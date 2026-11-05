@@ -738,8 +738,16 @@ PyCode* PyFrame::code(JSGlobalObject* globalObject) const { return codeOf(global
 
 PyFrame* PyFrame::of(JSGlobalObject* globalObject, CallFrame* callFrame)
 {
-    if (PyFrame* frame = frameObjectIfAny(callFrame))
+    if (PyFrame* frame = frameObjectIfAny(callFrame)) {
+        ASSERT(!frame->m_lacksBack);
+        frame->m_isKnownToTracebackOnly = false;
         return frame;
+    }
+    return makeFor(globalObject, callFrame);
+}
+
+ALWAYS_INLINE PyFrame* PyFrame::makeFor(JSGlobalObject* globalObject, CallFrame* callFrame)
+{
     // The body of a generator is called with the generator.
     PyFrame* frame = isGeneratorBody(callFrame) ? of(globalObject, uncheckedDowncast<PyGenerator>(callFrame->uncheckedArgument(0).asCell())) : create(globalObject, functionOf(callFrame), executableOf(callFrame));
     frame->m_callFrame = callFrame;
@@ -748,6 +756,15 @@ PyFrame* PyFrame::of(JSGlobalObject* globalObject, CallFrame* callFrame)
         frame->shownLine = rt.tracedLine;
         frame->shownOffset = rt.tracedOffset;
     }
+    return frame;
+}
+
+PyFrame* PyFrame::ofForTraceback(JSGlobalObject* globalObject, CallFrame* callFrame, bool isOutOfReach)
+{
+    if (PyFrame* frame = frameObjectIfAny(callFrame))
+        return frame;
+    PyFrame* frame = makeFor(globalObject, callFrame);
+    frame->m_isKnownToTracebackOnly = isOutOfReach && !frame->m_generator;
     return frame;
 }
 
@@ -888,7 +905,7 @@ int PyFrame::lineNumber()
     return m_lineNumber;
 }
 
-void PyFrame::callIsEnding(JSGlobalObject* globalObject, CallFrame* callFrame)
+void PyFrame::callIsEnding(JSGlobalObject* globalObject, CallFrame* callFrame, bool callerIsFoundLater)
 {
     VM& vm = getVM(globalObject);
     DeferGC deferGC(vm);
@@ -913,6 +930,8 @@ void PyFrame::callIsEnding(JSGlobalObject* globalObject, CallFrame* callFrame)
     // Whoever resumed a generator is not its caller once it has stopped.
     if (m_generator)
         m_generator.clear();
+    else if (callerIsFoundLater)
+        m_lacksBack = true;
     else if (CallFrame* caller = pythonCallerOfFrameThatEnds(vm, callFrame))
         m_back.set(vm, this, of(globalObject, caller));
     m_callFrame = nullptr;
@@ -931,7 +950,7 @@ void PyFrame::clear()
     m_extraLocals.clear();
 }
 
-void Runtime::frameIsEnding(CallFrame* callFrame)
+void Runtime::frameIsEnding(CallFrame* callFrame, JSValue leftBy, bool callerIsEntryFrame)
 {
     if (!isPythonFrame(callFrame)) [[unlikely]]
         return;
@@ -942,8 +961,16 @@ void Runtime::frameIsEnding(CallFrame* callFrame)
     // That of a generator may be from before it was last resumed.
     if (!frame && isGeneratorBody(callFrame))
         frame = uncheckedDowncast<PyGenerator>(callFrame->uncheckedArgument(0).asCell())->frameObject();
-    if (frame)
-        frame->callIsEnding(m_globalObject, callFrame);
+    if (!frame)
+        return;
+    bool callerIsFoundLater = false;
+    if (frame->isKnownToTracebackOnly() && !callerIsEntryFrame) {
+        // (What closes the iterators of loops, or a tool, may have raised something else since the entry was made.)
+        auto* exception = leftBy ? PyException::tryFrom(leftBy) : nullptr;
+        CallFrame* caller = callFrame->callerFrame();
+        callerIsFoundLater = exception && exception->isUnseen() && exception->lastEntryIsOf(frame) && !caller->isNativeCalleeFrame() && isPythonCodeBlock(caller->codeBlock());
+    }
+    frame->callIsEnding(m_globalObject, callFrame, callerIsFoundLater);
 }
 
 void forEachPythonFrameWithoutAllocating(CallFrame* topCallFrame, EntryFrame* entryFrame, const ScopedLambda<bool(const CodeInfo&, int line)>& function)
@@ -1768,6 +1795,26 @@ void Runtime::assertNoNotedEntryOf(CallFrame* callFrame) const
 }
 #endif
 
+// `traceback`: what an exception has so far. See PyFrame::backIs().
+static bool frameLeftLastLacksCaller(JSValue traceback)
+{
+    PyFrame* left = traceback ? PyTraceback::from(traceback)->frameIfMade() : nullptr;
+    return left && left->lacksBack();
+}
+
+static ALWAYS_INLINE void callerOfFrameLeftLastIs(VM& vm, JSValue traceback, PyFrame* caller)
+{
+    if (PyFrame* left = traceback ? PyTraceback::from(traceback)->frameIfMade() : nullptr)
+        left->backIs(vm, caller);
+}
+
+#if ASSERT_ENABLED
+void PyException::assertFrameLeftLastHasCaller() const
+{
+    ASSERT(!frameLeftLastLacksCaller(m_traceback.get()));
+}
+#endif
+
 static void makeEntry(JSGlobalObject* globalObject, const Runtime::NotedEntry& entry)
 {
     VM& vm = getVM(globalObject);
@@ -1783,7 +1830,9 @@ static void makeEntry(JSGlobalObject* globalObject, const Runtime::NotedEntry& e
     // As exceptionIsRaised() would have had it, had there been a frame object.
     if (frame->raisedAt < 0)
         frame->raisedAt = entry.offset;
-    entry.exception->setTraceback(vm, PyTraceback::create(globalObject, entry.exception->traceback(), frame, entry.codeBlock, BytecodeIndex(entry.offset)));
+    JSValue next = entry.exception->tracebackSoFar();
+    callerOfFrameLeftLastIs(vm, next, frame);
+    entry.exception->setTraceback(vm, PyTraceback::create(globalObject, next, frame, entry.codeBlock, BytecodeIndex(entry.offset)));
 }
 
 static bool takeOut(Runtime::NotedEntries& entries, Lock& lock, PyException* exception, Runtime::NotedEntry& result)
@@ -1904,21 +1953,30 @@ JSValue addTracebackEntry(JSGlobalObject* globalObject, JSValue exceptionValue, 
     // A call whose arguments do not fit never began. Nor did that of a generator expression whose first iterable is none: it is the
     // code around it that asks for the iterator, as far as a program can tell.
     CodeBlock* codeBlock = callFrame->codeBlock();
-    if (!isPastStart(codeBlock->unlinkedCodeBlock()->pythonMarks(), index.offset()))
+    if (!isPastStart(codeBlock->unlinkedCodeBlock()->pythonMarks(), index.offset())) {
+        // (It is the caller of whatever it called all the same.)
+        if (auto* exception = PyException::tryFrom(exceptionValue); exception && frameLeftLastLacksCaller(exception->tracebackSoFar())) [[unlikely]]
+            callerOfFrameLeftLastIs(vm, exception->tracebackSoFar(), PyFrame::of(globalObject, callFrame));
         return exceptionValue;
+    }
     clearFrameMadeByInstruction(callFrame, codeBlock, index, frameBefore, exceptionValue);
-    if (auto* exception = PyException::tryFrom(exceptionValue); !isRaisedAgain && exception && exception->isUnseen() && handler && handlerLeavesItUnseen(codeBlock, *handler) && !rt.monitoring().wantsExceptions()) {
-        rt.noteEntry(exception, callFrame, codeBlock, index.offset());
+    auto* unseen = PyException::tryFrom(exceptionValue);
+    if (unseen && !unseen->isUnseen())
+        unseen = nullptr;
+    if (!isRaisedAgain && unseen && handler && handlerLeavesItUnseen(codeBlock, *handler) && !rt.monitoring().wantsExceptions()) {
+        rt.noteEntry(unseen, callFrame, codeBlock, index.offset());
         return exceptionIsRaised(globalObject, exceptionValue, callFrame, index, false);
     }
     if (!isRaisedAgain) {
         DeferGC deferGC(vm);
         auto makeEntry = [&](JSValue next) -> JSValue {
-            return PyTraceback::create(globalObject, next, PyFrame::of(globalObject, callFrame), codeBlock, index);
+            PyFrame* frame = PyFrame::ofForTraceback(globalObject, callFrame, unseen && !handler);
+            callerOfFrameLeftLastIs(vm, next, frame);
+            return PyTraceback::create(globalObject, next, frame, codeBlock, index);
         };
         // What JS threw has a JSError once Python has caught it: making one runs code. Until then the object keeps the traceback.
         if (auto* exception = exceptionOfThrownValueIfKnown(globalObject, exceptionValue))
-            exception->setTraceback(vm, makeEntry(exception->traceback()));
+            exception->setTraceback(vm, makeEntry(exception->tracebackSoFar()));
         else {
             auto makeEntries = [&](JSValue next) -> JSValue {
                 return makeEntry(next ? next : tracebackOfErrorOfJS(globalObject, exceptionValue, codeBlock));
@@ -1926,6 +1984,10 @@ JSValue addTracebackEntry(JSGlobalObject* globalObject, JSValue exceptionValue, 
             addTracebackEntryToThrownObject(globalObject, exceptionValue, makeEntries);
         }
     }
+#if ASSERT_ENABLED
+    if (auto* exception = PyException::tryFrom(exceptionValue))
+        ASSERT(exception->hasNotedEntry() || !frameLeftLastLacksCaller(exception->tracebackSoFar()));
+#endif
     return exceptionIsRaised(globalObject, exceptionValue, callFrame, index, isRaisedAgain);
 }
 

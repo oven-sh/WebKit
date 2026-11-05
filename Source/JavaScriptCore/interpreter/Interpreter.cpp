@@ -1427,7 +1427,7 @@ public:
         // See Python::Runtime::frameDepth.
         Python::Runtime* runtime = globalObject->pythonRuntime();
         runtime->frameIsLeftByException(m_callFrame, m_isTermination ? JSValue() : m_thrownValue);
-        runtime->frameIsEnding(m_callFrame);
+        runtime->frameIsEnding(m_callFrame, m_isTermination ? JSValue() : m_thrownValue, visitor->callerIsEntryFrame());
         if (m_codeBlock->unlinkedCodeBlock()->parseMode() != SourceParseMode::GeneratorBodyMode) {
             // op_py_bind_args counts a frame in. Before it comes op_enter, which polls for traps.
             if (visitor->bytecodeIndex().offset())

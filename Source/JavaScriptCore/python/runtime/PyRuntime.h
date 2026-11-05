@@ -901,7 +901,8 @@ public:
     Vector<CallFrame*, 2> framesToldOfException;
     // The call is about to end, by a return or an exception. Its frame object, if it has one, takes over what the frame holds.
     // (A generator that yields, or ends without an exception, tells its frame object itself.)
-    void frameIsEnding(CallFrame*);
+    // `leftBy`: the exception that leaves it, for the unwinder.
+    void frameIsEnding(CallFrame*, JSValue leftBy = { }, bool callerIsEntryFrame = true);
 
     // ---- For the interpreter (LowLevelInterpreter64.asm) ----
 

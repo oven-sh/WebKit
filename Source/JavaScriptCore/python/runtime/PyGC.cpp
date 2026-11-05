@@ -296,6 +296,12 @@ static bool isTracked(Runtime& rt, JSValue value, bool isYoung = false)
     return !isOfUntrackedType(type);
 }
 
+// Of what the program is given: see PyFrame::backIs().
+static ALWAYS_INLINE void assertIsComplete(JSValue object)
+{
+    ASSERT_UNUSED(object, !PyFrame::is(object) || !PyFrame::from(object)->lacksBack());
+}
+
 // ---- gc.collect(): how much was found ----
 //
 // CPython's collector deals with what reference counts do not free: the objects that are in a cycle, and what only such
@@ -455,6 +461,7 @@ static JSValue gcCollect(JSGlobalObject* globalObject, JSValue generationValue)
         writeToStderr(globalObject, makeString("gc: collectable "_s, description, '\n'));
     if (JSArray* garbage = gcList(rt, Runtime::Slot::GCGarbage)) {
         for (unsigned i = 0; i < census.kept.size(); ++i) {
+            assertIsComplete(census.kept.at(i));
             listAppend(globalObject, garbage, census.kept.at(i));
             RETURN_IF_EXCEPTION(scope, { });
         }
@@ -573,8 +580,10 @@ static JSValue gcGetObjects(JSGlobalObject* globalObject, JSValue generation)
     {
         HeapView view(globalObject);
         for (JSCell* cell : view.objects()) {
-            if (view.mayBeGiven(cell) && isTracked(rt, cell))
+            if (view.mayBeGiven(cell) && isTracked(rt, cell)) {
+                assertIsComplete(cell);
                 objects.append(cell);
+            }
         }
     }
     RELEASE_AND_RETURN(scope, newList(globalObject, spanOf(objects)));
@@ -649,8 +658,10 @@ static JSValue gcGetReferrers(JSGlobalObject* globalObject, const CallArgs& args
                 seen.add(forHooks);
             for (JSCell* cell : listener.found()) {
                 cell = view.objectOf(cell);
-                if (cell && seen.add(cell).isNewEntry)
+                if (cell && seen.add(cell).isNewEntry) {
+                    assertIsComplete(cell);
                     result.append(cell);
+                }
             }
         }
         // No cell says so of these.
@@ -810,6 +821,8 @@ static JSValue gcGetReferents(JSGlobalObject* globalObject, const CallArgs& args
         if (object.isCell() && object.asCell()->isObject() && isObjectOfPython(object.asCell(), globalObject) && !isOfUntrackedType(typeOf(globalObject, object)))
             appendReferents(globalObject, object.asCell(), result);
     }
+    for (unsigned i = 0; i < result.size(); ++i)
+        assertIsComplete(result.at(i));
     RELEASE_AND_RETURN(scope, newList(globalObject, spanOf(result)));
 }
 

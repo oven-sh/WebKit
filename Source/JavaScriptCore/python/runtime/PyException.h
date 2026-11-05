@@ -41,6 +41,14 @@ public:
     {
         if (m_hasNotedEntry) [[unlikely]]
             const_cast<PyException*>(this)->willBeSeen();
+        assertFrameLeftLastHasCaller();
+        return m_traceback.get();
+    }
+    // For what adds an entry to it.
+    JSValue tracebackSoFar()
+    {
+        if (m_hasNotedEntry) [[unlikely]]
+            willBeSeen();
         return m_traceback.get();
     }
     void setTraceback(VM& vm, JSValue value)
@@ -73,13 +81,22 @@ public:
         m_isUnseen = false;
         if (m_hasNotedEntry) [[unlikely]]
             makeNotedEntry();
+        assertFrameLeftLastHasCaller();
     }
     bool hasNotedEntry() const { return m_hasNotedEntry; }
+    // The entry that was made last is of that frame.
+    inline bool lastEntryIsOf(PyFrame*) const;
     void setHasNotedEntry(bool value) { m_hasNotedEntry = value; }
 
 private:
     PyException(VM&, Structure*, PyType*);
     void makeNotedEntry();
+    // See PyFrame::backIs().
+#if ASSERT_ENABLED
+    void assertFrameLeftLastHasCaller() const;
+#else
+    void assertFrameLeftLastHasCaller() const { }
+#endif
 
     WriteBarrier<PyTuple> m_args;
     WriteBarrier<Unknown> m_traceback;
@@ -135,13 +152,31 @@ public:
     // Null: it is not the frame of a generator, or that has ended.
     PyGenerator* generator() const;
 
-    // The call ends, with its frame still there.
-    void callIsEnding(JSGlobalObject*, CallFrame*);
+    // The same for the entry of a traceback. `isOutOfReach`: of an exception that nobody has seen and that is about to leave the call. If the frame object is
+    // made for that, only the exception leads to it.
+    static PyFrame* ofForTraceback(JSGlobalObject*, CallFrame*, bool isOutOfReach);
+
+    // The call ends, with its frame still there. `callerIsFoundLater`: see backIs().
+    void callIsEnding(JSGlobalObject*, CallFrame*, bool callerIsFoundLater = false);
+    bool isKnownToTracebackOnly() const { return m_isKnownToTracebackOnly; }
+    // An exception that nobody has seen has left the call and come up to its caller, a call of Python's. If that one catches it and nobody
+    // looks, it needs no frame object, nor do its callers. If it gets one after all, for its own entry in the traceback, this is told. That is before the
+    // exception is seen (PyException::willBeSeen()), and only the exception leads here: so nothing of the program's meets a frame object that lacks its caller.
+    void backIs(VM& vm, PyFrame* caller)
+    {
+        if (std::exchange(m_lacksBack, false))
+            m_back.set(vm, this, caller);
+    }
+    bool lacksBack() const { return m_lacksBack; }
     // The generator has yielded, or has ended: its frame is gone.
     void generatorHasStopped(bool isCompleted);
 
     // Once the call has ended: the frame of the caller. Empty: there was none.
-    JSValue back() const { return m_back.get(); }
+    JSValue back() const
+    {
+        ASSERT(!m_lacksBack);
+        return m_back.get();
+    }
     // Once the call has ended: what the registers of CodeInfo::variables held. Null: nothing is kept.
     PyTuple* values() const { return m_values.get(); }
     // Once the call has ended: the namespace, for the body of a module or a class.
@@ -179,6 +214,7 @@ public:
 private:
     PyFrame(VM&, Structure*, PyType*);
     static PyFrame* create(JSGlobalObject*, PyFunction*, FunctionExecutable*);
+    static PyFrame* makeFor(JSGlobalObject*, CallFrame*);
     void findPlace(CodeBlock*, BytecodeIndex);
 
     WriteBarrier<PyFunction> m_function;
@@ -192,6 +228,8 @@ private:
     WriteBarrier<PyDict> m_extraLocals;
     WriteBarrier<Unknown> m_trace;
     bool m_isOnNoLine { false };
+    bool m_isKnownToTracebackOnly { false };
+    bool m_lacksBack { false };
     // Not null while the call is in progress, except that the frame object of a generator may not have been told that it runs again.
     CallFrame* m_callFrame { nullptr };
     int m_lineNumber { 0 };
@@ -217,8 +255,11 @@ public:
     {
         if (!m_frame) [[unlikely]]
             makeFrameOfJS();
+        ASSERT(!m_frame->lacksBack());
         return m_frame.get();
     }
+    // For what adds an entry in front of this one.
+    PyFrame* frameIfMade() const { return m_frame.get(); }
     int lineNumber()
     {
         if (m_codeBlock)
@@ -246,6 +287,12 @@ private:
     int m_lastI { 0 };
     bool m_isOfJS { false };
 };
+
+inline bool PyException::lastEntryIsOf(PyFrame* frame) const
+{
+    JSValue traceback = m_traceback.get();
+    return traceback && uncheckedDowncast<PyTraceback>(traceback.asCell())->frameIfMade() == frame;
+}
 
 // type(*args), for a built-in exception type, without running any Python code.
 PyException* newException(JSGlobalObject*, PyType*, std::span<const JSValue> args);
