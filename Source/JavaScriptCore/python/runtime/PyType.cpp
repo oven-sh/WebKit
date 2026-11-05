@@ -228,7 +228,7 @@ void PyType::addMethods(JSGlobalObject* globalObject, std::span<const NativeDef>
                 add(comparison);
         }
     }
-    didChange(vm);
+    didChange(vm, Change::HowAttributesAreRead);
 }
 
 void PyType::addGetSets(JSGlobalObject* globalObject, std::span<const NativeGetSet> getsets)
@@ -336,12 +336,19 @@ JSValue PyType::lookupKey(JSGlobalObject* globalObject, JSValue name)
 JSValue PyType::lookupSpecialSlow(Special special)
 {
     Runtime& rt = Runtime::from(realm());
-    JSString* name = rt.name(special);
-    JSValue value = lookup(name);
-    // What that has not remembered is not remembered here either.
-    StringImpl* impl = name->tryGetValueImpl();
-    if (LookupCacheEntry& entry = lookupCacheEntry(impl); entry.impl != impl || entry.value.get() != value) [[unlikely]]
-        return value;
+    JSValue value;
+    if (special != Special::GetAttr || !m_hasGivenUpGetAttr) {
+        JSString* name = rt.name(special);
+        value = lookup(name);
+        if (special == Special::GetAttr && !value)
+            m_hasGivenUpGetAttr = true;
+        else {
+            // What that has not remembered is not remembered here either.
+            StringImpl* impl = name->tryGetValueImpl();
+            if (LookupCacheEntry& entry = lookupCacheEntry(impl); entry.impl != impl || entry.value.get() != value) [[unlikely]]
+                return value;
+        }
+    }
     unsigned index = static_cast<unsigned>(special);
     m_specials[index].set(rt.vm(), this, value);
     m_specialStates[index] = PyFunction::is(value) ? SpecialState::Function : SpecialState::Known;
@@ -439,7 +446,7 @@ Structure* PyType::createInstanceStructure(VM& vm)
     return structure;
 }
 
-void PyType::didChange(VM& vm)
+void PyType::didChange(VM& vm, Change change)
 {
     // Two types may each have the other in an MRO of their own making.
     if (m_isBeingToldOfChange)
@@ -448,6 +455,8 @@ void PyType::didChange(VM& vm)
     m_version = 0;
     ++m_numberOfChanges;
     m_construction = Construction::Unknown;
+    if (change == Change::HowAttributesAreRead)
+        m_hasGivenUpGetAttr = false;
     // What the caches held must not be kept alive by them: it may be what was just taken out of the class.
     m_specialStates.fill(SpecialState::Unknown);
     for (auto& special : m_specials)
@@ -463,7 +472,7 @@ void PyType::didChange(VM& vm)
     JSArray* list = asList(subclasses);
     for (unsigned i = 0; i < listLength(list); ++i) {
         if (PyType* subclass = subclassInEntry(listGet(list, i)))
-            subclass->didChange(vm);
+            subclass->didChange(vm, change);
     }
 }
 

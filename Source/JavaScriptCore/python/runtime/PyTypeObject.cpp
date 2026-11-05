@@ -813,7 +813,9 @@ static void typeSetAttrImpl(JSGlobalObject* globalObject, PyType* type, JSString
             return;
         }
     }
-    type->didChange(vm);
+    StringImpl* impl = name->tryGetValueImpl();
+    bool isHook = impl == rt.name(Special::GetAttr)->tryGetValueImpl() || impl == rt.name(Special::GetAttribute)->tryGetValueImpl();
+    type->didChange(vm, isHook ? PyType::Change::HowAttributesAreRead : PyType::Change::Any);
     if (getsFinalizer) [[unlikely]]
         registerInstancesForFinalization(globalObject, type);
 }
@@ -1135,7 +1137,7 @@ static MROResult resolveMRO(JSGlobalObject* globalObject, PyType* type)
     if (type->mro() != before)
         return MROResult::Superseded;
     type->setMRO(vm, mro);
-    type->didChange(vm);
+    type->didChange(vm, PyType::Change::HowAttributesAreRead);
     // An mro() may name a class that the type does not derive from. What is remembered of the type's attributes depends on that
     // class all the same.
     if (type->type() != rt.typeType()) {
@@ -1769,7 +1771,7 @@ static void typeSetBases(JSGlobalObject* globalObject, JSValue self, JSValue val
         PyType::from(bases->at(i))->addSubclass(globalObject, type);
         RETURN_IF_EXCEPTION(scope, void());
     }
-    type->didChange(vm);
+    type->didChange(vm, PyType::Change::HowAttributesAreRead);
     if (!hadFinalizer && type->lookup(Special::Del)) [[unlikely]]
         registerInstancesForFinalization(globalObject, type);
 }

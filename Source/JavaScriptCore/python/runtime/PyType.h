@@ -188,8 +188,10 @@ public:
     bool hasInstancesAmongAttributes() const { return m_hasInstancesAmongAttributes; }
     void setHasInstancesAmongAttributes() { m_hasInstancesAmongAttributes = true; }
 
-    // After a change to the dict of the type, or to its bases.
-    void didChange(VM&);
+    // After a change to the dict of the type, or to its bases; those derived from it are told. HowAttributesAreRead: __getattr__ or
+    // __getattribute__ has been set or deleted, or __bases__ has been assigned to.
+    enum class Change : bool { Any, HowAttributesAreRead };
+    void didChange(VM&, Change = Change::Any);
     // A number that no other type has or had, nor this one before it last changed: what was found by looking a name up in the
     // type holds for as long as the type has the number. 0: it has none, and nothing is to be remembered about it. A type gets
     // a number when it is asked for one, and a type that keeps changing gets no more of them after a while: they are finite.
@@ -276,6 +278,10 @@ private:
     uint16_t m_versionsLeft { 1000 };
     bool m_isBeingToldOfChange { false };
     bool m_hasInstancesAmongAttributes { false };
+    // __getattr__ was looked for and not found. Then it is not looked for again, whatever else changes, as in CPython, where what
+    // reads the attributes of the instances is replaced by something simpler. It shows where a key that is no str raised when it
+    // was asked whether it is "__getattr__".
+    bool m_hasGivenUpGetAttr { false };
     Construction m_construction { Construction::Unknown };
     enum class SpecialState : uint8_t { Unknown, Known, Function, NativeTakingNone, NativeTakingOne, NativeTakingTwo };
     static_assert(static_cast<uint8_t>(SpecialState::Known) == specialIsOfNoParticularKind && static_cast<uint8_t>(SpecialState::Function) == specialIsFunction);
