@@ -197,6 +197,7 @@ void Unit::functionDefinition(FunctionDef* node)
             unit.callRuntime(result.get(), RuntimeFunction::SetFunctionTypeParams, { result.get(), typeParams.get() });
             unit.g.emitReturn(result.get());
         });
+        loc(node->range);
         emitMakeFunction(function.get(), executable, scope, { });
         if (parts.defaults && parts.kwDefaults)
             emitSimpleCall(function.get(), function.get(), { parts.defaults.get(), parts.kwDefaults.get() }, node->range);
@@ -358,6 +359,7 @@ void Unit::classDefinition(ClassDef* node)
             unit.emitBuildClass(value.get(), node, firstLineNumber, names().dotGenericBase);
             unit.g.emitReturn(value.get());
         });
+        loc(node->range);
         emitMakeFunction(result.get(), executable, scope, { });
         emitSimpleCall(result.get(), result.get(), { }, node->range);
     }
@@ -452,6 +454,7 @@ RegisterID* Unit::emitTypeAliasObject(RegisterID* dst, AST::TypeAlias* node, Reg
         });
         FunctionParts parts;
         parts.defaults = constant(PyTuple::create(globalObject(), { jsNumber(1) }));
+        loc(node->range);
         emitMakeFunction(value.get(), executable, scope, parts);
     }
     loc(node->range);
@@ -474,6 +477,7 @@ void Unit::typeAlias(AST::TypeAlias* node)
             unit.emitTypeAliasObject(value.get(), node, typeParams.get());
             unit.g.emitReturn(value.get());
         });
+        loc(node->range);
         emitMakeFunction(result.get(), executable, scope, { });
         emitSimpleCall(result.get(), result.get(), { }, node->range);
     }
