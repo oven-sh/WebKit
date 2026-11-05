@@ -163,6 +163,7 @@ void appendRepeated(StringBuilder&, char32_t, int64_t count);
 
 // For text that is mostly short and Latin-1: it is put together on the stack and copied once, into a string of just its size. (A
 // StringBuilder allocates a buffer, and a second time when the text is taken out of it.) What does not fit goes on in a StrBuilder.
+// The room is not written to before it is used: not to be held across code of the program where it can be helped.
 class ShortStrBuilder {
     WTF_FORBID_HEAP_ALLOCATION;
 public:
