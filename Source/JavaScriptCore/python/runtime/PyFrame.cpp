@@ -1591,7 +1591,8 @@ PyTraceback* PyTraceback::createForJS(JSGlobalObject* globalObject, JSValue next
 void PyTraceback::makeFrameOfJS()
 {
     CodeBlock* codeBlock = m_codeBlock.get();
-    JSGlobalObject* globalObject = codeBlock->globalObject();
+    // (Not that of the code, which may be of a realm that has no Python.)
+    JSGlobalObject* globalObject = realm();
     VM& vm = getVM(globalObject);
     // An exception may be on its way.
     SuspendExceptionScope suspended(vm);
@@ -2010,6 +2011,9 @@ private:
     // What runs is not what the programmer wrote, which is in the file.
     String sourceLineOfJS(const String& filename, int lineNumber)
     {
+        // Code that was given to the engine as text.
+        if (filename.isEmpty())
+            return { };
         auto& contents = m_filesOfJS.ensure(filename, [&] {
             return readFile(filename).value_or(Vector<uint8_t> { });
         }).iterator->value;
