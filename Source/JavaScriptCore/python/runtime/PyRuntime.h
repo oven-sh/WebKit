@@ -554,6 +554,8 @@ public:
 
     // What of all this belongs to the thread that is running. It goes with the thread when another takes its place. It refers
     // to cells, and is visited by nobody: it must be on the stack of the thread.
+    // It lies on the stack of a thread that has given up the GIL, for as long as that lasts, where the frames of the thread's last calls lay, and the collector takes every word there for a
+    // reference. So there is no room in it that is not written: no vector with room of its own, no padding (of a word with one byte written the rest still points into the old cell's block).
     struct ThreadLocalState {
         JSValue currentContext;
         JSValue handledException;
@@ -573,17 +575,17 @@ public:
         CallFrame* tracedCallFrame { nullptr };
         int tracedLine { -1 };
         int tracedOffset { -1 };
-        Vector<JSCell*, 8> reprStack;
+        Vector<JSCell*> reprStack;
         NotedEntries notedEntries;
         CallFrame* reraisingFrame { nullptr };
         RuntimeCall* runtimeCall { nullptr };
         int frameDepth { 0 };
         unsigned buffersThatKeepGIL { 0 };
-        bool isRunningPendingCalls { false };
         void* stackWhereUnaskedCallsBegan { nullptr };
-        uint32_t thread { 0 };
+        uintptr_t isRunningPendingCalls { false };
         NewGenerators newGenerators;
         unsigned ownershipEpoch { 0 }; // When they were put here.
+        uint32_t thread { 0 };
     };
     // Leaves the runtime as a thread that has just started finds it.
     void takeThreadLocalState(ThreadLocalState&);
@@ -865,7 +867,7 @@ public:
     void setExceptionGroupRest(JSValue value) { set(m_exceptionGroupRest, value); }
 
     // The objects whose repr() is being computed, to catch one that contains itself.
-    Vector<JSCell*, 8> reprStack;
+    Vector<JSCell*> reprStack;
 
     // See StrView.
     std::unique_ptr<StrIndexCache, void (*)(StrIndexCache*)> strIndexCache { nullptr, nullptr };

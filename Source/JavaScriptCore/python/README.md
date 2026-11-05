@@ -1007,6 +1007,15 @@ so the aim is that everything Python *guarantees* holds, and that what it merely
     themselves. Nothing changes where JS catches. Nobody misses it: it is read by the collector, by a function of `$vm`, and by the host where it has a value to report and no exception
     (`reportException(JSGlobalObject*, JSValue)`), and every entry from native code clears it, so it could not be counted on beyond the return of the call that failed. That report was wrong
     before: an event listener whose `handleEvent` cannot be called, after `hasattr()` had caught an `AttributeError`, was reported as that `AttributeError`.
+  - *What a thread has on its stack while it is without the GIL has no room that is not written.* The state that a thread takes along (`Runtime::ThreadLocalState`) lies in the frame of whatever
+    gave up the GIL, where the frames of the thread's last calls lay, and stays there for as long as the thread waits; the collector takes every word of it for a reference. It had a vector with room for
+    eight items of its own, which nothing writes while the vector is empty, and a `bool` with seven bytes of padding. A thread that did nothing but raise and catch had the cell that carries a thrown
+    exception (`JSC::Exception`) in that vector's room every time it was made to give up the GIL: the throw had left the address there. (A heap snapshot had the cell without an edge or a root; the
+    word stood at the same offset from the stack pointer in every run, beside a return address into `VM::throwException`.) And in the padding: of a word with one byte written the rest still points into the block
+    of the old cell, which holds nothing but such cells, and the scan also takes what points just behind a cell for a reference to it. `gc.get_objects()` in another thread found the frame of
+    the function that had raised in every call, one for each such thread; now in none of 40. Nothing is wiped for that: there is nothing left to wipe.
+  - *What is left* are the words that the compiler leaves unwritten in frames that are not ours, on the way into the wait (`Threads::takeGIL`, `Condition::waitFor`, `ParkingLot`). Other shapes of that loop
+    (a raise twelve calls deep, `hasattr()`, several threads) have the address of the carrier, or of the exception itself, in one of those in up to 15 looks of 40, for as long as the thread stays at that very place.
 - **The collector marks while the program runs.** Its threads call `visitChildren` on cells that the program is changing at that
   moment. What every class of cell owes them:
   - Whatever `visitChildren` reads that is not a value is set by the constructor and never changes: the length of a tuple, the
