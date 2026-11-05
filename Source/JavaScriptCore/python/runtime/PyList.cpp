@@ -693,6 +693,9 @@ public:
                     return false;
                 length = forced;
             }
+            // A short list, or one that was in order.
+            if (length == static_cast<ptrdiff_t>(m_count))
+                return true;
             if (!mergeBefore(length))
                 return false;
             m_runs.append(Run { rest, length, 0 });
@@ -1283,7 +1286,9 @@ private:
     Slice m_all;
     Slice m_scratch;
     size_t m_count;
-    Vector<Run, 64> m_runs;
+    // Not in the frame: the comparisons, which are code of the program's, run under it, and room that is not written to holds whatever
+    // old words lie there for the collector to find.
+    Vector<Run> m_runs;
     ptrdiff_t m_minimumGallop { initialMinimumGallop };
     Comparison m_comparison { Comparison::Generic };
     bool m_keysAreTuples { false };
@@ -1312,7 +1317,7 @@ static SortedKeys whatAllAre(std::span<const WriteBarrier<Unknown>> items)
 
 // Nothing gets to see the list while such items are sorted, so it keeps them meanwhile, and the collector need not know of the copy.
 template<SortedKeys sortedKeys>
-static bool sortItemsThatAreAll(JSGlobalObject* globalObject, JSArray* list, std::span<WriteBarrier<Unknown>> items, bool reverse)
+static NEVER_INLINE bool sortItemsThatAreAll(JSGlobalObject* globalObject, JSArray* list, std::span<WriteBarrier<Unknown>> items, bool reverse)
 {
     // A list that is a single run is not merged.
     constexpr size_t shortList = Sorter<sortedKeys>::maxMinimumRun;
@@ -1332,6 +1337,12 @@ static bool sortItemsThatAreAll(JSGlobalObject* globalObject, JSArray* list, std
         items[i].setWithoutWriteBarrier(values[i]);
     getVM(globalObject).writeBarrier(list);
     return true;
+}
+
+// In a frame of its own, which is not there yet while the key function is called.
+static NEVER_INLINE bool sortItemsOfAnyKind(JSGlobalObject* globalObject, JSValue* keys, JSValue* values, JSValue* scratchKeys, JSValue* scratchValues, size_t count)
+{
+    return Sorter<SortedKeys::Any>(globalObject, keys, values, scratchKeys, scratchValues, count).sort();
 }
 
 void listSort(JSGlobalObject* globalObject, JSArray* list, JSValue key, bool reverse)
@@ -1422,8 +1433,7 @@ void listSort(JSGlobalObject* globalObject, JSArray* list, JSValue key, bool rev
             reverseAll(keyData);
         }
         auto dataOf = [](MarkedArgumentBuffer& buffer) { return reinterpret_cast<JSValue*>(const_cast<EncodedJSValue*>(ArgList(buffer).data())); };
-        Sorter<SortedKeys::Any> sorter(globalObject, keyData ? keyData : valueData, keyData ? valueData : nullptr, dataOf(scratch), keyData ? dataOf(secondScratch) : nullptr, count);
-        failed = !sorter.sort();
+        failed = !sortItemsOfAnyKind(globalObject, keyData ? keyData : valueData, keyData ? valueData : nullptr, dataOf(scratch), keyData ? dataOf(secondScratch) : nullptr, count);
         if (reverse)
             reverseAll(valueData);
     }
