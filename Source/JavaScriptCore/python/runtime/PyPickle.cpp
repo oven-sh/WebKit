@@ -2818,18 +2818,27 @@ private:
             return false;
         if (m_line.size() < 2)
             RELEASE_AND_RETURN(scope, truncated());
-        auto text = byteCast<Latin1Character>(m_line.span());
+        // The text ends at the first NUL, as that of an int.
+        auto line = m_line.span();
+        if (size_t end = WTF::find(line, static_cast<uint8_t>(0)); end != notFound)
+            line = line.first(end);
+        auto text = byteCast<Latin1Character>(line);
         double value;
         size_t used = scanDouble(text, value);
-        if (!used) {
-            raiseValueError(m_globalObject, scope, "could not convert string to float: '"_s, StringView(text), '\'');
+        bool isTooLarge = used && std::isinf(value) && !isASCIIAlpha(text[text[0] == '-' || text[0] == '+']);
+        if (!used || isTooLarge) {
+            // The first 200 bytes, without the beginning of a character that they may end with.
+            size_t consumed;
+            bool isCut = line.size() >= 200;
+            JSValue shown = codecDecodeUTF8(m_globalObject, line.first(std::min<size_t>(line.size(), 200)), "replace"_s, isCut ? &consumed : nullptr);
+            RETURN_IF_EXCEPTION(scope, false);
+            if (isTooLarge)
+                raiseOverflowError(m_globalObject, scope, "value too large to convert to float: '"_s, stringOf(asString(shown)), '\'');
+            else
+                raiseValueError(m_globalObject, scope, "could not convert string to float: '"_s, stringOf(asString(shown)), '\'');
             return false;
         }
-        if (std::isinf(value) && !isASCIIAlpha(text[text[0] == '-' || text[0] == '+'])) {
-            raiseOverflowError(m_globalObject, scope, "value too large to convert to float: '"_s, StringView(text), '\'');
-            return false;
-        }
-        if (text[used] != '\n') {
+        if (used < text.size() && text[used] != '\n') {
             raiseValueError(m_globalObject, scope, "could not convert string to float"_s);
             return false;
         }
