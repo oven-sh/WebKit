@@ -1427,9 +1427,13 @@ static bool constantsAreTheSame(JSGlobalObject* globalObject, JSValue a, JSValue
         return sameBits(floatValue(a), floatValue(b));
     if (auto* complex = PyComplex::tryFrom(a))
         return sameBits(complex->real(), PyComplex::from(b)->real()) && sameBits(complex->imaginary(), PyComplex::from(b)->imaginary());
-    if (auto* tuple = PyTuple::tryFrom(a)) {
-        auto* other = PyTuple::from(b);
-        if (tuple->length() != other->length())
+    // (That of the names of keyword arguments is a tuple to nobody but a call.)
+    auto tupleOrKeywordNames = [](JSValue value) {
+        return value.isCell() && (value.asCell()->type() == PyTupleType || value.asCell()->type() == PyKwNamesType) ? uncheckedDowncast<PyTuple>(value.asCell()) : nullptr;
+    };
+    if (auto* tuple = tupleOrKeywordNames(a)) {
+        auto* other = tupleOrKeywordNames(b);
+        if (!other || tuple->length() != other->length())
             return false;
         for (unsigned i = 0; i < tuple->length(); ++i) {
             bool same = constantsAreTheSame(globalObject, tuple->at(i), other->at(i));
