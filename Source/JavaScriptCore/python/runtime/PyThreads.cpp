@@ -899,6 +899,12 @@ bool IdleWait::collectAsLastResort()
     return std::exchange(m_hasCollectedAsLastResort, true) || collect(true);
 }
 
+bool IdleWait::collectBeforeBlocking()
+{
+    // If there is no other thread, nothing else can end the wait, as far as this process goes.
+    return m_continuesWait || collect(!runtime(m_globalObject).threads().runningCount());
+}
+
 int64_t IdleWait::nextPiece(int64_t remaining) const
 {
     int64_t piece = std::max<int64_t>(m_timeToCollect - monotonicNanoseconds(), 0);

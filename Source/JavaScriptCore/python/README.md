@@ -777,8 +777,15 @@ so the aim is that everything Python *guarantees* holds, and that what it merely
       what the frames above hold by chance stays. So does what the frames of another thread hold that sits in such a function.
     - What runs between giving up and beginning again (finalizers, and other threads while those wait) finds the function not begun: a
       `poll` object is not in use, a lock that a finalizer takes for this thread and keeps is this thread's.
-  - Not covered: `recv` and the like on a blocking socket in a thread other than the main one, writes, `connect`, `flock`,
-    `wait()` for any child, `sigwait`.
+  - *`flock` cannot be made piece by piece.* `flock(open(p, "w"), LOCK_EX)`, the file dropped, and the same again: with reference counts the
+    first file is closed by then. Here it would hold its lock while the second call waits for it, for ever if there is no other
+    thread. So a call that may wait asks without waiting first, and if the lock is taken and this very process has one on
+    the same file (by `fstat` of the descriptors it has locked), it collects before it blocks: whatever the share of the time if
+    this is the only thread, within the share of the threads that wait otherwise (two threads may well contend for such a lock).
+    If that is refused it blocks, and a thread that waits looks within the 5 s. A lock that another process holds costs one more
+    system call. A copy of the descriptor (`dup`, a child) keeps the lock as it does in CPython: then the call blocks.
+  - Not covered: `recv` and the like on a blocking socket in a thread other than the main one, writes, `connect`,
+    `wait()` for any child, `sigwait`, `sigtimedwait`.
 - **What only a temporary holds is finalized at once**, where that can be known without the collector (`PyTemporaries.cpp`, which has the
   argument in full). `bytes(memoryview(b)[:n]); del b[:n]`, `open(p, "w").write(s)` and `for x in g(): break` count on it. The compiler leaves marks beside the
   code, no instructions: this call or subscript makes a value that goes in a temporary register, and that instruction is its one

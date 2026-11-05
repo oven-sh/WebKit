@@ -9,8 +9,10 @@
 #if !OS(WINDOWS)
 
 #include "JSCInlines.h"
+#include "PyThreads.h"
 #include <sys/file.h>
 #include <sys/ioctl.h>
+#include <sys/stat.h>
 
 #if OS(LINUX) && !defined(FICLONE)
 // As in <linux/fs.h>, which defines much else.
@@ -219,6 +221,38 @@ static JSValue fcntlNoneUnlessFailed(JSGlobalObject* globalObject, int result)
     return jsUndefined();
 }
 
+// The descriptors through which this process has taken a lock with flock() and has not given it back. One that has been closed since
+// goes when it is next looked at; one whose number is in use again is at worst a collection for nothing. One list for the process,
+// whatever runs Python in it, as descriptors are the process's.
+static Lock s_descriptorsWithLockLock;
+static Vector<int> s_descriptorsWithLock WTF_GUARDED_BY_LOCK(s_descriptorsWithLockLock);
+
+static void fcntlDidFlock(int fd, bool holdsLock)
+{
+    Locker locker { s_descriptorsWithLockLock };
+    if (!holdsLock)
+        s_descriptorsWithLock.removeFirst(fd);
+    else if (!s_descriptorsWithLock.contains(fd))
+        s_descriptorsWithLock.append(fd);
+}
+
+static bool fcntlHoldsLockOnFileOf(int fd)
+{
+    struct stat wanted;
+    if (fstat(fd, &wanted))
+        return false;
+    bool holdsLock = false;
+    Locker locker { s_descriptorsWithLockLock };
+    s_descriptorsWithLock.removeAllMatching([&](int other) {
+        struct stat locked;
+        if (fstat(other, &locked))
+            return true;
+        holdsLock |= other != fd && locked.st_dev == wanted.st_dev && locked.st_ino == wanted.st_ino;
+        return false;
+    });
+    return holdsLock;
+}
+
 static JSValue fcntlFlock(JSGlobalObject* globalObject, JSValue fdValue, JSValue operationValue)
 {
     VM& vm = getVM(globalObject);
@@ -229,11 +263,41 @@ static JSValue fcntlFlock(JSGlobalObject* globalObject, JSValue fdValue, JSValue
         return { };
     if (failed(scope, audit(globalObject, "fcntl.flock"_s, jsNumber(fd), jsNumber(operation))))
         return { };
-    int result;
-    do {
-        AllowThreads allow(globalObject, AllowThreads::LosesNothing);
-        result = flock(fd, operation);
-    } while (result == -1 && errno == EINTR && !failed(scope, checkSignals(globalObject)));
+    // With reference counts a file that the program has dropped is closed, and has given back its lock. Here it holds it until the
+    // collector comes, which this call would keep waiting for: nothing is allocated meanwhile, and it cannot be made piece by piece.
+    // So if the lock is not free, and this very process has one on the same file, the collector looks first.
+    int result = -1;
+    bool isAnswered = false;
+    if (!(operation & (LOCK_NB | LOCK_UN))) {
+        {
+            // It does not wait for the lock, but on a file system of the network it waits for the answer.
+            AllowThreads allow(globalObject, AllowThreads::LosesNothing);
+            result = flock(fd, operation | LOCK_NB);
+        }
+        // Noted at once: what follows makes system calls of its own, which may fail.
+        bool isTaken = result == -1 && errno == EWOULDBLOCK;
+        bool wasInterrupted = result == -1 && errno == EINTR;
+        isAnswered = !isTaken && !wasInterrupted;
+        if (wasInterrupted && failed(scope, checkSignals(globalObject)))
+            return { };
+        if (isTaken && fcntlHoldsLockOnFileOf(fd)) {
+            int64_t deadline = -1;
+            IdleWait idle(globalObject, deadline, true);
+            // A hook hears of a call once.
+            if (isAudited(globalObject))
+                idle.mustNotBeginCallAgain();
+            if (failed(scope, idle.collectBeforeBlocking()))
+                return { };
+        }
+    }
+    if (!isAnswered) {
+        do {
+            AllowThreads allow(globalObject, AllowThreads::LosesNothing);
+            result = flock(fd, operation);
+        } while (result == -1 && errno == EINTR && !failed(scope, checkSignals(globalObject)));
+    }
+    if (!result)
+        fcntlDidFlock(fd, !(operation & LOCK_UN));
     RELEASE_AND_RETURN(scope, fcntlNoneUnlessFailed(globalObject, result));
 }
 
@@ -272,7 +336,7 @@ static JSValue fcntlLockf(JSGlobalObject* globalObject, JSValue fdValue, JSValue
 static constexpr NativeDef fcntlFunctions[] = {
     PY_FUNCTION("fcntl", fcntlFcntl, "(fd, cmd, arg=0, /)"),
     PY_FUNCTION("ioctl", fcntlIoctl, "(fd, request, arg=0, mutate_flag=True, /)"),
-    PY_FUNCTION("flock", fcntlFlock, "(fd, operation, /)"),
+    NativeDef(NativeKind::Function, "flock"_s, fcntlFlock, "(fd, operation, /)"_s, MayWait),
     PY_FUNCTION("lockf", fcntlLockf, "(fd, cmd, len=0, start=0, whence=0, /)"),
 };
 

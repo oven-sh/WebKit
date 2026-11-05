@@ -419,6 +419,9 @@ public:
     // Nothing can end the wait but a finalizer. Once for each time that this is so: a call that has been begun again for it does not ask again.
     bool collectAsLastResort();
     void canBeEnded() { m_hasCollectedAsLastResort = false; }
+    // For a wait that cannot be made piece by piece, if there is reason to think that what it waits for is held by something that
+    // the program has dropped. Once: a call that has been begun again for it does not ask again.
+    bool collectBeforeBlocking();
 
 private:
     bool collect(bool isLastResort);
