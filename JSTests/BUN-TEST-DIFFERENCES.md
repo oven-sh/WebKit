@@ -1,10 +1,10 @@
 # Where this fork's tests differ from upstream's, and why
 
-`JSTests/`, `LayoutTests/js` and the PerformanceTests collections are upstream's tests. This fork changes 129 of them and
+`JSTests/`, `LayoutTests/js` and the PerformanceTests collections are upstream's tests. This fork changes 132 of them and
 three runner scripts. Every change is listed here by the reason for it, so that after an upstream sync a failing test can
 be sorted into one of three piles:
 
-1. **The fork behaves differently on purpose.** Update the expectation. Sections A1–A10 list every such behavior, how to
+1. **The fork behaves differently on purpose.** Update the expectation. Sections A1–A11 list every such behavior, how to
    recognize it in a failure, and the fork code that causes it. If a failure matches one of these and the fork code is
    still there, the test is the thing to change.
 2. **The test cannot pass in a mode or build we run.** Skip it in that mode only, with the reason. Section B.
@@ -127,6 +127,27 @@ Rules for an edit to an upstream test:
 - `stress/intl-extended-timezone-names.js`: CLDR 49 removed zh-Hant's short names for America/Los_Angeles: `PDT` → `GMT-7`,
   `PT` → `洛杉磯時間`.
 
+### A11. A `StringBuilder` of 16-bit characters grows to the longest string there is
+
+- Upstream: `StringBuilder::expandedCapacity()` doubles the capacity, up to `String::MaxLength` (2^31 - 1). That is a few more
+  16-bit characters than a string can have, so once the capacity is 2^30 or more, a buffer of 16-bit characters cannot grow, and
+  one of 8-bit characters cannot be widened, whatever is needed: the builder overflows (`RangeError: Out of memory`) at half the
+  length that such a string can have.
+- Fork code: `maxCapacity` in `Source/WTF/wtf/text/StringBuilder.cpp` (commit 5637efab50) is the greatest length that both kinds
+  of string can have. What is needed is asked for as before, and a result that no string can hold overflows as upstream.
+- Recognize: a test takes 2^30 16-bit characters, or widens as many 8-bit ones, for a handy way to an overflow, and expects
+  `RangeError: Out of memory` from a function whose result a string can hold. Here the function returns, or goes on to its next
+  error.
+- Files (3). Each keeps upstream's call, with what comes of it here, and behind it has a block of the fork's own in which the same
+  builder does overflow, here and upstream, which is what the test was written for:
+  - `stress/out-of-memory-in-globalFuncUnescape.js`: `unescape('\u0100'.repeat(2**30))` is its argument. The block: the last
+    character of the text widens 2^31 - 7 others.
+  - `stress/regexp-escape-oom.js`: `RegExp.escape('퀀'.repeat(2 ** 30))` is its argument. The block: 2^30 characters that
+    become six each.
+  - `slowMicrobenchmarks/function-constructor-with-huge-strings.js`: the text of the function is built, and the parser finds the
+    arrow function among the parameters: `SyntaxError: Unexpected token '('. Expected a parameter pattern or a ')' in parameter
+    list.` The block: strings four times as long.
+
 ---
 
 ## B. The test cannot pass in a mode or build we run: narrowed, not changed
@@ -176,7 +197,7 @@ Upstream's too, and run by the `test` job.
 |---|---|---|
 | `Threading.cpp` | `WTF_Thread.SchedulingAttributesFollowQOS` and `.HighPriorityThreadsRestoresClampWhenReenabled` are compiled only without `USE(BUN_JSC_ADDITIONS)` | on purpose, as in A: `Thread::updateSchedulingAttributes()` (`wtf/posix/ThreadingPOSIX.cpp`) does nothing on Linux, so a thread keeps the scheduling policy, nice level and utilization clamp of the process that embeds it. The tests expect upstream's mapping from QOS |
 | `StackTraceTest.cpp` | `StackTraceTest.StackTraceWorks` and `.CaptureStackTraceLimitAndSkip` are `DISABLED_` on Linux | the build, as in B: `DEFAULT_CFLAGS` in `Dockerfile` has `-fno-unwind-tables -fno-asynchronous-unwind-tables`, and glibc's `backtrace()` then returns its own frame alone |
-| `StringBuilder.cpp` | the `JSONEscape*` tests are the fork's own | they hold `appendEscapedJSONStringContent()` (`wtf/text/StringBuilderJSON.h`), which the fork vectorizes, to a scalar escaper, to its buffer, and to its check that the output has six characters of room for each one of the input |
+| `StringBuilder.cpp` | the `JSONEscape*` tests and `AppendAfterOverflow` are the fork's own | `AppendAfterOverflow`: a builder that has recorded an overflow takes nothing more, 16-bit characters included (`extendBufferForAppendingWithUpconvert()`, `wtf/text/StringBuilder.cpp`; upstream ends the process in a `RELEASE_ASSERT`). The others hold `appendEscapedJSONStringContent()` (`wtf/text/StringBuilderJSON.h`), which the fork vectorizes, to a scalar escaper, to its buffer, and to its check that the output has six characters of room for each one of the input |
 | `PtrTag.cpp` | the file is the fork's own | `WTF::removeReturnAddressSignature()` (`wtf/PtrTag.h`) gives the return address of a function that signs the one it saves. The function is compiled with `pac-ret` on ARM64 Linux in every build. On a processor without pointer authentication nothing is signed and the test passes whatever the code does |
 
 ---
@@ -205,6 +226,7 @@ Not upstream's: a sync neither brings nor changes them. Most are named `stress/b
 | `stress/bun-object-assign-calls-indexed-setters-on-the-chain.js` | `Object.assign()` stores with `[[Set]]` on its fast path too: an indexed setter on the target's prototype chain is called, and a read-only element there refuses the store |
 | `stress/bun-arrays-become-prototypes-below-immutable-prototypes.js` | with `Object.prototype` and `Array.prototype` immutable and a setter under an index on a class prototype, an array or an object with elements that becomes a prototype keeps the storage it has; reads, stores and changes of length on it and through its heirs answer as the language says |
 | `stress/function-prototype-call-not-called-as-a-method.js` | `f.call(...)` is compiled to a call of `f`, so only other ways reach `Function.prototype.call` itself: `call.bind(f)`, `Reflect.apply`, `call.call` and `call.apply`. Through each of them `this`, the arguments and `new.target` arrive as they should, and a callee that is not callable is a `TypeError`, in every tier |
+| `stress/string-split-and-replace-all-too-many-pieces.js` | `split()` and `replaceAll()` gather the places of the pieces in a `Vector`, which has room for fewer than a string has characters: 2^29 pieces are `RangeError: Out of memory`, where the process used to end, and both go on working afterwards |
 | `stress/regexp-greedy-group-in-tail-position.js` | a greedy `*` or `+` group that nothing can fail after runs without the state of its earlier iterations: `exec()`, `match()` and `replace()` give the listed results |
 | `stress/regexp-greedy-group-with-minimum-can-match-empty.js` | `YarrPattern` drops the minimum of a greedy group that has no maximum and whose body can match the empty string: the results are the same as with the minimum |
 | `stress/regexp-long-source.js` | the limit of 1 MiB on the source of a pattern does not include the text of character classes made only of characters and ranges, up to 4 MiB in all. Everything else is "too large" where it was before |
@@ -244,7 +266,7 @@ the programs that test ahead-of-time compilation are in Bun's `test/aot`.
 
 ## E. After a sync: a failing test, step by step
 
-1. Does the difference match A1–A10 exactly (same text, same shape)? Check that the fork code named there is still in the
+1. Does the difference match A1–A11 exactly (same text, same shape)? Check that the fork code named there is still in the
    tree, then update the expectation with a `// Bun:` comment and add the file to its list here.
 2. Does it fail only in one mode or only with ASan, for a reason in the test and not the engine (it counts JIT compiles,
    depends on allocation never failing, needs more than 300 s)? Narrow it as in B.
