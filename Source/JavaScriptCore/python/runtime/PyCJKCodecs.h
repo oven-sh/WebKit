@@ -48,7 +48,7 @@ private:
     String m_string;
     const char16_t* m_units { nullptr }; // If there are no surrogate pairs.
     const Latin1Character* m_narrow { nullptr };
-    Vector<char32_t> m_wide;
+    WideText m_wide;
     size_t m_length;
     bool m_hasFailed { false };
 };

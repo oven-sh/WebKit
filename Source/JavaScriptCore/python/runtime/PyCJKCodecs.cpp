@@ -202,29 +202,13 @@ Text::Text(const String& string)
         return;
     }
     auto units = string.span16();
-    size_t pairs = 0;
-    for (size_t i = 0; i + 1 < units.size(); ++i) {
-        if (U16_IS_LEAD(units[i]) && U16_IS_TRAIL(units[i + 1])) {
-            ++pairs;
-            ++i;
-        }
-    }
-    if (!pairs) {
+    auto result = m_wide.set(units);
+    if (result == WideText::Result::NoPairs) {
         m_units = units.data();
         return;
     }
-    m_length = units.size() - pairs;
-    if (!m_wide.tryReserveInitialCapacity(m_length)) {
-        m_hasFailed = true;
-        m_length = 0;
-        return;
-    }
-    for (size_t i = 0; i < units.size(); ++i) {
-        char32_t character = units[i];
-        if (U16_IS_LEAD(character) && i + 1 < units.size() && U16_IS_TRAIL(units[i + 1]))
-            character = U16_GET_SUPPLEMENTARY(character, units[++i]);
-        m_wide.append(character);
-    }
+    m_hasFailed = result == WideText::Result::NoRoom;
+    m_length = m_wide.size();
 }
 
 // ---- Output ----

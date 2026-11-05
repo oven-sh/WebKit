@@ -30,19 +30,23 @@ public:
         : m_string(string)
         , m_length(string.length())
     {
-        if (string.is8Bit() || StrView(string).isSimple())
+        if (string.is8Bit())
             return;
-        for (char32_t character : StringView(string).codePoints())
-            m_points.append(character);
+        auto result = m_points.set(string.span16());
+        if (result == WideText::Result::NoPairs)
+            return;
+        m_hasRoom = result == WideText::Result::Done;
         m_length = m_points.size();
     }
 
+    // If not, it is empty.
+    bool hasRoom() const { return m_hasRoom; }
     unsigned length() const { return m_length; }
-    char32_t operator[](unsigned index) const { return m_points.isEmpty() ? m_string[index] : m_points[index]; }
+    char32_t operator[](unsigned index) const { return m_points.size() ? m_points[index] : m_string[index]; }
 
     void appendTo(StringBuilder& builder, unsigned start, unsigned end) const
     {
-        if (m_points.isEmpty()) {
+        if (!m_points.size()) {
             builder.append(StringView(m_string).substring(start, end - start));
             return;
         }
@@ -52,7 +56,7 @@ public:
 
     String substring(unsigned start, unsigned end) const
     {
-        if (m_points.isEmpty())
+        if (!m_points.size())
             return m_string.substring(start, end - start);
         StrBuilder builder;
         appendTo(builder, start, end);
@@ -61,8 +65,9 @@ public:
 
 private:
     String m_string;
-    Vector<char32_t> m_points;
+    WideText m_points;
     unsigned m_length;
+    bool m_hasRoom { true };
 };
 
 struct FormatSpec {
@@ -114,6 +119,10 @@ static bool parseFormatSpec(JSGlobalObject* globalObject, const CodePoints& text
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
+    if (!text.hasRoom()) [[unlikely]] {
+        raiseMemoryError(globalObject, scope, String());
+        return false;
+    }
     unsigned position = 0;
     unsigned end = text.length();
     auto isAlignment = [](char32_t c) { return c == '<' || c == '>' || c == '=' || c == '^'; };
@@ -1115,6 +1124,8 @@ static JSValue formatWith(JSGlobalObject* globalObject, JSValue self, FormatArgu
     String string = strValue(self)->value(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
     CodePoints text(string);
+    if (!text.hasRoom()) [[unlikely]]
+        return raiseMemoryError(globalObject, scope, String());
     StrBuilder builder;
     // A field may be nested in the format spec of another, and no deeper.
     if (failed(scope, expandFormat(globalObject, text, 0, text.length(), arguments, 2, builder)))
@@ -1153,6 +1164,8 @@ JSValue formatterParser(JSGlobalObject* globalObject, JSValue formatString)
     String string = strValue(formatString)->value(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
     CodePoints text(string);
+    if (!text.hasRoom()) [[unlikely]]
+        return raiseMemoryError(globalObject, scope, String());
     JSArray* result = newList(globalObject);
     unsigned position = 0;
     Markup markup;
@@ -1181,6 +1194,8 @@ JSValue formatterFieldNameSplit(JSGlobalObject* globalObject, JSValue fieldName)
     String string = strValue(fieldName)->value(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
     CodePoints text(string);
+    if (!text.hasRoom()) [[unlikely]]
+        return raiseMemoryError(globalObject, scope, String());
     unsigned end = text.length();
     unsigned firstEnd = 0;
     while (firstEnd < end && text[firstEnd] != '[' && text[firstEnd] != '.')
@@ -1594,6 +1609,8 @@ static void appendPercentArgument(PercentFormatter& f, PercentArgument& argument
         return;
     }
     CodePoints text(string);
+    if (!text.hasRoom()) [[unlikely]]
+        return f.builder.builder().didOverflow();
     int64_t length = text.length();
     char fill = argument.isNumber && (argument.flags & ZeroPad) ? '0' : ' ';
     if ((argument.width == -1 || argument.width <= length) && (argument.precision == -1 || argument.precision >= length) && !hasSignFlag) {
@@ -1659,6 +1676,8 @@ JSValue strFormatPercent(JSGlobalObject* globalObject, JSString* formatString, J
     String string = formatString->value(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
     CodePoints text(string);
+    if (!text.hasRoom()) [[unlikely]]
+        return raiseMemoryError(globalObject, scope, String());
 
     PercentFormatter f { globalObject, text, 0, arguments, -1, -2, { }, { } };
     if (auto* tuple = PyTuple::tryFrom(arguments)) {

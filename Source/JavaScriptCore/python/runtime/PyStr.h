@@ -8,6 +8,7 @@
 #include "JSString.h"
 #include "PyBytecode.h"
 #include "PyObject.h"
+#include <wtf/MallocSpan.h>
 #include <wtf/text/StringBuilder.h>
 
 namespace JSC {
@@ -151,6 +152,23 @@ private:
     RefPtr<StrCheckpoints> m_checkpoints; // Only if it is long and not simple.
 };
 static_assert(sizeof(String) == sizeof(StringImpl*));
+
+// The characters of a text that has surrogate pairs, each in a place of its own: for code that goes to and fro in a text by index.
+// (Not a Vector, which holds 2**31 bytes at most and ends the process beyond.)
+class WideText {
+    WTF_MAKE_NONCOPYABLE(WideText);
+public:
+    WideText() = default;
+    // NoPairs: every unit is a character, and nothing is kept. NoRoom: there is no memory for them.
+    enum class Result : uint8_t { NoPairs, Done, NoRoom };
+    Result set(std::span<const char16_t>);
+    size_t size() const { return m_characters.size(); }
+    ALWAYS_INLINE char32_t operator[](size_t index) const { return m_characters[index]; }
+
+private:
+    MallocSpan<char32_t> m_memory; // Room for as many characters as there are units.
+    std::span<const char32_t> m_characters;
+};
 
 unsigned strLength(JSGlobalObject*, JSString*);
 // Negative, 0 or positive. By code point, which is not the order of UTF-16 code units.

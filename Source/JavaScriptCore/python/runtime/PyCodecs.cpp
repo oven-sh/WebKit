@@ -223,42 +223,36 @@ public:
         auto scope = DECLARE_THROW_SCOPE(vm);
         String text = string->value(globalObject);
         RETURN_IF_EXCEPTION(scope, false);
-        set(text);
+        if (!set(text)) [[unlikely]] {
+            codecRaiseMemoryError(globalObject);
+            return false;
+        }
         return true;
     }
 
-    void set(const String& string)
+    // False: there is no room for its characters.
+    bool set(const String& string)
     {
         m_string = string;
         m_length = string.length();
         if (string.is8Bit()) {
             m_form = Form::Narrow;
             m_narrow = byteCast<uint8_t>(string.span8());
-            return;
+            return true;
         }
         m_units = string.span16();
-        bool hasPair = false;
-        for (size_t i = 0; i + 1 < m_units.size(); ++i) {
-            if (U16_IS_LEAD(m_units[i]) && U16_IS_TRAIL(m_units[i + 1])) {
-                hasPair = true;
-                break;
-            }
-        }
-        if (!hasPair) {
+        switch (m_wide.set(m_units)) {
+        case WideText::Result::NoPairs:
             m_form = Form::Units;
-            return;
+            return true;
+        case WideText::Result::Done:
+            m_form = Form::Wide;
+            m_length = static_cast<unsigned>(m_wide.size());
+            return true;
+        case WideText::Result::NoRoom:
+            break;
         }
-        m_form = Form::Wide;
-        m_wide.reserveInitialCapacity(m_units.size());
-        for (size_t i = 0; i < m_units.size(); ++i) {
-            char32_t character = m_units[i];
-            if (U16_IS_LEAD(character) && i + 1 < m_units.size() && U16_IS_TRAIL(m_units[i + 1])) {
-                character = U16_GET_SUPPLEMENTARY(character, m_units[i + 1]);
-                ++i;
-            }
-            m_wide.append(character);
-        }
-        m_length = static_cast<unsigned>(m_wide.size());
+        return false;
     }
 
     unsigned length() const { return m_length; }
@@ -287,7 +281,7 @@ private:
     String m_string;
     std::span<const uint8_t> m_narrow;
     std::span<const char16_t> m_units;
-    Vector<char32_t> m_wide;
+    WideText m_wide;
     unsigned m_length { 0 };
     Form m_form { Form::Narrow };
 };

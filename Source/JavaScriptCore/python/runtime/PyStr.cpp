@@ -530,6 +530,45 @@ Vector<uint8_t> encodeFilesystem(StringView text)
 
 // ---- Helpers for the methods ----
 
+// The character that begins at `index`, which goes on to the next one; and the one that ends there, to whose beginning it goes back.
+static ALWAYS_INLINE char32_t nextCharacter(std::span<const Latin1Character> text, size_t& index) { return text[index++]; }
+static ALWAYS_INLINE char32_t previousCharacter(std::span<const Latin1Character> text, size_t& index) { return text[--index]; }
+static ALWAYS_INLINE char32_t nextCharacter(std::span<const char16_t> text, size_t& index)
+{
+    char32_t character = text[index++];
+    if (U16_IS_LEAD(character) && index < text.size() && U16_IS_TRAIL(text[index])) [[unlikely]]
+        character = U16_GET_SUPPLEMENTARY(character, text[index++]);
+    return character;
+}
+static ALWAYS_INLINE char32_t previousCharacter(std::span<const char16_t> text, size_t& index)
+{
+    char32_t character = text[--index];
+    if (U16_IS_TRAIL(character) && index && U16_IS_LEAD(text[index - 1])) [[unlikely]]
+        character = U16_GET_SUPPLEMENTARY(text[--index], character);
+    return character;
+}
+
+WideText::Result WideText::set(std::span<const char16_t> units)
+{
+    m_characters = { };
+    if (!hasSecondHalves(units))
+        return Result::NoPairs;
+    m_memory = MallocSpan<char32_t>::tryMalloc(units.size() * sizeof(char32_t));
+    if (!m_memory)
+        return Result::NoRoom;
+    auto characters = m_memory.mutableSpan();
+    size_t size = 0;
+    for (size_t index = 0; index < units.size();)
+        characters[size++] = nextCharacter(units, index);
+    // The second halves may all be on their own.
+    if (size == units.size()) {
+        m_memory = { };
+        return Result::NoPairs;
+    }
+    m_characters = characters.first(size);
+    return Result::Done;
+}
+
 #define PY_STR_METHOD_PROLOGUE(view) \
     VM& vm = getVM(globalObject); \
     auto scope = DECLARE_THROW_SCOPE(vm); \
