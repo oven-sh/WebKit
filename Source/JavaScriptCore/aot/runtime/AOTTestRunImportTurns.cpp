@@ -120,6 +120,7 @@ void Modules::forgetTextsThatWait()
     m_textsThatWait.clear();
     m_numberOfTextsThatHaveCome = 0;
     m_callsToMakeAgain.clear();
+    m_promiseOfJobThatMakesCallsAgain.clear();
     m_promiseOfJobOfRound.clear();
     m_isJobOfRoundQueued = false;
 }
@@ -185,7 +186,10 @@ void Modules::runJobThatMakesCallsAgain(ModuleID moduleOfJob)
     while (!m_callsToMakeAgain.isEmpty() && m_callsToMakeAgain.first().jobsBehindFirstCall <= m_jobsBehindDelivery) {
         TextThatWaits text = m_callsToMakeAgain.takeFirst();
         makeCallAgain(text);
-        RETURN_IF_EXCEPTION(scope, void());
+        if (scope.exception()) [[unlikely]] {
+            m_callsToMakeAgain.clear();
+            return;
+        }
     }
     if (!m_callsToMakeAgain.isEmpty())
         queueStepOfImportInImportTurns(m_promiseOfJobThatMakesCallsAgain.get(), moduleOfJob, 1);

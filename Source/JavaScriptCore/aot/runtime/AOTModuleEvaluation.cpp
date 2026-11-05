@@ -3341,7 +3341,8 @@ JSValue Modules::exportsShownByModuleObject(ModuleID file)
 JSValue Modules::exportsSeenByLoader(ModuleID module)
 {
     LoadedModule* loaded = loadedIfExists(module);
-    if (!loaded || !loaded->requirer || data(module).hasValue() || data(module).exportsStayInCompiledCode()) [[likely]]
+    bool isVariableLaidOnObject = loaded && loaded->moduleObjectOverExportsVariable.get() == loaded->requirer.get();
+    if (!loaded || !loaded->requirer || (data(module).hasValue() && !isVariableLaidOnObject) || data(module).exportsStayInCompiledCode()) [[likely]]
         return exportsGivenBackToCompiledCode(module);
     return loaded->requirer->get(m_instance.globalObject, m_instance.vm->propertyNames->exports);
 }
@@ -3450,6 +3451,12 @@ JSObject* Modules::moduleObjectOverExportsVariableIfMade(ModuleID module) const
     return loaded && data(module).kind == ModuleKind::CommonJs && data(module).hasValue() ? loaded->requirer.get() : nullptr;
 }
 
+void Modules::didLayExportsVariableOnModuleObject(ModuleID module)
+{
+    LoadedModule& loaded = ensureLoaded(module);
+    loaded.moduleObjectOverExportsVariable.set(*this, loaded.requirer.get());
+}
+
 JSObject* Modules::moduleObject(ModuleID module)
 {
     JSGlobalObject* realm = m_instance.globalObject;
@@ -3469,6 +3476,8 @@ JSObject* Modules::moduleObject(ModuleID module)
     }
     RETURN_IF_EXCEPTION(scope, nullptr);
     loaded.requirer.set(*this, objects.module);
+    if (data(module).kind == ModuleKind::CommonJs)
+        loaded.moduleObjectOverExportsVariable.set(*this, objects.module);
     loaded.requireFunction.set(*this, objects.require);
     return objects.module;
 }

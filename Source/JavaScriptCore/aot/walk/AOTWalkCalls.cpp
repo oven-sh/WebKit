@@ -141,6 +141,11 @@ static bool unitMayLeaveByCallInWalkCalls(Walker& walker, CodeUnit entered)
     return conventions.numberOfResults(unit) == 1 && conventions.numberOfResults(entered) == 1;
 }
 
+bool unitMayLeaveByDirectCallOf(Walker& walker, FunctionID callee)
+{
+    return unitMayLeaveByCallInWalkCalls(walker, walker.plan().conventions().directEntryOf(callee));
+}
+
 static bool findCapturesInSightInWalkCalls(const Code& code, FunctionID function, Reference closure, size_t numberOfCaptures, Vector<Reference, 8>& captures)
 {
     if (!closure || !closure.isRecord())
@@ -406,10 +411,9 @@ Reference callInPlaceOfCopy(Walker& walker, const Draft& site, FunctionID callee
     direct.setIsNeverInlined(true);
     direct.setVariadicOperands(entryArguments);
     Effects effects = effectsOfDirectCall(walker, callee, entryArguments);
-    Reference result = walker.buildCallThatMayBorrowScopes(WTF::move(direct), &effects);
-    if (result && (entersAsCallWould || !hasSlowVersion))
+    if (entersAsCallWould || !hasSlowVersion)
         walker.leaveArrivals(callee, entryArguments);
-    return result;
+    return walker.buildCallThatMayBorrowScopes(WTF::move(direct), &effects);
 }
 
 bool unitTakesWhatCopyIsHanded(Walker& walker, FunctionID callee, std::span<const Reference> entryArguments)

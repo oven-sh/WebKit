@@ -7,7 +7,8 @@
 # change(made, Gauge);
 # print(ask(made), ask(wrap(made)), ask(new Gauge(8)));
 # print(made.read(), made.mark);
-# The run time marks the cell as it does where a field leaves its slot, and does not take the mark off while an accessor lies among the properties beside the fields.
+# The run time marks the cell as it does where a field leaves its slot, and the mark stays, as it does behind a field: one bit of the Structure of those properties answers, which no later change clears,
+# so that nothing is ever looked for among them: a look through them at each change made n changes cost n * n.
 # OPTIONS: mechanisms=all
 # RUN(EXTRA): run-in-shell change = function (made) { Object.defineProperty(made, "other", { get() { return 70; }, set(v) { }, configurable: true }); }; wrap = x => x;
 # EXTRA: plain - - - - -
@@ -30,13 +31,13 @@
 # STORED: plain - - - - -
 # STORED-NEXT: - - plain
 # STORED-NEXT: 6 n
-# The accessor turned back into a value, or deleted: the mark goes with the last of them.
+# The accessor turned back into a value, or deleted: the mark stays.
 # RUN(BACK): run-in-shell change = function (made) { Object.defineProperty(made, "other", { get() { return 70; }, configurable: true }); Object.defineProperty(made, "other", { value: 1, writable: true, configurable: true, enumerable: true }); }; wrap = x => x;
 # BACK: plain - - - - -
-# BACK-NEXT: plain plain plain
+# BACK-NEXT: - - plain
 # RUN(GONE): run-in-shell change = function (made) { Object.defineProperty(made, "other", { get() { return 70; }, configurable: true }); delete made.other; }; wrap = x => x;
 # GONE: plain - - - - -
-# GONE-NEXT: plain plain plain
+# GONE-NEXT: - - plain
 # RUN(ONELEFT): run-in-shell change = function (made) { Object.defineProperty(made, "other", { get() { return 70; }, configurable: true }); Object.defineProperty(made, "third", { get() { return 71; }, configurable: true }); delete made.other; }; wrap = x => x;
 # ONELEFT: plain - - - - -
 # ONELEFT-NEXT: - - plain

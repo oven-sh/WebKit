@@ -210,6 +210,7 @@ static TextInStringBuilder* beginTextInTextBuilders(Walker& walker, const BodyIn
     }
 
     begun.beganEmpty = textOfKnownPartOfStringBuilder(walker, enters) == walker.program().strings.emptyString();
+    begun.beganAsText = walker.types().at(walker.typeOf(enters)).isAnyString();
     if (!begun.beganEmpty) {
         appendPartsToStringBuilder(walker, begun, begun.builder, singleElementSpan(enters), origin);
         if (walker.isUnreachable())
@@ -265,11 +266,14 @@ void beginTextsInStringBuilders(Walker& walker, BlockID inputHead, LoopPreview& 
                 walker.fail("a text enters a loop in a builder that nobody has begun"_s);
                 return;
             }
+            if (std::exchange(before->waitsForNextLoop, false))
+                before->headThatTookIt = inputHead;
             if (web && (!before->liesInFrame || textBegunHereMayLieInFrame(walker, inputHead, *web))) {
                 TextInStringBuilder text;
                 text.web = WTF::move(*web);
                 text.frameIndex = before->frameIndex;
                 text.builder = before->builder;
+                text.beganAsText = before->beganAsText;
                 text.liesInFrame = before->liesInFrame;
                 walker.textsInStringBuilders().append(WTF::move(text));
                 bindNamesReadBehindLoopAnewInTextBuilders(walker, index, walker.textsInStringBuilders().last().web);
@@ -286,7 +290,7 @@ void beginTextsInStringBuilders(Walker& walker, BlockID inputHead, LoopPreview& 
         if (!web || !enters || !enters.isRecord())
             continue;
         Type typeOfWhatEnters = walker.types().at(walker.typeOf(enters));
-        if (!typeOfWhatEnters.isAnyString() && (!web->isOnlyConcatenated || !hasTextByItself(typeOfWhatEnters)))
+        if (!typeOfWhatEnters.isAnyString() && (!web->isOnlyConcatenated || !hasTextByItself(typeOfWhatEnters) || !walker.loopIsBeingTried(inputHead)))
             continue;
         if (comesRoundLoopAroundAsStringInTextBuilders(walker, index, inputHead, parameterIndex))
             continue;
@@ -446,6 +450,17 @@ static void appendPartsBehindFrontInTextBuilders(Walker& walker, TextInStringBui
         appendPartsToStringBuilder(walker, text, name, parts.subspan(1), origin);
 }
 
+bool growthJoinsTextsInStringBuilder(Walker& walker, const TextInStringBuilder& text, std::span<const Reference> partsBehindFront)
+{
+    if (text.beganAsText)
+        return true;
+    Reference first = partsBehindFront.empty() ? Reference() : partsBehindFront.front();
+    bool firstJoinGivesText = first && walker.types().at(walker.typeOf(first)).isAnyString();
+    if (!firstJoinGivesText)
+        walker.walkLoopAgainWithoutBuilders(text);
+    return firstJoinGivesText;
+}
+
 bool appendRowToTextInStringBuilder(Walker& walker, const BodyValue& join, Vector<Reference, 8>& parts)
 {
     if (!walker.hasTextsInStringBuilders() || parts.isEmpty())
@@ -469,6 +484,8 @@ bool appendRowToTextInStringBuilder(Walker& walker, const BodyValue& join, Vecto
     }
     if (!name)
         return false;
+    if (!growthJoinsTextsInStringBuilder(walker, *grown, parts.span().subspan(1)))
+        return true;
 
     appendPartsBehindFrontInTextBuilders(walker, *grown, name, parts.span(), origin);
     if (!walker.isUnreachable())
@@ -661,8 +678,10 @@ void takeTextsOutOfStringBuildersOnEdge(Walker& walker, BlockID to, BodyTarget t
     }
 
     forEachTextLeftOnEdgeInTextBuilders(walker, from, to, [&](TextInStringBuilder& text) {
-        if (textStaysInStringBuilderOnEdge(walker, text, to, target))
+        if (textStaysInStringBuilderOnEdge(walker, text, to, target)) {
+            text.waitsForNextLoop = true;
             return IterationStatus::Continue;
+        }
 
         Vector<Reference, 2> records;
         auto noteReader = [&](Reference record) {
@@ -739,6 +758,52 @@ const PlacesOfTextsInStringBuilders& Walker::placesOfTextsInStringBuilders()
         places.endsByFrame[text.frameIndex] = place + 1;
     }
     return places;
+}
+
+void Walker::endTextsInStringBuildersFrom(size_t numberOfTexts)
+{
+    const auto& texts = std::as_const(m_textsInStringBuilders);
+    size_t kept = texts.size();
+    while (kept > numberOfTexts && !texts[kept - 1].waitsForNextLoop)
+        --kept;
+    forgetPlacesOfTextsInStringBuildersFrom(kept);
+    while (texts.size() > kept)
+        m_textsInStringBuilders.removeLast();
+    for (size_t place = numberOfTexts; place < kept; ++place) {
+        if (!texts[place].waitsForNextLoop)
+            m_textsInStringBuilders[place].isNoLongerNeeded = true;
+    }
+}
+
+void Walker::letGoOfTextsThatLoopTook(BlockID inputHead)
+{
+    const auto& texts = std::as_const(m_textsInStringBuilders);
+    for (size_t place = 0; place < texts.size(); ++place) {
+        if (texts[place].headThatTookIt == inputHead && texts[place].frameIndex == m_frames.size() - 1 && !texts[place].waitsForNextLoop && !texts[place].isNoLongerNeeded)
+            m_textsInStringBuilders[place].isNoLongerNeeded = true;
+    }
+    size_t kept = texts.size();
+    while (kept && texts[kept - 1].isNoLongerNeeded)
+        --kept;
+    forgetPlacesOfTextsInStringBuildersFrom(kept);
+    while (texts.size() > kept)
+        m_textsInStringBuilders.removeLast();
+}
+
+bool Walker::loopIsBeingTried(BlockID inputHead) const
+{
+    return isBeingTried(m_frames.size() - 1, inputHead);
+}
+
+void Walker::walkLoopAgainWithoutBuilders(const TextInStringBuilder& text)
+{
+    keepTextsOfLoopOutOfBuilders(text.web.loopHead);
+    bool isInsideLoopOfText = false;
+    for (TryOfLoop& tried : m_triesOfLoops) {
+        isInsideLoopOfText |= tried.frameIndex == text.frameIndex && tried.inputHead == text.web.loopHead;
+        tried.misfits |= isInsideLoopOfText;
+    }
+    fail("a text that began as no text grows by what is no text"_s);
 }
 
 void Walker::forgetPlacesOfTextsInStringBuildersFrom(size_t size)

@@ -65,6 +65,7 @@ bool everyHandlerLetsTextGo(Walker&, const GrowingText&);
 void appendPartsRolledBackWhereTheyFail(Walker&, TextInStringBuilder&, Reference name, std::span<const Reference> parts, Origin);
 Reference primitivePartOfStringBuilder(Walker&, Opcode join, Reference part, Origin);
 bool convertPartsAndAppendToTextInStringBuilder(Walker&, const BodyValue& join, std::span<const Reference> parts);
+bool growthJoinsTextsInStringBuilder(Walker&, const TextInStringBuilder&, std::span<const Reference> partsBehindFront);
 bool textBegunHereMayLieInFrame(Walker&, BlockID inputHead, const GrowingText&);
 void becomeOperationOfStringBuilderInFrame(Walker&, TextInStringBuilder&, Reference name, Draft&, Opcode inFrame);
 Reference finishTextInFrame(Walker&, Reference name, Origin);

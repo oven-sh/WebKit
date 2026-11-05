@@ -116,6 +116,8 @@ void Walker::walkCopyOfLoop(BlockID inputHead, std::span<const Reference> enteri
     LoopID loop = index.loopOf(inputHead);
 
     bool leavesFrontOpen = std::exchange(m_leavesFrontOfLoopOpenBehindWalk, false);
+    size_t numberOfTextsInFront = m_textsInStringBuilders.size();
+    m_walkOfLoopBeganTexts = false;
     uint32_t namesAtHead = inputBlock(frameIndex, inputHead).firstNarrowerName;
     for (BlockID member : index.membersOf(loop)) {
         if (!m_frames[frameIndex].blocks[member.index()].isAsNew())
@@ -159,6 +161,9 @@ void Walker::walkCopyOfLoop(BlockID inputHead, std::span<const Reference> enteri
         }
     }
     endBlocksInFrontOfLoopsFrom(numberOfLoopsAround);
+    m_walkOfLoopBeganTexts = m_textsInStringBuilders.size() > numberOfTextsInFront;
+    if (!m_hasFailed)
+        endTextsInStringBuildersFrom(numberOfTextsInFront);
     m_block = { };
     m_state.clear();
     if (m_frames[frameIndex].valuesBuiltTwice) {
@@ -802,8 +807,6 @@ bool Walker::buildLoopForEachMember(BlockID inputHead, const LoopPreview& previe
         for (auto [name, reference] : boundBefore)
             bind(name, reference);
         forgetValuesOfLoop(inputHead);
-        forgetPlacesOfTextsInStringBuildersFrom(0);
-        m_textsInStringBuilders.putBack(0, m_textsInStringBuilders.sizeOfLog());
     }
     m_closedCopiesShared.removeLast();
 
@@ -947,7 +950,7 @@ bool Walker::buildLoopTwice(BlockID inputHead, const LoopPreview& preview, std::
         if (m_operationsThatRanOtherCodeOfRow.isEmpty())
             return false;
         for (ValueID ran : m_operationsThatRanOtherCodeOfRow) {
-            if (!index.isInLoop(index.blockOf(ran), loop))
+            if (!ran || !index.isInLoop(index.blockOf(ran), loop))
                 return false;
             BodyValue operation = index.value(ran);
             bool storesIntoListTested = operation.opcode() == Opcode::ElemSet && listsRead.lists.containsIf([](const ListTestedInFrontOfLoop& list) { return list.isWritable; });
@@ -1081,7 +1084,7 @@ bool Walker::buildLoopTwice(BlockID inputHead, const LoopPreview& preview, std::
             for (const AccessUnderCounterOfLoop& access : heldBelowRoom.accesses)
                 isUnderCounter.set(access.access.index());
             storesUnderCounterAloneRanOtherCode = std::ranges::all_of(m_operationsThatRanOtherCodeOfRow, [&](ValueID ran) {
-                if (!isUnderCounter.get(ran.index()) || index.opcodeOf(ran) != Opcode::ElemSet)
+                if (!ran || !isUnderCounter.get(ran.index()) || index.opcodeOf(ran) != Opcode::ElemSet)
                     return false;
                 ValueID stored = index.valueBehindCasts(index.value(ran).valueOperand());
                 return isUnderCounter.get(stored.index()) && !index.isParameter(stored) && index.opcodeOf(stored) == Opcode::ElemGet;

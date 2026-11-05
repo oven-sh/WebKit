@@ -185,6 +185,7 @@ JS_EXPORT_PRIVATE std::optional<OptionSet<ModuleObjectTrait>> traitsOfModuleObje
 JS_EXPORT_PRIVATE void takeModuleObject(JSGlobalObject*, ModuleID, const ModuleObjects&);
 JS_EXPORT_PRIVATE void giveBackModuleObject(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE JSObject* moduleObjectOverExportsVariableIfMade(JSGlobalObject*, ModuleID);
+JS_EXPORT_PRIVATE void didLayExportsVariableOnModuleObject(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void willRequireModuleFromOutsideImage(JSGlobalObject*, ModuleID, JSObject* moduleObjectOfRequirer);
 
 JS_EXPORT_PRIVATE void willSetRequireCacheEntry(JSGlobalObject*, ModuleID, JSValue entry);

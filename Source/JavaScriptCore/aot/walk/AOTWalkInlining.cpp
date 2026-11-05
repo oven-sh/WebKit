@@ -1093,9 +1093,12 @@ bool Walker::walkInline(const BodyValue& call, FunctionID callee, std::span<cons
     bool isConstructionOfCopy = isConstruction || (call.opcode() == Opcode::CallDirect && site.isConstruction());
     bool isDerivedConstructorWithoutList = function.kind == FunctionKind::DerivedConstructor && !function.hasAny({ FunctionFlags::HasRestParameter, FunctionFlags::HasHiddenRest });
     bool copyMayLeaveForCall = (!isConstructionOfCopy || conventions.hasParameterGuard(callee) || isDerivedConstructorWithoutList) && !program().at(unit().function).isCoroutine() && !function.isCoroutine() && !entersBodyOfCoroutineAtInlining(site)
-        && facts().linked().mayBeMentionedBy(unit(), callee) && unitTakesWhatCopyIsHanded(*this, callee, entryArguments.span());
-    if (blocksOfHead && !copyMayLeaveForCall)
+        && facts().linked().mayBeMentionedBy(unit(), callee) && unitTakesWhatCopyIsHanded(*this, callee, entryArguments.span())
+        && (!(site.isTailCall || site.resultIsReturnedAtOnce) || unitMayLeaveByDirectCallOf(*this, callee));
+    if (blocksOfHead && !copyMayLeaveForCall) {
+        m_operationsCopiedAtWrittenCall -= facts().summaries().at(callee).numberOfOperations;
         return false;
+    }
     if (copyMayLeaveForCall) {
         argumentsAsTheyCame = entryArguments;
         closuresMadeForCall = collectClosuresMadeForCallAtInlining(*this, call);

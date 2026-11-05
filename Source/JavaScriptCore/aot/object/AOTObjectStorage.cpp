@@ -374,10 +374,7 @@ void putProperty(VM& vm, JSObject* holder, PropertyName name, Object::LeavingPro
 
 void didChangeOwnProperties(VM& vm, Object& object, VM::StructureChainIntegrityEvent event, UniquedStringImpl* nameOrNull)
 {
-    if (object.perCellBit()) [[unlikely]] {
-        if (event != VM::StructureChainIntegrityEvent::Add)
-            object.tryFinishBirth();
-    } else if (event != VM::StructureChainIntegrityEvent::Remove && object.hasAccessorAmongExtraProperties()) [[unlikely]]
+    if (!object.perCellBit() && object.hasAccessorAmongExtraProperties()) [[unlikely]]
         object.setBearsMark(true);
     if (object.structure()->mayBePrototype()) [[unlikely]]
         vm.invalidateStructureChainIntegrity(event, &object, nameOrNull);

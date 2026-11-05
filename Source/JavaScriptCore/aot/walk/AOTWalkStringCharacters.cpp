@@ -292,6 +292,8 @@ bool BuilderOfCharacterRead::build(Reference position)
         goOnWhere(isBelow);
         position = buildProofBehindTestForStrings(m_walker, position, isBelow, OperandIndex::Less::left, m_origin);
     }
+    if (position && !m_walker.isUnreachable() && !types.at(m_walker.typeOf(position)).isInt32())
+        position = operate(Opcode::ToInt32, position);
 
     std::array<Reference, 2> inside;
     if (position && !m_walker.isUnreachable())

@@ -293,6 +293,7 @@ bool calleeOfTailCallComesBack(const Walker&, FunctionID callee, std::span<const
 bool passOnOwnArgumentsByCount(Walker&, const BodyValue& call, const Draft& written, Reference callee, Reference thisValueOrNull, Reference arguments);
 
 Reference callInPlaceOfCopy(Walker&, const Draft& site, FunctionID callee, std::span<const Reference> entryArguments, bool isConstruction, bool entersAsCallWould = false);
+bool unitMayLeaveByDirectCallOf(Walker&, FunctionID callee);
 bool unitTakesWhatCopyIsHanded(Walker&, FunctionID callee, std::span<const Reference> entryArguments);
 
 struct PlaceOfCall {
@@ -343,7 +344,11 @@ struct TextInStringBuilder {
     uint32_t frameIndex { 0 };
     Reference builder;
     bool beganEmpty { false };
+    bool beganAsText { true };
     bool liesInFrame { false };
+    bool waitsForNextLoop { false };
+    bool isNoLongerNeeded { false };
+    BlockID headThatTookIt;
     Reference stringOfState;
     Reference lengthOfState;
     BlockID blockOfState;
@@ -1055,6 +1060,8 @@ public:
     bool isBuiltInTurnThatMayBeginAgain(Reference) const;
     bool branchInFrontOfTypedCopy(Reference test, bool passesWithYes);
     bool textsOfLoopStayOutOfBuilders(BlockID inputHead) const;
+    bool loopIsBeingTried(BlockID inputHead) const;
+    void walkLoopAgainWithoutBuilders(const TextInStringBuilder&);
     class InFrontOfTypedCopy;
     bool hasURLsThatAreNeverMade() const { return m_hasURLsThatAreNeverMade; }
     void noteURLThatIsNeverMade() { m_hasURLsThatAreNeverMade = true; }
@@ -1931,6 +1938,9 @@ private:
     bool wayBehindOperationComesRound(BlockID inputHead, ValueID operation) const;
     bool someTextGrowsInQuietTurn(BlockID inputHead, std::span<const GrowingText>, const TryOfLoop&);
     void keepTextsOfLoopOutOfBuilders(BlockID inputHead);
+    void endTextsInStringBuildersFrom(size_t numberOfTexts);
+    void letGoOfTextsThatLoopTook(BlockID inputHead);
+    bool m_walkOfLoopBeganTexts { false };
     void letFrontOfQuietTurnsFailUnasked(uint32_t indexOfLoop);
     bool quietTurnsWroteMoreThanRowSays(AnswerOfLoop&, const TryOfLoop&);
     bool frontOfQuietTurnsIsWorthAWalk(AnswerOfLoop&, const TryOfLoop&);

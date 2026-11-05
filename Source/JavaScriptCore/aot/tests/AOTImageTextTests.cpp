@@ -12,9 +12,11 @@
 #include "AOTImageTestBodies.h"
 #include "AOTImageText.h"
 #include "AOTNumbering.h"
+#include "AOTStoredStrings.h"
 #include "AOTTextEncoder.h"
 #include "AOTTypeArena.h"
 #include "AOTVector.h"
+#include <algorithm>
 #include <array>
 #include <memory>
 #include <optional>
@@ -27,6 +29,7 @@
 #include <wtf/text/AtomString.h>
 #include <wtf/text/AtomStringImpl.h>
 #include <wtf/text/AtomStringTable.h>
+#include <wtf/text/CString.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/StringBuilder.h>
 #include <wtf/text/StringHasherInlines.h>
@@ -323,6 +326,120 @@ static bool textsLieApart(StringView first, StringView second)
     return bytesOfFirst.data() + bytesOfFirst.size() <= bytesOfSecond.data() || bytesOfSecond.data() + bytesOfSecond.size() <= bytesOfFirst.data();
 }
 
+static constexpr size_t sizeOfOtherBytesInFile = 1024;
+
+static Vector<uint8_t> otherBytes(size_t size)
+{
+    Vector<uint8_t> bytes(size);
+    bytes.fill('x');
+    return bytes;
+}
+
+static Vector<uint8_t> fileThatHoldsTextImage(unsigned times)
+{
+    Vector<uint8_t> file;
+    for (unsigned index = 0; index < times; ++index) {
+        file.appendVector(otherBytes(sizeOfOtherBytesInFile));
+        file.append(std::as_const(textImage().image.bytes).span());
+    }
+    return file;
+}
+
+static size_t offsetOfTextInFile()
+{
+    return sizeOfOtherBytesInFile + textImage().image.image->header().sections[static_cast<size_t>(ImageSection::Text)].offset;
+}
+
+static String reportOf(const StoredStrings& stored)
+{
+    return String::fromUTF8(byteCast<char8_t>(stored.report.span()));
+}
+
+static Vector<uint8_t> stringsByReaderOfRuntime()
+{
+    const ImageText& text = textImage().text();
+    Vector<uint8_t> strings;
+    for (uint32_t index = 0; index < text.numberOfStrings(); ++index) {
+        StringID string(index);
+        if (!text.hasText(string) || text.view(string).isEmpty())
+            continue;
+        strings.append(byteCast<uint8_t>(text.view(string).utf8().span()));
+        strings.append(0);
+    }
+    return strings;
+}
+
+static String lineOnTextOfImage(unsigned number, size_t offsetInFile, unsigned bytesBesideStrings)
+{
+    size_t length = textImage().image.image->section<uint8_t>(ImageSection::Text).size();
+    return makeString("image "_s, number, " | Text | offset "_s, offsetInFile, " | length "_s, length, " | "_s, bytesBesideStrings, " bytes that no string covers\n"_s);
+}
+
+static unsigned numberOfBytesBesideStringsOfTextImage()
+{
+    StoredStrings stored = readStoredStrings(fileThatHoldsTextImage(1).span());
+    for (unsigned count = 1; count < 64; ++count) {
+        if (reportOf(stored) == lineOnTextOfImage(0, offsetOfTextInFile(), count))
+            return count;
+    }
+    AOT_TEST_CHECK(false);
+    return 0;
+}
+
+static void testStoredStringsAreReadOutOfFile()
+{
+    StoredStrings stored = readStoredStrings(fileThatHoldsTextImage(1).span());
+    AOT_TEST_CHECK(stored.verdict == VerdictOnStoredStrings::NothingLiesBesideStrings);
+    AOT_TEST_CHECK(numberOfBytesBesideStringsOfTextImage());
+    AOT_TEST_CHECK(equalSpans(stored.strings.span(), stringsByReaderOfRuntime().span()));
+    auto holds = [&](StringView text) {
+        CString wanted = text.utf8();
+        Vector<uint8_t> record;
+        record.append(0);
+        record.append(byteCast<uint8_t>(wanted.span()));
+        record.append(0);
+        return !std::ranges::search(stored.strings.span(), record.span()).empty();
+    };
+    for (StringView shared : { StringView(textThatHoldsOthers), StringView(tailOfText), StringView(innerPartOfText), StringView(nameHeldByName), StringView(textHeldByName) })
+        AOT_TEST_CHECK(holds(shared));
+    AOT_TEST_CHECK(holds(textOfUnits(wideTextWithTail)) && holds(textOfUnits(tailOfWideText)));
+}
+
+static void testStoredStringsOfEachImageInFile()
+{
+    StoredStrings stored = readStoredStrings(fileThatHoldsTextImage(2).span());
+    AOT_TEST_CHECK(stored.verdict == VerdictOnStoredStrings::NothingLiesBesideStrings);
+    unsigned beside = numberOfBytesBesideStringsOfTextImage();
+    size_t sizeOfImage = std::as_const(textImage().image.bytes).span().size();
+    AOT_TEST_CHECK(reportOf(stored) == makeString(lineOnTextOfImage(0, offsetOfTextInFile(), beside), lineOnTextOfImage(1, offsetOfTextInFile() + sizeOfImage + sizeOfOtherBytesInFile, beside)));
+    Vector<uint8_t> twice = stringsByReaderOfRuntime();
+    twice.appendVector(stringsByReaderOfRuntime());
+    AOT_TEST_CHECK(equalSpans(stored.strings.span(), twice.span()));
+}
+
+static void testByteBesideStoredStringsThatIsNotZeroIsFound()
+{
+    Vector<uint8_t> file = fileThatHoldsTextImage(1);
+    AOT_TEST_CHECK(!file[offsetOfTextInFile()]);
+    file[offsetOfTextInFile()] = 'x';
+    StoredStrings stored = readStoredStrings(file.span());
+    AOT_TEST_CHECK(stored.verdict == VerdictOnStoredStrings::BytesBesideStringsAreNotZero);
+    AOT_TEST_CHECK(reportOf(stored) == makeString(lineOnTextOfImage(0, offsetOfTextInFile(), numberOfBytesBesideStringsOfTextImage()), "image 0 | Text | the byte at offset "_s, offsetOfTextInFile(), " is covered by no string and is not zero\n"_s));
+}
+
+static void testStoredStringsOfAnotherFormatAreRefusedByName()
+{
+    Vector<uint8_t> file = fileThatHoldsTextImage(1);
+    uint32_t other = imageFormatVersion + 1;
+    memcpy(file.mutableSpan().data() + sizeOfOtherBytesInFile + offsetof(ImageHeader, formatVersion), &other, sizeof(other));
+    StoredStrings stored = readStoredStrings(file.span());
+    AOT_TEST_CHECK(stored.verdict == VerdictOnStoredStrings::CannotBeRead && stored.strings.isEmpty());
+    AOT_TEST_CHECK(reportOf(stored) == makeString("image 0 | this Bun reads format "_s, imageFormatVersion, "; the image says "_s, other, '\n'));
+
+    StoredStrings ofNoImage = readStoredStrings(otherBytes(4 * sizeOfOtherBytesInFile).span());
+    AOT_TEST_CHECK(ofNoImage.verdict == VerdictOnStoredStrings::CannotBeRead && reportOf(ofNoImage) == "the file holds no image\n"_s);
+}
+
 static void testTextsThatAddToOneAnotherLieAtFrontOfLongest()
 {
     String first = makeString(piecesOfMadeTexts[0], piecesOfMadeTexts[1]);
@@ -466,6 +583,10 @@ std::span<const NativeTest> imageTextTests()
         { "image/text/headers-are-created-at-first-use"_s, testHeadersAreCreatedAtFirstUse },
         { "image/text/image-holds-no-address"_s, testImageHoldsNoAddress },
 #endif
+        { "image/text/a-byte-beside-the-stored-strings-that-is-not-zero-is-found"_s, testByteBesideStoredStringsThatIsNotZeroIsFound },
+        { "image/text/stored-strings-are-read-out-of-a-file"_s, testStoredStringsAreReadOutOfFile },
+        { "image/text/stored-strings-of-another-format-are-refused-by-name"_s, testStoredStringsOfAnotherFormatAreRefusedByName },
+        { "image/text/stored-strings-of-each-image-in-a-file"_s, testStoredStringsOfEachImageInFile },
         { "image/text/string-only-shown-has-no-header"_s, testStringOnlyShownHasNoHeader },
         { "image/text/texts-that-add-to-one-another-lie-at-the-front-of-the-longest"_s, testTextsThatAddToOneAnotherLieAtFrontOfLongest },
     };

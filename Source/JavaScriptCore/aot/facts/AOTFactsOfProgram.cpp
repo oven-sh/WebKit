@@ -493,6 +493,7 @@ private:
     void lookAtLoad(const BodyValue&);
     void noteObjectOfModule(RuntimeModuleID, const BodyValue& load);
     void accessMember(const BodyValue&, BuiltinID holder);
+    PropertyKeyID wellKnownSymbolThatReadGoesBy(const BodyValue&) const;
     bool followPartOfClass(const BodyValue&, BuiltinID holder, BuiltinID member);
     void followAsPartOfClass(ValueID, BuiltinID objectOfClass);
     void accessMemberOfPartOfClass(const BodyValue&, BuiltinID objectOfClass);
@@ -784,13 +785,25 @@ void BodyLookOfProgramFacts::accessMemberOfPartOfClass(const BodyValue& value, B
         note(Finding::Kind::PartOfClassIsUsed, 0, objectOfClass.index(), witnessAt(value));
 }
 
+PropertyKeyID BodyLookOfProgramFacts::wellKnownSymbolThatReadGoesBy(const BodyValue& value) const
+{
+    if (value.opcode() != Opcode::ElemGet)
+        return { };
+    ValueID written = m_index.valueBehindCasts(value.operand(1));
+    if (!written || m_index.isParameter(written) || m_index.opcodeOf(written) != Opcode::Builtin)
+        return { };
+    BuiltinName name = m_builtins.nameOfSymbol(m_index.value(written).as<Opcode::Builtin>().builtin());
+    return name ? m_program.keyOf(name) : PropertyKeyID();
+}
+
 void BodyLookOfProgramFacts::accessMember(const BodyValue& value, BuiltinID holder)
 {
     Opcode opcode = value.opcode();
     PropertyKeyID key;
     BuiltinUse use = BuiltinUse::Written;
-    if (opcode == Opcode::PropGet) {
-        key = value.as<Opcode::PropGet>().key();
+    bool isRead = opcode == Opcode::PropGet || opcode == Opcode::ElemGet;
+    if (isRead) {
+        key = opcode == Opcode::PropGet ? value.as<Opcode::PropGet>().key() : wellKnownSymbolThatReadGoesBy(value);
         use = BuiltinUse::Read;
     } else if (opcode == Opcode::PropHas) {
         key = value.as<Opcode::PropHas>().key();
@@ -820,15 +833,15 @@ void BodyLookOfProgramFacts::accessMember(const BodyValue& value, BuiltinID hold
     if (mayRunAccessorAbove)
         note(Finding::Kind::KeysOfBuiltinListed, 0, holder.index(), witnessAt(value));
     if (!member) {
-        if (opcode == Opcode::PropGet && key && m_builtins.at(m_builtins.rootOf(m_builtins.canonicalID(holder))).scope != BuiltinScope::Realm)
+        if (isRead && key && m_builtins.at(m_builtins.rootOf(m_builtins.canonicalID(holder))).scope != BuiltinScope::Realm)
             note(Finding::Kind::ReadThatNoRowAnswers, 1, holder.index(), key.index(), witnessAt(value));
-        if (opcode == Opcode::PropGet && !tableRulesOutMemberFoundFrom(holder, key) && !readGivesNothingThatNobodyDescribes(holder, key))
+        if (isRead && !tableRulesOutMemberFoundFrom(holder, key) && !readGivesNothingThatNobodyDescribes(holder, key))
             note(Finding::Kind::ReadThatNoRowAnswers, 0, holder.index(), witnessAt(value));
         followPartOfClass(value, holder, { });
         return;
     }
     noteUse(member, use, value);
-    if (opcode != Opcode::PropGet)
+    if (!isRead)
         return;
     if (!standsForObjectInProgramFacts(m_builtins, m_builtins.canonicalID(member)) && !m_rows.haveLightForms.quickGet(m_builtins.canonicalID(member).index())) {
         followWhatReadAnswers(value, member);
@@ -1647,6 +1660,9 @@ void BodyLookOfProgramFacts::look(const BodyValue& value)
             accessMemberOfPartOfClass(value, objectOfClass);
         else if (BuiltinID holder = holderOfMethodServed(value.operand(0)))
             note(Finding::Kind::LightFormIsAskedForMore, 0, holder.index(), witnessAt(value));
+        operandAccountedFor = 0;
+    } else if (BuiltinID holder = wellKnownSymbolThatReadGoesBy(value) ? builtinAt(value.operand(0)) : BuiltinID()) {
+        accessMember(value, holder);
         operandAccountedFor = 0;
     } else if (callsByValueInProgramFacts.contains(opcode))
         lookAtCall(value);

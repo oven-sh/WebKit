@@ -369,6 +369,8 @@ static void makeListForCallAsWritten(Walker& walker, const BodyValue& call, cons
     });
     if (!user || user->kind != BodyUseKind::Operand || user->value != call.id() || timesNamedByCall != 1)
         return;
+    if (index.loopOf(index.blockOf(object)) != index.loopOf(index.blockOf(call.id())))
+        return;
     Reference built = walker.referenceOf(object);
     bool isArgumentsObject = argumentsObjectsOfForwardedCall.contains(index.opcodeOf(object));
     std::optional<Vector<Reference, 8>> elements = isArgumentsObject ? std::nullopt : elementsOfFreshList(walker, built);

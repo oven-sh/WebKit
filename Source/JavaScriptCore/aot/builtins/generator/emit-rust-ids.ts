@@ -285,7 +285,7 @@ export function formatString(text: string): string {
   return `"${Array.from(bytes, escapeByte).join("")}"`;
 }
 
-export const nameBeforeNul = `const fn name_before_nul(text: &'static str) -> &'static str {
+export const nameBeforeNul = `pub(super) const fn name_before_nul(text: &'static str) -> &'static str {
     let (name, end) = text.as_bytes().split_at(text.len() - 1);
     assert!(end[0] == 0);
     match core::str::from_utf8(name) {
@@ -293,6 +293,9 @@ export const nameBeforeNul = `const fn name_before_nul(text: &'static str) -> &'
         Err(_) => panic!(),
     }
 }
+`;
+
+export const usesNameBeforeNul = `use super::ids::name_before_nul;
 `;
 
 export function formatName(text: string): string {

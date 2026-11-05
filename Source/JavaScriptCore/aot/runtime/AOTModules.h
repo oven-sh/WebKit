@@ -72,6 +72,7 @@ struct LinkContext {
     macro(JSObject*, deferredNamespaceObject) \
     macro(JSObject*, importMeta) \
     macro(JSObject*, requirer) \
+    macro(JSObject*, moduleObjectOverExportsVariable) \
     macro(JSObject*, objectMadeByRequire) \
     macro(JSValue, exportsGivenToObjectMadeByRequire) \
     macro(JSObject*, firstRequirerOutsideImage) \
@@ -669,6 +670,7 @@ public:
     void takeModuleObject(ModuleID, const ModuleObjects&);
     void giveBackModuleObject(ModuleID);
     JSObject* moduleObjectOverExportsVariableIfMade(ModuleID) const;
+    void didLayExportsVariableOnModuleObject(ModuleID);
     JSObject* mainModuleObject(ModuleID);
     JSObject* parentModuleObject(ModuleID);
     bool mayHandOutModuleObject(ModuleID module) const { return data(module).kind != ModuleKind::CommonJs || data(module).hasValue(); }

@@ -265,7 +265,11 @@ static FunctionID functionHeldByCaptureInBirths(Walker& walker, FunctionID funct
 
 static FunctionID functionWhoseCallIsReadInBirths(Walker& walker, const BodyReadInBirths& body, const BodyValue& read)
 {
-    if (read.opcode() != Opcode::PropGet || read.isFreeName() || read.key() != walker.program().keyOf(BuiltinNames::call))
+    if (read.opcode() != Opcode::PropGet || read.isFreeName())
+        return { };
+    const Program& program = walker.program();
+    BuiltinID foundOnFunctionPrototype = findConstantMemberFrom(program, walker.facts(), Builtins::FunctionPrototype, read.key());
+    if (!foundOnFunctionPrototype || program.builtins().canonicalID(foundOnFunctionPrototype) != Builtins::FunctionPrototypeCall)
         return { };
     ValueID holder = valueBehindNamesInBodyForBirths(body.index, read.objectOperand());
     if (!holder)

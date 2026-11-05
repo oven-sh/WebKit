@@ -3608,7 +3608,7 @@ bool Walker::copy(const BodyValue& value)
     Draft draft = draftOf(value);
     if (isUnreachable())
         return true;
-    if (draft.opcode == Opcode::ReleaseHint && (!draft.valueOperand() || isWithoutNameBehindLoopBuiltTwice(value.operand(0))))
+    if (draft.opcode == Opcode::ReleaseHint && (!draft.valueOperand() || isTextInStringBuilder(*this, draft.valueOperand()) || isWithoutNameBehindLoopBuiltTwice(value.operand(0))))
         return true;
 
     chooseConservativeFields(draft);
@@ -4165,7 +4165,7 @@ bool Walker::makeReadyToCross(BlockID to, std::span<const Reference> arguments, 
     }
     ready.m_records.shrink(0);
     for (size_t index = 0; index < arguments.size(); ++index) {
-        if (hasTextsInStringBuilders() && isTextInStringBuilder(*this, arguments[index]) && !isTextInStringBuilder(*this, Reference::value(parameters[index]))) {
+        if (isTextInStringBuilder(*this, arguments[index]) && !isTextInStringBuilder(*this, Reference::value(parameters[index]))) {
             fail("an edge hands a text in its builder to a parameter that holds no builder"_s);
             return false;
         }
@@ -5357,8 +5357,11 @@ void Walker::enterLoopHead(BlockID inputHead)
         return;
     if (!isBeingTried(frameIndex, inputHead) && !m_loopsBeingBought.contains(std::pair { static_cast<uint32_t>(frameIndex), inputHead }))
         reserveRoomOfListsThatLoopFills(*this, inputHead, entering.span());
-    if (tryLoop(inputHead, entering.span()))
+    if (tryLoop(inputHead, entering.span())) {
+        if (!m_frames[frameIndex].loopsBeingBuiltTwice.contains(currentBodyIndex().loopOf(inputHead)))
+            letGoOfTextsThatLoopTook(inputHead);
         return;
+    }
     for (Reference argument : entering)
         letLeave(argument);
     if (hasTextsInStringBuilders())

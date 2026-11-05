@@ -183,17 +183,7 @@ bool Object::hasEveryFieldOfBirth() const
 bool Object::hasAccessorAmongExtraProperties() const
 {
     JSObject* extra = extraPropertiesIfMade(*this);
-    if (!extra)
-        return false;
-    Structure* structure = extra->structure();
-    if (!structure->hasAnyKindOfGetterSetterProperties())
-        return false;
-    bool isFound = false;
-    structure->forEachProperty(vm(), [&](const PropertyTableEntry& entry) {
-        isFound = entry.attributes() & (PropertyAttribute::Accessor | PropertyAttribute::CustomAccessorOrValue);
-        return !isFound;
-    });
-    return isFound;
+    return extra && extra->structure()->hasAnyKindOfGetterSetterProperties();
 }
 
 void Object::tryFinishBirth()

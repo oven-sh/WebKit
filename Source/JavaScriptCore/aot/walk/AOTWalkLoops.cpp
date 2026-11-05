@@ -556,7 +556,7 @@ bool Walker::isBeingTried(size_t frameIndex, BlockID inputHead) const
     macro(placeTakenByEndOfBlockAskedLast) macro(hasHandler) macro(numberOfFramesUpToHandlerBelow) macro(firstOperationToWalk) macro(hasPassedByWhatFeedsThrow) macro(standsInFrontOfHead) \
     macro(narrowedValues) macro(firstNarrowerName) macro(listOfNarrowerNamesIsLong) macro(beginOfStretch) macro(loopLookedAt) macro(firstValueLookedAt) macro(typesOfLooks) \
     macro(loopsBeingBuiltTwice) macro(headOfTurnsWrittenOut) macro(turnsOfForIn) macro(valuesListedForTurnsWrittenOut) macro(stepWhosePositionEdgesBring) \
-    macro(placeOfForInWhosePositionEdgesBring) macro(blocksWalkedForEachWay) macro(wholeExpectations) macro(whereCopyLeavesForCall)
+    macro(placeOfForInWhosePositionEdgesBring) macro(blocksWalkedForEachWay) macro(wholeExpectations) macro(whereCopyLeavesForCall) macro(whereHeadEnds)
 
 #define FOR_EACH_FIELD_OF_WALKER_IN_TRY(macro) \
     macro(m_state) macro(m_block) macro(m_origin) macro(m_opensGuesses) macro(m_firstFreeOpenEdge) macro(m_pendingBlocks) macro(m_numberOfClosedArms) \
@@ -904,8 +904,13 @@ void Walker::letMentionsOfLoopLeave(BlockID inputHead, std::span<const ValueID> 
         if (!reference || !reference.isValue())
             continue;
         Reference object = referenceTo(rootOfCellInSweptCode(m_code, reference.id()));
-        if (m_state.isFresh(object))
+        if (!m_state.isFresh(object))
+            continue;
+        Opcode maker = m_code.at(object.id()).opcode;
+        if (hasKind(m_types, typeOf(object), OperandKind::Array) || maker == Opcode::CreateUnmappedArguments || maker == Opcode::CreateMappedArguments)
             kept->append(FreshObjectKeptAtHead { value, object });
+        else
+            letLeave(reference);
     }
 }
 
@@ -1824,6 +1829,7 @@ bool Walker::tryLoop(BlockID inputHead, std::span<const Reference> entering)
         auto typesBeforeWalk = m_answersOfLoops[place].types;
         auto rungsBeforeWalk = m_answersOfLoops[place].rungs;
         walkCopyOfLoop(inputHead, enteringKept.span());
+        bool walkBeganTexts = m_walkOfLoopBeganTexts;
         auto ownerOfTried = makeUniqueWithoutFastMallocCheck<TryOfLoop>(m_triesOfLoops.takeLast());
         TryOfLoop& tried = *ownerOfTried;
         if (!m_triesOfLoops.isEmpty()) {
@@ -2191,7 +2197,8 @@ bool Walker::tryLoop(BlockID inputHead, std::span<const Reference> entering)
                     return url.inlineFrame == m_frames[frameIndex].inlineFrame && url.made.index() >= learned.firstValue && url.made.index() - learned.firstValue < learned.typesOfValues.size();
                 });
                 bool keepsPlainWalk = m_frontOfLoopLeftOpen.block && tried.stateInFront && tried.freshObjectsKept.isEmpty() && m_otherCopyOpensItsGuessesAsAsked && !leavesURLUnmade
-                    && !sharedClosedCopyWaits && !hasTextsInStringBuilders() && steppedInFrontOfLoop.asTheyEntered.isEmpty()
+                    && !sharedClosedCopyWaits && !hasTextsInStringBuilders() && !walkBeganTexts && steppedInFrontOfLoop.asTheyEntered.isEmpty()
+                    && !enteringKept.containsIf([&](Reference enters) { return isTextInStringBuilder(*this, enters); })
                     && !m_inputHeadsOfIterations.contains(inputHeadInFrame(m_frames[frameIndex].inlineFrame, inputHead))
                     && m_code.at(m_frontOfLoopLeftOpen.head).parameters().size() == enteringKept.size() && m_frontOfLoopLeftOpen.block.index() < m_frontOfLoopLeftOpen.head.index();
                 bool isBuilt;

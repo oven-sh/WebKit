@@ -1772,6 +1772,11 @@ static FunctionID findMethodReadBehindLooksForTypedAccess(const Walker& walker, 
         return { };
     }
     FunctionID method = findMethodDeclaredAboveReceiversForTypedAccess(walker, receivers, key, whyNone);
+    if (method && !walker.facts().linked().mayBeMentionedBy(walker.unit(), method)) {
+        if (whyNone)
+            *whyNone = "no field: a method above that the unit may not mention"_s;
+        return { };
+    }
     if (!isForCallAlone) {
         if (method && !closureTableHoldsMethodForTypedAccess(walker, method)) {
             if (whyNone)

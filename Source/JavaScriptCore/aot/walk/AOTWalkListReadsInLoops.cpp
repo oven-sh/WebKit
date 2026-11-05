@@ -293,6 +293,8 @@ static bool rowFindsListsLeftAsTheyAreInListReadsInLoops(Walker& walker, BlockID
     const BodyIndex& index = walker.currentBodyIndex();
     uint32_t firstValueOfLoop = index.block(inputHead).firstParameter().index();
     for (ValueID ran : walker.operationsThatRanOtherCodeOfRow()) {
+        if (!ran)
+            return false;
         BodyValue operation = index.value(ran);
         bool readsList = false;
         bool isStore = operation.opcode() == Opcode::ElemSet;

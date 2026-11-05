@@ -3920,6 +3920,10 @@ static bool listConditionsOfPlainInstanceForGuesses(const Walker& walker, Layout
         names.append(field.key);
     }
     names.appendVector(plan.slots().layout(layout).appendedKeys);
+    for (PropertyKeyID name : names) {
+        if (std::optional<FieldIndex> field = plan.slots().findField(program, layout, name); field && plan.slot(layout, *field).holdsAccessor)
+            return false;
+    }
 
     auto isOfLibrary = [&](FunctionID function) {
         return function && isLibraryCode(program, program.at(function));

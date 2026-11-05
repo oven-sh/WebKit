@@ -161,8 +161,11 @@ bool convertPartsAndAppendToTextInStringBuilder(Walker& walker, const BodyValue&
         if (!part || !part.isRecord() || isTextInStringBuilder(walker, part))
             return false;
     }
-    if (!findTextNamedBy(walker, join.id()))
+    TextInStringBuilder* grown = findTextNamedBy(walker, join.id());
+    if (!grown)
         return false;
+    if (!growthJoinsTextsInStringBuilder(walker, *grown, parts.subspan(1)))
+        return true;
 
     Origin origin = walker.originOf(join);
     origin.isTailCall = false;

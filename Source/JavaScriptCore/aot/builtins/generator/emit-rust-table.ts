@@ -17,9 +17,9 @@ import {
   formatString,
   formatStruct,
   formatWellKnownSymbol,
-  nameBeforeNul,
   sortModules,
   sortUniqueNumbers,
+  usesNameBeforeNul,
 } from "./emit-rust-ids.ts";
 import {
   builtinFlags,
@@ -606,7 +606,7 @@ function emitFunctionsForAnyHostObject(model: TableModel): string {
 export function emitRustTable(model: TableModel): string {
   return [
     fileHeader,
-    nameBeforeNul,
+    usesNameBeforeNul,
     emitConstants(model),
     emitEntries(model),
     emitNames(model),

@@ -5690,6 +5690,11 @@ JSObject* moduleObjectOverExportsVariableIfMade(JSGlobalObject* realm, ModuleID 
     return modules ? modules->moduleObjectOverExportsVariableIfMade(module) : nullptr;
 }
 
+void didLayExportsVariableOnModuleObject(JSGlobalObject* realm, ModuleID module)
+{
+    modulesOf(realm)->didLayExportsVariableOnModuleObject(module);
+}
+
 void didMakeModuleObjectForRequire(JSGlobalObject* realm, ModuleID module, JSObject* moduleObject)
 {
     if (Modules* modules = modulesOf(realm))

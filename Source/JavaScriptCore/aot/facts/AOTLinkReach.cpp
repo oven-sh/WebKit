@@ -66,6 +66,12 @@ static LinkType typeOfBuiltinForLinkReach(const Program& program, BuiltinID cano
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+static PropertyKeyID keyOfWellKnownSymbolForLinkReach(const Program& program, BuiltinID constant)
+{
+    BuiltinName name = program.builtins().nameOfSymbol(constant);
+    return name ? program.keyOf(name) : PropertyKeyID();
+}
+
 static LinkType typeOfUnseenObjectsForLinkReach()
 {
     LinkType type;
@@ -1667,6 +1673,12 @@ void StateOfLinkReach::bringAlive(FunctionID id)
             m_flow.arrive(nodeAt(index), typeOfClosuresForLinkReach(FunctionID(node.first)));
             break;
         case SummaryNode::Kind::Builtin:
+            if (PropertyKeyID symbol = keyOfWellKnownSymbolForLinkReach(m_program, BuiltinID(node.first))) {
+                LinkType oneSymbol;
+                oneSymbol.primitives = LinkType::oneSymbol;
+                m_flow.arrive(nodeAt(index), oneSymbol, symbol);
+                break;
+            }
             m_flow.arrive(nodeAt(index), typeOfBuiltinForLinkReach(m_program, BuiltinID(node.first)));
             break;
         }

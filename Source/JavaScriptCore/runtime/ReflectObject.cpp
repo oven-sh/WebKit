@@ -294,7 +294,7 @@ JSC_DEFINE_HOST_FUNCTION(reflectObjectDeleteProperty, (JSGlobalObject* globalObj
 #if ENABLE(AOT)
 static bool isPrototypeRefusedByLanguage(JSObject* object, JSValue prototype)
 {
-    if (object->structure()->isImmutablePrototypeExoticObject())
+    if (object->structure()->isImmutablePrototypeExoticObject() || !object->isStructureExtensible())
         return true;
     for (JSValue next = prototype; next.isObject() && asObject(next)->type() != ProxyObjectType; next = asObject(next)->getPrototypeDirect()) {
         if (next == JSValue(object))
