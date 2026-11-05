@@ -32,7 +32,10 @@
 
 namespace WTF {
 
-static constexpr unsigned maxCapacity = String::MaxLength;
+// What is asked for ahead of need is no more than a string of either kind of character can have. (With String::MaxLength, which is a
+// little more than a string of 16-bit characters can have, such a buffer could not grow beyond half of that.)
+static constexpr unsigned maxCapacity = (std::numeric_limits<unsigned>::max() - sizeof(StringImpl)) / sizeof(char16_t);
+static_assert(maxCapacity <= String::MaxLength && StringImpl::isValidLength<char16_t>(maxCapacity) && !StringImpl::isValidLength<char16_t>(maxCapacity + 1));
 
 unsigned StringBuilder::expandedCapacity(unsigned capacity, unsigned requiredCapacity)
 {
