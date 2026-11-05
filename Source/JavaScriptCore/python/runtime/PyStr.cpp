@@ -2143,16 +2143,16 @@ static JSValue strNew(JSGlobalObject* globalObject, JSValue cls, const CallArgs&
             return raiseTypeError(globalObject, scope, "argument for str() given by name ('"_s, keyword, "') and position ("_s, index + 1, ')');
         values[index] = args.keywordValue(i);
     }
-    if (!args.keywordCount() && type == rt.strType()) {
-        for (unsigned i = 1; i < 3; ++i) {
-            if (values[i] && !isStr(values[i]))
-                return raiseTypeError(globalObject, scope, "str() argument '"_s, names[i], "' must be str, not "_s, typeNameForMessage(globalObject, rt.typeOf(values[i])));
-        }
+    // All that can be wrong with the encoding comes before anything that is wrong with the handler.
+    JSString* texts[3];
+    for (unsigned i = 1; i < 3; ++i) {
+        if (!args.keywordCount() && type == rt.strType() && values[i] && !isStr(values[i]))
+            return raiseTypeError(globalObject, scope, "str() argument '"_s, names[i], "' must be str, not "_s, typeNameForMessage(globalObject, rt.typeOf(values[i])));
+        if (failed(scope, optionalStr(globalObject, values[i], "str"_s, names[i], texts[i])))
+            return { };
     }
-    JSString* encoding;
-    JSString* errors;
-    if (failed(scope, optionalStr(globalObject, values[1], "str"_s, "encoding"_s, encoding)) || failed(scope, optionalStr(globalObject, values[2], "str"_s, "errors"_s, errors)))
-        return { };
+    JSString* encoding = texts[1];
+    JSString* errors = texts[2];
 
     JSString* result;
     if (!values[0])
