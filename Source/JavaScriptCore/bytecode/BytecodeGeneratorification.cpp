@@ -35,6 +35,7 @@
 #include "BytecodeUseDef.h"
 #include "JSGenerator.h"
 #include "Label.h"
+#include "PreciseJumpTargetsInlines.h"
 #include "PyBytecode.h"
 #include "StrongInlines.h"
 #include "UnlinkedCodeBlockGenerator.h"
@@ -308,6 +309,13 @@ private:
             else if (instruction->is<OpPySend>())
                 result = instruction->as<OpPySend>().m_dst;
             resetLiveRegisters(instruction.next().offset(), false, *firstLocal, { result });
+            // These two have made their call when they jump, too. What is above the registers in use here is not in use there
+            // either, whoever else jumps there.
+            if (instruction->is<OpPyForIter>() || instruction->is<OpPySend>()) {
+                extractStoredJumpTargetsForInstruction(codeBlock, instruction, [&](int32_t relativeOffset) {
+                    resetLiveRegisters(instruction.offset() + relativeOffset, true, *firstLocal, { result });
+                });
+            }
         }
 
         for (size_t i = 0; i < codeBlock->numberOfExceptionHandlers(); ++i) {
