@@ -1780,7 +1780,8 @@ RegisterID* Unit::emitCall(RegisterID* dst, RegisterID* callee, std::span<Regist
     }
 
     // callee(*positional, **named)
-    Arguments operands(*this, 3);
+    bool hasOnlyMapping = keywords.size() == 1 && !keywords[0]->arg;
+    Arguments operands(*this, hasOnlyMapping ? 4 : 3);
     g.move(operands[0], callee);
     if (pushed.empty() && !injected && args.size() == 1 && args[0]->is<Starred>())
         expr(args[0]->as<Starred>()->value, operands[1]);
@@ -1789,7 +1790,12 @@ RegisterID* Unit::emitCall(RegisterID* dst, RegisterID* callee, std::span<Regist
 
     if (keywords.isEmpty())
         g.move(operands[2], emptyValue());
-    else {
+    else if (hasOnlyMapping) {
+        // It is only read: callArguments(). In CPython a dict is made here, on the line the call begins on.
+        line(range);
+        g.move(operands[2], emptyValue());
+        expr(keywords[0]->value, operands[3]);
+    } else {
         RegisterID* named = operands[2];
         bool haveDict = false;
         for (unsigned i = 0; i < keywords.size();) {

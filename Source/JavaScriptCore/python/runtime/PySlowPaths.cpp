@@ -1188,25 +1188,42 @@ static JSValue makeGenerator(JSGlobalObject* globalObject, CallFrame* callFrame,
 }
 
 // callee(*positional, **keywords): the arguments in an array, as op_call_varargs takes them. The names of the keywords are set aside.
-// `keywords`: empty (then nobody asks for the names), or a dict that the compiled code has made.
-static JSValue callArguments(JSGlobalObject* globalObject, JSValue, JSValue positional, JSValue keywords)
+// `keywords`: a dict that the compiled code has made. `mapping`: what was after the only **. If both are empty, nobody asks for the names.
+static JSValue callArguments(JSGlobalObject* globalObject, JSValue callee, JSValue positional, JSValue keywords, JSValue mapping)
 {
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto* tuple = PyTuple::tryFrom(positional);
+    if (tuple && tuple->type() != rt.tupleType())
+        tuple = nullptr;
+    JSArray* list = isExactList(positional) ? asList(positional) : nullptr;
+
+    // In CPython's order: what is after the ** is read first. To go through what is after the * may run code, which may change it.
+    PyDict* dict = keywords ? PyDict::from(keywords) : nullptr;
+    if (mapping) {
+        dict = PyDict::tryFrom(mapping);
+        // (Keys that are not exactly strs may be asked when they are put into another dict.)
+        if (!dict || !isExactDict(rt, dict) || !dict->hasOnlyStringKeys() || (!tuple && !list)) {
+            dict = PyDict::create(globalObject);
+            dictMergeForCall(globalObject, dict, mapping, callee);
+            RETURN_IF_EXCEPTION(scope, { });
+        }
+    }
+    if (dict && dict->isEmpty())
+        dict = nullptr;
+
     JSArray* array;
-    if (isExactList(positional) && !keywords) {
+    if (list && !dict) {
         // Made by the compiled code, or about to be copied into the frame anyway.
-        array = asList(positional);
-    } else if (tuple && tuple->type() == rt.tupleType() && !keywords) {
+        array = list;
+    } else if (tuple && !dict) {
         array = newList(globalObject, tuple->span());
         RETURN_IF_EXCEPTION(scope, { });
     } else {
-        array = newList(globalObject);
+        array = newList(globalObject, dict ? (tuple ? tuple->length() : list ? list->length() : 0) + dict->size() : 0);
         RETURN_IF_EXCEPTION(scope, { });
-        // f(*x): CPython makes a tuple of x, as tuple(x) does.
         listExtend(globalObject, array, positional, LengthHint::NotAsked);
         if (scope.exception()) [[unlikely]] {
             PyType* type = rt.typeOf(positional);
@@ -1217,13 +1234,11 @@ static JSValue callArguments(JSGlobalObject* globalObject, JSValue, JSValue posi
             return { };
         }
     }
-
-    if (!keywords)
+    if (!keywords && !mapping)
         return array;
 
     rt.setPendingKeywordNames(jsUndefined());
-    auto* dict = PyDict::from(keywords);
-    if (dict->isEmpty())
+    if (!dict)
         return array;
     PyTuple* names = keywordNamesOf(globalObject, dict);
     RETURN_IF_EXCEPTION(scope, { });
@@ -1615,7 +1630,7 @@ static JSValue runRuntimeFunction(JSGlobalObject* globalObject, CallFrame* callF
         rt.releaseIteratorOfLoop(args[0]);
         return jsUndefined();
     case RuntimeFunction::CallArguments:
-        RELEASE_AND_RETURN(scope, callArguments(globalObject, args[0], args[1], args[2]));
+        RELEASE_AND_RETURN(scope, callArguments(globalObject, args[0], args[1], args[2], args.size() > 3 ? args[3] : JSValue()));
     case RuntimeFunction::TakeKeywordNames:
         return rt.takePendingKeywordNames();
 
