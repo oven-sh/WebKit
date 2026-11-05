@@ -91,15 +91,15 @@ void ClassEmitter::generateFinishClass(const ValueContext& value)
 void ClassEmitter::generateBeginMemberGuards(const ValueContext& value)
 {
     LayoutID constructorFunction = value->layout();
-    LBasicBlock prototypeSideHasEnded = newBlock();
-    LBasicBlock mayNotHaveBegun = newBlock();
+    if (!m_plan.hasClassRecord(constructorFunction)) {
+        fail(value, InternalErrorKind::OpcodeWithoutCode);
+        return;
+    }
+    LBasicBlock wereNeverBegun = newBlock();
     LBasicBlock continuation = newBlock();
-    branch(emitter<GuardEmitter>().holds(constructorFunction, ClassSide::Prototype, { }), { normalEdge(continuation), rareEdge(prototypeSideHasEnded) });
+    branch(emitter<GuardEmitter>().guardsWereBegun(constructorFunction), { normalEdge(continuation), rareEdge(wereNeverBegun) });
 
-    m_out.appendTo(prototypeSideHasEnded);
-    branch(emitter<GuardEmitter>().holds(constructorFunction, ClassSide::Static, { }), { normalEdge(continuation), rareEdge(mayNotHaveBegun) });
-
-    m_out.appendTo(mayNotHaveBegun);
+    m_out.appendTo(wereNeverBegun);
     Operand arguments[] { word32(constructorFunction.index()) };
     callWithoutSite(RuntimeOperation::BeginMemberGuards, arguments, Representation::Void, { .isOnRarePath = true });
     m_out.jump(continuation);

@@ -56,9 +56,10 @@ public:
     JSValue fillWatchedValue(JSGlobalObject*, BuiltinCellKey);
     void forgetValuesNamed(UniquedStringImpl* key);
     void willWrite(BuiltinID member, UniquedStringImpl* key) final;
-    void willAddNameTo(BuiltinID holder) final { noteWriteAboveInstances(holder); }
+    void willAddNameTo(BuiltinID holder) final;
     void didMakeMember(BuiltinID member, JSObject*);
     void cannotHearOfWritesTo(BuiltinID holder);
+    void hearsOfWritesTo(BuiltinID holder);
     void noteWriteAboveInstances(BuiltinID holder);
     void fillCellsUnderModules();
     void didLoadModule(RuntimeModuleID, JSObject* exports);
@@ -144,6 +145,9 @@ private:
     BitVector m_holdersThatTellOfWrites;
     BitVector m_writtenMembers;
     std::span<uint8_t> m_classesWrittenAbove;
+    std::span<uint8_t> m_membersWritten;
+    enum class NamesOnHolder : uint8_t { AreAsBuilt, AreNotHeardOf, WereAdded };
+    std::span<NamesOnHolder> m_namesOnHolders;
     BitVector m_holdersWhoseWriteIsNoted;
     ObjectsByBuiltin m_membersMadeBehindAnnouncedWrite;
 };

@@ -144,26 +144,51 @@ static bool engineHonorsTestingSwitch(Wire::TestingSwitch testingSwitch)
     // A false bound on purpose, for the red control of that: isKnownToLieInsideList().
     case Wire::TestingSwitch::PositionsAreTakenToLieInside:
     case Wire::TestingSwitch::NoCalleeKeepsWhatItIsHanded:
-    case Wire::TestingSwitch::HoldsObjectsToStayingAsMade:
+    case Wire::TestingSwitch::ArgumentsOfUnseenCodeDoNotLeave:
     case Wire::TestingSwitch::CheckEffectsAtRunTime:
     case Wire::TestingSwitch::RowSaysLess:
-        return true;
-    case Wire::TestingSwitch::NobodyLooksAtNewInstances:
-    case Wire::TestingSwitch::WalksNothingAtCalls:
+    case Wire::TestingSwitch::UndoLeavesExpectations:
     case Wire::TestingSwitch::IgnoreBranchHints:
-    case Wire::TestingSwitch::MayEncounterMasqueradesAsUndefined:
-    case Wire::TestingSwitch::DropGuard:
+    case Wire::TestingSwitch::ShuffleBlockFrequencies:
     case Wire::TestingSwitch::IgnoreExpectedTypes:
-    case Wire::TestingSwitch::DropReferenceGuards:
-    case Wire::TestingSwitch::ProveEverything:
-    case Wire::TestingSwitch::NoCallConvertsCells:
-    case Wire::TestingSwitch::NoLayoutIsMadeSeldom:
-    case Wire::TestingSwitch::FoldLoadsPastCollections:
-    case Wire::TestingSwitch::OverwriteDeadValuesAtCollections:
     case Wire::TestingSwitch::ShuffleExpectedTypes:
-        return false;
+    case Wire::TestingSwitch::FailGuesses:
+    case Wire::TestingSwitch::GiveLinkMore:
+    case Wire::TestingSwitch::ShuffleChoices:
+        return true;
     }
     RELEASE_ASSERT_NOT_REACHED();
+}
+
+static bool drawsBySeed(Wire::TestingSwitch testingSwitch)
+{
+    return testingSwitch == Wire::TestingSwitch::ShuffleBlockFrequencies || testingSwitch == Wire::TestingSwitch::ShuffleExpectedTypes
+        || testingSwitch == Wire::TestingSwitch::GiveLinkMore || testingSwitch == Wire::TestingSwitch::ShuffleChoices;
+}
+
+static std::optional<String> takeSeedOfShuffles(Wire::CompileOptions& options, StringView written)
+{
+    auto seed = parseNumber<uint32_t>(written);
+    if (!seed)
+        return notANumberSentence(written);
+    if (!*seed)
+        return String("a seed is at least 1"_s);
+    if (options.seedOfShuffles && options.seedOfShuffles != *seed)
+        return String("one build draws by one seed"_s);
+    options.seedOfShuffles = *seed;
+    return std::nullopt;
+}
+
+static std::optional<String> takePeriodOfGuessesThatFail(Wire::CompileOptions& options, StringView written)
+{
+    auto [period, seed] = splitOptionText(written, ':');
+    auto turns = parseNumber<uint32_t>(period);
+    if (!turns)
+        return notANumberSentence(period);
+    if (!*turns)
+        return String("a guess fails one time in n, and n is at least 1"_s);
+    options.periodOfGuessesThatFail = *turns;
+    return seed ? takeSeedOfShuffles(options, *seed) : std::nullopt;
 }
 
 static std::optional<uint32_t> parseRowThatSaysLess(StringView written)
@@ -247,6 +272,18 @@ static std::optional<String> applyTesting(Wire::CompileOptions& options, const O
             options.rowThatSaysLess = *row;
             numbers = std::nullopt;
         }
+        if (drawsBySeed(*testingSwitch)) {
+            if (!numbers)
+                return makeString(name, " takes a seed"_s);
+            if (auto sentence = takeSeedOfShuffles(options, *numbers))
+                return sentence;
+            numbers = std::nullopt;
+        }
+        if (*testingSwitch == Wire::TestingSwitch::FailGuesses) {
+            if (auto sentence = takePeriodOfGuessesThatFail(options, numbers.value_or("1"_s)))
+                return sentence;
+            numbers = std::nullopt;
+        }
         if (numbers)
             return makeString(name, " takes no number"_s);
         addFlag(options.testing, *testingSwitch);
@@ -270,6 +307,9 @@ static bool engineHonorsCheck(Wire::CheckSet check)
     case Wire::CheckSet::VerifyEachStage:
     case Wire::CheckSet::ValidateReferenceGuards:
     case Wire::CheckSet::FlowFixpoint:
+    case Wire::CheckSet::LastWalksOfLoopsAlone:
+    case Wire::CheckSet::WalksOfLoopsThatFitAgain:
+    case Wire::CheckSet::FlowFindsNoLessFromMore:
         return true;
     case Wire::CheckSet::KeepGoing:
     case Wire::CheckSet::VerifyEachPass:

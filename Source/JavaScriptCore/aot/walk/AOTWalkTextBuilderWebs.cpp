@@ -222,8 +222,11 @@ void TextBuilderWebScan::findCandidates()
     for (uint32_t parameterIndex = 0; parameterIndex < numberOfParameters; ++parameterIndex) {
         TypeID written = m_head.parameterType(parameterIndex);
         isWrittenWithoutText[parameterIndex] = written && holdsOnlyPrimitives(written) && !(primitivesInID(written) & Primitive::String);
-        cannotGrow[parameterIndex] = isNameOfTextInStringBuilder(m_walker, m_head.parameter(parameterIndex));
+        TypeID inRow = typeInLooks(m_head.parameter(parameterIndex));
+        cannotGrow[parameterIndex] = isNameOfTextInStringBuilder(m_walker, m_head.parameter(parameterIndex)) || (inRow && !m_walker.types().overlap(inRow, TypeTable::string));
     }
+    if (!cannotGrow.contains(false))
+        return;
     auto joinsText = [&](ValueID root) {
         return operationsThatJoinTexts.contains(m_index.opcodeOf(root)) && isProvenToBeText(root);
     };

@@ -182,7 +182,7 @@ bool buildTestAgainstJoinOfTextsOfItsOpcodes(Walker& walker, const BodyValue& jo
     Walker::StretchInArms stretch = walker.stretchInArms(inputBlock, placeOfJoin, behindCall, true);
 
     if (FunctionID callee = walker.facts().linked().calleeAt(walker.currentFunction(), join.id()))
-        walker.arrivals().leaveAnything(callee);
+        walker.leaveAnythingAt(callee);
 
     Origin origin = walker.originOf(join);
     Reference part = test->partAtEnd;

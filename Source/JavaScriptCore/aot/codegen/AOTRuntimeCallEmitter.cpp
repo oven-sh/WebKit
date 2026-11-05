@@ -49,7 +49,6 @@ struct CallGenerator {
     OptionalIndex firstRead;
     const ThrowSite* throwSite;
     const OperationCall* preservingCall;
-    std::optional<StubKey> keyWhereNoRegisterIsKept;
     std::optional<StubKey> keyWhereNoFPRIsKept;
     Machine::RegisterMask receiversWithVariant;
 };
@@ -63,6 +62,18 @@ struct ReturnTraits {
 };
 
 } // anonymous namespace
+
+static void appendArgumentMoveOutOfFrame(ArgumentMoves& moves, GPRReg destination, const Machine::PatchParameters& params, const Machine::ValueRep& rep, bool isNarrow)
+{
+    RELEASE_ASSERT(rep.isStack() && params.frameIsSetUp());
+    if (params.frame().hasFrameRecord()) {
+        appendArgumentMove(moves, destination, isNarrow ? ArgumentSource::Stack32 : ArgumentSource::Stack64, static_cast<int64_t>(rep.offsetFromFP()));
+        return;
+    }
+    MacroAssembler::Address atCall = params.frame().addressInFrame(rep.offsetFromFP());
+    RELEASE_ASSERT(isX86_64() && atCall.base == MacroAssembler::stackPointerRegister);
+    appendArgumentMove(moves, destination, isNarrow ? ArgumentSource::Stack32OffStackPointer : ArgumentSource::Stack64OffStackPointer, static_cast<int64_t>(atCall.offset) + static_cast<int64_t>(sizeof(CPURegister)));
+}
 
 ArgumentMoves CallGenerator::moveArguments(CCallHelpers& jit, const Machine::PatchParameters& params) const
 {
@@ -94,9 +105,7 @@ ArgumentMoves CallGenerator::moveArguments(CCallHelpers& jit, const Machine::Pat
                 appendArgumentMove(moves, destination, ArgumentSource::Constant, rep.value());
             continue;
         }
-        RELEASE_ASSERT(rep.isStack() && params.frameIsSetUp());
-        bool isNarrow = childType == Machine::Int32;
-        appendArgumentMove(moves, destination, isNarrow ? ArgumentSource::Stack32 : ArgumentSource::Stack64, static_cast<int64_t>(rep.offsetFromFP()));
+        appendArgumentMoveOutOfFrame(moves, destination, params, rep, childType == Machine::Int32);
     }
     return moves;
 }
@@ -123,8 +132,7 @@ ArgumentMoves CallGenerator::bringOperands(const Machine::PatchParameters& param
             appendArgumentMove(moves, destination.gpr(), ArgumentSource::Constant, isNarrow ? static_cast<uint32_t>(rep.value()) : static_cast<uint64_t>(rep.value()));
             continue;
         }
-        RELEASE_ASSERT(rep.isStack() && params.frameIsSetUp());
-        appendArgumentMove(moves, destination.gpr(), isNarrow ? ArgumentSource::Stack32 : ArgumentSource::Stack64, static_cast<int64_t>(rep.offsetFromFP()));
+        appendArgumentMoveOutOfFrame(moves, destination.gpr(), params, rep, isNarrow);
     }
     return moves;
 }
@@ -212,7 +220,7 @@ void CallGenerator::generate(CCallHelpers& jit, const Machine::PatchParameters& 
         called = callOperationPreservingRegisters(call);
     }
     ArgumentMoves moves = preservingCall ? moveArguments(jit, params) : bringOperands(params);
-    if (keyWhereNoRegisterIsKept || keyWhereNoFPRIsKept) {
+    if (keyWhereNoFPRIsKept) {
         Machine::RegisterMask kept = registersToKeepAcrossCCall(params);
         if (resultIsInAnyRegister)
             kept &= ~Machine::maskOf(Reg(params[0].gpr()));
@@ -220,9 +228,7 @@ void CallGenerator::generate(CCallHelpers& jit, const Machine::PatchParameters& 
             kept &= ~Machine::maskOf(signature.firstResult);
         if (signature.secondResult)
             kept &= ~Machine::maskOf(signature.secondResult);
-        if (keyWhereNoRegisterIsKept && !kept)
-            called = *keyWhereNoRegisterIsKept;
-        else if (keyWhereNoFPRIsKept && !holdsFPR(kept))
+        if (!holdsFPR(kept))
             called = *keyWhereNoFPRIsKept;
     }
     if (receiverIsInAnyRegister) {
@@ -230,12 +236,9 @@ void CallGenerator::generate(CCallHelpers& jit, const Machine::PatchParameters& 
         GPRReg receiver = params[resultComesFirst ? 1 : 0].gpr();
         GPRReg receiverOfStub = signature.operands[0].gpr();
         bool hasVariant = receiver != receiverOfStub && (called == key ? !!(receiversWithVariant & Machine::maskOf(Reg(receiver))) : exists(called.withOperandRegister(receiver)));
+        RELEASE_ASSERT(hasVariant || receiver == receiverOfStub);
         if (hasVariant)
             called = called.withOperandRegister(receiver);
-        else {
-            RELEASE_ASSERT(receiver == receiverOfStub || descriptorOf(called.family()).operandRegisters == OperandRegisterChoice::AlternateReceivers);
-            jit.move(receiver, receiverOfStub);
-        }
     }
     if (resultIsInAnyRegister && (params[0].gpr() != signature.firstResult.gpr() || !namesRegisterOfResult(descriptorOf(called.family()).operandRegisters)))
         called = called.withOperandRegister(params[0].gpr());
@@ -254,9 +257,7 @@ static StubKey boundKeyOf(const StubCatalog& catalog, StubKey key, std::optional
 static bool acceptsAnyReceiverRegister(StubKey key, const StubSignature& signature, size_t numberOfOperands)
 {
     OperandRegisterChoice choice = descriptorOf(key.family()).operandRegisters;
-    if (operandRegistersOf(choice).empty() || namesRegisterOfResult(choice) || numberOfOperands != 1)
-        return false;
-    return choice != OperandRegisterChoice::AlternateReceivers || signature.result == StubResult::GPR || signature.result == StubResult::None;
+    return !operandRegistersOf(choice).empty() && !namesRegisterOfResult(choice) && numberOfOperands == 1;
 }
 
 static bool returnsInAnyRegister(StubKey key, const StubSignature& signature, size_t numberOfOperands)
@@ -275,8 +276,6 @@ bool leavesCallerWithoutFrame(StubKey key)
 static RegisterSet lateClobbersOf(const StubCatalog& catalog, StubKey key, bool receiverIsInAnyRegister, const StubSignature& signature, const RegisterSet& additionalClobbers)
 {
     RegisterSet late = receiverIsInAnyRegister ? catalog.clobberedByRegisterVariantsOf(key) : catalog.summaryOf(key).clobbered;
-    if (receiverIsInAnyRegister && descriptorOf(key.family()).operandRegisters == OperandRegisterChoice::AlternateReceivers)
-        late.add(signature.operands[0], IgnoreVectors);
     if (signature.immediate)
         late.add(*signature.immediate, IgnoreVectors);
     late.merge(RegisterSet::macroClobberedGPRs());
@@ -354,7 +353,6 @@ struct StubCallShape {
     Machine::RegisterMask operandRegisters { 0 };
     Machine::RegisterMask receiversWithVariant { 0 };
     RegisterSet resultRegisters;
-    std::optional<StubKey> keyWhereNoRegisterIsKept;
     std::optional<StubKey> keyWhereNoFPRIsKept;
     uint8_t numberOfOperandRegisters { 0 };
     bool needsFrameRecord { false };
@@ -447,7 +445,6 @@ static void fillStubCallShape(StubCallShape& shape, const StubCatalog& catalog, 
         }
         return std::nullopt;
     };
-    shape.keyWhereNoRegisterIsKept = formThatDiffers(CallerFrame::KeepsNoRegisters);
     shape.keyWhereNoFPRIsKept = formThatDiffers(CallerFrame::KeepsNoFPRs);
     shape.hasEffects = false;
     shape.patchEffectsOfLastCall = nullptr;
@@ -964,6 +961,7 @@ StubCallResult RuntimeCallEmitter::emitCall(const OperationContext* context, con
     Machine::PatchOperation* patchpoint = m_out.patchpoint(type);
     patchpoint->effects.terminal = !returns;
     patchpoint->setNeedsFrameRecord(shape->needsFrameRecord);
+    patchpoint->setFindsOperandsInFrameWithoutRecord(true);
     patchpoint->setRunsWithoutFrame(!hasSite && !neverReturns && shape->leavesCallerWithoutFrame);
 
     bool receiverIsInAnyRegister = shape->receiverIsInAnyRegister;
@@ -1019,7 +1017,7 @@ StubCallResult RuntimeCallEmitter::emitCall(const OperationContext* context, con
 
     const ThrowSite* throwSite = options.throwSite ? m_proc.arena().create<ThrowSite>(*options.throwSite) : nullptr;
     const OperationCall* preservingCall = request.preservingCall ? m_proc.arena().create<OperationCall>(*request.preservingCall) : nullptr;
-    patchpoint->setGenerator(CallGenerator { &m_records, key, *signature, receiverIsInAnyRegister, resultIsInAnyRegister, branchesOnFlags, neverReturns, options.immediate, options.numberedImmediate, site, firstRead, throwSite, preservingCall, shape->keyWhereNoRegisterIsKept, shape->keyWhereNoFPRIsKept, shape->receiversWithVariant });
+    patchpoint->setGenerator(CallGenerator { &m_records, key, *signature, receiverIsInAnyRegister, resultIsInAnyRegister, branchesOnFlags, neverReturns, options.immediate, options.numberedImmediate, site, firstRead, throwSite, preservingCall, shape->keyWhereNoFPRIsKept, shape->receiversWithVariant });
     if (mayBeShared)
         m_out.recordPurePatch(patchpoint);
 

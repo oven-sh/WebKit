@@ -278,6 +278,10 @@ void emitEmptyArrayOfHoles(StubAssembler& jit, EmptyArray form)
         return emitArrayOfHoles(jit, ArrayWithDouble, HoleArrayOperand::None, arrayLiteralVectorLength(0));
     case EmptyArray::Int32DefaultCapacity:
         return emitArrayOfHoles(jit, ArrayWithInt32, HoleArrayOperand::None, arrayLiteralVectorLength(0));
+    case EmptyArray::Int32Capacity1:
+        return emitArrayOfHoles(jit, ArrayWithInt32, HoleArrayOperand::None, 1);
+    case EmptyArray::Int32Capacity3:
+        return emitArrayOfHoles(jit, ArrayWithInt32, HoleArrayOperand::None, 3);
     case EmptyArray::ContiguousCapacity1:
     case EmptyArray::ContiguousCapacity3:
         break;
@@ -323,6 +327,8 @@ static void emitJumpToEmptyArrayStub(StubAssembler& jit, ArrayElementKind kind, 
     switch (kind) {
     case ArrayElementKind::Int32:
         jit.linkToStub(hasDefaultCapacity, newEmptyArray(EmptyArray::Int32DefaultCapacity));
+        jit.linkToStub(jit.branch32(CCallHelpers::Equal, capacity, TrustedImm32(1)), newEmptyArray(EmptyArray::Int32Capacity1));
+        jit.linkToStub(jit.branch32(CCallHelpers::Equal, capacity, TrustedImm32(3)), newEmptyArray(EmptyArray::Int32Capacity3));
         break;
     case ArrayElementKind::Double:
         jit.linkToStub(hasDefaultCapacity, newEmptyArray(EmptyArray::DoubleDefaultCapacity));

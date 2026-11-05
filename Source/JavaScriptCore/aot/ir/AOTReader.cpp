@@ -248,6 +248,7 @@ void Reader::forEachListReadIntoTableOfItsName(const Wire::Sections& sections, c
     functor(sections.entries, m_program.entries);
     functor(sections.runtimeFunctions, m_program.runtimeFunctions);
     functor(sections.webAssemblyModules, m_program.webAssemblyModules);
+    functor(sections.builtinsUsedAtStart, m_program.builtinsUsedAtStart);
 }
 
 void Reader::makeRoomForTables()

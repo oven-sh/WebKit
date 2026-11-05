@@ -16,6 +16,7 @@
 #include "AOTInstance.h"
 #include "AOTNumbering.h"
 #include "AOTOperationData.h"
+#include "AOTOperatorEmitter.h"
 #include "AOTPureOperations.h"
 #include "AOTRuntimeCallEmitter.h"
 #include "AOTStringTable.h"
@@ -118,7 +119,12 @@ void ConstantEmitter::generateString(const ValueContext& value)
 
 void ConstantEmitter::generateBuiltin(const ValueContext& value)
 {
-    defineCell(value, builtinCell(value, m_builtins.canonicalID(value->builtin())));
+    BuiltinCellKey key = BuiltinCellKey::object(m_builtins.canonicalID(value->builtin()));
+    if (key.hasCell(m_builtins) && key.kind() != BuiltinCellKey::Kind::Value && formOfConstantsWithCellsAt(value).form == Form::Closed && emitter<OperatorEmitter>().leaveOperandToInstanceOf(value, InstanceOfOperand::PrototypeThatIsBuiltin, NumberedImmediate { m_mentions.builtinCell(key) })) {
+        defineCell(value, CellPointer(m_out.constInt64(0)));
+        return;
+    }
+    defineCell(value, builtinCell(value, key));
 }
 
 void ConstantEmitter::generateModuleBuiltin(const ValueContext& value)
@@ -270,11 +276,8 @@ CellPointer ConstantEmitter::makeConstantAtSite(const OperationContext* context,
     return CellPointer(patch);
 }
 
-CellPointer ConstantEmitter::cellMadeByStub(const OperationContext& context, StubKey stub, const CallOptions& options, bool isNarrow, NOESCAPE const Invocable<TypedPointer()> auto& cellWord)
+FormAtPlace ConstantEmitter::formOfConstantsWithCellsAt(const OperationContext& context)
 {
-    auto callStubThatMakesCell = [&] {
-        return CellPointer(callStub(context, stub, { }, options).first);
-    };
     constexpr StateOfKnowledge always = StateOfKnowledge::Always;
     static_assert(formByLoopAlone(Opcode::KeyConstant, always, true).form == formByLoopAlone(Opcode::String, always, true).form && formByLoopAlone(Opcode::KeyConstant, always, false).form == formByLoopAlone(Opcode::String, always, false).form);
     static_assert(formByLoopAlone(Opcode::Builtin, always, true).form == formByLoopAlone(Opcode::String, always, true).form && formByLoopAlone(Opcode::Builtin, always, false).form == formByLoopAlone(Opcode::String, always, false).form);
@@ -285,11 +288,17 @@ CellPointer ConstantEmitter::cellMadeByStub(const OperationContext& context, Stu
     bool runsOnce = !standsInLoop && m_program.at(m_id).isModuleBody();
     bool standsInRareBlock = m_code.at(context.block()).frequency == BlockFrequency::Rare;
     bool standsInUnlikelyBlock = m_code.at(context.block()).frequency == BlockFrequency::Unlikely;
-    if (named.form == Form::Closed || runsOnce || standsInRareBlock || standsInUnlikelyBlock) {
-        m_out.noteFormOf(constantsWithCells, Form::Closed, always, runsOnce ? Place::CodeThatRunsOnce : standsInRareBlock ? Place::RareBlock : standsInUnlikelyBlock ? Place::UnlikelyBlock : named.place);
-        return callStubThatMakesCell();
-    }
-    m_out.noteFormOf(constantsWithCells, named.form, always, named.place);
+    if (runsOnce || standsInRareBlock || standsInUnlikelyBlock)
+        return { Form::Closed, runsOnce ? Place::CodeThatRunsOnce : standsInRareBlock ? Place::RareBlock : Place::UnlikelyBlock };
+    return named;
+}
+
+CellPointer ConstantEmitter::cellMadeByStub(const OperationContext& context, StubKey stub, const CallOptions& options, bool isNarrow, NOESCAPE const Invocable<TypedPointer()> auto& cellWord)
+{
+    FormAtPlace named = formOfConstantsWithCellsAt(context);
+    m_out.noteFormOf(constantsWithCells, named.form, StateOfKnowledge::Always, named.place);
+    if (named.form == Form::Closed)
+        return CellPointer(callStub(context, stub, { }, options).first);
     ConstantAtSite constant = stub.family() == StubFamily::BuiltinCell ? ConstantAtSite::BuiltinCell : stub.form() == static_cast<uint8_t>(CreatedConstant::Key) ? ConstantAtSite::Key : ConstantAtSite::String;
     return numberedPermanentCell(*options.pureFunction, isNarrow, cellWord, [&](TypedPointer word) {
         return makeConstantAtSite(&context, { constant, options.numberedImmediate->mention, options.runsCodeOfHost }, *word.heap());

@@ -596,6 +596,14 @@ void Walker::bindValuesThatLoopBringsRound(BlockID inputHead, std::span<const Re
         bind(place < numberOfParameters ? head.parameter(place) : ValueID(firstCarried + place - numberOfParameters), carried[place]);
 }
 
+void Walker::bindInFrame(size_t frameIndex, ValueID input, Reference reference)
+{
+    Reference& bound = m_frames[frameIndex].references[input.index()];
+    if (m_numberOfClosedArms || m_numberOfMarksOfTries)
+        m_bindings.append(Binding { static_cast<uint32_t>(frameIndex), input, bound });
+    bound = reference;
+}
+
 void Walker::moveFrame(size_t from, size_t to)
 {
     if (to == m_frames.size()) {
@@ -620,18 +628,19 @@ void Walker::moveFrame(size_t from, size_t to)
         if (walked.frameOfTurn == from)
             walked.frameOfTurn = static_cast<uint32_t>(to);
     }
-    for (TextInStringBuilder& text : m_textsInStringBuilders) {
-        if (text.frameIndex == from)
-            text.frameIndex = static_cast<uint32_t>(to);
+    for (size_t place = 0; place < m_textsInStringBuilders.size(); ++place) {
+        if (std::as_const(m_textsInStringBuilders)[place].frameIndex == from)
+            m_textsInStringBuilders[place].frameIndex = static_cast<uint32_t>(to);
     }
     for (size_t& resumption : m_resumptionsToLeave) {
         if (resumption == from)
             resumption = to;
     }
-    for (OpenLoop& loop : m_openLoops) {
-        if (loop.frame == from)
-            loop.frame = static_cast<uint32_t>(to);
+    for (size_t place = 0; place < m_openLoops.size(); ++place) {
+        if (m_openLoops[place].frame == from)
+            m_openLoops.changeable(place).frame = static_cast<uint32_t>(to);
     }
+    renameFrameInTries(from, to);
 }
 
 
@@ -642,9 +651,16 @@ void Walker::forgetRegionOfIteration(size_t frameIndex, const GeneratorWalkedInC
         inputBlock(frameIndex, member) = InputBlock { };
         BodyBlock block = index.block(member);
         for (uint32_t value = member == walked.inputHead ? walked.step.index() + 1 : block.firstParameter().index(); value < block.endOfValues().index(); ++value)
-            m_frames[frameIndex].references[value] = Reference();
+            bindInFrame(frameIndex, ValueID(value), Reference());
     }
     inputBlock(frameIndex, walked.inputHead).firstNarrowerName = walked.namesAtHead;
+    for (size_t place = 0; place < m_iterationsByIndex.size(); ++place) {
+        const IterationByIndex& iteration = std::as_const(m_iterationsByIndex)[place];
+        if (iteration.head || !iteration.inputHead || iteration.inlineFrame != m_frames[frameIndex].inlineFrame || !std::ranges::binary_search(walked.region, iteration.inputHead.index(), { }, [](BlockID each) { return each.index(); }))
+            continue;
+        m_iterationsByIndex[place].inputHead = { };
+        --m_numberOfIterationsInFrontOfTheirLoops;
+    }
     bindNamesInFrontOfLoop(walked);
 }
 
@@ -793,22 +809,23 @@ bool Walker::walkYieldOfGeneratorInConsumer(const BodyValue& yield)
 }
 
 
+bool Walker::loopCarriesValuesOfConsumerRound(BlockID inputHead) const
+{
+    const BodyIndex& body = currentBodyIndex();
+    return placeOfGeneratorOnTop() != notFound && loopHoldsYield(body, body.loopOf(inputHead));
+}
+
 void Walker::carryValuesRoundLoopOfGenerator(BlockID inputHead, BlockID head, Vector<Reference, 8>& entering, Vector<ValueID, 8>& parameters)
 {
+    if (!loopCarriesValuesOfConsumerRound(inputHead))
+        return;
     size_t place = placeOfGeneratorOnTop();
-    if (place == notFound)
-        return;
     const BodyIndex& body = currentBodyIndex();
-    if (!loopHoldsYield(body, body.loopOf(inputHead)))
-        return;
     m_state.clear();
     GeneratorWalkedInConsumer& walked = m_generatorsWalkedInConsumers[place];
-    uint32_t numberOfParametersOfHead = body.block(inputHead).numberOfParameters();
     for (uint32_t number = 0; number < walked.typesOfCarriedValues.size(); ++number) {
         ValueID name(body.numberOfValues() + number);
-        TypeID type = walked.typesOfCarriedValues[number];
-        if (TypeID least = leastTypeOfHeadParameter(currentFunction(), inputHead, numberOfParametersOfHead + number))
-            type = m_types.unionOf(type, least);
+        TypeID type = typeInRowOfValueCarriedRound(inputHead, parameters.size(), walked.typesOfCarriedValues[number]);
         entering.append(referenceBoundTo(name));
         parameters.append(m_code.appendParameter(head, type, formOfParameter(type, { }), m_origin));
         bind(name, Reference::value(parameters.last()));
@@ -825,19 +842,7 @@ void Walker::appendCarriedValuesThatComeRound(BlockID head, Vector<Reference, 8>
     size_t number = m_generatorsWalkedInConsumers[place].headsThatCarryValues.find(head);
     if (number == notFound)
         return;
-    BlockID inputHead = m_generatorsWalkedInConsumers[place].inputHeadsThatCarryValues[number];
-    Vector<Reference, 4> carried = carriedValuesInFrame(m_frames.size() - 1);
-    std::span<const ValueID> parameters = m_code.at(head).parameters();
-    if (parameters.size() == arguments.size() + carried.size()) {
-        uint32_t numberOfParametersOfHead = currentBodyIndex().block(inputHead).numberOfParameters();
-        for (uint32_t value = 0; value < carried.size(); ++value) {
-            TypeID comingRound = ownTypeOf(carried[value]);
-            TypeID assumed = m_code.at(parameters[arguments.size() + value]).type;
-            if (comingRound && !m_types.isSubset(comingRound, assumed) && walkUnitAgainWithWiderHead(inputHead, numberOfParametersOfHead + value, assumed, comingRound))
-                return;
-        }
-    }
-    arguments.appendVector(carried);
+    arguments.appendVector(carriedValuesInFrame(m_frames.size() - 1));
 }
 
 bool Walker::takeCarriedValuesOntoHandlerEdge(size_t frameIndex, Vector<std::pair<ValueID, Reference>, 2>& names)
@@ -874,7 +879,7 @@ void Walker::bindParametersOfHeadForHandlerOfStep(size_t frameIndex)
             uint32_t name = number < numberOfParameters ? frame.index->block(walked.inputHead).parameter(number).index() : frame.index->numberOfValues() + number - numberOfParameters;
             if (frame.valuesBuiltTwice)
                 frame.valuesBuiltTwice->noteBoundOnWay(ValueID(name), generator.references[firstCarried + number]);
-            frame.references[name] = generator.references[firstCarried + number];
+            bindInFrame(walked.frameOfConsumer, ValueID(name), generator.references[firstCarried + number]);
         }
     }
 }
@@ -989,8 +994,7 @@ bool Walker::walkGeneratorInPlaceOfLoop(BlockID inputHead, std::span<const TypeI
         TypeID type = typesOfParameters[parameter];
         TypeID arriving = ownTypeOf(entering[parameter]);
         if (!type || !arriving || !m_types.isSubset(arriving, type)) {
-            if (!type || !arriving || !walkUnitAgainWithWiderHead(inputHead, static_cast<uint32_t>(parameter), type, arriving))
-                fail("what enters a loop over a generator lies outside the type of the head's parameter"_s);
+            fail("what enters a loop over a generator lies outside the type of the head's parameter"_s);
             return true;
         }
         walked.typesOfCarriedValues.append(type);

@@ -172,8 +172,6 @@ static ASCIILiteral nameOfCallerFrameOfStub(CallerFrame callerFrame)
         return "Frameless"_s;
     case CallerFrame::StubFrame:
         return "StubFrame"_s;
-    case CallerFrame::KeepsNoRegisters:
-        return "KeepsNoRegisters"_s;
     case CallerFrame::KeepsNoFPRs:
         return "KeepsNoFPRs"_s;
     }
@@ -521,10 +519,10 @@ void StubAssembler::callStub(StubKey target)
     emitStubCall(target);
 }
 
-static bool formOfJumpTargetKeepsResults(CallerFrame callerFrame, const StubSignature& target, const StubSignature& signature)
+static bool formOfJumpTargetKeepsResults(const StubSignature& target, const StubSignature& signature)
 {
     for (Reg result : { signature.firstResult, signature.secondResult }) {
-        if (!result || (callerFrame == CallerFrame::KeepsNoFPRs && result.isGPR()))
+        if (!result || result.isGPR())
             continue;
         if (result != target.firstResult && result != target.secondResult)
             return false;
@@ -535,9 +533,9 @@ static bool formOfJumpTargetKeepsResults(CallerFrame callerFrame, const StubSign
 void StubAssembler::linkToStub(Jump jump, StubKey target)
 {
     RELEASE_ASSERT(!m_boxesBooleanAtEveryReturn || target.family() == StubFamily::HandleException);
-    if (hasFrameAndKeepsFewerRegisters(m_key.callerFrame()) && target.callerFrame() == CallerFrame::HasFrame) {
+    if (callerKeepsNoFPRs() && target.callerFrame() == CallerFrame::HasFrame) {
         std::optional<StubKey> form = tryWithCallerFrame(target, m_key.callerFrame());
-        if (form && formOfJumpTargetKeepsResults(m_key.callerFrame(), signatureOf(target), m_signature))
+        if (form && formOfJumpTargetKeepsResults(signatureOf(target), m_signature))
             target = *form;
     }
     addReference(target, StubReference::Kind::Jump);

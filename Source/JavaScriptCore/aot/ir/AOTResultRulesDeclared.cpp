@@ -153,7 +153,9 @@ static TypeID askEachReceiverForSlotContents(const TypingContext& context, Layou
     FieldReadUnion read { context };
     bool someReceiverHasField = false;
     LayoutID onlyReceiver;
-    for (LayoutID receiver : layoutsOfSetInResultRules(context, receivers, onlyReceiver)) {
+    Vector<LayoutID, 16> asked;
+    bool asksSomeReceivers = !holdsOneMember(receivers) && context.positions.listLayoutsAskedAbout(key, receivers, false, asked);
+    for (LayoutID receiver : asksSomeReceivers ? asked.span() : layoutsOfSetInResultRules(context, receivers, onlyReceiver)) {
         std::optional<FieldReference> field = findFieldOfSlotAccess(context, receiver, key);
         if (!field)
             continue;
@@ -406,7 +408,13 @@ static TypeID askEachReceiverForExpectedTypeOfFieldRead(const TypingContext& con
         if (ofField && *ofField && !context.at(*ofField).isAnything())
             read.add(*ofField);
     }
-    for (LayoutID layout : membersOf(context.types, receiver.unnamedLayouts))
+    std::span<const LayoutID> unnamedLayouts = membersOf(context.types, receiver.unnamedLayouts);
+    Vector<LayoutID, 16> asked;
+    if (receiver.unnamedLayouts && !holdsOneMember(receiver.unnamedLayouts) && context.positions.listLayoutsAskedAbout(key, receiver.unnamedLayouts, true, asked)) {
+        isMissingSomewhere |= asked.size() < unnamedLayouts.size();
+        unnamedLayouts = asked.span();
+    }
+    for (LayoutID layout : unnamedLayouts)
         addField(layout);
 
     if (!isFoundSomewhere)

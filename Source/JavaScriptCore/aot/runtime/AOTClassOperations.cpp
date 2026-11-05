@@ -127,9 +127,12 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTSetConstructPrototype, JSCell*, (I
         vm.heap.cage().tryTakeBackOutOfMemoryError(vm);
     ObjectModel& objects = *instance->state->objects;
     Object* allocated = object ? cellArgument<Object>(object, entry) : uncheckedDowncast<Object>(objects.structures.allocate(vm, allocation));
+    size_t numberOfStructuresBefore = objects.structures.numberOfStructuresMade();
     JSObject* result = objects.classes.instanceWithPrototype(vm, allocated, cellArgument<JSObject>(prototype, entry), !!holdsNoField);
     if (result == allocated)
         objects.structures.predictStructure(vm, allocation, uncheckedDowncast<CompiledStructure>(result->structure()));
+    if (Object* made = !object && holdsNoField ? compiledObjectOrNull(result) : nullptr; made && objects.structures.structureIDOf(allocation) != made->structureID() && objects.structures.numberOfStructuresMade() == numberOfStructuresBefore)
+        objects.classes.rememberInstanceBelow(vm, allocation, cellArgument<JSObject>(prototype, entry), *made, result == allocated ? instance->state->tables.allocations()[allocation].size() : made->layout().size);
     vm.writeBarrier(result);
     OPERATION_RETURN(scope, newCellForCompiledCode(vm, result));
 }

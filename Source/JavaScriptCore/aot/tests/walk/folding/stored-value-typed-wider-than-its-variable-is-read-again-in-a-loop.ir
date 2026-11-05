@@ -1,12 +1,13 @@
 # the row of a read of a variable answers with what Link has proven of the variable: Link follows the read that is stored into the getter, which answers an integer. The value that was stored is typed by the row of a read by name off a parameter, of which nothing is known here: anything.
-# A look at a loop types the read of the variable by its row. So in a loop the state does not answer that read with such a value: the read is made, and what comes round lies within the preview. Outside a loop the value is handed on
+# The state answers the read of the variable with the value that was stored, in a loop as outside one: no read is made, and the head holds the type of that value, which every back edge is held against. What Link has proven of the variable is not leaned on
 # var held = 0;  function run(n, meter) { let last = 0; for (let i = 0; i < n; i++) { held = meter.value; last = held; } return last; }  function once(meter) { held = meter.value; return held; }  run(3, new Meter());  once(new Meter());
 # RUN: walk f1 mechanisms=none+TypedOperations+Folding
 # CHECK-LABEL: code f1:Body
-# CHECK: ([[last]]: {{*}}i32 {{*}}isLoopHead=true
-# CHECK: PutModuleVariable
-# CHECK: [[read]]: {{*}}i32 {{*}} = GetModuleVariable
-# CHECK: Jump -> next {{*}}([[read]],
+# CHECK: ([[last]]: anything{{*}}isLoopHead=true
+# CHECK: [[stored]]: anything{{*}} = PropGet {{*}}key="value"
+# CHECK: PutModuleVariable [[stored]]
+# CHECK-NOT: GetModuleVariable
+# CHECK: Jump -> next {{*}}([[stored]],
 # RUN(ONCE): walk f2 mechanisms=none+TypedOperations+Folding
 # ONCE-LABEL: code f2:Body
 # ONCE: [[answer]]: anything{{*}} = PropGet {{*}}key="value"

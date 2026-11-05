@@ -26,12 +26,29 @@ enum class SetsThatNoFamilyHolds : bool { Stay, BecomeAnyObject };
 
 using SetsOfLayoutsWritten = UncheckedKeyHashSet<uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>;
 
+enum class SourceOfSetForFamilies : uint8_t {
+    Class,
+    OtherLayoutOfClassesAlone,
+    MetInFlow,
+    OtherLayout,
+    WrittenTypeAlone,
+};
+
+struct DeclaredSetForFamilies {
+    LayoutSetID layouts;
+    SourceOfSetForFamilies source { SourceOfSetForFamilies::WrittenTypeAlone };
+    uint32_t size { 0 };
+};
+
+Vector<DeclaredSetForFamilies> setsDeclaredForFamilies(const Program&, const SetsOfLayoutsWritten& writtenInBodies, const ParallelLoops&);
+
 class Families {
     WTF_MAKE_NONCOPYABLE(Families);
 public:
-    enum ClassHierarchiesAloneTag { ClassHierarchiesAlone };
-    Families(Program&, ClassHierarchiesAloneTag, const ParallelLoops&);
+    enum ClassesAloneTag { ClassesAlone };
+    Families(Program&, ClassesAloneTag, const ParallelLoops&);
     Families(Program&, const SetsOfLayoutsWritten& writtenInBodies, std::span<const LayoutSetID> layoutsThatMet, const ParallelLoops&);
+    Families(Program&, std::span<const DeclaredSetForFamilies> declaredInProgram, std::span<const LayoutSetID> layoutsThatMet, const ParallelLoops&);
 
     uint32_t size() const { return m_layouts.size(); }
     LayoutSetID layoutsOf(FamilyID id) const { return m_layouts[id.index()]; }
@@ -41,6 +58,12 @@ public:
     FamilyID nearestCommonFamily(FamilyID, FamilyID) const;
     FamilyID nearestFamilyOf(LayoutID id) const { return id.index() < m_nearestFamilyOfLayout.size() ? m_nearestFamilyOfLayout[id.index()] : FamilyID(); }
     FamilyID nearestFamilyAbove(FamilyID id) const { return m_waysUp[id.index()].above; }
+    FamilyID topmostFamilyAtOrAbove(FamilyID id) const
+    {
+        while (m_waysUp[id.index()].depth)
+            id = m_waysUp[id.index()].farAbove;
+        return id;
+    }
     void forEachFamilyOf(LayoutID id, NOESCAPE const Invocable<void(FamilyID)> auto& functor) const
     {
         for (FamilyID family = nearestFamilyOf(id); family; family = m_waysUp[family.index()].above)
@@ -63,8 +86,6 @@ public:
 
 private:
     friend TypeID widenedToFamily(TypeArena&, const Families&, TypeID, SetsThatNoFamilyHolds);
-
-    Families(Program&, const SetsOfLayoutsWritten* writtenInBodies, std::span<const LayoutSetID> layoutsThatMet, const ParallelLoops&);
 
     FamilyID smallestFamilyHolding(const TypeArena&, LayoutSetID) const;
 

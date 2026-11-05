@@ -1115,8 +1115,12 @@ void JSModuleLoader::innerModuleLoading(JSGlobalObject* globalObject, ModuleGrap
         if (!state->containsVisited(module)) {
             auto* cyclic = dynamicDowncast<CyclicModuleRecord>(module);
 #if ENABLE(AOT)
-            if (state->isPartOfWholeLoad() && cyclic && cyclic->status() == CyclicModuleRecord::Status::New && !state->beginWalkForWholeLoad(vm, cyclic) && cyclic->inherits<AOT::ModuleRecord>())
-                cyclic = nullptr;
+            if (state->isPartOfWholeLoad() && cyclic && cyclic->status() == CyclicModuleRecord::Status::New && !state->beginWalkForWholeLoad(vm, cyclic)) {
+                if (auto* compiled = dynamicDowncast<AOT::ModuleRecord>(cyclic)) {
+                    compiled->countLoaderStep();
+                    cyclic = nullptr;
+                }
+            }
 #endif
             if (cyclic && cyclic->status() == CyclicModuleRecord::Status::New) {
                 // 2.a. Append module to state.[[Visited]].
@@ -1333,6 +1337,10 @@ void JSModuleLoader::continueModuleLoading(JSGlobalObject* globalObject, ModuleG
             state->setPendingModulesCount(state->pendingModulesCount() - 1);
             if (!state->pendingModulesCount()) {
                 state->setIsLoading(false);
+#if ENABLE(AOT)
+                // As at step 5.b of innerModuleLoading().
+                if (!state->isPartOfWholeLoad())
+#endif
                 state->iterateVisited([](CyclicModuleRecord* loaded) {
                     if (loaded->status() == CyclicModuleRecord::Status::New)
                         loaded->setStatus(CyclicModuleRecord::Status::Unlinked);

@@ -37,7 +37,7 @@ std::optional<AwaitingBodyOfCoroutine> findAwaitingBodyOfCoroutine(Walker& walke
 {
     Reference driver;
     std::optional<CoroutineKind> kind = kindOfSuspendingBody(walker, driver);
-    if (!kind || *kind != CoroutineKind::AsyncFunction || walker.program().at(walker.unit().function).isModuleBody())
+    if (!kind || *kind == CoroutineKind::Generator || walker.program().at(walker.unit().function).isModuleBody())
         return std::nullopt;
     return AwaitingBodyOfCoroutine { *kind, driver };
 }
@@ -137,7 +137,7 @@ bool writtenOperandsMayStartBodyOfCoroutine(Walker& walker, const Draft& written
 void leaveAnythingForSwallowedOperation(Walker& walker, ValueID swallowed)
 {
     if (FunctionID listed = walker.facts().linked().calleeAt(walker.currentFunction(), swallowed))
-        walker.arrivals().leaveAnything(listed);
+        walker.leaveAnythingAt(listed);
 }
 
 ValueID followCastsToOnlyTaker(const BodyIndex& index, ValueID& name)

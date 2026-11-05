@@ -91,6 +91,7 @@ GenerationResult CodeGenerator::run()
 
     m_values = allocateZeroedSpan<LValue>(m_proc.arena(), code().numberOfValues());
     m_mayReleaseBehindLastReads = code().opcodesOfValues().contains(Opcode::ReleaseHint);
+    m_mayLendCells = code().holdsFrameCells();
     orderBlocks();
     createBlocks();
     followNumbersOutOfBytes();
@@ -1012,6 +1013,8 @@ void CodeGenerator::generateBlock(BlockID id, const Block& block)
         m_out.appendTo(blockFor(id));
     m_out.setOrigin(Machine::Origin());
     m_isAheadOfWhatMayThrow = true;
+    if (m_mayLendCells && block.isHandlerBlock()) [[unlikely]]
+        emitter<CellAllocationEmitter>().clearWhatWasLentUnderHandler(id);
 
     if (ValueID owned = valueOwnedByTerminator(block.terminator)) {
         RELEASE_ASSERT(!values.empty() && values.back() == owned);

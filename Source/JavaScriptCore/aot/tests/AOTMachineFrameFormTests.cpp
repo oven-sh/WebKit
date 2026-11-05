@@ -875,6 +875,48 @@ static void testMachineFrameFormGeneratorToldOfPlaceInFrameKeepsRecord()
     AOT_FRAME_FORM_TEST_CHECK(test, test.call<uint64_t>(uint64_t { 30 }) == 31);
 }
 
+static void buildFrameFormTestWithGeneratorThatGoesByFormOfFrame(TestProcedure& test, unsigned numberOfValuesAcrossCall)
+{
+    Output& out = test.out();
+    Vector<Operation*, 16> values;
+    for (unsigned index = 0; index < numberOfValuesAcrossCall; ++index)
+        values.append(out.opaque(out.add(test.argumentGPR(0), out.constInt64(index + 1))));
+    appendCallOfFrameFormTest(test);
+    PatchOperation* reader = out.patch(Int64);
+    reader->effects = Effects::none();
+    reader->effects.writesLocalState = true;
+    reader->setFindsOperandsInFrameWithoutRecord(true);
+    reader->append(values[0], ValueRep::ColdAny);
+    reader->setGenerator([](CCallHelpers& jit, const PatchParameters& params) {
+        AOT_TEST_CHECK(params.frameIsSetUp() && params.size() == 2 && params[1].isStack());
+        jit.load64(params.frame().addressInFrame(params[1].offsetFromFP()), params[0].gpr());
+    });
+    Operation* sum = reader;
+    for (unsigned index = 1; index < numberOfValuesAcrossCall; ++index)
+        sum = out.add(sum, values[index]);
+    out.ret(sum);
+}
+
+static void testMachineFrameFormGeneratorThatGoesByFormOfFrameNeedsNoRecord()
+{
+    TestProcedure test(traitsOfFrameFormTest(true, true));
+    buildFrameFormTestWithGeneratorThatGoesByFormOfFrame(test, 1);
+    compileOrFail(test);
+    AOT_FRAME_FORM_TEST_CHECK(test, test.procedure().allocation().holdsPatchWithOperandInFrame() && !test.procedure().allocation().holdsPatchThatCountsOnFrameRecord());
+    AOT_FRAME_FORM_TEST_CHECK(test, test.procedure().frame().hasFrameRecord() == !isX86_64());
+    AOT_FRAME_FORM_TEST_CHECK(test, test.call<uint64_t>(uint64_t { 30 }) == 31);
+}
+
+static void testMachineFrameFormManyPlacesInFrameKeepRecordBesideSuchGenerator()
+{
+    TestProcedure test(traitsOfFrameFormTest(true, true));
+    buildFrameFormTestWithGeneratorThatGoesByFormOfFrame(test, 12);
+    compileOrFail(test);
+    AOT_FRAME_FORM_TEST_CHECK(test, test.procedure().allocation().holdsPatchWithOperandInFrame() && !test.procedure().allocation().holdsPatchThatCountsOnFrameRecord());
+    AOT_FRAME_FORM_TEST_CHECK(test, test.procedure().frame().hasFrameRecord());
+    AOT_FRAME_FORM_TEST_CHECK(test, test.call<uint64_t>(uint64_t { 30 }) == 12 * 30 + 78);
+}
+
 static void testMachineFrameFormUseOfFramePointerKeepsRecord()
 {
     TestProcedure test(traitsOfFrameFormTest(false, true));
@@ -955,6 +997,8 @@ std::span<const NativeTest> machineFrameFormTests()
         { "machine/frame-forms/an-arm-that-only-leads-on-to-a-shared-need-is-no-head"_s, Machine::testMachineFrameFormArmThatOnlyLeadsOnToSharedNeedIsNoHead },
         { "machine/frame-forms/patch-that-needs-the-record-keeps-it"_s, Machine::testMachineFrameFormPatchThatNeedsRecordKeepsIt },
         { "machine/frame-forms/generator-told-of-a-place-in-the-frame-keeps-the-record"_s, Machine::testMachineFrameFormGeneratorToldOfPlaceInFrameKeepsRecord },
+        { "machine/frame-forms/generator-that-goes-by-the-form-of-the-frame-needs-no-record"_s, Machine::testMachineFrameFormGeneratorThatGoesByFormOfFrameNeedsNoRecord },
+        { "machine/frame-forms/many-places-in-the-frame-keep-the-record-beside-such-a-generator"_s, Machine::testMachineFrameFormManyPlacesInFrameKeepRecordBesideSuchGenerator },
         { "machine/frame-forms/use-of-the-frame-pointer-keeps-the-record"_s, Machine::testMachineFrameFormUseOfFramePointerKeepsRecord },
         { "machine/frame-forms/handlers-keep-the-record"_s, Machine::testMachineFrameFormHandlersKeepRecord },
         { "machine/frame-forms/checker-refuses-a-frame-without-a-record-that-a-patch-counts-on"_s, Machine::testMachineFrameFormCheckerRefusesFrameWithoutRecordThatPatchCountsOn },

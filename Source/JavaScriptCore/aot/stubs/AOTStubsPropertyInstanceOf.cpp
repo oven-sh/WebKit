@@ -11,6 +11,7 @@
 #include "AOTConvention.h"
 #include "AOTInstance.h"
 #include "AOTStubsCalls.h"
+#include "AOTStubsConstants.h"
 #include "AOTStubsGlobalBindings.h"
 #include "AOTStubsValues.h"
 #include "JSObject.h"
@@ -56,9 +57,37 @@ static void readConstructorOffGlobalNameAndGoOn(StubAssembler& jit, GlobalBindin
     jit.jumpToStub(instanceOf(InstanceOfOperand::Constructor));
 }
 
+static void readPrototypeOutOfCellOfBuiltinAndGoOn(StubAssembler& jit)
+{
+    const GPRReg value = jit.operand(0);
+    const GPRReg prototype = jit.clobberRegister(jit.immediate());
+    const GPRReg number = jit.allocateScratch(StubRegister::T11);
+
+    jit.zeroExtend32ToWord(jit.immediate(), number);
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_PREFIX_OFFSET(builtinCells)), prototype);
+    jit.load64(BaseIndex(prototype, number, CCallHelpers::TimesEight), prototype);
+    Jump isNotMade = jit.branchTest64(CCallHelpers::Zero, prototype);
+    jit.jumpToStub(instanceOf(InstanceOfOperand::Prototype));
+
+    const StubSignature signatureOfMaker = signatureOf(builtinCell());
+    isNotMade.link(&jit);
+    jit.emitFunctionPrologue();
+    jit.preserving({ value }, [&] {
+        jit.move(number, *signatureOfMaker.immediate);
+        jit.callStub(builtinCell());
+        jit.move(signatureOfMaker.firstResult.gpr(), prototype);
+    });
+    jit.emitFunctionEpilogue();
+    jit.jumpToStub(instanceOf(InstanceOfOperand::Prototype));
+}
+
 void generateInstanceOf(StubAssembler& jit)
 {
     const auto operand = static_cast<InstanceOfOperand>(jit.key().form());
+    if (operand == InstanceOfOperand::PrototypeThatIsBuiltin) {
+        readPrototypeOutOfCellOfBuiltinAndGoOn(jit);
+        return;
+    }
     if (operand == InstanceOfOperand::NameSeenByScripts || operand == InstanceOfOperand::NameOfGlobalObject) {
         readConstructorOffGlobalNameAndGoOn(jit, operand == InstanceOfOperand::NameSeenByScripts ? GlobalBindingScope::ScriptsAndGlobalObject : GlobalBindingScope::GlobalObject);
         return;

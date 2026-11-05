@@ -101,41 +101,31 @@ static void forEachNamedSlotOfCompiledObjectsForNamePlan(const Program& program,
     }
 }
 
-static void chooseFormsOfKeysForNamePlan(const Program& program, SlotPlanParts& parts, const ParallelLoops& loops)
+static void findKeysOfFieldsForNamePlan(const Program& program, SlotPlanParts& parts, const ParallelLoops& loops)
 {
-    static constexpr std::array forms { SlotRepresentation::OptionalCell32, SlotRepresentation::OptionalInt32, SlotRepresentation::OptionalDouble, SlotRepresentation::OptionalBoolean, SlotRepresentation::OptionalInt64 };
-    auto counterOf = [](const PlacedSlot& slot) -> size_t {
-        SlotRepresentation read = slot.representation == SlotRepresentation::Cell32 ? SlotRepresentation::OptionalCell32 : slot.representation;
-        return slot.isOutOfLine() ? forms.size() : static_cast<size_t>(std::ranges::find(forms, read) - forms.begin());
-    };
     unsigned numberOfKeys = program.types.numberOfPropertyKeys();
-    constexpr size_t withoutStorage = forms.size() + 1;
-    Vector<std::array<uint32_t, withoutStorage + 1>> layoutsByKey;
-    layoutsByKey.fill({ }, numberOfKeys);
+    Vector<uint8_t> namesField;
+    namesField.fill(0, numberOfKeys);
     forEachRangeOfIndicesInParallel(loops, parts.layouts.size(), [&](size_t first, size_t end) {
-        forEachNamedSlotOfCompiledObjectsForNamePlan(program, parts, first, end, [&](PropertyKeyID key, const PlacedSlot& slot) {
-            AtomicRef(layoutsByKey[key.index()][slot.hasStorage() ? counterOf(slot) : withoutStorage]).fetch_add(1, std::memory_order_relaxed);
+        forEachNamedSlotOfCompiledObjectsForNamePlan(program, parts, first, end, [&](PropertyKeyID key, const PlacedSlot&) {
+            AtomicRef(namesField[key.index()]).store(1, std::memory_order_relaxed);
         });
     });
-    parts.narrowFormsOfKeys.fill(SlotRepresentation::JSValue, numberOfKeys);
     parts.keysOfFields.ensureSize(numberOfKeys);
     static_assert(!(indicesInRangeOfLoop % 64));
     forEachRangeOfIndicesInParallel(loops, numberOfKeys, [&](size_t first, size_t end) {
         for (size_t key = first; key < end; ++key) {
-            std::span layouts = std::span(layoutsByKey[key]).first(withoutStorage);
-            size_t most = static_cast<size_t>(std::ranges::max_element(layouts) - layouts.begin());
-            if (most < forms.size() && layouts[most] > layouts[forms.size()])
-                parts.narrowFormsOfKeys[key] = forms[most];
-            if (layouts[most] || layoutsByKey[key][withoutStorage])
+            if (namesField[key])
                 parts.keysOfFields.quickSet(key);
         }
     });
 }
+
 void planNames(const Program&, const MentionedKeys&, BuildContext&, SlotPlanParts&);
 void planNames(const Program& program, const MentionedKeys& mentioned, BuildContext& build, SlotPlanParts& parts)
 {
     parts.keysWithColumn = chooseKeysWithColumnForNamePlan(program, mentioned, build);
-    chooseFormsOfKeysForNamePlan(program, parts, build.parallelLoops());
+    findKeysOfFieldsForNamePlan(program, parts, build.parallelLoops());
 }
 
 } } } // namespace JSC::AOT::Typed

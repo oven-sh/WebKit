@@ -538,6 +538,8 @@ bool BuilderOfEntries::buildParameterGuard()
     }
 
     BlockID failing;
+    if (!m_cannotGoOn)
+        m_walker.letGuessFailUnasked(failing, m_origin);
     Vector<Reference, 16> passed(m_parameters.span());
     for (unsigned index = 0; index < m_parameters.size() && !m_cannotGoOn; ++index) {
         TypeID tested = m_conventions.typeBehindGuard(m_unit.function, index);

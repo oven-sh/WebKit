@@ -1062,6 +1062,19 @@ bool requireAddsToRequireCache(const Program& program, ModuleID referrer, Module
     return !spanHasPrefix(name, byteCast<uint8_t>("node:"_span)) && !equalSpans(name, byteCast<uint8_t>("bun"_span)) && !equalSpans(name, byteCast<uint8_t>("bun:test"_span));
 }
 
+bool importStatementListsInRequireCache(const Program& program, ModuleID target)
+{
+    if (!isLibraryModule(program, program.at(target)))
+        return false;
+    std::span<const uint8_t> name = program.string(program.at(target).path);
+    return !spanHasPrefix(name, byteCast<uint8_t>("node:"_span)) && !spanHasPrefix(name, byteCast<uint8_t>("bun:"_span)) && !equalSpans(name, byteCast<uint8_t>("bun"_span));
+}
+
+bool loaderFillsVariablesOffValueOf(const Module& module)
+{
+    return module.kind == ModuleKind::RuntimeSource && module.body && module.exportRule == SyntheticExportRule::RuntimeModule && module.requireResult == RequireResult::DefaultExport;
+}
+
 BuiltinID functionOfHostThatRequireCallsFor(const Module& module)
 {
     switch (module.kind) {

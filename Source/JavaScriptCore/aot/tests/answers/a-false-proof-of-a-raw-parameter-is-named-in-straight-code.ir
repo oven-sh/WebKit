@@ -31,4 +31,9 @@
 # NONE: 4.5
 # NONE-NEXT: went on
 # NONE-NEXT: exited with 0
+# The stop is a throw site: one word says the source of the proof, and the run time finds the function and the position of the text by the site beside the code. Neither stands in the code, which is the same wherever the text stands.
+# RUN(BYTES): bytes f1 mechanisms=all
+# BYTES: ThrowAtSite.WordInRegister
+# RUN(NOWORD): bytes f1 mechanisms=all
+# NOWORD-NOT: operationAOTStopAtFalseProof
 # PROGRAM-OF: a-false-proof-of-a-raw-parameter-traps-in-straight-code.ir

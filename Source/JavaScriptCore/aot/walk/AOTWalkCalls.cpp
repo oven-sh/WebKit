@@ -377,7 +377,7 @@ static bool buildCallAsWrittenForLongListInWalkCalls(Walker& walker, const Draft
         asWritten.setListOperand(buildListOfArgumentsAndListInWalkCalls(walker, originInFrontOfCall, request.arguments, request.restList));
     walker.chooseConservativeFields(asWritten);
     Reference result = walker.build(WTF::move(asWritten));
-    walker.arrivals().leaveAnything(request.callee);
+    walker.leaveAnythingAt(request.callee);
     if (walker.unitReturnsAtOnce(written))
         walker.returnAtOnce(result);
     else {
@@ -680,7 +680,7 @@ static bool walkCallInWalkCalls(Walker& walker, const BodyValue& call)
 bool makesThisOfConstruction(const Walker& walker, FunctionID id)
 {
     const Function& constructor = walker.program().at(id);
-    if (!constructor.takesThisFromConstruction() || constructor.isCoroutine() || !constructor.has(FunctionFlags::HasThis) || constructor.results.size() != 1 || !constructor.constructedClass)
+    if (!constructor.takesThisFromConstruction() || constructor.isCoroutine() || constructor.results.size() != 1 || !constructor.constructedClass)
         return false;
     const Program& program = walker.program();
     const SlotPlan& slots = walker.plan().slots();
@@ -746,7 +746,7 @@ static bool goOnWhereGuardOfPrototypeHoldsInWalkCalls(Walker& walker, const Body
     walker.continueIn(whereItHolds);
     if (walker.isUnreachable())
         return false;
-    walker.state().noteGuardOfReadsHolds(guard.condition.layout, guard.condition.key, holds, ClassSide::Static);
+    noteGuardsShownByTest(walker, singleElementSpan(guard.condition), holds);
     return true;
 }
 
@@ -804,10 +804,10 @@ static bool walkConstructOfFunctionInWalkCalls(Walker& walker, const BodyValue& 
     walker.chooseConservativeFields(read);
     Effects ofRead = declaredBoundOf(Opcode::NewObject);
     ofRead.reads.add(AbstractHeap::NamedProperties);
-    std::optional<GuardOfPrototypeAtConstruction> guardOfPrototype = call.opcode() == Opcode::Construct ? findGuardOfPrototypeAtConstruction(walker, request.callee, walker.opensGuesses() && looksAtCellsAskForLayoutPrototype(walker, constructed), false, origin) : std::nullopt;
+    std::optional<GuardOfPrototypeAtConstruction> guardOfPrototype = !classObjectBelow && call.opcode() == Opcode::Construct ? findGuardOfPrototypeAtConstruction(walker, request.callee, walker.opensGuesses() && looksAtCellsAskForLayoutPrototype(walker, constructed), false, origin) : std::nullopt;
     if (guardOfPrototype && !goOnWhereGuardOfPrototypeHoldsInWalkCalls(walker, call, request, *guardOfPrototype, origin))
         return true;
-    bool allocationNamesPrototype = guardOfPrototype || (classObjectBelow && walker.facts().isEvaluatedAtMostOnce(constructed) && walker.plan().hasClassRecord(constructed));
+    bool allocationNamesPrototype = (guardOfPrototype && !walker.checksProofs()) || (classObjectBelow && walker.facts().isEvaluatedAtMostOnce(constructed) && walker.plan().hasClassRecord(constructed));
     Reference prototype = allocationNamesPrototype ? Reference() : walker.build(WTF::move(read), &ofRead);
     if (!prototype && !allocationNamesPrototype)
         return true;
@@ -823,8 +823,10 @@ static bool walkConstructOfFunctionInWalkCalls(Walker& walker, const BodyValue& 
     request.thisValue = object;
     request.typeOfThisToBeMade = { };
     noteFreshObject(walker, object, 0);
-    if (guardOfPrototype)
+    if (guardOfPrototype) {
+        checkPrototypeOfCellMadeBehindGuard(walker, object, origin);
         walker.state().noteFactsOfCell(object, FactOfCell::HasLayoutPrototype);
+    }
 
     bool isCopied = false;
     if (walker.has(Mechanism::Inlining) && !request.isNeverInlined && !constructor.isHiddenInStackTraces() && !constructor.has(FunctionFlags::HasRestParameter)) {
@@ -1549,6 +1551,7 @@ LibraryFunctionsBehindBuiltin findLibraryFunctionsBehindBuiltin(const Walker& wa
         }
         if (!found.named.contains(held->function))
             found.named.append(held->function);
+        found.someSpecialCaseNamesFunction |= overload.flags.contains(BuiltinOverloadFlag::IsSpecialCase);
         RuntimeFunctionRole role = table.at(held->id).role;
         if (role != RuntimeFunctionRole::EngineBuiltin && role != RuntimeFunctionRole::HostBuiltin)
             continue;

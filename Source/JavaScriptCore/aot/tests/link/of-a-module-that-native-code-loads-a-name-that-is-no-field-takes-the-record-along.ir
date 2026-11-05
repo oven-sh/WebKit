@@ -2,12 +2,13 @@
 # Nobody can say what native code finds under the name, so the whole record leaves, and with it all that it holds.
 # LIBRARY: own
 # OPTIONS: exclude=CodeOutsideImage
-# RUN: link layouts fields variables mechanisms=all
+# RUN: link layouts fields variables modules mechanisms=all
 # REQUIRES: entries-of-bun
 # CHECK-NOT: layout L0 {{*}}stays-with-compiled-code
 # CHECK-NOT: layout L1 {{*}}stays-with-compiled-code
 # CHECK-NOT: field L0.1 "queueTick1" proven
 # CHECK-NOT: variable g0 proven
+# CHECK-NOT: module m2 value-stays-with-compiled-code
 
 layout L0 module=m2 fields=[{key="nextTick" declared={type=anything} flags=[IsRequired]}, {key="queueTick1" declared={type=anything} flags=[IsRequired]}, {key="ring" declared={type=anything} flags=[IsRequired]}]
 layout L1 module=m2 fields=[{key="made" declared={type=number} flags=[IsRequired]}]

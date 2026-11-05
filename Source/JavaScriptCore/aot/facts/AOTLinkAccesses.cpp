@@ -358,8 +358,8 @@ void AccessInLinkAccesses::giveWhatIsEstablishedOf(const DeclaredType& declared)
     std::optional<ProvenInEveryVersion> established = declared.established();
     if (!established)
         return;
-    if (TypeID type = *established)
-        give(m_flow.fromTypeID(type));
+    if (TypeID type = *established; type && isRead() && m_value)
+        m_flow.arriveFromSource(m_value, type);
 }
 
 void AccessInLinkAccesses::storeInto(FlowNodeID to)
@@ -372,11 +372,34 @@ bool AccessInLinkAccesses::storesTextNumberOrBooleanThatIsWritten() const
 {
     if (m_shared || m_access.value == noSummaryNode)
         return false;
+    constexpr uint16_t textsNumbersAndBooleans = LinkType::closed(Primitive::AnyString | Primitive::Number | Primitive::Boolean);
     const SummaryNode& stored = m_flow.summaries.at(m_function).nodes[m_access.value];
+    if (stored.kind == SummaryNode::Kind::ResultOfOperator) {
+        std::optional<uint16_t> given = m_flow.primitivesThatOperatorGivesWhateverArrives(m_function, stored.first);
+        return given && !(*given & ~textsNumbersAndBooleans);
+    }
+    if (stored.kind == SummaryNode::Kind::ResultOfCall) {
+        const SummaryCall& call = m_flow.summaries.at(m_function).calls[stored.first];
+        if (call.callee != SummaryCall::Callee::Builtin || stored.second || m_program.isUnlocked(call.builtin) || m_program.isUnlocked(m_table.canonicalID(call.builtin)))
+            return false;
+        static constexpr OptionSet<BuiltinPrimitive> textsNumbersAndBooleansOfTable { BuiltinPrimitive::String, BuiltinPrimitive::Number, BuiltinPrimitive::Boolean };
+        bool hasRow = false;
+        for (const BuiltinOverload& row : m_table.overloadsOf(m_table.canonicalID(call.builtin))) {
+            if (row.mode != (call.isConstruction ? BuiltinCallMode::Construct : BuiltinCallMode::Call))
+                continue;
+            if (row.isUndeclared() || row.resultIsDeclaredOnly() || row.hasTypedResult() || !row.result.type)
+                return false;
+            const BuiltinType& answered = m_table.at(row.result.type);
+            if (answered.mayBeObject() || !(answered.primitives - textsNumbersAndBooleansOfTable).isEmpty())
+                return false;
+            hasRow = true;
+        }
+        return hasRow;
+    }
     if (stored.kind != SummaryNode::Kind::Constant)
         return false;
     LinkType type = m_flow.fromTypeID(TypeID::fromBits(stored.first));
-    return !holdsObjectsForLinkAccesses(type) && !(type.primitives & ~LinkType::closed(Primitive::AnyString | Primitive::Number | Primitive::Boolean));
+    return !holdsObjectsForLinkAccesses(type) && !(type.primitives & ~textsNumbersAndBooleans);
 }
 
 void AccessInLinkAccesses::mayThrow()
@@ -391,7 +414,7 @@ void AccessInLinkAccesses::mayThrow()
 void AccessInLinkAccesses::cannotTell(UnknownIs unknownIs)
 {
     LinkFlow::UnknownByEscapeAlone unknownByEscapeAlone(unknownIs == UnknownIs::ByEscapeAlone, LinkFlow::UnknownByEscapeAlone::Marks::OfRule);
-    bool isToldOf = isRead() && (m_shared || !m_flow.rowsSpeakFor(m_function));
+    bool isToldOf = isRead() && (m_shared || !m_flow.rowsSpeakOfKeyFor(m_function, m_access.key));
     if (isToldOf && isNamed())
         m_flow.note(LinkFlow::Note::NameRead, m_access.key.bits(), !m_flow.codeAtWorkIsOfLibrary());
     else if (isToldOf && !m_keyIsOnlyNumbers)
@@ -522,10 +545,14 @@ void AccessInLinkAccesses::resolve()
         mayThrow();
     if (m_receiver != m_subject && !isAboveHomeObjectOfClassForLinkAccesses(subject))
         m_flow.addEdge(m_receiver, m_flow.unseen());
-    if (!isRead() && (isNamed() || !m_keyIsOnlyNumbers)) {
-        m_flow.noteWriteOn(subject, m_access.key, m_function, storesTextNumberOrBooleanThatIsWritten() ? LinkFlow::WhatIsStored::TextsNumbersAndBooleans : LinkFlow::WhatIsStored::Anything);
-        if (!m_shared)
-            m_flow.noteSiteOfWrite(m_function, m_access.site, m_subject);
+    if (!isRead()) {
+        LinkFlow::WhatIsStored stored = storesTextNumberOrBooleanThatIsWritten() ? LinkFlow::WhatIsStored::TextsNumbersAndBooleans : LinkFlow::WhatIsStored::Anything;
+        if (isNamed() || !m_keyIsOnlyNumbers) {
+            m_flow.noteWriteOn(subject, m_access.key, m_function, stored);
+            if (!m_shared)
+                m_flow.noteSiteOfWrite(m_function, m_access.site, m_subject);
+        } else
+            m_flow.noteWhatIsStoredOn(subject, stored);
     }
     if (!isNamed() && !m_keyIsOnlyNumbers && m_access.kind != Kind::Define && !membersOfObjectPrototypeAreWhatTableLists())
         m_flow.addEdge(m_subject, m_flow.unseen());
@@ -1836,6 +1863,17 @@ void AccessInLinkAccesses::resolveOnBuiltin(BuiltinID builtin)
     }
     if (isRead())
         m_flow.noteLossOf(builtin);
+    bool mayStoreUnderPrototypeLink = isNamed() ? m_flow.nameClassOf(m_access.key) == NameClass::Proto : !m_keyIsOnlyNumbers;
+    if (m_access.kind == Kind::Store && mayStoreUnderPrototypeLink && !m_table.hasLockedPrototypeLink(builtin)) {
+        LinkType stored = LinkType::anything();
+        if (m_value) {
+            tellAgainOnceClimbs(m_value);
+            stored = m_flow.typeAt(m_value);
+        }
+        stored.primitives = 0;
+        if (!stored.isNothing())
+            m_flow.addEdge(m_subject, m_flow.unseen());
+    }
     cannotTell();
 }
 

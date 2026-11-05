@@ -197,6 +197,7 @@ bool callAccessorInSlot(Walker& walker, const BodyValue& access)
         walker.listArm(stretch, arms);
     };
 
+    walker.letGuessFailUnasked(asWritten, origin);
     bool goesOn = true;
     if (!layoutIsProven) {
         Draft test(Opcode::ShapeTest, origin);

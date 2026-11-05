@@ -176,6 +176,7 @@ struct SummaryCall {
     bool isMadeByProtocol : 1 { false };
     bool resultIsReadAsKey : 1 { false };
     bool liesOnNoWayToReturn : 1 { false };
+    bool passesOnGatheredArguments : 1 { false };
     FunctionID function;
     BuiltinID builtin;
     PropertyKeyID key;
@@ -271,6 +272,7 @@ struct SummaryChange {
     bool definesWhatItCopies { false };
     bool isUnderNameThatNobodyElseNames { false };
     bool descriptorIsInSight { false };
+    bool descriptorLaysNoAccessor { false };
     uint32_t getterInSight { noSummaryNode };
     uint32_t setterInSight { noSummaryNode };
     bool laysValueInSight { false };
@@ -323,6 +325,7 @@ enum class SummaryTrait : uint16_t {
     MayThrow = 1 << 5,
     ReadsUnderComputedKey = 1 << 6,
     StoresUnderComputedKey = 1 << 7,
+    OnlyPassesOnGatheredArguments = 1 << 8,
 };
 
 struct OtherNameOfObjectBeingMade {
@@ -353,6 +356,7 @@ struct SummaryScopeStoredFirst {
     ValueID allocation;
     uint32_t blockOfLeaving { UINT32_MAX };
     uint32_t positionOfLeaving { 0 };
+    uint32_t scopeAtThisPlaceInOrderOfLeaving { 0 };
     Vector<uint32_t, 4> fields;
 };
 

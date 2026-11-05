@@ -774,7 +774,7 @@ void noteKnown(Walker& walker, KnownNote kind, Reference subject, Reference othe
     walker.state().answers().note(words.span(), answer, restsOn, true, holder && walker.state().isFresh(holder));
 }
 
-std::optional<uint64_t> findKnown(Walker& walker, KnownNote kind, Reference subject, Reference other, uint32_t word)
+std::optional<uint64_t> findKnown(const Walker& walker, KnownNote kind, Reference subject, Reference other, uint32_t word)
 {
     const KnownAnswers& answers = walker.state().answers();
     if (answers.isEmpty() || !walker.has(Mechanism::Folding))

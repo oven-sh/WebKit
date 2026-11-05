@@ -513,6 +513,7 @@ aot/walk/AOTWalkExceptionsPolls.cpp
 aot/walk/AOTWalkFolding.cpp
 aot/walk/AOTWalkForIn.cpp
 aot/walk/AOTWalkForInKeys.cpp
+aot/walk/AOTWalkFrontsOfLoops.cpp
 aot/walk/AOTWalkGeneratorStepsByHand.cpp
 aot/walk/AOTWalkGeneratorsInLoops.cpp
 aot/walk/AOTWalkGuesses.cpp

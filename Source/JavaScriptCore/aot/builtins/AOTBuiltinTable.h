@@ -263,6 +263,7 @@ struct BuiltinPlace {
     BuiltinSlotID slot { };
     uint16_t fieldIndex { 0 };
     bool holdsOnlyWhatIsStored { false };
+    bool holdsWhatIsThrown { false };
     BuiltinTypeID newValueType { };
     bool isSettled { false };
     BuiltinNameStretch memberPath { };
@@ -540,6 +541,7 @@ struct BuiltinClass {
     BuiltinPristineTest pristineTest { BuiltinPristineTest::Mark };
     bool hasClosureInstances { false };
     bool instancesAreEntries { false };
+    bool keepsStructuresOfClassesBelow { false };
     bool definesCharactersOnNewInstances { false };
     bool listsNamesDefinedOnNewInstances { false };
     std::span<const BuiltinName> namesDefinedOnNewInstances { };
@@ -577,6 +579,7 @@ struct BuiltinCondition {
     std::span<const BuiltinName> methodsServed { };
 
     BuiltinName firstText() const { return !isOneOf.empty() ? isOneOf.front() : !startsWith.empty() ? startsWith.front() : BuiltinName(); }
+    BuiltinName nameToldUnder() const { return hasProperty ? hasProperty : firstText(); }
     bool isAboutWhatProgramReplaces() const { return testsReplaceBuiltins || programStores; }
 };
 
@@ -746,6 +749,7 @@ enum class BuiltinMark : uint8_t {
     HandsOutWhatNativeCodeHolds,
     RegistersPreparationOfHolders,
     AnswersWithPathOfModule,
+    IsKeyReadOnlyByRowsThatNameIt,
 };
 
 struct BuiltinMarkedEntry {
@@ -1014,6 +1018,7 @@ public:
     bool letsInUnseenCodeWhenCalled(BuiltinID) const;
     const BuiltinForms* formsOf(BuiltinID) const;
     std::optional<BuiltinBoxedStub> boxedCallStubOf(BuiltinID) const;
+    Vector<BuiltinID, 4> membersThatHoldMethodOf(BuiltinBoxedStub) const;
     std::span<const BuiltinBoxedCall> boxedCalls() const { return m_data.attachments.boxedCalls; }
 
     std::span<const BuiltinID> lockedObjects() const { return m_data.runtime.lockedObjects; }

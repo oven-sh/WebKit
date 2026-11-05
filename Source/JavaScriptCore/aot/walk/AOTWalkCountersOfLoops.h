@@ -17,6 +17,22 @@ struct CounterTestedInFrontOfLoop {
     bool isHeldWhereItComesRound { false };
 };
 
+struct AccessUnderCounterOfLoop {
+    ValueID access;
+    ValueID view;
+    ValueID addend;
+};
+
+struct CounterHeldBelowRoomOfViews {
+    uint32_t position { 0 };
+    ValueID relation;
+    ValueID bound;
+    ValueID viewWhoseLengthIsBound;
+    ValueID stepThatMayBeNegative;
+    Vector<AccessUnderCounterOfLoop, 4> accesses;
+};
+
+CounterHeldBelowRoomOfViews findCounterHeldBelowRoomOfViews(Walker&, BlockID inputHead, NOESCAPE const ScopedLambda<TypeID(uint32_t position)>& typeThatEnters, NOESCAPE const ScopedLambda<TypeID(ValueID)>& typeInFront);
 Vector<CounterTestedInFrontOfLoop, 2> findCountersTestedInFrontOfLoop(Walker&, BlockID inputHead, const LoopPreview&, std::span<const Reference> entering, Vector<GuessInFrontOfLoop, 4>& guesses);
 
 } } } // namespace JSC::AOT::Typed

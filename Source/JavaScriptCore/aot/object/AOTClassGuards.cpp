@@ -199,6 +199,26 @@ static bool bitOfClassGuardSaysThatItHolds(const LayoutData& classLayout, ClassS
     return !!(*bit.byte & bit.mask) != classLayout.classData().bitsAreClearWhileGuardsHold(side);
 }
 
+void ClassTable::beginGuardsSlowCase(const LayoutData& classLayout)
+{
+    m_classesWhoseGuardsHaveBegun.set(m_tables.rankOfClass(classLayout.index));
+    if (BitOfClassGuard guardOfPrototypeSide = bitOfClassGuard(m_state, classLayout, ClassSide::Prototype); guardOfPrototypeSide.byte) {
+        RELEASE_ASSERT(guardOfPrototypeSide.mask != maskOfClassGuardsBegun);
+        *guardOfPrototypeSide.byte |= maskOfClassGuardsBegun;
+    }
+    if (!classLayout.classData().guardsOfNamesAwaitBeginning)
+        return;
+    Vector<uint32_t, 16> bits;
+    for (const NamedClassGuardData& guard : guardsOfNamesInClassRecord(m_tables, classLayout, ClassSide::Prototype))
+        bits.append(guard.numberOfBit());
+    AOT::sort(bits);
+    bits.shrink(bits.size() - std::ranges::unique(bits).size());
+    for (uint32_t numberOfBit : bits) {
+        if (!bitOfClassGuardSaysThatItHolds(classLayout, ClassSide::Prototype, bitOfClassGuardWithNumber(m_state, numberOfBit)))
+            countChangeOfClassGuard(m_state, numberOfBit, false);
+    }
+}
+
 static bool classGuardOfSideHolds(const State& state, const LayoutData& classLayout, ClassSide side)
 {
     if (state.objects->classes.guardHasEnded(classLayout, side))
@@ -220,12 +240,12 @@ bool classGuardHolds(const State& state, const LayoutData& classLayout, ClassSid
 bool classGuardOfNameHolds(const State& state, const LayoutData& classLayout, ClassSide side, uint32_t key)
 {
     auto guards = guardsOfNameInClassRecord(state.tables, classLayout, side, key);
-    if (std::ranges::all_of(guards, &NamedClassGuardData::answersStoresAlone))
+    if (std::ranges::none_of(guards, &NamedClassGuardData::answersReadsOffEveryObject))
         return classGuardHolds(state, classLayout, side);
     if (state.objects->classes.guardHasEnded(classLayout, side))
         return false;
     return std::ranges::any_of(guards, [&](const NamedClassGuardData& guard) {
-        return !guard.answersStoresAlone() && bitOfClassGuardSaysThatItHolds(classLayout, side, bitOfClassGuardWithNumber(state, guard.numberOfBit()));
+        return guard.answersReadsOffEveryObject() && bitOfClassGuardSaysThatItHolds(classLayout, side, bitOfClassGuardWithNumber(state, guard.numberOfBit()));
     });
 }
 
@@ -269,15 +289,28 @@ void endClassGuardsOfName(State& state, const LayoutData& classLayout, ClassSide
         return;
 
     ClassTable::MethodTableUpdate update(classes);
+    auto goesOnHolding = [&](const NamedClassGuardData& guard) {
+        switch (toEnd) {
+        case GuardsOfNameToEnd::All:
+            return false;
+        case GuardsOfNameToEnd::StoresStillPass:
+            return guard.answersStoresAlone();
+        case GuardsOfNameToEnd::ReadsStillFind:
+            return !guard.answersStoresAlone();
+        case GuardsOfNameToEnd::OneObjectHidesName:
+            return !guard.answersReadsOffEveryObject();
+        }
+        RELEASE_ASSERT_NOT_REACHED();
+    };
     auto endGuardsIn = [&](const LayoutData& current) {
         for (const NamedClassGuardData& guard : guardsOfNameInClassRecord(state.tables, current, side, *key)) {
-            if (toEnd != GuardsOfNameToEnd::All && guard.answersStoresAlone() == (toEnd == GuardsOfNameToEnd::StoresStillPass))
+            if (goesOnHolding(guard))
                 continue;
             classes.m_endedGuardsOfNames.add(guard.numberOfBit());
             storeBitOfClassGuard(state, current, side, guard.numberOfBit(), false);
         }
     };
-    if (subclassesInClassRecord(state.tables, classLayout).empty()) {
+    if (toEnd == GuardsOfNameToEnd::OneObjectHidesName || subclassesInClassRecord(state.tables, classLayout).empty()) {
         endGuardsIn(classLayout);
         return;
     }
@@ -737,6 +770,7 @@ static NameOnPrototypeHolder findNameOnPrototypeHolder(VM& vm, State& state, con
 void ClassTable::armMemberGuards(VM& vm, const LayoutData& layout, ClassSide side, JSObject* holder, HolderState holderState)
 {
     ASSERT(holder);
+    beginGuards(layout);
     if (classHolderReportsAsPrototype(*this, layout, side)) {
         holder->didBecomePrototype(vm);
         if (side == ClassSide::Static)
@@ -964,7 +998,7 @@ bool ClassTable::endGuardsOfShadowedMember(const LayoutData& instanceLayout, Uni
     for (const LayoutData* current = &layout; current; current = assumedBaseOf(*current)) {
         switch (findNameOnPrototypeHolder(vm, m_state, *current, uid, key)) {
         case NameOnPrototypeHolder::Found:
-            endClassGuardsOfName(m_state, layout, ClassSide::Prototype, key, GuardsOfNameToEnd::StoresStillPass);
+            endClassGuardsOfName(m_state, layout, ClassSide::Prototype, key, GuardsOfNameToEnd::OneObjectHidesName);
             return true;
         case NameOnPrototypeHolder::AbsentUntilReported:
             break;
@@ -1131,7 +1165,7 @@ bool ClassTable::accessorAboveCreatedObjectsIsWhatRecordNames(VM& vm, const Layo
     JSGlobalObject* realm = m_state.instance.globalObject;
     const Identifier& identifier = identifiersOf(m_state.instance).identifier(name);
     ChainWalk walk = walkChain({ realm, structure, nullptr, ChainWalkMode::MayAllocate, ChainWalkUse::KeptForReads }, identifier.impl());
-    if (!walk.dependsOnChain())
+    if (!walk.dependsOnChain() || walk.passedEmptySlot)
         return false;
     if (!getter && !setter) {
         if (walk.result != ChainWalkResult::Absent)

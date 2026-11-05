@@ -38,6 +38,8 @@ struct BuiltinNativeFunctionBinding;
 struct BuiltinWords {
     ObjectBuiltinWords objects;
     uint8_t* classesWrittenAbove;
+    uint8_t* membersWritten;
+    uint8_t* namesOnHolders;
     uint8_t someClassOfViewsWasWrittenAbove;
     EncodedJSValue* hostValues;
 };

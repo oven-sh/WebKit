@@ -36,6 +36,7 @@ bool buildCallByOneRowForStrings(Walker&, const CallByOneRow&);
 bool buildConstructionOnAnyOperandsForStrings(Walker&, const CallByOneRow&);
 
 bool openGuessAtOperandOfBuiltinCall(Walker&, const BodyValue& call);
+bool openGuessAtOperandThatSpecialCaseTakesAsMade(Walker&, const BodyValue& call, FunctionID enteredByValue);
 TypeID typeExpectedOfResultOfCall(Walker&, const BodyValue& call);
 
 inline constexpr uint32_t startOfStringRange = 0;
@@ -90,13 +91,19 @@ inline constexpr OpcodeSet opcodesThatBuildTestAgainstJoinOfTextsTakes = operati
 AOT_LINK_OF_WALK(buildTestAgainstJoinOfTexts, opcodesThatBuildTestAgainstJoinOfTextsTakes)
 Reference buildTestOfCodeUnitBesidePartOfJoin(Walker&, Reference string, Reference lengthOfPart, Reference holdsOfPart, char16_t unit, bool testsStart, Origin);
 ValueID findTestOfEndThatTakesJoinApart(Walker&, const BodyValue& join, Reference takenToHaveText);
-bool goesByOneRowOnOperandAsMade(Walker&, const BodyValue& call, BuiltinID, Reference value, TypeID behindTest);
+bool goesByOneRowOnOperandAsMade(Walker&, const BodyValue& call, BuiltinID, Reference value, TypeID behindTest, BuiltinOverloadID* onlyRow = nullptr);
 void openGuessAtOperandTakenAsMade(Walker&, const BodyValue& call, Reference value, TypeID tested, std::optional<uint32_t> firstPlace = std::nullopt);
 
 struct NotesOfStrings final : Walker::KeptForBuild {
     template<typename Noted> using ByRecord = HashMap<uint32_t, Noted, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>;
     ByRecord<Reference> codeUnitsBesideCharacters;
     ByRecord<Reference> codeUnitsBesideCharCodes;
+    struct CodeUnitChanged {
+        uint32_t record { 0 };
+        Reference before;
+        bool isBesideCharacter { false };
+    };
+    Vector<CodeUnitChanged> codeUnitsChanged;
     struct URLThatIsNeverMade {
         uint32_t inlineFrame { 0 };
         ValueID made;

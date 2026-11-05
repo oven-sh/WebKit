@@ -20,6 +20,7 @@
 #include <memory>
 #include <optional>
 #include <span>
+#include <wtf/HashMap.h>
 #include <wtf/StdLibExtras.h>
 
 namespace JSC { namespace AOT {
@@ -212,6 +213,7 @@ private:
     Vector<std::optional<uint32_t>, 16> m_mentionsOfImmediates;
     Vector<uint32_t> m_placesOfStubKeys;
     Vector<Typed::CodeUnit> m_callees;
+    UncheckedKeyHashMap<uint64_t, uint32_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_indexesOfCallees;
     ListOfUnit<ArgumentMoves, 16> m_argumentMoves;
 };
 

@@ -1,6 +1,6 @@
 # wipe(hidden()); climb(hidden()); print(code(text)); replace(); print(code(text)); restore(); print(code(text))   with   function code(text: string) { return text.charCodeAt(0); }
 # `charCodeAt` is written through a value that nobody knows and prototypes are climbed to from such values, so the method above all texts is open in this test run, and the code of the shell really replaces it
-# between two calls. A text has no test of being as made; the byte of its class is asked alone. The call stands in line behind it; the store sets the byte, the test fails from then on, and the read by name finds
+# between two calls. A text has no test of being as made; the byte of the member is asked alone. The call stands in line behind it; the store sets the byte, the test fails from then on, and the read by name finds
 # what the test run has laid.
 # OPTIONS: admit=ReplacedBuiltins
 # RUN: run-in-shell const above = String.prototype, original = above.charCodeAt; globalThis.hidden = () => [1]; globalThis.replace = () => { above.charCodeAt = () => 7; }; globalThis.restore = () => { above.charCodeAt = original; };
@@ -12,7 +12,7 @@
 # LOCKS: open StringPrototypeCharCodeAt spelled-through-unseen
 # RUN(WALK): walk f1 mechanisms=all
 # WALK-LABEL: code f1:Body
-# WALK: = IsPristine {{*}}builtinClass=String aspects=[Names]
+# WALK: = IsMemberAsBuilt builtin=StringPrototypeCharCodeAt
 # WALK: = PropGet {{*}}key="charCodeAt"
 # WALK: = GetStringCodeUnit
 

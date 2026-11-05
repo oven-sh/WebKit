@@ -15,8 +15,11 @@
 #include "AOTNativeTest.h"
 #include "AOTPlan.h"
 #include "AOTProgramFile.h"
+#include "AOTScratchRealm.h"
 #include "AOTShellProgramTestSupport.h"
 #include "AOTTestHarness.h"
+#include "JSGlobalObject.h"
+#include "VM.h"
 #include <wtf/text/StringBuilder.h>
 #include <wtf/text/StringToIntegerConversion.h>
 
@@ -343,6 +346,70 @@ static void testWalkGrowsAsLoopsInRowDo()
     std::optional<uint64_t> smaller = instructionsOfWalkForGrowthTests(loopsInRowForGrowthTests(LoopInRowForGrowthTests::Empty, numberOfLoops), FunctionID(1u));
     std::optional<uint64_t> large = instructionsOfWalkForGrowthTests(loopsInRowForGrowthTests(LoopInRowForGrowthTests::Empty, 4 * numberOfLoops), FunctionID(1u));
     AOT_TEST_CHECK(growsAsSizeDoes(smaller, large));
+}
+
+static String loopsInsideOneAnotherForGrowthTests(unsigned numberOfLoops)
+{
+    StringBuilder text;
+    text.append("module m0 path=\"main.js\" displayPath=\"main.js\" body=f0\nentry module=m0\n"_s);
+    text.append("function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {\n  b0():\n    v0 = Builtin builtin=GlobalThis\n    v1 = PropGet v0 key=\"sink\" [isFreeName]\n"_s);
+    text.append("    v2 = NewClosure function=f1\n    v3 = Call v1, -, v2\n    Return v3\n}\n"_s);
+    text.append("function f1 name=\"run\" module=m0 length=1 thisType={type=anything} parameters=[{type=boolean}] results=[{type=anything}] {\n  b0(v0: boolean):\n    Jump -> next b1()\n"_s);
+    for (unsigned loop = 1; loop <= numberOfLoops; ++loop)
+        text.append("  b"_s, loop, "():\n    LoopHint\n    Branch v0 -> taken b"_s, std::min(loop + 1, numberOfLoops), "(), notTaken b"_s, loop > 1 ? loop - 1 : numberOfLoops + 1, "()\n"_s);
+    text.append("  b"_s, numberOfLoops + 1, "():\n    Return v0\n}\n"_s);
+    return text.toString();
+}
+
+static NEVER_INLINE void runBelowMegabytesOfStackForGrowthTests(unsigned megabytes, NOESCAPE const ScopedLambda<void()>& functor)
+{
+    volatile char taken[MB];
+    taken[0] = static_cast<char>(megabytes);
+    if (megabytes)
+        runBelowMegabytesOfStackForGrowthTests(megabytes - 1, functor);
+    else
+        functor();
+    taken[MB - 1] = taken[0];
+}
+
+static uint64_t walksOfLoopsForGrowthTests(const String& text, unsigned megabytesOfStackTakenFirst)
+{
+    uint64_t walks = 0;
+    runOnBuildThread([&] {
+        BuildContext build(makeOptionsOfTestedProgram());
+        std::unique_ptr<Program> parsed = parseProgram(withStandInLibrary(text), build);
+        AOT_TEST_CHECK(parsed);
+        StagedBuild stages(WTF::move(parsed), build);
+        AOT_TEST_CHECK(stages.plan());
+        runBelowMegabytesOfStackForGrowthTests(megabytesOfStackTakenFirst, [&] {
+            AOT_TEST_CHECK(stages.code(CodeUnit { FunctionID(1u), CodeRole::Body }));
+        });
+        walks = build.statistics().values()[static_cast<unsigned>(StatisticID::WalksOfLoops)];
+    });
+    return walks;
+}
+
+static void testNestOfLoopsIsWalkedAlikeWhateverRoomStackHas()
+{
+    uint64_t walks = walksOfLoopsForGrowthTests(loopsInsideOneAnotherForGrowthTests(1200), 0);
+    AOT_TEST_CHECK(walks == walksOfLoopsForGrowthTests(loopsInsideOneAnotherForGrowthTests(1200), 4));
+    AOT_TEST_CHECK(walks == walksOfLoopsForGrowthTests(loopsInsideOneAnotherForGrowthTests(1300), 0));
+}
+
+static void testScratchRealmHasItsRoomWhereverQuestionStands()
+{
+    runOnBuildThread([&] {
+        ScratchRealm realm;
+        auto hasRoom = [&] {
+            return realm.run([](JSGlobalObject* global) {
+                return global->vm().isSafeToRecurse();
+            });
+        };
+        AOT_TEST_CHECK(hasRoom());
+        runBelowMegabytesOfStackForGrowthTests(6, [&] {
+            AOT_TEST_CHECK(hasRoom());
+        });
+    });
 }
 
 static String loopsUpToOneBoundForGrowthTests(unsigned numberOfPairs)
@@ -947,6 +1014,8 @@ std::span<const NativeTest> growthOfWorkTests()
         { "growth-of-work/the-facts-grow-as-the-objects-created-below-one-literal-do"_s, testFactsGrowAsObjectsCreatedBelowOneLiteralDo },
         { "growth-of-work/the-walk-grows-as-the-loops-in-a-row-do"_s, testWalkGrowsAsLoopsInRowDo },
         { "growth-of-work/the-walk-grows-as-the-loops-up-to-one-bound-do"_s, testWalkGrowsAsLoopsUpToOneBoundDo },
+        { "growth-of-work/a-nest-of-loops-is-walked-alike-whatever-room-its-stack-has"_s, testNestOfLoopsIsWalkedAlikeWhateverRoomStackHas },
+        { "growth-of-work/the-scratch-realm-has-its-room-wherever-a-question-stands"_s, testScratchRealmHasItsRoomWhereverQuestionStands },
         { "growth-of-work/the-walk-grows-as-the-early-returns-that-each-leave-a-value-alive-do"_s, testWalkGrowsAsEarlyReturnsThatEachLeaveValueAliveDo<ReadInRowForGrowthTests::OfOneOfThreeElements, 1000> },
         { "growth-of-work/the-walk-grows-as-the-early-returns-behind-guesses-of-their-own-that-each-leave-a-value-alive-do"_s, testWalkGrowsAsEarlyReturnsThatEachLeaveValueAliveDo<ReadInRowForGrowthTests::OfElementOfItsOwn, 150> },
         { "growth-of-work/the-liveness-of-a-body-grows-as-the-values-read-at-its-end-do"_s, testLivenessGrowsAsValuesReadAtEndDo<StatementInRowForGrowthTests::TestThatLeaves> },

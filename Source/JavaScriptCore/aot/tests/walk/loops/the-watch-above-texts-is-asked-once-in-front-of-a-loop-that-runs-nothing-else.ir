@@ -1,6 +1,6 @@
 # function count(text: string) { let found = 0; for (let at = 0; at < text.length; at++) if (text.charCodeAt(at) === 10) found++; return found; }
 # hidden().charCodeAt = 0; Object.getPrototypeOf(hidden()); print(count(text)); replace(); print(count(text)); restore(); print(count(text))
-# The method above all texts lies behind the watch of this test run. The turns run nothing else, so the byte of the class is asked once, in front of the loop, and the turns read the text in line;
+# The method above all texts lies behind the watch of this test run. The turns run nothing else, so the byte of the member is asked once, in front of the loop, and the turns read the text in line;
 # where the byte is set the loop is taken as it is written, and finds what the test run has laid.
 # OPTIONS: admit=ReplacedBuiltins
 # RUN: run-in-shell const above = String.prototype, original = above.charCodeAt; globalThis.hidden = () => [1]; globalThis.replace = () => { above.charCodeAt = () => 10; }; globalThis.restore = () => { above.charCodeAt = original; };
@@ -14,12 +14,12 @@
 # WALK-LABEL: code f1:Body
 # WALK: frequency=Rare isLoopHead=true
 # WALK: = PropGet {{*}}key="charCodeAt"
-# WALK: = IsPristine {{*}}builtinClass=String aspects=[Names]
+# WALK: = IsMemberAsBuilt builtin=StringPrototypeCharCodeAt
 # WALK: isInLoop=true isLoopHead=true
-# WALK-NOT: = IsPristine
+# WALK-NOT: = IsMemberAsBuilt
 # WALK-NOT: = PropGet
 # WALK: = GetStringCodeUnit
-# WALK-NOT: = IsPristine
+# WALK-NOT: = IsMemberAsBuilt
 
 module m0 path="main.ts" displayPath="main.ts" body=f0 namespaceLayout=L(m0)
 entry module=m0

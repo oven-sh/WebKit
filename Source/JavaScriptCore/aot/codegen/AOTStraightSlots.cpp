@@ -216,7 +216,7 @@ void StraightEmitter::storeVariable(VariableID variable, GPRReg boxed)
 void StraightEmitter::barrierAfterStore(GPRReg owner)
 {
     StraightArgument ownerInRegister = StraightArgument::inRegister(owner);
-    callStub(Origin { }, tryWithOperandRegister(writeBarrier(), owner).value_or(writeBarrier()), { &ownerInRegister, 1 }, { });
+    callStub(Origin { }, writeBarrier(), { &ownerInRegister, 1 }, { });
 }
 
 } } } // namespace JSC::AOT::Typed

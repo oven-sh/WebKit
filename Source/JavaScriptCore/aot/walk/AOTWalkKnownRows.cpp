@@ -21,6 +21,7 @@
 #include "AOTTypeArena.h"
 #include "AOTTypeRelations.h"
 #include "AOTWalkKnownCalls.h"
+#include "AOTWalkStrings.h"
 #include <algorithm>
 #include <optional>
 #include <span>
@@ -236,7 +237,13 @@ bool callLibraryFunctionBehindRows(Walker& walker, const BodyValue& call)
     bool enteredByValue = false;
     if (!function && callee) {
         LibraryFunctionsBehindBuiltin behind = findLibraryFunctionsBehindBuiltin(walker, walker.typeOf(callee));
-        if (behind.enteredByValue) {
+        bool mayGoBySpecialCase = behind.enteredByValue && behind.someSpecialCaseNamesFunction;
+        FunctionID ofSpecialCase = mayGoBySpecialCase ? findLibraryFunctionOfRowsReachedBy(walker, call, RowsThatNameLibraryFunction::SpecialCasesAlone) : FunctionID();
+        if (ofSpecialCase && ofSpecialCase != behind.enteredByValue)
+            function = ofSpecialCase;
+        else if (behind.enteredByValue) {
+            if (mayGoBySpecialCase && openGuessAtOperandThatSpecialCaseTakesAsMade(walker, call, behind.enteredByValue))
+                return true;
             function = behind.enteredByValue;
             enteredByValue = true;
             Reference handedOver = call.argumentsOperands().empty() ? Reference() : walker.referenceOf(call.argumentsOperands()[0]);
@@ -245,7 +252,7 @@ bool callLibraryFunctionBehindRows(Walker& walker, const BodyValue& call)
             mayCopy = walker.isInLoop() && (isListAsItWasMade || walker.walksOwnBodyOfUnit()) && handedOver && isLeafHandedToMethodOfLists(walker, walker.typeOf(handedOver)) ? MayCopyFunctionCalledDirectly::Yes : MayCopyFunctionCalledDirectly::No;
         } else if (!behind.named.isEmpty())
             function = findLibraryFunctionOfRowsReachedBy(walker, call);
-        isFoundByRowsReached = function && !behind.enteredByValue;
+        isFoundByRowsReached = function && function != behind.enteredByValue;
     }
     if (!function)
         return false;

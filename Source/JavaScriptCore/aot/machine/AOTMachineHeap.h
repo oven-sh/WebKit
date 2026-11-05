@@ -12,6 +12,7 @@
 #include <span>
 #include <wtf/Noncopyable.h>
 #include <wtf/OptionSet.h>
+#include <wtf/StdLibExtras.h>
 #include <wtf/text/ASCIILiteral.h>
 
 namespace JSC { namespace AOT { namespace Machine {
@@ -133,18 +134,21 @@ public:
     static HeapSet of(std::span<const HeapIndex> heaps)
     {
         HeapSet result;
-        result.m_heaps = heaps;
+        result.m_heaps = heaps.data();
+        result.m_numberOfHeaps = static_cast<uint32_t>(heaps.size());
         return result;
     }
 
-    bool isEmpty() const { return !m_isTop && m_heaps.empty(); }
+    bool isEmpty() const { return !m_isTop && !m_numberOfHeaps; }
     bool isTop() const { return m_isTop; }
-    std::span<const HeapIndex> heaps() const { return m_heaps; }
+    std::span<const HeapIndex> heaps() const { return unsafeMakeSpan(m_heaps, m_numberOfHeaps); }
 
 private:
-    std::span<const HeapIndex> m_heaps;
+    const HeapIndex* m_heaps { nullptr };
+    uint32_t m_numberOfHeaps { 0 };
     bool m_isTop { false };
 };
+static_assert(sizeof(HeapSet) == 16);
 
 } } } // namespace JSC::AOT::Machine
 

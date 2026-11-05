@@ -39,6 +39,7 @@ struct StubOptions {
     bool matchesRegExps { true };
     bool recordsLastMatch { true };
     bool checksProofs { false };
+    bool methodsOfBuiltinsMayBeReplaced { false };
     bool isPositionIndependent { imageFormOfThisRuntime() == ImageForm::PositionIndependent };
     uint32_t maxNameInFieldTable { UINT16_MAX };
     CPUFeatureSet targetFeatures;

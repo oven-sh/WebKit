@@ -507,7 +507,13 @@ static NEVER_INLINE uint32_t findDominatorsInFirstPassWithLongWalks(WalksUpToDom
 {
     WaysFurtherUpToDominators waysFurtherUp { arena, static_cast<uint32_t>(blocksInOrder.size()) };
     walks.waysFurtherUp = &waysFurtherUp;
-    return findDominatorsInFirstPass<PassOverDominators::FirstWithLongWalks>(walks, blocksInOrder, dominators, numbersOfJoins);
+    const uint32_t numberOfJoins = findDominatorsInFirstPass<PassOverDominators::FirstWithLongWalks>(walks, blocksInOrder, dominators, numbersOfJoins);
+    walks.waysFurtherUp = nullptr;
+    if (waysFurtherUp.heights) {
+        arena.letGoOfArray(waysFurtherUp.ways, waysFurtherUp.numberOfBlocks + 1);
+        arena.letGoOfArray(waysFurtherUp.heights, waysFurtherUp.numberOfBlocks + 1);
+    }
+    return numberOfJoins;
 }
 
 static NEVER_INLINE void findImmediateDominatorsOfOrderedBlocks(Allocator& allocator)
@@ -542,6 +548,8 @@ static NEVER_INLINE void findImmediateDominatorsOfOrderedBlocks(Allocator& alloc
             dominators[indexOfBlock] = dominator ? blocks[dominator - 1] : nullptr;
         }
     }
+    arena.letGoOfArray(numbersOfJoins, numberOfBlocks);
+    arena.letGoOfArray(walks.lastJoinsWalkedFor, numberOfBlocks + 1);
 }
 
 static ALWAYS_INLINE Position findLimitOfDefinitionsReachingHead(Allocator& allocator, const Block* target, const Block* from)
@@ -810,6 +818,8 @@ static NEVER_INLINE void numberDominatedBlocksByPlaceInOrder(Allocator& allocato
         next += size;
         nextNumbersBelow[place + 1] = own.first + 1;
     }
+    allocator.m_arena.letGoOfArray(nextNumbersBelow, numberOfBlocks + 1);
+    allocator.m_arena.letGoOfArray(numbersOfBlocksAbove, numberOfBlocks);
 }
 
 static NEVER_INLINE Allocator::NumbersOfReadingBlocks findNumbersOfBlocksThatReadFrom(Allocator& allocator, uint32_t firstRead, uint32_t placeAhead)

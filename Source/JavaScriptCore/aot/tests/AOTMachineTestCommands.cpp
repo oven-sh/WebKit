@@ -498,8 +498,10 @@ void NamesInBytesText::printWord(WordOfMentionKey kind, uint32_t word)
             m_out.print("?"_s, word);
         return;
     case WordOfMentionKey::ClassSide:
-        if (word == sideWordOfClassGuardOfName(ClassSide::Prototype, true))
+        if (word == sideWordOfClassGuardOfName(ClassSide::Prototype, AskerOfClassGuardOfName::StoresAlone))
             m_out.print("PrototypeForStores");
+        else if (word == sideWordOfClassGuardOfName(ClassSide::Prototype, AskerOfClassGuardOfName::ReadsBehindLookAtObject))
+            m_out.print("PrototypeBehindLookAtObject");
         else
             m_out.print(WTF::enumName(static_cast<ClassSide>(word)));
         return;

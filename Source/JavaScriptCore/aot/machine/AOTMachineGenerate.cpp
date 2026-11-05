@@ -40,6 +40,9 @@ void prepareForGeneration(Procedure& procedure)
     if (runsChecks && !runCheckBeforeGeneration(procedure, validate))
         return;
 
+    if (procedure.m_roomsThatBuildingLeaves) [[unlikely]]
+        procedure.letGoOfWhatBuildingLeaves();
+
     threadJumps(procedure);
     if (procedure.failure())
         return;

@@ -23,7 +23,6 @@ constexpr StubKey callBoxedBuiltin(BoxedCallForm form, unsigned count) { return 
 constexpr StubKey callMethodOfBuiltinClass(BoxedCallForm form, unsigned count) { return StubKey(StubFamily::CallMethodOfBuiltinClass).withForm(static_cast<uint8_t>(form)).withCount(count); }
 constexpr StubKey tryCallMethodOfBuiltinClass(BoxedCallForm form, unsigned count) { return StubKey(StubFamily::TryCallMethodOfBuiltinClass).withForm(static_cast<uint8_t>(form)).withCount(count); }
 constexpr StubKey callMethodOfBuiltinClassAtSite(BoxedCallForm form, unsigned count) { return StubKey(StubFamily::CallMethodOfBuiltinClassAtSite).withForm(static_cast<uint8_t>(form)).withCount(count); }
-constexpr StubKey callMethodOfOneBuiltinClassAtSite(BoxedCallForm form, unsigned count) { return StubKey(StubFamily::CallMethodOfOneBuiltinClassAtSite).withForm(static_cast<uint8_t>(form)).withCount(count); }
 constexpr StubKey callMethodOfBuiltinClassWithSharedPattern(BoxedCallForm form, unsigned count) { return StubKey(StubFamily::CallMethodOfBuiltinClassWithSharedPattern).withForm(static_cast<uint8_t>(form)).withCount(count); }
 constexpr StubKey callMethodOfBuiltinClassAtSiteWithSharedPattern(BoxedCallForm form, unsigned count) { return StubKey(StubFamily::CallMethodOfBuiltinClassAtSiteWithSharedPattern).withForm(static_cast<uint8_t>(form)).withCount(count); }
 constexpr StubKey callMethodOfBuiltinClassByValue(BoxedCallForm form, unsigned count) { return StubKey(StubFamily::CallMethodOfBuiltinClassByValue).withForm(static_cast<uint8_t>(form)).withCount(count); }
@@ -61,7 +60,6 @@ static_assert(descriptorOf(StubFamily::CallBoxedBuiltin).numberOfForms == number
 static_assert(descriptorOf(StubFamily::CallMethodOfBuiltinClass).numberOfForms == numberOfBuiltinBoxedStubs);
 static_assert(descriptorOf(StubFamily::TryCallMethodOfBuiltinClass).numberOfForms == numberOfBuiltinBoxedStubs);
 static_assert(descriptorOf(StubFamily::CallMethodOfBuiltinClassAtSite).numberOfForms == numberOfBuiltinBoxedStubs);
-static_assert(descriptorOf(StubFamily::CallMethodOfOneBuiltinClassAtSite).numberOfForms == numberOfBuiltinBoxedStubs);
 static_assert(descriptorOf(StubFamily::CallMethodOfBuiltinClassByValue).numberOfForms == numberOfBuiltinBoxedStubs);
 static_assert(descriptorOf(StubFamily::CallMethodOfProvenBuiltinClass).numberOfForms == numberOfBuiltinBoxedStubs);
 static_assert(descriptorOf(StubFamily::CallMethodOfProvenBuiltinClassByValue).numberOfForms == numberOfBuiltinBoxedStubs);

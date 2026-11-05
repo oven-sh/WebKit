@@ -14,8 +14,7 @@
 # function objects(a: unknown[] | undefined, b: unknown[] | undefined) { return a === b; }
 # RUN(OBJECTS): walk f3 mechanisms=none+TypedOperations+Guesses
 # OBJECTS-LABEL: code f3:Body
-# OBJECTS-NOT: expects
-# OBJECTS: Return
+# OBJECTS: = StrictEq {{*}}form=Generic [expectsObjectOnLeft]
 # RUN(ONE): walk f4 mechanisms=none+TypedOperations+Guesses
 # ONE-LABEL: code f4:Body
 # ONE: = StrictEq {{*}}form=Generic [expectsInt32s]

@@ -123,7 +123,7 @@ std::optional<Stubs::BlockOfCallbackEntries> Stubs::tryMapCallbackEntries() cons
     bool fileHoldsPages = descriptor >= 0 && !fstat(descriptor, &status) && S_ISREG(status.st_mode) && status.st_size >= m_callbackEntries.offsetInFile + static_cast<int64_t>(codeSize);
     uint8_t* code = fileHoldsPages ? mapRegion(PROT_READ | PROT_EXEC, 0, descriptor, m_callbackEntries.offsetInFile) : nullptr;
     if (code && mmap(code + codeSize, m_callbackEntries.contextSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON | MAP_FIXED, -1, 0) == MAP_FAILED) {
-        munmap(code, codeSize);
+        munmap(code, regionSize);
         code = nullptr;
     }
     if (code && memcmp(code, pages, codeSize)) {

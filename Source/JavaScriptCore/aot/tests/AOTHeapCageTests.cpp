@@ -1361,16 +1361,18 @@ static void checkOtherAllocatorWarmsUpWithTheCage()
 namespace {
 
 enum class CellKind : bool { InBlock, Precise };
-enum class WordForm : uint8_t { IndexInLowHalf, IndexInHighHalf, Offset, OffsetIntoCell, OtherIndex };
+enum class WordForm : uint8_t { Pointer, IndexInLowHalf, IndexInHighHalf, Offset, OffsetIntoCell };
 
 constexpr unsigned numberOfCandidates = 32;
 using Words = std::array<uint64_t, numberOfCandidates>;
 
 } // anonymous namespace
 
-static uint64_t wordFor(uint32_t index, WordForm form)
+static uint64_t wordFor(uintptr_t base, uint32_t index, WordForm form)
 {
     switch (form) {
+    case WordForm::Pointer:
+        return std::bit_cast<uintptr_t>(MarkedBlockCage::decode(base, index));
     case WordForm::IndexInLowHalf:
         return index;
     case WordForm::IndexInHighHalf:
@@ -1379,8 +1381,6 @@ static uint64_t wordFor(uint32_t index, WordForm form)
         return static_cast<uint64_t>(index) << MarkedBlockCage::shift;
     case WordForm::OffsetIntoCell:
         return (static_cast<uint64_t>(index) << MarkedBlockCage::shift) + 8;
-    case WordForm::OtherIndex:
-        return index ^ 1;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -1392,12 +1392,11 @@ static uint32_t indexIn(uint64_t word, WordForm form)
         return static_cast<uint32_t>(word);
     case WordForm::IndexInHighHalf:
         return static_cast<uint32_t>(word >> 32);
+    case WordForm::Pointer:
     case WordForm::Offset:
         return static_cast<uint32_t>(word >> MarkedBlockCage::shift);
     case WordForm::OffsetIntoCell:
         return static_cast<uint32_t>((word - 8) >> MarkedBlockCage::shift);
-    case WordForm::OtherIndex:
-        return static_cast<uint32_t>(word) ^ 1;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -1407,7 +1406,7 @@ static NEVER_INLINE void createUnreferencedCells(TestVM& test, JSGlobalObject* r
     for (uint64_t& word : words) {
         JSCell* cell = kind == CellKind::Precise ? static_cast<JSCell*>(JSBigInt::tryCreateWithLength(test.vm(), 200 * KB / sizeof(JSBigInt::Digit))) : constructEmptyObject(realm);
         AOT_TEST_CHECK(cell && cell->isPreciseAllocation() == (kind == CellKind::Precise));
-        word = wordFor(MarkedBlockCage::encode(test.cage().base(), cell), form);
+        word = wordFor(test.cage().base(), MarkedBlockCage::encode(test.cage().base(), cell), form);
     }
 }
 
@@ -1431,16 +1430,16 @@ static NEVER_INLINE unsigned countCellsMarkedThroughWords(CellKind kind, WordFor
     return numberOfMarkedCells;
 }
 
-template<CellKind kind, WordForm form>
-static void checkWordKeepsCellsAlive()
+template<CellKind kind>
+static void checkPointerKeepsCellsAlive()
 {
-    AOT_TEST_CHECK(countCellsMarkedThroughWords(kind, form) == numberOfCandidates);
+    AOT_TEST_CHECK(countCellsMarkedThroughWords(kind, WordForm::Pointer) == numberOfCandidates);
 }
 
-template<CellKind kind>
-static void checkOtherIndexKeepsNothingAlive()
+template<CellKind kind, WordForm form>
+static void checkWordKeepsNothingAlive()
 {
-    AOT_TEST_CHECK(countCellsMarkedThroughWords(kind, WordForm::OtherIndex) < numberOfCandidates / 2);
+    AOT_TEST_CHECK(countCellsMarkedThroughWords(kind, form) < numberOfCandidates / 2);
 }
 
 template<void (*body)()>
@@ -1503,15 +1502,15 @@ std::span<const NativeTest> heapCageTests()
 #if !ENABLE(MALLOC_HEAP_BREAKDOWN)
         { "heap-cage/cage/other-allocator-warms-up-with-the-cage"_s, withCage<checkOtherAllocatorWarmsUpWithTheCage> },
 #endif
-        { "heap-cage/scan/index-in-low-half"_s, withCage<checkWordKeepsCellsAlive<CellKind::InBlock, WordForm::IndexInLowHalf>> },
-        { "heap-cage/scan/index-in-high-half"_s, withCage<checkWordKeepsCellsAlive<CellKind::InBlock, WordForm::IndexInHighHalf>> },
-        { "heap-cage/scan/offset-from-base"_s, withCage<checkWordKeepsCellsAlive<CellKind::InBlock, WordForm::Offset>> },
-        { "heap-cage/scan/offset-into-cell"_s, withCage<checkWordKeepsCellsAlive<CellKind::InBlock, WordForm::OffsetIntoCell>> },
-        { "heap-cage/scan/other-index-keeps-nothing-alive"_s, withCage<checkOtherIndexKeepsNothingAlive<CellKind::InBlock>> },
-        { "heap-cage/scan/precise-cell-index-in-low-half"_s, withCage<checkWordKeepsCellsAlive<CellKind::Precise, WordForm::IndexInLowHalf>> },
-        { "heap-cage/scan/precise-cell-index-in-high-half"_s, withCage<checkWordKeepsCellsAlive<CellKind::Precise, WordForm::IndexInHighHalf>> },
-        { "heap-cage/scan/precise-cell-offset-from-base"_s, withCage<checkWordKeepsCellsAlive<CellKind::Precise, WordForm::Offset>> },
-        { "heap-cage/scan/precise-cell-other-index-keeps-nothing-alive"_s, withCage<checkOtherIndexKeepsNothingAlive<CellKind::Precise>> },
+        { "heap-cage/scan/pointer-keeps-the-cell-alive"_s, withCage<checkPointerKeepsCellsAlive<CellKind::InBlock>> },
+        { "heap-cage/scan/index-in-low-half-keeps-nothing-alive"_s, withCage<checkWordKeepsNothingAlive<CellKind::InBlock, WordForm::IndexInLowHalf>> },
+        { "heap-cage/scan/index-in-high-half-keeps-nothing-alive"_s, withCage<checkWordKeepsNothingAlive<CellKind::InBlock, WordForm::IndexInHighHalf>> },
+        { "heap-cage/scan/offset-from-base-keeps-nothing-alive"_s, withCage<checkWordKeepsNothingAlive<CellKind::InBlock, WordForm::Offset>> },
+        { "heap-cage/scan/offset-into-cell-keeps-nothing-alive"_s, withCage<checkWordKeepsNothingAlive<CellKind::InBlock, WordForm::OffsetIntoCell>> },
+        { "heap-cage/scan/pointer-keeps-the-precise-cell-alive"_s, withCage<checkPointerKeepsCellsAlive<CellKind::Precise>> },
+        { "heap-cage/scan/precise-cell-index-in-low-half-keeps-nothing-alive"_s, withCage<checkWordKeepsNothingAlive<CellKind::Precise, WordForm::IndexInLowHalf>> },
+        { "heap-cage/scan/precise-cell-index-in-high-half-keeps-nothing-alive"_s, withCage<checkWordKeepsNothingAlive<CellKind::Precise, WordForm::IndexInHighHalf>> },
+        { "heap-cage/scan/precise-cell-offset-from-base-keeps-nothing-alive"_s, withCage<checkWordKeepsNothingAlive<CellKind::Precise, WordForm::Offset>> },
     };
     return tests;
 }

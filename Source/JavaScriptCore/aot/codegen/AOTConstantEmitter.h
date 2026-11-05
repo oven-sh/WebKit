@@ -39,6 +39,8 @@ public:
     void generateModuleBuiltin(const ValueContext&);
     void generateData(const ValueContext&);
     void generateNewClosure(const ValueContext&);
+    bool closureLentLiesInFrame(ValueID closure);
+    void clearCellsThatClosureLentHolds(ValueID closure);
     void generateKeyConstant(const ValueContext&);
     void generateUnspecified(const ValueContext& value) { define(value, zeroOf(value.representation())); }
     void generateEmptyArgumentList(const ValueContext& value) { defineCell(value, CellPointer(loadImmutablePointer(AOT_INSTANCE_OFFSET(realm.emptyArgumentList)).value())); }
@@ -86,12 +88,14 @@ private:
     CellPointer failWithoutCell(const OperationContext&, InternalErrorKind);
 
     TypedPointer builtinCellWord(BuiltinCellKey);
+    FormAtPlace formOfConstantsWithCellsAt(const OperationContext&);
     CellPointer cellMadeByStub(const OperationContext&, StubKey, const CallOptions&, bool isNarrow, NOESCAPE const Invocable<TypedPointer()> auto& cellWord);
     const RegisterSet& registersLostAtSiteOf(ConstantAtSite);
     CellPointer newCopyOnWriteArray(const ValueContext&);
     CellPointer newCopyOnWriteArrayByStub(const ValueContext&);
 
     CellPointer closureCreatedBy(const ValueContext&);
+    void noteWhatClosureLentHolds(ValueID closure);
     bool canUseClosureStub(const NewClosureRequest&) const;
     CellPointer newFullClosure(const ValueContext&, const NewClosureRequest&);
     CellPointer newSlimClosure(const ValueContext&, const NewClosureRequest&);

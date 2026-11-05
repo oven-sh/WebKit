@@ -96,6 +96,8 @@ static std::optional<uint8_t> rankOfExplainedOperation(Typed::WalkNoteKind kind)
         return 0;
     case Typed::WalkNoteKind::TestThatRejoins:
         return 1;
+    case Typed::WalkNoteKind::TestThatLeaves:
+        return 2;
     case Typed::WalkNoteKind::TestThatThrows:
         return 3;
     case Typed::WalkNoteKind::ResolvedOperation:
@@ -117,6 +119,7 @@ static Wire::KnowledgeLevel levelOfExplainedOperation(Typed::WalkNoteKind kind)
     case Typed::WalkNoteKind::GenericOperation:
         return Wire::KnowledgeLevel::Unknown;
     case Typed::WalkNoteKind::TestThatRejoins:
+    case Typed::WalkNoteKind::TestThatLeaves:
     case Typed::WalkNoteKind::TestThatThrows:
         return Wire::KnowledgeLevel::Expected;
     case Typed::WalkNoteKind::ResolvedOperation:
@@ -137,6 +140,8 @@ static std::optional<Wire::TypeTestFailure> failureOfExplainedTest(Typed::WalkNo
     switch (kind) {
     case Typed::WalkNoteKind::TestThatRejoins:
         return Wire::TypeTestFailure::TakesGenericPath;
+    case Typed::WalkNoteKind::TestThatLeaves:
+        return Wire::TypeTestFailure::Leaves;
     case Typed::WalkNoteKind::TestThatThrows:
         return Wire::TypeTestFailure::Throws;
     case Typed::WalkNoteKind::ResolvedOperation:

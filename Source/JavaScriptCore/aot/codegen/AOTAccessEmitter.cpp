@@ -103,12 +103,12 @@ Boxed AccessEmitter::getById(const OperationContext& context, Boxed receiver, Pr
         NameAtSite name = hasColumn ? NameAtSite::HasColumn : NameAtSite::IsAnyName;
         ReceiverAtSite receiverIs = receiverID && typeOf(receiverID).isObject() ? ReceiverAtSite::IsCell : ReceiverAtSite::IsAnyValue;
         const bool namesLength = hasColumn ? isLength : m_program.nameClassOf(key) == NameClass::Length;
-        StubKey stub = namesLength ? readLengthAtSite(name) : !m_plan.slots().namesField(key) ? readAtSiteOfNameWithoutField(receiverIs, name) : tryReadAtSiteOfNarrowField(m_plan.slots().narrowFormOf(key), receiverIs, name).value_or(readAtSite(receiverIs, name));
+        StubKey stub = namesLength ? readLengthAtSite(name) : !m_plan.slots().namesField(key) ? readAtSiteOfNameWithoutField(receiverIs, name) : readAtSite(receiverIs, name);
         return Boxed(callStub(context, stub, { receiver.value() }, { .numberedImmediate = *answers }).first);
     }
     if (isLength)
         return Boxed(callStub(context, getLengthAtSite(), { receiver.value() }, { .numberedImmediate = mention }).first);
-    StubKey stub = !hasColumn ? getByIdCheckingColumn() : m_plan.slots().narrowFormOf(key) == SlotRepresentation::JSValue ? AOT::getById() : getByIdAskingFieldTableFirst();
+    StubKey stub = hasColumn ? AOT::getById() : getByIdCheckingColumn();
     return Boxed(callStub(context, stub, { receiver.value() }, { .numberedImmediate = mention }).first);
 }
 
@@ -319,7 +319,7 @@ void AccessEmitter::generateGetGlobalBinding(const ValueContext& value)
 
     if (!m_generator.takesOpenForm(value)) {
         NumberedImmediate binding { m_mentions.globalBinding(key, flags) };
-        if (emitter<OperatorEmitter>().leaveConstructorToInstanceOf(value, seesScriptBindings ? InstanceOfOperand::NameSeenByScripts : InstanceOfOperand::NameOfGlobalObject, binding)) {
+        if (emitter<OperatorEmitter>().leaveOperandToInstanceOf(value, seesScriptBindings ? InstanceOfOperand::NameSeenByScripts : InstanceOfOperand::NameOfGlobalObject, binding)) {
             define(value, undefined());
             return;
         }
@@ -530,7 +530,7 @@ bool AccessEmitter::tryCallMethodByName(const ValueContext& call)
     RELEASE_ASSERT(read.read == call->calleeOperand() && !call.returnCall());
     CallEmitter& calls = emitter<CallEmitter>();
     const uint8_t lentArguments = argumentsLentBy(m_code, call.value());
-    if (!read.pattern && !lentArguments && calls.tryCallThroughMethodTable(call, read.key))
+    if (!read.pattern && !lentArguments && m_code.at(call.block()).frequency != BlockFrequency::Rare && calls.tryCallThroughMethodTable(call, read.key))
         return true;
     Vector<LValue, 8> arguments;
     for (ValueID argument : call->argumentsOperands())
@@ -541,12 +541,10 @@ bool AccessEmitter::tryCallMethodByName(const ValueContext& call)
     std::optional<CompiledMethodOfArray> compiledMethod = !goesByClass && call->methodOfReceiverAsMade() && count <= maxArgumentCountOfCompiledMethodOfArray ? compiledMethodOfArray(call->methodOfReceiverAsMade()) : std::nullopt;
     std::optional<NumberedImmediate> answers = (!goesByClass || call->methodIsNamedByKeyAlone()) && !compiledMethod && m_plan.slots().hasColumn(read.key) ? answersOf(call, read.key, SiteUse::Call) : std::nullopt;
     bool standsBehindFailedLookInLoop = goesByClass && m_code.at(call.block()).frequency == BlockFrequency::Rare && m_generator.paysForCodeInLine(call.block());
-    bool asksOneClassAtSite = !answers && standsBehindFailedLookInLoop && !read.pattern && m_plan.slots().hasColumn(read.key) && !isSymbolOfRealm(read.key);
-    if (asksOneClassAtSite)
+    if (!answers && standsBehindFailedLookInLoop && !read.pattern && m_plan.slots().hasColumn(read.key) && !isSymbolOfRealm(read.key))
         answers = answersAtSite(call, read.key, SiteUse::Call);
     RELEASE_ASSERT((!read.pattern || goesByClass) && (!lentArguments || !goesByClass));
     StubKey byClass = !goesByClass ? StubKey() : read.pattern ? (answers ? callMethodOfBuiltinClassAtSiteWithSharedPattern(*boxedCall, count) : callMethodOfBuiltinClassWithSharedPattern(*boxedCall, count))
-        : answers && asksOneClassAtSite ? callMethodOfOneBuiltinClassAtSite(*boxedCall, count)
         : answers ? callMethodOfBuiltinClassAtSite(*boxedCall, count)
         : calls.isProvenReceiverOf(*boxedCall, typeOf(call->thisValueOperand())) ? callMethodOfProvenBuiltinClass(*boxedCall, count) : callMethodOfBuiltinClass(*boxedCall, count);
     ConventionCall conventionCall {
@@ -665,7 +663,25 @@ std::optional<Boxed> AccessEmitter::lookWhetherReceiverIsAsMadeInPlaceOfRead(con
     m_out.noteForm(Form::Closed, StateOfKnowledge::Always);
     m_methodsThatMayBeUnread.set(read.id().index());
     NameAtSite name = m_plan.slots().hasColumn(key) ? NameAtSite::HasColumn : NameAtSite::IsAnyName;
-    return Boxed(callStub(read, readAtSiteUnlessAsMade(name), { in<Boxed>(read->objectOperand()).value() }, { .numberedImmediate = *answers }).first);
+    LValue receiver = in<Boxed>(read->objectOperand()).value();
+    auto readUnlessAsMade = [&] {
+        return Boxed(callStub(read, readAtSiteUnlessAsMade(name), { receiver }, { .numberedImmediate = *answers }).first);
+    };
+    if (!m_program.admitsReplacedBuiltins)
+        return readUnlessAsMade();
+    Pointer membersWritten = loadImmutablePointer(AOT_INSTANCE_OFFSET(builtins.membersWritten));
+    Condition methodIsAsBuilt = boolean(true);
+    for (BuiltinID member : BuiltinTable::singleton().membersThatHoldMethodOf(*boxedCall))
+        methodIsAsBuilt = logicalAnd(methodIsAsBuilt, isZero(Word32(m_out.load8ZeroExt32(m_out.address(m_heaps.entire(AbstractHeap::NamedProperties), membersWritten.value(), member.index())))));
+    LBasicBlock asBuilt = newBlock();
+    LBasicBlock replaced = newBlock();
+    OperandJoin methods(m_out, Representation::JSValue);
+    branch(methodIsAsBuilt, { normalEdge(asBuilt), rareEdge(replaced) });
+    m_out.appendTo(asBuilt);
+    methods.add(readUnlessAsMade());
+    m_out.appendTo(replaced);
+    methods.add(getNamedProperty(read));
+    return methods.finish().as<Boxed>();
 }
 
 std::optional<AccessEmitter::StoreOfKnownField> AccessEmitter::findStoreOfKnownField(const Type& receiver, PropertyKeyID key, PutMode mode)

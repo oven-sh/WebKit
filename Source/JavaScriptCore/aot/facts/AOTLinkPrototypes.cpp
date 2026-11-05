@@ -271,6 +271,15 @@ bool LinkFlow::mayNotBeLinkedYetBelow(LayoutID from, LayoutID classAbove) const
     return false;
 }
 
+FlowNodeID LinkFlow::objectsMadeThroughConstructorOf(LayoutID layout)
+{
+    LockerOfWhatIsShared lockerOfWhatIsShared(*this);
+    auto added = m_nodesOfObjectsMadeThroughConstructors.add(layout.index(), UINT32_MAX);
+    if (added.isNewEntry)
+        added.iterator->value = makeNode().index();
+    return FlowNodeID(added.iterator->value);
+}
+
 FlowNodeID LinkFlow::objectsMadeForClassBelowConstructorFunction(LayoutID layout)
 {
     LockerOfWhatIsShared lockerOfWhatIsShared(*this);

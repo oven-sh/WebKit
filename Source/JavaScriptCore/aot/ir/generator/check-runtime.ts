@@ -131,7 +131,6 @@ function checkInlineParameterType(type: SchemaEnum, errors: ErrorList): void {
 }
 
 const justifiedDifferences: ReadonlyMap<string, string> = new Map([
-  ["NewObject writes MemberGuards", "the first allocation of a class may begin a guard; only what ends one has to say so (GuardEmitter::holds())"],
   ["PrivateSet writes MemberGuards", "DefinesProperty speaks for every definer; a private name is no member, and a guard ends with a member"],
   ["PrivateDefine writes MemberGuards", "as PrivateSet"],
   ["InitializeBuiltin writes ExternalState", "it orders the operation among others in the IR; generated code has no load of that heap"],

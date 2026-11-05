@@ -10,6 +10,8 @@
 
 #include "AOTBuiltinTable.h"
 #include "AOTCallSiteTable.h"
+#include "AOTClassPrototype.h"
+#include "AOTCompiledCallee.h"
 #include "AOTCompiledFrame.h"
 #include "AOTEffectsNet.h"
 #include "AOTErrorMessages.h"
@@ -19,6 +21,7 @@
 #include "AOTInstance.h"
 #include "AOTMembersLeftOut.h"
 #include "AOTObject.h"
+#include "AOTObjectModel.h"
 #include "AOTOperationData.h"
 #include "AOTOperationScope.h"
 #include "AOTPoisonedCell.h"
@@ -36,6 +39,7 @@
 #include "Error.h"
 #include "ErrorInstance.h"
 #include "ExceptionHelpers.h"
+#include "FunctionExecutable.h"
 #include "IteratorOperations.h"
 #include "JSCInlines.h"
 #include "MarkedBlockCage.h"
@@ -379,9 +383,56 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTStopAtNativeResult, void, (Instanc
     CRASH();
 }
 
+static void stopIfSaidNeverToReachUnseenCode(VM& vm, const State& state, JSValue handedOver)
+{
+    if (!handedOver || !handedOver.isCell())
+        return;
+    countEvent(vm, RuntimeCounterID::CellsHandedToUnseenCode);
+    JSCell* cell = handedOver.asCell();
+    StringPrintStream what;
+    if (isCompiledObject(cell)) {
+        const LayoutData& layout = uncheckedDowncast<Object>(cell)->layout();
+        if (!layout.isSaidNeverToReachUnseenCode)
+            return;
+        what.print("an object of layout L"_s, layout.index);
+    } else if (std::optional<FunctionID> function = functionOf(cell)) {
+        if (!Image::current()->programTables().traceOfFunction(function->index()).closuresAreSaidNeverToReachUnseenCode)
+            return;
+        what.print("a closure of f"_s, sourceFunctionOf(*function).index());
+    } else if (cell->isObject()) {
+        const ClassTable& classes = state.objects->classes;
+        ClassSide side = ClassSide::Prototype;
+        const LayoutData* layout = classes.classHeldBy(asObject(cell), side);
+        if (!layout && cell->classInfo() == ClassPrototype::info())
+            layout = classes.classOf(*uncheckedDowncast<ClassPrototype>(cell));
+        if (!layout || !layout->isSaidNeverToReachUnseenCode)
+            return;
+        what.print(side == ClassSide::Prototype ? "the prototype object of class L"_s : "the class object of class L"_s, layout->index);
+    } else
+        return;
+    dataLogLn("AOT: ", what.toString(), " is handed to code that the compiler has not read, and the compiler took it never to leave. This is a bug in Bun.");
+    CRASH();
+}
+
+static void askWhatIsHandedToCalleeOfEngine(VM& vm, const State& state, const CallFrame* laid)
+{
+    JSValue called = laid->guaranteedJSValueCallee();
+    auto* callee = called.isCell() ? dynamicDowncast<JSFunction>(called.asCell()) : nullptr;
+    auto* executable = callee ? dynamicDowncast<FunctionExecutable>(callee->executable()) : nullptr;
+    if (!executable || executable->isBuiltinFunction())
+        return;
+    stopIfSaidNeverToReachUnseenCode(vm, state, laid->thisValue());
+    for (size_t argument = 0; argument < laid->argumentCount(); ++argument)
+        stopIfSaidNeverToReachUnseenCode(vm, state, laid->uncheckedArgument(argument));
+}
+
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTPoisonCell, void, (Instance* instance, JSCell* cell, uint32_t function, uint32_t position))
 {
     AOT_OPERATION_BEGIN_WITHOUT_COLLECTION(instance, Entry::operationAOTPoisonCell);
+    if (function & PoisonedCell::isFrameLaidForCalleeOfEngine) {
+        askWhatIsHandedToCalleeOfEngine(vm, *instance->state, reinterpret_cast<const CallFrame*>(cell));
+        return;
+    }
     if (function & PoisonedCell::isLentForCallAhead) {
         PoisonedCell::noteThatCellIsLent(cell, AOT_FRAME_RECORD_OF_THIS_FUNCTION()->callerFrame, function & ~PoisonedCell::isLentForCallAhead, position);
         return;

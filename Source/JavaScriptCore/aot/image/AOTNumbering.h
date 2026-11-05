@@ -58,8 +58,12 @@ using Typed::PropertyKeyID;
 using Typed::TypeID;
 using Typed::VariableID;
 
-constexpr uint32_t sideWordOfClassGuardOfName(ClassSide side, bool isAskedByStoresAlone) { return static_cast<uint32_t>(side) + (isAskedByStoresAlone ? numberOfEnumerators<ClassSide> : 0); }
+enum class AskerOfClassGuardOfName : uint8_t { Reads, StoresAlone, ReadsBehindLookAtObject };
+constexpr uint32_t sideWordOfClassGuardOfName(ClassSide side, AskerOfClassGuardOfName asker) { return static_cast<uint32_t>(side) + static_cast<uint32_t>(asker) * numberOfEnumerators<ClassSide>; }
 inline ClassSide sideOfClassGuardKey(std::span<const uint32_t> key) { return static_cast<ClassSide>(key[1] % numberOfEnumerators<ClassSide>); }
+inline AskerOfClassGuardOfName askerOfClassGuardKey(std::span<const uint32_t> key) { return static_cast<AskerOfClassGuardOfName>(key[1] / numberOfEnumerators<ClassSide>); }
+inline bool isClassGuardOfNamesKey(std::span<const uint32_t> key) { return key.size() > 2; }
+bool guardsOfNamesAwaitBeginningOf(const Typed::Program&, const Typed::Plan&, LayoutID classLayout);
 
 using ClassGuardKey = Vector<uint32_t, 4>;
 
@@ -161,9 +165,9 @@ public:
     template<typename Tag> uint32_t add(NumberSpace space, Typed::ID<Tag> id, int32_t addend = 0) { return add(space, id.index(), addend); }
 
     static ClassGuardKey keyOfClassGuard(LayoutID classLayout, ClassSide side) { return { classLayout.index(), static_cast<uint32_t>(side) }; }
-    static ClassGuardKey keyOfClassGuardOfName(LayoutID classLayout, ClassSide side, NumberSpace spaceOfName, uint32_t name, bool isAskedByStoresAlone = false)
+    static ClassGuardKey keyOfClassGuardOfName(LayoutID classLayout, ClassSide side, NumberSpace spaceOfName, uint32_t name, AskerOfClassGuardOfName asker = AskerOfClassGuardOfName::Reads)
     {
-        return { classLayout.index(), sideWordOfClassGuardOfName(side, isAskedByStoresAlone), static_cast<uint32_t>(spaceOfName), name };
+        return { classLayout.index(), sideWordOfClassGuardOfName(side, asker), static_cast<uint32_t>(spaceOfName), name };
     }
     static ClassGuardKey keyOfClassGuardOfNames(LayoutID classLayout, ClassSide side, std::span<const PropertyKeyID> names)
     {
@@ -336,7 +340,7 @@ struct ModuleBuiltinCell {
 };
 
 struct PlacedClassGuardOfName {
-    uint32_t sideWord() const { return sideWordOfClassGuardOfName(side, isAskedByStoresAlone); }
+    uint32_t sideWord() const { return sideWordOfClassGuardOfName(side, asker); }
     std::array<uint32_t, 4> key() const { return { classLayout.index(), sideWord(), static_cast<uint32_t>(spaceOfName), name }; }
     friend auto operator<=>(const PlacedClassGuardOfName& first, const PlacedClassGuardOfName& second) { return first.key() <=> second.key(); }
     friend bool operator==(const PlacedClassGuardOfName& first, const PlacedClassGuardOfName& second) { return first.key() == second.key(); }
@@ -346,7 +350,7 @@ struct PlacedClassGuardOfName {
     NumberSpace spaceOfName { NumberSpace::Name };
     uint32_t name { 0 };
     uint32_t bit { 0 };
-    bool isAskedByStoresAlone { false };
+    AskerOfClassGuardOfName asker { AskerOfClassGuardOfName::Reads };
 };
 
 struct PlacedClassGuardCount {

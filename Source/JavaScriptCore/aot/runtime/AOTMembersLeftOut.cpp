@@ -298,6 +298,12 @@ void explainErrorBehindMemberLeftOut(JSGlobalObject* realm, JSObject* error, JSV
     error->putDirect(vm, vm.propertyNames->message, jsString(vm, makeString(text, text.endsWith('.') ? " "_s : ". "_s, sentence)), static_cast<unsigned>(PropertyAttribute::DontEnum));
 }
 
+bool isAnythingNotedOfMembersLeftOut(const VM* vm)
+{
+    Locker locker { membersLock };
+    return membersByVM().contains(const_cast<VM*>(vm));
+}
+
 void forgetErrorOfCodeLeftOut(VM& vm)
 {
     Locker locker { membersLock };

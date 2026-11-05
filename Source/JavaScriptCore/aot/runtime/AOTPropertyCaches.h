@@ -107,6 +107,24 @@ private:
     uint32_t m_versionOfStructuresThatWait { 0 };
 };
 
+class StructuresBelowBuiltinClasses final : public ChainDependentOwner {
+    WTF_MAKE_NONCOPYABLE(StructuresBelowBuiltinClasses);
+public:
+    explicit StructuresBelowBuiltinClasses(State&);
+
+    void dropChainDependent(VM&, uint32_t structureID, UniquedStringImpl*) final;
+    bool hasChainDependent(VM&, uint32_t structureID, UniquedStringImpl*) const final;
+    size_t removeDeadEntries(VM&, CollectionScope);
+    BuiltinClassID classAbove(Structure*) const;
+    bool holds(Structure*) const;
+    void keep(Structure*, std::span<JSObject* const> changeableObjects);
+
+private:
+    State& m_state;
+    ChainDependentOwnerID m_ownerID;
+    Vector<std::pair<JSType, BuiltinClassID>, 2> m_classes;
+};
+
 class AnswersAtSites final : public ChainDependentOwner {
     WTF_MAKE_NONCOPYABLE(AnswersAtSites);
 public:
@@ -426,6 +444,7 @@ private:
     static constexpr uint32_t storeMissesBeforeFiling = 1;
 
     void ensureChangesAreReported(std::span<JSObject* const>);
+    void keepIfBelowBuiltinClass(Structure*);
     bool canCache(Structure*, const PropertyAnswer&) const;
 
     State& m_state;
@@ -434,6 +453,7 @@ private:
     ChainDependentOwnerID m_tablesOwnerID;
     SiteCaches m_siteCaches;
     AnswersAtSites m_answersAtSites;
+    StructuresBelowBuiltinClasses m_structuresBelowBuiltinClasses;
     uint32_t m_stateOfPeriodsOfSamples { 0 };
     Vector<Addition> m_additionsSinceCollection;
     UncheckedKeyHashMap<UniquedStringImpl*, JSCell*> m_keysForTraps;

@@ -437,7 +437,7 @@ bool forwardCallBehindTestOfCallee(Walker& walker, const BodyValue& call)
     walker.branch(isExpected, forwarding, asWritten);
 
     if (FunctionID listed = walker.facts().linked().calleeAt(walker.currentFunction(), call.id()))
-        walker.arrivals().leaveAnything(listed);
+        walker.leaveAnythingAt(listed);
 
     walker.continueIn(asWritten);
     Draft closed = written;

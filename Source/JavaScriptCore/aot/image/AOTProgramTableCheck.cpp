@@ -725,6 +725,7 @@ static void checkClassRecord(const JoinedTables& check, const LayoutData& layout
     }
     check.expect(!!classData.guardsHoldWhileClear == check.plan.classGuardsHoldWhileClear(id), "GuardPolarityDiffersFromPlan"_s, id);
     check.expect(!!classData.guardsOfPrototypeSideHoldWhileClear == check.plan.bitsOfClassGuardsAreClearWhileTheyHold(id, ClassSide::Prototype), "GuardPolarityDiffersFromPlan"_s, id);
+    check.expect(!!classData.guardsOfNamesAwaitBeginning == guardsOfNamesAwaitBeginningOf(check.program, check.plan, id), "GuardPolarityDiffersFromPlan"_s, id);
     check.expect(std::ranges::all_of(layout.staticFields(), [&](const FieldData& field) {
         return field.slot.representation() == SlotRepresentation::JSValue && std::ranges::binary_search(check.numbers.statics().roots, static_cast<uint32_t>(field.slot.offset));
     }), "StaticFieldWithoutBoxedVariable"_s, id);

@@ -19,7 +19,7 @@ namespace JSC { namespace AOT { namespace Typed {
 
 static constexpr PristineAspectSet aspectsThatLookAtCellProvesForStringOperands { PristineAspects::Storage, PristineAspects::Names, PristineAspects::NamesKeptBelow, PristineAspects::Prototype };
 
-bool goesByOneRowOnOperandAsMade(Walker& walker, const BodyValue& call, BuiltinID builtin, Reference value, TypeID behindTest)
+bool goesByOneRowOnOperandAsMade(Walker& walker, const BodyValue& call, BuiltinID builtin, Reference value, TypeID behindTest, BuiltinOverloadID* onlyRow)
 {
     TypeArena& types = walker.types();
     const BuiltinTable& table = walker.program().builtins();
@@ -53,7 +53,11 @@ bool goesByOneRowOnOperandAsMade(Walker& walker, const BodyValue& call, BuiltinI
     if (!isEachBuilt || !rowsSpeakOfCallOnReceiver(context, builtin, assumed.receiver))
         return false;
     Vector<BuiltinOverloadID, 4> reached = overloadsReachedBy(context, builtin, BuiltinCallMode::Call, assumed);
-    return reached.size() == 1 && !table.at(reached[0]).isUndeclared();
+    if (reached.size() != 1 || table.at(reached[0]).isUndeclared())
+        return false;
+    if (onlyRow)
+        *onlyRow = reached[0];
+    return true;
 }
 
 bool openTestOfListAtReadOfMethodOfItsOpcodes(Walker& walker, const BodyValue& read)
@@ -138,10 +142,12 @@ void openGuessAtOperandTakenAsMade(Walker& walker, const BodyValue& call, Refere
         goOnWhereTestPasses(isOfClass);
         proven = buildProofBehindTestForStrings(walker, value, isOfClass, OperandIndex::TypeTest::value, origin);
     }
-    if (Reference isAsMade = proven ? buildTestOfObjectAsMade(walker, proven, origin) : Reference()) {
+    TestOfObjectAsMade asked = walker.program().admitsReplacedBuiltins ? TestOfObjectAsMade::AsksObjectAlone : TestOfObjectAsMade::AsksWhatWasWrittenAboveToo;
+    if (Reference isAsMade = proven ? buildTestOfObjectAsMade(walker, proven, origin, asked) : Reference()) {
         goOnWhereTestPasses(isAsMade);
         noteListAsMade(walker, proven);
     }
+    walker.letGuessFailUnasked(closedBlock, origin);
     if (walker.hasFailed())
         return;
     BlockID typedBlock = walker.isUnreachable() ? BlockID() : walker.currentBlock();

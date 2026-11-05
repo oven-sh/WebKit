@@ -26,10 +26,15 @@ enum class KnownNote : uint8_t {
     ListTestedInFrontOfLoop,
     NumberReadOutOfList,
     PassedTestOfBeingAsMade,
-    HeldToStayingAsMade,
+    AnswerOfQuestionStillStands,
+    ViewOfFixedLength,
+    MemberOfBuiltinIsAsBuilt,
+    HolderOfBuiltinHasNoAddedNames,
+    RoomOfViewIsAsInFrontOfLoop,
+    CounterLiesBelowLesserBound,
 };
 void noteKnown(Walker&, KnownNote, Reference subject, Reference other, uint32_t word, const LocationMasks& restsOn, uint64_t noted, bool endsAtSuspension = false);
-std::optional<uint64_t> findKnown(Walker&, KnownNote, Reference subject, Reference other = { }, uint32_t word = 0);
+std::optional<uint64_t> findKnown(const Walker&, KnownNote, Reference subject, Reference other = { }, uint32_t word = 0);
 void endKnown(Walker&, KnownNote, Reference subject, Reference other = { }, uint32_t word = 0);
 extern const OpcodeSet opcodesThatFindEqualOperationBuiltTakes;
 extern const OpcodeSet opcodesThatNoteOperationBuiltTakes;

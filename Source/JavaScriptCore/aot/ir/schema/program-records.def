@@ -109,6 +109,7 @@ record RuntimeFunctionEntry wire { id: RuntimeFunction function: Function(Closur
 record WebAssemblyModule wire { module: Module(Target) bytes: Span<Byte> }
 record ReplaceableBuiltin wire { member: Builtin staysLocked: Bool }
 record OpenedName wire { holder: Builtin name: String }
+record BuiltinUsedAtStart wire { builtin: Builtin }
 
 enum ResumeMode { Next Throw Return }
 enum IteratorKind { Sync Async }
@@ -152,6 +153,7 @@ list runtimeFunctions : RuntimeFunctionEntry as runtimefunction sorted by id
 list webAssemblyModules : WebAssemblyModule as webassemblymodule
 list replaceableBuiltins : ReplaceableBuiltin as replaceablebuiltin sorted by member
 list openedNames : OpenedName as openedname
+list builtinsUsedAtStart : BuiltinUsedAtStart as usedatstart
 
 enum BlockRole { Ordinary CatchHandler CleanupHandler IterationCleanup DisposalCleanup }
 enum BlockFrequency { | engine Normal Unlikely Rare }

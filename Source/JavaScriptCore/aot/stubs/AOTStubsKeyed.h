@@ -15,6 +15,7 @@ void loadNameOfKey(StubAssembler&, GPRReg key, GPRReg uid, GPRReg scratch, JumpL
 void callLeafLookup(StubAssembler&, Entry, GPRReg second, std::optional<GPRReg> value, GPRReg baseAfterCall, const RegisterSet& lostAnyway = { });
 void rememberAbsenceOfKey(StubAssembler&, GPRReg key, GPRReg header, GPRReg place, GPRReg scratch);
 void rememberOwnGetterOfKey(StubAssembler&, GPRReg key, GPRReg header, GPRReg wordIndex, GPRReg place, GPRReg scratch);
+void rememberGetterAboveOfKey(StubAssembler&, GPRReg key, GPRReg header, GPRReg addressOfWord, GPRReg place, GPRReg scratch);
 void rememberPlaceOfExtraProperty(StubAssembler&, SlotAccess, const CachedSlot&, GPRReg object, GPRReg key, GPRReg place, GPRReg structureID);
 Jump branchIfEveryPlaceWasFiledFromSlots(StubAssembler&);
 void rememberPlaceOfAddition(StubAssembler&, const CachedSlot&, GPRReg object, GPRReg key, GPRReg place, GPRReg scratch);

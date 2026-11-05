@@ -705,6 +705,21 @@ std::optional<BuiltinBoxedStub> BuiltinTable::boxedCallStubOf(BuiltinID id) cons
     return found->stub;
 }
 
+Vector<BuiltinID, 4> BuiltinTable::membersThatHoldMethodOf(BuiltinBoxedStub stub) const
+{
+    Vector<BuiltinID, 4> members;
+    for (const BuiltinBoxedCall& call : m_data.attachments.boxedCalls) {
+        if (call.stub != stub)
+            continue;
+        BuiltinID method = canonicalID(call.builtin);
+        for (BuiltinID member : membersOf(at(method).holder)) {
+            if (canonicalID(member) == method && !members.contains(member))
+                members.append(member);
+        }
+    }
+    return members;
+}
+
 std::span<const BuiltinName> BuiltinTable::keysReadBy(Protocol protocol) const
 {
     auto found = std::ranges::find(m_data.names.protocolKeys, protocol, &BuiltinProtocolKeys::protocol);

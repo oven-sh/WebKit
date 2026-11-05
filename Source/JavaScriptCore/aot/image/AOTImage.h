@@ -144,6 +144,7 @@ public:
     bool showsWaysBetweenModuleObjects() const { return header().has(ImageFlag::ShowsWaysBetweenModuleObjects); }
     bool storesPathOfMainModule() const { return header().has(ImageFlag::StoresPathOfMainModule); }
     bool runsEntryPointsAgain() const { return header().has(ImageFlag::RunsEntryPointsAgain); }
+    bool showsEntriesOfRequireCache() const { return header().has(ImageFlag::ShowsEntriesOfRequireCache); }
 
     JS_EXPORT_PRIVATE CodeLocation locate(const void* pc) const;
 

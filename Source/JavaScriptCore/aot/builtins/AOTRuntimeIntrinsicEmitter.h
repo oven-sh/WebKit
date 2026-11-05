@@ -20,6 +20,8 @@ public:
     void generateLinkTimeConstant(const ValueContext&);
     void generateHasJSType(const ValueContext&);
     void generateFindsDeclaredMember(const ValueContext&);
+    void generateIsPlainInstanceOf(const ValueContext&);
+    void generateFindsNoMember(const ValueContext&);
     void generateGetInternalField(const ValueContext&);
     void generatePutInternalField(const ValueContext&);
 

@@ -37,6 +37,7 @@ enum class AnswerKeptInArena : uint8_t {
     FieldsOfSlotRead = 85,
     TypeInFilledSlot = 101,
     TestOfGuess = 102,
+    TypeHeldUnderName = 104,
 };
 
 enum class MakerOfType : uint8_t {

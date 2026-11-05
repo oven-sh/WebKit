@@ -511,10 +511,10 @@ static constexpr StubKey bodyForEveryCaller { StubFamily::AllocateCell };
 static constexpr StubKey stubMakingSameResult = bodyForEveryCaller.withForm(1);
 static constexpr StubKey stubMakingNoResult { StubFamily::RememberElement };
 
-static_assert(exists(bodyForEveryCaller.withCallerFrame(CallerFrame::KeepsNoRegisters)) && exists(bodyForEveryCaller.withCallerFrame(CallerFrame::KeepsNoFPRs)));
-static_assert(exists(stubMakingSameResult.withCallerFrame(CallerFrame::KeepsNoRegisters)) && exists(stubMakingSameResult.withCallerFrame(CallerFrame::KeepsNoFPRs)));
-static_assert(exists(stubMakingNoResult.withCallerFrame(CallerFrame::KeepsNoRegisters)) && exists(stubMakingNoResult.withCallerFrame(CallerFrame::KeepsNoFPRs)));
-static_assert(!exists(StubKey(StubFamily::BuiltinCell).withCallerFrame(CallerFrame::KeepsNoFPRs)) && !exists(StubKey(StubFamily::Equal).withCallerFrame(CallerFrame::KeepsNoRegisters)) && !exists(bodyWithTwoEntries.withCallerFrame(CallerFrame::KeepsNoRegisters)));
+static_assert(exists(bodyForEveryCaller.withCallerFrame(CallerFrame::KeepsNoFPRs)));
+static_assert(exists(stubMakingSameResult.withCallerFrame(CallerFrame::KeepsNoFPRs)));
+static_assert(exists(stubMakingNoResult.withCallerFrame(CallerFrame::KeepsNoFPRs)));
+static_assert(!exists(StubKey(StubFamily::BuiltinCell).withCallerFrame(CallerFrame::KeepsNoFPRs)) && !exists(StubKey(StubFamily::Equal).withCallerFrame(CallerFrame::KeepsNoFPRs)) && !exists(bodyWithTwoEntries.withCallerFrame(CallerFrame::KeepsNoFPRs)));
 
 static RegisterSet registersLostToOperationFor(CallerFrame callerFrame, SavedRegistersAreRead savedRegistersAreRead)
 {
@@ -536,17 +536,13 @@ static void testCallersThatKeepFewerRegisters()
 
     RegisterSet lostToCallerWithFrame = registersLostToOperationFor(CallerFrame::HasFrame, SavedRegistersAreRead::ByCallerAlone);
     AOT_TEST_CHECK(!lostToCallerWithFrame.numberOfSetFPRs());
-    AOT_TEST_CHECK(registersLostToOperationFor(CallerFrame::KeepsNoRegisters, SavedRegistersAreRead::ByCallerAlone) == registersClobberedByOperations());
     RegisterSet lostToCallerWithoutFPRs = registersLostToOperationFor(CallerFrame::KeepsNoFPRs, SavedRegistersAreRead::ByCallerAlone);
     AOT_TEST_CHECK(RegisterSet(lostToCallerWithoutFPRs).filter(RegisterSet::allGPRs()) == lostToCallerWithFrame);
     AOT_TEST_CHECK(RegisterSet(lostToCallerWithoutFPRs).filter(RegisterSet::allFPRs()) == registersClobberedByOperations().filter(RegisterSet::allFPRs()));
 
     AOT_TEST_CHECK(targetOfJumpFor(CallerFrame::HasFrame, stubMakingSameResult) == stubMakingSameResult);
-    for (CallerFrame callerFrame : { CallerFrame::KeepsNoRegisters, CallerFrame::KeepsNoFPRs }) {
-        AOT_TEST_CHECK(registersLostToOperationFor(callerFrame, SavedRegistersAreRead::BeforeReturnToo) == lostToCallerWithFrame);
-        AOT_TEST_CHECK(targetOfJumpFor(callerFrame, stubMakingSameResult) == stubMakingSameResult.withCallerFrame(callerFrame));
-    }
-    AOT_TEST_CHECK(targetOfJumpFor(CallerFrame::KeepsNoRegisters, stubMakingNoResult) == stubMakingNoResult);
+    AOT_TEST_CHECK(registersLostToOperationFor(CallerFrame::KeepsNoFPRs, SavedRegistersAreRead::BeforeReturnToo) == lostToCallerWithFrame);
+    AOT_TEST_CHECK(targetOfJumpFor(CallerFrame::KeepsNoFPRs, stubMakingSameResult) == stubMakingSameResult.withCallerFrame(CallerFrame::KeepsNoFPRs));
     AOT_TEST_CHECK(targetOfJumpFor(CallerFrame::KeepsNoFPRs, stubMakingNoResult) == stubMakingNoResult.withCallerFrame(CallerFrame::KeepsNoFPRs));
 }
 

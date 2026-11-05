@@ -358,6 +358,25 @@ void rememberOwnGetterOfKey(StubAssembler& jit, GPRReg key, GPRReg header, GPRRe
     jit.store32(wordIndex, inKeyedValuePlace(place, SlotAccess::Read, OBJECT_OFFSETOF(KeyedValuePlace, wordIndex)));
 }
 
+void rememberGetterAboveOfKey(StubAssembler& jit, GPRReg key, GPRReg header, GPRReg addressOfWord, GPRReg place, GPRReg scratch)
+{
+    RELEASE_ASSERT(noOverlap(key, header, addressOfWord, place, scratch, instanceGPR, cellCageBaseGPR));
+    static_assert(!Slot::offsetOfStructureID());
+    const GPRReg wordInCellCage = addressOfWord;
+    jit.sub64(cellCageBaseGPR, wordInCellCage);
+    jit.urshift64(TrustedImm32(3), wordInCellCage);
+    jit.urshift64(wordInCellCage, TrustedImm32(32), scratch);
+    Jump liesOutsideCage = jit.branchTest64(CCallHelpers::NonZero, scratch);
+    jit.zeroExtend32ToWord(header, scratch);
+    locateKeyedValuePlace(jit, SlotAccess::Read, key, scratch, place);
+    jit.storePtr(key, inKeyedValuePlace(place, SlotAccess::Read, OBJECT_OFFSETOF(KeyedValuePlace, key)));
+    jit.add32(TrustedImm32(KeyedValuePlace::getterAboveBits), scratch);
+    jit.store32(scratch, inKeyedValuePlace(place, SlotAccess::Read, OBJECT_OFFSETOF(KeyedValuePlace, structureID)));
+    jit.store32(wordInCellCage, inKeyedValuePlace(place, SlotAccess::Read, OBJECT_OFFSETOF(KeyedValuePlace, wordInCellCage)));
+    jit.store8(TrustedImm32(1), Address(instanceGPR, AOT_INSTANCE_OFFSET(propertyCaches.placesSayAbsence)));
+    liesOutsideCage.link(&jit);
+}
+
 static void rememberKeyedValuePlace(StubAssembler& jit, SlotAccess access, const KeyedProbeRegisters& registers, GPRReg wordIndex)
 {
     RELEASE_ASSERT(noOverlap(wordIndex, registers.base, registers.key, registers.structureID, registers.entry));
@@ -898,6 +917,17 @@ static KeyedValueRead returnValueOfKey(StubAssembler& jit, const KeyedProbeRegis
         jit.load32(Address(base, JSCell::structureIDOffset()), registers.structureID);
         hasNoPlace.append(jit.jump());
         placeIsOfNoGetter.link(&jit);
+
+        jit.add32(TrustedImm32(KeyedValuePlace::getterAboveBits), registers.structureID, header);
+        Jump placeIsOfNoGetterAbove = jit.branch32(CCallHelpers::NotEqual, inKeyedValuePlace(registers.entry, SlotAccess::Read, OBJECT_OFFSETOF(KeyedValuePlace, structureID)), header);
+        jit.load32(inKeyedValuePlace(registers.entry, SlotAccess::Read, OBJECT_OFFSETOF(KeyedValuePlace, wordInCellCage)), header);
+        jit.load64(BaseIndex(cellCageBaseGPR, header, CCallHelpers::TimesEight), getterSetter);
+        JumpList cannotCallGetterAbove;
+        callGetterAndReturn(jit, base, getterSetter, cannotCallGetterAbove);
+        cannotCallGetterAbove.link(&jit);
+        jit.load32(Address(base, JSCell::structureIDOffset()), registers.structureID);
+        hasNoPlace.append(jit.jump());
+        placeIsOfNoGetterAbove.link(&jit);
     }
     returnExtraPropertyByPlace(jit, registers, hasNoPlace);
 

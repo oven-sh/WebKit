@@ -52,10 +52,20 @@ WalkOptions walkOptionsOf(const BuildContext& build)
         .testsEveryPosition = AOT::hasFlag(options.testing, Wire::TestingSwitch::TestsEveryPosition),
         .takesPositionsToLieInside = AOT::hasFlag(options.testing, Wire::TestingSwitch::PositionsAreTakenToLieInside),
         .takesCalleesToKeepNothing = AOT::hasFlag(options.testing, Wire::TestingSwitch::NoCalleeKeepsWhatItIsHanded),
-        .holdsObjectsToStayingAsMade = AOT::hasFlag(options.testing, Wire::TestingSwitch::HoldsObjectsToStayingAsMade),
         .writesBodiesStraight = AOT::hasFlag(options.testing, Wire::TestingSwitch::WritesBodiesStraight),
         .checksEffects = AOT::hasFlag(options.testing, Wire::TestingSwitch::CheckEffectsAtRunTime),
+        .walksLastWalksOfLoopsAlone = options.walksLastWalksOfLoopsAlone,
+        .walksLoopsThatFitAgain = options.walksLoopsThatFitAgain,
+        .undoLeavesExpectations = AOT::hasFlag(options.testing, Wire::TestingSwitch::UndoLeavesExpectations),
         .rowThatSaysLess = options.rowThatSaysLess,
+        .ignoresBranchHints = AOT::hasFlag(options.testing, Wire::TestingSwitch::IgnoreBranchHints),
+        .shufflesBlockFrequencies = AOT::hasFlag(options.testing, Wire::TestingSwitch::ShuffleBlockFrequencies),
+        .ignoresExpectedTypes = AOT::hasFlag(options.testing, Wire::TestingSwitch::IgnoreExpectedTypes),
+        .shufflesExpectedTypes = AOT::hasFlag(options.testing, Wire::TestingSwitch::ShuffleExpectedTypes),
+        .failsGuesses = AOT::hasFlag(options.testing, Wire::TestingSwitch::FailGuesses),
+        .shufflesChoices = AOT::hasFlag(options.testing, Wire::TestingSwitch::ShuffleChoices),
+        .judgesInt32Promises = !AOT::hasFlag(options.testing, Wire::TestingSwitch::IgnoreExpectedTypes) && !AOT::hasFlag(options.testing, Wire::TestingSwitch::ShuffleExpectedTypes) && !AOT::hasFlag(options.testing, Wire::TestingSwitch::GiveLinkMore),
+        .seedOfShuffles = options.seedOfShuffles,
     };
 }
 
@@ -238,6 +248,8 @@ static String findOperationThatLinkHasNotCounted(const WalkInputs& inputs, TypeA
         RowThatSaysLess row = RowThatSaysLess::decode(inputs.options.rowThatSaysLess);
         row.cut(KindOfEffectsRow::Summary, unit.function.index(), given ? countedGivenArguments : counted);
     }
+    if (inputs.options.ignoresBranchHints || inputs.options.shufflesBlockFrequencies) [[unlikely]]
+        given = nullptr;
     ClosuresThatCalledParametersHold leftToCaller;
     if (given && given->parametersCalled)
         leftToCaller = findClosuresThatCalledParametersHold(inputs, types, code, given->parametersCalled);
@@ -319,9 +331,9 @@ static bool notesAreTakenOfCompileUnit(CodeRole role)
     switch (role) {
     case CodeRole::Body:
     case CodeRole::CoroutineBody:
+    case CodeRole::ParameterGuard:
         return true;
     case CodeRole::SlowBody:
-    case CodeRole::ParameterGuard:
     case CodeRole::GenericCallEntry:
     case CodeRole::GenericConstructEntry:
     case CodeRole::AllocatingConstructEntry:
@@ -402,6 +414,8 @@ bool CompileWorker::walkAndSweep(CodeUnit unit)
     SweepTotals swept = m_sweep.run(SweepInputs { inputs.program, inputs.facts, inputs.plan, m_types }, code);
     m_build.statistics().count(StatisticID::OperationsSwept, swept.operationsSwept);
     m_build.statistics().count(StatisticID::ValuesWalked, m_walker->numberOfValuesWalked());
+    m_build.statistics().count(StatisticID::WalksOfLoops, m_walker->numberOfWalksOfLoops());
+    m_build.statistics().count(StatisticID::WalksOfLoopsUndone, m_walker->numberOfWalksOfLoopsUndone());
     m_build.statistics().count(StatisticID::OperationsBuilt, code.numberOfValues());
     m_build.statistics().count(StatisticID::CallsInlined, code.inlineFrames().size() - 1);
 
@@ -413,7 +427,8 @@ bool CompileWorker::walkAndSweep(CodeUnit unit)
 
     if (inputs.options.takesNotes && notesAreTakenOfCompileUnit(unit.role)) {
         WalkNotes notes = notesOfSweptCode(m_types, code, AOT::hasFlag(m_build.options().reports, Wire::ReportSet::AccessCounts));
-        m_build.statistics().count(StatisticID::ValuesInDouble, notes.numberOfValuesInDouble);
+        if (unit.role != CodeRole::ParameterGuard)
+            m_build.statistics().count(StatisticID::ValuesInDouble, notes.numberOfValuesInDouble);
         if (!notes.notes.isEmpty())
             m_notes.append(WTF::move(notes));
     }
@@ -659,6 +674,7 @@ std::optional<CompiledCode> CompileWorker::compileEntryByHand(CodeUnit unit)
         return std::nullopt;
     }
     m_build.statistics().count(StatisticID::UnitsCompiled);
+    m_build.statistics().count(StatisticID::EntriesWrittenByHand);
     return compiled;
 }
 
@@ -700,6 +716,8 @@ std::optional<CompiledCode> CompileWorker::compile(CodeUnit unit)
         statistics.count(StatisticID::SlicesMadeOfElementsInSight, slices);
     for (const Walker::CountOfUnit& count : m_walker->countsOfUnit())
         statistics.count(count.statistic, count.amount);
+    if (uint32_t blocks = swept.numberOfBlocksPlacedOtherwise()) [[unlikely]]
+        statistics.count(StatisticID::BlocksPlacedOtherwise, blocks);
     return code;
 }
 

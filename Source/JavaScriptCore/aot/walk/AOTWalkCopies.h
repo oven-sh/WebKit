@@ -71,6 +71,8 @@ bool orderWordTellsOwnKeysOf(const Walker&, LayoutID);
 bool callAccessorInSlot(Walker&, const BodyValue& access);
 bool accessStaticFieldInVariable(Walker&, const BodyValue& access);
 bool buildCopyThatMakesObject(Walker&, const BodyValue& copy);
+bool fillLiteralInSight(Walker&, const BodyValue& firstCopy);
+bool mayStandBehindCopy(const BodyValue&, ValueID copy);
 inline constexpr OpcodeSet opcodesThatBuildCopyWithWhatFollowsTakes { Opcode::CopyObject };
 AOT_LINK_OF_WALK(buildCopyWithWhatFollows, opcodesThatBuildCopyWithWhatFollowsTakes)
 

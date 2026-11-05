@@ -534,10 +534,12 @@ static void checkArraySummaries(const StubCatalog& catalog)
     const StubSignature& largestLiteral = catalog.summaryOf(arrayLiteral(maxCount)).signature;
     AOT_TEST_CHECK(largestLiteral.numberOfOperands == maxCount);
     for (StubKey key : allStubKeys()) {
-        if (std::ranges::find(creationFamilies, key.family()) != creationFamilies.end() && !hasFrameAndKeepsFewerRegisters(key.callerFrame()))
+        if (std::ranges::find(creationFamilies, key.family()) != creationFamilies.end() && key.callerFrame() != CallerFrame::KeepsNoFPRs)
             checkArrayCreationSummary(catalog, key, largestLiteral);
     }
     checkArrayCreationSummary(catalog, newEmptyArrayAtSite(ArrayElementKind::Contiguous), largestLiteral);
+    for (EmptyArray few : { EmptyArray::Int32Capacity1, EmptyArray::Int32Capacity3 })
+        AOT_TEST_CHECK(refersToBody(catalog, newEmptyArrayAtSite(ArrayElementKind::Int32), bodyOf(newEmptyArray(few))));
 
     for (StubKey key : { arrayPush(), arrayPushOfKnownKind() })
         AOT_TEST_CHECK(!clobbersFPR(catalog.summaryOf(key)));
@@ -597,15 +599,14 @@ static void checkClobbersBesideResults(const StubCatalog& catalog)
             return;
         const StubSummary& summary = catalog.summaryOf(key);
         const RegisterSet& lost = catalog.clobberedBesideResultByRegisterVariantsOf(key);
-        bool keepsRegisters = key.callerFrame() != CallerFrame::KeepsNoRegisters;
-        AOT_TEST_CHECK(summary.signature.firstResult == Reg(GPRInfo::returnValueGPR) && (!keepsRegisters || !containsRegister(lost, GPRInfo::returnValueGPR)));
+        AOT_TEST_CHECK(summary.signature.firstResult == Reg(GPRInfo::returnValueGPR) && !containsRegister(lost, GPRInfo::returnValueGPR));
         forEachRegisterVariant(key, [&](StubKey variant) {
             if (variant == key)
                 return;
             ++numberOfVariants;
             GPRReg reg = *variant.operandRegister();
             const StubSignature& signature = catalog.summaryOf(variant).signature;
-            AOT_TEST_CHECK(signature.firstResult == Reg(reg) && signature.numberOfOperands == summary.signature.numberOfOperands && (!keepsRegisters || !containsRegister(lost, reg)));
+            AOT_TEST_CHECK(signature.firstResult == Reg(reg) && signature.numberOfOperands == summary.signature.numberOfOperands && !containsRegister(lost, reg));
             for (unsigned index = 0; index < signature.numberOfOperands; ++index)
                 AOT_TEST_CHECK(signature.operands[index] == summary.signature.operands[index] && signature.operands[index] != Reg(reg));
         });
@@ -691,26 +692,20 @@ static void testWideReferences()
 static void testImmediatesInKeys()
 {
     constexpr StubKey cell = builtinCell().withImmediate(7);
-    constexpr StubKey cellForCallerKeepingNoRegisters = cell.withCallerFrame(CallerFrame::KeepsNoRegisters);
     constexpr StubKey match = regExpMatchLiteralWithoutObject(Typed::RegExpMatchForm::Exec);
-    static_assert(exists(cell) && exists(cellForCallerKeepingNoRegisters) && exists(match) && !exists(match.withImmediate(1)));
+    static_assert(exists(cell) && exists(match) && !exists(match.withImmediate(1)));
 
     StubCatalog catalog(StubOptions { });
-    for (StubKey key : { cell, cellForCallerKeepingNoRegisters })
-        AOT_TEST_CHECK(catalog.bindsImmediate(key.withoutImmediate()));
+    AOT_TEST_CHECK(catalog.bindsImmediate(cell.withoutImmediate()));
     AOT_TEST_CHECK(!catalog.bindsImmediate(createConstant(CreatedConstant::Key)) && !catalog.bindsImmediate(match));
 
-    for (StubKey key : { cell, cellForCallerKeepingNoRegisters }) {
-        StubRecording recording = catalog.dryRun(key);
-        AOT_TEST_CHECK(recording.references.size() == 1 && recording.references[0].target == key.withoutImmediate() && recording.references[0].kind == StubReference::Kind::Jump);
-    }
+    StubRecording recording = catalog.dryRun(cell);
+    AOT_TEST_CHECK(recording.references.size() == 1 && recording.references[0].target == cell.withoutImmediate() && recording.references[0].kind == StubReference::Kind::Jump);
 
-    StubBlob blob = buildBlob(catalog, std::array { cell, cellForCallerKeepingNoRegisters }, EntrySet { });
-    for (StubKey key : { cell, cellForCallerKeepingNoRegisters }) {
-        std::optional<uint32_t> offset = blob.offsetOf(key);
-        std::optional<uint32_t> offsetOfStubTakingImmediate = blob.offsetOf(key.withoutImmediate());
-        AOT_TEST_CHECK(offset && offsetOfStubTakingImmediate && *offsetOfStubTakingImmediate < *offset);
-    }
+    StubBlob blob = buildBlob(catalog, std::array { cell }, EntrySet { });
+    std::optional<uint32_t> offset = blob.offsetOf(cell);
+    std::optional<uint32_t> offsetOfStubTakingImmediate = blob.offsetOf(cell.withoutImmediate());
+    AOT_TEST_CHECK(offset && offsetOfStubTakingImmediate && *offsetOfStubTakingImmediate < *offset);
 }
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN

@@ -51,7 +51,7 @@ constexpr StubISA currentStubISA = StubISA::X86_64;
 #error "AOT stubs are generated for ARM64 and x86-64 only"
 #endif
 
-enum class OperandRegisterChoice : uint8_t { NoChoice, AlternateReceivers, AnyAllocatableRegister, AlternateResults, FewAlternateResults };
+enum class OperandRegisterChoice : uint8_t { NoChoice, AnyAllocatableRegister, AlternateResults, FewAlternateResults };
 
 constexpr bool namesRegisterOfResult(OperandRegisterChoice choice) { return choice == OperandRegisterChoice::AlternateResults || choice == OperandRegisterChoice::FewAlternateResults; }
 enum class ImmediateBinding : uint8_t { Never, Every, OperationOffset, InThunk };
@@ -318,8 +318,6 @@ constexpr std::span<const GPRReg> operandRegistersOf(OperandRegisterChoice choic
     switch (choice) {
     case OperandRegisterChoice::NoChoice:
         return { };
-    case OperandRegisterChoice::AlternateReceivers:
-        return alternateReceiverGPRs();
     case OperandRegisterChoice::AnyAllocatableRegister:
         return allocatableGPRs;
     case OperandRegisterChoice::AlternateResults:
@@ -352,11 +350,7 @@ constexpr bool hasCallerFrameVariant(const StubDescriptor& descriptor, StubKey k
 {
     switch (key.callerFrame()) {
     case CallerFrame::KeepsNoFPRs:
-        if (!descriptor.axes.contains(StubAxis::SlowPathRecurs))
-            return false;
-        [[fallthrough]];
-    case CallerFrame::KeepsNoRegisters:
-        return descriptor.linkage == StubLinkage::CalledByCode && descriptor.leafness != StubLeafness::Leaf && descriptor.clobbers == StubClobbers::ClobbersOnlyScratch && (!key.operandRegister() || namesRegisterOfResult(descriptor.operandRegisters)) && isOnlyEntryOfItsBody(descriptor);
+        return descriptor.axes.contains(StubAxis::SlowPathRecurs) && descriptor.linkage == StubLinkage::CalledByCode && descriptor.leafness != StubLeafness::Leaf && descriptor.clobbers == StubClobbers::ClobbersOnlyScratch && (!key.operandRegister() || namesRegisterOfResult(descriptor.operandRegisters)) && isOnlyEntryOfItsBody(descriptor);
     case CallerFrame::HasFrame:
         return true;
     case CallerFrame::Frameless:
@@ -427,7 +421,7 @@ void forEachRegisterVariant(StubKey key, const Functor& functor)
 template<typename Functor>
 void forEachKeyWithoutImmediate(const Functor& functor)
 {
-    constexpr std::array callerFrames { CallerFrame::HasFrame, CallerFrame::Frameless, CallerFrame::StubFrame, CallerFrame::KeepsNoRegisters, CallerFrame::KeepsNoFPRs };
+    constexpr std::array callerFrames { CallerFrame::HasFrame, CallerFrame::Frameless, CallerFrame::StubFrame, CallerFrame::KeepsNoFPRs };
     for (const StubDescriptor& descriptor : StubFamilyTokens::descriptors) {
         for (uint8_t form = 0; form < descriptor.numberOfForms; ++form) {
             for (unsigned count = descriptor.minCount; count <= descriptor.maxCount; ++count) {

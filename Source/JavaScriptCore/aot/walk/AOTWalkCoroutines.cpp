@@ -11,6 +11,7 @@
 #include "AOTCallingConventions.h"
 #include "AOTEffectsDeclared.h"
 #include "AOTEffectsOfOperations.h"
+#include "AOTHeldOperands.h"
 #include "AOTIRFunction.h"
 #include "AOTIRProgram.h"
 #include "AOTInliningRules.h"
@@ -19,6 +20,7 @@
 #include "AOTPrimitives.h"
 #include "AOTRepresentationRules.h"
 #include "AOTResultRules.h"
+#include "AOTSweep.h"
 #include "AOTWalkCoroutinePromises.h"
 #include "AOTWalkCoroutineCalls.h"
 #include "AOTWalkCoroutinePromises.h"
@@ -100,6 +102,104 @@ static std::optional<SuspendingBodyOfCoroutine> findSuspendingBodyOfCoroutine(Wa
     if (function.has(FunctionFlags::IsGenerator))
         kind = function.has(FunctionFlags::IsAsync) ? CoroutineKind::AsyncGenerator : CoroutineKind::Generator;
     return SuspendingBodyOfCoroutine { kind, Reference::value(parameters.back()) };
+}
+
+static bool somebodyMayHoldObjectsWeaklyInCoroutines(const Walker& walker)
+{
+    const LinkTables& linked = walker.facts().linked();
+    if (linked.unseenCodeCanRun || !walker.facts().loadsOfMachineCode().empty())
+        return true;
+    const BuiltinTable& builtins = walker.program().builtins();
+    const LookupsPastProgramObjects& lookups = linked.lookups;
+    for (BuiltinClassID watcher : { BuiltinClassID(BuiltinClasses::WeakRef), BuiltinClassID(BuiltinClasses::FinalizationRegistry) }) {
+        BuiltinID constructor = builtins.at(watcher).constructor;
+        for (const BitVector* told : { &lookups.builtinsRead, &lookups.builtinsCalled, &lookups.builtinsConstructed, &lookups.builtinsLetGo, &lookups.builtinsCalledOutOfSight, &lookups.builtinsCalledWithoutRow, &lookups.lostBuiltins, &lookups.builtinsAtUnseen }) {
+            if (told->get(constructor.index()) || told->get(builtins.canonicalID(constructor).index()))
+                return true;
+        }
+    }
+    return false;
+}
+
+static bool isListOfFlatEntriesInCoroutines(const Walker& walker, const Operation& made)
+{
+    const BuiltinTable& table = walker.program().builtins();
+    return made.opcode == Opcode::CallBuiltin && table.contains(Builtins::CompilerHelpersOwnEntriesFlat) && table.at(made.overload()).builtin == table.canonicalID(Builtins::CompilerHelpersOwnEntriesFlat);
+}
+
+static bool isReadBehindInBlockOfCoroutine(const BodyIndex& index, BodyBlock block, ValueID point, ValueID value)
+{
+    bool isRead = false;
+    auto read = [&](ValueID operand, uint32_t = 0) {
+        isRead |= operand == value;
+    };
+    for (uint32_t place = point.index() + 1; place < block.endOfValues().index() && !isRead; ++place) {
+        BodyValue user = index.value(ValueID(place));
+        if (user.opcode() != Opcode::ReleaseHint)
+            user.forEachOperand(read);
+    }
+    BodyTerminator terminator = block.terminator();
+    terminator.forEachOperand(read);
+    if (terminator.isConditionalBranch()) {
+        index.forEachEdgeResult(block.id(), [&](const BodyEdgeResult& result) {
+            read(result.subject);
+        });
+    }
+    block.forEachOutgoingEdge([&](BodyTarget target, bool) {
+        uint32_t taker = index.block(target.block()).firstParameter().index();
+        for (ValueID argument : target.arguments()) {
+            if (!index.isReadByReleaseHintsAlone(ValueID(taker++)))
+                read(argument);
+        }
+    });
+    return isRead;
+}
+
+void Walker::holdWhatTextReadsBehind(Draft& suspension)
+{
+    if (unit().role != CodeRole::CoroutineBody || !(VariadicOperandPosition::held(suspension.opcode) || PayloadWord::numberOfHeld(suspension.opcode)) || !somebodyMayHoldObjectsWeaklyInCoroutines(*this))
+        return;
+    bool isBuiltInCopy = !m_frames.last().isOfUnit;
+    if (isBuiltInCopy && (m_frames.size() != 2 || !m_frames.first().isOfUnit))
+        return;
+    const Frame& frame = isBuiltInCopy ? m_frames.first() : m_frames.last();
+    ValueID point = isBuiltInCopy ? m_frames.last().callCopied : m_valueBeingWalked;
+    if (!point)
+        return;
+
+    auto hold = [&](Reference reference) {
+        if (!reference || !reference.isValue())
+            return;
+        const Type& type = m_types.at(typeOf(reference));
+        if (!type.hasObjects() && !(type.primitives & Primitive::AnySymbol))
+            return;
+        ValueID cell = rootOfCellInSweptCode(m_code, reference.id());
+        if ((m_code.at(cell).opcode == Opcode::NewClosure && m_state.isFresh(Reference::value(cell))) || isListOfFlatEntriesInCoroutines(*this, m_code.at(cell)) || std::ranges::contains(heldOperandsOf(suspension), reference))
+            return;
+        suspension.appendVariadicOperand(reference);
+        if (PayloadWord::numberOfHeld(suspension.opcode))
+            suspension.setNumberOfHeld(suspension.numberOfHeld().value_or(0) + 1);
+    };
+    const BodyIndex& index = *frame.index;
+    if (!m_liveness.isComputedFor(index))
+        m_liveness.compute(index);
+    BodyBlock block = index.block(index.blockOf(point));
+    uint32_t end = block.endOfValues().index();
+    m_liveness.forEachLiveAcross(point, block.id(), [&](ValueID value) {
+        bool isReadBehind = m_liveness.lastUse(value).index() < end;
+        if (!isReadBehind) {
+            block.forEachOutgoingEdge([&](BodyTarget target, bool) {
+                isReadBehind |= m_liveness.isLiveAtHead(value, target.block());
+            });
+        }
+        if (!isReadBehind && !isReadBehindInBlockOfCoroutine(index, block, point, value))
+            return;
+        Reference reference = referenceBoundIn(frame, value);
+        if (!reference || !reference.isVirtual())
+            hold(reference);
+        else if (!standsForFrameOfGenerator(reference))
+            iterationByIndex(reference).forEachValueHeld(hold);
+    });
 }
 
 static Reference buildSuspensionOfCoroutine(Walker& walker, Draft&& suspension)

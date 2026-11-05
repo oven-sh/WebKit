@@ -76,6 +76,31 @@ void LinkFlow::prepareOperatorsForSeveralThreads()
         m_stateOfLinkOperators.reset(new StateOfLinkOperators(program));
 }
 
+std::optional<uint16_t> LinkFlow::primitivesThatOperatorGivesWhateverArrives(FunctionID function, uint32_t record)
+{
+    const ThinSummary& summary = summaries.at(function);
+    const SummaryOperator& operation = summary.operators[record];
+    if (flowRuleOf(operation.opcode) == FlowRule::ToPropertyKey)
+        return std::nullopt;
+    Vector<uint16_t, SummaryOperator::mostOperands> operands;
+    for (uint32_t index = 0; index < SummaryOperator::mostOperands && operation.operands[index] != noSummaryNode; ++index) {
+        const SummaryNode& operand = summary.nodes[operation.operands[index]];
+        LinkType written = operand.kind == SummaryNode::Kind::Constant ? fromTypeID(TypeID::fromBits(operand.first)) : LinkType::anything();
+        uint16_t primitives = (holdsObjectsForLinkOperators(written) ? LinkType::anything().primitives : written.primitives) & LinkType::closed(Primitive::All);
+        if (!primitives)
+            return std::nullopt;
+        operands.append(primitives);
+    }
+    if (operands.isEmpty())
+        return std::nullopt;
+
+    prepareOperatorsForSeveralThreads();
+    uint64_t words = static_cast<uint64_t>(operation.opcode) << 40 | static_cast<uint64_t>(operands.size()) << 32 | static_cast<uint64_t>(operands[0]) << 16 | (operands.size() > 1 ? operands[1] : 0);
+    return static_cast<uint16_t>(askedOnceByLane(MadeOnDemand::ResultOfOperator, words, [&]() -> uint32_t {
+        return m_stateOfLinkOperators->resultOf(operation.opcode, operands.span());
+    }));
+}
+
 void LinkFlow::operatorObserved(const FlowObserver& observer, const LinkType& now)
 {
     if (!typeObservedBefore().isNothing() && typeObservedBefore().primitives == now.primitives && holdsObjectsForLinkOperators(typeObservedBefore()) == holdsObjectsForLinkOperators(now) && typeObservedBefore().hasSameShadowsAs(now))

@@ -42,12 +42,28 @@ static FormOfFrame usualFormOfFrame(const Procedure& proc, uint64_t numberOfSave
     return form;
 }
 
+static bool namesFewPlacesInFrame(const Procedure& proc)
+{
+    constexpr unsigned mostPlacesNamedOffStackPointer = 8;
+    unsigned numberOfPlaces = 0;
+    for (const Step& step : proc.allocation().steps()) {
+        numberOfPlaces += step.destination.isSpill();
+        for (Location source : step.sources)
+            numberOfPlaces += source.isSpill();
+        if (numberOfPlaces > mostPlacesNamedOffStackPointer)
+            return false;
+    }
+    return true;
+}
+
 static std::optional<FormOfFrame> formOfFrameWithoutRecord(const Procedure& proc, uint64_t numberOfSaves)
 {
     const ProcedureTraits& traits = proc.traits();
     if (!isX86_64() || !traits.mayOmitFrameRecord || traits.setsUpFrameAtEntry() || traits.savesRegistersOfCallers)
         return std::nullopt;
     if (proc.namesFramePointer() || !proc.stackSlots().empty() || proc.allocation().holdsPatchThatCountsOnFrameRecord())
+        return std::nullopt;
+    if (proc.allocation().holdsPatchWithOperandInFrame() && !namesFewPlacesInFrame(proc))
         return std::nullopt;
 
     const uint64_t bytesOfSlots = proc.slots().bytesInAll();
@@ -128,7 +144,7 @@ bool stepCountsOnFrameRecord(const Procedure& proc, const Step& step)
     if (!patch || step.patchAssignment == UINT32_MAX)
         return countsOnRecord;
     for (Location location : proc.allocation().patchAssignment(step.patchAssignment).locations)
-        countsOnRecord |= location.isSpill() || location.kind() == Location::SlotBytes;
+        countsOnRecord |= (location.isSpill() && !patch->findsOperandsInFrameWithoutRecord()) || location.kind() == Location::SlotBytes;
     return countsOnRecord;
 }
 

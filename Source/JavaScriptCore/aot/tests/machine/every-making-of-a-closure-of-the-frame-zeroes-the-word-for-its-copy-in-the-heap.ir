@@ -5,6 +5,12 @@
 # RUN(STUB): emit f2 mechanisms=all-Inlining
 # STUB-LABEL: unit f2:Body
 # STUB-NOT: = Store({{*}}frameSlots
+# STUB: = Patch(
+# STUB-NOT: = Store({{*}}frameSlots
+# STUB: = Patch(
+# Behind the call that borrowed it the code clears what the closure held, and that word with it.
+# STUB: = Store({{*}}offset = 16, AOTSlimClosure_captures[0]
+# STUB: = Store({{*}}offset = 24, frameSlots
 # In a loop the code fills the closure itself: header, word, one capture at 16, the word at 24.
 # RUN(LOOP): emit f3 mechanisms=all-Inlining
 # LOOP-LABEL: unit f3:Body

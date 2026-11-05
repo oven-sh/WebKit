@@ -24,7 +24,7 @@ static_assert(sizeof(IndexingHeader) == sizeof(EncodedJSValue) && MarkedSpace::s
 static_assert(Butterfly::offsetOfPublicLength() == -static_cast<ptrdiff_t>(sizeof(IndexingHeader)) && Butterfly::offsetOfVectorLength() == Butterfly::offsetOfPublicLength() + static_cast<ptrdiff_t>(sizeof(uint32_t)));
 
 enum class ArrayElementKind : uint8_t { Int32, Double, Contiguous };
-enum class EmptyArray : uint8_t { ContiguousCapacity1, ContiguousCapacity3, DoubleCapacity1, DoubleCapacity3, DoubleDefaultCapacity, Int32DefaultCapacity };
+enum class EmptyArray : uint8_t { ContiguousCapacity1, ContiguousCapacity3, DoubleCapacity1, DoubleCapacity3, DoubleDefaultCapacity, Int32DefaultCapacity, Int32Capacity1, Int32Capacity3 };
 enum class ArraySliceRange : uint8_t { Bounded, Whole, BoundedWithPropertyRoom, WholeWithPropertyRoom, BoundedAsDoubles, WholeAsDoubles };
 enum class ArrayStoredValue : uint8_t { Value, Number };
 enum class ArrayRead : uint8_t { OfListAsMade, OfAnyList };
@@ -113,7 +113,7 @@ void emitFindSparseElement(StubAssembler&, const SparseElementSearch&, JumpList&
 static_assert(exists(arrayLiteral(0)) && exists(arrayLiteral(maxArrayElementsInRegisters)) && !exists(arrayLiteral(maxArrayElementsInRegisters).withCount(maxArrayElementsInRegisters + 1)));
 static_assert(exists(arrayLiteralWithDouble(1)) && !exists(arrayLiteralWithDouble(1).withCount(0)) && exists(arrayLiteralWithDoubleSlow()));
 static_assert(exists(newCopyOnWriteArray(ArrayElementKind::Contiguous, SharedElements::InStorageOfSite)) && !exists(newCopyOnWriteArray(ArrayElementKind::Contiguous, SharedElements::InStorageOfSite).withForm(6)));
-static_assert(exists(newEmptyArray(EmptyArray::Int32DefaultCapacity)) && !exists(newEmptyArray(EmptyArray::Int32DefaultCapacity).withForm(6)));
+static_assert(exists(newEmptyArray(EmptyArray::Int32Capacity3)) && !exists(newEmptyArray(EmptyArray::Int32Capacity3).withForm(8)));
 static_assert(exists(newArrayWithLength(ArrayElementKind::Contiguous)) && exists(newEmptyArrayAtSite(ArrayElementKind::Contiguous)) && exists(newEmptyArrayWithCapacity()) && exists(newArrayOfHolesSlow()));
 static_assert(exists(arraySlice(true)) && exists(arrayCopy(true)) && exists(arraySliceAsDoubles()) && exists(arrayCopyAsDoubles()) && !exists(arrayCopyAsDoubles().withForm(6)));
 static_assert(exists(arrayIndexOfString(SearchedElements::Values)) && exists(arrayIndexOfString(SearchedElements::ValuesFromStart)) && !exists(arrayIndexOfString(SearchedElements::Values).withForm(2)));

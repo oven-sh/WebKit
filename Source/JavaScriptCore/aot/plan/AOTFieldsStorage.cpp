@@ -729,11 +729,11 @@ void ChooserOfFieldsStorage::fillRoomLeftInCell(LayoutID id, PlannedLayout& plan
         }
         return UINT32_MAX;
     };
-    Vector<std::pair<uint32_t, FieldIndex>, 32> lateNames;
+    Vector<std::tuple<bool, uint32_t, FieldIndex>, 32> lateNames;
     for (FieldIndex field = numberListed; field < planned.numberOfFields(); ++field)
-        lateNames.append({ placeInWrittenTypes(field), field });
+        lateNames.append({ !m_link.isStoredByFollowerOfMaker({ id, field }), placeInWrittenTypes(field), field });
     std::ranges::sort(lateNames);
-    for (auto [place, field] : lateNames) {
+    for (auto [isStoredIntoObjectsThatArriveAlone, place, field] : lateNames) {
         PlacedSlot& slot = planned.slots[field];
         if (slot.liesInCellOnTrial()) {
             if (std::optional<uint64_t> offset = m_cell.tryTakeBelow(slot.width(), endOfCell))

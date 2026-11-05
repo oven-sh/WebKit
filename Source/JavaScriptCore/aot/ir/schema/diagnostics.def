@@ -138,7 +138,7 @@ enum InternalErrorKind (stage: Stage, message: Text) {
     MaskCutKnownValue(AnalyzeFlow, "{function}: the type of {value} removed a value flow knows arrives")
     FlowEndedTooEarly(AnalyzeFlow, "the flow analysis was at rest, and {count} of its rules still add something when they run once more over the solved sets")
     FlowRuleWasNotDue(AnalyzeFlow, "{value} in {function}: the rule was not due, and run once more over the solved sets it adds something")
-    FlowFindsLessFromMore(AnalyzeFlow, "{value} in {function}: the flow analysis was given more to begin with, and finds less")
+    FlowFindsLessFromMore(AnalyzeFlow, "the flow analysis was given more to begin with, and {count} of its answers say more than they say of the program as it is")
 
     EffectsExceedReplacedGroup(Select, "a selected operation has effects beyond those of the group it replaced")
     EffectsOfPreparedTooNarrow(Select, "an operation was selected into a form with effects it does not declare")

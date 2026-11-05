@@ -15,6 +15,7 @@
 #include "AOTOpcodeSets.h"
 #include "AOTTypeArena.h"
 #include "AOTTypeTable.h"
+#include <algorithm>
 #include <optional>
 #include <utility>
 
@@ -143,6 +144,69 @@ bool openGuessAtOperandOfBuiltinCall(Walker& walker, const BodyValue& call)
     for (ValueID argument : call.argumentsOperands()) {
         if (openGuessAtOperandForStringOperands(walker, call, builtin, argument, BuiltinOperand::argument(position++)))
             return true;
+    }
+    return false;
+}
+
+bool openGuessAtOperandThatSpecialCaseTakesAsMade(Walker& walker, const BodyValue& call, FunctionID enteredByValue)
+{
+    if (call.opcode() != Opcode::Call || !walker.opensGuesses() || !walker.has(Mechanism::Guesses) || walker.isUnreachable())
+        return false;
+    NotesOfStrings& notes = notesOfStrings(walker);
+    if (notes.callWhoseOperandIsTested == call.id() && notes.depthOfCopiesAroundThatCall == walker.depthOfCopies())
+        return false;
+
+    TypeArena& types = walker.types();
+    const Program& program = walker.program();
+    Reference callee = walker.referenceOf(call.calleeOperand());
+    if (!callee)
+        return false;
+    Type typeOfCallee = types.at(walker.typeOf(callee));
+    BuiltinID builtin = typeOfCallee.isObject() ? singleBuiltinOf(types, typeOfCallee) : BuiltinID();
+    if (!builtin)
+        return false;
+    builtin = program.builtins().canonicalID(builtin);
+
+    bool handsOverOneFunction = std::ranges::any_of(call.argumentsOperands(), [&](ValueID argument) {
+        Reference handedOver = walker.referenceOf(argument);
+        if (!handedOver)
+            return false;
+        Type type = types.at(walker.typeOf(handedOver));
+        return type.isObject() && type.isJavaScriptValue() && singleFunctionOf(types, type);
+    });
+    if (!handsOverOneFunction)
+        return false;
+
+    for (ValueID argument : call.argumentsOperands()) {
+        Reference value = walker.referenceOf(argument);
+        if (!value || !value.isValue() || isListAsMade(walker, value))
+            continue;
+        TypeID proven = walker.typeOf(value);
+        if (isNeverType(proven))
+            continue;
+        TypeID tested = proven;
+        bool isDeclared = true;
+        if (!types.at(proven).isObject() || !singleBuiltinClassOf(types, types.at(proven))) {
+            ExpectationOfValue expectation = findExpectation(walker, argument);
+            TypeID present = expectation.type ? types.withoutNullish(expectation.type) : TypeID();
+            tested = present && !isNeverType(present) ? types.testablePartOf(present) : TypeID();
+            isDeclared = expectation.isDeclared;
+            if (!tested || isNeverType(tested) || !types.overlap(proven, tested))
+                continue;
+        }
+        BuiltinOverloadID onlyRow;
+        if (!goesByOneRowOnOperandAsMade(walker, call, builtin, value, types.intersectionOf(proven, tested), &onlyRow))
+            continue;
+        const BuiltinOverload& row = program.builtins().at(onlyRow);
+        const RuntimeFunctionEntry* held = row.flags.contains(BuiltinOverloadFlag::IsSpecialCase) ? findRuntimeFunction(program, row.libraryFunction()) : nullptr;
+        if (!held || !held->function || held->function == enteredByValue || !shouldOpenGuess(walker, value, tested, isDeclared, weightOfCallByOneRowForStrings))
+            continue;
+        ValueID callBefore = std::exchange(notes.callWhoseOperandIsTested, call.id());
+        size_t depthBefore = std::exchange(notes.depthOfCopiesAroundThatCall, walker.depthOfCopies());
+        openGuessAtOperandTakenAsMade(walker, call, value, tested);
+        notes.callWhoseOperandIsTested = callBefore;
+        notes.depthOfCopiesAroundThatCall = depthBefore;
+        return true;
     }
     return false;
 }

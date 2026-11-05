@@ -303,7 +303,7 @@ void StubCatalog::checkDeclarations(std::span<Node* const> nodes)
         case StubClobbers::ClobbersLikeCall:
             break;
         case StubClobbers::ClobbersOnlyScratch: {
-            if (hasFrameAndKeepsFewerRegisters(body.callerFrame()))
+            if (body.callerFrame() == CallerFrame::KeepsNoFPRs)
                 break;
             RegisterSet lost = node.clobbered;
             lost.exclude(node.clobberedInline);
@@ -511,7 +511,7 @@ bool StubCatalog::bindsImmediate(StubKey key) const
     case ImmediateBinding::OperationOffset:
         return true;
     case ImmediateBinding::Every:
-        return !key.operandRegister() && (key.callerFrame() == CallerFrame::HasFrame || hasFrameAndKeepsFewerRegisters(key.callerFrame()));
+        return !key.operandRegister() && (key.callerFrame() == CallerFrame::HasFrame || key.callerFrame() == CallerFrame::KeepsNoFPRs);
     }
     RELEASE_ASSERT_NOT_REACHED();
 }

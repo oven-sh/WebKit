@@ -367,6 +367,8 @@ void CodeVerifier::verifyEdges()
 
     for (uint32_t edgeIndex = 0; edgeIndex < numberOfEdges; ++edgeIndex) {
         const Edge& edge = m_code.at(EdgeID(edgeIndex));
+        if (m_code.isAbandoned(EdgeID(edgeIndex)))
+            continue;
         if (!hasOwner.quickGet(edgeIndex))
             return fail(edge.from, { }, "an edge belongs to the end of no block: its block has ended twice"_s);
         if (edge.isOpen())
@@ -376,6 +378,8 @@ void CodeVerifier::verifyEdges()
         for (ValueID argument : edge.arguments()) {
             if (!isRecord(argument))
                 return fail(edge.from, argument, "an argument of an edge is no record"_s);
+            if (m_code.isAbandoned(argument))
+                return fail(edge.from, argument, "an argument of an edge was made by a walk of a loop that was undone"_s);
         }
     }
 }
@@ -621,6 +625,8 @@ void CodeVerifier::verifyWords(BlockID block, ValueID id, const Instruction& ins
         }
         if (operand && !isRecord(operand))
             return fail(block, id, "an operand is no record"_s, operand);
+        if (operand && m_code.isAbandoned(operand) && !m_code.isAbandoned(id))
+            return fail(block, id, "an operand was made by a walk of a loop that was undone"_s, operand);
     }
 }
 
@@ -1412,10 +1418,12 @@ void CodeVerifier::verifyFrameCells()
     bool hasFrameCells = false;
     bool hasClosuresOfFrame = false;
     bool hasFlatStrings = false;
+    bool hasTextsInFrame = false;
     for (BlockID block : m_reachedBlocks) {
         for (ValueID id : operationsOf(block)) {
             const Operation& operation = m_code.at(id);
             hasFlatStrings |= operation.opcode == Opcode::FlattenString;
+            hasTextsInFrame |= operation.opcode == Opcode::StackStringBuilderBegin;
             if (operation.opcode == Opcode::NewClosure) {
                 verifyMakerOfClosure(block, id, operation);
                 if (hasFailed())
@@ -1428,7 +1436,7 @@ void CodeVerifier::verifyFrameCells()
             hasClosuresOfFrame |= operation.opcode == Opcode::NewClosure;
         }
     }
-    if (!hasFrameCells && !hasFlatStrings)
+    if (!hasFrameCells && !hasFlatStrings && !hasTextsInFrame)
         return;
     m_namesOfClosuresTaken.ensureSize(m_code.numberOfValues());
 
@@ -1535,6 +1543,10 @@ void CodeVerifier::verifyFrameCells()
         TypeID type = m_code.at(id).type;
         return type && m_types.at(type).isOpaque(OpaqueKind::FlatString);
     };
+    auto isTextInBuilder = [&](ValueID id) {
+        TypeID type = m_code.at(id).type;
+        return hasTextsInFrame && type && (m_types.at(type).isOpaque(OpaqueKind::StringBuilder) || m_types.at(type).isOpaque(OpaqueKind::BuilderCursor));
+    };
     for (BlockID block : m_reachedBlocks) {
         for (ValueID parameter : m_code.at(block).parameters()) {
             if (mayPointIntoFrame(parameter))
@@ -1546,13 +1558,14 @@ void CodeVerifier::verifyFrameCells()
         uint32_t firstPlaceBehindSuspension = 0;
         auto verifyUse = [&](ValueID user, ValueID operand) {
             bool isCellOfFrame = mayPointIntoFrame(operand);
-            if (!isCellOfFrame && !isFlatString(operand))
+            bool isText = isTextInBuilder(operand);
+            if (!isCellOfFrame && !isText && !isFlatString(operand))
                 return;
             bool outlivesSuspension = m_code.blockOf(operand) == block
                 ? m_places[operand.index()] < firstPlaceBehindSuspension
                 : firstPlaceBehindSuspension || maySuspendBetweenMakerAndHeadOf(block, operand);
             if (outlivesSuspension)
-                fail(block, user, isCellOfFrame ? "a cell of the frame of a coroutine body outlives a suspension"_s : "a flat string outlives a suspension"_s, operand, InternalErrorKind::InvalidSuspension);
+                fail(block, user, isCellOfFrame ? "a cell of the frame of a coroutine body outlives a suspension"_s : isText ? "a text in a builder of the frame outlives a suspension"_s : "a flat string outlives a suspension"_s, operand, InternalErrorKind::InvalidSuspension);
         };
         for (ValueID id : operationsOf(block)) {
             const Operation& operation = m_code.at(id);

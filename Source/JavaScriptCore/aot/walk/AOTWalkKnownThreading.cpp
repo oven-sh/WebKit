@@ -95,6 +95,7 @@ public:
     bool endArmWithBranch();
     bool armsMayWalkEndOfBlockFrom(uint32_t begin);
     bool walkApartFromClosedWays();
+    bool walkApartFromWaysThatDidSomething();
     bool walkForEachWayThatBringsObjectInSight();
     bool armsWouldStayApartBehindEndOfBlock(uint32_t begin, uint32_t end, Reference value, const BitVector& placesThatTypedRunKnowsBetter);
     bool isMentionedBehindBlock(ValueID);
@@ -168,7 +169,7 @@ bool KnownThreading::terminatorMayBeWalkedAgain()
 
 void KnownThreading::forgetValuesThatNobodyReadsAnyMore()
 {
-    if (!frame().loopsBeingBuiltTwice.isEmpty() || !frame().valuesBuiltTwice)
+    if (!frame().loopsBeingBuiltTwice.isEmpty() || !frame().valuesBuiltTwice || m_walker.m_numberOfMarksOfTries)
         return;
     uint32_t here = m_block.firstParameter().index();
     Walker::Frame::ValuesBuiltTwice& listed = *frame().valuesBuiltTwice;
@@ -647,6 +648,57 @@ bool KnownThreading::walkApartFromClosedWays()
     return true;
 }
 
+bool KnownThreading::walkApartFromWaysThatDidSomething()
+{
+    Walker& walker = m_walker;
+    BlockID block = m_block.id();
+    LoopID inputLoop = m_index.loopOf(block);
+    uint32_t placeOfLoop = inputLoop && !frame().placesOfOpenLoops.isEmpty() ? frame().placesOfOpenLoops[inputLoop.index()] : 0;
+    if (!placeOfLoop || (!walker.m_openLoops[placeOfLoop - 1].frontOfQuietTurns && !walker.m_openLoops[placeOfLoop - 1].watchesTurns) || m_block.terminator().kind() != TerminatorKind::Jump)
+        return false;
+    const Walker::OpenLoop& loop = walker.m_openLoops[placeOfLoop - 1];
+    for (BodyTarget target : m_block.terminator().targets()) {
+        if (walker.inputBlock(m_frameIndex, target.block()).head != loop.head)
+            return false;
+    }
+
+    Vector<uint32_t, 4> quiet;
+    Vector<uint32_t, 4> others;
+    for (uint32_t place = walker.inputBlock(m_frameIndex, block).firstOpenEdge; place != Walker::noOpenEdge; place = walker.m_openEdges[place].next) {
+        const Walker::OpenEdge& open = walker.m_openEdges[place];
+        if (open.block || open.arguments.size() != m_block.numberOfParameters())
+            return false;
+        (open.state.noOtherCodeRanInTurn(loop.numberOfTurn) ? quiet : others).append(place);
+    }
+    if (quiet.isEmpty() || others.isEmpty() || walker.isWalkingBlockForEachWay(m_frameIndex) || !mayBeWalkedApartFromClosedWays())
+        return false;
+    if (numberOfOperationsBuiltIn(0, m_block.numberOfValues()) + numberOfNamesBroughtApart(quiet.span()) + numberOfNamesBroughtApart(others.span()) > mostOperationsOfJoinWalkedForEachWay)
+        return false;
+    quiet.reverse();
+    others.reverse();
+    if (!terminatorMayBeWalkedByWaysApart())
+        return false;
+    if (loop.watchesTurns) {
+        walker.noteWhatTurnsOfLoopShow(loop, Walker::someWayRoundDidNothing);
+        return false;
+    }
+    if (!letTerminatorBeWalkedForEachWay(m_block.firstParameter()))
+        return false;
+
+    uint32_t namesAtHead = walker.inputBlock(m_frameIndex, block).firstNarrowerName;
+    walkBlockOnWays(others.span(), namesAtHead);
+    walkBlockOnWays(quiet.span(), namesAtHead);
+
+    frame().blocksWalkedForEachWay.shrink(0);
+    walker.inputBlock(m_frameIndex, block).firstNarrowerName = namesAtHead;
+    forgetValuesFrom(m_block.firstParameter());
+    if (frame().valuesBuiltTwice)
+        walker.forgetNamesOfWay(frame());
+    walker.m_block = { };
+    walker.m_state.clear();
+    return true;
+}
+
 bool KnownThreading::takesApartParameter(ValueID parameter)
 {
     for (uint32_t place = 0; place < m_block.numberOfValues(); ++place) {
@@ -794,6 +846,15 @@ bool Walker::walkBlockApartFromClosedWays(BlockID inputBlock)
     if (m_openEdges[this->inputBlock(m_frames.size() - 1, inputBlock).firstOpenEdge].next == noOpenEdge)
         return false;
     return KnownThreading(*this, inputBlock).walkApartFromClosedWays();
+}
+
+bool Walker::walkBlockApartFromWaysThatDidSomething(BlockID inputBlock)
+{
+    if (m_hasFailed || m_openLoops.isEmpty() || m_numberOfCopiesBuiltForSize || hasTextsInStringBuilders())
+        return false;
+    if (m_openEdges[this->inputBlock(m_frames.size() - 1, inputBlock).firstOpenEdge].next == noOpenEdge)
+        return false;
+    return KnownThreading(*this, inputBlock).walkApartFromWaysThatDidSomething();
 }
 
 bool Walker::walkBlockForEachWayThatBringsObjectInSight(BlockID inputBlock)

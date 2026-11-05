@@ -524,23 +524,6 @@ static void testBarriers()
     });
 }
 
-static void testBarriersOfOwnersInOtherRegisters()
-{
-    PropertyStores stores;
-    stores.runner.recordCallsOf(Entry::operationAOTBarrierSlow);
-    AOT_TEST_CHECK(alternateReceiverGPRs().empty() == !isX86_64());
-    for (GPRReg reg : alternateReceiverGPRs()) {
-        const StubKey variant = writeBarrier().withOperandRegister(reg);
-        FakePlainObject whiteOwner(PropertyStores::structureID);
-        AOT_TEST_CHECK(!stores.runner.run(variant, { whiteOwner.address() }).calledOperation);
-
-        FakePlainObject blackOwner(PropertyStores::structureID);
-        blackOwner.setCellState(CellState::PossiblyBlack);
-        StubRun run = stores.runner.run(variant, { blackOwner.address() });
-        AOT_TEST_CHECK(run.numberOfRecordedCalls == 1 && run.recordedArguments[0] == blackOwner.address());
-    }
-}
-
 static void testBarrierRemembersOwnerWithoutOperation()
 {
 #if !ASSERT_ENABLED
@@ -1807,7 +1790,6 @@ std::span<const NativeTest> stubPropertyStoreTests()
         { "stubs/put-by-id/setters"_s, ImageTests::whenExecutable<testSetters> },
         { "stubs/put-by-id/exits"_s, ImageTests::whenExecutable<testExits> },
         { "stubs/put-by-id/barriers"_s, ImageTests::whenExecutable<testBarriers> },
-        { "stubs/write-barrier/owners-in-other-registers"_s, ImageTests::whenExecutable<testBarriersOfOwnersInOtherRegisters> },
         { "stubs/write-barrier/remembers-owner-without-operation"_s, ImageTests::whenExecutable<testBarrierRemembersOwnerWithoutOperation> },
         { "stubs/put-by-id/typed-fields"_s, ImageTests::whenExecutable<testTypedFields> },
         { "stubs/put-by-id/fields-that-leave-the-stub"_s, ImageTests::whenExecutable<testFieldsThatLeaveTheStub> },

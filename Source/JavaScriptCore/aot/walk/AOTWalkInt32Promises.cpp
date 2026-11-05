@@ -516,7 +516,7 @@ static bool mayLieInPositionOfInt32Promise(Walker& walker, TypeID judged, const 
 
 void checkInt32Promise(Walker& walker, const DeclaredType& position, ValueID entering, Origin origin)
 {
-    if (!position.has(PositionFlags::IsInt32Promise) || !entering)
+    if (!position.has(PositionFlags::IsInt32Promise) || !entering || !walker.judgesInt32Promises())
         return;
     Reference value = walker.referenceOf(entering);
     TypeID walked = value ? walker.typeOf(value) : TypeID();

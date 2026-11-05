@@ -106,7 +106,7 @@ FieldAccess SlotPlan::fieldAccess(const Program& program, PropertyKeyID key, Lay
         auto findIn = [&](const Vector<std::unique_ptr<FieldAccessesOfSets::Part::OfMembers>, 1>& kept) -> const FieldAccess* {
             for (const auto& entry : kept) {
                 if (entry->key == key && std::ranges::equal(entry->members, members))
-                    return &entry->access;
+                    return &entry->access.withMembersLent();
             }
             return nullptr;
         };
@@ -117,16 +117,13 @@ FieldAccess SlotPlan::fieldAccess(const Program& program, PropertyKeyID key, Lay
                     return *access;
             }
         }
-        auto entry = makeUniqueWithoutFastMallocCheck<FieldAccessesOfSets::Part::OfMembers>();
-        entry->key = key;
-        entry->members.append(members);
-        entry->access = fieldAccess(program, key, members, isStore);
-        FieldAccess access = entry->access;
+        auto entry = makeUniqueWithoutFastMallocCheck<FieldAccessesOfSets::Part::OfMembers>(key, members, fieldAccess(program, key, members, isStore));
         Locker locker { part.lock };
         auto& kept = part.accessesOfMembers[isStore].add(hash, Vector<std::unique_ptr<FieldAccessesOfSets::Part::OfMembers>, 1>()).iterator->value;
-        if (!findIn(kept))
-            kept.append(WTF::move(entry));
-        return access;
+        if (const FieldAccess* access = findIn(kept))
+            return *access;
+        kept.append(WTF::move(entry));
+        return kept.last()->access.withMembersLent();
     }
 
     uint64_t asked = static_cast<uint64_t>(set.bits()) << 32 | key.bits();
@@ -134,12 +131,90 @@ FieldAccess SlotPlan::fieldAccess(const Program& program, PropertyKeyID key, Lay
     {
         Locker locker { part.lock };
         if (auto known = part.accesses[isStore].find(asked); known != part.accesses[isStore].end())
-            return *known->value;
+            return known->value->withMembersLent();
     }
-    FieldAccess access = fieldAccess(program, key, members, isStore);
+    Vector<LayoutID, 16> membersAsked;
+    uint32_t numberInUse = 0;
+    FieldAccess access = listMembersAskedAbout(program, key, set, WhatIsWrittenAbove::IsNotAsked, membersAsked, numberInUse) ? fieldAccessOfLayouts(program, key, membersAsked.span(), isStore, numberInUse) : fieldAccess(program, key, members, isStore);
     Locker locker { part.lock };
-    part.accesses[isStore].add(asked, makeUniqueWithoutFastMallocCheck<FieldAccess>(access));
-    return access;
+    return part.accesses[isStore].ensure(asked, [&] {
+        return makeUniqueWithoutFastMallocCheck<FieldAccessKeptForBuild>(WTF::move(access));
+    }).iterator->value->withMembersLent();
+}
+
+bool SlotPlan::listMembersAskedAbout(const Program& program, PropertyKeyID key, LayoutSetID set, WhatIsWrittenAbove whatIsWrittenAbove, Vector<LayoutID, 16>& asked, uint32_t& numberInUse) const
+{
+    static constexpr size_t mostMembersAskedOneByOne = 64;
+    if (!m_fieldAccessesOfSets || !set || !key || holdsOneMember(set) || liesInThread(set) || liesInThread(key))
+        return false;
+    std::span<const LayoutID> members = membersOf(program.types, set);
+    if (members.size() <= mostMembersAskedOneByOne)
+        return false;
+
+    using MembersByName = FieldAccessesOfSets::Part::MembersByName;
+    FieldAccessesOfSets::Part& part = m_fieldAccessesOfSets->parts[WTF::intHash(set.bits()) % m_fieldAccessesOfSets->parts.size()];
+    Locker locker { part.lock };
+    MembersByName& listed = *part.membersByName.ensure(set.bits(), [] {
+        return makeUniqueWithoutFastMallocCheck<MembersByName>();
+    }).iterator->value;
+    auto sortWithoutRepeats = [](auto& list) {
+        AOT::sort(list);
+        list.shrink(list.size() - std::ranges::unique(list).size());
+        list.shrinkToFit();
+    };
+    if (!listed.areListed) {
+        listed.areListed = true;
+        for (LayoutID member : members) {
+            const Layout& layout = program.at(member);
+            listed.numberInUse += !isNeverAllocated(member);
+            if (writtenBaseOf(layout) && layout.inheritedFields != InheritedFields::AllOfRow) {
+                listed.askedAboutEveryName.append(member);
+                continue;
+            }
+            auto list = [&](PropertyKeyID name) {
+                if (name)
+                    listed.byName.append(static_cast<uint64_t>(name.bits()) << 32 | member.index());
+            };
+            for (const Field& field : layout.fields)
+                list(field.key);
+            for (PropertyKeyID appended : this->layout(member).appendedKeys)
+                list(appended);
+        }
+        sortWithoutRepeats(listed.byName);
+    }
+    if (whatIsWrittenAbove == WhatIsWrittenAbove::IsAsked && !listed.namesWrittenAboveAreListed) {
+        listed.namesWrittenAboveAreListed = true;
+        Vector<LayoutID> viewsAbove;
+        for (LayoutID member : members) {
+            const Layout& layout = program.at(member);
+            if (!writtenBaseOf(layout) || layout.inheritedFields == InheritedFields::AllOfRow)
+                viewsAbove.append(program.viewsAbove(declaredLayoutOf(program, member)));
+        }
+        sortWithoutRepeats(viewsAbove);
+        for (LayoutID view : viewsAbove) {
+            for (const Field& field : program.at(view).fields) {
+                if (field.key)
+                    listed.namesWrittenAbove.append(field.key.bits());
+            }
+        }
+        sortWithoutRepeats(listed.namesWrittenAbove);
+    }
+    if (whatIsWrittenAbove == WhatIsWrittenAbove::IsAsked && std::ranges::binary_search(listed.namesWrittenAbove, key.bits()))
+        return false;
+
+    numberInUse = listed.numberInUse;
+    uint64_t first = static_cast<uint64_t>(key.bits()) << 32;
+    auto withName = std::ranges::lower_bound(listed.byName, first);
+    auto everyName = listed.askedAboutEveryName.begin();
+    for (; withName != listed.byName.end() && *withName >> 32 == key.bits(); ++withName) {
+        LayoutID member(static_cast<uint32_t>(*withName));
+        while (everyName != listed.askedAboutEveryName.end() && *everyName < member)
+            asked.append(*everyName++);
+        asked.append(member);
+    }
+    while (everyName != listed.askedAboutEveryName.end())
+        asked.append(*everyName++);
+    return true;
 }
 
 FieldAccess SlotPlan::fieldAccessOfOneLayout(const Program& program, PropertyKeyID key, LayoutID receiver) const
@@ -165,7 +240,7 @@ FieldAccess SlotPlan::fieldAccessOfOneLayout(const Program& program, PropertyKey
     return access;
 }
 
-FieldAccess SlotPlan::fieldAccessOfLayouts(const Program& program, PropertyKeyID key, std::span<const LayoutID> receivers, bool isStore) const
+FieldAccess SlotPlan::fieldAccessOfLayouts(const Program& program, PropertyKeyID key, std::span<const LayoutID> receivers, bool isStore, std::optional<uint32_t> numberInUseAmongAllReceivers) const
 {
     Vector<LayoutID, 8> ascendingReceivers;
     if (std::ranges::adjacent_find(receivers, std::ranges::greater_equal { }) != receivers.end()) {
@@ -179,9 +254,11 @@ FieldAccess SlotPlan::fieldAccessOfLayouts(const Program& program, PropertyKeyID
     access.key = key;
     Vector<const PlacedSlot*, 4> slotsOfMembers;
     bool coversEveryMember = true;
+    uint32_t numberInUse = 0;
     for (LayoutID member : receivers) {
         if (isNeverAllocated(member))
             continue;
+        ++numberInUse;
         const PlacedSlot* placed = nullptr;
         if (holdsCompiledObjects(member)) {
             if (std::optional<FieldIndex> field = findField(program, member, key))
@@ -194,6 +271,8 @@ FieldAccess SlotPlan::fieldAccessOfLayouts(const Program& program, PropertyKeyID
         access.membersWithField.append(member);
         slotsOfMembers.append(placed);
     }
+    if (numberInUseAmongAllReceivers && numberInUse < *numberInUseAmongAllReceivers)
+        coversEveryMember = false;
     if (slotsOfMembers.isEmpty())
         return access;
 

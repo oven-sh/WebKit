@@ -497,6 +497,9 @@ every unit that the build compiles: entries and units of the library too.
   `Arrivals` the whole stage runs once in front of the first unit, so a callee takes what all its callers have left (`walk/AOTArrivals.h`), as
   in a build, whichever units are named. The Machine commands do the same. Where a unit fails the line is `the walk of f1:Body failed`, and no
   unit follows.
+- `notes unit..` walks and sweeps each unit as a build does that takes notes for `--explain`, and prints `notes of f1:Body`, then a line for
+  each note: its kind (`walk/AOTWalkNotes.h`), `@<position>`, `in f<n>` for the function in whose text the position lies, and `layout=L<n>`
+  where the note has a layout.
 
 The other three take the section `code` and no argument.
 
@@ -595,6 +598,32 @@ If you write a command:
 Without the word the image lets one global of a VM have an instance, and an import in a second one throws.
 
 `erase-types` is a word of the front end. Bun's tests of whole programs run it.
+
+**Words that take the other way what may only be a matter of cost.** No options of a build. Each build under one of them must give the answers of the build without it: a lane builds a program twice
+and holds the two executables against each other. Nothing is drawn by chance: `drawBySeed()` (`support/AOTCompileOptions.h`) is a function of the seed on the command line (at least 1; one seed a build), of the
+question and of two numbers of the program, so one command line gives one executable.
+- `testing=IgnoreBranchHints`: every block of a walked body is `Normal`. `testing=ShuffleBlockFrequencies:<seed>`: each is drawn `Normal`, `Unlikely` or `Rare`, and one loop mark in four is drawn away
+  (`Code::frequencyTakenFor()`, `Code::loopMarkIsDrawnAway()`). The forms that the emitters pick by place, the order of blocks and the polls on rare ways follow. Not the entries and the guards: a guard falls into what lies behind it.
+  The verifier's look at Link's effects given the arguments goes by rare blocks and is left out under both words. `BlocksPlacedOtherwise` counts the blocks whose class is not the one that the walk gave.
+- `testing=FailGuesses[:<n>[:<seed>]]`: a guess fails one time in n (1: always) though its value would have passed. `GuessFailsUnasked` steps a word of the instance and is branched on beside the tests
+  (`Walker::letGuessFailUnasked()`): a guess with arms (`openGuessWithTest()`, which then narrows nothing on the failing side), a turn that begins again, the tests in front of a loop built twice and at the head of its typed copy, the guard of a copy
+  in line, a parameter guard, the truth of an object or nothing, an operand taken as made, an accessor in a slot, the own keys of an object, a URL answered out of its text, an awaited step written by hand.
+  `PlacesWhereGuessesFailUnasked` counts the places. ONLY WHERE THE FAILING SIDE IS THE OPERATION AS WRITTEN. A branch whose other side believes the test that failed is a case, not a guess, and may never be hooked: the divisor that is zero,
+  the key that is undefined (`goOnWhereTestPassesInNumberForms()`), the integer that a switch takes (`buildIntegerThatSwitchTakesForGuesses()`), the head that returns at once (`copyHeadThatReturnsAtOnceAtInlining()`).
+  Not the guesses of one operation, which test in their own code, nor the guesses at callees and getters.
+- `testing=IgnoreExpectedTypes`: nothing is expected of any value. `testing=ShuffleExpectedTypes:<seed>`: one expectation in four is dropped and one in four is that of another value of the body
+  (`expectationTakenInPlaceOfWhatIsFoundForGuesses()`); the plan of the guards, the looks and the walk draw alike. `ExpectedTypesTakenOtherwise` counts. Where a look and the walk differ under the shuffle a verifying build walks the unit again, as
+  every other build does (`Walker::stopsWhereLookAndWalkDiffer()`). Under both words, and under `GiveLinkMore`, no promise of an int32 is judged (`Walker::judgesInt32Promises()`): the judge reports on the program's text and builds nothing,
+  it goes by what is written and by Link's types, and the build without the word has heard it.
+- `testing=GiveLinkMore:<seed>`: Link's answer is weakened and stays true. Of the results of calls and reads one in 4, 16, 128 or 2048 (bits 1 and 2 of the seed) is given anything, as a larger program might
+  (`StateOfLinkReach::giveMoreToNodesOf()`); an odd seed leaves the library alone; with bit 3 set half of the nodes drawn are given what another node of the same body holds instead (an edge from it): a second value with a name takes a type up
+  its steps one by one. `FactNodesGivenMore` counts. With `check=FlowFindsNoLessFromMore` Link runs on the program as it is as well, and the build stops by name
+  (`FlowFindsLessFromMore`) where the tables from more say more than those: reach, callers, results, parameters, cells, layouts, the one callee of a call, whether unseen code can run (`stopWhereLinkFindsLessFromMore()`).
+  Of a place that nothing arrives at in the program as it is, and of a call that enters nothing there, nothing is asked: every answer is true of them, and the tables alone cannot tell nothing from anything (`ProgramAsItIsInLink`).
+  Effects are not compared: they count what a proof lets the code do, and rightly shrink where the proof goes; `findOperationThatLinkHasNotCounted()` and `testing=CheckEffectsAtRunTime` hold them to what is built and to what runs.
+  THE RED CONTROL: a seed with its highest bit set gives the more to the run that stands for the program as it is, and the build must stop: `link/link-that-says-more-of-more-is-stopped-by-name.ir`.
+- `testing=ShuffleChoices:<seed>`: `Walker::drawChoice()` answers a question of cost with yes, no or as it pays: a copy in line (no), a loop built twice (no), a place in front of a loop (no), a parameter guard (both), a guess outside loops (both).
+  `ChoicesOfCostDrawn` counts the draws.
 
 **`testing=CheckEffectsAtRunTime`: the rows of effects are held against what runs** (`ir/AOTEffectsNet.h`). No option of a build. What an operation, a stub, an
 operation of the run time, a built-in or a callee is said NOT to do is believed by the walk, the sweep and the back end. Under the word each call is held to it, and the

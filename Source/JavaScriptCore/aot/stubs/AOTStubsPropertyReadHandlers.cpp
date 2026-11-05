@@ -249,7 +249,15 @@ void generateReadSlot(StubAssembler& jit)
                 Jump isAbove = slot.branchUnlessFlag(jit, Slot::isOwn);
                 slot.loadOwnWordIndex(jit, T10);
                 rememberOwnGetterOfKey(jit, operands.keyCell, slot.header(), T10, T11, T14);
+                Jump isRemembered = jit.jump();
                 isAbove.link(&jit);
+                Jump liesOutOfLine = slot.branchIfFlag(jit, Slot::isOutOfLine);
+                slot.loadHolder(jit, T10);
+                slot.loadInheritedWordIndex(jit, T11);
+                jit.getEffectiveAddress(BaseIndex(T10, T11, CCallHelpers::TimesEight), T10);
+                rememberGetterAboveOfKey(jit, operands.keyCell, slot.header(), T10, T11, T14);
+                liesOutOfLine.link(&jit);
+                isRemembered.link(&jit);
             }
             loadValueBySlot(jit, slot, R0, T10, T11, T10);
             callGetter(T10);

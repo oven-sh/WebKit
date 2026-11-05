@@ -948,13 +948,18 @@ void WalkState::Held::noteGuardOfReadsHolds(LayoutID classLayout, PropertyKeyID 
     dropEndedRecordsIfMany();
 }
 
-bool WalkState::Held::someGuardHoldsOf(LayoutID classLayout) const
+bool WalkState::Held::mayHoldGuards() const
 {
     uint32_t holder = findHolder(Reference());
     constexpr uint16_t kindsOfGuards = 1 << static_cast<unsigned>(PlaceKind::GuardOfStores) | 1 << static_cast<unsigned>(PlaceKind::GuardOfReads);
-    if (holder == none || !(m_holders[holder].kindsOfPlaces & kindsOfGuards))
+    return holder != none && (m_holders[holder].kindsOfPlaces & kindsOfGuards);
+}
+
+bool WalkState::Held::someGuardHoldsOf(LayoutID classLayout) const
+{
+    if (!mayHoldGuards())
         return false;
-    for (uint32_t position = m_holders[holder].firstPlace; position != none; position = m_places[position].next) {
+    for (uint32_t position = m_holders[findHolder(Reference())].firstPlace; position != none; position = m_places[position].next) {
         const Place& place = m_places[position];
         if (place.value && (place.kind == PlaceKind::GuardOfStores || place.kind == PlaceKind::GuardOfReads) && classOfGuardedSide(place.first) == classLayout)
             return true;
@@ -1445,7 +1450,7 @@ void WalkState::meetWith(const WalkState& other, RecordsLastMet* last)
         return;
     m_answers.meetWith(other.m_answers);
     if (m_marks.turnInWhichNothingWasDone != other.m_marks.turnInWhichNothingWasDone)
-        m_marks.turnInWhichNothingWasDone = 0;
+        m_marks.turnInWhichNothingWasDone = ((m_marks.turnInWhichNothingWasDone ^ other.m_marks.turnInWhichNothingWasDone) & ~placesWereWrittenInTurn) ? 0 : m_marks.turnInWhichNothingWasDone | placesWereWrittenInTurn;
     if (m_held == other.m_held || holdsNothing())
         return;
     if (other.holdsNothing()) {

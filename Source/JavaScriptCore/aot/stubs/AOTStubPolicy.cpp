@@ -28,6 +28,7 @@ StubOptions StubOptions::from(const RecordedOptions& recorded, const Typed::Prog
         .matchesRegExps = matchesRegExps,
         .recordsLastMatch = recordsLastMatch,
         .checksProofs = checksProofs,
+        .methodsOfBuiltinsMayBeReplaced = program.admitsReplacedBuiltins,
         .isPositionIndependent = recorded.form() == ImageForm::PositionIndependent,
         .maxNameInFieldTable = RowDisplacementTable::maxColumn,
         .targetFeatures = CPUFeatureSet::fromBits(static_cast<uint32_t>(recorded.targetFeatures)),

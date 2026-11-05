@@ -36,7 +36,7 @@ class ParallelLoops {
     WTF_MAKE_NONCOPYABLE(ParallelLoops);
     WTF_MAKE_NONMOVABLE(ParallelLoops);
 public:
-    static constexpr size_t workerStackSize = 8 * MB;
+    static constexpr size_t workerStackSize = 64 * MB;
 
     JS_EXPORT_PRIVATE explicit ParallelLoops(unsigned width, const HostThreadPool* = nullptr);
 

@@ -141,6 +141,7 @@ public:
     AllocationSiteRecord& fillAllocationSite(VM&, uint32_t allocation);
     void predictStructure(VM&, uint32_t allocation, CompiledStructure*);
     std::optional<StructureID> structureIDOf(uint32_t allocation) const;
+    size_t numberOfStructuresMade() const { return m_numberOfStructuresMade; }
     void forgetStructuresOf(const LayoutData& classLayout);
 
     template<typename Visitor> void visitRoots(Visitor&);
@@ -190,6 +191,7 @@ private:
     Vector<uint32_t> m_shapesWithStructure;
     BitVector m_shapeHasStructure;
     uint32_t m_numberOfAllocationSiteRecords { 0 };
+    size_t m_numberOfStructuresMade { 0 };
     AllocatorWithoutRoom m_allocatorWithoutRoom { };
     std::array<CompiledStructure*, 2> m_templateStructures { };
     std::unique_ptr<VariantMaps> m_variants;

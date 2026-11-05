@@ -29,6 +29,7 @@ struct ExceptionWords {
     EncodedJSValue thrownValue;
     void* stackPointerOfHandler;
     uint32_t pollLeavesOwedError;
+    uint32_t stateOfGuessesThatFail;
 };
 static_assert(sizeof(ExceptionWords) == 24);
 

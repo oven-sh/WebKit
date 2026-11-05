@@ -66,7 +66,7 @@ uint64_t fillEnforcedFieldsForFacts(Program& program, const LinkTables& linked, 
     auto forEachFieldWithSlot = [&](const Invocable<void(FieldReference)> auto& functor) {
         for (uint32_t index = 0; index < numberOfLayouts; ++index) {
             LayoutID id(index);
-            if (!hasOrSharesSlotsForFactsOfEnforcedFields(program, linked, id) || !slotsOfLayoutMayBeHeldToTypes(program, linked, held, familiesOfInstances, id))
+            if (!hasOrSharesSlotsForFactsOfEnforcedFields(program, linked, id) || !slotsOfLayoutMayBeHeldToTypes(program, familiesOfInstances, id))
                 continue;
             uint32_t numberOfFields = tables.firstFieldOfLayout[index + 1] - tables.firstFieldOfLayout[index];
             for (uint32_t field = 0; field < numberOfFields; ++field)

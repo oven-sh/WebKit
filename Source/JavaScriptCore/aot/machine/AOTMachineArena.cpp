@@ -60,14 +60,16 @@ void* Arena::allocateSlow(size_t bytes, size_t alignment)
     if (m_chunk) {
         uintptr_t endOfChunk = reinterpret_cast<uintptr_t>(m_chunk) + m_chunk->size;
         uintptr_t start = (m_cursor + alignment - 1) & ~(static_cast<uintptr_t>(alignment) - 1);
-        if (start >= m_cursor && start <= endOfChunk && bytes <= endOfChunk - start) {
+        if (start >= m_cursor && start <= endOfChunk && bytes <= endOfChunk - start && bytesTakenBy(bytes) <= endOfChunk - start) {
             __asan_unpoison_memory_region(reinterpret_cast<void*>(m_cursor), start + bytes - m_cursor);
-            m_cursor = start + bytes;
+            m_cursor = start + bytesTakenBy(bytes);
             m_end = m_cursor;
             return reinterpret_cast<void*>(start);
         }
     }
 #endif
+    if (m_endOfChunk)
+        return allocateOutsideRoomLetGo(bytes, alignment);
 
     static_assert(!(sizeof(Chunk) % alignmentOfCursor));
     size_t overhead = sizeof(Chunk) + alignment - 1 + alignmentOfCursor - 1;
@@ -81,6 +83,118 @@ void* Arena::allocateSlow(size_t bytes, size_t alignment)
     m_cursor = m_begin;
     m_end = poisonFreeMachineArenaBytes(m_begin, reinterpret_cast<uintptr_t>(chunk) + size);
     return allocate(bytes, alignment);
+}
+
+bool Arena::holds(uintptr_t begin, uintptr_t end) const
+{
+    for (const Chunk* chunk = m_chunk; chunk; chunk = chunk->previous) {
+        if (begin >= reinterpret_cast<uintptr_t>(chunk + 1) && end <= reinterpret_cast<uintptr_t>(chunk) + chunk->size)
+            return true;
+    }
+    return false;
+}
+
+void Arena::letGoOfLargeRoom(uintptr_t begin, size_t bytes)
+{
+    constexpr uintptr_t maskOfCursor = ~(static_cast<uintptr_t>(alignmentOfCursor) - 1);
+    uintptr_t end = (begin + bytes) & maskOfCursor;
+    begin = (begin + alignmentOfCursor - 1) & maskOfCursor;
+    if (end <= begin || end - begin < smallestRoomKept || !holds(begin, end))
+        return;
+
+#if ASAN_ENABLED
+    __asan_poison_memory_region(reinterpret_cast<void*>(begin), end - begin);
+#else
+#if ASSERT_ENABLED
+    std::memset(reinterpret_cast<void*>(begin), 0xab, end - begin);
+#endif
+    if (!m_forgetsRoomsLetGoAtReset) {
+        m_forgetsRoomsLetGoAtReset = true;
+        addFinalizer(this, [](void* arena) { static_cast<Arena*>(arena)->forgetRoomsLetGo(); });
+    }
+    keepRoomLetGo(begin, end);
+    if (!m_endOfChunk)
+        standInRoomLetGo();
+#endif
+}
+
+void Arena::keepRoomLetGo(uintptr_t begin, uintptr_t end)
+{
+    RoomLetGo** linkToRoomInFront = nullptr;
+    RoomLetGo** link = &m_roomsLetGo;
+    while (*link && reinterpret_cast<uintptr_t>(*link) < begin) {
+        linkToRoomInFront = link;
+        link = &(*link)->next;
+    }
+
+    RoomLetGo* behind = *link;
+    if (behind && reinterpret_cast<uintptr_t>(behind) == end) {
+        end = behind->end;
+        behind = behind->next;
+    }
+    if (linkToRoomInFront && (*linkToRoomInFront)->end == begin) {
+        begin = reinterpret_cast<uintptr_t>(*linkToRoomInFront);
+        link = linkToRoomInFront;
+    }
+
+    uintptr_t& cursorInChunk = m_endOfChunk ? m_cursorInChunk : m_cursor;
+    if (end == cursorInChunk) {
+        cursorInChunk = begin;
+        *link = behind;
+        return;
+    }
+    if (end - begin < smallestRoomKept)
+        return;
+    *link = new (NotNull, reinterpret_cast<void*>(begin)) RoomLetGo { behind, end };
+}
+
+void Arena::standInRoomLetGo()
+{
+    ASSERT(!m_endOfChunk);
+    RoomLetGo* room = m_roomsLetGo;
+    if (!room)
+        return;
+    m_roomsLetGo = room->next;
+    m_cursorInChunk = m_cursor;
+    m_endOfChunk = m_end;
+    m_cursor = reinterpret_cast<uintptr_t>(room);
+    m_end = room->end;
+}
+
+void* Arena::allocateOutsideRoomLetGo(size_t bytes, size_t alignment)
+{
+    keepRoomLetGo(m_cursor, m_end);
+    m_cursor = m_cursorInChunk;
+    m_end = m_endOfChunk;
+    m_endOfChunk = 0;
+
+    size_t bytesTaken = bytesTakenBy(bytes);
+    for (RoomLetGo** link = &m_roomsLetGo; RoomLetGo* room = *link; link = &room->next) {
+        uintptr_t start = (reinterpret_cast<uintptr_t>(room) + alignment - 1) & ~(static_cast<uintptr_t>(alignment) - 1);
+        if (start > room->end || room->end - start < bytesTaken)
+            continue;
+        *link = room->next;
+        m_cursorInChunk = m_cursor;
+        m_endOfChunk = m_end;
+        m_cursor = reinterpret_cast<uintptr_t>(room);
+        m_end = room->end;
+        return allocate(bytes, alignment);
+    }
+
+    void* result = allocate(bytes, alignment);
+    standInRoomLetGo();
+    return result;
+}
+
+void Arena::forgetRoomsLetGo()
+{
+    if (m_endOfChunk) {
+        m_cursor = m_cursorInChunk;
+        m_end = m_endOfChunk;
+        m_endOfChunk = 0;
+    }
+    m_roomsLetGo = nullptr;
+    m_forgetsRoomsLetGoAtReset = false;
 }
 
 void Arena::addFinalizer(void* object, void (*destroy)(void*))
@@ -105,6 +219,7 @@ void Arena::reset()
     if (!m_chunk)
         return;
 
+    size_t bytesTaken = bytesAllocatedSinceReset();
     for (Chunk* chunk = std::exchange(m_chunk->previous, nullptr); chunk;) {
         ASSERT(chunk->size < m_chunk->size);
         Chunk* previous = chunk->previous;
@@ -112,7 +227,19 @@ void Arena::reset()
         chunk = previous;
     }
 
+    if (bytesTaken && m_chunk->size > smallestChunkSize && bytesTaken < m_chunk->size / 8) {
+        size_t size = m_chunk->size / 2;
+        freeMachineArenaChunk(m_chunk, m_chunk->size);
+        m_chunk = new (NotNull, fastMalloc(size)) Chunk { nullptr, size };
+        m_begin = reinterpret_cast<uintptr_t>(m_chunk + 1);
+        m_cursor = m_begin;
+        m_end = reinterpret_cast<uintptr_t>(m_chunk) + size;
+    }
+
 #if ASSERT_ENABLED
+#if ASAN_ENABLED
+    __asan_unpoison_memory_region(reinterpret_cast<void*>(m_begin), m_cursor - m_begin);
+#endif
     std::memset(reinterpret_cast<void*>(m_begin), 0xab, m_cursor - m_begin);
 #endif
     m_bytesInFullChunks = 0;

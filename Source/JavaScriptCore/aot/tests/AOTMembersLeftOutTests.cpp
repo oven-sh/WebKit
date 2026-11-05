@@ -133,6 +133,19 @@ static void testInnermostMakingSaysWhetherLookOnlyTests()
     AOT_TEST_CHECK(!isMakingMemberForLookThatOnlyTests());
 }
 
+static void testWhatIsNotedGoesWithItsVM()
+{
+    const VM* gone;
+    {
+        Realms realms;
+        gone = &realms.vm();
+        refuse(realms);
+        layOnGlobalObject(realms, takeStandInForMemberLeftOut(realms.plain(), "made"_s));
+        AOT_TEST_CHECK(isAnythingNotedOfMembersLeftOut(gone));
+    }
+    AOT_TEST_CHECK(!isAnythingNotedOfMembersLeftOut(gone));
+}
+
 static void testOrdinaryFunctionStandsInForNothing()
 {
     Realms realms;
@@ -148,6 +161,7 @@ std::span<const NativeTest> membersLeftOutTests()
         { "members-left-out/stand-in-for-a-function-that-constructs-without-a-prototype"_s, testStandInForFunctionThatConstructsWithoutPrototype },
         { "members-left-out/stand-in-for-a-value-refuses-reads"_s, testStandInForValueRefusesReads },
         { "members-left-out/innermost-making-says-whether-the-look-only-tests"_s, testInnermostMakingSaysWhetherLookOnlyTests },
+        { "members-left-out/what-is-noted-goes-with-its-vm"_s, testWhatIsNotedGoesWithItsVM },
         { "members-left-out/ordinary-function-stands-in-for-nothing"_s, testOrdinaryFunctionStandsInForNothing },
     };
     return tests;

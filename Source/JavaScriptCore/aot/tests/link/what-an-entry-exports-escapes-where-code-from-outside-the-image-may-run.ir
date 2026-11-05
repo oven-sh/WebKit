@@ -1,5 +1,6 @@
 # The same entry where code from outside the image may run: it imports the entry and calls what it likes.
 # main.ts: export function pathOf(n) { return n } export default function serve(n) { return n }
+# REQUIRES: code-outside-image
 # RUN: link functions mechanisms=all
 # CHECK-NOT: function f1 callers-known
 # CHECK-NOT: function f2 callers-known

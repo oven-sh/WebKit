@@ -314,6 +314,44 @@ void generateAllocateInstanceOutOfLine(StubAssembler& jit)
     JumpList allocatesSlowly;
     allocatesSlowly.append(jit.branchPtr(CCallHelpers::Equal, Address(record, AllocationSiteRecord::offsetOfPrototype()), prototype));
 
+    const GPRReg mask = jit.allocateScratch(StubRegister::T12);
+    RELEASE_ASSERT(noOverlap(cell, allocation, prototype, record, scratch, mask, instanceGPR));
+    JumpList isNotRemembered;
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(classes.instancesBelowPrototypes.entries)), record);
+    isNotRemembered.append(jit.branchTestPtr(CCallHelpers::Zero, record));
+    jit.load64(Address(instanceGPR, AOT_INSTANCE_OFFSET(classes.instancesBelowPrototypes.maskOfOffsets)), mask);
+    static_assert(firstOffsetOfInstanceBelowPrototype(16, 3) == 128);
+    jit.zeroExtend32ToWord(allocation, scratch);
+    jit.lshift64(TrustedImm32(shiftOfInstanceBelowPrototype - 1), scratch);
+    jit.add64(prototype, scratch);
+    jit.lshift64(TrustedImm32(1), scratch);
+    Label looksAtEntry = jit.label();
+    jit.and64(mask, scratch);
+    jit.load64(BaseIndex(record, scratch, CCallHelpers::TimesOne, OBJECT_OFFSETOF(InstanceBelowPrototype, prototype)), cell);
+    isNotRemembered.append(jit.branchTestPtr(CCallHelpers::Zero, cell));
+    Jump isOfOtherPrototype = jit.branchPtr(CCallHelpers::NotEqual, cell, prototype);
+    jit.load32(BaseIndex(record, scratch, CCallHelpers::TimesOne, OBJECT_OFFSETOF(InstanceBelowPrototype, allocationOfSite)), cell);
+    Jump isRemembered = jit.branch32(CCallHelpers::Equal, cell, allocation);
+    isOfOtherPrototype.link(&jit);
+    jit.add64(TrustedImm32(sizeof(InstanceBelowPrototype)), scratch);
+    jit.jump().linkTo(looksAtEntry, &jit);
+
+    isRemembered.link(&jit);
+    jit.add64(scratch, record);
+    jit.loadPtr(Address(record, OBJECT_OFFSETOF(InstanceBelowPrototype, allocator)), mask);
+    allocateCell(jit, cell, mask, scratch, isNotRemembered);
+    jit.load32(Address(mask, LocalAllocator::offsetOfCellSize()), scratch);
+    jit.loadPtr(Address(record, OBJECT_OFFSETOF(InstanceBelowPrototype, words)), mask);
+    Label copiesWord = jit.label();
+    jit.sub64(TrustedImm32(sizeof(uint64_t)), scratch);
+    jit.load64(BaseIndex(mask, scratch, CCallHelpers::TimesOne), allocation);
+    jit.store64(allocation, BaseIndex(cell, scratch, CCallHelpers::TimesOne));
+    jit.branchTest64(CCallHelpers::NonZero, scratch).linkTo(copiesWord, &jit);
+    jit.move(TrustedImm32(0), record);
+    jit.returnToCaller();
+
+    isNotRemembered.link(&jit);
+
     const GPRReg setsPrototype = scratch;
     static_assert(areDistinctOnEveryISA(StubRegister::T9, StubRegister::T13, StubRegister::A0, StubRegister::A1, StubRegister::A3, StubRegister::A4));
     RELEASE_ASSERT(allocation == gprOf(StubRegister::T9) && setsPrototype == gprOf(StubRegister::T13));

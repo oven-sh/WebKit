@@ -4,7 +4,7 @@ enum AsyncGeneratorStepStatus { | engine Result Yielded Completed }
 
 parameters SlotStamp (key: PropertyKey, receivers: LayoutSet, level: KnowledgeLevel)
 
-enum MemberConditionKind { | engine MemberUnchanged PrototypeLinkUnchanged ClassEvaluatedOnce InstancePrototypeUnchanged MemberNotHidden MemberPassedByStores }
+enum MemberConditionKind { | engine MemberUnchanged PrototypeLinkUnchanged ClassEvaluatedOnce InstancePrototypeUnchanged MemberNotHidden MemberPassedByStores MemberUnchangedAbove }
 record MemberConditionRecord engine { kind: MemberConditionKind layout: Layout side: ClassSide key: PropertyKey? }
 
 family Guard Prepared..Placed ; branches = May ; interpreted = Test
@@ -15,6 +15,8 @@ operation HasNoFieldOutsideSlot (object: Object/inspects) [mayMeetUnfinishedObje
 operation IsNotFrozen (object: Object/inspects) [| engine hasNoExtraProperties hasNoFieldOutsideSlot] -> natural(boolean) ; reads(ShapeWords, OrderWords, NamedProperties) ; proves = NotFrozen ; relies = Shape ; form = Open
 operation HasLayoutPrototype (object: Object/inspects) [| engine hasNoFieldOutsideSlot] -> natural(boolean) ; reads(PrototypeLinks, NamedProperties) ; proves = PrototypeLinkUnchanged ; relies = Shape ; form = Open
 operation IsPristine (value: Any/inspects, builtinClass: BuiltinClass, aspects: PristineAspects) -> natural(boolean) ; reads(NamedProperties, PrototypeLinks) ; hasKnownValueRule = true ; proves = Pristine ; replaces = IsPristineArray, CallBuiltin ; form = Open
+engine operation IsMemberAsBuilt (builtin: Builtin) -> natural(boolean) ; reads(NamedProperties) ; form = Open
+engine operation IsHolderWithoutAddedNames (builtin: Builtin) -> natural(boolean) ; reads(NamedProperties) ; form = Open
 operation HasArrayStorage (array: Array/inspects, arrayStorage: ArrayStorage) [isWritable | engine admitsInt32Storage] -> natural(boolean) ; reads(ArrayStorage) ; proves = ArrayStorage ; form = Open
 operation IsElementPresent (array: Array/inspects, position: Number/inspects, storage?: ArrayStoragePointer/inspects, length...: Integer/inspects, arrayStorage: ArrayStorage) [keyIsIntegral | engine admitsInt32Storage isInBounds] -> natural(boolean) ; reads(ArrayStorage, Elements[Array]) ; proves = InBounds ; relies = ArrayStorage ; form = Open
 operation IsNotThenable (value: Any/inspects) -> natural(boolean) ; reads(NamedProperties, ObjectFields, PrototypeLinks, RuntimeState) ; proves = NotThenable ; replaces = ReturnAsyncResult, ResolvePromise ; form = Open
@@ -52,9 +54,9 @@ operation ElemGetByKeyParts (object: Any/retains, firstPart: Any/inspects, secon
 family ElementAccess Prepared..Placed
 operation GetArrayLength (array: Array/inspects) -> natural(uint32) ; reads(ArrayStorage) ; relies = Pristine, ArrayStorage ; interpreted = Read ; form = Open
 engine operation GetArrayStorage (array: Array/inspects) -> natural(ArrayStoragePointer) ; reads(ArrayStorage) ; base = array ; form = Open
-operation GetArrayElement (array: Array/inspects+readsContents, position: Number/inspects, storage?: ArrayStoragePointer/inspects, length...: Integer/inspects, arrayStorage: ArrayStorage, level: KnowledgeLevel) [keyIsIntegral isInBounds isPresent readsHoleAsNaN | engine admitsInt32Storage] -> unknown => declared(array) ; CreatesString reads(ArrayStorage, Elements[Array], NamedProperties) ; relies = Pristine, ArrayStorage, InBounds ; interpreted = Read ; replaces = ElemGet ; accessClass = Slot ; formDependsOnLoop = true ; openIn = Loop ; form = Open
+operation GetArrayElement (array: Array/inspects+readsContents, position: Number/inspects, storage?: ArrayStoragePointer/inspects, length...: Integer/inspects, arrayStorage: ArrayStorage, level: KnowledgeLevel) [keyIsIntegral isInBounds isPresent readsHoleAsNaN | engine admitsInt32Storage asksCellWhereNothingIsFound] -> unknown => declared(array) ; CreatesString reads(ArrayStorage, Elements[Array], NamedProperties) ; relies = Pristine, ArrayStorage, InBounds ; interpreted = Read ; replaces = ElemGet ; accessClass = Slot ; formDependsOnLoop = true ; openIn = Loop ; form = Open
 operation PutArrayElement(array: Array/inspects+writesContents, position: Number/inspects, value: Any/retains(array), storage?: ArrayStoragePointer/inspects, arrayStorage: ArrayStorage, mode: ECMAMode, level: KnowledgeLevel) [keyIsIntegral isInBounds | engine storageIsWritable] -> none ; GrowsArray writes(NamedProperties) ; relies = Pristine, ArrayStorage, InBounds ; interpreted = Store ; replaces = ElemSet, ElemDefine ; accessClass = Slot ; runtime = ArrayPutAtIndex ; runsOwnerBarrier = true ; formDependsOnLoop = true ; openUnder = Always ; closedUnder = ValueNeverFitsStorage ; openIn = Loop
-operation HasArrayElement (array: Array/inspects, position: Number/inspects, length...: Integer/inspects, arrayStorage: ArrayStorage, level: KnowledgeLevel) [keyIsIntegral] -> natural(boolean) ; CreatesString reads(ArrayStorage, Elements[Array], NamedProperties) ; relies = Pristine, ArrayStorage ; interpreted = Test ; replaces = ElemHas ; accessClass = Slot ; branches = May ; form = Open
+operation HasArrayElement (array: Array/inspects, position: Number/inspects, length...: Integer/inspects, arrayStorage: ArrayStorage, level: KnowledgeLevel) [keyIsIntegral | engine asksCellWhereNothingIsFound] -> natural(boolean) ; CreatesString reads(ArrayStorage, Elements[Array], NamedProperties) ; relies = Pristine, ArrayStorage ; interpreted = Test ; replaces = ElemHas ; accessClass = Slot ; branches = May ; form = Open
 operation AppendElements (array: Array/inspects+writesContents, source: Array/Listed) -> none ; GrowsArray ; relies = Pristine, ArrayStorage ; interpreted = List ; replaces = AppendSpread ; runtime = AppendElements ; form = Closed
 operation AppendMembers (array: Array/inspects+writesContents, source: Object/inspects+readsContents+retainsContents+writesContents) -> none ; GrowsArray reads(CollectionStorage, CollectionEntries) writes(CollectionStorage) ; relies = Pristine ; replaces = AppendSpread ; runtime = AppendMembers ; form = Closed
 operation GetTypedArrayLength (view: Object/inspects, typedArrayType: TypedArrayType) -> natural(int[0, 17179869184]) ; reads(TypedArrayStorage) ; form = Open
@@ -116,9 +118,9 @@ operation StringBuilderRollBack (builder: StringBuilder/inspects, checkpoint: In
 engine operation StackStringBuilderBegin () -> natural(StringBuilder) ; writes(StringBuilderContents) ; form = Open
 engine operation StackStringBuilderStart (builder: StringBuilder/inspects) -> natural(BuilderCursor) ; none ; base = builder ; form = Open
 engine operation StackStringBuilderCursor (builder: StringBuilder/inspects) -> natural(BuilderCursor) ; reads(StringBuilderContents) ; base = builder ; form = Open
-engine operation StackStringBuilderLength (builder: StringBuilder/inspects, cursor: BuilderCursor/inspects) -> natural(int[0, 2147483647]) ; reads(StringBuilderContents) ; base = builder ; form = Open
-engine operation StackStringBuilderToString (builder: StringBuilder/inspects, cursor: BuilderCursor/inspects) -> natural(string) ; AppendsToBuilder ; runtime = StackStringBuilderToString ; base = builder ; form = Runtime
-engine operation StackStringBuilderFinish (builder: StringBuilder/inspects, cursor: BuilderCursor/inspects) -> natural(string) ; AppendsToBuilder ; runtime = StackStringBuilderFinish ; base = builder ; form = Runtime
+engine operation StackStringBuilderLength (builder: StringBuilder/inspects, cursor: BuilderCursor/inspects) -> natural(int[0, 2147483647]) ; reads(StringBuilderContents) ; form = Open
+engine operation StackStringBuilderToString (builder: StringBuilder/inspects, cursor: BuilderCursor/inspects) -> natural(string) ; AppendsToBuilder ; runtime = StackStringBuilderToString ; form = Runtime
+engine operation StackStringBuilderFinish (builder: StringBuilder/inspects, cursor: BuilderCursor/inspects) -> natural(string) ; AppendsToBuilder ; runtime = StackStringBuilderFinish ; form = Runtime
 engine operation StackStringBuilderDiscard (builder: StringBuilder/inspects) -> none ; reads(StringBuilderContents, RuntimeState) writes(StringBuilderContents, RuntimeState) ; runtime = StackStringBuilderDiscard ; form = Open
 
 family SavedFrame Prepared..Placed

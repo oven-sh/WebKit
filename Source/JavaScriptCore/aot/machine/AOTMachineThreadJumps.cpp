@@ -35,6 +35,7 @@ public:
     }
 
     void run();
+    void letGoOfLists();
 
 private:
     enum Flag : uint8_t {
@@ -141,6 +142,7 @@ private:
     std::optional<ThreadableJoin> matchThreadableJoin(Block* join);
 
     void retarget(Block* from, unsigned successorIndex, Block* target);
+    void retargetPast(Block* from, unsigned successorIndex, Edge passedBy);
     void setEdgeClass(Block* from, unsigned successorIndex, EdgeClass);
     ALWAYS_INLINE bool isInHand(const Block*) const;
     ALWAYS_INLINE void letGoUnlessSomethingLeadsTo(Block*);
@@ -285,6 +287,7 @@ void JumpThreader::findLoopHeads()
             end = next + successors.size();
         }
     }
+    m_arena.letGoOfArray(path, numberOfBlocks);
 }
 
 ALWAYS_INLINE bool JumpThreader::isLoopHead(const Block* block)
@@ -423,6 +426,13 @@ void JumpThreader::retarget(Block* from, unsigned successorIndex, Block* target)
     letGoUnlessSomethingLeadsTo(formerTarget);
 }
 
+void JumpThreader::retargetPast(Block* from, unsigned successorIndex, Edge passedBy)
+{
+    Block* formerTarget = from->successor(successorIndex).block();
+    Order::retargetPast(from, successorIndex, passedBy);
+    letGoUnlessSomethingLeadsTo(formerTarget);
+}
+
 void JumpThreader::setEdgeClass(Block* from, unsigned successorIndex, EdgeClass edgeClass)
 {
     if (from->successor(successorIndex).edgeClass() == edgeClass)
@@ -524,7 +534,7 @@ void JumpThreader::threadThroughJoin(Block* from, unsigned successorIndex)
 
     bool isOnlyEdge = m_joinsThatOneWayLedToAtFirst.get(join->index());
     EdgeClass edgeClass = from->successor(successorIndex).edgeClass();
-    retarget(from, successorIndex, target);
+    retargetPast(from, successorIndex, join->successor(chosenSuccessor));
     if (isOnlyEdge)
         setEdgeClass(from, successorIndex, edgeClass);
 }
@@ -785,6 +795,7 @@ bool JumpThreader::numberTestsAskedTwice()
             break;
         }
     }
+    m_arena.letGoOfArray(table, numberOfPlaces);
     if (!holdsSuchBlock)
         return false;
     m_answersOnWay.fill(m_arena, numberOfBranches + 1, Answer::Unknown);
@@ -912,6 +923,10 @@ void JumpThreader::threadEdgesPastDecidedTests()
             way.takeLast();
         }
     }
+    way.letGo(m_arena);
+    tops.letGo(m_arena);
+    m_arena.letGoOfArray(nextBlocksBeside, numberOfBlocks);
+    m_arena.letGoOfArray(firstBlocksBelow, numberOfBlocks);
 }
 
 std::optional<JumpThreader::LeavingTest> JumpThreader::describeTestLeavingBy(const Block* block, unsigned leavingSuccessor)
@@ -1168,6 +1183,22 @@ void JumpThreader::run()
     askTestsBehindNextThatImplyThem();
 }
 
+void JumpThreader::letGoOfLists()
+{
+    if (m_testsOfBranches.capacity() * sizeof(TestOfBranch) < Arena::smallestRoomLetGo)
+        return;
+    m_answersOnWay.letGo(m_arena);
+    m_testsOfBlocks.letGo(m_arena);
+    m_joinsPassedBy.letGo(m_arena);
+    m_blocksInHandThatNothingLeadsTo.letGo(m_arena);
+    m_blocksToLetGo.letGo(m_arena);
+    m_joinsThatJump.letGo(m_arena);
+    m_chain.letGo(m_arena);
+    m_matchesOfJoins.letGo(m_arena);
+    m_testsOfBranches.letGo(m_arena);
+    m_flags.letGo(m_arena);
+}
+
 } // anonymous namespace
 
 void threadJumps(Procedure& procedure)
@@ -1176,7 +1207,9 @@ void threadJumps(Procedure& procedure)
         return;
     if (procedure.numberOfBlocks() == 1 && !procedure.blockAt(0)->numSuccessors())
         return;
-    JumpThreader(procedure).run();
+    JumpThreader threader(procedure);
+    threader.run();
+    threader.letGoOfLists();
 }
 
 } } } // namespace JSC::AOT::Machine

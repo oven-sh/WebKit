@@ -154,9 +154,12 @@ static constexpr unsigned numberOfClassSides = numberOfEnumerators<ClassSide>;
 
 struct NamedClassGuardData {
     static constexpr uint32_t isAskedByStoresAlone = 1u << 31;
+    static constexpr uint32_t isAskedBehindLookAtObject = 1u << 0;
 
-    uint32_t numberOfBit() const { return bit & ~isAskedByStoresAlone; }
+    uint32_t numberOfBit() const { return bit & ~(isAskedByStoresAlone | isAskedBehindLookAtObject); }
     bool answersStoresAlone() const { return bit & isAskedByStoresAlone; }
+    bool answersBehindLookAtObject() const { return bit & isAskedBehindLookAtObject; }
+    bool answersReadsOffEveryObject() const { return !(bit & (isAskedByStoresAlone | isAskedBehindLookAtObject)); }
 
     uint32_t name;
     uint32_t bit;
@@ -186,7 +189,8 @@ struct ClassData {
     uint32_t guardsHoldWhileClear : 1;
     uint32_t guardsOfPrototypeSideHoldWhileClear : 1;
     uint32_t sidesWithGuardsHereOrBelow : numberOfClassSides;
-    uint32_t unusedClassBits : 30 - numberOfClassSides { 0 };
+    uint32_t guardsOfNamesAwaitBeginning : 1;
+    uint32_t unusedClassBits : 29 - numberOfClassSides { 0 };
 
     bool bitsAreClearWhileGuardsHold(ClassSide side) const { return side == ClassSide::Prototype ? guardsOfPrototypeSideHoldWhileClear : guardsHoldWhileClear; }
     bool hasGuardsHereOrBelow(ClassSide side) const { return sidesWithGuardsHereOrBelow >> static_cast<unsigned>(side) & 1; }
@@ -205,11 +209,12 @@ static_assert(offsetof(ExtensionLayoutData, granulesOfFirstExtensionHigh) == off
 struct LayoutData {
     static constexpr uint32_t noBase = UINT32_MAX;
 
-    static constexpr unsigned impossibleMutationBits = 14;
+    static constexpr unsigned impossibleMutationBits = 13;
 
     uint32_t kindBits : 4;
     uint32_t isDerived : 1;
     uint32_t impossibleMutationsRaw : impossibleMutationBits;
+    uint32_t isSaidNeverToReachUnseenCode : 1;
     uint32_t evaluationBits : 2;
     uint32_t hasFieldsWithSymbolKeys : 1;
     uint32_t hasOnlyPlainSlots : 1;

@@ -915,7 +915,7 @@ void StraightEmitter::callStub(Origin origin, StubKey key, std::span<const Strai
     }
 
     StubKey called = key;
-    if (StubKey form = key.withCallerFrame(CallerFrame::KeepsNoRegisters); key.callerFrame() == CallerFrame::HasFrame && exists(form) && !options.neverReturns && !options.throwSite && !firstRead) {
+    if (StubKey form = key.withCallerFrame(CallerFrame::KeepsNoFPRs); key.callerFrame() == CallerFrame::HasFrame && exists(form) && !options.neverReturns && !options.throwSite && !firstRead) {
         StubKey boundForm = options.immediate && catalog.bindsImmediate(form) ? form.withImmediate(*options.immediate) : form;
         if (catalog.summaryOf(boundForm).clobbered != catalog.summaryOf(boundKey).clobbered)
             called = form;

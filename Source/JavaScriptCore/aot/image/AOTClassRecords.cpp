@@ -189,10 +189,11 @@ static Vector<uint32_t> collectGuardsOfNamesInClassRecord(const TableEncoder& en
         return std::pair(guard.classLayout, guard.sideWord());
     };
     const PlacedStatics& statics = encoder.numbers.statics();
-    auto guardsOfSide = std::ranges::equal_range(statics.classGuardsOfNames, std::pair(classLayout, sideWordOfClassGuardOfName(side, false)), { }, sideOfGuard);
-    auto guardsThatStoresAloneAsk = std::ranges::equal_range(statics.classGuardsOfNames, std::pair(classLayout, sideWordOfClassGuardOfName(side, true)), { }, sideOfGuard);
-    auto namesOfGuardsOfSeveralNames = std::ranges::equal_range(statics.namesOfClassGuardsOfSeveralNames, std::pair(classLayout, sideWordOfClassGuardOfName(side, false)), { }, sideOfGuard);
-    if (guardsOfSide.empty() && guardsThatStoresAloneAsk.empty() && namesOfGuardsOfSeveralNames.empty())
+    auto guardsOfSide = std::ranges::equal_range(statics.classGuardsOfNames, std::pair(classLayout, sideWordOfClassGuardOfName(side, AskerOfClassGuardOfName::Reads)), { }, sideOfGuard);
+    auto guardsThatStoresAloneAsk = std::ranges::equal_range(statics.classGuardsOfNames, std::pair(classLayout, sideWordOfClassGuardOfName(side, AskerOfClassGuardOfName::StoresAlone)), { }, sideOfGuard);
+    auto guardsAskedBehindLooksAtObjects = std::ranges::equal_range(statics.classGuardsOfNames, std::pair(classLayout, sideWordOfClassGuardOfName(side, AskerOfClassGuardOfName::ReadsBehindLookAtObject)), { }, sideOfGuard);
+    auto namesOfGuardsOfSeveralNames = std::ranges::equal_range(statics.namesOfClassGuardsOfSeveralNames, std::pair(classLayout, sideWordOfClassGuardOfName(side, AskerOfClassGuardOfName::Reads)), { }, sideOfGuard);
+    if (guardsOfSide.empty() && guardsThatStoresAloneAsk.empty() && guardsAskedBehindLooksAtObjects.empty() && namesOfGuardsOfSeveralNames.empty())
         return { };
     if (!isRankedAmongClassRecords(encoder, classLayout))
         encoder.fail("CodeTestsGuardOfClassWithoutRank"_s, classLayout);
@@ -204,10 +205,17 @@ static Vector<uint32_t> collectGuardsOfNamesInClassRecord(const TableEncoder& en
             encoder.fail("GuardedNameOfClassHasNoNumber"_s, classLayout);
             return;
         }
-        guards.append(NamedClassGuardData { *name, guard.bit | (guard.isAskedByStoresAlone ? NamedClassGuardData::isAskedByStoresAlone : 0) });
+        RELEASE_ASSERT(!(guard.bit & (NamedClassGuardData::isAskedByStoresAlone | NamedClassGuardData::isAskedBehindLookAtObject)));
+        uint32_t flagOfAsker = 0;
+        if (guard.asker == AskerOfClassGuardOfName::StoresAlone)
+            flagOfAsker = NamedClassGuardData::isAskedByStoresAlone;
+        else if (guard.asker == AskerOfClassGuardOfName::ReadsBehindLookAtObject)
+            flagOfAsker = NamedClassGuardData::isAskedBehindLookAtObject;
+        guards.append(NamedClassGuardData { *name, guard.bit | flagOfAsker });
     };
     std::ranges::for_each(guardsOfSide, listUnderNumberOfName);
     std::ranges::for_each(guardsThatStoresAloneAsk, listUnderNumberOfName);
+    std::ranges::for_each(guardsAskedBehindLooksAtObjects, listUnderNumberOfName);
     std::ranges::for_each(namesOfGuardsOfSeveralNames, listUnderNumberOfName);
     AOT::sort(guards, { }, [](const NamedClassGuardData& guard) {
         return std::pair(guard.name, guard.bit);
@@ -282,6 +290,7 @@ ClassRecordParts collectClassRecordParts(const TableEncoder& encoder, LayoutID c
         parts.namedGuards[static_cast<unsigned>(side)] = collectGuardsOfNamesInClassRecord(encoder, classLayout, side);
     data.guardsHoldWhileClear = encoder.plan.classGuardsHoldWhileClear(classLayout);
     data.guardsOfPrototypeSideHoldWhileClear = encoder.plan.bitsOfClassGuardsAreClearWhileTheyHold(classLayout, ClassSide::Prototype);
+    data.guardsOfNamesAwaitBeginning = guardsOfNamesAwaitBeginningOf(program, encoder.plan, classLayout);
     return parts;
 }
 

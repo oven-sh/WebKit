@@ -168,10 +168,10 @@ bool Allocator::registerFileIsConsistent() const
 
 uint32_t Allocator::findReadFromInList(const Operation* value, Position position) const
 {
-    if (m_listsOfReads.isEmpty())
-        m_listsOfReads.grow(m_arena, m_order.mostOperations());
-    std::span<const uint32_t>& list = m_listsOfReads[value->index()];
-    if (list.empty()) {
+    if (m_numbersOfListsOfReads.isEmpty())
+        m_numbersOfListsOfReads.fill(m_arena, m_order.mostOperations(), 0);
+    uint32_t& numberOfList = m_numbersOfListsOfReads[value->index()];
+    if (!numberOfList) {
         size_t numberOfReads = 0;
         for (uint32_t read = m_liveness.of(value).firstUse; read; read = m_liveness.use(read).next)
             ++numberOfReads;
@@ -179,8 +179,10 @@ uint32_t Allocator::findReadFromInList(const Operation* value, Position position
         size_t next = 0;
         for (uint32_t read = m_liveness.of(value).firstUse; read; read = m_liveness.use(read).next)
             reads[next++] = read;
-        list = reads;
+        m_listsOfReads.append(m_arena, reads);
+        numberOfList = m_listsOfReads.size();
     }
+    std::span<const uint32_t> list = m_listsOfReads[numberOfList - 1];
     auto found = std::ranges::lower_bound(list, position, { }, [&](uint32_t read) {
         return m_liveness.use(read).position;
     });

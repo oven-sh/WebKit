@@ -24,6 +24,7 @@
 
 #include "AOTHeapHooks.h"
 #include "AOTRuntimeHooks.h"
+#include "AddressSpaceBudget.h"
 #include "CagedAlignedMemoryAllocator.h"
 #include "CodeBlock.h"
 #include "CodeBlockSetInlines.h"
@@ -571,7 +572,7 @@ void Collector::startHelpers()
     if (AOT::RuntimeHooks::isInNoHelperThreadsScope())
         return;
 #endif
-    if (startsHelpersLazily() && m_collectionsWithoutHelpers.load(std::memory_order_relaxed))
+    if (startsHelpersLazily() && (hasAddressSpaceLimit() || m_collectionsWithoutHelpers.load(std::memory_order_relaxed)))
         return;
     if (m_hasStartedHelpers.exchange(true))
         return;

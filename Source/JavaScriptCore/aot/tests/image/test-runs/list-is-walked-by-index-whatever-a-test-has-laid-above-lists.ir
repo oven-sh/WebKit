@@ -2,7 +2,7 @@
 # with   function total(things: number[]) { let sum = 0; for (const thing of things) sum += thing; return sum; }   function ofValues(things: number[]) { .. for (const thing of things.values()) .. }
 # All that a loop over a list goes by no test run can change: the method under Symbol.iterator above lists, `next` above their iterators, the absence of `return` there and of indexes above lists are locked.
 # So the loop asks the list alone (CellAlone): not the byte of its class, which ANY name written above lists sets for the rest of the process. What the list itself says is still heard: `odd` has a method of its own.
-# `values` is written through a value that nobody knows: it lies behind the watch: the loop over things.values() asks the byte, and finds what the shell's code has laid. That store has set the byte:
+# `values` is written through a value that nobody knows: it lies behind the watch: the loop over things.values() asks the byte of `values`, and finds what the shell's code has laid. That store has set the byte of the class too:
 # the loop over the list itself goes on by index behind it. (By the protocol it would call a built-in written in JavaScript, which this shell does not have: the run would stop.)
 # OPTIONS: admit=ReplacedBuiltins
 # RUN: run-in-shell mechanisms=all const above = Array.prototype, values = above.values; const once = value => function () { let given = false; return { next() { const done = given; given = true; return { done, value: done ? undefined : value }; }, [Symbol.iterator]() { return this; } }; }; globalThis.hidden = () => [1]; globalThis.list = [1, 2, 3]; globalThis.odd = [1, 2, 3]; globalThis.odd[Symbol.iterator] = once(40); globalThis.replace = () => { above.values = once(50); };
@@ -19,7 +19,8 @@
 # WALK: = GetArrayElement
 # RUN(VALUES): walk f2 mechanisms=all
 # VALUES-LABEL: code f2:Body
-# VALUES: = IsPristine {{*}}builtinClass=Array aspects=[Storage, Names]
+# VALUES: = IsPristine {{*}}builtinClass=Array aspects=[Storage, Names, CellAlone]
+# VALUES: = IsMemberAsBuilt builtin=ArrayPrototypeValues
 # VALUES: = GetArrayElement
 
 module m0 path="/a.test.ts" displayPath="a.test.ts" body=f0

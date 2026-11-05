@@ -1278,46 +1278,6 @@ static void testNamesOutsideLayoutAreAbsent()
     AOT_TEST_CHECK(!run.calledOperation && run.result == bitsOf(jsNumber(7)));
 }
 
-static void testReceiversInOtherRegisters()
-{
-    PropertyReads reads;
-    FieldTable table(reads);
-    table.setFlagsOfStructure(CompiledStructure::Flag::HasOnlyFieldsBelowObjectPrototype);
-    AOT_TEST_CHECK(alternateReceiverGPRs().empty() == !isX86_64());
-    for (GPRReg reg : alternateReceiverGPRs()) {
-        const StubKey variant = getById().withOperandRegister(reg);
-        auto answerFor = [&](uint64_t receiver) {
-            reads.runner.forgetAccessTable();
-            StubRun run = reads.runner.run(variant, { receiver }, PropertyReads::name);
-            AOT_TEST_CHECK(!run.calledOperation);
-            return run.result;
-        };
-
-        reads.clear();
-        FakeObjectWithShape withField(FieldTable::shapeWithValue);
-        withField.field() = bitsOf(jsNumber(7));
-        AOT_TEST_CHECK(answerFor(withField.address()) == bitsOf(jsNumber(7)));
-        withField.field() = traitsOf(SlotRepresentation::JSValue).absentBits;
-        AOT_TEST_CHECK(answerFor(withField.address()) == bitsOf(jsUndefined()));
-
-        FakeTypedObject withoutShape;
-        withoutShape.field() = bitsOf(jsNumber(8));
-        reads.fileInFrontBesideOthers(createFieldSlot(SlotRepresentation::JSValue));
-        AOT_TEST_CHECK(answerFor(withoutShape.address()) == bitsOf(jsNumber(8)));
-        reads.file(createFieldSlot(SlotRepresentation::JSValue));
-        AOT_TEST_CHECK(answerFor(withoutShape.address()) == bitsOf(jsNumber(8)));
-
-        reads.clear();
-        reads.runner.recordCallsOf(Entry::operationAOTGetByIdAndCache);
-        for (uint64_t receiver : { withoutShape.address(), bitsOf(jsNumber(9)) }) {
-            reads.runner.forgetAccessTable();
-            StubRun run = reads.runner.run(variant, { receiver }, PropertyReads::name);
-            AOT_TEST_CHECK(run.numberOfRecordedCalls == 1 && run.recordedArguments[0] == receiver && static_cast<uint32_t>(run.recordedArguments[1]) == PropertyReads::name);
-        }
-        reads.runner.countCallsOf(Entry::operationAOTGetByIdAndCache);
-    }
-}
-
 namespace {
 
 constexpr uint16_t nameOutsideLayouts = 2;
@@ -1367,10 +1327,7 @@ static void testAnswersBehindFieldTable()
     ordinary.property(FakeHolder::inlineOffset) = bitsOf(jsNumber(21));
     ordinary.property(FakeHolder::outOfLineOffset) = bitsOf(jsNumber(22));
 
-    Vector<StubKey> stubs { getById() };
-    for (GPRReg reg : alternateReceiverGPRs())
-        stubs.append(getById().withOperandRegister(reg));
-    for (StubKey stub : stubs) {
+    for (StubKey stub : { getById() }) {
         FakeObjectWithShape withShape(FieldTable::shapeWithValue);
         FakeTypedObject withoutShape;
         for (FakeTypedObject* object : { static_cast<FakeTypedObject*>(&withShape), &withoutShape }) {
@@ -1439,6 +1396,26 @@ static void testInstructionsOfReadsBehindFieldTable()
         isWithinBudget &= isWithinBudgetOfRead(run, answer.budgetOfNextRead, nextReadByName, answer.what);
     }
     AOT_TEST_CHECK(isWithinBudget);
+#endif
+}
+
+static void testReadsThatHandlersAnswerLeapOverNoAnswer()
+{
+#if AOT_STUB_RUNNER_COUNTS_INSTRUCTIONS && CPU(X86_64) && !ASSERT_ENABLED
+    PropertyReads reads;
+    FieldTable table(reads);
+    reads.runner.setCountsInstructions(true);
+    FakeObjectWithShape object(FieldTable::shapeWithValue);
+    object.field() = bitsOf(jsNumber(7));
+    reads.clear();
+    reads.fileInFrontBesideOthers(createFieldSlot(SlotRepresentation::JSValue), nameOutsideLayouts);
+    reads.runner.forgetAccessTable();
+    StubRun run = reads.runner.run(getById(), { object.address() }, nameOutsideLayouts);
+    AOT_TEST_CHECK(!run.calledOperation && run.result == bitsOf(jsNumber(7)) && run.leapsInStubs);
+    constexpr uint32_t leapsToHandlerAndInIt = 4;
+    if (*run.leapsInStubs != leapsToHandlerAndInIt)
+        dataLogLn("a read that a handler answers: ", *run.leapsInStubs, " leaps, the budget is ", leapsToHandlerAndInIt);
+    AOT_TEST_CHECK(*run.leapsInStubs <= leapsToHandlerAndInIt);
 #endif
 }
 
@@ -1819,13 +1796,6 @@ static void testFieldsReadOutOfExtension()
         }
 
         hold(1 | 1ull << 3 | lastGranule);
-        for (GPRReg reg : alternateReceiverGPRs()) {
-            for (unsigned granule : { 0u, 2u, 3u, maxExtensionGranules - 1 }) {
-                for (SlotInGranule slot : { SlotInGranule::Word64, SlotInGranule::Word32At4, SlotInGranule::ByteAt5 })
-                    AOT_TEST_CHECK(read(readFieldInExtension(granule, slot).withOperandRegister(reg)) == (granule == 2 ? 0 : bytesOf(granule, slot)));
-            }
-        }
-
         if (usesWideReferences) {
             object.at<uint64_t>(offsetOfFirstField) = 0;
             for (unsigned granule : { 0u, 1u, maxExtensionGranules - 1 }) {
@@ -1989,8 +1959,30 @@ static void testInstanceOfRemembersOrdinaryConstructors()
         AOT_TEST_CHECK(withoutConstant.numberOfRecordedCalls == 1 && withoutConstant.recordedArguments[0] == numberOfBinding && withoutConstant.result == 1);
     }
 
+    constexpr uint32_t numberOfCell = 3;
+    std::array<JSCell*, numberOfCell + 1> cellsOfBuiltins { };
+    instance.prefix().builtinCells = cellsOfBuiltins.data();
+    auto askBuiltin = [&](uint64_t asked) { return runner.run(instanceOf(InstanceOfOperand::PrototypeThatIsBuiltin), { asked }, numberOfCell); };
+    cellsOfBuiltins[numberOfCell] = cellAt(prototypeObject.address());
+    StubRun belowBuiltin = askBuiltin(value.address());
+    AOT_TEST_CHECK(!belowBuiltin.calledOperation && belowBuiltin.result == 1);
+    cellsOfBuiltins[numberOfCell] = cellAt(otherPrototypeObject.address());
+    structureOfValues.at<uint64_t>(Structure::prototypeOffset()) = objectPrototype.address();
+    StubRun notBelowBuiltin = askBuiltin(value.address());
+    AOT_TEST_CHECK(!notBelowBuiltin.calledOperation && !notBelowBuiltin.result);
+    structureOfValues.at<uint64_t>(Structure::prototypeOffset()) = prototypeObject.address();
+
+    cellsOfBuiltins[numberOfCell] = nullptr;
+    runner.recordCallsOf(Entry::operationAOTBuiltinCell);
+    runner.setResultOfRecordedOperation(prototypeObject.address());
+    StubRun withCellNotMade = askBuiltin(value.address());
+    runner.countCallsOf(Entry::operationAOTBuiltinCell);
+    AOT_TEST_CHECK(withCellNotMade.numberOfRecordedCalls == 1 && withCellNotMade.recordedArguments[0] == numberOfCell && withCellNotMade.result == 1);
+    cellsOfBuiltins[numberOfCell] = cellAt(prototypeObject.address());
+
 #if AOT_STUB_RUNNER_COUNTS_INSTRUCTIONS
     runner.setCountsInstructions(true);
+    AOT_TEST_CHECK(isWithinBudgetOfRead(askBuiltin(value.address()), 21, "instanceof of a built-in whose prototype object the stub reads"_s));
     AOT_TEST_CHECK(isWithinBudgetOfRead(ask(value.address()), 32, "instanceof of a remembered constructor, found at the first link"_s));
     structureOfValues.at<uint64_t>(Structure::prototypeOffset()) = objectPrototype.address();
     AOT_TEST_CHECK(isWithinBudgetOfRead(ask(value.address()), 34, "instanceof of a remembered constructor, not found below Object.prototype"_s));
@@ -2028,8 +2020,8 @@ std::span<const NativeTest> stubPropertyReadTests()
         { "stubs/get-by-id/lookups-left-to-the-caches"_s, ImageTests::whenExecutable<testLookupsLeftToTheCaches> },
         { "stubs/get-by-id/symbols-of-a-realm"_s, ImageTests::whenExecutable<testSymbolsOfRealm> },
         { "stubs/get-by-id/names-outside-layout-are-absent"_s, ImageTests::whenExecutable<testNamesOutsideLayoutAreAbsent> },
-        { "stubs/get-by-id/receivers-in-other-registers"_s, ImageTests::whenExecutable<testReceiversInOtherRegisters> },
         { "stubs/get-by-id/answers-behind-field-table"_s, ImageTests::whenExecutable<testAnswersBehindFieldTable> },
+        { "stubs/get-by-id/reads-that-handlers-answer-leap-over-no-answer"_s, ImageTests::whenExecutable<testReadsThatHandlersAnswerLeapOverNoAnswer> },
         { "stubs/get-by-id/instructions-of-reads-behind-field-table"_s, ImageTests::whenExecutable<testInstructionsOfReadsBehindFieldTable> },
         { "stubs/get-by-id/reads-answered-by-access-table"_s, ImageTests::whenExecutable<testReadsAnsweredByAccessTable> },
         { "stubs/get-by-id/closures-not-created"_s, ImageTests::whenExecutable<testReadsOfClosuresNotCreated> },

@@ -19,28 +19,31 @@ enum StatisticID (stage: StatisticStage) {
     [Solve]
     FlowAppendedFields
     FactNodes FactEdges FactsCarriedOverEdges FactRounds FactRuleCalls
+    FactNodesGivenMore
     [Passes]
     FieldsHeldToWhatIsSeen
     [Plan]
     ModulesWithoutState RequireSitesBound RequiresRecorded AsyncWorkersMade FieldsOutOfLine NumbersOrUndefinedReturnedRaw EnvironmentsPromotedToVariables
     [Compile]
-    UnitsCompiled UnitsWrittenStraight
+    UnitsCompiled UnitsWrittenStraight EntriesWrittenByHand
     [Walk]
-    URLsLeftUnbuilt IteratorsSteppedWithoutCall IterationsOpenedByMethodsInSight OwnKeyWalksExpanded
+    URLsLeftUnbuilt IteratorsSteppedWithoutCall IterationsOpenedByMethodsInSight NextMethodsTestedForFunctionExpected OwnKeyWalksExpanded
     FieldsAskedWhereMakersEnd MakersWithoutFieldsHeldFilled ReadsOfOtherFilesVariablesHeld
     LibraryFunctionsEnteredBehindRows SortsThatCallNoComparator NewListsInPlaceOfSpecies
     AccessesProven AccessesGuarded AccessesUnknown ValuesInDouble
     LiteralArgumentsTakenApart
     ValuesWalked ValuesWalkedAndKept LoopsWalkedAgain CallsInlined OperationsBuilt OperationsSwept
-    DirectCalls IndirectCalls TestsThatRejoin LoopsBuiltTwice TurnsThatBeginAgain EmptySlotsTakenAsCases
+    DirectCalls IndirectCalls TestsThatRejoin LoopsBuiltTwice TurnsThatBeginAgain EmptySlotsTakenAsCases WalksOfLoops WalksOfLoopsUndone
     AssignmentsWrittenOutFieldByField JoinsWalkedOnceForEachWay ObjectsOfSeveralWaysMetAsOne
     ProofsCheckedOfEntryParameters ProofsCheckedOfResultsOfCalls ProofsCheckedOfFields ProofsCheckedOfVariables ProofsCheckedOfCaptures ProofsCheckedOfSlotsOfScopes ProofsCheckedOfContents ProofsCheckedOfCallees ProofsCheckedOfOtherOperations ProofsCheckedOfTests ProofsCheckedOfWhatIsRemembered ProofsCheckedOfLifetimes
     ProofsThatNoTestTells ProofsThatFormTells DoorsThatCanNeverPass
     FreshCellsLeftAloneAtReturns
-    AllocateInFramesChanges ClosuresInFrames KnownInductionsUsed NumbersBesideCountersAskedInFrontOfLoops
+    AllocateInFramesChanges ClosuresInFrames KnownInductionsUsed NumbersBesideCountersAskedInFrontOfLoops MembersOfBuiltinsAskedByTheirBytes CountersHeldBelowRoomOfViews
+    WordsClearedAtHeadsOfHandlers
     SlicesMadeOfElementsInSight
     MethodCallsToldApartByShape
     MethodCallsThroughTable
+    PlacesWhereGuessesFailUnasked ExpectedTypesTakenOtherwise ChoicesOfCostDrawn BlocksPlacedOtherwise
     [Emit]
     NativeFunctionsCalledDirectly NativeFunctionTestsEmitted ExactIntegersBehindNumbers StepsThatKnowTheDeletedPrefix LoopsRotated
     InnerPointersAcrossSafepoints NullChecksFoldedIntoAccesses
@@ -76,10 +79,10 @@ enum RuntimeCounterID {
     FieldsLeftSlotByDelete FieldsLeftSlotByRedefinition FieldsLeftSlotByStoreOfOtherType KeyOrdersStoredOutOfLine
     ObjectsGivenIntegrityLevel ObjectsLaidBelowOtherPrototype ClassGuardBitsEnded MethodTableMadeWritable
     FieldMovePlansMade AssignmentPlansMade CopiesCollectedByName CopiesByOrdinaryLookups
-    CompiledStructuresMade
+    CompiledStructuresMade InstancesRememberedBelowPrototypes
     StarsRecorded StarsCarriedOutLate
     CompiledModulesWalkedByLoader FilesComparedWithDisk
-    SiteCacheRefills
+    SiteCacheRefills StructuresKeptBelowBuiltinClasses
     JSONStringifySlowPaths StringBuilderGrowths RegExpsCreatedWithoutRecord
     TextsParsedByOwnParser ObjectsParsedIntoRecords ObjectsParsedIntoOrdinaryObjects
     RegExpPatternsParsed RegExpsCompiledToBytecode RegExpMatchesInterpreted
@@ -91,5 +94,5 @@ enum RuntimeCounterID {
     StackListingsAfterGivenUpCaptures
     ModulesForRequireCache ModulesForWhatHasRun ModulesForCyclesThatWait RecordsForStatesOfLoads LinksBelowRoots StacksOfThrows RunsBelowListedFrames
     GraphsHeldBehindEarlierCalls GraphsLetGoBehindEarlierCalls
-    CellsPoisoned CellsOfClassesThatAreNotPoisoned
+    CellsPoisoned CellsOfClassesThatAreNotPoisoned CellsHandedToUnseenCode
 }

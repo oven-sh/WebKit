@@ -17,6 +17,7 @@ enum class WalkNoteKind : uint8_t {
     ResolvedOperation,
     GenericOperation,
     TestThatRejoins,
+    TestThatLeaves,
     TestThatThrows,
     CallNotInlined,
     ObjectBuilt,

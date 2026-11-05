@@ -353,6 +353,7 @@ class BackwardScan {
 public:
     BackwardScan(Procedure&, Liveness&);
     void run();
+    void letGoOfWorkingLists();
 
     void scanBlock(Block*);
 

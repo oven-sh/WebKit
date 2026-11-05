@@ -148,8 +148,15 @@ void AllocationEmitter::generateNewObject(const ValueContext& value)
         return;
     }
     CellPointer cell = allocateWithFields(value, allocation, value->fields(), value->valuesOperands(), value->storage());
-    if (ValueID call = callThatBorrowsObject(m_code, value.id()); call && !collectSlotsThatMayHoldCells(operationAt(value.id())).isEmpty())
-        generator().noteObjectWhoseLifeEndsBehind(value.id(), call);
+    if (ValueID call = callThatBorrowsObject(m_code, value.id())) {
+        Vector<uint32_t, 8> offsets;
+        for (FieldIndex field : collectSlotsThatMayHoldCells(operationAt(value.id())))
+            offsets.append(m_plan.layout(layout).slots[field].offset);
+        if (!offsets.isEmpty()) {
+            generator().noteObjectWhoseLifeEndsBehind(value.id(), call);
+            cellAllocation.noteWordsThatCellLentHolds(value.id(), offsets.span());
+        }
+    }
     if (ValueID prototype = value->prototypeOperand())
         storePrototype(value, cell, prototype);
     else

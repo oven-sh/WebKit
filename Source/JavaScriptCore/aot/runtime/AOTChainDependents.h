@@ -55,6 +55,7 @@ struct ChainWalk {
     ChainWalkResult result { ChainWalkResult::Unknown };
     bool didFlatten { false };
     bool passedSlotFilledWithoutReport { false };
+    bool passedEmptySlot { false };
     JSObject* firstObjectWithEmptySlot { nullptr };
     JSObject* holder { nullptr };
     JSObject* owner { nullptr };

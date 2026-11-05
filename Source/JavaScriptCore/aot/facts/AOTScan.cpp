@@ -735,6 +735,35 @@ static bool loaderEntersBodyOnceInScan(const Program& program, FunctionID id, NO
     return isBodyOfOneModule(id);
 }
 
+static bool isOperandOfNothingButListsOfCallsInScan(const Body& body, ValueID list)
+{
+    const UnitIDRemap* unit = &body.unit();
+    auto takes = [&](BodyTarget target) {
+        return std::ranges::find(target.arguments(), list) != target.arguments().end();
+    };
+    bool isSo = true;
+    BodyBlock block = body.entry();
+    for (uint32_t remaining = body.numberOfBlocks(); remaining-- && isSo;) {
+        isSo = block.subject() != list && !(block.hasHandler() && takes(block.handler()));
+        BodyValues::Iterator cursor = block.values().begin();
+        for (uint32_t values = block.numberOfValues(); values--; ++cursor) {
+            BodyValue value = *cursor;
+            std::optional<unsigned> listPosition = OperandPosition::list(value.opcode());
+            value.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
+                isSo &= operand != list || (listPosition && *listPosition == operandIndex);
+            });
+        }
+        BodyTerminator terminator(cursor.words(), unit, block.id());
+        terminator.forEachOperand([&](ValueID operand, uint32_t) {
+            isSo &= operand != list;
+        });
+        for (BodyTarget target : terminator.targets())
+            isSo &= !takes(target);
+        block = { terminator.end(), nullptr, unit, BlockID(block.id().index() + 1), block.endOfValues() };
+    }
+    return isSo;
+}
+
 static bool isBodyOfOneModuleInScan(const Program& program, FunctionID id)
 {
     return std::ranges::count(program.modules, id, &Module::body) == 1;
@@ -1122,6 +1151,7 @@ private:
     void readCall(const BodyValue&, uint32_t block);
     void readDirectCall(const BodyValue&, SummaryCall&);
     void readCallByValue(const BodyValue&, SummaryCall&, uint32_t callIndex);
+    bool isGatheredListThatOnlyCallsTake(ValueID);
     void readChangesMadeByBuiltin(const BodyValue&, const SummaryCall&, uint32_t callIndex, ValueID receiver);
     void noteEvaluationOf(ModuleID, ValueID site, uint32_t block);
     bool answersWithResultOfBody(const BodyValue&) const;
@@ -1146,6 +1176,7 @@ private:
     const uint32_t* readTerminator(const BodyTerminator&, uint32_t block);
     void returnValue(ValueID, uint32_t block);
     void readNamesThatLoaderTakesOff(ValueID returned);
+    void readWhatHostLooksForOffEntry(const BodyValue& store);
     void readExportsCapturedByFace(const BodyValue& evaluation);
     void returnFromCoroutine(ListInScan, uint32_t block);
 
@@ -1262,6 +1293,7 @@ private:
     std::array<uint64_t, 256> m_typesWhoseSetsAreNoted { };
     SetsOfLayoutsWritten m_setsOfLayoutsWritten;
     bool m_hasStopped { false };
+    std::optional<bool> m_onlyCallsTakeGatheredList;
     std::optional<InternalError> m_error;
 
     Vector<uint32_t> m_nodeSlots;
@@ -1864,6 +1896,7 @@ void ScanOfBody::reset()
     }
     m_summary.nodes.append(SummaryNode { });
     m_hasStopped = false;
+    m_onlyCallsTakeGatheredList = std::nullopt;
     m_nodeSlots.fill(0, std::max(initialNumberOfNodeSlots, std::bit_ceil(2 * (m_function->body.numberOfValues() + 1))));
     m_listsOfNodes.shrink(0);
     m_listsOfNodes.append(ListInScan { });
@@ -2938,6 +2971,8 @@ void ScanOfBody::readOperation(const BodyValue& value, uint32_t block)
         lookForFirstStoresAndUses(value);
     if (m_listsDefinitions)
         lookForDefinitions(value);
+    if (opcode == Opcode::PutModuleVariable)
+        readWhatHostLooksForOffEntry(value);
 
     if (traits & Row::namesRecords) {
         bool isFollowedFromHere = (opcode == Opcode::ModuleNamespace && layoutOfNamespaceGivenBy(value)) || (opcode == Opcode::RequireModule && answersWithResultOfBody(value));
@@ -4395,6 +4430,17 @@ void ScanOfBody::readDirectCall(const BodyValue& value, SummaryCall& call)
     }
 }
 
+bool ScanOfBody::isGatheredListThatOnlyCallsTake(ValueID list)
+{
+    if (!m_function->has(FunctionFlags::HasRestParameter) || m_function->kind == FunctionKind::Getter || m_function->kind == FunctionKind::Setter)
+        return false;
+    if (list != m_function->body.entry().parameter(m_function->firstParameterIndex() + m_function->numberOfPositionalParameters()))
+        return false;
+    if (!m_onlyCallsTakeGatheredList)
+        m_onlyCallsTakeGatheredList = isOperandOfNothingButListsOfCallsInScan(m_function->body, list);
+    return *m_onlyCallsTakeGatheredList;
+}
+
 void ScanOfBody::readCallByValue(const BodyValue& value, SummaryCall& call, uint32_t callIndex)
 {
     Opcode opcode = value.opcode();
@@ -4416,6 +4462,10 @@ void ScanOfBody::readCallByValue(const BodyValue& value, SummaryCall& call, uint
             newTarget = operand;
         else if (listPosition && *listPosition == operandIndex) {
             noteLeaving(operand);
+            if (isGatheredListThatOnlyCallsTake(operand)) {
+                call.passesOnGatheredArguments = true;
+                m_summary.traits.add(SummaryTrait::OnlyPassesOnGatheredArguments);
+            }
             m_summary.arguments.append(readContents(value.id(), listOf(operand), ContentsSlot::Element));
         } else
             addArgument(operand);
@@ -4454,6 +4504,7 @@ void ScanOfBody::readCallByValue(const BodyValue& value, SummaryCall& call, uint
             readChangesMadeByBuiltin(value, call, callIndex, receiver);
             return;
         }
+        call.builtin = named.builtin();
     }
     if (definition && definition.opcode() == Opcode::PropGet && receiver) {
         auto read = definition.as<Opcode::PropGet>();
@@ -4976,12 +5027,11 @@ void ScanOfBody::readExportsCapturedByFace(const BodyValue& evaluation)
         return;
     uint32_t exports = variableNode(m_program.at(evaluated.module()).exportsVariable);
     uint32_t undefined = constant(TypeTable::undefined);
-    Vector<char16_t> buffer;
     for (const SyntheticExport& entry : face.syntheticExports) {
         if (!entry.variable)
             continue;
         m_summary.namesThatLoaderTakes.append({ undefined, entry.variable });
-        if (m_program.strings.viewOf(entry.name, buffer) == "default"_s)
+        if (entry.name == m_program.stringOf(BuiltinNames::defaultKeyword))
             m_summary.namesThatLoaderTakes.append({ exports, entry.variable });
         std::optional<PropertyKeyID> key = m_program.types.find(PropertyKey { .kind = PropertyKeyKind::Text, .text = entry.name });
         m_summary.namesThatLoaderTakes.append({ key ? addRead(evaluation.id(), listOfNode(exports), *key) : 0, entry.variable });
@@ -4994,9 +5044,36 @@ void ScanOfBody::readNamesThatLoaderTakesOff(ValueID returned)
     if (module.body != m_id || module.exportRule != SyntheticExportRule::RuntimeModule || module.requireResult != RequireResult::DefaultExport)
         return;
     for (const SyntheticExport& entry : module.syntheticExports) {
-        std::optional<PropertyKeyID> key = entry.variable ? m_program.types.find(PropertyKey { .kind = PropertyKeyKind::Text, .text = entry.name }) : std::nullopt;
-        if (key)
-            m_summary.namesThatLoaderTakes.append({ addRead(returned, listOf(returned), *key), entry.variable });
+        if (!entry.variable)
+            continue;
+        std::optional<PropertyKeyID> key = m_program.types.find(PropertyKey { .kind = PropertyKeyKind::Text, .text = entry.name });
+        m_summary.namesThatLoaderTakes.append({ key ? addRead(returned, listOf(returned), *key) : 0, entry.variable });
+        if (entry.name == m_program.stringOf(BuiltinNames::defaultKeyword))
+            m_summary.namesThatLoaderTakes.append({ resultNode(0), entry.variable });
+    }
+}
+
+void ScanOfBody::readWhatHostLooksForOffEntry(const BodyValue& store)
+{
+    const Module& module = m_program.at(m_function->module);
+    if (module.body != m_id || module.kind != ModuleKind::CommonJs || store.as<Opcode::PutModuleVariable>().variable() != module.exportsVariable)
+        return;
+    if (std::ranges::contains(m_summary.namesThatLoaderTakes, VariableID(), &ThinSummary::NameThatLoaderTakes::variable))
+        return;
+    const BuiltinTable& builtins = m_program.builtins();
+    auto entry = std::ranges::find(m_program.entries, m_function->module, &Entry::module);
+    bool startsServerAtMost = entry != m_program.entries.end() && std::ranges::all_of(entry->hostReads, [&](const HostRead& read) {
+        if (!read.builtin)
+            return read.exportName == m_program.stringOf(BuiltinNames::then);
+        return read.exportName == m_program.stringOf(BuiltinNames::defaultKeyword) && builtins.canonicalID(read.builtin) == builtins.canonicalID(Builtins::BunServe);
+    });
+    if (!startsServerAtMost || entry->hostReads.isEmpty())
+        return;
+    uint32_t exports = variableNode(module.exportsVariable);
+    uint32_t defaultOfExports = addRead(store.id(), listOfNode(exports), m_program.keyOf(BuiltinNames::defaultKeyword));
+    for (uint32_t holder : { exports, defaultOfExports }) {
+        for (BuiltinName name : { BuiltinNames::then, BuiltinNames::fetch, BuiltinNames::app, BuiltinNames::routes })
+            m_summary.namesThatLoaderTakes.append({ addRead(store.id(), listOfNode(holder), m_program.keyOf(name)), VariableID() });
     }
 }
 
@@ -5558,11 +5635,23 @@ void ScanOfBody::layDescriptorsInSight()
         uint32_t field { noSummaryNode };
     };
     Vector<Held, 6> held;
+    auto isOpened = [&](BuiltinName name) {
+        StringID text = m_program.stringOf(name);
+        return text && m_program.isOpenedSomewhere(text);
+    };
+    bool objectsInheritNoAccessor = !isOpened(BuiltinNames::get) && !isOpened(BuiltinNames::set);
     for (const DefinitionByDescriptorInScan& definition : m_definitionsByDescriptors) {
-        if (!definition.waitsForItsJudgment)
-            continue;
         uint32_t root = definition.rootOfDescriptor;
         BodyValue made = definitionOf(root);
+        uint32_t headOfDefinition = m_innermostLoopHeads.isEmpty() ? noLoop : m_innermostLoopHeads[m_blocks[definition.position]];
+        bool holdsWhatIsWritten = storesInto(root).empty() && !(m_uses[root] & isAccessedBesideNamedStores) && (headOfDefinition == noLoop || headOfDefinition <= m_blocks[root]);
+        if (made && made.opcode() == Opcode::Data && objectsInheritNoAccessor && holdsWhatIsWritten) {
+            DataID data = made.as<Opcode::Data>().data();
+            const auto* written = data ? m_program.at(data).root.tryAs<DataNode::Object>() : nullptr;
+            m_summary.changes[definition.change].descriptorLaysNoAccessor = written && !std::ranges::contains(written->members, get, &DataMember::key) && !std::ranges::contains(written->members, set, &DataMember::key);
+        }
+        if (!definition.waitsForItsJudgment)
+            continue;
         uint32_t head = m_innermostLoopHeads.isEmpty() ? noLoop : m_innermostLoopHeads[m_blocks[definition.position]];
         bool isInSight = holdsOnlyWhatItsBodyLaysInScan(m_program, made) && !(m_uses[root] & isAccessedBesideNamedStores) && (head == noLoop || head <= m_blocks[root]);
         held.shrink(0);
@@ -5594,6 +5683,7 @@ void ScanOfBody::layDescriptorsInSight()
         }
 
         m_summary.changes[definition.change].descriptorIsInSight = true;
+        m_summary.changes[definition.change].descriptorLaysNoAccessor = !std::ranges::contains(held, get, &Held::key) && !std::ranges::contains(held, set, &Held::key);
         auto flagWritten = [&](BuiltinName name) -> std::optional<bool> {
             PropertyKeyID key = m_program.keyOf(name);
             std::optional<bool> flag = false;

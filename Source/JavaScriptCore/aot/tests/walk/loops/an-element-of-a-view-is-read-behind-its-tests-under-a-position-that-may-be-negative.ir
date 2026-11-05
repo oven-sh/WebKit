@@ -4,6 +4,7 @@
 # and where the view stands in the row in front of the loop. Such a position is asked first whether it is negative: there a view finds nothing, as past its end.
 # Behind the tests the read lies inside the view and gives an int32; the position has a narrowed name.
 # PROGRAM-OF: a-key-that-comes-out-of-a-view-is-asked-for-a-number.ir
+# TODO: loops: the counter of the typed build goes round as a double (see the program's own test), so the key is read as undefined|i32 and not inside the view
 # RUN: walk f1 f2 mechanisms=all
 # CHECK-LABEL: code f1:Body
 # CHECK: isInLoop=true isLoopHead=true

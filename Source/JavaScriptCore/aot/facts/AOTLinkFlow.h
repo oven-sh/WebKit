@@ -329,14 +329,17 @@ public:
     LinkFlow(Program&, const ThinSummaries&, const Families&, const LooksAtBodies&, Mechanisms, BuildContext&, OrderOfWorklist = OrderOfWorklist::NewestFirst);
     ~LinkFlow();
 
+    OrderOfWorklist orderOfWorklist() const { return m_order; }
     Program& program;
     const ThinSummaries& summaries;
     const Families& families;
     const Families* familiesBehindFlow { nullptr };
+    const Vector<DeclaredSetForFamilies>* setsDeclaredInProgram { nullptr };
     const LooksAtBodies& looks;
     Mechanisms mechanisms;
     BuildContext& build;
     const ParallelLoops& loops;
+    bool isGivenMore { false };
 
     FlowNodeID parameter(FunctionID function, uint32_t entryParameter) const
     {
@@ -377,6 +380,13 @@ public:
     SiteID siteOfSummary(FunctionID, uint32_t rank, BuiltinClassID);
     uint32_t numberOfSitesOfSummary(FunctionID function) const { return m_firstSiteOfFunction[function.index() + 1] - m_firstSiteOfFunction[function.index()]; }
     SiteID listOfArgumentsOf(FunctionID);
+    enum class CallerOfGatherer : uint8_t { InSight, UnseenByEscapeAlone };
+    FlowNodeID argumentGatheredAt(FunctionID, uint32_t place);
+    FlowNodeID argumentsGatheredAtAnyPlace(FunctionID);
+    void noteNumberOfArgumentsGathered(FunctionID, uint32_t number, CallerOfGatherer = CallerOfGatherer::InSight);
+    void gatherWhatListsThatArriveHold(FunctionID);
+    void passOnGatheredArgument(FunctionID gatherer, uint32_t place, FlowNodeID to);
+    void passOnGatheredArguments(FunctionID gatherer, uint32_t firstPlace, FunctionID gathererBehind);
     BuiltinClassID classOf(SiteID site) const
     {
         return m_sites[site.index()].builtinClass;
@@ -464,6 +474,7 @@ public:
     bool isBelowConstructorFunction(LayoutID layout) const { return m_layoutsBelowConstructorFunctions.get(layout.index()); }
     bool mayNotBeLinkedYetBelow(LayoutID from, LayoutID classAbove) const;
     FlowNodeID objectsMadeForClassBelowConstructorFunction(LayoutID);
+    FlowNodeID objectsMadeThroughConstructorOf(LayoutID);
     void defineOnPrototypeOf(LayoutID, PropertyKeyID);
     void openPrototypeOf(LayoutID);
     struct NameOnPrototype {
@@ -739,12 +750,13 @@ public:
     std::optional<uint32_t> findWhatSomeLaneWasGiven(MadeOnDemand, uint64_t words) const;
     void keepWhatSomeLaneWasGiven(MadeOnDemand, uint64_t words, uint32_t) const;
     void forgetWhatSomeLaneWasGiven(MadeOnDemand);
-    enum class Note : uint8_t { NameRead, NameCalled, ReadUnderKeyNobodyKnows, BuiltinRead, BuiltinCalled, BuiltinCalledOutOfSight, FieldWrittenAfterConstruction, LayoutAllocated, ChangeOfLayout, WriteOnBuiltin, BuiltinHandedWhatIsNoTextNumberOrBoolean, WriteThroughLostBuiltins, ReadThroughLostBuiltins, WriteThroughUnseenByProgram, NameWrittenThroughUnseenByLibrary, OptionThatRunsCodePassed, BuiltinReadThroughAggregate, ExportIsShown, BuiltinCalledAtSite, LostFunctionCalled, EveryLostFunctionCalled, LayoutGainsWhatUnseenCodeGaveSources, LayoutDefinedOnUnderWrittenKeys, PrototypeLaidAboveOtherObjects };
+    enum class Note : uint8_t { NameRead, NameCalled, ReadUnderKeyNobodyKnows, BuiltinRead, BuiltinCalled, BuiltinCalledOutOfSight, FieldWrittenAfterConstruction, LayoutAllocated, ChangeOfLayout, WriteOnBuiltin, BuiltinHandedWhatIsNoTextNumberOrBoolean, WriteThroughLostBuiltins, ReadThroughLostBuiltins, WriteThroughUnseenByProgram, NameWrittenThroughUnseenByLibrary, OptionThatRunsCodePassed, OperandMayMeetCondition, BuiltinReadThroughAggregate, ExportIsShown, BuiltinCalledAtSite, LostFunctionCalled, EveryLostFunctionCalled, LayoutGainsWhatUnseenCodeGaveSources, LayoutDefinedOnUnderWrittenKeys, PrototypeLaidAboveOtherObjects };
     void note(Note, uint32_t number, uint32_t more = 0);
     static constexpr uint32_t byCode = 1;
     static constexpr uint32_t byRowThatMayRunCode = 2;
     static constexpr uint32_t asConstructor = 4;
     static constexpr uint32_t withoutRow = 1;
+    static constexpr uint32_t onlyDeletes = 1 << 16;
     unsigned numberOfLanes() const { return static_cast<unsigned>(m_lanes.size()); }
     bool bringAliveOnLanes(std::span<const FunctionID>, const ScopedLambda<void(FunctionID)>& bringAlive);
     bool listsSourceOfObjectsBehindPass(FlowNodeID, LayoutID);
@@ -771,6 +783,7 @@ public:
     bool setCodeAtWorkIsOfLibrary(bool);
     bool codeAtWorkIsOfLibrary() const;
     bool rowsSpeakFor(FunctionID function) const { return m_isFunctionThatRowsSpeakFor.quickGet(function.index()); }
+    bool rowsSpeakOfKeyFor(FunctionID function, PropertyKeyID key) const { return rowsSpeakFor(function) && !m_keysThatCodeTellsOfItself.contains(key); }
     bool objectsReachUnseen() const { return m_objectsReachUnseen; }
     void noteRowPassesWhatNobodyFollows() { LockerOfWhatIsShared locker(*this); m_rowPassesWhatNobodyFollows = true; }
     bool rowPassesWhatNobodyFollows() const { return m_rowPassesWhatNobodyFollows; }
@@ -786,8 +799,10 @@ public:
     bool lostBuiltinsReachUnseen() const { return m_lostBuiltinsReachUnseen; }
     LinkType anythingBeside(BuiltinID canonical, FunctionID reader) const;
     LinkType unseenObjectsBelow(BuiltinID canonicalPrototype, FunctionID maker) const;
-    enum class WhatIsStored : uint8_t { Anything, TextsNumbersAndBooleans };
+    enum class WhatIsStored : uint8_t { Anything, TextsNumbersAndBooleans, Nothing };
     void noteWriteOn(const LinkType& subject, PropertyKeyID, FunctionID writer, WhatIsStored = WhatIsStored::Anything);
+    void noteWhatIsStoredOn(const LinkType& subject, WhatIsStored);
+    void noteWhatNativeCodeHandsToWhatIsLaidOn(BuiltinID written, PropertyKeyID) const;
     void noteSiteOfWrite(FunctionID writer, ValueID site, FlowNodeID subject);
     void noteSiteOfCopy(FunctionID writer, ValueID site, FlowNodeID subject, FlowNodeID source);
     Vector<WriteFollowedToBuiltin> takeWritesFollowedToBuiltins();
@@ -847,20 +862,172 @@ public:
     void noteKeyOfAccessInLibrary(FunctionID, uint32_t record, const SummaryAccess&);
     void changeObserved(const FlowObserver&, const LinkType&);
     void operatorObserved(const FlowObserver&, const LinkType&);
+    std::optional<uint16_t> primitivesThatOperatorGivesWhateverArrives(FunctionID, uint32_t record);
 
-    struct CalleesOfCall {
-        Vector<FunctionID, 1> listed;
-        Vector<BuiltinID, 1> builtins;
-        Vector<uint32_t, 1> shared;
-        bool mayEnterLost { false };
-        bool mayEnterUnseen { false };
+    struct ListsOfCalleesOnHeap {
+        WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(ListsOfCalleesOnHeap);
+        Vector<FunctionID, 4> listed;
+        Vector<BuiltinID, 4> builtins;
+        Vector<uint32_t, 2> shared;
+    };
+    struct InlineRoomOfCalleesOfCall {
+        union {
+            std::array<FunctionID, 2> inlineListed { };
+            ListsOfCalleesOnHeap* listsOnHeap;
+        };
+        std::array<uint32_t, 1> inlineShared { };
+        std::array<BuiltinID, 1> inlineBuiltins { };
+        bool mayEnterLost : 1 { false };
+        bool mayEnterUnseen : 1 { false };
+        bool liesOnHeap : 1 { false };
+        uint8_t numberOfInlineListed : 2 { 0 };
+        uint8_t numberOfInlineBuiltins : 1 { 0 };
+        uint8_t numberOfInlineShared : 1 { 0 };
+    };
+    class CalleesOfCall : private InlineRoomOfCalleesOfCall {
+    public:
+        template<typename Member>
+        class List {
+        public:
+            explicit List(std::span<const Member> members)
+                : m_members(members)
+            {
+            }
 
+            auto begin() const { return m_members.begin(); }
+            auto end() const { return m_members.end(); }
+            size_t size() const { return m_members.size(); }
+            bool isEmpty() const { return m_members.empty(); }
+            bool contains(Member member) const { return std::ranges::contains(m_members, member); }
+            Member operator[](size_t index) const
+            {
+                RELEASE_ASSERT(index < m_members.size());
+                return m_members[index];
+            }
+            std::span<const Member> span() const { return m_members; }
+
+        private:
+            std::span<const Member> m_members;
+        };
+
+        using InlineRoomOfCalleesOfCall::mayEnterLost;
+        using InlineRoomOfCalleesOfCall::mayEnterUnseen;
+
+        CalleesOfCall() = default;
+        CalleesOfCall(const CalleesOfCall& other)
+            : InlineRoomOfCalleesOfCall(other)
+        {
+            if (liesOnHeap)
+                listsOnHeap = new ListsOfCalleesOnHeap(*other.listsOnHeap);
+        }
+        CalleesOfCall(CalleesOfCall&& other)
+            : InlineRoomOfCalleesOfCall(std::exchange<InlineRoomOfCalleesOfCall>(other, { }))
+        {
+        }
+        ~CalleesOfCall()
+        {
+            if (liesOnHeap)
+                delete listsOnHeap;
+        }
+        CalleesOfCall& operator=(CalleesOfCall other)
+        {
+            std::swap<InlineRoomOfCalleesOfCall>(*this, other);
+            return *this;
+        }
+
+        List<FunctionID> listed() const LIFETIME_BOUND { return List<FunctionID>(liesOnHeap ? listsOnHeap->listed.span() : std::span<const FunctionID>(inlineListed).first(numberOfInlineListed)); }
+        List<BuiltinID> builtins() const LIFETIME_BOUND { return List<BuiltinID>(liesOnHeap ? listsOnHeap->builtins.span() : std::span<const BuiltinID>(inlineBuiltins).first(numberOfInlineBuiltins)); }
+        List<uint32_t> shared() const LIFETIME_BOUND { return List<uint32_t>(liesOnHeap ? listsOnHeap->shared.span() : std::span<const uint32_t>(inlineShared).first(numberOfInlineShared)); }
+
+        void list(FunctionID callee)
+        {
+            if (!liesOnHeap && numberOfInlineListed < inlineListed.size()) {
+                inlineListed[numberOfInlineListed++] = callee;
+                return;
+            }
+            ensureListsOnHeap().listed.append(callee);
+        }
         void add(BuiltinID builtin)
         {
-            if (!builtins.contains(builtin))
-                builtins.append(builtin);
+            if (builtins().contains(builtin))
+                return;
+            if (!liesOnHeap && numberOfInlineBuiltins < inlineBuiltins.size()) {
+                inlineBuiltins[numberOfInlineBuiltins++] = builtin;
+                return;
+            }
+            ensureListsOnHeap().builtins.append(builtin);
+        }
+        void addShared(uint32_t index)
+        {
+            if (shared().contains(index))
+                return;
+            if (!liesOnHeap && numberOfInlineShared < inlineShared.size()) {
+                inlineShared[numberOfInlineShared++] = index;
+                return;
+            }
+            ensureListsOnHeap().shared.append(index);
+        }
+
+        void removeListedMatching(NOESCAPE const Invocable<bool(FunctionID)> auto& matches)
+        {
+            if (liesOnHeap) {
+                listsOnHeap->listed.removeAllMatching(matches);
+                return;
+            }
+            uint8_t numberKept = 0;
+            for (FunctionID callee : listed()) {
+                if (!matches(callee))
+                    inlineListed[numberKept++] = callee;
+            }
+            numberOfInlineListed = numberKept;
+        }
+        void clearBuiltins()
+        {
+            if (liesOnHeap)
+                listsOnHeap->builtins.clear();
+            numberOfInlineBuiltins = 0;
+        }
+        void clearShared()
+        {
+            if (liesOnHeap)
+                listsOnHeap->shared.clear();
+            numberOfInlineShared = 0;
+        }
+        void replaceShared(std::span<const uint32_t> indexes)
+        {
+            clearShared();
+            for (uint32_t index : indexes)
+                addShared(index);
+        }
+        void sortListedAndBuiltins()
+        {
+            if (liesOnHeap) {
+                std::ranges::sort(listsOnHeap->listed);
+                std::ranges::sort(listsOnHeap->builtins);
+                return;
+            }
+            if (numberOfInlineListed > 1)
+                std::ranges::sort(std::span(inlineListed).first(numberOfInlineListed));
+        }
+
+    private:
+        NEVER_INLINE ListsOfCalleesOnHeap& ensureListsOnHeap()
+        {
+            if (liesOnHeap)
+                return *listsOnHeap;
+            auto* lists = new ListsOfCalleesOnHeap;
+            lists->listed.append(listed().span());
+            lists->builtins.append(builtins().span());
+            lists->shared.append(shared().span());
+            numberOfInlineListed = 0;
+            numberOfInlineBuiltins = 0;
+            numberOfInlineShared = 0;
+            listsOnHeap = lists;
+            liesOnHeap = true;
+            return *lists;
         }
     };
+    static_assert(sizeof(CalleesOfCall) == 16);
     Vector<uint32_t> firstCallOfFunction;
     LargeList<CalleesOfCall> calleesOfCalls;
     Vector<CalleesOfCall> calleesOfSharedCalls;
@@ -941,6 +1108,8 @@ public:
     bool mayReadInFrontOfDefinition(FunctionID reader, const SummaryAccess&, LayoutID) const;
     bool superCallMayAnswerWithOlderObject(LayoutID id) const { return m_layoutsWhoseSuperCallMayAnswerWithOlderObject.get(id.index()); }
     bool constructionMayAnswerWithOlderObject(LayoutID id) const { return m_layoutsWhoseConstructionMayAnswerWithOlderObject.get(id.index()); }
+    bool everyMemberStandsAtOrBelow(FamilyID family, LayoutID above) const { return m_stretchesAtAndBelowLayouts[above.index()].holds(m_stretchesOfFamilies[family.index()]); }
+    LayoutID topOfRow(LayoutID id) const { return m_topsOfRows[id.index()]; }
     bool standsAtOrBelow(LayoutID id, LayoutID above) const
     {
         uint32_t place = m_stretchesAtAndBelowLayouts[id.index()].first;
@@ -1066,6 +1235,7 @@ public:
 private:
     void holdBackWhile(const ScopedLambda<void()>&);
     void takeNote(Note, uint32_t number, uint32_t more);
+    void takeNotesOfPassOnOneThread();
     bool resolveCallsThatWereToldIn(unsigned lane);
     bool m_setsMeetingsAside { false };
     Lane* m_firstLane { nullptr };
@@ -1172,6 +1342,7 @@ private:
     HashMap<uint64_t, uint32_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_recordsOfNamesOnPrototypes;
     HashMap<uint64_t, uint32_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_nodesFoundOnPrototypesAbove;
     HashMap<uint32_t, uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_nodesOfObjectsMadeForClassesBelow;
+    HashMap<uint32_t, uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_nodesOfObjectsMadeThroughConstructors;
     HashMap<uint32_t, uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_nodesOfMembersWritten;
 
     enum class NodeOnDemand : uint8_t { ReadThroughFamily, StoredThroughFamily, StoredInConstructionThroughFamily, AnyFieldReadOfLayout, AnyFieldStoredOfLayout, AnyFieldReadOfFamily, AnyFieldStoredOfFamily, AnyFieldReadOfSet, ElementReadOfSet, AnyFieldStoredOfSet, ElementStoredOfSet, FoundBesideFieldsUnderKey, LaidOnClosuresUnderKey, AnyFieldDefinedOnLayout, WhatStandsAbove, WhatStandsBelow };
@@ -1224,8 +1395,8 @@ private:
         uint32_t next { UINT32_MAX };
     };
 
-    void indexMembersOfClasses();
-    void numberNodes();
+    Vector<uint32_t> indexMembersOfClasses();
+    void numberNodes(Vector<uint32_t>&& numbersOfMemberNodesOfSides);
     void makeTablesThatNeedNoNodes();
     FlowNodeID findNodeOf(FunctionID, uint32_t nodeInSummary) const;
     FlowNodeID makeNode();
@@ -1247,7 +1418,6 @@ private:
     void deferUnion(LayoutID, LayoutID) const;
     LayoutID memberStandingFor(const LinkType&) const;
     mutable SetsOfLayoutsInLinkFlow m_setsOfLayouts;
-    BitVector m_layoutsOfDeclaredFamilies;
     bool mayStandInOneSet(std::span<const LayoutID> sortedMembers) const;
     mutable SetsOfFunctionsInLinkFlow m_setsOfFunctions;
     bool namesOnlyFunctionsOfSet(const LinkType&, const LinkType& set) const;
@@ -1282,6 +1452,12 @@ private:
     void deferLoss(FunctionID) const;
     void deferUnion(SiteID, SiteID) const;
     void deferLossOfConstructors(FamilyID) const;
+    void loseFamilyThatHoldsLostConstructorsWith(FamilyID, LayoutID onlyMemberLost);
+    struct LostConstructorsOfTree {
+        FamilyID nearestFamily;
+        LayoutID onlyMember;
+    };
+    HashMap<uint32_t, LostConstructorsOfTree, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_lostConstructorsOfTrees;
     bool deferEscape(LayoutID) const;
     bool deferEscape(FunctionID) const;
     void deferEscape(SiteID) const;
@@ -1329,6 +1505,26 @@ private:
     FlowNodeID fieldThroughLost(LayoutID member, PropertyKeyID, AggregateAccess);
     FlowNodeID argumentOfLostFunctions(uint32_t positionalArgument);
     FlowNodeID gatheredByLostFunctions();
+    struct ArgumentsGathered {
+        WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(ArgumentsGathered);
+        struct Taker {
+            FlowNodeID node;
+            uint32_t place { 0 };
+        };
+        struct GathererBehind {
+            FunctionID function;
+            uint32_t firstPlace { 0 };
+        };
+        uint32_t fewestInSight { UINT32_MAX };
+        uint32_t fewestByEscapeAlone { UINT32_MAX };
+        FlowNodeID atAnyPlace;
+        Vector<FlowNodeID> atPlaces;
+        Vector<Taker> takers;
+        Vector<GathererBehind> gatherersBehind;
+    };
+    ArgumentsGathered& argumentsGatheredBy(FunctionID);
+    Shared<HashMap<uint32_t, std::unique_ptr<ArgumentsGathered>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>> m_argumentsGathered;
+    Shared<HashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>> m_takersOfGatheredArguments;
 
     Vector<std::pair<FlowObserver, FlowNodeID>> m_newObservers;
     mutable Vector<Deferred> m_deferred;
@@ -1374,6 +1570,7 @@ private:
     Vector<uint32_t> m_numbersOfAllocatedMembersOfFamilies;
     Vector<StretchInTreeOfBases> m_stretchesAtAndBelowLayouts;
     Vector<StretchInTreeOfBases> m_stretchesOfFamilies;
+    Vector<LayoutID> m_topsOfRows;
 
     mutable BitVector m_layoutsToldLost;
     mutable BitVector m_familiesToldLost;
@@ -1390,6 +1587,7 @@ private:
     mutable bool m_lostFunctionsReachUnseen { false };
     mutable bool m_objectsReachUnseen { false };
     bool m_rowPassesWhatNobodyFollows { false };
+    Vector<PropertyKeyID, 2> m_keysThatCodeTellsOfItself;
     bool m_promisesMayBeHandedOut { false };
     mutable Vector<BuiltinID> m_builtinsLost;
     mutable Vector<BuiltinID> m_builtinsLostInSight;

@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTBuiltinOperationSupport.h"
+#include "AOTBuiltinTable.h"
 #include "AOTCellFormat.h"
 #include "AOTCompactTable.h"
 #include "AOTConvention.h"
@@ -981,7 +982,30 @@ bool leavesPatternAsMade(BoxedCallForm form, unsigned count)
 }
 StubSignature signatureOfTryCallMethodOfBuiltinClass(StubKey) { return callConventionSignature({ }); }
 
-static void branchUnlessReceiverFindsBuiltin(StubAssembler& jit, const BoxedCallHandler& handler, JumpList& looksUp, std::optional<StubKey> entryForProvenClass = std::nullopt)
+static bool structuresBelowClassOfReceiverAreKept(const BoxedCallHandler& handler)
+{
+    if (!handler.receiverTypes || handler.receiverTypes->first != handler.receiverTypes->last)
+        return false;
+    const BuiltinTable& table = BuiltinTable::singleton();
+    for (unsigned index = 0; index < table.classCount(); ++index) {
+        if (const BuiltinClass& builtinClass = table.at(BuiltinClassID(index)); builtinClass.keepsStructuresOfClassesBelow && builtinClass.type == handler.receiverTypes->first)
+            return true;
+    }
+    return false;
+}
+
+enum class MethodIsRead : uint8_t { AtTheCall, InFrontOfTheCall };
+
+static void branchIfMethodMayHaveBeenReplaced(StubAssembler& jit, BoxedCallForm form, GPRReg scratch, JumpList& mayHaveBeenReplaced)
+{
+    if (!jit.options().methodsOfBuiltinsMayBeReplaced)
+        return;
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(builtins.membersWritten)), scratch);
+    for (BuiltinID member : BuiltinTable::singleton().membersThatHoldMethodOf(form))
+        mayHaveBeenReplaced.append(jit.branchTest8(CCallHelpers::NonZero, Address(scratch, member.index())));
+}
+
+static void branchUnlessReceiverFindsBuiltin(StubAssembler& jit, const BoxedCallHandler& handler, MethodIsRead methodIsRead, GPRReg scratch, JumpList& looksUp, std::optional<StubKey> entryForProvenClass = std::nullopt)
 {
     if (handler.receiverTypes) {
         looksUp.append(jit.branchIfNotCell(thisGPR));
@@ -989,8 +1013,20 @@ static void branchUnlessReceiverFindsBuiltin(StubAssembler& jit, const BoxedCall
     }
     if (entryForProvenClass)
         jit.bindEntry(*entryForProvenClass);
-    if (receiverOfBoxedCallIsObject(handler.form))
+    branchIfMethodMayHaveBeenReplaced(jit, handler.form, scratch, looksUp);
+    if (!receiverOfBoxedCallIsObject(handler.form))
+        return;
+    if (methodIsRead == MethodIsRead::InFrontOfTheCall || !structuresBelowClassOfReceiverAreKept(handler)) {
         looksUp.append(branchIfNotPristine(jit, thisGPR));
+        return;
+    }
+    Jump isAsMade = jit.branchTest8(CCallHelpers::NonZero, Address(thisGPR, JSCell::typeInfoFlagsOffset()), TrustedImm32(IsPristine));
+    jit.load32(Address(thisGPR, JSCell::structureIDOffset()), scratch);
+    jit.urshift32(TrustedImm32(PropertyCacheWords::shiftOfPlaceOfStructureBelowBuiltinClass), scratch);
+    jit.and32(TrustedImm32(PropertyCacheWords::numberOfStructuresBelowBuiltinClasses - 1), scratch);
+    jit.load32(BaseIndex(instanceGPR, scratch, CCallHelpers::TimesFour, AOT_INSTANCE_OFFSET(propertyCaches.structuresBelowBuiltinClasses)), scratch);
+    looksUp.append(jit.branch32(CCallHelpers::NotEqual, scratch, Address(thisGPR, JSCell::structureIDOffset())));
+    isAsMade.link(&jit);
 }
 
 void generateTryCallMethodOfBuiltinClass(StubAssembler& jit)
@@ -998,8 +1034,9 @@ void generateTryCallMethodOfBuiltinClass(StubAssembler& jit)
     const BoxedCallHandler& handler = boxedCallHandlers[jit.key().form()];
     JumpList misses;
     if (servesCallsByName(handler.form, jit.key().count())) {
-        branchUnlessReceiverFindsBuiltin(jit, handler, misses);
-        handler.emit(jit, jit.allocateScratch(StubRegister::T9), misses);
+        const GPRReg scratch = jit.allocateScratch(StubRegister::T9);
+        branchUnlessReceiverFindsBuiltin(jit, handler, MethodIsRead::AtTheCall, scratch, misses);
+        handler.emit(jit, scratch, misses);
         misses.link(&jit);
     }
     jit.move(TrustedImm64(JSValue::encode(JSValue())), jit.result());
@@ -1021,9 +1058,10 @@ void generateCallMethodOfBuiltinClassByValue(StubAssembler& jit)
         return;
     }
     JumpList isOtherReceiver;
-    branchUnlessReceiverFindsBuiltin(jit, handler, isOtherReceiver, callMethodOfProvenBuiltinClassByValue(handler.form, count));
+    const GPRReg scratch = jit.allocateScratch(StubRegister::T9);
+    branchUnlessReceiverFindsBuiltin(jit, handler, MethodIsRead::InFrontOfTheCall, scratch, isOtherReceiver, callMethodOfProvenBuiltinClassByValue(handler.form, count));
     JumpList leavesUndone;
-    handler.emit(jit, jit.allocateScratch(StubRegister::T9), leavesUndone);
+    handler.emit(jit, scratch, leavesUndone);
     jit.linkToStub(leavesUndone, callValue(count));
     jit.linkToStub(isOtherReceiver, forOtherReceivers);
 }
@@ -1037,7 +1075,9 @@ void generateCallMethodThatMayBeUnread(StubAssembler& jit)
     JumpList callsValue;
     if (servesCallsByName(handler.form, count) && receiverOfBoxedCallIsObject(handler.form)) {
         callsValue.append(branchIfNotPristine(jit, thisGPR));
-        handler.emit(jit, jit.allocateScratch(StubRegister::T9), callsValue);
+        const GPRReg scratch = jit.allocateScratch(StubRegister::T9);
+        branchIfMethodMayHaveBeenReplaced(jit, handler.form, scratch, callsValue);
+        handler.emit(jit, scratch, callsValue);
         callsValue.link(&jit);
     }
     Jump isRead = jit.branchTest64(CCallHelpers::NonZero, calleeGPR);
@@ -1057,7 +1097,6 @@ void generateCallMethodThatMayBeUnread(StubAssembler& jit)
 }
 
 StubSignature signatureOfCallMethodOfBuiltinClassAtSite(StubKey key) { return signatureOf(callMethodAtSite(key.count())); }
-StubSignature signatureOfCallMethodOfOneBuiltinClassAtSite(StubKey key) { return signatureOf(callMethodAtSite(key.count())); }
 StubSignature signatureOfCallMethodOfProvenBuiltinClass(StubKey key) { return signatureOf(callMethodById(key.count())); }
 
 StubSignature signatureOfCallMethodOfBuiltinClassWithSharedPattern(StubKey key) { return signatureOf(callMethodById(key.count())); }
@@ -1105,16 +1144,12 @@ static void emitCallOfMethodOfBuiltinClass(StubAssembler& jit, bool patternIsSha
         goOnBy(byName);
         jit.bindEntry(entryAtSite);
         goOnBy(forOtherReceiversAtSite);
-        if (!patternIsShared) {
-            jit.bindEntry(callMethodOfOneBuiltinClassAtSite(handler.form, count));
-            jit.jumpToStub(callMethodAtSite(count));
-        }
         return;
     }
 
     RELEASE_ASSERT(noOverlap(name, calleeGPR, thisGPR, argumentGPR(0), argumentGPR(1), argumentGPR(2), argumentGPR(3), instanceGPR));
     JumpList looksUp;
-    branchUnlessReceiverFindsBuiltin(jit, handler, looksUp, entryForProvenClass);
+    branchUnlessReceiverFindsBuiltin(jit, handler, MethodIsRead::AtTheCall, calleeGPR, looksUp, entryForProvenClass);
     Label receiverFindsBuiltin = jit.label();
 
     jit.move(name, calleeGPR);
@@ -1126,24 +1161,14 @@ static void emitCallOfMethodOfBuiltinClass(StubAssembler& jit, bool patternIsSha
     goOnBy(byName);
 
     jit.bindEntry(entryAtSite);
-    if (!patternIsShared && !next)
-        jit.bindEntry(callMethodOfOneBuiltinClassAtSite(handler.form, count));
     JumpList isOtherReceiver;
-    branchUnlessReceiverFindsBuiltin(jit, handler, isOtherReceiver);
+    branchUnlessReceiverFindsBuiltin(jit, handler, MethodIsRead::AtTheCall, calleeGPR, isOtherReceiver);
     static_assert(sizeof(uint16_t) == InstanceLayout::sizeOfIndexOfSiteAnswers);
-    Label findsNameOfSite = jit.label();
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.namesOfSitesByDistance)), calleeGPR);
     jit.load16(BaseIndex(calleeGPR, name, CCallHelpers::TimesOne), name);
     jit.jump().linkTo(receiverFindsBuiltin, &jit);
     if (!patternIsShared) {
         jit.linkToStub(isOtherReceiver, forOtherReceiversAtSite);
-        if (next) {
-            jit.bindEntry(callMethodOfOneBuiltinClassAtSite(handler.form, count));
-            JumpList looksUpAtSite;
-            branchUnlessReceiverFindsBuiltin(jit, handler, looksUpAtSite);
-            jit.jump().linkTo(findsNameOfSite, &jit);
-            jit.linkToStub(looksUpAtSite, callMethodAtSite(count));
-        }
         return;
     }
     isOtherReceiver.link(&jit);

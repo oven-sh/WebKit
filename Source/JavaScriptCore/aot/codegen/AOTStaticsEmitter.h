@@ -24,7 +24,7 @@ public:
     Operand loadFieldOfEnvironment(VariableID, LayoutID, uint32_t field);
     void storeFieldOfEnvironment(VariableID, LayoutID, uint32_t field, Operand, const Type& storedType);
     ClassGuardKey keyOfGuard(LayoutID classLayout, ClassSide);
-    ClassGuardKey keyOfGuard(LayoutID classLayout, ClassSide, PropertyKeyID name, bool isAskedByStoresAlone = false);
+    ClassGuardKey keyOfGuard(LayoutID classLayout, ClassSide, PropertyKeyID name, AskerOfClassGuardOfName = AskerOfClassGuardOfName::Reads);
     ClassGuardKey keyOfGuardOfNames(LayoutID classLayout, ClassSide, std::span<const PropertyKeyID> names);
     TypedPointer guardByte(const ClassGuardKey&);
     TypedPointer countOfGuards(std::span<const ClassGuardKey>);

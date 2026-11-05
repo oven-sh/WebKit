@@ -27,6 +27,17 @@ struct NoLocationBits {
 
 } // anonymous namespace
 
+static_assert(LocationMasks().masksAgreeWithHeaps());
+static_assert(LocationMasks::top().masksAgreeWithHeaps());
+static_assert(LocationMasks::top().without(indexedHeaps).masksAgreeWithHeaps());
+static_assert(LocationMasks::top().restrictedTo(bookkeepingHeaps).masksAgreeWithHeaps());
+static_assert(LocationMasks::top().intersectedWith(bookkeepingHeaps).masksAgreeWithHeaps());
+static_assert([] {
+    LocationMasks masks = LocationMasks::top();
+    masks.intersect(bookkeepingHeaps);
+    return masks.masksAgreeWithHeaps();
+}());
+
 uint64_t maskOf(const Program& program, const MemoryLocation& location)
 {
     return locationMaskIn(program, location);

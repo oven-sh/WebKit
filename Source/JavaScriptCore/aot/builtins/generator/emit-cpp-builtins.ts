@@ -223,6 +223,7 @@ function formatClass(builtinClass: ModelClass, pools: ClassPools): string {
     ["pristineTest", formatUnlessDefault("BuiltinPristineTest", builtinClass.pristineTest, "Mark")],
     ["hasClosureInstances", formatUnlessFalse(builtinClass.hasClosureInstances)],
     ["instancesAreEntries", formatUnlessFalse(builtinClass.instancesAreEntries)],
+    ["keepsStructuresOfClassesBelow", formatUnlessFalse(builtinClass.keepsStructuresOfClassesBelow)],
     ["definesCharactersOnNewInstances", formatUnlessFalse(builtinClass.definesCharactersOnNewInstances)],
     ["listsNamesDefinedOnNewInstances", formatUnlessFalse(names !== undefined)],
     ["namesDefinedOnNewInstances", names === undefined ? null : classNames.add(names.map(name => formatName(name)))],

@@ -28,6 +28,7 @@ public:
 
     static bool tryPoison(VM&, JSCell*, uint32_t function, uint32_t position);
     static constexpr uint32_t isLentForCallAhead = 1u << 31;
+    static constexpr uint32_t isFrameLaidForCalleeOfEngine = 1u << 30;
     static void noteThatCellIsLent(JSCell*, const void* frame, uint32_t function, uint32_t position);
     static bool someCellIsLent() { return s_numberOfCellsLent; }
     static uint32_t poisonCellsLentBelow(VM&, const void* frame, bool andByThatFrame);

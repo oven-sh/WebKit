@@ -235,6 +235,8 @@ public:
     }
     void rememberPlaceOfPrototypeProperty(VM&, Closure* function, JSObject* prototype);
     JSObject* instanceWithPrototype(VM&, Object* allocated, JSObject* prototype, bool holdsNoField = false);
+    void rememberInstanceBelow(VM&, uint32_t allocationOfSite, JSObject* prototype, const Object& instanceWithoutFields, size_t size);
+    void forgetInstancesBelowPrototypes();
 
 private:
     friend bool classGuardHolds(const State&, const LayoutData&, ClassSide);
@@ -253,6 +255,12 @@ private:
     enum class UseOfFunction : bool { MakesObjects, IsBase };
     JSObject* defineClassOfConstructorFunction(VM&, const LayoutData&, UseOfFunction);
     void armGuardsOfConstructorFunction(VM&, const LayoutData&, JSObject* prototype, Closure* classObject);
+    void beginGuards(const LayoutData& classLayout)
+    {
+        if (!m_classesWhoseGuardsHaveBegun.get(m_tables.rankOfClass(classLayout.index))) [[unlikely]]
+            beginGuardsSlowCase(classLayout);
+    }
+    void beginGuardsSlowCase(const LayoutData&);
     void checkParentOfPrototypeObject(const LayoutData&, JSObject* prototype);
     void enterHolderWithoutGuards(VM&, const LayoutData&, ClassSide, JSObject* holder);
     bool tryLeaveDefinitionToRecord(VM&, Closure* classObject, const LayoutData&, JSValue heritage, JSValue prototypeParent);
@@ -300,6 +308,9 @@ private:
     std::array<PlaceOfPrototypeProperty, numberOfPlacesOfPrototypeProperties> m_placesOfPrototypeProperties { };
     std::array<PrototypeOfClassObject, numberOfPrototypesOfClassObjects> m_prototypesOfClassObjects { };
     std::array<PrivateFieldPlace, numberOfPrivateFieldPlaces> m_privateFieldPlaces { };
+    Vector<InstanceBelowPrototype> m_instancesBelowPrototypes;
+    size_t m_numberOfInstancesBelowPrototypes { 0 };
+    Vector<Vector<uint64_t>> m_wordsOfInstancesWithoutFields;
     static constexpr size_t numberOfClassesOfFunctionsAsked = 64;
     mutable std::array<std::atomic<uint64_t>, numberOfClassesOfFunctionsAsked> m_classesOfFunctionsAsked { };
     State& m_state;
@@ -311,6 +322,7 @@ private:
     bool m_hasHoldersLeftOut { false };
     RefPtr<PrivateSymbolImpl> m_classObjectOfHolderLeftOut;
     BitVector m_endedGuards;
+    BitVector m_classesWhoseGuardsHaveBegun;
     BitVector m_classesWhosePrototypeAwaitsFirstTouch;
     BitVector m_sidesWhereNamesEnded;
     static constexpr uint64_t storesStillPassUnderEndedName = 1ull << 63;

@@ -110,6 +110,8 @@ void finalize(VM& vm, CollectionScope scope)
         });
         state.didChangeInstances();
     }
+    if (state.realmWhoseDatesAreWrittenInPlace && !vm.heap.isMarked(state.realmWhoseDatesAreWrittenInPlace))
+        state.realmWhoseDatesAreWrittenInPlace = nullptr;
 
     state.caches->finalize(vm, scope);
     for (Instance* instance : state.instances)

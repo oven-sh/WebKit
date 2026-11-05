@@ -184,7 +184,11 @@ function formatPlace(place: ModelPlace, pools: Pools): string | null {
         ["holdsOnlyWhatIsStored", place.holdsOnlyWhatIsStored ? "true" : null],
       ]);
     case "NewValue":
-      return formatAggregate([kind, ["newValueType", formatId("BuiltinTypeID", place.type)]]);
+      return formatAggregate([
+        kind,
+        ["holdsWhatIsThrown", place.holdsWhatIsThrown ? "true" : null],
+        ["newValueType", formatId("BuiltinTypeID", place.type)],
+      ]);
     case "Member":
       return formatAggregate([
         kind,
@@ -193,7 +197,11 @@ function formatPlace(place: ModelPlace, pools: Pools): string | null {
         ["firstMemberStep", formatUnlessZero(place.firstStep)],
       ]);
     case "NativeCell":
-      return formatAggregate([kind, ["nativeCell", formatName(place.cell)]]);
+      return formatAggregate([
+        kind,
+        ["holdsOnlyWhatIsStored", place.holdsOnlyWhatIsStored ? "true" : null],
+        ["nativeCell", formatName(place.cell)],
+      ]);
   }
 }
 

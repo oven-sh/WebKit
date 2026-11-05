@@ -72,7 +72,7 @@ void Walker::noteRecordBuiltForPolls(ValueID id, const Draft& draft, const Effec
         uint32_t place = frame.placesOfOpenLoops[frame.index->loopOf(frame.block).index()];
         if (!place || m_openLoops[place - 1].poll)
             return;
-        m_openLoops[place - 1].poll = id;
+        m_openLoops.changeable(place - 1).poll = id;
         if (m_openLoops[place - 1].pollInFront && !isUnreachable() && m_code.at(m_block).handler)
             m_block = jumpIntoNewBlockForPolls(m_code, m_block, m_origin);
         return;
@@ -100,7 +100,7 @@ void Walker::noteRecordBuiltForPolls(ValueID id, const Draft& draft, const Effec
                 uint32_t place = frame.placesOfOpenLoops[loop.index()];
                 if (!place || place > numberOfLoops)
                     continue;
-                OpenLoop& open = m_openLoops[place - 1];
+                OpenLoop& open = m_openLoops.changeable(place - 1);
                 if (open.likelyTurnMayCollect)
                     isSettled = true;
                 else if (!standsOnRareWay)
@@ -157,7 +157,7 @@ void Walker::noteEdgeCameRound(BlockID head)
     for (LoopID loop = frame.index->loopOf(frame.block); loop; loop = frame.index->loop(loop).parent) {
         uint32_t place = frame.placesOfOpenLoops[loop.index()];
         if (place && m_openLoops[place - 1].head == head) {
-            ++m_openLoops[place - 1].numberOfEdgesThatCameRound;
+            ++m_openLoops.changeable(place - 1).numberOfEdgesThatCameRound;
             return;
         }
     }
@@ -176,7 +176,7 @@ void Walker::settleFateOfPoll(const OpenLoop& loop)
         LoopID first = frameIndex == loop.frame ? frame.index->loop(loop.loop).parent : frame.index->loopOf(frame.block);
         for (LoopID candidate = first; candidate && !around; candidate = frame.index->loop(candidate).parent) {
             if (uint32_t place = frame.placesOfOpenLoops[candidate.index()])
-                around = &m_openLoops[place - 1];
+                around = &m_openLoops.changeable(place - 1);
         }
     }
     auto drop = [&](ValueID poll) {

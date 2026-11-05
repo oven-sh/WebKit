@@ -1,6 +1,7 @@
 # wipe(hidden()); climb(hidden()); print(size(view)); replace(); print(size(view)); restore(); print(size(view))   with   function size(view: Int32Array) { return view.length; }
 # `length` is written through a value that nobody knows and prototypes are climbed to from such values, so the getter above all views is open in this test run, and the code of the shell really replaces it between
-# two reads. The read is GetTypedArrayLength behind the test of being as made; the store sets the byte of the class, the test fails from then on, and the read by name finds what the test run has laid.
+# two reads. The getter lies two steps above a view: the read is GetTypedArrayLength behind the cell alone, the byte of the member and the byte of the holder below it; the store sets the byte of the member, that test fails from
+# then on, and the read by name finds what the test run has laid.
 # OPTIONS: admit=ReplacedBuiltins
 # RUN: run-in-shell const above = Object.getPrototypeOf(Int32Array.prototype), original = Object.getOwnPropertyDescriptor(above, "length"); globalThis.hidden = () => [1]; globalThis.replace = () => { Object.defineProperty(above, "length", { configurable: true, get() { return 7; } }); }; globalThis.restore = () => { Object.defineProperty(above, "length", original); };
 # CHECK: 3
@@ -11,9 +12,11 @@
 # LOCKS: open TypedArrayPrototypeLength spelled-through-unseen
 # RUN(WALK): walk f1 mechanisms=all
 # WALK-LABEL: code f1:Body
-# WALK: = IsPristine {{*}}builtinClass=Int32Array
-# WALK: = GetTypedArrayLength
+# WALK: = IsPristine {{*}}builtinClass=Int32Array aspects=[{{*}}CellAlone]
+# WALK: = IsMemberAsBuilt builtin=TypedArrayPrototypeLength
 # WALK: = PropGet {{*}}key="length"
+# WALK: = IsHolderWithoutAddedNames builtin=Int32ArrayPrototype
+# WALK: = GetTypedArrayLength
 
 module m0 path="/a.test.ts" displayPath="a.test.ts" body=f0
 entry module=m0

@@ -138,7 +138,6 @@ public:
     StubRecording generateForTesting(StubKey body, const ScopedLambda<void(StubAssembler&)>& generator) { return generateBody(body, generator); }
 
     StubKey key() const;
-    bool callerKeepsNoRegisters() const { return m_key.callerFrame() == CallerFrame::KeepsNoRegisters; }
     bool callerKeepsNoFPRs() const { return m_key.callerFrame() == CallerFrame::KeepsNoFPRs; }
     const StubSignature& signature() const { return m_signature; }
     const StubOptions& options() const { return m_options; }
@@ -318,7 +317,6 @@ private:
     OperationToCall setUpOperationCall(const CalledOperation&, const OperationCall&);
     void prepareCallOperation();
     void emitOperationCallAndReturn(const CalledOperation&, const OperationCall&, const ScopedLambda<void()>& beforeReturn, SavedRegistersAreRead);
-    bool resultsComeFromOperation(const OperationCall&) const;
     bool resultsInFPRsComeFromOperation(const OperationCall&) const;
     void emitOperationCallSavingNothing(const CalledOperation&, const OperationCall&, const ScopedLambda<void()>& beforeReturn);
     void emitOperationCallSavingRegisters(const CalledOperation&, const OperationCall&, const ScopedLambda<void()>& beforeReturn);
@@ -359,7 +357,7 @@ private:
 inline StubKey StubAssembler::key() const
 {
     ASSERT(m_key.hasFamily());
-    return hasFrameAndKeepsFewerRegisters(m_key.callerFrame()) ? m_key.withCallerFrame(CallerFrame::HasFrame) : m_key;
+    return callerKeepsNoFPRs() ? m_key.withCallerFrame(CallerFrame::HasFrame) : m_key;
 }
 
 inline GPRReg StubAssembler::operand(unsigned index) const

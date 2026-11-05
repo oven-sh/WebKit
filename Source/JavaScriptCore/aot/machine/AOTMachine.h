@@ -569,6 +569,14 @@ private:
     ArenaVector<ValueRep> m_reps;
 };
 
+struct FactsOfSuspension {
+    std::optional<BitSpan> frameWordsDeadAcrossSuspension;
+    BitSpan frameWordsClearedInFrontOfSuspension;
+    uint32_t operandEncodedAsFrameWordIndex { UINT32_MAX };
+    uint8_t numberOfFrameWordsToClearAtFirstSuspension { 0 };
+};
+inline constexpr FactsOfSuspension factsOfPatchThatIsToldNothingOfSuspensions { };
+
 class PatchOperation final : public Operation {
 public:
     static bool accepts(Opcode opcode) { return opcode == Patch || opcode == Check; }
@@ -580,6 +588,11 @@ public:
     uint8_t numGPScratchRegisters { 0 };
     uint8_t numFPScratchRegisters { 0 };
     bool onlyKeepsChildrenAlive { false };
+
+private:
+    uint16_t m_bits { 0 };
+
+public:
     std::optional<PureFunction> pureFunction;
 
     void append(const ConstrainedValue& value) { append(value.value(), value.rep()); }
@@ -629,10 +642,16 @@ public:
     bool leavesByReturning() const { return bit(LeavesByReturning); }
     void setNeedsFrameRecord(bool value) { setBit(NeedsFrameRecord, value); }
     bool needsFrameRecord() const { return bit(NeedsFrameRecord); }
+    void setFindsOperandsInFrameWithoutRecord(bool value) { setBit(FindsOperandsInFrameWithoutRecord, value); }
+    bool findsOperandsInFrameWithoutRecord() const { return bit(FindsOperandsInFrameWithoutRecord); }
     void setIsSuspension(bool value) { setBit(IsSuspension, value); }
     bool isSuspension() const { return bit(IsSuspension); }
-    void setOperandEncodedAsFrameWordIndex(unsigned child) { m_operandEncodedAsFrameWordIndex = child; }
-    std::optional<unsigned> operandEncodedAsFrameWordIndex() const { return m_operandEncodedAsFrameWordIndex == UINT32_MAX ? std::nullopt : std::optional<unsigned>(m_operandEncodedAsFrameWordIndex); }
+    void setOperandEncodedAsFrameWordIndex(unsigned child) { ensureFactsOfSuspension().operandEncodedAsFrameWordIndex = child; }
+    std::optional<unsigned> operandEncodedAsFrameWordIndex() const
+    {
+        uint32_t child = factsOfSuspension().operandEncodedAsFrameWordIndex;
+        return child == UINT32_MAX ? std::nullopt : std::optional<unsigned>(child);
+    }
     void setReleasesDeadValues(bool value) { setBit(ReleasesDeadValues, value); }
     bool releasesDeadValues() const { return bit(ReleasesDeadValues); }
     JS_EXPORT_PRIVATE void markChildAsLetGoByCallee(unsigned child);
@@ -645,9 +664,9 @@ public:
 
     Reg registerToBringOperandTo(unsigned child) const { return child < m_registersToBringOperandsTo.size() ? m_registersToBringOperandsTo[child] : Reg(); }
     RegisterSet registersToRelease() const { return registerSetOf(m_registersToRelease); }
-    const std::optional<BitSpan>& frameWordsDeadAcrossSuspension() const { return m_frameWordsDeadAcrossSuspension; }
-    unsigned numberOfFrameWordsToClearAtFirstSuspension() const { return m_numberOfFrameWordsToClearAtFirstSuspension; }
-    const BitSpan& frameWordsClearedInFrontOfSuspension() const { return m_frameWordsClearedInFrontOfSuspension; }
+    const std::optional<BitSpan>& frameWordsDeadAcrossSuspension() const { return factsOfSuspension().frameWordsDeadAcrossSuspension; }
+    unsigned numberOfFrameWordsToClearAtFirstSuspension() const { return factsOfSuspension().numberOfFrameWordsToClearAtFirstSuspension; }
+    const BitSpan& frameWordsClearedInFrontOfSuspension() const { return factsOfSuspension().frameWordsClearedInFrontOfSuspension; }
 
 private:
     friend class Allocator;
@@ -665,6 +684,7 @@ private:
         SharesLatePath = 1 << 5,
         LeavesByReturning = 1 << 6,
         BringsOperandsToTheirRegisters = 1 << 7,
+        FindsOperandsInFrameWithoutRecord = 1 << 8,
     };
 
     struct SuccessorClobber {
@@ -683,6 +703,8 @@ private:
     inline PatchOperation(Procedure&, Opcode, Type, Origin);
 
     JS_EXPORT_PRIVATE void growStorageOfOperands();
+    JS_EXPORT_PRIVATE FactsOfSuspension& ensureFactsOfSuspension();
+    const FactsOfSuspension& factsOfSuspension() const { return m_factsOfSuspension ? *m_factsOfSuspension : factsOfPatchThatIsToldNothingOfSuspensions; }
 
     bool bit(Bit bit) const { return m_bits & bit; }
     void setBit(Bit bit, bool value) { m_bits = value ? m_bits | bit : m_bits & ~bit; }
@@ -698,11 +720,7 @@ private:
     RegisterMask m_registersToRelease { 0 };
     RegisterMask m_registersOfResults { ~static_cast<RegisterMask>(0) };
     PatchGenerator* m_generator { nullptr };
-    std::optional<BitSpan> m_frameWordsDeadAcrossSuspension;
-    BitSpan m_frameWordsClearedInFrontOfSuspension;
-    uint32_t m_operandEncodedAsFrameWordIndex { UINT32_MAX };
-    uint8_t m_numberOfFrameWordsToClearAtFirstSuspension { 0 };
-    uint16_t m_bits { 0 };
+    FactsOfSuspension* m_factsOfSuspension { nullptr };
 };
 
 ALWAYS_INLINE void PatchOperation::append(Operation* value, const ValueRep& rep)
@@ -818,11 +836,8 @@ public:
     Block* singlePredecessor() const { return m_numberOfIncomingEdges == 1 ? std::bit_cast<Block*>(m_sourcesOfIncomingEdgesFolded) : nullptr; }
     EdgeClass classOfSingleIncomingEdge() const
     {
-        for (const Edge& edge : singlePredecessor()->successors()) {
-            if (edge.block() == this)
-                return edge.edgeClass();
-        }
-        RELEASE_ASSERT_NOT_REACHED();
+        ASSERT(m_numberOfIncomingEdges == 1);
+        return static_cast<EdgeClass>(m_classesOfIncomingEdgesFolded);
     }
     bool hasOnlyOnePredecessor() const { return m_hasOnlyOnePredecessor; }
     bool isLandingPad() const { return m_isLandingPad; }
@@ -854,26 +869,34 @@ private:
     inline void setSuccessorsInline(Edge taken, Edge notTaken);
     bool mayBeAppendedTo() const { return !m_lastOperationMayEndBlock || !isTerminated(); }
 
-    void didGainIncomingEdge(const Block* from)
+    void didGainIncomingEdge(const Block* from, EdgeClass edgeClass)
     {
         RELEASE_ASSERT(!m_isEntry);
         if (m_numberOfIncomingEdges)
             m_hasOnlyOnePredecessor = false;
         m_sourcesOfIncomingEdgesFolded ^= std::bit_cast<uintptr_t>(from);
+        m_classesOfIncomingEdgesFolded ^= static_cast<uint8_t>(edgeClass);
         ++m_numberOfIncomingEdges;
     }
 
-    void didLoseIncomingEdge(const Block* from)
+    void didLoseIncomingEdge(const Block* from, EdgeClass edgeClass)
     {
         ASSERT(m_numberOfIncomingEdges);
         m_sourcesOfIncomingEdgesFolded ^= std::bit_cast<uintptr_t>(from);
+        m_classesOfIncomingEdgesFolded ^= static_cast<uint8_t>(edgeClass);
         --m_numberOfIncomingEdges;
+    }
+
+    void didChangeClassOfIncomingEdge(EdgeClass before, EdgeClass behind)
+    {
+        m_classesOfIncomingEdgesFolded ^= static_cast<uint8_t>(before) ^ static_cast<uint8_t>(behind);
     }
 
     Procedure& m_procedure;
     uint32_t m_index;
     uint32_t m_numberOfIncomingEdges { 0 };
     uintptr_t m_sourcesOfIncomingEdgesFolded { 0 };
+    uint8_t m_classesOfIncomingEdgesFolded { 0 };
     bool m_hasOnlyOnePredecessor { false };
     bool m_isLandingPad { false };
     bool m_isEntry { false };
@@ -1060,6 +1083,7 @@ public:
 private:
     friend class Builder;
     friend class Encoder;
+    friend class Numbering;
     friend class Order;
     friend void prepareForGeneration(Procedure&);
 
@@ -1069,6 +1093,31 @@ private:
         m_operations.append(m_arena, operation);
     }
     inline Block* addBlockInline();
+
+    enum class ListThatBuildingLeaves : uint8_t {
+        NumberedOperations,
+        BucketsOfNumberedOperations,
+        OperationsWithoutPosition,
+        BucketsWithoutPosition,
+        EpochsOfInheritedFinds,
+    };
+    static constexpr unsigned numberOfListsThatBuildingLeaves = 5;
+
+    struct RoomThatBuildingLeaves {
+        void* room { nullptr };
+        size_t bytes { 0 };
+    };
+    using RoomsThatBuildingLeaves = std::array<RoomThatBuildingLeaves, numberOfListsThatBuildingLeaves>;
+
+    template<typename T>
+    void noteListThatBuildingLeaves(ListThatBuildingLeaves list, ArenaVector<T>& held)
+    {
+        size_t bytes = static_cast<size_t>(held.capacity()) * sizeof(T);
+        if (bytes >= Arena::smallestRoomLetGo)
+            noteRoomThatBuildingLeaves(list, held.begin(), bytes);
+    }
+    void noteRoomThatBuildingLeaves(ListThatBuildingLeaves, void* room, size_t bytes);
+    void letGoOfWhatBuildingLeaves();
 
     struct ListOfHeapsWithItsSet {
         std::span<const AbstractHeap* const> list;
@@ -1091,6 +1140,7 @@ private:
     ArenaVector<StackSlot*> m_stackSlots;
     ArenaVector<ConstantDataRecord> m_constantData;
     ArenaVector<uint32_t> m_constantDataBuckets;
+    RoomsThatBuildingLeaves* m_roomsThatBuildingLeaves { nullptr };
     unsigned m_callArgAreaSize { 0 };
     bool m_holdsIntegersAddedTo { false };
     bool m_namesFramePointer { false };
@@ -1181,6 +1231,7 @@ ALWAYS_INLINE void Block::appendSuccessorWhereRoomIsKnown(Edge edge)
         m_successors.append(m_procedure.arena(), edge);
     target->m_numberOfIncomingEdges = numberOfIncomingEdges + 1;
     target->m_sourcesOfIncomingEdgesFolded ^= std::bit_cast<uintptr_t>(this);
+    target->m_classesOfIncomingEdgesFolded ^= static_cast<uint8_t>(edge.edgeClass());
 }
 
 ALWAYS_INLINE void Block::appendSuccessorInline(Edge edge)

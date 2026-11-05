@@ -9,6 +9,7 @@
 
 #include "AOTArrivals.h"
 #include "AOTCompileFunctions.h"
+#include "AOTCompileOptions.h"
 #include "AOTFacts.h"
 #include "AOTMechanisms.h"
 #include "AOTPlan.h"
@@ -72,10 +73,20 @@ struct WalkOptions {
     bool testsEveryPosition { false };
     bool takesPositionsToLieInside { false };
     bool takesCalleesToKeepNothing { false };
-    bool holdsObjectsToStayingAsMade { false };
     bool writesBodiesStraight { false };
     bool checksEffects { false };
+    bool walksLastWalksOfLoopsAlone { false };
+    bool walksLoopsThatFitAgain { false };
+    bool undoLeavesExpectations { false };
     uint32_t rowThatSaysLess { 0 };
+    bool ignoresBranchHints { false };
+    bool shufflesBlockFrequencies { false };
+    bool ignoresExpectedTypes { false };
+    bool shufflesExpectedTypes { false };
+    bool failsGuesses { false };
+    bool shufflesChoices { false };
+    bool judgesInt32Promises { true };
+    uint32_t seedOfShuffles { 0 };
     PrintStream* explainsClosedAccessesTo { nullptr };
 };
 

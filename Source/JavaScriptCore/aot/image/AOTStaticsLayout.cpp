@@ -245,7 +245,9 @@ private:
             CountToPlace count { 0, static_cast<uint32_t>(index) };
             forEachGuardInClassGuardCountKey(guards.keyAt(firstCount + index), [&](std::span<const uint32_t> guard) {
                 LayoutID classLayout(guard[0]);
-                if (m_plan.hasClassRecord(classLayout) && !m_plan.bitsOfClassGuardsAreClearWhileTheyHold(classLayout, sideOfClassGuardKey(guard)))
+                ClassSide side = sideOfClassGuardKey(guard);
+                bool isCountedWhereGuardsBegin = side == ClassSide::Prototype && isClassGuardOfNamesKey(guard) && guardsOfNamesAwaitBeginningOf(m_program, m_plan, classLayout);
+                if (m_plan.hasClassRecord(classLayout) && !m_plan.bitsOfClassGuardsAreClearWhileTheyHold(classLayout, side) && !isCountedWhereGuardsBegin)
                     ++count.firstValue;
             });
             return count;
@@ -366,9 +368,10 @@ private:
         uint32_t firstCount = placeOfFirstClassGuardCount();
         for (uint32_t index = 0; index < firstCount; ++index) {
             std::span<const uint32_t> key = guards.keyAt(index);
-            bool isAskedByStoresAlone = key.size() == 4 && key[1] == sideWordOfClassGuardOfName(ClassSide::Prototype, true);
-            RELEASE_ASSERT(key.size() >= 2 && !(key.size() % 2) && (key[1] < numberOfClassSides || isAskedByStoresAlone));
-            ClassSide side = isAskedByStoresAlone ? ClassSide::Prototype : static_cast<ClassSide>(key[1]);
+            RELEASE_ASSERT(key.size() >= 2 && !(key.size() % 2));
+            AskerOfClassGuardOfName asker = askerOfClassGuardKey(key);
+            ClassSide side = sideOfClassGuardKey(key);
+            RELEASE_ASSERT(asker == AskerOfClassGuardOfName::Reads || (key.size() == 4 && side == ClassSide::Prototype && asker <= AskerOfClassGuardOfName::ReadsBehindLookAtObject));
             LayoutID classLayout(key[0]);
             if (!m_plan.hasClassRecord(classLayout)) {
                 m_context.diagnostics().add(InternalError {
@@ -386,7 +389,7 @@ private:
             Vector<PlacedClassGuardOfName>& list = key.size() == 4 ? m_statics.classGuardsOfNames : m_statics.namesOfClassGuardsOfSeveralNames;
             for (std::span<const uint32_t> names = key.subspan(2); !names.empty(); names = names.subspan(2)) {
                 RELEASE_ASSERT(names[0] == static_cast<uint32_t>(NumberSpace::Name) || names[0] == static_cast<uint32_t>(NumberSpace::NameOfText));
-                list.append(PlacedClassGuardOfName { classLayout, side, static_cast<NumberSpace>(names[0]), names[1], bit, isAskedByStoresAlone });
+                list.append(PlacedClassGuardOfName { classLayout, side, static_cast<NumberSpace>(names[0]), names[1], bit, asker });
             }
         }
         for (uint32_t offset : m_offsetsOfClassGuardCounts)
@@ -551,6 +554,11 @@ private:
 };
 
 } // anonymous namespace
+
+bool guardsOfNamesAwaitBeginningOf(const Typed::Program& program, const Typed::Plan& plan, LayoutID classLayout)
+{
+    return !plan.bitsOfClassGuardsAreClearWhileTheyHold(classLayout, ClassSide::Prototype) && !program.at(classLayout).has(Typed::LayoutFlags::IsOfCreatedObject);
+}
 
 void ImageNumbersBuilder::numberSites()
 {

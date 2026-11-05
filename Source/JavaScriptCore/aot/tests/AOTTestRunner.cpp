@@ -416,7 +416,7 @@ static FileResult runOneFileInThisProcess(const String& path, const TestRunReque
     std::optional<TestTodo> todo;
     Vector<TestFailure> failures = runOneFile(path, request.showsOutput ? &outputs : nullptr, request.variant, &todo);
 
-    bool isPlainRun = request.variant.optionWords.isEmpty() && !request.variant.onlyDiagnostic;
+    bool isPlainRun = request.variant.optionWords.isEmpty() && !request.variant.onlyDiagnostic && mechanismsOfProcess() == allMechanisms;
     bool isOwed = todo && !failures.isEmpty() && !failures.containsIf([](const TestFailure& failure) { return failure.isInternalError; });
     if (todo && failures.isEmpty() && isPlainRun)
         failures.append(TestFailure { todo->line, "passes: remove the TODO line"_s });

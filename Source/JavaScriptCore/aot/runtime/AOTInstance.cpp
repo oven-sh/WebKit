@@ -1012,11 +1012,11 @@ void VMState::countWithoutImage(VM& vm)
 void VMState::releaseImage(VM& vm)
 {
     counts = nullptr;
+    forgetErrorOfCodeLeftOut(vm);
     if (!hasCompiledCode)
         return;
     ASSERT(vm.heap.isShuttingDown());
 
-    forgetErrorOfCodeLeftOut(vm);
     pages->willReleaseEverything();
     Instance::destroyAll(vm);
     RELEASE_ASSERT(instances.isEmpty() && instancesToDestroy.isEmpty());

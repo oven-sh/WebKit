@@ -10,6 +10,7 @@
 
 #include "AOTCellFormat.h"
 #include "AOTInstance.h"
+#include "AOTPoisonedCell.h"
 #include "AOTSlimClosure.h"
 #include "AOTStubFrames.h"
 #include "AOTStubProgramTables.h"
@@ -995,6 +996,21 @@ void generateCallEngineCallee(StubAssembler& jit)
 #endif
     const GPRReg calleeOfTrampoline = jit.reuseScratch(StubRegister::R0);
     const GPRReg callLinkInfo = jit.allocateScratch(StubRegister::A2);
+    if (jit.options().checksProofs) {
+        jit.addPtr(TrustedImm32(-static_cast<int32_t>(sizeof(CallerFrameAndPC))), sp, frame);
+#if CPU(ARM64)
+        constexpr std::array readBehindCall { calleeGPR, CCallHelpers::linkRegister };
+#else
+        constexpr std::array readBehindCall { calleeGPR };
+#endif
+        jit.preserving(std::span<const GPRReg> { readBehindCall }, [&] {
+            jit.move(frame, jit.clobberRegister(StubRegister::A1));
+            jit.move(instanceGPR, jit.clobberRegister(StubRegister::A0));
+            jit.move(TrustedImm32(static_cast<int32_t>(PoisonedCell::isFrameLaidForCalleeOfEngine)), callLinkInfo);
+            jit.move(TrustedImm32(0), jit.clobberRegister(StubRegister::A3));
+            jit.callOperation(Entry::operationAOTPoisonCell, jit.reuseScratch(StubRegister::Operation));
+        });
+    }
     JumpList needsTrampoline;
     needsTrampoline.append(jit.branchIfNotType(calleeGPR, JSFunctionType));
     jit.loadPtr(Address(calleeGPR, JSFunction::offsetOfExecutableOrRareData()), word);

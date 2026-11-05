@@ -220,6 +220,9 @@ static void printLinesOfProgramList(IRPrinter& printer, ProgramList list)
     case ProgramList::OpenedNames:
         printLinesOfList(printer, list, program.openedNames);
         return;
+    case ProgramList::BuiltinsUsedAtStart:
+        printLinesOfList(printer, list, program.builtinsUsedAtStart);
+        return;
     case ProgramList::Bytes:
     case ProgramList::Words:
     case ProgramList::Strings:

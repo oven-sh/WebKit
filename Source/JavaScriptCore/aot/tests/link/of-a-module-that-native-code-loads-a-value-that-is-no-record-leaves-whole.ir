@@ -2,10 +2,11 @@
 # takes the function itself, and a name that it reads off a function is followed by nobody: the value leaves whole, so the function may be called with anything.
 # LIBRARY: own
 # OPTIONS: exclude=CodeOutsideImage
-# RUN: link functions variables mechanisms=all
+# RUN: link functions variables modules mechanisms=all
 # REQUIRES: entries-of-bun
 # CHECK-NOT: function f4 {{*}}callers-known
 # CHECK-NOT: function f4 unreached
+# CHECK-NOT: module m2 value-stays-with-compiled-code
 
 layout L0 module=m2 fields=[{key="nextTick" declared={type=anything} flags=[IsRequired]}, {key="queueTick1" declared={type=anything} flags=[IsRequired]}, {key="ring" declared={type=anything} flags=[IsRequired]}, {key="whileHooked" declared={type=anything} flags=[IsRequired]}]
 layout L1 module=m2 fields=[{key="made" declared={type=number} flags=[IsRequired]}]

@@ -273,6 +273,11 @@ void checkIDsThatRecordWalkerSkips(RecordReferenceChecker& checker, const Replac
     checker.checkRequired(replaceable.member);
 }
 
+void checkIDsThatRecordWalkerSkips(RecordReferenceChecker& checker, const BuiltinUsedAtStart& used)
+{
+    checker.checkRequired(used.builtin);
+}
+
 void checkIDsThatRecordWalkerSkips(RecordReferenceChecker& checker, const OpenedName& opened)
 {
     checker.checkRequired(opened.holder);
@@ -709,6 +714,7 @@ void ProgramVerifier::verifyIDs()
     verifyList(m_program.webAssemblyModules);
     verifyList(m_program.replaceableBuiltins);
     verifyList(m_program.openedNames);
+    verifyList(m_program.builtinsUsedAtStart);
     verifyEach(types.numberOfPropertyKeys(), [&](unsigned index) -> const PropertyKey& { return types.at(PropertyKeyID(index)); }, inRecord);
 
     Vector<uint32_t> layoutsWithInvalidMembers = findIndicesInParallel(loops, m_program.layouts.size(), [&](unsigned index) {

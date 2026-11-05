@@ -8,7 +8,9 @@
 
 #if ENABLE(AOT)
 
+#include "AOTThrowEmitter.h"
 #include "AOTTypeArena.h"
+#include "AllowMacroScratchRegisterUsage.h"
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -125,25 +127,26 @@ void StraightEmitter::trapUnlessOfType(ValueID value, TypeID tested, ProofSource
             return;
     }
     origin.isTailCall = false;
-    auto stopByName = [&](StraightArgument found) {
-        StraightArgument arguments[] { found, StraightArgument::word(function().index()), StraightArgument::word(origin.position), StraightArgument::word(static_cast<uint32_t>(source)) };
-        callOperation(origin, RuntimeOperation::StopAtFalseProof, arguments, { .neverReturns = true });
+    GPRReg boxed = temporary(1);
+    auto stopByName = [&] {
+        AllowMacroScratchRegisterUsage allowScratch(*m_jit);
+        emitStraightThrowSite(*m_jit, m_records, ThrowSite { .kind = ThrowKind::ErrorWithMessage, .a = ThrowSiteWord::none, .b = std::nullopt, .sourceOfFalseProof = source }, boxed, 0, addSite(origin, { }));
         m_jit->breakpoint();
     };
+    storeWhatWaitsInRegister();
     if (!value) {
-        storeWhatWaitsInRegister();
-        stopByName(StraightArgument::boxed(jsUndefined()));
+        m_jit->move(CCallHelpers::TrustedImm64(JSValue::encode(jsUndefined())), boxed);
+        stopByName();
         return;
     }
-    storeWhatWaitsInRegister();
-    GPRReg boxed = temporary(1);
     load(value, boxed);
     GPRReg passes = takeResultRegister();
     testType(boxed, tested, passes);
     if (m_hasFailed)
         return;
     CCallHelpers::Jump isOfType = m_jit->branchTest32(CCallHelpers::NonZero, passes);
-    stopByName(StraightArgument(value));
+    load(value, boxed);
+    stopByName();
     isOfType.link(m_jit);
 }
 

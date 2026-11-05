@@ -95,8 +95,8 @@
 # EARLY-NEXT: exited with 0
 # RUN(OTHER): run-in-shell early = function () { }; change = function (made, Above) { Object.defineProperty(new Above(1), "count", { value: 6 }); };
 # OTHER: size count first second third -
-# OTHER-NEXT: size - first second third -
-# OTHER-NEXT: size - first second third -
+# OTHER-NEXT: size count first second third -
+# OTHER-NEXT: size count first second third -
 # OTHER-NEXT: 5 2
 # OTHER-NEXT: exited with 0
 

@@ -46,9 +46,9 @@ runtime BeginMemberGuards : void (uint32_t classIndex) ; reads(all) writes(Membe
 runtime GetConstructPrototype : JSCell* (EncodedJSValue newTarget) ; unknownCode
 runtime SetConstructPrototype : JSCell* (JSCell* object, JSCell* prototype, uint32_t allocation, uint32_t holdsNoField) ; RuntimeAllocates writes(MemberGuards)
 
-runtime AllocateSlow : JSCell* (uint32_t allocation) ; RuntimeAllocates
-runtime AllocateSlowFromTemplate : JSCell* (uint32_t allocation, const uint8_t* body) ; RuntimeAllocates
-runtime GetHeaderOfAllocation : uint64_t (uint32_t allocation) ; RuntimeAllocates
+runtime AllocateSlow : JSCell* (uint32_t allocation) ; RuntimeAllocates writes(MemberGuards)
+runtime AllocateSlowFromTemplate : JSCell* (uint32_t allocation, const uint8_t* body) ; RuntimeAllocates writes(MemberGuards)
+runtime GetHeaderOfAllocation : uint64_t (uint32_t allocation) ; RuntimeAllocates writes(MemberGuards)
 runtime NewDictionary : JSCell* () ; RuntimeAllocates
 runtime NewFromData, NewSetFromData, NewMapFromData : JSCell* (uint32_t request) ; RuntimeAllocates throws
 runtime CopyDataProperties : void (JSCell* target, EncodedJSValue source, uint32_t excludedRun, uint32_t count, const EncodedJSValue* excludedKeys) ; unknownCode

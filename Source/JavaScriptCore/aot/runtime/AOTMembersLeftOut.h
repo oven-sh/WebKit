@@ -44,6 +44,7 @@ bool isMakingMemberForLookThatOnlyTests();
 JSValue takeStandInForGetterLeftOut(JSGlobalObject*, JSObject* getter);
 void explainErrorBehindMemberLeftOut(JSGlobalObject*, JSObject* error, JSValue base);
 void forgetErrorOfCodeLeftOut(VM&);
+bool isAnythingNotedOfMembersLeftOut(const VM*);
 
 } } // namespace JSC::AOT
 

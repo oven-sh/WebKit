@@ -16,6 +16,7 @@
 #include "AOTTypeIDs.h"
 #include "AOTVector.h"
 #include "JSExportMacros.h"
+#include <algorithm>
 #include <array>
 #include <bit>
 #include <memory>
@@ -188,6 +189,43 @@ private:
     PlannedLayout m_unplannedLayout;
 };
 
+template<size_t inlineCapacity>
+class LayoutsOwnedOrLent {
+public:
+    LayoutsOwnedOrLent() = default;
+
+    static LayoutsOwnedOrLent lentBy(const LayoutsOwnedOrLent& keptForBuild LIFETIME_BOUND)
+    {
+        LayoutsOwnedOrLent layouts;
+        layouts.m_lent = keptForBuild.span();
+        return layouts;
+    }
+
+    std::span<const LayoutID> span() const LIFETIME_BOUND { return m_own.isEmpty() ? m_lent : m_own.span(); }
+    size_t size() const { return span().size(); }
+    bool isEmpty() const { return span().empty(); }
+    auto begin() const LIFETIME_BOUND { return span().begin(); }
+    auto end() const LIFETIME_BOUND { return span().end(); }
+    bool contains(LayoutID layout) const { return std::ranges::contains(span(), layout); }
+    LayoutID operator[](size_t index) const
+    {
+        std::span<const LayoutID> layouts = span();
+        RELEASE_ASSERT(index < layouts.size());
+        return layouts[index];
+    }
+
+    void reserveInitialCapacity(size_t capacity) { m_own.reserveInitialCapacity(capacity); }
+    void append(LayoutID layout)
+    {
+        RELEASE_ASSERT(m_lent.empty());
+        m_own.append(layout);
+    }
+
+private:
+    Vector<LayoutID, inlineCapacity> m_own;
+    std::span<const LayoutID> m_lent;
+};
+
 struct FieldAccess {
     enum class Coverage : uint8_t {
         NoMember,
@@ -202,7 +240,24 @@ struct FieldAccess {
     PropertyKeyID key;
     PlacedSlot slot;
     PlacedSlot extensionWord;
-    Vector<LayoutID, 4> membersWithField;
+    LayoutsOwnedOrLent<4> membersWithField;
+};
+
+class FieldAccessKeptForBuild {
+    WTF_MAKE_NONCOPYABLE(FieldAccessKeptForBuild);
+public:
+    explicit FieldAccessKeptForBuild(FieldAccess&& access)
+        : m_membersWithField(WTF::move(access.membersWithField))
+        , m_access(WTF::move(access))
+    {
+        m_access.membersWithField = LayoutsOwnedOrLent<4>::lentBy(m_membersWithField);
+    }
+
+    const FieldAccess& withMembersLent() const LIFETIME_BOUND { return m_access; }
+
+private:
+    LayoutsOwnedOrLent<4> m_membersWithField;
+    FieldAccess m_access;
 };
 
 enum class StoredFieldForm : uint8_t {
@@ -272,20 +327,35 @@ struct SlotPlanParts {
     BitVector layoutsNeverAllocated;
     BitVector keysWithColumn;
     BitVector keysOfSlotsThatHoldMarks;
-    Vector<SlotRepresentation> narrowFormsOfKeys;
     BitVector keysOfFields;
 };
 
 struct FieldAccessesOfSets {
     struct Part {
         Lock lock;
-        std::array<HashMap<uint64_t, std::unique_ptr<FieldAccess>>, 2> accesses;
+        std::array<HashMap<uint64_t, std::unique_ptr<FieldAccessKeptForBuild>>, 2> accesses;
         struct OfMembers {
+            OfMembers(PropertyKeyID key, std::span<const LayoutID> members, FieldAccess&& access)
+                : key(key)
+                , members(members)
+                , access(WTF::move(access))
+            {
+            }
+
             PropertyKeyID key;
             Vector<LayoutID> members;
-            FieldAccess access;
+            FieldAccessKeptForBuild access;
         };
         std::array<HashMap<uint64_t, Vector<std::unique_ptr<OfMembers>, 1>>, 2> accessesOfMembers;
+        struct MembersByName {
+            bool areListed { false };
+            bool namesWrittenAboveAreListed { false };
+            uint32_t numberInUse { 0 };
+            Vector<LayoutID> askedAboutEveryName;
+            Vector<uint64_t> byName;
+            Vector<uint32_t> namesWrittenAbove;
+        };
+        HashMap<uint32_t, std::unique_ptr<MembersByName>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> membersByName;
     };
     std::array<Part, 64> parts;
 };
@@ -333,7 +403,9 @@ public:
         return fieldAccessOfLayouts(program, key, receivers, isStore);
     }
     JS_EXPORT_PRIVATE FieldAccess fieldAccessOfOneLayout(const Program&, PropertyKeyID, LayoutID receiver) const;
-    JS_EXPORT_PRIVATE FieldAccess fieldAccessOfLayouts(const Program&, PropertyKeyID, std::span<const LayoutID> receivers, bool isStore) const;
+    JS_EXPORT_PRIVATE FieldAccess fieldAccessOfLayouts(const Program&, PropertyKeyID, std::span<const LayoutID> receivers, bool isStore, std::optional<uint32_t> numberInUseAmongAllReceivers = std::nullopt) const;
+    enum class WhatIsWrittenAbove : bool { IsNotAsked, IsAsked };
+    JS_EXPORT_PRIVATE bool listMembersAskedAbout(const Program&, PropertyKeyID, LayoutSetID, WhatIsWrittenAbove, Vector<LayoutID, 16>& asked, uint32_t& numberInUse) const;
     JS_EXPORT_PRIVATE FieldAccess fieldAccess(const Program&, PropertyKeyID, LayoutSetID, std::span<const LayoutID> members, bool isStore) const;
     bool storeMayListKey(const FieldAccess& access) const
     {
@@ -350,7 +422,6 @@ public:
     bool someSlotUnderKeyHoldsMark(PropertyKeyID key) const { return m_parts.keysOfSlotsThatHoldMarks.get(key.index()); }
     const BitVector& keysWithColumn() const { return m_parts.keysWithColumn; }
     bool namesField(PropertyKeyID key) const { return m_parts.keysOfFields.get(key.index()); }
-    SlotRepresentation narrowFormOf(PropertyKeyID key) const { return key.index() < m_parts.narrowFormsOfKeys.size() ? m_parts.narrowFormsOfKeys[key.index()] : SlotRepresentation::JSValue; }
 
     unsigned numberOfLayouts() const { return m_parts.layouts.size(); }
     unsigned numberOfVariables() const { return m_parts.variables.size(); }

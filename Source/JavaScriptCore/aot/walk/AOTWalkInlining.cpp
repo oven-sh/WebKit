@@ -131,8 +131,15 @@ static bool onlyHandsFunctionToHelperThatCallsItAtInlining(const Walker& walker,
     return false;
 }
 
+static bool copyIsDrawnAwayAtInlining(const Walker& walker, FunctionID callee, const PlaceOfCall& place)
+{
+    return walker.drawChoice(DrawnFor::CopyInLine, place.caller.index(), callee.index()) == Walker::ChoiceOfCost::No;
+}
+
 static bool copyPaysAtInlining(const Walker& walker, FunctionID callee, size_t numberOfOperands, const PlaceOfCall& place, const std::span<const Reference>* handedOver)
 {
+    if (copyIsDrawnAwayAtInlining(walker, callee, place))
+        return false;
     if (!place.isInLoop && onlyHandsFunctionToHelperThatCallsItAtInlining(walker, callee))
         return false;
     const ThinSummary& summary = walker.facts().summaries().at(callee);
@@ -562,6 +569,8 @@ static bool stepsForOfAtInlining(const Walker& walker, FunctionID callee)
 static bool callAdmitsCopyAtInlining(const Walker& walker, const Draft& site, FunctionID callee, const PlaceOfCall& place, const OperandsInSightAtInlining* inSight)
 {
     auto copyPays = [&](size_t numberOfOperands) {
+        if (copyIsDrawnAwayAtInlining(walker, callee, place))
+            return false;
         if (inSight && isSecondLoopOverWhatCopyCallsAtInlining(walker, callee, place, inSight->handedOver))
             return false;
         return ((!inSight || !inSight->calleeStandsBehindBuiltin) && copyPaysAtInlining(walker, callee, numberOfOperands, place, inSight ? &inSight->handedOver : nullptr))
@@ -941,7 +950,8 @@ bool Walker::walkInline(const BodyValue& call, FunctionID callee, std::span<cons
     BlockID whereGuardFails;
     const CallingConventions& conventions = plan().conventions();
     bool isConstructionOfCopy = isConstruction || (call.opcode() == Opcode::CallDirect && site.isConstruction());
-    bool copyMayLeaveForCall = (!isConstructionOfCopy || conventions.hasParameterGuard(callee)) && !program().at(unit().function).isCoroutine() && !function.isCoroutine() && !entersBodyOfCoroutineAtInlining(site)
+    bool isDerivedConstructorWithoutList = function.kind == FunctionKind::DerivedConstructor && !function.hasAny({ FunctionFlags::HasRestParameter, FunctionFlags::HasHiddenRest });
+    bool copyMayLeaveForCall = (!isConstructionOfCopy || conventions.hasParameterGuard(callee) || isDerivedConstructorWithoutList) && !program().at(unit().function).isCoroutine() && !function.isCoroutine() && !entersBodyOfCoroutineAtInlining(site)
         && facts().linked().mayBeMentionedBy(unit(), callee) && unitTakesWhatCopyIsHanded(*this, callee, entryArguments.span());
     if (copyMayLeaveForCall) {
         argumentsAsTheyCame = entryArguments;
@@ -957,16 +967,24 @@ bool Walker::walkInline(const BodyValue& call, FunctionID callee, std::span<cons
         Reference passes = build(WTF::move(test));
         if (!passes)
             return true;
-        BlockID whereTestPasses = addBlock();
-        if (!whereGuardFails) {
-            whereGuardFails = addBlock(BlockFrequency::Rare);
+        if (m_inputs.options.takesNotes && passes.isValue())
+            m_code.noteTestOfGuardInFrontOfCopy({ passes.id(), callee, function.position });
+        bool isAskedInFront = branchInFrontOfTypedCopy(passes, true);
+        if (isAskedInFront)
             noteGuessOpened();
-            argumentsAsTheyCame = entryArguments;
-            closuresMadeForCall = collectClosuresMadeForCallAtInlining(*this, call);
+        else {
+            BlockID whereTestPasses = addBlock();
+            if (!whereGuardFails) {
+                whereGuardFails = addBlock(BlockFrequency::Rare);
+                noteGuessOpened();
+                argumentsAsTheyCame = entryArguments;
+                closuresMadeForCall = collectClosuresMadeForCallAtInlining(*this, call);
+            }
+            branch(passes, whereTestPasses, whereGuardFails);
+            continueIn(whereTestPasses);
         }
-        branch(passes, whereTestPasses, whereGuardFails);
-        continueIn(whereTestPasses);
 
+        InFrontOfTypedCopy inFront(*this, isAskedInFront);
         Draft narrowed(Opcode::Narrowed, originOfCall);
         narrowed.setValueOperand(entryArguments[index]);
         narrowed.setTestOperand(passes);
@@ -974,6 +992,8 @@ bool Walker::walkInline(const BodyValue& call, FunctionID callee, std::span<cons
         narrowed.setIsOnTakenEdge(true);
         entryArguments[index] = build(WTF::move(narrowed));
     }
+    if (whereGuardFails)
+        letGuessFailUnasked(whereGuardFails, originOfCall);
     const LinkTables& link = facts().linked();
     const LinkedFunction& linked = link.function(callee);
     for (uint32_t index = 0; index < entryArguments.size() && checksProofsOf(ProofSource::EntryParameter) && linked.everyCallerIsKnown && !isUnreachable(); ++index) {
@@ -1087,6 +1107,7 @@ bool Walker::walkInline(const BodyValue& call, FunctionID callee, std::span<cons
         m_block = { };
         m_state.clear();
         continueIn(whereGuardFails);
+        ClosedArm closedArm(*this, true);
         for (Reference& argument : argumentsAsTheyCame) {
             for (const ClosureMadeForCallAtInlining& closure : closuresMadeForCall) {
                 if (argument != closure.made || isUnreachable())

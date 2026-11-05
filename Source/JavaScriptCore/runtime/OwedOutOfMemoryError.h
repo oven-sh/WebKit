@@ -20,10 +20,9 @@ ALWAYS_INLINE bool throwOutOfMemoryErrorIfOwed(VM& vm, JSGlobalObject* globalObj
         return false;
     if (vm.heap.cage().errorWaitsForPoll())
         return false;
+    throwOutOfMemoryError(globalObject, scope, vm.heap.cage().describeExhaustedLimit());
     vm.traps().setNeedsOutOfMemoryError(false);
-    String limit = vm.heap.cage().describeExhaustedLimit();
     vm.heap.cage().didThrowOutOfMemoryError(vm);
-    throwOutOfMemoryError(globalObject, scope, limit);
     return true;
 }
 

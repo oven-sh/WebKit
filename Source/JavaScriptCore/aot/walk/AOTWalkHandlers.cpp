@@ -22,9 +22,11 @@ void Walker::noteStateAtThrowForHandler(std::span<const Reference> thrown)
 
     Frame& frame = m_frames[frameIndex];
     BodyTarget target = frame.index->block(frame.block).handler();
+    keepStateOfHandlerForUndo(frameIndex, target.block());
     StateOfHandler* known = frame.findStateOfHandler(target.block());
     if (!known) {
         frame.addStateOfHandler(target.block(), WalkState());
+        frame.statesOfHandlers.last().serialLogged = m_serialOfNewestMark;
         return;
     }
 

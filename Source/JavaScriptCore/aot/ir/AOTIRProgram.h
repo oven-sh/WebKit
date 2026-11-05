@@ -97,6 +97,7 @@ public:
     Vector<WebAssemblyModule> webAssemblyModules;
     Vector<ReplaceableBuiltin> replaceableBuiltins;
     Vector<OpenedName> openedNames;
+    Vector<BuiltinUsedAtStart> builtinsUsedAtStart;
     Wire::ExcludedCode excludedCode { };
     bool admitsReplacedBuiltins { false };
     bool rowsOfNativeCodeWriteNullish { false };
@@ -288,6 +289,8 @@ bool importMayAnswerWithMock(const Module&);
 bool requireMayAnswerWithMock(const Program&, const Module&);
 bool requireReadsModuleValue(const Program&, const Module&);
 bool requireAddsToRequireCache(const Program&, ModuleID referrer, ModuleID target);
+bool importStatementListsInRequireCache(const Program&, ModuleID target);
+bool loaderFillsVariablesOffValueOf(const Module&);
 
 } } } // namespace JSC::AOT::Typed
 

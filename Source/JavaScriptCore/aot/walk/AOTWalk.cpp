@@ -87,8 +87,10 @@ static TypeID askOnceForBuild(TypeArena& types, WhoAnswersInWalk who, unsigned q
 class PositionsKnowingNothingInWalk final : public PositionTypes {
     WTF_MAKE_NONCOPYABLE(PositionsKnowingNothingInWalk);
 public:
-    explicit PositionsKnowingNothingInWalk(TypeArena& types)
-        : m_types(types)
+    PositionsKnowingNothingInWalk(const Program& program, const Plan& plan, TypeArena& types)
+        : m_program(program)
+        , m_plan(plan)
+        , m_types(types)
     {
     }
 
@@ -103,7 +105,15 @@ public:
     TypeID askedOfEachObject(QuestionOfEachObject question, TypeLevel level, ObjectSetID objects, uint32_t word, NOESCAPE const ScopedLambda<TypeID()>& askEachObject) const final { return askOnceForBuild(m_types, WhoAnswersInWalk::Nobody, static_cast<unsigned>(question), level, objects, word, askEachObject); }
     TypeID askedOfEachLayout(QuestionOfEachLayout question, TypeLevel level, LayoutSetID layouts, PropertyKeyID key, NOESCAPE const ScopedLambda<TypeID()>& askEachLayout) const final { return askOnceForBuild(m_types, WhoAnswersInWalk::Nobody, 2 + static_cast<unsigned>(question), level, layouts, key.bits(), askEachLayout); }
 
+    bool listLayoutsAskedAbout(PropertyKeyID key, LayoutSetID layouts, bool asksWhatIsWrittenAbove, Vector<LayoutID, 16>& asked) const final
+    {
+        uint32_t numberInUse = 0;
+        return layouts && !holdsOneMember(layouts) && m_plan.slots().listMembersAskedAbout(m_program, key, layouts, static_cast<SlotPlan::WhatIsWrittenAbove>(asksWhatIsWrittenAbove), asked, numberInUse);
+    }
+
 private:
+    const Program& m_program;
+    const Plan& m_plan;
     TypeArena& m_types;
 };
 
@@ -123,6 +133,7 @@ public:
     TypeID result(TypeLevel level, FunctionID function, uint32_t resultIndex) const final { return m_positionsOfBuild.result(level, function, resultIndex); }
     TypeID entryParameter(TypeLevel, FunctionID, uint32_t) const final { return { }; }
     TypeID resultOfCallBeingTyped(TypeLevel, uint32_t) const final { return { }; }
+    bool listLayoutsAskedAbout(PropertyKeyID key, LayoutSetID layouts, bool asksWhatIsWrittenAbove, Vector<LayoutID, 16>& asked) const final { return m_positionsOfBuild.listLayoutsAskedAbout(key, layouts, asksWhatIsWrittenAbove, asked); }
 
 private:
     const PositionTypes& m_positionsOfBuild;
@@ -208,6 +219,11 @@ public:
         if (!laid || !(isSetter ? laid->setterIsProven : laid->getterIsProven))
             return { };
         return m_types.forFunction(isSetter ? laid->setter : laid->getter);
+    }
+    bool listLayoutsAskedAbout(PropertyKeyID key, LayoutSetID layouts, bool asksWhatIsWrittenAbove, Vector<LayoutID, 16>& asked) const final
+    {
+        uint32_t numberInUse = 0;
+        return layouts && !holdsOneMember(layouts) && m_plan.slots().listMembersAskedAbout(m_program, key, layouts, static_cast<SlotPlan::WhatIsWrittenAbove>(asksWhatIsWrittenAbove), asked, numberInUse);
     }
     std::optional<uint32_t> appendedField(LayoutID layout, PropertyKeyID key) const final
     {
@@ -535,7 +551,7 @@ Walker::Walker(const WalkInputs& inputs, TypeArena& types, Arrivals& arrivals)
     , m_positionsOfBuild(makeUniqueWithoutFastMallocCheck<PositionsOfWalk>(inputs.program, inputs.facts, inputs.facts.linked(), inputs.plan, types, m_mechanismsOfBuild.contains(Mechanism::TypedOperations), true, &m_resultOfCallBeingTyped, &m_resultOfReadBeingTyped, &m_contentsBeingTyped))
     , m_positionsOfSlowBody(makeUniqueWithoutFastMallocCheck<PositionsOfWalk>(inputs.program, inputs.facts, inputs.facts.linked(), inputs.plan, types, false))
     , m_positions(m_positionsOfBuild.get())
-    , m_positionsKnowingNothing(makeUniqueWithoutFastMallocCheck<PositionsKnowingNothingInWalk>(types))
+    , m_positionsKnowingNothing(makeUniqueWithoutFastMallocCheck<PositionsKnowingNothingInWalk>(inputs.program, inputs.plan, types))
     , m_positionsKnowingWhatFunctionsHandBack(makeUniqueWithoutFastMallocCheck<PositionsKnowingWhatFunctionsHandBackInWalk>(*m_positionsOfBuild))
     , m_heldPositions(makeUniqueWithoutFastMallocCheck<PositionsOfWalk>(inputs.program, inputs.facts, inputs.facts.held(), inputs.plan, types, m_mechanismsOfBuild.contains(Mechanism::TypedOperations)))
     , m_explainsClosedAccessesTo(inputs.options.explainsClosedAccessesTo)
@@ -575,6 +591,8 @@ void Walker::beginUnit(CodeUnit unit)
     m_positions = isSlowBody ? m_positionsOfSlowBody.get() : m_positionsOfBuild.get();
 
     m_code.reset(unit);
+    if ((m_inputs.options.shufflesBlockFrequencies || m_inputs.options.ignoresBranchHints) && walksInputBody(unit.role)) [[unlikely]]
+        m_code.takeFrequenciesOfBlocks(m_inputs.options.shufflesBlockFrequencies ? Code::FrequenciesOfBlocks::DrawnBySeed : Code::FrequenciesOfBlocks::AllNormal, m_inputs.options.seedOfShuffles);
     m_state.clear();
     m_numbersOfStates.clear();
     m_answersOfStates.clear();
@@ -585,6 +603,8 @@ void Walker::beginUnit(CodeUnit unit)
     m_opensGuesses = true;
     m_numberOfGuessesOpened = 0;
     m_numberOfLoopsBuiltTwice = 0;
+    m_numberOfWalksOfLoops = 0;
+    m_numberOfWalksOfLoopsUndone = 0;
     m_numberOfAssignmentsWrittenOut = 0;
     m_keysStoredInFrontOfLastRow = { };
     m_numberOfJoinsWalkedForEachWay = 0;
@@ -610,9 +630,11 @@ void Walker::beginUnit(CodeUnit unit)
     m_numberOfFreshCellsLeftAloneAtReturns = 0;
     m_callIsAccountedFor = false;
     m_hasFailed = false;
+    m_failureIsSaid = false;
+    m_numberOfTryWhoseWalkIsCutShort = 0;
     m_failure = { };
     m_origin = { .position = function.position, .inlineFrame = 0, .isTailCall = false, .isPartOfConstruction = false };
-    m_openEdges.shrink(0);
+    m_openEdges.clear();
     m_firstFreeOpenEdge = noOpenEdge;
     m_pendingBlocks.shrink(0);
     m_bindings.shrink(0);
@@ -625,19 +647,18 @@ void Walker::beginUnit(CodeUnit unit)
     m_narrowedTypedLast = { };
     m_copiesOfConstants.shrink(0);
     m_numberOfCopiesOfConstants = 0;
-    m_iterationsByIndex.shrink(0);
+    m_iterationsByIndex.clear();
     m_iterationsOfHeads.clear();
-    if (unitHasMadeScopes()) {
-        m_fieldsOfScopesOfHeads.clear();
-        m_layoutsOfScopesThatUnitHasMade.clear();
-        m_scopesThatClosuresHold.clear();
-        m_scopesWhoseFieldsHaveComeRound.clear();
-        m_scopesCopiedOnWaysThatAreNotRare.clear();
-    }
+    m_fieldsOfScopesOfHeads.clear();
+    m_blocksWithFieldsOfScopesInOrder.shrink(0);
+    m_unitHasMadeScopes = false;
+    m_scopesThatClosuresHold.clear();
+    m_scopesWhoseFieldsHaveComeRound.clear();
+    m_scopesCopiedOnWaysThatAreNotRare.clear();
     m_inputHeadsOfIterations.clear();
     m_numberOfIterationsInFrontOfTheirLoops = 0;
     m_isLeadingHandlerEdge = false;
-    m_openLoops.shrink(0);
+    m_openLoops.clear();
     m_placesOfLoopsBehindBlocks.shrink(0);
     m_numberOfLoopsThatMayBeLeft = UINT32_MAX;
     m_numberOfScopesWhereProofsHoldEverywhere = 0;
@@ -647,7 +668,7 @@ void Walker::beginUnit(CodeUnit unit)
     m_loopsOverGenerators = { };
     m_environmentCellsOfUnit = { };
     m_environmentCellsOfUnit.mayNameSome = isHandedEnvironmentWithByte(*this, unit.function);
-    m_textsInStringBuilders.shrink(0);
+    m_textsInStringBuilders.clear();
     m_generatorsTakenByConsumers.shrink(0);
     m_generatorsWalkedInConsumers.shrink(0);
     m_resumptionsToLeave.shrink(0);
@@ -686,10 +707,34 @@ bool Walker::standInFrontOfBodyOf(FunctionID function)
 
 bool Walker::walk(CodeUnit unit)
 {
-    if (!std::exchange(m_walksUnitAgain, false)) {
-        m_loopsOfWalksGivenUp.shrink(0);
-        m_loopsLetScopesLeave = false;
-    }
+    RELEASE_ASSERT(m_arrivalsHeldInTries.isEmpty());
+    if (!m_isWalkingLastAlone)
+        forgetAnswersOfLoops();
+    m_triesOfLoops.shrink(0);
+    m_inputBlocksInTries.shrink(0);
+    m_numberOfMarksOfTries = 0;
+    m_numberOfMarksTaken = 0;
+    setSerialOfNewestMark(0);
+    m_statesOfHandlersInTries.shrink(0);
+    m_placesOfOpenLoopsInTries.shrink(0);
+    m_inputHeadsOfIterationsAddedInTries.shrink(0);
+    m_typesChangedInTries.shrink(0);
+    m_entriesOfCopiesOfLoops.clear();
+    m_entriesOfCopiesOfLoopsInTries.shrink(0);
+    m_placesOfLoopsChangedInTries.shrink(0);
+    m_sharedConstantsAddedInTries.shrink(0);
+    m_copiesOfConstantsAddedInTries.shrink(0);
+    m_valuesReadBehindLoopFoundLast = { };
+    m_effectsOfLoopKeptLast = Effects::none();
+    m_walkOfLoopWasKept = false;
+    m_reportOfTypedBuildMadeLast = std::nullopt;
+    m_effectsSeededForNextRow = std::nullopt;
+    m_frontOfLoopLeftOpen = { };
+    m_operationsBeingWalkedInFrames.shrink(0);
+    m_sizesOfLogsWhereFramesWentOnTop.shrink(0);
+    m_expectationsInTries.shrink(0);
+    m_sourcesOfHeadParameters.clear();
+    m_headParametersWithSources.shrink(0);
     beginUnit(unit);
     bool bodyStandsBehindUnit = walksInputBody(unit.role) && (unit.role != CodeRole::Body || !program().at(unit.function).isCoroutine());
 
@@ -700,14 +745,13 @@ bool Walker::walk(CodeUnit unit)
         isBuilt = walkRampOfCoroutine(*this);
     else
         isBuilt = walkEntryUnit(*this, unit);
-    if (m_walksUnitAgain) {
-        m_reports.shrink(0);
-        return walk(unit);
-    }
     if (!isBuilt && !m_hasFailed)
         fail("the unit was not built, and nobody says why"_s);
-    if (m_hasFailed)
+    if (m_hasFailed) {
+        if (!m_failureIsSaid)
+            sayFailure();
         return false;
+    }
 
     if (!walksOwnBodyOfUnit())
         fail("the walk is over and the frame of a callee is left"_s);
@@ -722,6 +766,27 @@ bool Walker::walk(CodeUnit unit)
         else if (!m_code.at(edge.to).hasEnded())
             fail("the walk is over and an edge leads to a block that has no end"_s);
     }
+    if (m_inputs.options.walksLastWalksOfLoopsAlone && !m_hasFailed && !m_isWalkingLastAlone && !m_answersOfLoops.isEmpty()) {
+        SetForScope lastAlone(m_isWalkingLastAlone, true);
+        m_reports.shrink(0);
+        for (AnswerOfLoop& answer : m_answersOfLoops) {
+            if (!answer.asWalkedLast)
+                continue;
+            std::shared_ptr<const AnswerOfLoop> walked = answer.asWalkedLast;
+            answer.types = walked->types;
+            answer.rungs = walked->rungs;
+            answer.effects = walked->effects;
+            answer.knowsEffects = walked->knowsEffects;
+            answer.claimsNothing = walked->claimsNothing;
+            answer.typesOfValues = walked->typesOfValues;
+            answer.numberOfRecordsWhenTypesOfValuesWereNoted = 0;
+            answer.firstValue = walked->firstValue;
+            answer.steppedOnDoubles = walked->steppedOnDoubles;
+            answer.mentionsThatLeave = walked->mentionsThatLeave;
+            answer.storesIntoScopes = walked->storesIntoScopes;
+        }
+        return walk(unit);
+    }
     return !m_hasFailed;
 }
 
@@ -731,9 +796,17 @@ void Walker::fail(ASCIILiteral what, InternalErrorKind kind)
         m_hasFailed = true;
         m_failure = what;
         m_kindOfFailure = kind;
-        dataLogLn("AOT: the walk of f", unit().function.index(), " ", nameOf(unit().role), " failed, in f", m_frames.isEmpty() ? unit().function.index() : currentFunction().index(), ": ", what);
+        m_functionOfFailure = m_frames.isEmpty() ? unit().function : currentFunction();
+        if (m_triesOfLoops.isEmpty())
+            sayFailure();
     }
     endAsUnreachable(m_origin);
+}
+
+void Walker::sayFailure()
+{
+    dataLogLn("AOT: the walk of f", unit().function.index(), " ", nameOf(unit().role), " failed, in f", m_functionOfFailure.index(), ": ", m_failure);
+    m_failureIsSaid = true;
 }
 
 void Walker::endAsUnreachable(Origin origin)
@@ -873,8 +946,8 @@ bool Walker::makeTestOnTheWayAskInFull(Reference value, TypeID taken)
             continue;
         m_code.makeTestAskInFull(testID);
         for (ValueID between = value.id(); between != id; between = m_code.at(between).operand(0))
-            m_typesShown.remove(between.index());
-        m_typesShown.remove(id.index());
+            removeTypeShown(between);
+        removeTypeShown(id);
         return true;
     }
     return false;
@@ -911,8 +984,8 @@ bool Walker::makeObjectOfSlotReadShown(Reference value, TypeID taken)
     if (!held || !m_types.isSubset(held, taken) || !object || !makeTestOnTheWayAskInFull(Reference::value(object), m_types.forLayoutSet(read.receivers())))
         return false;
     for (ValueID between = value.id(); between != id; between = m_code.at(between).operand(0))
-        m_typesShown.remove(between.index());
-    m_typesShown.remove(id.index());
+        removeTypeShown(between);
+    removeTypeShown(id);
     return true;
 }
 
@@ -1058,9 +1131,14 @@ void Walker::holdVariablesStoredFirstWhereFunctionsAreUsed(std::span<const Linke
 void Walker::holdSlotsOfScopesThatLeaveAt(std::span<const SummaryScopeStoredFirst> scopes, uint32_t position, bool standsBehindOperationsOfBlock)
 {
     uint32_t block = m_frames.last().block.index();
-    for (const SummaryScopeStoredFirst& scope : scopes) {
-        if (scope.blockOfLeaving != block || isUnreachable() || (standsBehindOperationsOfBlock ? scope.positionOfLeaving < position : scope.positionOfLeaving != position))
-            continue;
+    auto place = std::ranges::lower_bound(scopes, std::pair { block, position }, { }, [&](const SummaryScopeStoredFirst& atPlace) {
+        const SummaryScopeStoredFirst& scope = scopes[atPlace.scopeAtThisPlaceInOrderOfLeaving];
+        return std::pair { scope.blockOfLeaving, scope.positionOfLeaving };
+    });
+    for (; place != scopes.end() && !isUnreachable(); ++place) {
+        const SummaryScopeStoredFirst& scope = scopes[place->scopeAtThisPlaceInOrderOfLeaving];
+        if (scope.blockOfLeaving != block || (!standsBehindOperationsOfBlock && scope.positionOfLeaving != position))
+            return;
         Reference environment = referenceOf(scope.allocation);
         if (!environment || !environment.isRecord())
             continue;
@@ -1541,6 +1619,17 @@ void Walker::askWhatCallByValueGives(ValueID call, const Draft& draft, TypeID pr
         buildCheckOfProof(callee, TypeTable::never, TypeTable::anything, ProofSource::ResultOfOtherCall, draft.origin());
 }
 
+bool Walker::isTypedByWhatLinkSaysOfContents(const Draft& draft) const
+{
+    return m_positions == m_positionsOfBuild.get()
+        && ((m_resultOfReadBeingTyped && readsTypedByWhatIsProvenOfInput.contains(draft.opcode)) || (m_contentsBeingTyped && recordsTypedByWhatIsProvenOfContents.contains(draft.opcode)));
+}
+
+ProofSource Walker::sourceOfProofOf(const Draft& draft) const
+{
+    return isTypedByWhatLinkSaysOfContents(draft) ? ProofSource::Contents : sourceOfProofInWalk(draft.opcode);
+}
+
 void Walker::checkProofOfRecord(ValueID record, const Draft& draft, TypeID proven)
 {
     if (draft.opcode == Opcode::Narrowed) {
@@ -1585,7 +1674,7 @@ void Walker::checkProofOfRecord(ValueID record, const Draft& draft, TypeID prove
     }
     if (draft.opcode == Opcode::GetModuleVariable || draft.opcode == Opcode::GetEnvironmentField || draft.opcode == Opcode::GetCapture)
         withoutProof = m_types.withPrimitives(withoutProof, Primitive::Absent);
-    ProofSource source = sourceOfProofInWalk(draft.opcode);
+    ProofSource source = sourceOfProofOf(draft);
     uint32_t numberChecked = numberOfProofsChecked(source);
     if (withoutProof != proven)
         checkProof(Reference::value(record), withoutProof, source, draft.origin());
@@ -1834,7 +1923,7 @@ TypeID Walker::typeShown(Reference value)
         }
         if (!isComingRound && m_code.at(id).opcode == Opcode::Parameter && m_code.at(m_code.at(id).block()).isLoopHead) {
             comingRound.add(id.index());
-            m_typesShown.set(id.index(), TypeTable::anything);
+            setTypeShown(id, TypeTable::anything);
         }
         size_t numberWaiting = waiting.size();
         forEachValueThatTypeShownLeansOn(id, [&](ValueID leanedOn) {
@@ -1843,7 +1932,7 @@ TypeID Walker::typeShown(Reference value)
         });
         if (waiting.size() != numberWaiting)
             continue;
-        m_typesShown.set(id.index(), computeTypeShown(id));
+        setTypeShown(id, computeTypeShown(id));
         if (!comingRound.isEmpty())
             comingRound.remove(id.index());
         waiting.removeLast();
@@ -1875,8 +1964,14 @@ void Walker::checkProof(Reference value, TypeID withoutProof, ProofSource source
         return;
     TypeID proven = typeAsBuilt(value);
     Representation representation = representationOf(value);
-    if (!proven || isNeverType(proven) || (representation != Representation::JSValue && representation != Representation::Cell))
+    bool liesRaw = numberRepresentations.contains(representation) || optionalRepresentations.contains(representation) || representation == Representation::Boolean;
+    if (!proven || isNeverType(proven) || (!liesRaw && representation != Representation::JSValue && representation != Representation::Cell))
         return;
+    if (liesRaw && m_types.at(withoutProof).isJavaScriptValue()) {
+        TypeID toldByForm = widestTypeOf(representation);
+        TypeID both = m_types.intersectionOf(withoutProof, toldByForm);
+        withoutProof = isNeverType(both) ? toldByForm : both;
+    }
     if (!m_types.at(proven).isJavaScriptValue() || !m_types.at(withoutProof).isJavaScriptValue() || m_types.isSubset(withoutProof, proven))
         return;
     checkProof(value, proven, withoutProof, source, origin);
@@ -1888,7 +1983,8 @@ void Walker::checkProofOfCopy(Reference value, TypeID proven, ProofSource source
         return;
     Representation representation = representationOf(value);
     TypeID own = typeAsBuilt(value);
-    if (!own || isNeverType(own) || (representation != Representation::JSValue && representation != Representation::Cell))
+    bool liesRaw = numberRepresentations.contains(representation) || optionalRepresentations.contains(representation) || representation == Representation::Boolean;
+    if (!own || isNeverType(own) || (!liesRaw && representation != Representation::JSValue && representation != Representation::Cell))
         return;
     if (!m_types.at(proven).isJavaScriptValue() || !m_types.at(own).isJavaScriptValue() || m_types.isSubset(own, proven))
         return;
@@ -1992,7 +2088,7 @@ std::optional<Origin> Walker::leaveCheckOfWhatContainerHasJustGivenToTestBehind(
     }
     Origin origin = check.origin();
     m_code.leaveCheckOfProofToTestBehind(asked);
-    m_typesAsked.remove(given.id().index());
+    removeTypeAsked(given.id());
     return origin;
 }
 
@@ -2143,11 +2239,11 @@ void Walker::buildCheckOfProof(Reference value, TypeID proven, TypeID withoutPro
         }
         bool isRawNumber = !value.isConstant() && (m_types.at(said).primitives & Primitive::Number);
         bool mayBeNumberThatIsProven = isRawNumber && (m_types.at(proven).primitives & Primitive::Number);
-        if (m_types.isSubset(said, proven) || (mayBeNumberThatIsProven && source != ProofSource::EntryParameter && m_types.isSubset(typeAsBuilt(value), proven))) {
+        if (m_types.isSubset(said, proven) || (mayBeNumberThatIsProven && source != ProofSource::EntryParameter && !checksProofsOf(source) && m_types.isSubset(typeAsBuilt(value), proven))) {
             ++m_numberOfProofsThatFormTells;
             return;
         }
-        isAskedInRawForm = mayBeNumberThatIsProven && numberRepresentations.contains(form);
+        isAskedInRawForm = mayBeNumberThatIsProven && (numberRepresentations.contains(form) || (checksProofsOf(source) && optionalRepresentations.contains(form)));
         if (!isNeverType(proven) && isNeverType(m_types.intersectionOf(said, proven))) {
             ++m_numberOfDoorsThatCanNeverPass;
             if (m_inputs.options.verifiesCode) {
@@ -2179,7 +2275,7 @@ void Walker::buildCheckOfProof(Reference value, TypeID proven, TypeID withoutPro
         return;
     TypeID shown = typeShown(asked);
     if (m_types.isSubset(shown, m_types.withPrimitives(withoutProof, Primitive::Absent)))
-        m_typesAsked.set(asked.id().index(), m_types.intersectionOf(shown, checked));
+        setTypeAsked(asked.id(), m_types.intersectionOf(shown, checked));
 }
 
 void Walker::beginModuleInBody()
@@ -2579,6 +2675,30 @@ void Walker::addSharedConstant(unsigned hashOfWords, uint32_t added)
         place = (place + 1) & mask;
     m_sharedConstants[place] = added;
     ++m_numberOfSharedConstants;
+    if (m_numberOfMarksOfTries) [[unlikely]]
+        m_sharedConstantsAddedInTries.append(added & ~hasFormOfItsTypeInWalk);
+}
+
+void Walker::forgetSharedConstantsAddedBehind(size_t numberLogged)
+{
+    while (m_sharedConstantsAddedInTries.size() > numberLogged) {
+        uint32_t added = m_sharedConstantsAddedInTries.takeLast();
+        size_t mask = m_sharedConstants.size() - 1;
+        size_t hole = hashOfWordsOfConstantInWalk(m_code.at(ValueID(added))) & mask;
+        while (m_sharedConstants[hole] == noSharedConstantInWalk || (m_sharedConstants[hole] & ~hasFormOfItsTypeInWalk) != added) {
+            RELEASE_ASSERT(m_sharedConstants[hole] != noSharedConstantInWalk);
+            hole = (hole + 1) & mask;
+        }
+        for (size_t next = (hole + 1) & mask; m_sharedConstants[next] != noSharedConstantInWalk; next = (next + 1) & mask) {
+            size_t home = hashOfWordsOfConstantInWalk(m_code.at(ValueID(m_sharedConstants[next] & ~hasFormOfItsTypeInWalk))) & mask;
+            if (hole <= next ? (hole < home && home <= next) : (hole < home || home <= next))
+                continue;
+            m_sharedConstants[hole] = m_sharedConstants[next];
+            hole = next;
+        }
+        m_sharedConstants[hole] = noSharedConstantInWalk;
+        --m_numberOfSharedConstants;
+    }
 }
 
 Reference Walker::convertWithoutCode(Reference reference, Representation wanted)
@@ -3218,28 +3338,32 @@ Reference Walker::build(Draft&& draft, const Effects* foundByCaller)
         effects.mayThrow |= ThrowEffect::onlyForLackOfMemory();
 
     if (!m_openLoops.isEmpty()) {
-        if (!m_isWalkingAccess && !m_openLoops.isEmpty() && !looksAtLoopsAroundHaveCounted(draft, effects) && draft.opcode != Opcode::EndLifeOfCell) {
-            if (mayBeginTurnAgainInClosedCopy()) {
-                beginTurnAgainInClosedCopy();
-                return { };
-            }
-            if (walkUnitAgainWithLoopsThatMayDoAnything())
-                return { };
-            dataLogLn("AOT: a ", nameOf(draft.opcode), " is built in a loop of f", currentFunction().index(), ", where a ", nameOf(m_opcodeBeingWalked), " is written");
-            fail("what is built in a loop does what the looks at the loop have not counted on"_s, InternalErrorKind::EffectsNotCounted);
+        if (!m_isWalkingAccess && !m_openLoops.isEmpty() && effects.mayRunOtherCode() && mayBeginTurnAgainInClosedCopy() && !looksAtLoopsAroundHaveCounted(draft, effects)) {
+            m_turnOfTypedBuildLeavesWithoutTest |= m_code.at(m_block).frequency == BlockFrequency::Normal;
+            beginTurnAgainInClosedCopy();
             return { };
         }
-        if (m_isWalkingAccess && !m_openLoops.isEmpty() && !looksAtLoopsAroundHaveSeen(effects)) {
-            if (mayBeginTurnAgainInClosedCopy()) {
-                beginTurnAgainInClosedCopy();
-                return { };
-            }
-            if (walkUnitAgainWithLoopsThatMayDoAnything())
-                return { };
-            dataLogLn("AOT: ", nameOf(draft.opcode), " stands for an access in a loop");
-            fail("an access in a loop does what the look at the loop has not counted on"_s, InternalErrorKind::EffectsNotCounted);
+        if (m_isWalkingAccess && !m_openLoops.isEmpty() && effects.mayRunOtherCode() && mayBeginTurnAgainInClosedCopy() && !looksAtLoopsAroundHaveSeen(effects)) {
+            beginTurnAgainInClosedCopy();
             return { };
         }
+    }
+    if (!m_triesOfLoops.isEmpty() && draft.opcode != Opcode::EndLifeOfCell) {
+        FunctionID callee = effects.mayRunOtherCode() && effectRuleOf(draft.opcode) == EffectRule::Call && draft.inputValueGiven && !facts().linked().calls.isEmpty() ? facts().linked().calleeAt(currentFunction(), draft.inputValueGiven) : FunctionID();
+        if (callee) {
+            Effects ofCallee = facts().linked().function(callee).effectsOnReturn();
+            ofCallee.merge(facts().linked().function(callee).effectsOnThrow());
+            hearEffectsInTries(Typed::effectsOf(typing(), draft, typesOfOperands(draft), { }, &ofCallee));
+        } else
+            hearEffectsInTries(effects);
+    }
+    if (BlockID row = m_numberOfLoopsThatMayBeLeft < m_openLoops.size() ? rowInFrontOfLoopFor(m_numberOfLoopsThatMayBeLeft, draft, effects) : BlockID(); row && row != m_block) {
+        BlockID otherRow = std::exchange(m_block, row);
+        Reference built = build(WTF::move(draft), foundByCaller);
+        m_block = m_hasFailed ? BlockID() : otherRow;
+        return built;
+    }
+    if (!m_openLoops.isEmpty()) {
         if (!m_openLoops.isEmpty() && proven && !isNeverType(proven)) {
             if (std::optional<uint32_t> loop = findLoopToBuildInFrontOf(draft, effects)) {
             BlockID inside = std::exchange(m_block, m_openLoops[*loop].blockInFront);
@@ -3267,6 +3391,8 @@ Reference Walker::build(Draft&& draft, const Effects* foundByCaller)
         convertOperands(draft);
     if (isUnreachable())
         return { };
+    if (effects.maySuspend)
+        holdWhatTextReadsBehind(draft);
     if (effects.mayThrow && !m_isLeadingHandlerEdge && !m_code.at(m_block).handler && (m_handlerMadeOverCopies || numberOfFramesUpToHandlerInForce())) {
         leadHandlerEdge();
         if (isUnreachable())
@@ -3299,8 +3425,11 @@ Reference Walker::build(Draft&& draft, const Effects* foundByCaller)
     if (effects.mayThrow && !m_isLeadingHandlerEdge && has(Mechanism::Handlers) && numberOfFramesUpToHandlerInForce())
         noteStateAtThrowForHandler();
     bool standsInFrontOfLoop = m_numberOfLoopsThatMayBeLeft < m_openLoops.size();
-    if (ValueID same = standsInFrontOfLoop ? findSameInFrontOfLoop(m_numberOfLoopsThatMayBeLeft, draft) : ValueID())
+    if (ValueID same = standsInFrontOfLoop ? findSameInFrontOfLoop(m_numberOfLoopsThatMayBeLeft, draft) : m_buildsTestsBesidePlainWalk ? findSameInFrontOfPlainWalk(draft) : ValueID()) {
+        if (steps & Step::notesOperationBuilt)
+            noteOperationBuiltOfItsOpcodes(*this, draft, effects, Reference::value(same));
         return Reference::value(same);
+    }
     ValueID id = m_code.append(m_block, draft, proven, hasNoEffects ? EffectTraits() : EffectTraits(effects));
     if (m_inputs.options.checksEffects && opcodesWhoseEffectsAreFoundByWalk.contains(draft.opcode)) [[unlikely]]
         m_code.noteEffectsBelieved(id, effects);
@@ -3316,11 +3445,10 @@ Reference Walker::build(Draft&& draft, const Effects* foundByCaller)
         noteBuiltInFrontOfLoop(m_numberOfLoopsThatMayBeLeft, id);
     if (steps & Step::isCallForStackTests)
         noteDirectCallForStackTests(draft);
-    bool checksRecord = m_positionsWithoutProofs && (checksProofs() || (draft.opcode != Opcode::Narrowed && (unit().role == CodeRole::Body || unit().role == CodeRole::CoroutineBody) && checksProofsOf(sourceOfProofInWalk(draft.opcode))));
+    bool checksRecord = m_positionsWithoutProofs && (checksProofs() || (draft.opcode != Opcode::Narrowed && (unit().role == CodeRole::Body || unit().role == CodeRole::CoroutineBody) && checksProofsOf(sourceOfProofOf(draft))));
     if (checksRecord && holdsValue)
         checkProofOfRecord(id, draft, proven);
-    else if ((steps & Step::isTypedByWhatIsProven) && holdsValue && proven && m_positions == m_positionsOfBuild.get()
-        && ((m_resultOfReadBeingTyped && readsTypedByWhatIsProvenOfInput.contains(draft.opcode)) || (m_contentsBeingTyped && recordsTypedByWhatIsProvenOfContents.contains(draft.opcode))))
+    else if ((steps & Step::isTypedByWhatIsProven) && holdsValue && proven && isTypedByWhatLinkSaysOfContents(draft))
         buildCheckOfProof(Reference::value(id), proven, TypeTable::anything, ProofSource::Contents, draft.origin(), true);
     else if ((steps & Step::isTypedByWhatIsProven) && proven && (holdsValue || isNeverType(proven)) && callsByValueInWalk.contains(draft.opcode))
         askWhatCallByValueGives(id, draft, proven);
@@ -3505,6 +3633,30 @@ void Walker::noteCopyOfConstant(ValueID constant, Representation form, ValueID c
     ++m_numberOfCopiesOfConstants;
     uint32_t constantAndForm = constant.index() << bitsOfFormOfCopyInWalk | static_cast<uint32_t>(form);
     m_copiesOfConstants[placeFor(constantAndForm)] = { constantAndForm, copy };
+    if (m_numberOfMarksOfTries) [[unlikely]]
+        m_copiesOfConstantsAddedInTries.append(constantAndForm);
+}
+
+void Walker::forgetCopiesOfConstantsAddedBehind(size_t numberLogged)
+{
+    while (m_copiesOfConstantsAddedInTries.size() > numberLogged) {
+        uint32_t added = m_copiesOfConstantsAddedInTries.takeLast();
+        size_t mask = m_copiesOfConstants.size() - 1;
+        size_t hole = placeOfCopyOfConstantInWalk(added) & mask;
+        while (m_copiesOfConstants[hole].constantAndForm != added) {
+            RELEASE_ASSERT(m_copiesOfConstants[hole].copy);
+            hole = (hole + 1) & mask;
+        }
+        for (size_t next = (hole + 1) & mask; m_copiesOfConstants[next].copy; next = (next + 1) & mask) {
+            size_t home = placeOfCopyOfConstantInWalk(m_copiesOfConstants[next].constantAndForm) & mask;
+            if (hole <= next ? (hole < home && home <= next) : (hole < home || home <= next))
+                continue;
+            m_copiesOfConstants[hole] = m_copiesOfConstants[next];
+            hole = next;
+        }
+        m_copiesOfConstants[hole] = CopyOfConstant { };
+        --m_numberOfCopiesOfConstants;
+    }
 }
 
 bool Walker::copy(const BodyValue& value)
@@ -3547,7 +3699,8 @@ Reference Walker::addIterationByIndex(IterationByIndex&& iteration)
     iteration.inlineFrame = m_frames.last().inlineFrame;
     m_numberOfIterationsInFrontOfTheirLoops += !!iteration.inputHead;
     if (iteration.inputHead)
-        m_inputHeadsOfIterations.add(inputHeadInFrame(iteration.inlineFrame, iteration.inputHead));
+        if (m_inputHeadsOfIterations.add(inputHeadInFrame(iteration.inlineFrame, iteration.inputHead)).isNewEntry && m_numberOfMarksOfTries)
+            m_inputHeadsOfIterationsAddedInTries.append(inputHeadInFrame(iteration.inlineFrame, iteration.inputHead));
     m_iterationsByIndex.append(WTF::move(iteration));
     return Reference::virtualObject(VirtualObjectID(m_iterationsByIndex.size() - 1));
 }
@@ -3559,11 +3712,45 @@ void Walker::leaveArrivals(FunctionID callee, std::span<const Reference> argumen
         Reference argument = arguments[entryParameter];
         bool goesByWhatIsShown = argument && argument.isRecord() && (entryParameter >= function.numberOfEntryParameters() || function.entryParameterKind(entryParameter) != EntryParameter::Capture);
         TypeID proven = goesByWhatIsShown ? typeShown(argument) : ownTypeOf(argument);
-        m_arrivals.leave(m_types, callee, entryParameter, proven ? proven : TypeID(TypeTable::anything));
+        if (!proven)
+            proven = TypeTable::anything;
+        if (!m_numberOfMarksOfTries)
+            m_arrivals.leave(m_types, callee, entryParameter, proven);
+        else
+            m_arrivalsHeldInTries.append({ callee, entryParameter, proven, ArrivalHeldInTry::Kind::Proven });
     }
-    m_arrivals.leaveUndefinedFrom(m_types, callee, static_cast<uint32_t>(arguments.size()));
+    if (!m_numberOfMarksOfTries)
+        m_arrivals.leaveUndefinedFrom(m_types, callee, static_cast<uint32_t>(arguments.size()));
+    else
+        m_arrivalsHeldInTries.append({ callee, static_cast<uint32_t>(arguments.size()), { }, ArrivalHeldInTry::Kind::UndefinedFrom });
     m_callIsAccountedFor = true;
     m_calleeAccountedFor = callee;
+}
+
+void Walker::leaveAnythingAt(FunctionID callee)
+{
+    if (!m_numberOfMarksOfTries)
+        m_arrivals.leaveAnything(callee);
+    else
+        m_arrivalsHeldInTries.append({ callee, 0, { }, ArrivalHeldInTry::Kind::Anything });
+}
+
+void Walker::handOverArrivalsHeldInTries()
+{
+    for (const ArrivalHeldInTry& held : m_arrivalsHeldInTries) {
+        switch (held.kind) {
+        case ArrivalHeldInTry::Kind::Proven:
+            m_arrivals.leave(m_types, held.callee, held.entryParameter, held.proven);
+            break;
+        case ArrivalHeldInTry::Kind::UndefinedFrom:
+            m_arrivals.leaveUndefinedFrom(m_types, held.callee, held.entryParameter);
+            break;
+        case ArrivalHeldInTry::Kind::Anything:
+            m_arrivals.leaveAnything(held.callee);
+            break;
+        }
+    }
+    m_arrivalsHeldInTries.shrink(0);
 }
 
 Walker::PendingBlock* Walker::findPendingBlock(BlockID block)
@@ -3777,6 +3964,7 @@ Reference Walker::tryCallInline(TerminatorDraft&& terminator, BlockID done, Bloc
         if (isUnreachable())
             return { };
     }
+    hearEffectsInTries(effects);
     m_state.invalidate(effects);
     if (effects.mayThrow && has(Mechanism::Handlers))
         noteStateAtThrowForHandler(terminator.operands());
@@ -4070,6 +4258,13 @@ void Walker::closeEdgeWithArguments(EdgeID edge, BlockID to, std::span<const Ref
 void Walker::closeBackEdge(EdgeID edge, BlockID head, std::span<const Reference> arguments)
 {
     noteEdgeCameRound(head);
+    for (size_t place = m_triesOfLoops.size(); place--;) {
+        TryOfLoop& tried = m_triesOfLoops[place];
+        if (tried.frameIndex < m_frames.size() && inputBlock(tried.frameIndex, tried.inputHead).head == head) {
+            ++tried.numberOfEdgesThatCameRound;
+            break;
+        }
+    }
     std::span<const ValueID> parameters = m_code.at(head).parameters();
     Vector<Reference, 8> withPositions;
     if (parameters.size() != arguments.size()) {
@@ -4095,27 +4290,48 @@ void Walker::closeBackEdge(EdgeID edge, BlockID head, std::span<const Reference>
         return;
     }
     Vector<Reference, 8> askedAgain;
+    bool misfitsInTry = false;
+    if (m_state.holdsFreshObjects()) {
+        for (Reference argument : arguments)
+            letLeave(argument);
+    }
+    if (!m_triesOfLoops.isEmpty())
+        holdFreshObjectsAgainstWhatComesRound(head);
     for (size_t index = 0; index < arguments.size(); ++index) {
         TypeID comingRound = ownTypeOf(arguments[index]);
         TypeID previewed = m_code.at(parameters[index]).type;
-        if (!comingRound || !m_types.isSubset(comingRound, previewed)) {
-            if (Reference proven = comingRound ? askCounterAgainWhereItComesRound(edge, head, index, arguments) : Reference(); proven && m_types.isSubset(ownTypeOf(proven), previewed)) {
+        if (comingRound && !m_types.isSubset(comingRound, previewed)) {
+            if (Reference proven = askCounterAgainWhereItComesRound(edge, head, index, arguments)) {
                 if (askedAgain.isEmpty())
                     askedAgain.append(arguments);
                 askedAgain[index] = proven;
                 arguments = askedAgain.span();
-                continue;
+                comingRound = ownTypeOf(proven);
             }
             if (m_hasFailed)
                 return;
-            if (comingRound && walkUnitAgainWithWiderHeadOfCode(head, index, previewed, comingRound))
-                return;
+        }
+        if (comingRound && !m_triesOfLoops.isEmpty())
+            noteAllThatComesRoundInTry(head, index, comingRound, arguments[index]);
+        if (!comingRound || !m_types.isSubset(comingRound, previewed)) {
+            if (comingRound && noteWhatCameRoundInTry(head, index, previewed, comingRound)) {
+                misfitsInTry = true;
+                continue;
+            }
             if (comingRound)
                 dataLogLn("AOT: parameter ", index, " of the head b", head.index(), ": ", TypeInText { m_types, comingRound }, " comes round in v", arguments[index].id().index(), ", a ", nameOf(m_code.at(arguments[index].id()).opcode), ", and ", TypeInText { m_types, previewed }, " was previewed");
             fail("what comes round to the head of a loop lies outside the previewed type of its parameter"_s);
             return;
         }
     }
+    if (misfitsInTry) {
+        if (!edge)
+            endAsUnreachable(m_origin);
+        m_block = { };
+        return;
+    }
+    if (holdBackEdgeOfTurnThatDidSomething(edge, head, arguments))
+        return;
     if (edge)
         closeEdgeWithArguments(edge, head, arguments);
     else
@@ -4195,7 +4411,7 @@ void Walker::closeEdgesInto(BlockID block, BlockID inputBlock, std::span<const u
     if (!isHandler && !joined.isEmpty() && has(Mechanism::EscapeAnalysis))
         findObjectsThatMeetAt(block, inputBlock, edges, joined.span(), joinedNames.span(), parameters, objectsMet);
     Vector<FieldOfScope, 4> fieldsThatMeet;
-    if (unitHasMadeScopes() && !isHandler && edges.size() > 1) {
+    if ((unitHasMadeScopes() || !m_fieldsOfScopesOfHeads.isEmpty()) && !isHandler && edges.size() > 1) {
         Vector<const WalkState*, 4> states;
         for (uint32_t place : edges)
             states.append(&m_openEdges[place].state);
@@ -4914,6 +5130,55 @@ void Walker::leadEdge(EdgeID edge, BlockID from, const BodyTerminator& terminato
             noteNarrowerName(to, operand, narrowed);
         }
     }
+    ValueID plainInstanceAsked = entersAlone && !targetIndex && index.opcodes().contains(Opcode::IsPlainInstanceOf) ? condition : ValueID();
+    while (plainInstanceAsked && !index.isParameter(plainInstanceAsked) && (index.opcodeOf(plainInstanceAsked) == Opcode::ToBoolean || index.opcodeOf(plainInstanceAsked) == Opcode::Convert))
+        plainInstanceAsked = index.value(plainInstanceAsked).operand(0);
+    if (plainInstanceAsked && !index.isParameter(plainInstanceAsked) && index.opcodeOf(plainInstanceAsked) == Opcode::IsPlainInstanceOf) {
+        BodyEdgeResult proven;
+        proven.test = plainInstanceAsked;
+        proven.subject = index.value(plainInstanceAsked).operand(0);
+        proven.operandIndex = OperandIndex::IsPlainInstanceOf::object;
+        proven.isOnTakenEdge = true;
+        Reference operand = referenceOf(proven.subject);
+        Reference test = referenceOf(proven.test);
+        bool isStamped = test && test.isValue() && m_code.at(test.id()).opcode == Opcode::IsPlainInstanceOf && m_code.at(test.id()).receivers();
+        Reference named = operand;
+        if (std::optional<Draft> draft = isStamped ? draftOfNarrowedOnEdge(from, targetIndex, proven) : std::nullopt) {
+            named = build(WTF::move(*draft));
+            if (isUnreachable()) {
+                m_block = { };
+                return;
+            }
+            for (Reference& argument : arguments) {
+                if (argument == operand)
+                    argument = named;
+            }
+            noteNarrowerName(to, operand, named);
+        }
+        if (isStamped && named && named.isValue() && findKnown(*this, KnownNote::AnswerOfQuestionStillStands, test))
+            m_state.noteFactsOfCell(named, { FactOfCell::NoFieldOutsideSlot, FactOfCell::HasLayoutPrototype, FactOfCell::BearsNoMark });
+    }
+    ValueID absenceAsked = !targetIndex && index.opcodes().contains(Opcode::FindsNoMember) ? condition : ValueID();
+    while (absenceAsked && !index.isParameter(absenceAsked) && (index.opcodeOf(absenceAsked) == Opcode::ToBoolean || index.opcodeOf(absenceAsked) == Opcode::Convert))
+        absenceAsked = index.value(absenceAsked).operand(0);
+    if (absenceAsked && !index.isParameter(absenceAsked) && index.opcodeOf(absenceAsked) == Opcode::FindsNoMember) {
+        Reference test = referenceOf(absenceAsked);
+        const Terminator& end = m_code.at(from).terminator;
+        if (test && test.isValue() && m_code.at(test.id()).opcode == Opcode::FindsNoMember && m_code.at(test.id()).receivers() && end.isConditionalBranch() && end.conditionOperand() == test.id() && findKnown(*this, KnownNote::AnswerOfQuestionStillStands, test)) {
+            const Operation& question = m_code.at(test.id());
+            OptionSet<FactOfCell> shown;
+            if (question.asksForNoExtraProperties())
+                shown.add(FactOfCell::NoExtraProperties);
+            if (question.asksForNoFieldOutsideSlot())
+                shown.add(FactOfCell::NoFieldOutsideSlot);
+            if (question.asksForLayoutPrototype())
+                shown.add(FactOfCell::HasLayoutPrototype);
+            if (!shown.isEmpty())
+                m_state.noteFactsOfCell(Reference::value(question.objectOperand()), shown);
+            for (MemberConditionRecord condition : question.conditions())
+                m_state.noteGuardOfReadsHolds(condition.layout, condition.key, test);
+        }
+    }
     if (entersAlone && terminator.isConditionalBranch())
         nameBooleansAskedByBranch(from, terminator, targetIndex, to);
     TextsTakenOutOnEdge textsTakenOut;
@@ -5097,6 +5362,27 @@ ALWAYS_INLINE void Walker::enterJoin(BlockID inputBlock, InputBlock& record, con
     releaseOpenEdge(only);
 }
 
+void Walker::noteTestSeenInTries(Reference value, ValueID operation, TypeID tested)
+{
+    if (m_triesOfLoops.isEmpty() || !value || !value.isValue())
+        return;
+    if (TryOfLoop& innermost = m_triesOfLoops.last(); operation && tested && innermost.frameIndex == m_frames.size() - 1) {
+        currentBodyIndex().value(operation).forEachOperand([&](ValueID operand, auto...) {
+            if (operand && referenceOf(operand) == value && !innermost.testsSeen.containsIf([&](const GuessCountedOnByLooks& seen) { return seen.operation == operation && seen.operand == operand; }))
+                innermost.testsSeen.append(GuessCountedOnByLooks { operation, operand, tested });
+        });
+    }
+}
+
+void Walker::noteMemberAskedByItsByteInTries(const BodyValue& read, TypeID typeOfHolder)
+{
+    if (m_triesOfLoops.isEmpty() || m_triesOfLoops.last().frameIndex != m_frames.size() - 1)
+        return;
+    Vector<GuessCountedOnByLooks, 4>& seen = m_triesOfLoops.last().testsSeen;
+    if (seen.isEmpty() || seen.last().operation != read.id())
+        seen.append(GuessCountedOnByLooks { read.id(), read.objectOperand(), typeOfHolder });
+}
+
 void Walker::enterLoopHead(BlockID inputHead)
 {
     size_t frameIndex = m_frames.size() - 1;
@@ -5123,6 +5409,8 @@ void Walker::enterLoopHead(BlockID inputHead)
         m_iterationsByIndex[m_frames[frameIndex].placeOfForInWhosePositionEdgesBring].position = m_frames[frameIndex].valuesBuiltTwice->nameOn(m_frames[frameIndex].valuesBuiltTwice->namesOfWay, step);
     if (writeOutTurnsOfLoop(inputHead, entering.span()) || writeOutTurnsOfForIn(inputHead, entering.span()) || writeOutTurnsOfForOf(inputHead, entering.span()))
         return;
+    if (tryLoop(inputHead, entering.span()))
+        return;
     for (Reference argument : entering)
         letLeave(argument);
     if (hasTextsInStringBuilders())
@@ -5131,9 +5419,8 @@ void Walker::enterLoopHead(BlockID inputHead)
     bool isInsideLoopLookedAt = frame.loopLookedAt && frame.loopLookedAt != currentBodyIndex().loopOf(inputHead) && currentBodyIndex().isInLoop(inputHead, frame.loopLookedAt);
     std::span<const TypeID> settledAround;
     if (isInsideLoopLookedAt)
-        settledAround = frame.typesOfLooks.span().subspan(input.firstParameter().index() - frame.firstValueLookedAt, numberOfParameters);
-    std::unique_ptr<LoopPreview> madeInFront = !m_numberOfCopiesBuiltForSize && looksCountOnTurnsThatBeginAgain(inputHead) ? std::exchange(m_previewOfTypedCopyAboutToBeEntered, nullptr) : nullptr;
-    LoopPreview preview = madeInFront ? WTF::move(*madeInFront) : previewLoop(*this, inputHead, entryTypes.span(), settledAround);
+        settledAround = frame.typesOfLooks.spanAt(input.firstParameter().index() - frame.firstValueLookedAt, numberOfParameters);
+    LoopPreview preview = isBeingTried(frameIndex, inputHead) ? previewOutOfTries(inputHead, entryTypes.span()) : previewThatClaimsNothingOfLoops(*this, inputHead, entryTypes.span(), settledAround);
     if (m_hasFailed)
         return;
     if (preview.typesOfParameters.size() != numberOfParameters) {
@@ -5143,9 +5430,8 @@ void Walker::enterLoopHead(BlockID inputHead)
     if (!m_generatorsTakenByConsumers.isEmpty() && walkGeneratorInPlaceOfLoop(inputHead, preview.typesOfParameters.span(), entering.span()))
         return;
     bool turnsBorrowScopes = !preview.scopesThatTurnsOnlyBorrow.isEmpty();
-    Vector<FieldReference, 2> fieldsGuessedAtReads;
-    if (turnsBorrowScopes)
-        fieldsGuessedAtReads = fieldsAtWhoseReadsLooksCountOnGuesses(preview.guessesCountedOn.span());
+    if (!preview.hasLetMentionsLeave && m_headOfRowHandedOn == inputHead && m_frameOfRowHandedOn == frameIndex)
+        m_storesIntoScopesHandedOn.areKnown = false;
     if (has(Mechanism::LoopInvariants) && mayBuildLoopSeveralTimes(inputHead) && (buildLoopForEachMember(inputHead, preview, entering.span()) || buildLoopTwice(inputHead, preview, entering.span())))
         return;
     if (!m_waysIntoClosedCopies.isEmpty() && looksCountOnTurnsThatBeginAgain(inputHead))
@@ -5168,9 +5454,9 @@ void Walker::enterLoopHead(BlockID inputHead)
             for (uint32_t parameter = 0; parameter < innerHead.numberOfParameters(); ++parameter) {
                 uint32_t value = innerHead.parameter(parameter).index();
                 TypeID found = preview.typesOfValues[value - preview.firstValue];
-                TypeID& around = frame.typesOfLooks[value - frame.firstValueLookedAt];
-                if (found && (!around || m_types.isSubset(found, around)))
-                    around = found;
+                TypeID* around = frame.typesOfLooks.slotAt(value - frame.firstValueLookedAt);
+                if (around && found && (!*around || m_types.isSubset(found, *around)))
+                    *around = found;
             }
         }
     } else if (!preview.typesOfValues.isEmpty()) {
@@ -5178,13 +5464,19 @@ void Walker::enterLoopHead(BlockID inputHead)
         frame.firstValueLookedAt = preview.firstValue;
         frame.typesOfLooks = WTF::move(preview.typesOfValues);
     }
-    noteTypesOfLooksLieInFrame(*this);
 
     Vector<FieldOfScope, 4> fieldsThatComeRound;
     if (preview.effects.maySuspend)
         letObjectsLeaveAtSuspension(*this);
     else if (turnsBorrowScopes)
-        findFieldsOfScopesInFrontOfLoop(fieldsGuessedAtReads.span(), preview, fieldsThatComeRound);
+        findFieldsOfScopesInFrontOfLoop(preview, fieldsThatComeRound);
+    findFieldsOfScopesFromOutsideThatQuietTurnsStore(inputHead, preview.effects, fieldsThatComeRound, true);
+    if (isBeingTried(frameIndex, inputHead)) {
+        m_triesOfLoops.last().assumed = preview.effects;
+        m_triesOfLoops.last().knowsWhatIsAssumed = true;
+        if (m_triesOfLoops.last().wantsStateInFront)
+            m_triesOfLoops.last().stateInFront = std::make_shared<WalkState>(m_state);
+    }
     if (has(Mechanism::EscapeAnalysis) && !preview.hasLetMentionsLeave)
         m_state.clear();
     else {
@@ -5192,8 +5484,8 @@ void Walker::enterLoopHead(BlockID inputHead)
             endFieldsOfScopesThatTurnsStore(preview);
         m_state.invalidate(preview.effects);
     }
-    if (turnsBorrowScopes)
-        keepFieldsOfScopesThatLoopWrites(fieldsThatComeRound);
+    if (!fieldsThatComeRound.isEmpty())
+        keepFieldsOfScopesThatLoopWrites(inputHead, fieldsThatComeRound);
 
     BlockID head = m_code.addBlock(BlockRole::Ordinary, frequency);
     m_code.setLoopMarks(head, !m_numberOfCopiesBuiltForSize, true);
@@ -5201,8 +5493,6 @@ void Walker::enterLoopHead(BlockID inputHead)
     for (uint32_t index = 0; index < numberOfParameters; ++index) {
         TypeID type = preview.typesOfParameters[index];
         if (!type || !entryTypes[index] || !m_types.isSubset(entryTypes[index], type)) {
-            if (type && entryTypes[index] && walkUnitAgainWithWiderHead(inputHead, index, type, entryTypes[index]))
-                return;
             fail("what enters a loop lies outside the previewed type of the head's parameter"_s);
             return;
         }
@@ -5267,9 +5557,12 @@ void Walker::enterLoopHead(BlockID inputHead)
         m_block = head;
     if (!m_hasFailed && !fieldsThatComeRound.isEmpty()) {
         noteFieldsOfScopes(fieldsThatComeRound.span());
-        m_fieldsOfScopesOfHeads.add(head.index(), Vector<FieldOfScope> { }).iterator->value.append(fieldsThatComeRound.span());
+        fieldsOfScopesLaidAt(head).append(fieldsThatComeRound.span());
     }
+    if (!m_hasFailed && turnsBorrowScopes)
+        m_triesOfLoops.last().stateAtHeadThatKeepsScopes = std::make_shared<WalkState>(m_state);
     noteHeadOfTurn(inputHead);
+    noteHeadOfQuietTurns(head);
 }
 
 size_t Walker::Frame::placeOfStateOfHandler(BlockID handler) const
@@ -5317,16 +5610,30 @@ bool Walker::Frame::takeStateOfHandler(BlockID handler, WalkState& state)
     return true;
 }
 
+void Walker::keepStateOfHandlerForUndo(size_t frameIndex, BlockID handler)
+{
+    if (!m_serialOfNewestMark)
+        return;
+    StateOfHandler* known = m_frames[frameIndex].findStateOfHandler(handler);
+    if (known && known->serialLogged >= m_serialOfNewestMark)
+        return;
+    m_statesOfHandlersInTries.append(StateOfHandlerInTry { static_cast<uint32_t>(frameIndex), handler, known ? std::optional<StateOfHandler>(*known) : std::nullopt });
+    if (known)
+        known->serialLogged = m_serialOfNewestMark;
+}
+
 void Walker::noteStateAtHeadForHandler()
 {
     Frame& frame = m_frames.last();
     BlockID handler = frame.index->block(frame.block).handler().block();
+    keepStateOfHandlerForUndo(m_frames.size() - 1, handler);
     if (StateOfHandler* known = frame.findStateOfHandler(handler)) {
         if (!known->state.isEmpty())
             known->state.meetWith(m_state, &known->lastMet);
         return;
     }
     frame.addStateOfHandler(handler, WalkState(m_state));
+    frame.statesOfHandlers.last().serialLogged = m_serialOfNewestMark;
 }
 
 void Walker::enterHandlerBlock(BlockID inputBlock)
@@ -5350,6 +5657,7 @@ void Walker::enterHandlerBlock(BlockID inputBlock)
     m_state.clear();
     if (!has(Mechanism::Handlers))
         return;
+    keepStateOfHandlerForUndo(m_frames.size() - 1, inputBlock);
     m_frames.last().takeStateOfHandler(inputBlock, m_state);
     enterHandler(*this, inputBlock);
 }
@@ -5394,7 +5702,7 @@ void Walker::walkBlock(BlockID inputBlock)
             enterHandlerBlock(inputBlock);
         else if (!isHeadOfTurnsWrittenOut && index.isLoopHead(inputBlock))
             enterLoopHead(inputBlock);
-        else if (!isHeadOfTurnsWrittenOut && severalEdgesEnter && (walkBlockApartFromClosedWays(inputBlock) || walkBlockForEachWayThatBringsObjectInSight(inputBlock)))
+        else if (!isHeadOfTurnsWrittenOut && severalEdgesEnter && (walkBlockApartFromClosedWays(inputBlock) || walkBlockApartFromWaysThatDidSomething(inputBlock) || walkBlockForEachWayThatBringsObjectInSight(inputBlock)))
             return;
         else {
             enterJoin(inputBlock, record, block);
@@ -5437,6 +5745,7 @@ void Walker::walkBlock(BlockID inputBlock)
 
 void Walker::walkStretch(BlockID inputBlock, uint32_t begin, uint32_t end)
 {
+    SetForScope deeper(m_nestingDepth, m_nestingDepth + 1);
     size_t frameIndex = m_frames.size() - 1;
     standIn(inputBlock);
     const BodyIndex& index = *m_frames[frameIndex].index;
@@ -5529,7 +5838,7 @@ template<Opcode known> bool Walker::walkThroughChainOf(const BodyValue& walked)
         GuessOpened opened = openGuessAt(*this, value);
         if (opened == GuessOpened::WithArms)
             return true;
-        isBuilt = opened == GuessOpened::AsOneOperation || (value.opcode() == Opcode::FindsDeclaredMember && askGuardsAboutDeclaredMember(*this, value));
+        isBuilt = opened == GuessOpened::AsOneOperation || (value.opcode() == Opcode::FindsDeclaredMember && askGuardsAboutDeclaredMember(*this, value)) || (value.opcode() == Opcode::IsPlainInstanceOf && askCellWhetherItIsPlainInstance(*this, value)) || (value.opcode() == Opcode::FindsNoMember && askCellAndGuardsWhetherNoMemberIsFound(*this, value));
     }
     if (!isBuilt && value.opcode() == Opcode::PropGet && has(Mechanism::TypedOperations))
         isBuilt = buildReadWhereSomeReceiversLackField(*this, value);
@@ -5551,8 +5860,11 @@ bool Walker::walkThroughChain(const BodyValue& written)
         return std::array<Chain, sizeof...(opcodes)> { &Walker::walkThroughChainOf<static_cast<Opcode>(opcodes)>... };
     }(std::make_index_sequence<numberOfEnumerators<Opcode>>());
     if (!accessesUnderComputedKeys.contains(written.opcode())) [[likely]] {
-        if (!m_waysIntoClosedCopies.isEmpty())
+        if (!m_waysIntoClosedCopies.isEmpty()) {
             proveWhatLooksCountOnAt(written);
+            if (askLesserBoundAt(written))
+                return false;
+        }
         return (this->*chains[static_cast<size_t>(written.opcode())])(written);
     }
     BodyValue value = written;
@@ -5663,6 +5975,11 @@ void Walker::noteClosuresThatAllocationAloneTakes(const BodyValue& allocation)
 
 void Walker::walkOperation(const BodyValue& value)
 {
+    if (!m_triesOfLoops.isEmpty()) {
+        if (m_operationsBeingWalkedInFrames.size() < m_frames.size())
+            m_operationsBeingWalkedInFrames.grow(m_frames.size());
+        m_operationsBeingWalkedInFrames[m_frames.size() - 1] = value.id();
+    }
     ++m_numberOfValuesWalked;
     m_opcodeBeingWalked = value.opcode();
     if (value.opcode() == Opcode::LoopHint && m_frames.last().headOfTurnsWrittenOut == m_frames.last().block)
@@ -5728,20 +6045,12 @@ void Walker::walkOperation(const BodyValue& value)
             return;
     }
     uint32_t numberOfRecordsInFront = m_code.numberOfValues();
+    uint32_t firstRecordOfOperation = numberOfRecordsInFront;
+    uint32_t numberOfTurnsThatBeganAgainInFront = m_numberOfTurnsThatBeginAgain;
     if (strings && strings->bindsWhatNoLookHasSeen())
         numberOfRecordsInFront = UINT32_MAX;
     if (!(strings && strings->hasBoundOperation()) && walkThroughChain(value))
         return;
-
-    if (m_code.numberOfValues() == numberOfRecordsInFront && has(Mechanism::Folding) && !opcodesThatStateTypes.contains(value.opcode()) && !isUnreachable() && isInLoop()) {
-        TypeID handedOn = ownTypeOf(referenceOf(value.id()));
-        TypeID widest = handedOn ? widestTypeOfOperation(*this, value) : TypeID();
-        if (widest && !m_types.isSubset(handedOn, widest)) {
-            SetForScope withoutAnswersOfState(m_mechanisms, withoutMechanismsMissingDependencies(m_mechanisms - Mechanism::Folding));
-            if (walkThroughChain(value))
-                return;
-        }
-    }
 
     bool isAnsweredByBuilder = strings && strings->bindsWhatNoLookHasSeen();
     if (checksProofs() && !isAnsweredByBuilder && has(Mechanism::Folding) && readsThatMemoryAnswers.contains(value.opcode()) && !isUnreachable() && !hasFailed()) {
@@ -5759,8 +6068,16 @@ void Walker::walkOperation(const BodyValue& value)
     if (!opcodesThatMayRunOtherCode.contains(value.opcode()) || linked.calls.isEmpty())
         return;
     FunctionID callee = linked.calleeAt(function, value.id());
-    if (callee && !(m_callIsAccountedFor && m_calleeAccountedFor == callee))
-        m_arrivals.leaveAnything(callee);
+    if (!callee || (m_callIsAccountedFor && m_calleeAccountedFor == callee))
+        return;
+    if (isUnreachable() && m_numberOfTurnsThatBeginAgain != numberOfTurnsThatBeganAgainInFront) {
+        bool hasBuiltCall = false;
+        for (uint32_t index = firstRecordOfOperation; index < m_code.numberOfValues() && !hasBuiltCall; ++index)
+            hasBuiltCall = declaredBoundInTable(m_code.at(ValueID(index)).opcode).mayRunOtherCode();
+        if (!hasBuiltCall)
+            return;
+    }
+    leaveAnythingAt(callee);
 }
 
 ALWAYS_INLINE void Walker::walkJump(const BodyTerminator& terminator)
@@ -5791,6 +6108,38 @@ static ALWAYS_INLINE bool mayBeTrueOrFalseInWalk(const Walker& walker, Reference
         return false;
     TypeID type = walker.typeOf(condition);
     return type && isBooleanType(type) && primitivesInID(type) == Primitive::Boolean;
+}
+
+bool Walker::handTurnOverWhereLesserBoundIsReached(const BodyTerminator& terminator)
+{
+    if (m_waysIntoClosedCopies.isEmpty())
+        return false;
+    const WayIntoClosedCopy& way = m_waysIntoClosedCopies.last();
+    if (!way.headAsksLesserBound || way.frameIndex != m_frames.size() - 1 || terminator.block() != way.inputHead)
+        return false;
+    Reference condition = referenceOf(terminator.as<TerminatorKind::Branch>().conditionOperand());
+    if (!condition || !condition.isValue() || !isAsBranchTakesItInWalk(*this, condition) || !mayBeginTurnAgainInClosedCopy()) {
+        fail("the head of a typed build asks the lesser bound and cannot hand the turn over"_s);
+        return true;
+    }
+    BlockID from = m_block;
+    m_code.endWithBranch(from, condition.id(), m_origin);
+    m_block = { };
+    uint32_t firstEdge = m_code.at(from).terminator.firstEdge.index();
+    WalkState atEnd(m_state);
+    noteKnown(*this, KnownNote::CounterLiesBelowLesserBound, condition, { }, 0, LocationMasks(), 1);
+    leadEdge(EdgeID(firstEdge), from, terminator, 0, *terminator.targets().begin());
+    if (m_hasFailed)
+        return true;
+    m_state = WTF::move(atEnd);
+    BlockID handsOver = m_code.addBlock(BlockRole::Ordinary, BlockFrequency::Normal);
+    m_code.setLoopMarks(handsOver, isInLoop(), false);
+    m_code.closeEdge(EdgeID(firstEdge + 1), handsOver, { });
+    m_block = handsOver;
+    beginTurnAgainInClosedCopy();
+    m_block = { };
+    m_state.clear();
+    return true;
 }
 
 void Walker::walkTerminator(const BodyTerminator& terminator)
@@ -5850,7 +6199,7 @@ void Walker::walkTerminator(const BodyTerminator& terminator)
     switch (terminator.kind()) {
     case TerminatorKind::Return:
     case TerminatorKind::ReturnCall:
-        if (!m_environmentCellsOfUnit.names.isEmpty() && terminator.kind() == TerminatorKind::Return)
+        if (!m_frames.last().environmentsMade.isEmpty() && terminator.kind() == TerminatorKind::Return)
             handBackEnvironmentsAtReturn(*this, terminator.block());
         if (!frameIndex || m_frames[frameIndex].returnsInPlaceOfUnit)
             walkReturn(terminator);
@@ -5981,6 +6330,7 @@ void Walker::walkTerminator(const BodyTerminator& terminator)
             if (isUnreachable())
                 return;
         }
+        hearEffectsInTries(effects);
         m_state.invalidate(effects);
         if (effects.mayThrow && has(Mechanism::Handlers))
             noteStateAtThrowForHandler(draft->operands());
@@ -6198,7 +6548,7 @@ Reference Walker::holdResultToItsType(Reference value, Origin origin)
 
 void Walker::endLivesOfCellsThatHaveNotLeft(std::span<const Reference> handedBack, Origin origin, uint32_t numberOfValuesBuiltBefore)
 {
-    if (!checksProofsOf(ProofSource::Lifetime) || !m_state.holdsFreshObjects() || m_numberOfFramesLaidForLooks)
+    if (!checksProofsOf(ProofSource::Lifetime) || !m_state.holdsFreshObjects())
         return;
 
     BitVector cellsHandedBack(m_code.numberOfValues());
@@ -6233,7 +6583,7 @@ void Walker::endLivesOfCellsThatHaveNotLeft(std::span<const Reference> handedBac
 
 bool Walker::endsLivesOnWays() const
 {
-    return checksProofsOf(ProofSource::Lifetime) && m_state.holdsFreshObjects() && !m_numberOfFramesLaidForLooks && !program().at(currentFunction()).isCoroutine();
+    return checksProofsOf(ProofSource::Lifetime) && m_state.holdsFreshObjects() && !program().at(currentFunction()).isCoroutine();
 }
 
 bool Walker::standsForFrameOfGenerator(Reference state) const

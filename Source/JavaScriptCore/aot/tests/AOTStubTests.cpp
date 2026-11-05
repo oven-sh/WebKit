@@ -178,7 +178,7 @@ static void testVariantLookup()
 {
     for (StubKey key : allStubKeys()) {
         const StubDescriptor& descriptor = descriptorOf(key.family());
-        for (CallerFrame callerFrame : { CallerFrame::HasFrame, CallerFrame::Frameless, CallerFrame::StubFrame, CallerFrame::KeepsNoRegisters, CallerFrame::KeepsNoFPRs })
+        for (CallerFrame callerFrame : { CallerFrame::HasFrame, CallerFrame::Frameless, CallerFrame::StubFrame, CallerFrame::KeepsNoFPRs })
             AOT_TEST_CHECK(tryWithCallerFrame(key, callerFrame) == keyIfExists(key.withCallerFrame(callerFrame)));
 
         AOT_TEST_CHECK(!tryWithOperandRegister(key, instanceGPR));
@@ -538,7 +538,6 @@ static void testStubCallsWithNumbersInKeys()
 {
     StubCatalog catalog(StubOptions { });
     constexpr StubKey key { StubFamily::BuiltinCell };
-    constexpr StubKey keyForCallerKeepingNoRegisters = key.withCallerFrame(CallerFrame::KeepsNoRegisters);
     constexpr uint32_t firstMention = 3;
     constexpr uint32_t secondMention = 8;
     AssembledCalls assembled = assembleCalls(catalog, [&](CCallHelpers& jit, StubCalls& calls, const auto& markCall) {
@@ -548,19 +547,17 @@ static void testStubCallsWithNumbersInKeys()
         calls.call(jit, key, NumberedImmediate { secondMention }, OptionalIndex { 2 });
         markCall();
         calls.call(jit, key, NumberedImmediate { firstMention }, OptionalIndex { 3 });
-        markCall();
-        calls.call(jit, keyForCallerKeepingNoRegisters, NumberedImmediate { firstMention }, OptionalIndex { 4 });
     });
     const CodeBody& body = assembled.body;
 
-    AOT_TEST_CHECK(body.stubKeys == (Vector<StubKey> { key.withImmediate(0), key.withImmediate(0), keyForCallerKeepingNoRegisters.withImmediate(0) }));
-    constexpr uint32_t expectedSymbols[] = { 0, 1, 0, 2 };
+    AOT_TEST_CHECK(body.stubKeys == (Vector<StubKey> { key.withImmediate(0), key.withImmediate(0) }));
+    constexpr uint32_t expectedSymbols[] = { 0, 1, 0 };
     AOT_TEST_CHECK(body.relocations.size() == std::size(expectedSymbols));
     for (size_t index = 0; index < std::size(expectedSymbols); ++index) {
         checkRelocation(body.relocations[index], RelocationKind::Call, { SymbolSpace::Stub, expectedSymbols[index] });
         AOT_TEST_CHECK(assembled.bytesBefore(index).empty());
     }
-    constexpr uint32_t expectedMentions[] = { firstMention, secondMention, firstMention };
+    constexpr uint32_t expectedMentions[] = { firstMention, secondMention };
     const auto& numberedStubKeys = body.rareLists->numberedStubKeys;
     AOT_TEST_CHECK(numberedStubKeys.size() == std::size(expectedMentions));
     for (uint32_t index = 0; index < std::size(expectedMentions); ++index)

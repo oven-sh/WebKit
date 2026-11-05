@@ -52,7 +52,7 @@
 # MEMBERS: member L0 Static 6 Method symbol("near")@m1:0 function=f11
 # MEMBERS: member L1 Prototype 0 Method [computed]
 # MEMBERS: member L2 Prototype 0 Method [computed]
-# RUN(WALK): walk f3 mechanisms=all
+# RUN(WALK): walk f3 mechanisms=all-Inlining
 # WALK-NOT: ElemGet
 # WALK-NOT: ElemSet
 # WALK: CallDirect {{*}} function=f10

@@ -202,6 +202,7 @@ public:
     bool holdsPatchThatFollowsFrameSetup() const { return m_holdsPatchThatFollowsFrameSetup; }
     bool holdsPatchThatCountsOnStackCheck() const { return m_holdsPatchThatCountsOnStackCheck; }
     bool holdsPatchThatCountsOnFrameRecord() const { return m_holdsPatchThatCountsOnFrameRecord; }
+    bool holdsPatchWithOperandInFrame() const { return m_holdsPatchWithOperandInFrame; }
 
     struct HeadOfFramedPart {
         const Block* block { nullptr };
@@ -241,6 +242,7 @@ private:
     bool m_holdsPatchThatFollowsFrameSetup { false };
     bool m_holdsPatchThatCountsOnStackCheck { false };
     bool m_holdsPatchThatCountsOnFrameRecord { false };
+    bool m_holdsPatchWithOperandInFrame { false };
     BitSpan m_regionNeedsFrame;
     ArenaVector<HeadOfFramedPart> m_headsOfFramedPart;
     BitSpan m_isInFramedPart;

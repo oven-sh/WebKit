@@ -26,6 +26,7 @@
 #include <optional>
 #include <span>
 #include <wtf/Scope.h>
+#include <wtf/StackPointer.h>
 #include <wtf/text/StringView.h>
 #include <wtf/text/WTFString.h>
 
@@ -45,8 +46,10 @@ ScratchRealm::~ScratchRealm()
 
 void ScratchRealm::makeAtFirstQuestion()
 {
-    if (m_vm)
+    if (m_vm) {
+        m_vm->setStackPointerAtVMEntry(currentStackPointer());
         return;
+    }
     m_noHelperThreads.emplace();
     m_vm = VM::create(HeapType::Small);
     m_lockOfWholeLife.emplace(*m_vm);

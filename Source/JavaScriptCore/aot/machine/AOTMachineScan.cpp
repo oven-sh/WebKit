@@ -960,7 +960,7 @@ static ALWAYS_INLINE bool scanOperationOfBlock(BackwardScan& scan, Block* block,
     }
     if (opcode == Patch) {
         PatchOperation* patch = static_cast<PatchOperation*>(operation);
-        if (patch->bringsOperandsToTheirRegisters() && (rareRegion != noRareRegion || at.loop == noLoop || functionEndsBehindScannedPatch(patch)))
+        if (patch->bringsOperandsToTheirRegisters() && (rareRegion != noRareRegion || functionEndsBehindScannedPatch(patch)))
             patch->leaveOperandsWhereTheyLie();
         noteScannedCall(scan, patch, early + 1, block, rareRegion, at.loop, true);
         readOperandsOfScannedPatch(scan, patch, own, early);
@@ -1016,6 +1016,7 @@ Liveness* scanBackward(Procedure& proc)
     Liveness* liveness = proc.arena().create<Liveness>();
     BackwardScan scan(proc, *liveness);
     scan.run();
+    scan.letGoOfWorkingLists();
     return liveness;
 }
 
@@ -1160,6 +1161,20 @@ void BackwardScan::run()
             return left->index() < right->index();
         });
     }
+}
+
+void BackwardScan::letGoOfWorkingLists()
+{
+    if (static_cast<size_t>(m_proc.numberOfOperations()) * sizeof(SummaryOfReads) < Arena::smallestRoomLetGo)
+        return;
+    Arena& arena = m_proc.arena();
+    m_lowHalfUpdatesInLoops.letGo(arena);
+    m_wordsReadWhole.letGo(arena);
+    m_loopOfLastListedRead.letGo(arena);
+    m_loopCountedFor.letGo(arena);
+    m_loopStates.letGo(arena);
+    m_summariesOfReads.letGo(arena);
+    m_regions.letGo(arena);
 }
 
 void BackwardScan::addUse(Operation* value, Position position, Reg hint)

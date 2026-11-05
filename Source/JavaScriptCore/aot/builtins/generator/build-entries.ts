@@ -299,6 +299,7 @@ function declareClasses({ builder, sorted }: EntryContext): void {
       pristineTest: pristineTestOf(builder, declaration, source),
       hasClosureInstances: columns.hasClosureInstances ?? false,
       instancesAreEntries: columns.instancesAreEntries ?? false,
+      keepsStructuresOfClassesBelow: columns.keepsStructuresOfClassesBelow ?? false,
       definesCharactersOnNewInstances: columns.definesCharactersOnNewInstances ?? false,
       namesDefinedOnNewInstances:
         columns.namesDefinedOnNewInstances?.map(text => builder.internComponent(text)) ?? null,
@@ -1007,7 +1008,8 @@ function linkPrototypes({ builder, sorted }: EntryContext): void {
       builder.problems.add(source, `the prototype of ${builtin.text} is declared twice`);
       continue;
     }
-    written.set(builtin, prototype === null ? { link: "Null" } : linkTo(prototype.sameObjectAs ?? prototype));
+    const link: ModelPrototype = prototype === null ? { link: "Null" } : linkTo(prototype.sameObjectAs ?? prototype);
+    written.set(builtin, declaration.isUnknown ? unknownPrototype : link);
   }
   for (const builtin of builder.builtins) {
     const isOfUnknownClass =

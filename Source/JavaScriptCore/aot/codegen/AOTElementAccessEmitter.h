@@ -57,6 +57,7 @@ public:
 
     bool testsEveryPosition();
     void stopUnlessInside(const ValueContext& access, Condition isInside);
+    void stopUnlessListIsAsMadeWhereNothingIsFound(const ValueContext& access, CellPointer list);
 
     Condition isPristineArray(CellPointer, OptionSet<PristineAspects>);
     Condition isPristineInstance(CellPointer, OptionSet<PristineAspects>);
@@ -83,6 +84,8 @@ public:
     Boxed boxRawElement(const ArrayStorageForm&, Operand rawElement);
     Operand convertRawElement(const OperationContext&, const ArrayStorageForm&, Operand rawElement, Representation, TypeID result);
     void stopUnlessElementIsOf(const OperationContext&, Boxed element, TypeID proven);
+    void stopUnlessDoubleIsOf(const OperationContext&, Operand element, TypeID proven);
+    Operand convertElementThatHasBeenAsked(const OperationContext&, const ArrayStorageForm&, Operand rawElement, Representation, TypeID result);
     Operand convertInt32Element(Word32, Representation);
     Operand absentElement(const OperationContext&, Representation);
     void storeRawElement(const ArrayStorageForm&, const ArrayElements&, Integer index, Operand rawElement);

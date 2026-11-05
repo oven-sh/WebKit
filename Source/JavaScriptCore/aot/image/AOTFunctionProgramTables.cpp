@@ -410,6 +410,7 @@ void FunctionTablesByRange::collectFunction(uint32_t index, RowsOfFunctionRange&
     CodeUnit unit = unitOfImageFunction(m_encoder, index);
     FunctionTraceRecord trace = Typed::functionTraceOf(program, conventions, unit);
     FunctionRecordData record { m_encoder.plan.functionKind(program, closureEntryThatDescribes(conventions, unit)), trace };
+    record.trace.closuresAreSaidNeverToReachUnseenCode = AOT::hasFlag(m_encoder.build.options().testing, Wire::TestingSwitch::CheckProofsAtRunTime) && m_encoder.facts.linked().function(unit.function).everyCallerIsKnown;
     uint32_t bits = std::bit_cast<uint32_t>(record);
     m_bitsOfRecords[index] = bits;
     if (rows.records.isEmpty() || rows.records.last().bits != bits)

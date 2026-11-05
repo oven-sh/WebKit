@@ -365,6 +365,7 @@ function placeOf(place: PlaceLike): PlaceSpec {
 }
 
 export const result: PlaceSpec = { place: "Result" };
+export const thrown: PlaceSpec = { place: "NewValue", value: anythingSpec, holdsWhatIsThrown: true };
 export const nativeMemory: PlaceSpec = { place: "NativeMemory" };
 export const resultSlot = (slotName: SlotName): PlaceSpec => ({ place: "ResultSlot", slot: slotName });
 export const resultField = (field: string | number): PlaceSpec => ({ place: "ResultField", field });
@@ -595,6 +596,7 @@ export const createdIn = (value: TableType, place: PlaceLike): UseSpec => ({
   in: placeOf(place),
 });
 export const returnedFrom = (cell: string): UseSpec => ({ use: "ReturnsKept", cell });
+export const handedBackFrom = (cell: string): UseSpec => ({ use: "ReturnsKept", cell, holdsOnlyWhatIsStored: true });
 export const handedOutFrom = (cell: string): UseSpec => ({ use: "HandsOutKept", cell });
 
 export const functionIn = (file: string, name: string): FunctionRef => ({ file, name });
@@ -1051,6 +1053,7 @@ const classColumnKeys = [
   "pristineTest",
   "hasClosureInstances",
   "instancesAreEntries",
+  "keepsStructuresOfClassesBelow",
   "definesCharactersOnNewInstances",
   "namesDefinedOnNewInstances",
   "constructorOnlyReadsPrototypeOfNewTarget",
@@ -1265,6 +1268,9 @@ export const same = (path: BuiltinPath, original: BuiltinPath): Declaration[] =>
 ];
 export const inherits = (path: BuiltinPath, prototype: BuiltinPath | null): Declaration[] => [
   { declares: "Inheritance", path, prototype },
+];
+export const inheritsFromUnknown = (path: BuiltinPath): Declaration[] => [
+  { declares: "Inheritance", path, prototype: null, isUnknown: true },
 ];
 export const name = (...texts: readonly string[]): Declaration[] => texts.map(text => ({ declares: "Name", text }));
 

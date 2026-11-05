@@ -72,6 +72,10 @@ FrameMapEmitter::Roots FrameMapEmitter::appendRoots(Machine::PatchOperation* pat
     auto addRoot = [&](ValueID id) {
         if (!id || id == suspension.id() || m_code.isConstant(id) || isDeferredClosure(id))
             return;
+        if (typeOf(id).isOpaque(OpaqueKind::StringBuilder)) {
+            fail(suspension, InternalErrorKind::FramePointerAcrossSuspension);
+            return;
+        }
         if (std::optional<uint32_t> numberOfResults = numberOfResultsDefinedBy(operationAt(id))) {
             for (uint32_t index = 0; index < *numberOfResults; ++index)
                 append(generator().resultAt(id, index));

@@ -173,7 +173,7 @@ bool buildTypedJoinOfTextsOfItsOpcodes(Walker& walker, const BodyValue& first)
         parts = WTF::move(longer);
         last = index.value(taker);
         if (FunctionID callee = walker.facts().linked().calleeAt(walker.currentFunction(), last.id()))
-            walker.arrivals().leaveAnything(callee);
+            walker.leaveAnythingAt(callee);
     }
 
     if (walker.hasTextsInStringBuilders() && appendRowToTextInStringBuilder(walker, last, parts)) {

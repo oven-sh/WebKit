@@ -1023,11 +1023,12 @@ void SlotAssigner::publishDeadWords(Procedure& proc, unsigned numberOfCalleeSave
     for (uint32_t index = 0; index < suspensions.size(); ++index) {
         std::span<uint64_t> bitsOfDeadWordsOfFrame = arena.copySpan<uint64_t>(bitsOfWordsAlwaysDead);
         setBitsMovedUp(bitsOfDeadWordsOfFrame, slots.wordsDeadAcross(index), firstWordKept);
-        suspensions[index]->m_frameWordsDeadAcrossSuspension = BitSpan(bitsOfDeadWordsOfFrame);
+        FactsOfSuspension& facts = suspensions[index]->ensureFactsOfSuspension();
+        facts.frameWordsDeadAcrossSuspension = BitSpan(bitsOfDeadWordsOfFrame);
 
         const WordsClearedAtSuspension& cleared = slots.wordsClearedAt(index);
         RELEASE_ASSERT(cleared.numberOfLowestWords <= SavedFrame::maxClearedWords && cleared.numberOfLowestWords <= numberOfWordsKept + numberOfWordsKept % 2);
-        suspensions[index]->m_numberOfFrameWordsToClearAtFirstSuspension = static_cast<uint8_t>(cleared.numberOfLowestWords);
+        facts.numberOfFrameWordsToClearAtFirstSuspension = static_cast<uint8_t>(cleared.numberOfLowestWords);
 
         const bool clearsUnusedWord = cleared.wordAboveFirstPart && numberOfCalleeSaves % 2;
         if (!clearsUnusedWord && !cleared.others.size())
@@ -1038,7 +1039,7 @@ void SlotAssigner::publishDeadWords(Procedure& proc, unsigned numberOfCalleeSave
         cleared.others.forEachSetBit([&](size_t word) {
             wordsClearedInFront.set(firstWordKept + word);
         });
-        suspensions[index]->m_frameWordsClearedInFrontOfSuspension = wordsClearedInFront;
+        facts.frameWordsClearedInFrontOfSuspension = wordsClearedInFront;
     }
 }
 

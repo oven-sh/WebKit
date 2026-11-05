@@ -166,6 +166,7 @@ export interface InheritanceDeclaration {
   declares: "Inheritance";
   path: BuiltinPath;
   prototype: BuiltinPath | null;
+  isUnknown?: boolean;
 }
 
 export interface NameDeclaration {

@@ -38,9 +38,7 @@ bool textBegunHereMayLieInFrame(Walker& walker, BlockID, const GrowingText& text
 {
     if (opcodesWithoutEmitter().contains(Opcode::StackStringBuilderBegin))
         return false;
-    if (text.standsUnderHandlers && !everyHandlerLetsTextGo(walker, text))
-        return false;
-    return walker.unit().role != CodeRole::CoroutineBody && !walker.program().at(walker.unit().function).isCoroutine();
+    return !text.standsUnderHandlers || everyHandlerLetsTextGo(walker, text);
 }
 
 static CursorInSightOfTextInFrame findCursorInSightOfTextInFrame(const Walker& walker, Reference name)

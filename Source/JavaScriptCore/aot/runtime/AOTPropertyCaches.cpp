@@ -9,6 +9,8 @@
 #if ENABLE(AOT)
 
 #include "AOTArrayAllocationProfile.h"
+#include "AOTBuiltinCells.h"
+#include "AOTBuiltinTable.h"
 #include "AOTClassPrototype.h"
 #include "AOTClassTable.h"
 #include "AOTCompiledStructure.h"
@@ -1460,6 +1462,7 @@ PropertyCaches::PropertyCaches(State& state)
     , m_tablesOwnerID(state.chainDependents->addOwner(m_tables))
     , m_siteCaches(state, m_tables.customAccessors())
     , m_answersAtSites(state, m_siteCaches)
+    , m_structuresBelowBuiltinClasses(state)
 {
     state.caches->add(CacheKind::StrongRoots, "Structures of additions in an Eden collection"_s, *this);
     state.caches->addObserver("PropertyCaches"_s, *this);
@@ -1595,6 +1598,8 @@ void PropertyCaches::cache(const CachedAccess& access, const PropertyAnswer& ans
         m_state.chainDependents->add(answer.changeableObjects.span(), { access.name.uid, structure->id().bits(), m_tablesOwnerID });
     if (answer.newStructure)
         didAddProperty(structure, answer.newStructure);
+    if (access.access == SlotAccess::Read)
+        keepIfBelowBuiltinClass(structure);
 }
 
 static unsigned hashOfName(UniquedStringImpl* uidOrNull)
@@ -2494,11 +2499,105 @@ bool PropertyCaches::fillAboveFieldLeftOut(uint32_t place, Object& object, const
     return true;
 }
 
+StructuresBelowBuiltinClasses::StructuresBelowBuiltinClasses(State& state)
+    : m_state(state)
+    , m_ownerID(state.chainDependents->addOwner(*this))
+{
+    const BuiltinTable& table = BuiltinTable::singleton();
+    for (unsigned index = 0; index < table.classCount(); ++index) {
+        if (const BuiltinClass& builtinClass = table.at(BuiltinClassID(index)); builtinClass.keepsStructuresOfClassesBelow)
+            m_classes.append({ builtinClass.type, builtinClass.id });
+    }
+    state.caches->add(CacheKind::WeakByKey, "structures below built-in classes"_s, *this);
+}
+
+void StructuresBelowBuiltinClasses::dropChainDependent(VM&, uint32_t structureID, UniquedStringImpl*)
+{
+    uint32_t& place = m_state.instance.propertyCaches.placeOfStructureBelowBuiltinClass(structureID);
+    if (place == structureID)
+        place = 0;
+}
+
+bool StructuresBelowBuiltinClasses::hasChainDependent(VM&, uint32_t structureID, UniquedStringImpl*) const
+{
+    return m_state.instance.propertyCaches.placeOfStructureBelowBuiltinClass(structureID) == structureID;
+}
+
+size_t StructuresBelowBuiltinClasses::removeDeadEntries(VM& vm, CollectionScope)
+{
+    size_t numberCleared = 0;
+    for (uint32_t& place : m_state.instance.propertyCaches.structuresBelowBuiltinClasses) {
+        if (!place || vm.heap.isMarked(std::bit_cast<StructureID>(place).decode()))
+            continue;
+        place = 0;
+        ++numberCleared;
+    }
+    return numberCleared;
+}
+
+BuiltinClassID StructuresBelowBuiltinClasses::classAbove(Structure* structure) const
+{
+    JSType type = structure->typeInfo().type();
+    for (auto [typeOfInstances, builtinClass] : m_classes) {
+        if (type == typeOfInstances)
+            return builtinClass;
+    }
+    return { };
+}
+
+bool StructuresBelowBuiltinClasses::holds(Structure* structure) const
+{
+    return m_state.instance.propertyCaches.placeOfStructureBelowBuiltinClass(structure->id().bits()) == structure->id().bits();
+}
+
+void StructuresBelowBuiltinClasses::keep(Structure* structure, std::span<JSObject* const> changeableObjects)
+{
+    m_state.chainDependents->add(changeableObjects, { nullptr, structure->id().bits(), m_ownerID });
+    m_state.instance.propertyCaches.placeOfStructureBelowBuiltinClass(structure->id().bits()) = structure->id().bits();
+    countEvent(*m_state.instance.vm, RuntimeCounterID::StructuresKeptBelowBuiltinClasses);
+}
+
+void PropertyCaches::keepIfBelowBuiltinClass(Structure* structure)
+{
+    BuiltinClassID builtinClass = m_structuresBelowBuiltinClasses.classAbove(structure);
+    if (!builtinClass) [[likely]]
+        return;
+    if (structure->isPristine() || structure->isDictionary() || structure->hasPolyProto() || structure->typeInfo().overridesGetOwnPropertySlot() || m_structuresBelowBuiltinClasses.holds(structure))
+        return;
+    JSGlobalObject* globalObject = m_state.instance.globalObject;
+    const BuiltinTable& table = BuiltinTable::singleton();
+    BuiltinID prototype = table.at(builtinClass).prototype;
+    JSObject* prototypeOfClass = m_state.builtinCells ? m_state.builtinCells->lockedObjects().get(prototype.index()) : nullptr;
+    if (structure->realm() != globalObject || !prototypeOfClass)
+        return;
+    ChainObjects changeableObjects;
+    for (BuiltinID member : table.membersOf(prototype)) {
+        if (!table.boxedCallStubOf(table.canonicalID(member)))
+            continue;
+        Identifier name = table.identifierOf(m_vm, table.at(member).name);
+        unsigned attributes = 0;
+        std::optional<PropertyOffset> own = structure->getWithoutMaterializing(name.impl(), attributes);
+        if (!own || isValidOffset(*own))
+            return;
+        ChainWalk walk = walkChain({ globalObject, structure, nullptr, ChainWalkMode::AllocatesNothing, ChainWalkUse::KeptForReads }, name.impl());
+        if (walk.result != ChainWalkResult::Found || walk.holder != prototypeOfClass)
+            return;
+        for (JSObject* object : walk.changeableObjects) {
+            if (!changeableObjects.contains(object))
+                changeableObjects.append(object);
+        }
+    }
+    ensureChangesAreReported(changeableObjects.span());
+    m_structuresBelowBuiltinClasses.keep(structure, changeableObjects.span());
+}
+
 void PropertyCaches::fillSiteAnswers(uint32_t place, JSCell* base, uint32_t identifierNumber, SiteUse use)
 {
     Structure* structure = WTF::opaque(base->structure());
     StructureID id = structure->id();
     CachedName name = nameOf(identifierNumber);
+    if (use == SiteUse::Call)
+        keepIfBelowBuiltinClass(structure);
 
     if (compiledObjectStructureOrNull(structure)) {
         auto* object = uncheckedDowncast<Object>(base);

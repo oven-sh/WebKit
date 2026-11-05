@@ -19,6 +19,7 @@ public:
     void generateReleaseHint(const ValueContext&);
     void release(ValueID);
     void generateEndLifeOfCell(const ValueContext&);
+    void generateGuessFailsUnasked(const ValueContext&);
     bool endsLivesAtRunTime();
     void endLifeOf(const OperationContext&, ValueID cell);
     void noteThatCellIsLent(const ValueContext& made, CellPointer);

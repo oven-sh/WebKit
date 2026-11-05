@@ -171,6 +171,7 @@ bool Walker::enterBehindHeadOfHandlerBlock(BlockID inputBlock, std::span<const u
 
     m_state.clear();
     Frame& frame = m_frames.last();
+    keepStateOfHandlerForUndo(m_frames.size() - 1, inputBlock);
     frame.takeStateOfHandler(inputBlock, m_state);
     enterHandler(*this, inputBlock);
     frame.firstOperationToWalk = numberOfCatches;

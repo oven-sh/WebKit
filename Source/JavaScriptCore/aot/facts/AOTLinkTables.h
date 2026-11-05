@@ -131,6 +131,13 @@ struct LinkedNameOnFunction {
     FunctionID expected;
 };
 
+struct LinkedNameBesideFields {
+    LayoutID layout;
+    PropertyKeyID key;
+
+    friend constexpr auto operator<=>(const LinkedNameBesideFields&, const LinkedNameBesideFields&) = default;
+};
+
 struct LinkTables;
 void appendMembersAssignedByProgram(const Program&, const LinkTables&, LayoutID, Vector<ClassMember>&);
 
@@ -279,18 +286,21 @@ struct LookupsPastProgramObjects {
     BitVector builtinsCalledOutOfSight;
     BitVector builtinsCalledWithoutRow;
     BitVector builtinsWithCallsThatMayRunCode;
+    UncheckedKeyHashSet<uint64_t> conditionsThatOperandsMayMeet;
     Vector<LinkedCallOfBuiltin> callsOfBuiltinsAtSites;
     // MUST BE TRUE OF THE PROGRAM THAT RUNS: each is locked at the start (Facts::builtinMembersLockedAtStartUp()), with every mechanism withheld too: what is reached hangs on it.
     BitVector membersTakenForConstants;
     BitVector membersWritten;
     Vector<WriteFollowedToBuiltin> writesFollowedToBuiltins;
     BitVector holdersWrittenUnderAnyName;
+    BitVector holdersStoredOnUnderAnyName;
     BitVector holdersHandedWhatIsNoTextNumberOrBoolean;
     bool objectsNobodyKnowsAreHandedWhatIsNoTextNumberOrBoolean { false };
     BitVector lostBuiltins;
     BitVector builtinsAtUnseen;
     BitVector builtinsPassedOptionThatRunsCode;
     BitVector classesWithInstancesAtUnseen;
+    BitVector entriesThatHandHostNothing;
     BitVector namesReadThroughLostBuiltins;
     BitVector namesWrittenThroughLostBuiltins;
     BitVector namesWrittenThroughUnseenByProgram;
@@ -373,7 +383,12 @@ struct LinkTables {
     Vector<LinkedCell> appendedFields;
     BitVector appendedFieldsThatSomeWrittenTypeRequires;
     BitVector appendedFieldsThatTypeOfThisRequires;
+    BitVector appendedFieldsLaidLate;
+    BitVector keysAppendedByHeldAloneLaidLate;
     BitVector appendedFieldsThatTakeWordLeftInCell;
+    BitVector appendedFieldsThatFollowersOfMakersStore;
+    BitVector keysAppendedByHeldAloneThatFollowersOfMakersStore;
+    Vector<LinkedNameBesideFields> namesStoredBesideFields;
     Vector<uint32_t> firstRunOfMakersOfLayout;
     Vector<uint32_t> firstKeyOfRunOfMakers;
     Vector<PropertyKeyID> keysOfRunsOfMakers;
@@ -434,6 +449,11 @@ struct LinkTables {
             return { };
         return keysAppendedByHeldAlone.span().subspan(firstKeyAppendedByHeldAloneOfLayout[layout], firstKeyAppendedByHeldAloneOfLayout[layout + 1] - firstKeyAppendedByHeldAloneOfLayout[layout]);
     }
+    std::span<const LinkedNameBesideFields> namesStoredBesideFieldsOf(LayoutID id) const LIFETIME_BOUND
+    {
+        auto found = std::ranges::equal_range(namesStoredBesideFields, id, { }, &LinkedNameBesideFields::layout);
+        return { found.begin(), found.end() };
+    }
     uint32_t numberOfAppendedKeysOfPlan(LayoutID id) const { return static_cast<uint32_t>(appendedKeysOf(id).size() + keysAppendedByHeldAloneOf(id).size()); }
     Vector<PropertyKeyID, 16> appendedKeysOfPlan(LayoutID id) const
     {
@@ -473,10 +493,32 @@ struct LinkTables {
         std::optional<size_t> place = findPlaceOfAppendedField(field);
         return place && appendedFieldsThatSomeWrittenTypeRequires.get(*place);
     }
+    bool isStoredByFollowerOfMaker(FieldReference field) const
+    {
+        if (std::optional<size_t> place = findPlaceOfAppendedField(field))
+            return appendedFieldsThatFollowersOfMakersStore.get(*place);
+        size_t layout = field.layout.index();
+        if (layout + 1 >= firstFieldOfLayout.size() || layout + 1 >= firstKeyAppendedByHeldAloneOfLayout.size())
+            return false;
+        size_t numberInFront = firstFieldOfLayout[layout + 1] - firstFieldOfLayout[layout] + appendedKeysOf(field.layout).size();
+        if (field.field < numberInFront || field.field - numberInFront >= keysAppendedByHeldAloneOf(field.layout).size())
+            return false;
+        return keysAppendedByHeldAloneThatFollowersOfMakersStore.get(firstKeyAppendedByHeldAloneOfLayout[layout] + (field.field - numberInFront));
+    }
     bool takesWordLeftInCell(FieldReference field) const
     {
         std::optional<size_t> place = findPlaceOfAppendedField(field);
         return place && appendedFieldsThatTakeWordLeftInCell.get(*place);
+    }
+    bool isAppendedFieldLaidLate(FieldReference field) const
+    {
+        if (std::optional<size_t> place = findPlaceOfAppendedField(field))
+            return appendedFieldsLaidLate.get(*place);
+        size_t layout = field.layout.index();
+        if (layout + 1 >= firstFieldOfLayout.size() || layout + 1 >= firstKeyAppendedByHeldAloneOfLayout.size())
+            return false;
+        size_t numberInFront = firstFieldOfLayout[layout + 1] - firstFieldOfLayout[layout] + appendedKeysOf(field.layout).size();
+        return field.field >= numberInFront && field.field - numberInFront < keysAppendedByHeldAloneOf(field.layout).size() && keysAppendedByHeldAloneLaidLate.get(firstKeyAppendedByHeldAloneOfLayout[layout] + (field.field - numberInFront));
     }
     bool isAppendedFieldRequiredByTypeOfThis(FieldReference field) const
     {

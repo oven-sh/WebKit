@@ -22,6 +22,7 @@ namespace JSC { namespace AOT {
 static_assert(numberOfHeaderWords == 2);
 
 static constexpr size_t fewestStubKeysWithTable = 16;
+static constexpr size_t fewestCalleesWithIndexes = 16;
 static constexpr size_t smallestTableOfStubKeys = 64;
 static_assert(2 * (fewestStubKeysWithTable + 1) <= smallestTableOfStubKeys && !(smallestTableOfStubKeys & (smallestTableOfStubKeys - 1)));
 
@@ -60,17 +61,6 @@ static uint32_t hashOfStubKey(StubKey key, std::optional<uint32_t> mentionOfImme
 static void moveNumberedImmediate(RelocationRecorder& relocations, NumberedImmediate immediate, GPRReg destination)
 {
     relocations.moveNumber({ SymbolSpace::Number, immediate.mention }, destination);
-}
-
-template<typename T>
-static uint32_t findOrAppendSymbol(Vector<T>& symbols, T symbol)
-{
-    size_t index = symbols.find(symbol);
-    if (index == notFound) {
-        index = symbols.size();
-        symbols.append(symbol);
-    }
-    return safeCast<uint32_t>(index);
 }
 
 static uint32_t appendWordsOfThunk(auto& lists, StubKey callee, uint64_t wordOfImmediate, const ArgumentMoves& moves)
@@ -193,7 +183,25 @@ uint32_t StubCalls::indexOf(StubKey key, std::optional<uint32_t> mentionOfImmedi
 uint32_t StubCalls::indexOf(Typed::CodeUnit callee)
 {
     RELEASE_ASSERT(callee);
-    return findOrAppendSymbol(m_callees, callee);
+    if (m_indexesOfCallees.isEmpty() && m_callees.size() < fewestCalleesWithIndexes) {
+        size_t index = m_callees.find(callee);
+        if (index == notFound) {
+            index = m_callees.size();
+            m_callees.append(callee);
+        }
+        return safeCast<uint32_t>(index);
+    }
+    auto keyOf = [](Typed::CodeUnit unit) {
+        return static_cast<uint64_t>(unit.function.index()) << 32 | static_cast<uint64_t>(unit.role) << 24 | unit.placeOfSelector();
+    };
+    if (m_indexesOfCallees.isEmpty()) {
+        for (uint32_t index = 0; index < m_callees.size(); ++index)
+            m_indexesOfCallees.add(keyOf(m_callees[index]), index);
+    }
+    auto result = m_indexesOfCallees.add(keyOf(callee), safeCast<uint32_t>(m_callees.size()));
+    if (result.isNewEntry)
+        m_callees.append(callee);
+    return result.iterator->value;
 }
 
 ALWAYS_INLINE uint32_t StubCalls::emitCall(CCallHelpers&, StubKey, CodeSymbol symbol, const RecordedCall& record)
@@ -314,6 +322,7 @@ void StubCalls::describeCalls(std::span<const Relocation> relocations, CodeBody&
     }
     m_mentionsOfImmediates.clear();
     m_placesOfStubKeys.clear();
+    m_indexesOfCallees.clear();
     body.stubKeys = WTF::move(m_stubKeys);
     body.callees = WTF::move(m_callees);
     body.argumentMoves = ArgumentMovesOfUnit(m_argumentMoves.span());

@@ -318,14 +318,14 @@ public:
 
     ALWAYS_INLINE void encodePatch(const Step&, PatchOperation*);
     void encodeCheck(const Step&, PatchOperation*);
-    ALWAYS_INLINE ValueRep repOf(Location location, const Operation* value) const
+    ALWAYS_INLINE ValueRep repOf(const PatchOperation* patch, Location location, const Operation* value) const
     {
         switch (location.kind()) {
         case Location::Register:
             return ValueRep::reg(location.reg());
         case Location::Spill:
             RELEASE_ASSERT(m_frameIsSetUp);
-            RELEASE_ASSERT(m_frame.hasFrameRecord());
+            RELEASE_ASSERT(m_frame.hasFrameRecord() || patch->findsOperandsInFrameWithoutRecord());
             return ValueRep::stack(m_frame.offsetFromFPOf(location.spillIndex()));
         case Location::Outgoing:
             RELEASE_ASSERT(m_frameIsSetUp);
@@ -640,7 +640,7 @@ ALWAYS_INLINE void Encoder::fillParameters(PatchParameters& parameters, const St
                 RELEASE_ASSERT(patchRegisterAnswersConstraint(*rep, constraint));
                 continue;
             }
-            new (NotNull, rep) ValueRep(repOf(*location, patch));
+            new (NotNull, rep) ValueRep(repOf(patch, *location, patch));
             RELEASE_ASSERT(patchRepAnswersConstraint(*rep, constraint));
         }
         Operation* const* operand = operands.data() + firstOperand;
@@ -651,7 +651,7 @@ ALWAYS_INLINE void Encoder::fillParameters(PatchParameters& parameters, const St
                 RELEASE_ASSERT(patchRegisterAnswersConstraint(*rep, constraint));
                 continue;
             }
-            new (NotNull, rep) ValueRep(repOf(*location, *operand));
+            new (NotNull, rep) ValueRep(repOf(patch, *location, *operand));
             RELEASE_ASSERT(patchRepAnswersConstraint(*rep, constraint));
         }
         parameters.m_reps = std::span<const ValueRep>(reps, numberOfReps);

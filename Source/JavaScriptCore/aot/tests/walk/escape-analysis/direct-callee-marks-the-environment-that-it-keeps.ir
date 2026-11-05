@@ -5,8 +5,8 @@
 # CHECK-NOT: MarkEnvironmentEscaped
 # CHECK: = NewClosure {{*}}function=f3
 # RUN(EMIT): bytes f2 mechanisms=none+TypedOperations+Folding+EscapeAnalysis+CellsInFrames+DirectCalls
-# EMIT: CallValueLending.First count 1
 # EMIT: NewSlimClosureInFrame.Plain count 1
+# EMIT: CallValueLending.First count 1
 # RUN(NEVER): walk f2 mechanisms=none+TypedOperations+Folding+EscapeAnalysis+CellsInFrames+DirectCalls
 # NEVER-NOT: ReleaseEnvironment
 # RUN(MAKER): walk f1 mechanisms=none+TypedOperations+Folding+EscapeAnalysis+CellsInFrames+DirectCalls

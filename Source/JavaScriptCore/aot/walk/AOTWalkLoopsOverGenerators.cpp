@@ -77,11 +77,11 @@ static bool isConstantLocationForGenerators(const Walker& walker, BuiltinID memb
 {
     const Program& program = walker.program();
     const BuiltinTable& table = program.builtins();
-    if (table.has(BuiltinMark::MayBeAbsent, member) || program.isUnlocked(member) || program.isUnlocked(table.canonicalID(member)))
+    if (table.has(BuiltinMark::MayBeAbsent, member) || program.isUnlocked(member))
         return false;
     if (table.at(member).mutability == BuiltinMutability::AlwaysLocked || table.isLocationOfLockedObject(member))
         return true;
-    return walker.facts().builtinLocation(member) == BuiltinLocationState::Constant;
+    return !program.isUnlocked(table.canonicalID(member)) && walker.facts().builtinLocation(member) == BuiltinLocationState::Constant;
 }
 
 std::optional<BuiltinID> findMemberAboveForIteration(const Walker& walker, BuiltinID start, BuiltinName name, MembersBehindWatch watch)
@@ -201,7 +201,7 @@ static Reference buildStepOfGenerator(Walker& walker, BuilderForGenerators& buil
 static void leaveAnythingForCalleeListedAtForGenerators(Walker& walker, const BodyValue& operation)
 {
     if (FunctionID listed = walker.facts().linked().calleeAt(walker.currentFunction(), operation.id()))
-        walker.arrivals().leaveAnything(listed);
+        walker.leaveAnythingAt(listed);
 }
 
 static TypeID typeOfGenerators(Walker& walker)

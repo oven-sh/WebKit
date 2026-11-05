@@ -1,9 +1,10 @@
 # `o instanceof V` in a loop, with V a function that is constructed and that code out of sight holds: it may give V another `prototype` or a Symbol.hasInstance at any time, so the guards of the class are asked first, and the operator as written stands on their failing side
 # an object with the shape of V says itself whether it stands where it was made; whatever has another shape walks its chain up to the prototype object of V
+# a plain object laid between an object and the prototype object of V is taken for no other prototype, and what is done to that link later ends guards alone: so the guard of the prototype's side is asked with the others
 # function V(x) { this.x = x; }  sink(V);  function isV(o, C) { return o instanceof C; }  function countV(o, C, n) { let s = 0; for (let i = 0; i < n; i++) s += o instanceof C; return s; }
 # RUN: walk f3 mechanisms=none+TypedOperations+Guesses+DirectCalls+Arrivals
 # CHECK-LABEL: code f3:Body
-# CHECK: = AreMembersUnchanged conditions=[{layout=L0 side=Static key=@@hasInstance}, {layout=L0 side=Static key="prototype"}]
+# CHECK: = AreMembersUnchanged conditions=[{layout=L0 side=Static key=@@hasInstance}, {layout=L0 side=Static key="prototype"}, {kind=PrototypeLinkUnchanged layout=L0}]
 # CHECK: = ShapeTest {{*}}layouts=[L0]
 # CHECK: = InstanceOf
 # CHECK: = HasLayoutPrototype
@@ -16,11 +17,17 @@
 # RUN(ONE): walk f3 mechanisms=none+TypedOperations+Guesses+DirectCalls+Arrivals
 # ONE: = InstanceOf
 # ONE-NOT: = InstanceOf
-# outside a loop the bytes are not paid
+# outside a loop the shape answers in line, what is no object is no instance, and everything else goes to the one closed arm: no walk of the chain is written out
 # RUN(ONCE): walk f2 mechanisms=none+TypedOperations+Guesses+DirectCalls+Arrivals
 # ONCE-LABEL: code f2:Body
-# ONCE-NOT: AreMembersUnchanged
+# ONCE: = AreMembersUnchanged conditions=[{layout=L0 side=Static key=@@hasInstance}, {layout=L0 side=Static key="prototype"}, {kind=PrototypeLinkUnchanged layout=L0}]
+# ONCE: = ShapeTest {{*}}layouts=[L0]
 # ONCE: = InstanceOf
+# ONCE-NOT: = InstanceOf
+# ONCE: = HasLayoutPrototype
+# ONCE: = TypeTest {{*}}testedType=object
+# RUN(NOWALK): walk f2 mechanisms=none+TypedOperations+Guesses+DirectCalls+Arrivals
+# NOWALK-NOT: GetClassPrototype
 # without arms nothing can be asked first
 # RUN(WITHHELD): walk f3 mechanisms=none+TypedOperations+DirectCalls+Arrivals
 # WITHHELD-LABEL: code f3:Body

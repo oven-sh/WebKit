@@ -203,9 +203,6 @@ static void appendStubToSymbolName(ImageSymbolTable& table, StubKey key)
     case CallerFrame::StubFrame:
         table.append(".StubFrame"_s);
         break;
-    case CallerFrame::KeepsNoRegisters:
-        table.append(".KeepsNoRegisters"_s);
-        break;
     case CallerFrame::KeepsNoFPRs:
         table.append(".KeepsNoFPRs"_s);
         break;

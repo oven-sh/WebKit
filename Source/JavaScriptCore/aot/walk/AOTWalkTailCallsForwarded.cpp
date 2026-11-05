@@ -59,7 +59,7 @@ bool passOnOwnArgumentsByCount(Walker& walker, const BodyValue& call, const Draf
     Origin originInFrontOfCall = written.origin();
     originInFrontOfCall.isTailCall = false;
     if (FunctionID listed = walker.facts().linked().calleeAt(walker.currentFunction(), call.id()))
-        walker.arrivals().leaveAnything(listed);
+        walker.leaveAnythingAt(listed);
 
     bool returnsAtOnce = walker.unitReturnsAtOnce(written);
     BlockID behindCall;

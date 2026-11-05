@@ -122,6 +122,7 @@ enum class ImageFlag : uint32_t {
     ShowsWaysBetweenModuleObjects = 1 << 4,
     LoadsCodeOutsideImage = 1 << 5,
     IsBuiltWithLibrary = 1 << 6,
+    ShowsEntriesOfRequireCache = 1 << 7,
     RunsEntryPointsAgain = 1 << 8,
     StoresPathOfMainModule = 1 << 10,
     RefusesOriginalsBesideMocks = 1 << 12,

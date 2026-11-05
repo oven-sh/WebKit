@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTCompileOptions.h"
 #include "AOTDiagnostics.h"
 #include "AOTIRFunction.h"
 #include "AOTIRProgram.h"
@@ -238,6 +239,10 @@ const Effects* Code::effectsBelievedOf(ValueID id) const
 void Code::reset(CodeUnit unit)
 {
     m_unit = unit;
+    m_graveyard = { };
+    m_changesToOlderParts.shrink(0);
+    m_recordsAbandoned.shrink(0);
+    m_keepsChangesToOlderParts = false;
     m_operations.clear();
     m_blocks.clear();
     m_edges.clear();
@@ -246,6 +251,7 @@ void Code::reset(CodeUnit unit)
     m_entries.shrink(0);
     m_factUses.shrink(0);
     m_effectsBelieved.shrink(0);
+    m_testsOfGuardsInFrontOfCopies.shrink(0);
     m_pollsWithFates.shrink(0);
     m_opcodesOfValues = { };
     m_numberOfFrameWords = 0;
@@ -256,6 +262,9 @@ void Code::reset(CodeUnit unit)
     m_holdsCallThatPlanHasNotCounted = false;
     m_callsOfFunctionNeverCollect = false;
     m_readsNumbersOutOfBytes = false;
+    m_frequenciesOfBlocks = FrequenciesOfBlocks::AsGiven;
+    m_seedOfFrequencies = 0;
+    m_numberOfBlocksPlacedOtherwise = 0;
 
     m_isSwept = false;
     m_marks.shrink(0);
@@ -308,6 +317,30 @@ std::span<const ValueID> Code::liveAt(ValueID suspension) const
     return m_liveValues.span().subspan(found->first, found->count);
 }
 
+BlockFrequency Code::frequencyTakenFor(uint32_t block, BlockFrequency given)
+{
+    if (m_frequenciesOfBlocks == FrequenciesOfBlocks::AsGiven) [[likely]]
+        return given;
+    BlockFrequency taken = BlockFrequency::Normal;
+    if (m_frequenciesOfBlocks == FrequenciesOfBlocks::DrawnBySeed) {
+        if (!block)
+            return given;
+        static constexpr std::array<BlockFrequency, 4> drawn { BlockFrequency::Normal, BlockFrequency::Normal, BlockFrequency::Unlikely, BlockFrequency::Rare };
+        uint32_t wordOfUnit = m_unit.function.index() << 4 | static_cast<uint32_t>(m_unit.role);
+        taken = drawn[drawBySeed(m_seedOfFrequencies, DrawnFor::BlockFrequency, wordOfUnit, block) % drawn.size()];
+    }
+    m_numberOfBlocksPlacedOtherwise += taken != given;
+    return taken;
+}
+
+bool Code::loopMarkIsDrawnAway(uint32_t block) const
+{
+    if (m_frequenciesOfBlocks != FrequenciesOfBlocks::DrawnBySeed) [[likely]]
+        return false;
+    uint32_t wordOfUnit = m_unit.function.index() << 4 | static_cast<uint32_t>(m_unit.role);
+    return !(drawBySeed(m_seedOfFrequencies, DrawnFor::LoopMark, wordOfUnit, block) % 4);
+}
+
 BlockID Code::addBlock(BlockRole role, BlockFrequency frequency)
 {
     RELEASE_ASSERT(!m_isSwept);
@@ -315,7 +348,7 @@ BlockID Code::addBlock(BlockRole role, BlockFrequency frequency)
     BlockID id(m_blocks.size());
     Block& block = m_blocks.appendNew();
     block.role = role;
-    block.frequency = frequency;
+    block.frequency = frequencyTakenFor(id.index(), frequency);
     if (block.isHandlerBlock())
         m_hasHandlers = true;
     return id;
@@ -328,9 +361,9 @@ BlockID Code::addBlockBehindEdge(EdgeID edgeID, BlockFrequency frequency, bool i
     Edge& edge = m_edges[checkedIndexInCode(edgeID, m_edges.size())];
     RELEASE_ASSERT(edge.isOpen());
     Block block;
-    block.frequency = frequency;
+    block.frequency = frequencyTakenFor(m_blocks.size(), frequency);
     if (isInLoop) {
-        block.isInLoop = m_unit.role != CodeRole::SlowBody;
+        block.isInLoop = m_unit.role != CodeRole::SlowBody && !loopMarkIsDrawnAway(m_blocks.size());
         m_hasLoops = true;
     }
     block.m_firstEdgeIn = edgeID;
@@ -338,14 +371,31 @@ BlockID Code::addBlockBehindEdge(EdgeID edgeID, BlockFrequency frequency, bool i
     edge.to = BlockID(m_blocks.append(block));
     edge.m_arguments = nullptr;
     edge.m_numberOfArguments = 0;
+    if (m_keepsChangesToOlderParts)
+        m_changesToOlderParts.append(ChangeToOlderPart { edgeID, edge.to, { }, { }, { } });
     return edge.to;
+}
+
+void Code::makeBlocksRare(uint32_t first, uint32_t end)
+{
+    RELEASE_ASSERT(!m_isSwept && first <= end && end <= m_blocks.size());
+    for (uint32_t index = first; index < end; ++index) {
+        m_blocks[index].frequency = BlockFrequency::Rare;
+        m_blocks[index].isInLoop = false;
+    }
+}
+
+void Code::makeBlockRare(BlockID block)
+{
+    RELEASE_ASSERT(!m_isSwept);
+    m_blocks[checkedIndexInCode(block, m_blocks.size())].frequency = BlockFrequency::Rare;
 }
 
 void Code::setLoopMarks(BlockID blockID, bool isInLoop, bool isLoopHead)
 {
     RELEASE_ASSERT(!m_isSwept);
     Block& block = m_blocks[checkedIndexInCode(blockID, m_blocks.size())];
-    block.isInLoop = isInLoop && m_unit.role != CodeRole::SlowBody;
+    block.isInLoop = isInLoop && m_unit.role != CodeRole::SlowBody && !loopMarkIsDrawnAway(blockID.index());
     block.isLoopHead = isLoopHead;
     if (isInLoop || isLoopHead)
         m_hasLoops = true;
@@ -384,6 +434,8 @@ void Code::setTypeOfJoinParameter(ValueID parameter, TypeID type)
     Operation& record = m_operations[checkedIndexInCode(parameter, m_operations.size())];
     const Block& block = m_blocks[record.blockIndex];
     RELEASE_ASSERT(record.opcode == Opcode::Parameter && !block.isEntry && !block.isLoopHead && !block.m_last && !block.hasEnded());
+    if (m_keepsChangesToOlderParts)
+        m_changesToOlderParts.append(ChangeToOlderPart { { }, { }, { }, parameter, record });
     record.type = type;
 }
 
@@ -392,6 +444,8 @@ void Code::makeTestAskInFull(ValueID test)
     RELEASE_ASSERT(!m_isSwept);
     Operation& record = m_operations[checkedIndexInCode(test, m_operations.size())];
     RELEASE_ASSERT(FlagMask::asksInFull(record.opcode));
+    if (m_keepsChangesToOlderParts)
+        m_changesToOlderParts.append(ChangeToOlderPart { { }, { }, { }, test, record });
     record.flags |= *FlagMask::asksInFull(record.opcode);
 }
 
@@ -400,6 +454,8 @@ void Code::makeTypeTestAskInFull(ValueID test)
     RELEASE_ASSERT(!m_isSwept);
     Operation& record = m_operations[checkedIndexInCode(test, m_operations.size())];
     RELEASE_ASSERT(record.opcode == Opcode::TypeTest);
+    if (m_keepsChangesToOlderParts)
+        m_changesToOlderParts.append(ChangeToOlderPart { { }, { }, { }, test, record });
     record.flags |= *FlagMask::asksInFull(Opcode::TypeTest);
 }
 
@@ -428,6 +484,8 @@ void Code::leaveCheckOfProofToTestBehind(ValueID check)
     RELEASE_ASSERT(!m_isSwept);
     Operation& record = m_operations[checkedIndexInCode(check, m_operations.size())];
     RELEASE_ASSERT(record.opcode == Opcode::CheckProof);
+    if (m_keepsChangesToOlderParts)
+        m_changesToOlderParts.append(ChangeToOlderPart { { }, { }, { }, check, record });
     record.flags |= *FlagMask::isLeftToTestBehind(Opcode::CheckProof);
 }
 
@@ -564,7 +622,7 @@ void Code::end(BlockID blockID, const TerminatorDraft& draft, uint32_t numberOfE
         for (uint32_t index = 0; index < numberOfEdges; ++index)
             m_edges.append(edge);
     }
-    block.terminator = terminator;
+    setTerminator(blockID, block, terminator);
 }
 
 EdgeID Code::endWithJump(BlockID blockID, Origin origin)
@@ -583,7 +641,7 @@ EdgeID Code::endWithJump(BlockID blockID, Origin origin)
     Edge edge;
     edge.from = blockID;
     terminator.firstEdge = EdgeID(m_edges.append(edge));
-    block.terminator = terminator;
+    setTerminator(blockID, block, terminator);
     return terminator.firstEdge;
 }
 
@@ -606,7 +664,7 @@ void Code::endWithBranch(BlockID blockID, ValueID condition, Origin origin)
     edge.from = blockID;
     terminator.firstEdge = EdgeID(m_edges.append(edge));
     m_edges.append(edge);
-    block.terminator = terminator;
+    setTerminator(blockID, block, terminator);
 }
 
 ALWAYS_INLINE void Code::appendEdgeInto(BlockID from, BlockID to, std::span<const ValueID> arguments)
@@ -618,6 +676,8 @@ ALWAYS_INLINE void Code::appendEdgeInto(BlockID from, BlockID to, std::span<cons
     edge.m_arguments = arguments.data();
     edge.m_numberOfArguments = static_cast<uint32_t>(arguments.size());
     EdgeID added(m_edges.append(edge));
+    if (m_keepsChangesToOlderParts)
+        m_changesToOlderParts.append(ChangeToOlderPart { added, to, entered.m_lastEdgeIn, { }, { } });
     if (!entered.m_firstEdgeIn)
         entered.m_firstEdgeIn = added;
     else
@@ -639,7 +699,7 @@ void Code::endWithJump(BlockID blockID, Origin origin, BlockID to, std::span<con
     terminator.isSet = true;
     terminator.numberOfEdges = 1;
     terminator.firstEdge = EdgeID(m_edges.size());
-    block.terminator = terminator;
+    setTerminator(blockID, block, terminator);
     appendEdgeInto(blockID, to, m_sideWords.copy(arguments));
 }
 
@@ -657,7 +717,7 @@ void Code::endWithBranch(BlockID blockID, ValueID condition, Origin origin, Bloc
     terminator.isSet = true;
     terminator.numberOfEdges = 2;
     terminator.firstEdge = EdgeID(m_edges.size());
-    block.terminator = terminator;
+    setTerminator(blockID, block, terminator);
     appendEdgeInto(blockID, taken, { });
     appendEdgeInto(blockID, notTaken, { });
 }
@@ -685,6 +745,8 @@ void Code::closeEdge(EdgeID edgeID, BlockID to, std::span<const ValueID> argumen
     std::span<const ValueID> kept = m_sideWords.copy(arguments);
     edge.to = to;
     Block& entered = m_blocks[to.index()];
+    if (m_keepsChangesToOlderParts)
+        m_changesToOlderParts.append(ChangeToOlderPart { edgeID, to, entered.m_lastEdgeIn, { }, { } });
     if (!entered.m_firstEdgeIn)
         entered.m_firstEdgeIn = edgeID;
     else
@@ -692,6 +754,156 @@ void Code::closeEdge(EdgeID edgeID, BlockID to, std::span<const ValueID> argumen
     entered.m_lastEdgeIn = edgeID;
     edge.m_arguments = kept.data();
     edge.m_numberOfArguments = static_cast<uint32_t>(kept.size());
+}
+
+Code::Mark Code::mark() const
+{
+    Mark mark;
+    mark.numberOfOperations = m_operations.size();
+    mark.numberOfBlocks = m_blocks.size();
+    mark.numberOfEdges = m_edges.size();
+    mark.numberOfInlineFrames = static_cast<uint32_t>(m_inlineFrames.size());
+    mark.numberOfEntries = static_cast<uint32_t>(m_entries.size());
+    mark.numberOfFrameWords = m_numberOfFrameWords;
+    mark.numberOfFactUses = static_cast<uint32_t>(m_factUses.size());
+    mark.numberOfEffectsBelieved = static_cast<uint32_t>(m_effectsBelieved.size());
+    mark.numberOfTestsOfGuardsInFrontOfCopies = static_cast<uint32_t>(m_testsOfGuardsInFrontOfCopies.size());
+    mark.numberOfPollsWithFates = static_cast<uint32_t>(m_pollsWithFates.size());
+    mark.numberOfChangesToOlderParts = static_cast<uint32_t>(m_changesToOlderParts.size());
+    mark.numberOfOlderBlocksEnded = static_cast<uint32_t>(m_olderBlocksEnded.size());
+    m_numberOfBlocksAtNewestMark = m_blocks.size();
+    mark.opcodesOfValues = m_opcodesOfValues;
+    mark.hasHandlers = m_hasHandlers;
+    mark.hasSuspensions = m_hasSuspensions;
+    mark.hasLoops = m_hasLoops;
+    mark.holdsFrameCells = m_holdsFrameCells;
+    mark.holdsCallThatPlanHasNotCounted = m_holdsCallThatPlanHasNotCounted;
+    mark.callsOfFunctionNeverCollect = m_callsOfFunctionNeverCollect;
+    mark.readsNumbersOutOfBytes = m_readsNumbersOutOfBytes;
+    return mark;
+}
+
+Code::OpenBlock Code::stateOf(BlockID blockID) const
+{
+    const Block& block = m_blocks[checkedIndexInCode(blockID, m_blocks.size())];
+    return { blockID, block.m_last, block.hasEnded(), !!block.handler };
+}
+
+void Code::abandonBackTo(const Mark& mark, std::span<const OpenBlock> openBlocks)
+{
+    RELEASE_ASSERT(!m_isSwept && m_keepsChangesToOlderParts);
+    RELEASE_ASSERT(mark.numberOfOperations <= m_operations.size() && mark.numberOfBlocks <= m_blocks.size() && mark.numberOfEdges <= m_edges.size());
+    RELEASE_ASSERT(mark.numberOfInlineFrames && mark.numberOfInlineFrames <= m_inlineFrames.size() && mark.numberOfEntries <= m_entries.size());
+    RELEASE_ASSERT(mark.numberOfChangesToOlderParts <= m_changesToOlderParts.size());
+
+    while (m_changesToOlderParts.size() > mark.numberOfChangesToOlderParts) {
+        ChangeToOlderPart change = m_changesToOlderParts.takeLast();
+        if (change.changed) {
+            if (change.changed.index() < mark.numberOfOperations)
+                m_operations[change.changed.index()] = change.recordBefore;
+            continue;
+        }
+        if (change.entered.index() < mark.numberOfBlocks) {
+            Block& entered = m_blocks[change.entered.index()];
+            entered.m_lastEdgeIn = change.lastEdgeInBefore;
+            if (change.lastEdgeInBefore)
+                m_edges[change.lastEdgeInBefore.index()].m_nextInto = EdgeID();
+            else
+                entered.m_firstEdgeIn = EdgeID();
+        }
+        if (change.closed.index() < mark.numberOfEdges) {
+            Edge& edge = m_edges[change.closed.index()];
+            edge.to = BlockID();
+            edge.m_arguments = nullptr;
+            edge.m_numberOfArguments = 0;
+            edge.m_nextInto = EdgeID();
+        }
+    }
+
+    for (uint32_t index = mark.numberOfOperations; index < m_operations.size(); ++index) {
+        const Operation& operation = m_operations[index];
+        if (operation.blockIndex >= mark.numberOfBlocks)
+            continue;
+        Block& block = m_blocks[operation.blockIndex];
+        if (operation.opcode == Opcode::Parameter) {
+            block.m_parameters = nullptr;
+            block.m_numberOfParameters = 0;
+        } else if (!operation.previous || operation.previous.index() < mark.numberOfOperations)
+            block.m_last = operation.previous;
+    }
+    for (uint32_t index = mark.numberOfEdges; index < m_edges.size(); ++index) {
+        const Edge& edge = m_edges[index];
+        if (!edge.from || edge.from.index() >= mark.numberOfBlocks)
+            continue;
+        Block& block = m_blocks[edge.from.index()];
+        if (block.handler == EdgeID(index))
+            block.handler = EdgeID();
+        else if (block.terminator.isSet && block.terminator.numberOfEdges && block.terminator.firstEdge.index() <= index && index < block.terminator.firstEdge.index() + block.terminator.numberOfEdges)
+            block.terminator = Terminator();
+    }
+    for (uint32_t index = mark.numberOfEntries; index < m_entries.size(); ++index) {
+        BlockID entered = m_entries[index].block;
+        if (entered.index() < mark.numberOfBlocks)
+            m_blocks[entered.index()].isEntry = false;
+    }
+    while (m_olderBlocksEnded.size() > mark.numberOfOlderBlocksEnded) {
+        OlderBlockEnded ended = m_olderBlocksEnded.takeLast();
+        if (ended.block.index() < mark.numberOfBlocks)
+            m_blocks[ended.block.index()].terminator = ended.before;
+    }
+    for (const OpenBlock& open : openBlocks) {
+        Block& block = m_blocks[checkedIndexInCode(open.block, mark.numberOfBlocks)];
+        if (!open.hadEnded)
+            block.terminator = Terminator();
+        RELEASE_ASSERT(block.m_last == open.last);
+        RELEASE_ASSERT(block.hasEnded() == open.hadEnded);
+        RELEASE_ASSERT(!!block.handler == open.hadHandler);
+    }
+
+    Block dead;
+    dead.frequency = BlockFrequency::Rare;
+    dead.terminator.isSet = true;
+    if (!m_graveyard)
+        m_graveyard = BlockID(m_blocks.append(dead));
+    for (uint32_t index = mark.numberOfBlocks; index < m_blocks.size(); ++index)
+        m_blocks[index] = dead;
+    for (uint32_t index = mark.numberOfEdges; index < m_edges.size(); ++index) {
+        Edge& edge = m_edges[index];
+        edge.from = m_graveyard;
+        edge.to = m_graveyard;
+        edge.m_arguments = nullptr;
+        edge.m_numberOfArguments = 0;
+        edge.m_nextInto = EdgeID();
+    }
+    while (!m_recordsAbandoned.isEmpty() && m_recordsAbandoned.last().first >= mark.numberOfOperations)
+        m_recordsAbandoned.removeLast();
+    if (mark.numberOfOperations < m_operations.size())
+        m_recordsAbandoned.append({ mark.numberOfOperations, m_operations.size() });
+    Operation deadRecord;
+    deadRecord.opcode = Opcode::Undefined;
+    deadRecord.type = TypeTable::undefined;
+    deadRecord.representation = Representation::JSValue;
+    for (uint32_t index = mark.numberOfOperations; index < m_operations.size(); ++index) {
+        if (m_operations[index].blockIndex != Operation::noBlock)
+            m_operations[index] = deadRecord;
+        else
+            m_operations[index].inlineFrame = 0;
+    }
+    m_inlineFrames.shrink(mark.numberOfInlineFrames);
+    m_entries.shrink(mark.numberOfEntries);
+    m_numberOfFrameWords = mark.numberOfFrameWords;
+    m_factUses.shrink(mark.numberOfFactUses);
+    m_effectsBelieved.shrink(mark.numberOfEffectsBelieved);
+    m_testsOfGuardsInFrontOfCopies.shrink(mark.numberOfTestsOfGuardsInFrontOfCopies);
+    m_pollsWithFates.shrink(mark.numberOfPollsWithFates);
+    m_opcodesOfValues = mark.opcodesOfValues;
+    m_hasHandlers = mark.hasHandlers;
+    m_hasSuspensions = mark.hasSuspensions;
+    m_hasLoops = mark.hasLoops;
+    m_holdsFrameCells = mark.holdsFrameCells;
+    m_holdsCallThatPlanHasNotCounted = mark.holdsCallThatPlanHasNotCounted;
+    m_callsOfFunctionNeverCollect = mark.callsOfFunctionNeverCollect;
+    m_readsNumbersOutOfBytes = mark.readsNumbersOutOfBytes;
 }
 
 uint32_t Code::addInlineFrame(const InlineFrame& frame)

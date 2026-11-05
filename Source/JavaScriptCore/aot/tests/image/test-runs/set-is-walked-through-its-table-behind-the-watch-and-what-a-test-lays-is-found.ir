@@ -2,7 +2,7 @@
 # with   function total(things: Set<number>) { let sum = 0; for (const thing of things) sum += thing; return sum; }   function ofValues(things: Map<number, number>) { .. for (const value of things.values()) .. }
 # The method under Symbol.iterator and `values` are written through a value that nobody knows, and prototypes are climbed to from such values: so what opens an iteration over a Set, and what makes the iterator
 # of a Map's values, are open in this test run, behind the watch. `next` above the iterators, and the absence of `return` there, no test run can change. So the loops walk the tables in line, as in an executable,
-# behind the test that asks the instance and, in a test run, the byte of its class. The shell's code really replaces both methods between two calls: the byte is set, the test fails from then on,
+# behind the test that asks the instance and, in a test run, the byte of the method that opens. The shell's code really replaces both methods between two calls: the bytes are set, the tests fail from then on,
 # and the protocol on the failing side finds what the test run has laid.
 # OPTIONS: admit=ReplacedBuiltins
 # RUN: run-in-shell const aboveSets = Set.prototype, aboveMaps = Map.prototype, opens = aboveSets[Symbol.iterator], values = aboveMaps.values; globalThis.hidden = () => [1]; globalThis.set = new Set([1, 2, 3]); globalThis.map = new Map([[1, 4], [2, 5]]); const once = value => function () { let given = false; return { next() { const done = given; given = true; return { done, value: done ? undefined : value }; }, [Symbol.iterator]() { return this; } }; }; globalThis.replace = () => { aboveSets[Symbol.iterator] = once(40); aboveMaps.values = once(50); }; globalThis.restore = () => { aboveSets[Symbol.iterator] = opens; aboveMaps.values = values; };
@@ -18,13 +18,15 @@
 # LOCKS: open SetPrototypeSymbolIterator spelled-through-unseen
 # RUN(WALK): walk f1 mechanisms=all
 # WALK-LABEL: code f1:Body
-# WALK: = IsPristine {{*}}builtinClass=Set aspects=[Names]
+# WALK: = IsPristine {{*}}builtinClass=Set aspects=[Names, CellAlone]
+# WALK: = IsMemberAsBuilt builtin=SetPrototypeSymbolIterator
 # WALK: = SetNext
 # RUN(PROTOCOL): walk f1 mechanisms=all
 # PROTOCOL: key="next"
 # RUN(VALUES): walk f2 mechanisms=all
 # VALUES-LABEL: code f2:Body
-# VALUES: = IsPristine {{*}}builtinClass=Map aspects=[Names]
+# VALUES: = IsPristine {{*}}builtinClass=Map aspects=[Names, CellAlone]
+# VALUES: = IsMemberAsBuilt builtin=MapPrototypeValues
 # VALUES: = MapNext
 # RUN(CALLED): walk f2 mechanisms=all
 # CALLED: = PropGet {{*}}key="values"

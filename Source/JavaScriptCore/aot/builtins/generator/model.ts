@@ -218,11 +218,11 @@ export type ModelPlace =
   | { place: "Result" }
   | { place: "ResultSlot"; slot: ModelSlot }
   | { place: "ResultField"; index: number; holdsOnlyWhatIsStored: boolean }
-  | { place: "NewValue"; type: ModelType }
+  | { place: "NewValue"; type: ModelType; holdsWhatIsThrown: boolean }
   | { place: "NativeMemory" }
   | { place: "Prototype"; operand: ModelOperand }
   | { place: "Member"; operand: ModelOperand; path: readonly (ModelName | null)[]; firstStep: number }
-  | { place: "NativeCell"; cell: ModelName };
+  | { place: "NativeCell"; cell: ModelName; holdsOnlyWhatIsStored: boolean };
 
 export type ModelKey =
   | { key: "None" }
@@ -576,6 +576,7 @@ export interface ModelClass {
   pristineTest: PristineTest;
   hasClosureInstances: boolean;
   instancesAreEntries: boolean;
+  keepsStructuresOfClassesBelow: boolean;
   definesCharactersOnNewInstances: boolean;
   namesDefinedOnNewInstances: readonly ModelName[] | null;
   constructorOnlyReadsPrototypeOfNewTarget: boolean;

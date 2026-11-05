@@ -38,13 +38,17 @@ static bool namesValueInCopiesFused(const BodyValue& operation, ValueID named)
     return names;
 }
 
-static bool mayStandBehindCopyInCopiesFused(const BodyValue& operation, ValueID copy)
+bool mayStandBehindCopy(const BodyValue& operation, ValueID copy)
 {
     Opcode opcode = operation.opcode();
     if (namesValueInCopiesFused(operation, copy))
         return false;
     if (constantsInFormOfUses.contains(opcode))
         return true;
+    if (opcode == Opcode::Convert) {
+        DeclaredType declared = operation.as<Opcode::Convert>().declared();
+        return !declared.has(PositionFlags::IsClaim) && !declared.has(PositionFlags::IsInt32Promise);
+    }
     if (opcodesThatStateTypes.contains(opcode))
         return opcode == Opcode::Upcast;
     return declaredBoundInTable(opcode).isPure() && !operandsMayRunCode(opcode);
@@ -104,7 +108,7 @@ bool buildCopyWithWhatFollowsOfItsOpcodes(Walker& walker, const BodyValue& copy)
     for (uint32_t place = placeOfCopy + 1; place < end && firstTaken == TakenByCopyInCopiesFused::Nothing; ++place) {
         BodyValue next = index.value(ValueID(firstValue + place));
         firstTaken = whatCopyTakesOfInCopiesFused(walker, next, copy.id());
-        if (firstTaken == TakenByCopyInCopiesFused::Nothing && !mayStandBehindCopyInCopiesFused(next, copy.id()))
+        if (firstTaken == TakenByCopyInCopiesFused::Nothing && !mayStandBehindCopy(next, copy.id()))
             return false;
     }
     if (firstTaken == TakenByCopyInCopiesFused::Nothing)
@@ -123,7 +127,7 @@ bool buildCopyWithWhatFollowsOfItsOpcodes(Walker& walker, const BodyValue& copy)
         BodyValue next = index.value(ValueID(firstValue + place));
         TakenByCopyInCopiesFused whatIsTaken = whatCopyTakesOfInCopiesFused(walker, next, copy.id());
         if (whatIsTaken == TakenByCopyInCopiesFused::Nothing) {
-            if (!mayStandBehindCopyInCopiesFused(next, copy.id()))
+            if (!mayStandBehindCopy(next, copy.id()))
                 break;
             continue;
         }
@@ -181,7 +185,7 @@ bool buildCopyWithWhatFollowsOfItsOpcodes(Walker& walker, const BodyValue& copy)
 
     for (ValueID part : taken) {
         if (FunctionID callee = walker.facts().linked().calleeAt(walker.currentFunction(), part))
-            walker.arrivals().leaveAnything(callee);
+            walker.leaveAnythingAt(callee);
     }
     walker.walkStretch(block.id(), walkedUpTo, walkedUpTo);
     return true;

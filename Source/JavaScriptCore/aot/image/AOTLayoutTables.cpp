@@ -679,6 +679,7 @@ static uint32_t appendObjectLayoutRecord(TableEncoder& encoder, LayoutID id, con
     if (encoder.facts.linked().layout(id).reachesUnseenCode && !shape.impossibleMutations.isEmpty())
         encoder.fail("RecordRulesOutWhatUnseenCodeMayDo"_s, id);
     record.impossibleMutationsRaw = shape.impossibleMutations.toRaw();
+    record.isSaidNeverToReachUnseenCode = AOT::hasFlag(encoder.build.options().testing, Wire::TestingSwitch::CheckProofsAtRunTime) && !encoder.facts.linked().layout(id).reachesUnseenCode;
     record.shape = shapeNumber;
     record.numberOfOrders = parts.numberOfKeyOrders;
     record.referencesOffset = distanceFromLayoutRecord(offset, referencesOffset);

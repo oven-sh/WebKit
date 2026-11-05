@@ -263,6 +263,16 @@ public:
         return true;
     }
 
+    constexpr bool masksAgreeWithHeaps() const
+    {
+        uint32_t heapsWithMasks = 0;
+        for (unsigned index = 0; index < numberOfIndexedHeaps; ++index) {
+            if (m_masks[index])
+                heapsWithMasks |= bitsOf(indexedHeapsInOrder[index]);
+        }
+        return heapsWithMasks == (m_heaps & bitsOf(indexedHeaps));
+    }
+
     void forEach(NOESCAPE const Invocable<void(AbstractHeap, uint64_t mask)> auto& functor) const
     {
         for (AbstractHeap heap : heaps())

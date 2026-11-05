@@ -56,9 +56,9 @@ static std::optional<TextPackedForStraightSwitch> tryPackTextForStraightSwitch(s
     return TextPackedForStraightSwitch { text.length(), packStringIntoRegister(text) };
 }
 
-static bool keepsSubjectOfStraightSwitch(StubKey stub, const StubSummary& summary)
+static bool keepsSubjectOfStraightSwitch(const StubSummary& summary)
 {
-    return !exists(stub.withCallerFrame(CallerFrame::KeepsNoRegisters)) && !summary.clobbered.contains(subjectOfStraightSwitchGPR, IgnoreVectors);
+    return !summary.clobbered.contains(subjectOfStraightSwitchGPR, IgnoreVectors);
 }
 
 static TestOfStraightSwitch testCaseOfStraightSwitch(StraightEmitter& emitter, Origin origin, StringID literal, bool jumpsIfEqual)
@@ -75,12 +75,12 @@ static TestOfStraightSwitch testCaseOfStraightSwitch(StraightEmitter& emitter, O
         StraightArgument operands[] { subject, StraightArgument::word(text->packed) };
         emitter.callStub(origin, stub, operands, { });
         bool zeroSaysEqual = summary.signature.trueCondition == MacroAssembler::Zero;
-        return { jit.branchOnFlags(jumpsIfEqual == zeroSaysEqual ? CCallHelpers::Equal : CCallHelpers::NotEqual), keepsSubjectOfStraightSwitch(stub, summary) };
+        return { jit.branchOnFlags(jumpsIfEqual == zeroSaysEqual ? CCallHelpers::Equal : CCallHelpers::NotEqual), keepsSubjectOfStraightSwitch(summary) };
     }
 
     StubKey stub = AOT::equalsLiteral(ComparedOperand::Value);
     emitter.callStub(origin, stub, { &subject, 1 }, { .numberedImmediate = NumberedImmediate { emitter.mentions().add(NumberSpace::String, literal) } });
-    return { jit.branchTest32(jumpsIfEqual ? CCallHelpers::NonZero : CCallHelpers::Zero, emitter.resultOfCall()), keepsSubjectOfStraightSwitch(stub, emitter.catalog().summaryOf(stub)) };
+    return { jit.branchTest32(jumpsIfEqual ? CCallHelpers::NonZero : CCallHelpers::Zero, emitter.resultOfCall()), keepsSubjectOfStraightSwitch(emitter.catalog().summaryOf(stub)) };
 }
 
 void StraightEmitter::generateSwitchOnString(const BodyTerminator& terminator)

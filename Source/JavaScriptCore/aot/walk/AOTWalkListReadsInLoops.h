@@ -28,27 +28,14 @@ Reference storageOfListFromInFrontOfLoop(Walker&, const ListTestedInFrontOfLoop&
 
 bool holeLeavesTurnBehindRow(const BodyIndex&, const BodyValue& read, const ListTestedInFrontOfLoop&);
 bool readLeavesTurnAtHoleBehindRow(Walker&, const BodyValue& read);
-TypeID typeReadOutOfListTestedInFrontOfLoop(Walker&, const BodyIndex&, const BodyValue& read, TypeID typeOfList, TypeID typeOfPosition);
 bool leavesListsTestedInFrontOfLoopAsTheyAre(const Effects&);
 Vector<ValueID, 2> namesInFrontThatLoopMentions(const Walker&, const BodyIndex&, LoopID, uint32_t firstValueOfLoop, Reference value);
 bool readsLengthOfViewTestedInFrontOfLoop(Walker&, const BodyValue& read);
-bool leavesViewsTestedInFrontOfLoopAsTheyAre(const Effects&);
 
-class ListsNotedAsTestedForLook {
-    WTF_MAKE_NONCOPYABLE(ListsNotedAsTestedForLook);
-public:
-    ListsNotedAsTestedForLook(Walker&, std::span<const ListTestedInFrontOfLoop>);
-    ~ListsNotedAsTestedForLook();
-
-private:
-    Walker& m_walker;
-    std::span<const ListTestedInFrontOfLoop> m_lists;
-};
 struct ListsReadInLoop {
     Vector<ListTestedInFrontOfLoop, 2> lists;
     bool areLeftAsTheyAre { false };
     bool areTested { false };
-    std::unique_ptr<LoopPreview> look;
 };
 ListsReadInLoop findListsReadInLoop(Walker&, BlockID inputHead, const LoopPreview&, std::span<const Reference> entering, Vector<GuessInFrontOfLoop, 4>& guesses);
 void buildTestsOfListsReadInLoop(Walker&, BlockID inputHead, std::span<const Reference> entering, ListsReadInLoop&, std::span<const GuessInFrontOfLoop>, std::span<const Reference> proofs, BlockID& closedStart, Origin);

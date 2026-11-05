@@ -327,7 +327,7 @@ std::optional<GuardOfPrototypeAtConstruction> findGuardOfPrototypeAtConstruction
         return std::nullopt;
 
     GuardOfPrototypeAtConstruction guard { { MemberConditionKind::MemberUnchanged, classLayout, ClassSide::Static, program.keyOf(BuiltinNames::prototype) } };
-    guard.isKnownToHold = walker.state().someGuardHoldsOf(classLayout);
+    guard.isKnownToHold = walker.state().guardsHaveBegun(classLayout) && walker.state().someGuardHoldsOf(classLayout);
     if (!guard.isKnownToHold && !newCellIsLookedAt && !(guardsAreAskedAtBirth && walker.state().guardsHaveBegun(classLayout)))
         return std::nullopt;
     if (walker.state().guardOfReadsHolds(classLayout, guard.condition.key, ClassSide::Static) && walker.checksProofs() && !walker.isUnreachable()) {
@@ -339,6 +339,18 @@ std::optional<GuardOfPrototypeAtConstruction> findGuardOfPrototypeAtConstruction
             walker.checkProof(holds, TypeArena::fromPrimitives(Primitive::True), TypeTable::boolean, ProofSource::WhatIsRemembered, origin);
     }
     return guard;
+}
+
+void checkPrototypeOfCellMadeBehindGuard(Walker& walker, Reference object, Origin origin)
+{
+    if (!walker.checksProofs() || walker.isUnreachable())
+        return;
+    origin.isTailCall = false;
+    Draft look(Opcode::HasLayoutPrototype, origin);
+    look.setObjectOperand(object);
+    Reference passes = walker.build(WTF::move(look));
+    if (passes && passes.isValue() && !walker.isUnreachable())
+        walker.checkProof(passes, TypeArena::fromPrimitives(Primitive::True), TypeTable::boolean, ProofSource::WhatIsRemembered, origin);
 }
 
 static Reference buildWhatConstructionGivesInBirths(Walker& walker, FunctionID callee, Reference returned, Reference object, Origin origin)
@@ -431,6 +443,8 @@ bool listStoresOfCopiedConstructorOfItsOpcodes(Walker& walker, const BodyValue& 
     if (guardOfPrototype && !guardOfPrototype->isKnownToHold && !someGuardOfClassIsAsked)
         listed.conditions.append(guardOfPrototype->condition);
     bool beginsGuards = guardOfPrototype && !walker.state().guardsHaveBegun(guardOfPrototype->condition.layout);
+    if (!beginsGuards)
+        askWholeSideWhereGuardsMayNotHaveBegun(walker, declaredLayoutOf(program, constructed), listed.conditions);
 
     const BodyIndex& index = walker.currentBodyIndex();
     BodyBlock block = index.block(index.blockOf(call.id()));
@@ -460,7 +474,7 @@ bool listStoresOfCopiedConstructorOfItsOpcodes(Walker& walker, const BodyValue& 
     }
 
     Reference prototype;
-    if (!guardOfPrototype) {
+    if (!guardOfPrototype || walker.checksProofs()) {
         Draft read(Opcode::GetConstructPrototype, origin);
         read.setNewTargetOperand(closure);
         read.setLayout(declaredLayoutOf(program, constructed));
@@ -492,16 +506,12 @@ bool listStoresOfCopiedConstructorOfItsOpcodes(Walker& walker, const BodyValue& 
             return true;
         goOnWhereLookPasses(passes);
     }
+    if (guardOfPrototype)
+        checkPrototypeOfCellMadeBehindGuard(walker, object, origin);
     if (listed.asksForLayoutPrototype || guardOfPrototype)
         walker.state().noteFactsOfCell(object, FactOfCell::HasLayoutPrototype);
-    if (guardsHold) {
-        for (const MemberConditionRecord& condition : listed.conditions) {
-            if (condition.kind == MemberConditionKind::MemberUnchanged)
-                walker.state().noteGuardOfReadsHolds(condition.layout, condition.key, guardsHold, condition.side);
-            else
-                walker.state().noteStoresPassAbove(condition.layout, condition.key, guardsHold);
-        }
-    }
+    if (guardsHold)
+        noteGuardsShownByTest(walker, listed.conditions.span(), guardsHold);
 
     Vector<Walker::ArmThatMeets, 2> arms;
     auto endArm = [&](Reference value) {
@@ -518,7 +528,7 @@ bool listStoresOfCopiedConstructorOfItsOpcodes(Walker& walker, const BodyValue& 
         Walker::ClosedArm closedArm(walker, !!guardOfPrototype);
         if (walker.isUnreachable())
             return;
-        walker.arrivals().leaveAnything(callee);
+        walker.leaveAnythingAt(callee);
         Draft asWritten = walker.draftOf(call);
         walker.chooseConservativeFields(asWritten);
         endArm(walker.isUnreachable() ? Reference() : buildCallAsWrittenThatGives(walker, WTF::move(asWritten), typeOfObjectsMadeThroughEntryOf(walker, callee)));

@@ -204,6 +204,8 @@ static ASCIILiteral nameInFactsText(SummaryTrait trait)
         return "ReadsUnderComputedKey"_s;
     case SummaryTrait::StoresUnderComputedKey:
         return "StoresUnderComputedKey"_s;
+    case SummaryTrait::OnlyPassesOnGatheredArguments:
+        return "OnlyPassesOnGatheredArguments"_s;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -455,6 +457,8 @@ static void printCallOfSummary(IRPrinter& printer, const ThinSummary& summary, u
         out.print(" on-no-way-to-return"_s);
     if (call.passesList)
         out.print(" passes-list"_s);
+    if (call.passesOnGatheredArguments)
+        out.print(" passes-on-gathered-arguments"_s);
     printNamedNodeOfSummary(printer, summary, "throws-to="_s, call.thrownTo);
     out.println();
 }
@@ -726,8 +730,12 @@ static void printSummaryInFactsText(IRPrinter& printer, FunctionID function, con
         out.println("  answer-of-require m"_s, answer.module.index(), " -> n"_s, answer.node);
     for (const ThinSummary::AnswerOfRequire& answer : summary.objectsOfCompiledModules)
         out.println("  object-of-compiled-module m"_s, answer.module.index(), " -> n"_s, answer.node);
-    for (const ThinSummary::NameThatLoaderTakes& name : summary.namesThatLoaderTakes)
-        out.println("  loader-takes n"_s, name.read, " -> g"_s, name.variable.index());
+    for (const ThinSummary::NameThatLoaderTakes& name : summary.namesThatLoaderTakes) {
+        if (name.variable)
+            out.println("  loader-takes n"_s, name.read, " -> g"_s, name.variable.index());
+        else
+            out.println("  host-looks-for n"_s, name.read);
+    }
     if (!summary.firstStoresOfBody.isEmpty()) {
         out.print("  stores-first"_s);
         CommaPrinter comma(", "_s, " "_s);
@@ -849,7 +857,7 @@ static void runSummaryCommand(TestCommandContext& context)
     }
 }
 
-enum class PartOfLinkTables : uint8_t { Functions, Calls, Accesses, Fields, Variables, Captures, Members, Layouts, Families, Counts };
+enum class PartOfLinkTables : uint8_t { Functions, Calls, Accesses, Fields, Variables, Captures, Members, Layouts, Modules, Families, Counts };
 
 static constexpr PartOfLinkTables lookupsAmongPartsOfLinkTables = static_cast<PartOfLinkTables>(UINT8_MAX - 1);
 
@@ -867,6 +875,7 @@ static constexpr NamedPartOfLinkTables namedPartsOfLinkTables[] {
     { "captures"_s, PartOfLinkTables::Captures },
     { "members"_s, PartOfLinkTables::Members },
     { "layouts"_s, PartOfLinkTables::Layouts },
+    { "modules"_s, PartOfLinkTables::Modules },
     { "families"_s, PartOfLinkTables::Families },
     { "lookups"_s, lookupsAmongPartsOfLinkTables },
     { "counts"_s, PartOfLinkTables::Counts },
@@ -880,7 +889,7 @@ static void printTypeFieldInFactsText(IRPrinter& printer, ASCIILiteral name, Typ
     printer.print(type);
 }
 
-static void printLinkedCell(IRPrinter& printer, const LinkedCell& cell)
+static void printLinkedCell(IRPrinter& printer, const LinkedCell& cell, bool isLaidLate = false, bool isStoredByFollowerOfMaker = false)
 {
     printTypeFieldInFactsText(printer, "proven"_s, cell.proven);
     if (cell.everyWriterIsKnown)
@@ -908,6 +917,10 @@ static void printLinkedCell(IRPrinter& printer, const LinkedCell& cell)
                 printer.out().print(word, "."_s);
         }
     }
+    if (isLaidLate)
+        printer.out().print(" laid-late"_s);
+    if (isStoredByFollowerOfMaker)
+        printer.out().print(" stored-by-follower-of-maker"_s);
     printer.out().println();
 }
 
@@ -1153,7 +1166,7 @@ static void printLinkedFields(IRPrinter& printer, const LinkTables& tables)
             printer.out().print(" "_s);
             printer.print(appendedKeys[place]);
             printer.out().print(" appended"_s);
-            printLinkedCell(printer, *tables.findCellOfField({ LayoutID(layout), numberOfFields + place }));
+            printLinkedCell(printer, *tables.findCellOfField({ LayoutID(layout), numberOfFields + place }), tables.isAppendedFieldLaidLate({ LayoutID(layout), numberOfFields + place }), tables.isStoredByFollowerOfMaker({ LayoutID(layout), numberOfFields + place }));
         }
     }
 }
@@ -1266,6 +1279,12 @@ static void printLinkedLayouts(IRPrinter& printer, const LinkTables& tables)
         }
         out.println();
     }
+}
+
+static void printLinkedModules(IRPrinter& printer, const LinkTables& tables)
+{
+    for (size_t index : tables.modulesWhoseValueStaysIn)
+        printer.out().println("module m"_s, index, " value-stays-with-compiled-code"_s);
 }
 
 static void printFamiliesInFactsText(IRPrinter& printer, const Families& families)
@@ -1634,6 +1653,8 @@ static void printLookupsInFactsText(IRPrinter& printer, const LookupsPastProgram
         printer.print(BuiltinClassID(static_cast<uint32_t>(index)));
         out.println();
     }
+    for (size_t index : lookups.entriesThatHandHostNothing)
+        out.println("lookup entry-hands-host-nothing "_s, index);
     printKeys("name-read-through-lost"_s, lookups.namesReadThroughLostBuiltins);
     printKeys("name-written-through-lost"_s, lookups.namesWrittenThroughLostBuiltins);
     printKeys("name-written-through-unseen-by-program"_s, lookups.namesWrittenThroughUnseenByProgram);
@@ -1738,6 +1759,9 @@ static void runLinkCommand(TestCommandContext& context)
         case PartOfLinkTables::Layouts:
             printLinkedLayouts(printer, tables);
             printFactsOfStringsInFactsText(printer, *facts);
+            break;
+        case PartOfLinkTables::Modules:
+            printLinkedModules(printer, tables);
             break;
         case PartOfLinkTables::Families:
             printFamiliesInFactsText(printer, facts->families());

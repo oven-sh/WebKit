@@ -1,10 +1,10 @@
-# the row of a quotient of integers says between which two integers it lies, and a look at a loop types the quotient by its row. Folding puts the number itself in the place of the quotient.
+# the row of a quotient of integers says between which two integers it lies. Folding puts the number itself in the place of the quotient.
 # The type of a number with a fraction names the two integers around it: the least type that holds it. So it lies within whatever a row says of the operation that was folded,
-# and what a built-in or an operator makes of it lies within what the look made of the row's type. What comes round lies within the preview
+# and so does what a built-in or an operator makes of it. The head of the loop holds what enters, 0, joined with what the walk saw come round, and every back edge is held against it
 # function run(n) { let q = 0, t = 0, s = 0, m = 0; for (let i = 0; i < n; i++) { q = 7 / 3; t = Math.trunc(7 / 3); s = 7 / 3 + 1; m = -(7 / 3); } return [q, t, s, m]; }
 # RUN: walk f1 mechanisms=none+TypedOperations+Folding+DirectCalls+BuiltinCalls
 # CHECK-LABEL: code f1:Body
-# CHECK: ([[q]]: int[0, 3]|fractional[2, 3] {{*}}, [[t]]: int[0, 3] {{*}}, [[s]]: int[0, 4]|fractional[3, 4] {{*}}, [[m]]: int[-3, 0]|fractional[-3, -2] {{*}}isLoopHead=true
+# CHECK: ([[q]]: 0|fractional[2, 3] {{*}}, [[t]]: int[0, 3] {{*}}, [[s]]: 0|fractional[3, 4] {{*}}, [[m]]: 0|fractional[-3, -2] {{*}}isLoopHead=true
 # CHECK: [[whole]]: int[2, 3] {{*}} = CallInline {{*}}inlineBuiltin=MathTrunc
 # RUN(CONSTANTS): walk f1 mechanisms=none+TypedOperations+Folding+DirectCalls+BuiltinCalls
 # CONSTANTS-LABEL: code f1:Body

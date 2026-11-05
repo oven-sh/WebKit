@@ -819,6 +819,8 @@ private:
     static std::optional<unsigned> reservationFor(std::span<const AOT::FieldAsProperty>);
     template<HasGap hasGap> bool writeListedFields(Cursor&, JSObject&, std::span<const AOT::FieldAsProperty>, unsigned reservation);
     template<HasGap hasGap> void appendListedFields(JSObject&, std::span<const AOT::FieldAsProperty>);
+    bool isMemberWrittenByItsFields(JSObject&);
+    bool writeListedFieldsOfMember(Cursor&, JSObject&, std::span<const AOT::FieldAsProperty>, unsigned reservation);
     void appendElementsInCompiledProgram(JSArray&);
     bool isCompiledStructureKnown(const JSObject& object) const { return m_hasCompiledStructureWithoutToJSON && object.structureID().bits() == m_compiledStructureWithoutToJSON; }
 #endif
@@ -882,6 +884,7 @@ private:
     uint8_t* m_stackLimit { nullptr };
 #if ENABLE(AOT)
     uint32_t m_compiledStructureWithoutToJSON; // The bits of a StructureID. Written before m_hasCompiledStructureWithoutToJSON is set.
+    uint32_t m_compiledStructureOfMemberWithoutToJSON { 0 }; // The same for an object that is a member of another. No StructureID is zero.
     // While it is watching, m_stackLimit is above every frame, so every append() takes the slow check.
     NO_UNIQUE_ADDRESS std::conditional_t<growsBuffer, WatchedJSONLevels, std::monostate> m_watchedLevels;
 #endif
@@ -2117,6 +2120,9 @@ NEVER_INLINE void FastStringifier<CharType, bufferMode>::appendDate(DateInstance
 template<typename CharType, BufferMode bufferMode>
 bool FastStringifier<CharType, bufferMode>::datesHaveBuiltinToJSON(JSObject& datePrototype)
 {
+    // A name that is immutable stays so, and a date of this realm has been written in place only behind all that is asked below.
+    if (m_vm.aotState().realmWhoseDatesAreWrittenInPlace == &m_globalObject) [[likely]]
+        return true;
     if (m_datesHaveBuiltinToJSON != TriState::Indeterminate)
         return m_datesHaveBuiltinToJSON == TriState::True;
     bool result = true;
@@ -2692,7 +2698,7 @@ ALWAYS_INLINE bool FastStringifier<CharType, bufferMode>::writeListedFields(Curs
 
     for (const AOT::FieldAsProperty* current = fields.data(), *end = current + fields.size(); ; ++current) {
         if constexpr (writesLatin1 && hasGap == HasGap::No) {
-            if (readsSlots) [[likely]] {
+            if (readsSlots && current != end) [[likely]] {
                 FieldsWrittenBySlot written = writeFieldsBySlot(cursor.next, cursor.limit, object, current, end, reservation);
                 cursor.next = written.next;
                 current = written.firstFieldNotWritten;
@@ -2784,6 +2790,22 @@ ALWAYS_INLINE bool FastStringifier<CharType, bufferMode>::writeListedFields(Curs
                     return false;
                 }
                 continue;
+            } else if constexpr (writesLatin1 && hasGap == HasGap::No) {
+                // A compiled object of which all is known goes on with this cursor.
+                if (type == CompiledObjectType && !AOT::PropertyWalk::hasExtraProperties(asObject(&cell))) {
+                    if (!isMemberWrittenByItsFields(*asObject(&cell))) [[unlikely]] {
+                        recordFailure("compiled object that is callable, has a prototype of its own or static properties that are not made yet, or may have toJSON"_s);
+                        return false;
+                    }
+                    auto fieldsOfMember = AOT::PropertyWalk::fieldsInKeyOrder(asObject(&cell));
+                    auto reservationOfMember = fieldsOfMember ? reservationFor(*fieldsOfMember) : std::nullopt;
+                    if (reservationOfMember) [[likely]] {
+                        appendKey();
+                        if (!writeListedFieldsOfMember(cursor, *asObject(&cell), *fieldsOfMember, *reservationOfMember) || !reserve(cursor, reservation)) [[unlikely]]
+                            return false;
+                        continue;
+                    }
+                }
             }
         } else if constexpr (writesLatin1) {
             appendKey();
@@ -2822,6 +2844,39 @@ ALWAYS_INLINE bool FastStringifier<CharType, bufferMode>::writeListedFields(Curs
     *brace = '{';
     *cursor.next++ = '}';
     return true;
+}
+
+// What appendCompiledObject() asks of an object without extra properties in front of its fields.
+template<typename CharType, BufferMode bufferMode>
+ALWAYS_INLINE bool FastStringifier<CharType, bufferMode>::isMemberWrittenByItsFields(JSObject& object)
+{
+    uint32_t bits = object.structureID().bits();
+    if (bits == m_compiledStructureOfMemberWithoutToJSON || isCompiledStructureKnown(object)) [[likely]]
+        return true;
+    auto& structure = *object.structure();
+    uint32_t known = m_compiledStructureWithoutToJSON;
+    bool hasKnown = m_hasCompiledStructureWithoutToJSON;
+    if (object.isCallable() || structure.hasPolyProto() || structure.hasNonReifiedStaticProperties() || mayCompiledObjectHaveToJSON(object)) [[unlikely]]
+        return false;
+    // Only a Structure that has answered is remembered. Where this object alone has answered, the next one of its Structure is asked again.
+    if (isCompiledStructureKnown(object)) {
+        m_compiledStructureOfMemberWithoutToJSON = bits;
+        m_compiledStructureWithoutToJSON = known;
+        m_hasCompiledStructureWithoutToJSON = hasKnown;
+    }
+    return true;
+}
+
+template<typename CharType, BufferMode bufferMode>
+NEVER_INLINE bool FastStringifier<CharType, bufferMode>::writeListedFieldsOfMember(Cursor& cursor, JSObject& object, std::span<const AOT::FieldAsProperty> fields, unsigned reservation)
+{
+    if constexpr (growsBuffer) {
+        if (std::bit_cast<uint8_t*>(currentStackPointer()) < m_stackLimit) [[unlikely]] {
+            if (!hasStackSpaceAtWatchedLevel(&object, currentStackPointer()))
+                return false;
+        }
+    }
+    return writeListedFields<HasGap::No>(cursor, object, fields, reservation);
 }
 
 template<typename CharType, BufferMode bufferMode>

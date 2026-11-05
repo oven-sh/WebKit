@@ -163,13 +163,13 @@ function isSamePlace(left: ModelPlace, right: ModelPlace): boolean {
       if (right.place !== "ResultField" || left.holdsOnlyWhatIsStored !== right.holdsOnlyWhatIsStored) return false;
       return left.index === right.index;
     case "NewValue":
-      return right.place === "NewValue" && left.type === right.type;
+      return right.place === "NewValue" && left.type === right.type && left.holdsWhatIsThrown === right.holdsWhatIsThrown;
     case "Member":
       return (
         right.place === "Member" && left.firstStep === right.firstStep && isSameOperand(left.operand, right.operand)
       );
     case "NativeCell":
-      return right.place === "NativeCell" && left.cell === right.cell;
+      return right.place === "NativeCell" && left.cell === right.cell && left.holdsOnlyWhatIsStored === right.holdsOnlyWhatIsStored;
   }
 }
 
@@ -465,13 +465,21 @@ function resolvePlace(context: OverloadContext, spec: PlaceSpec): ModelPlace | n
       return { place: "ResultField", index, holdsOnlyWhatIsStored: spec.holdsOnlyWhatIsStored ?? false };
     }
     case "NewValue":
-      return { place: "NewValue", type: context.types.intern(spec.value, context, context.source) };
+      return {
+        place: "NewValue",
+        type: context.types.intern(spec.value, context, context.source),
+        holdsWhatIsThrown: spec.holdsWhatIsThrown ?? false,
+      };
     case "Member": {
       const operand = context.operandOf(spec.operand, context.source);
       return operand === null ? null : memberPlaceOf(context, operand, spec.path);
     }
     case "NativeCell":
-      return { place: "NativeCell", cell: context.builder.internName(spec.cell, "Text") };
+      return {
+        place: "NativeCell",
+        cell: context.builder.internName(spec.cell, "Text"),
+        holdsOnlyWhatIsStored: spec.holdsOnlyWhatIsStored ?? false,
+      };
   }
 }
 
@@ -958,7 +966,7 @@ function applyUse(context: OverloadContext, state: OperandState, use: UseSpec): 
       return;
     }
     case "ReturnsKept": {
-      const from = resolvePlace(context, { place: "NativeCell", cell: use.cell });
+      const from = resolvePlace(context, { place: "NativeCell", cell: use.cell, holdsOnlyWhatIsStored: use.holdsOnlyWhatIsStored });
       if (from !== null) addTransfer(context, from, resultPlace, "Returns");
       return;
     }

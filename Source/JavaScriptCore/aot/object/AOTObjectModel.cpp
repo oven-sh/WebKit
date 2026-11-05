@@ -688,6 +688,7 @@ ALWAYS_INLINE CompiledStructure* StructureTable::create(VM& vm, const LayoutData
     if (JSObject* object = variant.prototype.getObject(); object && !object->structure()->mayBePrototype())
         object->didBecomePrototype(vm);
     countEvent(vm, RuntimeCounterID::CompiledStructuresMade);
+    ++m_numberOfStructuresMade;
     RELEASE_ASSERT(!variant.hasExtraProperties || !layout.extraPropertiesSlot() == !!variant.heldExtraProperties);
     RELEASE_ASSERT(!variant.heldExtraProperties || (variant.hasExtraProperties && !variant.extraPropertiesStructure));
     if (variant.realm == realm)
@@ -1054,6 +1055,7 @@ std::optional<StructureID> StructureTable::structureIDOf(uint32_t number) const
 
 void StructureTable::forgetStructuresOf(const LayoutData& classLayout)
 {
+    m_state.objects->classes.forgetInstancesBelowPrototypes();
     const ClassTable& classes = m_state.objects->classes;
     auto belongsToClass = [&](uint32_t shape) {
         return m_tables.hasLayoutForShape(shape) && classes.classOfInstances(m_tables.layoutForShape(shape)).index == classLayout.index;

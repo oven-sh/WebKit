@@ -220,11 +220,75 @@ static void runWhyClosedCommand(TestCommandContext& context)
     }
 }
 
+static ASCIILiteral nameOfWalkNoteKind(WalkNoteKind kind)
+{
+    switch (kind) {
+    case WalkNoteKind::ResolvedOperation:
+        return "ResolvedOperation"_s;
+    case WalkNoteKind::GenericOperation:
+        return "GenericOperation"_s;
+    case WalkNoteKind::TestThatRejoins:
+        return "TestThatRejoins"_s;
+    case WalkNoteKind::TestThatLeaves:
+        return "TestThatLeaves"_s;
+    case WalkNoteKind::TestThatThrows:
+        return "TestThatThrows"_s;
+    case WalkNoteKind::CallNotInlined:
+        return "CallNotInlined"_s;
+    case WalkNoteKind::ObjectBuilt:
+        return "ObjectBuilt"_s;
+    case WalkNoteKind::ObjectNotInFrame:
+        return "ObjectNotInFrame"_s;
+    case WalkNoteKind::ObjectStayedVirtual:
+        return "ObjectStayedVirtual"_s;
+    case WalkNoteKind::LoopWalkedAgain:
+        return "LoopWalkedAgain"_s;
+    case WalkNoteKind::WayEnds:
+        return "WayEnds"_s;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+static void runNotesCommand(TestCommandContext& context)
+{
+    std::optional<Vector<CodeUnit>> units = unitsInOrderOfWords(*context.program, context.arguments, context.out);
+    if (!units || units->isEmpty())
+        return;
+
+    StagedBuild stage = context.stage();
+    if (!stage.code(units->first()))
+        return;
+    CompileInputs inputs(*stage.prepared()->compileInputs);
+    inputs.walk.options.takesNotes = true;
+    CompileWorker worker(inputs, context.build, stage.program().types);
+    for (CodeUnit unit : *units) {
+        size_t numberOfUnitsWithNotes = worker.notes().size();
+        if (!worker.walkAndSweep(unit)) {
+            context.out.print("the walk of "_s);
+            printCodeUnit(context.out, unit);
+            context.out.println(" failed"_s);
+            return;
+        }
+        context.out.print("notes of "_s);
+        printCodeUnit(context.out, unit);
+        context.out.println();
+        if (worker.notes().size() == numberOfUnitsWithNotes)
+            continue;
+        for (const WalkNote& note : worker.notes().last().notes) {
+            context.out.print(nameOfWalkNoteKind(note.kind), " @"_s, note.origin.position, " in f"_s, note.writtenIn.index());
+            if (note.layout)
+                context.out.print(" layout=L"_s, note.layout.index());
+            context.out.println();
+        }
+    }
+}
+
 std::span<const TestCommand> walkTestCommands()
 {
     static constexpr TestCommand commands[] {
         { "walk"_s, runWalkCommand, ProgramOfCommand::AsWritten, "unit.."_s },
         { "why-closed"_s, runWhyClosedCommand, ProgramOfCommand::AsWritten, "unit.."_s },
+        { "notes"_s, runNotesCommand, ProgramOfCommand::AsWritten, "unit.."_s },
         { "code-round-trip"_s, runCodeRoundTripCommand },
         { "verify-code"_s, runVerifyCodeCommand },
         { "sweep-code"_s, runSweepCodeCommand },

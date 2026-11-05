@@ -5,7 +5,7 @@
 # The control: of-a-module-that-native-code-loads-a-name-that-is-no-field-takes-the-record-along.ir.
 # LIBRARY: own
 # OPTIONS: exclude=CodeOutsideImage
-# RUN: link layouts fields variables functions mechanisms=all
+# RUN: link layouts fields variables functions modules mechanisms=all
 # REQUIRES: entries-of-bun
 # CHECK: layout L0 changes=[] stays-with-compiled-code
 # CHECK: layout L1 changes=[] stays-with-compiled-code
@@ -18,6 +18,7 @@
 # CHECK: variable g1 proven=L1 writers-known written-at-construction-alone filled
 # CHECK-NOT: function f3 {{*}}callers-known
 # CHECK: function f4 {{*}}callers-known
+# CHECK: module m2 value-stays-with-compiled-code
 
 layout L0 module=m2 fields=[{key="nextTick" declared={type=anything} flags=[IsRequired]}, {key="queueTick1" declared={type=anything} flags=[IsRequired]}, {key="ring" declared={type=anything} flags=[IsRequired]}, {key="whileHooked" declared={type=anything} flags=[IsRequired]}]
 layout L1 module=m2 fields=[{key="made" declared={type=number} flags=[IsRequired]}]

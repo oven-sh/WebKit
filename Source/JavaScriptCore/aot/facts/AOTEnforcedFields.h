@@ -47,7 +47,7 @@ private:
 
 JS_EXPORT_PRIVATE EnforcedField enforcedTypeOfField(const Program&, const LinkTables& linked, const LinkTables& held, const Families&, const FamiliesOfInstances&, TypeArena&, FieldReference);
 
-bool slotsOfLayoutMayBeHeldToTypes(const Program&, const LinkTables& linked, const LinkTables& held, const FamiliesOfInstances&, LayoutID);
+bool slotsOfLayoutMayBeHeldToTypes(const Program&, const FamiliesOfInstances&, LayoutID);
 
 JS_EXPORT_PRIVATE TypeID contentsOfEnforcedSlot(TypeArena&, TypeID slotType, bool holdsUndefinedAndNull);
 

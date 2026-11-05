@@ -4,14 +4,16 @@
 # and the way there is not rare, or the allocator would spill in it.
 # Link has followed both lists, so that copy asks the list nothing either (LinkTables::receiversThatStayAsMade): it names no kind and goes by the one that it finds, and what it reads is a number, a text or undefined (resultsOfReadsByKey).
 # The other copy was once closed and rare: x1.126 on one benchmark.
+# The other copy is the walk that found the row, kept: it is printed in front of the second test.
 # RUN: walk f1 mechanisms=all
 # CHECK-LABEL: code f1:Body
-# CHECK: = HasArrayStorage {{*}}arrayStorage=Double
 # CHECK-NOT: frequency=Rare isLoopHead=true
-# CHECK: isLoopHead=true
+# CHECK: isInLoop=true isLoopHead=true
 # CHECK: = GetArrayElement {{*}}level=Proven
 # CHECK: = TypeTest {{*}}testedType=number
-# CHECK: isLoopHead=true
+# CHECK: = HasArrayStorage {{*}}arrayStorage=Double
+# CHECK-NOT: frequency=Rare isLoopHead=true
+# CHECK: isInLoop=true isLoopHead=true
 # CHECK: = GetArrayElement {{*}}arrayStorage=Double level=Proven
 # RUN(SHELL): run-in-shell globalThis.sink = (first, second) => { print(first + " " + second); };
 # SHELL: 6 6

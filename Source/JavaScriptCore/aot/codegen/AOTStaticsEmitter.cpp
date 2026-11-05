@@ -73,14 +73,14 @@ ClassGuardKey StaticsEmitter::keyOfGuard(LayoutID classLayout, ClassSide side)
     return MentionList::keyOfClassGuard(classLayout, side);
 }
 
-ClassGuardKey StaticsEmitter::keyOfGuard(LayoutID classLayout, ClassSide side, PropertyKeyID name, bool isAskedByStoresAlone)
+ClassGuardKey StaticsEmitter::keyOfGuard(LayoutID classLayout, ClassSide side, PropertyKeyID name, AskerOfClassGuardOfName asker)
 {
-    RELEASE_ASSERT(classLayout && name && m_plan.hasClassRecord(classLayout) && (!isAskedByStoresAlone || side == ClassSide::Prototype));
+    RELEASE_ASSERT(classLayout && name && m_plan.hasClassRecord(classLayout) && (asker == AskerOfClassGuardOfName::Reads || side == ClassSide::Prototype));
     if (!liesInThread(name))
-        return MentionList::keyOfClassGuardOfName(classLayout, side, NumberSpace::Name, name.index(), isAskedByStoresAlone);
+        return MentionList::keyOfClassGuardOfName(classLayout, side, NumberSpace::Name, name.index(), asker);
     const PropertyKey& threadLocalKey = types().at(name);
     RELEASE_ASSERT(threadLocalKey.kind == PropertyKeyKind::Text);
-    return MentionList::keyOfClassGuardOfName(classLayout, side, NumberSpace::NameOfText, threadLocalKey.text.index(), isAskedByStoresAlone);
+    return MentionList::keyOfClassGuardOfName(classLayout, side, NumberSpace::NameOfText, threadLocalKey.text.index(), asker);
 }
 
 ClassGuardKey StaticsEmitter::keyOfGuardOfNames(LayoutID classLayout, ClassSide side, std::span<const PropertyKeyID> names)

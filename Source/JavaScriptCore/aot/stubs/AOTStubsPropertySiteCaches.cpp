@@ -450,19 +450,6 @@ public:
     Word word(ptrdiff_t offset) const { return Word(m_place, static_cast<int32_t>(offset)); }
 #endif
 
-    Jump loadOperandUnlessKeyDiffers(StubAssembler& jit, ptrdiff_t offsetOfAnswer, GPRReg key, GPRReg operand, [[maybe_unused]] GPRReg keyOfAnswer) const
-    {
-#if CPU(X86_64)
-        Jump differs = jit.branch32(CCallHelpers::NotEqual, word(offsetOfAnswer), key);
-        jit.load32(word(offsetOfAnswer + OBJECT_OFFSETOF(SiteAnswers::Answer, operand)), operand);
-        return differs;
-#else
-        RELEASE_ASSERT(noOverlap(key, operand, keyOfAnswer));
-        jit.loadPair32(m_place, TrustedImm32(static_cast<int32_t>(offsetOfAnswer)), keyOfAnswer, operand);
-        return jit.branch32(CCallHelpers::NotEqual, key, keyOfAnswer);
-#endif
-    }
-
     Jump loadOperandUnlessKeyDiffersKeepingDifference(StubAssembler& jit, ptrdiff_t offsetOfAnswer, GPRReg difference, GPRReg operand, [[maybe_unused]] GPRReg keyOfAnswer) const
     {
 #if CPU(X86_64)
@@ -604,11 +591,10 @@ static void countMissAtSite(StubAssembler& jit, GPRReg receiver, GPRReg distance
     });
 }
 
-StubSignature signatureOfReadAtSite(StubKey key)
+StubSignature signatureOfReadAtSite(StubKey)
 {
-    GPRReg receiver = key.operandRegister().value_or(gprOf(firstStubOperandRegister));
-    StubSignature signature = StubSignature::withGPRResult({ receiver });
-    signature.immediate = gprOf(receiver == gprOf(shortStubImmediateRegister) ? stubImmediateRegister : shortStubImmediateRegister);
+    StubSignature signature = StubSignature::withGPRResult({ gprOf(firstStubOperandRegister) });
+    signature.immediate = gprOf(shortStubImmediateRegister);
     return signature;
 }
 
@@ -1041,8 +1027,6 @@ void generateReadAtSiteUnlessAsMade(StubAssembler& jit)
 {
     const ReadAtSiteForm form = readAtSiteFormOf(jit.key());
     StubKey reads = readAtSite(form.receiver, form.name);
-    if (jit.key().operandRegister())
-        reads = reads.withOperandRegister(*jit.key().operandRegister());
     if (form.receiver != ReceiverAtSite::IsCell) {
         jit.jumpToStub(reads);
         return;
@@ -1051,80 +1035,6 @@ void generateReadAtSiteUnlessAsMade(StubAssembler& jit)
     jit.move(TrustedImm64(JSValue::encode(JSValue())), jit.result());
     jit.returnToCaller();
     jit.linkToStub(isNotAsMade, reads);
-}
-
-StubSignature signatureOfReadAtSiteOfNarrowField(StubKey key)
-{
-    return signatureOfReadAtSite(key);
-}
-
-void generateReadAtSiteOfNarrowField(StubAssembler& jit)
-{
-    const ReadAtSiteForm form = readAtSiteFormOf(jit.key());
-    const SlotRepresentation representation = narrowFieldsAtSites[jit.key().count()];
-    const GPRReg receiver = jit.operand(0);
-    const GPRReg distance = jit.immediate();
-#if CPU(X86_64)
-    const GPRReg place = jit.allocateScratch(StubRegister::T11);
-    const GPRReg key = jit.allocateScratch(StubRegister::T13);
-    std::optional<OwnedScratchRegister> ownedScratch;
-    if (receiver == gprOf(StubRegister::T14))
-        ownedScratch.emplace(jit);
-    const GPRReg offset = ownedScratch ? ownedScratch->gpr() : jit.allocateScratch(StubRegister::T14);
-    const GPRReg keyOfAnswer = InvalidGPRReg;
-#else
-    const GPRReg key = jit.allocateScratch(StubRegister::T11);
-    const GPRReg offset = jit.allocateScratch(StubRegister::T13);
-    const GPRReg keyOfAnswer = jit.allocateScratch(StubRegister::T12);
-    const GPRReg place = jit.allocateScratch(StubRegister::T14);
-#endif
-    RELEASE_ASSERT(noOverlap(receiver, distance, place, key, offset));
-    auto readAsAtEveryPlace = [&](ReceiverAtSite receiverIs) {
-        StubKey stub = readAtSite(receiverIs, form.name);
-        jit.jumpToStub(jit.key().operandRegister() ? stub.withOperandRegister(*jit.key().operandRegister()) : stub);
-    };
-
-    Jump isNotCell;
-    if (form.receiver == ReceiverAtSite::IsAnyValue)
-        isNotCell = jit.branchIfNotCell(receiver);
-    const AnswersOfStub answers(jit, distance, place);
-    jit.load32(Address(receiver, offsetOfShapeWord), key);
-    jit.xor32(TrustedImm32(static_cast<int32_t>(SiteAnswers::bitTurnedForSlotInCell(representation))), key);
-    JumpList goesOn;
-    Jump hasOtherKey = answers.loadOperandUnlessKeyDiffers(jit, offsetOfFirstAnswer, key, offset, keyOfAnswer);
-    Label readsSlot = jit.label();
-    FieldReadRegisters typed {
-        .field = { .object = receiver, .slotData = InvalidGPRReg, .extensionWordOffset = InvalidGPRReg, .address = place, .representation = offset },
-        .value = key,
-        .result = jit.result(),
-        .number = jit.allocateScratch(FPRInfo::fpRegT0),
-        .numberScratch = jit.allocateScratch(FPRInfo::fpRegT1),
-    };
-    if (representationWithCodeForRead(representation) <= representationsReadAsInt32.back())
-        typed.slot = BaseIndex(receiver, offset, CCallHelpers::TimesOne);
-    else
-        jit.getEffectiveAddress(BaseIndex(receiver, offset, CCallHelpers::TimesOne), place);
-    FieldReadExits exits;
-    {
-        AllowMacroScratchRegisterUsage offsetIsFreeBehindTheLoad(jit);
-        readFieldAndReturn(jit, typed, exits, representation);
-    }
-
-    hasOtherKey.link(&jit);
-    if (std::optional<SiteAnswers::Form> byStructure = SiteAnswers::formByStructureOfSlotInCell(representation)) {
-        answers.loadBitsOfForm(jit, offsetOfSecondAnswer, receiver, key, offset, keyOfAnswer);
-        goesOn.append(jit.branch32(CCallHelpers::NotEqual, key, TrustedImm32(static_cast<int32_t>(SiteAnswers::bitsOf(SiteUse::Read, *byStructure)))));
-        answers.loadOperand(jit, offsetOfSecondAnswer, offset);
-        jit.jump().linkTo(readsSlot, &jit);
-    }
-    goesOn.append(exits.isAbsent);
-    goesOn.append(exits.cannot);
-    goesOn.link(&jit);
-    readAsAtEveryPlace(ReceiverAtSite::IsCell);
-    if (isNotCell.isSet()) {
-        isNotCell.link(&jit);
-        readAsAtEveryPlace(ReceiverAtSite::IsAnyValue);
-    }
 }
 
 void generateReadBehindSite(StubAssembler& jit)

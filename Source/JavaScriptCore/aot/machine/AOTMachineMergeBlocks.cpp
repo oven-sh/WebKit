@@ -29,6 +29,7 @@ public:
     }
 
     void run();
+    void letGoOfLists();
 
 private:
     static constexpr uint32_t none = UINT32_MAX;
@@ -48,7 +49,7 @@ private:
     static ALWAYS_INLINE bool originIsObservable(const Operation*);
 
     BlocksByPlace listBlocksByPlace();
-    ALWAYS_INLINE std::optional<uint32_t> hashOfContentIfMergeable(const Block*, uint32_t& hashOfGenerators);
+    ALWAYS_INLINE std::optional<uint32_t> hashOfContentIfMergeable(const Block*);
     NEVER_INLINE bool isMergeable(const Block*);
 
     static bool areEqual(const HeapSet&, const HeapSet&);
@@ -71,6 +72,7 @@ private:
     const bool* m_isSuccessorOfPatch { nullptr };
     const bool* m_isEnteredFromRareBlock { nullptr };
     ArenaVector<uint32_t> m_usesWithinBlock;
+    std::span<uint8_t> m_memoryOfPlaces;
 };
 
 ALWAYS_INLINE uint64_t MachineBlockMerger::mix(uint64_t hash, uint64_t word)
@@ -197,7 +199,9 @@ MachineBlockMerger::BlocksByPlace MachineBlockMerger::listBlocksByPlace()
     const size_t bytesOfPlaces = static_cast<size_t>(numberOfPlaces) * sizeof(uint32_t);
     const size_t offsetOfPreviousInPlace = (bytesOfPlaces + numberOfBlocks + sizeof(uint32_t) - 1) & ~(sizeof(uint32_t) - 1);
     const size_t offsetOfPlacesOfSeveral = offsetOfPreviousInPlace + static_cast<size_t>(numberOfBlocks) * sizeof(uint32_t);
-    uint8_t* memory = static_cast<uint8_t*>(m_arena.allocate(offsetOfPlacesOfSeveral + static_cast<size_t>(numberOfBlocks / 2) * sizeof(uint32_t), alignof(uint64_t)));
+    const size_t bytesOfMemory = offsetOfPlacesOfSeveral + static_cast<size_t>(numberOfBlocks / 2) * sizeof(uint32_t);
+    uint8_t* memory = static_cast<uint8_t*>(m_arena.allocate(bytesOfMemory, alignof(uint64_t)));
+    m_memoryOfPlaces = std::span<uint8_t>(memory, bytesOfMemory);
     std::memset(memory, 0, bytesOfPlaces + numberOfBlocks);
     uint32_t* places = reinterpret_cast<uint32_t*>(memory);
     bool* isSuccessorOfPatch = reinterpret_cast<bool*>(memory + bytesOfPlaces);
@@ -258,7 +262,7 @@ MachineBlockMerger::BlocksByPlace MachineBlockMerger::listBlocksByPlace()
     return { reinterpret_cast<uint64_t*>(memory), previousInPlace, { placesOfSeveral, numberOfPlacesOfSeveral } };
 }
 
-ALWAYS_INLINE std::optional<uint32_t> MachineBlockMerger::hashOfContentIfMergeable(const Block* block, uint32_t& hashOfGenerators)
+ALWAYS_INLINE std::optional<uint32_t> MachineBlockMerger::hashOfContentIfMergeable(const Block* block)
 {
     const uint32_t size = block->size();
     uint64_t hash = static_cast<uint64_t>(size) << 32 | static_cast<uint64_t>(block->upsilons().size()) << 1 | static_cast<uint64_t>(block->isLandingPad());
@@ -321,14 +325,12 @@ ALWAYS_INLINE std::optional<uint32_t> MachineBlockMerger::hashOfContentIfMergeab
 
     if (originsMatter)
         hash = mix(hash, hashOfOrigins);
-    hashOfGenerators = static_cast<uint32_t>(generators);
-    return static_cast<uint32_t>(hash);
+    return static_cast<uint32_t>(mix(hash, generators));
 }
 
 bool MachineBlockMerger::isMergeable(const Block* block)
 {
-    uint32_t hashOfGenerators;
-    return hashOfContentIfMergeable(block, hashOfGenerators).has_value();
+    return hashOfContentIfMergeable(block).has_value();
 }
 
 bool MachineBlockMerger::areEqual(const HeapSet& a, const HeapSet& b)
@@ -363,6 +365,7 @@ bool MachineBlockMerger::areEqual(const PatchOperation* a, const PatchOperation*
         || a->followsFrameSetup() != b->followsFrameSetup()
         || a->leavesByReturning() != b->leavesByReturning()
         || a->needsFrameRecord() != b->needsFrameRecord()
+        || a->findsOperandsInFrameWithoutRecord() != b->findsOperandsInFrameWithoutRecord()
         || a->isSuspension() != b->isSuspension()
         || a->releasesDeadValues() != b->releasesDeadValues()
         || a->sharesLatePath() != b->sharesLatePath()
@@ -448,7 +451,7 @@ void MachineBlockMerger::moveEdgesToBlocksThatStay(Block* from, const uint32_t* 
     for (unsigned successorIndex = 0; successorIndex < from->numSuccessors(); ++successorIndex) {
         uint32_t replacement = replacements[from->successor(successorIndex).block()->index()];
         if (replacement != none)
-            Order::retarget(from, successorIndex, m_proc.blockAt(replacement));
+            Order::retargetToBlockThatStandsForTarget(from, successorIndex, m_proc.blockAt(replacement));
     }
 }
 
@@ -485,6 +488,17 @@ void MachineBlockMerger::findBlocksEnteredFromRareBlocks()
             isEnteredFromRareBlock[edge.block()->index()] = true;
     }
     m_isEnteredFromRareBlock = isEnteredFromRareBlock;
+    m_arena.letGoOfArray(reached, numberOfBlocks);
+    m_arena.letGoOfArray(isReached, numberOfBlocks);
+}
+
+void MachineBlockMerger::letGoOfLists()
+{
+    if (m_memoryOfPlaces.size() < Arena::smallestRoomLetGo)
+        return;
+    m_arena.letGoOfArray(m_isEnteredFromRareBlock, m_isEnteredFromRareBlock ? m_proc.numberOfBlocks() : 0);
+    m_usesWithinBlock.letGo(m_arena);
+    m_arena.letGoOfArray(m_memoryOfPlaces.data(), m_memoryOfPlaces.size());
 }
 
 void MachineBlockMerger::run()
@@ -509,7 +523,6 @@ void MachineBlockMerger::run()
     uint64_t* candidates = byPlace.storage;
     uint32_t numberOfCandidates = 0;
     uint32_t* replacements = reinterpret_cast<uint32_t*>(byPlace.storage + numberOfBlocks);
-    uint32_t* hashesOfGenerators = replacements + numberOfBlocks;
     bool hasReplacements = false;
     auto replace = [&](uint32_t other, uint32_t kept) {
         if (!hasReplacements) {
@@ -544,7 +557,7 @@ void MachineBlockMerger::run()
             uint32_t index = member - 1;
             if (!mayMergeUnlessRareBlockEnters(index))
                 continue;
-            if (std::optional<uint32_t> hash = hashOfContentIfMergeable(blocks[index], hashesOfGenerators[index]))
+            if (std::optional<uint32_t> hash = hashOfContentIfMergeable(blocks[index]))
                 candidates[numberOfCandidates++] = static_cast<uint64_t>(*hash) << 32 | index;
         }
     }
@@ -564,7 +577,7 @@ void MachineBlockMerger::run()
                 uint32_t other = static_cast<uint32_t>(candidates[next]);
                 if (hasReplacements && replacements[other] != none)
                     continue;
-                if (hashesOfGenerators[kept] != hashesOfGenerators[other] || !areIdentical(blocks[kept], blocks[other]))
+                if (!areIdentical(blocks[kept], blocks[other]))
                     continue;
                 if (staysApartForRareBlockThatEnters(other))
                     continue;
@@ -595,7 +608,9 @@ void mergeIdenticalBlocks(Procedure& procedure)
 {
     if (procedure.failure())
         return;
-    MachineBlockMerger(procedure).run();
+    MachineBlockMerger merger(procedure);
+    merger.run();
+    merger.letGoOfLists();
 }
 
 } } } // namespace JSC::AOT::Machine

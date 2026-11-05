@@ -27,6 +27,11 @@ static constexpr int32_t bytesReservedForNullishPart = roundUpToMultipleOf<sizeo
 static_assert(maxLengthOfTextWrittenByStores <= StackStringBuilder::maxBytesWrittenPastLimit && StringBuilderEmitter::maxInlineDigits <= StackStringBuilder::maxBytesWrittenPastLimit);
 static_assert(bytesReservedForBooleanPart <= static_cast<int32_t>(StackStringBuilder::maxBytesWrittenPastLimit) && bytesReservedForNullishPart <= static_cast<int32_t>(StackStringBuilder::maxBytesWrittenPastLimit));
 
+static bool everyCellIsTextInStringBuilderParts(const Type& type)
+{
+    return (type.primitives & Primitive::AnyString) && !(type.primitives & (Primitive::BigInt | Primitive::AnySymbol));
+}
+
 static void emitArmsOfStringBuilderPart(Output& out, Condition condition, Machine::EdgeClass classOfSecond, NOESCAPE const Invocable<void()> auto& emitFirst, NOESCAPE const Invocable<void()> auto& emitSecond)
 {
     LBasicBlock first = out.newBlock();
@@ -254,16 +259,25 @@ void StringBuilderPartEmitter::generateStringBuilderAppendValue(const ValueConte
     }
     CellPointer builder = in<CellPointer>(value->builderOperand());
     Boxed boxed = in<Boxed>(appended);
+    auto appendTextOrPrimitive = [&] {
+        if (!everyCellIsTextInStringBuilderParts(typeOf(appended))) {
+            appendPrimitive(value, builder, boxed);
+            return;
+        }
+        emitArmsOfStringBuilderPart(m_out, isCell(boxed), Machine::EdgeClass::Unlikely, [&] {
+            appendString(value, builder, unboxCell(boxed));
+        }, [&] {
+            appendPrimitive(value, builder, boxed);
+        });
+    };
     if (typeOf(appended).primitives & Primitive::Number) {
         Integer untagged(m_out.sub(boxed.value(), m_numberTag));
         emitArmsOfStringBuilderPart(m_out, below(untagged, StringBuilderEmitter::firstIntegerWrittenByCall), Machine::EdgeClass::Normal, [&] {
             appendDigits(value, builder, low32(untagged));
-        }, [&] {
-            appendPrimitive(value, builder, boxed);
-        });
+        }, appendTextOrPrimitive);
         return;
     }
-    appendPrimitive(value, builder, boxed);
+    appendTextOrPrimitive();
 }
 
 Pointer StringBuilderPartEmitter::appendString(const OperationContext& context, PlaceInFrame place, CellPointer string)
@@ -425,16 +439,23 @@ void StringBuilderPartEmitter::generateStackStringBuilderAppendValue(const Value
     }
     PlaceInFrame place = placeInFrameOf(value);
     Boxed boxed = in<Boxed>(value->valueOperand());
+    auto appendTextOrPrimitive = [&] {
+        if (!everyCellIsTextInStringBuilderParts(typeOf(value->valueOperand())))
+            return appendPrimitive(value, place, boxed);
+        return emitArmsOfStackStringBuilderPart(m_out, isCell(boxed), Machine::EdgeClass::Unlikely, [&] {
+            return appendString(value, place, unboxCell(boxed));
+        }, [&] {
+            return appendPrimitive(value, place, boxed);
+        });
+    };
     if (typeOf(value->valueOperand()).primitives & Primitive::Number) {
         Integer untagged(m_out.sub(boxed.value(), m_numberTag));
         builders().defineCursorBehindPart(value, place.record, emitArmsOfStackStringBuilderPart(m_out, below(untagged, StringBuilderEmitter::firstIntegerWrittenByCall), Machine::EdgeClass::Normal, [&] {
             return appendDigits(value, place, low32(untagged));
-        }, [&] {
-            return appendPrimitive(value, place, boxed);
-        }));
+        }, appendTextOrPrimitive));
         return;
     }
-    builders().defineCursorBehindPart(value, place.record, appendPrimitive(value, place, boxed));
+    builders().defineCursorBehindPart(value, place.record, appendTextOrPrimitive());
 }
 
 } } } // namespace JSC::AOT::Typed

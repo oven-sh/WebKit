@@ -171,6 +171,7 @@ struct KeyedValuePlace {
     static constexpr uint32_t extraPropertyBits = absenceBit | fieldBit;
     static constexpr uint32_t getterBit = 4;
     static constexpr uint32_t notOwnBits = getterBit | absenceBit;
+    static constexpr uint32_t getterAboveBits = getterBit | fieldBit;
     static constexpr uint32_t globalObjectBit = 1;
     static constexpr uint32_t additionBit = 4;
     static constexpr uint32_t narrowReferenceBit = 1u << 31;
@@ -186,6 +187,7 @@ struct KeyedValuePlace {
         int32_t wordIndex;
         uint32_t slotData;
         uint32_t offsetOfSlot;
+        uint32_t wordInCellCage;
         ExtraProperty extraProperty;
     };
 };
@@ -293,7 +295,11 @@ struct PropertyCacheWords {
     SlotHandlers handlers;
 #endif
     uint64_t headersOfPrototypeSlotsOfOrdinaryConstructors[PlaceOfOrdinaryConstructor::numberOfPlaces + 1];
+    static constexpr unsigned shiftOfPlaceOfStructureBelowBuiltinClass = 4;
+    static constexpr unsigned numberOfStructuresBelowBuiltinClasses = 64;
+    uint32_t structuresBelowBuiltinClasses[numberOfStructuresBelowBuiltinClasses];
 
+    uint32_t& placeOfStructureBelowBuiltinClass(uint32_t structureID) { return structuresBelowBuiltinClasses[structureID >> shiftOfPlaceOfStructureBelowBuiltinClass & (numberOfStructuresBelowBuiltinClasses - 1)]; }
     static constexpr ptrdiff_t offsetOfFront(SlotAccess access) { return OBJECT_OFFSETOF(PropertyCacheWords, front) + static_cast<ptrdiff_t>(static_cast<unsigned>(access) * sizeof(FrontWords)); }
 };
 

@@ -98,9 +98,9 @@ static void rememberOwnerAndReturn(StubAssembler& jit, GPRReg owner)
     jit.callOperationAndReturn(Entry::operationAOTBarrierSlow, { .returns = Returns::Void, .saves = Saves::CallerSavedRegisters, .checksException = false, .secondArgumentIn = owner });
 }
 
-StubSignature signatureOfWriteBarrier(StubKey key)
+StubSignature signatureOfWriteBarrier(StubKey)
 {
-    return StubSignature::withoutResult({ key.operandRegister().value_or(gprOf(firstStubOperandRegister)) });
+    return StubSignature::withoutResult({ gprOf(firstStubOperandRegister) });
 }
 
 void generateWriteBarrier(StubAssembler& jit)
@@ -112,12 +112,6 @@ void generateWriteBarrier(StubAssembler& jit)
     jit.returnToCaller();
 
     isWithinThreshold.link(&jit);
-    if (jit.key().operandRegister()) {
-        if (owner != gprOf(firstStubOperandRegister))
-            jit.move(owner, jit.allocateScratch(firstStubOperandRegister));
-        jit.jumpToStub(writeBarrier());
-        return;
-    }
     returnUnlessOperationRemembers(jit, owner, state);
     rememberOwnerAndReturn(jit, owner);
 }

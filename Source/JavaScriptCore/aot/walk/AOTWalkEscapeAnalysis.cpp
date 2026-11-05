@@ -163,7 +163,7 @@ static void noteWhatNewObjectFillsIn(Walker& walker, Reference object, const Ope
 
     bool isEnvironment = program.at(layout).isEnvironment();
     if (isEnvironment)
-        walker.noteScopeThatUnitMakes(layout);
+        walker.noteThatUnitMakesScope();
     state.noteShape(object, isEnvironment ? walker.types().forEnvironment(layout) : walker.types().forLayout(layout));
     if (!isEnvironment) {
         OptionSet<FactOfCell> facts { FactOfCell::NotFrozen };
@@ -605,31 +605,6 @@ std::optional<Vector<Reference, 8>> elementsOfFreshArguments(Walker& walker, Ref
     return elements;
 }
 
-bool readLeavesFreshObjectAsItIs(Walker& walker, const BodyValue& read, uint32_t operandIndex, Reference name, TypeID typeOfKey)
-{
-    Reference object = freshObjectNamedBy(walker, name);
-    if (!object)
-        return false;
-    bool isArguments = argumentsObjectsOfEscapeAnalysis.contains(walker.code().at(object.id()).opcode);
-
-    if (read.opcode() == Opcode::PropGet) {
-        if (operandIndex != OperandIndex::PropGet::object || read.isFreeName() || read.key() != walker.program().keyOf(BuiltinNames::length))
-            return false;
-        return isArguments ? !!lengthOfFreshArguments(walker, object) : hasKind(walker.types(), walker.typeOf(object), OperandKind::Array);
-    }
-    static_assert(OperandIndex::ElemGet::object == OperandIndex::ElemHas::object);
-    if ((read.opcode() != Opcode::ElemGet && read.opcode() != Opcode::ElemHas) || operandIndex != OperandIndex::ElemGet::object || read.propertyOperand() == read.objectOperand() || !typeOfKey)
-        return false;
-    Type key = walker.types().at(typeOfKey);
-    if (!isArguments)
-        return key.isNumber() && isFreshListAsMade(walker, object);
-    if (read.opcode() != Opcode::ElemGet || !key.isInteger())
-        return false;
-    if (key.integers.isSingleValue() && key.integers.minimum >= 0 && key.integers.minimum < UINT32_MAX && elementOfFreshArguments(walker, object, static_cast<uint32_t>(key.integers.minimum)))
-        return true;
-    return positionsOfFreshArgumentsAreInSight(walker, object, key.integers.minimum);
-}
-
 static bool answerMappedArgumentFromState(Walker& walker, const BodyValue& read)
 {
     Reference object = freshArgumentsNamedBy(walker, walker.referenceOf(read.as<Opcode::GetMappedArgument>().argumentsOperand()));
@@ -854,7 +829,7 @@ void markEscapingOperands(Walker& walker, const Draft& draft, const Effects* fou
         bool handsOutWhatClosureHolds = operand.isHeldByClosure && opcode == Opcode::GetCapture;
         if (!doesGenericOperation && !handsOutWhatClosureHolds && !useLetsFreshObjectLeave(operandInfoOf(opcode, std::min(operand.operandIndex, numberOfNamedOperands)), runsOtherCode))
             continue;
-        if (closuresHoldScopes)
+        if (walker.unitHasMadeScopes())
             walker.noteThatWalkLetsScopeLeave(operand.object);
         state.markEscaped(operand.object);
         someObjectHasLeft = true;

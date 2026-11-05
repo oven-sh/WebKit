@@ -229,7 +229,7 @@ inline void ScanOfBody::letFirstValuesOfSlotsArrive()
             uint32_t block = m_blocks[store];
             return m_environmentsWhoseLeavingLiesBelow[block] == number && (block != environment.blockOfLeaving || store < environment.positionOfLeaving);
         };
-        SummaryScopeStoredFirst storedFirst { ValueID(environment.root), environment.blockOfLeaving, environment.positionOfLeaving, { } };
+        SummaryScopeStoredFirst storedFirst { ValueID(environment.root), environment.blockOfLeaving, environment.positionOfLeaving, 0, { } };
         for (uint32_t field = 0; field < environment.numberOfSlots; ++field) {
             const SlotOfEnvironmentInScan& slot = m_slotsOfEnvironments[environment.firstSlot + field];
             if (slot.firstValue == FirstValueOfSlotInScan::IsListed)
@@ -243,6 +243,18 @@ inline void ScanOfBody::letFirstValuesOfSlotsArrive()
         if (!storedFirst.fields.isEmpty())
             m_summary.scopesStoredFirst.append(WTF::move(storedFirst));
     }
+
+    Vector<SummaryScopeStoredFirst>& scopes = m_summary.scopesStoredFirst;
+    if (scopes.size() < 2)
+        return;
+    Vector<uint32_t, 8> inOrderOfLeaving;
+    for (uint32_t scope = 0; scope < scopes.size(); ++scope)
+        inOrderOfLeaving.append(scope);
+    std::ranges::sort(inOrderOfLeaving, { }, [&](uint32_t scope) {
+        return std::tuple { scopes[scope].blockOfLeaving, scopes[scope].positionOfLeaving, scope };
+    });
+    for (uint32_t place = 0; place < scopes.size(); ++place)
+        scopes[place].scopeAtThisPlaceInOrderOfLeaving = inOrderOfLeaving[place];
 }
 
 } } } // namespace JSC::AOT::Typed

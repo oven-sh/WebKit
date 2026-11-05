@@ -102,7 +102,7 @@ auto Modules::momentOfNow() -> MomentMockWasLaid
     return { ++state.momentOfLoads, state.momentOfTestFile, isInPreload };
 }
 
-std::optional<unsigned> Modules::keepEndedMock(ModuleID fileOrModule, JSObject* mock, MomentMockWasLaid laid, uint32_t momentEnded)
+std::optional<unsigned> Modules::keepEndedMock(ModuleID fileOrModule, JSObject* mock, MomentMockWasLaid laid, uint32_t momentEnded, BitVector&& exportsLeftOut)
 {
     if (m_momentsOfLoads.isEmpty())
         return std::nullopt;
@@ -121,7 +121,7 @@ std::optional<unsigned> Modules::keepEndedMock(ModuleID fileOrModule, JSObject* 
     storeValue(m_instance.globalObject, loaded.endedMocks.get(), static_cast<unsigned>(ended.size()), mock);
     if (!ended.isEmpty() && laid.moment < std::max(ended.last().momentLaid, ended.last().momentEnded))
         m_modulesWhoseEndedMocksOverlap.set(fileOrModule.index());
-    ended.append({ laid.moment, momentEnded, state.momentOfTestFile, laid.isInPreload });
+    ended.append({ laid.moment, momentEnded, state.momentOfTestFile, laid.isInPreload, WTF::move(exportsLeftOut) });
     return ended.size() - 1;
 }
 
@@ -220,6 +220,19 @@ JSObject* Modules::mockSeenBy(ModuleID mocked, ModuleID importer) const
         return ended;
     JSObject* standing = mockInPlace(fileOrModule);
     return standing && seesMockOf(fileOrModule, importer) ? standing : nullptr;
+}
+
+std::optional<bool> Modules::isLeftOutInViewOf(ModuleID importer, ModuleID mocked, unsigned exportIndex) const
+{
+    JSObject* standing = mockInPlace(mocked);
+    if (!standing && m_endedMocks.isEmpty()) [[likely]]
+        return std::nullopt;
+    ModuleID fileOrModule = m_table.fileBehindFace(mocked).value_or(mocked);
+    if (std::optional<unsigned> ended = indexOfEndedMockSeenBy(fileOrModule, importer); ended && endedMock(fileOrModule, ended) != standing)
+        return m_endedMocks.find(fileOrModule)->value[*ended].exportsLeftOut.get(exportIndex);
+    if (standing && !seesMockOf(fileOrModule, importer))
+        return false;
+    return std::nullopt;
 }
 
 JSObject* Modules::namespaceSeenBy(ModuleID module, ModuleID importer)
@@ -323,9 +336,11 @@ bool Modules::seesMockOf(ModuleID mocked, ModuleID importer) const
 void Modules::noteMomentMockComesInPlace(ModuleID fileOrModule, JSObject* mock, bool stoodInPlace, bool leavesEarlierMockToItsImporters)
 {
     std::optional<MomentMockWasLaid> waiting = m_momentsWaitingMocksWereLaid.takeOptional(fileOrModule);
-    if (JSObject* earlier = leavesEarlierMockToItsImporters ? mockInPlace(fileOrModule) : nullptr; earlier && earlier != mock && earlier == ensureLoaded(fileOrModule).mockLaidInPreload.get() && m_loadedInPreload.get(fileOrModule.index())) {
-        if (std::optional<MomentMockWasLaid> laid = m_momentsStandingMocksWereLaid.takeOptional(fileOrModule))
-            keepEndedMock(fileOrModule, earlier, *laid, waiting ? waiting->moment : 0);
+    if (JSObject* earlier = leavesEarlierMockToItsImporters ? mockInPlace(fileOrModule) : nullptr; earlier && earlier != mock && earlier == ensureLoaded(fileOrModule).mockLaidInPreload.get()) {
+        ModuleID module = moduleWithExportsOf(fileOrModule);
+        std::optional<MomentMockWasLaid> laid = m_loadedInPreload.get(module.index()) ? m_momentsStandingMocksWereLaid.takeOptional(fileOrModule) : std::nullopt;
+        keepNamespacesMadeUnder(fileOrModule, module, earlier, laid ? keepEndedMock(fileOrModule, earlier, *laid, waiting ? waiting->moment : 0, m_exportsLeftOut.get(module)) : std::nullopt);
+        letGoOfNamespaceMadeUnderMock(module);
     }
     MomentMockWasLaid laid = waiting && !stoodInPlace ? *waiting : momentOfNow();
     LoadedModule& held = ensureLoaded(fileOrModule);
@@ -344,12 +359,12 @@ void Modules::noteMomentMockComesInPlace(ModuleID fileOrModule, JSObject* mock, 
     m_momentsStandingMocksWereLaid.set(fileOrModule, laid);
 }
 
-void Modules::keepMockThatStoodInPlace(ModuleID fileOrModule, ModuleID module, JSObject* endedMock)
+void Modules::keepMockThatStoodInPlace(ModuleID fileOrModule, ModuleID module, JSObject* endedMock, BitVector&& exportsLeftOut)
 {
     std::optional<uint32_t> testFileOfEnd = m_testFilesInWhichMocksEnded.takeOptional(fileOrModule);
     bool endedInThisTestFile = !testFileOfEnd || *testFileOfEnd == m_instance.vm->aotState().momentOfTestFile;
     std::optional<MomentMockWasLaid> laid = m_momentsStandingMocksWereLaid.takeOptional(fileOrModule);
-    std::optional<unsigned> ended = laid && (endedInThisTestFile || laid->isInPreload) ? keepEndedMock(fileOrModule, endedMock, *laid) : std::nullopt;
+    std::optional<unsigned> ended = laid && (endedInThisTestFile || laid->isInPreload) ? keepEndedMock(fileOrModule, endedMock, *laid, 0, WTF::move(exportsLeftOut)) : std::nullopt;
     if (!m_momentsOfLoads.isEmpty())
         keepNamespacesMadeUnder(fileOrModule, module, endedMock, ended);
 }

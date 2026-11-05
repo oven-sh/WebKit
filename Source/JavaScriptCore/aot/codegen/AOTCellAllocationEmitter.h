@@ -44,6 +44,8 @@ public:
     void copyFieldWords(CellPointer source, CellPointer cell, unsigned fieldBytes);
     CellPointer allocateInFrame(const OperationContext&, size_t size);
     CellPointer frameCellLent(ValueID cell);
+    void noteWordsThatCellLentHolds(ValueID cell, std::span<const uint32_t> offsets);
+    void clearWhatWasLentUnderHandler(BlockID handler);
 
     std::pair<CellPointer, Pointer> allocateArray(const OperationContext&, Word32 length, Word32 vectorLength, IndexingType, LBasicBlock slowPath);
     CellPointer allocateArrayOfLength(const OperationContext&, IndexingType, unsigned length);
@@ -64,6 +66,14 @@ private:
         ValueID cell;
     };
     Vector<SlotOfClosuresLent, 4> m_slotsOfClosuresLent;
+
+    struct WordLentOutOfFrame {
+        Machine::StackSlot* slot;
+        uint32_t offset;
+    };
+    using WordsLentOutOfFrame = Machine::ArenaVector<WordLentOutOfFrame>;
+    WordsLentOutOfFrame& wordsLentUnderHandler(BlockID handler);
+    Vector<WordsLentOutOfFrame*> m_wordsLentUnderHandlers;
 };
 
 } } } // namespace JSC::AOT::Typed

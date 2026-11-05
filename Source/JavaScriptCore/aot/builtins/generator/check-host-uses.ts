@@ -100,6 +100,7 @@ function checkCall(row: string, call: ModelHostCall, problems: Problems): void {
   }
   for (const value of valuesOfCall(call)) {
     if (value.place !== "NewValue") continue;
+    if (value.holdsWhatIsThrown) problems.add(null, `${row}: what is thrown is said of an argument of a callback or of a handler of an overload alone`);
     const { isAnything, hasAnyObject, hasAnyFunction, hasPlainData, primitives, integers, stringLiterals, parts } =
       value.type;
     const isNever =
@@ -196,6 +197,37 @@ function checkCells(model: CheckedModel, written: readonly DescribedUses[], prob
   }
 }
 
+const placesOfOperands: readonly ModelPlace["place"][] = ["Operand", "Member", "OwnValues", "IteratedValues", "Slot"];
+
+function checkCellsHoldingOnlyWhatIsStored(model: CheckedModel, written: readonly DescribedUses[], problems: Problems): void {
+  const cells = new Set(
+    model.overloads.flatMap(({ flow }) =>
+      flow.transfers.flatMap(({ from }) => (from.place === "NativeCell" && from.holdsOnlyWhatIsStored ? [from.cell] : [])),
+    ),
+  );
+  const refuse = (cell: ModelName, filler: string) => {
+    if (cells.has(cell))
+      problems.add(null, `the native cell ${cell.text} is said to hold only what rows store there out of their operands, and ${filler}`);
+  };
+  for (const { flow } of model.overloads) {
+    for (const { from, to } of flow.transfers) {
+      if (to.place === "NativeCell" && !placesOfOperands.includes(from.place)) refuse(to.cell, `a row stores ${from.place} there`);
+    }
+    for (const cell of flow.callbacks.flatMap(({ resultTo }) => cellOf(resultTo))) refuse(cell, "a row stores there what a callback answers");
+    for (const cell of flow.propertyActions.flatMap(({ value }) => cellOf(value))) refuse(cell, "a row reads or stores a property through it");
+  }
+  const filled = new Set(cellsWrittenByOverloads(model.overloads));
+  for (const cell of cells) {
+    if (!filled.has(cell)) refuse(cell, "no row stores anything there");
+  }
+  for (const { cell } of model.hostObjects) refuse(cell, "a host object lies there");
+  for (const { uses } of written) {
+    forEachUse(uses, use => {
+      if (use.read === "Kept") refuse(use.cell, "what a function answers that the host calls is kept there");
+    });
+  }
+}
+
 function checkHostObjects({ hostObjects }: CheckedModel, problems: Problems): void {
   const cells = new Set<ModelName>();
   for (const { cell, function: described, internalFields, source } of hostObjects) {
@@ -266,6 +298,7 @@ export function checkHostUses(model: CheckedModel, problems: Problems): void {
   const written = collectWrittenUses(model);
   for (const { row, uses } of written) forEachUse(uses, use => checkUse(row, use, problems));
   checkCells(model, written, problems);
+  checkCellsHoldingOnlyWhatIsStored(model, written, problems);
   checkHostObjects(model, problems);
   checkClassesWithHostMethods(model, problems);
 }

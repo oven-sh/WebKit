@@ -459,9 +459,9 @@ const noHostValue: ModelHostValue = { place: "None" };
 function resolveHostValue({ builder, types }: AttachmentContext, spec: HostValueSpec, source: Source): ModelHostValue {
   switch (spec.place) {
     case "NewValue":
-      return { place: "NewValue", type: types.intern(spec.value, null, source) };
+      return { place: "NewValue", type: types.intern(spec.value, null, source), holdsWhatIsThrown: spec.holdsWhatIsThrown ?? false };
     case "NativeCell":
-      return { place: "NativeCell", cell: builder.internName(spec.cell, "Text") };
+      return { place: "NativeCell", cell: builder.internName(spec.cell, "Text"), holdsOnlyWhatIsStored: false };
     case "NativeMemory":
       return { place: "NativeMemory" };
   }

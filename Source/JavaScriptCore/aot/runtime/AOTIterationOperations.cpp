@@ -25,6 +25,7 @@
 #include "DeferGCInlines.h"
 #include "DeferTermination.h"
 #include "ArrayConstructor.h"
+#include "ClonedArguments.h"
 #include "CommonSlowPathsInlines.h"
 #include "IteratorOperations.h"
 #include "JSArrayIterator.h"
@@ -599,6 +600,28 @@ static JSFunction* makeFunctionOfLibrary(JSGlobalObject* globalObject, BuiltinID
 }
 
 
+static bool tryAppendElementsOfArguments(JSGlobalObject* globalObject, JSArray* target, ClonedArguments* arguments)
+{
+    if (!arguments->isIteratorProtocolFastAndNonObservable() || !hasContiguous(arguments->indexingType()))
+        return false;
+    uint32_t length = arguments->getDirect(clonedArgumentsLengthPropertyOffset).asInt32();
+    Butterfly* butterfly = arguments->butterfly();
+    if (length > butterfly->publicLength() || static_cast<uint64_t>(target->length()) + length > MAX_STORAGE_VECTOR_LENGTH)
+        return false;
+    std::span<const EncodedJSValue> elements(std::bit_cast<const EncodedJSValue*>(butterfly->contiguous().data()), length);
+    bool holdsInt32Alone = true;
+    bool holdsNumbersAlone = true;
+    for (EncodedJSValue element : elements) {
+        if (!element)
+            return false;
+        JSValue value = JSValue::decode(element);
+        holdsInt32Alone &= value.isInt32();
+        holdsNumbersAlone &= value.isNumber() && value.asNumber() == value.asNumber();
+    }
+    IndexingType kind = holdsInt32Alone ? ArrayWithInt32 : holdsNumbersAlone ? ArrayWithDouble : ArrayWithContiguous;
+    return !length || target->appendMemcpy(globalObject, globalObject->vm(), target->length(), kind, elements);
+}
+
 static void appendIterable(Instance& instance, JSGlobalObject* globalObject, JSArray* target, JSValue iterable)
 {
     VM& vm = globalObject->vm();
@@ -622,6 +645,12 @@ static void appendIterable(Instance& instance, JSGlobalObject* globalObject, JSA
                 return;
             if (cell->type() == JSMapType && uncheckedDowncast<JSMap>(cell)->isIteratorProtocolFastAndNonObservable() && tryAppendPairsOfMap(globalObject, target, uncheckedDowncast<JSMap>(cell)))
                 return;
+            if (cell->type() == ClonedArgumentsType) {
+                bool isAppended = tryAppendElementsOfArguments(globalObject, target, uncheckedDowncast<ClonedArguments>(cell));
+                RETURN_IF_EXCEPTION(scope, void());
+                if (isAppended)
+                    return;
+            }
             JSArray* list = tryCreateArrayFromIterableFast(globalObject, iterable);
             RETURN_IF_EXCEPTION(scope, void());
             if (list)

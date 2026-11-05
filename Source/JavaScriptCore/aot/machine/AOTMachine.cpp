@@ -119,6 +119,13 @@ NEVER_INLINE void PatchOperation::growStorageOfOperands()
     m_constraints.reserve(arena, capacity);
 }
 
+FactsOfSuspension& PatchOperation::ensureFactsOfSuspension()
+{
+    if (!m_factsOfSuspension)
+        m_factsOfSuspension = m_procedure.arena().create<FactsOfSuspension>();
+    return *m_factsOfSuspension;
+}
+
 void PatchOperation::markChildAsLetGoByCallee(unsigned child)
 {
     RELEASE_ASSERT(m_opcode == Patch && child < m_operands.size());
@@ -207,7 +214,7 @@ void Block::setSuccessors(Edge taken, Edge notTaken)
 void Block::clearSuccessors()
 {
     for (const Edge& edge : m_successors)
-        edge.block()->didLoseIncomingEdge(this);
+        edge.block()->didLoseIncomingEdge(this, edge.edgeClass());
     m_successors.clear();
 }
 
@@ -228,6 +235,20 @@ void Procedure::fail(FailureKind kind, const Operation* operation)
         m_failure = Failure { kind, operation->origin(), operation->index() };
     else
         m_failure = Failure { kind, Origin(), UINT32_MAX };
+}
+
+void Procedure::noteRoomThatBuildingLeaves(ListThatBuildingLeaves list, void* room, size_t bytes)
+{
+    RELEASE_ASSERT(!m_order);
+    if (!m_roomsThatBuildingLeaves)
+        m_roomsThatBuildingLeaves = m_arena.create<RoomsThatBuildingLeaves>();
+    (*m_roomsThatBuildingLeaves)[static_cast<unsigned>(list)] = { room, bytes };
+}
+
+void Procedure::letGoOfWhatBuildingLeaves()
+{
+    for (const RoomThatBuildingLeaves& left : *std::exchange(m_roomsThatBuildingLeaves, nullptr))
+        m_arena.letGo(left.room, left.bytes);
 }
 
 NEVER_INLINE Block* Procedure::addBlock()

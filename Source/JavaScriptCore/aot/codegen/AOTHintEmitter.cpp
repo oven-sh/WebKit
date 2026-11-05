@@ -12,6 +12,7 @@
 #include "AOTCodeRecords.h"
 #include "AOTCodeSites.h"
 #include "AOTCompileUnit.h"
+#include "AOTConstantEmitter.h"
 #include "AOTConvention.h"
 #include "AOTExceptionEmitter.h"
 #include "AOTInstance.h"
@@ -129,6 +130,26 @@ void HintEmitter::generateEndLifeOfCell(const ValueContext& value)
     endLifeOf(value, value->cellOperand());
 }
 
+void HintEmitter::generateGuessFailsUnasked(const ValueContext& value)
+{
+    uint32_t period = build().options().periodOfGuessesThatFail;
+    RELEASE_ASSERT(period);
+    int32_t step = static_cast<int32_t>(drawBySeed(build().options().seedOfShuffles, DrawnFor::StepOfGuessesThatFail, 0, 0) | 1);
+    Machine::PatchOperation* drawn = m_out.patchpoint(Machine::Int64);
+    drawn->effects = Machine::Effects::none();
+    drawn->effects.writesLocalState = true;
+    drawn->setRunsWithoutFrame(true);
+    drawn->clobber(RegisterSet::macroClobberedGPRs());
+    drawn->setGenerator([step](CCallHelpers& jit, const Machine::PatchParameters& params) {
+        AllowMacroScratchRegisterUsage allowScratch(jit);
+        CCallHelpers::Address state(instanceGPR, AOT_INSTANCE_OFFSET(runtime.exceptions.stateOfGuessesThatFail));
+        jit.load32(state, params[0].gpr());
+        jit.add32(CCallHelpers::TrustedImm32(step), params[0].gpr());
+        jit.store32(params[0].gpr(), state);
+    });
+    defineTest(value, belowOrEqual(Integer(drawn), integer(UINT32_MAX / period)));
+}
+
 bool HintEmitter::endsLivesAtRunTime()
 {
     return sourcesOfProofsCheckedUnder(build().options().testing) & bitOfSourceOfProofs(ProofSource::Lifetime);
@@ -139,6 +160,8 @@ void HintEmitter::endLifeOf(const OperationContext& context, ValueID cell)
     const Operation& made = operationAt(definitionOf(cell));
     if (made.opcode == Opcode::NewObject && made.storage() == AllocationStorage::Frame)
         return emitter<AllocationEmitter>().clearCellsThatObjectLentHolds(definitionOf(cell));
+    if (emitter<ConstantEmitter>().closureLentLiesInFrame(definitionOf(cell)))
+        return emitter<ConstantEmitter>().clearCellsThatClosureLentHolds(definitionOf(cell));
     FunctionID madeIn = generator().code().inlineFrames()[made.inlineFrame].callee;
     m_out.suspendDeclaredAccesses();
     callVoidOperation(context, RuntimeOperation::PoisonCell, { in<CellPointer>(cell), word32(static_cast<int32_t>(madeIn.index())), word32(static_cast<int32_t>(made.position)) });

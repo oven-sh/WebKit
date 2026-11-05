@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTIRProgram.h"
+#include "AOTLinkTables.h"
 #include "AOTOpcodeSets.h"
 #include <array>
 
@@ -63,6 +64,23 @@ static Reference makeObjectOfDeferredVariable(Walker& walker, const DeferredVari
     return walker.build(WTF::move(operation));
 }
 
+static std::optional<uint32_t> orderWordThatObjectKeepsForLife(Walker& walker, Reference made)
+{
+    if (!made.isValue() || walker.code().at(made.id()).opcode != Opcode::NewObject)
+        return std::nullopt;
+    const Operation& allocation = walker.code().at(made.id());
+    LayoutID layout = allocation.layout();
+    const LinkedLayout& linked = walker.facts().linked().layout(layout);
+    if (linked.reachesUnseenCode || linked.isFilledUnderComputedKeys || linked.possibleChanges.containsAny({ LayoutChange::IsFrozen, LayoutChange::GainsProperty, LayoutChange::LosesProperty, LayoutChange::GetsAccessor }))
+        return std::nullopt;
+    const PlannedLayout& planned = walker.plan().layout(layout);
+    for (FieldIndex field = 0; field < planned.numberOfFields(); ++field) {
+        if (planned.slots[field].hasStorage() && !std::ranges::contains(allocation.fields(), field))
+            return std::nullopt;
+    }
+    return walker.plan().keyOrders().findOrderWord(layout, allocation.fields());
+}
+
 static Reference findOrMakeObjectOfDeferredVariable(Walker&, const DeferredVariable&, Reference held, Origin);
 
 static void buildReadOfDeferredVariable(Walker& walker, const BodyValue& read, const DeferredVariable& deferred)
@@ -111,6 +129,7 @@ static Reference findOrMakeObjectOfDeferredVariable(Walker& walker, const Deferr
     Reference made = makeObjectOfDeferredVariable(walker, deferred);
     if (!made)
         return { };
+    std::optional<uint32_t> orderWordForLife = orderWordThatObjectKeepsForLife(walker, made);
     buildStoreIntoDeferredVariable(walker, deferred, made);
     walker.jumpTo(meet, std::array { made });
 
@@ -126,6 +145,8 @@ static Reference findOrMakeObjectOfDeferredVariable(Walker& walker, const Deferr
     walker.jumpTo(meet, std::array { found });
 
     walker.state().noteVariable(deferred.variable, result);
+    if (orderWordForLife)
+        walker.state().noteOrderWord(result, orderWordForLife);
     noteObjectOfVariablePutOff(walker, deferred.variable, result);
     return result;
 }

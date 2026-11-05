@@ -30,14 +30,20 @@ public:
     void generateIsElementPresent(const ValueContext&);
     void generateIsNotThenable(const ValueContext&);
     void generateAreMembersUnchanged(const ValueContext&);
+    void generateIsMemberAsBuilt(const ValueContext&);
+    void generateIsHolderWithoutAddedNames(const ValueContext&);
     void defineWhetherDeclaredMemberIsFound(const ValueContext&);
+    void defineWhetherObjectIsPlainInstance(const ValueContext&);
+    void defineWhetherNoMemberIsFound(const ValueContext&);
     void branchOnOwnPropertyByCell(const ValueContext&, BranchTargets, LBasicBlock asksRunTime);
     void generateIsClosureOf(const ValueContext&);
     void generateIsEnumeratorCurrent(const ValueContext&);
 
-    Condition holds(LayoutID classLayout, ClassSide, PropertyKeyID name, bool isAskedByStoresAlone = false);
+    Condition holds(LayoutID classLayout, ClassSide, PropertyKeyID name);
+    Condition guardsWereBegun(LayoutID constructorFunction);
     Condition belongsToInstance(CellPointer cell) { return hasInstanceRealm(loadStructure(cell)); }
     Condition areMembersUnchanged(PayloadListView<MemberConditionRecord>);
+    Condition areMembersUnchanged(std::span<const MemberConditionRecord>);
     Condition isClosureAsCreated(CellPointer, BuiltinClassID, OptionSet<PristineAspects>);
     Condition isNotThenable(const OperationContext&, Boxed, const Type&);
     Condition realmWatchesSpeciesOfLists();

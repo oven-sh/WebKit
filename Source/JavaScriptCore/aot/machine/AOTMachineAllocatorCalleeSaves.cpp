@@ -31,11 +31,11 @@ static bool isWorthCalleeSaveNotYetSaved(const Allocator& allocator, const Opera
     return facts.lastUse != noPosition && facts.lastUse > lastRead;
 }
 
-unsigned Allocator::numberOfReadsThatWordWouldReload(const Operation* value) const
+unsigned Allocator::numberOfReadsThatWordWouldReload(const Operation* value, Position end) const
 {
     unsigned number = 0;
-    for (uint32_t use = m_liveness.of(value).firstUse; use; use = m_liveness.use(use).next) {
-        if (m_liveness.use(use).position > m_position && !m_liveness.isUseInRareRegion(use))
+    for (uint32_t use = findReadFrom(value, m_position + 1); use && m_liveness.use(use).position < end; use = m_liveness.use(use).next) {
+        if (!m_liveness.isUseInRareRegion(use))
             ++number;
     }
     return number;

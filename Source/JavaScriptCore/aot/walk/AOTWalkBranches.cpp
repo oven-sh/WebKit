@@ -160,6 +160,7 @@ void Walker::endBlockLeadingTo(TerminatorDraft&& draft, std::span<const EdgeToTa
             if (isUnreachable())
                 return;
         }
+        hearEffectsInTries(effects);
         m_state.invalidate(effects);
         if (effects.mayThrow && has(Mechanism::Handlers))
             noteStateAtThrowForHandler(draft.operands());
@@ -200,6 +201,8 @@ bool Walker::leaveBlockAnotherWay(const BodyTerminator& terminator)
         return true;
     }
     case TerminatorKind::Branch: {
+        if (handTurnOverWhereLesserBoundIsReached(terminator))
+            return true;
         if (!has(Mechanism::Folding))
             return false;
         Reference condition = referenceOf(terminator.as<TerminatorKind::Branch>().conditionOperand());

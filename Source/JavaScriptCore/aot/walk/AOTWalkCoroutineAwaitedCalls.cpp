@@ -128,7 +128,7 @@ static Reference buildAwaitOfNewPromiseInAwaitedCalls(Walker& walker, Opcode set
     return buildAwaitBySavingFrame(walker, promise, held, origin);
 }
 
-static Reference buildAwaitOfPlainBodyInAwaitedCalls(Walker& walker, const BodyValue& call, FunctionID callee, std::span<const Reference> operands, std::span<const Reference> held, Origin originOfAwait)
+static Reference buildAwaitOfPlainBodyInAwaitedCalls(Walker& walker, const BodyValue& call, FunctionID callee, CoroutineKind kindOfAwaitingBody, std::span<const Reference> operands, std::span<const Reference> held, Origin originOfAwait)
 {
     Origin origin = walker.originOf(call);
     BlockID handler;
@@ -159,6 +159,14 @@ static Reference buildAwaitOfPlainBodyInAwaitedCalls(Walker& walker, const BodyV
     }
     if (!returned)
         return { };
+
+    if (kindOfAwaitingBody == CoroutineKind::AsyncGenerator) {
+        Reference promise = buildNewPromiseOfCoroutineCalls(walker, origin);
+        if (!promise)
+            return { };
+        resolvePromiseThatNothingHasTaken(walker, promise, returned, true, origin);
+        return walker.isUnreachable() ? Reference() : buildAwaitBySavingFrame(walker, promise, held, originOfAwait);
+    }
 
     Reference hasNoThen = buildTestForNoThen(walker, returned, origin);
     if (!hasNoThen)
@@ -278,7 +286,7 @@ bool buildAwaitedCall(Walker& walker, const BodyValue& call)
         return buildCallOfCopyInAwaitedCalls(walker, call);
 
     std::optional<AwaitingBodyOfCoroutine> body = findAwaitingBodyOfCoroutine(walker);
-    if (!body || body->kind != CoroutineKind::AsyncFunction)
+    if (!body)
         return false;
     const BodyIndex& index = walker.currentBodyIndex();
     BodyBlock block = index.block(index.blockOf(call.id()));
@@ -288,13 +296,16 @@ bool buildAwaitedCall(Walker& walker, const BodyValue& call)
 
     FunctionID callee = findCoroutineCalledBy(walker, call);
     if (!callee) {
-        noteAwaitForCopyInAwaitedCalls(walker, index, block, call, *wait, body->driver);
+        if (body->kind == CoroutineKind::AsyncFunction)
+            noteAwaitForCopyInAwaitedCalls(walker, index, block, call, *wait, body->driver);
         return false;
     }
     const Function& function = walker.program().at(callee);
     if (!isAsyncFunctionInAwaitedCalls(function) || !writtenOperandsMayStartBodyOfCoroutine(walker, walker.draftOf(call)))
         return false;
     bool neverSuspends = walker.plan().conventions().of(callee).coroutineNeverSuspends;
+    if (!neverSuspends && body->kind != CoroutineKind::AsyncFunction)
+        return false;
     if (neverSuspends && !walker.isInLoop() && bodyMayThrowInAwaitedCalls(walker, callee))
         return false;
 
@@ -308,7 +319,7 @@ bool buildAwaitedCall(Walker& walker, const BodyValue& call)
     if (!walkUpToAwaitOfCall(walker, index, block, *wait, held))
         return true;
     Reference given = neverSuspends
-        ? buildAwaitOfPlainBodyInAwaitedCalls(walker, call, callee, operands->span(), held.span(), walker.originOf(index.value(wait->await)))
+        ? buildAwaitOfPlainBodyInAwaitedCalls(walker, call, callee, body->kind, operands->span(), held.span(), walker.originOf(index.value(wait->await)))
         : buildAwaitCallInAwaitedCalls(walker, call, callee, operands->span(), body->driver, held.span(), wait->await);
     if (given)
         finishWaitOfCall(walker, block, *wait, given);

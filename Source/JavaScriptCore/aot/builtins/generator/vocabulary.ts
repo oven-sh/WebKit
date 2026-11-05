@@ -293,11 +293,11 @@ export type PlaceSpec =
   | { place: "Result" }
   | { place: "ResultSlot"; slot: SlotName }
   | { place: "ResultField"; field: string | number; holdsOnlyWhatIsStored?: boolean }
-  | { place: "NewValue"; value: TypeSpec }
+  | { place: "NewValue"; value: TypeSpec; holdsWhatIsThrown?: boolean }
   | { place: "NativeMemory" }
   | { place: "Prototype"; operand: OperandName }
   | { place: "Member"; operand: OperandName; path: MemberPath }
-  | { place: "NativeCell"; cell: string };
+  | { place: "NativeCell"; cell: string; holdsOnlyWhatIsStored?: boolean };
 
 export type MemberPath = readonly (string | null)[];
 
@@ -336,7 +336,7 @@ export type UseSpec =
   | ({ use: "CallsMember"; path: MemberPath } & HandlerSpec)
   | ({ use: "CallsKept"; cell: string } & HandlerSpec)
   | { use: "RetainsMember"; path: MemberPath; in: PlaceSpec }
-  | { use: "ReturnsKept"; cell: string }
+  | { use: "ReturnsKept"; cell: string; holdsOnlyWhatIsStored?: boolean }
   | { use: "HandsOutKept"; cell: string }
   | { use: "Creates"; value: TypeSpec; in: PlaceSpec }
   | { use: "ReadsByKey"; key: KeySpec; to: PlaceSpec }
@@ -545,6 +545,7 @@ export const builtinMarks = [
   "HandsOutWhatNativeCodeHolds",
   "RegistersPreparationOfHolders",
   "AnswersWithPathOfModule",
+  "IsKeyReadOnlyByRowsThatNameIt",
 ] as const;
 export type BuiltinMark = (typeof builtinMarks)[number];
 
@@ -615,6 +616,7 @@ export interface ClassColumns {
   pristineTest?: PristineTest;
   hasClosureInstances?: boolean;
   instancesAreEntries?: boolean;
+  keepsStructuresOfClassesBelow?: boolean;
   definesCharactersOnNewInstances?: boolean;
   namesDefinedOnNewInstances?: readonly string[];
   constructorOnlyReadsPrototypeOfNewTarget?: boolean;

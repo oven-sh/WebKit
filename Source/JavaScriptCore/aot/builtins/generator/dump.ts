@@ -122,9 +122,9 @@ export type DumpedPlace =
   | { place: "Slot"; operand: DumpedOperand; slot: string }
   | { place: "ResultSlot"; slot: string }
   | { place: "ResultField"; index: number; holdsOnlyWhatIsStored: boolean }
-  | { place: "NewValue"; type: DumpedType }
+  | { place: "NewValue"; type: DumpedType; holdsWhatIsThrown: boolean }
   | { place: "Member"; operand: DumpedOperand; path: (string | null)[]; firstStep: number }
-  | { place: "NativeCell"; cell: string };
+  | { place: "NativeCell"; cell: string; holdsOnlyWhatIsStored: boolean };
 
 export type DumpedKey =
   | { key: "None" | "Any" | "Indexes" }

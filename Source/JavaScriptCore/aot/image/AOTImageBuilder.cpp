@@ -584,6 +584,8 @@ static void writeHeader(ImageHeader& header, const ImageWriterInputs& parts, con
         flags.add(ImageFlag::ShowsWaysBetweenModuleObjects);
     if (std::ranges::any_of(parts.program.modules, [](const Typed::Module& module) { return module.kind != Typed::ModuleKind::CommonJs && module.flags.contains(Typed::ModuleFlags::RunsAgain); }))
         flags.add(ImageFlag::RunsEntryPointsAgain);
+    if (std::ranges::any_of(parts.program.modules, [](const Typed::Module& module) { return module.flags.contains(Typed::ModuleFlags::IsShownByEntryOfCache); }))
+        flags.add(ImageFlag::ShowsEntriesOfRequireCache);
     header.flags = flags.toRaw();
     for (size_t entry : parts.entriesUsed)
         header.entriesUsed[entry / 32] |= 1u << entry % 32;

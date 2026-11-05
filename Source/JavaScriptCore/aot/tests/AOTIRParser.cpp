@@ -308,6 +308,9 @@ void TextParser::parseItem(const TextItem& item)
     case ProgramList::OpenedNames:
         parseProgramRecord<Wire::OpenedName, OpenedName>(*this, &Program::openedNames);
         break;
+    case ProgramList::BuiltinsUsedAtStart:
+        parseProgramRecord<Wire::BuiltinUsedAtStart, BuiltinUsedAtStart>(*this, &Program::builtinsUsedAtStart);
+        break;
     case ProgramList::Bytes:
     case ProgramList::Words:
     case ProgramList::Strings:

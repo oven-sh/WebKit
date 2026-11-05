@@ -412,7 +412,7 @@ bool CalleeSummarizerForLinkEffects::keepsDefaults(FunctionID id, const ThinSumm
 
 bool CalleeSummarizerForLinkEffects::isAnyCodeByItsOwnText(FunctionID id, const ThinSummary& summary) const
 {
-    if (keepsDefaults(id, summary, { SummaryTrait::Suspends, SummaryTrait::HasDirectEval }) || summary.ownEffects().mayCallUnknownCode)
+    if (keepsDefaults(id, summary, { SummaryTrait::Suspends, SummaryTrait::HasDirectEval }) || summary.ownEffectsMayCallUnknownCode())
         return true;
     return std::ranges::any_of(summary.calls, [&](const SummaryCall& call) {
         if (call.callee != SummaryCall::Callee::Value)
@@ -840,7 +840,7 @@ std::span<const BuiltinID> CalleeSummarizerForLinkEffects::builtinsEnteredBy(Fun
     const SummaryCall& call = summary.calls[index];
     if (call.callee == SummaryCall::Callee::Builtin)
         return std::span<const BuiltinID>(&call.builtin, 1);
-    return m_flow.calleesOfCalls[m_flow.firstCallOfFunction[id.index()] + index].builtins.span();
+    return m_flow.calleesOfCalls[m_flow.firstCallOfFunction[id.index()] + index].builtins().span();
 }
 
 template<typename Functor>
@@ -1006,9 +1006,9 @@ void CalleeSummarizerForLinkEffects::findCodeEnteredByCall(FunctionID id, const 
 {
     const SummaryCall& call = summary.calls[index];
     const LinkFlow::CalleesOfCall& callees = m_flow.calleesOfCalls[m_flow.firstCallOfFunction[id.index()] + index];
-    for (FunctionID callee : callees.listed)
+    for (FunctionID callee : callees.listed())
         found.add(callee);
-    for (uint32_t shared : callees.shared)
+    for (uint32_t shared : callees.shared())
         found.add(FunctionID(nodeOfSharedCall(shared)));
     found.mayBeLost = callees.mayEnterLost;
     found.mayBeUnseen = callees.mayEnterUnseen;
@@ -1223,7 +1223,7 @@ void CalleeSummarizerForLinkEffects::findComponentsOfCallees()
     }
     for (const LinkFlow::CalleesOfCall& shared : m_flow.calleesOfSharedCalls) {
         m_firstCallee.append(m_callees.size());
-        m_callees.appendVector(shared.listed);
+        m_callees.append(shared.listed().span());
     }
     m_firstCallee.append(m_callees.size());
 

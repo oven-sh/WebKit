@@ -394,13 +394,20 @@ static std::optional<FormOfInstanceOf> planFormOfInstanceOf(const Walker& walker
     form.missMeansFalse = !chains.hasUndecidedLayouts && (areAllConsidered || onlyInstancesStandBelow);
     form.areAllInstances = areAllConsidered && form.missMeansFalse && !chains.decided.isEmpty() && chains.instances.size() == chains.decided.size();
 
+    bool guardsAnswerForLinksLaidBetween = !chains.testsObjects || std::ranges::all_of(chains.instances, [&](LayoutID layout) {
+        return walker.plan().hasClassRecord(declaredLayoutOf(program, layout));
+    });
     if (!chains.instances.isEmpty()) {
-        if (isTestableByShapeForInstanceOf(walker, chains.instances.span()))
+        if (guardsAnswerForLinksLaidBetween && isTestableByShapeForInstanceOf(walker, chains.instances.span()))
             form.instances = types.layoutSets().ofSorted(chains.instances.span());
         else {
             form.missMeansFalse = false;
             form.areAllInstances = false;
         }
+    }
+    if (form.instances && chains.testsObjects) {
+        for (LayoutID layout : chains.instances)
+            addConditionOfInstanceOf(form.conditions, { MemberConditionKind::PrototypeLinkUnchanged, declaredLayoutOf(program, layout), ClassSide::Prototype, { } });
     }
     if (walker.isInLoop() && form.testedIsConstructorFunction && !form.missMeansFalse && walker.plan().hasClassRecord(form.tested) && hasOneClassObjectForInstanceOf(walker, form.tested))
         addConditionOfInstanceOf(form.conditions, conditionOnPrototypePropertyForInstanceOf(program, form.tested));
@@ -434,7 +441,8 @@ static bool buildInstanceOfClassOfProgram(Walker& walker, const BodyValue& test,
     bool prototypeObjectIsInTable = !form->testedIsConstructorFunction || form->conditions.contains(conditionOnPrototypePropertyForInstanceOf(walker.program(), form->tested));
     if (!prototypeObjectIsInTable && !form->instances && !form->missMeansFalse)
         return false;
-    if (!form->conditions.isEmpty() && !walker.isInLoop())
+    bool hasOneClosedArm = !form->conditions.isEmpty() && !walker.isInLoop();
+    if (hasOneClosedArm && !form->instances && !form->missMeansFalse)
         return false;
     if (inputs.areOnlyTypes())
         return true;
@@ -498,13 +506,23 @@ static bool buildInstanceOfClassOfProgram(Walker& walker, const BodyValue& test,
             return isInstance;
 
         BlockID hasShape = walker.addBlock();
-        bool missIsAskedAsWritten = asWritten && !prototypeObjectIsInTable;
+        bool missIsAskedAsWritten = asWritten && (hasOneClosedArm || !prototypeObjectIsInTable);
         BlockID walksChain = missIsAskedAsWritten ? asWritten : walker.addBlock(BlockFrequency::Rare);
-        BlockID hasOtherShape = form->missMeansFalse ? walker.addBlock() : walksChain;
+        bool asksWhetherMissIsObject = hasOneClosedArm && !form->missMeansFalse && !form->valueIsSurelyObject;
+        BlockID hasOtherShape = form->missMeansFalse || asksWhetherMissIsObject ? walker.addBlock() : walksChain;
         walker.branch(isInstance, hasShape, hasOtherShape);
         if (!hasArms)
             walker.noteGuessOpened();
         hasArms = true;
+        if (asksWhetherMissIsObject) {
+            walker.continueIn(hasOtherShape);
+            if (Reference isObject = buildTypeTestOfInstanceOf(walker, value, TypeTable::object, origin)) {
+                BlockID isPrimitive = walker.addBlock();
+                walker.branch(isObject, walksChain, isPrimitive);
+                walker.continueIn(isPrimitive);
+                answers.arrive(booleanAnswerOfInstanceOf(walker, false));
+            }
+        }
 
         walker.continueIn(hasShape);
         if (testsPrototype) {

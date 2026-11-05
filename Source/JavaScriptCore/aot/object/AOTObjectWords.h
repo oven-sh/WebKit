@@ -208,6 +208,20 @@ struct PrototypeOfClassObject {
 constexpr unsigned numberOfPrototypesOfClassObjects = 32;
 constexpr unsigned shiftOfClassObjectForPrototype = 4;
 
+struct InstanceBelowPrototype {
+    JSCell* prototype;
+    uint64_t allocationOfSite;
+    void* allocator;
+    const uint64_t* words;
+};
+constexpr unsigned shiftOfInstanceBelowPrototype = 5;
+constexpr uint64_t firstOffsetOfInstanceBelowPrototype(uint64_t bitsOfPrototype, uint32_t allocationOfSite) { return (bitsOfPrototype + (static_cast<uint64_t>(allocationOfSite) << (shiftOfInstanceBelowPrototype - 1))) << 1; }
+
+struct InstancesBelowPrototypes {
+    const InstanceBelowPrototype* entries;
+    uint64_t maskOfOffsets;
+};
+
 struct FieldData;
 
 struct PrivateFieldPlace {
@@ -226,9 +240,11 @@ struct ClassWords {
     const PlaceOfPrototypeProperty* placesOfPrototypeProperties;
     const PrototypeOfClassObject* prototypesOfClassObjects;
     PrivateFieldPlace* privateFieldPlaces;
+    InstancesBelowPrototypes instancesBelowPrototypes;
 };
 
 static_assert(sizeof(PrivateFieldPlace) == 1u << shiftOfPrivateFieldPlace && !(numberOfPrivateFieldPlaces & (numberOfPrivateFieldPlaces - 1)));
+static_assert(sizeof(InstanceBelowPrototype) == 1u << shiftOfInstanceBelowPrototype);
 static_assert(sizeof(KeyOrderTransition) == 16);
 static_assert(sizeof(KeyListCacheEntry) == 16);
 static_assert(!(numberOfKeyLists & (numberOfKeyLists - 1)));

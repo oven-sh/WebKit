@@ -70,7 +70,7 @@ inline Vector<StubKey> entriesOf(StubKey body)
 inline Vector<StubOptions> stubOptionVariants()
 {
     Vector<StubOptions> variants { StubOptions { } };
-    for (bool StubOptions::* member : { &StubOptions::useWideReferences, &StubOptions::imageHasWebAssembly, &StubOptions::hasOneInstance, &StubOptions::matchesRegExps, &StubOptions::recordsLastMatch, &StubOptions::checksProofs }) {
+    for (bool StubOptions::* member : { &StubOptions::useWideReferences, &StubOptions::imageHasWebAssembly, &StubOptions::hasOneInstance, &StubOptions::matchesRegExps, &StubOptions::recordsLastMatch, &StubOptions::checksProofs, &StubOptions::methodsOfBuiltinsMayBeReplaced }) {
         StubOptions options;
         options.*member = !(options.*member);
         variants.append(options);

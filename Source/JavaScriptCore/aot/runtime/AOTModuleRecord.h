@@ -67,6 +67,7 @@ public:
     unsigned innerModuleEvaluation(JSGlobalObject*, ModuleEvaluationStack&, unsigned index, int64_t referrerAsyncOrder, JSPromise* dynamicImportPromise);
     void generateDeferredSyntheticModules(JSGlobalObject*, VisitedModuleRecords&);
     void willLoadRequests(ModuleGraphLoadingState&);
+    void countLoaderStep();
     void didGoOnWithLoadWhileRequestsWereListed(ModuleGraphLoadingState& load) { m_loadGoneOnWithWhileRequestsWereListed = &load; }
     bool takeWentOnWhileRequestsWereListed(ModuleGraphLoadingState& load)
     {

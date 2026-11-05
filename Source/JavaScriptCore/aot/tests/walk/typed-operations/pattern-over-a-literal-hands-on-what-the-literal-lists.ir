@@ -1,9 +1,9 @@
 # `[a, b] = [b, a]`: nothing but the pattern names the literal, so the step that is written as number k hands on what the literal lists at k.
-# The look at the loop types the steps in the same way, so what comes round keeps its type. Nothing needs the list, and the sweep drops it.
+# What comes round is what the other parameter of the head held, so both heads hold 1 or 2 and nothing wider. Nothing needs the list, and the sweep drops it.
 # function swap(n) { let a = 1, b = 2; for (let i = 0; i < n; i++) [a, b] = [b, a]; return a * 10 + b; }
 # RUN: walk f1 mechanisms=none+TypedOperations
 # CHECK-LABEL: code f1:Body
-# CHECK: ([[a]]: int|whole {{*}}, [[b]]: int|whole {{*}}isLoopHead=true
+# CHECK: ([[a]]: int[1, 2] {{*}}, [[b]]: int[1, 2] {{*}}isLoopHead=true
 # CHECK: Jump -> next {{*}}([[b]], [[a]],
 # RUN(NEVER): walk f1 mechanisms=none+TypedOperations
 # NEVER-NOT: = NewArray

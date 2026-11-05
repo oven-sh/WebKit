@@ -463,6 +463,7 @@ void GuessedAccessEmitter::readNumberOfProvenList(const ValueContext& value)
     }, ElementAccessEmitter::FirstForm::IsLikeTheOthers);
 
     m_out.appendTo(outOfLine);
+    elements.stopUnlessListIsAsMadeWhereNothingIsFound(value, list);
     Boxed answer(callStub(value, testsForItself(value) ? arrayGetAtIndex(AOT::ArrayRead::OfAnyList) : arrayGetAtIndex(), { list.value(), index.value() }).first);
     elements.stopUnlessElementIsOf(value, answer, typeIDOf(value.id()));
     join.add(emitter<ConversionEmitter>().unbox(answer, result, representation));

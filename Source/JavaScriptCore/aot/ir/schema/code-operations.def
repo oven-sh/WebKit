@@ -7,3 +7,4 @@ engine operation AssumeType (value: Convertible/returns, provenType: Type, sourc
 
 family Hint Placed..Placed
 engine operation EndLifeOfCell (cell: Convertible/inspects) -> none ; writes(ShapeWords, OrderWords, NamedProperties, ObjectFields, ArrayStorage, Elements) ; form = Open
+engine operation GuessFailsUnasked () -> natural(boolean) ; reads(RuntimeState) writes(RuntimeState) ; form = Open

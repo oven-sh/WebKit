@@ -102,9 +102,7 @@ static void emitCallMethodById(StubAssembler& jit, unsigned lentArguments)
     isNotInAccessTable.link(&jit);
     readsByStub.append(jit.branch32(CCallHelpers::Above, name, TrustedImm32(RowDisplacementTable::maxColumn)));
     jit.load32(Address(thisGPR, JSCell::structureIDOffset()), key);
-    readByFrontTable(jit, { thisGPR, name, key, spare, place, secondSpare, ReceiverOfFrontProbe::IsCompiledObject, false }, calleeGPR, readsByStub, [&] {
-        jit.jumpToStub(callsValue);
-    });
+    readByFrontTable(jit, { thisGPR, name, key, spare, place, secondSpare, ReceiverOfFrontProbe::IsCompiledObject, false }, calleeGPR, readsByStub, callsValue);
 
     readsByStub.link(&jit);
     Vector<GPRReg, 1 + numberOfArgumentGPRs> kept;

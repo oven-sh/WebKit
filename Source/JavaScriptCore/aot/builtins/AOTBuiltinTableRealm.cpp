@@ -117,6 +117,12 @@ static bool hasAccessorCallee(const BuiltinTable& table, BuiltinID id, BuiltinCa
     });
 }
 
+BuiltinCellKey cellThatNamesMemberAskedByItsByte(const BuiltinTable& table, BuiltinID member)
+{
+    BuiltinID object = table.canonicalID(member);
+    return table.at(object).kind == BuiltinKind::Accessor ? BuiltinCellKey::getter(object) : BuiltinCellKey::object(object);
+}
+
 bool BuiltinCellKey::hasCell(const BuiltinTable& table) const
 {
     if (table.at(m_builtin).scope == BuiltinScope::Module)

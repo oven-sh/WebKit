@@ -257,6 +257,13 @@ Operand ElementAccessEmitter::convertInt32Element(Word32 element, Representation
 
 Operand ElementAccessEmitter::convertRawElement(const OperationContext& context, const ArrayStorageForm& form, Operand rawElement, Representation representation, TypeID result)
 {
+    if (form.element == Representation::Double)
+        stopUnlessDoubleIsOf(context, rawElement, result);
+    return convertElementThatHasBeenAsked(context, form, rawElement, representation, result);
+}
+
+Operand ElementAccessEmitter::convertElementThatHasBeenAsked(const OperationContext& context, const ArrayStorageForm& form, Operand rawElement, Representation representation, TypeID result)
+{
     if (form.element == Representation::Double && holdsDouble(representation))
         return Operand(representation, rawElement.value);
     if (form.element == Representation::Int32 && holdsUnboxedNumber(representation))
@@ -265,6 +272,15 @@ Operand ElementAccessEmitter::convertRawElement(const OperationContext& context,
     if (form.element == Representation::JSValue && holdsUnboxedNumber(representation))
         stopUnlessElementIsOf(context, element, result);
     return emitter<ConversionEmitter>().unbox(element, types().at(result), representation);
+}
+
+void ElementAccessEmitter::stopUnlessDoubleIsOf(const OperationContext& context, Operand element, TypeID proven)
+{
+    TypeID numbers = types().intersectionOf(proven, TypeTable::number);
+    if (numbers == TypeID(TypeTable::number))
+        return;
+    Condition isOfPartClaimed = isNeverType(numbers) ? boolean(false) : hasType(Operand(Representation::Double, element.value), typeTestPlanFor(TypeTable::number, Representation::Double, numbers));
+    emitter<ThrowEmitter>().checkOrStopAtFalseProof(context, isOfPartClaimed, ProofSource::Contents);
 }
 
 void ElementAccessEmitter::stopUnlessElementIsOf(const OperationContext& context, Boxed element, TypeID proven)
@@ -407,6 +423,13 @@ void ElementAccessEmitter::stopUnlessInside(const ValueContext& access, Conditio
     emitter<ThrowEmitter>().requireOrStopAtFalseProof(access, isInside, std::nullopt, ProofSource::WhatIsRemembered);
 }
 
+void ElementAccessEmitter::stopUnlessListIsAsMadeWhereNothingIsFound(const ValueContext& access, CellPointer list)
+{
+    if (!Operation::opcodesWithAsksCellWhereNothingIsFound.contains(access.opcode()) || !access->asksCellWhereNothingIsFound())
+        return;
+    emitter<ThrowEmitter>().requireOrStopAtFalseProof(access, isPristineArray(list, { PristineAspects::Storage, PristineAspects::Names }), std::nullopt, ProofSource::OtherOperation);
+}
+
 void ElementAccessEmitter::holdPositionInsideList(const ValueContext& access)
 {
     if (!testsEveryPosition()) {
@@ -546,6 +569,7 @@ void ElementAccessEmitter::generateGetArrayElement(const ValueContext& value)
     if (emitter<GuessedAccessEmitter>().tryReadNumberOfProvenList(value))
         return;
     const ArrayStorageForm* form = findArrayStorageForm(value->arrayStorage());
+    RELEASE_ASSERT(!form || !value->asksCellWhereNothingIsFound());
     if (!form)
         readWithAnyStorage(value);
     else if (value->admitsInt32Storage())
@@ -712,7 +736,7 @@ Operand ElementAccessEmitter::readNumberInsideLength(const ValueContext& value, 
     RELEASE_ASSERT(form.element == Representation::Int32);
     Boxed rawElement = loadRawElement(form, elements, index).as<Boxed>();
     Number element = select(isEmpty(rawElement), number(PNaN), toNumber(unboxInt32Element(rawElement)));
-    return convertRawElement(value, arrayStorageFormOf(ArrayStorage::Double), element, value.representation(), typeIDOf(value.id()));
+    return convertElementThatHasBeenAsked(value, arrayStorageFormOf(ArrayStorage::Double), element, value.representation(), typeIDOf(value.id()));
 }
 
 void ElementAccessEmitter::readFromDoubleOrInt32Storage(const ValueContext& value)
@@ -772,6 +796,7 @@ Boxed ElementAccessEmitter::readOutOfLine(const ValueContext& value, CellPointer
     if (value.opcode() != Opcode::GetArrayElement)
         return emitter<AccessEmitter>().getByVal(value, boxCell(array), boxedPosition(position));
 
+    stopUnlessListIsAsMadeWhereNothingIsFound(value, array);
     if (Operand key = get(position); key.is<Number>())
         return Boxed(callStub(value, arrayGetAtNumber(), { array.value(), key.value }).first);
     return Boxed(callStub(value, arrayGetAtIndex(), { array.value(), integerOf(position).value() }).first);
@@ -832,7 +857,9 @@ void ElementAccessEmitter::generateHasArrayElement(const ValueContext& value)
         bool isAlwaysIndex = isAlwaysArrayIndex(typeOf(position));
         LBasicBlock outOfLine = knownForm && isAlwaysIndex ? nullptr : newBlock();
         LBasicBlock isAbsent = isAlwaysIndex ? nullptr : newBlock();
-        BranchTargets presenceTargets { targets.taken, !isAbsent ? targets.notTaken : normalEdge(isAbsent) };
+        LBasicBlock asksCell = value->asksCellWhereNothingIsFound() ? newBlock() : nullptr;
+        BlockEdge isFoundNowhere = asksCell ? BlockEdge(asksCell, targets.notTaken.edgeClass()) : targets.notTaken;
+        BranchTargets presenceTargets { targets.taken, !isAbsent ? isFoundNowhere : normalEdge(isAbsent) };
 
         Integer index = indexOrElse(position, value->keyIsIntegral(), outOfLine);
         ArrayElements elements = elementsOf(array);
@@ -846,7 +873,12 @@ void ElementAccessEmitter::generateHasArrayElement(const ValueContext& value)
 
         if (isAbsent) {
             m_out.appendTo(isAbsent);
-            branch(belowOrEqual(index, integer(MAX_ARRAY_INDEX)), { targets.notTaken, rareEdge(outOfLine) });
+            branch(belowOrEqual(index, integer(MAX_ARRAY_INDEX)), { isFoundNowhere, rareEdge(outOfLine) });
+        }
+        if (asksCell) {
+            m_out.appendTo(asksCell);
+            stopUnlessListIsAsMadeWhereNothingIsFound(value, array);
+            m_out.jump(targets.notTaken);
         }
         if (outOfLine) {
             m_out.appendTo(outOfLine);

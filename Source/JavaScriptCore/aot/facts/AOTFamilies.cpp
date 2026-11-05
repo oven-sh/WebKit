@@ -17,23 +17,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-namespace {
-
-enum class SourceOfSetForFamilies : uint8_t {
-    Class,
-    MetInFlow,
-    OtherLayout,
-    WrittenTypeAlone,
-};
-
-struct DeclaredSetForFamilies {
-    LayoutSetID layouts;
-    SourceOfSetForFamilies source { SourceOfSetForFamilies::WrittenTypeAlone };
-    uint32_t size { 0 };
-};
-
-} // anonymous namespace
-
 static bool comesFirstBySizeAndContentInFamilies(const TypeTable& types, const DeclaredSetForFamilies& first, const DeclaredSetForFamilies& second)
 {
     if (first.size != second.size)
@@ -68,7 +51,16 @@ static SetsOfLayoutsWritten setsWrittenOnPlacesForFamilies(const Program& progra
     return sets;
 }
 
-static Vector<DeclaredSetForFamilies> declaredSetsForFamilies(const Program& program, const SetsOfLayoutsWritten* writtenInBodies, std::span<const LayoutSetID> layoutsThatMet, const ParallelLoops& loops)
+static void removeRepeatedSetsForFamilies(const ParallelLoops& loops, Vector<DeclaredSetForFamilies>& declaredSets)
+{
+    sortAndRemoveDuplicates(loops, declaredSets, [](const DeclaredSetForFamilies& first, const DeclaredSetForFamilies& second) {
+        return std::tie(first.layouts, first.source) < std::tie(second.layouts, second.source);
+    }, [](const DeclaredSetForFamilies& first, const DeclaredSetForFamilies& second) {
+        return first.layouts == second.layouts;
+    });
+}
+
+static Vector<DeclaredSetForFamilies> setsDeclaredInProgramForFamilies(const Program& program, const SetsOfLayoutsWritten* writtenInBodies, const ParallelLoops& loops)
 {
     const TypeTable& types = program.types;
     unsigned numberOfLayouts = static_cast<unsigned>(program.layouts.size());
@@ -82,23 +74,39 @@ static Vector<DeclaredSetForFamilies> declaredSetsForFamilies(const Program& pro
         if (index < numberOfLayouts) {
             if (program.hasDeclaredMembers(LayoutID(index)))
                 set = program.declaredMembersOf(LayoutID(index));
-            source = program.layouts[index].kind == LayoutKind::Instance ? SourceOfSetForFamilies::Class : SourceOfSetForFamilies::OtherLayout;
+            auto isClass = [&](LayoutID member) {
+                return program.at(member).kind == LayoutKind::Instance;
+            };
+            if (isClass(LayoutID(index)))
+                source = SourceOfSetForFamilies::Class;
+            else
+                source = set && std::ranges::all_of(membersOf(types, set), isClass) ? SourceOfSetForFamilies::OtherLayoutOfClassesAlone : SourceOfSetForFamilies::OtherLayout;
         } else if (TypeID type = writtenTypes[index - numberOfLayouts]; type && !holdsOnlyPrimitives(type))
             set = types.at(type).unnamedLayouts;
         if (index >= numberOfLayouts && set && !setsWrittenOnPlaces.contains(set.bits()))
             return;
-        if (!writtenInBodies && source != SourceOfSetForFamilies::Class)
+        if (!writtenInBodies && source > SourceOfSetForFamilies::OtherLayoutOfClassesAlone)
             return;
         if (set && !holdsOneMember(set))
             found.append(DeclaredSetForFamilies { set, source, types.at(set).size() });
     });
-    for (LayoutSetID set : layoutsThatMet)
-        declaredSets.append(DeclaredSetForFamilies { set, SourceOfSetForFamilies::MetInFlow, types.at(set).size() });
-    sortAndRemoveDuplicates(loops, declaredSets, [](const DeclaredSetForFamilies& first, const DeclaredSetForFamilies& second) {
-        return std::tie(first.layouts, first.source) < std::tie(second.layouts, second.source);
-    }, [](const DeclaredSetForFamilies& first, const DeclaredSetForFamilies& second) {
-        return first.layouts == second.layouts;
-    });
+    removeRepeatedSetsForFamilies(loops, declaredSets);
+    return declaredSets;
+}
+
+Vector<DeclaredSetForFamilies> setsDeclaredForFamilies(const Program& program, const SetsOfLayoutsWritten& writtenInBodies, const ParallelLoops& loops)
+{
+    return setsDeclaredInProgramForFamilies(program, &writtenInBodies, loops);
+}
+
+static Vector<DeclaredSetForFamilies> setsInOrderOfAdmissionToFamilies(const TypeTable& types, std::span<const DeclaredSetForFamilies> declaredInProgram, std::span<const LayoutSetID> layoutsThatMet, const ParallelLoops& loops)
+{
+    Vector<DeclaredSetForFamilies> declaredSets(declaredInProgram);
+    if (!layoutsThatMet.empty()) {
+        for (LayoutSetID set : layoutsThatMet)
+            declaredSets.append(DeclaredSetForFamilies { set, SourceOfSetForFamilies::MetInFlow, types.at(set).size() });
+        removeRepeatedSetsForFamilies(loops, declaredSets);
+    }
     parallelSort(loops, declaredSets.mutableSpan(), [&](const DeclaredSetForFamilies& first, const DeclaredSetForFamilies& second) {
         if (first.source != second.source)
             return first.source < second.source;
@@ -113,22 +121,22 @@ static size_t placeOfSetInFamilies(LayoutSetID set, size_t numberOfPlaces)
     return (hash ^ (hash >> 15)) & (numberOfPlaces - 1);
 }
 
-Families::Families(Program& program, ClassHierarchiesAloneTag, const ParallelLoops& loops)
-    : Families(program, nullptr, { }, loops)
+Families::Families(Program& program, ClassesAloneTag, const ParallelLoops& loops)
+    : Families(program, setsDeclaredInProgramForFamilies(program, nullptr, loops).span(), { }, loops)
 {
 }
 
 Families::Families(Program& program, const SetsOfLayoutsWritten& writtenInBodies, std::span<const LayoutSetID> layoutsThatMet, const ParallelLoops& loops)
-    : Families(program, &writtenInBodies, layoutsThatMet, loops)
+    : Families(program, setsDeclaredInProgramForFamilies(program, &writtenInBodies, loops).span(), layoutsThatMet, loops)
 {
 }
 
-Families::Families(Program& program, const SetsOfLayoutsWritten* writtenInBodies, std::span<const LayoutSetID> layoutsThatMet, const ParallelLoops& loops)
+Families::Families(Program& program, std::span<const DeclaredSetForFamilies> declaredInProgram, std::span<const LayoutSetID> layoutsThatMet, const ParallelLoops& loops)
 {
     const TypeTable& types = program.types;
     constexpr uint32_t none = UINT32_MAX;
 
-    Vector<DeclaredSetForFamilies> declaredSets = declaredSetsForFamilies(program, writtenInBodies, layoutsThatMet, loops);
+    Vector<DeclaredSetForFamilies> declaredSets = setsInOrderOfAdmissionToFamilies(types, declaredInProgram, layoutsThatMet, loops);
     Vector<DeclaredSetForFamilies> admitted;
     Vector<uint32_t> placesAbove;
     Vector<uint32_t> placesFarAbove;

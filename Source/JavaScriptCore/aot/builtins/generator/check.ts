@@ -500,6 +500,22 @@ export function checkFieldsHoldingOnlyWhatIsStored(overload: ModelOverload, prob
   }
 }
 
+export function checkPlacesHoldingWhatIsThrown(overload: ModelOverload, problems: Problems): void {
+  const { transfers, callbacks, propertyActions, handlerCalls } = overload.flow;
+  const otherPlaces = [
+    ...transfers.flatMap(({ from, to }) => [from, to]),
+    ...callbacks.flatMap(({ newTarget, thisValue, spreadArguments, resultTo }) => [newTarget, thisValue, spreadArguments, resultTo]),
+    ...propertyActions.map(({ value }) => value),
+    ...handlerCalls.flatMap(({ callee, thisValue }) => [callee, thisValue]),
+  ];
+  if (otherPlaces.some(place => place.place === "NewValue" && place.holdsWhatIsThrown))
+    report(problems, overload, "what is thrown is handed over as an argument of a callback or of a handler, and a record says it of another place");
+  for (const place of [...callbacks, ...handlerCalls].flatMap(call => call.arguments)) {
+    if (place.place === "NewValue" && place.holdsWhatIsThrown && !place.type.isAnything)
+      report(problems, overload, "a place that holds what is thrown says nothing else of the value, and this one has a type");
+  }
+}
+
 export function checkResultAdmitsWhatRecordsBring(overload: ModelOverload, problems: Problems): void {
   const { type } = overload.result;
   if (overload.mode === "Get" || overload.mode === "Set" || overload.flags.includes("IsUndeclared")) return;
@@ -515,6 +531,7 @@ export function checkResultAdmitsWhatRecordsBring(overload: ModelOverload, probl
 
 function checkResultPlaces(overload: ModelOverload, problems: Problems): void {
   checkFieldsHoldingOnlyWhatIsStored(overload, problems);
+  checkPlacesHoldingWhatIsThrown(overload, problems);
   checkResultAdmitsWhatRecordsBring(overload, problems);
   const classes = resultClassesOf(overload);
   const layouts = overload.result.type.parts.flatMap(part => (part.part === "Layout" ? [part.layout] : []));

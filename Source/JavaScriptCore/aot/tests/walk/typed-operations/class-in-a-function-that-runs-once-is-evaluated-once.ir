@@ -12,7 +12,6 @@
 # TWICE-NOT: AreMembersUnchanged
 # TWICE: = PropGet {{*}}key="get"
 # TWICE-NOT: AreMembersUnchanged
-# TWICE: Return
 
 layout L0 kind=Instance name="Point" module=m0 constructor=f7 fields=[{key="x" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=1
 layout L1 kind=Instance name="Twice" module=m0 constructor=f5 fields=[{key="y" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=1

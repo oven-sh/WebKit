@@ -27,6 +27,8 @@ enum class LoaderChange : uint8_t {
     ReplaceLoaderFunction,
     TakeOutOfRequireCache,
     StoreUnderNameOfModuleInRequireCache,
+    RunFileAgain,
+    HandTextToCompile,
 };
 
 JS_EXPORT_PRIVATE String quotedTextOfFailedExpression(VM&);
@@ -58,6 +60,7 @@ JSObject* createLoadByNameRefusedError(JSGlobalObject*, StringView name, ASCIILi
 JSObject* createFileOfImageRefusedError(JSGlobalObject*, StringView path, ASCIILiteral code);
 JSObject* createModuleInOtherRealmError(JSGlobalObject*, StringView path);
 JSObject* createLoaderChangeRefusedError(JSGlobalObject*, LoaderChange, StringView changed);
+JSObject* createEntryOfRequireCacheRefusedError(JSGlobalObject*, StringView path);
 JSObject* createModuleMissingAtBuildError(JSGlobalObject*, const String& specifier, const String& importer, ASCIILiteral code);
 JSObject* createExportStatementFindsNothingError(JSGlobalObject*, const String& exportName, const String& specifier);
 JSObject* createExportStatementFindsSeveralError(JSGlobalObject*, const String& exportName, const String& specifier);

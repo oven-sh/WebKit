@@ -536,8 +536,10 @@ ALWAYS_INLINE Operation* Builder::createWithoutPosition(Opcode opcode, Type type
 void Builder::noteInheritedFind(const Operation* operation)
 {
     uint32_t index = operation->index();
-    if (index >= m_epochOfLastInheritedFind.size())
+    if (index >= m_epochOfLastInheritedFind.size()) {
         m_epochOfLastInheritedFind.grow(m_proc.arena(), std::max(m_proc.numberOfOperations(), m_epochOfLastInheritedFind.size() * 2));
+        m_proc.noteListThatBuildingLeaves(Procedure::ListThatBuildingLeaves::EpochsOfInheritedFinds, m_epochOfLastInheritedFind);
+    }
     m_epochOfLastInheritedFind[index] = m_scopeEpoch;
     m_hasInheritedFindsInEpoch = true;
 }
@@ -1315,7 +1317,7 @@ bool Builder::tryToLeadBranchPastEmptyBlock(Edge target)
     uint32_t numberOfIncomingEdges = newTarget->m_numberOfIncomingEdges;
     RELEASE_ASSERT(!newTarget->m_isEntry && (!newTarget->m_hasOnlyOnePredecessor || !numberOfIncomingEdges));
     from->m_successors[index] = target;
-    newTarget->didGainIncomingEdge(from);
+    newTarget->didGainIncomingEdge(from, target.edgeClass());
     m_proc.m_blocks.takeLast();
     m_block = from;
     return true;

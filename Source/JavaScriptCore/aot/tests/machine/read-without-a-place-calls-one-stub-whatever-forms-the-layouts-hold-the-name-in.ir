@@ -1,6 +1,5 @@
 # const a = { part: 1.5, whole: 7, first: 7 }, b = { whole: "w", part: 2.5, second: 2.5 }, c = { part: "p", whole: "x", more: 1 };   const o = never ? one of two other literals or a text : which ? a : b;   show(o.part, o.whole);
-# The two reads run once, so they have no place. Three layouts have both names, and none is written as a kind of another; four layouts and a text meet in `o`, and a text has no slots, so the reads look the names up. Two of them hold `part` as a raw number: the read under it calls the stub that asks the table of fields first.
-# Two hold `whole` as any value: the read under it asks as every read by name does.
+# The two reads run once, so they have no place. Three layouts have both names, and none is written as a kind of another; four layouts and a text meet in `o`, and a text has no slots, so the reads look the names up. Two of them hold `part` as a raw number, two hold `whole` as any value: both reads ask as every read by name does (the first went by the majority and asked the table of fields first).
 # RUN(PLAN): plan layouts mechanisms=none+TypedOperations+UnboxedNumbers+TypedSlots
 # PLAN: layout L0 CompiledObject
 # PLAN-NEXT: slot 0 "part" OptionalDouble Inline
@@ -12,7 +11,7 @@
 # PLAN-NEXT: slot 0 "part" Cell32 Inline
 # PLAN-NEXT: slot 1 "whole" Cell32 Inline
 # RUN(CODE): bytes f0:Body mechanisms=none+TypedOperations+UnboxedNumbers+TypedSlots
-# CODE: GetByIdAskingFieldTableFirst immediate mention
+# CODE: GetById immediate mention
 # CODE: GetById immediate mention
 # RUN(FIRST): run-in-shell globalThis.which = true; globalThis.never = false; globalThis.show = (a, b) => print(a, b); mechanisms=none+TypedOperations+UnboxedNumbers+TypedSlots
 # FIRST: 1.5 7

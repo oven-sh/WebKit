@@ -67,6 +67,7 @@ public:
     void noteCalledOutOfSight(BuiltinID);
     void noteCalledWithoutRow(BuiltinID);
     void noteCallMayRunCode(BuiltinID);
+    void noteOperandMayMeetCondition(BuiltinID, BuiltinName toldUnder);
     void noteCalledAtSite(FunctionID caller, ValueID site, bool isConstruction, BuiltinID row);
 
     void settle(Vector<BuiltinID>& cameIntoReach, Vector<BuiltinID>& cameOutOfSight);
@@ -74,6 +75,7 @@ public:
 
     bool mayBeHandedWhatIsNoTextNumberOrBoolean(BuiltinID canonical) const;
     bool hasCallThatMayRunCode(BuiltinID canonical) const;
+    bool hasCallWhoseOperandMayMeet(const BuiltinCondition&, BuiltinID canonical) const;
     bool mayRun(BuiltinID canonical) const;
     bool mayRunOrHasObjects(BuiltinID canonical) const;
     bool isAskedForOtherNames(BuiltinID canonical) const;
@@ -85,7 +87,7 @@ public:
 
     bool takeForConstant(BuiltinID member);
 
-    void noteWrite(BuiltinID holder, PropertyKeyID);
+    void noteWrite(BuiltinID holder, PropertyKeyID, bool onlyDeletes = false);
     void noteHandedWhatIsNoTextNumberOrBoolean(BuiltinID holder);
     void noteWriteThroughLostBuiltins(PropertyKeyID);
     void noteWriteThroughUnseenByProgram(PropertyKeyID);
@@ -98,6 +100,10 @@ public:
     void noteOptionThatRunsCodePassed(BuiltinID);
     void noteLostBuiltinsReachUnseen();
     void noteInstanceAtUnseen(BuiltinClassID);
+    void noteEntryHandsHostNothing(uint32_t entry);
+    void noteHostMayFindSomethingAt(uint32_t entry);
+    std::span<const FunctionID> functionsThatAnswerEveryNameOnInstances() const;
+    void noteInstancesAnswerEveryNameWithObjects();
     bool isWorthFollowingToWrites(BuiltinID canonical) const { return m_builtinsWorthFollowingToWrites.quickGet(canonical.index()); }
 
     LookupsPastProgramObjects takeLookups();

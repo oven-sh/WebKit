@@ -1,0 +1,141 @@
+# the program makes a weak reference, so somebody may tell when an object is let go. A suspension then holds what the function as written reads behind it, also where the walk answers the read without the value
+# f1: async function wayNeverTaken(x, p) { await p; if (false) return x.n; return 1; }            the way is folded away
+# f2: async function operandThatWaits(x, p) { return [x, await p].length; }                      the length is folded and the list is swept
+# f3: async function listThatIsWalked(x, p) { for (const each of [x]) { await p; return 1; } }   nothing steps or closes a list that is walked by index
+# f4: async function readOnAnotherWay(x, p) { if (p) { const n = x.n; await p; return n; } return x.n; }   x is read in front of the await and on a way that does not pass it: it is let go
+# f5: async function helperThatIsOnlyCalled(x, p) { const helper = () => 1; await p; return helper(); }    a closure that nobody has seen is no object of the text: it is not made, and what it captures is let go
+# f7: async function textThatWaits(x, p) { const kind = typeof x; await p; if (false) return kind; return 1; }   nobody holds a text weakly: it is let go, and so it is not made
+# RUN: walk f1:CoroutineBody f2:CoroutineBody f3:CoroutineBody f4:CoroutineBody f5:CoroutineBody f7:CoroutineBody mechanisms=all
+# RUN(FEWEST): walk f1:CoroutineBody f2:CoroutineBody f3:CoroutineBody f4:CoroutineBody f7:CoroutineBody mechanisms=none+TypedOperations+Folding+EscapeAnalysis
+# CHECK-LABEL: code f1:CoroutineBody
+# CHECK: b0([[x]]:
+# CHECK: = AwaitBySavingFrame [[awaited]], [[promise]], [[x]] traits=
+# CHECK-LABEL: code f2:CoroutineBody
+# CHECK: b0([[operand]]:
+# CHECK: = AwaitBySavingFrame [[awaitedByTwo]], [[promiseOfTwo]], [[operand]] traits=
+# CHECK-LABEL: code f3:CoroutineBody
+# CHECK: [[list]]: {{*}}= NewArray
+# CHECK: = AwaitBySavingFrame [[awaitedByThree]], [[promiseOfThree]], [[list]] traits=
+# CHECK-LABEL: code f4:CoroutineBody
+# CHECK: [[read]]: {{*}}key="n"
+# CHECK: = AwaitBySavingFrame [[awaitedByFour]], [[promiseOfFour]], [[read]] traits=
+# CHECK-LABEL: code f5:CoroutineBody
+# CHECK-NOT: NewClosure
+# CHECK: = AwaitBySavingFrame [[awaitedByFive]], [[promiseOfFive]] traits=
+# CHECK-LABEL: code f7:CoroutineBody
+# CHECK-NOT: TypeOf
+# CHECK: = AwaitBySavingFrame [[awaitedBySeven]], [[promiseOfSeven]] traits=
+# FEWEST-LABEL: code f1:CoroutineBody
+# FEWEST: b0([[fewx]]:
+# FEWEST: = AwaitBySavingFrame [[fewawaited]], [[fewpromise]], [[fewx]] traits=
+# FEWEST-LABEL: code f2:CoroutineBody
+# FEWEST: b0([[fewoperand]]:
+# FEWEST: = AwaitBySavingFrame [[fewawaitedByTwo]], [[fewpromiseOfTwo]], [[fewoperand]] traits=
+# FEWEST-LABEL: code f3:CoroutineBody
+# FEWEST: [[fewlist]]: {{*}}= NewArray
+# FEWEST: = AwaitBySavingFrame [[fewawaitedByThree]], [[fewpromiseOfThree]], [[fewlist]] traits=
+# FEWEST-LABEL: code f4:CoroutineBody
+# FEWEST: [[fewread]]: {{*}}key="n"
+# FEWEST: = AwaitBySavingFrame [[fewawaitedByFour]], [[fewpromiseOfFour]], [[fewread]] traits=
+# FEWEST-LABEL: code f7:CoroutineBody
+# FEWEST-NOT: TypeOf
+# FEWEST: = AwaitBySavingFrame [[fewawaitedBySeven]], [[fewpromiseOfSeven]] traits=
+
+layout L0 module=m0 fields=[{key="n" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="WeakRef" [isFreeName]
+    v2 = NewObject layout=L0
+    v3 = Integer integer=1
+    PropDefine v2, v3 key="n"
+    v5 = FinishObject v2
+    v6 = Construct v1, -, v5
+    v7 = NewClosure function=f1
+    v8 = Call v7, -, v5, v6
+    v9 = NewClosure function=f2
+    v10 = Call v9, -, v5, v6
+    v11 = NewClosure function=f3
+    v12 = Call v11, -, v5, v6
+    v13 = NewClosure function=f4
+    v14 = Call v13, -, v5, v6
+    v15 = NewClosure function=f5
+    v16 = Call v15, -, v5, v6
+    v17 = NewClosure function=f7
+    v18 = Call v17, -, v5, v6
+    Return v6
+}
+function f1 name="wayNeverTaken" module=m0 flags=[IsAsync] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Await v1
+    v3 = Boolean
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    v4 = PropGet v0 key="n"
+    Return v4
+  b2():
+    v5 = Integer integer=1
+    Return v5
+}
+function f2 name="operandThatWaits" module=m0 flags=[IsAsync] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Await v1
+    v3 = NewArray v0, v2 contents=anything
+    v4 = PropGet v3 key="length"
+    Return v4
+}
+function f3 name="listThatIsWalked" module=m0 flags=[IsAsync] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewArray v0 contents=anything
+    v3 = IteratorOpen v2
+    v4 = IteratorResume v3
+    v5 = ResultAt v4
+    v6 = ResultAt v4 index=1
+    Branch v5 -> taken b1(), notTaken b2()
+  b1():
+    v7 = Undefined
+    Return v7
+  b2():
+    v8 = Await v1
+    IteratorClose v3
+    v10 = Integer integer=1
+    Return v10
+}
+function f4 name="readOnAnotherWay" module=m0 flags=[IsAsync] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = ToBoolean v1
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = PropGet v0 key="n"
+    v4 = Await v1
+    Return v3
+  b2():
+    v5 = PropGet v0 key="n"
+    Return v5
+}
+function f5 name="helperThatIsOnlyCalled" module=m0 flags=[IsAsync] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewClosure v0 function=f6
+    v3 = Await v1
+    v4 = Call v2, -
+    Return v4
+}
+function f6 name="helper" module=m0 kind=Arrow captures=[{type=anything}] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    Return v1
+}
+function f7 name="textThatWaits" module=m0 flags=[IsAsync] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = TypeOf v0
+    v3 = Await v1
+    v4 = Boolean
+    Branch v4 -> taken b1(), notTaken b2()
+  b1():
+    Return v2
+  b2():
+    v5 = Integer integer=1
+    Return v5
+}

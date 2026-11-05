@@ -421,6 +421,7 @@ void Walker::endWithSwitchOverOwnBlocks(TerminatorDraft& terminator, std::span<c
         if (isUnreachable())
             return;
     }
+    hearEffectsInTries(effects);
     m_state.invalidate(effects);
     if (effects.mayThrow && has(Mechanism::Handlers))
         noteStateAtThrowForHandler(terminator.operands());

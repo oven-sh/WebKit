@@ -400,6 +400,7 @@ static void testWriterEndsWhatItMayWrite()
     state.noteVariable(VariableID(0u), held);
     state.noteGuardOfReadsHolds(LayoutID(1u), key, held);
     state.noteGuardOfReadsHolds(LayoutID(2u), key, held);
+    state.noteThatGuardsHaveBegun(LayoutID(1u));
     noteInKnownAnswersTests(state, { 1, 1, written, { AbstractHeap::ObjectFields }, false });
     noteInKnownAnswersTests(state, { 2, 2, other, { AbstractHeap::ObjectFields }, false });
     noteInKnownAnswersTests(state, { 3, 3, other, { AbstractHeap::ModuleVariables }, false });
@@ -431,7 +432,7 @@ static void testWriterEndsWhatItMayWrite()
 
     state.invalidate(Effects::unknownCode(), mayBeWritten, mayEndGuard);
     AOT_TEST_CHECK(!state.slot(other, field) && !state.guardOfReadsHolds(LayoutID(2u), key) && !findInKnownAnswersTests(state, 2));
-    AOT_TEST_CHECK(state.guardsHaveBegun(LayoutID(1u)) && state.guardsHaveBegun(LayoutID(2u)) && !state.guardsHaveBegun(LayoutID(3u)));
+    AOT_TEST_CHECK(state.guardsHaveBegun(LayoutID(1u)) && !state.guardsHaveBegun(LayoutID(2u)));
 }
 
 static void testNumberFarAboveOldOneCostsNoMore()

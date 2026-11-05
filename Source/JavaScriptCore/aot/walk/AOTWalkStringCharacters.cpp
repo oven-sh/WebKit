@@ -108,6 +108,7 @@ private:
     Reference m_length;
     Origin m_origin;
     BlockID m_outside;
+    bool m_positionComesRound { false };
 };
 
 } // anonymous namespace
@@ -183,6 +184,8 @@ void BuilderOfCharacterRead::bindAndNote(Reference given, Reference codeUnit)
         return;
     NotesOfStrings& notes = notesOfStrings(m_walker);
     uint32_t record = given.id().index();
+    if (m_walker.keepsLogsForUndo())
+        notes.codeUnitsChanged.append({ record, (answersWithString() ? notes.codeUnitsBesideCharacters : notes.codeUnitsBesideCharCodes).get(record), answersWithString() });
     if (answersWithString())
         notes.codeUnitsBesideCharacters.set(record, codeUnit);
     else
@@ -208,6 +211,16 @@ void BuilderOfCharacterRead::meetAndBind(const std::array<Reference, 2>& inside)
         return;
     }
 
+    if (lastInside && m_positionComesRound && m_walker.opensGuesses() && !m_walker.testsEveryPosition() && m_walker.mayBeginTurnAgainInClosedCopy()) {
+        m_walker.continueIn(m_outside);
+        if (!m_walker.isUnreachable())
+            m_walker.beginTurnAgainInClosedCopy();
+        m_walker.continueIn(lastInside);
+        m_walker.noteGuessOpened();
+        bindAndNote(inside[0], inside[1]);
+        return;
+    }
+
     std::array<Reference, 2> outside { valueOutside(), integer(-1) };
     if (!lastInside) {
         m_walker.continueIn(m_outside);
@@ -228,6 +241,7 @@ bool BuilderOfCharacterRead::build(Reference position)
         position = integer(0);
     if (!position || !types.at(m_walker.typeOf(position)).isNumber())
         return false;
+    m_positionComesRound = m_method != CharacterReadInWalkStrings::At && m_method != CharacterReadInWalkStrings::CharCodeAt && m_walker.comesRoundTypedCopy(rootForStrings(m_walker, position));
 
     if (std::optional<PieceOfString> piece = pieceInSight(m_walker, m_string)) {
         m_stringRead = piece->string;

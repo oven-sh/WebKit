@@ -120,6 +120,7 @@ static AccessCost costOfWalkNoteKind(WalkNoteKind kind)
     case WalkNoteKind::ResolvedOperation:
         return AccessCost::Free;
     case WalkNoteKind::TestThatRejoins:
+    case WalkNoteKind::TestThatLeaves:
     case WalkNoteKind::TestThatThrows:
         return AccessCost::TestsReceiver;
     case WalkNoteKind::GenericOperation:
@@ -210,6 +211,16 @@ WalkNotes notesOfSweptCode(TypeReader types, const Code& code, bool notesResolve
             continue;
 
         note.opcode = operation.opcode;
+        if (code.unit().role == CodeRole::ParameterGuard) {
+            if (operation.opcode != Opcode::TypeTest)
+                continue;
+            note.kind = WalkNoteKind::TestThatLeaves;
+            note.cost = costOfWalkNoteKind(note.kind);
+            note.cause = UnprovenCause::UnknownObject;
+            note.layout = singleLayoutOf(types, types.at(operation.testedType()));
+            result.notes.append(note);
+            continue;
+        }
         if (testsInWalkNotes.contains(operation.opcode)) {
             note.kind = WalkNoteKind::TestThatRejoins;
             note.cost = costOfWalkNoteKind(note.kind);
@@ -233,6 +244,22 @@ WalkNotes notesOfSweptCode(TypeReader types, const Code& code, bool notesResolve
             if (ValueID object = operation.child(*receiver))
                 note.layout = layoutOfValueInWalkNote(types, code, object);
         }
+        result.notes.append(note);
+    }
+    for (const Code::TestOfGuardInFrontOfCopy& noted : code.testsOfGuardsInFrontOfCopies()) {
+        const Operation& operation = code.at(noted.test);
+        BlockID block = operation.block();
+        if (operation.opcode != Opcode::TypeTest || !block || !code.isReached(block) || !code.isNeeded(noted.test))
+            continue;
+        WalkNote note;
+        note.kind = WalkNoteKind::TestThatLeaves;
+        note.opcode = operation.opcode;
+        note.cost = costOfWalkNoteKind(note.kind);
+        note.cause = UnprovenCause::UnknownObject;
+        note.loopDepth = code.at(block).isInLoop;
+        note.origin = Origin { noted.positionOfCallee, 0, false, false };
+        note.writtenIn = noted.callee;
+        note.layout = singleLayoutOf(types, types.at(operation.testedType()));
         result.notes.append(note);
     }
     return result;

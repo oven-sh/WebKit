@@ -33,6 +33,9 @@ public:
     JS_EXPORT_PRIVATE ~Arena();
 
     static constexpr size_t alignmentOfCursor = 8;
+    static constexpr size_t smallestRoomLetGo = 4 * KB;
+
+    static constexpr size_t bytesTakenBy(size_t bytes) { return (bytes + alignmentOfCursor - 1) & ~(alignmentOfCursor - 1); }
 
     void* allocate(size_t bytes, size_t alignment = alignof(std::max_align_t))
     {
@@ -94,9 +97,21 @@ public:
         return { first, source.size() };
     }
 
+    void letGo(void* room, size_t bytes)
+    {
+        if (bytes >= smallestRoomLetGo) [[unlikely]]
+            letGoOfLargeRoom(reinterpret_cast<uintptr_t>(room), bytes);
+    }
+
+    template<typename T>
+    void letGoOfArray(T* first, size_t count)
+    {
+        letGo(const_cast<std::remove_const_t<T>*>(first), bytesTakenBy(count * sizeof(T)));
+    }
+
     JS_EXPORT_PRIVATE void reset();
 
-    size_t bytesAllocatedSinceReset() const { return m_bytesInFullChunks + (m_cursor - m_begin); }
+    size_t bytesAllocatedSinceReset() const { return m_bytesInFullChunks + ((m_endOfChunk ? m_cursorInChunk : m_cursor) - m_begin); }
 
     template<typename T>
     T& objectKeptAcrossResets()
@@ -127,14 +142,24 @@ private:
         void* object;
         void (*destroy)(void*);
     };
+    struct RoomLetGo {
+        RoomLetGo* next;
+        uintptr_t end;
+    };
 
     static constexpr size_t smallestChunkSize = 64 * KB;
-
-    static constexpr size_t bytesTakenBy(size_t bytes) { return (bytes + alignmentOfCursor - 1) & ~(alignmentOfCursor - 1); }
+    static constexpr size_t smallestRoomKept = 512;
+    static_assert(smallestRoomKept >= sizeof(RoomLetGo) && smallestRoomKept <= smallestRoomLetGo);
 
     JS_EXPORT_PRIVATE void* allocateSlow(size_t bytes, size_t alignment);
     JS_EXPORT_PRIVATE void addFinalizer(void* object, void (*destroy)(void*));
     JS_EXPORT_PRIVATE void* allocateKeptObject(size_t bytes, const char* keyOfType, void (*destroy)(void*));
+    JS_EXPORT_PRIVATE void letGoOfLargeRoom(uintptr_t begin, size_t bytes);
+    bool holds(uintptr_t begin, uintptr_t end) const;
+    void keepRoomLetGo(uintptr_t begin, uintptr_t end);
+    void standInRoomLetGo();
+    void* allocateOutsideRoomLetGo(size_t bytes, size_t alignment);
+    void forgetRoomsLetGo();
 
     uintptr_t m_begin { 0 };
     uintptr_t m_cursor { 0 };
@@ -143,6 +168,10 @@ private:
     Chunk* m_chunk { nullptr };
     Finalizer* m_finalizers { nullptr };
     KeptObject* m_keptObjects { nullptr };
+    RoomLetGo* m_roomsLetGo { nullptr };
+    uintptr_t m_cursorInChunk { 0 };
+    uintptr_t m_endOfChunk { 0 };
+    bool m_forgetsRoomsLetGoAtReset { false };
 };
 
 template<typename T>
@@ -259,8 +288,17 @@ public:
         T* data = static_cast<T*>(arena.allocate(static_cast<size_t>(capacity) * sizeof(T), alignof(T)));
         if (m_size)
             std::uninitialized_copy_n(m_data, m_size, data);
+        arena.letGo(m_data, static_cast<size_t>(m_capacity) * sizeof(T));
         m_data = data;
         m_capacity = capacity;
+    }
+
+    void letGo(Arena& arena)
+    {
+        arena.letGoOfArray(m_data, m_capacity);
+        m_data = nullptr;
+        m_size = 0;
+        m_capacity = 0;
     }
 
 private:

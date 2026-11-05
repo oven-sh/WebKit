@@ -6,8 +6,8 @@
 # CHECK-LABEL: code f1:CoroutineBody
 # CHECK: = TypeTest [[next]] testedType=builtin(AsyncGeneratorPrototypeNext)
 # CHECK: [[isGenerator]]: boolean {{*}} = TypeTest [[iterator]] testedType=AsyncGenerator
-# CHECK: [[generator]]: AsyncGenerator {{*}} = Narrowed [[iterator]], [[isGenerator]]
-# CHECK: [[cell]]: AsyncGenerator {{*}} = Unbox [[generator]]
+# CHECK: [[generator]]: AsyncGenerator{{*}} = Narrowed [[iterator]], [[isGenerator]]
+# CHECK: [[cell]]: AsyncGenerator{{*}} = Unbox [[generator]]
 # CHECK: [[step]]: {{*}} = StepAsyncGenerator [[cell]],
 # CHECK: [[value]]: {{*}} = ResultAt [[step]]
 # CHECK: [[status]]: {{*}} = ResultAt [[step]] index=1

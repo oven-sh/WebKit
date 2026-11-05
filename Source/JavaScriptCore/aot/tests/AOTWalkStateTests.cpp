@@ -168,12 +168,6 @@ public:
             begun.append(classLayout);
     }
 
-    void noteGuard(Kind kind, uint32_t classLayout, uint32_t key, Reference test)
-    {
-        note(kind, Reference(), classLayout, key, test);
-        noteThatGuardsHaveBegun(classLayout);
-    }
-
     bool someGuardHoldsOf(uint32_t classLayout) const
     {
         return places.containsIf([&](const Place& place) {
@@ -522,11 +516,11 @@ static void runRandomStepsInWalkStateTests(unsigned seed, uint32_t numberOfObjec
             switch (random.getUint32(3)) {
             case 0:
                 pair.state.noteStoresPassAbove(LayoutID(classLayout), PropertyKeyID(key), test);
-                pair.lists.noteGuard(Kind::GuardOfStores, classLayout, key, test);
+                pair.lists.note(Kind::GuardOfStores, Reference(), classLayout, key, test);
                 break;
             case 1:
                 pair.state.noteGuardOfReadsHolds(LayoutID(classLayout), PropertyKeyID(key), test);
-                pair.lists.noteGuard(Kind::GuardOfReads, classLayout, key, test);
+                pair.lists.note(Kind::GuardOfReads, Reference(), classLayout, key, test);
                 break;
             case 2:
                 pair.state.noteThatGuardsHaveBegun(LayoutID(classLayout));

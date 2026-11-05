@@ -78,30 +78,6 @@ void StubAssembler::callOperationAndReturn(Entry entry, const OperationCall& ope
     emitOperationCallAndReturn(entry, call, beforeReturn, savedRegistersAreRead);
 }
 
-bool StubAssembler::resultsComeFromOperation(const OperationCall& operationCall) const
-{
-    RegisterSet returned;
-    switch (operationCall.returns) {
-    case OperationCall::Returns::Void:
-        break;
-    case OperationCall::Returns::Value:
-        returned.add(operationCall.valueDestination.value_or(GPRInfo::returnValueGPR), IgnoreVectors);
-        break;
-    case OperationCall::Returns::Double:
-        returned.add(FPRInfo::returnValueFPR, IgnoreVectors);
-        break;
-    case OperationCall::Returns::Pair:
-        returned.add(GPRInfo::returnValueGPR, IgnoreVectors);
-        returned.add(GPRInfo::returnValueGPR2, IgnoreVectors);
-        break;
-    }
-    for (Reg result : { m_signature.firstResult, m_signature.secondResult }) {
-        if (result && !returned.contains(result, IgnoreVectors))
-            return false;
-    }
-    return m_signature.result != StubResult::Flags;
-}
-
 bool StubAssembler::resultsInFPRsComeFromOperation(const OperationCall& operationCall) const
 {
     for (Reg result : { m_signature.firstResult, m_signature.secondResult }) {
@@ -128,15 +104,7 @@ void StubAssembler::emitOperationCallAndReturn(const CalledOperation& operation,
         RELEASE_ASSERT(!operationCall.constantArguments[0] && !operationCall.constantArguments[1]);
         RELEASE_ASSERT(operationCall.spilledArguments->count < numberOfOperationArgumentGPRs);
     }
-    OperationCall::Saves saves = operationCall.saves;
-    if (callerKeepsNoRegisters() && savedRegistersAreRead == SavedRegistersAreRead::ByCallerAlone && !operationCall.spilledArguments && resultsComeFromOperation(operationCall)) {
-        saves = OperationCall::Saves::Nothing;
-        for (unsigned index = 0; index < m_signature.numberOfOperands; ++index) {
-            if (m_signature.operands[index].isGPR())
-                clobberOperand(index);
-        }
-    }
-    switch (saves) {
+    switch (operationCall.saves) {
     case OperationCall::Saves::Nothing:
         emitOperationCallSavingNothing(operation, operationCall, beforeReturn);
         return;
@@ -372,27 +340,26 @@ void StubAssembler::emitOperationCallSavingRegisters(const CalledOperation& oper
     std::array<unsigned, 16> indexOfFPR { };
     std::array<unsigned, numberOfGPRs> indexOfGPR { };
     unsigned numberOfSlots = 0;
+    for (unsigned i = 0; i < numberOfGPRs; ++i) {
+        if (restored.contains(Reg(saved[i]), IgnoreVectors)) {
+            indexOfGPR[i] = numberOfSlots++;
+            push(saved[i]);
+        }
+    }
+    const int32_t sizeOfPushedRegisters = numberOfSlots * sizeof(CPURegister);
     forEachFPRSavedAroundOperation(operationCall.saves, [&](FPRReg fpr, unsigned i) {
         if (restored.contains(fpr, IgnoreVectors))
             indexOfFPR[i] = numberOfSlots++;
     });
-    for (unsigned i = 0; i < numberOfGPRs; ++i) {
-        if (restored.contains(Reg(saved[i]), IgnoreVectors))
-            indexOfGPR[i] = numberOfSlots++;
-    }
     const int32_t sizeOfFrame = alignedSizeOfRegisters(numberOfSpillSlots + numberOfSlots);
-    if (sizeOfFrame)
-        subPtr(TrustedImm32(sizeOfFrame), sp);
+    if (sizeOfFrame != sizeOfPushedRegisters)
+        subPtr(TrustedImm32(sizeOfFrame - sizeOfPushedRegisters), sp);
     auto slot = [&](unsigned index) {
         int32_t belowFramePointer = (index + 1) * sizeof(CPURegister);
         return belowFramePointer <= 128 ? Address(GPRInfo::callFrameRegister, -belowFramePointer) : Address(sp, sizeOfFrame - belowFramePointer);
     };
     auto slotOfGPR = [&](unsigned i) { return slot(indexOfGPR[i]); };
     auto slotOfFPR = [&](unsigned i) { return slot(indexOfFPR[i]); };
-    for (unsigned i = 0; i < numberOfGPRs; ++i) {
-        if (restored.contains(Reg(saved[i]), IgnoreVectors))
-            store64(saved[i], slotOfGPR(i));
-    }
     forEachFPRSavedAroundOperation(operationCall.saves, [&](FPRReg fpr, unsigned i) {
         if (restored.contains(fpr, IgnoreVectors))
             storeDouble(fpr, slotOfFPR(i));
@@ -427,17 +394,19 @@ void StubAssembler::emitOperationCallSavingRegisters(const CalledOperation& oper
     }
     if (valueDestination && !valueGoesThroughFrame)
         move(GPRInfo::returnValueGPR, *valueDestination);
-    for (unsigned i = 0; i < numberOfGPRs; ++i) {
-        if (restored.contains(Reg(saved[i]), IgnoreVectors))
-            load64(slotOfGPR(i), saved[i]);
-    }
     forEachFPRSavedAroundOperation(operationCall.saves, [&](FPRReg fpr, unsigned i) {
         if (restored.contains(fpr, IgnoreVectors))
             loadDouble(slotOfFPR(i), fpr);
     });
     if (valueDestination)
         recordClobber(*valueDestination);
-    emitFunctionEpilogue();
+    if (sizeOfFrame != sizeOfPushedRegisters)
+        addPtr(TrustedImm32(sizeOfFrame - sizeOfPushedRegisters), sp);
+    for (unsigned i = numberOfGPRs; i--;) {
+        if (restored.contains(Reg(saved[i]), IgnoreVectors))
+            pop(saved[i]);
+    }
+    emitFunctionEpilogueWithEmptyFrame();
     Jump exceptionOrPoll;
     if (testsException || polls)
         exceptionOrPoll = branchTestPtr(NonZero, scratch);

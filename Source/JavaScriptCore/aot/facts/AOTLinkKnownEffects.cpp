@@ -51,6 +51,7 @@ const Effects* DistinctEffects::keep(const Effects& effects)
 {
     if (effects == effectsOfUnknownCode)
         return &effectsOfUnknownCode;
+    RELEASE_ASSERT(effects.reads.masksAgreeWithHeaps() && effects.writes.masksAgreeWithHeaps());
     if ((m_numberKept + 1) * 2 > m_places.size())
         makeRoomInPlaces();
     const Effects*& place = placeOf(effects);

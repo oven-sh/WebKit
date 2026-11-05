@@ -89,9 +89,9 @@ enum CompileAction { Compile VerifyOnly CheckOnly }
 enum Architecture { ARM64 X86_64 }
 enum ReferenceWidth { Wide Narrow }
 enum ImageForm { Absolute PositionIndependent }
-flags CheckSet { VerifyEachPass Validate ValidateBackEnd ValidateReferences VerifyEachStage ValidateReferenceGuards FlowFixpoint UsedValuesAreListed ClaimsToBackEnd MovedLoads DecidedComparisons SpillSlots AllocatedRegisters ClaimsOfFlow KeepGoing }
+flags CheckSet { VerifyEachPass Validate ValidateBackEnd ValidateReferences VerifyEachStage ValidateReferenceGuards FlowFixpoint UsedValuesAreListed ClaimsToBackEnd MovedLoads DecidedComparisons SpillSlots AllocatedRegisters ClaimsOfFlow KeepGoing LastWalksOfLoopsAlone WalksOfLoopsThatFitAgain FlowFindsNoLessFromMore }
 flags ReportSet { Flow Symbols Allocations AccessCounts Uses }
-flags TestingSwitch { IgnoreBranchHints MayEncounterMasqueradesAsUndefined DropGuard IgnoreExpectedTypes DropReferenceGuards ProveEverything NoCallConvertsCells NoLayoutIsMadeSeldom DelayFlowRules DelayOtherFlowRules FoldLoadsPastCollections OverwriteDeadValuesAtCollections ShuffleExpectedTypes NobodyLooksAtNewInstances NativeCodeAnswersNullish WalksNothingAtCalls CheckProofsAtRunTime UnseenCodeAnswersUndefined WritesBodiesStraight CheckProofsAtEntries CheckProofsAtEntriesAndFields KeepsCellsOutOfFrames TestsEveryPosition PositionsAreTakenToLieInside CheckEffectsAtRunTime RowSaysLess NoCalleeKeepsWhatItIsHanded HoldsObjectsToStayingAsMade }
+flags TestingSwitch { IgnoreBranchHints IgnoreExpectedTypes DelayFlowRules DelayOtherFlowRules ShuffleExpectedTypes NativeCodeAnswersNullish CheckProofsAtRunTime UnseenCodeAnswersUndefined WritesBodiesStraight CheckProofsAtEntries CheckProofsAtEntriesAndFields KeepsCellsOutOfFrames TestsEveryPosition PositionsAreTakenToLieInside CheckEffectsAtRunTime RowSaysLess NoCalleeKeepsWhatItIsHanded ArgumentsOfUnseenCodeDoNotLeave UndoLeavesExpectations ShuffleBlockFrequencies FailGuesses GiveLinkMore ShuffleChoices }
 flags AdmittedCode { Inspector ReplacedBuiltins }
 flags ExcludedCode { EvaluatedText FunctionSource CodeOutsideImage HostEvaluatedText ForeignCalls ForeignCallsOfUnseenCode LibraryText FilesOfImageForCodeOutside }
 flags OutputOptions { Obfuscate SharesRealms RunsInSeveralRealms RunsInPlaceOfFiles }
@@ -102,6 +102,7 @@ record CompileOptions abi {
     action: CompileAction checks: CheckSet reports: ReportSet testing: TestingSwitch 
     threadCount: UInt32 admittedCode: AdmittedCode output: OutputOptions
     excludedCode: ExcludedCode rowThatSaysLess: UInt32
+    seedOfShuffles: UInt32 periodOfGuessesThatFail: UInt32
 }
 
 word "check" "<name>,.." "check" custom applyCheck listChecks

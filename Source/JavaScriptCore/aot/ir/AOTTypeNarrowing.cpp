@@ -619,6 +619,10 @@ static TypeID typeThatTestAsksFor(TypeArena& types, const Test& test)
         if constexpr (!isCursorOverInput<Test>)
             return types.forLayoutSet(test.layouts());
         break;
+    case Opcode::IsPlainInstanceOf:
+        if constexpr (!isCursorOverInput<Test>)
+            return types.forLayoutSet(test.receivers());
+        break;
     default:
         break;
     }
@@ -639,7 +643,10 @@ TypeID typeOfEdgeResult(const TypingContext& context, const Test& test, OperandT
         if constexpr (!isCursorOverInput<Test>) {
             if (opcode == Opcode::ShapeTest && side == EdgeSide::NotTaken && test.refusesMarkedObjects())
                 return source;
-        }
+            if (opcode == Opcode::IsPlainInstanceOf && (side == EdgeSide::NotTaken || !test.receivers()))
+                return source;
+        } else if (opcode == Opcode::IsPlainInstanceOf)
+            return source;
         return narrowByTest(context, source, typeThatTestAsksFor(context.types, test), side);
     case Proof::Truthiness:
         return narrowByTruthiness(context, source, side);

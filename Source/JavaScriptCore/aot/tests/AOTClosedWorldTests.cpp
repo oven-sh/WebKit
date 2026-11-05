@@ -822,8 +822,8 @@ static void testWhatIsDoneToModuleCacheLeavesTheProgramClosed()
 static void testFrontEndAloneSaysWhetherWaysBetweenModuleObjectsAreShown()
 {
     checkFlags({
-        { takesMainModuleAsFrontEndSays, runsTextThatLoadsCode | showsWaysBetweenModuleObjects },
-        { takesMainModuleBehindFrontEnd, runsTextThatLoadsCode },
+        { takesMainModuleAsFrontEndSays, (runsOnlyCodeOfImage ? findsModulesByName : loadsCodeFromOutside) | showsWaysBetweenModuleObjects },
+        { takesMainModuleBehindFrontEnd, runsOnlyCodeOfImage ? findsModulesByName : loadsCodeFromOutside },
         { takesMainModuleAsFrontEndSays, open | showsWaysBetweenModuleObjects, { "admit=Inspector"_s, "exclude=CodeOutsideImage"_s } },
     });
 }

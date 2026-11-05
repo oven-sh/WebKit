@@ -831,6 +831,14 @@ public:
 
     void reset(CodeUnit);
 
+    enum class FrequenciesOfBlocks : uint8_t { AsGiven, AllNormal, DrawnBySeed };
+    void takeFrequenciesOfBlocks(FrequenciesOfBlocks taken, uint32_t seed)
+    {
+        m_frequenciesOfBlocks = taken;
+        m_seedOfFrequencies = seed;
+    }
+    uint32_t numberOfBlocksPlacedOtherwise() const { return m_numberOfBlocksPlacedOtherwise; }
+
     CodeUnit unit() const { return m_unit; }
     FunctionID function() const { return m_unit.function; }
     CodeRole role() const { return m_unit.role; }
@@ -899,6 +907,8 @@ public:
     BlockID addBlock(BlockRole = BlockRole::Ordinary, BlockFrequency = BlockFrequency::Normal);
     BlockID addBlockBehindEdge(EdgeID, BlockFrequency, bool isInLoop);
     void setLoopMarks(BlockID, bool isInLoop, bool isLoopHead);
+    void makeBlocksRare(uint32_t first, uint32_t end);
+    void makeBlockRare(BlockID);
     void setSubject(BlockID, ValueID);
     void markMeetingOfStepWrittenByHand(BlockID);
     void setParameters(BlockID, std::span<const ValueID>);
@@ -910,6 +920,13 @@ public:
     ValueID append(BlockID, const Draft&, TypeID proven, EffectTraits);
     void noteEffectsBelieved(ValueID, const Effects&);
     const Effects* effectsBelievedOf(ValueID) const;
+    struct TestOfGuardInFrontOfCopy {
+        ValueID test;
+        FunctionID callee;
+        uint32_t positionOfCallee { 0 };
+    };
+    void noteTestOfGuardInFrontOfCopy(TestOfGuardInFrontOfCopy noted) { m_testsOfGuardsInFrontOfCopies.append(noted); }
+    std::span<const TestOfGuardInFrontOfCopy> testsOfGuardsInFrontOfCopies() const LIFETIME_BOUND { return m_testsOfGuardsInFrontOfCopies.span(); }
     ValueID appendConversion(BlockID, Opcode, ValueID operand, Representation, TypeID proven, Origin);
     ValueID addConstant(const Draft&, TypeID proven);
     ValueID addCopyOfConstant(ValueID constant, Representation);
@@ -928,6 +945,53 @@ public:
     void noteCallThatPlanHasNotCounted() { m_holdsCallThatPlanHasNotCounted = true; }
     void noteThatCallsOfFunctionNeverCollect() { m_callsOfFunctionNeverCollect = true; }
 
+    struct OpenBlock {
+        BlockID block;
+        ValueID last;
+        bool hadEnded { false };
+        bool hadHandler { false };
+    };
+    struct Mark {
+        uint32_t numberOfOperations { 0 };
+        uint32_t numberOfBlocks { 0 };
+        uint32_t numberOfEdges { 0 };
+        uint32_t numberOfInlineFrames { 0 };
+        uint32_t numberOfEntries { 0 };
+        uint32_t numberOfFrameWords { 0 };
+        uint32_t numberOfFactUses { 0 };
+        uint32_t numberOfEffectsBelieved { 0 };
+        uint32_t numberOfTestsOfGuardsInFrontOfCopies { 0 };
+        uint32_t numberOfPollsWithFates { 0 };
+        uint32_t numberOfChangesToOlderParts { 0 };
+        uint32_t numberOfOlderBlocksEnded { 0 };
+        OpcodeSet opcodesOfValues;
+        bool hasHandlers { false };
+        bool hasSuspensions { false };
+        bool hasLoops { false };
+        bool holdsFrameCells { false };
+        bool holdsCallThatPlanHasNotCounted { false };
+        bool callsOfFunctionNeverCollect { false };
+        bool readsNumbersOutOfBytes { false };
+    };
+    Mark mark() const;
+    OpenBlock stateOf(BlockID) const;
+    void abandonBackTo(const Mark&, std::span<const OpenBlock> openBlocks);
+    bool isAbandoned(EdgeID edge) const { return m_graveyard && at(edge).from == m_graveyard; }
+    bool isAbandoned(ValueID record) const
+    {
+        if (m_recordsAbandoned.isEmpty() || record.index() < m_recordsAbandoned.first().first)
+            return false;
+        auto behind = std::ranges::upper_bound(m_recordsAbandoned, record.index(), { }, &std::pair<uint32_t, uint32_t>::first);
+        return record.index() < (behind - 1)->second;
+    }
+    void keepChangesToOlderParts(bool keeps)
+    {
+        m_keepsChangesToOlderParts = keeps;
+        if (!keeps) {
+            m_changesToOlderParts.shrink(0);
+            m_olderBlocksEnded.shrink(0);
+        }
+    }
 
 private:
     friend class Sweep;
@@ -936,6 +1000,8 @@ private:
     void appendEdgeInto(BlockID from, BlockID to, std::span<const ValueID> arguments);
     void layClosureInFrame(ValueID, LoanOfClosure);
     void layObjectInFrame(ValueID);
+    BlockFrequency frequencyTakenFor(uint32_t block, BlockFrequency given);
+    bool loopMarkIsDrawnAway(uint32_t block) const;
 
     CodeUnit m_unit;
     StableArray<Operation, 10> m_operations;
@@ -946,7 +1012,31 @@ private:
     Vector<EntryOfCode, 2> m_entries;
     Vector<FactUse> m_factUses;
     Vector<std::pair<ValueID, Effects>> m_effectsBelieved;
+    Vector<TestOfGuardInFrontOfCopy> m_testsOfGuardsInFrontOfCopies;
     Vector<PollWithFate> m_pollsWithFates;
+    struct ChangeToOlderPart {
+        EdgeID closed;
+        BlockID entered;
+        EdgeID lastEdgeInBefore;
+        ValueID changed;
+        Operation recordBefore;
+    };
+    Vector<ChangeToOlderPart> m_changesToOlderParts;
+    struct OlderBlockEnded {
+        BlockID block;
+        Terminator before;
+    };
+    Vector<OlderBlockEnded> m_olderBlocksEnded;
+    mutable uint32_t m_numberOfBlocksAtNewestMark { 0 };
+    void setTerminator(BlockID blockID, Block& block, const Terminator& terminator)
+    {
+        if (m_keepsChangesToOlderParts && blockID.index() < m_numberOfBlocksAtNewestMark)
+            m_olderBlocksEnded.append({ blockID, block.terminator });
+        block.terminator = terminator;
+    }
+    Vector<std::pair<uint32_t, uint32_t>, 4> m_recordsAbandoned;
+    bool m_keepsChangesToOlderParts { false };
+    BlockID m_graveyard;
     OpcodeSet m_opcodesOfValues;
     uint32_t m_numberOfFrameWords { 0 };
     bool m_hasHandlers { false };
@@ -956,6 +1046,9 @@ private:
     bool m_holdsCallThatPlanHasNotCounted { false };
     bool m_callsOfFunctionNeverCollect { false };
     bool m_readsNumbersOutOfBytes { false };
+    FrequenciesOfBlocks m_frequenciesOfBlocks { FrequenciesOfBlocks::AsGiven };
+    uint32_t m_seedOfFrequencies { 0 };
+    uint32_t m_numberOfBlocksPlacedOtherwise { 0 };
 
     bool m_isSwept { false };
     Vector<uint8_t> m_marks;

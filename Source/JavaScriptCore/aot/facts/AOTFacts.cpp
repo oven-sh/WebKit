@@ -232,12 +232,23 @@ static void layKeysThatHeldAloneAppendsOver(LinkTables& linked, const LinkTables
         std::span<const PropertyKeyID> keysOfHeld = held.appendedKeysOf(id);
         for (size_t place = 0; place < keysOfHeld.size(); ++place) {
             PropertyKeyID key = keysOfHeld[place];
+            bool isStoredByFollowerOfMaker = held.appendedFieldsThatFollowersOfMakersStore.get(held.firstAppendedFieldOfLayout[index] + place);
+            bool isLaidLate = held.appendedFieldsLaidLate.get(held.firstAppendedFieldOfLayout[index] + place);
+            if (auto found = std::ranges::find(proven, key); found != proven.end()) {
+                if (isLaidLate)
+                    linked.appendedFieldsLaidLate.set(linked.firstAppendedFieldOfLayout[index] + (found - proven.begin()));
+                if (isStoredByFollowerOfMaker)
+                    linked.appendedFieldsThatFollowersOfMakersStore.set(linked.firstAppendedFieldOfLayout[index] + (found - proven.begin()));
+                continue;
+            }
             if (!room)
-                break;
-            if (std::ranges::find(proven, key) != proven.end())
                 continue;
             if (held.appendedFieldsThatTypeOfThisRequires.get(held.firstAppendedFieldOfLayout[index] + place))
                 linked.keysAppendedByHeldAloneThatLieInCell.set(linked.keysAppendedByHeldAlone.size());
+            if (isLaidLate)
+                linked.keysAppendedByHeldAloneLaidLate.set(linked.keysAppendedByHeldAlone.size());
+            if (isStoredByFollowerOfMaker)
+                linked.keysAppendedByHeldAloneThatFollowersOfMakersStore.set(linked.keysAppendedByHeldAlone.size());
             linked.keysAppendedByHeldAlone.append(key);
             --room;
         }
@@ -666,7 +677,7 @@ void printBreachesOfClosureOfLink(PrintStream& out, Program& program, BuildConte
     ThinSummaries summaries = scanBodies(program, build.diagnostics(), loops, mechanisms);
     if (build.diagnostics().hasErrors())
         return;
-    Families families(program, Families::ClassHierarchiesAlone, loops);
+    Families families(program, Families::ClassesAlone, loops);
     OwnedLooksAtBodies looks = makeEmptyLooksAtBodies(*bodies);
     lookAtBodies(*looks, program, summaries, build);
     printBreachesOfClosureOfLink(out, program, summaries, families, *looks, mechanisms, build);
@@ -848,18 +859,26 @@ std::unique_ptr<Facts> computeFacts(Program& program, BuildContext& build, const
         return nullptr;
 
     PhaseTimes times(build, "scan and Link"_s);
-    parts.summaries = makeUniqueWithoutFastMallocCheck<ThinSummaries>(scanBodies(program, build.diagnostics(), build.parallelLoops(), parts.mechanisms));
+    runLanes(loops, {
+        [&] {
+            parts.summaries = makeUniqueWithoutFastMallocCheck<ThinSummaries>(scanBodies(program, build.diagnostics(), build.parallelLoops(), parts.mechanisms));
+        },
+        [&] {
+            StepTimes stepsOfLane(build, "facts"_s);
+            parts.familiesOfFlow = makeUniqueWithoutFastMallocCheck<Families>(program, Families::ClassesAlone, build.parallelLoops());
+            stepsOfLane.didFinish("families"_s);
+        },
+    });
     times.didFinish("scan"_s);
     if (hasFailed())
         return nullptr;
-    steps.didFinish("scan"_s);
+    steps.didFinish("scan beside families"_s);
     OwnedLooksAtBodies looks = makeEmptyLooksAtBodies(*parts.bodies);
     std::unique_ptr<LinkFlow> flow;
+    Vector<DeclaredSetForFamilies> setsDeclaredInProgram;
     runLanes(loops, {
         [&] {
             StepTimes stepsOfLane(build, "facts"_s);
-            parts.familiesOfFlow = makeUniqueWithoutFastMallocCheck<Families>(program, Families::ClassHierarchiesAlone, build.parallelLoops());
-            stepsOfLane.didFinish("families"_s);
             flow = makeUniqueWithoutFastMallocCheck<LinkFlow>(program, *parts.summaries, *parts.familiesOfFlow, *looks, parts.mechanisms, build, request.orderOfWorklist);
             stepsOfLane.didFinish("the flow is made"_s);
         },
@@ -868,9 +887,15 @@ std::unique_ptr<Facts> computeFacts(Program& program, BuildContext& build, const
             lookAtBodies(*looks, program, *parts.summaries, build);
             stepsOfLane.didFinish("look at bodies"_s);
         },
+        [&] {
+            StepTimes stepsOfLane(build, "facts"_s);
+            setsDeclaredInProgram = setsDeclaredForFamilies(program, parts.summaries->setsOfLayoutsWrittenInBodies(), build.parallelLoops());
+            stepsOfLane.didFinish("sets declared for families"_s);
+        },
     });
+    flow->setsDeclaredInProgram = &setsDeclaredInProgram;
     times.didFinish("families"_s);
-    steps.didFinish("families and the flow beside the look at bodies"_s);
+    steps.didFinish("the flow beside the look at bodies and the sets declared for families"_s);
     TurnsOfReadings turns;
     runLanes(loops, {
         [&] {
@@ -903,7 +928,7 @@ std::unique_ptr<Facts> computeFacts(Program& program, BuildContext& build, const
     parts.held = WTF::move(turns.held);
     parts.families = WTF::move(parts.linked.familiesBehindFlow);
     if (!parts.families)
-        parts.families = makeUniqueWithoutFastMallocCheck<Families>(program, parts.summaries->setsOfLayoutsWrittenInBodies(), std::span<const LayoutSetID>(), build.parallelLoops());
+        parts.families = makeUniqueWithoutFastMallocCheck<Families>(program, setsDeclaredInProgram.span(), std::span<const LayoutSetID>(), build.parallelLoops());
     steps.didFinish("the two readings"_s);
     openNamesFoundByLink(program, build, parts.linked, parts.held);
     steps.didFinish("open names"_s);

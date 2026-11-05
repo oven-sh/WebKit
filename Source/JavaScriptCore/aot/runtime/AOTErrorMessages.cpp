@@ -302,8 +302,17 @@ JSObject* createLoaderChangeRefusedError(JSGlobalObject* globalObject, LoaderCha
         return createError(globalObject, makeString("Cannot take '"_s, changed, "' out of require.cache: the build found nothing that does, so the code that imports it was compiled for a module that loads once. Spell the path where it is deleted, in a file that the tests import: delete require.cache[require.resolve(\"./module\")]"_s));
     if (change == LoaderChange::StoreUnderNameOfModuleInRequireCache)
         return createError(globalObject, withAOTErrorNote(makeString("Cannot store an entry under '"_s, changed, "' in require.cache: the build read no store under that key, so require(\""_s, changed, "\") was compiled to answer with the module. Spell the key where it is stored: require.cache[\""_s, changed, "\"] = entry. In a test, mock.module(\""_s, changed, "\", () => ({ .. })) replaces the module too."_s)));
+    if (change == LoaderChange::RunFileAgain)
+        return createError(globalObject, withAOTErrorNote(makeString("Cannot run '"_s, changed, "' a second time: the loader in Module._extensions runs the text of a file into the module object that it is handed, and this executable holds the file compiled, once. require() answers with what the file exports."_s)));
+    if (change == LoaderChange::HandTextToCompile)
+        return createError(globalObject, withAOTErrorNote(makeString("Cannot hand the source text of '"_s, changed, "' to module._compile: a loader in Module._extensions has replaced module._compile, and this executable holds the file compiled, without its text. The build has compiled TypeScript and JSX already. If the program depends on what the loader does to the text, build it with --no-aot."_s)));
     bool isInRequireCache = change == LoaderChange::ReplaceInRequireCache;
     return createError(globalObject, withAOTErrorNote(makeString("Cannot replace "_s, isInRequireCache ? "'"_s : ""_s, changed, isInRequireCache ? "' in require.cache"_s : ""_s, ": imports in this executable were resolved at build time, so the module loader can't be patched."_s)));
+}
+
+JSObject* createEntryOfRequireCacheRefusedError(JSGlobalObject* globalObject, StringView path)
+{
+    return createError(globalObject, makeString("Cannot read the entry of '"_s, path, "' in require.cache: the build found nothing that reads the cache, so the module was compiled for the code that imports it. Spell the read in a file that the tests import: require.cache[require.resolve(\"./module\")]"_s));
 }
 
 JSObject* createModuleMissingAtBuildError(JSGlobalObject* globalObject, const String& specifier, const String& importer, ASCIILiteral code)

@@ -5,12 +5,12 @@
 # CHECK-LABEL: code f3:Body
 # CHECK: [[parent]]: {{*}} = GetSuperBase
 # CHECK-NEXT: [[test]]: {{*}} = TypeTest [[parent]] testedType=f1
-# CHECK-NEXT: Branch [[test]] -> taken {{*}}, notTaken [[closed]]()
+# In a copy nothing has been done in front of super(): the failing side is the construction as written, and nothing meets the likely way again.
+# CHECK-NEXT: Branch [[test]] -> taken {{*}}, notTaken [[call]]()
+# CHECK: [[call]]() frequency=Rare isInLoop=true:
+# CHECK-NEXT: = CallDirect {{*}}function=f2 [isNeverInlined, isConstruction]
 # CHECK: : L1 {{*}} = NewObject layout=L1
-# CHECK: [[closed]]() frequency=Rare isInLoop=true:
-# CHECK-NEXT: = SuperConstruct [[parent]]
 # RUN(ONE): walk f3 mechanisms=all
-# ONE-COUNT-1: = SuperConstruct
 # ONE-NOT: = SuperConstruct
 # RUN(WITHHELD): walk f3 mechanisms=-Guesses
 # WITHHELD-NOT: TypeTest {{*}}testedType=f1

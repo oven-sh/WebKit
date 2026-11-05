@@ -3,8 +3,7 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-v(GetById, CalledByCode, (), CallerFrameAxis | StubFrameAxis | OperandRegisterAxis, 0, 0, AllISAs, NoISA, AlternateReceivers, InThunk, MayCall, ClobbersOnlyScratch, AsOperation, GetById)
-v(GetByIdAskingFieldTableFirst, CalledByCode, (), CallerFrameAxis | StubFrameAxis | OperandRegisterAxis, 0, 0, AllISAs, NoISA, AlternateReceivers, InThunk, MayCall, ClobbersOnlyScratch, AsOperation, GetByIdAskingFieldTableFirst)
+v(GetById, CalledByCode, (), CallerFrameAxis | StubFrameAxis, 0, 0, AllISAs, NoISA, NoChoice, InThunk, MayCall, ClobbersOnlyScratch, AsOperation, GetById)
 v(GetByIdAfterFrontProbe, CalledByCode, (), CallerFrameAxis | StubFrameAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, GetById)
 v(GetByIdHashed, CalledByCode, (), CallerFrameAxis | StubFrameAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, GetById)
 v(GetByIdCheckingColumn, CalledByCode, (), CallerFrameAxis | StubFrameAxis, 0, 0, AllISAs, NoISA, NoChoice, InThunk, MayCall, ClobbersOnlyScratch, AsOperation, GetById)
@@ -15,7 +14,7 @@ v(GetByIdOfFieldLeftOut, InternalEntry, (), CallerFrameAxis | StubFrameAxis, 0, 
 v(GetByIdOfNarrowCellInExtension, InternalEntry, (), CallerFrameAxis | StubFrameAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, GetById)
 v(GetByIdOfCell, InternalEntry, (), CallerFrameAxis | StubFrameAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, GetById)
 v(InById, CalledByCode, (In, HasOwn), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, InById)
-v(ReadFieldInExtension, CalledByCode, (Word64, Word32At0, Word32At4, ByteAt0, ByteAt1, ByteAt2, ByteAt3, ByteAt4, ByteAt5, ByteAt6, ByteAt7), FormAxis | CountAxis | OperandRegisterAxis, 0, 63, AllISAs, NoISA, AlternateReceivers, Never, Leaf, ClobbersOnlyScratch, reads(ObjectFields), ReadFieldInExtension)
+v(ReadFieldInExtension, CalledByCode, (Word64, Word32At0, Word32At4, ByteAt0, ByteAt1, ByteAt2, ByteAt3, ByteAt4, ByteAt5, ByteAt6, ByteAt7), FormAxis | CountAxis, 0, 63, AllISAs, NoISA, NoChoice, Never, Leaf, ClobbersOnlyScratch, reads(ObjectFields), ReadFieldInExtension)
 
 v(ReadSlot, Handler, (ById, ByIdPacked, ByVal), FormAxis | CountAxis | CallerFrameAxis | StubFrameAxis, 0, 27, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, ReadSlot)
 v(ReadSlotExit, InternalEntry, (ByIdMiss, ByIdUncached, ByValMiss, ByValUncached), FormAxis | CallerFrameAxis | StubFrameAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, ReadSlotExit)
@@ -31,12 +30,11 @@ v(GetByIdOfObjectAtSite, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoic
 v(GetByIdAtSiteHashed, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, GetByIdAtSiteHashed)
 v(PutByIdAtSite, CalledByCode, (Strict, Sloppy), FormAxis | CountAxis, 0, 2, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, PutByIdAtSite)
 v(GetLengthAtSite, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, InThunk, MayCall, ClobbersOnlyScratch, AsOperation, GetLengthAtSite)
-v(ReadAtSite, CalledByCode, (OfAnyValue, OfCell, OfAnyValueUnderNameWithColumn, OfCellUnderNameWithColumn), FormAxis | OperandRegisterAxis, 0, 0, AllISAs, NoISA, AlternateReceivers, Never, MayCall, ClobbersOnlyScratch, AsOperation, ReadAtSite)
+v(ReadAtSite, CalledByCode, (OfAnyValue, OfCell, OfAnyValueUnderNameWithColumn, OfCellUnderNameWithColumn), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, ReadAtSite)
 v(ReadTruthAtSite, CalledByCode, (OfAnyValue, OfCell, OfAnyValueUnderNameWithColumn, OfCellUnderNameWithColumn), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, ReadTruthAtSite)
 v(ReadTruthAtSiteOfNameWithoutField, CalledByCode, (OfAnyValue, OfCell, OfAnyValueUnderNameWithColumn, OfCellUnderNameWithColumn), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, ReadTruthAtSiteOfNameWithoutField)
-v(ReadAtSiteOfNameWithoutField, CalledByCode, (OfAnyValue, OfCell, OfAnyValueUnderNameWithColumn, OfCellUnderNameWithColumn), FormAxis | OperandRegisterAxis, 0, 0, AllISAs, NoISA, AlternateReceivers, Never, MayCall, ClobbersOnlyScratch, AsOperation, ReadAtSiteOfNameWithoutField)
-v(ReadAtSiteUnlessAsMade, CalledByCode, (OfAnyValue, OfCell, OfAnyValueUnderNameWithColumn, OfCellUnderNameWithColumn), FormAxis | OperandRegisterAxis, 0, 0, AllISAs, NoISA, AlternateReceivers, Never, MayCall, ClobbersOnlyScratch, AsOperation, ReadAtSiteUnlessAsMade)
-v(ReadAtSiteOfNarrowField, CalledByCode, (OfAnyValue, OfCell, OfAnyValueUnderNameWithColumn, OfCellUnderNameWithColumn), FormAxis | CountAxis | OperandRegisterAxis, 0, 4, AllISAs, NoISA, AlternateReceivers, Never, MayCall, ClobbersOnlyScratch, AsOperation, ReadAtSiteOfNarrowField)
+v(ReadAtSiteOfNameWithoutField, CalledByCode, (OfAnyValue, OfCell, OfAnyValueUnderNameWithColumn, OfCellUnderNameWithColumn), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, ReadAtSiteOfNameWithoutField)
+v(ReadAtSiteUnlessAsMade, CalledByCode, (OfAnyValue, OfCell, OfAnyValueUnderNameWithColumn, OfCellUnderNameWithColumn), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, ReadAtSiteUnlessAsMade)
 v(ReadBehindSite, InternalEntry, (AfterMiss, WithoutMiss, AfterMissUnderNameWithColumn, WithoutMissUnderNameWithColumn, OfFieldLeftOutUnderNameWithColumn), FormAxis | CallerFrameAxis | StubFrameAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, ReadBehindSite)
 v(ReadLengthAtSite, CalledByCode, (UnderAnyName, UnderNameWithColumn), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, ReadLengthAtSite)
 v(GetterAtSite, CalledByCode, (UnderAnyName, UnderNameWithColumn), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, GetterAtSite)
@@ -57,7 +55,7 @@ v(GetSuperBaseOfClass, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice,
 v(CallMethodById, CalledByCode, (), CountAxis, 0, N, AllISAs, NoISA, NoChoice, InThunk, MayCall, ClobbersLikeCall, AsOperation, CallMethodById)
 v(CallMethodByIdLending, CalledByCode, (First, Second, FirstAndSecond), FormAxis | CountAxis, 1, N, AllISAs, NoISA, NoChoice, InThunk, MayCall, ClobbersLikeCall, AsOperation, CallMethodByIdLending)
 
-v(InstanceOf, CalledByCode, (Constructor, Prototype, NameSeenByScripts, NameOfGlobalObject), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, InstanceOf)
+v(InstanceOf, CalledByCode, (Constructor, Prototype, NameSeenByScripts, NameOfGlobalObject, PrototypeThatIsBuiltin), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, InstanceOf)
 
 v(PutById, CalledByCode, (Strict, Sloppy, Define), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, PutById)
 v(PutByIdAfterFrontProbe, CalledByCode, (Strict, Sloppy, Define), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, PutById)

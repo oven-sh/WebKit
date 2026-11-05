@@ -15,6 +15,7 @@
 #include "AOTObjectInternal.h"
 #include "AOTObjectModel.h"
 #include "AOTPropertyCachesAnswers.h"
+#include "AOTRuntimeReporter.h"
 #include "AOTState.h"
 #include "AOTThisAllocationInlines.h"
 #include "FunctionRareData.h"
@@ -275,6 +276,47 @@ static void defineFieldOnInstance(VM& vm, State& state, const Object& allocated,
         uncheckedDowncast<Object>(&instance)->putDirectFromNativeCode(vm, name, value, allocated.attributesOf(field));
     else
         instance.putDirect(vm, name, value, allocated.attributesOf(field));
+}
+
+void ClassTable::forgetInstancesBelowPrototypes()
+{
+    m_state.instance.classes.instancesBelowPrototypes = { };
+    m_instancesBelowPrototypes.clear();
+    m_numberOfInstancesBelowPrototypes = 0;
+    m_wordsOfInstancesWithoutFields.clear();
+}
+
+void ClassTable::rememberInstanceBelow(VM& vm, uint32_t allocationOfSite, JSObject* prototype, const Object& instance, size_t size)
+{
+    LocalAllocator* allocator = vm.cellSpace().allocatorFor(size, AllocatorForMode::EnsureAllocator).localAllocator();
+    if (!allocator)
+        return;
+
+    auto placeOf = [&](const JSCell* wanted, uint64_t site) -> InstanceBelowPrototype& {
+        uint64_t mask = (m_instancesBelowPrototypes.size() - 1) << shiftOfInstanceBelowPrototype;
+        for (uint64_t offset = firstOffsetOfInstanceBelowPrototype(std::bit_cast<uintptr_t>(wanted), static_cast<uint32_t>(site));; offset += sizeof(InstanceBelowPrototype)) {
+            InstanceBelowPrototype& entry = m_instancesBelowPrototypes[(offset & mask) >> shiftOfInstanceBelowPrototype];
+            if (!entry.prototype || (entry.prototype == wanted && entry.allocationOfSite == site))
+                return entry;
+        }
+    };
+    if (2 * (m_numberOfInstancesBelowPrototypes + 1) > m_instancesBelowPrototypes.size()) {
+        Vector<InstanceBelowPrototype> former = std::exchange(m_instancesBelowPrototypes, Vector<InstanceBelowPrototype>(FillWith { }, std::max<size_t>(8, 2 * m_instancesBelowPrototypes.size()), InstanceBelowPrototype { }));
+        for (const InstanceBelowPrototype& entry : former) {
+            if (entry.prototype)
+                placeOf(entry.prototype, entry.allocationOfSite) = entry;
+        }
+    }
+    if (InstanceBelowPrototype& entry = placeOf(prototype, allocationOfSite); !entry.prototype) {
+        Vector<uint64_t> words(FillWith { }, allocator->cellSize() / sizeof(uint64_t), static_cast<uint64_t>(0));
+        memcpySpan(asMutableByteSpan(words.mutableSpan()), std::span { reinterpret_cast<const uint8_t*>(&instance), size });
+        words[0] = cellHeaderFor(instance.structure());
+        m_wordsOfInstancesWithoutFields.append(WTF::move(words));
+        entry = { prototype, allocationOfSite, allocator, m_wordsOfInstancesWithoutFields.last().span().data() };
+        ++m_numberOfInstancesBelowPrototypes;
+        countEvent(vm, RuntimeCounterID::InstancesRememberedBelowPrototypes);
+    }
+    m_state.instance.classes.instancesBelowPrototypes = { m_instancesBelowPrototypes.span().data(), (m_instancesBelowPrototypes.size() - 1) << shiftOfInstanceBelowPrototype };
 }
 
 JSObject* ClassTable::instanceWithPrototype(VM& vm, Object* allocated, JSObject* prototype, bool holdsNoField)

@@ -53,7 +53,7 @@ public:
     void generateToNumeric(const ValueContext&);
     void generateToNumber(const ValueContext&);
     void generateInstanceOf(const ValueContext&);
-    bool leaveConstructorToInstanceOf(const ValueContext& read, InstanceOfOperand, NumberedImmediate);
+    bool leaveOperandToInstanceOf(const ValueContext& read, InstanceOfOperand, NumberedImmediate);
     void generateHasInPrototypeChain(const ValueContext&);
     void generateToBoolean(const ValueContext&);
     void generateLogicalNot(const ValueContext&);
@@ -109,12 +109,12 @@ private:
     bool generateRelationOfBoxedNumberAndValue(const ValueContext&, Relation);
     bool generateRelationOfValuesThatAreLikelyInt32s(const ValueContext&, Relation);
 
-    struct ConstructorLeftToInstanceOf {
+    struct OperandLeftToInstanceOf {
         ValueID read;
         InstanceOfOperand operand;
         NumberedImmediate number;
     };
-    std::optional<ConstructorLeftToInstanceOf> m_constructorLeftToInstanceOf;
+    std::optional<OperandLeftToInstanceOf> m_operandLeftToInstanceOf;
 };
 
 } } } // namespace JSC::AOT::Typed

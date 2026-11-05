@@ -156,6 +156,7 @@ struct StubRun {
     LandedCall landedCall;
     std::optional<uint32_t> instructionsInStubs { };
     RegisterSet changedRegisters { };
+    std::optional<uint32_t> leapsInStubs { };
 };
 
 class StubRunner {
@@ -244,6 +245,8 @@ public:
         s_start = std::bit_cast<uintptr_t>(start);
         s_size = size;
         s_count = 0;
+        s_leaps = 0;
+        s_previous = 0;
         struct sigaction action { };
         action.sa_sigaction = didStep;
         action.sa_flags = SA_SIGINFO;
@@ -256,18 +259,26 @@ public:
     static ALWAYS_INLINE void start() { asm volatile("subq $128, %%rsp\n\tpushfq\n\torq $0x100, (%%rsp)\n\tpopfq\n\taddq $128, %%rsp" ::: "memory", "cc"); }
     static ALWAYS_INLINE void stop() { asm volatile("subq $128, %%rsp\n\tpushfq\n\tandq $~0x100, (%%rsp)\n\tpopfq\n\taddq $128, %%rsp" ::: "memory", "cc"); }
     static uint32_t count() { return s_count; }
+    static uint32_t leaps() { return s_leaps; }
 
 private:
     static void didStep(int, siginfo_t*, void* context)
     {
         uintptr_t next = static_cast<uintptr_t>(static_cast<ucontext_t*>(context)->uc_mcontext.gregs[REG_RIP]);
-        if (next - s_start < s_size)
+        constexpr uintptr_t longestInstruction = 15;
+        if (next - s_start < s_size) {
             ++s_count;
+            if (s_previous - s_start < s_size && next - s_previous > longestInstruction)
+                ++s_leaps;
+        }
+        s_previous = next;
     }
 
     static inline uintptr_t s_start;
     static inline size_t s_size;
     static inline uint32_t s_count;
+    static inline uint32_t s_leaps;
+    static inline uintptr_t s_previous;
     struct sigaction m_previousAction { };
 };
 #endif
@@ -580,6 +591,7 @@ inline StubRun StubRunner::run(StubKey key, const StubSignature& signature, std:
     MacroAssemblerCodeRef<JSEntryPtrTag> caller = compileStubCaller(signature, immediate.has_value());
     void* callerAddress = untagCFunctionPtr<JSEntryPtrTag>(caller.code().taggedPtr());
     std::optional<uint32_t> instructionsInStubs;
+    std::optional<uint32_t> leapsInStubs;
 #if AOT_STUB_RUNNER_COUNTS_INSTRUCTIONS
     if (m_countsInstructions) {
         InstructionCounter counter(m_code.start(), m_blob.code.bytes.size());
@@ -587,6 +599,7 @@ inline StubRun StubRunner::run(StubKey key, const StubSignature& signature, std:
         std::bit_cast<void (SYSV_ABI *)(Instance*)>(callerAddress)(&environment.instance);
         InstructionCounter::stop();
         instructionsInStubs = InstructionCounter::count();
+        leapsInStubs = InstructionCounter::leaps();
     } else
 #endif
         std::bit_cast<void (SYSV_ABI *)(Instance*)>(callerAddress)(&environment.instance);
@@ -618,7 +631,7 @@ inline StubRun StubRunner::run(StubKey key, const StubSignature& signature, std:
             changedRegisters.add(reg, IgnoreVectors);
     }
     changedRegisters.forEach(checkIsAnnounced);
-    return { environment.result, !!environment.numberOfOperationCalls, environment.numberOfRecordedCalls, environment.recordedArguments, environment.landedCall, instructionsInStubs, changedRegisters };
+    return { environment.result, !!environment.numberOfOperationCalls, environment.numberOfRecordedCalls, environment.recordedArguments, environment.landedCall, instructionsInStubs, changedRegisters, leapsInStubs };
 }
 
 inline StubRun StubRunner::runCall(StubKey key, uint64_t callee, uint64_t thisValue, std::initializer_list<uint64_t> arguments)

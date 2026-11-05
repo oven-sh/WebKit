@@ -186,12 +186,8 @@ static bool isLentToCalleeThatOnlyLooks(const SweepInputs& inputs, const Code& c
     if (!nothingButOwnFieldsAnswersFor(inputs.program, made) || !objectOfLayoutMayLieInFrame(inputs.plan.layout(made.layout())))
         return false;
 
-    bool throwsIntoThisFrame = !!code.at(call.block()).handler;
     return std::ranges::none_of(made.valuesOperands(), [&](ValueID value) {
-        if (!value)
-            return false;
-        TypeID type = code.at(value).type;
-        return Operation::opcodesWithStorage.contains(code.at(rootOfCellInSweptCode(code, value)).opcode) || (throwsIntoThisFrame && (!type || inputs.types.at(type).hasCells()));
+        return value && Operation::opcodesWithStorage.contains(code.at(rootOfCellInSweptCode(code, value)).opcode);
     });
 }
 

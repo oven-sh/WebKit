@@ -430,7 +430,7 @@ bool buildNumberRemainderWithItsTest(Walker& walker, const BodyValue& remainder)
     walker.bind(remainder.id(), metRemainder);
     walker.bind(test.id(), metAnswer);
     if (FunctionID callee = walker.facts().linked().calleeAt(walker.currentFunction(), test.id()))
-        walker.arrivals().leaveAnything(callee);
+        walker.leaveAnythingAt(callee);
     walker.walkStretch(block.id(), placeOfTest + 1, placeOfTest + 1);
     return true;
 }

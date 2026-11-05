@@ -30,12 +30,15 @@ struct StoresListedAtBirth {
 };
 StoresListedAtBirth findStoresThatAllocationMayList(Walker&, LayoutID, std::span<const PropertyKeyID> keys, std::span<const TypeID> stored, std::span<const PropertyKeyID> keysStoredFurtherOn);
 bool looksAtCellsAskForLayoutPrototype(Walker&, LayoutID);
+void noteGuardsShownByTest(Walker&, std::span<const MemberConditionRecord>, Reference test);
+void askWholeSideWhereGuardsMayNotHaveBegun(Walker&, LayoutID classLayout, Vector<MemberConditionRecord, 8>& conditions);
 
 struct GuardOfPrototypeAtConstruction {
     MemberConditionRecord condition;
     bool isKnownToHold { false };
 };
 std::optional<GuardOfPrototypeAtConstruction> findGuardOfPrototypeAtConstruction(Walker&, FunctionID constructor, bool newCellIsLookedAt, bool guardsAreAskedAtBirth, Origin);
+void checkPrototypeOfCellMadeBehindGuard(Walker&, Reference object, Origin);
 
 } } } // namespace JSC::AOT::Typed
 

@@ -225,6 +225,18 @@ bool MachineValidator::checkEdges()
     }
 
     for (const Block* block : m_proc.blocks()) {
+        if (!m_isBehindBlockPasses && block->numberOfIncomingEdges() != m_numberOfIncomingEdges[block->index()])
+            return failAtEndOf(block);
+    }
+
+    for (const Block* block : m_proc.blocks()) {
+        for (const Edge& edge : block->successors()) {
+            if (edge.block()->numberOfIncomingEdges() == 1 && (edge.block()->singlePredecessor() != block || edge.block()->classOfSingleIncomingEdge() != edge.edgeClass()))
+                return failAtEndOf(block);
+        }
+    }
+
+    for (const Block* block : m_proc.blocks()) {
         if (isLeft(block) && block->hasOnlyOnePredecessor() && m_numberOfIncomingEdges[block->index()] != 1)
             return failAtEndOf(block);
     }

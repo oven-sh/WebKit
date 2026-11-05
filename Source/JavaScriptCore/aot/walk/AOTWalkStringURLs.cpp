@@ -647,6 +647,7 @@ static bool buildURLThatIsNeverMade(Walker& walker, const CallByOneRow& call, Re
     uint32_t place = placeInBlockForStrings(index, made);
     BlockID asWritten = walker.addBlock(BlockFrequency::Rare);
     BlockID meeting = walker.addBlock();
+    walker.letGuessFailUnasked(asWritten, origin);
     Reference string = text;
     if (!isProven) {
         Reference isString = buildTypeTestForStrings(walker, text, TypeTable::string, origin);
@@ -770,6 +771,7 @@ bool buildURLCallByScan(Walker& walker, const CallByOneRow& call)
     BlockID plain = walker.addBlock();
     BlockID asWritten = walker.addBlock(BlockFrequency::Rare);
     BlockID meeting = walker.addBlock();
+    walker.letGuessFailUnasked(asWritten, origin);
     walker.branch(isPlain, plain, asWritten);
     walker.noteGuessOpened();
     walker.count(StatisticID::URLsLeftUnbuilt);

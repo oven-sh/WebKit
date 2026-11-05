@@ -408,6 +408,10 @@ static Reference buildAwaitedStepInStepsByHand(Walker& walker, const BodyValue& 
 
     goOnWhereTestPassesInStepsByHand(walker, callee, types.forBuiltin(next), byCall, someWayTurnsAway, origin);
     Reference generator = goOnWhereTestPassesInStepsByHand(walker, receiver, types.builtinClass(BuiltinClasses::AsyncGenerator), byCall, someWayTurnsAway, origin);
+    if (walker.failsGuesses() && !walker.isUnreachable()) [[unlikely]] {
+        walker.letGuessFailUnasked(byCall, origin);
+        someWayTurnsAway = true;
+    }
     walker.noteGuessOpened();
     Reference stepped = walker.isUnreachable() ? Reference() : buildStepOfAsyncGenerator(walker, generator, sent, held, next, origin);
     Reference value = buildResultAtInStepsByHand(walker, stepped, StepGeneratorResult::Value, origin);

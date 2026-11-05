@@ -128,6 +128,7 @@ Modules::Modules(State& state)
     , m_storesPathOfMainModule(state.instance.vm->aotState().image->storesPathOfMainModule())
     , m_loadsModulesByName(state.instance.vm->aotState().image->loadsModulesByName())
     , m_refusesOriginalsBesideMocks(state.instance.vm->aotState().image->refusesOriginalsBesideMocks())
+    , m_showsEntriesOfRequireCache(state.instance.vm->aotState().image->showsEntriesOfRequireCache())
     , m_mockOperations(host().mockOperations ? host().mockOperations() : nullptr)
 {
     m_instance.modules.status = state.tableArena.allocate<uint8_t>(m_table.size());
@@ -151,6 +152,7 @@ void Modules::forgetUnfinishedLoads()
     m_evaluationOfImportOfMainModule.clear();
     m_capabilityOfMainModule.clear();
     m_loadsInFlight.clear();
+    m_loadsThatHoldModules.clear();
     m_levelsOfLoads.clear();
     m_deferredRequests.clear();
     m_deferredImports.clear();
@@ -778,6 +780,7 @@ void Modules::retireRecordsOfSettledLoads()
     if (m_loadsInFlight.hasPendingPromise())
         return;
     m_loadsInFlight.clear();
+    m_loadsThatHoldModules.clear();
     for (ModuleID module : std::exchange(m_modulesWhoseRecordsLoaderHolds, { })) {
         ModuleRecord* record = m_records.get(module);
         if (!record)
@@ -1375,8 +1378,10 @@ bool Modules::isLeftOut(ModuleID module, unsigned index, TablesBehindStars table
             comesRoundInCircle |= handsOnBinding;
             continue;
         }
-        if (handsOnBinding)
-            isMissing = isLeftOut(target, *handedOn, tables, search);
+        if (handsOnBinding) {
+            std::optional<bool> inViewOfModule = isLeftOutInViewOf(module, target, *handedOn);
+            isMissing = inViewOfModule ? *inViewOfModule : isLeftOut(target, *handedOn, tables, search);
+        }
         else if (!handedOn && tables == TablesBehindStars::MayLackName)
             isMissing = false;
         else
@@ -1571,6 +1576,7 @@ void Modules::takeNamesOfMockInPlace(ModuleID module, JSObject* mock)
     auto scope = DECLARE_THROW_SCOPE(vm);
     LoadedModule& loaded = ensureLoaded(module);
     bool hasTable = data(module).hasExportTable() && !data(module).capturesExports();
+    loaded.wasImportedUnderMockInPlace = false;
     if (!mock) {
         m_exportsLeftOut.remove(module);
         loaded.exportsAddedByMock.set(*this, nullptr);
@@ -1652,9 +1658,11 @@ bool Modules::setMockInPlace(ModuleID fileOrModule, JSObject* mock, JSValue what
     if (!mock && !stoodInPlace)
         return false;
     JSObject* endedMock = mock ? nullptr : mockInPlace(fileOrModule);
+    BitVector leftOutByEndedMock = endedMock ? m_exportsLeftOut.get(module) : BitVector();
     if (mock)
         noteMomentMockComesInPlace(fileOrModule, mock, stoodInPlace, leavesEarlierMockToItsImporters);
-    takeNamesOfMockInPlace(module, mock);
+    if (!mock || leavesEarlierMockToItsImporters || !ensureLoaded(module).wasImportedUnderMockInPlace)
+        takeNamesOfMockInPlace(module, mock);
     RETURN_IF_EXCEPTION(scope, false);
     m_numberOfMocksInPlace += !!mock - stoodInPlace;
     m_importersAskedAboutOriginal.clear();
@@ -1672,7 +1680,7 @@ bool Modules::setMockInPlace(ModuleID fileOrModule, JSObject* mock, JSValue what
             letRecordAnswerByMock(record, mock);
     }
     if (endedMock)
-        keepMockThatStoodInPlace(fileOrModule, module, endedMock);
+        keepMockThatStoodInPlace(fileOrModule, module, endedMock, WTF::move(leftOutByEndedMock));
     didReplaceNamespaceHandedOn(fileOrModule);
     if (module != fileOrModule)
         didReplaceNamespaceHandedOn(module);
@@ -2033,6 +2041,7 @@ void Modules::endMockOverModuleThatHasRun(ModuleID module)
         return;
     }
     LoadedModule& exporting = ensureLoaded(withExports);
+    BitVector leftOutByEndedMock = m_exportsLeftOut.get(withExports);
     takeNamesOfMockInPlace(withExports, nullptr);
     scope.assertNoExceptionExceptTermination();
     if (kept.exportsLeftOutBefore)
@@ -2042,7 +2051,7 @@ void Modules::endMockOverModuleThatHasRun(ModuleID module)
         exporting.capturedExportsBeforeMockInPlace.set(*this, nullptr);
     }
     m_momentsWaitingMocksWereLaid.remove(module);
-    keepNamespacesMadeUnder(module, withExports, loaded.mockInPlace.get(), keepEndedMock(module, loaded.mockInPlace.get(), { kept.momentThisWasLaid, kept.momentOfTestFile }));
+    keepNamespacesMadeUnder(module, withExports, loaded.mockInPlace.get(), keepEndedMock(module, loaded.mockInPlace.get(), { kept.momentThisWasLaid, kept.momentOfTestFile }, 0, WTF::move(leftOutByEndedMock)));
     loaded.mockInPlace.set(*this, nullptr);
     exporting.mockInPlace.set(*this, nullptr);
     --m_numberOfMocksInPlace;
@@ -2437,6 +2446,8 @@ JSObject* Modules::moduleNamespace(ModuleID module, ModulePhase phase, bool shou
 {
     if (m_mocks) [[unlikely]]
         noteLoadBehindMock(module, false);
+    if (m_numberOfMocksInPlace && mockInPlace(module)) [[unlikely]]
+        ensureLoaded(module).wasImportedUnderMockInPlace = true;
     if (JSObject* namespaceObject = namespaceIfCreated(module, phase))
         return namespaceObject;
     return createNamespace(module, phase, shouldPreventExtensions);
@@ -2926,10 +2937,18 @@ void Modules::setRequireCacheValue(ModuleID module, JSValue exports)
 
 JSObject* Modules::requireCacheEntry(ModuleID module)
 {
-    if (!data(module).isOfLibrary())
-        return moduleObjectMadeByRequire(module);
     VM& vm = *m_instance.vm;
     auto scope = DECLARE_THROW_SCOPE(vm);
+    if (!data(module).isOfLibrary() && !data(module).isEntryPoint() && !m_showsEntriesOfRequireCache) {
+        throwException(m_instance.globalObject, scope, createEntryOfRequireCacheRefusedError(m_instance.globalObject, m_table.pathText(module)));
+        return nullptr;
+    }
+    if (!data(module).isOfLibrary())
+        RELEASE_AND_RETURN(scope, moduleObjectMadeByRequire(module));
+    if (valueOfLibraryFileStaysWithCompiledCode(module)) [[unlikely]] {
+        dataLogLn("AOT: require.cache hands out all that the library module ", m_table.pathText(module), " gives, and the build has kept it for compiled code alone: what it has proven of it no longer holds.");
+        CRASH();
+    }
     if (JSObject* entry = ensureLoaded(module).objectMadeByRequire)
         return entry;
     if (!isInRequireCache(module)) {
@@ -3119,9 +3138,7 @@ bool Modules::isTextLeftToRead(ModuleID module)
 
 void Modules::noteThatTextHasCome(ModuleID module)
 {
-    if (m_turnsInWhichTextsCame.isEmpty())
-        m_turnsInWhichTextsCame.fill(0, m_table.size());
-    m_turnsInWhichTextsCame[fileOf(module).index()] = ++m_turnOfTexts;
+    m_turnsInWhichTextsCame.set(fileOf(module), ++m_turnOfTexts);
 }
 
 void Modules::holdText(JSPromise* promise, ModuleID module, ModuleRecord* requested, std::optional<int64_t> referrerAsyncOrder, uint32_t turnOfRequest)
@@ -3401,7 +3418,7 @@ bool Modules::asksForLastTextBelow(const LoadInFlight& load, ModuleID module)
 
 Modules::LoadInFlight* Modules::loadBeingLoadedThatHolds(ModuleID module) const
 {
-    uint64_t holder = m_loadsThatHoldModules[module.index()];
+    uint64_t holder = m_loadsThatHoldModules.get(module);
     LoadInFlight* load = holder ? m_loadsInFlight.withNumber(holder - 1) : nullptr;
     return load && m_loadsInFlight.isBeingLoaded(*load) ? load : nullptr;
 }
@@ -3414,13 +3431,11 @@ void Modules::goThroughLoadsOfEarlierJobs()
             continue;
         if (load->stepsOfLoaderAtCall == m_stepsOfLoader)
             return;
-        if (m_loadsThatHoldModules.isEmpty())
-            m_loadsThatHoldModules.fill(0, m_table.size());
         Vector<ModuleID, 16> modules;
         auto take = [&](ModuleID module) {
             if (loadBeingLoadedThatHolds(module))
                 return;
-            m_loadsThatHoldModules[module.index()] = load->number + 1;
+            m_loadsThatHoldModules.set(module, load->number + 1);
             modules.append(module);
         };
         if (status(load->root) < ModuleStatus::Evaluating)
@@ -5615,6 +5630,22 @@ JSValue requireModule(JSGlobalObject* realm, ModuleID module, std::optional<Modu
     return modules->require(module, referrer.value_or(ModuleID()), Modules::RequiredBy::Program);
 }
 
+JSValue runFileForDefaultLoader(JSGlobalObject* realm, ModuleID module)
+{
+    Modules* modules = modulesOf(realm);
+    if (modules && modules->data(module).kind == ModuleKind::CommonJs && !modules->hasYetToBegin(module)) {
+        throwLoaderChangeRefused(realm, LoaderChange::RunFileAgain, modules->table().pathText(module));
+        return { };
+    }
+    return requireModule(realm, module);
+}
+
+void throwTextRefusedToCompileOfProgram(JSGlobalObject* realm, ModuleID module)
+{
+    if (Modules* modules = modulesOf(realm))
+        throwLoaderChangeRefused(realm, LoaderChange::HandTextToCompile, modules->table().pathText(module));
+}
+
 bool isInRequireCache(JSGlobalObject* realm, ModuleID module)
 {
     Modules* modules = modulesOf(realm);
@@ -6023,6 +6054,11 @@ void ModuleRecord::willLoadRequests(ModuleGraphLoadingState& load)
 {
     countEvent(vm(), RuntimeCounterID::RecordsForStatesOfLoads);
     modules().appendRequestsForLoader(m_module, this, load);
+}
+
+void ModuleRecord::countLoaderStep()
+{
+    modules().noteStepOfLoader();
 }
 
 void ModuleRecord::didLoad()

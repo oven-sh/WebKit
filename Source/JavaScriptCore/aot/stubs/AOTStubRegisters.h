@@ -187,16 +187,6 @@ inline constexpr GPRReg preservingCallImmediateGPR = ARM64Registers::x9;
 inline constexpr GPRReg leafFunctionGPR = ARM64Registers::x16;
 #endif
 
-constexpr std::span<const GPRReg> alternateReceiverGPRs()
-{
-#if CPU(X86_64)
-    static constexpr GPRReg registers[] = { X86Registers::ecx, X86Registers::edx, X86Registers::ebx, X86Registers::eax, X86Registers::edi, X86Registers::r8, X86Registers::r15 };
-    return registers;
-#elif CPU(ARM64)
-    return { };
-#endif
-}
-
 constexpr std::span<const GPRReg> alternateResultGPRs()
 {
 #if CPU(X86_64)

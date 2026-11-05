@@ -62,7 +62,7 @@ struct FunctionTraceData {
     uint16_t implementsBuiltin : 1;
     uint16_t isNamedByComputedKey : 1;
     uint16_t makesPromiseOfCall : 1;
-    uint16_t unused : 1 { 0 };
+    uint16_t closuresAreSaidNeverToReachUnseenCode : 1 { 0 };
 
     TraceVisibility visibility() const { return static_cast<TraceVisibility>(visibilityBits); }
     static constexpr uint16_t kindBitsInsideHelperOfCompiler = 2;

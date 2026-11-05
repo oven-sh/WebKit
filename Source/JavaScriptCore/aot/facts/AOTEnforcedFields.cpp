@@ -42,15 +42,18 @@ FamiliesOfInstances::FamiliesOfInstances(const Program& program, const Families&
     }
 }
 
-bool slotsOfLayoutMayBeHeldToTypes(const Program& program, const LinkTables& linked, const LinkTables& held, const FamiliesOfInstances& familiesOfInstances, LayoutID id)
+bool slotsOfLayoutMayBeHeldToTypes(const Program& program, const FamiliesOfInstances& familiesOfInstances, LayoutID id)
 {
     LayoutKind kind = program.at(id).kind;
-    if (kind != LayoutKind::Instance && (kind != LayoutKind::Record || !familiesOfInstances.sharesFamilyWithInstance(id)))
-        return false;
+    return kind == LayoutKind::Instance || (kind == LayoutKind::Record && familiesOfInstances.sharesFamilyWithInstance(id));
+}
+
+static bool moreIsStoredThanIsSeenInEnforcedFields(const LinkTables& linked, const LinkTables& held, LayoutID id)
+{
     auto isFilledUnderComputedKeys = [&](const LinkTables& tables) {
         return id.index() < tables.layouts.size() && tables.layouts[id.index()].isFilledUnderComputedKeys;
     };
-    return !isFilledUnderComputedKeys(linked) && !isFilledUnderComputedKeys(held);
+    return isFilledUnderComputedKeys(linked) || isFilledUnderComputedKeys(held);
 }
 
 TypeID contentsOfEnforcedSlot(TypeArena& types, TypeID slotType, bool holdsUndefinedAndNull)
@@ -210,7 +213,7 @@ static bool everyStoreIsProvenToFitInEnforcedFields(const LinkTables& linked, Ty
 
 EnforcedField enforcedTypeOfField(const Program& program, const LinkTables& linked, const LinkTables& held, const Families& families, const FamiliesOfInstances& familiesOfInstances, TypeArena& types, FieldReference reference)
 {
-    if (!slotsOfLayoutMayBeHeldToTypes(program, linked, held, familiesOfInstances, reference.layout))
+    if (!slotsOfLayoutMayBeHeldToTypes(program, familiesOfInstances, reference.layout))
         return { };
     if (const LinkedCell* cell = linked.findCellOfField(reference); cell && cell->isFilledByAccessorsAlone)
         return { };
@@ -218,8 +221,9 @@ EnforcedField enforcedTypeOfField(const Program& program, const LinkTables& link
     size_t numberDeclared = program.at(reference.layout).fields.size();
     bool isAppended = reference.field >= numberDeclared;
     FieldReference declaration = isAppended ? reference : declarationOf(program, reference);
-    if (declaration.layout != reference.layout && !slotsOfLayoutMayBeHeldToTypes(program, linked, held, familiesOfInstances, declaration.layout))
+    if (declaration.layout != reference.layout && !slotsOfLayoutMayBeHeldToTypes(program, familiesOfInstances, declaration.layout))
         return { };
+    bool moreIsStoredThanIsSeen = moreIsStoredThanIsSeenInEnforcedFields(linked, held, reference.layout) || moreIsStoredThanIsSeenInEnforcedFields(linked, held, declaration.layout);
 
     TypeID written;
     SourceOfSlotType source = SourceOfSlotType::Nothing;
@@ -238,7 +242,7 @@ EnforcedField enforcedTypeOfField(const Program& program, const LinkTables& link
             written = record.declared.written();
     }
 
-    if (!isAppended && (!written || written == TypeTable::anything)) {
+    if (!isAppended && !moreIsStoredThanIsSeen && (!written || written == TypeTable::anything)) {
         if (const LinkedCell* seen = held.findCellOfField(declaration); seen && seen->proven && !seen->leavesOutWhatArrives && !isNeverType(seen->proven)) {
             Type shown = types.at(seen->proven);
             if (!shown.hasUnboundedUnknown() && (shown.primitives & Primitive::All) != Primitive::All && !shown.hasOnlyPrimitives(rawValuesInEnforcedFields | Primitive::UndefinedOrNull)) {
@@ -255,7 +259,7 @@ EnforcedField enforcedTypeOfField(const Program& program, const LinkTables& link
     if (type) {
         Type words = types.at(type);
         bool holdsFractionsOrWideIntegers = words.primitives & Primitive::Double || !words.integers.isSubsetOf(Range::int32());
-        answer.isInt32ByGuess = words.isNumberOrNullish() && holdsFractionsOrWideIntegers && numberIsInt32ByGuessInEnforcedFields(program, linked, held, types, declaration);
+        answer.isInt32ByGuess = !moreIsStoredThanIsSeen && words.isNumberOrNullish() && holdsFractionsOrWideIntegers && numberIsInt32ByGuessInEnforcedFields(program, linked, held, types, declaration);
         type = widenedToAllThatFormHoldsInEnforcedFields(types, type, answer.isInt32ByGuess);
     }
     if (type && source != SourceOfSlotType::Compiler) {

@@ -21,6 +21,8 @@
 #include "Collector.h"
 #include "ErrorInstance.h"
 #include "IteratorOperations.h"
+#include "JSArrayBuffer.h"
+#include "JSArrayBufferView.h"
 #include "JSCInlines.h"
 #include "JSLock.h"
 #include "JSMap.h"
@@ -44,10 +46,11 @@ static constexpr uint64_t operationsInAllForEachOfProgram = 4;
 static constexpr uint64_t operationsForText = 1 << 8;
 static constexpr uint64_t operationsInAllOfSmallestProgram = 8 * operationsFromOneStart;
 static constexpr unsigned deepestCall = 256;
+static constexpr unsigned mostOpenRegions = 1024;
 static constexpr uint32_t valuesMadeRoomForAtPriceOfOneOperation = 16;
 static constexpr uint8_t timesThroughBlockWhileGoingBothWays = 4;
 static constexpr uint32_t operationsForBuiltinHandedRegExp = 1 << 10;
-static constexpr size_t mostBytesOfRealm = 256 * MB;
+static constexpr size_t mostBytesMade = 256 * MB;
 
 static bool repeatsInsideRepeat(const Yarr::PatternDisjunction& disjunction, bool isInsideRepeat)
 {
@@ -145,6 +148,7 @@ private:
     JSValue construct(JSValue callee, JSValue newTarget, std::span<const JSValue> arguments);
     bool appendElementsOf(JSValue list, Values&);
     bool payForBuiltin(JSValue thisValue, std::span<const JSValue> arguments);
+    JSValue noteMadeByBuiltin(JSValue);
     bool mayMatchWithoutEnd(RegExp*);
     void noteThrown(Exception*);
     bool hasThrown(TopExceptionScope&);
@@ -207,13 +211,13 @@ private:
     Vector<ModuleID> m_modulesOfRuntimeModules;
     BitVector m_rehearsed;
 
-    bool hasRoomLeft() const { return m_vm->heap.capacity() + m_charactersOfTextsMade <= mostBytesOfRealm; }
+    bool hasRoomLeft() const { return m_bytesMade <= mostBytesMade; }
 
     uint32_t m_operationsLeft { 0 };
     uint64_t m_operationsLeftInAll { operationsInAllOfSmallestProgram };
     bool m_isOver { false };
     uint64_t m_operationsLeftInAllAtLastText { 0 };
-    size_t m_charactersOfTextsMade { 0 };
+    size_t m_bytesMade { 0 };
     unsigned m_depth { 0 };
     unsigned m_openRegions { 0 };
     Vector<unsigned> m_regionsOpenAtEntryPlusOne;
@@ -773,7 +777,9 @@ JSValue RehearsalOfRegExpTexts::call(JSValue callee, JSValue thisValue, std::spa
         noteThrown(exception.get());
     if (exception || !result)
         return unknown();
-    return callee == m_regExpConstructor ? notePatternMadeHere(result) : result;
+    if (callee == m_regExpConstructor)
+        return notePatternMadeHere(result);
+    return isOfProgram ? result : noteMadeByBuiltin(result);
 }
 
 bool RehearsalOfRegExpTexts::mayMatchWithoutEnd(RegExp* regExp)
@@ -810,6 +816,17 @@ bool RehearsalOfRegExpTexts::payForBuiltin(JSValue thisValue, std::span<const JS
     m_operationsLeft -= static_cast<uint32_t>(price);
     m_operationsLeftInAll -= price;
     return true;
+}
+
+JSValue RehearsalOfRegExpTexts::noteMadeByBuiltin(JSValue made)
+{
+    if (auto* list = dynamicDowncast<JSArray>(made))
+        m_bytesMade += static_cast<size_t>(list->length()) * sizeof(JSValue);
+    else if (auto* view = dynamicDowncast<JSArrayBufferView>(made); view && !view->hasArrayBuffer())
+        m_bytesMade += view->byteLength();
+    else if (auto* buffer = dynamicDowncast<JSArrayBuffer>(made))
+        m_bytesMade += buffer->impl()->byteLength();
+    return made;
 }
 
 void RehearsalOfRegExpTexts::noteThrown(Exception* exception)
@@ -871,7 +888,7 @@ JSValue RehearsalOfRegExpTexts::construct(JSValue callee, JSValue newTarget, std
     }
     if (!result)
         return unknown();
-    return callee == m_regExpConstructor ? notePatternMadeHere(result) : JSValue(result);
+    return callee == m_regExpConstructor ? notePatternMadeHere(result) : noteMadeByBuiltin(result);
 }
 
 bool RehearsalOfRegExpTexts::appendElementsOf(JSValue list, Values& elements)
@@ -906,7 +923,7 @@ JSValue RehearsalOfRegExpTexts::execute(Activation& activation, const BodyValue&
         if (!result || (result.isString() && asString(result)->length() > m_longestText))
             return unknown();
         if (result.isString())
-            m_charactersOfTextsMade += asString(result)->length();
+            m_bytesMade += asString(result)->length();
         return result;
     };
     auto operandsOf = [&](std::span<const ValueID> ids) {
@@ -1771,7 +1788,7 @@ BlockID RehearsalOfRegExpTexts::joinBehind(Activation& activation, BlockID block
 
 BlockID RehearsalOfRegExpTexts::goEachWayFrom(Activation& activation, BodyBlock block, JSValue& result)
 {
-    if (!m_vm->isSafeToRecurse())
+    if (m_openRegions >= mostOpenRegions)
         return { };
     if (activation.timesEnteredWhileGoingBothWays.isEmpty())
         activation.timesEnteredWhileGoingBothWays.fill(0, activation.index.numberOfBlocks());
@@ -1963,7 +1980,7 @@ JSValue RehearsalOfRegExpTexts::runBlocks(Activation& activation)
 JSValue RehearsalOfRegExpTexts::enterWithEntryParameters(FunctionID function, std::span<const JSValue> entryParameters)
 {
     const BodyIndex* index = m_bodies.find(function);
-    if (!index || m_depth >= deepestCall || !m_operationsLeft || !m_operationsLeftInAll || !m_vm->isSafeToRecurse())
+    if (!index || m_depth >= deepestCall || !m_operationsLeft || !m_operationsLeftInAll)
         return unknown();
     uint32_t price = index->numberOfValues() / valuesMadeRoomForAtPriceOfOneOperation;
     if (price >= m_operationsLeft || price >= m_operationsLeftInAll)
@@ -2046,7 +2063,7 @@ void RehearsalOfRegExpTexts::runModule(ModuleID id)
 {
     StateOfModule& state = m_statesOfModules[id.index()];
     FunctionID body = m_program.at(id).body;
-    if (state != StateOfModule::IsNotEntered || !body || m_depth >= deepestCall || !m_operationsLeft || !m_operationsLeftInAll || !m_vm->isSafeToRecurse())
+    if (state != StateOfModule::IsNotEntered || !body || m_depth >= deepestCall || !m_operationsLeft || !m_operationsLeftInAll)
         return;
     state = StateOfModule::IsRunning;
     m_rehearsed.set(body.index());

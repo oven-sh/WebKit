@@ -27,8 +27,7 @@ constexpr unsigned numberOfStubFamilies = 0
 #undef v
     ;
 
-enum class CallerFrame : uint8_t { HasFrame, Frameless, StubFrame, KeepsNoRegisters, KeepsNoFPRs };
-constexpr bool hasFrameAndKeepsFewerRegisters(CallerFrame callerFrame) { return callerFrame == CallerFrame::KeepsNoRegisters || callerFrame == CallerFrame::KeepsNoFPRs; }
+enum class CallerFrame : uint8_t { HasFrame, Frameless, StubFrame, KeepsNoFPRs };
 
 constexpr bool readsFrameRecordOfCaller(StubFamily family)
 {

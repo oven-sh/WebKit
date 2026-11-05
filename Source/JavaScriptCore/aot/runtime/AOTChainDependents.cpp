@@ -495,6 +495,7 @@ static StepResult passEmptySlot(const ChainWalkStart& start, Object& object, con
             break;
         }
     }
+    walk.passedEmptySlot = true;
     walk.changeableObjects.append(&object);
     return StepResult::Continue;
 }

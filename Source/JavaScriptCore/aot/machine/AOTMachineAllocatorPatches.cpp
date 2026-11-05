@@ -1127,7 +1127,7 @@ void Allocator::allocatePatch(PatchOperation* patch)
                     locked |= registersOfOperandsThatStay;
                     if (traitsOfPatch & SomeOperandStaysInItsSpill) {
                         noteFrameUse();
-                        m_allocation.m_holdsPatchThatCountsOnFrameRecord = true;
+                        notePatchWithOperandInFrame(patch);
                     }
                 } else {
                     const ValueRep* const constraints = patch->m_constraints.begin();
@@ -1144,7 +1144,7 @@ void Allocator::allocatePatch(PatchOperation* patch)
                     };
                     auto notePlaceOfOperand = [&](unsigned child, ValueRep::Kind kind, Location place) ALWAYS_INLINE_LAMBDA {
                         if (place.isSpill())
-                            m_allocation.m_holdsPatchThatCountsOnFrameRecord = true;
+                            notePatchWithOperandInFrame(patch);
                         if (child < endOfOperandsBroughtToRegisters) {
                             Reg reg = registersToBringOperandsTo[child];
                             if (reg && !(place.isRegister() && place.reg() == reg))
@@ -1513,7 +1513,7 @@ void Allocator::allocatePatch(PatchOperation* patch)
     RegisterMask heldLate = 0;
     for (unsigned index = 0; index < numberOfChildren - firstChild; ++index) {
         if (placesOfOperands[index].isSpill())
-            m_allocation.m_holdsPatchThatCountsOnFrameRecord = true;
+            notePatchWithOperandInFrame(patch);
     }
     if (someOperandIsReadLate) {
         for (unsigned child = firstChild; child < numberOfChildren; ++child) {

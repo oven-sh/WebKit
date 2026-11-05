@@ -97,6 +97,8 @@ public:
     Position endOfProcedure() const { return m_end; }
 
     static inline void retarget(Block* from, unsigned successorIndex, Block* newTarget);
+    static inline void retargetPast(Block* from, unsigned successorIndex, Edge passedBy);
+    static inline void retargetToBlockThatStandsForTarget(Block* from, unsigned successorIndex, Block* newTarget);
     static void emptyBlock(Block*);
     static void letGoOfBlockThatNothingLeadsTo(Block*);
     static void replaceJumpWithBranch(Block* from, const Operation* phi, bool isInverted);
@@ -127,6 +129,14 @@ private:
     friend class Arena;
     friend Order* orderBlocks(Procedure&);
 
+    template<typename Functor> static inline void retargetWithClass(Block* from, unsigned successorIndex, Block* newTarget, const Functor& raiseClass);
+
+    static void setClassOf(Edge& edge, EdgeClass edgeClass)
+    {
+        edge.m_block->didChangeClassOfIncomingEdge(edge.m_class, edgeClass);
+        edge.m_class = edgeClass;
+    }
+
     Order() = default;
     JS_EXPORT_PRIVATE unsigned successorIndexOfPredecessorWithManySuccessors(const Block* target, Block* const* entry) const;
     static void dropUpsilonsHandedTo(const Block* formerTarget, Block* from);
@@ -148,12 +158,7 @@ private:
 
 ALWAYS_INLINE void Order::retarget(Block* from, unsigned successorIndex, Block* newTarget)
 {
-    Edge& edge = from->m_successors[successorIndex];
-    Block* oldTarget = edge.m_block;
-    if (oldTarget == newTarget)
-        return;
-
-    if (newTarget->m_numberOfIncomingEdges) {
+    retargetWithClass(from, successorIndex, newTarget, [&](Edge& edge, const Block* oldTarget) ALWAYS_INLINE_LAMBDA {
         constexpr uint8_t passesNoEdgeBy = UINT8_MAX;
         uint8_t classOfEdgePassedBy = passesNoEdgeBy;
         for (const Edge& passedBy : oldTarget->successors()) {
@@ -162,11 +167,35 @@ ALWAYS_INLINE void Order::retarget(Block* from, unsigned successorIndex, Block* 
         }
         if (classOfEdgePassedBy != passesNoEdgeBy)
             edge.m_class = std::max(edge.m_class, static_cast<EdgeClass>(classOfEdgePassedBy));
-    }
+    });
+}
 
-    oldTarget->didLoseIncomingEdge(from);
+ALWAYS_INLINE void Order::retargetPast(Block* from, unsigned successorIndex, Edge passedBy)
+{
+    retargetWithClass(from, successorIndex, passedBy.block(), [&](Edge& edge, const Block*) ALWAYS_INLINE_LAMBDA {
+        edge.m_class = std::max(edge.m_class, passedBy.edgeClass());
+    });
+}
+
+ALWAYS_INLINE void Order::retargetToBlockThatStandsForTarget(Block* from, unsigned successorIndex, Block* newTarget)
+{
+    retargetWithClass(from, successorIndex, newTarget, [](Edge&, const Block*) ALWAYS_INLINE_LAMBDA { });
+}
+
+template<typename Functor>
+ALWAYS_INLINE void Order::retargetWithClass(Block* from, unsigned successorIndex, Block* newTarget, const Functor& raiseClass)
+{
+    Edge& edge = from->m_successors[successorIndex];
+    Block* oldTarget = edge.m_block;
+    if (oldTarget == newTarget)
+        return;
+
+    oldTarget->didLoseIncomingEdge(from, edge.m_class);
+    if (newTarget->m_numberOfIncomingEdges)
+        raiseClass(edge, oldTarget);
+
     edge.m_block = newTarget;
-    newTarget->didGainIncomingEdge(from);
+    newTarget->didGainIncomingEdge(from, edge.m_class);
 
     if (!oldTarget->m_phis.isEmpty() && !from->m_upsilons.isEmpty())
         dropUpsilonsHandedTo(oldTarget, from);

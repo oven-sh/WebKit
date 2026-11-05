@@ -102,9 +102,9 @@ void Order::replaceJumpWithBranch(Block* from, const Operation* phi, bool isInve
     const Edge whenZero = join->successor(isInverted ? 0 : 1);
     EdgeClass classOfJump = from->successor(0).edgeClass();
     retarget(from, 0, whenNotZero.block());
-    from->m_successors[0].m_class = std::max(classOfJump, whenNotZero.edgeClass());
+    setClassOf(from->m_successors[0], std::max(classOfJump, whenNotZero.edgeClass()));
     from->m_successors.append(from->procedure().arena(), Edge(whenZero.block(), std::max(classOfJump, whenZero.edgeClass())));
-    whenZero.block()->didGainIncomingEdge(from);
+    whenZero.block()->didGainIncomingEdge(from, from->m_successors[1].edgeClass());
 
     end->m_opcode = Branch;
     end->m_origin = join->last()->origin();
@@ -210,9 +210,9 @@ Block* Order::split(Block* from, unsigned successorIndex, EdgeClass classOfEdgeT
     };
 
     if (target->m_phis.isEmpty()) {
-        target->didLoseIncomingEdge(from);
+        target->didLoseIncomingEdge(from, from->m_successors[successorIndex].m_class);
         from->m_successors[successorIndex].m_block = middle;
-        middle->didGainIncomingEdge(from);
+        middle->didGainIncomingEdge(from, from->m_successors[successorIndex].m_class);
     } else {
         for (Operation* upsilon : from->upsilons()) {
             Operation* phi = upsilon->phi();
@@ -283,9 +283,9 @@ void Order::joinEdgesToOneBlock(Block* from)
     if (kept.m_block != other.m_block)
         return;
 
-    kept.m_class = std::min(kept.m_class, other.m_class);
     ASSERT(kept.m_block->m_numberOfIncomingEdges >= 2);
-    kept.m_block->didLoseIncomingEdge(from);
+    kept.m_block->didLoseIncomingEdge(from, other.m_class);
+    setClassOf(kept, std::min(kept.m_class, other.m_class));
     from->m_successors.shrink(1);
     branch->child(0)->loseUse();
 }
@@ -302,6 +302,7 @@ public:
     }
 
     void run();
+    void letGoOfWorkingLists();
 
     enum class Search : uint8_t {
         ForBlocksOutsideRareRegions,
@@ -630,6 +631,7 @@ void BlockOrderBuilder::findReachedBlocks()
     numberOfBlocksIn(UnlikelyPart) = numberOfBlocksOutsideRareRegions - numberOfLikelyBlocks;
     numberOfBlocksIn(RarePart) = static_cast<uint32_t>(endOfReachedBlocks - reachedBlocks) - numberOfBlocksOutsideRareRegions;
     m_numberOfEdges = numberOfEdges;
+    m_arena.letGoOfArray(reachedBlocks, 2 * static_cast<size_t>(numberOfBlocks));
 
     if (everyBlockIsTerminated) [[likely]]
         return;
@@ -1642,12 +1644,33 @@ void BlockOrderBuilder::run()
 #endif
 }
 
+void BlockOrderBuilder::letGoOfWorkingLists()
+{
+    if (m_states.capacity() * sizeof(BlockState) < Arena::smallestRoomLetGo)
+        return;
+    m_loopHeads.letGo(m_arena);
+    m_rareLandingPads.letGo(m_arena);
+    m_edgesToRareLandingPads.letGo(m_arena);
+    if (m_regionPlans)
+        m_arena.letGoOfArray(m_regionPlans, m_numberOfRareRegions);
+    if (m_blocksOutsideRareRegions) {
+        m_arena.letGoOfArray(m_entriesOfRareRegions.data(), m_rareEdgesFromOutside.size());
+        m_arena.letGoOfArray(m_blocksOutsideRareRegions, numberOfBlocksIn(LikelyPart) + numberOfBlocksIn(UnlikelyPart));
+    }
+    m_progressThroughManySuccessors.letGo(m_arena);
+    m_edgesThatGetBlocks.letGo(m_arena);
+    m_numberOfEdgesFromCountedBlock.letGo(m_arena);
+    m_rareEdgesFromOutside.letGo(m_arena);
+    m_states.letGo(m_arena);
+}
+
 } // anonymous namespace
 
 Order* orderBlocks(Procedure& procedure)
 {
     BlockOrderBuilder builder(procedure);
     builder.run();
+    builder.letGoOfWorkingLists();
 
     Order* order = procedure.arena().create<Order>();
     order->m_blocksInOrder = builder.m_blocksInOrder;

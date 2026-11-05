@@ -1742,6 +1742,8 @@ void Modules::noteLoadOfEachModuleWith(ModuleID root)
                 imported = moduleLoadedBy(request);
             if (!data(imported).isESModuleOfProgram())
                 continue;
+            if (mockInPlace(imported))
+                ensureLoaded(imported).wasImportedUnderMockInPlace = true;
             if (!m_modulesLoadedBesideGroups.quickSet(imported.index()))
                 found.append(imported.index());
         }

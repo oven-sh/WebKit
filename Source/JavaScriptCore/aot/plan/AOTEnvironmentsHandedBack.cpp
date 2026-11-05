@@ -56,6 +56,18 @@ struct BodyOfMakerInEnvironmentsHandedBack {
     FunctionID function;
     const BodyIndex& index;
     const Vector<uint32_t>& numberOfFunctionsThatCapture;
+    uint32_t numberOfEnvironmentsJudged { 0 };
+    Vector<uint32_t, 64> lastJudgedThatBlockKeeps { };
+    Vector<uint32_t, 64> lastJudgedWhoseWaysPassBlock { };
+    Vector<uint32_t, 64> depthsBelowEntry { };
+    Vector<uint32_t, 64> leastDepthsAboveWhatWaysOnReach { };
+};
+
+struct EnvironmentJudgedInEnvironmentsHandedBack {
+    ValueID environment;
+    bool isHandedToFunctionEnteredItself { false };
+    Vector<BlockID, 2> blocksThatKeep { };
+    Vector<FunctionID, 2> functionsOfClosuresLent { };
 };
 
 } // anonymous namespace
@@ -140,57 +152,108 @@ static bool leavesCellToItsFrames(const BodyOfMakerInEnvironmentsHandedBack& bod
     }
 }
 
-static bool someWayKeepsNothing(const BodyOfMakerInEnvironmentsHandedBack& body, ValueID environment)
+static void findHowFarWaysOnLeadOutOfBlocksAbove(BodyOfMakerInEnvironmentsHandedBack& body)
 {
     const BodyIndex& index = body.index;
-    BlockID making = index.blockOf(environment);
-    BitVector keeps(index.numberOfBlocks());
-    uint32_t mentionsLeft = index.useCount(environment);
-    bool countsEveryMention = mentionsLeft < BodyIndex::maxCountedUses;
-    bool isHandedToFunctionEnteredItself = false;
-    Vector<FunctionID, 4> functionsOfClosuresLent;
-    std::span<const BlockID> below = index.blocksInDominatorOrder().subspan(index.dominatorNumber(making), index.lastDominatorNumberBelow(making) - index.dominatorNumber(making) + 1);
-    for (BlockID id : below) {
-        if (countsEveryMention && !mentionsLeft)
-            break;
+    body.depthsBelowEntry.fill(0, index.numberOfBlocks());
+    body.leastDepthsAboveWhatWaysOnReach.fill(UINT32_MAX, index.numberOfBlocks());
+    for (BlockID id : index.blocksInDominatorOrder()) {
+        BlockID above = index.immediateDominator(id);
+        body.depthsBelowEntry[id.index()] = above ? body.depthsBelowEntry[above.index()] + 1 : 1;
+    }
+    for (uint32_t block = index.numberOfBlocks(); block--;) {
+        if (!body.depthsBelowEntry[block])
+            continue;
+        BodyTerminator end = index.block(BlockID(block)).terminator();
+        uint32_t least = end.kind() == TerminatorKind::Return ? 0 : UINT32_MAX;
+        for (BodyTarget target : end.targets()) {
+            BlockID above = index.immediateDominator(target.block());
+            least = std::min(least, above ? body.depthsBelowEntry[above.index()] : 0);
+            if (target.block().index() > block)
+                least = std::min(least, body.leastDepthsAboveWhatWaysOnReach[target.block().index()]);
+        }
+        body.leastDepthsAboveWhatWaysOnReach[block] = least;
+    }
+}
+
+static void findMentionsOfEnvironmentsJudged(const BodyOfMakerInEnvironmentsHandedBack& body, std::span<EnvironmentJudgedInEnvironmentsHandedBack> judged)
+{
+    const BodyIndex& index = body.index;
+    ValueID first = judged.front().environment;
+    ValueID last = judged.back().environment;
+    auto judgedThatIs = [&](ValueID operand) -> EnvironmentJudgedInEnvironmentsHandedBack* {
+        if (operand < first || operand > last)
+            return nullptr;
+        auto found = std::ranges::lower_bound(judged, operand, { }, &EnvironmentJudgedInEnvironmentsHandedBack::environment);
+        return found != judged.end() && found->environment == operand ? &*found : nullptr;
+    };
+    BlockID firstMaking = index.blockOf(first);
+    for (BlockID id : index.blocksInDominatorOrder()) {
+        if (id < firstMaking)
+            continue;
         BodyBlock block = index.block(id);
         for (BodyValue user : block.values()) {
-            if (user.id().index() <= environment.index())
-                continue;
             user.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
-                if (operand != environment)
+                EnvironmentJudgedInEnvironmentsHandedBack* mentioned = judgedThatIs(operand);
+                if (!mentioned)
                     return;
-                --mentionsLeft;
                 bool leavesCell = leavesCellToItsFrames(body, user, operandIndex);
-                isHandedToFunctionEnteredItself |= user.opcode() == Opcode::CallDirect;
-                if (leavesCell && user.opcode() == Opcode::NewClosure && !functionsOfClosuresLent.contains(user.function()))
-                    functionsOfClosuresLent.append(user.function());
+                mentioned->isHandedToFunctionEnteredItself |= user.opcode() == Opcode::CallDirect;
+                if (leavesCell && user.opcode() == Opcode::NewClosure)
+                    mentioned->functionsOfClosuresLent.append(user.function());
                 if (!leavesCell)
-                    keeps.quickSet(id.index());
+                    mentioned->blocksThatKeep.append(id);
             });
         }
         block.terminator().forEachOperand([&](ValueID operand, uint32_t) {
-            if (operand == environment)
-                keeps.quickSet(id.index());
+            if (EnvironmentJudgedInEnvironmentsHandedBack* mentioned = judgedThatIs(operand))
+                mentioned->blocksThatKeep.append(id);
         });
     }
-    LayoutID layout = index.value(environment).as<Opcode::NewObject>().layout();
-    bool closuresLentAloneTakeIt = !functionsOfClosuresLent.isEmpty() && functionsOfClosuresLent.size() == body.numberOfFunctionsThatCapture[layout.index()];
-    if (keeps.quickGet(making.index()) || (!isHandedToFunctionEnteredItself && !closuresLentAloneTakeIt))
+}
+
+static bool someWayKeepsNothing(BodyOfMakerInEnvironmentsHandedBack& body, EnvironmentJudgedInEnvironmentsHandedBack& judged)
+{
+    const BodyIndex& index = body.index;
+    BlockID making = index.blockOf(judged.environment);
+    LayoutID layout = index.value(judged.environment).as<Opcode::NewObject>().layout();
+    std::ranges::sort(judged.functionsOfClosuresLent);
+    size_t numberOfFunctionsLent = std::ranges::unique(judged.functionsOfClosuresLent).begin() - judged.functionsOfClosuresLent.begin();
+    bool closuresLentAloneTakeIt = numberOfFunctionsLent && numberOfFunctionsLent == body.numberOfFunctionsThatCapture[layout.index()];
+    if (judged.blocksThatKeep.contains(making) || (!judged.isHandedToFunctionEnteredItself && !closuresLentAloneTakeIt))
         return false;
 
-    BitVector seen(index.numberOfBlocks());
+    if (body.depthsBelowEntry.isEmpty())
+        findHowFarWaysOnLeadOutOfBlocksAbove(body);
+    if (judged.blocksThatKeep.isEmpty())
+        return body.leastDepthsAboveWhatWaysOnReach[making.index()] < body.depthsBelowEntry[making.index()];
+    if (body.lastJudgedThatBlockKeeps.isEmpty()) {
+        body.lastJudgedThatBlockKeeps.fill(0, index.numberOfBlocks());
+        body.lastJudgedWhoseWaysPassBlock.fill(0, index.numberOfBlocks());
+    }
+    uint32_t number = ++body.numberOfEnvironmentsJudged;
+    uint32_t endOfBlocksThatKeep = 0;
+    for (BlockID id : judged.blocksThatKeep) {
+        body.lastJudgedThatBlockKeeps[id.index()] = number;
+        endOfBlocksThatKeep = std::max(endOfBlocksThatKeep, id.index() + 1);
+    }
     Vector<BlockID, 16> worklist { making };
-    seen.quickSet(making.index());
+    body.lastJudgedWhoseWaysPassBlock[making.index()] = number;
     while (!worklist.isEmpty()) {
-        BodyBlock block = index.block(worklist.takeLast());
-        BodyTerminator end = block.terminator();
+        BlockID id = worklist.takeLast();
+        if (!index.loopOf(id) && id.index() >= endOfBlocksThatKeep) {
+            if (body.leastDepthsAboveWhatWaysOnReach[id.index()] < body.depthsBelowEntry[making.index()])
+                return true;
+            continue;
+        }
+        BodyTerminator end = index.block(id).terminator();
         if (end.kind() == TerminatorKind::Return)
             return true;
         for (BodyTarget target : end.targets()) {
             if (!index.strictlyDominates(making, target.block()))
                 return true;
-            if (!keeps.quickGet(target.block().index()) && !seen.quickSet(target.block().index()))
+            uint32_t to = target.block().index();
+            if (body.lastJudgedThatBlockKeeps[to] != number && std::exchange(body.lastJudgedWhoseWaysPassBlock[to], number) != number)
                 worklist.append(target.block());
         }
     }
@@ -239,17 +302,22 @@ Vector<LayoutID> findEnvironmentsHandedBack(const Program& program, const Facts&
     Vector<Vector<LayoutID, 2>> found(makers.size());
     forEachIndexInParallel(build.parallelLoops(), makers.size(), [&](unsigned place) {
         const BodyIndex* index = facts.bodies().find(makers[place]);
-        if (!index || index->hasIrreducibleFlow())
+        if (!index || index->hasIrreducibleFlow() || program.at(makers[place]).isModuleBody())
             return;
+        Vector<EnvironmentJudgedInEnvironmentsHandedBack, 2> judged;
         for (ValueID environment : facts.summaries().at(makers[place]).environmentsMade) {
-            LayoutID layout = index->value(environment).as<Opcode::NewObject>().layout();
-            if (program.at(makers[place]).isModuleBody())
-                continue;
             BlockID making = index->blockOf(environment);
-            if (index->loopOf(making) || index->block(making).hasHandler())
-                continue;
-            if (!found[place].contains(layout) && someWayKeepsNothing({ program, facts, makers[place], *index, numberOfFunctionsThatCapture }, environment))
-                found[place].append(layout);
+            if (!index->loopOf(making) && !index->block(making).hasHandler())
+                judged.append(EnvironmentJudgedInEnvironmentsHandedBack { environment });
+        }
+        if (judged.isEmpty())
+            return;
+        std::ranges::sort(judged, { }, &EnvironmentJudgedInEnvironmentsHandedBack::environment);
+        BodyOfMakerInEnvironmentsHandedBack body { program, facts, makers[place], *index, numberOfFunctionsThatCapture };
+        findMentionsOfEnvironmentsJudged(body, judged.mutableSpan());
+        for (EnvironmentJudgedInEnvironmentsHandedBack& environment : judged) {
+            if (someWayKeepsNothing(body, environment))
+                found[place].append(index->value(environment.environment).as<Opcode::NewObject>().layout());
         }
     });
 

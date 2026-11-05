@@ -199,7 +199,7 @@ public:
             members("index"_s, place.fieldIndex, "holdsOnlyWhatIsStored"_s, place.holdsOnlyWhatIsStored);
             break;
         case BuiltinPlaceKind::NewValue:
-            members("type"_s, place.newValueType);
+            members("type"_s, place.newValueType, "holdsWhatIsThrown"_s, place.holdsWhatIsThrown);
             break;
         case BuiltinPlaceKind::Member: {
             auto path = [&] {
@@ -211,7 +211,7 @@ public:
             break;
         }
         case BuiltinPlaceKind::NativeCell:
-            members("cell"_s, PlainName { place.nativeCell });
+            members("cell"_s, PlainName { place.nativeCell }, "holdsOnlyWhatIsStored"_s, place.holdsOnlyWhatIsStored);
             break;
         }
         close('}');

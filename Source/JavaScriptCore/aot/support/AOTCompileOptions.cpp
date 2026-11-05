@@ -153,6 +153,9 @@ private:
         options.recorded.validates = hasFlag(checks, CheckSet::Validate);
         options.verifiesMachineCode = options.recorded.validates || Options::verifyAOTMachineCode();
         options.asksWhetherFlowOfLinkIsClosed = hasFlag(checks, CheckSet::FlowFixpoint);
+        options.walksLastWalksOfLoopsAlone = hasFlag(checks, CheckSet::LastWalksOfLoopsAlone);
+        options.walksLoopsThatFitAgain = hasFlag(checks, CheckSet::WalksOfLoopsThatFitAgain);
+        options.asksWhetherLinkFindsLessFromMore = hasFlag(checks, CheckSet::FlowFindsNoLessFromMore);
 #if ASSERT_ENABLED || ASAN_ENABLED
         options.verifiesAfterEveryStage = hasFlag(checks, CheckSet::VerifyEachStage);
         options.verifiesProgram = options.verifiesAfterEveryStage || options.recorded.validates || Options::verifyAOTProgram();
@@ -195,6 +198,16 @@ private:
         if (m_wire.rowThatSaysLess && !hasFlag(m_wire.testing, TestingSwitch::RowSaysLess))
             reportInvalid(m_wire.rowThatSaysLess);
         options.rowThatSaysLess = m_wire.rowThatSaysLess;
+
+        bool failsGuesses = hasFlag(m_wire.testing, TestingSwitch::FailGuesses);
+        bool drawsBySeed = hasFlag(m_wire.testing, TestingSwitch::ShuffleBlockFrequencies) || hasFlag(m_wire.testing, TestingSwitch::ShuffleExpectedTypes)
+            || hasFlag(m_wire.testing, TestingSwitch::GiveLinkMore) || hasFlag(m_wire.testing, TestingSwitch::ShuffleChoices);
+        if (drawsBySeed ? !m_wire.seedOfShuffles : m_wire.seedOfShuffles && !failsGuesses)
+            reportInvalid(m_wire.seedOfShuffles);
+        if (failsGuesses != !!m_wire.periodOfGuessesThatFail)
+            reportInvalid(m_wire.periodOfGuessesThatFail);
+        options.seedOfShuffles = m_wire.seedOfShuffles;
+        options.periodOfGuessesThatFail = m_wire.periodOfGuessesThatFail;
     }
 
     WireOptions m_wire;

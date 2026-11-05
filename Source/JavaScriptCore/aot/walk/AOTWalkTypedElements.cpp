@@ -53,6 +53,11 @@ struct AccessOfTypedElements {
     bool isOnlyAskedAbout { false };
 };
 
+struct LevelOfArrayReadOfTypedElements {
+    KnowledgeLevel level { KnowledgeLevel::Unknown };
+    bool restsOnLinksWordAlone { false };
+};
+
 } // anonymous namespace
 
 static BuiltinTypeContext builtinContextOfTypedElements(Walker& walker)
@@ -128,15 +133,13 @@ static KnowledgeLevel levelOfArrayAccessOfTypedElements(const AccessOfTypedEleme
     return access.typeOfKey.isInteger() ? KnowledgeLevel::Expected : KnowledgeLevel::Unknown;
 }
 
-static KnowledgeLevel levelOfArrayReadOfTypedElements(const AccessOfTypedElements& access)
+static LevelOfArrayReadOfTypedElements levelOfArrayReadOfTypedElements(const AccessOfTypedElements& access)
 {
     if (access.base && isFreshListAsMade(access.walker, access.base))
-        return KnowledgeLevel::Proven;
+        return { KnowledgeLevel::Proven, false };
     if (!readsOffListThatStaysAsMadeByLink(access.walker, access.value))
-        return levelOfArrayAccessOfTypedElements(access);
-    if (!access.isOnlyAskedAbout)
-        holdLinksWordAgainstObjectAsMade(access.walker, access.base, access.walker.originOf(access.value), false);
-    return KnowledgeLevel::Proven;
+        return { levelOfArrayAccessOfTypedElements(access), false };
+    return { KnowledgeLevel::Proven, !access.isOnlyAskedAbout && !isListAsMade(access.walker, access.base) };
 }
 
 static ArrayStorage storageDeclaredForTypedElements(const AccessOfTypedElements& access)
@@ -292,7 +295,7 @@ static bool buildArrayReadOfTypedElements(const AccessOfTypedElements& access)
     Walker& walker = access.walker;
     if (!access.isOnlyAskedAbout && bindNumberReadBehindTestsOfTypedElements(access))
         return true;
-    KnowledgeLevel level = levelOfArrayReadOfTypedElements(access);
+    auto [level, restsOnLinksWordAlone] = levelOfArrayReadOfTypedElements(access);
     std::optional<ListTestedInFrontOfLoop> tested = level == KnowledgeLevel::Unknown ? std::nullopt : findListTestedInFrontOfLoop(walker, access.value);
     if (tested)
         level = KnowledgeLevel::Proven;
@@ -311,6 +314,7 @@ static bool buildArrayReadOfTypedElements(const AccessOfTypedElements& access)
     read.setArrayStorage(storage);
     read.setAdmitsInt32Storage(storage == ArrayStorage::Double);
     read.setLevel(level);
+    read.setAsksCellWhereNothingIsFound(restsOnLinksWordAlone && !tested);
     if (!tested && !hasArrayStorageForm(storage))
         read.representation = formOfNumberThatLinkHasTypedOfTypedElements(access);
     read.setKeyIsIntegral(access.typeOfKey.isNumberWithoutFraction());
@@ -461,7 +465,7 @@ static bool buildArrayStoreOfTypedElements(const AccessOfTypedElements& access)
 static bool buildArrayTestOfTypedElements(const AccessOfTypedElements& access)
 {
     Walker& walker = access.walker;
-    KnowledgeLevel level = levelOfArrayReadOfTypedElements(access);
+    auto [level, restsOnLinksWordAlone] = levelOfArrayReadOfTypedElements(access);
     if (level == KnowledgeLevel::Unknown)
         return false;
     if (access.isOnlyAskedAbout)
@@ -472,6 +476,7 @@ static bool buildArrayTestOfTypedElements(const AccessOfTypedElements& access)
     test.setPositionOperand(access.key);
     test.setArrayStorage(level == KnowledgeLevel::Expected ? storageDeclaredForTypedElements(access) : ArrayStorage::Other);
     test.setLevel(level);
+    test.setAsksCellWhereNothingIsFound(restsOnLinksWordAlone);
     test.setKeyIsIntegral(access.typeOfKey.isNumberWithoutFraction());
     if (level == KnowledgeLevel::Expected)
         markBaseAsPassedInTypedElements(walker, access.base);
@@ -600,6 +605,36 @@ TypeID typeOfElementInsideViewOfNumbers(Walker& walker, const BodyValue& read, T
     return elementTypeOf(base.typedArrayType);
 }
 
+bool isViewOfNumbersReadInLine(Walker& walker, TypeID typeOfView)
+{
+    if (!typeOfView)
+        return false;
+    BaseOfTypedElements base = classifyBaseOfTypedElements(walker, typeOfView);
+    return base.kind == KindOfBaseOfTypedElements::TypedArray && hasInlineElementAccess(base.typedArrayType) && !isBigInt(base.typedArrayType);
+}
+
+Reference buildOperatorOnIntegersOfLoop(Walker& walker, Opcode opcode, Reference left, Reference right, Origin origin)
+{
+    Draft draft(opcode, origin);
+    walker.chooseConservativeFields(draft);
+    draft.setLeftOperand(left);
+    draft.setRightOperand(right);
+    draft.setForm(formAllowedForTypedOperator(walker, draft));
+    return walker.build(WTF::move(draft));
+}
+
+Reference buildRoomOfViewBesideAddend(Walker& walker, Reference view, Reference addend, Origin origin)
+{
+    Draft length(Opcode::GetTypedArrayLength, origin);
+    walker.chooseConservativeFields(length);
+    length.setViewOperand(view);
+    length.setTypedArrayType(classifyBaseOfTypedElements(walker, walker.typeOf(view)).typedArrayType);
+    Reference room = walker.build(WTF::move(length));
+    if (room && addend && !walker.isUnreachable())
+        room = buildOperatorOnIntegersOfLoop(walker, Opcode::Sub, room, addend, origin);
+    return room && room.isRecord() && walker.types().at(walker.typeOf(room)).isInteger() ? room : Reference();
+}
+
 Reference buildReadOfElementOfViewBehindTestOfLength(Walker& walker, const BodyValue& read, Reference view, Origin origin, BlockID whereItLiesOutside)
 {
     Reference position = walker.referenceOf(read.propertyOperand());
@@ -673,7 +708,7 @@ static bool buildViewReadOfTypedElements(const AccessOfTypedElements& access, Ty
         return true;
     Walker& walker = access.walker;
     Draft read = draftOfTypedElements(walker, access.value, Opcode::GetTypedArrayElement);
-    bool isHeldBelowLength = holdPositionBelowLengthOrBeginTurnAgainInTypedElements(access, typedArrayType, read.origin());
+    bool isHeldBelowLength = (access.typeOfKey.isInteger() && walker.counterHoldsAccessBelowRoomOfView(access.value.id(), access.base)) || holdPositionBelowLengthOrBeginTurnAgainInTypedElements(access, typedArrayType, read.origin());
     read.setViewOperand(access.base);
     read.setPositionOperand(access.key);
     read.setTypedArrayType(typedArrayType);
@@ -712,7 +747,7 @@ static bool buildViewStoreOfTypedElements(const AccessOfTypedElements& access, T
     put.setPositionOperand(access.key);
     put.setValueOperand(access.stored);
     put.setTypedArrayType(typedArrayType);
-    put.setIsInsideView(level == KnowledgeLevel::Proven && positionIsKnownToLieInsideList(walker, access.base, access.key));
+    put.setIsInsideView(level == KnowledgeLevel::Proven && (positionIsKnownToLieInsideList(walker, access.base, access.key) || (access.typeOfKey.isInteger() && walker.counterHoldsAccessBelowRoomOfView(access.value.id(), access.base))));
     put.setMode(mode);
     put.setLevel(level);
     put.setKeyIsIntegral(access.typeOfKey.isNumberWithoutFraction());
@@ -932,13 +967,13 @@ static bool buildLengthOfTypedElements(Walker& walker, const BodyValue& value, c
     case KindOfBaseOfTypedElements::TypedArray: {
         const ClassPart* onlyClass = singleBuiltinClassOf(types, types.at(typeOfBase));
         bool isSeenToFindGetter = onlyClass && !isOnlyAskedAbout && findConstantMemberReadOff(walker, base, value.key());
-        bool isSaidByLinkToFindGetter = onlyClass && !isSeenToFindGetter && readsOffEntryParameterThatStaysAsMade(walker, value);
+        bool isSaidByLinkToFindGetter = onlyClass && !isSeenToFindGetter && (isOnlyAskedAbout || linksWordCanBeHeldAgainst(walker, base)) && readsOffEntryParameterThatStaysAsMade(walker, value);
         if (!isSeenToFindGetter && !isSaidByLinkToFindGetter)
             return false;
         if (isOnlyAskedAbout)
             return answerAhead(Opcode::GetTypedArrayLength);
         if (isSaidByLinkToFindGetter)
-            holdLinksWordAgainstObjectAsMade(walker, base, walker.originOf(value), false);
+            holdLinksWordAgainstObjectAsMade(walker, base, walker.originOf(value));
         Draft length = draftOfTypedElements(walker, value, Opcode::GetTypedArrayLength);
         length.setViewOperand(base);
         length.setTypedArrayType(classified.typedArrayType);

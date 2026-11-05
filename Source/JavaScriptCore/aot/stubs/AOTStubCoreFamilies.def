@@ -21,7 +21,7 @@ v(PollAtPrologueWithoutCollecting, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoIS
 v(PollAtLoop, EnteredByRuntime, (), CallerFrameAxis, 0, 0, AllISAs, AllISAs, NoChoice, Never, MayCall, ClobbersOnlyScratch, NoEffects, PollAtLoop)
 v(PollBeforeEntering, InternalEntry, (Plain, FunctionObject), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, NoEffects, PollBeforeEntering)
 
-v(WriteBarrier, CalledByCode, (), OperandRegisterAxis | SlowPathRecurs, 0, 0, AllISAs, NoISA, AlternateReceivers, Never, MayCall, ClobbersOnlyScratch, reads(RuntimeState), WriteBarrier)
+v(WriteBarrier, CalledByCode, (), SlowPathRecurs, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(RuntimeState), WriteBarrier)
 v(RememberElement, CalledByCode, (), SlowPathRecurs, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(RuntimeState, ArrayStorage) | writes(RuntimeState), RememberElement)
 
 v(AllocateCell, CalledByCode, (Header, HeaderAndWords, HeaderAndZeros, HeaderAndWordsAndZeros), FormAxis | CountAxis | OperandRegisterAxis | SlowPathRecurs, 0, 5, AllISAs, NoISA, AlternateResults, Never, MayCall, ClobbersOnlyScratch, reads(AllocatorState) | writes(AllocatorState), AllocateCell)
@@ -144,7 +144,6 @@ v(CallBoxedBuiltin, Handler, AOT_FORMS_OF_BOXED_CALLS, FormAxis | CountAxis, 0, 
 v(CallMethodOfBuiltinClass, CalledByCode, AOT_FORMS_OF_BOXED_CALLS, FormAxis | CountAxis, 0, 4, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, CallMethodOfBuiltinClass)
 v(TryCallMethodOfBuiltinClass, CalledByCode, AOT_FORMS_OF_BOXED_CALLS, FormAxis | CountAxis, 0, 4, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, TryCallMethodOfBuiltinClass)
 v(CallMethodOfBuiltinClassAtSite, CalledByCode, AOT_FORMS_OF_BOXED_CALLS, FormAxis | CountAxis, 0, 4, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, CallMethodOfBuiltinClass)
-v(CallMethodOfOneBuiltinClassAtSite, CalledByCode, AOT_FORMS_OF_BOXED_CALLS, FormAxis | CountAxis, 0, 4, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, CallMethodOfBuiltinClass)
 v(CallMethodOfBuiltinClassWithSharedPattern, CalledByCode, AOT_FORMS_OF_BOXED_CALLS, FormAxis | CountAxis, 0, 4, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, CallMethodOfBuiltinClassWithSharedPattern)
 v(CallMethodOfBuiltinClassAtSiteWithSharedPattern, CalledByCode, AOT_FORMS_OF_BOXED_CALLS, FormAxis | CountAxis, 0, 4, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, CallMethodOfBuiltinClassWithSharedPattern)
 v(CallMethodOfBuiltinClassByValue, CalledByCode, AOT_FORMS_OF_BOXED_CALLS, FormAxis | CountAxis, 0, 4, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, CallMethodOfBuiltinClassByValue)

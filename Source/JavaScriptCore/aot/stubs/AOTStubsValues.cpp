@@ -307,18 +307,32 @@ void generateEqual(StubAssembler& jit)
         });
     };
 
+#if CPU(X86_64)
+    const bool flagsOfLastTestAreAnswer = answersInFlags;
+#else
+    const bool flagsOfLastTestAreAnswer = false;
+#endif
+    JumpList flagsSayFalse;
+    JumpList& isFalseWhereTestFoundBits = flagsOfLastTestAreAnswer ? flagsSayFalse : isFalse;
+
     Jump haveSameBits = jit.branch64(CCallHelpers::Equal, left, right);
     jit.or64(left, right, leftValue);
-    Jump areNotBothCells = jit.branchIfNotCell(leftValue);
-    isFalse.append(jit.branchTest64(CCallHelpers::Zero, left));
-    isFalse.append(jit.branchTest64(CCallHelpers::Zero, right));
+    Jump areNotBothCells;
     Jump notStrings;
     if (isStrict) {
         static_assert(StringType + 1 == HeapBigIntType && HeapBigIntType == LastValueCompareCellType);
-        isFalse.append(jit.branch8(CCallHelpers::Above, Address(left, JSCell::typeInfoTypeOffset()), TrustedImm32(HeapBigIntType)));
+        static_assert(JSValue::ValueNull & JSValue::OtherTag && JSValue::ValueUndefined & JSValue::OtherTag && JSValue::ValueFalse & JSValue::OtherTag && JSValue::ValueTrue & JSValue::OtherTag);
+        areNotBothCells = jit.branchTest64(CCallHelpers::NonZero, leftValue, numberTag);
+        isFalseWhereTestFoundBits.append(jit.branchTest64(CCallHelpers::NonZero, leftValue, TrustedImm32(JSValue::OtherTag)));
+        isFalse.append(jit.branchTest64(CCallHelpers::Zero, left));
+        isFalseWhereTestFoundBits.append(jit.branch8(CCallHelpers::Above, Address(left, JSCell::typeInfoTypeOffset()), TrustedImm32(HeapBigIntType)));
         notStrings = jit.branchOnFlags(CCallHelpers::Equal);
+        isFalse.append(jit.branchTest64(CCallHelpers::Zero, right));
         isFalse.append(jit.branch8(CCallHelpers::NotEqual, Address(right, JSCell::typeInfoTypeOffset()), TrustedImm32(StringType)));
     } else {
+        areNotBothCells = jit.branchIfNotCell(leftValue);
+        isFalse.append(jit.branchTest64(CCallHelpers::Zero, left));
+        isFalse.append(jit.branchTest64(CCallHelpers::Zero, right));
         jit.load8(Address(left, JSCell::typeInfoTypeOffset()), leftValue);
         jit.load8(Address(right, JSCell::typeInfoTypeOffset()), rightValue);
         kindsDiffer.append(jit.branch32(CCallHelpers::NotEqual, leftValue, rightValue));
@@ -337,12 +351,17 @@ void generateEqual(StubAssembler& jit)
 
     haveSameBits.link(&jit);
     Jump isNumber = jit.branchTest64(CCallHelpers::NonZero, left, numberTag);
-    returnConstant(true);
+    if (flagsOfLastTestAreAnswer) {
+        flagsSayFalse.link(&jit);
+        jit.returnToCaller();
+    } else
+        returnConstant(true);
 
     notStrings.link(&jit);
-    if (isStrict)
+    if (isStrict) {
+        isFalse.append(jit.branchTest64(CCallHelpers::Zero, right));
         needsContent.append(jit.branch8(CCallHelpers::Equal, Address(right, JSCell::typeInfoTypeOffset()), TrustedImm32(HeapBigIntType)));
-    else
+    } else
         needsContent.append(jit.branch32(CCallHelpers::Equal, leftValue, TrustedImm32(HeapBigIntType)));
     isFalse.append(jit.jump());
 

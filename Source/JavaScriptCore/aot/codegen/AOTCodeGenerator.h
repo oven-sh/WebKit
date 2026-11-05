@@ -386,6 +386,7 @@ private:
     bool m_watchesOperations { false };
     bool m_notesForms { false };
     bool m_mayReleaseBehindLastReads { false };
+    bool m_mayLendCells { false };
     PinnedValues m_pinned;
     std::span<LValue> m_values;
     std::span<ResultRange> m_resultRanges;

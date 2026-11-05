@@ -1,7 +1,7 @@
 # function partOfA(o) { return o.part; }  function wholeOfA(o) { return o.whole; }  .. OfB .. OfC   publish(partOfA, ..);
 # const a = { part: 1.5, whole: 7, first: 7 }, b = { whole: "w", part: 2.5, second: 2.5 }, c = { part: "p", whole: "x", more: 1 };   for (..) partOfA(a) ..
-# Three layouts have both names. Each has a name of its own, so none is written as a kind of another, and their objects never meet. Two of them hold `part` as a raw number and one as any value: every read under the name asks its place for a raw number first.
-# One holds `whole` raw and two as any value: a read under that name asks as at every place. Whichever is asked first, each object is read right.
+# Three layouts have both names. Each has a name of its own, so none is written as a kind of another, and their objects never meet. Two of them hold `part` as a raw number and one as any value.
+# One holds `whole` raw and two as any value. Every read under either name calls the same stub: how a function is compiled does not hang on how many layouts elsewhere hold a name in which form (it went by the majority). Each object is read right.
 # RUN(PLAN): plan layouts mechanisms=none+TypedOperations+UnboxedNumbers+TypedSlots
 # PLAN: layout L0 CompiledObject
 # PLAN-NEXT: slot 0 "part" OptionalDouble Inline
@@ -13,9 +13,9 @@
 # PLAN-NEXT: slot 0 "part" Cell32 Inline
 # PLAN-NEXT: slot 1 "whole" Cell32 Inline
 # RUN(CODE): bytes f1:Body f2:Body f5:Body mechanisms=none+TypedOperations+UnboxedNumbers+TypedSlots
-# CODE: Call Stub ReadAtSiteOfNarrowField.OfAnyValueUnderNameWithColumn count 2
 # CODE: Call Stub ReadAtSite.OfAnyValueUnderNameWithColumn
-# CODE: Call Stub ReadAtSiteOfNarrowField.OfAnyValueUnderNameWithColumn count 2
+# CODE: Call Stub ReadAtSite.OfAnyValueUnderNameWithColumn
+# CODE: Call Stub ReadAtSite.OfAnyValueUnderNameWithColumn
 # RUN: run-in-shell globalThis.publish = () => { }; globalThis.show = (a, b) => print(a, b); mechanisms=none+TypedOperations+UnboxedNumbers+TypedSlots
 # CHECK: 1.5 7
 # CHECK-NEXT: 2.5 w

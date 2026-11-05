@@ -134,7 +134,7 @@ struct LoadedFrontCell {
     ReceiverOfFrontProbe receiverIs { ReceiverOfFrontProbe::IsAnyCell };
 };
 
-void readByFrontTable(StubAssembler&, const FrontTableRead&, GPRReg result, JumpList& hasOtherName, const ScopedLambda<void()>& finish);
+void readByFrontTable(StubAssembler&, const FrontTableRead&, GPRReg result, JumpList& hasOtherName, std::optional<StubKey> entersBehindAnswer = std::nullopt);
 void readByLoadedFrontCell(StubAssembler&, const LoadedFrontCell&, GPRReg result, const ScopedLambda<void()>& finish);
 void loadIdentifier(StubAssembler&, GPRReg identifierNumber, GPRReg uid, JumpList& isNotCreated);
 void loadProgramSymbol(StubAssembler&, GPRReg identifierNumber, GPRReg uid, JumpList& isNotCreated);

@@ -20,6 +20,7 @@ class Allocator {
 public:
     Allocator(Procedure&, Allocation&);
     void run();
+    void letGoOfWorkingLists();
 
     struct ValueState {
         RegisterMask registers { 0 };
@@ -166,6 +167,12 @@ public:
         std::fill_n(step->sources + 2, maxLeaves - 2, Location());
         step->operation = operation;
         step->other = nullptr;
+    }
+    ALWAYS_INLINE void notePatchWithOperandInFrame(const PatchOperation* patch)
+    {
+        m_allocation.m_holdsPatchWithOperandInFrame = true;
+        if (!patch->findsOperandsInFrameWithoutRecord())
+            m_allocation.m_holdsPatchThatCountsOnFrameRecord = true;
     }
     ALWAYS_INLINE void noteFrameUse()
     {
@@ -404,7 +411,7 @@ public:
     void findGapsAheadOfLandingPads();
 
     RegisterMask registersWhereCallInBlockTakesWhatLiesThere(const Block*) const;
-    unsigned numberOfReadsThatWordWouldReload(const Operation*) const;
+    unsigned numberOfReadsThatWordWouldReload(const Operation*, Position end) const;
     void findFramedPart();
     void settleFramedPart();
     void standIn(const Block* block)
@@ -526,6 +533,7 @@ public:
         Position read { noPosition };
     };
     ArenaVector<FirstReadFromHead> m_firstReadsFromHeads;
+    mutable ArenaVector<uint32_t> m_numbersOfListsOfReads;
     mutable ArenaVector<std::span<const uint32_t>> m_listsOfReads;
     ArenaVector<uint32_t> m_lastSearchThatReachedBlock;
     uint32_t m_numberOfSearchesForWays { 0 };

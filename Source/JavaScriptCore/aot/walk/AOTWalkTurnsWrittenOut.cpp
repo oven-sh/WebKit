@@ -12,6 +12,7 @@
 #include "AOTThinSummary.h"
 #include "AOTWalkCopies.h"
 #include "AOTWalkLoopsOverGeneratorsBuilder.h"
+#include "AOTWalkTextBuilders.h"
 #include <algorithm>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -75,8 +76,11 @@ struct IntegersByText {
 static uint32_t numberOfOperationsOfLoopWrittenOut(const BodyIndex& index, LoopID loop)
 {
     uint32_t numberOfOperations = 0;
-    for (BlockID member : index.membersOf(loop))
+    for (BlockID member : index.membersOf(loop)) {
         numberOfOperations += index.block(member).numberOfValues() + 1;
+        if (numberOfOperations > mostOperationsWalkedForTurnsWrittenOut)
+            break;
+    }
     return numberOfOperations;
 }
 
@@ -387,6 +391,9 @@ bool Walker::writeOutTurnsOfLoop(BlockID inputHead, std::span<const Reference> e
     if (m_inputHeadsOfIterations.contains(inputHeadInFrame(m_frames[frameIndex].inlineFrame, inputHead)) || hasTextsInStringBuilders())
         return false;
 
+    if (numberOfOperationsOfLoopWrittenOut(index, loop) > mostOperationsWalkedForTurnsWrittenOut)
+        return false;
+
     PropertyKeyID keyOfLength = program().keyOf(BuiltinNames::length);
     uint32_t firstValue = index.block(inputHead).firstParameter().index();
     auto isDefinedInLoop = [&](ValueID value) {
@@ -513,13 +520,29 @@ void Walker::walkTurnsWrittenOut(BlockID inputHead, std::span<const Reference> e
     m_block = { };
     m_state.clear();
 
+    const bool standsInTry = !m_triesOfLoops.isEmpty() && m_triesOfLoops.last().frameIndex == frameIndex;
+    const size_t placeOfTryAround = m_triesOfLoops.size() - standsInTry;
+    const size_t firstTypeLeft = standsInTry ? m_triesOfLoops.last().typesLeftByTurnsWrittenOut.size() : 0;
+    auto emptyName = [&](uint32_t value) {
+        Reference bound = std::exchange(m_frames[frameIndex].references[value], Reference());
+        TypeID type = standsInTry && bound ? typeOfRecordForLooks(*this, ownTypeOf(bound)) : TypeID();
+        if (!type)
+            return;
+        auto& typesLeft = m_triesOfLoops[placeOfTryAround].typesLeftByTurnsWrittenOut;
+        auto ofTheseTurns = typesLeft.mutableSpan().subspan(firstTypeLeft);
+        auto found = std::ranges::lower_bound(ofTheseTurns, value, { }, &TryOfLoop::TypeLeftByTurnsWrittenOut::value);
+        if (found != ofTheseTurns.end() && found->value == value)
+            found->type = m_types.unionOf(found->type, type);
+        else
+            typesLeft.insert(firstTypeLeft + (found - ofTheseTurns.begin()), TryOfLoop::TypeLeftByTurnsWrittenOut { value, type });
+    };
     auto beginWalkOfLoop = [&] {
         uint32_t cameRound = inputBlock(frameIndex, inputHead).firstOpenEdge;
         for (BlockID member : index.membersOf(loop)) {
             inputBlock(frameIndex, member) = InputBlock { };
             BodyBlock block = index.block(member);
             for (uint32_t value = block.firstParameter().index(); value < block.endOfValues().index(); ++value)
-                m_frames[frameIndex].references[value] = Reference();
+                emptyName(value);
         }
         inputBlock(frameIndex, inputHead).firstOpenEdge = cameRound;
         inputBlock(frameIndex, inputHead).firstNarrowerName = namesInFrontOfLoop;
@@ -566,7 +589,7 @@ void Walker::walkTurnsWrittenOut(BlockID inputHead, std::span<const Reference> e
         inputBlock(frameIndex, member).firstNarrowerName = namesInFrontOfLoop;
         BodyBlock block = index.block(member);
         for (uint32_t value = block.firstParameter().index(); value < block.endOfValues().index(); ++value)
-            m_frames[frameIndex].references[value] = Reference();
+            emptyName(value);
     }
     m_frames[frameIndex].loopsBeingBuiltTwice.removeLast();
     m_frames[frameIndex].stepWhosePositionEdgesBring = { };

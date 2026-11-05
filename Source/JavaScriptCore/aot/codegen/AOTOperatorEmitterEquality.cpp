@@ -345,6 +345,26 @@ public:
             });
             return;
         }
+        ValueID expectedObject = value->expectsObjectOnLeft() ? value->leftOperand() : value->expectsObjectOnRight() ? value->rightOperand() : ValueID();
+        bool asksKindInLine = expectedObject && !mayBeEmpty(expectedObject) && generator().code().at(value.block()).frequency != BlockFrequency::Rare;
+        if (asksKindInLine && !bitsDecide(kindsComparedBy(value)) && generator().takesOpenForm(value, StateOfKnowledge::Generic)) {
+            m_out.noteForm(Form::Open, StateOfKnowledge::Generic);
+            Boxed tested = expectedObject == value->leftOperand() ? x : y;
+            defineTestByBranching(value, [&](BranchTargets targets) {
+                LBasicBlock isCellOfSomeKind = newBlock();
+                LBasicBlock bitsTell = newBlock();
+                LBasicBlock callsStub = newBlock();
+                m_out.branch(isCell(tested).value(), normalEdge(isCellOfSomeKind), rareEdge(callsStub));
+                m_out.appendTo(isCellOfSomeKind);
+                m_out.branch(hasCellTypeAbove(unboxCell(tested), static_cast<JSType>(LastValueCompareCellType)).value(), normalEdge(bitsTell), rareEdge(callsStub));
+                m_out.appendTo(bitsTell);
+                branch(equal(x, y), targets);
+                m_out.appendTo(callsStub);
+                LValue operands[] = { x.value(), y.value() };
+                emitter<RuntimeCallEmitter>().callStubAndBranch(value, strictEqualInFlags(), operands, { }, targets);
+            });
+            return;
+        }
         if (!bitsDecide(kindsComparedBy(value)) && !generator().takesOpenForm(value, StateOfKnowledge::Generic)) {
             if (value.isBranchCondition()) {
                 LValue operands[] = { x.value(), y.value() };

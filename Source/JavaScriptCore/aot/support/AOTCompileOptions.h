@@ -36,6 +36,19 @@ constexpr bool hasFlag(Flags set, Flags flag)
     return static_cast<uint32_t>(set) & static_cast<uint32_t>(flag);
 }
 
+enum class DrawnFor : uint8_t { BlockFrequency, LoopMark, ExpectedType, OtherExpectedType, StepOfGuessesThatFail, NodeOfLink, CopyInLine, ParameterGuard, LoopBuiltTwice, PlaceInFrontOfLoop, GuessOutsideLoops };
+
+constexpr uint32_t drawBySeed(uint32_t seed, DrawnFor question, uint32_t first, uint32_t second)
+{
+    uint64_t drawn = (static_cast<uint64_t>(seed) << 8 | static_cast<uint64_t>(question)) * 0x9E3779B97F4A7C15ull;
+    drawn ^= (static_cast<uint64_t>(first) << 32 | second) * 0xC2B2AE3D27D4EB4Full;
+    drawn ^= drawn >> 29;
+    drawn *= 0xBF58476D1CE4E5B9ull;
+    drawn ^= drawn >> 32;
+    drawn *= 0x94D049BB133111EBull;
+    return static_cast<uint32_t>(drawn >> 32);
+}
+
 #if defined(BUN_HARDENED)
 constexpr bool runsOnlyCodeOfImage = true;
 #else
@@ -90,6 +103,9 @@ struct CompileOptions {
     CompileAction action { CompileAction::Compile };
     bool verifiesMachineCode { false };
     bool asksWhetherFlowOfLinkIsClosed { false };
+    bool walksLastWalksOfLoopsAlone { false };
+    bool walksLoopsThatFitAgain { false };
+    bool asksWhetherLinkFindsLessFromMore { false };
 #if ASSERT_ENABLED || ASAN_ENABLED
     bool verifiesAfterEveryStage { false };
     bool verifiesProgram { false };
@@ -104,6 +120,8 @@ struct CompileOptions {
     ReportSet reports { };
     TestingSwitch testing { };
     uint32_t rowThatSaysLess { 0 };
+    uint32_t seedOfShuffles { 0 };
+    uint32_t periodOfGuessesThatFail { 0 };
     ExcludedCode excludedCode { };
     OutputOptions output { };
     LoggingOptions logging;

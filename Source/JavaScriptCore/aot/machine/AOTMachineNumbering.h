@@ -324,6 +324,7 @@ private:
     JS_EXPORT_PRIVATE void switchBlocksThatMayWait(Block* from, Block* to);
     JS_EXPORT_PRIVATE void forgetSuspendedBlocksFrom(uint32_t numberKept);
 
+    Procedure& m_procedure;
     Arena& m_arena;
     const HeapTree& m_heapTree;
     const bool m_savesFrameOnSuspend;

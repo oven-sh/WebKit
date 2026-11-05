@@ -26,7 +26,7 @@
 
 namespace JSC { namespace AOT {
 
-static_assert(descriptorOf(StubFamily::NewEmptyArray).numberOfForms == static_cast<unsigned>(EmptyArray::Int32DefaultCapacity) + 1);
+static_assert(descriptorOf(StubFamily::NewEmptyArray).numberOfForms == static_cast<unsigned>(EmptyArray::Int32Capacity3) + 1);
 
 static constexpr StubRegister countAndNumberMaskRegister = StubRegister::T13;
 
@@ -200,6 +200,8 @@ void generateNewEmptyArray(StubAssembler& jit)
     case EmptyArray::DoubleCapacity3:
     case EmptyArray::DoubleDefaultCapacity:
     case EmptyArray::Int32DefaultCapacity:
+    case EmptyArray::Int32Capacity1:
+    case EmptyArray::Int32Capacity3:
         return emitEmptyArrayOfHoles(jit, form);
     }
     RELEASE_ASSERT_NOT_REACHED();

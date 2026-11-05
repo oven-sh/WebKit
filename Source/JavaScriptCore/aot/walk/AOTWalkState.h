@@ -406,7 +406,6 @@ public:
             heldToWrite().noteStoresPassAbove(classLayout, key, test);
             m_marks.kinds |= Kinds::places;
         }
-        noteThatGuardsHaveBegun(classLayout);
     }
     bool storesPassAbove(LayoutID classLayout, PropertyKeyID key) const { return !!valueOfPlace(PlaceKind::GuardOfStores, Reference(), numberOfGuardedSide(classLayout, ClassSide::Prototype), key.bits()); }
     void noteGuardOfReadsHolds(LayoutID classLayout, PropertyKeyID key, Reference test, ClassSide side = ClassSide::Prototype)
@@ -415,9 +414,9 @@ public:
             heldToWrite().noteGuardOfReadsHolds(classLayout, key, test, side);
             m_marks.kinds |= Kinds::places;
         }
-        noteThatGuardsHaveBegun(classLayout);
     }
     bool guardOfReadsHolds(LayoutID classLayout, PropertyKeyID key, ClassSide side = ClassSide::Prototype) const { return !!valueOfPlace(PlaceKind::GuardOfReads, Reference(), numberOfGuardedSide(classLayout, side), key.bits()); }
+    bool mayHoldGuards() const { return mayHoldPlaceOf(Reference()) && m_held->mayHoldGuards(); }
     bool someGuardHoldsOf(LayoutID classLayout) const { return mayHoldPlaceOf(Reference()) && m_held->someGuardHoldsOf(classLayout); }
     void noteThatGuardsHaveBegun(LayoutID classLayout)
     {
@@ -477,19 +476,21 @@ public:
             heldToWrite().invalidateAliasedSlots(m_program, object, field, mayBeSameObject);
     }
 
+    static constexpr uint32_t placesWereWrittenInTurn = 1u << 31;
     bool nothingWasDoneInTurn(uint32_t numberOfTurn) const { return numberOfTurn && m_marks.turnInWhichNothingWasDone == numberOfTurn; }
+    bool noOtherCodeRanInTurn(uint32_t numberOfTurn) const { return numberOfTurn && (m_marks.turnInWhichNothingWasDone & ~placesWereWrittenInTurn) == numberOfTurn; }
     void noteHeadOfTurn(uint32_t numberOfTurn) { m_marks.turnInWhichNothingWasDone = numberOfTurn; }
     void noteSomethingWasDoneInTurn() { m_marks.turnInWhichNothingWasDone = 0; }
     bool nothingWasDoneSinceCopyBegan(uint32_t numberOfCopy) const { return m_marks.turnInWhichNothingWasDone && m_marks.turnInWhichNothingWasDone <= numberOfCopy; }
     void noteCopyBegins(uint32_t numberOfCopy)
     {
-        if (!m_marks.turnInWhichNothingWasDone)
+        if (!m_marks.turnInWhichNothingWasDone || (m_marks.turnInWhichNothingWasDone & placesWereWrittenInTurn))
             m_marks.turnInWhichNothingWasDone = numberOfCopy;
     }
     void noteWhatOperationDoes(const Effects& effects)
     {
         if (m_marks.turnInWhichNothingWasDone && !effects.mayBeRunAgainUnseen())
-            m_marks.turnInWhichNothingWasDone = 0;
+            m_marks.turnInWhichNothingWasDone = effects.mayRunOtherCode() ? 0 : m_marks.turnInWhichNothingWasDone | placesWereWrittenInTurn;
     }
 
     ALWAYS_INLINE void invalidate(const Effects& effects)
@@ -650,6 +651,7 @@ private:
         std::optional<uint32_t> orderWordOf(Reference object) const;
         void noteStoresPassAbove(LayoutID classLayout, PropertyKeyID, Reference test);
         void noteGuardOfReadsHolds(LayoutID classLayout, PropertyKeyID, Reference test, ClassSide);
+        bool mayHoldGuards() const;
         bool someGuardHoldsOf(LayoutID classLayout) const;
         void noteSlot(const ProgramOfState&, Reference object, FieldReference, Reference value);
         void noteVariable(const ProgramOfState&, VariableID, Reference value);

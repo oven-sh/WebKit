@@ -42,7 +42,8 @@ static void machineNumberingGrowBuckets(Arena& arena, ArenaVector<EntryType>& en
 }
 
 Numbering::Numbering(Procedure& procedure)
-    : m_arena(procedure.arena())
+    : m_procedure(procedure)
+    , m_arena(procedure.arena())
     , m_heapTree(procedure.heapTree())
     , m_savesFrameOnSuspend(procedure.traits().savesFrameOnSuspend)
 {
@@ -59,6 +60,8 @@ void Numbering::makeTimesOfWrites()
 void Numbering::growBucketsWithoutPosition()
 {
     machineNumberingGrowBuckets(m_arena, m_withoutPosition, m_bucketsWithoutPosition);
+    m_procedure.noteListThatBuildingLeaves(Procedure::ListThatBuildingLeaves::OperationsWithoutPosition, m_withoutPosition);
+    m_procedure.noteListThatBuildingLeaves(Procedure::ListThatBuildingLeaves::BucketsWithoutPosition, m_bucketsWithoutPosition);
 }
 
 Operation* Numbering::findPurePatch(const NumberingKeyOfPurePatch& key) const
@@ -217,6 +220,8 @@ bool Numbering::patchWasEndedByWrite(const Entry& entry) const
 void Numbering::growBuckets()
 {
     machineNumberingGrowBuckets(m_arena, m_log, m_buckets);
+    m_procedure.noteListThatBuildingLeaves(Procedure::ListThatBuildingLeaves::NumberedOperations, m_log);
+    m_procedure.noteListThatBuildingLeaves(Procedure::ListThatBuildingLeaves::BucketsOfNumberedOperations, m_buckets);
 }
 
 } } } // namespace JSC::AOT::Machine

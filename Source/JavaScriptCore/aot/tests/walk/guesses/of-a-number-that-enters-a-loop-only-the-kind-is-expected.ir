@@ -1,8 +1,9 @@
 # `sum` enters the loop as 0, and what comes round is made of `sum` itself. Which number enters says nothing of the next turn: a test for 0 would fail from the second turn on. Any number is expected
 # function grow(step: number) { let sum = 0; while (sum < 100) sum += step; return sum; }
+# The head holds a number or a text: a number and whatever `step` is give one of the two or throw, and a text and anything give a text, so no BigInt comes round
 # RUN: walk f1 mechanisms=none+TypedOperations+Guesses
 # CHECK-LABEL: code f1:Body
-# CHECK: ([[sum]]: number|string|bigint{{*}}isLoopHead=true
+# CHECK: ([[sum]]: number|string @JSValue) {{*}}isLoopHead=true
 # CHECK: = TypeTest [[sum]] testedType=number
 # CHECK: = Add {{*}}form=Numbers
 # RUN(NEVER): walk f1 mechanisms=none+TypedOperations+Guesses

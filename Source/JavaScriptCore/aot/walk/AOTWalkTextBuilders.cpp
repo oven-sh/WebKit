@@ -68,7 +68,7 @@ bool isTextInStringBuilder(const Walker& walker, Reference reference)
 
 TextInStringBuilder* findTextNamedBy(Walker& walker, ValueID input)
 {
-    Vector<TextInStringBuilder, 2>& texts = walker.textsInStringBuilders();
+    auto& texts = walker.textsInStringBuilders();
     for (size_t place = walker.endOfTextsInStringBuildersNamedBy(input); place--;) {
         if (texts[place].frameIndex < walker.indexOfFrameOnTop())
             break;
@@ -95,7 +95,7 @@ static Reference builderBehindNameInTextBuilders(const Walker& walker, Reference
 
 static TextInStringBuilder* findTextByRecordInTextBuilders(Walker& walker, Reference name)
 {
-    Vector<TextInStringBuilder, 2>& texts = walker.textsInStringBuilders();
+    auto& texts = walker.textsInStringBuilders();
     for (size_t place = texts.size(); place--;) {
         TextInStringBuilder& text = texts[place];
         if (!belongsToFrameOnTopInTextBuilders(walker, text))
@@ -198,7 +198,7 @@ static TextInStringBuilder* beginTextInTextBuilders(Walker& walker, const BodyIn
     if (!text.builder)
         return nullptr;
 
-    Vector<TextInStringBuilder, 2>& texts = walker.textsInStringBuilders();
+    auto& texts = walker.textsInStringBuilders();
     texts.append(WTF::move(text));
     TextInStringBuilder& begun = texts.last();
     if (begun.liesInFrame) {
@@ -482,7 +482,7 @@ template<typename Functor>
 static void forEachTextLeftOnEdgeInTextBuilders(Walker& walker, BlockID from, BlockID to, const Functor& functor)
 {
     const BodyIndex& index = walker.currentBodyIndex();
-    Vector<TextInStringBuilder, 2>& texts = walker.textsInStringBuilders();
+    auto& texts = walker.textsInStringBuilders();
     Vector<ValueID, 4> parametersOfHeadsSeen;
     for (uint32_t place : walker.placesOfTextsInStringBuildersLeftOnEdge(from, to)) {
         TextInStringBuilder& text = texts[place];
@@ -725,10 +725,13 @@ const PlacesOfTextsInStringBuilders& Walker::placesOfTextsInStringBuilders()
 {
     PlacesOfTextsInStringBuilders& places = m_placesOfTextsInStringBuilders;
     for (uint32_t place = places.endsBeforeInSameLoop.size(); place < m_textsInStringBuilders.size(); ++place) {
-        const TextInStringBuilder& text = m_textsInStringBuilders[place];
+        const TextInStringBuilder& text = std::as_const(m_textsInStringBuilders)[place];
         uint64_t frame = static_cast<uint64_t>(text.frameIndex) << 32;
-        for (const NameOfGrowingText& name : text.web.names)
-            places.endsByName.set(frame | name.value.index(), place + 1);
+        places.before.append({ text.frameIndex < places.endsByFrame.size() ? places.endsByFrame[text.frameIndex] : 0, static_cast<uint32_t>(places.endsByNameBefore.size()) });
+        for (const NameOfGrowingText& name : text.web.names) {
+            uint32_t& end = places.endsByName.add(frame | name.value.index(), 0).iterator->value;
+            places.endsByNameBefore.append({ frame | name.value.index(), std::exchange(end, place + 1) });
+        }
         uint32_t& endInSameLoop = places.endsByLoopHead.add(frame | text.web.loopHead.index(), 0).iterator->value;
         places.endsBeforeInSameLoop.append(std::exchange(endInSameLoop, place + 1));
         while (places.endsByFrame.size() <= text.frameIndex)
@@ -736,6 +739,21 @@ const PlacesOfTextsInStringBuilders& Walker::placesOfTextsInStringBuilders()
         places.endsByFrame[text.frameIndex] = place + 1;
     }
     return places;
+}
+
+void Walker::forgetPlacesOfTextsInStringBuildersFrom(size_t size)
+{
+    PlacesOfTextsInStringBuilders& places = m_placesOfTextsInStringBuilders;
+    while (places.endsBeforeInSameLoop.size() > size) {
+        const TextInStringBuilder& text = std::as_const(m_textsInStringBuilders)[places.endsBeforeInSameLoop.size() - 1];
+        PlacesOfTextsInStringBuilders::Before before = places.before.takeLast();
+        while (places.endsByNameBefore.size() > before.numberOfNamesBefore) {
+            auto name = places.endsByNameBefore.takeLast();
+            places.endsByName.set(name.first, name.second);
+        }
+        places.endsByLoopHead.set(static_cast<uint64_t>(text.frameIndex) << 32 | text.web.loopHead.index(), places.endsBeforeInSameLoop.takeLast());
+        places.endsByFrame[text.frameIndex] = before.endOfFrame;
+    }
 }
 
 static constexpr size_t minTextsInStringBuildersToIndex = 8;

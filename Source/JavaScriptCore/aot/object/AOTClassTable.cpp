@@ -220,6 +220,7 @@ JSObject* ClassTable::classPrototypeIfExists(const LayoutData& classLayout) cons
 JSObject* ClassTable::classPrototypeOfInstances(VM& vm, const LayoutData& classLayout)
 {
     JSObject* prototype = classPrototype(vm, classLayout);
+    beginGuards(classLayout);
     if (!m_constructorFunctionsThatAreOnlyBases.isEmpty() && m_constructorFunctionsThatAreOnlyBases.remove(classLayout.index)) [[unlikely]]
         armGuardsOfConstructorFunction(vm, classLayout, prototype, uncheckedDowncast<Closure>(m_state.objects->closures.closureIfCreated(FunctionID(classLayout.classData().classConstructor))));
     return prototype;
@@ -362,6 +363,7 @@ bool ClassTable::keepsStructuresForNextEvaluation(const Closure& classObject, co
 
 size_t ClassTable::removeDeadEntries(VM& vm, CollectionScope scope)
 {
+    forgetInstancesBelowPrototypes();
     size_t sizeBefore = m_classSidesByHolder.size();
     m_writes.forEachRegionToSweep(scope, [&](size_t, size_t) {
         m_classSidesByHolder.removeIf([&](auto& entry) {
@@ -1095,6 +1097,7 @@ Closure* ClassTable::classObjectForEvaluation(Closure* allocated, const LayoutDa
 void ClassTable::defineClass(JSGlobalObject* globalObject, Closure* classObject, const LayoutData& classLayout, JSValue parent, JSValue prototypeParent)
 {
     VM& vm = globalObject->vm();
+    beginGuards(classLayout);
     if (tryLeaveDefinitionToRecord(vm, classObject, classLayout, parent, prototypeParent))
         return;
     bool isProvenOnce = classLayout.evaluation() == EvaluationState::ProvenOnce;

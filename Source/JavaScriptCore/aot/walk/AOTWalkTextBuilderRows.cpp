@@ -210,6 +210,69 @@ static ValueID findLastJoinTypedByProofInTextBuilderRows(const Walker& walker, c
     return last;
 }
 
+static bool isJoinedIntoTextInStringBuilder(Walker& walker, const BodyIndex& index, const BodyBlock& block, ValueID part)
+{
+    ValueID reader = index.onlyUsingValue(part);
+    if (!reader || (index.opcodeOf(reader) != Opcode::Strcat && !findTextNamedBy(walker, reader)))
+        return false;
+    for (ValueID taker = reader; taker && block.holds(taker) && operationsThatJoinTexts.contains(index.opcodeOf(taker)); taker = index.onlyUsingValue(taker)) {
+        if (findTextNamedBy(walker, taker))
+            return true;
+    }
+    return false;
+}
+
+static bool keepNumberThatIsConvertedInFrontOfOtherParts(Walker& walker, const BodyValue& conversion, Reference value, const ExpectationOfValue& expectation)
+{
+    TypeArena& types = walker.types();
+    TypeID proven = walker.typeOf(value);
+    if (!expectation.type || !types.at(expectation.type).isNumber() || !types.at(proven).isJavaScriptValue() || !types.overlap(proven, TypeTable::number))
+        return false;
+    if (!shouldOpenGuess(walker, value, TypeTable::number, expectation.isDeclared, closedOperationsOfJoinBesideString))
+        return false;
+
+    Origin origin = walker.originOf(conversion);
+    origin.isTailCall = false;
+    Draft test(Opcode::TypeTest, origin);
+    walker.chooseConservativeFields(test);
+    test.setValueOperand(value);
+    test.setTestedType(TypeTable::number);
+    Reference isNumber = walker.build(WTF::move(test));
+    if (!isNumber)
+        return true;
+    if (!isNumber.isValue())
+        return false;
+
+    BlockID keeps = walker.addBlock();
+    BlockID converts = walker.addBlock(BlockFrequency::Unlikely);
+    BlockID meeting = walker.addBlock();
+    Reference part = walker.addParameter(meeting, { }, Representation::JSValue);
+    walker.branch(isNumber, keeps, converts);
+    walker.noteGuessOpened();
+
+    walker.continueIn(keeps);
+    Draft proof(Opcode::Narrowed, origin);
+    walker.chooseConservativeFields(proof);
+    proof.setValueOperand(value);
+    proof.setTestOperand(isNumber);
+    proof.setOperandIndex(OperandIndex::TypeTest::value);
+    proof.setIsOnTakenEdge(true);
+    if (Reference number = walker.build(WTF::move(proof)))
+        walker.jumpTo(meeting, singleElementSpan(number));
+
+    walker.continueIn(converts);
+    Draft asWritten = walker.draftOf(conversion);
+    walker.chooseConservativeFields(asWritten);
+    asWritten.setForm(formAllowedForTypedOperator(walker, asWritten));
+    if (Reference text = walker.build(WTF::move(asWritten)))
+        walker.jumpTo(meeting, singleElementSpan(text));
+
+    walker.continueIn(meeting);
+    if (!walker.isUnreachable())
+        walker.bind(conversion.id(), part);
+    return true;
+}
+
 bool guessThatOperandBesideStringHasTextOfItsOpcodes(Walker& walker, const BodyValue& sum)
 {
     bool isConversion = sum.opcode() == Opcode::ToString;
@@ -239,6 +302,8 @@ bool guessThatOperandBesideStringHasTextOfItsOpcodes(Walker& walker, const BodyV
     handsPartOnToLikelyKey &= !endsInTextInStringBuilder && expectation.isDeclared;
     if (handsPartOnToLikelyKey)
         last = sum.id();
+    if (isConversion && !endsInTextInStringBuilder && !handsPartOnToLikelyKey && isJoinedIntoTextInStringBuilder(walker, index, block, sum.id()))
+        return keepNumberThatIsConvertedInFrontOfOtherParts(walker, sum, value, expectation);
     if ((isConversion || (expectation.type && walker.isInLoop())) && !endsInTextInStringBuilder && !handsPartOnToLikelyKey)
         return false;
     TypeID expected = typeOfPartGuessedBesideString;

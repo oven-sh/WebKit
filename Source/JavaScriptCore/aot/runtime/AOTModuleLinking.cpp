@@ -1493,7 +1493,8 @@ auto Modules::collectDynamicExports(ModuleID module) -> Vector<DynamicExport>
         seen.quickSet(module.index());
         Vector<ModuleID, 8> pending { module };
         while (!pending.isEmpty()) {
-            for (const ModuleRequestData& request : m_table.requests(pending.takeLast())) {
+            ModuleID importer = pending.takeLast();
+            for (const ModuleRequestData& request : m_table.requests(importer)) {
                 ModuleID source = request.targetModule();
                 if (!request.isDynamicStarExport || seen.quickSet(source.index()))
                     continue;
@@ -1515,14 +1516,15 @@ auto Modules::collectDynamicExports(ModuleID module) -> Vector<DynamicExport>
                 } else {
                     RELEASE_ASSERT(sourceData.hasExportTable());
                     std::span<const ModuleExportData> entriesOfSource = m_table.exports(source);
+                    bool seesMock = mockInPlace(source) && seesMockOf(source, importer);
                     appendLiveExports(source, entriesOfSource | std::views::filter([&](const ModuleExportData& entry) {
-                        return !mockInPlace(source) || !isLeftOut(source, &entry - entriesOfSource.data(), TablesBehindStars::HaveName);
+                        return !seesMock || !isLeftOut(source, &entry - entriesOfSource.data(), TablesBehindStars::HaveName);
                     }) | std::views::transform([&](const ModuleExportData& entry) {
                         return identifier(entry.name);
                     }));
                     RETURN_IF_EXCEPTION(scope, { });
                     WTF::Vector<Identifier> addedByMock;
-                    if (isMockedByFactoryThatTakesOriginal(source)) {
+                    if (seesMock && isMockedByFactoryThatTakesOriginal(source)) {
                         for (unsigned index = 0; index < entriesOfSource.size(); ++index) {
                             if (!isLeftOut(source, index, TablesBehindStars::HaveName))
                                 continue;
@@ -1548,7 +1550,7 @@ auto Modules::collectDynamicExports(ModuleID module) -> Vector<DynamicExport>
                             if (isExported)
                                 result.append({ name, jsUndefined() });
                         }
-                    } else
+                    } else if (seesMock)
                         appendNamesAddedByMock(source, addedByMock);
                     RETURN_IF_EXCEPTION(scope, { });
                     appendLiveExports(source, addedByMock);

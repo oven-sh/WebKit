@@ -126,6 +126,15 @@ BuiltinCells::BuiltinCells(State& state)
     m_classesWrittenAbove = unsafeMakeSpan(state.tableArena.allocate<uint8_t>(numberOfClasses), numberOfClasses);
     zeroSpan(m_classesWrittenAbove);
     m_instance.builtins.classesWrittenAbove = m_classesWrittenAbove.data();
+    if (hasFlag(m_instance.options().admitted(), AdmittedCode::ReplacedBuiltins)) {
+        size_t numberOfBuiltins = BuiltinTable::singleton().builtinCount();
+        m_membersWritten = unsafeMakeSpan(state.tableArena.allocate<uint8_t>(numberOfBuiltins), numberOfBuiltins);
+        memsetSpan(m_membersWritten, 1);
+        m_namesOnHolders = unsafeMakeSpan(state.tableArena.allocate<NamesOnHolder>(numberOfBuiltins), numberOfBuiltins);
+        std::ranges::fill(m_namesOnHolders, NamesOnHolder::AreNotHeardOf);
+    }
+    m_instance.builtins.membersWritten = m_membersWritten.data();
+    m_instance.builtins.namesOnHolders = std::bit_cast<uint8_t*>(m_namesOnHolders.data());
     m_instance.builtins.hostValues = std::bit_cast<EncodedJSValue*>(std::bit_cast<uintptr_t>(m_values.data()) - m_numberOfFirstValue * sizeof(EncodedJSValue));
     m_instance.builtinBindings.directFunctions = BuiltinBindings::directFunctions().data();
     m_instance.builtinBindings.nativeFunctionsOfHost = BuiltinBindings::nativeFunctionsOfHost().data();
@@ -484,7 +493,12 @@ JSValue BuiltinCells::fillWatchedValue(JSGlobalObject* realm, BuiltinCellKey key
     const BuiltinTable& table = BuiltinTable::singleton();
     const Builtin& member = table.at(key.builtin());
     JSCell* holder = findObject(member.holder);
-    RELEASE_ASSERT(holder);
+    if (!holder) {
+        if (!BuiltinBindings::provides(member.origin))
+            exitForWantOfHost(table, key.builtin());
+        dataLogLn("AOT: the holder of the built-in value ", table.textOf(key.builtin()), " (key ", key.encoded(), ") is not in this realm");
+        CRASH();
+    }
     Identifier name = table.identifierOf(vm, member.name);
     JSValue value;
     {
@@ -566,9 +580,18 @@ void BuiltinCells::noteWriteAboveInstances(BuiltinID holder)
     }
 }
 
+void BuiltinCells::willAddNameTo(BuiltinID holder)
+{
+    if (!m_namesOnHolders.empty())
+        m_namesOnHolders[BuiltinTable::singleton().canonicalID(holder).index()] = NamesOnHolder::WereAdded;
+    noteWriteAboveInstances(holder);
+}
+
 void BuiltinCells::willWrite(BuiltinID member, UniquedStringImpl* key)
 {
     const BuiltinTable& table = BuiltinTable::singleton();
+    if (!m_membersWritten.empty())
+        m_membersWritten[member.index()] = 1;
     noteWriteAboveInstances(table.at(member).holder);
     if (!BuiltinBindings::provides(table.at(member).origin) || m_writtenMembers.quickSet(member.index()))
         return;
@@ -647,6 +670,19 @@ void BuiltinCells::fillCellsUnderModules()
     }
 }
 
+void BuiltinCells::hearsOfWritesTo(BuiltinID holder)
+{
+    if (m_membersWritten.empty())
+        return;
+    NamesOnHolder& names = m_namesOnHolders[BuiltinTable::singleton().canonicalID(holder).index()];
+    if (names == NamesOnHolder::AreNotHeardOf)
+        names = NamesOnHolder::AreAsBuilt;
+    for (BuiltinID member : BuiltinTable::singleton().membersOf(holder)) {
+        if (!m_writtenMembers.quickGet(member.index()))
+            m_membersWritten[member.index()] = 0;
+    }
+}
+
 void BuiltinCells::cannotHearOfWritesTo(BuiltinID holder)
 {
     const BuiltinTable& table = BuiltinTable::singleton();
@@ -657,8 +693,13 @@ void BuiltinCells::cannotHearOfWritesTo(BuiltinID holder)
             cell(number);
     }
     noteWriteAboveInstances(holder);
-    for (BuiltinID member : table.membersOf(holder))
+    if (!m_namesOnHolders.empty())
+        m_namesOnHolders[table.canonicalID(holder).index()] = NamesOnHolder::WereAdded;
+    for (BuiltinID member : table.membersOf(holder)) {
+        if (!m_membersWritten.empty())
+            m_membersWritten[member.index()] = 1;
         m_writtenMembers.quickSet(member.index());
+    }
 }
 
 void BuiltinCells::didLoadModule(RuntimeModuleID module, JSObject* exports)
@@ -1060,7 +1101,7 @@ struct BuiltinsToLock {
     BitVector holdersThatTellOfWrites;
 };
 
-static BuiltinsToLock findBuiltinsToLock(const BuiltinTable& table, const ProgramTables& tables)
+static BuiltinsToLock findBuiltinsToLock(const BuiltinTable& table, const ProgramTables& tables, bool isTestRun)
 {
     BuiltinsToLock result { BitVector(table.builtinCount()), BitVector(table.builtinCount()) };
     BitVector& builtins = result.builtins;
@@ -1077,6 +1118,16 @@ static BuiltinsToLock findBuiltinsToLock(const BuiltinTable& table, const Progra
         addWithPath(id);
     forEachHolderOf(table, table.lockedMembers(), addWithPath);
     forEachHolderOf(table, tables.constantBuiltinMembers(), addWithPath);
+    for (unsigned index = 0; isTestRun && index < table.classCount(); ++index) {
+        BuiltinID above;
+        for (BuiltinClassID current(index); current && !above; current = table.at(current).parent)
+            above = table.at(current).prototype;
+        while (above && !result.holdersThatTellOfWrites.quickSet(table.canonicalID(above).index())) {
+            addWithPath(table.canonicalID(above));
+            const Builtin& object = table.at(table.canonicalID(above));
+            above = object.prototypeLink == BuiltinPrototypeLink::Builtin ? object.inheritsFrom : BuiltinID();
+        }
+    }
     if (tables.eagerBuiltinCells().empty())
         return result;
     BitVector namespaces = namespacesOfBuiltinModules(table);
@@ -1149,8 +1200,11 @@ public:
             ++memberIndex;
             if (!m_builtinsToLock.quickGet(target.index()) || hasLocked(target))
                 continue;
-            if (JSObject* existing = findOrCreateMember(table, object, entry.name, target))
+            bool isLockedWhereItIsMade = false;
+            if (JSObject* existing = findOrCreateMember(table, object, entry.name, target, isLockedWhereItIsMade))
                 lock(target, existing);
+            else if (isLockedWhereItIsMade && m_cells)
+                m_cells->hearsOfWritesTo(target);
         }
         if (BuiltinID inherited = holder.inheritsFrom) {
             if (JSObject* prototype = object->getPrototypeDirect().getObject())
@@ -1159,19 +1213,23 @@ public:
     }
 
 private:
-    JSObject* findOrCreateMember(const BuiltinTable& table, JSObject* holder, BuiltinName name, BuiltinID member)
+    JSObject* findOrCreateMember(const BuiltinTable& table, JSObject* holder, BuiltinName name, BuiltinID member, bool& isLockedWhereItIsMade)
     {
         if (name == BuiltinNames::prototype)
             return findExistingObject(holder, m_vm.propertyNames->prototype.impl());
         if (name == BuiltinNames::constructor)
             return findExistingObject(holder, m_vm.propertyNames->constructor.impl());
-        if (isConstructorOfClassNotMade(table, member))
+        if (isConstructorOfClassNotMade(table, member)) {
+            isLockedWhereItIsMade = true;
             return nullptr;
+        }
         Identifier key = table.identifierOf(m_vm, name);
         if (JSObject* existing = findExistingObject(holder, key.impl()))
             return existing;
-        if (isLockedByTable(table, member) || reportsCreationOfMember(holder, key.impl()))
+        if (isLockedByTable(table, member) || reportsCreationOfMember(holder, key.impl())) {
+            isLockedWhereItIsMade = true;
             return nullptr;
+        }
         return findOrCreateObject(m_realm, member);
     }
 
@@ -1218,8 +1276,11 @@ private:
         if (!hasFixedNames && !tellsOfWrites)
             return;
         std::optional<std::span<const uint32_t>> namesTakenForAbsent = m_isTestRun ? std::nullopt : std::optional(m_tables.namesTakenForAbsent());
-        if (object->makePropertiesImmutable(m_vm, immutablePropertyNamesOf(m_vm, id, constantMembers, m_cells, m_tables.unlockedBuiltinMembers(), m_isTestRun, openedNames.span(), namesTakenForAbsent).get())) [[likely]]
+        if (object->makePropertiesImmutable(m_vm, immutablePropertyNamesOf(m_vm, id, constantMembers, m_cells, m_tables.unlockedBuiltinMembers(), m_isTestRun, openedNames.span(), namesTakenForAbsent).get())) [[likely]] {
+            if (m_cells)
+                m_cells->hearsOfWritesTo(id);
             return;
+        }
         if (hasFixedNames)
             crashOnBuiltinHolder(id, "cannot be made immutable"_s);
         m_cells->cannotHearOfWritesTo(id);
@@ -1289,7 +1350,7 @@ static void lockHoldersOfProgram(BuiltinLocker& locker, JSGlobalObject* realm, c
 static void lockBuiltins(Instance& instance)
 {
     JSGlobalObject* realm = instance.globalObject;
-    BuiltinsToLock toLock = findBuiltinsToLock(BuiltinTable::singleton(), instance.tables());
+    BuiltinsToLock toLock = findBuiltinsToLock(BuiltinTable::singleton(), instance.tables(), admitsReplacedBuiltins(instance));
     if (!instance.state) {
         BitVector locked;
         BuiltinLocker locker(instance, toLock.builtins, &locked);

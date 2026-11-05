@@ -154,7 +154,7 @@ function dumpPlace(place: ModelPlace): DumpedPlace {
     case "ResultField":
       return { place: "ResultField", index: place.index, holdsOnlyWhatIsStored: place.holdsOnlyWhatIsStored };
     case "NewValue":
-      return { place: "NewValue", type: dumpType(place.type) };
+      return { place: "NewValue", type: dumpType(place.type), holdsWhatIsThrown: place.holdsWhatIsThrown };
     case "Member":
       return {
         place: "Member",
@@ -163,7 +163,7 @@ function dumpPlace(place: ModelPlace): DumpedPlace {
         firstStep: place.firstStep,
       };
     case "NativeCell":
-      return { place: "NativeCell", cell: place.cell.text };
+      return { place: "NativeCell", cell: place.cell.text, holdsOnlyWhatIsStored: place.holdsOnlyWhatIsStored };
   }
 }
 

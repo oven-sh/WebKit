@@ -40,14 +40,13 @@ static StubSignature signatureReturningValue(std::initializer_list<StubRegister>
     return signature;
 }
 
-StubSignature signatureOfGetById(StubKey key)
+StubSignature signatureOfGetById(StubKey)
 {
     StubSignature signature = signatureReturningValue({ });
-    signature.addOperand(key.operandRegister().value_or(gprOf(firstStubOperandRegister)));
+    signature.addOperand(gprOf(firstStubOperandRegister));
     return signature;
 }
 
-StubSignature signatureOfGetByIdAskingFieldTableFirst(StubKey key) { return signatureOfGetById(key); }
 StubSignature signatureOfGetByIdAfterFrontProbe(StubKey) { return signatureReturningValue({ firstStubOperandRegister, slotHeaderRegister }); }
 StubSignature signatureOfGetByIdHashed(StubKey) { return signatureReturningValue({ firstStubOperandRegister }); }
 StubSignature signatureOfGetByIdCheckingColumn(StubKey) { return signatureReturningValue({ firstStubOperandRegister }); }
@@ -826,30 +825,31 @@ void readByLoadedFrontCell(StubAssembler& jit, const LoadedFrontCell& r, GPRReg 
     needsHandler.link(&jit);
 }
 
-void readByFrontTable(StubAssembler& jit, const FrontTableRead& r, GPRReg result, JumpList& hasOtherName, const ScopedLambda<void()>& finish)
+void readByFrontTable(StubAssembler& jit, const FrontTableRead& r, GPRReg result, JumpList& hasOtherName, std::optional<StubKey> entersBehindAnswer)
 {
 #if CPU(X86_64)
     const GPRReg plane = r.scratch;
     const GPRReg index = r.structureID;
     const GPRReg word = r.cell;
     RELEASE_ASSERT(noOverlap(r.receiver, r.column, plane, index, word, cellCageBaseGPR) && noOverlap(result, r.column, plane, index, word));
-    auto inCell = [&](ptrdiff_t offset) {
+    auto inCell = [=](ptrdiff_t offset) {
         return BaseIndex(plane, index, CCallHelpers::TimesEight, static_cast<int32_t>(offset));
     };
-    JumpList needsHandler;
-    auto answerWhereCellIs = [&](Slot::Kind kind, uint8_t flags, const auto& load) {
-        Jump isSomethingElse = jit.branch8(CCallHelpers::NotEqual, inCell(PackedSlot::offsetOfBiasedKindAndFlags()), TrustedImm32(biasedBitsOfFrontCell(kind, flags)));
-        load();
-        finish();
-        isSomethingElse.link(&jit);
+    struct Answer {
+        Jump isAsked;
+        Function<void(StubAssembler&, JumpList& needsHandler)> load;
+    };
+    Vector<Answer, 5> answers;
+    auto answerWhereCellIs = [&](Slot::Kind kind, uint8_t flags, Function<void(StubAssembler&, JumpList&)>&& load) {
+        answers.append(Answer { jit.branch8(CCallHelpers::Equal, inCell(PackedSlot::offsetOfBiasedKindAndFlags()), TrustedImm32(biasedBitsOfFrontCell(kind, flags))), WTF::move(load) });
     };
     auto answerExtraProperty = [&](bool isOutOfLine) {
-        answerWhereCellIs(Slot::Kind::ExtraProperty, isOutOfLine ? PackedSlot::isOwn | PackedSlot::isOutOfLine : PackedSlot::isOwn, [&] {
+        answerWhereCellIs(Slot::Kind::ExtraProperty, isOutOfLine ? PackedSlot::isOwn | PackedSlot::isOutOfLine : PackedSlot::isOwn, [=](StubAssembler& jit, JumpList& needsHandler) {
             loadExtraPropertyByFrontCell(jit, inCell(0), isOutOfLine, r.receiver, word, result, needsHandler);
         });
     };
     auto answerValueInCellOfHolder = [&] {
-        answerWhereCellIs(Slot::Kind::Value, 0, [&] {
+        answerWhereCellIs(Slot::Kind::Value, 0, [=](StubAssembler& jit, JumpList&) {
             jit.load8(inCell(PackedSlot::offsetOfLocation()), word);
             jit.add32(inCell(PackedSlot::offsetOfPayload()), word);
             if (r.filesInAccessTable) {
@@ -865,7 +865,7 @@ void readByFrontTable(StubAssembler& jit, const FrontTableRead& r, GPRReg result
         });
     };
     auto answerValueInStorageOfHolder = [&] {
-        answerWhereCellIs(Slot::Kind::Value, PackedSlot::isOutOfLine, [&] {
+        answerWhereCellIs(Slot::Kind::Value, PackedSlot::isOutOfLine, [=](StubAssembler& jit, JumpList&) {
             if (r.filesInAccessTable) {
                 jit.load64(inCell(0), word);
                 makeAnswerInStorageOfHolder(jit, word, word);
@@ -880,7 +880,7 @@ void readByFrontTable(StubAssembler& jit, const FrontTableRead& r, GPRReg result
         });
     };
     auto answerValueInOwnCell = [&] {
-        answerWhereCellIs(Slot::Kind::Value, PackedSlot::isOwn, [&] {
+        answerWhereCellIs(Slot::Kind::Value, PackedSlot::isOwn, [=](StubAssembler& jit, JumpList&) {
             jit.load32(inCell(PackedSlot::offsetOfPayload()), word);
             if (r.filesInAccessTable) {
                 jit.lshift32(TrustedImm32(WTF::fastLog2(static_cast<unsigned>(sizeof(EncodedJSValue)))), word);
@@ -892,7 +892,7 @@ void readByFrontTable(StubAssembler& jit, const FrontTableRead& r, GPRReg result
         });
     };
     auto answerValueInOwnStorage = [&] {
-        answerWhereCellIs(Slot::Kind::Value, PackedSlot::isOwn | PackedSlot::isOutOfLine, [&] {
+        answerWhereCellIs(Slot::Kind::Value, PackedSlot::isOwn | PackedSlot::isOutOfLine, [=](StubAssembler& jit, JumpList&) {
             jit.load32SignedExtendTo64(inCell(PackedSlot::offsetOfPayload()), word);
             if (r.filesInAccessTable) {
                 makeAnswerInOwnStorage(jit, word);
@@ -905,7 +905,7 @@ void readByFrontTable(StubAssembler& jit, const FrontTableRead& r, GPRReg result
         });
     };
     auto answerAbsence = [&] {
-        answerWhereCellIs(Slot::Kind::Absent, 0, [&] {
+        answerWhereCellIs(Slot::Kind::Absent, 0, [=](StubAssembler& jit, JumpList&) {
             if (r.filesInAccessTable)
                 fileAbsenceInAccessTable(jit, { r.receiver, r.column, plane, index }, word);
             jit.move(TrustedImm64(JSValue::ValueUndefined), result);
@@ -931,9 +931,27 @@ void readByFrontTable(StubAssembler& jit, const FrontTableRead& r, GPRReg result
         answerValueInStorageOfHolder();
         break;
     }
-    needsHandler.link(&jit);
+    Label asksHandler = jit.label();
+    for (Answer& answer : answers) {
+        jit.addOutOfLinePart([isAsked = answer.isAsked, load = WTF::move(answer.load), asksHandler, entersBehindAnswer](StubAssembler& jit) {
+            isAsked.link(&jit);
+            JumpList needsHandler;
+            load(jit, needsHandler);
+            if (entersBehindAnswer)
+                jit.jumpToStub(*entersBehindAnswer);
+            else
+                jit.returnToCaller();
+            needsHandler.linkTo(asksHandler, &jit);
+        });
+    }
     jit.load64(inCell(0), word);
 #else
+    auto finish = [&] {
+        if (entersBehindAnswer)
+            jit.jumpToStub(*entersBehindAnswer);
+        else
+            jit.returnToCaller();
+    };
     const AccessTableRegisters inAccessTable { r.receiver, r.column, r.structureID, r.secondScratch };
     loadFrontCell(jit, SlotAccess::Read, { r.structureID, r.column, r.secondScratch, r.cell, r.scratch });
     if (r.receiverIs == ReceiverOfFrontProbe::IsAnyCell) {
@@ -991,66 +1009,8 @@ void readByFrontTable(StubAssembler& jit, const FrontTableRead& r, GPRReg result
 #endif
 }
 
-#if CPU(X86_64)
-static void emitAlternateReceiverProbe(StubAssembler& jit)
-{
-    const CallerFrame callerFrame = jit.key().callerFrame();
-    const GPRReg receiver = jit.operand(0);
-    const GPRReg R0 = jit.result();
-    const GPRReg name = jit.immediate();
-    const GPRReg scratch = jit.allocateScratch(StubRegister::A1);
-    const GPRReg T11 = jit.allocateScratch(StubRegister::T11);
-    const GPRReg row = jit.allocateScratch(StubRegister::T13);
-    const GPRReg T12 = receiver == gprOf(StubRegister::T12) ? jit.clobberOperand(0) : jit.allocateScratch(StubRegister::T12);
-    const GPRReg cell = T11;
-    const SlotOrigin origin = callerFrame == CallerFrame::StubFrame ? SlotOrigin::ByIdInStubFrame : SlotOrigin::ById;
-    RELEASE_ASSERT(noOverlap(receiver, name, scratch, T11, row));
-    Jump isNotCell = jit.branchIfNotCell(receiver);
-    JumpList isNotInAccessTable;
-    JumpList isAnsweredByFieldTable;
-    JumpList isNotInFieldTable;
-    JumpList hasOtherName;
-    JumpList isNotCompiledObject;
-    returnValueByAccessTable(jit, { { receiver, name, cell, scratch }, row, InvalidGPRReg }, isNotInAccessTable, isAnsweredByFieldTable);
-    isNotInAccessTable.link(&jit);
-    FieldTableProbe probe { receiver, name, row, cell, true, true, false, callerFrame };
-    probe.isNotCompiledObject = &isNotCompiledObject;
-    probe.keyInAccessTable = scratch;
-    probe.placeInAccessTable = OwnedScratchRegister::registerToHandOn;
-    probe.hasFormAndOperand = &isAnsweredByFieldTable;
-    returnFieldByTable(jit, probe, isNotInFieldTable);
-    auto askFrontTable = [&](ReceiverOfFrontProbe receiverIs) {
-        jit.load32(Address(receiver, JSCell::structureIDOffset()), cell);
-        readByFrontTable(jit, { receiver, name, cell, row, scratch, InvalidGPRReg, receiverIs, true }, R0, hasOtherName, [&] {
-            jit.returnToCaller();
-        });
-        jit.move(receiver, R0);
-        jit.move(row, T12);
-        jumpToSlotHandler(jit, slotHandlerTable(SlotOperation::Read, origin, SlotForm::PackedSlot), T12, scratch);
-    };
-    isNotInFieldTable.link(&jit);
-    askFrontTable(ReceiverOfFrontProbe::IsCompiledObject);
-    isNotCompiledObject.link(&jit);
-    askFrontTable(ReceiverOfFrontProbe::IsAnyCell);
-
-    hasOtherName.link(&jit);
-    jit.move(receiver, R0);
-    jit.jumpToStub(getByIdHashed().withCallerFrame(callerFrame));
-
-    isNotCell.link(&jit);
-    jit.move(receiver, R0);
-    jit.jumpToStub(getById().withCallerFrame(callerFrame));
-}
-#endif
-
 void generateGetById(StubAssembler& jit)
 {
-#if CPU(X86_64)
-    if (jit.key().operandRegister()) {
-        emitAlternateReceiverProbe(jit);
-        return;
-    }
-#endif
     const CallerFrame callerFrame = jit.key().callerFrame();
     const SlotOrigin origin = callerFrame == CallerFrame::StubFrame ? SlotOrigin::ByIdInStubFrame : SlotOrigin::ById;
     const SlotHandlerTable packedTable = slotHandlerTable(SlotOperation::Read, origin, SlotForm::PackedSlot);
@@ -1067,9 +1027,11 @@ void generateGetById(StubAssembler& jit)
 
     const GPRReg cell = T12;
     JumpList hasOtherName;
+#if CPU(ARM64)
     auto returnToCaller = [&] {
         jit.returnToCaller();
     };
+#endif
     Label start = jit.label();
     loadStructureIDOfReceiver(jit, R0, T11, *miss, [&] {
         JumpList isNotInAccessTable;
@@ -1088,12 +1050,12 @@ void generateGetById(StubAssembler& jit)
         isNotInFieldTable.link(&jit);
         behindFieldTable = jit.label();
         jit.load32(Address(R0, JSCell::structureIDOffset()), T11);
-        readByFrontTable(jit, { R0, name, T11, cell, T10, T13, ReceiverOfFrontProbe::IsCompiledObject, true }, R0, hasOtherName, returnToCaller);
+        readByFrontTable(jit, { R0, name, T11, cell, T10, T13, ReceiverOfFrontProbe::IsCompiledObject, true }, R0, hasOtherName);
         jumpToSlotHandler(jit, packedTable, cell, T10);
 
         isNotCompiledObject.link(&jit);
     });
-    readByFrontTable(jit, { R0, name, T11, cell, T10, T13, ReceiverOfFrontProbe::IsAnyCell, true }, R0, hasOtherName, returnToCaller);
+    readByFrontTable(jit, { R0, name, T11, cell, T10, T13, ReceiverOfFrontProbe::IsAnyCell, true }, R0, hasOtherName);
     jumpToSlotHandler(jit, packedTable, cell, T10);
 
     jit.bindEntry(getByIdAfterFrontProbe().withCallerFrame(callerFrame));
@@ -1147,22 +1109,6 @@ void generateGetById(StubAssembler& jit)
     jit.addOutOfLinePart([miss, unpackedTable](StubAssembler& jit) {
         linkToSlotExit(jit, *miss, unpackedTable, SlotExit::Miss);
     });
-}
-
-void generateGetByIdAskingFieldTableFirst(StubAssembler& jit)
-{
-    const CallerFrame callerFrame = jit.key().callerFrame();
-    const GPRReg receiver = jit.operand(0);
-    const GPRReg name = jit.immediate();
-    const GPRReg index = jit.allocateScratch(StubRegister::T13);
-    const GPRReg table = jit.allocateScratch(StubRegister::T11);
-    RELEASE_ASSERT(noOverlap(receiver, name, index, table));
-    JumpList goesOn;
-    goesOn.append(jit.branchIfNotCell(receiver));
-    returnFieldByTable(jit, { receiver, name, index, table, true, true, false, callerFrame }, goesOn);
-    goesOn.link(&jit);
-    jit.move(receiver, jit.result());
-    jit.jumpToStub(getById().withCallerFrame(callerFrame));
 }
 
 static Entry cachingOperationByNameFor(PresenceQuestion question)
@@ -1241,9 +1187,9 @@ void generateInById(StubAssembler& jit)
     jit.callOperationAndReturn(Entry::operationAOTHasExtraProperty, { .saves = OperationCall::Saves::CallerSavedRegisters, .checksException = false, .secondArgumentIn = R0, .thirdArgumentIn = name });
 }
 
-StubSignature signatureOfReadFieldInExtension(StubKey key)
+StubSignature signatureOfReadFieldInExtension(StubKey)
 {
-    return StubSignature::withGPRResult({ key.operandRegister().value_or(gprOf(firstStubOperandRegister)) });
+    return StubSignature::withGPRResult({ gprOf(firstStubOperandRegister) });
 }
 
 void generateReadFieldInExtension(StubAssembler& jit)

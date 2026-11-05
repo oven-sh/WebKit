@@ -795,7 +795,7 @@ static void testWordsThatCountClassGuards()
     std::array<ClassGuardKey, 3> guards {
         MentionList::keyOfClassGuardOfName(old, ClassSide::Prototype, NumberSpace::NameOfText, note),
         MentionList::keyOfClassGuard(below, ClassSide::Static),
-        MentionList::keyOfClassGuardOfName(above, ClassSide::Prototype, NumberSpace::NameOfText, note, true),
+        MentionList::keyOfClassGuardOfName(above, ClassSide::Prototype, NumberSpace::NameOfText, note, AskerOfClassGuardOfName::StoresAlone),
     };
     CompiledCode code = plainBody(1);
     MentionList mentions;

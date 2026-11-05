@@ -19,6 +19,8 @@ namespace JSC { namespace AOT { namespace Machine {
 
 static constexpr uint16_t flagsOfOperationWithLeavesOfItsOwn = Allocator::bitOf(ValueFlag::WorksInMemory) | Allocator::bitOf(ValueFlag::GoesByOverflow);
 
+static constexpr size_t smallestSizeOfStepsTakenApartFromOtherLists = 64 * KB;
+
 static constexpr bool allocatedOperationMayTakeScratchRegisters(Opcode opcode)
 {
     return opcode == Switch || opcode == PopCount;
@@ -260,10 +262,10 @@ struct ValueThatAsksForCalleeSave {
 };
 static_assert(std::is_trivially_default_constructible_v<ValueThatAsksForCalleeSave>);
 
-static void orderByGainFromCalleeSaves(const Allocator& allocator, std::span<ValueThatAsksForCalleeSave> asking)
+static void orderByGainFromCalleeSaves(const Allocator& allocator, std::span<ValueThatAsksForCalleeSave> asking, Position endOfWhereTheyAreKept)
 {
     for (ValueThatAsksForCalleeSave& one : asking)
-        one.gain = allocator.numberOfReadsThatWordWouldReload(one.value);
+        one.gain = allocator.numberOfReadsThatWordWouldReload(one.value, endOfWhereTheyAreKept);
     std::ranges::stable_sort(asking, std::ranges::greater { }, &ValueThatAsksForCalleeSave::gain);
 }
 
@@ -298,7 +300,7 @@ static NEVER_INLINE void bindArgumentRegistersOfEntry(Allocator& allocator, Bloc
         size_t numberOfCalleeSaves = static_cast<size_t>(std::popcount(allocator.m_file.calleeSavedIn(bank)));
         if (!numberOfCalleeSaves || ofBank.size() <= numberOfCalleeSaves)
             continue;
-        orderByGainFromCalleeSaves(allocator, ofBank);
+        orderByGainFromCalleeSaves(allocator, ofBank, noPosition);
         for (const ValueThatAsksForCalleeSave& one : ofBank.subspan(numberOfCalleeSaves))
             allocator.m_argumentRegistersThatGiveWay |= maskOf(one.reg());
     }
@@ -373,7 +375,42 @@ Allocation* allocateRegisters(Procedure& proc)
     Allocation* allocation = proc.arena().create<Allocation>();
     Allocator allocator(proc, *allocation);
     allocator.run();
+    allocator.letGoOfWorkingLists();
     return allocation;
+}
+
+void Allocator::letGoOfWorkingLists()
+{
+    const size_t bytesOfStatesAndSnapshots = static_cast<size_t>(m_values.capacity()) * sizeof(ValueState) + (static_cast<size_t>(m_heads.capacity()) + m_ends.capacity()) * sizeof(Snapshot);
+    if (bytesOfStatesAndSnapshots < Arena::smallestRoomLetGo)
+        return;
+    RELEASE_ASSERT(reinterpret_cast<uintptr_t>(m_values.begin()) + bytesOfStatesAndSnapshots == reinterpret_cast<uintptr_t>(m_ends.begin() + m_ends.capacity()));
+    m_arena.letGo(m_values.begin(), bytesOfStatesAndSnapshots);
+    m_arena.letGo(m_hints.begin(), static_cast<size_t>(m_hints.capacity()) * sizeof(Reg));
+
+    m_operandsTakenBackAtHeads.letGo(m_arena);
+    m_firstLoopsWhoseHeadsAreNotJudged.letGo(m_arena);
+    m_lastSearchThatReachedBlock.letGo(m_arena);
+    for (std::span<const uint32_t> reads : m_listsOfReads)
+        m_arena.letGoOfArray(reads.data(), reads.size());
+    m_listsOfReads.letGo(m_arena);
+    m_numbersOfListsOfReads.letGo(m_arena);
+    m_firstReadsFromHeads.letGo(m_arena);
+    m_firstReadsNotKnownOutOfReach.letGo(m_arena);
+    m_knownReadsOutsideRareRegions.letGo(m_arena);
+    m_phisInSpills.letGo(m_arena);
+    m_pendingMoves.letGo(m_arena);
+    m_savesHoldUntil.letGo(m_arena);
+    m_valuesSavedInRareRegion.letGo(m_arena);
+    m_resultsDefinedAtEndOfPredecessor.letGo(m_arena);
+    m_numbersOfBlocksThatReadFrom.letGo(m_arena);
+    m_numbersOfDominatedBlocks.letGo(m_arena);
+    for (ArenaVector<uint32_t>& nearest : m_nearestDominatorsWithCall)
+        nearest.letGo(m_arena);
+    m_immediateDominators.letGo(m_arena);
+    m_waitingEdgesOfHeads.letGo(m_arena);
+    m_savesReadByWaitingEdges.letGo(m_arena);
+    m_waitingEdges.letGo(m_arena);
 }
 
 Allocator::Allocator(Procedure& proc, Allocation& allocation)
@@ -404,15 +441,21 @@ Allocator::Allocator(Procedure& proc, Allocation& allocation)
     static_assert(alignof(Step) == alignof(uint64_t) && alignof(PatchAssignment) == alignof(uint64_t));
     static_assert(alignof(ValueState) == alignof(uint64_t) && alignof(Snapshot) == alignof(uint64_t) && alignof(BindingsAtHead) == alignof(uint64_t));
     static_assert(alignof(BlockSteps) == alignof(SpillIndex) && alignof(SpillIndex) <= alignof(uint64_t) && alignof(Reg) == 1);
-    const size_t bytesLeftUnwritten = static_cast<size_t>(numberOfOperations) * sizeof(Step) + static_cast<size_t>(capacityOfPatchAssignments) * sizeof(PatchAssignment);
+    const size_t bytesOfSteps = static_cast<size_t>(numberOfOperations) * sizeof(Step);
+    const size_t bytesOfPatchAssignments = static_cast<size_t>(capacityOfPatchAssignments) * sizeof(PatchAssignment);
     static_assert(!BlockSteps { }.begin && !BlockSteps { }.end && !BlockSteps { }.beginOfEdgeMoves && !BlockSteps { }.endOfEdgeMoves && sizeof(BlockSteps) == 5 * sizeof(uint32_t));
     const size_t bytesCleared = static_cast<size_t>(numberOfOperations) * sizeof(ValueState) + static_cast<size_t>(numberOfBlocks) * (2 * sizeof(Snapshot) + sizeof(BindingsAtHead) + sizeof(BlockSteps)) + (numberOfWordsForBlocks + numberOfWordsForRareRegions) * sizeof(uint64_t);
     const size_t bytesOfNarrowLists = static_cast<size_t>(mostOperations) * sizeof(SpillIndex) + (static_cast<size_t>(numberOfOperations) + mostOperations) * sizeof(Reg);
-    uintptr_t storage = reinterpret_cast<uintptr_t>(arena.allocate(bytesLeftUnwritten + bytesCleared + bytesOfNarrowLists, alignof(uint64_t)));
+    const bool takesListsApart = bytesOfSteps >= smallestSizeOfStepsTakenApartFromOtherLists;
+    uintptr_t storage = reinterpret_cast<uintptr_t>(arena.allocate(takesListsApart ? bytesOfSteps : bytesOfSteps + bytesOfPatchAssignments + bytesCleared + bytesOfNarrowLists, alignof(uint64_t)));
 
     takeStorageOfListOfAllocator(storage, allocation.m_steps, numberOfOperations);
+    if (takesListsApart) [[unlikely]]
+        storage = reinterpret_cast<uintptr_t>(arena.allocate(bytesOfPatchAssignments, alignof(uint64_t)));
     takeStorageOfListOfAllocator(storage, allocation.m_patchAssignments, capacityOfPatchAssignments);
 
+    if (takesListsApart) [[unlikely]]
+        storage = reinterpret_cast<uintptr_t>(arena.allocate(bytesCleared, alignof(uint64_t)));
     memset(reinterpret_cast<void*>(storage), 0, bytesCleared);
     ValueState* states = takeListOfAllocator(arena, storage, m_values, numberOfOperations);
     takeListOfAllocator(arena, storage, m_heads, numberOfBlocks);
@@ -424,6 +467,8 @@ Allocator::Allocator(Procedure& proc, Allocation& allocation)
     allocation.m_regionNeedsFrame = BitSpan(std::span<uint64_t>(words + numberOfWordsForBlocks, numberOfWordsForRareRegions));
 
     BlockSteps* stepsOfBlocks = takeListOfAllocator(arena, storage, allocation.m_blocks, numberOfBlocks);
+    if (takesListsApart) [[unlikely]]
+        storage = reinterpret_cast<uintptr_t>(arena.allocate(bytesOfNarrowLists, alignof(uint64_t)));
     SpillIndex* spillsOfValues = takeListOfAllocator(arena, storage, allocation.m_spillOfValue, mostOperations);
     Reg* registers = takeListOfAllocator(arena, storage, m_hints, numberOfOperations);
     takeListOfAllocator(arena, storage, allocation.m_registerAtDefinition, mostOperations);
@@ -1617,8 +1662,13 @@ void Allocator::enterFramedPart()
         asking[numberAsking++] = { value, 0, static_cast<uint8_t>(reg.index()) };
     });
     std::span<ValueThatAsksForCalleeSave> inOrder = std::span(asking).first(numberAsking);
-    if (numberAsking > 1)
-        orderByGainFromCalleeSaves(*this, inOrder);
+    if (numberAsking > 1) {
+        std::span<Block* const> blocks = m_order.blocksInOrder();
+        size_t behindPart = m_order.of(m_block).orderIndex + 1;
+        while (behindPart < blocks.size() && m_allocation.isInFramedPart(blocks[behindPart]) && m_allocation.headOfFramedPartAbove(blocks[behindPart]).block == m_block)
+            ++behindPart;
+        orderByGainFromCalleeSaves(*this, inOrder, m_order.endOf(blocks[behindPart - 1]));
+    }
     for (const ValueThatAsksForCalleeSave& one : inOrder) {
         Operation* value = one.value;
         Reg reg = one.reg();

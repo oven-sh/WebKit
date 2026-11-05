@@ -144,7 +144,7 @@ std::optional<OwnKeyOrder> ownKeysInSight(Walker& walker, Reference object)
     if (!walker.has(Mechanism::TypedOperations) || !object || !object.isValue())
         return std::nullopt;
     Reference known = nameWhoseOrderWordIsKnownInCopiesOwnKeys(walker, object);
-    LayoutID layout = known ? onlyLayoutProvenInCopiesOwnKeys(walker, walker.typeOf(known)) : LayoutID();
+    LayoutID layout = known ? onlyLayoutProvenInCopiesOwnKeys(walker, walker.typeOf(object)) : LayoutID();
     if (!layout || !canPlanOwnKeysOfLayoutInCopiesOwnKeys(walker, layout))
         return std::nullopt;
 
@@ -321,6 +321,8 @@ bool goOnWhereObjectHasOwnKeys(Walker& walker, Reference& object, const OwnKeyOr
     if (!goOnWhereTestPassesInCopiesOwnKeys(walker, walker.build(WTF::move(hasOrder)), waysOut.whereOrderDiffers))
         return false;
 
+    BlockID whereGuessFails = waysOut.whereTestFails;
+    walker.letGuessFailUnasked(whereGuessFails, origin);
     Draft hasNothingElse(Opcode::HasNoExtraProperties, origin);
     hasNothingElse.setObjectOperand(object);
     hasNothingElse.setHasNoFieldOutsideSlot(true);

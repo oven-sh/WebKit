@@ -317,6 +317,52 @@ CellPointer CellAllocationEmitter::frameCellLent(ValueID cell)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+CellAllocationEmitter::WordsLentOutOfFrame& CellAllocationEmitter::wordsLentUnderHandler(BlockID handler)
+{
+    if (m_wordsLentUnderHandlers.isEmpty())
+        m_wordsLentUnderHandlers.fill(nullptr, m_code.numberOfBlocks());
+    WordsLentOutOfFrame*& words = m_wordsLentUnderHandlers[handler.index()];
+    if (!words)
+        words = m_proc.arena().create<WordsLentOutOfFrame>();
+    return *words;
+}
+
+void CellAllocationEmitter::noteWordsThatCellLentHolds(ValueID cell, std::span<const uint32_t> offsets)
+{
+    EdgeID handler = m_code.handlerOf(operationAt(cell).block());
+    if (!handler)
+        return;
+    BlockID head = m_code.at(handler).to;
+    RELEASE_ASSERT(m_code.at(head).isHandlerBlock());
+    auto shared = std::ranges::find(m_slotsOfClosuresLent, cell, &SlotOfClosuresLent::cell);
+    RELEASE_ASSERT(shared != m_slotsOfClosuresLent.end());
+    WordsLentOutOfFrame& words = wordsLentUnderHandler(head);
+    for (uint32_t offset : offsets)
+        words.append(m_proc.arena(), WordLentOutOfFrame { shared->slot, offset });
+}
+
+void CellAllocationEmitter::clearWhatWasLentUnderHandler(BlockID handler)
+{
+    Machine::PatchOperation* clear = m_out.patchpoint(Machine::Void);
+    clear->effects = Machine::Effects::none();
+    clear->effects.writesLocalState = true;
+    clear->setGenerator([words = &wordsLentUnderHandler(handler), statistics = &build().statistics()](CCallHelpers& jit, const Machine::PatchParameters& params) {
+        AllowMacroScratchRegisterUsage allowScratch(jit);
+        Vector<intptr_t, 8> offsets;
+        for (uint32_t index = 0; index < words->size(); ++index)
+            offsets.append(words->at(index).slot->offsetFromFP() + static_cast<intptr_t>(words->at(index).offset));
+        std::ranges::sort(offsets);
+        intptr_t cleared = 0;
+        for (intptr_t offset : offsets) {
+            if (offset == cleared)
+                continue;
+            jit.store64(CCallHelpers::TrustedImm32(0), params.frame().addressInFrame(offset));
+            cleared = offset;
+            statistics->count(StatisticID::WordsClearedAtHeadsOfHandlers);
+        }
+    });
+}
+
 CellPointer CellAllocationEmitter::allocateInFrame(const OperationContext& context, size_t size)
 {
     if (AOT::hasFlag(build().options().testing, Wire::TestingSwitch::KeepsCellsOutOfFrames))
