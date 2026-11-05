@@ -260,6 +260,9 @@ private:
         isAlwaysNumbered = false;
         switch (kind) {
         case Kind::Int: {
+            // A BigInt that JS has made may be small.
+            if (!isSmallInt(value)) [[unlikely]]
+                value = normalizeInt(value);
             if (!isSmallInt(value))
                 break;
             // The same number may be encoded in two ways.
@@ -441,6 +444,9 @@ private:
 
     NEVER_INLINE void writeInt(JSValue value, uint8_t flag)
     {
+        // A BigInt that JS has made may be small.
+        if (!isSmallInt(value)) [[unlikely]]
+            value = normalizeInt(value);
         if (isSmallInt(value)) {
             int64_t number = smallIntValue(value);
             if (number >= std::numeric_limits<int32_t>::min() && number <= std::numeric_limits<int32_t>::max()) {

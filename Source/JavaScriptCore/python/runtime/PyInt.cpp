@@ -167,7 +167,8 @@ uint64_t intBitLength(JSValue value)
         uint64_t magnitude = number < 0 ? -static_cast<uint64_t>(number) : number;
         return magnitude ? 64 - std::countl_zero(magnitude) : 0;
     }
-    return value.asHeapBigInt()->bitLength();
+    // (A BigInt of JS's may be 0n.)
+    return value.asHeapBigInt()->length() ? value.asHeapBigInt()->bitLength() : 0;
 }
 
 int compareInts(JSValue a, JSValue b)
@@ -484,6 +485,9 @@ JSValue intLeftShift(JSGlobalObject* globalObject, JSValue a, JSValue b)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
+    // A BigInt is taken for more than a small int holds below. One that JS has made may be small.
+    if (!isSmallInt(b)) [[unlikely]]
+        b = normalizeInt(b);
     if (intSign(b) < 0)
         return raiseValueError(globalObject, scope, "negative shift count"_s);
     if (!intSign(a))
@@ -503,6 +507,9 @@ JSValue intRightShift(JSGlobalObject* globalObject, JSValue a, JSValue b)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
+    // As above.
+    if (!isSmallInt(b)) [[unlikely]]
+        b = normalizeInt(b);
     if (intSign(b) < 0)
         return raiseValueError(globalObject, scope, "negative shift count"_s);
     if (isSmallInt(a)) {
@@ -547,6 +554,12 @@ JSValue intPower(JSGlobalObject* globalObject, JSValue base, JSValue exponent, J
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // As for the shifts.
+    if (!isSmallInt(base) || !isSmallInt(exponent)) [[unlikely]] {
+        base = normalizeInt(base);
+        exponent = normalizeInt(exponent);
+    }
 
     if (modulus) {
         if (!intSign(modulus))
