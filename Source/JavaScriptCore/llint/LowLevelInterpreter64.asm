@@ -3208,9 +3208,9 @@ end)
 llintOp(op_py_list_append, OpPyListAppend, macro (size, get, dispatch)
     get(m_list, t0)
     loadq [cfr, t0, 8], t0
-    loadb JSCell::m_indexingTypeAndMisc[t0], t1
-    andi (constexpr IndexingModeMask), t1
-    bineq t1, ArrayWithContiguous, .slow
+    loadb JSCell::m_indexingTypeAndMisc[t0], t6
+    andi (constexpr IndexingModeMask), t6
+    bineq t6, ArrayWithContiguous, .notContiguous
     loadp JSObjectWithButterfly::m_butterfly[t0], t1
     loadi -sizeof IndexingHeader + IndexingHeader::u.lengths.publicLength[t1], t3
     biaeq t3, -sizeof IndexingHeader + IndexingHeader::u.lengths.vectorLength[t1], .slow
@@ -3220,6 +3220,36 @@ llintOp(op_py_list_append, OpPyListAppend, macro (size, get, dispatch)
     addi 1, t3
     storei t3, -sizeof IndexingHeader + IndexingHeader::u.lengths.publicLength[t1]
     pythonWriteBarrier(t0, t5, t3)
+    dispatch()
+
+# A list that has held nothing but ints, or nothing but numbers, is an array of int32s or of doubles, as in JS.
+.notContiguous:
+    bieq t6, ArrayWithInt32, .numbers
+    bineq t6, (constexpr ArrayWithDouble), .slow
+.numbers:
+    loadp JSObjectWithButterfly::m_butterfly[t0], t1
+    loadi -sizeof IndexingHeader + IndexingHeader::u.lengths.publicLength[t1], t3
+    biaeq t3, -sizeof IndexingHeader + IndexingHeader::u.lengths.vectorLength[t1], .slow
+    get(m_value, t2)
+    loadConstantOrVariable(size, t2, t5)
+    bieq t6, (constexpr ArrayWithDouble), .double
+    bqb t5, numberTag, .slow
+    storeq t5, [t1, t3, 8]
+    jmp .isStored
+.double:
+    bqb t5, numberTag, .notInt32
+    ci2ds t5, ft0
+    jmp .storeDouble
+.notInt32:
+    btqz t5, numberTag, .slow
+    addq numberTag, t5
+    fq2d t5, ft0
+    bdnequn ft0, ft0, .slow
+.storeDouble:
+    stored ft0, [t1, t3, 8]
+.isStored:
+    addi 1, t3
+    storei t3, -sizeof IndexingHeader + IndexingHeader::u.lengths.publicLength[t1]
     dispatch()
 
 .slow:
