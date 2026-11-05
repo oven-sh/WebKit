@@ -1110,12 +1110,34 @@ static JSValue buildString(JSGlobalObject* globalObject, const RuntimeArguments&
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
+    // In a tree that a program has made, the parts of an f-string may be anything.
+    uint64_t length = 0;
+    bool isFlatLatin1 = true;
+    for (unsigned i = 0; i < args.size(); ++i) {
+        if (!isStr(args[i])) [[unlikely]]
+            return raiseTypeError(globalObject, scope, "sequence item "_s, i, ": expected str instance, "_s, typeName(globalObject, args[i]), " found"_s);
+        JSString* part = strValue(args[i]);
+        length += part->length();
+        isFlatLatin1 &= !part->isRope() && part->is8Bit();
+    }
+
+    // What an f-string makes is nearly always looked at, and at once: printed, compared, hashed, joined. A rope is written out
+    // then. Short text is written out here, which takes no longer than to make the rope (up to this length, measured) and saves the rope.
+    constexpr unsigned longestWrittenOutAtOnce = 256;
+    if (isFlatLatin1 && length <= longestWrittenOutAtOnce && args.size() > 1 && length) {
+        std::span<Latin1Character> buffer;
+        auto text = StringImpl::createUninitialized(length, buffer);
+        for (unsigned i = 0; i < args.size(); ++i) {
+            auto part = strValue(args[i])->tryGetValueImpl()->span8();
+            memcpySpan(buffer, part);
+            skip(buffer, part.size());
+        }
+        return jsString(vm, String(WTF::move(text)));
+    }
+
     // As a template literal of JS is put together: jsStringFromRegisterArray().
     JSRopeString::RopeBuilder<RecordOverflow> builder(vm);
     for (unsigned i = 0; i < args.size(); ++i) {
-        // In a tree that a program has made, the parts of an f-string may be anything.
-        if (!isStr(args[i])) [[unlikely]]
-            return raiseTypeError(globalObject, scope, "sequence item "_s, i, ": expected str instance, "_s, typeName(globalObject, args[i]), " found"_s);
         if (!builder.append(strValue(args[i]))) [[unlikely]] {
             throwOutOfMemoryError(globalObject, scope);
             return { };
