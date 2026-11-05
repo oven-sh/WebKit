@@ -264,7 +264,6 @@ private:
     void noteFoldedConstant(AST::Expr*, JSValue);
     void noteWhatConstantIsMadeOf(AST::Expr*);
     void noteConstantMade(JSValue);
-    void noteCode(unsigned functionIndex);
     void finishConstants();
     RegisterID* stringConstant(const String&);
     RegisterID* load(RegisterID* dst, JSValue);
@@ -348,8 +347,15 @@ private:
         Reg annotate;
     };
     // Makes a function of the code. Its free variables are found in this unit.
-    RegisterID* emitMakeFunction(RegisterID* dst, unsigned index, Scope*, const FunctionParts&); // Of the functions of the code block.
     RegisterID* emitMakeFunction(RegisterID* dst, UnlinkedFunctionExecutable*, Scope*, const FunctionParts&);
+    // What is written once may be compiled several times: a `finally` clause, for each way into it. Code in there is compiled once, and is one
+    // constant (in CPython two that are equal, which makes them one).
+    struct CompiledCode {
+        UnlinkedFunctionExecutable* executable;
+        std::optional<unsigned> index; // Of the functions of the code block.
+        unsigned constant; // Of m_info.constants.
+    };
+    UncheckedKeyHashMap<Scope*, CompiledCode> m_compiledCode;
     void emitDefaults(AST::Arguments*, FunctionParts&, const Range&);
     void emitFunctionAnnotations(AST::Arguments*, Expr* returns, const Range&, FunctionParts&);
     void emitAnnotationsPrologue(const Range&);
@@ -442,12 +448,6 @@ private:
     RegisterID* call(AST::Call*, RegisterID* dst, RegisterID* callee = nullptr);
     enum class GoesThrough : uint8_t { All, Any, Tuple, List, Set };
     RegisterID* callOnGeneratorExpression(AST::Call*, RegisterID* callee, JSValue builtin, GoesThrough, RegisterID* dst, unsigned temporary);
-    // It makes the generator in two places, from the same code: which of the functions of the code block that is.
-    struct MadeTwice {
-        Expr* node { nullptr };
-        std::optional<unsigned> index { };
-    };
-    MadeTwice m_generatorExpressionMadeTwice;
     // callee(pushed..., *args, **keywords). `injected`: a variable to pass after the positional arguments.
     RegisterID* emitCall(RegisterID* dst, RegisterID* callee, std::span<RegisterID* const> pushed, Seq<Expr*> args, Seq<AST::Keyword*> keywords, Name injected, const Range&, unsigned temporary = 0);
 

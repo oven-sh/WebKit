@@ -1984,7 +1984,6 @@ RegisterID* Unit::callOnGeneratorExpression(Call* node, RegisterID* callee, JSVa
     Ref<Label> exhausted = g.newLabel();
     Ref<Label> done = g.newLabel();
     Reg result = g.finalDestination(dst);
-    SetForScope generatorExpressionMadeTwice(m_generatorExpressionMadeTwice, MadeTwice { node->args[0], { } });
 
     loc(range);
     {
@@ -2433,38 +2432,28 @@ RegisterID* Unit::comprehension(Expr* node, ComprehensionKind kind, Seq<Comprehe
     bool isGenerator = kind == ComprehensionKind::Generator;
     if (isGenerator)
         spec.iterateFirstParameter = outermost->isAsync ? CodeSpec::IterateFirstParameter::Async : CodeSpec::IterateFirstParameter::Sync;
-    auto compile = [&] {
-        return c.compileCode(this, spec, m_source, [&](Unit& unit) {
-            Reg iterator = isGenerator ? unit.m_firstIterator : unit.loadName(names().dotZero, unit.newTemporary().get(), range);
-            if (!isGenerator) {
-                unit.loc(outermost->iter->range);
-                if (outermost->isAsync)
-                    unit.callRuntime(iterator.get(), RuntimeFunction::GetAIterOfLoop, { iterator.get() });
-                else
-                    unit.g.emitPyGetIter(iterator.get(), iterator.get());
-            }
-            Reg result = unit.newTemporary();
-            emitContainer(unit, result.get());
-            unit.comprehensionGenerator(kind, generators, 0, element, value, result.get(), iterator.get(), range);
-            if (isGenerator)
-                unit.emitReturnNone();
+    auto* executable = c.compileCode(this, spec, m_source, [&](Unit& unit) {
+        Reg iterator = isGenerator ? unit.m_firstIterator : unit.loadName(names().dotZero, unit.newTemporary().get(), range);
+        if (!isGenerator) {
+            unit.loc(outermost->iter->range);
+            if (outermost->isAsync)
+                unit.callRuntime(iterator.get(), RuntimeFunction::GetAIterOfLoop, { iterator.get() });
             else
-                unit.g.emitReturn(result.get());
-        });
-    };
-    auto& madeTwice = m_generatorExpressionMadeTwice;
-    std::optional<unsigned> index = madeTwice.node == node ? madeTwice.index : std::nullopt;
-    if (!index) {
-        index = g.addPythonFunction(compile());
-        noteCode(*index);
-        if (madeTwice.node == node)
-            madeTwice.index = index;
-    }
+                unit.g.emitPyGetIter(iterator.get(), iterator.get());
+        }
+        Reg result = unit.newTemporary();
+        emitContainer(unit, result.get());
+        unit.comprehensionGenerator(kind, generators, 0, element, value, result.get(), iterator.get(), range);
+        if (isGenerator)
+            unit.emitReturnNone();
+        else
+            unit.g.emitReturn(result.get());
+    });
 
     Reg result = g.finalDestination(dst);
     Reg function = newTemporary();
     loc(range);
-    emitMakeFunction(function.get(), *index, scope, { });
+    emitMakeFunction(function.get(), executable, scope, { });
     Reg iterable = outermost->isAsync ? expr(outermost->iter) : exprToIterateOverOrSearch(outermost->iter);
     emitSimpleCall(result.get(), function.get(), { iterable.get() }, range);
     if (scope->isCoroutine && !isGenerator)

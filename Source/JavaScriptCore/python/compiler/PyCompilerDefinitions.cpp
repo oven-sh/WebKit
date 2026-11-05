@@ -22,13 +22,16 @@ using namespace AST;
 
 RegisterID* Unit::emitMakeFunction(RegisterID* dst, UnlinkedFunctionExecutable* executable, Scope* scope, const FunctionParts& parts)
 {
-    unsigned index = g.addPythonFunction(executable);
-    noteCode(index);
-    return emitMakeFunction(dst, index, scope, parts);
-}
+    CompiledCode& code = m_compiledCode.find(scope)->value;
+    ASSERT(code.executable == executable);
+    if (!code.index) {
+        code.index = g.addPythonFunction(executable);
+        code.constant = m_info.constants.size();
+        m_info.constants.append({ VirtualRegister(), *code.index, false });
+    }
+    m_info.constants[code.constant].isUsed |= !m_cannotBeReached;
+    unsigned index = *code.index;
 
-RegisterID* Unit::emitMakeFunction(RegisterID* dst, unsigned index, Scope* scope, const FunctionParts& parts)
-{
     Vector<Name> freeVariables = freeVariablesOf(scope);
     unsigned present = (parts.defaults ? HasDefaults : 0) | (parts.kwDefaults ? HasKwDefaults : 0) | (parts.annotate ? HasAnnotate : 0);
     Arguments arguments(*this, 1 + std::popcount(present) + freeVariables.size());

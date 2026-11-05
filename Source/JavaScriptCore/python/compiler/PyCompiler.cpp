@@ -282,6 +282,17 @@ static String qualifiedName(Unit* parent, const Compiler::CodeSpec& spec, Symbol
 
 UnlinkedFunctionExecutable* Compiler::compileCode(Unit* parent, const CodeSpec& spec, const SourceCode& parentSource, const Function<void(Unit&)>& emitBody)
 {
+    if (!parent)
+        return compileCodeAnew(parent, spec, parentSource, emitBody);
+    if (auto it = parent->m_compiledCode.find(spec.scope); it != parent->m_compiledCode.end())
+        return it->value.executable;
+    auto* executable = compileCodeAnew(parent, spec, parentSource, emitBody);
+    parent->m_compiledCode.add(spec.scope, Unit::CompiledCode { executable, { }, 0 });
+    return executable;
+}
+
+UnlinkedFunctionExecutable* Compiler::compileCodeAnew(Unit* parent, const CodeSpec& spec, const SourceCode& parentSource, const Function<void(Unit&)>& emitBody)
+{
     Scope* scope = spec.scope;
     Ref<CodeInfo> info = CodeInfo::create();
     info->name = *spec.name;
@@ -707,10 +718,6 @@ void Unit::noteConstantMade(JSValue value)
     m_foldedConstants.append({ constant(value)->virtualRegister(), 0, true });
 }
 
-void Unit::noteCode(unsigned functionIndex)
-{
-    m_info.constants.append({ VirtualRegister(), functionIndex, !m_cannotBeReached });
-}
 
 void Unit::finishConstants()
 {
