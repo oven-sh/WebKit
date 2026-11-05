@@ -824,6 +824,13 @@ so the aim is that everything Python *guarantees* holds, and that what it merely
       what the frames above hold by chance stays. So does what the frames of another thread hold that sits in such a function.
     - What runs between giving up and beginning again (finalizers, and other threads while those wait) finds the function not begun: a
       `poll` object is not in use, a lock that a finalizer takes for this thread and keeps is this thread's.
+    - *What JSC's own entry leaves unwritten.* Every entry into the VM (`vmEntryToJavaScript`, `vmEntryToNative`) makes room on the stack
+      for a `VMEntryRecord`, and `doVMEntry` does not write its `calleeSaveRegistersBuffer`: that is filled when something is thrown
+      (`copyCalleeSavesToEntryFrameCalleeSavesBuffer`). Until then it holds what earlier calls have left there, for as long as the entry
+      lasts. Seen in a debugger: the scope of a function of JS that had returned, with no edge to it and no root in five heap
+      snapshots, and its address in `calleeSaveRegistersBuffer[0]` of the entry that ran the test; in 4 runs of 450 it kept a generator of
+      Python alive that the test had dropped. Nothing is done about it: a store at every entry is a store that JS would pay for. A test
+      that asks whether something has been collected asks it of several objects, and not of all of them.
   - *`flock` cannot be made piece by piece.* `flock(open(p, "w"), LOCK_EX)`, the file dropped, and the same again: with reference counts the
     first file is closed by then. Here it would hold its lock while the second call waits for it, for ever if there is no other
     thread. So a call that may wait asks without waiting first, and if the lock is taken and this very process has one on
