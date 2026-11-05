@@ -1361,17 +1361,38 @@ static JSValue bytesRemoveSuffix(JSGlobalObject* globalObject, JSValue self, JSV
 
 // ---- Splitting and joining ----
 
-using BytesRanges = Vector<std::pair<size_t, size_t>, 16>;
+// Where the parts are. If there are more than there is room for, no more are taken, and bytesListOfParts() raises a MemoryError.
+class BytesRanges {
+public:
+    struct Range {
+        size_t first;
+        size_t second;
+    };
+    void append(Range range) { m_ranges.append(asByteSpan(range)); }
+    bool hasOverflowed() const { return m_ranges.hasOverflowed(); }
+    size_t size() const { return m_ranges.size() / sizeof(Range); }
+    Range operator[](size_t index) const
+    {
+        Range range;
+        memcpy(&range, m_ranges.span().data() + index * sizeof(Range), sizeof(Range));
+        return range;
+    }
+
+private:
+    ByteBuilderWithRoom<16 * sizeof(Range)> m_ranges;
+};
 
 // A list of those parts of `self`.
 static JSValue bytesListOfParts(JSGlobalObject* globalObject, JSValue self, const BytesRanges& ranges, bool reversed)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
+    if (ranges.hasOverflowed()) [[unlikely]]
+        return raiseMemoryError(globalObject, scope, String());
     JSArray* list = newList(globalObject, static_cast<unsigned>(std::min<size_t>(ranges.size(), 1u << 20)));
     RETURN_IF_EXCEPTION(scope, { });
     for (size_t i = 0; i < ranges.size(); ++i) {
-        auto& range = ranges[reversed ? ranges.size() - 1 - i : i];
+        auto range = ranges[reversed ? ranges.size() - 1 - i : i];
         JSValue part = bytesPart(globalObject, self, range.first, range.second);
         RETURN_IF_EXCEPTION(scope, { });
         listAppend(globalObject, list, part);
@@ -2382,7 +2403,8 @@ JSValue bytesFormatPercent(JSGlobalObject* globalObject, std::span<const uint8_t
 
     // What is formatted runs code, which may change the bytearray the format is.
     Vector<uint8_t, 128> format;
-    format.append(formatBytes);
+    if (!format.tryAppend(formatBytes)) [[unlikely]]
+        return raiseMemoryError(globalObject, scope, String());
     ByteBuilder out;
     auto appendFill = [&](uint8_t fill, int64_t count) {
         out.appendRepeated(fill, count);

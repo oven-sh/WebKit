@@ -924,16 +924,24 @@ static JSValue intToBytes(JSGlobalObject* globalObject, JSValue self, JSValue le
     return result;
 }
 
-JSValue intFromByteSpan(JSGlobalObject* globalObject, std::span<const uint8_t> bytes, bool littleEndian, bool isSigned)
+JSValue intFromByteSpan(JSGlobalObject* globalObject, std::span<const uint8_t> allBytes, bool littleEndian, bool isSigned)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    size_t length = bytes.size();
-    if (!length)
+    if (allBytes.empty())
         return jsNumber(0);
-    auto byteAt = [&](size_t i) { return bytes[littleEndian ? i : length - 1 - i]; };
-    bool negative = isSigned && (byteAt(length - 1) & 0x80);
+    auto fromTheTop = [=](size_t i) { return allBytes[littleEndian ? allBytes.size() - 1 - i : i]; };
+    bool negative = isSigned && (fromTheTop(0) & 0x80);
+    // All but one of the bytes at the upper end that say nothing are left out.
+    size_t idle = 0;
+    for (uint8_t padding = negative ? 0xff : 0; idle + 1 < allBytes.size() && fromTheTop(idle) == padding && fromTheTop(idle + 1) == padding;)
+        ++idle;
+    const std::span<const uint8_t> bytes = littleEndian ? allBytes.first(allBytes.size() - idle) : allBytes.subspan(idle);
+    const size_t length = bytes.size();
+    auto byteAt = [=](size_t i) { return bytes[littleEndian ? i : length - 1 - i]; };
 
+    if (length > maxIntBits / 8 + 1) [[unlikely]]
+        return raiseOverflowError(globalObject, scope, "too many digits in integer"_s);
     Vector<uint64_t, 8> words;
     words.fill(0, (length + 7) / 8);
     unsigned carry = 1;
@@ -1066,6 +1074,9 @@ JSValue intFromText(JSGlobalObject* globalObject, StringView text, int base)
     }
 
     Vector<Latin1Character, 64> digits;
+    // All at once: a Vector that grows step by step ends the process long before it is full.
+    if (end - start > digits.capacity() && !digits.tryReserveInitialCapacity(end - start)) [[unlikely]]
+        return raiseMemoryError(globalObject, scope, String());
     bool lastWasUnderscore = true; // None at the start.
     for (unsigned i = start; i < end; ++i) {
         char32_t ch = text[i];
@@ -1110,6 +1121,8 @@ static JSValue intFromTextObject(JSGlobalObject* globalObject, JSValue source, i
         std::span<const uint8_t> bytes;
         getBytesLike(globalObject, source, bytes);
         RETURN_IF_EXCEPTION(scope, { });
+        if (bytes.size() > String::MaxLength) [[unlikely]]
+            return raiseMemoryError(globalObject, scope, String());
         text = String(byteCast<Latin1Character>(bytes));
     }
     JSValue result = intFromText(globalObject, StringView(text), base);

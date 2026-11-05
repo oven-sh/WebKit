@@ -470,7 +470,8 @@ size_t scanDouble(std::span<const Latin1Character> text, double& value)
     double magnitude = WTF::parseDouble(text.subspan(start, i - start), parsed);
     // "1." and ".5e3" may be more than it cares to read.
     if (parsed != i - start) {
-        Vector<Latin1Character, 64> normalized;
+        ByteBuilderWithRoom<64> normalized;
+        normalized.reserveInitialCapacity(i - start + 2);
         if (text[start] == '.')
             normalized.append('0');
         for (size_t j = start; j < i; ++j) {
@@ -478,7 +479,8 @@ size_t scanDouble(std::span<const Latin1Character> text, double& value)
             if (text[j] == '.' && (j + 1 == i || !isASCIIDigit(text[j + 1])))
                 normalized.append('0');
         }
-        magnitude = WTF::parseDouble(normalized.span(), parsed);
+        RELEASE_ASSERT_RESOURCE_AVAILABLE(!normalized.hasOverflowed(), MemoryExhaustion, "Crash intentionally because memory is exhausted.");
+        magnitude = WTF::parseDouble(byteCast<Latin1Character>(normalized.span()), parsed);
         ASSERT(parsed == normalized.size());
     }
     value = negative ? -magnitude : magnitude;
@@ -504,6 +506,9 @@ bool normalizeNumberText(StringView text, Vector<Latin1Character, 64>& result)
         ++start;
     while (end > start && isPythonWhitespace(text[end - 1]))
         --end;
+    // All at once: a Vector that grows step by step ends the process long before it is full.
+    if (end - start > result.capacity()) [[unlikely]]
+        result.reserveCapacity(end - start);
     bool previousIsDigit = false;
     for (unsigned i = start; i < end; ++i) {
         char32_t character = text[i];
@@ -1199,6 +1204,8 @@ static JSValue floatNew(JSGlobalObject* globalObject, JSValue cls, const CallArg
                 std::span<const uint8_t> bytes;
                 getBytesLike(globalObject, source, bytes);
                 RETURN_IF_EXCEPTION(scope, { });
+                if (bytes.size() > String::MaxLength) [[unlikely]]
+                    return raiseMemoryError(globalObject, scope, String());
                 // Not Latin-1, in which 0xA0 would be a space.
                 if (std::ranges::all_of(bytes, isASCII<uint8_t>))
                     text = String(byteCast<Latin1Character>(bytes));

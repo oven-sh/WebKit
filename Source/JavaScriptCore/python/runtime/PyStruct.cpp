@@ -375,8 +375,8 @@ static bool structIsSameFormat(JSGlobalObject* globalObject, PyRecord* object, J
     String current = asString(object->get(StructFormatString))->value(globalObject);
     if (isStr(format))
         return strValue(format)->value(globalObject) == current;
-    if (PyBytes::is(format))
-        return current == String(byteCast<Latin1Character>(PyBytes::from(format)->span()));
+    if (auto* bytes = PyBytes::tryFrom(format))
+        return bytes->length() == current.length() && equal(current.impl(), byteCast<Latin1Character>(bytes->span()));
     return false;
 }
 

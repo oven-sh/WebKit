@@ -1187,8 +1187,9 @@ static JSValue binasciiB2AQP(JSGlobalObject* globalObject, JSValue dataValue, JS
     if (auto* newline = static_cast<const uint8_t*>(size ? memchr(input.data(), '\n', size) : nullptr))
         usesCRLF = newline > input.data() && newline[-1] == '\r';
 
-    Vector<uint8_t, 256> output;
-    if (!output.tryReserveCapacity(size + size / 8))
+    ByteBuilderWithRoom<256> output;
+    output.reserveInitialCapacity(size + size / 8);
+    if (output.hasOverflowed()) [[unlikely]]
         return raiseMemoryError(globalObject, scope, String());
     unsigned lineLength = 0;
     auto appendLineEnd = [&] {
@@ -1226,8 +1227,11 @@ static JSValue binasciiB2AQP(JSGlobalObject* globalObject, JSValue dataValue, JS
         }
         if (isText && (character == '\n' || (!isLast && character == '\r' && input[i + 1] == '\n'))) {
             // A blank at the end of a line would get lost.
-            if (!output.isEmpty() && (output.last() == ' ' || output.last() == '\t'))
-                appendEscaped(output.takeLast());
+            if (auto written = output.span(); !written.empty() && (written.back() == ' ' || written.back() == '\t')) {
+                uint8_t blank = written.back();
+                output.shrink(written.size() - 1);
+                appendEscaped(blank);
+            }
             appendLineEnd();
             i += character == '\r' ? 2 : 1;
             continue;
@@ -1240,7 +1244,7 @@ static JSValue binasciiB2AQP(JSGlobalObject* globalObject, JSValue dataValue, JS
         output.append(isHeader && character == ' ' ? static_cast<uint8_t>('_') : character);
         ++i;
     }
-    RELEASE_AND_RETURN(scope, PyBytes::create(globalObject, output.span()));
+    RELEASE_AND_RETURN(scope, makeBytes(globalObject, output));
 }
 
 // ---- The module ----
