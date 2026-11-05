@@ -185,7 +185,7 @@ Vector<OffsetUseInUnionSlots, 8> countOffsetUsesInUnionSlots(Vector<uint32_t, 8>
 class PlacerOfUnionSlots {
     WTF_MAKE_NONCOPYABLE(PlacerOfUnionSlots);
 public:
-    PlacerOfUnionSlots(const Program& program, const LinkTables& link, const Families& families, const RowsOfSlotPlan& rows, const ScopedLambda<bool(LayoutID)>& hasCells, const ScopedLambda<uint32_t()>& addPlace)
+    PlacerOfUnionSlots(const Program& program, const LinkTables& link, const Families& families, const LayoutsBelowTheirBases& layoutsBelowTheirBases, const RowsOfSlotPlan& rows, const ScopedLambda<bool(LayoutID)>& hasCells, const ScopedLambda<uint32_t()>& addPlace)
         : m_program(program)
         , m_link(link)
         , m_families(families)
@@ -193,16 +193,18 @@ public:
         , m_hasCells(hasCells)
         , m_addPlace(addPlace)
         , m_numberOfLayouts(static_cast<uint32_t>(program.layouts.size()))
+        , m_depths(layoutsBelowTheirBases.depths)
+        , m_layoutsBelowTheirBases(layoutsBelowTheirBases.layouts)
         , m_isTouched(m_numberOfLayouts)
         , m_allAboveIsPlaced(m_numberOfLayouts)
     {
-        RELEASE_ASSERT(rows.firstRowOfLayout.size() == m_numberOfLayouts + 1 && rows.ends.size() == m_numberOfLayouts);
+        RELEASE_ASSERT(rows.firstRowOfLayout.size() == m_numberOfLayouts + 1 && rows.ends.size() == m_numberOfLayouts && m_depths.size() == m_numberOfLayouts);
         RELEASE_ASSERT(rows.offsets.size() == rows.firstRowOfLayout.back() && rows.places.size() == rows.offsets.size() && (rows.widths.empty() || rows.widths.size() == rows.offsets.size()));
     }
 
     void run()
     {
-        orderLayoutsBelowTheirBases();
+
         collectUnits();
         collectGroups();
         if (m_groups.isEmpty())
@@ -255,33 +257,6 @@ private:
     std::span<const UnitIndex> unitsOf(const Group& group) const LIFETIME_BOUND { return m_unitsOfGroups.span().subspan(group.firstUnit, group.numberOfUnits); }
     uint32_t offsetOfFirstSlotOf(LayoutID id) const { return offsetOfFirstField + (m_rows.layoutsWithHiddenWords.get(id.index()) ? widestSlotInUnionSlots : 0); }
 
-    void orderLayoutsBelowTheirBases()
-    {
-        constexpr uint32_t unseen = UINT32_MAX - 1;
-        constexpr uint32_t onTheWay = UINT32_MAX - 2;
-        m_depths.fill(unseen, m_numberOfLayouts);
-        Vector<uint32_t, 16> row;
-        for (uint32_t index = 0; index < m_numberOfLayouts; ++index) {
-            row.shrink(0);
-            LayoutID above(index);
-            for (; above && m_depths[above.index()] == unseen; above = writtenBaseOf(m_program.at(above))) {
-                m_depths[above.index()] = onTheWay;
-                row.append(above.index());
-            }
-            uint32_t depthAbove = above ? m_depths[above.index()] : 0;
-            bool mayBeTouched = !above || (depthAbove != onTheWay && depthAbove != none);
-            uint32_t depth = above && mayBeTouched ? depthAbove + 1 : 0;
-            while (!row.isEmpty()) {
-                uint32_t layoutIndex = row.takeLast();
-                const Layout& layout = m_program.layouts[layoutIndex];
-                mayBeTouched &= isObjectLayout(layout.kind) && (!writtenBaseOf(layout) || layout.inheritedFields == InheritedFields::AllOfRow);
-                m_depths[layoutIndex] = mayBeTouched ? depth++ : none;
-                if (mayBeTouched)
-                    m_layoutsBelowTheirBases.append(LayoutID(layoutIndex));
-            }
-        }
-    }
-
     bool standsByItself(LayoutID id) const
     {
         return !writtenBaseOf(m_program.at(id)) && m_program.layoutsExpectedBelow(id).empty() && m_link.appendedKeysOf(id).empty() && m_hasCells(id);
@@ -310,11 +285,22 @@ private:
         uint32_t numberOfRows = static_cast<uint32_t>(m_rows.offsets.size());
         m_unitOfRow.fill(none, numberOfRows);
         m_layoutOfRow.fill(LayoutID(), numberOfRows);
+        BitVector layoutsWithLayoutsBelow(m_numberOfLayouts);
+        for (LayoutID id : m_layoutsBelowTheirBases) {
+            if (LayoutID base = writtenBaseOf(m_program.at(id)))
+                layoutsWithLayoutsBelow.quickSet(base.index());
+        }
         Vector<uint32_t> rowsWithUnits;
         for (LayoutID id : m_layoutsBelowTheirBases) {
-            uint32_t numberOfFields = static_cast<uint32_t>(m_program.at(id).fields.size());
+            const Layout& layout = m_program.at(id);
+            uint32_t numberOfFields = static_cast<uint32_t>(layout.fields.size());
+            uint32_t firstRow = m_rows.firstRowOfLayout[id.index()];
+            uint32_t depth = m_depths[id.index()];
+            bool hasBase = !!writtenBaseOf(layout);
+            if (!hasBase && !layoutsWithLayoutsBelow.quickGet(id.index()) && !m_families.nearestFamilyOf(id))
+                continue;
             for (uint32_t field = 0; field < numberOfFields; ++field) {
-                uint32_t row = rowOf({ id, field });
+                uint32_t row = firstRow + field;
                 uint32_t width = widthOfRow(row);
                 m_layoutOfRow[row] = id;
                 if (!width)
@@ -322,22 +308,26 @@ private:
                 RELEASE_ASSERT(std::has_single_bit(width) && width <= widestSlotInUnionSlots);
                 uint8_t logWidth = static_cast<uint8_t>(std::countr_zero(width));
                 UnitIndex unit = none;
-                if (std::optional<FieldReference> above = findFieldAbove({ id, field }))
-                    unit = m_unitOfRow[rowOf(*above)];
+                if (hasBase) {
+                    if (std::optional<FieldReference> above = findFieldAbove({ id, field }))
+                        unit = m_unitOfRow[rowOf(*above)];
+                }
                 if (unit == none) {
                     unit = static_cast<UnitIndex>(m_units.size());
-                    m_units.append(Unit { });
-                    m_units[unit].declaringLayout = id;
-                    m_units[unit].depth = m_depths[id.index()];
-                    m_units[unit].logWidth = logWidth;
+                    Unit declared;
+                    declared.declaringLayout = id;
+                    declared.depth = depth;
+                    declared.logWidth = logWidth;
                     if (m_rows.places[row] != RowsOfSlotPlan::noPlace) {
-                        m_units[unit].isPlaced = true;
-                        m_units[unit].offset = static_cast<uint32_t>(m_rows.offsets[row]);
-                        m_units[unit].place = m_rows.places[row];
+                        declared.isPlaced = true;
+                        declared.offset = static_cast<uint32_t>(m_rows.offsets[row]);
+                        declared.place = m_rows.places[row];
                     }
+                    m_units.append(declared);
                 }
-                m_units[unit].isRefused |= m_units[unit].logWidth != logWidth;
-                ++m_units[unit].numberOfRows;
+                Unit& unitOfRow = m_units[unit];
+                unitOfRow.isRefused |= unitOfRow.logWidth != logWidth;
+                ++unitOfRow.numberOfRows;
                 m_unitOfRow[row] = unit;
                 rowsWithUnits.append(row);
             }
@@ -427,6 +417,7 @@ private:
         lastFamiliesWithSeveralDeclarations.fill(0, types.numberOfPropertyKeys());
 
         Vector<RowInMember> rowsInMembers;
+        Vector<uint64_t> namesWithUnits;
         for (uint32_t family = 0; family < numberOfFamilies; ++family) {
             Vector<DeclarationOfName> declarations = std::exchange(declarationsInFamilies[family], { });
             for (LayoutID member : membersOutsideSmallerFamilies.span().subspan(firstMemberOutsideSmallerFamilies[family], firstMemberOutsideSmallerFamilies[family + 1] - firstMemberOutsideSmallerFamilies[family])) {
@@ -435,7 +426,9 @@ private:
                 });
             }
             auto endOfThoseInOrder = declarations.begin() + numbersOfDeclarationsInOrder[family];
-            AOT::sort(std::span(endOfThoseInOrder, declarations.end()));
+            std::ranges::sort(std::span(endOfThoseInOrder, declarations.end()), { }, [](const DeclarationOfName& declaration) {
+                return static_cast<uint64_t>(declaration.key) << 32 | declaration.unit;
+            });
             std::inplace_merge(declarations.begin(), endOfThoseInOrder, declarations.end());
 
             bool hasNameWithSeveralDeclarations = false;
@@ -454,12 +447,18 @@ private:
             declarations.shrink(numberKept);
 
             if (hasNameWithSeveralDeclarations) {
+                namesWithUnits.shrink(0);
                 m_program.at(m_families.layoutsOf(FamilyID(family))).forEach([&](LayoutID member) {
                     forEachNameOf(member, [&](uint32_t key, UnitIndex unit) {
                         if (lastFamiliesWithSeveralDeclarations[key] == family + 1)
-                            rowsInMembers.append(RowInMember { family, key, m_units[unit].logWidth, FormInUnionSlots::Unknown, unit });
+                            namesWithUnits.append(static_cast<uint64_t>(key) << 32 | unit);
                     });
                 });
+                std::ranges::sort(namesWithUnits);
+                for (uint64_t nameWithUnit : namesWithUnits) {
+                    UnitIndex unit = static_cast<UnitIndex>(nameWithUnit);
+                    rowsInMembers.append(RowInMember { family, static_cast<uint32_t>(nameWithUnit >> 32), m_units[unit].logWidth, FormInUnionSlots::Unknown, unit });
+                }
             }
 
             if (FamilyID above = m_families.nearestFamilyAbove(FamilyID(family))) {
@@ -474,9 +473,7 @@ private:
         auto nameInFamily = [](const RowInMember& row) {
             return std::tuple(row.family, row.key);
         };
-        AOT::sort(rowsInMembers, [&](const RowInMember& a, const RowInMember& b) {
-            return std::tuple(nameInFamily(a), a.unit) < std::tuple(nameInFamily(b), b.unit);
-        });
+
 
         for (size_t begin = 0; begin < rowsInMembers.size();) {
             size_t end = begin;
@@ -505,12 +502,16 @@ private:
         }
     }
 
-    CellInUnionSlots& cellOf(LayoutID id)
+    ALWAYS_INLINE CellInUnionSlots& cellOf(LayoutID id)
     {
         CellInUnionSlots& cell = m_cells[id.index()];
-        if (cell.isInitialized())
-            return cell;
+        if (!cell.isInitialized()) [[unlikely]]
+            initializeCellOf(id, cell);
+        return cell;
+    }
 
+    NEVER_INLINE void initializeCellOf(LayoutID id, CellInUnionSlots& cell)
+    {
         uint32_t firstRow = m_rows.firstRowOfLayout[id.index()];
         uint32_t endOfRows = m_rows.firstRowOfLayout[id.index() + 1];
         UnitList units;
@@ -541,15 +542,16 @@ private:
             if (m_units[unit].isPlaced)
                 cell.occupy(m_units[unit].offset, m_units[unit].logWidth);
         }
-        return cell;
+
     }
 
     CellInUnionSlots& cellOfRow(uint32_t row) { return cellOf(m_layoutOfRow[row]); }
 
     bool fitsEveryRow(UnitIndex unit, uint32_t offset)
     {
+        unsigned logWidth = m_units[unit].logWidth;
         return std::ranges::all_of(rowsOf(unit), [&](uint32_t row) {
-            return cellOfRow(row).canPlace(offset, m_units[unit].logWidth);
+            return cellOfRow(row).canPlace(offset, logWidth);
         });
     }
 
@@ -738,7 +740,7 @@ private:
                     rowsThatFit[best] -= numberOfRows;
                     continue;
                 }
-                for (size_t candidate = 0; candidate < numberOfCandidates; ++candidate) {
+                for (size_t candidate = 0; candidate < candidatesWithinLimits[index]; ++candidate) {
                     if (fits.quickClear(index * numberOfCandidates + candidate))
                         rowsThatFit[candidate] -= numberOfRows;
                 }
@@ -819,8 +821,8 @@ private:
     const ScopedLambda<bool(LayoutID)>& m_hasCells;
     const ScopedLambda<uint32_t()>& m_addPlace;
     uint32_t m_numberOfLayouts;
-    Vector<uint32_t> m_depths;
-    Vector<LayoutID> m_layoutsBelowTheirBases;
+    const Vector<uint32_t>& m_depths;
+    const Vector<LayoutID>& m_layoutsBelowTheirBases;
     BitVector m_isTouched;
     Vector<CellInUnionSlots> m_cells;
     Vector<uint32_t> m_depthsReached;
@@ -835,9 +837,40 @@ private:
 
 } // anonymous namespace
 
-void placeFieldsOfUnions(const Program& program, const LinkTables& link, const Families& families, RowsOfSlotPlan rows, NOESCAPE const ScopedLambda<bool(LayoutID)>& hasCells, NOESCAPE const ScopedLambda<uint32_t()>& addPlace)
+LayoutsBelowTheirBases orderLayoutsBelowTheirBases(const Program& program)
 {
-    PlacerOfUnionSlots(program, link, families, rows, hasCells, addPlace).run();
+    constexpr uint32_t none = LayoutsBelowTheirBases::isNotTouched;
+    constexpr uint32_t unseen = UINT32_MAX - 1;
+    constexpr uint32_t onTheWay = UINT32_MAX - 2;
+    uint32_t numberOfLayouts = static_cast<uint32_t>(program.layouts.size());
+    LayoutsBelowTheirBases result;
+    result.depths.fill(unseen, numberOfLayouts);
+    Vector<uint32_t, 16> row;
+    for (uint32_t index = 0; index < numberOfLayouts; ++index) {
+        row.shrink(0);
+        LayoutID above(index);
+        for (; above && result.depths[above.index()] == unseen; above = writtenBaseOf(program.at(above))) {
+            result.depths[above.index()] = onTheWay;
+            row.append(above.index());
+        }
+        uint32_t depthAbove = above ? result.depths[above.index()] : 0;
+        bool mayBeTouched = !above || (depthAbove != onTheWay && depthAbove != none);
+        uint32_t depth = above && mayBeTouched ? depthAbove + 1 : 0;
+        while (!row.isEmpty()) {
+            uint32_t layoutIndex = row.takeLast();
+            const Layout& layout = program.layouts[layoutIndex];
+            mayBeTouched &= isObjectLayout(layout.kind) && (!writtenBaseOf(layout) || layout.inheritedFields == InheritedFields::AllOfRow);
+            result.depths[layoutIndex] = mayBeTouched ? depth++ : none;
+            if (mayBeTouched)
+                result.layouts.append(LayoutID(layoutIndex));
+        }
+    }
+    return result;
+}
+
+void placeFieldsOfUnions(const Program& program, const LinkTables& link, const Families& families, const LayoutsBelowTheirBases& layoutsBelowTheirBases, RowsOfSlotPlan rows, NOESCAPE const ScopedLambda<bool(LayoutID)>& hasCells, NOESCAPE const ScopedLambda<uint32_t()>& addPlace)
+{
+    PlacerOfUnionSlots(program, link, families, layoutsBelowTheirBases, rows, hasCells, addPlace).run();
 }
 
 } } } // namespace JSC::AOT::Typed

@@ -133,7 +133,7 @@ StubSignature signatureOfWeakMapSet(StubKey) { return receiverOperationSignature
 StubSignature signatureOfStringStartsWith(StubKey) { return receiverOperationSignature(1); }
 StubSignature signatureOfStringIndexOf(StubKey) { return receiverOperationSignature(1); }
 
-static bool isCalledByName(const StubAssembler& jit) { return jit.key().family() == StubFamily::CallMethodOfBuiltinClass || jit.key().family() == StubFamily::TryCallMethodOfBuiltinClass || jit.key().family() == StubFamily::CallMethodOfBuiltinClassWithSharedPattern; }
+static bool isCalledByName(const StubAssembler& jit) { return jit.key().family() == StubFamily::CallMethodOfBuiltinClass || jit.key().family() == StubFamily::TryCallMethodOfBuiltinClass || jit.key().family() == StubFamily::CallMethodOfBuiltinClassWithSharedPattern || jit.key().family() == StubFamily::CallMethodThatMayBeUnread; }
 static bool receiverOfBoxedCallIsObject(BoxedCallForm);
 
 static void checkCalleeRealm(StubAssembler& jit, GPRReg scratch, JumpList& callsHostFunction)
@@ -706,6 +706,25 @@ static void emitTableClear(StubAssembler& jit, GPRReg scratch, JumpList& callsHo
     emitFirstCallThatFits(jit, scratch, callsHostFunction);
 }
 
+static void emitStringEndsWith(StubAssembler& jit, GPRReg scratch, JumpList& callsHostFunction)
+{
+    static_assert(areDistinctOnEveryISA(StubRegister::A0, StubRegister::A1, StubRegister::A2, StubRegister::A3, StubRegister::A5, StubRegister::T9));
+    JumpList isNotThere;
+    JumpList needsOperation;
+    needsOperation.append(jit.branchIfNotCell(argumentGPR(0)));
+    needsOperation.append(jit.branchIfNotType(argumentGPR(0), StringType));
+    branchUnlessTextStandsAtPlace(jit, { thisGPR, argumentGPR(0), jit.reuseScratch(StubRegister::A1), jit.reuseScratch(StubRegister::A2), jit.reuseScratch(StubRegister::A3), scratch, jit.reuseScratch(StubRegister::A5) }, PlaceOfSoughtText::IsEnd, isNotThere, needsOperation);
+    jit.move(TrustedImm32(JSValue::ValueTrue), jit.result());
+    jit.returnToCaller();
+
+    isNotThere.link(&jit);
+    jit.move(TrustedImm32(JSValue::ValueFalse), jit.result());
+    jit.returnToCaller();
+
+    needsOperation.link(&jit);
+    emitFirstCallThatFits(jit, scratch, callsHostFunction);
+}
+
 static constexpr uint32_t noSplitLimit = UINT32_MAX;
 static constexpr auto anything = ArgumentGuard::None;
 static constexpr auto aText = ArgumentGuard::IsString;
@@ -777,7 +796,7 @@ static constexpr BoxedCallHandler boxedCallHandlers[] = {
     { BoxedCallForm::StringCharAt, 1, 1, exactly(StringType), emitStringCharacterAt },
     { BoxedCallForm::StringCharCodeAt, 1, 1, exactly(StringType), emitStringCodeUnitAt },
     { BoxedCallForm::StringCodePointAt, 1, 1, exactly(StringType), emitStringCodeUnitAt },
-    { BoxedCallForm::StringEndsWith, 1, 1, exactly(StringType), emitFirstCallThatFits, { }, anything, stringEndsWithCalls },
+    { BoxedCallForm::StringEndsWith, 1, 1, exactly(StringType), emitStringEndsWith, { }, anything, stringEndsWithCalls },
     { BoxedCallForm::StringIncludes, 1, 1, exactly(StringType), emitFirstCallThatFits, { }, anything, stringIncludesCalls },
     { BoxedCallForm::StringIndexOf, 1, 1, exactly(StringType), emitStringSearchFromPosition },
     { BoxedCallForm::StringIsWellFormed, 0, 0, exactly(StringType), emitStringIsWellFormed },
@@ -933,6 +952,16 @@ static bool receiverOfBoxedCallIsObject(BoxedCallForm form)
     return handler.receiverTypes && handler.receiverTypes->first >= ObjectType;
 }
 
+std::optional<JSTypeRange> cellTypesOfReceiversOf(BoxedCallForm form)
+{
+    return boxedCallHandlers[static_cast<unsigned>(form)].receiverTypes;
+}
+
+bool looksWhetherReceiverIsAsMade(BoxedCallForm form)
+{
+    return receiverOfBoxedCallIsObject(form);
+}
+
 bool servesCallsByName(BoxedCallForm form, unsigned count)
 {
     const BoxedCallHandler& handler = boxedCallHandlers[static_cast<unsigned>(form)];
@@ -952,12 +981,14 @@ bool leavesPatternAsMade(BoxedCallForm form, unsigned count)
 }
 StubSignature signatureOfTryCallMethodOfBuiltinClass(StubKey) { return callConventionSignature({ }); }
 
-static void branchUnlessReceiverFindsBuiltin(StubAssembler& jit, const BoxedCallHandler& handler, JumpList& looksUp)
+static void branchUnlessReceiverFindsBuiltin(StubAssembler& jit, const BoxedCallHandler& handler, JumpList& looksUp, std::optional<StubKey> entryForProvenClass = std::nullopt)
 {
     if (handler.receiverTypes) {
         looksUp.append(jit.branchIfNotCell(thisGPR));
         looksUp.append(jit.branchIfNotType(thisGPR, *handler.receiverTypes));
     }
+    if (entryForProvenClass)
+        jit.bindEntry(*entryForProvenClass);
     if (receiverOfBoxedCallIsObject(handler.form))
         looksUp.append(branchIfNotPristine(jit, thisGPR));
 }
@@ -976,6 +1007,7 @@ void generateTryCallMethodOfBuiltinClass(StubAssembler& jit)
 }
 
 StubSignature signatureOfCallMethodOfBuiltinClassByValue(StubKey key) { return signatureOf(callValue(key.count())); }
+StubSignature signatureOfCallMethodOfProvenBuiltinClassByValue(StubKey key) { return signatureOf(callValue(key.count())); }
 
 void generateCallMethodOfBuiltinClassByValue(StubAssembler& jit)
 {
@@ -984,18 +1016,48 @@ void generateCallMethodOfBuiltinClassByValue(StubAssembler& jit)
     std::optional<BoxedCallForm> next = formAskedBehind(handler.form);
     const StubKey forOtherReceivers = next ? callMethodOfBuiltinClassByValue(*next, count) : callValue(count);
     if (!servesCallsByName(handler.form, count) || !handler.receiverTypes) {
+        jit.bindEntry(callMethodOfProvenBuiltinClassByValue(handler.form, count));
         jit.jumpToStub(forOtherReceivers);
         return;
     }
     JumpList isOtherReceiver;
-    branchUnlessReceiverFindsBuiltin(jit, handler, isOtherReceiver);
+    branchUnlessReceiverFindsBuiltin(jit, handler, isOtherReceiver, callMethodOfProvenBuiltinClassByValue(handler.form, count));
     JumpList leavesUndone;
     handler.emit(jit, jit.allocateScratch(StubRegister::T9), leavesUndone);
     jit.linkToStub(leavesUndone, callValue(count));
     jit.linkToStub(isOtherReceiver, forOtherReceivers);
 }
 
+StubSignature signatureOfCallMethodThatMayBeUnread(StubKey key) { return signatureOf(callValue(key.count())); }
+
+void generateCallMethodThatMayBeUnread(StubAssembler& jit)
+{
+    const BoxedCallHandler& handler = boxedCallHandlers[jit.key().form()];
+    const unsigned count = jit.key().count();
+    JumpList callsValue;
+    if (servesCallsByName(handler.form, count) && receiverOfBoxedCallIsObject(handler.form)) {
+        callsValue.append(branchIfNotPristine(jit, thisGPR));
+        handler.emit(jit, jit.allocateScratch(StubRegister::T9), callsValue);
+        callsValue.link(&jit);
+    }
+    Jump isRead = jit.branchTest64(CCallHelpers::NonZero, calleeGPR);
+    Vector<GPRReg, 6> preserved { thisGPR };
+    for (unsigned index = 0; index < count; ++index)
+        preserved.append(argumentGPR(index));
+    jit.emitFunctionPrologue();
+    jit.preserving(preserved.span(), [&] {
+        jit.move(TrustedImm32(static_cast<int32_t>(handler.form)), operationArgumentGPR(1));
+        jit.move(instanceGPR, operationArgumentGPR(0));
+        jit.callOperation(Entry::operationAOTMethodCalledBoxed, jit.reuseScratch(StubRegister::Operation));
+        jit.move(GPRInfo::returnValueGPR, calleeGPR);
+    });
+    jit.emitFunctionEpilogue();
+    isRead.link(&jit);
+    jit.jumpToStub(callValue(count));
+}
+
 StubSignature signatureOfCallMethodOfBuiltinClassAtSite(StubKey key) { return signatureOf(callMethodAtSite(key.count())); }
+StubSignature signatureOfCallMethodOfProvenBuiltinClass(StubKey key) { return signatureOf(callMethodById(key.count())); }
 
 StubSignature signatureOfCallMethodOfBuiltinClassWithSharedPattern(StubKey key) { return signatureOf(callMethodById(key.count())); }
 StubSignature signatureOfCallMethodOfBuiltinClassAtSiteWithSharedPattern(StubKey key) { return signatureOf(callMethodAtSite(key.count())); }
@@ -1035,7 +1097,10 @@ static void emitCallOfMethodOfBuiltinClass(StubAssembler& jit, bool patternIsSha
             makePatternOfItsOwn(jit, count, name);
         jit.jumpToStub(stub);
     };
+    std::optional<StubKey> entryForProvenClass = patternIsShared ? std::nullopt : std::optional<StubKey>(callMethodOfProvenBuiltinClass(handler.form, count));
     if (!servesCallsByName(handler.form, count)) {
+        if (entryForProvenClass)
+            jit.bindEntry(*entryForProvenClass);
         goOnBy(byName);
         jit.bindEntry(entryAtSite);
         goOnBy(forOtherReceiversAtSite);
@@ -1044,7 +1109,7 @@ static void emitCallOfMethodOfBuiltinClass(StubAssembler& jit, bool patternIsSha
 
     RELEASE_ASSERT(noOverlap(name, calleeGPR, thisGPR, argumentGPR(0), argumentGPR(1), argumentGPR(2), argumentGPR(3), instanceGPR));
     JumpList looksUp;
-    branchUnlessReceiverFindsBuiltin(jit, handler, looksUp);
+    branchUnlessReceiverFindsBuiltin(jit, handler, looksUp, entryForProvenClass);
     Label receiverFindsBuiltin = jit.label();
 
     jit.move(name, calleeGPR);
@@ -1099,6 +1164,18 @@ static void emitStringOperationAtPositionZero(StubAssembler& jit, Entry operatio
 
 void generateStringStartsWith(StubAssembler& jit)
 {
+    static_assert(areDistinctOnEveryISA(StubRegister::A0, StubRegister::A1, StubRegister::A2, StubRegister::A3, StubRegister::A5, StubRegister::T9));
+    JumpList isNotThere;
+    JumpList needsOperation;
+    branchUnlessTextStandsAtPlace(jit, { jit.operand(0), jit.operand(1), jit.allocateScratch(StubRegister::A1), jit.allocateScratch(StubRegister::A2), jit.allocateScratch(StubRegister::A3), jit.allocateScratch(StubRegister::T9), jit.allocateScratch(StubRegister::A5) }, PlaceOfSoughtText::IsStart, isNotThere, needsOperation);
+    jit.move(TrustedImm32(JSValue::ValueTrue), jit.result());
+    jit.returnToCaller();
+
+    isNotThere.link(&jit);
+    jit.move(TrustedImm32(JSValue::ValueFalse), jit.result());
+    jit.returnToCaller();
+
+    needsOperation.link(&jit);
     emitStringOperationAtPositionZero(jit, Entry::operationAOTStringHasAt, [&] {
         jit.or32(TrustedImm32(JSValue::ValueFalse), jit.result());
     });

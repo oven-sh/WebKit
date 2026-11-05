@@ -54,11 +54,15 @@ struct TextsTakenOutOnEdge {
 };
 void takeTextsOutOfStringBuildersOnEdge(Walker&, BlockID to, BodyTarget, Vector<Reference, 8>& arguments, TextsTakenOutOnEdge&);
 void takeTextsOutOfStringBuildersAtEndOfWay(Walker&, const BodyTerminator&);
+Reference finishTextInStringBuilder(Walker&, TextInStringBuilder&, Reference name, Origin);
 void discardTextInStringBuilder(Walker&, TextInStringBuilder&, Reference name, Origin);
 
 bool readsTextWithoutString(Walker&, const BodyValue& reader, TextInStringBuilder&, Reference name);
 Reference truthOfTextInStringBuilder(Walker&, TextInStringBuilder&, Reference name, Origin);
+bool textStaysInStringBuilderOnEdge(Walker&, const TextInStringBuilder&, BlockID to, BodyTarget);
+bool mayKeepTextUnderHandlers(Walker&, BlockID inputHead, const GrowingText&);
 bool everyHandlerLetsTextGo(Walker&, const GrowingText&);
+void appendPartsRolledBackWhereTheyFail(Walker&, TextInStringBuilder&, Reference name, std::span<const Reference> parts, Origin);
 Reference primitivePartOfStringBuilder(Walker&, Opcode join, Reference part, Origin);
 bool convertPartsAndAppendToTextInStringBuilder(Walker&, const BodyValue& join, std::span<const Reference> parts);
 bool textBegunHereMayLieInFrame(Walker&, BlockID inputHead, const GrowingText&);

@@ -24,56 +24,48 @@ namespace JSC { namespace AOT { namespace Typed {
 
 static_assert(!RowDisplacementTable::hasColumn(0) && RowDisplacementTable::hasColumn(RowDisplacementTable::maxColumn) && FieldTableEntry::hasColumn(RowDisplacementTable::maxColumn));
 
-MentionsOfKeys countMentionsOfKeys(const Program&, const Facts&, const ParallelLoops&);
-MentionsOfKeys countMentionsOfKeys(const Program& program, const Facts& facts, const ParallelLoops& loops)
+MentionedKeys findMentionedKeys(const Program&, const Facts&, const ParallelLoops&);
+MentionedKeys findMentionedKeys(const Program& program, const Facts& facts, const ParallelLoops& loops)
 {
     unsigned numberOfKeys = program.types.numberOfPropertyKeys();
-    MentionsOfKeys mentions;
-    mentions.all.fill(0, numberOfKeys);
-    mentions.thatMayRunAgain.fill(0, numberOfKeys);
+    MentionedKeys mentioned;
+    mentioned.isMentioned.fill(0, numberOfKeys);
     const LinkTables& link = facts.linked();
     forEachRangeOfIndicesInParallel(loops, program.functions.size(), [&](size_t first, size_t end) {
         for (size_t index = first; index < end; ++index) {
             FunctionID id(index);
             if (!link.function(id).isReached)
                 continue;
-            bool mayRunAgain = !facts.runsAtMostOnce(id) && !program.at(id).isModuleBody();
             const ThinSummary& summary = facts.summaries().at(id);
             for (const Vector<PropertyKeyID>* names : { &summary.namesRead, &summary.namesCalled, &summary.namesStored }) {
                 for (PropertyKeyID key : *names) {
-                    if (key.index() >= numberOfKeys)
-                        continue;
-                    AtomicRef(mentions.all[key.index()]).fetch_add(1, std::memory_order_relaxed);
-                    if (mayRunAgain)
-                        AtomicRef(mentions.thatMayRunAgain[key.index()]).fetch_add(1, std::memory_order_relaxed);
+                    if (key.index() < numberOfKeys)
+                        AtomicRef(mentioned.isMentioned[key.index()]).store(1, std::memory_order_relaxed);
                 }
             }
         }
     });
     for (const LinkedAccess& access : link.accessesUnderOneKey) {
-        if (access.key.index() >= numberOfKeys)
-            continue;
-        ++mentions.all[access.key.index()];
-        if (!facts.runsAtMostOnce(access.function) && !program.at(access.function).isModuleBody())
-            ++mentions.thatMayRunAgain[access.key.index()];
+        if (access.key.index() < numberOfKeys)
+            mentioned.isMentioned[access.key.index()] = 1;
     }
     for (size_t text : facts.summaries().textsSpelledThatNameFieldsNeverWritten()) {
         std::optional<PropertyKeyID> key = program.types.find(PropertyKey { .kind = PropertyKeyKind::Text, .text = StringID(static_cast<uint32_t>(text)) });
         if (key && key->index() < numberOfKeys)
-            mentions.isSpelledAsText.set(key->index());
+            mentioned.isSpelledAsText.set(key->index());
     }
-    return mentions;
+    return mentioned;
 }
 
-static BitVector chooseKeysWithColumnForNamePlan(const Program& program, const MentionsOfKeys& mentions, BuildContext& build)
+static BitVector chooseKeysWithColumnForNamePlan(const Program& program, const MentionedKeys& mentioned, BuildContext& build)
 {
     size_t numberOfColumns = static_cast<size_t>(std::min<uint64_t>(build.limit(LimitID::LookupTableNames), RowDisplacementTable::maxColumn));
-    uint32_t numberOfKeys = static_cast<uint32_t>(mentions.all.size());
+    uint32_t numberOfKeys = static_cast<uint32_t>(mentioned.isMentioned.size());
     BitVector keysWithColumn(numberOfKeys);
 
     Vector<uint32_t> mentionedKeys;
     for (uint32_t key = 0; key < numberOfKeys; ++key) {
-        if (mentions.all[key] && program.types.hasStableNumber(PropertyKeyID(key)))
+        if (mentioned.isMentioned[key] && program.types.hasStableNumber(PropertyKeyID(key)))
             mentionedKeys.append(key);
     }
     if (mentionedKeys.size() > numberOfColumns)
@@ -84,7 +76,7 @@ static BitVector chooseKeysWithColumnForNamePlan(const Program& program, const M
     size_t columnsLeft = numberOfColumns - mentionedKeys.size();
     for (uint32_t key = 0; key < numberOfKeys && columnsLeft; ++key) {
         PropertyKeyID id(key);
-        if (mentions.all[key] || !program.types.hasStableNumber(id) || !program.builtinNameOf(id))
+        if (mentioned.isMentioned[key] || !program.types.hasStableNumber(id) || !program.builtinNameOf(id))
             continue;
         keysWithColumn.quickSet(key);
         --columnsLeft;
@@ -127,20 +119,22 @@ static void chooseFormsOfKeysForNamePlan(const Program& program, SlotPlanParts& 
     });
     parts.narrowFormsOfKeys.fill(SlotRepresentation::JSValue, numberOfKeys);
     parts.keysOfFields.ensureSize(numberOfKeys);
-    for (unsigned key = 0; key < numberOfKeys; ++key) {
-        std::span layouts = std::span(layoutsByKey[key]).first(withoutStorage);
-        size_t most = static_cast<size_t>(std::ranges::max_element(layouts) - layouts.begin());
-        if (most < forms.size() && layouts[most] > layouts[forms.size()])
-            parts.narrowFormsOfKeys[key] = forms[most];
-        if (layouts[most] || layoutsByKey[key][withoutStorage])
-            parts.keysOfFields.quickSet(key);
-    }
+    static_assert(!(indicesInRangeOfLoop % 64));
+    forEachRangeOfIndicesInParallel(loops, numberOfKeys, [&](size_t first, size_t end) {
+        for (size_t key = first; key < end; ++key) {
+            std::span layouts = std::span(layoutsByKey[key]).first(withoutStorage);
+            size_t most = static_cast<size_t>(std::ranges::max_element(layouts) - layouts.begin());
+            if (most < forms.size() && layouts[most] > layouts[forms.size()])
+                parts.narrowFormsOfKeys[key] = forms[most];
+            if (layouts[most] || layoutsByKey[key][withoutStorage])
+                parts.keysOfFields.quickSet(key);
+        }
+    });
 }
-void planNames(const Program&, const MentionsOfKeys&, BuildContext&, SlotPlanParts&);
-void planNames(const Program& program, const MentionsOfKeys& mentions, BuildContext& build, SlotPlanParts& parts)
+void planNames(const Program&, const MentionedKeys&, BuildContext&, SlotPlanParts&);
+void planNames(const Program& program, const MentionedKeys& mentioned, BuildContext& build, SlotPlanParts& parts)
 {
-    parts.keysWithColumn = chooseKeysWithColumnForNamePlan(program, mentions, build);
-    parts.fieldTableProbes = { .readsTestOutOfLineValuesSecond = true, .readsTestDoublesSecond = false };
+    parts.keysWithColumn = chooseKeysWithColumnForNamePlan(program, mentioned, build);
     chooseFormsOfKeysForNamePlan(program, parts, build.parallelLoops());
 }
 

@@ -35,9 +35,10 @@ constexpr bool isEnforced(ProofSource source)
 {
     switch (source) {
     case ProofSource::ResultOfCall:
-        return true;
     case ProofSource::EntryParameter:
     case ProofSource::Field:
+    case ProofSource::SlotOfScope:
+        return true;
     case ProofSource::Variable:
     case ProofSource::Capture:
     case ProofSource::Contents:
@@ -93,13 +94,17 @@ WalkOptions walkOptionsOf(const BuildContext&);
 
 struct FunctionsNamedByFieldsOfOperation {
     template<typename IDType, typename... Role>
-    void operator()(IDType id, Role...)
+    void operator()(IDType id, Role... role)
     {
         if constexpr (std::is_same_v<IDType, FunctionID>) {
             if (id)
                 functions.append(id);
+        } else if constexpr (std::is_same_v<IDType, ModuleID>) {
+            if (id && ((role == ModuleReferenceKind::Target) || ...) && program.at(id).body)
+                functions.append(program.at(id).body);
         }
     }
+    const Program& program;
     Vector<FunctionID, 4>& functions;
 };
 
@@ -108,7 +113,7 @@ void listFunctionsUsedBy(const Program& program, const BodyIndex& index, const O
 {
     functions.shrink(0);
     if (namesFunctionsInFields)
-        user.forEachReference(FunctionsNamedByFieldsOfOperation { functions });
+        user.forEachReference(FunctionsNamedByFieldsOfOperation { program, functions });
     if (variableRead && program.at(variableRead).function)
         functions.append(program.at(variableRead).function);
     if (!usesOperands)

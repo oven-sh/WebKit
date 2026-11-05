@@ -389,8 +389,6 @@ void InlineFrameReader::decode(const Image& image, uint32_t function, unsigned l
         m_frames.unsafeAppendWithoutCapacityCheck(InlineFrameRecord { row, CallSiteIndex(++callSite) });
     }
     m_rest.count -= last - numberOfDecodedFrames;
-    if (m_decoded)
-        m_decoded->m_numberOfFramesDecoded += last - numberOfDecodedFrames;
 }
 
 SiteFrames::SiteFrames(const Image& image, uint32_t function)
@@ -513,14 +511,6 @@ std::optional<CallSiteRecord> Image::callSiteAt(uint32_t function, uint32_t retu
     if (!head)
         return std::nullopt;
     return findCallSite(&*head, returnOffset);
-}
-
-std::optional<CalleeOfSite> Image::calleeOfSiteAt(uint32_t function, CallSiteIndex site) const
-{
-    const ImageFunction& record = this->function(function);
-    if (!record.has(ImageFunctionFlag::HasCalleesOfSites)) [[likely]]
-        return std::nullopt;
-    return SideTableParts::read(record, section<uint8_t>(ImageSection::SideTables).data()).calleeOfSiteAt(site.bits());
 }
 
 std::optional<FunctionID> Image::constructedCalleeAt(uint32_t function, CallSiteIndex site) const

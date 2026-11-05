@@ -12,8 +12,8 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-enum class KindOfEffectsRow : uint8_t { None, Operation, RuntimeOperation, Stub, Builtin, Callee };
-enum class PartOfEffects : uint8_t { None, RunsOtherCode, Throws, Writes, Collects };
+enum class KindOfEffectsRow : uint8_t { None, Operation, RuntimeOperation, Stub, Builtin, Callee, Summary };
+enum class PartOfEffects : uint8_t { None, RunsOtherCode, Throws, Writes, Collects, ThrowsByRule };
 
 inline constexpr std::array<AbstractHeap, 8> heapsOfDigestInEffectsNet {
     AbstractHeap::ShapeWords, AbstractHeap::OrderWords, AbstractHeap::ObjectFields, AbstractHeap::NamedProperties,
@@ -68,6 +68,9 @@ struct RowThatSaysLess {
             return;
         case PartOfEffects::Collects:
             effects.mayCollect = false;
+            return;
+        case PartOfEffects::ThrowsByRule:
+            effects.mayThrow &= ThrowEffect::onlyForLackOfMemory();
             return;
         }
     }

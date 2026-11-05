@@ -1,0 +1,58 @@
+# function sum(list: number[]) { let total = 0; for (const x of list) total += x; return total; }   sink(sum([1, 2, 3])); sink(sum(new Set([4, 5]))); sink(sum([1, "2", 3]));
+# Whether the list is as it was made is asked where the iteration is opened. The row in front of the loop asks the answer once more, and the kind of the list: behind it stands the loop over such a list.
+# No turn of that copy asks again, none has an arm that steps by the protocol, the step joins nothing (each way walks the Branch for itself), and the sum goes round raw. Whatever else is iterated runs the other copy.
+# It used to be one copy: the sum boxed, an arm of the protocol and a join of three in every turn: 36 instructions a turn, 12.5 since; by index 11.5.
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = HasArrayStorage {{*}}arrayStorage=
+# CHECK: frequency=Rare isLoopHead=true
+# CHECK: @Double, {{*}}isInLoop=true isLoopHead=true
+# CHECK-NOT: CallDirect
+# CHECK: = GetArrayElement {{*}}level=Proven [keyIsIntegral, isInBounds
+# CHECK-NOT: CallDirect
+# CHECK: form=Numbers
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+data d0 root=Array{contents=anything elements=[Number{value=1}, Number{value=2}, Number{value=3}]} module=m0
+data d1 root=Array{contents=anything elements=[Number{value=4}, Number{value=5}]} module=m0
+data d2 root=Array{contents=anything elements=[Number{value=1}, String{value="2"}, Number{value=3}]} module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="sink" [isFreeName]
+    v3 = Data data=d0
+    v4 = Call v0, -, v3
+    v5 = Call v2, -, v4
+    v6 = PropGet v1 key="Set" [isFreeName]
+    v7 = Data data=d1
+    v8 = Construct v6, v6, v7
+    v9 = Call v0, -, v8
+    v10 = Call v2, -, v9
+    v11 = Data data=d2
+    v12 = Call v0, -, v11
+    v13 = Call v2, -, v12
+    Return v13
+}
+function f1 name="sum" module=m0 length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
+  b0(v0: undefined|null|Array<number>):
+    v1 = Integer
+    v2 = IteratorOpen v0
+    Jump -> next b1(v1)
+  b1(v3: number):
+    LoopHint
+    v5 = IteratorResume v2
+    v6 = ResultAt v5
+    v7 = ResultAt v5 index=1
+    Branch v6 -> taken b2(), notTaken b3()
+  b2():
+    Return v3
+  b3() handler=b4():
+    v8 = Add v3, v7
+    Jump -> next b1(v8)
+  b4() role=IterationCleanup subject=v2:
+    v9 = CatchException
+    IteratorClose v2 completion=Throw
+    Rethrow v9
+}

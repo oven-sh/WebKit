@@ -21,6 +21,7 @@
 #include "AOTMemoryLocation.h"
 #include "AOTModuleEvaluationPlan.h"
 #include "AOTPrimitives.h"
+#include "AOTPromotedEnvironments.h"
 #include "AOTShapeTest.h"
 #include "AOTSlotPlan.h"
 #include "AOTThreads.h"
@@ -73,26 +74,6 @@ struct DeferredDefinitions {
     Vector<uint32_t> variablesByMaker;
     BitVector isDeferred;
     BitVector bodiesThatDefine;
-};
-
-struct PromotedVariable {
-    ModuleID module;
-    StringID name;
-    LocationFacts location;
-};
-
-struct PromotedEnvironments {
-    uint32_t numberOfRemovedCapturesOf(FunctionID function) const { return function.index() < numbersOfRemovedCaptures.size() ? numbersOfRemovedCaptures[function.index()] : 0; }
-    const PromotedVariable* find(VariableID id) const LIFETIME_BOUND
-    {
-        if (!id || !firstVariable || id.index() < firstVariable.index() || id.index() - firstVariable.index() >= variables.size())
-            return nullptr;
-        return &variables[id.index() - firstVariable.index()];
-    }
-
-    VariableID firstVariable;
-    Vector<PromotedVariable> variables;
-    Vector<uint32_t> numbersOfRemovedCaptures;
 };
 
 struct GlobalNameUse {
@@ -156,11 +137,11 @@ public:
     void setFunctionsThatEndTheirTailCalls(FunctionsThatEndTheirTailCalls&& functions) { m_parts.functionsThatEndTheirTailCalls = WTF::move(functions); }
     void setTailCalls(TailCallPlan&& tailCalls) { m_parts.conventions.setTailCalls(WTF::move(tailCalls)); }
     void setStackTests(StackTestPlan&& stackTests) { m_parts.conventions.setStackTests(WTF::move(stackTests)); }
-    void fuseCallEntriesThatOnlyMove(const Program& program, const ParallelLoops& loops) { m_parts.conventions.fuseCallEntriesThatOnlyMove(program, loops); }
+    void fuseCallEntriesThatOnlyMove(const Program& program, const Facts& facts, const ParallelLoops& loops) { m_parts.conventions.fuseCallEntriesThatOnlyMove(program, facts, loops); }
 
     FieldAccess fieldAccess(const Program& program, PropertyKeyID key, LayoutSetID set, std::span<const LayoutID> members, bool isStore) const { return slots().fieldAccess(program, key, set, members, isStore); }
 
-    JS_EXPORT_PRIVATE std::optional<PlacedAllocation> allocation(const Program&, LayoutID, AllocationClassID, std::span<const FieldIndex> initialFields) const;
+    JS_EXPORT_PRIVATE std::optional<PlacedAllocation> allocation(const Program&, LayoutID, std::span<const FieldIndex> initialFields) const;
     JS_EXPORT_PRIVATE PlacedAllocation environmentAllocation(LayoutID) const;
     JS_EXPORT_PRIVATE PlacedAllocation closureAllocation(unsigned numberOfCaptures) const;
 

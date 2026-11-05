@@ -16,7 +16,7 @@ namespace JSC { namespace AOT {
 class PoisonedCell final : public JSObject {
 public:
     using Base = JSObject;
-    static constexpr unsigned StructureFlags = Base::StructureFlags | OverridesGetOwnPropertySlot | OverridesGetOwnPropertyNames | OverridesPut | OverridesGetPrototype | OverridesIsExtensible | InterceptsGetOwnPropertySlotByIndexEvenWhenLengthIsNotZero | ProhibitsPropertyCaching | GetOwnPropertySlotIsImpureForPropertyAbsence;
+    static constexpr unsigned StructureFlags = Base::StructureFlags | OverridesGetCallData | OverridesGetOwnPropertySlot | OverridesGetOwnPropertyNames | OverridesPut | OverridesGetPrototype | OverridesIsExtensible | InterceptsGetOwnPropertySlotByIndexEvenWhenLengthIsNotZero | ProhibitsPropertyCaching | GetOwnPropertySlotIsImpureForPropertyAbsence;
     static constexpr DestructionMode needsDestruction = DoesNotNeedDestruction;
 
     template<typename CellType, SubspaceAccess>
@@ -43,6 +43,8 @@ public:
     static bool isExtensible(JSObject*, JSGlobalObject*);
     static bool setPrototype(JSObject*, JSGlobalObject*, JSValue, bool shouldThrowIfCantSet);
     static JSValue getPrototype(JSObject*, JSGlobalObject*);
+    static CallData getCallData(JSCell*);
+    static CallData getConstructData(JSCell*);
 };
 
 } } // namespace JSC::AOT

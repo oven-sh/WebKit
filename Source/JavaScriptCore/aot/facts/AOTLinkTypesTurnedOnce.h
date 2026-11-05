@@ -13,21 +13,20 @@ namespace JSC { namespace AOT { namespace Typed {
 
 class TypesOfFlowTurnedOnce {
 public:
-    TypeID turn(const LinkFlow& flow, TypeArena& types, const LinkType& type)
+    ALWAYS_INLINE TypeID turn(const LinkFlow& flow, TypeArena& types, const LinkType& type)
     {
-        if (m_numberKept * 4 >= m_slots.size() * 3)
-            grow();
-        size_t mask = m_slots.size() - 1;
-        for (size_t place = hashOf(type) & mask;; place = (place + 1) & mask) {
-            Slot& slot = m_slots[place];
-            if (!slot.isFilled) {
-                slot = { type, flow.toTypeID(types, type), true };
-                ++m_numberKept;
-                return slot.turned;
+        if (type.holdsPrimitivesAlone())
+            return type.isNothing() ? TypeID() : type.primitivesWithoutLiteralsAsType();
+        size_t hash = hashOf(type);
+        std::span<const Slot> slots = m_slots.span();
+        if (!slots.empty()) {
+            size_t mask = slots.size() - 1;
+            for (size_t place = hash & mask; slots[place].isFilled; place = (place + 1) & mask) {
+                if (slots[place].type.holdsSameAs(type))
+                    return slots[place].turned;
             }
-            if (slot.type == type)
-                return slot.turned;
         }
+        return turnAndKeep(flow, types, type, hash);
     }
 
 private:
@@ -37,19 +36,24 @@ private:
         bool isFilled { false };
     };
 
-    static size_t hashOf(const LinkType& type)
+    static ALWAYS_INLINE size_t hashOf(const LinkType& type)
     {
-        auto mix = [](uint64_t hash, uint64_t bits) {
-            hash = (hash ^ bits) * 0x9e3779b97f4a7c15ull;
-            return hash ^ hash >> 32;
-        };
-        uint64_t smallParts = type.primitives | static_cast<uint64_t>(type.objects) << 16 | static_cast<uint64_t>(type.functions) << 19 | static_cast<uint64_t>(type.classes) << 22
-            | static_cast<uint64_t>(type.holdsUnseen) << 24 | static_cast<uint64_t>(type.holdsLostBuiltins) << 25
-            | static_cast<uint64_t>(type.builtinClass.index()) << 32 | static_cast<uint64_t>(type.builtin.index()) << 48;
-        uint64_t hash = mix(0, smallParts);
-        hash = mix(hash, static_cast<uint64_t>(type.layout.bits()) << 32 | type.family.bits());
-        hash = mix(hash, static_cast<uint64_t>(type.function.bits()) << 32 | type.constructorsOf.bits());
-        return static_cast<size_t>(mix(hash, type.site.bits()));
+        LinkType::Words words = type.wordsWithoutShadows();
+        uint64_t hash = words[0] * 0x9e3779b97f4a7c15ull ^ words[1] * 0xc2b2ae3d27d4eb4full ^ words[2] * 0x165667b19e3779f9ull ^ words[3] * 0x27d4eb2f165667c5ull;
+        return static_cast<size_t>(hash ^ hash >> 32);
+    }
+
+    NEVER_INLINE TypeID turnAndKeep(const LinkFlow& flow, TypeArena& types, const LinkType& type, size_t hash)
+    {
+        if (m_numberKept * 4 >= m_slots.size() * 3)
+            grow();
+        size_t mask = m_slots.size() - 1;
+        size_t place = hash & mask;
+        while (m_slots[place].isFilled)
+            place = (place + 1) & mask;
+        m_slots[place] = { type, flow.toTypeID(types, type), true };
+        ++m_numberKept;
+        return m_slots[place].turned;
     }
 
     void grow()

@@ -20,7 +20,6 @@
 #include "AOTVector.h"
 #include "JSCell.h"
 #include <algorithm>
-#include <wtf/SetForScope.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -45,18 +44,6 @@ bool ClosureTestEmitter::closureWordNames(FunctionID function) const
     return hasOneInstance() && closureKindOf(function).isSlim && conventions().exists(conventions().closureEntryOf(function));
 }
 
-bool ClosureTestEmitter::isDecidedByClosureWord(FunctionID function, const Type& tested)
-{
-    if (!closureWordNames(function))
-        return false;
-    return !m_passesChangedClosures && tested.hasUnboundedUnknown() && !namesFunction(types(), tested, function);
-}
-
-Condition ClosureTestEmitter::hasClosureWordThatDecides(CellPointer cell, FunctionID function)
-{
-    return hasClosureWordOf(cell, true, function);
-}
-
 void ClosureTestEmitter::branchOnIsChangedClosureWithNumber(CellPointer cell, bool isSlim, uint32_t mentionOfClosureNumber, BranchTargets targets)
 {
     LValue operand = cell.value();
@@ -75,29 +62,22 @@ Word32 ClosureTestEmitter::upperHalfOfWordAtSlimClosureWord(CellPointer cell)
     return Word32(m_out.load32(m_out.address(cell.value(), m_heaps.AOTSlimClosure_word, sizeof(uint32_t))));
 }
 
-Condition ClosureTestEmitter::isClosureOf(CellPointer cell, FunctionID function, const Type& tested)
+Condition ClosureTestEmitter::isClosureOf(CellPointer cell, FunctionID function)
 {
-    if (isDecidedByClosureWord(function, tested))
-        return hasClosureWordThatDecides(cell, function);
     return asBoolean([&](BranchTargets targets) {
-        branchOnClosureTest(cell, function, tested, targets);
+        branchOnClosureTest(cell, function, targets);
     });
 }
 
-void ClosureTestEmitter::branchOnIsClosureOf(CellPointer cell, FunctionID function, const Type& tested, BranchTargets targets)
+void ClosureTestEmitter::branchOnIsClosureOf(CellPointer cell, FunctionID function, BranchTargets targets)
 {
-    SetForScope passesChangedClosures(m_passesChangedClosures, true);
-    branchOnClosureTest(cell, function, tested, targets);
+    branchOnClosureTest(cell, function, targets);
 }
 
-void ClosureTestEmitter::branchOnClosureTest(CellPointer cell, FunctionID function, const Type& tested, BranchTargets targets)
+void ClosureTestEmitter::branchOnClosureTest(CellPointer cell, FunctionID function, BranchTargets targets)
 {
     if (!conventions().exists(conventions().closureEntryOf(function))) {
         m_out.jump(targets.notTaken.block());
-        return;
-    }
-    if (isDecidedByClosureWord(function, tested)) {
-        branch(hasClosureWordThatDecides(cell, function), targets);
         return;
     }
     bool isSlim = closureKindOf(function).isSlim;
@@ -109,7 +89,7 @@ void ClosureTestEmitter::branchOnClosureTest(CellPointer cell, FunctionID functi
         m_out.branch(equal(upperHalf, upperHalfOfClosureWordOf(function)).value(), targets.taken, normalEdge(hasOtherWord));
 
         m_out.appendToContinuation(hasOtherWord);
-        m_out.branch(hasBits(upperHalf, closureWordMarker | compiledObjectShapeBit).value(), targets.notTaken, rareEdge(hasOtherStructure));
+        m_out.branch(hasMutableCellType(cell, SlimClosureWithPropertiesType).value(), rareEdge(hasOtherStructure), targets.notTaken);
 
         m_out.appendToContinuation(hasOtherStructure);
     } else {
@@ -124,10 +104,10 @@ void ClosureTestEmitter::branchOnClosureTest(CellPointer cell, FunctionID functi
     branchOnIsChangedClosureWithNumber(cell, isSlim, m_mentions.add(NumberSpace::ClosureFunction, function), targets);
 }
 
-Condition ClosureTestEmitter::isClosureOfAny(CellPointer cell, std::span<const FunctionID> functions, const Type& tested)
+Condition ClosureTestEmitter::isClosureOfAny(CellPointer cell, std::span<const FunctionID> functions)
 {
     return asBoolean([&](BranchTargets targets) {
-        branchOnIsClosureOfAny(cell, functions, tested, targets);
+        branchOnIsClosureOfAny(cell, functions, targets);
     });
 }
 
@@ -171,7 +151,7 @@ void ClosureTestEmitter::branchOnClosureNumberInRuns(Word32 closureNumber, std::
     }
 }
 
-void ClosureTestEmitter::branchOnIsClosureOfAny(CellPointer cell, std::span<const FunctionID> functions, const Type& tested, BranchTargets targets)
+void ClosureTestEmitter::branchOnIsClosureOfAny(CellPointer cell, std::span<const FunctionID> functions, BranchTargets targets)
 {
     struct InitialStructure {
         bool isSlim;
@@ -181,12 +161,10 @@ void ClosureTestEmitter::branchOnIsClosureOfAny(CellPointer cell, std::span<cons
     Vector<InitialStructure, 4> structures;
     bool hasSlimMember = false;
     bool hasFullMember = false;
-    bool closureWordsDecide = true;
     for (FunctionID function : functions) {
         if (!conventions().exists(conventions().closureEntryOf(function)))
             continue;
         members.append(function);
-        closureWordsDecide &= isDecidedByClosureWord(function, tested);
         FunctionKindData kind = closureKindOf(function);
         (kind.isSlim ? hasSlimMember : hasFullMember) = true;
         ptrdiff_t offsetOfHeader = offsetOfClosureHeader(kind);
@@ -210,13 +188,7 @@ void ClosureTestEmitter::branchOnIsClosureOfAny(CellPointer cell, std::span<cons
             runs.append({ member, member });
     }
     if (runs.size() == 1 && runs[0].first == runs[0].last) {
-        branchOnClosureTest(cell, runs[0].first, tested, targets);
-        return;
-    }
-
-    if (closureWordsDecide) {
-        Word32 markerAndNumber = bitAnd(upperHalfOfWordAtSlimClosureWord(cell), word32(static_cast<int32_t>(closureWordMarker | compiledObjectShapeBit | ClosureWord::functionMask)));
-        branchOnClosureNumberInRuns(markerAndNumber, runs.span(), closureWordMarker, true, targets);
+        branchOnClosureTest(cell, runs[0].first, targets);
         return;
     }
 
@@ -302,32 +274,6 @@ Condition ClosureTestEmitter::isSlimClosureAsCreated(CellPointer cell)
 {
     Word32 topByte(m_out.load8SignExt32(m_out.address(cell.value(), m_heaps.AOTSlimClosure_word, ClosureWord::topByteShift / 8)));
     return greaterThanOrEqual(topByte, word32(static_cast<uint32_t>(ClosureWord::minTopByteOfCalleeTaking(ClosureWord::maxNumberOfParameters))));
-}
-
-void ClosureTestEmitter::branchOnEndsItsTailCalls(Boxed value, BranchTargets targets)
-{
-    static_assert(ClosureWord::functionShift == 32 && ClosureWord::endsItsTailCallsBit >= ClosureWord::functionShift);
-    constexpr uint32_t bitInUpperHalf = 1u << (ClosureWord::endsItsTailCallsBit - ClosureWord::functionShift);
-
-    LBasicBlock valueIsCell = newBlock();
-    m_out.branch(isCell(value).value(), normalEdge(valueIsCell), targets.notTaken);
-
-    m_out.appendTo(valueIsCell);
-    CellPointer cell = unboxCell(value);
-    LBasicBlock isSlimClosure = newBlock();
-    LBasicBlock isOtherCell = newBlock();
-    m_out.branch(isSlimClosureAsCreated(cell).value(), normalEdge(isSlimClosure), normalEdge(isOtherCell));
-
-    m_out.appendTo(isSlimClosure);
-    branch(hasBits(upperHalfOfWordAtSlimClosureWord(cell), bitInUpperHalf), targets);
-
-    m_out.appendTo(isOtherCell);
-    LBasicBlock isFullClosure = newBlock();
-    m_out.branch(hasCellType(cell, CompiledClosureType).value(), normalEdge(isFullClosure), targets.notTaken);
-
-    m_out.appendTo(isFullClosure);
-    Word32 upperHalf(m_out.load32(m_out.address(cell.value(), m_heaps.AOTClosure_entry, sizeof(uint32_t))));
-    branch(hasBits(upperHalf, bitInUpperHalf), targets);
 }
 
 Condition ClosureTestEmitter::hasFunctionCellType(CellPointer cell)

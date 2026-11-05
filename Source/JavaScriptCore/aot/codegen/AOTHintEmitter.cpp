@@ -8,19 +8,17 @@
 
 #if ENABLE(AOT)
 
-#include "AOTCellFormat.h"
-#include "AOTClosure.h"
 #include "AOTCodeRecords.h"
 #include "AOTCodeSites.h"
+#include "AOTCompileUnit.h"
 #include "AOTConvention.h"
 #include "AOTExceptionEmitter.h"
-#include "AOTFunctionKinds.h"
 #include "AOTInstance.h"
 #include "AOTRuntimeCallEmitter.h"
-#include "AOTSlimClosure.h"
 #include "AOTStubCatalog.h"
 #include "AOTStubRegisters.h"
 #include "AOTStubsOperations.h"
+#include "AOTThrowEmitter.h"
 #include "AllowMacroScratchRegisterUsage.h"
 #include "LinkBuffer.h"
 #include "StackManager.h"
@@ -124,45 +122,31 @@ void HintEmitter::release(ValueID operand)
     });
 }
 
-void HintEmitter::generateClearFrameCell(const ValueContext& value)
-{
-    const Operation& made = operationAt(definitionOf(value->cellOperand()));
-    RELEASE_ASSERT((made.opcode == Opcode::NewObject || made.opcode == Opcode::NewClosure || made.opcode == Opcode::NewArray) && made.storage() == AllocationStorage::Frame);
-
-    if (made.opcode == Opcode::NewArray) {
-        LValue butterfly = m_out.loadPtr(in<CellPointer>(value->cellOperand()).value(), m_heaps.JSArray_butterfly);
-        for (unsigned index = 0; index < made.elementsOperands().size(); ++index)
-            m_out.store64(m_out.constInt64(0), butterfly, m_heaps.indexedContiguousProperties[index]);
-        return;
-    }
-
-    size_t begin = sizeof(JSCell);
-    size_t end = 0;
-    AbstractHeap heap = AbstractHeap::EnvironmentFields;
-    if (made.opcode == Opcode::NewClosure) {
-        unsigned numberOfWords = closureCaptureCountsOf(m_program, conventions(), made.function()).captures;
-        end = made.closureForm() == ClosureForm::Slim ? SlimClosure::allocationSize(numberOfWords) : Closure::allocationSize(numberOfWords);
-    } else {
-        end = m_plan.layout(made.layout()).size;
-        if (isObjectLayout(m_program.at(made.layout()).kind)) {
-            begin = offsetOfFirstField;
-            heap = AbstractHeap::ObjectFields;
-        }
-    }
-
-    CellPointer cell = in<CellPointer>(value->cellOperand());
-    RELEASE_ASSERT(cell.value()->opcode() != Machine::SlotBase || end <= cell.value()->slot()->byteSize());
-    for (size_t offset = begin; offset < end; offset += sizeof(uint64_t))
-        m_out.store64(m_out.constInt64(0), m_out.address(m_heaps.entire(heap), cell.value(), offset));
-}
-
 void HintEmitter::generateEndLifeOfCell(const ValueContext& value)
 {
-    const Operation& made = operationAt(definitionOf(value->cellOperand()));
+    endLifeOf(value, value->cellOperand());
+}
+
+bool HintEmitter::endsLivesAtRunTime()
+{
+    return sourcesOfProofsCheckedUnder(build().options().testing) & bitOfSourceOfProofs(ProofSource::Lifetime);
+}
+
+void HintEmitter::endLifeOf(const OperationContext& context, ValueID cell)
+{
+    const Operation& made = operationAt(definitionOf(cell));
     FunctionID madeIn = generator().code().inlineFrames()[made.inlineFrame].callee;
     m_out.suspendDeclaredAccesses();
-    callVoidOperation(value, RuntimeOperation::PoisonCell, { in<CellPointer>(value->cellOperand()), word32(static_cast<int32_t>(madeIn.index())), word32(static_cast<int32_t>(made.position)) });
+    callVoidOperation(context, RuntimeOperation::PoisonCell, { in<CellPointer>(cell), word32(static_cast<int32_t>(madeIn.index())), word32(static_cast<int32_t>(made.position)) });
     m_out.resumeDeclaredAccesses();
+}
+
+void HintEmitter::stopWhereLifeHasEnded(const OperationContext& context, CellPointer cell)
+{
+    if (!endsLivesAtRunTime())
+        return;
+    Word32 type(m_out.load8ZeroExt32(m_out.address(m_heaps.collectorState, cell.value(), JSCell::typeInfoTypeOffset())));
+    emitter<ThrowEmitter>().requireOrStopAtFalseProof(context, notEqual(type, word32(ObjectType)), boxCell(cell), ProofSource::Lifetime);
 }
 
 void HintEmitter::pollWhereNoFrameIsSetUp(const OperationContext& context)

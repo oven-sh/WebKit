@@ -9,8 +9,8 @@
 #if ENABLE(AOT)
 
 #include "AOTCellFormat.h"
-#include "AOTClosuresLent.h"
 #include "AOTFunctionKinds.h"
+#include "AOTHintEmitter.h"
 #include "AOTIRProgram.h"
 #include "AOTRepresentationRules.h"
 #include "AOTStaticsEmitter.h"
@@ -43,7 +43,9 @@ void EnvironmentEmitter::generateGetCapture(const ValueContext& value)
         }));
         return;
     }
-    define(value, closureCapture(in<CellPointer>(value->closureOperand()), value->function(), value->index()));
+    CellPointer holder = in<CellPointer>(value->closureOperand());
+    emitter<HintEmitter>().stopWhereLifeHasEnded(value, holder);
+    define(value, closureCapture(holder, value->function(), value->index()));
 }
 
 TypedPointer EnvironmentEmitter::byteWithEscapeMarkOf(ValueID environment)
@@ -72,7 +74,7 @@ void EnvironmentEmitter::generateMarkEnvironmentEscaped(const ValueContext& valu
 
 void EnvironmentEmitter::markEnvironmentsThatClosureKeeps(const ValueContext& closure)
 {
-    if (findLoanOfClosure(m_program, generator().facts(), m_code, closure.valueID()).loan != LoanOfClosure::None)
+    if (closure->loan() != LoanOfClosure::None)
         return;
     for (ValueID capture : closure->capturesOperands()) {
         if (!capture || m_code.isConstant(capture))
@@ -98,6 +100,10 @@ void EnvironmentEmitter::generateReleaseEnvironment(const ValueContext& value)
     LayoutID layout = typeOf(environment).environment;
     Word32 byteWithEscapeMark(m_out.load8ZeroExt32(byteWithEscapeMarkOf(environment)));
     ifElse(hasNoBits(byteWithEscapeMark, environmentIsEscapedBit), [&] {
+        if (emitter<HintEmitter>().endsLivesAtRunTime()) {
+            emitter<HintEmitter>().endLifeOf(value, environment);
+            return;
+        }
         Machine::DeclaredAccessesSuspension writesToCellThatNobodyHolds(m_out);
         CellPointer cell = in<CellPointer>(environment);
         TypedPointer head = emitter<StaticsEmitter>().wordOfEnvironmentHandedBack(layout);

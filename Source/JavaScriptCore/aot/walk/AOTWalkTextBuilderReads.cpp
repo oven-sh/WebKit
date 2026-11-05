@@ -81,7 +81,7 @@ bool readsTextWithoutString(Walker& walker, const BodyValue& reader, TextInStrin
     if (!readersOfLengthInTextBuilderReads.contains(opcode))
         return false;
     auto namesText = [&](ValueID operand) {
-        return operand && walker.referenceBoundTo(operand) == name;
+        return operand && walker.nameLastBoundTo(operand) == name;
     };
 
     Origin origin = walker.originOf(reader);

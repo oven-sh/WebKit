@@ -62,10 +62,7 @@ Vector<uint32_t, 3> throwSiteWords(const ThrowSite& site, Representation represe
         ThrowSite packed = site;
         packed.sourceOfFalseProof = std::nullopt;
         packed.calleeIsReadFromReceiver = true;
-        unsigned source = static_cast<unsigned>(*site.sourceOfFalseProof);
-        if (representation == Representation::Void)
-            return throwSiteWords(packed, representation, source);
-        packed.a = site.a << ThrowSiteWord::bitsOfSourceOfProof | source;
+        packed.a = static_cast<uint32_t>(*site.sourceOfFalseProof);
         return throwSiteWords(packed, representation, registerNumber);
     }
     bool hasWideA = site.aIsMention || (site.a > ThrowSiteWord::maxNarrowA && site.a != ThrowSiteWord::none);
@@ -301,15 +298,15 @@ void ThrowEmitter::throwError(const OperationContext& context, ErrorKind kind, S
 
 void ThrowEmitter::requireOrStopAtFalseProof(const OperationContext& context, Condition holds, std::optional<Boxed> found, ProofSource source)
 {
-    static_assert(numberOfEnumerators<ProofSource> <= 1u << ThrowSiteWord::bitsOfSourceOfProof && numberOfEnumerators<ProofSource> <= ThrowSiteWord::numberOfRegistersPerBank);
+    static_assert(numberOfEnumerators<ProofSource> <= ThrowSiteWord::maxNarrowA);
     Origin origin = context.origin();
     LBasicBlock stops = newBlock();
     LBasicBlock continuation = newBlock();
     ScopeFork fork = m_out.forkScope();
     m_out.branch(holds.value(), normalEdge(continuation), rareEdge(stops));
     m_out.appendToArm(stops, fork);
-    if (!generator().isInitializingCell() && origin.position <= ThrowSiteWord::maxPositionBesideSourceOfProof) {
-        throwAt(context, { .kind = ThrowKind::ErrorWithMessage, .a = origin.position, .b = std::nullopt, .sourceOfFalseProof = source }, found ? std::optional<Operand>(*found) : std::nullopt);
+    if (!generator().isInitializingCell()) {
+        throwAt(context, { .kind = ThrowKind::ErrorWithMessage, .a = ThrowSiteWord::none, .b = std::nullopt, .sourceOfFalseProof = source }, found ? std::optional<Operand>(*found) : std::nullopt);
         m_out.unreachable();
         m_out.appendToArm(continuation, fork);
         return;

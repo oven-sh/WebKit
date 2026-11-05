@@ -29,6 +29,8 @@ struct ValueCall {
     bool calleeIsCell { false };
     uint8_t lentArguments { 0 };
     std::optional<BuiltinBoxedStub> methodOfBuiltinClass;
+    bool receiverIsProvenOfBuiltinClass { false };
+    bool methodMayBeUnread { false };
 };
 
 struct ConventionCall {
@@ -59,7 +61,7 @@ public:
 
     Boxed callValue(const OperationContext&, const ValueCall&, const CallOptions& = { });
     void defineResultOfCallByValue(const ValueContext&, Boxed result);
-    static CallPosition positionOf(const OperationContext& context, const CallOptions& options = { }) { return options.isTailCall || context.origin().isTailCall ? CallPosition::Tail : CallPosition::Ordinary; }
+    static CallPosition positionOf(const OperationContext& context) { return context.origin().isTailCall ? CallPosition::Tail : CallPosition::Ordinary; }
     Boxed callByConvention(const OperationContext&, const ConventionCall&, const CallOptions& = { });
     Boxed constructValue(const OperationContext&, ConstructSyntax, Boxed callee, Boxed newTarget, std::span<const ValueID> arguments, std::optional<ThrowSite> siteThatNamesCallee = std::nullopt);
     Boxed superConstructWithArray(const OperationContext&, Boxed parent, Boxed newTarget, CellPointer list);
@@ -76,6 +78,7 @@ public:
     void requireForwardedCallCanBeMade(const ValueContext&, Boxed callee, Boxed thisValue, bool isAtTailCall);
     void didEmitTailCall();
     std::optional<ThrowSite> siteThatNamesCallee(const ValueContext&);
+    bool isProvenReceiverOf(BuiltinBoxedStub, const Type& receiver);
 
     void returnValues(const TerminatorContext&, std::span<const Operand>);
     void returnValues(std::span<const Operand>);
@@ -96,7 +99,6 @@ private:
         uint16_t entry { primaryEntry };
         StubKey calledStub;
         std::optional<uint32_t> immediate;
-        bool passesCallee { false };
     };
 
     struct PlacedArguments {
@@ -139,7 +141,6 @@ private:
     Machine::PatchOperation* leaveAfterFrameTeardown(std::span<const Machine::ConstrainedValue> inRegisters, std::span<const StackWord>, const Invocable<void(CCallHelpers&)> auto& leave);
     void jumpAfterFrameTeardown(const CallTarget&, const PlacedArguments&);
     void callFromArgumentListFrame(const CallTarget&, const PlacedArguments&);
-    void callAndReturnIfCalleeEndsItsTailCalls(const ValueContext&, const ValueCall&);
     void tailCallValue(const ValueContext&, const ValueCall&);
     bool hasStackWordsOfCaller(uint32_t numberOfWords) const;
 

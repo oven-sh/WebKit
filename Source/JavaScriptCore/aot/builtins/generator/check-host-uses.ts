@@ -16,10 +16,7 @@ import type {
 } from "./model.ts";
 import type { BuiltinKind } from "./vocabulary.ts";
 
-type CheckedModel = Pick<
-  TableModel,
-  "builtins" | "overloads" | "startup" | "hostObjects" | "namedMemberCalls" | "hostMethodCalls"
->;
+type CheckedModel = Pick<TableModel, "builtins" | "overloads" | "startup" | "hostObjects">;
 
 interface DescribedUses {
   row: string;
@@ -68,10 +65,6 @@ function collectWrittenUses(model: CheckedModel): DescribedUses[] {
         uses,
       })),
     ),
-    ...model.hostMethodCalls.map(({ name, cell, call }) => ({
-      row: `a host method named ${name.text} uses what lies in ${cell.text}`,
-      uses: [{ path: [], read: "Called", call }] satisfies ModelHostUse[],
-    })),
   ];
 }
 
@@ -178,12 +171,6 @@ function collectReadValues(model: CheckedModel, written: readonly DescribedUses[
       });
     }
   }
-  for (const { name, arguments: passed } of model.namedMemberCalls) {
-    for (const value of passed) values.push({ row: `the call of a member named ${name.text}`, value });
-  }
-  for (const { name, cell } of model.hostMethodCalls) {
-    values.push({ row: `a host method named ${name.text}`, value: { place: "NativeCell", cell } });
-  }
   return values;
 }
 
@@ -220,31 +207,6 @@ function checkHostObjects({ hostObjects }: CheckedModel, problems: Problems): vo
       if (indexes.has(index)) problems.add(source, `the host object ${cell.text} lists internal field ${index} twice`);
       indexes.add(index);
     }
-  }
-}
-
-function checkNamedMemberCalls({ namedMemberCalls, overloads }: CheckedModel, problems: Problems): void {
-  const calledNames = new Set(
-    overloads.flatMap(({ receiver, parameters }) =>
-      [...(receiver === null ? [] : [receiver]), ...parameters].flatMap(parameter => parameter.calledMembers),
-    ),
-  );
-  const names = new Set<ModelName>();
-  for (const { name, source } of namedMemberCalls) {
-    if (names.has(name)) problems.add(source, `two rows say what native code passes to a member named ${name.text}`);
-    names.add(name);
-    if (!calledNames.has(name))
-      problems.add(source, `no operand has b.calls("${name.text}"), so nothing calls a member of that name`);
-  }
-}
-
-function checkHostMethodCalls({ hostMethodCalls, startup }: CheckedModel, problems: Problems): void {
-  for (const { name, source } of hostMethodCalls) {
-    if (startup.namesOfMethodsCallingLoads.includes(name)) continue;
-    problems.add(
-      source,
-      `${name.text} is not among namesOfMethodsCallingLoads of b.startup, so nothing says that the host has methods of that name`,
-    );
   }
 }
 
@@ -294,7 +256,5 @@ export function checkHostUses(model: CheckedModel, problems: Problems): void {
   for (const { row, uses } of written) forEachUse(uses, use => checkUse(row, use, problems));
   checkCells(model, written, problems);
   checkHostObjects(model, problems);
-  checkNamedMemberCalls(model, problems);
-  checkHostMethodCalls(model, problems);
   checkClassesWithHostMethods(model, problems);
 }

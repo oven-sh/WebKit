@@ -213,11 +213,11 @@ static void testClassesAndSlots()
                 AOT_TEST_CHECK(!table().at(slot).indexInType);
                 continue;
             }
-            AOT_TEST_CHECK(table().at(slot).indexInType == numberOfSlotsInType && table().slotInType(id, numberOfSlotsInType) == slot);
+            AOT_TEST_CHECK(table().at(slot).indexInType == numberOfSlotsInType);
             AOT_TEST_CHECK(table().findSlot(id, *table().at(slot).contentsSlot) == slot);
             ++numberOfSlotsInType;
         }
-        AOT_TEST_CHECK(table().numberOfSlotsInType(id) == numberOfSlotsInType && !table().slotInType(id, numberOfSlotsInType));
+        AOT_TEST_CHECK(table().numberOfSlotsInType(id) == numberOfSlotsInType);
     });
     forEachID<BuiltinSlotID>(table().slotCount(), [&](BuiltinSlotID id) {
         AOT_TEST_CHECK(table().at(id).id == id && std::ranges::contains(table().at(table().at(id).owner).slots, id));
@@ -230,7 +230,6 @@ static void testClassesAndSlots()
 
     AOT_TEST_CHECK(table().findSlot(BuiltinClasses::Map, ContentsSlot::Key) == BuiltinSlots::MapKey && table().findSlot(BuiltinClasses::Map, ContentsSlot::Value) == BuiltinSlots::MapValue);
     AOT_TEST_CHECK(!table().findSlot(BuiltinClasses::Map, ContentsSlot::Element) && table().numberOfSlotsInType(BuiltinClasses::Map) == 2);
-    AOT_TEST_CHECK(table().slotInType(BuiltinClasses::Map, 0) == BuiltinSlots::MapKey && table().slotInType(BuiltinClasses::Map, 1) == BuiltinSlots::MapValue);
     AOT_TEST_CHECK(table().findSlot(BuiltinClasses::Array, ContentsSlot::Element) == BuiltinSlots::ArrayElement && table().numberOfSlotsInType(BuiltinClasses::Array) == 1);
     AOT_TEST_CHECK(table().findSlot(BuiltinClasses::Int8Array, ContentsSlot::Element) == BuiltinSlots::TypedArrayElement);
 }
@@ -539,14 +538,9 @@ static void testHostUsesOfStartupLoads()
     AOT_TEST_CHECK(usesOfInspect.areListed && usesOfInspect.list.size() == 1 && usesOfInspect.list[0].use == BuiltinHostReadUse::Kept);
     BuiltinName inspectCell = usesOfInspect.list[0].nativeCell;
 
-    BuiltinName customInspect = table().namesOfHostMethodsCallingStartupLoads()[0];
-    const BuiltinNamedMemberCall* call = table().callOfMemberNamed(customInspect);
-    AOT_TEST_CHECK(call && call->arguments.size() == 3 && call->arguments[2].kind == BuiltinPlaceKind::NativeCell && call->arguments[2].nativeCell == inspectCell);
-    const BuiltinNamedMemberCall* callOfToJSON = table().callOfMemberNamed(BuiltinNames::toJSON);
-    AOT_TEST_CHECK(callOfToJSON && callOfToJSON->arguments.empty());
-    AOT_TEST_CHECK(!table().callOfMemberNamed(BuiltinNames::then));
-
-    auto options = std::ranges::find(table().hostObjects(), call->arguments[1].nativeCell, &BuiltinHostObject::nativeCell);
+    auto options = std::ranges::find_if(table().hostObjects(), [](const BuiltinHostObject& object) {
+        return std::ranges::contains(object.fields, nameOf("stylize"_s), &BuiltinHostObjectField::name);
+    });
     AOT_TEST_CHECK(options != table().hostObjects().end() && options->prototype == Builtins::ObjectPrototype && options->fields.size() == 4);
     HashSet<uint32_t> cellsOfStylize;
     for (const BuiltinHostObjectField& field : options->fields) {
@@ -562,12 +556,6 @@ static void testHostUsesOfStartupLoads()
         const BuiltinHostUse& kept = use.call ? use.call->result.list[0] : use;
         AOT_TEST_CHECK(kept.use == BuiltinHostReadUse::Kept && cellsOfStylize.contains(kept.nativeCell.index() + 1));
         AOT_TEST_CHECK(!use.call || (use.call->arguments.size() == 1 && use.call->arguments[0].nativeCell == inspectCell));
-    }
-
-    AOT_TEST_CHECK(table().hostMethodCalls().size() == 3);
-    for (const BuiltinHostMethodCall& method : table().hostMethodCalls()) {
-        AOT_TEST_CHECK(method.name == customInspect && method.call->arguments.size() == 2);
-        AOT_TEST_CHECK(method.nativeCell == inspectCell || (cellsOfStylize.contains(method.nativeCell.index() + 1) && method.call->thisValue.nativeCell == options->nativeCell && !method.call->result.areListed));
     }
 }
 

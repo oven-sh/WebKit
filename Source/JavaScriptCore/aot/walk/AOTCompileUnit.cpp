@@ -11,6 +11,7 @@
 #include "AOTCurrentWork.h"
 #include "AOTDiagnostics.h"
 #include "AOTEffectsDeclared.h"
+#include "AOTEffectsNet.h"
 #include "AOTMachineArena.h"
 #include "AOTNumbering.h"
 #include "AOTPhaseTimes.h"
@@ -126,14 +127,113 @@ static std::optional<uint64_t> instructionsOfCompileThreadSoFar(const BuildConte
     return InstructionCounts::ofCurrentThread();
 }
 
+static bool isAllocationOfUnitForEffectsAgainstLink(const Code& code, ValueID value, Vector<ValueID, 8>& parametersAsked)
+{
+    if (!value)
+        return false;
+    value = rootOfCellInSweptCode(code, value);
+    const Operation& made = code.at(value);
+    if (made.opcode != Opcode::Parameter)
+        return resultRuleOf(made.opcode) == ResultRule::Allocation || (!made.numberOfOperands() && declaredBoundInTable(made.opcode).writes.contains(AbstractHeap::AllocatorState));
+    const Block& block = code.at(made.block());
+    if (block.isEntry || block.isHandlerBlock() || !block.firstEdgeIn())
+        return false;
+    if (parametersAsked.contains(value))
+        return true;
+    parametersAsked.append(value);
+    size_t place = std::ranges::find(block.parameters(), value) - block.parameters().begin();
+    for (EdgeID edge = block.firstEdgeIn(); edge; edge = code.at(edge).nextInto()) {
+        std::span<const ValueID> arguments = code.at(edge).arguments();
+        if (place >= arguments.size() || !isAllocationOfUnitForEffectsAgainstLink(code, arguments[place], parametersAsked))
+            return false;
+    }
+    return true;
+}
+
+static String findPartThatLinkHasNotCounted(const Code& code, const Operation& operation, const Effects& counted)
+{
+    EffectTraits traits = operation.traits();
+    if (traits.mayThrowByRule() && !counted.mayThrowByRule() && effectRuleOf(operation.opcode) != EffectRule::Operator && !code.at(operation.block()).handler)
+        return "may throw"_s;
+    if (traits.mayCollect() && !counted.mayCollect)
+        return "may collect"_s;
+    if (!traits.mayWriteWhatIsSeen())
+        return { };
+    Vector<ValueID, 8> parametersAsked;
+    bool fillsWhatUnitMakes = operation.origin().isPartOfConstruction || !operation.numberOfOperands() || familyOf(operation.opcode) == OperationFamily::Hint || isAllocationOfUnitForEffectsAgainstLink(code, operation.operand(0), parametersAsked);
+    const Effects& declared = declaredBoundInTable(operation.opcode);
+    if (declared.mayCallUnknownCode) {
+        EffectTraits traitsCounted(counted);
+        if (traits.mayWriteOutsideObjects() && !traitsCounted.mayWriteOutsideObjects())
+            return "may write outside of objects"_s;
+        return traitsCounted.mayWriteWhatIsSeen() || fillsWhatUnitMakes ? String() : String("may write what is seen"_s);
+    }
+    for (AbstractHeap heap : allMembersOf<AbstractHeap>) {
+        if (!observableHeaps.contains(heap) || !declared.writes.contains(heap) || counted.writes.contains(heap))
+            continue;
+        if (!fillsWhatUnitMakes || !perObjectHeaps.contains(heap))
+            return makeString("writes "_s, nameOf(heap));
+    }
+    return { };
+}
+
+static String findOperationThatLinkHasNotCounted(const WalkInputs& inputs, const Code& code)
+{
+    CodeUnit unit = code.unit();
+    if (unit.role != CodeRole::Body || inputs.plan.moduleEvaluation().moduleThatBeginsIn(unit.function))
+        return { };
+    const LinkTables& tables = inputs.facts.linked();
+    const LinkedFunction& linked = tables.function(unit.function);
+    Effects counted = linked.effectsOnReturn;
+    counted.merge(linked.effectsOnThrow);
+    const LinkedEffectsGivenArguments* given = tables.known.findEffectsGivenArguments(unit.function);
+    Effects countedGivenArguments = given ? given->onReturn : Effects::none();
+    if (given)
+        countedGivenArguments.merge(given->onThrow);
+    if (inputs.options.rowThatSaysLess) [[unlikely]] {
+        RowThatSaysLess row = RowThatSaysLess::decode(inputs.options.rowThatSaysLess);
+        row.cut(KindOfEffectsRow::Summary, unit.function.index(), counted);
+        row.cut(KindOfEffectsRow::Summary, unit.function.index(), countedGivenArguments);
+    }
+    for (uint32_t index = 0; index < code.numberOfValues(); ++index) {
+        const Operation& operation = code.at(ValueID(index));
+        if (!operation.block() || operation.traits().mayCallUnknownCode())
+            continue;
+        String part = findPartThatLinkHasNotCounted(code, operation, counted);
+        ASCIILiteral summary = "Link's effects of the function"_s;
+        if (part.isNull() && given && code.at(operation.block()).frequency == BlockFrequency::Normal) {
+            part = findPartThatLinkHasNotCounted(code, operation, countedGivenArguments);
+            summary = "Link's effects of the function given its arguments"_s;
+        }
+        if (part.isNull())
+            continue;
+        return makeString('f', unit.function.index(), " v"_s, index, " ("_s, nameOf(operation.opcode), ") "_s, part, ", and "_s, summary, " say that it does not"_s);
+    }
+    return { };
+}
+
 static bool verifyCodeOfCompileUnit(const WalkInputs& inputs, BuildContext& build, TypeArena& types, const PositionTypes& positions, const Code& code)
 {
     InternalErrorKind kindOfBrokenRule { InternalErrorKind::OpcodeNotInForm };
-    String brokenRule = verifyCode(CodeTextContext { inputs.program, types, &inputs.plan }, code, &kindOfBrokenRule);
+    String brokenRule = verifyCode(CodeTextContext { inputs.program, types, &inputs.plan, &inputs.facts }, code, &kindOfBrokenRule);
     if (brokenRule.isNull()) {
         kindOfBrokenRule = InternalErrorKind::TypeOutOfDate;
         brokenRule = verifyTypesOfCode(TypingContext { inputs.program, types, positions }, inputs.plan.conventions(), inputs.arrivals, code);
     }
+    if (brokenRule.isNull()) {
+        kindOfBrokenRule = InternalErrorKind::EffectsNotCounted;
+        brokenRule = findOperationThatLinkHasNotCounted(inputs, code);
+    }
+    if (brokenRule.isNull())
+        return true;
+    reportFailureOfCompileUnit(build, code.unit(), kindOfBrokenRule, brokenRule);
+    return false;
+}
+
+static bool verifyFrameCellsOfCompileUnit(const WalkInputs& inputs, BuildContext& build, TypeArena& types, const Code& code)
+{
+    InternalErrorKind kindOfBrokenRule { InternalErrorKind::OpcodeNotInForm };
+    String brokenRule = verifyFrameCellsOfSweptCode(CodeTextContext { inputs.program, types, &inputs.plan, &inputs.facts }, code, &kindOfBrokenRule);
     if (brokenRule.isNull())
         return true;
     reportFailureOfCompileUnit(build, code.unit(), kindOfBrokenRule, brokenRule);
@@ -207,6 +307,10 @@ bool CompileWorker::walkAndSweep(CodeUnit unit)
         m_build.statistics().count(StatisticID::ProofsThatNoTestTells, m_walker->numberOfProofsThatNoTestTells());
         m_build.statistics().count(StatisticID::FreshCellsLeftAloneAtReturns, m_walker->numberOfFreshCellsLeftAloneAtReturns());
     }
+    if (uint32_t told = m_walker->numberOfProofsThatFormTells())
+        m_build.statistics().count(StatisticID::ProofsThatFormTells, told);
+    if (uint32_t doors = m_walker->numberOfDoorsThatCanNeverPass())
+        m_build.statistics().count(StatisticID::DoorsThatCanNeverPass, doors);
     RELEASE_ASSERT(code.unit() == unit);
     m_build.diagnostics().append(m_walker->takeReports());
 
@@ -217,11 +321,17 @@ bool CompileWorker::walkAndSweep(CodeUnit unit)
     }
 
     work.setStep("sweep"_s);
-    SweepTotals swept = m_sweep.run(SweepInputs { inputs.program, inputs.plan, m_types }, code);
+    SweepTotals swept = m_sweep.run(SweepInputs { inputs.program, inputs.facts, inputs.plan, m_types }, code);
     m_build.statistics().count(StatisticID::OperationsSwept, swept.operationsSwept);
     m_build.statistics().count(StatisticID::ValuesWalked, m_walker->numberOfValuesWalked());
     m_build.statistics().count(StatisticID::OperationsBuilt, code.numberOfValues());
     m_build.statistics().count(StatisticID::CallsInlined, code.inlineFrames().size() - 1);
+
+    if (inputs.options.verifiesCode && code.holdsFrameCells()) {
+        work.setStep("verify"_s);
+        if (!verifyFrameCellsOfCompileUnit(inputs, m_build, m_types, code))
+            return false;
+    }
 
     if (inputs.options.takesNotes && notesAreTakenOfCompileUnit(unit.role)) {
         WalkNotes notes = notesOfSweptCode(m_types, code, AOT::hasFlag(m_build.options().reports, Wire::ReportSet::AccessCounts));
@@ -232,32 +342,93 @@ bool CompileWorker::walkAndSweep(CodeUnit unit)
     return true;
 }
 
-// Straight code stores without a look: Walker::holdStoresToSymbolsOfPlaces().
-static bool storesIntoPlaceWhoseTypeNamesSymbol(const WalkInputs& inputs, const BodyIndex& index)
+static bool storesOnlyWhatFitsByItsMaking(const WalkInputs& inputs, TypeArena& types, const BodyIndex& index)
 {
-    static constexpr OpcodeSet storesIntoPlaces { Opcode::PutModuleVariable, Opcode::PutEnvironmentField, Opcode::NewObject };
-    if (!index.opcodes().intersects(storesIntoPlaces))
-        return false;
+    static constexpr OpcodeSet operationsThatStoreIntoPlaces { Opcode::PutModuleVariable, Opcode::PutEnvironmentField, Opcode::NewObject, Opcode::NewClosure };
+    if (!index.opcodes().intersects(operationsThatStoreIntoPlaces))
+        return true;
     const LinkTables& linked = inputs.facts.linked();
-    TypeReader types(inputs.program);
-    auto namesSymbol = [&](const LinkedCell* cell) {
-        return cell && cell->everyWriterIsKnown && cell->proven && !holdsOnlyPrimitives(cell->proven) && (types.at(cell->proven).primitives & Primitive::LiteralSymbol);
+    auto heldIn = [&](LayoutID layout, uint32_t field) -> TypeID {
+        const LinkedCell* cell = linked.findCellOfField({ layout, field });
+        return cell && cell->everyWriterIsKnown ? cell->proven : TypeID();
     };
-    bool found = false;
+    auto fits = [&](ValueID value, TypeID held) {
+        if (!value || !held)
+            return true;
+        Type type = types.at(held);
+        if (!type.isJavaScriptValue() || type.isAnything())
+            return true;
+        ValueID made = index.valueBehindCasts(value);
+        while (made && !index.isParameter(made) && (index.value(made).opcode() == Opcode::FinishClass || index.value(made).opcode() == Opcode::NewClass)) {
+            BodyValue handsOn = index.value(made);
+            made = index.valueBehindCasts(handsOn.opcode() == Opcode::FinishClass ? handsOn.as<Opcode::FinishClass>().classObjectOperand() : handsOn.as<Opcode::NewClass>().constructorOperand());
+        }
+        if (!made || index.isParameter(made))
+            return false;
+        BodyValue definition = index.value(made);
+        switch (definition.opcode()) {
+        case Opcode::String:
+            return !!(type.primitives & Primitive::String);
+        case Opcode::BigInt:
+            return !!(type.primitives & Primitive::BigInt);
+        case Opcode::Double:
+            return (type.primitives & Primitive::Number) == Primitive::Number && type.integers == Range::full() && type.boundsOfFractions.isEmpty();
+        case Opcode::Undefined:
+            return !!(type.primitives & Primitive::Undefined);
+        case Opcode::Null:
+            return !!(type.primitives & Primitive::Null);
+        case Opcode::Absent:
+            return true;
+        case Opcode::Boolean:
+            return !!(type.primitives & (definition.boolean() ? Primitive::True : Primitive::False));
+        case Opcode::Integer:
+            return type.primitives & Primitive::Integer && Range::one(definition.integer()).isSubsetOf(type.integers);
+        case Opcode::NewClosure:
+            return types.isSubset(types.forFunction(definition.as<Opcode::NewClosure>().function()), held);
+        default:
+            return false;
+        }
+    };
+    bool allFit = true;
     index.body().forEachBlock([&](BodyBlock block) {
         for (BodyValue value : block.values()) {
+            if (!allFit || !operationsThatStoreIntoPlaces.contains(value.opcode()))
+                continue;
             if (value.opcode() == Opcode::PutModuleVariable) {
-                uint32_t variable = value.variable().index();
-                found |= variable < linked.variables.size() && namesSymbol(&linked.variables[variable]);
-            } else if (value.opcode() == Opcode::PutEnvironmentField)
-                found |= namesSymbol(linked.findCellOfField({ value.layout(), value.field() }));
-            else if (value.opcode() == Opcode::NewObject && value.layout() && inputs.program.at(value.layout()).kind == LayoutKind::Environment) {
-                for (FieldIndex field : value.as<Opcode::NewObject>().fields())
-                    found |= namesSymbol(linked.findCellOfField({ value.layout(), field }));
+                VariableID variable = value.variable();
+                bool isTyped = variable.index() < linked.variables.size() && linked.variable(variable).everyWriterIsKnown && !inputs.plan.runTimeMayFill(variable);
+                allFit = fits(value.valueOperand(), isTyped ? linked.variable(variable).proven : TypeID());
+                continue;
+            }
+            if (value.opcode() == Opcode::PutEnvironmentField) {
+                allFit = fits(value.valueOperand(), heldIn(value.layout(), value.field()));
+                continue;
+            }
+            if (value.opcode() == Opcode::NewClosure) {
+                FunctionID function = value.as<Opcode::NewClosure>().function();
+                uint32_t numberTyped = function.index() + 1 < linked.firstCaptureOfFunction.size() ? linked.firstCaptureOfFunction[function.index() + 1] - linked.firstCaptureOfFunction[function.index()] : 0;
+                uint32_t place = 0;
+                for (ValueID captured : value.as<Opcode::NewClosure>().capturesOperands()) {
+                    if (place < numberTyped && linked.capture(function, place).everyWriterIsKnown)
+                        allFit = allFit && fits(captured, linked.capture(function, place).proven);
+                    ++place;
+                }
+                continue;
+            }
+            auto allocation = value.as<Opcode::NewObject>();
+            if (!allocation.layout() || inputs.program.at(allocation.layout()).kind != LayoutKind::Environment)
+                continue;
+            std::span<const ValueID> values = value.variadicOperands();
+            size_t place = 0;
+            for (uint32_t field : allocation.fields()) {
+                ValueID listed = place < values.size() ? index.valueBehindCasts(values[place]) : ValueID();
+                if (listed && (index.isParameter(listed) || index.value(listed).opcode() != Opcode::Undefined))
+                    allFit = allFit && fits(listed, heldIn(allocation.layout(), field));
+                ++place;
             }
         }
     });
-    return found;
+    return allFit;
 }
 
 static bool entryBlockStoresVariablesInFrontOfTheirFirstReaders(const WalkInputs& inputs, CodeUnit unit, const BodyIndex& index)
@@ -292,6 +463,21 @@ static bool entryBlockStoresVariablesInFrontOfTheirFirstReaders(const WalkInputs
     return isShown;
 }
 
+static bool readsVariableOfAnotherFileStoredFirst(const WalkInputs& inputs, CodeUnit unit, const BodyIndex& index)
+{
+    if (!index.opcodes().contains(Opcode::GetModuleVariable))
+        return false;
+    ModuleID own = inputs.program.at(unit.function).module;
+    bool reads = false;
+    index.body().forEachBlock([&](BodyBlock block) {
+        for (BodyValue value : block.values()) {
+            if (value.opcode() == Opcode::GetModuleVariable && inputs.program.at(value.variable()).module != own)
+                reads |= inputs.facts.linked().variables[value.variable().index()].isFilled;
+        }
+    });
+    return reads;
+}
+
 static bool isWrittenStraight(const WalkInputs& inputs, CodeUnit unit, const BodyIndex& index)
 {
     static constexpr OpcodeSet operationsThatTypesMakeNoCheaper = inputOperationsThatHandOn | OpcodeSet {
@@ -301,13 +487,15 @@ static bool isWrittenStraight(const WalkInputs& inputs, CodeUnit unit, const Bod
     };
     if ((unit.role != CodeRole::SlowBody && unit.role != CodeRole::Body) || inputs.facts.isTakenToRunOnce(unit.function))
         return false;
+    if (inputs.plan.promotedEnvironments().isMaker(unit.function) || inputs.plan.promotedEnvironments().numberOfRemovedCapturesOf(unit.function))
+        return false;
     if (inputs.options.writesBodiesStraight)
         return true;
     if (unit.role != CodeRole::Body)
-        return !index.opcodes().contains(Opcode::Builtin) && !storesIntoPlaceWhoseTypeNamesSymbol(inputs, index);
+        return !index.opcodes().contains(Opcode::Builtin);
     if (!inputs.facts.runsAtMostOnce(unit.function) && !inputs.program.at(unit.function).isModuleBody())
         return false;
-    return !index.hasLoops() && (index.opcodes() | operationsThatTypesMakeNoCheaper) == operationsThatTypesMakeNoCheaper && !storesIntoPlaceWhoseTypeNamesSymbol(inputs, index);
+    return !index.hasLoops() && (index.opcodes() | operationsThatTypesMakeNoCheaper) == operationsThatTypesMakeNoCheaper;
 }
 
 std::optional<CompiledCode> CompileWorker::compileStraight(CodeUnit unit)
@@ -315,7 +503,9 @@ std::optional<CompiledCode> CompileWorker::compileStraight(CodeUnit unit)
     const BodyIndex* index = m_inputs.walk.facts.bodies().find(unit.function);
     if (!index || !isWrittenStraight(m_inputs.walk, unit, *index) || !hasStraightForm(m_inputs.generation, unit, *index))
         return std::nullopt;
-    if (!entryBlockStoresVariablesInFrontOfTheirFirstReaders(m_inputs.walk, unit, *index))
+    if (!entryBlockStoresVariablesInFrontOfTheirFirstReaders(m_inputs.walk, unit, *index) || readsVariableOfAnotherFileStoredFirst(m_inputs.walk, unit, *index))
+        return std::nullopt;
+    if (!storesOnlyWhatFitsByItsMaking(m_inputs.walk, m_types, *index) || !m_inputs.walk.facts.summaries().at(unit.function).scopesStoredFirst.isEmpty())
         return std::nullopt;
     Code& code = m_walker->code();
     code.reset(unit);

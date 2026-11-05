@@ -506,6 +506,10 @@ JSValue Modules::callBody(ModuleID module)
     if (!moduleData.isOfLibrary())
         didStartThread(&vm);
     auto scope = DECLARE_THROW_SCOPE(vm);
+    if (m_numberOfMocksInPlace && m_rootWhoseFilesRun != std::optional(module)) [[unlikely]] {
+        runOriginalsOwedTo(module);
+        RETURN_IF_EXCEPTION(scope, { });
+    }
     if (!m_formsAnsweredFirst.isEmpty()) [[unlikely]] {
         if (moduleData.kind == ModuleKind::Data) {
             bool hasTaken = takeWhatFormAnsweredFirstHolds(module);
@@ -1306,16 +1310,6 @@ bool Modules::evaluateImportedCommonJSFiles(ModuleID root, JobsOfImportedFiles j
             holdJobsBehind(numberOfJobs, imported, jobs);
         m_rootWhoseFilesRanAhead = root;
         return didRunFile;
-    }
-    if (m_numberOfMocksInPlace) [[unlikely]] {
-        BitVector mocked = m_modulesWithMockInPlace;
-        for (size_t file : mocked) {
-            if (!hasImporterBelowThatGetsOriginal(root, ModuleID(file)))
-                continue;
-            runFileBesideMock(ModuleID(file));
-            RETURN_IF_EXCEPTION(scope, didRunFile);
-            didRunFile = true;
-        }
     }
     if (didRunFile)
         m_rootsLoadedWithoutLoader.append(root);
@@ -2555,16 +2549,19 @@ void Modules::noteThatGraphBegins(ModuleID root)
     if (!m_table.listsNamesOfStatements())
         return;
     Vector<ModuleID, 32> toFollow;
-    toFollow.append(fileOf(root));
+    auto begins = [&](ModuleID file) {
+        if (isMocked(file) || mockInPlace(file) || m_modulesWithMockToRun.get(file.index()))
+            return;
+        if (!m_filesWhoseGraphHasBegun.set(file.index()))
+            toFollow.append(file);
+    };
+    begins(fileOf(root));
     while (!toFollow.isEmpty()) {
         ModuleID importer = toFollow.takeLast();
-        if (!isLoadedWithRequests(importer) || isMocked(importer) || mockInPlace(importer) || m_modulesWithMockToRun.get(importer.index()))
+        if (!isLoadedWithRequests(importer))
             continue;
-        for (const ModuleRequestData& request : m_table.imports(importer)) {
-            ModuleID file = fileOf(request.targetModule());
-            if (!m_filesWhoseGraphHasBegun.set(file.index()))
-                toFollow.append(file);
-        }
+        for (const ModuleRequestData& request : m_table.imports(importer))
+            begins(fileOf(request.targetModule()));
     }
 }
 
@@ -2943,6 +2940,19 @@ bool Modules::isHeldForImport(ModuleID target) const
     });
 }
 
+void Modules::runDataFileAgainForImport(ModuleID file, ImportAnsweredBy answeredBy)
+{
+    LoadedModule* loaded = loadedIfExists(file);
+    if (data(file).kind != ModuleKind::Data || !loaded || !loaded->requiredValue || recordIfExists(file) || isMocked(file))
+        return;
+    if (answeredBy == ImportAnsweredBy::Build && !loaded->wasRequiredByHost && !isTestRun())
+        return;
+    if (status(file) != ModuleStatus::Evaluated || isHeldForImport(file))
+        return;
+    setStatus(file, ModuleStatus::Linked);
+    evaluateSynchronously(file, SynchronousEvaluationReason::Require);
+}
+
 bool Modules::wasImporterLoaded(ModuleID importer) const
 {
     if (status(importer) > ModuleStatus::Linked || (m_entryPointIsLinked && data(importer).isLinkedWithEntryPoint()))
@@ -3199,6 +3209,11 @@ JSValue Modules::answerRequire(ModuleID target, ModuleID referrer, RequiredBy re
     }
     if (!isAnsweredAsByLoader)
         loaded.requiredValue.set(*this, result);
+    loaded.wasRequiredByHost |= requiredBy == RequiredBy::Program;
+    if (!m_table.importsOfHeldFile(target).empty()) {
+        runDataFileAgainForImport(target, ImportAnsweredBy::Build);
+        RETURN_IF_EXCEPTION(scope, { });
+    }
     return answer(result);
 }
 
@@ -3243,6 +3258,12 @@ void Modules::evaluateCommonJS(ModuleID module)
 
 JSValue Modules::commonJSExports(ModuleID module) const
 {
+    stopWhereExportsLeaveCompiledCode(module);
+    return exportsGivenBackToCompiledCode(module);
+}
+
+JSValue Modules::exportsGivenBackToCompiledCode(ModuleID module) const
+{
     ASSERT(data(module).kind == ModuleKind::CommonJs);
     JSValue exports = data(module).hasValue() ? ProgramStatics::readVariable(m_instance, data(module).value) : JSValue();
     return exports ? exports : jsUndefined();
@@ -3272,7 +3293,7 @@ JSValue Modules::exportsSeenByLoader(ModuleID module)
 {
     LoadedModule* loaded = loadedIfExists(module);
     if (!loaded || !loaded->requirer || data(module).exportsStayInCompiledCode()) [[likely]]
-        return commonJSExports(module);
+        return exportsGivenBackToCompiledCode(module);
     return loaded->requirer->get(m_instance.globalObject, m_instance.vm->propertyNames->exports);
 }
 
@@ -3355,6 +3376,7 @@ JSObject* Modules::moduleObject(ModuleID module)
 
     ModuleObjects objects;
     if (data(module).kind == ModuleKind::CommonJs) {
+        stopWhereExportsLeaveCompiledCode(module);
         OptionSet<ModuleObjectTrait> traits;
         if (data(module).hasValue())
             traits.add(ModuleObjectTrait::HasExportsVariable);

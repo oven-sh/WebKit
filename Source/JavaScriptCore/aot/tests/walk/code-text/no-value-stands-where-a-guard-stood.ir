@@ -1,0 +1,20 @@
+# a test of the order word has one operand: the place of the guard behind it left the schema, with the kinds of operands Guard and Fact and the rule of Code that held such a place empty
+# RUN: verify-code
+# CHECK: IsNotFrozen takes fewer operands
+# -- code
+# code f0:Body {
+#   frame 0 callee=f0
+#   b0(v0: L0 @Cell) entry=0:
+#     v1: boolean @Boolean = IsNotFrozen v0 traits=[mayTouchMemory]
+#     v2: boolean @Boolean = IsNotFrozen v0, v1 traits=[mayTouchMemory]
+#     Return v0
+# }
+# -- end of code
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Box" fields=[{key="w" declared={type=anything}}]
+function f0 name="width" parameters=[{type=undefined|null|L0 flags=[IsExpected]}] results=[{type=anything}] {
+    v1 = PropGet v0 key="w"
+    Return v1
+}
+entry module=m0

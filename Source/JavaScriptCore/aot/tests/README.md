@@ -495,7 +495,8 @@ The other three take the section `code` and no argument.
 - `code-round-trip` takes the section through the parser and the printer. It prints the text, then `round trip: same` or
   `round trip: differs at line <n>`.
 - `verify-code` prints `verified`, or the kind of the stop and the first rule of Code that the section breaks.
-- `sweep-code` sweeps the Code and prints it, then `# visits of operations: <n>`.
+- `sweep-code` sweeps the Code and prints it, then `# visits of operations: <n>`. Where the swept Code holds a cell of the frame, the line
+  `# cells of the frame: verified` follows, or the kind of the stop and the first rule about such cells that the swept Code breaks.
 
 **Machine** (`AOTMachineTestCommands.cpp`). `machine/AOTMachinePrinter.h` shows the texts. They hold no address. These commands get the
 stand-in library, so they see one more module and one more function than the text has. Each unit starts with the line
@@ -593,13 +594,20 @@ process ends by name: `AOT: f2 at 715: the rows of effects of operation:CallDire
 those words of operand 0 are others behind it. This is a bug in Bun.`
 - Two doors: every call of a stub or of an operation of the run time, held to the row of the operation cut by that of the callee (`RuntimeCallEmitter::emitCall()`); every
   operation under the rules `Call`, `Builtin` and `Inline`, held to what the walk took for its effects (`Code::effectsBelievedOf()`).
-- Runs no other code: every unit counts its entries. Writes: the words of the operands that are cells, by heap, are hashed in front and behind. Throws nothing: whoever looks
-  for a handler asks whether such a call is under way; lack of memory, a full stack and a termination do not count. Does not collect: the heap's count of collections, which
+- Runs no other code: every unit counts its entries. Writes: the words of the operands that are cells, by heap, are hashed in front and behind. Throws nothing by rule (a row that
+  throws nothing, and one that throws for lack of memory alone): whoever looks for a handler asks whether such a call is under way; lack of memory, a full stack and a termination do not count. Does not collect: the heap's count of collections, which
   sees every allocation of the engine under `--slowPathAllocsBetweenGCs=1`.
 - It does not see: a write to what is no operand (a variable, a scope, a buffer of the caller), the named properties of an object of the engine, code that the interpreter
   runs, and whether a call of compiled code runs unknown code.
-- `testing=RowSaysLess:<Operation|RuntimeOperation|Stub|Builtin|Callee>/<row>/<RunsOtherCode|Throws|Collects|a heap>` lays one row false, for the red controls:
+- `testing=RowSaysLess:<Operation|RuntimeOperation|Stub|Builtin|Callee>/<row>/<RunsOtherCode|Throws|ThrowsByRule|Collects|a heap>` lays one row false, for the red controls:
   `answers/false-rows-of-effects-are-stopped-by-name.ir`.
+- **Its twin at build time**, in every build that verifies (`findOperationThatLinkHasNotCounted()`, `walk/AOTCompileUnit.cpp`): an operation of a `Body` whose own row is exact, that is one which calls
+  no unknown code, and which writes an observable heap, throws by rule or collects, in a function of which Link's effects say that it does not, stops the verifier: `f2 v12 (PutSlot) writes ObjectFields,
+  and Link's effects of the function say that it does not`. In every block against the effects of the function, in blocks that are not rare also against its effects given the arguments. What fills an
+  allocation of the unit is no write, as for Link. A closed operation's row is an upper bound and judges nothing: that is the net's. Nor is what an operator may throw judged: Link
+  (`addEffectsOfOperatorsLeftApart()`) and the walk (`effectsOfOperatorWithin()`) each have a rule for it over the same types, and the walk's is the wider: `undefined|string < "b"`. A hint (`family Hint`: `EndLifeOfCell`
+  and `ReleaseHint`) overwrites a cell whose life the unit itself ends, which no caller sees. The lie: `RowSaysLess:Summary/f2/ObjectFields`:
+  `answers/effects-by-link-that-say-less-than-the-body-stop-the-verifier.ir`.
 - `BUN_AOT_EFFECTS_NET_GOES_ON=1`: each false row is told once and the run goes on. With `aotCountsPath` the file lists `effects:<part>:<row>` for each part of a row that a
   call was held to, and `false-effects:` for each false one; `testaot list rows-of-effects` lists what there is to hold.
 

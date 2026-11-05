@@ -17,6 +17,7 @@
 #include "AOTJSONSerializerPlan.h"
 #include "AOTLayout.h"
 #include "AOTMechanisms.h"
+#include "AOTPromotedEnvironments.h"
 #include "AOTRepresentation.h"
 #include "AOTThreads.h"
 #include "FPRInfo.h"
@@ -357,6 +358,8 @@ Representation CallingConventions::parameterRepresentationByRole(const Program& 
         RELEASE_ASSERT(m_parts.formsOfEntryParameters.isEmpty());
         return boxedFormOfEntryParameter(program, program.at(unit.function), parameterIndex);
     case CodeRole::SlowBody:
+        if (formOfEntryParameterInConvention(m_parts, program, unit.function, parameterIndex) == Representation::Void)
+            return Representation::Void;
         return boxedFormOfEntryParameter(program, program.at(unit.function), parameterIndex);
     case CodeRole::GenericCallEntry:
     case CodeRole::GenericConstructEntry:
@@ -554,18 +557,32 @@ std::optional<Vector<CallEntryMove, 8>> planCallEntryMoves(const Program& progra
     return moves;
 }
 
-void CallingConventions::fuseCallEntriesThatOnlyMove(const Program& program, const ParallelLoops& loops)
+static bool entryByValueHasToAskForConventions(const Program& program, const Facts& facts, FunctionID id)
 {
-    uint32_t numberOfFunctions = this->numberOfFunctions();
-    Vector<uint8_t> isFused(FillWith { }, numberOfFunctions, static_cast<uint8_t>(0));
-    forEachIndexInParallel(loops, numberOfFunctions, [&](unsigned index) {
-        isFused[index] = !!planCallEntryMoves(program, *this, FunctionID(index));
-    });
-    m_functionsWithFusedCallEntry = BitVector(numberOfFunctions);
-    for (uint32_t index = 0; index < numberOfFunctions; ++index) {
-        if (isFused[index])
-            m_functionsWithFusedCallEntry.quickSet(index);
+    const Function& function = program.at(id);
+    bool takesWhatCallersLeave = id.index() < facts.linked().functions.size() && facts.linked().bodyTakesWhatCallersLeave(id);
+    for (unsigned index = 0; index < function.numberOfEntryParameters(); ++index) {
+        EntryParameter kind = function.entryParameterKind(index);
+        if ((kind == EntryParameter::This || kind == EntryParameter::Parameter) && (takesWhatCallersLeave || facts.typeOfEntryParameter(id, index).proven))
+            return true;
     }
+    return false;
+}
+
+void CallingConventions::fuseCallEntriesThatOnlyMove(const Program& program, const Facts& facts, const ParallelLoops& loops)
+{
+    static constexpr uint32_t functionsInRange = 256;
+    static_assert(!(functionsInRange % 64));
+    uint32_t numberOfFunctions = this->numberOfFunctions();
+    BitVector functionsWithFusedCallEntry(numberOfFunctions);
+    forEachIndexInParallel(loops, (numberOfFunctions + functionsInRange - 1) / functionsInRange, [&](unsigned range) {
+        uint32_t endOfRange = std::min(numberOfFunctions, (range + 1) * functionsInRange);
+        for (uint32_t index = range * functionsInRange; index < endOfRange; ++index) {
+            if (!entryByValueHasToAskForConventions(program, facts, FunctionID(index)) && planCallEntryMoves(program, *this, FunctionID(index)))
+                functionsWithFusedCallEntry.quickSet(index);
+        }
+    });
+    m_functionsWithFusedCallEntry = WTF::move(functionsWithFusedCallEntry);
 }
 
 static bool isRunTimeCodeForConventions(const Program& program, const Function& function)
@@ -607,7 +624,7 @@ static ConstructionThroughConvention constructionThroughConventionOf(const Progr
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static void chooseRolesOfConvention(const Program& program, const Facts& facts, FunctionID id, const BitVector& bodiesWithModuleStart, const BitVector& layoutsMadeAsCompiledObjects, FunctionConvention& convention)
+static void chooseRolesOfConvention(const Program& program, const Facts& facts, FunctionID id, const BitVector& layoutsMadeAsCompiledObjects, FunctionConvention& convention)
 {
     const Function& function = program.at(id);
     if (!function.hasBody() || !hasSourceBodyOf(function.role) || !canBeCalledByValueOf(function.role))
@@ -644,8 +661,32 @@ static void chooseRolesOfConvention(const Program& program, const Facts& facts, 
         add(CodeRole::CoroutineBody);
         convention.coroutineNeverSuspends = isAsyncFunctionInWhichNothingSuspends(program, facts, id);
     }
-    if (function.isModuleBody() && bodiesWithModuleStart.get(id.index()))
-        add(CodeRole::ModuleStart);
+}
+
+void CallingConventions::setModuleStarts(const Program& program, const BitVector& bodiesWithModuleStart)
+{
+    for (size_t index : bodiesWithModuleStart) {
+        FunctionConvention& convention = m_parts.conventions[index];
+        if (convention.has(CodeRole::Body) && program.functions[index].isModuleBody())
+            convention.roles |= bitOfRoleInConvention(CodeRole::ModuleStart);
+    }
+}
+
+void CallingConventions::setRemovedCaptures(const Program& program, const PromotedEnvironments& promoted)
+{
+    static_assert(!static_cast<unsigned>(EntryParameter::Capture));
+    if (promoted.removedCaptures.isEmpty())
+        return;
+    if (m_parts.formsOfEntryParameters.isEmpty()) {
+        for (uint32_t index = 0; index < numberOfFunctions(); ++index) {
+            FunctionConvention& convention = m_parts.conventions[index];
+            convention.firstEntryParameter = safeCast<uint32_t>(m_parts.formsOfEntryParameters.size());
+            for (unsigned entryParameter = 0; entryParameter < convention.numberOfEntryParameters; ++entryParameter)
+                m_parts.formsOfEntryParameters.append(boxedFormOfEntryParameter(program, program.functions[index], entryParameter));
+        }
+    }
+    for (const RemovedCapture& removed : promoted.removedCaptures)
+        m_parts.formsOfEntryParameters[m_parts.conventions[removed.function.index()].firstEntryParameter + removed.capture] = Representation::Void;
 }
 
 static Representation formOfResultProvenToBe(const Program& program, TypeID proven)
@@ -675,10 +716,10 @@ static bool tellsAbsentFromUndefinedInConvention(const Program& program, const D
     return written && (program.at(written).primitives & Primitive::Absent);
 }
 
-static void appendFormsOfEntryParameters(const Program& program, const Facts& facts, FunctionID id, bool mayTakeUnboxedNumbers, Vector<Representation>& forms)
+static void fillFormsOfEntryParameters(const Program& program, const Facts& facts, FunctionID id, bool mayTakeUnboxedNumbers, std::span<Representation> forms)
 {
     const Function& function = program.at(id);
-    unsigned numberOfEntryParameters = function.numberOfEntryParameters();
+    unsigned numberOfEntryParameters = static_cast<unsigned>(forms.size());
     unsigned firstPositionalParameter = function.firstParameterIndex();
     unsigned numberOfPositionalParameters = function.numberOfPositionalParameters();
     for (unsigned index = 0; index < numberOfEntryParameters; ++index) {
@@ -686,7 +727,7 @@ static void appendFormsOfEntryParameters(const Program& program, const Facts& fa
         bool isPositional = index >= firstPositionalParameter && index - firstPositionalParameter < numberOfPositionalParameters;
         if (mayTakeUnboxedNumbers && isPositional && form == Representation::JSValue && !tellsAbsentFromUndefinedInConvention(program, function.parameters[index - firstPositionalParameter]))
             form = formOfParameterProvenToBe(program, facts.typeOfEntryParameter(id, index).proven);
-        forms.append(form);
+        forms[index] = form;
     }
 }
 
@@ -717,8 +758,9 @@ static void boxResultsThatNobodyTakesRaw(const LinkTables& linked, BitVector& fu
     }
 }
 
-CallingConventions computeCallingConventions(const Program& program, const Facts& facts, const BitVector& bodiesWithModuleStart, const BitVector& layoutsMadeAsCompiledObjects)
+CallingConventions computeCallingConventions(const Program& program, const Facts& facts, const BitVector& layoutsMadeAsCompiledObjects, const ParallelLoops& loops)
 {
+    static_assert(!(indicesInRangeOfLoop % 64));
     bool unboxesNumbers = facts.mechanisms().containsAll({ Mechanism::UnboxedNumbers, Mechanism::Arrivals });
     const LinkTables& linked = facts.linked();
     bool returnsRawValues = unboxesNumbers && linked.functions.size() == program.functions.size();
@@ -726,32 +768,48 @@ CallingConventions computeCallingConventions(const Program& program, const Facts
 
     CallingConventionParts parts;
     parts.conventions.fill(FunctionConvention { }, numberOfFunctions);
-    BitVector functionsThatReturnRawValues(numberOfFunctions);
+    size_t numberOfResults = 0;
+    size_t numberOfEntryParameters = 0;
     for (uint32_t index = 0; index < numberOfFunctions; ++index) {
-        FunctionID id(index);
-        const Function& function = program.at(id);
+        const Function& function = program.functions[index];
         FunctionConvention& convention = parts.conventions[index];
         convention.numberOfEntryParameters = safeCast<uint16_t>(function.numberOfEntryParameters());
         convention.numberOfResults = safeCast<uint16_t>(function.results.size());
-        convention.firstResult = safeCast<uint32_t>(parts.formsOfResults.size());
-        chooseRolesOfConvention(program, facts, id, bodiesWithModuleStart, layoutsMadeAsCompiledObjects, convention);
-        convention.borrowedArguments = argumentsThatEntryOnlyCalls(program, facts, id, convention);
-
-        for (const DeclaredType& result : function.results)
-            parts.formsOfResults.append(boxedFormOfDeclaredPosition(program, result));
-        if (returnsRawValues && convention.has(CodeRole::Body) && mayReturnInFormOfItsOwn(function) && parts.formsOfResults.last() == Representation::JSValue) {
-            const LinkedFunction& proven = linked.function(id);
-            if (proven.everyCallHasOneCallee && proven.ringsOfTailCallsAreListed)
-                parts.formsOfResults.last() = formOfResultProvenToBe(program, proven.result);
-            if (parts.formsOfResults.last() != Representation::JSValue)
-                functionsThatReturnRawValues.quickSet(index);
-        }
+        convention.firstResult = safeCast<uint32_t>(numberOfResults);
+        numberOfResults += convention.numberOfResults;
         if (!unboxesNumbers)
             continue;
-        bool mayTakeUnboxedNumbers = convention.has(CodeRole::Body) && facts.everyCallerIsKnown(id) && !convention.takesArgumentsInBuffer && !function.isCoroutine();
-        convention.firstEntryParameter = safeCast<uint32_t>(parts.formsOfEntryParameters.size());
-        appendFormsOfEntryParameters(program, facts, id, mayTakeUnboxedNumbers, parts.formsOfEntryParameters);
+        convention.firstEntryParameter = safeCast<uint32_t>(numberOfEntryParameters);
+        numberOfEntryParameters += convention.numberOfEntryParameters;
     }
+    parts.formsOfResults.fill(Representation::JSValue, numberOfResults);
+    parts.formsOfEntryParameters.fill(Representation::JSValue, numberOfEntryParameters);
+
+    BitVector functionsThatReturnRawValues(numberOfFunctions);
+    forEachRangeOfIndicesInParallel(loops, numberOfFunctions, [&](size_t firstFunction, size_t endOfFunctions) {
+        for (size_t index = firstFunction; index < endOfFunctions; ++index) {
+            FunctionID id(static_cast<uint32_t>(index));
+            const Function& function = program.at(id);
+            FunctionConvention& convention = parts.conventions[index];
+            chooseRolesOfConvention(program, facts, id, layoutsMadeAsCompiledObjects, convention);
+            convention.borrowedArguments = argumentsThatEntryOnlyCalls(program, facts, id, convention);
+
+            std::span<Representation> formsOfResults = parts.formsOfResults.mutableSpan().subspan(convention.firstResult, convention.numberOfResults);
+            for (size_t result = 0; result < formsOfResults.size(); ++result)
+                formsOfResults[result] = boxedFormOfDeclaredPosition(program, function.results[result]);
+            if (returnsRawValues && convention.has(CodeRole::Body) && mayReturnInFormOfItsOwn(function) && formsOfResults.back() == Representation::JSValue) {
+                const LinkedFunction& proven = linked.function(id);
+                if (proven.everyCallHasOneCallee && proven.ringsOfTailCallsAreListed)
+                    formsOfResults.back() = formOfResultProvenToBe(program, proven.result);
+                if (formsOfResults.back() != Representation::JSValue)
+                    functionsThatReturnRawValues.quickSet(index);
+            }
+            if (!unboxesNumbers)
+                continue;
+            bool mayTakeUnboxedNumbers = convention.has(CodeRole::Body) && facts.everyCallerIsKnown(id) && !convention.takesArgumentsInBuffer && !function.isCoroutine();
+            fillFormsOfEntryParameters(program, facts, id, mayTakeUnboxedNumbers, parts.formsOfEntryParameters.mutableSpan().subspan(convention.firstEntryParameter, convention.numberOfEntryParameters));
+        }
+    });
     boxResultsThatNobodyTakesRaw(linked, functionsThatReturnRawValues, parts);
     planSerializers(parts, program, facts);
     return CallingConventions(WTF::move(parts));

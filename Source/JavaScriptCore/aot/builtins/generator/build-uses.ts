@@ -264,11 +264,7 @@ function createOperandState(parameter: ModelParameter): OperandState {
 
 function finishParameter(state: OperandState): ModelParameter {
   const uses = new Set(state.uses);
-  if (state.readsOwnValuesByKey) {
-    const walksOwnValues = state.protocols.has("OwnValues") || state.protocolsOfContents.has("OwnValues");
-    if (!walksOwnValues) state.roles.add("OwnValuesAreReadByKeyOnly");
-    state.protocols.add("OwnValues");
-  }
+  if (state.readsOwnValuesByKey) state.protocols.add("OwnValues");
   if (state.protocolsOfContents.size > 0) {
     const runsOnOperand = state.protocols.size > 0 || uses.has("AppliesTransitively");
     uses.add(runsOnOperand ? "AppliesTransitively" : "AppliesToContents");

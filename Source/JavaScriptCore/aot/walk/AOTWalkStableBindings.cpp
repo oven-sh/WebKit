@@ -13,9 +13,7 @@
 #include "AOTMemoryLocation.h"
 #include "AOTOpcodeSets.h"
 #include "AOTSweep.h"
-#include "AOTThinSummary.h"
 #include "AOTWalkKnown.h"
-#include <bit>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -88,30 +86,6 @@ static bool hasDeadZone(const Walker& walker, FieldReference field)
 {
     TypeID written = walker.program().at(field.layout).fields[field.field].declared.written();
     return written && (walker.program().at(written).primitives & Primitive::Absent);
-}
-
-Reference literalHeldByFilledVariable(Walker& walker, VariableID variable)
-{
-    if (!keepsNotesOfStableBindings(walker) || !variableStaysAsFilled(walker, variable))
-        return { };
-    const LiteralOfVariable* literal = walker.facts().summaries().findLiteralOfVariable(variable);
-    if (!literal)
-        return { };
-    Draft constant(literal->opcode);
-    switch (literal->opcode) {
-    case Opcode::Integer:
-        constant.setInteger(static_cast<int64_t>(literal->bits));
-        break;
-    case Opcode::Double:
-        constant.setNumber(std::bit_cast<double>(literal->bits));
-        break;
-    case Opcode::Boolean:
-        constant.setBoolean(!!literal->bits);
-        break;
-    default:
-        return { };
-    }
-    return walker.constant(WTF::move(constant));
 }
 
 void noteValueOfStableBinding(Walker& walker, VariableID variable, Reference value)

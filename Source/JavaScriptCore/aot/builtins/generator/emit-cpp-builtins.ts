@@ -1,5 +1,5 @@
 import { GeneratorError, Problems } from "./declarations.ts";
-import { collectArrayDeclarations, namesOfNativeAccessors } from "./emit-cpp-ids.ts";
+import { collectArrayDeclarations } from "./emit-cpp-ids.ts";
 import { textNamesArray, textNameSlotsArray } from "./emit-cpp-names.ts";
 import {
   checkDenseIds,
@@ -24,7 +24,6 @@ import {
   type ModelClass,
   type ModelClosedKeys,
   type ModelFunction,
-  type ModelHostRead,
   type ModelLayout,
   type ModelLayoutField,
   type ModelModule,
@@ -82,8 +81,6 @@ const attachmentSpans: readonly SpanMember[] = [
   ["calledFunctions", "builtinTableCalledFunctions"],
   ["startupCalledFunctions", "builtinTableStartupCalledFunctions"],
   ["hostObjects", "builtinTableHostObjects"],
-  ["namedMemberCalls", "builtinTableNamedMemberCalls"],
-  ["hostMethodCalls", "builtinTableHostMethodCalls"],
   ["forms", "builtinTableForms"],
   ["boxedCalls", "builtinTableBoxedCalls"],
   ["numberConstants", "builtinTableNumberConstants"],
@@ -98,13 +95,11 @@ const runtimeSpans: readonly SpanMember[] = [
   ["functionsCalledWithStartupLoads", "builtinTableFunctionsCalledWithStartupLoads"],
   ["namesOfHostMethodsCallingStartupLoads", "builtinTableNamesOfHostMethodsCallingStartupLoads"],
   ["moduleLoaderFunctions", "builtinTableModuleLoaderFunctions"],
-  ["hostReads", "builtinTableHostReads"],
   ["lockedObjects", "builtinTableLockedObjects"],
   ["marks", "builtinTableMarks"],
   ["loadersOfMachineCode", "builtinTableLoadersOfMachineCode"],
   ["closedKeys", "builtinTableClosedKeys"],
   ["namesReadByNativeCode", "builtinTableNamesReadByNativeCode"],
-  ["namesOfNativeAccessors", "builtinTableNamesOfNativeAccessors"],
 ];
 
 function checkAscendingIds(cppType: string, items: readonly { id: number }[], problems: Problems): void {
@@ -311,16 +306,6 @@ function formatFunction(runtimeFunction: ModelFunction, implementedBuiltins: Poo
   ]);
 }
 
-function formatHostRead({ context, exportName, use }: ModelHostRead): string {
-  return formatAggregate([
-    ["context", formatUnlessDefault("BuiltinHostReadContext", context, "EntryPoint")],
-    ["exportName", formatName(exportName)],
-    ["use", formatUnlessDefault("BuiltinHostReadUse", use.read, "Inspected")],
-    ["passedTo", formatId("BuiltinID", use.read === "PassedTo" ? use.builtin : null)],
-    ["argumentIndex", use.read === "PassedTo" ? formatUnlessZero(use.argument) : null],
-  ]);
-}
-
 function formatClosedKeys({ holder, keys, openNames }: ModelClosedKeys, closedKeyNames: Pool): string {
   return formatAggregate([
     ["holder", formatId("BuiltinID", holder)],
@@ -470,7 +455,6 @@ export function emitCppBuiltins(model: TableModel): string {
       "builtinTableModuleLoaderFunctions",
       startup.moduleLoaderFunctions.map(runtimeFunction => formatId("RuntimeFunctionID", runtimeFunction)),
     ),
-    emitTableArray(arrays, "builtinTableHostReads", model.hostReads.map(formatHostRead)),
     emitTableArray(arrays, "builtinTableLockedObjects", formatBuiltinIds(model.builtins.filter(isLockedObject))),
     emitTableArray(
       arrays,
@@ -509,11 +493,6 @@ export function emitCppBuiltins(model: TableModel): string {
       arrays,
       "builtinTableNamesReadByNativeCode",
       model.namesReadByNativeCode.map(read => formatNamesReadByNativeCode(read, namesReadByNativeCode)),
-    ),
-    emitTableArray(
-      arrays,
-      "builtinTableNamesOfNativeAccessors",
-      namesOfNativeAccessors(model).map(name => formatName(name)),
     ),
   ];
   const body = joinBlocks([

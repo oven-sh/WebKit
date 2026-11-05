@@ -97,8 +97,6 @@ using ExpectedResultID = ID<struct ExpectedResultIDTag>;
 
 using LayoutSetID = ID<struct LayoutSetIDTag>;
 using CalleeSetID = ID<struct CalleeSetIDTag>;
-using AccessSiteID = ID<struct AccessSiteIDTag>;
-using AllocationClassID = ID<struct AllocationClassIDTag>;
 using RegExpRecordID = ID<struct RegExpRecordIDTag>;
 
 } } } // namespace JSC::AOT::Typed

@@ -1,8 +1,9 @@
 # function stored(k, look) { const map = new Map(); look(map); const old = map.get(k); map.set(k, 1); return [old]; }
 # The receiver is proven a Map, and code that nobody has seen may have hidden `get` under a property of its own or laid the map below something else.
 # The read and the call stay as they are written, and are one call of a stub with the name, as ever. The walk names what a map as its class makes it finds under the name,
-# so the stub is the one of that method: it looks at the cell, its type and the bit that says that the object is as it was made, and goes straight on to the code of the built-in:
+# so the stub is the one of that method: it looks at the bit that says that the object is as it was made, and goes straight on to the code of the built-in:
 # no words at the site, no look at the callee, no search for its boxed form. Whatever misses goes on to the call by name.
+# That it is a cell, and one of a Map, is proven: the stub is entered behind its two tests of that.
 # RUN: walk f1 mechanisms=all
 # CHECK-LABEL: code f1:Body
 # CHECK: = Call {{*}}calleeKey="get" {{*}}methodOfReceiverAsMade=MapPrototypeGet
@@ -10,11 +11,11 @@
 # RUN(BYTES): bytes f1:Body mechanisms=all
 # BYTES-LABEL: unit f1:Body
 # BYTES-NOT: Stub CallMethodAtSite
-# BYTES: Stub CallMethodOfBuiltinClass.MapGet count 1
+# BYTES: Stub CallMethodOfProvenBuiltinClass.MapGet count 1
 # BYTES-NOT: Stub CallMethodAtSite
-# BYTES: Stub CallMethodOfBuiltinClass.MapSet count 2
+# BYTES: Stub CallMethodOfProvenBuiltinClass.MapSet count 2
 # RUN(WITHHELD): bytes f1:Body mechanisms=all-BuiltinCalls
-# WITHHELD-NOT: CallMethodOfBuiltinClass
+# WITHHELD-NOT: BuiltinClass.Map
 # It answers as the call by name does, whatever the map has become.
 # RUN(ANSWERS): run-in-shell globalThis.sink = stored => { print(stored(1, map => { map.set(1, "a"); })); print(stored(1, map => { map.get = () => "own"; })); print(stored(1, map => { Object.setPrototypeOf(map, { get() { return "moved"; }, set() { } }); })); print(stored(1, map => { map.extra = 1; map.set(1, "b"); })); };
 # ANSWERS: a

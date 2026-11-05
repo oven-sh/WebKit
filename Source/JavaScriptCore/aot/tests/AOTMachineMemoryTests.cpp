@@ -183,7 +183,7 @@ static void checkIndexedAccessInMemoryTest(const MemoryTestKind& kind, unsigned 
         indexValue = out.zeroExtPtr(out.castToInt32(indexValue));
         break;
     case IndexExtension::SignExtend32:
-        indexValue = out.signExt32ToPtr(out.castToInt32(indexValue));
+        indexValue = out.signExt32To64(out.castToInt32(indexValue));
         break;
     }
     LValue address = out.add(base, out.shl(indexValue, shift));

@@ -163,10 +163,37 @@ static bool crossesStraightCall(const ArgumentLocation& location)
 
 static TypeID typeAskedOfOperandOfStraightCall(StraightEmitter& emitter, FunctionID callee, size_t entryParameter, const ArgumentLocation& location)
 {
-    if (location.kind == ArgumentLocation::Kind::None || (location.representation != Representation::Int32 && location.representation != Representation::Double && location.representation != Representation::Boolean))
+    if (location.kind == ArgumentLocation::Kind::None)
         return { };
-    TypeID promised = emitter.facts().typeOfEntryParameter(callee, static_cast<uint32_t>(entryParameter)).proven;
-    return promised ? emitter.types().testablePartOf(promised) : widestTypeOf(location.representation);
+    bool isUnboxed = location.representation == Representation::Int32 || location.representation == Representation::Double || location.representation == Representation::Boolean;
+    if (!isUnboxed && location.representation != Representation::JSValue && location.representation != Representation::Cell)
+        return { };
+    uint32_t index = static_cast<uint32_t>(entryParameter);
+    TypeID promised = emitter.facts().typeBelievedOfEntryParameter(emitter.types(), callee, index, emitter.facts().typeOfEntryParameter(callee, index).proven);
+    if (promised && !emitter.types().at(promised).isJavaScriptValue())
+        promised = { };
+    if (!promised)
+        return isUnboxed ? widestTypeOf(location.representation) : TypeID();
+    return emitter.types().testablePartOf(promised);
+}
+
+static bool constantIsOfTypeAskedOfStraightCall(StraightEmitter& emitter, JSValue constant, TypeID asked)
+{
+    uint16_t primitives = holdsOnlyPrimitives(asked) ? primitivesInID(asked) : emitter.types().recordOf(asked).primitives;
+    if (!constant)
+        return primitives & Primitive::Absent;
+    if (constant.isUndefined())
+        return primitives & Primitive::Undefined;
+    return constant.isInt32() && (primitives & Primitive::Integer);
+}
+
+static bool canAskOperandOfStraightCall(StraightEmitter& emitter, TypeID asked)
+{
+    if (!emitter.canTestType(asked))
+        return false;
+    return !emitter.facts().testMentionsWhatIsOutOfReach(emitter.types(), asked, scopedLambda<bool(FunctionID)>([&](FunctionID named) {
+        return emitter.facts().linked().mayBeMentionedBy(emitter.unit(), named);
+    }));
 }
 
 static void testOperandsOfStraightCall(StraightEmitter& emitter, const BodyValue& call, FunctionID callee, std::span<const StraightArgument> operands, const ArgumentLocations& locations)
@@ -198,7 +225,7 @@ static std::optional<DirectCallInStraightForm> planStraightDirectCall(StraightEm
         const ArgumentLocation& location = call.locations.parameters[index];
         if (!crossesStraightCall(location) || (location.kind != ArgumentLocation::Kind::None && !arguments[index]))
             return std::nullopt;
-        if (TypeID asked = typeAskedOfOperandOfStraightCall(emitter, callee.function, index, location); asked && !emitter.canTestType(asked))
+        if (TypeID asked = typeAskedOfOperandOfStraightCall(emitter, callee.function, index, location); asked && !canAskOperandOfStraightCall(emitter, asked))
             return std::nullopt;
     }
     for (const ArgumentLocation& result : call.locations.results) {
@@ -367,11 +394,14 @@ static std::optional<DirectCallInStraightForm> planStraightCallOfOnlyCallee(Stra
         if (operands[place].kind == StraightArgument::Kind::Value) {
             if (!operands[place].value)
                 return std::nullopt;
-            if (TypeID asked = typeAskedOfOperandOfStraightCall(emitter, only, place, location); asked && !emitter.canTestType(asked))
+            if (TypeID asked = typeAskedOfOperandOfStraightCall(emitter, only, place, location); asked && !canAskOperandOfStraightCall(emitter, asked))
                 return std::nullopt;
             continue;
         }
-        bool isInt32 = JSValue::decode(static_cast<EncodedJSValue>(operands[place].bits)).isInt32();
+        JSValue constant = JSValue::decode(static_cast<EncodedJSValue>(operands[place].bits));
+        if (TypeID asked = typeAskedOfOperandOfStraightCall(emitter, only, place, location); asked && !constantIsOfTypeAskedOfStraightCall(emitter, constant, asked))
+            return std::nullopt;
+        bool isInt32 = constant.isInt32();
         if (location.kind != ArgumentLocation::Kind::GPR || (location.representation != Representation::JSValue && !(location.representation == Representation::Int32 && isInt32)))
             return std::nullopt;
     }

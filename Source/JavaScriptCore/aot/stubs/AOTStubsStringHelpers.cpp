@@ -92,12 +92,13 @@ static void loadZeroExtended(StubAssembler& jit, unsigned width, auto address, G
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static void forEachWordCovering(StubAssembler& jit, std::initializer_list<GPRReg> starts, GPRReg size, const auto& visit)
+static void forEachWordCovering(StubAssembler& jit, std::initializer_list<GPRReg> starts, GPRReg size, const auto& visit, StartsOfEqualBytes startsOfEqualBytes = StartsOfEqualBytes::EndAnywhere)
 {
     auto atStart = [](GPRReg bytes) {
         return Address(bytes);
     };
     JumpList isDone;
+    JumpList isDoneWithStartsInPlace;
 
     constexpr int32_t wordSize = sizeof(uint64_t);
     Jump isShorter = jit.branch32(CCallHelpers::Below, size, TrustedImm32(wordSize));
@@ -124,16 +125,21 @@ static void forEachWordCovering(StubAssembler& jit, std::initializer_list<GPRReg
         visit(width, [&](GPRReg bytes) {
             return BaseIndex(bytes, size, CCallHelpers::TimesOne, -width);
         });
-        isDone.append(jit.jump());
+        isDoneWithStartsInPlace.append(jit.jump());
     }
 
     isShorter.link(&jit);
     isDone.append(jit.branchTest32(CCallHelpers::Zero, size));
     visit(1, atStart);
+    isDoneWithStartsInPlace.link(&jit);
+    if (startsOfEqualBytes == StartsOfEqualBytes::EndBehindBytes) {
+        for (GPRReg start : starts)
+            jit.addPtr(size, start);
+    }
     isDone.link(&jit);
 }
 
-void branchIfBytesDiffer(StubAssembler& jit, const ComparedBytes& compared, JumpList& differ, DifferingWords differingWords)
+void branchIfBytesDiffer(StubAssembler& jit, const ComparedBytes& compared, JumpList& differ, DifferingWords differingWords, StartsOfEqualBytes startsOfEqualBytes)
 {
     auto [first, second, size, firstWord, secondWord] = compared;
     RELEASE_ASSERT(noOverlap(first, second, size, firstWord, secondWord));
@@ -147,7 +153,7 @@ void branchIfBytesDiffer(StubAssembler& jit, const ComparedBytes& compared, Jump
 #endif
         loadZeroExtended(jit, width, addressIn(second), secondWord);
         differ.append(jit.branch64(CCallHelpers::NotEqual, firstWord, secondWord));
-    });
+    }, startsOfEqualBytes);
     UNUSED_PARAM(differingWords);
 }
 

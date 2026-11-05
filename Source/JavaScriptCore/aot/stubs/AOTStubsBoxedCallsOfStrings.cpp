@@ -42,7 +42,7 @@ static bool isFormOfStringSubstr(uint8_t form)
 static void checkRealmOfCalleeOfString(StubAssembler& jit, GPRReg scratch, JumpList& callsHostFunction)
 {
     StubFamily family = jit.key().family();
-    if (family == StubFamily::CallMethodOfBuiltinClass || family == StubFamily::TryCallMethodOfBuiltinClass || family == StubFamily::CallMethodOfBuiltinClassWithSharedPattern)
+    if (family == StubFamily::CallMethodOfBuiltinClass || family == StubFamily::TryCallMethodOfBuiltinClass || family == StubFamily::CallMethodOfBuiltinClassWithSharedPattern || family == StubFamily::CallMethodThatMayBeUnread)
         return;
     jit.loadPtr(Address(calleeGPR, JSCallee::offsetOfScopeChain()), scratch);
     callsHostFunction.append(jit.branchPtr(CCallHelpers::NotEqual, scratch, Address(instanceGPR, AOT_INSTANCE_OFFSET(globalObject))));

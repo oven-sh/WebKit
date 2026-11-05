@@ -31,6 +31,7 @@ public:
 
     virtual TypeID variable(TypeLevel, VariableID) const = 0;
     virtual TypeID environmentField(TypeLevel, LayoutID, uint32_t field) const = 0;
+    virtual bool environmentLiesAmongVariables(LayoutID) const { return false; }
     virtual TypeID slot(TypeLevel, LayoutID, uint32_t field) const = 0;
     virtual TypeID readOfSlot(TypeLevel, LayoutID, uint32_t) const { return { }; }
     virtual TypeID halfOfAccessorOfField(TypeLevel, LayoutID, uint32_t, bool) const { return { }; }
@@ -225,20 +226,7 @@ LayoutSetID layoutsSelectedByNewTarget(const TypingContext&, LayoutID written, T
 
 FunctionID onlyCalleeOf(const TypingContext&, TypeID callee);
 
-enum class ConvertStep : uint8_t {
-    Nothing,
-    Test,
-    TakeAsFact,
-};
-
-struct ConvertResolution {
-    ConvertStep step { ConvertStep::Nothing };
-    TypeID target;
-    TypeID tested;
-};
-
 TypeID targetOfConvert(const TypingContext&, const DeclaredType&);
-ConvertResolution resolveConvert(const TypingContext&, TypeID proven, const DeclaredType&);
 TypeID tryTypeWrittenAbove(const TypingContext&, LayoutID, PropertyKeyID);
 bool changesCodeWhereProven(const TypeArena&, TypeID tested);
 bool describesBagOfOptions(const TypeArena&, TypeID written);

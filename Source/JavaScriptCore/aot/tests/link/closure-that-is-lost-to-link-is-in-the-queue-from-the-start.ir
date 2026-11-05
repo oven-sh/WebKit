@@ -1,6 +1,7 @@
 # Link no longer tells two closures apart that have met. A caller may: it folds a branch, it knows what a slot holds. What it has proven of its argument is proven of the parameter, so the callee may mention one of the two.
 # Which, nobody lists. So no referrer stands for that: all that is made of the bodies of lost functions is in the queue from the start, and `pass`, at whose parameter they arrive, leads to neither.
-# function a() {}  function b() {}  function pass(f) { return f; }  pass(a); pass(b);
+# function a() {}  function b() {}  function pass(f) { return f; }  pass(a); pass(b)();
+# One of them is called: functions that have met and that nobody calls are not reached (functions-that-met-and-are-never-called-are-not-reached.ir).
 # RUN: link functions mechanisms=all
 # CHECK: function f1 {{*}} in-queue-from-start
 # CHECK: referrers f0
@@ -18,8 +19,9 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v2 = NewClosure function=f3
     v3 = Call v2, -, v0 calleeName="pass"
     v4 = Call v2, -, v1 calleeName="pass"
-    v5 = Undefined
-    Return v5
+    v5 = Call v4, -
+    v6 = Undefined
+    Return v6
 }
 function f1 name="a" module=m0 thisType={type=anything} results=[{type=anything}] {
   b0():

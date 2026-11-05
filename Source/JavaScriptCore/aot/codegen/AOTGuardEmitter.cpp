@@ -91,7 +91,11 @@ CellPointer GuardEmitter::untestedCell(const OperationContext& context, ValueID 
 
 CellPointer GuardEmitter::cellOrElse(const OperationContext& context, ValueID id, BlockEdge isNotCell)
 {
-    const Type& type = typeOf(id);
+    return cellOrElse(context, id, typeOf(id), isNotCell);
+}
+
+CellPointer GuardEmitter::cellOrElse(const OperationContext& context, ValueID id, const Type& type, BlockEdge isNotCell)
+{
     if (representationOf(id) == Representation::JSValue && (type.primitives & ~cellPrimitives)) {
         LBasicBlock isCellBlock = newBlock();
         m_out.branch(isPresentCell(in<Boxed>(id), type).value(), normalEdge(isCellBlock), isNotCell);
@@ -103,7 +107,8 @@ CellPointer GuardEmitter::cellOrElse(const OperationContext& context, ValueID id
 void GuardEmitter::generateShapeTest(const ValueContext& value)
 {
     ValueID object = value->objectOperand();
-    bool asksForInstance = !hasOneInstance() && !holdsOnlyCompiledObjects(types(), m_plan, typeOf(object));
+    const Type& known = value->asksInFull() ? types().at(TypeTable::anythingOrAbsent) : typeOf(object);
+    bool asksForInstance = !hasOneInstance() && !holdsOnlyCompiledObjects(types(), m_plan, known);
     MarkedObjects marked = value->refusesMarkedObjects() ? MarkedObjects::AreRefused : MarkedObjects::Pass;
     defineTestByBranching(value, [&](BranchTargets targets) {
         BranchTargets targetsOfShape = targets;
@@ -112,8 +117,8 @@ void GuardEmitter::generateShapeTest(const ValueContext& value)
             hasShape = newBlock();
             targetsOfShape = { normalEdge(hasShape), targets.notTaken };
         }
-        CellPointer cell = cellOrElse(value, object, targets.notTaken);
-        emitter<ShapeTestEmitter>().branchOnShapeIn(cell, value->layouts(), typeOf(object), targetsOfShape, marked);
+        CellPointer cell = cellOrElse(value, object, known, targets.notTaken);
+        emitter<ShapeTestEmitter>().branchOnShapeIn(cell, value->layouts(), known, targetsOfShape, marked);
         if (!asksForInstance)
             return;
         m_out.appendTo(hasShape);
@@ -430,7 +435,7 @@ void GuardEmitter::generateIsClosureOf(const ValueContext& value)
             return;
         }
         m_out.clearDeclaredAccesses();
-        emitter<ClosureTestEmitter>().branchOnIsClosureOf(cell, function, tested, targets);
+        emitter<ClosureTestEmitter>().branchOnIsClosureOf(cell, function, targets);
     });
 }
 

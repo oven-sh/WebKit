@@ -276,6 +276,20 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTBuiltinCell, JSCell*, (Instance* i
     OPERATION_RETURN(scope, cell);
 }
 
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTMethodCalledBoxed, JSCell*, (Instance* instance, uint32_t form))
+{
+    AOT_OPERATION_BEGIN_WITHOUT_COLLECTION(instance, Entry::operationAOTMethodCalledBoxed);
+    const BuiltinTable& table = BuiltinTable::singleton();
+    JSCell* method = nullptr;
+    for (uint32_t index = 0; index < table.builtinCount() && !method; ++index) {
+        BuiltinID builtin(index);
+        if (table.canonicalID(builtin) == builtin && table.boxedCallStubOf(builtin) == static_cast<BuiltinBoxedStub>(form))
+            method = instance->state->builtinCells->findObject(builtin);
+    }
+    RELEASE_ASSERT(method);
+    OPERATION_RETURN(scope, method);
+}
+
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTBigIntConstant, EncodedJSValue, (Instance* instance, uint32_t index))
 {
     AOT_OPERATION_BEGIN_WITHOUT_COLLECTION(instance, Entry::operationAOTBigIntConstant);

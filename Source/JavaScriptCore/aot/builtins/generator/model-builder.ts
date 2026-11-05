@@ -18,13 +18,11 @@ import {
   type ModelDispatch,
   type ModelEngineFile,
   type ModelFunction,
-  type ModelHostMethodCall,
   type ModelHostObject,
   type ModelHostRead,
   type ModelLayout,
   type ModelModule,
   type ModelName,
-  type ModelNamedMemberCall,
   type ModelNamesReadByNativeCode,
   type ModelOverload,
   type ModelPrototype,
@@ -193,8 +191,6 @@ export class ModelBuilder {
   readonly hostClassRoles: { name: ClassName; source: Source }[] = [];
   unfilledHostRoles: { path: BuiltinPath; class: ClassName; source: Source } | null = null;
   hostObjects: ModelHostObject[] = [];
-  namedMemberCalls: ModelNamedMemberCall[] = [];
-  hostMethodCalls: ModelHostMethodCall[] = [];
   checkedNumbers: ModelBound[] = [];
   startup: ModelStartup = {
     modules: [],

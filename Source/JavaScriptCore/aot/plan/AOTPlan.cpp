@@ -47,20 +47,20 @@ static_assert(unorderedOrderWord == orderWordOf(0, 0));
 static_assert(representsAbsentAsZero(SlotRepresentation::JSValue) && traitsOf(SlotRepresentation::JSValue).undefinedBits);
 
 Vector<ClosureForm> chooseClosureForms(const Program&, const LinkTables&);
-SlotPlanParts computeSlotPlanParts(Program&, const Facts&, BuildContext&);
-void holdDoorsToProofsInSlotPlan(Program&, const Facts&, SlotPlanParts&);
-ShapeTable computeShapeTable(const Program&, const LinkTables&, const SlotPlan&, LayoutID closureLayout, std::span<const uint32_t> orderOfLayouts);
-KeyOrders computeKeyOrders(const Program&, const LinkTables&, const ThinSummaries&, const BodyIndexTable&, Mechanisms, const SlotPlan&, BuildContext&);
+StorageOfLayouts chooseStorageOfLayouts(const Program&, const LinkTables&, const ParallelLoops&);
+SlotPlanParts computeSlotPlanParts(Program&, const Facts&, BuildContext&, const StorageOfLayouts&, KeyOrders&, PromotedEnvironments&);
+void holdDoorsToProofsInSlotPlan(Program&, const Facts&, const ParallelLoops&, SlotPlanParts&);
+ShapeTable computeShapeTable(const Program&, const LinkTables&, const StorageOfLayouts&, LayoutID closureLayout, std::span<const uint32_t> orderOfLayouts);
 Vector<ParameterGuardPlan> planParameterGuards(Program&, const Facts&, const Plan&, BuildContext&);
 void finishMethodTableForUnions(Program&, const Facts&, Plan&);
 
-static MethodTablePlan planMethodTable(const Program& program, const Facts& facts, const Plan& plan)
+static MethodTablePlan planMethodTable(const Program& program, const Facts& facts, const CallingConventions& conventions, const StorageOfLayouts& storage, const BitVector& layoutsWithClassRecord)
 {
     MethodTablePlan table;
     if (!facts.mechanisms().contains(Mechanism::DirectCalls))
         return table;
     const LinkTables& linked = facts.linked();
-    const CallingConventions& conventions = plan.conventions();
+
 
     Vector<uint8_t> numbersOfArgumentsPassedUnderKey;
     numbersOfArgumentsPassedUnderKey.fill(0, program.types.numberOfPropertyKeys());
@@ -95,7 +95,7 @@ static MethodTablePlan planMethodTable(const Program& program, const Facts& fact
     for (uint32_t index = 0; index < program.layouts.size(); ++index) {
         LayoutID layout(index);
         const Layout& record = program.layouts[index];
-        if (record.kind != LayoutKind::Instance || record.has(LayoutFlags::IsConstructorFunction) || !isFoundByShapeTest(record) || !plan.isInUse(layout) || !plan.hasClassRecord(layout))
+        if (record.kind != LayoutKind::Instance || record.has(LayoutFlags::IsConstructorFunction) || !isFoundByShapeTest(record) || storage.isNeverAllocated(layout) || !layoutsWithClassRecord.get(index))
             continue;
         unsigned numberOfClassesPassed = 0;
         for (LayoutID current = layout; current; current = program.at(current).base) {
@@ -353,11 +353,11 @@ static LayoutID closureLayoutOfPlan(const Program& program)
     return { };
 }
 
-static BitVector layoutsMadeAsCompiledObjectsInPlan(const Program& program, const SlotPlan& slots)
+static BitVector layoutsMadeAsCompiledObjectsInPlan(const Program& program, const StorageOfLayouts& storage)
 {
     BitVector layouts(program.layouts.size());
     for (uint32_t index = 0; index < program.layouts.size(); ++index) {
-        if (slots.holdsCompiledObjects(LayoutID(index)) && !slots.isNeverAllocated(LayoutID(index)))
+        if (storage.holdsCompiledObjectsInUse(LayoutID(index)))
             layouts.quickSet(index);
     }
     return layouts;
@@ -611,27 +611,22 @@ static BitVector globalNamesNeverStoredInPlan(const Program& program, const Fact
     return neverStored;
 }
 
-static void planModulesAndGlobalNames(const Program& program, const Facts& facts, BuildContext& build, PlanParts& parts)
+static void planWordsOfModulesAndGlobalNames(const Program& program, const Facts& facts, BuildContext& build, PlanParts& parts)
 {
-    parts.layoutsWithClassRecord = layoutsWithClassRecordInPlan(program, facts);
-    parts.moduleEvaluation = planModuleEvaluation(program, facts, build.parallelLoops(), build.statistics());
     chooseModuleWordsOfPlan(program, parts);
     parts.globalNamesNeverStoredByName = globalNamesNeverStoredInPlan(program, facts);
     parts.globalNamesNeverStoredThroughBinding = parts.globalNamesNeverStoredByName;
+    parts.functionsWhoseResultsPassNoReturn = functionsWhoseResultsPassNoReturnInPlan(program, facts);
+    parts.variablesThatRunTimeMayFill = variablesThatRunTimeMayFill(program);
 }
 
-static void planKeyOrders(const Program& program, const Facts& facts, BuildContext& build, PlanParts& parts)
+static void planShapes(Program& program, const Facts& facts, const StorageOfLayouts& storage, PlanParts& parts)
 {
-    parts.keyOrders = computeKeyOrders(program, facts.linked(), facts.summaries(), facts.bodies(), facts.mechanisms(), parts.slots, build);
+    Vector<uint32_t> orderOfLayoutsForShapes = orderOfLayoutsForShapeNumbers(program, facts, storage);
+    parts.shapes = computeShapeTable(program, facts.linked(), storage, parts.closureLayout, orderOfLayoutsForShapes.span());
 }
 
-static void planShapes(Program& program, const Facts& facts, PlanParts& parts)
-{
-    Vector<uint32_t> orderOfLayoutsForShapes = orderOfLayoutsForShapeNumbers(program, facts, parts.slots);
-    parts.shapes = computeShapeTable(program, facts.linked(), parts.slots, parts.closureLayout, orderOfLayoutsForShapes.span());
-}
-
-static void planConventions(const Program& program, const Facts& facts, BuildContext& build, PlanParts& parts)
+static void planConventions(const Program& program, const Facts& facts, BuildContext& build, const StorageOfLayouts& storage, PlanParts& parts)
 {
     bool everyFunctionCanBeCounted = true;
     for (uint32_t index = 0; index < program.functions.size(); ++index) {
@@ -644,7 +639,7 @@ static void planConventions(const Program& program, const Facts& facts, BuildCon
     if (!everyFunctionCanBeCounted)
         return;
 
-    parts.conventions = computeCallingConventions(program, facts, bodiesWithModuleStartInPlan(program, parts.moduleEvaluation), layoutsMadeAsCompiledObjectsInPlan(program, parts.slots));
+    parts.conventions = computeCallingConventions(program, facts, layoutsMadeAsCompiledObjectsInPlan(program, storage), build.parallelLoops());
     parts.functionsWithClosureCell = functionsWithClosureCellInPlan(program, parts.conventions);
     uint64_t numberOfAsyncFunctionsThatNeverSuspend = 0;
     uint64_t numberOfFunctionsThatReturnNumberOrUndefinedRaw = 0;
@@ -658,10 +653,7 @@ static void planConventions(const Program& program, const Facts& facts, BuildCon
     }
     build.statistics().count(StatisticID::AsyncWorkersMade, numberOfAsyncFunctionsThatNeverSuspend);
     build.statistics().count(StatisticID::NumbersOrUndefinedReturnedRaw, numberOfFunctionsThatReturnNumberOrUndefinedRaw);
-    parts.functionsWhoseResultsPassNoReturn = functionsWhoseResultsPassNoReturnInPlan(program, facts);
-    if (AOT::hasFlag(build.options().testing, Wire::TestingSwitch::CheckProofsAtRunTime) || AOT::hasFlag(build.options().testing, Wire::TestingSwitch::CheckProofsAtEntries) || AOT::hasFlag(build.options().testing, Wire::TestingSwitch::CheckProofsAtEntriesAndFields)) {
-        parts.variablesThatRunTimeMayFill = variablesThatRunTimeMayFill(program);
-    }
+
 }
 
 static bool makesObjectsWithBirthsInPlan(const Program& program, const SlotPlanParts& slots, uint32_t layout)
@@ -754,52 +746,93 @@ std::unique_ptr<Plan> planProgram(Program& program, const Facts& facts, BuildCon
         timesOfLane.didFinish(step);
     };
 
+    auto hasFailed = [&] {
+        return build.diagnostics().hasErrors();
+    };
+
     PlanParts parts;
     parts.usesWideReferences = build.recordedOptions().useWideReferences();
     parts.hasOneInstance = facts.hasOneInstance();
     parts.closureLayout = closureLayoutOfPlan(program);
-    SlotPlanParts slots;
+    const StorageOfLayouts storage = chooseStorageOfLayouts(program, facts.linked(), build.parallelLoops());
     FunctionsThatEndTheirTailCalls functionsThatEndTheirTailCalls;
+    StackTestPlan stackTests;
+    auto planSlotsAndKeyOrders = [&] {
+        SlotPlanParts slots;
+        Vector<ClosureForm> closureForms;
+        Vector<PlannedVariable> variables;
+        Vector<ClassCreationPlan> classCreation;
+        runLanes(build.parallelLoops(), {
+            [&] { runLane("plan: lane of slots"_s, [&] { slots = computeSlotPlanParts(program, facts, build, storage, parts.keyOrders, parts.promotedEnvironments); }); },
+            [&] { runLane("plan: lane of closure forms, variables, class creation"_s, [&] {
+                closureForms = chooseClosureForms(program, facts.linked());
+                const BitVector variablesDescribedToRunTime = variablesDescribedToRunTimeByPlan(program);
+                parts.deferredDefinitions = deferredDefinitionsOfPlan(program, facts, variablesDescribedToRunTime, AOT::hasFlag(build.options().testing, Wire::TestingSwitch::CheckProofsAtRunTime));
+                variables = variablesOfPlan(program, facts, variablesDescribedToRunTime);
+                classCreation = classCreationOfPlan(program, facts);
+            }); },
+        });
+        if (hasFailed())
+            return;
+        slots.closureForms = WTF::move(closureForms);
+        slots.variables = WTF::move(variables);
+        slots.classCreation = WTF::move(classCreation);
+        build.statistics().count(StatisticID::EnvironmentsPromotedToVariables, parts.promotedEnvironments.layouts.size());
+        leaveClosuresOfLiteralsUnmade(program, facts, parts.promotedEnvironments, build.recordedOptions().useWideReferences(), slots);
+        holdDoorsToProofsInSlotPlan(program, facts, build.parallelLoops(), slots);
+        appendPromotedVariables(parts.promotedEnvironments, slots);
+        markSlotsFilledAtBirthInPlan(program, facts, slots);
+        parts.slots = SlotPlan(WTF::move(slots));
+    };
+    auto planConventionsAndStackTests = [&] {
+        bool plansStackTests = facts.mechanisms().contains(Mechanism::DirectCalls);
+        MethodTablePlan methodTable;
+        CallsCountedForStackTests callsCounted;
+        runLanes(build.parallelLoops(), {
+            [&] { runLane("plan: lane of module evaluation"_s, [&] { parts.moduleEvaluation = planModuleEvaluation(program, facts, build.parallelLoops(), build.statistics()); }); },
+            [&] { runLane("plan: lane of conventions, method table, cycles of calls"_s, [&] {
+                planConventions(program, facts, build, storage, parts);
+                if (hasFailed())
+                    return;
+                runLanes(build.parallelLoops(), {
+                    [&] {
+                        parts.layoutsWithClassRecord = layoutsWithClassRecordInPlan(program, facts);
+                        methodTable = planMethodTable(program, facts, parts.conventions, storage, parts.layoutsWithClassRecord);
+                    },
+                    [&] {
+                        if (plansStackTests)
+                            callsCounted = findCallsCountedForStackTests(program, facts, parts.conventions, build.parallelLoops());
+                    },
+                });
+            }); },
+        });
+        if (hasFailed())
+            return;
+        parts.conventions.setMethodTable(WTF::move(methodTable));
+        parts.conventions.setModuleStarts(program, bodiesWithModuleStartInPlan(program, parts.moduleEvaluation));
+        if (plansStackTests)
+            stackTests = planStackTests(program, facts, parts.conventions, parts.moduleEvaluation, build.parallelLoops(), WTF::move(callsCounted));
+    };
     runLanes(build.parallelLoops(), {
-        [&] { runLane("plan: lane of slots"_s, [&] { slots = computeSlotPlanParts(program, facts, build); }); },
-        [&] { runLane("plan: lane of modules, classes"_s, [&] { planModulesAndGlobalNames(program, facts, build, parts); }); },
-        [&] { runLane("plan: lane of tail calls that end"_s, [&] {
+        [&] { runLane("plan: lane of slots, key orders"_s, planSlotsAndKeyOrders); },
+        [&] { runLane("plan: lane of modules, conventions, method table, stack tests"_s, planConventionsAndStackTests); },
+        [&] { runLane("plan: lane of shapes"_s, [&] { planShapes(program, facts, storage, parts); }); },
+        [&] { runLane("plan: lane of tail calls that end, words of modules, names"_s, [&] {
             if (facts.mechanisms().contains(Mechanism::DirectCalls))
                 functionsThatEndTheirTailCalls = findFunctionsThatEndTheirTailCalls(program, facts);
+            planWordsOfModulesAndGlobalNames(program, facts, build, parts);
         }); },
     });
-    if (!finish("plan: slots beside modules, classes"_s))
+    if (!finish("plan: slots, key orders beside conventions, stack tests, shapes"_s))
         return nullptr;
 
-    slots.closureForms = chooseClosureForms(program, facts.linked());
-    leaveClosuresOfLiteralsUnmade(program, facts, build.recordedOptions().useWideReferences(), slots);
-    holdDoorsToProofsInSlotPlan(program, facts, slots);
-    const BitVector variablesDescribedToRunTime = variablesDescribedToRunTimeByPlan(program);
-    parts.deferredDefinitions = deferredDefinitionsOfPlan(program, facts, variablesDescribedToRunTime, AOT::hasFlag(build.options().testing, Wire::TestingSwitch::CheckProofsAtRunTime));
-    slots.variables = variablesOfPlan(program, facts, variablesDescribedToRunTime);
-    slots.classCreation = classCreationOfPlan(program, facts);
-    markSlotsFilledAtBirthInPlan(program, facts, slots);
-    parts.slots = SlotPlan(WTF::move(slots));
-    if (!finish("plan: closure forms, variables, class creation"_s))
-        return nullptr;
-
-    runLanes(build.parallelLoops(), {
-        [&] { runLane("plan: lane of key orders"_s, [&] { planKeyOrders(program, facts, build, parts); }); },
-        [&] { runLane("plan: lane of shapes"_s, [&] { planShapes(program, facts, parts); }); },
-        [&] { runLane("plan: lane of conventions and closure cells"_s, [&] { planConventions(program, facts, build, parts); }); },
-    });
-    if (!finish("plan: conventions and closure cells"_s))
-        return nullptr;
-
+    parts.conventions.setRemovedCaptures(program, parts.promotedEnvironments);
     std::unique_ptr<Plan> plan = makeUnique<Plan>(WTF::move(parts));
-    plan->setMethodTable(planMethodTable(program, facts, *plan));
-    if (!finish("plan: method table"_s))
-        return nullptr;
     plan->setParameterGuards(planParameterGuards(program, facts, *plan, build).span());
     plan->setFunctionsThatEndTheirTailCalls(WTF::move(functionsThatEndTheirTailCalls));
-    planTailCallsAndStackTests(program, facts, *plan, build);
+    planTailCallsAndStackTests(program, facts, *plan, WTF::move(stackTests));
     finishMethodTableForUnions(program, facts, *plan);
-    plan->fuseCallEntriesThatOnlyMove(program, build.parallelLoops());
+    plan->fuseCallEntriesThatOnlyMove(program, facts, build.parallelLoops());
     if (!finish("plan: parameter guards"_s))
         return nullptr;
     return plan;
@@ -820,7 +853,7 @@ static bool allocationIsBornUnfinishedInPlan(const PlannedLayout& planned, std::
     return false;
 }
 
-std::optional<PlacedAllocation> Plan::allocation(const Program& program, LayoutID id, AllocationClassID, std::span<const FieldIndex> initialFields) const
+std::optional<PlacedAllocation> Plan::allocation(const Program& program, LayoutID id, std::span<const FieldIndex> initialFields) const
 {
     const PlannedLayout& planned = layout(id);
     uint32_t shape = shapes().generalShapeOf(id);

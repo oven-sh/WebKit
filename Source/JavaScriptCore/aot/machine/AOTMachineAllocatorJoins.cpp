@@ -1023,6 +1023,57 @@ static bool firstCallBehindHeadReadsValueElsewhere(Allocator& allocator, const B
     return isReadByCall;
 }
 
+struct WhatCallInBlockOfHeadTakes {
+    bool isKnown { false };
+    RegisterMask registers { 0 };
+    const Operation* valueIn[64];
+};
+
+static NEVER_INLINE void findWhatCallInBlockOfHeadTakes(const Allocator& allocator, const Block* target, WhatCallInBlockOfHeadTakes& taken)
+{
+    const Order& order = allocator.m_order;
+    taken.isKnown = true;
+    for (Bank bank : { Bank::GP, Bank::FP }) {
+        Position call = allocator.m_liveness.nextCallBehindHeadOf(target, bank);
+        if (call == noPosition || call >= order.endOf(target))
+            continue;
+        const PatchOperation* patch = target->at((call - 1 - order.earlyPositionOf(target, 0)) / 2)->as<PatchOperation>();
+        if (!patch)
+            continue;
+        for (unsigned child = 0; child < patch->numChildren(); ++child) {
+            const ValueRep& constraint = patch->constraintOf(child);
+            if (!constraint.isReg() || bankOf(constraint.reg()) != bank)
+                continue;
+            taken.registers |= maskOf(constraint.reg());
+            taken.valueIn[constraint.reg().index()] = patch->child(child);
+        }
+    }
+}
+
+static ALWAYS_INLINE RegisterMask registersWhereCallInBlockOfHeadTakes(const Allocator& allocator, const Block* target, WhatCallInBlockOfHeadTakes& taken, const Operation* value, RegisterMask among)
+{
+    if (!taken.isKnown)
+        findWhatCallInBlockOfHeadTakes(allocator, target, taken);
+    RegisterMask found = 0;
+    for (RegisterMask registers = among & taken.registers; registers; registers &= registers - 1) {
+        if (taken.valueIn[std::countr_zero(registers)] == value)
+            found |= registers & -registers;
+    }
+    return found;
+}
+
+RegisterMask Allocator::registersWhereCallInBlockTakesWhatLiesThere(const Block* block) const
+{
+    WhatCallInBlockOfHeadTakes taken;
+    findWhatCallInBlockOfHeadTakes(*this, block, taken);
+    RegisterMask found = 0;
+    for (RegisterMask registers = m_bound & taken.registers; registers; registers &= registers - 1) {
+        if (taken.valueIn[std::countr_zero(registers)] == m_valueIn[std::countr_zero(registers)])
+            found |= registers & -registers;
+    }
+    return found;
+}
+
 bool Allocator::passThroughBlockThatOnlyJumps(Block* blockAsked)
 {
     if (blockAsked->size() != 1)
@@ -1884,6 +1935,7 @@ void Allocator::fixHeadOf(Block* targetOfEdge, Block* blockOfEdge, const BlockPl
         ASSERT(kind != KindOfHeadBeingFixed::PlainButForPhis || (!m_isAheadOfFramedPart && !isInRareRegion()));
         const RegisterMask calleeSavesStillToNote = kind == KindOfHeadBeingFixed::PlainButForPhis ? calleeSavedRegisters & ~m_calleeSavesTakenOutsideRareRegions : calleeSavesStillToNoteBetweenBlocks(*this);
 
+        WhatCallInBlockOfHeadTakes whatCallTakes;
         Reg registersOfDyingValuesInLine[mostPhisListedInLine];
         Reg* registersOfDyingValues = registersOfDyingValuesInLine;
         Operation* incomingValuesInLine[mostPhisListedInLine];
@@ -1938,8 +1990,16 @@ void Allocator::fixHeadOf(Block* targetOfEdge, Block* blockOfEdge, const BlockPl
                 RegisterMask calleeSaved = held & calleeSavedRegisters;
                 const bool livesAcrossCall = phiLivesAcrossCall(index, phi, facts);
                 RegisterMask candidates = livesAcrossCall && calleeSaved ? calleeSaved : held;
+                bool liesWhereCallTakesIt = false;
+                if (livesAcrossCall && !calleeSaved && !head.startsLoop && (calleeSavesWorthTakingFor(phi, bankOf(phi->type()), target) & ~m_bound)) {
+                    if (RegisterMask taken = registersWhereCallInBlockOfHeadTakes(*this, target, whatCallTakes, phi, held)) {
+                        candidates = taken;
+                        liesWhereCallTakesIt = true;
+                        phisLiveAcrossCalls[index] = PhiLivesAcrossNoCall;
+                    }
+                }
                 Reg hintOfLaterHead = hints[phi->index()];
-                bool isBetterOffElsewhere = (livesAcrossCall && !calleeSaved) || (hintOfLaterHead && !(candidates & maskOf(hintOfLaterHead))) || !(candidates & ~takenByPatchesOfLoop);
+                bool isBetterOffElsewhere = (livesAcrossCall && !calleeSaved && !liesWhereCallTakesIt) || (hintOfLaterHead && !(candidates & maskOf(hintOfLaterHead))) || !(candidates & ~takenByPatchesOfLoop);
                 if (candidates & ~takenByPatchesOfLoop)
                     candidates &= ~takenByPatchesOfLoop;
                 if (isBetterOffElsewhere && movesMayWriteRegisters) {

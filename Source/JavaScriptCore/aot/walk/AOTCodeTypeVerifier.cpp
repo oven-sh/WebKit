@@ -54,6 +54,7 @@ public:
 
     TypeID variable(TypeLevel level, VariableID variable) const final { return m_positionsOfWalk.variable(level, variable); }
     TypeID environmentField(TypeLevel level, LayoutID layout, uint32_t field) const final { return m_positionsOfWalk.environmentField(level, layout, field); }
+    bool environmentLiesAmongVariables(LayoutID layout) const final { return m_positionsOfWalk.environmentLiesAmongVariables(layout); }
     TypeID slot(TypeLevel level, LayoutID layout, uint32_t field) const final { return m_positionsOfWalk.slot(level, layout, field); }
     TypeID readOfSlot(TypeLevel level, LayoutID layout, uint32_t field) const final { return m_positionsOfWalk.readOfSlot(level, layout, field); }
     TypeID halfOfAccessorOfField(TypeLevel level, LayoutID layout, uint32_t field, bool isSetter) const final { return m_positionsOfWalk.halfOfAccessorOfField(level, layout, field, isSetter); }

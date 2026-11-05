@@ -76,6 +76,7 @@ private:
     Vector<WordOfEmptyObject, 8> wordsOfEmptyObject(LayoutID);
     Vector<uint8_t, 64> bodyOfEmptyCell(const MentionedAllocation&);
     CellPointer createArguments(const ValueContext&, std::optional<CellPointer> callee);
+    bool isListedByArgumentsObjectAlone(ValueID list) const;
 };
 
 } } } // namespace JSC::AOT::Typed

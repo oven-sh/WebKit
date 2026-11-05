@@ -193,10 +193,10 @@ static void generateNewObject(StraightEmitter& emitter, const BodyValue& value)
         if (isEnvironment)
             placed = plan.environmentAllocation(layout);
         else {
-            placed = plan.allocation(program, layout, AllocationClassID(), fields.span().first(numberListed));
+            placed = plan.allocation(program, layout, fields.span().first(numberListed));
             if (!placed) {
                 numberListed = plan.keyOrders().lengthOfLongestBeginningWithOrderWord(layout, fields.span().first(numberListed));
-                placed = plan.allocation(program, layout, AllocationClassID(), fields.span().first(numberListed));
+                placed = plan.allocation(program, layout, fields.span().first(numberListed));
             }
         }
     }
@@ -218,7 +218,7 @@ static void generateNewObject(StraightEmitter& emitter, const BodyValue& value)
 
     CCallHelpers& jit = emitter.jit();
     if (!hasSlots)
-        emitter.callStub(value, AOT::newDictionary(0), { });
+        emitter.callStub(value, AOT::newDictionary(), { });
     else {
         std::span<const FieldIndex> listed = fields.span().first(numberListed);
         StraightArgument row = StraightArgument::number(emitter.mentions().allocation(*placed, isEnvironment ? std::span<const FieldIndex>() : listed));
@@ -318,7 +318,7 @@ void StraightEmitter::generateAllocation(const BodyValue& value)
         generateNewObject(*this, value);
         return;
     case Opcode::NewDictionary:
-        callStub(value, AOT::newDictionary(0), { });
+        callStub(value, AOT::newDictionary(), { });
         define(value);
         return;
     case Opcode::FinishObject:

@@ -38,6 +38,8 @@ static constexpr OpcodeSet operationsWithTypedAccesses = accessesByNameWithTyped
 
 FamilyID familyAroundSetOfLayouts(const Walker&, LayoutSetID);
 
+static constexpr size_t mostLayoutsWithoutFamilyAround = 4;
+
 namespace {
 
 struct ReceiversOfTypedAccess {
@@ -279,7 +281,7 @@ static std::optional<ReceiversOfTypedAccess> findReceiversOfTypedAccess(Walker& 
         if (receivers.family)
             return receiversOfFamilyForTypedAccess(walker, receivers.family);
         receivers.familyAround = familyAroundSetOfLayouts(walker, receivers.set);
-        if (!receivers.familyAround)
+        if (!receivers.familyAround && types.at(receivers.set).size() > mostLayoutsWithoutFamilyAround)
             return std::nullopt;
     }
     return findReceiversAmongMembersForTypedAccess(walker, WTF::move(receivers));
@@ -442,7 +444,7 @@ static FieldOfTypedAccess describeFieldAnewForTypedAccess(Walker& walker, const 
         bool mayLackStorage = !slot.hasStorage() || (mayBeListedWithoutStorage && !goesByKeyOrder);
         if (OptionSet<FieldForm> form = recordOrNull ? OptionSet<FieldForm>() : walker.facts().field(reference).formOfValue; !form.isEmpty())
             holdsPlainValue &= !stored && !form.contains(FieldForm::IsAccessor);
-        holdsPlainValue &= (!recordOrNull || recordOrNull->form.isEmpty()) && !slot.holdsAccessor && !mayLackStorage && (slot.representation != SlotRepresentation::DeferredClosure || !stored);
+        holdsPlainValue &= (!recordOrNull || recordOrNull->form.isEmpty()) && !slot.holdsAccessor && !mayLackStorage && (slot.representation != SlotRepresentation::DeferredClosure || !stored || (slot.type && types.isSubset(stored, slot.type)));
 
         LinkedCell cell = cellOfFieldForTypedAccess(link, reference);
         bool takesEveryValue = slot.representation == SlotRepresentation::JSValue && (!slot.type || types.at(slot.type).isAnything());
@@ -601,17 +603,17 @@ static bool findsNothingForTypedAccess(const Walker& walker, const ReceiversOfTy
         && nothingAnswersAboveReceiversForTypedAccess(walker, receivers, key);
 }
 
-static bool paysToLookAtSlotForTypedAccess(const Walker& walker, const FieldOfTypedAccess& field, PropertyKeyID key, bool isRead = false)
+static bool paysToLookAtSlotForTypedAccess(const Walker& walker, const FieldOfTypedAccess& field, PropertyKeyID key, bool isRead = false, bool isLastResort = false)
 {
     PropertyKeyKind kind = walker.program().at(key).kind;
-    bool isLikelyThere = field.isRequired || (isRead && (field.isAppended ? field.isAppendedByConstructors : field.isOfBirth));
+    bool isLikelyThere = isLastResort || field.isRequired || (isRead && (field.isAppended ? field.isAppendedByConstructors : field.isOfBirth));
     bool isNameOrSymbolThatIsRead = kind == PropertyKeyKind::Text || kind == PropertyKeyKind::EnginePrivateName || kind == PropertyKeyKind::ModulePrivateName || (isRead && kind == PropertyKeyKind::CreatedSymbol);
     return isLikelyThere && !field.mayBeListedWithoutStorage && isNameOrSymbolThatIsRead;
 }
 
-static TypedForm formBehindFilledSlotForTypedAccess(const Walker& walker, const ReceiversOfTypedAccess& receivers, const FieldOfTypedAccess& field, PropertyKeyID key, TypedAccess access)
+static TypedForm formBehindFilledSlotForTypedAccess(const Walker& walker, const ReceiversOfTypedAccess& receivers, const FieldOfTypedAccess& field, PropertyKeyID key, TypedAccess access, bool isLastResort = false)
 {
-    if (!paysToLookAtSlotForTypedAccess(walker, field, key, access == TypedAccess::ReadsFilledSlot) || possibleChangesForbid(receivers.possibleChanges, access))
+    if (!paysToLookAtSlotForTypedAccess(walker, field, key, access == TypedAccess::ReadsFilledSlot, isLastResort) || possibleChangesForbid(receivers.possibleChanges, access))
         return TypedForm::None;
     return TypedForm::BuiltBehindFilledSlot;
 }
@@ -932,9 +934,11 @@ static TypedForm buildReadForTypedAccess(Walker& walker, const BodyValue& value,
         const LinkedFunction& functionOfUnit = walker.facts().linked().function(walker.unit().function);
         bool isWrittenInWhatRepeats = walker.program().at(walker.currentFunction()).has(FunctionFlags::IsChecked) && (functionOfUnit.isNamedInItsCycle || functionOfUnit.isCalledInLoop);
         bool paysToLookAtCell = walker.isInLoop() || isWrittenInWhatRepeats;
-        if (behindFilledSlot != TypedForm::None || !paysToLookAtCell || !askAheadAboutReadOfSlotThatMayBeEmpty(walker, *receivers, field, key))
+        if (behindFilledSlot != TypedForm::None || !paysToLookAtCell)
             return behindFilledSlot;
-        return TypedForm::BuiltBehindLookAtCell;
+        if (askAheadAboutReadOfSlotThatMayBeEmpty(walker, *receivers, field, key))
+            return TypedForm::BuiltBehindLookAtCell;
+        return walker.isInLoop() ? formBehindFilledSlotForTypedAccess(walker, *receivers, field, key, TypedAccess::ReadsFilledSlot, true) : TypedForm::None;
     }
 
     Reference object = operands.object;
@@ -1563,7 +1567,7 @@ static bool isReadForCallAloneInTypedAccess(const Walker& walker, const BodyValu
 {
     const BodyIndex& index = walker.currentBodyIndex();
     ValueID user = read.opcode() == Opcode::PropGet ? index.onlyUsingValue(read.id()) : ValueID();
-    return user && index.opcodeOf(user) == Opcode::Call && index.value(user).as<Opcode::Call>().calleeOperand() == read.id();
+    return user && (index.opcodeOf(user) == Opcode::Call || index.opcodeOf(user) == Opcode::CallList) && index.value(user).calleeOperand() == read.id();
 }
 
 static bool closureTableHoldsMethodForTypedAccess(const Walker& walker, FunctionID method)
@@ -1584,7 +1588,14 @@ static FunctionID findMethodReadBehindLooksForTypedAccess(const Walker& walker, 
             *whyNone = "no field: a method above, outside of loops"_s;
         return { };
     }
-    return findMethodDeclaredAboveReceiversForTypedAccess(walker, receivers, key, whyNone);
+    FunctionID method = findMethodDeclaredAboveReceiversForTypedAccess(walker, receivers, key, whyNone);
+    BodyValue user = walker.currentBodyIndex().value(walker.currentBodyIndex().onlyUsingValue(read.id()));
+    if (method && user.opcode() == Opcode::CallList && !listSpreadBehindArgumentsIsRestListOf(const_cast<Walker&>(walker), user, method)) {
+        if (whyNone)
+            *whyNone = "no field: a method above, called with a list that is laid out"_s;
+        return { };
+    }
+    return method;
 }
 
 void Walker::checkFactsRememberedOfCell(Reference object, Origin origin)
@@ -2615,7 +2626,7 @@ StoresListedAtBirth findStoresThatAllocationMayList(Walker& walker, LayoutID lay
     size_t count = plan.keyOrders().lengthOfLongestBeginningWithOrderWord(layout, fields.span());
     std::optional<PlacedAllocation> placed;
     for (; count; --count) {
-        placed = plan.allocation(program, layout, AllocationClassID(), fields.span().first(count));
+        placed = plan.allocation(program, layout, fields.span().first(count));
         if (placed)
             break;
     }
@@ -2897,15 +2908,9 @@ static bool buildVariableReadForTypedAccess(Walker& walker, const BodyValue& val
             return true;
         }
     }
-    bool isPastDeadZone = walker.has(Mechanism::Folding) && walker.state().isPastDeadZone(variable);
-    if (Reference literal = isPastDeadZone ? literalHeldByFilledVariable(walker, variable) : Reference()) {
-        walker.bind(value.id(), literal);
-        walker.state().noteVariable(variable, literal);
-        return true;
-    }
     Draft draft = walker.draftOf(value);
     walker.chooseConservativeFields(draft);
-    if (isPastDeadZone)
+    if (walker.has(Mechanism::Folding) && walker.state().isPastDeadZone(variable))
         draft.setFollowsItsStore(true);
     Reference read = walker.build(WTF::move(draft));
     walker.bind(value.id(), read);
@@ -3363,8 +3368,8 @@ ASCIILiteral whyAccessByNameHasNoTypedForm(Walker& walker, const BodyValue& valu
         return type.hasUnboundedUnknown() ? "objects that nobody describes"_s : "objects without a layout (built-in classes, functions, named objects)"_s;
     if (type.traitsOfNamed.contains(ObjectTrait::MayHaveLayoutBelow))
         return "may have a layout below"_s;
-    if (!holdsOneMember(type.layouts) && !familiesForTypedAccesses(walker).familyOf(type.layouts))
-        return "several layouts that are no family"_s;
+    if (!holdsOneMember(type.layouts) && !familiesForTypedAccesses(walker).familyOf(type.layouts) && !familyAroundSetOfLayouts(walker, type.layouts) && types.at(type.layouts).size() > mostLayoutsWithoutFamilyAround)
+        return "more layouts than a set holds that no family stands around"_s;
     const Plan& plan = walker.plan();
     unsigned inUse = 0;
     for (LayoutID member : membersOf(types, type.layouts)) {

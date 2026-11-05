@@ -271,8 +271,12 @@ struct LookupsPastProgramObjects {
     BitVector namesSpelledByProgram;
     BitVector builtinsRead;
     BitVector builtinsCalled;
+    BitVector builtinsConstructed;
+    BitVector builtinsCalledByCode;
     BitVector builtinsLetGo;
     BitVector builtinsCalledOutOfSight;
+    BitVector builtinsCalledWithoutRow;
+    BitVector builtinsWithCallsThatMayRunCode;
     Vector<LinkedCallOfBuiltin> callsOfBuiltinsAtSites;
     // MUST BE TRUE OF THE PROGRAM THAT RUNS: each is locked at the start (Facts::builtinMembersLockedAtStartUp()), with every mechanism withheld too: what is reached hangs on it.
     BitVector membersTakenForConstants;
@@ -404,6 +408,7 @@ struct LinkTables {
     void listCyclesNamed();
     bool cycleLeadsTo(uint32_t referrer, uint32_t named) const;
     bool leadsTo(FunctionID referrer, FunctionID function) const { return cycleLeadsTo(functions[referrer.index()].cycle, functions[function.index()].cycle); }
+    bool bodyTakesWhatCallersLeave(FunctionID id) const { return functions[id.index()].everyCallerIsKnown && functions[id.index()].everyCallHasOneCallee && !functions[id.index()].isNamedInItsCycle; }
     bool standsOutsideCycles(CodeUnit unit) const { return namesOnlyUnitsOfItsFunction(unit.role) && functions[unit.function.index()].isInQueueFromStart; }
     bool leadsTo(CodeUnit referrer, FunctionID function) const { return leadsTo(referrer.function, function) && (!standsOutsideCycles(referrer) || functions[function.index()].isInQueueFromStart); }
     bool mayBeMentionedBy(CodeUnit referrer, FunctionID function) const { return functions[function.index()].isInQueueFromStart || leadsTo(referrer, function); }
@@ -577,7 +582,8 @@ bool isSymbolOfLibrary(const Program&, PropertyKeyID);
 
 LinkTables conservativeLinkTables(const Program&);
 LinkTables conservativeLinkTables(const Program&, const ParallelLoops&);
-void findParametersThatAreOnlyCalled(const Program&, const BodyIndexTable&, const ThinSummaries&, const ParallelLoops&, Mechanisms, LinkTables&);
+void findParametersThatAreOnlyCalled(const Program&, const BodyIndexTable&, const ThinSummaries&, const ParallelLoops&, Mechanisms, bool takesCalleesToKeepNothing, LinkTables&);
+void carryExpectationOfThisIntoCaptures(const Program&, const BodyIndexTable&, const ThinSummaries&, LinkTables&);
 
 BitVector bodiesThatLoaderEntersAtMostOnce(const Program&);
 

@@ -91,7 +91,7 @@ public:
             LValue inFront { nullptr };
         };
 
-        bool isSet() const { return entriesInFront || collectionsInFront || isHeldToThrowNothing || numberOfDigests; }
+        bool isSet() const { return entriesInFront || collectionsInFront || isHeldToThrowNothing || callHeldToThrowNothing || numberOfDigests; }
 
         uint32_t rows { 0 };
         LValue entriesInFront { nullptr };

@@ -1,11 +1,10 @@
 family Cast Placed..Placed
 engine operation Narrowed (value: Convertible/returns, test?: Convertible/inspects, operandIndex: UInt32, caseIndex?: UInt32) [| engine isOnTakenEdge narrowsHolderOfOperand narrowsOtherResultOfOperand] -> natural(same(value)) ; none ; handsOn = NarrowerType ; form = Open
 
-enum ProofSource { | engine EntryParameter ResultOfCall Field Variable Capture Contents ResultOfOtherCall OtherOperation Test WhatIsRemembered Lifetime }
-engine operation CheckProof (value: Convertible/inspects, checkedType: Type, typeWithoutProof: Type, source: ProofSource) -> none ; none ; form = Open
+enum ProofSource { | engine EntryParameter ResultOfCall Field Variable Capture SlotOfScope Contents ResultOfOtherCall OtherOperation Test WhatIsRemembered Lifetime }
+engine operation CheckProof (value: Convertible/inspects, checkedType: Type, typeWithoutProof: Type, source: ProofSource) [| engine isLeftToTestBehind] -> none ; none ; form = Open
 
 family Hint Placed..Placed
-engine operation ClearFrameCell (cell: Convertible/inspects) -> none ; reads(ArrayStorage) writes(EnvironmentFields, ObjectFields, Elements[Array]) ; form = Open
 # TestingSwitch::CheckProofsAtRunTime alone builds it, in front of a Return: the state of the walk has the cell as fresh there, so nothing but the frame that ends names it. No comparison of values shows a lifetime:
 # PoisonCell overwrites the cell where it lies, and whoever holds it after all stops at his next look into it and says where it was made.
 engine operation EndLifeOfCell (cell: Convertible/inspects) -> none ; writes(ShapeWords, OrderWords, NamedProperties, ObjectFields, ArrayStorage, Elements) ; form = Open

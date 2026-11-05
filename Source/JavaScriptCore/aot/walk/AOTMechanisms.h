@@ -27,13 +27,14 @@ enum class Mechanism : uint16_t {
     ParameterGuards = 1 << 12,
     Deferral = 1 << 13,
     CellsInFrames = 1 << 14,
+    PromotedEnvironments = 1 << 15,
 };
 using Mechanisms = OptionSet<Mechanism>;
 
 inline constexpr Mechanisms allMechanisms {
     Mechanism::TypedOperations, Mechanism::Guesses, Mechanism::Arrivals, Mechanism::DirectCalls, Mechanism::Inlining, Mechanism::UnboxedNumbers,
     Mechanism::EscapeAnalysis, Mechanism::LoopInvariants, Mechanism::Folding, Mechanism::TypedSlots, Mechanism::Handlers, Mechanism::BuiltinCalls,
-    Mechanism::ParameterGuards, Mechanism::Deferral, Mechanism::CellsInFrames
+    Mechanism::ParameterGuards, Mechanism::Deferral, Mechanism::CellsInFrames, Mechanism::PromotedEnvironments
 };
 
 constexpr Mechanisms dependenciesOf(Mechanism mechanism)
@@ -60,6 +61,7 @@ constexpr Mechanisms dependenciesOf(Mechanism mechanism)
     case Mechanism::Folding:
     case Mechanism::Handlers:
     case Mechanism::Deferral:
+    case Mechanism::PromotedEnvironments:
         return { };
     }
     return { };

@@ -15,7 +15,7 @@
 # RUN(WALKED): walk f1 mechanisms=all-Inlining
 # WALKED-LABEL: code f1:Body
 # WALKED: ([[stored]]: undefined|7|"fits" @JSValue)
-# WALKED: PutSlot {{*}}, -, [[stored]] key="held" receivers=[L0] level=Expected
+# WALKED: PutSlot {{*}}, [[stored]] key="held" receivers=[L0] level=Expected
 # RUN(EMITTED): emit f1 mechanisms=all-Inlining
 # EMITTED: JSCell_typeInfoType
 # RUN(TEXT): run-in-shell mechanisms=-Inlining globalThis.which = 0; globalThis.id = (value) => value;

@@ -775,8 +775,8 @@ static OptionSet<ObjectMutation> mutationsRuledOutForShapeTest(const Program& pr
     return ruledOut;
 }
 
-ShapeTable computeShapeTable(const Program&, const LinkTables&, const SlotPlan&, LayoutID closureLayout, std::span<const uint32_t> orderOfLayouts);
-ShapeTable computeShapeTable(const Program& program, const LinkTables& linked, const SlotPlan& slots, LayoutID closureLayout, std::span<const uint32_t> orderOfLayouts)
+ShapeTable computeShapeTable(const Program&, const LinkTables&, const StorageOfLayouts&, LayoutID closureLayout, std::span<const uint32_t> orderOfLayouts);
+ShapeTable computeShapeTable(const Program& program, const LinkTables& linked, const StorageOfLayouts& storage, LayoutID closureLayout, std::span<const uint32_t> orderOfLayouts)
 {
     uint32_t numberOfLayouts = static_cast<uint32_t>(program.layouts.size());
     ShapeTableParts parts;
@@ -794,7 +794,7 @@ ShapeTable computeShapeTable(const Program& program, const LinkTables& linked, c
     }
     for (uint32_t index : orderOfLayouts) {
         LayoutID id(index);
-        if (slots.holdsCompiledObjects(id) && !slots.isNeverAllocated(id)) {
+        if (storage.holdsCompiledObjectsInUse(id)) {
             giveShapeTo(id);
             parts.shapes.last().impossibleMutations = mutationsRuledOutForShapeTest(program, linked, id);
         }
@@ -802,7 +802,7 @@ ShapeTable computeShapeTable(const Program& program, const LinkTables& linked, c
     parts.firstEnvironmentShape = static_cast<uint32_t>(parts.shapes.size());
     for (uint32_t index = 0; index < numberOfLayouts; ++index) {
         LayoutID id(index);
-        bool isEnvironmentInUse = slots.layout(id).storage == LayoutStorage::Environment && !slots.isNeverAllocated(id);
+        bool isEnvironmentInUse = storage.of(id).storage == LayoutStorage::Environment && !storage.isNeverAllocated(id);
         if (isEnvironmentInUse || id == closureLayout)
             giveShapeTo(id);
     }

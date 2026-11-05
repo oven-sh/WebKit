@@ -19,6 +19,8 @@ bool storeLaysWhatSlotOfFreshObjectHolds(Walker&, Reference object, Reference he
 
 bool lookMayFinishBirthOf(Walker&, Reference object);
 void finishBirthAtReturnOfClassConstructor(Walker&, Reference returned, Origin);
+void showWhatIsHeldFilledWhereConstructionEnds(Walker&, FunctionID constructor, Reference object, Origin);
+void showWhatIsHeldFilledAtReturnOfClassConstructor(Walker&, Reference returned, Origin);
 
 struct StoresListedAtBirth {
     Vector<FieldIndex, 16> fields;

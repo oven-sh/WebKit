@@ -71,11 +71,18 @@ bool openTestOfListAtReadOfMethodOfItsOpcodes(Walker& walker, const BodyValue& r
         return false;
     const Program& program = walker.program();
     const BuiltinTable& table = program.builtins();
-    BuiltinID member = read.key() ? findOwnMember(program, table.at(BuiltinClasses::Array).prototype, read.key()) : BuiltinID();
-    if (!member || pristineTestOf(table, BuiltinClasses::Array) != PristineTest::MayPass)
-        return false;
     TypeArena& types = walker.types();
-    if (!findLibraryFunctionsBehindBuiltin(walker, types.forBuiltin(table.canonicalID(member))).enteredByValue)
+    Reference receiver = walker.referenceOf(read.objectOperand());
+    TypeID proven = receiver && receiver.isValue() ? walker.typeOf(receiver) : TypeID();
+    const ClassPart* onlyClass = proven && !isNeverType(proven) && types.at(proven).isObject() ? singleBuiltinClassOf(types, types.at(proven)) : nullptr;
+    if (!onlyClass || !read.key() || pristineTestOf(table, onlyClass->builtinClass) != PristineTest::MayPass)
+        return false;
+    BuiltinClassID builtinClass = onlyClass->builtinClass;
+    BuiltinID member = findOwnMember(program, table.at(builtinClass).prototype, read.key());
+    if (!member)
+        return false;
+    bool copiesLibraryText = !!findLibraryFunctionsBehindBuiltin(walker, types.forBuiltin(table.canonicalID(member))).enteredByValue;
+    if (!copiesLibraryText && ((builtinClass != BuiltinClasses::Map && builtinClass != BuiltinClasses::Set) || !table.boxedCallStubOf(table.canonicalID(member))))
         return false;
 
     const BodyIndex& index = walker.currentBodyIndex();
@@ -86,12 +93,12 @@ bool openTestOfListAtReadOfMethodOfItsOpcodes(Walker& walker, const BodyValue& r
     BodyValue call = index.value(callID);
     ValueID receiverID = read.objectOperand();
     auto arguments = call.as<Opcode::Call>().argumentsOperands();
-    if (call.calleeOperand() != read.id() || call.thisValueOperand() != receiverID || arguments.empty())
+    if (call.calleeOperand() != read.id() || call.thisValueOperand() != receiverID)
         return false;
-    ValueID handedOver = index.valueBehindCasts(arguments[0]);
-    if (!handedOver || index.isParameter(handedOver) || index.opcodeOf(handedOver) != Opcode::NewClosure)
+    ValueID handedOver = copiesLibraryText && !arguments.empty() ? index.valueBehindCasts(arguments[0]) : ValueID();
+    if (copiesLibraryText && (!handedOver || index.isParameter(handedOver) || index.opcodeOf(handedOver) != Opcode::NewClosure))
         return false;
-    if (walker.facts().linked().function(index.value(handedOver).function()).weightAsLeaf == LinkedFunction::notLeaf)
+    if (copiesLibraryText && walker.facts().linked().function(index.value(handedOver).function()).weightAsLeaf == LinkedFunction::notLeaf)
         return false;
     for (uint32_t number = read.id().index() + 1; number < callID.index(); ++number) {
         ValueID user = index.onlyUsingValue(ValueID(number));
@@ -99,12 +106,10 @@ bool openTestOfListAtReadOfMethodOfItsOpcodes(Walker& walker, const BodyValue& r
             return false;
     }
 
-    Reference receiver = walker.referenceOf(receiverID);
-    TypeID proven = receiver && receiver.isValue() ? walker.typeOf(receiver) : TypeID();
-    TypeID lists = types.builtinClass(BuiltinClasses::Array);
-    if (!proven || isNeverType(proven) || !types.isSubset(proven, lists) || !singleBuiltinClassOf(types, types.at(proven)) || isListAsMade(walker, receiver) || receiverStaysAsMadeByLink(walker, read))
+    TypeID instances = types.builtinClass(builtinClass);
+    if (!types.isSubset(proven, instances) || isListAsMade(walker, receiver) || receiverStaysAsMadeByLink(walker, read))
         return false;
-    openGuessAtOperandTakenAsMade(walker, call, receiver, lists, read.id().index() - block.firstValue().index());
+    openGuessAtOperandTakenAsMade(walker, call, receiver, instances, read.id().index() - block.firstValue().index());
     return true;
 }
 

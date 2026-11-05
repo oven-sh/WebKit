@@ -117,6 +117,7 @@ function recordReferencesRs(schema: Schema): string[] {
 
 const fieldHelpers = `type Visit<'v> = &'v mut dyn FnMut(FieldWord, usize);
 
+#[inline]
 fn skip<W: Words + ?Sized>(words: &W, at: &mut usize, count: usize) -> Option<()> {
     if count > 0 {
         words.get(*at + count - 1)?;
@@ -125,6 +126,7 @@ fn skip<W: Words + ?Sized>(words: &W, at: &mut usize, count: usize) -> Option<()
     Some(())
 }
 
+#[inline]
 fn present<W: Words + ?Sized>(words: &W, at: &mut usize, field: FieldWord, visit: Visit<'_>) -> Option<()> {
     words.get(*at)?;
     visit(field, *at);
@@ -132,6 +134,7 @@ fn present<W: Words + ?Sized>(words: &W, at: &mut usize, field: FieldWord, visit
     Some(())
 }
 
+#[inline]
 fn optional<W: Words + ?Sized>(words: &W, at: &mut usize, field: FieldWord, visit: Visit<'_>) -> Option<()> {
     if words.get(*at)? != ABSENT_WORD {
         visit(field, *at);
@@ -140,6 +143,7 @@ fn optional<W: Words + ?Sized>(words: &W, at: &mut usize, field: FieldWord, visi
     Some(())
 }
 
+#[inline]
 fn counted<W: Words + ?Sized>(words: &W, at: &mut usize, field: FieldWord, visit: Visit<'_>) -> Option<()> {
     let count = words.get(*at)?;
     *at += 1;
@@ -149,6 +153,7 @@ fn counted<W: Words + ?Sized>(words: &W, at: &mut usize, field: FieldWord, visit
     Some(())
 }
 
+#[inline]
 fn counted_words<W: Words + ?Sized>(words: &W, at: &mut usize, words_per_element: usize) -> Option<()> {
     let count = words.get(*at)? as usize;
     *at += 1;
@@ -222,9 +227,16 @@ export function groupedArms(enumName: string, bodies: readonly CaseBody[], inden
   return lines;
 }
 
-function visitFunction(name: string, enumName: string, parameter: string, entries: readonly Entry[]): string[] {
+function visitFunction(
+  attribute: string,
+  name: string,
+  enumName: string,
+  parameter: string,
+  entries: readonly Entry[],
+): string[] {
   const bodies = entries.map(entry => ({ label: entry.name, body: entryStatements(entry) }));
   return [
+    attribute,
     `pub fn ${name}<W: Words + ?Sized>(${parameter}: ${enumName}, words: &W, at: usize, visit: &mut dyn FnMut(FieldWord, usize)) -> Option<usize> {`,
     `${indentation}let mut at = at;`,
     `${indentation}match ${parameter} {`,
@@ -249,9 +261,15 @@ function entryFieldsRs(schema: Schema): string[] {
     "",
     ...fieldHelpers,
     "",
-    ...visitFunction("visit_value_fields", "Opcode", "opcode", schema.operations.filter(isWire)),
+    ...visitFunction("", "visit_value_fields", "Opcode", "opcode", schema.operations.filter(isWire)),
     "",
-    ...visitFunction("visit_terminator_fields", "TerminatorKind", "kind", schema.terminators.filter(isWire)),
+    ...visitFunction(
+      "#[inline]",
+      "visit_terminator_fields",
+      "TerminatorKind",
+      "kind",
+      schema.terminators.filter(isWire),
+    ),
   ];
 }
 

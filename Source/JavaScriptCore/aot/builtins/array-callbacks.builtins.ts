@@ -341,8 +341,8 @@ export default b.declarations(
   traversalMethod(
     "map",
     arrayWithDefaultSpecies,
-    { returns: newArrayOf(callbackResult).dense, result: "Stored", resultTo: b.resultSlot("element"), receiverUses: [b.copiesHolesToResult] },
-    speciesResult("Stored", b.copiesHolesToResult),
+    { returns: newArrayOf(callbackResult).dense, result: "Stored", resultTo: b.resultSlot("element"), receiverUses: b.inspected },
+    speciesResult("Stored"),
   ),
   traversalMethod(
     "flatMap",

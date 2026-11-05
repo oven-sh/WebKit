@@ -498,29 +498,7 @@ static Vector<const SiteLandingPad*> findLandingPadsOfSites(const ExceptionRecor
     return landingPads;
 }
 
-static void describeCalleeOfSite(const RecordedSite& site, uint32_t number, const SiteRecords& records, SiteDescription& sites)
-{
-    if (site.callsOwnFunctionObject) {
-        sites.calleesOfSites.append({ number, CalleeOfSite::ownFunctionObject() });
-        return;
-    }
-    if (!site.keptCalleePlusOne)
-        return;
-    const KeptCallee& kept = records.keptCallees[site.keptCalleePlusOne - 1];
-    auto field = records.fieldsOfCallees.find(kept.call);
-    if (field != records.fieldsOfCallees.end() && !field->value) {
-        sites.calleesOfSites.append({ number, CalleeOfSite::ownFunctionObject() });
-        return;
-    }
-    if (kept.word >= records.wordsOfCallees.size() || !records.wordsOfCallees[kept.word])
-        return;
-    intptr_t offset = records.wordsOfCallees[kept.word]->offsetFromFP();
-    RELEASE_ASSERT(!(offset % static_cast<intptr_t>(sizeof(uint64_t))));
-    int32_t word = safeCast<int32_t>(offset / static_cast<intptr_t>(sizeof(uint64_t)));
-    sites.calleesOfSites.append({ number, field != records.fieldsOfCallees.end() ? CalleeOfSite::inEnvironmentInFrame(word, *field->value) : CalleeOfSite::inFrame(word) });
-}
-
-static void describeSitesInOrder(const DescribedUnit& described, const CodeRecords& records, LinkBuffer& linkBuffer, SiteReferencesInOrder references, DescribedCallees& callees, bool describesCalleesOfSites, SiteDescription& sites)
+static void describeSitesInOrder(const DescribedUnit& described, const CodeRecords& records, LinkBuffer& linkBuffer, SiteReferencesInOrder references, DescribedCallees& callees, SiteDescription& sites)
 {
     const Program& program = described.program;
     const Vector<RecordedSite>& recorded = records.sites.positions;
@@ -541,8 +519,6 @@ static void describeSitesInOrder(const DescribedUnit& described, const CodeRecor
             sites.flaggedSites.append({ number, site.kind, site.calledBuiltin });
         if (site.constructedCallee)
             sites.constructedCallees.append({ number, callees.indexOf(site.constructedCallee) });
-        if (describesCalleesOfSites)
-            describeCalleeOfSite(site, number, records.sites, sites);
         return number;
     };
     for (const RecordedSite& site : recorded.span().first(numberOfSitesWithoutCode))
@@ -563,7 +539,7 @@ static void describeSitesInOrder(const DescribedUnit& described, const CodeRecor
         RELEASE_ASSERT(recordedNumber && recordedNumber <= recorded.size());
         const RecordedSite& record = recorded[recordedNumber - 1];
         const SiteLandingPad* landingPad = landingPads.isEmpty() ? nullptr : landingPads[recordedNumber];
-        bool recordsOnlyPosition = !reference.isFirstRead && record.kind == CallSiteKind::Plain && !record.callsOwnFunctionObject && !record.keptCalleePlusOne;
+        bool recordsOnlyPosition = !reference.isFirstRead && record.kind == CallSiteKind::Plain;
         if (recordsOnlyPosition && last.record && *last.record == record && leadToSameHandler(last.landingPad, landingPad)) {
             *reference.site = numberOfSites;
             continue;
@@ -612,7 +588,7 @@ static void describeSites(const DescribedUnit& described, CodeRecords& records, 
     size_t numberOfInlineCallSites = numberOfFrames ? numberOfFrames - 1 : 0;
     bool hasOnlyInlineCallSites = numberOfInlineCallSites && sites.numberOfSitesWithoutCode == numberOfInlineCallSites && references.isAtEnd();
     DescribedCallees callees(body);
-    describeSitesInOrder(described, records, linkBuffer, references, callees, !hasOnlyInlineCallSites, sites);
+    describeSitesInOrder(described, records, linkBuffer, references, callees, sites);
     if (hasOnlyInlineCallSites) {
         sites.numberOfSitesWithoutCode = 0;
         sites.positions.shrink(1);

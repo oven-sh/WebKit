@@ -383,6 +383,7 @@ void Sweep::beginFollowingLiveness()
     uint32_t numberOfBlocks = code.numberOfBlocks();
     m_environmentsFollowed.clearAll();
     m_environmentsHandedBack.shrink(0);
+    m_namesOfCellsThatMayHoldEnvironments.shrink(0);
     m_blocksThatSuspend.clearAll();
     m_blocksThatSuspend.ensureSize(numberOfBlocks);
     m_blocksWithHints.clearAll();
@@ -416,33 +417,67 @@ void Sweep::followIfEnvironmentIsHandedBack(ValueID id)
     }
 }
 
-void Sweep::followIfHoldsEnvironmentInFrame(ValueID id)
+static bool holdsEnvironmentsWithoutMarkingThemInSweptCode(const Operation& holder)
+{
+    bool mayLieInFrame = holder.opcode == Opcode::NewClosure || (holder.opcode == Opcode::NewObject && holder.storage() != AllocationStorage::Heap);
+    return mayLieInFrame || holder.opcode == Opcode::Results;
+}
+
+void Sweep::noteIfMayHoldEnvironmentInFrame(ValueID id)
 {
     const Code& code = *m_code;
-    auto holdsWithoutSettingByte = [](const Operation& holder) ALWAYS_INLINE_LAMBDA {
-        bool mayLieInFrame = holder.opcode == Opcode::NewClosure || (holder.opcode == Opcode::NewObject && holder.storage() != AllocationStorage::Heap);
-        return mayLieInFrame || holder.opcode == Opcode::Results;
-    };
-    ValueID cell = rootOfCellInSweptCode(code, id);
-    if (!holdsWithoutSettingByte(code.at(cell)))
-        return;
+    if (holdsEnvironmentsWithoutMarkingThemInSweptCode(code.at(rootOfCellInSweptCode(code, id))))
+        m_namesOfCellsThatMayHoldEnvironments.append(id);
+}
 
-    Vector<ValueID, 8> cellsOfFrameToLookInto;
-    cellsOfFrameToLookInto.append(cell);
-    while (!cellsOfFrameToLookInto.isEmpty()) {
-        const Operation& holder = code.at(cellsOfFrameToLookInto.takeLast());
-        if (!holdsWithoutSettingByte(holder))
-            continue;
-        for (ValueID held : holder.operands()) {
-            if (!held || code.isConstant(held))
-                continue;
-            if (LayoutID layout = layoutOfSweptEnvironmentHandedBack(*m_inputs, code.at(held).type)) {
-                m_environmentsFollowed.set(id.index());
-                m_environmentsHandedBack.append({ layout, id });
+void Sweep::followCellsThatHoldEnvironmentsInFrames()
+{
+    struct LayoutsHeld {
+        uint32_t first { 0 };
+        uint32_t count { 0 };
+    };
+    const Code& code = *m_code;
+    Vector<ValueID>& names = m_namesOfCellsThatMayHoldEnvironments;
+    AOT::sort(names);
+    Vector<LayoutsHeld> heldByNames(names.size());
+    Vector<LayoutID> layouts;
+    for (size_t index = 0; index < names.size(); ++index) {
+        ValueID id = names[index];
+        auto settledFor = [&](ValueID cell) {
+            size_t position = std::ranges::lower_bound(names, cell) - names.begin();
+            RELEASE_ASSERT(position < index && names[position] == cell);
+            return heldByNames[position];
+        };
+        ValueID cell = rootOfCellInSweptCode(code, id);
+        if (cell != id)
+            heldByNames[index] = settledFor(cell);
+        else {
+            uint32_t first = static_cast<uint32_t>(layouts.size());
+            auto add = [&](LayoutID layout) {
+                if (!std::ranges::contains(layouts.span().subspan(first), layout))
+                    layouts.append(layout);
+            };
+            for (ValueID held : code.at(cell).operands()) {
+                if (!held || code.isConstant(held))
+                    continue;
+                if (LayoutID layout = layoutOfSweptEnvironmentHandedBack(*m_inputs, code.at(held).type))
+                    add(layout);
+                ValueID captured = rootOfCellInSweptCode(code, held);
+                if (!holdsEnvironmentsWithoutMarkingThemInSweptCode(code.at(captured)))
+                    continue;
+                LayoutsHeld below = settledFor(captured);
+                for (uint32_t offset = 0; offset < below.count; ++offset)
+                    add(layouts[below.first + offset]);
             }
-            cellsOfFrameToLookInto.append(held);
+            heldByNames[index] = { first, static_cast<uint32_t>(layouts.size()) - first };
         }
+        LayoutsHeld held = heldByNames[index];
+        if (held.count)
+            m_environmentsFollowed.set(id.index());
+        for (uint32_t offset = 0; offset < held.count; ++offset)
+            m_environmentsHandedBack.append({ layouts[held.first + offset], id });
     }
+    names.shrink(0);
 }
 
 void Sweep::noteValueHeldByCopiedBody(ValueID value)
@@ -479,7 +514,7 @@ void Sweep::noteNeededOperationForLiveness(ValueID id, const Operation& operatio
     m_liveness.blockOfValue.mutableSpan().data()[id.index()] = block.index();
     if (m_mayHandBackEnvironments) {
         followIfEnvironmentIsHandedBack(id);
-        followIfHoldsEnvironmentInFrame(id);
+        noteIfMayHoldEnvironmentInFrame(id);
     }
     if (operation.traits().maySuspend()) {
         m_blocksThatSuspend.quickSet(block.index());
@@ -524,6 +559,7 @@ void Sweep::finishLiveness()
                     followIfEnvironmentIsHandedBack(parameter);
             }
         }
+        followCellsThatHoldEnvironmentsInFrames();
     }
 
     ASSERT(m_worklist.isEmpty());

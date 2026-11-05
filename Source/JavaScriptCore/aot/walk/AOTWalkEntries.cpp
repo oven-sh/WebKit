@@ -275,34 +275,16 @@ Reference BuilderOfEntries::captureAt(const ValuesHandedOnByEntries& values, uns
 
 TypeID BuilderOfEntries::typeAtEntryOfFunction(unsigned entryParameter)
 {
-    if (TypeID proven = m_walker.facts().typeOfEntryParameter(m_unit.function, entryParameter).proven)
-        return proven;
-    if (const DeclaredType* declared = m_function.declaredEntryParameter(entryParameter))
-        return m_program.provenTypeOf(*declared);
-    return m_types.anything(UnknownSeed::ParameterOfEscapedFunction);
+    return m_walker.typeArrivingAtEntryParameter(entryParameter);
 }
 
 Reference BuilderOfEntries::proveOrTrap(Reference value, TypeID promised)
 {
-    m_walker.checkProof(value, promised, m_walker.typeOf(value), ProofSource::EntryParameter, m_origin);
-    Draft test = draft(Opcode::TypeTest);
-    test.setValueOperand(value);
-    test.setTestedType(m_types.testablePartOf(promised));
-    Reference passes = build(WTF::move(test));
-
-    BlockID passing = m_walker.addBlock();
-    BlockID failing = m_walker.addBlock(BlockFrequency::Rare);
-    branch(passes, passing, failing);
-    continueIn(failing);
-    endAsUnreachable();
-    continueIn(passing);
-
-    Draft narrowed = draft(Opcode::Narrowed);
-    narrowed.setValueOperand(value);
-    narrowed.setTestOperand(passes);
-    narrowed.setOperandIndex(OperandIndex::TypeTest::value);
-    narrowed.setIsOnTakenEdge(true);
-    return append(WTF::move(narrowed));
+    if (m_cannotGoOn)
+        return { };
+    Reference proven = m_walker.proveOrTrap(value, m_walker.typeThatUnitMayTestFor(m_types.testablePartOf(promised)), ProofSource::EntryParameter, m_origin);
+    m_cannotGoOn |= !proven || m_walker.hasFailed();
+    return proven;
 }
 
 Reference BuilderOfEntries::inFormThatUnitTakes(Reference operand, CodeUnit target, unsigned entryParameter)
@@ -313,11 +295,11 @@ Reference BuilderOfEntries::inFormThatUnitTakes(Reference operand, CodeUnit targ
     auto allowsWantedForm = [&] {
         return isLegalRepresentation(m_types.at(m_walker.typeOf(operand)), wanted);
     };
-    if (allowsWantedForm())
-        return operand;
-
     TypeID promised = typeAtEntryOfFunction(entryParameter);
-    if (m_types.at(promised).isJavaScriptValue() && m_types.at(m_walker.typeOf(operand)).isJavaScriptValue())
+    bool isAsked = m_types.at(promised).isJavaScriptValue() && m_types.at(m_walker.typeOf(operand)).isJavaScriptValue() && !m_types.isSubset(m_walker.typeOf(operand), m_walker.typeThatUnitMayTestFor(m_types.testablePartOf(promised)));
+    if (!isAsked && allowsWantedForm())
+        return operand;
+    if (isAsked)
         operand = proveOrTrap(operand, promised);
     if (m_cannotGoOn)
         return { };
@@ -339,6 +321,10 @@ void BuilderOfEntries::layOutOperands(const ValuesHandedOnByEntries& values, Cod
         Reference operand;
         switch (m_function.entryParameterKind(index)) {
         case EntryParameter::Capture:
+            if (m_walker.plan().promotedEnvironments().isRemoved(m_unit.function, nextCapture)) {
+                operands.append(wordInPlaceOfRemovedCapture(m_walker, m_unit.function, nextCapture++));
+                continue;
+            }
             operand = captureAt(values, nextCapture++);
             break;
         case EntryParameter::This:
@@ -465,6 +451,9 @@ void BuilderOfEntries::returnWhatWasConstructed(Reference returned, Reference ob
     finish.setObjectOperand(object);
     if (lookMayFinishBirthOf(m_walker, object))
         build(WTF::move(finish));
+    showWhatIsHeldFilledWhereConstructionEnds(m_walker, m_unit.function, object, m_origin);
+    if (m_walker.isUnreachable())
+        return;
 
     Draft test = draft(Opcode::TypeTest);
     test.setValueOperand(returned);

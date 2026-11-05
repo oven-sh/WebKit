@@ -54,6 +54,28 @@ static void makeRopeInLanguageCallTests(TextInLanguageCallTests& cell, uint32_t 
     cell.at<uint32_t>(JSRopeString::offsetOfLength()) = length;
 }
 
+static void makePieceInLanguageCallTests(TextInLanguageCallTests& cell, const TextInLanguageCallTests& base, uint64_t offset, uint64_t length)
+{
+    using CompactFibers = JSRopeString::CompactFibers;
+    cell.setHeader(0, StringType);
+    cell.at<uint64_t>(sizeof(uint64_t)) = JSString::isRopeInPointer | JSRopeString::isSubstringInPointer | JSRopeString::is8BitInPointer;
+    cell.at<uint64_t>(2 * sizeof(uint64_t)) = base.address() << CompactFibers::shiftOfFiber1LowerInLengthWord | length;
+    cell.at<uint64_t>(3 * sizeof(uint64_t)) = base.address() >> CompactFibers::widthOfFiber1LowerInLengthWord | offset << CompactFibers::shiftOfFiber2InUpperWord;
+}
+
+static void makeJoinedInLanguageCallTests(TextInLanguageCallTests& cell, uint64_t length, std::initializer_list<const TextInLanguageCallTests*> parts)
+{
+    using CompactFibers = JSRopeString::CompactFibers;
+    std::array<uint64_t, 3> fibers { };
+    std::ranges::transform(parts, fibers.begin(), [](const TextInLanguageCallTests* part) {
+        return part->address();
+    });
+    cell.setHeader(0, StringType);
+    cell.at<uint64_t>(sizeof(uint64_t)) = fibers[0] | JSString::isRopeInPointer | JSRopeString::is8BitInPointer;
+    cell.at<uint64_t>(2 * sizeof(uint64_t)) = fibers[1] << CompactFibers::shiftOfFiber1LowerInLengthWord | length;
+    cell.at<uint64_t>(3 * sizeof(uint64_t)) = fibers[1] >> CompactFibers::widthOfFiber1LowerInLengthWord | fibers[2] << CompactFibers::shiftOfFiber2InUpperWord;
+}
+
 static bool refersToInLanguageCallTests(const StubCatalog& catalog, StubKey from, StubKey target)
 {
     return catalog.recordingOf(bodyOf(from)).references.containsIf([&](const StubReference& reference) {
@@ -120,8 +142,9 @@ static void testIsWellFormedInLanguageCallTests()
 static void testSearchesFromPositionInLanguageCallTests()
 {
     StubRunner runner;
-    Ref<StringImpl> characters = StringImpl::create("abcdef"_s);
-    Ref<StringImpl> charactersOfPart = StringImpl::create("cd"_s);
+    constexpr std::array<char16_t, 6> wideCharacters { 'a', 'b', 'c', 'd', 'e', 0x100 };
+    Ref<StringImpl> characters = StringImpl::create(std::span<const char16_t>(wideCharacters));
+    Ref<StringImpl> charactersOfPart = *StringImpl::empty();
     TextInLanguageCallTests text;
     TextInLanguageCallTests rope;
     TextInLanguageCallTests part;
@@ -184,6 +207,218 @@ static void testSearchesFromPositionInLanguageCallTests()
         for (auto [receiver, searched, position] : leftAlone) {
             StubRun run = runner.runCall(key, callee.address(), receiver, { searched, position });
             AOT_TEST_CHECK(run.result == nothingDoneInLanguageCallTests && !run.calledOperation);
+        }
+    }
+}
+
+static void testTextAtOnePlaceInLanguageCallTests()
+{
+    StubRunner runner;
+    std::array<char, 40> manyCharacters;
+    manyCharacters.fill('a');
+    constexpr std::array<char16_t, 2> wideCharacters { 'e', 'f' };
+    Ref<StringImpl> impls[] = {
+        StringImpl::create("abcdef"_s), StringImpl::create("ab"_s), StringImpl::create("cd"_s), StringImpl::create("ef"_s), Ref<StringImpl> { *StringImpl::empty() }, StringImpl::create("abcdefg"_s), StringImpl::create("xabcdef"_s),
+        StringImpl::create(std::span<const char>(manyCharacters)), StringImpl::create(std::span<const char>(manyCharacters).first(32)), StringImpl::create(std::span<const char>(manyCharacters).first(33)),
+        StringImpl::create(std::span<const char16_t>(wideCharacters)),
+    };
+    enum Text : unsigned { Whole, Head, Middle, Tail, Nothing, Longer, Shifted, Forty, ThirtyTwo, ThirtyThree, Wide, Rope, PieceWhole, PieceTail, PieceOfWide, HeadAndMiddle, MiddleAndTail, HeadMiddleAndTail, HeadAndTail, MiddleAndPieceTail, ThirtyTwoOfTwoParts, ThirtyTwoAndHead, MiddleAndWide, HeadAndJoined, WholeOfThreeParts, HeadMiddleAndHead, numberOfTexts };
+    std::array<TextInLanguageCallTests, numberOfTexts> texts;
+    for (unsigned index = 0; index < std::size(impls); ++index)
+        makeFlatInLanguageCallTests(texts[index], impls[index].get());
+    makePieceInLanguageCallTests(texts[PieceWhole], texts[Shifted], 1, 6);
+    makePieceInLanguageCallTests(texts[PieceTail], texts[Shifted], 5, 2);
+    makePieceInLanguageCallTests(texts[PieceOfWide], texts[Wide], 0, 1);
+    Ref<StringImpl> sixteen = StringImpl::create(std::span<const char>(manyCharacters).first(16));
+    TextInLanguageCallTests textOfSixteen;
+    makeFlatInLanguageCallTests(textOfSixteen, sixteen.get());
+    makeJoinedInLanguageCallTests(texts[HeadAndMiddle], 4, { &texts[Head], &texts[Middle] });
+    makeJoinedInLanguageCallTests(texts[MiddleAndTail], 4, { &texts[Middle], &texts[Tail] });
+    makeJoinedInLanguageCallTests(texts[HeadMiddleAndTail], 6, { &texts[Head], &texts[Middle], &texts[Tail] });
+    makeJoinedInLanguageCallTests(texts[HeadAndTail], 4, { &texts[Head], &texts[Tail] });
+    makeJoinedInLanguageCallTests(texts[MiddleAndPieceTail], 4, { &texts[Middle], &texts[PieceTail] });
+    makeJoinedInLanguageCallTests(texts[ThirtyTwoOfTwoParts], 32, { &textOfSixteen, &textOfSixteen });
+    makeJoinedInLanguageCallTests(texts[ThirtyTwoAndHead], 18, { &textOfSixteen, &texts[Head] });
+    makeJoinedInLanguageCallTests(texts[MiddleAndWide], 4, { &texts[Middle], &texts[Wide] });
+    Ref<StringImpl> one = StringImpl::create("e"_s);
+    Ref<StringImpl> other = StringImpl::create("f"_s);
+    TextInLanguageCallTests textOfOne;
+    TextInLanguageCallTests textOfOther;
+    TextInLanguageCallTests joinedOfBoth;
+    makeFlatInLanguageCallTests(textOfOne, one.get());
+    makeFlatInLanguageCallTests(textOfOther, other.get());
+    makeJoinedInLanguageCallTests(joinedOfBoth, 2, { &textOfOne, &textOfOther });
+    makeJoinedInLanguageCallTests(texts[Rope], 2, { &joinedOfBoth, &texts[Nothing] });
+    makeJoinedInLanguageCallTests(texts[HeadAndJoined], 6, { &texts[Head], &texts[MiddleAndTail] });
+    makeJoinedInLanguageCallTests(texts[WholeOfThreeParts], 6, { &texts[Head], &texts[Middle], &texts[Tail] });
+    makeJoinedInLanguageCallTests(texts[HeadMiddleAndHead], 6, { &texts[Head], &texts[Middle], &texts[Head] });
+    FakeObject<sizeof(JSFunction)> callee;
+    constexpr uint64_t yes = JSValue::ValueTrue;
+    constexpr uint64_t no = JSValue::ValueFalse;
+    constexpr int32_t unused = 0;
+
+    struct Case {
+        BoxedCallForm form;
+        unsigned count;
+        Text receiver;
+        Text sought;
+        int32_t position;
+        uint64_t result;
+    };
+    const Case answeredByStub[] = {
+        { BoxedCallForm::StringStartsWith, 1, Whole, Head, unused, yes },
+        { BoxedCallForm::StringStartsWith, 1, Whole, Middle, unused, no },
+        { BoxedCallForm::StringStartsWith, 1, Whole, Nothing, unused, yes },
+        { BoxedCallForm::StringStartsWith, 1, Whole, Whole, unused, yes },
+        { BoxedCallForm::StringStartsWith, 1, Whole, Longer, unused, no },
+        { BoxedCallForm::StringStartsWith, 1, Nothing, Nothing, unused, yes },
+        { BoxedCallForm::StringStartsWith, 1, Forty, ThirtyTwo, unused, yes },
+        { BoxedCallForm::StringStartsWith, 2, Whole, Middle, 2, yes },
+        { BoxedCallForm::StringStartsWith, 2, Whole, Middle, 3, no },
+        { BoxedCallForm::StringStartsWith, 2, Whole, Tail, 4, yes },
+        { BoxedCallForm::StringStartsWith, 2, Whole, Tail, 5, no },
+        { BoxedCallForm::StringStartsWith, 2, Whole, Nothing, 6, yes },
+        { BoxedCallForm::StringStartsWith, 2, Whole, Nothing, 100, yes },
+        { BoxedCallForm::StringStartsWith, 2, Whole, Middle, -1, no },
+        { BoxedCallForm::StringStartsWith, 2, Whole, Head, -7, yes },
+        { BoxedCallForm::StringEndsWith, 1, Whole, Tail, unused, yes },
+        { BoxedCallForm::StringEndsWith, 1, Whole, Middle, unused, no },
+        { BoxedCallForm::StringEndsWith, 1, Whole, Nothing, unused, yes },
+        { BoxedCallForm::StringEndsWith, 1, Whole, Whole, unused, yes },
+        { BoxedCallForm::StringEndsWith, 1, Whole, Shifted, unused, no },
+        { BoxedCallForm::StringEndsWith, 1, Shifted, Whole, unused, yes },
+        { BoxedCallForm::StringEndsWith, 1, Longer, Whole, unused, no },
+        { BoxedCallForm::StringEndsWith, 1, Forty, ThirtyTwo, unused, yes },
+        { BoxedCallForm::StringIndexOf, 2, Whole, Tail, 4, int32InLanguageCallTests(4) },
+        { BoxedCallForm::StringIndexOf, 2, Whole, Middle, 4, int32InLanguageCallTests(-1) },
+        { BoxedCallForm::StringIndexOf, 2, Whole, Tail, 5, int32InLanguageCallTests(-1) },
+        { BoxedCallForm::StringIndexOf, 2, Whole, Tail, 100, int32InLanguageCallTests(-1) },
+        { BoxedCallForm::StringIndexOf, 2, Whole, Whole, 0, int32InLanguageCallTests(0) },
+        { BoxedCallForm::StringIndexOf, 2, Whole, Whole, -3, int32InLanguageCallTests(0) },
+        { BoxedCallForm::StringIndexOf, 2, Whole, Longer, 0, int32InLanguageCallTests(-1) },
+        { BoxedCallForm::StringIndexOf, 2, Shifted, Whole, 1, int32InLanguageCallTests(1) },
+        { BoxedCallForm::StringIndexOf, 2, Whole, Nothing, 6, int32InLanguageCallTests(6) },
+        { BoxedCallForm::StringIndexOf, 2, Whole, Nothing, 100, int32InLanguageCallTests(6) },
+        { BoxedCallForm::StringIndexOf, 2, Nothing, Nothing, 0, int32InLanguageCallTests(0) },
+        { BoxedCallForm::StringLastIndexOf, 2, Whole, Head, 0, int32InLanguageCallTests(0) },
+        { BoxedCallForm::StringLastIndexOf, 2, Whole, Middle, 0, int32InLanguageCallTests(-1) },
+        { BoxedCallForm::StringLastIndexOf, 2, Whole, Head, -3, int32InLanguageCallTests(0) },
+        { BoxedCallForm::StringLastIndexOf, 2, Whole, Nothing, 0, int32InLanguageCallTests(0) },
+        { BoxedCallForm::StringLastIndexOf, 2, Whole, Longer, 0, int32InLanguageCallTests(-1) },
+        { BoxedCallForm::StringLastIndexOf, 2, Whole, Whole, std::numeric_limits<int32_t>::min(), int32InLanguageCallTests(0) },
+        { BoxedCallForm::StringEndsWith, 1, Whole, PieceTail, unused, yes },
+        { BoxedCallForm::StringEndsWith, 1, PieceWhole, Tail, unused, yes },
+        { BoxedCallForm::StringEndsWith, 1, PieceWhole, Middle, unused, no },
+        { BoxedCallForm::StringEndsWith, 1, PieceWhole, PieceTail, unused, yes },
+        { BoxedCallForm::StringStartsWith, 1, PieceWhole, Head, unused, yes },
+        { BoxedCallForm::StringStartsWith, 1, PieceWhole, PieceTail, unused, no },
+        { BoxedCallForm::StringStartsWith, 2, PieceWhole, PieceTail, 4, yes },
+        { BoxedCallForm::StringIndexOf, 2, PieceWhole, PieceTail, 4, int32InLanguageCallTests(4) },
+        { BoxedCallForm::StringLastIndexOf, 2, PieceWhole, Head, 0, int32InLanguageCallTests(0) },
+        { BoxedCallForm::StringStartsWith, 1, Wide, Whole, unused, no },
+        { BoxedCallForm::StringStartsWith, 2, Whole, Wide, 5, no },
+        { BoxedCallForm::StringEndsWith, 1, Rope, Whole, unused, no },
+        { BoxedCallForm::StringIndexOf, 2, Rope, Whole, 0, int32InLanguageCallTests(-1) },
+        { BoxedCallForm::StringIndexOf, 2, Whole, Wide, 5, int32InLanguageCallTests(-1) },
+        { BoxedCallForm::StringLastIndexOf, 2, Wide, Whole, 0, int32InLanguageCallTests(-1) },
+        { BoxedCallForm::StringStartsWith, 1, Whole, HeadAndMiddle, unused, yes },
+        { BoxedCallForm::StringStartsWith, 1, Whole, MiddleAndTail, unused, no },
+        { BoxedCallForm::StringStartsWith, 1, Whole, HeadAndTail, unused, no },
+        { BoxedCallForm::StringStartsWith, 1, Whole, HeadMiddleAndTail, unused, yes },
+        { BoxedCallForm::StringStartsWith, 1, Longer, HeadMiddleAndTail, unused, yes },
+        { BoxedCallForm::StringStartsWith, 1, Whole, HeadMiddleAndHead, unused, no },
+        { BoxedCallForm::StringEndsWith, 1, Shifted, HeadMiddleAndHead, unused, no },
+        { BoxedCallForm::StringStartsWith, 1, Shifted, HeadMiddleAndTail, unused, no },
+        { BoxedCallForm::StringStartsWith, 1, Forty, ThirtyTwoOfTwoParts, unused, yes },
+        { BoxedCallForm::StringStartsWith, 1, Forty, ThirtyTwoAndHead, unused, no },
+        { BoxedCallForm::StringStartsWith, 2, Whole, MiddleAndTail, 2, yes },
+        { BoxedCallForm::StringStartsWith, 2, Whole, MiddleAndTail, 1, no },
+        { BoxedCallForm::StringStartsWith, 2, Whole, MiddleAndTail, 3, no },
+        { BoxedCallForm::StringStartsWith, 2, PieceWhole, MiddleAndPieceTail, 2, yes },
+        { BoxedCallForm::StringEndsWith, 1, Whole, MiddleAndTail, unused, yes },
+        { BoxedCallForm::StringEndsWith, 1, Whole, HeadAndMiddle, unused, no },
+        { BoxedCallForm::StringEndsWith, 1, Whole, HeadAndTail, unused, no },
+        { BoxedCallForm::StringEndsWith, 1, Whole, MiddleAndPieceTail, unused, yes },
+        { BoxedCallForm::StringEndsWith, 1, Shifted, HeadMiddleAndTail, unused, yes },
+        { BoxedCallForm::StringEndsWith, 1, Forty, ThirtyTwoOfTwoParts, unused, yes },
+        { BoxedCallForm::StringEndsWith, 1, Head, HeadAndMiddle, unused, no },
+        { BoxedCallForm::StringIndexOf, 2, Whole, MiddleAndTail, 2, int32InLanguageCallTests(2) },
+        { BoxedCallForm::StringIndexOf, 2, Whole, HeadAndTail, 2, int32InLanguageCallTests(-1) },
+        { BoxedCallForm::StringIndexOf, 2, Shifted, HeadMiddleAndTail, 1, int32InLanguageCallTests(1) },
+        { BoxedCallForm::StringLastIndexOf, 2, Whole, HeadAndMiddle, 0, int32InLanguageCallTests(0) },
+        { BoxedCallForm::StringLastIndexOf, 2, Whole, MiddleAndTail, 0, int32InLanguageCallTests(-1) },
+    };
+    const Case leftToOperation[] = {
+        { BoxedCallForm::StringStartsWith, 1, Forty, ThirtyThree, unused, yes },
+        { BoxedCallForm::StringStartsWith, 1, Whole, Wide, unused, no },
+        { BoxedCallForm::StringStartsWith, 1, Wide, Nothing, unused, yes },
+        { BoxedCallForm::StringStartsWith, 1, Whole, Rope, unused, no },
+        { BoxedCallForm::StringStartsWith, 1, Rope, Head, unused, no },
+        { BoxedCallForm::StringStartsWith, 1, Whole, PieceOfWide, unused, no },
+        { BoxedCallForm::StringEndsWith, 1, Whole, PieceOfWide, unused, no },
+        { BoxedCallForm::StringEndsWith, 1, Whole, MiddleAndWide, unused, yes },
+        { BoxedCallForm::StringStartsWith, 1, Whole, HeadAndJoined, unused, yes },
+        { BoxedCallForm::StringEndsWith, 1, Whole, HeadAndJoined, unused, yes },
+        { BoxedCallForm::StringStartsWith, 1, WholeOfThreeParts, Head, unused, yes },
+        { BoxedCallForm::StringEndsWith, 1, WholeOfThreeParts, MiddleAndTail, unused, yes },
+        { BoxedCallForm::StringStartsWith, 2, Forty, ThirtyThree, 1, yes },
+        { BoxedCallForm::StringStartsWith, 2, Whole, Wide, 4, yes },
+        { BoxedCallForm::StringEndsWith, 1, Forty, ThirtyThree, unused, yes },
+        { BoxedCallForm::StringEndsWith, 1, Whole, Wide, unused, yes },
+        { BoxedCallForm::StringEndsWith, 1, Whole, Rope, unused, no },
+        { BoxedCallForm::StringEndsWith, 1, Rope, Tail, unused, no },
+        { BoxedCallForm::StringIndexOf, 2, Whole, Tail, 3, int32InLanguageCallTests(4) },
+        { BoxedCallForm::StringIndexOf, 2, Whole, Nothing, 2, int32InLanguageCallTests(2) },
+        { BoxedCallForm::StringIndexOf, 2, Whole, Wide, 4, int32InLanguageCallTests(4) },
+        { BoxedCallForm::StringIndexOf, 2, Forty, ThirtyThree, 7, int32InLanguageCallTests(7) },
+        { BoxedCallForm::StringLastIndexOf, 2, Whole, Head, 1, int32InLanguageCallTests(0) },
+        { BoxedCallForm::StringLastIndexOf, 2, Whole, Wide, 0, int32InLanguageCallTests(-1) },
+        { BoxedCallForm::StringLastIndexOf, 2, Rope, Head, 0, int32InLanguageCallTests(-1) },
+    };
+    auto operationOf = [](BoxedCallForm form) {
+        switch (form) {
+        case BoxedCallForm::StringStartsWith:
+            return Entry::operationAOTStringHasAt;
+        case BoxedCallForm::StringEndsWith:
+            return Entry::operationAOTStringEndsWith;
+        case BoxedCallForm::StringIndexOf:
+            return Entry::operationAOTStringIndexOfFrom;
+        default:
+            return Entry::operationAOTStringLastIndexOf;
+        }
+    };
+    auto answerInFormOfOperation = [](BoxedCallForm form, uint64_t result) -> uint64_t {
+        if (form == BoxedCallForm::StringStartsWith)
+            return result == yes;
+        if (form == BoxedCallForm::StringEndsWith)
+            return result;
+        return static_cast<uint64_t>(static_cast<int64_t>(static_cast<int32_t>(result)));
+    };
+    auto otherAnswer = [](BoxedCallForm form, uint64_t result) -> uint64_t {
+        if (form == BoxedCallForm::StringStartsWith || form == BoxedCallForm::StringEndsWith)
+            return result == yes ? no : yes;
+        return int32InLanguageCallTests(static_cast<int32_t>(result) + 2);
+    };
+    auto run = [&](const Case& testCase, StubKey key) {
+        if (testCase.count == 1)
+            return runner.runCall(key, callee.address(), texts[testCase.receiver].address(), { texts[testCase.sought].address() });
+        return runner.runCall(key, callee.address(), texts[testCase.receiver].address(), { texts[testCase.sought].address(), int32InLanguageCallTests(testCase.position) });
+    };
+    for (const Case& testCase : answeredByStub) {
+        runner.recordCallsOf(operationOf(testCase.form));
+        runner.setResultOfRecordedOperation(answerInFormOfOperation(testCase.form, otherAnswer(testCase.form, testCase.result)));
+        for (StubKey key : { tryCallMethodOfBuiltinClass(testCase.form, testCase.count), callBoxedBuiltin(testCase.form, testCase.count) }) {
+            StubRun answer = run(testCase, key);
+            AOT_TEST_CHECK(!answer.numberOfRecordedCalls && answer.result == testCase.result);
+        }
+    }
+    for (const Case& testCase : leftToOperation) {
+        runner.recordCallsOf(operationOf(testCase.form));
+        runner.setResultOfRecordedOperation(answerInFormOfOperation(testCase.form, testCase.result));
+        for (StubKey key : { tryCallMethodOfBuiltinClass(testCase.form, testCase.count), callBoxedBuiltin(testCase.form, testCase.count) }) {
+            StubRun answer = run(testCase, key);
+            AOT_TEST_CHECK(answer.numberOfRecordedCalls == 1 && answer.result == testCase.result);
+            AOT_TEST_CHECK(answer.recordedArguments[0] == texts[testCase.receiver].address() && answer.recordedArguments[1] == texts[testCase.sought].address());
         }
     }
 }
@@ -298,6 +533,7 @@ std::span<const NativeTest> stubBoxedCallsOfLanguageTests()
         { "stubs/boxed-calls-of-language/exec-and-match-go-to-what-matches"_s, testFormsThatMatchInLanguageCallTests },
         { "stubs/boxed-calls-of-language/narrow-flat-text-is-well-formed"_s, ImageTests::whenExecutable<testIsWellFormedInLanguageCallTests> },
         { "stubs/boxed-calls-of-language/search-from-a-position-lies-in-the-text"_s, ImageTests::whenExecutable<testSearchesFromPositionInLanguageCallTests> },
+        { "stubs/boxed-calls-of-language/short-text-that-can-stand-at-one-place-alone-is-compared-there"_s, ImageTests::whenExecutable<testTextAtOnePlaceInLanguageCallTests> },
         { "stubs/boxed-calls-of-language/several-values-are-pushed-by-one-operation"_s, ImageTests::whenExecutable<testPushesOfSeveralValuesInLanguageCallTests> },
         { "stubs/boxed-calls-of-language/boolean-called-by-value-takes-no-frame"_s, ImageTests::whenExecutable<testBooleanCalledByValueInLanguageCallTests> },
     };

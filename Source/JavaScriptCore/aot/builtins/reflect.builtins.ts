@@ -138,7 +138,7 @@ export default b.declarations(
         ...operandCodeEffects,
         args: { target: b.object },
         returns: b.bool,
-        uses: { target: [b.askedWhetherExtensible, ...b.ownPropertyTraps] },
+        uses: { target: [...b.ownPropertyTraps] },
         reads: ownProperties,
         implementation: b.hostCall,
       },

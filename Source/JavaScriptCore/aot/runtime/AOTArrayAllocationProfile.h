@@ -66,8 +66,6 @@ constexpr size_t sizeOfArrayWithStorage(unsigned capacity, unsigned propertyRoom
 JSArray* tryCreateArrayWithStorage(VM&, Structure*, unsigned publicLength, unsigned vectorLength, unsigned propertyRoom = 0);
 inline constexpr uint32_t maxValuesInArrayLiteral = (1u << 25) - 1;
 
-void reserveArrayCapacity(VM&, JSArray*, uint64_t additional);
-
 inline constexpr unsigned holeArrayCapacityShift = 8;
 inline constexpr unsigned maxHoleArrayCapacity = 127;
 inline constexpr unsigned arrayLiteralWithDoubleIsNumberMaskShift = 8;

@@ -29,11 +29,6 @@ struct UseOfKeyInWalkForInKeys {
     ValueID key;
 };
 
-struct ArmInWalkForInKeys {
-    BlockID last;
-    Reference value;
-};
-
 }
 
 Walker::IterationByIndex* findForInThatHandedOut(Walker& walker, ValueID key)
@@ -144,11 +139,11 @@ bool useKeyOfForInBehindTestOfItsOpcodes(Walker& walker, const BodyValue& operat
     walker.branch(isCurrent, current, asWritten);
     walker.noteGuessOpened();
 
-    Vector<ArmInWalkForInKeys, 2> arms;
+    Vector<Walker::ArmThatMeets, 2> arms;
     auto endArm = [&] {
         if (walker.isUnreachable() || walker.hasFailed())
             return;
-        arms.append(ArmInWalkForInKeys { walker.currentBlock(), walker.referenceOf(operation.id()) });
+        arms.append(Walker::ArmThatMeets { walker.currentBlock(), { walker.referenceOf(operation.id()) } });
     };
 
     walker.continueIn(asWritten);
@@ -186,26 +181,8 @@ bool useKeyOfForInBehindTestOfItsOpcodes(Walker& walker, const BodyValue& operat
         return true;
 
     Reference met;
-    if (arms.size() == 2 && arms[0].value && arms[1].value) {
-        const Code& code = walker.code();
-        TypeID type = joinOf(walker.types(), walker.facts().families(), code.at(arms[0].value.id()).type, code.at(arms[1].value.id()).type);
-        Representation forms[] { walker.representationOf(arms[0].value), walker.representationOf(arms[1].value) };
-        met = walker.addParameter(meeting, type, walker.formOfParameter(type, forms));
-    }
-    for (const ArmInWalkForInKeys& arm : arms) {
-        walker.continueIn(arm.last);
-        if (met)
-            walker.jumpTo(meeting, singleElementSpan(arm.value));
-        else
-            walker.jumpTo(meeting);
-        if (walker.hasFailed())
-            return true;
-    }
-    walker.continueIn(meeting);
-    if (met)
+    if (walker.letArmsMeet(arms.span(), meeting, singleElementSpan(met)))
         walker.bind(operation.id(), met);
-    else if (arms.size() == 1 && arms[0].value)
-        walker.bind(operation.id(), arms[0].value);
     return true;
 }
 

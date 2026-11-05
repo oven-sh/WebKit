@@ -201,7 +201,7 @@ static uint32_t appendOffsetsInLayoutTables(TablePart& part, std::span<const uin
 
 static bool slotOfLayoutRecordTakesEveryValue(const Typed::Program& program, const FieldOfLayoutRecord& field, const Typed::FieldFacts& facts, const Typed::PlacedSlot& slot)
 {
-    if (field.form.contains(Typed::FieldForm::IsAccessor) || (facts.facts.contains(Typed::FieldFact::IsEnforced) && slot.type) || facts.location.deferral != Typed::ClosureDeferral::Unknown)
+    if (field.form.contains(Typed::FieldForm::IsAccessor) || (facts.facts.contains(Typed::FieldFact::IsEnforced) && slot.type))
         return false;
     return slot.representation == SlotRepresentation::JSValue && program.at(typeRecordedForSlot(slot)).isAnything();
 }
@@ -225,7 +225,7 @@ static uint16_t flagsOfFieldInLayoutRecord(const FieldOfLayoutRecord& field, con
         { slot.deferredClosureCapturesObject, fieldDeferredClosureCapturesObject },
         { slot.deferredClosureCapturesEnvironment, fieldDeferredClosureCapturesEnvironment },
         { field.flags.contains(FieldFlags::IsPrivate) || (field.flags.contains(FieldFlags::IsHidden) && !field.key), fieldIsPrivate },
-        { field.flags.contains(FieldFlags::IsBrand) && facts.location.reads != Typed::ReadState::NeverRead, fieldIsBrand },
+        { field.flags.contains(FieldFlags::IsBrand), fieldIsBrand },
         { facts.stability.contains(FieldStability::IsNeverDeleted), fieldIsNeverDeleted },
         { facts.stability.contains(FieldStability::IsNeverRedefined), fieldIsNeverRedefined },
         { slot.everyStoreFits, fieldIsNeverStoredWithOtherType },

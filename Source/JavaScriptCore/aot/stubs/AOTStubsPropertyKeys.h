@@ -69,6 +69,7 @@ struct ReadBehindSiteForm {
 };
 constexpr StubKey readAtSite(ReceiverAtSite receiver, NameAtSite name) { return StubKey(StubFamily::ReadAtSite).withForm(static_cast<uint8_t>(receiver) + 2 * static_cast<uint8_t>(name)); }
 constexpr ReadAtSiteForm readAtSiteFormOf(StubKey key) { return { static_cast<ReceiverAtSite>(key.form() % 2), static_cast<NameAtSite>(key.form() / 2) }; }
+constexpr StubKey readAtSiteUnlessAsMade(NameAtSite name) { return readAtSite(ReceiverAtSite::IsCell, name).withFamily(StubFamily::ReadAtSiteUnlessAsMade); }
 inline constexpr std::array narrowFieldsAtSites { SlotRepresentation::OptionalCell32, SlotRepresentation::OptionalInt32, SlotRepresentation::OptionalDouble, SlotRepresentation::OptionalBoolean, SlotRepresentation::OptionalInt64 };
 constexpr std::optional<StubKey> tryReadAtSiteOfNarrowField(SlotRepresentation field, ReceiverAtSite receiver, NameAtSite name)
 {

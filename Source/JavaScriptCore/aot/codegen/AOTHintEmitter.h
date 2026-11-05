@@ -18,8 +18,10 @@ public:
     void generateLoopHint(const ValueContext&);
     void generateReleaseHint(const ValueContext&);
     void release(ValueID);
-    void generateClearFrameCell(const ValueContext&);
     void generateEndLifeOfCell(const ValueContext&);
+    bool endsLivesAtRunTime();
+    void endLifeOf(const OperationContext&, ValueID cell);
+    void stopWhereLifeHasEnded(const OperationContext&, CellPointer);
     void pollWhereNoFrameIsSetUp(const OperationContext&);
 
 private:

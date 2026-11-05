@@ -48,6 +48,19 @@ private:
     void suspendGenerator(const ValueContext&, GeneratorSuspension);
     void defineValueAndWord(const ValueContext&, StubCallResult);
     void branchUnlessUnmodifiedGenerator(Operand, const Type&, LBasicBlock otherwise);
+
+    struct HeapWordsInFrame {
+        ValueID made;
+        Machine::StackSlot* slot { nullptr };
+    };
+    void findHeapWordsAliveAtSuspensions();
+    bool areNamedOnlyByReadsAndStoresOfWords(ValueID made) const;
+    Machine::StackSlot* slotOfHeapWordsInFrame(ValueID frame);
+    TypedPointer wordInFrame(Machine::StackSlot*, uint32_t index);
+
+    Vector<HeapWordsInFrame, 2> m_heapWordsInFrame;
+    Vector<ValueID, 2> m_heapWordsAliveAtSuspensions;
+    bool m_hasLookedForHeapWordsAliveAtSuspensions { false };
 };
 
 } } } // namespace JSC::AOT::Typed

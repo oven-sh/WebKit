@@ -80,7 +80,7 @@ static constexpr RepresentationRule representationRuleOf(Opcode opcode)
     case Opcode::CheckInitialized: case Opcode::RequireObjectCoercible: case Opcode::RequireObject: case Opcode::FinishObject: case Opcode::FinishClass:
     case Opcode::Convert: case Opcode::Check: case Opcode::Expect: case Opcode::Upcast: case Opcode::NarrowByField: case Opcode::NarrowByTest:
         return RepresentationRule::Forwarding;
-    case Opcode::TypeTest: case Opcode::ReleaseHint: case Opcode::ClearFrameCell: case Opcode::EndLifeOfCell: case Opcode::CheckProof:
+    case Opcode::TypeTest: case Opcode::ReleaseHint: case Opcode::EndLifeOfCell: case Opcode::CheckProof:
         return RepresentationRule::AsItIs;
     case Opcode::Add: case Opcode::Sub: case Opcode::Mul: case Opcode::Div: case Opcode::Mod: case Opcode::Pow: case Opcode::Negate: case Opcode::Increment: case Opcode::Decrement:
     case Opcode::BitAnd: case Opcode::BitOr: case Opcode::BitXor: case Opcode::LShift: case Opcode::RShift: case Opcode::URShift: case Opcode::BitNot:

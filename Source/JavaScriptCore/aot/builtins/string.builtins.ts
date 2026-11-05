@@ -2,7 +2,7 @@ import * as b from "bun-builtins-table";
 
 const receiver = b.string.loose.refusing(b.null);
 const position = b.integer.loose.optional;
-const characters = [b.readAsCharacters];
+const characters = b.inspected;
 const maximumLength = 2 ** 31 - 1;
 const propertyLookup = ["ObjectFields", "NamedProperties", "ShapeWords", "PrototypeLinks"];
 

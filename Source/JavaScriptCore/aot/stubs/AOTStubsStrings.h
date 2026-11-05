@@ -77,7 +77,8 @@ struct ComparedBytes {
     GPRReg secondWord;
 };
 enum class DifferingWords : bool { AreLoaded, MayBeUnloaded };
-void branchIfBytesDiffer(StubAssembler&, const ComparedBytes&, MacroAssembler::JumpList& differ, DifferingWords = DifferingWords::AreLoaded);
+enum class StartsOfEqualBytes : bool { EndAnywhere, EndBehindBytes };
+void branchIfBytesDiffer(StubAssembler&, const ComparedBytes&, MacroAssembler::JumpList& differ, DifferingWords = DifferingWords::AreLoaded, StartsOfEqualBytes = StartsOfEqualBytes::EndAnywhere);
 struct ComparedImpls {
     GPRReg first;
     GPRReg second;
@@ -96,6 +97,17 @@ struct ComparedStrings {
     GPRReg word;
 };
 void branchIfCharactersInPlaceDiffer(StubAssembler&, const ComparedStrings&, MacroAssembler::JumpList& differ, MacroAssembler::JumpList& needsOperation);
+struct TextSoughtAtOnePlace {
+    GPRReg string;
+    GPRReg sought;
+    GPRReg place;
+    GPRReg characters;
+    GPRReg soughtCharacters;
+    GPRReg length;
+    GPRReg word;
+};
+enum class PlaceOfSoughtText : uint8_t { IsStart, IsEnd, IsGiven, IsGivenAndLast };
+void branchUnlessTextStandsAtPlace(StubAssembler&, const TextSoughtAtOnePlace&, PlaceOfSoughtText, MacroAssembler::JumpList& isNotThere, MacroAssembler::JumpList& needsOperation);
 struct ScannedBytes {
     GPRReg bytes;
     GPRReg size;

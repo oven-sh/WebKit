@@ -89,6 +89,7 @@ struct CompileOptions {
     unsigned threadCount { 1 };
     CompileAction action { CompileAction::Compile };
     bool verifiesMachineCode { false };
+    bool asksWhetherFlowOfLinkIsClosed { false };
 #if ASSERT_ENABLED || ASAN_ENABLED
     bool verifiesAfterEveryStage { false };
     bool verifiesProgram { false };

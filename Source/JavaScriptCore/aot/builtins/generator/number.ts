@@ -380,8 +380,6 @@ export function numberModel(builder: ModelBuilder, types: TypeInterner): TableMo
     hostRoles: resolveHostRoles(builder),
     hostClassRoles: resolveHostClassRoles(builder),
     hostObjects: Object.freeze([...builder.hostObjects]),
-    namedMemberCalls: Object.freeze([...builder.namedMemberCalls]),
-    hostMethodCalls: Object.freeze([...builder.hostMethodCalls]),
     checkedNumbers: orderCheckedNumbers(builder.checkedNumbers),
     startup: builder.startup,
     syntax: builder.syntax,

@@ -81,7 +81,7 @@ static void generateCreateIteratorResult(StraightEmitter& emitter, const BodyVal
     std::array<FieldIndex, 2> fields { *valueField, *doneField };
 
     const PlannedLayout& planned = emitter.plan().layout(layout);
-    std::optional<PlacedAllocation> placed = emitter.plan().allocation(program, layout, AllocationClassID(), fields);
+    std::optional<PlacedAllocation> placed = emitter.plan().allocation(program, layout, fields);
     bool hasStraightForm = placed && !placed->isBornUnfinished && !planned.cellsAreHandedBack;
     for (FieldIndex field = 0; hasStraightForm && field < planned.slots.size(); ++field) {
         const PlacedSlot& slot = planned.slots[field];

@@ -700,10 +700,8 @@ StubSignature signatureOfNewDictionary(StubKey)
 
 void generateNewDictionary(StubAssembler& jit)
 {
-    static_assert(exists(newDictionary(numberOfRoomierFinalObjects)) && !exists(newDictionary(numberOfRoomierFinalObjects + 1)));
-    const unsigned kind = static_cast<unsigned>(InlineAllocation::DefaultFinalObject) + jit.key().count();
-    const unsigned inlineCapacity = JSFinalObject::defaultInlineCapacity + 2 * jit.key().count();
-    const size_t numberOfWords = JSFinalObject::allocationSize(inlineCapacity) / sizeof(uint64_t);
+    constexpr unsigned kind = static_cast<unsigned>(InlineAllocation::DefaultFinalObject);
+    const size_t numberOfWords = JSFinalObject::allocationSize(JSFinalObject::defaultInlineCapacity) / sizeof(uint64_t);
     const GPRReg result = jit.result();
     const GPRReg allocator = jit.allocateScratch(StubRegister::T12);
     const GPRReg scratch = jit.allocateScratch(StubRegister::T13);
@@ -722,7 +720,6 @@ void generateNewDictionary(StubAssembler& jit)
     jit.callOperationAndReturn(Entry::operationAOTNewDictionary, {
         .saves = Saves::CallerSavedRegisters,
         .checksException = false,
-        .constantArguments = { OperationCall::ConstantArgument { operationArgumentGPR(1), inlineCapacity } },
     });
 }
 

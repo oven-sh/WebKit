@@ -372,7 +372,7 @@ bool Walker::iterationsSteppedAtHandOverPositionsAlone(BlockID inputHead) const
         --numberInFront;
         if (iteration.inputHead != inputHead || iteration.inlineFrame != m_frames.last().inlineFrame)
             continue;
-        if (iteration.mayGoByProtocol || iteration.table || iteration.count || !iteration.isDeadBehindLoop || iteration.otherForm != IterationByIndex::OtherForm::None)
+        if (!iteration.goesThroughListByIndexAlone() || !iteration.isDeadBehindLoop)
             return false;
     }
     return true;

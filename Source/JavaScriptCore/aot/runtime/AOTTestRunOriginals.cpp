@@ -22,7 +22,7 @@ bool Modules::importsOriginalBesideMock(ModuleID fileOrModule, ModuleID importer
     if (!isMocked(mocked) || !host().givesOriginalBesideMock || !importer || !m_table.hasFilePath(mocked) || !m_table.hasFilePath(importer))
         return false;
     bool isFile = data(mocked).kind == ModuleKind::CommonJs && !data(mocked).isOfLibrary();
-    if (isFile ? moduleWithExportsOf(mocked) == mocked || fileOf(importer) == mocked : !data(mocked).isESModuleOfProgram())
+    if (isFile ? moduleWithExportsOf(mocked) == mocked || fileOf(importer) == mocked : !data(mocked).isESModuleOfProgram() && data(mocked).kind != ModuleKind::Data)
         return false;
     auto asked = m_importersAskedAboutOriginal.add(static_cast<uint64_t>(mocked.index()) << 32 | importer.index(), false);
     if (asked.isNewEntry)
@@ -58,6 +58,22 @@ bool Modules::hasImporterBelowThatGetsOriginal(ModuleID root, ModuleID fileOrFac
         }
     }
     return false;
+}
+
+void Modules::runOriginalsOwedTo(ModuleID importer)
+{
+    auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+    if (!data(importer).isESModuleOfProgram())
+        return;
+    for (const ModuleRequestData& request : m_table.imports(importer)) {
+        if (request.isHoisted || request.isRequire)
+            continue;
+        ModuleID file = fileOf(moduleLoadedBy(request));
+        if (!mockInPlace(file) || isLeftAloneByMock(file) || moduleWithExportsOf(file) == file || !importsOriginalBesideMock(file, importer))
+            continue;
+        runFileBesideMock(file);
+        RETURN_IF_EXCEPTION(scope, void());
+    }
 }
 
 void Modules::runFileBesideMock(ModuleID file)

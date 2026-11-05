@@ -1885,6 +1885,22 @@ static void runCausesCommand(TestCommandContext& context)
     context.out.println("unseen-scripts "_s, facts->unseenScriptsCanRun() ? "can-run"_s : "cannot-run"_s);
 }
 
+static void runFeaturesCommand(TestCommandContext& context)
+{
+    StagedBuild stage = context.stage();
+    const Facts* facts = stage.facts();
+    if (!facts)
+        return;
+    IRPrinter printer(context.out, stage.program());
+    for (const FeatureUseRecord& record : facts->featureUses()) {
+        if (record.builtin == Wire::none)
+            continue;
+        context.out.print("feature "_s, record.feature, " by "_s);
+        printer.print(BuiltinID(record.builtin));
+        context.out.println(record.kind == FeatureUseKind::Named ? " named"_s : " unnamed"_s);
+    }
+}
+
 static void runClosureCommand(TestCommandContext& context)
 {
     printBreachesOfClosureOfLink(context.out, *context.program, context.build, context.mechanisms);
@@ -1900,6 +1916,7 @@ std::span<const TestCommand> factsTestCommands()
         { "link"_s, runLinkCommand, ProgramOfCommand::AsWritten, "[functions|calls|accesses|fields|variables|captures|members|layouts|families|counts].. [oldest-first|scattered]"_s },
         { "locales"_s, runLocalesCommand, ProgramOfCommand::AsWritten, ""_s },
         { "causes"_s, runCausesCommand, ProgramOfCommand::AsWritten, ""_s },
+        { "features"_s, runFeaturesCommand, ProgramOfCommand::AsWritten, ""_s },
         { "closure"_s, runClosureCommand, ProgramOfCommand::AsWritten, ""_s },
         { "facts"_s, runFactsCommand, ProgramOfCommand::AsWritten, "enforced [counts]"_s },
         { "regexp-texts"_s, runRegExpTextsCommand, ProgramOfCommand::AsWritten, "[hashes] [realms]"_s },

@@ -285,7 +285,6 @@ static void fillAllocationSpaces(Instance& instance, VM& vm)
 
 static void fillArrayHeaders(Instance& instance, JSGlobalObject* realm)
 {
-    instance.allocation.frameArrayHeader = 0;
     if (realm->isHavingABadTime())
         return;
     InstancePrefix& prefix = instance.prefix();
@@ -295,12 +294,6 @@ static void fillArrayHeaders(Instance& instance, JSGlobalObject* realm)
     instance.allocation.newCopyOnWriteArrayHeaders[0] = cellHeaderFor(realm->arrayStructureForIndexingTypeDuringAllocation(CopyOnWriteArrayWithInt32));
     instance.allocation.newCopyOnWriteArrayHeaders[1] = cellHeaderFor(realm->arrayStructureForIndexingTypeDuringAllocation(CopyOnWriteArrayWithDouble));
     prefix.newCopyOnWriteArrayWithContiguousHeader = cellHeaderFor(realm->arrayStructureForIndexingTypeDuringAllocation(CopyOnWriteArrayWithContiguous));
-
-    Structure* arraysOfValues = realm->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous);
-    if (arraysOfValues->isPristine() && arraysOfValues->hasPristineElements()) {
-        constexpr unsigned cellStateShift = JSCell::cellStateOffset() * 8;
-        instance.allocation.frameArrayHeader = (prefix.newArrayWithContiguousHeader & ~(0xffull << cellStateShift)) | static_cast<uint64_t>(frameCellState) << cellStateShift;
-    }
 }
 
 static void fillRealmWords(Instance& instance, VM& vm, JSGlobalObject* realm)

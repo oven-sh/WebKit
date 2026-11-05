@@ -56,7 +56,6 @@ struct UndecodedInlineFrames {
 
 class DecodedInlineFrames {
 public:
-    uint64_t numberOfFramesDecoded() const { return m_numberOfFramesDecoded; }
 
 private:
     friend class InlineFrameReader;
@@ -70,7 +69,6 @@ private:
     static constexpr size_t numberOfFunctions = 64;
 
     Vector<FramesOfFunction> m_functions;
-    uint64_t m_numberOfFramesDecoded { 0 };
 };
 
 class InlineFrameReader {

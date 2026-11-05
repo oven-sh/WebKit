@@ -70,6 +70,8 @@ public:
     bool isAmbiguousExport(ModuleID, StringView name) const;
     bool hasSourceStamps() const { return !m_tables->sourceStamps().empty(); }
     std::optional<uint64_t> sourceStamp(ModuleID) const;
+    using PathInUTF8 = Vector<char, 256>;
+    PathInUTF8 pathInUTF8(ModuleID) const;
     std::span<const NameOfStatementData> namesOfStatements(ModuleID) const;
     bool listsNamesOfStatements() const { return !m_tables->namesOfStatements().empty(); }
     const ModuleFailureData& failure(ModuleFailureID) const;

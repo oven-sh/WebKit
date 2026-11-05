@@ -2,8 +2,8 @@ enum LayoutKind (| engine isEnvironmentKind: Bool, canHaveExtraKeys: Bool, isObj
     Record(false, true, true, true, true, true) Instance(false, false, true, true, true, true) Container(false, false, true, false, false, true) Environment(true, false, false, false, true, false)
     | engine Closure(true, false, false, false, false, false) CoroutineFrame(true, false, false, false, false, false) BuiltinResult(false, false, true, false, false, false) ModuleNamespace(false, false, false, false, false, false)
 }
-flags LayoutFlags { HasHeritage IsConstructorFunction HasMembersWithoutLayout IsTypeParameter IsNeverAllocated IsWrittenUnderDictionaryType IsOfCreatedObject | engine IsDerived IsOfImageBelow }
-flags FieldFlags { IsRequired IsMethod IsPrivate IsImmutable IsBrand IsHidden IsNeverWritten IsAlsoInPrototype IsBrandOfMethods | engine IsInherited IsAddedLate IsRemovedAsUnread IsEnforced IsRequiredUntilDeleted IsFilledByCreator IsCountedWith }
+flags LayoutFlags { HasHeritage IsConstructorFunction HasMembersWithoutLayout IsTypeParameter IsNeverAllocated IsWrittenUnderDictionaryType IsOfCreatedObject | engine IsDerived }
+flags FieldFlags { IsRequired IsMethod IsPrivate IsImmutable IsBrand IsHidden IsNeverWritten IsAlsoInPrototype IsBrandOfMethods | engine IsInherited IsAddedLate IsRemovedAsUnread IsEnforced IsRequiredUntilDeleted }
 flags FieldForm { IsReadOnly IsNotEnumerable IsNotConfigurable IsAccessor }
 enum MethodKind { Method Getter Setter }
 enum ClassSide { Prototype Static }
@@ -32,7 +32,6 @@ enum FunctionKind (| engine canBeBound: Bool, isClassConstructor: Bool) {
 flags FunctionFlags {
     IsAsync IsGenerator IsSloppy HasRestParameter HasThis HasNewTarget TakesCallee HasArgumentCount HasHiddenRest IsChecked IsHiddenInStackTraces
     HasExplicitName IsNakedConstructor IsNamedByComputedKey
-    | engine AllocatesOwnThis IsSplitOffGenericVersion
 }
 flags FunctionSyntax { HasWrittenAwait IsEvaluatedScript IsShownAsNativeCode IsShownInModuleOfHelpers }
 enum EntryParameter (presentWith: FunctionFlags) {
@@ -45,7 +44,7 @@ record Function wire extendedEngine {
     name: String? module: Module(Referrer) position: UInt32 text: SourceRange kind: FunctionKind role: FunctionRole flags: FunctionFlags length: UInt32 syntax: FunctionSyntax
     enclosingRuntimeFunction: RuntimeFunction? captures: Span<DeclaredCapture> thisType: DeclaredType parameters: Span<DeclaredType>
     results: Span<DeclaredType> body: Body functionTypes: Span<Function(Dispatch)> sorted builtinMembers: Span<Builtin> sorted
-    | engine capabilities: FunctionCapabilities derivation: Derivation creator: CreatorRecord constructedClass: Layout? inlineFrames: List<InlineFrame>
+    | engine capabilities: FunctionCapabilities constructedClass: Layout?
 }
 
 enum ECMAMode { Strict Sloppy }

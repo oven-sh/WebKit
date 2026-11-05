@@ -206,15 +206,6 @@ static void testModuleOfNamespaceObjects(LoadedProgram& program)
     AOT_TEST_CHECK(!operationAOTIsNamespaceOfModule(evaluate(program, "({ a: 1 })"_s).asCell(), firstModule.index()));
 }
 
-static void testNoShapePasses(LoadedProgram& program)
-{
-    const RuntimeLayoutTable& layouts = program.state().objects->layouts;
-    constexpr uint32_t firstShape = 1;
-    AOT_TEST_CHECK(layouts.shapeHasType(TypeRecord { RuntimeCellTest::isObject() }, firstShape));
-    for (RuntimeCellTest test : { RuntimeCellTest::sharingModeIs(unshared), RuntimeCellTest::sharingModeIs(shared), RuntimeCellTest::isNamespaceOf(firstModule) })
-        AOT_TEST_CHECK(!layouts.shapeHasType(TypeRecord { test }, firstShape));
-}
-
 static constexpr ASCIILiteral scriptStart = R"js(
 globalThis.registry = { };
 function describe(value)
@@ -311,7 +302,6 @@ std::span<const NativeTest> sharingModeAndNamespaceTests()
     static constexpr NativeTest tests[] = {
         { "sharing-mode-and-namespace/sharing-mode-of-values"_s, withProgram<testSharingModeOfValues> },
         { "sharing-mode-and-namespace/module-of-namespace-objects"_s, withProgram<testModuleOfNamespaceObjects> },
-        { "sharing-mode-and-namespace/no-shape-passes"_s, withProgram<testNoShapePasses> },
         { "sharing-mode-and-namespace/compiled-tests"_s, testCompiledTests },
     };
     return tests;

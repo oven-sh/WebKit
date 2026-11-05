@@ -51,7 +51,11 @@ Reference primitivePartOfStringBuilder(Walker& walker, Opcode join, Reference pa
 
 static void appendPartsInTextBuilderCallees(Walker& walker, const BodyValue& join, Reference name, std::span<const Reference> parts, Origin origin)
 {
-    appendPartsToStringBuilder(walker, *findTextNamedBy(walker, join.id()), name, parts, origin);
+    TextInStringBuilder& text = *findTextNamedBy(walker, join.id());
+    if (text.web.standsUnderHandlers)
+        appendPartsRolledBackWhereTheyFail(walker, text, name, parts, origin);
+    else
+        appendPartsToStringBuilder(walker, text, name, parts, origin);
 }
 
 static bool appendPartsBehindTestsOfWhatIsWrittenInTextBuilderCallees(Walker& walker, const BodyValue& join, std::span<const Reference> parts, Origin origin)

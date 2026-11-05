@@ -124,9 +124,11 @@ void ArrayIntrinsicEmitter::generateHasContiguousIndex(const ValueContext& value
             m_out.appendToContinuation(next);
         };
         constexpr IndexingType distance = contiguous.shape - int32s.shape;
-        goOnIf(Condition(m_out.testIsZero32(m_out.sub(elements().indexingMode(array, arrayStorageTestMask).value(), int32s.shape), ~static_cast<int32_t>(distance))));
+        if (!value->storageOperand() || elements().testsEveryPosition())
+            goOnIf(Condition(m_out.testIsZero32(m_out.sub(elements().indexingMode(array, arrayStorageTestMask).value(), int32s.shape), ~static_cast<int32_t>(distance))));
         ArrayElements storage = elements().elementsOf(value, array);
-        goOnIf(below(index, elements().publicLength(storage)));
+        if (!value->isInBounds() || elements().testsEveryPosition())
+            goOnIf(below(index, elements().publicLength(storage)));
         Boxed element(m_out.load64(elements().elementOfUnknownForm(storage, index)));
         ensureStillAliveHere(array);
         generator().testThatFoundElement = value.id();

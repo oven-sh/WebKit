@@ -500,15 +500,6 @@ Reference buildProofBehindTestForStrings(Walker& walker, Reference value, Refere
     return walker.build(WTF::move(proof));
 }
 
-namespace {
-
-struct ArmBuiltInWalkStrings {
-    BlockID last;
-    Vector<Reference, 2> values;
-};
-
-} // anonymous namespace
-
 bool buildArmsForStrings(Walker& walker, Reference test, BlockFrequency ofFailing, const ArmForStrings& passing, const ArmForStrings& failing, std::span<Reference> met)
 {
     if (!test || walker.isUnreachable())
@@ -529,10 +520,10 @@ bool buildArmsForStrings(Walker& walker, Reference test, BlockFrequency ofFailin
     BlockID meetingBlock = walker.addBlock();
     walker.branch(test, passingBlock, failingBlock);
 
-    Vector<ArmBuiltInWalkStrings, 2> arms;
+    Vector<Walker::ArmThatMeets, 2> arms;
     auto buildArm = [&](BlockID block, const ArmForStrings& arm) {
         walker.continueIn(block);
-        ArmBuiltInWalkStrings built;
+        Walker::ArmThatMeets built;
         built.values.fill(Reference(), met.size());
         arm(built.values.mutableSpan());
         if (walker.isUnreachable() || walker.hasFailed())
@@ -547,33 +538,7 @@ bool buildArmsForStrings(Walker& walker, Reference test, BlockFrequency ofFailin
         buildArm(failingBlock, failing);
     if (walker.hasFailed() || arms.isEmpty())
         return false;
-
-    const Code& code = walker.code();
-    Vector<size_t, 2> positionsOfParameters;
-    for (size_t position = 0; position < met.size(); ++position) {
-        Reference one = arms.first().values[position];
-        Reference other = arms.last().values[position];
-        met[position] = one;
-        if (one == other)
-            continue;
-        TypeID type = joinOf(walker.types(), walker.facts().families(), code.at(one.id()).type, code.at(other.id()).type);
-        Representation forms[] { walker.representationOf(one), walker.representationOf(other) };
-        met[position] = walker.addParameter(meetingBlock, type, walker.formOfParameter(type, forms));
-        positionsOfParameters.append(position);
-    }
-
-    Vector<Reference, 2> arguments;
-    for (const ArmBuiltInWalkStrings& arm : arms) {
-        arguments.shrink(0);
-        for (size_t position : positionsOfParameters)
-            arguments.append(arm.values[position]);
-        walker.continueIn(arm.last);
-        walker.jumpTo(meetingBlock, arguments.span());
-        if (walker.hasFailed())
-            return false;
-    }
-    walker.continueIn(meetingBlock);
-    return !walker.isUnreachable();
+    return walker.letArmsMeet(arms.span(), meetingBlock, met);
 }
 
 } } } // namespace JSC::AOT::Typed

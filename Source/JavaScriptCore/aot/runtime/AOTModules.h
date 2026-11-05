@@ -185,6 +185,7 @@ public:
         return loaded ? loaded->mockInPlace.get() : nullptr;
     }
     bool someMockStandsInPlace() const { return m_numberOfMocksInPlace; }
+    bool someMockIsSeen() const { return m_numberOfMocksInPlace || !m_endedMocks.isEmpty(); }
     bool setMockInPlace(ModuleID, JSObject* mock, JSValue whatRequireAnswers, bool leavesEarlierMockToItsImporters = false);
     bool setMockInPlaceOfLibraryModule(ModuleID, JSObject* mock, JSValue whatRequireAnswers);
     bool willLeaveModuleAlone(ModuleID, bool onlyIfLoadedInPreload, std::optional<ModuleID> askingAsHostNamesIt);
@@ -210,6 +211,7 @@ public:
     JSValue handedOnInPlaceOfNamespace(const ModuleExportData&) const;
     bool tryReplaceNamespaceHandedOn(ModuleID handedOn, JSValue);
     void didReplaceNamespaceHandedOn(ModuleID handedOn);
+    std::span<const ModuleID> modulesThatHandOnNamespaceOf(ModuleID handedOn);
     void letGoOfMockAtNextLoad(ModuleID);
     void letGoOfMockThatEnded(ModuleID);
     void letGoOfMockThatEndedSlow(ModuleID);
@@ -278,11 +280,12 @@ public:
     enum class TablesBehindStars : bool { MayLackName, HaveName };
     bool leavesNameToStars(ModuleID module, unsigned exportIndex) const
     {
-        return m_table.exports(module)[exportIndex].isDroppedWhileEmpty && isVariableOfExportEmpty(module, exportIndex);
+        const ModuleExportData& moduleExport = m_table.exports(module)[exportIndex];
+        return moduleExport.isDroppedWhileEmpty && isVariableOfExportEmpty(module, exportIndex) && !mockThatAnswersFor(module, moduleExport);
     }
     bool isLeftOut(ModuleID module, unsigned exportIndex, TablesBehindStars tables) const
     {
-        if (m_table.exports(module)[exportIndex].isDroppedWhileEmpty && isVariableOfExportEmpty(module, exportIndex)) [[unlikely]]
+        if (leavesNameToStars(module, exportIndex)) [[unlikely]]
             return true;
         if (m_exportsLeftOut.isEmpty()) [[likely]]
             return false;
@@ -412,6 +415,8 @@ public:
     }
     std::optional<ModuleID> firstModuleRequestedByHost() const { return m_firstModuleRequestedByHost; }
     bool isHeldForImport(ModuleID) const;
+    enum class ImportAnsweredBy : bool { Build, Loader };
+    void runDataFileAgainForImport(ModuleID, ImportAnsweredBy);
     void didImportFromUncompiledCode(ModuleID module, bool isRootOfImportCall)
     {
         if (data(module).kind != ModuleKind::Data)
@@ -471,6 +476,7 @@ public:
     bool holdsCodeThatMayBeEvicted();
     BitVector modulesThatHaveRun();
     bool isLeftToHost(ModuleID);
+    bool isLeftToHostAsFarAsIsKnown(ModuleID);
     bool isChangedOutOfSightOfBuild(StringView path) const;
     bool isTextNamedByProgram(StringView url) const;
     bool refusesLoadsByName() const { return !m_loadsModulesByName && !m_runsUncompiledCode && !m_hostRunsCopiesFromDisk && !isAskingHost(); }
@@ -489,6 +495,7 @@ public:
     bool getsOriginalBesideMock(ModuleID, ModuleID referrer);
     JSValue answerRequireWithOriginal(ModuleID file, ModuleID referrer);
     void runFileBesideMock(ModuleID file);
+    void runOriginalsOwedTo(ModuleID importer);
     JSValue requireModuleItselfBesideMock(ModuleID);
     void oweBodyBesideMock(ModuleID);
     bool isAskedForByOwnFactory(ModuleID);
@@ -621,6 +628,7 @@ public:
     JSValue require(ModuleID, ModuleID referrer = { }, RequiredBy = RequiredBy::Referrer);
     void evaluateCommonJS(ModuleID);
     JSValue commonJSExports(ModuleID) const;
+    JSValue exportsGivenBackToCompiledCode(ModuleID) const;
     bool hasYetToBegin(ModuleID file) const;
     JSValue exportsShownByModuleObject(ModuleID);
     JSValue exportsSeenByLoader(ModuleID);
@@ -723,6 +731,7 @@ private:
 #undef AOT_DECLARE_REFERENCE
         bool isBeingRequired { false };
         bool isKeptByRequire { false };
+        bool wasRequiredByHost { false };
         bool hasMockLaidOver { false };
         bool hadRunWhenMockWasLaid { false };
         Vector<ModuleID> namespacesReplacedByMock;
@@ -1401,6 +1410,7 @@ private:
     void giveBackNamespacesHandedOn(LoadedModule& mocked);
     bool isSomeLoadUnderWay() const;
     BitVector m_namespacesReplacedByMock;
+    std::optional<UncheckedKeyHashMap<ModuleID, Vector<ModuleID, 2>>> m_modulesThatHandOnNamespaces;
     BitVector m_modulesOwedToImportersThatRan;
     BitVector m_modulesWithNothingOwedBelow;
     Vector<ModuleID, 4> m_mockedModulesPassedOverByWalks;
@@ -1514,10 +1524,13 @@ private:
         UncheckedKeyHashMap<uint32_t, uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> visitOrder;
         Vector<uint32_t, 32> unsettledFiles;
         Vector<uint32_t, 8> filesToAskHostAbout;
+        std::optional<bool> pluginsAnswerForNames;
         bool importsAreFollowed { false };
     };
     bool importsEvictedFile(ModuleID, WalkForEvictedFiles&, uint32_t& earliestVisitReached);
     bool importsEvictedFile(ModuleID);
+    bool walkForEvictedFiles(ModuleID, WalkForEvictedFiles&);
+    bool askHostLevelByLevel(ModuleID root, const WalkForEvictedFiles&, BitVector& filesAsked);
     void followImportsOfModulesThatHaveRun();
     void followImportsAnewAtNextQuestion();
     void evaluateModulesOwedBelow(ModuleID root, bool hasImporterThatRan = false);
@@ -1528,7 +1541,7 @@ private:
     void letStartsAskWhereSomethingIsDueBelow(ModuleID root);
     void leaveToHost(ModuleID file);
     bool isChangedOnDisk(ModuleID file);
-    bool writesNameThatHostMayAnswerFor(ModuleID file);
+    bool writesNameThatHostMayAnswerFor(ModuleID file, WalkForEvictedFiles&);
     bool hostAnswersForNameWrittenBy(ModuleID file);
     bool mayBeAskedAbout(ModuleID file) const { return !m_filesWhoseNamesNobodyAnswersFor.get(file.index()) && !m_filesWhoseGraphHasBegun.get(file.index()); }
     void forEachFileEvaluatedByLoader(const Invocable<void(ModuleID)> auto&) const;
@@ -1699,7 +1712,7 @@ ALWAYS_INLINE bool Modules::runMockThatWaits(ModuleID module)
 
 ALWAYS_INLINE auto Modules::mockThatAnswersFor(ModuleID passingOn, const ModuleExportData& passedOn, MockOfModule ofPassingOn) const -> std::optional<AnswerOfMock>
 {
-    if (!m_numberOfMocksInPlace) [[likely]]
+    if (!someMockIsSeen()) [[likely]]
         return std::nullopt;
     return m_mockOperations->mockThatAnswersFor(*this, passingOn, passedOn, ofPassingOn);
 }

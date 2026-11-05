@@ -58,7 +58,6 @@ constexpr ptrdiff_t offsetOfStackWordFromFrame(unsigned stackIndex)
 static constexpr unsigned maxArrayElementsInRegisters = 4;
 static constexpr unsigned arrayLiteralVectorLength(unsigned count) { return (count ? count : 5) | 1; }
 static constexpr unsigned maxArrayLengthInStubKey = 16;
-static constexpr unsigned maxLengthOfArrayInFrame = 8;
 static constexpr unsigned capacityShiftInArrayLiteralCount = 27;
 
 static constexpr unsigned maxFrameSizeWithoutStackCheck = 240;

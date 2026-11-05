@@ -866,8 +866,8 @@ void JumpThreader::threadEdgesPastDecidedTests()
         }
         way.append(m_arena, BlockOnWay { block, firstBlocksBelow[block->index()], testAnswered });
     };
-    for (Block* top : tops) {
-        enter(top, nullptr);
+    for (uint32_t place = tops.size(); place--;) {
+        enter(tops[place], nullptr);
         while (!way.isEmpty()) {
             BlockOnWay& last = way.last();
             if (uint32_t below = last.nextChild) {

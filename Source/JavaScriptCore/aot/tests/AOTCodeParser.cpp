@@ -214,8 +214,6 @@ static void fillWordsOfDefaultValueInCodeText(const PayloadFieldInfo& info, Payl
     case PayloadKind::Builtin:
     case PayloadKind::LayoutSet:
     case PayloadKind::CalleeSet:
-    case PayloadKind::AccessSite:
-    case PayloadKind::AllocationClass:
         std::ranges::fill(words, absentPayloadWord);
         return;
     case PayloadKind::External:
@@ -1161,8 +1159,6 @@ void CodeTextParser::parsePayloadValue(const PayloadFieldInfo& info, PayloadKind
         words[0] = parseBool();
         return;
     case PayloadKind::CalleeSet:
-    case PayloadKind::AccessSite:
-    case PayloadKind::AllocationClass:
         words[0] = accept(TokenKind::Minus) ? absentPayloadWord : parseUInt32("a number"_s);
         return;
     case PayloadKind::Field:
@@ -1310,12 +1306,6 @@ void CodeTextParser::scanFrame()
             frame.isConstruction = parseBool();
         else if (acceptField("callIsPartOfConstruction"_s))
             frame.callIsPartOfConstruction = parseBool();
-        else if (acceptField("callsOwnFunctionObject"_s))
-            frame.callsOwnFunctionObject = parseBool();
-        else if (acceptField("calleeIsKeptInFrame"_s))
-            frame.calleeIsKeptInFrame = parseBool();
-        else if (acceptField("calleeIsPredicted"_s))
-            frame.calleeIsPredicted = parseBool();
         else if (acceptField("module"_s))
             frame.module = ModuleID(parseProgramID(IDPrefix::Module, m_program.modules.size(), "a module"_s));
         else if (acceptField("calledBuiltin"_s))

@@ -33,11 +33,6 @@ struct NumberTestedInArms {
     Reference proven;
 };
 
-struct ArmOfNumbers {
-    BlockID lastBlock;
-    Vector<Reference, 8> values;
-};
-
 } // anonymous namespace
 
 uint32_t limitOfStretchOfNumbers(const Walker& walker, const BodyBlock& block)
@@ -83,36 +78,6 @@ static bool isReturnedAtOnceInNumberArms(const BodyIndex& index, BlockID block, 
 {
     BodyTerminator end = index.terminator(block);
     return end.kind() == TerminatorKind::ReturnCall && end.operand(0) == value;
-}
-
-static void letArmsOfNumbersMeet(Walker& walker, std::span<const ArmOfNumbers> arms, std::span<const ValueID> valuesMentionedLater, BlockID meetingBlock)
-{
-    Code& code = walker.code();
-    Vector<size_t, 8> positionsOfParameters;
-    for (size_t position = 0; position < valuesMentionedLater.size() && !arms.empty(); ++position) {
-        Reference one = arms.front().values[position];
-        Reference other = arms.back().values[position];
-        Reference met = one;
-        if (one != other) {
-            TypeID type = joinOf(walker.types(), walker.facts().families(), code.at(one.id()).type, code.at(other.id()).type);
-            Representation forms[] { walker.representationOf(one), walker.representationOf(other) };
-            met = walker.addParameter(meetingBlock, type, walker.formOfParameter(type, forms));
-            positionsOfParameters.append(position);
-        }
-        walker.bind(valuesMentionedLater[position], met);
-    }
-
-    Vector<Reference, 8> arguments;
-    for (const ArmOfNumbers& arm : arms) {
-        arguments.shrink(0);
-        for (size_t position : positionsOfParameters)
-            arguments.append(arm.values[position]);
-        walker.continueIn(arm.lastBlock);
-        walker.jumpTo(meetingBlock, arguments.span());
-        if (walker.hasFailed())
-            return;
-    }
-    walker.continueIn(meetingBlock);
 }
 
 bool walkStretchBehindTestsOfNumbers(Walker& walker, std::span<const TestOfNumber> tests, BlockID inputBlock, uint32_t begin, uint32_t end, BlockFrequency ofOtherArm)
@@ -189,11 +154,11 @@ bool walkStretchBehindTestsOfNumbers(Walker& walker, std::span<const TestOfNumbe
     BlockID meetingBlock = walker.addBlock();
     walker.noteGuessOpened();
 
-    Vector<ArmOfNumbers, 2> arms;
+    Vector<Walker::ArmThatMeets, 2> arms;
     auto endArm = [&] {
         if (walker.isUnreachable())
             return;
-        ArmOfNumbers arm { walker.currentBlock(), { } };
+        Walker::ArmThatMeets arm { walker.currentBlock(), { } };
         for (ValueID mentioned : valuesMentionedLater) {
             Reference built = walker.referenceOf(mentioned);
             if (!built || !built.isRecord())
@@ -238,7 +203,10 @@ bool walkStretchBehindTestsOfNumbers(Walker& walker, std::span<const TestOfNumbe
         if (arms.isEmpty() || !valuesMentionedLater.contains(ValueID(first + place)))
             walker.bind(ValueID(first + place), Reference());
     }
-    letArmsOfNumbersMeet(walker, arms.span(), valuesMentionedLater.span(), meetingBlock);
+    Vector<Reference, 8> met(valuesMentionedLater.size());
+    walker.letArmsMeet(arms.span(), meetingBlock, met.mutableSpan());
+    for (size_t position = 0; position < met.size() && !arms.isEmpty() && !walker.hasFailed(); ++position)
+        walker.bind(valuesMentionedLater[position], met[position]);
     return true;
 }
 

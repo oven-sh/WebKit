@@ -185,8 +185,6 @@ function pathOfDeclaration(declaration: Declaration): BuiltinPath | null {
     case "EngineFeatures":
     case "HostRead":
     case "HostObject":
-    case "NamedMemberCall":
-    case "HostMethodCall":
     case "Startup":
     case "SeenCodeOnly":
     case "InstancesWithoutOwnNames":

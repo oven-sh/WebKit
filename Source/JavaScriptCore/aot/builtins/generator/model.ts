@@ -473,19 +473,6 @@ export interface ModelHostObject {
   source: Source;
 }
 
-export interface ModelHostMethodCall {
-  name: ModelName;
-  cell: ModelName;
-  call: ModelHostCall;
-  source: Source;
-}
-
-export interface ModelNamedMemberCall {
-  name: ModelName;
-  arguments: readonly ModelHostValue[];
-  source: Source;
-}
-
 export interface ModelNativeFunction {
   symbol: string;
   length: number;
@@ -769,8 +756,6 @@ export interface TableModel {
   hostRoles: readonly { token: string; builtin: ModelBuiltin }[];
   hostClassRoles: readonly { token: string; builtinClass: ModelClass }[];
   hostObjects: readonly ModelHostObject[];
-  namedMemberCalls: readonly ModelNamedMemberCall[];
-  hostMethodCalls: readonly ModelHostMethodCall[];
   checkedNumbers: readonly ModelBound[];
   startup: ModelStartup;
   syntax: ModelSyntax;

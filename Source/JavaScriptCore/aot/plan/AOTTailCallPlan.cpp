@@ -365,7 +365,7 @@ BitVector findFunctionsThatSaveRegistersOfCallers(const Program& program, const 
     return functions;
 }
 
-void planTailCallsAndStackTests(const Program& program, const Facts& facts, Plan& plan, BuildContext&)
+void planTailCallsAndStackTests(const Program& program, const Facts& facts, Plan& plan, StackTestPlan&& stackTests)
 {
     if (!facts.mechanisms().contains(Mechanism::DirectCalls))
         return;
@@ -374,7 +374,7 @@ void planTailCallsAndStackTests(const Program& program, const Facts& facts, Plan
     tailCalls.functionsThatSaveRegistersOfCallers = findFunctionsThatSaveRegistersOfCallers(program, facts, plan.conventions());
     plan.setTailCalls(WTF::move(tailCalls));
 
-    plan.setStackTests(planStackTests(program, facts, plan));
+    plan.setStackTests(WTF::move(stackTests));
 }
 
 } } } // namespace JSC::AOT::Typed

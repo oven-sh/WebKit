@@ -65,7 +65,7 @@ static void checkRecordedClobbers(const StubRecording& recording)
     AOT_TEST_CHECK(pinnedRegisters().filter(recording.clobbered()).isEmpty());
     for (StubKey entry : recording.entries)
         checkWrittenRegisters(recording.clobberedInline, signatureFor(entry));
-    if (!recording.leavesStubs && recording.symbols.isEmpty())
+    if (!recording.leavesStubs)
         AOT_TEST_CHECK(recording.clobberedByCallees.isEmpty());
 
     if (neverReturns(body))
@@ -88,8 +88,6 @@ static void checkRecording(const StubRecording& recording, StubKey body)
     }
     AOT_TEST_CHECK(!recording.returnLabels.contains(StubFrameKind::Plain));
     AOT_TEST_CHECK(recording.entriesUsed.subsumes(recording.operationsCalled));
-    for (CodeSymbol symbol : recording.symbols)
-        AOT_TEST_CHECK(symbol.space == SymbolSpace::RegExp);
     checkRecordedClobbers(recording);
 }
 
@@ -552,27 +550,6 @@ static void testCallersThatKeepFewerRegisters()
     AOT_TEST_CHECK(targetOfJumpFor(CallerFrame::KeepsNoFPRs, stubMakingNoResult) == stubMakingNoResult.withCallerFrame(CallerFrame::KeepsNoFPRs));
 }
 
-static void testRecordedCodeSymbols()
-{
-    constexpr CodeSymbol narrow { SymbolSpace::RegExp, 3, 0 };
-    constexpr CodeSymbol wide { SymbolSpace::RegExp, 3, 1 };
-
-    StubRecording recording = recordStubBody(findStubBodyWithoutRegisters(), [&](StubAssembler& jit) {
-        jit.callCode(narrow);
-        jit.callCode(narrow);
-        jit.callCode(wide);
-        AOT_TEST_CHECK(jit.relocations().numberOfRelocations() == 3);
-    });
-    AOT_TEST_CHECK(recording.symbols.size() == 2 && recording.symbols[0] == narrow && recording.symbols[1] == wide);
-    AOT_TEST_CHECK(recording.clobberedByCallees == registersClobberedByOperations());
-    AOT_TEST_CHECK(!recording.leavesStubs && !recording.hasUnknownEffects);
-
-    StubRecording saved = recordStubBody(findStubBodyWithoutRegisters(), [&](StubAssembler& jit) {
-        jit.preservingCallerSavedRegisters(false, [&](unsigned) { jit.callCode(narrow); });
-    });
-    AOT_TEST_CHECK(saved.symbols.size() == 1 && saved.clobberedByCallees.isEmpty());
-}
-
 #if OS(UNIX)
 
 template<typename Legal, typename Illegal>
@@ -613,21 +590,6 @@ static void checkBorrowedRegisterAssertion()
     }, [&](StubAssembler& jit) {
         jit.saveFPR(borrowedFPR, jit.allocateScratch(scratch));
         jit.returnToCaller();
-    });
-}
-
-static void callStubThroughHandlerTable(StubAssembler& jit, GPRReg index)
-{
-    jit.callThroughHandlerTable(CCallHelpers::BaseIndex(instanceGPR, index, CCallHelpers::TimesEight), std::array { calledStub });
-}
-
-static void checkHandlerTableAssertions()
-{
-    ReadOnlyStubOperand operand = findReadOnlyStubOperand();
-    checkAssemblerAssertion(operand.body, [&](StubAssembler& jit) {
-        callStubThroughHandlerTable(jit, jit.allocateScratch(freeStubRegisterOf(operand.body)));
-    }, [&](StubAssembler& jit) {
-        callStubThroughHandlerTable(jit, operand.gpr);
     });
 }
 
@@ -735,7 +697,6 @@ static void testStubAssemblerAssertions()
     StubRegister scratch = freeStubRegisterOf(plain);
     checkRegisterAssertions(plain, scratch);
     checkBorrowedRegisterAssertion();
-    checkHandlerTableAssertions();
     checkEntryAssertions();
     checkReferenceAssertions(plain, scratch);
     if (isARM64())
@@ -777,7 +738,6 @@ std::span<const NativeTest> stubAssemblerTests()
         { "stubs/calls-in-saving-scopes"_s, testCallsInSavingScopes },
         { "stubs/leaf-calls"_s, testLeafCalls },
         { "stubs/callers-that-keep-fewer-registers"_s, testCallersThatKeepFewerRegisters },
-        { "stubs/recorded-code-symbols"_s, testRecordedCodeSymbols },
         { "stubs/address-reach"_s, testAddressReach },
 #if OS(UNIX)
         { "stubs/assembler-assertions"_s, testStubAssemblerAssertions },

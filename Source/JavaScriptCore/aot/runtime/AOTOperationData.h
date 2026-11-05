@@ -442,8 +442,6 @@ struct ThrowSiteWord {
 #endif
 
     uint32_t narrowA() const { return a == narrowNone ? none : a; }
-    static constexpr unsigned bitsOfSourceOfProof = 4;
-    static constexpr uint32_t maxPositionBesideSourceOfProof = (1u << (31 - bitsOfSourceOfProof)) - 1;
     bool stopsAtFalseProof() const { return static_cast<ThrowKind>(kind) == ThrowKind::ErrorWithMessage && calleeIsReadFromReceiver; }
     bool isCallSite() const { return static_cast<ThrowKind>(kind) == ThrowKind::NotAFunction && static_cast<Typed::Representation>(representation) == Typed::Representation::Void; }
     bool differsOnlyInRegisterNumber(ThrowSiteWord other) const

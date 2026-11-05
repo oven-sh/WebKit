@@ -385,10 +385,10 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTPoisonCell, void, (Instance* insta
     countEvent(vm, PoisonedCell::tryPoison(vm, cell, function, position) ? RuntimeCounterID::CellsPoisoned : RuntimeCounterID::CellsOfClassesThatAreNotPoisoned);
 }
 
-[[noreturn]] static void stopAtFalseProof(EncodedJSValue encodedFound, uint32_t function, uint32_t position, uint32_t source)
+[[noreturn]] static void stopAtFalseProof(EncodedJSValue encodedFound, uint32_t function, const String& position, uint32_t source)
 {
-    static constexpr std::array<ASCIILiteral, 10> names {
-        "an entry parameter"_s, "the result of a call"_s, "what a field holds"_s, "what a variable holds"_s, "what was captured"_s, "what a container holds"_s, "what a built-in or a call by value gives"_s, "what an operation gives"_s, "what a test has let pass"_s, "what memory holds where the compiler remembers another value"_s,
+    static constexpr std::array<ASCIILiteral, 11> names {
+        "an entry parameter"_s, "the result of a call"_s, "what a field holds"_s, "what a variable holds"_s, "what was captured"_s, "what a slot of a scope holds"_s, "what a container holds"_s, "what a built-in or a call by value gives"_s, "what an operation gives"_s, "what a test has let pass"_s, "what memory holds where the compiler remembers another value"_s,
     };
     // The check has met a cell whose life was ended: where that cell was made says more than where it was met.
     if (JSValue value = JSValue::decode(encodedFound); value && value.isCell() && value.asCell()->classInfo() == PoisonedCell::info())
@@ -407,7 +407,9 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTPoisonCell, void, (Instance* insta
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTStopAtFalseProof, void, (Instance*, EncodedJSValue encodedFound, uint32_t function, uint32_t position, uint32_t source))
 {
-    stopAtFalseProof(encodedFound, function, position, source);
+    StringPrintStream written;
+    written.print(position);
+    stopAtFalseProof(encodedFound, function, written.toString(), source);
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTEnterBodyThatRunsOnce, void, (Instance* instance, uint32_t function))
@@ -420,7 +422,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTEnterBodyThatRunsOnce, void, (Inst
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTStopAtFalseEffects, void, (Instance*, uint32_t function, uint32_t position, uint32_t part, uint32_t rows, uint64_t differs))
 {
-    static constexpr std::array<ASCIILiteral, 5> names { "nothing"_s, "run no other code, and compiled code was entered"_s, "throw nothing, and it threw"_s, "nothing"_s, "not collect, and the heap was collected"_s };
+    static constexpr std::array<ASCIILiteral, 5> names { "nothing"_s, "run no other code, and compiled code was entered"_s, "throw nothing by a rule of the language, and it threw"_s, "nothing"_s, "not collect, and the heap was collected"_s };
     static const bool goesOn = !!getenv("BUN_AOT_EFFECTS_NET_GOES_ON");
     StringPrintStream said;
     said.print("f", function, " at ", position, ": the rows of effects of ");
@@ -695,15 +697,19 @@ static void throwErrorWithMessage(Instance* instance, JSGlobalObject* globalObje
 [[noreturn]] static void stopAtFalseProofNamedBy(const DecodedThrowSite& decoded, const uint64_t* registers, const uint32_t* returnAddress)
 {
     bool namesValue = static_cast<Typed::Representation>(decoded.word.representation) != Typed::Representation::Void;
-    uint32_t source = namesValue ? decoded.a & ((1u << ThrowSiteWord::bitsOfSourceOfProof) - 1) : decoded.word.registerNumber;
-    uint32_t position = namesValue ? decoded.a >> ThrowSiteWord::bitsOfSourceOfProof : decoded.a;
     const Image& image = *Image::current();
     CodeLocation location = image.locate(returnAddress);
     RELEASE_ASSERT(location.kind == CodeKind::Function);
     FunctionID writtenIn = image.rootFunctionOf(location.function);
-    if (std::optional<CallSiteRecord> record = image.callSiteAt(location.function, location.offset); record && record->inlineFrame)
+    StringPrintStream position;
+    std::optional<CallSiteRecord> record = image.callSiteAt(location.function, location.offset);
+    if (record && record->inlineFrame)
         writtenIn = InlineFrameReader().at(image, location.function, record->inlineFrame).function;
-    stopAtFalseProof(namesValue ? registers[decoded.word.registerNumber] : 0, writtenIn.index(), position, source);
+    if (std::optional<SourcePosition> found = record ? image.positionOf(location.function, record->callSite) : std::nullopt)
+        position.print(found->lineColumn.line, ":", found->lineColumn.column);
+    else
+        position.print("?");
+    stopAtFalseProof(namesValue ? registers[decoded.word.registerNumber] : 0, writtenIn.index(), position.toString(), decoded.a);
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTThrowAtSite, void, (Instance* instance, const uint64_t* registers, const uint32_t* site, uint32_t source))

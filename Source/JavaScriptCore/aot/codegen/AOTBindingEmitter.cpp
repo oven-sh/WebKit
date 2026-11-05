@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTConstantEmitter.h"
+#include "AOTHintEmitter.h"
 #include "AOTSlotEmitter.h"
 #include "AOTStaticsEmitter.h"
 
@@ -157,7 +158,12 @@ void BindingEmitter::generateGetEnvironmentField(const ValueContext& value)
         failAndDefineZero(value, InternalErrorKind::SlotAccessNotPlaced);
         return;
     }
+    if (VariableID variable = m_plan.promotedEnvironments().variableOf(layout, field)) {
+        define(value, emitter<StaticsEmitter>().loadFieldOfEnvironment(variable, layout, field));
+        return;
+    }
     CellPointer environment = in<CellPointer>(value->environmentOperand());
+    emitter<HintEmitter>().stopWhereLifeHasEnded(value, environment);
     define(value, emitter<SlotEmitter>().loadSlot(environment, slot, MemoryLocation::environmentField(layout, field)));
 }
 
@@ -172,7 +178,12 @@ void BindingEmitter::generatePutEnvironmentField(const ValueContext& value)
         fail(value, InternalErrorKind::SlotAccessNotPlaced);
         return;
     }
+    if (VariableID variable = m_plan.promotedEnvironments().variableOf(layout, field)) {
+        emitter<StaticsEmitter>().storeFieldOfEnvironment(variable, layout, field, get(value->valueOperand()), typeOf(value->valueOperand()));
+        return;
+    }
     CellPointer environment = in<CellPointer>(value->environmentOperand());
+    emitter<HintEmitter>().stopWhereLifeHasEnded(value, environment);
     ValueID storedValue = value->valueOperand();
     Operand stored = get(storedValue);
     emitter<SlotEmitter>().storeSlot(environment, slot, MemoryLocation::environmentField(layout, field), stored);

@@ -108,9 +108,9 @@ CellPointer CellAllocationEmitter::allocateObject(InlineAllocation kind, LBasicB
     return result;
 }
 
-MentionedAllocation CellAllocationEmitter::allocationOf(const OperationContext& context, LayoutID layout, AllocationClassID allocationClass, std::span<const FieldIndex> initialFields)
+MentionedAllocation CellAllocationEmitter::allocationOf(const OperationContext& context, LayoutID layout, std::span<const FieldIndex> initialFields)
 {
-    std::optional<PlacedAllocation> placed = m_plan.allocation(m_program, layout, allocationClass, initialFields);
+    std::optional<PlacedAllocation> placed = m_plan.allocation(m_program, layout, initialFields);
     if (!placed) {
         fail(context, InternalErrorKind::PlacedPayloadMissing);
         return { PlacedAllocation { .layout = layout, .size = m_plan.layout(layout).size }, 0 };
@@ -285,7 +285,7 @@ CellPointer CellAllocationEmitter::allocateObjectCopy(const OperationContext& co
 LValue CellAllocationEmitter::slotOfFrameCell(const OperationContext& context, size_t size)
 {
     const Operation& made = operationAt(context.valueID());
-    if (ValueID call = findLoanOfClosure(m_program, generator().facts(), m_code, context.valueID()).call) {
+    if (ValueID call = callThatBorrowsClosure(m_code, context.valueID())) {
         for (SlotOfClosuresLent& shared : m_slotsOfClosuresLent) {
             if (shared.size != size || (shared.blockIndex == made.blockIndex && shared.call.index() > context.valueID().index()))
                 continue;
@@ -423,38 +423,6 @@ CellPointer CellAllocationEmitter::newArrayFromBuffer(const OperationContext& co
     m_out.appendTo(slowPath);
     Word32 countOrCapacityOfEmptyArray = select(isZero(count), 1 << capacityShiftInArrayLiteralCount, count);
     join.add(callOperation<CellPointer>(context, RuntimeOperation::NewArray, { countOrCapacityOfEmptyArray, buffer }, { .isOnRarePath = true }));
-    return join.finish();
-}
-
-std::pair<CellPointer, Pointer> CellAllocationEmitter::allocateArrayInFrame(const OperationContext& context, Word32 length, unsigned capacity, LBasicBlock isOnHeap)
-{
-    Integer header(m_out.load64(instanceField(m_heaps.entire(AbstractHeap::AllocatorState), AOT_INSTANCE_OFFSET(allocation.frameArrayHeader))));
-    branchUnless(isNotZero(header), isOnHeap);
-
-    CellPointer array = allocateInFrame(context, sizeOfFrameArray(capacity));
-    Pointer butterfly = offsetBy(asPointer(array), sizeOfFrameArray(0));
-    CodeGenerator::InitializationScope scope(generator());
-    storeHeader(array, header);
-    m_out.store64(butterfly.value(), array.value(), m_heaps.JSArray_butterfly);
-    storeField(butterfly, m_heaps.Butterfly_publicLength, length);
-    storeField(butterfly, m_heaps.Butterfly_vectorLength, length);
-    return { array, butterfly };
-}
-
-CellPointer CellAllocationEmitter::newArrayInFrameFromBuffer(const OperationContext& context, Word32 count, Pointer buffer, unsigned capacity)
-{
-    LBasicBlock isOnHeap = newBlock();
-    LBasicBlock copyLoop = newBlock();
-    LBasicBlock copyElement = newBlock();
-    LBasicBlock copied = newBlock();
-    Join<CellPointer> join(m_out);
-    branchUnless(belowOrEqual(count, word32(static_cast<int32_t>(capacity))), isOnHeap);
-    auto [array, butterfly] = allocateArrayInFrame(context, count, capacity, isOnHeap);
-    copyFromBuffer(count, buffer, butterfly, copyLoop, copyElement, copied);
-    join.add(array);
-
-    m_out.appendTo(isOnHeap);
-    join.add(newArrayFromBuffer(context, count, buffer));
     return join.finish();
 }
 

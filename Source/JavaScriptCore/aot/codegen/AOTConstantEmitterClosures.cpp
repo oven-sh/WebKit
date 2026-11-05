@@ -19,6 +19,7 @@
 #include "AOTFunctionKinds.h"
 #include "AOTFunctionTables.h"
 #include "AOTGuardEmitter.h"
+#include "AOTHintEmitter.h"
 #include "AOTIRProgram.h"
 #include "AOTInstance.h"
 #include "AOTLimits.h"
@@ -79,13 +80,13 @@ CellPointer ConstantEmitter::closureCreatedBy(const ValueContext& value)
     if (!conventions().exists(entry))
         return failWithoutCell(value, InternalErrorKind::OpcodeWithoutCode);
 
-    bool isLent = findLoanOfClosure(m_program, generator().facts(), m_code, value.valueID()).loan != LoanOfClosure::None;
-    NewClosureRequest request { function, m_plan.functionKind(m_program, entry), { }, isLent ? AllocationStorage::Frame : value->storage(), value->closureForm(), captures };
+    bool lifeIsEndedBehindCall = emitter<HintEmitter>().endsLivesAtRunTime() && isLentToFunctionsEnteredAlone(m_code, value.valueID());
+    if (lifeIsEndedBehindCall)
+        generator().noteClosureWhoseLifeEndsBehind(value.valueID(), callThatBorrowsClosure(m_code, value.valueID()));
+    NewClosureRequest request { function, m_plan.functionKind(m_program, entry), { }, lifeIsEndedBehindCall ? AllocationStorage::Heap : value->storage(), value->closureForm(), captures };
     request.numberOfWords = closureCaptureCountsOf(m_program, conventions(), function).captures;
     if (request.form != ClosureForm::Deferred)
         emitter<EnvironmentEmitter>().markEnvironmentsThatClosureKeeps(value);
-    if (value->isLent() && (request.form != ClosureForm::Slim || request.storage != AllocationStorage::Frame))
-        return failWithoutCell(value, InternalErrorKind::OpcodeWithoutCode);
     switch (request.form) {
     case ClosureForm::Slim:
         return newSlimClosure(value, request);
@@ -224,14 +225,12 @@ CellPointer ConstantEmitter::newSlimClosure(const ValueContext& value, const New
         operands.append(zeroExtended(numberOf(closureNumberMentionedBy(request))).value());
         operands.append(cell.value());
         operands.append(captureWords.span().first(numberOfWordsStored));
-        cell = CellPointer(callStub(value, newSlimClosureInFrame(request.kind.slimClosureKind(), count), operands.span()).first);
+        cell = CellPointer(emitter<RuntimeCallEmitter>().callStubWithoutSite(newSlimClosureInFrame(request.kind.slimClosureKind(), count), operands.span()).first);
     }
     {
         CodeGenerator::InitializationScope scope(generator());
         storeClosureCaptureWords(m_out, cell, captureWords.span(), m_heaps.AOTSlimClosure_captures, numberOfWordsStored);
     }
-    if (value->storage() == AllocationStorage::Heap)
-        emitter<BarrierEmitter>().fenceAfterInitialization(value);
     return cell;
 }
 
@@ -307,7 +306,7 @@ CellPointer ConstantEmitter::newFullClosure(const ValueContext& value, const New
         storeClosureCaptureWords(m_out, cell, captureWords.span(), m_heaps.AOTClosure_captures);
         storeField(cell, m_heaps.AOTClosure_entry, closureWordOf(request));
     }
-    if (isOnHeap || value->storage() == AllocationStorage::Heap)
+    if (isOnHeap)
         emitter<BarrierEmitter>().fenceAfterInitialization(value);
     return cell;
 }

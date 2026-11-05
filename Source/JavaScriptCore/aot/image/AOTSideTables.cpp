@@ -260,7 +260,6 @@ SideTables encodeSideTables(const LinkedFunctions& functions, std::span<const Ve
                 .frame = frameOf[position],
                 .frameMapRange = frameMapRange,
                 .handlers = scratch.handlers.span(),
-                .calleesOfSites = sites.calleesOfSites.span(),
                 .constructedCallees = scratch.constructedCallees.span(),
                 .callSites = callSites[position].span(),
             };

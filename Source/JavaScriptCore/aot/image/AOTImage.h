@@ -166,7 +166,6 @@ public:
 
     std::optional<uint32_t> imageFunctionFromClosureWord(FunctionID) const;
     std::optional<uint32_t> imageFunctionOf(FunctionID) const;
-    bool hasSortedFunctionIndex() const { return !m_functionsByID.isEmpty(); }
     std::span<const uint32_t> frameMapWords(uint32_t function) const;
     bool hasFrameAt(uint32_t function, uint32_t offset) const;
     bool hasFrameAtReturnOffset(uint32_t function, uint32_t returnOffset) const;
@@ -175,7 +174,6 @@ public:
     ReturnSiteInfo returnSiteInfoAt(uint32_t function, uint32_t returnOffset) const;
 
     std::optional<CallSiteRecord> callSiteAt(uint32_t function, uint32_t returnOffset) const;
-    std::optional<CalleeOfSite> calleeOfSiteAt(uint32_t function, CallSiteIndex) const;
     std::optional<FunctionID> constructedCalleeAt(uint32_t function, CallSiteIndex) const;
     std::optional<PrologueCheck> prologueCheckAt(const void* returnAddress) const;
 

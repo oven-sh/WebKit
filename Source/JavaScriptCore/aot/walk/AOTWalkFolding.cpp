@@ -18,6 +18,7 @@
 #include "AOTTypeRelations.h"
 #include "AOTWalkStringFolds.h"
 #include "AOTWalkKnown.h"
+#include "AOTWalkListReadsInLoops.h"
 #include "MathCommon.h"
 #include "PureNaN.h"
 #include <array>
@@ -692,13 +693,17 @@ static Reference answerOfNamedReadInFolding(Walker& walker, const BodyOperation<
     return held && !isClosureLeftUnmade(walker, held) ? unlessAbsentInFolding(walker, held) : Reference();
 }
 
-static Reference elementAnsweredByStateInFolding(Walker& walker, const BodyOperation<Opcode::ElemGet>& read)
+static Reference elementAnsweredByStateInFolding(Walker& walker, const BodyValue& value)
 {
+    BodyOperation<Opcode::ElemGet> read = value.as<Opcode::ElemGet>();
     Reference index = walker.referenceOf(read.propertyOperand());
     TypeID typeOfIndex = typeToJudgeByInFolding(walker, index);
     if (!typeOfIndex || !walker.types().at(typeOfIndex).isNumber())
         return { };
-    return unlessAbsentInFolding(walker, walker.state().element(walker.referenceOf(read.objectOperand()), index));
+    Reference held = unlessAbsentInFolding(walker, walker.state().element(walker.referenceOf(read.objectOperand()), index));
+    if (held && (walker.types().at(typeToJudgeByInFolding(walker, held)).primitives & Primitive::Undefined) && readLeavesTurnAtHoleBehindRow(walker, value))
+        return { };
+    return held;
 }
 
 static Reference answerOfReadInFolding(Walker& walker, const BodyValue& value)
@@ -731,7 +736,7 @@ static Reference answerOfReadInFolding(Walker& walker, const BodyValue& value)
             return earlier;
         return answerOfNamedReadInFolding(walker, value.as<Opcode::PropGet>());
     case Opcode::ElemGet:
-        return elementAnsweredByStateInFolding(walker, value.as<Opcode::ElemGet>());
+        return elementAnsweredByStateInFolding(walker, value);
     default:
         RELEASE_ASSERT_NOT_REACHED();
     }
@@ -792,17 +797,12 @@ static bool buildCheckOfCellInFolding(Walker& walker, const BodyValue& check)
     if (!passed || walker.isUnreachable())
         return true;
 
-    bool holdsVariable = variable && walker.state().variable(variable) == checked;
-    if (Reference literal = variable ? literalHeldByFilledVariable(walker, variable) : Reference()) {
-        walker.bind(check.id(), literal);
-        passed = literal;
-    }
     if (variable)
         noteValueOfStableBinding(walker, variable, passed);
     if (environment)
         noteValueOfStableBinding(walker, environment, field, passed);
     WalkState& state = walker.state();
-    if (holdsVariable)
+    if (variable && state.variable(variable) == checked)
         state.noteVariable(variable, passed);
     if (environment && state.environmentField(environment, field) == checked)
         state.noteEnvironmentField(environment, field, passed);

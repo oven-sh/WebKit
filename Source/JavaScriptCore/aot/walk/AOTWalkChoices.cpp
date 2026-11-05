@@ -309,9 +309,9 @@ static bool settleAllocationOfObjectInChoices(Walker& walker, Draft& draft, Refe
     if (hasSlots) {
         while (numberListed < fields.size() && plan.slot(layout, fields[numberListed]).hasStorage() && (valueFitsSlotInChoices(walker, { layout, fields[numberListed] }, values[numberListed]) || listFillerInPlaceOfMisfitInChoices(walker, layout, fields.span(), values, numberListed, misfits)))
             ++numberListed;
-        if (!plan.allocation(program, layout, AllocationClassID(), fields.span().first(numberListed))) {
+        if (!plan.allocation(program, layout, fields.span().first(numberListed))) {
             numberListed = plan.keyOrders().lengthOfLongestBeginningWithOrderWord(layout, fields.span().first(numberListed));
-            if (!plan.allocation(program, layout, AllocationClassID(), fields.span().first(numberListed))) {
+            if (!plan.allocation(program, layout, fields.span().first(numberListed))) {
                 walker.fail("the plan has no allocation of the layout that begins with these fields"_s);
                 return false;
             }
@@ -353,12 +353,12 @@ static bool settleAllocationOfObjectInChoices(Walker& walker, Draft& draft, Refe
     built = walker.build(Draft(draft));
     if (!built)
         return false;
-    if (!misfits.isEmpty()) {
-        Vector<FieldIndex, 2> fieldsWithFillers;
-        for (const MisfitInChoices& misfit : misfits)
-            fieldsWithFillers.append(fields[misfit.position]);
-        walker.noteFillersOfAllocation(built, WTF::move(fieldsWithFillers));
-    }
+    Vector<FieldIndex, 2> fieldsDefinedBehind;
+    for (const MisfitInChoices& misfit : misfits)
+        fieldsDefinedBehind.append(fields[misfit.position]);
+    for (size_t index = numberListed; index < fields.size(); ++index)
+        fieldsDefinedBehind.append(fields[index]);
+    walker.noteFillersOfAllocation(built, WTF::move(fieldsDefinedBehind));
     for (const MisfitInChoices& misfit : misfits)
         defineBehindAllocationInChoices(walker, origin, built, misfit.key, misfit.value);
     for (size_t index = 0; index < keysDefinedBehind.size(); ++index)
@@ -490,22 +490,12 @@ static bool tableOfImageHoldsObjectInChoices(Walker& walker, const DataNode::Obj
             return false;
         fields.append(*field);
     }
-    return !isCompiledObject || plan.allocation(program, layout, AllocationClassID(), fields.span());
+    return !isCompiledObject || plan.allocation(program, layout, fields.span());
 }
 
-namespace {
-
-struct SurveyOfDataInChoices {
-    bool tableOfImageHoldsIt { true };
-    bool allocationsAloneMakeIt { true };
-    uint32_t numberOfNodes { 0 };
-};
-
-} // namespace
-
-static SurveyOfDataInChoices surveyDataInChoices(Walker& walker, const DataNode& root)
+static Walker::SurveyOfConstant surveyNodesOfDataInChoices(Walker& walker, const DataNode& root)
 {
-    SurveyOfDataInChoices survey;
+    Walker::SurveyOfConstant survey;
     Vector<const DataNode*, 16> aggregates;
     Vector<FieldIndex, 16> fields;
     auto add = [&](const DataNode& node) {
@@ -532,6 +522,13 @@ static SurveyOfDataInChoices surveyDataInChoices(Walker& walker, const DataNode&
             add(member.value);
     }
     return survey;
+}
+
+static Walker::SurveyOfConstant surveyDataInChoices(Walker& walker, DataID data)
+{
+    return walker.surveysOfConstants().ensure(data.index(), [&] {
+        return surveyNodesOfDataInChoices(walker, walker.program().at(data).root);
+    }).iterator->value;
 }
 
 static void becomeLeafOfDataInChoices(Walker& walker, Draft& draft, const DataNode& leaf)
@@ -647,7 +644,7 @@ static void becomeObjectOfDataInChoices(Walker& walker, Draft& draft, const Data
 
 static void chooseWhatListTakesFromItsSiteInChoices(Walker& walker, Draft& list)
 {
-    bool isEmpty = !list.numberOfVariadicOperands() && list.holes().empty() && !list.capacityOperand();
+    bool isEmpty = !list.numberOfVariadicOperands() && list.holes().empty();
     bool kindIsWritten = list.contents() && !walker.types().at(list.contents()).isAnything() && arrayStorageHolding(walker.types(), list.contents()) == ArrayStorage::Contiguous;
     if (isEmpty && !kindIsWritten && list.storage() == AllocationStorage::Heap && list.arrayStorage() == ArrayStorage::Other && (walker.isInLoop() || !walker.facts().runsAtMostOnce(walker.unit().function)))
         list.setLiteralStorage(ArrayLiteralStorage::Profiled);
@@ -706,7 +703,7 @@ static bool canLieInSharedStorageInChoices(const DataNode& element)
 
 bool tableOfImageHoldsData(Walker& walker, DataID data)
 {
-    return surveyDataInChoices(walker, walker.program().at(data).root).tableOfImageHoldsIt;
+    return surveyDataInChoices(walker, data).tableOfImageHoldsIt;
 }
 
 static bool holdsNothingYetInChoices(const DataNode& element)
@@ -728,7 +725,8 @@ static bool sharesStorageOfArrayInChoices(Walker& walker, const DataNode::Array&
 
 static void chooseEncodingOfDataInChoices(Walker& walker, Draft& data)
 {
-    if (!constantListsFieldsHeldFilledInSlots(walker.program(), walker.facts().linked(), walker.plan().slots(), data.data())) {
+    RootOfConstant whereRootEnds = walker.constantEndsWhereItLeaves(data.inputValueGiven, data.data()) ? RootOfConstant::EndsWhereItLeaves : RootOfConstant::IsAsked;
+    if (!walker.constantListsFieldsHeldFilled(data.data(), whereRootEnds)) {
         walker.stopAtMaker(data.origin());
         return;
     }
@@ -740,7 +738,7 @@ static void chooseEncodingOfDataInChoices(Walker& walker, Draft& data)
     }
     data.setEncoding(DataEncoding::ReadOnlyTree);
     if (isAggregateOfDataInChoices(root)) {
-        SurveyOfDataInChoices survey = surveyDataInChoices(walker, root);
+        Walker::SurveyOfConstant survey = surveyDataInChoices(walker, data.data());
         if (survey.tableOfImageHoldsIt && !(survey.allocationsAloneMakeIt && survey.numberOfNodes <= maxNodesOfExpandedData))
             return;
     }

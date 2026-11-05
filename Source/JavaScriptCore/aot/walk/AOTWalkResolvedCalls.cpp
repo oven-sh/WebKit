@@ -10,21 +10,8 @@
 
 #include "AOTIRProgram.h"
 #include "AOTOperandKinds.h"
-#include <algorithm>
 
 namespace JSC { namespace AOT { namespace Typed {
-
-static bool lendsClosureOfFrameInResolvedCalls(const Code& code, const Draft& call)
-{
-    return std::ranges::any_of(call.operands(), [&](Reference operand) {
-        if (!operand || !operand.isValue())
-            return false;
-        const Operation* made = &code.at(operand.id());
-        if (made->opcode == Opcode::Box)
-            made = &code.at(made->operand(0));
-        return made->opcode == Opcode::NewClosure && made->isLent();
-    });
-}
 
 bool callThroughTargetResolvedOnceOfItsOpcodes(Walker& walker, const BodyValue& call)
 {
@@ -48,8 +35,6 @@ bool callThroughTargetResolvedOnceOfItsOpcodes(Walker& walker, const BodyValue& 
 
     Draft asWritten = walker.draftOf(call);
     if (asWritten.isTailCall || asWritten.resultIsReturnedAtOnce || asWritten.expectedResult() || asWritten.origin().isTailCall)
-        return false;
-    if (lendsClosureOfFrameInResolvedCalls(walker.code(), asWritten))
         return false;
 
     Draft resolution(Opcode::ResolveCallTarget, asWritten.origin());

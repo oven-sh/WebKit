@@ -24,7 +24,7 @@
 # PARAMETER-NOT: = PropGet
 # PARAMETER-NOT: GetSlotGetter
 # PARAMETER: = GetSlot {{*}}key="raw"
-# RUN(CLOSURE): walk f7 mechanisms=all
+# RUN(CLOSURE): walk f7 mechanisms=all-PromotedEnvironments
 # CLOSURE-LABEL: code f7:Body
 # CLOSURE-NOT: TypeTest
 # CLOSURE: : i32 {{*}} = PropGet {{*}}key="held"

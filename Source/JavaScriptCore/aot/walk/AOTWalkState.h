@@ -260,7 +260,7 @@ public:
             m_answers.holderHasLeft(object);
         }
     }
-    void letFreshObjectsLeave();
+    Vector<Reference, 8> listFreshObjects() const;
 
     void noteCheckedName(Reference value, Reference name)
     {
@@ -431,7 +431,8 @@ public:
         m_answers.clear();
     }
 
-    void meetWith(const WalkState& other);
+    struct RecordsLastMet;
+    void meetWith(const WalkState& other, RecordsLastMet* = nullptr);
 
     bool isEmpty() const { return !m_marks.turnInWhichNothingWasDone && (!m_held || m_held->isEmpty()) && m_answers.isEmpty(); }
 
@@ -516,6 +517,16 @@ private:
         NumbersOfWalkStates* numbers { nullptr };
     };
 
+public:
+    struct RecordsLastMet {
+        SharedArray<Holder, holdersFoundWithoutTable> holders;
+        SharedArray<Place, placesThatLieInHeld> places;
+        uint32_t numberOfOwnHolders { 0 };
+        uint32_t numberOfOwnPlaces { 0 };
+        bool lieAsOwn { false };
+    };
+
+private:
     struct Held {
         WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(Held);
 
@@ -544,7 +555,7 @@ private:
         void noteEnvironmentField(const ProgramOfState&, Reference environment, FieldReference, Reference value);
         void noteElement(Reference object, Reference index, Reference value);
         void invalidateAliasedSlots(const ProgramOfState&, Reference object, FieldReference, NOESCAPE const ScopedLambda<bool(Reference other)>& mayBeSameObject);
-        void meetWith(const Held&);
+        void meetWith(const Held&, RecordsLastMet*);
         void endWhatIsWritten(const Effects&, NOESCAPE const ScopedLambda<bool(Reference holder)>& mayBeWritten, NOESCAPE const ScopedLambda<bool(LayoutID classOfGuard)>& mayEndGuard);
 
         bool mayHaveRecordOf(Reference object) const { return m_filterOfHolders & bitInFilterOfHolders(object); }

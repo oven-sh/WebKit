@@ -256,6 +256,8 @@ bool handsOperandOn(const TypingContext& context, const Operation& operation, ui
     }
     if (opcode == Opcode::NewClosure && operandIndex >= numberOfNamedOperandsOf(opcode) && context.positions.entryParameterIsLeftOutOfCalls(operation.function(), operandIndex - numberOfNamedOperandsOf(opcode)))
         return true;
+    if ((opcode == Opcode::GetEnvironmentField || opcode == Opcode::PutEnvironmentField) && operandIndex == OperandIndex::GetEnvironmentField::environment && context.positions.environmentLiesAmongVariables(operation.layout()))
+        return true;
     if (opcode == Opcode::PutModuleVariable) {
         VariableID id = operation.variable();
         if (id.index() >= context.program.variables.size())

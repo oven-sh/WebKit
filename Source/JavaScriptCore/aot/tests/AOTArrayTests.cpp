@@ -207,44 +207,6 @@ static void testProfileReviewIntervalGrowsWhileNothingChanges()
     AOT_TEST_CHECK(profile.capacity() == 1);
 }
 
-static bool hasLengths(JSArray* array, unsigned publicLength, unsigned minVectorLength, unsigned maxVectorLength)
-{
-    unsigned vectorLength = array->butterfly()->vectorLength();
-    return array->length() == publicLength && vectorLength >= minVectorLength && vectorLength <= maxVectorLength;
-}
-
-static void testReserveLeavesSmallStepsToUsualGrowth()
-{
-    Realms realms;
-    JSArray* array = createArray(realms, ArrayWithContiguous, 1000);
-    Butterfly* butterfly = array->butterfly();
-    unsigned vectorLength = butterfly->vectorLength();
-    for (uint64_t additional : { uint64_t { 0 }, uint64_t { 1 }, uint64_t { 400 } }) {
-        reserveArrayCapacity(realms.vm(), array, additional);
-        AOT_TEST_CHECK(array->butterfly() == butterfly && hasLengths(array, 1000, vectorLength, vectorLength));
-    }
-}
-
-static void testReserveDeclines()
-{
-    Realms realms;
-    constexpr unsigned maxElementsReservedInOneStep = 4194304;
-    JSArray* array = createArray(realms, ArrayWithInt32, 4);
-    Butterfly* butterfly = array->butterfly();
-    uint64_t largestCountThatFits = MAX_STORAGE_VECTOR_LENGTH - array->length();
-    for (uint64_t additional : { uint64_t { maxElementsReservedInOneStep } + 1, largestCountThatFits, static_cast<uint64_t>(-1), static_cast<uint64_t>(MAX_STORAGE_VECTOR_LENGTH) })
-        reserveArrayCapacity(realms.vm(), array, additional);
-    AOT_TEST_CHECK(array->butterfly() == butterfly && array->length() == 4);
-
-    reserveArrayCapacity(realms.vm(), array, maxElementsReservedInOneStep);
-    AOT_TEST_CHECK(array->length() == 4 && array->butterfly()->vectorLength() >= maxElementsReservedInOneStep + 4);
-
-    JSArray* withArrayStorage = createArray(realms, ArrayWithArrayStorage, 4);
-    butterfly = withArrayStorage->butterfly();
-    reserveArrayCapacity(realms.vm(), withArrayStorage, 100000);
-    AOT_TEST_CHECK(withArrayStorage->butterfly() == butterfly && withArrayStorage->length() == 4);
-}
-
 std::span<const NativeTest> arrayTests()
 {
     static constexpr NativeTest tests[] = {
@@ -253,8 +215,6 @@ std::span<const NativeTest> arrayTests()
         { "arrays/profile/grows-with-the-third-longer-array"_s, testProfileGrowsWithTheThirdLongerArray },
         { "arrays/profile/review-interval"_s, testProfileReviewInterval },
         { "arrays/profile/review-interval-grows-while-nothing-changes"_s, testProfileReviewIntervalGrowsWhileNothingChanges },
-        { "arrays/reserve/leaves-small-steps-to-usual-growth"_s, testReserveLeavesSmallStepsToUsualGrowth },
-        { "arrays/reserve/declines"_s, testReserveDeclines },
     };
     return tests;
 }

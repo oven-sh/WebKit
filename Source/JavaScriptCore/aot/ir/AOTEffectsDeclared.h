@@ -10,6 +10,7 @@
 #include "AOTEffects.h"
 #include "AOTSchemaEffects.h"
 #include <array>
+#include <span>
 #include <type_traits>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -71,9 +72,10 @@ constexpr Effects withDeclaredKindOfThrow(Opcode opcode, Effects effects)
     return effects;
 }
 
-extern const std::array<const Effects*, numberOfOpcodes> declaredBoundsByOpcode;
+extern const std::array<uint8_t, numberOfOpcodes>& rowsOfDeclaredBoundsByOpcode;
+extern const std::span<const Effects> declaredBoundsInRows;
 extern const OpcodeSet opcodesWithExactBoundsInTable;
-ALWAYS_INLINE const Effects& declaredBoundInTable(Opcode opcode) { return *declaredBoundsByOpcode[static_cast<unsigned>(opcode)]; }
+ALWAYS_INLINE const Effects& declaredBoundInTable(Opcode opcode) { return declaredBoundsInRows[rowsOfDeclaredBoundsByOpcode[static_cast<unsigned>(opcode)]]; }
 ALWAYS_INLINE const Effects* findDeclaredEffectsOfEveryValue(Opcode opcode) { return opcodesWithExactBoundsInTable.contains(opcode) ? &declaredBoundInTable(opcode) : nullptr; }
 
 inline constexpr AbstractHeapSet heapsThatOnlyFlagsOfIsNotFrozenRead { AbstractHeap::NamedProperties };

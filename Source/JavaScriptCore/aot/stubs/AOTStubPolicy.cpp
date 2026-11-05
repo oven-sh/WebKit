@@ -11,7 +11,6 @@
 #include "AOTCompileOptions.h"
 #include "AOTFieldTable.h"
 #include "AOTPropertyCachesFront.h"
-#include "AOTSlotPlan.h"
 #include "AOTWasmModules.h"
 #include <algorithm>
 #include <span>
@@ -32,15 +31,6 @@ StubOptions StubOptions::from(const RecordedOptions& recorded, const Typed::Prog
         .maxNameInFieldTable = RowDisplacementTable::maxColumn,
         .targetFeatures = CPUFeatureSet::fromBits(static_cast<uint32_t>(recorded.targetFeatures)),
     };
-}
-
-StubPolicy stubPolicyOf(const Typed::SlotPlan& slots)
-{
-    const Typed::FieldTableProbePlan& probes = slots.fieldTableProbes();
-    StubPolicy policy;
-    policy.readsTestOutOfLineValuesSecond = probes.readsTestOutOfLineValuesSecond;
-    policy.readsTestDoublesSecond = probes.readsTestDoublesSecond;
-    return policy;
 }
 
 } } // namespace JSC::AOT

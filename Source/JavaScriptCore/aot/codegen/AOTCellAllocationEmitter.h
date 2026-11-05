@@ -32,7 +32,7 @@ public:
 
     CellPointer allocateObject(InlineAllocation, LBasicBlock slowPath);
     CellPointer allocateCellWithHeader(InlineAllocation, LBasicBlock slowPath);
-    MentionedAllocation allocationOf(const OperationContext&, LayoutID, AllocationClassID, std::span<const FieldIndex> initialFields);
+    MentionedAllocation allocationOf(const OperationContext&, LayoutID, std::span<const FieldIndex> initialFields);
     MentionedAllocation environmentAllocationOf(LayoutID);
     MentionedAllocation closureAllocationOf(unsigned numberOfCaptures);
     Pointer allocationSiteRecord(const MentionedAllocation&);
@@ -49,10 +49,8 @@ public:
     void finishArrayOfLength(const OperationContext&, CellPointer array, unsigned length);
     CellPointer newArrayOf(const OperationContext&, std::span<const Boxed> elements);
     CellPointer newArrayFromBuffer(const OperationContext&, Word32 count, Pointer buffer);
-    CellPointer newArrayInFrameFromBuffer(const OperationContext&, Word32 count, Pointer buffer, unsigned capacity);
 
 private:
-    std::pair<CellPointer, Pointer> allocateArrayInFrame(const OperationContext&, Word32 length, unsigned capacity, LBasicBlock isOnHeap);
     Integer rowOf(const MentionedAllocation& allocation) { return zeroExtended(numberOf(allocation.mention)); }
     void copyFromBuffer(Word32 count, Pointer buffer, Pointer butterfly, LBasicBlock copyLoop, LBasicBlock copyElement, LBasicBlock copied);
     void zeroBody(CellPointer, const MentionedAllocation&);

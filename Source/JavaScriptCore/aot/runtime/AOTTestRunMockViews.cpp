@@ -44,18 +44,31 @@ bool Modules::tryReplaceNamespaceHandedOn(ModuleID handedOn, JSValue value)
     return true;
 }
 
+std::span<const ModuleID> Modules::modulesThatHandOnNamespaceOf(ModuleID handedOn)
+{
+    if (!m_modulesThatHandOnNamespaces) {
+        m_modulesThatHandOnNamespaces.emplace();
+        for (unsigned index = 0; index < m_table.size(); ++index) {
+            for (const ModuleExportData& entry : m_table.exports(ModuleID(index))) {
+                if (entry.kind() != ModuleExportKind::Namespace)
+                    continue;
+                Vector<ModuleID, 2>& handers = m_modulesThatHandOnNamespaces->add(entry.targetModule(), Vector<ModuleID, 2>()).iterator->value;
+                if (handers.isEmpty() || handers.last() != ModuleID(index))
+                    handers.append(ModuleID(index));
+            }
+        }
+    }
+    auto found = m_modulesThatHandOnNamespaces->find(handedOn);
+    return found == m_modulesThatHandOnNamespaces->end() ? std::span<const ModuleID>() : found->value.span();
+}
+
 void Modules::didReplaceNamespaceHandedOn(ModuleID handedOn)
 {
-    for (unsigned index = 0; index < m_table.size(); ++index) {
-        JSObject* made = namespaceIfCreated(ModuleID(index), ModulePhase::Evaluation);
-        LoadedModule* loaded = loadedIfExists(ModuleID(index));
+    for (ModuleID hander : modulesThatHandOnNamespaceOf(handedOn)) {
+        JSObject* made = namespaceIfCreated(hander, ModulePhase::Evaluation);
+        LoadedModule* loaded = loadedIfExists(hander);
         JSObject* setAside = loaded ? loaded->namespaceBeforeMockInPlace.get() : nullptr;
         if (!made && !setAside)
-            continue;
-        bool handsItOn = std::ranges::any_of(m_table.exports(ModuleID(index)), [&](const ModuleExportData& entry) {
-            return entry.kind() == ModuleExportKind::Namespace && entry.targetModule() == handedOn;
-        });
-        if (!handsItOn)
             continue;
         for (JSObject* object : { made, setAside }) {
             if (auto* filed = dynamicDowncast<ModuleNamespace>(object))

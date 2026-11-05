@@ -6,19 +6,19 @@
 # print(read("second"));
 # print("went on");
 # The program and the lie of what-a-map-gives-is-asked-where-it-comes-out.ir. What is asked here is the form of the stop.
-# In the cold end stands one call. Its thunk lays one word into a register and enters the stub that throws at sites: the word names the register that holds the value, the source of the proof and the position.
-# The function is found by the address that the call returns to, also where read() stands in line in the module's body.
+# In the cold end stands one call. Its thunk lays one word into a register and enters the stub that throws at sites: the word names the register that holds the value and the source of the proof, so all stops of a kind share one thunk.
+# The function and the place in the text are found by the address that the call returns to, also where read() stands in line in the module's body: no position lies in the code. A program written as this one has no lines: 1:1.
 # OPTIONS: testing=UnseenCodeAnswersUndefined
 # RUN(BYTES): bytes f1:Body mechanisms=all
 # BYTES: argument thunk {{*}}ThrowAtSite.WordInRegister
 # RUN(ALL): run-in-shell mechanisms=all
 # ALL: 1
-# ALL-NEXT: AOT: f1 at 421: what a container holds is not of the type that the compiler has proven of it. It is: string. This is a bug in Bun.
+# ALL-NEXT: AOT: f1 at 1:1: what a container holds is not of the type that the compiler has proven of it. It is: string. This is a bug in Bun.
 # ALL-NOT: went on
 # ALL: crashed with
 # RUN(CALLS): run-in-shell mechanisms=-Inlining
 # CALLS: 1
-# CALLS-NEXT: AOT: f1 at 421: what a container holds is not of the type that the compiler has proven of it. It is: string. This is a bug in Bun.
+# CALLS-NEXT: AOT: f1 at 1:1: what a container holds is not of the type that the compiler has proven of it. It is: string. This is a bug in Bun.
 # CALLS-NOT: went on
 # CALLS: crashed with
 

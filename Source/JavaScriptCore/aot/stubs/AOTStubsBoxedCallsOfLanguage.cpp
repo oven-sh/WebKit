@@ -28,7 +28,7 @@ namespace JSC { namespace AOT {
 static void checkRealmOfCalleeInBoxedCallsOfLanguage(StubAssembler& jit, GPRReg scratch, JumpList& callsHostFunction)
 {
     StubFamily family = jit.key().family();
-    if (family == StubFamily::CallMethodOfBuiltinClass || family == StubFamily::TryCallMethodOfBuiltinClass)
+    if (family == StubFamily::CallMethodOfBuiltinClass || family == StubFamily::TryCallMethodOfBuiltinClass || family == StubFamily::CallMethodThatMayBeUnread)
         return;
     jit.loadPtr(Address(calleeGPR, JSCallee::offsetOfScopeChain()), scratch);
     callsHostFunction.append(jit.branchPtr(CCallHelpers::NotEqual, scratch, Address(instanceGPR, AOT_INSTANCE_OFFSET(globalObject))));
@@ -85,6 +85,34 @@ void emitStringSearchFromPosition(StubAssembler& jit, GPRReg scratch, JumpList& 
         jit.move(length, position);
         liesInString.link(&jit);
     }
+
+    static_assert(areDistinctOnEveryISA(StubRegister::A0, StubRegister::A1, StubRegister::A2, StubRegister::A3, StubRegister::A5, StubRegister::T9, StubRegister::T10));
+    static_assert(gprOf(StubRegister::T10) == calleeGPR);
+    JumpList isNotThere;
+    JumpList needsOperation;
+    const GPRReg place = jit.reuseScratch(StubRegister::A1);
+    if (form == BoxedCallForm::StringLastIndexOf)
+        needsOperation.append(jit.branch32(CCallHelpers::GreaterThan, position, TrustedImm32(0)));
+    else
+        jit.move(position, place);
+    branchUnlessTextStandsAtPlace(jit, { thisGPR, argumentGPR(0), place, jit.reuseScratch(StubRegister::A2), jit.reuseScratch(StubRegister::A5), scratch, jit.reuseScratch(StubRegister::T10) },
+        form == BoxedCallForm::StringLastIndexOf ? PlaceOfSoughtText::IsStart : form == BoxedCallForm::StringIndexOf ? PlaceOfSoughtText::IsGivenAndLast : PlaceOfSoughtText::IsGiven, isNotThere, needsOperation);
+    if (form == BoxedCallForm::StringStartsWith)
+        jit.move(TrustedImm32(JSValue::ValueTrue), jit.result());
+    else if (form == BoxedCallForm::StringLastIndexOf)
+        jit.move(TrustedImm64(JSValue::encode(jsNumber(0))), jit.result());
+    else
+        boxInt32(jit, position, jit.result());
+    jit.returnToCaller();
+
+    isNotThere.link(&jit);
+    if (form == BoxedCallForm::StringStartsWith)
+        jit.move(TrustedImm32(JSValue::ValueFalse), jit.result());
+    else
+        jit.move(TrustedImm64(JSValue::encode(jsNumber(-1))), jit.result());
+    jit.returnToCaller();
+
+    needsOperation.link(&jit);
     jit.move(argumentGPR(0), jit.reuseScratch(StubRegister::A2));
     jit.move(thisGPR, jit.reuseScratch(StubRegister::A1));
     if (form == BoxedCallForm::StringStartsWith) {

@@ -27,9 +27,8 @@ static_assert(!OptionSet<SweepMark> { SweepMark::IsNeeded, SweepMark::ReleasesOp
 
 static constexpr OpcodeSet operationsThatSweepNeverDrops { Opcode::LoopHint, Opcode::CountExecution, Opcode::CheckProof, Opcode::EndLifeOfCell, Opcode::EnterBodyThatRunsOnce };
 
-static constexpr OpcodeSet operationsThatSweepKeepsForTheirOperand { Opcode::ReleaseHint, Opcode::MarkEnvironmentEscaped, Opcode::ReleaseEnvironment, Opcode::ClearFrameCell };
+static constexpr OpcodeSet operationsThatSweepKeepsForTheirOperand { Opcode::ReleaseHint, Opcode::MarkEnvironmentEscaped, Opcode::ReleaseEnvironment };
 static_assert(OperandIndex::ReleaseHint::value == OperandIndex::MarkEnvironmentEscaped::environment && OperandIndex::ReleaseHint::value == OperandIndex::ReleaseEnvironment::environment);
-static_assert(OperandIndex::ReleaseHint::value == OperandIndex::ClearFrameCell::cell);
 
 static constexpr uint8_t isKeptForOperandInRowOfSweep = 1 << 0;
 static constexpr uint8_t isNeverDroppedInRowOfSweep = 1 << 1;
@@ -533,6 +532,7 @@ void Sweep::sweepBackward()
     m_looksForCoveredBarriers = beginLookingForCoveredBarriers();
     m_looksForCoveredFences = beginLookingForCoveredFences();
     m_coverageIsOutOfDate = false;
+    m_lendsClosures = beginLendingClosures();
     beginFollowingLiveness();
 
     for (const EntryOfCode& entry : code.entries())
@@ -567,6 +567,8 @@ void Sweep::sweepBackward()
         putOperationsNeededLateInOrder();
     m_totals.operationsDropped -= m_numberOfOperationsInOrder;
     countUsesAtEndsOfBlocks();
+    if (m_lendsClosures)
+        lendClosures();
     if (m_coverageIsOutOfDate)
         lookForCoverageAgain();
     sortFactUses();
@@ -595,6 +597,8 @@ void Sweep::settleWhatIsNeeded()
             m_operationsNeededLate.append({ operation.block(), value });
         noteNeededOperation(arrays, m_states[operation.blockIndex], value, operation);
         m_coverageIsOutOfDate = m_coverageIsOutOfDate || mayChangeWhatIsCovered(operation);
+        if (m_lendsClosures && operation.opcode == Opcode::NewClosure)
+            m_closuresThatMayBeLent.append(value);
     }
 }
 

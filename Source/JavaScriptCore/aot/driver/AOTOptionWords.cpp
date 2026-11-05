@@ -181,6 +181,8 @@ static std::optional<uint32_t> parseRowThatSaysLess(StringView written)
         found.part = Typed::PartOfEffects::Collects;
     else if (matchesName(*part, "Throws"_s))
         found.part = Typed::PartOfEffects::Throws;
+    else if (matchesName(*part, "ThrowsByRule"_s))
+        found.part = Typed::PartOfEffects::ThrowsByRule;
     else if (auto heap = findMember<Typed::AbstractHeap>(*part)) {
         found.part = Typed::PartOfEffects::Writes;
         found.heap = *heap;
@@ -209,13 +211,13 @@ static std::optional<uint32_t> parseRowThatSaysLess(StringView written)
             return std::nullopt;
         found.kind = Typed::KindOfEffectsRow::Stub;
         found.row = static_cast<uint16_t>(family);
-    } else if (matchesName(kind, "Callee"_s)) {
+    } else if (matchesName(kind, "Callee"_s) || matchesName(kind, "Summary"_s)) {
         if (!row.startsWith('f'))
             return std::nullopt;
         auto function = parseNumber<uint16_t>(row.substring(1));
         if (!function)
             return std::nullopt;
-        found.kind = Typed::KindOfEffectsRow::Callee;
+        found.kind = matchesName(kind, "Callee"_s) ? Typed::KindOfEffectsRow::Callee : Typed::KindOfEffectsRow::Summary;
         found.row = *function;
     } else if (matchesName(kind, "Builtin"_s)) {
         const BuiltinTable& table = BuiltinTable::singleton();
@@ -267,11 +269,11 @@ static bool engineHonorsCheck(Wire::CheckSet check)
     case Wire::CheckSet::ValidateReferences:
     case Wire::CheckSet::VerifyEachStage:
     case Wire::CheckSet::ValidateReferenceGuards:
+    case Wire::CheckSet::FlowFixpoint:
         return true;
     case Wire::CheckSet::KeepGoing:
     case Wire::CheckSet::VerifyEachPass:
     case Wire::CheckSet::ValidateBackEnd:
-    case Wire::CheckSet::FlowFixpoint:
     case Wire::CheckSet::UsedValuesAreListed:
     case Wire::CheckSet::ClaimsToBackEnd:
     case Wire::CheckSet::MovedLoads:
@@ -432,6 +434,8 @@ ASCIILiteral nameOfMechanism(Typed::Mechanism mechanism)
         return "CellsInFrames"_s;
     case Typed::Mechanism::Deferral:
         return "Deferral"_s;
+    case Typed::Mechanism::PromotedEnvironments:
+        return "PromotedEnvironments"_s;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }

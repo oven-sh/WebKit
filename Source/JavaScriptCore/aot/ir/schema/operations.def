@@ -1,5 +1,6 @@
 enum AllocationStorage { | engine Heap Frame }
 enum ClosureForm { | engine Full Slim Deferred Singleton }
+enum LoanOfClosure { | engine None ToFunctionEntered LeftToStubOfCall }
 enum ArrayLiteralStorage { | engine Fresh Profiled ProfiledForRoom }
 enum TailCallRequirement { | engine Required Allowed }
 enum CodeRole { | engine Body GenericCallEntry GenericConstructEntry AllocatingConstructEntry CoroutineBody ModuleStart SlowBody ParameterGuard TableEntry TableLookup Serializer }
@@ -13,8 +14,8 @@ enum OperatorForm (state: StateOfKnowledge) {
     MayBeStringOrNumber(MayBeStringOrNumber)
 }
 
-parameters AccessStamp (engine accessSite?: AccessSite, engine receivers?: LayoutSet)
-parameters CallStamp (engine accessSite?: AccessSite, engine callees?: CalleeSet)
+parameters AccessStamp (engine receivers?: LayoutSet)
+parameters CallStamp (engine callees?: CalleeSet)
 parameters CellStamp (engine storage: AllocationStorage)
 
 effects DefinesProperty = Allocates reads(ShapeWords, OrderWords, NamedProperties, ObjectFields) writes(ShapeWords, MemberGuards, OrderWords, NamedProperties, ObjectFields, RuntimeState) throws
@@ -32,7 +33,7 @@ operation BigInt (digits: String) -> constant ; CreatesConstant ; runtime = BigI
 operation Builtin (builtin: Builtin) [isNotReadFromHolder] -> constant ; CreatesConstant ; runtime = BuiltinCell ; flow = TableProves ; flowRule = Module ; formDependsOnLoop = true ; form = Closed ; openIn = Loop ; closedIn = UnlikelyBlock, RareBlock, CodeThatRunsOnce
 operation ModuleBuiltin (builtin: Builtin, module: Module(Referrer)) -> constant ; Allocates UsesRuntime throws ; runtime = ModuleBuiltinCell ; flow = TableProves ; form = Open
 operation Data (data: Data, engine arrayStorage: ArrayStorage, engine from Selected encoding: DataEncoding) -> constant ; Allocates throws ; runtime = NewFromData ; interpreted = Allocation ; flow = Allocates ; flowRule = Heap ; formDependsOnLoop = true ; closedUnder = CopyOnWriteArray ; runtimeUnder = ReadOnlyTree ; openIn = Loop
-operation NewClosure (function: Function(Closure), captures...: Declared/retains(result), with CellStamp, engine from Selected closureForm: ClosureForm) [| engine isMadeOnDemand isHeldByClosureTable isLent isMadeForOneUse] -> constant ; Allocates ; runtime = NewClosureSlow ; interpreted = Allocation ; allocatesInline = true ; flow = Allocates ; formDependsOnLoop = true ; openUnder = FullInFrame, FullWithOwnStructure, Singleton ; closedUnder = SlimOnHeap, SlimInFrame, FullOnHeap ; openIn = Loop
+operation NewClosure (function: Function(Closure), captures...: Declared/retains(result), with CellStamp, engine from Selected closureForm: ClosureForm, engine from Selected loan: LoanOfClosure) [| engine isMadeOnDemand isHeldByClosureTable] -> constant ; Allocates ; runtime = NewClosureSlow ; interpreted = Allocation ; allocatesInline = true ; flow = Allocates ; formDependsOnLoop = true ; openUnder = FullInFrame, FullWithOwnStructure, Singleton ; closedUnder = SlimOnHeap, SlimInFrame, FullOnHeap ; openIn = Loop
 engine operation KeyConstant (key: PropertyKey) -> constant ; CreatesConstant ; runtime = KeyConstant ; flow = TableProves ; formDependsOnLoop = true ; form = Closed ; openIn = Loop ; closedIn = UnlikelyBlock, RareBlock, CodeThatRunsOnce
 operation Unspecified (valueType: Type) -> declared(valueType) ; none ; Prepared..Placed ; form = Open
 operation EmptyArgumentList (valueType: Type) -> declared(valueType) ; none ; Prepared..Placed ; replaces = NewArray ; form = Open
@@ -48,10 +49,10 @@ operation PutEnvironmentField (environment: Layout/inspects, layout: Layout, fie
 operation ScopeHasBinding (scope: Object/inspects, key: PropertyKey) -> natural(boolean) ; unknownCode ; runtime = ScopeHasBinding ; flow = TableProves ; flowRule = Heap ; form = Runtime
 
 family Allocation AsRead..Placed
-operation NewObject (layout: Layout, fields: List<Field>, prototype?: Object/retains(result), values...: Declared/retains(result), with CellStamp, engine allocationClass?: AllocationClass) [| engine isMadeForOneUse] -> allocation(layout) ; Allocates writes(MemberGuards) ; runtime = AllocateSlow ; interpreted = Allocation ; allocatesInline = true ; allocatesAfterLastSafepoint = true ; replaces = CreateIteratorResult ; flow = Allocates ; flowRule = Heap ; closedUnder = Always, ObjectInFrame ; openUnder = CellInFrameFilledOnce ; formDependsOnLoop = true ; openIn = Loop
-operation NewDictionary (engine roomForNames?: UInt32) -> natural(object) ; Allocates ; runtime = NewDictionary ; allocatesInline = true ; flow = Allocates ; flowRule = NewDictionary ; form = Closed
+operation NewObject (layout: Layout, fields: List<Field>, prototype?: Object/retains(result), values...: Declared/retains(result), with CellStamp) -> allocation(layout) ; Allocates writes(MemberGuards) ; runtime = AllocateSlow ; interpreted = Allocation ; allocatesInline = true ; allocatesAfterLastSafepoint = true ; replaces = CreateIteratorResult ; flow = Allocates ; flowRule = Heap ; closedUnder = Always, ObjectInFrame ; openUnder = CellInFrameFilledOnce ; formDependsOnLoop = true ; openIn = Loop
+operation NewDictionary () -> natural(object) ; Allocates ; runtime = NewDictionary ; allocatesInline = true ; flow = Allocates ; flowRule = NewDictionary ; form = Closed
 operation FinishObject (object: Object/returns) -> natural(same(object)) ; none ; interpreted = Cast ; flow = Copies ; handsOn = Mark ; form = Open
-operation NewArray (contents: Type, holes: List<UInt32>, engine capacity?: Integer/inspects, elements...: Declared/retains(result), engine storage: AllocationStorage, engine literalStorage: ArrayLiteralStorage, engine arrayStorage: ArrayStorage) [| engine isFilledToCapacity isMadeForOneUse] -> allocation(Array<contents>) ; Allocates ; runtime = NewArray ; interpreted = Allocation ; allocatesInline = true ; flow = Allocates ; flowRule = Heap ; formDependsOnLoop = true ; form = Closed
+operation NewArray (contents: Type, holes: List<UInt32>, elements...: Declared/retains(result), engine storage: AllocationStorage, engine literalStorage: ArrayLiteralStorage, engine arrayStorage: ArrayStorage) -> allocation(Array<contents>) ; Allocates ; runtime = NewArray ; interpreted = Allocation ; allocatesInline = true ; flow = Allocates ; flowRule = Heap ; formDependsOnLoop = true ; form = Closed
 operation AppendElement (array: Array/inspects+writesContents, value: Any/retains(array), engine length...: Integer/inspects) -> none ; GrowsArray ; runtime = ArrayPush ; interpreted = Store ; runsOwnerBarrier = true ; flow = Copies ; flowRule = Heap ; formDependsOnLoop = true ; openIn = Loop ; form = Closed
 operation AppendSpread (array: Array/inspects+writesContents, iterable: Any/Iterated) -> none ; GrowsArray ; AsRead..AsRead ; interpreted = List ; flow = Copies ; flowRule = Iteration
 operation AppendHole (array: Array/inspects+writesContents) -> none ; GrowsArray ; runtime = AppendHole ; interpreted = Store ; flow = Copies ; flowRule = Heap ; form = Runtime
@@ -141,7 +142,7 @@ operation Call (callee: Any/calls, thisValue?: Any/retains, arguments...: Any/re
 operation Construct (callee: Any/calls, newTarget?: Any/retains, arguments...: Any/retains, calleeName?: String, with CallStamp) [isAnnotatedPure] -> unknown ; unknownCode by Call ; accessClass = IndirectCall ; runtime = Construct ; flow = TableProves ; flowRule = Call ; entersByValue = Construction ; form = Closed
 operation CallList (callee: Any/calls, thisValue?: Any/retains, list: Array/Listed, calleeKey?: PropertyKey, calleeName?: String, expectedResult?: ExpectedResult, engine calledBuiltin?: Builtin, with CallStamp) -> unknown ; unknownCode by Call ; accessClass = IndirectCall ; interpreted = List ; runtime = Apply ; flow = Copies ; runsBeforeCallee = true ; flowRule = Call ; entersByValue = Call ; form = Closed
 operation ConstructList (callee: Any/calls, newTarget?: Any/retains, list: Array/Listed, calleeName?: String, with CallStamp) -> unknown ; unknownCode by Call ; accessClass = IndirectCall ; interpreted = List ; runtime = ConstructWithArray ; flow = TableProves ; flowRule = Call ; entersByValue = Construction ; form = Runtime
-operation CallDirect (function: Function(Call), arguments...: Declared/retains, engine accessSite?: AccessSite, engine calledBuiltin?: Builtin, engine role: CodeRole, engine numberOfBoundArguments: UInt32) [| engine isNeverInlined isConstruction callsOwnFunctionObject] -> declared(function) ; unknownCode by Call ; accessClass = DirectCall ; flow = Copies ; runsBeforeCallee = true ; form = Open
+operation CallDirect (function: Function(Call), arguments...: Declared/retains, engine calledBuiltin?: Builtin, engine role: CodeRole, engine numberOfBoundArguments: UInt32) [| engine isNeverInlined isConstruction] -> declared(function) ; unknownCode by Call ; accessClass = DirectCall ; flow = Copies ; runsBeforeCallee = true ; form = Open
 engine operation CallTable (receiver: Object/retains, arguments...: Declared/retains, key: PropertyKey, selector: UInt32, with CallStamp) -> unknown ; unknownCode ; Prepared..Placed ; accessClass = IndirectCall ; form = Open
 operation Results (values...: Declared/returns) -> results(..) ; none ; flow = Copies ; form = Open
 operation ResultAt (results: Results/inspects, index: UInt32) -> declared(results) ; none ; interpreted = List ; flow = Copies ; form = Open

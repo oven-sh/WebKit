@@ -79,8 +79,8 @@ String assignmentToFoldedMemberMessage(const String& property, LockedIn);
 String deletionOfFoldedMemberMessage(const String& property, LockedIn);
 String assignmentToNameThatBuiltinFunctionInheritsMessage(UniquedStringImpl*);
 String prototypeChangeOfLockedBuiltinMessage(const String& holder, LockedIn = LockedIn::Executable);
-String spyOnExportRefusedMessage(UniquedStringImpl* name, const String& path, LockedIn);
-String mockOfModuleRefusedMessage(const String& path, LockedIn);
+String spyOnExportRefusedMessage(UniquedStringImpl* name, const String& path, LockedIn, const String& callerOutsideBuild);
+String mockOfModuleRefusedMessage(const String& path, LockedIn, const String& callerOutsideBuild);
 
 } } // namespace JSC::AOT
 

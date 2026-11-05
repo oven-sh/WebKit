@@ -112,7 +112,7 @@ public:
     Opcode opcodeOf(ValueID id) const { return code().at(id).opcode; }
     TypeID typeIDOf(ValueID id) const { return code().at(id).type; }
     Representation representationOf(ValueID id) const { return code().at(id).representation; }
-    ALWAYS_INLINE Type typeOf(ValueID id) const { return m_inputs.types.at(typeIDOf(id)); }
+    Type typeOf(ValueID id) const { return m_inputs.types.at(typeIDOf(id)); }
 
     bool suspends() const { return m_proc.traits().savesFrameOnSuspend; }
     bool hasHandlers() const { return code().hasHandlers(); }
@@ -131,6 +131,7 @@ public:
             return nullptr;
         return slotOfScopeReadInPlaceOfClosureSlow(id, read);
     }
+    void noteClosureWhoseLifeEndsBehind(ValueID closure, ValueID call) { m_closuresWhoseLivesEndBehindCalls.append({ closure, call }); }
     const PlacedSlot* slotOfScopeOfClosureWithoutValue(ValueID closure) const { return closure == m_closureReadForItsScope ? m_slotOfScopeOfClosureRead : nullptr; }
     const Effects& effectsOf(const OperationContext& context LIFETIME_BOUND) const
     {
@@ -139,9 +140,9 @@ public:
         return context.m_effects;
     }
 
-    ALWAYS_INLINE Operand get(ValueID id) { return get(id, code().at(id)); }
+    Operand get(ValueID id) { return get(id, code().at(id)); }
     LValue wordOf(ValueID id) const { return m_values[id.index()]; }
-    ALWAYS_INLINE Operand getIn(ValueID id, Representation wanted)
+    Operand getIn(ValueID id, Representation wanted)
     {
         if (wanted == Representation::Void)
             return { wanted, nullptr };
@@ -162,7 +163,7 @@ public:
         return sumBoxedBySlow(box);
     }
     Number settleNaNOf(const ValueContext&, Number);
-    ALWAYS_INLINE void define(const ValueContext& value, Operand result)
+    void define(const ValueContext& value, Operand result)
     {
         RELEASE_ASSERT(!value.isBranchCondition());
         defineValue(value.id(), value.representation(), result);
@@ -239,6 +240,7 @@ private:
     bool isDeferredClosureSlow(const Operation&) const;
     const PlacedSlot* slotOfScopeReadInPlaceOfClosureSlow(ValueID, const Operation&) const;
     ValueID m_closureReadForItsScope;
+    Vector<std::pair<ValueID, ValueID>, 2> m_closuresWhoseLivesEndBehindCalls;
     const PlacedSlot* m_slotOfScopeOfClosureRead { nullptr };
     void computeEffectsOf(const OperationContext&) const;
     bool hasResults(size_t indexOfValue) const { return !m_resultRanges.empty() && m_resultRanges[indexOfValue]; }
@@ -295,7 +297,7 @@ private:
         EdgeID handler = code().handlerOf(id);
         return handler ? &code().at(handler) : nullptr;
     }
-    ALWAYS_INLINE Operand get(ValueID id, const Operation& operation)
+    Operand get(ValueID id, const Operation& operation)
     {
         Representation representation = operation.representation;
         RELEASE_ASSERT(representation != Representation::Unchosen);
@@ -317,7 +319,7 @@ private:
     Operand getNumberInFormKept(ValueID, LValue lowered);
     Operand makeInWantedForm(ValueID, const Operation&, Representation wanted);
     Operand makeConstant(ValueID, const Operation&);
-    ALWAYS_INLINE void defineValue(ValueID id, Representation representation, Operand operand)
+    void defineValue(ValueID id, Representation representation, Operand operand)
     {
         if (m_definitionTaken) [[unlikely]] {
             *m_definitionTaken = operand;

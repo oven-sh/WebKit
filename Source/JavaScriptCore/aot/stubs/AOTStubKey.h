@@ -93,7 +93,6 @@ public:
     constexpr StubKey withCallerFrame(CallerFrame callerFrame) const { return withField(callerFrameShift, callerFrameWidth, static_cast<uint64_t>(callerFrame)); }
     constexpr StubKey withCount(unsigned count) const { return withField(countShift, countWidth, count); }
     constexpr StubKey withOperandRegister(GPRReg reg) const { return withField(operandRegisterShift, operandRegisterWidth, static_cast<uint64_t>(Reg(reg).index()) + 1); }
-    constexpr StubKey withoutOperandRegister() const { return withField(operandRegisterShift, operandRegisterWidth, 0); }
     constexpr StubKey withImmediate(uint32_t immediate) const { return withField(hasImmediateShift, hasImmediateWidth, 1).withField(immediateShift, immediateWidth, immediate); }
     constexpr StubKey withoutImmediate() const { return withField(hasImmediateShift, hasImmediateWidth, 0).withField(immediateShift, immediateWidth, 0); }
     constexpr StubKey withFamily(StubFamily family) const { return withField(familyShift, familyWidth, static_cast<uint64_t>(family) + 1); }

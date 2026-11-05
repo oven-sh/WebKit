@@ -75,7 +75,7 @@ const integrityTest = {
   capability: "js",
   throws: true,
   runsOnlyOperandCode: true,
-  uses: { object: [b.askedWhetherExtensible, ...b.ownPropertyTraps] },
+  uses: { object: [...b.ownPropertyTraps] },
   reads: ownProperties,
   implementation: b.hostCall,
 } satisfies b.FunctionField;
@@ -83,7 +83,7 @@ const integrityTest = {
 const integrityTestOfProperties = {
   ...integrityTest,
   throws: true,
-  uses: { object: [b.askedWhetherExtensible, b.testedByKey(b.anyKey), ...b.ownPropertyTraps] },
+  uses: { object: [b.testedByKey(b.anyKey), ...b.ownPropertyTraps] },
 } satisfies b.FunctionField;
 
 const ownPropertyTest = (inlineBuiltin: string) =>

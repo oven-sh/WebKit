@@ -34,10 +34,10 @@ namespace {
 
 class OrderOfShapesInUnionShapeNumbers {
 public:
-    OrderOfShapesInUnionShapeNumbers(const Program& program, const Facts& facts, const SlotPlan& slots)
+    OrderOfShapesInUnionShapeNumbers(const Program& program, const Facts& facts, const StorageOfLayouts& storage)
         : m_program(program)
         , m_facts(facts)
-        , m_slots(slots)
+        , m_storage(storage)
         , m_families(facts.families())
         , m_linked(facts.linked())
         , m_numberOfLayouts(static_cast<uint32_t>(program.layouts.size()))
@@ -85,7 +85,7 @@ private:
         uint32_t mentions { 0 };
     };
 
-    bool hasShape(LayoutID id) const { return m_slots.holdsCompiledObjects(id) && !m_slots.isNeverAllocated(id); }
+    bool hasShape(LayoutID id) const { return m_storage.holdsCompiledObjectsInUse(id); }
 
     std::span<const uint32_t> leavesOf(const MentionedSet& set) const LIFETIME_BOUND
     {
@@ -170,7 +170,7 @@ private:
                 noteWrittenType(result.written());
         }
         for (uint32_t index = 0; index < m_numberOfLayouts; ++index) {
-            if (m_slots.isNeverAllocated(LayoutID(index)))
+            if (m_storage.isNeverAllocated(LayoutID(index)))
                 continue;
             for (const Field& field : m_program.layouts[index].fields)
                 noteWrittenType(field.declared.written());
@@ -417,7 +417,7 @@ private:
 
     const Program& m_program;
     const Facts& m_facts;
-    const SlotPlan& m_slots;
+    const StorageOfLayouts& m_storage;
     const Families& m_families;
     const LinkTables& m_linked;
     uint32_t m_numberOfLayouts;
@@ -435,11 +435,11 @@ private:
 
 } // anonymous namespace
 
-Vector<uint32_t> orderOfLayoutsForShapeNumbers(Program& program, const Facts& facts, const SlotPlan& slots)
+Vector<uint32_t> orderOfLayoutsForShapeNumbers(Program& program, const Facts& facts, const StorageOfLayouts& storage)
 {
     if (!withoutMechanismsMissingDependencies(facts.mechanisms()).contains(Mechanism::TypedOperations))
         return { };
-    return OrderOfShapesInUnionShapeNumbers(program, facts, slots).run();
+    return OrderOfShapesInUnionShapeNumbers(program, facts, storage).run();
 }
 
 } } } // namespace JSC::AOT::Typed

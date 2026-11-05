@@ -38,6 +38,22 @@ void StaticsEmitter::storeStaticField(VariableID id, Boxed stored)
     emitter<BarrierEmitter>().markCard(m_mentions.add(NumberSpace::CardOfVariable, id));
 }
 
+Operand StaticsEmitter::loadFieldOfEnvironment(VariableID id, LayoutID layout, uint32_t field)
+{
+    PlannedVariable variable = m_plan.variable(id);
+    RELEASE_ASSERT(variable.hasWordInStatics() && variable.encoding == VariableEncoding::Plain);
+    return emitter<SlotEmitter>().load(instanceWord(m_heaps.at(m_program, MemoryLocation::environmentField(layout, field)), m_mentions.add(NumberSpace::Variable, id)), variable.representation);
+}
+
+void StaticsEmitter::storeFieldOfEnvironment(VariableID id, LayoutID layout, uint32_t field, Operand stored, const Type& storedType)
+{
+    PlannedVariable variable = m_plan.variable(id);
+    RELEASE_ASSERT(variable.hasWordInStatics() && variable.encoding == VariableEncoding::Plain);
+    emitter<SlotEmitter>().store(instanceWord(m_heaps.at(m_program, MemoryLocation::environmentField(layout, field)), m_mentions.add(NumberSpace::Variable, id)), variable.representation, stored);
+    if (traitsOf(variable.representation).holdsCell && storedType.hasCells())
+        emitter<BarrierEmitter>().markCard(m_mentions.add(NumberSpace::CardOfVariable, id));
+}
+
 Operand StaticsEmitter::loadVariable(VariableID id)
 {
     return emitter<SlotEmitter>().load(addressOf(id), m_plan.variable(id).representation);

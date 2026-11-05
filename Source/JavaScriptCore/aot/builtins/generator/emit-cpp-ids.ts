@@ -16,7 +16,6 @@ import type {
   ModelBound,
   ModelBuiltin,
   ModelFunction,
-  ModelName,
   ModelSlot,
   TableModel,
 } from "./model.ts";
@@ -177,11 +176,6 @@ function isLockedObject({ flags }: ModelBuiltin): boolean {
   return flags.includes("IsLockedObject");
 }
 
-export function namesOfNativeAccessors({ builtins }: TableModel): ModelName[] {
-  const names = new Set(builtins.filter(({ kind }) => kind === "Accessor").map(({ name }) => name));
-  return [...names].sort((left, right) => left.number - right.number);
-}
-
 export function collectArrayDeclarations(model: TableModel): ArrayDeclaration[] {
   const { builtins, startup } = model;
   const countBuiltins = (isListed: (builtin: ModelBuiltin) => boolean) => builtins.filter(isListed).length;
@@ -208,8 +202,6 @@ export function collectArrayDeclarations(model: TableModel): ArrayDeclaration[] 
     ["BuiltinCalledFunction", "builtinTableCalledFunctions", countAttached(attachments => attachments.calledFunctions)],
     ["BuiltinCalledFunction", "builtinTableStartupCalledFunctions", startup.functionsCalledWithLoads.length],
     ["BuiltinHostObject", "builtinTableHostObjects", model.hostObjects.length],
-    ["BuiltinNamedMemberCall", "builtinTableNamedMemberCalls", model.namedMemberCalls.length],
-    ["BuiltinHostMethodCall", "builtinTableHostMethodCalls", model.hostMethodCalls.length],
     ["BuiltinForms", "builtinTableForms", countBuiltins(hasForms)],
     ["BuiltinBoxedCall", "builtinTableBoxedCalls", countBuiltins(hasBoxedCallStub)],
     ["BuiltinNumberConstant", "builtinTableNumberConstants", countBuiltins(isNumberConstant)],
@@ -225,7 +217,6 @@ export function collectArrayDeclarations(model: TableModel): ArrayDeclaration[] 
     ["RuntimeFunctionID", "builtinTableFunctionsCalledWithStartupLoads", startup.functionsCalledWithLoads.length],
     ["BuiltinName", "builtinTableNamesOfHostMethodsCallingStartupLoads", startup.namesOfMethodsCallingLoads.length],
     ["RuntimeFunctionID", "builtinTableModuleLoaderFunctions", startup.moduleLoaderFunctions.length],
-    ["BuiltinHostRead", "builtinTableHostReads", model.hostReads.length],
     ["BuiltinID", "builtinTableLockedObjects", countBuiltins(isLockedObject)],
     ["BuiltinMarkedEntry", "builtinTableMarks", builtins.reduce((count, { marks }) => count + marks.length, 0)],
     [
@@ -235,7 +226,6 @@ export function collectArrayDeclarations(model: TableModel): ArrayDeclaration[] 
     ],
     ["BuiltinClosedKeys", "builtinTableClosedKeys", model.closedKeys.length],
     ["BuiltinNamesReadByNativeCode", "builtinTableNamesReadByNativeCode", model.namesReadByNativeCode.length],
-    ["BuiltinName", "builtinTableNamesOfNativeAccessors", namesOfNativeAccessors(model).length],
   ];
 }
 

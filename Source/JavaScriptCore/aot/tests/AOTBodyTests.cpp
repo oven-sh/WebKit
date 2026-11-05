@@ -392,7 +392,7 @@ static void checkCopiesOfEveryShape(const Body& body)
     AOT_TEST_CHECK(bodyTestValuesEqual(call.operandsAskedFor.span(), { v0, v2, v3 }) && bodyTestValuesEqual(call.operands.span(), { v0 + shift, none, v2 + shift, v3 + shift }));
     AOT_TEST_CHECK(call.word(PayloadWord::calleeKey(Opcode::Call)) == bodyTestID<PropertyKeyID>(2).bits() && call.word(PayloadWord::calleeName(Opcode::Call)) == absentPayloadWord);
     AOT_TEST_CHECK(call.word(PayloadWord::expectedResult(Opcode::Call)) == bodyTestID<ExpectedResultID>(3).bits() && call.word(PayloadWord::calledBuiltin(Opcode::Call)) == absentPayloadWord);
-    AOT_TEST_CHECK(call.word(PayloadWord::callNumber(Opcode::Call)) == 9 && call.word(PayloadWord::accessSite(Opcode::Call)) == absentPayloadWord);
+    AOT_TEST_CHECK(call.word(PayloadWord::callNumber(Opcode::Call)) == 9);
 
     BodyTestHolder newObject = copyIntoBodyTestHolder(values[v8], Opcode::NewObject);
     AOT_TEST_CHECK(bodyTestValuesEqual(newObject.operands.span(), { none, v2 + shift, v3 + shift }) && newObject.word(PayloadWord::layout(Opcode::NewObject)) == bodyTestID<LayoutID>(1).bits());

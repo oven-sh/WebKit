@@ -61,7 +61,6 @@ protected:
     Integer add(Integer a, Integer b) { return binary<Integer>(&Output::add, a, b); }
     Integer sub(Integer a, Integer b) { return binary<Integer>(&Output::sub, a, b); }
     Integer mul(Integer a, Integer b) { return binary<Integer>(&Output::mul, a, b); }
-    Integer mod(Integer a, Integer b) { return binary<Integer>(&Output::mod, a, b); }
     Integer neg(Integer a) { return unary<Integer>(&Output::neg, a); }
     Integer bitAnd(Integer a, Integer b) { return binary<Integer>(&Output::bitAnd, a, b); }
     Integer bitOr(Integer a, Integer b) { return binary<Integer>(&Output::bitOr, a, b); }
@@ -225,7 +224,6 @@ protected:
     Pointer offsetBy(Pointer base, ptrdiff_t offset) { return offset ? Pointer(m_out.add(base.value(), offset)) : base; }
     Pointer asPointer(CellPointer cell) { return Pointer(cell.value()); }
 
-    Pointer instance() { return Pointer(m_instance); }
     Pointer vm() { return Pointer(m_out.loadPtr(m_instance, m_heaps.AOTInstance_vm)); }
     Pointer loadImmutablePointer(ptrdiff_t offsetInInstance);
     Word32 loadImmutable32(ptrdiff_t offsetInInstance);

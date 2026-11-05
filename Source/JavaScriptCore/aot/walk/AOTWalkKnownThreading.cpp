@@ -126,7 +126,7 @@ private:
     void lookBehindReturnOfCopy(LookAhead&, const PlaceLookedAt& from, const BodyTerminator&);
     template<typename Functor> bool looksAhead(LookAhead&, const Functor& isLeanedOn);
     bool endOfBlockMayBeWalkedForEachWayFrom(uint32_t begin);
-    bool bringSameNames(std::span<const uint32_t> ways);
+    uint32_t numberOfNamesBroughtApart(std::span<const uint32_t> ways);
     bool leansOnWhatWaysHaveProven(std::span<const uint32_t> passing, std::span<const uint32_t> closed);
     bool takesApartParameter(ValueID parameter);
     bool letArmsWalkEndOfBlockFrom(uint32_t begin);
@@ -173,8 +173,6 @@ void KnownThreading::forgetValuesThatNobodyReadsAnyMore()
     uint32_t here = m_block.firstParameter().index();
     Walker::Frame::ValuesBuiltTwice& listed = *frame().valuesBuiltTwice;
     for (uint32_t slot : listed.slotsListedAnew) {
-        if (listed.slots[slot].value.index() >= frame().index->numberOfValues())
-            continue;
         listed.slotsByLastUse.append({ m_walker.m_liveness.lastUse(listed.slots[slot].value).index(), slot });
         std::ranges::push_heap(listed.slotsByLastUse, std::ranges::greater());
     }
@@ -523,15 +521,17 @@ bool KnownThreading::armsWouldStayApartBehindEndOfBlock(uint32_t begin, uint32_t
     return false;
 }
 
-bool KnownThreading::bringSameNames(std::span<const uint32_t> ways)
+uint32_t KnownThreading::numberOfNamesBroughtApart(std::span<const uint32_t> ways)
 {
-    bool bringSameNames = true;
+    Vector<uint32_t, 8> slots;
     for (size_t index = 1; index < ways.size(); ++index) {
         m_walker.m_openEdges[ways[index]].names.forEachSlotNamedOtherwiseBy(m_walker.m_openEdges[ways[index - 1]].names, [&](uint32_t slot) {
-            bringSameNames = bringSameNames && !m_walker.isNamedByWaysInto(frame(), frame().valuesBuiltTwice->slots[slot].value, m_block.id());
+            if (m_walker.isNamedByWaysInto(frame(), frame().valuesBuiltTwice->slots[slot].value, m_block.id()))
+                slots.append(slot);
         });
     }
-    return bringSameNames;
+    std::ranges::sort(slots);
+    return static_cast<uint32_t>(std::ranges::unique(slots).begin() - slots.begin());
 }
 
 bool KnownThreading::leansOnWhatWaysHaveProven(std::span<const uint32_t> passing, std::span<const uint32_t> closed)
@@ -617,7 +617,9 @@ bool KnownThreading::walkApartFromClosedWays()
             return false;
         (open.isLedByClosedArm ? closed : passing).append(place);
     }
-    if (passing.isEmpty() || closed.isEmpty() || walker.isWalkingBlockForEachWay(m_frameIndex) || !mayBeWalkedApartFromClosedWays() || !bringSameNames(closed.span()))
+    if (passing.isEmpty() || closed.isEmpty() || walker.isWalkingBlockForEachWay(m_frameIndex) || !mayBeWalkedApartFromClosedWays())
+        return false;
+    if (numberOfOperationsBuiltIn(0, m_block.numberOfValues()) + numberOfNamesBroughtApart(closed.span()) > mostOperationsOfJoinWalkedForEachWay)
         return false;
     passing.reverse();
     closed.reverse();

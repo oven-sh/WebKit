@@ -380,6 +380,7 @@ aot/plan/AOTModuleEvaluationPlan.cpp
 aot/plan/AOTNamePlan.cpp
 aot/plan/AOTNumberMethodSelectors.cpp
 aot/plan/AOTPlan.cpp
+aot/plan/AOTPromotedEnvironments.cpp
 aot/plan/AOTShapeTest.cpp
 aot/plan/AOTSlotPlan.cpp
 aot/plan/AOTStackTestPlan.cpp
@@ -481,6 +482,7 @@ aot/walk/AOTRepresentationConversions.cpp
 aot/walk/AOTRepresentationRules.cpp
 aot/walk/AOTRepresentationRulesOfPositions.cpp
 aot/walk/AOTSweep.cpp
+aot/walk/AOTSweepClosuresLent.cpp
 aot/walk/AOTSweepHandlers.cpp
 aot/walk/AOTSweepLiveness.cpp
 aot/walk/AOTSweepStores.cpp
@@ -515,7 +517,6 @@ aot/walk/AOTWalkFolding.cpp
 aot/walk/AOTWalkForIn.cpp
 aot/walk/AOTWalkForInKeys.cpp
 aot/walk/AOTWalkGeneratorStepsByHand.cpp
-aot/walk/AOTWalkGeneratorsInLoops.cpp
 aot/walk/AOTWalkGuesses.cpp
 aot/walk/AOTWalkHandlers.cpp
 aot/walk/AOTWalkInlining.cpp
@@ -560,6 +561,7 @@ aot/walk/AOTWalkNumberQuotients.cpp
 aot/walk/AOTWalkNumberSwitches.cpp
 aot/walk/AOTWalkNumbers.cpp
 aot/walk/AOTWalkPositionsInTexts.cpp
+aot/walk/AOTWalkPromotedEnvironments.cpp
 aot/walk/AOTWalkRegExps.cpp
 aot/walk/AOTWalkReplacements.cpp
 aot/walk/AOTWalkResolvedCalls.cpp

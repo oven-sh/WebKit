@@ -229,7 +229,6 @@ struct SiteDescription {
     ListOfUnit<SitePosition> positions;
     ListOfUnit<InlineFrame> inlineFrames;
     ListOfUnit<FlaggedSite> flaggedSites;
-    ListOfUnit<CalleeAtSite> calleesOfSites;
     ListOfUnit<ConstructedCallee> constructedCallees;
     ListOfUnit<SiteHandler> handlers;
     ListOfUnit<FaultingAccess> faultingAccesses;
@@ -339,7 +338,7 @@ void forEachListOfUnitWhateverItHoldsIn(CompiledCode& code, auto& visit)
     SiteDescription& sites = code.sites;
     visitEach(body.bytes, body.entries, body.relocations, body.returnSites, body.firstReadSites, body.callees, body.stubKeys, body.numberedStubKeys, body.argumentMoves, body.constants, body.jumpTables, body.mentions, body.mentionWords, body.bytesOfMadeTexts, body.firstsOfMadeTexts, body.endsOfMadeTexts);
     visitEach(code.frame.calleeSaveRegisters.list(), code.frame.frameRanges, code.frame.prologueChecks);
-    visitEach(sites.positions, sites.inlineFrames, sites.flaggedSites, sites.calleesOfSites, sites.constructedCallees, sites.handlers, sites.faultingAccesses, sites.pollSites, sites.frameMapWords);
+    visitEach(sites.positions, sites.inlineFrames, sites.flaggedSites, sites.constructedCallees, sites.handlers, sites.faultingAccesses, sites.pollSites, sites.frameMapWords);
     visitEach(code.bytesByForm, code.bytesOutsideOperations, code.ranges);
 }
 

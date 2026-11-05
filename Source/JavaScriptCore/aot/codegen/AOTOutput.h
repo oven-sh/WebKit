@@ -117,7 +117,6 @@ public:
     const LValue intPtrZero;
     const LValue intPtrEight;
 
-    LValue constBool(bool value) { return const32(value); }
     LValue constInt32(int32_t value) { return const32(value); }
     LValue constInt64(int64_t value) { return const64(value); }
     using Machine::Builder::constDouble;
@@ -182,13 +181,11 @@ public:
     LValue shl(LValue value, LValue amount) { return binary(Machine::Shl, value, amount); }
     LValue aShr(LValue value, LValue amount) { return binary(Machine::SShr, value, amount); }
     LValue lShr(LValue value, LValue amount) { return binary(Machine::ZShr, value, amount); }
-    LValue bitNot(LValue value) { return bitXor(value, constantOfTypeOf(value, -1)); }
     LValue logicalNot(LValue value) { return equal(value, int32Zero); }
     LValue ctlz32(LValue value) { return unary(Machine::Clz, value); }
     LValue popCount(LValue value) { return unary(Machine::PopCount, value); }
 
     LValue signExt32To64(LValue value) { return unary(Machine::SExt32, value); }
-    LValue signExt32ToPtr(LValue value) { return signExt32To64(value); }
     LValue zeroExt(LValue value, LType type) { return value->type() == type ? value : unary(Machine::ZExt32, value); }
     LValue zeroExtPtr(LValue value) { return zeroExt(value, Machine::Int64); }
     LValue intToDouble(LValue value) { return unary(Machine::IToD, value); }
@@ -339,7 +336,6 @@ public:
     void branch(LValue condition, BranchTargets targets) { branch(condition, targets.taken, targets.notTaken); }
     void unreachable() { oops(); }
     void appendSuccessor(BlockEdge target) { m_block->appendSuccessor(target); }
-    unsigned minCasesForJumpTable() const { return Machine::minCasesForJumpTable; }
 
     Machine::PatchOperation* patchpoint(LType type) { return patch(type); }
     Machine::PatchOperation* patchpointWithUniqueRecord(LType type) { return patch(type); }

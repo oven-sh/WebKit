@@ -79,7 +79,7 @@ GroupsOfLayoutsForFields groupLayoutsForFields(const Program& program, const Fam
     return groups;
 }
 
-UnitsOfFields collectUnitsOfFields(const Program& program, const SlotPlanParts& parts, const GroupsOfLayoutsForFields& groups)
+UnitsOfFields collectUnitsOfFields(const Program& program, const LinkTables& linked, const StorageOfLayouts& storage, const GroupsOfLayoutsForFields& groups)
 {
     uint32_t numberOfLayouts = static_cast<uint32_t>(program.layouts.size());
     UnitsOfFields result;
@@ -87,7 +87,7 @@ UnitsOfFields collectUnitsOfFields(const Program& program, const SlotPlanParts& 
     uint64_t numberOfRows = 0;
     for (uint32_t index = 0; index < numberOfLayouts; ++index) {
         result.firstRowOfLayout.append(static_cast<uint32_t>(numberOfRows));
-        numberOfRows += program.layouts[index].fields.size() + parts.layouts[index].appendedKeys.size();
+        numberOfRows += program.layouts[index].fields.size() + (storage.layouts[index].holdsCompiledObjects() ? linked.numberOfAppendedKeysOfPlan(LayoutID(index)) : 0);
     }
     RELEASE_ASSERT(numberOfRows < UnitsOfFields::noUnit);
     result.firstRowOfLayout.append(static_cast<uint32_t>(numberOfRows));
@@ -122,9 +122,13 @@ UnitsOfFields collectUnitsOfFields(const Program& program, const SlotPlanParts& 
             if (key && layout.findField(key) == field)
                 noteRow({ id, field }, key);
         }
-        const Vector<PropertyKeyID>& appendedKeys = parts.layouts[index].appendedKeys;
-        for (uint32_t place = 0; place < appendedKeys.size(); ++place)
-            noteRow({ id, numberListed + place }, appendedKeys[place]);
+        if (!storage.layouts[index].holdsCompiledObjects())
+            continue;
+        uint32_t fieldOfNextKey = numberListed;
+        for (PropertyKeyID key : linked.appendedKeysOf(id))
+            noteRow({ id, fieldOfNextKey++ }, key);
+        for (PropertyKeyID key : linked.keysAppendedByHeldAloneOf(id))
+            noteRow({ id, fieldOfNextKey++ }, key);
     }
 
     uint32_t numberOfRowsInUnits = 0;
@@ -184,7 +188,7 @@ bool isPlainFieldByRecords(const Program& program, const Facts& facts, FieldRefe
     if (!key || program.at(key).kind != PropertyKeyKind::Text)
         return false;
     FieldFacts fieldFacts = facts.field(reference);
-    return fieldFacts.formOfValue.isEmpty() && !fieldFacts.facts.contains(FieldFact::IsAccessor) && fieldFacts.location.deferral == ClosureDeferral::Unknown;
+    return fieldFacts.formOfValue.isEmpty() && !fieldFacts.facts.contains(FieldFact::IsAccessor);
 }
 
 bool isPlainSlotOfField(const PlannedLayout& planned, FieldIndex field)
@@ -289,7 +293,7 @@ private:
 class ChooserOfFieldsStorage {
     WTF_MAKE_NONCOPYABLE(ChooserOfFieldsStorage);
 public:
-    ChooserOfFieldsStorage(Program&, const Facts&, BuildContext&, SlotPlanParts&);
+    ChooserOfFieldsStorage(Program&, const Facts&, BuildContext&, SlotPlanParts&, const LayoutsBelowTheirBases&, GroupsOfLayoutsForFields&&, UnitsOfFields&&);
 
     void run();
 
@@ -330,6 +334,7 @@ private:
     const LinkTables& m_link;
     BuildContext& m_build;
     SlotPlanParts& m_parts;
+    const LayoutsBelowTheirBases& m_layoutsBelowTheirBases;
     CellSizesForFields m_cellSizes;
     GroupsOfLayoutsForFields m_groups;
     UnitsOfFields m_units;
@@ -347,15 +352,16 @@ private:
     BytesOfCellInFieldsStorage m_cell;
 };
 
-ChooserOfFieldsStorage::ChooserOfFieldsStorage(Program& program, const Facts& facts, BuildContext& build, SlotPlanParts& parts)
+ChooserOfFieldsStorage::ChooserOfFieldsStorage(Program& program, const Facts& facts, BuildContext& build, SlotPlanParts& parts, const LayoutsBelowTheirBases& layoutsBelowTheirBases, GroupsOfLayoutsForFields&& groups, UnitsOfFields&& units)
     : m_program(program)
     , m_facts(facts)
     , m_link(facts.linked())
     , m_build(build)
     , m_parts(parts)
+    , m_layoutsBelowTheirBases(layoutsBelowTheirBases)
     , m_cellSizes(build)
-    , m_groups(groupLayoutsForFields(program, facts.families()))
-    , m_units(collectUnitsOfFields(program, parts, m_groups))
+    , m_groups(WTF::move(groups))
+    , m_units(WTF::move(units))
     , m_groupsLaidAgain(program.layouts.size())
     , m_groupsOfSeveralLayouts(program.layouts.size())
     , m_layoutsWithHiddenWords(program.layouts.size())
@@ -376,19 +382,10 @@ void ChooserOfFieldsStorage::run()
 
 void ChooserOfFieldsStorage::chooseForms()
 {
-    Vector<uint8_t> widthsInFrontOfForms;
-    widthsInFrontOfForms.fill(0, m_units.numberOfRows());
-    forEachLayoutWithCells([&](LayoutID id, PlannedLayout& planned) {
-        for (FieldIndex field = 0; field < planned.numberOfFields(); ++field)
-            widthsInFrontOfForms[m_units.rowOf({ id, field })] = static_cast<uint8_t>(planned.slots[field].width());
-    });
-    chooseFormsOfSlots(m_program, m_facts, m_build, m_parts, m_groups, m_units);
-    forEachLayoutWithCells([&](LayoutID id, PlannedLayout& planned) {
-        for (FieldIndex field = 0; field < planned.numberOfFields(); ++field) {
-            if (planned.slots[field].storage == SlotStorage::Inline && widthsInFrontOfForms[m_units.rowOf({ id, field })] != planned.slots[field].width())
-                layGroupAgain(id);
-        }
-    });
+    BitVector layoutsWithSlotsOfOtherWidths(numberOfLayouts());
+    chooseFormsOfSlots(m_program, m_facts, m_build, m_parts, m_groups, m_units, layoutsWithSlotsOfOtherWidths);
+    for (size_t index : layoutsWithSlotsOfOtherWidths)
+        layGroupAgain(LayoutID(static_cast<uint32_t>(index)));
 }
 
 void ChooserOfFieldsStorage::findGroupsWithHiddenWords()
@@ -544,7 +541,7 @@ void ChooserOfFieldsStorage::layFieldsOfUnions()
         return m_numberOfPlacesInCells++;
     };
     RowsOfSlotPlan rows { m_units.firstRowOfLayout.span(), m_offsets.mutableSpan(), m_placesInCells.mutableSpan(), m_ends.mutableSpan(), m_layoutsWithHiddenWords, m_widths.span() };
-    placeFieldsOfUnions(m_program, m_link, m_facts.families(), rows, scopedLambda<bool(LayoutID)>(hasCellsLaidAgain), scopedLambda<uint32_t()>(addPlace));
+    placeFieldsOfUnions(m_program, m_link, m_facts.families(), m_layoutsBelowTheirBases, rows, scopedLambda<bool(LayoutID)>(hasCellsLaidAgain), scopedLambda<uint32_t()>(addPlace));
 }
 
 std::optional<FieldReference> ChooserOfFieldsStorage::findFieldAbove(const BitVector& isLaid, FieldReference reference, LayoutID base) const
@@ -685,7 +682,7 @@ void ChooserOfFieldsStorage::finishCell(LayoutID id)
     uint64_t size = WTF::roundUpToMultipleOf<MarkedSpace::sizeStep>(m_cell.end());
     if (size > m_build.limit(LimitID::MaxFieldOffset)) {
         m_build.diagnostics().add(InternalError { .kind = InternalErrorKind::InvalidLayout, .layout = id, .limit = LimitID::MaxFieldOffset, .count = clampTo<uint32_t>(size) });
-        planned = PlannedLayout { };
+
         return;
     }
     planned.size = static_cast<uint32_t>(size);
@@ -717,11 +714,11 @@ void ChooserOfFieldsStorage::layCellsAgain()
 
 } // anonymous namespace
 
-void chooseStorageOfFields(Program& program, const Facts& facts, BuildContext& build, SlotPlanParts& parts)
+void chooseStorageOfFields(Program& program, const Facts& facts, BuildContext& build, SlotPlanParts& parts, const LayoutsBelowTheirBases& layoutsBelowTheirBases, GroupsOfLayoutsForFields&& groups, UnitsOfFields&& units)
 {
     if (!hasTypedSlotsForFields(facts))
         return;
-    ChooserOfFieldsStorage(program, facts, build, parts).run();
+    ChooserOfFieldsStorage(program, facts, build, parts, layoutsBelowTheirBases, WTF::move(groups), WTF::move(units)).run();
 }
 
 static bool isNarrowFormForFieldsStorage(SlotRepresentation representation)

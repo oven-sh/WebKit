@@ -64,6 +64,30 @@ static bool isNearEndOfStack(VM& vm)
     return std::bit_cast<uintptr_t>(currentStackPointer()) < std::bit_cast<uintptr_t>(vm.softStackLimit()) + BuiltinCells::stackKeptFromProgram;
 }
 
+class UseOfStackKeptFromProgram {
+    WTF_MAKE_NONCOPYABLE(UseOfStackKeptFromProgram);
+public:
+    explicit UseOfStackKeptFromProgram(VM& vm)
+        : m_vm(vm)
+        , m_softReservedZoneSize(vm.softReservedZoneSize())
+        , m_isNearEndOfStack(isNearEndOfStack(vm))
+    {
+        if (m_isNearEndOfStack && m_softReservedZoneSize > Options::softReservedZoneSize()) [[unlikely]]
+            m_vm.updateSoftReservedZoneSize(Options::softReservedZoneSize());
+    }
+
+    ~UseOfStackKeptFromProgram()
+    {
+        if (m_isNearEndOfStack) [[unlikely]]
+            m_vm.updateSoftReservedZoneSize(m_softReservedZoneSize);
+    }
+
+private:
+    VM& m_vm;
+    size_t m_softReservedZoneSize;
+    bool m_isNearEndOfStack;
+};
+
 static_assert(BuiltinCellKey::Kind::Value > BuiltinCellKey::Kind::Object && BuiltinCellKey::Kind::Value > BuiltinCellKey::Kind::Getter && BuiltinCellKey::Kind::Value > BuiltinCellKey::Kind::Setter);
 
 static uint32_t findFirstValue(std::span<const uint32_t> keys)
@@ -334,14 +358,7 @@ JSCell* BuiltinCells::cell(uint32_t number)
     std::optional<BuiltinCellKey> key = BuiltinCellKey::decode(keys[number], table);
     RELEASE_ASSERT(key);
     DeferTerminationForAWhile deferTermination(*m_instance.vm);
-    size_t softReservedZoneSize = m_instance.vm->softReservedZoneSize();
-    bool usesStackKeptFromProgram = isNearEndOfStack(*m_instance.vm);
-    if (usesStackKeptFromProgram && softReservedZoneSize > Options::softReservedZoneSize()) [[unlikely]]
-        m_instance.vm->updateSoftReservedZoneSize(Options::softReservedZoneSize());
-    auto restoreStackKeptFromProgram = makeScopeExit([&] {
-        if (usesStackKeptFromProgram) [[unlikely]]
-            m_instance.vm->updateSoftReservedZoneSize(softReservedZoneSize);
-    });
+    UseOfStackKeptFromProgram stackKeptFromProgram(*m_instance.vm);
     bool didEnterVM = m_instance.vm->didEnterVM;
     loadModuleOf(key->builtin());
     auto found = find(*key);
@@ -469,7 +486,11 @@ JSValue BuiltinCells::fillWatchedValue(JSGlobalObject* realm, BuiltinCellKey key
     JSCell* holder = findObject(member.holder);
     RELEASE_ASSERT(holder);
     Identifier name = table.identifierOf(vm, member.name);
-    JSValue value = asObject(holder)->get(realm, name);
+    JSValue value;
+    {
+        UseOfStackKeptFromProgram stackKeptFromProgram(vm);
+        value = asObject(holder)->get(realm, name);
+    }
     RETURN_IF_EXCEPTION(scope, { });
 
     size_t place = word - m_values.data();
@@ -862,16 +883,16 @@ static LockedIn kindOfRun(JSGlobalObject* realm)
     return instance && admitsReplacedBuiltins(*instance) ? LockedIn::TestRun : LockedIn::Executable;
 }
 
-String refusedSpyOnExportMessage(JSCell* moduleNamespace, UniquedStringImpl* name)
+String refusedSpyOnExportMessage(JSCell* moduleNamespace, UniquedStringImpl* name, const String& callerOutsideBuild)
 {
     auto* object = uncheckedDowncast<ModuleNamespace>(moduleNamespace);
     JSGlobalObject* realm = object->realm();
-    return spyOnExportRefusedMessage(name, modulesOf(realm)->table().pathText(object->module()), kindOfRun(realm));
+    return spyOnExportRefusedMessage(name, modulesOf(realm)->table().pathText(object->module()), kindOfRun(realm), callerOutsideBuild);
 }
 
-String refusedMockMessage(JSGlobalObject* realm, const String& path)
+String refusedMockMessage(JSGlobalObject* realm, const String& path, const String& callerOutsideBuild)
 {
-    return mockOfModuleRefusedMessage(path, kindOfRun(realm));
+    return mockOfModuleRefusedMessage(path, kindOfRun(realm), callerOutsideBuild);
 }
 
 static bool hasUnlocked(const Instance& instance, BuiltinID member)

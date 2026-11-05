@@ -41,6 +41,23 @@ enum class LayoutStorage : uint8_t {
     Environment,
 };
 
+struct StorageOfLayout {
+    bool hasCells() const { return holdsCompiledObjects() || storage == LayoutStorage::Environment; }
+    bool holdsCompiledObjects() const { return storage == LayoutStorage::CompiledObject && !isRecordAlone; }
+
+    LayoutStorage storage { LayoutStorage::None };
+    bool isRecordAlone { false };
+};
+
+struct StorageOfLayouts {
+    StorageOfLayout of(LayoutID id) const { return id.index() < layouts.size() ? layouts[id.index()] : StorageOfLayout { }; }
+    bool isNeverAllocated(LayoutID id) const { return layoutsNeverAllocated.get(id.index()); }
+    bool holdsCompiledObjectsInUse(LayoutID id) const { return of(id).holdsCompiledObjects() && !isNeverAllocated(id); }
+
+    BitVector layoutsNeverAllocated;
+    Vector<StorageOfLayout> layouts;
+};
+
 enum class SlotStorage : uint8_t {
     None,
     Inline,
@@ -136,6 +153,39 @@ inline void PlannedLayout::indexAppendedKeys()
     }
 }
 
+ALWAYS_INLINE std::optional<FieldIndex> findFieldOfPlannedLayout(const Program& program, const PlannedLayout& planned, LayoutID id, PropertyKeyID key)
+{
+    const Layout& declaring = program.at(id);
+    if (std::optional<uint32_t> declared = declaring.findField(key)) {
+        bool isSpelledByTypeAlone = planned.storage == LayoutStorage::CompiledObject && *declared < planned.numberOfFields() && !planned.slots.span()[*declared].indexInLayoutRecord;
+        return isSpelledByTypeAlone ? std::nullopt : declared;
+    }
+    size_t place = planned.findAppendedKey(key);
+    if (place == notFound)
+        return std::nullopt;
+    return static_cast<FieldIndex>(declaring.fields.size() + place);
+}
+
+class PlannedLayouts {
+public:
+    explicit PlannedLayouts(std::span<const PlannedLayout> layouts)
+        : m_layouts(layouts)
+    {
+    }
+
+    const PlannedLayout& layout(LayoutID id) const { return id.index() < m_layouts.size() ? m_layouts[id.index()] : m_unplannedLayout; }
+    std::optional<FieldIndex> findField(const Program& program, LayoutID id, PropertyKeyID key) const
+    {
+        if (!id || !key)
+            return std::nullopt;
+        return findFieldOfPlannedLayout(program, layout(id), id, key);
+    }
+
+private:
+    std::span<const PlannedLayout> m_layouts;
+    PlannedLayout m_unplannedLayout;
+};
+
 struct FieldAccess {
     enum class Coverage : uint8_t {
         NoMember,
@@ -205,17 +255,11 @@ struct PlacedAllocation {
     bool isBornUnfinished { false };
 };
 
-struct FieldTableProbePlan {
-    bool readsTestOutOfLineValuesSecond { false };
-    bool readsTestDoublesSecond { false };
-};
+struct MentionedKeys {
+    bool isSpelled(PropertyKeyID key) const { return key.index() >= isMentioned.size() || isMentioned[key.index()] || isSpelledAsText.get(key.index()); }
 
-struct MentionsOfKeys {
-    bool isSpelled(PropertyKeyID key) const { return key.index() >= all.size() || all[key.index()] || isSpelledAsText.get(key.index()); }
-
-    Vector<uint32_t> all;
+    Vector<uint8_t> isMentioned;
     BitVector isSpelledAsText;
-    Vector<uint32_t> thatMayRunAgain;
 };
 
 struct SlotPlanParts {
@@ -226,7 +270,6 @@ struct SlotPlanParts {
     BitVector layoutsNeverAllocated;
     BitVector keysWithColumn;
     BitVector keysOfSlotsThatHoldMarks;
-    FieldTableProbePlan fieldTableProbes;
     Vector<SlotRepresentation> narrowFormsOfKeys;
     BitVector keysOfFields;
 };
@@ -249,7 +292,8 @@ bool fieldStaysInSlot(const Program&, const PlacedSlot&);
 class SlotPlan;
 struct LinkTables;
 Vector<FieldIndex, 8> fieldsHeldFilledInSlots(const Program&, const LinkTables&, const SlotPlan&, LayoutID);
-bool constantListsFieldsHeldFilledInSlots(const Program&, const LinkTables&, const SlotPlan&, DataID);
+enum class RootOfConstant : uint8_t { IsAsked, EndsWhereItLeaves };
+bool constantListsFieldsHeldFilledInSlots(const Program&, const LinkTables&, const SlotPlan&, DataID, RootOfConstant = RootOfConstant::IsAsked);
 
 class SlotPlan {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(SlotPlan);
@@ -274,16 +318,7 @@ public:
     {
         if (!id || !key)
             return std::nullopt;
-        const Layout& declaring = program.at(id);
-        if (std::optional<uint32_t> declared = declaring.findField(key)) {
-            const PlannedLayout& planned = layout(id);
-            bool isSpelledByTypeAlone = planned.storage == LayoutStorage::CompiledObject && *declared < planned.numberOfFields() && !planned.slots.span()[*declared].indexInLayoutRecord;
-            return isSpelledByTypeAlone ? std::nullopt : declared;
-        }
-        size_t place = layout(id).findAppendedKey(key);
-        if (place == notFound)
-            return std::nullopt;
-        return static_cast<FieldIndex>(declaring.fields.size() + place);
+        return findFieldOfPlannedLayout(program, layout(id), id, key);
     }
     JS_EXPORT_PRIVATE PropertyKeyID keyOf(const Program&, FieldReference) const;
     const PlacedSlot& extensionWord(LayoutID id) const { return slot(id, layout(id).extensionWordIndex()); }
@@ -313,7 +348,6 @@ public:
     bool someSlotUnderKeyHoldsMark(PropertyKeyID key) const { return m_parts.keysOfSlotsThatHoldMarks.get(key.index()); }
     const BitVector& keysWithColumn() const { return m_parts.keysWithColumn; }
     bool namesField(PropertyKeyID key) const { return m_parts.keysOfFields.get(key.index()); }
-    const FieldTableProbePlan& fieldTableProbes() const { return m_parts.fieldTableProbes; }
     SlotRepresentation narrowFormOf(PropertyKeyID key) const { return key.index() < m_parts.narrowFormsOfKeys.size() ? m_parts.narrowFormsOfKeys[key.index()] : SlotRepresentation::JSValue; }
 
     unsigned numberOfLayouts() const { return m_parts.layouts.size(); }

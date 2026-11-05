@@ -327,19 +327,6 @@ export interface HostObjectDeclaration {
   platforms: readonly TargetPlatform[];
 }
 
-export interface NamedMemberCallDeclaration {
-  declares: "NamedMemberCall";
-  name: string;
-  arguments: readonly HostValueSpec[];
-}
-
-export interface HostMethodCallDeclaration {
-  declares: "HostMethodCall";
-  name: string;
-  cell: string;
-  call: HostCallSpec;
-}
-
 export interface StartupDeclaration {
   declares: "Startup";
   modules: readonly string[];
@@ -388,8 +375,6 @@ export type Declaration =
   | HostClassRoleDeclaration
   | HostReadDeclaration
   | HostObjectDeclaration
-  | NamedMemberCallDeclaration
-  | HostMethodCallDeclaration
   | StartupDeclaration
   | SeenCodeOnlyDeclaration
   | InstancesWithoutOwnNamesDeclaration;

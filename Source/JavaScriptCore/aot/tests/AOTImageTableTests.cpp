@@ -203,37 +203,6 @@ static void testVarintRoundTrip()
     AOT_TEST_CHECK(cursor == all.span().data() + all.size());
 }
 
-static void testCalleesOfSites()
-{
-    static constexpr std::array<uint8_t, 2> handlers { 1, 2 };
-    static constexpr std::array<uint8_t, 3> callSites { 7, 8, 9 };
-    static constexpr std::array<CalleeAtSite, 6> listed { { { 1, CalleeOfSite::ownFunctionObject() }, { 2, CalleeOfSite::inFrame(-1) }, { 130, CalleeOfSite::inFrame(0) }, { 131, CalleeOfSite::inFrame(-70000) }, { 70000, CalleeOfSite::ownFunctionObject() }, { 70002, CalleeOfSite::inEnvironmentInFrame(70000, 0x1000018) } } };
-
-    SideTableInputs inputs { };
-    inputs.handlers = handlers;
-    inputs.callSites = callSites;
-    Vector<uint8_t> without;
-    SideTableParts::append(without, inputs);
-    AOT_TEST_CHECK(!inputs.flags().contains(ImageFunctionFlag::HasCalleesOfSites));
-    SideTableParts none = SideTableParts::read(ImageFunction::create(0, 0, inputs.flags()), without.span().data());
-    for (uint32_t site : { 0u, 1u, 130u })
-        AOT_TEST_CHECK(!none.calleeOfSiteAt(site));
-
-    inputs.calleesOfSites = listed;
-    Vector<uint8_t> stream;
-    SideTableParts::append(stream, inputs);
-    AOT_TEST_CHECK(inputs.flags().contains(ImageFunctionFlag::HasCalleesOfSites));
-    SideTableParts parts = SideTableParts::read(ImageFunction::create(0, 0, inputs.flags()), stream.span().data());
-    for (auto [site, callee] : listed)
-        AOT_TEST_CHECK(parts.calleeOfSiteAt(site) == callee);
-    AOT_TEST_CHECK(parts.calleeOfSiteAt(131)->wordInFrame() == -70000 && !parts.calleeOfSiteAt(130)->isOwnFunctionObject() && !parts.calleeOfSiteAt(130)->wordInFrame());
-    AOT_TEST_CHECK(parts.calleeOfSiteAt(70002)->wordInFrame() == 70000 && parts.calleeOfSiteAt(70002)->fieldInEnvironment() == 0x1000018u && !parts.calleeOfSiteAt(131)->fieldInEnvironment());
-    for (uint32_t site : { 0u, 3u, 129u, 132u, 69999u, 70001u, 70003u })
-        AOT_TEST_CHECK(!parts.calleeOfSiteAt(site));
-    AOT_TEST_CHECK(std::ranges::equal(parts.handlers, handlers));
-    AOT_TEST_CHECK(parts.callSites && std::ranges::equal(unsafeMakeSpan(parts.callSites, callSites.size()), callSites));
-}
-
 static void testSevenBytes()
 {
     AOT_TEST_CHECK(Image::check(smallImage().bytes.span().first(7), testIdentity) == Verdict::NotAnImage);
@@ -864,7 +833,6 @@ std::span<const NativeTest> imageTableTests()
 {
     static constexpr NativeTest tests[] = {
         { "image/format/varint-round-trip"_s, testVarintRoundTrip },
-        { "image/format/callees-of-sites"_s, testCalleesOfSites },
         { "image/check/seven-bytes"_s, testSevenBytes },
         { "image/check/thirty-one-bytes"_s, testThirtyOneBytes },
         { "image/check/header-cut"_s, testHeaderCut },

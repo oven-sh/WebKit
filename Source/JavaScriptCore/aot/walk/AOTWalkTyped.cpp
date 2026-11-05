@@ -74,9 +74,16 @@ static bool splitNullishOffReceiverInWalkTyped(Walker& walker, const BodyValue& 
         if (const PropertyKey& key = walker.program().at(access.key()); key.kind == PropertyKeyKind::Text)
             check.setName(key.text);
     }
+    if (walker.splitNullishOffWhatContainerHasJustGiven(receiver, rest, Draft(check)))
+        return walker.isUnreachable() || walker.hasFailed();
     if (Reference checked = walker.build(WTF::move(check)); checked && receiver.isValue())
         walker.state().noteCheckedName(receiver, checked);
     return walker.isUnreachable();
+}
+
+bool splitNullishOffReceiverOfAccess(Walker& walker, const BodyValue& access)
+{
+    return splitNullishOffReceiverInWalkTyped(walker, access);
 }
 
 template<Opcode opcode> static bool buildTypedOperationOf(Walker& walker, const BodyValue& walked)
@@ -86,6 +93,10 @@ template<Opcode opcode> static bool buildTypedOperationOf(Walker& walker, const 
         return true;
     if (accessesThatThrowOffNullishInWalkTyped.contains(opcode)) {
         if (splitNullishOffReceiverInWalkTyped(walker, value))
+            return true;
+    }
+    if constexpr (opcode == Opcode::TypeTest) {
+        if (walker.letTestInFrontOfBranchAskWhatContainerHasJustGiven(walked))
             return true;
     }
     if (buildTypedOperationOnStrings(walker, value, InputsOfTypedOperation(walker, nullptr)))

@@ -168,9 +168,8 @@ struct LazyStringWords {
 };
 
 enum class InlineAllocation : unsigned { Promise, Map, BoundFunction, BigInt, RegExpObject, NullPrototypeObject, RegExpMatchesArray, Set, GetterSetter, Arguments, MappedArguments, DefaultFinalObject };
-static constexpr unsigned numberOfRoomierFinalObjects = 13;
-static constexpr unsigned numberOfInlineAllocations = 12 + numberOfRoomierFinalObjects;
-static_assert(static_cast<unsigned>(InlineAllocation::DefaultFinalObject) + 1 + numberOfRoomierFinalObjects == numberOfInlineAllocations);
+static constexpr unsigned numberOfInlineAllocations = 12;
+static_assert(static_cast<unsigned>(InlineAllocation::DefaultFinalObject) + 1 == numberOfInlineAllocations);
 
 struct InlineAllocationData {
     void* allocator;
@@ -202,7 +201,6 @@ struct AllocationWords {
     JSCell* calleeOfStrictArguments;
     TypedArrayAllocation typedArrayAllocations[numberOfTypedArrayAllocations];
     uint64_t newCopyOnWriteArrayHeaders[2];
-    uint64_t frameArrayHeader;
     uint64_t compactTableHeader;
     const uint64_t* compactTableGrowthPlans;
     uint32_t textBufferStructureID;

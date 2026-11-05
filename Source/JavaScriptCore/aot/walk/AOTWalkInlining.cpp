@@ -266,6 +266,8 @@ static bool mayBeWalkedAtInlining(const Walker& walker, FunctionID callee)
     const Function& function = program.at(callee);
     const ThinSummary& summary = walker.facts().summaries().at(callee);
     const BodyIndex* body = walker.facts().bodies().find(callee);
+    if (walker.plan().promotedEnvironments().isMaker(callee))
+        return false;
     if (function.isCoroutine() || function.results.size() != 1 || walker.facts().isTakenToRunOnce(callee))
         return false;
     FlagsOfSummaryForInlining flags {
@@ -368,6 +370,8 @@ static bool operandsFitAtInlining(Walker& walker, const CallOfInlining& call, co
         return false;
 
     for (unsigned index = 0; index < numberOfEntryParameters; ++index) {
+        if (walker.positions().entryParameterIsLeftOutOfCalls(call.callee, index))
+            continue;
         if (handedOver[index]) {
             TypeID arriving = walker.typeOf(handedOver[index]);
             if (!arriving || !fitsParameterAtInlining(walker, callee, index, arriving))
@@ -449,6 +453,11 @@ static Vector<Reference, 8> buildEntryArgumentsAtInlining(Walker& walker, Origin
     for (unsigned index = 0; index < handedOver.size(); ++index) {
         EntryParameter kind = callee.entryParameterKind(index);
         uint32_t capture = kind == EntryParameter::Capture ? numberOfCapturesPassed++ : 0;
+        if (kind == EntryParameter::Capture && walker.plan().promotedEnvironments().isRemoved(call.callee, capture)) {
+            bool isInSight = handedOver[index] && !walker.types().at(walker.typeOf(handedOver[index])).mayBeUnspecified();
+            operands.append(isInSight ? handedOver[index] : valueNoLongerCaptured(walker, call.callee, capture, origin));
+            continue;
+        }
         if (handedOver[index]) {
             operands.append(handedOver[index]);
             continue;
@@ -578,35 +587,6 @@ static bool callAdmitsCopyAtInlining(const Walker& walker, const Draft& site, Fu
     if (site.opcode == Opcode::Call && site.isNeverInlined())
         return false;
     return isEnteredAtInlining(walker.program().at(callee), isConstruction) && copyPays(site.argumentsOperands().size());
-}
-
-static CallOfInlining callAsWrittenAtInlining(const Draft& site, FunctionID callee)
-{
-    CallOfInlining written;
-    written.callee = callee;
-    written.closure = closureCalledAtInlining(site);
-    written.arguments = site.argumentsOperands();
-    return written;
-}
-
-bool callMayEnterCopyOfBody(Walker& walker, const Draft& site, FunctionID callee, std::span<const Reference> handedOver)
-{
-    const Function& function = walker.program().at(callee);
-    if (site.opcode != Opcode::Call || site.isNeverInlined() || !isEnteredAtInlining(function, false))
-        return false;
-    return operandsFitAtInlining(walker, callAsWrittenAtInlining(site, callee), function, handedOver);
-}
-
-Vector<Reference, 8> buildEntryArgumentsOfCopy(Walker& walker, const Draft& site, FunctionID callee, std::span<const Reference> handedOver)
-{
-    Origin origin = site.origin();
-    origin.isTailCall = false;
-    return buildEntryArgumentsAtInlining(walker, origin, callAsWrittenAtInlining(site, callee), walker.program().at(callee), handedOver);
-}
-
-bool operationsFitWindowOfCallWrittenInLoop(const Walker& walker, uint64_t numberOfOperations)
-{
-    return (walker.depthOfCopies() ? walker.operationsCopiedAtWrittenCall() : 0) + numberOfOperations <= inlineWindowOfWrittenCallInLoops;
 }
 
 bool mayCopyCallee(const Walker& walker, const Draft& site, FunctionID callee, const PlaceOfCall& place)
@@ -946,7 +926,8 @@ bool Walker::walkInline(const BodyValue& call, FunctionID callee, std::span<cons
         BlockID whereClaimFails = addBlock(BlockFrequency::Rare);
         branch(passes, whereClaimHolds, whereClaimFails);
         continueIn(whereClaimFails);
-        m_code.end(whereClaimFails, TerminatorDraft(TerminatorKind::Unreachable, originOfCall), 0);
+        buildCheckOfProof(entryArguments[index], TypeTable::never, TypeTable::anything, ProofSource::EntryParameter, originOfCall);
+        endAsUnreachable(originOfCall);
         continueIn(whereClaimHolds);
 
         Draft narrowed(Opcode::Narrowed, originOfCall);
@@ -1069,6 +1050,7 @@ bool Walker::walkInline(const BodyValue& call, FunctionID callee, std::span<cons
         }
         if (!m_hasFailed)
             walkEndOfBlockBehind(passing.span());
+        m_frames.last().references[call.id().index()] = Reference();
         m_block = { };
         m_state.clear();
         m_callIsAccountedFor = true;

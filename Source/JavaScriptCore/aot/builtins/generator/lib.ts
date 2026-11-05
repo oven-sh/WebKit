@@ -391,26 +391,14 @@ export const returned: UseSpec = { use: "Returns" };
 export const movesElements: UseSpec = { use: "MovesElements" };
 export const evaluatedAsText: UseSpec = { use: "Role", role: "EvaluatedAsText" };
 export const loadedAsModule: UseSpec = { use: "Role", role: "ModuleSpecifier" };
-export const readAsCharacters: UseSpec = { use: "Role", role: "ReadAsCharacters" };
 export const readAsLocale: UseSpec = { use: "Role", role: "Locale" };
 export const mayReplaceLocale: UseSpec = { use: "Role", role: "MayReplaceLocale" };
-export const contentKey: UseSpec = { use: "Role", role: "ContentKey" };
-export const replacesContents: UseSpec = { use: "Role", role: "ReplacesContents" };
-export const becomesLengthOfReceiver: UseSpec = { use: "Role", role: "BecomesLengthOfReceiver" };
-export const copiesHolesToResult: UseSpec = { use: "Role", role: "CopiesHolesToResult" };
 export const workerEntryPath: UseSpec = { use: "Role", role: "WorkerEntryPath" };
 export const membersOnlyInspected: UseSpec = { use: "Role", role: "MembersAreOnlyInspected" };
-export const membersOfObjectsOnly: UseSpec = { use: "Role", role: "MembersAreOfObjectsOnly" };
 export const functionsConvertedUnderNamesOnly: UseSpec = { use: "Role", role: "FunctionsAreConvertedUnderNamesOnly" };
 export const onlyBoxedPrimitivesConverted: UseSpec = { use: "Role", role: "OnlyBoxedPrimitivesAreConverted" };
 export const contentsOfContentsOnlyStored: UseSpec = { use: "Role", role: "ContentsOfContentsAreOnlyStored" };
-export const functionsOnlyNamed: UseSpec = { use: "Role", role: "FunctionsAreOnlyNamed" };
-export const proxiesPrintedAsTargets: UseSpec = { use: "Role", role: "ProxiesArePrintedAsTheirTargets" };
-export const ownPropertyTraps: readonly UseSpec[] = [
-  { use: "Runs", protocols: ["OwnKeys"] },
-  { use: "Role", role: "KeysAreNotListed" },
-];
-export const askedWhetherExtensible: UseSpec = { use: "Role", role: "IsAskedWhetherExtensible" };
+export const ownPropertyTraps: readonly UseSpec[] = [{ use: "Runs", protocols: ["OwnKeys"] }];
 export const storedIn = (place: PlaceLike): UseSpec => ({ use: "Retains", in: placeOf(place) });
 export const readsContents = (slotName?: SlotName): UseSpec => ({ use: "ReadsContents", slot: slotName });
 export const writesContents = (slotName?: SlotName): UseSpec => ({ use: "WritesContents", slot: slotName });
@@ -497,7 +485,6 @@ export const hostLocaleOrWellFormedTag = union(
   ),
 ).optional;
 export const optionBag = (names: readonly string[]): UseSpec[] => [runsTransitively("ToPrimitive", named(...names))];
-export const hostOptionBag = (names: readonly string[]): UseSpec[] => [...optionBag(names), membersOfObjectsOnly];
 
 export const printedByFormatter = (...otherMembers: readonly string[]): UseSpec =>
   runsTransitively(
@@ -1421,16 +1408,6 @@ export function hostFunction(
     },
   ];
 }
-
-export function hostMethodCall(member: string, cell: string, options: HostCallOptions): Declaration[] {
-  const use = calledByHost(options);
-  assert(use.read === "Called" && use.call !== undefined);
-  return [{ declares: "HostMethodCall", name: member, cell, call: use.call }];
-}
-
-export const namedMemberCall = (member: string, args: readonly PlaceLike[]): Declaration[] => [
-  { declares: "NamedMemberCall", name: member, arguments: args.map(hostValueOf) },
-];
 
 export interface NativeCallsOptions {
   through: readonly string[];

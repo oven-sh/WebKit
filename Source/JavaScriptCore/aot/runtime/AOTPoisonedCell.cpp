@@ -8,7 +8,10 @@
 
 #if ENABLE(AOT)
 
+#include "AOTClosure.h"
+#include "AOTEnvironment.h"
 #include "AOTObject.h"
+#include "AOTSlimClosure.h"
 #include "AOTSlotAccess.h"
 #include "AOTVMState.h"
 #include "JSArray.h"
@@ -77,7 +80,9 @@ bool PoisonedCell::tryPoison(VM& vm, JSCell* cell, uint32_t function, uint32_t p
             if (void* slot = object->slotOf(field))
                 clearSlot(field.slot.representation(), slot);
         }
-    } else if (classInfo != JSArray::info())
+    } else if (classInfo == Environment::info() || classInfo == Closure::info() || classInfo == SlimClosure::info())
+        zeroSpan(std::span { bytes + sizeof(JSCell), cell->cellSize() - sizeof(JSCell) });
+    else if (classInfo != JSArray::info())
         return false;
 
     VMState& state = vm.aotState();
@@ -124,6 +129,8 @@ bool PoisonedCell::preventExtensions(JSObject* object, JSGlobalObject*) { stop(o
 bool PoisonedCell::isExtensible(JSObject* object, JSGlobalObject*) { stop(object); }
 bool PoisonedCell::setPrototype(JSObject* object, JSGlobalObject*, JSValue, bool) { stop(object); }
 JSValue PoisonedCell::getPrototype(JSObject* object, JSGlobalObject*) { stop(object); }
+CallData PoisonedCell::getCallData(JSCell* cell) { stop(cell); }
+CallData PoisonedCell::getConstructData(JSCell* cell) { stop(cell); }
 
 } } // namespace JSC::AOT
 

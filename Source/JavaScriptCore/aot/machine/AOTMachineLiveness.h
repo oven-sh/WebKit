@@ -334,7 +334,10 @@ inline bool isFreeInRegisterOfChild(const Liveness& liveness, const Operation* o
         return false;
     if (opcode == Trunc || !liveness.of(operation).has(ValueFlag::UpperHalfIsRead))
         return true;
-    return opcode == ZExt32 && clearsUpperHalfOfRegister(operation->child(0));
+    if (opcode != ZExt32)
+        return false;
+    const Operation* child = operation->child(0);
+    return clearsUpperHalfOfRegister(child) || (child->opcode() == Trunc && liveness.goesByOverflow(child->child(0)));
 }
 
 inline constexpr unsigned maxOperationsBetweenLoadAndUser = 4;

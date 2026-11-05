@@ -8,7 +8,7 @@ enum StatisticID {
     FlowAppendedFields FieldsHeldToWhatIsSeen
     ModulesWithoutState RequireSitesBound RequiresRecorded AsyncWorkersMade FieldsOutOfLine NumbersOrUndefinedReturnedRaw
     URLsLeftUnbuilt IteratorsSteppedWithoutCall SerializersCreated OwnKeyWalksExpanded
-    FieldsAskedWhereMakersEnd MakersWithoutFieldsHeldFilled
+    FieldsAskedWhereMakersEnd MakersWithoutFieldsHeldFilled ReadsOfOtherFilesVariablesHeld
     LibraryFunctionsEnteredBehindRows SortsThatCallNoComparator NewListsInPlaceOfSpecies
     AccessesProven AccessesGuarded AccessesUnknown ValuesInDouble
     NativeFunctionsCalledDirectly NativeFunctionTestsEmitted ExactIntegersBehindNumbers StepsThatKnowTheDeletedPrefix LoopsRotated
@@ -26,8 +26,8 @@ enum StatisticID {
     FormsThatDifferFromSchema FormsPickedByPlaceOtherThanLoop
     DirectCalls IndirectCalls TestsThatRejoin LoopsBuiltTwice TurnsThatBeginAgain
     AssignmentsWrittenOutFieldByField JoinsWalkedOnceForEachWay
-    ProofsCheckedOfEntryParameters ProofsCheckedOfResultsOfCalls ProofsCheckedOfFields ProofsCheckedOfVariables ProofsCheckedOfCaptures ProofsCheckedOfContents ProofsCheckedOfCallees ProofsCheckedOfOtherOperations ProofsCheckedOfTests ProofsCheckedOfWhatIsRemembered ProofsCheckedOfLifetimes
-    ProofsThatNoTestTells
+    ProofsCheckedOfEntryParameters ProofsCheckedOfResultsOfCalls ProofsCheckedOfFields ProofsCheckedOfVariables ProofsCheckedOfCaptures ProofsCheckedOfSlotsOfScopes ProofsCheckedOfContents ProofsCheckedOfCallees ProofsCheckedOfOtherOperations ProofsCheckedOfTests ProofsCheckedOfWhatIsRemembered ProofsCheckedOfLifetimes
+    ProofsThatNoTestTells ProofsThatFormTells DoorsThatCanNeverPass
     # What is fresh where a unit returns and gets no EndLifeOfCell: Walker::endLivesOfCellsThatHaveNotLeft().
     FreshCellsLeftAloneAtReturns
     CallsHeldToRunNoOtherCode CallsHeldToThrowNothing CallsHeldNotToCollect OperandsHashedRoundCalls

@@ -17,6 +17,7 @@
 #include <functional>
 #include <ranges>
 #include <utility>
+#include <wtf/text/ASCIIFastPath.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/StringBuilder.h>
 
@@ -289,6 +290,24 @@ std::strong_ordering ModuleTable::comparePath(ModuleID module, StringView other)
         position += piece.length();
     }
     return position == other.length() ? std::strong_ordering::equal : std::strong_ordering::less;
+}
+
+ModuleTable::PathInUTF8 ModuleTable::pathInUTF8(ModuleID module) const
+{
+    PathInUTF8 path;
+    auto append = [&](StringView piece) {
+        if (piece.is8Bit() && charactersAreAllASCII(piece.span8()))
+            path.append(byteCast<char>(piece.span8()));
+        else
+            path.append(piece.utf8().span());
+    };
+    if (data(module).directory == Number24::max)
+        append(ProgramStrings::viewInImage(*m_tables, StringID(data(module).publicPathOrName)));
+    else {
+        for (StringView piece : piecesOfPath(module))
+            append(piece);
+    }
+    return path;
 }
 
 String ModuleTable::pathText(ModuleID module) const

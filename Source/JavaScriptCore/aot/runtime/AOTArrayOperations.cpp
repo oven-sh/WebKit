@@ -14,7 +14,6 @@
 #include "AOTBuiltinTableRealm.h"
 #include "AOTCellFormat.h"
 #include "AOTConvention.h"
-#include "AOTFrameArrays.h"
 #include "AOTInstance.h"
 #include "AOTObjectWords.h"
 #include "AOTOperationArguments.h"
@@ -48,16 +47,6 @@ static NEVER_INLINE bool appendBoxedDoubles(JSGlobalObject* globalObject, VM& vm
         return JSValue::encode(JSValue(JSValue::EncodeAsDouble, numbers[i]));
     });
     return target->appendMemcpy(globalObject, vm, target->length(), ArrayWithContiguous, boxed.span());
-}
-
-JSArray* copyFrameArrayToHeap(Instance* instance, JSCell* frameArray)
-{
-    Butterfly* elements = uncheckedDowncast<JSArray>(frameArray)->butterfly();
-    unsigned length = elements->publicLength();
-    JSArray* copy = JSArray::create(*instance->vm, instance->globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous), length);
-    for (unsigned index = 0; index < length; ++index)
-        copy->butterfly()->contiguous().atUnsafe(index).setWithoutWriteBarrier(elements->contiguous().atUnsafe(index).get());
-    return copy;
 }
 
 static bool holdsOnlyNumbersForDoubleStorage(std::span<const EncodedJSValue> values)
@@ -148,15 +137,6 @@ static NEVER_INLINE bool tryAppendArrayWithHoles(JSGlobalObject* globalObject, V
     return target->appendMemcpy(globalObject, vm, target->length(), ArrayWithContiguous, values.span());
 }
 
-static bool tryAppendFrameArray(JSGlobalObject* globalObject, VM& vm, JSArray* target, JSArray* frameArray)
-{
-    Butterfly* elements = frameArray->butterfly();
-    if (containsHole(elements->contiguous().data(), elements->publicLength()))
-        return false;
-    std::span<const EncodedJSValue> values { std::bit_cast<const EncodedJSValue*>(elements->contiguous().data()), elements->publicLength() };
-    return target->appendMemcpy(globalObject, vm, target->length(), ArrayWithContiguous, values);
-}
-
 static bool mayRefuseOrRunOtherCode(JSArray* array)
 {
     IndexingType type = array->indexingType();
@@ -174,11 +154,11 @@ static void appendElements(JSGlobalObject* globalObject, VM& vm, JSArray* target
     }
     if (!source->length())
         return;
-    bool isAppended = isFrameArray(source) ? tryAppendFrameArray(globalObject, vm, target, source) : tryAppendArray(globalObject, vm, target, source);
+    bool isAppended = tryAppendArray(globalObject, vm, target, source);
     RETURN_IF_EXCEPTION(scope, void());
     if (isAppended)
         return;
-    isAppended = !isFrameArray(source) && tryAppendArrayWithHoles(globalObject, vm, target, source);
+    isAppended = tryAppendArrayWithHoles(globalObject, vm, target, source);
     RETURN_IF_EXCEPTION(scope, void());
     if (isAppended)
         return;
@@ -224,39 +204,6 @@ JSC_DEFINE_JIT_OPERATION(operationAOTAppendHole, JSCell*, (Instance* instance, J
     JSArray* array = cellArgument<JSArray>(cell, Entry::operationAOTAppendHole);
     array->setLength(globalObject, array->length() + 1, true);
     OPERATION_RETURN(scope, array);
-}
-
-enum class ElementsThatRoomIsReservedFor : bool { MayNotCome, AreSureToCome };
-
-static void reserveRoomBehindElementsOfArray(VM& vm, JSArray* array, uint64_t additional, ElementsThatRoomIsReservedFor elements)
-{
-    constexpr uint64_t maxElementsReservedInOneStep = 4194304;
-    IndexingType mode = array->indexingMode();
-    if (mode != ArrayWithInt32 && mode != ArrayWithDouble && mode != ArrayWithContiguous)
-        return;
-    if (additional > (elements == ElementsThatRoomIsReservedFor::MayNotCome ? maxElementsReservedInOneStep : MAX_STORAGE_VECTOR_LENGTH))
-        return;
-    unsigned publicLength = array->butterfly()->publicLength();
-    uint64_t vectorLength = publicLength + additional;
-    if (vectorLength > MAX_STORAGE_VECTOR_LENGTH)
-        return;
-
-    unsigned length = static_cast<unsigned>(vectorLength - vectorLength / 3);
-    ASSERT(nextLength(length) >= vectorLength);
-    if (length <= array->butterfly()->vectorLength() || !array->ensureLength(vm, length))
-        return;
-    array->butterfly()->setPublicLength(publicLength);
-}
-
-void reserveArrayCapacity(VM& vm, JSArray* array, uint64_t additional)
-{
-    reserveRoomBehindElementsOfArray(vm, array, additional, ElementsThatRoomIsReservedFor::MayNotCome);
-}
-
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTReserveWholeArrayCapacity, void, (Instance* instance, JSCell* cell, uint64_t additional))
-{
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTReserveWholeArrayCapacity);
-    reserveRoomBehindElementsOfArray(vm, cellArgument<JSArray>(cell, Entry::operationAOTReserveWholeArrayCapacity), additional, ElementsThatRoomIsReservedFor::AreSureToCome);
 }
 
 JSArray* tryCreateArrayWithStorage(VM& vm, Structure* structure, unsigned publicLength, unsigned vectorLength, unsigned propertyRoom)

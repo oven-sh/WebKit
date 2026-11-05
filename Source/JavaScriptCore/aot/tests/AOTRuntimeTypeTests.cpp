@@ -379,31 +379,6 @@ static void testAnyCellTestMayPass(LoadedProgram& program)
         AOT_TEST_CHECK(!values.hasType(type, refused));
 }
 
-static void testShapeHasType(LoadedProgram& program)
-{
-    const RuntimeLayoutTable& layouts = program.state().objects->layouts;
-    uint32_t circle = layoutNamed(program, "Circle"_s).shape;
-    uint32_t square = layoutNamed(program, "Square"_s).shape;
-    AOT_TEST_CHECK(layouts.shapeHasType(TypeRecord({ }, { RuntimeCellTest::isObject() }), circle));
-    AOT_TEST_CHECK(layouts.shapeHasType(TypeRecord({ }, { RuntimeCellTest::cellTypeIs(CompiledObjectType, CompiledObjectType) }), circle));
-    AOT_TEST_CHECK(layouts.shapeHasType(TypeRecord({ }, { RuntimeCellTest::cellTypeIs(ObjectType, static_cast<JSType>(LastObjectType)) }), circle));
-    AOT_TEST_CHECK(!layouts.shapeHasType(TypeRecord({ }, { RuntimeCellTest::cellTypeIs(ArrayType, DerivedArrayType) }), circle));
-    AOT_TEST_CHECK(layouts.shapeHasType(TypeRecord({ }, { RuntimeCellTest::shapeIn(shapeTestFor(program, "Circle"_s)) }), circle));
-    AOT_TEST_CHECK(!layouts.shapeHasType(TypeRecord({ }, { RuntimeCellTest::shapeIn(shapeTestFor(program, "Circle"_s)) }), square));
-    AOT_TEST_CHECK(!layouts.shapeHasType(TypeRecord(allPrimitives), circle));
-
-    const RuntimeCellTest testsOfOtherCells[] = {
-        RuntimeCellTest::isCallable(),
-        RuntimeCellTest::inheritsClassInfo(BuiltinClasses::WeakRef),
-        RuntimeCellTest::isPristine(BuiltinClasses::Array),
-        RuntimeCellTest::isBuiltinCell(builtinCellNumberOf(program, Builtins::ArrayPrototype)),
-        RuntimeCellTest::isClosureOf(closureNumberOf(closureFunctionNamed(program, "area"_s))),
-        RuntimeCellTest::isSymbol(numberOfWellKnownSymbol(WellKnownSymbol::Iterator)),
-    };
-    for (const RuntimeCellTest& test : testsOfOtherCells)
-        AOT_TEST_CHECK(!layouts.shapeHasType(TypeRecord({ }, { test }), circle));
-}
-
 template<LoadedProgramTest body>
 static constexpr void (*withProgram)() = runNativeTestWithLoadedProgram<runtimeTypeTests, programText, body>;
 
@@ -421,7 +396,6 @@ std::span<const NativeTest> runtimeTypeTests()
         { "runtime-types/is-builtin-cell"_s, withProgram<testIsBuiltinCell> },
         { "runtime-types/is-symbol"_s, withProgram<testIsSymbol> },
         { "runtime-types/any-cell-test-may-pass"_s, withProgram<testAnyCellTestMayPass>, noSlotIsHeldToType },
-        { "runtime-types/shape-has-type"_s, withProgram<testShapeHasType>, noSlotIsHeldToType },
     };
     return tests;
 }

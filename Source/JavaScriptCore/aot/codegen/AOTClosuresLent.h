@@ -12,21 +12,10 @@
 namespace JSC { namespace AOT { namespace Typed {
 
 class Facts;
-class Program;
 
-enum class LoanOfClosure : uint8_t {
-    None,
-    ToFunctionEntered,
-    LeftToStubOfCall,
-};
-
-struct ClosureLent {
-    LoanOfClosure loan { LoanOfClosure::None };
-    ValueID call;
-};
-
-ClosureLent findLoanOfClosure(const Program&, const Facts&, const Code&, ValueID closure);
-uint8_t argumentsLentBy(const Program&, const Facts&, const Code&, const Operation& call);
+ValueID callThatBorrowsClosure(const Code&, ValueID closure);
+bool isLentToFunctionsEnteredAlone(const Code&, ValueID closure);
+uint8_t argumentsLentBy(const Code&, const Operation& call);
 bool mayCaptureClosuresOfFrames(const Facts&, const Code&);
 
 } } } // namespace JSC::AOT::Typed

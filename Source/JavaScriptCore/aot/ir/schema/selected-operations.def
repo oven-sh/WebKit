@@ -54,8 +54,8 @@ operation CallResolved (callee: Any/calls, target: CodeAddress/inspects, thisVal
 operation RegExpMatchLiteral (overload: BuiltinOverload, string: String/inspects, regExp?: Object/inspects, pattern: String, regExpFlags: RegExpFlags, matchForm: RegExpMatchForm) -> declared(overload) ; CreatesString reads(RegExpState) writes(RegExpState) ; relies = Pristine ; replaces = CallBuiltin ; form = Closed
 
 family InlineBuiltin Selected..Placed ; replaces = CallBuiltin
-operation CallInline (inlineBuiltin: InlineBuiltin, inlineParameters: List<UInt32>, overload: BuiltinOverload, receiver?: Any/retains+returns+calls, arguments...: Any/retains+returns+calls, calleeName?: String, accessSite?: AccessSite) [| engine isDoneInPlace] -> declared(overload) ; unknownCode by Inline ; accessClass = DirectCall ; formDependsOnLoop = true ; form = Closed
-terminator TryCallInline (inlineBuiltin: InlineBuiltin, inlineParameters: List<UInt32>, overload: BuiltinOverload, receiver?: Any/retains+returns+calls, arguments...: Any/retains+returns+calls, accessSite?: AccessSite) -> done(declared(overload)), miss ; unknownCode by Inline ; accessClass = DirectCall
+operation CallInline (inlineBuiltin: InlineBuiltin, inlineParameters: List<UInt32>, overload: BuiltinOverload, receiver?: Any/retains+returns+calls, arguments...: Any/retains+returns+calls, calleeName?: String) [| engine isDoneInPlace] -> declared(overload) ; unknownCode by Inline ; accessClass = DirectCall ; formDependsOnLoop = true ; form = Closed
+terminator TryCallInline (inlineBuiltin: InlineBuiltin, inlineParameters: List<UInt32>, overload: BuiltinOverload, receiver?: Any/retains+returns+calls, arguments...: Any/retains+returns+calls) -> done(declared(overload)), miss ; unknownCode by Inline ; accessClass = DirectCall
 
 family Control Selected..Placed
 terminator TestAndBranch (condition: Boolean/inspects) -> taken(proof), notTaken(proof) ; none ; replaces = Branch

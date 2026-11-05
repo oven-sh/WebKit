@@ -58,7 +58,6 @@ public:
     bool valueHasType(const RuntimeType&, JSValue) const;
     bool objectHasType(const RuntimeType&, JSCell*) const;
     bool cellPassesTest(const RuntimeCellTest&, JSCell*) const;
-    bool shapeHasType(const RuntimeType&, uint32_t shape) const;
     bool fieldAccepts(const FieldData& field, JSValue value) const { return field.isBrand() || valueHasType(typeOf(field), value); }
     bool slotAdmits(const FieldData& field, JSValue value) const
     {

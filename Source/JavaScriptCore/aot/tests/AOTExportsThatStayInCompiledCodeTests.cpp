@@ -57,6 +57,10 @@ static constexpr ModuleID fileThatSitesAloneRead { 1u };
 static constexpr ModuleID fileFoundByName { 2u };
 static constexpr ASCIILiteral refusedInWindowTest = "exports-that-stay-in-compiled-code/the-host-is-refused-the-file-while-the-engine-asks-the-host"_s;
 static constexpr ASCIILiteral stopsByNameTest = "exports-that-stay-in-compiled-code/the-module-object-stops-by-name"_s;
+static constexpr ASCIILiteral storeStopsByNameTest = "exports-that-stay-in-compiled-code/a-store-through-the-module-object-stops-by-name"_s;
+static constexpr ASCIILiteral mockStopsByNameTest = "exports-that-stay-in-compiled-code/a-mock-laid-over-the-file-stops-by-name"_s;
+static constexpr ASCIILiteral objectStopsByNameTest = "exports-that-stay-in-compiled-code/making-the-module-object-stops-by-name"_s;
+static constexpr ASCIILiteral wordsOfStop = "AOT: the exports of /parse.cjs are read or stored from outside compiled code"_s;
 
 static JSValue requiredWhileEngineAsksHost(LoadedProgram& program, ModuleID file, bool& threw)
 {
@@ -88,6 +92,21 @@ static void askModuleObjectForExports(LoadedProgram& program)
     moduleExports(program.realm(), fileThatSitesAloneRead);
 }
 
+static void storeExportsThroughModuleObject(LoadedProgram& program)
+{
+    setModuleExports(program.realm(), fileThatSitesAloneRead, jsNumber(1));
+}
+
+static void layMockOverFile(LoadedProgram& program)
+{
+    modulesOf(program.instance()).keepWhatMockIsLaidOver(fileThatSitesAloneRead);
+}
+
+static void makeModuleObject(LoadedProgram& program)
+{
+    modulesOf(program.instance()).moduleObject(fileThatSitesAloneRead);
+}
+
 static void hostIsRefusedFileWhileEngineAsksHost()
 {
     runWithLoadedProgram(refusedInWindowTest, programText, checkHostIsRefusedFileWhileEngineAsksHost, { "exclude=CodeOutsideImage"_s });
@@ -98,11 +117,29 @@ static void moduleObjectStopsByName()
     runWithLoadedProgramThatStops(stopsByNameTest, programText, askModuleObjectForExports, "AOT: the exports of /parse.cjs are read or stored from outside compiled code"_s, { "exclude=CodeOutsideImage"_s });
 }
 
+static void storeThroughModuleObjectStopsByName()
+{
+    runWithLoadedProgramThatStops(storeStopsByNameTest, programText, storeExportsThroughModuleObject, wordsOfStop, { "exclude=CodeOutsideImage"_s });
+}
+
+static void mockLaidOverFileStopsByName()
+{
+    runWithLoadedProgramThatStops(mockStopsByNameTest, programText, layMockOverFile, wordsOfStop, { "exclude=CodeOutsideImage"_s });
+}
+
+static void makingModuleObjectStopsByName()
+{
+    runWithLoadedProgramThatStops(objectStopsByNameTest, programText, makeModuleObject, wordsOfStop, { "exclude=CodeOutsideImage"_s });
+}
+
 std::span<const NativeTest> exportsThatStayInCompiledCodeTests()
 {
     static constexpr NativeTest tests[] = {
         { refusedInWindowTest, hostIsRefusedFileWhileEngineAsksHost },
         { stopsByNameTest, moduleObjectStopsByName },
+        { storeStopsByNameTest, storeThroughModuleObjectStopsByName },
+        { mockStopsByNameTest, mockLaidOverFileStopsByName },
+        { objectStopsByNameTest, makingModuleObjectStopsByName },
     };
     return tests;
 }

@@ -18,6 +18,7 @@ class Program;
 
 struct SweepInputs {
     const Program& program;
+    const Facts& facts;
     const Plan& plan;
     TypeArena& types;
 };
@@ -100,12 +101,17 @@ private:
     bool mayChangeWhatIsCovered(const Operation&) const;
     void lookForCoverageAgain();
 
+    bool beginLendingClosures();
+    bool noteIfClosureMayBeLent(ValueID);
+    void lendClosures();
+
     void beginFollowingLiveness();
     void noteNeededOperationForLiveness(ValueID, const Operation&);
     void noteReadForLiveness(ValueID read, BlockID, ValueID reader);
     void noteValueHeldByCopiedBody(ValueID);
     void followIfEnvironmentIsHandedBack(ValueID needed);
-    void followIfHoldsEnvironmentInFrame(ValueID needed);
+    void noteIfMayHoldEnvironmentInFrame(ValueID needed);
+    void followCellsThatHoldEnvironmentsInFrames();
     void finishLiveness();
     void findLiveSets(std::span<const ValueID> releaseHints, const SweepBits* valuesToFollow);
     SweepValueSets::Set liveThroughLoopsAround(BlockID) const;
@@ -159,11 +165,14 @@ private:
     bool m_looksForCoveredBarriers { false };
     bool m_looksForCoveredFences { false };
     bool m_coverageIsOutOfDate { false };
+    bool m_lendsClosures { false };
+    Vector<ValueID> m_closuresThatMayBeLent;
     struct EnvironmentHandedBack {
         LayoutID layout;
         ValueID value;
     };
     Vector<EnvironmentHandedBack> m_environmentsHandedBack;
+    Vector<ValueID> m_namesOfCellsThatMayHoldEnvironments;
     bool m_followsLiveness { false };
     bool m_mayHoldHints { false };
     bool m_mayHandBackEnvironments { false };
@@ -223,6 +232,8 @@ inline constexpr OpcodeSet sweptAllocationsWithFences { Opcode::NewObject, Opcod
 
 bool newObjectFencesBeforeHandingCellOn(const Program&, const Plan&, const Operation& newObject);
 bool newArrayFencesBeforeHandingCellOn(const Operation& newArray);
+
+bool stubOfMethodEntersFunctionsThatOnlyCallFirstArgument(const Program&, const Facts&, BuiltinID method);
 
 } } } // namespace JSC::AOT::Typed
 

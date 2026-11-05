@@ -13,23 +13,21 @@ namespace JSC { namespace AOT { namespace Typed {
 void Walker::noteStateAtThrowForHandler(std::span<const Reference> thrown)
 {
     size_t frameIndex = numberOfFramesUpToHandlerInForce();
-    if (m_numberOfFramesOverHandlersOfCode && handlerOfCodeInForce(frameIndex))
-        return;
     if (!frameIndex--)
         return;
 
     Frame& frame = m_frames[frameIndex];
     BodyTarget target = frame.index->block(frame.block).handler();
-    WalkState* known = frame.findStateOfHandler(target.block());
+    StateOfHandler* known = frame.findStateOfHandler(target.block());
     if (!known) {
         frame.addStateOfHandler(target.block(), WalkState());
         return;
     }
 
-    WalkState& state = *known;
+    WalkState& state = known->state;
     if (state.isEmpty())
         return;
-    state.meetWith(m_state);
+    state.meetWith(m_state, &known->lastMet);
     for (Reference reference : thrown) {
         if (reference)
             letLeave(state, reference);

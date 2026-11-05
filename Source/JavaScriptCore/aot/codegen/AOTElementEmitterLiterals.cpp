@@ -16,6 +16,10 @@ namespace JSC { namespace AOT { namespace Typed {
 
 void AllocationEmitter::generateNewArray(const ValueContext& value)
 {
+    if (isListedByArgumentsObjectAlone(value.id())) {
+        define(value, CellPointer(loadImmutablePointer(AOT_INSTANCE_OFFSET(realm.emptyArgumentList)).value()));
+        return;
+    }
     ArrayAllocationEmitter allocation(generator());
     define(value, allocation.newLiteral(value));
 }

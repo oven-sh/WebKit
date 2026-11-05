@@ -49,12 +49,8 @@ constexpr auto distinctBounds = [] {
 
 } // anonymous namespace
 
-constinit const std::array<const Effects*, numberOfOpcodes> declaredBoundsByOpcode = [] {
-    std::array<const Effects*, numberOfOpcodes> bounds { };
-    for (Opcode member : allMembersOf<Opcode>)
-        bounds[static_cast<unsigned>(member)] = &distinctBounds.rows[distinctBounds.rowOf[static_cast<unsigned>(member)]];
-    return bounds;
-}();
+constinit const std::array<uint8_t, numberOfOpcodes>& rowsOfDeclaredBoundsByOpcode = distinctBounds.rowOf;
+constinit const std::span<const Effects> declaredBoundsInRows(distinctBounds.rows);
 
 constinit const OpcodeSet opcodesWithPureBoundInTable = [] {
     OpcodeSet opcodes;
@@ -299,6 +295,9 @@ static_assert(noEffects.isSubsetOf(allocation));
 static_assert(allocation.isSubsetOf(unknownCode));
 static_assert(!unknownCode.isSubsetOf(allocation));
 static_assert(!withThrow(allocation).isSubsetOf(allocation));
+static_assert(neverThrows.isSubsetOf(stackOverflow) && stackOverflow.isSubsetOf(lackOfMemory) && lackOfMemory.isSubsetOf(throwsByRule));
+static_assert(!throwsByRule.isSubsetOf(lackOfMemory) && !lackOfMemory.isSubsetOf(stackOverflow) && !stackOverflow.isSubsetOf(neverThrows));
+static_assert(!withThrow(allocation).isSubsetOf(withKindOfThrow(allocation, lackOfMemory)));
 static_assert(writeOf(fieldA).isSubsetOf(writeOf(fieldsAB)));
 static_assert(!writeOf(fieldsAB).isSubsetOf(writeOf(fieldA)));
 static_assert(!writeOf(fieldA).isSubsetOf(readOf(fieldA)));

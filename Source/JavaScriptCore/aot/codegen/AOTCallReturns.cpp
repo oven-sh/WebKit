@@ -350,38 +350,14 @@ void CallEmitter::requireForwardedCallCanBeMade(const ValueContext& value, Boxed
     m_out.appendTo(continuation);
 }
 
-void CallEmitter::callAndReturnIfCalleeEndsItsTailCalls(const ValueContext& value, const ValueCall& call)
-{
-    const ArgumentLocations& own = ownLocations();
-    if (own.results.size() != 1 || own.results[0].representation != Representation::JSValue)
-        return;
-
-    LBasicBlock keepsFrame = newBlock();
-    LBasicBlock givesUpFrame = newBlock();
-    emitter<ClosureTestEmitter>().branchOnEndsItsTailCalls(call.callee, { normalEdge(keepsFrame), normalEdge(givesUpFrame) });
-
-    m_out.appendTo(keepsFrame);
-    Boxed result = callValue(value, call, { .isTailCall = true });
-    Operand operand = result;
-    returnValues(*value.returnCall(), singleElementSpan(operand));
-
-    m_out.appendTo(givesUpFrame);
-}
-
 void CallEmitter::tailCallValue(const ValueContext& value, const ValueCall& call)
 {
+    RELEASE_ASSERT(!call.lentArguments);
     requireCallableBeforeTailCall(value, call.callee, call.thisValue);
 
     Vector<LValue, 8> values;
     for (Boxed argument : call.arguments)
         values.append(argument.value());
-    if (call.lentArguments) {
-        callAndReturnIfCalleeEndsItsTailCalls(value, call);
-        for (unsigned index = 0; index < values.size(); ++index) {
-            if (call.lentArguments >> index & 1)
-                values[index] = boxCell(callOperation<CellPointer>(value, RuntimeOperation::MoveClosureToHeap, { unboxCell(call.arguments[index]) })).value();
-        }
-    }
 
     ConventionCall conventionCall { .callee = call.callee.value(), .thisValue = call.thisValue.value(), .arguments = values.span() };
     LValue countOperand = nullptr;

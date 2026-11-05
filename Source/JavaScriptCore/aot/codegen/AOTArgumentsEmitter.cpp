@@ -67,17 +67,10 @@ void ArgumentsEmitter::generateGetRestLength(const ValueContext& value)
 
 void ArgumentsEmitter::generateCreateRest(const ValueContext& value)
 {
+    if (value->storage() == AllocationStorage::Frame)
+        generator().fail(value, InternalErrorKind::OpcodeWithoutCode, "the frame has no form for a list of arguments"_s);
     uint32_t firstArgument = value->firstArgument();
-    CellAllocationEmitter& cells = emitter<CellAllocationEmitter>();
-    switch (value->storage()) {
-    case AllocationStorage::Heap:
-        define(value, cells.newArrayFromBuffer(value, restLength(firstArgument), restList(firstArgument)));
-        return;
-    case AllocationStorage::Frame:
-        define(value, cells.newArrayInFrameFromBuffer(value, restLength(firstArgument), restList(firstArgument), maxLengthOfArrayInFrame));
-        return;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
+    define(value, emitter<CellAllocationEmitter>().newArrayFromBuffer(value, restLength(firstArgument), restList(firstArgument)));
 }
 
 } } } // namespace JSC::AOT::Typed

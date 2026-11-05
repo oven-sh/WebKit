@@ -38,7 +38,7 @@ bool textBegunHereMayLieInFrame(Walker& walker, BlockID, const GrowingText& text
 {
     if (opcodesWithoutEmitter().contains(Opcode::StackStringBuilderBegin))
         return false;
-    if (text.takesTextOfJSONStringify)
+    if ((text.standsUnderHandlers && !everyHandlerLetsTextGo(walker, text)) || text.takesTextOfJSONStringify)
         return false;
     return walker.unit().role != CodeRole::CoroutineBody && !walker.program().at(walker.unit().function).isCoroutine();
 }

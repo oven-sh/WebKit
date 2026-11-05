@@ -80,6 +80,7 @@ struct TestOfGuess {
     TypeID failingSideAsksFor;
     bool failingSideAsksForNothing { false };
     bool asksForElementOfNumbers { false };
+    TypeID elementInsideView;
     bool admitsAllThatIsExpected { false };
     bool failingSideIsAsLikely { false };
     bool typedRunOpensGuesses { false };
@@ -1339,7 +1340,7 @@ static TypeID partOfWrittenSetThatFactoriesFill(Walker& walker, TypeID expected,
 static TypeID widenedForTestOfGuess(Walker& walker, TypeID expected)
 {
     TypeArena& types = walker.types();
-    TypeID widened = widenedToFamily(types, walker.facts().families(), expected);
+    TypeID widened = widenedToFamily(types, walker.facts().families(), expected, SetsThatNoFamilyHolds::BecomeAnyObject);
     if (widened == expected || !types.at(expected).hasObjects())
         return widened;
     Type objects = types.at(types.withOnlyObjects(expected));
@@ -1750,7 +1751,8 @@ static uint32_t mostOperationsThatStretchCountsForGuesses(Walker& walker, Refere
     for (uint32_t place = begin; place < limit && most < enough; ++place) {
         BodyValue operation = walker.asWalked(index.value(ValueID(first + place - begin)));
         Opcode opcode = operation.opcode();
-        if (endsEveryStretchOfGuess(opcode))
+        bool isSpreadOfListAsMade = opcode == Opcode::AppendSpread && spreadAppendsElementsOfListAsMade(walker, operation.as<Opcode::AppendSpread>().iterableOperand());
+        if (!isSpreadOfListAsMade && endsEveryStretchOfGuess(opcode))
             break;
         bool takesWhatMayRestOnProof = false;
         if (opcode != Opcode::ReleaseHint) {
@@ -1759,7 +1761,7 @@ static uint32_t mostOperationsThatStretchCountsForGuesses(Walker& walker, Refere
             });
         }
         if (!takesWhatMayRestOnProof) {
-            if (mayEndProofOfGuess(opcode) && !operationsWhoseTypedFormsRunNoCodeForGuesses.contains(opcode))
+            if (mayEndProofOfGuess(opcode) && !operationsWhoseTypedFormsRunNoCodeForGuesses.contains(opcode) && !isSpreadOfListAsMade)
                 break;
             continue;
         }
@@ -1858,7 +1860,8 @@ static StretchOfGuess findStretchOfGuess(Walker& walker, Reference value, const 
     for (uint32_t place = begin; place < limit; ++place) {
         BodyValue operation = walker.asWalked(index.value(ValueID(first + place - begin)));
         Opcode opcode = operation.opcode();
-        if (endsEveryStretchOfGuess(opcode))
+        bool isSpreadOfListAsMade = opcode == Opcode::AppendSpread && spreadAppendsElementsOfListAsMade(walker, operation.as<Opcode::AppendSpread>().iterableOperand());
+        if (!isSpreadOfListAsMade && endsEveryStretchOfGuess(opcode))
             break;
         std::optional<BodyUser> firstUser = index.firstUser(operation.id());
         if (standsInNoStretchOfGuessByItsUsers(index, operation.id(), firstUser))
@@ -1906,7 +1909,8 @@ static StretchOfGuess findStretchOfGuess(Walker& walker, Reference value, const 
         leans |= handsWhatRestsOnProofToCopy;
         bool isTypedEitherWay = !leans && operationsWhoseTypedFormsRunNoCodeForGuesses.contains(opcode) && typedFormForGuesses(walker, operation, inputsOfClosedArm) == TypedForm::Built;
         bool endsNoProofOfPrimitive = callAwaited && operation.id() < callAwaited && operationsThatEndNoProofOfPrimitiveForGuesses.contains(opcode) && !types.at(chosen.tested).hasObjects();
-        if (!leans && !isTypedEitherWay && !endsNoProofOfPrimitive && mayEndProofOfGuess(opcode))
+        bool appendsElementsOfList = !leans && isSpreadOfListAsMade && callAwaited && operation.id() < callAwaited;
+        if (!leans && !isTypedEitherWay && !endsNoProofOfPrimitive && !appendsElementsOfList && mayEndProofOfGuess(opcode))
             break;
         bool readsMethodForItsCall = leans && isReadOfMethodForItsCallForGuesses(index, operation);
         if (readsMethodForItsCall)
@@ -1961,6 +1965,10 @@ static StretchOfGuess findStretchOfGuess(Walker& walker, Reference value, const 
                     countsForTwo |= constructor && makesThisOfConstruction(walker, constructor);
                 }
                 countsForTwo |= counts && constructionsOfParentForGuesses.contains(opcode);
+                if (counts && opcode == Opcode::CallList && callOfBuiltinInTypedRun == BuiltinCallAskedAbout::None) {
+                    FunctionID entered = findOnlyCallee(walker, operation, typeInTypedRun(operation.calleeOperand(), 0));
+                    countsForTwo |= entered && listSpreadBehindArgumentsIsRestListOf(walker, operation, entered);
+                }
                 break;
             }
             case TypedForm::BuiltBehindFilledSlot:
@@ -2082,6 +2090,13 @@ static TestOfGuess secondTestOfGuess(const TestOfGuess& first)
 }
 
 static constexpr AbstractHeapSet heapsUnderNumberReadOutOfListForGuesses { AbstractHeap::ArrayStorage, AbstractHeap::Elements };
+static constexpr AbstractHeapSet heapsUnderNumberReadOutOfViewForGuesses { AbstractHeap::TypedArrayStorage, AbstractHeap::TypedArrayElements };
+
+static void noteWhatReadOfViewGivesForGuesses(Walker& walker, const BodyValue& read, Reference view, Reference given)
+{
+    if (given && !walker.isUnreachable())
+        noteKnown(walker, KnownNote::NumberReadOutOfList, view, walker.referenceOf(read.propertyOperand()), 0, LocationMasks(heapsUnderNumberReadOutOfViewForGuesses), given.bits());
+}
 
 static void buildReadOfElementOfNumbersForGuesses(Walker& walker, const BodyValue& read, Reference list, Origin origin, BlockID closedBlock)
 {
@@ -2443,7 +2458,10 @@ static void openGuessWithTest(Walker& walker, Reference value, const TestOfGuess
             closedBlock = walker.addBlock(BlockFrequency::Rare);
         lastTest = { };
         numberOfTests += 2;
-        buildReadOfElementOfNumbersForGuesses(walker, walker.asWalked(index.value(ValueID(first))), proven, origin, closedBlock);
+        if (chosen.elementInsideView)
+            noteWhatReadOfViewGivesForGuesses(walker, walker.asWalked(index.value(ValueID(first))), proven, buildReadOfElementOfViewBehindTestOfLength(walker, walker.asWalked(index.value(ValueID(first))), proven, origin, closedBlock));
+        else
+            buildReadOfElementOfNumbersForGuesses(walker, walker.asWalked(index.value(ValueID(first))), proven, origin, closedBlock);
         if (walker.hasFailed())
             return;
     }
@@ -2896,7 +2914,9 @@ static bool testAdmitsAllThatIsExpectedForGuesses(Walker& walker, const BodyValu
         : callsOfValuesForGuesses.contains(opcode) && operation.operandUses(operandIndex).contains(OperandUse::Calls);
     TypeArena& types = walker.types();
     static constexpr OpcodeSet operatorsOnNumbers = allRelations | allBitwiseOperators | operatorsOfKinds({ OperatorKind::Additive, OperatorKind::Multiplicative });
-    bool takesNumbersAlone = operatorsOnNumbers.contains(opcode) && types.at(types.withoutNullish(expected)).hasOnlyPrimitives(Primitive::Number | Primitive::Absent);
+    static constexpr OpcodeSet accessesByKey { Opcode::ElemGet, Opcode::ElemSet };
+    bool isKey = accessesByKey.contains(opcode) && operand == operation.propertyOperand();
+    bool takesNumbersAlone = (isKey || operatorsOnNumbers.contains(opcode)) && types.at(types.withoutNullish(expected)).hasOnlyPrimitives(Primitive::Number | Primitive::Absent);
     return types.isSubset(throwsOffNothing || takesNumbersAlone ? types.withoutNullish(expected) : expected, tested);
 }
 
@@ -2909,18 +2929,29 @@ bool openGuessAtElementOfNumbersOfItsOpcodes(Walker& walker, const BodyValue& re
     if (!list || !list.isValue() || !position)
         return false;
     TypeID typeOfList = walker.typeOf(list);
-    if (!readTakesIndexOfProvenList(walker.types(), typeOfList, walker.typeOf(position)))
+    TypeID elementInsideView = walker.isInLoop() && !walker.testsEveryPosition() && walker.mayBeginTurnAgainInClosedCopy() ? typeOfElementInsideViewOfNumbers(walker, walker.types().withoutNullish(typeOfList), walker.typeOf(position)) : TypeID();
+    if (elementInsideView && walker.types().at(typeOfList).mayBeUndefinedOrNull()) {
+        if (splitNullishOffReceiverOfAccess(walker, read))
+            return true;
+        list = walker.referenceOf(read.objectOperand());
+        typeOfList = walker.typeOf(list);
+        if (!list.isValue() || walker.types().at(typeOfList).mayBeUndefinedOrNull())
+            return false;
+    }
+    if (elementInsideView && positionIsKnownToLieInsideList(walker, list, position))
         return false;
-    if (!isDeclaredToHoldNumbersAlone(walker.program(), walker.types(), typeOfList)) {
+    if (!elementInsideView && !readTakesIndexOfProvenList(walker.types(), typeOfList, walker.typeOf(position)))
+        return false;
+    if (!elementInsideView && !isDeclaredToHoldNumbersAlone(walker.program(), walker.types(), typeOfList)) {
         TypeID expected = findExpectationForGuesses(walker, read.objectOperand()).type;
         if (!expected || !isDeclaredToHoldNumbersAlone(walker.program(), walker.types(), walker.types().withoutNullish(expected)))
             return false;
     }
     if (findKnown(walker, KnownNote::NumberReadOutOfList, list, position))
         return false;
-    if (findListTestedInFrontOfLoop(walker, read))
+    if (!elementInsideView && findListTestedInFrontOfLoop(walker, read))
         return false;
-    if (TypeID proven = walker.facts().linked().resultOfReadByKey(walker.currentFunction(), read.id()); proven && !saysNothingForGuesses(walker.types(), proven))
+    if (TypeID proven = elementInsideView ? TypeID() : walker.facts().linked().resultOfReadByKey(walker.currentFunction(), read.id()); proven && !saysNothingForGuesses(walker.types(), proven))
         return false;
     ValueID cell = rootOfCellInSweptCode(walker.code(), list.id());
     if (!walker.code().isConstant(cell) && walker.state().isFresh(Reference::value(cell)))
@@ -2939,7 +2970,9 @@ bool openGuessAtElementOfNumbersOfItsOpcodes(Walker& walker, const BodyValue& re
         return false;
     TestOfGuess chosen { typeOfList, { }, true };
     chosen.asksForElementOfNumbers = true;
-    StretchOfGuess stretch = findStretchOfGuess(walker, list, chosen, block, begin, limit);
+    chosen.elementInsideView = elementInsideView;
+    chosen.admitsAllThatIsExpected = !!elementInsideView;
+    StretchOfGuess stretch = elementInsideView ? StretchOfGuess { begin + 1, least, { } } : findStretchOfGuess(walker, list, chosen, block, begin, limit);
     if (stretch.numberOfTypedOperations < least)
         return false;
     uint32_t first = block.firstValue().index();
@@ -2960,7 +2993,7 @@ bool openGuessAtElementOfNumbersOfItsOpcodes(Walker& walker, const BodyValue& re
         if (!joinsNumbersAlone)
             return false;
     }
-    for (uint32_t place = begin; place < stretch.end; ++place) {
+    for (uint32_t place = begin; place < stretch.end && !elementInsideView; ++place) {
         ValueID made(first + place);
         if (place > begin && !stretch.placesThatRestOnProof.get(place - begin))
             continue;
@@ -2975,6 +3008,8 @@ bool openGuessAtElementOfNumbersOfItsOpcodes(Walker& walker, const BodyValue& re
             return false;
     }
     openGuessWithTest(walker, list, chosen, block.id(), begin, stretch);
+    if (elementInsideView && !walker.isUnreachable())
+        endKnown(walker, KnownNote::NumberReadOutOfList, list, walker.referenceOf(read.propertyOperand()));
     return true;
 }
 

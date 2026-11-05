@@ -52,7 +52,7 @@ bool Walker::throwsPastHandlerOf(BodyBlock block) const
     if (!open)
         return false;
 
-    Reference state = frame.lastNameOf(open);
+    Reference state = referenceBoundIn(frame, open);
     if (!state || !state.isVirtual())
         return false;
     const IterationByIndex& iteration = m_iterationsByIndex[state.object().index()];

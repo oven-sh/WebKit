@@ -127,7 +127,7 @@ void AllocationEmitter::generateNewObject(const ValueContext& value)
     LayoutID layout = value->layout();
     MentionedAllocation allocation = m_program.at(layout).isEnvironment()
         ? cellAllocation.environmentAllocationOf(layout)
-        : cellAllocation.allocationOf(value, layout, value->allocationClass(), value->fields());
+        : cellAllocation.allocationOf(value, layout, value->fields());
     if (generator().hasFailed()) {
         define(value, emitter<ConstantEmitter>().zeroOf(value.representation()));
         return;
@@ -155,9 +155,7 @@ void AllocationEmitter::generateNewObject(const ValueContext& value)
 
 void AllocationEmitter::generateNewDictionary(const ValueContext& value)
 {
-    unsigned numberOfNames = value->roomForNames().value_or(0);
-    unsigned addedPairsOfSlots = numberOfNames > JSFinalObject::defaultInlineCapacity ? (numberOfNames - JSFinalObject::defaultInlineCapacity + 1) / 2 : 0;
-    define(value, CellPointer(callStub(value, newDictionary(std::min(addedPairsOfSlots, numberOfRoomierFinalObjects)), { }).first));
+    define(value, CellPointer(callStub(value, newDictionary(), { }).first));
 }
 
 void AllocationEmitter::generateFinishObject(const ValueContext& value)
@@ -621,7 +619,7 @@ void AllocationEmitter::storePrototype(const ValueContext& value, CellPointer ce
         return cell;
     };
     auto setByOperation = [&] {
-        MentionedAllocation allocation = emitter<CellAllocationEmitter>().allocationOf(value, value->layout(), value->allocationClass(), value->fields());
+        MentionedAllocation allocation = emitter<CellAllocationEmitter>().allocationOf(value, value->layout(), value->fields());
         return callOperation<CellPointer>(value, RuntimeOperation::SetConstructPrototype, { cell, requested, numberOf(allocation.mention), word32(value->fields().empty()) }, { .isOnRarePath = true });
     };
     if (newObjectMayHaveOtherLayout(m_program, value.value()) || !generator().isInLoop(value.block())) {

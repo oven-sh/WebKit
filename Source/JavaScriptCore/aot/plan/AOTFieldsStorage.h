@@ -20,8 +20,8 @@ namespace Typed {
 
 class Plan;
 class Program;
+struct LayoutsBelowTheirBases;
 
-void chooseStorageOfFields(Program&, const Facts&, BuildContext&, SlotPlanParts&);
 SlotRepresentation narrowFormOfSlotHeldToTypeForFields(const Program&, TypeID held, bool usesWideReferences);
 void checkStorageOfFields(const Program&, const Facts&, const Plan&, BuildContext&);
 
@@ -60,8 +60,9 @@ struct UnitsOfFields {
     Vector<uint32_t> firstRowOfLayout;
     Vector<uint32_t> unitOfRow;
 };
-void chooseFormsOfSlots(Program&, const Facts&, BuildContext&, SlotPlanParts&, const GroupsOfLayoutsForFields&, const UnitsOfFields&);
-UnitsOfFields collectUnitsOfFields(const Program&, const SlotPlanParts&, const GroupsOfLayoutsForFields&);
+void chooseFormsOfSlots(Program&, const Facts&, BuildContext&, SlotPlanParts&, const GroupsOfLayoutsForFields&, const UnitsOfFields&, BitVector& layoutsWithSlotsOfOtherWidths);
+UnitsOfFields collectUnitsOfFields(const Program&, const LinkTables&, const StorageOfLayouts&, const GroupsOfLayoutsForFields&);
+void chooseStorageOfFields(Program&, const Facts&, BuildContext&, SlotPlanParts&, const LayoutsBelowTheirBases&, GroupsOfLayoutsForFields&&, UnitsOfFields&&);
 
 class CellSizesForFields {
 public:

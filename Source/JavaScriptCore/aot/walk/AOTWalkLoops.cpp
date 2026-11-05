@@ -14,6 +14,7 @@
 #include "AOTIRFunction.h"
 #include "AOTIRProgram.h"
 #include "AOTLinkTables.h"
+#include "AOTBuiltinMembers.h"
 #include "AOTBuiltinTable.h"
 #include "AOTOpcodeSets.h"
 #include "AOTOperandKinds.h"
@@ -335,6 +336,7 @@ private:
     Vector<Reference, 4> m_objectsLeftAsTheyAre;
     bool m_hasLostTypes { false };
     bool m_countsOnListsTestedInFront { false };
+    bool m_countsOnViewsTestedInFront { false };
     bool m_countsOnTurnsThatBeginAgain { false };
     bool m_nothingWasDoneInTurn { false };
     bool m_takesEffectsOfCopiesFromTheirOperations { false };
@@ -569,6 +571,8 @@ std::optional<LoopPreview> LooksAtLoops::preview(std::span<const TypeID> entryTy
         return std::nullopt;
 
     if (m_countsOnListsTestedInFront && !leavesListsTestedInFrontOfLoopAsTheyAre(m_effects))
+        return std::nullopt;
+    if (m_countsOnViewsTestedInFront && !leavesViewsTestedInFrontOfLoopAsTheyAre(m_effects))
         return std::nullopt;
     bool turnsEndElementsOfFreshObjects = !m_effects.mayRunOtherCode() && m_effects.writes.containsAny(AbstractHeapSet { AbstractHeap::TypedArrayElements, AbstractHeap::TypedArrayStorage });
     if (m_hasLostTypes || turnsEndElementsOfFreshObjects) {
@@ -951,7 +955,8 @@ void LooksAtLoops::lookAtOperationAsTyped(const BodyValue& operation)
         else if (TypeID text = holder && holdsOnlyPrimitives(holder) ? m_arena.withoutNullish(holder) : TypeID(); text && !isNeverType(text) && m_arena.at(text).isAnyString())
             byRow = resultTypeOf(m_typing, Draft(Opcode::GetStringLength), OperandTypes { std::span<const TypeID>(&text, 1) });
     }
-    if (operation.opcode() == Opcode::PropGet && m_walker.has(Mechanism::TypedOperations) && !operation.isFreeName() && !isLookingAtCopy() && operation.key() == m_walker.program().keyOf(BuiltinNames::length) && readsOffEntryParameterThatStaysAsMade(m_walker, operation)) {
+    if (operation.opcode() == Opcode::PropGet && m_walker.has(Mechanism::TypedOperations) && !operation.isFreeName() && !isLookingAtCopy() && operation.key() == m_walker.program().keyOf(BuiltinNames::length) && (readsOffEntryParameterThatStaysAsMade(m_walker, operation) || readsLengthOfViewTestedInFrontOfLoop(m_walker, operation))) {
+        m_countsOnViewsTestedInFront |= !readsOffEntryParameterThatStaysAsMade(m_walker, operation);
         TypeID holder = operands[OperandIndex::PropGet::object];
         const ClassPart* onlyClass = holder && m_arena.at(holder).isObject() ? singleBuiltinClassOf(m_arena, m_arena.at(holder)) : nullptr;
         if (onlyClass && isTypedView(m_walker.program().builtins().typedArrayTypeOf(onlyClass->builtinClass)))
@@ -1215,7 +1220,7 @@ void LooksAtLoops::addEffectsOf(const BodyValue& operation, OperandTypes operand
         return;
     }
     if (opcode == Opcode::Builtin && firstReadOfNamedBuiltinIsSeen(m_walker, operation))
-        m_effects.merge(declaredBoundOf(Opcode::InitializeBuiltin));
+        m_effects.merge(declaredBoundInTable(opcodeOfFirstReadOffHolder(m_walker.program().builtins(), operation.as<Opcode::Builtin>().builtin())));
     if (opcode == Opcode::ForInStep)
         m_effects.merge(declaredBoundOf(Opcode::PutHeapFrameWord));
     if (opcode == Opcode::GetModuleVariable && isVariableFilledAtFirstRead(m_walker.plan(), operation.variable())) {

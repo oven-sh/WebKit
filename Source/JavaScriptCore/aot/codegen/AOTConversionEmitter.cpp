@@ -447,8 +447,8 @@ Boxed ConversionEmitter::boxInteger(Integer value, Range range)
     Join<Boxed> join(m_out);
     ScopeFork fork = m_out.forkScope();
     m_out.branch(fitsInt32.value(), normalEdge(int32Case), unlikelyEdge(doubleCase));
-    m_out.appendToArm(int32Case, fork);
-    join.add(boxInt32(low));
+    m_out.appendToSuccessor(int32Case, fork);
+    join.add(boxInt32(low32(value)));
     m_out.appendToArm(doubleCase, fork);
     join.add(boxDouble(toNumber(value)));
     return join.finishBehind(fork);

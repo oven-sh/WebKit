@@ -1,0 +1,7 @@
+# Under the checking word FlowFixpoint Link goes over its flow once more when it is at rest: every edge is gone along and every observer told as if for the first time. Where a node climbs, a rule had not laid down again what it owed, and the build stops by name (FlowEndedTooEarly).
+# The program is one in which a read is told again when a member comes later: the flow is closed, so the tables are written as without the word.
+# OPTIONS: check=FlowFixpoint
+# PROGRAM-OF: sets/a-read-is-told-again-when-a-member-comes-later.ir
+# RUN: link functions mechanisms=all
+# CHECK-NOT: FlowEndedTooEarly
+# CHECK: function f0

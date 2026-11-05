@@ -159,7 +159,7 @@ static void runMachineEmitCodeCommand(TestCommandContext& context)
         return;
     }
     Sweep sweep;
-    sweep.run(SweepInputs { stage.program(), *plan, stage.types() }, code);
+    sweep.run(SweepInputs { stage.program(), *stage.facts(), *plan, stage.types() }, code);
 
     printHeadingOfMachineUnit(context.out, code.unit());
     context.out.println();

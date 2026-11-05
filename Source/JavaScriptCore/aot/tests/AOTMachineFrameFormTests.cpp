@@ -416,6 +416,45 @@ static void testMachineFrameFormSavesOfHeadArePushed()
 #endif
 }
 
+static void testMachineFrameFormWhatCallAtHeadTakesStaysWhereItLies()
+{
+    uint64_t noted = 0;
+    TestProcedure test;
+    Output& out = test.out();
+    Procedure& proc = test.procedure();
+    RegisterFile file = registerFileFor(proc.traits());
+    Operation* taken = test.argumentGPR(0);
+    Operation* tested = test.argumentGPR(1);
+    Block* returning = out.newBlock();
+    Block* calling = out.newBlock();
+    out.branch(out.testNonZero64(tested, out.constInt64(1)), normalEdge(returning), normalEdge(calling));
+    out.appendTo(returning);
+    out.ret(tested);
+    out.appendTo(calling);
+    PatchOperation* call = out.patch(Void);
+    call->append(taken, ValueRep::reg(GPRInfo::argumentGPR0));
+    call->clobberLate((file.allocatableIn(Bank::GP) | file.allocatableIn(Bank::FP)) & ~file.calleeSaved);
+    call->setGenerator([place = &noted](CCallHelpers& jit, const PatchParameters& params) {
+        AllowMacroScratchRegisterUsage allowScratch(jit);
+        AOT_TEST_CHECK(params.frameIsSetUp() && params.size() == 1 && params[0] == ValueRep::reg(GPRInfo::argumentGPR0));
+        GPRReg address = jit.scratchRegister();
+        jit.move(CCallHelpers::TrustedImm64(std::bit_cast<int64_t>(place)), address);
+        jit.store64(GPRInfo::argumentGPR0, CCallHelpers::Address(address));
+        jit.move(CCallHelpers::TrustedImm64(static_cast<int64_t>(poison)), GPRInfo::argumentGPR0);
+    });
+    out.ret(out.add(taken, tested));
+    compileOrFail(test);
+
+    const Allocation& allocation = proc.allocation();
+    AOT_FRAME_FORM_TEST_CHECK(test, proc.frame().coverage() == FrameCoverage::FramedPart && allocation.onlyHeadOfFramedPart() == calling);
+    unsigned numberOfMoves = 0;
+    for (const Step& step : allocation.steps())
+        numberOfMoves += step.kind == StepKind::Move && step.operation == taken;
+    AOT_FRAME_FORM_TEST_CHECK(test, numberOfMoves == 1 && !allocation.isSpilled(taken));
+    AOT_FRAME_FORM_TEST_CHECK(test, test.call<uint64_t>(uint64_t { 40 }, uint64_t { 3 }) == 3 && !noted);
+    AOT_FRAME_FORM_TEST_CHECK(test, test.call<uint64_t>(uint64_t { 40 }, uint64_t { 2 }) == 42 && noted == 40);
+}
+
 static void testMachineFrameFormNumberStoredBehindSetupIsNotPushed()
 {
     TestProcedure test;
@@ -850,6 +889,7 @@ std::span<const NativeTest> machineFrameFormTests()
         { "machine/frame-forms/second-saved-register-of-a-pair-is-free"_s, Machine::testMachineFrameFormSecondSavedRegisterOfPairIsFree },
         { "machine/frame-forms/arguments-stored-behind-the-setup-are-pushed"_s, Machine::testMachineFrameFormArgumentsStoredBehindSetupArePushed },
         { "machine/frame-forms/saves-of-a-head-are-pushed"_s, Machine::testMachineFrameFormSavesOfHeadArePushed },
+        { "machine/frame-forms/what-the-call-at-a-head-takes-stays-where-it-lies"_s, Machine::testMachineFrameFormWhatCallAtHeadTakesStaysWhereItLies },
         { "machine/frame-forms/number-stored-behind-the-setup-is-not-pushed"_s, Machine::testMachineFrameFormNumberStoredBehindSetupIsNotPushed },
         { "machine/frame-forms/outgoing-words-keep-the-saves-on-top"_s, Machine::testMachineFrameFormOutgoingWordsKeepSavesOnTop },
         { "machine/frame-forms/saved-registers-at-the-bottom-come-back"_s, Machine::testMachineFrameFormSavedRegistersAtBottomComeBack },

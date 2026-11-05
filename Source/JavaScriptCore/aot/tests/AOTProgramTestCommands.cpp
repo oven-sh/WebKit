@@ -276,7 +276,6 @@ static constexpr NamedImageFunctionFlag namedImageFunctionFlags[] {
     { "HasCallSites"_s, ImageFunctionFlag::HasCallSites },
     { "HasPositions"_s, ImageFunctionFlag::HasPositions },
     { "SpillsArgumentRegisters"_s, ImageFunctionFlag::SpillsArgumentRegisters },
-    { "HasCalleesOfSites"_s, ImageFunctionFlag::HasCalleesOfSites },
     { "HasConstructedCallees"_s, ImageFunctionFlag::HasConstructedCallees },
 };
 

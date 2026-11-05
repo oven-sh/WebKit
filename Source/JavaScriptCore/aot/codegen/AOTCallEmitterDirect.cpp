@@ -152,7 +152,7 @@ void CallEmitter::generateCallDirect(const ValueContext& value)
         return;
     }
 
-    CallOptions options { .constructs = value->isConstruction(), .callsOwnFunctionObject = value->callsOwnFunctionObject(), .callerSuspendsAtReturn = value.isAwaitedAtOnce() };
+    CallOptions options { .constructs = value->isConstruction(), .callerSuspendsAtReturn = value.isAwaitedAtOnce() };
     bool entersConstructEntry = callee.role == CodeRole::AllocatingConstructEntry || callee.role == CodeRole::GenericConstructEntry;
     if (options.constructs && calledFunction.kind == FunctionKind::Plain && !entersConstructEntry)
         options.constructedCallee = callee.function;

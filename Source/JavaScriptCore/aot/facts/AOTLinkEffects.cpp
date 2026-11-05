@@ -69,15 +69,25 @@ static ComponentsOfLinkEffects findComponentsForLinkEffects(uint32_t numberOfFun
         while (!path.isEmpty()) {
             uint32_t function = path.last().function;
             std::span<const FunctionID> successors = successorsOf(function);
-            if (path.last().nextSuccessor < successors.size()) {
-                uint32_t successor = successors[path.last().nextSuccessor++].index();
+            uint32_t nextSuccessor = path.last().nextSuccessor;
+            uint32_t lowestOfFunction = lowest[function];
+            bool hasEntered = false;
+            while (nextSuccessor < successors.size()) {
+                uint32_t successor = successors[nextSuccessor++].index();
                 RELEASE_ASSERT(successor < numberOfFunctions);
-                if (discovery[successor] == none)
+                if (discovery[successor] == none) {
+                    hasEntered = true;
+                    path.last().nextSuccessor = nextSuccessor;
+                    lowest[function] = lowestOfFunction;
                     enter(successor);
-                else if (components.componentOfFunction[successor] == none)
-                    lowest[function] = std::min(lowest[function], discovery[successor]);
-                continue;
+                    break;
+                }
+                if (components.componentOfFunction[successor] == none)
+                    lowestOfFunction = std::min(lowestOfFunction, discovery[successor]);
             }
+            if (hasEntered)
+                continue;
+            lowest[function] = lowestOfFunction;
 
             path.removeLast();
             if (!path.isEmpty())
@@ -280,6 +290,7 @@ private:
     Vector<uint64_t> m_bitsOfLayouts;
     Vector<uint64_t> m_bitsOfFamilies;
     BitVector m_variablesThatFirstReadMayFill;
+    BitVector m_keysOfFieldsThatHoldOneClosure;
     BitVector m_layoutsOfPlainObjects;
     Vector<LinkedEffectsGivenArguments> m_effectsGivenArguments;
 
@@ -380,6 +391,7 @@ void CalleeSummarizerForLinkEffects::indexHolders()
     uint32_t numberOfKeys = m_program.types.numberOfPropertyKeys();
     m_keysOfAccessorFields.ensureSize(numberOfKeys);
     m_keysOfOtherCallables.ensureSize(numberOfKeys);
+    m_keysOfFieldsThatHoldOneClosure.ensureSize(numberOfKeys);
     m_keysThatObjectPrototypeNeverAnswers.fill(Answer::NotAsked, numberOfKeys);
 
     auto note = [&](PropertyKeyID key, FlowNodeID holder, bool runsAtReads, bool runsAtStores) {
@@ -407,6 +419,8 @@ void CalleeSummarizerForLinkEffects::indexHolders()
                 m_keysOfAccessorFields.quickSet(key.index());
             else
                 note(key, m_flow.field({ LayoutID(index), field }), false, false);
+            if (key && m_flow.typeAt(m_flow.field({ LayoutID(index), field })).functions == LinkType::Functions::Closure)
+                m_keysOfFieldsThatHoldOneClosure.quickSet(key.index());
         }
     }
     std::ranges::stable_sort(m_accessors, { }, &AccessorUnderKey::key);
@@ -926,7 +940,7 @@ Effects CalleeSummarizerForLinkEffects::effectsOfCallItself(FunctionID id, const
         if (!addEffectsOfRows(builtin, id, summary, call, found, effects))
             return Effects::unknownCode();
         if (standsForFirstReadOffHolder(m_program.builtins(), builtin, false))
-            effects.merge(declaredBoundInTable(Opcode::InitializeBuiltin));
+            effects.merge(declaredBoundInTable(opcodeOfFirstReadOffHolder(m_program.builtins(), builtin)));
     }
     if (call.passesList) {
         effects.mayThrow = ThrowEffect(true);
@@ -968,25 +982,48 @@ bool CalleeSummarizerForLinkEffects::changeMayRunCode(FunctionID id, const Summa
 
 void CalleeSummarizerForLinkEffects::findComponentsOfCallees()
 {
-    m_firstCallee.reserveInitialCapacity(numberOfNodesOfCallees() + 1);
-    m_callees.reserveInitialCapacity(m_functionsEntered.size() + m_numberOfFunctions);
-    for (uint32_t function = 0; function < m_numberOfFunctions; ++function) {
-        m_firstCallee.append(m_callees.size());
-        if (!isSummarized(function))
-            continue;
-        bool mayEnterLost = false;
-        auto add = [&](const CodeEntered& code) {
-            m_callees.append(functionsOf(code));
-            mayEnterLost |= code.mayBeLost;
-        };
+    const ParallelLoops& loops = m_flow.loops;
+    auto forEachCodeEnteredBy = [&](size_t function, const auto& functor) {
         for (uint32_t call = m_flow.firstCallOfFunction[function]; call < m_flow.firstCallOfFunction[function + 1]; ++call)
-            add(m_codeOfCalls[call]);
+            functor(m_codeOfCalls[call]);
         for (uint32_t access = m_firstAccessOfFunction[function]; access < m_firstAccessOfFunction[function + 1]; ++access)
-            add(m_codeOfAccesses[access]);
-        if (mayEnterLost)
-            m_callees.append(FunctionID(nodeOfLostFunctions()));
-    }
-    m_firstCallee.append(m_callees.size());
+            functor(m_codeOfAccesses[access]);
+    };
+    m_firstCallee.reserveInitialCapacity(numberOfNodesOfCallees() + 1);
+    m_firstCallee.fill(0, m_numberOfFunctions + 1);
+    forEachRangeOfIndicesInParallel(loops, m_numberOfFunctions, [&](size_t first, size_t end) {
+        for (size_t function = first; function < end; ++function) {
+            if (!isSummarized(static_cast<uint32_t>(function)))
+                continue;
+            uint32_t numberOfCallees = 0;
+            bool mayEnterLost = false;
+            forEachCodeEnteredBy(function, [&](const CodeEntered& code) {
+                numberOfCallees += code.numberOfFunctions;
+                mayEnterLost |= code.mayBeLost;
+            });
+            m_firstCallee[function + 1] = numberOfCallees + mayEnterLost;
+        }
+    });
+    for (uint32_t function = 0; function < m_numberOfFunctions; ++function)
+        m_firstCallee[function + 1] += m_firstCallee[function];
+    m_callees.reserveInitialCapacity(std::max<size_t>(m_functionsEntered.size() + m_numberOfFunctions, m_firstCallee.last()));
+    m_callees.grow(m_firstCallee.last());
+    forEachRangeOfIndicesInParallel(loops, m_numberOfFunctions, [&](size_t first, size_t end) {
+        for (size_t function = first; function < end; ++function) {
+            uint32_t place = m_firstCallee[function];
+            if (place == m_firstCallee[function + 1])
+                continue;
+            bool mayEnterLost = false;
+            forEachCodeEnteredBy(function, [&](const CodeEntered& code) {
+                for (FunctionID callee : functionsOf(code))
+                    m_callees[place++] = callee;
+                mayEnterLost |= code.mayBeLost;
+            });
+            if (mayEnterLost)
+                m_callees[place++] = FunctionID(nodeOfLostFunctions());
+            RELEASE_ASSERT(place == m_firstCallee[function + 1]);
+        }
+    });
     for (size_t function : m_flow.lostFunctions) {
         if (m_flow.reached.get(function))
             m_callees.append(FunctionID(static_cast<uint32_t>(function)));

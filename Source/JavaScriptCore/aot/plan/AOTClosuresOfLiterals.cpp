@@ -14,6 +14,7 @@
 #include "AOTLinkTables.h"
 #include "AOTMechanisms.h"
 #include "AOTNameClass.h"
+#include "AOTPromotedEnvironments.h"
 #include "AOTSlotPlan.h"
 #include "AOTSlotRepresentation.h"
 #include "AOTType.h"
@@ -74,7 +75,7 @@ static bool mayDeferForClosuresOfLiterals(const Program& program, const Facts& f
     return !fieldFacts.facts.containsAny(excludedFacts) && fieldFacts.formOfValue.isEmpty();
 }
 
-static FunctionID functionWhoseClosuresFieldHoldsForClosuresOfLiterals(const Program& program, const LinkTables& linked, const SlotPlanParts& slots, FieldReference reference, LayoutID& scope)
+static FunctionID functionWhoseClosuresFieldHoldsForClosuresOfLiterals(const Program& program, const LinkTables& linked, const PromotedEnvironments& promoted, const SlotPlanParts& slots, FieldReference reference, LayoutID& scope)
 {
     const LinkedCell* cell = linked.findCellOfField(reference);
     if (!cell || !cell->proven || !cell->everyWriterIsKnown || cell->isWrittenAfterConstruction)
@@ -86,13 +87,13 @@ static FunctionID functionWhoseClosuresFieldHoldsForClosuresOfLiterals(const Pro
     if (!id || id.index() >= slots.closureForms.size() || slots.closureForms[id.index()] != ClosureForm::Slim)
         return { };
     const Function& function = program.at(id);
-    if (function.captures.size() != 1 || !function.captures[0].isEstablished() || !function.captures[0].written())
+    if (function.captures.size() != 1 || !function.captures[0].isEstablished() || !function.captures[0].written() || promoted.numberOfRemovedCapturesOf(id))
         return { };
     scope = program.at(function.captures[0].written()).environment;
     return scope ? id : FunctionID();
 }
 
-void leaveClosuresOfLiteralsUnmade(const Program& program, const Facts& facts, bool useWideReferences, SlotPlanParts& slots)
+void leaveClosuresOfLiteralsUnmade(const Program& program, const Facts& facts, const PromotedEnvironments& promoted, bool useWideReferences, SlotPlanParts& slots)
 {
     if (useWideReferences || !withoutMechanismsMissingDependencies(facts.mechanisms()).contains(Mechanism::Deferral))
         return;
@@ -113,11 +114,11 @@ void leaveClosuresOfLiteralsUnmade(const Program& program, const Facts& facts, b
         for (FieldIndex field = 0; field < layout.fields.size(); ++field) {
             FieldReference reference { id, field };
             PlacedSlot& slot = planned.slots[field];
-            if (!isLookedUpAsNameForClosuresOfLiterals(program, layout.fields[field].key) || !mayDeferForClosuresOfLiterals(program, facts, reference, slot))
-                continue;
             LayoutID scope;
-            FunctionID function = functionWhoseClosuresFieldHoldsForClosuresOfLiterals(program, linked, slots, reference, scope);
+            FunctionID function = functionWhoseClosuresFieldHoldsForClosuresOfLiterals(program, linked, promoted, slots, reference, scope);
             if (!function || (scopeOfLayout && scope != scopeOfLayout))
+                continue;
+            if (!isLookedUpAsNameForClosuresOfLiterals(program, layout.fields[field].key) || !mayDeferForClosuresOfLiterals(program, facts, reference, slot))
                 continue;
             if (!layoutsThatShareSlots)
                 layoutsThatShareSlots = findLayoutsThatShareSlotsForClosuresOfLiterals(program, facts.families(), slots);

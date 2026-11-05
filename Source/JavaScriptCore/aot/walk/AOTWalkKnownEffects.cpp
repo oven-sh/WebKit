@@ -48,17 +48,9 @@ void addEffectsOfEnteringByValue(Effects& effects)
     effects.mayCollect = true;
 }
 
-void addVariablesThatStandForFields(const Plan& plan, Effects& effects)
-{
-    if (plan.promotedEnvironments().variables.isEmpty())
-        return;
-    effects.reads.add(AbstractHeap::ModuleVariables, effects.reads.maskOf(AbstractHeap::EnvironmentFields));
-    effects.writes.add(AbstractHeap::ModuleVariables, effects.writes.maskOf(AbstractHeap::EnvironmentFields));
-}
-
 static bool unitDoesMoreThanBodyForKnownEffects(const Plan& plan, FunctionID function)
 {
-    return !!plan.moduleEvaluation().moduleThatBeginsIn(function);
+    return !!plan.moduleEvaluation().moduleThatBeginsIn(function) || plan.promotedEnvironments().leadsToMaker(function);
 }
 
 static Effects effectsOfCallByValueOfFunctionForKnownEffects(const LinkTables& linked, FunctionID function)
@@ -130,7 +122,6 @@ Effects effectsOfDirectCall(Walker& walker, FunctionID callee, std::span<const R
     Effects effects = onReturn;
     effects.merge(onThrow);
     effects.mayThrow |= ThrowEffect::onlyStackOverflow();
-    addVariablesThatStandForFields(walker.plan(), effects);
     return effects;
 }
 

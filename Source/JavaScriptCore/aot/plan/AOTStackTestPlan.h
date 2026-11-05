@@ -18,10 +18,13 @@
 namespace JSC { namespace AOT {
 
 class BuildContext;
+class ParallelLoops;
 
 namespace Typed {
 
+class CallingConventions;
 class Facts;
+class ModuleEvaluationPlan;
 class Plan;
 class Program;
 
@@ -54,7 +57,15 @@ inline bool StackTestPlan::hasCountedAtBareSite(FunctionID caller, FunctionID ca
     return std::ranges::binary_search(callsCountedAtBareSites, std::pair { caller, callee });
 }
 
-JS_EXPORT_PRIVATE StackTestPlan planStackTests(const Program&, const Facts&, const Plan&);
+struct CallsCountedForStackTests {
+    Vector<uint32_t> firstCalleeOf;
+    Vector<FunctionID> callees;
+    BitVector bodiesThatMaySuspend;
+    BitVector functionsInCycles;
+};
+
+CallsCountedForStackTests findCallsCountedForStackTests(const Program&, const Facts&, const CallingConventions&, const ParallelLoops&);
+JS_EXPORT_PRIVATE StackTestPlan planStackTests(const Program&, const Facts&, const CallingConventions&, const ModuleEvaluationPlan&, const ParallelLoops&, CallsCountedForStackTests&&);
 void checkStackTests(const Program&, const Facts&, const Plan&, BuildContext&);
 
 } } } // namespace JSC::AOT::Typed

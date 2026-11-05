@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuildContext.h"
 #include "AOTBuiltinIDs.h"
 #include "AOTBuiltinTypes.h"
 #include "AOTGroupingOnPool.h"
@@ -25,6 +26,7 @@
 #include <wtf/Lock.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/SetForScope.h>
+#include <wtf/StringPrintStream.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -352,7 +354,9 @@ public:
     void writeWhatMakesNoType();
     void writeWhatMakesTypes(TypeArena&);
     void writeProofsThatMakeNoType();
+    void weighLeaves();
     BitVector functionsWhoseCallersAreAllKnown();
+    bool everyCallerIsKnownOf(size_t function) const { return m_flow.reached.get(function) && !m_flow.lostFunctions.get(function) && !m_flow.escapedFunctions.get(function) && !m_functionsEnteredByHost.get(function) && !m_functionsThatNoSummaryNames.get(function); }
     void goOnWith(const ParallelLoops& loops) { m_loops = &loops; }
     void writeReferrers();
 
@@ -389,7 +393,7 @@ private:
     void findRingsOfTailCalls();
     void findFunctionsThatRunAtMostOnce();
     uint32_t weighAsLeaf(FunctionID, unsigned depth, bool& levelsRanOut);
-    void weighLeaves();
+
     BitVector m_functionsThatAreNoLeaves;
     void writeCalls();
     void writeAccessesUnderOneKey();
@@ -473,11 +477,12 @@ WriterOfLink::WriterOfLink(const LinkFlow& flow, LinkTables& tables)
 BitVector WriterOfLink::functionsWhoseCallersAreAllKnown()
 {
     m_functionsThatNoSummaryNamesAreFound.wait();
-    BitVector known = m_flow.reached;
-    known.exclude(m_flow.lostFunctions);
-    known.exclude(m_flow.escapedFunctions);
-    known.exclude(m_functionsEnteredByHost);
-    known.exclude(m_functionsThatNoSummaryNames);
+    BitVector known;
+    known.ensureSize(m_numberOfFunctions);
+    for (size_t index : m_flow.reached) {
+        if (everyCallerIsKnownOf(index))
+            known.quickSet(index);
+    }
     return known;
 }
 
@@ -506,7 +511,7 @@ void WriterOfLink::writeWhatMakesTypes(TypeArena& types)
 void WriterOfLink::writeProofsThatMakeNoType()
 {
     RELEASE_ASSERT(!writesWhatIsExpected());
-    weighLeaves();
+
     findExportsThatStayIn();
     writeReceiversThatStayAsMade();
     findRingsOfTailCalls();
@@ -1071,26 +1076,45 @@ void WriterOfLink::writeContentsAtOperations()
 {
     if (writesWhatIsExpected())
         return;
+    struct Operation {
+        FunctionID function;
+        ValueID site;
+        FlowNodeID receiver;
+    };
+    auto isMapOrWeakMap = [](const LinkType& receiver) {
+        return receiver.builtinClass == BuiltinClasses::Map || receiver.builtinClass == BuiltinClasses::WeakMap;
+    };
+    Vector<Operation> found = collectInParallel<Operation>(loops(), m_numberOfFunctions, [&](unsigned index, Vector<Operation>& operationsOfChunk) {
+        if (!m_flow.reached.get(index))
+            return;
+        FunctionID function(index);
+        for (const SummaryCall& call : m_flow.summaries.at(function).calls) {
+            if (!call.site || call.receiver == noSummaryNode || !call.receiver)
+                continue;
+            FlowNodeID node = m_flow.nodeOf(function, call.receiver);
+            const LinkType& receiver = m_flow.typeAt(node);
+            bool mayMakeIteratorOverList = receiver.builtinClass == BuiltinClasses::Array && !call.numberOfArguments;
+            if (receiver.classes != LinkType::Classes::Site || receiver.objects != LinkType::Objects::None || receiver.functions != LinkType::Functions::None || (!isMapOrWeakMap(receiver) && !mayMakeIteratorOverList && receiver.builtinClass != BuiltinClasses::Set))
+                continue;
+            if ((receiver.primitives & ~Primitive::UndefinedOrNull) || m_flow.hasEscaped(receiver.site))
+                continue;
+            operationsOfChunk.append(Operation { function, call.site, node });
+        }
+    });
+
     Vector<LinkedContentsAtOperation>& listed = m_tables.contentsAtOperations;
     auto heldIn = [&](const LinkType& receiver, ContentsSlot slot) -> TypeID {
         FlowNodeID node = m_flow.findContentsOf(receiver, SlotOfContents(slot));
         return node ? unlessAnything(typeIDOf(m_flow.typeAt(node))) : TypeID();
     };
-    for (uint32_t index = 0; index < m_numberOfFunctions; ++index) {
-        if (!m_flow.reached.get(index))
-            continue;
-        FunctionID function(index);
+    size_t endOfFunction = 0;
+    for (size_t firstOfFunction = 0; firstOfFunction < found.size(); firstOfFunction = endOfFunction) {
+        FunctionID function = found[firstOfFunction].function;
         size_t first = listed.size();
-        for (const SummaryCall& call : m_flow.summaries.at(function).calls) {
-            if (!call.site || call.receiver == noSummaryNode || !call.receiver)
-                continue;
-            const LinkType& receiver = m_flow.typeAt(m_flow.nodeOf(function, call.receiver));
-            bool isMap = receiver.builtinClass == BuiltinClasses::Map || receiver.builtinClass == BuiltinClasses::WeakMap;
-            if (receiver.classes != LinkType::Classes::Site || receiver.objects != LinkType::Objects::None || receiver.functions != LinkType::Functions::None || (!isMap && receiver.builtinClass != BuiltinClasses::Set))
-                continue;
-            if ((receiver.primitives & ~Primitive::UndefinedOrNull) || m_flow.hasEscaped(receiver.site))
-                continue;
-            LinkedContentsAtOperation contents { function, call.site, isMap ? heldIn(receiver, ContentsSlot::Key) : TypeID(), heldIn(receiver, isMap ? ContentsSlot::Value : ContentsSlot::Element) };
+        for (; endOfFunction < found.size() && found[endOfFunction].function == function; ++endOfFunction) {
+            const LinkType& receiver = m_flow.typeAt(found[endOfFunction].receiver);
+            bool isMap = isMapOrWeakMap(receiver);
+            LinkedContentsAtOperation contents { function, found[endOfFunction].site, isMap ? heldIn(receiver, ContentsSlot::Key) : TypeID(), heldIn(receiver, isMap ? ContentsSlot::Value : ContentsSlot::Element) };
             if (contents.key || contents.value)
                 listed.append(contents);
         }
@@ -1119,7 +1143,7 @@ TypeID WriterOfLink::widened(TypeID type)
 {
     if (!type || isNeverType(type))
         return { };
-    return holdsOnlyPrimitives(type) ? type : widenedToFamily(typesAtHand(), m_flow.families, type);
+    return holdsOnlyPrimitives(type) ? type : widenedToFamily(typesAtHand(), m_flow.families, type, SetsThatNoFamilyHolds::BecomeAnyObject);
 }
 
 TypeID WriterOfLink::typeIDOf(const LinkType& type)
@@ -1178,8 +1202,7 @@ void WriterOfLink::writeFunction(FunctionID id)
         return;
 
     const Function& function = m_program.at(id);
-    bool isLost = m_flow.lostFunctions.get(index);
-    linked.everyCallerIsKnown = !isLost && !m_flow.escapedFunctions.get(index) && !m_functionsEnteredByHost.get(index) && !m_functionsThatNoSummaryNames.get(index);
+    linked.everyCallerIsKnown = everyCallerIsKnownOf(index);
     linked.everyCallHasOneCallee = linked.everyCallerIsKnown && !m_functionsSharingCalls.get(index) && isEnteredByCallsAloneForLink(function.kind);
     if (function.results.size() == 1 && !function.isCoroutine()) {
         linked.result = typeIDOf(m_flow.typeAt(m_flow.result(id, 0)));
@@ -1351,7 +1374,8 @@ void WriterOfLink::writeParameters(FunctionID id, const LinkedFunction& linked)
 
     for (uint32_t index = 0; index < parameters.size(); ++index) {
         LinkedParameter& parameter = parameters[index];
-        const LinkType arrived = m_flow.withoutObjectsThatHaveEscaped(m_flow.typeAt(m_flow.parameter(id, index)));
+        const LinkType& held = m_flow.typeAt(m_flow.parameter(id, index));
+        const LinkType arrived = m_flow.withoutObjectsThatHaveEscaped(held);
         const DeclaredType* declared = function.declaredEntryParameter(index);
 
         TypeID established;
@@ -1377,7 +1401,7 @@ void WriterOfLink::writeParameters(FunctionID id, const LinkedFunction& linked)
             TypeID written = declared && !declared->isEstablished() ? unlessAnything(widened(declared->written())) : TypeID();
             if (!written)
                 written = unlessAnything(widened(typeExpectedByLibraryFunction(m_program, typesAtHand(), id, index)));
-            LinkType seen = m_flow.typeAt(m_flow.parameter(id, index));
+            LinkType seen = held;
             seen.holdsUnseen = false;
             seen.holdsLostBuiltins = false;
             TypeID seenToArrive = typeIDOf(seen);
@@ -1866,6 +1890,40 @@ void layReferrersOfHeldReadingOver(LinkTables& tables, LinkTables& held, const P
     held.firstReferrer.fill(0, numberOfFunctions + 1);
 }
 
+static void printBreachOfClosureInLink(PrintStream& out, LinkFlow& flow, const BreachOfClosure& breach)
+{
+    if (breach.node) {
+        flow.describe(out, breach.node);
+        out.print(" climbs from ", breach.before, " to ", breach.after);
+    } else
+        out.print(breach.set, " grows");
+    if (!breach.goneOver) {
+        out.println(" | follows from the others");
+        return;
+    }
+    out.print(" | brought by ");
+    if (breach.told.function)
+        out.print(breach.told, ", told at ");
+    else
+        out.print("an edge out of ");
+    flow.describe(out, breach.goneOver);
+    out.println();
+}
+
+static void stopWhereFlowIsNotClosedInLink(LinkFlow& flow, BuildContext& build)
+{
+    Vector<BreachOfClosure> breaches = flow.findBreachesOfClosure();
+    if (breaches.isEmpty())
+        return;
+    StringPrintStream first;
+    printBreachOfClosureInLink(first, flow, breaches[0]);
+    build.diagnostics().add(InternalError {
+        .kind = InternalErrorKind::FlowEndedTooEarly,
+        .count = static_cast<uint32_t>(breaches.size()),
+        .detail = first.toString(),
+    });
+}
+
 void printBreachesOfClosureOfLink(PrintStream& out, Program& program, const ThinSummaries& summaries, const Families& families, const LooksAtBodies& looks, Mechanisms mechanisms, BuildContext& build)
 {
     static constexpr std::pair<OrderOfWorklist, ASCIILiteral> orders[] {
@@ -1879,22 +1937,7 @@ void printBreachesOfClosureOfLink(PrintStream& out, Program& program, const Thin
         seedCellsSharedWithUnseenCode(flow);
         for (const BreachOfClosure& breach : flow.findBreachesOfClosure()) {
             out.print(name, ": ");
-            if (breach.node) {
-                flow.describe(out, breach.node);
-                out.print(" climbs from ", breach.before, " to ", breach.after);
-            } else
-                out.print(breach.set, " grows");
-            if (!breach.goneOver)
-                out.println(" | follows from the others");
-            else {
-                out.print(" | brought by ");
-                if (breach.told.function)
-                    out.print(breach.told, ", told at ");
-                else
-                    out.print("an edge out of ");
-                flow.describe(out, breach.goneOver);
-                out.println();
-            }
+            printBreachOfClosureInLink(out, flow, breach);
         }
     }
 }
@@ -1909,6 +1952,8 @@ LinkTables link(Program& program, const ThinSummaries& summaries, const Families
     flow.reachEntries();
     seedCellsSharedWithUnseenCode(flow);
     flow.run();
+    if (build.options().asksWhetherFlowOfLinkIsClosed)
+        stopWhereFlowIsNotClosedInLink(flow, build);
     flow.forgetWaysOfFlow();
     if (!turns)
         return writeTablesOfProvingReading(program, mechanisms, ownedFlow, turns);
@@ -1948,6 +1993,7 @@ LinkTables link(Program& program, const ThinSummaries& summaries, const Families
             }
             writer.writeReferrers();
         }
+        destroyInBackground(build.backgroundJobs(), WTF::move(view));
     });
     return tables;
 }
@@ -1996,9 +2042,13 @@ static LinkTables writeTablesOfProvingReading(Program& program, Mechanisms mecha
         writeTablesOfUnions(flow, tables);
     }
     endTurnOfProvingReading();
-    runLanes(flow.loops, 2, [&](unsigned lane, const ParallelLoops& loopsOfLane) {
+    runLanes(flow.loops, 3, [&](unsigned lane, const ParallelLoops& loopsOfLane) {
         if (!lane) {
             summarizeCallees(flow, tables);
+            return;
+        }
+        if (lane == 2) {
+            writer.weighLeaves();
             return;
         }
         writer.goOnWith(loopsOfLane);
@@ -2017,7 +2067,8 @@ void finishReadingsOfLink(Program& program, Mechanisms mechanisms, TurnsOfReadin
     if (!mechanisms.containsAny({ Mechanism::DirectCalls, Mechanism::TypedOperations }))
         return;
     writePrototypeObjectsThatAreSettled(*turns.provingFlow, proven);
-    turns.provingFlow = nullptr;
+    BackgroundJobs& backgroundJobs = turns.provingFlow->build.backgroundJobs();
+    destroyInBackground(backgroundJobs, WTF::move(turns.provingFlow));
     TypeArena types(program.types, ArenaKeeps::InProgram);
     for (size_t variable = 0; variable < held.variables.size(); ++variable) {
         TypeID provenOfVariable = proven.variables[variable].proven;

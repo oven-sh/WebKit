@@ -13,7 +13,7 @@ inline bool ScanOfBody::hasFilledInFrontOfEveryLeaving(uint32_t root, PropertyKe
 {
     FillInScan fill { root, false, key.bits() };
     const ObjectBeingMadeInScan& object = objectBeingMade(root);
-    return m_fills.contains(fill) && (!object.hasLeft || std::ranges::binary_search(object.filled, fill));
+    return m_setsOfFills.contains(m_fills, fill) && (!object.hasLeft || std::ranges::binary_search(object.filled, fill));
 }
 
 inline void ScanOfBody::noteFieldLeftEmptyForGood(FieldReference field)
@@ -27,7 +27,7 @@ inline void ScanOfBody::meetFillsWhereConstructionEnds(uint32_t root)
     ObjectBeingMadeInScan& object = objectBeingMade(root);
     if (object.isGivenUp)
         return;
-    std::span<const FillInScan> fillsOfObject = fillsOf(root, m_fills.inOrder());
+    std::span<const FillInScan> fillsOfObject = fillsOf(root, m_fills);
     if (!std::exchange(object.hasEnded, true)) {
         object.filledAtEnd.append(fillsOfObject);
         return;

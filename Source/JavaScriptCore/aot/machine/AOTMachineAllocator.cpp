@@ -1564,7 +1564,7 @@ void Allocator::enterFramedPart()
             waiting.pointer = keepPointerBesideAllocatedReference(*this, reference, waiting.pointer);
     }
 
-    forEachRegister(m_bound & ~m_file.calleeSaved, [&](Reg reg) {
+    forEachRegister(m_bound & ~m_file.calleeSaved & ~registersWhereCallInBlockTakesWhatLiesThere(m_block), [&](Reg reg) {
         Operation* value = m_valueIn[reg.index()];
         if (!value || !value->type().isNumeric() || (stateOf(value).registers & m_file.calleeSaved))
             return;

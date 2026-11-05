@@ -247,20 +247,11 @@ private:
 
 } // anonymous namespace
 
-static TypeID typeClaimedByConvertForReplacement(Walker& walker, const DeclaredType& declared, Reference operand)
+static TypeID typeClaimedByConvertForReplacement(Walker& walker, const DeclaredType& declared)
 {
-    if (!declared.has(PositionFlags::IsClaim))
+    if (!declared.has(PositionFlags::IsClaim) || declared.isExpected() || !declared.isEstablished())
         return { };
-    TypingContext context { walker.program(), walker.types(), PositionTypes::knowingNothing() };
-    ConvertResolution resolution = resolveConvert(context, walker.typeOf(operand), declared);
-    switch (resolution.step) {
-    case ConvertStep::Nothing:
-    case ConvertStep::Test:
-        return { };
-    case ConvertStep::TakeAsFact:
-        return resolution.target;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
+    return targetOfConvert({ walker.program(), walker.types(), PositionTypes::knowingNothing() }, declared);
 }
 
 static void bindOperandInPlaceOfCastForReplacement(Walker& walker, const BodyValue& cast)
@@ -269,7 +260,7 @@ static void bindOperandInPlaceOfCastForReplacement(Walker& walker, const BodyVal
     if (cast.opcode() == Opcode::Convert)
         checkInt32Promise(walker, cast.as<Opcode::Convert>().declared(), cast.operand(0), walker.originOf(cast));
     if (cast.opcode() == Opcode::Convert && !walker.currentBodyIndex().isUnused(cast.id())) {
-        if (TypeID claimed = typeClaimedByConvertForReplacement(walker, cast.as<Opcode::Convert>().declared(), operand)) {
+        if (TypeID claimed = typeClaimedByConvertForReplacement(walker, cast.as<Opcode::Convert>().declared())) {
             BuilderOfReplacements builder(walker, cast);
             operand = builder.proveOrTrap(operand, claimed);
             if (builder.hasStopped())
@@ -847,45 +838,6 @@ void Walker::stopUnlessValueIsOf(Reference value, TypeID tested, ProofSource sou
         value = convert(value, Representation::JSValue, origin);
     if (value && !isUnreachable())
         buildCheckOfProof(value, tested, TypeTable::anything, source, origin);
-}
-
-void Walker::holdStoresToSymbolsOfPlaces(const BodyValue& store)
-{
-    auto hold = [&](ValueID stored, TypeID held, ProofSource source) {
-        if (!held || holdsOnlyPrimitives(held) || !(m_types.at(held).primitives & Primitive::LiteralSymbol) || isUnreachable())
-            return;
-        Reference value = referenceOf(stored);
-        if (!value || m_types.isSubset(typeOf(value), held))
-            return;
-        stopUnlessValueIsOf(value, held, source);
-    };
-    switch (store.opcode()) {
-    case Opcode::PutModuleVariable: {
-        auto written = store.as<Opcode::PutModuleVariable>();
-        hold(written.valueOperand(), m_positionsOfBuild->variable(TypeLevel::Proven, written.variable()), ProofSource::Variable);
-        return;
-    }
-    case Opcode::PutEnvironmentField: {
-        auto written = store.as<Opcode::PutEnvironmentField>();
-        hold(written.valueOperand(), m_positionsOfBuild->environmentField(TypeLevel::Proven, written.layout(), written.field()), ProofSource::Capture);
-        return;
-    }
-    case Opcode::NewObject: {
-        auto written = store.as<Opcode::NewObject>();
-        if (!written.layout() || program().at(written.layout()).kind != LayoutKind::Environment)
-            return;
-        std::span<const FieldIndex> fields = written.fields();
-        std::span<const ValueID> values = written.valuesOperands();
-        for (size_t index = 0; index < std::min(fields.size(), values.size()); ++index) {
-            if (Reference listed = referenceOf(values[index]); listed && listed.isConstant() && typeOf(listed) == TypeID(TypeTable::undefined))
-                continue;
-            hold(values[index], m_positionsOfBuild->environmentField(TypeLevel::Proven, written.layout(), fields[index]), ProofSource::Capture);
-        }
-        return;
-    }
-    default:
-        RELEASE_ASSERT_NOT_REACHED();
-    }
 }
 
 static bool mayHaveGlobalBindingForReplacement(const Program& program, const BodyValue& access)

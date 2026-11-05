@@ -26,6 +26,11 @@ constexpr StubKey callMethodOfBuiltinClassAtSite(BoxedCallForm form, unsigned co
 constexpr StubKey callMethodOfBuiltinClassWithSharedPattern(BoxedCallForm form, unsigned count) { return StubKey(StubFamily::CallMethodOfBuiltinClassWithSharedPattern).withForm(static_cast<uint8_t>(form)).withCount(count); }
 constexpr StubKey callMethodOfBuiltinClassAtSiteWithSharedPattern(BoxedCallForm form, unsigned count) { return StubKey(StubFamily::CallMethodOfBuiltinClassAtSiteWithSharedPattern).withForm(static_cast<uint8_t>(form)).withCount(count); }
 constexpr StubKey callMethodOfBuiltinClassByValue(BoxedCallForm form, unsigned count) { return StubKey(StubFamily::CallMethodOfBuiltinClassByValue).withForm(static_cast<uint8_t>(form)).withCount(count); }
+constexpr StubKey callMethodOfProvenBuiltinClass(BoxedCallForm form, unsigned count) { return StubKey(StubFamily::CallMethodOfProvenBuiltinClass).withForm(static_cast<uint8_t>(form)).withCount(count); }
+constexpr StubKey callMethodOfProvenBuiltinClassByValue(BoxedCallForm form, unsigned count) { return StubKey(StubFamily::CallMethodOfProvenBuiltinClassByValue).withForm(static_cast<uint8_t>(form)).withCount(count); }
+constexpr StubKey callMethodThatMayBeUnread(BoxedCallForm form, unsigned count) { return StubKey(StubFamily::CallMethodThatMayBeUnread).withForm(static_cast<uint8_t>(form)).withCount(count); }
+std::optional<JSTypeRange> cellTypesOfReceiversOf(BoxedCallForm);
+bool looksWhetherReceiverIsAsMade(BoxedCallForm);
 bool leavesPatternAsMade(BoxedCallForm, unsigned count);
 constexpr std::optional<BoxedCallForm> formAskedBehind(BoxedCallForm form)
 {
@@ -56,6 +61,9 @@ static_assert(descriptorOf(StubFamily::CallMethodOfBuiltinClass).numberOfForms =
 static_assert(descriptorOf(StubFamily::TryCallMethodOfBuiltinClass).numberOfForms == numberOfBuiltinBoxedStubs);
 static_assert(descriptorOf(StubFamily::CallMethodOfBuiltinClassAtSite).numberOfForms == numberOfBuiltinBoxedStubs);
 static_assert(descriptorOf(StubFamily::CallMethodOfBuiltinClassByValue).numberOfForms == numberOfBuiltinBoxedStubs);
+static_assert(descriptorOf(StubFamily::CallMethodOfProvenBuiltinClass).numberOfForms == numberOfBuiltinBoxedStubs);
+static_assert(descriptorOf(StubFamily::CallMethodOfProvenBuiltinClassByValue).numberOfForms == numberOfBuiltinBoxedStubs);
+static_assert(descriptorOf(StubFamily::CallMethodThatMayBeUnread).numberOfForms == numberOfBuiltinBoxedStubs);
 static_assert(descriptorOf(StubFamily::CallBoxedBuiltin).minCount == BoxedCallEntry::minArgumentCount && descriptorOf(StubFamily::CallBoxedBuiltin).maxCount == BoxedCallEntry::maxArgumentCount);
 static_assert(numberOfBuiltinBoxedStubs * 2 <= StubWords::numberOfBoxedCallEntries);
 

@@ -205,7 +205,7 @@ TypeID resultTypeOf(const TypingContext& context, const Operation& operation, Op
         return context.types.anything(seedOfUnknownResultOf(opcode));
 
     ResultRules rules { context, operands, created };
-    TypeID result = applyResultRuleInLine(rules, operation, resultIndex, ResultSide::Proven);
+    TypeID result = applyResultRule(rules, operation, resultIndex, ResultSide::Proven);
     if (rules.wasUnproven && opcodesWithOtherResultRuleWhereUnproven.contains(opcode))
         result = applyResultRule(rules, operation, resultIndex, ResultSide::Unproven);
     return result;

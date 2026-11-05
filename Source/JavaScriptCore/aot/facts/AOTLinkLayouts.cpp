@@ -1170,6 +1170,26 @@ bool LinkFlow::mayReadInFrontOfDefinition(FunctionID reader, const SummaryAccess
     return filledAbove && !filledAbove->contains(access.key);
 }
 
+bool LinkFlow::storesIntoWhatSuperCallAnswers(FunctionID function) const
+{
+    return program.at(function).kind == FunctionKind::DerivedConstructor;
+}
+
+bool LinkFlow::isPartOfConstructionOf(LayoutID layout, FunctionID writer, const SummaryAccess& access) const
+{
+    if (!access.isPartOfConstruction || !storesIntoWhatSuperCallAnswers(writer))
+        return access.isPartOfConstruction;
+    if (summaries.at(writer).nodes[access.subject].kind == SummaryNode::Kind::Allocation)
+        return true;
+    LayoutID constructed = program.at(writer).constructedClass;
+    size_t stepsLeft = program.layouts.size();
+    for (LayoutID current = layout; current && stepsLeft; current = program.at(current).base, --stepsLeft) {
+        if (current == constructed)
+            return true;
+    }
+    return false;
+}
+
 void LinkFlow::findWhatRowsOfConstructorsFill()
 {
     using Row = RowOfConstructorsInLinkLayouts;
@@ -1331,6 +1351,11 @@ private:
         uint32_t family = lostFamilyOf(member);
         return m_lostFamiliesWrittenLateUnderEveryKey.get(family) || (key && m_keysWrittenLateThroughLost.contains(static_cast<uint64_t>(family) << 32 | key.bits()));
     }
+    bool isGivenValueThroughLost(LayoutID member, PropertyKeyID key) const
+    {
+        uint32_t family = lostFamilyOf(member);
+        return m_lostFamiliesGivenValuesUnderEveryKey.get(family) || (key && m_keysGivenValuesThroughLost.contains(static_cast<uint64_t>(family) << 32 | key.bits()));
+    }
 
     TypeID unlessAnything(TypeID) const;
     TypeID claimedTypeAt(FlowNodeID);
@@ -1369,6 +1394,7 @@ private:
     bool isListedByClassBelow(LayoutID, PropertyKeyID) const;
     bool noteNameNotListed(LayoutID, PropertyKeyID);
     void noteNamesWrittenOfLayouts();
+    void noteNamesThatMakersGive();
     void appendFields();
     void noteStoreOfMaker(const ThinSummary&, const SummaryAccess&, PropertyKeyID);
     Traits traitsOfStoreOfMaker(FunctionID, const ThinSummary&, const SummaryAccess&) const;
@@ -1433,6 +1459,10 @@ private:
     BitVector m_fieldsGivenValues;
     static constexpr uint32_t otherThanOneUnit = UINT32_MAX;
     Vector<uint32_t> m_unitsListedForFields;
+    static constexpr uint8_t unitsOfEveryFieldAreNoted = 1 << 0;
+    static constexpr uint8_t everyFieldIsGivenValues = 1 << 1;
+    static constexpr uint8_t everyFieldIsWrittenLate = 1 << 2;
+    Vector<uint8_t> m_whatIsNotedOfEveryField;
     struct SaidByEdges {
         BitVector fieldsGivenValues;
         BitVector fieldsGivenUndefinedByMakers;
@@ -1456,6 +1486,8 @@ private:
     BitVector m_fieldsWithUnseenWriters;
     HashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_keysWrittenLateThroughLost;
     BitVector m_lostFamiliesWrittenLateUnderEveryKey;
+    HashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_keysGivenValuesThroughLost;
+    BitVector m_lostFamiliesGivenValuesUnderEveryKey;
     BitVector m_fieldsReadInFrontOfDefinition;
     HashSet<uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_keysReadInFrontOfDefinitionThroughLost;
     HashMap<uint64_t, uint8_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_writesNotedThroughFamilies;
@@ -1542,6 +1574,7 @@ WriterOfLinkLayouts::WriterOfLinkLayouts(const LinkFlow& flow, LinkTables& table
     m_isMadeAtNoNode.ensureSize(numberOfLayouts);
     m_changesOfLostFamilies.grow(numberOfLayouts);
     m_lostFamiliesWrittenLateUnderEveryKey.ensureSize(numberOfLayouts);
+    m_lostFamiliesGivenValuesUnderEveryKey.ensureSize(numberOfLayouts);
     m_liesBelowLostClassObject.ensureSize(numberOfLayouts);
     m_isFilledUnderComputedKeys.ensureSize(numberOfLayouts);
     m_heritages.fill(LayoutID(), numberOfLayouts);
@@ -1549,6 +1582,7 @@ WriterOfLinkLayouts::WriterOfLinkLayouts(const LinkFlow& flow, LinkTables& table
     m_fieldsWrittenLate.ensureSize(tables.fields.size());
     m_fieldsGivenValues.ensureSize(tables.fields.size());
     m_unitsListedForFields.fill(0, tables.fields.size());
+    m_whatIsNotedOfEveryField.fill(0, numberOfLayouts);
     m_keysOfTestedFields.ensureSize(m_program.types.numberOfPropertyKeys());
     m_fieldsGivenUndefinedByMakers.ensureSize(tables.fields.size());
     m_fieldsFilledByConstructors.ensureSize(tables.fields.size());
@@ -1736,8 +1770,10 @@ void WriterOfLinkLayouts::lookAtAccesses(FunctionID id, const ThinSummary& summa
         if (constructs && key && (subject.objects == LinkType::Objects::Lost || subject.objects == LinkType::Objects::None) && findNameThatConstructorStores(id, summary, access))
             noteWriteInto(m_program.at(id).constructedClass, key, traits);
         noteChangeOfClosure(subject, key);
-        noteWriteOfPrototypeProperty(subject, key, access.kind == SummaryAccess::Kind::Store && access.storesObjectMadeForIt);
-        if (access.kind != SummaryAccess::Kind::Store || !key || m_program.nameClassOf(key) != NameClass::Prototype)
+        bool isUnderPrototype = key && m_program.nameClassOf(key) == NameClass::Prototype;
+        if (!key || isUnderPrototype)
+            noteWriteOfPrototypeProperty(subject, key, access.kind == SummaryAccess::Kind::Store && access.storesObjectMadeForIt);
+        if (access.kind != SummaryAccess::Kind::Store || !isUnderPrototype)
             noteNameGivenToClosure(subject, access.laysValueInSightUnderName() ? key : PropertyKeyID());
         if (key && subject.objects == LinkType::Objects::Layout && !access.isToContents() && m_program.at(id).role != FunctionRole::Library) {
             const Layout& stored = m_program.at(subject.layout);
@@ -1748,10 +1784,22 @@ void WriterOfLinkLayouts::lookAtAccesses(FunctionID id, const ThinSummary& summa
             m_namesThatConstructorsStore.add(static_cast<uint64_t>(made.first) << 32 | key.bits());
         m_definitionAtHand = access.kind == SummaryAccess::Kind::Define ? &access : nullptr;
         noteWrite(subject, key, traits);
+        if (access.isPartOfConstruction && m_flow.storesIntoWhatSuperCallAnswers(id) && subject.objects != LinkType::Objects::Lost) {
+            Traits traitsOfLaterStore = traits;
+            traitsOfLaterStore.add(Trait::ComesAfterConstruction);
+            if (access.kind == SummaryAccess::Kind::Store)
+                traitsOfLaterStore.remove(Trait::MayGiveValue);
+            m_flow.forEachLayoutOf(subject, [&](LayoutID member) {
+                if (!m_flow.isPartOfConstructionOf(member, id, access))
+                    noteWriteInto(member, key, traitsOfLaterStore);
+            });
+        }
         m_definitionAtHand = nullptr;
     }
-    finishRunsOfMakersIn(id);
-    finishRunsOnObjectsInFieldsIn(id);
+    if (!m_runsOfMakersInFunction.isEmpty() || m_asksWhatBodyHandsOn)
+        finishRunsOfMakersIn(id);
+    if (!m_runsOnObjectsInFieldsInFunction.isEmpty())
+        finishRunsOnObjectsInFieldsIn(id);
 }
 
 PropertyKeyID WriterOfLinkLayouts::findNameThatConstructorStores(FunctionID id, const ThinSummary& summary, const SummaryAccess& access) const
@@ -2051,12 +2099,14 @@ void WriterOfLinkLayouts::writeNamesOnFunctions()
 
 void WriterOfLinkLayouts::writeWhosePrototypePropertyStaysAsMade()
 {
-    for (size_t index = 0; index < m_tables.functions.size(); ++index) {
-        LinkedFunction& function = m_tables.functions[index];
-        function.closuresGetOnlyNamesThatAreListed = function.everyCallerIsKnown && !m_someConstructorGetsName && !m_functionsWhoseClosuresGetWhatIsNotListed.get(index);
-        bool isWrittenInNoOtherWay = function.everyCallerIsKnown && !m_prototypePropertyOfSomeConstructorIsWritten && !m_functionsWhosePrototypePropertyIsWritten.get(index);
-        function.prototypePropertyStaysAsMade = isWrittenInNoOtherWay && !m_functionsGivenObjectMadeToBePrototype.get(index);
-    }
+    forEachRangeOfIndicesInParallel(m_flow.loopsOfReading(), m_tables.functions.size(), [&](size_t first, size_t end) {
+        for (size_t index = first; index < end; ++index) {
+            LinkedFunction& function = m_tables.functions[index];
+            function.closuresGetOnlyNamesThatAreListed = function.everyCallerIsKnown && !m_someConstructorGetsName && !m_functionsWhoseClosuresGetWhatIsNotListed.get(index);
+            bool isWrittenInNoOtherWay = function.everyCallerIsKnown && !m_prototypePropertyOfSomeConstructorIsWritten && !m_functionsWhosePrototypePropertyIsWritten.get(index);
+            function.prototypePropertyStaysAsMade = isWrittenInNoOtherWay && !m_functionsGivenObjectMadeToBePrototype.get(index);
+        }
+    });
 }
 
 void WriterOfLinkLayouts::noteHeritage(const LinkType& heritage, FunctionID constructor)
@@ -2190,6 +2240,10 @@ void WriterOfLinkLayouts::noteWrite(const LinkType& subject, PropertyKeyID key, 
             m_changesOfLostFamilies[family].add(LayoutChange::GainsProperty);
         if (traits.contains(Trait::MayRunSetter) && (!key || m_program.nameClassOf(key) == NameClass::Proto))
             m_changesOfLostFamilies[family].add(LayoutChange::ChangesPrototype);
+        if (traits.contains(Trait::MayGiveValue) && key)
+            m_keysGivenValuesThroughLost.add(static_cast<uint64_t>(family) << 32 | key.bits());
+        else if (traits.contains(Trait::MayGiveValue))
+            m_lostFamiliesGivenValuesUnderEveryKey.set(family);
         if (!traits.contains(Trait::ComesAfterConstruction))
             return;
         if (key)
@@ -2209,10 +2263,7 @@ void WriterOfLinkLayouts::noteValueLeftOutOfDescriptor(const LinkType& descripto
         if (std::optional<FieldReference> held = findField(m_program, layout, key))
             m_fieldsWithUnseenWriters.quickSet(cellOf(*held));
     };
-    if (descriptor.objects == LinkType::Objects::Layout)
-        note(descriptor.layout);
-    else if (descriptor.objects == LinkType::Objects::Family)
-        m_program.at(m_flow.families.layoutsOf(descriptor.family)).forEach(note);
+    m_flow.forEachLayoutOf(descriptor, note);
 }
 
 void WriterOfLinkLayouts::noteWriteInto(LayoutID layout, PropertyKeyID key, Traits traits, bool mayComeToObject)
@@ -2222,10 +2273,17 @@ void WriterOfLinkLayouts::noteWriteInto(LayoutID layout, PropertyKeyID key, Trai
         changes.add(LayoutChange::ChangesPrototype);
 
     if (!key) {
-        for (uint32_t cell = m_tables.firstFieldOfLayout[layout.index()]; cell < m_tables.firstFieldOfLayout[layout.index() + 1]; ++cell)
-            m_unitsListedForFields[cell] = otherThanOneUnit;
-        if (traits.contains(Trait::MayGiveValue)) {
-            for (uint32_t cell = m_tables.firstFieldOfLayout[layout.index()]; cell < m_tables.firstFieldOfLayout[layout.index() + 1]; ++cell)
+        uint8_t& noted = m_whatIsNotedOfEveryField[layout.index()];
+        uint32_t firstCell = m_tables.firstFieldOfLayout[layout.index()];
+        uint32_t endOfCells = m_tables.firstFieldOfLayout[layout.index() + 1];
+        if (!(noted & unitsOfEveryFieldAreNoted)) {
+            noted |= unitsOfEveryFieldAreNoted;
+            for (uint32_t cell = firstCell; cell < endOfCells; ++cell)
+                m_unitsListedForFields[cell] = otherThanOneUnit;
+        }
+        if (traits.contains(Trait::MayGiveValue) && !(noted & everyFieldIsGivenValues)) {
+            noted |= everyFieldIsGivenValues;
+            for (uint32_t cell = firstCell; cell < endOfCells; ++cell)
                 m_fieldsGivenValues.quickSet(cell);
         }
         if (traits.contains(Trait::AddsWhatIsNotListed)) {
@@ -2233,8 +2291,9 @@ void WriterOfLinkLayouts::noteWriteInto(LayoutID layout, PropertyKeyID key, Trai
             if (mayComeToObject)
                 m_isFilledUnderComputedKeys.quickSet(layout.index());
         }
-        if (traits.contains(Trait::ComesAfterConstruction)) {
-            for (uint32_t cell = m_tables.firstFieldOfLayout[layout.index()]; cell < m_tables.firstFieldOfLayout[layout.index() + 1]; ++cell)
+        if (traits.contains(Trait::ComesAfterConstruction) && !(noted & everyFieldIsWrittenLate)) {
+            noted |= everyFieldIsWrittenLate;
+            for (uint32_t cell = firstCell; cell < endOfCells; ++cell)
                 m_fieldsWrittenLate.quickSet(cell);
         }
         return;
@@ -2341,6 +2400,8 @@ void WriterOfLinkLayouts::noteNamesWrittenOfLayouts()
 
     Vector<LayoutID, 16> described;
     Vector<LayoutID, 16> pending;
+    Vector<LayoutID, 16> visited;
+    Vector<bool, 16> mayHideBehindUnknownObjects;
     BitVector isVisited(numberOfLayouts);
     for (uint32_t index = 0; index < numberOfLayouts; ++index) {
         const Layout& written = m_program.layouts[index];
@@ -2348,11 +2409,16 @@ void WriterOfLinkLayouts::noteNamesWrittenOfLayouts()
             continue;
 
         described.shrink(0);
-        isVisited.clearAll();
+        for (LayoutID seen : visited)
+            isVisited.quickClear(seen.index());
+        visited.shrink(0);
         pending.append(LayoutID(index));
         while (!pending.isEmpty()) {
             LayoutID current = pending.takeLast();
-            if (!current || current.index() >= numberOfLayouts || isVisited.quickSet(current.index()) || !isWrittenTypeAlone(current))
+            if (!current || current.index() >= numberOfLayouts || isVisited.quickSet(current.index()))
+                continue;
+            visited.append(current);
+            if (!isWrittenTypeAlone(current))
                 continue;
             if (!layoutsWrittenAs[current.index()].isEmpty()) {
                 described.append(layoutsWrittenAs[current.index()].span());
@@ -2366,16 +2432,19 @@ void WriterOfLinkLayouts::noteNamesWrittenOfLayouts()
             continue;
         std::ranges::sort(described);
         described.shrink(described.size() - std::ranges::unique(described).size());
+        mayHideBehindUnknownObjects.shrink(0);
+        for (LayoutID id : described)
+            mayHideBehindUnknownObjects.append(m_flow.lostLayouts.get(id.index()) || hasEscaped(id.index()));
 
         for (const Field& field : written.fields) {
             if (!field.key || field.form.contains(FieldForm::IsAccessor) || field.flags.contains(FieldFlags::IsMethod))
                 continue;
             bool isStoredOnUnknownObjects = m_keysStoredOnUnknownObjects.contains(field.key.bits());
-            for (LayoutID id : described) {
+            for (size_t place = 0; place < described.size(); ++place) {
+                LayoutID id = described[place];
                 auto noted = m_pairsNotListed.find(static_cast<uint64_t>(id.index()) << 32 | field.key.bits());
                 if (noted == m_pairsNotListed.end()) {
-                    bool mayHideBehindUnknownObjects = m_flow.lostLayouts.get(id.index()) || hasEscaped(id.index());
-                    if (!isStoredOnUnknownObjects || !mayHideBehindUnknownObjects || findField(m_program, id, field.key) || !noteNameNotListed(id, field.key))
+                    if (!isStoredOnUnknownObjects || !mayHideBehindUnknownObjects[place] || findField(m_program, id, field.key) || !noteNameNotListed(id, field.key))
                         continue;
                     noted = m_pairsNotListed.find(static_cast<uint64_t>(id.index()) << 32 | field.key.bits());
                 }
@@ -2389,7 +2458,7 @@ void WriterOfLinkLayouts::noteNamesWrittenOfLayouts()
     }
 }
 
-void WriterOfLinkLayouts::appendFields()
+void WriterOfLinkLayouts::noteNamesThatMakersGive()
 {
     noteNamesWrittenOfLayouts();
     BitVector bodiesAskedWhatTheyHandOn(m_program.functions.size());
@@ -2465,6 +2534,10 @@ void WriterOfLinkLayouts::appendFields()
                 giveNamesTo(layout);
         }
     }
+}
+
+void WriterOfLinkLayouts::appendFields()
+{
     m_pairsNotListed.clear();
     m_namesNotListed.removeAllMatching([&](const NameNotListed& name) {
         if (canNameAppendedField(name.layout, name.key))
@@ -3108,7 +3181,7 @@ void WriterOfLinkLayouts::writeFields()
                 && !m_fieldsGivenValues.quickGet(cellOf(reference)) && !m_fieldsGivenValues.quickGet(declaration);
             cell.holdsAccessorFromBirth = cell.isFilledByAccessorsAlone && keepsWhatLiesBesideAccessors && m_flow.reading() == WhatUnseenCodeDoes::Anything && m_flow.allocatedLayouts.get(index)
                 && !m_flow.fieldsThatMayBeEmpty.get(cellOf(reference)) && !m_fieldsReadInFrontOfDefinition.quickGet(cellOf(reference))
-                && !(m_flow.lostLayouts.get(index) && m_keysReadInFrontOfDefinitionThroughLost.contains(record.key.bits()));
+                && !(m_flow.lostLayouts.get(index) && (m_keysReadInFrontOfDefinitionThroughLost.contains(record.key.bits()) || isGivenValueThroughLost(LayoutID(index), record.key)));
             isOfProgram &= isOfProgramInLink(cell.proven);
         }
         return isOfProgram;
@@ -3275,15 +3348,25 @@ void WriterOfLinkLayouts::lookAtSummaries()
             unit = unit ? otherThanOneUnit : listed;
     }
     m_saidByEdges = { };
+    m_whatIsNotedOfEveryField = { };
 }
 
 void WriterOfLinkLayouts::writeWhatMakesNoType(BitVector&& functionsWhoseCallersAreAllKnown)
 {
     m_functionsWhoseCallersAreAllKnown = WTF::move(functionsWhoseCallersAreAllKnown);
-    appendFields();
-    writeRunsOfMakers();
-    writeRunsBehindTaggedMakers();
-    gatherAtDeclarationsOfFields();
+    noteNamesThatMakersGive();
+    LinkFlow::ViewOfHeldReading* view = LinkFlow::ViewAtWork::current();
+    runLanes(m_flow.loopsOfReading().ofCurrentThread(), {
+        [&] {
+            appendFields();
+            writeRunsOfMakers();
+            writeRunsBehindTaggedMakers();
+        },
+        [&] {
+            LinkFlow::ViewAtWork viewAtWork(view);
+            gatherAtDeclarationsOfFields();
+        },
+    });
 }
 
 void WriterOfLinkLayouts::write(TypeArena& types)

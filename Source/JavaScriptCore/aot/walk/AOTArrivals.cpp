@@ -133,8 +133,7 @@ void Arrivals::leaveAnything(FunctionID callee)
 
 bool Arrivals::takesWhatWasLeft(FunctionID function) const
 {
-    const LinkedFunction& linked = linkTablesOfArrivals(m_facts).function(function);
-    return linked.everyCallerIsKnown && linked.everyCallHasOneCallee && !linked.isNamedInItsCycle;
+    return linkTablesOfArrivals(m_facts).bodyTakesWhatCallersLeave(function);
 }
 
 TypeID Arrivals::provenAt(FunctionID function, uint32_t entryParameter) const
@@ -158,10 +157,17 @@ TypeID Arrivals::provenAt(TypeArena& types, FunctionID function, uint32_t entryP
     const LinkedFunction& linked = linkTablesOfArrivals(m_facts).function(function);
     if (entryParameter < linked.numberOfParameters && takesWhatWasLeft(function)) {
         TypeID joined = m_joined[linked.firstParameter + entryParameter];
+        TypeID byLink = linked.everyCallerIsKnown ? linkTablesOfArrivals(m_facts).parameters[linked.firstParameter + entryParameter].proven : TypeID();
+        TypeID left;
         if (liesInThread(joined)) {
             Locker locker { m_joinsLock };
-            return copyTypeBetweenArenasOfArrivals(m_joins, types, joined);
-        }
+            left = copyTypeBetweenArenasOfArrivals(m_joins, types, joined);
+        } else
+            left = provenAt(function, entryParameter);
+        if (!left || !byLink || left == byLink || !types.at(left).isJavaScriptValue() || !types.at(byLink).isJavaScriptValue())
+            return left;
+        TypeID both = types.intersectionOf(left, byLink);
+        return isNeverType(both) ? left : both;
     }
     return provenAt(function, entryParameter);
 }
@@ -182,7 +188,7 @@ void takeArrivals(Walker& walker)
         if (!proven)
             continue;
         TypeID given = code.at(parameter.id()).type;
-        if (!types.isSubset(given, proven))
+        if (!types.isSubset(given, walker.typeArrivingAtEntryParameter(entryParameter)))
             continue;
         code.addFactUse(FactUse {
             .record = parameter.id(),

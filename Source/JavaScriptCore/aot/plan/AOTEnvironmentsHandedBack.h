@@ -7,6 +7,10 @@
 
 #if ENABLE(AOT)
 
+#include "AOTID.h"
+#include "AOTVector.h"
+#include <span>
+
 namespace JSC { namespace AOT {
 
 class BuildContext;
@@ -17,7 +21,8 @@ class Facts;
 class Program;
 struct SlotPlanParts;
 
-void planEnvironmentsHandedBack(const Program&, const Facts&, BuildContext&, SlotPlanParts&);
+Vector<LayoutID> findEnvironmentsHandedBack(const Program&, const Facts&, BuildContext&);
+void layEnvironmentsHandedBack(BuildContext&, std::span<const LayoutID>, SlotPlanParts&);
 
 } } } // namespace JSC::AOT::Typed
 

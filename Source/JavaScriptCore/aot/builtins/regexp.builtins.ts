@@ -19,8 +19,8 @@ const matchProperties = {
 };
 const newArrayOf = (element: b.TableType) => b.instance("Array").holding({ element }).fresh;
 
-const characters = [b.readAsCharacters];
-const patternText = [b.contentKey, b.readAsCharacters];
+const characters = b.inspected;
+const patternText = b.inspected;
 const usesLastIndex = [b.readsContents("lastIndex"), b.writesContents("lastIndex"), b.runsOnContents("ToPrimitive")];
 const escapesToOperandCode = [b.retained, b.runs("ToPrimitive")];
 const storesLastIndex = b.storedByKey(b.keysNamed("lastIndex"), b.length);
@@ -47,7 +47,7 @@ const createRegExp = (resultForObject: b.TableType, namesReadFromPattern: readon
       capability: "heap",
       throws: true,
       readsStateBeforeConversions: true,
-      uses: { pattern: [b.contentKey], flags: patternText },
+      uses: { pattern: b.inspected, flags: patternText },
       reads: [state],
       implementation: b.hostCall,
     },
@@ -66,8 +66,8 @@ const createRegExp = (resultForObject: b.TableType, namesReadFromPattern: readon
       throws: true,
       runsOnlyOperandCode: true,
       uses: {
-        pattern: [b.contentKey, runsMembers(b.named(...namesReadFromPattern))],
-        flags: [b.contentKey, b.runs("ToPrimitive")],
+        pattern: [runsMembers(b.named(...namesReadFromPattern))],
+        flags: [b.runs("ToPrimitive")],
       },
       reads: [state],
       implementation: b.hostCall,
@@ -281,7 +281,6 @@ const splitAtRegExp = (limit: b.TableType) =>
   }) satisfies b.FunctionField;
 
 export default b.declarations(
-  b.namedMemberCall("exec", [b.string]),
   b.class("RegExp", {
     jsType: "RegExpObjectType",
     constructorOnlyReadsPrototypeOfNewTarget: true,
@@ -402,7 +401,7 @@ export default b.declarations(
         throws: true,
         runsOnlyOperandCode: true,
         uses: {
-          this: [b.writesContents(), b.replacesContents],
+          this: [b.writesContents()],
           pattern: [b.runs("ToPrimitive")],
           flags: [b.runs("ToPrimitive")],
         },

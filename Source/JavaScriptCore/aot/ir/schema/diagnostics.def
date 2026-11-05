@@ -94,6 +94,7 @@ enum InternalErrorKind (stage: Stage, message: Text) {
     BlockOrderInvalid(ReadAndVerify, "the blocks are not in reverse postorder, or a block is unreachable")
     BodyIndexMismatch(ReadAndVerify, "the index of the body differs from what a plain computation gives")
     TypeOutOfDate(ReadAndVerify, "the type is not what the result rule gives")
+    EffectsNotCounted(ReadAndVerify, "an operation does what the effects of its function do not name")
     BrokenResultRule(ReadAndVerify, "a result rule answers with more for an operand of a narrower type, or its two paths disagree")
     WrongRepresentation(ChooseRepresentations, "a value has a representation that its type does not allow, or one operation takes it in two")
     OperandTypeMismatch(ReadAndVerify, "the operand has the wrong type")

@@ -25,6 +25,7 @@ class CallingConventions;
 class Facts;
 class Plan;
 class Program;
+struct StackTestPlan;
 
 struct TailCallPlan {
     BitVector functionsThatSaveRegistersOfCallers;
@@ -56,7 +57,7 @@ JS_EXPORT_PRIVATE FunctionsThatEndTheirTailCalls findFunctionsThatEndTheirTailCa
 void checkFormsRoundRingsOfTailCalls(const Program&, const Facts&, const Plan&, BuildContext&);
 BitVector findFunctionsThatSaveRegistersOfCallers(const Program&, const Facts&, const CallingConventions&);
 // planProgram(), behind the guards and in front of the fused entries. In this order: ends of tail calls > registers > stack tests. With DirectCalls withheld: nothing.
-void planTailCallsAndStackTests(const Program&, const Facts&, Plan&, BuildContext&);
+void planTailCallsAndStackTests(const Program&, const Facts&, Plan&, StackTestPlan&&);
 
 } } } // namespace JSC::AOT::Typed
 

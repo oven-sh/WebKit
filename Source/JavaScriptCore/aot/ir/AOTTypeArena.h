@@ -164,7 +164,6 @@ public:
     TypeID describedByShape(TypeID);
     TypeID testablePartOf(TypeID);
 
-    TypeID widenedFrom(TypeID now, TypeID previous);
 
     std::optional<uint32_t> rememberedAnswer(uint8_t question, uint32_t first, uint32_t second);
     void rememberAnswer(uint8_t question, uint32_t first, uint32_t second, uint32_t answer);

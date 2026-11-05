@@ -75,7 +75,6 @@ struct StubRecording {
     Vector<StubKey, 4> entries;
     Vector<StubReference, 8> references;
     Vector<StubFrameKind, 2> returnLabels;
-    Vector<CodeSymbol, 2> symbols;
     WTF::BitSet<numberOfEntries> entriesUsed;
     WTF::BitSet<numberOfEntries> operationsCalled;
 };

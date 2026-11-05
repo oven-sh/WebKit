@@ -119,9 +119,6 @@ const localized = [
 ] satisfies b.FunctionField[];
 
 export default b.declarations(
-  b.namedMemberCall("toISOString", []),
-  b.namedMemberCall("toString", []),
-  b.namedMemberCall("valueOf", []),
   b.class("Date", {
     jsType: "JSDateType",
     slots: { time: b.state("InternalFields", b.f64) },
@@ -156,7 +153,7 @@ export default b.declarations(
         args: { value: b.string, month: b.notPassed },
         returns: newDate,
         capability: "heap",
-        uses: { value: [b.readAsCharacters] },
+        uses: { value: b.inspected },
         reads: [hostTimeZone],
         implementation: b.hostCall,
       },
@@ -172,7 +169,7 @@ export default b.declarations(
         returns: newDate,
         capability: "heap",
         throws: true,
-        uses: { value: [b.readAsCharacters] },
+        uses: { value: b.inspected },
         reads: [hostTimeZone],
         implementation: b.hostCall,
       },
@@ -196,7 +193,7 @@ export default b.declarations(
         args: { string: b.string.loose },
         returns: b.f64,
         capability: "heap",
-        uses: { string: [b.readAsCharacters] },
+        uses: { string: b.inspected },
         reads: [hostTimeZone],
         implementation: b.hostCall,
       },

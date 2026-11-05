@@ -713,7 +713,6 @@ static void checkRepresentationLaws(TypeLawChecker& laws, TypeArena& arena, std:
             continue;
         if (representation != Representation::Void)
             laws.check(arena.isSubset(arena.withoutPrimitives(types[i], Primitive::Unspecified), widestTypeOf(representation)), "widest"_s, i, i);
-        laws.check(isLegalRepresentation(type, representationOf(defaultSlotRepresentationOf(type))), "slot-legal"_s, i, i);
     }
 }
 
@@ -727,7 +726,7 @@ static void runRepresentation(TestCommandContext& context)
     for (unsigned i = 0; i < types->size(); ++i) {
         Type type = arena.at(types->at(i));
         Representation representation = representationOf(type);
-        context.out.println("t"_s, i, ": rep "_s, nameOf(representation), " slot "_s, nameOf(defaultSlotRepresentationOf(type)),
+        context.out.println("t"_s, i, ": rep "_s, nameOf(representation),
             " cells "_s, yesOrNo(holdsCells(representation)), " legal "_s, LegalRepresentationsText { type });
     }
     for (Representation representation : allMembersOf<Representation>) {

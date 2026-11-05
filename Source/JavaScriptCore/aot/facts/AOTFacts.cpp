@@ -20,6 +20,7 @@
 #include "AOTLinkFlow.h"
 #include "AOTLinkStrings.h"
 #include "AOTPhaseTimes.h"
+#include "AOTResultRules.h"
 #include "AOTSort.h"
 #include "AOTThreads.h"
 #include <algorithm>
@@ -418,19 +419,31 @@ static void fillFunctionsGivenToVariablesForFacts(const Program& program, const 
     }
     if (givenTo.isEmpty() && parametersStored.isEmpty())
         return;
+    FunctionID callerWhoseCallsAreListed;
+    UncheckedKeyHashMap<uint32_t, uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> callsBySite;
     for (const LinkedCall& listed : linked.calls) {
         if (!functionsThatStoreParameter.get(listed.callee.index()))
             continue;
         const ThinSummary& summary = summaries.at(listed.caller);
-        auto call = std::ranges::find_if(summary.calls, [&](const SummaryCall& candidate) {
-            return candidate.site == listed.site && !candidate.isMadeByProtocol;
-        });
-        if (call == summary.calls.end() || call->passesList)
+        if (callerWhoseCallsAreListed != listed.caller) {
+            callerWhoseCallsAreListed = listed.caller;
+            callsBySite.clear();
+            for (uint32_t index = 0; index < summary.calls.size(); ++index) {
+                if (!summary.calls[index].isMadeByProtocol)
+                    callsBySite.add(summary.calls[index].site.index(), index);
+            }
+        }
+        auto found = callsBySite.find(listed.site.index());
+        if (found == callsBySite.end())
+            continue;
+        const SummaryCall* call = &summary.calls[found->value];
+        if (call->passesList)
             continue;
         uint32_t firstPositional = program.at(listed.callee).firstParameterIndex();
-        for (const ParameterStored& stored : parametersStored) {
-            if (stored.function != listed.callee)
-                continue;
+        auto storedByCallee = std::ranges::equal_range(parametersStored, listed.callee.index(), { }, [](const ParameterStored& stored) {
+            return stored.function.index();
+        });
+        for (const ParameterStored& stored : storedByCallee) {
             uint32_t place = stored.entryParameter;
             if (call->callee != SummaryCall::Callee::Binding) {
                 if (place < firstPositional)
@@ -676,13 +689,35 @@ bool Facts::testMentionsWhatIsOutOfReach(TypeReader types, TypeID tested, NOESCA
     return mentionsIt;
 }
 
+TypeID Facts::typeBelievedOfEntryParameter(TypeArena& types, FunctionID id, unsigned entryParameter, TypeID knownOfCallers) const
+{
+    TypingContext withoutFacts { m_program, types, PositionTypes::knowingNothing(), TypeLevel::Proven };
+    const DeclaredType* declared = m_program.at(id).declaredEntryParameter(entryParameter);
+    TypeID type = declared ? m_program.provenTypeOf(*declared) : declaredEntryTypeOf(withoutFacts, id, entryParameter);
+    if (!type)
+        type = TypeTable::anything;
+
+    TypeID both = knownOfCallers && types.at(type).isJavaScriptValue() ? types.intersectionOf(type, knownOfCallers) : TypeID(TypeTable::never);
+    if (isNeverType(both))
+        return !declared || !declared->isEstablished() ? types.withSeeds(type, UnknownSeed::ParameterOfEscapedFunction) : type;
+
+    CodeUnit entryByValue { id, CodeRole::GenericCallEntry };
+    bool entryMayNotAsk = testMentionsWhatIsOutOfReach(types, both, scopedLambda<bool(FunctionID)>([&](FunctionID named) {
+        return m_linked.mayBeMentionedBy(entryByValue, named);
+    }));
+    if (!entryMayNotAsk)
+        return both;
+    return types.unionOf(types.withoutObjects(both), types.at(both).hasOnlyClosures() ? TypeTable::function : TypeTable::object);
+}
+
 static void orderFunctionsByReferrersForFacts([[maybe_unused]] Program& program, const ParallelLoops& loops, BuildContext& build, Facts::Parts& parts)
 {
     StepTimes steps(build, "facts"_s);
     layReferrersOfHeldReadingOver(parts.linked, parts.held, loops);
     steps.didFinish("lay referrers over"_s);
     rankReferrersFirst(parts.linked);
-    findParametersThatAreOnlyCalled(program, *parts.bodies, *parts.summaries, loops, parts.mechanisms, parts.linked);
+    findParametersThatAreOnlyCalled(program, *parts.bodies, *parts.summaries, loops, parts.mechanisms, AOT::hasFlag(build.options().testing, Wire::TestingSwitch::NoCalleeKeepsWhatItIsHanded), parts.linked);
+    carryExpectationOfThisIntoCaptures(program, *parts.bodies, *parts.summaries, parts.linked);
     steps.didFinish("rank referrers"_s);
 }
 
@@ -762,6 +797,8 @@ std::unique_ptr<Facts> computeFacts(Program& program, BuildContext& build, const
                 workOutRegExpTexts(program, *parts.bodies, *parts.summaries, parts.tables.program);
         },
     });
+    if (hasFailed())
+        return nullptr;
     for (const RegExpCallWithoutText& call : parts.tables.program.regExpCallsWithoutText) {
         const BodyIndex& index = *parts.bodies->find(call.function);
         build.diagnostics().add(UserDiagnostic {

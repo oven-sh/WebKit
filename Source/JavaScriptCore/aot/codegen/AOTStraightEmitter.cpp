@@ -69,6 +69,10 @@ bool StraightEmitter::covers(const CodeGenerationInputs& inputs, CodeUnit unit, 
     if (opcodes.contains(Opcode::NewClosure) && inputs.facts.linked().capturesWhatItOnlyCalls(unit.function))
         return false;
 
+    const Function& function = inputs.program.at(unit.function);
+    if (isClassConstructorOf(function.kind) && function.constructedClass && !fieldsHeldFilledInSlots(inputs.program, inputs.facts.linked(), inputs.plan.slots(), function.constructedClass).isEmpty())
+        return false;
+
     const CallingConventions& conventions = inputs.plan.conventions();
     if (conventions.entryConventionOf(unit) != EntryConvention::Direct || conventions.numberOfResults(unit) != 1 || conventions.savesRegistersOfCallers(unit))
         return false;

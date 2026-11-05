@@ -976,17 +976,17 @@ static void testInstructionsOfReadsByKindOfField()
     auto absent = [](SlotRepresentation representation) { return traitsOf(representation).absentBits; };
     const Read readsByKind[] = {
         { "a boxed value"_s, FieldTable::shapeWithValue, SlotRepresentation::JSValue, bitsOf(jsNumber(7)), jsNumber(7), 40, 19 },
-        { "an integer"_s, FieldTable::shapeWithInt32, SlotRepresentation::OptionalInt32, 7, jsNumber(7), 45, 32 },
-        { "a narrow reference"_s, FieldTable::shapeWithNarrowCell, SlotRepresentation::OptionalCell32, MarkedBlockCage::encode(cageBase, std::bit_cast<JSCell*>(cell.address())), JSValue(std::bit_cast<JSCell*>(cell.address())), 48, 35 },
-        { "an optional boolean"_s, FieldTable::shapeWithEncodedByte, SlotRepresentation::OptionalBoolean, JSValue::ValueTrue, jsBoolean(true), 55, 42 },
-        { "a boolean"_s, FieldTable::shapeWithBoolean, SlotRepresentation::Boolean, 1, jsBoolean(true), 54, 41 },
-        { "a double"_s, FieldTable::shapeWithDouble, SlotRepresentation::OptionalDouble, std::bit_cast<uint64_t>(0.5), jsDoubleNumber(0.5), 50, 37 },
-        { "a 64-bit integer"_s, FieldTable::shapeWithInt64, SlotRepresentation::OptionalInt64, 7, jsNumber(7), 59, 46 },
+        { "an integer"_s, FieldTable::shapeWithInt32, SlotRepresentation::OptionalInt32, 7, jsNumber(7), 49, 36 },
+        { "a narrow reference"_s, FieldTable::shapeWithNarrowCell, SlotRepresentation::OptionalCell32, MarkedBlockCage::encode(cageBase, std::bit_cast<JSCell*>(cell.address())), JSValue(std::bit_cast<JSCell*>(cell.address())), 51, 38 },
+        { "an optional boolean"_s, FieldTable::shapeWithEncodedByte, SlotRepresentation::OptionalBoolean, JSValue::ValueTrue, jsBoolean(true), 56, 43 },
+        { "a boolean"_s, FieldTable::shapeWithBoolean, SlotRepresentation::Boolean, 1, jsBoolean(true), 57, 44 },
+        { "a double"_s, FieldTable::shapeWithDouble, SlotRepresentation::OptionalDouble, std::bit_cast<uint64_t>(0.5), jsDoubleNumber(0.5), 62, 49 },
+        { "a 64-bit integer"_s, FieldTable::shapeWithInt64, SlotRepresentation::OptionalInt64, 7, jsNumber(7), 60, 47 },
         { "a boxed value that is missing"_s, FieldTable::shapeWithValue, SlotRepresentation::JSValue, absent(SlotRepresentation::JSValue), jsUndefined(), 44, 44 },
-        { "an optional boolean that is missing"_s, FieldTable::shapeWithEncodedByte, SlotRepresentation::OptionalBoolean, absent(SlotRepresentation::OptionalBoolean), jsUndefined(), 70, 57 },
-        { "an integer that is missing"_s, FieldTable::shapeWithInt32, SlotRepresentation::OptionalInt32, absent(SlotRepresentation::OptionalInt32), jsUndefined(), 90, 77 },
-        { "a narrow reference that is missing"_s, FieldTable::shapeWithNarrowCell, SlotRepresentation::OptionalCell32, absent(SlotRepresentation::OptionalCell32), jsUndefined(), 98, 85 },
-        { "a double that is missing"_s, FieldTable::shapeWithDouble, SlotRepresentation::OptionalDouble, absent(SlotRepresentation::OptionalDouble), jsUndefined(), 104, 91 },
+        { "an optional boolean that is missing"_s, FieldTable::shapeWithEncodedByte, SlotRepresentation::OptionalBoolean, absent(SlotRepresentation::OptionalBoolean), jsUndefined(), 71, 58 },
+        { "an integer that is missing"_s, FieldTable::shapeWithInt32, SlotRepresentation::OptionalInt32, absent(SlotRepresentation::OptionalInt32), jsUndefined(), 94, 81 },
+        { "a narrow reference that is missing"_s, FieldTable::shapeWithNarrowCell, SlotRepresentation::OptionalCell32, absent(SlotRepresentation::OptionalCell32), jsUndefined(), 101, 88 },
+        { "a double that is missing"_s, FieldTable::shapeWithDouble, SlotRepresentation::OptionalDouble, absent(SlotRepresentation::OptionalDouble), jsUndefined(), 116, 103 },
     };
     bool isWithinBudget = true;
     for (const Read& read : readsByKind) {
@@ -1003,6 +1003,18 @@ static void testInstructionsOfReadsByKindOfField()
         AOT_TEST_CHECK(!run.calledOperation && run.result == bitsOf(read.expected));
         isWithinBudget &= isWithinBudgetOfRead(run, read.budgetOfNextRead, nextReadByName, read.what);
     }
+
+    FakeExtension extension(FakeExtension::bitOfSlot);
+    extension.granule() = bitsOf(jsNumber(7));
+    FakeObjectWithShape withOutOfLineValue(FieldTable::shapeWithOutOfLineValue);
+    withOutOfLineValue.at<uint32_t>(offsetOfOrderWord) = 0;
+    withOutOfLineValue.field() = extension.encode(cageBase);
+    StubRun run = reads.read(withOutOfLineValue.address());
+    AOT_TEST_CHECK(!run.calledOperation && run.result == bitsOf(jsNumber(7)));
+    isWithinBudget &= isWithinBudgetOfRead(run, 56, firstReadByName, "a boxed value out of line"_s);
+    run = reads.readAgain(withOutOfLineValue.address());
+    AOT_TEST_CHECK(!run.calledOperation && run.result == bitsOf(jsNumber(7)));
+    isWithinBudget &= isWithinBudgetOfRead(run, 43, nextReadByName, "a boxed value out of line"_s);
     AOT_TEST_CHECK(isWithinBudget);
 #endif
 }
@@ -1066,9 +1078,9 @@ static void testInstructionsOfReadsOfMissingFieldsBelowClasses()
     };
     const Read readsByKind[] = {
         { "a boxed value"_s, FieldTable::shapeWithValue, SlotRepresentation::JSValue, 49, 49 },
-        { "an optional boolean"_s, FieldTable::shapeWithEncodedByte, SlotRepresentation::OptionalBoolean, 75, 62 },
-        { "an integer"_s, FieldTable::shapeWithInt32, SlotRepresentation::OptionalInt32, 95, 82 },
-        { "a narrow reference"_s, FieldTable::shapeWithNarrowCell, SlotRepresentation::OptionalCell32, 103, 90 },
+        { "an optional boolean"_s, FieldTable::shapeWithEncodedByte, SlotRepresentation::OptionalBoolean, 76, 63 },
+        { "an integer"_s, FieldTable::shapeWithInt32, SlotRepresentation::OptionalInt32, 99, 86 },
+        { "a narrow reference"_s, FieldTable::shapeWithNarrowCell, SlotRepresentation::OptionalCell32, 106, 93 },
     };
     bool isWithinBudget = true;
     for (const Read& read : readsByKind) {

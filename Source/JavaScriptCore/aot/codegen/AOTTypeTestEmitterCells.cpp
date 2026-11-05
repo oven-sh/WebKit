@@ -85,7 +85,7 @@ void TypeTestEmitter::forEachCellCase(CellPointer cell, const TypeTestPlan& plan
     if (testsClosureNumber) {
         visit([&] {
             Machine::DeclaredAccessesSuspension suspension(m_out);
-            return emitter<ClosureTestEmitter>().isClosureOfAny(cell, functions.span(), from);
+            return emitter<ClosureTestEmitter>().isClosureOfAny(cell, functions.span());
         });
     }
 
@@ -185,7 +185,7 @@ Condition TypeTestEmitter::passesCellTest(CellPointer cell, const CellTest& test
             return boolean(false);
         return equal(cell, emitter<ConstantEmitter>().builtinCell(test.builtin));
     case CellTestKind::IsClosureOf:
-        return emitter<ClosureTestEmitter>().isClosureOf(cell, test.function, from);
+        return emitter<ClosureTestEmitter>().isClosureOf(cell, test.function);
     case CellTestKind::IsSymbol:
         return equal(cell, emitter<ConstantEmitter>().keyConstant(test.symbol));
     case CellTestKind::SharingModeIs:

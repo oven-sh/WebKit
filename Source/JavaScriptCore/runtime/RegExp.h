@@ -94,7 +94,6 @@ public:
     static constexpr uint8_t stateWithBytecode() { return ByteCode; }
     static constexpr ptrdiff_t offsetOfRegExpBytecode() { return OBJECT_OFFSETOF(RegExp, m_regExpBytecode); }
 #endif
-    static constexpr ptrdiff_t offsetOfOvector() { return OBJECT_OFFSETOF(RegExp, m_ovector); }
     static constexpr ptrdiff_t offsetOfNumSubpatterns() { return OBJECT_OFFSETOF(RegExp, m_numSubpatterns); }
     static constexpr ptrdiff_t offsetOfAtom() { return OBJECT_OFFSETOF(RegExp, m_atom); }
     static constexpr ptrdiff_t offsetOfRareData() { return OBJECT_OFFSETOF(RegExp, m_rareData); }

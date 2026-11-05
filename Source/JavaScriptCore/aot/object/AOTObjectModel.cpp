@@ -397,30 +397,6 @@ bool RuntimeLayoutTable::cellPassesTest(const RuntimeCellTest& test, JSCell* cel
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-bool RuntimeLayoutTable::shapeHasType(const RuntimeType& type, uint32_t shape) const
-{
-    return std::ranges::any_of(type.cellTests(), [&](const RuntimeCellTest& test) {
-        switch (test.kind) {
-        case CellTestKind::IsObject:
-            return true;
-        case CellTestKind::CellTypeIs:
-            return test.cellTypes().contains(CompiledObjectType);
-        case CellTestKind::ShapeIn:
-            return passes(m_tables.shapeTestAt(test.shapeTestOffset()), shape);
-        case CellTestKind::IsCallable:
-        case CellTestKind::InheritsClassInfo:
-        case CellTestKind::IsPristine:
-        case CellTestKind::IsBuiltinCell:
-        case CellTestKind::IsClosureOf:
-        case CellTestKind::IsSymbol:
-        case CellTestKind::SharingModeIs:
-        case CellTestKind::IsNamespaceOf:
-            return false;
-        }
-        RELEASE_ASSERT_NOT_REACHED();
-    });
-}
-
 static_assert(ConservativeRoots::findsStructuresOfFrameCells);
 
 struct StructureTable::VariantMaps {

@@ -147,7 +147,7 @@ static bool tableOfImageHoldsObjectInStraightForm(StraightEmitter& emitter, cons
             return false;
         fields.append(*field);
     }
-    return !isCompiledObject || plan.allocation(program, layout, AllocationClassID(), fields.span());
+    return !isCompiledObject || plan.allocation(program, layout, fields.span());
 }
 
 static bool tableOfImageHoldsDataInStraightForm(StraightEmitter& emitter, const DataNode& root)

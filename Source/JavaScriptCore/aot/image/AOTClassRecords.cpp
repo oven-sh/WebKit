@@ -107,9 +107,9 @@ static Typed::MemberCreation creationOfMemberInClassRecord(const Typed::ClassCre
     return member < creation.members.size() ? creation.members[member] : Typed::MemberCreation::AtDefinition;
 }
 
-static LayoutID environmentHeldByClassObject(const Typed::Program& program, const Typed::Layout& layout)
+static LayoutID environmentHeldByClassObject(const Typed::Program& program, const Typed::Plan& plan, const Typed::Layout& layout)
 {
-    if (!layout.constructor)
+    if (!layout.constructor || plan.promotedEnvironments().numberOfRemovedCapturesOf(layout.constructor))
         return { };
     const auto& captures = program.at(layout.constructor).captures;
     if (captures.size() != 1 || !captures[0].written())
@@ -128,7 +128,7 @@ static bool memberCapturesAtMostEnvironmentOfClassObject(const Typed::Program& p
 static MethodData describeMemberInClassRecord(const TableEncoder& encoder, LayoutID classLayout, LayoutID environmentOfClassObject, const Typed::ClassMember& member, Typed::MemberCreation creation)
 {
     const Typed::Program& program = encoder.program;
-    bool takesEnvironment = member.function && !program.at(member.function).captures.isEmpty();
+    bool takesEnvironment = member.function && program.at(member.function).captures.size() > encoder.plan.promotedEnvironments().numberOfRemovedCapturesOf(member.function);
     MethodData method { };
     method.name = member.key ? nameInClassRecord(encoder, member.key, "a member in the record of"_s, classLayout) : 0;
     method.kindBits = static_cast<uint32_t>(member.kind);
@@ -204,7 +204,7 @@ ClassRecordParts collectClassRecordParts(const TableEncoder& encoder, LayoutID c
     const Typed::Layout& layout = program.at(classLayout);
     const Typed::ClassCreationPlan& creation = encoder.plan.slots().classCreation(classLayout);
     std::optional<FunctionID> classConstructor = layout.constructor ? encoder.findEntrypoint(layout.constructor) : std::nullopt;
-    LayoutID environment = environmentHeldByClassObject(program, layout);
+    LayoutID environment = environmentHeldByClassObject(program, encoder.plan, layout);
     ClassRecordParts parts;
     ClassData& data = parts.data;
 

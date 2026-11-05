@@ -388,12 +388,39 @@ void Code::setTypeOfJoinParameter(ValueID parameter, TypeID type)
     record.type = type;
 }
 
+void Code::makeTestAskInFull(ValueID test)
+{
+    RELEASE_ASSERT(!m_isSwept);
+    Operation& record = m_operations[checkedIndexInCode(test, m_operations.size())];
+    RELEASE_ASSERT(FlagMask::asksInFull(record.opcode));
+    record.flags |= *FlagMask::asksInFull(record.opcode);
+}
+
 void Code::makeTypeTestAskInFull(ValueID test)
 {
     RELEASE_ASSERT(!m_isSwept);
     Operation& record = m_operations[checkedIndexInCode(test, m_operations.size())];
     RELEASE_ASSERT(record.opcode == Opcode::TypeTest);
     record.flags |= *FlagMask::asksInFull(Opcode::TypeTest);
+}
+
+void Code::layClosureInFrame(ValueID closure, LoanOfClosure loan)
+{
+    RELEASE_ASSERT(m_isSwept && loan != LoanOfClosure::None);
+    Operation& record = m_operations[checkedIndexInCode(closure, m_operations.size())];
+    RELEASE_ASSERT(record.opcode == Opcode::NewClosure && record.storage() == AllocationStorage::Heap);
+    std::span<const uint32_t> payload = record.payload();
+    const_cast<uint32_t&>(payload[*PayloadWord::storage(Opcode::NewClosure)]) = encodePayloadWord(AllocationStorage::Frame);
+    const_cast<uint32_t&>(payload[*PayloadWord::loan(Opcode::NewClosure)]) = encodePayloadWord(loan);
+    m_holdsFrameCells = true;
+}
+
+void Code::leaveCheckOfProofToTestBehind(ValueID check)
+{
+    RELEASE_ASSERT(!m_isSwept);
+    Operation& record = m_operations[checkedIndexInCode(check, m_operations.size())];
+    RELEASE_ASSERT(record.opcode == Opcode::CheckProof);
+    record.flags |= *FlagMask::isLeftToTestBehind(Opcode::CheckProof);
 }
 
 ValueID Code::appendParameter(BlockID blockID, TypeID type, Representation representation, Origin origin)

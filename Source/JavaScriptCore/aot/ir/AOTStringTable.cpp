@@ -189,6 +189,7 @@ void StringTable::initialize(const BuiltinTable& builtins, const ParallelLoops& 
     for (size_t i = 0; i < numberOfStrings; ++i)
         recordBuiltinName(StringID(i));
     m_emptyString = intern(std::span<const uint8_t> { });
+    m_comma = intern(StringView(","_s));
     m_textOfUndefined = intern(StringView("undefined"_s));
     m_textOfNull = intern(StringView("null"_s));
     m_textOfTrue = intern(StringView("true"_s));

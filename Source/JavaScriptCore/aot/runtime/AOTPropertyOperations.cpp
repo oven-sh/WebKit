@@ -359,14 +359,12 @@ JSC_DEFINE_JIT_OPERATION(operationAOTScopeHasBinding, size_t, (Instance* instanc
     OPERATION_RETURN(scope, !blocked.toBoolean(globalObject));
 }
 
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNewDictionary, JSCell*, (Instance* instance, uint32_t inlineCapacity))
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNewDictionary, JSCell*, (Instance* instance))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTNewDictionary);
     DeferTerminationForAWhile deferTermination(vm);
     Structure* structure = globalObject->objectStructureForObjectConstructor();
-    if (inlineCapacity != JSFinalObject::defaultInlineCapacity)
-        structure = globalObject->structureCache().emptyObjectStructureForPrototype(globalObject, globalObject->objectPrototype(), inlineCapacity);
-    prepareFinalObjectAllocation(instance, static_cast<InlineAllocation>(static_cast<unsigned>(InlineAllocation::DefaultFinalObject) + (inlineCapacity - JSFinalObject::defaultInlineCapacity) / 2), structure);
+    prepareFinalObjectAllocation(instance, InlineAllocation::DefaultFinalObject, structure);
     OPERATION_RETURN(scope, constructEmptyObject(vm, structure));
 }
 

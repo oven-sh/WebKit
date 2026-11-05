@@ -16,7 +16,7 @@ struct CounterTestedInFrontOfLoop {
     TypeID tested;
 };
 
-Vector<CounterTestedInFrontOfLoop, 2> findCountersTestedInFrontOfLoop(Walker&, BlockID inputHead, std::span<const Reference> entering, Vector<GuessInFrontOfLoop, 4>& guesses);
+Vector<CounterTestedInFrontOfLoop, 2> findCountersTestedInFrontOfLoop(Walker&, BlockID inputHead, const LoopPreview&, std::span<const Reference> entering, Vector<GuessInFrontOfLoop, 4>& guesses);
 
 } } } // namespace JSC::AOT::Typed
 

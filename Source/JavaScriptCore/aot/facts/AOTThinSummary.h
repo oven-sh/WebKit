@@ -15,7 +15,6 @@
 #include "AOTOpcode.h"
 #include "AOTThreads.h"
 #include "AOTType.h"
-#include <algorithm>
 #include <memory>
 #include <optional>
 #include <wtf/ScopedLambda.h>
@@ -363,6 +362,8 @@ struct ThinSummary {
     Vector<SummaryConstruction::Part> partsOfConstructions;
     Vector<FieldReference> fieldsLeftEmpty;
     Vector<SummaryMakerThatEndsWhereItLeaves> makersThatEndWhereTheyLeave;
+    Vector<ValueID> allocationsOfMakersThatEndWhereTheyLeave;
+    bool makerEndsWhereItLeaves(ValueID allocation) const { return std::ranges::binary_search(allocationsOfMakersThatEndWhereTheyLeave, allocation.index(), { }, &ValueID::index); }
     Vector<FieldReference> fieldsFilledAtEndAlone;
     Vector<FieldReference> fieldsEmptyAtEndAlone;
     Vector<HalfOfAccessorInSummary> halvesOfAccessorsNotLaid;
@@ -373,6 +374,7 @@ struct ThinSummary {
     Vector<ValueID> environmentsMade;
     Vector<SummaryScopeStoredFirst> scopesStoredFirst;
     Vector<ValueID> environmentsHandedToFunctionsEntered;
+    Vector<ValueID> sitesThatHandOverCaptures;
     Vector<SummaryDefinition> definitions;
     Vector<FunctionID> functionsNamed;
     Vector<BlockID> blocksNeverEntered;
@@ -471,12 +473,6 @@ struct ThinSummary {
     bool has(SummaryTrait trait) const { return traits.contains(trait); }
 };
 
-struct LiteralOfVariable {
-    VariableID variable;
-    Opcode opcode { Opcode::Undefined };
-    uint64_t bits { 0 };
-};
-
 class ThinSummaries {
 public:
     explicit ThinSummaries(size_t numberOfFunctions) { m_summaries.grow(numberOfFunctions); }
@@ -490,17 +486,9 @@ public:
     const BitVector& textsSpelledThatNameFieldsNeverWritten() const LIFETIME_BOUND { return m_textsSpelledThatNameFieldsNeverWritten; }
     void setTextsSpelledThatNameFieldsNeverWritten(BitVector&& texts) { m_textsSpelledThatNameFieldsNeverWritten = WTF::move(texts); }
 
-    const LiteralOfVariable* findLiteralOfVariable(VariableID variable) const LIFETIME_BOUND
-    {
-        auto found = std::ranges::lower_bound(m_literalsOfVariables, variable, { }, &LiteralOfVariable::variable);
-        return found != m_literalsOfVariables.end() && found->variable == variable ? &*found : nullptr;
-    }
-    void setLiteralsOfVariables(Vector<LiteralOfVariable>&& literals) { m_literalsOfVariables = WTF::move(literals); }
-
 private:
     LargeList<ThinSummary> m_summaries;
     BitVector m_textsSpelledThatNameFieldsNeverWritten;
-    Vector<LiteralOfVariable> m_literalsOfVariables;
 };
 
 ThinSummaries scanBodies(const Program&, Diagnostics&, const ParallelLoops&, Mechanisms = allMechanisms);

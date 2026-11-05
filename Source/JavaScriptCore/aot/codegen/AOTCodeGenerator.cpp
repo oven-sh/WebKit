@@ -233,12 +233,9 @@ bool CodeGenerator::recordSitesWithoutCode()
             sites.inlineCallSites.append(0);
             continue;
         }
-        uint32_t keptCalleePlusOne = frame.calleeIsKeptInFrame ? sites.addKeptCallee(inlineFrames, frame.callPosition, frame.parent) : 0;
         sites.inlineCallSites.append(sites.addSite({
             .origin = { .position = frame.callPosition, .inlineFrame = frame.parent, .isPartOfConstruction = frame.callIsPartOfConstruction || frame.isConstruction },
             .kind = frame.isConstruction ? CallSiteKind::Construct : CallSiteKind::Plain,
-            .callsOwnFunctionObject = frame.callsOwnFunctionObject,
-            .keptCalleePlusOne = keptCalleePlusOne,
         }));
     }
     sites.numberOfSitesWithoutCode = sites.positions.size();
@@ -399,12 +396,45 @@ void CodeGenerator::findDominators()
             firstWaysIn[target] = index;
         }
     }
+    constexpr int64_t stepsOfShortClimbsForEachPlace = 4;
+    int64_t stepsLeftForShortClimbs = stepsOfShortClimbsForEachPlace * numberOfPlaces;
+    std::span<uint32_t> depths;
+    std::span<uint32_t> leaps;
+    uint32_t numberOfPlacesHung = 1;
+    uint32_t numberOfPlacesWithDominatorOfRound = 1;
+    bool dominatorHasMovedBehindRound = false;
     auto lastOnEveryWayToBoth = [&](uint32_t found, uint32_t other) {
+        if (stepsLeftForShortClimbs >= 0 || dominatorHasMovedBehindRound) [[likely]] {
+            while (found != other) {
+                if (found > other)
+                    found = m_dominatorsByPlace[found];
+                else
+                    other = m_dominatorsByPlace[other];
+                --stepsLeftForShortClimbs;
+            }
+            return found;
+        }
+        if (leaps.empty()) {
+            depths = allocateSpan<uint32_t>(arena, numberOfPlaces);
+            leaps = allocateSpan<uint32_t>(arena, numberOfPlaces);
+            depths[root] = 0;
+            leaps[root] = root;
+        }
+        for (; numberOfPlacesHung < numberOfPlacesWithDominatorOfRound; ++numberOfPlacesHung) {
+            uint32_t above = m_dominatorsByPlace[numberOfPlacesHung];
+            uint32_t leap = leaps[above];
+            depths[numberOfPlacesHung] = depths[above] + 1;
+            leaps[numberOfPlacesHung] = depths[above] - depths[leap] == depths[leap] - depths[leaps[leap]] ? leaps[leap] : above;
+        }
+        if (depths[found] < depths[other])
+            std::swap(found, other);
+        uint32_t depth = depths[other];
+        while (depths[found] > depth)
+            found = depths[leaps[found]] >= depth ? leaps[found] : m_dominatorsByPlace[found];
         while (found != other) {
-            if (found > other)
-                found = m_dominatorsByPlace[found];
-            else
-                other = m_dominatorsByPlace[other];
+            bool leapsDiffer = leaps[found] != leaps[other];
+            found = leapsDiffer ? leaps[found] : m_dominatorsByPlace[found];
+            other = leapsDiffer ? leaps[other] : m_dominatorsByPlace[other];
         }
         return found;
     };
@@ -432,14 +462,23 @@ void CodeGenerator::findDominators()
 
     for (bool changed = true; changed;) {
         changed = false;
+        numberOfPlacesHung = 1;
+        dominatorHasMovedBehindRound = false;
         for (uint32_t place = 1; place < numberOfPlaces; ++place) {
             if (BlockID predecessor = m_singlePredecessors[m_order[place - 1].index()])
                 m_dominatorsByPlace[place] = m_places[predecessor.index()];
-            else
+            else {
+                numberOfPlacesWithDominatorOfRound = place;
                 takeWaysInto(place, false);
+            }
         }
-        for (uint32_t target : targetsOfWaysThatComeRound)
-            changed |= takeWaysInto(target, true);
+        numberOfPlacesWithDominatorOfRound = numberOfPlaces;
+        for (uint32_t target : targetsOfWaysThatComeRound) {
+            if (takeWaysInto(target, true)) {
+                changed = true;
+                dominatorHasMovedBehindRound = true;
+            }
+        }
     }
 }
 
@@ -774,6 +813,15 @@ ALWAYS_INLINE void CodeGenerator::generate(const ValueContext& context)
         dispatchWatched(context);
     else
         dispatch(context);
+    if (!m_closuresWhoseLivesEndBehindCalls.isEmpty()) [[unlikely]] {
+        m_closuresWhoseLivesEndBehindCalls.removeAllMatching([&](const std::pair<ValueID, ValueID>& lent) {
+            if (lent.second != context.id())
+                return false;
+            if (!m_hasFailed && currentBlockIsOpen())
+                emitter<HintEmitter>().endLifeOf(context, lent.first);
+            return true;
+        });
+    }
     m_out.setOrigin(originOfUser);
     m_operation = user;
     if (m_checksAllocation) [[unlikely]] {

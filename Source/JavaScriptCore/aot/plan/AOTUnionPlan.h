@@ -13,7 +13,7 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-Vector<uint32_t> orderOfLayoutsForShapeNumbers(Program&, const Facts&, const SlotPlan&);
+Vector<uint32_t> orderOfLayoutsForShapeNumbers(Program&, const Facts&, const StorageOfLayouts&);
 
 struct RowsOfSlotPlan {
     static constexpr uint32_t noPlace = UINT32_MAX;
@@ -24,7 +24,13 @@ struct RowsOfSlotPlan {
     const BitVector& layoutsWithHiddenWords;
     std::span<const uint8_t> widths { };
 };
-void placeFieldsOfUnions(const Program&, const LinkTables&, const Families&, RowsOfSlotPlan, NOESCAPE const ScopedLambda<bool(LayoutID)>& hasCells, NOESCAPE const ScopedLambda<uint32_t()>& addPlace);
+struct LayoutsBelowTheirBases {
+    static constexpr uint32_t isNotTouched = UINT32_MAX;
+    Vector<uint32_t> depths;
+    Vector<LayoutID> layouts;
+};
+LayoutsBelowTheirBases orderLayoutsBelowTheirBases(const Program&);
+void placeFieldsOfUnions(const Program&, const LinkTables&, const Families&, const LayoutsBelowTheirBases&, RowsOfSlotPlan, NOESCAPE const ScopedLambda<bool(LayoutID)>& hasCells, NOESCAPE const ScopedLambda<uint32_t()>& addPlace);
 
 } } } // namespace JSC::AOT::Typed
 

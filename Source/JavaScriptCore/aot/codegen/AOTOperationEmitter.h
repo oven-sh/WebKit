@@ -38,11 +38,8 @@ struct CallOptions {
     std::optional<ThrowSite> throwSite { };
     BuiltinID calledBuiltin { };
     FunctionID constructedCallee { };
-    uint32_t keptCalleePlusOne { 0 };
     bool constructs { false };
-    bool isTailCall { false };
     bool callerHasLeft { false };
-    bool callsOwnFunctionObject { false };
     bool isOnRarePath { false };
     bool accessesCollectorState { false };
     bool writesArgumentBuffer { false };
@@ -75,7 +72,7 @@ protected:
     const Operation& operationAt(ValueID id) const LIFETIME_BOUND { return m_code.at(id); }
     Opcode opcodeOf(ValueID id) const { return m_code.at(id).opcode; }
     TypeID typeIDOf(ValueID id) const { return m_code.at(id).type; }
-    ALWAYS_INLINE Type typeOf(ValueID id) const { return m_generator.typeOf(id); }
+    Type typeOf(ValueID id) const { return m_generator.typeOf(id); }
     Representation representationOf(ValueID id) const { return m_code.at(id).representation; }
     bool isDeferredClosure(ValueID id) const { return m_generator.isDeferredClosure(id); }
     const Effects& effectsOf(const OperationContext& context LIFETIME_BOUND) const { return m_generator.effectsOf(context); }
@@ -89,13 +86,13 @@ protected:
     bool functionHasHandlers() const { return m_generator.hasHandlers(); }
     bool hasOneInstance() const;
 
-    ALWAYS_INLINE Operand get(ValueID id) const { return m_generator.get(id); }
-    template<typename T> ALWAYS_INLINE T in(ValueID id) const { return m_generator.getIn(id, T::representation).template as<T>(); }
+    Operand get(ValueID id) const { return m_generator.get(id); }
+    template<typename T> T in(ValueID id) const { return m_generator.getIn(id, T::representation).template as<T>(); }
     template<typename T> std::optional<T> inOptional(ValueID id) const { return id ? std::optional<T>(in<T>(id)) : std::nullopt; }
-    ALWAYS_INLINE Boxed boxed(ValueID id) const { return in<Boxed>(id); }
+    Boxed boxed(ValueID id) const { return in<Boxed>(id); }
     Integer integerOf(ValueID);
 
-    ALWAYS_INLINE void define(const ValueContext& value, Operand result) { m_generator.define(value, result); }
+    void define(const ValueContext& value, Operand result) { m_generator.define(value, result); }
     void defineNarrowed(const ValueContext&, Operand);
     void defineTest(const ValueContext& value, Condition result) { m_generator.defineTest(value, result); }
     void defineTestByBranching(const ValueContext&, NOESCAPE const Invocable<void(BranchTargets)> auto& branchOnTest);

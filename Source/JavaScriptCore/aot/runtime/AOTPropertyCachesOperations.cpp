@@ -13,7 +13,6 @@
 #include "AOTClosure.h"
 #include "AOTClosureTable.h"
 #include "AOTErrorMessages.h"
-#include "AOTFrameArrays.h"
 #include "AOTObject.h"
 #include "AOTObjectInternal.h"
 #include "AOTObjectModel.h"
@@ -178,7 +177,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTGetByIdAndCache, EncodedJSValue, (Instance*
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTGetByIdAndCache);
     NamedAccess access { instance, identifierAt(instance, key), key };
-    JSValue base = heapValueOf(instance, JSValue::decode(encodedBase));
+    JSValue base = JSValue::decode(encodedBase);
     if (JSValue value = tryGetFromPermanentDictionary(instance, base, access.ident.impl()))
         OPERATION_RETURN(scope, JSValue::encode(value));
     if (base.isUndefinedOrNull()) [[unlikely]] {
@@ -489,7 +488,7 @@ static JSValue getByVal(JSGlobalObject* globalObject, JSValue base, JSValue prop
 JSC_DEFINE_JIT_OPERATION(operationAOTGetByVal, EncodedJSValue, (Instance* instance, EncodedJSValue encodedBase, EncodedJSValue encodedProperty))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTGetByVal);
-    OPERATION_RETURN(scope, JSValue::encode(getByVal(globalObject, heapValueOf(instance, JSValue::decode(encodedBase)), JSValue::decode(encodedProperty))));
+    OPERATION_RETURN(scope, JSValue::encode(getByVal(globalObject, JSValue::decode(encodedBase), JSValue::decode(encodedProperty))));
 }
 
 static const ProxyAccessWords& proxyAccessWords(EncodedJSValue* words) { return *std::bit_cast<const ProxyAccessWords*>(words); }
@@ -614,7 +613,7 @@ static JSValue getFromCellAndCache(Instance* instance, JSValue base, const Ident
 JSC_DEFINE_JIT_OPERATION(operationAOTGetByValAndCache, EncodedJSValue, (Instance* instance, EncodedJSValue encodedBase, EncodedJSValue encodedProperty))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTGetByValAndCache);
-    JSValue base = heapValueOf(instance, JSValue::decode(encodedBase));
+    JSValue base = JSValue::decode(encodedBase);
     JSValue property = JSValue::decode(encodedProperty);
     if (auto longKeyName = findNameEqualToLongString(base, property)) [[unlikely]]
         OPERATION_RETURN(scope, JSValue::encode(*longKeyName ? asObject(base)->get(globalObject, Identifier::fromUid(vm, *longKeyName)) : jsUndefined()));
@@ -839,7 +838,7 @@ static bool hasByValAndCache(Instance* instance, JSObject* object, JSValue prope
 JSC_DEFINE_JIT_OPERATION(operationAOTInByIdAndCache, size_t, (Instance* instance, EncodedJSValue encodedBase, uint32_t key))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTInByIdAndCache);
-    JSValue base = heapValueOf(instance, JSValue::decode(encodedBase));
+    JSValue base = JSValue::decode(encodedBase);
     if (!base.isObject()) {
         throwException(globalObject, scope, createKeyTestOfNonObjectError(globalObject, base));
         OPERATION_RETURN(scope, 0);
@@ -850,7 +849,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTInByIdAndCache, size_t, (Instance* instance
 JSC_DEFINE_JIT_OPERATION(operationAOTInByValAndCache, size_t, (Instance* instance, EncodedJSValue encodedBase, EncodedJSValue encodedProperty))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTInByValAndCache);
-    JSValue base = heapValueOf(instance, JSValue::decode(encodedBase));
+    JSValue base = JSValue::decode(encodedBase);
     if (!base.isObject()) {
         throwException(globalObject, scope, createKeyTestOfNonObjectError(globalObject, base));
         OPERATION_RETURN(scope, 0);
@@ -861,7 +860,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTInByValAndCache, size_t, (Instance* instanc
 JSC_DEFINE_JIT_OPERATION(operationAOTHasOwnByIdAndCache, size_t, (Instance* instance, EncodedJSValue encodedBase, uint32_t key))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTHasOwnByIdAndCache);
-    JSValue base = heapValueOf(instance, JSValue::decode(encodedBase));
+    JSValue base = JSValue::decode(encodedBase);
     if (base.isObject()) [[likely]]
         OPERATION_RETURN(scope, hasAndCache(instance, asObject(base), instance->state->propertyCaches->nameOf(key), false));
     JSObject* object = base.toObject(globalObject);
@@ -872,7 +871,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTHasOwnByIdAndCache, size_t, (Instance* inst
 JSC_DEFINE_JIT_OPERATION(operationAOTHasOwnByValAndCache, size_t, (Instance* instance, EncodedJSValue encodedBase, EncodedJSValue encodedProperty))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTHasOwnByValAndCache);
-    JSValue base = heapValueOf(instance, JSValue::decode(encodedBase));
+    JSValue base = JSValue::decode(encodedBase);
     JSValue property = JSValue::decode(encodedProperty);
     if (base.isObject()) [[likely]]
         OPERATION_RETURN(scope, hasByValAndCache(instance, asObject(base), property, false));

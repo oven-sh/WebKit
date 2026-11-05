@@ -133,7 +133,7 @@ export default b.declarations(
           returns: b.int(0, 3 * (2 ** 31 - 1)),
           capability: "heap",
           throws: true,
-          uses: { string: [b.readAsCharacters], encoding: b.inspected },
+          uses: { string: b.inspected, encoding: b.inspected },
           implementation: b.inline("StringUTF8ByteLength", { otherwise: b.hostCall }),
         },
         {

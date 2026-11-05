@@ -837,6 +837,27 @@ void generateReadAtSite(StubAssembler& jit)
     }
 }
 
+StubSignature signatureOfReadAtSiteUnlessAsMade(StubKey key)
+{
+    return signatureOfReadAtSite(key);
+}
+
+void generateReadAtSiteUnlessAsMade(StubAssembler& jit)
+{
+    const ReadAtSiteForm form = readAtSiteFormOf(jit.key());
+    StubKey reads = readAtSite(form.receiver, form.name);
+    if (jit.key().operandRegister())
+        reads = reads.withOperandRegister(*jit.key().operandRegister());
+    if (form.receiver != ReceiverAtSite::IsCell) {
+        jit.jumpToStub(reads);
+        return;
+    }
+    Jump isNotAsMade = branchIfNotPristine(jit, jit.operand(0));
+    jit.move(TrustedImm64(JSValue::encode(JSValue())), jit.result());
+    jit.returnToCaller();
+    jit.linkToStub(isNotAsMade, reads);
+}
+
 StubSignature signatureOfReadAtSiteOfNarrowField(StubKey key)
 {
     return signatureOfReadAtSite(key);

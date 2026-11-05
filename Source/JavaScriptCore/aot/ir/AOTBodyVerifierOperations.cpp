@@ -361,7 +361,7 @@ void BodyVerifier::verifyRuleOfOpcode(const BodyBlock& block, uint32_t indexInBl
     case Opcode::StackStringBuilderAppendStringRange: case Opcode::StackStringBuilderAppendBoolean: case Opcode::StackStringBuilderAppendStringOrNullish: case Opcode::StackStringBuilderAppendValue:
     case Opcode::ResolveCallTarget: case Opcode::CallResolved: case Opcode::RegExpMatchLiteral: case Opcode::CallInline:
     case Opcode::Box: case Opcode::Unbox: case Opcode::IntegerToNumber: case Opcode::NumberToInteger: case Opcode::WidenInteger: case Opcode::NarrowInteger: case Opcode::Decode: case Opcode::Compress:
-    case Opcode::Narrowed: case Opcode::ClearFrameCell: case Opcode::EndLifeOfCell: case Opcode::CheckProof:
+    case Opcode::Narrowed: case Opcode::EndLifeOfCell: case Opcode::CheckProof:
         RELEASE_ASSERT_NOT_REACHED();
     }
     RELEASE_ASSERT_NOT_REACHED();

@@ -124,14 +124,69 @@ static bool standsForObjectInProgramFacts(const BuiltinTable& builtins, BuiltinI
     return isObjectKind(entry.kind) || entry.memberCount;
 }
 
+static bool mayHoldObjectInProgramFacts(const BuiltinTable& builtins, BuiltinID canonical)
+{
+    if (standsForObjectInProgramFacts(builtins, canonical))
+        return true;
+    std::span<const BuiltinOverload> rows = builtins.overloadsOf(canonical);
+    return rows.empty() || std::ranges::any_of(rows, [&](const BuiltinOverload& row) {
+        return row.isUndeclared() || !row.result.type || builtins.at(row.result.type).mayBeObject();
+    });
+}
+
 static const BuiltinCondition* optionThatRunsCodeInProgramFacts(const BuiltinTable& builtins, BuiltinID canonical)
 {
     const BuiltinUnseenCode* row = builtins.unseenCodeOf(canonical);
     return row && row->condition && row->condition->hasProperty ? row->condition : nullptr;
 }
 
+static BuiltinID outermostHolderWithFeatureInProgramFacts(const BuiltinTable& builtins, BuiltinID builtin, uint32_t feature)
+{
+    BuiltinID outermost = builtin;
+    for (BuiltinID holder = builtins.at(builtin).holder; holder; holder = builtins.at(holder).holder) {
+        holder = builtins.canonicalID(holder);
+        bool hasFeature = std::ranges::any_of(builtins.featureUsesOf(holder), [&](const BuiltinFeatureUse& line) {
+            return static_cast<uint32_t>(line.feature) == feature;
+        });
+        if (hasFeature)
+            outermost = holder;
+    }
+    return outermost;
+}
+
+static bool isCharacterOfWordInProgramFacts(uint8_t character)
+{
+    return isASCIIAlphanumeric(character) || character == '_' || character == '$';
+}
+
+static void forEachWordInProgramFacts(std::span<const uint8_t> text, NOESCAPE const Invocable<void(std::span<const uint8_t>)> auto& functor)
+{
+    for (size_t start = 0; start < text.size();) {
+        if (!isCharacterOfWordInProgramFacts(text[start])) {
+            ++start;
+            continue;
+        }
+        size_t end = start + 1;
+        while (end < text.size() && isCharacterOfWordInProgramFacts(text[end]))
+            ++end;
+        functor(text.subspan(start, end - start));
+        start = end;
+    }
+}
+
+static unsigned placeInFilterOfWordsInProgramFacts(std::span<const uint8_t> word)
+{
+    return (word.size() * 131 + word.front() * 31 + word.back()) & 4095;
+}
+
+struct BuiltinSpelledInProgramFacts {
+    std::span<const uint8_t> text;
+    BuiltinID builtin;
+    bool isMethod { false };
+};
+
 struct RowsOfProgramFacts {
-    explicit RowsOfProgramFacts(const BuiltinTable&);
+    RowsOfProgramFacts(const BuiltinTable&, const std::array<uint64_t, 8>& featuresKeptOnlyWhenNamed);
 
     static constexpr uint32_t bitOfArgument(size_t argument) { return 1u << std::min<size_t>(argument, 31); }
 
@@ -142,6 +197,8 @@ struct RowsOfProgramFacts {
     BuiltinName href;
     BitVector areEvents;
     BitVector writeUnderKeysOfCalls;
+    Vector<BuiltinSpelledInProgramFacts> builtinsKeptOnlyWhenNamed;
+    BitVector filterOfWords;
 };
 
 static bool writesUnderKeyOfCallInProgramFacts(const BuiltinPropertyAction& action)
@@ -177,7 +234,7 @@ static constexpr bool readsDataOfLocalesInProgramFacts(RemovableFeature feature)
     return feature == IntlCollation || feature == IntlNumberFormat || feature == IntlDateTimeFormat || feature == IntlUnits || feature == IntlSegmenter || feature == IntlDisplayNames || feature == IntlOther;
 }
 
-RowsOfProgramFacts::RowsOfProgramFacts(const BuiltinTable& builtins)
+RowsOfProgramFacts::RowsOfProgramFacts(const BuiltinTable& builtins, const std::array<uint64_t, 8>& featuresKeptOnlyWhenNamed)
     : readLocalesWithoutDescription(builtins.builtinCount())
     , startWorkers(builtins.builtinCount())
     , areEvents(builtins.builtinCount())
@@ -221,10 +278,32 @@ RowsOfProgramFacts::RowsOfProgramFacts(const BuiltinTable& builtins)
     if (BuiltinID constructor = classOfURLs ? builtins.at(classOfURLs).constructor : BuiltinID())
         constructorOfURLs = builtins.canonicalID(constructor);
     href = builtins.nameOf(byteCast<uint8_t>("href"_s.span()));
+
+    BitVector standForFeature(builtins.builtinCount());
+    for (uint32_t index = 0; index < builtins.builtinCount(); ++index) {
+        for (const BuiltinFeatureUse& line : builtins.featureUsesOf(BuiltinID(index))) {
+            auto feature = static_cast<uint32_t>(line.feature);
+            if (featuresKeptOnlyWhenNamed[feature / 64] >> feature % 64 & 1)
+                standForFeature.quickSet(outermostHolderWithFeatureInProgramFacts(builtins, builtins.canonicalID(BuiltinID(index)), feature).index());
+        }
+    }
+    filterOfWords.ensureSize(4096);
+    for (uint32_t index = 0; index < builtins.builtinCount(); ++index) {
+        const Builtin& entry = builtins.at(BuiltinID(index));
+        BuiltinID canonical = builtins.canonicalID(BuiltinID(index));
+        if (!standForFeature.quickGet(canonical.index()) || !entry.name || entry.kind == BuiltinKind::Prototype || builtins.isSymbolName(entry.name))
+            continue;
+        bool hangsOnPrototype = entry.holder && builtins.at(entry.holder).kind == BuiltinKind::Prototype;
+        std::span<const uint8_t> text = builtins.textOf(entry.name);
+        if (text.empty() || (entry.kind == BuiltinKind::Constructor && hangsOnPrototype))
+            continue;
+        builtinsKeptOnlyWhenNamed.append(BuiltinSpelledInProgramFacts { text, canonical, hangsOnPrototype });
+        filterOfWords.quickSet(placeInFilterOfWordsInProgramFacts(text));
+    }
 }
 
 struct FindingOfProgramFacts {
-    enum class Kind : uint8_t { UseOfBuiltin, ReadOfAnyMember, WriteOnBuiltin, PrototypeChangeOfBuiltin, NameStoredByRow, NameReadOffUnknownValue, ReadThatNoRowAnswers, KeysOfBuiltinListed, OptionThatRunsCode, UnseenCode, WorkerEntry, WorkerStartWithoutName, URLThatStartsWorker, URLThatLeavesBody, NamedModule, LoaderHandedToText, CallOfEvent };
+    enum class Kind : uint8_t { UseOfBuiltin, ReadOfAnyMember, WriteOnBuiltin, PrototypeChangeOfBuiltin, NameStoredByRow, NameReadOffUnknownValue, ReadThatNoRowAnswers, KeysOfBuiltinListed, OptionThatRunsCode, UnseenCode, WorkerEntry, WorkerStartWithoutName, URLThatStartsWorker, URLThatLeavesBody, NamedModule, LoaderHandedToText, CallOfEvent, BuiltinSpelledInText };
 
     Kind kind { Kind::UseOfBuiltin };
     uint8_t detail { 0 };
@@ -348,6 +427,8 @@ private:
     bool passOn(ValueID argument, ValueID parameter, const BodyBlock& from);
 
     void look(const BodyValue&);
+    void noteBuiltinsSpelledIn(StringID, bool standsInData, const BodyValue&);
+    void noteBuiltinsSpelledIn(const DataNode&, const BodyValue&);
     TypeID writtenTypeOf(ValueID) const;
     void forEachDeclarerOfFieldOf(ValueID receiver, PropertyKeyID, NOESCAPE const Invocable<void(LayoutID)> auto&) const;
     void noteReadUsedAsInteger(ValueID);
@@ -390,6 +471,7 @@ private:
     Vector<BuiltinID> m_builtinOfValue;
     BitVector m_mayBeSomethingElse;
     Vector<PropertyKeyID, 8> m_namesReadOffUnknownValues;
+    Vector<BuiltinID, 4> m_builtinsSpelledInTexts;
     Vector<ValueID> m_originOfURLOfValue;
 };
 
@@ -1096,9 +1178,44 @@ void BodyLookOfProgramFacts::noteWhatIsToldOfNumbers(const BodyValue& value)
         }
     }
 }
+void BodyLookOfProgramFacts::noteBuiltinsSpelledIn(StringID id, bool standsInData, const BodyValue& value)
+{
+    std::span<const uint8_t> text = m_program.string(id);
+    forEachWordInProgramFacts(text, [&](std::span<const uint8_t> word) {
+        if (!m_rows.filterOfWords.quickGet(placeInFilterOfWordsInProgramFacts(word)))
+            return;
+        bool isKeyInList = standsInData && word.size() == text.size();
+        for (const BuiltinSpelledInProgramFacts& spelled : m_rows.builtinsKeptOnlyWhenNamed) {
+            if ((isKeyInList && !spelled.isMethod) || !std::ranges::equal(spelled.text, word) || m_builtinsSpelledInTexts.contains(spelled.builtin))
+                continue;
+            m_builtinsSpelledInTexts.append(spelled.builtin);
+            note(Finding::Kind::BuiltinSpelledInText, 0, spelled.builtin.index(), witnessAt(value));
+        }
+    });
+}
+
+void BodyLookOfProgramFacts::noteBuiltinsSpelledIn(const DataNode& node, const BodyValue& value)
+{
+    if (const auto* text = node.tryAs<DataNode::String>())
+        noteBuiltinsSpelledIn(text->value, true, value);
+    else if (const auto* array = node.tryAs<DataNode::Array>()) {
+        for (const DataNode& element : array->elements)
+            noteBuiltinsSpelledIn(element, value);
+    } else if (const auto* object = node.tryAs<DataNode::Object>()) {
+        for (const DataMember& member : object->members)
+            noteBuiltinsSpelledIn(member.value, value);
+    }
+}
+
 void BodyLookOfProgramFacts::look(const BodyValue& value)
 {
     Opcode opcode = value.opcode();
+    if (m_isOfProgram && opcode == Opcode::String)
+        noteBuiltinsSpelledIn(value.as<Opcode::String>().string(), false, value);
+    if (m_isOfProgram && opcode == Opcode::Data) {
+        if (DataID data = value.as<Opcode::Data>().data())
+            noteBuiltinsSpelledIn(m_program.at(data).root, value);
+    }
     if (m_isOfProgram && operationsThatTellOfNumbersInProgramFacts.contains(opcode))
         noteWhatIsToldOfNumbers(value);
     if (loadsAndEvaluationsInProgramFacts.contains(opcode))
@@ -1180,7 +1297,8 @@ void BodyLookOfProgramFacts::run()
 {
     bool namesBuiltins = m_index.holdsAnyOf(giversOfBuiltinsInProgramFacts);
     bool mayReadNameOffUnknownValue = m_isOfProgram && m_index.holdsAnyOf(OpcodeSet { Opcode::PropGet, Opcode::PropSet, Opcode::PropDefine, Opcode::NewObject });
-    if (!namesBuiltins && !mayReadNameOffUnknownValue && !m_index.holdsAnyOf(loadsAndEvaluationsInProgramFacts))
+    bool maySpellBuiltins = m_isOfProgram && m_index.holdsAnyOf(OpcodeSet { Opcode::String, Opcode::Data });
+    if (!namesBuiltins && !mayReadNameOffUnknownValue && !maySpellBuiltins && !m_index.holdsAnyOf(loadsAndEvaluationsInProgramFacts))
         return;
     if (namesBuiltins)
         m_builtinOfValue.fill(BuiltinID(), m_index.numberOfValues());
@@ -1271,7 +1389,7 @@ static RefusedCode codeRefusedInProgramFacts(const Program& program, BuildContex
 
 OwnedLooksAtBodies lookAtBodies(const Program& program, const BodyIndexTable& bodies, const ThinSummaries& summaries, BuildContext& build)
 {
-    RowsOfProgramFacts rows(program.builtins());
+    RowsOfProgramFacts rows(program.builtins(), build.options().featuresKeptOnlyWhenNamed);
     RefusedCode refused = codeRefusedInProgramFacts(program, build);
     auto numberOfFunctions = static_cast<unsigned>(program.functions.size());
 
@@ -1509,16 +1627,7 @@ void FeaturesOfProgramFacts::appendRecordsOf(BuiltinID builtin)
 
 BuiltinID FeaturesOfProgramFacts::outermostHolderWithFeature(BuiltinID builtin, uint32_t feature) const
 {
-    BuiltinID outermost = builtin;
-    for (BuiltinID holder = m_builtins.at(builtin).holder; holder; holder = m_builtins.at(holder).holder) {
-        holder = m_builtins.canonicalID(holder);
-        bool hasFeature = std::ranges::any_of(m_builtins.featureUsesOf(holder), [&](const BuiltinFeatureUse& line) {
-            return static_cast<uint32_t>(line.feature) == feature;
-        });
-        if (hasFeature)
-            outermost = holder;
-    }
-    return outermost;
+    return outermostHolderWithFeatureInProgramFacts(m_builtins, builtin, feature);
 }
 
 void FeaturesOfProgramFacts::sortRecordsAndMarkUnnamed()
@@ -1532,8 +1641,6 @@ void FeaturesOfProgramFacts::sortRecordsAndMarkUnnamed()
         if (record.builtin == Wire::none)
             continue;
         BuiltinID builtin(record.builtin);
-        if (m_builtins.at(builtin).origin == BuiltinOrigin::Host)
-            continue;
         if (!m_isNamed.quickGet(outermostHolderWithFeature(builtin, record.feature).index()))
             record.kind = FeatureUseKind::Unnamed;
     }
@@ -1784,6 +1891,7 @@ void WritesOnBuiltinsInProgramFacts::take(const FindingOfProgramFacts& finding)
     case Kind::KeysOfBuiltinListed:
     case Kind::UnseenCode:
     case Kind::CallOfEvent:
+    case Kind::BuiltinSpelledInText:
     case Kind::WorkerEntry:
     case Kind::WorkerStartWithoutName:
     case Kind::URLThatStartsWorker:
@@ -1891,6 +1999,11 @@ public:
     void noteReadOfMember(BuiltinID);
     void noteLossOf(BuiltinID);
     void noteCallOutOfSight(BuiltinID builtin) { m_isCalledOutOfSightOfLink.quickSet(m_builtins.canonicalID(builtin).index()); }
+    void noteCallWithoutRow(BuiltinID builtin) { m_isCalledWithoutRow.quickSet(m_builtins.canonicalID(builtin).index()); }
+    bool anyRowMayApply(BuiltinID canonical) const { return m_isOutOfSight.quickGet(canonical.index()) || m_isCalledWithoutRow.quickGet(canonical.index()) || m_uses[canonical.index()].contains(BuiltinUse::Escaped); }
+    void noteConstruction(BuiltinID builtin) { noteUse(m_builtins.canonicalID(builtin), BuiltinUse::Constructed); }
+    bool mayRun(BuiltinID canonical) const;
+    bool mayRunOrHasObjects(BuiltinID canonical) const;
     void takeBuiltinsThatCameOutOfSight(Vector<BuiltinID>&);
     bool objectsMayHaveMethodCalledWithStartupLoads() const { return m_objectsMayHaveMethodCalledWithStartupLoads; }
     void settle();
@@ -1920,9 +2033,11 @@ private:
     void take(std::span<const Finding>);
     void takeNamesOf(FunctionID);
     bool linkSeesCallAt(const Witness&, BuiltinID canonical);
+    bool linkHasCallAt(const Witness&) const;
     void noteObjectsMayExist(BuiltinClassID);
     void noteTypeIsMade(BuiltinTypeID, BuiltinOrigin);
     void noteWhatRowsMake(BuiltinID canonical);
+    uint16_t stateOfRowsOf(BuiltinID canonical) const;
     void noteWhatBodyMakes(FunctionID);
     void lookThroughPrototypesOfClassesWithObjects();
     bool mayExport(const Module&, StringID name) const;
@@ -1958,6 +2073,7 @@ private:
     void listLoadsOfUnseenCode();
     void listLoadsOfMachineCode();
     void listBuiltinUses();
+    Vector<BuiltinUseRecord> usesWithWhatNobodyNamesAsEscaped() const;
     void listHoldersWhoseKeysAreNeverListed();
     void lockMembersThatNobodyWrites();
 
@@ -2008,13 +2124,17 @@ private:
     BitVector m_isLetGo;
     BitVector m_isOutOfSight;
     BitVector m_isCalledOutOfSightOfLink;
+    BitVector m_isCalledWithoutRow;
     Vector<uint64_t> m_callsBoundToBuiltins;
+    Vector<uint32_t> m_callSites;
     uint32_t m_functionOfCallsBoundToBuiltins { UINT32_MAX };
     uint32_t m_numberOfQuestionsAboutCallsOfFunction { 0 };
+    static constexpr uint32_t mostQuestionsAnsweredByGoingThroughCalls = 8;
     BitVector m_hasComeOutOfSight;
     BitVector m_classesWithObjects;
     BitVector m_typesMade;
-    BitVector m_rowsAreReadForWhatTheyMake;
+    BitVector m_typesMadeByHost;
+    Vector<uint16_t> m_stateWhenRowsWereRead;
     Vector<BuiltinClassID> m_classOfPrototype;
     bool m_objectsOfAnyClassMayExist { false };
     bool m_classesWithObjectsHaveGrown { true };
@@ -2024,6 +2144,8 @@ private:
     Vector<BuiltinID> m_holdersToSpreadBelow;
     Vector<BuiltinID> m_holdersToLookThrough;
     BitVector m_isFoundByName;
+    BitVector m_isCalledByCodeInSight;
+    BitVector m_isSpelledInTexts;
     bool m_eventsAreWithheld { true };
     BitVector m_keysAreListedInSight;
     BitVector m_namesThatRowsLayOnBuiltins;
@@ -2077,7 +2199,7 @@ BuilderOfProgramFacts::BuilderOfProgramFacts(const InputsOfProgramFacts& inputs,
     : m_inputs(inputs)
     , m_source(inputs.program)
     , m_builtins(inputs.program.builtins())
-    , m_rows(m_builtins)
+    , m_rows(m_builtins, inputs.build.options().featuresKeptOnlyWhenNamed)
     , m_refused(codeRefusedInProgramFacts(inputs.program, inputs.build))
     , m_globalObject(m_builtins.canonicalID(Builtins::GlobalThis))
     , m_tables(tables)
@@ -2086,13 +2208,15 @@ BuilderOfProgramFacts::BuilderOfProgramFacts(const InputsOfProgramFacts& inputs,
     , m_isLetGo(m_builtins.builtinCount())
     , m_isOutOfSight(m_builtins.builtinCount())
     , m_isCalledOutOfSightOfLink(m_builtins.builtinCount())
+    , m_isCalledWithoutRow(m_builtins.builtinCount())
     , m_hasComeOutOfSight(m_builtins.builtinCount())
     , m_classesWithObjects(m_builtins.classCount())
-    , m_rowsAreReadForWhatTheyMake(m_builtins.builtinCount())
     , m_keysAreListedInSight(m_builtins.builtinCount())
     , m_isLookedThrough(m_builtins.builtinCount())
     , m_mayBePassedOptionThatRunsCode(m_builtins.builtinCount())
     , m_isFoundByName(m_builtins.builtinCount())
+    , m_isCalledByCodeInSight(m_builtins.builtinCount())
+    , m_isSpelledInTexts(m_builtins.builtinCount())
     , m_writes(inputs.program, m_refused, inputs.linked.lookups)
     , m_namesOfProtocols(m_builtins.nameCount())
     , m_hasComeIntoReach(m_builtins.builtinCount())
@@ -2100,6 +2224,7 @@ BuilderOfProgramFacts::BuilderOfProgramFacts(const InputsOfProgramFacts& inputs,
     , m_modulesEvaluated(inputs.program.modules.size())
 {
     m_uses.fill(OptionSet<BuiltinUse>(), m_builtins.builtinCount());
+    m_stateWhenRowsWereRead.fill(0, m_builtins.builtinCount());
     m_witnesses.fill(noWitness, m_builtins.builtinCount());
     m_witnessesOfEscapes.fill(noWitness, m_builtins.builtinCount());
     for (Protocol protocol : allMembersOf<Protocol>) {
@@ -2184,8 +2309,11 @@ void BuilderOfProgramFacts::take(std::span<const Finding> findings)
                 m_isNamedByOperation.quickSet(finding.subject);
                 m_isNamedByOperation.quickSet(canonical.index());
             }
-            if (uses.containsAny(callingUsesInProgramFacts) && !linkSeesCallAt(finding.witness, canonical))
+            if (uses.containsAny(callingUsesInProgramFacts) && !linkSeesCallAt(finding.witness, canonical)) {
                 m_isCalledOutOfSightOfLink.quickSet(canonical.index());
+                if (!linkHasCallAt(finding.witness))
+                    m_isCalledWithoutRow.quickSet(canonical.index());
+            }
             if (uses.contains(BuiltinUse::Escaped)) {
                 if (m_rows.startWorkers.quickGet(canonical.index()) && standsInFront(finding.witness, m_whereConstructorOfWorkersIsLetGo))
                     m_whereConstructorOfWorkersIsLetGo = finding.witness;
@@ -2233,6 +2361,9 @@ void BuilderOfProgramFacts::take(std::span<const Finding> findings)
             if (static_cast<UnseenCodeCause>(finding.detail) == UnseenCodeCause::LoadsModuleByName)
                 m_loadsOfProgramByName.append(finding.witness);
             break;
+        case Finding::Kind::BuiltinSpelledInText:
+            m_isSpelledInTexts.quickSet(finding.subject);
+            break;
         case Finding::Kind::CallOfEvent:
             m_callsOfEventsNamedInBodies.append(finding);
             break;
@@ -2260,7 +2391,6 @@ void BuilderOfProgramFacts::take(std::span<const Finding> findings)
 
 bool BuilderOfProgramFacts::linkSeesCallAt(const Witness& witness, BuiltinID canonical)
 {
-    static constexpr uint32_t mostQuestionsAnsweredByGoingThroughCalls = 8;
     const auto& calls = m_inputs.summaries.at(FunctionID(witness.function)).calls;
     if (m_functionOfCallsBoundToBuiltins != witness.function) {
         m_functionOfCallsBoundToBuiltins = witness.function;
@@ -2275,13 +2405,26 @@ bool BuilderOfProgramFacts::linkSeesCallAt(const Witness& witness, BuiltinID can
     if (m_numberOfQuestionsAboutCallsOfFunction == mostQuestionsAnsweredByGoingThroughCalls) {
         ++m_numberOfQuestionsAboutCallsOfFunction;
         m_callsBoundToBuiltins.shrink(0);
+        m_callSites.shrink(0);
         for (const SummaryCall& call : calls) {
+            m_callSites.append(call.site.index());
             if (call.callee == SummaryCall::Callee::Builtin)
                 m_callsBoundToBuiltins.append(static_cast<uint64_t>(call.site.index()) << 32 | m_builtins.canonicalID(call.builtin).index());
         }
         std::ranges::sort(m_callsBoundToBuiltins);
+        std::ranges::sort(m_callSites);
     }
     return std::ranges::binary_search(m_callsBoundToBuiltins, static_cast<uint64_t>(witness.value) << 32 | canonical.index());
+}
+
+bool BuilderOfProgramFacts::linkHasCallAt(const Witness& witness) const
+{
+    RELEASE_ASSERT(m_functionOfCallsBoundToBuiltins == witness.function);
+    if (m_numberOfQuestionsAboutCallsOfFunction > mostQuestionsAnsweredByGoingThroughCalls)
+        return std::ranges::binary_search(m_callSites, witness.value);
+    return std::ranges::contains(m_inputs.summaries.at(FunctionID(witness.function)).calls, witness.value, [](const SummaryCall& call) {
+        return call.site.index();
+    });
 }
 
 void BuilderOfProgramFacts::noteObjectsMayExist(BuiltinClassID builtinClass)
@@ -2297,7 +2440,7 @@ void BuilderOfProgramFacts::noteObjectsMayExist(BuiltinClassID builtinClass)
 
 void BuilderOfProgramFacts::noteTypeIsMade(BuiltinTypeID type, BuiltinOrigin origin)
 {
-    if (!type || m_typesMade.set(type.index()))
+    if (!type || (origin == BuiltinOrigin::Host ? m_typesMadeByHost : m_typesMade).set(type.index()))
         return;
     const BuiltinType& made = m_builtins.at(type);
     if (origin == BuiltinOrigin::Host && made.flags.containsAny({ BuiltinTypeFlag::IsAnything, BuiltinTypeFlag::HasAnyObject }) && !std::exchange(m_objectsOfAnyClassMayExist, true))
@@ -2314,17 +2457,59 @@ void BuilderOfProgramFacts::noteTypeIsMade(BuiltinTypeID type, BuiltinOrigin ori
     }
 }
 
+bool BuilderOfProgramFacts::mayRun(BuiltinID canonical) const
+{
+    switch (m_builtins.at(canonical).kind) {
+    case BuiltinKind::Constructor:
+    case BuiltinKind::Function:
+    case BuiltinKind::Method:
+        return anyRowMayApply(canonical) || m_uses[canonical.index()].containsAny(callingUsesInProgramFacts);
+    case BuiltinKind::Namespace:
+    case BuiltinKind::Prototype:
+    case BuiltinKind::Accessor:
+    case BuiltinKind::DataProperty:
+    case BuiltinKind::Constant:
+    case BuiltinKind::NativeBinding:
+        return true;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+bool BuilderOfProgramFacts::mayRunOrHasObjects(BuiltinID canonical) const
+{
+    BuiltinClassID made = m_builtins.at(canonical).instanceClass;
+    return mayRun(canonical) || (made && (m_objectsOfAnyClassMayExist || m_classesWithObjects.quickGet(made.index())));
+}
+
+uint16_t BuilderOfProgramFacts::stateOfRowsOf(BuiltinID canonical) const
+{
+    static constexpr uint16_t isRead = 1 << 15;
+    static constexpr uint16_t anyRow = 1 << 14;
+    return static_cast<uint16_t>(isRead | (anyRowMayApply(canonical) ? anyRow : 0) | m_uses[canonical.index()].toRaw());
+}
+
 void BuilderOfProgramFacts::noteWhatRowsMake(BuiltinID canonical)
 {
-    BuiltinOrigin origin = m_builtins.at(canonical).origin;
+    const Builtin& entry = m_builtins.at(canonical);
+    bool isExportOfCompiledModule = entry.holder && compiledModuleWithObject(m_source, m_builtins.canonicalID(m_builtins.rootOf(canonical)));
+    BuiltinOrigin origin = isExportOfCompiledModule || entry.flags.contains(BuiltinFlag::IsCompilerHelper) ? BuiltinOrigin::Engine : entry.origin;
+    OptionSet<BuiltinUse> uses = m_uses[canonical.index()];
+    bool anyRow = anyRowMayApply(canonical) || callingUsesOf(entry.kind).isEmpty();
     auto notePlace = [&](const BuiltinPlace& place) {
         if (place.kind == BuiltinPlaceKind::NewValue)
             noteTypeIsMade(place.newValueType, origin);
     };
-    if (BuiltinClassID made = m_builtins.at(canonical).instanceClass)
-        noteObjectsMayExist(made);
+    if (entry.instanceClass && (anyRow || uses.containsAny(callingUsesInProgramFacts)))
+        noteObjectsMayExist(entry.instanceClass);
     for (const BuiltinOverload& overload : m_builtins.overloadsOf(canonical)) {
-        if (overload.isUndeclared() && !std::exchange(m_objectsOfAnyClassMayExist, true))
+        bool isTaken = anyRow || (overload.mode == BuiltinCallMode::Call ? uses.contains(BuiltinUse::Called) : overload.mode != BuiltinCallMode::Construct || uses.contains(BuiltinUse::Constructed));
+        if (!isTaken)
+            continue;
+        const RuntimeFunctionEntry* code = overload.isUndeclared() ? findRuntimeFunction(m_source, overload.code.implementation.function) : nullptr;
+        if ((code && code->function) || (isExportOfCompiledModule && overload.isUndeclared()))
+            continue;
+        bool constructsOperand = std::ranges::any_of(overload.flow.callbacks, &BuiltinCallback::constructs);
+        if (overload.isUndeclared() && !constructsOperand && !std::exchange(m_objectsOfAnyClassMayExist, true))
             m_classesWithObjectsHaveGrown = true;
         noteTypeIsMade(overload.result.type, origin);
         for (const BuiltinResultProperty& property : overload.result.properties)
@@ -2378,8 +2563,10 @@ void BuilderOfProgramFacts::lookThroughPrototypesOfClassesWithObjects()
                 if (BuiltinID prototype = m_builtins.findOwnMember(BuiltinID(index), BuiltinNames::prototype))
                     lookThrough(m_builtins.canonicalID(prototype));
             }
-            if (!m_rowsAreReadForWhatTheyMake.quickSet(index))
+            if (uint16_t state = stateOfRowsOf(BuiltinID(index)); m_stateWhenRowsWereRead[index] != state) {
+                m_stateWhenRowsWereRead[index] = state;
                 noteWhatRowsMake(BuiltinID(index));
+            }
         }
         if (std::exchange(m_classesWithObjectsHaveGrown, false)) {
             for (uint32_t index = 0; index < m_builtins.builtinCount(); ++index) {
@@ -2394,7 +2581,7 @@ void BuilderOfProgramFacts::lookThroughPrototypesOfClassesWithObjects()
         followWhatIsLetGo();
         uniteUsesOfSameObject();
     } while (m_classesWithObjectsHaveGrown || std::ranges::any_of(std::views::iota(uint32_t(0), static_cast<uint32_t>(m_uses.size())), [&](uint32_t index) {
-        return m_builtins.canonicalID(BuiltinID(index)).index() == index && !m_rowsAreReadForWhatTheyMake.quickGet(index) && !(m_uses[index] - OptionSet<BuiltinUse> { BuiltinUse::Tested }).isEmpty();
+        return m_builtins.canonicalID(BuiltinID(index)).index() == index && m_stateWhenRowsWereRead[index] != stateOfRowsOf(BuiltinID(index)) && !(m_uses[index] - OptionSet<BuiltinUse> { BuiltinUse::Tested }).isEmpty();
     }));
 }
 
@@ -2411,10 +2598,16 @@ void BuilderOfProgramFacts::take(const LookupsPastProgramObjects& lookups)
         noteReadOfMember(BuiltinID(static_cast<uint32_t>(index)));
     for (size_t index : lookups.builtinsCalled)
         noteCall(BuiltinID(static_cast<uint32_t>(index)));
+    for (size_t index : lookups.builtinsConstructed)
+        noteConstruction(BuiltinID(static_cast<uint32_t>(index)));
+    for (size_t index : lookups.builtinsCalledWithoutRow)
+        noteCallWithoutRow(BuiltinID(static_cast<uint32_t>(index)));
     for (size_t index : lookups.builtinsLetGo)
         noteLossOf(BuiltinID(static_cast<uint32_t>(index)));
     m_readsUnderComputedKeys |= lookups.readsUnderKeysNobodyKnows;
     m_nativeCodeMayHoldObjects |= lookups.nativeCodeMayHoldObjects;
+    for (size_t index : lookups.builtinsCalledByCode)
+        m_isCalledByCodeInSight.quickSet(m_builtins.canonicalID(BuiltinID(static_cast<uint32_t>(index))).index());
 }
 
 static bool isLibraryModuleWithoutCodeInProgramFacts(const Program& program, const Module& module)
@@ -2520,7 +2713,7 @@ void BuilderOfProgramFacts::spreadBelow(BuiltinID canonicalHolder)
 
 void BuilderOfProgramFacts::findMembersOffUnknownValues(BuiltinID canonicalHolder)
 {
-    if (!m_builtins.at(canonicalHolder).flags.containsAny({ BuiltinFlag::ListsAllMembers, BuiltinFlag::IsGlobalObject }) && (m_readsUnderComputedKeys || !m_namesRead.isEmpty()))
+    if (mayHoldObjectInProgramFacts(m_builtins, canonicalHolder) && !m_builtins.at(canonicalHolder).flags.containsAny({ BuiltinFlag::ListsAllMembers, BuiltinFlag::IsGlobalObject }) && (m_readsUnderComputedKeys || !m_namesRead.isEmpty()))
         m_objectsMayHaveMethodCalledWithStartupLoads = true;
     for (BuiltinID member : m_builtins.membersOf(canonicalHolder)) {
         BuiltinName name = m_builtins.at(member).name;
@@ -2539,6 +2732,9 @@ void BuilderOfProgramFacts::findMembersOffUnknownValues(BuiltinID canonicalHolde
         m_uses[member.index()].add(BuiltinUse::Read);
         if (isNamedByCode)
             m_isFoundByName.quickSet(member.index());
+        std::span<const BuiltinName> keysOfSpecies = m_builtins.keysReadBy(Protocol::Species);
+        if (!isNamedByCode && !isHandedOn && name == keysOfSpecies[0] && m_builtins.findMember(canonical, keysOfSpecies[1]).outcome == BuiltinMemberLookup::Outcome::Absent)
+            continue;
         m_isOutOfSight.quickSet(canonical.index());
         if (isNamed)
             m_uses[canonical.index()].add(callingUsesOf(m_builtins.at(canonical).kind));
@@ -2652,6 +2848,37 @@ void BuilderOfProgramFacts::listBuiltinUses()
         if (!m_uses[index].isEmpty())
             m_tables.builtinUses.append(BuiltinUseRecord { index, static_cast<BuiltinUse>(m_uses[index].toRaw()), m_witnesses[index] });
     }
+}
+
+Vector<BuiltinUseRecord> BuilderOfProgramFacts::usesWithWhatNobodyNamesAsEscaped() const
+{
+    static constexpr OptionSet<BuiltinUse> usesThatNameNothing { BuiltinUse::Tested, BuiltinUse::Escaped };
+    BitVector isNamed = m_isSpelledInTexts;
+    for (uint32_t index = 0; index < m_builtins.builtinCount(); ++index) {
+        bool isNamedInBody = m_isNamedByOperation.quickGet(index) || m_uses[index].containsAny({ BuiltinUse::Written, BuiltinUse::StoredByName });
+        if (!isNamedInBody && !m_isFoundByName.quickGet(index) && !m_isCalledByCodeInSight.quickGet(index))
+            continue;
+        const Builtin& entry = m_builtins.at(BuiltinID(index));
+        bool isClassFoundOffItsPrototype = entry.kind == BuiltinKind::Constructor && entry.holder && m_builtins.at(entry.holder).kind == BuiltinKind::Prototype;
+        if (isNamedInBody || !isClassFoundOffItsPrototype)
+            isNamed.quickSet(m_builtins.canonicalID(BuiltinID(index)).index());
+    }
+    Vector<BuiltinUseRecord> records = m_tables.builtinUses;
+    for (BuiltinUseRecord& record : records) {
+        auto uses = OptionSet<BuiltinUse>::fromRaw(static_cast<OptionSet<BuiltinUse>::StorageType>(record.uses));
+        if ((uses - OptionSet<BuiltinUse> { BuiltinUse::Tested }).isEmpty())
+            continue;
+        uint32_t canonical = m_builtins.canonicalID(BuiltinID(record.builtin)).index();
+        if (m_isSpelledInTexts.quickGet(canonical))
+            uses.add(BuiltinUse::Read);
+        else if (!isNamed.quickGet(canonical)) {
+            uses = (uses & usesThatNameNothing) | OptionSet<BuiltinUse> { BuiltinUse::Escaped };
+            if (!standsInTextOfProgram(record.witness))
+                record.witness = noWitness;
+        }
+        record.uses = static_cast<BuiltinUse>(uses.toRaw());
+    }
+    return records;
 }
 
 void BuilderOfProgramFacts::listHoldersWhoseKeysAreNeverListed()
@@ -3391,15 +3618,22 @@ void BuilderOfProgramFacts::listLibraryCodeLacked()
         if (m_builtins.canonicalID(builtin) != builtin || (m_uses[index] - OptionSet<BuiltinUse> { BuiltinUse::Tested }).isEmpty())
             continue;
         bool isNamed = m_isNamedByOperation.quickGet(index);
+        auto listUnlessHeld = [&](RuntimeFunctionID function) {
+            if (const RuntimeFunctionEntry* entry = findRuntimeFunction(m_source, function); entry && entry->function)
+                return;
+            if (m_builtins.contains(function) && !m_builtins.at(function).platforms.contains(targetOfThisBuild().platform))
+                return;
+            if (isNamed || isHeldByEveryProgram(function))
+                m_program.libraryFunctionsLacked.append(function);
+        };
         for (const BuiltinCalledFunction& called : m_builtins.calledFunctionsOf(builtin)) {
-            if (called.condition || !called.function)
-                continue;
-            if (const RuntimeFunctionEntry* entry = findRuntimeFunction(m_source, called.function); entry && entry->function)
-                continue;
-            if (m_builtins.contains(called.function) && !m_builtins.at(called.function).platforms.contains(targetOfThisBuild().platform))
-                continue;
-            if (isNamed || isHeldByEveryProgram(called.function))
-                m_program.libraryFunctionsLacked.append(called.function);
+            if (!called.condition && called.function)
+                listUnlessHeld(called.function);
+        }
+        bool mayRun = m_uses[index].containsAny(usesOfObjectItselfInProgramFacts) || m_isOutOfSight.quickGet(index) || m_isCalledOutOfSightOfLink.quickGet(index);
+        for (const BuiltinOverload& overload : m_builtins.overloadsOf(builtin)) {
+            if (mayRun && overload.code.implementation.function)
+                listUnlessHeld(overload.code.implementation.function);
         }
         if (!isNamed)
             continue;
@@ -3651,11 +3885,12 @@ void BuilderOfProgramFacts::takeBuiltinsThatCameIntoReach(Vector<BuiltinID>& lis
         BuiltinID builtin(index);
         if (m_builtins.canonicalID(builtin) != builtin || (m_uses[index] - OptionSet<BuiltinUse> { BuiltinUse::Tested }).isEmpty())
             continue;
-        if (m_hasComeIntoReach.quickSet(index))
+        if (!m_hasComeIntoReach.quickSet(index))
+            list.append(builtin);
+        if (m_objectsMayHaveMethodCalledWithStartupLoads || !mayRunOrHasObjects(builtin))
             continue;
-        list.append(builtin);
         const Builtin& entry = m_builtins.at(builtin);
-        bool givesSymbolInUse = std::ranges::any_of(m_builtins.overloadsOf(builtin), [&](const BuiltinOverload& overload) {
+        bool givesSymbolInUse = mayRun(builtin) && !entry.flags.contains(BuiltinFlag::IsCompilerHelper) && std::ranges::any_of(m_builtins.overloadsOf(builtin), [&](const BuiltinOverload& overload) {
             if (overload.isUndeclared() || !overload.result.type)
                 return overload.isUndeclared();
             const BuiltinType& given = m_builtins.at(overload.result.type);
@@ -3713,7 +3948,7 @@ void BuilderOfProgramFacts::run()
     lockMembersThatNobodyWrites();
     reportWritesThatLocksRefuse();
     reportLoadsUnderNamesThatNobodyHasRead();
-    m_tables.featureUses = FeaturesOfProgramFacts(m_inputs, m_refused).run(m_tables.builtinUses.span());
+    m_tables.featureUses = FeaturesOfProgramFacts(m_inputs, m_refused).run(usesWithWhatNobodyNamesAsEscaped().span());
     m_program.mayReadLegacyRegExpStatics = mayReadRecordOfLastMatch();
     m_program.matchesRegExps = m_program.unseenCodeCanRun || std::ranges::contains(m_tables.featureUses, static_cast<uint32_t>(RemovableFeature::RegExp), &FeatureUseRecord::feature);
     listLibraryCodeLacked();
@@ -3840,6 +4075,14 @@ void BuiltinsInReach::noteCalled(BuiltinID builtin)
     m_builder->noteCall(builtin);
 }
 
+void BuiltinsInReach::noteConstructed(BuiltinID builtin)
+{
+    if (m_linked->lookups.builtinsConstructed.set(builtin.index()))
+        return;
+    m_wasToldSomethingNew = true;
+    m_builder->noteConstruction(builtin);
+}
+
 void BuiltinsInReach::noteLetGo(BuiltinID builtin)
 {
     if (m_linked->lookups.builtinsLetGo.set(builtin.index()))
@@ -3853,12 +4096,45 @@ void BuiltinsInReach::noteCalledAtSite(FunctionID caller, ValueID site, bool isC
     m_linked->lookups.callsOfBuiltinsAtSites.append(LinkedCallOfBuiltin { caller, site, row, isConstruction });
 }
 
+void BuiltinsInReach::noteCalledByCode(BuiltinID builtin)
+{
+    m_linked->lookups.builtinsCalledByCode.set(builtin.index());
+}
+
 void BuiltinsInReach::noteCalledOutOfSight(BuiltinID builtin)
 {
     if (m_linked->lookups.builtinsCalledOutOfSight.set(builtin.index()))
         return;
     m_wasToldSomethingNew = true;
     m_builder->noteCallOutOfSight(builtin);
+}
+
+void BuiltinsInReach::noteCalledWithoutRow(BuiltinID builtin)
+{
+    if (m_linked->lookups.builtinsCalledWithoutRow.set(builtin.index()))
+        return;
+    m_wasToldSomethingNew = true;
+    m_builder->noteCallWithoutRow(builtin);
+}
+
+void BuiltinsInReach::noteCallMayRunCode(BuiltinID builtin)
+{
+    m_linked->lookups.builtinsWithCallsThatMayRunCode.set(builtin.index());
+}
+
+bool BuiltinsInReach::hasCallThatMayRunCode(BuiltinID canonical) const
+{
+    return m_linked->lookups.builtinsWithCallsThatMayRunCode.get(canonical.index()) || m_builder->anyRowMayApply(canonical);
+}
+
+bool BuiltinsInReach::mayRun(BuiltinID canonical) const
+{
+    return m_builder->mayRun(canonical);
+}
+
+bool BuiltinsInReach::mayRunOrHasObjects(BuiltinID canonical) const
+{
+    return m_builder->mayRunOrHasObjects(canonical);
 }
 
 bool BuiltinsInReach::mayBeHandedWhatIsNoTextNumberOrBoolean(BuiltinID canonical) const

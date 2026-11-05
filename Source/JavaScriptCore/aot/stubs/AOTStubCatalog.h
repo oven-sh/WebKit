@@ -28,7 +28,6 @@ struct StubRecording;
 
 namespace Typed {
 class Program;
-class SlotPlan;
 }
 
 struct StubOptions {
@@ -45,12 +44,8 @@ struct StubOptions {
 };
 
 struct StubPolicy {
-    bool readsTestOutOfLineValuesSecond { false };
-    bool readsTestDoublesSecond { false };
     bool shapesFitHalfword { true };
 };
-
-StubPolicy stubPolicyOf(const Typed::SlotPlan&);
 
 struct StubSummary {
     StubSignature signature;

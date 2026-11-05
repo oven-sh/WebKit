@@ -133,7 +133,7 @@ static bool listPlacesThatTakeCaptureInLinkCallbacks(const BodyReadInLinkCallbac
         name = taker;
         taker = index.onlyUsingValue(name);
     }
-    if (!taker || (index.opcodeOf(taker) != Opcode::Call && index.opcodeOf(taker) != Opcode::CallDirect))
+    if (!taker || (index.opcodeOf(taker) != Opcode::Call && index.opcodeOf(taker) != Opcode::CallDirect) || index.blockOf(taker) != index.blockOf(closure.id()))
         return false;
     std::optional<BodyUser> userOfCall = index.onlyUser(taker);
     if (userOfCall && userOfCall->kind == BodyUseKind::TerminatorOperand && index.terminator(userOfCall->block).kind() == TerminatorKind::ReturnCall)
@@ -253,7 +253,7 @@ static FunctionID functionThatTakesAtInLinkCallbacks(const LinkTables& tables, u
     return FunctionID(static_cast<uint32_t>(behind - tables.functions.begin()) - 1);
 }
 
-void findParametersThatAreOnlyCalled(const Program& program, const BodyIndexTable& bodies, const ThinSummaries& summaries, const ParallelLoops& loops, Mechanisms mechanisms, LinkTables& tables)
+void findParametersThatAreOnlyCalled(const Program& program, const BodyIndexTable& bodies, const ThinSummaries& summaries, const ParallelLoops& loops, Mechanisms mechanisms, bool takesCalleesToKeepNothing, LinkTables& tables)
 {
     if (!mechanisms.contains(Mechanism::CellsInFrames))
         return;
@@ -275,7 +275,7 @@ void findParametersThatAreOnlyCalled(const Program& program, const BodyIndexTabl
     auto judgeEntryParameter = [&](FunctionID id, const BodyIndex& index, unsigned entryParameter, Vector<HandingOnInLinkCallbacks>& handingsFound) {
         uint32_t place = tables.function(id).firstParameter + entryParameter;
         MentionsInLinkCallbacks mentions;
-        if (!isOnlyCalledInLinkCallbacks({ program, tables, index }, index.block(entryBlock).parameter(entryParameter), mentions))
+        if (!isOnlyCalledInLinkCallbacks({ program, tables, index }, index.block(entryBlock).parameter(entryParameter), mentions) && !takesCalleesToKeepNothing)
             return;
         LinkedParameter& arriving = tables.parameters[place];
         arriving.isOnlyCalled = true;
@@ -360,21 +360,40 @@ void findParametersThatAreOnlyCalled(const Program& program, const BodyIndexTabl
     });
     while (!takenBack.isEmpty())
         takeBackFromAllThatHandTo(takenBack.takeLast());
+}
 
-    Vector<uint32_t> foundCaptured;
-    auto tellAllThatHandTo = [&](uint32_t place) {
-        forEachThatHandsTo(place, [&](uint32_t from) {
-            LinkedParameter& giver = tables.parameters[from];
-            if (giver.isOnlyCalled && !std::exchange(giver.isCapturedWhereOnlyCalled, true))
-                foundCaptured.append(from);
-        });
-    };
-    forEachPlaceHandedTo([&](uint32_t place) {
-        if (tables.parameters[place].isCapturedWhereOnlyCalled)
-            tellAllThatHandTo(place);
-    });
-    while (!foundCaptured.isEmpty())
-        tellAllThatHandTo(foundCaptured.takeLast());
+void carryExpectationOfThisIntoCaptures(const Program& program, const BodyIndexTable& bodies, const ThinSummaries& summaries, LinkTables& tables)
+{
+    size_t numberOfFunctions = std::min<size_t>({ program.functions.size(), tables.functions.size(), summaries.size() });
+    for (uint32_t number = 0; number < numberOfFunctions; ++number) {
+        FunctionID maker(number);
+        const ThinSummary& summary = summaries.at(maker);
+        std::optional<unsigned> ownThis = summary.sitesThatHandOverCaptures.isEmpty() ? std::nullopt : program.at(maker).thisParameterIndex();
+        if (!ownThis || *ownThis >= tables.function(maker).numberOfParameters)
+            continue;
+        LinkedParameter arriving = tables.parametersOf(maker)[*ownThis];
+        const BodyIndex* index = arriving.expected && arriving.expectedIsDeclared ? bodies.find(maker) : nullptr;
+        if (!index || !index->numberOfBlocks())
+            continue;
+        ValueID held = index->block(entryBlock).parameter(*ownThis);
+        for (ValueID site : summary.sitesThatHandOverCaptures) {
+            BodyValue value = index->value(site);
+            if (value.opcode() != Opcode::NewClosure)
+                continue;
+            FunctionID made = value.as<Opcode::NewClosure>().function();
+            if (made.index() >= tables.functions.size() || program.at(made).kind == FunctionKind::Arrow)
+                continue;
+            std::span<const ValueID> operands = value.as<Opcode::NewClosure>().capturesOperands();
+            size_t numberOfCaptures = std::min<size_t>({ operands.size(), program.at(made).captures.size(), tables.function(made).numberOfParameters });
+            for (size_t capture = 0; capture < numberOfCaptures; ++capture) {
+                if (!operands[capture] || index->valueBehindCasts(operands[capture]) != held)
+                    continue;
+                LinkedParameter& captured = tables.parameters[tables.function(made).firstParameter + capture];
+                captured.expected = arriving.expected;
+                captured.expectedIsDeclared = true;
+            }
+        }
+    }
 }
 
 } } } // namespace JSC::AOT::Typed

@@ -1,13 +1,7 @@
-enum InitializationState { | engine Unknown StoredBeforeEveryRead SetAtCreation }
-enum ReadState { | engine Unknown OnlyCalled OnlyAccessed NeverRead OnlyWhereDefined }
-enum ClosureDeferral { | engine Unknown CapturesNothing CapturesObject CapturesEnvironment }
+enum InitializationState { | engine Unknown StoredBeforeEveryRead }
 enum Occupancy { | engine Unknown FilledAtBirth FilledWithValueAtBirth AlwaysFilled }
 enum ExecutionCount { | engine Unknown AtMostOnce }
-enum KeyEnumeration { | engine Unknown NeverEnumerated }
-enum FieldCreation { | engine Unknown OnlyAtConstruction OnlyBeforeObjectIsFinished }
 enum BaseState { | engine Unknown None Layout BuiltinClass }
-enum FrameLocality { | engine Unknown FrameLocal }
-enum NamespaceUse { | engine Unknown NamedReadsOnly NeverCreated }
 enum BuiltinLocationState { | engine Unknown Constant }
 
 flags ObjectMutation {
@@ -17,11 +11,3 @@ flags ObjectMutation {
 flags FieldStability { | engine IsNeverDeleted IsNeverRedefined }
 
 record ClassMember engine { key: PropertyKey? side: ClassSide kind: MethodKind function: Function(Dispatch)? isAssignedByProgram: Bool }
-
-record AccessSite engine { function: Function(Dispatch) location: SourceLocation kind: AccessKind }
-record AllocationClass engine {
-    layout: Layout? builtinClass: BuiltinClass? closureFunction: Function(Closure)? impossibleMutations: ObjectMutation
-    keys: KeyEnumeration locality: FrameLocality addedKeys: List<PropertyKey> addedKeysAreComplete: Bool isReachedThroughUnknownReceivers: Bool
-    cause: UnprovenCause witness: Witness
-    isStoredUnderUnnamedKeys: Bool inheritsFromListedFunctions: Bool
-}

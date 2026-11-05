@@ -40,11 +40,6 @@ struct StoresBehindAllocationInBirths {
     Vector<TypeID, 16> types;
 };
 
-struct ArmOfBirth {
-    BlockID last;
-    Reference value;
-};
-
 } // anonymous namespace
 
 static ValueID recordBehindNamesAndFormsInBirths(const Code& code, ValueID record)
@@ -91,6 +86,71 @@ bool lookMayFinishBirthOf(Walker& walker, Reference object)
     return std::ranges::any_of(membersOf(walker.types(), type.layouts), [&](LayoutID member) {
         return markAnswersForSomeFieldInBirths(walker.plan(), member);
     });
+}
+
+static void showWhatIsHeldFilledOfLayoutInBirths(Walker& walker, Reference object, LayoutID layout, Origin origin)
+{
+    const Plan& plan = walker.plan();
+    TypeArena& types = walker.types();
+    if (!plan.isInUse(layout) || !plan.layout(layout).holdsCompiledObjects() || walker.fieldsHeldFilledThatAreNotShown(object, layout).isEmpty())
+        return;
+    TypeID proven = walker.typeOf(object);
+    TypeID tested = types.forLayout(layout);
+    if (proven) {
+        Type type = types.at(proven);
+        bool namesLayoutAlone = !type.primitives && type.hasOnlyLayouts() && !type.traitsOfNamed.contains(ObjectTrait::MayHaveLayoutBelow);
+        for (LayoutID member : membersOf(types, type.layouts))
+            namesLayoutAlone &= member == layout;
+        if (namesLayoutAlone) {
+            walker.showThatObjectHoldsWhatIsHeldFilled(object, layout);
+            return;
+        }
+    }
+    if (plan.shapes().shapesOf(layout).isEmpty() || (proven && !types.overlap(proven, tested)))
+        return;
+    origin.isTailCall = false;
+    GuessInFrontOfLoop isOfLayout { object, tested, types.at(tested).layouts, { } };
+    Reference test = buildTestInFrontOfLoop(walker, isOfLayout, origin);
+    if (!test)
+        return;
+    BlockID asks = walker.addBlock();
+    BlockID isOfAnother = walker.addBlock();
+    BlockID behind = walker.addBlock();
+    walker.branch(test, asks, isOfAnother);
+    walker.continueIn(asks);
+    if (Reference narrowed = buildProofInFrontOfLoop(walker, isOfLayout, test, origin))
+        walker.showThatObjectHoldsWhatIsHeldFilled(narrowed, layout);
+    if (!walker.isUnreachable())
+        walker.jumpTo(behind);
+    walker.continueIn(isOfAnother);
+    walker.jumpTo(behind);
+    walker.continueIn(behind);
+}
+
+void showWhatIsHeldFilledWhereConstructionEnds(Walker& walker, FunctionID constructor, Reference object, Origin origin)
+{
+    TypeID proven = object && !walker.isUnreachable() ? walker.typeOf(object) : TypeID();
+    if (!proven)
+        return;
+    Vector<LayoutID, 4> members;
+    for (LayoutID member : membersOf(walker.types(), walker.types().at(proven).layouts)) {
+        if (walker.program().at(declaredLayoutOf(walker.program(), member)).constructor == constructor)
+            members.append(member);
+    }
+    for (LayoutID member : members) {
+        if (walker.isUnreachable())
+            return;
+        showWhatIsHeldFilledOfLayoutInBirths(walker, object, member, origin);
+    }
+}
+
+void showWhatIsHeldFilledAtReturnOfClassConstructor(Walker& walker, Reference returned, Origin origin)
+{
+    if (!returned || !returned.isValue() || walker.isUnreachable())
+        return;
+    const Function& function = walker.program().at(walker.currentFunction());
+    if (isClassConstructorOf(function.kind) && function.constructedClass)
+        showWhatIsHeldFilledOfLayoutInBirths(walker, returned, function.constructedClass, origin);
 }
 
 void finishBirthAtReturnOfClassConstructor(Walker& walker, Reference returned, Origin origin)
@@ -398,10 +458,10 @@ bool listStoresOfCopiedConstructorOfItsOpcodes(Walker& walker, const BodyValue& 
             walker.state().noteStoresPassAbove(condition.layout, condition.key, guardsHold);
     }
 
-    Vector<ArmOfBirth, 2> arms;
+    Vector<Walker::ArmThatMeets, 2> arms;
     auto endArm = [&](Reference value) {
         if (!walker.isUnreachable() && !walker.hasFailed())
-            arms.append(ArmOfBirth { walker.currentBlock(), value });
+            arms.append(Walker::ArmThatMeets { walker.currentBlock(), { value } });
     };
     auto walkAsWritten = [&] {
         Walker::ClosedArm closedArm(walker);
@@ -411,6 +471,7 @@ bool listStoresOfCopiedConstructorOfItsOpcodes(Walker& walker, const BodyValue& 
 
     auto constructAsWritten = [&] {
         Walker::ClosedArm closedArm(walker);
+        walker.arrivals().leaveAnything(callee);
         Draft asWritten = walker.draftOf(call);
         walker.chooseConservativeFields(asWritten);
         endArm(walker.isUnreachable() ? Reference() : buildCallAsWrittenThatGives(walker, WTF::move(asWritten), typeOfObjectsMadeThroughEntryOf(walker, callee)));
@@ -435,40 +496,24 @@ bool listStoresOfCopiedConstructorOfItsOpcodes(Walker& walker, const BodyValue& 
             walker.chooseConservativeFields(finish);
             walker.build(WTF::move(finish));
         }
-        endArm(returned ? buildWhatConstructionGivesInBirths(walker, callee, returned, object, origin) : Reference());
+        if (returned)
+            showWhatIsHeldFilledWhereConstructionEnds(walker, callee, object, origin);
+        endArm(returned && !walker.isUnreachable() ? buildWhatConstructionGivesInBirths(walker, callee, returned, object, origin) : Reference());
     } else
         walkAsWritten();
     if (walker.hasFailed())
         return true;
 
     if (!closedBlock) {
-        if (arms.size() == 1 && arms[0].value)
-            walker.bind(call.id(), arms[0].value);
+        if (arms.size() == 1 && arms[0].values[0])
+            walker.bind(call.id(), arms[0].values[0]);
         return true;
     }
 
     BlockID meeting = walker.addBlock();
     Reference met;
-    if (arms.size() == 2 && arms[0].value && arms[1].value) {
-        const Code& code = walker.code();
-        TypeID type = joinOf(walker.types(), walker.facts().families(), code.at(arms[0].value.id()).type, code.at(arms[1].value.id()).type);
-        Representation forms[] { walker.representationOf(arms[0].value), walker.representationOf(arms[1].value) };
-        met = walker.addParameter(meeting, type, walker.formOfParameter(type, forms));
-    }
-    for (const ArmOfBirth& arm : arms) {
-        walker.continueIn(arm.last);
-        if (met)
-            walker.jumpTo(meeting, singleElementSpan(arm.value));
-        else
-            walker.jumpTo(meeting);
-        if (walker.hasFailed())
-            return true;
-    }
-    walker.continueIn(meeting);
-    if (met)
+    if (walker.letArmsMeet(arms.span(), meeting, singleElementSpan(met)))
         walker.bind(call.id(), met);
-    else if (arms.size() == 1 && arms[0].value)
-        walker.bind(call.id(), arms[0].value);
     return true;
 }
 

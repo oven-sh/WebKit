@@ -16,7 +16,6 @@
 #include "AOTMechanisms.h"
 #include "AOTWalkLinks.h"
 #include "AOTWalkLoopsOverGeneratorsOfUnit.h"
-#include "AOTWalkGeneratorsInLoops.h"
 #include "AOTWalkCoroutineState.h"
 #include "AOTWalkState.h"
 #include <array>
@@ -68,6 +67,12 @@ bool isHandedEnvironmentWithByte(const Walker&, FunctionID);
 void noteEnvironmentThatUnitMakes(Walker&, const Draft& allocation);
 void handBackEnvironmentsAtReturn(Walker&, BlockID inputBlock);
 void markEnvironmentsThatCoroutineIsHanded(Walker&);
+void takeWhatIsNoLongerCaptured(Walker&);
+void stopAtSecondEntryOfMaker(Walker&);
+bool leaveEnvironmentAmongVariables(Walker&, const BodyValue&);
+void storeValuesNoLongerCaptured(Walker&, const BodyValue&);
+Reference wordInPlaceOfRemovedCapture(Walker&, FunctionID, uint32_t capture);
+Reference valueNoLongerCaptured(Walker&, FunctionID, uint32_t capture, Origin);
 bool isVariableFilledAtFirstRead(const Plan&, VariableID);
 bool takeObjectOfDeferredVariable(Walker&, VariableID, Reference held, Origin);
 bool foldOperation(Walker&, const BodyValue&);
@@ -133,7 +138,6 @@ Reference findCaptureAtHand(Walker&, FunctionID callee, uint32_t capture, Refere
 Reference valueOfStableBinding(Walker&, const BodyValue& read);
 Reference valueOfStableVariable(Walker&, VariableID, TypeID widest);
 void noteValueOfStableBinding(Walker&, VariableID, Reference value);
-Reference literalHeldByFilledVariable(Walker&, VariableID);
 void noteValueOfStableBinding(Walker&, Reference environment, FieldReference, Reference value);
 Reference objectOfVariablePutOff(Walker&, VariableID);
 void noteObjectOfVariablePutOff(Walker&, VariableID, Reference object);
@@ -256,6 +260,8 @@ bool findGuardsOfMethodAboveObjectsOf(Walker&, TypeID typeOfObjects, PropertyKey
 FunctionID findGetterOfRead(Walker&, Opcode, TypeID lookedAt, PropertyKeyID);
 bool callForwardedDirectly(Walker&, const BodyValue& call, const Draft& forwarded);
 bool listOfSuperCallCanBeHandedOver(Walker&, const BodyValue& call, FunctionID constructor);
+bool listSpreadBehindArgumentsIsRestListOf(Walker&, const BodyValue& call, FunctionID callee);
+bool spreadAppendsElementsOfListAsMade(Walker&, ValueID spreadValue);
 bool callBuiltinForwarded(Walker&, const BodyValue& call, const Draft& forwarded);
 TailCallRequirement requirementOfTailCall(const Walker&, Reference call);
 bool calleeOfTailCallComesBack(const Walker&, FunctionID callee, std::span<const Reference> arguments);
@@ -339,6 +345,11 @@ public:
         BuiltinID method;
     };
     UncheckedKeyHashMap<uint64_t, Vector<MethodGivenUnderKey, 2>> methodsGivenUnderKeys;
+    struct ReceiverMadeInBody {
+        ValueID made;
+        uint8_t classesItStaysAsMadeOf;
+    };
+    UncheckedKeyHashMap<uint32_t, Vector<ReceiverMadeInBody, 4>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> receiversMadeInBodies;
     struct GettersExpectedInFunction {
         FunctionID function;
         std::span<const LinkedGetterAtRead> reads;
@@ -410,7 +421,8 @@ public:
             return bound;
         return narrowestReferenceOf(input);
     }
-    Reference referenceBoundTo(ValueID input) const { return m_frames.last().lastNameOf(input); }
+    Reference referenceBoundTo(ValueID input) const { return referenceBoundIn(m_frames.last(), input); }
+    Reference nameLastBoundTo(ValueID input) const { return m_frames.last().lastNameOf(input); }
     ALWAYS_INLINE void bind(ValueID input, Reference reference)
     {
         Frame& frame = m_frames.last();
@@ -475,6 +487,7 @@ public:
         Reference keyForAccesses;
         bool isAsMadeForGood { false };
         bool isDeadBehindLoop { false };
+        bool goesThroughListByIndexAlone() const { return !mayGoByProtocol && !isTakenAtOpen && !holdsFlatEntries && !literal && !table && contents == Contents::List && otherForm == OtherForm::None; }
         TypeID keysProven;
         TypeID valuesProven;
         TypeID elementsProven;
@@ -487,6 +500,7 @@ public:
     Draft draftOf(const BodyValue&);
     Reference build(Draft&&, const Effects* foundByCaller = nullptr);
     Reference constant(Draft&&);
+    Reference wordThatSaysNothing(TypeID);
     Reference cellThatRunTimeKeeps(Draft&);
     bool copy(const BodyValue&);
     void chooseConservativeFields(Draft&);
@@ -499,8 +513,14 @@ public:
     void continueIn(BlockID);
     Reference addParameter(BlockID, TypeID, Representation);
     Representation formOfParameter(TypeID, std::span<const Representation> arguments);
+    struct ArmThatMeets {
+        BlockID last;
+        Vector<Reference, 8> values;
+    };
+    bool letArmsMeet(std::span<const ArmThatMeets>, BlockID meeting, std::span<Reference> met);
     void endWithReturn(std::span<const Reference>, Origin);
     void endWithThrow(Reference, Origin);
+    void endWithRethrow(Reference exception, Origin);
     void endAsUnreachable(Origin);
     void holdWhatBodyReadsOfItsOwnScope(const BodyValue& read, Reference environment, Reference found);
     void noteStoreIntoSlotStoredFirst(const BodyValue& store, Reference environment);
@@ -575,6 +595,17 @@ public:
         uint32_t amount;
     };
     void stopAtMaker(Origin);
+    bool constantEndsWhereItLeaves(ValueID written, DataID) const;
+    void showThatObjectHoldsWhatIsHeldFilled(Reference object, LayoutID);
+    Vector<FieldIndex, 8> fieldsHeldFilledThatAreNotShown(Reference object, LayoutID);
+    struct SurveyOfConstant {
+        bool tableOfImageHoldsIt { true };
+        bool allocationsAloneMakeIt { true };
+        uint32_t numberOfNodes { 0 };
+    };
+    using SurveysOfConstants = HashMap<uint32_t, SurveyOfConstant, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>;
+    SurveysOfConstants& surveysOfConstants() { return m_surveysOfConstants; }
+    bool constantListsFieldsHeldFilled(DataID, RootOfConstant);
     SetForScope<bool> makingObjectsOfConstant() { return SetForScope(m_isMakingObjectsOfConstant, true); }
     void count(StatisticID statistic, uint32_t amount = 1)
     {
@@ -597,15 +628,22 @@ public:
     void checkProof(Reference value, TypeID proven, TypeID withoutProof, ProofSource, Origin);
     void checkProofOfCopy(Reference value, TypeID proven, ProofSource, Origin);
     Reference proveOrTrap(Reference value, TypeID tested, ProofSource, Origin);
-    TypeID typeThatUnitMayTestFor(TypeID tested, bool mayBringClasses = true);
+    TypeID typeThatUnitMayTestFor(TypeID tested, bool mayBringClasses = true, bool asOfUnitWithoutReach = false);
     void checkThatSlotTakes(Reference value, TypeID taken, Origin);
-    bool isReadOutOfSlot(Reference value, LayoutID, FieldIndex);
     void holdStoredValuesToSlots(const Draft&);
+    void holdStoredValuesToPlaces(const Draft&);
+    void holdToTypeOfPlace(Reference value, TypeID held, ProofSource, Origin);
     void holdSlotsOfScopesThatLeaveAt(const Vector<SummaryScopeStoredFirst>&, uint32_t position, bool standsBehindOperationsOfBlock);
+    void holdVariableOfAnotherFileStoredFirst(VariableID);
     void holdVariablesStoredFirstWhereFunctionsAreUsed(std::span<const LinkedVariableStoredFirst> claims, std::span<const FunctionID> used, VariableID storedByOperation);
     void holdSlotStoredFirst(Reference environment, FieldReference, Reference found);
     bool makeTestOnTheWayAskInFull(Reference value, TypeID taken);
+    TypeID typeThatDoorsHoldOfSlotRead(const Operation& read);
+    bool makeObjectOfSlotReadShown(Reference value, TypeID taken);
     void buildCheckOfProof(Reference value, TypeID proven, TypeID withoutProof, ProofSource, Origin, bool mayBringClasses = false);
+    void buildCheckThatTestHolds(Reference test, ProofSource, Origin);
+    bool splitNullishOffWhatContainerHasJustGiven(Reference given, TypeID rest, Draft&& throwsOffNullish);
+    bool letTestInFrontOfBranchAskWhatContainerHasJustGiven(const BodyValue& test);
     TypeID typeShown(Reference);
     bool isShown(Reference value, TypeID within) { return m_types.isSubset(typeShown(value), within); }
     TypeID typeThatStoreTakesOnWordOfWalk(const Draft& store);
@@ -619,6 +657,9 @@ public:
     void checkElementsRememberedOfList(Reference list, std::span<const Reference> elements, Origin);
     uint32_t numberOfProofsChecked(ProofSource source) const { return m_numbersOfProofsChecked[static_cast<unsigned>(source)]; }
     uint32_t numberOfProofsThatNoTestTells() const { return m_numberOfProofsThatNoTestTells; }
+    uint32_t numberOfProofsThatFormTells() const { return m_numberOfProofsThatFormTells; }
+    uint32_t numberOfDoorsThatCanNeverPass() const { return m_numberOfDoorsThatCanNeverPass; }
+    TypeID typeThatFormSays(Reference value);
     uint32_t numberOfFreshCellsLeftAloneAtReturns() const { return m_numberOfFreshCellsLeftAloneAtReturns; }
     class ClosedArm;
     class OpenArm;
@@ -686,6 +727,7 @@ public:
     TypingContext typing() const { return { program(), m_types, *m_positions, TypeLevel::Proven }; }
 
     bool hasTextsInStringBuilders() const { return !m_textsInStringBuilders.isEmpty(); }
+    bool edgeLeavesLoopBeingBuiltTwice(BlockID to) const { return leavesLoopBeingBuiltTwice(m_frames.size() - 1, to); }
     bool mayBeginTurnAgainInClosedCopy() const;
     bool looksCountOnTurnsThatBeginAgain(BlockID inputHead) const;
     bool layFrameForLookIntoCopy(FunctionID callee, const BodyIndex&);
@@ -755,6 +797,7 @@ private:
     struct StateOfHandler {
         BlockID handler;
         WalkState state;
+        WalkState::RecordsLastMet lastMet;
     };
 
     struct PendingBlock {
@@ -836,7 +879,6 @@ private:
         uint32_t numberOfStretchesBeingWalked { 0 };
         PlaceTakenByEndOfBlock placeTakenByEndOfBlockAskedLast;
         bool hasHandler { false };
-        BlockID handlerOfCodeBelow;
         static constexpr uint32_t notAskedYet = UINT32_MAX;
         mutable uint32_t numberOfFramesUpToHandlerBelow { notAskedYet };
         mutable CountOfFrame countAmongFramesOfFunction;
@@ -997,7 +1039,7 @@ private:
         Vector<StateOfHandler, 1> statesOfHandlers;
         HashMap<uint32_t, uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> placesOfStatesOfHandlers;
         size_t placeOfStateOfHandler(BlockID handler) const;
-        WalkState* findStateOfHandler(BlockID handler);
+        StateOfHandler* findStateOfHandler(BlockID handler);
         void addStateOfHandler(BlockID handler, WalkState&&);
         bool takeStateOfHandler(BlockID handler, WalkState&);
         Vector<std::unique_ptr<AccessUnderProvenKey>> accessesUnderProvenKeys;
@@ -1060,7 +1102,6 @@ private:
     BodyValue accessByName(const BodyValue& written, PropertyKeyID);
     enum class KeyOfAccess : uint8_t { IsAnyValue, IsSymbol, ArmsHaveWalkedAccess };
     KeyOfAccess compareKeyOfAccessWithSymbol(const BodyValue& written, PropertyKeyID chosen);
-    void holdStoresToSymbolsOfPlaces(const BodyValue& store);
     void stopUnlessValueIsOf(Reference value, TypeID tested, ProofSource);
     ValueID m_accessWhoseKeyIsTested;
     size_t m_depthOfCopiesAroundThatAccess { 0 };
@@ -1081,14 +1122,15 @@ private:
     bool allocationHoldsWhatIsHeldFilled(const Draft& allocation);
     void showThatLiteralHoldsWhatIsHeldFilled(const BodyValue& finishOrData);
     void showThatMakersThatLeaveAtHoldWhatIsHeldFilled(const Vector<SummaryMakerThatEndsWhereItLeaves>&, uint32_t position, bool standsBehindOperationsOfBlock);
-    void showThatObjectHoldsWhatIsHeldFilled(Reference object, LayoutID);
     void stopAtMakerUnless(Reference holds, Origin);
     void checkProofsOfOperandsOfDirectCall(const Draft&);
     void checkProofsOfWhatComesThroughFusedEntry();
     void checkProofThatSlotIsFilled(const Draft& read);
     bool checkWhatIsRememberedOf(const BodyValue& read);
     void checkProofOfRecord(ValueID record, const Draft&, TypeID proven);
+    std::optional<Origin> leaveCheckOfWhatContainerHasJustGivenToTestBehind(Reference given);
     Reference holdResultToItsType(Reference value, Origin);
+    void holdOperandsToWhatCalleeBelieves(const Draft&);
     void checkThatReadGivesValue(Reference value, ProofSource, Origin);
     void beginModuleInBody();
     ALWAYS_INLINE void standIn(BlockID inputBlock)
@@ -1233,7 +1275,7 @@ private:
     uint32_t m_operationsCopiedAtWrittenCallInWalk { 0 };
     void noteHeadOfTurn(BlockID inputHead);
     void proveWhatLooksCountOnAt(const BodyValue&);
-    std::unique_ptr<LoopPreview> previewTypedCopy(BlockID inputHead, const LoopPreview&, std::span<const Reference> entering, std::span<const ListTestedInFrontOfLoop> lists);
+    std::unique_ptr<LoopPreview> previewTypedCopy(BlockID inputHead, const LoopPreview&, std::span<const Reference> entering, std::span<const ListTestedInFrontOfLoop> lists, std::unique_ptr<LoopPreview> madeWithListsNoted);
     bool turnsOfTypedCopyMayBeginAgain(BlockID inputHead, const LoopPreview&) const;
     std::optional<uint32_t> openLoopOfTypedCopy() const;
     ValueID findReadAskedAtHeadOfLoop(BlockID inputHead, std::span<const std::pair<Reference, TypeID>> tested);
@@ -1260,39 +1302,6 @@ private:
         return bound;
     }
     bool isWithoutNameBehindLoopBuiltTwice(ValueID);
-    bool walkOperationOfGeneratorInLoop(const BodyValue&);
-    bool takeGeneratorForConsumer(const BodyValue& call);
-    bool openGeneratorTaken(const BodyValue& open);
-    bool closeGeneratorTaken(const BodyValue& close);
-    bool spreadGeneratorTaken(const BodyValue& spread);
-    bool walkYieldOfGeneratorInConsumer(const BodyValue& yield);
-    size_t placeOfGeneratorOnTop() const;
-    size_t placeOfGeneratorTaken(ValueID taker, ValueID iterable) const;
-    bool isBeingWalkedOtherThanAtYield(FunctionID) const;
-    bool leavesRegionOfIteration(size_t frameIndex, BlockID to) const;
-    bool stepGeneratorTakenOutsideLoops(const BodyValue& step);
-    void layFrameOfGenerator(FunctionID, uint32_t callPosition, uint32_t loopDepthAtCall, uint32_t numberOfCarriedValues);
-    Vector<Reference, 4> carriedValuesInFrame(size_t frameIndex) const;
-    Vector<Reference, 4> valuesThatLoopBringsRound(size_t frameIndex, BlockID inputHead) const;
-    void bindValuesThatLoopBringsRound(BlockID inputHead, std::span<const Reference> carried);
-    void moveFrame(size_t from, size_t to);
-    void forgetRegionOfIteration(size_t frameIndex, const GeneratorWalkedInConsumer&);
-    void walkHeadOfLoopBehindStep(BlockID inputHead, ValueID step, std::span<const Reference> carried, bool isDone, Reference handedOut);
-    Reference resumptionOfGenerator(Reference sent, ResumeMode, Origin);
-    void carryValuesRoundLoopOfGenerator(BlockID inputHead, BlockID head, Vector<Reference, 8>& entering, Vector<ValueID, 8>& parameters);
-    void appendCarriedValuesThatComeRound(BlockID head, Vector<Reference, 8>& arguments);
-    bool takeCarriedValuesOntoHandlerEdge(size_t frameIndex, Vector<std::pair<ValueID, Reference>, 2>& names);
-    void bindParametersOfHeadForHandlerOfStep(size_t frameIndex);
-    BlockID handlerOfCodeInForce(size_t numberOfFramesUpToHandler) const;
-    void noteCarriedValuesAtReturnOfGenerator();
-    Vector<Reference, 4> walkBodyOfGeneratorToItsEnd(size_t place, Origin originInFront);
-    bool walkGeneratorInPlaceOfLoop(BlockID inputHead, std::span<const TypeID> typesOfParameters, std::span<const Reference> entering);
-    void resumeGeneratorToLeave(size_t place, ResumeMode, bool dropsWhatIsThrown, Origin);
-    Vector<GeneratorTakenByConsumer, 1> m_generatorsTakenByConsumers;
-    Vector<GeneratorWalkedInConsumer, 1> m_generatorsWalkedInConsumers;
-    Vector<size_t, 1> m_resumptionsToLeave;
-    uint32_t m_numberOfFramesOverHandlersOfCode { 0 };
-    std::unique_ptr<KeptForBuild> m_keptByGeneratorsInLoops;
     bool isWalkingBlockForEachWay(size_t frameIndex) const;
     bool walkBlockApartFromClosedWays(BlockID inputBlock);
     bool letReturnsOfCopyWalkEndOfBlockApart(ValueID call, std::span<Frame::ReturnOfCopy* const> passing, std::span<Frame::ReturnOfCopy* const> closed);
@@ -1325,6 +1334,9 @@ private:
         return below != Frame::notAskedYet ? below : findFramesUpToHandlersBelow();
     }
     size_t findFramesUpToHandlersBelow() const;
+    std::optional<size_t> findTextHeldInFrame(size_t frameIndex, ValueID) const;
+    bool leadHandlerEdgeBehindStringsOfTexts(size_t frameIndex, BodyTarget, Vector<Reference, 4>& arguments, Vector<TypeID, 4>& types);
+    void bindTextsAtHeadOfHandlerBlock(BlockID inputBlock);
     Reference narrowOnEdge(BlockID from, uint32_t targetIndex, const BodyEdgeResult&);
     Reference booleanAskedByBranchOnEdge(BlockID from, uint32_t targetIndex, Reference value);
     void nameBooleansAskedByBranch(BlockID from, const BodyTerminator&, uint32_t targetIndex, BlockID to);
@@ -1447,8 +1459,12 @@ private:
     HashMap<uint64_t, Vector<uint32_t, 1>, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_numbersOfListsOfNames;
     std::array<uint32_t, numberOfEnumerators<ProofSource>> m_numbersOfProofsChecked { };
     uint32_t m_numberOfProofsThatNoTestTells { 0 };
+    uint32_t m_numberOfProofsThatFormTells { 0 };
+    uint32_t m_numberOfDoorsThatCanNeverPass { 0 };
     uint32_t m_numberOfFreshCellsLeftAloneAtReturns { 0 };
     HashMap<uint32_t, bool, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_functionsInReachOfUnit;
+    SurveysOfConstants m_surveysOfConstants;
+    HashMap<uint32_t, bool, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_constantsThatListFieldsHeldFilled;
     bool m_callIsAccountedFor { false };
     FunctionID m_calleeAccountedFor;
     bool m_hasFailed { false };
@@ -1464,6 +1480,7 @@ private:
     std::unique_ptr<PositionTypes> m_positionsWithoutProofs;
     void forEachValueThatTypeShownLeansOn(ValueID, NOESCAPE const Invocable<void(ValueID)> auto&) const;
     TypeID typeShownAtOnce(ValueID) const;
+    bool entryParameterIsShown(const Block&, ValueID) const;
     TypeID computeTypeShown(ValueID);
     HashMap<uint32_t, TypeID, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_typesShown;
     HashMap<uint32_t, TypeID, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_typesAsked;
@@ -1480,6 +1497,7 @@ private:
     Vector<uint32_t, 16> m_sharedConstants;
     bool m_holdsReadsOfVariablesAsConstants { false };
     uint32_t m_numberOfSharedConstants { 0 };
+    Vector<std::pair<TypeID, Reference>, 2> m_wordsThatSayNothing;
     struct NarrowedTypedLast {
         Reference value;
         Reference test;
@@ -1636,11 +1654,16 @@ BuiltinID findConstantMemberReadOff(Walker&, Reference object, PropertyKeyID);
 TypedForm buildReadOfBuiltinMember(Walker&, const BodyValue& read, TypeID typeOfObject, Reference object);
 bool readsOffEntryParameterThatStaysAsMade(Walker&, const BodyValue& access);
 bool viewMayFollowSharedMemoryThatGrows(const Walker&, Reference view);
-bool receiverStaysAsMadeByLink(Walker&, const BodyValue& operation);
+bool receiverStaysAsMadeByLink(Walker&, const BodyValue& operation, bool* isSaidByBodyAlone = nullptr);
+bool linksWordCanBeHeldAgainst(const Walker&, Reference object);
+void holdLinksWordAgainstObjectAsMade(Walker&, Reference object, Origin, bool isSaidByBodyAlone = false);
 bool readsOffListThatStaysAsMadeByLink(Walker&, const BodyValue& read);
 BuiltinClassID classOfIterableThatStaysAsMadeByLink(Walker&, const BodyValue& operation, ValueID iterable);
 bool indexesAreAbsentAboveLists(const Walker&);
 Reference buildReadOfElementOffExpectedList(Walker&, const BodyValue& read);
+TypeID typeOfElementInsideViewOfNumbers(Walker&, TypeID typeOfView, TypeID typeOfPosition);
+Reference buildReadOfElementOfViewBehindTestOfLength(Walker&, const BodyValue& read, Reference view, Origin, BlockID whereItLiesOutside);
+bool splitNullishOffReceiverOfAccess(Walker&, const BodyValue& access);
 void buildFirstReadOfNamedBuiltin(Walker&, const BodyValue& named);
 bool firstReadOfNamedBuiltinIsSeen(const Walker&, const BodyValue& named);
 bool buildInstanceOfBuiltin(Walker&, const BodyValue& test, const InputsOfTypedOperation&);

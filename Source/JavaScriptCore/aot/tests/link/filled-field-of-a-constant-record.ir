@@ -1,20 +1,19 @@
 # If a constant record counted as an object that has every field of its layout, a field that the constant leaves out would be read as a slot that is filled, and the read would hand out the mark of an empty slot
 # type R = { a: number, b?: number, c?: number }  function get(o: R) { return o.b; }  const o: R = { a: 1 };  o.c = 2;  get(o);
-# The constant lists `a`. The body stores `c` behind the constant: of a record only what its maker gives it counts, which the walk sees for itself where it builds the maker. Nothing ever fills `b`.
+# The constant lists `a`. The body stores `c` straight behind the constant, in front of the call that sees the object, so that is filled too: the maker ends at that call. Nothing ever fills `b`.
 # RUN: summary f0
 # CHECK: leaves-empty L0.1 "b"
-# CHECK-NEXT: leaves-empty L0.2 "c"
+# CHECK: ends-where-it-leaves v0 b0 at 4
 # RUN(KEPT): summary f0
 # KEPT-NOT: leaves-empty L0.0
+# KEPT-NOT: leaves-empty L0.2
 # RUN(LINK): link functions fields layouts mechanisms=all
 # LINK: function f1 callers-known one-callee {{*}}result=undefined
 # LINK: field L0.0 "a" {{*}}filled
 # LINK: field L0.1 "b"
 # LINK-NOT: filled
-# LINK: field L0.2 "c"
+# LINK: field L0.2 "c" {{*}}filled
 # LINK: layout L0 changes=[]
-# RUN(EMPTY): link fields mechanisms=all
-# EMPTY-NOT: field L0.2 "c" {{*}}filled
 
 layout L0 name="R" module=m0 fields=[{key="a" declared={type=anything} flags=[IsRequired]}, {key="b" declared={type=anything}}, {key="c" declared={type=anything}}]
 data d0 root=Object{layout=L0 members=[{key="a" value=Number{value=1}}]} module=m0

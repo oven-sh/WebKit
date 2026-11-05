@@ -360,7 +360,7 @@ static void listRowsOfEffects(PrintStream& out)
             print("does-not-collect"_s, row);
     };
     auto printEffects = [&](unsigned row, const Typed::Effects& effects) {
-        printParts(row, !effects.mayRunOtherCode(), !effects.mayThrow, !!Typed::lanesNotWrittenInEffectsNet(effects), !effects.mayCollect);
+        printParts(row, !effects.mayRunOtherCode(), !effects.mayThrowByRule(), !!Typed::lanesNotWrittenInEffectsNet(effects), !effects.mayCollect);
     };
     for (Typed::Opcode opcode : allMembersOf<Typed::Opcode>)
         printEffects(Typed::firstRowOfOperationsInEffectsNet + static_cast<unsigned>(opcode), Typed::declaredBoundOf(opcode));

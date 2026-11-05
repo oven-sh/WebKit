@@ -10,9 +10,10 @@
 
 #include "AOTClosureTestEmitter.h"
 #include "AOTCompileUnit.h"
+#include "AOTOpcodeSets.h"
 #include "AOTThrowEmitter.h"
 #include "AOTTypeTestPlan.h"
-#include <wtf/SetForScope.h>
+#include <algorithm>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -60,29 +61,14 @@ void CastEmitter::generateRequireObject(const ValueContext& value)
     defineNarrowed(value, operand);
 }
 
-static bool failingSideOfTypeTestTraps(const Code& code, const ValueContext& test)
-{
-    if (!test.isBranchCondition())
-        return false;
-    const Terminator& branch = code.at(test.block()).terminator;
-    if (branch.kind != TerminatorKind::Branch)
-        return false;
-    BlockID failingSide = code.at(branch.notTaken()).to;
-    return code.valuesOf(failingSide).empty() && code.at(failingSide).terminator.kind == TerminatorKind::Unreachable;
-}
-
 void CastEmitter::generateTypeTest(const ValueContext& value)
 {
     ValueID source = value->valueOperand();
     Operand operand = get(source);
     if (value->asksInFull())
         operand = Operand { Representation::JSValue, operand.value };
-    const TypeTestPlan& plan = value->asksInFull() ? typeTestPlanFor(TypeTable::anythingOrAbsent, Representation::JSValue, value->testedType()) : planFor(source, value->testedType());
-    std::optional<SetForScope<bool>> passesChangedClosuresWhereFailureTraps;
-    if (!plan.cellTests.isEmpty()) {
-        bool& passesChangedClosures = emitter<ClosureTestEmitter>().passesChangedClosures();
-        passesChangedClosuresWhereFailureTraps.emplace(passesChangedClosures, passesChangedClosures || failingSideOfTypeTestTraps(generator().code(), value));
-    }
+    TypeID whatMayCome = hasTestedForHole(operationAt(definitionOf(source))) ? TypeTable::anything : TypeTable::anythingOrAbsent;
+    const TypeTestPlan& plan = value->asksInFull() ? typeTestPlanFor(whatMayCome, Representation::JSValue, value->testedType()) : planFor(source, value->testedType());
     if (!value.isBranchCondition()) {
         define(value, hasType(operand, plan));
         return;
@@ -92,10 +78,11 @@ void CastEmitter::generateTypeTest(const ValueContext& value)
 
 void CastEmitter::generateCheckProof(const ValueContext& value)
 {
+    if (value->isLeftToTestBehind())
+        return;
     Operand source = get(value->valueOperand());
     bool isAnswerOfTest = source.representation == Representation::Boolean;
     Boxed found(isAnswerOfTest ? m_out.constInt64(JSValue::encode(JSValue())) : source.value);
-    SetForScope passesChangedClosures(emitter<ClosureTestEmitter>().passesChangedClosures(), true);
     bool asksForType = value->checkedType() != value->typeWithoutProof();
     Condition holds = isAnswerOfTest ? Condition(source.value) : asksForType ? hasType(found, typeTestPlanFor(value->typeWithoutProof(), Representation::JSValue, value->checkedType())) : boolean(true);
     if (!isAnswerOfTest && sourcesOfProofsCheckedUnder(build().options().testing)) {

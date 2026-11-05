@@ -53,8 +53,6 @@ bool Walker::handlerInForceIgnoresWhatIsThrown() const
         return false;
 
     size_t frameIndex = numberOfFramesUpToHandlerInForce();
-    if (m_numberOfFramesOverHandlersOfCode && handlerOfCodeInForce(frameIndex))
-        return false;
     if (!frameIndex--)
         return false;
 

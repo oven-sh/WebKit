@@ -257,10 +257,92 @@ static constexpr ptrdiff_t offsetOfWordInHeapFrame(uint32_t index)
     return SavedFrame::offsetOfWords() + static_cast<ptrdiff_t>(index) * static_cast<ptrdiff_t>(sizeof(uint64_t));
 }
 
+void SavedFrameEmitter::findHeapWordsAliveAtSuspensions()
+{
+    if (std::exchange(m_hasLookedForHeapWordsAliveAtSuspensions, true))
+        return;
+    for (const LiveAtSuspension& record : m_code.suspensions()) {
+        for (ValueID live : m_code.liveAt(record.suspension)) {
+            if (m_code.at(live).opcode == Opcode::NewHeapWords && !m_heapWordsAliveAtSuspensions.contains(live))
+                m_heapWordsAliveAtSuspensions.append(live);
+        }
+    }
+}
+
+bool SavedFrameEmitter::areNamedOnlyByReadsAndStoresOfWords(ValueID made) const
+{
+    uint32_t usersNotSeen = m_code.useCountOf(made);
+    if (usersNotSeen == std::numeric_limits<uint8_t>::max())
+        return false;
+    static_assert(!OperandIndex::GetHeapFrameWord::frame && !OperandIndex::PutHeapFrameWord::frame);
+    uint32_t numberOfBlocks = m_code.numberOfBlocks();
+    uint32_t first = m_code.blockOf(made).index();
+    for (uint32_t step = 0; usersNotSeen && step < numberOfBlocks; ++step) {
+        BlockID block((first + step) % numberOfBlocks);
+        if (!m_code.isReached(block))
+            continue;
+        bool areNamedOtherwise = false;
+        for (ValueID id : m_code.valuesOf(block)) {
+            const Operation& operation = m_code.at(id);
+            bool takesWordsFirst = operation.opcode == Opcode::GetHeapFrameWord || operation.opcode == Opcode::PutHeapFrameWord;
+            operation.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
+                if (operand != made)
+                    return;
+                if (takesWordsFirst && !operandIndex)
+                    --usersNotSeen;
+                else
+                    areNamedOtherwise = true;
+            });
+        }
+        for (ValueID operand : m_code.at(block).terminator.operands())
+            areNamedOtherwise |= operand == made;
+        if (m_code.at(block).subject == made)
+            --usersNotSeen;
+        m_code.forEachEdgeOf(block, [&](EdgeID, const Edge& edge) {
+            for (ValueID argument : edge.arguments())
+                areNamedOtherwise |= argument == made;
+        });
+        if (areNamedOtherwise)
+            return false;
+    }
+    return !usersNotSeen;
+}
+
+Machine::StackSlot* SavedFrameEmitter::slotOfHeapWordsInFrame(ValueID frame)
+{
+    const Operation& made = m_code.at(frame);
+    if (made.opcode != Opcode::NewHeapWords || !m_facts.mechanisms().contains(Mechanism::CellsInFrames))
+        return nullptr;
+    for (const HeapWordsInFrame& words : m_heapWordsInFrame) {
+        if (words.made == frame)
+            return words.slot;
+    }
+    findHeapWordsAliveAtSuspensions();
+    Machine::StackSlot* slot = nullptr;
+    if (!m_heapWordsAliveAtSuspensions.contains(frame) && areNamedOnlyByReadsAndStoresOfWords(frame)) {
+        slot = m_proc.addStackSlot(made.numberOfWords() * sizeof(uint64_t));
+        slot->setIsDeadAtSuspensions(true);
+    }
+    m_heapWordsInFrame.append(HeapWordsInFrame { frame, slot });
+    return slot;
+}
+
+TypedPointer SavedFrameEmitter::wordInFrame(Machine::StackSlot* slot, uint32_t index)
+{
+    return m_out.address(m_heaps.entire(AbstractHeap::InternalFields), m_out.slotBase(slot), static_cast<ptrdiff_t>(index) * static_cast<ptrdiff_t>(sizeof(uint64_t)));
+}
+
 void SavedFrameEmitter::generateNewHeapWords(const ValueContext& value)
 {
     uint32_t numberOfWords = value->numberOfWords();
     RELEASE_ASSERT(numberOfWords && numberOfWords <= SavedFrame::maxNumberOfWords);
+    if (Machine::StackSlot* slot = slotOfHeapWordsInFrame(value.valueID())) {
+        build().statistics().count(StatisticID::AllocateInFramesChanges);
+        for (uint32_t index = 0; index < numberOfWords; ++index)
+            m_out.store64(m_out.int64Zero, wordInFrame(slot, index));
+        define(value, undefined());
+        return;
+    }
     if (numberOfWords <= SavedFrame::maxWordsAllocatedInStub) {
         define(value, boxCell(CellPointer(callStub(value, AOT::newHeapFrame(), { m_out.constInt64(numberOfWords), m_out.intPtrZero }).first)));
         return;
@@ -271,18 +353,26 @@ void SavedFrameEmitter::generateNewHeapWords(const ValueContext& value)
 
 void SavedFrameEmitter::generateGetHeapFrameWord(const ValueContext& value)
 {
+    if (Machine::StackSlot* slot = slotOfHeapWordsInFrame(value->frameOperand())) {
+        defineNarrowed(value, Boxed(m_out.load64(wordInFrame(slot, value->index()))));
+        return;
+    }
     LValue frame = in<Boxed>(value->frameOperand()).value();
     defineNarrowed(value, Boxed(m_out.load64(m_out.address(m_heaps.entire(AbstractHeap::InternalFields), frame, offsetOfWordInHeapFrame(value->index())))));
 }
 
 void SavedFrameEmitter::generatePutHeapFrameWord(const ValueContext& value)
 {
-    CellPointer frame = unboxCell(in<Boxed>(value->frameOperand()));
     ValueID operand = value->valueOperand();
     const Type& storedType = typeOf(operand);
     LValue stored = in<Boxed>(operand).value();
     if (m_cellCageBase && storedType.mayBeUnspecified())
         stored = m_out.select(m_out.equal(stored, m_cellCageBase), m_out.int64Zero, stored);
+    if (Machine::StackSlot* slot = slotOfHeapWordsInFrame(value->frameOperand())) {
+        m_out.store64(stored, wordInFrame(slot, value->index()));
+        return;
+    }
+    CellPointer frame = unboxCell(in<Boxed>(value->frameOperand()));
     m_out.store64(stored, m_out.address(m_heaps.entire(AbstractHeap::InternalFields), frame.value(), offsetOfWordInHeapFrame(value->index())));
     if (value->remembersFrame())
         emitter<BarrierEmitter>().barrierAfterStore(value, frame, storedType);

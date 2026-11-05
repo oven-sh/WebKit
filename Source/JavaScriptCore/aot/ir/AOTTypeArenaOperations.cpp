@@ -51,11 +51,6 @@ static ALWAYS_INLINE TypeID typeOfPrimitivesInArena(TypeArena& arena, uint16_t p
     return internTypeOfPrimitivesInArena(arena, primitives, integers);
 }
 
-static Range integersOfTypeInArena(const TypeArena& arena, TypeID type)
-{
-    return holdsOnlyPrimitives(type) ? integersInID(type) : arena.at(type).integers;
-}
-
 static constexpr Range integersLeftWhereTestFailed(Range integers, Range removed)
 {
     if (integers.isEmpty() || removed.isEmpty())
@@ -538,25 +533,6 @@ TypeID TypeArena::withSeedsOnRecord(TypeID type, UnknownSeeds added)
     TypeID result = intern(parts);
     noteTypeMade(MakerOfType::WithSeeds, type.bits(), added.toRaw(), result, !liesInThread(type) && !liesInThread(result));
     return result;
-}
-
-TypeID TypeArena::widenedFrom(TypeID now, TypeID previous)
-{
-    if (now == previous)
-        return now;
-    Range integers = integersOfTypeInArena(*this, now);
-    Range widened = integers.widenedFrom(integersOfTypeInArena(*this, previous));
-    if (widened != integers)
-        now = withIntegers(now, widened);
-    if (holdsOnlyPrimitives(now) || holdsOnlyPrimitives(previous))
-        return now;
-
-    TypeParts parts = at(now);
-    Range widenedBounds = parts.boundsOfFractions.widenedFrom(at(previous).boundsOfFractions);
-    if (widenedBounds == parts.boundsOfFractions)
-        return now;
-    parts.boundsOfFractions = widenedBounds;
-    return intern(parts);
 }
 
 template<typename SetID>

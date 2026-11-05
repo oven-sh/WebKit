@@ -1,0 +1,51 @@
+# Functions that met at one place are no longer told apart, so a call of what lies at such a place may enter any of them. If only the functions that met at that very place were reached, one that met them elsewhere would be entered without code.
+# function run(f) { return f(); }  function look(f) { return typeof f; }  function one() { return 1; }  function two() { return 2; }  function three() { return 3; }  run(one); run(two); look(two); look(three);
+# RUN: link functions mechanisms=all
+# CHECK: function f3
+# CHECK-NOT: unreached
+# CHECK: function f4
+# CHECK-NOT: unreached
+# CHECK: function f5
+# CHECK-NOT: unreached
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f3
+    v3 = NewClosure function=f4
+    v4 = NewClosure function=f5
+    v5 = Call v0, -, v2 calleeName="run"
+    v6 = Call v0, -, v3 calleeName="run"
+    v7 = Call v1, -, v3 calleeName="look"
+    v8 = Call v1, -, v4 calleeName="look"
+    v9 = Undefined
+    Return v9
+}
+function f1 name="run" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Call v0, -
+    Return v1
+}
+function f2 name="look" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeOf v0
+    Return v1
+}
+function f3 name="one" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    Return v0
+}
+function f4 name="two" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=2
+    Return v0
+}
+function f5 name="three" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=3
+    Return v0
+}

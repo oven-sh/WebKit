@@ -15,7 +15,6 @@
 namespace JSC { namespace AOT { namespace Typed {
 
 void addEffectsOfEnteringByValue(Effects&);
-void addVariablesThatStandForFields(const Plan&, Effects&);
 
 Reference buildCallAsWrittenThatGives(Walker&, Draft&&, TypeID given);
 

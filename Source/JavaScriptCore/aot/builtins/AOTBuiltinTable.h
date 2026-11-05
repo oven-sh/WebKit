@@ -158,14 +158,6 @@ enum class RuntimeModuleFlag : uint8_t {
     IsPublic = 1 << 3,
 };
 
-enum class BuiltinHostReadContext : uint8_t {
-    EntryPoint,
-    Worker,
-    Preload,
-    Plugin,
-    TestFile,
-};
-
 struct BuiltinIntegerRange {
     int64_t minimum { 1 };
     int64_t maximum { 0 };
@@ -660,17 +652,6 @@ struct BuiltinHostObject {
     OptionSet<BuiltinPlatform> platforms { everyBuiltinPlatform };
 };
 
-struct BuiltinNamedMemberCall {
-    BuiltinName name { };
-    std::span<const BuiltinPlace> arguments { };
-};
-
-struct BuiltinHostMethodCall {
-    BuiltinName name { };
-    BuiltinName nativeCell { };
-    const BuiltinHostCall* call { nullptr };
-};
-
 inline constexpr size_t maxLiteralPartNames = 4;
 
 struct BuiltinForms {
@@ -788,14 +769,6 @@ struct RuntimeModuleData {
     std::span<const BuiltinName> exportsHeldByNamespace { };
 };
 
-struct BuiltinHostRead {
-    BuiltinHostReadContext context { BuiltinHostReadContext::EntryPoint };
-    BuiltinName exportName { };
-    BuiltinHostReadUse use { BuiltinHostReadUse::Inspected };
-    BuiltinID passedTo { };
-    uint8_t argumentIndex { 0 };
-};
-
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 template<size_t numberOfTexts, size_t numberOfCharacters>
@@ -860,8 +833,6 @@ struct BuiltinTableAttachments {
     std::span<const BuiltinCalledFunction> calledFunctions { };
     std::span<const BuiltinCalledFunction> startupCalledFunctions { };
     std::span<const BuiltinHostObject> hostObjects { };
-    std::span<const BuiltinNamedMemberCall> namedMemberCalls { };
-    std::span<const BuiltinHostMethodCall> hostMethodCalls { };
     std::span<const BuiltinForms> forms { };
     std::span<const BuiltinBoxedCall> boxedCalls { };
     std::span<const BuiltinNumberConstant> numberConstants { };
@@ -876,13 +847,11 @@ struct BuiltinTableRuntime {
     std::span<const RuntimeFunctionID> functionsCalledWithStartupLoads { };
     std::span<const BuiltinName> namesOfHostMethodsCallingStartupLoads { };
     std::span<const RuntimeFunctionID> moduleLoaderFunctions { };
-    std::span<const BuiltinHostRead> hostReads { };
     std::span<const BuiltinID> lockedObjects { };
     std::span<const BuiltinMarkedEntry> marks { };
     std::span<const BuiltinLoaderOfMachineCode> loadersOfMachineCode { };
     std::span<const BuiltinClosedKeys> closedKeys { };
     std::span<const BuiltinNamesReadByNativeCode> namesReadByNativeCode { };
-    std::span<const BuiltinName> namesOfNativeAccessors { };
     std::span<const BuiltinID> lockedMembers { };
     std::span<const BuiltinRealmStructure> realmStructures { };
 };
@@ -914,8 +883,6 @@ extern const BuiltinModuleLoad builtinTableModuleLoads[];
 extern const BuiltinCalledFunction builtinTableCalledFunctions[];
 extern const BuiltinCalledFunction builtinTableStartupCalledFunctions[];
 extern const BuiltinHostObject builtinTableHostObjects[];
-extern const BuiltinNamedMemberCall builtinTableNamedMemberCalls[];
-extern const BuiltinHostMethodCall builtinTableHostMethodCalls[];
 extern const BuiltinForms builtinTableForms[];
 extern const BuiltinNameClasses builtinTableClassesByMemberName[];
 extern const BuiltinClassTokenStorage builtinTableClassTokens;
@@ -1007,7 +974,6 @@ public:
     BuiltinClassID typedArrayClassOf(BuiltinClassID) const;
     BuiltinSlotID findSlot(BuiltinClassID, BuiltinName) const;
     BuiltinSlotID findSlot(BuiltinClassID, ContentsSlot) const;
-    BuiltinSlotID slotInType(BuiltinClassID, unsigned indexInType) const;
     unsigned numberOfSlotsInType(BuiltinClassID) const;
 
     BuiltinID rootOf(BuiltinID) const;
@@ -1046,18 +1012,14 @@ public:
     bool has(BuiltinMark, BuiltinID) const;
     std::span<const BuiltinLoaderOfMachineCode> loadersOfMachineCode() const { return m_data.runtime.loadersOfMachineCode; }
     std::span<const BuiltinID> lockedMembers() const { return m_data.runtime.lockedMembers; }
-    std::span<const BuiltinName> namesOfNativeAccessors() const { return m_data.runtime.namesOfNativeAccessors; }
     std::span<const RuntimeFunctionData> runtimeFunctions() const { return m_data.runtime.functions; }
     std::span<const RuntimeModuleID> startupModules() const { return m_data.runtime.startupModules; }
     std::span<const BuiltinModuleLoad> startupLoads() const { return m_data.attachments.startupLoads; }
     std::span<const RuntimeFunctionID> functionsCalledWithStartupLoads() const { return m_data.runtime.functionsCalledWithStartupLoads; }
     std::span<const BuiltinCalledFunction> startupCalledFunctions() const;
     std::span<const BuiltinHostObject> hostObjects() const;
-    const BuiltinNamedMemberCall* callOfMemberNamed(BuiltinName) const;
-    std::span<const BuiltinHostMethodCall> hostMethodCalls() const;
     std::span<const BuiltinName> namesOfHostMethodsCallingStartupLoads() const { return m_data.runtime.namesOfHostMethodsCallingStartupLoads; }
     std::span<const RuntimeFunctionID> moduleLoaderFunctions() const { return m_data.runtime.moduleLoaderFunctions; }
-    std::span<const BuiltinHostRead> hostReads() const { return m_data.runtime.hostReads; }
     std::span<const BuiltinName> keysReadBy(Protocol) const;
 
     BuiltinName nameOf(std::span<const uint8_t> utf8) const;

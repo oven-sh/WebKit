@@ -11,6 +11,7 @@
 #include "AOTAccessEmitter.h"
 #include "AOTBuiltinCallEmitter.h"
 #include "AOTConstantEmitter.h"
+#include "AOTConversionEmitter.h"
 #include "AOTDiagnostics.h"
 #include "AOTIRProgram.h"
 #include "AOTNumbering.h"
@@ -94,6 +95,23 @@ void AllocationEmitter::generateNewSuppressedError(const ValueContext& value)
     define(value, callOperation<CellPointer>(value, RuntimeOperation::NewSuppressedError, { in<Boxed>(value->errorOperand()), in<Boxed>(value->suppressedOperand()) }, { .capturesStackTrace = true }));
 }
 
+bool AllocationEmitter::isListedByArgumentsObjectAlone(ValueID list) const
+{
+    const Operation& made = m_code.at(list);
+    if (made.opcode != Opcode::NewArray || !m_facts.mechanisms().contains(Mechanism::EscapeAnalysis))
+        return false;
+    if (made.storage() != AllocationStorage::Heap || !made.holes().empty())
+        return false;
+    ValueID user = m_code.onlyUserOf(list);
+    if (!user || m_code.at(user).opcode != Opcode::CreateUnmappedArguments || m_code.at(user).restOperand() != list)
+        return false;
+    for (const LiveAtSuspension& record : m_code.suspensions()) {
+        if (std::ranges::contains(m_code.liveAt(record.suspension), list))
+            return false;
+    }
+    return true;
+}
+
 CellPointer AllocationEmitter::createArguments(const ValueContext& value, std::optional<CellPointer> callee)
 {
     ValueID countOperand = value->countOperand();
@@ -122,6 +140,13 @@ CellPointer AllocationEmitter::createArguments(const ValueContext& value, std::o
     Vector<Boxed, 8> parameters;
     for (ValueID parameter : value->parametersOperands())
         parameters.append(in<Boxed>(parameter));
+    if (isListedByArgumentsObjectAlone(value->restOperand())) {
+        ConversionEmitter& conversions = emitter<ConversionEmitter>();
+        for (ValueID element : operationAt(value->restOperand()).elementsOperands()) {
+            const Type& type = typeOf(element);
+            parameters.append(conversions.box(value, conversions.inFormOfType(get(element), type), type));
+        }
+    }
 
     CellPointer rest = in<CellPointer>(value->restOperand());
     Pointer buffer = argumentBuffer(parameters.span());

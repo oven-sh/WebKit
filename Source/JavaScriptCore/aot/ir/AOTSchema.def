@@ -66,7 +66,7 @@ enum PayloadKind (isId: Bool, words: UInt32) {
     String(true, 1) PropertyKey(true, 1) Function(true, 1) Layout(true, 1) Field(false, 1) Variable(true, 1) Module(true, 1) ModuleFailure(true, 1)
     Type(true, 1) TypeSite(true, 1) EvalScope(true, 1) Data(true, 1) ExpectedResult(true, 1) Builtin(true, 1) Enum(false, 1) Flags(false, 1)
     Bool(false, 1) UInt32(false, 1) Int64(false, 2) Double(false, 2) External(false, 1) Record(false, 0) Variant(false, 0) List(false, 0)
-    | engine LayoutSet(true, 1) CalleeSet(true, 1) AccessSite(true, 1) AllocationClass(true, 1) OrderWord(false, 1) Origin(false, 2)
+    | engine LayoutSet(true, 1) CalleeSet(true, 1) OrderWord(false, 1) Origin(false, 2)
     Opcode(false, 1)
 }
 

@@ -108,17 +108,6 @@ void StubAssembler::exitOnCannot(Entry finisher, const OperationCall& operationC
     callOperationAndReturn(finisher, operationCall);
 }
 
-void StubAssembler::callCode(CodeSymbol symbol)
-{
-    RELEASE_ASSERT(symbol.space == SymbolSpace::RegExp);
-    RegisterSet lost = registersClobberedByOperations();
-    if (!m_savedRegisterStack.isEmpty())
-        lost.exclude(m_savedRegisterStack.last());
-    m_recording.clobberedByCallees.merge(lost);
-    m_recording.symbols.appendIfNotContains(symbol);
-    m_relocations.call(symbol);
-}
-
 } } // namespace JSC::AOT
 
 #endif // ENABLE(AOT)

@@ -335,13 +335,6 @@ bool StringEmitter::canCompareInline(StringID literal) const
     return textOf(literal).length() <= maxLengthComparedInPlace;
 }
 
-Condition StringEmitter::hasTextAt(const CharacterView& view, Word32 offset, StringID literal)
-{
-    return asBoolean([&](BranchTargets targets) {
-        branchOnTextAt(view, offset, literal, targets);
-    });
-}
-
 void StringEmitter::branchOnTextAt(const CharacterView& view, Word32 offset, StringID literal, BranchTargets targets)
 {
     String text = textOf(literal);

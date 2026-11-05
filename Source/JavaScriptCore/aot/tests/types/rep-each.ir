@@ -1,20 +1,20 @@
 # Each representation once: the default of a type, its slot, whether the collector must see it, every representation that can hold the type, and the widest type of each representation
 # No type that the text can name has the form RawWord. It shows among the opaque kinds, which are listed behind the widest types.
 # RUN: rep
-# CHECK: t0: rep Boolean slot Boolean cells no legal [Boolean, JSValue]
-# CHECK-NEXT: t1: rep Int32 slot Uint8 cells no legal [Int32, Int64, Double, OptionalInt64, OptionalDouble, JSValue]
-# CHECK-NEXT: t2: rep Int32 slot Int16 cells no legal [Int32, Int64, Double, OptionalInt64, OptionalDouble, JSValue]
-# CHECK-NEXT: t3: rep Int64 slot Int64 cells no legal [Int64, Double, OptionalInt64, OptionalDouble, JSValue]
-# CHECK-NEXT: t4: rep Double slot Double cells no legal [Double, OptionalDouble, JSValue]
-# CHECK-NEXT: t5: rep OptionalInt64 slot OptionalInt64 cells no legal [OptionalInt64, OptionalDouble, JSValue]
-# CHECK-NEXT: t6: rep OptionalDouble slot OptionalDouble cells no legal [OptionalDouble, JSValue]
-# CHECK-NEXT: t7: rep Cell slot Cell cells yes legal [Cell, Cell32, JSValue]
-# CHECK-NEXT: t8: rep Cell slot Cell cells yes legal [Cell, Cell32, JSValue]
-# CHECK-NEXT: t9: rep JSValue slot JSValue cells yes legal [JSValue]
-# CHECK-NEXT: t10: rep Cell slot Cell cells yes legal [Cell, Cell32, JSValue]
-# CHECK-NEXT: t11: rep Cell slot Cell cells yes legal [Cell, Cell32, JSValue]
-# CHECK-NEXT: t12: rep JSValue slot JSValue cells yes legal [Cell32, JSValue]
-# CHECK-NEXT: t13: rep Void slot JSValue cells no legal [Void, OptionalInt64, OptionalDouble, Cell32, JSValue]
+# CHECK: t0: rep Boolean cells no legal [Boolean, JSValue]
+# CHECK-NEXT: t1: rep Int32 cells no legal [Int32, Int64, Double, OptionalInt64, OptionalDouble, JSValue]
+# CHECK-NEXT: t2: rep Int32 cells no legal [Int32, Int64, Double, OptionalInt64, OptionalDouble, JSValue]
+# CHECK-NEXT: t3: rep Int64 cells no legal [Int64, Double, OptionalInt64, OptionalDouble, JSValue]
+# CHECK-NEXT: t4: rep Double cells no legal [Double, OptionalDouble, JSValue]
+# CHECK-NEXT: t5: rep OptionalInt64 cells no legal [OptionalInt64, OptionalDouble, JSValue]
+# CHECK-NEXT: t6: rep OptionalDouble cells no legal [OptionalDouble, JSValue]
+# CHECK-NEXT: t7: rep Cell cells yes legal [Cell, Cell32, JSValue]
+# CHECK-NEXT: t8: rep Cell cells yes legal [Cell, Cell32, JSValue]
+# CHECK-NEXT: t9: rep JSValue cells yes legal [JSValue]
+# CHECK-NEXT: t10: rep Cell cells yes legal [Cell, Cell32, JSValue]
+# CHECK-NEXT: t11: rep Cell cells yes legal [Cell, Cell32, JSValue]
+# CHECK-NEXT: t12: rep JSValue cells yes legal [Cell32, JSValue]
+# CHECK-NEXT: t13: rep Void cells no legal [Void, OptionalInt64, OptionalDouble, Cell32, JSValue]
 # CHECK-NEXT: Void: never
 # CHECK-NEXT: Boolean: boolean
 # CHECK-NEXT: Int32: i32

@@ -172,7 +172,6 @@ bool buildReadByPartsOfKey(Walker& walker, const BodyValue& read, const InputsOf
     byParts.setObjectOperand(object);
     byParts.setFirstPartOperand(parts[0]);
     byParts.setSecondPartOperand(parts[1]);
-    byParts.setAccessSite(written.accessSite());
     byParts.expected = written.expected;
     byParts.resultIsReturnedAtOnce = written.resultIsReturnedAtOnce;
     byParts.inputValueGiven = read.id();

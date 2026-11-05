@@ -27,7 +27,6 @@
 #include "AOTThreads.h"
 #include "AOTTypeTable.h"
 #include <algorithm>
-#include <bit>
 #include <array>
 #include <bit>
 #include <initializer_list>
@@ -136,65 +135,162 @@ struct FillInScan {
     friend constexpr auto operator<=>(const FillInScan&, const FillInScan&) = default;
 };
 
-class FillsAtPointInScan {
+class SetsOfFillsInScan {
 public:
-    void clear()
-    {
-        m_fills.shrink(0);
-        m_firstsOfRuns.shrink(0);
-    }
+    using Set = uint32_t;
+    static constexpr Set empty = 0;
 
-    void set(std::span<const FillInScan> inOrder)
-    {
-        clear();
-        m_fills.append(inOrder);
-    }
+    void clear() { m_nodes.shrink(0); }
 
-    bool contains(const FillInScan& fill) const
+    Set with(Set set, const FillInScan& fill) { return withKey(set, keyOf(fill)); }
+    bool contains(Set set, const FillInScan& fill) const { return containsKey(set, keyOf(fill)); }
+
+    Set meet(Set first, Set second)
     {
-        size_t end = m_fills.size();
-        for (size_t run = m_firstsOfRuns.size(); run--; end = m_firstsOfRuns[run]) {
-            if (std::ranges::binary_search(m_fills.span().subspan(m_firstsOfRuns[run], end - m_firstsOfRuns[run]), fill))
-                return true;
+        if (first == second)
+            return first;
+        if (!first || !second)
+            return empty;
+        Node nodeOfFirst = m_nodes[first];
+        Node nodeOfSecond = m_nodes[second];
+        if (nodeOfFirst.isLeaf())
+            return containsKey(second, nodeOfFirst.bits) ? first : empty;
+        if (nodeOfSecond.isLeaf())
+            return containsKey(first, nodeOfSecond.bits) ? second : empty;
+        if (nodeOfFirst.bits == nodeOfSecond.bits) {
+            Set zero = meet(nodeOfFirst.zero, nodeOfSecond.zero);
+            Set one = meet(nodeOfFirst.one, nodeOfSecond.one);
+            if (zero == nodeOfFirst.zero && one == nodeOfFirst.one)
+                return first;
+            if (zero == nodeOfSecond.zero && one == nodeOfSecond.one)
+                return second;
+            if (!zero || !one)
+                return zero | one;
+            return makeNode(nodeOfFirst.bits, zero, one);
         }
-        return std::ranges::binary_search(m_fills.span().first(end), fill);
+        if (nodeOfFirst.bit() > nodeOfSecond.bit())
+            return nodeOfFirst.isAbove(nodeOfSecond.prefix()) ? meet(nodeOfFirst.sideOf(nodeOfSecond.prefix()), second) : empty;
+        if (nodeOfSecond.bit() > nodeOfFirst.bit())
+            return nodeOfSecond.isAbove(nodeOfFirst.prefix()) ? meet(first, nodeOfSecond.sideOf(nodeOfFirst.prefix())) : empty;
+        return empty;
     }
 
-    void add(const FillInScan& fill)
+    template<typename Functor>
+    void forEachFillOf(Set set, uint32_t root, const Functor& functor) const
     {
-        if (contains(fill))
+        forEachKeyBetween(set, keyOf({ root, false, 0 }), keyOf({ root, true, UINT32_MAX }), functor);
+    }
+
+    template<typename Functor>
+    void forEachFillMissingIn(Set set, Set other, const Functor& functor) const
+    {
+        if (set == other || !set)
             return;
-        size_t firstOfLastRun = m_firstsOfRuns.isEmpty() ? 0 : m_firstsOfRuns.last();
-        if (m_fills.size() - firstOfLastRun >= longestRunThatTakesFill) {
-            m_firstsOfRuns.append(m_fills.size());
-            m_fills.append(fill);
+        Node node = m_nodes[set];
+        if (node.isLeaf()) {
+            if (!containsKey(other, node.bits))
+                functor(fillOf(node.bits));
             return;
         }
-        std::span<const FillInScan> lastRun = m_fills.span().subspan(firstOfLastRun);
-        m_fills.insert(firstOfLastRun + (std::ranges::lower_bound(lastRun, fill) - lastRun.begin()), fill);
-        while (!m_firstsOfRuns.isEmpty() && m_fills.size() - m_firstsOfRuns.last() >= m_firstsOfRuns.last() - firstOfRunInFrontOfLast())
-            uniteLastTwoRuns();
-    }
-
-    std::span<const FillInScan> inOrder() LIFETIME_BOUND
-    {
-        while (!m_firstsOfRuns.isEmpty())
-            uniteLastTwoRuns();
-        return m_fills.span();
+        Set besideZero = empty;
+        Set besideOne = empty;
+        if (other) {
+            Node nodeOfOther = m_nodes[other];
+            uint64_t bitOfOther = nodeOfOther.isLeaf() ? 0 : nodeOfOther.bit();
+            uint64_t prefixOfOther = nodeOfOther.isLeaf() ? nodeOfOther.bits : nodeOfOther.prefix();
+            if (node.bits == nodeOfOther.bits && bitOfOther) {
+                besideZero = nodeOfOther.zero;
+                besideOne = nodeOfOther.one;
+            } else if (node.bit() > bitOfOther) {
+                if (node.isAbove(prefixOfOther))
+                    (prefixOfOther & node.bit() ? besideOne : besideZero) = other;
+            } else if (bitOfOther > node.bit() && nodeOfOther.isAbove(node.prefix()))
+                return forEachFillMissingIn(set, nodeOfOther.sideOf(node.prefix()), functor);
+        }
+        forEachFillMissingIn(node.zero, besideZero, functor);
+        forEachFillMissingIn(node.one, besideOne, functor);
     }
 
 private:
-    static constexpr size_t longestRunThatTakesFill = 64;
+    struct Node {
+        bool isLeaf() const { return !zero; }
+        uint64_t bit() const { return bits & (~bits + 1); }
+        uint64_t prefix() const { return bits ^ bit(); }
+        bool isAbove(uint64_t key) const { return (key & ~(bit() | (bit() - 1))) == prefix(); }
+        Set sideOf(uint64_t key) const { return key & bit() ? one : zero; }
 
-    size_t firstOfRunInFrontOfLast() const { return m_firstsOfRuns.size() > 1 ? m_firstsOfRuns[m_firstsOfRuns.size() - 2] : 0; }
-    void uniteLastTwoRuns()
+        uint64_t bits { 0 };
+        Set zero { empty };
+        Set one { empty };
+    };
+
+    static uint64_t keyOf(const FillInScan& fill)
     {
-        std::inplace_merge(m_fills.begin() + firstOfRunInFrontOfLast(), m_fills.begin() + m_firstsOfRuns.last(), m_fills.end());
-        m_firstsOfRuns.removeLast();
+        ASSERT(fill.root <= static_cast<uint32_t>(INT32_MAX));
+        return static_cast<uint64_t>(fill.root) << 33 | static_cast<uint64_t>(fill.isPart) << 32 | fill.number;
+    }
+    static FillInScan fillOf(uint64_t key) { return { static_cast<uint32_t>(key >> 33), !!(key >> 32 & 1), static_cast<uint32_t>(key) }; }
+
+    Set makeNode(uint64_t bits, Set zero, Set one)
+    {
+        if (m_nodes.isEmpty())
+            m_nodes.append(Node { });
+        m_nodes.append(Node { bits, zero, one });
+        return static_cast<Set>(m_nodes.size() - 1);
     }
 
-    Vector<FillInScan, 16> m_fills;
-    Vector<size_t, 4> m_firstsOfRuns;
+    Set makeNodeAbove(uint64_t key, Set setOfKey, uint64_t other, Set setOfOther)
+    {
+        uint64_t bit = 1ull << (63 - std::countl_zero(key ^ other));
+        uint64_t bits = (key & ~(bit | (bit - 1))) | bit;
+        return key & bit ? makeNode(bits, setOfOther, setOfKey) : makeNode(bits, setOfKey, setOfOther);
+    }
+
+    Set withKey(Set set, uint64_t key)
+    {
+        if (!set)
+            return makeNode(key, empty, empty);
+        Node node = m_nodes[set];
+        if (node.isLeaf())
+            return node.bits == key ? set : makeNodeAbove(key, makeNode(key, empty, empty), node.bits, set);
+        if (!node.isAbove(key))
+            return makeNodeAbove(key, makeNode(key, empty, empty), node.prefix(), set);
+        Set side = node.sideOf(key);
+        Set sideWithKey = withKey(side, key);
+        if (sideWithKey == side)
+            return set;
+        return key & node.bit() ? makeNode(node.bits, node.zero, sideWithKey) : makeNode(node.bits, sideWithKey, node.one);
+    }
+
+    bool containsKey(Set set, uint64_t key) const
+    {
+        while (set) {
+            const Node& node = m_nodes[set];
+            if (node.isLeaf())
+                return node.bits == key;
+            set = node.sideOf(key);
+        }
+        return false;
+    }
+
+    template<typename Functor>
+    void forEachKeyBetween(Set set, uint64_t first, uint64_t last, const Functor& functor) const
+    {
+        if (!set)
+            return;
+        Node node = m_nodes[set];
+        if (node.isLeaf()) {
+            if (node.bits >= first && node.bits <= last)
+                functor(fillOf(node.bits));
+            return;
+        }
+        if ((node.bits | (node.bit() - 1)) < first || node.prefix() > last)
+            return;
+        forEachKeyBetween(node.zero, first, last, functor);
+        forEachKeyBetween(node.one, first, last, functor);
+    }
+
+    Vector<Node> m_nodes;
 };
 
 enum class ObjectBeingMadeKindInScan : uint8_t { OfOneLayout, Allocated, AnsweredBySuperCall, This };
@@ -208,6 +304,7 @@ struct ObjectBeingMadeInScan {
     bool hasEnded { false };
     bool isFinished { false };
     bool endsWhereItLeaves { false };
+    bool isConstant { false };
     uint32_t blockOfFinish { 0 };
     uint32_t positionOfFinish { 0 };
     uint32_t positionOfLastFill { 0 };
@@ -223,7 +320,7 @@ struct ObjectHandedToBlockInScan {
     uint32_t position { 0 };
     uint32_t root { 0 };
     uint32_t placeInStream { 0 };
-    ListInScan fills;
+    SetsOfFillsInScan::Set fills { SetsOfFillsInScan::empty };
 };
 
 struct BlockThatTookObjectInScan {
@@ -828,7 +925,6 @@ public:
         VariableID variable;
     };
     const Vector<KeyOfVariableInScan>& keysOfVariables() const { return m_keysOfVariables; }
-    const Vector<LiteralOfVariable>& storesIntoImmutableVariables() const { return m_storesIntoImmutableVariables; }
     const Vector<MemberUnderVariableInScan>& membersUnderVariables() const { return m_membersUnderVariables; }
 
 private:
@@ -1080,7 +1176,7 @@ private:
     void followAllocation(const BodyValue&);
     void leaveEveryFieldEmpty(LayoutID);
     bool isListedByAllocation(uint32_t root, PropertyKeyID) const;
-    std::span<const FillInScan> fillsOf(uint32_t root, std::span<const FillInScan>) const;
+    std::span<const FillInScan> fillsOf(uint32_t root, SetsOfFillsInScan::Set) LIFETIME_BOUND;
     void noteFill(uint32_t root, bool isPart, uint32_t number);
     void noteLookUp(uint32_t root, PropertyKeyID);
     void noteStoreIntoObject(uint32_t root, PropertyKeyID, SummaryAccess::Kind);
@@ -1243,7 +1339,6 @@ private:
     };
     Vector<ValueOfVariableInScan> m_valuesOfImmutableVariables;
     Vector<KeyOfVariableInScan> m_keysOfVariables;
-    Vector<LiteralOfVariable> m_storesIntoImmutableVariables;
     Vector<MemberUnderVariableInScan> m_membersUnderVariables;
     HashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_placesOfAccessorsLaid;
     bool hasAccessorLaidUnder(uint32_t root, PropertyKeyID key) const { return !m_accessorsLaid.isEmpty() && m_placesOfAccessorsLaid.contains(static_cast<uint64_t>(root) << 32 | key.bits()); }
@@ -1288,9 +1383,10 @@ private:
 
     Vector<ObjectBeingMadeInScan> m_objectsBeingMade;
     uint32_t m_thisBeingMade { noDefinition };
-    FillsAtPointInScan m_fills;
-    Vector<FillInScan> m_fillsKept;
-    Vector<ListInScan> m_fillsAtBlocks;
+    SetsOfFillsInScan m_setsOfFills;
+    SetsOfFillsInScan::Set m_fills { SetsOfFillsInScan::empty };
+    Vector<SetsOfFillsInScan::Set> m_fillsAtBlocks;
+    Vector<FillInScan, 16> m_fillsOfObjectAsked;
     Vector<uint32_t> m_numberOfEdgesInto;
     Vector<ObjectHandedToBlockInScan> m_objectsHandedToBlocks;
     Vector<BlockThatTookObjectInScan> m_blocksThatTookObjects;
@@ -1371,14 +1467,19 @@ struct ReferencesOfScan {
             scan.noteRecordOf(scan.m_program.at(id).module);
             if (!isNewClosure)
                 scan.noteUseByBodyOfModule(id);
-            if (((role == FunctionReferenceKind::Closure) || ...) && !isNewClosure)
+            if (((role == FunctionReferenceKind::Closure) || ...) && !isNewClosure) {
                 scan.addEdge(scan.nodeFor(SummaryNode::Kind::Closure, id.index()), 0, { }, true);
+                if (!scan.m_program.at(id).captures.isEmpty())
+                    scan.m_summary.sitesThatHandOverCaptures.append(site);
+            }
         } else if constexpr (std::is_same_v<IDType, VariableID>)
             scan.noteRecordOf(scan.m_program.at(id).module);
         else if constexpr (std::is_same_v<IDType, ModuleID>) {
             if (((role == ModuleReferenceKind::Target) || ...)) {
                 scan.noteFunctionNamed(scan.m_program.at(id).body);
                 scan.noteEvaluationOf(id, site, block);
+                if (FunctionID body = scan.m_program.at(id).body; body && scan.m_program.at(body).module == scan.m_function->module)
+                    scan.noteUseByBodyOfModule(body);
                 if (handsModuleOut)
                     scan.noteModuleHandedOut(id);
             }
@@ -1560,8 +1661,8 @@ void ScanOfBody::reset()
     m_objectsBeingMade.shrink(0);
     m_thisBeingMade = noDefinition;
     m_leavesFieldsEmptyForGood = false;
-    m_fills.clear();
-    m_fillsKept.shrink(0);
+    m_setsOfFills.clear();
+    m_fills = SetsOfFillsInScan::empty;
     m_objectsHandedToBlocks.shrink(0);
     m_blocksThatTookObjects.shrink(0);
     m_followsSomeEnvironment = false;
@@ -2309,7 +2410,7 @@ PrimitiveKnownToFolding ScanOfBody::primitiveHeldBy(ValueID value)
 void ScanOfBody::noteLeavingOfObjectBeingMade(uint32_t root, WayOfLeavingInScan way)
 {
     noteWhereFinishedLiteralLeavesFirst(objectBeingMade(root));
-    meetFillsWhereObjectLeaves(objectBeingMade(root), fillsOf(root, m_fills.inOrder()));
+    meetFillsWhereObjectLeaves(objectBeingMade(root), fillsOf(root, m_fills));
     if (way == WayOfLeavingInScan::IsReturned)
         meetFillsWhereConstructionEnds(root);
 }
@@ -2333,7 +2434,7 @@ void ScanOfBody::readBody()
     m_firstLeft.fill(hasNotLeft, body.numberOfValues());
     m_lastLeft.fill(0, body.numberOfValues());
     m_firstParameterOfBlock.fill(0, body.numberOfBlocks() + 1);
-    m_fillsAtBlocks.fill(ListInScan { 0, noFillsYet }, body.numberOfBlocks());
+    m_fillsAtBlocks.fill(noFillsYet, body.numberOfBlocks());
     m_numberOfEdgesInto.fill(0, body.numberOfBlocks());
     if (m_listsFirstStoresOfBody) {
         m_immediateDominators.fill(noDefinition, body.numberOfBlocks());
@@ -2385,8 +2486,7 @@ BodyBlock ScanOfBody::readBlock(const BodyBlock& block)
     if (block.id() == entryBlock)
         followThis(block);
     else if (!m_objectsBeingMade.isEmpty()) {
-        ListInScan kept = m_fillsAtBlocks[number];
-        m_fills.set(kept.count != noFillsYet ? m_fillsKept.span().subspan(kept.first, kept.count) : std::span<const FillInScan> { });
+        m_fills = m_fillsAtBlocks[number] != noFillsYet ? m_fillsAtBlocks[number] : SetsOfFillsInScan::empty;
         takeObjectsHandedTo(block);
     }
     if (block.hasHandler()) {
@@ -2475,7 +2575,7 @@ bool ScanOfBody::noteEffectsOf(const BodyValue& value, Opcode opcode, uint32_t b
     if (opcode == Opcode::Builtin && standsForFirstReadOffHolder(m_program.builtins(), value.as<Opcode::Builtin>().builtin(), value.as<Opcode::Builtin>().isNotReadFromHolder())) {
         if (declaredEffects != &effectsStorage)
             effectsStorage = *declaredEffects;
-        effectsStorage.merge(declaredBoundInTable(Opcode::InitializeBuiltin));
+        effectsStorage.merge(declaredBoundInTable(opcodeOfFirstReadOffHolder(m_program.builtins(), value.as<Opcode::Builtin>().builtin())));
         declaredEffects = &effectsStorage;
     }
     if (access && declaredEffects->mayCallUnknownCode)
@@ -2544,8 +2644,11 @@ void ScanOfBody::readOperation(const BodyValue& value, uint32_t block)
                 noteModuleHandedOut(file);
         }
         if (opcode == Opcode::NewClosure && !references.namesUndefinedRecord) {
-            if (LayoutID constructed = classOfConstructorFunction(m_program, value.as<Opcode::NewClosure>().function()))
+            FunctionID made = value.as<Opcode::NewClosure>().function();
+            if (LayoutID constructed = classOfConstructorFunction(m_program, made))
                 m_summary.classesEvaluated.append(constructed);
+            if (!m_program.at(made).captures.isEmpty())
+                m_summary.sitesThatHandOverCaptures.append(value.id());
         }
         if (references.namesUndefinedRecord) {
             stopAtUndefinedRecord(block, value.id(), m_function->locationOf(value), nameOf(opcode));
@@ -3321,8 +3424,6 @@ void ScanOfBody::retain(const BodyValue& value, uint32_t operandIndex, const Ope
             VariableID variable = value.as<Opcode::PutModuleVariable>().variable();
             if (m_function->isModuleBody() && m_program.at(variable).module == m_function->module && m_program.at(variable).flags.contains(VariableFlags::IsImmutable))
                 m_valuesOfImmutableVariables.append({ variable, value.as<Opcode::PutModuleVariable>().valueOperand() });
-            else if (m_program.at(variable).flags.contains(VariableFlags::IsImmutable))
-                m_storesIntoImmutableVariables.append({ variable });
             if (m_program.at(variable).initialization == VariableInitialization::Function)
                 m_summary.functionVariablesStoredInto.append(variable);
             flowInto(list, variableNode(variable));
@@ -3570,8 +3671,16 @@ void ScanOfBody::followAllocation(const BodyValue& value)
         size_t numberListed = value.opcode() == Opcode::NewObject ? value.as<Opcode::NewObject>().fields().size() : static_cast<size_t>(std::ranges::count_if(objectOfDataInScan(m_program, value)->members, [&](const DataMember& member) {
             return layout.findField(member.key).has_value();
         }));
-        if (numberListed < layout.fields.size())
+        if (numberListed < layout.fields.size()) {
             follow(value.id().index(), ObjectBeingMadeKindInScan::OfOneLayout);
+            if (value.opcode() == Opcode::Data) {
+                ObjectBeingMadeInScan& constant = m_objectsBeingMade.last();
+                constant.isFinished = true;
+                constant.isConstant = true;
+                constant.blockOfFinish = m_blockBeingRead;
+                constant.positionOfFinish = value.id().index();
+            }
+        }
         return;
     }
     if (m_function->kind == FunctionKind::BaseConstructor && m_function->constructedClass == id) {
@@ -3604,10 +3713,13 @@ bool ScanOfBody::isListedByAllocation(uint32_t root, PropertyKeyID key) const
     return field && std::ranges::contains(allocation.fields(), *field);
 }
 
-std::span<const FillInScan> ScanOfBody::fillsOf(uint32_t root, std::span<const FillInScan> fills) const
+std::span<const FillInScan> ScanOfBody::fillsOf(uint32_t root, SetsOfFillsInScan::Set fills)
 {
-    auto [first, end] = std::ranges::equal_range(fills, root, { }, &FillInScan::root);
-    return fills.subspan(first - fills.begin(), end - first);
+    m_fillsOfObjectAsked.shrink(0);
+    m_setsOfFills.forEachFillOf(fills, root, [&](const FillInScan& fill) {
+        m_fillsOfObjectAsked.append(fill);
+    });
+    return m_fillsOfObjectAsked.span();
 }
 
 void ScanOfBody::noteFill(uint32_t root, bool isPart, uint32_t number)
@@ -3617,7 +3729,7 @@ void ScanOfBody::noteFill(uint32_t root, bool isPart, uint32_t number)
     if (object.isGivenUp || (object.hasLeft && object.hasEnded && !std::ranges::binary_search(object.filled, fill) && !std::ranges::binary_search(object.filledAtEnd, fill)))
         return;
     object.positionOfLastFill = m_position;
-    m_fills.add(fill);
+    m_fills = m_setsOfFills.with(m_fills, fill);
 }
 
 void ScanOfBody::noteWhereFinishedLiteralLeavesFirst(ObjectBeingMadeInScan& object)
@@ -3634,7 +3746,7 @@ void ScanOfBody::noteLookUp(uint32_t root, PropertyKeyID key)
 {
     ObjectBeingMadeInScan& object = objectBeingMade(root);
     if (object.kind != ObjectBeingMadeKindInScan::OfOneLayout) {
-        if (!object.keysLookedUp.contains(key))
+        if (object.keysLookedUp.isEmpty() || object.keysLookedUp.last() != key)
             object.keysLookedUp.append(key);
         return;
     }
@@ -3720,9 +3832,7 @@ void ScanOfBody::handToBlock(ValueID value, uint32_t from, uint32_t block, uint3
         noteLeaving(value);
         return;
     }
-    std::span<const FillInScan> fills = fillsOf(root, m_fills.inOrder());
-    m_objectsHandedToBlocks.append(ObjectHandedToBlockInScan { block, position, root, m_position, { static_cast<uint32_t>(m_fillsKept.size()), static_cast<uint32_t>(fills.size()) } });
-    m_fillsKept.append(fills);
+    m_objectsHandedToBlocks.append(ObjectHandedToBlockInScan { block, position, root, m_position, m_fills });
 }
 
 void ScanOfBody::takeObjectsHandedTo(const BodyBlock& block)
@@ -3748,19 +3858,18 @@ void ScanOfBody::takeObjectsHandedTo(const BodyBlock& block)
         m_firstLeft[handed.root] = std::min(m_firstLeft[handed.root], handed.placeInStream);
         if (hasParameter)
             object.parametersHandedTo.append(block.parameter(handed.position).index());
-        meetFillsWhereObjectLeaves(object, m_fillsKept.span().subspan(handed.fills.first, handed.fills.count));
+        meetFillsWhereObjectLeaves(object, fillsOf(handed.root, handed.fills));
     }
 }
 
 void ScanOfBody::carryFillsOver(uint32_t from, uint32_t to)
 {
-    ListInScan& kept = m_fillsAtBlocks[to];
+    SetsOfFillsInScan::Set& kept = m_fillsAtBlocks[to];
     if (to <= from) {
-        if (kept.count != noFillsYet) {
-            for (const FillInScan& fill : m_fillsKept.span().subspan(kept.first, kept.count)) {
-                if (!m_fills.contains(fill))
-                    giveUp(fill.root);
-            }
+        if (kept != noFillsYet) {
+            m_setsOfFills.forEachFillMissingIn(kept, m_fills, [&](const FillInScan& fill) {
+                giveUp(fill.root);
+            });
         }
         for (const BlockThatTookObjectInScan& taken : m_blocksThatTookObjects) {
             if (taken.block == to)
@@ -3768,24 +3877,7 @@ void ScanOfBody::carryFillsOver(uint32_t from, uint32_t to)
         }
         return;
     }
-
-    if (kept.count == noFillsYet) {
-        std::span<const FillInScan> fills = m_fills.inOrder();
-        kept = { static_cast<uint32_t>(m_fillsKept.size()), static_cast<uint32_t>(fills.size()) };
-        m_fillsKept.append(fills);
-        return;
-    }
-    std::span<const FillInScan> fills = m_fills.inOrder();
-    size_t place = 0;
-    uint32_t numberKept = 0;
-    for (uint32_t index = 0; index < kept.count; ++index) {
-        FillInScan fill = m_fillsKept[kept.first + index];
-        while (place < fills.size() && fills[place] < fill)
-            ++place;
-        if (place < fills.size() && fills[place] == fill)
-            m_fillsKept[kept.first + numberKept++] = fill;
-    }
-    kept.count = numberKept;
+    kept = kept == noFillsYet ? m_fills : m_setsOfFills.meet(kept, m_fills);
 }
 
 void ScanOfBody::listDefinitionsBehindAllocation(const ObjectBeingMadeInScan& object)
@@ -3825,7 +3917,7 @@ void ScanOfBody::listConstructions()
             const Layout& layout = m_program.at(id);
             bool goesByLiteralAlone = layout.kind == LayoutKind::Record && !object.endsWhereItLeaves;
             auto hasAtItsFinish = [&](PropertyKeyID key) {
-                return key && (isListedByAllocation(object.root, key) || (object.isFinished && !object.isGivenUp && std::ranges::binary_search(object.filledAtEnd, FillInScan { object.root, false, key.bits() })));
+                return key && (isListedByAllocation(object.root, key) || (object.isFinished && !object.isConstant && !object.isGivenUp && std::ranges::binary_search(object.filledAtEnd, FillInScan { object.root, false, key.bits() })));
             };
             if (!object.hasLeft && !goesByLiteralAlone)
                 continue;
@@ -3895,6 +3987,10 @@ void ScanOfBody::listConstructions()
     if (!m_objectsBeingMade.isEmpty())
         listBirths();
     sortWithoutRepeatsInScan(m_summary.fieldsLeftEmpty);
+    std::ranges::stable_sort(m_summary.makersThatEndWhereTheyLeave, { }, &SummaryMakerThatEndsWhereItLeaves::positionOfLeaving);
+    for (const SummaryMakerThatEndsWhereItLeaves& maker : m_summary.makersThatEndWhereTheyLeave)
+        m_summary.allocationsOfMakersThatEndWhereTheyLeave.append(maker.allocation);
+    std::ranges::sort(m_summary.allocationsOfMakersThatEndWhereTheyLeave, { }, &ValueID::index);
 }
 
 void ScanOfBody::listHalvesOfAccessorsNotLaid()
@@ -3961,6 +4057,8 @@ void ScanOfBody::readDirectCall(const BodyValue& value, SummaryCall& call)
     std::span<const ValueID> arguments = direct.argumentsOperands();
     const Function& callee = m_program.at(call.function);
     uint32_t numberOfCaptures = static_cast<uint32_t>(callee.captures.size());
+    if (numberOfCaptures)
+        m_summary.sitesThatHandOverCaptures.append(value.id());
     std::optional<unsigned> thisOfInitializer = callee.kind == FunctionKind::Initializer ? callee.thisParameterIndex() : std::nullopt;
     for (uint32_t index = 0; index < arguments.size(); ++index) {
         uint32_t root = arguments[index] ? m_roots[arguments[index].index()] : noDefinition;
@@ -4494,7 +4592,7 @@ const uint32_t* ScanOfBody::readTerminator(const BodyTerminator& terminator, uin
             m_summary.calls[call].isInTailPosition = true;
     }
     if (m_thisBeingMade != noDefinition && (kind == TerminatorKind::Return || kind == TerminatorKind::ReturnCall)) {
-        meetFillsWhereObjectLeaves(objectBeingMade(m_thisBeingMade), fillsOf(m_thisBeingMade, m_fills.inOrder()));
+        meetFillsWhereObjectLeaves(objectBeingMade(m_thisBeingMade), fillsOf(m_thisBeingMade, m_fills));
         meetFillsWhereConstructionEnds(m_thisBeingMade);
     }
 
@@ -4673,16 +4771,6 @@ void ScanOfBody::nameKeysOfMembers()
     for (auto [variable, value] : m_valuesOfImmutableVariables) {
         if (PropertyKeyID key = value ? keySpelledBy(definitionBehindCasts(value)) : PropertyKeyID())
             m_keysOfVariables.append({ variable, key });
-        LiteralOfVariable store { variable };
-        if (BodyValue definition = value ? definitionBehindCasts(value) : BodyValue()) {
-            if (definition.opcode() == Opcode::Integer)
-                store = { variable, Opcode::Integer, static_cast<uint64_t>(definition.as<Opcode::Integer>().integer()) };
-            else if (definition.opcode() == Opcode::Double)
-                store = { variable, Opcode::Double, std::bit_cast<uint64_t>(definition.as<Opcode::Double>().number()) };
-            else if (definition.opcode() == Opcode::Boolean)
-                store = { variable, Opcode::Boolean, definition.as<Opcode::Boolean>().boolean() };
-        }
-        m_storesIntoImmutableVariables.append(store);
     }
     for (auto [member, written] : m_keysWrittenForMembers) {
         BodyValue definition = definitionBehindCasts(written);
@@ -5686,7 +5774,7 @@ static BitVector findTextsThatNameFieldsNeverWrittenForScan(const Program& progr
 static bool holdsWhatItsOneStoreLaysThereInScan(const Program& program, VariableID id)
 {
     const Variable& variable = program.at(id);
-    if (variable.owner || !variable.module || !variable.flags.contains(VariableFlags::IsImmutable) || variable.flags.containsAny({ VariableFlags::IsReplaceable, VariableFlags::HoldsMock, VariableFlags::OriginalMayRun }))
+    if (variable.owner || !variable.module || variable.initialization != VariableInitialization::Uninitialized || !variable.flags.contains(VariableFlags::IsImmutable) || variable.flags.containsAny({ VariableFlags::IsReplaceable, VariableFlags::HoldsMock, VariableFlags::OriginalMayRun }))
         return false;
     const Module& module = program.at(variable.module);
     return isEvaluatedAtMostOnceOf(module.kind) && !module.flags.containsAny({ ModuleFlags::RunsAgain, ModuleFlags::MayBeEvicted, ModuleFlags::MayBeMocked });
@@ -5713,26 +5801,6 @@ static void nameKeysOfMembersByVariablesInScan(const Program& program, const Vec
                 summaries.at(member.function).members[member.member].key = stored.front().key;
         }
     }
-}
-
-static void listLiteralsOfVariablesInScan(const Program& program, const Vector<std::unique_ptr<ScanOfBody>>& scans, ThinSummaries& summaries)
-{
-    Vector<LiteralOfVariable> stores;
-    for (const std::unique_ptr<ScanOfBody>& scan : scans) {
-        if (scan)
-            stores.appendVector(scan->storesIntoImmutableVariables());
-    }
-    std::ranges::sort(stores, { }, &LiteralOfVariable::variable);
-    Vector<LiteralOfVariable> literals;
-    for (size_t first = 0; first < stores.size();) {
-        size_t end = first + 1;
-        while (end < stores.size() && stores[end].variable == stores[first].variable)
-            ++end;
-        if (end == first + 1 && stores[first].opcode != Opcode::Undefined && holdsWhatItsOneStoreLaysThereInScan(program, stores[first].variable))
-            literals.append(stores[first]);
-        first = end;
-    }
-    summaries.setLiteralsOfVariables(WTF::move(literals));
 }
 
 ThinSummaries scanBodies(const Program& program, Diagnostics& diagnostics, const ParallelLoops& loops, Mechanisms mechanisms)
@@ -5769,7 +5837,6 @@ ThinSummaries scanBodies(const Program& program, Diagnostics& diagnostics, const
     }
 
     nameKeysOfMembersByVariablesInScan(program, scans, summaries);
-    listLiteralsOfVariablesInScan(program, scans, summaries);
 
     std::optional<InternalError> firstError;
     for (std::unique_ptr<ScanOfBody>& scan : scans) {

@@ -575,17 +575,6 @@ void StubAssembler::jumpThroughHandlerTable(BaseIndex tableEntry, std::span<cons
     CCallHelpers::farJump(tableEntry, JITThunkPtrTag);
 }
 
-void StubAssembler::callThroughHandlerTable(BaseIndex tableEntry, std::span<const StubKey> handlers)
-{
-    if (!canWrite(tableEntry.index))
-        crashWhileGenerating("the index register of a called handler table holds an operand or belongs to the caller"_s);
-    recordClobber(tableEntry.index);
-    for (StubKey handler : handlers)
-        addReference(handler, StubReference::Kind::Call);
-    loadPtr(tableEntry, tableEntry.index);
-    CCallHelpers::call(tableEntry.index, JITThunkPtrTag);
-}
-
 void StubAssembler::bindEntryAt(StubKey entry, Label location)
 {
     if (!exists(entry) || bodyOf(entry) != m_key)

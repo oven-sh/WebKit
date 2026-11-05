@@ -104,7 +104,7 @@ export default b.declarations(
       {
         ...conversionToNumber,
         args: { value: b.union(b.string, b.strictNull, b.bool, b.f64).optional },
-        uses: { value: [b.readAsCharacters] },
+        uses: { value: b.inspected },
         isSpecialCase: true,
       },
       { ...conversionToNumber, args: { value: numeric } },

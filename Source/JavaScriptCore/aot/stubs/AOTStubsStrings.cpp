@@ -415,20 +415,77 @@ void branchIfCharactersDiffer(StubAssembler& jit, const ComparedImpls& impls, Ju
     areSame.link(&jit);
 }
 
+static void load8BitCharactersInPlace(StubAssembler& jit, GPRReg string, GPRReg fiber, GPRReg offset, JumpList& isOther)
+{
+    Jump isRope = jit.branchIfRopeStringImpl(fiber);
+    isOther.append(jit.branchTest32(CCallHelpers::Zero, Address(fiber, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIs8Bit())));
+    jit.loadPtr(Address(fiber, StringImpl::dataOffset()), fiber);
+    Jump hasCharacters = jit.jump();
+    isRope.link(&jit);
+    load8BitCharactersOfSubstring(jit, string, fiber, offset, isOther);
+    hasCharacters.link(&jit);
+}
+
 void branchIfCharactersInPlaceDiffer(StubAssembler& jit, const ComparedStrings& strings, JumpList& differ, JumpList& needsOperation)
 {
     auto [first, second, firstFiber, secondFiber, length, offset, word] = strings;
     needsOperation.append(jit.branch32(CCallHelpers::Above, length, TrustedImm32(maxLengthComparedWithoutCall)));
-    for (auto [string, fiber] : { std::pair { first, firstFiber }, std::pair { second, secondFiber } }) {
-        Jump isRope = jit.branchIfRopeStringImpl(fiber);
-        needsOperation.append(jit.branchTest32(CCallHelpers::Zero, Address(fiber, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIs8Bit())));
-        jit.loadPtr(Address(fiber, StringImpl::dataOffset()), fiber);
-        Jump hasCharacters = jit.jump();
-        isRope.link(&jit);
-        load8BitCharactersOfSubstring(jit, string, fiber, offset, needsOperation);
-        hasCharacters.link(&jit);
-    }
+    load8BitCharactersInPlace(jit, first, firstFiber, offset, needsOperation);
+    load8BitCharactersInPlace(jit, second, secondFiber, offset, needsOperation);
     branchIfBytesDiffer(jit, { firstFiber, secondFiber, length, offset, word }, differ, DifferingWords::MayBeUnloaded);
+}
+
+void branchUnlessTextStandsAtPlace(StubAssembler& jit, const TextSoughtAtOnePlace& text, PlaceOfSoughtText where, JumpList& isNotThere, JumpList& needsOperation)
+{
+    auto [string, sought, place, characters, soughtCharacters, length, word] = text;
+    RELEASE_ASSERT(noOverlap(string, sought, place, characters, soughtCharacters, length, word));
+    jit.loadPtr(Address(string, JSString::offsetOfValue()), characters);
+    jit.loadPtr(Address(sought, JSString::offsetOfValue()), soughtCharacters);
+    loadStringLength(jit, sought, soughtCharacters, length);
+    loadStringLength(jit, string, characters, word);
+    isNotThere.append(jit.branch32(CCallHelpers::Below, word, length));
+    jit.sub32(length, word);
+    switch (where) {
+    case PlaceOfSoughtText::IsStart:
+        break;
+    case PlaceOfSoughtText::IsEnd:
+        jit.move(word, place);
+        break;
+    case PlaceOfSoughtText::IsGivenAndLast:
+        needsOperation.append(jit.branch32(CCallHelpers::Below, place, word));
+        [[fallthrough]];
+    case PlaceOfSoughtText::IsGiven:
+        isNotThere.append(jit.branch32(CCallHelpers::Above, place, word));
+        break;
+    }
+    needsOperation.append(jit.branch32(CCallHelpers::Above, length, TrustedImm32(maxLengthComparedWithoutCall)));
+    load8BitCharactersInPlace(jit, string, characters, word, needsOperation);
+    if (where != PlaceOfSoughtText::IsStart)
+        jit.addPtr(place, characters);
+    jit.and32(TrustedImm32(JSString::isRopeInPointer | JSRopeString::isSubstringInPointer), soughtCharacters, word);
+    Jump isJoined = jit.branch32(CCallHelpers::Equal, word, TrustedImm32(JSString::isRopeInPointer));
+    load8BitCharactersInPlace(jit, sought, soughtCharacters, word, needsOperation);
+    branchIfBytesDiffer(jit, { characters, soughtCharacters, length, place, word }, isNotThere, DifferingWords::MayBeUnloaded);
+    JumpList standsThere;
+    standsThere.append(jit.jump());
+
+    isJoined.link(&jit);
+    const GPRReg part = place;
+    auto comparePart = [&] {
+        jit.loadPtr(Address(part, JSString::offsetOfValue()), soughtCharacters);
+        loadStringLength(jit, part, soughtCharacters, length);
+        load8BitCharactersInPlace(jit, part, soughtCharacters, word, needsOperation);
+        branchIfBytesDiffer(jit, { characters, soughtCharacters, length, place, word }, isNotThere, DifferingWords::MayBeUnloaded, StartsOfEqualBytes::EndBehindBytes);
+    };
+    jit.and64(TrustedImm32(static_cast<int32_t>(JSRopeString::stringMask)), soughtCharacters, part);
+    comparePart();
+    loadSubstringBaseAndOffset(jit, sought, part, word);
+    comparePart();
+    jit.load64(Address(sought, JSRopeString::offsetOfFiber2()), part);
+    jit.urshift64(TrustedImm32(JSRopeString::CompactFibers::shiftOfFiber2InUpperWord), part);
+    standsThere.append(jit.branchTestPtr(CCallHelpers::Zero, part));
+    comparePart();
+    standsThere.link(&jit);
 }
 
 void generateStringsAreEqual(StubAssembler& jit)

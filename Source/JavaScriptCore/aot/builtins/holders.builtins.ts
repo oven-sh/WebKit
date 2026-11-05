@@ -51,6 +51,16 @@ const hostIteratorResult = b.ordinaryObjectOf("IteratorResult").fresh;
 const advances = [b.readsContents(), b.writesContents()];
 const advancesAndExposesContents = [...advances, b.retained];
 
+const stepOfWrappedIterator = {
+  this: b.any,
+  args: { value: b.any.optional },
+  returns: b.instance("Promise").holding({ value: hostIteratorResult, reason: b.any }).fresh,
+  capability: "js",
+  throws: true,
+  uses: { this: [b.everything], value: [b.everything] },
+  implementation: b.generic,
+} satisfies b.FunctionField;
+
 const iteratorColumns = {
   hasConstructor: false,
   slots: { iterated: b.state(internalFields) },
@@ -567,7 +577,7 @@ export default b.declarations(
   }),
   b.class("%AsyncFromSyncIterator%", {
     ...lockedIteratorColumns,
-    proto: { next: undeclared, return: undeclared, throw: undeclared },
+    proto: { next: stepOfWrappedIterator, return: stepOfWrappedIterator, throw: stepOfWrappedIterator },
   }),
   b.class("%IntlSegments%", {
     hasConstructor: false,

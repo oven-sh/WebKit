@@ -152,6 +152,7 @@ private:
         CheckSet checks = m_wire.checks;
         options.recorded.validates = hasFlag(checks, CheckSet::Validate);
         options.verifiesMachineCode = options.recorded.validates || Options::verifyAOTMachineCode();
+        options.asksWhetherFlowOfLinkIsClosed = hasFlag(checks, CheckSet::FlowFixpoint);
 #if ASSERT_ENABLED || ASAN_ENABLED
         options.verifiesAfterEveryStage = hasFlag(checks, CheckSet::VerifyEachStage);
         options.verifiesProgram = options.verifiesAfterEveryStage || options.recorded.validates || Options::verifyAOTProgram();

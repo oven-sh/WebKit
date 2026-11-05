@@ -17,7 +17,7 @@ export default b.declarations(
           returns: b.union(b.plainData, b.strictNull, b.bool, b.f64, b.string),
           capability: "heap",
           throws: true,
-          uses: { text: [b.readAsCharacters] },
+          uses: { text: b.inspected },
           typedResultForm: { form: "ParsedText", source: "text" },
           implementation: b.hostCall,
         },
@@ -28,7 +28,7 @@ export default b.declarations(
           throws: true,
           runsOnlyOperandCode: true,
           uses: {
-            text: [b.readAsCharacters],
+            text: b.inspected,
             reviver: [
               b.called({
                 afterwards: "WritesIntoWhatItFinds",

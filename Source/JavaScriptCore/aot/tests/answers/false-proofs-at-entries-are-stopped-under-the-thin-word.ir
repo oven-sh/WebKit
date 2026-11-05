@@ -17,7 +17,7 @@
 # if (which === 7) print(new Map().getOrInsertComputed(id(7), compares));
 # print("went on");
 # testing=CheckProofsAtEntries: A THIN SISTER OF CheckProofsAtRunTime: only what goes into an entry parameter, by a call, by a copy or by value, and what a call or a copy gives is held against Link's word. Nothing that the whole word keeps from being folded or fused is kept from it here.
-# The program, the lie and the runs are those of false-proofs-are-stopped-where-the-value-comes-in.ir. What was captured is stopped where the closure's function takes it: a capture is an entry parameter. WHAT THIS WORD DOES NOT SEE GOES ON WITH A WRONG ANSWER, and the test says so.
+# The program, the lie and the runs are those of false-proofs-are-stopped-where-the-value-comes-in.ir. What was captured is stopped where the closure is made, by the door that every build has. What goes into a variable is stopped at the store, by the door that every build has.
 # THE RED CONTROL OF THAT NET. The lie, testing=UnseenCodeAnswersUndefined: Link takes what the shell's `id` gives for undefined, so it proves too much of every place that the value flows to.
 # Without the net, and with nothing copied in line, every one of the first six prints "undefined" for a number or a text and goes on, and the seventh prints 0 for NaN, and nothing shows it.
 # The seventh: native code enters the function by value, through the few moves that the emitter lays in front of the body, for which no operation stands.
@@ -52,14 +52,15 @@
 # FIELD-NOT: went on
 # FIELD: crashed with
 # RUN(VARIABLE): run-in-shell mechanisms=all globalThis.which = 5;
-# VARIABLE-NOT: This is a bug in Bun
-# VARIABLE: went on
+# VARIABLE: AOT: f{{*}} at {{*}}: what a variable holds is not of the type that the compiler has proven of it. It is: number. This is a bug in Bun.
+# VARIABLE-NOT: went on
+# VARIABLE: crashed with
 # RUN(CAPTURE): run-in-shell mechanisms=-Inlining globalThis.which = 6;
-# CAPTURE: AOT: f{{*}} at {{*}}: an entry parameter is not of the type that the compiler has proven of it. It is: number. This is a bug in Bun.
+# CAPTURE: AOT: f{{*}} at {{*}}: what was captured is not of the type that the compiler has proven of it. It is: number. This is a bug in Bun.
 # CAPTURE-NOT: went on
 # CAPTURE: crashed with
 # RUN(CAPTURECOPY): run-in-shell mechanisms=all globalThis.which = 6;
-# CAPTURECOPY: AOT: f{{*}} at {{*}}: an entry parameter is not of the type that the compiler has proven of it. It is: number. This is a bug in Bun.
+# CAPTURECOPY: AOT: f{{*}} at {{*}}: what was captured is not of the type that the compiler has proven of it. It is: number. This is a bug in Bun.
 # CAPTURECOPY-NOT: went on
 # CAPTURECOPY: crashed with
 # RUN(BYVALUE): run-in-shell mechanisms=all globalThis.which = 7;

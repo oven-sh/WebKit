@@ -199,7 +199,6 @@ static void nameClassOfNumbers()
     };
     for (auto& [text, nameClass] : cases) {
         AOT_TEST_CHECK(classifyName(bytesOf(text)) == nameClass);
-        AOT_TEST_CHECK(mayBeElementKey(nameClass) == (accessPathOf(nameClass) == NameAccessPath::ByKey));
     }
 }
 

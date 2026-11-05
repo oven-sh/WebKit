@@ -3,7 +3,9 @@
 # OPTIONS: testing=CheckProofsAtRunTime
 # RUN: walk f4:GenericCallEntry mechanisms=all
 # CHECK-LABEL: code f4:GenericCallEntry
-# CHECK: CheckProof v3 checkedType=f5 typeWithoutProof
+# The entry asks in every build, and the failing side stops by name.
+# CHECK: TypeTest v3 testedType=f5
+# CHECK: CheckProof v3 checkedType=never
 
 layout L0 kind=Instance name="Plain" module=m0 constructor=f1
 layout L1 kind=Instance name="Other" module=m0 base=L0 constructor=f3 supertypes=[L0] flags=[HasHeritage]

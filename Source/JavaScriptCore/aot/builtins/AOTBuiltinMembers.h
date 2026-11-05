@@ -61,6 +61,7 @@ struct MemberOfClasses {
 
 bool isMadeWithCodeOfLibrary(const BuiltinTable&, BuiltinID member);
 bool standsForFirstReadOffHolder(const BuiltinTable&, BuiltinID written, bool isNotReadFromHolder);
+Opcode opcodeOfFirstReadOffHolder(const BuiltinTable&, BuiltinID location);
 bool hasFeatureGuard(const BuiltinTable&, BuiltinID);
 
 } } } // namespace JSC::AOT::Typed

@@ -529,6 +529,8 @@ void Sweep::lookForCoveredFence(ValueID id, const Operation& operation)
     if (!m_laterFenceCovers && !sweptAllocationsWithFences.contains(operation.opcode))
         return;
     FenceOfSweptOperation fence = describeFenceOfSweptOperation(m_inputs->program, m_inputs->plan, operation);
+    if (m_lendsClosures && operation.opcode == Opcode::NewClosure && noteIfClosureMayBeLent(id) && fence.alwaysFences)
+        return;
     if (m_laterFenceCovers && fence.mayLeaveFenceToLaterOne) {
         m_code->m_marks[id.index()] |= laterFenceCoversMarkOfSweep;
         return;

@@ -55,7 +55,12 @@ public:
         return *this;
     }
 
-    constexpr bool isSubsetOf(ThrowEffect other) const { return !m_mayThrow || other.m_mayThrow; }
+    constexpr bool isSubsetOf(ThrowEffect other) const
+    {
+        return (!m_mayThrow || other.m_mayThrow)
+            && (!m_mayThrowOtherThanStackOverflow || other.m_mayThrowOtherThanStackOverflow)
+            && (!m_mayThrowByRule || other.m_mayThrowByRule);
+    }
 
     friend constexpr bool operator==(ThrowEffect, ThrowEffect) = default;
 

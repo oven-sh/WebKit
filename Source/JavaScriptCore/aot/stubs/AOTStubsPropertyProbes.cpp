@@ -295,8 +295,6 @@ void readFieldByTable(StubAssembler& jit, const FieldTableProbe& probe, GPRReg r
         }
         isNotOutOfLineValue.link(&jit);
     };
-    const bool testsOutOfLineValuesSecond = jit.bindingPolicy().readsTestOutOfLineValuesSecond;
-    const bool testsDoublesSecond = jit.bindingPolicy().readsTestDoublesSecond;
     auto readDouble = [&](int32_t firstDouble) {
         jit.load64(BaseIndex(probe.receiver, operand, CCallHelpers::TimesEight, -firstDouble * static_cast<int32_t>(sizeof(double))), word);
         boxDoubleBits(jit, PureDoubleBits::branchIfNotFinite(jit, word, operand, slotIsSilent));
@@ -310,44 +308,17 @@ void readFieldByTable(StubAssembler& jit, const FieldTableProbe& probe, GPRReg r
         fileAnswerOfFieldTableInAccessTable(jit, { probe.receiver, probe.name, probe.keyInAccessTable, probe.placeInAccessTable }, word);
     }
     bindArrivalsWithFormAndOperand(jit, probe);
-    auto readDoubleOrGoOn = [&] {
-        RELEASE_ASSERT(!formsTakenOff);
-        constexpr int32_t firstDouble = static_cast<int32_t>((static_cast<uint32_t>(Form::Field) << FieldTableEntry::formShift) + FieldTableEntry::firstDouble);
-        Jump isNotDouble = jit.branch32(CCallHelpers::Below, operand, TrustedImm32(firstDouble));
-        readDouble(firstDouble);
-        isNotDouble.link(&jit);
-    };
-#if CPU(X86_64)
-    const bool asksInOrder = !testsOutOfLineValuesSecond;
-#else
-    const bool asksInOrder = false;
-#endif
-    auto branchUnlessNextFormIs = [&](Form form) {
-        if (!asksInOrder)
-            return branchUnlessFormIs(form);
-        RELEASE_ASSERT(!formsTakenOff);
-        return jit.branch32(CCallHelpers::Above, operand, TrustedImm32(static_cast<int32_t>(static_cast<uint32_t>(form) << FieldTableEntry::formShift | FieldTableEntry::maxOperand)));
-    };
-    auto narrowSlot = [&](Form form) {
-        int32_t formInOperand = asksInOrder ? static_cast<int32_t>(static_cast<uint32_t>(form) << FieldTableEntry::formShift) : 0;
-        return BaseIndex(probe.receiver, operand, CCallHelpers::TimesFour, -formInOperand * static_cast<int32_t>(sizeof(uint32_t)));
-    };
-    if (testsDoublesSecond)
-        readDoubleOrGoOn();
-    if (testsOutOfLineValuesSecond)
-        readOutOfLineValue();
-    Jump isNotInt32 = branchUnlessNextFormIs(Form::InlineInt32);
-    jit.load32(narrowSlot(Form::InlineInt32), word);
+    BaseIndex narrowSlot(probe.receiver, operand, CCallHelpers::TimesFour);
+    readOutOfLineValue();
+    Jump isNotInt32 = branchUnlessFormIs(Form::InlineInt32);
+    jit.load32(narrowSlot, word);
     slotIsSilent.append(jit.branch32(CCallHelpers::LessThan, word, TrustedImm32(minInlineInt32)));
     boxInt32(jit, word, result);
     finish();
 
     isNotInt32.link(&jit);
-    const bool testsDoublesThird = asksInOrder && !testsDoublesSecond;
-    if (testsDoublesThird)
-        readDoubleOrGoOn();
-    Jump isNotNarrowCell = branchUnlessNextFormIs(Form::InlineNarrowCell);
-    jit.load32(narrowSlot(Form::InlineNarrowCell), word);
+    Jump isNotNarrowCell = branchUnlessFormIs(Form::InlineNarrowCell);
+    jit.load32(narrowSlot, word);
     Jump isNotCell = jit.branch32(CCallHelpers::Below, word, TrustedImm32(minCell32));
     decodeCell32(jit, word, result);
     finish();
@@ -358,12 +329,7 @@ void readFieldByTable(StubAssembler& jit, const FieldTableProbe& probe, GPRReg r
     finish();
 
     isNotNarrowCell.link(&jit);
-    if (testsOutOfLineValuesSecond) {
-        jit.sub32(TrustedImm32(1 << FieldTableEntry::formShift), operand);
-        formsTakenOff = static_cast<unsigned>(Form::OutOfLineValue);
-    } else
-        readOutOfLineValue();
-    RELEASE_ASSERT(formsTakenOff == static_cast<unsigned>(Form::OutOfLineValue));
+    jit.sub32(TrustedImm32(1 << FieldTableEntry::formShift), operand);
 
     static_assert(static_cast<unsigned>(Form::Field) == static_cast<unsigned>(Form::OutOfLineValue) + 1);
     auto first = [](uint32_t firstOperand) { return static_cast<int32_t>((1u << FieldTableEntry::formShift) + firstOperand); };
@@ -375,19 +341,14 @@ void readFieldByTable(StubAssembler& jit, const FieldTableProbe& probe, GPRReg r
     finish();
 
     isNotEncodedByte.link(&jit);
-    Jump isDouble;
-    const bool testsDoublesLast = !testsDoublesSecond && !testsDoublesThird;
-    if (testsDoublesLast)
-        isDouble = jit.branch32(CCallHelpers::AboveOrEqual, operand, TrustedImm32(first(FieldTableEntry::firstDouble)));
+    Jump isDouble = jit.branch32(CCallHelpers::AboveOrEqual, operand, TrustedImm32(first(FieldTableEntry::firstDouble)));
     jit.load8(BaseIndex(probe.receiver, operand, CCallHelpers::TimesOne, -first(FieldTableEntry::firstBoolean)), word);
     jit.or32(TrustedImm32(JSValue::ValueFalse), word);
     jit.move(word, result);
     finish();
 
-    if (testsDoublesLast) {
-        isDouble.link(&jit);
-        readDouble(first(FieldTableEntry::firstDouble));
-    }
+    isDouble.link(&jit);
+    readDouble(first(FieldTableEntry::firstDouble));
 
     if (!probe.answersMissingFields) {
         otherwise.append(slotIsEmpty);

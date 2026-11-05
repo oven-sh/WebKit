@@ -1,0 +1,5 @@
+# the stub allocates nothing: it writes the header and the word of the closure through the address in the frame that it is handed, and its row says that. What the closure captures lies in words that are written once, which no row names.
+# RUN: emit f2 mechanisms=none+TypedOperations+Folding+EscapeAnalysis+CellsInFrames+DirectCalls
+# CHECK-LABEL: unit f2:Body
+# CHECK: = Patch({{*}}Writes:{ShapeWords
+# PROGRAM-OF: ../walk/escape-analysis/direct-callee-marks-the-environment-that-it-keeps.ir

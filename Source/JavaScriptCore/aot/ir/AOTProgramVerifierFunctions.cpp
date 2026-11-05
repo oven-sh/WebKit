@@ -74,15 +74,8 @@ bool hasOnlyTypesThatCrossCalls(const Program& program, const Function& function
         && std::ranges::all_of(function.results, crossesCalls);
 }
 
-bool hasDerivedFunctionFields(const Function& function)
-{
-    return !function.creator.is<CreatorRecord::None>() || function.derivation != Derivation { } || !function.inlineFrames.isEmpty();
-}
-
 ASCIILiteral findBrokenRuleOfFunctionRecord(const Program& program, FunctionID id, const Function& function)
 {
-    if (hasDerivedFunctionFields(function))
-        return "it has a creator record, a derivation, or inline frames, which only a derived function has"_s;
     if (!function.capabilities.containsOnly(capabilitiesOf(function.role)))
         return "it has a capability that its role does not give"_s;
     if (function.hasBody() != hasSourceBodyOf(function.role))

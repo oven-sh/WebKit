@@ -17,6 +17,35 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
+template<typename T, unsigned bitsOfLeaf>
+struct PartsOfSharedArray {
+    static constexpr unsigned bitsOfBranch = 5;
+    static constexpr uint32_t widthOfBranch = 1u << bitsOfBranch;
+    static constexpr uint32_t widthOfLeaf = 1u << bitsOfLeaf;
+    static constexpr unsigned maxHeight = (32 - bitsOfLeaf + bitsOfBranch - 1) / bitsOfBranch + 1;
+
+    struct Node {
+        uint32_t numberOfOwners { 1 };
+    };
+    struct Leaf : Node {
+        T* records() { return reinterpret_cast<T*>(storage); }
+        const T* records() const { return reinterpret_cast<const T*>(storage); }
+
+        alignas(T) std::byte storage[sizeof(T) * widthOfLeaf];
+    };
+    struct Branch : Node {
+        Node* children[widthOfBranch] { };
+    };
+
+    static Node** partsOfZeros()
+    {
+        static thread_local Node** s_partsOfZeros = nullptr;
+        if (!s_partsOfZeros)
+            s_partsOfZeros = static_cast<Node**>(fastZeroedMalloc(sizeof(Node*) * maxHeight));
+        return s_partsOfZeros;
+    }
+};
+
 template<typename T, size_t inlineCapacity, unsigned bitsOfLeaf = 5>
 class SharedArray {
     static_assert(std::is_arithmetic_v<T> || (std::is_trivially_copyable_v<T> && std::is_trivially_destructible_v<T> && std::is_aggregate_v<T>));
@@ -61,6 +90,7 @@ public:
 
     uint32_t size() const { return m_size; }
     bool isEmpty() const { return !m_size; }
+    bool liesInTree() const { return m_root; }
 
     const T& operator[](uint32_t index) const
     {
@@ -188,10 +218,10 @@ public:
             if (m_root) {
                 const Node* node = m_root;
                 unsigned level = m_height;
-                for (; level && node != s_partsOfZeros[level]; --level)
+                for (; level && node != Parts::partsOfZeros()[level]; --level)
                     node = static_cast<const Branch*>(node)->children[childAt(last >> bitsOfLeaf, level)];
                 firstOfPart = static_cast<uint32_t>(last & ~((static_cast<uint64_t>(widthOfLeaf) << (bitsOfBranch * level)) - 1));
-                if (node == s_partsOfZeros[level]) {
+                if (node == Parts::partsOfZeros()[level]) {
                     size = firstOfPart;
                     continue;
                 }
@@ -216,24 +246,15 @@ public:
     }
 
 private:
-    static constexpr unsigned bitsOfBranch = 5;
-    static constexpr uint32_t widthOfBranch = 1u << bitsOfBranch;
-    static constexpr uint32_t widthOfLeaf = 1u << bitsOfLeaf;
-    static constexpr unsigned maxHeight = (32 - bitsOfLeaf + bitsOfBranch - 1) / bitsOfBranch + 1;
+    using Parts = PartsOfSharedArray<T, bitsOfLeaf>;
+    using Node = typename Parts::Node;
+    using Leaf = typename Parts::Leaf;
+    using Branch = typename Parts::Branch;
+    static constexpr unsigned bitsOfBranch = Parts::bitsOfBranch;
+    static constexpr uint32_t widthOfBranch = Parts::widthOfBranch;
+    static constexpr uint32_t widthOfLeaf = Parts::widthOfLeaf;
+    static constexpr unsigned maxHeight = Parts::maxHeight;
     static_assert(inlineCapacity <= widthOfLeaf);
-
-    struct Node {
-        uint32_t numberOfOwners { 1 };
-    };
-    struct Leaf : Node {
-        T* records() { return reinterpret_cast<T*>(storage); }
-        const T* records() const { return reinterpret_cast<const T*>(storage); }
-
-        alignas(T) std::byte storage[sizeof(T) * widthOfLeaf];
-    };
-    struct Branch : Node {
-        Node* children[widthOfBranch] { };
-    };
 
     template<typename NodeType>
     static NodeType* make()
@@ -249,18 +270,18 @@ private:
 
     static Node* partOfZeros(unsigned level)
     {
-        if (Node* part = s_partsOfZeros[level])
+        if (Node* part = Parts::partsOfZeros()[level])
             return part;
         if (!level) {
             Leaf* leaf = make<Leaf>();
             std::memset(leaf->storage, 0, sizeof(leaf->storage));
-            return s_partsOfZeros[0] = leaf;
+            return Parts::partsOfZeros()[0] = leaf;
         }
         Node* below = partOfZeros(level - 1);
         Branch* branch = make<Branch>();
         std::fill_n(branch->children, widthOfBranch, below);
         below->numberOfOwners += widthOfBranch;
-        return s_partsOfZeros[level] = branch;
+        return Parts::partsOfZeros()[level] = branch;
     }
 
     T* inlineRecords() { return reinterpret_cast<T*>(m_inline); }
@@ -352,8 +373,6 @@ private:
             visitPartsNotShared(child, level - 1, firstLeafOfChild, other, functor);
         }
     }
-
-    static inline thread_local Node* s_partsOfZeros[maxHeight] { };
 
     Node* m_root { nullptr };
     uint32_t m_size { 0 };

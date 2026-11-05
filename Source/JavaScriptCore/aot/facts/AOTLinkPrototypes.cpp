@@ -74,6 +74,12 @@ LayoutID LinkFlow::layoutOfConstructorFunction(FunctionID function) const
     return constructed && isOfConstructorFunction(constructed) && program.at(constructed).constructor == function ? constructed : LayoutID();
 }
 
+uint32_t LinkFlow::firstNameOnPrototypeOf(LayoutID layout) const
+{
+    auto found = m_namesOfPrototypes.find(layout.index());
+    return found == m_namesOfPrototypes.end() ? UINT32_MAX : found->value.first;
+}
+
 const LinkFlow::NameOnPrototype* LinkFlow::findNameOnPrototype(LayoutID layout, PropertyKeyID key) const
 {
     auto found = m_recordsOfNamesOnPrototypes.find(wordOfNameInLinkPrototypes(layout, key));
@@ -90,8 +96,12 @@ bool LinkFlow::mayLieOnPrototypeAbove(LayoutID layout, PropertyKeyID key, bool c
         if (!isOfConstructorFunction(current))
             continue;
         const NameOnPrototype* underKey = findNameOnPrototype(current, key);
+        if (underKey && (underKey->isStoredInto || underKey->isDefinedByDescriptor))
+            return true;
+        if (!countsKeysThatNobodyKnows || !m_prototypesWithDefinitions.get(current.index()))
+            continue;
         const NameOnPrototype* underSomeKey = findNameOnPrototype(current, { });
-        if ((underKey && (underKey->isStoredInto || underKey->isDefinedByDescriptor)) || (countsKeysThatNobodyKnows && underSomeKey && underSomeKey->isDefinedByDescriptor))
+        if (underSomeKey && underSomeKey->isDefinedByDescriptor)
             return true;
     }
     return false;
@@ -109,6 +119,11 @@ uint32_t LinkFlow::recordOfNameOnPrototype(LayoutID layout, PropertyKeyID key)
     FlowNodeID stored = makeNode();
     FlowNodeID storedInSight = makeNode();
     m_namesOnPrototypes.append(NameOnPrototype { layout, key, stored, storedInSight });
+    auto namesOfLayout = m_namesOfPrototypes.add(layout.index(), NamesOfPrototype { record, record });
+    if (!namesOfLayout.isNewEntry) {
+        m_namesOnPrototypes[namesOfLayout.iterator->value.last].nextOfLayout = record;
+        namesOfLayout.iterator->value.last = record;
+    }
     addEdge(storedInSight, stored);
     if (key) {
         if (const NameOnPrototype* underAnyKey = findNameOnPrototype(layout, { }); underAnyKey && underAnyKey->isReadUnderAnyKey)
@@ -178,9 +193,9 @@ FlowNodeID LinkFlow::foundOnPrototypesAbove(LayoutID layout, PropertyKeyID key)
         forEachPrototypePassedAbove(layout, key, [&](uint32_t record) {
             NameOnPrototype passed = m_namesOnPrototypes[record];
             if (!key && !std::exchange(m_namesOnPrototypes[record].isReadUnderAnyKey, true)) {
-                for (size_t other = 0; other < m_namesOnPrototypes.size(); ++other) {
+                for (uint32_t other = firstNameOnPrototypeOf(passed.layout); other != UINT32_MAX; other = m_namesOnPrototypes[other].nextOfLayout) {
                     NameOnPrototype name = m_namesOnPrototypes[other];
-                    if (name.layout == passed.layout && name.key)
+                    if (name.key)
                         addEdge(name.stored, passed.stored);
                 }
             }
@@ -208,9 +223,11 @@ void LinkFlow::passPrototypesAboveUnderNumbers(LayoutID layout)
     for (LayoutID current = layout; current && stepsLeft; current = program.at(current).base, --stepsLeft) {
         if (!isOfConstructorFunction(current) || m_prototypesPassedByNumbers.set(current.index()) || !m_prototypesWithDefinitions.get(current.index()))
             continue;
-        bool mayFindAccessor = std::ranges::any_of(m_namesOnPrototypes, [&](const NameOnPrototype& name) {
-            return name.layout == current && name.isDefinedByDescriptor && mayBeNamedByNumber(name.key);
-        });
+        bool mayFindAccessor = false;
+        for (uint32_t record = firstNameOnPrototypeOf(current); record != UINT32_MAX && !mayFindAccessor; record = m_namesOnPrototypes[record].nextOfLayout) {
+            const NameOnPrototype& name = m_namesOnPrototypes[record];
+            mayFindAccessor = name.isDefinedByDescriptor && mayBeNamedByNumber(name.key);
+        }
         if (mayFindAccessor)
             deferEscape(current);
     }
@@ -280,9 +297,9 @@ void LinkFlow::tiePrototypesAboveLostLayout(LayoutID lost)
     for (LayoutID current = lost; current && stepsLeft; current = program.at(current).base, --stepsLeft) {
         if (!isOfConstructorFunction(current) || m_prototypesAboveLostLayouts.set(current.index()))
             continue;
-        for (size_t record = 0; record < m_namesOnPrototypes.size(); ++record) {
+        for (uint32_t record = firstNameOnPrototypeOf(current); record != UINT32_MAX; record = m_namesOnPrototypes[record].nextOfLayout) {
             NameOnPrototype name = m_namesOnPrototypes[record];
-            if (name.layout == current && name.key)
+            if (name.key)
                 addEdge(name.stored, foundBesideFieldsUnder(name.key));
         }
     }
@@ -307,9 +324,7 @@ void LinkFlow::openPrototypeOf(LayoutID layout)
 {
     if (!isOfConstructorFunction(layout))
         return;
-    for (size_t record = 0; record < m_namesOnPrototypes.size(); ++record) {
-        if (m_namesOnPrototypes[record].layout != layout)
-            continue;
+    for (uint32_t record = firstNameOnPrototypeOf(layout); record != UINT32_MAX; record = m_namesOnPrototypes[record].nextOfLayout) {
         FlowNodeID stored = m_namesOnPrototypes[record].stored;
         arrive(stored, LinkType::anything().byEscapeAlone());
         addEdge(stored, unseen());

@@ -21,7 +21,6 @@ import {
   type ModelCondition,
   type ModelFeatureUse,
   type ModelHostCall,
-  type ModelHostMethodCall,
   type ModelHostObject,
   type ModelHostUse,
   type ModelHostUses,
@@ -29,7 +28,6 @@ import {
   type ModelImplementation,
   type ModelModuleLoad,
   type ModelName,
-  type ModelNamedMemberCall,
   type ModelOverload,
   type TableFeature,
   type TableModel,
@@ -254,21 +252,6 @@ function formatHostObject(context: AttachmentContext, object: ModelHostObject): 
   ]);
 }
 
-function formatHostMethodCall(context: AttachmentContext, { name, cell, call }: ModelHostMethodCall): string {
-  return formatAggregate([
-    ["name", formatName(name)],
-    ["nativeCell", formatName(cell)],
-    ["call", context.hostUses.addCall(formatHostCall(context, call))],
-  ]);
-}
-
-function formatNamedMemberCall(context: AttachmentContext, call: ModelNamedMemberCall): string {
-  return formatAggregate([
-    ["name", formatName(call.name)],
-    ["arguments", formatHostValues(context, call.arguments)],
-  ]);
-}
-
 function formatForms(builtin: ModelBuiltin): string[] {
   const { appendForm, literalPartsForm } = builtin.attachments;
   if (appendForm === null && literalPartsForm === null) return [];
@@ -414,16 +397,6 @@ export function emitCppAttachments(model: TableModel, features: readonly TableFe
       "BuiltinHostObject",
       "HostObjects",
       model.hostObjects.map(object => formatHostObject(context, object)),
-    ),
-    emitTableArray(
-      "BuiltinNamedMemberCall",
-      "NamedMemberCalls",
-      model.namedMemberCalls.map(call => formatNamedMemberCall(context, call)),
-    ),
-    emitTableArray(
-      "BuiltinHostMethodCall",
-      "HostMethodCalls",
-      model.hostMethodCalls.map(call => formatHostMethodCall(context, call)),
     ),
     emitTableArray("BuiltinForms", "Forms", builtins.flatMap(formatForms)),
     emitTableArray("BuiltinBoxedCall", "BoxedCalls", builtins.flatMap(formatBoxedCall)),

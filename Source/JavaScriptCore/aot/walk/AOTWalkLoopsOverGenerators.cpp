@@ -21,7 +21,13 @@ namespace JSC { namespace AOT { namespace Typed {
 
 static constexpr uint32_t closedOperationsOfProtocolForGenerators = 3;
 
-std::optional<LoopOverIterator> findLoopOverIterator(const BodyIndex& index, ValueID open)
+struct LoopOverIterator {
+    ValueID step;
+    BlockID blockOfStep;
+    bool stepStandsInHeadOfLoop { false };
+};
+
+static std::optional<LoopOverIterator> findLoopOverIterator(const BodyIndex& index, ValueID open)
 {
     LoopOverIterator loop;
     Vector<BlockID, 4> blocksOfCloses;
@@ -164,7 +170,7 @@ static void buildFirstReadForGenerators(Walker& walker, BuiltinName name, Origin
     if (walker.has(Mechanism::Folding) && walker.state().hasReadBuiltin(*location))
         return;
     origin.isTailCall = false;
-    Draft initialization(Opcode::InitializeBuiltin, origin);
+    Draft initialization(opcodeOfFirstReadOffHolder(walker.program().builtins(), *location), origin);
     walker.chooseConservativeFields(initialization);
     initialization.setBuiltin(*location);
     walker.build(WTF::move(initialization));
@@ -172,13 +178,13 @@ static void buildFirstReadForGenerators(Walker& walker, BuiltinName name, Origin
         walker.state().noteReadOfBuiltin(*location);
 }
 
-void buildFirstReadsThatOpenOfGeneratorLeavesOut(Walker& walker, Origin origin)
+static void buildFirstReadsThatOpenLeavesOut(Walker& walker, Origin origin)
 {
     buildFirstReadForGenerators(walker, walker.program().builtins().nameOf(WellKnownSymbol::Iterator), origin);
     buildFirstReadForGenerators(walker, BuiltinNames::next, origin);
 }
 
-void buildFirstReadThatCloseOfGeneratorLeavesOut(Walker& walker, Origin origin)
+static void buildFirstReadThatCloseLeavesOut(Walker& walker, Origin origin)
 {
     buildFirstReadForGenerators(walker, BuiltinNames::returnKeyword, origin);
 }
@@ -272,7 +278,7 @@ static bool openLoopOverGenerator(Walker& walker, const BodyValue& open)
     BlockID isAsMade = builder.addBlock();
     builder.branch(builder.build(WTF::move(test)), isAsMade, byProtocol);
     builder.continueIn(isAsMade);
-    buildFirstReadsThatOpenOfGeneratorLeavesOut(walker, builder.origin());
+    buildFirstReadsThatOpenLeavesOut(walker, builder.origin());
     builder.jumpTo(opened, { generator });
 
     builder.continueIn(byProtocol);
@@ -340,7 +346,7 @@ static void closeGenerator(Walker& walker, BuilderForGenerators& builder, Refere
     BlockID isClosed = builder.addBlock();
     builder.branch(builder.isInteger(status, static_cast<int64_t>(GeneratorStepStatus::NotStepped)), isNotStepped, isStepped);
     builder.continueIn(isStepped);
-    buildFirstReadThatCloseOfGeneratorLeavesOut(walker, builder.origin());
+    buildFirstReadThatCloseLeavesOut(walker, builder.origin());
     builder.jumpTo(isClosed);
     builder.continueIn(isNotStepped);
     builder.closeByProtocol(generator, IteratorCompletion::Normal);

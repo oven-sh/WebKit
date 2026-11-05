@@ -904,6 +904,8 @@ public:
     ValueID appendParameter(BlockID, TypeID, Representation, Origin);
     void setTypeOfJoinParameter(ValueID, TypeID);
     void makeTypeTestAskInFull(ValueID);
+    void makeTestAskInFull(ValueID);
+    void leaveCheckOfProofToTestBehind(ValueID);
     ValueID append(BlockID, const Draft&, TypeID proven, EffectTraits);
     void noteEffectsBelieved(ValueID, const Effects&);
     const Effects* effectsBelievedOf(ValueID) const;
@@ -931,6 +933,7 @@ private:
 
     void fill(Instruction&, const DraftWords&);
     void appendEdgeInto(BlockID from, BlockID to, std::span<const ValueID> arguments);
+    void layClosureInFrame(ValueID, LoanOfClosure);
 
     CodeUnit m_unit;
     StableArray<Operation, 10> m_operations;
@@ -969,6 +972,7 @@ struct CodeTextContext {
     const Program& program;
     TypeArena& types;
     const Plan* plan { nullptr };
+    const Facts* facts { nullptr };
 };
 
 void printCode(PrintStream&, const CodeTextContext&, const Code&);
@@ -988,6 +992,10 @@ inline ValueID valueThatTestSpeaksOf(const Code& code, ValueID test, uint32_t op
 }
 inline constexpr OpcodeSet operationsThatStandAmongNarrowedValues = conversionsOfForm | OpcodeSet { Opcode::CheckProof };
 inline constexpr OpcodeSet readsThatNarrowTheirHolders { Opcode::GetSlot, Opcode::GetSlotOrUndefined };
+inline bool hasTestedForHole(const Operation& read)
+{
+    return read.opcode == Opcode::GetArrayElement && !read.isPresent() && !read.readsHoleAsNaN() && !testsItsOwnGuess(read);
+}
 template<typename Read>
 ReadOfEmptySlot whatReadOfEmptySlotGives(const Read& read)
 {
@@ -1025,6 +1033,7 @@ TypeID typeOfNarrowed(const TypingContext&, const Code&, ValueID narrowed);
 TypeID typeOfJoinParameter(TypeArena&, std::span<const EdgeID> edgesThatReachJoin, NOESCAPE const ScopedLambda<TypeID(EdgeID)>& typeArrivingOn);
 
 String verifyCode(const CodeTextContext&, const Code&, InternalErrorKind* kindOfBrokenRule = nullptr);
+String verifyFrameCellsOfSweptCode(const CodeTextContext&, const Code&, InternalErrorKind* kindOfBrokenRule = nullptr);
 class DominatorsOfCode {
     WTF_MAKE_NONCOPYABLE(DominatorsOfCode);
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(DominatorsOfCode);

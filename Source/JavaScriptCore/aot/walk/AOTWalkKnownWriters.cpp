@@ -535,14 +535,10 @@ static void endWhatOperationWritesOrRunsInKnownWriters(Walker& walker, const Dra
 
 void endWhatOperationWritesOrRuns(Walker& walker, const Draft& draft, const Effects& effects)
 {
-    if ((draft.opcode != Opcode::PutSlot && draft.opcode != Opcode::PutSlotOrAdd) || testsItsOwnGuess(draft)
-        || !storeMaySetMarkOfCell(walker, membersOf(walker.types(), draft.receivers()), draft.key(), walker.typeOf(draft.valueOperand()))) {
-        endWhatOperationWritesOrRunsInKnownWriters(walker, draft, effects);
+    endWhatOperationWritesOrRunsInKnownWriters(walker, draft, effects);
+    static_assert(!declaredBoundOf(Opcode::PutSlot).writes.contains(AbstractHeap::NamedProperties) && !declaredBoundOf(Opcode::PutSlotOrAdd).writes.contains(AbstractHeap::NamedProperties));
+    if ((draft.opcode != Opcode::PutSlot && draft.opcode != Opcode::PutSlotOrAdd) || testsItsOwnGuess(draft) || !effects.writes.contains(AbstractHeap::NamedProperties))
         return;
-    }
-    Effects effectsWithMark = effects;
-    effectsWithMark.writes.add(AbstractHeap::NamedProperties);
-    endWhatOperationWritesOrRunsInKnownWriters(walker, draft, effectsWithMark);
     const Code& code = walker.code();
     for (Reference name = draft.objectOperand(); name.isValue(); name = Reference::value(code.at(name.id()).operand(0))) {
         walker.state().endFactsOfCell(name, FactOfCell::BearsNoMark);

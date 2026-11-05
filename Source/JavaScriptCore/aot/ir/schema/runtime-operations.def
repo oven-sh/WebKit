@@ -49,7 +49,7 @@ runtime SetConstructPrototype : JSCell* (JSCell* object, JSCell* prototype, uint
 runtime AllocateSlow : JSCell* (uint32_t allocation) ; RuntimeAllocates
 runtime AllocateSlowFromTemplate : JSCell* (uint32_t allocation, const uint8_t* body) ; RuntimeAllocates
 runtime GetHeaderOfAllocation : uint64_t (uint32_t allocation) ; RuntimeAllocates
-runtime NewDictionary : JSCell* (uint32_t inlineCapacity) ; RuntimeAllocates
+runtime NewDictionary : JSCell* () ; RuntimeAllocates
 runtime NewFromData, NewSetFromData, NewMapFromData : JSCell* (uint32_t request) ; RuntimeAllocates throws
 runtime CopyDataProperties : void (JSCell* target, EncodedJSValue source, uint32_t excludedRun, uint32_t count, const EncodedJSValue* excludedKeys) ; unknownCode
 runtime CopyObject, AssignToNewObject : JSCell* (EncodedJSValue source, uint32_t excludedRun, uint32_t count, const EncodedJSValue* excludedKeys) ; unknownCode
@@ -69,7 +69,6 @@ runtime ArrayCopy : EncodedJSValue (JSCell* array) ; unknownCode
 runtime AppendElements : void (JSCell* array, JSCell* source) ; RuntimeGrowsArray
 runtime AppendMembers : void (JSCell* array, JSCell* source) ; RuntimeGrowsArray writes(CollectionStorage)
 runtime AppendHole : JSCell* (JSCell* array) ; RuntimeGrowsArray
-runtime ReserveWholeArrayCapacity : void (JSCell* array, uint64_t additional) ; reads(all) writes(Elements, ArrayStorage, AllocatorState, RuntimeState) collects
 runtime TryFinishBirth : void (JSCell* object) ; reads(all) writes(RuntimeState)
 runtime ArrayPutAtIndex, ArrayPutNumberAtIndex : void (JSCell* array, EncodedJSValue value, uint64_t position) ; unknownCode
 runtime ArrayPutAtNumber : void (JSCell* array, EncodedJSValue value, double position) ; unknownCode
@@ -179,6 +178,7 @@ runtime PollAtPrologueWithoutCollecting : void* (uint8_t* returnAddress) ; reads
 runtime DirectEval : EncodedJSValue (EncodedJSValue text, uint32_t request, uint32_t count, const EncodedJSValue* operands) ; unknownCode
 
 runtime StringConstant, KeyConstant, BuiltinCell : JSCell* (uint32_t index) ; RuntimeCreatesConstant
+runtime MethodCalledBoxed : JSCell* (uint32_t form) ; RuntimeCreatesConstant
 runtime ModuleBuiltinCell : JSCell* (uint32_t builtin, uint32_t module) ; reads(all) writes(AllocatorState, RuntimeState) throws collects
 runtime FillBuiltinValue : EncodedJSValue (uint32_t cellKey) ; unknownCode
 runtime FillWatchedBuiltinValue : EncodedJSValue (uint32_t cellKey) ; unknownCode

@@ -20,12 +20,12 @@
 # RUN(ALL): run-in-shell mechanisms=all
 # ALL-NOT: deep
 # ALL-NOT: went on
-# ALL: AOT: f{{*}} at {{*}}: what was captured is not of the type that the compiler has proven of it. It is: symbol. This is a bug in Bun.
+# ALL: AOT: f{{*}} at {{*}}: what a slot of a scope holds is not of the type that the compiler has proven of it. It is: symbol. This is a bug in Bun.
 # ALL: crashed with
 # RUN(CALLS): run-in-shell mechanisms=-Inlining
 # CALLS-NOT: deep
 # CALLS-NOT: went on
-# CALLS: AOT: f{{*}} at {{*}}: what was captured is not of the type that the compiler has proven of it. It is: symbol. This is a bug in Bun.
+# CALLS: AOT: f{{*}} at {{*}}: what a slot of a scope holds is not of the type that the compiler has proven of it. It is: symbol. This is a bug in Bun.
 # CALLS: crashed with
 
 layout L0 module=m0 fields=[{key=symbol("depth")@m0:0 declared={type=anything} flags=[IsRequired]}, {key=symbol("width")@m0:1 declared={type=anything} flags=[IsRequired]}] ownFieldCount=2

@@ -6,11 +6,11 @@
 # print(read(make(which > 0 ? "text" : undefined)));
 # print("went on");
 # A DEFINITION WRITTEN IN LINE IS A TYPED STORE. Where the type as built of the value of Object.defineProperty() fits the slot, the emitter writes it straight into the slot (SlotAccessEmitter::tryCreateFieldByDefinition()).
-# The claim of an entry parameter is asked by nobody, so the floor asks in front of the definition, as it does in front of PutSlot, PutSlotOrAdd and NewObject.
+# Every road into a parameter asks (isEnforced(ProofSource::EntryParameter)), so the parameter shows its type, and the floor, which asks in front of a definition as in front of PutSlot, PutSlotOrAdd and NewObject, has nothing to ask here.
 # RUN(DEFINED): walk f1 mechanisms=all-Inlining
 # DEFINED-LABEL: code f1:Body
 # DEFINED: b0([[value]]: undefined|"text" @JSValue
-# DEFINED: CheckProof [[value]] checkedType=undefined|"text" typeWithoutProof=absent|anything source=Field
+# DEFINED-NOT: CheckProof
 # DEFINED: = DefineOwnProperty {{*}}, {{*}}, [[value]] descriptorFlags=
 # RUN(TEXT): run-in-shell mechanisms=-Inlining globalThis.which = 1;
 # TEXT: string

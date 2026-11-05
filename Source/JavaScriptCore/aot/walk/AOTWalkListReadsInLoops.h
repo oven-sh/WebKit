@@ -27,8 +27,11 @@ bool positionIsKnownToLieInsideList(Walker&, Reference list, Reference position)
 Reference storageOfListFromInFrontOfLoop(Walker&, const ListTestedInFrontOfLoop&, Origin);
 
 bool holeLeavesTurnBehindRow(const BodyIndex&, const BodyValue& read, const ListTestedInFrontOfLoop&);
+bool readLeavesTurnAtHoleBehindRow(Walker&, const BodyValue& read);
 TypeID typeReadOutOfListTestedInFrontOfLoop(Walker&, const BodyIndex&, const BodyValue& read, TypeID typeOfList, TypeID typeOfPosition);
 bool leavesListsTestedInFrontOfLoopAsTheyAre(const Effects&);
+bool readsLengthOfViewTestedInFrontOfLoop(Walker&, const BodyValue& read);
+bool leavesViewsTestedInFrontOfLoopAsTheyAre(const Effects&);
 
 class ListsNotedAsTestedForLook {
     WTF_MAKE_NONCOPYABLE(ListsNotedAsTestedForLook);
@@ -44,6 +47,7 @@ struct ListsReadInLoop {
     Vector<ListTestedInFrontOfLoop, 2> lists;
     bool areLeftAsTheyAre { false };
     bool areTested { false };
+    std::unique_ptr<LoopPreview> look;
 };
 ListsReadInLoop findListsReadInLoop(Walker&, BlockID inputHead, const LoopPreview&, std::span<const Reference> entering, Vector<GuessInFrontOfLoop, 4>& guesses);
 void buildTestsOfListsReadInLoop(Walker&, BlockID inputHead, std::span<const Reference> entering, ListsReadInLoop&, std::span<const GuessInFrontOfLoop>, std::span<const Reference> proofs, BlockID& closedStart, Origin);

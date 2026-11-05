@@ -321,7 +321,9 @@ static bool buildArrayReadOfTypedElements(const AccessOfTypedElements& access)
     if (level == KnowledgeLevel::Expected)
         markBaseAsPassedInTypedElements(walker, access.base);
     bool givesNaNForHole = read.readsHoleAsNaN();
-    Reference element = walker.build(WTF::move(read));
+    Reference element = leavesTurnAtHole ? walker.state().element(access.base, access.key) : Reference();
+    if (!element || !walker.types().at(walker.typeOf(element)).hasOnlyPrimitives(Primitive::Number | Primitive::Undefined))
+        element = walker.build(WTF::move(read));
     if (leavesTurnAtHole && element && walker.types().at(walker.typeOf(element)).primitives & Primitive::Undefined) {
         Origin origin = walker.originOf(access.value);
         origin.isTailCall = false;
@@ -520,16 +522,128 @@ static void nameStorageOfViewInTypedElements(const AccessOfTypedElements& writte
         access.setLengthOperands(singleElementSpan(length));
 }
 
+static bool holdPositionBelowLengthOrBeginTurnAgainInTypedElements(const AccessOfTypedElements& access, TypedArrayType typedArrayType, Origin origin)
+{
+    Walker& walker = access.walker;
+    if (!walker.mayBeginTurnAgainInClosedCopy() || !walker.opensGuesses() || walker.testsEveryPosition() || !hasInlineElementAccess(typedArrayType))
+        return false;
+    if (!access.typeOfKey.isInteger() || access.typeOfKey.integers.minimum < 0 || positionIsKnownToLieInsideList(walker, access.base, access.key))
+        return false;
+    if (!onlyUserTakesUndefinedForNaNInTypedElements(walker, access.value))
+        return false;
+    origin.isTailCall = false;
+    Reference length = lengthOfViewInTypedElements(access, typedArrayType, origin);
+    if (!length || walker.isUnreachable())
+        return false;
+    Draft test(Opcode::Less, origin);
+    walker.chooseConservativeFields(test);
+    test.setLeftOperand(access.key);
+    test.setRightOperand(length);
+    test.setForm(formAllowedForTypedOperator(walker, test));
+    Reference isBelow = walker.build(WTF::move(test));
+    if (!isBelow || !isBelow.isValue())
+        return false;
+    BlockID passed = walker.addBlock();
+    BlockID failed = walker.addBlock(BlockFrequency::Rare);
+    walker.branch(isBelow, passed, failed);
+    walker.continueIn(failed);
+    if (!walker.isUnreachable())
+        walker.beginTurnAgainInClosedCopy();
+    walker.continueIn(passed);
+    walker.noteGuessOpened();
+    return !walker.isUnreachable();
+}
+
+TypeID typeOfElementInsideViewOfNumbers(Walker& walker, TypeID typeOfView, TypeID typeOfPosition)
+{
+    if (!typeOfView || !typeOfPosition)
+        return { };
+    if (!walker.types().at(typeOfPosition).isInteger())
+        return { };
+    BaseOfTypedElements base = classifyBaseOfTypedElements(walker, typeOfView);
+    if (base.kind != KindOfBaseOfTypedElements::TypedArray || !hasInlineElementAccess(base.typedArrayType) || isBigInt(base.typedArrayType))
+        return { };
+    return elementTypeOf(base.typedArrayType);
+}
+
+Reference buildReadOfElementOfViewBehindTestOfLength(Walker& walker, const BodyValue& read, Reference view, Origin origin, BlockID whereItLiesOutside)
+{
+    Reference position = walker.referenceOf(read.propertyOperand());
+    TypedArrayType typedArrayType = classifyBaseOfTypedElements(walker, walker.typeOf(view)).typedArrayType;
+    AccessOfTypedElements access { walker, read, view, position, { }, walker.typeOf(view), walker.types().at(walker.typeOf(position)), { }, false };
+    Reference length = lengthOfViewInTypedElements(access, typedArrayType, origin);
+    if (!length) {
+        Draft draft(Opcode::GetTypedArrayLength, origin);
+        walker.chooseConservativeFields(draft);
+        draft.setViewOperand(view);
+        draft.setTypedArrayType(typedArrayType);
+        length = walker.build(WTF::move(draft));
+        if (!length || walker.isUnreachable())
+            return { };
+    }
+    if (access.typeOfKey.integers.minimum < 0) {
+        Draft zero(Opcode::Integer, origin);
+        zero.setInteger(0);
+        Draft isNotNegative(Opcode::GreaterEq, origin);
+        walker.chooseConservativeFields(isNotNegative);
+        isNotNegative.setLeftOperand(position);
+        isNotNegative.setRightOperand(walker.constant(WTF::move(zero)));
+        isNotNegative.setForm(formAllowedForTypedOperator(walker, isNotNegative));
+        Reference test = walker.build(WTF::move(isNotNegative));
+        if (!test)
+            return { };
+        BlockID fromZeroUp = walker.addBlock();
+        walker.branch(test, fromZeroUp, whereItLiesOutside);
+        walker.continueIn(fromZeroUp);
+    }
+    Draft isBelow(Opcode::Less, origin);
+    walker.chooseConservativeFields(isBelow);
+    isBelow.setLeftOperand(position);
+    isBelow.setRightOperand(length);
+    isBelow.setForm(formAllowedForTypedOperator(walker, isBelow));
+    Reference test = walker.build(WTF::move(isBelow));
+    if (!test)
+        return { };
+    BlockID inside = walker.addBlock();
+    walker.branch(test, inside, whereItLiesOutside);
+    walker.continueIn(inside);
+    if (position.isValue() && test.isValue() && !walker.state().checkedNameOf(position)) {
+        Draft narrowed(Opcode::Narrowed, origin);
+        narrowed.setValueOperand(position);
+        narrowed.setTestOperand(test);
+        narrowed.setOperandIndex(OperandIndex::Less::left);
+        narrowed.setIsOnTakenEdge(true);
+        Reference held = walker.build(WTF::move(narrowed));
+        if (held && held.isValue() && held != position) {
+            walker.state().noteCheckedName(position, held);
+            position = held;
+        }
+    }
+
+    Draft element = draftOfTypedElements(walker, read, Opcode::GetTypedArrayElement);
+    element.setViewOperand(view);
+    element.setPositionOperand(position);
+    element.setTypedArrayType(typedArrayType);
+    element.setIsInsideView(true);
+    element.setLevel(KnowledgeLevel::Proven);
+    element.setKeyIsIntegral(true);
+    nameStorageOfViewInTypedElements(access, element, typedArrayType);
+    return walker.build(WTF::move(element));
+}
+
 static bool buildViewReadOfTypedElements(const AccessOfTypedElements& access, TypedArrayType typedArrayType)
 {
     if (access.isOnlyAskedAbout)
         return answerAheadOfTypedElements(access, Opcode::GetTypedArrayElement, KnowledgeLevel::Proven);
+    if (bindNumberReadBehindTestsOfTypedElements(access))
+        return true;
     Walker& walker = access.walker;
     Draft read = draftOfTypedElements(walker, access.value, Opcode::GetTypedArrayElement);
+    bool isHeldBelowLength = holdPositionBelowLengthOrBeginTurnAgainInTypedElements(access, typedArrayType, read.origin());
     read.setViewOperand(access.base);
     read.setPositionOperand(access.key);
     read.setTypedArrayType(typedArrayType);
-    read.setIsInsideView(positionIsKnownToLieInsideList(walker, access.base, access.key));
+    read.setIsInsideView(isHeldBelowLength || positionIsKnownToLieInsideList(walker, access.base, access.key));
     read.setLevel(KnowledgeLevel::Proven);
     read.setKeyIsIntegral(access.typeOfKey.isNumberWithoutFraction());
     nameStorageOfViewInTypedElements(access, read, typedArrayType);

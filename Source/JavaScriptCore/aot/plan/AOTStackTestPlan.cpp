@@ -39,7 +39,8 @@ using CallAtBareSiteForStackTests = std::pair<FunctionID, FunctionID>;
 class CallsListedForStackTests {
     WTF_MAKE_NONCOPYABLE(CallsListedForStackTests);
 public:
-    CallsListedForStackTests(const Program&, const Facts&, const Plan&);
+    CallsListedForStackTests(const Program&, const Facts&, const ModuleEvaluationPlan&, const ParallelLoops&);
+    CallsListedForStackTests(Vector<uint32_t>&& firstCalleeOf, Vector<FunctionID>&& callees, const ModuleEvaluationPlan&);
 
     std::span<const FunctionID> calleesOf(FunctionID caller) const { return m_callees.span().subspan(m_firstCalleeOf[caller.index()], m_firstCalleeOf[caller.index() + 1] - m_firstCalleeOf[caller.index()]); }
     std::span<const CallAtBareSiteForStackTests> stepsAtBareSitesOf(FunctionID caller) const
@@ -50,12 +51,14 @@ public:
     const Vector<CallAtBareSiteForStackTests>& atBareSites() const { return m_atBareSites; }
 
 private:
+    void listStepsAtBareSites(const ModuleEvaluationPlan&);
+
     Vector<uint32_t> m_firstCalleeOf;
     Vector<FunctionID> m_callees;
     Vector<CallAtBareSiteForStackTests> m_atBareSites;
 };
 
-CallsListedForStackTests::CallsListedForStackTests(const Program& program, const Facts& facts, const Plan& plan)
+void listCalleesForStackTests(const Program& program, const Facts& facts, const ParallelLoops& loops, Vector<uint32_t>& firstCalleeOf, Vector<FunctionID>& calleesOfAll)
 {
     auto callsListedUnder = [](const LinkTables& tables, FunctionID caller) -> std::span<const LinkedCall> {
         if (caller.index() + 1 >= tables.firstCallOfCaller.size())
@@ -65,21 +68,38 @@ CallsListedForStackTests::CallsListedForStackTests(const Program& program, const
     };
 
     uint32_t numberOfFunctions = static_cast<uint32_t>(program.functions.size());
-    m_firstCalleeOf.reserveInitialCapacity(numberOfFunctions + 1);
-    for (uint32_t index = 0; index < numberOfFunctions; ++index) {
-        size_t first = m_callees.size();
-        m_firstCalleeOf.append(static_cast<uint32_t>(first));
+    firstCalleeOf.fill(0, numberOfFunctions + 1);
+    Vector<Vector<FunctionID>> calleesInChunks = collectChunksInParallel<FunctionID>(loops, numberOfFunctions, [&](unsigned index, Vector<FunctionID>& callees) {
+        size_t first = callees.size();
         for (const LinkTables* tables : { &facts.linked(), &facts.held() }) {
             for (const LinkedCall& call : callsListedUnder(*tables, FunctionID(index)))
-                m_callees.append(call.callee);
+                callees.append(call.callee);
         }
-        std::span<FunctionID> added = m_callees.mutableSpan().subspan(first);
+        std::span<FunctionID> added = callees.mutableSpan().subspan(first);
         std::ranges::sort(added);
-        m_callees.shrink(m_callees.size() - std::ranges::unique(added).size());
-    }
-    m_firstCalleeOf.append(static_cast<uint32_t>(m_callees.size()));
+        callees.shrink(callees.size() - std::ranges::unique(added).size());
+        firstCalleeOf[index + 1] = static_cast<uint32_t>(callees.size() - first);
+    });
+    for (uint32_t index = 0; index < numberOfFunctions; ++index)
+        firstCalleeOf[index + 1] += firstCalleeOf[index];
+    calleesOfAll = joinChunks<FunctionID>(loops, WTF::move(calleesInChunks));
+}
 
-    const ModuleEvaluationPlan& evaluation = plan.moduleEvaluation();
+CallsListedForStackTests::CallsListedForStackTests(const Program& program, const Facts& facts, const ModuleEvaluationPlan& evaluation, const ParallelLoops& loops)
+{
+    listCalleesForStackTests(program, facts, loops, m_firstCalleeOf, m_callees);
+    listStepsAtBareSites(evaluation);
+}
+
+CallsListedForStackTests::CallsListedForStackTests(Vector<uint32_t>&& firstCalleeOf, Vector<FunctionID>&& callees, const ModuleEvaluationPlan& evaluation)
+    : m_firstCalleeOf(WTF::move(firstCalleeOf))
+    , m_callees(WTF::move(callees))
+{
+    listStepsAtBareSites(evaluation);
+}
+
+void CallsListedForStackTests::listStepsAtBareSites(const ModuleEvaluationPlan& evaluation)
+{
     for (const BareModuleSite& site : evaluation.bareSites()) {
         for (const ModuleStep& step : evaluation.stepsOf(site)) {
             if (step.callee && !step.calleeIsStart)
@@ -93,7 +113,7 @@ CallsListedForStackTests::CallsListedForStackTests(const Program& program, const
 class CounterOfCoveredFrames {
     WTF_MAKE_NONCOPYABLE(CounterOfCoveredFrames);
 public:
-    CounterOfCoveredFrames(const Program&, const Facts&, const Plan&);
+    CounterOfCoveredFrames(const Program&, const Facts&, const CallingConventions&, const ModuleEvaluationPlan&, const ParallelLoops&, CallsCountedForStackTests&&);
 
     StackTestPlan run();
 
@@ -114,8 +134,8 @@ private:
         uint32_t nextStep { 0 };
     };
 
-    bool bodyMaySuspend(FunctionID id) const { return m_conventions.of(id).has(CodeRole::CoroutineBody) && !m_conventions.of(id).coroutineNeverSuspends; }
-    OptionSet<BodyTrait> traitsOf(FunctionID, const StronglyConnectedComponents& cyclesOfCountedCalls, const BitVector& methodsOfTable) const;
+    bool bodyMaySuspend(FunctionID id) const { return m_bodiesThatMaySuspend.quickGet(id.index()); }
+    OptionSet<BodyTrait> traitsOf(FunctionID, const BitVector& methodsOfTable) const;
     bool needsNoCount(FunctionID id) const { return m_traits[id.index()].isEmpty() || m_counts[id.index()] == Count::Done; }
     bool addsNothingBelowCaller(FunctionID id) const { return needsNoCount(id) || !m_traits[id.index()].containsAny({ BodyTrait::MayBeCovered, BodyTrait::MayBeInlined }); }
     std::span<const FunctionID> calleesCountedBelow(FunctionID) const;
@@ -127,19 +147,25 @@ private:
     const Program& m_program;
     const Facts& m_facts;
     const CallingConventions& m_conventions;
+    const ParallelLoops& m_loops;
     CallsListedForStackTests m_calls;
     StackTestPlan m_plan;
 
+    BitVector m_bodiesThatMaySuspend;
+    BitVector m_functionsInCycles;
     Vector<OptionSet<BodyTrait>> m_traits;
     Vector<Count> m_counts;
     Vector<CountInProgress> m_countsInProgress;
 };
 
-CounterOfCoveredFrames::CounterOfCoveredFrames(const Program& program, const Facts& facts, const Plan& plan)
+CounterOfCoveredFrames::CounterOfCoveredFrames(const Program& program, const Facts& facts, const CallingConventions& conventions, const ModuleEvaluationPlan& evaluation, const ParallelLoops& loops, CallsCountedForStackTests&& callsCounted)
     : m_program(program)
     , m_facts(facts)
-    , m_conventions(plan.conventions())
-    , m_calls(program, facts, plan)
+    , m_conventions(conventions)
+    , m_loops(loops)
+    , m_calls(WTF::move(callsCounted.firstCalleeOf), WTF::move(callsCounted.callees), evaluation)
+    , m_bodiesThatMaySuspend(WTF::move(callsCounted.bodiesThatMaySuspend))
+    , m_functionsInCycles(WTF::move(callsCounted.functionsInCycles))
 {
     size_t numberOfFunctions = program.functions.size();
     m_plan.bodiesCoveredByCallers = BitVector(numberOfFunctions);
@@ -152,7 +178,7 @@ CounterOfCoveredFrames::CounterOfCoveredFrames(const Program& program, const Fac
     m_counts.fill(Count::NotBegun, numberOfFunctions);
 }
 
-auto CounterOfCoveredFrames::traitsOf(FunctionID id, const StronglyConnectedComponents& cyclesOfCountedCalls, const BitVector& methodsOfTable) const -> OptionSet<BodyTrait>
+auto CounterOfCoveredFrames::traitsOf(FunctionID id, const BitVector& methodsOfTable) const -> OptionSet<BodyTrait>
 {
     const Function& function = m_program.at(id);
     FunctionConvention convention = m_conventions.of(id);
@@ -164,7 +190,7 @@ auto CounterOfCoveredFrames::traitsOf(FunctionID id, const StronglyConnectedComp
 
     OptionSet<BodyTrait> traits;
     bool isSmallEnough = m_facts.summaries().at(id).numberOfOperations <= mostOperationsOfBodyBuiltIntoFrameOfCaller || isLibraryCode(m_program, function);
-    if (!cyclesOfCountedCalls.isInCycle.get(id.index()) && isSmallEnough && !bodyMaySuspend(id))
+    if (!m_functionsInCycles.get(id.index()) && isSmallEnough && !bodyMaySuspend(id))
         traits.add(BodyTrait::MayBeInlined);
     if (!methodsOfTable.get(id.index()))
         traits.add(BodyTrait::MayBeCovered);
@@ -265,25 +291,45 @@ void CounterOfCoveredFrames::countCoveredFrames()
 StackTestPlan CounterOfCoveredFrames::run()
 {
     uint32_t numberOfFunctions = static_cast<uint32_t>(m_traits.size());
-    StronglyConnectedComponents cyclesOfCountedCalls = computeStronglyConnectedComponents(numberOfFunctions, [&](unsigned node) {
-        return calleesCountedBelow(FunctionID(node));
-    });
+
     BitVector methodsOfTable(numberOfFunctions);
     for (const MethodFamily& family : m_conventions.methodFamilies()) {
         for (FunctionID method : family.methods)
             methodsOfTable.set(method.index());
     }
-    for (uint32_t index = 0; index < numberOfFunctions; ++index)
-        m_traits[index] = traitsOf(FunctionID(index), cyclesOfCountedCalls, methodsOfTable);
+    forEachRangeOfIndicesInParallel(m_loops, numberOfFunctions, [&](size_t first, size_t end) {
+        for (size_t index = first; index < end; ++index)
+            m_traits[index] = traitsOf(FunctionID(static_cast<uint32_t>(index)), methodsOfTable);
+    });
     countCoveredFrames();
     return WTF::move(m_plan);
 }
 
 } // anonymous namespace
 
-StackTestPlan planStackTests(const Program& program, const Facts& facts, const Plan& plan)
+CallsCountedForStackTests findCallsCountedForStackTests(const Program& program, const Facts& facts, const CallingConventions& conventions, const ParallelLoops& loops)
 {
-    return CounterOfCoveredFrames(program, facts, plan).run();
+    uint32_t numberOfFunctions = static_cast<uint32_t>(program.functions.size());
+    CallsCountedForStackTests result;
+    listCalleesForStackTests(program, facts, loops, result.firstCalleeOf, result.callees);
+    result.bodiesThatMaySuspend = BitVector(numberOfFunctions);
+    for (uint32_t index = 0; index < numberOfFunctions; ++index) {
+        const FunctionConvention& convention = conventions.of(FunctionID(index));
+        if (convention.has(CodeRole::CoroutineBody) && !convention.coroutineNeverSuspends)
+            result.bodiesThatMaySuspend.quickSet(index);
+    }
+    StronglyConnectedComponents cyclesOfCountedCalls = computeStronglyConnectedComponents(numberOfFunctions, [&](unsigned node) -> std::span<const FunctionID> {
+        if (result.bodiesThatMaySuspend.quickGet(node))
+            return { };
+        return result.callees.span().subspan(result.firstCalleeOf[node], result.firstCalleeOf[node + 1] - result.firstCalleeOf[node]);
+    });
+    result.functionsInCycles = WTF::move(cyclesOfCountedCalls.isInCycle);
+    return result;
+}
+
+StackTestPlan planStackTests(const Program& program, const Facts& facts, const CallingConventions& conventions, const ModuleEvaluationPlan& evaluation, const ParallelLoops& loops, CallsCountedForStackTests&& callsCounted)
+{
+    return CounterOfCoveredFrames(program, facts, conventions, evaluation, loops, WTF::move(callsCounted)).run();
 }
 
 void checkStackTests(const Program& program, const Facts& facts, const Plan& plan, BuildContext& build)
@@ -332,7 +378,7 @@ void checkStackTests(const Program& program, const Facts& facts, const Plan& pla
         uint32_t nextStep { 0 };
     };
 
-    CallsListedForStackTests calls(program, facts, plan);
+    CallsListedForStackTests calls(program, facts, plan.moduleEvaluation(), build.parallelLoops());
     Vector<Height> heights(FillWith { }, numberOfFunctions, Height::NotBegun);
     Vector<uint32_t> framesOfCall(FillWith { }, numberOfFunctions, 0u);
     Vector<CallerOnPath> path;

@@ -19,7 +19,6 @@
 namespace JSC { namespace AOT { namespace Typed {
 
 static constexpr OperandUses usesThatLeaveCellToItsFramesInEnvironmentCells { OperandUse::Inspects, OperandUse::Returns };
-static constexpr OperandUses usesOfCellThatResultHoldsInEnvironmentCells { OperandUse::Inspects, OperandUse::Returns, OperandUse::Retains };
 
 static_assert(resultRuleOf(Opcode::MarkEnvironmentEscaped) == ResultRule::None && resultRuleOf(Opcode::ReleaseEnvironment) == ResultRule::None);
 static_assert(!mayThrow(Opcode::MarkEnvironmentEscaped) && !mayThrow(Opcode::ReleaseEnvironment) && !maySuspend(Opcode::MarkEnvironmentEscaped) && !maySuspend(Opcode::ReleaseEnvironment));
@@ -120,8 +119,6 @@ void markEnvironmentsThatOperationKeeps(Walker& walker, const Draft& draft)
     if (opcode == Opcode::NewClosure && draft.closureForm() == ClosureForm::Deferred)
         return;
 
-    bool mayHoldWithoutKeeping = opcode == Opcode::NewClosure ? !draft.isLent() : opcode == Opcode::NewObject && walker.program().at(draft.layout()).isEnvironment();
-    bool resultLiesInFrame = mayHoldWithoutKeeping && draft.storage() == AllocationStorage::Frame && draft.isMadeForOneUse();
     bool looksAtUsesOfOperands = looksAtUsesOfOperandsInEnvironmentCells(opcode);
     uint32_t indexOfList = numberOfNamedOperandsOf(opcode);
     std::span<const Reference> operands = draft.operands();
@@ -132,8 +129,6 @@ void markEnvironmentsThatOperationKeeps(Walker& walker, const Draft& draft)
         if (looksAtUsesOfOperands) {
             const OperandInfo& info = operandInfoOf(opcode, std::min(operandIndex, indexOfList));
             if (info.protocols.isEmpty() && info.uses.containsOnly(usesThatLeaveCellToItsFramesInEnvironmentCells))
-                continue;
-            if (resultLiesInFrame && info.protocols.isEmpty() && info.retainedIn == RetainedIn::Result && info.uses.containsOnly(usesOfCellThatResultHoldsInEnvironmentCells))
                 continue;
         }
         if (!layoutHandedBackInEnvironmentCells(walker, operand.id()))
@@ -204,7 +199,7 @@ void handBackEnvironmentsAtReturn(Walker& walker, BlockID block)
         const Walker::EnvironmentCellsOfUnit::Name& name = names[index];
         if (name.body != &input || name.copy != origin.inlineFrame || name.hasSeveralRecords || !input.dominates(name.making, block))
             continue;
-        ValueID record = cellMadeByUnitInEnvironmentCells(walker, walker.referenceBoundTo(name.name));
+        ValueID record = cellMadeByUnitInEnvironmentCells(walker, walker.nameLastBoundTo(name.name));
         if (!record)
             continue;
         Draft release(Opcode::ReleaseEnvironment, origin);

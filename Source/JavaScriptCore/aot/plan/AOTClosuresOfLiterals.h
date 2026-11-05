@@ -11,9 +11,10 @@ namespace JSC { namespace AOT { namespace Typed {
 
 class Facts;
 class Program;
+struct PromotedEnvironments;
 struct SlotPlanParts;
 
-void leaveClosuresOfLiteralsUnmade(const Program&, const Facts&, bool useWideReferences, SlotPlanParts&);
+void leaveClosuresOfLiteralsUnmade(const Program&, const Facts&, const PromotedEnvironments&, bool useWideReferences, SlotPlanParts&);
 
 } } } // namespace JSC::AOT::Typed
 

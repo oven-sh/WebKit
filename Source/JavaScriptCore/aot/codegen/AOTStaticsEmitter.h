@@ -21,6 +21,8 @@ public:
     TypedPointer addressOfStaticField(VariableID);
     bool holdsStaticField(VariableID) const;
     void storeStaticField(VariableID, Boxed);
+    Operand loadFieldOfEnvironment(VariableID, LayoutID, uint32_t field);
+    void storeFieldOfEnvironment(VariableID, LayoutID, uint32_t field, Operand, const Type& storedType);
     ClassGuardKey keyOfGuard(LayoutID classLayout, ClassSide);
     ClassGuardKey keyOfGuard(LayoutID classLayout, ClassSide, PropertyKeyID name, bool isAskedByStoresAlone = false);
     ClassGuardKey keyOfGuardOfNames(LayoutID classLayout, ClassSide, std::span<const PropertyKeyID> names);

@@ -126,7 +126,6 @@ public:
     void branchOnEqualsLiteralByStub(const OperationContext&, ComparedOperand, LValue subject, StringID, BranchTargets);
     void makeCellsHoldAtomOf(StringID);
     void makeCellsHoldAtomOf(StringID, const String& text);
-    Condition hasTextAt(const CharacterView&, Word32 offset, StringID);
     void branchOnTextAt(const CharacterView&, Word32 offset, StringID, BranchTargets);
     bool canCompareInline(StringID) const;
     static bool canCompareInline(const String& text) { return text.length() <= maxLengthComparedInPlace; }

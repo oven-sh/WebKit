@@ -95,7 +95,6 @@ struct Range {
         return { std::min(minimum, other.minimum), std::max(maximum, other.maximum) };
     }
     constexpr Range intersectWith(Range other) const { return { std::max(minimum, other.minimum), std::min(maximum, other.maximum) }; }
-    constexpr Range widenedFrom(Range previous) const;
     friend constexpr bool operator==(Range, Range) = default;
 };
 
@@ -117,18 +116,6 @@ constexpr int64_t widenedMinimum(int64_t minimum)
     return -maxTrackedInteger;
 }
 
-constexpr Range Range::widenedFrom(Range previous) const
-{
-    if (isEmpty() || previous.isEmpty())
-        return *this;
-    Range result = *this;
-    if (minimum < previous.minimum)
-        result.minimum = widenedMinimum(minimum);
-    if (maximum > previous.maximum)
-        result.maximum = widenedMaximum(maximum);
-    return result;
-}
-
 static_assert(Primitive::Defined == (1u << numberOfEnumerators<PrimitiveSet>) - 1);
 static_assert(!(Primitive::All & (Primitive::Absent | Primitive::LiteralString | Primitive::LiteralSymbol | Primitive::Unspecified)));
 static_assert(static_cast<double>(maxTrackedInteger + 1) == 0x1p62);
@@ -138,8 +125,6 @@ static_assert(primitiveOfNumber(1) == PrimitiveSet::Integer);
 static_assert(primitiveOfNumber(-0.0) == PrimitiveSet::WholeNumber);
 static_assert(primitiveOfNumber(0x1p62) == PrimitiveSet::WholeNumber);
 static_assert(primitiveOfNumber(0.5) == PrimitiveSet::FractionalNumber);
-static_assert(Range { 0, 5 }.widenedFrom({ 0, 4 }) == Range::length());
-static_assert(Range { -1, 4 }.widenedFrom({ 0, 4 }) == Range { INT32_MIN, 4 });
 
 } } } // namespace JSC::AOT::Typed
 

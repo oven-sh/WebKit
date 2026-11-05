@@ -25,7 +25,6 @@ public:
     void generateHasKeyOrder(const ValueContext&);
     void generateIsNotFrozen(const ValueContext&);
     void generateHasLayoutPrototype(const ValueContext&);
-    void generateBelongsToInstance(const ValueContext& value) { defineTest(value, belongsToInstance(in<CellPointer>(value->objectOperand()))); }
     void generateIsPristine(const ValueContext&);
     void generateHasArrayStorage(const ValueContext&);
     void generateIsElementPresent(const ValueContext&);
@@ -51,6 +50,7 @@ private:
     Condition orderWordHasNoBits(const ValueContext&, uint32_t bits);
     CellPointer untestedCell(const OperationContext&, ValueID);
     CellPointer cellOrElse(const OperationContext&, ValueID, BlockEdge isNotCell);
+    CellPointer cellOrElse(const OperationContext&, ValueID, const Type& known, BlockEdge isNotCell);
 
     Condition hasInstanceRealm(Pointer structure);
     void branchOnIsNotThenable(Boxed, const Type&, BranchTargets);

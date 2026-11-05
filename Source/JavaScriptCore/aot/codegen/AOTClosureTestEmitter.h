@@ -15,26 +15,22 @@ class ClosureTestEmitter final : public OperationEmitter {
 public:
     explicit ClosureTestEmitter(CodeGenerator&);
 
-    Condition isClosureOf(CellPointer, FunctionID, const Type& tested);
-    void branchOnIsClosureOf(CellPointer, FunctionID, const Type& tested, BranchTargets);
-    Condition isClosureOfAny(CellPointer, std::span<const FunctionID>, const Type& tested);
+    Condition isClosureOf(CellPointer, FunctionID);
+    void branchOnIsClosureOf(CellPointer, FunctionID, BranchTargets);
+    Condition isClosureOfAny(CellPointer, std::span<const FunctionID>);
     Condition hasFunctionCellType(CellPointer);
     Condition isSlimClosureAsCreated(CellPointer);
-    void branchOnEndsItsTailCalls(Boxed, BranchTargets);
     CellPointer closureIfCreated(FunctionID);
-    bool& passesChangedClosures() { return m_passesChangedClosures; }
 
 private:
     FunctionKindData closureKindOf(FunctionID) const;
     bool closureWordNames(FunctionID) const;
-    bool isDecidedByClosureWord(FunctionID, const Type& tested);
-    Condition hasClosureWordThatDecides(CellPointer, FunctionID);
-    void branchOnClosureTest(CellPointer, FunctionID, const Type& tested, BranchTargets);
+    void branchOnClosureTest(CellPointer, FunctionID, BranchTargets);
     struct ClosureNumberRun {
         FunctionID first;
         FunctionID last;
     };
-    void branchOnIsClosureOfAny(CellPointer, std::span<const FunctionID>, const Type& tested, BranchTargets);
+    void branchOnIsClosureOfAny(CellPointer, std::span<const FunctionID>, BranchTargets);
     void branchOnClosureNumberInRuns(Word32, std::span<const ClosureNumberRun> ascendingRuns, int32_t addend, bool mayLieBelowFirstRun, BranchTargets);
     void branchOnIsChangedClosureWithNumber(CellPointer, bool isSlim, uint32_t mentionOfClosureNumber, BranchTargets);
     Word32 numberOfChangedClosure(CellPointer);
@@ -47,7 +43,6 @@ private:
     Word32 closureNumberOf(FunctionID, int32_t addend = 0);
     Word32 upperHalfOfClosureWordOf(FunctionID);
 
-    bool m_passesChangedClosures { false };
 };
 
 } } } // namespace JSC::AOT::Typed

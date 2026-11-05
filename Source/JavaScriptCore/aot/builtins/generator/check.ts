@@ -707,26 +707,15 @@ function needsText(role: OperandRole): boolean {
   switch (role) {
     case "EvaluatedAsText":
     case "ModuleSpecifier":
-    case "ReadAsCharacters":
       return true;
     case "Locale":
     case "MayReplaceLocale":
-    case "ContentKey":
-    case "ReplacesContents":
     case "MembersAreOnlyInspected":
-    case "KeysAreNotListed":
-    case "IsAskedWhetherExtensible":
-    case "OwnValuesAreReadByKeyOnly":
-    case "MembersAreOfObjectsOnly":
     case "FunctionsAreConvertedUnderNamesOnly":
     case "OnlyBoxedPrimitivesAreConverted":
-    case "BecomesLengthOfReceiver":
-    case "CopiesHolesToResult":
     case "WorkerEntryPath":
     case "DescribedWhenRefused":
     case "ContentsOfContentsAreOnlyStored":
-    case "FunctionsAreOnlyNamed":
-    case "ProxiesArePrintedAsTheirTargets":
     case "KeepsWhatCanBeReached":
       return false;
   }

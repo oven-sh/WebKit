@@ -3,11 +3,15 @@
 # OPTIONS: testing=CheckProofsAtRunTime
 # RUN: walk f4:GenericCallEntry mechanisms=all
 # CHECK-LABEL: code f4:GenericCallEntry
-# CHECK: CheckProof v2 checkedType=int|whole
-# CHECK: CheckProof v3 checkedType=function typeWithoutProof
+# The entry asks in every build, and the failing side stops by name.
+# CHECK: TypeTest v2 testedType=int|whole
+# CHECK: TypeTest v3 testedType=function
+# CHECK: CheckProof v2 checkedType=never
+# CHECK: CheckProof v3 checkedType=never
 # RUN(TABLE): walk f4:TableEntry mechanisms=all
 # TABLE-LABEL: code f4:TableEntry
-# TABLE: CheckProof v2 checkedType=function typeWithoutProof
+# TABLE: TypeTest v2 testedType=function
+# TABLE: CheckProof v2 checkedType=never
 # RUN(BODY): walk f0:Body mechanisms=all
 # BODY-LABEL: code f0:Body
 # BODY: checkedType=f4 typeWithoutProof

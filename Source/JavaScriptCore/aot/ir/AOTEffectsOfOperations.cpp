@@ -674,8 +674,6 @@ static Effects declaredEffectsWithOperands(const TypingContext& context, Opcode 
     return effects;
 }
 
-static constexpr OpcodeSet slotStoresThatMaySetMarkForEffects { Opcode::PutSlot, Opcode::PutSlotOrAdd };
-
 template<typename Operation>
 Effects effectsOf(const TypingContext& context, const Operation& operation, OperandTypes operandTypes, TypeID result, const Effects* foundByCaller)
 {
@@ -693,11 +691,6 @@ Effects effectsOf(const TypingContext& context, const Operation& operation, Oper
         if (foundByCaller)
             bound.intersect(*foundByCaller);
         return bound;
-    }
-    if (foundByCaller && slotStoresThatMaySetMarkForEffects.contains(opcode) && foundByCaller->writes.contains(AbstractHeap::NamedProperties)) {
-        Effects effects = effectsOf(context, operation, operandTypes, result, nullptr);
-        effects.writes.add(AbstractHeap::NamedProperties, foundByCaller->writes.maskOf(AbstractHeap::NamedProperties));
-        return effects;
     }
 
     if (opcodesUnderRuleOfOperators.contains(opcode))

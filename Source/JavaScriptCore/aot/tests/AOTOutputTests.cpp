@@ -577,7 +577,7 @@ static void testOutputValuesAnswerWhatTheEmittersAsk()
     LValue minusOne = out.constInt64(-1);
     AOT_TEST_CHECK(minusOne->hasInt() && minusOne->hasInt64() && !minusOne->hasInt32() && minusOne->asInt() == -1 && minusOne->isInt64(-1));
     AOT_TEST_CHECK(out.constDouble(1.5)->hasDouble() && !out.constDouble(1.5)->hasInt() && out.constDouble(1.5)->asDouble() == 1.5);
-    AOT_TEST_CHECK(out.constInt32(7) == seven && out.constBool(true) == out.booleanTrue && out.constInt32(0) == out.booleanFalse && out.constIntPtr(8) == out.intPtrEight);
+    AOT_TEST_CHECK(out.constInt32(7) == seven && out.constInt32(0) == out.booleanFalse && out.constIntPtr(8) == out.intPtrEight);
     AOT_TEST_CHECK(out.constInt32(-1) != minusOne && out.constDouble(0.0) != out.constDouble(-0.0));
 
     AOT_TEST_CHECK(!x->isConstant() && !x->hasInt() && !x->hasNoPosition() && x->owner() == out.m_block);
@@ -779,10 +779,9 @@ static void testOutputImmediatesTakeTheTypeOfTheOperandBeforeThem()
     AOT_TEST_CHECK(out.add(narrow, 5)->type() == Int32 && out.add(narrow, 5)->child(1)->isInt32(5));
     AOT_TEST_CHECK(out.shl(wide, 3)->type() == Int64 && out.shl(wide, 3)->child(1)->isInt32(3));
     AOT_TEST_CHECK(out.above(narrow, undefinedCell32)->child(1)->isInt32(undefinedCell32) && out.bitAnd(narrow, UINT32_MAX) == narrow);
-    AOT_TEST_CHECK(out.bitNot(narrow)->type() == Int32 && out.bitNot(wide)->child(1)->isInt64(-1));
 
     LValue fromWide = out.bitOr(out.bitAnd(out.bitXor(out.sub(out.mul(out.add(wide, 5), 3), 7), 0x55), -16), out.lShr(wide, 60));
-    LValue fromNarrow = out.aShr(out.shl(out.bitNot(out.add(narrow, 5)), 4), 2);
+    LValue fromNarrow = out.aShr(out.shl(out.bitXor(out.add(narrow, 5), -1), 4), 2);
     out.ret(out.add(fromWide, out.signExt32To64(fromNarrow)));
     emitter.compile();
 

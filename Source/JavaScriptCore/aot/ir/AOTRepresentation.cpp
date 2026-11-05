@@ -206,54 +206,6 @@ Representation representationOfJoin(const Type& united, std::span<const Represen
     return allArgumentsAgree && isLegalRepresentation(united, shared) ? shared : own;
 }
 
-static SlotRepresentation narrowestIntegerSlotFor(Range integers)
-{
-    auto fits = [&](int64_t minimum, int64_t maximum) {
-        return integers.isSubsetOf({ minimum, maximum });
-    };
-    if (fits(0, UINT8_MAX))
-        return SlotRepresentation::Uint8;
-    if (fits(INT8_MIN, INT8_MAX))
-        return SlotRepresentation::Int8;
-    if (fits(0, UINT16_MAX))
-        return SlotRepresentation::Uint16;
-    if (fits(INT16_MIN, INT16_MAX))
-        return SlotRepresentation::Int16;
-    if (fits(INT32_MIN, INT32_MAX))
-        return SlotRepresentation::Int32;
-    if (fits(0, UINT32_MAX))
-        return SlotRepresentation::Uint32;
-    return SlotRepresentation::Int64;
-}
-
-SlotRepresentation defaultSlotRepresentationOf(const Type& type)
-{
-    switch (representationOf(type)) {
-    case Representation::Boolean:
-        return SlotRepresentation::Boolean;
-    case Representation::Int32:
-    case Representation::Int64:
-        return narrowestIntegerSlotFor(type.integers);
-    case Representation::RawWord:
-        return SlotRepresentation::Int64;
-    case Representation::Double:
-        return SlotRepresentation::Double;
-    case Representation::OptionalInt64:
-        return SlotRepresentation::OptionalInt64;
-    case Representation::OptionalDouble:
-        return SlotRepresentation::OptionalDouble;
-    case Representation::Cell:
-        return SlotRepresentation::Cell;
-    case Representation::Void:
-    case Representation::JSValue:
-        return SlotRepresentation::JSValue;
-    case Representation::Unchosen:
-    case Representation::Cell32:
-        break;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
 static constexpr TypeID widestTypeOfPrimitivesHeldAs(Representation representation)
 {
     RepresentableSet set = representableSetOf(representation);

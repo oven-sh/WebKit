@@ -82,8 +82,9 @@ struct ModuleHost {
     bool (*runMock)(JSGlobalObject*, ModuleID);
     bool (*loadsSynchronously)(JSGlobalObject*, ModuleID);
     bool (*loadsFileItself)(JSGlobalObject*, const String& path);
-    bool (*mayAnswerForName)(JSGlobalObject*, const String& name);
+    bool (*hasPluginsThatAnswerForNames)(JSGlobalObject*);
     bool (*answersForName)(JSGlobalObject*, const String& name, const String& importer);
+    void (*askingAboutNames)(JSGlobalObject*, const ScopedLambda<bool(const String& importer)>* leavesWhereAskingEnds);
     const MockOperations* (*mockOperations)();
     uint64_t (*stampOfFile)(std::span<const char> path);
     bool (*givesOriginalBesideMock)(JSGlobalObject*, const String& path, const String& importer, bool isImport);
@@ -201,9 +202,9 @@ JS_EXPORT_PRIVATE void willStoreLoaderOfExtension(JSGlobalObject*, StringView ex
 
 JS_EXPORT_PRIVATE bool isModuleNamespace(JSCell*);
 JS_EXPORT_PRIVATE bool tryReplaceExport(JSCell* moduleNamespace, UniquedStringImpl* name, JSValue);
-JS_EXPORT_PRIVATE String refusedSpyOnExportMessage(JSCell* moduleNamespace, UniquedStringImpl* name);
+JS_EXPORT_PRIVATE String refusedSpyOnExportMessage(JSCell* moduleNamespace, UniquedStringImpl* name, const String& callerOutsideBuild);
 JS_EXPORT_PRIVATE bool mayBeMocked(JSGlobalObject*, ModuleID);
-JS_EXPORT_PRIVATE String refusedMockMessage(JSGlobalObject*, const String& path);
+JS_EXPORT_PRIVATE String refusedMockMessage(JSGlobalObject*, const String& path, const String& callerOutsideBuild);
 JS_EXPORT_PRIVATE bool hasBegunToLoad(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void forEachModuleWhoseBodyRuns(VM&, CallFrame*, const ScopedLambda<void(ModuleID)>&);
 JS_EXPORT_PRIVATE bool hasYetToBegin(JSGlobalObject*, ModuleID);

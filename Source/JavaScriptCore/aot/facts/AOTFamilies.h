@@ -21,6 +21,8 @@ class Program;
 
 using FamilyID = ID<struct FamilyIDTag>;
 
+enum class SetsThatNoFamilyHolds : bool { Stay, BecomeAnyObject };
+
 class Families {
     WTF_MAKE_NONCOPYABLE(Families);
 public:
@@ -55,7 +57,7 @@ public:
     }
 
 private:
-    friend TypeID widenedToFamily(TypeArena&, const Families&, TypeID);
+    friend TypeID widenedToFamily(TypeArena&, const Families&, TypeID, SetsThatNoFamilyHolds);
 
     FamilyID smallestFamilyHolding(const TypeArena&, LayoutSetID) const;
 
@@ -72,7 +74,7 @@ private:
     Vector<FamilyID> m_familiesBySet;
 };
 
-TypeID widenedToFamily(TypeArena&, const Families&, TypeID);
+TypeID widenedToFamily(TypeArena&, const Families&, TypeID, SetsThatNoFamilyHolds = SetsThatNoFamilyHolds::Stay);
 TypeID joinOf(TypeArena&, const Families&, TypeID, TypeID);
 
 } } } // namespace JSC::AOT::Typed

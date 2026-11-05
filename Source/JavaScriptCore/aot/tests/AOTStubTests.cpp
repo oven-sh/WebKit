@@ -65,7 +65,6 @@ static_assert(familyKey.withFamily(StubFamily::PutById).family() == StubFamily::
 
 static_assert(familyKey.withImmediate(0) != familyKey && familyKey.withImmediate(0).immediate() == 0u);
 static_assert(familyKey.withImmediate(UINT32_MAX).withoutImmediate() == familyKey);
-static_assert(familyKey.withOperandRegister(GPRInfo::regT1).withoutOperandRegister() == familyKey);
 
 static constexpr StubKey keyWithEveryAxis = familyKey.withForm(5).withCount(7).withCallerFrame(CallerFrame::Frameless).withOperandRegister(GPRInfo::regT1).withImmediate(UINT32_MAX);
 

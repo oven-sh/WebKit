@@ -130,8 +130,6 @@ const disposalCallback = (...args: readonly b.PlaceLike[]) => [
 ];
 
 export default b.declarations(
-  b.namedMemberCall("next", []),
-  b.namedMemberCall("return", []),
   b.class("Iterator", {
     isNeverPristine: true,
     lockedMembers: ["prototype"],

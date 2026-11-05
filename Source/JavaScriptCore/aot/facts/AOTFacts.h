@@ -194,6 +194,7 @@ public:
     const BodyIndexTable& bodies() const { return *m_bodies; }
     FunctionID functionThatCallEntersByBinding(const BodyIndex&, const BodyValue& call, ValueID* checkThatPasses = nullptr) const;
     bool testMentionsWhatIsOutOfReach(TypeReader, TypeID tested, NOESCAPE const ScopedLambda<bool(FunctionID)>& isInReach) const;
+    TypeID typeBelievedOfEntryParameter(TypeArena&, FunctionID, unsigned entryParameter, TypeID knownOfCallers) const;
 
     const LinkTables& linked() const LIFETIME_BOUND { return m_linked; }
     const LinkTables& held() const LIFETIME_BOUND { return m_held; }

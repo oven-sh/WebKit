@@ -1,17 +1,17 @@
 # An opaque kind has its own representation: a cell or a raw word. A cell that may be absent is a JSValue, a raw word stays one.
 # The kinds that the wire cannot name are arguments, which count on behind the parameters.
 # RUN: rep opaque(FlatString) opaque(CodeAddress) opaque(ViewVector) absent|opaque(CodeAddress)
-# CHECK: t0: rep Cell slot Cell cells yes legal [Cell, Cell32, JSValue]
-# CHECK-NEXT: t1: rep Cell slot Cell cells yes legal [Cell, Cell32, JSValue]
-# CHECK-NEXT: t2: rep Cell slot Cell cells yes legal [Cell, Cell32, JSValue]
-# CHECK-NEXT: t3: rep Cell slot Cell cells yes legal [Cell, Cell32, JSValue]
-# CHECK-NEXT: t4: rep Cell slot Cell cells yes legal [Cell, Cell32, JSValue]
-# CHECK-NEXT: t5: rep JSValue slot JSValue cells yes legal [Cell32, JSValue]
-# CHECK-NEXT: t6: rep JSValue slot JSValue cells yes legal [Cell32, JSValue]
-# CHECK-NEXT: t7: rep Cell slot Cell cells yes legal [Cell, Cell32, JSValue]
-# CHECK-NEXT: t8: rep RawWord slot Int64 cells no legal [RawWord]
-# CHECK-NEXT: t9: rep RawWord slot Int64 cells no legal [RawWord]
-# CHECK-NEXT: t10: rep RawWord slot Int64 cells no legal [RawWord]
+# CHECK: t0: rep Cell cells yes legal [Cell, Cell32, JSValue]
+# CHECK-NEXT: t1: rep Cell cells yes legal [Cell, Cell32, JSValue]
+# CHECK-NEXT: t2: rep Cell cells yes legal [Cell, Cell32, JSValue]
+# CHECK-NEXT: t3: rep Cell cells yes legal [Cell, Cell32, JSValue]
+# CHECK-NEXT: t4: rep Cell cells yes legal [Cell, Cell32, JSValue]
+# CHECK-NEXT: t5: rep JSValue cells yes legal [Cell32, JSValue]
+# CHECK-NEXT: t6: rep JSValue cells yes legal [Cell32, JSValue]
+# CHECK-NEXT: t7: rep Cell cells yes legal [Cell, Cell32, JSValue]
+# CHECK-NEXT: t8: rep RawWord cells no legal [RawWord]
+# CHECK-NEXT: t9: rep RawWord cells no legal [RawWord]
+# CHECK-NEXT: t10: rep RawWord cells no legal [RawWord]
 # CHECK: RawWord: never
 # CHECK-NEXT: opaque(IteratorState): Cell legal [Cell, Cell32, JSValue]
 # CHECK-NEXT: opaque(Enumerator): Cell legal [Cell, Cell32, JSValue]

@@ -70,7 +70,6 @@ inline constexpr StubRegister arrayStorageRegister = StubRegister::T12;
 inline constexpr int64_t arraySliceToEnd = 1ll << 32;
 
 constexpr StubKey arrayLiteral(unsigned count) { return StubKey(StubFamily::ArrayLiteral).withCount(count); }
-constexpr size_t sizeOfFrameArray(unsigned capacity) { return sizeof(JSArray) + sizeof(IndexingHeader) + capacity * sizeof(EncodedJSValue); }
 constexpr StubKey arrayLiteralWithDouble(unsigned count) { return StubKey(StubFamily::ArrayLiteralWithDouble).withCount(count); }
 constexpr StubKey arrayLiteralWithDoubleSlow() { return StubKey(StubFamily::ArrayLiteralWithDoubleSlow); }
 constexpr StubKey newCopyOnWriteArray(ArrayElementKind kind, SharedElements elements) { return StubKey(StubFamily::NewCopyOnWriteArray).withForm(static_cast<uint8_t>(kind) + 3 * static_cast<uint8_t>(elements)); }

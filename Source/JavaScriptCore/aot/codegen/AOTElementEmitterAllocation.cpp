@@ -27,10 +27,8 @@
 namespace JSC { namespace AOT { namespace Typed {
 
 static constexpr unsigned maxInlineArrayLiteralLength = 16;
-static constexpr int64_t maxCapacityInStubOperand = (1 << (32 - holeArrayCapacityShift)) - 1;
 
 static_assert(maxInlineArrayLiteralLength < (1u << holeArrayCapacityShift));
-static_assert(maxCapacityInStubOperand & 1);
 
 static Vector<uint32_t, 16> indexesWithoutHoles(unsigned length, std::span<const uint32_t> holes = { })
 {
@@ -48,21 +46,6 @@ static Vector<uint32_t, 16> indexesWithoutHoles(unsigned length, std::span<const
 static ArrayElementKind elementKindOfForm(const ArrayStorageForm& form)
 {
     return arrayElementKindOf(form.indexingType);
-}
-
-static std::optional<EmptyArray> emptyArrayStubWithRoom(const ArrayStorageForm& form, uint64_t room)
-{
-    if (room != 1 && room != 3)
-        return std::nullopt;
-    switch (elementKindOfForm(form)) {
-    case ArrayElementKind::Contiguous:
-        return room == 1 ? EmptyArray::ContiguousCapacity1 : EmptyArray::ContiguousCapacity3;
-    case ArrayElementKind::Double:
-        return room == 1 ? EmptyArray::DoubleCapacity1 : EmptyArray::DoubleCapacity3;
-    case ArrayElementKind::Int32:
-        return std::nullopt;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
 }
 
 static EmptyArray emptyNumberArray(const ArrayStorageForm& form)
@@ -90,7 +73,7 @@ static std::optional<uint32_t> kindOfEmptyArrayLiteralAtSite(const Operation& li
         kindIsDecided = true;
         break;
     }
-    if (!literal.elementsOperands().empty() || !literal.holes().empty() || literal.capacityOperand())
+    if (!literal.elementsOperands().empty() || !literal.holes().empty())
         return std::nullopt;
     return static_cast<uint32_t>(elementKindOfForm(form)) << 1 | static_cast<uint32_t>(kindIsDecided);
 }
@@ -162,7 +145,7 @@ const ArrayStorageForm* ArrayAllocationEmitter::findFormOfLiteral(std::span<cons
 bool newArrayFencesBeforeHandingCellOn(const Operation& newArray)
 {
     size_t length = newArray.elementsOperands().size();
-    return newArray.storage() == AllocationStorage::Heap && newArray.holes().empty() && !newArray.capacityOperand() && newArray.arrayStorage() == ArrayStorage::Contiguous
+    return newArray.storage() == AllocationStorage::Heap && newArray.holes().empty() && newArray.arrayStorage() == ArrayStorage::Contiguous
         && length > maxArrayElementsInRegisters && length <= std::min<size_t>(maxInlineArrayLiteralLength, maxArrayLengthInStubKey);
 }
 
@@ -188,55 +171,7 @@ CellPointer ArrayAllocationEmitter::newLiteral(const ValueContext& value)
         site->append(*kindAtSite);
         return newLiteralAtSite(value, formAtSite, site->span());
     }
-    if (!value->capacityOperand() || length > maxInlineArrayLiteralLength)
-        return newArrayInForm(value, elements, length ? form : formAtSite);
-
-    Integer capacity = integerOf(value->capacityOperand());
-    if (!length && capacity.value()->hasInt64()) {
-        uint64_t room = static_cast<uint64_t>(capacity.value()->asInt64()) | 1;
-        if (room > static_cast<uint64_t>(maxCapacityInStubOperand) || room == arrayLiteralVectorLength(0))
-            return newArrayInForm(value, elements, form);
-        if (std::optional<EmptyArray> emptyArray = emptyArrayStubWithRoom(form, room))
-            return callNewEmptyArray(value, *emptyArray);
-    }
-    if (!length && form.kind == ArrayStorage::Contiguous && !value->isFilledToCapacity())
-        return CellPointer(callStub(value, newEmptyArrayWithCapacity(), { capacity.value() }).first);
-
-    LBasicBlock withoutRoom = newBlock();
-    Join<CellPointer> join(m_out);
-    RawElements rawElements = form.element == Representation::JSValue ? boxElements<Operand>(generator(), value, elements) : rawElementsOf(elements, form, withoutRoom);
-    if (rawElements.size() != length) {
-        fail(value, InternalErrorKind::OpcodeWithoutCode);
-        return CellPointer(m_out.int64Zero);
-    }
-    branchUnless(belowOrEqual(capacity, integer(maxCapacityInStubOperand)), withoutRoom);
-    Integer room = length ? select(below(capacity, integer(length)), integer(length), capacity) : capacity;
-    Integer lengthAndCapacity(m_out.shl(bitOr(room, integer(1)).value(), m_out.constInt32(holeArrayCapacityShift)));
-    if (length)
-        lengthAndCapacity = bitOr(lengthAndCapacity, integer(length));
-    CellPointer newArray = callNewArrayWithLength(value, form, lengthAndCapacity);
-    branchUnless(Condition(m_out.notNull(newArray.value())), withoutRoom);
-    storeElements(value, newArray, form, rawElements.span(), indexesWithoutHoles(length).span());
-    join.add(newArray);
-
-    m_out.appendTo(withoutRoom);
-    CellPointer madeWithoutRoom = newArrayOutOfLine(value, elements, form);
-    if (value->isFilledToCapacity()) {
-        LBasicBlock reserves = newBlock();
-        LBasicBlock isMade = newBlock();
-        m_out.branch(below(integer(length), capacity).value(), normalEdge(reserves), normalEdge(isMade));
-
-        m_out.appendTo(reserves);
-        {
-            Machine::DeclaredAccessesSuspension writesToNewArray(m_out);
-            callVoidOperation(value, RuntimeOperation::ReserveWholeArrayCapacity, { madeWithoutRoom, length ? sub(capacity, integer(length)) : capacity }, { .isOnRarePath = true });
-        }
-        m_out.jump(isMade);
-
-        m_out.appendTo(isMade);
-    }
-    join.add(madeWithoutRoom);
-    return join.finish();
+    return newArrayInForm(value, elements, length ? form : formAtSite);
 }
 
 CellPointer ArrayAllocationEmitter::newLiteralAtSite(const ValueContext& value, const ArrayStorageForm& form, std::span<const uint32_t> site)

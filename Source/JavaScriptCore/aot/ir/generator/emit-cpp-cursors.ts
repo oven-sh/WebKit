@@ -1,9 +1,19 @@
 import { defaultWordsOf, engineRecordNameOf, engineTypeOf, twoWordScalars } from "./cpp-types.ts";
 import { kindText } from "./hash.ts";
-import { blocks, cppHeader, cppMarker, groupedCases, indent, indentation, inNamespace } from "./lines.ts";
+import {
+  blocks,
+  constexprSwitch,
+  cppHeader,
+  cppMarker,
+  groupedCases,
+  indent,
+  indentation,
+  inNamespace,
+  type Lines,
+} from "./lines.ts";
 import type { Entry, Field, Flag, Kind, Parameter, PayloadField, Schema, SchemaRecord } from "./model.ts";
 import { entriesOf, functionLocalIdKinds, isNested, wireFlagsOf, wireParametersOf } from "./model.ts";
-import { cppOperandGetterName, reservedAccessorNames } from "./names.ts";
+import { cppOperandGetterName, reservedAccessorNames, upperFirst } from "./names.ts";
 import type { EmitContext, OutputFile } from "./outputs.ts";
 import { compareLocations, SchemaError, type Location } from "./source.ts";
 import { offsetText, wireRecordsInFields, wireSlotsOf } from "./wire-layout.ts";
@@ -24,9 +34,15 @@ interface User<Part> {
   readonly part: Part;
 }
 
+interface ReadAtPlace {
+  readonly place: number;
+  readonly value: string;
+}
+
 interface Answer {
   readonly entry: Entry;
   readonly value: string;
+  readonly atPlace: ReadAtPlace | "engine default" | null;
 }
 
 interface NamedGetter {
@@ -41,6 +57,15 @@ interface Cursor {
   readonly enumName: string;
   readonly tag: string;
 }
+
+interface GetterWithTable {
+  readonly table: Lines;
+  readonly getter: Lines;
+}
+
+const placeOfEngineDefault = 0xfe;
+const noPlace = 0xff;
+const fewestClustersOfJumpTable = 4;
 
 const bodyValue: Cursor = { isTerminator: false, enumName: "Opcode", tag: "opcode()" };
 const bodyTerminator: Cursor = { isTerminator: true, enumName: "TerminatorKind", tag: "kind()" };
@@ -169,6 +194,13 @@ function flagOnWire(flag: Flag): string {
   return `flags() & 1 << ${flag.bit}`;
 }
 
+function readAtPlace(entry: Entry, parameter: Parameter, offset: string): ReadAtPlace | null {
+  if (entry.isTerminator || !/^\d+$/.test(offset)) return null;
+  const place = Number(offset) + (wireFlagsOf(entry).length > 0 ? 1 : 0);
+  if (place >= placeOfEngineDefault) return null;
+  return { place, value: valueOnWire(parameter, "place", readThrough("wordsBehindHead().")) };
+}
+
 function getterNameOf(parameter: Parameter): string {
   return parameter.tag === "Payload" ? parameter.name : cppOperandGetterName(parameter.name, parameter.isVariadic);
 }
@@ -245,8 +277,12 @@ function elementStruct(record: SchemaRecord): string[] {
   ];
 }
 
-function elementsInc(schema: Schema): string[] {
-  return blocks([cppMarker], ...wireRecordsInFields(schema).map(elementStruct));
+function elementsInc(schema: Schema, tablesOfGetters: readonly Lines[]): string[] {
+  const places = [
+    `inline constexpr uint8_t placeOfEngineDefaultInBodyValue = ${placeOfEngineDefault};`,
+    `inline constexpr uint8_t noPlaceInBodyValue = ${noPlace};`,
+  ];
+  return blocks([cppMarker], ...wireRecordsInFields(schema).map(elementStruct), places, ...tablesOfGetters);
 }
 
 function getterLine(type: string, name: string, value: string): string {
@@ -300,8 +336,9 @@ function gettersOfParameters(
     const { type, engineDefault } = shapeOf(first, isOptional, isOnWire);
     const answers = users.map(({ entry, part }) => {
       const offset = offsets.get(part);
-      const value = offset === undefined ? engineDefault : valueOnWire(part, offset, readFieldWordsOf(entry));
-      return { entry, value };
+      if (offset === undefined) return { entry, value: engineDefault, atPlace: "engine default" as const };
+      const value = valueOnWire(part, offset, readFieldWordsOf(entry));
+      return { entry, value, atPlace: readAtPlace(entry, part, offset) };
     });
     return { name: getterNameOf(first), type, answers, location: first.location };
   });
@@ -313,6 +350,7 @@ function gettersOfFlags(entries: readonly Entry[]): NamedGetter[] {
     const answers = users.map(({ entry, part }) => ({
       entry,
       value: entry.isWire && !part.isEngine ? `flagsWord() & 1 << ${part.bit}` : "false",
+      atPlace: null,
     }));
     return { name, type: "bool", answers, location };
   });
@@ -335,7 +373,7 @@ function gettersByName(schema: Schema, offsets: Offsets): NamedGetter[] {
   return getters;
 }
 
-function getterByName(cursor: Cursor, getter: NamedGetter): string[] {
+function getterBySwitch(cursor: Cursor, getter: NamedGetter): string[] {
   const answers = getter.answers.filter(answer => answer.entry.isTerminator === cursor.isTerminator);
   if (answers.length === 0) return [];
   const inFunction = indentation.repeat(2);
@@ -352,18 +390,117 @@ function getterByName(cursor: Cursor, getter: NamedGetter): string[] {
   ];
 }
 
-function accessorsInc(cursor: Cursor, getters: readonly NamedGetter[]): string[] {
-  return blocks([cppMarker], ...getters.map(getter => getterByName(cursor, getter)));
+function numberOfClusters(operations: readonly Entry[], answers: readonly Answer[]): number {
+  const inOrder = answers
+    .map(({ entry, value }) => ({ number: operations.indexOf(entry), value }))
+    .sort((left, right) => left.number - right.number);
+  return inOrder.filter(({ number, value }, index) => {
+    const previous = index === 0 ? null : inOrder[index - 1];
+    return previous === null || previous.number + 1 !== number || previous.value !== value;
+  }).length;
+}
+
+function valueReadAtPlace(answers: readonly Answer[]): string | null {
+  if (answers.some(({ atPlace }) => atPlace === null)) return null;
+  const reads = answers.flatMap(({ atPlace }) =>
+    atPlace === null || atPlace === "engine default" ? [] : [atPlace.value],
+  );
+  const someIsOptional = reads.some(read => read.includes(".optionalIDAt<"));
+  const distinct = new Set(reads.map(read => (someIsOptional ? read.replace(".idAt<", ".optionalIDAt<") : read)));
+  const [only, ...others] = distinct;
+  return only !== undefined && others.length === 0 ? only : null;
+}
+
+function getterByPlace(getter: NamedGetter, answers: readonly Answer[], value: string): GetterWithTable {
+  const placeOf = `placeOf${upperFirst(getter.name)}InBodyValue`;
+  const cases = answers.map(({ entry, atPlace }) => ({
+    label: entry.name,
+    value: atPlace === null || atPlace === "engine default" ? "placeOfEngineDefaultInBodyValue" : String(atPlace.place),
+  }));
+  const engineDefault = answers.find(({ atPlace }) => atPlace === "engine default")?.value;
+  const answer =
+    engineDefault === undefined
+      ? ["RELEASE_ASSERT(place != noPlaceInBodyValue);", `return ${value};`]
+      : [
+          "if (place < placeOfEngineDefaultInBodyValue) [[likely]]",
+          `${indentation}return ${value};`,
+          "RELEASE_ASSERT(place == placeOfEngineDefaultInBodyValue);",
+          `return ${engineDefault};`,
+        ];
+  return {
+    table: constexprSwitch({
+      signature: `uint8_t ${placeOf}(Opcode opcode)`,
+      subject: "opcode",
+      enumName: "Opcode",
+      cases,
+      defaultValue: "noPlaceInBodyValue",
+    }),
+    getter: indent([
+      `ALWAYS_INLINE ${getter.type} ${getter.name}() const`,
+      "{",
+      ...indent([`uint8_t place = CaseTable<Opcode, ${placeOf}>::at(opcode());`, ...answer]),
+      "}",
+    ]),
+  };
+}
+
+function getterByArm(getter: NamedGetter, answers: readonly Answer[]): GetterWithTable {
+  const armOf = `armOf${upperFirst(getter.name)}InBodyValue`;
+  const arms = [...Map.groupBy(answers, ({ value }) => value).entries()];
+  const cases = arms.flatMap(([, members], index) =>
+    members.map(({ entry }) => ({ label: entry.name, value: String(index + 1) })),
+  );
+  return {
+    table: constexprSwitch({
+      signature: `uint8_t ${armOf}(Opcode opcode)`,
+      subject: "opcode",
+      enumName: "Opcode",
+      cases,
+      defaultValue: "0",
+    }),
+    getter: indent([
+      `${getter.type} ${getter.name}() const`,
+      "{",
+      ...indent([
+        `switch (CaseTable<Opcode, ${armOf}>::at(opcode())) {`,
+        ...arms.flatMap(([value], index) => [`case ${index + 1}:`, `${indentation}return ${value};`]),
+        "default:",
+        `${indentation}RELEASE_ASSERT_NOT_REACHED();`,
+        "}",
+      ]),
+      "}",
+    ]),
+  };
+}
+
+function getterOfBodyValue(operations: readonly Entry[], getter: NamedGetter): GetterWithTable {
+  const answers = getter.answers.filter(answer => !answer.entry.isTerminator);
+  if (numberOfClusters(operations, answers) < fewestClustersOfJumpTable)
+    return { table: [], getter: getterBySwitch(bodyValue, getter) };
+  const value = valueReadAtPlace(answers);
+  return value === null ? getterByArm(getter, answers) : getterByPlace(getter, answers, value);
+}
+
+function accessorsInc(getters: readonly Lines[]): string[] {
+  return blocks([cppMarker], ...getters);
 }
 
 export function emitCppCursors(context: EmitContext): OutputFile[] {
   const { schema } = context;
   const offsets = offsetsOnWire(schema);
   const getters = gettersByName(schema, offsets);
+  const ofBodyValue = getters.map(getter => getterOfBodyValue(schema.operations, getter));
+  const ofBodyTerminator = getters.map(getter => getterBySwitch(bodyTerminator, getter));
   return [
     { name: "AOTSchemaBodyOperations.h", lines: operationsHeader(schema, offsets) },
-    { name: "AOTSchemaBodyElements.inc", lines: elementsInc(schema) },
-    { name: "AOTSchemaBodyValueAccessors.inc", lines: accessorsInc(bodyValue, getters) },
-    { name: "AOTSchemaBodyTerminatorAccessors.inc", lines: accessorsInc(bodyTerminator, getters) },
+    {
+      name: "AOTSchemaBodyElements.inc",
+      lines: elementsInc(
+        schema,
+        ofBodyValue.map(({ table }) => table),
+      ),
+    },
+    { name: "AOTSchemaBodyValueAccessors.inc", lines: accessorsInc(ofBodyValue.map(({ getter }) => getter)) },
+    { name: "AOTSchemaBodyTerminatorAccessors.inc", lines: accessorsInc(ofBodyTerminator) },
   ];
 }

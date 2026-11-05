@@ -18,6 +18,8 @@
 #include "IteratorOperations.h"
 #include "JSCInlines.h"
 #include "JSGenerator.h"
+#include "JSIteratorHelper.h"
+#include "JSIteratorHelperPrototype.h"
 
 namespace JSC { namespace AOT {
 
@@ -156,17 +158,62 @@ JSC_DEFINE_HOST_FUNCTION(generatorThrowOfEitherKind, (JSGlobalObject* globalObje
     return resumeGeneratorOfEitherKind<ResumeMode::Throw>(globalObject, callFrame);
 }
 
+// builtins/JSIteratorHelperPrototype.js, which reads the internal fields of the helper's generator: a compiled one has none.
+template<ResumeMode mode>
+static EncodedJSValue resumeIteratorHelperOfEitherKind(JSGlobalObject* globalObject, CallFrame* callFrame)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* helper = dynamicDowncast<JSIteratorHelper>(callFrame->thisValue());
+    if (!helper)
+        return throwVMTypeError(globalObject, scope, "|this| should be an iterator helper"_s);
+    JSValue generator = helper->internalField(JSIteratorHelper::Field::Generator).get();
+    auto* compiled = dynamicDowncast<Generator>(generator);
+    auto* bytecodeGenerator = compiled ? nullptr : uncheckedDowncast<JSGenerator>(generator);
+    if constexpr (mode == ResumeMode::Return) {
+        WriteBarrier<Unknown>* state = compiled ? nullptr : &bytecodeGenerator->internalField(JSGenerator::Field::State);
+        if (compiled ? compiled->isSuspendedAtStart() : state->get().asInt32() == static_cast<int32_t>(JSGenerator::State::Init)) {
+            if (compiled)
+                compiled->didThrow();
+            else
+                state->setWithoutWriteBarrier(jsNumber(static_cast<int32_t>(JSGenerator::State::Completed)));
+            if (JSValue underlyingIterator = helper->internalField(JSIteratorHelper::Field::UnderlyingIterator).get(); !underlyingIterator.isNull()) {
+                iteratorClose(globalObject, underlyingIterator);
+                RETURN_IF_EXCEPTION(scope, { });
+            }
+            return JSValue::encode(createIteratorResultObject(globalObject, jsUndefined(), true));
+        }
+    }
+    if (compiled)
+        RELEASE_AND_RETURN(scope, JSValue::encode(compiled->resume(globalObject, mode, jsUndefined())));
+    RELEASE_AND_RETURN(scope, JSValue::encode(resumeBytecodeGenerator(globalObject, vm, bytecodeGenerator, engineResumeModeOf(mode), jsUndefined())));
+}
+
+static JSC_DECLARE_HOST_FUNCTION(iteratorHelperNextOfEitherKind);
+static JSC_DECLARE_HOST_FUNCTION(iteratorHelperReturnOfEitherKind);
+
+JSC_DEFINE_HOST_FUNCTION(iteratorHelperNextOfEitherKind, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    return resumeIteratorHelperOfEitherKind<ResumeMode::Next>(globalObject, callFrame);
+}
+
+JSC_DEFINE_HOST_FUNCTION(iteratorHelperReturnOfEitherKind, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    return resumeIteratorHelperOfEitherKind<ResumeMode::Return>(globalObject, callFrame);
+}
+
 void installGeneratorMethodsForCompiledGenerators(JSGlobalObject* realm)
 {
     VM& vm = realm->vm();
-    JSObject* prototype = realm->generatorPrototype();
-    auto install = [&](const Identifier& name, NativeFunction function) {
-        JSFunction* method = JSFunction::create(vm, realm, 1, name.string(), function, ImplementationVisibility::Public);
+    auto install = [&](JSObject* prototype, const Identifier& name, unsigned length, NativeFunction function) {
+        JSFunction* method = JSFunction::create(vm, realm, length, name.string(), function, ImplementationVisibility::Public);
         prototype->putDirect(vm, name, method, static_cast<unsigned>(PropertyAttribute::DontEnum));
     };
-    install(vm.propertyNames->next, generatorNextOfEitherKind);
-    install(vm.propertyNames->returnKeyword, generatorReturnOfEitherKind);
-    install(vm.propertyNames->throwKeyword, generatorThrowOfEitherKind);
+    install(realm->generatorPrototype(), vm.propertyNames->next, 1, generatorNextOfEitherKind);
+    install(realm->generatorPrototype(), vm.propertyNames->returnKeyword, 1, generatorReturnOfEitherKind);
+    install(realm->generatorPrototype(), vm.propertyNames->throwKeyword, 1, generatorThrowOfEitherKind);
+    install(realm->iteratorHelperPrototype(), vm.propertyNames->next, 0, iteratorHelperNextOfEitherKind);
+    install(realm->iteratorHelperPrototype(), vm.propertyNames->returnKeyword, 0, iteratorHelperReturnOfEitherKind);
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTIsGeneratorSuspendedAtStart, size_t, (Instance*, JSCell* cell))

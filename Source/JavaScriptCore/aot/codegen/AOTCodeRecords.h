@@ -48,37 +48,12 @@ struct RecordedSite {
     CallSiteKind kind { CallSiteKind::Plain };
     BuiltinID calledBuiltin { };
     FunctionID constructedCallee { };
-    bool callsOwnFunctionObject { false };
-    uint32_t keptCalleePlusOne { 0 };
-};
-
-struct KeptCallee {
-    uint32_t word { 0 };
-    uint64_t call { 0 };
 };
 
 struct SiteRecords {
     Vector<RecordedSite> positions;
     Vector<uint32_t> inlineCallSites;
     uint32_t numberOfSitesWithoutCode { 0 };
-    Vector<Machine::StackSlot*, 2> wordsOfCallees;
-    Vector<KeptCallee, 4> keptCallees;
-    UncheckedKeyHashMap<uint64_t, std::optional<uint32_t>, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> fieldsOfCallees;
-
-    static uint32_t wordOfCalleeCalledFrom(std::span<const InlineFrame> inlineFrames, uint32_t inlineFrame)
-    {
-        uint32_t depth = 0;
-        for (; inlineFrame; inlineFrame = inlineFrames[inlineFrame].parent)
-            ++depth;
-        return depth;
-    }
-    static uint64_t keyOfCall(uint32_t position, uint32_t inlineFrame) { return static_cast<uint64_t>(position) << 32 | inlineFrame; }
-
-    uint32_t addKeptCallee(std::span<const InlineFrame> inlineFrames, uint32_t position, uint32_t inlineFrame)
-    {
-        keptCallees.append({ wordOfCalleeCalledFrom(inlineFrames, inlineFrame), keyOfCall(position, inlineFrame) });
-        return keptCallees.size();
-    }
 
     uint32_t addSite(const RecordedSite& site)
     {

@@ -29,21 +29,6 @@ TypeID targetOfConvert(const TypingContext& context, const DeclaredType& declare
     return context.types.withPrimitives(written, Primitive::Number);
 }
 
-ConvertResolution resolveConvert(const TypingContext& context, TypeID proven, const DeclaredType& declared)
-{
-    TypeID target = targetOfConvert(context, declared);
-    if (!target || declared.isExpected())
-        return { ConvertStep::Nothing, target, { } };
-
-    TypeArena& types = context.types;
-    if (declared.isEstablished() && declared.has(PositionFlags::IsClaim))
-        return { ConvertStep::TakeAsFact, target, types.testablePartOf(target) };
-
-    if (proven && types.isSubset(proven, target))
-        return { ConvertStep::Nothing, target, { } };
-    return { ConvertStep::Test, target, types.testablePartOf(target) };
-}
-
 bool changesCodeWhereProven(const TypeArena& types, TypeID tested)
 {
     return holdsOnlyPrimitives(tested) || !types.at(tested).anyObject;

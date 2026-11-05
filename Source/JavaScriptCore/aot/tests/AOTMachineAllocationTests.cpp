@@ -633,6 +633,42 @@ static void allocatorKeepsValuesAcrossCallInCalleeSavedRegisters()
     }
 }
 
+static void allocatorLeavesPhiWhereCallInItsBlockTakesIt()
+{
+    uint64_t noted = 0;
+    TestProcedure test;
+    Output& out = test.out();
+    RegisterFile file = registerFileFor(test.procedure().traits());
+    LValue argument = test.argumentGPR(0);
+    LBasicBlock body = out.newBlock();
+    ValueFromBlock handedOn = out.anchor(argument);
+    out.jump(body);
+
+    out.appendTo(body);
+    LValue parameter = out.phi(Int64, handedOn);
+    PatchOperation* call = out.patch(Void);
+    call->append(parameter, ValueRep::reg(GPRInfo::argumentGPR0));
+    call->clobberLate((file.allocatableIn(Bank::GP) | file.allocatableIn(Bank::FP)) & ~file.calleeSaved);
+    call->setGenerator([place = &noted](CCallHelpers& jit, const PatchParameters& params) {
+        AllowMacroScratchRegisterUsage allowScratch(jit);
+        AOT_TEST_CHECK(params.size() == 1 && params[0] == ValueRep::reg(GPRInfo::argumentGPR0));
+        GPRReg address = jit.scratchRegister();
+        jit.move(CCallHelpers::TrustedImm64(std::bit_cast<int64_t>(place)), address);
+        jit.store64(GPRInfo::argumentGPR0, CCallHelpers::Address(address));
+        jit.move(CCallHelpers::TrustedImm64(-1), GPRInfo::argumentGPR0);
+    });
+    out.ret(out.add(parameter, out.constInt64(1)));
+    compileOrFail(test);
+
+    AllocationTestText text(test);
+    const Allocation& allocation = test.procedure().allocation();
+    AOT_ALLOCATION_TEST_CHECK(test, parameter->opcode() == Phi && test.procedure().liveness().of(parameter).has(ValueFlag::LivesAcrossCall));
+    AOT_ALLOCATION_TEST_CHECK(test, allocation.registerAtDefinitionOf(parameter) == Reg(GPRInfo::argumentGPR0));
+    AOT_ALLOCATION_TEST_CHECK(test, !text.count("move"_s, argument) && text.count("move"_s, parameter) == 1);
+    AOT_ALLOCATION_TEST_CHECK(test, !allocation.isSpilled(parameter) && allocationTestCountOf(allocation.usedCalleeSaves()) == 1);
+    AOT_ALLOCATION_TEST_CHECK(test, test.call<uint64_t>(uint64_t { 41 }) == 42 && noted == 41);
+}
+
 template<typename Word, bool isUnderPressure>
 static void allocatorDecidesByPressureWhatKeepsItsRegisterThroughLoop()
 {
@@ -2666,6 +2702,7 @@ std::span<const NativeTest> machineAllocationTests()
         { "machine-allocation/nothing-is-spilled-ahead-of-a-join-that-a-rare-block-leads-back-to"_s, Machine::allocatorSpillsNothingAheadOfJoinThatRareBlockLeadsBackTo },
         { "machine-allocation/sum-comes-round-in-its-register-past-a-join-that-a-rare-block-leads-back-to"_s, Machine::allocatorBringsSumRoundInItsRegisterPastJoinThatRareBlockLeadsBackTo },
         { "machine-allocation/value-for-a-phi-is-made-in-the-register-of-the-phi"_s, Machine::allocatorDefinesValueInRegisterOfPhiWhoseHeadIsFixed },
+        { "machine-allocation/a-phi-stays-where-the-call-in-its-block-takes-it"_s, Machine::allocatorLeavesPhiWhereCallInItsBlockTakesIt },
         { "machine-allocation/count-that-one-arm-adds-to-comes-round-in-its-register"_s, Machine::allocatorBringsCountThatOneArmAddsToRoundInItsRegister },
         { "machine-allocation/phi-of-a-join-lies-in-the-word-of-the-phi-that-is-handed-to-it"_s, Machine::allocatorLaysPhiOfJoinInWordOfPhiThatIsHandedToIt<false> },
         { "machine-allocation/phi-of-a-join-has-a-word-of-its-own-where-what-is-handed-to-it-lives-on"_s, Machine::allocatorLaysPhiOfJoinInWordOfPhiThatIsHandedToIt<true> },

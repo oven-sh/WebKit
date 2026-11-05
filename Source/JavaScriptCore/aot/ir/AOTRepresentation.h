@@ -108,7 +108,6 @@ ALWAYS_INLINE bool isLegalRepresentation(TypeReader types, TypeID id, Representa
     return !(primitives & ~set.primitives) && integersInID(id).isSubsetOf(set.integers);
 }
 Representation representationOfJoin(const Type& united, std::span<const Representation> arguments);
-SlotRepresentation defaultSlotRepresentationOf(const Type&);
 TypeID widestTypeOf(Representation);
 Representation representationWantedBy(OperandKind, const Type& operand);
 

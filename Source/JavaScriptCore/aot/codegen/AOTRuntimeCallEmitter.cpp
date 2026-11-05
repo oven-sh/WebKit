@@ -949,14 +949,15 @@ StubCallResult RuntimeCallEmitter::emitCall(const OperationContext* context, con
     }
 
     std::optional<WatchOfEffects> watch;
-    std::optional<StubSignature> signatureKeptAcrossWatch;
+    std::optional<StubCallShape> shapeKeptAcrossWatch;
     if (checksEffectsAtRunTime && context && context->valueID() && returns && request.entry != AOT::Entry::operationAOTStopAtFalseEffects) [[unlikely]] {
         static_assert(numberOfEnumerators<Opcode> <= firstRowOfRuntimeOperationsInEffectsNet - firstRowOfOperationsInEffectsNet);
         static_assert(numberOfEntries <= firstRowOfStubsInEffectsNet - firstRowOfRuntimeOperationsInEffectsNet);
         static_assert(numberOfStubFamilies <= firstRowOfBuiltinsInEffectsNet - firstRowOfStubsInEffectsNet);
         unsigned rowOfCallee = request.entry ? firstRowOfRuntimeOperationsInEffectsNet + static_cast<unsigned>(*request.entry) : firstRowOfStubsInEffectsNet + static_cast<unsigned>(key.family());
-        signatureKeptAcrossWatch = *signature;
-        signature = &*signatureKeptAcrossWatch;
+        shapeKeptAcrossWatch = *shape;
+        shape = &*shapeKeptAcrossWatch;
+        signature = &shape->signature;
         beginWatchOfEffects(*context, *effects, EntersCompiledCode::No, (firstRowOfOperationsInEffectsNet + static_cast<unsigned>(operationAt(context->valueID()).opcode)) | rowOfCallee << 16, watch.emplace());
     }
 
@@ -1087,7 +1088,7 @@ void RuntimeCallEmitter::beginWatchOfEffects(const OperationContext& context, co
             watch.digests[watch.numberOfDigests++] = { operandIndex, cell, emitEntryCall(nullptr, AOT::Entry::operationAOTDigestForEffectsNet, arguments, { }).first };
         }
     }
-    if (watch.isHeldToThrowNothing && watch.entriesInFront) {
+    if (!effects.mayThrowByRule() && watch.entriesInFront) {
         Origin origin = context.origin();
         uint64_t function = m_code.inlineFrames()[origin.inlineFrame].callee.index();
         watch.callHeldToThrowNothing = 1ull << 63 | function << 32 | origin.position;
@@ -1106,11 +1107,13 @@ void RuntimeCallEmitter::endWatchOfEffects(const OperationContext& context, cons
         parts.append(PartOfEffects::Collects);
         build().statistics().count(StatisticID::CallsHeldNotToCollect);
     }
+    if (watch.callHeldToThrowNothing)
+        noteCallHeldToThrowNothing(watch.around ? watch.around->callHeldToThrowNothing : 0, watch.around ? watch.around->rows : 0);
     if (watch.isHeldToThrowNothing) {
-        if (watch.callHeldToThrowNothing)
-            noteCallHeldToThrowNothing(watch.around ? watch.around->callHeldToThrowNothing : 0, watch.around ? watch.around->rows : 0);
         LValue pending = readWordForEffectsNet(AOT_INSTANCE_OFFSET(vm), VM::exceptionOffset(), behind);
         stopAtFalseEffects(context, watch.rows, m_out.isZero64(pending), static_cast<uint32_t>(PartOfEffects::Throws), builtinNamed);
+    }
+    if (watch.isHeldToThrowNothing || watch.callHeldToThrowNothing) {
         parts.append(PartOfEffects::Throws);
         build().statistics().count(StatisticID::CallsHeldToThrowNothing);
     }
@@ -1384,12 +1387,12 @@ RecordedSite RuntimeCallEmitter::recordedSiteOf(const OperationContext& context,
     }
     if (calledBuiltin && BuiltinBindings::linkTimeConstantOf(calledBuiltin))
         calledBuiltin = { };
-    bool standsForCallee = calledBuiltin ? origin.isTailCall || options.isTailCall : origin.isTailCall && !options.isTailCall && !options.constructs;
+    bool standsForCallee = origin.isTailCall && (calledBuiltin || !options.constructs);
     bool isInsideCallee = options.callerHasLeft || (standsForCallee && (calledBuiltin || !operation || !runsBeforeCalleeOf(operation->opcode)));
-    bool isTailCall = options.isTailCall || origin.isTailCall || options.callerHasLeft;
+    bool isTailCall = origin.isTailCall || options.callerHasLeft;
     uint8_t kind = callSiteKindsByColumns[(options.constructs ? 1 : 0) | (isTailCall ? 2 : 0) | (isInsideCallee ? 4 : 0) | (calledBuiltin ? 8 : 0)];
     RELEASE_ASSERT(kind != noCallSiteKind);
-    return { .origin = origin, .kind = static_cast<CallSiteKind>(kind), .calledBuiltin = calledBuiltin, .constructedCallee = options.constructedCallee, .callsOwnFunctionObject = options.callsOwnFunctionObject, .keptCalleePlusOne = options.keptCalleePlusOne };
+    return { .origin = origin, .kind = static_cast<CallSiteKind>(kind), .calledBuiltin = calledBuiltin, .constructedCallee = options.constructedCallee };
 }
 
 uint32_t RuntimeCallEmitter::addSite(const OperationContext& context, const CallOptions& options)

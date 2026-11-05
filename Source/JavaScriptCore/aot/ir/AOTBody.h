@@ -254,6 +254,11 @@ public:
         ASSERT(!m_isParameter && !hasFlagsWord());
         return { m_words + numberOfHeadWords, m_unit, 0 };
     }
+    ALWAYS_INLINE BodyFields wordsBehindHead(uint32_t numberOfWordsPassedOver = 0) const
+    {
+        ASSERT(!m_isParameter);
+        return { m_words + numberOfHeadWords + numberOfWordsPassedOver, m_unit, 0 };
+    }
 
     uint32_t sizeInWords() const
     {

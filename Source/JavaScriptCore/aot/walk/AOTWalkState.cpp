@@ -846,17 +846,16 @@ bool WalkState::Held::holderIsFresh(Reference object) const
     return record && record->isFresh;
 }
 
-void WalkState::letFreshObjectsLeave()
+Vector<Reference, 8> WalkState::listFreshObjects() const
 {
-    if (!holdsFreshObjects())
-        return;
     Vector<Reference, 8> fresh;
+    if (!holdsFreshObjects())
+        return fresh;
     for (uint32_t holder = 0; holder < m_held->m_holders.size(); ++holder) {
         if (m_held->m_holders[holder].isFresh)
             fresh.append(m_held->m_holders[holder].object);
     }
-    for (Reference object : fresh)
-        markEscaped(object);
+    return fresh;
 }
 
 bool WalkState::Held::letLeaveIfFresh(Reference object)
@@ -1366,6 +1365,8 @@ void WalkState::Held::clear()
 
 bool leavesDeadZoneForGood(const Program& program, VariableID id)
 {
+    if (id.index() >= program.variables.size())
+        return false;
     const Variable& variable = program.at(id);
     if (variable.initialization != VariableInitialization::Uninitialized || variable.owner || !variable.module)
         return false;
@@ -1408,7 +1409,7 @@ void SharedSetOfNumbers::keepMembersOfWhereSomeAreHeld(const SharedSetOfNumbers&
     }
 }
 
-void WalkState::meetWith(const WalkState& other)
+void WalkState::meetWith(const WalkState& other, RecordsLastMet* last)
 {
     if (&other == this)
         return;
@@ -1421,13 +1422,13 @@ void WalkState::meetWith(const WalkState& other)
         dropWhatIsHeld();
         return;
     }
-    heldToWrite().meetWith(*other.m_held);
+    heldToWrite().meetWith(*other.m_held, last);
     noteKindsOfRecordsLeft();
     if (m_held->m_checkedNames.isEmpty())
         m_marks.kinds &= ~Kinds::checkedNames;
 }
 
-void WalkState::Held::meetWith(const Held& other)
+void WalkState::Held::meetWith(const Held& other, RecordsLastMet* last)
 {
     m_checkedNames.keepMembersOf(other.m_checkedNames);
     m_bindingsPastDeadZone.keepMembersOf(other.m_bindingsPastDeadZone);
@@ -1446,6 +1447,16 @@ void WalkState::Held::meetWith(const Held& other)
     auto noteStretch = [&](uint32_t begin, uint32_t end) {
         stretches.append({ begin, end });
     };
+    bool goesByWhatHasChanged = last && last->lieAsOwn
+        && last->numberOfOwnHolders == m_holders.size() && last->numberOfOwnPlaces == m_places.size()
+        && last->holders.size() <= other.m_holders.size() && last->places.size() <= other.m_places.size();
+    bool lieAsOwn = true;
+    auto noteStretchAmong = [&](uint32_t numberOfOwn) {
+        return [&stretches, numberOfOwn](uint32_t begin, uint32_t end) {
+            if (begin < numberOfOwn)
+                stretches.append({ begin, std::min(end, numberOfOwn) });
+        };
+    };
     auto findHolderInOther = [&](uint32_t holder, Reference object) {
         if (holder < other.m_holders.size()) {
             if (const Holder& same = other.m_holders[holder]; same.object == object)
@@ -1454,7 +1465,10 @@ void WalkState::Held::meetWith(const Held& other)
         return other.findHolder(object);
     };
 
-    m_places.forEachStretchNotSharedWith(other.m_places, noteStretch);
+    if (goesByWhatHasChanged)
+        other.m_places.forEachStretchNotSharedWith(last->places, noteStretchAmong(m_places.size()));
+    else
+        m_places.forEachStretchNotSharedWith(other.m_places, noteStretch);
     for (Stretch stretch : stretches) {
         for (uint32_t position = stretch.begin; position < stretch.end; ++position) {
             const Place& place = m_places[position];
@@ -1471,11 +1485,16 @@ void WalkState::Held::meetWith(const Held& other)
             }
             if (placeInOther == none || other.m_places[placeInOther].value != place.value)
                 endPlace(position);
+            else if (placeInOther != position || holderInOther != place.holder)
+                lieAsOwn = false;
         }
     }
 
     stretches.shrink(0);
-    m_holders.forEachStretchNotSharedWith(other.m_holders, noteStretch);
+    if (goesByWhatHasChanged)
+        other.m_holders.forEachStretchNotSharedWith(last->holders, noteStretchAmong(m_holders.size()));
+    else
+        m_holders.forEachStretchNotSharedWith(other.m_holders, noteStretch);
     for (Stretch stretch : stretches) {
         for (uint32_t holder = stretch.begin; holder < stretch.end; ++holder) {
             const Holder& record = m_holders[holder];
@@ -1486,6 +1505,8 @@ void WalkState::Held::meetWith(const Held& other)
                 endHolder(holder);
                 continue;
             }
+            if (holderInOther != holder)
+                lieAsOwn = false;
             const Holder& same = other.m_holders[holderInOther];
             bool leaves = record.isFresh && !same.isFresh;
             OptionSet<FactOfCell> factsKnownHereAlone = record.factsOfCell - same.factsOfCell;
@@ -1498,7 +1519,14 @@ void WalkState::Held::meetWith(const Held& other)
                 letLeave(holder);
         }
     }
-    dropEndedRecordsIfMany();
+    if (!last)
+        dropEndedRecordsIfMany();
+    else if ((last->lieAsOwn = lieAsOwn && other.m_places.liesInTree())) {
+        last->holders = other.m_holders;
+        last->places = other.m_places;
+        last->numberOfOwnHolders = m_holders.size();
+        last->numberOfOwnPlaces = m_places.size();
+    }
     if (other.m_recordsGoneThrough | m_recordsGoneThrough) [[unlikely]] {
         m_recordsGoneThrough = std::max(m_recordsGoneThrough, other.m_recordsGoneThrough);
         makeListsIfDue();

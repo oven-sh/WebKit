@@ -5,10 +5,10 @@
 # OPTIONS: testing=CheckProofsAtRunTime
 # RUN: walk f2:GenericCallEntry mechanisms=all
 # CHECK-LABEL: code f2:GenericCallEntry
-# CHECK: CheckProof v2 checkedType=i32
+# SINCE THE ENTRY STOPS BY NAME IN EVERY BUILD the value is asked once, by the test, and the check that names the fault stands on the failing side.
 # CHECK: TypeTest v2 testedType=i32
-# CHECK: CheckProof v3 checkedType=i32
 # CHECK: TypeTest v3 testedType=i32
+# CHECK: CheckProof v2 checkedType=never
 # CHECK: Unbox
 
 module m0 path="/library.js" displayPath="library.js" body=f1

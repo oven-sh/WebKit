@@ -108,8 +108,6 @@ const arraysNamedByEngine: ReadonlySet<string> = new Set([
   "builtinTableCalledFunctions",
   "builtinTableStartupCalledFunctions",
   "builtinTableHostObjects",
-  "builtinTableNamedMemberCalls",
-  "builtinTableHostMethodCalls",
   "builtinTableForms",
   "builtinTableClassesByMemberName",
 ]);

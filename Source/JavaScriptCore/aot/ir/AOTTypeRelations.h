@@ -34,6 +34,7 @@ bool mayContainAnyCallable(TypeReader, const Type&);
 bool mayContainAnyClosure(TypeReader, const Type&);
 bool mayBeInstanceOf(const BuiltinTable&, BuiltinID, BuiltinClassID);
 bool mayBeClosureOf(TypeReader, BuiltinID, FunctionID);
+bool hostUsesPutValueInto(const BuiltinTable&, const BuiltinHostUses&, BuiltinID entry);
 bool mayContainBuiltin(TypeReader, const Type&, BuiltinID);
 bool overlapsAnotherClass(TypeReader, BuiltinClassID, const Type&);
 

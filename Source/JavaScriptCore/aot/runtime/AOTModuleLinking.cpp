@@ -1052,7 +1052,7 @@ JSValue Modules::exportsBeforeMock(ModuleID file)
     JSGlobalObject* realm = m_instance.globalObject;
     auto scope = DECLARE_THROW_SCOPE(vm);
     bool isCommonJSFile = data(file).kind == ModuleKind::CommonJs;
-    if (isLeftAloneByMock(file) && !isEvicted(file) && !isLeftToHost(file)) {
+    if (isLeftAloneByMock(file) && !isLeftToHostAsFarAsIsKnown(file)) {
         if (isCommonJSFile) {
             JSValue original = ensureLoaded(file).exportsOfOriginalBesideMock.get();
             return original ? original : commonJSExports(file);
@@ -1061,7 +1061,7 @@ JSValue Modules::exportsBeforeMock(ModuleID file)
         RETURN_IF_EXCEPTION(scope, { });
         RELEASE_AND_RETURN(scope, namespaceOfModuleItself(file));
     }
-    if (mockInPlace(file) || isEvicted(file) || isLeftToHost(file))
+    if (mockInPlace(file) || isLeftToHostAsFarAsIsKnown(file))
         return { };
     LoadedModule* loaded = loadedIfExists(file);
     bool isLaidOver = loaded && loaded->hasMockLaidOver;

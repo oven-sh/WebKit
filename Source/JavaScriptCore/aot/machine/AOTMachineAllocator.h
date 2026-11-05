@@ -403,6 +403,7 @@ public:
     void findSpillsHeldAtSuspensions();
     void findGapsAheadOfLandingPads();
 
+    RegisterMask registersWhereCallInBlockTakesWhatLiesThere(const Block*) const;
     void findFramedPart();
     void settleFramedPart();
     void standIn(const Block* block)

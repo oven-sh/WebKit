@@ -59,14 +59,21 @@ public:
     void noteReadUnderKeyNobodyKnows();
     void noteRead(BuiltinID);
     void noteCalled(BuiltinID);
+    void noteConstructed(BuiltinID);
+    void noteCalledByCode(BuiltinID);
     void noteLetGo(BuiltinID);
     void noteCalledOutOfSight(BuiltinID);
+    void noteCalledWithoutRow(BuiltinID);
+    void noteCallMayRunCode(BuiltinID);
     void noteCalledAtSite(FunctionID caller, ValueID site, bool isConstruction, BuiltinID row);
 
     void settle(Vector<BuiltinID>& cameIntoReach, Vector<BuiltinID>& cameOutOfSight);
     Vector<BuiltinID> takeMembersWrittenAfterAll() { return std::exchange(m_membersWrittenAfterAll, { }); }
 
     bool mayBeHandedWhatIsNoTextNumberOrBoolean(BuiltinID canonical) const;
+    bool hasCallThatMayRunCode(BuiltinID canonical) const;
+    bool mayRun(BuiltinID canonical) const;
+    bool mayRunOrHasObjects(BuiltinID canonical) const;
     bool loaderOfHostMayRun() const;
     bool hostIsAskedForValueOfModule() const;
     bool unseenCodeCanRun() const;

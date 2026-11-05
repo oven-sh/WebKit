@@ -69,7 +69,7 @@ constexpr StubKey allocateExtension(unsigned size)
 inline constexpr GPRReg extensionMadeBySlowStub = gprOf(StubRegister::R0);
 
 constexpr StubKey newTypedArray() { return StubKey(StubFamily::NewTypedArray); }
-constexpr StubKey newDictionary(unsigned addedPairsOfSlots) { return StubKey(StubFamily::NewDictionary).withCount(addedPairsOfSlots); }
+constexpr StubKey newDictionary() { return StubKey(StubFamily::NewDictionary); }
 
 void loadAllocationSiteRecord(StubAssembler&, GPRReg allocation, GPRReg record, GPRReg scratch);
 

@@ -69,8 +69,6 @@ const BuiltinTable& BuiltinTable::singleton()
     letArrayLeaveWithCompiler<&builtinTableCalledFunctions>();
     letArrayLeaveWithCompiler<&builtinTableStartupCalledFunctions>();
     letArrayLeaveWithCompiler<&builtinTableHostObjects>();
-    letArrayLeaveWithCompiler<&builtinTableNamedMemberCalls>();
-    letArrayLeaveWithCompiler<&builtinTableHostMethodCalls>();
     letArrayLeaveWithCompiler<&builtinTableForms>();
     letArrayLeaveWithCompiler<&builtinTableClassTokens>();
     letArrayLeaveWithCompiler<&builtinTableClassesByMemberName>();
@@ -507,13 +505,6 @@ BuiltinSlotID BuiltinTable::findSlot(BuiltinClassID builtinClass, ContentsSlot c
     });
 }
 
-BuiltinSlotID BuiltinTable::slotInType(BuiltinClassID builtinClass, unsigned indexInType) const
-{
-    return findSlotIf(*this, builtinClass, [&](const BuiltinSlot& slot) {
-        return slot.indexInType == indexInType;
-    });
-}
-
 unsigned BuiltinTable::numberOfSlotsInType(BuiltinClassID builtinClass) const
 {
     return static_cast<unsigned>(std::ranges::count_if(at(builtinClass).slots, [&](BuiltinSlotID id) {
@@ -631,18 +622,6 @@ std::span<const BuiltinCalledFunction> BuiltinTable::startupCalledFunctions() co
 std::span<const BuiltinHostObject> BuiltinTable::hostObjects() const
 {
     return keptByThisReader(m_data.attachments.hostObjects, builtinTableHostObjects);
-}
-
-const BuiltinNamedMemberCall* BuiltinTable::callOfMemberNamed(BuiltinName name) const
-{
-    std::span<const BuiltinNamedMemberCall> calls = keptByThisReader(m_data.attachments.namedMemberCalls, builtinTableNamedMemberCalls);
-    auto found = std::ranges::find(calls, name, &BuiltinNamedMemberCall::name);
-    return found == calls.end() ? nullptr : &*found;
-}
-
-std::span<const BuiltinHostMethodCall> BuiltinTable::hostMethodCalls() const
-{
-    return keptByThisReader(m_data.attachments.hostMethodCalls, builtinTableHostMethodCalls);
 }
 
 const BuiltinUnseenCode* BuiltinTable::unseenCodeOf(BuiltinID id) const

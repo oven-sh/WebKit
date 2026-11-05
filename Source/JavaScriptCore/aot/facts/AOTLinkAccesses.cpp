@@ -457,6 +457,8 @@ void AccessInLinkAccesses::resolve()
         return;
     }
     if (isPrivateNameInLink(m_program, m_access.key)) {
+        if (!isRead() && m_access.kind != Kind::Has && subject.classes != LinkType::Classes::None)
+            m_flow.arrive(m_flow.contentsOf(subject, SlotOfContents::underUnknownNames()), m_flow.fromTypeID(TypeTable::undefined));
         resolveUnderPrivateName();
         return;
     }
@@ -601,7 +603,7 @@ void AccessInLinkAccesses::resolveOnLayout(LayoutID id, const LinkType& pooled)
         if (isRead())
             giveWhatIsHeldAt(m_flow.anyFieldReadThrough(pooled.objects, pooled.layout, pooled.family, namesOnlyElements()));
         else
-            storeInto(m_flow.anyFieldStoredThrough(pooled.objects, pooled.layout, pooled.family));
+            storeInto(m_flow.anyFieldStoredThrough(pooled.objects, pooled.layout, pooled.family, m_keyIsOnlyNumbers));
         return;
     }
     if (m_nameClass == NameClass::Proto) {
@@ -688,7 +690,7 @@ void AccessInLinkAccesses::resolveOnLayout(LayoutID id, const LinkType& pooled)
     }
     if (field) {
         storeInto(m_flow.field(*field));
-        if (!m_access.isPartOfConstruction)
+        if (!m_flow.isPartOfConstructionOf(id, m_function, m_access))
             noteWrittenAfterConstruction(*field);
         return;
     }
@@ -843,8 +845,15 @@ void AccessInLinkAccesses::resolveOnFamily(FamilyID family)
         }
         if (isRead())
             giveWhatIsHeldAt(m_flow.fieldReadThrough(family, m_access.key));
-        else
-            storeInto(m_flow.fieldStoredThrough(family, m_access.key, m_access.isPartOfConstruction));
+        else {
+            bool isPartOfConstruction = m_access.isPartOfConstruction;
+            if (isPartOfConstruction && m_flow.storesIntoWhatSuperCallAnswers(m_function)) {
+                m_program.at(m_flow.families.layoutsOf(family)).forEach([&](LayoutID member) {
+                    isPartOfConstruction &= m_flow.isPartOfConstructionOf(member, m_function, m_access);
+                });
+            }
+            storeInto(m_flow.fieldStoredThrough(family, m_access.key, isPartOfConstruction));
+        }
         return;
     }
     if (isRead()) {
@@ -853,7 +862,7 @@ void AccessInLinkAccesses::resolveOnFamily(FamilyID family)
     }
     if (mayStoreIntoPrototypeLink())
         m_flow.escapeAllOf(familyForLinkAccesses(family));
-    storeInto(m_flow.anyFieldStoredThrough(LinkType::Objects::Family, LayoutID(), family));
+    storeInto(m_flow.anyFieldStoredThrough(LinkType::Objects::Family, LayoutID(), family, m_keyIsOnlyNumbers));
 }
 
 void AccessInLinkAccesses::resolveOnLostObjects(LayoutID member)
@@ -1531,6 +1540,8 @@ void AccessInLinkAccesses::resolveOnClasses(const LinkType& instances)
         giveWhatIsHeldAt(elements);
         storeInto(elements);
     });
+    if (!isRead() && !isNamed())
+        storeInto(m_flow.contentsOf(instances, SlotOfContents::underUnknownNames()));
     BuiltinID prototype = isOneClass && isElement && hasElements ? prototypeOfInstancesOf(builtinClass) : BuiltinID();
     if (prototype && indexesAreAbsentFrom(prototype))
         givePrimitives(Primitive::Undefined);

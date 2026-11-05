@@ -312,6 +312,8 @@ void CalleeSummarizerForLinkEffects::addEffectsOfOperatorsLeftApart(FunctionID i
 
 bool CalleeSummarizerForLinkEffects::readMayMakeClosureOfField(const LinkType& subject, PropertyKeyID key) const
 {
+    if (!m_keysOfFieldsThatHoldOneClosure.quickGet(key.index()))
+        return false;
     auto holdsClosures = [&](LayoutID layout) {
         std::optional<FieldReference> field = findField(m_program, layout, key);
         return field && m_flow.typeAt(m_flow.field(*field)).functions == LinkType::Functions::Closure;
@@ -323,13 +325,7 @@ bool CalleeSummarizerForLinkEffects::readMayMakeClosureOfField(const LinkType& s
         return holdsClosures(subject.layout);
     case LinkType::Objects::Set:
         return std::ranges::any_of(m_flow.layoutsOfSet(subject), holdsClosures);
-    case LinkType::Objects::Family: {
-        bool found = false;
-        m_program.at(m_flow.families.layoutsOf(subject.family)).forEach([&](LayoutID member) {
-            found |= holdsClosures(member);
-        });
-        return found;
-    }
+    case LinkType::Objects::Family:
     case LinkType::Objects::Prototype:
     case LinkType::Objects::Prototypes:
     case LinkType::Objects::Lost:

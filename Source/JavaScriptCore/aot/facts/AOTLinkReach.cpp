@@ -15,6 +15,7 @@
 #include "AOTIRProgram.h"
 #include "AOTLinkCoroutines.h"
 #include "AOTLinkUnions.h"
+#include "AOTTypeRelations.h"
 #include "AOTLinkExceptions.h"
 #include <algorithm>
 #include <optional>
@@ -184,6 +185,8 @@ private:
     void escapeExportsOf(ModuleID);
     void findModulesWhoseValueStaysInSight();
     void escapeValueOf(ModuleID);
+    bool hostReadsNamesAloneOff(ModuleID) const;
+    void escapeExportsThatHostReadsOff(const Entry&);
     void escapeExportsWhoseGettersFacesRun();
     BitVector findFilesThatHaveRunToTheirEndWhereOthersNameThem() const;
     BitVector findVariablesStoredFirst(Vector<LinkedVariableStoredFirst>& firstReaders) const;
@@ -191,7 +194,8 @@ private:
     void escapeField(FieldReference);
 
     bool mayHold(const BuiltinCondition*, BuiltinID canonical);
-    Vector<BuiltinID> m_builtinsWhoseWriteIsAwaited;
+    Vector<BuiltinID> m_builtinsWaitingOnConditions;
+    void waitOnConditionsOf(BuiltinID canonical);
     void enterLibraryBehind(BuiltinID canonical);
     void enterLibraryFunction(RuntimeFunctionID);
     void letGoWhatHostHandsOver(const BuiltinHostUses&);
@@ -213,7 +217,7 @@ private:
     void arriveWhatIsEstablished(FlowNodeID, const DeclaredType*);
     void arriveWhatNoNodeBrings(FlowNodeID, const DeclaredType&);
     void fillFields();
-    void watch(FunctionID, uint32_t nodeInSummary, FlowObserver::Kind, uint32_t record);
+
 
     void tieLostLayout(LayoutID);
     void tieLostFunction(FunctionID);
@@ -253,6 +257,12 @@ private:
     BitVector m_variablesReadByUnseenCode;
     BitVector m_evaluatedModules;
     BitVector m_modulesWithReachedCode;
+    bool waitsUntilReachedCodeNamesIt(FunctionID);
+    void noteFunctionsNamedBy(FunctionID);
+    Vector<std::pair<FunctionID, FunctionID>> m_functionsDeclaredBesideBodies;
+    BitVector m_functionsThatSomeCodeNames;
+    BitVector m_functionsThatReachedCodeNames;
+    BitVector m_functionsThatWaitToBeNamed;
     BitVector m_modulesWithEscapedExports;
     BitVector m_modulesWhoseValueStaysInSight;
     Vector<ModuleID> m_facesThatWereFollowedAtFirst;
@@ -313,6 +323,25 @@ StateOfLinkReach::StateOfLinkReach(LinkFlow& flow)
         if (FunctionID body = m_program.modules[index].body)
             m_moduleWithBody[body.index()] = ModuleID(index);
     }
+
+    m_functionsThatSomeCodeNames = BitVector(numberOfFunctions);
+    m_functionsThatReachedCodeNames = BitVector(numberOfFunctions);
+    m_functionsThatWaitToBeNamed = BitVector(numberOfFunctions);
+    for (size_t index = 0; index < numberOfFunctions; ++index) {
+        for (FunctionID named : flow.summaries.at(FunctionID(index)).functionsNamed) {
+            if (named.index() != index)
+                m_functionsThatSomeCodeNames.quickSet(named.index());
+        }
+    }
+    for (const Variable& variable : m_program.variables) {
+        if (variable.initialization != VariableInitialization::Function || !variable.module)
+            continue;
+        if (FunctionID body = m_program.at(variable.module).body) {
+            m_functionsThatSomeCodeNames.quickSet(variable.function.index());
+            m_functionsDeclaredBesideBodies.append({ body, variable.function });
+        }
+    }
+    std::ranges::sort(m_functionsDeclaredBesideBodies);
 
     m_firstFieldOfLayout.reserveInitialCapacity(m_numberOfLayouts + 1);
     uint32_t numberOfFields = 0;
@@ -428,8 +457,36 @@ void StateOfLinkReach::queueEntries()
 
 void StateOfLinkReach::reach(FunctionID id)
 {
-    if (!m_flow.reached.set(id.index()))
-        m_functionsToBringAlive.append(id);
+    if (m_flow.reached.get(id.index()) || waitsUntilReachedCodeNamesIt(id))
+        return;
+    m_flow.reached.set(id.index());
+    m_functionsToBringAlive.append(id);
+    noteFunctionsNamedBy(id);
+}
+
+bool StateOfLinkReach::waitsUntilReachedCodeNamesIt(FunctionID id)
+{
+    if (!m_functionsThatSomeCodeNames.quickGet(id.index()) || m_functionsThatReachedCodeNames.quickGet(id.index()))
+        return false;
+    if (m_isCodeBehindBuiltin.get(id.index()) || m_moduleWithBody[id.index()] || m_functionsCalledByHost.get(id.index()))
+        return false;
+    m_functionsThatWaitToBeNamed.quickSet(id.index());
+    return true;
+}
+
+void StateOfLinkReach::noteFunctionsNamedBy(FunctionID namer)
+{
+    auto note = [&](FunctionID named) {
+        if (named == namer)
+            return;
+        m_functionsThatReachedCodeNames.quickSet(named.index());
+        if (m_functionsThatWaitToBeNamed.quickClear(named.index()))
+            reach(named);
+    };
+    for (FunctionID named : m_flow.summaries.at(namer).functionsNamed)
+        note(named);
+    for (auto [body, declared] : std::ranges::equal_range(m_functionsDeclaredBesideBodies, namer, { }, &std::pair<FunctionID, FunctionID>::first))
+        note(declared);
 }
 
 void StateOfLinkReach::loseLayout(LayoutID id)
@@ -599,7 +656,42 @@ void StateOfLinkReach::enterProgram()
         if (!isHandedOut && !isAskedFor.get(index) && (!isOfProgram || isRequested.get(index)))
             continue;
         evaluate(ModuleID(index));
+        if (!isHandedOut && isOfProgram && hostReadsNamesAloneOff(ModuleID(index)))
+            continue;
         escapeExportsOf(ModuleID(index));
+    }
+    for (const Entry& entry : m_program.entries) {
+        if (hostReadsNamesAloneOff(entry.module))
+            escapeExportsThatHostReadsOff(entry);
+    }
+}
+
+bool StateOfLinkReach::hostReadsNamesAloneOff(ModuleID id) const
+{
+    static constexpr OptionSet<ModuleFlags> flagsOfModulesThatHostAsksForWhole {
+        ModuleFlags::IsFoundByName, ModuleFlags::MayBeMocked, ModuleFlags::MayBeEvicted, ModuleFlags::IsImportedAsNamespace, ModuleFlags::AnswersLoaderWithNamespace,
+        ModuleFlags::IsListedInCache, ModuleFlags::IsShownByEntryOfCache, ModuleFlags::IsHandedOutByTestRunner, ModuleFlags::IsChangedOnDiskByRun,
+    };
+    const Module& module = m_program.at(id);
+    if (module.kind != ModuleKind::SourceText || module.exportRule != SyntheticExportRule::None || module.flags.containsAny(flagsOfModulesThatHostAsksForWhole))
+        return false;
+    if (m_program.admitsInspector || !refusedCodeOf(m_program).codeOutsideImage || std::ranges::any_of(module.requests, &ModuleRequest::isDynamicStarExport))
+        return false;
+    return std::ranges::contains(m_program.entries, id, &Entry::module);
+}
+
+void StateOfLinkReach::escapeExportsThatHostReadsOff(const Entry& entry)
+{
+    const Module& module = m_program.at(entry.module);
+    for (const HostRead& read : entry.hostReads) {
+        for (uint32_t index = 0; index < module.exports.size(); ++index) {
+            if (module.exports[index].name != read.exportName)
+                continue;
+            if (m_program.variableBehindExport(entry.module, index))
+                m_flow.showExport(entry.module, index);
+            else
+                escapeExportsOf(entry.module);
+        }
     }
 }
 
@@ -670,7 +762,7 @@ BitVector StateOfLinkReach::findVariablesStoredFirst(Vector<LinkedVariableStored
         toVisit.append(start.function);
         while (!toVisit.isEmpty()) {
             FunctionID function = toVisit.takeLast();
-            if (m_program.at(function).module != module || m_moduleWithBody[function.index()] || couldRun.quickSet(function.index()))
+            if (m_program.at(function).module != module || m_moduleWithBody[function.index()] == module || couldRun.quickSet(function.index()))
                 continue;
             const ThinSummary& summary = m_flow.summaries.at(function);
             for (const SummaryNode& node : summary.nodes) {
@@ -987,11 +1079,20 @@ void StateOfLinkReach::escapeVariable(VariableID id)
 
 void StateOfLinkReach::escapeField(FieldReference reference)
 {
+    uint32_t cell = cellOf(reference);
+    if (m_flow.fieldsThatUnseenCodeMayWrite.get(cell))
+        return;
     FlowNodeID node = m_flow.field(reference);
     m_flow.addEdge(node, m_flow.unseen());
     m_flow.arrive(node, LinkType::anything().byEscapeAlone());
-    m_flow.fieldsThatUnseenCodeMayWrite.set(cellOf(reference));
+    m_flow.fieldsThatUnseenCodeMayWrite.set(cell);
     m_flow.fieldsThatUnseenCodeMayWrite.set(cellOf(declarationOf(m_program, reference)));
+}
+
+void StateOfLinkReach::waitOnConditionsOf(BuiltinID canonical)
+{
+    if (m_builtinsWaitingOnConditions.isEmpty() || m_builtinsWaitingOnConditions.last() != canonical)
+        m_builtinsWaitingOnConditions.append(canonical);
 }
 
 bool StateOfLinkReach::mayHold(const BuiltinCondition* condition, BuiltinID canonical)
@@ -1000,9 +1101,10 @@ bool StateOfLinkReach::mayHold(const BuiltinCondition* condition, BuiltinID cano
         return true;
     if (condition->buildAdmitsRuntimeCode)
         return false;
-    if (condition->objectNobodyKnowsIsWritten && !m_builtinsInReach.mayBeHandedWhatIsNoTextNumberOrBoolean(canonical)) {
-        if (!m_builtinsWhoseWriteIsAwaited.contains(canonical))
-            m_builtinsWhoseWriteIsAwaited.append(canonical);
+    bool waitsForWrite = condition->objectNobodyKnowsIsWritten && !m_builtinsInReach.mayBeHandedWhatIsNoTextNumberOrBoolean(canonical);
+    bool waitsForCall = condition->callRunsOtherCode && !m_builtinsInReach.hasCallThatMayRunCode(canonical);
+    if (waitsForWrite || waitsForCall) {
+        waitOnConditionsOf(canonical);
         return false;
     }
     return !condition->testsReplaceBuiltins || m_program.testsReplaceBuiltins();
@@ -1053,12 +1155,18 @@ void StateOfLinkReach::enterLibraryBehind(BuiltinID canonical)
 {
     const BuiltinTable& builtins = m_program.builtins();
     const Builtin& entry = builtins.at(canonical);
+    bool mayRun = m_builtinsInReach.mayRun(canonical);
+    bool mayRunOrHasObjects = m_builtinsInReach.mayRunOrHasObjects(canonical);
+    if (!mayRun)
+        waitOnConditionsOf(canonical);
     bool isNativeCodeOfHost = entry.origin == BuiltinOrigin::Host && !entry.flags.contains(BuiltinFlag::IsCompilerHelper);
     for (const BuiltinOverload& overload : builtins.overloadsOf(canonical)) {
-        if (isNativeCodeOfHost && overload.isUndeclared())
+        if (isNativeCodeOfHost && mayRun && overload.isUndeclared())
             enterWhatUndeclaredNativeCodeCalls();
     }
     for (const BuiltinCalledFunction& called : builtins.calledFunctionsOf(canonical)) {
+        if (!mayRunOrHasObjects && called.uses.areListed && !hostUsesPutValueInto(builtins, called.uses, canonical))
+            continue;
         if (!mayHold(called.condition, canonical))
             continue;
         if (builtins.contains(called.function) && !builtins.at(called.function).platforms.contains(targetOfThisBuild().platform))
@@ -1067,6 +1175,11 @@ void StateOfLinkReach::enterLibraryBehind(BuiltinID canonical)
         letGoWhatHostHandsOver(called.uses);
     }
     for (const BuiltinModuleLoad& load : builtins.moduleLoadsOf(canonical)) {
+        bool makesValue = std::ranges::any_of(load.usesOfExports, [&](const BuiltinHostUses& uses) {
+            return hostUsesPutValueInto(builtins, uses, canonical);
+        });
+        if (!mayRunOrHasObjects && !makesValue)
+            continue;
         if (!mayHold(load.condition, canonical))
             continue;
         loadLibraryModule(load.module);
@@ -1116,6 +1229,8 @@ void StateOfLinkReach::enterLoaderOfHost()
         evaluate(ModuleID(index));
         escapeExportsOf(ModuleID(index));
     }
+    for (const Entry& entry : m_program.entries)
+        escapeExportsOf(entry.module);
 }
 
 void StateOfLinkReach::enterWhatUnseenCodeFinds()
@@ -1161,12 +1276,8 @@ bool StateOfLinkReach::enterLibraryInReach()
             m_flow.testRuns().noteCameIntoReach(cameIntoReach);
         m_flow.testRuns().lookAtWhatHasSettled();
     }
-    for (BuiltinID awaited : std::exchange(m_builtinsWhoseWriteIsAwaited, { })) {
-        if (m_builtinsInReach.mayBeHandedWhatIsNoTextNumberOrBoolean(awaited))
-            enterLibraryBehind(awaited);
-        else
-            m_builtinsWhoseWriteIsAwaited.append(awaited);
-    }
+    for (BuiltinID waiting : std::exchange(m_builtinsWaitingOnConditions, { }))
+        enterLibraryBehind(waiting);
     for (BuiltinID builtin : m_builtinsThatCameIntoReach)
         enterLibraryBehind(builtin);
     for (BuiltinID builtin : m_builtinsThatCameOutOfSight) {
@@ -1256,6 +1367,16 @@ void StateOfLinkReach::bringAlive(FunctionID id)
 
     m_flow.addEdge(m_flow.thrown(id), m_flow.unseen());
 
+    std::span<const uint32_t> nodesOfSummary = m_flow.nodesOfSummaryOf(id);
+    auto nodeAt = [&](uint32_t nodeInSummary) {
+        RELEASE_ASSERT(nodeInSummary < nodesOfSummary.size());
+        return FlowNodeID(nodesOfSummary[nodeInSummary]);
+    };
+    auto watch = [&](uint32_t nodeInSummary, FlowObserver::Kind kind, uint32_t record) {
+        if (nodeInSummary != noSummaryNode)
+            m_flow.observe(nodeAt(nodeInSummary), FlowObserver { kind, id, record });
+    };
+
     Vector<uint32_t, 16> classInstances;
     if (m_flow.numberOfSitesOfSummary(id)) {
         for (uint32_t index = 0; index < summary.nodes.size(); ++index) {
@@ -1282,36 +1403,36 @@ void StateOfLinkReach::bringAlive(FunctionID id)
             break;
         case SummaryNode::Kind::Contents:
             if (!slotSpeaksOfBodyOfCoroutine(SlotOfContents::fromNumber(node.second)))
-                m_flow.takeAsContents(siteAt(id, classInstances.span(), node.first), SlotOfContents::fromNumber(node.second), m_flow.nodeOf(id, index));
+                m_flow.takeAsContents(siteAt(id, classInstances.span(), node.first), SlotOfContents::fromNumber(node.second), nodeAt(index));
             break;
         case SummaryNode::Kind::Constant:
-            m_flow.arriveFromSource(m_flow.nodeOf(id, index), m_flow.fromTypeID(TypeID::fromBits(node.first)));
+            m_flow.arriveFromSource(nodeAt(index), m_flow.fromTypeID(TypeID::fromBits(node.first)));
             break;
         case SummaryNode::Kind::Allocation: {
             LayoutID layout(node.first);
             FunctionID constructor = m_program.at(layout).constructor;
             if (!constructor || m_program.at(constructor).constructedClass != layout)
                 m_flow.noteAllocated(layout);
-            arriveFromSource(m_flow.nodeOf(id, index), typeOfObjectsForLinkReach(layout));
+            arriveFromSource(nodeAt(index), typeOfObjectsForLinkReach(layout));
             break;
         }
         case SummaryNode::Kind::ClassInstance: {
             SiteID site = siteAt(id, classInstances.span(), index);
-            m_flow.arrive(m_flow.nodeOf(id, index), m_flow.typeOf(site));
+            m_flow.arrive(nodeAt(index), m_flow.typeOf(site));
             fillStateThatNoSummaryFollows(site, !node.second);
             break;
         }
         case SummaryNode::Kind::Closure:
-            m_flow.arrive(m_flow.nodeOf(id, index), typeOfClosuresForLinkReach(FunctionID(node.first)));
+            m_flow.arrive(nodeAt(index), typeOfClosuresForLinkReach(FunctionID(node.first)));
             break;
         case SummaryNode::Kind::Builtin:
-            m_flow.arrive(m_flow.nodeOf(id, index), typeOfBuiltinForLinkReach(m_program, BuiltinID(node.first)));
+            m_flow.arrive(nodeAt(index), typeOfBuiltinForLinkReach(m_program, BuiltinID(node.first)));
             break;
         }
     }
 
     for (const SummaryEdge& edge : summary.edges)
-        m_flow.addEdge(m_flow.nodeOf(id, edge.from), m_flow.nodeOf(id, edge.to), edge.passes);
+        m_flow.addEdge(nodeAt(edge.from), nodeAt(edge.to), edge.passes);
 
     for (const SummaryMember& member : summary.members) {
         if (member.key)
@@ -1343,14 +1464,14 @@ void StateOfLinkReach::bringAlive(FunctionID id)
             m_flow.enter(id, index, call.function);
             break;
         case SummaryCall::Callee::Name:
-            watch(id, call.subject, FlowObserver::Kind::SubjectOfCall, index);
-            watch(id, call.receiver, FlowObserver::Kind::ReceiverOfCall, index);
+            watch(call.subject, FlowObserver::Kind::SubjectOfCall, index);
+            watch(call.receiver, FlowObserver::Kind::ReceiverOfCall, index);
             break;
         case SummaryCall::Callee::Value:
-            watch(id, call.subject, FlowObserver::Kind::SubjectOfCall, index);
+            watch(call.subject, FlowObserver::Kind::SubjectOfCall, index);
             break;
         case SummaryCall::Callee::Builtin:
-            watch(id, call.receiver, FlowObserver::Kind::ReceiverOfCall, index);
+            watch(call.receiver, FlowObserver::Kind::ReceiverOfCall, index);
             m_flow.observe(m_flow.unseen(), FlowObserver { FlowObserver::Kind::SubjectOfCall, id, index });
             break;
         }
@@ -1358,23 +1479,23 @@ void StateOfLinkReach::bringAlive(FunctionID id)
 
     for (uint32_t index = 0; index < summary.accesses.size(); ++index) {
         const SummaryAccess& access = summary.accesses[index];
-        watch(id, access.subject, FlowObserver::Kind::SubjectOfAccess, index);
-        watch(id, access.keyNode, FlowObserver::Kind::KeyOfAccess, index);
+        watch(access.subject, FlowObserver::Kind::SubjectOfAccess, index);
+        watch(access.keyNode, FlowObserver::Kind::KeyOfAccess, index);
     }
 
     for (uint32_t index = 0; index < summary.changes.size(); ++index) {
         const SummaryChange& change = summary.changes[index];
-        watch(id, change.subject, FlowObserver::Kind::SubjectOfChange, index);
-        watch(id, change.other, FlowObserver::Kind::OtherOfChange, index);
-        watch(id, change.getterInSight, FlowObserver::Kind::OtherOfChange, index);
-        watch(id, change.setterInSight, FlowObserver::Kind::OtherOfChange, index);
+        watch(change.subject, FlowObserver::Kind::SubjectOfChange, index);
+        watch(change.other, FlowObserver::Kind::OtherOfChange, index);
+        watch(change.getterInSight, FlowObserver::Kind::OtherOfChange, index);
+        watch(change.setterInSight, FlowObserver::Kind::OtherOfChange, index);
     }
 
     for (uint32_t index = 0; index < summary.operators.size(); ++index) {
         const SummaryOperator& operation = summary.operators[index];
         for (uint32_t operand = 0; operand < SummaryOperator::mostOperands; ++operand) {
-            watch(id, operation.operands[operand], FlowObserver::Kind::OperandOfOperator, index);
-            watch(id, operation.converted[operand], FlowObserver::Kind::OperandOfOperator, index);
+            watch(operation.operands[operand], FlowObserver::Kind::OperandOfOperator, index);
+            watch(operation.converted[operand], FlowObserver::Kind::OperandOfOperator, index);
         }
     }
 }
@@ -1497,12 +1618,6 @@ void StateOfLinkReach::makeSourceOfFamily(FamilyID id, FlowNodeID source)
     });
 }
 
-void StateOfLinkReach::watch(FunctionID function, uint32_t nodeInSummary, FlowObserver::Kind kind, uint32_t record)
-{
-    if (nodeInSummary != noSummaryNode)
-        m_flow.observe(m_flow.nodeOf(function, nodeInSummary), FlowObserver { kind, function, record });
-}
-
 void StateOfLinkReach::tieLostLayout(LayoutID id)
 {
     if (m_flow.namesMayBeIncomplete(id, ClassSide::Prototype))
@@ -1511,7 +1626,6 @@ void StateOfLinkReach::tieLostLayout(LayoutID id)
 
 void StateOfLinkReach::tieLostFunction(FunctionID id)
 {
-    reach(id);
     m_flow.tieNamesOnLostClosuresOf(id);
     if (m_lostFunctionsHaveEscaped || (m_program.at(id).constructedClass && !m_flow.layoutOfConstructorFunction(id)))
         escapeFunction(id);

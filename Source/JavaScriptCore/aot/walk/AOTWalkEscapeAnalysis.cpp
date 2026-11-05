@@ -162,7 +162,7 @@ static void noteWhatNewObjectFillsIn(Walker& walker, Reference object, const Ope
         state.noteFactsOfCell(object, FactOfCell::NotFrozen);
         if (!made.prototypeOperand())
             state.noteFactsOfCell(object, FactOfCell::HasLayoutPrototype);
-        std::optional<PlacedAllocation> placed = isAsAllocated ? walker.plan().allocation(program, layout, made.allocationClass(), made.fields()) : std::nullopt;
+        std::optional<PlacedAllocation> placed = isAsAllocated ? walker.plan().allocation(program, layout, made.fields()) : std::nullopt;
         if (isAsAllocated)
             state.noteFactsOfCell(object, FactOfCell::NoFieldOutsideSlot);
         if (placed)
@@ -324,7 +324,7 @@ std::optional<Vector<PropertyOfFreshObject, 8>> propertiesOfFreshObject(Walker& 
     LayoutID layout = made.layout();
     if (made.opcode != Opcode::NewObject || program.at(layout).kind != LayoutKind::Record || !walker.plan().slots().layout(layout).appendedKeys.isEmpty())
         return std::nullopt;
-    std::optional<PlacedAllocation> placed = walker.plan().allocation(program, layout, made.allocationClass(), made.fields());
+    std::optional<PlacedAllocation> placed = walker.plan().allocation(program, layout, made.fields());
     if (!placed || state.orderWordOf(object) != std::optional<uint32_t>(placed->orderWord))
         return std::nullopt;
 

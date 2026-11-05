@@ -356,9 +356,8 @@ void Modules::bringBackKeptFiles(const WTF::Function<void(const String&)>& funct
     m_filesAboveEvictedFile.clearAll();
     m_filesAboveNoEvictedFile.clearAll();
     ++m_linkEpoch;
-    SetForScope listsWithoutAsking(m_listsWithoutAsking, true);
     for (size_t index : evictedWithImports)
-        isLeftToHost(ModuleID(index));
+        isLeftToHostAsFarAsIsKnown(ModuleID(index));
     for (ModuleID file : back) {
         functor(m_table.pathText(file));
         if (data(file).kind != ModuleKind::CommonJs)
@@ -440,18 +439,18 @@ bool Modules::isChangedOnDisk(ModuleID file)
     if (!stampOfBuild || !host().stampOfFile)
         return false;
     countEvent(*m_instance.vm, RuntimeCounterID::FilesComparedWithDisk);
-    CString path = m_table.pathText(file).utf8();
-    return host().stampOfFile(byteCast<char>(path.span())) != *stampOfBuild;
+    ModuleTable::PathInUTF8 path = m_table.pathInUTF8(file);
+    path.append('\0');
+    return host().stampOfFile(path.span().first(path.size() - 1)) != *stampOfBuild;
 }
 
-bool Modules::writesNameThatHostMayAnswerFor(ModuleID file)
+bool Modules::writesNameThatHostMayAnswerFor(ModuleID file, WalkForEvictedFiles& walk)
 {
-    std::span<const NameOfStatementData> names = m_table.namesOfStatements(file);
-    if (names.empty() || !host().mayAnswerForName || !mayBeEvicted(file))
+    if (m_table.namesOfStatements(file).empty() || !host().hasPluginsThatAnswerForNames || !mayBeEvicted(file))
         return false;
-    return std::ranges::any_of(names, [&](const NameOfStatementData& written) {
-        return host().mayAnswerForName(m_instance.globalObject, ProgramStrings::text(m_table.programTables(), written.nameString()));
-    });
+    if (!walk.pluginsAnswerForNames)
+        walk.pluginsAnswerForNames = host().hasPluginsThatAnswerForNames(m_instance.globalObject);
+    return *walk.pluginsAnswerForNames;
 }
 
 bool Modules::hostAnswersForNameWrittenBy(ModuleID file)
@@ -470,34 +469,78 @@ bool Modules::isChangedOutOfSightOfBuild(StringView path) const
     return found && m_filesChangedOutOfSightOfBuild.get(fileOf(*found).index());
 }
 
+bool Modules::walkForEvictedFiles(ModuleID module, WalkForEvictedFiles& walk)
+{
+    uint32_t earliestVisitReached = 0;
+    bool isAboveEvictedFile = importsEvictedFile(module, walk, earliestVisitReached);
+    if (!walk.filesToAskHostAbout.isEmpty())
+        m_filesAboveNoEvictedFile.clearAll();
+    if (isAboveEvictedFile) {
+        for (uint32_t file : walk.unsettledFiles)
+            m_filesAboveEvictedFile.set(file);
+    }
+    return isAboveEvictedFile;
+}
+
+bool Modules::askHostLevelByLevel(ModuleID root, const WalkForEvictedFiles& walk, BitVector& filesAsked)
+{
+    BitVector isListed;
+    for (uint32_t index : walk.filesToAskHostAbout)
+        isListed.set(index);
+    bool didAsk = false;
+    BitVector isReached;
+    Deque<ModuleID, 32> toFollow;
+    isReached.set(fileOf(root).index());
+    toFollow.append(fileOf(root));
+    while (!toFollow.isEmpty()) {
+        ModuleID file = toFollow.takeFirst();
+        if (isEvicted(file))
+            continue;
+        if (isListed.get(file.index()) && !filesAsked.get(file.index()) && mayBeAskedAbout(file) && status(file) < ModuleStatus::Evaluating && !hasRun(file)) {
+            if (filesAsked.isEmpty())
+                host().askingAboutNames(m_instance.globalObject, nullptr);
+            filesAsked.set(file.index());
+            didAsk = true;
+            if (hostAnswersForNameWrittenBy(file)) {
+                leaveToHostUnlessItHasRun(file);
+                continue;
+            }
+            m_filesWhoseNamesNobodyAnswersFor.set(file.index());
+        }
+        if (!isLoadedWithRequests(file))
+            continue;
+        for (const ModuleRequestData& request : m_table.imports(file)) {
+            ModuleID target = fileOf(request.targetModule());
+            if (walk.visitOrder.contains(target.index()) && !isReached.set(target.index()))
+                toFollow.append(target);
+        }
+    }
+    return didAsk;
+}
+
 bool Modules::importsEvictedFile(ModuleID module)
 {
     BitVector filesAsked;
+    bool isAboveEvictedFile = false;
+    auto tellHostWhoLeaves = makeScopeExit([&] {
+        if (filesAsked.isEmpty())
+            return;
+        auto isLeaving = [&](const String& importer) {
+            std::optional<ModuleID> found = isAboveEvictedFile ? m_table.findByPath(importer) : std::nullopt;
+            if (!found)
+                return false;
+            WalkForEvictedFiles walk;
+            return walkForEvictedFiles(*found, walk);
+        };
+        ScopedLambda<bool(const String&)> leaves = isLeaving;
+        host().askingAboutNames(m_instance.globalObject, &leaves);
+    });
     while (true) {
         WalkForEvictedFiles walk;
-        uint32_t earliestVisitReached = 0;
-        bool isAboveEvictedFile = importsEvictedFile(module, walk, earliestVisitReached);
-        if (!walk.filesToAskHostAbout.isEmpty())
-            m_filesAboveNoEvictedFile.clearAll();
-        if (isAboveEvictedFile) {
-            for (uint32_t file : walk.unsettledFiles)
-                m_filesAboveEvictedFile.set(file);
+        isAboveEvictedFile = walkForEvictedFiles(module, walk);
+        if (isAboveEvictedFile)
             return true;
-        }
-        if (m_listsWithoutAsking)
-            return false;
-        bool didAsk = false;
-        for (uint32_t index : walk.filesToAskHostAbout) {
-            ModuleID file(index);
-            if (filesAsked.set(index) || !mayBeAskedAbout(file) || isEvicted(file) || status(file) >= ModuleStatus::Evaluating || hasRun(file))
-                continue;
-            didAsk = true;
-            if (hostAnswersForNameWrittenBy(file))
-                leaveToHostUnlessItHasRun(file);
-            else
-                m_filesWhoseNamesNobodyAnswersFor.set(index);
-        }
-        if (!didAsk)
+        if (m_listsWithoutAsking || !askHostLevelByLevel(module, walk, filesAsked))
             return false;
     }
 }
@@ -528,7 +571,7 @@ bool Modules::importsEvictedFile(ModuleID module, WalkForEvictedFiles& walk, uin
         leaveToHostUnlessItHasRun(file);
         return true;
     }
-    if (mayBeAskedAbout(file) && writesNameThatHostMayAnswerFor(file)) [[unlikely]]
+    if (mayBeAskedAbout(file) && writesNameThatHostMayAnswerFor(file, walk)) [[unlikely]]
         walk.filesToAskHostAbout.append(file.index());
     size_t numberOfUnsettledFiles = walk.unsettledFiles.size();
     uint32_t earliestVisitReachedFromHere = visit;
@@ -550,6 +593,12 @@ bool Modules::importsEvictedFile(ModuleID module, WalkForEvictedFiles& walk, uin
         m_filesAboveNoEvictedFile.set(settled);
     walk.unsettledFiles.shrink(numberOfUnsettledFiles);
     return false;
+}
+
+bool Modules::isLeftToHostAsFarAsIsKnown(ModuleID module)
+{
+    SetForScope listsWithoutAsking(m_listsWithoutAsking, true);
+    return isLeftToHost(module);
 }
 
 bool Modules::isLeftToHost(ModuleID module)
@@ -826,7 +875,7 @@ JSValue Modules::readExportIfInitialized(ModuleID module, unsigned index) const
     std::span<const ModuleExportData> exports = m_table.exports(module);
     RELEASE_ASSERT(index < exports.size());
     const ModuleExportData& moduleExport = exports[index];
-    if (m_numberOfMocksInPlace && (mockInPlace(module) || mockThatAnswersFor(module, moduleExport))) [[unlikely]]
+    if (someMockIsSeen() && (mockInPlace(module) || mockThatAnswersFor(module, moduleExport))) [[unlikely]]
         return { };
     switch (moduleExport.kind()) {
     case ModuleExportKind::Variable:
@@ -859,7 +908,7 @@ JSValue Modules::readExport(ModuleID module, unsigned index, MockOfModule mockOf
         RELEASE_AND_RETURN(scope, mock->get(realm, identifier(moduleExport.name)));
     if (status(module) == ModuleStatus::Linked) [[unlikely]]
         recordEvaluationIfNothingIsLeftToRun(module);
-    if (m_numberOfMocksInPlace) [[unlikely]] {
+    if (someMockIsSeen()) [[unlikely]] {
         if (std::optional<AnswerOfMock> answer = mockThatAnswersFor(module, moduleExport, mockOfModule)) {
             bool hasExport = answer->mock->hasProperty(realm, answer->name);
             RETURN_IF_EXCEPTION(scope, { });
@@ -1334,16 +1383,20 @@ void Modules::letGoOfMockInRequireCache(ModuleID module)
 
 auto Modules::mockThatAnswersForSlow(ModuleID passingOn, const ModuleExportData& passedOn, MockOfModule ofPassingOn) const -> std::optional<AnswerOfMock>
 {
-    if (!m_numberOfMocksInPlace || passedOn.kind() == ModuleExportKind::Indirect)
+    if (!someMockIsSeen() || passedOn.kind() == ModuleExportKind::Indirect)
         return std::nullopt;
-    auto seesMockInPlaceOf = [&](ModuleID mocked) {
-        if (ofPassingOn == MockOfModule::IsReadPast && (mocked == passingOn || moduleWithExportsOf(mocked) == passingOn))
-            return false;
-        return mockInPlace(mocked) && seesMockOf(mocked, passingOn);
+    BitVector modulesWithMock = m_modulesWithMockInPlace;
+    for (ModuleID mocked : m_endedMocks.keys())
+        modulesWithMock.set(mocked.index());
+    auto mockSeenOf = [&](ModuleID mocked) -> JSObject* {
+        if (mocked != passingOn && moduleWithExportsOf(mocked) != passingOn)
+            return mockSeenBy(mocked, passingOn);
+        JSObject* standing = ofPassingOn == MockOfModule::IsReadPast ? nullptr : mockInPlace(mocked);
+        return standing && seesMockOf(mocked, passingOn) ? standing : nullptr;
     };
     auto mockedModuleFor = [&](ModuleID module) -> std::optional<ModuleID> {
-        for (size_t index : m_modulesWithMockInPlace) {
-            if ((ModuleID(index) == module || moduleWithExportsOf(ModuleID(index)) == module) && seesMockInPlaceOf(ModuleID(index)))
+        for (size_t index : modulesWithMock) {
+            if ((ModuleID(index) == module || moduleWithExportsOf(ModuleID(index)) == module) && mockSeenOf(ModuleID(index)))
                 return ModuleID(index);
         }
         return std::nullopt;
@@ -1369,7 +1422,7 @@ auto Modules::mockThatAnswersForSlow(ModuleID passingOn, const ModuleExportData&
         if (!seen.add(static_cast<uint64_t>(asked.module.index()) << 32 | asked.name).isNewEntry)
             continue;
         if (std::optional<ModuleID> mocked = mockedModuleFor(asked.module)) {
-            AnswerOfMock answer { mockInPlace(*mocked), identifier(asked.name), *mocked };
+            AnswerOfMock answer { mockSeenOf(*mocked), identifier(asked.name), *mocked };
             if (!asked.isAskedByStar || !wasLeftOutByMock(asked.module, asked.name))
                 return answer;
             if (!mockThatLacksName)
@@ -1395,10 +1448,10 @@ auto Modules::mockThatAnswersForSlow(ModuleID passingOn, const ModuleExportData&
         return mockThatLacksName;
     if (passedOn.kind() != ModuleExportKind::Variable)
         return std::nullopt;
-    for (size_t index : m_modulesWithMockInPlace) {
-        if (!seesMockInPlaceOf(ModuleID(index)))
+    for (size_t index : modulesWithMock) {
+        JSObject* mock = mockSeenOf(ModuleID(index));
+        if (!mock)
             continue;
-        JSObject* mock = mockInPlace(ModuleID(index));
         for (const SyntheticExportData& entry : m_table.syntheticExports(moduleWithExportsOf(ModuleID(index)))) {
             if (entry.hasVariable && entry.variable == passedOn.variable)
                 return AnswerOfMock { mock, identifier(entry.name), ModuleID(index) };
@@ -1725,7 +1778,8 @@ bool Modules::willLeaveModuleAlone(ModuleID module, bool onlyIfLoadedInPreload, 
         return true;
     const ModuleData& moduleData = data(module);
     bool isFile = moduleData.kind == ModuleKind::CommonJs && !moduleData.isOfLibrary();
-    if ((!isFile && (!moduleData.isESModuleOfProgram() || moduleData.isFaceOfFile())) || !m_table.hasFilePath(module) || !m_table.wordOfMock(module))
+    bool isData = moduleData.kind == ModuleKind::Data && !moduleData.isOfLibrary();
+    if ((!isFile && !isData && (!moduleData.isESModuleOfProgram() || moduleData.isFaceOfFile())) || !m_table.hasFilePath(module) || !m_table.wordOfMock(module))
         return false;
     if (!hasRun(module) || isMocked(module) || mockInPlace(module) || isEvicted(module) || m_momentsOfLoads.isEmpty())
         return false;
@@ -2638,12 +2692,7 @@ JSPromise* Modules::import(ModuleID module, ModuleID referrer, JSValue options)
     RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
     if (!fetchParameters)
         return fetchParameters.error();
-    bool isLeft = false;
-    {
-        SetForScope listsWithoutAsking(m_listsWithoutAsking, true);
-        isLeft = isLeftToHost(module);
-    }
-    if (isLeft) [[unlikely]]
+    if (isLeftToHostAsFarAsIsKnown(module)) [[unlikely]]
         RELEASE_AND_RETURN(scope, importUncompiled(keyWithoutForm(fileOf(module)), referrer, WTF::move(*fetchParameters)));
     if (hostAnswersInPlaceOf(module, LoadByName::Import)) [[unlikely]] {
         Identifier key;
@@ -3099,6 +3148,8 @@ JSPromise* Modules::startImport(ModuleID module, std::optional<int64_t> referrer
     auto promiseForCaller = [&] {
         return promiseOfCaller ? promiseOfCaller : JSPromise::create(*m_instance.vm, realm->promiseStructure());
     };
+    runDataFileAgainForImport(module, caller == ImportCaller::Host ? ImportAnsweredBy::Loader : ImportAnsweredBy::Build);
+    RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
     if (isCommonJSFileOrFace(module)) {
         if (ModuleID file = fileOf(module); data(file).runsAgainAfterThrow() && !isAwaitedByImport(file)) [[unlikely]]
             ensureLoaded(file).isAwaitedByCallThatComesInLaterJob = status(file) == ModuleStatus::Evaluating || !m_instance.vm->synchronousModuleQueue();
@@ -3663,6 +3714,8 @@ JSPromise* Modules::importDynamic(JSValue specifier, JSValue options, ModuleID r
     std::optional<ModuleID> found = *fetchParameters ? findWithAttributes(key, fetchParameters->get()) : findByName(key);
     RETURN_IF_EXCEPTION(scope, importPromiseRejectedByLoader(realm, scope));
     if (found) {
+        runDataFileAgainForImport(*found, ImportAnsweredBy::Loader);
+        RETURN_IF_EXCEPTION(scope, importPromiseRejectedByLoader(realm, scope));
         willAnswerWithModule(realm, *found, LoadByName::Import);
         RETURN_IF_EXCEPTION(scope, importPromiseRejectedByLoader(realm, scope));
         RELEASE_AND_RETURN(scope, import(m_table.faceOfFile(*found).value_or(*found), referrer));
@@ -3788,6 +3841,7 @@ ModuleRecord* Modules::exposeRecord(ModuleID module, RecordHolder holder)
         record->retain();
     else if (!record->isRetained()) {
         record->setIsHeldByLoader(true);
+        noteThatGraphBegins(module);
         m_modulesWhoseRecordsLoaderHolds.append(module);
     }
     if (record->status() != CyclicModuleRecord::Status::New || !record->requestedModules().isEmpty())
@@ -5372,6 +5426,8 @@ AbstractModuleRecord* moduleRecord(JSGlobalObject* realm, ModuleID module)
             modules->didImportFileFromUncompiledCode(module);
         RELEASE_AND_RETURN(scope, modules->recordOfCommonJSFile(module, Modules::LoadOfFile::IsRequested));
     }
+    modules->runDataFileAgainForImport(module, Modules::ImportAnsweredBy::Loader);
+    RETURN_IF_EXCEPTION(scope, nullptr);
     if (!modules->isAskingHost() || modules->isStatementAskingHost())
         modules->didImportFromUncompiledCode(module, isFirstAskedForByImport);
     RELEASE_AND_RETURN(scope, modules->exposeRecord(module, modules->isAskingHost() ? Modules::RecordHolder::Loader : Modules::RecordHolder::Anyone));

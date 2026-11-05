@@ -36,11 +36,13 @@ public:
     bool isReady() const { return m_worker.has_value(); }
 
     const Program& program() const { return m_inputs->walk.program; }
+    const Facts& facts() const { return m_inputs->walk.facts; }
     const Arrivals& arrivals() const { return m_inputs->walk.arrivals; }
     const Plan& plan() const { return m_inputs->walk.plan; }
     Walker& walker() { return m_worker->walker(); }
     TypeArena& types() { return walker().types(); }
     CodeTextContext textContext() { return { program(), types() }; }
+    CodeTextContext contextOfVerifier() { return { program(), types(), &plan(), &facts() }; }
 
 private:
     StagedBuild m_stage;
@@ -132,7 +134,7 @@ static void runVerifyCodeCommand(TestCommandContext& context)
     if (!readCodeOfSection(context, walks, code))
         return;
     InternalErrorKind kindOfBrokenRule { InternalErrorKind::Unknown };
-    String brokenRule = verifyCode(CodeTextContext { walks.program(), walks.types(), &walks.plan() }, code, &kindOfBrokenRule);
+    String brokenRule = verifyCode(walks.contextOfVerifier(), code, &kindOfBrokenRule);
     if (brokenRule.isNull()) {
         kindOfBrokenRule = InternalErrorKind::TypeOutOfDate;
         brokenRule = verifyTypesOfCode(TypingContext { walks.program(), walks.types(), walks.walker().positions() }, walks.plan().conventions(), walks.arrivals(), code);
@@ -154,9 +156,17 @@ static void runSweepCodeCommand(TestCommandContext& context)
     if (!readCodeOfSection(context, walks, code))
         return;
     Sweep sweep;
-    SweepTotals totals = sweep.run(SweepInputs { walks.program(), walks.plan(), walks.types() }, code);
+    SweepTotals totals = sweep.run(SweepInputs { walks.program(), walks.facts(), walks.plan(), walks.types() }, code);
     printCode(context.out, walks.textContext(), code);
     context.out.println("# visits of operations: "_s, totals.operationsSwept);
+    if (!code.holdsFrameCells())
+        return;
+    InternalErrorKind kindOfBrokenRule { InternalErrorKind::Unknown };
+    String brokenRule = verifyFrameCellsOfSweptCode(walks.contextOfVerifier(), code, &kindOfBrokenRule);
+    if (brokenRule.isNull())
+        context.out.println("# cells of the frame: verified"_s);
+    else
+        context.out.println("# cells of the frame: "_s, nameOf(kindOfBrokenRule), ": "_s, brokenRule);
 }
 
 static void runWalkCommand(TestCommandContext& context)

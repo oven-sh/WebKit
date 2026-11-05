@@ -42,7 +42,6 @@ static void idReservesAbsentAndDeletedValues()
     checkReservedValuesOfEach<ValueID, BlockID>();
     checkReservedValuesOfEach<StringID, PropertyKeyID, FunctionID, LayoutID, VariableID, ModuleID, ModuleFailureID, TypeID, TypeSiteID, EvalScopeID, DataID, ExpectedResultID>();
     checkReservedValuesOfEach<LayoutSetID, CalleeSetID>();
-    checkReservedValuesOfEach<AccessSiteID, AllocationClassID>();
     checkReservedValuesOfEach<RegExpRecordID>();
     checkReservedValuesOfEach<FamilyID>();
     checkReservedValuesOfEach<EdgeID>();

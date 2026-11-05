@@ -47,7 +47,6 @@ Effects effectsOfLibraryFunctionBehindRow(const Walker& walker, const BuiltinOve
     if (program.builtins().has(BuiltinMark::MayTerminateProcess, row.builtin))
         effects.mayBeTerminated = true;
     effects.merge(declaredBoundOf(NamedEffectSet::Allocates));
-    addVariablesThatStandForFields(walker.plan(), effects);
     return effects;
 }
 

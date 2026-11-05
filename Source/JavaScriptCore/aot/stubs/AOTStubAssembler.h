@@ -143,7 +143,6 @@ public:
     const StubSignature& signature() const { return m_signature; }
     const StubOptions& options() const { return m_options; }
     const StubPolicy& bindingPolicy() const { return m_catalog.policy(); }
-    const StubCatalog& catalog() const { return m_catalog; }
     RelocationRecorder& relocations() { return m_relocations; }
 
     GPRReg operand(unsigned) const;
@@ -190,7 +189,6 @@ public:
     void exitOnMiss(Entry cachingOperation, const OperationCall&);
     void exitOnCannot(Entry finisher, const OperationCall&);
 
-    void callCode(CodeSymbol);
 
     void callStub(StubKey);
     void jumpToStub(StubKey target) { linkToStub(jump(), target); }
@@ -200,7 +198,6 @@ public:
     void returnStubAddress(StubKey);
     void loadLabelAddress(Label, GPRReg);
     void jumpThroughHandlerTable(BaseIndex tableEntry, std::span<const StubKey> handlers);
-    void callThroughHandlerTable(BaseIndex tableEntry, std::span<const StubKey> handlers);
 
     void align();
     void bindEntry(StubKey entry) { bindEntryAt(entry, label()); }

@@ -11,7 +11,6 @@ import type {
   ModelFeatureUse,
   ModelFunction,
   ModelHostCall,
-  ModelHostMethodCall,
   ModelHostObject,
   ModelHostRead,
   ModelHostUse,
@@ -20,7 +19,6 @@ import type {
   ModelModule,
   ModelModuleLoad,
   ModelName,
-  ModelNamedMemberCall,
   ModelNativeFunction,
   ModelOperand,
   ModelOverload,
@@ -912,30 +910,6 @@ function buildHostObjects(context: AttachmentContext): ModelHostObject[] {
   return objects.sort((left, right) => compareNames(left.cell, right.cell));
 }
 
-function buildNamedMemberCalls(context: AttachmentContext): ModelNamedMemberCall[] {
-  const { builder } = context;
-  return declarationsOf(builder, "NamedMemberCall")
-    .map(({ value: declared, source }) => ({
-      name: builder.internComponent(declared.name),
-      arguments: declared.arguments.map(value => resolveHostValue(context, value, source)),
-      source,
-    }))
-    .sort((left, right) => compareNames(left.name, right.name));
-}
-
-function buildHostMethodCalls(context: AttachmentContext): ModelHostMethodCall[] {
-  const { builder } = context;
-  return declarationsOf(builder, "HostMethodCall")
-    .flatMap(({ value: declared, source }) => {
-      const call = resolveHostCall(context, declared.call, source);
-      if (call === null) return [];
-      return [
-        { name: builder.internComponent(declared.name), cell: builder.internName(declared.cell, "Text"), call, source },
-      ];
-    })
-    .sort((left, right) => compareNames(left.name, right.name) || compareNames(left.cell, right.cell));
-}
-
 export function buildAttachments(builder: ModelBuilder, features: readonly TableFeature[], types: TypeInterner): void {
   const context: AttachmentContext = {
     builder,
@@ -954,8 +928,6 @@ export function buildAttachments(builder: ModelBuilder, features: readonly Table
   builder.boxedStubs = collectBoxedStubs(builder);
   builder.hostReads = buildHostReads(builder);
   builder.hostObjects = buildHostObjects(context);
-  builder.namedMemberCalls = buildNamedMemberCalls(context);
-  builder.hostMethodCalls = buildHostMethodCalls(context);
   builder.startup = buildStartup(context);
   classifyUnseenCode(builder);
 }

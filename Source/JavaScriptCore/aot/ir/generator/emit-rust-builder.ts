@@ -1,6 +1,6 @@
 import path from "node:path";
 import { indentation, lineWidth, rustMarker } from "./lines.ts";
-import type { Entry, Parameter } from "./model.ts";
+import type { Entry, Field, Parameter } from "./model.ts";
 import { entriesOf, wireFlagsOf, wireParametersOf } from "./model.ts";
 import { rustIdentifier, snakeCase } from "./names.ts";
 import type { EmitContext, OutputFile } from "./outputs.ts";
@@ -17,30 +17,44 @@ function paramType(parameter: Parameter): string {
   return (kind.tag === "Record" || kind.tag === "Variant") && holdsVector(kind) ? `&${type}` : type;
 }
 
+function isWrittenAsWords(field: Field): boolean {
+  const tag = field.kind.tag;
+  if (field.isOnePerList || (field.isOptional && (tag === "Enum" || tag === "External"))) return false;
+  return tag !== "Record" && tag !== "Variant" && tag !== "Span" && tag !== "List";
+}
+
+function fieldsOfFlatRecord(parameter: Parameter): readonly Field[] | null {
+  if (parameter.tag === "Operand" || parameter.kind.tag !== "Record" || parameter.isOptional) return null;
+  const fields = parameter.kind.record.wireFields;
+  return fields.every(isWrittenAsWords) ? fields : null;
+}
+
 function isSimple(parameter: Parameter): boolean {
   if (parameter.tag === "Operand") return !parameter.isVariadic;
+  if (fieldsOfFlatRecord(parameter) !== null) return true;
   return parameter.kind.tag !== "List" && parameter.kind.tag !== "Record" && parameter.kind.tag !== "Variant";
 }
 
 function simpleWords(parameter: Parameter): string[] {
   const name = rustIdentifier(parameter.name);
   if (parameter.tag === "Operand") return [parameter.isOptional ? `optional_id_to_word(${name})` : `${name}.to_word()`];
-  return toWords(parameter.kind, name, parameter.isOptional, false);
+  const fields = fieldsOfFlatRecord(parameter);
+  if (fields === null) return toWords(parameter.kind, name, parameter.isOptional, false);
+  return fields.flatMap(field => toWords(field.kind, `${name}.${rustIdentifier(field.name)}`, field.isOptional, false));
 }
 
 function push(parameter: Parameter): string[] {
   const name = rustIdentifier(parameter.name);
   if (isSimple(parameter)) return simpleWords(parameter).map(word => `words.push(${word});`);
   const pushCount = `words.push(${name}.len() as u32);`;
-  if (parameter.tag === "Operand") return [pushCount, `words.extend(${name}.iter().map(|operand| operand.to_word()));`];
+  if (parameter.tag === "Operand") return [pushCount, `for operand in ${name} { words.push(operand.to_word()); }`];
   const kind = parameter.kind;
   if (kind.tag !== "List") return [`${name}.append_to(&mut words);`];
   if (kind.element.tag === "Record" || kind.element.tag === "Variant") {
     return [pushCount, `for element in ${name} { element.append_to(&mut words); }`];
   }
   const elementWords = toWords(kind.element, "element", false, false);
-  if (elementWords.length === 1 && elementWords[0] === "element")
-    return [pushCount, `words.extend_from_slice(${name});`];
+
   return [pushCount, `for &element in ${name} { ${elementWords.map(word => `words.push(${word});`).join(" ")} }`];
 }
 

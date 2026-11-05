@@ -90,8 +90,6 @@ struct FunctionEffects {
 
 struct LocationFacts {
     InitializationState initialization { InitializationState::Unknown };
-    ReadState reads { ReadState::Unknown };
-    ClosureDeferral deferral { ClosureDeferral::Unknown };
 };
 
 struct VariableFacts {

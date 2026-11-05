@@ -2,7 +2,8 @@
 # The name `f` is bound to the function for good. The property of the object is not: what it holds is what the stores bring. And the object is in the variable before its block has stored anything:
 # the scan follows the allocation as it follows a record's, so neither field counts as filled by the construction.
 # RUN: link fields layouts variables mechanisms=all
-# CHECK: field L0.0 "f" proven=f1|f2
+# CHECK: field L0.0 "f"
+# CHECK-NOT: proven=f1
 # CHECK: field L0.1 "late"
 # CHECK: layout L0 changes=[] stays-with-compiled-code
 # CHECK: variable g0 proven=undefined|L0

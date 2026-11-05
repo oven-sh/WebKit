@@ -69,6 +69,7 @@ public:
     std::optional<CellPointer> tryAllocateCopyOfFields(const ValueContext& allocation, const MentionedAllocation&, ValueID copy, const ScopedLambda<CellPointer()>& allocateEmpty);
     bool tryCallMethodByName(const ValueContext& call);
     bool isPatternLeftToCall(ValueID pattern) const { return m_readLeftToCall && m_readLeftToCall->pattern == pattern; }
+    bool methodMayBeUnread(ValueID read) const { return m_methodsThatMayBeUnread.get(read.index()); }
     static PutMode putModeOf(ECMAMode mode) { return forMode(mode, PutMode::Strict, PutMode::Sloppy); }
 
 private:
@@ -92,6 +93,7 @@ private:
     std::optional<StoreOfKnownField> findStoreOfKnownField(const Type& receiver, PropertyKeyID, PutMode);
     void putNamedProperty(const ValueContext&, Boxed object, PutMode);
     Boxed getNamedProperty(const ValueContext&);
+    std::optional<Boxed> lookWhetherReceiverIsAsMadeInPlaceOfRead(const ValueContext&);
     bool isReadOfMethodCalledNext(const ValueContext& read);
     ValueID findPatternLeftToCall(const ValueContext& read);
     void returnWhatMethodOfBuiltinClassGives(const ValueContext& read);
@@ -134,6 +136,7 @@ private:
         ValueID pattern;
     };
     std::optional<ReadLeftToCall> m_readLeftToCall;
+    BitVector m_methodsThatMayBeUnread;
     const bool m_functionComesAgain;
 };
 

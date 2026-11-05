@@ -77,6 +77,20 @@ static bool readsCalleeFromReceiver(const ValueContext& call)
     return false;
 }
 
+bool CallEmitter::isProvenReceiverOf(BuiltinBoxedStub method, const Type& receiver)
+{
+    std::optional<JSTypeRange> accepted = cellTypesOfReceiversOf(method);
+    if (!accepted || !receiver.isJavaScriptValue() || receiver.isNever())
+        return false;
+    if (receiver.hasOnlyPrimitives(Primitive::AnyString))
+        return accepted->contains(StringType);
+    const ClassPart* onlyClass = receiver.isObject() ? singleBuiltinClassOf(types(), receiver) : nullptr;
+    if (!onlyClass)
+        return false;
+    const BuiltinClass& builtinClass = m_program.builtins().at(onlyClass->builtinClass);
+    return builtinClass.instanceTest == BuiltinInstanceTest::JSTypeEquals && accepted->contains(builtinClass.type);
+}
+
 std::optional<ThrowSite> CallEmitter::siteThatNamesCallee(const ValueContext& value)
 {
     StringID name = value->calleeName();
@@ -320,14 +334,17 @@ Boxed CallEmitter::callValue(const OperationContext& context, const ValueCall& c
 
     ConventionCall conventionCall { .callee = call.callee.value(), .thisValue = call.thisValue.value(), .arguments = values.span() };
     LValue countOperand = nullptr;
-    if (call.lentArguments) {
+    if (call.methodMayBeUnread) {
+        RELEASE_ASSERT(call.methodOfBuiltinClass && !call.lentArguments && positionOf(context) == CallPosition::Ordinary);
+        conventionCall.stub = callMethodThatMayBeUnread(*call.methodOfBuiltinClass, static_cast<unsigned>(values.size()));
+    } else if (call.lentArguments) {
         RELEASE_ASSERT(values.size() <= numberOfArgumentGPRs && !(call.lentArguments >> values.size()));
-        conventionCall.stub = callValueLending(static_cast<unsigned>(values.size()), call.lentArguments, positionOf(context, options));
-    } else if (call.methodOfBuiltinClass && positionOf(context, options) == CallPosition::Ordinary && servesCallsByName(*call.methodOfBuiltinClass, static_cast<unsigned>(values.size()))) {
-        conventionCall.stub = callMethodOfBuiltinClassByValue(*call.methodOfBuiltinClass, static_cast<unsigned>(values.size()));
+        conventionCall.stub = callValueLending(static_cast<unsigned>(values.size()), call.lentArguments, positionOf(context));
+    } else if (call.methodOfBuiltinClass && positionOf(context) == CallPosition::Ordinary && servesCallsByName(*call.methodOfBuiltinClass, static_cast<unsigned>(values.size()))) {
+        conventionCall.stub = call.receiverIsProvenOfBuiltinClass ? callMethodOfProvenBuiltinClassByValue(*call.methodOfBuiltinClass, static_cast<unsigned>(values.size())) : callMethodOfBuiltinClassByValue(*call.methodOfBuiltinClass, static_cast<unsigned>(values.size()));
     } else {
         chooseStubThatCallsValue(conventionCall, countOperand, call.calleeIsCell);
-        conventionCall.stub = conventionCall.stub.withForm(static_cast<uint8_t>(positionOf(context, options)));
+        conventionCall.stub = conventionCall.stub.withForm(static_cast<uint8_t>(positionOf(context)));
     }
     return callByConvention(context, conventionCall, options);
 }
@@ -362,9 +379,11 @@ void CallEmitter::generateCall(const ValueContext& value)
     Vector<Boxed, 8> arguments = boxedOperands(value->argumentsOperands());
     ValueCall call { in<Boxed>(callee), thisOrUndefined(value->thisValueOperand()), arguments.span() };
     call.calleeIsCell = type.isObject();
-    call.lentArguments = argumentsLentBy(m_program, generator().facts(), m_code, value.value());
+    call.lentArguments = argumentsLentBy(m_code, value.value());
     if (value->methodOfReceiverAsMade() && value->thisValueOperand())
         call.methodOfBuiltinClass = m_program.builtins().boxedCallStubOf(value->methodOfReceiverAsMade());
+    call.receiverIsProvenOfBuiltinClass = call.methodOfBuiltinClass && isProvenReceiverOf(*call.methodOfBuiltinClass, typeOf(value->thisValueOperand()));
+    call.methodMayBeUnread = emitter<AccessEmitter>().methodMayBeUnread(callee);
     if (value.returnCall()) {
         tailCallValue(value, call);
         return;

@@ -10,13 +10,17 @@
 
 #include "AOTBuiltinIDs.h"
 #include "AOTBuiltinTable.h"
+#include "AOTClosureWord.h"
+#include "AOTConvention.h"
 #include "AOTEffectsDeclared.h"
 #include "AOTHeldOperands.h"
 #include "AOTIRProgram.h"
+#include "AOTLinkTables.h"
 #include "AOTOperandKinds.h"
 #include "AOTPlan.h"
 #include "AOTRepresentation.h"
 #include "AOTRepresentationRules.h"
+#include "AOTSweep.h"
 #include "AOTTypeArena.h"
 #include <algorithm>
 #include <utility>
@@ -47,6 +51,7 @@ public:
     }
 
     TypeID environmentField(TypeLevel, LayoutID, uint32_t) const final { return { }; }
+    bool environmentLiesAmongVariables(LayoutID layout) const final { return m_plan && m_plan->promotedEnvironments().isPromoted(layout); }
     TypeID slot(TypeLevel, LayoutID layout, uint32_t field) const final
     {
         if (!m_plan)
@@ -80,9 +85,13 @@ public:
     CodeVerifier(const CodeTextContext&, const Code&);
 
     String run();
+    String runOnFrameCellsAlone();
     InternalErrorKind kindOfFailure() const { return m_kindOfFailure; }
 
 private:
+    using Stage = void (CodeVerifier::*)();
+    String run(std::span<const Stage>);
+
     static constexpr uint32_t notListed = UINT32_MAX;
     static constexpr uint32_t notReached = UINT32_MAX;
 
@@ -131,6 +140,9 @@ private:
     void verifyPointerIntoStorage(BlockID, ValueID access, ValueID pointer, Opcode readOfPointer, ValueID owner);
     void verifyFramePointersTakenBy(BlockID, ValueID, const Operation&);
     void verifyFramePointersTakenByEnd(BlockID, const Terminator&);
+    void verifyMakerOfClosure(BlockID, ValueID, const Operation&);
+    void verifyClosuresOfFrameTakenBy(BlockID, ValueID, const Operation&);
+    void verifyEnvironmentsHeldByClosuresOfFrame(BlockID);
 
     template<typename Record> void collectOperands(BlockID, uint32_t place, ValueID user, const Record&, ValueID ownedValueItMayUse);
     template<typename Record> void verifyFormsOfOperands(BlockID, ValueID, const Record&);
@@ -160,10 +172,14 @@ private:
     void collectCellsThatArriveUnder(ValueID name, Vector<ValueID, 4>& cells) const;
     bool mayPointIntoFrame(ValueID id) const { return m_mayPointIntoFrame.quickGet(id.index()); }
     bool handsBackPointerIntoFrame(const Operation&) const;
+    bool isClosureOfFrame(ValueID name) const;
+    bool onlyCallsWhatArrivesAt(FunctionID function, uint32_t entryParameter) const { return m_facts && m_facts->linked().onlyCallsWhatArrivesAt(function, entryParameter); }
+    LayoutID layoutOfEnvironment(ValueID) const;
 
     const Program& m_program;
     TypeArena& m_types;
     const Plan* m_plan;
+    const Facts* m_facts;
     const Code& m_code;
     PositionsOfCodeVerifier m_positions;
     TypingContext m_typing;
@@ -173,6 +189,7 @@ private:
     Vector<uint32_t> m_places;
     BitVector m_isOwnedByEnd;
     BitVector m_mayPointIntoFrame;
+    BitVector m_namesOfClosuresTaken;
     Vector<uint32_t> m_firstOperation;
     Vector<uint32_t> m_placeOfFirstThrow;
     Vector<uint32_t> m_firstIncomingEdge;
@@ -194,6 +211,7 @@ CodeVerifier::CodeVerifier(const CodeTextContext& context, const Code& code)
     : m_program(context.program)
     , m_types(context.types)
     , m_plan(context.plan)
+    , m_facts(context.facts)
     , m_code(code)
     , m_positions(context.program, context.plan)
     , m_typing { context.program, context.types, m_positions, TypeLevel::Proven }
@@ -202,7 +220,6 @@ CodeVerifier::CodeVerifier(const CodeTextContext& context, const Code& code)
 
 String CodeVerifier::run()
 {
-    using Stage = void (CodeVerifier::*)();
     static constexpr Stage stages[] = {
         &CodeVerifier::listRecords,
         &CodeVerifier::verifyEdges,
@@ -217,6 +234,23 @@ String CodeVerifier::run()
         &CodeVerifier::verifyNarrowedValues,
         &CodeVerifier::verifyFrameCells,
     };
+    return run(stages);
+}
+
+String CodeVerifier::runOnFrameCellsAlone()
+{
+    static constexpr Stage stages[] = {
+        &CodeVerifier::listRecords,
+        &CodeVerifier::verifyEntries,
+        &CodeVerifier::orderNodes,
+        &CodeVerifier::listIncomingEdges,
+        &CodeVerifier::verifyFrameCells,
+    };
+    return run(stages);
+}
+
+String CodeVerifier::run(std::span<const Stage> stages)
+{
     for (Stage stage : stages) {
         (this->*stage)();
         if (hasFailed())
@@ -1200,9 +1234,7 @@ void CodeVerifier::verifyFramePointersTakenByEnd(BlockID block, const Terminator
     switch (end.kind) {
     case TerminatorKind::ReturnCall:
         m_code.at(end.callOperand()).forEachChild([&](ValueID operand) {
-            const Operation& made = m_code.at(cellBeforeForwarding(operand));
-            bool isMovedOutOfFrame = m_code.at(end.callOperand()).opcode == Opcode::Call && made.opcode == Opcode::NewClosure && made.isLent();
-            if (mayPointIntoFrame(operand) && !isMovedOutOfFrame)
+            if (mayPointIntoFrame(operand))
                 fail(block, end.callOperand(), "a cell of the frame is an operand of a tail call"_s, operand);
         });
         [[fallthrough]];
@@ -1221,6 +1253,10 @@ void CodeVerifier::verifyFramePointersTakenByEnd(BlockID block, const Terminator
     case TerminatorKind::Unreachable:
     case TerminatorKind::TryCallInline:
     case TerminatorKind::TestAndBranch:
+        end.forEachChild([&](ValueID operand) {
+            if (mayPointIntoFrame(operand) && isClosureOfFrame(operand))
+                fail(block, { }, "a closure of the frame is read by the end of a block"_s, operand);
+        });
         return;
     }
     end.forEachChild([&](ValueID operand) {
@@ -1229,22 +1265,142 @@ void CodeVerifier::verifyFramePointersTakenByEnd(BlockID block, const Terminator
     });
 }
 
+bool CodeVerifier::isClosureOfFrame(ValueID name) const
+{
+    const Operation& made = m_code.at(cellBehindNames(name));
+    return made.opcode == Opcode::NewClosure && isFrameCell(made);
+}
+
+LayoutID CodeVerifier::layoutOfEnvironment(ValueID id) const
+{
+    TypeID type = m_code.at(id).type;
+    if (!type || holdsOnlyPrimitives(type))
+        return { };
+    return m_types.at(type).environment;
+}
+
+void CodeVerifier::verifyMakerOfClosure(BlockID block, ValueID id, const Operation& made)
+{
+    if (isFrameCell(made) != (made.loan() != LoanOfClosure::None))
+        return fail(block, id, "where a closure lies and who borrows it do not agree"_s);
+    if (!isFrameCell(made))
+        return;
+    if (made.closureForm() != ClosureForm::Slim && made.closureForm() != ClosureForm::Full)
+        return fail(block, id, "a closure of the frame has a form that has no cell of its own"_s);
+    if (m_program.at(made.function()).calleeParameterIndex())
+        return fail(block, id, "a closure that its own function names lies in the frame"_s);
+    bool isCoroutine = m_program.at(m_code.function()).isCoroutine();
+    if (isBodyOfCoroutine(m_code.role(), isCoroutine) || (isCoroutine && walksInputBody(m_code.role())))
+        return fail(block, id, "a closure lies in the frame of a coroutine"_s, { }, InternalErrorKind::InvalidSuspension);
+}
+
+void CodeVerifier::verifyClosuresOfFrameTakenBy(BlockID block, ValueID id, const Operation& taker)
+{
+    uint32_t numberOfNamedOperands = taker.numberOfNamedOperands();
+    for (uint32_t operandIndex = 0; operandIndex < taker.numberOfOperands(); ++operandIndex) {
+        ValueID name = taker.operand(operandIndex);
+        if (!name || !mayPointIntoFrame(name) || !isClosureOfFrame(name))
+            continue;
+        ValueID closure = cellBehindNames(name);
+        const Operation& made = m_code.at(closure);
+        if (m_namesOfClosuresTaken.quickSet(name.index()))
+            return fail(block, id, "a closure of the frame is taken twice"_s, name);
+        if (m_code.blockOf(closure) != block)
+            return fail(block, id, "a closure of the frame is taken outside the block that makes it"_s, name);
+        if (!operandIndex && opcodesThatGiveSameCell.contains(taker.opcode))
+            continue;
+
+        bool isArgument = operandIndex >= numberOfNamedOperands;
+        uint32_t position = isArgument ? operandIndex - numberOfNamedOperands : 0;
+        switch (taker.opcode) {
+        case Opcode::CallDirect:
+            if (made.loan() != LoanOfClosure::ToFunctionEntered || !returnsResultOfFunction(taker.role()) || taker.numberOfBoundArguments() || !onlyCallsWhatArrivesAt(taker.function(), position))
+                return fail(block, id, "a closure of the frame is handed to a function that may do more than call it"_s, name);
+            break;
+        case Opcode::Call: {
+            bool isLookedAtByStub = isArgument && position < ClosureWord::numberOfBorrowedArguments && taker.numberOfVariadicOperands() <= numberOfArgumentGPRs;
+            if (BuiltinID method = taker.methodOfReceiverAsMade(); method && isLookedAtByStub)
+                isLookedAtByStub = !position && m_facts && stubOfMethodEntersFunctionsThatOnlyCallFirstArgument(m_program, *m_facts, method);
+            if (made.loan() != LoanOfClosure::LeftToStubOfCall || made.closureForm() != ClosureForm::Slim || !isLookedAtByStub)
+                return fail(block, id, "a closure of the frame is handed to a call whose stub does not look at it"_s, name);
+            break;
+        }
+        case Opcode::NewClosure:
+            if (made.loan() != LoanOfClosure::ToFunctionEntered || !onlyCallsWhatArrivesAt(taker.function(), position))
+                return fail(block, id, "a closure of the frame is captured by a closure that may do more than call it"_s, name);
+            break;
+        default:
+            return fail(block, id, "a closure of the frame is taken by what is neither a call nor a closure of the frame"_s, name);
+        }
+    }
+}
+
+void CodeVerifier::verifyEnvironmentsHeldByClosuresOfFrame(BlockID block)
+{
+    Vector<ValueID, 4> closuresThatAwaitTheirCalls;
+    auto noteTaken = [&](ValueID name) {
+        Vector<ValueID, 4> taken { cellBehindNames(name) };
+        while (!taken.isEmpty()) {
+            ValueID closure = taken.takeLast();
+            if (!closuresThatAwaitTheirCalls.removeFirst(closure))
+                continue;
+            m_code.at(closure).forEachChild([&](ValueID capture) {
+                taken.append(cellBehindNames(capture));
+            });
+        }
+    };
+    for (ValueID id : operationsOf(block)) {
+        const Operation& operation = m_code.at(id);
+        if (operation.opcode == Opcode::NewClosure) {
+            if (isFrameCell(operation))
+                closuresThatAwaitTheirCalls.append(id);
+            continue;
+        }
+        if (closuresThatAwaitTheirCalls.isEmpty())
+            continue;
+        if (handsOperandsToCallee(operation.opcode)) {
+            operation.forEachChild(noteTaken);
+            continue;
+        }
+        if (operation.opcode != Opcode::ReleaseEnvironment || (m_code.isSwept() && !m_code.marksOf(id).contains(SweepMark::ReleasesOperand)))
+            continue;
+        LayoutID handedBack = layoutOfEnvironment(operation.environmentOperand());
+        for (ValueID closure : closuresThatAwaitTheirCalls) {
+            m_code.at(closure).forEachChild([&](ValueID capture) {
+                if (handedBack && layoutOfEnvironment(capture) == handedBack)
+                    fail(block, id, "the environment that a closure of the frame holds is handed back in front of the call that takes the closure"_s, closure);
+            });
+        }
+        if (hasFailed())
+            return;
+    }
+}
+
 void CodeVerifier::verifyFrameCells()
 {
     m_mayPointIntoFrame.ensureSize(m_code.numberOfValues());
     bool hasFrameCells = false;
+    bool hasClosuresOfFrame = false;
     bool hasFlatStrings = false;
     for (BlockID block : m_reachedBlocks) {
         for (ValueID id : operationsOf(block)) {
-            hasFlatStrings |= m_code.at(id).opcode == Opcode::FlattenString;
-            if (!isFrameCell(m_code.at(id)))
+            const Operation& operation = m_code.at(id);
+            hasFlatStrings |= operation.opcode == Opcode::FlattenString;
+            if (operation.opcode == Opcode::NewClosure) {
+                verifyMakerOfClosure(block, id, operation);
+                if (hasFailed())
+                    return;
+            }
+            if (!isFrameCell(operation))
                 continue;
             m_mayPointIntoFrame.quickSet(id.index());
             hasFrameCells = true;
+            hasClosuresOfFrame |= operation.opcode == Opcode::NewClosure;
         }
     }
     if (!hasFrameCells && !hasFlatStrings)
         return;
+    m_namesOfClosuresTaken.ensureSize(m_code.numberOfValues());
 
     for (bool hasChanged = true; hasChanged;) {
         hasChanged = false;
@@ -1269,17 +1425,29 @@ void CodeVerifier::verifyFrameCells()
     for (BlockID block : m_reachedBlocks) {
         for (ValueID id : operationsOf(block)) {
             verifyFramePointersTakenBy(block, id, m_code.at(id));
+            if (hasClosuresOfFrame && !hasFailed())
+                verifyClosuresOfFrameTakenBy(block, id, m_code.at(id));
             if (hasFailed())
                 return;
         }
         verifyFramePointersTakenByEnd(block, m_code.at(block).terminator);
+        if (ValueID subject = m_code.at(block).subject; subject && mayPointIntoFrame(subject) && isClosureOfFrame(subject))
+            fail(block, { }, "a closure of the frame is read by the end of a block"_s, subject);
+        if (hasClosuresOfFrame && !hasFailed())
+            verifyEnvironmentsHeldByClosuresOfFrame(block);
         if (hasFailed())
             return;
     }
 
     for (BlockID block : m_reachedBlocks) {
         m_code.forEachEdgeOf(block, [&](EdgeID, const Edge& edge) {
-            for (ValueID argument : edge.arguments()) {
+            std::span<const ValueID> arguments = edge.arguments();
+            std::span<const ValueID> parameters = m_code.at(edge.to).parameters();
+            for (size_t index = 0; index < arguments.size(); ++index) {
+                ValueID argument = arguments[index];
+                bool isRead = !m_code.isSwept() || index >= parameters.size() || m_code.isNeeded(parameters[index]);
+                if (isRead && mayPointIntoFrame(argument) && isClosureOfFrame(argument))
+                    fail(block, { }, "a closure of the frame is an argument of an edge"_s, argument);
                 const Operation& made = m_code.at(cellBeforeForwarding(argument));
                 if (made.opcode != Opcode::NewObject || made.storage() != AllocationStorage::Frame || !m_program.at(made.layout()).isEnvironment())
                     continue;
@@ -1381,6 +1549,16 @@ String verifyCode(const CodeTextContext& context, const Code& code, InternalErro
 {
     CodeVerifier verifier(context, code);
     String brokenRule = verifier.run();
+    if (kindOfBrokenRule)
+        *kindOfBrokenRule = verifier.kindOfFailure();
+    return brokenRule;
+}
+
+String verifyFrameCellsOfSweptCode(const CodeTextContext& context, const Code& code, InternalErrorKind* kindOfBrokenRule)
+{
+    RELEASE_ASSERT(code.isSwept());
+    CodeVerifier verifier(context, code);
+    String brokenRule = verifier.runOnFrameCellsAlone();
     if (kindOfBrokenRule)
         *kindOfBrokenRule = verifier.kindOfFailure();
     return brokenRule;

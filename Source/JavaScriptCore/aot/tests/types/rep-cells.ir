@@ -1,29 +1,29 @@
 # A type of cells only is a Cell, one marker alone needs no bits, every other mix is a JSValue
 # The wire has no list of symbols: t22 is an argument, and L2 is there for its key alone.
 # RUN: rep symbol("p")@m0:10
-# CHECK: t0: rep Void slot JSValue cells no
-# CHECK-NEXT: t1: rep Void slot JSValue cells no
-# CHECK-NEXT: t2: rep JSValue slot JSValue cells yes
-# CHECK-NEXT: t3: rep Cell slot Cell cells yes
-# CHECK-NEXT: t4: rep JSValue slot JSValue cells yes
-# CHECK-NEXT: t5: rep Cell slot Cell cells yes
-# CHECK-NEXT: t6: rep JSValue slot JSValue cells yes
-# CHECK-NEXT: t7: rep Cell slot Cell cells yes
-# CHECK-NEXT: t8: rep Cell slot Cell cells yes
-# CHECK-NEXT: t9: rep Cell slot Cell cells yes
-# CHECK-NEXT: t10: rep Cell slot Cell cells yes
-# CHECK-NEXT: t11: rep JSValue slot JSValue cells yes
-# CHECK-NEXT: t12: rep Cell slot Cell cells yes
-# CHECK-NEXT: t13: rep Cell slot Cell cells yes
-# CHECK-NEXT: t14: rep Cell slot Cell cells yes
-# CHECK-NEXT: t15: rep Cell slot Cell cells yes
-# CHECK-NEXT: t16: rep JSValue slot JSValue cells yes
-# CHECK-NEXT: t17: rep Void slot JSValue cells no
-# CHECK-NEXT: t18: rep Void slot JSValue cells no
-# CHECK-NEXT: t19: rep JSValue slot JSValue cells yes
-# CHECK-NEXT: t20: rep Cell slot Cell cells yes
-# CHECK-NEXT: t21: rep Cell slot Cell cells yes
-# CHECK-NEXT: t22: rep Cell slot Cell cells yes
+# CHECK: t0: rep Void cells no
+# CHECK-NEXT: t1: rep Void cells no
+# CHECK-NEXT: t2: rep JSValue cells yes
+# CHECK-NEXT: t3: rep Cell cells yes
+# CHECK-NEXT: t4: rep JSValue cells yes
+# CHECK-NEXT: t5: rep Cell cells yes
+# CHECK-NEXT: t6: rep JSValue cells yes
+# CHECK-NEXT: t7: rep Cell cells yes
+# CHECK-NEXT: t8: rep Cell cells yes
+# CHECK-NEXT: t9: rep Cell cells yes
+# CHECK-NEXT: t10: rep Cell cells yes
+# CHECK-NEXT: t11: rep JSValue cells yes
+# CHECK-NEXT: t12: rep Cell cells yes
+# CHECK-NEXT: t13: rep Cell cells yes
+# CHECK-NEXT: t14: rep Cell cells yes
+# CHECK-NEXT: t15: rep Cell cells yes
+# CHECK-NEXT: t16: rep JSValue cells yes
+# CHECK-NEXT: t17: rep Void cells no
+# CHECK-NEXT: t18: rep Void cells no
+# CHECK-NEXT: t19: rep JSValue cells yes
+# CHECK-NEXT: t20: rep Cell cells yes
+# CHECK-NEXT: t21: rep Cell cells yes
+# CHECK-NEXT: t22: rep Cell cells yes
 # CHECK: laws hold
 
 module m0 path="main.js" displayPath="main.js"

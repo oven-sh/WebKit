@@ -2285,7 +2285,6 @@ static void testMachineFrameWayWithoutFrameReturnsInPlaceOfJump()
 
 } // namespace Machine
 
-static constexpr ASCIILiteral argumentLiesInReturnRegister = isARM64() ? "machine/AOTMachineAllocator*.cpp: a way that returns at once takes the register of an argument that other ways read: the argument is stored ahead of the guards, so the frame covers the whole function, and a Phi that is returned gets another register"_s : ASCIILiteral();
 
 std::span<const NativeTest> machineFrameTests()
 {
@@ -2323,7 +2322,7 @@ std::span<const NativeTest> machineFrameTests()
         { "machine/frame/block-of-a-rare-region-does-not-read-what-its-sibling-saved"_s, Machine::testMachineFrameBlockOfRareRegionDoesNotReadWhatItsSiblingSaved },
         { "machine/frame/head-stands-where-every-way-on-calls"_s, Machine::testMachineFrameHeadStandsWhereEveryWayOnCalls },
         { "machine/frame/way-that-leaves-it-tears-it-down"_s, Machine::testMachineFrameIsTornDownWhereWayLeavesFramedPart },
-        { "machine/frame/way-without-it-returns-in-place-of-a-jump"_s, Machine::testMachineFrameWayWithoutFrameReturnsInPlaceOfJump, argumentLiesInReturnRegister },
+        { "machine/frame/way-without-it-returns-in-place-of-a-jump"_s, Machine::testMachineFrameWayWithoutFrameReturnsInPlaceOfJump },
     };
     return tests;
 }

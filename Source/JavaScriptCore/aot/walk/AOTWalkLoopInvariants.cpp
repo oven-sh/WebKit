@@ -12,8 +12,10 @@
 #include "AOTIRProgram.h"
 #include "AOTLinkTables.h"
 #include "AOTOpcodeSets.h"
+#include "AOTPlan.h"
 #include "AOTRepresentationRules.h"
 #include "AOTResultRules.h"
+#include "AOTWalkListReadsInLoops.h"
 #include <algorithm>
 #include <optional>
 #include <wtf/IterationStatus.h>
@@ -84,7 +86,7 @@ std::optional<Effects> effectsOfTypedFormAhead(Walker& walker, const BodyValue& 
     walker.takeFormAskedAhead();
     TypedForm typedForm = typedFormOf(walker, operation, types);
     bool isBuiltBehindLooks = !isByKey && walker.looksTakeFormsBehindLooksAsBuilt() && typedForm != TypedForm::None && typedForm != TypedForm::BuiltAsCall && typedForm != TypedForm::BuiltOnObjectAsMade;
-    if (typedForm != TypedForm::Built && !isBuiltBehindLooks)
+    if (typedForm != TypedForm::Built && !isBuiltBehindLooks && !(typedForm == TypedForm::BuiltOnObjectAsMade && readsLengthOfViewTestedInFrontOfLoop(walker, operation)))
         return std::nullopt;
     Walker::FormAskedAhead form = walker.takeFormAskedAhead();
     if (form.opcode == Opcode::CallDirect) {
@@ -354,7 +356,7 @@ std::optional<uint32_t> Walker::findLoopToBuildInFrontOf(const Draft& draft, con
         return std::nullopt;
     if ((draft.opcode == Opcode::GetModuleVariable || draft.opcode == Opcode::GetEnvironmentField) && draft.followsItsStore())
         return std::nullopt;
-    if (draft.opcode == Opcode::GetModuleVariable && isVariableFilledAtFirstRead(plan(), draft.variable()))
+    if (draft.opcode == Opcode::GetModuleVariable && (isVariableFilledAtFirstRead(plan(), draft.variable()) || plan().promotedEnvironments().find(draft.variable())))
         return std::nullopt;
     for (Reference operand : draft.operands()) {
         if (operand && (!operand.isRecord() || typeOf(operand) != ownTypeOf(operand)))
@@ -413,6 +415,22 @@ Reference Walker::buildInFrontOfOpenLoop(uint32_t indexOfLoop, Draft&& draft, co
     Reference built = build(WTF::move(draft), foundByCaller);
     m_block = m_hasFailed ? BlockID() : inside;
     return built;
+}
+
+void Walker::buildCheckThatTestHolds(Reference test, ProofSource source, Origin origin)
+{
+    TypeID holds = TypeArena::fromPrimitives(Primitive::True);
+    uint32_t numberOfLoops = std::min<uint32_t>(m_openLoops.size(), m_numberOfLoopsThatMayBeLeft);
+    for (uint32_t index = 0; index < numberOfLoops && !isUnreachable(); ++index) {
+        BlockID inFront = m_openLoops[index].blockInFront;
+        if (!inFront || m_code.at(inFront).hasEnded() || !standsInFrontOfLoop(index, test))
+            continue;
+        SetForScope blockInFront(m_block, inFront);
+        SetForScope loopsThatMayBeLeft(m_numberOfLoopsThatMayBeLeft, index);
+        buildCheckOfProof(test, holds, TypeTable::boolean, source, origin);
+        return;
+    }
+    buildCheckOfProof(test, holds, TypeTable::boolean, source, origin);
 }
 
 std::optional<uint32_t> Walker::outermostLoopToMakeTextInFrontOf(std::span<const Reference> operands, const Effects& ofText) const

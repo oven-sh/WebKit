@@ -83,7 +83,7 @@ public:
         row.numberOfFields = static_cast<uint32_t>(fieldsInOrderOfMembers.size());
         m_fields.append(fieldsInOrderOfMembers);
         row.firstKeyWord = static_cast<uint32_t>(m_keyWords.size());
-        row.allocation = m_inputs.plan.allocation(m_inputs.program, layout, Typed::AllocationClassID(), fieldsInOrderOfMembers);
+        row.allocation = m_inputs.plan.allocation(m_inputs.program, layout, fieldsInOrderOfMembers);
         if (row.allocation) {
             m_mentionsOfOneRow.mentions.shrink(0);
             m_mentionsOfOneRow.mentionWords.shrink(0);

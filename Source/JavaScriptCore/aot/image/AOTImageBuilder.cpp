@@ -852,7 +852,7 @@ BuiltImage buildImage(ImageInputs&& inputs, BuildContext& context)
             StepTimes steps(context, nameOfLaneSteps);
             StubOptions stubOptions = inputs.stubCatalog.options();
             stubOptions.maxNameInFieldTable = numbers.identifiers().countWithFieldTableColumn() - 1;
-            StubPolicy stubPolicy = stubPolicyOf(inputs.plan.slots());
+            StubPolicy stubPolicy;
             stubPolicy.shapesFitHalfword = inputs.plan.shapes().numberOfShapes() <= 1u << 16;
             const StubCatalog stubCatalogOfImage(stubOptions, WTF::move(stubPolicy));
             steps.didFinish("create stub catalog"_s);

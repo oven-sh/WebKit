@@ -344,7 +344,24 @@ static ClassPartsID classPartsWidenedForFamilies(TypeArena& arena, const Familie
     return hasChanged ? arena.internClassParts(parts.span()) : classes;
 }
 
-TypeID widenedToFamily(TypeArena& arena, const Families& families, TypeID type)
+static constexpr size_t mostLayoutsOfSetForFamilies = 4;
+
+static LayoutSetID withFamiliesOfMembersThatShareOneForFamilies(TypeArena& arena, const Families& families, LayoutSetID set)
+{
+    Vector<LayoutID, mostLayoutsOfSetForFamilies> members;
+    arena.at(set).forEach([&](LayoutID member) {
+        members.append(member);
+    });
+    for (size_t first = 0; first < members.size(); ++first) {
+        for (size_t second = first + 1; second < members.size(); ++second) {
+            if (FamilyID family = families.nearestCommonFamily(members[first], members[second]))
+                set = arena.layoutSets().unionOf(set, families.layoutsOf(family));
+        }
+    }
+    return set;
+}
+
+TypeID widenedToFamily(TypeArena& arena, const Families& families, TypeID type, SetsThatNoFamilyHolds sets)
 {
     ASSERT(type);
     if (holdsOnlyPrimitives(type))
@@ -384,8 +401,12 @@ TypeID widenedToFamily(TypeArena& arena, const Families& families, TypeID type)
     if (!parts.anyObject && parts.unnamedLayouts && !holdsOneMember(parts.unnamedLayouts) && !families.familyOf(parts.unnamedLayouts)) {
         if (FamilyID family = families.smallestFamilyHolding(arena, parts.unnamedLayouts))
             parts.unnamedLayouts = families.layoutsOf(family);
-        else
+        else if (sets == SetsThatNoFamilyHolds::BecomeAnyObject || arena.at(parts.unnamedLayouts).size() > mostLayoutsOfSetForFamilies)
             parts.anyObject = true;
+        else {
+            parts.unnamedLayouts = withFamiliesOfMembersThatShareOneForFamilies(arena, families, parts.unnamedLayouts);
+            parts.anyObject = arena.at(parts.unnamedLayouts).size() > mostLayoutsOfSetForFamilies;
+        }
     }
     if (!parts.anyObject)
         parts.unnamedClasses = classPartsWidenedForFamilies(arena, families, parts.unnamedClasses);
@@ -435,6 +456,8 @@ static void widenLayoutsOfBothSidesForFamilies(TypeArena& arena, const Families&
         common = families.nearestCommonFamily(familyOfSecond, onlyLayoutOfFirst);
     else
         common = families.nearestCommonFamily(onlyLayoutOfFirst, onlyLayoutOfSecond);
+    if (!common && arena.at(layoutsOfFirst).size() + arena.at(layoutsOfSecond).size() <= mostLayoutsOfSetForFamilies)
+        return;
 
     first = withLayoutsOfFamilyForFamilies(arena, families, first, recordOfFirst, common);
     if (common)

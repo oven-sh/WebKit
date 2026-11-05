@@ -49,6 +49,7 @@ interface ReferenceInRecord {
 
 const variableSizeMarker = 0xff;
 const maxCasesPerTable = 256;
+const markOfFlagsWordInCase = 128;
 const notOnWire: Lines = ["RELEASE_ASSERT_NOT_REACHED();"];
 
 const helpers = `static_assert(Wire::none == absentPayloadWord);
@@ -513,41 +514,38 @@ function walkersOf(schema: Schema): Walker[] {
   ];
 }
 
-function fieldsReadBy(body: Lines, entry: Entry, receiver: string): string[] {
-  if (!body.some(line => /\b(fields|word)\b/.test(line))) return [];
-  const hasFlagsWord = wireFlagsOf(entry).length > 0;
-  const fieldsOfValue = hasFlagsWord ? "fieldWordsBehindFlagsWord" : "fieldWordsBehindHead";
-  return [
-    `BodyFields fields = ${receiver}${entry.isTerminator ? "fieldWords" : fieldsOfValue}();`,
-    "[[maybe_unused]] auto word = [&fields](uint32_t offset) { return fields.word(offset); };",
-  ];
-}
-
 function defineWalker(cursor: Cursor, walker: Walker): string[] {
   const { className, enumName, tag } = cursor;
+  const isValue = className === "BodyValue";
   const receiver = walker.isMember ? "" : `${cursor.parameter}.`;
-  const walked = cursor.entries.map(entry => {
-    const body = entry.isWire ? walker.bodyOf(entry) : notOnWire;
-    return { entry, body: [...fieldsReadBy(body, entry, receiver), ...body] };
-  });
+  const walked = cursor.entries.map(entry => ({ entry, body: entry.isWire ? walker.bodyOf(entry) : notOnWire }));
   const groups = [...Map.groupBy(walked, ({ body }) => body.join("\n")).values()];
-  if (groups.length > maxCasesPerTable) {
-    throw new Error(`${walker.name} of ${className} has more cases than a byte can number`);
+  if (groups.length > (isValue ? markOfFlagsWordInCase : maxCasesPerTable)) {
+    throw new Error(`${walker.name} of ${className} has more cases than its table can number`);
   }
   const caseOf = `caseOf${walker.name}Of${className}`;
+  const markOf = (entry: Entry) => (isValue && entry.isWire && wireFlagsOf(entry).length > 0 ? markOfFlagsWordInCase : 0);
   const cases = groups.flatMap((group, index) =>
-    group.map(({ entry }) => ({ label: entry.name, value: String(index) })),
+    group.map(({ entry }) => ({ label: entry.name, value: String(index + markOf(entry)) })),
   );
   const signature = `uint8_t ${caseOf}(${enumName} ${tag})`;
-  const guard =
-    className === "BodyValue" ? [`if (${receiver}isParameter())`, ...indent([walker.answerForParameter])] : [];
+  const caseInTable = `CaseTable<${enumName}, ${caseOf}>::at(${receiver}${tag}())`;
+  const head = isValue
+    ? [
+        `if (${receiver}isParameter())`,
+        ...indent([walker.answerForParameter]),
+        `uint8_t caseWithMark = ${caseInTable};`,
+        `BodyFields fields = ${receiver}wordsBehindHead(caseWithMark / ${markOfFlagsWordInCase});`,
+      ]
+    : [`BodyFields fields = ${receiver}fieldWords();`];
   return blocks(constexprSwitch({ signature, subject: tag, enumName, cases, defaultValue: "most common" }), [
     ...walker.head(cursor),
     "{",
     ...indent([
-      ...guard,
-      `switch (CaseTable<${enumName}, ${caseOf}>::at(${receiver}${tag}())) {`,
-      ...groups.flatMap((group, index) => [`case ${index}: {`, ...indent(group[0].body), "}"]),
+      ...head,
+      "[[maybe_unused]] auto word = [&fields](uint32_t offset) { return fields.word(offset); };",
+      `switch (${isValue ? `caseWithMark % ${markOfFlagsWordInCase}` : caseInTable}) {`,
+      ...groups.flatMap((group, index) => [`case ${index}:`, ...indent(group[0].body)]),
       "default:",
       ...indent(["WTF_UNREACHABLE();"]),
       "}",

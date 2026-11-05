@@ -30,6 +30,7 @@ namespace Typed {
 
 class Facts;
 class Program;
+struct PromotedEnvironments;
 
 enum class StackCheck : uint8_t { Required, CoveredByCallers };
 
@@ -144,12 +145,14 @@ public:
         return m_parts.typesBehindGuards[convention.firstTypeBehindGuard + entryParameter];
     }
     JS_EXPORT_PRIVATE void setParameterGuards(std::span<const ParameterGuardPlan>);
+    JS_EXPORT_PRIVATE void setModuleStarts(const Program&, const BitVector& bodiesWithModuleStart);
+    JS_EXPORT_PRIVATE void setRemovedCaptures(const Program&, const PromotedEnvironments&);
     CodeUnit closureEntryOf(FunctionID id) const { return { id, CodeRole::GenericCallEntry }; }
     template<typename Call>
     CodeUnit unitEnteredBy(const Call& call) const { return { call.function(), call.role(), static_cast<uint16_t>(call.numberOfBoundArguments()) }; }
 
     bool hasFusedCallEntry(FunctionID id) const { return m_functionsWithFusedCallEntry.get(id.index()); }
-    JS_EXPORT_PRIVATE void fuseCallEntriesThatOnlyMove(const Program&, const ParallelLoops&);
+    JS_EXPORT_PRIVATE void fuseCallEntriesThatOnlyMove(const Program&, const Facts&, const ParallelLoops&);
     bool holdsFusedCallEntry(CodeUnit unit) const { return hasFusedCallEntry(unit.function) && unit == genericEntry(closureEntryOf(unit.function)).target; }
     bool haveNeighboringClosureNumbers(FunctionID lower, FunctionID higher) const
     {
@@ -262,7 +265,7 @@ private:
 
 JS_EXPORT_PRIVATE std::optional<Vector<CallEntryMove, 8>> planCallEntryMoves(const Program&, const CallingConventions&, FunctionID);
 
-JS_EXPORT_PRIVATE CallingConventions computeCallingConventions(const Program&, const Facts&, const BitVector& bodiesWithModuleStart, const BitVector& layoutsMadeAsCompiledObjects);
+JS_EXPORT_PRIVATE CallingConventions computeCallingConventions(const Program&, const Facts&, const BitVector& layoutsMadeAsCompiledObjects, const ParallelLoops&);
 
 } } } // namespace JSC::AOT::Typed
 

@@ -32,11 +32,11 @@ v(AllocateInstanceOutOfLine, InternalEntry, (), NoAxis, 0, 0, AllISAs, NoISA, No
 v(AllocateExtension, CalledByCode, (), CountAxis, 1, 16, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(ObjectFields, AllocatorState) | writes(ObjectFields, AllocatorState), AllocateExtension)
 v(AllocateExtensionSlow, InternalEntry, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, NoEffects, AllocateExtensionSlow)
 v(NewTypedArray, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, reads(AllocatorState) | writes(AllocatorState), NewTypedArray)
-v(NewDictionary, CalledByCode, (), CountAxis | SlowPathRecurs, 0, 13, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(AllocatorState) | writes(AllocatorState), NewDictionary)
+v(NewDictionary, CalledByCode, (), SlowPathRecurs, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(AllocatorState) | writes(AllocatorState), NewDictionary)
 
 v(NewClosure, CalledByCode, (), CountAxis | OperandRegisterAxis | SlowPathRecurs, 0, ClosureRequest::maxNumberOfCaptures, AllISAs, NoISA, FewAlternateResults, Never, MayCall, ClobbersOnlyScratch, reads(AllocatorState) | writes(AllocatorState), NewClosure)
 v(NewSlimClosure, CalledByCode, (Plain, Async), FormAxis | CountAxis | OperandRegisterAxis | SlowPathRecurs, 0, ClosureRequest::maxSlimClosureCaptures, AllISAs, NoISA, FewAlternateResults, Never, MayCall, ClobbersOnlyScratch, reads(AllocatorState) | writes(AllocatorState), NewSlimClosure)
-v(NewSlimClosureInFrame, CalledByCode, (Plain, Async), FormAxis | CountAxis, 0, ClosureRequest::maxSlimClosureCaptures, AllISAs, NoISA, NoChoice, Never, Leaf, ClobbersOnlyScratch, reads(AllocatorState) | writes(AllocatorState), NewSlimClosureInFrame)
+v(NewSlimClosureInFrame, CalledByCode, (Plain, Async), FormAxis | CountAxis, 0, ClosureRequest::maxSlimClosureCaptures, AllISAs, NoISA, NoChoice, Never, Leaf, ClobbersOnlyScratch, writes(ShapeWords), NewSlimClosureInFrame)
 v(MakeClosureOfField, CalledByCode, (Plain, Async), FormAxis | CountAxis, 0, 2, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(AllocatorState, RuntimeState, ObjectFields) | writes(AllocatorState, ObjectFields), MakeClosureOfField)
 v(ClosureOfTable, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(RuntimeState, AllocatorState) | writes(RuntimeState, AllocatorState), ClosureOfTable)
 
@@ -147,6 +147,9 @@ v(CallMethodOfBuiltinClassAtSite, CalledByCode, AOT_FORMS_OF_BOXED_CALLS, FormAx
 v(CallMethodOfBuiltinClassWithSharedPattern, CalledByCode, AOT_FORMS_OF_BOXED_CALLS, FormAxis | CountAxis, 0, 4, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, CallMethodOfBuiltinClassWithSharedPattern)
 v(CallMethodOfBuiltinClassAtSiteWithSharedPattern, CalledByCode, AOT_FORMS_OF_BOXED_CALLS, FormAxis | CountAxis, 0, 4, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, CallMethodOfBuiltinClassWithSharedPattern)
 v(CallMethodOfBuiltinClassByValue, CalledByCode, AOT_FORMS_OF_BOXED_CALLS, FormAxis | CountAxis, 0, 4, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, CallMethodOfBuiltinClassByValue)
+v(CallMethodOfProvenBuiltinClass, CalledByCode, AOT_FORMS_OF_BOXED_CALLS, FormAxis | CountAxis, 0, 4, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, CallMethodOfBuiltinClass)
+v(CallMethodOfProvenBuiltinClassByValue, CalledByCode, AOT_FORMS_OF_BOXED_CALLS, FormAxis | CountAxis, 0, 4, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, CallMethodOfBuiltinClassByValue)
+v(CallMethodThatMayBeUnread, CalledByCode, AOT_FORMS_OF_BOXED_CALLS, FormAxis | CountAxis, 0, 4, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, CallMethodThatMayBeUnread)
 #undef AOT_FORMS_OF_BOXED_CALLS
 v(CallCompiledMethodOfArray, CalledByCode, (At, Every, Filter, Find, FindIndex, FindLast, FindLastIndex, FlatMap, ForEach, Map, Reduce, ReduceRight, Some), FormAxis | CountAxis, 0, 4, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, CallCompiledMethodOfArray)
 v(CallCompiledMethodOfArrayLending, CalledByCode, (At, Every, Filter, Find, FindIndex, FindLast, FindLastIndex, FlatMap, ForEach, Map, Reduce, ReduceRight, Some), FormAxis | CountAxis, 1, 4, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, CallCompiledMethodOfArrayLending)

@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuiltinTableRealm.h"
 #include "AOTPrimitives.h"
 #include "AOTSort.h"
 #include "AOTTypeRelations.h"
@@ -149,6 +150,12 @@ bool isClosedKey(const Program& program, BuiltinID holder, PropertyKeyID key)
 bool isLockedLocation(const Program& program, BuiltinID holder, PropertyKeyID key)
 {
     return MembersUnderKey(program, key).isLockedLocation(holder);
+}
+
+Opcode opcodeOfFirstReadOffHolder(const BuiltinTable& table, BuiltinID location)
+{
+    bool runsCodeOfLibrary = isMadeWithCodeOfLibrary(table, location) && BuiltinCellKey::value(table.canonicalID(location)).hasCell(table);
+    return runsCodeOfLibrary ? Opcode::GetWatchedBuiltinValue : Opcode::InitializeBuiltin;
 }
 
 bool standsForFirstReadOffHolder(const BuiltinTable& table, BuiltinID written, bool isNotReadFromHolder)

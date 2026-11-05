@@ -118,7 +118,6 @@ public:
 
         m_codeBlock.at<void*>(Yarr::YarrCodeBlock::offsetOf8BitCode()) = tagCFunctionPtr<void*, Yarr8BitPtrTag>(runMatchingCodeScript);
         regExp.at<void*>(RegExp::offsetOfRegExpJITCode()) = m_codeBlock.bytes.data();
-        regExp.at<void*>(RegExp::offsetOfOvector() + FixedVector<int>::offsetOfStorage()) = m_ownVector.bytes.data();
         reset({ }, jsNumber(0));
     }
 
@@ -136,7 +135,6 @@ public:
         recorded<uint8_t>(cachedResult + RegExpCachedResult::offsetOfReified()) = 1;
         recorded<uint8_t>(cachedResult + RegExpCachedResult::offsetOfOneCharacterMatch()) = 1;
         outputOfVM.fill(-2);
-        std::ranges::fill(outputOfRegExp(), -2);
         script = { };
     }
 
@@ -153,7 +151,6 @@ public:
     template<typename T> T& recorded(ptrdiff_t offset) { return m_globalObject->at<T>(offset); }
     uint64_t addressOfGlobalObject() const { return m_globalObject->address(); }
     uint64_t lastIndex() { return regExpObject.at<uint64_t>(RegExpObject::offsetOfLastIndex()); }
-    std::span<int> outputOfRegExp() { return { &m_ownVector.at<int>(FixedVector<int>::Storage::offsetOfData()), 2 * (maxGroupsInTests + 1) }; }
 
     bool hasRecorded(const FakeSubject& subject, uint64_t start, uint64_t end)
     {
@@ -183,7 +180,6 @@ public:
 private:
     std::unique_ptr<FakeObject<sizeof(JSGlobalObject)>> m_globalObject;
     FakeObject<sizeof(Yarr::YarrCodeBlock)> m_codeBlock;
-    FakeObject<FixedVector<int>::Storage::offsetOfData() + 2 * (maxGroupsInTests + 1) * sizeof(int)> m_ownVector;
     FakeObject<CompleteSubspace::offsetOfAllocatorForSizeStep() + 16 * sizeof(void*)> m_auxiliarySpace;
     std::array<uint64_t, maxSingleCharacterString + 1> m_singleCharacterStrings;
 };

@@ -892,7 +892,7 @@ LValue appendBaseOfOperationTestAddress(Output& out, const OperationTestAddress&
         index = out.zeroExtPtr(out.castToInt32(indexBits));
         break;
     case IndexExtension::SignExtend32:
-        index = out.signExt32ToPtr(out.castToInt32(indexBits));
+        index = out.signExt32To64(out.castToInt32(indexBits));
         break;
     }
     return out.add(base, address.shift ? out.shl(index, address.shift) : index);
@@ -1686,6 +1686,50 @@ static void testMachineOperationsOnSumThatIsMadeNumberWhereItOverflows()
     }
 }
 
+static void testMachineOperationsOnLowHalfOfSumThatIsExtendedWithoutCode()
+{
+    constexpr uint64_t tag = 0xfffe000000000000ull;
+    for (Opcode opcode : { Add, Sub }) {
+        for (EdgeClass classOfFailingEdge : { EdgeClass::Normal, EdgeClass::Unlikely, EdgeClass::Rare }) {
+            OperationTestProcedure test;
+            Output& out = test.out();
+            LValue left = out.signExt32To64(out.castToInt32(test.argumentGPR(0)));
+            LValue right = out.signExt32To64(out.castToInt32(test.argumentGPR(1)));
+            LValue sum = out.binary(opcode, left, right);
+            LValue low = out.castToInt32(sum);
+            LBasicBlock tests = out.m_block;
+            LBasicBlock fits = out.newBlock();
+            LBasicBlock overflows = out.newBlock();
+            LBasicBlock join = out.newBlock();
+            out.branch(out.equal(out.signExt32To64(low), sum), normalEdge(fits), Edge(overflows, classOfFailingEdge));
+
+            out.appendTo(fits);
+            LValue extended = out.zeroExtPtr(low);
+            ValueFromBlock whenItFits = out.anchor(out.add(extended, out.constInt64(static_cast<int64_t>(tag))));
+            out.jump(join);
+            out.appendTo(overflows);
+            ValueFromBlock whenItOverflows = out.anchor(sum);
+            out.jump(join);
+            out.appendTo(join);
+            out.ret(out.phi(Int64, whenItFits, whenItOverflows));
+            compileOrFail(test);
+
+            checkOperationTest(test.procedure().liveness().goesByOverflow(tests->last()), test, opcode, " whose low half is extended goes by overflow");
+            checkOperationTest(extended->opcode() == ZExt32 && isFreeInRegisterOfChild(test.procedure().liveness(), extended), test, opcode, ": the extension of its low half takes code");
+            for (uint64_t a : operationTestInt32s) {
+                for (uint64_t b : operationTestInt32s) {
+                    int64_t x = static_cast<int32_t>(a);
+                    int64_t y = static_cast<int32_t>(b);
+                    int64_t whole = opcode == Add ? x + y : x - y;
+                    uint64_t expected = whole == static_cast<int32_t>(whole) ? static_cast<uint32_t>(whole) + tag : static_cast<uint64_t>(whole);
+                    uint64_t returned = test.call<uint64_t>(operationTestWithDirtAbove(a, sizeof(uint32_t)), operationTestWithDirtAbove(b, sizeof(uint32_t)));
+                    checkOperationTest(returned == expected, test, opcode, " of (", x, ", ", y, "), its low half extended, gave ", RawHex(returned));
+                }
+            }
+        }
+    }
+}
+
 static std::span<const NativeTest> listOfMachineOperationTests()
 {
     static constexpr NativeTest tests[] = {
@@ -1709,6 +1753,7 @@ static std::span<const NativeTest> listOfMachineOperationTests()
         { "machine/operations/sums-tested-by-overflow/sum-that-goes-round-a-loop"_s, runOperationTestWhereCodeRuns<testMachineOperationsOnSumThatGoesRoundLoop> },
         { "machine/operations/sums-tested-by-overflow/spilled-sum-is-widened"_s, runOperationTestWhereCodeRuns<testMachineOperationsOnSpilledSumThatIsWidened> },
         { "machine/operations/sums-tested-by-overflow/sum-is-made-a-number-where-it-overflows"_s, runOperationTestWhereCodeRuns<testMachineOperationsOnSumThatIsMadeNumberWhereItOverflows> },
+        { "machine/operations/sums-tested-by-overflow/low-half-is-extended-without-code"_s, runOperationTestWhereCodeRuns<testMachineOperationsOnLowHalfOfSumThatIsExtendedWithoutCode> },
     };
     return tests;
 }

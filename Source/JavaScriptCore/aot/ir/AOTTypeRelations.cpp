@@ -170,7 +170,7 @@ static const RuntimeFunctionData* findTableRecordOfLibraryFunction(const Program
     return nullptr;
 }
 
-static bool hostUsesPutValueInto(const BuiltinTable& builtins, const BuiltinHostUses& uses, BuiltinID entry)
+bool hostUsesPutValueInto(const BuiltinTable& builtins, const BuiltinHostUses& uses, BuiltinID entry)
 {
     return std::ranges::any_of(uses.list, [&](const BuiltinHostUse& use) {
         if (use.use == BuiltinHostReadUse::IsValueOf)
