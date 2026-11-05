@@ -2335,21 +2335,27 @@ RegisterID* Unit::comprehension(Expr* node, ComprehensionKind kind, Seq<Comprehe
         Reg iterable = outermost->iter->is<NameExpr>() ? expr(outermost->iter) : expr(outermost->iter, iterator.get());
 
         VariableMap& variables = *m_variables.get(scope);
-        // Here CPython puts aside what variables of the same names hold.
-        for (auto& symbol : scope->symbols) {
-            if (auto it = variables.find(symbol.name->impl()); it != variables.end())
-                noteUse(it->value);
-        }
-        auto resetVariables = [&] {
-            for (auto& variable : variables.values()) {
-                g.move(variable.reg, emptyValue());
-                noteUnbound(variable);
+        // (In the order of the symbols. That of the table goes by addresses: the same source would not always give the same code.)
+        auto forEachVariable = [&](auto&& function) {
+            for (auto& symbol : scope->symbols) {
+                if (auto it = variables.find(symbol.name->impl()); it != variables.end())
+                    function(it->value);
             }
         };
-        for (auto& variable : variables.values()) {
+        // Here CPython puts aside what variables of the same names hold.
+        forEachVariable([&](Variable& variable) {
+            noteUse(variable);
+        });
+        auto resetVariables = [&] {
+            forEachVariable([&](Variable& variable) {
+                g.move(variable.reg, emptyValue());
+                noteUnbound(variable);
+            });
+        };
+        forEachVariable([&](Variable& variable) {
             if (variable.kind == Variable::Kind::Cell)
                 callRuntime(variable.reg, RuntimeFunction::MakeCell, { emptyValue() });
-        }
+        });
 
         // Its variables have no value once it is over, however it ends.
         std::optional<Try> guard;
