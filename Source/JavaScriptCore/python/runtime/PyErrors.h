@@ -30,6 +30,8 @@ ALWAYS_INLINE bool failed(Scope& scope, Result result)
 
 // raise type(message)
 JSValue raise(JSGlobalObject*, ThrowScope&, PyType*, const String& message);
+// The same for what tryMakeString() returned. Null: the message would be too long to be a str, which is a MemoryError.
+JSValue raiseUnlessTooLong(JSGlobalObject*, ThrowScope&, PyType*, String&& message);
 // raise type(*args)
 JSValue raiseWithArgs(JSGlobalObject*, ThrowScope&, PyType*, std::initializer_list<JSValue> args);
 // raise exception, an instance of BaseException
@@ -44,7 +46,7 @@ JSValue raiseExceptionThrownIntoGenerator(JSGlobalObject*, ThrowScope&, JSValue 
     inline JSValue raise##Name(JSGlobalObject* globalObject, ThrowScope& scope, const String& message) { return raise(globalObject, scope, runtime(globalObject).Name(), message); } \
     template<typename... Parts> \
     requires(sizeof...(Parts) > 1) \
-    JSValue raise##Name(JSGlobalObject* globalObject, ThrowScope& scope, Parts&&... parts) { return raise(globalObject, scope, runtime(globalObject).Name(), makeString(std::forward<Parts>(parts)...)); }
+    JSValue raise##Name(JSGlobalObject* globalObject, ThrowScope& scope, Parts&&... parts) { return raiseUnlessTooLong(globalObject, scope, runtime(globalObject).Name(), tryMakeString(std::forward<Parts>(parts)...)); }
 
 PY_DECLARE_RAISE(TypeError)
 PY_DECLARE_RAISE(ValueError)

@@ -132,6 +132,13 @@ JSValue raise(JSGlobalObject* globalObject, ThrowScope& scope, PyType* type, con
     return raiseNewException(globalObject, scope, exception);
 }
 
+JSValue raiseUnlessTooLong(JSGlobalObject* globalObject, ThrowScope& scope, PyType* type, String&& message)
+{
+    if (message.isNull()) [[unlikely]]
+        return raise(globalObject, scope, runtime(globalObject).MemoryError(), String());
+    return raise(globalObject, scope, type, message);
+}
+
 JSValue raiseWithArgs(JSGlobalObject* globalObject, ThrowScope& scope, PyType* type, std::initializer_list<JSValue> args)
 {
     PyException* exception = newException(globalObject, type, std::span<const JSValue> { args.begin(), args.size() });
