@@ -99,6 +99,10 @@ public:
         // A branch after which, if it does not jump, CPython has something more to do on the same line, which here the instruction has
         // done: a `for` loop stores the item, `except E:` drops the exception. That is where it is said to go on.
         static constexpr uint16_t goesOnInItself = 1 << 13;
+        // Nothing leads here but one way of a branch: it is here that the way is told of. See `leftIsToldOfAt`.
+        static constexpr uint16_t isWhereBranchFallsThrough = 1 << 12;
+        static constexpr uint16_t isWhereBranchJumps = 1 << 11;
+        static_assert(Event::instrumentedCount <= 11);
 
         unsigned offset { 0 };
         uint16_t kinds { 0 }; // 1 << event, for the events that are told of here.
@@ -106,8 +110,27 @@ public:
         unsigned next { 0 }; // The offset of the instruction that follows.
         unsigned target { 0 }; // A jump, or a branch: where it goes.
         unsigned shownTarget { 0 }; // A branch: where it is said to go. A call: what comes after it.
-        unsigned source { 0 }; // asyncForEndsMark: where the branch is said to be.
+        unsigned source { 0 }; // asyncForEndsMark: where the branch is said to be. isWhereBranchFallsThrough, isWhereBranchJumps: where it is.
+        // A branch. Which way it goes is known once it has gone, so to tell of it here is to take the branch in C++, every time, for as long as one of
+        // the ways is still wanted: and the way out of a loop is wanted until the loop ends. Where nothing else leads to where a way
+        // goes, it is told of there, and the branch is left as it is. (CPython has an instruction behind every branch for that.) 0: it is told of here.
+        unsigned leftIsToldOfAt { 0 };
+        unsigned rightIsToldOfAt { 0 };
         bool isPatched { false };
+        // isWhereBranchJumps: jumps lead here as well, as a `break` does to where the loop ends. They say so as they go (leadsWhereBranchJumps), for as
+        // long as the way of the branch is wanted: they are taken once where the branch is taken at every turn.
+        bool isAlsoJumpedTo { false };
+        bool leadsWhereBranchJumps { false };
+        // If nothing else is wanted here:
+        enum class ShortWay : uint8_t {
+            None,
+            // A branch that is told of here when it jumps, because more than jumps lead to where it jumps (`if` without `else` and with something behind it,
+            // `a and b`). It may never jump: the runtime takes the branch and that is all.
+            TakeBranch,
+            SayItIsAJump, // leadsWhereBranchJumps
+            ArriveByJump, // isAlsoJumpedTo, and that is how the frame got here.
+        };
+        ShortWay shortWay { ShortWay::None };
         // Whether the first of the lines is news depends on where the frame comes from: see findPoints().
         bool firstLineIsInDoubt { false };
         bool firstLineFollowsCatch { false }; // It is news unless the exception was raised on that line.
@@ -141,6 +164,7 @@ public:
     }
     // Changes whenever pointers to the places may have become invalid.
     unsigned generation() const { return m_generation; }
+    uint8_t toolsToTellOf(const LineStart&) const;
     std::span<LineStart> lineStartsOf(Point& point) { return m_lineStarts.mutableSpan().subspan(point.firstLineStart, point.lineStartCount); }
     // The line the instruction comes from. -1: none.
     int lineAt(unsigned offset) const;
@@ -168,6 +192,8 @@ public:
     // Makes the instructions what they are to be: the entrances of code that is asleep, the places in code that is awake.
     void update();
     void update(Point&);
+    // The same for a branch, with the places where its ways are told of.
+    void updateBranch(Point&);
     // After a tool has been added to LineStart::disabledTools.
     void didDisableLine(unsigned offset, const LineStart&);
     // What DISABLE switched off is on again.
@@ -292,10 +318,10 @@ public:
     Outcome handle(JSGlobalObject*, CallFrame*, const JSInstruction*);
     // True: it is worth calling these two.
     bool wantsExceptions() const { return m_wantsExceptions; }
-    void noteWhereItIsRaised(CallFrame* callFrame, int line)
+    void noteWhereItIsRaised(CallFrame* callFrame, unsigned offset)
     {
         m_raisedIn = callFrame;
-        m_raisedOnLine = line;
+        m_raisedAt = offset;
     }
     bool isRaisedIn(CallFrame* callFrame) const { return m_raisedIn == callFrame; }
     // With no exception pending. False: one is now.
@@ -325,6 +351,7 @@ private:
     enum class What : uint8_t { Call, Line, Return, Exception, Opcode, CCall, CReturn, CException };
 
     Outcome handle(JSGlobalObject*, CallFrame*, const JSInstruction*, CodeMonitor&, CodeMonitor::Point*);
+    Outcome takeBranch(JSGlobalObject*, CallFrame*, const JSInstruction*, CodeMonitor&, const CodeMonitor::Point&);
     JSArray* state() const { return asArray(m_runtime.slot(Runtime::Slot::Monitoring)); }
     JSValue nameOf(What what) { return m_namesOfWhat[static_cast<unsigned>(what)]; }
     void updateAll();
@@ -353,7 +380,7 @@ private:
     bool m_wantsExceptions { false };
     CallFrame* m_startIsToldOfIn { nullptr };
     CallFrame* m_raisedIn { nullptr };
-    int m_raisedOnLine { -1 };
+    unsigned m_raisedAt { 0 };
     // All code that has a CodeBlock has a monitor: so it is from the first time that something is wanted everywhere.
     bool m_knowsAllCode { false };
     unsigned m_monitorsWithLocalTools { 0 };
@@ -368,6 +395,11 @@ private:
         CallFrame* callFrame { nullptr };
         unsigned offset { 0 };
     } m_comesFromSameLine;
+    // It got there by a jump: see Point::leadsWhereBranchJumps.
+    struct {
+        CallFrame* callFrame { nullptr };
+        unsigned offset { 0 };
+    } m_arrivesByJump;
     std::array<JSValue, 8> m_namesOfWhat { }; // What trace and profile functions are told has happened. state() keeps them.
     unsigned m_tracingThreads { 0 };
     unsigned m_profilingThreads { 0 };

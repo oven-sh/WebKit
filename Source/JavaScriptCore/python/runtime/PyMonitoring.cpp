@@ -455,6 +455,14 @@ void CodeMonitor::findPointsWithoutTellingTheCollector(bool everyInstruction)
         bool isReachedFromSameLineOnlyByJumps { true };
         bool isNewsUnlessToldOtherwise { false };
         bool isJumpedTo { false }; // By anything but a `for` loop that ends.
+        unsigned jumpsHere { 0 }; // How many jumps and branches lead here,
+        unsigned branchesHere { 0 }; // how many of them are branches,
+        unsigned firstJumpHereFrom { std::numeric_limits<unsigned>::max() }; // where the jumps are,
+        unsigned lastJumpHereFrom { 0 };
+        bool isFallenInto { false }; // and whether what comes before it leads here too.
+        // Not 0: only a way of the branch there does.
+        unsigned branchThatLeadsHere { 0 };
+        bool branchJumpsHere { false };
         bool isResumedAt { false };
         bool isHiddenJump { false };
         uint8_t asyncForMark { 0 };
@@ -594,8 +602,11 @@ void CodeMonitor::findPointsWithoutTellingTheCollector(bool everyInstruction)
             items[i].isReachedFromSameLineOnlyByJumps = false;
         }
         const Item& item = items[i];
-        if (item.fallsThrough)
+        if (item.fallsThrough) {
             reach(i + 1, item, false);
+            if (i + 1 < items.size())
+                items[i + 1].isFallenInto = true;
+        }
         bool isResumption = isGeneratorBody && item.opcode == op_switch_imm && item.offset < start;
         extractStoredJumpTargetsForInstruction(code, instructions.at(item.offset), [&](int32_t relative) {
             auto it = indexOfOffset.find(item.offset + relative);
@@ -607,6 +618,12 @@ void CodeMonitor::findPointsWithoutTellingTheCollector(bool everyInstruction)
                     items[it->value].isResumedAt = true;
                 return;
             }
+            ++items[it->value].jumpsHere;
+            if (isJump(item.opcode)) {
+                items[it->value].firstJumpHereFrom = std::min(items[it->value].firstJumpHereFrom, item.offset);
+                items[it->value].lastJumpHereFrom = std::max(items[it->value].lastJumpHereFrom, item.offset);
+            } else
+                ++items[it->value].branchesHere;
             items[it->value].isJumpedTo |= item.opcode != op_py_for_iter;
             if (relative > 0 && !item.isHiddenJump)
                 items[it->value].lastJumpForwardFrom = std::max(items[it->value].lastJumpForwardFrom, item.offset);
@@ -719,6 +736,11 @@ void CodeMonitor::findPointsWithoutTellingTheCollector(bool everyInstruction)
         point.next = item.offset + instructions.at(item.offset)->size();
         if (item.offset == start)
             point.kinds |= bit(Event::PyStart);
+        if (item.branchThatLeadsHere) {
+            point.kinds |= item.branchJumpsHere ? Point::isWhereBranchJumps : Point::isWhereBranchFallsThrough;
+            point.source = item.branchThatLeadsHere;
+            point.isAlsoJumpedTo = item.jumpsHere > item.branchJumpsHere;
+        }
         if (everyInstruction && !item.isHiddenJump && item.offset >= start)
             point.kinds |= bit(Event::Instruction);
 
@@ -774,6 +796,8 @@ void CodeMonitor::findPointsWithoutTellingTheCollector(bool everyInstruction)
                 point.kinds |= bit(Event::Jump);
             point.target = targetOfJump(code, item.offset);
             noteTarget(point, item, point.target);
+            if (auto it = indexOfOffset.find(point.target); it != indexOfOffset.end())
+                point.leadsWhereBranchJumps = items[it->value].branchJumpsHere;
             break;
         default:
             // Whether it was resumed to go on, or to raise something, is not a branch of the program's.
@@ -788,6 +812,25 @@ void CodeMonitor::findPointsWithoutTellingTheCollector(bool everyInstruction)
                     point.shownTarget = whereItEndsUp(point.target);
                     noteTarget(point, item, point.target);
                 });
+                // See Point::leftIsToldOfAt. (What is behind this in the code has not been looked at yet.)
+                auto canTellOfWay = [&](const Item& other) {
+                    return !other.isResumedAt && other.opcode != op_py_catch && !other.asyncForMark && !other.branchThatLeadsHere;
+                };
+                unsigned index = &item - items.begin();
+                if (Item* next = index + 1 < items.size() ? &items[index + 1] : nullptr; next && !(point.kinds & Point::goesOnInItself) && !next->jumpsHere && canTellOfWay(*next)) {
+                    next->branchThatLeadsHere = item.offset;
+                    point.leftIsToldOfAt = next->offset;
+                }
+                if (auto it = indexOfOffset.find(point.target); it != indexOfOffset.end() && it->value > index) {
+                    Item& target = items[it->value];
+                    // `break`: jumps may lead there as well, if they are between here and there. See Point::leadsWhereBranchJumps.
+                    bool jumpsAreBetween = target.jumpsHere == 1 || (target.firstJumpHereFrom > item.offset && target.lastJumpHereFrom < target.offset);
+                    if (target.branchesHere == 1 && jumpsAreBetween && !target.isFallenInto && canTellOfWay(target)) {
+                        target.branchThatLeadsHere = item.offset;
+                        target.branchJumpsHere = true;
+                        point.rightIsToldOfAt = target.offset;
+                    }
+                }
             }
             break;
         }
@@ -825,7 +868,7 @@ void CodeMonitor::findPointsWithoutTellingTheCollector(bool everyInstruction)
                 point.kinds |= bit(Event::Line);
         }
 
-        if (point.kinds || point.lineStartOfTarget != noLineStart || (!jumpsFromSameLine.isEmpty() && jumpsFromSameLine.last().first == item.offset)) {
+        if (point.kinds || point.leadsWhereBranchJumps || point.lineStartOfTarget != noLineStart || (!jumpsFromSameLine.isEmpty() && jumpsFromSameLine.last().first == item.offset)) {
             m_points.append(point);
             if (m_points.size() > std::numeric_limits<uint16_t>::max())
                 m_indexOfPointAt.clear();
@@ -843,12 +886,61 @@ void CodeMonitor::findPointsWithoutTellingTheCollector(bool everyInstruction)
     }
 }
 
+// Of code that is written on the line of its `def` or `lambda`, only a trace function is told that the line begins, unless somebody is told
+// that the code starts (fireLineStart()). So nobody else ever gets to say DISABLE there.
+uint8_t CodeMonitor::toolsToTellOf(const LineStart& start) const
+{
+    uint8_t wanted = tools(Event::Line) & ~start.disabledTools;
+    if (start.isOnLineOfDefinition && !tools(Event::PyStart))
+        wanted &= 1 << traceTool;
+    return wanted;
+}
+
+static constexpr uint16_t bothWays = bit(Event::BranchLeft) | bit(Event::BranchRight);
+
+static ALWAYS_INLINE bool isToldOfElsewhere(const CodeMonitor::Point& point, unsigned event)
+{
+    return (event == Event::BranchLeft && point.leftIsToldOfAt) || (event == Event::BranchRight && point.rightIsToldOfAt);
+}
+
 uint8_t CodeMonitor::toolsWantedAt(Point& point)
 {
+    auto toldWhereItJumps = [&](const Point& arrival) -> uint8_t {
+        return tools(Event::BranchRight) & ~pointAt(arrival.source)->disabledTools[Event::BranchRight];
+    };
     uint8_t wanted = 0;
+    // What there is a short way for, if nothing else is wanted here.
+    uint8_t wantedOnShortWay = 0;
+    auto shortWay = Point::ShortWay::None;
+    bool isBranch = (point.kinds & bothWays) == bothWays;
     for (unsigned event = 0; event < Event::instrumentedCount; ++event) {
-        if (event != Event::Line && point.kinds & bit(event))
-            wanted |= tools(event) & ~point.disabledTools[event];
+        if (event == Event::Line || !(point.kinds & bit(event)) || isToldOfElsewhere(point, event))
+            continue;
+        uint8_t toldOfEvent = tools(event) & ~point.disabledTools[event];
+        if (isBranch && event == Event::BranchRight) {
+            wantedOnShortWay = toldOfEvent;
+            shortWay = Point::ShortWay::TakeBranch;
+        } else
+            wanted |= toldOfEvent;
+    }
+    if (point.kinds & Point::isWhereBranchFallsThrough)
+        wanted |= tools(Event::BranchLeft) & ~pointAt(point.source)->disabledTools[Event::BranchLeft];
+    if (point.kinds & Point::isWhereBranchJumps) {
+        if (point.isAlsoJumpedTo && shortWay == Point::ShortWay::None) {
+            wantedOnShortWay = toldWhereItJumps(point);
+            shortWay = Point::ShortWay::ArriveByJump;
+        } else
+            wanted |= toldWhereItJumps(point);
+    }
+    if (point.leadsWhereBranchJumps) {
+        // (A `break` that a branch leads to, and a jump: it may be all of this at once. Then there is no short way.)
+        uint8_t toldThere = toldWhereItJumps(*pointAt(point.target));
+        if (wantedOnShortWay)
+            wanted |= toldThere;
+        else {
+            wantedOnShortWay = toldThere;
+            shortWay = Point::ShortWay::SayItIsAJump;
+        }
     }
     if (point.kinds & bit(Event::PyResume))
         wanted |= tools(Event::PyThrow);
@@ -861,12 +953,13 @@ uint8_t CodeMonitor::toolsWantedAt(Point& point)
             wanted |= m_lineToolsStillOn;
         else {
             for (auto& start : lineStartsOf(point))
-                wanted |= tools(Event::Line) & ~start.disabledTools;
+                wanted |= toolsToTellOf(start);
         }
     }
     if (point.lineStartOfTarget != noLineStart)
-        wanted |= m_needsLastLine ? m_lineToolsStillOn : tools(Event::Line) & ~m_lineStarts[point.lineStartOfTarget].disabledTools;
-    return wanted;
+        wanted |= m_needsLastLine ? m_lineToolsStillOn : toolsToTellOf(m_lineStarts[point.lineStartOfTarget]);
+    point.shortWay = wantedOnShortWay && !wanted ? shortWay : Point::ShortWay::None;
+    return wanted | wantedOnShortWay;
 }
 
 void CodeMonitor::update(Point& point)
@@ -876,6 +969,23 @@ void CodeMonitor::update(Point& point)
         return;
     *opcodeAddress(point.offset) = isWanted ? static_cast<uint8_t>(op_py_instrumented) : byteOfOpcode(point.opcode);
     point.isPatched = isWanted;
+}
+
+void CodeMonitor::updateBranch(Point& point)
+{
+    update(point);
+    if (point.leftIsToldOfAt)
+        update(*pointAt(point.leftIsToldOfAt));
+    if (!point.rightIsToldOfAt)
+        return;
+    Point* arrival = pointAt(point.rightIsToldOfAt);
+    update(*arrival);
+    if (!arrival->isAlsoJumpedTo)
+        return;
+    for (Point* other = &point + 1; other < arrival; ++other) {
+        if (other->leadsWhereBranchJumps && other->target == arrival->offset)
+            update(*other);
+    }
 }
 
 void CodeMonitor::update()
@@ -936,9 +1046,8 @@ void CodeMonitor::noteLineTools()
     m_lineToolsStillOn = 0;
     if (!m_needsLastLine)
         return;
-    uint8_t lineTools = tools(Event::Line);
     for (auto& start : m_lineStarts)
-        m_lineToolsStillOn |= lineTools & ~start.disabledTools;
+        m_lineToolsStillOn |= toolsToTellOf(start);
 }
 
 void CodeMonitor::didDisableLine(unsigned offset, const LineStart& start)
@@ -1548,7 +1657,7 @@ bool Monitoring::fire(JSGlobalObject* globalObject, CallFrame* callFrame, CodeMo
                 // BRANCH, the event of old, is either way a branch goes.
                 if ((event == Event::BranchLeft || event == Event::BranchRight) && callback(tool, Event::Branch))
                     point->disabledTools[Event::BranchLeft] = point->disabledTools[Event::BranchRight] |= 1 << tool;
-                monitor.update(*point);
+                monitor.updateBranch(*point);
             }
         } else if (event < Event::ungroupedCount) {
             monitor.removeLocalTool(event, tool);
@@ -1602,6 +1711,12 @@ bool Monitoring::fireLineStart(JSGlobalObject* globalObject, CallFrame* callFram
     return true;
 }
 
+// What throw() raises comes from outside: a handler on the line of the `yield` is told of as a line that begins.
+static int lineItIsRaisedOn(CodeBlock* codeBlock, unsigned offset)
+{
+    return throwsIntoGenerator(codeBlock, BytecodeIndex(offset)) ? -1 : lineOfMarks(codeBlock->unlinkedCodeBlock()->pythonMarks(), offset);
+}
+
 bool Monitoring::fireLine(JSGlobalObject* globalObject, CallFrame* callFrame, CodeMonitor& monitor, const CodeMonitor::Point& point, bool comesFromSameLine)
 {
     auto scope = DECLARE_THROW_SCOPE(m_runtime.vm());
@@ -1610,7 +1725,7 @@ bool Monitoring::fireLine(JSGlobalObject* globalObject, CallFrame* callFrame, Co
     unsigned count = point.lineStartCount;
     bool firstLineIsInDoubt = point.firstLineIsInDoubt;
     // A handler on the line of what raised the exception: `with a: b()`.
-    if (point.firstLineFollowsCatch && m_raisedIn == callFrame && m_raisedOnLine == monitor.m_lineStarts[first].line)
+    if (point.firstLineFollowsCatch && m_raisedIn == callFrame && lineItIsRaisedOn(callFrame->codeBlock(), m_raisedAt) == monitor.m_lineStarts[first].line)
         comesFromSameLine = true;
     PyFrame* frame = monitor.m_needsLastLine || monitor.tools(Event::Line) >> traceTool ? frameObjectOf(globalObject, callFrame) : frameObjectIfThereIsOne(callFrame);
     // It got here because a trace function said so.
@@ -1725,7 +1840,62 @@ Monitoring::Outcome Monitoring::handle(JSGlobalObject* globalObject, CallFrame* 
     if (m_runtime.tracingDepth)
         return { pc, point->opcode };
     callFrame->setCallSiteIndex(CallSiteIndex(BytecodeIndex(offset)));
+    switch (point->shortWay) {
+    case CodeMonitor::Point::ShortWay::None:
+        break;
+    case CodeMonitor::Point::ShortWay::TakeBranch:
+        return takeBranch(globalObject, callFrame, pc, *monitor, *point);
+    case CodeMonitor::Point::ShortWay::SayItIsAJump:
+        m_comesFromSameLine = { };
+        m_arrivesByJump = { callFrame, point->target };
+        return { pc, point->opcode };
+    case CodeMonitor::Point::ShortWay::ArriveByJump:
+        if (m_arrivesByJump.callFrame != callFrame || m_arrivesByJump.offset != offset)
+            break;
+        m_comesFromSameLine = { };
+        m_arrivesByJump = { };
+        return { pc, point->opcode };
+    }
     return handle(globalObject, callFrame, pc, *monitor, point);
+}
+
+// See Point::ShortWay.
+Monitoring::Outcome Monitoring::takeBranch(JSGlobalObject* globalObject, CallFrame* callFrame, const JSInstruction* pc, CodeMonitor& monitor, const CodeMonitor::Point& point)
+{
+    auto scope = DECLARE_THROW_SCOPE(m_runtime.vm());
+    m_comesFromSameLine = { };
+    // What the branch calls may change what there is to know about the places in the code.
+    unsigned offset = point.offset;
+    unsigned next = point.next;
+    unsigned target = point.target;
+    unsigned shownTarget = point.shownTarget;
+    auto opcode = static_cast<OpcodeID>(point.opcode);
+    auto* whereItJumps = reinterpret_cast<const JSInstruction*>(monitor.instructions() + target);
+    bool jumps;
+    if (opcode == op_jundefined_or_null)
+        jumps = callFrame->r(pc->as<OpJundefinedOrNull>().m_value).jsValue().isUndefinedOrNull();
+    else if (opcode == op_jnundefined_or_null)
+        jumps = !callFrame->r(pc->as<OpJnundefinedOrNull>().m_value).jsValue().isUndefinedOrNull();
+    else {
+        const void* destination;
+        const void* signal;
+        decodeResult(slowPathOfBranch(opcode)(callFrame, pc), destination, signal);
+        if (failed(scope, signal != LLInt::exceptionSignal()))
+            return { nullptr, 0 };
+        jumps = destination == whereItJumps;
+    }
+    if (!jumps) [[likely]]
+        return { reinterpret_cast<const JSInstruction*>(monitor.instructions() + next), goOn };
+    callFrame->setCallSiteIndex(CallSiteIndex(BytecodeIndex(offset)));
+    m_runtime.forgetOwnedTemporaries();
+    auto* current = monitor.pointAt(offset);
+    uint8_t tools = current ? monitor.tools(Event::BranchRight) & ~current->disabledTools[Event::BranchRight] : 0;
+    if (failed(scope, fire(globalObject, callFrame, monitor, offset, Event::BranchRight, tools, jsNumber(shownOffset(shownTarget)))))
+        return { nullptr, 0 };
+    // As in handle().
+    if (auto* other = shownTarget != target ? monitor.pointAt(target) : nullptr; other && other->isPatched)
+        m_jumpGoesOn = { callFrame, target };
+    return { whereItJumps, goOn };
 }
 
 NEVER_INLINE Monitoring::Outcome Monitoring::handle(JSGlobalObject* globalObject, CallFrame* callFrame, const JSInstruction* pc, CodeMonitor& monitor, CodeMonitor::Point* point)
@@ -1774,6 +1944,26 @@ NEVER_INLINE Monitoring::Outcome Monitoring::handle(JSGlobalObject* globalObject
     Outcome elsewhere;
     bool comesFromSameLine = m_comesFromSameLine.callFrame == callFrame && m_comesFromSameLine.offset == offset;
     m_comesFromSameLine = { };
+    // A branch has led here: see Point::leftIsToldOfAt. (Unless a trace function has sent the frame here.)
+    auto wasSentHere = [&] {
+        PyFrame* frame = frameObjectIfThereIsOne(callFrame);
+        return frame && frame->jumpedTo;
+    };
+    bool arrivesByJump = m_arrivesByJump.callFrame == callFrame && m_arrivesByJump.offset == offset;
+    m_arrivesByJump = { };
+    if (kinds & (CodeMonitor::Point::isWhereBranchFallsThrough | CodeMonitor::Point::isWhereBranchJumps) && !arrivesByJump && !wasSentHere()) {
+        auto* branch = monitor.pointAt(source);
+        unsigned event = kinds & CodeMonitor::Point::isWhereBranchJumps ? Event::BranchRight : Event::BranchLeft;
+        unsigned shownDestination = event == Event::BranchLeft ? offset : branch->shownTarget;
+        // As far as anybody can tell, the frame is still at the branch.
+        setCurrentOffset(source);
+        if (failed(scope, fire(globalObject, callFrame, monitor, source, event, monitor.tools(event) & ~branch->disabledTools[event], jsNumber(shownOffset(shownDestination)))))
+            return threw;
+        setCurrentOffset(offset);
+        // This is a jump, then, which is not told of: CPython's compiler has the branch go where it goes.
+        if (shownDestination != offset)
+            m_jumpGoesOn = { callFrame, offset };
+    }
     if (kinds & bit(Event::Instruction)) {
         PyFrame* frame = frameObjectIfThereIsOne(callFrame);
         if (auto call = frame ? std::exchange(frame->callWithResultToTake, std::nullopt) : std::nullopt) {
@@ -1842,7 +2032,7 @@ NEVER_INLINE Monitoring::Outcome Monitoring::handle(JSGlobalObject* globalObject
         // The trace function may have asked for opcodes: pdb's `stepi`.
         if (auto* point = currentPoint())
             kinds |= point->kinds & bit(Event::Instruction);
-        if (kinds == bit(Event::Line))
+        if (kinds == bit(Event::Line) && !isJump(opcode))
             return runIt;
     }
     if (kinds & bit(Event::Instruction)) {
@@ -2041,6 +2231,8 @@ NEVER_INLINE Monitoring::Outcome Monitoring::handle(JSGlobalObject* globalObject
             return elsewhere;
         if (auto* other = jumpAt(target); other && other->isPatched && !tellsItself(*other))
             m_jumpGoesOn = { callFrame, target };
+        if (auto* point = currentPoint(); point && point->leadsWhereBranchJumps && monitor.pointAt(target)->isPatched)
+            m_arrivesByJump = { callFrame, target };
         return runIt;
     }
 
@@ -2082,7 +2274,11 @@ NEVER_INLINE Monitoring::Outcome Monitoring::handle(JSGlobalObject* globalObject
     // Which way a branch goes is known once it has gone.
     currentPoint();
     bool saysSomethingOfTarget = point && point->lineStartOfTarget != CodeMonitor::noLineStart;
-    bool isWanted = saysSomethingOfTarget || wanted(Event::BranchLeft) | wanted(Event::BranchRight);
+    auto wantedHere = [&](unsigned event) -> uint8_t {
+        auto* point = currentPoint();
+        return point && !isToldOfElsewhere(*point, event) ? wanted(event) : 0;
+    };
+    bool isWanted = saysSomethingOfTarget || wantedHere(Event::BranchLeft) | wantedHere(Event::BranchRight);
     // The iterators written in C++ end without raising anything.
     if (!isWanted && kinds & CodeMonitor::Point::forLoop && monitor.tools(Event::Raise)) {
         JSValue iterator = callFrame->uncheckedR(pc->as<OpPyForIter>().m_iterator).jsValue();
@@ -2116,7 +2312,7 @@ NEVER_INLINE Monitoring::Outcome Monitoring::handle(JSGlobalObject* globalObject
         unsigned shownDestination = event == Event::BranchLeft ? offsetOfNext : shownTarget;
         if (event == Event::BranchLeft && kinds & CodeMonitor::Point::goesOnInItself)
             shownDestination = whereItGoesOnInItself(shownDestination);
-        if (failed(scope, fire(globalObject, callFrame, monitor, offset, event, wanted(event), jsNumber(shownOffset(shownDestination)))))
+        if (failed(scope, fire(globalObject, callFrame, monitor, offset, event, wantedHere(event), jsNumber(shownOffset(shownDestination)))))
             return threw;
         if (event == Event::BranchRight) {
             if (!tellOfLineAt(target, elsewhere))
@@ -2282,7 +2478,7 @@ JSValue exceptionIsRaised(JSGlobalObject* globalObject, JSValue exception, CallF
     }
     // Only whoever is told of lines asks for the line.
     if (!isAwake) [[likely]] {
-        monitoring.noteWhereItIsRaised(nullptr, -1);
+        monitoring.noteWhereItIsRaised(nullptr, 0);
         if (!isWanted) [[likely]]
             return exception;
     }
@@ -2294,13 +2490,9 @@ JSValue exceptionIsRaised(JSGlobalObject* globalObject, JSValue exception, CallF
             return exception;
         return tellOfException(globalObject, exception, callFrame, index.offset(), isRaisedAgain ? Event::Reraise : Event::Raise);
     }
-    auto marks = codeBlock->unlinkedCodeBlock()->pythonMarks();
-    // What throw() raises comes from outside: a handler on the line of the `yield` is told of as a line that begins.
-    bool isThrownIn = throwsIntoGenerator(codeBlock, index);
-    int line = isThrownIn ? -1 : lineOfMarks(marks, index.offset());
     // As above: in `with a, b, c():` the handler of `a` is on the line that the exception comes from, though it comes by way of the handler of `b`.
-    if (!isRaisedAgain || line >= 0 || !monitoring.isRaisedIn(callFrame))
-        monitoring.noteWhereItIsRaised(callFrame, line);
+    if (!isRaisedAgain || !monitoring.isRaisedIn(callFrame) || lineItIsRaisedOn(codeBlock, index.offset()) >= 0)
+        monitoring.noteWhereItIsRaised(callFrame, index.offset());
     if (isRaisedAgain || !isSendThatThrows(callFrame, instruction)) [[likely]] {
         if (!isWanted) [[likely]]
             return exception;

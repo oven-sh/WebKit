@@ -1300,6 +1300,15 @@ coverage tools are CPython's own code on top. It is all in `runtime/PyMonitoring
   does not want the event: that is when CPython, which changes code as it is entered, forgets. So code with something disabled has its entrances replaced once more after a change.
 - Some instructions have to be carried out by the runtime to be told of: a branch (which way it went is known afterwards), a call of
   something that is not a Python function (`C_RETURN`, `C_RAISE`), the end of a `yield from` (`STOP_ITERATION`). `Name(...)` is an ordinary call while calls are told of.
+- A branch told of like that is carried out by the runtime for as long as one of its ways is still wanted, and the way out of a loop is wanted until the loop ends. Under a tool that
+  disables every place once it has seen it, as coverage.py does, each turn of each loop would go through the runtime. So a way is told of _where it leads_, if nothing else
+  leads there: `BRANCH_LEFT` at the instruction behind the branch, `BRANCH_RIGHT` at its target (`Point::leftIsToldOfAt`). The branch is left as the compiler emitted it, and a way that
+  is disabled, or never taken, costs nothing. (CPython has an instruction behind every branch for the first of the two, `NOT_TAKEN`.) As far as a tool can tell, the frame is still at the branch.
+  A `for` loop that goes on and an `except E:` that matches are told of at the branch: they have done more than branch by the time the next instruction runs.
+  Jumps may lead to the target as well, as a `break` does to where its loop ends: they are replaced for as long as the way of the branch is wanted, and say as they go that it is they who
+  come (`Point::leadsWhereBranchJumps`). A `break` is taken once where the branch at the head of the loop is taken at every turn.
+  Where more than that leads to the target (`if` without `else` and with something behind it, `a and b`), `BRANCH_RIGHT` is told of at the branch, which stays replaced until it
+  has jumped once. It may never: while that is all that is wanted there, the runtime only takes the branch (`Monitoring::takeBranch()`).
 - _Events to do with exceptions_ (`RAISE`, `RERAISE`, `EXCEPTION_HANDLED`, `PY_UNWIND`) come from the unwinder, which looks at one flag for each
   Python frame an exception passes.
 - `throw()` and `close()` of a generator that delegates go to the innermost one first in CPython, and the outer ones are resumed only if something
