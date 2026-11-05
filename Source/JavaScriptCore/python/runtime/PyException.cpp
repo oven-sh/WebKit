@@ -1306,9 +1306,7 @@ static JSValue unicodeErrorStrCommon(JSGlobalObject* globalObject, JSValue objec
         return raiseTypeError(globalObject, scope, "UnicodeError 'object' attribute must be a "_s, kind == 1 ? "bytes"_s : "string"_s);
 
     if (kind == 1) {
-        std::span<const uint8_t> bytes;
-        if (failed(scope, getBytesLike(globalObject, target, bytes)))
-            return { };
+        auto bytes = PyBytes::from(target)->span();
         if (start >= 0 && start < static_cast<int64_t>(bytes.size()) && end == start + 1)
             return makeStr(vm, makeString('\'', encoding, "' codec can't decode byte 0x"_s, hex(bytes[start], 2, Lowercase), " in position "_s, start, ": "_s, reason));
         return makeStr(vm, makeString('\'', encoding, "' codec can't decode bytes in position "_s, start, '-', end - 1, ": "_s, reason));

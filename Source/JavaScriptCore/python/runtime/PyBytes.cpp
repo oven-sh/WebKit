@@ -306,6 +306,25 @@ bool getBytesLike(JSGlobalObject* globalObject, JSValue value, std::span<const u
     return getBytesLikeSlow(globalObject, value, result);
 }
 
+bool getBytesOfNumber(JSGlobalObject* globalObject, JSValue value, std::span<const uint8_t>& result)
+{
+    if (auto* bytes = PyBytes::tryFrom(value)) {
+        result = bytes->span();
+        return true;
+    }
+    if (auto* array = PyByteArray::tryFrom(value)) {
+        result = array->span();
+        return true;
+    }
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    getBytesLike(globalObject, value, result);
+    if (!scope.exception())
+        return true;
+    takePendingException(globalObject);
+    return false;
+}
+
 String bytesRepr(std::span<const uint8_t> bytes)
 {
     static constexpr char digits[] = "0123456789abcdef";

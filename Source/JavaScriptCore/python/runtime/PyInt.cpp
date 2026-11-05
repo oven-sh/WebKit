@@ -1181,8 +1181,8 @@ static JSValue intFromTextObject(JSGlobalObject* globalObject, JSValue source, i
         RETURN_IF_EXCEPTION(scope, { });
     } else {
         std::span<const uint8_t> bytes;
-        getBytesLike(globalObject, source, bytes);
-        RETURN_IF_EXCEPTION(scope, { });
+        if (!getBytesOfNumber(globalObject, source, bytes))
+            RELEASE_AND_RETURN(scope, toInt(globalObject, source));
         if (bytes.size() > String::MaxLength) [[unlikely]]
             return raiseMemoryError(globalObject, scope, String());
         text = String(byteCast<Latin1Character>(bytes));

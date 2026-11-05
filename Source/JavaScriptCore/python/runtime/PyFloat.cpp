@@ -1197,15 +1197,15 @@ static JSValue floatNew(JSGlobalObject* globalObject, JSValue cls, const CallArg
             PyType* sourceType = rt.typeOf(source);
             isText = !sourceType->lookup(Special::Float) && !sourceType->lookup(Special::Index);
         }
+        std::span<const uint8_t> bytes;
+        if (isText && !isStr(source))
+            isText = getBytesOfNumber(globalObject, source, bytes);
         if (isText) {
             String text;
             if (isStr(source)) {
                 text = strValue(source)->value(globalObject);
                 RETURN_IF_EXCEPTION(scope, { });
             } else {
-                std::span<const uint8_t> bytes;
-                getBytesLike(globalObject, source, bytes);
-                RETURN_IF_EXCEPTION(scope, { });
                 if (bytes.size() > String::MaxLength) [[unlikely]]
                     return raiseMemoryError(globalObject, scope, String());
                 // Not Latin-1, in which 0xA0 would be a space.

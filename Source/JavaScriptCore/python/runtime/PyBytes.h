@@ -116,6 +116,9 @@ bool isBytesLike(JSValue);
 // that was released), a BufferError (one whose items do not follow one another), or what __buffer__() raised. That may run
 // code, so the bytes of a bytearray taken earlier are not to be relied on.
 bool getBytesLike(JSGlobalObject*, JSValue, std::span<const uint8_t>&);
+// The same for int() and float(), which read bytes and a bytearray where they are: a class derived from them is not asked for its __buffer__().
+// False, and no exception: the object would not give them, whatever it raised. To the two it is then no text.
+bool getBytesOfNumber(JSGlobalObject*, JSValue, std::span<const uint8_t>&);
 // bytes.hex()
 JSValue hexOfBytes(JSGlobalObject*, JSValue bytesOrByteArray, JSValue separator, JSValue bytesPerSeparator);
 
