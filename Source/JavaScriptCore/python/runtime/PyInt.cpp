@@ -15,6 +15,7 @@
 #include "PyModuleHelpers.h"
 #include "PyStr.h"
 #include "PyTypes.h"
+#include <wtf/FlipBytes.h>
 #include <wtf/text/StringToIntegerConversion.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -949,23 +950,44 @@ JSValue intFromByteSpan(JSGlobalObject* globalObject, std::span<const uint8_t> a
     size_t idle = 0;
     for (uint8_t padding = negative ? 0xff : 0; idle + 1 < allBytes.size() && fromTheTop(idle) == padding && fromTheTop(idle + 1) == padding;)
         ++idle;
-    const std::span<const uint8_t> bytes = littleEndian ? allBytes.first(allBytes.size() - idle) : allBytes.subspan(idle);
-    const size_t length = bytes.size();
-    auto byteAt = [=](size_t i) { return bytes[littleEndian ? i : length - 1 - i]; };
-
-    if (length > maxIntBits / 8 + 1) [[unlikely]]
+    std::span<const uint8_t> bytes = littleEndian ? allBytes.first(allBytes.size() - idle) : allBytes.subspan(idle);
+    if (bytes.size() > maxIntBits / 8 + 1) [[unlikely]]
         return raiseOverflowError(globalObject, scope, "too many digits in integer"_s);
+
+    // A word at a time, from the lower end.
+    unsigned bitsOfLastWord = bytes.size() % 8 * 8;
     Vector<uint64_t, 8> words;
-    words.fill(0, (length + 7) / 8);
-    unsigned carry = 1;
-    for (size_t i = 0; i < length; ++i) {
-        uint8_t byte = byteAt(i);
-        if (negative) {
-            unsigned inverted = static_cast<uint8_t>(~byte) + carry;
-            byte = static_cast<uint8_t>(inverted);
-            carry = inverted >> 8;
+    words.reserveInitialCapacity((bytes.size() + 7) / 8);
+    constexpr bool hostIsLittleEndian = std::endian::native == std::endian::little;
+    while (bytes.size() >= sizeof(uint64_t)) {
+        uint64_t word;
+        memcpySpan(asMutableByteSpan(word), littleEndian ? bytes.first<sizeof(uint64_t)>() : bytes.last<sizeof(uint64_t)>());
+        words.append(littleEndian == hostIsLittleEndian ? word : flipBytes(word));
+        if (littleEndian)
+            skip(bytes, sizeof(uint64_t));
+        else
+            dropLast(bytes, sizeof(uint64_t));
+    }
+    if (!bytes.empty()) {
+        uint64_t word = 0;
+        if (littleEndian) {
+            for (uint8_t byte : bytes | std::views::reverse)
+                word = word << 8 | byte;
+        } else {
+            for (uint8_t byte : bytes)
+                word = word << 8 | byte;
         }
-        words[i / 8] |= static_cast<uint64_t>(byte) << ((i % 8) * 8);
+        words.append(word);
+    }
+    if (negative) {
+        // What is above the sign is like the sign. Then the magnitude is the complement and one more.
+        if (bitsOfLastWord)
+            words.last() |= ~0ull << bitsOfLastWord;
+        bool carry = true;
+        for (uint64_t& word : words) {
+            word = ~word + carry;
+            carry = carry && !word;
+        }
     }
     while (!words.isEmpty() && !words.last())
         words.removeLast();
