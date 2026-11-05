@@ -553,26 +553,33 @@ void CodeMonitor::findPointsWithoutTellingTheCollector(bool everyInstruction)
     };
     // Nothing comes from what cannot be reached (`if 0:`).
     BitVector isReachable(items.size());
+    // Without an exception. CPython's compiler puts the rest behind all of this.
+    BitVector isReachableWithoutException;
     {
         Vector<unsigned, 16> toVisit;
         auto visit = [&](unsigned index) {
             if (index < items.size() && !isReachable.set(index))
                 toVisit.append(index);
         };
+        auto visitAllFromThere = [&] {
+            while (!toVisit.isEmpty()) {
+                unsigned i = toVisit.takeLast();
+                if (items[i].fallsThrough)
+                    visit(i + 1);
+                extractStoredJumpTargetsForInstruction(code, instructions.at(items[i].offset), [&](int32_t relative) {
+                    if (auto it = indexOfOffset.find(items[i].offset + relative); it != indexOfOffset.end())
+                        visit(it->value);
+                });
+            }
+        };
         visit(0);
+        visitAllFromThere();
+        isReachableWithoutException = isReachable;
         for (unsigned i = 0; i < items.size(); ++i) {
             if (items[i].opcode == op_py_catch)
                 visit(i);
         }
-        while (!toVisit.isEmpty()) {
-            unsigned i = toVisit.takeLast();
-            if (items[i].fallsThrough)
-                visit(i + 1);
-            extractStoredJumpTargetsForInstruction(code, instructions.at(items[i].offset), [&](int32_t relative) {
-                if (auto it = indexOfOffset.find(items[i].offset + relative); it != indexOfOffset.end())
-                    visit(it->value);
-            });
-        }
+        visitAllFromThere();
     }
     for (unsigned i = 0; i < items.size(); ++i) {
         if (!isReachable.get(i))
@@ -613,9 +620,10 @@ void CodeMonitor::findPointsWithoutTellingTheCollector(bool everyInstruction)
         Item& item = items[i];
         if (item.isJumpedTo || item.offset <= start || (item.entryLine < 0 && !item.firstLineFollowsSilentLine))
             continue;
-        // (Not what cannot be reached: CPython's compiler drops that.)
+        // (Not what cannot be reached: CPython's compiler drops that. Nor a handler in front of what is none, nor the other way round.)
+        bool isInHandler = !isReachableWithoutException.get(i);
         unsigned before = i - 1;
-        while (before && !isReachable.get(before))
+        while (before && (!isReachable.get(before) || isReachableWithoutException.get(before) == isInHandler))
             --before;
         int lineBefore = lineAt(items[before].offset);
         if (item.entryLine >= 0 && lineBefore == item.entryLine) {
