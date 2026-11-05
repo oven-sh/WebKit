@@ -2099,12 +2099,13 @@ bool cannotBeCString(JSGlobalObject* globalObject, JSString* string)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!string->is8Bit()) [[unlikely]] {
+    auto view = string->view(globalObject);
+    RETURN_IF_EXCEPTION(scope, true);
+    // A lone surrogate: the UnicodeEncodeError is the encoder's to raise.
+    if (!view->is8Bit() && !lengthInUTF8(view)) [[unlikely]] {
         strEncode(globalObject, string, nullptr, nullptr);
         RETURN_IF_EXCEPTION(scope, true);
     }
-    auto view = string->view(globalObject);
-    RETURN_IF_EXCEPTION(scope, true);
     if (view->find(static_cast<char16_t>(0)) == notFound)
         return false;
     raiseValueError(globalObject, scope, "embedded null character"_s);
