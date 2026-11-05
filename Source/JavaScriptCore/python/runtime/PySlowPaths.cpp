@@ -1209,6 +1209,15 @@ static JSValue makeGenerator(JSGlobalObject* globalObject, CallFrame* callFrame,
     return generator;
 }
 
+// Whether a hole of the array is undefined to JS as well, which asks the prototypes: none of them has anything to say about an index.
+static ALWAYS_INLINE bool holesAreUndefinedToJS(JSGlobalObject* globalObject, JSArray* list)
+{
+    Structure* structure = list->structure();
+    if (globalObject->isOriginalArrayStructure(structure) && globalObject->arrayPrototypeChainIsSane()) [[likely]]
+        return true;
+    return !structure->holesMustForwardToPrototype(list);
+}
+
 // callee(*positional, **keywords): the arguments in an array, as op_call_varargs takes them. The names of the keywords are set aside.
 // `keywords`: a dict that the compiled code has made. `mapping`: what was after the only **. If both are empty, nobody asks for the names.
 static JSValue callArguments(JSGlobalObject* globalObject, JSValue callee, JSValue positional, JSValue keywords, JSValue mapping)
@@ -1237,9 +1246,14 @@ static JSValue callArguments(JSGlobalObject* globalObject, JSValue callee, JSVal
         dict = nullptr;
 
     JSArray* array;
-    if (list && !dict) {
-        // Made by the compiled code, or about to be copied into the frame anyway.
+    if (list && !dict && holesAreUndefinedToJS(globalObject, list)) [[likely]] {
+        // Made by the compiled code, or about to be copied into the frame anyway: by the rules of JS, which ask the prototypes about a hole.
         array = list;
+    } else if (list && listLength(list) > maxArguments) {
+        // It is refused for its length, before anything of it is read.
+        if (keywords || mapping)
+            rt.setPendingKeywordNames(jsUndefined());
+        return list;
     } else if (tuple && !dict) {
         array = newList(globalObject, tuple->span());
         RETURN_IF_EXCEPTION(scope, { });
@@ -1254,6 +1268,15 @@ static JSValue callArguments(JSGlobalObject* globalObject, JSValue callee, JSVal
                 return raiseTypeError(globalObject, scope, "Value after * must be an iterable, not "_s, type->name());
             }
             return { };
+        }
+        // What was copied in one piece has the holes it had.
+        if (!holesAreUndefinedToJS(globalObject, array)) [[unlikely]] {
+            for (unsigned i = 0; i < listLength(array); ++i) {
+                if (array->tryGetIndexQuickly(i))
+                    continue;
+                listSet(globalObject, array, i, jsUndefined());
+                RETURN_IF_EXCEPTION(scope, { });
+            }
         }
     }
     if (!keywords && !mapping)

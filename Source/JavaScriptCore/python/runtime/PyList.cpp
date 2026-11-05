@@ -490,9 +490,12 @@ void listExtend(JSGlobalObject* globalObject, JSArray* list, JSValue iterable, L
     if (isExactList(iterable) || (iterable.isCell() && iterable.asCell() == list)) {
         JSArray* other = asList(iterable);
         unsigned count = other->length();
+        // (An array that JS has made sparse may say that it has thousands of millions of items.)
+        if (count > MAX_STORAGE_VECTOR_LENGTH - std::min<unsigned>(list->length(), MAX_STORAGE_VECTOR_LENGTH)) [[unlikely]]
+            RELEASE_AND_RETURN(scope, raiseListTooLong(globalObject));
         if (ListStorage storage { vm, list }; storage && hasItemsInARow(other)) [[likely]] {
             unsigned length = storage.length();
-            if (count > MAX_STORAGE_VECTOR_LENGTH - length || !storage.grow(length + count))
+            if (!storage.grow(length + count))
                 RELEASE_AND_RETURN(scope, raiseListTooLong(globalObject));
             // (It may be the other one: its items are looked for now that it has grown.)
             copyItems(storage.items() + length, other, 0, count);
