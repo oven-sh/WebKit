@@ -1515,18 +1515,36 @@ static JSString* joinItems(JSGlobalObject* globalObject, JSString* separatorStri
     }
 
     StringView separator = separatorString->tryGetValueImpl();
+    // As JSStringJoiner does it.
     auto fill = [&]<typename CharacterType>(std::span<CharacterType> buffer) {
-        for (size_t i = 0; i < count; ++i) {
-            if (i && separator.length() == 1) {
-                buffer[0] = static_cast<CharacterType>(separator[0]);
-                skip(buffer, 1);
-            } else if (i) {
-                separator.getCharacters(buffer);
-                skip(buffer, separator.length());
-            }
-            StringView text = strValue(items[i])->tryGetValueImpl();
-            text.getCharacters(buffer);
+        auto append = [&](StringView text) ALWAYS_INLINE_LAMBDA {
+            if constexpr (std::is_same_v<CharacterType, Latin1Character>)
+                text.getCharacters8(buffer);
+            else
+                text.getCharacters(buffer);
             skip(buffer, text.length());
+        };
+        auto textAt = [&](size_t index) ALWAYS_INLINE_LAMBDA -> StringView { return strValue(items[index])->tryGetValueImpl(); };
+        append(textAt(0));
+        switch (separator.length()) {
+        case 0:
+            for (size_t i = 1; i < count; ++i)
+                append(textAt(i));
+            break;
+        case 1: {
+            auto character = static_cast<CharacterType>(separator[0]);
+            for (size_t i = 1; i < count; ++i) {
+                buffer[0] = character;
+                skip(buffer, 1);
+                append(textAt(i));
+            }
+            break;
+        }
+        default:
+            for (size_t i = 1; i < count; ++i) {
+                append(separator);
+                append(textAt(i));
+            }
         }
         ASSERT(buffer.empty());
     };

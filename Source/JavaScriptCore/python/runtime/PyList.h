@@ -71,6 +71,16 @@ ALWAYS_INLINE JSValue listGet(JSArray* list, unsigned index)
         return value;
     return listGetSlow(list, index);
 }
+// The items of a list where they lie, if they lie there as values, for as long as nothing changes the list. An empty one is a hole.
+// No data: they lie there in another way.
+ALWAYS_INLINE std::span<const JSValue> listValues(JSArray* list)
+{
+    IndexingType indexingType = list->indexingType();
+    if (!hasContiguous(indexingType) && !hasInt32(indexingType))
+        return { };
+    Butterfly* butterfly = list->butterfly();
+    return { std::bit_cast<const JSValue*>(butterfly->contiguous().data()), butterfly->publicLength() };
+}
 void listSet(JSGlobalObject*, JSArray*, unsigned index, JSValue);
 void listAppend(JSGlobalObject*, JSArray*, JSValue);
 void listInsert(JSGlobalObject*, JSArray*, unsigned index, JSValue);

@@ -201,17 +201,6 @@ private:
     bool m_isContiguous { false };
 };
 
-// The items of a list where they lie, if they lie there as values, for as long as nothing changes the list. An empty one is a hole.
-// No data: they lie there in another way.
-static ALWAYS_INLINE std::span<const JSValue> listValues(JSArray* list)
-{
-    IndexingType indexingType = list->indexingType();
-    if (!hasContiguous(indexingType) && !hasInt32(indexingType))
-        return { };
-    Butterfly* butterfly = list->butterfly();
-    return { std::bit_cast<const JSValue*>(butterfly->contiguous().data()), butterfly->publicLength() };
-}
-
 // As values or as doubles.
 static ALWAYS_INLINE bool hasItemsInARow(JSArray* list)
 {

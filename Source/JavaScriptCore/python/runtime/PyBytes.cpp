@@ -1721,6 +1721,53 @@ static JSValue bytesJoin(JSGlobalObject* globalObject, JSValue self, JSValue ite
         takePendingException(globalObject);
         return raiseTypeError(globalObject, scope, "sequence item "_s, index, ": expected a bytes-like object, "_s, typeName(globalObject, item), " found"_s);
     };
+    // Mostly the items are bytes, all of them, and lie one behind the other.
+    auto asExactBytes = [&](JSValue item) ALWAYS_INLINE_LAMBDA -> PyBytes* {
+        if (!item || !item.isCell() || item.asCell()->type() != PyBytesType)
+            return nullptr;
+        auto* bytes = uncheckedDowncast<PyBytes>(item.asCell());
+        return bytes->type() == rt.bytesType() ? bytes : nullptr;
+    };
+    std::span<const JSValue> items = tuple ? tuple->span() : listValues(list);
+    uint64_t lengthOfBytes = 0;
+    size_t numberOfBytes = 0;
+    for (; numberOfBytes < items.size(); ++numberOfBytes) {
+        auto* bytes = asExactBytes(items[numberOfBytes]);
+        if (!bytes)
+            break;
+        lengthOfBytes += bytes->length();
+    }
+    if (numberOfBytes == count && count > 1) {
+        auto separator = bytesSpanOf(self);
+        lengthOfBytes += static_cast<uint64_t>(separator.size()) * (count - 1);
+        if (lengthOfBytes > static_cast<uint64_t>(bytesMaxSsize))
+            return raiseOverflowError(globalObject, scope, "join() result is too long"_s);
+        // (To allocate runs no code, so the items stay where they are.)
+        JSValue result;
+        uint8_t* data;
+        if (failed(scope, bytesAllocate(globalObject, isArray, lengthOfBytes, result, data)))
+            return { };
+        std::span<uint8_t> buffer { data, static_cast<size_t>(lengthOfBytes) };
+        auto append = [&](std::span<const uint8_t> bytes) ALWAYS_INLINE_LAMBDA {
+            WTF::copyElements(buffer, bytes);
+            skip(buffer, bytes.size());
+        };
+        auto bytesAt = [&](size_t index) ALWAYS_INLINE_LAMBDA { return uncheckedDowncast<PyBytes>(items[index].asCell())->span(); };
+        append(bytesAt(0));
+        if (separator.empty()) {
+            for (size_t i = 1; i < count; ++i)
+                append(bytesAt(i));
+        } else {
+            for (size_t i = 1; i < count; ++i) {
+                append(separator);
+                append(bytesAt(i));
+            }
+        }
+        ensureStillAliveHere(tuple);
+        ensureStillAliveHere(list);
+        return result;
+    }
+
     bool runsCode = false;
     for (unsigned i = 0; i < count && !runsCode; ++i)
         runsCode = getBufferRunsCode(itemAt(i));
