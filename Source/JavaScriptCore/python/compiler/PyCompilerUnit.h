@@ -446,7 +446,7 @@ private:
     // ---- Expressions ----
 
     RegisterID* boolOp(AST::BoolOp*, RegisterID* dst);
-    void boolOperand(Expr*, RegisterID* result, Label* ifTrue, Label* ifFalse, const Range& rangeOfTest);
+    void boolOperand(Expr*, RegisterID* result, Label* ifTrue, Label* ifFalse, const Range& rangeOfTest, const Range& rangeOfOperation, Label& whenConstantSettles, Label* endOfNested);
     RegisterID* chain(AST::Expr*, RegisterID* dst);
     RegisterID* unaryOp(AST::UnaryOp*, RegisterID* dst);
     RegisterID* ifExp(AST::IfExp*, RegisterID* dst);

@@ -1806,7 +1806,6 @@ void Unit::whileLoop(While* node, Last isLast)
     g.settlePythonLineMark();
     g.emitLabel(loop.get());
     m_statementStart = g.instructions().size();
-    loc(node->test->range);
     pushBlock({ .kind = BlockKind::WhileLoop, .tryDepth = g.tryDepth(), .continueTarget = loop.ptr(), .breakTarget = end.ptr(), .isLast = isLast, .valueToReturn = m_valueToReturn });
     ReturnsByLine returns;
     jumpIfOrLeave(node->test, anchor.get(), isLast.onlyIf(node->orelse.isEmpty()), returns);

@@ -432,6 +432,12 @@ RegisterID* Unit::expr(Expr* node, RegisterID* dst)
     if (node->is<NameExpr>() || node->is<Constant>())
         line(node->range);
     if (node->range.lineno != node->range.endLineno && !m_sameLineDepth && (node->is<BinOp>() || node->is<UnaryOp>()) && valueCPythonsCompilerWorksOut(node)) [[unlikely]] {
+        // (CPython's compiler works out `not` by another way than the rest, which leaves something on the line of the operand.)
+        Vector<Expr*, 4> operandsOfNot;
+        for (auto* unary = node->tryAs<UnaryOp>(); unary && unary->op == AST::UnaryKind::Not; unary = unary->operand->tryAs<UnaryOp>())
+            operandsOfNot.append(unary->operand);
+        while (!operandsOfNot.isEmpty())
+            line(operandsOfNot.takeLast()->range);
         line(node->range);
         SameLine sameLine(*this);
         return expr(node, dst);
@@ -522,38 +528,72 @@ RegisterID* Unit::boolOp(BoolOp* node, RegisterID* dst)
     unsigned last = node->values.size() - 1;
     bool isAnd = node->op == BoolOperator::And;
     for (unsigned i = 0; i < last; ++i)
-        boolOperand(node->values[i], result.get(), isAnd ? nullptr : end.ptr(), isAnd ? end.ptr() : nullptr, node->range);
-    expr(node->values[last], result.get());
-    g.emitLabel(end.get());
+        boolOperand(node->values[i], result.get(), isAnd ? nullptr : end.ptr(), isAnd ? end.ptr() : nullptr, node->range, node->range, end.get(), nullptr);
+    // (`b` in `0 and b`.)
+    if (!m_cannotBeReached && cannotGetHere())
+        deadExpr(node->values[last]);
+    else
+        expr(node->values[last], result.get());
+    if (end->isBound())
+        g.emitLabel(end.get());
     return dst ? g.move(dst, result.get()) : result.get();
 }
 
 // The value goes in `result`, and then, by its truth, control to one of the labels. One of them is null: straight on.
 // No object is asked twice whether it is true: in `a and b or c`, an `a` that is false is the value of `a and b`, known to be false.
-void Unit::boolOperand(Expr* node, RegisterID* result, Label* ifTrue, Label* ifFalse, const Range& rangeOfTest)
+// In CPython that is a jump to a jump, which its compiler has go where the second one goes, and then it is of the place of the second: `rangeOfTest`. What drops the
+// value, if control goes straight on, is of the expression that the operand is written in: `rangeOfOperation`.
+// A constant is not asked. If it settles the expression it is written in, the rest of that is never run, and it goes to the end of that (`whenConstantSettles`), where it is
+// tested like any other value if the expression is an operand itself: so CPython has it, for which whatever comes after such a test can be reached.
+// `endOfNested`: the operand is the last of an expression that is an operand itself, which ends here, before the test.
+void Unit::boolOperand(Expr* node, RegisterID* result, Label* ifTrue, Label* ifFalse, const Range& rangeOfTest, const Range& rangeOfOperation, Label& whenConstantSettles, Label* endOfNested)
 {
     ASSERT(!ifTrue != !ifFalse);
-    auto* nested = node->tryAs<BoolOp>();
+    bool isDead = !m_cannotBeReached && cannotGetHere();
+    if (isDead) {
+        deadExpr(node);
+        if (!endOfNested || !endOfNested->isBound())
+            return;
+    }
+    auto* nested = isDead ? nullptr : node->tryAs<BoolOp>();
     if (!nested || !isSafeToRecurse()) {
-        expr(node, result);
+        if (!isDead)
+            expr(node, result);
+        if (endOfNested && endOfNested->isBound())
+            g.emitLabel(*endOfNested);
+        line(rangeOfOperation);
+        // (What CPython's compiler works out, `not 1` or `()`, it has worked out too late for this.)
+        bool isWrittenAsConstant = node->is<Constant>() || node->is<NameExpr>();
+        if (auto truth = endOfNested || !isWrittenAsConstant ? std::nullopt : constantTruth(node)) {
+            if (*truth == !!ifTrue)
+                jump(whenConstantSettles);
+            return;
+        }
         loc(rangeOfTest);
         if (ifTrue)
             g.emitPyJumpIfTrue(result, *ifTrue);
         else
             g.emitPyJumpIfFalse(result, *ifFalse);
+        line(rangeOfOperation);
         return;
     }
     Ref<Label> next = g.newLabel();
+    Ref<Label> ownEnd = g.newLabel();
+    Label* end = endOfNested ? endOfNested : ownEnd.ptr();
     unsigned last = nested->values.size() - 1;
     bool isAnd = nested->op == BoolOperator::And;
     // What settles the nested expression early settles the test as well.
     Label* whenSettled = isAnd ? ifFalse : ifTrue;
+    const Range& rangeOfNestedTest = whenSettled ? rangeOfTest : nested->range;
     if (!whenSettled)
         whenSettled = next.ptr();
     for (unsigned i = 0; i < last; ++i)
-        boolOperand(nested->values[i], result, isAnd ? nullptr : whenSettled, isAnd ? whenSettled : nullptr, nested->range);
-    boolOperand(nested->values[last], result, ifTrue, ifFalse, rangeOfTest);
-    g.emitLabel(next.get());
+        boolOperand(nested->values[i], result, isAnd ? nullptr : whenSettled, isAnd ? whenSettled : nullptr, rangeOfNestedTest, nested->range, *end, nullptr);
+    boolOperand(nested->values[last], result, ifTrue, ifFalse, rangeOfTest, rangeOfOperation, whenConstantSettles, end);
+    if (next->isBound()) {
+        g.emitLabel(next.get());
+        line(rangeOfOperation);
+    }
 }
 
 
@@ -893,6 +933,19 @@ RegisterID* Unit::compare(Compare* node, RegisterID* dst)
     return dst ? g.move(dst, result.get()) : result.get();
 }
 
+// What the last branch of a condition is about, if it ends with one.
+static Expr* testedLast(Expr* node)
+{
+    while (true) {
+        if (auto* boolOp = node->tryAs<BoolOp>())
+            node = boolOp->values.last();
+        else if (auto* unaryOp = node->tryAs<UnaryOp>(); unaryOp && unaryOp->op == AST::UnaryKind::Not)
+            node = unaryOp->operand;
+        else
+            return node->is<IfExp>() ? nullptr : node;
+    }
+}
+
 void Unit::jumpIf(Expr* node, Label& target, bool condition)
 {
     // `b` in `a and 0 and b`. A branch would make it look as if its target could be reached from here.
@@ -900,21 +953,33 @@ void Unit::jumpIf(Expr* node, Label& target, bool condition)
         return deadExpr(node);
     if (&target != m_branchTarget.label) [[likely]]
         return jumpIfTo(node, target, condition);
-    if (node->is<BoolOp>() || node->is<IfExp>() || (node->is<UnaryOp>() && node->as<UnaryOp>()->op == AST::UnaryKind::Not) || constantTruth(node))
+    if (node->is<BoolOp>() || node->is<IfExp>() || (node->is<UnaryOp>() && node->as<UnaryOp>()->op == AST::UnaryKind::Not))
+        return jumpIfTo(node, target, condition);
+    // (It never goes there.)
+    if (auto truth = constantTruth(node); truth && *truth != condition)
         return jumpIfTo(node, target, condition);
     BranchTarget branchTarget = std::exchange(m_branchTarget, { });
     if (branchTarget.loop) {
         Ref<Label> goesOn = g.newLabel();
         jumpIfTo(node, goesOn.get(), !condition);
-        emitImplicitContinue(*branchTarget.loop);
-        g.emitLabel(goesOn.get());
+        if (!cannotGetHere())
+            emitImplicitContinue(*branchTarget.loop);
+        if (goesOn->isBound())
+            g.emitLabel(goesOn.get());
     } else if (branchTarget.loopOfComprehension) {
         Ref<Label> goesOn = g.newLabel();
         jumpIfTo(node, goesOn.get(), !condition);
-        line(branchTarget.placeOfJumpThere);
-        jump(*branchTarget.loopOfComprehension);
-        g.emitLabel(goesOn.get());
-        line(branchTarget.placeOfJumpThere);
+        if (!cannotGetHere()) {
+            line(branchTarget.placeOfJumpThere);
+            jump(*branchTarget.loopOfComprehension);
+        }
+        if (goesOn->isBound()) {
+            g.emitLabel(goesOn.get());
+            line(branchTarget.placeOfJumpThere);
+            // (CPython has a jump here, over what drops the operand of a comparison before the last that fails.)
+            if (auto* compare = node->tryAs<Compare>(); compare && compare->ops.size() > 1)
+                line(node->range);
+        }
     } else if (branchTarget.returns) {
         jumpIfTo(node, labelForLine(*branchTarget.returns, node->range.lineno), condition);
     } else {
@@ -929,7 +994,9 @@ void Unit::jumpIfTo(Expr* node, Label& target, bool condition)
     if (!isSafeToRecurse())
         return;
 
-    if (auto truth = constantTruth(node)) {
+    // (Not what is made up of constants, `0 or 1`: each of them may be on a line of its own, which the frame is on when it gets there.)
+    bool isMadeUp = node->is<BoolOp>() || node->is<IfExp>() || (node->is<UnaryOp>() && node->as<UnaryOp>()->op == AST::UnaryKind::Not);
+    if (auto truth = isMadeUp ? std::nullopt : constantTruth(node)) {
         line(node->range);
         noteWhatConstantIsMadeOf(node);
         if (*truth == condition)
@@ -965,6 +1032,9 @@ void Unit::jumpIfTo(Expr* node, Label& target, bool condition)
         Ref<Label> end = g.newLabel();
         jumpIf(ifExp->test, orelse.get(), false);
         jumpIf(ifExp->body, target, condition);
+        // (Of the line of what was tested last, wherever the branch is said to be.)
+        if (Expr* tested = cannotGetHere() ? nullptr : testedLast(ifExp->body))
+            line(tested->range);
         jump(end.get());
         if (orelse->isBound())
             g.emitLabel(orelse.get());
