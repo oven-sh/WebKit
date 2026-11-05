@@ -46,18 +46,6 @@
 #include <wtf/StdLibExtras.h>
 #include <wtf/text/StringToIntegerConversion.h>
 
-#if USE(MIMALLOC)
-#include <bmalloc/mimalloc.h>
-#endif
-
-#if OS(LINUX)
-#include <fcntl.h>
-#include <sched.h>
-#include <sys/mman.h>
-#include <unistd.h>
-#include <wtf/Threading.h>
-#endif
-
 namespace JSC { namespace AOT {
 
 using namespace Typed;
@@ -393,14 +381,6 @@ static int runWriteOutSubcommand(std::span<const String> arguments)
     return exitCodeForSuccess;
 }
 
-// As Bun has it while a build is under way (BuildUnderWay in src/threading/ThreadPool.rs): what is freed stays with the process, and the next stage takes it.
-static void treatMemoryAsBuildInBunDoes()
-{
-#if USE(MIMALLOC)
-    mi_option_set_default(mi_option_purge_delay, 24 * 60 * 60 * 1000);
-#endif
-}
-
 } } // namespace JSC::AOT
 
 int main(int argc, char** argv)
@@ -497,7 +477,6 @@ int main(int argc, char** argv)
         enterTemporaryFolder();
         return runCommandSubcommand(StringView::fromLatin1(commandLine[1]), arguments);
     case Subcommand::Compile:
-        treatMemoryAsBuildInBunDoes();
         return runCompileSubcommand(arguments);
     case Subcommand::WriteOut:
         return runWriteOutSubcommand(arguments);

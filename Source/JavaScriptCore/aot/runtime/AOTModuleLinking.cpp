@@ -576,7 +576,8 @@ void Modules::captureSyntheticExports(const ModuleLinkWalk& walk, VisitedModuleR
                 bindLatestCapture(module);
                 RETURN_IF_EXCEPTION(scope, void());
             }
-            if (data(module).capturesExportsBehindEvaluation() && !resolvesNames)
+            // Whoever links a file as a root is about to evaluate it: evaluateForCapture(). To capture its exports here would evaluate it, which would link it, without end.
+            if (data(module).capturesExportsBehindEvaluation() && (!resolvesNames || module == walk.root()))
                 captureExportsBehindEvaluation(module);
             else {
                 captureExports(module);
@@ -779,6 +780,9 @@ void Modules::captureExports(ModuleID module)
 
     if (loaded.capturedExports || loaded.capturedFields)
         return;
+    // A file may require a module whose link captures the exports of the next file, and so on.
+    checkSafeToRecurseWhileLinking(realm, scope);
+    RETURN_IF_EXCEPTION(scope, void());
 
     WTF::Vector<Identifier, 4> names;
     MarkedArgumentBuffer values;

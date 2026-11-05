@@ -611,13 +611,14 @@ static ModuleData createRecordForModuleLists(const TableInputs& inputs, const An
 }
 
 // No edge: the code of the requester evaluates the target where the require() stands, and asks the run time nothing.
+// A site that finds its target by a name at run time has no edge either, and asks the run time: code calls only what the plan lets it call.
 template<typename Numbers>
-static bool isAnsweredByCode(const Typed::Program& program, const Numbers& numbers, ModuleID requester, const Typed::ModuleRequest& request)
+static bool isAnsweredByCode(const TableInputs& inputs, const Numbers& numbers, ModuleID requester, const Typed::ModuleRequest& request)
 {
-    switch (program.at(request.target).kind) {
+    switch (inputs.program.at(request.target).kind) {
     case ModuleKind::SourceText:
     case ModuleKind::CommonJs:
-        return !numbers.hasRequireEdge(requester, request.target);
+        return inputs.plan.moduleEvaluation().isCalledWhereRequired(request.target) && !numbers.hasRequireEdge(requester, request.target);
     case ModuleKind::Data:
     case ModuleKind::RuntimeSource:
     case ModuleKind::Runtime:
@@ -702,7 +703,7 @@ static void appendModuleToModuleLists(const TableInputs& inputs, const AnswersAb
         if (answers.ofModules[request.target.index()].containsAll({ AnswerAboutModule::IsNotWorthVisiting, AnswerAboutModule::IsNeverEvaluated }))
             continue;
         bool isRequire = request.kind == Typed::ModuleRequestKind::Require;
-        if (isRequire && &request != requestOfFace && !isAnsweredByCode(program, numbers, id, request))
+        if (isRequire && &request != requestOfFace && !isAnsweredByCode(inputs, numbers, id, request))
             continue;
         lists.requests.append(ModuleRequestData::create(request.target.index(), request.phase == ImportPhase::Defer, request.isDynamicStarExport, isRequire, request.isHoisted));
     }
