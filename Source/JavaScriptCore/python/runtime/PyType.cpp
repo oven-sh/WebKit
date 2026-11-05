@@ -274,15 +274,33 @@ JSValue PyType::lookupSlow(JSString* name)
             value = dict->get(name);
             continue;
         }
-        // type("X", (), { key: 1 }): the key is asked whether it equals the name. What it raises is lost, as in CPython.
-        if (vm.exceptionForInspection())
-            continue;
+        // type("X", (), { key: 1 }): the key is asked whether it equals the name. What it raises is lost, the name counts as not found,
+        // and nothing is remembered, as in CPython.
+        if (vm.hasPendingTerminationException()) [[unlikely]]
+            return { };
         JSGlobalObject* globalObject = realm();
         s_timesLookupRanCode.fetch_add(1, std::memory_order_relaxed);
-        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-        value = dict->get(globalObject, name);
-        if (scope.exception()) [[unlikely]]
-            takePendingException(globalObject);
+        bool hasRaised = false;
+        bool wasTerminated = false;
+        {
+            // An exception may be on its way.
+            SuspendExceptionScope suspended(vm);
+            auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+            value = dict->get(globalObject, name);
+            if (Exception* exception = scope.exception()) [[unlikely]] {
+                hasRaised = true;
+                wasTerminated = vm.isTerminationException(exception);
+                if (wasTerminated)
+                    scope.clearException();
+                else
+                    takePendingException(globalObject);
+            }
+        }
+        // In place of whatever was on its way.
+        if (wasTerminated) [[unlikely]]
+            vm.throwTerminationException();
+        if (hasRaised) [[unlikely]]
+            return { };
     }
     // And it may have changed the type, or its bases.
     if (m_numberOfChanges != numberOfChanges) [[unlikely]]
@@ -298,9 +316,11 @@ JSValue PyType::lookupSlow(JSString* name)
 JSValue PyType::lookupSpecialSlow(Special special)
 {
     Runtime& rt = Runtime::from(realm());
-    uint32_t numberOfChanges = m_numberOfChanges;
-    JSValue value = lookup(rt.name(special));
-    if (m_numberOfChanges != numberOfChanges) [[unlikely]]
+    JSString* name = rt.name(special);
+    JSValue value = lookup(name);
+    // What that has not remembered is not remembered here either.
+    StringImpl* impl = name->tryGetValueImpl();
+    if (LookupCacheEntry& entry = lookupCacheEntry(impl); entry.impl != impl || entry.value.get() != value) [[unlikely]]
         return value;
     unsigned index = static_cast<unsigned>(special);
     m_specials[index].set(rt.vm(), this, value);
