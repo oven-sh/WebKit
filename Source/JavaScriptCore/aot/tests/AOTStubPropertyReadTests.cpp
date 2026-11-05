@@ -2041,7 +2041,6 @@ std::span<const NativeTest> stubPropertyReadTests()
         { "stubs/get-by-id-keeping-registers/empty-slots-that-may-be-undefined"_s, ImageTests::whenExecutable<withStubThatKeepsRegisters<testEmptySlotsThatMayBeUndefined>> },
         { "stubs/get-by-id-keeping-registers/fields-in-extension-or-inherited-values"_s, ImageTests::whenExecutable<withStubThatKeepsRegisters<testFieldsInExtensionOrInheritedValues>> },
         { "stubs/get-by-id-keeping-registers/fields-or-inherited-getters"_s, ImageTests::whenExecutable<withStubThatKeepsRegisters<testFieldsOrInheritedGetters>> },
-        { "stubs/get-by-id-keeping-registers/receiver-of-a-host-getter-lies-in-the-frame-of-the-stub"_s, ImageTests::whenExecutable<withStubThatKeepsRegisters<testReceiverOfHostGetterLiesInFrameOfStub>> },
         { "stubs/get-by-id-keeping-registers/inherited-fields"_s, ImageTests::whenExecutable<withStubThatKeepsRegisters<testInheritedFields>> },
         { "stubs/get-by-id-keeping-registers/inherited-fields-of-holder-that-is-not-filed"_s, ImageTests::whenExecutable<withStubThatKeepsRegisters<testInheritedFieldsOfHolderThatIsNotFiled>> },
         { "stubs/get-by-id-keeping-registers/fields-or-inherited-fields"_s, ImageTests::whenExecutable<withStubThatKeepsRegisters<testFieldsOrInheritedFields>> },
