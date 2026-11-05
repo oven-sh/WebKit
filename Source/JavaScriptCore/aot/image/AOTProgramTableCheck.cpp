@@ -458,6 +458,7 @@ static void checkOrderOfProgramTables(const JoinedTables& check)
     checkAscending(tables.builtinCells(), std::identity { }, "builtinCells"_s);
     checkAscending(tables.eagerBuiltinCells(), std::identity { }, "eagerBuiltinCells"_s);
     checkAscending(tables.classGuardCounts(), std::identity { }, "classGuardCounts"_s);
+    checkAscending(tables.classesBelowWithGuardsOfNames(), std::identity { }, "classesBelowWithGuardsOfNames"_s);
 
     auto liesInStatics = [&](const StaticsRange& range) {
         return static_cast<uint64_t>(range.offset) + range.size <= sizeOfStatics;
@@ -704,6 +705,13 @@ static void checkClassRecord(const JoinedTables& check, const LayoutData& layout
                     return true;
                 return !(below->classData().sidesWithGuardsHereOrBelow & ~classData.sidesWithGuardsHereOrBelow);
             }), "ClassDoesNotListenForGuardsBelow"_s, id);
+            check.expect(std::ranges::all_of(subclasses, [&](uint32_t index) {
+                uint32_t offsetOfClassBelow = check.tables.offsetOfClass(index);
+                const LayoutData* below = offsetOfClassBelow ? check.tryGetRecord<LayoutData>(TablePartID::Layouts, offsetOfClassBelow) : nullptr;
+                if (!below || !below->isClass() || !check.liesInPart(TablePartID::Layouts, offsetOfClassBelow - below->prefixSize(), below->prefixSize(), alignof(LayoutData)))
+                    return true;
+                return below->assumedBase() == id.index();
+            }), "ClassListedBelowNamesAnotherBase"_s, id);
         }
     }
     for (unsigned side = 0; side < numberOfClassSides; ++side) {
@@ -722,6 +730,12 @@ static void checkClassRecord(const JoinedTables& check, const LayoutData& layout
         for (size_t place = 1; place < list.size(); place += 2)
             everyNameHasItsBit &= check.tables.someClassGuardNames(list[place]);
         check.expect(everyNameHasItsBit, "NameOfClassGuardWithoutItsBit"_s, id);
+        bool isListedUnderEveryName = true;
+        if (layout.assumedBase() != LayoutData::noBase) {
+            for (size_t place = 1; place < list.size(); place += 2)
+                isListedUnderEveryName &= std::ranges::binary_search(check.tables.classesBelowWithGuardsOfNames(), ClassBelowWithGuardOfNameData { list[place], id.index() * numberOfClassSides + side });
+        }
+        check.expect(isListedUnderEveryName, "ClassBelowNotListedUnderNameOfItsGuard"_s, id);
     }
     check.expect(!!classData.guardsHoldWhileClear == check.plan.classGuardsHoldWhileClear(id), "GuardPolarityDiffersFromPlan"_s, id);
     check.expect(!!classData.guardsOfPrototypeSideHoldWhileClear == check.plan.bitsOfClassGuardsAreClearWhileTheyHold(id, ClassSide::Prototype), "GuardPolarityDiffersFromPlan"_s, id);

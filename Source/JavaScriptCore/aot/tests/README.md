@@ -607,6 +607,9 @@ question and of two numbers of the program, so one command line gives one execut
 - `testing=IgnoreBranchHints`: every block of a walked body is `Normal`. `testing=ShuffleBlockFrequencies:<seed>`: each is drawn `Normal`, `Unlikely` or `Rare`, and one loop mark in four is drawn away
   (`Code::frequencyTakenFor()`, `Code::loopMarkIsDrawnAway()`). The forms that the emitters pick by place, the order of blocks and the polls on rare ways follow. Not the entries and the guards: a guard falls into what lies behind it.
   The verifier's look at Link's effects given the arguments goes by rare blocks and is left out under both words. `BlocksPlacedOtherwise` counts the blocks whose class is not the one that the walk gave.
+- `testing=OrderBlocksAgain`: the back end orders the blocks of every procedure by its second search, which does not go down from a rare block into a block outside rare regions (`orderBlocks()`, `machine/AOTMachineOrder.cpp`).
+  Without the word only a procedure whose first order laid a block ahead of all its predecessors is ordered so. More exits of rare regions lead back, so more loops by position have side entrances: the hardest orders that the allocator is given.
+  Each procedure is checked as one that was ordered again is in every build. `testaot fuzz-allocation` asks for it for one seed in five (`ProcedureTraits::ordersBlocksAsWhenOrderedAgain`).
 - `testing=FailGuesses[:<n>[:<seed>]]`: a guess fails one time in n (1: always) though its value would have passed. `GuessFailsUnasked` steps a word of the instance and is branched on beside the tests
   (`Walker::letGuessFailUnasked()`): a guess with arms (`openGuessWithTest()`, which then narrows nothing on the failing side), a turn that begins again, the tests in front of a loop built twice and at the head of its typed copy, the guard of a copy
   in line, a parameter guard, the truth of an object or nothing, an operand taken as made, an accessor in a slot, the own keys of an object, a URL answered out of its text, an awaited step written by hand.
@@ -614,8 +617,7 @@ question and of two numbers of the program, so one command line gives one execut
   the key that is undefined (`goOnWhereTestPassesInNumberForms()`), the integer that a switch takes (`buildIntegerThatSwitchTakesForGuesses()`), the head that returns at once (`copyHeadThatReturnsAtOnceAtInlining()`).
   Not the guesses of one operation, which test in their own code, nor the guesses at callees and getters.
 - `testing=IgnoreExpectedTypes`: nothing is expected of any value. `testing=ShuffleExpectedTypes:<seed>`: one expectation in four is dropped and one in four is that of another value of the body
-  (`expectationTakenInPlaceOfWhatIsFoundForGuesses()`); the plan of the guards, the looks and the walk draw alike. `ExpectedTypesTakenOtherwise` counts. Where a look and the walk differ under the shuffle a verifying build walks the unit again, as
-  every other build does (`Walker::stopsWhereLookAndWalkDiffer()`). Under both words, and under `GiveLinkMore`, no promise of an int32 is judged (`Walker::judgesInt32Promises()`): the judge reports on the program's text and builds nothing,
+  (`expectationTakenInPlaceOfWhatIsFoundForGuesses()`); the plan of the guards, the looks and the walk draw alike. `ExpectedTypesTakenOtherwise` counts. Under both words, and under `GiveLinkMore`, no promise of an int32 is judged (`Walker::judgesInt32Promises()`): the judge reports on the program's text and builds nothing,
   it goes by what is written and by Link's types, and the build without the word has heard it.
 - `testing=GiveLinkMore:<seed>`: Link's answer is weakened and stays true. Of the results of calls and reads one in 4, 16, 128 or 2048 (bits 1 and 2 of the seed) is given anything, as a larger program might
   (`StateOfLinkReach::giveMoreToNodesOf()`); an odd seed leaves the library alone; with bit 3 set half of the nodes drawn are given what another node of the same body holds instead (an edge from it): a second value with a name takes a type up
@@ -636,11 +638,22 @@ those words of operand 0 are others behind it. This is a bug in Bun.`
 - Runs no other code: every unit counts its entries. Writes: the words of the operands that are cells, by heap, are hashed in front and behind. Throws nothing by rule (a row that
   throws nothing, and one that throws for lack of memory alone): whoever looks for a handler asks whether such a call is under way; lack of memory, a full stack and a termination do not count. Does not collect: the heap's count of collections, which
   sees every allocation of the engine under `--slowPathAllocsBetweenGCs=1`.
-- A heap that is the words of no operand has no digest: whoever writes it counts the write (`State::writesCountedForEffectsNet`, `CountInEffectsNet`), and a call that runs no other code and is said not to
-  write the heap leaves the counts as they stood: `.. say that the call will not write MemberGuards, and under it guards that held have ended`. `MemberGuards`: the four sinks in `object/AOTClassGuards.cpp`
-  (a bit, a count, the bit "begun", an entry of the method table), apart by whether a guard that held has ended or guards were armed or have begun: `answers/a-write-of-a-heap-that-is-no-operands-is-counted-where-it-is-made.ir`.
-- It does not see: a write to what is no operand (a variable, a scope, a buffer of the caller), the named properties of an object of the engine, code that the interpreter
-  runs, and whether a call of compiled code runs unknown code.
+- Words that are no operand's have no digest: whoever writes them counts the write (`State::writesCountedForEffectsNet`, `CountInEffectsNet`), and a call that runs no unknown code, be it a call of a compiled
+  function held to what Link says of it, and is said to write none of the heaps that they are read under leaves the counts as they stood: `.. say that the call will not write MemberGuards, and under it guards that held have ended`. `MemberGuards`: the four sinks in `object/AOTClassGuards.cpp`
+  (a bit, a count, the bit "begun", an entry of the method table), apart by whether a test that passed may fail now (a guard has ended, a count of guards that do not hold was raised, also by a beginning) or not: `answers/a-write-of-a-heap-that-is-no-operands-is-counted-where-it-is-made.ir`.
+  The bytes of the watch over built-ins (`NamedProperties`; `runtime/AOTBuiltinCells.cpp`), where a byte that said "as built" says so no longer. The words of the statics that C++ writes (a variable of a module, a static
+  field, a variable of a scope that lies there: `ModuleVariables`, `NamedProperties`, `EnvironmentFields`): `ProgramStatics::writeVariable()` where the value is another, `putBack()`, `EvalBindings::writeBinding()`, `ClosureTable::forgetClosures()`;
+  what emitted code stores there is counted under the word, a count a kind (`StaticsEmitter`, `RuntimeCallEmitter::countStoreForEffectsNet()`; not in straight code).
+- A call into compiled code that is said to run no unknown code is held as well for the digests of what the variables of modules hold that the caller's unit reads (the first eight that may hold objects, each where it holds
+  the same cell behind the call; `RuntimeCallEmitter::digestVariablesThatUnitReads()`): the callee reaches those cells without an operand: `.. and those words of what the variable g2 of a module holds, no operand of the call, are others behind it`.
+- A second word of digests of each operand (`SecondLaneInEffectsNet`), a lane held where the call writes none of the heaps that its words are read under (`codegen/AOTHeaps.h`): the structure . the prototype . the named
+  properties of an object of the engine and the extra ones of a compiled object . the bytes of a view or a buffer that is not shared (of a long one the first and the last 4 KB, as of the storage of a map or a set) . the variables of an environment, also of the one that a closure
+  holds . the storage of a map or a set . a promise's words, an iterator's fields, a date's number . a regular expression's last index: `.. say that the call will not write TypedArrayElements, and of operand 1 these are others behind
+  it: the bytes`. `isKnownToSayLessOfSecondDigest()` (`runtime/AOTExceptionOperations.cpp`) lists the rows that it found false on right programs when it was written and that nobody has judged: `answers/the-second-word-of-digests-sees-what-the-first-has-no-lane-for.ir`.
+- It does not see: a write to what neither is an operand, nor lies in a variable that the caller reads, nor has a count (what a scope's variable holds, what a field of an operand holds); weak tables, shared memory, all but the
+  first and the last 128 of an object's properties outside its cell, a proxy's target and handler, the state of a coroutine, `arguments` objects, sparse storage, the fields of a bound function, a promise's reactions, the native state
+  of an object of the host; straight code; code that the interpreter runs, and whether a call of compiled code runs unknown code. One change in 256 a lane passes by chance. A FALSE STOP THAT MAY COME: a native thread that fills a
+  buffer (`fs.read`, `crypto.randomFill`, zlib, a reader of a stream) while a call that has the buffer for an operand is held to leave its bytes alone.
 - `testing=RowSaysLess:<Operation|RuntimeOperation|Stub|Builtin|Callee>/<row>/<RunsOtherCode|Throws|ThrowsByRule|Collects|a heap>` lays one row false, for the red controls:
   `answers/false-rows-of-effects-are-stopped-by-name.ir`.
 - **Its twin at build time**, in every build that verifies (`findOperationThatLinkHasNotCounted()`, `walk/AOTCompileUnit.cpp`): an operation of a `Body` whose own row is exact, that is one which calls
@@ -659,7 +672,15 @@ those words of operand 0 are others behind it. This is a bug in Bun.`
 - `BUN_AOT_EFFECTS_NET_GOES_ON=1`: each false row is told once and the run goes on. With `aotCountsPath` the file lists `effects:<part>:<row>` for each part of a row that a
   call was held to, and `false-effects:` for each false one; `testaot list rows-of-effects` lists what there is to hold.
 
-**`testing=CheckProofsAtRunTime`: Link's proofs are held against what runs.** No option of a build: tests, `testaot` and health set it
+**`testing=CheckWalkAtRunTime`: the walk is held against itself.** No option of a build and no part of `--aot-harden`: health's lane `proofs` sets it beside `CheckProofsAtRunTime`.
+Hardening pays for proofs that another part of the compiler made; a net may also ask the walk about itself.
+- **A guard that an access leans on is asked again where it leans** (`askAgainGuardsAboveReceiversForTypedAccess()`): a read of a slot that may be empty and a store that may create go without a look above
+  where the state remembers that the guard of the class holds: `AreMembersUnchanged` is built again in front of them, and `CheckProof .. source=WhatIsRemembered` on its answer. Only what the state says holds is asked.
+  The lie for the red control: `RowSaysLess:Operation/PutSlotOrAdd/MemberGuards`.
+- **With `CheckProofsAtRunTime`: a `Narrowed` in a raw form is asked for its range** (`source=Test`): what a compare in the code has just shown of a counter. A boxed one is asked under `CheckProofsAtRunTime` itself.
+
+**`testing=CheckProofsAtRunTime`: Link's proofs are held against what runs.** AN OPTION OF A BUILD: `--aot-harden=proof-checks` stands for it and `KeepsCellsOutOfFrames`: what is laid under it costs a
+hardened build of a user bytes and time, and nothing goes out of it without the owner's word. Tests, `testaot` and health set it
 (`--option=testing=CheckProofsAtRunTime` for a folder, `--aot-testing=CheckProofsAtRunTime` for `bun build`). The walk builds a `CheckProof` on a value, which
 takes the value for one of which only `typeWithoutProof` is known and ends the process where it is not of `checkedType`: `AOT: f12 at 345: what a field holds is
 not of the type that the compiler has proven of it. It is: string. This is a bug in Bun.` (the function that the operation is written in and the position there:
@@ -682,6 +703,12 @@ not of the type that the compiler has proven of it. It is: string. This is a bug
 - **WHAT THE WALK ITSELF REMEMBERS** (`checkWhatIsRememberedOf()`, asked by `walkOperation()`): a read, or a test for a name, that was given a constant or an older value is walked once more without the answers
   of the state, and `StrictEq` holds what memory gives against what was remembered: `what memory holds where the compiler remembers another value ..`. It stops a false `fresh`, a forgotten effect of a callee,
   a store that was lost. The walk goes on with the state that it had, so one check does not end the beliefs that the next would try.
+- **THE TEST OF A CHECK IS BUILT WHERE IT STANDS** (`Walker::buildTestOfCheck()`): `build()` answers an operation in four ways that go by what the walk believes: the row in front of a loop, a place in front of the loop where
+  the row of the loop says that the turns do not write what it reads, an equal operation in the table of known answers, the same record standing in front. A test built for a check takes none of them: else the check in a turn
+  hangs on a test from in front of the head and always passes. An answer that COMES FROM IN FRONT OF THE LOOP (the program's own read, carried out; also behind a `Narrowed`, a `Box`, an `Unbox`) is remembered like one that
+  memory gave: it is read again in the turn and compared; so is the length that a step of an iteration over a list or a view goes by. `ChecksThatWalkAnswers` counts the checks whose test still came back as a constant, an older
+  record or a record in front of the loops around (`InFrontOfTypedCopy` and `buildInFrontOfOpenLoop()` set the block by hand): no compare is built on those.
+  `from-source/walk/loop-invariants/under-the-word-a-read-carried-in-front-of-a-loop-is-read-again-in-the-turn.ir`.
 - **WHAT THE WALK REMEMBERS OF A CELL** (`checkFactsRememberedOfCell()`): not frozen, no field outside its slot, the layout's prototype, the order word. No read shows these, so `IsNotFrozen` | `HasNoFieldOutsideSlot`,
   `HasLayoutPrototype` and `HasKeyOrder` are built again, each with a `CheckProof`, in front of every `PutSlot`, `PutSlotOrAdd` and `GetSlotOrUndefined` at level Proven, and with `AreMembersUnchanged` in front of a method
   that is read behind looks.

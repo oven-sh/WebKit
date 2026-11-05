@@ -119,6 +119,7 @@ public:
     Vector<VariableFacts> variables;
     Vector<uint32_t> firstFieldOfLayout;
     Vector<FieldFacts> fields;
+    BitVector layoutsThatTakeRowsOfBase;
 
     Vector<LayoutFacts> layouts;
     Vector<ClassFacts> classes;
@@ -201,6 +202,7 @@ public:
 
     const LinkTables& linked() const LIFETIME_BOUND { return m_linked; }
     const LinkTables& held() const LIFETIME_BOUND { return m_held; }
+    bool saysOfInheritedFieldsWhatBaseSays(LayoutID layout) const { return m_linked.layouts[layout.index()].takesCellsOfBase && m_held.layouts[layout.index()].takesCellsOfBase && m_tables.layoutsThatTakeRowsOfBase.get(layout.index()); }
     const LayoutsByNames& layoutsByNames() const LIFETIME_BOUND { return m_layoutsByNames; }
     const Families& families() const LIFETIME_BOUND { return *m_families; }
     const ThinSummaries& summaries() const LIFETIME_BOUND { return *m_summaries; }
@@ -260,6 +262,11 @@ public:
         const BuiltinUseRecord* use = findFactRow(builtinUses(), id.index(), &BuiltinUseRecord::builtin);
         return use && hasFunction(use->witness);
     }
+    bool isUsedWithoutNamesFromRunTime(BuiltinID id) const
+    {
+        const BuiltinUseRecord* use = findFactRow(builtinUses(), id.index(), &BuiltinUseRecord::builtin);
+        return use && !(static_cast<uint32_t>(use->uses) & static_cast<uint32_t>(BuiltinUse::NamedAtRunTime));
+    }
     std::span<const FeatureUseRecord> featureUses() const LIFETIME_BOUND { return m_tables.featureUses.span(); }
     std::span<const LocaleUse> localeUses() const LIFETIME_BOUND { return m_tables.localeUses.span(); }
     bool mayReadLegacyRegExpStatics() const { return m_tables.program.mayReadLegacyRegExpStatics; }
@@ -312,6 +319,7 @@ struct InputsOfProgramFacts {
 void computeFactsOfProgram(const InputsOfProgramFacts&, FactTables&);
 void workOutRegExpTexts(const Program&, const BodyIndexTable&, const ThinSummaries&, ProgramFactTables&);
 
+BlockID blockWhereListsOfArgumentsAreFirstNamed(const Program&, const BodyIndexTable&, FunctionID);
 JS_EXPORT_PRIVATE std::unique_ptr<Facts> computeFacts(Program&, BuildContext&, const FactsRequest& = { });
 JS_EXPORT_PRIVATE void printBreachesOfClosureOfLink(PrintStream&, Program&, BuildContext&, Mechanisms);
 JS_EXPORT_PRIVATE std::unique_ptr<Facts> computeFacts(Program&, BuildContext&, const FactsRequest&, std::unique_ptr<BodyIndexTable>&&);

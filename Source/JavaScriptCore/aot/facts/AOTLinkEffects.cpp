@@ -108,25 +108,7 @@ static ComponentsOfLinkEffects findComponentsForLinkEffects(uint32_t numberOfFun
     return components;
 }
 
-static constexpr OperandUses usesThatCallOperandInLinkEffects { OperandUse::Calls, OperandUse::CallsPerElement, OperandUse::CallsRepeatedly };
-static constexpr OperandUses usesThatRunCodeNobodyNamesInLinkEffects {
-    OperandUse::StoresByKey, OperandUse::DeletesByKey, OperandUse::AssignsFrom, OperandUse::TakesDescriptor,
-    OperandUse::PassesToUserCode, OperandUse::AppliesTransitively, OperandUse::AppliesToContents,
-};
-static constexpr OperandUses usesThatChangeShapeInLinkEffects { OperandUse::DefinesName, OperandUse::ChangesIntegrity, OperandUse::ChangesPrototype, OperandUse::BecomesPrototype };
-static constexpr OperandUses usesThatChangeOperandInLinkEffects {
-    OperandUse::WritesContents, OperandUse::MovesElements, OperandUse::StoresByKey, OperandUse::DeletesByKey, OperandUse::AssignsFrom,
-    OperandUse::DefinesName, OperandUse::TakesDescriptor, OperandUse::ChangesIntegrity, OperandUse::ChangesPrototype,
-};
-static constexpr OperandUses usesThatAddNoEffectsInLinkEffects {
-    OperandUse::Inspects, OperandUse::Retains, OperandUse::Returns, OperandUse::ReadsContents, OperandUse::WritesContents, OperandUse::RetainsContents, OperandUse::MovesElements,
-};
-static constexpr OperandUses usesThatNeedNoHeapInLinkEffects {
-    OperandUse::Inspects, OperandUse::Retains, OperandUse::Returns, OperandUse::Calls, OperandUse::CallsPerElement, OperandUse::CallsRepeatedly,
-    OperandUse::RetainsContents, OperandUse::BecomesPrototype, OperandUse::PassesToUserCode, OperandUse::AppliesTransitively, OperandUse::AppliesToContents,
-};
-static_assert(everyOperandUseIsInExactlyOneOf({ usesThatCallOperandInLinkEffects, usesThatRunCodeNobodyNamesInLinkEffects, usesThatChangeShapeInLinkEffects, usesThatAddNoEffectsInLinkEffects }));
-static_assert(everyOperandUseIsInExactlyOneOf({ usesThatChangeOperandInLinkEffects, OperandUse::ReadsContents, usesThatNeedNoHeapInLinkEffects }));
+static constexpr OperandUses usesThatRunCodeNobodyNamesInLinkEffects = usesThatStoreByKey | usesThatReachBeyondOperand | OperandUse::PassesToUserCode;
 
 static bool mayBeObjectForLinkEffects(const LinkType& type)
 {
@@ -855,6 +837,7 @@ Effects CalleeSummarizerForLinkEffects::effectsOfLookupItself(SummaryAccess::Kin
     effects.merge(declaredBoundOf(NamedEffectSet::UsesRuntime));
     effects.reads.merge(ofDefinition.reads);
     effects.reads.add(AbstractHeapSet { AbstractHeap::PrototypeLinks, AbstractHeap::MemberGuards });
+    effects.writes.merge(Effects::ofReadByNameThatRunsNoCode().writes);
     effects.mayThrow = ThrowEffect(true);
     switch (kind) {
     case SummaryAccess::Kind::Read:
@@ -936,13 +919,13 @@ bool CalleeSummarizerForLinkEffects::addEffectsOnOperand(const BuiltinOverload& 
 
     if (parameter->uses.containsAny(usesThatRunCodeNobodyNamesInLinkEffects) || parameter->roles.contains(BuiltinOperandRole::DescribedWhenRefused))
         return false;
-    if (parameter->uses.containsAny(usesThatCallOperandInLinkEffects)) {
+    if (parameter->uses.containsAny(usesThatCallOperand)) {
         if (type.objects != LinkType::Objects::None || mayBeOtherCallableForLinkEffects(type) || !rowSaysAllOfCallsOf(row, parameter->operand))
             return false;
         addFunctionsAt(type, found);
         effects.mayThrow = ThrowEffect(true);
     }
-    if (parameter->uses.containsAny(usesThatChangeShapeInLinkEffects))
+    if (parameter->uses.containsAny(usesThatChangeShape))
         effects.writes.add(AbstractHeapSet { AbstractHeap::PrototypeLinks, AbstractHeap::MemberGuards, AbstractHeap::ShapeWords, AbstractHeap::OrderWords });
     return true;
 }
@@ -964,7 +947,7 @@ bool CalleeSummarizerForLinkEffects::addEffectsOfRow(const BuiltinOverload& row,
         uses.add(row.receiver->uses);
     for (const BuiltinParameter& parameter : row.parameters)
         uses.add(parameter.uses);
-    if ((uses.containsAny(usesThatChangeOperandInLinkEffects) && row.effects.writes.isEmpty()) || (uses.contains(OperandUse::ReadsContents) && row.effects.reads.isEmpty()))
+    if ((uses.containsAny(usesThatChangeOperand) && row.effects.writes.isEmpty()) || (uses.contains(OperandUse::ReadsContents) && row.effects.reads.isEmpty()))
         return false;
     if (!row.receiver && row.parameters.empty() && row.effects.reads.isEmpty() && row.effects.writes.isEmpty())
         return false;

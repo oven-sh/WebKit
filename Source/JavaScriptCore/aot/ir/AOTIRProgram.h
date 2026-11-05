@@ -307,6 +307,7 @@ Vector<ModuleID, 2> formsInImage(const Program&, ModuleID named);
 bool namesWaysToModuleObjects(const Program&);
 BuiltinID functionOfHostThatRequireCallsFor(const Module&);
 bool loaderEntersBodyAtMostOnce(const Module&);
+bool isBodyWrittenInAnotherFile(const Program&, FunctionID);
 bool importMayAnswerWithMock(const Module&);
 bool requireMayAnswerWithMock(const Program&, const Module&);
 bool requireReadsModuleValue(const Program&, const Module&);

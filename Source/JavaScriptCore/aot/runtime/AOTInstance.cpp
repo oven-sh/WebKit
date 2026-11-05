@@ -23,6 +23,7 @@
 #include "AOTCompileOptions.h"
 #include "AOTCoroutineTable.h"
 #include "AOTEffectsDeclared.h"
+#include "AOTEffectsNet.h"
 #include "AOTFaultHandler.h"
 #include "AOTFunctionTables.h"
 #include "AOTGenerator.h"
@@ -967,6 +968,7 @@ void VMState::attachImage(VM& vm)
     image = Image::current();
     RELEASE_ASSERT(image);
     Image::setCurrentOfThread(image);
+    verifiesFastPathAnswers = image->header().options.verifiesFastPathAnswers;
     size_t sizeOfPages = sizeOfPagesAtStart(*image);
     size_t sizeOfRegExpMatchOutput = 2 * (maxGroupsInRegExpMatchOutput + 1);
     sizeOfRegExpMatchOutput = std::max<size_t>(sizeOfRegExpMatchOutput, image->header().counts.maxRegExpOutputSize);
@@ -1382,6 +1384,7 @@ static std::optional<FunctionID> findFunctionVariable(const ProgramTables& table
 
 void ProgramStatics::putBack(uint32_t offset, uint32_t size)
 {
+    m_instance.state->countWriteForEffectsNet(Typed::CountInEffectsNet::WordsOfStaticsWritten);
     std::span<const StaticsRun> runs = m_tables.staticsRuns();
     auto initialWordAt = [&](uint32_t word) -> uint64_t {
         auto run = std::ranges::upper_bound(runs, word, { }, &StaticsRun::firstWord);
@@ -1420,7 +1423,7 @@ JSValue ProgramStatics::readVariable(Instance& instance, SlotData slot)
         return value;
     if (std::optional<FunctionID> function = findFunctionVariable(statics.m_tables, offset)) {
         JSCell* closure = closures.closure(vm, *function);
-        writeVariable(instance, slot, closure);
+        write(instance, slot, closure);
         return closure;
     }
     return { };
@@ -1454,6 +1457,13 @@ bool ProgramStatics::isVariableEmpty(const Instance& instance, SlotData slot)
 }
 
 void ProgramStatics::writeVariable(Instance& instance, SlotData slot, JSValue value)
+{
+    if (readVariableWithoutAllocating(instance, slot) != value)
+        instance.state->countWriteForEffectsNet(Typed::CountInEffectsNet::WordsOfStaticsWritten);
+    write(instance, slot, value);
+}
+
+void ProgramStatics::write(Instance& instance, SlotData slot, JSValue value)
 {
     SlotRepresentation representation = slot.representation();
     RELEASE_ASSERT(representation != SlotRepresentation::DeferredClosure);

@@ -92,6 +92,25 @@ StubKey AccessEmitter::stubThatReadsAtSite(PropertyKeyID key, ValueID receiver)
     return receiver && typeOf(receiver).isObject() ? getByIdOfObjectAtSite() : getByIdAtSite();
 }
 
+bool namesSizeOfTables(const Program& program, const Facts& facts, PropertyKeyID key)
+{
+    if (key != program.keyOf(BuiltinNames::size)) [[likely]]
+        return false;
+    const BuiltinTable& table = program.builtins();
+    for (BuiltinBoxedStub getter : { BuiltinBoxedStub::MapSize, BuiltinBoxedStub::SetSize }) {
+        for (BuiltinID member : table.membersThatHoldMethodOf(getter)) {
+            if (table.at(member).name != BuiltinNames::size)
+                return false;
+            if (program.admitsReplacedBuiltins)
+                continue;
+            bool isLocked = table.at(member).mutability == BuiltinMutability::AlwaysLocked || table.isLocationOfLockedObject(member) || facts.builtinLocation(member) == BuiltinLocationState::Constant;
+            if (!isLocked || table.has(BuiltinMark::MayBeAbsent, member) || program.isUnlocked(member) || program.isUnlocked(table.canonicalID(member)))
+                return false;
+        }
+    }
+    return true;
+}
+
 Boxed AccessEmitter::getById(const OperationContext& context, Boxed receiver, PropertyKeyID key, ValueID receiverID)
 {
     if (isSymbolOfRealm(key))
@@ -103,12 +122,14 @@ Boxed AccessEmitter::getById(const OperationContext& context, Boxed receiver, Pr
         NameAtSite name = hasColumn ? NameAtSite::HasColumn : NameAtSite::IsAnyName;
         ReceiverAtSite receiverIs = receiverID && typeOf(receiverID).isObject() ? ReceiverAtSite::IsCell : ReceiverAtSite::IsAnyValue;
         const bool namesLength = hasColumn ? isLength : m_program.nameClassOf(key) == NameClass::Length;
-        StubKey stub = namesLength ? readLengthAtSite(name) : !m_plan.slots().namesField(key) ? readAtSiteOfNameWithoutField(receiverIs, name) : readAtSite(receiverIs, name);
+        StubKey stub = namesLength ? readLengthAtSite(name) : namesSizeOfTables(m_program, m_facts, key) ? readSizeOfTableAtSite(name) : !m_plan.slots().namesField(key) ? readAtSiteOfNameWithoutField(receiverIs, name) : readAtSite(receiverIs, name);
         return Boxed(callStub(context, stub, { receiver.value() }, { .numberedImmediate = *answers }).first);
     }
     if (isLength)
         return Boxed(callStub(context, getLengthAtSite(), { receiver.value() }, { .numberedImmediate = mention }).first);
-    StubKey stub = hasColumn ? AOT::getById() : getByIdCheckingColumn();
+    if (hasColumn && namesSizeOfTables(m_program, m_facts, key))
+        return Boxed(callStub(context, getSizeOfTable(), { receiver.value() }, { .numberedImmediate = mention }).first);
+    StubKey stub = hasColumn ? getByIdCalledByCode() : getByIdCheckingColumn();
     return Boxed(callStub(context, stub, { receiver.value() }, { .numberedImmediate = mention }).first);
 }
 

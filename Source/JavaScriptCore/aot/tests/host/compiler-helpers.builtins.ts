@@ -132,6 +132,7 @@ export default b.declarations(
       runsOnlyOperandCode: true,
       runsUnseenCode: false,
       uses: { object: [b.runs("OwnKeys", "OwnValues"), b.contentsStoredIn(b.resultSlot("element"))] },
+      writes: ["ShapeWords", "NamedProperties", "MemberGuards", "ObjectFields"],
       implementation: b.hostCall,
       directEntry: {
         symbol: "AOT__ownEntriesFlat",

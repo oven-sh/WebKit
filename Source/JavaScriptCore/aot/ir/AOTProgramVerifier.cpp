@@ -771,7 +771,8 @@ void ProgramVerifier::verifyDeclaredPositions()
     };
 
     Vector<uint32_t> invalidLayouts = findIndicesInParallel(loops, m_program.layouts.size(), [&](unsigned index) {
-        return !std::ranges::all_of(m_program.layouts[index].fields, [&](const Field& field) {
+        const Layout& layout = m_program.layouts[index];
+        return !std::ranges::all_of(layout.fields.span().first(baseWhoseFieldListIsCopiedWhole(m_program, LayoutID(index)) ? layout.ownFieldCount : layout.fields.size()), [&](const Field& field) {
             return isValid(field.declared) && canOutliveActivation(m_program, field.declared);
         });
     });

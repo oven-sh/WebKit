@@ -11,15 +11,18 @@
 #include "AOTBuiltinTable.h"
 #include "AOTCallSiteTable.h"
 #include "AOTClassPrototype.h"
+#include "AOTClosure.h"
 #include "AOTCompiledCallee.h"
 #include "AOTCompiledFrame.h"
 #include "AOTEffectsNet.h"
+#include "AOTEnvironment.h"
 #include "AOTErrorMessages.h"
 #include "AOTFunctionDescription.h"
 #include "AOTFunctionNames.h"
 #include "AOTImage.h"
 #include "AOTInstance.h"
 #include "AOTMembersLeftOut.h"
+#include "AOTModuleHost.h"
 #include "AOTObject.h"
 #include "AOTObjectModel.h"
 #include "AOTOperationData.h"
@@ -34,6 +37,7 @@
 #include "AOTStubRegisters.h"
 #include "AOTStubsPolls.h"
 #include "AOTUnwinding.h"
+#include "DateInstance.h"
 #include "DeferGCInlines.h"
 #include "DeferTermination.h"
 #include "Error.h"
@@ -41,9 +45,15 @@
 #include "ExceptionHelpers.h"
 #include "FunctionExecutable.h"
 #include "IteratorOperations.h"
+#include "JSArrayBuffer.h"
 #include "JSCInlines.h"
+#include "JSInternalFieldObjectImpl.h"
+#include "JSMap.h"
+#include "JSPromise.h"
+#include "JSSet.h"
 #include "MarkedBlockCage.h"
 #include "OwedOutOfMemoryError.h"
+#include "RegExpObject.h"
 #include "SuppressedError.h"
 #include "TopExceptionScope.h"
 #include "VMTrapsInlines.h"
@@ -440,7 +450,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTPoisonCell, void, (Instance* insta
     countEvent(vm, PoisonedCell::tryPoison(vm, cell, function, position) ? RuntimeCounterID::CellsPoisoned : RuntimeCounterID::CellsOfClassesThatAreNotPoisoned);
 }
 
-[[noreturn]] static void stopAtFalseProof(EncodedJSValue encodedFound, uint32_t function, const String& position, uint32_t source)
+[[noreturn]] static void stopAtFalseProof(Instance& instance, EncodedJSValue encodedFound, uint32_t function, const String& position, uint32_t source)
 {
     using Typed::ProofSource;
     static constexpr std::array names {
@@ -456,15 +466,22 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTPoisonCell, void, (Instance* insta
         found.print("a cell that is no value of the language"_s);
     else
         printKindsOfNativeResult(found, kindOfNativeResult(JSValue::decode(encodedFound)));
-    dataLogLn("AOT: f", function, " at ", position, ": ", names[std::min<size_t>(source, names.size() - 1)], " is not of the type that the compiler has proven of it. It is: ", found.toString(), ". This is a bug in Bun.");
+    ASCIILiteral name = names[std::min<size_t>(source, names.size() - 1)];
+    dataLogLn("AOT: f", function, " at ", position, ": ", name, " is not of the type that the compiler has proven of it. It is: ", found.toString(), ". This is a bug in Bun.");
+    if (auto* stopWithReport = moduleHostOf(instance.globalObject).stopWithReport) {
+        StringPrintStream reason;
+        reason.print("AOT: f", function, " at ", position, ": ", name, ". It is: ", found.toString(), ".");
+        ASCIICString text = reason.toASCIICString();
+        stopWithReport(text.span());
+    }
     CRASH();
 }
 
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTStopAtFalseProof, void, (Instance*, EncodedJSValue encodedFound, uint32_t function, uint32_t position, uint32_t source))
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTStopAtFalseProof, void, (Instance* instance, EncodedJSValue encodedFound, uint32_t function, uint32_t position, uint32_t source))
 {
     StringPrintStream written;
     written.print(position);
-    stopAtFalseProof(encodedFound, function, written.toString(), source);
+    stopAtFalseProof(*instance, encodedFound, function, written.toString(), source);
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTEnterBodyThatRunsOnce, void, (Instance* instance, uint32_t function))
@@ -473,6 +490,38 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTEnterBodyThatRunsOnce, void, (Inst
         return;
     dataLogLn("AOT: f", function, " is entered a second time, and the compiler has proven that it runs at most once. This is a bug in Bun.");
     CRASH();
+}
+
+static bool isKnownToSayLessOfSecondDigest(unsigned rowOfCallee, uint64_t differs)
+{
+    using Lane = Typed::SecondLaneInEffectsNet;
+    struct Row {
+        ASCIILiteral name;
+        std::initializer_list<Lane> lanes;
+    };
+    static const Row rows[] = {
+        { "stub:BuiltinCell"_s, { Lane::Structure, Lane::NamedProperties } },
+        { "stub:DidCreateFieldOfSlot"_s, { Lane::Structure } },
+    };
+    StringPrintStream name;
+    printRowOfEffectsNet(name, rowOfCallee);
+    String named = name.toString();
+    for (const Row& row : rows) {
+        if (named != row.name)
+            continue;
+        for (Lane lane : row.lanes)
+            differs &= ~(0xffull << static_cast<unsigned>(lane) * 8);
+        return !differs;
+    }
+    return false;
+}
+
+static void printWhoseWordsInEffectsNet(PrintStream& out, uint32_t operand)
+{
+    if (operand & Typed::variableInEffectsNet)
+        out.print("what the variable g", operand & (Typed::variableInEffectsNet - 1), " of a module holds, no operand of the call,");
+    else
+        out.print("operand ", operand);
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTStopAtFalseEffects, void, (Instance*, uint32_t function, uint32_t position, uint32_t part, uint32_t rows, uint64_t differs))
@@ -488,27 +537,59 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTStopAtFalseEffects, void, (Instanc
         said.print(" say that the call will not write ");
         CommaPrinter comma;
         if (part >> 16 == Typed::noOperandInEffectsNet) {
-            static constexpr std::array<ASCIILiteral, Typed::heapsOfCountsInEffectsNet.size()> deeds { "guards that held have ended"_s, "guards were armed or have begun"_s };
+            static constexpr std::array<ASCIILiteral, Typed::heapsOfCountsInEffectsNet.size()> deeds {
+                "guards that held have ended"_s, "guards were armed or have begun"_s, "a built-in that was as built was written, or what stands above its instances"_s,
+                "a variable of a module, a static field or a variable of a scope that lies in the statics was given another value"_s,
+                "compiled code has stored into a variable of a module"_s, "compiled code has stored into a static field"_s, "compiled code has stored into a variable of a scope that lies in the statics"_s
+            };
             CommaPrinter commaOfDeeds;
             StringPrintStream done;
-            std::optional<Typed::AbstractHeap> named;
+            Typed::AbstractHeapSet heaps;
             for (unsigned count = 0; count < deeds.size(); ++count) {
-                if (!(differs >> count * 8 & 0xff))
+                if (!Typed::countInWordOfEffectsNet(differs, count))
                     continue;
-                if (named != Typed::heapsOfCountsInEffectsNet[count])
-                    said.print(comma, Typed::nameOf(Typed::heapsOfCountsInEffectsNet[count]));
-                named = Typed::heapsOfCountsInEffectsNet[count];
+                heaps.add(Typed::heapsOfCountsInEffectsNet[count]);
                 done.print(commaOfDeeds, deeds[count]);
             }
+            for (Typed::AbstractHeap heap : heaps)
+                said.print(comma, Typed::nameOf(heap));
             said.print(", and under it ", done.toString());
+            differs = 0;
+        }
+        if (part & Typed::speaksOfSecondDigestInEffectsNet) {
+            static constexpr std::array<ASCIILiteral, Typed::heapsOfSecondDigestInEffectsNet.size()> words {
+                "the structure"_s, "the prototype"_s, "the named properties"_s, "the bytes"_s, "the variables of the environment"_s, "the entries"_s, "the internal fields"_s, "the state of the regular expression"_s
+            };
+            Typed::AbstractHeapSet heaps;
+            CommaPrinter commaOfWords;
+            StringPrintStream others;
+            for (unsigned lane = 0; lane < words.size(); ++lane) {
+                if (!(differs >> lane * 8 & 0xff))
+                    continue;
+                heaps.add(Typed::heapsOfSecondDigestInEffectsNet[lane]);
+                others.print(commaOfWords, words[lane]);
+            }
+            for (Typed::AbstractHeap heap : heaps)
+                said.print(comma, Typed::nameOf(heap));
+            said.print(", and of ");
+            printWhoseWordsInEffectsNet(said, part >> 16);
+            said.print(" these are others behind it: ", others.toString());
+            if (isKnownToSayLessOfSecondDigest(rows >> 16, differs)) {
+                if (!goesOn)
+                    return;
+                said.print(" (a row on the list of those that are known to say less)");
+            }
             differs = 0;
         }
         for (unsigned lane = 0; lane < Typed::heapsOfDigestInEffectsNet.size(); ++lane) {
             if (differs >> lane * 8 & 0xff)
                 said.print(comma, Typed::nameOf(Typed::heapsOfDigestInEffectsNet[lane]));
         }
-        if (part >> 16 != Typed::noOperandInEffectsNet)
-            said.print(", and those words of operand ", part >> 16, " are others behind it");
+        if (part >> 16 != Typed::noOperandInEffectsNet && !(part & Typed::speaksOfSecondDigestInEffectsNet)) {
+            said.print(", and those words of ");
+            printWhoseWordsInEffectsNet(said, part >> 16);
+            said.print(" are others behind it");
+        }
     } else {
         if (differs)
             said.print(" (", BuiltinTable::singleton().textOf(BuiltinID(static_cast<uint16_t>(differs))), ")");
@@ -526,21 +607,132 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTCollectionsForEffectsNet, uint64_t
     return reinterpret_cast<VM*>(vm)->heap.objectSpace().newlyAllocatedVersion();
 }
 
+static uint64_t secondDigestForEffectsNet(JSCell* cell, uint64_t lanes)
+{
+    using Lane = Typed::SecondLaneInEffectsNet;
+    std::array<uint64_t, Typed::heapsOfSecondDigestInEffectsNet.size()> hashes;
+    hashes.fill(1);
+    auto mix = [&](Lane lane, uint64_t word) {
+        uint64_t& hash = hashes[static_cast<size_t>(lane)];
+        hash = (hash ^ word) * 0x9e3779b97f4a7c15ull;
+        hash ^= hash >> 29;
+    };
+    auto mixBytes = [&](Lane lane, const void* start, size_t numberOfBytes) {
+        const uint8_t* bytes = static_cast<const uint8_t*>(start);
+        size_t offset = 0;
+        for (; offset + sizeof(uint64_t) <= numberOfBytes; offset += sizeof(uint64_t))
+            mix(lane, WTF::unalignedLoad<uint64_t>(bytes + offset));
+        for (; offset < numberOfBytes; ++offset)
+            mix(lane, bytes[offset]);
+    };
+    auto mixRestOfCell = [&](Lane lane, const JSCell* whole, size_t from) {
+        mixBytes(lane, reinterpret_cast<const uint8_t*>(whole) + from, whole->cellSize() - from);
+    };
+    auto mixEndsOfBytes = [&](Lane lane, const void* start, size_t numberOfBytes) {
+        constexpr size_t most = 4 * KB;
+        if (numberOfBytes <= 2 * most) {
+            mixBytes(lane, start, numberOfBytes);
+            return;
+        }
+        mixBytes(lane, start, most);
+        mixBytes(lane, static_cast<const uint8_t*>(start) + numberOfBytes - most, most);
+    };
+    auto mixNamedProperties = [&](JSObject* object) {
+        Structure* structure = object->structure();
+        constexpr PropertyOffset most = 128;
+        PropertyOffset last = structure->maxOffset();
+        for (PropertyOffset offset = 0; offset <= last; ++offset) {
+            if (offset == static_cast<PropertyOffset>(structure->inlineCapacity()) && offset < firstOutOfLineOffset)
+                offset = firstOutOfLineOffset;
+            if (offset == firstOutOfLineOffset + most && last - most > offset)
+                offset = last - most;
+            if (offset <= last)
+                mix(Lane::NamedProperties, JSValue::encode(object->getDirect(offset)));
+        }
+    };
+    auto mixEnvironment = [&](const JSCell* environment) {
+        mixBytes(Lane::Environment, reinterpret_cast<const uint8_t*>(environment) + offsetOfFirstEnvironmentVariable, uncheckedDowncast<Environment>(environment)->layout().size - offsetOfFirstEnvironmentVariable);
+    };
+
+    JSType type = cell->type();
+    if (type == CompiledEnvironmentType)
+        mixEnvironment(cell);
+    else if (cell->isObject()) {
+        JSObject* object = asObject(cell);
+        const uint8_t* bytes = reinterpret_cast<const uint8_t*>(cell);
+        mix(Lane::Structure, cell->structureID().bits());
+        mix(Lane::Prototype, JSValue::encode(object->getPrototypeDirect()));
+        if (Object* compiled = compiledObjectOrNull(cell)) {
+            if (JSObject* extraProperties = compiled->extraProperties()) {
+                mix(Lane::NamedProperties, extraProperties->structureID().bits());
+                mixNamedProperties(extraProperties);
+            }
+        } else
+            mixNamedProperties(object);
+        if (isCompiledClosure(cell)) {
+            const Closure* closure = uncheckedDowncast<Closure>(cell);
+            if (closure->entry()) {
+                for (uint64_t reference : closure->captures().first(closure->numberOfReferences())) {
+                    JSValue captured = JSValue::decode(reference);
+                    if (captured && captured.isCell() && captured.asCell()->type() == CompiledEnvironmentType)
+                        mixEnvironment(captured.asCell());
+                }
+            }
+        } else if (isTypedArrayTypeIncludingDataView(type)) {
+            JSArrayBufferView* view = uncheckedDowncast<JSArrayBufferView>(cell);
+            if (const void* vector = view->vectorWithoutPACValidation(); vector && !view->isShared())
+                mixEndsOfBytes(Lane::BytesOfView, vector, view->byteLength());
+        } else if (type == ArrayBufferType) {
+            ArrayBuffer* buffer = uncheckedDowncast<JSArrayBuffer>(cell)->impl();
+            if (const void* data = buffer->data(); data && !buffer->isShared())
+                mixEndsOfBytes(Lane::BytesOfView, data, buffer->byteLength());
+        } else if (type == JSMapType || type == JSSetType) {
+            const JSCell* storage = WTF::unalignedLoad<const JSCell*>(bytes + (type == JSMapType ? JSMap::offsetOfStorage() : JSSet::offsetOfStorage()));
+            mix(Lane::Collection, reinterpret_cast<uintptr_t>(storage));
+            if (storage)
+                mixEndsOfBytes(Lane::Collection, reinterpret_cast<const uint8_t*>(storage) + sizeof(JSCell), storage->cellSize() - sizeof(JSCell));
+        } else if (type == JSPromiseType) {
+            mix(Lane::InternalFields, WTF::unalignedLoad<uint64_t>(bytes + JSPromise::offsetOfPacked()));
+            mix(Lane::InternalFields, WTF::unalignedLoad<uint64_t>(bytes + JSPromise::offsetOfSlot()));
+        } else if (type == JSDateType)
+            mix(Lane::InternalFields, WTF::unalignedLoad<uint64_t>(bytes + DateInstance::offsetOfInternalNumber()));
+        else if (type == RegExpObjectType) {
+            mix(Lane::RegExp, WTF::unalignedLoad<uint64_t>(bytes + RegExpObject::offsetOfRegExpAndFlags()));
+            mix(Lane::RegExp, WTF::unalignedLoad<uint64_t>(bytes + RegExpObject::offsetOfLastIndex()));
+        } else if (type == JSArrayIteratorType || type == JSMapIteratorType || type == JSSetIteratorType || type == JSStringIteratorType || type == JSIteratorHelperType
+            || type == JSWrapForValidIteratorType || type == JSRegExpStringIteratorType || type == JSAsyncFromSyncIteratorType)
+            mixRestOfCell(Lane::InternalFields, cell, JSInternalFieldObjectImpl<>::offsetOfInternalFields());
+    }
+    uint64_t digest = 0;
+    for (unsigned lane = 0; lane < hashes.size(); ++lane) {
+        if (lanes & 1ull << lane)
+            digest |= (hashes[lane] >> 56) << lane * 8;
+    }
+    return digest;
+}
+
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTDigestForEffectsNet, uint64_t, (EncodedJSValue encodedValue, uint64_t lanes))
 {
+    if (lanes & Typed::countsStoreInEffectsNet) {
+        reinterpret_cast<State*>(encodedValue)->countWriteForEffectsNet(static_cast<Typed::CountInEffectsNet>(lanes & 0xff));
+        return 0;
+    }
     if (lanes & Typed::asksForCountsInEffectsNet) {
         const State& state = *reinterpret_cast<const State*>(encodedValue);
         uint64_t counts = 0;
         for (unsigned count = 0; count < Typed::heapsOfCountsInEffectsNet.size(); ++count) {
             if (lanes & 1ull << count)
-                counts |= (state.writesCountedForEffectsNet[count] & 0xff) << count * 8;
+                counts |= Typed::wordOfCountInEffectsNet(state.writesCountedForEffectsNet[count], count);
         }
         return counts;
     }
     JSValue value = JSValue::decode(encodedValue);
     if (!value || !value.isCell())
         return 0;
-    std::array<uint64_t, Typed::heapsOfDigestInEffectsNet.size()> hashes { };
+    if (lanes & Typed::asksForSecondDigestInEffectsNet)
+        return secondDigestForEffectsNet(value.asCell(), lanes);
+    std::array<uint64_t, Typed::heapsOfDigestInEffectsNet.size()> hashes;
+    hashes.fill(1);
     auto mix = [&](unsigned lane, uint64_t word) {
         hashes[lane] = (hashes[lane] ^ word) * 0x9e3779b97f4a7c15ull;
         hashes[lane] ^= hashes[lane] >> 29;
@@ -589,6 +781,13 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTDigestForEffectsNet, uint64_t, (En
             mix(typedArrayStorage, view->lengthRaw());
             mix(typedArrayStorage, view->byteOffsetRaw());
             mix(typedArrayStorage, static_cast<uint64_t>(view->mode()));
+            if (!view->isShared())
+                mix(typedArrayStorage, view->byteLength());
+        } else if (cell->type() == ArrayBufferType) {
+            if (ArrayBuffer* buffer = uncheckedDowncast<JSArrayBuffer>(cell)->impl(); !buffer->isShared()) {
+                mix(typedArrayStorage, reinterpret_cast<uintptr_t>(buffer->data()));
+                mix(typedArrayStorage, buffer->byteLength());
+            }
         }
     }
     uint64_t digest = 0;
@@ -652,7 +851,7 @@ static ErrorInstance* createErrorWithMessage(Instance* instance, JSGlobalObject*
 
 JSC_DEFINE_JIT_OPERATION(operationAOTThrowRuntimeError, void, (Instance* instance, uint32_t errorKind))
 {
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTThrowRuntimeError);
+    AOT_OPERATION_BEGIN_WITHOUT_COLLECTION(instance, Entry::operationAOTThrowRuntimeError);
     throwException(globalObject, scope, createRuntimeError(globalObject, static_cast<Typed::RuntimeErrorKind>(errorKind), nullptr));
     OPERATION_RETURN(scope);
 }
@@ -775,7 +974,7 @@ static void throwErrorWithMessage(Instance* instance, JSGlobalObject* globalObje
     instance->runtime.exceptions.thrownValue = JSValue::encode(error);
 }
 
-[[noreturn]] static void stopAtFalseProofNamedBy(const DecodedThrowSite& decoded, const uint64_t* registers, const uint32_t* returnAddress)
+[[noreturn]] static void stopAtFalseProofNamedBy(Instance& instance, const DecodedThrowSite& decoded, const uint64_t* registers, const uint32_t* returnAddress)
 {
     bool namesValue = static_cast<Typed::Representation>(decoded.word.representation) != Typed::Representation::Void;
     const Image& image = *Image::current();
@@ -790,17 +989,17 @@ static void throwErrorWithMessage(Instance* instance, JSGlobalObject* globalObje
         position.print(found->lineColumn.line, ":", found->lineColumn.column);
     else
         position.print("?");
-    stopAtFalseProof(namesValue ? registers[decoded.word.registerNumber] : 0, writtenIn.index(), position.toString(), decoded.a);
+    stopAtFalseProof(instance, namesValue ? registers[decoded.word.registerNumber] : 0, writtenIn.index(), position.toString(), decoded.a);
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTThrowAtSite, void, (Instance* instance, const uint64_t* registers, const uint32_t* site, uint32_t source))
 {
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTThrowAtSite);
+    AOT_OPERATION_BEGIN_WITHOUT_COLLECTION(instance, Entry::operationAOTThrowAtSite);
     if (static_cast<ThrowSiteSource>(source) == ThrowSiteSource::FaultSite)
         const_cast<uint64_t*>(registers)[static_cast<unsigned>(registerWrittenAtFaults)] = instance->state->registerBeforeFault;
     DecodedThrowSite decoded = decodeThrowSite(registers, site, static_cast<ThrowSiteSource>(source));
     if (decoded.word.stopsAtFalseProof())
-        stopAtFalseProofNamedBy(decoded, registers, site);
+        stopAtFalseProofNamedBy(*instance, decoded, registers, site);
     if (!needsExceptionForEveryThrow(*instance) && nearestHandlerIgnoresValue(vm, *instance, callFrame)) {
         instance->runtime.exceptions.thrownValue = JSValue::encode(jsUndefined());
         OPERATION_RETURN(scope);

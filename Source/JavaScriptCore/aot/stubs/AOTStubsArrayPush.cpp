@@ -67,7 +67,7 @@ void emitElementBarrierAndReturn(StubAssembler& jit, GPRReg array, GPRReg value)
 
 StubSignature signatureOfArrayPush(StubKey)
 {
-    return StubSignature::withGPRResult({ gprOf(StubRegister::A1), gprOf(StubRegister::A2) });
+    return StubSignature::withGPRResult({ gprOf(StubRegister::A1), gprOf(StubRegister::A2) }).fillingOperandInFront(1);
 }
 
 StubSignature signatureOfArrayPushOfKnownKind(StubKey)
@@ -120,7 +120,10 @@ void generateArrayPush(StubAssembler& jit)
     jit.returnToCaller();
 
     notNumber.link(&jit);
-    slowPath.append(jit.branch32(CCallHelpers::NotEqual, kind, TrustedImm32(ContiguousShape)));
+    Jump holdsAnyValue = jit.branch32(CCallHelpers::Equal, kind, TrustedImm32(ContiguousShape));
+    slowPath.append(jit.branch32(CCallHelpers::NotEqual, kind, TrustedImm32(Int32Shape)));
+    widenStorageOfIntegersForAnyValue(jit, array, kind, slowPath);
+    holdsAnyValue.link(&jit);
     jit.store64(value, BaseIndex(butterfly, length, CCallHelpers::TimesEight));
     jit.add32(TrustedImm32(1), length);
     jit.store32(length, Address(butterfly, Butterfly::offsetOfPublicLength()));
@@ -328,7 +331,7 @@ StubSignature signatureOfAppendIterable(StubKey)
     StubSignature signature;
     signature.addOperand(gprOf(StubRegister::A1));
     signature.addOperand(gprOf(StubRegister::A2));
-    return signature;
+    return signature.fillingOperandInFront(1);
 }
 
 void generateAppendIterable(StubAssembler& jit)

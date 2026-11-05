@@ -66,7 +66,7 @@ static LinkType typeOfBuiltinForLinkReach(const Program& program, BuiltinID cano
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static PropertyKeyID keyOfWellKnownSymbolForLinkReach(const Program& program, BuiltinID constant)
+PropertyKeyID keyOfWellKnownSymbol(const Program& program, BuiltinID constant)
 {
     BuiltinName name = program.builtins().nameOfSymbol(constant);
     return name ? program.keyOf(name) : PropertyKeyID();
@@ -198,13 +198,14 @@ private:
     void findModulesWhoseValueStaysInSight();
     void escapeValueOf(ModuleID);
     bool hostReadsNamesAloneOff(ModuleID) const;
-    void escapeExportsThatHostReadsOff(const Entry&);
+    enum class HostWith : bool { Looks, Takes };
+    void showExportsThatHostReadsOff(const Entry&, HostWith);
     void escapeExportsWhoseGettersFacesRun();
     bool mayHaveAccessor(const LinkType& exports);
     void tellWhatHostFindsAtEntries();
     BitVector findFilesThatHaveRunToTheirEndWhereOthersNameThem() const;
     BitVector findVariablesStoredFirst(Vector<LinkedVariableStoredFirst>& firstReaders) const;
-    void escapeVariable(VariableID);
+    void escapeVariable(VariableID, bool isExpectedToStayAsLaid = false);
     void escapeField(FieldReference);
 
     bool mayHold(const BuiltinCondition*, BuiltinID canonical);
@@ -222,6 +223,7 @@ private:
     void enterWhatHostLoadsToPrintObjects();
     void enterLoaderOfHost();
     void enterWhatUnseenCodeFinds();
+    void letExportsOfEntriesEscape();
 
     void bringAlive(FunctionID);
     void giveMoreToNodesOf(FunctionID);
@@ -300,6 +302,8 @@ private:
     bool m_hasEnteredWhatUndeclaredNativeCodeCalls { false };
     bool m_hasEnteredWhatHostLoadsToPrintObjects { false };
     bool m_hasEnteredLoaderOfHost { false };
+    bool m_hasEnteredWhatLoaderOfHostFinds { false };
+    bool m_hasLetExportsOfEntriesEscape { false };
     bool m_hasEnteredWhatUnseenCodeFinds { false };
 
     Vector<ModuleID> m_moduleWithBody;
@@ -797,9 +801,10 @@ void StateOfLinkReach::enterProgram()
             continue;
         escapeExportsOf(ModuleID(index));
     }
-    for (const Entry& entry : m_program.entries) {
+    for (uint32_t index = 0; index < m_program.entries.size(); ++index) {
+        const Entry& entry = m_program.entries[index];
         if (hostReadsNamesAloneOff(entry.module))
-            escapeExportsThatHostReadsOff(entry);
+            showExportsThatHostReadsOff(entry, m_entriesThatHandHostNothing.contains(index) ? HostWith::Looks : HostWith::Takes);
     }
 }
 
@@ -814,19 +819,23 @@ bool StateOfLinkReach::hostReadsNamesAloneOff(ModuleID id) const
         return m_modulesWhoseValueStaysInSight.quickGet(id.index()) && std::ranges::contains(m_program.entries, id, &Entry::module);
     if (module.kind != ModuleKind::SourceText || module.exportRule != SyntheticExportRule::None || module.flags.containsAny(flagsOfModulesThatHostAsksForWhole))
         return false;
-    if (m_program.admitsInspector || !refusedCodeOf(m_program).codeOutsideImage || std::ranges::any_of(module.requests, &ModuleRequest::isDynamicStarExport))
+    if (m_program.admitsInspector || !refusedCodeOf(m_program).codeOutsideImage)
         return false;
-    return std::ranges::contains(m_program.entries, id, &Entry::module);
+    bool hostLooksThroughStars = module.body && !m_flow.summaries.at(module.body).namesThatHostLooksFor.isEmpty();
+    return (hostLooksThroughStars || std::ranges::none_of(module.requests, &ModuleRequest::isDynamicStarExport)) && std::ranges::contains(m_program.entries, id, &Entry::module);
 }
 
-void StateOfLinkReach::escapeExportsThatHostReadsOff(const Entry& entry)
+void StateOfLinkReach::showExportsThatHostReadsOff(const Entry& entry, HostWith host)
 {
     const Module& module = m_program.at(entry.module);
     for (const HostRead& read : entry.hostReads) {
         for (uint32_t index = 0; index < module.exports.size(); ++index) {
             if (module.exports[index].name != read.exportName)
                 continue;
-            if (m_program.variableBehindExport(entry.module, index))
+            VariableID shown = m_program.variableBehindExport(entry.module, index);
+            if (shown && host == HostWith::Looks)
+                m_flow.note(LinkFlow::Note::ExportIsShown, shown.index());
+            else if (shown)
                 m_flow.showExport(entry.module, index);
             else
                 escapeExportsOf(entry.module);
@@ -946,6 +955,17 @@ void StateOfLinkReach::fillVariables()
     m_flow.firstReadersOfVariablesStoredFirst.shrink(0);
     m_flow.variablesStoredFirst = findVariablesStoredFirst(m_flow.firstReadersOfVariablesStoredFirst);
     const BitVector& isStoredFirst = m_flow.variablesStoredFirst;
+    for (uint32_t index = 0; index < m_program.modules.size(); ++index) {
+        const Module& module = m_program.modules[index];
+        if (module.exportsVariable && !m_modulesWhoseValueStaysInSight.quickGet(index))
+            escapeVariable(module.exportsVariable);
+        bool isFollowedFace = module.kind == ModuleKind::SourceText && m_modulesWhoseValueStaysInSight.quickGet(index);
+        bool isFollowedLibraryFile = loaderFillsVariablesOffValueOf(module) && m_modulesWhoseValueStaysInSight.quickGet(index);
+        for (const SyntheticExport& synthetic : module.syntheticExports) {
+            if (synthetic.variable && !isFollowedFace && !isFollowedLibraryFile)
+                escapeVariable(synthetic.variable);
+        }
+    }
     for (uint32_t index = 0; index < m_program.variables.size(); ++index) {
         const Variable& variable = m_program.variables[index];
         FlowNodeID node = m_flow.variable(VariableID(index));
@@ -974,21 +994,9 @@ void StateOfLinkReach::fillVariables()
             continue;
         }
         if (variable.flags.containsAny({ VariableFlags::IsReplaceable, VariableFlags::HoldsMock, VariableFlags::OriginalMayRun }) || !module.body)
-            escapeVariable(VariableID(index));
+            escapeVariable(VariableID(index), module.body && !variable.flags.containsAny({ VariableFlags::HoldsMock, VariableFlags::OriginalMayRun }));
     }
     std::ranges::sort(m_variablesOfLibraryFiles);
-
-    for (uint32_t index = 0; index < m_program.modules.size(); ++index) {
-        const Module& module = m_program.modules[index];
-        if (module.exportsVariable && !m_modulesWhoseValueStaysInSight.quickGet(index))
-            escapeVariable(module.exportsVariable);
-        bool isFollowedFace = module.kind == ModuleKind::SourceText && m_modulesWhoseValueStaysInSight.quickGet(index);
-        bool isFollowedLibraryFile = loaderFillsVariablesOffValueOf(module) && m_modulesWhoseValueStaysInSight.quickGet(index);
-        for (const SyntheticExport& synthetic : module.syntheticExports) {
-            if (synthetic.variable && !isFollowedFace && !isFollowedLibraryFile)
-                escapeVariable(synthetic.variable);
-        }
-    }
 }
 
 void StateOfLinkReach::letGoWhatDirectEvalsShowIn(FunctionID id)
@@ -1129,7 +1137,7 @@ void StateOfLinkReach::findModulesWhoseValueStaysInSight()
     }
     for (const Module& module : m_program.modules) {
         for (const ModuleRequest& request : module.requests) {
-            bool bindsVariablesOfFace = request.phase == ImportPhase::Evaluation && !request.isDynamicStarExport && commonJsModuleCapturedBy(m_program, m_program.at(request.target));
+            bool bindsVariablesOfFace = request.phase == ImportPhase::Evaluation && commonJsModuleCapturedBy(m_program, m_program.at(request.target));
             bool bindsVariablesOfLibraryFile = request.phase == ImportPhase::Evaluation && !request.isDynamicStarExport && loaderFillsVariablesOffValueOf(m_program.at(request.target)) && !importStatementListsInRequireCache(m_program, request.target);
             if (request.kind != ModuleRequestKind::Require && !bindsVariablesOfFace && !bindsVariablesOfLibraryFile)
                 m_modulesWhoseValueStaysInSight.quickClear(request.target.index());
@@ -1155,7 +1163,8 @@ void StateOfLinkReach::findModulesWhoseValueStaysInSight()
     }
     for (uint32_t index = 0; index < m_program.entries.size(); ++index) {
         ModuleID id = m_program.entries[index].module;
-        if (m_program.at(id).kind != ModuleKind::CommonJs || !m_modulesWhoseValueStaysInSight.quickGet(id.index()))
+        FunctionID body = m_program.at(id).body;
+        if (!body || m_flow.summaries.at(body).namesThatHostLooksFor.isEmpty() || !hostReadsNamesAloneOff(id))
             continue;
         m_entriesThatHandHostNothing.append(index);
         m_builtinsInReach.noteEntryHandsHostNothing(index);
@@ -1167,9 +1176,20 @@ void StateOfLinkReach::tellWhatHostFindsAtEntries()
 {
     m_entriesThatHandHostNothing.removeAllMatching([&](uint32_t index) {
         ModuleID id = m_program.entries[index].module;
-        const LinkType& exports = m_flow.typeAt(m_flow.variable(m_program.at(id).exportsVariable));
-        bool mayFindSomething = !m_modulesWhoseValueStaysInSight.quickGet(id.index()) || exports.functions != LinkType::Functions::None || exports.classes != LinkType::Classes::None
-            || exports.builtin || exports.holdsUnseen || exports.holdsLostBuiltins || mayHaveAccessor(exports);
+        bool mayFindSomething = false;
+        auto lookAtExportsOf = [&](ModuleID file) {
+            const LinkType& exports = m_flow.typeAt(m_flow.variable(m_program.at(file).exportsVariable));
+            mayFindSomething |= !m_modulesWhoseValueStaysInSight.quickGet(file.index()) || exports.functions != LinkType::Functions::None || exports.classes != LinkType::Classes::None
+                || exports.builtin || exports.holdsUnseen || exports.holdsLostBuiltins || mayHaveAccessor(exports);
+        };
+        if (m_program.at(id).kind == ModuleKind::CommonJs)
+            lookAtExportsOf(id);
+        for (const ModuleRequest& request : m_program.at(id).requests) {
+            if (!request.isDynamicStarExport)
+                continue;
+            mayFindSomething |= !m_modulesWhoseValueStaysInSight.quickGet(request.target.index());
+            lookAtExportsOf(commonJsModuleCapturedBy(m_program, m_program.at(request.target)));
+        }
         FunctionID body = m_program.at(id).body;
         for (uint32_t read : m_flow.summaries.at(body).namesThatHostLooksFor) {
             const LinkType& found = m_flow.typeAt(m_flow.nodeOf(body, read));
@@ -1180,7 +1200,10 @@ void StateOfLinkReach::tellWhatHostFindsAtEntries()
         if (!mayFindSomething)
             return false;
         m_builtinsInReach.noteHostMayFindSomethingAt(index);
-        escapeExportsOf(id);
+        if (m_program.at(id).kind == ModuleKind::CommonJs || std::ranges::any_of(m_program.at(id).requests, &ModuleRequest::isDynamicStarExport))
+            escapeExportsOf(id);
+        else
+            showExportsThatHostReadsOff(m_program.entries[index], HostWith::Takes);
         return true;
     });
 }
@@ -1249,7 +1272,7 @@ void StateOfLinkReach::escapeValueOf(ModuleID id)
         m_flow.addEdge(m_flow.result(body, result), m_flow.unseen());
 }
 
-void StateOfLinkReach::escapeVariable(VariableID id)
+void StateOfLinkReach::escapeVariable(VariableID id, bool isExpectedToStayAsLaid)
 {
     if (m_flow.lanesTakeStepsOfReach()) {
         if (m_flow.escapedVariables.get(id.index()))
@@ -1258,7 +1281,7 @@ void StateOfLinkReach::escapeVariable(VariableID id)
     } else if (m_flow.escapedVariables.set(id.index()))
         return;
     FlowNodeID node = m_flow.variable(id);
-    m_flow.arrive(node, LinkType::anything());
+    m_flow.arrive(node, isExpectedToStayAsLaid ? LinkType::anything().byEscapeAlone() : LinkType::anything());
     m_flow.addEdge(node, m_flow.unseen());
 }
 
@@ -1297,7 +1320,7 @@ bool StateOfLinkReach::mayHold(const BuiltinCondition* condition, BuiltinID cano
     bool waitsForCall = condition->callRunsOtherCode && !m_builtinsInReach.hasCallThatMayRunCode(canonical);
     bool waitsToBeAskedForMore = condition->isAskedForOtherNames && !m_builtinsInReach.isAskedForOtherNames(m_program.builtins().canonicalID(condition->isAskedForOtherNames));
     bool waitsForOperand = condition->nameToldUnder() && !m_builtinsInReach.hasCallWhoseOperandMayMeet(*condition, canonical);
-    bool waitsForStore = condition->programStores && !m_builtinsInReach.mayBeReplacedOrHidden(condition->programStores);
+    bool waitsForStore = condition->programStores && m_builtinsInReach.takeForConstant(condition->programStores);
     if (waitsForWrite || waitsForCall || waitsToBeAskedForMore || waitsForOperand || waitsForStore) {
         waitOnConditionsOf(canonical);
         return false;
@@ -1438,17 +1461,26 @@ void StateOfLinkReach::enterWhatHostLoadsToPrintObjects()
 
 void StateOfLinkReach::enterLoaderOfHost()
 {
-    if (std::exchange(m_hasEnteredLoaderOfHost, true))
-        return;
-    for (RuntimeFunctionID function : m_program.builtins().moduleLoaderFunctions())
-        enterLibraryFunction(function);
-    for (uint32_t index = 0; index < m_program.modules.size(); ++index) {
-        const Module& module = m_program.modules[index];
-        if (isProgramModuleOf(module.kind) && !module.flags.contains(ModuleFlags::IsLibrary))
-            continue;
-        evaluate(ModuleID(index));
-        escapeExportsOf(ModuleID(index));
+    if (!std::exchange(m_hasEnteredLoaderOfHost, true)) {
+        for (RuntimeFunctionID function : m_program.builtins().moduleLoaderFunctions())
+            enterLibraryFunction(function);
     }
+    if (!m_builtinsInReach.holdsBackNamesFromRunTime() && !std::exchange(m_hasEnteredWhatLoaderOfHostFinds, true)) {
+        for (uint32_t index = 0; index < m_program.modules.size(); ++index) {
+            const Module& module = m_program.modules[index];
+            if (isProgramModuleOf(module.kind) && !module.flags.contains(ModuleFlags::IsLibrary))
+                continue;
+            evaluate(ModuleID(index));
+            escapeExportsOf(ModuleID(index));
+        }
+    }
+    letExportsOfEntriesEscape();
+}
+
+void StateOfLinkReach::letExportsOfEntriesEscape()
+{
+    if (std::exchange(m_hasLetExportsOfEntriesEscape, true))
+        return;
     for (const Entry& entry : m_program.entries)
         escapeExportsOf(entry.module);
 }
@@ -1501,6 +1533,14 @@ bool StateOfLinkReach::enterLibraryInReach()
     m_membersWrittenAfterAll = m_builtinsInReach.takeMembersWrittenAfterAll();
     for (BuiltinID member : m_membersWrittenAfterAll)
         m_flow.arrive(m_flow.writtenAtMember(member), LinkType::anything());
+    bool holdersThatAreWatchedHaveComeOutOfSight = false;
+    for (BuiltinID builtin : m_builtinsThatCameOutOfSight) {
+        FlowNodeID watched = m_flow.findLaidOnBuiltin(builtin, { });
+        if (!watched || !m_flow.typeAt(watched).isNothing())
+            continue;
+        m_flow.arrive(watched, LinkType::anything());
+        holdersThatAreWatchedHaveComeOutOfSight = true;
+    }
     if (m_flow.testRuns().isTestRun()) {
         for (BuiltinID cameIntoReach : m_builtinsThatCameIntoReach)
             m_flow.testRuns().noteCameIntoReach(cameIntoReach);
@@ -1534,14 +1574,22 @@ bool StateOfLinkReach::enterLibraryInReach()
         for (RuntimeFunctionID function : m_program.builtins().moduleLoaderFunctions())
             enterLibraryFunction(function);
     }
+    if (m_builtinsInReach.holdsBackNamesFromRunTime() && m_builtinsInReach.unseenCodeCanRun())
+        letExportsOfEntriesEscape();
+    if (m_builtinsInReach.holdsBackNamesFromRunTime() && (m_builtinsInReach.unseenCodeCanRun() || m_builtinsInReach.loaderOfHostMayRun())) {
+        for (ModuleID module : m_builtinsInReach.takeModulesSpelledInTexts()) {
+            evaluate(module);
+            escapeExportsOf(module);
+        }
+    }
     if (m_builtinsInReach.loaderOfHostMayRun())
         enterLoaderOfHost();
-    if (m_builtinsInReach.unseenCodeCanRun())
+    if (m_builtinsInReach.unseenCodeCanRun() && !m_builtinsInReach.holdsBackNamesFromRunTime())
         enterWhatUnseenCodeFinds();
     letGoWhatNativeCodeReadsOffModules();
     bool somebodyCanBeHandedSomething = m_nativeCodeMayHoldObjects || m_flow.rowPassesWhatNobodyFollows() || m_builtinsInReach.unseenCodeCanRun();
     bool promisesHaveChanged = somebodyCanBeHandedSomething && m_flow.letPromisesBeHandedOut();
-    bool hasEntered = !m_steps.isEmpty() || !m_stepsThatOneThreadTakes.isEmpty() || !m_functionsToBringAlive.isEmpty() || !m_membersWrittenAfterAll.isEmpty() || promisesHaveChanged || entriesHaveComeToBeAskedForMore;
+    bool hasEntered = holdersThatAreWatchedHaveComeOutOfSight || !m_steps.isEmpty() || !m_stepsThatOneThreadTakes.isEmpty() || !m_functionsToBringAlive.isEmpty() || !m_membersWrittenAfterAll.isEmpty() || promisesHaveChanged || entriesHaveComeToBeAskedForMore;
     finish();
     return hasEntered || receiversHaveLeft;
 }
@@ -1592,10 +1640,8 @@ void StateOfLinkReach::bringAlive(FunctionID id)
             const Module& module = m_program.at(answer.module);
             if (module.requireResult == RequireResult::DefaultExport && module.exportRule == SyntheticExportRule::RuntimeModule && module.body && !m_program.at(module.body).results.isEmpty())
                 m_flow.addEdge(m_flow.result(module.body, 0), m_flow.nodeOf(id, answer.node));
-            if (m_modulesWhoseValueStaysInSight.get(answer.module.index())) {
-                LinkFlow::LockerOfWhatIsShared locker(m_flow);
-                escapeValueOf(answer.module);
-            }
+            LinkFlow::LockerOfWhatIsShared locker(m_flow);
+            escapeValueOf(answer.module);
         }
         for (const ThinSummary::NameThatLoaderTakes& name : summary.namesThatLoaderTakes)
             m_flow.addEdge(m_flow.nodeOf(id, name.read), m_flow.variable(name.variable));
@@ -1673,7 +1719,7 @@ void StateOfLinkReach::bringAlive(FunctionID id)
             m_flow.arrive(nodeAt(index), typeOfClosuresForLinkReach(FunctionID(node.first)));
             break;
         case SummaryNode::Kind::Builtin:
-            if (PropertyKeyID symbol = keyOfWellKnownSymbolForLinkReach(m_program, BuiltinID(node.first))) {
+            if (PropertyKeyID symbol = keyOfWellKnownSymbol(m_program, BuiltinID(node.first))) {
                 LinkType oneSymbol;
                 oneSymbol.primitives = LinkType::oneSymbol;
                 m_flow.arrive(nodeAt(index), oneSymbol, symbol);
@@ -2207,6 +2253,11 @@ void LinkFlow::noteAllocated(LayoutID id)
 bool LinkFlow::isWorthFollowingToWrites(BuiltinID canonical) const
 {
     return m_stateOfLinkReach->builtinsInReach().isWorthFollowingToWrites(canonical);
+}
+
+bool LinkFlow::isOutOfSight(BuiltinID canonical) const
+{
+    return m_stateOfLinkReach->builtinsInReach().isOutOfSight(canonical);
 }
 
 bool LinkFlow::takeForConstant(BuiltinID member)

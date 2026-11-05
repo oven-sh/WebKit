@@ -81,9 +81,14 @@ StubRecording StubAssembler::generateBody(StubKey body, const ScopedLambda<void(
     m_stubBehindEveryReturn = std::nullopt;
     m_outOfLineParts.clear();
 
+    if (m_signature.filledOutOfResultInFrontOfBody) {
+        alignWhatStandsBehind(sizeOfMoveInFrontOfStub);
+        CCallHelpers::move(GPRInfo::returnValueGPR, m_signature.filledOutOfResultInFrontOfBody.gpr());
+    }
     if (!isOperationCallHead(body))
         align();
     Label start = label();
+    m_headOfBody = start;
     generator(*this);
     for (size_t index = 0; index < m_outOfLineParts.size(); ++index)
         std::exchange(m_outOfLineParts[index], nullptr)(*this);
@@ -155,6 +160,8 @@ void StubAssembler::jumpToStubTakingImmediate()
 void StubAssembler::recordSignatureRegisters(StubKey entry)
 {
     StubSignature signature = signatureOf(entry);
+    if (signature.filledOutOfResultInFront && (signature.filledOutOfResultInFront != m_signature.filledOutOfResultInFrontOfBody || m_entryLabels.get(entry.bits()) != m_headOfBody))
+        crashWhileGenerating("an entry that has an operand filled in front does not stand at the head of the body"_s);
     if (signature.firstResult)
         recordClobber(signature.firstResult);
     if (signature.secondResult)
@@ -239,6 +246,14 @@ GPRReg StubAssembler::reuseScratch(StubRegister stubRegister)
         crashWhileGenerating("a reused register holds an operand, belongs to the caller, or does not exist on this CPU"_s);
     m_allocated.add(reg);
     recordClobber(reg);
+    return reg;
+}
+
+GPRReg StubAssembler::savedScratch(StubRegister stubRegister)
+{
+    GPRReg reg = gprOf(stubRegister);
+    if (reg == InvalidGPRReg || !isSaved(reg))
+        crashWhileGenerating("a register that is taken for saved is not saved here, or does not exist on this CPU"_s);
     return reg;
 }
 
@@ -449,11 +464,16 @@ void StubAssembler::recordFarJump(PtrTag tag)
     recordCallee(tag);
 }
 
+void StubAssembler::alignWhatStandsBehind(unsigned size)
+{
+    constexpr unsigned alignment = 16;
+    while ((m_assembler.codeSize() + size) % alignment)
+        emitPadding(*this);
+}
+
 void StubAssembler::align()
 {
-    constexpr int alignment = 16;
-    while (!m_assembler.buffer().isAligned(alignment))
-        emitPadding(*this);
+    alignWhatStandsBehind(0);
 }
 
 CCallHelpers::Call StubAssembler::call(GPRReg target, PtrTag tag)
@@ -578,6 +598,14 @@ void StubAssembler::jumpThroughHandlerTable(BaseIndex tableEntry, std::span<cons
     for (StubKey handler : handlers)
         addReference(handler, StubReference::Kind::Jump);
     CCallHelpers::farJump(tableEntry, JITThunkPtrTag);
+}
+
+void StubAssembler::callThroughHandlerTable(BaseIndex tableEntry, std::span<const StubKey> handlers, GPRReg scratch)
+{
+    for (StubKey handler : handlers)
+        addReference(handler, StubReference::Kind::Call);
+    loadPtr(tableEntry, scratch);
+    CCallHelpers::call(scratch, JITThunkPtrTag);
 }
 
 void StubAssembler::bindEntryAt(StubKey entry, Label location)

@@ -52,6 +52,7 @@ void GuardEmitter::generateHasArrayStorage(const ValueContext& value)
 void GuardEmitter::generateIsElementPresent(const ValueContext& value)
 {
     const ArrayStorageForm* form = findArrayStorageForm(value->arrayStorage());
+    emitter<ElementAccessEmitter>().holdKindOfList(value);
     defineTestByBranching(value, [&](BranchTargets targets) {
         if (form && value->admitsInt32Storage())
             emitter<ElementAccessEmitter>().branchOnPresentElementInDoubleOrInt32Storage(value, targets);

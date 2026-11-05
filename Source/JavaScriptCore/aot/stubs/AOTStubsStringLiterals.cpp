@@ -38,10 +38,10 @@ static StubSignature registerComparisonSignature()
     return signature;
 }
 
-StubSignature signatureOfStringEqualsLiteral(StubKey) { return tableComparisonSignature(comparedSubjectRegister); }
-StubSignature signatureOfValueEqualsLiteral(StubKey) { return tableComparisonSignature(comparedSubjectRegister); }
-StubSignature signatureOfStringEqualsLiteralOfLength(StubKey) { return registerComparisonSignature(); }
-StubSignature signatureOfValueEqualsLiteralOfLength(StubKey) { return registerComparisonSignature(); }
+StubSignature signatureOfStringEqualsLiteral(StubKey) { return tableComparisonSignature(comparedSubjectRegister).standingBehindEntryThatFillsOperandInFront(0); }
+StubSignature signatureOfValueEqualsLiteral(StubKey) { return tableComparisonSignature(comparedSubjectRegister).fillingOperandInFront(0); }
+StubSignature signatureOfStringEqualsLiteralOfLength(StubKey) { return registerComparisonSignature().standingBehindEntryThatFillsOperandInFront(0); }
+StubSignature signatureOfValueEqualsLiteralOfLength(StubKey) { return registerComparisonSignature().fillingOperandInFront(0); }
 StubSignature signatureOfNarrowCharactersOfString(StubKey) { return StubSignature::withGPRResult({ gprOf(StubRegister::T11) }); }
 
 void generateStringEqualsLiteral(StubAssembler& jit)

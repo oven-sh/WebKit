@@ -148,6 +148,7 @@ export default b.declarations(
         returns: b.instance("Array").holding({ element: b.union(b.string, b.symbol) }).fresh.dense,
         uses: { target: [b.runs("OwnKeys")] },
         reads: ownProperties,
+        writes: ["ShapeWords", "NamedProperties", ...memberGuards],
         implementation: b.inline("OwnPropertyKeys", { parameters: ["All"], otherwise: b.hostCall }),
       },
       preventExtensions: {

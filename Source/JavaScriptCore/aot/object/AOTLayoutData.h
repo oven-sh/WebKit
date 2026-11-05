@@ -71,7 +71,8 @@ struct FieldData {
     uint32_t getterIsProven : 1;
     uint32_t setterIsProven : 1;
     uint32_t isHeldFilled : 1;
-    uint32_t unused : 26 - nameBits { 0 };
+    uint32_t isWrittenPrivateName : 1;
+    uint32_t isKeptFromComparisons : 1;
     uint16_t flags;
     uint16_t operandIndex;
     SlotData slot;
@@ -85,7 +86,7 @@ struct FieldData {
     bool canLeaveSlot() const { return AOT::canLeaveSlot(slot.representation()); }
     bool isRequired() const { return !(flags & fieldIsOptional); }
 };
-static_assert(sizeof(FieldData) == 16 && isImageRecord<FieldData>);
+static_assert(sizeof(FieldData) == 16 && isImageRecord<FieldData> && FieldData::nameBits + 8 == 32);
 
 struct alignas(64) FieldExit {
     static constexpr unsigned numberOfPlaces = 64;
@@ -138,6 +139,7 @@ static_assert(sizeof(VariableData) == 8 && isImageRecord<VariableData>);
 static constexpr uint32_t methodHasComputedName = 1;
 static constexpr uint32_t methodTakesEnvironment = 2;
 static constexpr uint32_t methodIsCreatedAtDefinition = 4;
+static constexpr uint32_t methodMayBeStoredOver = 8;
 
 struct MethodData {
     static constexpr unsigned nameBits = FieldData::nameBits;
@@ -149,7 +151,7 @@ struct MethodData {
     MethodKind kind() const { return static_cast<MethodKind>(kindBits); }
 };
 static_assert(sizeof(MethodData) == 8 && isImageRecord<MethodData>);
-static_assert(numberOfEnumerators<MethodKind> <= 1u << 2 && methodIsCreatedAtDefinition < 1u << (30 - MethodData::nameBits));
+static_assert(numberOfEnumerators<MethodKind> <= 1u << 2 && methodMayBeStoredOver < 1u << (30 - MethodData::nameBits));
 
 static constexpr unsigned numberOfClassSides = numberOfEnumerators<ClassSide>;
 
@@ -166,6 +168,16 @@ struct NamedClassGuardData {
     uint32_t bit;
 };
 static_assert(sizeof(NamedClassGuardData) == 8 && isImageRecord<NamedClassGuardData>);
+
+struct ClassBelowWithGuardOfNameData {
+    uint32_t classLayout() const { return classAndSide / numberOfClassSides; }
+    ClassSide side() const { return static_cast<ClassSide>(classAndSide % numberOfClassSides); }
+    friend auto operator<=>(const ClassBelowWithGuardOfNameData&, const ClassBelowWithGuardOfNameData&) = default;
+
+    uint32_t name;
+    uint32_t classAndSide;
+};
+static_assert(sizeof(ClassBelowWithGuardOfNameData) == 8 && isImageRecord<ClassBelowWithGuardOfNameData>);
 
 struct ClassGuardCountData {
     uint32_t guardBit;
@@ -191,10 +203,15 @@ struct ClassData {
     uint32_t guardsOfPrototypeSideHoldWhileClear : 1;
     uint32_t sidesWithGuardsHereOrBelow : numberOfClassSides;
     uint32_t guardsOfNamesAwaitBeginning : 1;
-    uint32_t unusedClassBits : 29 - numberOfClassSides { 0 };
+    uint32_t sidesChangedInSightAlone : numberOfClassSides;
+    uint32_t namesAreLaidUnderWrittenKeysAlone : 1;
+    uint32_t classObjectLacksHasInstance : 1;
+    uint32_t hasStaticFieldUnderComputedKey : 1;
+    uint32_t unusedClassBits : 26 - 2 * numberOfClassSides { 0 };
 
     bool bitsAreClearWhileGuardsHold(ClassSide side) const { return side == ClassSide::Prototype ? guardsOfPrototypeSideHoldWhileClear : guardsHoldWhileClear; }
     bool hasGuardsHereOrBelow(ClassSide side) const { return sidesWithGuardsHereOrBelow >> static_cast<unsigned>(side) & 1; }
+    bool isChangedInSightAlone(ClassSide side) const { return sidesChangedInSightAlone >> static_cast<unsigned>(side) & 1; }
 };
 static_assert(sizeof(ClassData) == 56 && isImageRecord<ClassData>);
 

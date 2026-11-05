@@ -197,56 +197,6 @@ bool testOfBodyHoldsPositionOfCharacterReadBelowLength(Walker& walker, const Bod
     return testOfBodyHoldsPositionBelowLengthOfText(walker, index, index.blockOf(read.id()), text, position);
 }
 
-static std::optional<InlineBuiltin> codeInLineOfCallsInPositionsInTexts(const BuiltinTable& table, BuiltinID builtin)
-{
-    std::optional<InlineBuiltin> found;
-    for (const BuiltinOverload& row : table.overloadsOf(builtin)) {
-        if (row.mode != BuiltinCallMode::Call)
-            continue;
-        std::optional<InlineBuiltin> ofRow = row.code.implementation.inlineBuiltin;
-        if (!ofRow || (found && *found != *ofRow))
-            return std::nullopt;
-        found = ofRow;
-    }
-    return found;
-}
-
-TypeID typeOfReadInsideTextAhead(Walker& walker, const BodyIndex& index, const BodyValue& call, const TypesOfInputs& types)
-{
-    if (!walker.has(Mechanism::BuiltinCalls))
-        return { };
-    if (&index != &walker.currentBodyIndex() || call.opcode() != Opcode::Call || call.isDoneInPlace() || call.argumentsOperands().size() != 1)
-        return { };
-
-    TypeArena& arena = walker.types();
-    TypeID typeOfCallee = types(call.calleeOperand());
-    if (!typeOfCallee)
-        return { };
-    Type callee = arena.at(typeOfCallee);
-    BuiltinID builtin = callee.isObject() ? singleBuiltinOf(arena, callee) : BuiltinID();
-    if (!builtin)
-        return { };
-    const BuiltinTable& table = walker.program().builtins();
-    std::optional<InlineBuiltin> codeInLine = codeInLineOfCallsInPositionsInTexts(table, table.canonicalID(builtin));
-    if (codeInLine != InlineBuiltin::StringCharCodeAt && codeInLine != InlineBuiltin::StringCodePointAt)
-        return { };
-
-    ValueID text = call.thisValueOperand();
-    ValueID position = call.argumentsOperands()[0];
-    TypeID typeOfText = text ? types(text) : TypeID();
-    TypeID typeOfPosition = types(position);
-    if (!typeOfText || !typeOfPosition || !isProvenString(walker, typeOfText))
-        return { };
-    Type integer = arena.at(typeOfPosition);
-    if (!integer.isInteger() || integer.integers.minimum < 0)
-        return { };
-    if (!testOfBodyHoldsPositionBelowLengthOfText(walker, index, index.blockOf(call.id()), text, position))
-        return { };
-    if (wouldCallBuiltin(walker, call, types) != BuiltinCallAskedAbout::ByOneRow)
-        return { };
-    return arena.integer(Range { 0, codeInLine == InlineBuiltin::StringCharCodeAt ? 0xFFFF : 0x10FFFF });
-}
-
 } } } // namespace JSC::AOT::Typed
 
 #endif // ENABLE(AOT)

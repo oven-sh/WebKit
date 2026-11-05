@@ -50,12 +50,15 @@ private:
     Boxed contiguousElementOrEmpty(const ValueContext& access, CellPointer array, Integer index);
     LValue elementFoundByTestInFront(const ValueContext& read);
     void putInBounds(const ValueContext&, const ArrayStorageForm&);
-    Integer positionThatLibraryVouchesFor(const ValueContext&, const ArrayElements&);
+    enum class AccessVouchedFor : bool { Reads, Writes };
+    Integer positionThatLibraryVouchesFor(const ValueContext&, const ArrayElements&, const ArrayStorageForm&, AccessVouchedFor);
     template<typename Functor> void forEachPositionBelow(Integer count, const Functor&);
     Condition isOneOfBoxedForms(Word32 mode, IndexingType ofIntegers, IndexingType ofValues);
     void newArrayOfForm(const ValueContext&, const ArrayStorageForm&);
     void newArrayOfHoles(const ValueContext&, Integer length, ValueID source, const ArrayStorageForm&, uint32_t flags);
     const ArrayStorageForm& formToConstruct(const ValueContext&) const;
+    const ArrayStorageForm* findFormOfListFilled(const ValueContext&) const;
+    bool isMadeLikeSource(const ValueContext&) const;
     Integer lengthOfArrayStoredInto(const ValueContext&, const ArrayElements&);
     CellPointer sourceOrNull(ValueID);
 };

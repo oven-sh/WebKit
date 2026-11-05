@@ -131,6 +131,7 @@ enum class BuiltinTypeFlag : uint8_t {
     HasAnyFunction = 1 << 2,
     HasPlainData = 1 << 3,
     HasOnlyIntegers = 1 << 4,
+    IsMadeOfListedClasses = 1 << 5,
 };
 
 constexpr bool isCalledAfterReturn(BuiltinCallbackTimes times)
@@ -728,6 +729,7 @@ enum class BuiltinMark : uint8_t {
     IsCalledWithoutStartupLoads,
     InstancesHaveMethodCalledWithStartupLoads,
     InstancesArePrintedByCodeOfTheirOwn,
+    PrintsWhatHandlersAnswer,
     LoadsCodeWithoutJSAccess,
     ReadLoadsCodeByName,
     HoldsPathOfMainModule,
@@ -746,6 +748,7 @@ enum class BuiltinMark : uint8_t {
     AnswersWithPathOfModule,
     IsKeyReadOnlyByRowsThatNameIt,
     LaysOperandAbovePrototype,
+    HandsOutNoOtherHostObject,
 };
 
 struct BuiltinMarkedEntry {
@@ -1028,6 +1031,7 @@ public:
     std::span<const BuiltinHostObject> hostObjects() const;
     std::span<const BuiltinName> nativeCellsFilledByCalledFunctions() const;
     bool isPrintedByFormatter(BuiltinID, const BuiltinParameter&) const;
+    bool formatterWalksInstancesOf(BuiltinClassID) const;
     std::span<const BuiltinName> namesOfHostMethodsCallingStartupLoads() const { return m_data.runtime.namesOfHostMethodsCallingStartupLoads; }
     std::span<const RuntimeFunctionID> moduleLoaderFunctions() const { return m_data.runtime.moduleLoaderFunctions; }
     std::span<const BuiltinName> keysReadBy(Protocol) const;

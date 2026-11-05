@@ -344,7 +344,7 @@ export function mapOfList(callback /*, thisArg */)
         $throwTypeError("Array.prototype.map callback must be a function");
     
     var thisArg = $argument(1);
-    var result = $newArrayWithSpecies(length, array);
+    var result = $newArrayWithSpecies(length, array, length, undefined);
 
     for (var i = 0; i < length; i++) {
         if (!(i in array))
@@ -380,7 +380,7 @@ export function map(callback /*, thisArg */)
         $throwTypeError("Array.prototype.map callback must be a function");
     
     var thisArg = $argument(1);
-    var result = $newArrayWithSpecies(length, array);
+    var result = $newArrayWithSpecies(length, array, length, undefined);
 
     var i = 0;
     if (length > 0 && $isJSArray(array) && $isJSArray(result)) {

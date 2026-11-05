@@ -338,7 +338,7 @@ struct CodeLinker {
             if (symbol >= piece.stubKeys.size())
                 return fail(piece, relocation, "the code lists no such stub"_s);
             if (std::optional<uint32_t> offset = stubOffsets.find(piece.stubKeys[symbol]))
-                return piece.sharedCodeCopy + *offset;
+                return piece.sharedCodeCopy + *offset - (relocation.entry == entryInFrontOfStub ? sizeOfMoveInFrontOfStub : 0);
             context.diagnostics().add(InternalError { .kind = InternalErrorKind::CallToStubNotGenerated, .function = functionOf(piece), .count = relocation.offset });
             return std::nullopt;
         }

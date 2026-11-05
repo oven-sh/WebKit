@@ -377,7 +377,7 @@ bool FrameChecker::checkStep(const Step& step, bool frameIsSetUp, bool resultIsS
         if (patch && emitsCode) {
             needsFrame |= patch->needsFrameRecord() || !patch->runsWithoutFrame();
             bool everyPathPassesSetup = m_frame.coverage() == FrameCoverage::WholeFunction || (m_frame.coverage() == FrameCoverage::FramedPart && m_allocation.isInFramedPart(m_block));
-            if (patch->followsFrameSetup() && !everyPathPassesSetup)
+            if (patch->followsFrameSetup() && !everyPathPassesSetup && !(patch->testsStackAheadOfFramedPart() && m_frame.coverage() == FrameCoverage::FramedPart))
                 return fail(FailureKind::NeedsFrameWhereNoneIsSetUp, patch);
             if (patch->opcode() == Patch)
                 writtenByCodeOfPatch = patch->earlyClobberedMask() | patch->lateClobberedMask() | (patch->effects.terminal ? 0 : maskOf(patch->registersToRelease()));

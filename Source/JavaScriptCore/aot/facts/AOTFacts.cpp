@@ -269,7 +269,22 @@ static void fillFieldTablesForFacts(const Program& program, const LinkTables& li
         const LinkedLayout& layout = linked.layouts[index];
         uint32_t numberDeclared = static_cast<uint32_t>(program.layouts[index].fields.size());
         uint32_t numberOfFields = numberDeclared + static_cast<uint32_t>(linked.appendedKeysOf(id).size());
+        LayoutID base = layout.takesCellsOfBase ? writtenBaseOf(program.layouts[index]) : LayoutID();
+        auto whatLayoutSaysOfRows = [](const LinkedLayout& layout) {
+            return std::tuple { layout.possibleChanges.contains(LayoutChange::LosesProperty), layout.possibleChanges.contains(LayoutChange::GetsAccessor), layout.reachesUnseenCode, layout.isRedefinedByLiteralsAlone };
+        };
+        bool takesRowsOfBase = base && base.index() < index && numberDeclared > program.layouts[index].ownFieldCount && whatLayoutSaysOfRows(layout) == whatLayoutSaysOfRows(linked.layouts[base.index()]);
+        if (takesRowsOfBase)
+            tables.layoutsThatTakeRowsOfBase.set(index);
         for (uint32_t field = 0; field < numberOfFields; ++field) {
+            if (takesRowsOfBase && field == program.layouts[index].ownFieldCount) {
+                size_t numberTaken = numberDeclared - field;
+                size_t first = tables.fields.size();
+                tables.fields.grow(first + numberTaken);
+                std::ranges::copy(tables.fields.span().subspan(tables.firstFieldOfLayout[base.index()], numberTaken), tables.fields.mutableSpan().subspan(first).begin());
+                field = numberDeclared - 1;
+                continue;
+            }
             FieldFacts facts;
             if (const LinkedCell* cell = field >= numberDeclared && holdsAccessorsInSlots ? linked.findCellOfField({ id, field }) : nullptr) {
                 facts.formOfValue = cell->formThatDefinitionsCreate;
@@ -422,9 +437,21 @@ static void fillFunctionsGivenToVariablesForFacts(const Program& program, const 
     };
     Vector<ParameterStored> parametersStored;
     BitVector functionsThatStoreParameter;
+    BitVector variablesThatTestsMayReplace(program.variables.size());
+    GivenByVariable laidByProgram;
+    for (uint32_t index = 0; index < program.variables.size(); ++index) {
+        const Variable& variable = program.variables[index];
+        if (!variable.flags.contains(VariableFlags::IsReplaceable))
+            continue;
+        variablesThatTestsMayReplace.quickSet(index);
+        if (variable.initialization == VariableInitialization::Function)
+            noteIn(laidByProgram, index, variable.function);
+    }
+    bool someVariableMayBeReplaced = !variablesThatTestsMayReplace.isEmpty();
     for (uint32_t index = 0; index < program.functions.size(); ++index) {
         FunctionID function(index);
-        if (!linked.function(function).isReached || program.at(function).isModuleBody())
+        bool isModuleBody = program.at(function).isModuleBody();
+        if (!linked.function(function).isReached || (isModuleBody && !someVariableMayBeReplaced))
             continue;
         const ThinSummary& summary = summaries.at(function);
         for (const SummaryEdge& edge : summary.edges) {
@@ -432,6 +459,15 @@ static void fillFunctionsGivenToVariablesForFacts(const Program& program, const 
             if (to.kind != SummaryNode::Kind::Variable)
                 continue;
             const SummaryNode& from = summary.nodes[edge.from];
+            if (variablesThatTestsMayReplace.get(to.first)) {
+                if (FunctionID stored = functionAt(from)) {
+                    noteIn(laidByProgram, to.first, stored);
+                    continue;
+                }
+                laidByProgram.add(to.first, Given { }).iterator->value.areSeveral = true;
+            }
+            if (isModuleBody)
+                continue;
             if (FunctionID stored = functionAt(from))
                 note(to.first, stored);
             else if (from.kind == SummaryNode::Kind::Parameter) {
@@ -440,8 +476,14 @@ static void fillFunctionsGivenToVariablesForFacts(const Program& program, const 
             }
         }
     }
-    if (givenTo.isEmpty() && parametersStored.isEmpty())
+    for (const auto& [variable, laid] : laidByProgram) {
+        if (laid.function && !laid.areSeveral)
+            tables.functionsGivenToVariables.append({ variable, laid.function, { } });
+    }
+    if (givenTo.isEmpty() && parametersStored.isEmpty()) {
+        std::ranges::sort(tables.functionsGivenToVariables, { }, &FactTables::FunctionGivenToVariable::variable);
         return;
+    }
     FunctionID callerWhoseCallsAreListed;
     UncheckedKeyHashMap<uint32_t, uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> callsBySite;
     for (const LinkedCall& listed : linked.calls) {
@@ -568,7 +610,7 @@ static void fillClassTablesForFacts(const Program& program, const BodyIndexTable
             if (std::exchange(numberOfEvaluationsInBody[evaluated.index()], 0) != 1 || numberOfEvaluations[evaluated.index()] != 1)
                 continue;
             tables.classes[evaluated.index()].evaluations = ExecutionCount::AtMostOnce;
-            if (!loaderEntersOnce(id))
+            if (!loaderEntersOnce(id) || isBodyWrittenInAnotherFile(program, id))
                 tables.functionsTakenToRunOnce.set(number);
         }
     }
@@ -658,6 +700,132 @@ std::span<const uint32_t> Facts::placesOfMembersUnder(LayoutID classLayout, Clas
         return std::pair { members[place].side, members[place].key };
     });
     return { found.begin(), found.end() };
+}
+
+BlockID blockWhereListsOfArgumentsAreFirstNamed(const Program& program, const BodyIndexTable& bodies, FunctionID id)
+{
+    const Function& function = program.at(id);
+    const BodyIndex* found = bodies.find(id);
+    if (!found || found->hasIrreducibleFlow() || function.isCoroutine() || function.isModuleBody() || function.kind == FunctionKind::BaseConstructor || function.kind == FunctionKind::DerivedConstructor)
+        return { };
+    if (function.role == FunctionRole::Library || function.enclosingRuntimeFunction || (function.module && program.at(function.module).kind == ModuleKind::RuntimeSource))
+        return { };
+    const BodyIndex& body = *found;
+    BodyBlock entry = body.block(entryBlock);
+    Vector<ValueID, 2> lists;
+    for (unsigned index = 0; index < function.numberOfEntryParameters(); ++index) {
+        EntryParameter kind = function.entryParameterKind(index);
+        if (kind == EntryParameter::HiddenRest || (kind == EntryParameter::Parameter && index - function.firstParameterIndex() >= function.numberOfPositionalParameters()))
+            lists.append(entry.parameter(index));
+    }
+    if (lists.isEmpty())
+        return { };
+
+    auto takes = [&](BodyTarget target) {
+        return std::ranges::any_of(target.arguments(), [&](ValueID argument) {
+            return lists.contains(argument);
+        });
+    };
+    size_t numberOfLists = lists.size();
+    Vector<BlockID, 4> blocksOfLengthsLeftOut;
+    PropertyKeyID length = program.keyOf(BuiltinNames::length);
+    BlockID whereNamed;
+    bool isOnlyHandedToApply = true;
+    auto handsObjectToApply = [&](auto call) {
+        std::span<const ValueID> arguments = call.argumentsOperands();
+        if (arguments.size() != 2 || !call.calleeKey() || lists.contains(call.calleeOperand()) || lists.contains(call.thisValueOperand()) || lists.contains(arguments[0]))
+            return false;
+        if (!std::ranges::contains(lists.span().subspan(numberOfLists), arguments[1]))
+            return false;
+        BuiltinID member = findOwnMember(program, Builtins::FunctionPrototype, call.calleeKey());
+        return member && program.builtins().canonicalID(member) == Builtins::FunctionPrototypeApply;
+    };
+    for (uint32_t number = 0; number < body.numberOfBlocks(); ++number) {
+        BodyBlock block = body.block(BlockID(number));
+        bool names = lists.contains(block.subject()) || (block.hasHandler() && takes(block.handler()));
+        isOnlyHandedToApply &= !names;
+        for (BodyValue value : block.values()) {
+            if (value.opcode() == Opcode::CreateUnmappedArguments && std::ranges::contains(lists.span().first(numberOfLists), value.as<Opcode::CreateUnmappedArguments>().restOperand())) {
+                lists.append(value.id());
+                continue;
+            }
+            if (value.opcode() == Opcode::PropGet && value.key() == length && std::ranges::contains(lists.span().subspan(numberOfLists), value.objectOperand())) {
+                blocksOfLengthsLeftOut.append(BlockID(number));
+                continue;
+            }
+            bool isNamedHere = false;
+            value.forEachOperand([&](ValueID operand, uint32_t) {
+                isNamedHere |= lists.contains(operand);
+            });
+            names |= isNamedHere;
+            if (isNamedHere && isOnlyHandedToApply)
+                isOnlyHandedToApply = value.opcode() == Opcode::Call && handsObjectToApply(value.as<Opcode::Call>());
+        }
+        bool isNamedAtEnd = false;
+        BodyTerminator terminator = block.terminator();
+        terminator.forEachOperand([&](ValueID operand, uint32_t) {
+            isNamedAtEnd |= lists.contains(operand);
+        });
+        for (BodyTarget target : terminator.targets())
+            isNamedAtEnd |= takes(target);
+        names |= isNamedAtEnd;
+        isOnlyHandedToApply &= !isNamedAtEnd;
+        if (!names)
+            continue;
+        BlockID other(number);
+        if (!whereNamed)
+            whereNamed = other;
+        while (!body.dominates(whereNamed, other)) {
+            whereNamed = body.immediateDominator(whereNamed);
+            if (!whereNamed)
+                return { };
+        }
+    }
+    if (!whereNamed)
+        return { };
+    while (whereNamed != entryBlock && (body.loopDepthOf(whereNamed) || body.block(whereNamed).isHandlerBlock() || body.block(whereNamed).hasHandler())) {
+        whereNamed = body.immediateDominator(whereNamed);
+        if (!whereNamed)
+            return { };
+    }
+    if (whereNamed == entryBlock)
+        return isOnlyHandedToApply ? whereNamed : BlockID();
+
+    if (!blocksOfLengthsLeftOut.isEmpty()) {
+        BitVector liesBehind(body.numberOfBlocks());
+        Vector<BlockID, 16> toLookAt;
+        toLookAt.append(whereNamed);
+        while (!toLookAt.isEmpty()) {
+            BodyBlock block = body.block(toLookAt.takeLast());
+            auto leadsTo = [&](BlockID next) {
+                if (!liesBehind.quickSet(next.index()))
+                    toLookAt.append(next);
+            };
+            if (block.hasHandler())
+                leadsTo(block.handler().block());
+            for (BodyTarget target : block.terminator().targets())
+                leadsTo(target.block());
+        }
+        for (BlockID block : blocksOfLengthsLeftOut) {
+            if (liesBehind.quickGet(block.index()) && !body.dominates(whereNamed, block))
+                return { };
+        }
+    }
+    if (isOnlyHandedToApply)
+        return whereNamed;
+
+    BitVector reached(body.numberOfBlocks());
+    reached.quickSet(entryBlock.index());
+    for (uint32_t number = 0; number < body.numberOfBlocks(); ++number) {
+        if (!reached.quickGet(number) || BlockID(number) == whereNamed)
+            continue;
+        BodyTerminator terminator = body.block(BlockID(number)).terminator();
+        if (terminator.kind() == TerminatorKind::Return || terminator.kind() == TerminatorKind::ReturnCall)
+            return whereNamed;
+        for (BodyTarget target : terminator.targets())
+            reached.quickSet(target.block().index());
+    }
+    return { };
 }
 
 std::unique_ptr<Facts> computeFacts(Program& program, BuildContext& build, const FactsRequest& request)
@@ -872,6 +1040,7 @@ std::unique_ptr<Facts> computeFacts(Program& program, BuildContext& build, const
     times.didFinish("scan"_s);
     if (hasFailed())
         return nullptr;
+    build.statistics().count(StatisticID::ValuesScanned, parts.summaries->numberOfValuesScanned());
     steps.didFinish("scan beside families"_s);
     OwnedLooksAtBodies looks = makeEmptyLooksAtBodies(*parts.bodies);
     std::unique_ptr<LinkFlow> flow;
@@ -918,6 +1087,10 @@ std::unique_ptr<Facts> computeFacts(Program& program, BuildContext& build, const
             .count = 1,
             .location = program.at(call.function).locationOf(index.value(call.site)),
         });
+    }
+    for (uint32_t index = 0; index < parts.linked.functions.size(); ++index) {
+        if (parts.mechanisms.contains(Mechanism::EscapeAnalysis) && program.at(FunctionID(index)).hasAny({ FunctionFlags::HasRestParameter, FunctionFlags::HasHiddenRest }))
+            parts.linked.functions[index].callEntryWalksBody = !!blockWhereListsOfArgumentsAreFirstNamed(program, *parts.bodies, FunctionID(index));
     }
     const SizeOfLinkFlow& sizeOfFlow = parts.linked.sizeOfFlow;
     build.statistics().count(StatisticID::FactNodes, sizeOfFlow.nodes);

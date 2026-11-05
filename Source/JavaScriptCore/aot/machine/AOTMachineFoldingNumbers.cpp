@@ -30,12 +30,39 @@ static std::optional<T> numberFoldConstantOf(const Operation* operation)
 
 static Operation* numberFoldConstant(Builder& builder, double value)
 {
-    return builder.constDouble(std::isnan(value) ? std::bit_cast<double>((std::bit_cast<uint64_t>(value) >> 51 | 1) << 51) : value);
+    return builder.constDouble(value);
 }
 
 static Operation* numberFoldConstant(Builder& builder, float value)
 {
-    return builder.constFloat(std::isnan(value) ? std::bit_cast<float>((std::bit_cast<uint32_t>(value) >> 22 | 1) << 22) : value);
+    return builder.constFloat(value);
+}
+
+template<typename T>
+static T numberFoldNaN(bool isNegative)
+{
+    if constexpr (std::is_same_v<T, double>)
+        return std::bit_cast<double>(isNegative ? 0xfff8000000000000ull : 0x7ff8000000000000ull);
+    else
+        return std::bit_cast<float>(isNegative ? 0xffc00000u : 0x7fc00000u);
+}
+
+template<typename T>
+static Operation* numberFoldResult(Builder& builder, T result, T left, T right)
+{
+    if (!std::isnan(result))
+        return numberFoldConstant(builder, result);
+    if (std::isnan(left))
+        return numberFoldConstant(builder, numberFoldNaN<T>(std::signbit(left)));
+    if (std::isnan(right))
+        return numberFoldConstant(builder, numberFoldNaN<T>(std::signbit(right)));
+    return numberFoldConstant(builder, numberFoldNaN<T>(isX86_64()));
+}
+
+template<typename T>
+static Operation* numberFoldResult(Builder& builder, T result, T operand)
+{
+    return numberFoldResult(builder, result, operand, operand);
 }
 
 template<typename T>
@@ -118,7 +145,7 @@ static Operation* foldMachineNumber(Builder& builder, Opcode opcode, Operation* 
         if (!rightConstant)
             return nullptr;
         if (leftConstant)
-            return numberFoldConstant(builder, *leftConstant + *rightConstant);
+            return numberFoldResult(builder, *leftConstant + *rightConstant, *leftConstant, *rightConstant);
         if (!*rightConstant && std::signbit(*rightConstant))
             return left;
         return nullptr;
@@ -129,7 +156,7 @@ static Operation* foldMachineNumber(Builder& builder, Opcode opcode, Operation* 
         if (!rightConstant)
             return nullptr;
         if (leftConstant)
-            return numberFoldConstant(builder, *leftConstant - *rightConstant);
+            return numberFoldResult(builder, *leftConstant - *rightConstant, *leftConstant, *rightConstant);
         if (!*rightConstant && !std::signbit(*rightConstant))
             return left;
         return nullptr;
@@ -138,7 +165,7 @@ static Operation* foldMachineNumber(Builder& builder, Opcode opcode, Operation* 
         if (!rightConstant)
             return nullptr;
         if (leftConstant)
-            return numberFoldConstant(builder, *leftConstant * *rightConstant);
+            return numberFoldResult(builder, *leftConstant * *rightConstant, *leftConstant, *rightConstant);
         if (*rightConstant == 1)
             return left;
         return nullptr;
@@ -147,7 +174,7 @@ static Operation* foldMachineNumber(Builder& builder, Opcode opcode, Operation* 
         if (!rightConstant)
             return nullptr;
         if (leftConstant)
-            return numberFoldConstant(builder, *leftConstant / *rightConstant);
+            return numberFoldResult(builder, *leftConstant / *rightConstant, *leftConstant, *rightConstant);
         if (*rightConstant == 1)
             return left;
         if (std::optional<T> reciprocal = numberFoldExactReciprocalOf(*rightConstant))
@@ -156,14 +183,14 @@ static Operation* foldMachineNumber(Builder& builder, Opcode opcode, Operation* 
 
     case Neg:
         if (leftConstant)
-            return numberFoldConstant(builder, -*leftConstant);
+            return numberFoldConstant(builder, std::isnan(*leftConstant) ? numberFoldNaN<T>(!std::signbit(*leftConstant)) : -*leftConstant);
         if (left->opcode() == Neg)
             return left->child(0);
         return nullptr;
 
     case Abs:
         if (leftConstant)
-            return numberFoldConstant(builder, std::abs(*leftConstant));
+            return numberFoldConstant(builder, std::isnan(*leftConstant) ? numberFoldNaN<T>(false) : std::abs(*leftConstant));
         if (left->opcode() == Abs)
             return left;
         if (left->opcode() == Neg)
@@ -172,32 +199,32 @@ static Operation* foldMachineNumber(Builder& builder, Opcode opcode, Operation* 
 
     case Ceil:
         if (leftConstant)
-            return numberFoldConstant(builder, std::ceil(*leftConstant));
+            return numberFoldResult(builder, std::ceil(*leftConstant), *leftConstant);
         return numberFoldIsRounded(left) ? left : nullptr;
 
     case Floor:
         if (leftConstant)
-            return numberFoldConstant(builder, std::floor(*leftConstant));
+            return numberFoldResult(builder, std::floor(*leftConstant), *leftConstant);
         return numberFoldIsRounded(left) ? left : nullptr;
 
     case FTrunc:
         if (leftConstant)
-            return numberFoldConstant(builder, std::trunc(*leftConstant));
+            return numberFoldResult(builder, std::trunc(*leftConstant), *leftConstant);
         return numberFoldIsRounded(left) ? left : nullptr;
 
     case Sqrt:
         if (leftConstant)
-            return numberFoldConstant(builder, std::sqrt(*leftConstant));
+            return numberFoldResult(builder, std::sqrt(*leftConstant), *leftConstant);
         return nullptr;
 
     case FMin:
         if (leftConstant && rightConstant)
-            return numberFoldConstant(builder, numberFoldMin(*leftConstant, *rightConstant));
+            return numberFoldResult(builder, numberFoldMin(*leftConstant, *rightConstant), *leftConstant, *rightConstant);
         return nullptr;
 
     case FMax:
         if (leftConstant && rightConstant)
-            return numberFoldConstant(builder, numberFoldMax(*leftConstant, *rightConstant));
+            return numberFoldResult(builder, numberFoldMax(*leftConstant, *rightConstant), *leftConstant, *rightConstant);
         return nullptr;
 
     default:

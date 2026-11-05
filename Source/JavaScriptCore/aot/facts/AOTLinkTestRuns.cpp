@@ -275,6 +275,15 @@ void TestRunsInLink::noteCallOutOfSight(FunctionID caller, ValueID site, FlowNod
     m_spiesOutOfSight.append(SpyOutOfSight { caller, site, firstArgument });
 }
 
+void TestRunsInLink::noteCallHandedObjectAndName(FunctionID caller, ValueID site, FlowNodeID firstArgument)
+{
+    if (!m_isTestRun || isFileOfProductInTestRun(m_flow.program, caller) || !keyWrittenAtSpy(caller, site))
+        return;
+    LinkFlow::LockerOfWhatIsShared locker(m_flow);
+    if (m_callsHandedObjectAndName.add(static_cast<uint64_t>(caller.index()) << 32 | site.index()).isNewEntry)
+        m_spiesOutOfSight.append(SpyOutOfSight { caller, site, firstArgument });
+}
+
 PropertyKeyID TestRunsInLink::keyWrittenAtSpy(FunctionID caller, ValueID site) const
 {
     const Program& program = m_flow.program;

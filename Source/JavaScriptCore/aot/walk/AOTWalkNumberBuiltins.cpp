@@ -126,26 +126,6 @@ static Reference buildRoundedQuotientInNumberBuiltins(Walker& walker, const Call
     return buildDivisionOfIntegers(walker, call.origin, walker.referenceOf(quotient->division.dividend), walker.referenceOf(quotient->division.divisor), quotient->rounding);
 }
 
-TypeID typeOfCallOnNumbersAhead(Walker& walker, const BodyIndex& index, const BodyValue& call, const TypesOfInputs& types)
-{
-    if (!walker.has(Mechanism::BuiltinCalls) || !hasMechanismsOfNumberForms(walker))
-        return { };
-    if (&index != &walker.currentBodyIndex() || call.opcode() != Opcode::Call || call.isDoneInPlace())
-        return { };
-    TypeID typeOfCallee = types(call.calleeOperand());
-    if (!typeOfCallee)
-        return { };
-    Type callee = walker.types().at(typeOfCallee);
-    BuiltinID builtin = callee.isObject() ? singleBuiltinOf(walker.types(), callee) : BuiltinID();
-    if (!builtin)
-        return { };
-
-    std::optional<RoundedQuotientInNumberBuiltins> quotient = findRoundedQuotientInNumberBuiltins(walker, walker.program().builtins().canonicalID(builtin), call, InputsOfTypedOperation(walker, &types));
-    if (!quotient || wouldCallBuiltin(walker, call, types) != BuiltinCallAskedAbout::ByOneRow)
-        return { };
-    return typeOfDivisionOfIntegers(walker, quotient->rounding, types(quotient->division.dividend), types(quotient->division.divisor));
-}
-
 static Reference buildExtremumInNumberBuiltins(Walker& walker, const CallByOneRow& call)
 {
     bool asksForGreatest = *call.codeInLine == InlineBuiltin::MathMax;

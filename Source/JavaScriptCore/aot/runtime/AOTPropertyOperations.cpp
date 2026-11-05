@@ -88,7 +88,7 @@ bool tryReplaceGlobalProperty(Instance* instance, VM& vm, JSValue base, UniquedS
     if (!filed) {
         unsigned attributes = 0;
         offset = structure->get(vm, uid, attributes);
-        if (!isValidOffset(offset) || attributes & PropertyAttribute::ReadOnlyOrAccessorOrCustomAccessorOrValue || structure->isImmutableProperty(uid))
+        if (!isValidOffset(offset) || attributes & PropertyAttribute::ReadOnlyOrAccessorOrCustomAccessorOrValue || structure->isImmutableProperty(uid) || isWriteJudgedByWriter(structure, uid))
             return false;
         if (structure->propertyAccessesAreCacheable()) {
             structure->didCachePropertyReplacement(vm, offset);
@@ -368,7 +368,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNewDictionary, JSCell*, (Instance*
     OPERATION_RETURN(scope, constructEmptyObject(vm, structure));
 }
 
-static void putToArray(JSGlobalObject* globalObject, JSArray* array, JSValue key, JSValue value)
+static void putToArray(JSGlobalObject* globalObject, JSArray* array, JSValue key, JSValue value, ECMAMode mode = ECMAMode::strict())
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -378,12 +378,12 @@ static void putToArray(JSGlobalObject* globalObject, JSArray* array, JSValue key
         if (isPush && pushToFullVector(vm, array, value))
             return;
         scope.release();
-        array->methodTable()->putByIndex(array, globalObject, *index, value, true);
+        array->methodTable()->putByIndex(array, globalObject, *index, value, mode.isStrict());
         return;
     }
     auto name = key.toPropertyKey(globalObject);
     RETURN_IF_EXCEPTION(scope, void());
-    PutPropertySlot slot(array, true);
+    PutPropertySlot slot(array, mode.isStrict());
     scope.release();
     array->methodTable()->put(array, globalObject, name, value, slot);
 }
@@ -393,6 +393,14 @@ JSC_DEFINE_JIT_OPERATION(operationAOTArrayPutAtIndex, void, (Instance* instance,
     constexpr Entry entry = Entry::operationAOTArrayPutAtIndex;
     AOT_OPERATION_BEGIN(instance, entry);
     putToArray(globalObject, cellArgument<JSArray>(array, entry), jsNumber(static_cast<double>(static_cast<int64_t>(position))), JSValue::decode(value));
+    OPERATION_RETURN(scope);
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTArrayPutAtIndexInSloppyCode, void, (Instance* instance, JSCell* array, EncodedJSValue value, uint64_t position))
+{
+    constexpr Entry entry = Entry::operationAOTArrayPutAtIndexInSloppyCode;
+    AOT_OPERATION_BEGIN(instance, entry);
+    putToArray(globalObject, cellArgument<JSArray>(array, entry), jsNumber(static_cast<double>(static_cast<int64_t>(position))), JSValue::decode(value), ECMAMode::sloppy());
     OPERATION_RETURN(scope);
 }
 

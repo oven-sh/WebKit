@@ -695,10 +695,11 @@ function createOwnProperties({ builder, sorted, ownPropertyLists }: EntryContext
     }
     ownPropertyLists.set(holder, list);
     if (!declaration.isOpen) addFlag(holder, "ListsAllMembers");
-    for (const { name, isAccessor, isFixed } of declaration.properties) {
+    for (const { name, isAccessor, isFixed, isCreatedInSomeRuns } of declaration.properties) {
       const path = joinPath(builder.memberPathOf(key, name));
       const property = builder.find(path) ?? builder.create(path, isAccessor ? "Accessor" : "DataProperty", source);
       if (isFixed && property !== null) builder.fixedProperties.add(property);
+      if (isCreatedInSomeRuns && property !== null) property.isCreatedInSomeRuns = true;
     }
   }
 }

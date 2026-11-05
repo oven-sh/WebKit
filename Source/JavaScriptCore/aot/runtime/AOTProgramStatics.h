@@ -60,6 +60,7 @@ private:
     template<typename Appender> void visitRegion(Appender&, size_t begin, size_t end);
     std::span<const VariableData> namedVariablesOfModule(uint32_t module) const;
     JSCell* cellIn(SlotData) const;
+    static void write(Instance&, SlotData, JSValue);
 
     Instance& m_instance;
     const ProgramTables& m_tables;

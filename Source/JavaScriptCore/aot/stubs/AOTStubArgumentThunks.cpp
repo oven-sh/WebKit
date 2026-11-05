@@ -65,7 +65,7 @@ static bool areThunkMovesSound(StubKey key, const StubSignature& signature, bool
             areSound = false;
         if (source == ArgumentSource::Register && (payload >= MacroAssembler::numberOfRegisters() || scratchRegisters.contains(static_cast<GPRReg>(payload), IgnoreVectors)))
             areSound = false;
-        if (source == ArgumentSource::ThrowWordWithMention)
+        if (source == ArgumentSource::ThrowWordWithMention || source == ArgumentSource::ConstantBelowMention)
             areSound = false;
         destinations.add(destination, IgnoreVectors);
     });
@@ -127,6 +127,7 @@ static void emitLoadsOfThunk(CCallHelpers& jit, std::span<const uint64_t> moves)
             jit.load64(addressFrom(CCallHelpers::stackPointerRegister), destination);
             return;
         case ArgumentSource::ThrowWordWithMention:
+        case ArgumentSource::ConstantBelowMention:
             break;
         }
         RELEASE_ASSERT_NOT_REACHED();

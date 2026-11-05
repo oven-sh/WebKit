@@ -134,6 +134,7 @@ struct VectorGrowth {
     GPRReg scratch;
 };
 void growFullVector(StubAssembler&, const VectorGrowth&, JumpList& slowPath);
+void widenStorageOfIntegersForAnyValue(StubAssembler&, GPRReg array, GPRReg scratch, JumpList& isLeftToOthers);
 void growVectorFor(StubAssembler&, const VectorGrowth&, GPRReg neededLength, JumpList& slowPath);
 
 void loadTextOfIndexForTrap(StubAssembler&, GPRReg base, GPRReg key, GPRReg storage, GPRReg index, GPRReg text, JumpList& hasNoText);

@@ -820,7 +820,7 @@ bool Modules::beginModuleInRecord(ModuleID module)
         loadEvictedFile(module);
         return false;
     }
-    if (isRunningFilesOf(module))
+    if (isRunningFilesAheadOfLoader(module))
         return false;
     ModuleStatus moduleStatus = status(module);
     if (moduleStatus == ModuleStatus::Evaluated || moduleStatus == ModuleStatus::EvaluatingAsync) {
@@ -899,14 +899,31 @@ bool Modules::importsFileThatRunsAhead(ModuleID root) const
     forEachFileEvaluatedByLoader([&](ModuleID file) {
         running.append(file);
     });
-    if (running.isEmpty())
+    return importsOneOf(root, running.span());
+}
+
+bool Modules::loadFurtherOutWaitsForFileBeside(ModuleID module)
+{
+    ModuleID rootFurtherOut = m_rootsOfSynchronousLoads.first();
+    if (rootFurtherOut == module || !hasNotBegun(rootFurtherOut) || !leadsTo(rootFurtherOut, module))
+        return false;
+    std::optional<ModuleID> running = m_innermostFilesBeingRun ? fileOrFaceEvaluatedIn(*m_innermostFilesBeingRun) : std::nullopt;
+    if (!running)
+        return false;
+    ModuleID file = fileOf(*running);
+    return !importsOneOf(module, singleElementSpan(file));
+}
+
+bool Modules::importsOneOf(ModuleID root, std::span<const ModuleID> files) const
+{
+    if (files.empty())
         return false;
     BitVector seen(m_table.size());
     seen.quickSet(root.index());
     Vector<uint32_t, 32> found { root.index() };
     for (size_t index = 0; index < found.size(); ++index) {
         ModuleID module(found[index]);
-        if (running.contains(fileOf(module)))
+        if (std::ranges::contains(files, fileOf(module)))
             return true;
         if (!data(module).isESModuleOfProgram())
             continue;
@@ -914,6 +931,43 @@ bool Modules::importsFileThatRunsAhead(ModuleID root) const
             if (!request.isRequire && !request.isHoisted && !seen.quickSet(request.target()))
                 found.append(request.target());
         }
+    }
+    return false;
+}
+
+bool Modules::comesToLoadOf(FilesBeingRun& files, ModuleID required)
+{
+    auto forEachImportOfModuleOnItsWay = [&](ModuleID module, const Invocable<void(ModuleID)> auto& functor) {
+        if (!isLoadedWithRequests(module) || !isNotLoaded(module))
+            return;
+        for (const ModuleRequestData& request : m_table.requests(module)) {
+            if (!request.isHoisted && !request.isRequire && !request.isDeferred)
+                functor(request.targetModule());
+        }
+    };
+    Vector<ModuleID, 32> modules;
+    if (!files.modulesOfLoad.get(files.root.index())) {
+        files.modulesOfLoad.set(files.root.index());
+        modules.append(files.root);
+        while (!modules.isEmpty()) {
+            forEachImportOfModuleOnItsWay(modules.takeLast(), [&](ModuleID imported) {
+                if (!files.modulesOfLoad.set(imported.index()))
+                    modules.append(imported);
+            });
+        }
+    }
+    const uint32_t isSeen = takeMarkOfSearch();
+    std::span<uint32_t> placesSeen = m_placesSeenByPlans.mutableSpan();
+    placesSeen[required.index()] = isSeen;
+    modules.append(required);
+    while (!modules.isEmpty()) {
+        ModuleID module = modules.takeLast();
+        if (files.modulesOfLoad.get(module.index()) && (hasNotBegunAsFile(module) || (isLoadedWithRequests(module) && isNotLoaded(module))))
+            return true;
+        forEachImportOfModuleOnItsWay(module, [&](ModuleID imported) {
+            if (std::exchange(placesSeen[imported.index()], isSeen) != isSeen)
+                modules.append(imported);
+        });
     }
     return false;
 }
@@ -1095,6 +1149,103 @@ void Modules::resumeDeferredLoadsOfFinishedFiles()
     }
 }
 
+Vector<uint32_t, 16> Modules::placesOfFilesAsSynchronousLoadMakesThem(ModuleID root, const Vector<uint32_t, 16>& places)
+{
+    enum class State : uint8_t { Unrequested, Requested, Fetched, Made, Recorded, Settled };
+    enum class Job : uint8_t { SettleFetch, MakeRecord, StoreRecord, LoadRequests };
+    UncheckedKeyHashMap<uint32_t, State, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> states;
+    UncheckedKeyHashMap<uint32_t, uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> lastWalks;
+    UncheckedKeyHashMap<uint32_t, uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> ranks;
+    auto stateOf = [&](ModuleID module) {
+        if (auto found = states.find(module.index()); found != states.end())
+            return found->value;
+        if (isCommonJSFileOrFace(module))
+            return hasNotBegunAsFile(module) ? State::Unrequested : State::Recorded;
+        return isNotLoaded(module) && !isMocked(module) ? State::Unrequested : State::Settled;
+    };
+    Vector<std::pair<Job, ModuleID>, 64> jobs;
+    Vector<ModuleID, 32> toWalk;
+    Vector<ModuleID, 32> walked;
+    auto make = [&](ModuleID file) {
+        if (isCommonJSFileOrFace(file))
+            ranks.add(file.index(), ranks.size());
+    };
+    states.set(root.index(), State::Recorded);
+    jobs.append({ Job::LoadRequests, root });
+    for (uint32_t next = 0; next < jobs.size() && ranks.size() < places.size(); ++next) {
+        auto [job, file] = jobs[next];
+        State state = stateOf(file);
+        if (job == Job::SettleFetch && state == State::Requested) {
+            states.set(file.index(), State::Fetched);
+            jobs.append({ Job::MakeRecord, file });
+        } else if (job == Job::MakeRecord && state == State::Fetched) {
+            states.set(file.index(), State::Made);
+            make(file);
+            jobs.append({ Job::StoreRecord, file });
+        } else if (job == Job::StoreRecord && state == State::Made) {
+            states.set(file.index(), State::Recorded);
+            if (!isCommonJSFileOrFace(file))
+                jobs.append({ Job::LoadRequests, file });
+        } else if (job == Job::LoadRequests && state == State::Recorded) {
+            bool isAllRecorded = true;
+            toWalk.append(file);
+            while (!toWalk.isEmpty()) {
+                ModuleID importer = toWalk.takeLast();
+                if (stateOf(importer) == State::Settled || std::exchange(lastWalks.add(importer.index(), 0).iterator->value, next + 1) == next + 1)
+                    continue;
+                walked.append(importer);
+                for (const ModuleRequestData& request : m_table.requests(importer)) {
+                    if (request.isHoisted || request.isRequire || request.isDeferred)
+                        continue;
+                    ModuleID target = request.targetModule();
+                    bool isFile = isCommonJSFileOrFace(target);
+                    if (!isFile && !isLoadedWithRequests(target))
+                        continue;
+                    switch (stateOf(target)) {
+                    case State::Unrequested:
+                        states.set(target.index(), State::Requested);
+                        jobs.append({ Job::SettleFetch, target });
+                        isAllRecorded = false;
+                        break;
+                    case State::Requested:
+                        states.set(target.index(), State::Fetched);
+                        jobs.append({ Job::MakeRecord, target });
+                        isAllRecorded = false;
+                        break;
+                    case State::Fetched:
+                        make(target);
+                        [[fallthrough]];
+                    case State::Made:
+                        states.set(target.index(), State::Recorded);
+                        if (isFile)
+                            break;
+                        jobs.append({ Job::LoadRequests, target });
+                        toWalk.append(target);
+                        break;
+                    case State::Recorded:
+                        if (!isFile)
+                            toWalk.append(target);
+                        break;
+                    case State::Settled:
+                        break;
+                    }
+                }
+            }
+            for (ModuleID importer : std::exchange(walked, { })) {
+                if (isAllRecorded)
+                    states.set(importer.index(), State::Settled);
+            }
+        }
+    }
+    std::span<const ModuleRequestData> requests = m_table.requests(root);
+    Vector<uint32_t, 16> inOrder = places;
+    std::ranges::stable_sort(inOrder, { }, [&](uint32_t place) {
+        auto rank = ranks.find(requests[place].target());
+        return rank == ranks.end() ? std::numeric_limits<uint32_t>::max() : rank->value;
+    });
+    return inOrder;
+}
+
 bool Modules::evaluateImportedCommonJSFiles(ModuleID root, JobsOfImportedFiles jobs, ErrorOfImportedFile error, ModuleGraphLoadingState* load)
 {
     VM& vm = *m_instance.vm;
@@ -1226,14 +1377,20 @@ bool Modules::evaluateImportedCommonJSFiles(ModuleID root, JobsOfImportedFiles j
         }
     }
     std::span<const ModuleRequestData> requests = m_table.requests(root);
-    for (size_t index = 0; index < requests.size(); ++index) {
-        while (requests[index].isHoisted && m_storedStatuses[requests[index].target()] == static_cast<uint8_t>(StoredModuleStatus::Evaluated) && !mockInPlace(requests[index].targetModule())) {
-            if (++index == requests.size())
-                break;
-        }
-        if (index == requests.size())
-            break;
+    Vector<uint32_t, 16> placesOfFiles;
+    for (uint32_t place = 0; jobs == JobsOfImportedFiles::StepsOfLoaderWaitForLoader && place < requests.size() && requests[place].isHoisted; ++place) {
+        if (hasNotBegunAsFile(requests[place].targetModule()))
+            placesOfFiles.append(place);
+    }
+    Vector<uint32_t, 16> placesInOrder = placesOfFiles.size() > 1 ? placesOfFilesAsSynchronousLoadMakesThem(root, placesOfFiles) : placesOfFiles;
+    size_t nextFile = 0;
+    for (size_t place = 0; place < requests.size(); ++place) {
+        size_t index = place;
+        if (nextFile < placesOfFiles.size() && placesOfFiles[nextFile] == place)
+            index = placesInOrder[nextFile++];
         const ModuleRequestData& request = requests[index];
+        if (request.isHoisted && m_storedStatuses[request.target()] == static_cast<uint8_t>(StoredModuleStatus::Evaluated) && !mockInPlace(request.targetModule()))
+            continue;
         if (request.isRequire)
             continue;
         ModuleID imported = request.targetModule();
@@ -1651,19 +1808,19 @@ void Modules::didStartLoad(JSPromise* load, ModuleID root, SettlingOfLoad settli
     m_loadsInFlight.append(*m_instance.vm, load, root, settling).stepsOfLoaderAtCall = m_stepsOfLoaderAtCallWhoseTextHasCome.value_or(m_stepsOfLoader);
 }
 
-bool Modules::needsLoaderForRequire(ModuleID module)
+Modules::LoaderForRequire Modules::loaderForRequire(ModuleID module)
 {
     if (!isLoadedWithRequests(module))
-        return false;
+        return LoaderForRequire::IsNotNeeded;
     if (data(module).isLoadedByLoader() || statementThatEndsLoad(module))
-        return true;
+        return LoaderForRequire::IsNeeded;
+    if (numberOfGraphsBeingLoaded() && (m_rootWhoseFilesRanAhead || comesToLoadInFlight(module)))
+        return LoaderForRequire::IsNeeded;
     for (const FilesBeingRun* files = m_innermostFilesBeingRun; files; files = files->outer) {
         if (files->fileOrFace == files->root)
-            return true;
+            return LoaderForRequire::ComesBehindImportedFiles;
     }
-    if (!numberOfGraphsBeingLoaded())
-        return false;
-    return m_rootWhoseFilesRanAhead || comesToLoadInFlight(module);
+    return LoaderForRequire::IsNotNeeded;
 }
 
 bool Modules::isNotLoaded(ModuleID module)
@@ -2718,6 +2875,11 @@ void Modules::evaluateSynchronously(ModuleID module, SynchronousEvaluationReason
     }
 
     bool givesLoaderFileThatRunsAhead = reason == SynchronousEvaluationReason::Require && m_innermostFilesBeingRun && importsFileThatRunsAhead(module);
+    if (reason == SynchronousEvaluationReason::Require && m_innermostFilesBeingRun && m_innermostFilesBeingRun->isAheadOfStepsOfLoader && (givesLoaderFileThatRunsAhead || comesToLoadOf(*m_innermostFilesBeingRun, module))) [[unlikely]] {
+        handSynchronousLoadToLoader(*m_innermostFilesBeingRun);
+        RETURN_IF_EXCEPTION(scope, void());
+    }
+    givesLoaderFileThatRunsAhead &= !m_rootWhoseFilesRanAhead;
     if (std::optional<ModuleID> root = givesLoaderFileThatRunsAhead ? rootOfRunningFileThatHoldsCycleBelow(module) : std::nullopt) [[unlikely]] {
         evaluateRootThatWaitedForFile(*root);
         RETURN_IF_EXCEPTION(scope, void());
@@ -2725,7 +2887,8 @@ void Modules::evaluateSynchronously(ModuleID module, SynchronousEvaluationReason
             RELEASE_AND_RETURN(scope, evaluateSynchronously(module, reason));
     }
     bool runsStepsOfLoader = reason == SynchronousEvaluationReason::Require;
-    bool needsLoader = runsStepsOfLoader && needsLoaderForRequire(module);
+    LoaderForRequire loaderForRequire = runsStepsOfLoader ? this->loaderForRequire(module) : LoaderForRequire::IsNotNeeded;
+    bool needsLoader = loaderForRequire != LoaderForRequire::IsNotNeeded;
     std::optional<VM::SynchronousModuleQueueScope> queue;
     if (runsStepsOfLoader)
         queue.emplace(*m_instance.vm);
@@ -2749,10 +2912,10 @@ void Modules::evaluateSynchronously(ModuleID module, SynchronousEvaluationReason
         queue.reset();
     };
     auto didLeaveLoad = makeScopeExit(leaveLoad);
-    if (!needsLoader) {
+    if (loaderForRequire != LoaderForRequire::IsNeeded) {
         evaluateImportedCommonJSFiles(module, m_instance.vm->synchronousModuleQueue() ? JobsOfImportedFiles::StepsOfLoaderWaitForLoader : JobsOfImportedFiles::StayQueued, ErrorOfImportedFile::IsLeftToLoader);
         RETURN_IF_EXCEPTION(scope, void());
-        needsLoader = m_rootWhoseFilesRanAhead == module;
+        needsLoader |= m_rootWhoseFilesRanAhead == module;
         if (!needsLoader && status(module) != statusAtStart)
             RELEASE_AND_RETURN(scope, evaluateSynchronously(module, reason));
     }
@@ -2810,7 +2973,7 @@ void Modules::evaluateSynchronously(ModuleID module, SynchronousEvaluationReason
     promise->markAsHandled();
     if (promise->status() == JSPromise::Status::Rejected)
         throwException(realm, scope, promise->result());
-    else if (moduleData.isSynchronous() && hasNotBegun(module) && m_rootsOfSynchronousLoads.size() == 2) {
+    else if (moduleData.isSynchronous() && hasNotBegun(module) && m_rootsOfSynchronousLoads.size() == 2 && !loadFurtherOutWaitsForFileBeside(module)) {
         for (ModuleID waiting : Vector<ModuleID, 2> { m_rootsOfSynchronousLoads }) {
             if (!hasNotBegun(waiting) || !data(waiting).isSynchronous() || !leadsTo(waiting, module))
                 continue;
@@ -3081,12 +3244,21 @@ JSValue Modules::loadEvictedFile(ModuleID file)
     return value;
 }
 
+JSValue Modules::exportsOnObjectMadeByRequire(const LoadedModule& loaded)
+{
+    JSObject* entry = loaded.objectMadeByRequire;
+    if (!entry)
+        return { };
+    return entry->get(m_instance.globalObject, m_instance.vm->propertyNames->exports);
+}
+
 JSValue Modules::requireThroughCache(ModuleID target, ModuleID referrer)
 {
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
     LoadedModule& loaded = ensureLoaded(target);
     if (JSValue kept = loaded.valueInRequireCache) {
-        JSValue stored = loaded.objectMadeByRequire ? loaded.objectMadeByRequire->getDirect(*m_instance.vm, m_instance.vm->propertyNames->exports) : JSValue();
+        JSValue stored = exportsOnObjectMadeByRequire(loaded);
+        RETURN_IF_EXCEPTION(scope, { });
         return stored ? stored : kept;
     }
     JSValue answered = isMockedLibraryModule(target) ? answerRequireWithMock(target, referrer) : answerRequire(target);
@@ -3219,7 +3391,9 @@ JSValue Modules::answerRequire(ModuleID target, ModuleID referrer, RequiredBy re
         return answered;
     };
     if (!wasBeingRequired && loaded.requiredValue && loaded.objectMadeByRequire) [[unlikely]] {
-        if (JSValue held = loaded.objectMadeByRequire->getDirect(vm, vm.propertyNames->exports); held && held != loaded.exportsGivenToObjectMadeByRequire.get())
+        JSValue held = exportsOnObjectMadeByRequire(loaded);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (held && held != loaded.exportsGivenToObjectMadeByRequire.get())
             return held;
     }
     if (JSValue answered = loaded.requiredValue; answered && !isAnsweredAsByLoader)
@@ -3316,26 +3490,6 @@ JSValue Modules::exportsGivenBackToCompiledCode(ModuleID module) const
     ASSERT(data(module).kind == ModuleKind::CommonJs);
     JSValue exports = data(module).hasValue() ? ProgramStatics::readVariable(m_instance, data(module).value) : JSValue();
     return exports ? exports : jsUndefined();
-}
-
-bool Modules::hasYetToBegin(ModuleID file) const
-{
-    return data(file).hasValue() && status(file) <= ModuleStatus::Linked && ProgramStatics::isVariableEmpty(m_instance, data(file).value);
-}
-
-JSValue Modules::exportsShownByModuleObject(ModuleID file)
-{
-    if (!hasYetToBegin(file))
-        return commonJSExports(file);
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(*m_instance.vm);
-    LoadedModule& loaded = ensureLoaded(file);
-    if (!loaded.exportsShownBeforeBody) {
-        JSObject* empty = constructEmptyObject(m_instance.globalObject);
-        objectConstructorFreeze(m_instance.globalObject, empty);
-        scope.assertNoException();
-        loaded.exportsShownBeforeBody.set(*this, empty);
-    }
-    return loaded.exportsShownBeforeBody.get();
 }
 
 JSValue Modules::exportsSeenByLoader(ModuleID module)
@@ -3442,6 +3596,7 @@ void Modules::giveBackModuleObject(ModuleID module)
         return;
     LoadedModule& loaded = ensureLoaded(module);
     loaded.requirer.set(*this, nullptr);
+    loaded.moduleObjectOverExportsVariable.set(*this, nullptr);
     loaded.requireFunction.set(*this, JSValue());
 }
 
@@ -3472,7 +3627,7 @@ JSObject* Modules::moduleObject(ModuleID module)
     } else {
         JSObject* meta = importMeta(module);
         RETURN_IF_EXCEPTION(scope, nullptr);
-        host().createRequirer(realm, meta, objects);
+        host().createRequirer(realm, meta, module, objects);
     }
     RETURN_IF_EXCEPTION(scope, nullptr);
     loaded.requirer.set(*this, objects.module);
@@ -3660,6 +3815,17 @@ void Modules::forgetRequestByLoader(ModuleID module)
         letGoOfModuleObject(file);
 }
 
+void Modules::layValueInPlaceOfExportsVariable(ModuleID file)
+{
+    LoadedModule* loaded = loadedIfExists(file);
+    if (!loaded || !loaded->requirer || !data(file).hasValue())
+        return;
+    VM& vm = *m_instance.vm;
+    JSValue laid = loaded->requirer->getDirect(vm, vm.propertyNames->exports);
+    if (laid && laid.isCustomGetterSetter())
+        loaded->requirer->putDirect(vm, vm.propertyNames->exports, commonJSExports(file));
+}
+
 void Modules::letGoOfModuleObject(ModuleID file)
 {
     m_filesRequestedByLoader.clear(file.index());
@@ -3670,10 +3836,9 @@ void Modules::letGoOfModuleObject(ModuleID file)
     LoadedModule* loaded = loadedIfExists(file);
     if (!loaded || !loaded->requirer)
         return;
-    VM& vm = *m_instance.vm;
-    if (data(file).hasValue())
-        loaded->requirer->putDirect(vm, vm.propertyNames->exports, exportsShownByModuleObject(file));
+    layValueInPlaceOfExportsVariable(file);
     loaded->requirer.set(*this, nullptr);
+    loaded->moduleObjectOverExportsVariable.set(*this, nullptr);
     loaded->requireFunction.set(*this, JSValue());
 }
 

@@ -11,6 +11,7 @@
 #include <JavaScriptCore/JSExportMacros.h>
 #include <span>
 #include <wtf/text/StringView.h>
+#include <wtf/text/WTFString.h>
 
 namespace JSC {
 
@@ -19,6 +20,7 @@ class JSGlobalObject;
 namespace AOT {
 
 JSValue tryParseJSON(JSGlobalObject*, StringView);
+[[noreturn]] void stopAtJSONTextMismatch(const String& written, const String& writtenByGeneralWay);
 
 } } // namespace JSC::AOT
 

@@ -69,6 +69,7 @@ ProcedureTraits traitsOfSeed(uint64_t seed)
     traits.chargesForCalleeSaves = seed & 2;
     traits.mayOmitFrameRecord = seed % 3;
     traits.checksAllocation = true;
+    traits.ordersBlocksAsWhenOrderedAgain = !(seed % 5);
     return traits;
 }
 
@@ -150,7 +151,7 @@ static unsigned showFuzzedProcedure(uint64_t seed, unsigned numberOfBlocks, Prin
     ProcedureTraits traits = traitsOfSeed(seed);
     TestProcedure test(traits);
     auto program = buildRandomProcedure(test, optionsOfFuzzSeed(seed, numberOfBlocks));
-    out.println("seed ", seed, ": ", numberOfBlocks, " blocks", traits.hasHandlers ? ", has handlers" : "", traits.savesFrameOnSuspend ? ", saves its frame on suspension" : "");
+    out.println("seed ", seed, ": ", numberOfBlocks, " blocks", traits.hasHandlers ? ", has handlers" : "", traits.savesFrameOnSuspend ? ", saves its frame on suspension" : "", traits.ordersBlocksAsWhenOrderedAgain ? ", is ordered as when ordered again" : "");
 
     printTextOfFuzzedProcedure(out, "procedure"_s, test.printedProcedure());
     out.flush();

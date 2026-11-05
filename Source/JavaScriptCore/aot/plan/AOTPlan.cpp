@@ -45,7 +45,7 @@ static_assert(AOT::Closure::maxNumberOfCaptures % 2);
 static_assert(unorderedOrderWord == orderWordOf(0, 0));
 static_assert(representsAbsentAsZero(SlotRepresentation::JSValue) && traitsOf(SlotRepresentation::JSValue).undefinedBits);
 
-StorageOfLayouts chooseStorageOfLayouts(const Program&, const LinkTables&, const ParallelLoops&);
+StorageOfLayouts chooseStorageOfLayouts(const Program&, const Facts&, const ParallelLoops&);
 SlotPlanParts computeSlotPlanParts(Program&, const Facts&, BuildContext&, const StorageOfLayouts&, KeyOrders&, PromotedEnvironments&);
 void holdDoorsToProofsInSlotPlan(Program&, const Facts&, const ParallelLoops&, SlotPlanParts&);
 ShapeTable computeShapeTable(const Program&, const LinkTables&, const StorageOfLayouts&, LayoutID closureLayout, std::span<const uint32_t> orderOfLayouts);
@@ -83,11 +83,71 @@ static MethodTablePlan planMethodTable(const Program& program, const Facts& fact
         return std::pair { member.classLayout, member.side };
     };
 
-    struct RowUnderKey {
-        PropertyKeyID key;
-        MethodTableRow row;
+    enum class AnswerBelowClass : uint8_t { NotAsked, IsMethodWritten, IsSomethingElse };
+    struct MembersOfClass {
+        uint32_t first { 0 };
+        uint32_t end { 0 };
+        bool isAsked { false };
+        bool hasMemberWithoutKey { false };
     };
-    Vector<RowUnderKey> rows;
+    Vector<MembersOfClass> membersOfClasses(program.layouts.size());
+    BitVector membersThatMayHaveRows(linked.members.size());
+    Vector<AnswerBelowClass> answersBelowClassesOfMembers;
+    answersBelowClassesOfMembers.fill(AnswerBelowClass::NotAsked, linked.members.size());
+    auto membersOf = [&](LayoutID current) -> const MembersOfClass& {
+        MembersOfClass& known = membersOfClasses[current.index()];
+        if (std::exchange(known.isAsked, true))
+            return known;
+        auto members = std::ranges::equal_range(linked.members, std::pair { current, ClassSide::Prototype }, { }, sideOf);
+        known.first = static_cast<uint32_t>(members.begin() - linked.members.begin());
+        known.end = static_cast<uint32_t>(members.end() - linked.members.begin());
+        for (uint32_t place = known.first; place < known.end; ++place) {
+            const LinkedMember& member = linked.members[place];
+            if (!member.key) {
+                known.hasMemberWithoutKey = true;
+                continue;
+            }
+            if (numbersOfArgumentsPassedUnderKey[member.key.index()] && member.kind == MethodKind::Method && member.written && isEnteredThroughTable(member.written)
+                && linked.membersUnder(current, ClassSide::Prototype, member.key).size() == 1 && program.at(member.key).kind == PropertyKeyKind::Text)
+                membersThatMayHaveRows.quickSet(place);
+        }
+        return known;
+    };
+
+    constexpr uint32_t isNotAsked = UINT32_MAX - 1;
+    Vector<uint32_t> nearestClassesWithMembers;
+    nearestClassesWithMembers.fill(isNotAsked, program.layouts.size());
+    auto nearestClassWithMembers = [&](LayoutID from) {
+        Vector<uint32_t, 16> classesPassed;
+        LayoutID current = from;
+        for (; current && nearestClassesWithMembers[current.index()] == isNotAsked && classesPassed.size() <= program.layouts.size(); current = program.at(current).base) {
+            const MembersOfClass& members = membersOf(current);
+            if (members.first != members.end || program.at(current).has(LayoutFlags::IsConstructorFunction)) {
+                nearestClassesWithMembers[current.index()] = current.index();
+                break;
+            }
+            classesPassed.append(current.index());
+        }
+        LayoutID nearest = current && nearestClassesWithMembers[current.index()] != isNotAsked ? LayoutID::fromBits(nearestClassesWithMembers[current.index()]) : LayoutID();
+        for (uint32_t passed : classesPassed)
+            nearestClassesWithMembers[passed] = nearest.bits();
+        return nearest;
+    };
+
+    BitVector keysOfFields(program.types.numberOfPropertyKeys());
+    for (uint32_t index = 0; index < program.layouts.size(); ++index) {
+        const Layout& record = program.layouts[index];
+        size_t numberNotCopied = baseWhoseFieldListIsCopiedWhole(program, LayoutID(index)) ? record.ownFieldCount : record.fields.size();
+        for (size_t field = 0; field < numberNotCopied; ++field) {
+            if (record.fields[field].key)
+                keysOfFields.quickSet(record.fields[field].key.index());
+        }
+    }
+
+    Vector<PropertyKeyID> keysOfRows;
+    Vector<MethodTableRow> rowsAsFound;
+    Vector<uint32_t> numbersOfRowsUnderKeys;
+    numbersOfRowsUnderKeys.fill(0, program.types.numberOfPropertyKeys() + 1);
     Vector<uint32_t> lastLayoutThatPassedKey;
     lastLayoutThatPassedKey.fill(UINT32_MAX, program.types.numberOfPropertyKeys());
     for (uint32_t index = 0; index < program.layouts.size(); ++index) {
@@ -95,30 +155,52 @@ static MethodTablePlan planMethodTable(const Program& program, const Facts& fact
         const Layout& record = program.layouts[index];
         if (record.kind != LayoutKind::Instance || record.has(LayoutFlags::IsConstructorFunction) || !isFoundByShapeTest(record) || storage.isNeverAllocated(layout) || !layoutsWithClassRecord.get(index))
             continue;
+        bool keepsWhatIsFoundAbove = !linked.layout(layout).possibleChanges.containsAny({ LayoutChange::ChangesPrototype, LayoutChange::GetsAccessor });
+        bool listsEveryMemberAbove = linked.layout(layout).listsEveryMemberAbove;
         unsigned numberOfClassesPassed = 0;
-        for (LayoutID current = layout; current; current = program.at(current).base) {
+        for (LayoutID current = nearestClassWithMembers(layout); current; current = nearestClassWithMembers(program.at(current).base)) {
             if (++numberOfClassesPassed > program.layouts.size() || program.at(current).has(LayoutFlags::IsConstructorFunction))
                 break;
-            auto members = std::ranges::equal_range(linked.members, std::pair { current, ClassSide::Prototype }, { }, sideOf);
-            if (std::ranges::any_of(members, [](const LinkedMember& member) { return !member.key; }))
+            const MembersOfClass& members = membersOf(current);
+            if (members.hasMemberWithoutKey)
                 break;
-            for (const LinkedMember& member : members) {
+            for (uint32_t place = members.first; place < members.end; ++place) {
+                const LinkedMember& member = linked.members[place];
                 if (std::exchange(lastLayoutThatPassedKey[member.key.index()], index) == index)
                     continue;
-                if (!numbersOfArgumentsPassedUnderKey[member.key.index()] || member.kind != MethodKind::Method || !member.written || !isEnteredThroughTable(member.written))
+                if (!membersThatMayHaveRows.quickGet(place))
                     continue;
-                bool isOnlyMemberUnderKey = linked.membersUnder(current, ClassSide::Prototype, member.key).size() == 1;
-                if (!isOnlyMemberUnderKey)
+                if (keysOfFields.quickGet(member.key.index()) && findField(program, layout, member.key))
                     continue;
-                if (program.at(member.key).kind != PropertyKeyKind::Text || findField(program, layout, member.key))
-                    continue;
-                bool isProven = !linked.layout(layout).possibleChanges.containsAny({ LayoutChange::ChangesPrototype, LayoutChange::GetsAccessor })
-                    && linked.findMember(program, layout, ClassSide::Prototype, member.key).method == member.written;
-                rows.append({ member.key, MethodTableRow { layout, member.written, isProven ? LayoutID() : layout } });
+                auto findsMethodWritten = [&] {
+                    return linked.findMember(program, layout, ClassSide::Prototype, member.key).method == member.written;
+                };
+                bool isProven = false;
+                if (keepsWhatIsFoundAbove && listsEveryMemberAbove) {
+                    if (current == layout)
+                        isProven = findsMethodWritten();
+                    else {
+                        AnswerBelowClass& answer = answersBelowClassesOfMembers[place];
+                        if (answer == AnswerBelowClass::NotAsked)
+                            answer = findsMethodWritten() ? AnswerBelowClass::IsMethodWritten : AnswerBelowClass::IsSomethingElse;
+                        isProven = answer == AnswerBelowClass::IsMethodWritten;
+                    }
+                }
+                keysOfRows.append(member.key);
+                rowsAsFound.append(MethodTableRow { layout, member.written, isProven ? LayoutID() : layout });
+                ++numbersOfRowsUnderKeys[member.key.index() + 1];
             }
         }
     }
-    std::ranges::stable_sort(rows, { }, &RowUnderKey::key);
+    for (size_t key = 1; key < numbersOfRowsUnderKeys.size(); ++key)
+        numbersOfRowsUnderKeys[key] += numbersOfRowsUnderKeys[key - 1];
+    struct RowUnderKey {
+        PropertyKeyID key;
+        MethodTableRow row;
+    };
+    Vector<RowUnderKey> rows(rowsAsFound.size());
+    for (size_t place = 0; place < rowsAsFound.size(); ++place)
+        rows[numbersOfRowsUnderKeys[keysOfRows[place].index()]++] = { keysOfRows[place], rowsAsFound[place] };
 
     for (size_t first = 0; first < rows.size();) {
         MethodFamily family;
@@ -126,7 +208,8 @@ static MethodTablePlan planMethodTable(const Program& program, const Facts& fact
         size_t end = first;
         for (; end < rows.size() && rows[end].key == family.key; ++end) {
             family.rows.append(rows[end].row);
-            family.methods.append(rows[end].row.method);
+            if (family.methods.isEmpty() || family.methods.last() != rows[end].row.method)
+                family.methods.append(rows[end].row.method);
             family.hasGuardedRow = true;
         }
         family.hasGuardedRow = !formsOfSelector(program, linked, conventions, family).everyRowIsProven;
@@ -486,6 +569,25 @@ BuiltinID builtinParentNamedByClassRecord(const Program& program, const Facts& f
     return program.builtins().at(classFacts.baseClass).constructor;
 }
 
+ParentInClassRecord parentNamedByClassRecord(const Program& program, const Facts& facts, LayoutID id)
+{
+    const Layout& layout = program.at(id);
+    if (layout.isDerived())
+        return { writtenBaseOf(layout), true };
+    ClassFacts classFacts = facts.classOf(id);
+    switch (classFacts.baseState) {
+    case BaseState::Layout:
+        return { classFacts.base, true };
+    case BaseState::Unknown:
+        return { writtenBaseOf(layout), false };
+    case BaseState::None:
+        return { classFacts.prototypeBase, false };
+    case BaseState::BuiltinClass:
+        return { };
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
 static bool isDefinedByClassSyntaxInPlan(const Layout& layout)
 {
     return layout.kind == LayoutKind::Instance && layout.constructor && !layout.isDerived() && !layout.has(LayoutFlags::IsConstructorFunction);
@@ -673,10 +775,11 @@ static void planConventions(const Program& program, const Facts& facts, BuildCon
 
 }
 
-static bool makesObjectsWithBirthsInPlan(const Program& program, const SlotPlanParts& slots, uint32_t layout)
+static bool makesObjectsWithBirthsInPlan(const Program& program, const LinkTables& held, const SlotPlanParts& slots, uint32_t layout)
 {
     LayoutKind kind = program.layouts[layout].kind;
-    return kind == LayoutKind::Instance && slots.layouts[layout].holdsCompiledObjects() && !slots.layoutsNeverAllocated.get(layout);
+    bool isRecordThatStaysAsBorn = kind == LayoutKind::Record && !held.layouts[layout].possibleChanges.containsAny({ LayoutChange::LosesProperty, LayoutChange::GetsAccessor });
+    return (kind == LayoutKind::Instance || isRecordThatStaysAsBorn) && slots.layouts[layout].holdsCompiledObjects() && !slots.layoutsNeverAllocated.get(layout);
 }
 
 static bool slotMayBeOfBirthInPlan(const PlannedLayout& planned, FieldIndex field)
@@ -715,7 +818,7 @@ static void markSlotsFilledAtBirthInPlan(Program& program, const Facts& facts, S
         standsInRowOfClasses.quickSet(declaredLayoutOf(program, layout.base).index());
     }
     for (uint32_t index = 0; index < numberOfLayouts; ++index) {
-        if (!makesObjectsWithBirthsInPlan(program, slots, index))
+        if (!makesObjectsWithBirthsInPlan(program, held, slots, index))
             continue;
         LayoutID id(index);
         bool isReadWithoutLook = !linked.layout(id).reachesUnseenCode;
@@ -740,7 +843,7 @@ static void markSlotsFilledAtBirthInPlan(Program& program, const Facts& facts, S
 
     TypeArena types(program.types, ArenaKeeps::InProgram);
     for (uint32_t index = 0; index < numberOfLayouts; ++index) {
-        if (!makesObjectsWithBirthsInPlan(program, slots, index))
+        if (!makesObjectsWithBirthsInPlan(program, held, slots, index))
             continue;
         for (FieldIndex field = 0; field < program.layouts[index].fields.size(); ++field) {
             uint32_t declaration = declarationOfField({ LayoutID(index), field });
@@ -775,7 +878,7 @@ std::unique_ptr<Plan> planProgram(Program& program, const Facts& facts, BuildCon
     parts.usesWideReferences = build.recordedOptions().useWideReferences();
     parts.hasOneInstance = facts.hasOneInstance();
     parts.closureLayout = closureLayoutOfPlan(program);
-    const StorageOfLayouts storage = chooseStorageOfLayouts(program, facts.linked(), build.parallelLoops());
+    const StorageOfLayouts storage = chooseStorageOfLayouts(program, facts, build.parallelLoops());
     FunctionsThatEndTheirTailCalls functionsThatEndTheirTailCalls;
     StackTestPlan stackTests;
     auto planSlotsAndKeyOrders = [&] {
@@ -799,6 +902,7 @@ std::unique_ptr<Plan> planProgram(Program& program, const Facts& facts, BuildCon
         holdDoorsToProofsInSlotPlan(program, facts, build.parallelLoops(), slots);
         appendPromotedVariables(parts.promotedEnvironments, slots);
         markSlotsFilledAtBirthInPlan(program, facts, slots);
+        markFieldsHeldFilledInSlotPlan(program, facts.linked(), build.parallelLoops(), slots);
         parts.slots = SlotPlan(WTF::move(slots));
     };
     auto planConventionsAndStackTests = [&] {
@@ -853,6 +957,7 @@ std::unique_ptr<Plan> planProgram(Program& program, const Facts& facts, BuildCon
     planTailCallsAndStackTests(program, facts, *plan, WTF::move(stackTests));
     finishMethodTableForUnions(program, facts, *plan);
     plan->fuseCallEntriesThatOnlyMove(program, facts, build.parallelLoops());
+    plan->findCallEntriesThatWalkBodies(program, facts);
     if (!finish("plan: parameter guards"_s))
         return nullptr;
     return plan;
@@ -1308,6 +1413,33 @@ void CheckerOfPlan::check()
 } // anonymous namespace
 
 #undef FOR_EACH_AOT_PLAN_RULE
+
+void Plan::findCallEntriesThatWalkBodies(const Program& program, const Facts& facts)
+{
+    auto storesListAtEntry = [&](FunctionID id, const BodyIndex& body) {
+        const Function& function = program.at(id);
+        BodyBlock entryOfBody = body.block(entryBlock);
+        for (const StoreOfCapturedValue& store : promotedEnvironments().storesIn(id)) {
+            std::optional<uint32_t> index = entryOfBody.indexOfParameter(store.value);
+            if (!index)
+                continue;
+            EntryParameter kind = function.entryParameterKind(*index);
+            if (kind == EntryParameter::HiddenRest || (kind == EntryParameter::Parameter && *index - function.firstParameterIndex() >= function.numberOfPositionalParameters()))
+                return true;
+        }
+        return false;
+    };
+    m_parts.functionsWhoseCallEntryWalksBody.ensureSize(program.functions.size());
+    for (uint32_t index = 0; index < program.functions.size(); ++index) {
+        FunctionID id(index);
+        if (!conventions().callEntryWalksBody(id) || facts.isTakenToRunOnce(id))
+            continue;
+        GenericEntryPlan entry = conventions().genericEntry({ id, CodeRole::GenericCallEntry });
+        const BodyIndex* body = facts.bodies().find(id);
+        if (!entry.takesNewTarget && entry.target.role == CodeRole::Body && body && !storesListAtEntry(id, *body))
+            m_parts.functionsWhoseCallEntryWalksBody.quickSet(index);
+    }
+}
 
 void checkPlan(const Program& program, const Facts& facts, const Plan& plan, BuildContext& build)
 {

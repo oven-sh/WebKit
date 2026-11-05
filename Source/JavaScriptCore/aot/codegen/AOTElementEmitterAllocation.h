@@ -30,7 +30,7 @@ public:
     enum class LengthIsSetBy : bool { Allocation, Caller };
     CellPointer allocateArrayOfHoles(const OperationContext&, Integer length, const ArrayStorageForm&, LBasicBlock slowPath, ElementsBelowLength = ElementsBelowLength::Cleared, LengthIsSetBy = LengthIsSetBy::Allocation);
     CellPointer allocateEmptyArrayWithRoom(const OperationContext&, Integer room, const ArrayStorageForm&, LBasicBlock slowPath);
-    void allocateListLike(const OperationContext&, CellPointer source, Integer length, std::optional<Integer> roomOfEmptyList, LBasicBlock slowPath, const ScopedLambda<void(CellPointer)>&);
+    void allocateListLike(const OperationContext&, CellPointer source, Integer length, std::optional<Integer> roomOfEmptyList, LBasicBlock slowPath, const ScopedLambda<void(CellPointer)>&, const ArrayStorageForm* inPlaceOfAnyValue = nullptr);
     void setLengthOfNewArray(CellPointer, Integer length);
 
     CellPointer allocateArrayCell(Integer header, Pointer butterfly, LBasicBlock slowPath);

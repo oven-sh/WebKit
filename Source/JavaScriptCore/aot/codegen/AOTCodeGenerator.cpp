@@ -20,6 +20,7 @@
 #include "AOTPrimitiveEmitter.h"
 #include "AOTRepresentationRules.h"
 #include "AOTRuntimeCallEmitter.h"
+#include "AOTSavedFrameEmitter.h"
 #include "AOTStringEmitter.h"
 #include "AOTTypeIDs.h"
 #include <algorithm>
@@ -92,10 +93,15 @@ GenerationResult CodeGenerator::run()
     m_values = allocateZeroedSpan<LValue>(m_proc.arena(), code().numberOfValues());
     m_mayReleaseBehindLastReads = code().opcodesOfValues().contains(Opcode::ReleaseHint);
     m_mayLendCells = code().holdsFrameCells();
+    m_looksBehindEachOperation = m_checksAllocation;
     orderBlocks();
     createBlocks();
     followNumbersOutOfBytes();
     createPhis();
+    if (unit().role == CodeRole::CoroutineBody && code().hasSuspensions() && !m_savesFramesOfGenerators) {
+        m_keepsValuesInHeapFrame = emitter<SavedFrameEmitter>().layOutHeapFrame();
+        m_looksBehindEachOperation |= m_keepsValuesInHeapFrame;
+    }
 
     definePinnedValues(m_out, m_pinned);
     emitter<EntryEmitter>().generateEntries();
@@ -106,7 +112,7 @@ GenerationResult CodeGenerator::run()
         if (leavesOutBlockThatNothingLeadsTo(id))
             continue;
         const Block& block = code().at(id);
-        if (block.isLoopHead) {
+        if (block.isLoopHead && !m_keepsValuesInHeapFrame) {
             if (std::optional<CountedLoop> loop = findCountedLoopAt(position))
                 layOutTurns(*loop);
             if (m_hasFailed)
@@ -764,6 +770,16 @@ ALWAYS_INLINE ValueID CodeGenerator::testReadByBranchAlone(BlockID id, const Ter
     return condition;
 }
 
+ALWAYS_INLINE ValueID CodeGenerator::testReadByBranchBehindJumpAlone(BlockID id, const Block& block) const
+{
+    if (block.terminator.kind != TerminatorKind::Jump)
+        return { };
+    BlockID behind = code().at(block.terminator.next()).to;
+    if (m_blocks[behind.index()] || m_singlePredecessors[behind.index()] != id || !code().valuesOf(behind).empty() || code().handlerOf(behind) != code().handlerOf(id) || !code().releasesBehindLastReadsIn(behind).empty())
+        return { };
+    return testReadByBranchAlone(id, code().at(behind).terminator);
+}
+
 ALWAYS_INLINE bool CodeGenerator::isAwaitedAtOnce(const Operation& call, std::span<const ValueID> valuesOfBlock, size_t index) const
 {
     if ((call.opcode != Opcode::Call && call.opcode != Opcode::CallDirect) || index + 1 == valuesOfBlock.size())
@@ -859,11 +875,15 @@ ALWAYS_INLINE void CodeGenerator::generate(const ValueContext& context)
     }
     m_out.setOrigin(originOfUser);
     m_operation = user;
-    if (m_checksAllocation) [[unlikely]] {
-        if (user)
+    if (m_looksBehindEachOperation) [[unlikely]] {
+        if (m_checksAllocation && user)
             declareAccessesSlow(*user);
-        else
+        else if (m_checksAllocation)
             m_out.clearDeclaredAccesses();
+        if (m_keepsValuesInHeapFrame && !user && !m_hasFailed && currentBlockIsOpen() && !context.isBranchCondition() && !context.returnCall()) {
+            SetForScope<const OperationContext*> whileKeeping(m_operation, &context);
+            emitter<SavedFrameEmitter>().keepInHeapFrame(context);
+        }
     }
 
     size_t index = context.id().index();
@@ -1015,6 +1035,8 @@ void CodeGenerator::generateBlock(BlockID id, const Block& block)
     m_isAheadOfWhatMayThrow = true;
     if (m_mayLendCells && block.isHandlerBlock()) [[unlikely]]
         emitter<CellAllocationEmitter>().clearWhatWasLentUnderHandler(id);
+    if (m_keepsValuesInHeapFrame) [[unlikely]]
+        enterBlockOfBodyWithHeapFrame(id, block);
 
     if (ValueID owned = valueOwnedByTerminator(block.terminator)) {
         RELEASE_ASSERT(!values.empty() && values.back() == owned);
@@ -1068,6 +1090,26 @@ void CodeGenerator::generateBlock(BlockID id, const Block& block)
     generateTerminator(id, block, testWaitsForBranch);
 }
 
+void CodeGenerator::enterBlockOfBodyWithHeapFrame(BlockID id, const Block& block)
+{
+    SavedFrameEmitter& frames = emitter<SavedFrameEmitter>();
+    frames.beginStretchOfHeapFrame(id);
+    for (ValueID parameter : block.parameters()) {
+        if (!m_values[parameter.index()])
+            continue;
+        ValueContext context(id, parameter, code().at(parameter), nullptr);
+        SetForScope<const OperationContext*> whileKeeping(m_operation, &context);
+        frames.keepInHeapFrame(context);
+    }
+    if (ValueID neverStored = frames.readBackOutOfHeapFrame(id, ValueID()))
+        fail(ValueContext(id, neverStored, code().at(neverStored), nullptr), InternalErrorKind::InvalidSuspension);
+}
+
+bool CodeGenerator::blockDominates(BlockID above, BlockID below)
+{
+    return above == below || dominates(above, below);
+}
+
 static constexpr unsigned turnsLaidOut = 8;
 static constexpr int32_t turnsBetweenPolls = 1 << 20;
 static constexpr unsigned mostBlocksInTurnLaidOut = 4;
@@ -1101,11 +1143,11 @@ std::optional<CodeGenerator::CountedLoop> CodeGenerator::findCountedLoopAt(size_
         const Block& block = code().at(asking);
         if (!block.isInLoop || block.isLoopHead || code().handlerOf(asking) || block.subject || block.isEntry || block.isHandlerBlock() || block.frequency != blockOfHead.frequency)
             return std::nullopt;
-        if (!block.parameters().empty() || code().valuesOf(asking).size() != 1 || !code().releasesBehindLastReadsIn(asking).empty())
+        if (!block.parameters().empty() || code().valuesOf(asking).size() > 1 || !code().releasesBehindLastReadsIn(asking).empty())
             return std::nullopt;
     }
     const Block& blockThatAsks = code().at(asking);
-    ValueID test = testReadByBranchAlone(asking, blockThatAsks.terminator);
+    ValueID test = asking != head && code().valuesOf(asking).empty() ? testReadByBranchBehindJumpAlone(head, blockOfHead) : testReadByBranchAlone(asking, blockThatAsks.terminator);
     if (!test)
         return std::nullopt;
     for (ValueID value : code().valuesOf(head)) {
@@ -1733,6 +1775,8 @@ ALWAYS_INLINE void CodeGenerator::passArgument(ValueID parameter, Operand argume
         return;
     }
     LValue phi = m_values[parameter.index()];
+    if (phi && phi->opcode() != Machine::Phi) [[unlikely]]
+        phi = m_keepsValuesInHeapFrame ? emitter<SavedFrameEmitter>().phiOfKeptParameter(parameter) : nullptr;
     RELEASE_ASSERT(phi && phi->opcode() == Machine::Phi && argument.value && argument.value->type() == phi->type());
     m_out.upsilon(argument.value, phi);
 }
@@ -1951,6 +1995,8 @@ void CodeGenerator::fail(const OperationContext& context, InternalErrorKind kind
     if (m_hasFailed)
         return;
     m_hasFailed = true;
+    if (m_keepsValuesInHeapFrame && m_leavesFailuresWithHeapFrameUnsaid)
+        return;
     Subject subject = subjectOf(context);
     ASCIILiteral operation = nameOfGeneratedOperation(context);
     String ending = detail;
@@ -1969,6 +2015,8 @@ void CodeGenerator::failAtLimit(LimitID limit, uint64_t needed, const Subject& s
     if (m_hasFailed)
         return;
     m_hasFailed = true;
+    if (m_keepsValuesInHeapFrame && m_leavesFailuresWithHeapFrameUnsaid)
+        return;
     build().reportLimitExceeded(limit, needed, subject);
 }
 

@@ -57,8 +57,22 @@ struct StorageOfLayouts {
     bool holdsCompiledObjectsInUse(LayoutID id) const { return of(id).holdsCompiledObjects() && !isNeverAllocated(id); }
 
     BitVector layoutsNeverAllocated;
+    BitVector layoutsThatRepeatTheirBases;
     Vector<StorageOfLayout> layouts;
 };
+
+inline uint32_t numberOfFieldsNotRepeated(const Program& program, const BitVector& layoutsThatRepeatTheirBases, LayoutID id)
+{
+    const Layout& layout = program.at(id);
+    return layoutsThatRepeatTheirBases.get(id.index()) ? layout.ownFieldCount : static_cast<uint32_t>(layout.fields.size());
+}
+
+inline FieldReference fieldNotRepeated(const Program& program, const BitVector& layoutsThatRepeatTheirBases, FieldReference field)
+{
+    while (layoutsThatRepeatTheirBases.get(field.layout.index()) && field.field >= program.at(field.layout).ownFieldCount)
+        field = { writtenBaseOf(program.at(field.layout)), field.field - program.at(field.layout).ownFieldCount };
+    return field;
+}
 
 enum class SlotStorage : uint8_t {
     None,
@@ -84,6 +98,7 @@ struct PlacedSlot {
     bool isLeftOutByMakers { false };
     bool holdsAccessor { false };
     bool isFilledAtBirth { false };
+    bool isHeldFilled { false };
     bool everyStoreFits { false };
     bool deferredClosureCapturesObject { false };
     bool deferredClosureCapturesEnvironment { false };
@@ -324,6 +339,8 @@ struct SlotPlanParts {
     Vector<PlannedLayout> layouts;
     Vector<PlannedVariable> variables;
     Vector<ClosureForm> closureForms;
+    BitVector functionsWhoseClosuresGetOnlyListedNames;
+    BitVector functionsWhosePrototypePropertyStaysAsMade;
     Vector<ClassCreationPlan> classCreation;
     BitVector layoutsNeverAllocated;
     BitVector keysWithColumn;
@@ -364,6 +381,7 @@ struct FieldAccessesOfSets {
 bool fieldStaysInSlot(const Program&, const PlacedSlot&);
 class SlotPlan;
 struct LinkTables;
+void markFieldsHeldFilledInSlotPlan(const Program&, const LinkTables&, const ParallelLoops&, SlotPlanParts&);
 Vector<FieldIndex, 8> fieldsHeldFilledInSlots(const Program&, const LinkTables&, const SlotPlan&, LayoutID);
 enum class RootOfConstant : uint8_t { IsAsked, EndsWhereItLeaves };
 bool constantListsFieldsHeldFilledInSlots(const Program&, const LinkTables&, const SlotPlan&, DataID, RootOfConstant = RootOfConstant::IsAsked);
@@ -423,6 +441,9 @@ public:
 
     PlannedVariable variable(VariableID id) const { return id.index() < m_parts.variables.size() ? m_parts.variables[id.index()] : PlannedVariable { }; }
     ClosureForm closureFormOf(FunctionID id) const { return id.index() < m_parts.closureForms.size() ? m_parts.closureForms[id.index()] : ClosureForm::Full; }
+    bool closuresGetOnlyListedNames(FunctionID id) const { return m_parts.functionsWhoseClosuresGetOnlyListedNames.get(id.index()); }
+    bool prototypePropertyStaysAsMade(FunctionID id) const { return m_parts.functionsWhosePrototypePropertyStaysAsMade.get(id.index()); }
+    size_t numberOfFunctionsWhoseClosuresGetOnlyListedNames() const { return m_parts.functionsWhoseClosuresGetOnlyListedNames.bitCount(); }
     const ClassCreationPlan& classCreation(LayoutID id) const { return id.index() < m_parts.classCreation.size() ? m_parts.classCreation[id.index()] : m_unplannedClass; }
 
     bool hasColumn(PropertyKeyID key) const { return m_parts.keysWithColumn.get(key.index()); }

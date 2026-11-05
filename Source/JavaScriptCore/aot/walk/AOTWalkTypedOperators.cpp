@@ -151,8 +151,12 @@ static bool buildTypeTestInPlaceOfTypeOfOperator(Walker& walker, const BodyValue
         TypeID tested = typeAskedByTextOfTypeOfOperator(walker, text, inputs.typeOf(asked));
         if (!tested || types.testablePartOf(tested) != tested)
             return false;
-        if (!inputs.areOnlyTypes())
-            bindTypeTestAsTypedOperator(walker, value, walker.referenceOf(asked), tested);
+        if (inputs.areOnlyTypes())
+            return true;
+        Reference subject = walker.referenceOf(asked);
+        if (!subject)
+            return false;
+        bindTypeTestAsTypedOperator(walker, value, subject, tested);
         return true;
     }
     return false;

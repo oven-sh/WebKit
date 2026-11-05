@@ -480,6 +480,8 @@ bool Walker::endBlockWithSwitchOverAlternatives(const BodyTerminator& terminator
     RowOfAlternativesInUnionSwitches row(*this, index.block(terminator.block()));
     if (!row.find() || row.cases().size() < leastCasesOfUnionSwitches)
         return false;
+    if (m_makerOfListsBehindEntry && m_frames.size() == 1 && std::ranges::contains(row.blocksPassedBy(), m_whereListsAreMadeBehindEntry))
+        return false;
     Reference subject = row.subject();
     TypeID typeOfSubject = typeOf(subject);
     if (!typeOfSubject || isNeverType(typeOfSubject))

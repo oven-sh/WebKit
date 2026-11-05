@@ -98,17 +98,17 @@ bool isReadByNoRecordSoFar(const Walker& walker, Reference made)
     return true;
 }
 
-static bool isWrittenForOneReaderInTextBuilderRows(const BodyIndex& index, ValueID text)
+static ValueID findOperationWrittenForOneReaderInTextBuilderRows(const BodyIndex& index, ValueID text)
 {
     while (text && !index.isParameter(text) && index.hasOneUse(text)) {
         if (!opcodesThatStateTypes.contains(index.opcodeOf(text)))
-            return true;
+            return text;
         text = index.value(text).operand(0);
     }
-    return false;
+    return { };
 }
 
-bool takePartsOfJoinReturnedByCopy(Walker& walker, ValueID operand, Vector<Reference, 8>& parts)
+bool takePartsOfJoinMadeForOneReader(Walker& walker, ValueID operand, Vector<Reference, 8>& parts)
 {
     Reference text = walker.isUnreachable() ? Reference() : walker.referenceOf(operand);
     if (!text || !text.isValue())
@@ -116,7 +116,7 @@ bool takePartsOfJoinReturnedByCopy(Walker& walker, ValueID operand, Vector<Refer
     const Code& code = walker.code();
     ValueID root = rootOfCellInSweptCode(code, text.id());
     const Operation& made = code.at(root);
-    if (!textsTakenApartInTextBuilderRows.contains(made.opcode) || made.block() != walker.currentBlock() || !made.traits().isRemovableWhenUnused())
+    if (!textsTakenApartInTextBuilderRows.contains(made.opcode) || !made.traits().isRemovableWhenUnused())
         return false;
     if (made.opcode == Opcode::Strcat && made.isLikelyKey())
         return false;
@@ -125,7 +125,10 @@ bool takePartsOfJoinReturnedByCopy(Walker& walker, ValueID operand, Vector<Refer
 
     const BodyIndex& index = walker.currentBodyIndex();
     ValueID taker = index.onlyUsingValue(operand);
-    if (!taker || !isWrittenForOneReaderInTextBuilderRows(index, operand))
+    ValueID written = taker ? findOperationWrittenForOneReaderInTextBuilderRows(index, operand) : ValueID();
+    if (!written || index.loopOf(index.blockOf(written)) != index.loopOf(index.blockOf(taker)))
+        return false;
+    if (std::optional<uint32_t> loop = walker.innermostOpenLoop(); loop && walker.standsInFrontOfOpenLoop(*loop, Reference::value(root)))
         return false;
     size_t numberOfPartsAround = parts.size() + index.value(taker).variadicOperands().size() + numberOfOperandsOfSumInTextBuilderRows;
     if (numberOfPartsAround + made.numberOfOperands() > mostPartsInTextBuilderRows)
@@ -134,7 +137,7 @@ bool takePartsOfJoinReturnedByCopy(Walker& walker, ValueID operand, Vector<Refer
         if (!part || !hasTextByItselfInTextBuilderRows(walker, referenceToRecordInTextBuilderRows(code, part)))
             return false;
     }
-    if (!isReadByNoRecordSoFar(walker, Reference::value(root)))
+    if (made.block() == walker.currentBlock() && !isReadByNoRecordSoFar(walker, Reference::value(root)))
         return false;
 
     for (ValueID part : made.operands())

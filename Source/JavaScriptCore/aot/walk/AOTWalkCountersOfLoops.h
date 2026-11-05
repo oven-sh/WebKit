@@ -35,6 +35,12 @@ struct CounterHeldBelowRoomOfViews {
 CounterHeldBelowRoomOfViews findCounterHeldBelowRoomOfViews(Walker&, BlockID inputHead, NOESCAPE const ScopedLambda<TypeID(uint32_t position)>& typeThatEnters, NOESCAPE const ScopedLambda<TypeID(ValueID)>& typeInFront);
 Vector<CounterTestedInFrontOfLoop, 2> findCountersTestedInFrontOfLoop(Walker&, BlockID inputHead, const LoopPreview&, std::span<const Reference> entering, Vector<GuessInFrontOfLoop, 4>& guesses);
 
+struct RelationOfHeadOnNumber {
+    ValueID relation;
+    ValueID number;
+};
+RelationOfHeadOnNumber findRelationOfHeadBetweenCounterThatEntersAsInt32AndNumber(Walker&, BlockID inputHead, std::span<const Reference> entering, std::span<const CounterTestedInFrontOfLoop> askedInFront);
+
 } } } // namespace JSC::AOT::Typed
 
 #endif // ENABLE(AOT)

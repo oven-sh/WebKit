@@ -195,7 +195,7 @@ void StraightEmitter::generateArrayIntrinsic(const BodyValue& value)
         generateNewArrayOfHoles(*this, value, ValueID(), ArrayStorage::Contiguous, NewArrayWithHolesFlag::mustHaveIndexingType);
         return;
     case Opcode::NewArrayLike:
-        generateNewArrayOfHoles(*this, value, value.sourceOperand(), ArrayStorage::Contiguous, 0);
+        generateNewArrayOfHoles(*this, value, value.sourceOperand(), value.sourceOperand() && !isConstant(value.sourceOperand()) ? ArrayStorage::Contiguous : ArrayStorage::Int32, 0);
         return;
     case Opcode::TryCopyFilledElements:
         load(value.arrayOperand(), temporary(1));

@@ -65,7 +65,8 @@ TypedArrayElements ElementAccessEmitter::typedArrayElementsOf(ValueID id, LBasic
 TypedArrayElements ElementAccessEmitter::typedArrayElementsInsideView(const ValueContext& value, CellPointer view)
 {
     std::optional<Pointer> vector = testsEveryPosition() ? std::nullopt : inOptional<Pointer>(value->vectorOperand());
-    TypedArrayElements elements { view, loadField<Integer>(view, m_heaps.JSArrayBufferView_length), vector ? *vector : loadField<Pointer>(view, m_heaps.JSArrayBufferView_vector) };
+    Integer length = testsEveryPosition() ? TypedArraySupport(generator()).lengthOf(view) : loadField<Integer>(view, m_heaps.JSArrayBufferView_length);
+    TypedArrayElements elements { view, length, vector ? *vector : loadField<Pointer>(view, m_heaps.JSArrayBufferView_vector) };
     return elements;
 }
 

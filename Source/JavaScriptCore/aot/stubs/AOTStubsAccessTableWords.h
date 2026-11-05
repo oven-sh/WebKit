@@ -103,9 +103,14 @@ struct AccessTableWords {
     {
         if (!reads)
             return;
-        memset(static_cast<void*>(reads), 0, sizeof(AccessTable::reads));
-        memset(static_cast<void*>(stores), 0, sizeof(AccessTable::stores));
-        memset(static_cast<void*>(calls), 0, sizeof(AccessTable::calls));
+        for (uint32_t index = 0; index < AccessTable::numberOfPlaces; ++index) {
+            if (reads[index].keyOfOwnValue | reads[index].keyOfOtherAnswer)
+                reads[index] = { };
+            if (stores[index].key)
+                stores[index] = { };
+            if (calls[index].key)
+                calls[index] = { };
+        }
         numberOfKeysThatDependOnChains = 0;
         holdsStoresToUnwatchedStructures = 0;
     }

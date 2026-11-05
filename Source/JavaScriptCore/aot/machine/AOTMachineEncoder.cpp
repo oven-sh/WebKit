@@ -701,6 +701,41 @@ void Encoder::encodeBlocksUnder()
     m_isAmongOtherCode = false;
 }
 
+static NEVER_INLINE PatchOperation* findCalleeThatDoesMoveOutOfResultItself(const Step* move, const Step* end)
+{
+    const Reg result = Reg(GPRInfo::returnValueGPR);
+    if (move->width != Width64 || !move->destination.isRegister())
+        return nullptr;
+    const Reg filled = move->destination.reg();
+    WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+    for (const Step* next = move + 1; next < end; ++next) {
+        switch (next->kind) {
+        case StepKind::Move:
+            if (!next->sources[0].isRegister() || next->sources[0].reg() == filled)
+                return nullptr;
+            [[fallthrough]];
+        case StepKind::Reload:
+        case StepKind::Materialize:
+            if (!next->destination.isRegister() || next->destination.reg() == filled || next->destination.reg() == result)
+                return nullptr;
+            continue;
+        case StepKind::Execute: {
+            if (next->operation->opcode() != Patch)
+                return nullptr;
+            auto* patch = static_cast<PatchOperation*>(next->operation);
+            return patch->registerThatCalleeFillsOutOfResult() == filled ? patch : nullptr;
+        }
+        case StepKind::Save:
+        case StepKind::Swap:
+        case StepKind::ClearSpill:
+        case StepKind::KeepPointer:
+            return nullptr;
+        }
+    }
+    WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
+    return nullptr;
+}
+
 void Encoder::encodeSteps(uint32_t begin, uint32_t end)
 {
     auto executesStore = [](const Step& candidate) {
@@ -746,6 +781,12 @@ void Encoder::encodeSteps(uint32_t begin, uint32_t end)
             continue;
         }
         case StepKind::Move:
+            if (step.sources[0] == Location::reg(Reg(GPRInfo::returnValueGPR))) {
+                if (PatchOperation* callee = findCalleeThatDoesMoveOutOfResultItself(current, endOfSteps)) {
+                    callee->setLeavesMoveOutOfResultToCallee(true);
+                    continue;
+                }
+            }
             encodeMove(step);
             continue;
         case StepKind::Reload:

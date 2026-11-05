@@ -46,6 +46,7 @@ TypeID topsOfKindsInLoops(TypeArena&, TypeID);
 TypeID tryTypeOfFieldRead(const TypingContext&, TypeID receiver, PropertyKeyID);
 
 static constexpr uint32_t minimumOperationsPerGuess = 2;
+static constexpr size_t fewestLooksThatOneTestOfMarkStandsFor = 2;
 static constexpr uint32_t minimumOperationsPerGuessInLoop = 1;
 static constexpr uint32_t minimumOperationsPerGuessOfShape = 1;
 
@@ -88,6 +89,7 @@ struct TestOfGuess {
 struct LookAtSlotOfGuess {
     ValueID access;
     ValueID holder;
+    ValueID holderInFrontOfStretch { };
     bool isCalled { false };
     TypeID calleeSeenToArrive;
 };
@@ -811,7 +813,7 @@ static TypeID narrowedByNameAskedForGuesses(Walker& walker, TypeID expected, Pro
         LayoutID only = isAnsweredByBuiltin ? LayoutID() : walker.facts().layoutsByNames().findOnlyHolderAmong(name, types.listOf(type.layouts));
         return only ? types.forLayout(only) : expected;
     }
-    if (!type.hasObjects() || !type.hasOnlyLayouts() || type.hasOnlyClosures())
+    if (liesInThread(name) || !type.hasObjects() || !type.hasOnlyLayouts() || type.hasOnlyClosures())
         return expected;
     std::span<const LayoutID> layouts = types.listOf(type.layouts);
     if (layouts.size() < 2)
@@ -2045,6 +2047,13 @@ static StretchOfGuess findStretchOfGuess(Walker& walker, Reference value, const 
     TypesOfInputs inputsOfClosedArm(typeOfInputInClosedArm);
 
 
+    auto isStoredAtOnceIntoValueOfGuess = [&](ValueID read) {
+        ValueID user = index.onlyUsingValue(read);
+        if (!user || !block.holds(user) || index.opcodeOf(user) != Opcode::PropSet)
+            return false;
+        BodyValue store = index.value(user);
+        return store.valueOperand() == read && namesValueOfGuess(store.objectOperand());
+    };
     bool slotsAreAsFound = true;
     Vector<std::pair<ValueID, PropertyKeyID>, 8> slotsStoredInStretch;
     Vector<std::pair<ValueID, ValueID>, 8> readsAnsweredByLooks;
@@ -2103,6 +2112,12 @@ static StretchOfGuess findStretchOfGuess(Walker& walker, Reference value, const 
         bool isTypedEitherWay = !leans && operationsWhoseTypedFormsRunNoCodeForGuesses.contains(opcode) && typedFormForGuesses(walker, operation, inputsOfClosedArm) == TypedForm::Built;
         bool endsNoProofOfPrimitive = callAwaited && operation.id() < callAwaited && operationsThatEndNoProofOfPrimitiveForGuesses.contains(opcode) && !types.at(chosen.tested).hasObjects();
         bool appendsElementsOfList = !leans && isSpreadOfListAsMade && callAwaited && operation.id() < callAwaited;
+        bool readsOffHolderInFrontOfStretch = !leans && !isTypedEitherWay && place > begin && slotsAreAsFound && opcode == Opcode::PropGet && operation.objectOperand().index() < first
+            && !namesValueOfGuess(operation.objectOperand()) && walker.referenceOf(operation.objectOperand()).isValue() && isStoredAtOnceIntoValueOfGuess(operation.id())
+            && !types.at(provenTypeOfInput(operation.objectOperand())).mayBeUndefinedOrNull()
+            && !slotsStoredInStretch.containsIf([&](const auto& stored) { return stored.second == keyOfAccessToSlot(walker.program(), operation); })
+            && typedFormForGuesses(walker, operation, inputsOfClosedArm) == TypedForm::BuiltBehindFilledSlot;
+        isTypedEitherWay |= readsOffHolderInFrontOfStretch;
         bool standsInFrontOfCallOfMethodFound = callOfMethodFound && operation.id() < callOfMethodFound && !isReadOfMethodForItsCallForGuesses(index, operation);
         if (!leans && !isTypedEitherWay && !endsNoProofOfPrimitive && !appendsElementsOfList && !standsInFrontOfCallOfMethodFound && mayEndProofOfGuess(opcode))
             break;
@@ -2182,7 +2197,7 @@ static StretchOfGuess findStretchOfGuess(Walker& walker, Reference value, const 
                 PropertyKeyID key = keyOfAccessToSlot(walker.program(), operation);
                 bool isStoredInStretch = slotsStoredInStretch.contains(std::pair { holder, key });
                 size_t placeOfLook = stretch.firstAccessesToSlots.findIf([&](const LookAtSlotOfGuess& earlier) {
-                    return earlier.holder == holder && keyOfAccessToSlot(walker.program(), walker.asWalked(index.value(earlier.access))) == key;
+                    return !earlier.holderInFrontOfStretch && earlier.holder == holder && keyOfAccessToSlot(walker.program(), walker.asWalked(index.value(earlier.access))) == key;
                 });
                 bool isLookedAtAlready = form == TypedForm::BuiltBehindLookAtCell || (form != TypedForm::BuiltBehindEmptySlot && isStoredInStretch) || placeOfLook != notFound;
                 if (!isLookedAtAlready && storesIntoSlotsForGuesses.contains(opcode) && looksAtSlotOfObjectBeingMade(walker, operation))
@@ -2240,6 +2255,17 @@ static StretchOfGuess findStretchOfGuess(Walker& walker, Reference value, const 
             }
         }
         counts |= handsWhatRestsOnProofToCopy;
+        if (storesIntoSlotsForGuesses.contains(opcode))
+            slotsStoredInStretch.append({ operation.objectOperand(), keyOfAccessToSlot(walker.program(), operation) });
+        if (readsOffHolderInFrontOfStretch) {
+            PropertyKeyID key = keyOfAccessToSlot(walker.program(), operation);
+            bool isLookedAtAlready = stretch.firstAccessesToSlots.containsIf([&](const LookAtSlotOfGuess& earlier) {
+                return earlier.holderInFrontOfStretch == operation.objectOperand() && keyOfAccessToSlot(walker.program(), walker.asWalked(index.value(earlier.access))) == key;
+            });
+            if (!isLookedAtAlready)
+                stretch.firstAccessesToSlots.append({ operation.id(), { }, operation.objectOperand() });
+            foundInFilledSlot = typeFoundInFilledSlot(walker, operation, types.withoutNullish(typeInClosedArm(operation.objectOperand(), 0)));
+        }
         if (!counts)
             testsOfStoredValues.shrink(numberOfTestsOfStoredValuesInFront);
         if (place == begin && !counts)
@@ -2284,8 +2310,27 @@ static StretchOfGuess findStretchOfGuess(Walker& walker, Reference value, const 
             if (standsRightBehind)
                 stretch.endOfOperatorsBehind = place + 1;
         }
+        if (isTypedEitherWay && stretch.numberOfTypedOperations && operationsThatJoinTexts.contains(opcode)) {
+            uint32_t reached = std::max(stretch.end, stretch.endOfOperatorsBehind);
+            bool goesOnWithJoinOfStretch = false;
+            operation.forEachOperand([&](ValueID operand, uint32_t) {
+                if (operand.index() < first || operand.index() - first + begin >= reached || !operationsThatJoinTexts.contains(index.opcodeOf(operand)))
+                    return;
+                goesOnWithJoinOfStretch |= index.onlyUsingValue(operand) == operation.id() && types.at(typeInClosedArm(operand, 0)).isAnyString();
+            });
+            for (uint32_t between = reached; goesOnWithJoinOfStretch && between < place; ++between)
+                goesOnWithJoinOfStretch = primitiveConstants.contains(index.opcodeOf(ValueID(first + between - begin)));
+            if (goesOnWithJoinOfStretch) {
+                TypeID joined = inClosedArm ? inClosedArm : typeByRowForGuesses(typing, operation, typeInClosedArm, draftOfRow);
+                if (joined && types.at(joined).isAnyString())
+                    stretch.endOfOperatorsBehind = place + 1;
+            }
+        }
     }
 
+    stretch.firstAccessesToSlots.removeAllMatching([&](const LookAtSlotOfGuess& look) {
+        return look.holderInFrontOfStretch && look.access.index() - first + begin >= stretch.end;
+    });
     if (chosen.asksForElementOfNumbers)
         stretch.placesThatRestOnProof = WTF::move(restsOnProof);
     return stretch;
@@ -2513,7 +2558,7 @@ static void openGuessWithTest(Walker& walker, Reference value, const TestOfGuess
     ValueID subjectOfSwitch;
     if (ValueID subject = index.terminator(inputBlock).kind() == TerminatorKind::Switch ? index.terminator(inputBlock).operand(0) : ValueID(); !takesInBranch && subject && valuesMentionedLater.contains(subject) && walker.has(Mechanism::UnboxedNumbers)) {
         bool isLoadedByLook = stretch.firstAccessesToSlots.containsIf([&](const LookAtSlotOfGuess& look) {
-            return look.access == subject && !look.holder;
+            return look.access == subject && !look.holder && !look.holderInFrontOfStretch;
         });
         TypeID found = isLoadedByLook ? typeFoundInFilledSlot(walker, walker.asWalked(index.value(subject)), walker.types().withoutNullish(walker.types().intersectionOf(walker.typeOf(value), chosen.tested))) : TypeID();
         if (found && !isNeverType(found) && walker.types().at(found).isInt32() && isTakenBySwitchAloneForGuesses(walker, inputBlock, subject, end))
@@ -2600,6 +2645,8 @@ static void openGuessWithTest(Walker& walker, Reference value, const TestOfGuess
             walker.state().noteCheckedName(stored, fitting);
     }
     auto askWhetherLoadedValueIsThere = [&](Reference loaded) -> std::optional<Reference> {
+        while (Reference checked = loaded ? walker.state().checkedNameOf(loaded) : Reference())
+            loaded = checked;
         TypeID held = loaded ? walker.typeOf(loaded) : TypeID();
         TypeID rest = held ? walker.types().withoutNullish(held) : TypeID();
         if (!rest || rest == held || !loaded.isValue())
@@ -2615,6 +2662,8 @@ static void openGuessWithTest(Walker& walker, Reference value, const TestOfGuess
         return rested;
     };
     auto askWhetherLoadedValueIsClosureOf = [&](Reference loaded, TypeID function) {
+        while (Reference checked = loaded ? walker.state().checkedNameOf(loaded) : Reference())
+            loaded = checked;
         if (!loaded || !loaded.isValue())
             return false;
         if (walker.types().isSubset(walker.typeOf(loaded), function))
@@ -2629,16 +2678,39 @@ static void openGuessWithTest(Walker& walker, Reference value, const TestOfGuess
         return true;
     };
     Vector<std::pair<ValueID, Reference>, 4> loadedByLooks;
+    Vector<ValueID, 2> holdersAskedForTheirMark;
     BlockID blockOfEmptySlot;
     for (const LookAtSlotOfGuess& look : stretch.firstAccessesToSlots) {
         Reference holder = proven;
-        if (look.holder) {
+        if (look.holderInFrontOfStretch) {
+            holder = walker.referenceOf(look.holderInFrontOfStretch);
+            while (Reference checked = holder ? walker.state().checkedNameOf(holder) : Reference())
+                holder = checked;
+            auto isLeftToCell = [&](const LookAtSlotOfGuess& other) {
+                return other.holderInFrontOfStretch == look.holderInFrontOfStretch && !valueHeldOfFilledSlot(walker, walker.asWalked(index.value(other.access)), holder);
+            };
+            bool mayAskMark = holder && holder.isValue() && !walker.isUnreachable() && !holdersAskedForTheirMark.contains(look.holderInFrontOfStretch)
+                && !walker.state().factsOfCell(holder).contains(FactOfCell::BearsNoMark) && isLeftToCell(look);
+            if (mayAskMark && static_cast<size_t>(std::ranges::count_if(stretch.firstAccessesToSlots, isLeftToCell)) >= fewestLooksThatOneTestOfMarkStandsFor
+                && markOfCellAnswersForRead(walker, walker.asWalked(index.value(look.access)), walker.typeOf(holder))) {
+                holdersAskedForTheirMark.append(look.holderInFrontOfStretch);
+                std::optional<TestOfGuess> ofHolder = chooseTestOfTypeForGuesses(walker, walker.typeOf(holder));
+                uint32_t firstNewValue = walker.code().numberOfValues();
+                BlockID blockOfTest = walker.currentBlock();
+                Reference test = ofHolder && ofHolder->layouts ? buildTestOfGuess(walker, holder, *ofHolder, origin, true) : Reference();
+                bool isAskedHere = test && test.isValue() && test.id().index() >= firstNewValue && walker.code().blockOf(test.id()) == blockOfTest
+                    && walker.code().at(test.id()).opcode == Opcode::ShapeTest && walker.code().at(test.id()).refusesMarkedObjects();
+                if (isAskedHere) {
+                    goOnWhereTestPasses(test);
+                    if (!lastTestIsAskedInFront && !walker.isUnreachable())
+                        walker.state().noteFactsOfCell(holder, FactOfCell::BearsNoMark);
+                }
+            }
+        } else if (look.holder) {
             size_t place = loadedByLooks.findIf([&](const auto& loaded) {
                 return loaded.first == look.holder;
             });
             holder = place != notFound ? loadedByLooks[place].second : Reference();
-            while (Reference checked = holder ? walker.state().checkedNameOf(holder) : Reference())
-                holder = checked;
             std::optional<Reference> rested = askWhetherLoadedValueIsThere(holder);
             if (!rested)
                 break;
@@ -3108,6 +3180,35 @@ static bool openGuessAtCalleeOfReturnedCall(Walker& walker, const BodyValue& cal
     return true;
 }
 
+static ValueID findReadOfVariableThatMeetsMockForGuesses(Walker& walker, const BodyIndex& index, ValueID parameter)
+{
+    BlockID block = index.blockOf(parameter);
+    if (index.isEnteredByHandlerEdge(block))
+        return { };
+    uint32_t position = parameter.index() - index.block(block).parameter(0).index();
+    ValueID read;
+    for (const BodyIncomingEdge& edge : walker.incomingEdgesOf(index, block)) {
+        std::span<const ValueID> arguments = edge.target.arguments();
+        if (position >= arguments.size())
+            return { };
+        ValueID source = arguments[position];
+        while (!index.isParameter(source) && inputOperationsThatHandOn.contains(index.opcodeOf(source)))
+            source = index.value(source).operand(0);
+        if (index.isParameter(source))
+            return { };
+        if (index.opcodeOf(source) == Opcode::PropGet) {
+            ValueID subject = index.value(source).operand(0);
+            if (index.isParameter(subject) || index.opcodeOf(subject) != Opcode::MockSeenBy)
+                return { };
+            continue;
+        }
+        if (index.opcodeOf(source) != Opcode::GetModuleVariable || read)
+            return { };
+        read = source;
+    }
+    return read;
+}
+
 bool callFunctionGivenToVariableOfItsOpcodes(Walker& walker, const BodyValue& call)
 {
     if (!walker.has(Mechanism::DirectCalls) || call.isDoneInPlace())
@@ -3126,10 +3227,14 @@ bool callFunctionGivenToVariableOfItsOpcodes(Walker& walker, const BodyValue& ca
         ValueID source = call.calleeOperand();
         while (!index.isParameter(source) && inputOperationsThatHandOn.contains(index.opcodeOf(source)))
             source = index.value(source).operand(0);
-        if (index.isParameter(source) || index.opcodeOf(source) != Opcode::GetModuleVariable)
+        bool meetsMock = index.isParameter(source);
+        if (meetsMock)
+            source = findReadOfVariableThatMeetsMockForGuesses(walker, index, source);
+        if (!source || index.opcodeOf(source) != Opcode::GetModuleVariable)
             return false;
-        const FactTables::FunctionGivenToVariable* given = walker.facts().findFunctionGivenTo(index.value(source).as<Opcode::GetModuleVariable>().variable());
-        if (!given)
+        VariableID variable = index.value(source).as<Opcode::GetModuleVariable>().variable();
+        const FactTables::FunctionGivenToVariable* given = walker.facts().findFunctionGivenTo(variable);
+        if (!given || (walker.isInLoop() && !meetsMock && walker.program().at(variable).flags.contains(VariableFlags::IsReplaceable)))
             return false;
         tested = types.forFunction(given->atStart ? given->atStart : given->function);
         if (given->atStart)
@@ -3225,7 +3330,7 @@ bool openGuessAtElementOfNumbersOfItsOpcodes(Walker& walker, const BodyValue& re
         if (!list.isValue() || walker.types().at(typeOfList).mayBeUndefinedOrNull())
             return false;
     }
-    if (elementInsideView && (positionIsKnownToLieInsideList(walker, list, position) || walker.counterHoldsAccessBelowRoomOfView(read.id(), list)))
+    if (elementInsideView && (positionIsKnownToLieInsideList(walker, list, position) || walker.findWhatHoldsAccessBelowRoomOfView(read.id(), list)))
         return false;
     if (!elementInsideView && !readTakesIndexOfProvenList(walker.types(), typeOfList, walker.typeOf(position)))
         return false;
@@ -3373,6 +3478,59 @@ static bool askGuardOfNameReadOffConstructorFunction(Walker& walker, const BodyV
     TestOfGuess passedAlready { walker.typeOf(function), { }, true };
     passedAlready.admitsAllThatIsExpected = true;
     openGuessWithTest(walker, function, passedAlready, block.id(), begin, stretch);
+    return true;
+}
+
+static bool askGuardsOfMethodReadOffPrototypeOfClass(Walker& walker, const BodyValue& read)
+{
+    if (!walker.has(Mechanism::TypedOperations) || read.isFreeName() || read.key() != walker.program().keyOf(BuiltinNames::prototype))
+        return false;
+    Reference function = walker.referenceOf(read.objectOperand());
+    if (!function || !function.isRecord())
+        return false;
+    TypeArena& types = walker.types();
+    auto namesOneFunction = [&](TypeID type) {
+        return type && types.at(type).isObject() && types.at(type).isJavaScriptValue() && singleFunctionOf(types, types.at(type));
+    };
+    TypeID typeOfFunctionObject = walker.typeOf(function);
+    bool isProven = namesOneFunction(typeOfFunctionObject);
+    if (!isProven) {
+        TypeID expected = function.isValue() ? findExpectationForGuesses(walker, read.objectOperand()).type : TypeID();
+        typeOfFunctionObject = expected ? types.withoutNullish(expected) : TypeID();
+        if (!namesOneFunction(typeOfFunctionObject))
+            return false;
+    }
+    bool guardsHold = false;
+    if (!findsMethodReadOffPrototypeOfClass(walker, read, typeOfFunctionObject, guardsHold) || (isProven && guardsHold))
+        return false;
+    const BodyIndex& index = walker.currentBodyIndex();
+    BodyBlock block = index.block(index.blockOf(read.id()));
+    ValueID method = index.onlyUsingValue(read.id());
+    ValueID call = index.onlyUsingValue(method);
+    if (!call && index.useCount(method) == 2) {
+        std::optional<BodyUser> forwarder = index.firstUser(method);
+        if (forwarder && forwarder->value && index.opcodeOf(forwarder->value) == Opcode::PropGet)
+            call = index.onlyUsingValue(forwarder->value);
+    }
+    if (!call || index.opcodeOf(call) != Opcode::Call)
+        return false;
+    bool mentionsMethod = false;
+    index.value(call).forEachOperand([&](ValueID operand, uint32_t) {
+        mentionsMethod |= operand == method;
+    });
+    uint32_t first = block.firstValue().index();
+    uint32_t begin = read.id().index() - first;
+    if (!mentionsMethod || !block.holds(call) || call.index() - first >= limitOfStretchOfGuess(walker, block))
+        return false;
+    for (uint32_t place = begin; first + place <= call.index(); ++place) {
+        if (standsInNoStretchOfGuess(index, walker.asWalked(index.value(ValueID(first + place)))))
+            return false;
+    }
+    StretchOfGuess stretch { call.index() + 1 - first, 1, { } };
+    stretch.storesThatLookAtCell.append(read.id());
+    TestOfGuess isThatFunctionObject { typeOfFunctionObject, { }, isProven };
+    isThatFunctionObject.admitsAllThatIsExpected = true;
+    openGuessWithTest(walker, function, isThatFunctionObject, block.id(), begin, stretch);
     return true;
 }
 
@@ -3560,7 +3718,7 @@ GuessOpened openGuessAtOfItsOpcodes(Walker& walker, const BodyValue& operation)
         return askBytesOfMembersReadOffBuiltins(walker, operation, holder) ? GuessOpened::WithArms : GuessOpened::None;
     if (opcodesThatOpenGuessOfKeyOrdersTakes.contains(opcode) && nameMayOpenGuessOfKeyOrdersForGuesses(walker, operation) && openGuessOfKeyOrders(walker, operation))
         return GuessOpened::WithArms;
-    if (opcode == Opcode::PropGet && (callGetterExpectedAtRead(walker, operation) || (isInLoop && callMethodsBehindTestsOfShape(walker, operation)) || takeApartCallThatFindsBuiltinForGuesses(walker, operation) || askGuardOfNameReadOffConstructorFunction(walker, operation)))
+    if (opcode == Opcode::PropGet && (callGetterExpectedAtRead(walker, operation) || (isInLoop && callMethodsBehindTestsOfShape(walker, operation)) || takeApartCallThatFindsBuiltinForGuesses(walker, operation) || askGuardOfNameReadOffConstructorFunction(walker, operation) || askGuardsOfMethodReadOffPrototypeOfClass(walker, operation)))
         return GuessOpened::WithArms;
     if (callFunctionGivenToVariable(walker, operation))
         return GuessOpened::WithArms;
@@ -3672,7 +3830,8 @@ GuessOpened openGuessAtOfItsOpcodes(Walker& walker, const BodyValue& operation)
         };
         if (least > 2 * (limit - begin))
             return buildAsOneOperationOrLeaveClosed();
-        if ((least > 1 || readsMethodForItsCall) && mostOperationsThatStretchCountsForGuesses(walker, value, lacksOnlyFilledSlot, block, begin, limit, least) < least)
+        bool proofOutlivesStretch = readsMethodForItsCall && isInLoop && operand == object && walker.mayBeginTurnAgainInClosedCopy();
+        if (!proofOutlivesStretch && (least > 1 || readsMethodForItsCall) && mostOperationsThatStretchCountsForGuesses(walker, value, lacksOnlyFilledSlot, block, begin, limit, least) < least)
             return buildAsOneOperationOrLeaveClosed();
         if (!chosen)
             chosen = chooseTestOfGuess(walker, value, expectation.type);
@@ -3709,6 +3868,10 @@ GuessOpened openGuessAtOfItsOpcodes(Walker& walker, const BodyValue& operation)
         }
         if (callIsLoopOverTable && stretch.numberOfTypedOperations < least) {
             stretch.end = index.onlyUsingValue(operation.id()).index() + 1 - block.firstValue().index();
+            stretch.numberOfTypedOperations = least;
+        }
+        if (proofOutlivesStretch && stretch.numberOfTypedOperations < least && (stretch.looksWhetherValueIsAsMade || !stretch.firstAccessesToSlots.isEmpty() || !stretch.storesThatLookAtCell.isEmpty()) && testAdmitsAllThatIsExpectedForGuesses(walker, operation, operand, operandIndex, expectation.type, chosen->tested)) {
+            stretch.end = std::max(stretch.end, begin + 1);
             stretch.numberOfTypedOperations = least;
         }
         if (stretch.numberOfTypedOperations < least)
@@ -3818,12 +3981,8 @@ void proveExpectedTypeOrBeginTurnAgain(Walker& walker, ValueID input, TypeID exp
     if (!isAskedInFront) {
         BlockID passed = walker.addBlock();
         BlockID failed = walker.addBlock(BlockFrequency::Rare);
+        walker.letGuessFailUnasked(failed, origin);
         walker.branch(test, passed, failed);
-        if (walker.failsGuesses()) [[unlikely]] {
-            walker.continueIn(passed);
-            walker.letGuessFailUnasked(failed, origin);
-            passed = walker.currentBlock();
-        }
         walker.continueIn(failed);
         if (!walker.isUnreachable())
             walker.beginTurnAgainInClosedCopy();
@@ -4031,6 +4190,11 @@ bool askCellWhetherItIsPlainInstance(Walker& walker, const BodyValue& operation)
     LayoutSetID receivers = types.at(types.forLayouts(taken.span())).layouts;
     if (shapesOfLayoutsForGuesses(walker, receivers) != ShapesOfLayoutsForGuesses::Testable)
         return false;
+    if (operation.opcode() == Opcode::IsPlainHeirOf && program.at(classLayout).has(LayoutFlags::IsConstructorFunction) && !walker.state().guardsHaveBegun(classLayout)) {
+        Draft begin(Opcode::BeginMemberGuards, walker.originOf(operation));
+        begin.setLayout(classLayout);
+        walker.build(WTF::move(begin));
+    }
     Draft question(Opcode::IsPlainInstanceOf, walker.originOf(operation));
     walker.chooseConservativeFields(question);
     question.setObjectOperand(value);
@@ -4373,13 +4537,15 @@ struct ParameterOfGuard {
 struct WorkerOfParameterGuards {
     WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(WorkerOfParameterGuards);
 
-    explicit WorkerOfParameterGuards(TypeTable& table)
+    WorkerOfParameterGuards(const WalkInputs& inputs, TypeTable& table)
         : types(table, ArenaKeeps::InProgram)
+        , kept(inputs, types)
     {
     }
 
     TypeArena types;
     KeptBetweenUnits kept;
+    WalkerInRoom walker;
 };
 
 } // anonymous namespace
@@ -4714,18 +4880,25 @@ Vector<TypeID, 8> typesBehindParameterGuard(Walker& walker, FunctionID id)
     uint32_t numberOfEntryParameters = function.numberOfEntryParameters();
     if (linked.size() != numberOfEntryParameters)
         return { };
+    uint32_t firstPositionalParameter = function.firstParameterIndex();
+    uint32_t endOfPositionalParameters = firstPositionalParameter + function.numberOfPositionalParameters();
+    auto isTested = [&](uint32_t index) {
+        return function.entryParameterKind(index) == EntryParameter::This || (index >= firstPositionalParameter && index < endOfPositionalParameters);
+    };
+    bool someParameterIsTested = false;
+    for (uint32_t index = 0; index < numberOfEntryParameters && !someParameterIsTested; ++index)
+        someParameterIsTested = isTested(index);
+    if (!someParameterIsTested)
+        return { };
     if (!walker.standInFrontOfBodyOf(id) || walker.currentBodyIndex().block(entryBlock).numberOfParameters() != numberOfEntryParameters)
         return { };
 
     TypeArena& types = walker.types();
-    uint32_t firstPositionalParameter = function.firstParameterIndex();
-    uint32_t endOfPositionalParameters = firstPositionalParameter + function.numberOfPositionalParameters();
     Vector<TypeID, 8> typesInFrontOfGuard;
     Vector<ParameterOfGuard, 8> parameters;
     for (uint32_t index = 0; index < numberOfEntryParameters; ++index) {
         typesInFrontOfGuard.append(walker.typeArrivingAtEntryParameter(index));
-        bool isTested = function.entryParameterKind(index) == EntryParameter::This || (index >= firstPositionalParameter && index < endOfPositionalParameters);
-        TypeID tested = isTested ? typeTestedByParameterGuard(walker, findExpectationForGuesses(walker, ValueID(index)).type, typesInFrontOfGuard.last()) : TypeID();
+        TypeID tested = isTested(index) ? typeTestedByParameterGuard(walker, findExpectationForGuesses(walker, ValueID(index)).type, typesInFrontOfGuard.last()) : TypeID();
         tested = typeTestedInPlaceOfWrittenType(walker, id, index, tested);
         if (tested && isNeverType(types.intersectionOf(typesInFrontOfGuard.last(), tested)))
             tested = { };
@@ -4792,10 +4965,14 @@ Vector<ParameterGuardPlan> planParameterGuards(Program& program, const Facts& fa
     Vector<Vector<ParameterGuardPlan>> guardsInChunks(division.size());
     forEachIndexInParallel(loops, division.size(), [&](unsigned chunk, unsigned worker) {
         if (!workers[worker])
-            workers[worker] = makeUnique<WorkerOfParameterGuards>(program.types);
+            workers[worker] = makeUnique<WorkerOfParameterGuards>(inputs, program.types);
         for (unsigned index = division.firstIndexOf[chunk]; index < division.firstIndexOf[chunk + 1]; ++index) {
-            Walker walker(inputs, workers[worker]->types, inputs.arrivals, workers[worker]->kept);
-            Vector<TypeID, 8> typesBehindGuard = typesBehindParameterGuard(walker, FunctionID(index));
+            if (!workers[worker]->walker || workers[worker]->walker->hasBegunUnit()) {
+                WalkerInRoom former = std::exchange(workers[worker]->walker, workers[worker]->kept.makeWalker(inputs, workers[worker]->types, inputs.arrivals));
+                if (former)
+                    workers[worker]->walker->takeRoomOf(*former);
+            }
+            Vector<TypeID, 8> typesBehindGuard = typesBehindParameterGuard(*workers[worker]->walker, FunctionID(index));
             if (!typesBehindGuard.isEmpty())
                 guardsInChunks[chunk].append(ParameterGuardPlan { FunctionID(index), WTF::move(typesBehindGuard) });
         }

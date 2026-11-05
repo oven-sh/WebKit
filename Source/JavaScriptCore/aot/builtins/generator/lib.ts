@@ -267,6 +267,7 @@ function strict(accepted: TypeSpec, coercions: Coercions = {}): TableType {
 export const checked = (value: number, cppExpression: string): CheckedNumber => ({ value, cppExpression });
 
 export const any = strict(anythingSpec);
+export const anyMadeOf = (...classes: readonly ClassName[]) => strict({ type: "Anything", madeOf: classes });
 export const never = strict(neverSpec);
 export const notPassed = strict(primitiveSpec("NotPassed"));
 const undefined_ = strict(primitiveSpec("Undefined"));
@@ -399,6 +400,7 @@ export const membersOnlyInspected: UseSpec = { use: "Role", role: "MembersAreOnl
 export const functionsConvertedUnderNamesOnly: UseSpec = { use: "Role", role: "FunctionsAreConvertedUnderNamesOnly" };
 export const onlyBoxedPrimitivesConverted: UseSpec = { use: "Role", role: "OnlyBoxedPrimitivesAreConverted" };
 export const contentsOfContentsOnlyStored: UseSpec = { use: "Role", role: "ContentsOfContentsAreOnlyStored" };
+export const privateFieldsCompared: UseSpec = { use: "Role", role: "PrivateFieldsAreCompared" };
 export const ownPropertyTraps: readonly UseSpec[] = [{ use: "Runs", protocols: ["OwnKeys"] }];
 export const storedIn = (place: PlaceLike): UseSpec => ({ use: "Retains", in: placeOf(place) });
 export const readsContents = (slotName?: SlotName): UseSpec => ({ use: "ReadsContents", slot: slotName });

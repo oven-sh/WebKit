@@ -49,6 +49,7 @@ public:
     JSCell* cell(uint32_t number);
     JSCell* cellReadWithoutTest(uint32_t number);
     JSCell* findObject(BuiltinID);
+    JSCell* findGetter(BuiltinID);
     std::optional<BuiltinCellKey> keyOfCellHolding(JSCell*) const;
     JSCell* readMember(JSGlobalObject*, JSObject* holder, BuiltinID member);
     EncodedJSValue* addressOfValue(BuiltinCellKey);

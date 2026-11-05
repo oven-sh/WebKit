@@ -228,7 +228,7 @@ CellPointer ConstantEmitter::makeClosureOfField(const OperationContext& context,
 
 bool ConstantEmitter::canUseClosureStub(const NewClosureRequest& request) const
 {
-    if (request.kind.closureStructure || request.numberOfWords > ClosureRequest::maxNumberOfCaptures)
+    if (request.kind.closureStructureOfKind() || request.numberOfWords > ClosureRequest::maxNumberOfCaptures)
         return false;
     for (unsigned index = 0; index < request.captures.size(); ++index) {
         if (closureHoldsWordForListedCapture(m_program, m_plan.conventions(), request.function, index) && machineTypeOf(representationOf(request.captures[index])) == Machine::Double)
@@ -317,7 +317,7 @@ CellPointer ConstantEmitter::newFullClosure(const ValueContext& value, const New
 {
     m_out.noteForm(Form::Open, request.storage == AllocationStorage::Frame ? StateOfKnowledge::FullInFrame : StateOfKnowledge::FullWithOwnStructure);
     CellAllocationEmitter& cellAllocation = emitter<CellAllocationEmitter>();
-    unsigned structure = request.kind.closureStructure;
+    unsigned structure = request.kind.closureStructureOfKind();
     unsigned executable = static_cast<unsigned>(FunctionTables::executableKind(request.kind));
     Vector<LValue, 4> captureWords = captureWordsBySlot(value, request);
     bool isOnHeap = false;

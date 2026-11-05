@@ -726,7 +726,7 @@ static void testOptionThatAdmitsCodeKeepsEveryFeature()
     std::span<const Wire::BuiltinUseRecord> uses = output->records<Wire::BuiltinUseRecord>(Wire::ResultSection::BuiltinsUsed);
     AOT_TEST_CHECK(uses.size() == builtins.builtinCount());
     static_assert(isFlagWord<Wire::BuiltinUse>);
-    constexpr auto everyUse = static_cast<Wire::BuiltinUse>((1u << numberOfEnumerators<Wire::BuiltinUse>) - 1);
+    constexpr auto everyUse = static_cast<Wire::BuiltinUse>(((1u << numberOfEnumerators<Wire::BuiltinUse>) - 1) & ~static_cast<uint32_t>(Wire::BuiltinUse::NamedAtRunTime));
     AOT_TEST_CHECK(std::ranges::all_of(uses, [](const Wire::BuiltinUseRecord& use) {
         return use.uses == everyUse;
     }));

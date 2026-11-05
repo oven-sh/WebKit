@@ -579,6 +579,14 @@ static std::optional<unsigned> numberAmongClassesOfReceiversMadeInBodies(Builtin
     return std::nullopt;
 }
 
+static uint32_t placeBehindMakerInWalkBuiltins(const BodyIndex& index, BlockID maker, BlockID block)
+{
+    BlockID place = block;
+    for (LoopID loop = index.loopOf(block); loop && !index.isInLoop(maker, loop); loop = index.loop(loop).parent)
+        place = index.loop(loop).head;
+    return place.index();
+}
+
 static Vector<Walker::ReceiverMadeInBody, 4> lookForReceiversThatLeaveByReturnAloneInWalkBuiltins(Walker& walker, const BodyIndex& index)
 {
     const Program& program = walker.program();
@@ -593,7 +601,7 @@ static Vector<Walker::ReceiverMadeInBody, 4> lookForReceiversThatLeaveByReturnAl
         for (BodyValue operation : index.block(BlockID(number)).values()) {
             if (!makersOfReceiversInWalkBuiltins.contains(operation.opcode()))
                 continue;
-            receivers.append({ operation.id(), (1u << numberOfClassesOfReceiversMadeInBodies) - 1 });
+            receivers.append({ operation.id(), (1u << numberOfClassesOfReceiversMadeInBodies) - 1, UINT32_MAX });
             receiverNamedBy[operation.id().index()] = receivers.size();
         }
     }
@@ -679,8 +687,14 @@ static Vector<Walker::ReceiverMadeInBody, 4> lookForReceiversThatLeaveByReturnAl
                 bool isReadOffReceiver = opcode == Opcode::PropGet && operandIndex == OperandIndex::PropGet::object;
                 bool isCallOnReceiver = opcode == Opcode::Call && operandIndex == OperandIndex::Call::thisValue && !operation.isDoneInPlace();
                 if (!isReadOffReceiver && !isCallOnReceiver) {
-                    if (!questionsThatHandObjectToNobodyInWalkBuiltins.contains(opcode))
+                    if (questionsThatHandObjectToNobodyInWalkBuiltins.contains(opcode))
+                        return;
+                    if (index.hasIrreducibleFlow()) {
                         classes = 0;
+                        return;
+                    }
+                    Walker::ReceiverMadeInBody& handedOn = receivers[receiver - 1];
+                    handedOn.firstPlaceWhereItIsHandedOn = std::min(handedOn.firstPlaceWhereItIsHandedOn, placeBehindMakerInWalkBuiltins(index, index.blockOf(handedOn.made), BlockID(number)));
                     return;
                 }
                 ValueID read = isReadOffReceiver ? operation.id() : readOfMethodCalledOn(operation, receiver);
@@ -744,7 +758,8 @@ static bool receiverIsMadeHereAndLeavesByReturnAloneInWalkBuiltins(Walker& walke
     auto found = std::ranges::lower_bound(receivers, made.index(), { }, [](const Walker::ReceiverMadeInBody& known) {
         return known.made.index();
     });
-    return found != receivers.end() && found->made == made && (found->classesItStaysAsMadeOf & 1u << *classNumber);
+    return found != receivers.end() && found->made == made && (found->classesItStaysAsMadeOf & 1u << *classNumber)
+        && placeBehindMakerInWalkBuiltins(index, index.blockOf(made), index.blockOf(operation.id())) < found->firstPlaceWhereItIsHandedOn;
 }
 
 static bool receiverStaysAsMadeByLinkInWalkBuiltins(Walker& walker, const BodyValue& operation, WordOfBodyOnAsMade wordOfBody, Reference knownToTakeLinksWord)
@@ -1049,24 +1064,6 @@ private:
         bool staysAsMade { false };
     };
 
-    static constexpr OperandUses usesThatCall { OperandUse::Calls, OperandUse::CallsPerElement, OperandUse::CallsRepeatedly };
-    static constexpr OperandUses usesThatReachBeyondOperand { OperandUse::AppliesTransitively, OperandUse::AppliesToContents };
-    static constexpr OperandUses usesThatStoreByKey { OperandUse::StoresByKey, OperandUse::DeletesByKey, OperandUse::AssignsFrom, OperandUse::TakesDescriptor };
-    static constexpr OperandUses usesThatChangeShape { OperandUse::DefinesName, OperandUse::ChangesIntegrity, OperandUse::ChangesPrototype, OperandUse::BecomesPrototype };
-    static constexpr OperandUses usesThatChangeOperand {
-        OperandUse::WritesContents, OperandUse::MovesElements, OperandUse::StoresByKey, OperandUse::DeletesByKey, OperandUse::AssignsFrom,
-        OperandUse::DefinesName, OperandUse::TakesDescriptor, OperandUse::ChangesIntegrity, OperandUse::ChangesPrototype,
-    };
-    static constexpr OperandUses usesThatAddNoEffects {
-        OperandUse::Inspects, OperandUse::Retains, OperandUse::Returns, OperandUse::ReadsContents, OperandUse::WritesContents,
-        OperandUse::RetainsContents, OperandUse::MovesElements, OperandUse::PassesToUserCode,
-    };
-    static constexpr OperandUses usesThatNeedNoHeap {
-        OperandUse::Inspects, OperandUse::Retains, OperandUse::Returns, OperandUse::Calls, OperandUse::CallsPerElement, OperandUse::CallsRepeatedly,
-        OperandUse::RetainsContents, OperandUse::BecomesPrototype, OperandUse::PassesToUserCode, OperandUse::AppliesTransitively, OperandUse::AppliesToContents,
-    };
-    static_assert(everyOperandUseIsInExactlyOneOf({ usesThatCall, usesThatReachBeyondOperand, usesThatStoreByKey, usesThatChangeShape, usesThatAddNoEffects }));
-    static_assert(everyOperandUseIsInExactlyOneOf({ usesThatChangeOperand, OperandUse::ReadsContents, usesThatNeedNoHeap }));
 
     static bool mayBeObject(const Type& type) { return type.hasObjects() || !type.isJavaScriptValue(); }
     static bool holdsValue(const Operand& operand) { return operand.type && !isNeverType(operand.type); }
@@ -1203,7 +1200,7 @@ bool CallInWalkBuiltins::mayBeTrimmed() const
     if (!hasFeatureGuard(m_table, m_builtin) && !(m_location && hasFeatureGuard(m_table, m_location)))
         return false;
     auto isListed = [&](BuiltinID id) {
-        return id && findFactRow(m_walker.facts().builtinUses(), id.index(), &BuiltinUseRecord::builtin);
+        return id && m_walker.facts().isUsedWithoutNamesFromRunTime(id);
     };
     return !isListed(m_builtin) && !isListed(m_location);
 }
@@ -1844,7 +1841,7 @@ bool CallInWalkBuiltins::mayRaiseErrorOn(const BuiltinParameter& parameter, Type
 
 bool CallInWalkBuiltins::callsBeforeReturn(const BuiltinParameter& parameter) const
 {
-    if (!parameter.uses.containsAny(usesThatCall))
+    if (!parameter.uses.containsAny(usesThatCallOperand))
         return false;
     bool isListedAsCalledLater = false;
     for (const BuiltinCallback& callback : m_overload->flow.callbacks) {

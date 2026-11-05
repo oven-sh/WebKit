@@ -10,6 +10,7 @@
 
 #include "AOTBarrierEmitter.h"
 #include "AOTMemoryLocation.h"
+#include "AOTRuntimeCallEmitter.h"
 #include "AOTSlotEmitter.h"
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -35,6 +36,7 @@ TypedPointer StaticsEmitter::addressOfStaticField(VariableID id)
 void StaticsEmitter::storeStaticField(VariableID id, Boxed stored)
 {
     emitter<SlotEmitter>().store(addressOfStaticField(id), SlotRepresentation::JSValue, stored);
+    emitter<RuntimeCallEmitter>().countStoreForEffectsNet(CountInEffectsNet::StaticFieldsStored);
     emitter<BarrierEmitter>().markCard(m_mentions.add(NumberSpace::CardOfVariable, id));
 }
 
@@ -50,6 +52,7 @@ void StaticsEmitter::storeFieldOfEnvironment(VariableID id, LayoutID layout, uin
     PlannedVariable variable = m_plan.variable(id);
     RELEASE_ASSERT(variable.hasWordInStatics() && variable.encoding == VariableEncoding::Plain);
     emitter<SlotEmitter>().store(instanceWord(m_heaps.at(m_program, MemoryLocation::environmentField(layout, field)), m_mentions.add(NumberSpace::Variable, id)), variable.representation, stored);
+    emitter<RuntimeCallEmitter>().countStoreForEffectsNet(CountInEffectsNet::VariablesOfScopesInStaticsStored);
     if (traitsOf(variable.representation).holdsCell && storedType.hasCells())
         emitter<BarrierEmitter>().markCard(m_mentions.add(NumberSpace::CardOfVariable, id));
 }
@@ -63,6 +66,7 @@ void StaticsEmitter::storeVariable(VariableID id, Operand stored)
 {
     PlannedVariable variable = m_plan.variable(id);
     emitter<SlotEmitter>().store(addressOf(id), variable.representation, stored);
+    emitter<RuntimeCallEmitter>().countStoreForEffectsNet(CountInEffectsNet::VariablesOfModulesStored);
     if (traitsOf(variable.representation).holdsCell)
         emitter<BarrierEmitter>().markCard(m_mentions.add(NumberSpace::CardOfVariable, id));
 }

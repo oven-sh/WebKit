@@ -34,7 +34,7 @@ bool isAsyncFunctionWithoutAwait(const Program&, const Function& source);
 bool rejectsOnThrow(const Program&, const CallingConventions&, CodeUnit);
 
 JS_EXPORT_PRIVATE FunctionKindData functionKindOf(const Program&, const SlotPlan&, const CallingConventions&, CodeUnit closureEntry);
-JS_EXPORT_PRIVATE FunctionTraceRecord functionTraceOf(const Program&, const CallingConventions&, CodeUnit);
+JS_EXPORT_PRIVATE FunctionTraceRecord functionTraceOf(const Program&, const CallingConventions&, CodeUnit, bool isEntryThatWalksBody = false);
 
 } } } // namespace JSC::AOT::Typed
 

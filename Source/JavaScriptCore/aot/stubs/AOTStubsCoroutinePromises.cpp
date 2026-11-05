@@ -279,7 +279,7 @@ static void emitHandOverToWaiter(StubAssembler& jit, GPRReg waiter, GPRReg value
     isHandedOver.link(&jit);
 }
 
-StubSignature signatureOfReturnAsyncResult(StubKey) { return StubSignature::withGPRResult({ gprOf(StubRegister::A1), gprOf(StubRegister::A2) }); }
+StubSignature signatureOfReturnAsyncResult(StubKey) { return StubSignature::withGPRResult({ gprOf(StubRegister::A1), gprOf(StubRegister::A2) }).fillingOperandInFront(1); }
 
 void generateReturnAsyncResult(StubAssembler& jit)
 {

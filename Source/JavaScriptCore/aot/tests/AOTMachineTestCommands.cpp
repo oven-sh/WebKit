@@ -158,7 +158,8 @@ static void runMachineEmitCodeCommand(TestCommandContext& context)
         context.out.println("error in the Code's text, which starts at line "_s, section->firstLine, " of the file: "_s, error);
         return;
     }
-    Sweep sweep;
+    RoomsOfSweep rooms;
+    Sweep sweep(rooms);
     sweep.run(SweepInputs { stage.program(), *stage.facts(), *plan, stage.types() }, code);
 
     printHeadingOfMachineUnit(context.out, code.unit());
@@ -717,7 +718,7 @@ static void printListsOfBodyInBytesText(NamesInBytesText& names, const CodeBody&
     for (const Relocation& relocation : body.relocations) {
         out.print("  relocation "_s, relocation.offset, " "_s, WTF::enumName(relocation.kind), " "_s);
         names.printSymbol(body, relocation);
-        out.println();
+        out.println(relocation.space == SymbolSpace::Stub && relocation.entry == entryInFrontOfStub ? ", entered in front"_s : ""_s);
     }
     for (uint32_t index = 0; index < body.mentions.size(); ++index) {
         bool isNamedByCode = std::ranges::any_of(body.relocations, [&](const Relocation& relocation) {

@@ -44,6 +44,7 @@
 #include <bit>
 #include <optional>
 #include <span>
+#include <wtf/Scope.h>
 #include <wtf/SetForScope.h>
 
 namespace JSC { namespace AOT {
@@ -73,6 +74,7 @@ void defineDataProperty(Instance* instance, JSObject* object, PropertyName name,
         object->putDirect(vm, name, value, slot);
     else
         object->createDataProperty(instance->globalObject, name, value, true);
+    holdClosureToLackingName(vm, object, name.uid());
 }
 
 static bool canDefineElementsDirectly(JSObject* object)
@@ -295,6 +297,9 @@ static bool tryDefineWithoutDescriptor(JSGlobalObject* globalObject, JSObject* o
         stored = GetterSetter::create(vm, globalObject, bits.hasGet ? valueOrGetter.getObject() : nullptr, setter.getObject());
     if (compiled)
         return field ? compiled->tryDefineAbsentProperty(vm, field, name, stored, attributes) : compiled->tryAddAbsentExtraProperty(vm, name, stored, attributes);
+    auto holdClosureBehindDefinition = makeScopeExit([&] {
+        holdClosureToLackingName(vm, object, name.uid());
+    });
     if (object->tryPutDirectByExistingTransition(vm, name, stored, attributes))
         return true;
     if (isValidOffset(structure->get(vm, name)))
@@ -413,8 +418,10 @@ static void defineAccessor(JSGlobalObject* globalObject, JSObject* object, Prope
             else
                 getter = current->isGetterNull() ? nullptr : current->getter();
         }
-        if ((isOtherHalf || !isValidOffset(offset)) && object->putDirectNonIndexAccessor(vm, property, GetterSetter::create(vm, globalObject, getter, setter), accessorAttributes))
+        if ((isOtherHalf || !isValidOffset(offset)) && object->putDirectNonIndexAccessor(vm, property, GetterSetter::create(vm, globalObject, getter, setter), accessorAttributes)) {
+            holdClosureToLackingName(vm, object, property.uid());
             return;
+        }
     }
     PropertyDescriptor descriptor;
     if (isGetter)
@@ -506,6 +513,7 @@ static void defineMethod(JSGlobalObject* globalObject, JSObject* holder, Propert
         constexpr unsigned attributes = static_cast<unsigned>(PropertyAttribute::DontEnum);
         if (Structure* structure = holder->structure(); canSkipDefineOwnProperty(vm, holder, structure, key) && !isValidOffset(structure->get(vm, key))) {
             holder->putDirect(vm, key, function, attributes);
+            holdClosureToLackingName(vm, holder, key.uid());
             return;
         }
         holder->methodTable()->defineOwnProperty(holder, globalObject, key, PropertyDescriptor(function, attributes), true);

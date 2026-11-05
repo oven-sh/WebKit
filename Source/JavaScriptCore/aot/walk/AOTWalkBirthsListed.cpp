@@ -501,7 +501,7 @@ std::optional<GuardOfPrototypeAtConstruction> findGuardOfPrototypeAtConstruction
         origin.isTailCall = false;
         Draft test(Opcode::AreMembersUnchanged, origin);
         test.setConditions(singleElementSpan(guard.condition));
-        Reference holds = walker.build(WTF::move(test));
+        Reference holds = walker.buildTestOfCheck(WTF::move(test));
         if (holds && holds.isValue() && !walker.isUnreachable())
             walker.checkProof(holds, TypeArena::fromPrimitives(Primitive::True), TypeTable::boolean, ProofSource::WhatIsRemembered, origin);
     }
@@ -515,7 +515,7 @@ void checkPrototypeOfCellMadeBehindGuard(Walker& walker, Reference object, Origi
     origin.isTailCall = false;
     Draft look(Opcode::HasLayoutPrototype, origin);
     look.setObjectOperand(object);
-    Reference passes = walker.build(WTF::move(look));
+    Reference passes = walker.buildTestOfCheck(WTF::move(look));
     if (passes && passes.isValue() && !walker.isUnreachable())
         walker.checkProof(passes, TypeArena::fromPrimitives(Primitive::True), TypeTable::boolean, ProofSource::WhatIsRemembered, origin);
 }
@@ -601,13 +601,9 @@ bool listStoresOfCopiedConstructorOfItsOpcodes(Walker& walker, const BodyValue& 
     StoresListedAtBirth listed = findStoresThatAllocationMayList(walker, constructed, stores.keys.span(), stores.types.span(), keysFilledByBody);
     if (listed.fields.size() < stores.keys.size())
         return false;
-    Vector<LayoutID, 2> basesWhoseGuardsBegin;
     for (const MemberConditionRecord& guard : stores.guardsOfCallsOfBases) {
-        if (walker.state().guardOfReadsHolds(guard.layout, guard.key, ClassSide::Static))
-            continue;
-        listed.conditions.append(guard);
-        if (!walker.state().guardsHaveBegun(guard.layout))
-            basesWhoseGuardsBegin.append(guard.layout);
+        if (!walker.state().guardOfReadsHolds(guard.layout, guard.key, ClassSide::Static))
+            listed.conditions.append(guard);
     }
     if ((listed.asksForLayoutPrototype || !listed.conditions.isEmpty()) && !looksBehindAllocationPayInBirths(walker))
         return false;
@@ -640,9 +636,11 @@ bool listStoresOfCopiedConstructorOfItsOpcodes(Walker& walker, const BodyValue& 
             begin.setLayout(guardOfPrototype->condition.layout);
             walker.build(WTF::move(begin));
         }
-        for (LayoutID base : basesWhoseGuardsBegin) {
+        for (const MemberConditionRecord& guard : stores.guardsOfCallsOfBases) {
+            if (walker.state().guardsHaveBegun(guard.layout))
+                continue;
             Draft begin(Opcode::BeginMemberGuards, origin);
-            begin.setLayout(base);
+            begin.setLayout(guard.layout);
             walker.build(WTF::move(begin));
         }
         Draft look(Opcode::AreMembersUnchanged, origin);

@@ -529,7 +529,7 @@ StubSignature signatureOfAwaitBySavingFrame(StubKey key)
     switch (static_cast<AwaitedOperand>(key.form())) {
     case AwaitedOperand::Value:
     case AwaitedOperand::ValueInModuleBody:
-        return StubSignature::withGPRResult({ gprOf(StubRegister::A1), gprOf(StubRegister::T9) });
+        return StubSignature::withGPRResult({ gprOf(StubRegister::A1), gprOf(StubRegister::T9) }).fillingOperandInFront(0);
     case AwaitedOperand::ResultOfCallWithoutPromise:
         return StubSignature::withGPRResult({ gprOf(StubRegister::R0), gprOf(StubRegister::T9) });
     }

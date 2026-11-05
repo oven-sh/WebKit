@@ -11,8 +11,8 @@
 # PLAN-NEXT: slot 0 "part" Cell32 Inline
 # PLAN-NEXT: slot 1 "whole" Cell32 Inline
 # RUN(CODE): bytes f0:Body mechanisms=none+TypedOperations+UnboxedNumbers+TypedSlots
-# CODE: GetById immediate mention
-# CODE: GetById immediate mention
+# CODE: GetById{{*}} immediate mention
+# CODE: GetById{{*}} immediate mention
 # RUN(FIRST): run-in-shell globalThis.which = true; globalThis.never = false; globalThis.show = (a, b) => print(a, b); mechanisms=none+TypedOperations+UnboxedNumbers+TypedSlots
 # FIRST: 1.5 7
 # FIRST-NEXT: p x

@@ -28,6 +28,7 @@
 #include "MarkedSpace.h"
 #include <array>
 #include <optional>
+#include <ranges>
 #include <utility>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -222,7 +223,10 @@ void SavedFrameEmitter::generateYieldBySavingFrame(const ValueContext& value)
 {
     switch (kindOfFunction()) {
     case CoroutineKind::Generator:
-        suspendGenerator(value, GeneratorSuspension::Yield);
+        if (generator().keepsValuesInHeapFrame())
+            yieldOutOfHeapFrame(value);
+        else
+            suspendGenerator(value, GeneratorSuspension::Yield);
         return;
     case CoroutineKind::AsyncGenerator:
         suspendGenerator(value, GeneratorSuspension::AsyncYield);
@@ -374,8 +378,337 @@ void SavedFrameEmitter::generatePutHeapFrameWord(const ValueContext& value)
         emitter<BarrierEmitter>().barrierAfterStore(value, frame, storedType);
 }
 
-static constexpr uint32_t maxWordsOfHeapFrameMadeInLine = 16;
-static_assert(maxWordsOfHeapFrameMadeInLine <= SavedFrame::maxWordsAllocatedInStub);
+bool SavedFrameEmitter::findBlocksBehindFirstYield()
+{
+    for (BlockID block : generator().order()) {
+        for (ValueID id : m_code.valuesOf(block)) {
+            if (opcodeOf(id) != Opcode::YieldBySavingFrame)
+                continue;
+            m_firstYield = id;
+            m_blockOfFirstYield = block;
+            break;
+        }
+        if (m_firstYield)
+            break;
+    }
+    if (!m_firstYield || m_code.handlerOf(m_blockOfFirstYield))
+        return false;
+
+    Vector<BlockID, 16> worklist { m_blockOfFirstYield };
+    while (!worklist.isEmpty()) {
+        m_code.forEachEdgeOf(worklist.takeLast(), [&](EdgeID, const Edge& edge) {
+            if (!m_blocksBehindFirstYield.set(edge.to.index()))
+                worklist.append(edge.to);
+        });
+    }
+    if (m_blocksBehindFirstYield.get(m_blockOfFirstYield.index()))
+        return false;
+    for (size_t index : m_blocksBehindFirstYield) {
+        BlockID block(static_cast<uint32_t>(index));
+        if (m_code.at(block).terminator.kind == TerminatorKind::ReturnCall || !generator().blockDominates(m_blockOfFirstYield, block))
+            return false;
+    }
+    return std::ranges::all_of(m_code.suspensions(), [&](const LiveAtSuspension& record) {
+        BlockID block = m_code.blockOf(record.suspension);
+        return opcodeOf(record.suspension) == Opcode::YieldBySavingFrame && (block == m_blockOfFirstYield || m_blocksBehindFirstYield.get(block.index()));
+    });
+}
+
+bool SavedFrameEmitter::chooseValuesKeptInHeapFrame(Vector<ValueID, 16>& kept)
+{
+    auto choose = [&](ValueID id, ValueID suspension, bool isRead) {
+        if (!id || id == suspension || m_code.isConstant(id) || !m_code.isNeeded(id) || m_wordsOfKeptValues[id.index()])
+            return true;
+        const Operation& operation = operationAt(id);
+        if (isDeferredClosure(id) || typeOf(id).isOpaque(OpaqueKind::StringBuilder))
+            return false;
+        bool hasSeveralResults = operation.opcode == Opcode::CallDirect ? conventions().numberOfResults(conventions().unitEnteredBy(operation)) > 1 : numberOfResultsOf(m_program, operation).has_value();
+        return !hasSeveralResults && choosesWordFor(formKeptInHeapFrame(id), isRead, id, kept);
+    };
+    for (const LiveAtSuspension& record : m_code.suspensions()) {
+        for (ValueID live : m_code.liveAt(record.suspension)) {
+            if (!choose(live, record.suspension, true))
+                return false;
+        }
+        for (ValueID held : heldOperandsOf(operationAt(record.suspension))) {
+            if (!choose(held, record.suspension, false))
+                return false;
+        }
+    }
+    return kept.size() < SavedFrame::maxNumberOfWords;
+}
+
+Representation SavedFrameEmitter::formKeptInHeapFrame(ValueID id) const
+{
+    return m_generator.isCarriedBoxed(id) ? Representation::JSValue : representationOf(id);
+}
+
+bool SavedFrameEmitter::choosesWordFor(Representation representation, bool isRead, ValueID id, Vector<ValueID, 16>& kept)
+{
+    switch (representation) {
+    case Representation::Void:
+        return true;
+    case Representation::Unchosen:
+    case Representation::Cell32:
+    case Representation::RawWord:
+        return false;
+    case Representation::Boolean:
+    case Representation::Int32:
+    case Representation::Int64:
+    case Representation::Double:
+    case Representation::OptionalInt64:
+    case Representation::OptionalDouble:
+        if (!isRead)
+            return true;
+        break;
+    case Representation::JSValue:
+    case Representation::Cell:
+        if (!isRead && !typeOf(id).hasCells())
+            return true;
+        ++m_numberOfTracedWords;
+        break;
+    }
+    m_wordsOfKeptValues[id.index()] = 1;
+    kept.append(id);
+    return true;
+}
+
+bool SavedFrameEmitter::layOutHeapFrame()
+{
+    if (kindOfFunction() != CoroutineKind::Generator || !m_facts.mechanisms().contains(Mechanism::TypedOperations))
+        return false;
+    if (m_code.opcodesOfValues().contains(Opcode::ReleaseHint) || conventions().entryConventionOf(m_unit) != EntryConvention::Direct || m_code.suspensions().size() >= fusedCallEntry)
+        return false;
+    if (!findBlocksBehindFirstYield())
+        return false;
+
+    Machine::Arena& arena = m_proc.arena();
+    m_wordsOfKeptValues = arena.createSpan<uint16_t>(m_code.numberOfValues());
+    Vector<ValueID, 16> kept;
+    if (!chooseValuesKeptInHeapFrame(kept))
+        return false;
+
+    m_stretchesWhereNamed = arena.createSpan<uint32_t>(m_code.numberOfValues());
+    m_keptValuesAsDefined = arena.createSpan<LValue>(m_code.numberOfValues());
+    m_lastStretchesOfBlocks = arena.createSpan<uint32_t>(m_code.numberOfBlocks());
+    uint32_t nextTraced = 0;
+    uint32_t nextRaw = m_numberOfTracedWords;
+    for (ValueID id : kept) {
+        m_wordsOfKeptValues[id.index()] = static_cast<uint16_t>((frameSlotKindOf(formKeptInHeapFrame(id)) ? nextTraced : nextRaw)++ + 1);
+        if (opcodeOf(id) == Opcode::Parameter)
+            m_keptValuesAsDefined[id.index()] = generator().wordOf(id);
+    }
+    m_numberOfWordsInHeapFrame = std::max(nextRaw, 1u);
+    m_slotOfHeapFrame = m_proc.addStackSlot(sizeof(uint64_t));
+    return true;
+}
+
+LValue SavedFrameEmitter::readHeapFrameOutOfSlot()
+{
+    return m_out.loadPtr(m_out.address(m_heaps.frameSlots, m_out.slotBase(m_slotOfHeapFrame)));
+}
+
+LValue SavedFrameEmitter::heapFrame()
+{
+    if (!isNamedInThisStretch(std::exchange(m_stretchOfHeapFrame, m_stretch)))
+        m_heapFrame = readHeapFrameOutOfSlot();
+    return m_heapFrame;
+}
+
+TypedPointer SavedFrameEmitter::wordOfHeapFrame(LValue frame, ValueID kept)
+{
+    return m_out.address(m_heaps.entire(AbstractHeap::InternalFields), frame, offsetOfWordInHeapFrame(m_wordsOfKeptValues[kept.index()] - 1));
+}
+
+void SavedFrameEmitter::storeIntoHeapFrame(LValue frame, ValueID kept)
+{
+    LValue stored = generator().wordOf(kept);
+    RELEASE_ASSERT(stored);
+    if (isTracedInHeapFrame(kept) && typeOf(kept).mayBeUnspecified())
+        stored = m_out.select(m_out.equal(stored, m_cellCageBase), m_out.int64Zero, stored);
+    m_out.store(stored, wordOfHeapFrame(frame, kept));
+    m_valuesStoredInHeapFrame.set(kept.index());
+    m_keptValuesAsDefined[kept.index()] = generator().wordOf(kept);
+}
+
+LValue SavedFrameEmitter::readOutOfHeapFrame(LValue frame, ValueID kept)
+{
+    return m_out.load(wordOfHeapFrame(frame, kept), machineTypeOf(formKeptInHeapFrame(kept)));
+}
+
+void SavedFrameEmitter::keepInHeapFrame(const ValueContext& defined)
+{
+    ValueID id = defined.id();
+    if (!isKeptInHeapFrame(id) || !standsBehindFirstYield(defined.block()))
+        return;
+    if (!generator().wordOf(id)) {
+        fail(defined, InternalErrorKind::InvalidSuspension);
+        return;
+    }
+    LValue frame = heapFrame();
+    storeIntoHeapFrame(frame, id);
+    if (isTracedInHeapFrame(id) && typeOf(id).hasCells())
+        emitter<BarrierEmitter>().barrier(defined, CellPointer(frame));
+}
+
+void SavedFrameEmitter::beginStretchOfHeapFrame(BlockID block, LValue frameHandedIn)
+{
+    m_stretch = ++m_numberOfStretches;
+    BlockID onlyPredecessor = frameHandedIn ? BlockID() : generator().onlyPredecessorOf(block);
+    m_stretchInFront = onlyPredecessor ? m_lastStretchesOfBlocks[onlyPredecessor.index()] : 0;
+    m_lastStretchesOfBlocks[block.index()] = m_stretch;
+    if (frameHandedIn) {
+        m_heapFrame = frameHandedIn;
+        m_stretchOfHeapFrame = m_stretch;
+    }
+}
+
+ValueID SavedFrameEmitter::readBackOutOfHeapFrame(BlockID block, ValueID yieldInFront)
+{
+    bool isBehindFirstYield = standsBehindFirstYield(block);
+    if (!isBehindFirstYield && !m_hasPassedFirstYield)
+        return { };
+
+    const Block& written = m_code.at(block);
+    std::span<const ValueID> values = m_code.valuesOf(block);
+    if (yieldInFront)
+        values = values.subspan(std::ranges::find(values, yieldInFront) - values.begin() + 1);
+    else {
+        for (ValueID parameter : written.parameters())
+            m_stretchesWhereNamed[parameter.index()] = m_stretch;
+    }
+
+    ValueID neverStored;
+    auto name = [&](ValueID id) {
+        if (!id || !isKeptInHeapFrame(id) || isNamedInThisStretch(std::exchange(m_stretchesWhereNamed[id.index()], m_stretch)))
+            return;
+        if (!m_valuesStoredInHeapFrame.get(id.index())) {
+            neverStored = id;
+            return;
+        }
+        if (!isBehindFirstYield) {
+            generator().nameAgain(id, m_keptValuesAsDefined[id.index()]);
+            return;
+        }
+        generator().nameAgain(id, readOutOfHeapFrame(heapFrame(), id));
+    };
+    if (!yieldInFront)
+        name(written.subject);
+    for (ValueID id : values) {
+        const Operation& operation = operationAt(id);
+        if (operation.opcode == Opcode::YieldBySavingFrame) {
+            name(operation.generatorOperand());
+            name(operation.valueOperand());
+            return neverStored;
+        }
+        operation.forEachOperand([&](ValueID operand, uint32_t) {
+            name(operand);
+        });
+        m_stretchesWhereNamed[id.index()] = m_stretch;
+    }
+    for (ValueID operand : written.terminator.operands())
+        name(operand);
+    for (uint32_t index = 0; index < written.terminator.numberOfEdges; ++index) {
+        for (ValueID argument : m_code.at(written.terminator.edge(index)).arguments())
+            name(argument);
+    }
+    if (EdgeID handler = m_code.handlerOf(block); handler && (written.terminator.kind == TerminatorKind::Throw || written.terminator.kind == TerminatorKind::Rethrow)) {
+        for (ValueID argument : m_code.at(handler).arguments())
+            name(argument);
+    }
+    return neverStored;
+}
+
+void SavedFrameEmitter::passHandlerArgumentsInLandingPad(BlockID site, const Edge& handler)
+{
+    Vector<std::pair<ValueID, LValue>, 8> namedAtSite;
+    {
+        CodeGenerator::InitializationScope scope(generator());
+        bool isBehindFirstYield = standsBehindFirstYield(site);
+        LValue frame = nullptr;
+        for (ValueID argument : handler.arguments()) {
+            if (!isKeptInHeapFrame(argument) || !m_valuesStoredInHeapFrame.get(argument.index()))
+                continue;
+            if (isBehindFirstYield && !frame)
+                frame = readHeapFrameOutOfSlot();
+            namedAtSite.append({ argument, generator().wordOf(argument) });
+            generator().nameAgain(argument, isBehindFirstYield ? readOutOfHeapFrame(frame, argument) : m_keptValuesAsDefined[argument.index()]);
+        }
+    }
+    generator().passHandlerArguments(handler);
+    for (auto [argument, lowered] : namedAtSite | std::views::reverse)
+        generator().nameAgain(argument, lowered);
+}
+
+LValue SavedFrameEmitter::addressOfEntrypoint(unsigned index)
+{
+    Machine::PatchOperation* patch = m_out.patchpoint(Machine::pointerType());
+    patch->effects = Machine::Effects::none();
+    patch->setGenerator([index](CCallHelpers& jit, const Machine::PatchParameters& params) {
+        MacroAssembler::Label site = jit.movePCRelativeAddress(params[0].gpr(), PCRelativeReach::Far);
+        jit.addLinkTask([site, procedure = &params.proc(), index](LinkBuffer& linkBuffer) {
+            RELEASE_ASSERT(linkBuffer.link(site, addressKindFor(PCRelativeReach::Far), procedure->entrypointLabel(index)));
+        });
+    });
+    return patch;
+}
+
+void SavedFrameEmitter::makeHeapFrame(const ValueContext& firstYield, CellPointer generatorCell, LValue resumeAddress)
+{
+    LValue frame;
+    if (m_numberOfWordsInHeapFrame <= SavedFrame::maxWordsAllocatedInStub)
+        frame = callStub(firstYield, AOT::newHeapFrame(), { m_out.constInt64(m_numberOfWordsInHeapFrame), resumeAddress }).first;
+    else
+        frame = callOperation<CellPointer>(firstYield, RuntimeOperation::NewHeapFrame, { word32(static_cast<int32_t>(m_numberOfWordsInHeapFrame)), Pointer(resumeAddress) }).value();
+
+    const Machine::AbstractHeap& fields = m_heaps.entire(AbstractHeap::InternalFields);
+    if (m_numberOfTracedWords != m_numberOfWordsInHeapFrame)
+        m_out.store32As16(m_out.constInt32(static_cast<int32_t>(m_numberOfTracedWords)), m_out.address(fields, frame, SavedFrame::offsetOfNumberOfWords()));
+    auto store = [&](ValueID id) {
+        if (id && isKeptInHeapFrame(id) && !m_valuesStoredInHeapFrame.get(id.index()))
+            storeIntoHeapFrame(frame, id);
+    };
+    for (ValueID live : m_code.liveAt(firstYield.id()))
+        store(live);
+    for (ValueID held : heldOperandsOf(firstYield.value()))
+        store(held);
+    emitter<BarrierEmitter>().fenceAfterInitialization();
+    m_out.storePtr(frame, m_out.address(fields, generatorCell.value(), Generator::offsetOfSavedFrame()));
+    emitter<BarrierEmitter>().barrier(firstYield, generatorCell);
+}
+
+void SavedFrameEmitter::yieldOutOfHeapFrame(const ValueContext& value)
+{
+    const StubSignature& signature = inputs().stubCatalog.summaryOf(enterGeneratorFrame()).signature;
+    RELEASE_ASSERT(signature.numberOfOperands == 3);
+    CellPointer generatorCell = in<CellPointer>(value->generatorOperand());
+    Boxed yielded = in<Boxed>(value->valueOperand());
+    uint16_t entrypoint = m_numberOfEntrypoints++;
+    LValue resumeAddress = addressOfEntrypoint(entrypoint);
+    LValue suspendedAtYield = m_out.constInt32(static_cast<int32_t>(Generator::State::SuspendedAtYield));
+
+    if (value.id() == m_firstYield) {
+        makeHeapFrame(value, generatorCell, resumeAddress);
+        LValue state = m_out.load32(stateOf(generatorCell));
+        m_out.store32(m_out.select(m_out.equal(state, m_out.constInt32(static_cast<int32_t>(Generator::State::Running))), suspendedAtYield, state), stateOf(generatorCell));
+        m_hasPassedFirstYield = true;
+    } else {
+        m_out.storePtr(resumeAddress, m_out.address(m_heaps.entire(AbstractHeap::InternalFields), heapFrame(), SavedFrame::offsetOfResumeAddress()));
+        m_out.store32(suspendedAtYield, stateOf(generatorCell));
+    }
+    Operand returned = yielded;
+    emitter<CallEmitter>().returnValues(singleElementSpan(returned));
+
+    m_out.appendTo(m_proc.addEntrypoint(entrypoint));
+    LValue frame = m_out.argumentRegister(signature.operands[0]);
+    LValue mode = m_out.argumentRegister(signature.operands[1]);
+    LValue sent = m_out.argumentRegister(signature.operands[2]);
+    m_out.storePtr(frame, m_out.address(m_heaps.frameSlots, m_out.slotBase(m_slotOfHeapFrame)));
+    defineValueAndWord(value, { sent, mode });
+    beginStretchOfHeapFrame(value.block(), frame);
+    if (readBackOutOfHeapFrame(value.block(), value.id()))
+        fail(value, InternalErrorKind::InvalidSuspension);
+}
 
 CellPointer SavedFrameEmitter::allocateGenerator(std::optional<CellPointer> closure, LBasicBlock slowPath)
 {

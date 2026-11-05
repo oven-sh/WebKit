@@ -461,6 +461,8 @@ TypeID ResultRules::declared(const Operation& operation, VariableID variable)
     TypeID held = typeHeldInVariableInResultRules(*this, known, variable, seedOfUnknownResultOf(opcode));
     if (opcode == Opcode::GetModuleVariable && operation.followsItsStore())
         held = context.types.withoutPrimitives(held, Primitive::Absent);
+    if (opcode == Opcode::GetModuleVariable && operation.givesWordAsItLies())
+        held = context.types.withPrimitives(held, Primitive::Absent);
     if (opcode == Opcode::GetModuleVariable && operation.mayPrecedeItsStore())
         return context.types.withPrimitives(held, Primitive::Unspecified);
     return held;

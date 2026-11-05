@@ -418,6 +418,8 @@ void MachinePrinter::printPatch(PrintStream& out, CommaPrinter& comma, const Pat
         out.print(comma, "RunsWithoutFrame");
     if (patch.followsFrameSetup())
         out.print(comma, "FollowsFrameSetup");
+    if (patch.testsStackAheadOfFramedPart())
+        out.print(comma, "TestsStackAheadOfFramedPart");
     if (patch.leavesByReturning())
         out.print(comma, "LeavesByReturning");
     if (patch.needsFrameRecord())

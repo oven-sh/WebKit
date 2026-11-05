@@ -68,7 +68,7 @@ static_assert(everyOperandUseIsInExactlyOneOf({ usesThatChangeObjectsForLinkCall
 
 static constexpr BuiltinMark marksOfRowsThatSayTooLittleForLinkCalls[] {
     BuiltinMark::EvaluatesTextInGlobalScope, BuiltinMark::HoldsLoader, BuiltinMark::IsSpy, BuiltinMark::LoadsCodeWithoutJSAccess, BuiltinMark::IsResolverThatLoaderCalls,
-    BuiltinMark::IsRequireThatLoaderCalls, BuiltinMark::MocksModule, BuiltinMark::ExtendsMatchers, BuiltinMark::FakesTimers, BuiltinMark::RunsCodeThatLocksDoNotBind,
+    BuiltinMark::IsRequireThatLoaderCalls, BuiltinMark::MocksModule, BuiltinMark::ExtendsMatchers, BuiltinMark::FakesTimers,
     BuiltinMark::RunsCodeWithLoader, BuiltinMark::HandsOutWhatNativeCodeHolds,
 };
 
@@ -109,8 +109,8 @@ struct QuestionsInLinkCalls {
     Vector<PropertyKeyID, 4> keysOfConversion;
     bool readEverything { false };
     bool readOwnValues { false };
+    bool readPrivateFields { false };
     bool readThroughPrototypes { false };
-    bool readConstructor { false };
     bool describeObjects { false };
     bool convertToPrimitive { false };
     bool onlyBoxedPrimitivesAreConverted { false };
@@ -118,9 +118,10 @@ struct QuestionsInLinkCalls {
     bool iterate { false };
     bool membersOfTableAnswerNothing { false };
     bool areAskedByFormatter { false };
+    bool onlyFollow { false };
     bool askConstructorsOfInstances { false };
 
-    bool isEmpty() const { return keys.isEmpty() && keysAnsweredByProgramAlone.isEmpty() && !readEverything && !readOwnValues && !describeObjects && !convertToPrimitive && !callMembers; }
+    bool isEmpty() const { return keys.isEmpty() && keysAnsweredByProgramAlone.isEmpty() && !readEverything && !readOwnValues && !readPrivateFields && !describeObjects && !convertToPrimitive && !callMembers; }
     friend bool operator==(const QuestionsInLinkCalls&, const QuestionsInLinkCalls&) = default;
 };
 
@@ -164,6 +165,24 @@ struct MemberOfSharedCallInLinkCalls {
     uint32_t tellsThatBringNothing { 0 };
 };
 
+struct FirstStepToHandlerInLinkCalls {
+    BuiltinOperand operand;
+    BuiltinName name;
+    bool mayBeThere { true };
+};
+
+struct MemberWrittenInLinkCalls {
+    PropertyKeyID key;
+    ValueID value;
+    ValueID writer;
+};
+
+struct LiteralMadeForCallInLinkCalls {
+    ValueID handedOn;
+    bool isInSight { false };
+    Vector<MemberWrittenInLinkCalls, 8> written;
+};
+
 struct RowCallInLinkCalls {
     BuiltinID builtin;
     BuiltinCallMode mode { BuiltinCallMode::Call };
@@ -173,6 +192,8 @@ struct RowCallInLinkCalls {
     const BuiltinOverload* row { nullptr };
     bool resultIsUnknown { false };
     ValuesInLinkCalls result;
+    Vector<FirstStepToHandlerInLinkCalls, 8> firstStepsToHandlers;
+    mutable Vector<LiteralMadeForCallInLinkCalls, 1> literalsMadeForCall;
 };
 
 static LinkType primitivesForLinkCalls(uint16_t primitives)
@@ -489,7 +510,7 @@ static BitVector builtinsWithCodeWaitingInLinkCalls(const BuiltinTable& table, c
         return row.condition && waits(*row.condition);
     };
     for (uint32_t index = 0; index < table.builtinCount(); ++index) {
-        if (std::ranges::any_of(table.calledFunctionsOf(BuiltinID(index)), rowWaits) || std::ranges::any_of(table.moduleLoadsOf(BuiltinID(index)), rowWaits))
+        if (std::ranges::any_of(table.calledFunctionsOf(BuiltinID(index)), rowWaits) || std::ranges::any_of(table.moduleLoadsOf(BuiltinID(index)), rowWaits) || std::ranges::any_of(table.featureUsesOf(BuiltinID(index)), rowWaits))
             waiting.quickSet(table.canonicalID(BuiltinID(index)).index());
     }
     return waiting;
@@ -595,6 +616,9 @@ public:
     void resolve();
     void resolveMemberOfSharedCall(uint32_t member);
     void takeStepOfInspection(uint32_t step, const LinkType& now);
+    void showPrivateFieldsOf(LayoutID, uint32_t inspection);
+    static QuestionsInLinkCalls questionsOfComparisonOfPrivateFields();
+    void inspectWhatExpectedBuiltinCompares();
     void enter(FunctionID callee);
 
 private:
@@ -608,6 +632,8 @@ private:
 
     enum class Entry : uint8_t { Refused, Unseen, Body };
     enum class Lookup : uint8_t { Unknown, Absent, Found, FoundWhereProgramMayWrite };
+    enum class OpenHolders : uint8_t { EndLookup, ArePassed };
+    bool nobodyHasLaidNameOnTheWayUpFrom(BuiltinID firstHolder);
     enum class WhenAbsent : uint8_t { CallThrows, MayHaveBeenAdded };
 
     struct MemberOfTable {
@@ -708,7 +734,7 @@ private:
     MemberOfTable findOnInstancesOf(BuiltinClassID builtinClass) { return findOnInstancesOf(builtinClass, m_call.key); }
     MemberOfTable findOnInstancesOf(BuiltinClassID, PropertyKeyID);
     MemberOfTable findOnObjectsOfClassItself(BuiltinClassID);
-    MemberOfTable findAbove(BuiltinID firstHolder, PropertyKeyID, const MembersUnderKey&);
+    MemberOfTable findAbove(BuiltinID firstHolder, PropertyKeyID, const MembersUnderKey&, OpenHolders = OpenHolders::EndLookup);
     MemberOfTable findOnInstancesOf(BuiltinClassID, PropertyKeyID, const MembersUnderKey&);
     MemberOfTable findOnce(uint64_t question, const Invocable<MemberOfTable()> auto& find);
 
@@ -734,10 +760,14 @@ private:
     void noteOptionThatRunsCodeAmong(const RowCall&);
     void noteConditionsThatOperandsMayMeet(const RowCall&);
     bool mayMeet(const BuiltinCondition&, const RowCall&);
+    bool mayBePassedOptionThatRunsCode(const RowCall&);
     bool mayHaveProperty(const LinkType&, const Source*, PropertyKeyID);
     ValueID valueWrittenAs(const RowCall&, BuiltinOperand) const;
     std::optional<StringID> textWrittenAs(const RowCall&, BuiltinOperand) const;
     std::optional<bool> literalMadeForCallHas(const RowCall&, BuiltinOperand, BuiltinName, PropertyKeyID) const;
+    size_t literalHandedOn(const RowCall&, ValueID handedOn, ValueID user) const;
+    bool gatherWhatLiteralWrites(ValueID handedOn, ValueID user, Vector<MemberWrittenInLinkCalls, 8>&) const;
+    bool isAbsentAboveLiterals(BuiltinName, PropertyKeyID) const;
     void enterCodeBehindRow(RowCall&);
     bool rowsSpeakOf(const RowCall&);
     bool rowsMayBeTakenAtTheirWord(BuiltinID);
@@ -753,6 +783,7 @@ private:
     void applyParameter(RowCall&, const BuiltinParameter&);
     void applyCallback(RowCall&, const BuiltinCallback&);
     void applyHandlerCall(RowCall&, const BuiltinHandlerCall&);
+    bool handlerMayBeThere(RowCall&, const BuiltinPlace& callee);
     void applyAction(RowCall&, const BuiltinPropertyAction&);
     bool noteWritesOf(RowCall&, const BuiltinPropertyAction&);
     bool onlyWritesOnObject(RowCall&, const BuiltinPropertyAction&);
@@ -853,6 +884,8 @@ private:
     void inspectType(const LinkType&, uint32_t inspection);
     void tellWhatFormatterIsHanded(const LinkType&, const Questions&);
     void tellFormatterLosesSight(const Questions&);
+    void followWhatHandlersAnswerForFormatter(RowCall&, const BuiltinHandlerCall&);
+    bool gatherClosuresWrittenAt(const RowCall&, ValueID written, ValueID writer, std::span<const BuiltinName> path, Vector<FunctionID, 4>&) const;
     enum class SubjectOfInspection : uint8_t { Layout, Function, Site };
     bool askInspected(SubjectOfInspection, uint32_t number, const LinkType& subject, uint32_t inspection);
     void askAgain(uint32_t step);
@@ -1159,6 +1192,8 @@ void CallInLinkCalls::throwAnything()
 
 void CallInLinkCalls::resolve()
 {
+    if (m_flow.testRuns().isTestRun() && !m_shared && !m_call.isMadeByProtocol && !m_call.passesList && m_call.numberOfArguments > 1 && !m_flow.codeAtWorkIsOfLibrary() && m_summary.arguments[m_call.firstArgument] != noSummaryNode)
+        m_flow.testRuns().noteCallHandedObjectAndName(m_caller, m_call.site, nodeAt(m_summary.arguments[m_call.firstArgument]));
     switch (m_call.callee) {
     case SummaryCall::Callee::Binding:
         if (m_call.function)
@@ -1208,6 +1243,7 @@ void CallInLinkCalls::callUnseen(UnknownIs unknownIs)
     bool argumentsStay = AOT::hasFlag(m_flow.build.options().testing, Wire::TestingSwitch::ArgumentsOfUnseenCodeDoNotLeave) && !m_flow.codeAtWorkIsOfLibrary();
     for (uint32_t argument = 0; !argumentsStay && argument < m_call.numberOfArguments; ++argument)
         leave(m_summary.arguments[m_call.firstArgument + argument]);
+    inspectWhatExpectedBuiltinCompares();
     // testing=UnseenCodeAnswersUndefined, wrong on purpose: wherever what such a call gives flows to, Link proves too much.
     bool answersUndefined = AOT::hasFlag(m_flow.build.options().testing, Wire::TestingSwitch::UnseenCodeAnswersUndefined);
     for (const ResultInLinkCalls& result : results())
@@ -1818,9 +1854,34 @@ CallInLinkCalls::MemberOfTable CallInLinkCalls::findOnce(uint64_t question, cons
 
 CallInLinkCalls::MemberOfTable CallInLinkCalls::findAbove(BuiltinID firstHolder)
 {
-    return findOnce(static_cast<uint64_t>(firstHolder.index()) << 32 | m_call.key.index(), [&] {
+    MemberOfTable found = findOnce(static_cast<uint64_t>(firstHolder.index()) << 32 | m_call.key.index(), [&] {
         return findAbove(firstHolder, m_call.key, membersUnderKey());
     });
+    if (found.outcome != Lookup::Unknown)
+        return found;
+    found = findOnce(1ull << 60 | static_cast<uint64_t>(firstHolder.index()) << 32 | m_call.key.index(), [&] {
+        return findAbove(firstHolder, m_call.key, membersUnderKey(), OpenHolders::ArePassed);
+    });
+    return found.outcome == Lookup::Found && nobodyHasLaidNameOnTheWayUpFrom(firstHolder) ? found : MemberOfTable();
+}
+
+bool CallInLinkCalls::nobodyHasLaidNameOnTheWayUpFrom(BuiltinID firstHolder)
+{
+    BuiltinKind kindOfFirstHolder = m_builtins.at(m_builtins.canonicalID(firstHolder)).kind;
+    if (kindOfFirstHolder == BuiltinKind::Function || kindOfFirstHolder == BuiltinKind::Method || kindOfFirstHolder == BuiltinKind::Constructor || kindOfFirstHolder == BuiltinKind::Prototype)
+        return false;
+    for (BuiltinID holder = m_builtins.canonicalID(firstHolder); ; holder = m_builtins.canonicalID(m_builtins.at(holder).inheritsFrom)) {
+        if (m_flow.isOutOfSight(holder))
+            return false;
+        for (FlowNodeID laid : { m_flow.laidOnBuiltin(holder, m_call.key), m_flow.laidOnBuiltin(holder, { }) }) {
+            if (!watch(laid, 0) || !m_flow.typeAt(laid).isNothing())
+                return false;
+        }
+        if (membersUnderKey().findOwnMember(holder))
+            return true;
+        if (m_builtins.at(holder).prototypeLink != BuiltinPrototypeLink::Builtin)
+            return false;
+    }
 }
 
 CallInLinkCalls::MemberOfTable CallInLinkCalls::findOnInstancesOf(BuiltinClassID builtinClass, PropertyKeyID key)
@@ -1845,24 +1906,28 @@ CallInLinkCalls::MemberOfTable CallInLinkCalls::findOnObjectsOfClassItself(Built
     });
 }
 
-CallInLinkCalls::MemberOfTable CallInLinkCalls::findAbove(BuiltinID firstHolder, PropertyKeyID key, const MembersUnderKey& members)
+CallInLinkCalls::MemberOfTable CallInLinkCalls::findAbove(BuiltinID firstHolder, PropertyKeyID key, const MembersUnderKey& members, OpenHolders openHolders)
 {
     BuiltinID holder = m_builtins.canonicalID(firstHolder);
     while (true) {
         if (compiledModuleWithObject(m_program, holder) || m_builtins.at(m_builtins.rootOf(holder)).scope != BuiltinScope::Realm)
             return { };
         if (BuiltinID member = members.findOwnMember(holder)) {
-            if (!members.isLockedLocation(holder))
+            if (!members.isLockedLocation(holder) && openHolders == OpenHolders::EndLookup)
                 return { Lookup::FoundWhereProgramMayWrite, member };
             return { Lookup::Found, m_builtins.canonicalID(member) };
         }
-        if (!listsEveryMemberUnder(m_program, holder, key) || !members.isClosedKey(holder) || !m_builtins.hasLockedPrototypeLink(holder))
+        if (!listsEveryMemberUnder(m_program, holder, key))
+            return { };
+        if (openHolders == OpenHolders::EndLookup && (!members.isClosedKey(holder) || !m_builtins.hasLockedPrototypeLink(holder)))
             return { };
         const Builtin& object = m_builtins.at(holder);
         switch (object.prototypeLink) {
         case BuiltinPrototypeLink::Unknown:
             return { };
         case BuiltinPrototypeLink::Null:
+            if (openHolders == OpenHolders::ArePassed)
+                return { };
             return { Lookup::Absent, { } };
         case BuiltinPrototypeLink::Builtin:
             holder = m_builtins.canonicalID(object.inheritsFrom);
@@ -2239,9 +2304,13 @@ bool CallInLinkCalls::addObjectsMadeForNewTarget(Values& values, FunctionID call
     if (!handsNewTargetUpRowOfClasses(callee, passed))
         return false;
     LayoutID constructed = m_program.at(m_caller).constructedClass;
+    FunctionID constructorAtTop = m_program.at(m_flow.topOfRow(constructed)).constructor;
+    bool namesOnlyClassesOfRow = namesOnlyClassesAtOrBelow(constructed, *passed.newTarget);
+    if (!namesOnlyClassesOfRow && !isClassConstructorOf(m_program.at(constructorAtTop).kind))
+        return false;
     add(values, m_flow.objectsMadeThroughConstructorOf(constructed), notObservedForLinkCalls, TypeTable::object);
-    if (!namesOnlyClassesAtOrBelow(constructed, *passed.newTarget))
-        add(values, m_flow.result(m_program.at(m_flow.topOfRow(constructed)).constructor, 0), distance);
+    if (!namesOnlyClassesOfRow)
+        add(values, m_flow.result(constructorAtTop, 0), distance);
     return true;
 }
 
@@ -2622,7 +2691,17 @@ bool CallInLinkCalls::mayMeet(const BuiltinCondition& condition, const RowCall& 
         return std::ranges::equal(text, m_builtins.textOf(listed));
     }) || std::ranges::any_of(condition.startsWith, [&](BuiltinName listed) {
         std::span<const uint8_t> start = m_builtins.textOf(listed);
-        return text.size() >= start.size() && std::ranges::equal(text.first(start.size()), start);
+        size_t matched = 0;
+        for (uint8_t character : text) {
+            if (matched == start.size())
+                break;
+            if (character == '\t' || character == '\n' || character == '\r' || (!matched && character <= ' '))
+                continue;
+            if (character != start[matched])
+                return false;
+            ++matched;
+        }
+        return matched == start.size();
     });
 }
 
@@ -2640,6 +2719,8 @@ void CallInLinkCalls::noteConditionsThatOperandsMayMeet(const RowCall& call)
         look(called.condition);
     for (const BuiltinModuleLoad& load : m_builtins.moduleLoadsOf(call.builtin))
         look(load.condition);
+    for (const BuiltinFeatureUse& line : m_builtins.featureUsesOf(call.builtin))
+        look(line.condition);
 }
 
 ValuesInLinkCalls CallInLinkCalls::callOutOfSight(const RowCall& call)
@@ -2655,9 +2736,23 @@ void CallInLinkCalls::enterCodeBehindRow(RowCall& call)
         m_flow.note(LinkFlow::Note::BuiltinCalledOutOfSight, call.builtin.index());
 }
 
+bool CallInLinkCalls::mayBePassedOptionThatRunsCode(const RowCall& call)
+{
+    const BuiltinUnseenCode* unseenCode = m_builtins.unseenCodeOf(call.builtin);
+    if (!unseenCode || !unseenCode->condition)
+        return true;
+    RowCall byRow = call;
+    return std::ranges::any_of(m_builtins.overloadsOf(call.builtin), [&](const BuiltinOverload& row) {
+        byRow.row = &row;
+        return row.mode == call.mode && mayMeet(*unseenCode->condition, byRow);
+    });
+}
+
 bool CallInLinkCalls::rowsSpeakOf(const RowCall& call)
 {
     if (!rowsMayBeTakenAtTheirWord(call.builtin))
+        return false;
+    if (m_builtins.has(BuiltinMark::RunsCodeThatLocksDoNotBind, call.builtin) && mayBePassedOptionThatRunsCode(call))
         return false;
     const Builtin& entry = m_builtins.at(call.builtin);
 
@@ -2689,7 +2784,7 @@ void CallInLinkCalls::describeWhatRowRefuses(const RowCall& call, const BuiltinO
     Questions questions;
     questions.describeObjects = true;
     auto describe = [&](const BuiltinParameter& parameter) {
-        if (!parameter.roles.contains(BuiltinOperandRole::DescribedWhenRefused))
+        if (!parameter.roles.contains(BuiltinOperandRole::DescribedWhenRefused) || !fitOf(call, parameter).mayBeOutside)
             return;
         throwAnything();
         ask(valuesAt(call, parameter.operand), questions);
@@ -2975,6 +3070,8 @@ void CallInLinkCalls::applyParameter(RowCall& call, const BuiltinParameter& para
 {
     Values values = valuesAt(call, parameter.operand);
     OperandUses uses = parameter.uses;
+    if (parameter.roles.contains(BuiltinOperandRole::PrivateFieldsAreCompared))
+        inspect(values, questionsOfComparisonOfPrivateFields());
     bool isPrinted = m_builtins.isPrintedByFormatter(call.builtin, parameter);
     auto tellFormatterIsHandedWhateverObjectsThereAre = [&] {
         forEachType(values, [&](const LinkType& type, const Source*) {
@@ -3019,6 +3116,8 @@ void CallInLinkCalls::applyParameter(RowCall& call, const BuiltinParameter& para
         return;
 
     Questions questions = questionsOf(parameter);
+    if (questions.describeObjects && !fitOf(call, parameter).mayBeOutside)
+        questions.describeObjects = false;
     if (questions.isEmpty())
         return;
     questions.areAskedByFormatter = isPrinted;
@@ -3114,8 +3213,101 @@ void CallInLinkCalls::applyCallback(RowCall& call, const BuiltinCallback& callba
     }
 }
 
+bool CallInLinkCalls::handlerMayBeThere(RowCall& call, const BuiltinPlace& callee)
+{
+    if (callee.kind != BuiltinPlaceKind::Member || callee.memberPath.empty() || !callee.memberPath.front())
+        return true;
+    BuiltinName name = callee.memberPath.front();
+    for (const FirstStepToHandlerInLinkCalls& asked : call.firstStepsToHandlers) {
+        if (asked.operand == *callee.operand && asked.name == name)
+            return asked.mayBeThere;
+    }
+    PropertyKeyID key = m_program.keyOf(name);
+    bool mayBeThere = false;
+    if (std::optional<bool> has = literalMadeForCallHas(call, *callee.operand, name, key))
+        mayBeThere = *has;
+    else {
+        forEachType(valuesAt(call, *callee.operand), [&](const LinkType& type, const Source* source) {
+            mayBeThere = mayBeThere || mayHaveProperty(type, source, key);
+        });
+    }
+    call.firstStepsToHandlers.append({ *callee.operand, name, mayBeThere });
+    return mayBeThere;
+}
+
+void CallInLinkCalls::followWhatHandlersAnswerForFormatter(RowCall& call, const BuiltinHandlerCall& handlerCall)
+{
+    if (!m_builtins.has(BuiltinMark::PrintsWhatHandlersAnswer, call.builtin) || handlerCall.resultUse != BuiltinCallbackResultUse::Escapes || !handlerMayBeThere(call, handlerCall.callee))
+        return;
+    Questions questions;
+    questions.readOwnValues = true;
+    questions.readThroughPrototypes = true;
+    questions.areAskedByFormatter = true;
+    questions.onlyFollow = true;
+    Vector<FunctionID, 4> handlers;
+    ValueID options = handlerCall.callee.kind == BuiltinPlaceKind::Member ? valueWrittenAs(call, *handlerCall.callee.operand) : ValueID();
+    if (!options || !gatherClosuresWrittenAt(call, options, m_call.site, handlerCall.callee.memberPath, handlers)) {
+        tellFormatterLosesSight(questions);
+        return;
+    }
+    Values answers;
+    for (FunctionID handler : handlers) {
+        for (FlowNodeID answer : m_flow.nodesOfWhatFunctionAnswers(handler))
+            add(answers, answer, notObservedForLinkCalls);
+    }
+    inspect(answers, questions);
+}
+
+bool CallInLinkCalls::gatherClosuresWrittenAt(const RowCall& call, ValueID written, ValueID writer, std::span<const BuiltinName> path, Vector<FunctionID, 4>& closures) const
+{
+    if (!written)
+        return true;
+    const BodyIndex& index = *bodiesLookedAt(m_flow.looks).find(m_caller);
+    while (!index.isParameter(written) && opcodesThatStateTypes.contains(index.opcodeOf(written)) && index.onlyUsingValue(written) == writer) {
+        writer = written;
+        written = index.value(written).operand(0);
+    }
+    if (index.isParameter(written))
+        return false;
+    if (primitiveConstants.contains(index.opcodeOf(written)))
+        return true;
+    BuiltinName step = path.empty() ? BuiltinName() : path.front();
+    PropertyKeyID key = step ? m_program.keyOf(step) : PropertyKeyID();
+    if (index.opcodeOf(written) == Opcode::NewClosure) {
+        if (path.empty()) {
+            closures.append(index.value(written).as<Opcode::NewClosure>().function());
+            return true;
+        }
+        return step && index.onlyUsingValue(written) == writer && step != BuiltinNames::prototype && m_builtins.findMember(Builtins::FunctionPrototype, step).outcome == BuiltinMemberLookup::Outcome::Absent && isAbsentAboveLiterals(step, key);
+    }
+    size_t literal = literalHandedOn(call, written, writer);
+    if (!call.literalsMadeForCall[literal].isInSight)
+        return false;
+    if (path.empty())
+        return true;
+    bool isWritten = false;
+    for (size_t member = 0; member < call.literalsMadeForCall[literal].written.size(); ++member) {
+        MemberWrittenInLinkCalls below = call.literalsMadeForCall[literal].written[member];
+        if (step && below.key != key)
+            continue;
+        isWritten = true;
+        if (!gatherClosuresWrittenAt(call, below.value, below.writer, path.subspan(1), closures))
+            return false;
+    }
+    return !step || isWritten || isAbsentAboveLiterals(step, key);
+}
+
 void CallInLinkCalls::applyHandlerCall(RowCall& call, const BuiltinHandlerCall& handlerCall)
 {
+    if (handlerMayBeThere(call, handlerCall.callee)) {
+        auto tell = [&](const BuiltinPlace& place) {
+            if (place.kind == BuiltinPlaceKind::NewValue && !place.holdsWhatIsThrown && place.newValueType)
+                m_flow.note(LinkFlow::Note::TypeHandedToHandler, place.newValueType.index());
+        };
+        tell(handlerCall.thisValue);
+        std::ranges::for_each(handlerCall.arguments, tell);
+    }
+    followWhatHandlersAnswerForFormatter(call, handlerCall);
     escape(valuesAtPlace(call, handlerCall.callee));
     escape(valuesAtPlace(call, handlerCall.thisValue));
     for (const BuiltinPlace& argument : handlerCall.arguments)
@@ -3157,6 +3349,11 @@ void CallInLinkCalls::applyAction(RowCall& call, const BuiltinPropertyAction& ac
             return;
         if (action.kind != BuiltinPropertyActionKind::ChangesIntegrity && action.kind != BuiltinPropertyActionKind::ChangesPrototype && action.kind != BuiltinPropertyActionKind::BecomesPrototype)
             knowsThatLinkIsLeftAlone = noteWritesOf(call, action);
+        if (action.kind == BuiltinPropertyActionKind::ChangesPrototype) {
+            forEachType(valuesAt(call, action.object), [&](const LinkType& type, const Source*) {
+                m_flow.noteWhatMayMakeThenableOf(type, m_caller, std::nullopt);
+            });
+        }
         break;
     }
 
@@ -3268,32 +3465,30 @@ std::optional<StringID> CallInLinkCalls::textWrittenAs(const RowCall& call, Buil
     return index.value(written).as<Opcode::String>().string();
 }
 
-std::optional<bool> CallInLinkCalls::literalMadeForCallHas(const RowCall& call, BuiltinOperand operand, BuiltinName name, PropertyKeyID key) const
+bool CallInLinkCalls::gatherWhatLiteralWrites(ValueID finished, ValueID user, Vector<MemberWrittenInLinkCalls, 8>& written) const
 {
-    ValueID finished = valueWrittenAs(call, operand);
-    if (!finished)
-        return std::nullopt;
     const BodyIndex& index = *bodiesLookedAt(m_flow.looks).find(m_caller);
-    if (index.onlyUsingValue(finished) != m_call.site)
-        return std::nullopt;
-    bool isWritten = false;
+    if (index.onlyUsingValue(finished) != user)
+        return false;
     if (index.opcodeOf(finished) == Opcode::Data) {
         DataID data = index.value(finished).as<Opcode::Data>().data();
-        const auto* written = data ? m_program.at(data).root.tryAs<DataNode::Object>() : nullptr;
-        if (!written)
-            return std::nullopt;
-        isWritten = key && std::ranges::contains(written->members, key, &DataMember::key);
+        const auto* object = data ? m_program.at(data).root.tryAs<DataNode::Object>() : nullptr;
+        if (!object)
+            return false;
+        for (const DataMember& member : object->members)
+            written.append({ member.key, ValueID(), ValueID() });
     } else {
         if (index.opcodeOf(finished) != Opcode::FinishObject)
-            return std::nullopt;
+            return false;
         ValueID literal = index.value(finished).operand(0);
         if (!literal || index.isParameter(literal) || index.opcodeOf(literal) != Opcode::NewObject || index.blockOf(literal) != index.blockOf(finished))
-            return std::nullopt;
+            return false;
         auto made = index.value(literal).as<Opcode::NewObject>();
         if (!made.layout() || made.prototypeOperand())
-            return std::nullopt;
+            return false;
+        uint32_t operandOfField = 1;
         for (uint32_t field : made.fields())
-            isWritten |= key && m_program.at(made.layout()).fields[field].key == key;
+            written.append({ m_program.at(made.layout()).fields[field].key, index.value(literal).operand(operandOfField++), literal });
         uint32_t numberOfUses = 1;
         for (uint32_t number = literal.index() + 1; number < finished.index(); ++number) {
             BodyValue part = index.value(ValueID(number));
@@ -3304,18 +3499,51 @@ std::optional<bool> CallInLinkCalls::literalMadeForCallHas(const RowCall& call, 
             if (!touchesLiteral)
                 continue;
             if (part.opcode() != Opcode::PropDefine || part.operand(0) != literal)
-                return std::nullopt;
-            isWritten |= key && part.as<Opcode::PropDefine>().key() == key;
+                return false;
+            written.append({ part.as<Opcode::PropDefine>().key(), part.operand(1), ValueID(number) });
             ++numberOfUses;
         }
         if (numberOfUses >= BodyIndex::maxCountedUses || index.useCount(literal) != numberOfUses)
-            return std::nullopt;
+            return false;
     }
+    return true;
+}
+
+std::optional<bool> CallInLinkCalls::literalMadeForCallHas(const RowCall& call, BuiltinOperand operand, BuiltinName name, PropertyKeyID key) const
+{
+    ValueID handedOn = valueWrittenAs(call, operand);
+    if (!handedOn)
+        return std::nullopt;
+    const LiteralMadeForCallInLinkCalls& literal = call.literalsMadeForCall[literalHandedOn(call, handedOn, m_call.site)];
+    if (!literal.isInSight)
+        return std::nullopt;
+    bool isWritten = key && literal.written.containsIf([&](const MemberWrittenInLinkCalls& member) {
+        return member.key == key;
+    });
     if (isWritten)
         return true;
+    return isAbsentAboveLiterals(name, key) ? std::optional(false) : std::nullopt;
+}
+
+size_t CallInLinkCalls::literalHandedOn(const RowCall& call, ValueID handedOn, ValueID user) const
+{
+    size_t position = call.literalsMadeForCall.findIf([&](const LiteralMadeForCallInLinkCalls& gathered) {
+        return gathered.handedOn == handedOn;
+    });
+    if (position != notFound)
+        return position;
+    call.literalsMadeForCall.append({ handedOn, false, { } });
+    LiteralMadeForCallInLinkCalls& gathered = call.literalsMadeForCall.last();
+    gathered.isInSight = gatherWhatLiteralWrites(handedOn, user, gathered.written);
+    return call.literalsMadeForCall.size() - 1;
+}
+
+bool CallInLinkCalls::isAbsentAboveLiterals(BuiltinName name, PropertyKeyID key) const
+{
+    if (key)
+        return m_flow.isAbsentAboveClasses(key);
     BuiltinClassID objectClass = BuiltinClasses::Object;
-    bool isAbsentAbove = key ? m_flow.isAbsentAboveClasses(key) : m_program.openedNames.isEmpty() && m_builtins.findMember(m_builtins.at(objectClass).prototype, name).outcome == BuiltinMemberLookup::Outcome::Absent;
-    return isAbsentAbove ? std::optional(false) : std::nullopt;
+    return m_program.openedNames.isEmpty() && m_builtins.findMember(m_builtins.at(objectClass).prototype, name).outcome == BuiltinMemberLookup::Outcome::Absent;
 }
 
 std::optional<PropertyKeyID> CallInLinkCalls::keyWrittenAs(const RowCall& call, BuiltinOperand operand) const
@@ -3377,11 +3605,11 @@ void CallInLinkCalls::tellWhatReadFinds(const RowCall& call, const BuiltinProper
                 tellWhatIsFoundUnder(*written, objects, readsThroughPrototypes);
             return;
         }
-        bool isOnlyNumbers = true;
+        bool spellsNoMemberOfTable = true;
         forEachType(valuesAt(call, *action.key.operand), [&](const LinkType& key, const Source*) {
-            isOnlyNumbers &= key == primitivesForLinkCalls(key.primitives & LinkType::closed(Primitive::Number));
+            spellsNoMemberOfTable &= key == primitivesForLinkCalls(key.primitives & LinkType::closed(Primitive::All) & ~LinkType::closed(Primitive::AnyString | Primitive::AnySymbol));
         });
-        if (isOnlyNumbers)
+        if (spellsNoMemberOfTable)
             return;
         break;
     }
@@ -4202,7 +4430,6 @@ QuestionsInLinkCalls CallInLinkCalls::questionsOf(const BuiltinParameter& parame
             break;
         case Protocol::Named:
             questions.readEverything |= parameter.namedMembers.empty();
-            questions.readConstructor |= std::ranges::contains(parameter.namedMembers.span(), BuiltinNames::constructor);
             addKeysAnsweredByProgramAlone(questions, parameter.namedMembers);
             questions.askConstructorsOfInstances |= std::ranges::contains(parameter.namedMembers, BuiltinNames::constructor);
             break;
@@ -4340,6 +4567,50 @@ bool CallInLinkCalls::ask(const Values& subjects, const Questions& questions)
     return someMayAnswer;
 }
 
+void CallInLinkCalls::inspectWhatExpectedBuiltinCompares()
+{
+    bool isOfCallee = m_call.expectedBuiltin ? m_call.expectsCalleeItself : m_call.callee == SummaryCall::Callee::Value;
+    BuiltinID expected = m_call.expectedBuiltin ? m_call.expectedBuiltin : m_call.builtin;
+    if (!expected || (!isOfCallee && !m_call.key))
+        return;
+    expected = m_builtins.canonicalID(expected);
+    Vector<BuiltinID, 2> called;
+    if (isOfCallee)
+        called.append(expected);
+    else {
+        called.append(findOwnMember(m_program, expected, m_call.key));
+        for (const BuiltinOverload& row : m_builtins.overloadsOf(expected)) {
+            if (!row.result.type)
+                continue;
+            for (const BuiltinTypePart& part : m_builtins.at(row.result.type).parts) {
+                BuiltinID prototype = part.kind == BuiltinTypePartKind::Instance && part.builtinClass ? m_builtins.at(part.builtinClass).prototype : BuiltinID();
+                if (prototype)
+                    called.append(findOwnMember(m_program, prototype, m_call.key));
+            }
+        }
+    }
+    for (BuiltinID builtin : called) {
+        if (!builtin)
+            continue;
+        RowCall call { .builtin = m_builtins.canonicalID(builtin), .mode = m_call.isConstruction ? BuiltinCallMode::Construct : BuiltinCallMode::Call, .passed = passedByCall() };
+        for (const BuiltinOverload& row : m_builtins.overloadsOf(call.builtin)) {
+            for (const BuiltinParameter& parameter : row.parameters) {
+                if (parameter.roles.contains(BuiltinOperandRole::PrivateFieldsAreCompared))
+                    inspect(valuesAt(call, parameter.operand), questionsOfComparisonOfPrivateFields());
+            }
+        }
+    }
+}
+
+QuestionsInLinkCalls CallInLinkCalls::questionsOfComparisonOfPrivateFields()
+{
+    Questions questions;
+    questions.readEverything = true;
+    questions.readOwnValues = true;
+    questions.readPrivateFields = true;
+    return questions;
+}
+
 void CallInLinkCalls::inspect(const Values& values, const Questions& questions)
 {
     LinkFlow::LockerOfWhatIsShared locker(m_flow);
@@ -4350,10 +4621,24 @@ void CallInLinkCalls::inspect(const Values& values, const Questions& questions)
     if (inspection == m_state.inspections.size()) {
         m_state.inspections.append(InspectionInLinkCalls { questions, m_caller, m_index, static_cast<uint32_t>(m_state.stepsOfInspections.size()), { } });
         m_state.stepsOfInspections.append(StepOfInspectionInLinkCalls { inspection, { } });
+        for (uint32_t layout = 0; questions.readPrivateFields && layout < m_program.layouts.size(); ++layout) {
+            if (m_flow.superCallMayAnswerWithOlderObject(LayoutID(layout)))
+                showPrivateFieldsOf(LayoutID(layout), inspection);
+        }
     }
     for (const Source& source : values.sources)
         inspectAt(source.node, inspection);
     inspectType(values.made, inspection);
+}
+
+void CallInLinkCalls::showPrivateFieldsOf(LayoutID layout, uint32_t inspection)
+{
+    for (FlowNodeID cell : m_flow.cellsOfWrittenPrivateNamesOf(layout)) {
+        if (!m_state.inspections[inspection].nodes.get(cell.index()))
+            m_flow.build.statistics().count(StatisticID::PrivateFieldsShownToComparisons);
+        m_flow.addEdge(cell, m_flow.unseen());
+        inspectAt(cell, inspection);
+    }
 }
 
 void CallInLinkCalls::inspectAt(FlowNodeID node, uint32_t inspection)
@@ -4382,6 +4667,8 @@ void CallInLinkCalls::askAgain(uint32_t step)
 {
     StepOfInspectionInLinkCalls asked = m_state.stepsOfInspections[step];
     Questions questions = m_state.inspections[asked.inspection].questions;
+    if (questions.onlyFollow)
+        return;
     SetForScope watcher(m_stepThatWatches, std::optional(step));
     if (mayAnswer(asked.subject, nullptr, questions, true)) {
         tellFormatterLosesSight(questions);
@@ -4401,12 +4688,15 @@ void CallInLinkCalls::tellWhatFormatterIsHanded(const LinkType& type, const Ques
 {
     if (!questions.areAskedByFormatter)
         return;
-    bool isOfHost = type.classes == LinkType::Classes::Site && m_builtins.at(type.builtinClass).origin == BuiltinOrigin::Host;
+    auto isWalked = [&](BuiltinClassID builtinClass) {
+        return builtinClass && m_builtins.at(builtinClass).origin == BuiltinOrigin::Host && m_builtins.formatterWalksInstancesOf(builtinClass);
+    };
+    bool isOfHost = type.classes == LinkType::Classes::Site && isWalked(type.builtinClass);
     forEachLayoutWithListedOwnValues(type, [&](LayoutID layout) {
-        BuiltinClassID base = m_program.at(layout).writtenBuiltinBase;
-        isOfHost |= base && m_builtins.at(base).origin == BuiltinOrigin::Host;
+        isOfHost |= isWalked(m_program.at(layout).writtenBuiltinBase);
     });
-    if (isOfHost || type.classes == LinkType::Classes::Mixed || type.builtin || type.holdsUnseen || type.holdsLostBuiltins)
+    bool isFunctionThatNobodyAsks = questions.onlyFollow && type.functions != LinkType::Functions::None;
+    if (isOfHost || isFunctionThatNobodyAsks || type.classes == LinkType::Classes::Mixed || type.builtin || type.holdsUnseen || type.holdsLostBuiltins)
         m_flow.note(LinkFlow::Note::ObjectHandedToFormatter, 0);
 }
 
@@ -4428,12 +4718,8 @@ void CallInLinkCalls::inspectType(const LinkType& type, uint32_t inspection)
             return;
         if (FunctionID constructor = m_program.at(layout).constructor; constructor && m_state.inspections[inspection].questions.askConstructorsOfInstances)
             askInspected(SubjectOfInspection::Function, constructor.index(), closuresForLinkCalls(constructor), inspection);
-        FunctionID constructor = m_program.at(layout).kind == LayoutKind::Instance ? m_program.at(layout).constructor : FunctionID();
-        if (m_state.inspections[inspection].questions.readConstructor && m_flow.isBelowConstructorFunction(layout)) {
-            tellFormatterLosesSight(m_state.inspections[inspection].questions);
-            escape(objects, nullptr);
-        } else if (m_state.inspections[inspection].questions.readConstructor && constructor)
-            askInspected(SubjectOfInspection::Function, constructor.index(), closuresForLinkCalls(constructor), inspection);
+        if (m_state.inspections[inspection].questions.readPrivateFields)
+            showPrivateFieldsOf(layout, inspection);
         if (!m_state.inspections[inspection].questions.readOwnValues)
             return;
         Vector<FlowNodeID, 8> nodes = m_flow.nodesWithOwnValuesOf(layout);
@@ -4443,6 +4729,8 @@ void CallInLinkCalls::inspectType(const LinkType& type, uint32_t inspection)
         }
         for (FlowNodeID node : nodes)
             inspectAt(node, inspection);
+        if (FlowNodeID above = m_state.inspections[inspection].questions.readThroughPrototypes ? m_flow.foundOnPrototypesAbove(layout, { }) : FlowNodeID())
+            inspectAt(above, inspection);
     };
 
     LinkType rest = type;
@@ -4504,6 +4792,10 @@ void CallInLinkCalls::inspectType(const LinkType& type, uint32_t inspection)
         break;
     case LinkType::Classes::Site: {
         LinkType instances = instancesAmongForLinkCalls(type);
+        if (m_state.inspections[inspection].questions.onlyFollow && !m_builtins.formatterWalksInstancesOf(type.builtinClass)) {
+            inspectAt(m_flow.whereInstancesAreMadeThenables(), inspection);
+            break;
+        }
         if (!askInspected(SubjectOfInspection::Site, type.site.index(), instances, inspection))
             break;
         for (ContentsSlot slot : allMembersOf<ContentsSlot>)
@@ -4704,19 +4996,21 @@ bool LinkFlow::resolveCallsThatWereToldIn(unsigned lane)
 
 void LinkFlow::settleSharedCallsAs(WhatUnseenCodeDoes reading)
 {
-    auto settle = [&](CalleesOfCall& callees) {
+    enum class SharedCalls : bool { AreForgotten, StayNamed };
+    auto settle = [&](CalleesOfCall& callees, SharedCalls sharedCalls) {
         if (callees.mayEnterUnseen && reading == WhatUnseenCodeDoes::Anything) {
             callees.removeListedMatching([&](FunctionID callee) {
                 return escapedFunctions.get(callee.index());
             });
             callees.clearBuiltins();
-            callees.clearShared();
+            if (sharedCalls == SharedCalls::AreForgotten)
+                callees.clearShared();
             callees.mayEnterLost = false;
         }
         callees.sortListedAndBuiltins();
     };
     for (CalleesOfCall& callees : calleesOfSharedCalls)
-        settle(callees);
+        settle(callees, SharedCalls::AreForgotten);
     forEachRangeOfIndicesInParallel(loops, calleesOfCalls.size(), [&](size_t first, size_t end) {
         for (size_t call = first; call < end; ++call) {
             CalleesOfCall& callees = calleesOfCalls[call];
@@ -4752,8 +5046,15 @@ void LinkFlow::settleSharedCallsAs(WhatUnseenCodeDoes reading)
                     });
                 });
             }
-            settle(callees);
+            settle(callees, SharedCalls::StayNamed);
         }
+    });
+}
+
+bool LinkFlow::isInspectedByComparisonOfPrivateFields(FlowNodeID node) const
+{
+    return m_stateOfLinkCalls && std::ranges::any_of(m_stateOfLinkCalls->inspections, [&](const InspectionInLinkCalls& inspection) {
+        return inspection.questions.readPrivateFields && inspection.nodes.get(node.index());
     });
 }
 

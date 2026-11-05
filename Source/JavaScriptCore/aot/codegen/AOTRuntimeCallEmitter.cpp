@@ -10,13 +10,16 @@
 
 #include "AOTBuildContext.h"
 #include "AOTBuiltinTableBindings.h"
+#include "AOTCompileUnit.h"
 #include "AOTEffectsNet.h"
 #include "AOTExceptionEmitter.h"
 #include "AOTHeaps.h"
 #include "AOTPureOperations.h"
+#include "AOTStaticsEmitter.h"
 #include "AOTStubCatalog.h"
 #include "AOTStubsCallHost.h"
 #include "AOTStubsOperations.h"
+#include "AOTStubsPropertyKeys.h"
 #include "AOTThrowEmitter.h"
 #include "AllowMacroScratchRegisterUsage.h"
 #include <algorithm>
@@ -51,6 +54,8 @@ struct CallGenerator {
     const OperationCall* preservingCall;
     std::optional<StubKey> keyWhereNoFPRIsKept;
     Machine::RegisterMask receiversWithVariant;
+    std::optional<StubKey> keyThatKeepsFewerRegisters;
+    Machine::RegisterMask registersThatItLosesBesides;
 };
 
 static_assert(std::is_trivially_destructible_v<CallGenerator>);
@@ -220,7 +225,7 @@ void CallGenerator::generate(CCallHelpers& jit, const Machine::PatchParameters& 
         called = callOperationPreservingRegisters(call);
     }
     ArgumentMoves moves = preservingCall ? moveArguments(jit, params) : bringOperands(params);
-    if (keyWhereNoFPRIsKept) {
+    if (keyWhereNoFPRIsKept || keyThatKeepsFewerRegisters) {
         Machine::RegisterMask kept = registersToKeepAcrossCCall(params);
         if (resultIsInAnyRegister)
             kept &= ~Machine::maskOf(Reg(params[0].gpr()));
@@ -228,8 +233,12 @@ void CallGenerator::generate(CCallHelpers& jit, const Machine::PatchParameters& 
             kept &= ~Machine::maskOf(signature.firstResult);
         if (signature.secondResult)
             kept &= ~Machine::maskOf(signature.secondResult);
-        if (!holdsFPR(kept))
+        if (keyWhereNoFPRIsKept && !holdsFPR(kept))
             called = *keyWhereNoFPRIsKept;
+        if (keyThatKeepsFewerRegisters && !(kept & registersThatItLosesBesides)) {
+            StubKey inSameFrame = keyThatKeepsFewerRegisters->withCallerFrame(called.callerFrame());
+            called = exists(inSameFrame) ? inSameFrame : *keyThatKeepsFewerRegisters;
+        }
     }
     if (receiverIsInAnyRegister) {
         bool resultComesFirst = signature.result != StubResult::None && signature.result != StubResult::Flags;
@@ -242,6 +251,10 @@ void CallGenerator::generate(CCallHelpers& jit, const Machine::PatchParameters& 
     }
     if (resultIsInAnyRegister && (params[0].gpr() != signature.firstResult.gpr() || !namesRegisterOfResult(descriptorOf(called.family()).operandRegisters)))
         called = called.withOperandRegister(params[0].gpr());
+    if (params.value()->leavesMoveOutOfResultToCallee()) [[unlikely]] {
+        RELEASE_ASSERT(moves.isEmpty());
+        records->stubCalls.enterNextStubInFront(params.value()->registerThatCalleeFillsOutOfResult());
+    }
     emitCallInstruction(jit, called, moves);
     if (neverReturns)
         jit.breakpoint();
@@ -354,6 +367,8 @@ struct StubCallShape {
     Machine::RegisterMask receiversWithVariant { 0 };
     RegisterSet resultRegisters;
     std::optional<StubKey> keyWhereNoFPRIsKept;
+    std::optional<StubKey> keyThatKeepsFewerRegisters;
+    Machine::RegisterMask registersThatItLosesBesides { 0 };
     uint8_t numberOfOperandRegisters { 0 };
     bool needsFrameRecord { false };
     bool leavesCallerWithoutFrame { false };
@@ -446,6 +461,13 @@ static void fillStubCallShape(StubCallShape& shape, const StubCatalog& catalog, 
         return std::nullopt;
     };
     shape.keyWhereNoFPRIsKept = formThatDiffers(CallerFrame::KeepsNoFPRs);
+    shape.keyThatKeepsFewerRegisters = boundKey == key && !neverReturns && !namesSiteOrOperand && !(traits & StubCallTraits::hasPreservingCall) ? stubThatKeepsFewerRegisters(key) : std::nullopt;
+    shape.registersThatItLosesBesides = 0;
+    if (shape.keyThatKeepsFewerRegisters) {
+        RegisterSet lostBesides = catalog.summaryOf(*shape.keyThatKeepsFewerRegisters).clobbered;
+        lostBesides.exclude(summary.clobbered);
+        shape.registersThatItLosesBesides = Machine::maskOf(lostBesides);
+    }
     shape.hasEffects = false;
     shape.patchEffectsOfLastCall = nullptr;
 }
@@ -976,6 +998,8 @@ StubCallResult RuntimeCallEmitter::emitCall(const OperationContext* context, con
     auto liesSomewhere = [](const Machine::Operation* operand) { return !operand->hasNoPosition(); };
     bool operandsLeaveRegisterForResult = !resultIsInAnyRegister || static_cast<size_t>(std::ranges::count_if(patchpoint->operands(), liesSomewhere)) <= shape->numberOfOperandRegisters;
     patchpoint->setBringsOperandsToTheirRegisters(!receiverIsInAnyRegister && operandsLeaveRegisterForResult && !request.preservingCall && !request.firstRead && !options.throwSite);
+    if (signature->filledOutOfResultInFront && isCallOfStub && patchpoint->bringsOperandsToTheirRegisters())
+        patchpoint->setRegisterThatCalleeFillsOutOfResult(signature->filledOutOfResultInFront);
     Machine::RegisterMask additionalClobbers = request.preservingCall ? Machine::maskOf(request.additionalClobbers) : 0;
     ASSERT(request.preservingCall || request.additionalClobbers.isEmpty());
     if (resultIsInAnyRegister) {
@@ -1017,7 +1041,7 @@ StubCallResult RuntimeCallEmitter::emitCall(const OperationContext* context, con
 
     const ThrowSite* throwSite = options.throwSite ? m_proc.arena().create<ThrowSite>(*options.throwSite) : nullptr;
     const OperationCall* preservingCall = request.preservingCall ? m_proc.arena().create<OperationCall>(*request.preservingCall) : nullptr;
-    patchpoint->setGenerator(CallGenerator { &m_records, key, *signature, receiverIsInAnyRegister, resultIsInAnyRegister, branchesOnFlags, neverReturns, options.immediate, options.numberedImmediate, site, firstRead, throwSite, preservingCall, shape->keyWhereNoFPRIsKept, shape->receiversWithVariant });
+    patchpoint->setGenerator(CallGenerator { &m_records, key, *signature, receiverIsInAnyRegister, resultIsInAnyRegister, branchesOnFlags, neverReturns, options.immediate, options.numberedImmediate, site, firstRead, throwSite, preservingCall, shape->keyWhereNoFPRIsKept, shape->receiversWithVariant, shape->keyThatKeepsFewerRegisters, shape->registersThatItLosesBesides });
     if (mayBeShared)
         m_out.recordPurePatch(patchpoint);
 
@@ -1051,6 +1075,8 @@ void RuntimeCallEmitter::beginWatchOfOperation(const ValueContext& context, Watc
     }
     EntersCompiledCode entersCompiledCode = effectRuleOf(operation.opcode) == EffectRule::Call ? EntersCompiledCode::Yes : EntersCompiledCode::No;
     beginWatchOfEffects(context, *believed, entersCompiledCode, (firstRowOfOperationsInEffectsNet + static_cast<unsigned>(operation.opcode)) | rowOfCallee << 16, watch);
+    if (entersCompiledCode == EntersCompiledCode::Yes)
+        digestVariablesThatUnitReads(*believed, watch);
     m_watchOfOperation = &watch;
 }
 
@@ -1070,13 +1096,15 @@ void RuntimeCallEmitter::beginWatchOfEffects(const OperationContext& context, co
         watch.collectionsInFront = readCollectionsForEffectsNet(nullptr);
     watch.isHeldToThrowNothing = !effects.mayThrow;
     watch.lanesNotWritten = lanesNotWrittenInEffectsNet(effects);
-    if (watch.entriesInFront && !generator().isInitializingCell())
+    if (operationAt(context.valueID()).opcode != Opcode::EndLifeOfCell)
+        watch.secondLanesNotWritten = secondLanesNotWrittenInEffectsNet(effects);
+    if (!effects.mayRunOtherCode() && !generator().isInitializingCell())
         watch.countsHeld = countsHeldInEffectsNet(effects);
     if (watch.countsHeld)
         watch.countsInFront = readCountsForEffectsNet(watch.countsHeld, nullptr);
-    if (watch.lanesNotWritten && !generator().isInitializingCell()) {
+    if ((watch.lanesNotWritten || watch.secondLanesNotWritten) && !generator().isInitializingCell()) {
         const Operation& operation = operationAt(context.valueID());
-        for (uint32_t operandIndex = 0; operandIndex < operation.numberOfOperands() && watch.numberOfDigests < watch.digests.size(); ++operandIndex) {
+        for (uint32_t operandIndex = 0; operandIndex < operation.numberOfOperands() && watch.numberOfDigests < WatchOfEffects::mostOperandsDigested; ++operandIndex) {
             ValueID operand = operation.operand(operandIndex);
             if (!operand)
                 continue;
@@ -1086,8 +1114,7 @@ void RuntimeCallEmitter::beginWatchOfEffects(const OperationContext& context, co
             LValue cell = generator().wordOf(operand);
             if (!cell || cell->type() != Machine::Int64)
                 continue;
-            std::array<LValue, 2> arguments { cell, m_out.constInt64(watch.lanesNotWritten) };
-            watch.digests[watch.numberOfDigests++] = { operandIndex, cell, emitEntryCall(nullptr, AOT::Entry::operationAOTDigestForEffectsNet, arguments, { }).first };
+            digestInFrontOfCall(watch, operandIndex, cell);
         }
     }
     if (!effects.mayThrowByRule() && watch.entriesInFront) {
@@ -1126,18 +1153,27 @@ void RuntimeCallEmitter::endWatchOfEffects(const OperationContext& context, cons
         build().statistics().count(StatisticID::CallsHeldToRunNoOtherCode);
     }
     for (const WatchOfEffects::Digest& digest : std::span(watch.digests).first(watch.numberOfDigests)) {
-        std::array<LValue, 2> arguments { digest.cell, m_out.constInt64(watch.lanesNotWritten) };
-        LValue differs = m_out.bitXor(digest.inFront, emitEntryCall(nullptr, AOT::Entry::operationAOTDigestForEffectsNet, arguments, { }).first);
-        stopAtFalseEffects(context, watch.rows, m_out.isZero64(differs), static_cast<uint32_t>(PartOfEffects::Writes) | digest.operandIndex << 16, differs);
+        LValue cell = digest.variable ? loadVariableForEffectsNet(digest.variable) : digest.cell;
+        auto ifCellIsTheSame = [&](LValue differs) {
+            return digest.variable ? m_out.select(m_out.equal(cell, digest.cell), differs, m_out.int64Zero) : differs;
+        };
+        if (digest.inFront) {
+            LValue differs = ifCellIsTheSame(m_out.bitXor(digest.inFront, digestForEffectsNet(cell, watch.lanesNotWritten)));
+            stopAtFalseEffects(context, watch.rows, m_out.isZero64(differs), static_cast<uint32_t>(PartOfEffects::Writes) | digest.operandIndex << 16, differs);
+        }
+        if (digest.secondInFront) {
+            LValue differs = ifCellIsTheSame(m_out.bitXor(digest.secondInFront, digestForEffectsNet(cell, asksForSecondDigestInEffectsNet | watch.secondLanesNotWritten)));
+            stopAtFalseEffects(context, watch.rows, m_out.isZero64(differs), static_cast<uint32_t>(PartOfEffects::Writes) | speaksOfSecondDigestInEffectsNet | digest.operandIndex << 16, differs);
+        }
     }
     if (watch.countsInFront) {
         LValue differs = m_out.bitXor(watch.countsInFront, readCountsForEffectsNet(watch.countsHeld, behind));
         stopAtFalseEffects(context, watch.rows, m_out.isZero64(differs), static_cast<uint32_t>(PartOfEffects::Writes) | noOperandInEffectsNet << 16, differs);
     }
-    if (watch.numberOfDigests || watch.countsInFront)
+    if (watch.numberOfDigests) {
         parts.append(PartOfEffects::Writes);
-    if (watch.numberOfDigests)
         build().statistics().count(StatisticID::OperandsHashedRoundCalls, watch.numberOfDigests);
+    }
     markRowsExercised(watch.rows, parts.span());
 }
 
@@ -1177,6 +1213,50 @@ LValue RuntimeCallEmitter::readWordForEffectsNet(ptrdiff_t offsetInInstance, std
     return read;
 }
 
+void RuntimeCallEmitter::digestInFrontOfCall(WatchOfEffects& watch, uint32_t operandIndex, LValue cell, VariableID variable)
+{
+    WatchOfEffects::Digest& digest = watch.digests[watch.numberOfDigests++];
+    digest = { operandIndex, cell, nullptr, nullptr, variable };
+    if (watch.lanesNotWritten)
+        digest.inFront = digestForEffectsNet(cell, watch.lanesNotWritten);
+    if (watch.secondLanesNotWritten)
+        digest.secondInFront = digestForEffectsNet(cell, asksForSecondDigestInEffectsNet | watch.secondLanesNotWritten);
+}
+
+LValue RuntimeCallEmitter::loadVariableForEffectsNet(VariableID variable)
+{
+    Machine::DeclaredAccessesSuspension suspension(m_out);
+    return emitter<StaticsEmitter>().loadVariable(variable).value;
+}
+
+void RuntimeCallEmitter::digestVariablesThatUnitReads(const Effects& effects, WatchOfEffects& watch)
+{
+    if ((!watch.lanesNotWritten && !watch.secondLanesNotWritten) || effects.mayRunOtherCode() || generator().isInitializingCell())
+        return;
+    if (!m_variablesThatUnitReads) {
+        m_variablesThatUnitReads.emplace();
+        for (uint32_t index = 0; index < m_code.numberOfValues() && m_variablesThatUnitReads->size() < m_variablesThatUnitReads->capacity(); ++index) {
+            const Operation& operation = m_code.at(ValueID(index));
+            if (operation.opcode != Opcode::GetModuleVariable || !operation.block())
+                continue;
+            VariableID variable = operation.variable();
+            PlannedVariable planned = m_plan.variable(variable);
+            if (planned.hasWordInStatics() && planned.encoding == VariableEncoding::Plain && planned.representation == SlotRepresentation::JSValue && typeOf(ValueID(index)).hasObjects() && !m_variablesThatUnitReads->contains(variable))
+                m_variablesThatUnitReads->append(variable);
+        }
+    }
+    for (VariableID variable : *m_variablesThatUnitReads) {
+        if (watch.numberOfDigests < watch.digests.size())
+            digestInFrontOfCall(watch, variableInEffectsNet | (variable.index() & (variableInEffectsNet - 1)), loadVariableForEffectsNet(variable), variable);
+    }
+}
+
+LValue RuntimeCallEmitter::digestForEffectsNet(LValue cell, uint64_t lanes)
+{
+    std::array<LValue, 2> arguments { cell, m_out.constInt64(static_cast<int64_t>(lanes)) };
+    return emitEntryCall(nullptr, AOT::Entry::operationAOTDigestForEffectsNet, arguments, { }).first;
+}
+
 LValue RuntimeCallEmitter::readCountsForEffectsNet(uint8_t counts, LValue behind)
 {
     std::array<LValue, 2> arguments { readWordForEffectsNet(AOT_INSTANCE_OFFSET(state), std::nullopt, behind), m_out.constInt64(static_cast<int64_t>(asksForCountsInEffectsNet | counts)) };
@@ -1187,6 +1267,14 @@ LValue RuntimeCallEmitter::readCollectionsForEffectsNet(LValue behind)
 {
     std::array<LValue, 1> arguments { readWordForEffectsNet(AOT_INSTANCE_OFFSET(vm), std::nullopt, behind) };
     return emitEntryCall(nullptr, AOT::Entry::operationAOTCollectionsForEffectsNet, arguments, { }).first;
+}
+
+void RuntimeCallEmitter::countStoreForEffectsNet(CountInEffectsNet count)
+{
+    if (!AOT::hasFlag(m_options.testing, Wire::TestingSwitch::CheckEffectsAtRunTime)) [[likely]]
+        return;
+    std::array<LValue, 2> arguments { readWordForEffectsNet(AOT_INSTANCE_OFFSET(state), std::nullopt, nullptr), m_out.constInt64(static_cast<int64_t>(countsStoreInEffectsNet | static_cast<uint64_t>(count))) };
+    emitEntryCall(nullptr, AOT::Entry::operationAOTDigestForEffectsNet, arguments, { });
 }
 
 void RuntimeCallEmitter::noteCallHeldToThrowNothing(uint64_t call, uint32_t rows)
@@ -1528,7 +1616,7 @@ void RuntimeCallEmitter::computeEffects(Machine::PatchOperation* patchpoint, con
             m_heaps.decoratePatchpointRead(reads.span(), patchpoint);
     }
 
-    if (effects.writes.isTop()) {
+    if (effects.writes.isTop() || readsStorageWhereItIsUsedUnder(build().options().testing)) {
         patchpoint->effects.writes = Machine::HeapSet::top();
         return;
     }

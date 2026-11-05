@@ -945,8 +945,13 @@ bool AllocationChecker::enter(Block* block)
         if (!binding.value || binding.reg.index() >= numberOfRegisters || !(maskOf(binding.reg) & m_allocatable))
             return fail(FailureKind::RegisterLacksItsValue, binding.value);
         ValueID id = idOf(binding.value);
-        if (!id || m_state[binding.reg.index()] != id)
+        if (!id)
             return fail(FailureKind::RegisterLacksItsValue, binding.value);
+        if (m_state[binding.reg.index()] != id) {
+            SpillIndex spill = binding.value->opcode() == Phi ? m_allocation.spillOf(binding.value) : noSpill;
+            if (spill >= m_spills.size() || !m_spills[spill].isSharedByPhis)
+                return fail(FailureKind::RegisterLacksItsValue, binding.value);
+        }
     }
 
     for (Operation* phi : block->phis()) {

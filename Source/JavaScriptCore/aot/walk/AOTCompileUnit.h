@@ -28,6 +28,14 @@ namespace Typed {
 
 class Walker;
 struct KeptBetweenUnits;
+
+struct EndsWalkerInRoom {
+    void operator()(Walker*) const;
+
+    bool* roomIsTaken { nullptr };
+};
+using WalkerInRoom = std::unique_ptr<Walker, EndsWalkerInRoom>;
+
 class FormatPatternPlans;
 class ScratchRealm;
 
@@ -64,6 +72,12 @@ uint16_t sourcesOfProofsCheckedUnder(Switches testing)
     return AOT::hasFlag(testing, Wire::TestingSwitch::CheckProofsAtEntries) ? atEntries : 0;
 }
 
+template<typename Switches>
+bool readsStorageWhereItIsUsedUnder(Switches testing)
+{
+    return AOT::hasFlag(testing, Wire::TestingSwitch::TestsEveryPosition) || AOT::hasFlag(testing, Wire::TestingSwitch::CheckProofsAtRunTime);
+}
+
 struct WalkOptions {
     bool takesNotes { false };
     bool verifiesCode { false };
@@ -72,10 +86,12 @@ struct WalkOptions {
     bool checksProofs { false };
     uint16_t sourcesOfProofsChecked { 0 };
     bool testsEveryPosition { false };
+    bool readsStorageWhereItIsUsed { false };
     bool takesPositionsToLieInside { false };
     bool takesCalleesToKeepNothing { false };
     bool writesBodiesStraight { false };
     bool checksEffects { false };
+    bool checksWalk { false };
     bool walksLastWalksOfLoopsAlone { false };
     bool walksLoopsThatFitAgain { false };
     bool undoLeavesExpectations { false };
@@ -176,7 +192,8 @@ public:
     const InstructionsOfSteps& instructionsOfSteps() const LIFETIME_BOUND { return m_instructionsOfSteps; }
 
 private:
-    std::unique_ptr<Walker> makeWalker();
+    enum class RoomOfFormerWalker : bool { IsLeft, IsTaken };
+    WalkerInRoom makeWalker(RoomOfFormerWalker);
     static bool append(std::optional<CompiledCode>&& code, Vector<CompiledCode, 2>& finished)
     {
         if (!code)
@@ -192,7 +209,8 @@ private:
     std::unique_ptr<ScratchRealm> m_scratchRealm;
     WalkInputs m_walkInputs;
     std::unique_ptr<KeptBetweenUnits> m_keptBetweenUnits;
-    std::unique_ptr<Walker> m_walker;
+    WalkerInRoom m_walker;
+    RoomsOfSweep m_roomsOfSweep;
     CodeGenerationTotals m_totals;
     Vector<WalkNotes> m_notes;
     InstructionsOfSteps m_instructionsOfSteps;

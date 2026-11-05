@@ -15,7 +15,15 @@ import type {
 import { nameOf, wireWordsOf } from "./model.ts";
 import { programListMemberName, rustIdentifier, rustTypeName } from "./names.ts";
 import type { EmitContext, OutputFile } from "./outputs.ts";
-import { externalPathsOf, holdsVector, idsImport, listedTypesOf, toWords } from "./rust-types.ts";
+import {
+  externalPathsOf,
+  holdsVector,
+  idsImport,
+  listedTypesOf,
+  toWords,
+  viewImports,
+  viewOfSlices,
+} from "./rust-types.ts";
 
 const scalarsStoredAsWords: ReadonlySet<ScalarKind> = new Set(["Word", "CodeWord", "UInt32", "Field"]);
 
@@ -83,7 +91,13 @@ function writeSpan(schema: Schema, element: Kind, value: string, byReference: bo
   ];
 }
 
-function writeFields(schema: Schema, fields: readonly Field[], base: string, byReference: boolean): string[] {
+function writeFields(
+  schema: Schema,
+  fields: readonly Field[],
+  base: string,
+  byReference: boolean,
+  holdsSlices = byReference,
+): string[] {
   const statements: string[] = [];
   let run: string[] = [];
   const flush = () => {
@@ -98,7 +112,7 @@ function writeFields(schema: Schema, fields: readonly Field[], base: string, byR
       statements.push(
         "{",
         ...indent([
-          ...writeSpan(schema, kind.element, value, byReference),
+          ...writeSpan(schema, kind.element, value, holdsSlices),
           "record.push(span.first);",
           "record.push(span.count);",
         ]),
@@ -115,10 +129,11 @@ function writeFields(schema: Schema, fields: readonly Field[], base: string, byR
   return statements;
 }
 
-function recordStatements(schema: Schema, record: SchemaRecord): WriterStatements {
+function recordStatements(schema: Schema, record: SchemaRecord, holdsSlices: boolean): WriterStatements {
+  const valueOf = (field: Field) => `self.${rustIdentifier(field.name)}`;
   return {
-    counts: record.wireFields.flatMap(field => countField(schema, field, `self.${rustIdentifier(field.name)}`, false)),
-    writes: writeFields(schema, record.wireFields, "self.", false),
+    counts: record.wireFields.flatMap(field => countField(schema, field, valueOf(field), holdsSlices)),
+    writes: writeFields(schema, record.wireFields, "self.", false, holdsSlices),
   };
 }
 
@@ -162,16 +177,21 @@ function variantStatements(schema: Schema, variant: Variant): WriterStatements {
 }
 
 function writerImpl(schema: Schema, type: SchemaType): string[] {
+  const view = viewOfSlices(type);
   const { counts, writes } =
-    type.tag === "Record" ? recordStatements(schema, type.record) : variantStatements(schema, type.variant);
+    type.tag === "Record"
+      ? recordStatements(schema, type.record, view !== null)
+      : variantStatements(schema, type.variant);
   const isShort = type.tag === "Record" && !holdsVector(type) && type.record.wireWords <= mostWordsOfShortRecord;
   return [
-    `impl ${rustTypeName(nameOf(type))} {`,
+    view === null ? `impl ${rustTypeName(nameOf(type))} {` : `impl<'a> ${view}<'a> {`,
     `${indentation}pub fn count_records(&self, counts: &mut ListCounts) {`,
     ...indent(counts, 2),
     `${indentation}}`,
     ...(isShort ? [`${indentation}#[inline]`] : []),
-    `${indentation}pub fn write_record<'a>(&'a self, sections: &mut SectionWriter<'a>, record: &mut Vec<u32>) {`,
+    view === null
+      ? `${indentation}pub fn write_record<'a>(&'a self, sections: &mut SectionWriter<'a>, record: &mut Vec<u32>) {`
+      : `${indentation}pub fn write_record(&self, sections: &mut SectionWriter<'a>, record: &mut Vec<u32>) {`,
     ...indent(writes, 2),
     `${indentation}}`,
     "}",
@@ -192,6 +212,7 @@ function recordWriterRs(schema: Schema): string[] {
     ...externalPathsOf(types).map(path => `use ${path};`),
     idsImport,
     "use crate::ir::sections::{ListCounts, SectionWriter, WireSpan};",
+    ...viewImports(types),
     "",
     ...blocks(...types.map(type => writerImpl(schema, type))),
   ];

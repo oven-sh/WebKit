@@ -996,6 +996,27 @@ static bool structuresBelowClassOfReceiverAreKept(const BoxedCallHandler& handle
 
 enum class MethodIsRead : uint8_t { AtTheCall, InFrontOfTheCall };
 
+static void askAgainWhatReceiverFinds(StubAssembler& jit, BoxedCallForm form, MethodIsRead methodIsRead)
+{
+    if (!jit.options().checksWalk || !boxedCallHandlers[static_cast<unsigned>(form)].receiverTypes)
+        return;
+    jit.preservingCallerSavedRegisters(false, [&](unsigned) {
+        const GPRReg A0 = jit.savedScratch(StubRegister::A0);
+        const GPRReg A1 = jit.savedScratch(StubRegister::A1);
+        const GPRReg A2 = jit.savedScratch(StubRegister::A2);
+        const GPRReg A3 = jit.savedScratch(StubRegister::A3);
+        jit.subPtr(TrustedImm32(2 * sizeof(CPURegister)), sp);
+        jit.storePair64(thisGPR, calleeGPR, sp, TrustedImm32(0));
+        jit.loadPair64(sp, TrustedImm32(0), A1, A2);
+        jit.addPtr(TrustedImm32(2 * sizeof(CPURegister)), sp);
+        if (methodIsRead == MethodIsRead::AtTheCall)
+            jit.move(TrustedImm64(JSValue::encode(JSValue())), A2);
+        jit.move(instanceGPR, A0);
+        jit.move(TrustedImm32(static_cast<int32_t>(form)), A3);
+        jit.callOperation(Entry::operationAOTStopAtStaleMemberOfBuiltinClass, jit.savedScratch(StubRegister::Operation));
+    });
+}
+
 static void branchIfMethodMayHaveBeenReplaced(StubAssembler& jit, BoxedCallForm form, GPRReg scratch, JumpList& mayHaveBeenReplaced)
 {
     if (!jit.options().methodsOfBuiltinsMayBeReplaced)
@@ -1014,10 +1035,13 @@ static void branchUnlessReceiverFindsBuiltin(StubAssembler& jit, const BoxedCall
     if (entryForProvenClass)
         jit.bindEntry(*entryForProvenClass);
     branchIfMethodMayHaveBeenReplaced(jit, handler.form, scratch, looksUp);
-    if (!receiverOfBoxedCallIsObject(handler.form))
+    if (!receiverOfBoxedCallIsObject(handler.form)) {
+        askAgainWhatReceiverFinds(jit, handler.form, methodIsRead);
         return;
+    }
     if (methodIsRead == MethodIsRead::InFrontOfTheCall || !structuresBelowClassOfReceiverAreKept(handler)) {
         looksUp.append(branchIfNotPristine(jit, thisGPR));
+        askAgainWhatReceiverFinds(jit, handler.form, methodIsRead);
         return;
     }
     Jump isAsMade = jit.branchTest8(CCallHelpers::NonZero, Address(thisGPR, JSCell::typeInfoFlagsOffset()), TrustedImm32(IsPristine));
@@ -1027,6 +1051,7 @@ static void branchUnlessReceiverFindsBuiltin(StubAssembler& jit, const BoxedCall
     jit.load32(BaseIndex(instanceGPR, scratch, CCallHelpers::TimesFour, AOT_INSTANCE_OFFSET(propertyCaches.structuresBelowBuiltinClasses)), scratch);
     looksUp.append(jit.branch32(CCallHelpers::NotEqual, scratch, Address(thisGPR, JSCell::structureIDOffset())));
     isAsMade.link(&jit);
+    askAgainWhatReceiverFinds(jit, handler.form, methodIsRead);
 }
 
 void generateTryCallMethodOfBuiltinClass(StubAssembler& jit)
@@ -1226,6 +1251,38 @@ void generateStringIndexOf(StubAssembler& jit)
     emitStringOperationAtPositionZero(jit, Entry::operationAOTStringIndexOfFrom, [&] {
         boxInt32(jit, jit.result(), jit.result());
     });
+}
+
+static void returnSizeOfTableOrGoOnIn(StubAssembler& jit, StubKey readOfAnyName)
+{
+    const GPRReg receiver = jit.operand(0);
+    const GPRReg scratch = jit.allocateScratch(StubRegister::T11);
+    if (receiver != thisGPR)
+        jit.move(receiver, thisGPR == jit.result() ? thisGPR : jit.clobberRegister(thisGPR));
+    JumpList goesOn;
+    for (BoxedCallForm form : { BoxedCallForm::MapSize, BoxedCallForm::SetSize }) {
+        const BoxedCallHandler& handler = boxedCallHandlers[static_cast<size_t>(form)];
+        RELEASE_ASSERT(handler.form == form && handler.receiverTypes);
+        JumpList isOfOtherKind;
+        branchUnlessReceiverFindsBuiltin(jit, handler, MethodIsRead::AtTheCall, scratch, isOfOtherKind);
+        handler.emit(jit, scratch, goesOn);
+        isOfOtherKind.link(&jit);
+    }
+    goesOn.link(&jit);
+    jit.jumpToStub(readOfAnyName);
+}
+
+StubSignature signatureOfGetSizeOfTable(StubKey) { return signatureOf(getById()); }
+StubSignature signatureOfReadSizeOfTableAtSite(StubKey key) { return signatureOf(readAtSite(ReceiverAtSite::IsAnyValue, static_cast<NameAtSite>(key.form()))); }
+
+void generateGetSizeOfTable(StubAssembler& jit)
+{
+    returnSizeOfTableOrGoOnIn(jit, getById());
+}
+
+void generateReadSizeOfTableAtSite(StubAssembler& jit)
+{
+    returnSizeOfTableOrGoOnIn(jit, readAtSite(ReceiverAtSite::IsAnyValue, static_cast<NameAtSite>(jit.key().form())));
 }
 
 } } // namespace JSC::AOT

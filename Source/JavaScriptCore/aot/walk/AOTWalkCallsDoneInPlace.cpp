@@ -196,6 +196,9 @@ static bool buildForwardedCall(Walker& walker, const BodyValue& call, const Draf
     if (list && isNullishType(walker.typeOf(list)))
         list = { };
     std::optional<Vector<Reference, 8>> elements;
+    if (list && walker.walksBodyBehindEntry() && !hasKind(types, walker.typeOf(list), OperandKind::Array)
+        && passOnOwnArgumentsByCount(walker, call, written, callee, row.operands.thisValue ? operandOfForwardedCall(written, *row.operands.thisValue) : Reference(), list))
+        return true;
     if (list && !hasKind(types, walker.typeOf(list), OperandKind::Array)) {
         if (Reference standing = listStandingForFreshArguments(walker, list))
             list = standing;
@@ -382,6 +385,10 @@ static void makeListForCallAsWritten(Walker& walker, const BodyValue& call, cons
     again.inputValueGiven = { };
     if (elements)
         again.setElementsOperands(elements->span());
+    if (again.opcode == Opcode::CreateUnmappedArguments && walker.walksBodyBehindEntry()) {
+        if (Reference list = walker.makeHiddenListOfEntryAgain())
+            again.setRestOperand(list);
+    }
     walker.chooseConservativeFields(again);
     Reference made = walker.build(WTF::move(again));
     if (!made)

@@ -69,8 +69,8 @@ private:
     TypeID typeAtEntryOfFunction(unsigned entryParameter);
     Reference proveOrTrap(Reference value, TypeID promised);
     Reference inFormThatUnitTakes(Reference operand, CodeUnit target, unsigned entryParameter);
-    void layOutOperands(const ValuesHandedOnByEntries&, CodeUnit target, Vector<Reference, 16>& operands);
-
+    enum class ListsOfArguments : uint8_t { AreMade, AreLeftOut };
+    void layOutOperands(const ValuesHandedOnByEntries&, CodeUnit target, Vector<Reference, 16>& operands, ListsOfArguments = ListsOfArguments::AreMade);
     Reference callUnit(CodeUnit target, std::span<const Reference> operands, bool isConstruction = false);
     void returnResultOf(Reference call);
 
@@ -310,7 +310,7 @@ Reference BuilderOfEntries::inFormThatUnitTakes(Reference operand, CodeUnit targ
     return operand;
 }
 
-void BuilderOfEntries::layOutOperands(const ValuesHandedOnByEntries& values, CodeUnit target, Vector<Reference, 16>& operands)
+void BuilderOfEntries::layOutOperands(const ValuesHandedOnByEntries& values, CodeUnit target, Vector<Reference, 16>& operands, ListsOfArguments lists)
 {
     unsigned numberOfPositionalParameters = m_function.numberOfPositionalParameters();
     unsigned numberOfEntryParameters = m_function.numberOfEntryParameters();
@@ -342,10 +342,19 @@ void BuilderOfEntries::layOutOperands(const ValuesHandedOnByEntries& values, Cod
             operand = numberOfArgumentsFrom(m_firstSourceArgument);
             break;
         case EntryParameter::Parameter:
+            if (nextParameter >= numberOfPositionalParameters && lists == ListsOfArguments::AreLeftOut) {
+                ++nextParameter;
+                operands.append(Reference());
+                continue;
+            }
             operand = nextParameter < numberOfPositionalParameters ? values.positionalArguments[nextParameter] : listOfArgumentsBehindParameters();
             ++nextParameter;
             break;
         case EntryParameter::HiddenRest:
+            if (lists == ListsOfArguments::AreLeftOut) {
+                operands.append(Reference());
+                continue;
+            }
             operand = listOfArgumentsBehindParameters();
             break;
         }
@@ -508,6 +517,17 @@ bool BuilderOfEntries::buildGenericEntry()
     }
 
     Vector<Reference, 16> operands;
+    BlockID whereListsAreNamed = m_unit.role == CodeRole::GenericCallEntry && m_walker.plan().genericCallEntryWalksBody(m_unit.function)
+        ? blockWhereListsOfArgumentsAreFirstNamed(m_program, m_walker.facts().bodies(), m_unit.function) : BlockID();
+    if (whereListsAreNamed) {
+        layOutOperands(values, entry.target, operands, ListsOfArguments::AreLeftOut);
+        if (m_cannotGoOn)
+            return !m_walker.hasFailed();
+        return m_walker.walkBodyBehindEntry(operands.span(), whereListsAreNamed, scopedLambda<Reference(unsigned)>([&](unsigned entryParameter) {
+            m_cannotGoOn = false;
+            return inFormThatUnitTakes(listOfArgumentsBehindParameters(), entry.target, entryParameter);
+        }));
+    }
     layOutOperands(values, entry.target, operands);
     Reference result = callUnit(entry.target, operands.span(), entry.allocatesThis);
     if (entry.allocatesThis)

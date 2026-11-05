@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTClosureTestEmitter.h"
 #include "AOTConstantEmitter.h"
 #include "AOTHintEmitter.h"
 #include "AOTSlotEmitter.h"
@@ -74,6 +75,15 @@ void BindingEmitter::generateGetModuleVariable(const ValueContext& value)
 {
     VariableID variable = value->variable();
     PlannedVariable planned = m_plan.variable(variable);
+    if (value->givesWordAsItLies()) {
+        if (planned.hasWordInStatics())
+            define(value, emitter<StaticsEmitter>().loadVariable(variable));
+        else if (m_plan.hasClosureCell(planned.function))
+            define(value, boxCell(emitter<ClosureTestEmitter>().closureIfCreated(planned.function)));
+        else
+            define(value, boxedConstant(JSValue()));
+        return;
+    }
     switch (planned.storage) {
     case VariableStorage::Statics:
         break;

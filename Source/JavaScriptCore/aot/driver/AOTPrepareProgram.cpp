@@ -113,7 +113,7 @@ static bool planPreparedProgram(PreparedProgram& prepared, BuildContext& build)
         return false;
 
     runLanes(build.parallelLoops(), {
-        [&] { prepared.stubCatalog = makeUniqueWithoutFastMallocCheck<const StubCatalog>(StubOptions::from(build.recordedOptions(), program, facts.hasOneInstance(), facts.matchesRegExps(), facts.mayReadLegacyRegExpStatics(), AOT::hasFlag(build.options().testing, Wire::TestingSwitch::CheckProofsAtRunTime))); },
+        [&] { prepared.stubCatalog = makeUniqueWithoutFastMallocCheck<const StubCatalog>(StubOptions::from(build.recordedOptions(), program, facts.hasOneInstance(), facts.matchesRegExps(), facts.mayReadLegacyRegExpStatics(), AOT::hasFlag(build.options().testing, Wire::TestingSwitch::CheckProofsAtRunTime), AOT::hasFlag(build.options().testing, Wire::TestingSwitch::CheckWalkAtRunTime))); },
         [&] { prepared.facts->freeListsOfSummariesNotKeptForWalk(build.parallelLoops()); },
     });
     times.didFinish("make the stub catalog"_s);
@@ -122,7 +122,7 @@ static bool planPreparedProgram(PreparedProgram& prepared, BuildContext& build)
 
 static void makeCompileInputsOfPreparedProgram(PreparedProgram& prepared, BuildContext& build)
 {
-    PhaseTimes times(build, Stage::GenerateCode);
+    PhaseTimes times(build, Stage::PlanSlots);
     CurrentWorkScope work("compile: inputs"_s);
 
     prepared.heaps = makeUniqueWithoutFastMallocCheck<const AOTHeaps>();

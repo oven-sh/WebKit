@@ -347,6 +347,7 @@ void encodeStaticsTables(TableEncoder& encoder)
         return ClassGuardCountData { statics.guardsOfClassGuardCounts[index].bit, statics.guardsOfClassGuardCounts[index].offsetOfCount };
     }));
     encoder.part.setTable(ProgramTableIndex::namesOfClassGuards, collectBitsOfNamesOfClassGuards(encoder));
+    encoder.part.setTable(ProgramTableIndex::classesBelowWithGuardsOfNames, collectClassesBelowWithGuardsOfNames(encoder));
     encodeTableOfGlobalBindings(encoder);
 }
 

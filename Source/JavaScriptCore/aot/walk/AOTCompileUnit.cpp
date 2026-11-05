@@ -50,10 +50,12 @@ WalkOptions walkOptionsOf(const BuildContext& build)
         .checksProofs = !!sourcesOfProofsCheckedUnder(options.testing),
         .sourcesOfProofsChecked = sourcesOfProofsCheckedUnder(options.testing),
         .testsEveryPosition = AOT::hasFlag(options.testing, Wire::TestingSwitch::TestsEveryPosition),
+        .readsStorageWhereItIsUsed = readsStorageWhereItIsUsedUnder(options.testing),
         .takesPositionsToLieInside = AOT::hasFlag(options.testing, Wire::TestingSwitch::PositionsAreTakenToLieInside),
         .takesCalleesToKeepNothing = AOT::hasFlag(options.testing, Wire::TestingSwitch::NoCalleeKeepsWhatItIsHanded),
         .writesBodiesStraight = AOT::hasFlag(options.testing, Wire::TestingSwitch::WritesBodiesStraight),
         .checksEffects = AOT::hasFlag(options.testing, Wire::TestingSwitch::CheckEffectsAtRunTime),
+        .checksWalk = AOT::hasFlag(options.testing, Wire::TestingSwitch::CheckWalkAtRunTime),
         .walksLastWalksOfLoopsAlone = options.walksLastWalksOfLoopsAlone,
         .walksLoopsThatFitAgain = options.walksLoopsThatFitAgain,
         .undoLeavesExpectations = AOT::hasFlag(options.testing, Wire::TestingSwitch::UndoLeavesExpectations),
@@ -235,13 +237,13 @@ static ClosuresThatCalledParametersHold findClosuresThatCalledParametersHold(con
 static String findOperationThatLinkHasNotCounted(const WalkInputs& inputs, TypeArena& types, const Code& code)
 {
     CodeUnit unit = code.unit();
-    if (unit.role != CodeRole::Body || unitDoesMoreThanBodyForKnownEffects(inputs.plan, unit.function))
+    if ((unit.role != CodeRole::Body && !code.isEntryThatWalksBody()) || unitDoesMoreThanBodyForKnownEffects(inputs.plan, unit.function))
         return { };
     const LinkTables& tables = inputs.facts.linked();
     const LinkedFunction& linked = tables.function(unit.function);
     Effects counted = linked.effectsOnReturn();
     counted.merge(linked.effectsOnThrow());
-    const LinkedEffectsGivenArguments* given = tables.known.findEffectsGivenArguments(unit.function);
+    const LinkedEffectsGivenArguments* given = code.isEntryThatWalksBody() ? nullptr : tables.known.findEffectsGivenArguments(unit.function);
     Effects countedGivenArguments = given ? given->onReturn : Effects::none();
     if (given)
         countedGivenArguments.merge(given->onThrow);
@@ -256,7 +258,7 @@ static String findOperationThatLinkHasNotCounted(const WalkInputs& inputs, TypeA
         leftToCaller = findClosuresThatCalledParametersHold(inputs, types, code, given->parametersCalled);
     for (uint32_t index = 0; index < code.numberOfValues(); ++index) {
         const Operation& operation = code.at(ValueID(index));
-        if (!operation.block() || operation.traits().mayCallUnknownCode())
+        if (!operation.block() || operation.traits().mayCallUnknownCode() || (code.isEntryThatWalksBody() && operation.opcode == Opcode::CreateRest))
             continue;
         String part = findPartThatLinkHasNotCounted(code, operation, counted);
         ASCIILiteral summary = "Link's effects of the function"_s;
@@ -360,16 +362,19 @@ CompileWorker::CompileWorker(const CompileInputs& inputs, BuildContext& build, T
     , m_arena(makeUniqueWithoutFastMallocCheck<Machine::Arena>())
     , m_scratchRealm(makeUniqueWithoutFastMallocCheck<ScratchRealm>())
     , m_walkInputs(withRealmOfCompileWorker(inputs.walk, m_scratchRealm.get()))
-    , m_keptBetweenUnits(makeUnique<KeptBetweenUnits>())
-    , m_walker(makeWalker())
+    , m_keptBetweenUnits(makeUnique<KeptBetweenUnits>(m_walkInputs, m_types))
+    , m_walker(makeWalker(RoomOfFormerWalker::IsLeft))
 {
 }
 
 CompileWorker::~CompileWorker() = default;
 
-std::unique_ptr<Walker> CompileWorker::makeWalker()
+WalkerInRoom CompileWorker::makeWalker(RoomOfFormerWalker room)
 {
-    return makeUniqueWithoutFastMallocCheck<Walker>(m_walkInputs, m_types, m_inputs.walk.arrivals, *m_keptBetweenUnits);
+    WalkerInRoom walker = m_keptBetweenUnits->makeWalker(m_walkInputs, m_types, m_inputs.walk.arrivals);
+    if (room == RoomOfFormerWalker::IsTaken)
+        walker->takeRoomOf(*m_walker);
+    return walker;
 }
 
 bool CompileWorker::walkAndSweep(CodeUnit unit)
@@ -378,10 +383,11 @@ bool CompileWorker::walkAndSweep(CodeUnit unit)
     CurrentWorkScope work(inputs.program, unit.function, "walk"_s);
 
     m_types.reset();
-    m_walker = makeWalker();
+    if (m_walker->hasBegunUnit())
+        m_walker = makeWalker(RoomOfFormerWalker::IsTaken);
     bool isWalked = m_walker->walk(unit);
     if (isWalked && m_walker->hasLastWalksOfLoopsToWalkAlone()) {
-        std::unique_ptr<Walker> first = std::exchange(m_walker, makeWalker());
+        WalkerInRoom first = std::exchange(m_walker, makeWalker(RoomOfFormerWalker::IsLeft));
         isWalked = m_walker->walkLastWalksOfLoopsAlone(*first);
     }
     Code& code = m_walker->code();
@@ -389,7 +395,39 @@ bool CompileWorker::walkAndSweep(CodeUnit unit)
         m_build.diagnostics().append(m_walker->takeReports());
         reportFailureOfCompileUnit(m_build, unit, m_walker->kindOfFailure(), m_walker->failure());
         return false;
-    } else if (uint32_t guesses = m_walker->numberOfGuessesOpened()) {
+    }
+    RELEASE_ASSERT(code.unit() == unit);
+
+    if (inputs.options.verifiesCode) {
+        work.setStep("verify"_s);
+        if (!verifyCodeOfCompileUnit(inputs, m_build, m_types, m_walker->positions(), code)) {
+            m_build.diagnostics().append(m_walker->takeReports());
+            return false;
+        }
+    }
+
+    work.setStep("sweep"_s);
+    SweepTotals swept = Sweep(m_roomsOfSweep).run(SweepInputs { inputs.program, inputs.facts, inputs.plan, m_types }, code);
+
+    if (inputs.options.verifiesCode && code.holdsFrameCells()) {
+        work.setStep("verify"_s);
+        if (!verifyFrameCellsOfCompileUnit(inputs, m_build, m_types, code)) {
+            m_build.diagnostics().append(m_walker->takeReports());
+            return false;
+        }
+    }
+
+    m_walker->handOverArrivals();
+    m_build.diagnostics().append(m_walker->takeReports());
+    m_build.statistics().count(StatisticID::OperationsSwept, swept.operationsSwept);
+    m_build.statistics().count(StatisticID::ValuesWalked, m_walker->numberOfValuesWalked());
+    m_build.statistics().count(StatisticID::ValuesWalkedAndKept, m_walker->numberOfValuesWalkedAndKept());
+    m_build.statistics().count(StatisticID::WalksOfLoops, m_walker->numberOfWalksOfLoops());
+    m_build.statistics().count(StatisticID::WalksOfLoopsUndone, m_walker->numberOfWalksOfLoopsUndone());
+    m_build.statistics().count(StatisticID::PurchasesOfLoopsThatFailed, m_walker->numberOfPurchasesOfLoopsThatFailed());
+    m_build.statistics().count(StatisticID::OperationsBuilt, code.numberOfValues());
+    m_build.statistics().count(StatisticID::CallsInlined, code.inlineFrames().size() - 1);
+    if (uint32_t guesses = m_walker->numberOfGuessesOpened()) {
         m_build.statistics().count(StatisticID::TestsThatRejoin, guesses);
         m_build.statistics().count(StatisticID::LoopsBuiltTwice, m_walker->numberOfLoopsBuiltTwice());
         m_build.statistics().count(StatisticID::TurnsThatBeginAgain, m_walker->numberOfTurnsThatBeginAgain());
@@ -410,33 +448,12 @@ bool CompileWorker::walkAndSweep(CodeUnit unit)
         m_build.statistics().count(StatisticID::ProofsThatNoTestTells, m_walker->numberOfProofsThatNoTestTells());
         m_build.statistics().count(StatisticID::FreshCellsLeftAloneAtReturns, m_walker->numberOfFreshCellsLeftAloneAtReturns());
     }
+    if (uint32_t answered = m_walker->numberOfChecksThatWalkAnswers())
+        m_build.statistics().count(StatisticID::ChecksThatWalkAnswers, answered);
     if (uint32_t told = m_walker->numberOfProofsThatFormTells())
         m_build.statistics().count(StatisticID::ProofsThatFormTells, told);
     if (uint32_t doors = m_walker->numberOfDoorsThatCanNeverPass())
         m_build.statistics().count(StatisticID::DoorsThatCanNeverPass, doors);
-    RELEASE_ASSERT(code.unit() == unit);
-    m_build.diagnostics().append(m_walker->takeReports());
-
-    if (inputs.options.verifiesCode) {
-        work.setStep("verify"_s);
-        if (!verifyCodeOfCompileUnit(inputs, m_build, m_types, m_walker->positions(), code))
-            return false;
-    }
-
-    work.setStep("sweep"_s);
-    SweepTotals swept = Sweep().run(SweepInputs { inputs.program, inputs.facts, inputs.plan, m_types }, code);
-    m_build.statistics().count(StatisticID::OperationsSwept, swept.operationsSwept);
-    m_build.statistics().count(StatisticID::ValuesWalked, m_walker->numberOfValuesWalked());
-    m_build.statistics().count(StatisticID::WalksOfLoops, m_walker->numberOfWalksOfLoops());
-    m_build.statistics().count(StatisticID::WalksOfLoopsUndone, m_walker->numberOfWalksOfLoopsUndone());
-    m_build.statistics().count(StatisticID::OperationsBuilt, code.numberOfValues());
-    m_build.statistics().count(StatisticID::CallsInlined, code.inlineFrames().size() - 1);
-
-    if (inputs.options.verifiesCode && code.holdsFrameCells()) {
-        work.setStep("verify"_s);
-        if (!verifyFrameCellsOfCompileUnit(inputs, m_build, m_types, code))
-            return false;
-    }
 
     if (inputs.options.takesNotes && notesAreTakenOfCompileUnit(unit.role)) {
         WalkNotes notes = notesOfSweptCode(m_types, code, AOT::hasFlag(m_build.options().reports, Wire::ReportSet::AccessCounts));
@@ -613,7 +630,7 @@ static bool isWrittenStraight(const WalkInputs& inputs, CodeUnit unit, const Bod
         Opcode::GetModuleVariable, Opcode::PutModuleVariable, Opcode::TypeTest, Opcode::ThrowModuleFailure, Opcode::EvaluateModule, Opcode::RecordRequire, Opcode::RequireModule,
         Opcode::NewClosure, Opcode::NewRegExp, Opcode::NewClass, Opcode::NewClassToken, Opcode::ResolveHeritage, Opcode::DefineMethod, Opcode::FinishClass,
     };
-    if ((unit.role != CodeRole::SlowBody && unit.role != CodeRole::Body) || inputs.facts.isTakenToRunOnce(unit.function))
+    if ((unit.role != CodeRole::SlowBody && unit.role != CodeRole::Body) || (inputs.facts.isTakenToRunOnce(unit.function) && !isBodyWrittenInAnotherFile(inputs.program, unit.function)))
         return false;
     if (inputs.plan.promotedEnvironments().isMaker(unit.function) || inputs.plan.promotedEnvironments().numberOfRemovedCapturesOf(unit.function))
         return false;
@@ -633,6 +650,7 @@ std::optional<CompiledCode> CompileWorker::compileStraight(CodeUnit unit)
     const BodyIndex* index = m_inputs.walk.facts.bodies().find(unit.function);
     if (!index || !isWrittenStraight(m_inputs.walk, unit, *index) || !hasStraightForm(m_inputs.generation, unit, *index))
         return std::nullopt;
+    m_types.reset();
     if (!entryBlockStoresVariablesInFrontOfTheirFirstReaders(m_inputs.walk, unit, *index) || readsVariableOfAnotherFileStoredFirst(m_inputs.walk, unit, *index))
         return std::nullopt;
     if (!storesOnlyWhatFitsByItsMaking(m_inputs.walk, m_types, *index) || !m_inputs.walk.facts.summaries().at(unit.function).scopesStoredFirst.isEmpty())

@@ -579,6 +579,11 @@ static void checkClobbersOfRegisterVariants(const StubCatalog& catalog)
         AOT_TEST_CHECK(catalog.clobberedByRegisterVariantsOf(key) == clobbered);
     });
     AOT_TEST_CHECK(numberOfKeysWithVariants);
+#if CPU(X86_64)
+    for (GPRReg kept : { X86Registers::ecx, X86Registers::edx, X86Registers::esi, X86Registers::edi })
+        AOT_TEST_CHECK(!containsRegister(catalog.summaryOf(getByIdKeepingRegisters()).clobbered, kept));
+    AOT_TEST_CHECK(catalog.summaryOf(getById()).clobbered.subsumes(catalog.summaryOf(getByIdKeepingRegisters()).clobbered));
+#endif
 }
 
 static void checkClobbersBesideResults(const StubCatalog& catalog)

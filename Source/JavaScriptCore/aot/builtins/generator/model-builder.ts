@@ -392,6 +392,7 @@ export class ModelBuilder {
       constant: null,
       isAddedAtFirstRead: false,
       isAddedAsEnumerable: false,
+      isCreatedInSomeRuns: false,
       hostNumber: noHostNumber,
       attachments: createAttachments(),
     };

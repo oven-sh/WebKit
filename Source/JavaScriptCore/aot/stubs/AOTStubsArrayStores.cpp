@@ -61,7 +61,10 @@ static void emitStoreInsideVector(StubAssembler& jit, GPRReg kind, GPRReg butter
     callsOperation.append(jit.jump());
 
     isInt32Shape.link(&jit);
-    callsOperation.append(jit.branchIfNotInt32(value));
+    Jump isInteger = jit.branchIfInt32(value);
+    callsOperation.append(jit.branchIfNumber(value));
+    widenStorageOfIntegersForAnyValue(jit, array, kind, callsOperation);
+    isInteger.link(&jit);
     isContiguousShape.link(&jit);
     loadVector();
     jit.store64(value, BaseIndex(butterfly, position, CCallHelpers::TimesEight));
@@ -105,7 +108,11 @@ void generateArrayPutAtIndex(StubAssembler& jit)
     jit.jump().linkTo(start, &jit);
 
     callsOperation.link(&jit);
-    Entry operation = storedValueOf(jit) == ArrayStoredValue::Number ? Entry::operationAOTArrayPutNumberAtIndex : Entry::operationAOTArrayPutAtIndex;
+    Entry operation = Entry::operationAOTArrayPutAtIndex;
+    if (storedValueOf(jit) == ArrayStoredValue::Number)
+        operation = Entry::operationAOTArrayPutNumberAtIndex;
+    else if (storedValueOf(jit) == ArrayStoredValue::ValueInSloppyCode)
+        operation = Entry::operationAOTArrayPutAtIndexInSloppyCode;
     jit.callOperationAndReturn(operation, { .returns = OperationCall::Returns::Void, .saves = OperationCall::Saves::CallerSavedRegisters });
 }
 

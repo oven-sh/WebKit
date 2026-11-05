@@ -170,6 +170,101 @@ static void testMembersOfClassesFarAboveAreFoundByTheirKeys()
     AOT_TEST_CHECK(growsAsSizeDoes(smaller, large));
 }
 
+static void testMemberAboveLongRowIsTheOneThatWalkUpRowFinds()
+{
+    constexpr unsigned lengthOfRow = 24;
+    constexpr unsigned numberOfSiblings = 20;
+    constexpr unsigned numberOfKeys = 6;
+    Vector<std::optional<unsigned>> bases;
+    for (unsigned number = 0; number < lengthOfRow; ++number)
+        bases.append(number ? std::optional<unsigned>(number - 1) : std::nullopt);
+    for (unsigned number = 0; number < numberOfSiblings; ++number)
+        bases.append(1 + number % 12);
+    unsigned footOfSide = static_cast<unsigned>(bases.size()) + lengthOfRow - 1;
+    for (unsigned number = 0; number < lengthOfRow; ++number)
+        bases.append(number ? static_cast<unsigned>(bases.size()) - 1 : 4);
+
+    StringBuilder text;
+    for (unsigned number = 0; number < bases.size(); ++number) {
+        text.append("layout L"_s, number, " kind=Instance name=\"C"_s, number, "\" module=m0"_s);
+        if (bases[number])
+            text.append(" base=L"_s, *bases[number], " supertypes=[L"_s, *bases[number], "] flags=[HasHeritage]"_s);
+        text.append('\n');
+    }
+    text.append("module m0 path=\"main.js\" displayPath=\"main.js\" body=f0\nentry module=m0\n"_s);
+    text.append("function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {\n  b0():\n    v0 = Builtin builtin=GlobalThis\n"_s);
+    for (unsigned number = 0; number < numberOfKeys; ++number)
+        text.append("    v"_s, number + 1, " = PropGet v0 key=\"member"_s, number, "\"\n"_s);
+    text.append("    Return v1\n}\n"_s);
+
+    runOnBuildThread([&] {
+        BuildContext build(makeOptionsOfTestedProgram());
+        std::unique_ptr<Program> program = parseProgram(withStandInLibrary(text.toString()), build);
+        AOT_TEST_CHECK(program);
+        LinkTables tables = conservativeLinkTables(*program);
+        Vector<PropertyKeyID> keys(numberOfKeys, [&](size_t number) {
+            StringID name = program->strings.find(encodeProgramString(makeString("member"_s, number)).span());
+            return program->types.find(PropertyKey { .kind = PropertyKeyKind::Text, .text = name }).value_or(PropertyKeyID());
+        });
+        for (uint32_t number = 0; number < bases.size(); ++number) {
+            tables.layouts[number].listsEveryMemberAbove = true;
+            tables.layouts[number].listsEveryStaticMember = true;
+            tables.layouts[number].hasConstructorFunctionInRow = false;
+        }
+        auto append = [&](unsigned classLayout, ClassSide side, MethodKind kind, unsigned key) {
+            LinkedMember member;
+            member.classLayout = LayoutID(classLayout);
+            member.side = side;
+            member.kind = kind;
+            member.key = keys[key];
+            member.function = FunctionID(static_cast<uint32_t>(tables.members.size()) + 1);
+            member.everyWriterIsKnown = true;
+            tables.members.append(member);
+        };
+        for (ClassSide side : { ClassSide::Prototype, ClassSide::Static }) {
+            append(0, side, MethodKind::Method, 0);
+            append(9, side, MethodKind::Method, 0);
+            append(0, side, MethodKind::Method, 1);
+            for (unsigned number = 0; number < numberOfSiblings; ++number)
+                append(lengthOfRow + number, side, MethodKind::Method, 1);
+            append(footOfSide - 3, side, MethodKind::Method, 1);
+            append(0, side, MethodKind::Getter, 2);
+            append(0, side, MethodKind::Setter, 2);
+            append(9, side, MethodKind::Getter, 2);
+            append(lengthOfRow - 1, side, MethodKind::Method, 3);
+            append(footOfSide, side, MethodKind::Method, 3);
+        }
+        append(2, ClassSide::Prototype, MethodKind::Method, 4);
+        append(20, ClassSide::Static, MethodKind::Method, 4);
+        std::ranges::sort(tables.members, { }, [](const LinkedMember& member) {
+            return std::tuple { member.classLayout, member.side, member.function };
+        });
+        tables.indexMembersByKey(*program);
+
+        auto walkUpRow = [&](LayoutID layout, ClassSide side, PropertyKeyID key) {
+            MemberFound found { MemberFound::Kind::Nothing, { }, { }, { } };
+            for (LayoutID current = layout; current && found.kind == MemberFound::Kind::Nothing; current = program->at(current).base) {
+                for (const LinkedMember& member : tables.members) {
+                    if (member.classLayout != current || member.side != side || member.key != key)
+                        continue;
+                    (member.kind == MethodKind::Method ? found.method : member.kind == MethodKind::Getter ? found.getter : found.setter) = member.function;
+                    found.kind = member.kind == MethodKind::Method ? MemberFound::Kind::Method : MemberFound::Kind::Accessor;
+                }
+            }
+            return found;
+        };
+        for (uint32_t number = 0; number < bases.size(); ++number) {
+            for (ClassSide side : { ClassSide::Prototype, ClassSide::Static }) {
+                for (PropertyKeyID key : keys) {
+                    MemberFound found = tables.findMember(*program, LayoutID(number), side, key);
+                    MemberFound expected = walkUpRow(LayoutID(number), side, key);
+                    AOT_TEST_CHECK(found.kind == expected.kind && found.method == expected.method && found.getter == expected.getter && found.setter == expected.setter);
+                }
+            }
+        }
+    });
+}
+
 static void testEachOfManyEffectsIsKeptOnceAndStaysWhereItLies()
 {
     constexpr uint32_t numberOfEffects = 100000;
@@ -220,6 +315,42 @@ static void testPlanGrowsAsMembersOfClassDo()
     InstructionCounts::begin();
     std::optional<uint64_t> smaller = instructionsOfPlanForGrowthTests(classWithManyMethodsForGrowthTests(numberOfMethods));
     std::optional<uint64_t> large = instructionsOfPlanForGrowthTests(classWithManyMethodsForGrowthTests(4 * numberOfMethods));
+    AOT_TEST_CHECK(growsAsSizeDoes(smaller, large));
+}
+
+static String rowOfClassesWithFieldEachForGrowthTests(unsigned numberOfClasses)
+{
+    StringBuilder text;
+    text.append("layout L0 kind=Instance name=\"C0\" module=m0 constructor=f1 fields=[{key=\"f0\" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1\n"_s);
+    for (unsigned number = 1; number < numberOfClasses; ++number) {
+        text.append("layout L"_s, number, " kind=Instance name=\"C"_s, number, "\" module=m0 base=L"_s, number - 1, " constructor=f"_s, number + 1);
+        text.append(" fields=[{key=\"f"_s, number, "\" declared={type=anything} flags=[IsRequired]}] supertypes=[L"_s, number - 1, "] flags=[HasHeritage] ownFieldCount=1\n"_s);
+    }
+    text.append("module m0 path=\"main.js\" displayPath=\"main.js\" body=f0\nentry module=m0\n"_s);
+    text.append("function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {\n  b0():\n    v0 = Builtin builtin=GlobalThis\n    v1 = PropGet v0 key=\"sink\" [isFreeName]\n"_s);
+    text.append("    v2 = NewClosure function=f1\n    v3 = NewClass v2 layout=L0\n    v4 = FinishClass v3 layout=L0\n    v5 = Convert v4 declared={type=f1 flags=[IsFromCompiler]}\n"_s);
+    unsigned value = 6;
+    for (unsigned number = 1; number < numberOfClasses; ++number, value += 5) {
+        text.append("    v"_s, value, " = ResolveHeritage v"_s, value - 1, "\n    v"_s, value + 1, " = NewClosure function=f"_s, number + 1, "\n    v"_s, value + 2, " = NewClass v"_s, value + 1, ", v"_s, value - 1, ", v"_s, value, " layout=L"_s, number, '\n');
+        text.append("    v"_s, value + 3, " = FinishClass v"_s, value + 2, " layout=L"_s, number, "\n    v"_s, value + 4, " = Convert v"_s, value + 3, " declared={type=f"_s, number + 1, " flags=[IsFromCompiler]}\n"_s);
+    }
+    text.append("    v"_s, value, " = Construct v"_s, value - 1, ", -\n    v"_s, value + 1, " = PropGet v"_s, value, " key=\"f0\"\n    v"_s, value + 2, " = Call v1, -, v"_s, value + 1, "\n    Return v"_s, value + 2, "\n}\n"_s);
+    text.append("function f1 name=\"C0\" module=m0 kind=BaseConstructor flags=[HasNewTarget] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] constructedClass=L0 {\n  b0(v0: anything):\n"_s);
+    text.append("    v1 = GetConstructPrototype v0 layout=L0\n    v2 = NewObject v1 layout=L0\n    v3 = Convert v2 declared={type=L0}\n    v4 = Integer integer=1\n    PropSet v3, v4 key=\"f0\"\n    Return v3\n}\n"_s);
+    for (unsigned number = 1; number < numberOfClasses; ++number) {
+        text.append("function f"_s, number + 1, " name=\"C"_s, number, "\" module=m0 kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] constructedClass=L"_s, number, " {\n"_s);
+        text.append("  b0(v0: function, v1: anything):\n    v2 = GetSuperBase v0\n    v3 = SuperConstruct v2, v1 layout=L"_s, number, "\n    v4 = Convert v3 declared={type=L"_s, number, "}\n    v5 = Integer integer=1\n"_s);
+        text.append("    PropSet v4, v5 key=\"f"_s, number, "\"\n    Return v4\n}\n"_s);
+    }
+    return text.toString();
+}
+
+static void testPlanGrowsAsClassesInRowDo()
+{
+    constexpr unsigned numberOfClasses = 100;
+    InstructionCounts::begin();
+    std::optional<uint64_t> smaller = instructionsOfPlanForGrowthTests(rowOfClassesWithFieldEachForGrowthTests(numberOfClasses));
+    std::optional<uint64_t> large = instructionsOfPlanForGrowthTests(rowOfClassesWithFieldEachForGrowthTests(4 * numberOfClasses));
     AOT_TEST_CHECK(growsAsSizeDoes(smaller, large));
 }
 
@@ -403,6 +534,33 @@ static void testWalkGrowsAsLoopsInRowDo()
     AOT_TEST_CHECK(growsAsSizeDoes(smaller, large));
 }
 
+static String loopsInRowThatHandSumOnInsideLoopForGrowthTests(unsigned numberOfLoops)
+{
+    StringBuilder text;
+    text.append("module m0 path=\"main.js\" displayPath=\"main.js\" body=f0\nentry module=m0\n"_s);
+    text.append("function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {\n  b0():\n    v0 = Builtin builtin=GlobalThis\n    v1 = PropGet v0 key=\"sink\" [isFreeName]\n"_s);
+    text.append("    v2 = NewClosure function=f1\n    v3 = Call v1, -, v2\n    Return v3\n}\n"_s);
+    text.append("function f1 name=\"run\" module=m0 length=1 thisType={type=anything} parameters=[{type=boolean}] results=[{type=anything}] {\n  b0(v0: boolean):\n    v1 = Integer\n    v2 = Convert v1 declared={type=number}\n    Jump -> next b1(v2)\n"_s);
+    text.append("  b1(v3: number):\n    LoopHint\n    Branch v0 -> taken b2(v3), notTaken b"_s, 2 * numberOfLoops + 2, "(v3)\n"_s);
+    for (unsigned loop = 0; loop < numberOfLoops; ++loop) {
+        unsigned head = 2 * loop + 2;
+        unsigned sum = 4 * loop + 5;
+        text.append("  b"_s, head, "(v"_s, sum, ": number):\n    LoopHint\n    Branch v0 -> taken b"_s, head + 1, "(), notTaken b"_s, loop + 1 < numberOfLoops ? head + 2 : 1, "(v"_s, sum, ")\n"_s);
+        text.append("  b"_s, head + 1, "():\n    v"_s, sum + 2, " = Increment v"_s, sum, "\n    v"_s, sum + 3, " = Convert v"_s, sum + 2, " declared={type=number}\n    Jump -> next b"_s, head, "(v"_s, sum + 3, ")\n"_s);
+    }
+    text.append("  b"_s, 2 * numberOfLoops + 2, "(v"_s, 4 * numberOfLoops + 5, ": number):\n    Return v"_s, 4 * numberOfLoops + 5, "\n}\n"_s);
+    return text.toString();
+}
+
+static void testWalkGrowsAsLoopsInRowThatHandSumOnInsideLoopDo()
+{
+    constexpr unsigned numberOfLoops = 1500;
+    InstructionCounts::begin();
+    std::optional<uint64_t> smaller = instructionsOfWalkForGrowthTests(loopsInRowThatHandSumOnInsideLoopForGrowthTests(numberOfLoops), FunctionID(1u));
+    std::optional<uint64_t> large = instructionsOfWalkForGrowthTests(loopsInRowThatHandSumOnInsideLoopForGrowthTests(4 * numberOfLoops), FunctionID(1u));
+    AOT_TEST_CHECK(growsAsSizeDoes(smaller, large));
+}
+
 static String loopsInsideOneAnotherForGrowthTests(unsigned numberOfLoops)
 {
     StringBuilder text;
@@ -413,6 +571,21 @@ static String loopsInsideOneAnotherForGrowthTests(unsigned numberOfLoops)
     for (unsigned loop = 1; loop <= numberOfLoops; ++loop)
         text.append("  b"_s, loop, "():\n    LoopHint\n    Branch v0 -> taken b"_s, std::min(loop + 1, numberOfLoops), "(), notTaken b"_s, loop > 1 ? loop - 1 : numberOfLoops + 1, "()\n"_s);
     text.append("  b"_s, numberOfLoops + 1, "():\n    Return v0\n}\n"_s);
+    return text.toString();
+}
+
+static String loopsInsideOneAnotherRoundSumForGrowthTests(unsigned numberOfLoops)
+{
+    StringBuilder text;
+    text.append("module m0 path=\"main.js\" displayPath=\"main.js\" body=f0\nentry module=m0\n"_s);
+    text.append("function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {\n  b0():\n    v0 = Builtin builtin=GlobalThis\n    v1 = PropGet v0 key=\"sink\" [isFreeName]\n"_s);
+    text.append("    v2 = NewClosure function=f1\n    v3 = Call v1, -, v2\n    Return v3\n}\n"_s);
+    text.append("function f1 name=\"run\" module=m0 length=1 thisType={type=anything} parameters=[{type=boolean}] results=[{type=anything}] {\n  b0(v0: boolean):\n    v1 = Integer\n    v2 = Convert v1 declared={type=number}\n    Jump -> next b1(v2)\n"_s);
+    for (unsigned loop = 1; loop < numberOfLoops; ++loop)
+        text.append("  b"_s, loop, "(v"_s, 2 * loop + 1, ": number):\n    LoopHint\n    Branch v0 -> taken b"_s, loop + 1, "(v"_s, 2 * loop + 1, "), notTaken b"_s, loop > 1 ? loop - 1 : numberOfLoops + 1, "(v"_s, 2 * loop + 1, ")\n"_s);
+    unsigned sum = 2 * numberOfLoops + 1;
+    text.append("  b"_s, numberOfLoops, "(v"_s, sum, ": number):\n    LoopHint\n    v"_s, sum + 2, " = Increment v"_s, sum, "\n    v"_s, sum + 3, " = Convert v"_s, sum + 2, " declared={type=number}\n"_s);
+    text.append("    Branch v0 -> taken b"_s, numberOfLoops, "(v"_s, sum + 3, "), notTaken b"_s, numberOfLoops - 1, "(v"_s, sum + 3, ")\n  b"_s, numberOfLoops + 1, "(v"_s, sum + 4, ": number):\n    Return v"_s, sum + 4, "\n}\n"_s);
     return text.toString();
 }
 
@@ -449,6 +622,11 @@ static void testNestOfLoopsIsWalkedAlikeWhateverRoomStackHas()
     uint64_t walks = walksOfLoopsForGrowthTests(loopsInsideOneAnotherForGrowthTests(1200), 0);
     AOT_TEST_CHECK(walks == walksOfLoopsForGrowthTests(loopsInsideOneAnotherForGrowthTests(1200), 4));
     AOT_TEST_CHECK(walks == walksOfLoopsForGrowthTests(loopsInsideOneAnotherForGrowthTests(1300), 0));
+}
+
+static void testNestDeeperThanTriesGoIsWalkedLittleMoreThanOneThatIsNot()
+{
+    AOT_TEST_CHECK(walksOfLoopsForGrowthTests(loopsInsideOneAnotherRoundSumForGrowthTests(1200), 0) <= 2 * walksOfLoopsForGrowthTests(loopsInsideOneAnotherRoundSumForGrowthTests(1000), 0));
 }
 
 static void testScratchRealmHasItsRoomWhereverQuestionStands()
@@ -518,6 +696,7 @@ static void testWalkGrowsAsIterationsInRowDo()
 enum class LoopsOverGeneratorsForGrowthTests : uint8_t {
     YieldsAndStatements,
     InsideOneAnother,
+    OneBehindAnother,
     GeneratorsOverOneAnother,
 };
 
@@ -578,7 +757,7 @@ static void appendLoopOverOneGeneratorForGrowthTests(StringBuilder& text, unsign
 static String loopsOverGeneratorsForGrowthTests(LoopsOverGeneratorsForGrowthTests kind, unsigned size)
 {
     StringBuilder text;
-    unsigned numberOfGenerators = kind == LoopsOverGeneratorsForGrowthTests::YieldsAndStatements ? 1 : size;
+    unsigned numberOfGenerators = kind == LoopsOverGeneratorsForGrowthTests::YieldsAndStatements || kind == LoopsOverGeneratorsForGrowthTests::OneBehindAnother ? 1 : size;
     for (unsigned generator = 0; generator < numberOfGenerators; ++generator)
         text.append("variable g"_s, generator, " name=\"made"_s, generator + 2, "\" module=m0 declared={type=f"_s, generator + 2, " flags=[IsFromCompiler]} initialization=Function function=f"_s, generator + 2, " flags=[IsImmutable]\n"_s);
     text.append("module m0 path=\"main.js\" displayPath=\"main.js\" body=f0 namespaceLayout=L(m0)\nentry module=m0\n"_s);
@@ -596,6 +775,20 @@ static String loopsOverGeneratorsForGrowthTests(LoopsOverGeneratorsForGrowthTest
         for (unsigned generator = 1; generator < size; ++generator)
             appendGeneratorOverGeneratorForGrowthTests(text, generator + 2, generator - 1, 2);
         break;
+    case LoopsOverGeneratorsForGrowthTests::OneBehindAnother: {
+        unsigned head = 4;
+        for (unsigned loop = 0; loop < size; ++loop, head += 11) {
+            unsigned block = 5 * loop;
+            text.append("    v"_s, head - 3, " = GetModuleVariable variable=g0\n    v"_s, head - 2, " = Call v"_s, head - 3, ", -, v0\n    v"_s, head - 1, " = IteratorOpen v"_s, head - 2, '\n');
+            text.append("    Jump -> next b"_s, block + 1, "(v"_s, loop ? head - 11 : 0, ")\n  b"_s, block + 1, "(v"_s, head, ": number):\n    LoopHint\n    v"_s, head + 2, " = IteratorResume v"_s, head - 1, '\n');
+            text.append("    v"_s, head + 3, " = ResultAt v"_s, head + 2, "\n    v"_s, head + 4, " = ResultAt v"_s, head + 2, " index=1\n    Branch v"_s, head + 3, " -> taken b"_s, block + 5, "(), notTaken b"_s, block + 2, "()\n"_s);
+            text.append("  b"_s, block + 2, "():\n    Jump -> next b"_s, block + 3, "()\n  b"_s, block + 3, "() handler=b"_s, block + 4, "():\n    v"_s, head + 5, " = BitXor v"_s, head, ", v0\n    Jump -> next b"_s, block + 1, "(v"_s, head + 5, ")\n"_s);
+            text.append("  b"_s, block + 4, "() role=IterationCleanup subject=v"_s, head - 1, ":\n    v"_s, head + 6, " = CatchException\n    IteratorClose v"_s, head - 1, " completion=Throw\n    Rethrow v"_s, head + 6, "\n  b"_s, block + 5, "():\n"_s);
+        }
+        text.append("    Return v"_s, head - 11, "\n}\n"_s);
+        appendGeneratorOfYieldsInRowForGrowthTests(text, 2, 2);
+        break;
+    }
     case LoopsOverGeneratorsForGrowthTests::InsideOneAnother: {
         auto cleanupOf = [&](unsigned level) {
             return 3 * size + 1 + (size - 1 - level);
@@ -1063,14 +1256,18 @@ std::span<const NativeTest> growthOfWorkTests()
     static constexpr NativeTest tests[] {
         { "growth-of-work/each-of-many-members-of-a-class-is-found-by-its-key"_s, testEachOfManyMembersIsFoundByItsKey },
         { "growth-of-work/members-of-classes-far-above-are-found-by-their-keys"_s, testMembersOfClassesFarAboveAreFoundByTheirKeys },
+        { "growth-of-work/a-member-above-a-long-row-is-the-one-that-a-walk-up-the-row-finds"_s, testMemberAboveLongRowIsTheOneThatWalkUpRowFinds },
         { "growth-of-work/each-of-many-effects-is-kept-once-and-stays-where-it-lies"_s, testEachOfManyEffectsIsKeptOnceAndStaysWhereItLies },
         { "growth-of-work/the-plan-grows-as-the-members-of-a-class-do"_s, testPlanGrowsAsMembersOfClassDo },
+        { "growth-of-work/the-plan-grows-as-the-classes-in-a-row-of-which-the-foot-is-constructed-do"_s, testPlanGrowsAsClassesInRowDo },
         { "growth-of-work/a-function-with-more-parameters-than-a-convention-counts-is-refused"_s, testFunctionWithMoreParametersThanConventionCountsIsRefused },
         { "growth-of-work/the-facts-grow-as-the-classes-below-one-class-do"_s, testFactsGrowAsClassesBelowOneClassDo },
         { "growth-of-work/the-facts-grow-as-the-objects-created-below-one-literal-do"_s, testFactsGrowAsObjectsCreatedBelowOneLiteralDo },
         { "growth-of-work/the-walk-grows-as-the-loops-in-a-row-do"_s, testWalkGrowsAsLoopsInRowDo },
+        { "growth-of-work/the-walk-grows-as-the-loops-in-a-row-that-hand-a-sum-on-inside-a-loop-do"_s, testWalkGrowsAsLoopsInRowThatHandSumOnInsideLoopDo },
         { "growth-of-work/the-walk-grows-as-the-loops-up-to-one-bound-do"_s, testWalkGrowsAsLoopsUpToOneBoundDo },
         { "growth-of-work/a-nest-of-loops-is-walked-alike-whatever-room-its-stack-has"_s, testNestOfLoopsIsWalkedAlikeWhateverRoomStackHas },
+        { "growth-of-work/a-nest-round-a-sum-that-is-deeper-than-tries-go-is-walked-little-more-than-one-that-is-not"_s, testNestDeeperThanTriesGoIsWalkedLittleMoreThanOneThatIsNot },
         { "growth-of-work/the-scratch-realm-has-its-room-wherever-a-question-stands"_s, testScratchRealmHasItsRoomWhereverQuestionStands },
         { "growth-of-work/the-walk-grows-as-the-early-returns-that-each-leave-a-value-alive-do"_s, testWalkGrowsAsEarlyReturnsThatEachLeaveValueAliveDo<ReadInRowForGrowthTests::OfOneOfThreeElements, 1000> },
         { "growth-of-work/the-walk-grows-as-the-early-returns-behind-guesses-of-their-own-that-each-leave-a-value-alive-do"_s, testWalkGrowsAsEarlyReturnsThatEachLeaveValueAliveDo<ReadInRowForGrowthTests::OfElementOfItsOwn, 150> },
@@ -1080,6 +1277,7 @@ std::span<const NativeTest> growthOfWorkTests()
         { "growth-of-work/the-walk-grows-as-the-iterations-in-a-row-do"_s, testWalkGrowsAsIterationsInRowDo },
         { "growth-of-work/the-walk-grows-as-the-yields-and-the-statements-of-the-loop-that-takes-them-do"_s, testWalkGrowsAsLoopsOverGeneratorsDo<LoopsOverGeneratorsForGrowthTests::YieldsAndStatements, 100> },
         { "growth-of-work/the-walk-grows-as-the-loops-over-generators-inside-one-another-do"_s, testWalkGrowsAsLoopsOverGeneratorsDo<LoopsOverGeneratorsForGrowthTests::InsideOneAnother, 3> },
+        { "growth-of-work/the-walk-grows-as-the-loops-over-generators-one-behind-another-do"_s, testWalkGrowsAsLoopsOverGeneratorsDo<LoopsOverGeneratorsForGrowthTests::OneBehindAnother, 250> },
         { "growth-of-work/the-walk-grows-as-the-generators-that-loop-over-one-another-do"_s, testWalkGrowsAsLoopsOverGeneratorsDo<LoopsOverGeneratorsForGrowthTests::GeneratorsOverOneAnother, 4> },
         { "growth-of-work/a-chain-of-joined-texts-costs-what-its-last-text-holds"_s, testChainOfJoinedTextsCostsWhatItsLastTextHolds },
         { "growth-of-work/texts-that-add-to-one-another-and-are-each-read-cost-what-the-last-one-holds"_s, testTextsThatAddToOneAnotherAndAreEachReadCostWhatLastOneHolds },

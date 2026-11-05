@@ -377,7 +377,7 @@ static bool tryFileStore(const BindingAccess& access, const PutPropertySlot& slo
 {
     VM& vm = access.vm;
     JSGlobalObject* globalObject = access.globalObject;
-    if (!canCachePropertiesOf(globalObject) || globalObject->structure()->isImmutableProperty(access.uid()) || !structureSaysWherePropertiesAre(access))
+    if (!canCachePropertiesOf(globalObject) || globalObject->structure()->isImmutableProperty(access.uid()) || isWriteJudgedByWriter(globalObject->structure(), access.uid()) || !structureSaysWherePropertiesAre(access))
         return false;
     Structure* structure = globalObject->structure();
     unsigned attributes = 0;

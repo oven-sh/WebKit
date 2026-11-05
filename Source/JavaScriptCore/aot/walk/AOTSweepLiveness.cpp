@@ -378,6 +378,7 @@ void Sweep::beginFollowingLiveness()
     if (!m_followsLiveness)
         return;
 
+    m_liveness = makeUniqueWithoutFastMallocCheck<SweepLivenessStorage>();
     m_hasInteriorPointers = code.opcodesOfValues().intersects(interiorPointersInSweptCode);
     uint32_t numberOfValues = code.numberOfValues();
     uint32_t numberOfBlocks = code.numberOfBlocks();
@@ -397,9 +398,9 @@ void Sweep::beginFollowingLiveness()
     m_lastReads.fill(noReadOfSweptValue, numberOfValues);
     m_reads.shrink(0);
     m_lastReadersInOwnBlocks.fill(ValueID(), numberOfValues);
-    m_liveness.blockOfValue.fill(Operation::noBlock, numberOfValues);
-    m_liveness.operationsThatSuspend.clearAll();
-    m_liveness.operationsThatSuspend.ensureSize(numberOfValues);
+    m_liveness->blockOfValue.fill(Operation::noBlock, numberOfValues);
+    m_liveness->operationsThatSuspend.clearAll();
+    m_liveness->operationsThatSuspend.ensureSize(numberOfValues);
 }
 
 void Sweep::followIfEnvironmentIsHandedBack(ValueID id)
@@ -511,14 +512,14 @@ void Sweep::noteNeededOperationForLiveness(ValueID id, const Operation& operatio
 {
     const Code& code = *m_code;
     BlockID block = operation.block();
-    m_liveness.blockOfValue.mutableSpan().data()[id.index()] = block.index();
+    m_liveness->blockOfValue.mutableSpan().data()[id.index()] = block.index();
     if (m_mayHandBackEnvironments) {
         followIfEnvironmentIsHandedBack(id);
         noteIfMayHoldEnvironmentInFrame(id);
     }
     if (operation.traits().maySuspend()) {
         m_blocksThatSuspend.quickSet(block.index());
-        m_liveness.operationsThatSuspend.quickSet(id.index());
+        m_liveness->operationsThatSuspend.quickSet(id.index());
         if (m_looksForLastReads) {
             ValueID& last = m_lastSuspensions[block.index()];
             if (!last || last < id)
@@ -569,12 +570,12 @@ void Sweep::finishLiveness()
     });
     releaseHints.fill(ValueID(), m_mayHoldHints || m_mayHandBackEnvironments ? code.numberOfValues() : 0);
 
-    Vector<SweepLetGo>& placesLetGo = m_liveness.placesLetGo;
+    Vector<SweepLetGo>& placesLetGo = m_liveness->placesLetGo;
     placesLetGo.shrink(0);
-    Vector<ValueID>& hintsBehindLastUses = m_liveness.hintsBehindLastUses;
+    Vector<ValueID>& hintsBehindLastUses = m_liveness->hintsBehindLastUses;
     hintsBehindLastUses.shrink(0);
 
-    Vector<ValueID>& joinsLetGo = m_liveness.joinsLetGo;
+    Vector<ValueID>& joinsLetGo = m_liveness->joinsLetGo;
     joinsLetGo.shrink(0);
     auto letGoOfWhatFlowsInto = [&](ValueID join) {
         ensureEdgesThatAreTakenAreListed();
@@ -635,7 +636,7 @@ void Sweep::finishLiveness()
     });
 
     SweepLiveSets sets(code, m_arrays.marks, m_states, releaseHints.span(), m_environmentsFollowed, &m_valuesLetGo, m_hasInteriorPointers);
-    SweepLiveRanges ranges(code, m_states, m_lastReads, m_reads, m_liveness.waysOfValueLetGo);
+    SweepLiveRanges ranges(code, m_states, m_lastReads, m_reads, m_liveness->waysOfValueLetGo);
     m_valuesLetGo.forEachSetBit([&](size_t index) {
         if (ValueID reader = m_lastReadersInOwnBlocks[index])
             ranges.noteReadInAnyOrder(ValueID(index), code.blockOf(ValueID(index)), reader);
@@ -644,7 +645,7 @@ void Sweep::finishLiveness()
         sets.noteReadsAtEndOf(block, ranges);
     bool hasMarkedReleasesByValue = !code.hasSuspensions() && !m_mayHandBackEnvironments && markReleasesBehindLastUsesByValue(releaseHints.span());
     if (!hasMarkedReleasesByValue) {
-        SweepBits& valuesToFollow = m_liveness.valuesToFollow;
+        SweepBits& valuesToFollow = m_liveness->valuesToFollow;
         valuesToFollow.clearAll();
         if (!code.hasSuspensions()) {
             valuesToFollow.merge(m_environmentsFollowed);
@@ -733,7 +734,7 @@ static void forEachValueReadAtEndOfSweptBlock(const Code& code, const Block& blo
 void Sweep::findLiveSets(std::span<const ValueID> releaseHints, const SweepBits* valuesToFollow)
 {
     const Code& code = *m_code;
-    SweepLivenessStorage& storage = m_liveness;
+    SweepLivenessStorage& storage = *m_liveness;
     SweepValueSets& sets = storage.sets;
     uint32_t* const blockOfValue = storage.blockOfValue.mutableSpan().data();
     SweepBits& blocksAskedAbout = storage.blocksAskedAbout;
@@ -981,15 +982,15 @@ void Sweep::findLiveSets(std::span<const ValueID> releaseHints, const SweepBits*
 
 SweepValueSets::Set Sweep::liveThroughLoopsAround(BlockID block) const
 {
-    uint32_t loop = m_liveness.flow.loopAround(block);
-    return loop == SweepFlow::none ? SweepValueSets::empty : m_liveness.liveThroughLoops[loop];
+    uint32_t loop = m_liveness->flow.loopAround(block);
+    return loop == SweepFlow::none ? SweepValueSets::empty : m_liveness->liveThroughLoops[loop];
 }
 
 void Sweep::markReleasesBehindLastUsesBySets()
 {
     Code& code = *m_code;
-    const SweepValueSets& sets = m_liveness.sets;
-    for (const SweepLivenessStorage::PointAskedAbout& point : m_liveness.hints) {
+    const SweepValueSets& sets = m_liveness->sets;
+    for (const SweepLivenessStorage::PointAskedAbout& point : m_liveness->hints) {
         const OperationKeptForOperand& hint = m_operationsKeptForOperands[point.index];
         SweepValueSets::Set liveThroughLoops = liveThroughLoopsAround(point.block);
         auto isLive = [&](ValueID value) {
@@ -1015,9 +1016,9 @@ void Sweep::markReleasesBehindLastUsesBySets()
 bool Sweep::markReleasesBehindLastUsesByValue(std::span<const ValueID> releaseHints)
 {
     Code& code = *m_code;
-    Vector<ValueID>& valuesLiveAtHeads = m_liveness.valuesLiveAtHeads;
-    Vector<ValueID>& valuesLiveAtEnds = m_liveness.valuesLiveAtEnds;
-    Vector<BlockID>& blocksToLookAbove = m_liveness.blocksToLookAbove;
+    Vector<ValueID>& valuesLiveAtHeads = m_liveness->valuesLiveAtHeads;
+    Vector<ValueID>& valuesLiveAtEnds = m_liveness->valuesLiveAtEnds;
+    Vector<BlockID>& blocksToLookAbove = m_liveness->blocksToLookAbove;
     valuesLiveAtHeads.fill(ValueID(), code.numberOfBlocks());
     valuesLiveAtEnds.fill(ValueID(), code.numberOfBlocks());
     blocksToLookAbove.shrink(0);
@@ -1077,10 +1078,10 @@ bool Sweep::markReleasesBehindLastUsesByValue(std::span<const ValueID> releaseHi
 void Sweep::listLiveValuesAtSuspensionsBySets()
 {
     Code& code = *m_code;
-    SweepValueSets& sets = m_liveness.sets;
+    SweepValueSets& sets = m_liveness->sets;
     const bool mayPointIntoStorage = code.opcodesOfValues().contains(Opcode::GetTypedArrayVector) || code.opcodesOfValues().contains(Opcode::GetArrayStorage);
     sets.keepSetsMadeSoFar();
-    for (const SweepLivenessStorage::PointAskedAbout& point : m_liveness.suspensions) {
+    for (const SweepLivenessStorage::PointAskedAbout& point : m_liveness->suspensions) {
         ValueID suspension(point.index);
         uint32_t numberOfNodes = sets.numberOfNodes();
         SweepValueSets::Set live = sets.unite(point.liveBehind, liveThroughLoopsAround(point.block));
@@ -1089,7 +1090,7 @@ void Sweep::listLiveValuesAtSuspensionsBySets()
             ValueID id(index);
             if (id == suspension)
                 return;
-            if (!m_liveness.hintsThatStay.quickGet(index)) {
+            if (!m_liveness->hintsThatStay.quickGet(index)) {
                 if (mayPointIntoStorage) {
                     Opcode opcode = code.at(id).opcode;
                     RELEASE_ASSERT(opcode != Opcode::GetTypedArrayVector && opcode != Opcode::GetArrayStorage);

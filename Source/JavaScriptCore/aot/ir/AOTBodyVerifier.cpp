@@ -24,7 +24,7 @@ namespace JSC { namespace AOT { namespace Typed {
 
 static constexpr uint32_t verifiedWordsPerParameter = sizeof(Wire::ParameterHead) / sizeof(uint32_t);
 
-static_assert(BodyBlock::numberOfHeadWords == 5 && verifiedWordsPerParameter == 1 && BodyValue::numberOfHeadWords == 2 && BodyTerminator::numberOfHeadWords == 3 && BodyTarget::numberOfHeadWords == 3);
+static_assert(BodyBlock::numberOfHeadWords == 6 && verifiedWordsPerParameter == 1 && BodyValue::numberOfHeadWords == 2 && BodyTerminator::numberOfHeadWords == 3 && BodyTarget::numberOfHeadWords == 3);
 static_assert(!offsetof(Wire::ValueHead, opcode) && offsetof(Wire::ValueHead, position) == 4);
 static_assert(!offsetof(Wire::TerminatorHead, kind) && offsetof(Wire::TerminatorHead, position) == 4 && offsetof(Wire::TerminatorHead, targetCount) == 8);
 static_assert(!offsetof(Wire::TargetHead, block) && offsetof(Wire::TargetHead, argumentCount) == 4 && offsetof(Wire::TargetHead, proofCount) == 8);
@@ -290,6 +290,7 @@ ALWAYS_INLINE void BodyVerifier::verifyWordsOfBlock(CheckedBodyWords<report>& wo
     words.template takeEnumerator<BlockRole>();
     words.takeOperand(true);
     bool hasHandler = words.takeBoolean();
+    words.template takeEnumerator<BlockFrequency>();
     if (static_cast<uint64_t>(nextValue) + numberOfParameters + numberOfValues > m_body.numberOfValues())
         words.failAtSubject(InternalErrorKind::IdOutOfRange);
     if (words.hasFailed())

@@ -77,7 +77,7 @@ static void checkProvenHalfInKeyOrdersAccessors(Walker& walker, const BodyValue&
     load.setLevel(KnowledgeLevel::Proven);
     if (isStore)
         load.setIsInStrictCode(access.mode() == ECMAMode::Strict);
-    walker.build(WTF::move(load));
+    walker.buildTestOfCheck(WTF::move(load));
 }
 
 bool callProvenAccessorOfItsOpcodes(Walker& walker, const BodyValue& access)
@@ -102,16 +102,6 @@ bool callProvenAccessorOfItsOpcodes(Walker& walker, const BodyValue& access)
         return false;
     checkProvenHalfInKeyOrdersAccessors(walker, access, object, *field);
     return walker.isUnreachable() || callAccessor(walker, access, half, object, stored);
-}
-
-FunctionID findGetterExpectedInSlot(Walker& walker, TypeID lookedAt, PropertyKeyID key)
-{
-    if (!key || liesInThread(key) || !walker.facts().linked().keysOfAccessorsExpectedInFields.get(key.index()))
-        return { };
-    if (!walker.has(Mechanism::Guesses) || !walker.has(Mechanism::DirectCalls) || !walker.has(Mechanism::TypedOperations))
-        return { };
-    std::optional<FieldReference> field = findAccessorSlotInKeyOrdersAccessors(walker, onlyLayoutOfInKeyOrdersAccessors(walker, lookedAt), key);
-    return field ? findAccessorExpectedInKeyOrdersAccessors(walker, *field, false) : FunctionID();
 }
 
 static void fillSlotOperationInKeyOrdersAccessors(Walker& walker, Draft& draft, Reference object, FieldReference field, PropertyKeyID key)

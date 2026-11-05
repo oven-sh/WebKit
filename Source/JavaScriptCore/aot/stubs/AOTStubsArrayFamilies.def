@@ -27,7 +27,7 @@ v(AppendMembers, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never
 v(AppendIterable, CalledByCode, (), SlowPathRecurs, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, AppendIterable)
 v(DestructureIterable, CalledByCode, (), SlowPathRecurs, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, DestructureIterable)
 
-v(ArrayPutAtIndex, CalledByCode, (Value, Number), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, ArrayPutAtIndex)
+v(ArrayPutAtIndex, CalledByCode, (Value, Number, ValueInSloppyCode), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, ArrayPutAtIndex)
 v(ArrayPutAtNumber, CalledByCode, (Value, Number), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, ArrayPutAtNumber)
 v(ReserveArrayRoom, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, ReserveArrayRoom)
 

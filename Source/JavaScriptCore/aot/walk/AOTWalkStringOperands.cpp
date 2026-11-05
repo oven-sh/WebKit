@@ -138,6 +138,19 @@ bool openGuessAtOperandOfBuiltinCall(Walker& walker, const BodyValue& call)
         return false;
     builtin = walker.program().builtins().canonicalID(builtin);
 
+    if (ValueID receiver = call.thisValueOperand(); receiver && walker.isInLoop()) {
+        Reference value = walker.referenceOf(receiver);
+        TypeID proven = value && value.isValue() ? walker.typeOf(value) : TypeID();
+        if (proven && !isNeverType(proven) && types.at(proven).isObject() && singleBuiltinClassOf(types, types.at(proven)) && !isListAsMade(walker, value) && goesByOneRowOnOperandAsMade(walker, call, builtin, value, proven)) {
+            NotesOfStrings& changed = notesOfStrings(walker);
+            ValueID callBefore = std::exchange(changed.callWhoseOperandIsTested, call.id());
+            size_t depthBefore = std::exchange(changed.depthOfCopiesAroundThatCall, walker.depthOfCopies());
+            openGuessAtOperandTakenAsMade(walker, call, value, proven);
+            changed.callWhoseOperandIsTested = callBefore;
+            changed.depthOfCopiesAroundThatCall = depthBefore;
+            return true;
+        }
+    }
     if (ValueID receiver = call.thisValueOperand(); receiver && openGuessAtOperandForStringOperands(walker, call, builtin, receiver, BuiltinOperand::receiver()))
         return true;
     unsigned position = 0;

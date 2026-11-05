@@ -211,9 +211,11 @@ static void didChangeClassHolder(VM& vm, State& state, JSObject* changed, Unique
     if (!layout)
         return;
     if (uidOrNull) {
+        classes.holdMemberToProof(vm, *layout, side, changed, uidOrNull);
         classes.didChangeMember(*layout, side, uidOrNull);
         return;
     }
+    classes.holdLinkToProof(vm, *layout, side, changed);
     if (changed->isFrozen(vm)) {
         classes.didFreezeHolder(vm, *layout, side, changed);
         return;

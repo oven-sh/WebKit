@@ -200,10 +200,15 @@ function payloadAccessors(name: string, field: PayloadField, isOptional: boolean
   };
 }
 
+const flagsThatRestOnPassedTests = new Set(["isInsideView"]);
+
 function flagAccessors(name: string, tag: string): Accessors {
   const mask = `declaredPosition(FlagMask::${name}(${tag}))`;
+  const getter = `bool ${name}() const { return flags & ${mask}; }`;
+  if (flagsThatRestOnPassedTests.has(name))
+    return { getter, setter: `void ${cppSetterName(name)}(const PassedTest& passed) { flags |= ${mask}; restOn(passed); }` };
   return {
-    getter: `bool ${name}() const { return flags & ${mask}; }`,
+    getter,
     setter: `void ${cppSetterName(name)}(bool ${name}) { flags = ${name} ? flags | ${mask} : flags & ~${mask}; }`,
   };
 }

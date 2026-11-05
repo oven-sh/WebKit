@@ -1062,6 +1062,12 @@ bool loaderEntersBodyAtMostOnce(const Module& module)
     return module.kind == ModuleKind::SourceText && module.syntheticExports.isEmpty();
 }
 
+bool isBodyWrittenInAnotherFile(const Program& program, FunctionID id)
+{
+    const Function& function = program.at(id);
+    return function.isModuleBody() && function.module && program.at(function.module).body != id;
+}
+
 bool importMayAnswerWithMock(const Module& module)
 {
     return (module.runtimeModule || module.flags.contains(ModuleFlags::IsBundlerHelper)) && module.flags.contains(ModuleFlags::MayBeMocked);

@@ -24,7 +24,7 @@ static_assert(perObjectHeaps.containsAll(heapsUnderPlacesInWalkState - heapsUnde
 static_assert(perObjectHeaps.contains(AbstractHeap::ShapeWords));
 static_assert(perObjectHeaps.contains(AbstractHeap::NamedProperties) && perObjectHeaps.contains(AbstractHeap::OrderWords) && perObjectHeaps.contains(AbstractHeap::PrototypeLinks));
 
-static OptionSet<FactOfCell> factsOfCellEndedInWalkState(const LocationMasks& writes)
+OptionSet<FactOfCell> factsOfCellEndedBy(const LocationMasks& writes)
 {
     OptionSet<FactOfCell> ended;
     if (writes.contains(AbstractHeap::ShapeWords))
@@ -1253,7 +1253,7 @@ bool WalkState::Held::restsOnHeapsAmong(const LocationMasks& writes) const
 {
     return (writes.contains(AbstractHeap::ShapeWords) && m_numberOfShapes)
         || (writes.containsAny(heapsUnderPlacesInWalkState) && m_numberOfPlaces)
-        || (m_numberOfHoldersWithFactsOfCell && !factsOfCellEndedInWalkState(writes).isEmpty());
+        || (m_numberOfHoldersWithFactsOfCell && !factsOfCellEndedBy(writes).isEmpty());
 }
 
 void WalkState::Held::endWhatIsWritten(const Effects& effects)
@@ -1266,7 +1266,7 @@ void WalkState::Held::endWhatIsWritten(const Effects& effects)
     const LocationMasks& writes = effects.writes;
     bool endsShapes = writes.contains(AbstractHeap::ShapeWords) && m_numberOfShapes;
     bool endsPlaces = writes.containsAny(heapsUnderPlacesInWalkState) && m_numberOfPlaces;
-    OptionSet<FactOfCell> factsEnded = m_numberOfHoldersWithFactsOfCell ? factsOfCellEndedInWalkState(writes) : OptionSet<FactOfCell>();
+    OptionSet<FactOfCell> factsEnded = m_numberOfHoldersWithFactsOfCell ? factsOfCellEndedBy(writes) : OptionSet<FactOfCell>();
     if (!endsShapes && !endsPlaces && factsEnded.isEmpty())
         return;
 

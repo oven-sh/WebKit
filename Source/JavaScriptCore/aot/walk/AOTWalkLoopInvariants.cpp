@@ -66,16 +66,6 @@ static constexpr OpcodeSet readsByNameForLoopInvariants { Opcode::PropGet, Opcod
 static constexpr OpcodeSet storesByNameForLoopInvariants { Opcode::PropSet, Opcode::PropDefine };
 static constexpr OpcodeSet accessesByKeyForLoopInvariants { Opcode::ElemGet, Opcode::ElemSet, Opcode::ElemHas };
 
-static Effects effectsOfTypedReadByNameForLoopInvariants()
-{
-    Effects effects = Effects::unknownCode();
-    effects.writes = effects.writes.restrictedTo(heapsWhoseWritesNobodySees);
-    effects.mayThrow = ThrowEffect::onlyForLackOfMemory();
-    effects.mayCallUnknownCode = false;
-    effects.mayBeTerminated = false;
-    return effects;
-}
-
 std::optional<Effects> effectsOfTypedFormAhead(Walker& walker, const BodyValue& operation, const TypesOfInputs& types, FunctionID* halfRunBehindLooks)
 {
     Opcode opcode = operation.opcode();
@@ -100,7 +90,7 @@ std::optional<Effects> effectsOfTypedFormAhead(Walker& walker, const BodyValue& 
     if (isByKey)
         return form.level == KnowledgeLevel::Proven ? std::optional<Effects>(declaredBoundOf(form.opcode)) : std::nullopt;
     if (readsByNameForLoopInvariants.contains(opcode)) {
-        Effects effects = effectsOfTypedReadByNameForLoopInvariants();
+        Effects effects = Effects::ofReadByNameThatRunsNoCode();
         if (TypeID object = types(operation.objectOperand()); object && walker.types().at(walker.types().withoutNullish(object)).hasOnlyLayouts())
             effects.writes.remove(AbstractHeapSet { AbstractHeap::MemberGuards });
         if (form.opcode == Opcode::GetDeferredClosureSlotOrUndefined) {
@@ -244,7 +234,12 @@ void Walker::leaveBlockOpenInFrontOfLoop(BlockID inputHead, BlockID head, std::s
 
 void Walker::endBlocksInFrontOfLoops(size_t frameIndex, BlockID next)
 {
-    while (!m_openLoops.isEmpty()) {
+    size_t numberOfLoopsAroundTurn = 0;
+    for (const GeneratorWalkedInConsumer& walked : m_generatorsWalkedInConsumers) {
+        if (walked.frameOfTurn == frameIndex)
+            numberOfLoopsAroundTurn = std::max<size_t>(numberOfLoopsAroundTurn, walked.numberOfLoopsAroundTurn);
+    }
+    while (m_openLoops.size() > numberOfLoopsAroundTurn) {
         const OpenLoop& loop = m_openLoops.last();
         if (loop.frame < frameIndex)
             return;
@@ -371,10 +366,12 @@ bool Walker::executesOnEveryIteration(uint32_t loopIndex, const HoistPoint& poin
 
 std::optional<uint32_t> Walker::findLoopToBuildInFrontOf(const Draft& draft, const Effects& effects) const
 {
+    if (m_buildsWhereItStands)
+        return std::nullopt;
     uint32_t numberOfLoops = std::min<uint32_t>(m_openLoops.size(), m_numberOfLoopsThatMayBeLeft);
     if (!numberOfLoops || !mayLeaveSomeLoopForLoopInvariants(m_types, draft, effects, m_numberOfScopesWhereProofsHoldEverywhere))
         return std::nullopt;
-    if (drawChoice(DrawnFor::PlaceInFrontOfLoop, currentFunction().index(), draft.position) == ChoiceOfCost::No)
+    if (drawChoice(DrawnFor::PlaceInFrontOfLoop, currentFunction().index(), draft.position, false) == ChoiceOfCost::No)
         return std::nullopt;
     if ((draft.opcode == Opcode::GetModuleVariable || draft.opcode == Opcode::GetEnvironmentField) && draft.followsItsStore())
         return std::nullopt;
@@ -383,6 +380,8 @@ std::optional<uint32_t> Walker::findLoopToBuildInFrontOf(const Draft& draft, con
     if (draft.opcode == Opcode::GetEnvironmentField && plan().promotedEnvironments().isPromoted(draft.layout()))
         return std::nullopt;
     if (draft.opcode == Opcode::GetTypedArrayLength && viewMayFollowSharedMemoryThatGrows(*this, draft.viewOperand()))
+        return std::nullopt;
+    if (readsStorageWhereItIsUsed() && effects.reads.containsAny(AbstractHeapSet { AbstractHeap::ArrayStorage, AbstractHeap::TypedArrayStorage }))
         return std::nullopt;
     for (Reference operand : draft.operands()) {
         if (operand && (!operand.isRecord() || typeOf(operand) != ownTypeOf(operand)))

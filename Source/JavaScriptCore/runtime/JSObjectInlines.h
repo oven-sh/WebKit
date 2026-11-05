@@ -1092,7 +1092,7 @@ inline void JSObject::setPrivateField(JSGlobalObject* globalObject, PropertyName
     putDirect(vm, propertyName, value, putSlot);
 }
 
-inline void JSObject::definePrivateField(JSGlobalObject* globalObject, PropertyName propertyName, JSValue value, PutPropertySlot& putSlot)
+inline void JSObject::definePrivateField(JSGlobalObject* globalObject, PropertyName propertyName, JSValue value, PutPropertySlot& putSlot, unsigned attributes)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1119,7 +1119,7 @@ inline void JSObject::definePrivateField(JSGlobalObject* globalObject, PropertyN
     EXCEPTION_ASSERT(!scope.exception());
 
     scope.release();
-    putDirect(vm, propertyName, value, putSlot);
+    putDirect(vm, propertyName, value, attributes, putSlot);
 }
 
 ALWAYS_INLINE void JSObject::getNonReifiedStaticPropertyNames(VM& vm, PropertyNameArrayBuilder& propertyNames, DontEnumPropertiesMode mode)
@@ -1210,7 +1210,7 @@ inline void JSObject::setPrivateBrand(JSGlobalObject* globalObject, JSValue bran
             throwException(globalObject, scope, createReinstallPrivateMethodError(globalObject));
             return;
         }
-        AOT::PropertyWalk::putDirect(vm, this, uid, brand, static_cast<unsigned>(PropertyAttribute::None));
+        AOT::PropertyWalk::putDirect(vm, this, uid, jsBoolean(true), static_cast<unsigned>(PropertyAttribute::DontEnum));
         return;
     }
     if (type() == SlimClosureType) [[unlikely]] {

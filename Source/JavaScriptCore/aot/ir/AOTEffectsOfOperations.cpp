@@ -195,13 +195,12 @@ static_assert([] {
 
 } // anonymous namespace
 
-static constexpr OperandUses usesThatCallOperandForEffects { OperandUse::Calls, OperandUse::CallsPerElement, OperandUse::CallsRepeatedly };
 static constexpr OperandUses usesThatDeclareNoCodeOfOperandsForEffects {
     OperandUse::Inspects, OperandUse::Retains, OperandUse::Returns, OperandUse::ReadsContents, OperandUse::WritesContents, OperandUse::RetainsContents,
     OperandUse::MovesElements, OperandUse::StoresByKey, OperandUse::DeletesByKey, OperandUse::AssignsFrom, OperandUse::DefinesName, OperandUse::TakesDescriptor,
     OperandUse::ChangesIntegrity, OperandUse::ChangesPrototype, OperandUse::BecomesPrototype, OperandUse::AppliesTransitively, OperandUse::AppliesToContents,
 };
-static_assert(everyOperandUseIsInExactlyOneOf({ usesThatCallOperandForEffects, OperandUse::PassesToUserCode, usesThatDeclareNoCodeOfOperandsForEffects }));
+static_assert(everyOperandUseIsInExactlyOneOf({ usesThatCallOperand, OperandUse::PassesToUserCode, usesThatDeclareNoCodeOfOperandsForEffects }));
 
 static constexpr OpcodeSet opcodesThatMakeThisForEffects { Opcode::Construct, Opcode::ConstructList, Opcode::SuperConstruct, Opcode::SuperConstructList };
 static constexpr Effects effectsOfMakingThisOfConstruction = [] {
@@ -427,7 +426,7 @@ static const OpcodesByWhatOperandsDeclare& opcodesByWhatOperandsDeclare()
         for (Opcode opcode : allMembersOf<Opcode>) {
             if (declaresProtocolOrUseOfOperand(opcode, usesThatCall))
                 result.haveOperandsThatMayRunCode.add(opcode);
-            if (declaresProtocolOrUseOfOperand(opcode, usesThatCallOperandForEffects))
+            if (declaresProtocolOrUseOfOperand(opcode, usesThatCallOperand))
                 result.declareCodeOfOperands.add(opcode);
             else if (opcodesWithEffectsOfRowUnlessOperandsRunCode.contains(opcode))
                 result.haveEffectsOfRow.add(opcode);
@@ -442,7 +441,7 @@ static const TerminatorKindSet& terminatorKindsDeclaringCodeOfOperands()
     static constexpr TerminatorKindSet kinds = [] {
         TerminatorKindSet result;
         for (TerminatorKind kind : allMembersOf<TerminatorKind>) {
-            if (declaresProtocolOrUseOfOperand(kind, usesThatCallOperandForEffects))
+            if (declaresProtocolOrUseOfOperand(kind, usesThatCallOperand))
                 result.add(kind);
         }
         return result;
@@ -483,7 +482,7 @@ struct CodeRunByOperands {
 
     void add(const TypingContext& context, Protocols protocols, OperandUses uses, TypeID operand, bool looksForFunctions)
     {
-        bool isCalled = uses.containsAny(usesThatCallOperandForEffects);
+        bool isCalled = uses.containsAny(usesThatCallOperand);
         if (protocols.isEmpty() && !isCalled)
             return;
         operand = typeOrAnythingForEffects(operand);

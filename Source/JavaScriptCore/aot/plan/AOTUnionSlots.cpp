@@ -195,6 +195,7 @@ public:
         , m_numberOfLayouts(static_cast<uint32_t>(program.layouts.size()))
         , m_depths(layoutsBelowTheirBases.depths)
         , m_layoutsBelowTheirBases(layoutsBelowTheirBases.layouts)
+        , m_layoutsPassedOver(rows.layoutsThatRepeatTheirBases && !rows.layoutsThatRepeatTheirBases->isEmpty() ? rows.layoutsThatRepeatTheirBases : nullptr)
         , m_isTouched(m_numberOfLayouts)
         , m_allAboveIsPlaced(m_numberOfLayouts)
     {
@@ -209,6 +210,8 @@ public:
         collectGroups();
         if (m_groups.isEmpty())
             return;
+        if (m_layoutsPassedOver)
+            addRowsPassedOver();
         m_cells.grow(m_numberOfLayouts);
         m_depthsReached.fill(0, m_numberOfLayouts);
         for (const Group& group : m_groups)
@@ -277,7 +280,7 @@ private:
             return std::nullopt;
         if (above.layout == reference.layout || !isTouchable(above.layout))
             return std::nullopt;
-        return above;
+        return m_layoutsPassedOver ? fieldNotRepeated(m_program, *m_layoutsPassedOver, above) : above;
     }
 
     void collectUnits()
@@ -293,7 +296,7 @@ private:
         Vector<uint32_t> rowsWithUnits;
         for (LayoutID id : m_layoutsBelowTheirBases) {
             const Layout& layout = m_program.at(id);
-            uint32_t numberOfFields = static_cast<uint32_t>(layout.fields.size());
+            uint32_t numberOfFields = m_layoutsPassedOver ? numberOfFieldsNotRepeated(m_program, *m_layoutsPassedOver, id) : static_cast<uint32_t>(layout.fields.size());
             uint32_t firstRow = m_rows.firstRowOfLayout[id.index()];
             uint32_t depth = m_depths[id.index()];
             bool hasBase = !!writtenBaseOf(layout);
@@ -332,7 +335,11 @@ private:
                 rowsWithUnits.append(row);
             }
         }
+        listRowsOfUnits(rowsWithUnits.span());
+    }
 
+    void listRowsOfUnits(std::span<const uint32_t> rowsWithUnits)
+    {
         uint32_t firstRow = 0;
         for (Unit& unit : m_units) {
             unit.firstRow = firstRow;
@@ -342,6 +349,77 @@ private:
         for (uint32_t row : rowsWithUnits) {
             Unit& unit = m_units[m_unitOfRow[row]];
             m_rowsOfUnits[unit.firstRow + unit.numberOfRows++] = row;
+        }
+    }
+
+    void addRowsPassedOver()
+    {
+        struct RowAdded {
+            uint32_t row { 0 };
+            uint32_t lastAddedToUnitInFront { none };
+        };
+        const BitVector& layoutsPassedOver = *std::exchange(m_layoutsPassedOver, nullptr);
+        Vector<RowAdded> rowsAdded;
+        Vector<uint32_t> lastRowsAddedToUnits;
+        lastRowsAddedToUnits.fill(none, m_units.size());
+        Vector<uint32_t> placesInWalk;
+        placesInWalk.fill(0, m_numberOfLayouts);
+        uint32_t placeInWalk = 0;
+        bool declaresOrRefusesUnit = false;
+        for (LayoutID id : m_layoutsBelowTheirBases) {
+            placesInWalk[id.index()] = placeInWalk++;
+            if (!layoutsPassedOver.get(id.index()))
+                continue;
+            const Layout& layout = m_program.at(id);
+            uint32_t firstRow = m_rows.firstRowOfLayout[id.index()];
+            for (uint32_t field = layout.ownFieldCount; field < layout.fields.size(); ++field) {
+                uint32_t width = widthOfRow(firstRow + field);
+                m_layoutOfRow[firstRow + field] = id;
+                if (!width)
+                    continue;
+                std::optional<FieldReference> above = findFieldAbove({ id, field });
+                UnitIndex unit = above ? m_unitOfRow[rowOf(*above)] : none;
+                if (unit == none || m_units[unit].logWidth != std::countr_zero(width)) {
+                    declaresOrRefusesUnit = true;
+                    break;
+                }
+                m_unitOfRow[firstRow + field] = unit;
+                rowsAdded.append({ firstRow + field, std::exchange(lastRowsAddedToUnits[unit], static_cast<uint32_t>(rowsAdded.size())) });
+            }
+        }
+        if (declaresOrRefusesUnit) {
+            m_units.shrink(0);
+            m_groups.shrink(0);
+            m_unitsOfGroups.shrink(0);
+            collectUnits();
+            collectGroups();
+            return;
+        }
+
+        Vector<uint32_t, 16> rowsListed;
+        Vector<uint32_t, 16> rowsOfUnitAdded;
+        for (uint32_t last = static_cast<uint32_t>(rowsAdded.size()); last--;) {
+            UnitIndex index = m_unitOfRow[rowsAdded[last].row];
+            if (lastRowsAddedToUnits[index] != last)
+                continue;
+            rowsOfUnitAdded.shrink(0);
+            for (uint32_t added = last; added != none; added = rowsAdded[added].lastAddedToUnitInFront)
+                rowsOfUnitAdded.append(rowsAdded[added].row);
+            rowsListed.shrink(0);
+            rowsListed.append(rowsOf(index));
+            Unit& unit = m_units[index];
+            unit.firstRow = static_cast<uint32_t>(m_rowsOfUnits.size());
+            unit.numberOfRows = static_cast<uint32_t>(rowsListed.size() + rowsOfUnitAdded.size());
+            auto placeOf = [&](uint32_t row) {
+                return placesInWalk[m_layoutOfRow[row].index()];
+            };
+            for (uint32_t row : rowsListed) {
+                while (!rowsOfUnitAdded.isEmpty() && placeOf(rowsOfUnitAdded.last()) < placeOf(row))
+                    m_rowsOfUnits.append(rowsOfUnitAdded.takeLast());
+                m_rowsOfUnits.append(row);
+            }
+            while (!rowsOfUnitAdded.isEmpty())
+                m_rowsOfUnits.append(rowsOfUnitAdded.takeLast());
         }
     }
 
@@ -823,6 +901,7 @@ private:
     uint32_t m_numberOfLayouts;
     const Vector<uint32_t>& m_depths;
     const Vector<LayoutID>& m_layoutsBelowTheirBases;
+    const BitVector* m_layoutsPassedOver;
     BitVector m_isTouched;
     Vector<CellInUnionSlots> m_cells;
     Vector<uint32_t> m_depthsReached;

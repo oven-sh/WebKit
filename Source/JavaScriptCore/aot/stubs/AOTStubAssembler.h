@@ -83,6 +83,7 @@ struct PreservingCall {
     bool checksException { true };
     std::array<std::optional<GPRReg>, 3> cellsToKeep { };
     const ScopedLambda<void()>* emitBeforeReturn { nullptr };
+    std::span<const GPRReg> registersThatCalleeLoses { };
 };
 
 class OwnedScratchRegister {
@@ -158,6 +159,7 @@ public:
     void restoreFPR(FPRReg, GPRReg);
     GPRReg clobberOperand(unsigned);
     GPRReg reuseScratch(StubRegister);
+    GPRReg savedScratch(StubRegister);
     GPRReg clobberRegister(GPRReg);
     GPRReg clobberRegister(StubRegister stubRegister) { return clobberRegister(gprOf(stubRegister)); }
     bool canAllocate(StubRegister) const;
@@ -197,8 +199,10 @@ public:
     void returnStubAddress(StubKey);
     void loadLabelAddress(Label, GPRReg);
     void jumpThroughHandlerTable(BaseIndex tableEntry, std::span<const StubKey> handlers);
+    void callThroughHandlerTable(BaseIndex tableEntry, std::span<const StubKey> handlers, GPRReg scratch);
 
     void align();
+    void alignWhatStandsBehind(unsigned size);
     void bindEntry(StubKey entry) { bindEntryAt(entry, label()); }
     Label bindReturnLabel(StubFrameKind);
 
@@ -347,6 +351,7 @@ private:
     Vector<BoundEntry> m_boundEntries;
     Vector<BoundReturnLabel> m_boundReturnLabels;
     HashMap<uint64_t, Label> m_entryLabels;
+    Label m_headOfBody;
     Vector<PendingJump> m_pendingJumps;
     Vector<PendingCall> m_pendingCalls;
     Vector<PendingStubAddress> m_pendingStubAddresses;

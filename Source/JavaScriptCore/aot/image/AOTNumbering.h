@@ -285,11 +285,12 @@ constexpr bool mayHaveUnitsBehind(NumberSpace space)
 
 JS_EXPORT_PRIVATE void forEachUnitBehind(const Mention&, std::span<const uint32_t> mentionWords, const Typed::Program&, const Typed::Facts&, const Typed::Plan&, NOESCAPE const ScopedLambda<void(CodeUnit)>&);
 enum class MentionKind : uint8_t { Call, ClosureWord };
-JS_EXPORT_PRIVATE void forEachUnitBehindSlowCase(const Mention&, std::span<const uint32_t> mentionWords, const Typed::Program&, const Typed::Facts&, const Typed::Plan&, NOESCAPE const ScopedLambda<void(CodeUnit, MentionKind)>&);
-inline void forEachUnitBehind(const Mention& mention, std::span<const uint32_t> mentionWords, const Typed::Program& program, const Typed::Facts& facts, const Typed::Plan& plan, NOESCAPE const ScopedLambda<void(CodeUnit, MentionKind)>& functor)
+using AsksForUnitsOfClass = ScopedLambda<bool(LayoutID classOrNoneBehindLast)>;
+JS_EXPORT_PRIVATE void forEachUnitBehindSlowCase(const Mention&, std::span<const uint32_t> mentionWords, const Typed::Program&, const Typed::Facts&, const Typed::Plan&, NOESCAPE const ScopedLambda<void(CodeUnit, MentionKind)>&, const AsksForUnitsOfClass*);
+inline void forEachUnitBehind(const Mention& mention, std::span<const uint32_t> mentionWords, const Typed::Program& program, const Typed::Facts& facts, const Typed::Plan& plan, NOESCAPE const ScopedLambda<void(CodeUnit, MentionKind)>& functor, const AsksForUnitsOfClass* asksForUnitsOfClass = nullptr)
 {
     if (mayHaveUnitsBehind(mention.space))
-        forEachUnitBehindSlowCase(mention, mentionWords, program, facts, plan, functor);
+        forEachUnitBehindSlowCase(mention, mentionWords, program, facts, plan, functor, asksForUnitsOfClass);
 }
 
 class FunctionNumbers {

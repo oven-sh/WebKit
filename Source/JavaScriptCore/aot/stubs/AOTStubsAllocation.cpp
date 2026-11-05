@@ -264,7 +264,7 @@ StubSignature signatureOfAllocateInstance(StubKey)
     StubSignature signature = StubSignature::withGPRResult({ gprOf(StubRegister::T9), gprOf(StubRegister::A2) });
     signature.result = StubResult::TwoGPRs;
     signature.secondResult = gprOf(StubRegister::T11);
-    return signature;
+    return signature.fillingOperandInFront(1);
 }
 
 void generateAllocateInstance(StubAssembler& jit)

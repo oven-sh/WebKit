@@ -22,6 +22,7 @@ constexpr StubKey closureOfTable() { return StubKey(StubFamily::ClosureOfTable);
 enum class ChangedClosure : uint8_t { Slim, Full };
 constexpr StubKey changedClosureHasNumber(ChangedClosure form) { return StubKey(StubFamily::ChangedClosureHasNumber).withForm(static_cast<uint8_t>(form)); }
 constexpr StubKey numberOfChangedClosure() { return StubKey(StubFamily::NumberOfChangedClosure); }
+constexpr StubKey checkProofOfClosure() { return StubKey(StubFamily::CheckProofOfClosure); }
 inline constexpr uint32_t noClosureNumber = UINT32_MAX;
 
 void loadSlimClosureWord(StubAssembler&, GPRReg closure, GPRReg word);

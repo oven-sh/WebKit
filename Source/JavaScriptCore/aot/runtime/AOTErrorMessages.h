@@ -61,6 +61,7 @@ JSObject* createFileOfImageRefusedError(JSGlobalObject*, StringView path, ASCIIL
 JSObject* createModuleInOtherRealmError(JSGlobalObject*, StringView path);
 JSObject* createLoaderChangeRefusedError(JSGlobalObject*, LoaderChange, StringView changed);
 JSObject* createEntryOfRequireCacheRefusedError(JSGlobalObject*, StringView path);
+JSObject* createComparisonOfPrivateFieldRefusedError(JSGlobalObject*, const String& field);
 JSObject* createModuleMissingAtBuildError(JSGlobalObject*, const String& specifier, const String& importer, ASCIILiteral code);
 JSObject* createExportStatementFindsNothingError(JSGlobalObject*, const String& exportName, const String& specifier);
 JSObject* createExportStatementFindsSeveralError(JSGlobalObject*, const String& exportName, const String& specifier);

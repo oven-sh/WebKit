@@ -30,6 +30,7 @@ struct AccessTableRead {
     AccessTableRegisters registers;
     GPRReg word;
     GPRReg scratch;
+    bool waysOnwardAreCalls { false };
 };
 
 void returnValueByAccessTable(StubAssembler&, const AccessTableRead&, JumpList& isNotAnswered, JumpList& isAnsweredByFieldTable);

@@ -11,6 +11,7 @@
 #include "AOTDroppedClosureTestSupport.h"
 #include "AOTEmptyPages.h"
 #include "AOTPropertyCaches.h"
+#include "AOTVMState.h"
 #include "AOTVector.h"
 #include "JSCInlines.h"
 #include "WeakInlines.h"
@@ -163,7 +164,14 @@ static void testWhatIsRememberedOfStructureSpellsNoAddress(LoadedProgram& progra
 }
 
 template<LoadedProgramTest body>
-static constexpr void (*withClosuresToDrop)() = runNativeTestWithLoadedProgram<cacheSweepTests, programWithClosuresToDrop, body>;
+static void changeObjectsUnseen(LoadedProgram& program)
+{
+    program.vm().aotState().nativeTestChangesObjectsUnseen = true;
+    body(program);
+}
+
+template<LoadedProgramTest body>
+static constexpr void (*withClosuresToDrop)() = runNativeTestWithLoadedProgram<cacheSweepTests, programWithClosuresToDrop, changeObjectsUnseen<body>>;
 
 std::span<const NativeTest> cacheSweepTests()
 {

@@ -199,6 +199,11 @@ static void nameWhatEnvironmentRecordNames(const TableInputs& inputs, LayoutID i
     nameStringShownByLayoutTables(inputs, inputs.program.at(id).name, names);
 }
 
+static bool isLaidOutsideClassRecord(const TableInputs& inputs, const Typed::LinkedNameOnPrototype& laid)
+{
+    return laid.key && !inputs.facts.linked().layout(laid.layout).reachesUnseenCode && !inputs.facts.hasMemberUnder(laid.layout, ClassSide::Prototype, laid.key);
+}
+
 void nameWhatLayoutTablesName(const TableInputs& inputs, const GatheredMentions&, NamesOfTables& names)
 {
     RELEASE_ASSERT(inputs.build);
@@ -226,6 +231,14 @@ void nameWhatLayoutTablesName(const TableInputs& inputs, const GatheredMentions&
         for (uint32_t function : namesOfChunk.functionsWithClosureCell.ids)
             names.functionsWithClosureCell.set(function);
         names.types.appendVector(namesOfChunk.types);
+    }
+    for (const Typed::LinkedNameOnFunction& laid : inputs.facts.linked().namesOnFunctions) {
+        if (inputs.plan.slots().closuresGetOnlyListedNames(laid.holder))
+            names.keys.set(laid.key.index());
+    }
+    for (const Typed::LinkedNameOnPrototype& laid : inputs.facts.linked().namesOnPrototypes) {
+        if (isLaidOutsideClassRecord(inputs, laid))
+            names.keys.set(laid.key.index());
     }
 }
 
@@ -312,6 +325,8 @@ static FieldsOfLayoutRecord collectFieldsOfLayoutRecord(const TableEncoder& enco
         data.isFilledAtBirth = slot.isFilledAtBirth;
         data.holdsRawValueFromBirth = planned.holdsRawValueFromBirth(index);
         data.isHeldFilled = isHeldFilled.get(index);
+        data.isWrittenPrivateName = field.flags.contains(Typed::FieldFlags::IsPrivate) && !field.flags.contains(Typed::FieldFlags::IsHidden) && field.key && program.at(field.key).owner == id;
+        data.isKeptFromComparisons = data.isWrittenPrivateName && encoder.facts.linked().field(reference).isKeptFromComparisons;
         data.slotHoldsUndefinedAndNull = facts.facts.contains(Typed::FieldFact::SlotHoldsUndefinedAndNull) && !slot.provenType;
         data.flags = flagsOfFieldInLayoutRecord(field, facts, slot);
         data.slot = slot.data();
@@ -616,6 +631,7 @@ static Vector<LayoutRecordParts> collectLayoutRecordParts(TableEncoder& encoder)
             layouts.append(id);
     });
 
+    askRowsOfClassesForClassRecords(encoder);
     Vector<LayoutRecordParts> records(program.layouts.size());
     Vector<LayoutID> parentsThatListClasses(FillWith { }, program.layouts.size(), LayoutID());
     forEachIndexInParallel(encoder.build.parallelLoops(), static_cast<unsigned>(layouts.size()), [&](unsigned index) {
@@ -839,6 +855,30 @@ static Vector<ConstructorData> collectConstructorsOfLayouts(const TableEncoder& 
     return constructors;
 }
 
+static Vector<NameLaidOnClosuresData> collectNamesLaidOnClosures(const TableEncoder& encoder)
+{
+    Vector<NameLaidOnClosuresData> names;
+    for (const Typed::LinkedNameOnFunction& laid : encoder.facts.linked().namesOnFunctions) {
+        if (!encoder.plan.slots().closuresGetOnlyListedNames(laid.holder))
+            continue;
+        if (std::optional<FunctionID> entrypoint = encoder.findEntrypoint(laid.holder))
+            names.append({ entrypoint->index(), encoder.identifierNumber(laid.key, "a name laid on the closures of a function"_s) });
+    }
+    AOT::sort(names);
+    return names;
+}
+
+static Vector<NameLaidOutsideClassRecordData> collectNamesLaidOutsideClassRecords(const TableEncoder& encoder)
+{
+    Vector<NameLaidOutsideClassRecordData> names;
+    for (const Typed::LinkedNameOnPrototype& laid : encoder.facts.linked().namesOnPrototypes) {
+        if (isLaidOutsideClassRecord(encoder.inputs, laid))
+            names.append({ laid.layout.index(), encoder.identifierNumber(laid.key, "a name laid on the prototype object of"_s, laid.layout) });
+    }
+    AOT::sort(names);
+    return names;
+}
+
 void encodeLayoutTables(TableEncoder& encoder)
 {
     static constexpr ASCIILiteral nameOfSteps = "image: layout tables"_s;
@@ -873,6 +913,8 @@ void encodeLayoutTables(TableEncoder& encoder)
     encoder.part.setTable(ProgramTableIndex::allocations, allocationRows.allocations);
     encoder.part.setTable(ProgramTableIndex::constructedAllocations, allocationRows.constructedAllocations);
     encoder.part.setTable(ProgramTableIndex::constructors, constructors);
+    encoder.part.setTable(ProgramTableIndex::namesLaidOnClosures, collectNamesLaidOnClosures(encoder));
+    encoder.part.setTable(ProgramTableIndex::namesLaidOutsideClassRecords, collectNamesLaidOutsideClassRecords(encoder));
     times.didFinish("append the tables behind the records"_s);
 }
 

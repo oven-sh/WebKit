@@ -225,7 +225,8 @@ function resolveMeaning(builder: ModelBuilder, line: SyntaxLine): ModelIntrinsic
       return { intrinsic: "SymbolKey", symbol: constant.name };
     }
     case "Builtin":
-    case "Construct": {
+    case "Construct":
+    case "IsHolderWithoutAddedNames": {
       const builtin = builder.resolve(spec.path, source);
       if (builtin === null) return null;
       const { mutability, text } = builtin;

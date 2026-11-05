@@ -278,7 +278,7 @@ bool BuilderOfCharacterRead::build(Reference position)
 
     bool isInside = type.integers.minimum >= 0 && (isBelowLength || nameProvesPositionBelowLengthForStrings(m_walker, position, m_string));
     isInside = isInside || (m_method != CharacterReadInWalkStrings::At && type.integers.minimum >= 0 && testOfBodyHoldsPositionOfCharacterReadBelowLength(m_walker, m_value));
-    if (isInside && !m_walker.testsEveryPosition())
+    if (isInside && !m_walker.readsStorageWhereItIsUsed())
         m_walker.count(StatisticID::RangeChecksRemoved);
     if (!isInside) {
         if (type.integers.minimum < 0 && type.isInt32())

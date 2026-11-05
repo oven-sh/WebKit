@@ -124,6 +124,7 @@ export function dumpType(type: ModelType): DumpedType {
   const { integers } = type;
   return {
     isAnything: type.isAnything,
+    isMadeOfListedClasses: type.isMadeOfListedClasses,
     hasAnyObject: type.hasAnyObject,
     hasAnyFunction: type.hasAnyFunction,
     hasPlainData: type.hasPlainData,

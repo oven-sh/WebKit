@@ -72,6 +72,11 @@ public:
         uint32_t older { 0 };
     };
 
+    void takeRoomOf(NumbersOfWalkStates& former)
+    {
+        takeRoom(m_checkedNames, former.m_checkedNames);
+        takeRoom(m_newestCheckedNames, former.m_newestCheckedNames);
+    }
     void clear()
     {
         m_checkedNames.shrink(0);
@@ -146,6 +151,8 @@ enum class FactOfCell : uint8_t {
     NoExtraProperties = 1 << 6,
     BearsNoMark = 1 << 7,
 };
+
+OptionSet<FactOfCell> factsOfCellEndedBy(const LocationMasks& writes);
 
 class WalkState {
 public:
@@ -517,6 +524,12 @@ public:
         m_marks = { 0, m_marks.kinds & programIsWhole };
         if (m_held)
             dropWhatIsHeld();
+        m_answers.clear();
+    }
+    void freeWhatIsHeld()
+    {
+        m_marks = { 0, m_marks.kinds & programIsWhole };
+        release(std::exchange(m_held, nullptr));
         m_answers.clear();
     }
     void forgetAllButFreshObjects()

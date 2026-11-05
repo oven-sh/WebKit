@@ -199,6 +199,7 @@ export interface ModelType {
   id: number;
   key: string;
   isAnything: boolean;
+  isMadeOfListedClasses: boolean;
   hasAnyObject: boolean;
   hasAnyFunction: boolean;
   hasPlainData: boolean;
@@ -534,6 +535,7 @@ export interface ModelBuiltin {
   constant: ModelConstant | null;
   isAddedAtFirstRead: boolean;
   isAddedAsEnumerable: boolean;
+  isCreatedInSomeRuns: boolean;
   hostNumber: number;
   attachments: ModelAttachments;
 }
@@ -638,7 +640,7 @@ export type ModelIntrinsicMeaning =
   | { intrinsic: "IfAbruptCloseIterator" }
   | { intrinsic: "SymbolKey"; symbol: ModelName }
   | { intrinsic: "HasJSType"; first: string; last: string }
-  | { intrinsic: "Builtin" | "Construct" | "NativeBinding"; builtin: ModelBuiltin }
+  | { intrinsic: "Builtin" | "Construct" | "IsHolderWithoutAddedNames" | "NativeBinding"; builtin: ModelBuiltin }
   | { intrinsic: "LinkTimeConstant"; constant: string }
   | { intrinsic: "Int"; value: number }
   | { intrinsic: "Bool"; value: boolean }

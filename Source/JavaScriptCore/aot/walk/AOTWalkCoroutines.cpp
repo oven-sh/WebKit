@@ -104,7 +104,6 @@ static std::optional<SuspendingBodyOfCoroutine> findSuspendingBodyOfCoroutine(Wa
 
 static Reference buildSuspensionOfCoroutine(Walker& walker, Draft&& suspension)
 {
-    noteSuspensionOfCoroutine(walker, suspension);
     Reference resumption = walker.build(WTF::move(suspension));
     walker.state().invalidateHeap();
     return resumption;

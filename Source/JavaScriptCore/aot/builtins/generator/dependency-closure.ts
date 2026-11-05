@@ -51,12 +51,22 @@ interface HandedOutValues {
   objects: readonly ModelBuiltin[];
   undescribedValue: string | null;
   features: readonly FeatureName[];
+  isNoOtherHostObject: boolean;
 }
 
 const promiseClassName: ClassName = "Promise";
 const proxyClassName: ClassName = "Proxy";
 
-const nothingHandedOut: HandedOutValues = { objects: [], undescribedValue: null, features: [] };
+const nothingHandedOut: HandedOutValues = { objects: [], undescribedValue: null, features: [], isNoOtherHostObject: false };
+
+function handsOutNoOtherHostObject(builtin: ModelBuiltin): boolean {
+  const standsForWhatLiesBelow = ({ kind }: ModelBuiltin): boolean => kind === "Constructor" || kind === "Prototype";
+  for (let current: ModelBuiltin | null = builtin; current !== null; current = current.holder) {
+    const isMarked = current.marks.includes("HandsOutNoOtherHostObject");
+    if (isMarked && (current === builtin || standsForWhatLiesBelow(current))) return true;
+  }
+  return false;
+}
 
 function createDependencies(): RuntimeDependencies {
   return {
@@ -672,11 +682,12 @@ export class DependencyClosure {
       objects: [...collector.objects].sort((left, right) => left.id - right.id),
       undescribedValue: collector.undescribedValue,
       features: collector.undescribedValue === null ? [] : featuresOf(builtin),
+      isNoOtherHostObject: handsOutNoOtherHostObject(builtin),
     };
   }
 
   #reachableFrom(roots: HandedOutValues): RuntimeDependencies {
-    const key = `${roots.undescribedValue !== null}:${roots.features.join(",")}:${roots.objects.map(object => object.id).join(",")}`;
+    const key = `${roots.undescribedValue !== null}:${roots.isNoOtherHostObject}:${roots.features.join(",")}:${roots.objects.map(object => object.id).join(",")}`;
     let dependencies = this.#reachable.get(key);
     if (dependencies === undefined) {
       dependencies = this.#computeReachable(roots);
@@ -691,9 +702,9 @@ export class DependencyClosure {
     const reached: ModelBuiltin[] = [];
     const workList: ModelBuiltin[] = [];
     const featuresAdded = new Set<FeatureName>();
-    const addHandedOut = ({ objects, undescribedValue, features }: HandedOutValues): void => {
+    const addHandedOut = ({ objects, undescribedValue, features, isNoOtherHostObject }: HandedOutValues): void => {
       workList.push(...objects);
-      if (undescribedValue === null) return;
+      if (undescribedValue === null || isNoOtherHostObject) return;
       dependencies.mayHandOutAnyHostObject = true;
       for (const feature of features) {
         if (featuresAdded.has(feature)) continue;

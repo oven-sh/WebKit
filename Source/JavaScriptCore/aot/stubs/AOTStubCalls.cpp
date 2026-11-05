@@ -204,8 +204,13 @@ uint32_t StubCalls::indexOf(Typed::CodeUnit callee)
     return result.iterator->value;
 }
 
-ALWAYS_INLINE uint32_t StubCalls::emitCall(CCallHelpers&, StubKey, CodeSymbol symbol, const RecordedCall& record)
+ALWAYS_INLINE uint32_t StubCalls::emitCall(CCallHelpers&, StubKey called, CodeSymbol symbol, const RecordedCall& record)
 {
+    if (m_registerFilledInFrontOfNextCall) [[unlikely]] {
+        RELEASE_ASSERT(symbol.space == SymbolSpace::Stub && signatureOf(called).filledOutOfResultInFront == m_registerFilledInFrontOfNextCall);
+        m_registerFilledInFrontOfNextCall = Reg();
+        symbol.entry = entryInFrontOfStub;
+    }
     uint32_t call = safeCast<uint32_t>(m_calls.size());
     if (call == m_calls.capacity()) [[unlikely]]
         m_calls.reserveCapacity(2 * static_cast<size_t>(call));

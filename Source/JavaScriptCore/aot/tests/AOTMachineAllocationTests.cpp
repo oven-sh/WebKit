@@ -391,6 +391,54 @@ static void allocatorKeepsNothingWhereGeneratorMakesConstant()
     AOT_ALLOCATION_TEST_CHECK(test, !test.call<uint64_t>(0, 42, 0));
 }
 
+static void encoderLeavesMoveOutOfResultRegisterToCalleeThatDoesIt()
+{
+    enum Case : unsigned { CalleeFillsOperand, CalleeFillsNothing, ResultRegisterIsFilledBehindMove, numberOfCases };
+    TestProcedure test;
+    Output& out = test.out();
+    LValue buffer = test.argumentGPR(0);
+    LValue other = test.argumentGPR(1);
+    const Reg result = Reg(GPRInfo::returnValueGPR);
+    const Reg filled = test.argumentGPR(2)->argumentReg();
+    const Reg holdsBuffer = test.argumentGPR(3)->argumentReg();
+
+    PatchOperation* takers[numberOfCases];
+    for (unsigned index = 0; index < numberOfCases; ++index) {
+        PatchOperation* maker = out.patchpoint(Int64);
+        maker->resultConstraints = { ValueRep::reg(result) };
+        maker->effects = Effects::none();
+        maker->effects.writesLocalState = true;
+        maker->setGenerator([index](CCallHelpers& jit, const PatchParameters&) {
+            jit.move(CCallHelpers::TrustedImm64(40 + index), GPRInfo::returnValueGPR);
+        });
+        PatchOperation* taker = out.patchpoint(Void);
+        takers[index] = taker;
+        taker->append(maker, ValueRep::reg(filled));
+        taker->append(buffer, ValueRep::reg(holdsBuffer));
+        if (index == ResultRegisterIsFilledBehindMove)
+            taker->append(other, ValueRep::reg(result));
+        taker->setBringsOperandsToTheirRegisters(true);
+        if (index != CalleeFillsNothing)
+            taker->setRegisterThatCalleeFillsOutOfResult(filled);
+        taker->effects = Effects::none();
+        taker->effects.writesLocalState = true;
+        taker->setGenerator([index](CCallHelpers& jit, const PatchParameters& parameters) {
+            if (parameters.value()->leavesMoveOutOfResultToCallee())
+                jit.move(GPRInfo::returnValueGPR, parameters[0].gpr());
+            jit.store64(parameters[0].gpr(), CCallHelpers::Address(parameters[1].gpr(), index * sizeof(uint64_t)));
+        });
+    }
+    out.ret(out.constInt64(0));
+    compileOrFail(test);
+
+    AOT_ALLOCATION_TEST_CHECK(test, takers[CalleeFillsOperand]->leavesMoveOutOfResultToCallee());
+    AOT_ALLOCATION_TEST_CHECK(test, !takers[CalleeFillsNothing]->leavesMoveOutOfResultToCallee());
+    AOT_ALLOCATION_TEST_CHECK(test, !takers[ResultRegisterIsFilledBehindMove]->leavesMoveOutOfResultToCallee());
+    std::array<uint64_t, numberOfCases> stored { };
+    AOT_ALLOCATION_TEST_CHECK(test, !test.call<uint64_t>(stored.data(), 7, 0, 0));
+    AOT_ALLOCATION_TEST_CHECK(test, stored[0] == 40 && stored[1] == 41 && stored[2] == 42);
+}
+
 static unsigned allocationTestNumberOfBlocksSplitLate(TestProcedure& test)
 {
     const Order& order = test.procedure().order();
@@ -1373,6 +1421,103 @@ static void allocatorPassesOverReadOffAnotherSideEntranceAsOwnHeadDoes()
         std::array<uint64_t, 64> expected = words;
         for (unsigned index : way.noted)
             expected[index] = index == 3 ? way.value : index;
+        AOT_ALLOCATION_TEST_CHECK(test, test.call<uint64_t>(way.ways, words.data()) == way.result);
+        AOT_ALLOCATION_TEST_CHECK(test, words == expected);
+    }
+}
+
+static void allocatorAsksEachLoopAroundBlockInTurn()
+{
+    ProcedureTraits traits;
+    traits.checksAllocation = true;
+    traits.ordersBlocksAsWhenOrderedAgain = true;
+    TestProcedure test(traits);
+    Output& out = test.out();
+    LValue ways = test.argumentGPR(0);
+    LValue buffer = test.argumentGPR(1);
+    LBasicBlock second = out.newBlock();
+    LBasicBlock third = out.newBlock();
+    LBasicBlock outerHead = out.newBlock();
+    LBasicBlock readsIt = out.newBlock();
+    LBasicBlock innerHead = out.newBlock();
+    LBasicBlock ends = out.newBlock();
+    LBasicBlock side = out.newBlock();
+    LBasicBlock returns = out.newBlock();
+    LBasicBlock rare = out.newBlock();
+    LBasicBlock leavesForOuterHead = out.newBlock();
+    LBasicBlock leavesForInnerHead = out.newBlock();
+    auto note = [&](unsigned index) {
+        out.store64(out.constInt64(index), allocationTestWordAt(test, buffer, index));
+    };
+
+    LValue value = out.load64(allocationTestWordAt(test, buffer, 0));
+    out.branch(out.testNonZero64(ways, 1), normalEdge(second), normalEdge(side));
+
+    out.appendTo(second);
+    out.branch(out.testNonZero64(ways, 2), normalEdge(third), normalEdge(side));
+
+    out.appendTo(third);
+    out.branch(out.testNonZero64(ways, 4), normalEdge(outerHead), normalEdge(innerHead));
+
+    out.appendTo(outerHead);
+    note(1);
+    out.jump(normalEdge(readsIt));
+
+    out.appendTo(readsIt);
+    out.store64(value, allocationTestWordAt(test, buffer, 3));
+    out.jump(normalEdge(ends));
+
+    out.appendTo(innerHead);
+    note(2);
+    out.jump(normalEdge(ends));
+
+    out.appendTo(ends);
+    out.ret(out.constInt64(100));
+
+    out.appendTo(side);
+    out.branch(out.testNonZero64(ways, 8), rareEdge(rare), normalEdge(returns));
+
+    out.appendTo(returns);
+    out.ret(out.constInt64(200));
+
+    out.appendTo(rare);
+    note(4);
+    out.branch(out.testNonZero64(ways, 16), normalEdge(leavesForOuterHead), normalEdge(leavesForInnerHead));
+
+    out.appendTo(leavesForOuterHead);
+    note(5);
+    out.jump(normalEdge(outerHead));
+
+    out.appendTo(leavesForInnerHead);
+    note(6);
+    out.jump(normalEdge(innerHead));
+    compileOrFail(test);
+
+    const Order& order = test.procedure().order();
+    AOT_ALLOCATION_TEST_CHECK(test, order.headOf(outerHead) < order.headOf(innerHead) && order.headOf(innerHead) < order.headOf(side) && order.headOf(side) < order.headOf(rare));
+    AOT_ALLOCATION_TEST_CHECK(test, order.of(outerHead).isLoopHead && order.of(innerHead).isLoopHead && order.loops()[order.of(innerHead).loop].parent == order.of(outerHead).loop);
+    AOT_ALLOCATION_TEST_CHECK(test, order.of(side).loop == order.of(innerHead).loop && order.loops()[order.of(side).loop].hasSideEntrance && order.loops()[order.of(outerHead).loop].hasSideEntrance);
+    AOT_ALLOCATION_TEST_CHECK(test, allocationTestRegisterAtHead(test, outerHead, value) && !allocationTestRegisterAtHead(test, innerHead, value));
+
+    struct Way {
+        uint64_t ways;
+        uint64_t result;
+        std::initializer_list<unsigned> noted;
+    };
+    for (const Way& way : std::initializer_list<Way> {
+        { 0, 200, { } },
+        { 1, 200, { } },
+        { 1 | 2, 100, { 2 } },
+        { 1 | 2 | 4, 100, { 1, 3 } },
+        { 8, 100, { 4, 6, 2 } },
+        { 8 | 16, 100, { 4, 5, 1, 3 } },
+        { 1 | 8 | 16, 100, { 4, 5, 1, 3 } },
+    }) {
+        std::array<uint64_t, 64> words = allocationTestWords<uint64_t>();
+        words[0] = 40;
+        std::array<uint64_t, 64> expected = words;
+        for (unsigned index : way.noted)
+            expected[index] = index == 3 ? 40 : index;
         AOT_ALLOCATION_TEST_CHECK(test, test.call<uint64_t>(way.ways, words.data()) == way.result);
         AOT_ALLOCATION_TEST_CHECK(test, words == expected);
     }
@@ -3308,6 +3453,7 @@ std::span<const NativeTest> machineAllocationTests()
         { "machine-allocation/work-grows-as-the-edges-of-a-switch-that-get-moves-do"_s, Machine::allocatorWorkGrowsAsEdgesOfSwitchThatGetMovesDo },
         { "machine-allocation/operands-of-a-patch-that-ends-the-function-stay-where-they-lie"_s, Machine::allocatorLeavesOperandsOfPatchThatEndsFunctionWhereTheyLie },
         { "machine-allocation/nothing-is-kept-where-the-generator-makes-a-constant"_s, Machine::allocatorKeepsNothingWhereGeneratorMakesConstant },
+        { "machine-allocation/a-move-out-of-the-result-register-is-left-to-the-callee-that-does-it"_s, Machine::encoderLeavesMoveOutOfResultRegisterToCalleeThatDoesIt },
         { "machine-allocation/three-number-phis-rotate"_s, Machine::allocatorRotatesPhisBySwapping<double, 3> },
         { "machine-allocation/numbers-across-a-call-take-callee-saved-registers"_s, Machine::allocatorKeepsValuesAcrossCallInCalleeSavedRegisters<double> },
         { "machine-allocation/integer-loses-its-register-to-a-loop-under-pressure"_s, Machine::allocatorDecidesByPressureWhatKeepsItsRegisterThroughLoop<uint64_t, true> },
@@ -3317,6 +3463,7 @@ std::span<const NativeTest> machineAllocationTests()
         { "machine-allocation/no-block-is-laid-ahead-of-all-its-predecessors"_s, Machine::orderLaysNoBlockAheadOfAllItsPredecessors },
         { "machine-allocation/the-second-entrance-of-a-cycle-is-judged-as-its-outer-head-is"_s, Machine::allocatorJudgesSecondEntranceOfCycleAsItsOuterHead },
         { "machine-allocation/a-read-off-another-side-entrance-is-passed-over-as-the-loops-own-head-passes-it-over"_s, Machine::allocatorPassesOverReadOffAnotherSideEntranceAsOwnHeadDoes },
+        { "machine-allocation/each-loop-around-a-block-is-asked-in-turn"_s, Machine::allocatorAsksEachLoopAroundBlockInTurn },
         { "machine-allocation/sum-comes-round-in-its-register-past-a-join-that-a-rare-block-leads-back-to"_s, Machine::allocatorBringsSumRoundInItsRegisterPastJoinThatRareBlockLeadsBackTo },
         { "machine-allocation/value-for-a-phi-is-made-in-the-register-of-the-phi"_s, Machine::allocatorDefinesValueInRegisterOfPhiWhoseHeadIsFixed },
         { "machine-allocation/a-phi-stays-where-the-call-in-its-block-takes-it"_s, Machine::allocatorLeavesPhiWhereCallInItsBlockTakesIt },

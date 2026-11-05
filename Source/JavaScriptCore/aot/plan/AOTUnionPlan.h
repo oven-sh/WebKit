@@ -23,6 +23,7 @@ struct RowsOfSlotPlan {
     std::span<uint64_t> ends;
     std::span<const uint8_t> offsetsOfFirstSlots;
     std::span<const uint8_t> widths { };
+    const BitVector* layoutsThatRepeatTheirBases { nullptr };
 };
 struct LayoutsBelowTheirBases {
     static constexpr uint32_t isNotTouched = UINT32_MAX;

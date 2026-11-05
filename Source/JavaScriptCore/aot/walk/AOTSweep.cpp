@@ -102,6 +102,43 @@ static ALWAYS_INLINE void countUseInSweep(uint8_t* useCounts, ValueID* onlyUsers
     ++count;
 }
 
+Sweep::Sweep(RoomsOfSweep& rooms)
+    : m_statesOfBlocks(rooms.roomOfStatesOfBlocks.take())
+    , m_worklist(rooms.roomOfWorklist.take())
+    , m_blocksToReach(rooms.roomOfBlocksToReach.take())
+    , m_firstIncomingEdge(rooms.roomOfFirstIncomingEdge.take())
+    , m_incomingEdges(rooms.roomOfIncomingEdges.take())
+    , m_searchPath(rooms.roomOfSearchPath.take())
+    , m_reachedInPostorder(rooms.roomOfReachedInPostorder.take())
+    , m_heldBack(rooms.roomOfHeldBack.take())
+    , m_waitingStores(rooms.roomOfWaitingStores.take())
+    , m_operationsNeededLate(rooms.roomOfOperationsNeededLate.take())
+    , m_operationsKeptForOperands(rooms.roomOfOperationsKeptForOperands.take())
+    , m_closuresThatMayBeLent(rooms.roomOfClosuresThatMayBeLent.take())
+    , m_cellsThatMayBeLent(rooms.roomOfCellsThatMayBeLent.take())
+    , m_environmentsHandedBack(rooms.roomOfEnvironmentsHandedBack.take())
+    , m_namesOfCellsThatMayHoldEnvironments(rooms.roomOfNamesOfCellsThatMayHoldEnvironments.take())
+    , m_environmentsFollowed(rooms.roomOfEnvironmentsFollowed.take())
+    , m_blocksThatSuspend(rooms.roomOfBlocksThatSuspend.take())
+    , m_blocksWithHints(rooms.roomOfBlocksWithHints.take())
+    , m_lastSuspensions(rooms.roomOfLastSuspensions.take())
+    , m_valuesLetGo(rooms.roomOfValuesLetGo.take())
+    , m_valuesHeldByCopiedBodies(rooms.roomOfValuesHeldByCopiedBodies.take())
+    , m_otherNames(rooms.roomOfOtherNames.take())
+    , m_lastReads(rooms.roomOfLastReads.take())
+    , m_reads(rooms.roomOfReads.take())
+    , m_lastReadersInOwnBlocks(rooms.roomOfLastReadersInOwnBlocks.take())
+    , m_coveredAtHeads(rooms.roomOfCoveredAtHeads.take())
+    , m_firstCoveredAtHead(rooms.roomOfFirstCoveredAtHead.take())
+    , m_numberCoveredAtHead(rooms.roomOfNumberCoveredAtHead.take())
+    , m_coveredOwners(rooms.roomOfCoveredOwners.take())
+    , m_ownersCovered(rooms.roomOfOwnersCovered.take())
+    , m_storesThatAwaitBirth(rooms.roomOfStoresThatAwaitBirth.take())
+    , m_birthsAwaited(rooms.roomOfBirthsAwaited.take())
+    , m_laterFenceCoversAtHeads(rooms.roomOfLaterFenceCoversAtHeads.take())
+{
+}
+
 SweepTotals Sweep::run(const SweepInputs& inputs, Code& code)
 {
     RELEASE_ASSERT(!m_code);

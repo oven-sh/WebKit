@@ -236,6 +236,32 @@ const Effects* Code::effectsBelievedOf(ValueID id) const
     return found != m_effectsBelieved.end() && found->first == id ? &found->second : nullptr;
 }
 
+void Code::takeRoomOf(Code& former)
+{
+    m_operations.takeRoomOf(former.m_operations);
+    m_blocks.takeRoomOf(former.m_blocks);
+    m_edges.takeRoomOf(former.m_edges);
+    m_sideWords.takeRoomOf(former.m_sideWords);
+    takeRoom(m_inlineFrames, former.m_inlineFrames);
+    takeRoom(m_entries, former.m_entries);
+    takeRoom(m_factUses, former.m_factUses);
+    takeRoom(m_effectsBelieved, former.m_effectsBelieved);
+    takeRoom(m_testsOfGuardsInFrontOfCopies, former.m_testsOfGuardsInFrontOfCopies);
+    takeRoom(m_pollsWithFates, former.m_pollsWithFates);
+    takeRoom(m_changesToOlderParts, former.m_changesToOlderParts);
+    takeRoom(m_olderBlocksEnded, former.m_olderBlocksEnded);
+    takeRoom(m_recordsAbandoned, former.m_recordsAbandoned);
+    takeRoom(m_partsAbandoned, former.m_partsAbandoned);
+    takeRoom(m_marks, former.m_marks);
+    takeRoom(m_useCounts, former.m_useCounts);
+    takeRoom(m_onlyUsers, former.m_onlyUsers);
+    takeRoom(m_parametersFed, former.m_parametersFed);
+    takeRoom(m_order, former.m_order);
+    takeRoom(m_suspensions, former.m_suspensions);
+    takeRoom(m_liveValues, former.m_liveValues);
+    takeRoom(m_releasesBehindLastReads, former.m_releasesBehindLastReads);
+}
+
 void Code::reset(CodeUnit unit)
 {
     m_unit = unit;
@@ -263,6 +289,7 @@ void Code::reset(CodeUnit unit)
     m_holdsCallThatPlanHasNotCounted = false;
     m_callsOfFunctionNeverCollect = false;
     m_readsNumbersOutOfBytes = false;
+    m_isEntryThatWalksBody = false;
     m_frequenciesOfBlocks = FrequenciesOfBlocks::AsGiven;
     m_seedOfFrequencies = 0;
     m_numberOfBlocksPlacedOtherwise = 0;
@@ -381,15 +408,27 @@ void Code::makeBlocksRare(uint32_t first, uint32_t end)
 {
     RELEASE_ASSERT(!m_isSwept && first <= end && end <= m_blocks.size());
     for (uint32_t index = first; index < end; ++index) {
-        m_blocks[index].frequency = BlockFrequency::Rare;
+        keepMarksOfOlderBlock(index);
+        m_blocks[index].frequency = frequencyTakenFor(index, BlockFrequency::Rare);
         m_blocks[index].isInLoop = false;
+    }
+}
+
+void Code::makeBlockUnlikely(BlockID id)
+{
+    RELEASE_ASSERT(!m_isSwept);
+    Block& block = m_blocks[checkedIndexInCode(id, m_blocks.size())];
+    if (block.frequency == BlockFrequency::Normal && !block.isEntry) {
+        keepMarksOfOlderBlock(id.index());
+        block.frequency = frequencyTakenFor(id.index(), BlockFrequency::Unlikely);
     }
 }
 
 void Code::makeBlockRare(BlockID block)
 {
     RELEASE_ASSERT(!m_isSwept);
-    m_blocks[checkedIndexInCode(block, m_blocks.size())].frequency = BlockFrequency::Rare;
+    keepMarksOfOlderBlock(checkedIndexInCode(block, m_blocks.size()));
+    m_blocks[checkedIndexInCode(block, m_blocks.size())].frequency = frequencyTakenFor(block.index(), BlockFrequency::Rare);
 }
 
 void Code::setLoopMarks(BlockID blockID, bool isInLoop, bool isLoopHead)
@@ -488,6 +527,18 @@ void Code::leaveCheckOfProofToTestBehind(ValueID check)
     if (m_keepsChangesToOlderParts)
         m_changesToOlderParts.append(ChangeToOlderPart { { }, { }, { }, check, record });
     record.flags |= *FlagMask::isLeftToTestBehind(Opcode::CheckProof);
+}
+
+void Code::bearListWithStorage(ValueID list, ArrayStorage storage)
+{
+    RELEASE_ASSERT(!m_isSwept);
+    const Operation& record = m_operations[checkedIndexInCode(list, m_operations.size())];
+    RELEASE_ASSERT(record.opcode == Opcode::NewArrayLike);
+    const uint32_t& word = record.payload()[*PayloadWord::arrayStorage(Opcode::NewArrayLike)];
+    RELEASE_ASSERT(std::bit_cast<uintptr_t>(&word) - std::bit_cast<uintptr_t>(&record) < sizeof(Operation));
+    if (m_keepsChangesToOlderParts)
+        m_changesToOlderParts.append(ChangeToOlderPart { { }, { }, { }, list, record });
+    const_cast<uint32_t&>(word) = encodePayloadWord(storage);
 }
 
 ValueID Code::appendParameter(BlockID blockID, TypeID type, Representation representation, Origin origin)
@@ -801,6 +852,13 @@ void Code::abandonBackTo(const Mark& mark, std::span<const OpenBlock> openBlocks
 
     while (m_changesToOlderParts.size() > mark.numberOfChangesToOlderParts) {
         ChangeToOlderPart change = m_changesToOlderParts.takeLast();
+        if (change.marked) {
+            if (change.marked.index() < mark.numberOfBlocks) {
+                m_blocks[change.marked.index()].frequency = change.frequencyBefore;
+                m_blocks[change.marked.index()].isInLoop = change.wasInLoop;
+            }
+            continue;
+        }
         if (change.changed) {
             if (change.changed.index() < mark.numberOfOperations)
                 m_operations[change.changed.index()] = change.recordBefore;

@@ -15,6 +15,8 @@ namespace JSC { namespace AOT { namespace Typed {
 
 struct MentionedAllocation;
 
+bool namesSizeOfTables(const Program&, const Facts&, PropertyKeyID);
+
 class AccessEmitter final : public OperationEmitter {
 public:
     explicit AccessEmitter(CodeGenerator& generator)

@@ -76,7 +76,6 @@ bool mayStandBehindCopy(const BodyValue&, ValueID copy);
 inline constexpr OpcodeSet opcodesThatBuildCopyWithWhatFollowsTakes { Opcode::CopyObject };
 AOT_LINK_OF_WALK(buildCopyWithWhatFollows, opcodesThatBuildCopyWithWhatFollowsTakes)
 
-FunctionID findGetterExpectedInSlot(Walker&, TypeID lookedAt, PropertyKeyID);
 
 } } } // namespace JSC::AOT::Typed
 

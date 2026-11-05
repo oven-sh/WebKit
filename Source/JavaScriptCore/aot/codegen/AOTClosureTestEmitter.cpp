@@ -254,13 +254,25 @@ Word32 ClosureTestEmitter::closureNumberOf(FunctionID function, int32_t addend)
     return numberOf(m_mentions.add(NumberSpace::ClosureFunction, function, addend));
 }
 
-Word32 ClosureTestEmitter::upperHalfOfClosureWordOf(FunctionID function)
+uint32_t ClosureTestEmitter::mentionOfUpperHalfOfClosureWordOf(FunctionID function)
 {
     EntryDescription entry = describeEntry(inputs(), conventions().closureEntryOf(function));
     ClosureWord::Flags flags = closureWordFlags(closureKindOf(function));
     flags.borrowedArguments = entry.borrowedArguments;
     flags.endsItsTailCalls = entry.endsItsTailCalls;
-    return closureNumberOf(function, static_cast<int32_t>(ClosureWord::encodeUpperHalf(entry.numberOfParameters, 0, flags)));
+    return m_mentions.add(NumberSpace::ClosureFunction, function, static_cast<int32_t>(ClosureWord::encodeUpperHalf(entry.numberOfParameters, 0, flags)));
+}
+
+Word32 ClosureTestEmitter::upperHalfOfClosureWordOf(FunctionID function)
+{
+    return numberOf(mentionOfUpperHalfOfClosureWordOf(function));
+}
+
+std::optional<uint32_t> ClosureTestEmitter::mentionOfUpperHalfThatNames(FunctionID function)
+{
+    if (!closureWordNames(function))
+        return std::nullopt;
+    return mentionOfUpperHalfOfClosureWordOf(function);
 }
 
 Condition ClosureTestEmitter::hasClosureWordOf(CellPointer closure, bool isSlim, FunctionID function)
@@ -310,7 +322,7 @@ ptrdiff_t ClosureTestEmitter::offsetOfClosureHeader(FunctionKindData kind) const
 {
     return kind.isSlim
         ? AOT_INSTANCE_OFFSET(slimClosureHeaders) + kind.slimClosureKind() * sizeof(uint64_t)
-        : AOT_INSTANCE_OFFSET(closures.closureHeaders) + kind.closureStructure * sizeof(uint64_t);
+        : AOT_INSTANCE_OFFSET(closures.closureHeaders) + kind.closureStructureOfKind() * sizeof(uint64_t);
 }
 
 Condition ClosureTestEmitter::hasClosureStructure(CellPointer cell, FunctionID function)

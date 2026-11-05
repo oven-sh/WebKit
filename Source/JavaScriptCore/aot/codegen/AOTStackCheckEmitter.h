@@ -37,6 +37,7 @@ struct StackCheckState {
 };
 
 void setStackCheckGenerator(Machine::Procedure&, StackCheck, const FrameRequirements&, StackCheckState&);
+void emitStackTestAheadOfFramedPart(CCallHelpers&, const Machine::PatchParameters&);
 void emitStackOverflowPaths(CCallHelpers&, CodeRecords&, StackCheckState&);
 Vector<PrologueCheck, 1> linkStackChecks(LinkBuffer&, const CodeRecords&);
 

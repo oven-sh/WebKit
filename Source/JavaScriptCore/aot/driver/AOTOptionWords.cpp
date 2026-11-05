@@ -146,6 +146,7 @@ static bool engineHonorsTestingSwitch(Wire::TestingSwitch testingSwitch)
     case Wire::TestingSwitch::NoCalleeKeepsWhatItIsHanded:
     case Wire::TestingSwitch::ArgumentsOfUnseenCodeDoNotLeave:
     case Wire::TestingSwitch::CheckEffectsAtRunTime:
+    case Wire::TestingSwitch::CheckWalkAtRunTime:
     case Wire::TestingSwitch::RowSaysLess:
     case Wire::TestingSwitch::UndoLeavesExpectations:
     case Wire::TestingSwitch::LaterUnitsOpenNoGuesses:
@@ -156,6 +157,7 @@ static bool engineHonorsTestingSwitch(Wire::TestingSwitch testingSwitch)
     case Wire::TestingSwitch::FailGuesses:
     case Wire::TestingSwitch::GiveLinkMore:
     case Wire::TestingSwitch::ShuffleChoices:
+    case Wire::TestingSwitch::OrderBlocksAgain:
         return true;
     }
     RELEASE_ASSERT_NOT_REACHED();

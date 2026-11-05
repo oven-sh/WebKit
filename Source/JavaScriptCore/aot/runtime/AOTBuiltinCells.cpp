@@ -12,6 +12,7 @@
 #include "AOTBuiltinTableBindings.h"
 #include "AOTBuiltinTableRealm.h"
 #include "AOTClosure.h"
+#include "AOTEffectsNet.h"
 #include "AOTErrorMessages.h"
 #include "AOTHeapCacheRegistry.h"
 #include "AOTImage.h"
@@ -429,6 +430,13 @@ JSCell* BuiltinCells::findObject(BuiltinID id)
     return find(BuiltinCellKey::object(id)).value_or(nullptr);
 }
 
+JSCell* BuiltinCells::findGetter(BuiltinID id)
+{
+    if (std::optional<uint32_t> number = numberOf(BuiltinCellKey::getter(id)))
+        return cell(*number);
+    return find(BuiltinCellKey::getter(id)).value_or(nullptr);
+}
+
 JSCell* BuiltinCells::readMember(JSGlobalObject* realm, JSObject* holder, BuiltinID member)
 {
     return findInHolder(realm, BuiltinCellKey::object(member), holder).value_or(nullptr);
@@ -574,7 +582,8 @@ void BuiltinCells::noteWriteAboveInstances(BuiltinID holder)
         }
         if (!above)
             continue;
-        m_classesWrittenAbove[index] = 1;
+        if (!std::exchange(m_classesWrittenAbove[index], 1))
+            m_state.countWriteForEffectsNet(Typed::CountInEffectsNet::WatchOverBuiltinsEnded);
         if (isTypedView(table.typedArrayTypeOf(BuiltinClassID(index))))
             m_instance.builtins.someClassOfViewsWasWrittenAbove = 1;
     }
@@ -582,16 +591,16 @@ void BuiltinCells::noteWriteAboveInstances(BuiltinID holder)
 
 void BuiltinCells::willAddNameTo(BuiltinID holder)
 {
-    if (!m_namesOnHolders.empty())
-        m_namesOnHolders[BuiltinTable::singleton().canonicalID(holder).index()] = NamesOnHolder::WereAdded;
+    if (!m_namesOnHolders.empty() && std::exchange(m_namesOnHolders[BuiltinTable::singleton().canonicalID(holder).index()], NamesOnHolder::WereAdded) == NamesOnHolder::AreAsBuilt)
+        m_state.countWriteForEffectsNet(Typed::CountInEffectsNet::WatchOverBuiltinsEnded);
     noteWriteAboveInstances(holder);
 }
 
 void BuiltinCells::willWrite(BuiltinID member, UniquedStringImpl* key)
 {
     const BuiltinTable& table = BuiltinTable::singleton();
-    if (!m_membersWritten.empty())
-        m_membersWritten[member.index()] = 1;
+    if (!m_membersWritten.empty() && !std::exchange(m_membersWritten[member.index()], 1))
+        m_state.countWriteForEffectsNet(Typed::CountInEffectsNet::WatchOverBuiltinsEnded);
     noteWriteAboveInstances(table.at(member).holder);
     if (!BuiltinBindings::provides(table.at(member).origin) || m_writtenMembers.quickSet(member.index()))
         return;
@@ -675,11 +684,14 @@ void BuiltinCells::hearsOfWritesTo(BuiltinID holder)
     if (m_membersWritten.empty())
         return;
     NamesOnHolder& names = m_namesOnHolders[BuiltinTable::singleton().canonicalID(holder).index()];
-    if (names == NamesOnHolder::AreNotHeardOf)
+    const bool isHeardOfAgain = names != NamesOnHolder::AreNotHeardOf;
+    if (!isHeardOfAgain)
         names = NamesOnHolder::AreAsBuilt;
     for (BuiltinID member : BuiltinTable::singleton().membersOf(holder)) {
-        if (!m_writtenMembers.quickGet(member.index()))
-            m_membersWritten[member.index()] = 0;
+        if (m_writtenMembers.quickGet(member.index()))
+            continue;
+        RELEASE_ASSERT(!isHeardOfAgain || !m_membersWritten[member.index()]);
+        m_membersWritten[member.index()] = 0;
     }
 }
 
@@ -693,11 +705,11 @@ void BuiltinCells::cannotHearOfWritesTo(BuiltinID holder)
             cell(number);
     }
     noteWriteAboveInstances(holder);
-    if (!m_namesOnHolders.empty())
-        m_namesOnHolders[table.canonicalID(holder).index()] = NamesOnHolder::WereAdded;
+    if (!m_namesOnHolders.empty() && std::exchange(m_namesOnHolders[table.canonicalID(holder).index()], NamesOnHolder::WereAdded) == NamesOnHolder::AreAsBuilt)
+        m_state.countWriteForEffectsNet(Typed::CountInEffectsNet::WatchOverBuiltinsEnded);
     for (BuiltinID member : table.membersOf(holder)) {
-        if (!m_membersWritten.empty())
-            m_membersWritten[member.index()] = 1;
+        if (!m_membersWritten.empty() && !std::exchange(m_membersWritten[member.index()], 1))
+            m_state.countWriteForEffectsNet(Typed::CountInEffectsNet::WatchOverBuiltinsEnded);
         m_writtenMembers.quickSet(member.index());
     }
 }

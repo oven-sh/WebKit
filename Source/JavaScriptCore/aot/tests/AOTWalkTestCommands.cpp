@@ -155,7 +155,8 @@ static void runSweepCodeCommand(TestCommandContext& context)
     Code code;
     if (!readCodeOfSection(context, walks, code))
         return;
-    Sweep sweep;
+    RoomsOfSweep rooms;
+    Sweep sweep(rooms);
     SweepTotals totals = sweep.run(SweepInputs { walks.program(), walks.facts(), walks.plan(), walks.types() }, code);
     printCode(context.out, walks.textContext(), code);
     context.out.println("# visits of operations: "_s, totals.operationsSwept);

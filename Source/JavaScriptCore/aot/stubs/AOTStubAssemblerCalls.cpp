@@ -69,17 +69,24 @@ void StubAssembler::callAndReturnPreservingRegisters(const PreservingCall& prese
     RELEASE_ASSERT(m_savedRegisterStack.isEmpty() && key().callerFrame() != CallerFrame::Frameless);
     checkHasNoBorrowedFPRs();
     emitFunctionPrologue();
+    if (!preservingCall.registersThatCalleeLoses.empty()) {
+        RELEASE_ASSERT(!preservingCall.cellsToKeep[0]);
+        preserving(preservingCall.registersThatCalleeLoses, [&] {
+            emitCall();
+        });
+    } else {
 #if CPU(X86_64)
-    subPtr(TrustedImm32(sizeof(CPURegister)), stackPointerRegister);
+        subPtr(TrustedImm32(sizeof(CPURegister)), stackPointerRegister);
 #endif
-    RegisterSet lostAnyway = m_recording.clobbered();
-    lostAnyway.merge(RegisterSet::macroClobberedGPRs());
-    lostAnyway.merge(floatingPointRegistersLostToAccessors(preservingCall.callee));
-    SavedRegisterArea area = storeRegistersClobberedBy(preservingCall.callee, preservingCall.returnsValue, lostAnyway, preservingCall.cellsToKeep);
-    withSavedRegisters(RegisterSet::fromIterable(area.registers), [&] {
-        emitCall();
-    });
-    loadSavedRegisters(area);
+        RegisterSet lostAnyway = m_recording.clobbered();
+        lostAnyway.merge(RegisterSet::macroClobberedGPRs());
+        lostAnyway.merge(floatingPointRegistersLostToAccessors(preservingCall.callee));
+        SavedRegisterArea area = storeRegistersClobberedBy(preservingCall.callee, preservingCall.returnsValue, lostAnyway, preservingCall.cellsToKeep);
+        withSavedRegisters(RegisterSet::fromIterable(area.registers), [&] {
+            emitCall();
+        });
+        loadSavedRegisters(area);
+    }
     emitFunctionEpilogue();
     if (!preservingCall.checksException) {
         RELEASE_ASSERT(!preservingCall.emitBeforeReturn);

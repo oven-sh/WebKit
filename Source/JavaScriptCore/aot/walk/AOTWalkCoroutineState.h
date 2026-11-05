@@ -16,7 +16,6 @@ struct KeptForUnitOfCoroutines {
 };
 
 struct CoroutineStateOfUnit {
-    bool hasBuiltSuspension { false };
     std::unique_ptr<KeptForUnitOfCoroutines> keptByPromises;
     std::unique_ptr<KeptForUnitOfCoroutines> keptByCalls;
 };

@@ -209,6 +209,17 @@ public:
     AnswersOfWalk() = default;
 
     void clear();
+    void takeRoomOf(AnswersOfWalk& former)
+    {
+        takeRoom(m_answers, former.m_answers);
+        takeRoom(m_masks, former.m_masks);
+        takeRoom(m_keys, former.m_keys);
+        takeRoom(m_wordsOfKeys, former.m_wordsOfKeys);
+        takeRoom(m_placesOfKeys, former.m_placesOfKeys);
+        takeRoom(m_newestOfFirstAnswers, former.m_newestOfFirstAnswers);
+        takeRoom(m_answersOfHolders, former.m_answersOfHolders);
+        takeRoom(m_conversions, former.m_conversions);
+    }
 
     uint32_t size() const { return m_answers.size(); }
     const KnownAnswer& at(uint32_t number) const LIFETIME_BOUND { return m_answers[number]; }

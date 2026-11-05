@@ -268,7 +268,14 @@ static void testSiteDoesNotRootStructureOfOneObject(LoadedProgram& program)
 }
 
 template<LoadedProgramTest body>
-static constexpr void (*withClosuresToDrop)() = runNativeTestWithLoadedProgram<cacheRegistryRootTests, programWithClosuresToDrop, body>;
+static void changeObjectsUnseen(LoadedProgram& program)
+{
+    program.vm().aotState().nativeTestChangesObjectsUnseen = true;
+    body(program);
+}
+
+template<LoadedProgramTest body>
+static constexpr void (*withClosuresToDrop)() = runNativeTestWithLoadedProgram<cacheRegistryRootTests, programWithClosuresToDrop, changeObjectsUnseen<body>>;
 
 std::span<const NativeTest> cacheRegistryRootTests()
 {

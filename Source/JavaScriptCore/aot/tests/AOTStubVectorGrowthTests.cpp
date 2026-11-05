@@ -276,12 +276,58 @@ static void testValueOfOtherKindStillReachesOperation()
     allocator.makeRoomAt(arrays.room.address(), cellSize);
     arrays.setAllocator(sizeStep, &allocator);
 
-    StubRun run = appendByPush(arrays.runner, array, fullLength, jsBoolean(true));
+    StubRun run = appendByPush(arrays.runner, array, fullLength, jsNumber(2.25));
     AOT_TEST_CHECK(run.calledOperation && array.publicLength() == fullLength);
     for (uint32_t index = 0; index < fullLength; ++index)
         AOT_TEST_CHECK(array.butterfly[index] == integers.element(index));
     for (uint32_t index = fullLength; index < array.vectorLength(); ++index)
         AOT_TEST_CHECK(array.butterfly[index] == integers.hole);
+}
+
+static void checkThatIntegersAreWidened(Append append)
+{
+    constexpr uint32_t capacity = 4;
+    constexpr uint32_t length = 2;
+    GrowingArrays arrays;
+    const ArrayKind integers = arrayOfIntegers();
+    auto appendTo = [&](uint32_t structureID, uint8_t indexingTypeAndMisc) {
+        FakeVector<capacity> vector;
+        vector.fill(integers);
+        vector.publicLength = length;
+        vector.elements[2] = vector.elements[3] = integers.hole;
+        FakeArray array(integers, vector.butterfly());
+        array.structureID = structureID;
+        array.indexingTypeAndMisc = indexingTypeAndMisc;
+        StubRun run = append(arrays.runner, array, length, jsBoolean(true));
+        bool isStored = array.publicLength() == length + 1 && array.butterfly[length] == boxed(jsBoolean(true));
+        AOT_TEST_CHECK(array.butterfly[0] == integers.element(0) && array.butterfly[1] == integers.element(1) && array.butterfly[3] == integers.hole);
+        AOT_TEST_CHECK(run.calledOperation != isStored);
+        AOT_TEST_CHECK(!isStored || (array.structureID == contiguousStructureID && array.indexingTypeAndMisc == (IsArray | ContiguousShape)));
+        AOT_TEST_CHECK(isStored || (array.structureID == structureID && array.indexingTypeAndMisc == indexingTypeAndMisc));
+        return isStored;
+    };
+    AOT_TEST_CHECK(appendTo(int32StructureID, IsArray | Int32Shape));
+    AOT_TEST_CHECK(!appendTo(structureIDWithNamedProperties, IsArray | Int32Shape));
+    AOT_TEST_CHECK(!appendTo(int32StructureID, IsArray | Int32Shape | CopyOnWrite));
+    arrays.runner.instance().prefix().newArrayWithContiguousHeader = 0;
+    AOT_TEST_CHECK(!appendTo(int32StructureID, IsArray | Int32Shape));
+}
+
+static StubRun appendByStoreAtIndex(StubRunner& runner, FakeArray& array, uint32_t length, JSValue value)
+{
+    return runner.run(arrayPutAtIndex(ArrayStoredValue::Value), { array.address(), boxed(value), length });
+}
+
+static StubRun appendByStoreAtIndexInSloppyCode(StubRunner& runner, FakeArray& array, uint32_t length, JSValue value)
+{
+    return runner.run(arrayPutAtIndex(ArrayStoredValue::ValueInSloppyCode), { array.address(), boxed(value), length });
+}
+
+static void testWhatIsNoNumberWidensIntegers()
+{
+    checkThatIntegersAreWidened(appendByPush);
+    checkThatIntegersAreWidened(appendByStoreAtIndex);
+    checkThatIntegersAreWidened(appendByStoreAtIndexInSloppyCode);
 }
 
 std::span<const NativeTest> stubVectorGrowthTests()
@@ -292,6 +338,7 @@ std::span<const NativeTest> stubVectorGrowthTests()
         { "stubs/vector-growth/push-leaves-other-vectors-to-operation"_s, ImageTests::whenExecutable<testPushLeavesOtherVectorsToOperation> },
         { "stubs/vector-growth/store-leaves-other-vectors-to-operation"_s, ImageTests::whenExecutable<testStoreLeavesOtherVectorsToOperation> },
         { "stubs/vector-growth/value-of-other-kind-still-reaches-operation"_s, ImageTests::whenExecutable<testValueOfOtherKindStillReachesOperation> },
+        { "stubs/vector-growth/what-is-no-number-widens-integers-where-it-stands"_s, ImageTests::whenExecutable<testWhatIsNoNumberWidensIntegers> },
     };
     return tests;
 }

@@ -180,6 +180,30 @@ Vector<ClosureForm> chooseClosureForms(const Program& program, const LinkTables&
     });
 }
 
+BitVector findFunctionsWhoseClosuresGetOnlyListedNames(const Program&, const LinkTables&);
+BitVector findFunctionsWhoseClosuresGetOnlyListedNames(const Program& program, const LinkTables& linked)
+{
+    BitVector functions(program.functions.size());
+    for (size_t index = 0; index < std::min<size_t>(program.functions.size(), linked.functions.size()); ++index) {
+        const Function& function = program.functions[index];
+        if (!isClassConstructorOf(function.kind) && !functionObjectsLieInRuntimeModule(program, function) && linked.functions[index].closuresGetOnlyNamesThatAreListed)
+            functions.quickSet(index);
+    }
+    return functions;
+}
+
+BitVector findFunctionsWhosePrototypePropertyStaysAsMade(const Program&, const LinkTables&);
+BitVector findFunctionsWhosePrototypePropertyStaysAsMade(const Program& program, const LinkTables& linked)
+{
+    BitVector functions(program.functions.size());
+    for (size_t index = 0; index < std::min<size_t>(program.functions.size(), linked.functions.size()); ++index) {
+        const Function& function = program.functions[index];
+        if (!isClassConstructorOf(function.kind) && !functionObjectsLieInRuntimeModule(program, function) && linked.functions[index].prototypePropertyStaysAsMade)
+            functions.quickSet(index);
+    }
+    return functions;
+}
+
 bool isAsyncFunctionWithoutAwait(const Program&, const Function& source)
 {
     return coroutineKindWrittenFor(source) == CoroutineKind::AsyncFunction && !source.syntax.contains(FunctionSyntax::HasWrittenAwait);
@@ -224,16 +248,17 @@ FunctionKindData functionKindOf(const Program& program, const SlotPlan& slots, c
     kind.hasInferredName = !function.has(FunctionFlags::HasExplicitName);
     kind.isInRuntimeModule = functionObjectsLieInRuntimeModule(program, function);
     kind.isSlim = slots.closureFormOf(entry.function) == ClosureForm::Slim;
-    kind.closureStructure = kind.closureStructureOfKind();
+    kind.closuresGetOnlyListedNames = slots.closuresGetOnlyListedNames(entry.function);
+    kind.prototypePropertyStaysAsMade = slots.prototypePropertyStaysAsMade(entry.function);
     return kind;
 }
 
-static TraceVisibility traceVisibilityOfUnit(const Function& function, CodeRole role, bool isBuiltinThatProgramsCall)
+static TraceVisibility traceVisibilityOfUnit(const Function& function, CodeRole role, bool isBuiltinThatProgramsCall, bool isEntryThatWalksBody)
 {
     if (function.has(FunctionFlags::IsHiddenInStackTraces) && !isBuiltinThatProgramsCall)
         return TraceVisibility::Hidden;
 
-    switch (role) {
+    switch (isEntryThatWalksBody ? CodeRole::Body : role) {
     case CodeRole::Body:
         if (function.isCoroutine())
             return TraceVisibility::VisibleOnlyOnTop;
@@ -379,7 +404,7 @@ static CodeType codeTypeOfTracedFunction(const Function& function)
 static_assert(static_cast<unsigned>(TraceVisibility::Hidden) < 1 << 2 && static_cast<unsigned>(StackTraceBuiltinKind::HostFunction) < 1 << 2);
 static_assert(static_cast<unsigned>(EvalCode) < 1 << 2 && static_cast<unsigned>(FunctionCode) < 1 << 2 && static_cast<unsigned>(ModuleCode) < 1 << 2);
 
-FunctionTraceRecord functionTraceOf(const Program& program, const CallingConventions& conventions, CodeUnit unit)
+FunctionTraceRecord functionTraceOf(const Program& program, const CallingConventions& conventions, CodeUnit unit, bool isEntryThatWalksBody)
 {
     const Function& function = program.at(unit.function);
     const BuiltinTable& builtins = program.builtins();
@@ -389,7 +414,7 @@ FunctionTraceRecord functionTraceOf(const Program& program, const CallingConvent
     record.sourceFunctionIndex = unit.function.index();
     record.implementedBuiltinPlusOne = builtin ? builtin->index() + 1 : 0;
     record.implementsBuiltin = builtin.has_value();
-    record.visibilityBits = static_cast<uint16_t>(traceVisibilityOfUnit(function, unit.role, tracedBuiltinIsCalledByPrograms(builtins, function, builtin)));
+    record.visibilityBits = static_cast<uint16_t>(traceVisibilityOfUnit(function, unit.role, tracedBuiltinIsCalledByPrograms(builtins, function, builtin), isEntryThatWalksBody));
     record.builtinKindBits = static_cast<uint16_t>(stackTraceBuiltinKindOf(builtins, function, builtin));
     record.codeTypeBits = static_cast<uint16_t>(codeTypeOfTracedFunction(function));
     record.rejectsOnThrow = rejectsOnThrow(program, conventions, unit);

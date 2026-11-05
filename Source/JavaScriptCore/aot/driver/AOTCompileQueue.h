@@ -44,6 +44,8 @@ public:
     JS_EXPORT_PRIVATE bool asksWhoMentions(Typed::CodeUnit) const;
     bool hasMentionedUnitsBehindSelector(uint32_t selector) const { return m_selectorsWhoseUnitsAreMentioned[selector].load(std::memory_order_acquire); }
     void didMentionUnitsBehindSelector(uint32_t selector) { m_selectorsWhoseUnitsAreMentioned[selector].store(true, std::memory_order_release); }
+    const Vector<Typed::CodeUnit>* unitsThatAskAmongMentionedUnitsOfClass(LayoutID classLayout) const { return m_unitsThatAskAmongMentionedUnitsOfClasses[classLayout.index()].load(std::memory_order_acquire); }
+    JS_EXPORT_PRIVATE void didMentionUnitsOfClass(LayoutID, Vector<Typed::CodeUnit>&& thoseThatAskWhoMentions);
     JS_EXPORT_PRIVATE void addSeeds(std::span<const Typed::CodeUnit> lightestFirst, const ParallelLoops&);
 
     static constexpr size_t mostUnitsTakenAtOnce = 32;
@@ -112,6 +114,7 @@ private:
     Vector<uint32_t> m_cyclesReadyFromStart;
     Vector<std::atomic<uint32_t>> m_isMentioned;
     Vector<std::atomic<bool>> m_selectorsWhoseUnitsAreMentioned;
+    Vector<std::atomic<const Vector<Typed::CodeUnit>*>> m_unitsThatAskAmongMentionedUnitsOfClasses;
     Vector<uint32_t> m_isSeed;
     Vector<UnitsOfThread> m_unitsOfThreads;
     bool m_isTakingSeeds { false };

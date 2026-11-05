@@ -8,10 +8,12 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBodyIndex.h"
 #include "AOTBuiltinIDs.h"
 #include "AOTBuiltinMembers.h"
 #include "AOTBuiltinTable.h"
 #include "AOTBuiltinTypes.h"
+#include "AOTFactRecords.h"
 #include "AOTIRProgram.h"
 #include "AOTLinkStrings.h"
 #include "AOTLinkExceptions.h"
@@ -100,6 +102,7 @@ struct SharedAccessInLinkAccesses {
     FunctionID firstFunction;
     SummaryAccess access;
     bool keyIsOnlyNumbers { false };
+    bool keySpellsNoMemberOfTable { false };
     bool keyMayNamePrototypeLink { false };
     FlowNodeID subject;
     FlowNodeID value;
@@ -165,11 +168,13 @@ private:
     using SharedAccess = SharedAccessInLinkAccesses;
 
     bool isRead() const { return m_access.kind == Kind::Read; }
+    bool readsThroughSuperWhatIsOnlyCalled() const;
     bool isNamed() const { return !!m_access.key; }
     bool isTakenByLoader() const { return isRead() && m_function && isLibraryCode(m_program, m_program.at(m_function)) && std::ranges::contains(m_flow.summaries.at(m_function).namesThatLoaderTakes, m_access.value, &ThinSummary::NameThatLoaderTakes::read); }
     bool readKey();
 
     void give(const LinkType&);
+    void giveSymbol(PropertyKeyID);
     void giveAnything() { give(LinkType::anything()); }
     void givePrimitives(uint16_t primitives) { give(primitivesForLinkAccesses(primitives)); }
     void giveFrom(FlowNodeID);
@@ -180,7 +185,8 @@ private:
     void storeIntoUnseen() { storeInto(m_flow.unseen()); }
     void mayThrow();
     enum class UnknownIs : uint8_t { ByEscapeAlone, InSight };
-    void cannotTell(UnknownIs = UnknownIs::InSight);
+    enum class TellsName : uint8_t { No, Yes };
+    void cannotTell(UnknownIs = UnknownIs::InSight, TellsName = TellsName::Yes);
     void cannotTellWhatRuns();
 
     void noteChange(LayoutID layout, LayoutChange change)
@@ -207,7 +213,8 @@ private:
     void resolveUnderPrivateName();
     void resolveOnLayout(LayoutID, const LinkType& pooled);
     void resolvePrototypeLinkOfLayout(LayoutID, const Layout&);
-    void resolveOnNamespace(const Layout&);
+    void resolveOnNamespace(LayoutID, const Layout&);
+    void giveWhatNamespaceDoesNotList(LayoutID, ModuleID);
     void giveExport(ModuleID, uint32_t index);
     bool wasNamedBefore(LayoutID) const;
     void resolveOnSet(const LinkType& subject);
@@ -250,6 +257,7 @@ private:
     LookupInLinkAccesses lookUpFrom(BuiltinID start, BuiltinID& member) const;
     LookupInLinkAccesses lookUpInTableFrom(BuiltinID start, BuiltinID& member) const;
     bool giveWhatIsFoundFrom(BuiltinID start);
+    bool tellsWhatMayAnswerFrom(BuiltinID start);
     bool isServedByLightFormOf(BuiltinID) const;
     bool giveWhatLightFormServes(BuiltinID);
     bool mayRunCodeFoundFrom(BuiltinID start);
@@ -278,6 +286,7 @@ private:
     bool m_keyIsWritten { true };
     void tellAgainOnceClimbs(FlowNodeID);
     bool m_keyIsOnlyNumbers { false };
+    bool m_keySpellsNoMemberOfTable { false };
     bool m_keyIsSymbolAsFarAsIsSeen { false };
     bool m_keyMayNamePrototypeLink { false };
     bool m_hasThrown { false };
@@ -324,6 +333,7 @@ AccessInLinkAccesses::AccessInLinkAccesses(LinkFlow& flow, const PrivatePartsInL
     , m_value(shared.value)
     , m_laysObservers(laysObservers)
     , m_keyIsOnlyNumbers(shared.keyIsOnlyNumbers)
+    , m_keySpellsNoMemberOfTable(shared.keySpellsNoMemberOfTable)
     , m_keyMayNamePrototypeLink(shared.keyMayNamePrototypeLink)
 {
     if (m_access.key)
@@ -340,6 +350,15 @@ void AccessInLinkAccesses::give(const LinkType& type)
 {
     if (isRead() && m_value)
         m_flow.arriveFromSource(m_value, type);
+}
+
+void AccessInLinkAccesses::giveSymbol(PropertyKeyID symbol)
+{
+    if (!isRead() || !m_value)
+        return;
+    LinkType oneSymbol;
+    oneSymbol.primitives = LinkType::oneSymbol;
+    m_flow.arrive(m_value, oneSymbol, symbol);
 }
 
 void AccessInLinkAccesses::giveFrom(FlowNodeID from)
@@ -412,14 +431,27 @@ void AccessInLinkAccesses::mayThrow()
     }
 }
 
-void AccessInLinkAccesses::cannotTell(UnknownIs unknownIs)
+bool AccessInLinkAccesses::readsThroughSuperWhatIsOnlyCalled() const
+{
+    const BodyIndex* index = m_shared ? nullptr : bodiesLookedAt(m_flow.looks).find(m_function);
+    if (!index || m_access.site.index() >= index->numberOfValues() || index->isParameter(m_access.site) || index->value(m_access.site).opcode() != Opcode::SuperGet)
+        return false;
+    ValueID user = index->onlyUsingValue(m_access.site);
+    if (!user)
+        return false;
+    BodyValue call = index->value(user);
+    return (call.opcode() == Opcode::Call || call.opcode() == Opcode::CallList) && call.operand(0) == m_access.site;
+}
+
+void AccessInLinkAccesses::cannotTell(UnknownIs unknownIs, TellsName tellsName)
 {
     LinkFlow::UnknownByEscapeAlone unknownByEscapeAlone(unknownIs == UnknownIs::ByEscapeAlone, LinkFlow::UnknownByEscapeAlone::Marks::OfRule);
-    bool isToldOf = isRead() && !m_access.answerIsOnlyCalled && (m_shared || !m_flow.rowsSpeakOfKeyFor(m_function, m_access.key));
+    bool isToldOf = tellsName == TellsName::Yes && isRead() && !m_access.answerIsOnlyCalled && (m_shared || !m_flow.rowsSpeakOfKeyFor(m_function, m_access.key));
+    bool tellsSite = !m_shared && unknownIs == UnknownIs::InSight && !m_flow.codeAtWorkIsOfLibrary() && m_access.site.index() < 1u << 24;
     if (isToldOf && isNamed())
-        m_flow.note(LinkFlow::Note::NameRead, m_access.key.bits(), !m_flow.codeAtWorkIsOfLibrary());
-    else if (isToldOf && !m_keyIsOnlyNumbers)
-        m_flow.note(LinkFlow::Note::ReadUnderKeyNobodyKnows, 0);
+        m_flow.note(readsThroughSuperWhatIsOnlyCalled() ? LinkFlow::Note::NameCalled : LinkFlow::Note::NameRead, m_access.key.bits(), !m_flow.codeAtWorkIsOfLibrary());
+    else if (isToldOf && !m_keySpellsNoMemberOfTable)
+        m_flow.note(LinkFlow::Note::ReadUnderKeyNobodyKnows, tellsSite ? m_function.index() + 1 : 0, tellsSite ? m_access.site.index() : 0);
     mayThrow();
     giveAnything();
     storeIntoUnseen();
@@ -512,6 +544,7 @@ bool AccessInLinkAccesses::readKey()
         mayThrow();
     }
     m_keyIsOnlyNumbers = !holdsObjects && !(key.primitives & ~LinkType::closed(Primitive::Number));
+    m_keySpellsNoMemberOfTable = !holdsObjects && !(key.primitives & LinkType::closed(Primitive::AnyString | Primitive::AnySymbol));
     m_keyIsSymbolAsFarAsIsSeen = hasNode && LinkFlow::isSymbolAsFarAsIsSeen(key);
     m_keyMayNamePrototypeLink = (holdsObjects || key.primitives & Primitive::AnyString) && keyThatBeginsSoMayNamePrototypeLink(m_program, m_access);
     return true;
@@ -660,7 +693,7 @@ void AccessInLinkAccesses::resolveOnLayout(LayoutID id, const LinkType& pooled)
     case LayoutKind::BuiltinResult:
         break;
     case LayoutKind::ModuleNamespace:
-        resolveOnNamespace(layout);
+        resolveOnNamespace(id, layout);
         return;
     case LayoutKind::Environment:
     case LayoutKind::Closure:
@@ -812,7 +845,7 @@ void AccessInLinkAccesses::resolvePrototypeLinkOfLayout(LayoutID id, const Layou
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-void AccessInLinkAccesses::resolveOnNamespace(const Layout& layout)
+void AccessInLinkAccesses::resolveOnNamespace(LayoutID id, const Layout& layout)
 {
     mayThrow();
     if (!isRead()) {
@@ -827,13 +860,43 @@ void AccessInLinkAccesses::resolveOnNamespace(const Layout& layout)
         if (std::optional<uint32_t> field = layout.findField(m_access.key))
             giveExport(layout.namespaceOf, *field);
         else
-            giveAnything();
+            giveWhatNamespaceDoesNotList(id, layout.namespaceOf);
         return;
     }
     uint32_t numberOfFields = static_cast<uint32_t>(layout.fields.size());
     for (uint32_t field = 0; field < numberOfFields; ++field)
         giveExport(layout.namespaceOf, field);
+    if (std::ranges::any_of(m_program.at(layout.namespaceOf).requests, &ModuleRequest::isDynamicStarExport))
+        m_flow.escape(id);
     giveAnything();
+}
+
+void AccessInLinkAccesses::giveWhatNamespaceDoesNotList(LayoutID id, ModuleID module)
+{
+    const PropertyKey& key = m_program.at(m_access.key);
+    auto cannotFollow = [&] {
+        if (std::ranges::any_of(m_program.at(module).requests, &ModuleRequest::isDynamicStarExport))
+            m_flow.escape(id);
+        giveAnything();
+    };
+    if (key.kind != PropertyKeyKind::Text || m_access.key == m_program.keyOf(BuiltinNames::__esModule) || !refusedCodeOf(m_program).codeOutsideImage || m_flow.testRuns().isTestRun()) {
+        cannotFollow();
+        return;
+    }
+    givePrimitives(Primitive::Undefined);
+    if (m_access.key == m_program.keyOf(BuiltinNames::defaultKeyword))
+        return;
+    for (const ModuleRequest& request : m_program.at(module).requests) {
+        if (!request.isDynamicStarExport)
+            continue;
+        const Module& face = m_program.at(request.target);
+        auto listed = std::ranges::find(face.syntheticExports, key.text, &SyntheticExport::name);
+        if (!commonJsModuleCapturedBy(m_program, face) || listed == face.syntheticExports.end() || !listed->variable) {
+            cannotFollow();
+            return;
+        }
+        giveWhatIsHeldAt(m_flow.variable(listed->variable));
+    }
 }
 
 void AccessInLinkAccesses::giveExport(ModuleID module, uint32_t index)
@@ -880,6 +943,8 @@ void AccessInLinkAccesses::giveExport(ModuleID module, uint32_t index)
         }
         }
     }
+    if (LayoutID whole = m_program.layoutOfWholeNamespace(module); whole && std::ranges::any_of(m_program.at(module).requests, &ModuleRequest::isDynamicStarExport))
+        m_flow.escape(whole);
     giveAnything();
 }
 
@@ -1097,7 +1162,7 @@ bool AccessInLinkAccesses::resolveThroughSharedAccess(SharedAccess::Subjects sub
     std::pair<uint64_t, uint32_t> place {
         static_cast<uint64_t>(family.index()) << 32 | (isNamed() ? m_access.key.index() : 0),
         static_cast<uint32_t>(subjects) | static_cast<uint32_t>(m_access.kind) << 1 | isNamed() << 3 | !!m_value << 4 | valueIsUnseen << 5
-            | m_access.storesObjectMadeForIt << 6 | m_keyIsOnlyNumbers << 7 | m_keyMayNamePrototypeLink << 8 | isLibraryCode(m_program, m_program.at(m_function)) << 9,
+            | m_access.storesObjectMadeForIt << 6 | m_keyIsOnlyNumbers << 7 | m_keyMayNamePrototypeLink << 8 | isLibraryCode(m_program, m_program.at(m_function)) << 9 | m_keySpellsNoMemberOfTable << 10,
     };
     auto found = state.indexesOfSharedAccesses.add(place, static_cast<uint32_t>(state.sharedAccesses.size()));
     uint32_t index = found.iterator->value;
@@ -1109,6 +1174,7 @@ bool AccessInLinkAccesses::resolveThroughSharedAccess(SharedAccess::Subjects sub
         made->access.key = m_access.key;
         made->access.storesObjectMadeForIt = m_access.storesObjectMadeForIt;
         made->keyIsOnlyNumbers = m_keyIsOnlyNumbers;
+        made->keySpellsNoMemberOfTable = m_keySpellsNoMemberOfTable;
         made->keyMayNamePrototypeLink = m_keyMayNamePrototypeLink;
         made->subject = m_flow.makeSharedNode();
         if (m_value)
@@ -1243,6 +1309,8 @@ void AccessInLinkAccesses::resolvePrototypePropertyOf(FunctionID function, Layou
     if (isRead()) {
         give(prototypeForLinkAccesses(constructed));
         giveFrom(foundBesideFieldsOf(constructed));
+        if (!m_shared && m_flow.isOfConstructorFunction(constructed) && !m_flow.functionsThatReadPrototypeObjects.get(m_function.index()))
+            m_flow.note(LinkFlow::Note::PrototypeObjectRead, m_function.index());
         return;
     }
     if (m_access.storesObjectMadeForIt)
@@ -1376,7 +1444,8 @@ bool AccessInLinkAccesses::mayRunCodeFoundAboveClosures()
         return findsCodeToRunAboveClosures();
     }
     BytesSharedByThreads& answers = m_parts.state.codeFoundAboveClosures;
-    size_t place = 2 * static_cast<size_t>(m_access.key.index()) + isRead();
+    bool asksForLibrary = isLibraryCode(m_program, m_program.at(m_function)) || m_flow.codeAtWorkIsOfLibrary();
+    size_t place = 4 * static_cast<size_t>(m_access.key.index()) + 2 * isRead() + asksForLibrary;
     if (uint8_t answer = answers.at(place)) {
         if (answer & lookupMayThrow)
             mayThrow();
@@ -1862,8 +1931,14 @@ void AccessInLinkAccesses::resolveOnBuiltin(BuiltinID builtin)
     if (m_access.kind != Kind::Define && lookupPassesHolderLinkedAnew(m_program, builtin, m_access.key))
         m_flow.handToAccessorsLaidAbove(m_receiver);
     if (isRead() && isNamed()) {
-        if (!giveWhatLightFormServes(builtin))
-            giveWhatIsFoundFrom(builtin);
+        if (giveWhatLightFormServes(builtin))
+            return;
+        BuiltinID member;
+        if (lookUpFrom(builtin, member) == LookupInLinkAccesses::Unknown && tellsWhatMayAnswerFrom(builtin)) {
+            cannotTell(UnknownIs::InSight, TellsName::No);
+            return;
+        }
+        giveWhatIsFoundFrom(builtin);
         return;
     }
     if (isRead())
@@ -1985,6 +2060,34 @@ LookupInLinkAccesses AccessInLinkAccesses::lookUpInTableFrom(BuiltinID start, Bu
     }
 }
 
+bool AccessInLinkAccesses::tellsWhatMayAnswerFrom(BuiltinID start)
+{
+    if (m_flow.testRuns().isTestRun())
+        return false;
+    MembersUnderKey members(m_program, m_access.key);
+    BuiltinID holder = m_table.canonicalID(start);
+    while (true) {
+        if (compiledModuleWithObject(m_program, holder) || m_table.at(m_table.rootOf(holder)).scope != BuiltinScope::Realm || !(m_table.hasLockedPrototypeLink(holder) || m_table.at(holder).flags.contains(BuiltinFlag::IsGlobalObject)))
+            return false;
+        if (BuiltinID member = members.findOwnMember(holder)) {
+            m_flow.note(LinkFlow::Note::BuiltinRead, member.index());
+            m_flow.noteLossOf(m_table.canonicalID(member));
+            if (members.isLockedLocation(holder))
+                return true;
+        }
+        const Builtin& object = m_table.at(holder);
+        switch (object.prototypeLink) {
+        case BuiltinPrototypeLink::Unknown:
+            return false;
+        case BuiltinPrototypeLink::Null:
+            return true;
+        case BuiltinPrototypeLink::Builtin:
+            holder = m_table.canonicalID(object.inheritsFrom);
+            break;
+        }
+    }
+}
+
 bool AccessInLinkAccesses::giveWhatIsFoundFrom(BuiltinID start)
 {
     BuiltinID member;
@@ -1995,7 +2098,10 @@ bool AccessInLinkAccesses::giveWhatIsFoundFrom(BuiltinID start)
     case LookupInLinkAccesses::Found: {
         m_flow.note(LinkFlow::Note::BuiltinRead, member.index());
         LinkType held = typeHeldAtLocation(member);
-        give(held);
+        if (PropertyKeyID symbol = held == primitivesForLinkAccesses(Primitive::Symbol) ? keyOfWellKnownSymbol(m_program, member) : PropertyKeyID())
+            giveSymbol(symbol);
+        else
+            give(held);
         return !held.holdsUnseen;
     }
     case LookupInLinkAccesses::Unknown:
@@ -2356,7 +2462,7 @@ StateOfLinkAccesses& LinkFlow::stateOfLinkAccesses()
     if (!m_stateOfLinkAccesses) {
         m_stateOfLinkAccesses.reset(new StateOfLinkAccesses);
         m_stateOfLinkAccesses->lookups.grow(numberOfLanes());
-        m_stateOfLinkAccesses->codeFoundAboveClosures = BytesSharedByThreads(2 * static_cast<size_t>(program.types.numberOfPropertyKeys()));
+        m_stateOfLinkAccesses->codeFoundAboveClosures = BytesSharedByThreads(4 * static_cast<size_t>(program.types.numberOfPropertyKeys()));
     }
     return *m_stateOfLinkAccesses;
 }

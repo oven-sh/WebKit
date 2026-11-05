@@ -1101,6 +1101,10 @@ void StraightEmitter::generate(CCallHelpers& jit, const ArgumentLocations& locat
     });
 
     takeParameters(locations);
+    if (facts().isTakenToRunOnce(m_unit.function)) {
+        StraightArgument function = StraightArgument::word(m_unit.function.index());
+        callOperation(Origin { }, RuntimeOperation::EnterBodyThatRunsOnce, singleElementSpan(function), { });
+    }
     uint32_t endOfImportChecks = 0;
     m_index.body().forEachBlock([&](BodyBlock block) {
         if (m_hasFailed || isNeverEntered(block.id()) || block.id().index() < endOfImportChecks)

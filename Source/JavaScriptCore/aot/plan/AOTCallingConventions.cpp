@@ -618,6 +618,7 @@ static void chooseRolesOfConvention(const Program& program, const Facts& facts, 
 
     add(CodeRole::GenericCallEntry);
     convention.takesArgumentsInBuffer = function.hasAny({ FunctionFlags::HasRestParameter, FunctionFlags::HasHiddenRest, FunctionFlags::HasArgumentCount });
+    convention.callEntryWalksBody = id.index() < facts.linked().functions.size() && facts.linked().function(id).callEntryWalksBody;
 
     bool mayBeReached = facts.mayBeReached(id);
     switch (constructionThroughConventionOf(program, function, layoutsMadeAsCompiledObjects)) {

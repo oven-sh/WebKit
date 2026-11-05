@@ -16,6 +16,10 @@
 # CALLS: AOT: f{{*}} at {{*}}: what a variable holds is not of the type that the compiler has proven of it. It is: object. This is a bug in Bun.
 # CALLS-NOT: went on
 # CALLS: crashed with
+# Where the type names another function than the variable is made with, the closure itself is asked, at every site: the word as it lies would be empty until somebody makes the closure.
+# RUN(FORM): walk f0 mechanisms=-Inlining
+# FORM: [[held]]: f1 @JSValue = GetModuleVariable variable=g0
+# FORM-NEXT: CheckProof [[held]] checkedType=f1 typeWithoutProof=absent|anything{{*}} source=Variable
 
 variable g0 name="one" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
 module m0 path="main.js" displayPath="main.js" body=f0

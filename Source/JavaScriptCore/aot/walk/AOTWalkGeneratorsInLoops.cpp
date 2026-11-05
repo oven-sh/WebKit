@@ -421,9 +421,23 @@ bool Walker::takeGeneratorForConsumer(const BodyValue& call)
         uint64_t numberOfOperationsOfRegion = 0;
         uint64_t numberOfCloses = 0;
         bool holdsWhatIsWalkedInPlaceOfItself = false;
+        auto isInRegion = [&](BlockID block) {
+            return std::ranges::binary_search(taken.region, block.index(), { }, [](BlockID each) { return each.index(); });
+        };
+        auto noteName = [&](ValueID named, auto...) {
+            if (named && !isInRegion(index.blockOf(named)))
+                taken.valuesThatRegionNamesFromOutside.append(named);
+        };
         for (BlockID block : taken.region) {
             numberOfOperationsOfRegion += index.block(block).numberOfValues() + 1;
+            BodyTerminator end = index.terminator(block);
+            end.forEachOperand(noteName);
+            for (BodyTarget target : end.targets())
+                std::ranges::for_each(target.arguments(), noteName);
+            if (index.block(block).hasHandler())
+                std::ranges::for_each(index.block(block).handler().arguments(), noteName);
             for (BodyValue operation : index.block(block).values()) {
+                operation.forEachOperand(noteName);
                 Opcode opcode = operation.opcode();
                 numberOfCloses += opcode == Opcode::IteratorClose && operation.as<Opcode::IteratorClose>().iteratorOperand() == taker;
                 holdsWhatIsWalkedInPlaceOfItself |= opcode == Opcode::Yield;
@@ -438,11 +452,13 @@ bool Walker::takeGeneratorForConsumer(const BodyValue& call)
         numberOfOperations += numberOfOperationsOfRegion * std::max(1u, described.numberOfYields) - numberOfOperationsOfRegion;
         numberOfOperations += numberOfCloses * described.numberOfOperationsOnWaysOfReturn;
 
-        auto isInRegion = [&](BlockID block) {
-            return std::ranges::binary_search(taken.region, block.index(), { }, [](BlockID each) { return each.index(); });
-        };
+        std::ranges::sort(taken.valuesThatRegionNamesFromOutside, { }, &ValueID::index);
+        taken.valuesThatRegionNamesFromOutside.shrink(std::ranges::unique(taken.valuesThatRegionNamesFromOutside).begin() - taken.valuesThatRegionNamesFromOutside.begin());
+
         ValueID firstValue = taken.comesRound ? index.block(taken.inputHead).firstParameter() : ValueID(taken.step.index() + 1);
-        ValueID endOfValues(index.numberOfValues());
+        ValueID endOfValues = firstValue;
+        for (BlockID member : taken.region)
+            endOfValues = std::max(endOfValues, index.block(member).endOfValues(), [](ValueID one, ValueID other) { return one.index() < other.index(); });
         auto isDefinedInRegion = [&](ValueID value) {
             return value.index() >= firstValue.index() && isInRegion(index.blockOf(value));
         };
@@ -456,15 +472,17 @@ bool Walker::takeGeneratorForConsumer(const BodyValue& call)
                 });
             }
         }
-        for (BlockID handlerBlock : handlerBlocksOfFrameOnTop()) {
-            if (isInRegion(handlerBlock))
-                continue;
-            bool readsWhatRegionDefines = false;
-            m_liveness.forEachLiveAtHead(handlerBlock, firstValue, endOfValues, [&](ValueID live) {
-                readsWhatRegionDefines |= isDefinedInRegion(live);
-            });
-            if (readsWhatRegionDefines)
-                return false;
+        for (BlockID member : taken.region) {
+            BodyBlock block = index.block(member);
+            for (uint32_t value = std::max(block.firstParameter().index(), firstValue.index()); value < block.endOfValues().index(); ++value) {
+                uint32_t numberOutsideRegion = numberOfHandlersThatRead(m_frames[frameIndex], ValueID(value));
+                if (!numberOutsideRegion)
+                    continue;
+                for (BlockID inside : taken.region)
+                    numberOutsideRegion -= index.block(inside).isHandlerBlock() && m_liveness.isLiveAtHead(ValueID(value), inside);
+                if (numberOutsideRegion)
+                    return false;
+            }
         }
     }
     if (!operationsFitWindowOfCallWrittenInLoop(*this, numberOfOperations))
@@ -654,9 +672,13 @@ void Walker::forgetRegionOfIteration(size_t frameIndex, const GeneratorWalkedInC
             bindInFrame(frameIndex, ValueID(value), Reference());
     }
     inputBlock(frameIndex, walked.inputHead).firstNarrowerName = walked.namesAtHead;
-    for (size_t place = 0; place < m_iterationsByIndex.size(); ++place) {
+    uint32_t numberInFront = m_numberOfIterationsInFrontOfTheirLoops;
+    for (size_t place = m_iterationsByIndex.size(); place-- && numberInFront;) {
         const IterationByIndex& iteration = std::as_const(m_iterationsByIndex)[place];
-        if (iteration.head || !iteration.inputHead || iteration.inlineFrame != m_frames[frameIndex].inlineFrame || !std::ranges::binary_search(walked.region, iteration.inputHead.index(), { }, [](BlockID each) { return each.index(); }))
+        if (iteration.head || !iteration.inputHead)
+            continue;
+        --numberInFront;
+        if (iteration.inlineFrame != m_frames[frameIndex].inlineFrame || !std::ranges::binary_search(walked.region, iteration.inputHead.index(), { }, [](BlockID each) { return each.index(); }))
             continue;
         m_iterationsByIndex[place].inputHead = { };
         --m_numberOfIterationsInFrontOfTheirLoops;
@@ -666,11 +688,9 @@ void Walker::forgetRegionOfIteration(size_t frameIndex, const GeneratorWalkedInC
 
 void Walker::bindNamesInFrontOfLoop(const GeneratorWalkedInConsumer& walked)
 {
-    size_t frameIndex = m_frames.size() - 1;
-    const BodyIndex& index = *m_frames[frameIndex].index;
-    for (uint32_t value = 0; value < index.numberOfValues(); ++value) {
-        if (Reference name = walked.namesInFrontOfLoop[value]; name && referenceBoundIn(m_frames[frameIndex], ValueID(value)) != name && !std::ranges::binary_search(walked.region, index.blockOf(ValueID(value)).index(), { }, [](BlockID each) { return each.index(); }))
-            bind(ValueID(value), name);
+    for (auto [value, name] : walked.namesInFrontOfLoop) {
+        if (referenceBoundIn(m_frames.last(), value) != name)
+            bind(value, name);
     }
 }
 
@@ -764,6 +784,7 @@ bool Walker::walkYieldOfGeneratorInConsumer(const BodyValue& yield)
     forgetRegionOfIteration(frameOfTurn, m_generatorsWalkedInConsumers[place]);
 
     size_t numberOfLoopsAround = m_openLoops.size();
+    m_generatorsWalkedInConsumers[place].numberOfLoopsAroundTurn = static_cast<uint32_t>(numberOfLoopsAround);
     walkHeadOfLoopBehindStep(inputHead, step, carried.span(), false, yielded);
     for (size_t number = 0; number < m_generatorsWalkedInConsumers[place].region.size() && !m_hasFailed; ++number) {
         BlockID member = m_generatorsWalkedInConsumers[place].region[number];
@@ -989,9 +1010,10 @@ bool Walker::walkGeneratorInPlaceOfLoop(BlockID inputHead, std::span<const TypeI
     walked.numberOfYields = taken.numberOfYields;
     walked.region = WTF::move(taken.region);
     walked.namesAtHead = inputBlock(frameOfConsumer, inputHead).firstNarrowerName;
-    walked.namesInFrontOfLoop = Vector<Reference>(index.numberOfValues(), [&](size_t value) {
-        return referenceBoundIn(m_frames[frameOfConsumer], ValueID(static_cast<uint32_t>(value)));
-    });
+    for (ValueID value : taken.valuesThatRegionNamesFromOutside) {
+        if (Reference name = referenceBoundIn(m_frames[frameOfConsumer], value))
+            walked.namesInFrontOfLoop.append({ value, name });
+    }
     for (size_t parameter = 0; parameter < entering.size(); ++parameter) {
         TypeID type = typesOfParameters[parameter];
         TypeID arriving = ownTypeOf(entering[parameter]);

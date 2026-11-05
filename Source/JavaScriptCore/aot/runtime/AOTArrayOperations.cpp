@@ -181,7 +181,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTReserveArrayRoom, void, (Instance*
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTReserveArrayRoom);
     JSArray* array = cellArgument<JSArray>(cell, Entry::operationAOTReserveArrayRoom);
     IndexingType mode = array->indexingMode();
-    if (mode != ArrayWithUndecided && mode != ArrayWithInt32 && mode != ArrayWithDouble && mode != ArrayWithContiguous)
+    if (mode != ArrayWithInt32 && mode != ArrayWithDouble && mode != ArrayWithContiguous)
         return;
     unsigned vectorLength = array->butterfly()->vectorLength();
     if (room > MAX_STORAGE_VECTOR_LENGTH || room <= vectorLength)

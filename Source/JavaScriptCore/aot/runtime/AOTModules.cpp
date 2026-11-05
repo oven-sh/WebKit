@@ -299,9 +299,8 @@ void Modules::evict(ModuleID module, bool isUndoneForKeptFiles)
     m_admitsCodeOutsideImage = true;
     if (data(file).kind != ModuleKind::CommonJs)
         return;
-    VM& vm = *m_instance.vm;
-    if (LoadedModule* loaded = loadedIfExists(file); loaded && loaded->requirer && data(file).hasValue() && status(file) == ModuleStatus::Evaluated && !m_filesToBringBack.get(file.index()))
-        loaded->requirer->putDirect(vm, vm.propertyNames->exports, commonJSExports(file));
+    if (status(file) == ModuleStatus::Evaluated && !m_filesToBringBack.get(file.index()))
+        layValueInPlaceOfExportsVariable(file);
     m_filesToLoadAgain.set(file.index());
     setStoredStatus(file, StoredModuleStatus::InRecord);
 }
@@ -1692,6 +1691,10 @@ bool Modules::setMockInPlace(ModuleID fileOrModule, JSObject* mock, JSValue what
 
     LoadedModule& loaded = ensureLoaded(fileOrModule);
     bool originalRuns = isFile && m_filesWhoseOriginalRuns.get(fileOrModule.index());
+    if (mock && loaded.mockLaidInPreload.get() == mock) {
+        loaded.whatRequireAnswersUnderMockLaidInPreload.set(*this, whatRequireAnswers);
+        ensureLoaded(module).wasImportedUnderMockInPlace |= m_loadedInPreload.get(module.index());
+    }
     if (mock) {
         if (originalRuns) [[unlikely]]
             loaded.answerOfMockWhileOriginalRuns.set(*this, whatRequireAnswers);
@@ -5367,7 +5370,7 @@ JSValue moduleExports(JSGlobalObject* realm, ModuleID module)
         return jsUndefined();
     modules->stopWhereExportsLeaveCompiledCode(module);
     modules->noteLoadBehindMock(module, true);
-    return modules->exportsShownByModuleObject(module);
+    return modules->exportsGivenBackToCompiledCode(module);
 }
 
 void setModuleExports(JSGlobalObject* realm, ModuleID module, JSValue exports)
@@ -5824,6 +5827,32 @@ bool hasMockInPlace(JSGlobalObject* realm, ModuleID module)
     return modules && modules->mockInPlace(module) && !modules->hasMockThatEnded(module);
 }
 
+bool isStandingMockImportedByModuleYetToRun(JSGlobalObject* realm, ModuleID module, std::optional<ModuleID> asking)
+{
+    if (!hasMockInPlace(realm, module))
+        return false;
+    Modules* modules = modulesOf(realm);
+    return modules->isGraphRunning() && modules->hasLinkedImporterYetToRun(module, asking);
+}
+
+bool willLeaveStandingMockAlone(JSGlobalObject* realm, ModuleID module)
+{
+    if (!hasMockInPlace(realm, module))
+        return false;
+    Modules* modules = modulesOf(realm);
+    if (!modules->wasLoadedInThisTestFile(modules->moduleWithExportsOf(module)))
+        modules->letGoOfImportersOf(module, Modules::ImportersLetGo::All);
+    return true;
+}
+
+bool wasLoadedUnderMockOfPreloadInThisTestFile(JSGlobalObject* realm, ModuleID module)
+{
+    if (!hasMockInPlace(realm, module))
+        return false;
+    Modules* modules = modulesOf(realm);
+    return modules->mockInPlaceWasLaidInPreload(module) && modules->wasLoadedInThisTestFile(modules->moduleWithExportsOf(module));
+}
+
 bool wasRequiredUnderMockInPlace(JSGlobalObject* realm, ModuleID module)
 {
     Modules* modules = modulesOf(realm);
@@ -5863,12 +5892,6 @@ Vector<ModuleID, 2> formsThatAttributesAskFor(JSGlobalObject* realm, StringView 
     if (Modules* modules = modulesOf(realm))
         forms = modules->table().formsThatAttributesAskFor(path);
     return forms;
-}
-
-bool hasYetToBegin(JSGlobalObject* realm, ModuleID module)
-{
-    Modules* modules = modulesOf(realm);
-    return modules && modules->data(module).kind == ModuleKind::CommonJs && modules->hasYetToBegin(module);
 }
 
 bool isBeingEvaluated(JSGlobalObject* realm, ModuleID module)
@@ -5927,6 +5950,8 @@ void didEndMock(JSGlobalObject* realm, ModuleID module)
     }
     bool stoodInPlace = modules->mockInPlace(module);
     if (stoodInPlace) {
+        modules->bringBackMockOfPreloadThatWasPatched(module);
+        RETURN_IF_EXCEPTION(scope, void());
         modules->letGoOfMockAtNextLoad(module);
         RETURN_IF_EXCEPTION(scope, void());
     }
@@ -6937,15 +6962,17 @@ void ModuleNamespace::getOwnPropertyNames(JSObject* object, JSGlobalObject* glob
         }
         Identifier name = ownIndex < entries.size() ? modules.identifier(entries[ownIndex].name) : Identifier();
         bool isAnsweredByMock = false;
+        bool isTakenFromValue = false;
         if (dynamicIndex == dynamicNameCount || (!name.isNull() && codePointCompare(StringView(name.string()), StringView(*asString(dynamicNames->get(dynamicIndex))->tryGetValueImpl())) < 0))
             isAnsweredByMock = !!modules.mockThatAnswersFor(thisObject->m_module, entries[ownIndex++]);
         else {
             name = asString(dynamicNames->get(dynamicIndex++))->toIdentifier(globalObject);
+            isTakenFromValue = !thisObject->m_liveSources && modules.isNativeModule(thisObject->m_module);
             RETURN_IF_EXCEPTION(scope, void());
         }
         if (mode == DontEnumPropertiesMode::Exclude && !isAnsweredByMock) {
             PropertySlot slot(thisObject, PropertySlot::InternalMethodType::GetOwnProperty);
-            bool hasProperty = getOwnPropertySlot(thisObject, globalObject, name, slot);
+            bool hasProperty = isTakenFromValue ? modules.hasCapturedExport(thisObject->m_module, name) : getOwnPropertySlot(thisObject, globalObject, name, slot);
             RETURN_IF_EXCEPTION(scope, void());
             if (!hasProperty)
                 continue;

@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTEffectsNet.h"
 #include "AOTEnvironment.h"
 #include "AOTErrorMessages.h"
 #include "AOTHeapCacheRegistry.h"
@@ -434,6 +435,7 @@ void EvalBindings::writeBinding(VM& vm, const EvalBindingData& binding, JSValue 
     case EvalBindingForm::ModuleVariable: {
         RELEASE_ASSERT(representation != SlotRepresentation::DeferredClosure);
         ProgramStatics& statics = *m_instance->state->statics;
+        m_instance->state->countWriteForEffectsNet(Typed::CountInEffectsNet::WordsOfStaticsWritten);
         RELEASE_ASSERT(tryWriteSlot(*m_instance, representation, m_instance->statics() + offset, value));
         if (traitsOf(representation).holdsCell)
             statics.didStoreRootInStatics(offset);

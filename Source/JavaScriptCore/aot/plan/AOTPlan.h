@@ -101,6 +101,7 @@ struct PlanParts {
     BitVector functionsWithClosureCell;
     BitVector functionsWhoseResultsPassNoReturn;
     BitVector variablesThatRunTimeMayFill;
+    BitVector functionsWhoseCallEntryWalksBody;
     BitVector globalNamesNeverStoredByName;
     BitVector globalNamesNeverStoredThroughBinding;
 
@@ -183,6 +184,8 @@ public:
         return coroutine && coroutine->returned && !isNeverType(coroutine->returned) ? coroutine->returned : TypeID();
     }
     bool runTimeMayFill(VariableID id) const { return m_parts.variablesThatRunTimeMayFill.get(id.index()); }
+    bool genericCallEntryWalksBody(FunctionID id) const { return m_parts.functionsWhoseCallEntryWalksBody.get(id.index()); }
+    void findCallEntriesThatWalkBodies(const Program&, const Facts&);
 
     GlobalNameUse globalName(PropertyKeyID key) const { return { !m_parts.globalNamesNeverStoredByName.get(key.index()), !m_parts.globalNamesNeverStoredThroughBinding.get(key.index()) }; }
 
@@ -201,6 +204,12 @@ JS_EXPORT_PRIVATE void checkPlan(const Program&, const Facts&, const Plan&, Buil
 JS_EXPORT_PRIVATE Vector<CodeUnit> unitsNamedOutsideCode(const Program&, const Facts&, const Plan&);
 
 BuiltinID builtinParentNamedByClassRecord(const Program&, const Facts&, LayoutID);
+
+struct ParentInClassRecord {
+    LayoutID layout;
+    bool isProven { false };
+};
+ParentInClassRecord parentNamedByClassRecord(const Program&, const Facts&, LayoutID);
 
 } } } // namespace JSC::AOT::Typed
 

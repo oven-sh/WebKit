@@ -489,6 +489,56 @@ void generateChangedClosureHasNumber(StubAssembler& jit)
     jit.returnToCaller();
 }
 
+StubSignature signatureOfCheckProofOfClosure(StubKey key)
+{
+    return StubSignature::withoutResult({ key.operandRegister().value_or(gprOf(firstStubOperandRegister)), throwWordGPR });
+}
+
+void generateCheckProofOfClosure(StubAssembler& jit)
+{
+    static_assert(KindsOfProof::shiftOfNumber == 32 && ClosureWord::functionShift == 32);
+    const GPRReg value = jit.operand(0);
+    OwnedScratchRegister words(jit, jit.operand(1));
+    const GPRReg scratch = isX86_64() ? InvalidGPRReg : scratchImmediateGPR;
+    auto swapHalves = [&] {
+        jit.rotateRight64(TrustedImm32(32), words);
+    };
+
+    JumpList isNoCell;
+    isNoCell.append(jit.branchIfNotCell(value));
+    isNoCell.append(jit.branchTest64(CCallHelpers::Zero, value));
+    swapHalves();
+    Jump hasOtherWord = jit.branch32(CCallHelpers::NotEqual, words, Address(value, offsetOfSlimClosureWord + sizeof(uint32_t)));
+    compareCellTypeOnFlags(jit, value, ObjectType, scratch);
+    Jump isNoObject = jit.branchOnFlags(CCallHelpers::Below);
+    jit.returnToCaller();
+
+    hasOtherWord.link(&jit);
+    compareCellTypeOnFlags(jit, value, SlimClosureWithPropertiesType, scratch);
+    Jump isNotChanged = jit.branchOnFlags(CCallHelpers::NotEqual);
+#if CPU(X86_64)
+    jit.pushToSave(words);
+    loadNumberOfSlimClosureWithProperties(jit, value, words);
+    jit.xor32(Address(sp), words);
+    jit.and32(TrustedImm32(ClosureWord::functionMask), words);
+    jit.compareOnFlags32(words, TrustedImm32(0));
+    jit.popToRestore(words);
+    Jump hasOtherNumber = jit.branchOnFlags(CCallHelpers::NotEqual);
+#else
+    loadNumberOfSlimClosureWithProperties(jit, value, scratch);
+    jit.xor32(words, scratch);
+    Jump hasOtherNumber = jit.branchTest32(CCallHelpers::NonZero, scratch, TrustedImm32(ClosureWord::functionMask));
+#endif
+    jit.returnToCaller();
+
+    isNoObject.link(&jit);
+    isNotChanged.link(&jit);
+    hasOtherNumber.link(&jit);
+    swapHalves();
+    isNoCell.link(&jit);
+    jit.jumpToStub(jit.key().operandRegister() ? checkProofOfKinds().withOperandRegister(value) : checkProofOfKinds());
+}
+
 StubSignature signatureOfNumberOfChangedClosure(StubKey key)
 {
     return StubSignature::withGPRResult({ key.operandRegister().value_or(gprOf(firstStubOperandRegister)) });

@@ -495,12 +495,13 @@ namespace {
 
 class UnitsBehindMention {
 public:
-    UnitsBehindMention(const Typed::Program& program, const Typed::Facts& facts, const Typed::Plan& plan, const ScopedLambda<void(CodeUnit, MentionKind)>& functor)
+    UnitsBehindMention(const Typed::Program& program, const Typed::Facts& facts, const Typed::Plan& plan, const ScopedLambda<void(CodeUnit, MentionKind)>& functor, const AsksForUnitsOfClass* asksForUnitsOfClass)
         : m_program(program)
         , m_facts(facts)
         , m_plan(plan)
         , m_conventions(plan.conventions())
         , m_functor(functor)
+        , m_asksForUnitsOfClass(asksForUnitsOfClass)
     {
     }
 
@@ -524,6 +525,7 @@ private:
     const Typed::Plan& m_plan;
     const Typed::CallingConventions& m_conventions;
     const ScopedLambda<void(CodeUnit, MentionKind)>& m_functor;
+    const AsksForUnitsOfClass* m_asksForUnitsOfClass;
 };
 
 void UnitsBehindMention::addEntriesOf(FunctionID function) const
@@ -544,21 +546,25 @@ void UnitsBehindMention::addClass(LayoutID classLayout) const
 {
     size_t numberOfLayouts = m_program.layouts.size();
     for (size_t steps = 0; classLayout && m_plan.hasClassRecord(classLayout) && steps < numberOfLayouts; ++steps) {
-        addEntriesIfPlanned(m_program.at(classLayout).constructor);
-        std::span<const Typed::ClassMember> members = m_facts.membersOf(classLayout);
-        const Vector<Typed::MemberCreation>& creations = m_plan.slots().classCreation(classLayout).members;
-        for (size_t index = 0; index < members.size() && index < creations.size(); ++index) {
-            switch (creations[index]) {
-            case Typed::MemberCreation::AtDefinition:
-                break;
-            case Typed::MemberCreation::ByClassRecord:
-                addEntriesIfPlanned(members[index].function);
-                break;
+        if (!m_asksForUnitsOfClass || (*m_asksForUnitsOfClass)(classLayout)) {
+            addEntriesIfPlanned(m_program.at(classLayout).constructor);
+            std::span<const Typed::ClassMember> members = m_facts.membersOf(classLayout);
+            const Vector<Typed::MemberCreation>& creations = m_plan.slots().classCreation(classLayout).members;
+            for (size_t index = 0; index < members.size() && index < creations.size(); ++index) {
+                switch (creations[index]) {
+                case Typed::MemberCreation::AtDefinition:
+                    break;
+                case Typed::MemberCreation::ByClassRecord:
+                    addEntriesIfPlanned(members[index].function);
+                    break;
+                }
             }
         }
         Typed::ClassFacts classFacts = m_facts.classOf(classLayout);
         classLayout = classFacts.baseState == Typed::BaseState::Layout ? classFacts.base : LayoutID();
     }
+    if (m_asksForUnitsOfClass)
+        (*m_asksForUnitsOfClass)(LayoutID());
 }
 
 void UnitsBehindMention::addClosureOf(FunctionID function) const
@@ -618,9 +624,9 @@ void forEachUnitBehind(const Mention& mention, std::span<const uint32_t> mention
     }));
 }
 
-void forEachUnitBehindSlowCase(const Mention& mention, std::span<const uint32_t> mentionWords, const Typed::Program& program, const Typed::Facts& facts, const Typed::Plan& plan, NOESCAPE const ScopedLambda<void(CodeUnit, MentionKind)>& functor)
+void forEachUnitBehindSlowCase(const Mention& mention, std::span<const uint32_t> mentionWords, const Typed::Program& program, const Typed::Facts& facts, const Typed::Plan& plan, NOESCAPE const ScopedLambda<void(CodeUnit, MentionKind)>& functor, const AsksForUnitsOfClass* asksForUnitsOfClass)
 {
-    UnitsBehindMention units(program, facts, plan, functor);
+    UnitsBehindMention units(program, facts, plan, functor, asksForUnitsOfClass);
     std::span<const uint32_t> key = keyOf(mention, mentionWords);
     switch (mention.space) {
     case NumberSpace::ClosureFunction:

@@ -40,6 +40,25 @@ inline constexpr OperandUses usesThatNeverReturnOperand {
 };
 static_assert(everyOperandUseIsInExactlyOneOf({ OperandUse::Returns, usesThatNeverReturnOperand }));
 
+inline constexpr OperandUses usesThatCallOperand { OperandUse::Calls, OperandUse::CallsPerElement, OperandUse::CallsRepeatedly };
+inline constexpr OperandUses usesThatReachBeyondOperand { OperandUse::AppliesTransitively, OperandUse::AppliesToContents };
+inline constexpr OperandUses usesThatStoreByKey { OperandUse::StoresByKey, OperandUse::DeletesByKey, OperandUse::AssignsFrom, OperandUse::TakesDescriptor };
+inline constexpr OperandUses usesThatChangeShape { OperandUse::DefinesName, OperandUse::ChangesIntegrity, OperandUse::ChangesPrototype, OperandUse::BecomesPrototype };
+inline constexpr OperandUses usesThatAddNoEffects {
+    OperandUse::Inspects, OperandUse::Retains, OperandUse::Returns, OperandUse::ReadsContents, OperandUse::WritesContents, OperandUse::RetainsContents, OperandUse::MovesElements,
+};
+static_assert(everyOperandUseIsInExactlyOneOf({ usesThatCallOperand, usesThatReachBeyondOperand, usesThatStoreByKey, usesThatChangeShape, usesThatAddNoEffects, OperandUse::PassesToUserCode }));
+
+inline constexpr OperandUses usesThatChangeOperand {
+    OperandUse::WritesContents, OperandUse::MovesElements, OperandUse::StoresByKey, OperandUse::DeletesByKey, OperandUse::AssignsFrom,
+    OperandUse::DefinesName, OperandUse::TakesDescriptor, OperandUse::ChangesIntegrity, OperandUse::ChangesPrototype,
+};
+inline constexpr OperandUses usesThatNeedNoHeap {
+    OperandUse::Inspects, OperandUse::Retains, OperandUse::Returns, OperandUse::Calls, OperandUse::CallsPerElement, OperandUse::CallsRepeatedly,
+    OperandUse::RetainsContents, OperandUse::BecomesPrototype, OperandUse::PassesToUserCode, OperandUse::AppliesTransitively, OperandUse::AppliesToContents,
+};
+static_assert(everyOperandUseIsInExactlyOneOf({ usesThatChangeOperand, OperandUse::ReadsContents, usesThatNeedNoHeap }));
+
 inline constexpr uint32_t numberOfInlinePayloadWords = 3;
 
 constexpr bool mustBeDefinition(OperandKind kind)

@@ -734,6 +734,7 @@ function needsText(role: OperandRole): boolean {
     case "DescribedWhenRefused":
     case "ContentsOfContentsAreOnlyStored":
     case "KeepsWhatCanBeReached":
+    case "PrivateFieldsAreCompared":
       return false;
   }
 }

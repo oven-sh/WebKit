@@ -12,6 +12,8 @@
 #include "AOTConvention.h"
 #include "AOTPropertyCachesFront.h"
 #include "AOTRuntimeTable.h"
+#include "AOTStaleAnswers.h"
+#include "AOTStubsBoxedCalls.h"
 #include "AOTStubsCalls.h"
 #include "AOTStubsField.h"
 #include "AOTStubsValues.h"
@@ -595,7 +597,7 @@ StubSignature signatureOfReadAtSite(StubKey)
 {
     StubSignature signature = StubSignature::withGPRResult({ gprOf(receiverAtSiteRegister) });
     signature.immediate = gprOf(shortStubImmediateRegister);
-    return signature;
+    return signature.fillingOperandInFront(0);
 }
 
 StubSignature signatureOfReadBehindSite(StubKey)
@@ -615,7 +617,7 @@ StubSignature signatureOfReadTruthAtSite(StubKey key)
     const StubSignature reads = signatureOfReadAtSite(key);
     StubSignature signature = signatureWithFlagsResult({ reads.operands[0] }, signatureOf(valueIsTruthy()).trueCondition);
     signature.immediate = reads.immediate;
-    return signature;
+    return signature.fillingOperandInFront(0);
 }
 
 static void emitReadAtSite(StubAssembler& jit, bool asksTruth, bool someLayoutHasField)
@@ -1070,6 +1072,15 @@ void generateReadLengthAtSite(StubAssembler& jit)
         isNotAsMade.append(branchIfNotPristine(jit, receiver));
         isNotAsMade.append(jit.branchTest8(CCallHelpers::NonZero, Address(instanceGPR, AOT_INSTANCE_OFFSET(builtins.someClassOfViewsWasWrittenAbove))));
         Label readsLength = jit.label();
+        if (jit.options().checksWalk) {
+            jit.preservingCallerSavedRegisters(false, [&](unsigned) {
+                jit.move(receiver, jit.savedScratch(StubRegister::A1));
+                jit.move(TrustedImm64(JSValue::encode(JSValue())), jit.savedScratch(StubRegister::A2));
+                jit.move(instanceGPR, jit.savedScratch(StubRegister::A0));
+                jit.move(TrustedImm32(static_cast<int32_t>(BoxedCallForm::TypedArrayLength)), jit.savedScratch(StubRegister::A3));
+                jit.callOperation(Entry::operationAOTStopAtStaleMemberOfBuiltinClass, jit.savedScratch(StubRegister::Operation));
+            });
+        }
         goesOn.append(jit.branchTest8(CCallHelpers::NonZero, Address(receiver, JSArrayBufferView::offsetOfMode()), TrustedImm32(resizabilityAndAutoLengthMask)));
         jit.load64(Address(receiver, JSArrayBufferView::offsetOfLength()), key);
         goesOn.append(jit.branch64(CCallHelpers::Above, key, TrustedImm32(std::numeric_limits<int32_t>::max())));
@@ -1091,6 +1102,29 @@ StubSignature signatureOfCallMethodAtSite(StubKey key)
 }
 
 StubSignature signatureOfCallMethodAtSiteLending(StubKey key) { return signatureOfCallMethodAtSite(key); }
+
+static void askAgainWhatSiteAnswers(StubAssembler& jit, GPRReg receiver, GPRReg answer, GPRReg distance, NameAtSite nameAtSite, KindOfAnswer kind, StubThatAnswers stub)
+{
+    if (!jit.options().checksWalk)
+        return;
+    jit.preservingCallerSavedRegisters(false, [&](unsigned) {
+        const GPRReg A0 = jit.savedScratch(StubRegister::A0);
+        const GPRReg A1 = jit.savedScratch(StubRegister::A1);
+        const GPRReg A2 = jit.savedScratch(StubRegister::A2);
+        const GPRReg A3 = jit.savedScratch(StubRegister::A3);
+        const GPRReg A4 = jit.savedScratch(StubRegister::A4);
+        jit.subPtr(TrustedImm32(4 * sizeof(CPURegister)), sp);
+        jit.storePair64(receiver, answer, sp, TrustedImm32(0));
+        jit.storePtr(distance, Address(sp, 2 * sizeof(CPURegister)));
+        jit.loadPair64(sp, TrustedImm32(0), A1, A2);
+        jit.loadPtr(Address(sp, 2 * sizeof(CPURegister)), A3);
+        jit.addPtr(TrustedImm32(4 * sizeof(CPURegister)), sp);
+        loadNameOfSite(jit, A3, A3, A4, nameAtSite);
+        jit.move(instanceGPR, A0);
+        jit.move(TrustedImm32(static_cast<int32_t>(kindAndStubOfAnswer(kind, stub))), A4);
+        jit.callOperation(Entry::operationAOTStopAtStaleAnswer, jit.savedScratch(StubRegister::Operation));
+    });
+}
 
 static void emitCallMethodAtSite(StubAssembler& jit, unsigned lentArguments)
 {
@@ -1118,6 +1152,10 @@ static void emitCallMethodAtSite(StubAssembler& jit, unsigned lentArguments)
 #endif
     RELEASE_ASSERT(noOverlap(thisGPR, calleeGPR, distance, key, operand, place, instanceGPR));
     JumpList isNotAsked;
+    auto callAnswer = [&] {
+        askAgainWhatSiteAnswers(jit, thisGPR, calleeGPR, distance, NameAtSite::HasColumn, KindOfAnswer::Value, StubThatAnswers::CallMethodAtSite);
+        jit.jumpToStub(callsValue);
+    };
 
     isNotAsked.append(jit.branchIfNotCell(thisGPR));
     const AnswersOfStub answers(jit, distance, place);
@@ -1126,7 +1164,7 @@ static void emitCallMethodAtSite(StubAssembler& jit, unsigned lentArguments)
     jit.loadPtr(BaseIndex(cellCageBaseGPR, operandOfCommonForm, CCallHelpers::TimesEight, JSObject::butterflyOffset()), operandOfCommonForm);
     jit.load32SignedExtendTo64(answers.word(offsetOfSecondAnswer + OBJECT_OFFSETOF(SiteAnswers::Answer, operand)), index);
     jit.load64(BaseIndex(operandOfCommonForm, index, CCallHelpers::TimesEight), calleeGPR);
-    jit.jumpToStub(callsValue);
+    callAnswer();
 
     auto callValueOfOtherForm = [&](ptrdiff_t offsetOfAnswer) {
         JumpList differs;
@@ -1135,19 +1173,19 @@ static void emitCallMethodAtSite(StubAssembler& jit, unsigned lentArguments)
         Jump isNotInCell = branchUnlessForm(jit, use, calleeGPR, Form::OwnFieldInCell);
         jit.load64(BaseIndex(thisGPR, operand, CCallHelpers::TimesOne), calleeGPR);
         isNotAsked.append(jit.branchTest64(CCallHelpers::Zero, calleeGPR));
-        jit.jumpToStub(callsValue);
+        callAnswer();
 
         isNotInCell.link(&jit);
         Jump isNotAbove = branchUnlessForm(jit, use, calleeGPR, Form::ValueInWordOfCage);
         jit.load64(BaseIndex(cellCageBaseGPR, operand, CCallHelpers::TimesEight), calleeGPR);
-        jit.jumpToStub(callsValue);
+        callAnswer();
 
         isNotAbove.link(&jit);
         Jump isNotInStorage = branchUnlessForm(jit, use, calleeGPR, Form::OwnValueInStorage);
         jit.loadPtr(Address(thisGPR, JSObject::butterflyOffset()), calleeGPR);
         jit.signExtend32ToPtr(operand, operand);
         jit.load64(BaseIndex(calleeGPR, operand, CCallHelpers::TimesEight), calleeGPR);
-        jit.jumpToStub(callsValue);
+        callAnswer();
 
         isNotInStorage.link(&jit);
         auto loadExtraProperties = [&] {
@@ -1161,14 +1199,14 @@ static void emitCallMethodAtSite(StubAssembler& jit, unsigned lentArguments)
         jit.loadPtr(BaseIndex(cellCageBaseGPR, calleeGPR, CCallHelpers::TimesEight, JSObject::butterflyOffset()), calleeGPR);
         jit.signExtend32ToPtr(operand, operand);
         jit.load64(BaseIndex(calleeGPR, operand, CCallHelpers::TimesEight), calleeGPR);
-        jit.jumpToStub(callsValue);
+        callAnswer();
 
         isNotExtraValueInStorage.link(&jit);
         differs.append(branchUnlessForm(jit, use, calleeGPR, Form::ExtraValueInCell));
         loadExtraProperties();
         jit.add32(operand, calleeGPR);
         jit.load64(BaseIndex(cellCageBaseGPR, calleeGPR, CCallHelpers::TimesEight), calleeGPR);
-        jit.jumpToStub(callsValue);
+        callAnswer();
         differs.link(&jit);
     };
     hasOtherKey.link(&jit);

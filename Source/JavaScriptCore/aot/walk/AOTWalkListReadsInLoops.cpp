@@ -243,6 +243,8 @@ static bool isFreshInListReadsInLoops(Walker& walker, Reference name)
     return !walker.code().isConstant(cell) && walker.state().isFresh(Reference::value(cell));
 }
 
+static ArrayStorage kindThatHoldsWhatIsWrittenInListReadsInLoops(Walker&, TypeID list);
+
 static bool turnMayAppendToTextInListReadsInLoops(Walker& walker, BlockID inputHead, const LoopPreview& preview, std::span<const ListTestedInFrontOfLoop> lists, std::span<const GuessInFrontOfLoop> guesses, std::span<const Reference> proofs)
 {
     if (!mayKeepTextsInStringBuilders(walker))
@@ -260,6 +262,10 @@ static bool turnMayAppendToTextInListReadsInLoops(Walker& walker, BlockID inputH
                     proof = proofs[place];
             }
             if (name && std::ranges::any_of(lists, [&](const ListTestedInFrontOfLoop& list) { return (list.name == name || (proof && list.name == proof)) && holdsOnlyNumbers(list.storage); }))
+                return true;
+            size_t placeOfList = entersLoop.index() - preview.firstValue;
+            TypeID listInRow = entersLoop.index() >= preview.firstValue && placeOfList < preview.typesOfValues.size() ? preview.typesOfValues[placeOfList] : TypeID();
+            if (listInRow && readsListFoundByReadFromInFront(walker.program(), index, index.value(root), firstValueOfLoop) && holdsOnlyNumbers(kindThatHoldsWhatIsWrittenInListReadsInLoops(walker, walker.types().withoutNullish(listInRow))))
                 return true;
         }
         ValueID step = root.index() >= firstValueOfLoop && !index.isParameter(root) && index.opcodeOf(root) == Opcode::ResultAt ? index.value(root).operand(0) : ValueID();
@@ -286,6 +292,28 @@ static bool turnMayAppendToTextInListReadsInLoops(Walker& walker, BlockID inputH
     return false;
 }
 
+static constexpr OpcodeSet readsThatMayFindSameInEveryTurn { Opcode::PropGet, Opcode::GetModuleVariable, Opcode::GetEnvironmentField, Opcode::GetCapture };
+
+bool readsListFoundByReadFromInFront(const Program& program, const BodyIndex& index, const BodyValue& operation, uint32_t firstValueOfLoop)
+{
+    bool readsList = operation.opcode() == Opcode::ElemGet || (operation.opcode() == Opcode::PropGet && !operation.isFreeName() && operation.key() == program.keyOf(BuiltinNames::length));
+    if (!readsList)
+        return false;
+    ValueID source = index.valueBehindCasts(operation.objectOperand());
+    if (source && !index.isParameter(source) && index.opcodeOf(source) == Opcode::CheckInitialized)
+        source = index.valueBehindCasts(index.value(source).operand(0));
+    if (!source || source.index() < firstValueOfLoop || index.isParameter(source) || !readsThatMayFindSameInEveryTurn.contains(index.opcodeOf(source)))
+        return false;
+    BodyValue read = index.value(source);
+    if (read.opcode() == Opcode::PropGet && read.isFreeName())
+        return false;
+    bool takesOnlyWhatStandsInFront = true;
+    read.forEachOperand([&](ValueID operand, uint32_t) {
+        takesOnlyWhatStandsInFront &= operand.index() < firstValueOfLoop;
+    });
+    return takesOnlyWhatStandsInFront;
+}
+
 static bool rowFindsListsLeftAsTheyAreInListReadsInLoops(Walker& walker, BlockID inputHead, std::span<const ListTestedInFrontOfLoop> lists, std::span<const GuessInFrontOfLoop> guesses, std::span<const Reference> proofs)
 {
     if (walker.listsAreStruckInRow())
@@ -309,7 +337,7 @@ static bool rowFindsListsLeftAsTheyAreInListReadsInLoops(Walker& walker, BlockID
             readsList = name && std::ranges::any_of(lists, [&](const ListTestedInFrontOfLoop& list) { return (list.name == name || (proof && list.name == proof)) && (!isStore || list.isWritable); });
         } else if (const Walker::IterationByIndex* stepped = findListSteppedByIndexAlone(walker, index, operation))
             readsList = std::ranges::any_of(lists, [&](const ListTestedInFrontOfLoop& list) { return list.name == stepped->list; });
-        if (readsList || effectRuleOf(operation.opcode()) == EffectRule::Operator)
+        if (readsList || effectRuleOf(operation.opcode()) == EffectRule::Operator || readsListFoundByReadFromInFront(walker.program(), index, operation, firstValueOfLoop))
             continue;
         const LoopPreview* row = walker.previewOutOfRow();
         auto typeInRow = [&](ValueID input) -> TypeID {
@@ -374,7 +402,8 @@ static ArrayStorage kindThatHoldsWhatIsWrittenInListReadsInLoops(Walker& walker,
 
 static bool lookReadsCopyOfCalleeInListReadsInLoops(Walker& walker, const BodyValue& call, FunctionID callee)
 {
-    if (walker.facts().bodies().at(callee).hasLoops())
+    const BodyIndex* body = walker.facts().bodies().find(callee);
+    if (!body || body->hasLoops())
         return false;
     Draft site(call.opcode());
     site.flags = static_cast<uint8_t>(call.flags());
@@ -438,16 +467,48 @@ void reserveRoomOfListsThatLoopFills(Walker& walker, BlockID inputHead, std::spa
         ValueID input = index.valueBehindCasts(index.value(value).objectOperand());
         return input.index() < firstValueOfLoop && isProvenListInListReadsInLoops(walker, walker.referenceOf(input)) ? input : ValueID();
     };
-    auto isPlainPrimitive = [&](ValueID value) {
+    constexpr uint16_t plainPrimitives = Primitive::Number | Primitive::AnyString | Primitive::Boolean | Primitive::Undefined | Primitive::Null;
+    static constexpr OpcodeSet plainConstants { Opcode::Integer, Opcode::Double, Opcode::String, Opcode::Boolean, Opcode::Undefined, Opcode::Null };
+    Vector<std::pair<ValueID, Reference>, 2> namesAskedInFront;
+    auto readInFront = [&](ValueID read) -> Reference {
+        for (const auto& [asked, built] : namesAskedInFront) {
+            if (index.value(asked).variable() == index.value(read).variable())
+                return built;
+        }
+        Draft name(Opcode::GetModuleVariable, walker.originOf(index.value(read)));
+        copyFields(index.value(read), name, [](ValueID) { return Reference(); });
+        namesAskedInFront.append({ read, walker.build(WTF::move(name)) });
+        return namesAskedInFront.last().second;
+    };
+    auto nameThatIsChecked = [&](ValueID value) -> ValueID {
+        if (index.isParameter(value) || index.opcodeOf(value) != Opcode::CheckInitialized)
+            return { };
+        ValueID read = index.valueBehindCasts(index.value(value).operand(0));
+        return read.index() >= firstValueOfLoop && !index.isParameter(read) && index.opcodeOf(read) == Opcode::GetModuleVariable ? read : ValueID();
+    };
+    auto isPlainPrimitive = [&](auto& self, ValueID value, unsigned depth) -> bool {
         value = index.valueBehindCasts(value);
         if (value == counter)
             return true;
-        TypeID type = TypeTable::anything;
-        if (value.index() < firstValueOfLoop)
-            type = walker.referenceOf(value) ? walker.typeOf(walker.referenceOf(value)) : type;
-        else if (!index.isParameter(value))
-            type = widestTypeOfOperation(walker, index.value(value));
-        return type && types.at(type).hasOnlyPrimitives(Primitive::Number | Primitive::AnyString | Primitive::Boolean | Primitive::Undefined | Primitive::Null);
+        if (value.index() < firstValueOfLoop) {
+            Reference built = walker.referenceOf(value);
+            return built && types.at(walker.typeOf(built)).hasOnlyPrimitives(plainPrimitives);
+        }
+        if (index.isParameter(value) || !depth)
+            return false;
+        if (plainConstants.contains(index.opcodeOf(value)))
+            return true;
+        if (ValueID read = nameThatIsChecked(value)) {
+            Reference built = readInFront(read);
+            return built && types.at(types.withoutPrimitives(walker.typeOf(built), Primitive::Absent)).hasOnlyPrimitives(plainPrimitives);
+        }
+        if (effectRuleOf(index.opcodeOf(value)) != EffectRule::Operator)
+            return false;
+        bool takesPlainPrimitives = true;
+        index.value(value).forEachOperand([&](ValueID operand, auto...) {
+            takesPlainPrimitives = takesPlainPrimitives && (!operand || self(self, operand, depth - 1));
+        });
+        return takesPlainPrimitives;
     };
 
     Vector<Reference, 2> lists;
@@ -469,11 +530,12 @@ void reserveRoomOfListsThatLoopFills(Walker& walker, BlockID inputHead, std::spa
             Effects declared = declaredEffectsOfOperation(walker.program(), operation.opcode(), operation);
             if (!declared.mayThrow.byRule() && !declared.mayRunOtherCode())
                 continue;
-            bool takesPlainPrimitives = effectRuleOf(operation.opcode()) == EffectRule::Operator;
-            operation.forEachOperand([&](ValueID operand, auto...) {
-                takesPlainPrimitives &= !operand || isPlainPrimitive(operand);
-            });
-            if (!takesPlainPrimitives)
+            if (ValueID read = nameThatIsChecked(operation.id())) {
+                if (!readInFront(read))
+                    return;
+                continue;
+            }
+            if (effectRuleOf(operation.opcode()) != EffectRule::Operator || !isPlainPrimitive(isPlainPrimitive, operation.id(), 6))
                 return;
         }
     }
@@ -499,6 +561,12 @@ void reserveRoomOfListsThatLoopFills(Walker& walker, BlockID inputHead, std::spa
         walker.chooseConservativeFields(reserve);
         reserve.setArrayOperand(list);
         reserve.setRoomOperand(room);
+        Vector<Reference, 2> held;
+        for (const auto& [asked, built] : namesAskedInFront) {
+            if (types.at(walker.typeOf(built)).primitives & Primitive::Absent)
+                held.append(built);
+        }
+        reserve.setVariadicOperands(held.span());
         walker.build(WTF::move(reserve));
     }
 }
@@ -511,7 +579,11 @@ static void forEachReadOfArgumentInCopyOfCalleeInListReadsInLoops(Walker& walker
         value = body.valueBehindCasts(value);
         if (!value || !body.isParameter(value) || body.blockOf(value) != entry)
             return { };
+        const Function& function = walker.program().at(callee);
         size_t place = value.index() - body.block(entry).firstParameter().index();
+        if (place < function.firstParameterIndex() || place - function.firstParameterIndex() >= function.numberOfPositionalParameters())
+            return { };
+        place -= function.firstParameterIndex();
         return place < arguments.size() ? arguments[place] : ValueID();
     };
     for (uint32_t block = 0; block < body.numberOfBlocks(); ++block) {
@@ -527,7 +599,8 @@ static void forEachReadOfArgumentInCopyOfCalleeInListReadsInLoops(Walker& walker
             if (operation.opcode() != Opcode::Call || !depth)
                 continue;
             FunctionID inner = walker.facts().linked().calleeAt(callee, operation.id());
-            if (!inner || walker.facts().bodies().at(inner).hasLoops())
+            const BodyIndex* innerBody = inner ? walker.facts().bodies().find(inner) : nullptr;
+            if (!innerBody || innerBody->hasLoops())
                 continue;
             Vector<ValueID, 4> handedOn;
             for (ValueID argument : operation.as<Opcode::Call>().argumentsOperands())
@@ -609,7 +682,10 @@ ListsReadInLoop findListsReadInLoop(Walker& walker, BlockID inputHead, const Loo
                     found.lists.append(ListTestedInFrontOfLoop { name, holdsNumbers ? ArrayStorage::Double : written, holdsNumbers });
                 continue;
             }
-            if (FunctionID copied = operation.opcode() == Opcode::Call ? walker.facts().linked().calleeAt(walker.currentFunction(), operation.id()) : FunctionID(); copied && lookReadsCopyOfCalleeInListReadsInLoops(walker, operation, copied)) {
+            FunctionID copied = operation.opcode() == Opcode::Call ? walker.facts().linked().calleeAt(walker.currentFunction(), operation.id()) : FunctionID();
+            if (TypeID called = operation.opcode() == Opcode::Call && !copied ? typeInLook(operation.as<Opcode::Call>().calleeOperand()) : TypeID())
+                copied = singleFunctionOf(types, types.at(called));
+            if (copied && lookReadsCopyOfCalleeInListReadsInLoops(walker, operation, copied)) {
                 forEachReadOfArgumentInCopyOfCalleeInListReadsInLoops(walker, copied, operation.as<Opcode::Call>().argumentsOperands(), 2, [&](ValueID argument, ValueID key, FunctionID reader, ValueID read) {
                     ValueID input = valueThatEntersLoopInListReadsInLoops(index, argument, firstValueOfLoop);
                     Reference name = input.index() < firstValueOfLoop ? walker.referenceOf(input) : Reference();
@@ -751,6 +827,51 @@ ListsReadInLoop findListsReadInLoop(Walker& walker, BlockID inputHead, const Loo
     return found;
 }
 
+std::optional<ListTestedInFrontOfLoop> askListInFrontOfTypedCopy(Walker& walker, const BodyValue& read, Reference list)
+{
+    if (!walker.has(Mechanism::Folding) || !list || !list.isValue() || !walker.standsInFrontOfTypedCopy(list) || !walker.turnsOfTypedCopyLeaveListsAsTheyAre())
+        return std::nullopt;
+    if (!isProvenListInListReadsInLoops(walker, list) || isFreshInListReadsInLoops(walker, list))
+        return std::nullopt;
+    ArrayStorage written = kindThatHoldsWhatIsWrittenInListReadsInLoops(walker, ownTypeInListReadsInLoops(walker, list));
+    bool holdsNumbers = holdsOnlyNumbers(written);
+    ListTestedInFrontOfLoop tested { list, holdsNumbers ? ArrayStorage::Double : written, holdsNumbers };
+    Origin origin = walker.originOf(read);
+    origin.isTailCall = false;
+    auto passesInFront = [&](Draft&& draft) {
+        Reference test;
+        {
+            Walker::InFrontOfTypedCopy inFront(walker, true);
+            test = walker.build(WTF::move(draft));
+        }
+        return test && walker.branchInFrontOfTypedCopy(test, true);
+    };
+
+    Draft isAsMade(Opcode::IsPristine, origin);
+    walker.chooseConservativeFields(isAsMade);
+    isAsMade.setValueOperand(list);
+    isAsMade.setBuiltinClass(BuiltinClassID(BuiltinClasses::Array));
+    PristineAspectSet aspects { PristineAspects::Storage, PristineAspects::Names };
+    if (walker.program().admitsReplacedBuiltins)
+        aspects.add(PristineAspects::CellAlone);
+    isAsMade.setAspects(aspects);
+    if (!passesInFront(WTF::move(isAsMade)))
+        return std::nullopt;
+    if (hasArrayStorageForm(tested.storage)) {
+        Draft hasKindWritten(Opcode::HasArrayStorage, origin);
+        walker.chooseConservativeFields(hasKindWritten);
+        hasKindWritten.setArrayOperand(list);
+        hasKindWritten.setArrayStorage(tested.storage);
+        hasKindWritten.setAdmitsInt32Storage(tested.admitsInt32Storage);
+        if (!passesInFront(WTF::move(hasKindWritten)))
+            return std::nullopt;
+    }
+    walker.noteGuessOpened();
+    walker.noteListAskedInFrontOfTypedCopy();
+    noteListTestedInListReadsInLoops(walker, tested);
+    return tested;
+}
+
 static bool goOnWhereTestPassesInListReadsInLoops(Walker& walker, Reference test, BlockID& closedStart)
 {
     if (!test)
@@ -824,6 +945,7 @@ void buildTestsOfListsReadInLoop(Walker& walker, BlockID inputHead, std::span<co
             noteKnown(walker, KnownNote::ViewOfFixedLength, list.name, { }, 0, LocationMasks(), 1);
         if (!hasArrayStorageForm(list.storage))
             continue;
+        askBirthOfListForStorage(walker, list.name, list.storage);
         Draft hasKindWritten(Opcode::HasArrayStorage, origin);
         walker.chooseConservativeFields(hasKindWritten);
         hasKindWritten.setArrayOperand(list.name);

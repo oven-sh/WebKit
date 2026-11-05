@@ -43,6 +43,16 @@ static uint64_t bitsOf(JSValue value) { return static_cast<uint64_t>(JSValue::en
 
 static constexpr uint64_t untouched = 0xa5a5a5a5a5a5a5a5ULL;
 
+static constinit StubKey stubOfPropertyReads = getById();
+
+template<void (*test)()>
+[[maybe_unused]] static void withStubThatKeepsRegisters()
+{
+    stubOfPropertyReads = getByIdCalledByCode();
+    test();
+    stubOfPropertyReads = getById();
+}
+
 namespace {
 
 class PropertyReads {
@@ -161,7 +171,7 @@ public:
         runner.forgetAccessTable();
         return readAgain(receiver, otherName);
     }
-    StubRun readAgain(uint64_t receiver, uint16_t otherName = name) { return runner.run(getById(), { receiver }, otherName); }
+    StubRun readAgain(uint64_t receiver, uint16_t otherName = name) { return runner.run(stubOfPropertyReads, { receiver }, otherName); }
 
     StubRunner runner;
 
@@ -1327,7 +1337,7 @@ static void testAnswersBehindFieldTable()
     ordinary.property(FakeHolder::inlineOffset) = bitsOf(jsNumber(21));
     ordinary.property(FakeHolder::outOfLineOffset) = bitsOf(jsNumber(22));
 
-    for (StubKey stub : { getById() }) {
+    for (StubKey stub : { stubOfPropertyReads }) {
         FakeObjectWithShape withShape(FieldTable::shapeWithValue);
         FakeTypedObject withoutShape;
         for (FakeTypedObject* object : { static_cast<FakeTypedObject*>(&withShape), &withoutShape }) {
@@ -2025,6 +2035,31 @@ std::span<const NativeTest> stubPropertyReadTests()
         { "stubs/get-by-id/instructions-of-reads-behind-field-table"_s, ImageTests::whenExecutable<testInstructionsOfReadsBehindFieldTable> },
         { "stubs/get-by-id/reads-answered-by-access-table"_s, ImageTests::whenExecutable<testReadsAnsweredByAccessTable> },
         { "stubs/get-by-id/closures-not-created"_s, ImageTests::whenExecutable<testReadsOfClosuresNotCreated> },
+#if CPU(X86_64)
+        { "stubs/get-by-id-keeping-registers/typed-fields"_s, ImageTests::whenExecutable<withStubThatKeepsRegisters<testTypedFields>> },
+        { "stubs/get-by-id-keeping-registers/fields-or-inherited-values"_s, ImageTests::whenExecutable<withStubThatKeepsRegisters<testFieldsOrInheritedValues>> },
+        { "stubs/get-by-id-keeping-registers/empty-slots-that-may-be-undefined"_s, ImageTests::whenExecutable<withStubThatKeepsRegisters<testEmptySlotsThatMayBeUndefined>> },
+        { "stubs/get-by-id-keeping-registers/fields-in-extension-or-inherited-values"_s, ImageTests::whenExecutable<withStubThatKeepsRegisters<testFieldsInExtensionOrInheritedValues>> },
+        { "stubs/get-by-id-keeping-registers/fields-or-inherited-getters"_s, ImageTests::whenExecutable<withStubThatKeepsRegisters<testFieldsOrInheritedGetters>> },
+        { "stubs/get-by-id-keeping-registers/receiver-of-a-host-getter-lies-in-the-frame-of-the-stub"_s, ImageTests::whenExecutable<withStubThatKeepsRegisters<testReceiverOfHostGetterLiesInFrameOfStub>> },
+        { "stubs/get-by-id-keeping-registers/inherited-fields"_s, ImageTests::whenExecutable<withStubThatKeepsRegisters<testInheritedFields>> },
+        { "stubs/get-by-id-keeping-registers/inherited-fields-of-holder-that-is-not-filed"_s, ImageTests::whenExecutable<withStubThatKeepsRegisters<testInheritedFieldsOfHolderThatIsNotFiled>> },
+        { "stubs/get-by-id-keeping-registers/fields-or-inherited-fields"_s, ImageTests::whenExecutable<withStubThatKeepsRegisters<testFieldsOrInheritedFields>> },
+        { "stubs/get-by-id-keeping-registers/fields-in-extension-or-inherited-fields"_s, ImageTests::whenExecutable<withStubThatKeepsRegisters<testFieldsInExtensionOrInheritedFields>> },
+        { "stubs/get-by-id-keeping-registers/names-made-at-run-time"_s, ImageTests::whenExecutable<withStubThatKeepsRegisters<testNamesMadeAtRunTime>> },
+        { "stubs/get-by-id-keeping-registers/deferred-closures"_s, ImageTests::whenExecutable<withStubThatKeepsRegisters<testDeferredClosures>> },
+        { "stubs/get-by-id-keeping-registers/typed-array-lengths"_s, ImageTests::whenExecutable<withStubThatKeepsRegisters<testTypedArrayLengths>> },
+        { "stubs/get-by-id-keeping-registers/fields-found-in-field-table"_s, ImageTests::whenExecutable<withStubThatKeepsRegisters<testFieldsFoundInFieldTable>> },
+        { "stubs/get-by-id-keeping-registers/booleans-and-doubles-found-in-field-table"_s, ImageTests::whenExecutable<withStubThatKeepsRegisters<testBooleansAndDoublesFoundInFieldTable>> },
+        { "stubs/get-by-id-keeping-registers/missing-fields-answered-by-field-table"_s, ImageTests::whenExecutable<withStubThatKeepsRegisters<testMissingFieldsAnsweredByFieldTable>> },
+        { "stubs/get-by-id-keeping-registers/lookups-left-to-the-caches"_s, ImageTests::whenExecutable<withStubThatKeepsRegisters<testLookupsLeftToTheCaches>> },
+        { "stubs/get-by-id-keeping-registers/symbols-of-a-realm"_s, ImageTests::whenExecutable<withStubThatKeepsRegisters<testSymbolsOfRealm>> },
+        { "stubs/get-by-id-keeping-registers/names-outside-layout-are-absent"_s, ImageTests::whenExecutable<withStubThatKeepsRegisters<testNamesOutsideLayoutAreAbsent>> },
+        { "stubs/get-by-id-keeping-registers/answers-behind-field-table"_s, ImageTests::whenExecutable<withStubThatKeepsRegisters<testAnswersBehindFieldTable>> },
+        { "stubs/get-by-id-keeping-registers/reads-that-handlers-answer-leap-over-no-answer"_s, ImageTests::whenExecutable<withStubThatKeepsRegisters<testReadsThatHandlersAnswerLeapOverNoAnswer>> },
+        { "stubs/get-by-id-keeping-registers/reads-answered-by-access-table"_s, ImageTests::whenExecutable<withStubThatKeepsRegisters<testReadsAnsweredByAccessTable>> },
+        { "stubs/get-by-id-keeping-registers/closures-not-created"_s, ImageTests::whenExecutable<withStubThatKeepsRegisters<testReadsOfClosuresNotCreated>> },
+#endif
         { "stubs/in-by-val/presence-from-leaf-lookup"_s, ImageTests::whenExecutable<testPresenceFromLeafLookup> },
         { "stubs/in-by-val/own-presence-of-fields-that-objects-above-answer-for"_s, ImageTests::whenExecutable<testOwnPresenceOfFieldsThatObjectsAboveAnswerFor> },
         { "stubs/instance-of/ordinary-constructors-are-remembered"_s, ImageTests::whenExecutable<testInstanceOfRemembersOrdinaryConstructors> },

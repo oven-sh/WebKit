@@ -747,6 +747,7 @@ NEVER_INLINE bool Collector::runEndPhase(GCConductor conn)
         m_markingConditionVariable.notifyAll();
     }
     m_helperClient.finish();
+
     assertMarkStacksEmpty();
     RELEASE_ASSERT(m_raceMarkStack->isEmpty());
 

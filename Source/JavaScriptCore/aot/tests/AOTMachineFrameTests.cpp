@@ -128,6 +128,62 @@ static PatchOperation* appendFrameTestMark(Output& out, FrameTestMark& mark, boo
     return patch;
 }
 
+static void checkFrameTestMarkThatFollowsFrameSetupBesideCall(bool testsStackAheadOfFramedPart)
+{
+    TestProcedure test;
+    Output& out = test.out();
+    Operation* a = test.argumentGPR(0);
+    Block* calls = out.newBlock();
+    Block* leaves = out.newBlock();
+    FrameTestMark mark;
+    out.branch(out.testNonZero64(a, 1), normalEdge(calls), normalEdge(leaves));
+    out.appendTo(calls);
+    appendFrameTestCall(test);
+    out.ret(out.add(a, 100));
+    out.appendTo(leaves);
+    PatchOperation* patch = appendFrameTestMark(out, mark, true);
+    patch->setFollowsFrameSetup(true);
+    patch->setTestsStackAheadOfFramedPart(testsStackAheadOfFramedPart);
+    out.ret(out.add(a, 1));
+    compileOrFail(test);
+
+    const Procedure& proc = test.procedure();
+    AOT_FRAME_TEST_CHECK(test, mark.runs == 1 && mark.frameIsSetUp == !testsStackAheadOfFramedPart);
+    AOT_FRAME_TEST_CHECK(test, !testsStackAheadOfFramedPart || (proc.frame().coverage() == FrameCoverage::FramedPart && !proc.frame().holdsStepsOf(leaves)));
+    AOT_FRAME_TEST_CHECK(test, test.call<uint64_t>(uint64_t { 3 }) == 103);
+    AOT_FRAME_TEST_CHECK(test, test.call<uint64_t>(uint64_t { 4 }) == 5);
+}
+
+static void testMachineFramePatchThatTestsStackItselfStandsAheadOfFramedPart()
+{
+    checkFrameTestMarkThatFollowsFrameSetupBesideCall(false);
+    checkFrameTestMarkThatFollowsFrameSetupBesideCall(true);
+}
+
+static void testMachineFramePatchThatTestsStackItselfGetsFrameWhereNothingElseNeedsOne()
+{
+    TestProcedure test;
+    Output& out = test.out();
+    Operation* a = test.argumentGPR(0);
+    Block* one = out.newBlock();
+    Block* other = out.newBlock();
+    FrameTestMark mark;
+    out.branch(out.testNonZero64(a, 1), normalEdge(one), normalEdge(other));
+    out.appendTo(one);
+    out.ret(out.add(a, 100));
+    out.appendTo(other);
+    PatchOperation* patch = appendFrameTestMark(out, mark, true);
+    patch->setFollowsFrameSetup(true);
+    patch->setTestsStackAheadOfFramedPart(true);
+    out.ret(out.add(a, 1));
+    compileOrFail(test);
+
+    AOT_FRAME_TEST_CHECK(test, test.procedure().frame().coverage() == FrameCoverage::WholeFunction);
+    AOT_FRAME_TEST_CHECK(test, mark.runs == 1 && mark.frameIsSetUp);
+    AOT_FRAME_TEST_CHECK(test, test.call<uint64_t>(uint64_t { 3 }) == 103);
+    AOT_FRAME_TEST_CHECK(test, test.call<uint64_t>(uint64_t { 4 }) == 5);
+}
+
 static PatchOperation* appendFrameTestProbe(Output& out)
 {
     PatchOperation* probe = out.patch(Int64);
@@ -1996,6 +2052,81 @@ static void runFrameTestOfNarrowReferenceAheadOfGuard(bool passesRareSafepoint)
 }
 
 static void testMachineFrameKeepsPointerAtHeadOfFramedPart() { runFrameTestOfNarrowReferenceAheadOfGuard(false); }
+
+static void runFrameTestOfReferenceThatSomeWayHasNotDefined(bool wayPassesBlockLaidBehindDefinition)
+{
+    ProcedureTraits traits;
+    traits.chargesForCalleeSaves = true;
+    TestProcedure test(traits);
+    Output& out = test.out();
+    Procedure& proc = test.procedure();
+    Operation* argument = test.argumentGPR(0);
+    Block* defining = out.newBlock();
+    Block* returning = out.newBlock();
+    Block* calling = out.newBlock();
+    Block* done = out.newBlock();
+    Block* late = out.newBlock();
+    Block* other = out.newBlock();
+    Block* meeting = out.newBlock();
+
+    Block* mid = wayPassesBlockLaidBehindDefinition ? out.newBlock() : nullptr;
+    out.branch(out.testNonZero64(argument, 4), normalEdge(defining), normalEdge(mid ? mid : other));
+    if (mid) {
+        Block* leaving = out.newBlock();
+        out.appendTo(mid);
+        out.branch(out.testNonZero64(argument, 8), normalEdge(other), normalEdge(leaving));
+        out.appendTo(leaving);
+        out.ret(out.constInt64(11));
+    }
+    out.appendTo(defining);
+    Operation* reference = out.opaque(out.castToInt32(argument));
+    reference->markAsNarrowReference();
+    out.branch(out.testNonZero64(argument, 1), normalEdge(returning), normalEdge(calling));
+    out.appendTo(returning);
+    out.ret(out.constInt64(5));
+    out.appendTo(calling);
+    AbstractHeap storageOfOwner(test.heaps().argumentBuffer.index(), 0, OptionSet<HeapTrait> { HeapTrait::HoldsInnerPointer });
+    Operation* storage = out.loadPtr(out.address(storageOfOwner, out.shl(out.zeroExtPtr(reference), out.constInt32(cell32Shift))));
+    appendFrameTestCall(test)->effects.mayCollect = true;
+    out.branch(out.testNonZero64(out.load64(out.address(test.heaps().argumentBuffer, storage, 0)), 2), rareEdge(late), normalEdge(done));
+    out.appendTo(done);
+    ValueFromBlock fromDone = out.anchor(out.constInt64(7));
+    out.jump(meeting);
+    out.appendTo(late);
+    ValueFromBlock fromLate = out.anchor(out.zeroExtPtr(reference));
+    out.jump(meeting);
+    out.appendTo(other);
+    appendFrameTestCall(test);
+    ValueFromBlock fromOther = out.anchor(out.constInt64(9));
+    out.jump(meeting);
+    out.appendTo(meeting);
+    out.ret(out.phi(Int64, fromDone, fromLate, fromOther));
+
+    compileOrFail(test);
+    const Allocation& allocation = proc.allocation();
+    const Order& order = proc.order();
+    AOT_FRAME_TEST_CHECK(test, proc.liveness().of(reference).has(ValueFlag::NeedsPointerBesideIt) && proc.liveness().of(reference).has(ValueFlag::IsKeptForCollector) && allocation.isSpilled(reference) && proc.frame().coverage() == FrameCoverage::FramedPart);
+    AOT_FRAME_TEST_CHECK(test, order.headOf(defining) < order.headOf(other));
+    AOT_FRAME_TEST_CHECK(test, !mid || (order.headOf(defining) < order.headOf(mid) && order.headOf(mid) < order.headOf(other) && !allocation.isInFramedPart(mid)));
+    AOT_FRAME_TEST_CHECK(test, order.headOf(other) < order.headOf(late) && order.of(late).isRare() && !order.of(other).isRare());
+    const BlockSteps& stepsOfKeeper = allocation.stepsOf(calling);
+    unsigned numberOfStores = 0;
+    for (uint32_t index = 0; index < allocation.steps().size(); ++index) {
+        if (allocation.step(index).kind != StepKind::KeepPointer)
+            continue;
+        ++numberOfStores;
+        AOT_FRAME_TEST_CHECK(test, stepsOfKeeper.begin <= index && index < stepsOfKeeper.end);
+    }
+    AOT_FRAME_TEST_CHECK(test, numberOfStores == 1);
+
+    constexpr uint64_t high = uint64_t { 7 } << 32;
+    AOT_FRAME_TEST_CHECK(test, test.call<uint64_t>(high + 0x80000108u) == 9);
+    AOT_FRAME_TEST_CHECK(test, test.call<uint64_t>(high + 0x80000100u) == (mid ? 11u : 9u));
+    AOT_FRAME_TEST_CHECK(test, test.call<uint64_t>(high + 0x80000105u) == 5);
+}
+
+static void testMachineFrameKeepsNoPointerWhereSomeWayHasNotDefinedReference() { runFrameTestOfReferenceThatSomeWayHasNotDefined(false); }
+static void testMachineFrameKeepsNoPointerWhereWayPastLaterBlockHasNotDefinedReference() { runFrameTestOfReferenceThatSomeWayHasNotDefined(true); }
 static void testMachineFrameKeepsPointerAtDefinitionForSafepointAheadOfFramedPart() { runFrameTestOfNarrowReferenceAheadOfGuard(true); }
 
 static void testMachineFrameIsSetUpForArmThatRunsOutOfRegisters()
@@ -2290,6 +2421,8 @@ std::span<const NativeTest> machineFrameTests()
 {
     static constexpr NativeTest tests[] = {
         { "machine/frame/rare-blocks-with-calls-have-frames-of-their-own"_s, Machine::testMachineFrameCoversRareBlocksAlone },
+        { "machine/frame/patch-that-tests-the-stack-itself-stands-ahead-of-the-framed-part"_s, Machine::testMachineFramePatchThatTestsStackItselfStandsAheadOfFramedPart },
+        { "machine/frame/patch-that-tests-the-stack-itself-gets-a-frame-where-nothing-else-needs-one"_s, Machine::testMachineFramePatchThatTestsStackItselfGetsFrameWhereNothingElseNeedsOne },
         { "machine/frame/small-rare-region-stands-among-the-other-code"_s, Machine::testMachineSmallRareRegionStandsAmongOtherCode },
         { "machine/frame/small-run-of-unlikely-blocks-stands-near-its-jump"_s, Machine::testMachineSmallRunOfUnlikelyBlocksStandsNearItsJump },
         { "machine/frame/handlers-rejection-and-suspension-set-it-up-at-entry"_s, Machine::testMachineFrameIsSetUpAtEntryWhereTraitsAskForIt },
@@ -2316,6 +2449,8 @@ std::span<const NativeTest> machineFrameTests()
         { "machine/frame/whatever-writes-on-the-way-to-it-follows-the-setup"_s, Machine::testMachineFrameIsSetUpAheadOfWhateverWritesOnWayToIt },
         { "machine/frame/what-is-defined-ahead-of-it-is-stored-at-its-head"_s, Machine::testMachineFrameStoresAtHeadWhatIsDefinedAheadOfIt },
         { "machine/frame/pointer-beside-a-reference-from-ahead-of-it-is-kept-at-its-head"_s, Machine::testMachineFrameKeepsPointerAtHeadOfFramedPart },
+        { "machine/frame/no-pointer-is-kept-where-some-way-has-not-defined-the-reference"_s, Machine::testMachineFrameKeepsNoPointerWhereSomeWayHasNotDefinedReference },
+        { "machine/frame/no-pointer-is-kept-where-a-way-past-a-later-block-has-not-defined-the-reference"_s, Machine::testMachineFrameKeepsNoPointerWhereWayPastLaterBlockHasNotDefinedReference },
         { "machine/frame/safepoint-ahead-of-it-finds-the-pointer-kept"_s, Machine::testMachineFrameKeepsPointerAtDefinitionForSafepointAheadOfFramedPart },
         { "machine/frame/arm-that-runs-out-of-registers-is-framed-by-itself"_s, Machine::testMachineFrameIsSetUpForArmThatRunsOutOfRegisters },
         { "machine/frame/rare-region-ahead-of-it-has-a-frame-of-its-own"_s, Machine::testMachineFrameOfRareRegionAheadOfFramedPartIsItsOwn },

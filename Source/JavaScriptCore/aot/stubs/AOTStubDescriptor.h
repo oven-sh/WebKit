@@ -87,6 +87,8 @@ struct StubSignature {
     Reg secondResult;
     std::optional<GPRReg> immediate;
     MacroAssembler::ResultCondition trueCondition { MacroAssembler::Zero };
+    Reg filledOutOfResultInFront;
+    Reg filledOutOfResultInFrontOfBody;
 
     constexpr void addOperand(Reg reg)
     {
@@ -110,6 +112,22 @@ struct StubSignature {
         StubSignature signature = *this;
         if (reg)
             signature.firstResult = *reg;
+        return signature;
+    }
+
+    constexpr StubSignature fillingOperandInFront(unsigned operand) const
+    {
+        StubSignature signature = *this;
+        RELEASE_ASSERT_UNDER_CONSTEXPR_CONTEXT(operand < numberOfOperands && operands[operand].isGPR() && operands[operand].gpr() != GPRInfo::returnValueGPR);
+        signature.filledOutOfResultInFront = operands[operand];
+        signature.filledOutOfResultInFrontOfBody = operands[operand];
+        return signature;
+    }
+
+    constexpr StubSignature standingBehindEntryThatFillsOperandInFront(unsigned operand) const
+    {
+        StubSignature signature = fillingOperandInFront(operand);
+        signature.filledOutOfResultInFront = Reg();
         return signature;
     }
 

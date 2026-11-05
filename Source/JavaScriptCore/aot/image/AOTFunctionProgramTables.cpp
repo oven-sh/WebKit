@@ -408,7 +408,7 @@ void FunctionTablesByRange::collectFunction(uint32_t index, RowsOfFunctionRange&
     const Typed::Program& program = m_encoder.program;
     const Typed::CallingConventions& conventions = m_encoder.plan.conventions();
     CodeUnit unit = unitOfImageFunction(m_encoder, index);
-    FunctionTraceRecord trace = Typed::functionTraceOf(program, conventions, unit);
+    FunctionTraceRecord trace = Typed::functionTraceOf(program, conventions, unit, unit.role == Typed::CodeRole::GenericCallEntry && m_encoder.plan.genericCallEntryWalksBody(unit.function));
     FunctionRecordData record { m_encoder.plan.functionKind(program, closureEntryThatDescribes(conventions, unit)), trace };
     record.trace.closuresAreSaidNeverToReachUnseenCode = AOT::hasFlag(m_encoder.build.options().testing, Wire::TestingSwitch::CheckProofsAtRunTime) && m_encoder.facts.linked().function(unit.function).everyCallerIsKnown;
     uint32_t bits = std::bit_cast<uint32_t>(record);

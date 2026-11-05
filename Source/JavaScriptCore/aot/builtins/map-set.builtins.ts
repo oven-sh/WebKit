@@ -70,6 +70,8 @@ const setMethod = (nativeSymbol: string, withPristineSet: b.TableType, withSetLi
       capability: "heap",
       throws: b.propagated,
       uses: { this: [b.readsContents()], other: [b.readsContents()] },
+      reads: [storage],
+      writes: [storage],
       usesFeature: "SetMethods",
       nativeSymbols: [nativeSymbol],
       implementation: b.hostCall,

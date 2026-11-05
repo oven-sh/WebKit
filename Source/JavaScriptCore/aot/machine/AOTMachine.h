@@ -638,6 +638,9 @@ public:
     bool runsWithoutFrame() const { return bit(RunsWithoutFrame); }
     void setFollowsFrameSetup(bool value) { setBit(FollowsFrameSetup, value); }
     bool followsFrameSetup() const { return bit(FollowsFrameSetup); }
+    void setTestsStackAheadOfFramedPart(bool value) { setBit(TestsStackAheadOfFramedPart, value); }
+    bool testsStackAheadOfFramedPart() const { return bit(TestsStackAheadOfFramedPart); }
+    bool mustStandBehindFrameSetup() const { return followsFrameSetup() && !testsStackAheadOfFramedPart(); }
     void setLeavesByReturning(bool value) { setBit(LeavesByReturning, value); }
     bool leavesByReturning() const { return bit(LeavesByReturning); }
     void setNeedsFrameRecord(bool value) { setBit(NeedsFrameRecord, value); }
@@ -661,6 +664,10 @@ public:
     void setBringsOperandsToTheirRegisters(bool value) { setBit(BringsOperandsToTheirRegisters, value); }
     bool bringsOperandsToTheirRegisters() const { return bit(BringsOperandsToTheirRegisters); }
     JS_EXPORT_PRIVATE void leaveOperandsWhereTheyLie();
+    void setRegisterThatCalleeFillsOutOfResult(Reg reg) { m_registerThatCalleeFillsOutOfResult = reg; }
+    Reg registerThatCalleeFillsOutOfResult() const { return m_registersToBringOperandsTo.isEmpty() ? m_registerThatCalleeFillsOutOfResult : Reg(); }
+    void setLeavesMoveOutOfResultToCallee(bool value) { setBit(LeavesMoveOutOfResultToCallee, value); }
+    bool leavesMoveOutOfResultToCallee() const { return bit(LeavesMoveOutOfResultToCallee); }
 
     Reg registerToBringOperandTo(unsigned child) const { return child < m_registersToBringOperandsTo.size() ? m_registersToBringOperandsTo[child] : Reg(); }
     RegisterSet registersToRelease() const { return registerSetOf(m_registersToRelease); }
@@ -685,6 +692,8 @@ private:
         LeavesByReturning = 1 << 6,
         BringsOperandsToTheirRegisters = 1 << 7,
         FindsOperandsInFrameWithoutRecord = 1 << 8,
+        LeavesMoveOutOfResultToCallee = 1 << 9,
+        TestsStackAheadOfFramedPart = 1 << 10,
     };
 
     struct SuccessorClobber {
@@ -715,6 +724,7 @@ private:
     ArenaVector<SuccessorClobber> m_successorClobbers;
     ArenaVector<unsigned> m_childrenLetGoByCallee;
     ArenaVector<Reg> m_registersToBringOperandsTo;
+    Reg m_registerThatCalleeFillsOutOfResult;
     RegisterMask m_earlyClobbered { 0 };
     RegisterMask m_lateClobbered { 0 };
     RegisterMask m_registersToRelease { 0 };
@@ -922,6 +932,7 @@ struct ProcedureTraits {
     bool chargesForCalleeSaves { false };
     bool mayOmitFrameRecord { false };
     bool checksAllocation { false };
+    bool ordersBlocksAsWhenOrderedAgain { false };
     bool notesRangesOfOrigins { false };
     CPUFeatureSet features;
 

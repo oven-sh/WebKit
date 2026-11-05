@@ -21,6 +21,7 @@ public:
     Condition hasFunctionCellType(CellPointer);
     Condition isSlimClosureAsCreated(CellPointer);
     CellPointer closureIfCreated(FunctionID);
+    std::optional<uint32_t> mentionOfUpperHalfThatNames(FunctionID);
 
 private:
     FunctionKindData closureKindOf(FunctionID) const;
@@ -41,6 +42,7 @@ private:
     Condition hasClosureStructure(CellPointer, FunctionID);
     Condition hasClosureWordOf(CellPointer, bool isSlim, FunctionID);
     Word32 closureNumberOf(FunctionID, int32_t addend = 0);
+    uint32_t mentionOfUpperHalfOfClosureWordOf(FunctionID);
     Word32 upperHalfOfClosureWordOf(FunctionID);
 
 };

@@ -184,6 +184,9 @@ struct ObservedChangeInLinkLayouts {
     FlowNodeID getterInSight;
     FlowNodeID setterInSight;
     bool definesWhatItCopies { false };
+    FunctionID function;
+    uint32_t record { 0 };
+    bool fieldIsAsked { false };
 };
 
 } // anonymous namespace
@@ -446,9 +449,14 @@ static bool layKnownAccessorInLinkLayouts(LinkFlow& flow, const ObservedChangeIn
         return false;
 
     flow.noteAccessorLaid(layout, { *field, id, isGetter });
+    FlowNodeID held = flow.field(*field);
+    if (!change.fieldIsAsked && flow.typeAt(held).isNothing()) {
+        if (flow.copiesObservedIn(change.function).accessorsThatWait.add(static_cast<uint64_t>(change.function.index()) << 32 | change.record).isNewEntry)
+            flow.observe(held, FlowObserver { FlowObserver::Kind::FieldOfAccessorLaid, change.function, change.record });
+        return namesNothingElse;
+    }
     flow.reach(id);
     flow.addEdge(flow.thrown(id), flow.unseen());
-    FlowNodeID held = flow.field(*field);
     LinkType undefined = flow.fromTypeID(TypeTable::undefined);
     uint32_t firstPositional = function.firstParameterIndex();
     uint32_t numberOfPositional = function.numberOfPositionalParameters();
@@ -633,6 +641,13 @@ static void observeChangeOfPrototypeInLinkLayouts(LinkFlow& flow, const Observed
     });
 }
 
+static bool isWrittenRightAboveInLinkLayouts(const Program& program, LayoutID below, const LinkType& above, BuiltinID BuiltinClass::* part)
+{
+    BuiltinClassID written = program.at(below).base ? BuiltinClassID() : program.at(below).writtenBuiltinBase;
+    BuiltinID partOfWritten = written ? program.builtins().at(written).*part : BuiltinID();
+    return partOfWritten && namesBuiltinAloneInLinkLayouts(above) && above.builtin == program.builtins().canonicalID(partOfWritten);
+}
+
 static bool agreesWithLayoutsInLinkLayouts(const LinkFlow& flow, const LinkType& above, const LinkType& below)
 {
     const Program& program = flow.program;
@@ -646,6 +661,8 @@ static bool agreesWithLayoutsInLinkLayouts(const LinkFlow& flow, const LinkType&
             return true;
         LayoutID base = program.at(flow.classOfConstructor(below.function)).base;
         FunctionID constructorOfBase = base ? program.at(base).constructor : FunctionID();
+        if (isWrittenRightAboveInLinkLayouts(program, flow.classOfConstructor(below.function), above, &BuiltinClass::constructor))
+            return true;
         return constructorOfBase && aboveWithoutPrimitives == typeOfClosuresInLinkLayouts(constructorOfBase);
     }
 
@@ -653,6 +670,8 @@ static bool agreesWithLayoutsInLinkLayouts(const LinkFlow& flow, const LinkType&
         if (aboveWithoutPrimitives.isNothing())
             return true;
         LayoutID base = program.at(below.layout).base;
+        if (isWrittenRightAboveInLinkLayouts(program, below.layout, above, &BuiltinClass::prototype))
+            return true;
         return base && aboveWithoutPrimitives == typeOfPrototypeInLinkLayouts(base);
     }
 
@@ -804,6 +823,7 @@ struct KeysOfCopyInLinkLayouts {
     bool findFieldsInTarget { true };
     bool somethingLiesBesideFields { false };
     bool somethingSeenLiesBesideFields { false };
+    Vector<FlowNodeID, 2> fieldsCopiedOntoThemselves;
 };
 
 } // anonymous namespace
@@ -848,8 +868,13 @@ static bool copyFieldByFieldInLinkLayouts(LinkFlow& flow, const LinkType& subjec
                     keys.findFieldsInTarget &= !!findField(flow.program, target, value.key);
                 });
             }
-            for (FlowNodeID stored : value.key ? nodesStoredUnderInLinkLayouts(flow, subject, value.key) : underAnyKey)
+            auto copyInto = [&](FlowNodeID stored) {
+                if (stored == value.node)
+                    keys.fieldsCopiedOntoThemselves.append(stored);
                 flow.addEdge(value.node, stored ? stored : flow.unseen());
+            };
+            for (FlowNodeID stored : value.key ? nodesStoredUnderInLinkLayouts(flow, subject, value.key) : underAnyKey)
+                copyInto(stored);
         }
     });
     return true;
@@ -909,6 +934,8 @@ static CopyWaitsForInLinkLayouts observeCopyInLinkLayouts(LinkFlow& flow, const 
     bool definesWhatItCopies = change.definesWhatItCopies || assignmentFindsNoSetter;
     KeysOfCopyInLinkLayouts keys;
     bool isListedOnBothSides = change.otherNode && copyFieldByFieldInLinkLayouts(flow, subject, other, definesWhatItCopies, keys);
+    for (FlowNodeID field : keys.fieldsCopiedOntoThemselves)
+        flow.observe(field, FlowObserver { FlowObserver::Kind::FieldIsOnlyAsked, change.function, change.record });
     bool copiesFieldByField = isListedOnBothSides && landsOnObjectsOfProgramAlone;
     if (change.otherNode && subject.functions != LinkType::Functions::None) {
         forEachLayoutNamedInLinkLayouts(flow, other, [&](LayoutID layout) {
@@ -1001,6 +1028,7 @@ void LinkFlow::changeObserved(const FlowObserver& observer, const LinkType& now)
     switch (observer.kind) {
     case FlowObserver::Kind::SubjectOfChange:
     case FlowObserver::Kind::OtherOfChange:
+    case FlowObserver::Kind::FieldOfAccessorLaid:
         break;
     case FlowObserver::Kind::SubjectOfCall:
     case FlowObserver::Kind::ReceiverOfCall:
@@ -1013,6 +1041,7 @@ void LinkFlow::changeObserved(const FlowObserver& observer, const LinkType& now)
     case FlowObserver::Kind::MemberOfSharedCall:
     case FlowObserver::Kind::MemberOfSharedAccess:
     case FlowObserver::Kind::PassedToBeNamed:
+    case FlowObserver::Kind::FieldIsOnlyAsked:
         RELEASE_ASSERT_NOT_REACHED();
     }
 
@@ -1028,6 +1057,9 @@ void LinkFlow::changeObserved(const FlowObserver& observer, const LinkType& now)
     const SummaryChange& record = summaries.at(observer.function).changes[observer.record];
     UnknownByEscapeAlone unknownByEscapeAlone(isUnknownByEscapeAloneIfAtAll(typeAt(nodeOf(observer.function, record.subject))) && (record.other == noSummaryNode || isUnknownByEscapeAloneIfAtAll(typeAt(nodeOf(observer.function, record.other)))), UnknownByEscapeAlone::Marks::OfRule);
     ObservedChangeInLinkLayouts change;
+    change.function = observer.function;
+    change.record = observer.record;
+    change.fieldIsAsked = observer.kind == FlowObserver::Kind::FieldOfAccessorLaid;
     change.subjectNode = nodeOf(observer.function, record.subject);
     change.subject = typeAt(change.subjectNode);
     change.key = record.key;
@@ -1114,6 +1146,7 @@ void LinkFlow::changeObserved(const FlowObserver& observer, const LinkType& now)
         observeDefinitionInLinkLayouts(*this, change);
         return;
     case SummaryChange::Kind::ChangesPrototype:
+        noteWhatMayMakeThenableOf(change.subject, observer.function, std::nullopt);
         observeChangeOfPrototypeInLinkLayouts(*this, change);
         return;
     case SummaryChange::Kind::BecomesPrototype:
@@ -1580,7 +1613,7 @@ private:
     bool isWrittenLateThroughLost(LayoutID member, PropertyKeyID key) const
     {
         uint32_t family = lostFamilyOf(member);
-        return m_lostFamiliesWrittenLateUnderEveryKey.get(family) || (key && m_keysWrittenLateThroughLost.contains(static_cast<uint64_t>(family) << 32 | key.bits()));
+        return (m_lostFamiliesWrittenLateUnderEveryKey.get(family) && !isPrivateNameInLink(m_program, key)) || (key && m_keysWrittenLateThroughLost.contains(static_cast<uint64_t>(family) << 32 | key.bits()));
     }
     bool isGivenValueThroughLost(LayoutID member, PropertyKeyID key) const
     {
@@ -2464,10 +2497,25 @@ void WriterOfLinkLayouts::noteWriteOfPrototypeProperty(const LinkType& subject, 
 
 void WriterOfLinkLayouts::noteNameGivenToClosure(const LinkType& subject, PropertyKeyID storedUnder)
 {
-    if (subject.functions == LinkType::Functions::Closure && !(storedUnder && m_flow.followsNamesOnClosuresOf(subject.function, storedUnder)))
-        m_functionsWhoseClosuresGetWhatIsNotListed.set(subject.function.index());
-    if (subject.functions == LinkType::Functions::Constructors)
+    auto note = [&](FunctionID function) {
+        if (!storedUnder || !m_flow.followsNamesOnClosuresOf(function, storedUnder))
+            m_functionsWhoseClosuresGetWhatIsNotListed.set(function.index());
+    };
+    switch (subject.functions) {
+    case LinkType::Functions::None:
+    case LinkType::Functions::Lost:
+        return;
+    case LinkType::Functions::Closure:
+        note(subject.function);
+        return;
+    case LinkType::Functions::Set:
+        std::ranges::for_each(m_flow.functionsOfSet(subject), note);
+        return;
+    case LinkType::Functions::Constructors:
         m_someConstructorGetsName = true;
+        return;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
 }
 
 void WriterOfLinkLayouts::writeNamesOnFunctions()
@@ -2719,8 +2767,10 @@ void WriterOfLinkLayouts::noteWriteInto(LayoutID layout, PropertyKeyID key, Trai
         }
         if (traits.contains(Trait::ComesAfterConstruction) && !(noted & everyFieldIsWrittenLate)) {
             noted |= everyFieldIsWrittenLate;
-            for (uint32_t cell = firstCell; cell < endOfCells; ++cell)
-                m_fieldsWrittenLate.quickSet(cell);
+            for (uint32_t cell = firstCell; cell < endOfCells; ++cell) {
+                if (!isPrivateNameInLink(m_program, m_program.at(layout).fields[cell - firstCell].key))
+                    m_fieldsWrittenLate.quickSet(cell);
+            }
         }
         return;
     }
@@ -3427,6 +3477,8 @@ void WriterOfLinkLayouts::writeLayouts()
             linked.reachesUnseenCode = false;
         linked.possibleChanges = m_changes[index];
         linked.possibleChanges.add(m_flow.possibleChangesOf(index));
+        if (writtenBaseOf(m_program.at(id)) && m_program.at(id).inheritedFields != InheritedFields::AllOfRow)
+            linked.possibleChanges.add(LayoutChange::GainsProperty);
         if (m_flow.layoutsDefinedOnUnderWrittenKeys.get(index))
             linked.possibleChanges.add(changesMadeByInLinkLayouts(SummaryChange::Kind::DefinesByDescriptor));
         linked.isRedefinedByLiteralsAlone = m_flow.layoutsWithKnownAccessors.get(index) && !linked.possibleChanges.contains(LayoutChange::GetsAccessor)
@@ -3757,6 +3809,7 @@ void WriterOfLinkLayouts::writeFields()
             return set.holdsTheSameIn(first, firstOfBase, length);
         })) {
             takesCellsOfBase.quickSet(index);
+            m_tables.layouts[index].takesCellsOfBase = true;
             numberOfCellsWrittenOneByOne -= length;
         }
     }
@@ -3787,6 +3840,7 @@ void WriterOfLinkLayouts::writeFields()
             cell.isFilled = (keepsWhatConstructionsFill || liesBesideAccessors || (everyConstructionIsSeen && isPrivateNameInLink(m_program, record.key))) && record.key && record.form.isEmpty() && !m_flow.fieldsThatMayBeEmpty.get(cellOf(reference))
                 && (arrivesAtDeclaration[declaration] & somethingArrives) && !(m_flow.typeAt(m_flow.field(reference)).primitives & Primitive::Absent);
             cell.isOfBirth = constructionsAreFollowed && isAllocated && record.key && record.form.isEmpty() && !m_flow.fieldsNotOfBirth.get(cellOf(reference));
+            cell.isKeptFromComparisons = isPrivateNameInLink(m_program, record.key) && !m_flow.isInspectedByComparisonOfPrivateFields(m_flow.field(declarationOf(m_program, reference)));
             cell.isFilledAtEveryRead = cell.isFilled && !m_fieldsReadInFrontOfDefinition.quickGet(cellOf(reference))
                 && !(isLost && m_keysReadInFrontOfDefinitionThroughLost.contains(record.key.bits()));
             cell.isLeftUndefinedByMakers = isGivenUndefinedByMakers && m_fieldsGivenUndefinedByMakers.quickGet(declaration) && !m_fieldsFilledByConstructors.quickGet(declaration);

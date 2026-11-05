@@ -88,7 +88,7 @@ StubSignature signatureOfRegExpMatchLiteral(StubKey key)
     if (takesRegExpObject(key))
         signature.addOperand(gprOf(StubRegister::A2));
     signature.immediate = gprOf(stubImmediateRegister);
-    return signature;
+    return takesRegExpObject(key) ? signature.fillingOperandInFront(1) : signature;
 }
 
 static MatchFormTraits traitsOfMatchForm(RegExpMatchForm form)

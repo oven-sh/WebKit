@@ -51,6 +51,8 @@ static constexpr unsigned numberOfConstantKinds = 6;
 static_assert(static_cast<unsigned>(ConstantKind::CellTemplate) + 1 == numberOfConstantKinds);
 
 static constexpr uint16_t primaryEntry = 0;
+static constexpr uint16_t entryInFrontOfStub = 1;
+static constexpr unsigned sizeOfMoveInFrontOfStub = isX86_64() ? 3 : 4;
 
 struct CodeSymbol {
     friend constexpr bool operator==(const CodeSymbol&, const CodeSymbol&) = default;

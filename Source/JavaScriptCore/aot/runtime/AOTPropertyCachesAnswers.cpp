@@ -649,6 +649,12 @@ bool isHostObjectOverridingPut(Structure* structure)
     return structure->typeInfo().overridesPut() && structure->typeInfo().type() == ObjectType;
 }
 
+bool isWriteJudgedByWriter(Structure* structure, UniquedStringImpl* uid)
+{
+    ImmutablePropertyNames* names = structure->mayHaveImmutableProperties() ? structure->listedImmutablePropertyNames() : nullptr;
+    return names && names->refusalDependsOnWriter(uid);
+}
+
 static bool storesAreOrdinaryAlongPrototypeChain(Structure* structure)
 {
     for (;;) {
@@ -935,7 +941,7 @@ PropertyAnswer classifyDeletion(const DeletionQuery& query)
         return classifyCompiledObjectDeletion(query);
     MethodTable::DeletePropertyFunctionPtr ordinaryDelete = JSObject::deleteProperty;
     if (!query.slot.isCacheableDelete() || before->classInfoForCells()->methodTable.deleteProperty != ordinaryDelete || !before->propertyAccessesAreCacheable()
-        || before->typeInfo().prohibitsPropertyCaching() || before->needImpurePropertyWatchpoint() || before->isDictionary())
+        || before->typeInfo().prohibitsPropertyCaching() || before->needImpurePropertyWatchpoint() || before->isDictionary() || isWriteJudgedByWriter(before, query.uid))
         return PropertyAnswer::uncacheable(access);
     Structure* after = query.base->structure();
     if (query.slot.isConfigurableDeleteMiss()) {
@@ -961,7 +967,7 @@ PropertyAnswer classifyStore(const StoreQuery& query)
     SlotAccess access = accessFor(query.mode);
     Structure* structureBefore = query.structureBefore;
     bool isCompiled = structureBefore->isCompiledStructure();
-    bool isNeverCached = isNeverCachedName(vm, query.uid) || isProxyType(structureBefore->typeInfo().type()) || structureBefore->needImpurePropertyWatchpoint()
+    bool isNeverCached = isNeverCachedName(vm, query.uid) || isProxyType(structureBefore->typeInfo().type()) || structureBefore->needImpurePropertyWatchpoint() || isWriteJudgedByWriter(structureBefore, query.uid)
         || (!isCompiled && (!structureBefore->propertyAccessesAreCacheable() || structureBefore->typeInfo().prohibitsPropertyCaching() || (access == SlotAccess::Store && isHostObjectOverridingPut(structureBefore))));
     if (structureBefore->isDictionary() && !isCompiled) {
         if (auto answer = isNeverCached ? std::nullopt : classifyReplacement(query))

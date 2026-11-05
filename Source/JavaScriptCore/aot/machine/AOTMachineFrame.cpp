@@ -342,7 +342,7 @@ static ALWAYS_INLINE void readOperationAheadOfFrame(const Liveness& liveness, co
 {
     Opcode opcode = operation->opcode();
     if (const PatchOperation* patch = operation->as<PatchOperation>()) {
-        facts.holdsPatchThatNeedsFrame |= patch->needsFrameRecord() || !patch->runsWithoutFrame() || patch->followsFrameSetup();
+        facts.holdsPatchThatNeedsFrame |= patch->needsFrameRecord() || !patch->runsWithoutFrame() || patch->mustStandBehindFrameSetup();
         if (patch->onlyKeepsChildrenAlive || (stopsAtFirstNeed && facts.holdsPatchThatNeedsFrame))
             return;
         if (opcode == Patch) {
@@ -383,7 +383,7 @@ static void readBlockAheadOfFrame(const Allocator& allocator, const Block* block
 static bool blockHoldsPatchThatNeedsFrameToBePlanned(const Liveness& liveness, const Block* block)
 {
     auto needsFrame = [](const PatchOperation* patch) ALWAYS_INLINE_LAMBDA {
-        return patch->needsFrameRecord() || !patch->runsWithoutFrame() || patch->followsFrameSetup();
+        return patch->needsFrameRecord() || !patch->runsWithoutFrame() || patch->mustStandBehindFrameSetup();
     };
     for (const Operation* sunk : liveness.sunkInto(block)) {
         const PatchOperation* patch = sunk->as<PatchOperation>();
@@ -717,7 +717,7 @@ void Allocator::settleFramedPart()
             return false;
         if (step.kind == StepKind::Execute && step.patchAssignment != UINT32_MAX) {
             const PatchOperation* patch = step.operation->as<PatchOperation>();
-            if (patch && patch->followsFrameSetup())
+            if (patch && patch->mustStandBehindFrameSetup())
                 return false;
             if (someSpillIsStoredAtHead && std::ranges::any_of(m_allocation.patchAssignment(step.patchAssignment).locations, isStoredAtHead))
                 return false;

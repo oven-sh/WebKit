@@ -22,6 +22,7 @@
 #include "AOTPropertyCachesAnswers.h"
 #include "AOTPropertyListCache.h"
 #include "AOTPropertyWalkInlines.h"
+#include "AOTStaleAnswers.h"
 #include "AOTState.h"
 #include "AOTVector.h"
 #include "DeferGC.h"
@@ -580,6 +581,30 @@ static bool tryReadBySlots(VM& vm, JSObject* cell, PropertiesInSlots& properties
     return true;
 }
 
+static void askAgainWhatWasReadBySlots(JSGlobalObject* globalObject, JSObject* source, const PropertiesInSlots& properties)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    Instance& instance = uncheckedDowncast<Object>(source)->state().instance;
+    constexpr ASCIILiteral reader = "the reader of slots"_s;
+    for (size_t index = 0; index < properties.names.size(); ++index) {
+        UniquedStringImpl* name = properties.names[index];
+        if (name->isSymbol()) {
+            prepareForLookup(globalObject, source, name);
+            RETURN_IF_EXCEPTION(scope, void());
+        }
+        bool isAccessor = properties.attributes[index] & (PropertyAttribute::Accessor | PropertyAttribute::CustomAccessorOrValue);
+        stopAtStaleAnswer(instance, source, name, isAccessor ? KindOfAnswer::Accessor : KindOfAnswer::Value, isAccessor ? JSValue() : properties.valuesOrAccessors.at(index), reader);
+    }
+    PropertyNameArrayBuilder names(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
+    source->methodTable()->getOwnPropertyNames(source, globalObject, names, DontEnumPropertiesMode::Include);
+    RETURN_IF_EXCEPTION(scope, void());
+    for (auto& name : names) {
+        if (!properties.names.contains(name.impl()))
+            stopAtStaleAnswer(instance, source, name.impl(), KindOfAnswer::Absent, { }, reader);
+    }
+}
+
 static bool tryDefineFieldsWithAttributes(VM& vm, JSGlobalObject* globalObject, Object& target, const PropertiesInSlots& properties)
 {
     MarkedArgumentBuffer defined;
@@ -724,6 +749,10 @@ extern "C" JS_EXPORT_PRIVATE JSC::EncodedJSValue SYSV_ABI AOT__definePropertiesF
 
     AOT::PropertiesInSlots properties;
     if (AOT::tryReadBySlots(vm, source, properties)) {
+        if (vm.aotState().verifiesFastPathAnswers) [[unlikely]] {
+            AOT::askAgainWhatWasReadBySlots(globalObject, source, properties);
+            RETURN_IF_EXCEPTION(scope, { });
+        }
         AOT::Object* compiledTarget = definer.compiledTargetThatRefusesNothing();
         if (compiledTarget && properties.arePlain && !compiledTarget->hasFlagsInOrderWord() && compiledTarget->tryDefineFields(vm, properties.names.span(), { properties.valuesOrAccessors.data(), properties.valuesOrAccessors.size() }))
             return JSValue::encode(target);

@@ -29,7 +29,7 @@ class BuildContext;
 class StubCatalog;
 struct CodeBody;
 
-enum class ArgumentSource : uint8_t { Register, Stack32, Stack64, Constant, Stack32OffStackPointer, Stack64OffStackPointer, ThrowWordWithMention };
+enum class ArgumentSource : uint8_t { Register, Stack32, Stack64, Constant, Stack32OffStackPointer, Stack64OffStackPointer, ThrowWordWithMention, ConstantBelowMention };
 
 using ArgumentMoves = ListOfUnit<uint64_t, 8>;
 
@@ -178,6 +178,11 @@ public:
     uint32_t call(CCallHelpers&, StubKey, std::optional<uint32_t> immediate, OptionalIndex site, const ArgumentMoves&, OptionalIndex firstReadSite = { });
     uint32_t callWithImmediateOfSite(CCallHelpers&, StubKey, std::optional<uint32_t> immediate, OptionalIndex site, const ArgumentMoves&);
     uint32_t call(CCallHelpers&, StubKey, NumberedImmediate, OptionalIndex site, const ArgumentMoves&, OptionalIndex firstReadSite = { });
+    void enterNextStubInFront(Reg filledByCallee)
+    {
+        RELEASE_ASSERT(filledByCallee);
+        m_registerFilledInFrontOfNextCall = filledByCallee;
+    }
     void callForTwoReads(CCallHelpers&, StubKey, OptionalIndex firstRead, OptionalIndex secondRead);
     void tailCall(CCallHelpers&, StubKey);
     void tailCall(CCallHelpers&, StubKey, uint32_t immediate);
@@ -202,6 +207,7 @@ private:
     uint32_t indexOf(StubKey, std::optional<uint32_t> mentionOfImmediate = std::nullopt);
     uint32_t indexOf(Typed::CodeUnit);
     uint32_t emitCall(CCallHelpers&, StubKey called, CodeSymbol, const RecordedCall&);
+    Reg m_registerFilledInFrontOfNextCall;
     void emitJump(CodeSymbol);
 
     const StubCatalog& m_catalog;

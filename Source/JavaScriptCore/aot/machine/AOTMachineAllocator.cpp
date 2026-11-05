@@ -1642,9 +1642,23 @@ Location Allocator::defineResult(Operation* operation, RegisterMask allowed, Reg
 
 void Allocator::enterFramedPart()
 {
+    auto everyWayHasDefined = [&](const Operation* reference) {
+        if (m_order.of(m_block).isRare())
+            return true;
+        const Block* defining = reference->owner();
+        uint32_t orderIndexOfDefining = m_order.of(defining).orderIndex;
+        const Block* block = m_block;
+        while (m_order.of(block).orderIndex > orderIndexOfDefining) {
+            const Block* dominator = immediateDominatorOf(block);
+            if (!dominator)
+                return !block->isEntry();
+            block = dominator;
+        }
+        return block == defining;
+    };
     for (ReferenceWhosePointerWaits& waiting : m_referencesWhosePointersWaitForFramedPart) {
         Operation* reference = waiting.reference;
-        if (stateOf(reference).registers || (m_allocation.isSpilled(reference) && isLiveBehind(reference, m_position) && !isDeadOnEveryPathFrom(reference, m_block, m_headOfBlock)))
+        if (stateOf(reference).registers || (m_allocation.isSpilled(reference) && isLiveBehind(reference, m_position) && !isDeadOnEveryPathFrom(reference, m_block, m_headOfBlock) && everyWayHasDefined(reference)))
             waiting.pointer = keepPointerBesideAllocatedReference(*this, reference, waiting.pointer);
     }
 

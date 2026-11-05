@@ -67,7 +67,8 @@ void takeWhatIsNoLongerCaptured(Walker& walker)
 void stopAtSecondEntryOfMaker(Walker& walker)
 {
     FunctionID function = walker.unit().function;
-    if (!walker.plan().promotedEnvironments().isMaker(function) || walker.program().at(function).isModuleBody() || walker.facts().isTakenToRunOnce(function) || walker.isUnreachable())
+    bool restsOnLoaderAlone = walker.program().at(function).isModuleBody() && !isBodyWrittenInAnotherFile(walker.program(), function);
+    if (!walker.plan().promotedEnvironments().isMaker(function) || restsOnLoaderAlone || walker.facts().isTakenToRunOnce(function) || walker.isUnreachable())
         return;
     Draft enter(Opcode::EnterBodyThatRunsOnce, walker.originOfOperation());
     enter.setFunctionNumber(function.index());

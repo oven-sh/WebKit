@@ -49,6 +49,7 @@ public:
     void setKeepsToModule(bool keepsToModule) { m_keepsToModule = keepsToModule; }
     bool keepsToModule() const { return m_keepsToModule; }
     void setMockOfView(VM& vm, JSObject* mock) { m_mockOfView.set(vm, this, mock); }
+    void clearMockOfView() { m_mockOfView.clear(); }
     AbstractModuleRecord* recordForResolution();
     bool hasNamespaceLayoutOf(ModuleID module) const { return (m_module == module || m_face == module) && !m_isDeferred && !m_mockOfView; }
     void setFace(ModuleID face) { m_face = face; }

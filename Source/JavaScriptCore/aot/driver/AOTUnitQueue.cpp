@@ -103,6 +103,7 @@ UnitQueue::UnitQueue(const Typed::Program& program, const Typed::CallingConventi
     , m_cycles(numberOfCyclesOfUnitQueue(link))
     , m_isMentioned((static_cast<size_t>(conventions.numberOfUnits()) + bitsInWordOfUnitQueue - 1) / bitsInWordOfUnitQueue)
     , m_selectorsWhoseUnitsAreMentioned(conventions.methodSelectors().size())
+    , m_unitsThatAskAmongMentionedUnitsOfClasses(program.layouts.size())
     , m_unitsOfThreads(numberOfThreads)
 {
     RELEASE_ASSERT(numberOfThreads);
@@ -110,6 +111,8 @@ UnitQueue::UnitQueue(const Typed::Program& program, const Typed::CallingConventi
         word.store(0, std::memory_order_relaxed);
     for (std::atomic<bool>& areMentioned : m_selectorsWhoseUnitsAreMentioned)
         areMentioned.store(false, std::memory_order_relaxed);
+    for (std::atomic<const Vector<Typed::CodeUnit>*>& unitsThatAsk : m_unitsThatAskAmongMentionedUnitsOfClasses)
+        unitsThatAsk.store(nullptr, std::memory_order_relaxed);
     for (Cycle& cycle : m_cycles) {
         cycle.numberOfCyclesAwaited.store(0, std::memory_order_relaxed);
         cycle.numberOfOpenUnits.store(0, std::memory_order_relaxed);
@@ -130,7 +133,19 @@ UnitQueue::UnitQueue(const Typed::Program& program, const Typed::CallingConventi
     }
 }
 
-UnitQueue::~UnitQueue() = default;
+UnitQueue::~UnitQueue()
+{
+    for (std::atomic<const Vector<Typed::CodeUnit>*>& unitsThatAsk : m_unitsThatAskAmongMentionedUnitsOfClasses)
+        delete unitsThatAsk.load(std::memory_order_relaxed);
+}
+
+void UnitQueue::didMentionUnitsOfClass(LayoutID classLayout, Vector<Typed::CodeUnit>&& thoseThatAskWhoMentions)
+{
+    auto kept = makeUnique<Vector<Typed::CodeUnit>>(WTF::move(thoseThatAskWhoMentions));
+    const Vector<Typed::CodeUnit>* nobodyWasFirst = nullptr;
+    if (m_unitsThatAskAmongMentionedUnitsOfClasses[classLayout.index()].compare_exchange_strong(nobodyWasFirst, kept.get(), std::memory_order_release, std::memory_order_relaxed))
+        (void)kept.release();
+}
 
 void UnitQueue::orderCycles()
 {

@@ -292,6 +292,7 @@ constexpr ArgumentBufferAccess argumentBufferAccessOf(Entry entry)
     v(OperationsThatMakeArrays, AppendIterable) \
     v(OperationsThatMakeArrays, AppendMembers) \
     v(OperationsThatMakeArrays, ArrayPutAtIndex) \
+    v(OperationsThatMakeArrays, ArrayPutAtIndexInSloppyCode) \
     v(OperationsThatMakeArrays, ArrayPutAtNumber) \
     v(OperationsThatMakeArrays, ArrayPutNumberAtIndex) \
     v(OperationsThatMakeArrays, DestructureIterable) \

@@ -43,6 +43,7 @@ struct LinkedFunction {
     bool isNamedInItsCycle { true };
     bool liesUnderNameOrIsLost { false };
     bool isInQueueFromStart { false };
+    bool callEntryWalksBody { false };
     bool namesOnlyWhatEveryFunctionLeadsTo { false };
     bool closuresAreChanged { false };
     bool closuresGetOnlyNamesThatAreListed { false };
@@ -61,6 +62,8 @@ struct LinkedFunction {
 };
 
 struct LinkedCell {
+    friend bool operator==(const LinkedCell&, const LinkedCell&) = default;
+
     TypeID proven;
     bool leavesOutWhatArrives { false };
     bool everyWriterIsKnown { false };
@@ -76,6 +79,7 @@ struct LinkedCell {
     bool isLeftUndefinedByMakers { false };
     bool isGivenUndefinedOrNullInSight { false };
     bool isGivenByNoMaker { false };
+    bool isKeptFromComparisons { false };
     OptionSet<FieldForm> formThatDefinitionsCreate;
 };
 
@@ -95,6 +99,7 @@ struct LinkedLayout {
     bool reachesUnseenCode { true };
     OptionSet<LayoutChange> possibleChanges { LayoutChange::IsFrozen, LayoutChange::GainsProperty, LayoutChange::LosesProperty, LayoutChange::ChangesPrototype, LayoutChange::GetsAccessor };
     bool isRedefinedByLiteralsAlone { false };
+    bool takesCellsOfBase { false };
     bool listsEveryMemberAbove { false };
     bool listsEveryStaticMember { false };
     bool hasConstructorFunctionInRow { true };
@@ -114,6 +119,8 @@ struct LinkedMember {
     FunctionID function;
     bool everyWriterIsKnown { false };
     FunctionID written;
+
+    bool holdsOneFunction() const { return everyWriterIsKnown && function; }
 };
 
 struct LinkedNameOnPrototype {
@@ -291,7 +298,6 @@ struct LookupsPastProgramObjects {
     // MUST BE TRUE OF THE PROGRAM THAT RUNS: each is locked at the start (Facts::builtinMembersLockedAtStartUp()), with every mechanism withheld too: what is reached hangs on it.
     BitVector membersTakenForConstants;
     BitVector membersWritten;
-    BitVector membersHiddenFromBelow;
     Vector<WriteFollowedToBuiltin> writesFollowedToBuiltins;
     BitVector holdersWrittenUnderAnyName;
     BitVector holdersStoredOnUnderAnyName;
@@ -303,6 +309,7 @@ struct LookupsPastProgramObjects {
     BitVector builtinsPassedOptionThatRunsCode;
     BitVector classesWithInstancesAtUnseen;
     bool formattersAreHandedObjects { false };
+    BitVector typesHandedToHandlers;
     BitVector entriesThatHandHostNothing;
     BitVector namesReadThroughLostBuiltins;
     BitVector namesWrittenThroughLostBuiltins;
@@ -318,6 +325,9 @@ struct LookupsPastProgramObjects {
     bool climbsFromUnseenObjects { false };
     bool lostBuiltinsReachUnseen { false };
     bool readsUnderKeysNobodyKnows { false };
+    UncheckedKeyHashSet<uint64_t> readsOfProgramUnderKeysNobodyKnows;
+    bool namesFromRunTimeWereHeldBack { false };
+    BitVector builtinsUsedWithoutNamesFromRunTime;
     bool nativeCodeMayHoldObjects { false };
 };
 
@@ -443,7 +453,7 @@ struct LinkTables {
     bool cycleLeadsTo(uint32_t referrer, uint32_t named) const;
     bool leadsTo(FunctionID referrer, FunctionID function) const { return cycleLeadsTo(functions[referrer.index()].cycle, functions[function.index()].cycle); }
     bool bodyTakesWhatCallersLeave(FunctionID id) const { return functions[id.index()].everyCallerIsKnown && functions[id.index()].everyCallHasOneCallee && !functions[id.index()].isNamedInItsCycle; }
-    bool standsOutsideCycles(CodeUnit unit) const { return namesOnlyUnitsOfItsFunction(unit.role) && functions[unit.function.index()].isInQueueFromStart; }
+    bool standsOutsideCycles(CodeUnit unit) const { return namesOnlyUnitsOfItsFunction(unit.role) && functions[unit.function.index()].isInQueueFromStart && !(unit.role == CodeRole::GenericCallEntry && functions[unit.function.index()].callEntryWalksBody); }
     bool leadsTo(CodeUnit referrer, FunctionID function) const { return leadsTo(referrer.function, function) && (!standsOutsideCycles(referrer) || functions[function.index()].isInQueueFromStart); }
     bool mayBeMentionedBy(CodeUnit referrer, FunctionID function) const { return functions[function.index()].isInQueueFromStart || leadsTo(referrer, function); }
     const LinkedCell& field(FieldReference field) const LIFETIME_BOUND { return fields[firstFieldOfLayout[field.layout.index()] + field.field]; }
@@ -640,12 +650,16 @@ struct LinkTables {
     std::span<const uint32_t> membersUnder(LayoutID classLayout, ClassSide, PropertyKeyID) const LIFETIME_BOUND;
     MemberFound findMember(const Program&, LayoutID, ClassSide, PropertyKeyID) const;
     bool findFunctionsLaidAbove(const Program&, LayoutID, PropertyKeyID, Vector<FunctionID, 4>&) const;
+    bool holderIsChangedInSightAlone(const Program&, LayoutID classLayout, ClassSide) const;
+    bool memberHoldsOneFunction(const Program&, LayoutID classLayout, ClassSide, PropertyKeyID, FunctionID written) const;
+    bool findsNothingOnClassObjects(const Program&, LayoutID classLayout, PropertyKeyID) const;
     Vector<LinkedNameOnFunction> namesOnFunctions;
     const LinkedNameOnFunction* findNameOnFunction(FunctionID holder, PropertyKeyID) const LIFETIME_BOUND;
     bool closuresLackName(FunctionID, PropertyKeyID) const;
 };
 
 bool isNameInTextOf(const Program&, PropertyKeyID symbol, FunctionID);
+PropertyKeyID keyOfWellKnownSymbol(const Program&, BuiltinID constant);
 bool isSymbolOfLibrary(const Program&, PropertyKeyID);
 
 LinkTables conservativeLinkTables(const Program&);

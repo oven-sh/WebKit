@@ -178,8 +178,10 @@ struct SummaryCall {
     bool resultIsReadAsKey : 1 { false };
     bool liesOnNoWayToReturn : 1 { false };
     bool passesOnGatheredArguments : 1 { false };
+    bool expectsCalleeItself : 1 { false };
     FunctionID function;
     BuiltinID builtin;
+    BuiltinID expectedBuiltin;
     PropertyKeyID key;
     uint32_t subject { noSummaryNode };
     uint32_t receiver { noSummaryNode };
@@ -725,6 +727,8 @@ public:
     void setTextsSpelledThatNameFieldsNeverWritten(BitVector&& texts) { m_textsSpelledThatNameFieldsNeverWritten = WTF::move(texts); }
     const SetsOfLayoutsWritten& setsOfLayoutsWrittenInBodies() const LIFETIME_BOUND { return m_setsOfLayoutsWrittenInBodies; }
     void setSetsOfLayoutsWrittenInBodies(SetsOfLayoutsWritten&& sets) { m_setsOfLayoutsWrittenInBodies = WTF::move(sets); }
+    uint64_t numberOfValuesScanned() const { return m_numberOfValuesScanned; }
+    void setNumberOfValuesScanned(uint64_t number) { m_numberOfValuesScanned = number; }
     std::span<const FunctionID> functionsThatCopyMembers() const LIFETIME_BOUND { return m_functionsThatCopyMembers.span(); }
     void setFunctionsThatCopyMembers(Vector<FunctionID>&& functions) { m_functionsThatCopyMembers = WTF::move(functions); }
     struct MakerOfClosures {
@@ -742,6 +746,7 @@ private:
     LargeList<ThinSummary> m_summaries;
     BitVector m_textsSpelledThatNameFieldsNeverWritten;
     SetsOfLayoutsWritten m_setsOfLayoutsWrittenInBodies;
+    uint64_t m_numberOfValuesScanned { 0 };
     Vector<FunctionID> m_functionsThatCopyMembers;
     Vector<MakerOfClosures> m_makersAboveCopiesOfMembers;
 };

@@ -39,6 +39,18 @@ namespace JSC { namespace AOT {
 
 std::atomic<bool> InstructionCounts::s_hasBegun { false };
 
+static thread_local uint64_t t_instructionsSpentInsideLoops = 0;
+
+void InstructionCounts::noteSpentInsideLoop(uint64_t instructions)
+{
+    t_instructionsSpentInsideLoops += instructions;
+}
+
+uint64_t InstructionCounts::spentInsideLoopsOnCurrentThread()
+{
+    return t_instructionsSpentInsideLoops;
+}
+
 #if AOT_HAS_INSTRUCTION_COUNTERS
 
 namespace {
@@ -334,6 +346,7 @@ StepTimes::StepTimes(const BuildContext& build, ASCIILiteral name)
     , m_stepStart(MonotonicTime::now())
     , m_threadCPUTimeAtStepStart(m_logs ? CPUTime::forCurrentThread() : Seconds())
     , m_instructionsOfThreadAtStepStart(m_logs ? InstructionCounts::ofCurrentThread() : std::nullopt)
+    , m_instructionsInsideLoopsAtStepStart(InstructionCounts::spentInsideLoopsOnCurrentThread())
 {
 }
 
@@ -344,8 +357,11 @@ void StepTimes::didFinish(ASCIILiteral step)
     MonotonicTime now = MonotonicTime::now();
     Seconds threadCPUTime = CPUTime::forCurrentThread();
     std::optional<uint64_t> instructionsOfThread = InstructionCounts::ofCurrentThread();
-    dataLog(toUTF8CString("AOT phase times: ", m_name, " | ", step, " | wall ", (now - m_stepStart).milliseconds(), " ms | this thread ", (threadCPUTime - m_threadCPUTimeAtStepStart).milliseconds(), " ms | instructions of this thread ", instructionsOfThread && m_instructionsOfThreadAtStepStart ? static_cast<double>(*instructionsOfThread - *m_instructionsOfThreadAtStepStart) / 1e6 : 0.0, " M\n"));
+    uint64_t instructionsInsideLoops = InstructionCounts::spentInsideLoopsOnCurrentThread();
+    double instructionsOfStep = instructionsOfThread && m_instructionsOfThreadAtStepStart ? static_cast<double>(*instructionsOfThread - *m_instructionsOfThreadAtStepStart) : static_cast<double>(instructionsInsideLoops - m_instructionsInsideLoopsAtStepStart);
+    dataLog(toUTF8CString("AOT phase times: ", m_name, " | ", step, " | wall ", (now - m_stepStart).milliseconds(), " ms | this thread ", (threadCPUTime - m_threadCPUTimeAtStepStart).milliseconds(), " ms | instructions of this thread ", instructionsOfStep / 1e6, " M | outside loops ", (instructionsOfStep - static_cast<double>(instructionsInsideLoops - m_instructionsInsideLoopsAtStepStart)) / 1e6, " M\n"));
     m_instructionsOfThreadAtStepStart = instructionsOfThread;
+    m_instructionsInsideLoopsAtStepStart = instructionsInsideLoops;
     m_stepStart = now;
     m_threadCPUTimeAtStepStart = threadCPUTime;
 }
@@ -357,8 +373,11 @@ void StepTimes::didFinish(ASCIILiteral step, const UTF8CString& note)
     MonotonicTime now = MonotonicTime::now();
     Seconds threadCPUTime = CPUTime::forCurrentThread();
     std::optional<uint64_t> instructionsOfThread = InstructionCounts::ofCurrentThread();
-    dataLog(toUTF8CString("AOT phase times: ", m_name, " | ", step, ": ", note, " | wall ", (now - m_stepStart).milliseconds(), " ms | this thread ", (threadCPUTime - m_threadCPUTimeAtStepStart).milliseconds(), " ms | instructions of this thread ", instructionsOfThread && m_instructionsOfThreadAtStepStart ? static_cast<double>(*instructionsOfThread - *m_instructionsOfThreadAtStepStart) / 1e6 : 0.0, " M\n"));
+    uint64_t instructionsInsideLoops = InstructionCounts::spentInsideLoopsOnCurrentThread();
+    double instructionsOfStep = instructionsOfThread && m_instructionsOfThreadAtStepStart ? static_cast<double>(*instructionsOfThread - *m_instructionsOfThreadAtStepStart) : static_cast<double>(instructionsInsideLoops - m_instructionsInsideLoopsAtStepStart);
+    dataLog(toUTF8CString("AOT phase times: ", m_name, " | ", step, ": ", note, " | wall ", (now - m_stepStart).milliseconds(), " ms | this thread ", (threadCPUTime - m_threadCPUTimeAtStepStart).milliseconds(), " ms | instructions of this thread ", instructionsOfStep / 1e6, " M | outside loops ", (instructionsOfStep - static_cast<double>(instructionsInsideLoops - m_instructionsInsideLoopsAtStepStart)) / 1e6, " M\n"));
     m_instructionsOfThreadAtStepStart = instructionsOfThread;
+    m_instructionsInsideLoopsAtStepStart = instructionsInsideLoops;
     m_stepStart = now;
     m_threadCPUTimeAtStepStart = threadCPUTime;
 }

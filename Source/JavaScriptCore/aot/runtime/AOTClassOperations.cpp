@@ -23,6 +23,7 @@
 #include "AOTOperationData.h"
 #include "AOTOperationScope.h"
 #include "AOTPendingStars.h"
+#include "AOTPropertyWalk.h"
 #include "AOTPropertyCachesAnswers.h"
 #include "AOTRuntimeTable.h"
 #include "AOTState.h"
@@ -35,6 +36,7 @@
 #include "JSCellButterfly.h"
 #include "Symbol.h"
 #include <algorithm>
+#include <ranges>
 #include <wtf/text/SymbolImpl.h>
 
 namespace JSC { namespace AOT {
@@ -173,6 +175,7 @@ JSCellButterfly* ClassToken::create(VM& vm, const LayoutData& classLayout)
 {
     JSCellButterfly* butterfly = JSCellButterfly::create(vm, CopyOnWriteArrayWithContiguous, firstNameSlot + classLayout.numberOfFields);
     butterfly->setIndex(vm, classIndexSlot, jsNumber(classLayout.index));
+    vm.aotState().someClassHasPrivateNames = true;
     return butterfly;
 }
 
@@ -375,6 +378,8 @@ static Symbol* privateNameOf(VM& vm, State& state, JSCellButterfly* token, uint3
     return name;
 }
 
+static constexpr unsigned attributesOfNameWithoutField = static_cast<unsigned>(PropertyAttribute::DontEnum);
+
 static bool isOfRealmOf(const State& state, const Object& object)
 {
     return object.structure()->realm() == state.instance.globalObject;
@@ -454,7 +459,7 @@ static PrivateLocation locatePrivateName(VM& vm, State& state, JSObject* object,
 static void rememberLocation(VM& vm, JSObject* object, JSCellButterfly* token, uint32_t fieldIndex, const PrivateLocation& found)
 {
     JSObject* holder = holderOfNamesWithoutField(object);
-    if (!holder || !found.name || found.property.attributes || !isValidOffset(found.property.offset) || holder->structure()->isDictionary())
+    if (!holder || !found.name || (found.property.attributes & ~attributesOfNameWithoutField) || !isValidOffset(found.property.offset) || holder->structure()->isDictionary())
         return;
     bool needsBrand = found.name == found.declaredName && found.hasBrand && !found.isOfOnlyEvaluation;
     if (needsBrand && !isValidOffset(found.brand.offset))
@@ -561,7 +566,7 @@ static bool tryDefineByExistingTransition(VM& vm, State& state, JSObject* base, 
     if (declared.isBrand() ? defined != JSValue(token) : !!brandOf(state, declaringLayout, token))
         return false;
     Structure* before = base->structure();
-    if (!base->tryPutDirectByExistingTransition(vm, state.objects->layouts.nameOf(vm, declared), defined, static_cast<unsigned>(PropertyAttribute::None)))
+    if (!base->tryPutDirectByExistingTransition(vm, state.objects->layouts.nameOf(vm, declared), defined, attributesOfNameWithoutField))
         return false;
     rememberDefinition(vm, token, fieldIndex, before, base->structure(), std::nullopt);
     return true;
@@ -656,18 +661,12 @@ JSC_DEFINE_JIT_OPERATION(operationAOTPrivateSet, void, (Instance* instance, Enco
     }
     Object* compiledObject = location.compiledObject;
     if (!compiledObject) {
-        Structure* structure = base->structure();
-        if (!location.property.attributes && !structure->mayHaveImmutableProperties()) [[likely]] {
-            structure->didReplaceProperty(location.property.offset);
-            base->putDirectOffset(vm, location.property.offset, stored);
-            OPERATION_RETURN(scope);
-        }
-        PutPropertySlot slot(base, true);
-        base->setPrivateField(globalObject, location.name, stored, slot);
+        base->structure()->didReplaceProperty(location.property.offset);
+        base->putDirectOffset(vm, location.property.offset, stored);
     } else if (!location.property.isInSlot)
-        compiledObject->putDirectFromNativeCode(vm, location.name, stored, static_cast<unsigned>(PropertyAttribute::None));
+        compiledObject->putDirectFromNativeCode(vm, location.name, stored, attributesOfNameWithoutField);
     else if (!compiledObject->tryStore(vm, *location.property.field, stored))
-        compiledObject->moveFieldToExtraProperties(vm, *location.property.field, { stored, static_cast<unsigned>(PropertyAttribute::None) }, SlotExitReason::StoreOfOtherType);
+        compiledObject->moveFieldToExtraProperties(vm, *location.property.field, { stored, attributesOfNameWithoutField }, SlotExitReason::StoreOfOtherType);
     OPERATION_RETURN(scope);
 }
 
@@ -706,7 +705,8 @@ JSC_DEFINE_JIT_OPERATION(operationAOTPrivateDefine, void, (Instance* instance, E
             bool hadExtraProperties = compiledObject->hasExtraProperties();
             JSObject* extraBefore = extraPropertiesIfMade(*compiledObject);
             Structure* extraStructureBefore = extraBefore ? extraBefore->structure() : instance->realm.emptyExtraPropertiesStructure;
-            compiledObject->putDirectFromNativeCode(vm, uid, defined, static_cast<unsigned>(PropertyAttribute::None));
+            vm.aotState().somePrivateNameLiesBesideFields = true;
+            compiledObject->putDirectFromNativeCode(vm, uid, defined, attributesOfNameWithoutField);
             ensureRecordsOfKnownStructures(vm, state, classToken);
             bool needsBrand = !isBrand && location.hasBrand;
             if (!own && canUseDeclaredName && hadExtraProperties == !!extraBefore && (!needsBrand || isValidOffset(location.brand.offset)))
@@ -716,9 +716,10 @@ JSC_DEFINE_JIT_OPERATION(operationAOTPrivateDefine, void, (Instance* instance, E
         if (base->hasFrozenElementsInPlace()) [[unlikely]]
             base->moveFrozenElementsToSparseMap(vm);
         Structure* before = base->structure();
-        if (!base->tryPutDirectByExistingTransition(vm, uid, defined, static_cast<unsigned>(PropertyAttribute::None))) [[unlikely]] {
+        vm.aotState().somePrivateNameLiesBesideFields = true;
+        if (!base->tryPutDirectByExistingTransition(vm, uid, defined, attributesOfNameWithoutField)) [[unlikely]] {
             PutPropertySlot slot(base, true);
-            base->definePrivateField(globalObject, uid, defined, slot);
+            base->definePrivateField(globalObject, uid, defined, slot, attributesOfNameWithoutField);
         }
         ensureRecordsOfKnownStructures(vm, state, classToken);
         bool needsBrand = !isBrand && location.hasBrand;
@@ -727,6 +728,151 @@ JSC_DEFINE_JIT_OPERATION(operationAOTPrivateDefine, void, (Instance* instance, E
     }
     ensureStillAliveHere(classToken);
     OPERATION_RETURN(scope);
+}
+
+static JSCellButterfly* classTokenOrNull(State& state, JSValue value)
+{
+    JSCellButterfly* token = value && value.isCell() ? dynamicDowncast<JSCellButterfly>(value.asCell()) : nullptr;
+    if (!token || token->length() < ClassToken::firstNameSlot || !token->get(ClassToken::classIndexSlot).isUInt32())
+        return nullptr;
+    uint32_t index = token->get(ClassToken::classIndexSlot).asUInt32();
+    const LayoutData* layout = index < state.tables.numberOfLayoutIndices ? state.objects->classes.classWithIndex(index) : nullptr;
+    return layout && token->length() == ClassToken::firstNameSlot + layout->numberOfFields ? token : nullptr;
+}
+
+enum class AboveProxies : bool { IsNotLookedAt, IsLookedAt };
+
+static void collectObjectsThatLookupComesTo(JSGlobalObject* globalObject, JSObject* lowest, AboveProxies aboveProxies, MarkedArgumentBuffer& objects)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    for (JSObject* object = lowest; object;) {
+        bool isProxy = object->type() == ProxyObjectType;
+        if (isProxy && aboveProxies == AboveProxies::IsNotLookedAt)
+            return;
+        if (!isProxy)
+            objects.append(object);
+        JSValue above = isProxy ? object->getPrototype(globalObject) : object->getPrototypeDirect();
+        RETURN_IF_EXCEPTION(scope, void());
+        object = above.isObject() ? asObject(above) : nullptr;
+    }
+}
+
+static void collectClassTokens(VM& vm, State& state, const MarkedArgumentBuffer& objects, MarkedArgumentBuffer& tokens)
+{
+    auto add = [&](JSValue value) {
+        JSCellButterfly* token = classTokenOrNull(state, value);
+        for (size_t index = 0; token && index < tokens.size(); ++index) {
+            if (tokens.at(index) == JSValue(token))
+                token = nullptr;
+        }
+        if (token)
+            tokens.append(token);
+    };
+    for (size_t index = 0; index < objects.size(); ++index) {
+        JSObject* object = asObject(objects.at(index));
+        if (Object* compiledObject = compiledObjectOrNull(object)) {
+            for (const FieldData& field : compiledObject->layout().fields() | std::views::reverse) {
+                if (field.isBrand())
+                    add(findFieldProperty(vm, *compiledObject, field).valueOrAccessor);
+            }
+        }
+        JSObject* holder = vm.aotState().somePrivateNameLiesBesideFields ? holderOfNamesWithoutField(object) : nullptr;
+        if (!holder || holder->structure()->isQuickPropertyAccessAllowedForEnumeration())
+            continue;
+        holder->structure()->forEachProperty(vm, [&](const PropertyTableEntry& entry) {
+            if (PropertyName(entry.key()).isPrivateName())
+                add(holder->getDirect(entry.offset()));
+            return true;
+        });
+    }
+}
+
+static JSValue findPrivateFieldAmong(VM& vm, State& state, const MarkedArgumentBuffer& objects, JSCellButterfly* token, uint32_t field)
+{
+    for (size_t index = 0; index < objects.size(); ++index) {
+        if (PrivateLocation location = locatePrivateName(vm, state, asObject(objects.at(index)), token, field); location.name)
+            return location.property.value;
+    }
+    return { };
+}
+
+template<typename Functor>
+static void forEachWrittenPrivateFieldOn(JSGlobalObject* globalObject, JSObject* lowest, const Functor& functor)
+{
+    VM& vm = globalObject->vm();
+    if (!vm.aotState().someClassHasPrivateNames)
+        return;
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    Instance* instance = Instance::of(globalObject);
+    if (JSGlobalObject* realm = lowest->structure()->realm(); !instance && realm)
+        instance = Instance::of(realm);
+    if (!instance || !instance->state)
+        return;
+    State& state = *instance->state;
+    MarkedArgumentBuffer objects;
+    collectObjectsThatLookupComesTo(globalObject, lowest, AboveProxies::IsLookedAt, objects);
+    RETURN_IF_EXCEPTION(scope, void());
+    MarkedArgumentBuffer tokens;
+    collectClassTokens(vm, state, objects, tokens);
+    if (objects.hasOverflowed() || tokens.hasOverflowed()) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return;
+    }
+    for (size_t index = 0; index < tokens.size(); ++index) {
+        JSCellButterfly* token = uncheckedDowncast<JSCellButterfly>(tokens.at(index).asCell());
+        const LayoutData& declaringLayout = declaringLayoutOf(state, token);
+        for (uint32_t field = 0; field < declaringLayout.numberOfFields; ++field) {
+            const FieldData& declared = declaringLayout.fields()[field];
+            JSValue held = declared.isWrittenPrivateName ? findPrivateFieldAmong(vm, state, objects, token, field) : JSValue();
+            if (held && functor(state, token, field, declared, held) == IterationStatus::Done)
+                return;
+        }
+    }
+}
+
+unsigned PropertyWalk::countPrivateFieldsOfCompiledClasses(JSGlobalObject* globalObject, JSObject* lowest)
+{
+    unsigned count = 0;
+    forEachWrittenPrivateFieldOn(globalObject, lowest, [&](State&, JSCellButterfly*, uint32_t, const FieldData&, JSValue) {
+        ++count;
+        return IterationStatus::Continue;
+    });
+    return count;
+}
+
+bool PropertyWalk::matchPrivateFieldsOfCompiledClasses(JSGlobalObject* globalObject, JSObject* object, JSObject* pattern, const ScopedLambda<bool(JSValue ofObject, JSValue ofPattern)>& matches)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    bool everyFieldMatches = true;
+    MarkedArgumentBuffer objects;
+    forEachWrittenPrivateFieldOn(globalObject, pattern, [&](State& state, JSCellButterfly* token, uint32_t field, const FieldData& declared, JSValue ofPattern) {
+        if (objects.isEmpty()) {
+            collectObjectsThatLookupComesTo(globalObject, object, AboveProxies::IsNotLookedAt, objects);
+            scope.assertNoException();
+        }
+        if (objects.hasOverflowed()) [[unlikely]] {
+            throwOutOfMemoryError(globalObject, scope);
+            everyFieldMatches = false;
+            return IterationStatus::Done;
+        }
+        JSValue ofObject = findPrivateFieldAmong(vm, state, objects, token, field);
+        auto letsNothingGo = [](JSValue value) { return !value.isCell() || value.isString() || value.isHeapBigInt(); };
+        if (!ofObject)
+            everyFieldMatches = false;
+        else if (declared.isKeptFromComparisons && (!letsNothingGo(ofPattern) || !letsNothingGo(ofObject))) {
+            const ImageText& text = state.instance.program->text();
+            throwException(globalObject, scope, createComparisonOfPrivateFieldRefusedError(globalObject, text.createString(text.identifier(declared.name).text())));
+            everyFieldMatches = false;
+        } else {
+            bool matched = matches(ofObject, ofPattern);
+            everyFieldMatches = !scope.exception() && matched;
+        }
+        return everyFieldMatches ? IterationStatus::Continue : IterationStatus::Done;
+    });
+    RETURN_IF_EXCEPTION(scope, false);
+    return everyFieldMatches;
 }
 
 } } // namespace JSC::AOT

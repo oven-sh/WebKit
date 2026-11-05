@@ -113,6 +113,16 @@ void growOutOfLineStorage(StubAssembler& jit, const StorageGrowth& growth, JumpL
     jit.store32(growth.newStructureID, Address(object, JSCell::structureIDOffset()));
 }
 
+void widenStorageOfIntegersForAnyValue(StubAssembler& jit, GPRReg array, GPRReg scratch, JumpList& isLeftToOthers)
+{
+    jit.load32(Address(array, JSCell::structureIDOffset()), scratch);
+    isLeftToOthers.append(jit.branch32(CCallHelpers::NotEqual, scratch, Address(instanceGPR, Instance::offsetOfNewArrayHeader(ArrayWithInt32))));
+    jit.load32(Address(instanceGPR, Instance::offsetOfNewArrayHeader(ArrayWithContiguous)), scratch);
+    isLeftToOthers.append(jit.branchTest32(CCallHelpers::Zero, scratch));
+    jit.store32(scratch, Address(array, JSCell::structureIDOffset()));
+    jit.store8(TrustedImm32(ArrayWithContiguous), Address(array, JSCell::indexingTypeAndMiscOffset()));
+}
+
 static void branchUnlessHasOriginalArrayStructure(StubAssembler& jit, GPRReg array, GPRReg structureID, JumpList& otherwise)
 {
     JumpList hasOriginalStructure;

@@ -362,7 +362,7 @@ static bool putFieldDirect(VM& vm, Object& object, const FieldData& field, Prope
     FieldProperty current = findFieldProperty(vm, object, field);
     if (current && currentAttributes == CurrentAttributes::AreKept)
         property.attributes = current.attributes;
-    bool fitsSlot = property.attributes == object.attributesOf(field);
+    bool fitsSlot = (field.isPrivate() ? 0 : property.attributes) == object.attributesOf(field);
     if (current && !current.isInSlot) {
         putProperty(vm, object.extraProperties(), name, property);
         object.tryMoveFieldBackToSlot(vm, field);

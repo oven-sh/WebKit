@@ -2,8 +2,8 @@
 # the slow road fills the allocator of generators, the rare data of the closure and the Structure that is remembered there: words of the run time, which the road in line reads. A generator that takes its prototype may make a Structure.
 # RUN: emit-code
 # CHECK-LABEL: unit f1:Body
-# CHECK: = Patch({{*}}Writes:{AllocatorState, RuntimeState
-# CHECK: = Patch({{*}}Writes:{AllocatorState, RuntimeState
+# CHECK: = Patch({{*}}Writes:{{*}}AllocatorState, RuntimeState
+# CHECK: = Patch({{*}}Writes:{{*}}AllocatorState, RuntimeState
 # CHECK: = Patch({{*}}Writes:{{*}}AllocatorState, RuntimeState
 # -- code
 # code f1:Body {

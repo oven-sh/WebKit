@@ -140,8 +140,7 @@ private:
 
 class FieldTablePacker {
 public:
-    explicit FieldTablePacker(size_t numberOfEntriesOfAllRows)
-        : m_maxNumberOfTests(std::max<uint64_t>(numberOfEntriesOfAllRows * maxTestsPerEntry, fewestTestsAllowed))
+    FieldTablePacker()
     {
         m_firstEntries.set(fieldTableRowWithoutEntries);
     }
@@ -151,7 +150,7 @@ public:
     std::optional<uint32_t> place(std::span<const FieldTableRowEntry> row)
     {
         bool startsOver = row.size() != m_sizeOfLastRow || row.size() == 1;
-        if (startsOver && m_numberOfTests <= m_maxNumberOfTests)
+        if (startsOver && somePlaceInFrontMayTake(row.size()))
             m_entryOfFirstNameOfLastRow = 0;
 
         const uint32_t firstName = row[0].name;
@@ -163,7 +162,6 @@ public:
             size_t numberOfNamesTried = 0;
             while (fitting && numberOfNamesTried < row.size())
                 fitting &= m_occupiedEntries.clearBitsInWindowAt(firstEntry + row[numberOfNamesTried++].name);
-            m_numberOfTests += numberOfNamesTried + 1;
             if (fitting) {
                 firstEntry += WTF::ctz(fitting);
                 break;
@@ -179,6 +177,8 @@ public:
         m_firstEntries.set(firstEntry);
         for (const FieldTableRowEntry& entry : row)
             m_occupiedEntries.set(firstEntry + entry.name);
+        m_numberOfOccupiedEntries += row.size();
+        m_endOfOccupiedEntries = std::max<uint64_t>(m_endOfOccupiedEntries, static_cast<uint64_t>(firstEntry) + row.back().name + 1);
         m_highestFirstEntry = std::max(m_highestFirstEntry, firstEntry);
         m_entryOfFirstNameOfLastRow = firstEntry + firstName;
         m_sizeOfLastRow = row.size();
@@ -186,14 +186,25 @@ public:
     }
 
 private:
-    static constexpr uint64_t maxTestsPerEntry = 32;
-    static constexpr uint64_t fewestTestsAllowed = 1 << 24;
+    bool somePlaceInFrontMayTake(size_t numberOfNames) const
+    {
+        constexpr unsigned fractionBits = 16;
+        constexpr uint64_t searchesThatMayFindOnePlace = 16;
+        if (!m_endOfOccupiedEntries)
+            return true;
+        uint64_t shareOfFreeEntries = ((m_endOfOccupiedEntries - m_numberOfOccupiedEntries) << fractionBits) / m_endOfOccupiedEntries;
+        uint64_t placesExpectedToFit = (m_entryOfFirstNameOfLastRow * searchesThatMayFindOnePlace) << fractionBits;
+        for (size_t name = 0; name < numberOfNames && placesExpectedToFit >> fractionBits; ++name)
+            placesExpectedToFit = (placesExpectedToFit * shareOfFreeEntries) >> fractionBits;
+        return placesExpectedToFit >> fractionBits;
+    }
+
     static constexpr uint32_t maxFirstEntry = UINT32_MAX / sizeof(FieldTableEntry);
 
     FieldTableBits m_occupiedEntries;
     FieldTableBits m_firstEntries;
-    const uint64_t m_maxNumberOfTests;
-    uint64_t m_numberOfTests { 0 };
+    uint64_t m_numberOfOccupiedEntries { 0 };
+    uint64_t m_endOfOccupiedEntries { 0 };
     size_t m_sizeOfLastRow { 0 };
     uint32_t m_entryOfFirstNameOfLastRow { 0 };
     uint32_t m_highestFirstEntry { fieldTableRowWithoutEntries };
@@ -422,10 +433,7 @@ void encodeFieldTable(TableEncoder& encoder)
     sortFieldTableRows(loops, rows);
     times.didFinish("sort rows"_s);
 
-    size_t numberOfEntriesOfAllReaders = 0;
-    for (const FieldTableRow& row : rows.rows)
-        numberOfEntriesOfAllReaders += static_cast<size_t>(row.size) * row.numberOfReaders();
-    FieldTablePacker packer(numberOfEntriesOfAllReaders);
+    FieldTablePacker packer;
     if (!placeFieldTableRows(rows, packer)) {
         encoder.fail("FieldTableOutgrowsOffsetsOfTables"_s);
         return;

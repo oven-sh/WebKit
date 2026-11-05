@@ -145,12 +145,6 @@ static bool calleeIsNextOfEngineInStepsByHand(Walker& walker, const BodyValue& c
     return found && table.canonicalID(found) == next;
 }
 
-static bool mayHandOnInStepsByHand(Walker& walker, const BodyValue& operation, TypeID handedOn)
-{
-    TypeID widest = walker.isInLoop() ? widestTypeOfOperation(walker, operation) : TypeID();
-    return !widest || walker.types().isSubset(handedOn, widest);
-}
-
 enum class ResultOfNextInStepsByHand : uint8_t { IsWhatCallGives, IsWhatAwaitOfCallGives };
 
 static const BitVector& findCallsOfNextWhoseResultIsOnlyReadInStepsByHand(Walker& walker, ResultOfNextInStepsByHand result = ResultOfNextInStepsByHand::IsWhatCallGives)
@@ -311,8 +305,6 @@ bool answerFromStepWrittenByHandOfItsOpcodes(Walker& walker, const BodyValue& va
         atHand = step->value;
     else
         return false;
-    if (!mayHandOnInStepsByHand(walker, value, isTest ? TypeID(TypeTable::boolean) : TypeID(TypeTable::anything)))
-        return false;
 
     BlockID asWritten = walker.addBlock(BlockFrequency::Rare);
     BlockID ofStep = walker.addBlock();
@@ -338,7 +330,7 @@ bool answerFromStepWrittenByHandOfItsOpcodes(Walker& walker, const BodyValue& va
 
 bool buildStepWrittenByHand(Walker& walker, const BodyValue& call)
 {
-    if (call.opcode() != Opcode::Call || call.isDoneInPlace() || !walker.has(Mechanism::DirectCalls) || !walker.has(Mechanism::BuiltinCalls))
+    if (call.opcode() != Opcode::Call || call.isDoneInPlace() || !walker.has(Mechanism::DirectCalls) || !walker.has(Mechanism::BuiltinCalls) || !walker.opensGuesses())
         return false;
     const Program& program = walker.program();
     if (!call.thisValueOperand() || call.argumentsOperands().size() > 1 || call.calleeKey() != program.keyOf(BuiltinNames::next))
@@ -354,7 +346,7 @@ bool buildStepWrittenByHand(Walker& walker, const BodyValue& call)
         if (!expected || !types.isSubset(types.withoutNullish(expected), types.builtinClass(BuiltinClasses::Generator)))
             return false;
     }
-    if (!calleeIsNextOfEngineInStepsByHand(walker, call) || !mayHandOnInStepsByHand(walker, call, TypeTable::anything))
+    if (!calleeIsNextOfEngineInStepsByHand(walker, call))
         return false;
     if (!findCallsOfNextWhoseResultIsOnlyReadInStepsByHand(walker).quickGet(call.id().index()))
         return false;
@@ -470,7 +462,7 @@ bool buildAwaitedStepWrittenByHand(Walker& walker, const BodyValue& call)
     const BodyIndex& index = walker.currentBodyIndex();
     BodyBlock block = index.block(index.blockOf(call.id()));
     std::optional<WaitOfCallInCoroutine> wait = findWaitOfCallInCoroutine(walker, index, block, call.id());
-    if (!wait || !mayHandOnInStepsByHand(walker, index.value(wait->await), TypeTable::anything))
+    if (!wait)
         return false;
     Reference sent = call.argumentsOperands().empty() ? undefinedOfCoroutineCalls(walker) : walker.referenceOf(call.argumentsOperands()[0]);
     if (!sent)

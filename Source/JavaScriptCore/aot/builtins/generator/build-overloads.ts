@@ -65,6 +65,7 @@ const entryFlagsByRole: Readonly<Record<OperandRole, BuiltinFlag | null>> = {
   ContentsOfContentsAreOnlyStored: null,
   KeepsWhatCanBeReached: null,
   MayReplaceLocale: null,
+  PrivateFieldsAreCompared: null,
 };
 
 const engineEnumerators: ReadonlyMap<string, readonly string[]> = new Map<string, readonly string[]>([

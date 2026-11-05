@@ -435,6 +435,7 @@ aot/runtime/AOTRemovableFeature.cpp
 aot/runtime/AOTRuntimeHooks.cpp
 aot/runtime/AOTRuntimeReporter.cpp
 aot/runtime/AOTStackTrace.cpp
+aot/runtime/AOTStaleAnswers.cpp
 aot/runtime/AOTStraightEngineIntrinsicOperations.cpp
 aot/runtime/AOTStraightIterationOperations.cpp
 aot/runtime/AOTStraightModuleOperations.cpp

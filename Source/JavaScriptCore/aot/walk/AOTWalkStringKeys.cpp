@@ -223,11 +223,9 @@ bool buildLookupUnderAnyKeyOnPlainRecords(Walker& walker, const BodyValue& acces
             return false;
     }
 
-    Effects effects = Effects::unknownCode();
-    effects.writes = effects.writes.restrictedTo(heapsWhoseWritesNobodySees);
-    effects.mayThrow = object.mayBeUndefinedOrNull() ? ThrowEffect(true) : ThrowEffect::onlyForLackOfMemory();
-    effects.mayCallUnknownCode = false;
-    effects.mayBeTerminated = false;
+    Effects effects = Effects::ofReadByNameThatRunsNoCode();
+    if (object.mayBeUndefinedOrNull())
+        effects.mayThrow = ThrowEffect(true);
 
     Draft lookup = walker.draftOf(access);
     walker.chooseConservativeFields(lookup);

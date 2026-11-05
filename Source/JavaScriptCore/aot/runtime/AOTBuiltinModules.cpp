@@ -161,8 +161,8 @@ JSFunction* builtinFunction(JSGlobalObject* globalObject, uint32_t id, JSObject*
         return nullptr;
     VM& vm = globalObject->vm();
     FunctionKindData kind = functionKindData(*function);
-    RELEASE_ASSERT(kind.closureStructure != classObjectClosureStructure);
-    Closure* closure = Closure::create(vm, ClosureTable::realmClosureStructure(vm, globalObject, kind.closureStructure), *function);
+    RELEASE_ASSERT(kind.closureStructureOfKind() != classObjectClosureStructure);
+    Closure* closure = Closure::create(vm, ClosureTable::realmClosureStructure(vm, globalObject, kind.closureStructureOfKind()), *function);
     if (prototype)
         closure->setPrototypeDirect(vm, prototype);
     return closure;

@@ -294,15 +294,6 @@ void mergeKnownPartsOfJoinedText(Walker& walker, Vector<Reference, 8>& parts)
 
 std::optional<Effects> effectsOfRowOnOperandsWithoutCode(Walker& walker, BuiltinOverloadID id, TypeID receiver, std::span<const TypeID> arguments)
 {
-    static constexpr OperandUses usesThatChangeOperand {
-        OperandUse::WritesContents, OperandUse::MovesElements, OperandUse::StoresByKey, OperandUse::DeletesByKey, OperandUse::AssignsFrom,
-        OperandUse::DefinesName, OperandUse::TakesDescriptor, OperandUse::ChangesIntegrity, OperandUse::ChangesPrototype,
-    };
-    static constexpr OperandUses usesThatNeedNoHeap {
-        OperandUse::Inspects, OperandUse::Retains, OperandUse::Returns, OperandUse::Calls, OperandUse::CallsPerElement, OperandUse::CallsRepeatedly,
-        OperandUse::RetainsContents, OperandUse::BecomesPrototype, OperandUse::PassesToUserCode, OperandUse::AppliesTransitively, OperandUse::AppliesToContents,
-    };
-    static_assert(everyOperandUseIsInExactlyOneOf({ usesThatChangeOperand, OperandUse::ReadsContents, usesThatNeedNoHeap }));
 
     const BuiltinTable& table = walker.program().builtins();
     TypeArena& types = walker.types();
@@ -420,7 +411,7 @@ bool canCallHostHelperForStrings(const Walker& walker, BuiltinID helper)
     const BuiltinTable& table = walker.program().builtins();
     if (!table.contains(helper) || table.overloadsOf(helper).empty())
         return false;
-    return !hasFeatureGuard(table, helper) || findFactRow(walker.facts().builtinUses(), helper.index(), &BuiltinUseRecord::builtin);
+    return !hasFeatureGuard(table, helper) || walker.facts().isUsedWithoutNamesFromRunTime(helper);
 }
 
 Reference buildCallOfHostHelperForStrings(Walker& walker, BuiltinID helper, std::span<const Reference> arguments, Origin origin)

@@ -10,7 +10,9 @@
 
 #include "AOTClosureTestEmitter.h"
 #include "AOTCompileUnit.h"
+#include "AOTEffectsDeclared.h"
 #include "AOTOpcodeSets.h"
+#include "AOTStubsValues.h"
 #include "AOTThrowEmitter.h"
 #include "AOTTypeTestPlan.h"
 #include <algorithm>
@@ -53,6 +55,7 @@ void CastEmitter::generateRequireObject(const ValueContext& value)
         branchOnType(operand, plan, { normalEdge(continuation), rareEdge(isNotObject) });
 
         m_out.appendTo(isNotObject);
+        static_assert(mayCollect(Opcode::RequireObject) || !declaredBoundOf(RuntimeOperation::ThrowRuntimeError).mayCollect);
         callVoidOperation(value, RuntimeOperation::ThrowRuntimeError, { word32(static_cast<int32_t>(value->runtimeError())) }, { .isOnRarePath = true });
         m_out.unreachable();
 
@@ -76,6 +79,34 @@ void CastEmitter::generateTypeTest(const ValueContext& value)
     branchOnType(operand, plan, value.branchTargets());
 }
 
+auto CastEmitter::kindsAndClosureThatMakeUp(TypeID type) -> std::optional<KindsAndClosure>
+{
+    if (!types().at(type).isJavaScriptValue())
+        return std::nullopt;
+    const TypeTestPlan& plan = typeTestPlanFor(TypeTable::anythingOrAbsent, Representation::JSValue, type);
+    if (plan.verdict == TypeTestVerdict::AlwaysPasses)
+        return KindsAndClosure { KindsOfProof::all, std::nullopt };
+    if (plan.verdict == TypeTestVerdict::NeverPasses || plan.integers || !plan.stringLiterals.isEmpty())
+        return std::nullopt;
+    uint16_t numbers = plan.passingPrimitives & Primitive::Number;
+    if (numbers && numbers != Primitive::Number)
+        return std::nullopt;
+    uint32_t primitives = plan.passingPrimitives & KindsOfProof::primitives;
+    if (plan.objects == ObjectsVerdict::NeedTest) {
+        if (plan.cellTests.size() != 1 || plan.cellTests[0].kind != CellTestKind::IsClosureOf)
+            return std::nullopt;
+        std::optional<uint32_t> mention = emitter<ClosureTestEmitter>().mentionOfUpperHalfThatNames(plan.cellTests[0].function);
+        if (!mention)
+            return std::nullopt;
+        return KindsAndClosure { primitives, mention };
+    }
+    for (const CellTest& test : plan.cellTests) {
+        if (test.kind != CellTestKind::IsObject)
+            return std::nullopt;
+    }
+    return KindsAndClosure { primitives | (plan.objects == ObjectsVerdict::AllPass ? KindsOfProof::everyObject : 0), std::nullopt };
+}
+
 void CastEmitter::generateCheckProof(const ValueContext& value)
 {
     if (value->isLeftToTestBehind())
@@ -87,27 +118,43 @@ void CastEmitter::generateCheckProof(const ValueContext& value)
     }
     bool isAnswerOfTest = source.representation == Representation::Boolean;
     Boxed found(isAnswerOfTest ? m_out.constInt64(JSValue::encode(JSValue())) : source.value);
-    bool asksForType = value->checkedType() != value->typeWithoutProof();
-    if (!isAnswerOfTest && asksForType && !sourcesOfProofsCheckedUnder(build().options().testing)) {
-        LBasicBlock stops = newBlock();
-        LBasicBlock continuation = newBlock();
-        ScopeFork fork = m_out.forkScope();
-        branchOnType(found, typeTestPlanFor(value->typeWithoutProof(), Representation::JSValue, value->checkedType()), { normalEdge(continuation), rareEdge(stops) });
-        m_out.appendToJoin(stops, fork);
-        emitter<ThrowEmitter>().stopAtFalseProof(value, found, value->source());
-        m_out.appendToJoin(continuation, fork);
+    if (isAnswerOfTest) {
+        emitter<ThrowEmitter>().requireOrStopAtFalseProof(value, Condition(source.value), std::nullopt, value->source());
         return;
     }
-    Condition holds = isAnswerOfTest ? Condition(source.value) : asksForType ? hasType(found, typeTestPlanFor(value->typeWithoutProof(), Representation::JSValue, value->checkedType())) : boolean(true);
-    if (!isAnswerOfTest && sourcesOfProofsCheckedUnder(build().options().testing)) {
-        holds = logicalAnd(holds, either<Condition>(logicalOr(logicalNot(isCell(found)), isEmpty(found)), [&] {
-            return boolean(true);
-        }, [&] {
-            CellPointer cell = unboxCell(found);
-            return logicalOr(hasCellTypeIn(cell, { StringType, SymbolType }), isObjectCell(cell));
-        }));
+    bool asksForType = value->checkedType() != value->typeWithoutProof();
+    bool looksAtCell = sourcesOfProofsCheckedUnder(build().options().testing);
+    if (!asksForType && !looksAtCell)
+        return;
+    bool asksStub = looksAtCell && !generator().isInitializingCell();
+    if (asksStub) {
+        if (std::optional<KindsAndClosure> asked = asksForType ? kindsAndClosureThatMakeUp(value->checkedType()) : std::optional(KindsAndClosure { KindsOfProof::all, std::nullopt })) {
+            emitter<ThrowEmitter>().stopUnlessAmongKinds(value, found, asked->kinds, value->source(), asked->mentionOfUpperHalfOfClosureWord);
+            return;
+        }
     }
-    emitter<ThrowEmitter>().requireOrStopAtFalseProof(value, holds, isAnswerOfTest ? std::nullopt : std::optional(found), value->source());
+    LBasicBlock stops = newBlock();
+    LBasicBlock continuation = newBlock();
+    ScopeFork fork = m_out.forkScope();
+    if (asksForType) {
+        LBasicBlock hasCheckedType = looksAtCell ? newBlock() : continuation;
+        branchOnType(found, typeTestPlanFor(value->typeWithoutProof(), Representation::JSValue, value->checkedType()), { normalEdge(hasCheckedType), rareEdge(stops) });
+        if (looksAtCell)
+            m_out.appendToJoin(hasCheckedType, fork);
+    }
+    if (asksStub) {
+        emitter<ThrowEmitter>().stopUnlessAmongKinds(value, found, KindsOfProof::all, value->source());
+        m_out.jump(continuation);
+    } else if (looksAtCell) {
+        LBasicBlock isCellToLookAt = newBlock();
+        m_out.branch(logicalOr(logicalNot(isCell(found)), isEmpty(found)).value(), normalEdge(continuation), normalEdge(isCellToLookAt));
+        m_out.appendToJoin(isCellToLookAt, fork);
+        CellPointer cell = unboxCell(found);
+        m_out.branch(logicalOr(hasCellTypeIn(cell, { StringType, SymbolType }), isObjectCell(cell)).value(), normalEdge(continuation), rareEdge(stops));
+    }
+    m_out.appendToJoin(stops, fork);
+    emitter<ThrowEmitter>().stopAtFalseProof(value, found, value->source());
+    m_out.appendToJoin(continuation, fork);
 }
 
 } } } // namespace JSC::AOT::Typed

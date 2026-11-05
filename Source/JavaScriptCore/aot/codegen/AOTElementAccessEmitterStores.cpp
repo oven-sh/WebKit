@@ -261,6 +261,7 @@ void ElementAccessEmitter::generatePutArrayElement(const ValueContext& value)
 
     const ArrayStorageForm* knownForm = findArrayStorageForm(value->arrayStorage());
     if (knownForm && value->isInBounds()) {
+        holdKindOfList(value, StorageIsWritten::Yes);
         storeInsideLength(value, *knownForm);
         return;
     }
@@ -280,6 +281,8 @@ void ElementAccessEmitter::generatePutArrayElement(const ValueContext& value)
     if (knownForm) {
         if (!value->storageIsWritable())
             branchUnless(hasWritableShape(indexingMode(array, IndexingShapeAndWritabilityMask), *knownForm), slowPath);
+        else
+            holdKindOfList(value, StorageIsWritten::Yes);
         Operand rawElement = *rawElementToStore(*knownForm, stored, slowPath);
         storeInVector(value, *knownForm, elementsOf(array), index, rawElement, slowPath);
         m_out.jump(continuation);
@@ -346,13 +349,16 @@ void ElementAccessEmitter::storeOutOfLine(const ValueContext& value, CellPointer
     ValueID stored = value->valueOperand();
     const Type& storedType = typeOf(stored);
     Boxed boxedValue = boxForStub(value, emitter<ConversionEmitter>().inFormOfType(get(stored), storedType), storedType, boxing);
+    Operand key = get(position);
     if (value->mode() == ECMAMode::Sloppy) {
-        emitter<AccessEmitter>().putByVal(value, boxCell(array), boxedPosition(position), boxedValue, AccessEmitter::putModeOf(ECMAMode::Sloppy));
+        if (key.is<Number>())
+            emitter<AccessEmitter>().putByVal(value, boxCell(array), boxedPosition(position), boxedValue, AccessEmitter::putModeOf(ECMAMode::Sloppy));
+        else
+            callStub(value, arrayPutAtIndex(ArrayStoredValue::ValueInSloppyCode), { array.value(), boxedValue.value(), integerOf(position).value() });
         return;
     }
 
     bool mayConvertToDouble = storedType.isNumberLike() && !storedType.isInt32();
-    Operand key = get(position);
     ArrayStoredValue storedValue = mayConvertToDouble ? ArrayStoredValue::Number : ArrayStoredValue::Value;
     if (key.is<Number>()) {
         callStub(value, arrayPutAtNumber(storedValue), { array.value(), boxedValue.value(), key.value });
@@ -458,6 +464,40 @@ Boxed ElementAccessEmitter::appendOutOfLine(const OperationContext& store, CellP
     return Boxed(callStub(store, arrayPush(), { array.value(), boxForStub(store, operand, typeOf(element), boxing).value() }).first);
 }
 
+void ElementAccessEmitter::widenStorageOfIntegers(CellPointer array, const ArrayStorageForm& wider, LBasicBlock isLeftToOthers)
+{
+    Integer headerForInt32(m_out.load64(mutableInstanceField(Instance::offsetOfNewArrayHeader(ArrayWithInt32))));
+    Integer headerOfWider(m_out.load64(mutableInstanceField(Instance::offsetOfNewArrayHeader(wider.indexingType))));
+    branchUnless(logicalAnd(equal(loadField<Word32>(array, m_heaps.JSCell_structureID), low32(headerForInt32)), isNotZero(headerOfWider)), isLeftToOthers);
+    storeField(array, m_heaps.JSCell_structureID, low32(headerOfWider));
+    m_out.store32As8(m_out.constInt32(wider.indexingType), array.value(), m_heaps.JSCell_indexingTypeAndMisc);
+}
+
+void ElementAccessEmitter::turnIntegersIntoFractions(CellPointer array, const ArrayElements& elements, LBasicBlock isLeftToOthers)
+{
+    const ArrayStorageForm& forFractions = arrayStorageFormOf(ArrayStorage::Double);
+    widenStorageOfIntegers(array, forFractions, isLeftToOthers);
+    LBasicBlock loop = newBlock();
+    LBasicBlock element = newBlock();
+    LBasicBlock done = newBlock();
+    Integer count = vectorLength(elements);
+    Number hole = rawHole(forFractions).as<Number>();
+    ValueFromBlock start = m_out.anchor(integer(0).value());
+    m_out.jump(loop);
+
+    m_out.appendTo(loop);
+    Integer position(m_out.phi(Machine::Int64, start));
+    branch(below(position, count), { normalEdge(element), normalEdge(done) });
+
+    m_out.appendTo(element);
+    Boxed word(m_out.load64(elementOfUnknownForm(elements, position)));
+    storeRawElement(forFractions, elements, position, select(isZero(Integer(word.value())), hole, toNumber(unboxInt32(word))));
+    m_out.addIncomingToPhi(position.value(), m_out.anchor(add(position, integer(1)).value()));
+    m_out.jump(loop);
+
+    m_out.appendTo(done);
+}
+
 Condition ElementAccessEmitter::tryStoreElement(const ValueContext& store, CellPointer array, Integer index, ValueID stored)
 {
     RELEASE_ASSERT(store->valueOperand() == stored);
@@ -479,13 +519,23 @@ Condition ElementAccessEmitter::tryStoreElement(const ValueContext& store, CellP
     bool mayBeNoNumber = !typeOf(stored).isNumber();
     if (mayBeNoNumber && (given.representation == Representation::JSValue || given.representation == Representation::Cell)) {
         branchUnless(hasWritableShape(mode, forInt32), isLeftToOthers);
-        if (given.representation == Representation::JSValue)
-            branchUnless(logicalNot(isNumber(given.as<Boxed>())), isLeftToOthers);
-        Integer headerForInt32(m_out.load64(mutableInstanceField(Instance::offsetOfNewArrayHeader(ArrayWithInt32))));
-        Integer headerForAnyValue(m_out.load64(mutableInstanceField(Instance::offsetOfNewArrayHeader(ArrayWithContiguous))));
-        branchUnless(logicalAnd(equal(loadField<Word32>(array, m_heaps.JSCell_structureID), low32(headerForInt32)), isNotZero(headerForAnyValue)), isLeftToOthers);
-        storeField(array, m_heaps.JSCell_structureID, low32(headerForAnyValue));
-        m_out.store32As8(m_out.constInt32(ArrayWithContiguous), array.value(), m_heaps.JSCell_indexingTypeAndMisc);
+        if (given.representation == Representation::JSValue) {
+            Boxed boxed = given.as<Boxed>();
+            LBasicBlock isNumberBlock = newBlock();
+            LBasicBlock isAnyValue = newBlock();
+            branch(isNumber(boxed), { normalEdge(isNumberBlock), normalEdge(isAnyValue) });
+
+            m_out.appendTo(isNumberBlock);
+            branchUnless(logicalNot(isInt32(boxed)), isLeftToOthers);
+            Number fraction = unboxDouble(boxed);
+            branchUnless(equal(fraction, fraction), isAnyValue);
+            turnIntegersIntoFractions(array, elements, isLeftToOthers);
+            storeInVector(store, arrayStorageFormOf(ArrayStorage::Double), elements, index, fraction, isLeftToOthers);
+            join.add(boolean(true));
+
+            m_out.appendTo(isAnyValue);
+        }
+        widenStorageOfIntegers(array, forAnyValue, isLeftToOthers);
         Operand rawElement = *rawElementToStore(forAnyValue, stored, isLeftToOthers);
         storeInVector(store, forAnyValue, elements, index, rawElement, isLeftToOthers);
         join.add(boolean(true));

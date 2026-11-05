@@ -39,12 +39,16 @@ bool passOnOwnArgumentsByCount(Walker& walker, const BodyValue& call, const Draf
     if (!count || !count.isValue())
         return false;
     std::optional<ListBehindParametersOfArguments> behind = listBehindParametersOfFreshArguments(walker, arguments, true);
-    if (!behind || !behind->firstPosition || behind->firstPosition > mostArgumentsPassedOnByCount)
+    if (!behind || behind->firstPosition > mostArgumentsPassedOnByCount)
         return false;
     const Code& code = walker.code();
     ValueID object = rootOfOperandOfForwardedTailCall(code, arguments);
     if (!object || code.at(object).opcode != Opcode::CreateUnmappedArguments || !isListAsMade(walker, arguments))
         return false;
+    bool readsArgumentsOfEntry = walker.walksBodyBehindEntry() && !code.at(object).origin().inlineFrame;
+    if (!behind->firstPosition && !readsArgumentsOfEntry)
+        return false;
+    uint32_t mostPassedOnByCount = readsArgumentsOfEntry ? mostArgumentsPassedOnByCount : behind->firstPosition;
     if (rootOfOperandOfForwardedTailCall(code, callee) == object || rootOfOperandOfForwardedTailCall(code, thisValueOrNull) == object)
         return false;
     Vector<Reference, mostArgumentsPassedOnByCount> parameters;
@@ -58,6 +62,11 @@ bool passOnOwnArgumentsByCount(Walker& walker, const BodyValue& call, const Draf
 
     Origin originInFrontOfCall = written.origin();
     originInFrontOfCall.isTailCall = false;
+    for (uint32_t position = behind->firstPosition; position < mostPassedOnByCount; ++position) {
+        parameters.append(walker.argumentOfEntry(position, originInFrontOfCall));
+        if (!parameters.last())
+            return true;
+    }
     if (FunctionID listed = walker.facts().linked().calleeAt(walker.currentFunction(), call.id()))
         walker.leaveAnythingAt(listed);
 
@@ -93,7 +102,7 @@ bool passOnOwnArgumentsByCount(Walker& walker, const BodyValue& call, const Draf
     };
 
     Type typeOfCount = walker.types().at(walker.typeOf(count));
-    for (uint32_t numberPassed = behind->firstPosition + 1; numberPassed-- && !walker.isUnreachable();) {
+    for (uint32_t numberPassed = mostPassedOnByCount + 1; numberPassed-- && !walker.isUnreachable();) {
         if (typeOfCount.isInteger() && !typeOfCount.integers.contains(numberPassed))
             continue;
         Draft number(Opcode::Integer, originInFrontOfCall);
@@ -124,14 +133,21 @@ bool passOnOwnArgumentsByCount(Walker& walker, const BodyValue& call, const Draf
         walker.chooseConservativeFields(all);
         all.standsForNoValueOfInput = true;
         all.setContents(TypeTable::anything);
-        all.setVariadicOperands(parameters.span());
-        Reference list = walker.build(WTF::move(all));
-        noteFreshList(walker, list);
+        all.setVariadicOperands(parameters.span().first(behind->firstPosition));
+        Reference listBehindParameters = readsArgumentsOfEntry ? walker.makeHiddenListOfEntryAgain() : behind->list;
+        if (!listBehindParameters) {
+            walker.fail("the list of arguments of an entry cannot be made again"_s);
+            return true;
+        }
+        bool standsForWholeList = readsArgumentsOfEntry && !behind->firstPosition;
+        Reference list = standsForWholeList ? listBehindParameters : walker.build(WTF::move(all));
+        if (!standsForWholeList)
+            noteFreshList(walker, list);
         Draft append(Opcode::AppendElements, originInFrontOfCall);
         walker.chooseConservativeFields(append);
         append.setArrayOperand(list);
-        append.setSourceOperand(behind->list);
-        if (list)
+        append.setSourceOperand(listBehindParameters);
+        if (list && !standsForWholeList)
             walker.build(WTF::move(append));
         if (!walker.isUnreachable()) {
             Draft withList(Opcode::CallList, written.origin());

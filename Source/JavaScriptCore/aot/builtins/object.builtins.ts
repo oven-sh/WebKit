@@ -5,6 +5,8 @@ const inheritedProperties = [...ownProperties, "PrototypeLinks"];
 const prototypeLink = ["ShapeWords", "NamedProperties", "PrototypeLinks"];
 const memberGuards = ["MemberGuards"];
 const prototypeChange = [...prototypeLink, ...memberGuards, "ArrayStorage"];
+const madeByListingOfKeys = ["ShapeWords", "NamedProperties", ...memberGuards];
+const closuresMadeAtFirstRead = ["ObjectFields"];
 
 const objectOrNull = b.union(b.object, b.strictNull);
 const nonNullishPrimitive = b.union(b.bool, b.f64, b.string, b.symbol, b.bigint);
@@ -52,6 +54,7 @@ const ownKeyList = (kind: "Keys" | "Names" | "Symbols", key: b.TableType) =>
     runsOnlyOperandCode: true,
     uses: { object: [b.runs("OwnKeys")] },
     reads: ownProperties,
+    writes: madeByListingOfKeys,
     privateAlias: true,
     implementation: b.inline("OwnPropertyKeys", { parameters: [kind], otherwise: b.hostCall }),
   }) satisfies b.FunctionField;
@@ -237,6 +240,7 @@ export default b.declarations(
         throws: b.propagated,
         runsOnlyOperandCode: true,
         uses: { object: [b.runs("OwnKeys", "OwnValues"), b.contentsStoredIn(b.nativeMemory)] },
+        writes: [...madeByListingOfKeys, ...closuresMadeAtFirstRead],
         implementation: b.inline("ObjectEntries"),
       },
       freeze: integrityChange("Frozen", b.hostCall),
@@ -353,6 +357,7 @@ export default b.declarations(
           throws: b.propagated,
           runsOnlyOperandCode: true,
           uses: { object: [b.runs("OwnKeys", "OwnValues"), b.contentsStoredIn(b.resultSlot("element"))] },
+          writes: [...madeByListingOfKeys, ...closuresMadeAtFirstRead],
           privateAlias: true,
           implementation: b.inline("ObjectValues"),
         },
@@ -381,7 +386,7 @@ export default b.declarations(
         reads: prototypeLink,
         implementation: b.hostCall,
       },
-      propertyIsEnumerable: ownPropertyTest("ObjectPropertyIsEnumerable"),
+      propertyIsEnumerable: { ...ownPropertyTest("ObjectPropertyIsEnumerable"), writes: closuresMadeAtFirstRead },
       toLocaleString: {
         this: b.any.refusing(b.null),
         returns: b.any,

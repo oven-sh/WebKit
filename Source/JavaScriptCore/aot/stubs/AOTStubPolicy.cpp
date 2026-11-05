@@ -19,7 +19,7 @@ namespace JSC { namespace AOT {
 
 static_assert(RowDisplacementTable::maxColumn <= FieldTableEntry::maxName);
 
-StubOptions StubOptions::from(const RecordedOptions& recorded, const Typed::Program& program, bool hasOneInstance, bool matchesRegExps, bool recordsLastMatch, bool checksProofs)
+StubOptions StubOptions::from(const RecordedOptions& recorded, const Typed::Program& program, bool hasOneInstance, bool matchesRegExps, bool recordsLastMatch, bool checksProofs, bool checksWalk)
 {
     return {
         .useWideReferences = recorded.useWideReferences(),
@@ -28,6 +28,7 @@ StubOptions StubOptions::from(const RecordedOptions& recorded, const Typed::Prog
         .matchesRegExps = matchesRegExps,
         .recordsLastMatch = recordsLastMatch,
         .checksProofs = checksProofs,
+        .checksWalk = checksWalk,
         .methodsOfBuiltinsMayBeReplaced = program.admitsReplacedBuiltins,
         .isPositionIndependent = recorded.form() == ImageForm::PositionIndependent,
         .maxNameInFieldTable = RowDisplacementTable::maxColumn,

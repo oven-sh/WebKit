@@ -243,8 +243,8 @@ static void fillFullClosureInStraightForm(StraightEmitter& emitter, FunctionKind
         jit.load64(CCallHelpers::Address(instanceGPR, offsetInInstance), word);
         jit.store64(word, CCallHelpers::Address(cell, offsetInCell));
     };
-    if (kind.closureStructure)
-        storeWordOfInstance(AOT_INSTANCE_OFFSET(closures.closureHeaders) + kind.closureStructure * sizeof(uint64_t), 0);
+    if (kind.closureStructureOfKind())
+        storeWordOfInstance(AOT_INSTANCE_OFFSET(closures.closureHeaders) + kind.closureStructureOfKind() * sizeof(uint64_t), 0);
     jit.store64(CCallHelpers::TrustedImm32(0), CCallHelpers::Address(cell, JSObject::butterflyOffset()));
     storeWordOfInstance(AOT_INSTANCE_OFFSET(globalObject), JSCallee::offsetOfScopeChain());
     storeWordOfInstance(AOT_INSTANCE_OFFSET(closures.executables) + static_cast<unsigned>(FunctionTables::executableKind(kind)) * sizeof(JSCell*), JSFunction::offsetOfExecutableOrRareData());
@@ -306,7 +306,7 @@ static void generateNewClosure(StraightEmitter& emitter, const BodyValue& value)
         return;
     case ClosureForm::Full: {
         uint32_t allocation = mentions.allocation(plan.closureAllocation(count), { });
-        if (kind.closureStructure || count > ClosureRequest::maxNumberOfCaptures) {
+        if (kind.closureStructureOfKind() || count > ClosureRequest::maxNumberOfCaptures) {
             emitter.callStub(value, AOT::allocateCell(CellInitialization::Header), { StraightArgument::number(allocation) });
             fillFullClosureInStraightForm(emitter, kind, mentions.add(NumberSpace::ClosureFunction, function), words.span());
             emitter.define(value);

@@ -1,0 +1,27 @@
+# const { iterator: steps } = Symbol;  function walkOf(holder) { return holder[steps]; }  typeof walkOf(String.prototype);
+# What the read off Symbol gives is one symbol to Link: it goes through the variable, and the read in the other function goes by it.
+# OPTIONS: exclude=CodeOutsideImage
+# RUN: link accesses mechanisms=all
+# CHECK: access f1 v3 under @@iterator
+
+variable g0 name="steps" module=m0 declared={type=anything} flags=[IsImmutable]
+module m0 path="main.mjs" displayPath="main.mjs" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Symbol
+    v1 = PropGet v0 key="iterator"
+    PutModuleVariable v1 variable=g0
+    v3 = NewClosure function=f1
+    v4 = Builtin builtin=StringPrototype
+    v5 = Call v3, -, v4 calleeName="walkOf"
+    v6 = TypeOf v5
+    Return v6
+}
+function f1 name="walkOf" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g0
+    v2 = CheckInitialized v1 name="steps"
+    v3 = ElemGet v0, v2
+    Return v3
+}

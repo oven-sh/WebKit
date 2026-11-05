@@ -13,6 +13,7 @@
 #include "AOTBuiltinTable.h"
 #include "AOTClassPrototype.h"
 #include "AOTClassTable.h"
+#include "AOTClosure.h"
 #include "AOTCompiledStructure.h"
 #include "AOTEmptyPages.h"
 #include "AOTHeapCacheRegistry.h"
@@ -30,6 +31,7 @@
 #include "AOTRuntimeReporter.h"
 #include "AOTSchemaRuntimeOperations.h"
 #include "AOTSiteAnswersOfGetters.h"
+#include "AOTStaleAnswers.h"
 #include "AOTState.h"
 #include "AOTStubsPropertyKeys.h"
 #include "AOTVMState.h"
@@ -1778,6 +1780,30 @@ size_t FirstAdditions::removeDeadEntries(VM& vm, CollectionScope)
     return numberOfDeadObjects;
 }
 
+static void askAgainWhatSlotAnswers(Instance& instance, JSCell* base, UniquedStringImpl* name, const Slot& slot)
+{
+    constexpr ASCIILiteral table = "the table of slots"_s;
+    switch (slot.kind) {
+    case Slot::Kind::Value: {
+        JSCell* holder = slot.has(Slot::isOwn) ? base : slot.holder;
+        if (holder && holder->isObject())
+            stopAtStaleAnswer(instance, base, name, KindOfAnswer::Value, asObject(holder)->getDirect(Slot::offsetFor(slot.wordIndex())), table);
+        return;
+    }
+    case Slot::Kind::Getter:
+    case Slot::Kind::ExtraGetter:
+        stopAtStaleAnswer(instance, base, name, KindOfAnswer::Accessor, { }, table);
+        return;
+    case Slot::Kind::Absent:
+        stopAtStaleAnswer(instance, base, name, KindOfAnswer::Absent, { }, table);
+        return;
+    default:
+        if (Slot::presenceOf(slot.kind) == SlotPresence::Present)
+            stopAtStaleAnswer(instance, base, name, KindOfAnswer::Present, { }, table);
+        return;
+    }
+}
+
 const Slot* PropertyCaches::findByKey(Structure* structure, UniquedStringImpl* uid, SlotAccess access)
 {
     StructureID id = structure->id();
@@ -1800,6 +1826,8 @@ void PropertyCaches::fillSiteCacheFromTables(SiteCache site, JSCell* base, uint3
         m_siteCaches.didFailToFill(site);
         return;
     }
+    if (access == SlotAccess::Read && m_vm.aotState().verifiesFastPathAnswers) [[unlikely]]
+        askAgainWhatSlotAnswers(m_state.instance, base, name.uid, *slot);
     if (!belongsToOneObject(structure) && RowDisplacementTable::hasColumn(identifierNumber) && !m_tables.front().find(id, identifierNumber, access))
         m_tables.set(structure, name, access, *slot);
     if (!slot->has(Slot::dependsOnChain)) {
@@ -2488,6 +2516,8 @@ bool PropertyCaches::fillAboveFieldLeftOut(uint32_t place, Object& object, const
     std::optional<Slot> slot = m_tables.find(structure->id(), name, SlotAccess::Read);
     if (!slot || belongsToOneObject(structure))
         return false;
+    if (m_vm.aotState().verifiesFastPathAnswers) [[unlikely]]
+        askAgainWhatSlotAnswers(m_state.instance, &object, name.uid, *slot);
     if (JSGlobalObject* realm = structure->realm(); realm && Instance::of(realm) != &m_state.instance)
         return false;
     ChainWalk walk = walkChain({ m_state.instance.globalObject, structure, &object, ChainWalkMode::AllocatesNothing, ChainWalkUse::KeptForReadsThatAskObjects }, name.uid);
@@ -2639,6 +2669,8 @@ void PropertyCaches::fillSiteAnswers(uint32_t place, JSCell* base, uint32_t iden
     }
 
     std::optional<Slot> slot = m_tables.find(id, name, SlotAccess::Read);
+    if (slot && m_vm.aotState().verifiesFastPathAnswers) [[unlikely]]
+        askAgainWhatSlotAnswers(m_state.instance, base, name.uid, *slot);
     if (slot && slot->kind == Slot::Kind::ExtraProperty && belongsToOneObject(structure))
         slot = std::nullopt;
     if (slot && slot->kind == Slot::Kind::Getter && slot->has(Slot::isOwn) && compiledObjectStructureOrNull(structure))
@@ -2715,6 +2747,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTAddPropertyBySlot, void, (Instance
     RELEASE_ASSERT(object->structureID() == slot.structureID);
     if (slot.kind == Slot::Kind::Transition) {
         addPropertyByTransition(vm, asObject(object), WTF::opaque(slot.transition.newStructureID.decode()), slot.offsetInStorage(), JSValue::decode(value));
+        holdClosureToLackingName(vm, object, object->structure()->transitionPropertyName());
         return;
     }
     RELEASE_ASSERT(slot.kind == Slot::Kind::ExtraPropertyAddition);

@@ -168,7 +168,9 @@ bool Modules::isImportedByModuleThatRequireAnswered(ModuleID imported) const
 
 void Modules::noteCallOfMock(ModuleID fileOrModule)
 {
-    m_momentsWaitingMocksWereLaid.set(fileOrModule, momentOfNow());
+    MomentMockWasLaid call = momentOfNow();
+    call.hadNamespace = !!namespaceIfCreated(moduleWithExportsOf(fileOrModule), ModulePhase::Evaluation);
+    m_momentsWaitingMocksWereLaid.set(fileOrModule, call);
 }
 
 void Modules::forgetCallOfMock(ModuleID fileOrModule)

@@ -42,6 +42,7 @@ public:
             if ((layout.kind != LayoutKind::Record && layout.kind != LayoutKind::Instance) || index >= linked.layouts.size() || !linked.layouts[index].isAllocated)
                 continue;
             uint64_t holder = static_cast<uint64_t>(index) << 32;
+            size_t firstPairOfLayout = pairs.size();
             if (layout.kind == LayoutKind::Instance)
                 m_isInstance.set(index);
             for (const Field& field : layout.fields) {
@@ -56,9 +57,11 @@ public:
                 for (auto name = std::ranges::lower_bound(namesAbove, first); name != namesAbove.end() && *name >> 32 == current.index(); ++name)
                     pairs.append(holder | static_cast<uint32_t>(*name));
             }
+            std::span<uint64_t> pairsOfLayout = pairs.mutableSpan().subspan(firstPairOfLayout);
+            if (!std::ranges::is_sorted(pairsOfLayout))
+                std::ranges::sort(pairsOfLayout);
+            pairs.shrink(firstPairOfLayout + (std::ranges::unique(pairsOfLayout).begin() - pairsOfLayout.begin()));
         }
-        std::ranges::sort(pairs);
-        pairs.shrink(std::ranges::unique(pairs).begin() - pairs.begin());
 
         m_firstNameOfLayout.fill(0, numberOfLayouts + 1);
         m_firstHolderOfName.fill(0, numberOfKeys + 1);

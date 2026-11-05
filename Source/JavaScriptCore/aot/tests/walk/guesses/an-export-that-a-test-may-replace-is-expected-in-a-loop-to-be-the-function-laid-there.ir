@@ -1,0 +1,45 @@
+# export function one(v) { return v.x; }  export function caller(v, n) { let sum = 0; for (let i = 0; i < n; i++) sum += one(v); return sum; }   a spy may replace `one`
+# In a loop the guess at the callee is opened by what Link holds: the variable is let go by escape alone, so the reading that leaves out unseen code keeps the one function that the program laid.
+# OPTIONS: admit=ReplacedBuiltins
+# RUN: walk f2 mechanisms=all
+# CHECK-LABEL: code f2:Body
+# CHECK: isLoopHead=true
+# CHECK: [[callee]]: {{*}}= GetModuleVariable variable=g0
+# CHECK-NEXT: [[test]]: boolean @Boolean = TypeTest [[callee]] testedType=f1
+# CHECK: PropGet v0 key="x"
+# CHECK: Call [[callee]], -, v0 calleeName="one"
+
+variable g0 name="one" module=m0 declared={type=anything} initialization=Function function=f1 flags=[IsReplaceable]
+module m0 path="main.js" displayPath="main.js" body=f0 exports=[{name="one" variable=g0}]
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f2
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="one" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="x"
+    Return v1
+}
+function f2 name="caller" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Integer integer=0
+    Jump -> next b1(v2, v2)
+  b1(v3: anything, v4: anything):
+    LoopHint
+    v6 = Less v4, v1
+    Branch v6 -> taken b2(), notTaken b3()
+  b2():
+    v7 = GetModuleVariable variable=g0
+    v8 = Call v7, -, v0 calleeName="one"
+    v9 = Add v3, v8
+    v10 = Integer integer=1
+    v11 = Add v4, v10
+    Jump -> next b1(v9, v11)
+  b3():
+    Return v3
+}

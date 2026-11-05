@@ -28,6 +28,8 @@ public:
     static void countOnCurrentThread();
     static std::optional<uint64_t> ofCurrentThread();
     static std::optional<uint64_t> ofAllThreads();
+    static void noteSpentInsideLoop(uint64_t instructions);
+    static uint64_t spentInsideLoopsOnCurrentThread();
 
 private:
     static std::atomic<bool> s_hasBegun;
@@ -77,6 +79,7 @@ private:
     MonotonicTime m_stepStart;
     Seconds m_threadCPUTimeAtStepStart;
     std::optional<uint64_t> m_instructionsOfThreadAtStepStart;
+    uint64_t m_instructionsInsideLoopsAtStepStart;
 };
 
 } } // namespace JSC::AOT

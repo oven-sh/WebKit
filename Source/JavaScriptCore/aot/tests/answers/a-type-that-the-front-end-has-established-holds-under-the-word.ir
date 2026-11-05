@@ -8,8 +8,8 @@
 # THE GREEN CONTROL of a-type-that-the-front-end-has-established-is-asked-under-the-word.ir: the text as the front end writes it: what is asked holds.
 # OPTIONS: testing=CheckProofsAtRunTime
 # RUN(FORM): walk f3 mechanisms=-Inlining
-# FORM: [[held]]: f1 @JSValue = GetModuleVariable variable=g0
-# FORM-NEXT: CheckProof [[held]] checkedType=f1 typeWithoutProof=absent|anything{{*}} source=Variable
+# FORM: [[word]]: absent|f1 @JSValue = GetModuleVariable variable=g0 [givesWordAsItLies]
+# FORM-NEXT: CheckProof [[word]] checkedType=absent|f1 typeWithoutProof=absent|anything{{*}} source=Variable
 # RUN(ALL): run-in-shell mechanisms=all
 # ALL: 2
 # ALL-NEXT: text1

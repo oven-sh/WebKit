@@ -141,18 +141,6 @@ bool buildToStringOfPrimitiveByRows(Walker& walker, const BodyValue& call)
     return callee && buildToStringOfPrimitiveForKnownRows(walker, call, callee);
 }
 
-static bool directCallLiesWithinLooksForKnownRows(Walker& walker, const BodyValue& call, FunctionID function)
-{
-    if (!walker.isInLoop())
-        return true;
-    Draft direct(Opcode::CallDirect);
-    direct.setFunction(function);
-    direct.setRole(walker.plan().conventions().directEntryOf(function).role);
-    TypeID given = walker.resultTypeOf(direct);
-    TypeID widest = widestTypeOfOperation(walker, call);
-    return !widest || (given && walker.types().isSubset(given, widest));
-}
-
 static BuiltinID sortForComparatorThatIsDifferenceForKnownRows(const Walker& walker, FunctionID comparator)
 {
     constexpr OptionSet<FunctionFlags> otherForms { FunctionFlags::IsAsync, FunctionFlags::IsGenerator, FunctionFlags::HasRestParameter, FunctionFlags::HasArgumentCount, FunctionFlags::HasHiddenRest };
@@ -217,15 +205,6 @@ bool isLeafHandedToMethodOfLists(const Walker& walker, TypeID handedOver)
     return only && walker.facts().linked().function(only).weightAsLeaf != LinkedFunction::notLeaf;
 }
 
-bool mayBeLeafHandedToMethodOfLists(const Walker& walker, TypeID handedOver)
-{
-    if (!handedOver)
-        return true;
-    Type type = walker.types().at(handedOver);
-    FunctionID only = type.isObject() && type.isJavaScriptValue() ? singleFunctionOf(walker.types(), type) : FunctionID();
-    return !only || walker.facts().linked().function(only).weightAsLeaf != LinkedFunction::notLeaf;
-}
-
 bool callLibraryFunctionBehindRows(Walker& walker, const BodyValue& call)
 {
     if (call.opcode() != Opcode::Call || call.isDoneInPlace() || !walker.has(Mechanism::BuiltinCalls))
@@ -256,12 +235,10 @@ bool callLibraryFunctionBehindRows(Walker& walker, const BodyValue& call)
     }
     if (!function)
         return false;
-    if (!directCallLiesWithinLooksForKnownRows(walker, call, function))
-        return false;
     Draft written = walker.draftOf(call);
     if (walker.hasFailed())
         return false;
-    if (FunctionID withoutCalls = isFoundByRowsReached ? findSortThatCallsNoComparatorForKnownRows(walker, call, findBuiltinCalledForKnownRows(walker, call)) : FunctionID(); withoutCalls && directCallLiesWithinLooksForKnownRows(walker, call, withoutCalls)) {
+    if (FunctionID withoutCalls = isFoundByRowsReached ? findSortThatCallsNoComparatorForKnownRows(walker, call, findBuiltinCalledForKnownRows(walker, call)) : FunctionID()) {
         Reference listAndComparator[] { written.thisValueOperand(), written.argumentsOperands()[0] };
         if (callFunctionDirectly(walker, call, withoutCalls, Reference(), listAndComparator)) {
             walker.count(StatisticID::LibraryFunctionsEnteredBehindRows);

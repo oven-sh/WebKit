@@ -195,6 +195,7 @@ private:
     void readTesting(CompileOptions& options)
     {
         options.testing = m_wire.testing;
+        options.recorded.verifiesFastPathAnswers = hasFlag(m_wire.testing, TestingSwitch::CheckWalkAtRunTime);
         if (m_wire.rowThatSaysLess && !hasFlag(m_wire.testing, TestingSwitch::RowSaysLess))
             reportInvalid(m_wire.rowThatSaysLess);
         options.rowThatSaysLess = m_wire.rowThatSaysLess;

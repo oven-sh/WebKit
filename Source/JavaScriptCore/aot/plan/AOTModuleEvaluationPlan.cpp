@@ -274,6 +274,7 @@ struct ModuleEvaluationPlanner {
     bool isEvaluatedWithImporter(uint32_t module) const;
     bool needsLoaderItself(uint32_t module) const;
     bool hasLinkWorkItself(uint32_t module) const;
+    bool requiresModuleDuringLoad(uint32_t module) const;
     bool runsCode(uint32_t module) const { return isEvaluatedWithImporter(module) && has(module, HasCode) && !has(module, BodyOnlyReturns); }
     bool importsCommonJSBeforeItBegins(size_t module) const { return isAskedOfLoader.quickGet(module) && program.modules[module].kind == ModuleKind::SourceText; }
     FoundModuleSiteKind kindInPlanOf(const FoundModuleSite&) const;
@@ -424,6 +425,14 @@ bool ModuleEvaluationPlanner::needsLoaderItself(uint32_t index) const
     if (std::ranges::any_of(module.requests, [](const ModuleRequest& request) { return request.phase == ImportPhase::Defer; }))
         return true;
     return has(index, HasCode) && !has(index, BodyCanBeCalledByCode);
+}
+
+bool ModuleEvaluationPlanner::requiresModuleDuringLoad(uint32_t index) const
+{
+    const Module& file = has(index, IsFaceOfFile) ? program.at(program.modules[index].requests[0].target) : program.modules[index];
+    return file.kind == ModuleKind::CommonJs && std::ranges::any_of(file.requests, [&](const ModuleRequest& request) {
+        return request.kind == ModuleRequestKind::Require && program.at(request.target).flags.contains(ModuleFlags::IsRequiredDuringLoad);
+    });
 }
 
 bool ModuleEvaluationPlanner::hasLinkWorkItself(uint32_t index) const
@@ -606,6 +615,9 @@ void ModuleEvaluationPlanner::chooseModulesWalkedByCode()
     BitVector leadsToCycle = modulesThatReach(components, [&](uint32_t index) {
         return components.membersOf(components.componentOf[index]).size() > 1;
     });
+    BitVector leadsToLoadInsideLoad = modulesThatReach(components, [&](uint32_t index) {
+        return requiresModuleDuringLoad(index);
+    });
 
     isWalkedByCode.ensureSize(numberOfModules);
     startsItself.ensureSize(numberOfModules);
@@ -618,7 +630,7 @@ void ModuleEvaluationPlanner::chooseModulesWalkedByCode()
         if (!isEvaluatedWithImporter(index) || needsLoader.quickGet(index))
             continue;
         isWalkedByCode.quickSet(index);
-        bool isRequiredBetweenLoads = module.kind != ModuleKind::SourceText || (!loadsTwoGraphsAtOnce && !module.flags.contains(ModuleFlags::IsRequiredDuringLoad));
+        bool isRequiredBetweenLoads = module.kind != ModuleKind::SourceText || (!loadsTwoGraphsAtOnce && !module.flags.contains(ModuleFlags::IsRequiredDuringLoad) && !leadsToLoadInsideLoad.quickGet(index));
         bool loaderIsSeenToAsk = somebodyAsksWhoRequiredWhom && module.requests.size() > 1 && module.requests[1].isHoisted;
         bool isListedFromRequireOn = module.kind == ModuleKind::SourceText && module.flags.contains(ModuleFlags::IsListedInCache);
         if (!needsLink.quickGet(index) && !leadsToCycle.quickGet(index) && isRequiredBetweenLoads && !loaderIsSeenToAsk && !isListedFromRequireOn)

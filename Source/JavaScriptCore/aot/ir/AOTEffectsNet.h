@@ -29,19 +29,57 @@ constexpr uint8_t lanesNotWrittenInEffectsNet(const Effects& effects)
     return lanes;
 }
 
-enum class CountInEffectsNet : uint8_t { GuardsOfMembersEnded, GuardsOfMembersArmedOrBegun };
-inline constexpr std::array<AbstractHeap, 2> heapsOfCountsInEffectsNet { AbstractHeap::MemberGuards, AbstractHeap::MemberGuards };
+enum class SecondLaneInEffectsNet : uint8_t { Structure, Prototype, NamedProperties, BytesOfView, Environment, Collection, InternalFields, RegExp };
+inline constexpr std::array<AbstractHeapSet, 8> heapsOfSecondDigestInEffectsNet {
+    AbstractHeapSet { AbstractHeap::ShapeWords, AbstractHeap::NamedProperties, AbstractHeap::PrototypeLinks, AbstractHeap::ArrayStorage },
+    AbstractHeapSet { AbstractHeap::PrototypeLinks },
+    AbstractHeapSet { AbstractHeap::NamedProperties },
+    AbstractHeapSet { AbstractHeap::TypedArrayElements },
+    AbstractHeapSet { AbstractHeap::EnvironmentFields },
+    AbstractHeapSet { AbstractHeap::CollectionStorage, AbstractHeap::CollectionEntries },
+    AbstractHeapSet { AbstractHeap::InternalFields, AbstractHeap::PromiseState },
+    AbstractHeapSet { AbstractHeap::RegExpState },
+};
+constexpr uint8_t secondLanesNotWrittenInEffectsNet(const Effects& effects)
+{
+    uint8_t lanes = 0;
+    for (unsigned lane = 0; lane < heapsOfSecondDigestInEffectsNet.size(); ++lane) {
+        if (!effects.writes.containsAny(heapsOfSecondDigestInEffectsNet[lane]))
+            lanes |= static_cast<uint8_t>(1u << lane);
+    }
+    return lanes;
+}
+inline constexpr uint64_t asksForSecondDigestInEffectsNet = 1ull << 62;
+inline constexpr uint32_t speaksOfSecondDigestInEffectsNet = 1u << 15;
+
+enum class CountInEffectsNet : uint8_t {
+    GuardsOfMembersEnded, GuardsOfMembersArmedOrBegun, WatchOverBuiltinsEnded, WordsOfStaticsWritten, VariablesOfModulesStored, StaticFieldsStored, VariablesOfScopesInStaticsStored
+};
+inline constexpr std::array<AbstractHeapSet, 7> heapsOfCountsInEffectsNet {
+    AbstractHeapSet { AbstractHeap::MemberGuards },
+    AbstractHeapSet { AbstractHeap::MemberGuards },
+    AbstractHeapSet { AbstractHeap::NamedProperties },
+    AbstractHeapSet { AbstractHeap::ModuleVariables, AbstractHeap::EnvironmentFields, AbstractHeap::NamedProperties },
+    AbstractHeapSet { AbstractHeap::ModuleVariables },
+    AbstractHeapSet { AbstractHeap::NamedProperties },
+    AbstractHeapSet { AbstractHeap::EnvironmentFields },
+};
+inline constexpr unsigned bitsOfCountInEffectsNet = 64 / heapsOfCountsInEffectsNet.size();
+constexpr uint64_t countInWordOfEffectsNet(uint64_t word, unsigned count) { return word >> count * bitsOfCountInEffectsNet & ((1ull << bitsOfCountInEffectsNet) - 1); }
+constexpr uint64_t wordOfCountInEffectsNet(uint64_t writes, unsigned count) { return (writes * 0x9e3779b97f4a7c15ull >> (64 - bitsOfCountInEffectsNet)) << count * bitsOfCountInEffectsNet; }
+inline constexpr uint64_t countsStoreInEffectsNet = 1ull << 61;
 constexpr uint8_t countsHeldInEffectsNet(const Effects& effects)
 {
     uint8_t counts = 0;
     for (unsigned count = 0; count < heapsOfCountsInEffectsNet.size(); ++count) {
-        if (!effects.writes.contains(heapsOfCountsInEffectsNet[count]))
+        if (!effects.writes.containsAny(heapsOfCountsInEffectsNet[count]))
             counts |= static_cast<uint8_t>(1u << count);
     }
     return counts;
 }
 inline constexpr uint64_t asksForCountsInEffectsNet = 1ull << 63;
 inline constexpr uint32_t noOperandInEffectsNet = UINT16_MAX;
+inline constexpr uint32_t variableInEffectsNet = 1u << 15;
 
 inline constexpr unsigned firstRowOfOperationsInEffectsNet = 0;
 inline constexpr unsigned firstRowOfRuntimeOperationsInEffectsNet = 2048;

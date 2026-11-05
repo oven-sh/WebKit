@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTConversionEmitter.h"
+#include "AOTEffectsDeclared.h"
 #include "AOTExceptionEmitter.h"
 #include "AOTFaultTable.h"
 #include "AOTRepresentation.h"
@@ -17,7 +18,9 @@
 #include "AOTStubCalls.h"
 #include "AOTStubCatalog.h"
 #include "AOTStubRegisters.h"
+#include "AOTStubsClosures.h"
 #include "AOTStubsOperations.h"
+#include "AOTStubsValues.h"
 #include "AOTTypeArena.h"
 #include "AOTVector.h"
 #include "AllowMacroScratchRegisterUsage.h"
@@ -215,6 +218,7 @@ void ThrowEmitter::throwAt(const OperationContext& context, const ThrowSite& sit
         operand = inFormNamedByThrowWords(context, *operand);
 
     RuntimeCallEmitter& calls = emitter<RuntimeCallEmitter>();
+    static_assert(!declaredBoundOf(RuntimeOperation::ThrowAtSite).mayCollect);
     Effects effects = Effects::none();
     effects.mayThrow = true;
     CallPatchpointRequest request {
@@ -334,6 +338,31 @@ void ThrowEmitter::stopAtFalseProof(const OperationContext& context, std::option
     callVoidOperation(context, RuntimeOperation::StopAtFalseProof, { found ? *found : Boxed(m_out.constInt64(JSValue::encode(JSValue()))), word32(static_cast<int32_t>(writtenIn.index())), word32(static_cast<int32_t>(origin.position)), word32(static_cast<int32_t>(source)) });
     m_out.resumeDeclaredAccesses();
     m_out.unreachable();
+}
+
+void ThrowEmitter::stopUnlessAmongKinds(const OperationContext& context, Boxed found, uint32_t kinds, ProofSource source, std::optional<uint32_t> mentionOfUpperHalfOfClosureWord)
+{
+    RELEASE_ASSERT(!generator().isInitializingCell());
+    Machine::PatchOperation* check = m_out.patchpoint(Machine::Void);
+    check->effects = Machine::Effects::none();
+    check->effects.exitsSideways = true;
+    check->effects.controlDependent = true;
+    check->effects.reads = Machine::HeapSet::top();
+    check->clobber(inputs().stubCatalog.clobberedByRegisterVariantsOf(mentionOfUpperHalfOfClosureWord ? checkProofOfClosure() : checkProofOfKinds()));
+    check->appendSomeRegister(found.value());
+    uint32_t callSite = emitter<RuntimeCallEmitter>().addSite(context);
+    check->setGenerator([records = &m_records, words = KindsOfProof::withSource(kinds, source), mentionOfUpperHalfOfClosureWord, callSite](CCallHelpers& jit, const Machine::PatchParameters& params) {
+        GPRReg value = params[0].gpr();
+        StubKey key = mentionOfUpperHalfOfClosureWord ? checkProofOfClosure() : checkProofOfKinds();
+        if (value != signatureOf(key).operands[0].gpr())
+            key = key.withOperandRegister(value);
+        ArgumentMoves moves;
+        if (mentionOfUpperHalfOfClosureWord)
+            appendArgumentMove(moves, throwWordGPR, ArgumentSource::ConstantBelowMention, words | static_cast<uint64_t>(*mentionOfUpperHalfOfClosureWord) << KindsOfProof::shiftOfNumber);
+        else
+            appendArgumentMove(moves, throwWordGPR, ArgumentSource::Constant, words);
+        records->stubCalls.call(jit, key, std::nullopt, OptionalIndex { callSite }, moves);
+    });
 }
 
 void ThrowEmitter::requireNotNullish(const OperationContext& context, Operand operand, const Type& type, NullishAccess access, StringID name)

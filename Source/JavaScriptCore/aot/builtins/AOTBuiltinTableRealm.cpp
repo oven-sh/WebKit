@@ -948,7 +948,7 @@ public:
         , m_namesTakenForAbsent(namesTakenForAbsent)
     {
         for (const Identifier& opened : openedNames) {
-            if (m_namesTakenForAbsent)
+            if (m_namesTakenForAbsent || m_reflectThrows)
                 m_openedTexts.add(opened.impl());
             if (BuiltinName name = BuiltinTable::singleton().nameOf(vm, opened.impl()))
                 m_openedNames.append(name);
@@ -980,6 +980,20 @@ public:
         if (name && isFixed(name))
             return true;
         return m_namesTakenForAbsent && !uid->isSymbol() && !m_openedTexts.contains(uid) && !(name && table.findOwnMember(m_holder, name)) && isTakenForAbsent(uid);
+    }
+
+    bool refusesWrite(UniquedStringImpl* uid) const final { return contains(uid) || (refusalDependsOnWriter(uid) && isWrittenByFileOfProduct(m_vm)); }
+
+    bool refusalDependsOnWriter(UniquedStringImpl* uid) const final
+    {
+        if (!m_reflectThrows)
+            return false;
+        const BuiltinTable& table = BuiltinTable::singleton();
+        BuiltinName name = table.nameOf(m_vm, uid);
+        if (BuiltinID member = name ? table.findOwnMember(m_holder, name) : BuiltinID())
+            return table.at(member).mutability == BuiltinMutability::AlwaysLocked && ProgramTables::isUnlocked(m_unlockedMembers, member.index());
+        bool executableOpensWhatProgramSpells = table.canonicalID(m_holder) != Builtins::ObjectPrototype && table.at(m_holder).flags.containsAny({ BuiltinFlag::IsLockedObject, BuiltinFlag::IsClosedToOtherNames });
+        return !executableOpensWhatProgramSpells && m_openedTexts.contains(uid);
     }
 
     String storeErrorMessage(UniquedStringImpl* uid) const final { return assignmentToLockedBuiltinMessage(m_vm, m_holder, uid, lockedIn()); }

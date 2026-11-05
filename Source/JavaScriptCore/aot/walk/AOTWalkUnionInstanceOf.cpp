@@ -210,14 +210,8 @@ static bool findsOrdinaryHasInstanceForInstanceOf(const Walker& walker, const Cl
     if (!ordinary || table.canonicalID(ordinary) != Builtins::FunctionPrototypeSymbolHasInstance)
         return false;
 
-    if (!tested.isConstructorFunction && classStaysAsWrittenForInstanceOf(link, tested.layout) && link.findMember(program, tested.layout, ClassSide::Static, key).kind == MemberFound::Kind::Nothing) {
-        bool mayBeHidden = false;
-        size_t stepsLeft = program.layouts.size();
-        for (LayoutID current = tested.layout; current && stepsLeft; current = program.at(current).base, --stepsLeft)
-            mayBeHidden |= program.at(current).mayHaveStaticField(key);
-        if (!mayBeHidden && stepsLeft)
-            return true;
-    }
+    if (!tested.isConstructorFunction && classStaysAsWrittenForInstanceOf(link, tested.layout) && link.findsNothingOnClassObjects(program, tested.layout, key))
+        return true;
 
     if (FunctionID constructor = program.at(tested.layout).constructor; tested.isConstructorFunction && constructor && link.closuresLackName(constructor, key))
         return true;

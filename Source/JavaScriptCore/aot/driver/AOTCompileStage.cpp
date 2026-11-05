@@ -82,6 +82,26 @@ void mentionWhatCodeNames(UnitQueue& queue, unsigned thread, const CompiledCode&
             queue.mention(thread, body.callees[relocation.symbol]);
     }
     const Typed::WalkInputs& walk = inputs.walk;
+    struct ClassGoneThrough {
+        LayoutID classLayout;
+        Vector<CodeUnit> unitsThatAskWhoMentions;
+    };
+    Vector<ClassGoneThrough, 4> classesGoneThrough;
+    bool goesThroughClass = false;
+    auto mentionUnitsThatAskOrGoThrough = [&](LayoutID classOrNoneBehindLast) {
+        goesThroughClass = false;
+        if (!classOrNoneBehindLast)
+            return false;
+        if (const Vector<CodeUnit>* unitsThatAsk = queue.unitsThatAskAmongMentionedUnitsOfClass(classOrNoneBehindLast)) {
+            for (CodeUnit unit : *unitsThatAsk)
+                queue.mention(thread, unit);
+            return false;
+        }
+        classesGoneThrough.append({ classOrNoneBehindLast, { } });
+        goesThroughClass = true;
+        return true;
+    };
+    AsksForUnitsOfClass asksForUnitsOfClass = mentionUnitsThatAskOrGoThrough;
     for (const Mention& mention : body.mentions) {
         bool namesSelector = mention.space == NumberSpace::MethodSelector;
         if (namesSelector && queue.hasMentionedUnitsBehindSelector(keyOf(mention, body.mentionWords.span())[0]))
@@ -89,10 +109,15 @@ void mentionWhatCodeNames(UnitQueue& queue, unsigned thread, const CompiledCode&
         bool queueAsksWhoMentions = false;
         forEachUnitBehind(mention, body.mentionWords.span(), walk.program, walk.facts, walk.plan, scopedLambda<void(Typed::CodeUnit, MentionKind)>([&](CodeUnit unit, MentionKind) {
             queueAsksWhoMentions |= namesSelector && queue.asksWhoMentions(unit);
+            if (goesThroughClass && queue.asksWhoMentions(unit))
+                classesGoneThrough.last().unitsThatAskWhoMentions.append(unit);
             queue.mention(thread, unit);
-        }));
+        }), &asksForUnitsOfClass);
         if (namesSelector && !queueAsksWhoMentions)
             queue.didMentionUnitsBehindSelector(keyOf(mention, body.mentionWords.span())[0]);
+        for (ClassGoneThrough& gone : classesGoneThrough)
+            queue.didMentionUnitsOfClass(gone.classLayout, WTF::move(gone.unitsThatAskWhoMentions));
+        classesGoneThrough.shrink(0);
     }
 }
 

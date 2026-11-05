@@ -235,7 +235,7 @@ CellPointer ArrayAllocationEmitter::allocateEmptyArrayWithRoom(const OperationCo
     return array;
 }
 
-void ArrayAllocationEmitter::allocateListLike(const OperationContext& context, CellPointer source, Integer length, std::optional<Integer> roomOfEmptyList, LBasicBlock slowPath, const ScopedLambda<void(CellPointer)>& take)
+void ArrayAllocationEmitter::allocateListLike(const OperationContext& context, CellPointer source, Integer length, std::optional<Integer> roomOfEmptyList, LBasicBlock slowPath, const ScopedLambda<void(CellPointer)>& take, const ArrayStorageForm* inPlaceOfAnyValue)
 {
     if (roomOfEmptyList) {
         Integer most = integer(BASE_CONTIGUOUS_VECTOR_LEN_EMPTY);
@@ -243,7 +243,8 @@ void ArrayAllocationEmitter::allocateListLike(const OperationContext& context, C
     }
     ElementAccessEmitter& elements = emitter<ElementAccessEmitter>();
     ArrayStorageFormList kinds { &arrayStorageFormOf(ArrayStorage::Contiguous), &arrayStorageFormOf(ArrayStorage::Int32), &arrayStorageFormOf(ArrayStorage::Double) };
-    elements.forEachFormByShape(elements.indexingMode(source, IndexingShapeMask), &ElementAccessEmitter::hasShape, kinds, slowPath, scopedLambda<void(const ArrayStorageForm&)>([&](const ArrayStorageForm& form) {
+    elements.forEachFormByShape(elements.indexingMode(source, IndexingShapeMask), &ElementAccessEmitter::hasShape, kinds, slowPath, scopedLambda<void(const ArrayStorageForm&)>([&](const ArrayStorageForm& formOfSource) {
+        const ArrayStorageForm& form = formOfSource.holdsCells && inPlaceOfAnyValue ? *inPlaceOfAnyValue : formOfSource;
         take(roomOfEmptyList ? allocateEmptyArrayWithRoom(context, *roomOfEmptyList, form, slowPath) : allocateArrayOfHoles(context, length, form, slowPath));
     }));
 }

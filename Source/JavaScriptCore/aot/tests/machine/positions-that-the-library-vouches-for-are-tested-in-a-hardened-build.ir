@@ -1,10 +1,19 @@
 # What `bun build --aot-harden=ignore-told-ranges` asks for. The library's own reads and stores of elements test nothing by themselves: its code says that the position lies below the length.
-# Here each of the eight holds its position against the length that the list has there, and the process stops where it lies outside.
+# Here each of the eight holds its position against the length that the list has there, and the kind of storage that its name says against the byte of the list, and the process stops where either is false.
 # OPTIONS: testing=TestsEveryPosition
 # RUN: emit f1 mechanisms=all
+# CHECK: JSArray_indexingTypeAndMisc
 # CHECK: Butterfly_publicLength
 # CHECK: = Below(
 # RUN(STOPS): emit f1 mechanisms=all
+# STOPS: effects = Terminal|ControlDependent
+# STOPS: effects = Terminal|ControlDependent
+# STOPS: effects = Terminal|ControlDependent
+# STOPS: effects = Terminal|ControlDependent
+# STOPS: effects = Terminal|ControlDependent
+# STOPS: effects = Terminal|ControlDependent
+# STOPS: effects = Terminal|ControlDependent
+# STOPS: effects = Terminal|ControlDependent
 # STOPS: effects = Terminal|ControlDependent
 # STOPS: effects = Terminal|ControlDependent
 # STOPS: effects = Terminal|ControlDependent

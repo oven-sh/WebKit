@@ -650,6 +650,18 @@ const BuiltinCondition* BuiltinTable::conditionOnInstancesThatAnswerEveryName(Bu
     return row ? row->condition : nullptr;
 }
 
+bool BuiltinTable::formatterWalksInstancesOf(BuiltinClassID builtinClass) const
+{
+    for (BuiltinClassID current = builtinClass; current; current = at(current).parent) {
+        BuiltinID constructor = at(current).constructor;
+        if (!constructor)
+            continue;
+        if (has(BuiltinMark::InstancesArePrintedByCodeOfTheirOwn, canonicalID(constructor)) || has(BuiltinMark::InstancesHaveMethodCalledWithStartupLoads, canonicalID(constructor)))
+            return false;
+    }
+    return true;
+}
+
 bool BuiltinTable::isPrintedByFormatter(BuiltinID id, const BuiltinParameter& parameter) const
 {
     if (!parameter.protocols.contains(Protocol::OwnValues) || !parameter.protocols.contains(Protocol::PrototypeChain) || !parameter.protocols.contains(Protocol::CallsNamed))

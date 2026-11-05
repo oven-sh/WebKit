@@ -174,6 +174,7 @@ struct KeyedValuePlace {
     static constexpr uint32_t getterAboveBits = getterBit | fieldBit;
     static constexpr uint32_t globalObjectBit = 1;
     static constexpr uint32_t additionBit = 4;
+    static constexpr uint32_t fieldOfAnyValueBits = additionBit | absenceBit;
     static constexpr uint32_t narrowReferenceBit = 1u << 31;
 
     struct ExtraProperty {

@@ -2,9 +2,10 @@
 # each on what may be any object or any class object of the family. One shared call for each name enters the 201 methods, and each call lays an edge for each operand to it: members + calls.
 # Each call by itself makes members x calls: 166,689 edges and 164,003 observers here, and four times that with twice the classes.
 # class A { m() {} static make() {} }  class B1 extends A { m() {} static make() {} } ..  function f(x) { return x.m(); } f(new B7); f(new B1); ..  function g(C) { return C.make(); } g(B7); g(B1); ..
+# Each field of a layout of the table of built-ins is one edge in every program: a layout more in the table moves the number by its fields.
 # RUN: link counts mechanisms=all
 # REQUIRES: entries-of-bun
-# CHECK: counts flow | nodes {{*}} | edges 8689 | observers 4211 |
+# CHECK: counts flow | nodes {{*}} | edges 8693 | observers 4211 |
 # CHECK: counts who may name a function | groups 1 | referrers 2410 |
 
 layout L0 kind=Instance name="A" module=m0 constructor=f1

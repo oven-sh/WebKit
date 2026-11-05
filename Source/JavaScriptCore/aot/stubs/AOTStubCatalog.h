@@ -31,7 +31,7 @@ class Program;
 }
 
 struct StubOptions {
-    static StubOptions from(const RecordedOptions&, const Typed::Program&, bool hasOneInstance, bool matchesRegExps, bool recordsLastMatch, bool checksProofs);
+    static StubOptions from(const RecordedOptions&, const Typed::Program&, bool hasOneInstance, bool matchesRegExps, bool recordsLastMatch, bool checksProofs, bool checksWalk);
 
     bool useWideReferences { false };
     bool imageHasWebAssembly { false };
@@ -39,6 +39,7 @@ struct StubOptions {
     bool matchesRegExps { true };
     bool recordsLastMatch { true };
     bool checksProofs { false };
+    bool checksWalk { false };
     bool methodsOfBuiltinsMayBeReplaced { false };
     bool isPositionIndependent { imageFormOfThisRuntime() == ImageForm::PositionIndependent };
     uint32_t maxNameInFieldTable { UINT16_MAX };

@@ -68,7 +68,7 @@ void EngineIntrinsicEmitter::generateArraySpeciesCreate(const ValueContext& valu
         roomOfEmptyList = emitter<ConversionEmitter>().toInteger(room.as<Number>());
     allocation.allocateListLike(value, array, count, roomOfEmptyList, asksRunTime, scopedLambda<void(CellPointer)>([&](CellPointer list) {
         join.add(Boxed(list.value()));
-    }));
+    }), value->likeOperand() && typeOf(value->likeOperand()).isUndefinedOrNull() ? &arrayStorageFormOf(ArrayStorage::Int32) : nullptr);
 
     m_out.appendTo(asksRunTime);
     join.add(callOperation<Boxed>(value, RuntimeOperation::ArraySpeciesCreate, { length, array }));

@@ -11,6 +11,7 @@
 #include "AOTBuiltinModules.h"
 #include "AOTClassTable.h"
 #include "AOTClosure.h"
+#include "AOTEffectsNet.h"
 #include "AOTHeapCacheRegistry.h"
 #include "AOTInstance.h"
 #include "AOTObject.h"
@@ -278,6 +279,7 @@ void ClosureTable::registerClosureOfMember(FunctionID function, JSCell* closure)
 void ClosureTable::forgetClosures(uint32_t firstCell, uint32_t numberOfCells)
 {
     RELEASE_ASSERT(firstCell && static_cast<uint64_t>(firstCell) + numberOfCells <= m_tables.numberOfClosureCells);
+    m_state.countWriteForEffectsNet(Typed::CountInEffectsNet::WordsOfStaticsWritten);
     if (m_state.instance.options().useWideReferences()) {
         std::ranges::fill(std::span { static_cast<JSCell**>(m_state.instance.closureCells) + firstCell, numberOfCells }, nullptr);
         return;

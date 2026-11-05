@@ -71,6 +71,22 @@ struct MethodTableDependentData {
 };
 static_assert(sizeof(MethodTableDependentData) == 12 && isImageRecord<MethodTableDependentData>);
 
+struct NameLaidOnClosuresData {
+    uint32_t function;
+    uint32_t name;
+
+    friend auto operator<=>(const NameLaidOnClosuresData&, const NameLaidOnClosuresData&) = default;
+};
+static_assert(sizeof(NameLaidOnClosuresData) == 8 && isImageRecord<NameLaidOnClosuresData>);
+
+struct NameLaidOutsideClassRecordData {
+    uint32_t classLayout;
+    uint32_t name;
+
+    friend auto operator<=>(const NameLaidOutsideClassRecordData&, const NameLaidOutsideClassRecordData&) = default;
+};
+static_assert(sizeof(NameLaidOutsideClassRecordData) == 8 && isImageRecord<NameLaidOutsideClassRecordData>);
+
 constexpr uint32_t distanceToMethodTableEntry(uint32_t distanceToWordOfSelector, uint32_t shape) { return distanceToWordOfSelector - shape * static_cast<uint32_t>(sizeof(uint32_t)); }
 constexpr uint32_t methodTableEntryOf(uint32_t originOfSelector, uint32_t shape) { return originOfSelector - shape; }
 
@@ -91,6 +107,9 @@ constexpr uint32_t methodTableEntryOf(uint32_t originOfSelector, uint32_t shape)
     v(methodTableDependents, MethodTableDependentData) \
     v(classGuardCounts, ClassGuardCountData) \
     v(namesOfClassGuards, uint32_t) \
+    v(classesBelowWithGuardsOfNames, ClassBelowWithGuardOfNameData) \
+    v(namesLaidOnClosures, NameLaidOnClosuresData) \
+    v(namesLaidOutsideClassRecords, NameLaidOutsideClassRecordData) \
     v(parsedRecordFields, ParsedRecordFieldData)
 
 #define FOR_EACH_AOT_PROGRAM_TABLE(v) \

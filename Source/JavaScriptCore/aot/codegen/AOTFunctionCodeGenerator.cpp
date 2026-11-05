@@ -20,6 +20,7 @@
 #include "AOTMachineOrder.h"
 #include "AOTMachinePrinter.h"
 #include "AOTMachineBuilder.h"
+#include "AOTMachineChecker.h"
 #include "AOTStraightEmitter.h"
 #include "AOTStubAssembler.h"
 #include "CPU.h"
@@ -59,6 +60,7 @@ Machine::ProcedureTraits machineTraitsOf(const BuildContext& build, const CodeGe
         .chargesForCalleeSaves = isX86_64(),
         .mayOmitFrameRecord = isX86_64(),
         .checksAllocation = runsMachineChecks(build),
+        .ordersBlocksAsWhenOrderedAgain = hasFlag(build.options().testing, Wire::TestingSwitch::OrderBlocksAgain),
         .notesRangesOfOrigins = hasFlag(build.options().reports, ReportSet::Flow) || !build.options().logging.mapFilePath.isNull(),
         .features = build.targetFeatures(),
     };
@@ -165,13 +167,14 @@ static void reportFailureOfMachineProcedure(BuildContext& build, const Program& 
     build.diagnostics().add(error);
 }
 
-FunctionCodeGenerator::FunctionCodeGenerator(const CodeGenerationWorker& worker, const CodeGenerationInputs& inputs, const Code& code, CodeGenerationTotals& totals)
+FunctionCodeGenerator::FunctionCodeGenerator(const CodeGenerationWorker& worker, const CodeGenerationInputs& inputs, const Code& code, CodeGenerationTotals& totals, FramesOfGenerators framesOfGenerators)
     : m_worker(worker)
     , m_inputs(inputs)
     , m_code(code)
     , m_statistics(worker.build.statistics().countersOfCurrentThread())
     , m_relocations(m_jit, worker.build.assemblerPolicy())
     , m_records(inputs.stubCatalog, m_relocations, totals, &worker.arena.objectKeptAcrossResets<RememberedStubKeys>())
+    , m_framesOfGenerators(framesOfGenerators)
     , m_procedure(worker.arena, inputs.heaps.tree(), machineTraitsOf(worker.build, inputs, code))
 {
 }
@@ -196,10 +199,18 @@ bool FunctionCodeGenerator::appendOperations()
     m_records.frame.readsCallerFrame = unitReadsCallerFrame;
 
     CodeGenerator generator(FunctionInputs { build, m_worker.types, m_inputs, m_code }, m_procedure, m_records);
-    if (generator.run() == GenerationResult::Failed)
+    if (m_framesOfGenerators == FramesOfGenerators::AreSaved)
+        generator.saveFramesOfGenerators();
+    else if (!runsMachineChecks(build))
+        generator.leaveFailuresWithHeapFrameUnsaid();
+    GenerationResult result = generator.run();
+    m_keepsValuesInHeapFrame = generator.keepsValuesInHeapFrame();
+    if (result == GenerationResult::Failed) {
+        m_isToBeGeneratedAgain = m_keepsValuesInHeapFrame && !runsMachineChecks(build);
         return false;
-    if (m_procedure.failure()) {
-        reportFailureOfMachineProcedure(build, m_inputs.program, m_code, m_procedure);
+    }
+    if (m_procedure.failure() || (m_keepsValuesInHeapFrame && !runsMachineChecks(build) && !Machine::checkThatDefinitionsDominateUses(m_procedure))) {
+        reportFailureOfProcedure();
         return false;
     }
     RELEASE_ASSERT(m_records.frame.savesFrameOnSuspend <= m_procedure.traits().savesFrameOnSuspend);
@@ -296,7 +307,7 @@ CompiledCode FunctionCodeGenerator::emitCode()
         m_procedure.setLargestFrameSetUpWithoutStackCheck(maxFrameSizeWithoutStackCheck);
     Machine::prepareForGeneration(m_procedure);
     if (m_procedure.failure()) {
-        reportFailureOfMachineProcedure(build, m_inputs.program, m_code, m_procedure);
+        reportFailureOfProcedure();
         return { };
     }
     if (!frameFitsImage())
@@ -319,7 +330,7 @@ CompiledCode FunctionCodeGenerator::emitCode()
     if (m_straightEmitter && m_straightEmitter->hasFailed())
         return { };
     if (m_procedure.failure()) {
-        reportFailureOfMachineProcedure(build, m_inputs.program, m_code, m_procedure);
+        reportFailureOfProcedure();
         return { };
     }
     const CallingConventions& conventions = m_inputs.plan.conventions();
@@ -358,6 +369,15 @@ CompiledCode FunctionCodeGenerator::emitCode()
     return compiled;
 }
 
+void FunctionCodeGenerator::reportFailureOfProcedure()
+{
+    if (m_keepsValuesInHeapFrame && !runsMachineChecks(m_worker.build)) {
+        m_isToBeGeneratedAgain = true;
+        return;
+    }
+    reportFailureOfMachineProcedure(m_worker.build, m_inputs.program, m_code, m_procedure);
+}
+
 bool FunctionCodeGenerator::frameFitsImage()
 {
     BuildContext& build = m_worker.build;
@@ -384,7 +404,14 @@ CompiledCode generateCode(const CodeGenerationWorker& worker, const CodeGenerati
     RELEASE_ASSERT(code.isSwept());
 
     CurrentWorkScope work(inputs.program, code.function(), "emit"_s);
-    FunctionCodeGenerator generator(worker, inputs, code, totals);
+    {
+        FunctionCodeGenerator generator(worker, inputs, code, totals);
+        CompiledCode compiled = generator.run();
+        if (!generator.isToBeGeneratedAgain()) [[likely]]
+            return compiled;
+    }
+    worker.arena.reset();
+    FunctionCodeGenerator generator(worker, inputs, code, totals, FramesOfGenerators::AreSaved);
     return generator.run();
 }
 

@@ -119,7 +119,7 @@ StubSignature signatureOfArrayLiteral(StubKey key)
     StubSignature signature = StubSignature::withGPRResult({ });
     for (unsigned i = 0; i < key.count(); ++i)
         signature.addOperand(operationArgumentGPR(1 + i));
-    return signature;
+    return key.count() ? signature.fillingOperandInFront(key.count() - 1) : signature;
 }
 
 void generateArrayLiteral(StubAssembler& jit) { emitArrayLiteral(jit, { .count = jit.key().count() }); }

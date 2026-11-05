@@ -681,7 +681,7 @@ static void createModuleObject(JSGlobalObject* globalObject, JSString* path, Mod
     objects.require = createRequireFunction(globalObject);
 }
 
-static void createRequirer(JSGlobalObject* globalObject, JSObject* importMeta, ModuleObjects& objects)
+static void createRequirer(JSGlobalObject* globalObject, JSObject* importMeta, ModuleID, ModuleObjects& objects)
 {
     objects.module = importMeta;
     objects.require = createRequireFunction(globalObject);

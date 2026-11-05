@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTBuiltinTable.h"
+#include "AOTCompiledFrame.h"
 #include "AOTImage.h"
 #include "AOTModuleHost.h"
 #include "AOTRealmStartup.h"
@@ -315,6 +316,11 @@ JSObject* createEntryOfRequireCacheRefusedError(JSGlobalObject* globalObject, St
     return createError(globalObject, makeString("Cannot read the entry of '"_s, path, "' in require.cache: the build found nothing that reads the cache, so the module was compiled for the code that imports it. Spell the read in a file that the tests import: require.cache[require.resolve(\"./module\")]"_s));
 }
 
+JSObject* createComparisonOfPrivateFieldRefusedError(JSGlobalObject* globalObject, const String& field)
+{
+    return createError(globalObject, withAOTErrorNote(makeString("Cannot compare what the private field "_s, field, " holds: the build followed no object with this field to Bun.deepMatch(), toMatchObject() or expect.objectContaining(), so what the field holds was compiled for its class alone. Call the comparison by its own name, and make one of the two objects where it is called."_s)));
+}
+
 JSObject* createModuleMissingAtBuildError(JSGlobalObject* globalObject, const String& specifier, const String& importer, ASCIILiteral code)
 {
     return createErrorWithCode(globalObject, makeString("Cannot find module '"_s, specifier, "' from '"_s, importer, "'"_s), code);
@@ -423,36 +429,28 @@ static String refusalInTestRun(VM& vm, ASCIILiteral change, BuiltinID holder, Un
     return makeString(change, member, " because built-in objects are read-only in compiled code, and the build didn't see a test "_s, does, " this one. Spell out the object and the name where the test does it, as in "_s, example, pageOnCompiledTests);
 }
 
-static bool textOnTopIsOfFileOfProduct(VM& vm)
-{
-    std::optional<bool> answer;
-    StackVisitor::visit(vm.topCallFrame, vm, [&](auto& visitor) {
-        if constexpr (std::remove_reference_t<decltype(visitor)>::visitsCompiledFrames) {
-            if (visitor->isCompiledFrame())
-                return IterationStatus::Done;
-        }
-        CodeBlock* codeBlock = visitor->codeBlock();
-        if (!codeBlock)
-            return IterationStatus::Continue;
-        const URL& origin = codeBlock->ownerExecutable()->sourceOrigin().url();
-        std::optional<ModuleID> file = origin.protocolIsFile() ? findModule(origin.fileSystemPath()) : std::nullopt;
-        if (file)
-            answer = findsBuiltinsReadOnly(*file);
-        return IterationStatus::Done;
-    });
-    return answer.value_or(false);
-}
-
 bool isWrittenByFileOfProduct(VM& vm)
 {
+    if (!vm.hasCompiledCode() || !vm.topCallFrame)
+        return false;
     std::optional<bool> answer;
-    forEachShownFrameOfRunAtTop(vm, [&](const TraceFrame& frame) {
-        std::optional<SourcePosition> position = positionOf(frame);
-        if (position && position->source)
-            answer = findsBuiltinsReadOnly(position->source);
-        return answer ? IterationStatus::Done : IterationStatus::Continue;
-    });
-    return answer ? *answer : vm.topCallFrame && textOnTopIsOfFileOfProduct(vm);
+    StackVisitor::visitWithCompiledFrames(vm.topCallFrame, vm, [&](StackVisitor& visitor) {
+        if (visitor->isCompiledFrame()) {
+            for (CompiledFrameIterator& frames = visitor.compiledFrames(); !answer && !frames.isAtEnd(); frames.advance()) {
+                std::optional<SourcePosition> position = Image::current()->positionOf(frames.frame().code.index(), frames.frame().callSite);
+                if (position && position->source)
+                    answer = findsBuiltinsReadOnly(position->source);
+            }
+            return answer ? IterationStatus::Done : IterationStatus::Continue;
+        }
+        CodeBlock* codeBlock = visitor->codeBlock();
+        if (!codeBlock || !codeBlock->ownerExecutable()->sourceOrigin().url().protocolIsFile())
+            return IterationStatus::Continue;
+        if (std::optional<ModuleID> file = findModule(codeBlock->ownerExecutable()->sourceOrigin().url().fileSystemPath()))
+            answer = findsBuiltinsReadOnly(*file);
+        return IterationStatus::Done;
+    }, false, StackVisitor::CompiledFrameVisit::EachRunOnce);
+    return answer.value_or(false);
 }
 
 String assignmentToLockedBuiltinMessage(VM& vm, BuiltinID holder, UniquedStringImpl* key, LockedIn lockedIn)

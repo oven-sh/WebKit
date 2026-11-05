@@ -17,6 +17,7 @@
 #include "AOTConvention.h"
 #include "AOTHintEmitter.h"
 #include "AOTMachineFrame.h"
+#include "AOTStackCheckEmitter.h"
 #include "AOTStubsCallFrames.h"
 #include "AOTStubsCallLists.h"
 #include "AOTStubsCalls.h"
@@ -204,6 +205,10 @@ Machine::PatchOperation* CallEmitter::leaveAfterFrameTeardown(std::span<const Ma
             emitStoreToStackWord(jit, params.frame(), params[numberInRegisters + i], scratch, stackIndices[i]);
         if (params.frameIsSetUp())
             Machine::emitFrameTeardown(jit, params.frame());
+        else if (params.value()->followsFrameSetup()) {
+            RELEASE_ASSERT(params.value()->testsStackAheadOfFramedPart());
+            emitStackTestAheadOfFramedPart(jit, params);
+        }
         leave(jit);
     });
     return patchpoint;
@@ -228,6 +233,7 @@ void CallEmitter::jumpAfterFrameTeardown(const CallTarget& target, const PlacedA
         emitJumpTo(jit, *records, destination);
     });
     patchpoint->setFollowsFrameSetup(m_records.frame.needsStackCheckForTailCalls && !pollsWithoutFrame(conventions(), m_unit, target));
+    patchpoint->setTestsStackAheadOfFramedPart(patchpoint->followsFrameSetup() && isX86_64() && !spilledBytes && stackWords.isEmpty());
 }
 
 void CallEmitter::callFromArgumentListFrame(const CallTarget& target, const PlacedArguments& placed)

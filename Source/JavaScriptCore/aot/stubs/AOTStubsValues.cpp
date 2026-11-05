@@ -14,6 +14,7 @@
 #include "AOTStubFrontEnds.h"
 #include "AOTStubHelpers.h"
 #include "AOTStubRegisters.h"
+#include "AOTStubsOperations.h"
 #include "AOTStubsStrings.h"
 #include "AOTVector.h"
 #include "JSCJSValueInlines.h"
@@ -23,6 +24,7 @@
 #include "JSTypeInfo.h"
 #include "NumericStrings.h"
 #include "StackAlignment.h"
+#include <bit>
 #include <initializer_list>
 #include <utility>
 #include <wtf/MathExtras.h>
@@ -180,7 +182,7 @@ static JumpList branchIfFunction(StubAssembler& jit, GPRReg cell, GPRReg scratch
 
 StubSignature signatureOfThrowUnlessCallable(StubKey)
 {
-    return StubSignature::withoutResult({ calleeGPR });
+    return StubSignature::withoutResult({ calleeGPR }).fillingOperandInFront(0);
 }
 
 void generateThrowUnlessCallable(StubAssembler& jit)
@@ -195,6 +197,87 @@ void generateThrowUnlessCallable(StubAssembler& jit)
 
     isFunction.link(&jit);
     jit.returnToCaller();
+}
+
+static void stopAtFalseProofOfKinds(StubAssembler& jit, GPRReg value, GPRReg kindsWithSource, [[maybe_unused]] GPRReg scratch)
+{
+    ThrowSiteWord word { };
+    word.registerNumber = static_cast<uint32_t>(value);
+    word.kind = static_cast<uint32_t>(ThrowKind::ErrorWithMessage);
+    word.representation = static_cast<uint32_t>(Typed::Representation::JSValue);
+    word.calleeIsReadFromReceiver = true;
+    ThrowSiteWord wordOfSecondSource = word;
+    wordOfSecondSource.a = 1;
+    jit.urshift32(TrustedImm32(KindsOfProof::shiftOfSource), kindsWithSource);
+    jit.lshift32(TrustedImm32(WTF::ctz(std::bit_cast<uint32_t>(word) ^ std::bit_cast<uint32_t>(wordOfSecondSource))), kindsWithSource);
+#if CPU(X86_64)
+    jit.or32(TrustedImm32(static_cast<int32_t>(std::bit_cast<uint32_t>(word))), kindsWithSource);
+#else
+    jit.move(TrustedImm32(static_cast<int32_t>(std::bit_cast<uint32_t>(word))), scratch);
+    jit.or32(scratch, kindsWithSource);
+#endif
+    jit.jumpToStub(throwAtSite(ThrowSiteSource::WordInRegister, CallerFrame::HasFrame));
+}
+
+StubSignature signatureOfCheckProofOfKinds(StubKey key)
+{
+    return StubSignature::withoutResult({ key.operandRegister().value_or(gprOf(StubRegister::R0)), throwWordGPR });
+}
+
+void generateCheckProofOfKinds(StubAssembler& jit)
+{
+    namespace Primitive = Typed::Primitive;
+    const GPRReg value = jit.operand(0);
+    OwnedScratchRegister words(jit, jit.operand(1));
+    const GPRReg scratch = isX86_64() ? InvalidGPRReg : scratchImmediateGPR;
+    JumpList proofIsFalse;
+    auto returnIfAmongKinds = [&](uint32_t kind) {
+        proofIsFalse.append(jit.branchTest32(CCallHelpers::Zero, words, TrustedImm32(kind)));
+        jit.returnToCaller();
+    };
+
+    Jump isNotCell = jit.branchIfNotCell(value);
+    Jump isAbsent = jit.branchTest64(CCallHelpers::Zero, value);
+    compareTypeOfCellOnFlags(jit, value, ObjectType, scratch);
+    Jump isNotObject = jit.branchOnFlags(CCallHelpers::Below);
+    returnIfAmongKinds(KindsOfProof::everyObject);
+
+    isNotObject.link(&jit);
+    static constexpr std::pair<JSType, uint32_t> kindsOfOtherCells[] = {
+        { StringType, Primitive::String },
+        { SymbolType, Primitive::Symbol },
+        { HeapBigIntType, Primitive::BigInt },
+    };
+    for (auto [type, kind] : kindsOfOtherCells) {
+        compareTypeOfCellOnFlags(jit, value, type, scratch);
+        Jump isOfOtherType = jit.branchOnFlags(CCallHelpers::NotEqual);
+        returnIfAmongKinds(kind);
+        isOfOtherType.link(&jit);
+    }
+    proofIsFalse.append(jit.jump());
+
+    isAbsent.link(&jit);
+    returnIfAmongKinds(Primitive::Absent);
+
+    isNotCell.link(&jit);
+    Jump isNotNumber = jit.branchIfNotNumber(value);
+    returnIfAmongKinds(KindsOfProof::everyNumber);
+
+    isNotNumber.link(&jit);
+    static constexpr std::pair<int32_t, uint32_t> kindsOfOtherWords[] = {
+        { JSValue::ValueUndefined, Primitive::Undefined },
+        { JSValue::ValueNull, Primitive::Null },
+        { JSValue::ValueTrue, Primitive::True },
+        { JSValue::ValueFalse, Primitive::False },
+    };
+    for (auto [word, kind] : kindsOfOtherWords) {
+        Jump isOtherWord = jit.branch64(CCallHelpers::NotEqual, value, TrustedImm32(word));
+        returnIfAmongKinds(kind);
+        isOtherWord.link(&jit);
+    }
+
+    proofIsFalse.link(&jit);
+    stopAtFalseProofOfKinds(jit, value, words, scratch);
 }
 
 StubSignature signatureOfThrowUnlessForwardedCallCanBeMade(StubKey)

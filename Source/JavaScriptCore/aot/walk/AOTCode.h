@@ -108,6 +108,8 @@ private:
 
 static_assert(sizeof(Reference) == sizeof(uint32_t) && !Reference() && !Reference().isPostponed() && !Reference().isRecord() && !Reference().isVirtual());
 
+static constexpr uint8_t byteOfRoomThatIsTaken = 0xa5;
+
 template<typename T, unsigned logOfSegmentSize>
 class StableArray {
     WTF_MAKE_NONCOPYABLE(StableArray);
@@ -166,6 +168,19 @@ public:
         m_size = newSize;
     }
     void clear() { m_size = 0; }
+    void takeRoomOf(StableArray& former)
+    {
+        RELEASE_ASSERT(!m_capacity);
+        m_addressesOfIndexZero = std::exchange(former.m_addressesOfIndexZero, { });
+        m_addressOfIndexZeroBySegment = m_addressesOfIndexZero.span().data();
+        m_capacity = std::exchange(former.m_capacity, 0);
+        former.m_addressOfIndexZeroBySegment = nullptr;
+        former.m_size = 0;
+#if ASSERT_ENABLED
+        for (uint32_t index = 0; index < m_capacity; index += segmentSize)
+            memset(static_cast<void*>(recordAt(index)), byteOfRoomThatIsTaken, sizeof(T) * segmentSize);
+#endif
+    }
 
 private:
     ALWAYS_INLINE T* recordAt(uint32_t index) const
@@ -230,6 +245,22 @@ public:
 
     void rewindTo(Mark);
     void clear() { rewindTo({ }); }
+    void takeRoomOf(SideWords& former)
+    {
+        RELEASE_ASSERT(m_segments.isEmpty());
+        former.clear();
+        if (!former.m_segments.isEmpty() && former.m_segments.first().capacity > wordsPerSegment) {
+            fastFree(former.m_segments.first().words);
+            former.m_segments.removeAt(0);
+        }
+        m_segments = std::exchange(former.m_segments, { });
+        former.clear();
+        clear();
+#if ASSERT_ENABLED
+        for (const Segment& segment : m_segments)
+            memset(segment.words, byteOfRoomThatIsTaken, static_cast<size_t>(segment.capacity) * sizeof(uint32_t));
+#endif
+    }
 
 private:
     static constexpr uint32_t wordsPerSegment = 1u << 14;
@@ -768,6 +799,39 @@ void DraftWords::copyWordsOf(const Instruction& instruction, NOESCAPE const Invo
     m_payload.replaceFrom(0, instruction.payload(), absentPayloadWord);
 }
 
+class PassedTest {
+public:
+    struct Side {
+        ValueID test;
+        bool answersYes { true };
+    };
+    std::span<const Side> sides() const LIFETIME_BOUND { return std::span(m_sides).first(m_numberOfSides); }
+    PassedTest with(const PassedTest& other) const
+    {
+        PassedTest both = *this;
+        for (const Side& side : other.sides())
+            both.add(side);
+        return both;
+    }
+
+private:
+    friend class Walker;
+    PassedTest() = default;
+    PassedTest(ValueID test, bool answersYes) { add({ test, answersYes }); }
+    void add(const Side& added)
+    {
+        for (const Side& side : sides()) {
+            if (side.test == added.test && side.answersYes == added.answersYes)
+                return;
+        }
+        RELEASE_ASSERT(m_numberOfSides < m_sides.size());
+        m_sides[m_numberOfSides++] = added;
+    }
+
+    std::array<Side, 4> m_sides;
+    uint8_t m_numberOfSides { 0 };
+};
+
 struct Draft : DraftWords {
     Representation representation { Representation::Unchosen };
     Opcode opcode { Opcode::Undefined };
@@ -775,6 +839,7 @@ struct Draft : DraftWords {
     bool resultIsReturnedAtOnce { false };
     bool standsForNoValueOfInput { false };
     ValueID inputValueGiven;
+    std::optional<PassedTest> testsPassed;
 
     explicit Draft(Opcode newOpcode) { become(newOpcode); }
     Draft(Opcode newOpcode, Origin origin)
@@ -791,12 +856,14 @@ struct Draft : DraftWords {
         resultIsReturnedAtOnce = false;
         standsForNoValueOfInput = false;
         inputValueGiven = { };
+        testsPassed = std::nullopt;
         const FreshWordsOfOperation& fresh = freshWordsOf(newOpcode);
         resetOperandsAndPayload(fresh.numberOfNamedOperands, { fresh.payload, fresh.numberOfPayloadWords });
     }
 
     OperandKind operandKind(uint32_t operandIndex) const { return operandKindOf(opcode, operandIndex); }
     OperandUses operandUses(uint32_t operandIndex) const { return operandUsesOf(opcode, operandIndex); }
+    void restOn(const PassedTest& passed) { testsPassed = testsPassed ? testsPassed->with(passed) : passed; }
 
 #include "AOTSchemaOperationGetters.inc"
 #include "AOTSchemaOperationSetters.inc"
@@ -843,6 +910,7 @@ public:
     Code() = default;
 
     void reset(CodeUnit);
+    void takeRoomOf(Code& former);
 
     enum class FrequenciesOfBlocks : uint8_t { AsGiven, AllNormal, DrawnBySeed };
     void takeFrequenciesOfBlocks(FrequenciesOfBlocks taken, uint32_t seed)
@@ -882,6 +950,7 @@ public:
     bool holdsCallThatPlanHasNotCounted() const { return m_holdsCallThatPlanHasNotCounted; }
     bool callsOfFunctionNeverCollect() const { return m_callsOfFunctionNeverCollect; }
     bool readsNumbersOutOfBytes() const { return m_readsNumbersOutOfBytes; }
+    bool isEntryThatWalksBody() const { return m_isEntryThatWalksBody; }
     const OpcodeSet& opcodesOfValues() const LIFETIME_BOUND { return m_opcodesOfValues; }
 
     void forEachEdgeInto(BlockID block, NOESCAPE const Invocable<void(const Edge&)> auto& functor) const
@@ -922,6 +991,7 @@ public:
     void setLoopMarks(BlockID, bool isInLoop, bool isLoopHead);
     void makeBlocksRare(uint32_t first, uint32_t end);
     void makeBlockRare(BlockID);
+    void makeBlockUnlikely(BlockID);
     void setSubject(BlockID, ValueID);
     void markMeetingOfStepWrittenByHand(BlockID);
     void setParameters(BlockID, std::span<const ValueID>);
@@ -930,6 +1000,7 @@ public:
     void makeTypeTestAskInFull(ValueID);
     void makeTestAskInFull(ValueID);
     void leaveCheckOfProofToTestBehind(ValueID);
+    void bearListWithStorage(ValueID, ArrayStorage);
     ValueID append(BlockID, const Draft&, TypeID proven, EffectTraits);
     void noteEffectsBelieved(ValueID, const Effects&);
     const Effects* effectsBelievedOf(ValueID) const;
@@ -956,6 +1027,7 @@ public:
     void addFateOfPoll(ValueID poll, FateOfPoll);
     void reserveFrameWords(uint32_t numberOfWords) { m_numberOfFrameWords = std::max(m_numberOfFrameWords, numberOfWords); }
     void noteCallThatPlanHasNotCounted() { m_holdsCallThatPlanHasNotCounted = true; }
+    void noteThatEntryWalksBody() { m_isEntryThatWalksBody = true; }
     void noteThatCallsOfFunctionNeverCollect() { m_callsOfFunctionNeverCollect = true; }
 
     struct OpenBlock {
@@ -1033,6 +1105,9 @@ private:
         EdgeID lastEdgeInBefore;
         ValueID changed;
         Operation recordBefore;
+        BlockID marked;
+        BlockFrequency frequencyBefore { BlockFrequency::Normal };
+        bool wasInLoop { false };
     };
     Vector<ChangeToOlderPart> m_changesToOlderParts;
     struct OlderBlockEnded {
@@ -1041,6 +1116,11 @@ private:
     };
     Vector<OlderBlockEnded> m_olderBlocksEnded;
     mutable uint32_t m_numberOfBlocksAtNewestMark { 0 };
+    void keepMarksOfOlderBlock(uint32_t index)
+    {
+        if (m_keepsChangesToOlderParts && index < m_numberOfBlocksAtNewestMark)
+            m_changesToOlderParts.append(ChangeToOlderPart { { }, { }, { }, { }, { }, BlockID(index), m_blocks[index].frequency, m_blocks[index].isInLoop });
+    }
     void setTerminator(BlockID blockID, Block& block, const Terminator& terminator)
     {
         if (m_keepsChangesToOlderParts && blockID.index() < m_numberOfBlocksAtNewestMark)
@@ -1065,6 +1145,7 @@ private:
     bool m_holdsCallThatPlanHasNotCounted { false };
     bool m_callsOfFunctionNeverCollect { false };
     bool m_readsNumbersOutOfBytes { false };
+    bool m_isEntryThatWalksBody { false };
     FrequenciesOfBlocks m_frequenciesOfBlocks { FrequenciesOfBlocks::AsGiven };
     uint32_t m_seedOfFrequencies { 0 };
     uint32_t m_numberOfBlocksPlacedOtherwise { 0 };

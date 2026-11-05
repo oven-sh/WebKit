@@ -100,6 +100,19 @@ void setStackCheckGenerator(Machine::Procedure& proc, StackCheck stackCheck, con
     proc.setStackCheckGenerator(generateStackCheckAtFrameSetup, &state);
 }
 
+void emitStackTestAheadOfFramedPart(CCallHelpers& jit, const Machine::PatchParameters& params)
+{
+    RELEASE_ASSERT(!params.frameIsSetUp() && params.frame().hasFrame());
+    CCallHelpers::Jump doesNotFit = jit.branchPtr(CCallHelpers::Below, CCallHelpers::stackPointerRegister, wordOfStackLimit(StackLimit::TrapAwareSoft));
+    params.addLatePath([doesNotFit, fits = jit.label(), proc = &params.proc()](CCallHelpers& jit) {
+        AllowMacroScratchRegisterUsage allowScratch(jit);
+        doesNotFit.link(&jit);
+        Machine::emitFrameSetup(jit, *proc);
+        Machine::emitFrameTeardown(jit, proc->frame());
+        jit.jump().linkTo(fits, &jit);
+    });
+}
+
 void emitStackOverflowPaths(CCallHelpers& jit, CodeRecords& records, StackCheckState& state)
 {
     AllowMacroScratchRegisterUsage allowScratch(jit);

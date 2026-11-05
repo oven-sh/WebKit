@@ -11,6 +11,7 @@
 #include "AOTCallSiteTable.h"
 #include "AOTCodeRecords.h"
 #include "AOTRuntimeCallEmitter.h"
+#include "AOTSavedFrameEmitter.h"
 #include "AOTSort.h"
 #include "AOTVector.h"
 #include "AllowMacroScratchRegisterUsage.h"
@@ -280,7 +281,10 @@ const ExceptionEmitter::LandingPad& ExceptionEmitter::landingPadFor(BlockID bloc
     m_out.appendTo(landingPad.block);
     if (landingPad.type == HandlerType::SynthesizedCatch)
         callWithoutSite<Boxed>(RuntimeOperation::Catch, { }, { .isOnRarePath = true, .followsThrow = true });
-    generator().passHandlerArguments(handler);
+    if (generator().keepsValuesInHeapFrame()) [[unlikely]]
+        emitter<SavedFrameEmitter>().passHandlerArgumentsInLandingPad(block, handler);
+    else
+        generator().passHandlerArguments(handler);
     if (isEnteredByJump(handler.to))
         passCaughtWord(handler.to, m_out.int64Zero);
     m_out.jump(generator().blockFor(handler.to));

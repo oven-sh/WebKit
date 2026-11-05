@@ -8,13 +8,17 @@
 #if ENABLE(AOT)
 
 #include "AOTBuildContext.h"
+#include "AOTBuiltinCells.h"
+#include "AOTBuiltinTable.h"
 #include "AOTChildProcess.h"
 #include "AOTCompileOptionWords.h"
 #include "AOTDriver.h"
+#include "AOTEffectsNet.h"
 #include "AOTIRParser.h"
 #include "AOTLoadedProgramTestSupport.h"
 #include "AOTProgramFile.h"
 #include "AOTProgramStatics.h"
+#include "AOTState.h"
 #include "AOTTemporaryFile.h"
 #include "AOTTestHarness.h"
 #include "AOTThreads.h"
@@ -173,6 +177,35 @@ static void testNumberInWrittenCardIsNoCell(LoadedProgram& program)
     AOT_TEST_CHECK(visitedCells(program).isEmpty());
 }
 
+static void testOnlyWriteOfAnotherValueIsCounted(LoadedProgram& program)
+{
+    SlotData slot = variable(program, 41);
+    const uint64_t& count = program.state().writesCountedForEffectsNet[static_cast<size_t>(Typed::CountInEffectsNet::WordsOfStaticsWritten)];
+    uint64_t inFront = count;
+    ProgramStatics::writeVariable(program.instance(), slot, jsNumber(5));
+    AOT_TEST_CHECK(count == inFront + 1);
+    ProgramStatics::writeVariable(program.instance(), slot, jsNumber(5));
+    AOT_TEST_CHECK(count == inFront + 1);
+    ProgramStatics::writeVariable(program.instance(), slot, jsNumber(6));
+    AOT_TEST_CHECK(count == inFront + 2);
+}
+
+static void testOnlyFirstNameAddedAboveInstancesIsCounted(LoadedProgram& program)
+{
+    const BuiltinTable& table = BuiltinTable::singleton();
+    BuiltinID holder;
+    for (unsigned index = 0; index < table.classCount() && !holder; ++index)
+        holder = table.at(BuiltinClassID(index)).prototype;
+    AOT_TEST_CHECK(holder);
+    const uint64_t& count = program.state().writesCountedForEffectsNet[static_cast<size_t>(Typed::CountInEffectsNet::WatchOverBuiltinsEnded)];
+    uint64_t inFront = count;
+    program.state().builtinCells->willAddNameTo(holder);
+    uint64_t behindFirst = count;
+    AOT_TEST_CHECK(behindFirst > inFront);
+    program.state().builtinCells->willAddNameTo(holder);
+    AOT_TEST_CHECK(count == behindFirst);
+}
+
 template<LoadedProgramTest body>
 static void runNativeTestWithVariables()
 {
@@ -189,6 +222,8 @@ std::span<const NativeTest> programStaticsTests()
 {
     static constexpr NativeTest tests[] = {
         { "program-statics/number-in-written-card-is-no-cell"_s, runNativeTestWithVariables<testNumberInWrittenCardIsNoCell> },
+        { "program-statics/only-a-write-of-another-value-is-counted-for-the-net-of-effects"_s, runNativeTestWithVariables<testOnlyWriteOfAnotherValueIsCounted> },
+        { "program-statics/only-the-first-name-added-above-instances-is-counted-for-the-net-of-effects"_s, runNativeTestWithVariables<testOnlyFirstNameAddedAboveInstancesIsCounted> },
     };
     return tests;
 }

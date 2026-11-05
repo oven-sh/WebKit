@@ -303,6 +303,7 @@ NEVER_INLINE void forEachIndexInParallel(const ParallelLoops& loops, unsigned co
     alignas(128) std::atomic<unsigned> next { 0 };
     alignas(128) std::atomic<unsigned> numberOfHelpers { 0 };
     const char* stepOfCaller = currentWorkOfThread().step.load(std::memory_order_relaxed);
+    std::optional<uint64_t> instructionsInFrontOfLoop = InstructionCounts::hasBegun() ? InstructionCounts::ofCurrentThread() : std::nullopt;
     SharedWork::run(loops, maxWorkers - 1, [&](LoopParticipant participant) {
         std::optional<CurrentWorkScope> workOfCaller;
         if (participant == LoopParticipant::Helper && stepOfCaller)
@@ -330,6 +331,10 @@ NEVER_INLINE void forEachIndexInParallel(const ParallelLoops& loops, unsigned co
     }, [&] {
         return next.load(std::memory_order_relaxed) < count;
     });
+    if (instructionsInFrontOfLoop) [[unlikely]] {
+        if (std::optional<uint64_t> instructionsBehindLoop = InstructionCounts::ofCurrentThread())
+            InstructionCounts::noteSpentInsideLoop(*instructionsBehindLoop - *instructionsInFrontOfLoop);
+    }
 }
 
 NEVER_INLINE void forEachIndexInParallel(const ParallelLoops& loops, unsigned count, NOESCAPE const ScopedLambda<void(unsigned index)>& functor)

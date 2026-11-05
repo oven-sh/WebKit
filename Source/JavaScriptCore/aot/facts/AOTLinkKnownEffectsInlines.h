@@ -78,7 +78,7 @@ uint64_t CalleeSummarizerForLinkEffects::layoutsChangedByRowsOf(FunctionID id, c
             bool namesOperand = false;
             auto lookAt = [&](BuiltinOperand position, uint32_t node) {
                 const BuiltinParameter* parameter = m_builtins.parameterFor(row, position);
-                if (parameter && (parameter->uses.containsAny(usesThatChangeOperandInLinkEffects) || parameter->uses.containsAny(usesThatChangeShapeInLinkEffects))) {
+                if (parameter && (parameter->uses.containsAny(usesThatChangeOperand) || parameter->uses.containsAny(usesThatChangeShape))) {
                     namesOperand = true;
                     layouts |= bitsOfLayoutsAt(typeAt(id, node));
                 }

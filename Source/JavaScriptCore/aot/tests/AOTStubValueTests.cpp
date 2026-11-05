@@ -8,7 +8,10 @@
 #if ENABLE(AOT)
 
 #include "AOTStubRunner.h"
+#include "AOTClosureWord.h"
+#include "AOTSlimClosure.h"
 #include "AOTStubTestSupport.h"
+#include "AOTStubsClosures.h"
 #include "AOTStubsElements.h"
 #include "AOTStubsStrings.h"
 #include "AOTStubsValues.h"
@@ -160,6 +163,131 @@ static void testTruthinessOfDoubles()
     }
 }
 
+static void testKindsThatPassTheCheckOfAProof()
+{
+    namespace Primitive = Typed::Primitive;
+    struct alignas(16) FakeCell {
+        uint64_t address() const { return std::bit_cast<uintptr_t>(this); }
+
+        uint32_t structureID { 0 };
+        uint8_t indexingTypeAndMisc { 0 };
+        uint8_t type;
+        uint8_t flags { 0 };
+        uint8_t cellState { 0 };
+    };
+    static_assert(OBJECT_OFFSETOF(FakeCell, type) == JSCell::typeInfoTypeOffset());
+    auto bitsOf = [](JSValue value) {
+        return static_cast<uint64_t>(JSValue::encode(value));
+    };
+    FakeCell string { .type = StringType };
+    FakeCell symbol { .type = SymbolType };
+    FakeCell bigInt { .type = HeapBigIntType };
+    FakeCell firstObject { .type = ObjectType };
+    FakeCell lastObject { .type = UINT8_MAX };
+    const std::pair<uint64_t, uint32_t> values[] = {
+        { bitsOf(jsUndefined()), Primitive::Undefined },
+        { bitsOf(jsNull()), Primitive::Null },
+        { bitsOf(jsBoolean(true)), Primitive::True },
+        { bitsOf(jsBoolean(false)), Primitive::False },
+        { bitsOf(jsNumber(0)), KindsOfProof::everyNumber },
+        { bitsOf(jsNumber(-1)), KindsOfProof::everyNumber },
+        { bitsOfDouble(0.5), KindsOfProof::everyNumber },
+        { bitsOfDouble(PNaN), KindsOfProof::everyNumber },
+        { bitsOf(JSValue()), Primitive::Absent },
+        { string.address(), Primitive::String },
+        { symbol.address(), Primitive::Symbol },
+        { bigInt.address(), Primitive::BigInt },
+        { firstObject.address(), KindsOfProof::everyObject },
+        { lastObject.address(), KindsOfProof::everyObject },
+    };
+
+    auto wordsWith = [](uint32_t kinds) {
+        return KindsOfProof::withSource(kinds, Typed::ProofSource::Lifetime) | static_cast<uint64_t>(UINT32_MAX) << KindsOfProof::shiftOfNumber;
+    };
+
+    StubCatalog catalog(StubOptions { });
+    StubRunner runner;
+    forEachRegisterVariant(checkProofOfKinds(), [&](StubKey key) {
+        for (GPRReg reg : allocatableGPRs)
+            AOT_TEST_CHECK(isARM64() || !containsRegister(catalog.summaryOf(key).clobbered, reg));
+        for (auto [value, kind] : values) {
+            for (uint32_t kinds : { kind, KindsOfProof::all })
+                AOT_TEST_CHECK(!runner.run(key, { value, wordsWith(kinds) }).calledOperation);
+        }
+    });
+
+    FakeCell cellOfNoKind { .type = CellType };
+    FakeCell structure { .type = StructureType };
+    FakeCell lastCellThatIsNoObject { .type = ObjectType - 1 };
+    static_assert(SymbolType < ObjectType - 1);
+    runner.countWordsNobodyWroteAndLeaveStubAtCallsOf(Entry::operationAOTThrowAtSite);
+    forEachRegisterVariant(checkProofOfKinds(), [&](StubKey key) {
+        for (auto [value, kind] : values) {
+            for (uint32_t kinds : { KindsOfProof::all & ~kind, 0u })
+                AOT_TEST_CHECK(runner.run(key, { value, wordsWith(kinds) }).calledOperation);
+            AOT_TEST_CHECK(!runner.run(key, { value, wordsWith(kind) }).calledOperation);
+        }
+        for (uint64_t wordThatIsNoValue : { cellOfNoKind.address(), structure.address(), lastCellThatIsNoObject.address(), static_cast<uint64_t>(JSValue::ValueNull | 1), static_cast<uint64_t>(JSValue::ValueUndefined | 0x10) })
+            AOT_TEST_CHECK(runner.run(key, { wordThatIsNoValue, wordsWith(KindsOfProof::all) }).calledOperation);
+    });
+}
+
+static void testClosuresThatPassTheCheckOfAProof()
+{
+    namespace Primitive = Typed::Primitive;
+    struct alignas(16) FakeClosure {
+        uint64_t address() const { return std::bit_cast<uintptr_t>(this); }
+
+        uint32_t structureID { 0 };
+        uint8_t indexingTypeAndMisc { 0 };
+        uint8_t type;
+        uint8_t flags { 0 };
+        uint8_t cellState { 0 };
+        uint64_t word;
+    };
+    static_assert(OBJECT_OFFSETOF(FakeClosure, type) == JSCell::typeInfoTypeOffset() && OBJECT_OFFSETOF(FakeClosure, word) == offsetOfSlimClosureWord);
+    constexpr uint32_t number = 77;
+    constexpr uint32_t upperHalf = ClosureWord::encodeUpperHalf(2, number, { });
+    static_assert((upperHalf & ClosureWord::functionMask) == number && upperHalf != number);
+    alignas(8) std::array<uint8_t, 128> storage { };
+    uint8_t* butterfly = storage.data() + storage.size() / 2;
+    memcpy(butterfly + ReifiedSlimClosure::offsetOfFunctionIndexInButterfly(), &number, sizeof(number));
+    FakeClosure asCreated { .type = SlimClosureType, .word = static_cast<uint64_t>(upperHalf) << 32 | 5 };
+    FakeClosure changed { .type = SlimClosureWithPropertiesType, .word = std::bit_cast<uintptr_t>(butterfly) };
+    auto wordsWith = [&](uint32_t kinds) {
+        return KindsOfProof::withSource(kinds, Typed::ProofSource::Variable) | static_cast<uint64_t>(upperHalf) << KindsOfProof::shiftOfNumber;
+    };
+
+    StubRunner runner;
+    forEachRegisterVariant(checkProofOfClosure(), [&](StubKey key) {
+        for (uint64_t closure : { asCreated.address(), changed.address() })
+            AOT_TEST_CHECK(!runner.run(key, { closure, wordsWith(0) }).calledOperation);
+        AOT_TEST_CHECK(!runner.run(key, { static_cast<uint64_t>(JSValue::encode(JSValue())), wordsWith(Primitive::Absent) }).calledOperation);
+        AOT_TEST_CHECK(!runner.run(key, { static_cast<uint64_t>(JSValue::encode(jsUndefined())), wordsWith(Primitive::Undefined) }).calledOperation);
+    });
+
+    constexpr uint32_t otherNumber = number + 1;
+    alignas(8) std::array<uint8_t, 128> otherStorage { };
+    uint8_t* otherButterfly = otherStorage.data() + otherStorage.size() / 2;
+    memcpy(otherButterfly + ReifiedSlimClosure::offsetOfFunctionIndexInButterfly(), &otherNumber, sizeof(otherNumber));
+    FakeClosure ofOtherFunction { .type = SlimClosureType, .word = static_cast<uint64_t>(ClosureWord::encodeUpperHalf(2, otherNumber, { })) << 32 | 5 };
+    FakeClosure withOtherFlags { .type = SlimClosureType, .word = static_cast<uint64_t>(ClosureWord::encodeUpperHalf(3, number, { })) << 32 | 5 };
+    FakeClosure changedOfOtherFunction { .type = SlimClosureWithPropertiesType, .word = std::bit_cast<uintptr_t>(otherButterfly) };
+    FakeClosure plainObject { .type = FinalObjectType, .word = 0 };
+    FakeClosure cellOfNoKindWithTheWord { .type = CellType, .word = asCreated.word };
+    FakeClosure textWithTheWord { .type = StringType, .word = asCreated.word };
+    runner.countWordsNobodyWroteAndLeaveStubAtCallsOf(Entry::operationAOTThrowAtSite);
+    forEachRegisterVariant(checkProofOfClosure(), [&](StubKey key) {
+        for (const FakeClosure* other : { &ofOtherFunction, &withOtherFlags, &changedOfOtherFunction, &plainObject, &cellOfNoKindWithTheWord, &textWithTheWord })
+            AOT_TEST_CHECK(runner.run(key, { other->address(), wordsWith(KindsOfProof::primitives & ~Primitive::String) }).calledOperation);
+        AOT_TEST_CHECK(!runner.run(key, { textWithTheWord.address(), wordsWith(Primitive::String) }).calledOperation);
+        AOT_TEST_CHECK(runner.run(key, { static_cast<uint64_t>(JSValue::encode(JSValue())), wordsWith(KindsOfProof::primitives & ~Primitive::Absent) }).calledOperation);
+        AOT_TEST_CHECK(runner.run(key, { static_cast<uint64_t>(JSValue::encode(jsNull())), wordsWith(Primitive::Undefined) }).calledOperation);
+        for (uint64_t closure : { asCreated.address(), changed.address() })
+            AOT_TEST_CHECK(!runner.run(key, { closure, wordsWith(0) }).calledOperation);
+    });
+}
+
 static void testStrictEqualityInBothForms()
 {
     StubRunner runner;
@@ -248,6 +376,8 @@ std::span<const NativeTest> stubValueTests()
         { "stubs/concatenate/ropes-from-every-state-of-the-free-list"_s, ImageTests::whenExecutable<testRopesFromEveryStateOfTheFreeList> },
         { "stubs/substring/ropes-from-every-state-of-the-free-list"_s, ImageTests::whenExecutable<testSubstringsFromEveryStateOfTheFreeList> },
         { "stubs/to-boolean/doubles"_s, ImageTests::whenExecutable<testTruthinessOfDoubles> },
+        { "stubs/check-proof-of-kinds/a-value-passes-where-its-kind-is-among-them-and-nowhere-else"_s, ImageTests::whenExecutable<testKindsThatPassTheCheckOfAProof> },
+        { "stubs/check-proof-of-closure/the-closure-asked-for-passes-and-no-other-object"_s, ImageTests::whenExecutable<testClosuresThatPassTheCheckOfAProof> },
         { "stubs/equal/strict-in-the-register-and-in-the-flags"_s, ImageTests::whenExecutable<testStrictEqualityInBothForms> },
     };
     return tests;

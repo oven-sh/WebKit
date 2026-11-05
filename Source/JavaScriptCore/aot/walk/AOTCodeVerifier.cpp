@@ -1545,7 +1545,9 @@ void CodeVerifier::verifyFrameCells()
     };
     auto isTextInBuilder = [&](ValueID id) {
         TypeID type = m_code.at(id).type;
-        return hasTextsInFrame && type && (m_types.at(type).isOpaque(OpaqueKind::StringBuilder) || m_types.at(type).isOpaque(OpaqueKind::BuilderCursor));
+        if (!hasTextsInFrame || !type)
+            return false;
+        return m_types.at(type).isOpaque(OpaqueKind::BuilderCursor) || (m_types.at(type).isOpaque(OpaqueKind::StringBuilder) && !stringBuilderIsCellOfHeap(m_code, id));
     };
     for (BlockID block : m_reachedBlocks) {
         for (ValueID parameter : m_code.at(block).parameters()) {

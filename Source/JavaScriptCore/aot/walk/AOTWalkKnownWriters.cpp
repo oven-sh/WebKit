@@ -14,6 +14,7 @@
 #include "AOTIRProgram.h"
 #include "AOTLinkTables.h"
 #include "AOTOpcodeSets.h"
+#include "AOTPlan.h"
 #include "AOTSweep.h"
 #include "AOTTypeArena.h"
 #include <algorithm>
@@ -34,16 +35,7 @@ static constexpr OptionSet<FactOfCell> factsOfCellKnownInKnownWriters {
 
 static OptionSet<FactOfCell> factsOfCellEndedInKnownWriters(const LocationMasks& writes)
 {
-    OptionSet<FactOfCell> ended = OptionSet<FactOfCell>::fromRaw(static_cast<OptionSet<FactOfCell>::StorageType>(~factsOfCellKnownInKnownWriters.toRaw()));
-    if (writes.contains(AbstractHeap::ShapeWords))
-        ended.add({ FactOfCell::NotFrozen, FactOfCell::OrderWordIsKnown, FactOfCell::IsLikelyAsAllocated, FactOfCell::IsLikelyAsConstructed, FactOfCell::BearsNoMark });
-    if (writes.contains(AbstractHeap::NamedProperties))
-        ended.add({ FactOfCell::NoFieldOutsideSlot, FactOfCell::NoExtraProperties, FactOfCell::OrderWordIsKnown, FactOfCell::IsLikelyAsAllocated, FactOfCell::IsLikelyAsConstructed, FactOfCell::BearsNoMark });
-    if (writes.contains(AbstractHeap::OrderWords))
-        ended.add({ FactOfCell::OrderWordIsKnown, FactOfCell::IsLikelyAsAllocated, FactOfCell::IsLikelyAsConstructed });
-    if (writes.contains(AbstractHeap::PrototypeLinks))
-        ended.add(FactOfCell::HasLayoutPrototype);
-    return ended;
+    return factsOfCellEndedBy(writes) | OptionSet<FactOfCell>::fromRaw(static_cast<OptionSet<FactOfCell>::StorageType>(~factsOfCellKnownInKnownWriters.toRaw()));
 }
 
 void WalkState::invalidate(const Effects& effects, NOESCAPE const ScopedLambda<bool(Reference holder)>& mayBeWritten, NOESCAPE const ScopedLambda<bool(LayoutID classOfGuard, PropertyKeyID nameOfGuard)>& mayEndGuard)
@@ -263,7 +255,6 @@ struct ElementStoreInKnownWriters {
 
 } // anonymous namespace
 
-static constexpr OperandUses usesThatCallOperandInKnownWriters { OperandUse::Calls, OperandUse::CallsPerElement, OperandUse::CallsRepeatedly };
 static constexpr OperandUses usesThatWriteOperandInKnownWriters {
     OperandUse::WritesContents, OperandUse::MovesElements, OperandUse::StoresByKey, OperandUse::DeletesByKey, OperandUse::AssignsFrom, OperandUse::ChangesIntegrity
 };
@@ -273,7 +264,7 @@ static constexpr OperandUses usesThatReachBeyondOperandInKnownWriters {
 static constexpr OperandUses usesThatWriteNoOperandInKnownWriters {
     OperandUse::Inspects, OperandUse::Retains, OperandUse::Returns, OperandUse::ReadsContents, OperandUse::RetainsContents
 };
-static_assert(everyOperandUseIsInExactlyOneOf({ usesThatCallOperandInKnownWriters, usesThatWriteOperandInKnownWriters, usesThatReachBeyondOperandInKnownWriters, usesThatWriteNoOperandInKnownWriters }));
+static_assert(everyOperandUseIsInExactlyOneOf({ usesThatCallOperand, usesThatWriteOperandInKnownWriters, usesThatReachBeyondOperandInKnownWriters, usesThatWriteNoOperandInKnownWriters }));
 
 static uint32_t numberOfDeclaredOperandsInKnownWriters(Opcode opcode)
 {
@@ -284,7 +275,7 @@ static bool opcodeMayRunCodeOfOperandsInKnownWriters(Opcode opcode, uint32_t num
 {
     for (uint32_t operandIndex = 0; operandIndex < numberOfDeclaredOperands; ++operandIndex) {
         const OperandInfo& info = operandInfoOf(opcode, operandIndex);
-        if (!info.protocols.isEmpty() || info.uses.containsAny(usesThatCallOperandInKnownWriters))
+        if (!info.protocols.isEmpty() || info.uses.containsAny(usesThatCallOperand))
             return true;
     }
     return false;
@@ -544,11 +535,25 @@ static void endWhatOperationWritesOrRunsInKnownWriters(Walker& walker, const Dra
     endWhatWriterWritesInKnownWriters(walker, draft, effects);
 }
 
+static void noteThatGuardsOfRowHaveBegunInKnownWriters(Walker& walker, LayoutID classLayout)
+{
+    const Program& program = walker.program();
+    do {
+        walker.state().noteThatGuardsHaveBegun(classLayout);
+        classLayout = parentNamedByClassRecord(program, walker.facts(), classLayout).layout;
+    } while (classLayout && program.at(classLayout).has(LayoutFlags::IsConstructorFunction) && walker.plan().hasClassRecord(classLayout) && !walker.state().guardsHaveBegun(classLayout));
+}
+
+bool writerEndsNoGuard(const Walker& walker, const Draft& writer)
+{
+    return guardsEndedByInKnownWriters(walker, writer).which == GuardsEndedInKnownWriters::Which::None;
+}
+
 void endWhatOperationWritesOrRuns(Walker& walker, const Draft& draft, const Effects& effects)
 {
     endWhatOperationWritesOrRunsInKnownWriters(walker, draft, effects);
     if (draft.opcode == Opcode::BeginMemberGuards)
-        walker.state().noteThatGuardsHaveBegun(declaredLayoutOf(walker.program(), draft.layout()));
+        noteThatGuardsOfRowHaveBegunInKnownWriters(walker, declaredLayoutOf(walker.program(), draft.layout()));
     static_assert(!declaredBoundOf(Opcode::PutSlot).writes.contains(AbstractHeap::NamedProperties) && !declaredBoundOf(Opcode::PutSlotOrAdd).writes.contains(AbstractHeap::NamedProperties));
     if ((draft.opcode != Opcode::PutSlot && draft.opcode != Opcode::PutSlotOrAdd) || testsItsOwnGuess(draft) || !effects.writes.contains(AbstractHeap::NamedProperties))
         return;

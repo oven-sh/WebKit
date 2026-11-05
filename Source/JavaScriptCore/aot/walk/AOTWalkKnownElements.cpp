@@ -24,14 +24,21 @@ static bool isTakenToLieInsideInKnownElements(Walker& walker, Reference position
     return type && walker.types().at(type).isInteger() && walker.types().at(type).integers.minimum >= 0;
 }
 
+std::optional<PassedTest> Walker::findWhatHoldsPositionInsideList(Reference list, Reference position)
+{
+    if (isTakenToLieInsideInKnownElements(*this, position))
+        return PassedTest();
+    if (!position || !has(Mechanism::TypedOperations) || m_state.answers().isEmpty())
+        return std::nullopt;
+    Reference length = recordNotedInKnownElements(findKnown(*this, KnownNote::LengthOfList, list));
+    std::optional<PassedTest> fromZeroUp = length ? findWhatHoldsFromZeroUp(position) : std::nullopt;
+    std::optional<PassedTest> below = fromZeroUp ? findWhatHoldsBelow(position, length) : std::nullopt;
+    return below ? std::optional(fromZeroUp->with(*below)) : std::nullopt;
+}
+
 bool isKnownToLieInsideList(Walker& walker, Reference list, Reference position)
 {
-    if (isTakenToLieInsideInKnownElements(walker, position))
-        return true;
-    if (!position || !walker.has(Mechanism::TypedOperations) || walker.state().answers().isEmpty())
-        return false;
-    Reference length = recordNotedInKnownElements(findKnown(walker, KnownNote::LengthOfList, list));
-    return length && isKnownToLieInside(walker, position, length);
+    return !!walker.findWhatHoldsPositionInsideList(list, position);
 }
 
 std::optional<Effects> effectsOfAppendToListAsMade(Walker& walker, const Draft& append)

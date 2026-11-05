@@ -238,19 +238,44 @@ function formatWrittenOperand({ mode, accepted, conversion, refused }: ModelPara
   return `WrittenOperand::Integer { least: ${minimum.value}, most: ${maximum.value}, may_be_left_out: ${mode === "Optional"} }`;
 }
 
+function findOperandsCalledWithReceiver({ overloads }: ModelBuiltin): number[] {
+  const called = overloads.flatMap(({ flow }) =>
+    flow.callbacks.flatMap(({ callee, thisValue }) =>
+      thisValue.place === "Operand" && thisValue.operand.operand === "Receiver" && callee.operand !== "Receiver"
+        ? [callee.index]
+        : [],
+    ),
+  );
+  return [...new Set(called)].sort((left, right) => left - right);
+}
+
+function mayAnswerReceiver({ overloads }: ModelBuiltin): boolean {
+  return overloads.some(({ result }) =>
+    [result.type, ...result.typesByPlatform.map(({ type }) => type)].some(({ parts }) =>
+      parts.some(part => part.part === "Operand" && part.operand.operand === "Receiver"),
+    ),
+  );
+}
+
 function formatQuietCalls(builtin: ModelBuiltin, context: EntryContext): string[] {
   const calls = builtin.overloads.filter(({ mode }) => mode === "Call");
   const firstThatRunsCode = calls.findIndex(({ effects }) => effects.capability === "js");
   const inFrontOfIt = firstThatRunsCode === -1 ? calls : calls.slice(0, firstThatRunsCode);
+  const quiet: string[] = [];
   let answersPrimitive = true;
-  return inFrontOfIt.flatMap(({ parameters, receiver, flags, result, flow }) => {
+  for (const { parameters, receiver, flags, result, flow } of inFrontOfIt) {
     answersPrimitive &&= holdsNoObject(result.type);
-    if (receiver !== null || flags.includes("IsUndeclared") || !handsCodeOnlyWhatProgramHandedIn(flow)) return [];
     const operands = parameters.map(formatWrittenOperand);
-    if (operands.includes(null)) return [];
+    const givesNoLine =
+      receiver !== null ||
+      flags.includes("IsUndeclared") ||
+      !handsCodeOnlyWhatProgramHandedIn(flow) ||
+      operands.includes(null);
+    if (givesNoLine) break;
     const written = context.writtenOperandLists.add(operands.map(operand => operand ?? ""));
-    return [`QuietCall { operands: ${written}, answers_primitive: ${answersPrimitive} }`];
-  });
+    quiet.push(`QuietCall { operands: ${written}, answers_primitive: ${answersPrimitive} }`);
+  }
+  return quiet;
 }
 
 function formatEntry(builtin: ModelBuiltin, context: EntryContext): string {
@@ -574,6 +599,16 @@ function emitWhatAnyOperandIsAsked(model: TableModel): string {
       formatFunctions(calls.union(implementedBy)),
     ),
     emitSlice(
+      "pub static OPERANDS_CALLED_WITH_RECEIVER: &[(BuiltinId, u32)]",
+      model.builtins.flatMap(builtin =>
+        findOperandsCalledWithReceiver(builtin).map(index => `(${formatBuiltinId(builtin)}, ${index})`),
+      ),
+    ),
+    emitSlice(
+      "pub static ENTRIES_THAT_MAY_ANSWER_RECEIVER: &[BuiltinId]",
+      model.builtins.filter(mayAnswerReceiver).map(formatBuiltinId),
+    ),
+    emitSlice(
       "pub static ENTRIES_THAT_MAKE_PROMISES: &[BuiltinId]",
       model.builtins.filter(builtin => closure.makesPromise(builtin)).map(formatBuiltinId),
     ),
@@ -625,6 +660,10 @@ export function emitRustTable(model: TableModel): string {
     emitEntriesReadingUnderKeysTheyAreHanded(model),
     emitWhatAnyOperandIsAsked(model),
     emitFunctionsOfOpenRealm(model),
+    emitSlice(
+      "pub static MEMBERS_CREATED_IN_SOME_RUNS: &[BuiltinId]",
+      model.builtins.filter(builtin => builtin.isCreatedInSomeRuns).map(formatBuiltinId),
+    ),
     emitSlice("static HOST_READS: &[HostRead]", model.hostReads.map(formatHostRead)),
   ].join("");
 }

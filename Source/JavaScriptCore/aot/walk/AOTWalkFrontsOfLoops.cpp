@@ -207,9 +207,9 @@ BitVector Walker::blocksThatSomeQuietTurnPassesThrough(BlockID inputHead, std::s
 
 bool Walker::wayBehindOperationComesRound(BlockID inputHead, ValueID operation) const
 {
-    if (!operation)
-        return false;
     const BodyIndex& index = currentBodyIndex();
+    if (!operation || operation.index() >= index.numberOfValues())
+        return false;
     LoopID loop = index.loopOf(inputHead);
     BlockID from = index.blockOf(operation);
     if (!index.isInLoop(from, loop))
@@ -238,7 +238,7 @@ bool Walker::someTextGrowsInQuietTurn(BlockID inputHead, std::span<const Growing
     const BodyIndex& index = currentBodyIndex();
     Vector<ValueID, 4> ranOtherCode;
     for (ValueID ran : tried.operationsThatRanOtherCode) {
-        if (!ran)
+        if (!ran || ran.index() >= index.numberOfValues() || index.isParameter(ran))
             return true;
         if (!opcodesOfFamily(OperationFamily::Operator).contains(index.opcodeOf(ran)))
             ranOtherCode.append(ran);

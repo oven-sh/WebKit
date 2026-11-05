@@ -24,6 +24,7 @@
 #include <memory>
 #include <optional>
 #include <type_traits>
+#include <utility>
 #include <wtf/BitVector.h>
 #include <wtf/HashMap.h>
 #include <wtf/HashSet.h>
@@ -107,7 +108,6 @@ public:
 
     JSObject* classPrototype(VM&, const LayoutData&);
     JSObject* classPrototypeOfInstances(VM&, const LayoutData&);
-    JSObject* classPrototypeOfBase(VM&, const LayoutData&);
     void didCreatePrototypePropertyOf(Closure*);
     JSObject* classPrototypeIfExists(const LayoutData&) const;
     bool prototypeAwaitsFirstTouch(const LayoutData& classLayout) const { return m_classesWhosePrototypeAwaitsFirstTouch.get(m_tables.rankOfClass(classLayout.index)); }
@@ -154,7 +154,6 @@ public:
     bool guardHasEnded(const LayoutData& classLayout, ClassSide side) const { return m_endedGuards.get(indexOfGuard(classLayout, side)); }
     bool hasNoGuardLeft(const LayoutData& classLayout, ClassSide side) const { return !classLayout.classData().hasGuardsHereOrBelow(side) || guardHasEnded(classLayout, side); }
     bool hasInstanceBelowOtherPrototype(const LayoutData& classLayout) const { return !m_classesWithInstanceBelowOtherPrototype.isEmpty() && m_classesWithInstanceBelowOtherPrototype.contains(classLayout.index); }
-    bool guardsAwaitFirstInstance(const LayoutData& classLayout) const { return !m_constructorFunctionsThatAreOnlyBases.isEmpty() && m_constructorFunctionsThatAreOnlyBases.contains(classLayout.index); }
     bool guardsHaveBegun(const LayoutData& classLayout) const { return m_classesWhoseGuardsHaveBegun.get(m_tables.rankOfClass(classLayout.index)); }
     static bool leavesDefinitionToRecord(const LayoutData& classLayout) { return classLayout.createsMembersLazily && classLayout.createsClassObjectOnMutation && classLayout.classData().guardsHoldWhileClear; }
     void disarmMemberGuards(const LayoutData&);
@@ -175,6 +174,23 @@ public:
     private:
         ClassTable& m_classes;
     };
+    class DefinitionFromRecord {
+        WTF_MAKE_NONCOPYABLE(DefinitionFromRecord);
+    public:
+        DefinitionFromRecord(ClassTable& classes, const LayoutData& classLayout)
+            : m_classes(classes)
+            , m_outer(std::exchange(classes.m_classDefinedFromRecord, &classLayout))
+        {
+        }
+
+        ~DefinitionFromRecord() { m_classes.m_classDefinedFromRecord = m_outer; }
+
+    private:
+        ClassTable& m_classes;
+        const LayoutData* m_outer;
+    };
+    void holdMemberToProof(VM&, const LayoutData&, ClassSide, JSObject* holder, UniquedStringImpl*);
+    void holdLinkToProof(VM&, const LayoutData&, ClassSide, JSObject* holder);
     class MethodTableUpdate {
         WTF_MAKE_NONCOPYABLE(MethodTableUpdate);
     public:
@@ -264,9 +280,7 @@ private:
     Object* createClassInstance(VM&, const LayoutData&, JSObject* prototype);
     static JSFinalObject* createOrdinaryInstance(JSGlobalObject*, unsigned numberOfProperties, JSObject* prototype);
     const LayoutData* classWithPrototype(JSObject* prototype) const;
-    enum class UseOfFunction : bool { MakesObjects, IsBase };
-    JSObject* defineClassOfConstructorFunction(VM&, const LayoutData&, UseOfFunction);
-    void armGuardsOfConstructorFunction(VM&, const LayoutData&, JSObject* prototype, Closure* classObject);
+    JSObject* defineClassOfConstructorFunction(VM&, const LayoutData&);
     void beginGuards(const LayoutData& classLayout)
     {
         if (!guardsHaveBegun(classLayout)) [[unlikely]]
@@ -274,7 +288,6 @@ private:
     }
     void beginGuardsSlowCase(const LayoutData&);
     void checkParentOfPrototypeObject(const LayoutData&, JSObject* prototype);
-    void enterHolderWithoutGuards(VM&, const LayoutData&, ClassSide, JSObject* holder);
     bool tryLeaveDefinitionToRecord(VM&, Closure* classObject, const LayoutData&, JSValue heritage, JSValue prototypeParent);
     bool tryDefineAgainWithKeptStructures(JSGlobalObject*, Closure* classObject, const LayoutData&, JSValue heritage, JSValue prototypeParent);
     bool hasNoGuardLeft(const LayoutData& classLayout) const { return hasNoGuardLeft(classLayout, ClassSide::Prototype) && hasNoGuardLeft(classLayout, ClassSide::Static); }
@@ -365,8 +378,8 @@ private:
         ClassSide side { ClassSide::Prototype };
         UniquedStringImpl* uid { nullptr };
     } m_memberBeingDefined;
+    const LayoutData* m_classDefinedFromRecord { nullptr };
     UncheckedKeyHashSet<uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_constructorFunctionsWithoutClass;
-    UncheckedKeyHashSet<uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_constructorFunctionsThatAreOnlyBases;
 };
 
 } } // namespace JSC::AOT

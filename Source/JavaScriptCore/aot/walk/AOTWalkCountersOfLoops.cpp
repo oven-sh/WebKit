@@ -438,6 +438,47 @@ Vector<CounterTestedInFrontOfLoop, 2> findCountersTestedInFrontOfLoop(Walker& wa
     return counters;
 }
 
+RelationOfHeadOnNumber findRelationOfHeadBetweenCounterThatEntersAsInt32AndNumber(Walker& walker, BlockID inputHead, std::span<const Reference> entering, std::span<const CounterTestedInFrontOfLoop> askedInFront)
+{
+    static constexpr OpcodeSet relations { Opcode::Less, Opcode::LessEq };
+    if (!walker.has(Mechanism::TypedOperations) || !walker.has(Mechanism::UnboxedNumbers) || !walker.has(Mechanism::LoopInvariants))
+        return { };
+    const BodyIndex& index = walker.currentBodyIndex();
+    if (!index.holdsAnyOf(stepsByOneOfCountersOfLoops | stepsByNumberOfCountersOfLoops))
+        return { };
+    LoopID loop = index.loopOf(inputHead);
+    BodyBlock head = index.block(inputHead);
+    BodyTerminator end = head.terminator();
+    if (end.kind() != TerminatorKind::Branch || !head.numberOfParameters())
+        return { };
+    uint32_t firstValueOfLoop = head.firstParameter().index();
+    ValueID asked = end.as<TerminatorKind::Branch>().conditionOperand();
+    if (!asked || index.isParameter(asked) || !head.holds(asked) || asked.index() + 1 != head.endOfValues().index() || !relations.contains(index.opcodeOf(asked)))
+        return { };
+    BodyTargets::Iterator target = end.targets().begin();
+    if (!index.isInLoop((*target).block(), loop) || index.isInLoop((*++target).block(), loop))
+        return { };
+    BodyValue relation = index.value(asked);
+    ValueID counter = parameterOfHeadNamedInCountersOfLoops(index, relation.operand(0), inputHead);
+    ValueID number = index.valueBehindCasts(relation.operand(1));
+    if (!counter || !number || number.index() >= firstValueOfLoop)
+        return { };
+    uint32_t position = counter.index() - firstValueOfLoop;
+    Reference enters = position < entering.size() ? entering[position] : Reference();
+    bool isAskedForInt32 = std::ranges::any_of(askedInFront, [&](const CounterTestedInFrontOfLoop& counter) {
+        return counter.position == position && counter.tested == TypeTable::int32 && !counter.isHeldWhereItComesRound;
+    });
+    if (!enters || !enters.isRecord() || (!isAskedForInt32 && !walker.types().at(walker.typeOf(enters)).isInt32()))
+        return { };
+    Reference value = walker.referenceOf(number);
+    if (!isBoxOrDoubleThatMayBeInt32InCountersOfLoops(walker, value) || std::ranges::find(entering, value) != entering.end())
+        return { };
+    NamesOfCounterOfLoop names;
+    if (!isSteppedAllRoundInCountersOfLoops(walker, index, inputHead, position, names) || !turnsTakeCounterAsIntegerInCountersOfLoops(index, loop, names))
+        return { };
+    return { asked, number };
+}
+
 } } } // namespace JSC::AOT::Typed
 
 #endif // ENABLE(AOT)

@@ -26,7 +26,7 @@ static_assert(Butterfly::offsetOfPublicLength() == -static_cast<ptrdiff_t>(sizeo
 enum class ArrayElementKind : uint8_t { Int32, Double, Contiguous };
 enum class EmptyArray : uint8_t { ContiguousCapacity1, ContiguousCapacity3, DoubleCapacity1, DoubleCapacity3, DoubleDefaultCapacity, Int32DefaultCapacity, Int32Capacity1, Int32Capacity3 };
 enum class ArraySliceRange : uint8_t { Bounded, Whole, BoundedWithPropertyRoom, WholeWithPropertyRoom, BoundedAsDoubles, WholeAsDoubles };
-enum class ArrayStoredValue : uint8_t { Value, Number };
+enum class ArrayStoredValue : uint8_t { Value, Number, ValueInSloppyCode };
 enum class ArrayRead : uint8_t { OfListAsMade, OfAnyList };
 enum class SharedElements : uint8_t { InImage, InStorageOfSite };
 enum class SearchedElements : uint8_t { Values, ValuesFromStart };
@@ -121,6 +121,7 @@ static_assert(exists(arrayIndexOfString(SearchedElements::Values)) && exists(arr
 static_assert(exists(arraySlice()) && exists(arrayCopy()) && exists(createArguments()) && exists(arrayPush()) && exists(arrayPushOfKnownKind()) && exists(appendElements()));
 static_assert(exists(appendMembers()));
 static_assert(bodyOf(arrayPushOfKnownKind()) == arrayPush());
+static_assert(exists(arrayPutAtIndex(ArrayStoredValue::ValueInSloppyCode)) && !exists(arrayPutAtNumber(ArrayStoredValue::ValueInSloppyCode)));
 static_assert(exists(arrayPutAtIndex(ArrayStoredValue::Number)) && exists(arrayPutAtNumber(ArrayStoredValue::Number)) && exists(arrayGetAtIndex()) && exists(arrayGetAtIndex(ArrayRead::OfAnyList)) && !exists(arrayGetAtIndex().withForm(2)) && exists(arrayGetAtNumber()));
 
 } } // namespace JSC::AOT

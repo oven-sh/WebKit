@@ -44,7 +44,7 @@ static bool takesKeyOfCollectionInWalkTexts(Walker& walker, const BodyValue& use
     auto call = user.as<Opcode::Call>();
     auto arguments = call.argumentsOperands();
     ValueID receiver = call.thisValueOperand();
-    if (!arguments.size() || *arguments.begin() != text || !receiver || !(receiver < text))
+    if (!arguments.size() || *arguments.begin() != text || !receiver)
         return false;
 
     TypeArena& types = walker.types();
@@ -52,13 +52,13 @@ static bool takesKeyOfCollectionInWalkTexts(Walker& walker, const BodyValue& use
     auto holdsCollections = [&](TypeID type) {
         return type && !isNeverType(type) && types.isSubset(type, collections);
     };
-    if (Reference built = walker.referenceOf(receiver); built && holdsCollections(walker.typeOf(built)))
+    if (Reference built = receiver < text ? walker.referenceOf(receiver) : Reference(); built && holdsCollections(walker.typeOf(built)))
         return true;
     TypeID expected = findExpectation(walker, receiver).type;
     return expected && holdsCollections(types.withoutNullish(expected));
 }
 
-static UseOfTextAsKey useAsKeyInWalkTexts(Walker& walker, const BodyIndex& index, ValueID text)
+static UseOfTextAsKey useAsKeyInWalkTexts(Walker& walker, const BodyIndex& index, ValueID text, bool goesOnThroughJoinThatAloneTakesText = false)
 {
     while (true) {
         std::optional<BodyUser> mention = index.firstUser(text);
@@ -69,7 +69,7 @@ static UseOfTextAsKey useAsKeyInWalkTexts(Walker& walker, const BodyIndex& index
         BodyValue user = index.value(mention->value);
         if (accessesUnderKeysInWalkTexts.contains(user.opcode()))
             return user.operand(OperandIndex::ElemGet::property) == text ? UseOfTextAsKey::NameOfProperty : UseOfTextAsKey::None;
-        if (!opcodesThatStateTypes.contains(user.opcode()))
+        if (!opcodesThatStateTypes.contains(user.opcode()) && !(goesOnThroughJoinThatAloneTakesText && operationsThatJoinTexts.contains(user.opcode()) && index.onlyUsingValue(text) == user.id()))
             return takesKeyOfCollectionInWalkTexts(walker, user, text) ? UseOfTextAsKey::AnyKey : UseOfTextAsKey::None;
         text = user.id();
     }
@@ -90,7 +90,7 @@ static bool takePartsInWalkTexts(Walker& walker, const BodyValue& join, ValueID 
             joinsTexts = true;
             return;
         }
-        if (takePartsOfJoinReturnedByCopy(walker, operand, parts)) {
+        if (takePartsOfJoinMadeForOneReader(walker, operand, parts)) {
             joinsTexts = true;
             return;
         }
@@ -181,7 +181,7 @@ bool buildTypedJoinOfTextsOfItsOpcodes(Walker& walker, const BodyValue& first)
         walker.walkStretch(block.id(), behindGrowth, behindGrowth);
         return true;
     }
-    UseOfTextAsKey use = useAsKeyInWalkTexts(walker, index, last.id());
+    UseOfTextAsKey use = useAsKeyInWalkTexts(walker, index, last.id(), parts.size() == 2);
     hasWalkedOn |= holdsPartsTakenOutOfTexts(walker, last, parts.span());
     if (!hasWalkedOn && use == UseOfTextAsKey::None)
         return false;

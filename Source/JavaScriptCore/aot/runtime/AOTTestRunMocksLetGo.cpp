@@ -37,6 +37,14 @@ bool Modules::loadComesToModuleWhoseMockEnded(ModuleID module) const
     return hasMockThatEnded(module) || (data(module).kind == ModuleKind::CommonJs && !isImportedByModuleThatRequireAnswered(module));
 }
 
+void Modules::bringBackMockOfPreloadThatWasPatched(ModuleID fileOrModule)
+{
+    if (!m_modulesWhoseMockOfPreloadIsPatched.get(fileOrModule.index()))
+        return;
+    LoadedModule& held = ensureLoaded(fileOrModule);
+    setMockInPlace(fileOrModule, held.mockLaidInPreload.get(), held.whatRequireAnswersUnderMockLaidInPreload.get());
+}
+
 void Modules::letGoOfMockAtNextLoad(ModuleID module)
 {
     if (!data(module).isESModuleOfProgram() || data(module).isFaceOfFile() || isSomeLoadUnderWay() || isLoaderInMiddleOfGraph() || isImportedByModuleThatRequireAnswered(module)) {

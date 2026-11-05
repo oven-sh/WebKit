@@ -57,6 +57,8 @@ public:
     void generateGetStringCodeUnit(const ValueContext&);
 
     bool testsEveryPosition();
+    enum class StorageIsWritten : bool { No, Yes };
+    void holdKindOfList(const ValueContext& access, StorageIsWritten = StorageIsWritten::No);
     void stopUnlessInside(const ValueContext& access, Condition isInside);
     void stopUnlessListIsAsMadeWhereNothingIsFound(const ValueContext& access, CellPointer list);
 
@@ -123,6 +125,8 @@ public:
     void appendElement(const ValueContext& store, CellPointer array, ValueID element);
     Boxed appendOutOfLine(const OperationContext&, CellPointer array, ValueID element);
     Condition tryStoreElement(const ValueContext& store, CellPointer array, Integer index, ValueID stored);
+    void widenStorageOfIntegers(CellPointer array, const ArrayStorageForm& wider, LBasicBlock isLeftToOthers);
+    void turnIntegersIntoFractions(CellPointer array, const ArrayElements&, LBasicBlock isLeftToOthers);
 
     TypedArrayElements typedArrayElementsOf(CellPointer view, LBasicBlock isNotFixedLength);
     TypedArrayElements typedArrayElementsOf(ValueID view, LBasicBlock isNotFixedLength);

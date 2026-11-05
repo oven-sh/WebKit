@@ -318,7 +318,10 @@ inline CCallHelpers::Address StubRunner::environmentSlot(size_t offsetInEnvironm
 
 inline std::optional<GPRReg> StubRunner::registerThatHoldsAddressOfStub(const StubSignature& signature, bool passesImmediate)
 {
-    if (!isARM64() || !passesImmediate || !containsRegister(RegisterSet::macroClobberedGPRs(), *signature.immediate))
+    bool takesScratchRegister = passesImmediate && containsRegister(RegisterSet::macroClobberedGPRs(), *signature.immediate);
+    for (unsigned i = 0; i < signature.numberOfOperands; ++i)
+        takesScratchRegister |= containsRegister(RegisterSet::macroClobberedGPRs(), signature.operands[i]);
+    if (!isARM64() || !takesScratchRegister)
         return std::nullopt;
     GPRReg reg = namesRegister(signature, gprOf(StubRegister::T15)) ? gprOf(StubRegister::T14) : gprOf(StubRegister::T15);
     AOT_TEST_CHECK(!namesRegister(signature, reg) && !signature.usesCallConvention);
@@ -359,7 +362,12 @@ inline void StubRunner::emitStubCall(CCallHelpers& jit, const StubSignature& sig
 
     if (addressOfStub) {
         jit.loadPtr(environmentSlot(OBJECT_OFFSETOF(StubEnvironment, stub)), *addressOfStub);
-        jit.load64(environmentSlot(OBJECT_OFFSETOF(StubEnvironment, immediate)), *signature.immediate);
+        if (passesImmediate)
+            jit.load64(environmentSlot(OBJECT_OFFSETOF(StubEnvironment, immediate)), *signature.immediate);
+        for (unsigned i = 0; i < signature.numberOfOperands; ++i) {
+            if (containsRegister(RegisterSet::macroClobberedGPRs(), signature.operands[i]))
+                jit.load64(environmentSlot(OBJECT_OFFSETOF(StubEnvironment, operands), i), signature.operands[i].gpr());
+        }
         jit.call(*addressOfStub, JITThunkPtrTag);
     } else
         jit.call(environmentSlot(OBJECT_OFFSETOF(StubEnvironment, stub)), JITThunkPtrTag);

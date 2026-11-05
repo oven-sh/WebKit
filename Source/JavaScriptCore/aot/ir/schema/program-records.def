@@ -156,8 +156,8 @@ list openedNames : OpenedName as openedname
 list builtinsUsedAtStart : BuiltinUsedAtStart as usedatstart
 
 enum BlockRole { Ordinary CatchHandler CleanupHandler IterationCleanup DisposalCleanup }
-enum BlockFrequency { | engine Normal Unlikely Rare }
-record BlockHead wire wireOnly { parameterCount: UInt32 valueCount: UInt32 role: BlockRole subject: Value? hasHandler: Bool }
+enum BlockFrequency { Normal Unlikely | engine Rare }
+record BlockHead wire wireOnly { parameterCount: UInt32 valueCount: UInt32 role: BlockRole subject: Value? hasHandler: Bool frequency: BlockFrequency }
 record ParameterHead wire wireOnly { type: Type? }
 record ValueHead wire wireOnly { opcode: UInt32 position: UInt32? }
 record TerminatorHead wire wireOnly { kind: UInt32 position: UInt32? targetCount: UInt32 }

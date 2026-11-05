@@ -581,11 +581,61 @@ static void testObjectsThatLeaveCostNoMoreBesideManyVariables()
         AOT_TEST_CHECK(state.variable(VariableID(statement)) == valueOfWalkStateTests(statement));
 }
 
+static void testListTakesRoomOfFormerListAndNothingThatItHeld()
+{
+    Vector<uint32_t> former;
+    for (uint32_t number = 0; number < 1000; ++number)
+        former.append(number);
+    const uint32_t* room = former.span().data();
+    size_t capacity = former.capacity();
+    Vector<uint32_t> list;
+    takeRoom(list, former);
+    AOT_TEST_CHECK(list.isEmpty() && list.capacity() == capacity && former.isEmpty() && !former.capacity());
+    list.append(7);
+    AOT_TEST_CHECK(list.span().data() == room);
+
+    Vector<uint32_t, 4> formerInItsOwnRoom { 1, 2, 3 };
+    Vector<uint32_t, 4> listInItsOwnRoom;
+    takeRoom(listInItsOwnRoom, formerInItsOwnRoom);
+    AOT_TEST_CHECK(listInItsOwnRoom.isEmpty() && listInItsOwnRoom.capacity() == 4);
+}
+
+static void testRecordsTakeSegmentsOfFormerRecords()
+{
+    StableArray<uint32_t, 4> former;
+    for (uint32_t number = 0; number < 40; ++number)
+        former.append(number);
+    const uint32_t* first = &former[0];
+    StableArray<uint32_t, 4> records;
+    records.takeRoomOf(former);
+    AOT_TEST_CHECK(records.isEmpty() && former.isEmpty());
+#if ASSERT_ENABLED
+    AOT_TEST_CHECK(*reinterpret_cast<const uint8_t*>(first) == byteOfRoomThatIsTaken);
+#endif
+    records.append(7);
+    former.append(8);
+    AOT_TEST_CHECK(&records[0] == first && records[0] == 7 && &former[0] != first && former[0] == 8);
+}
+
+static void testSideWordsTakeSegmentsOfUsualSizeAlone()
+{
+    SideWords former;
+    uint32_t* inLargeSegment = former.allocate(1u << 15);
+    uint32_t* inUsualSegment = former.allocate(8);
+    AOT_TEST_CHECK(inLargeSegment != inUsualSegment);
+    SideWords words;
+    words.takeRoomOf(former);
+    AOT_TEST_CHECK(words.allocate(8) == inUsualSegment);
+}
+
 std::span<const NativeTest> walkStateTests()
 {
     static constexpr NativeTest tests[] {
         { "walk-state/answers-as-plain-lists-do"_s, testAnswersAsPlainListsDo },
         { "walk-state/objects-that-leave-cost-no-more-beside-many-variables"_s, testObjectsThatLeaveCostNoMoreBesideManyVariables },
+        { "walk-state/a-list-takes-the-room-of-a-former-list-and-nothing-that-it-held"_s, testListTakesRoomOfFormerListAndNothingThatItHeld },
+        { "walk-state/records-take-the-segments-of-former-records"_s, testRecordsTakeSegmentsOfFormerRecords },
+        { "walk-state/side-words-take-segments-of-the-usual-size-alone"_s, testSideWordsTakeSegmentsOfUsualSizeAlone },
     };
     return tests;
 }

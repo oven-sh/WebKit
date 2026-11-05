@@ -217,11 +217,6 @@ Reference valueOfPromiseFulfilledHere(Walker& walker, Reference promise)
     return { };
 }
 
-void noteSuspensionOfCoroutine(Walker& walker, Draft&)
-{
-    walker.coroutineState().hasBuiltSuspension = true;
-}
-
 static bool findsConstructorOfPromisesInCoroutinePromises(Walker& walker, Reference promise)
 {
     const Program& program = walker.program();
@@ -265,7 +260,6 @@ Reference buildAwaitOfWhatHasNoThen(Walker& walker, Reference awaited, std::span
     if (!asksWhetherFrameMayGoOn)
         return buildSuspensionInCoroutine(walker, WTF::move(await)) ? awaited : Reference();
 
-    noteSuspensionOfCoroutine(walker, await);
     Reference mayGoOn = walker.build(draftInCoroutinePromises(walker, Opcode::AwaitMayContinue, origin));
     if (!mayGoOn)
         return { };
@@ -359,23 +353,14 @@ static bool buildCallOfPromiseResolveInCoroutinePromises(Walker& walker, const B
     if (!typeOfValue)
         return false;
 
-    auto liesWithinWhatLooksHaveSeen = [&](TypeID given) {
-        TypeID widest = walker.isInLoop() ? widestTypeOfOperation(walker, call) : given;
-        return widest && types.isSubset(given, widest);
-    };
-
     if (types.overlap(typeOfValue, typeOfPromisesInCoroutinePromises(walker))) {
         if (!promiseHasConstructorOfThisRealmInCoroutinePromises(walker, value))
-            return false;
-        if (!liesWithinWhatLooksHaveSeen(typeOfValue))
             return false;
         walker.bind(call.id(), value);
         return true;
     }
 
     if (!isProvenToHaveNoThen(walker, value))
-        return false;
-    if (!liesWithinWhatLooksHaveSeen(typeOfPromisesInCoroutinePromises(walker)))
         return false;
     Reference promise = buildPromiseOfRealmInCoroutinePromises(walker, call, origin);
     if (!promise)

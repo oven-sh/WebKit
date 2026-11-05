@@ -91,7 +91,13 @@ ArgumentsMadeWhereTheyLeave::ArgumentsMadeWhereTheyLeave(Walker& walker, const B
 
     m_name = name;
     m_boundBefore = bound;
+    ValueID list = walker.walksBodyBehindEntry() && index.opcodeOf(name) == Opcode::CreateUnmappedArguments ? index.value(name).as<Opcode::CreateUnmappedArguments>().restOperand() : ValueID();
+    Reference listBefore = list ? walker.referenceBoundTo(list) : Reference();
+    if (Reference again = listBefore ? walker.makeHiddenListOfEntryAgain() : Reference())
+        walker.bind(list, again);
     buildFreshObject(walker, index.value(name));
+    if (listBefore)
+        walker.bind(list, listBefore);
 }
 
 ArgumentsMadeWhereTheyLeave::~ArgumentsMadeWhereTheyLeave()

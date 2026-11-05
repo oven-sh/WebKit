@@ -1025,7 +1025,7 @@ std::optional<bool> outcomeKnownOf(Walker& walker, Reference condition)
     return std::nullopt;
 }
 
-static void noteRelationInKnownAnswers(Walker& walker, const Operation& comparison, bool isTrue)
+static void noteRelationInKnownAnswers(Walker& walker, Reference test, const Operation& comparison, bool isTrue)
 {
     const Code& code = walker.code();
     Reference left = referenceToRecordInKnownAnswers(code, comparison.operand(0));
@@ -1037,7 +1037,7 @@ static void noteRelationInKnownAnswers(Walker& walker, const Operation& comparis
         return;
     bool isWrittenOtherWayRound = comparison.opcode == Opcode::Greater || comparison.opcode == Opcode::GreaterEq;
     bool admitsEqual = comparison.opcode == Opcode::LessEq || comparison.opcode == Opcode::GreaterEq;
-    noteKnown(walker, KnownNote::Relation, isWrittenOtherWayRound ? right : left, isWrittenOtherWayRound ? left : right, admitsEqual, LocationMasks(), isTrue);
+    noteKnown(walker, KnownNote::Relation, isWrittenOtherWayRound ? right : left, isWrittenOtherWayRound ? left : right, admitsEqual, LocationMasks(), static_cast<uint64_t>(test.bits()) << 32 | isTrue);
 }
 
 void noteWhatBranchDecidesOnEdge(Walker& walker, BlockID from, uint32_t targetIndex)
@@ -1062,7 +1062,7 @@ void noteWhatBranchDecidesOnEdge(Walker& walker, BlockID from, uint32_t targetIn
             continue;
         }
         if (allRelations.contains(record.opcode))
-            noteRelationInKnownAnswers(walker, record, isTrue);
+            noteRelationInKnownAnswers(walker, condition, record, isTrue);
         return;
     }
 }
@@ -1078,34 +1078,46 @@ std::optional<uint32_t> onlyTargetDecidedOnWay(Walker& walker, const BodyTermina
     if (!outcome)
         return std::nullopt;
     uint32_t target = *outcome ? 0 : 1;
-    if (walker.isInLoop() && (!terminator.targets()[target].proofs().empty() || boundsProvenOnEdge(walker.currentBodyIndex(), terminator, target)))
-        return std::nullopt;
     return target;
+}
+
+std::optional<PassedTest> Walker::findWhatHoldsBelow(Reference value, Reference bound)
+{
+    TypeID typeOfValue = typeOf(value);
+    TypeID typeOfBound = typeOf(bound);
+    if (!typeOfValue || !typeOfBound)
+        return std::nullopt;
+    Type valueType = m_types.at(typeOfValue);
+    Type boundType = m_types.at(typeOfBound);
+    bool areIntegers = valueType.isInteger() && boundType.isInteger();
+    if (areIntegers && valueType.integers.maximum < boundType.integers.minimum)
+        return PassedTest();
+    auto comparisonThatAnswered = [&](std::optional<uint64_t> noted, bool answer) -> std::optional<PassedTest> {
+        if (!noted || static_cast<bool>(*noted & 1) != answer)
+            return std::nullopt;
+        return findPassedTest(Reference::fromBits(static_cast<uint32_t>(*noted >> 32)), answer);
+    };
+    if (std::optional<PassedTest> isLess = comparisonThatAnswered(findKnown(*this, KnownNote::Relation, value, bound, 0), true))
+        return isLess;
+    return areIntegers ? comparisonThatAnswered(findKnown(*this, KnownNote::Relation, bound, value, 1), false) : std::nullopt;
+}
+
+std::optional<PassedTest> Walker::findWhatHoldsFromZeroUp(Reference value)
+{
+    TypeID type = typeOf(value);
+    if (!type || !m_types.at(type).isInteger() || m_types.at(type).integers.minimum < 0)
+        return std::nullopt;
+    return PassedTest();
 }
 
 bool isKnownToLieBelow(Walker& walker, Reference value, Reference bound)
 {
-    TypeID typeOfValue = walker.typeOf(value);
-    TypeID typeOfBound = walker.typeOf(bound);
-    if (!typeOfValue || !typeOfBound)
-        return false;
-    Type valueType = walker.types().at(typeOfValue);
-    Type boundType = walker.types().at(typeOfBound);
-    bool areIntegers = valueType.isInteger() && boundType.isInteger();
-    if (areIntegers && valueType.integers.maximum < boundType.integers.minimum)
-        return true;
-    if (findKnown(walker, KnownNote::Relation, value, bound, 0) == std::optional<uint64_t>(1))
-        return true;
-    return areIntegers && findKnown(walker, KnownNote::Relation, bound, value, 1) == std::optional<uint64_t>(0);
+    return !!walker.findWhatHoldsBelow(value, bound);
 }
 
 bool isKnownToLieInside(Walker& walker, Reference position, Reference length)
 {
-    TypeID type = walker.typeOf(position);
-    if (!type)
-        return false;
-    Type typeOfPosition = walker.types().at(type);
-    return typeOfPosition.isInteger() && typeOfPosition.integers.minimum >= 0 && isKnownToLieBelow(walker, position, length);
+    return walker.findWhatHoldsFromZeroUp(position) && walker.findWhatHoldsBelow(position, length);
 }
 
 } } } // namespace JSC::AOT::Typed

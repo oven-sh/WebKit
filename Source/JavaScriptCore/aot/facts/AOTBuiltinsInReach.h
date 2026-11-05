@@ -60,6 +60,7 @@ public:
     void noteNameCalled(PropertyKeyID);
     void noteNameSpelledByProgram(PropertyKeyID);
     void noteReadUnderKeyNobodyKnows();
+    void noteReadOfProgramUnderKeyNobodyKnows(FunctionID, ValueID);
     void noteRead(BuiltinID);
     void noteCalled(BuiltinID);
     void noteConstructed(BuiltinID);
@@ -80,14 +81,17 @@ public:
     bool mayRun(BuiltinID canonical) const;
     bool mayRunOrHasObjects(BuiltinID canonical) const;
     bool isAskedForOtherNames(BuiltinID canonical) const;
+    bool isOutOfSight(BuiltinID canonical) const;
     const BuiltinCondition* lightFormOf(BuiltinID canonical) const;
     bool loaderOfHostMayRun() const;
     bool hostIsAskedForValueOfModule() const;
     bool unseenCodeCanRun() const;
+    bool holdsBackNamesFromRunTime() const;
+    Vector<ModuleID> takeModulesSpelledInTexts();
+    bool letInNamesFromRunTime();
     bool objectsMayHaveMethodCalledWithStartupLoads() const;
 
     bool takeForConstant(BuiltinID member);
-    bool mayBeReplacedOrHidden(BuiltinID member);
 
     void noteWrite(BuiltinID holder, PropertyKeyID, bool onlyDeletes = false);
     void noteHandedWhatIsNoTextNumberOrBoolean(BuiltinID holder);
@@ -103,6 +107,7 @@ public:
     void noteLostBuiltinsReachUnseen();
     void noteInstanceAtUnseen(BuiltinClassID);
     void noteObjectHandedToFormatter();
+    void noteTypeHandedToHandler(BuiltinTypeID);
     void noteEntryHandsHostNothing(uint32_t entry);
     void noteHostMayFindSomethingAt(uint32_t entry);
     std::span<const FunctionID> functionsThatAnswerEveryNameOnInstances() const;

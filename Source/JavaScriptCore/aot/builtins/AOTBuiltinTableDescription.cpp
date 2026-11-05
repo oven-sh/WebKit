@@ -167,7 +167,7 @@ public:
         auto integers = [&] {
             has(BuiltinTypeFlag::HasOnlyIntegers) ? object("minimum"_s, type.integers.minimum, "maximum"_s, type.integers.maximum) : write(Null { });
         };
-        object("isAnything"_s, has(BuiltinTypeFlag::IsAnything), "hasAnyObject"_s, has(BuiltinTypeFlag::HasAnyObject), "hasAnyFunction"_s, has(BuiltinTypeFlag::HasAnyFunction),
+        object("isAnything"_s, has(BuiltinTypeFlag::IsAnything), "isMadeOfListedClasses"_s, has(BuiltinTypeFlag::IsMadeOfListedClasses), "hasAnyObject"_s, has(BuiltinTypeFlag::HasAnyObject), "hasAnyFunction"_s, has(BuiltinTypeFlag::HasAnyFunction),
             "hasPlainData"_s, has(BuiltinTypeFlag::HasPlainData), "primitives"_s, type.primitives, "integers"_s, integers, "stringLiterals"_s, type.stringLiterals,
             "freshness"_s, type.freshness, "parts"_s, type.parts);
     }

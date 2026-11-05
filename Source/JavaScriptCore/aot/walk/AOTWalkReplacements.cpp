@@ -574,8 +574,8 @@ PropertyKeyID keyOfSymbolMadeOnce(Walker& walker, const BodyValue& value)
     if (called != Builtins::Symbol && called != Builtins::SymbolFor)
         return { };
     std::span<const SummaryKeyAtSite> symbols = walker.facts().summaries().at(walker.currentFunction()).symbolsMadeOnce.span();
-    auto made = std::ranges::find(symbols, value.id(), &SummaryKeyAtSite::site);
-    return made != symbols.end() ? made->key : PropertyKeyID();
+    auto made = std::ranges::lower_bound(symbols, value.id(), { }, &SummaryKeyAtSite::site);
+    return made != symbols.end() && made->site == value.id() ? made->key : PropertyKeyID();
 }
 
 static bool replaceCallThatMakesSymbolOnce(Walker& walker, const BodyValue& call)
@@ -977,7 +977,7 @@ static bool replaceSpeciesOfListByNewList(Walker& walker, const BodyValue& creat
     Draft list(Opcode::NewArrayLike, walker.originOf(created));
     walker.chooseConservativeFields(list);
     list.setLengthOperand(length);
-    list.setSourceOperand(source);
+    list.setSourceOperand(operation.likeOperand() ? walker.referenceOf(operation.likeOperand()) : source);
     if (Reference room = operation.roomOperand() ? walker.referenceOf(operation.roomOperand()) : Reference(); room && walker.types().at(walker.typeOf(room)).isInteger())
         list.setRoomOperand(room);
     list.setArrayStorage(ArrayStorage::Other);

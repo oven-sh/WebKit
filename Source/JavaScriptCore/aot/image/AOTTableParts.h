@@ -284,6 +284,7 @@ struct TableEncoder {
     Vector<uint32_t> classesByParent;
     Vector<uint32_t> firstClassBelow;
     BitVector sidesWithClassGuardsHereOrBelow;
+    BitVector classesWithRecordsAllTheWayUp;
 };
 
 bool showsVariablesOf(const TableInputs&, ModuleID);
@@ -329,7 +330,9 @@ struct ClassRecordParts {
     LayoutID parentThatListsClass;
     ClassData data { };
 };
+void askRowsOfClassesForClassRecords(TableEncoder&);
 ClassRecordParts collectClassRecordParts(const TableEncoder&, LayoutID classLayout);
+Vector<ClassBelowWithGuardOfNameData> collectClassesBelowWithGuardsOfNames(const TableEncoder&);
 void groupClassesByParentInClassRecords(TableEncoder&, std::span<const LayoutID> parentsThatListClasses);
 void appendListsOfClassRecord(TableEncoder&, LayoutID classLayout, const std::array<Vector<uint32_t>, numberOfClassSides>& namedGuards, ClassData&);
 

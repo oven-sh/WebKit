@@ -101,7 +101,8 @@ public:
         m_blockHead = m_words.size();
         ++m_numberOfBlocks;
         m_numberOfValues += static_cast<uint32_t>(parameterTypes.size());
-        add(parameterTypes.size(), 0, role, subject, 0);
+        static_assert(BodyBlock::numberOfHeadWords == 6);
+        add(parameterTypes.size(), 0, role, subject, 0, BlockFrequency::Normal);
         for (uint32_t type : parameterTypes)
             add(type);
         return *this;

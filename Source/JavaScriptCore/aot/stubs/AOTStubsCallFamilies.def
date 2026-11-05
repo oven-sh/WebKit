@@ -40,3 +40,4 @@ v(CallDirectFunction, CalledByCode, (WithFrame, Leaf, WithHostFrame, LeafReturni
 
 v(ChangedClosureHasNumber, CalledByCode, (Slim, Full), FormAxis | OperandRegisterAxis, 0, 0, AllISAs, NoISA, AnyAllocatableRegister, Never, Leaf, ClobbersOnlyScratch, NoEffects, ChangedClosureHasNumber)
 v(NumberOfChangedClosure, CalledByCode, (), OperandRegisterAxis, 0, 0, AllISAs, NoISA, AnyAllocatableRegister, Never, Leaf, ClobbersOnlyScratch, NoEffects, NumberOfChangedClosure)
+v(CheckProofOfClosure, CalledByCode, (), OperandRegisterAxis, 0, 0, AllISAs, NoISA, AnyAllocatableRegister, Never, MayCall, ClobbersOnlyScratch, NoEffects, CheckProofOfClosure)

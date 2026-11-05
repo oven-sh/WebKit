@@ -12,8 +12,8 @@ enum UnprovenCause (family: UnprovenCauseFamily) {
     Untracked(UnprovenType) LayoutOutsideFamily(UnprovenType)
 }
 enum UnseenCodeCause { Unknown EvaluatesText ImportsUncompiledModule LoadsModuleByName RunsUnseenCode OptionAdmitsCode FlowResultDisabled RunsMachineCode LoadsCodeByName }
-flags BuiltinUse { Tested Read Called Constructed Written Escaped StoredByName }
-enum FeatureUseKind { Named Unnamed }
+flags BuiltinUse { Tested Read Called Constructed Written Escaped StoredByName NamedAtRunTime }
+enum FeatureUseKind { Named Unnamed NamedAtRunTime }
 enum LocaleUseKind { Unknown HostDefault Constant }
 enum TypeTestFailure { TakesGenericPath Throws Leaves }
 enum CodeForm { Open Closed Generic }
@@ -91,9 +91,9 @@ enum ReferenceWidth { Wide Narrow }
 enum ImageForm { Absolute PositionIndependent }
 flags CheckSet { VerifyEachPass Validate ValidateBackEnd ValidateReferences VerifyEachStage ValidateReferenceGuards FlowFixpoint UsedValuesAreListed ClaimsToBackEnd MovedLoads DecidedComparisons SpillSlots AllocatedRegisters ClaimsOfFlow KeepGoing LastWalksOfLoopsAlone WalksOfLoopsThatFitAgain FlowFindsNoLessFromMore }
 flags ReportSet { Flow Symbols Allocations AccessCounts Uses }
-flags TestingSwitch { IgnoreBranchHints IgnoreExpectedTypes DelayFlowRules DelayOtherFlowRules ShuffleExpectedTypes NativeCodeAnswersNullish CheckProofsAtRunTime UnseenCodeAnswersUndefined WritesBodiesStraight CheckProofsAtEntries CheckProofsAtEntriesAndFields KeepsCellsOutOfFrames TestsEveryPosition PositionsAreTakenToLieInside CheckEffectsAtRunTime RowSaysLess NoCalleeKeepsWhatItIsHanded ArgumentsOfUnseenCodeDoNotLeave UndoLeavesExpectations ShuffleBlockFrequencies FailGuesses GiveLinkMore ShuffleChoices LaterUnitsOpenNoGuesses }
+flags TestingSwitch { IgnoreBranchHints IgnoreExpectedTypes DelayFlowRules DelayOtherFlowRules ShuffleExpectedTypes NativeCodeAnswersNullish CheckProofsAtRunTime UnseenCodeAnswersUndefined WritesBodiesStraight CheckProofsAtEntries CheckProofsAtEntriesAndFields KeepsCellsOutOfFrames TestsEveryPosition PositionsAreTakenToLieInside CheckEffectsAtRunTime RowSaysLess NoCalleeKeepsWhatItIsHanded ArgumentsOfUnseenCodeDoNotLeave UndoLeavesExpectations ShuffleBlockFrequencies FailGuesses GiveLinkMore ShuffleChoices LaterUnitsOpenNoGuesses CheckWalkAtRunTime OrderBlocksAgain }
 flags AdmittedCode { Inspector ReplacedBuiltins }
-flags ExcludedCode { EvaluatedText FunctionSource CodeOutsideImage HostEvaluatedText ForeignCalls ForeignCallsOfUnseenCode LibraryText FilesOfImageForCodeOutside }
+flags ExcludedCode { EvaluatedText FunctionSource CodeOutsideImage HostEvaluatedText ForeignCalls ForeignCallsOfUnseenCode LibraryText FilesOfImageForCodeOutside FeaturesNamedAtRunTime }
 flags OutputOptions { Obfuscate SharesRealms RunsInSeveralRealms RunsInPlaceOfFiles KeepsFunctionNames }
 record ImagesBelowWords abi { address: UInt64 size: UInt64 }
 record TargetOptions abi { features: UInt64 featuresKeptOnlyWhenNamed: UInt64[8] imagesBelow: ImagesBelowWords architecture: Architecture referenceWidth: ReferenceWidth imageForm: ImageForm reserved: UInt32 }

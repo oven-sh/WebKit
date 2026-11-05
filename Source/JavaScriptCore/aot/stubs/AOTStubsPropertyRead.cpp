@@ -47,6 +47,7 @@ StubSignature signatureOfGetById(StubKey)
     return signature;
 }
 
+StubSignature signatureOfGetByIdKeepingRegisters(StubKey key) { return signatureOfGetById(key); }
 StubSignature signatureOfGetByIdAfterFrontProbe(StubKey) { return signatureReturningValue({ firstStubOperandRegister, slotHeaderRegister }); }
 StubSignature signatureOfGetByIdHashed(StubKey) { return signatureReturningValue({ firstStubOperandRegister }); }
 StubSignature signatureOfGetByIdCheckingColumn(StubKey) { return signatureReturningValue({ firstStubOperandRegister }); }
@@ -1006,6 +1007,66 @@ void readByFrontTable(StubAssembler& jit, const FrontTableRead& r, GPRReg result
         }
     }
     readByLoadedFrontCell(jit, { r.receiver, r.cell, r.scratch, r.structureID, r.receiverIs }, result, finish);
+#endif
+}
+
+void generateGetByIdKeepingRegisters(StubAssembler& jit)
+{
+#if CPU(X86_64)
+    const GPRReg R0 = jit.operand(0);
+    const GPRReg name = jit.immediate();
+    const GPRReg scratch = jit.allocateScratch(StubRegister::T10);
+    const GPRReg cell = jit.allocateScratch(StubRegister::T11);
+    const GPRReg row = jit.allocateScratch(StubRegister::T13);
+    const GPRReg header = gprOf(StubRegister::T12);
+    RELEASE_ASSERT(R0 == jit.result() && noOverlap(R0, name, scratch, cell, row, header));
+    auto callAndReturn = [&](const ScopedLambda<void()>& emitCall) {
+        jit.callAndReturnPreservingRegisters({ .callee = StubCallee::CompiledCode, .returnsValue = true, .checksException = true, .registersThatCalleeLoses = registersThatWaysOnwardOfGetByIdLose }, emitCall);
+    };
+    Jump isNotCell = jit.branchIfNotCell(R0);
+    JumpList isNotInAccessTable;
+    JumpList isAnsweredByFieldTable;
+    JumpList isNotInFieldTable;
+    JumpList hasOtherName;
+    JumpList isNotCompiledObject;
+    JumpList isAnsweredByHandler;
+    returnValueByAccessTable(jit, { { R0, name, cell, scratch }, row, InvalidGPRReg, true }, isNotInAccessTable, isAnsweredByFieldTable);
+    isNotInAccessTable.link(&jit);
+    FieldTableProbe probe { R0, name, row, cell, true, true, false, jit.key().callerFrame() };
+    probe.isNotCompiledObject = &isNotCompiledObject;
+    probe.keyInAccessTable = scratch;
+    probe.placeInAccessTable = OwnedScratchRegister::registerToHandOn;
+    probe.hasFormAndOperand = &isAnsweredByFieldTable;
+    probe.waysOnwardAreCalls = true;
+    returnFieldByTable(jit, probe, isNotInFieldTable);
+    auto askFrontTable = [&](ReceiverOfFrontProbe receiverIs) {
+        jit.load32(Address(R0, JSCell::structureIDOffset()), cell);
+        readByFrontTable(jit, { R0, name, cell, row, scratch, InvalidGPRReg, receiverIs, true }, R0, hasOtherName);
+        isAnsweredByHandler.append(jit.jump());
+    };
+    isNotInFieldTable.link(&jit);
+    askFrontTable(ReceiverOfFrontProbe::IsCompiledObject);
+    isNotCompiledObject.link(&jit);
+    askFrontTable(ReceiverOfFrontProbe::IsAnyCell);
+
+    isAnsweredByHandler.link(&jit);
+    callAndReturn(scopedLambda<void()>([&] {
+        jit.move(row, header);
+        callSlotHandler(jit, slotHandlerTable(SlotOperation::Read, SlotOrigin::ByIdInStubFrame, SlotForm::PackedSlot), header, scratch);
+    }));
+
+    hasOtherName.link(&jit);
+    callAndReturn(scopedLambda<void()>([&] {
+        jit.callStub(getByIdHashed().withCallerFrame(CallerFrame::StubFrame));
+    }));
+
+    isNotCell.link(&jit);
+    callAndReturn(scopedLambda<void()>([&] {
+        jit.callStub(getById().withCallerFrame(CallerFrame::StubFrame));
+    }));
+#else
+    UNUSED_PARAM(jit);
+    RELEASE_ASSERT_NOT_REACHED();
 #endif
 }
 

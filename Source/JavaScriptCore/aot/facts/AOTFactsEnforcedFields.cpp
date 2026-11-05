@@ -63,14 +63,27 @@ uint64_t fillEnforcedFieldsForFacts(Program& program, const LinkTables& linked, 
         const Vector<Field>& declared = program.at(field.layout).fields;
         return field.field < declared.size() && declared[field.field].flags.contains(FieldFlags::IsInherited);
     };
-    auto forEachFieldWithSlot = [&](const Invocable<void(FieldReference)> auto& functor) {
+    auto hasRowsToWrite = [&](LayoutID id) {
+        return hasOrSharesSlotsForFactsOfEnforcedFields(program, linked, id) && slotsOfLayoutMayBeHeldToTypes(program, familiesOfInstances, id);
+    };
+    for (size_t index : tables.layoutsThatTakeRowsOfBase) {
+        LayoutID id(static_cast<uint32_t>(index));
+        if (hasRowsToWrite(id) != hasRowsToWrite(writtenBaseOf(program.at(id))))
+            tables.layoutsThatTakeRowsOfBase.clear(index);
+    }
+    auto forEachFieldWithSlot = [&](const Invocable<bool(LayoutID)> auto& takeRowsOfBase, const Invocable<void(FieldReference)> auto& functor) {
         for (uint32_t index = 0; index < numberOfLayouts; ++index) {
             LayoutID id(index);
-            if (!hasOrSharesSlotsForFactsOfEnforcedFields(program, linked, id) || !slotsOfLayoutMayBeHeldToTypes(program, familiesOfInstances, id))
+            if (!hasRowsToWrite(id))
                 continue;
             uint32_t numberOfFields = tables.firstFieldOfLayout[index + 1] - tables.firstFieldOfLayout[index];
-            for (uint32_t field = 0; field < numberOfFields; ++field)
+            for (uint32_t field = 0; field < numberOfFields; ++field) {
+                if (field == program.layouts[index].ownFieldCount && takeRowsOfBase(id)) {
+                    field = static_cast<uint32_t>(program.layouts[index].fields.size()) - 1;
+                    continue;
+                }
                 functor(FieldReference { id, field });
+            }
         }
     };
 
@@ -80,14 +93,22 @@ uint64_t fillEnforcedFieldsForFacts(Program& program, const LinkTables& linked, 
         FunctionID constructor = program.at(id).constructor;
         return constructor && program.at(constructor).role == FunctionRole::Library;
     };
-    forEachFieldWithSlot([&](FieldReference field) {
+    forEachFieldWithSlot([&](LayoutID id) {
+        return tables.layoutsThatTakeRowsOfBase.get(id.index());
+    }, [&](FieldReference field) {
         if (isTakenFromAbove(field))
             return;
         EnforcedField answer = enforcedTypeOfField(program, linked, held, families, familiesOfInstances, types, field);
         numberHeldToWhatIsSeen += answer.type && answer.source == SourceOfSlotType::Seen && !isMadeByLibrary(field.layout);
         writeForFactsOfEnforcedFields(rowOf(field), answer.type, answer.holdsUndefinedAndNull);
     });
-    forEachFieldWithSlot([&](FieldReference field) {
+    forEachFieldWithSlot([&](LayoutID id) {
+        if (!tables.layoutsThatTakeRowsOfBase.get(id.index()))
+            return false;
+        LayoutID base = writtenBaseOf(program.at(id));
+        std::ranges::copy(tables.fields.span().subspan(tables.firstFieldOfLayout[base.index()], program.at(base).fields.size()), tables.fields.mutableSpan().subspan(tables.firstFieldOfLayout[id.index()] + program.at(id).ownFieldCount).begin());
+        return true;
+    }, [&](FieldReference field) {
         if (!isTakenFromAbove(field) || rowOf(field).facts.contains(FieldFact::IsAccessor))
             return;
         const FieldFacts& declaration = rowOf(declarationOf(program, field));

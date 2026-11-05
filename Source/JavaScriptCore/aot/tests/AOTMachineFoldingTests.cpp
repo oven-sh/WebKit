@@ -49,6 +49,12 @@ static constexpr int64_t foldingTestTag = static_cast<int64_t>(0xfffe00000000000
 static constexpr ASCIILiteral foldingTestTextOfPureNaN = "ConstDouble(NaN(0x7ff8000000000000))"_s;
 static constexpr ASCIILiteral foldingTestTextOfNegativeNaN = "ConstDouble(NaN(0xfff8000000000000))"_s;
 static constexpr ASCIILiteral foldingTestTextOfInvalidOperation = isX86_64() ? foldingTestTextOfNegativeNaN : foldingTestTextOfPureNaN;
+static constexpr ASCIILiteral foldingTestTextOfPureNaNOfFloats = "ConstFloat(NaN(0x7fc00000))"_s;
+static constexpr ASCIILiteral foldingTestTextOfNegativeNaNOfFloats = "ConstFloat(NaN(0xffc00000))"_s;
+static constexpr ASCIILiteral foldingTestTextOfInvalidOperationOnFloats = isX86_64() ? foldingTestTextOfNegativeNaNOfFloats : foldingTestTextOfPureNaNOfFloats;
+static constexpr int64_t foldingTestBitsOfNaNWithPayload = 0x7ff8000000abcdefll;
+static constexpr int64_t foldingTestBitsOfNegativeNaNWithPayload = static_cast<int64_t>(0xfff8000000abcdefull);
+static constexpr int64_t foldingTestBitsOfNegativeSignalingNaN = static_cast<int64_t>(0xfff0000000000001ull);
 static constexpr ASCIILiteral foldingTestAnyText { };
 
 static constexpr ASCIILiteral foldingTestTextOnARM64(ASCIILiteral text)
@@ -883,6 +889,45 @@ static void testMachineFoldingOfNumbers()
         { foldingTestTextOfInvalidOperation, [](FoldingTest& v) { return v.make(Mul, v.number(foldingTestInfinity), 0.0); } },
         { foldingTestTextOfInvalidOperation, [](FoldingTest& v) { return v.make(Sqrt, v.number(-1.0)); } },
         { foldingTestTextOfNegativeNaN, [](FoldingTest& v) { return v.make(Add, v.cast(v.int64(-1), Double), 1.0); } },
+        { foldingTestTextOfInvalidOperation, [](FoldingTest& v) { return v.make(Add, v.number(foldingTestInfinity), -foldingTestInfinity); } },
+        { foldingTestTextOfInvalidOperation, [](FoldingTest& v) { return v.make(Add, v.number(-foldingTestInfinity), foldingTestInfinity); } },
+        { foldingTestTextOfInvalidOperation, [](FoldingTest& v) { return v.make(Sub, v.number(-foldingTestInfinity), -foldingTestInfinity); } },
+        { foldingTestTextOfInvalidOperation, [](FoldingTest& v) { return v.make(Mul, v.number(0.0), foldingTestInfinity); } },
+        { foldingTestTextOfInvalidOperation, [](FoldingTest& v) { return v.make(Mul, v.number(-0.0), foldingTestInfinity); } },
+        { foldingTestTextOfInvalidOperation, [](FoldingTest& v) { return v.make(Mul, v.number(-foldingTestInfinity), 0.0); } },
+        { foldingTestTextOfInvalidOperation, [](FoldingTest& v) { return v.make(Div, v.number(-0.0), 0.0); } },
+        { foldingTestTextOfInvalidOperation, [](FoldingTest& v) { return v.make(Div, v.number(foldingTestInfinity), foldingTestInfinity); } },
+        { foldingTestTextOfInvalidOperation, [](FoldingTest& v) { return v.make(Div, v.number(-foldingTestInfinity), foldingTestInfinity); } },
+        { foldingTestTextOfInvalidOperation, [](FoldingTest& v) { return v.make(Sqrt, v.number(-foldingTestInfinity)); } },
+        { foldingTestTextOfInvalidOperation, [](FoldingTest& v) { return v.make(Sqrt, v.number(-std::numeric_limits<double>::denorm_min())); } },
+        { foldingTestTextOfInvalidOperationOnFloats, [](FoldingTest& v) { return v.make(Div, v.single(0.0f), 0.0f); }, FoldingTestAnswers::NotCompared },
+        { foldingTestTextOfInvalidOperationOnFloats, [](FoldingTest& v) { return v.make(Sub, v.single(std::numeric_limits<float>::infinity()), std::numeric_limits<float>::infinity()); }, FoldingTestAnswers::NotCompared },
+        { foldingTestTextOfInvalidOperationOnFloats, [](FoldingTest& v) { return v.make(Mul, v.single(std::numeric_limits<float>::infinity()), 0.0f); }, FoldingTestAnswers::NotCompared },
+        { foldingTestTextOfInvalidOperationOnFloats, [](FoldingTest& v) { return v.make(Sqrt, v.single(-1.0f)); }, FoldingTestAnswers::NotCompared },
+        { foldingTestTextOfPureNaNOfFloats, [](FoldingTest& v) { return v.make(Add, v.single(std::numeric_limits<float>::quiet_NaN()), 1.0f); }, FoldingTestAnswers::NotCompared },
+        { foldingTestTextOfNegativeNaNOfFloats, [](FoldingTest& v) { return v.make(Neg, v.single(std::numeric_limits<float>::quiet_NaN())); }, FoldingTestAnswers::NotCompared },
+        { foldingTestTextOfPureNaN, [](FoldingTest& v) { return v.make(Add, v.cast(v.int64(foldingTestBitsOfNaNWithPayload), Double), 1.0); } },
+        { foldingTestTextOfPureNaN, [](FoldingTest& v) { return v.make(Sub, v.number(1.0), v.cast(v.int64(foldingTestBitsOfNaNWithPayload), Double)); } },
+        { foldingTestTextOfNegativeNaN, [](FoldingTest& v) { return v.make(Sub, v.number(1.0), v.cast(v.int64(foldingTestBitsOfNegativeNaNWithPayload), Double)); } },
+        { foldingTestTextOfNegativeNaN, [](FoldingTest& v) { return v.make(Mul, v.cast(v.int64(foldingTestBitsOfNegativeNaNWithPayload), Double), 0.0); } },
+        { foldingTestTextOfNegativeNaN, [](FoldingTest& v) { return v.make(Mul, v.number(foldingTestInfinity), v.cast(v.int64(foldingTestBitsOfNegativeNaNWithPayload), Double)); } },
+        { foldingTestTextOfNegativeNaN, [](FoldingTest& v) { return v.make(Div, v.cast(v.int64(foldingTestBitsOfNegativeNaNWithPayload), Double), 0.0); } },
+        { foldingTestTextOfPureNaN, [](FoldingTest& v) { return v.make(Div, v.number(0.0), v.cast(v.int64(foldingTestBitsOfNaNWithPayload), Double)); } },
+        { foldingTestTextOfNegativeNaN, [](FoldingTest& v) { return v.make(Add, v.cast(v.int64(foldingTestBitsOfNegativeSignalingNaN), Double), 1.0); } },
+        { foldingTestTextOfNegativeNaN, [](FoldingTest& v) { return v.make(Add, v.cast(v.int64(foldingTestBitsOfNegativeNaNWithPayload), Double), v.cast(v.int64(foldingTestBitsOfNaNWithPayload), Double)); }, FoldingTestAnswers::NotCompared },
+        { foldingTestTextOfPureNaN, [](FoldingTest& v) { return v.make(Add, v.cast(v.int64(foldingTestBitsOfNaNWithPayload), Double), v.cast(v.int64(foldingTestBitsOfNegativeNaNWithPayload), Double)); }, FoldingTestAnswers::NotCompared },
+        { foldingTestTextOfPureNaN, [](FoldingTest& v) { return v.make(Sqrt, v.cast(v.int64(foldingTestBitsOfNaNWithPayload), Double)); } },
+        { foldingTestTextOfNegativeNaN, [](FoldingTest& v) { return v.make(Sqrt, v.cast(v.int64(foldingTestBitsOfNegativeNaNWithPayload), Double)); } },
+        { foldingTestTextOfNegativeNaN, [](FoldingTest& v) { return v.make(Ceil, v.cast(v.int64(foldingTestBitsOfNegativeNaNWithPayload), Double)); } },
+        { foldingTestTextOfNegativeNaN, [](FoldingTest& v) { return v.make(Floor, v.cast(v.int64(foldingTestBitsOfNegativeNaNWithPayload), Double)); } },
+        { foldingTestTextOfNegativeNaN, [](FoldingTest& v) { return v.make(FTrunc, v.cast(v.int64(foldingTestBitsOfNegativeNaNWithPayload), Double)); } },
+        { foldingTestTextOfPureNaN, [](FoldingTest& v) { return v.make(Ceil, v.number(foldingTestNaN)); } },
+        { foldingTestTextOfPureNaN, [](FoldingTest& v) { return v.make(Floor, v.number(foldingTestNaN)); } },
+        { foldingTestTextOfPureNaN, [](FoldingTest& v) { return v.make(FTrunc, v.number(foldingTestNaN)); } },
+        { foldingTestTextOfNegativeNaN, [](FoldingTest& v) { return v.make(Neg, v.number(foldingTestNaN)); } },
+        { foldingTestTextOfPureNaN, [](FoldingTest& v) { return v.make(Neg, v.cast(v.int64(foldingTestBitsOfNegativeNaNWithPayload), Double)); } },
+        { foldingTestTextOfPureNaN, [](FoldingTest& v) { return v.make(Abs, v.cast(v.int64(foldingTestBitsOfNegativeNaNWithPayload), Double)); } },
+        { foldingTestTextOfPureNaN, [](FoldingTest& v) { return v.make(Abs, v.number(foldingTestNaN)); } },
         { "ConstDouble(-0)"_s, [](FoldingTest& v) { return v.make(Mul, v.number(-1.0), 0.0); } },
         { "ConstDouble(0)"_s, [](FoldingTest& v) { return v.make(Add, v.number(-0.0), 0.0); } },
         { "ConstDouble(-0)"_s, [](FoldingTest& v) { return v.make(Add, v.number(-0.0), -0.0); } },
@@ -937,6 +982,10 @@ static void testMachineFoldingOfNumbers()
         { foldingTestTextOfPureNaN, [](FoldingTest& v) { return v.make(FMin, v.number(1.0), foldingTestNaN); } },
         { foldingTestTextOfPureNaN, [](FoldingTest& v) { return v.make(FMax, v.number(foldingTestNaN), 1.0); } },
         { foldingTestTextOfPureNaN, [](FoldingTest& v) { return v.make(FMax, v.number(1.0), foldingTestNaN); } },
+        { foldingTestTextOfNegativeNaN, [](FoldingTest& v) { return v.make(FMin, v.cast(v.int64(foldingTestBitsOfNegativeNaNWithPayload), Double), 1.0); } },
+        { foldingTestTextOfNegativeNaN, [](FoldingTest& v) { return v.make(FMin, v.number(1.0), v.cast(v.int64(foldingTestBitsOfNegativeNaNWithPayload), Double)); } },
+        { foldingTestTextOfNegativeNaN, [](FoldingTest& v) { return v.make(FMax, v.cast(v.int64(foldingTestBitsOfNegativeNaNWithPayload), Double), 1.0); } },
+        { foldingTestTextOfNegativeNaN, [](FoldingTest& v) { return v.make(FMax, v.number(1.0), v.cast(v.int64(foldingTestBitsOfNegativeNaNWithPayload), Double)); } },
         { "ConstDouble(-0)"_s, [](FoldingTest& v) { return v.make(FMin, v.number(0.0), -0.0); } },
         { "ConstDouble(-0)"_s, [](FoldingTest& v) { return v.make(FMin, v.number(-0.0), 0.0); } },
         { "ConstDouble(0)"_s, [](FoldingTest& v) { return v.make(FMax, v.number(0.0), -0.0); } },

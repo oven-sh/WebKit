@@ -134,7 +134,7 @@ static bool onlyHandsFunctionToHelperThatCallsItAtInlining(const Walker& walker,
 
 static bool copyIsDrawnAwayAtInlining(const Walker& walker, FunctionID callee, const PlaceOfCall& place)
 {
-    return walker.drawChoice(DrawnFor::CopyInLine, place.caller.index(), callee.index()) == Walker::ChoiceOfCost::No;
+    return walker.drawChoice(DrawnFor::CopyInLine, place.caller.index(), callee.index(), false) == Walker::ChoiceOfCost::No;
 }
 
 static bool copyPaysAtInlining(const Walker& walker, FunctionID callee, size_t numberOfOperands, const PlaceOfCall& place, const std::span<const Reference>* handedOver)
@@ -860,62 +860,62 @@ static bool branchAsksFieldAtInlining(const BodyIndex& body, BodyTerminator bran
 
 static std::optional<BitVector> findHeadThatAsksFieldsAtInlining(const BodyIndex& body)
 {
-    BitVector head(body.numberOfBlocks());
-    BitVector seen(body.numberOfBlocks());
+    Vector<BlockID, 8> head;
     Vector<BlockID, 8> queue { entryBlock };
     uint32_t weight = 0;
+    uint32_t numberOfOperations = 0;
     for (size_t next = 0; next < queue.size(); ++next) {
         BlockID id = queue[next];
-        if (seen.quickSet(id.index()))
+        if (std::ranges::contains(queue.span().first(next), id))
             continue;
         BodyBlock block = body.block(id);
         BodyTerminator end = block.terminator();
-        if (block.hasHandler() || block.isHandlerBlock() || body.loopDepthOf(id) || (end.kind() != TerminatorKind::Branch && end.kind() != TerminatorKind::Jump && end.kind() != TerminatorKind::Return))
-            continue;
+        bool isAdmitted = !block.hasHandler() && !block.isHandlerBlock() && !body.loopDepthOf(id) && (end.kind() == TerminatorKind::Branch || end.kind() == TerminatorKind::Jump || end.kind() == TerminatorKind::Return);
         uint32_t weightOfBlock = end.kind() == TerminatorKind::Branch;
-        bool holdsOperationsOfHeadsAlone = true;
-        for (uint32_t place = 0; place < block.numberOfValues(); ++place) {
+        isAdmitted &= numberOfOperations + block.numberOfValues() <= inlineWindowOfWrittenCall;
+        for (uint32_t place = 0; isAdmitted && place < block.numberOfValues(); ++place) {
             Opcode opcode = body.opcodeOf(ValueID(block.firstValue().index() + place));
-            holdsOperationsOfHeadsAlone &= operationsOfHeadsAtInlining.contains(opcode);
             weightOfBlock += !operationsThatWeighNothingInHeadsAtInlining.contains(opcode);
+            isAdmitted = operationsOfHeadsAtInlining.contains(opcode) && weight + weightOfBlock <= inlineLimitOfHeads;
         }
-        if (!holdsOperationsOfHeadsAlone || weight + weightOfBlock > inlineLimitOfHeads)
+        if (!isAdmitted || weight + weightOfBlock > inlineLimitOfHeads) {
+            if (!next)
+                return std::nullopt;
             continue;
+        }
         weight += weightOfBlock;
-        head.quickSet(id.index());
+        numberOfOperations += block.numberOfValues();
+        head.append(id);
         for (BodyTarget target : end.targets())
             queue.append(target.block());
     }
     for (bool hasChanged = true; hasChanged;) {
-        hasChanged = false;
-        for (BlockID id : queue) {
+        hasChanged = head.removeAllMatching([&](BlockID id) {
             BodyTerminator end = body.block(id).terminator();
-            if (!head.quickGet(id.index()) || end.kind() == TerminatorKind::Return)
-                continue;
+            if (end.kind() == TerminatorKind::Return)
+                return false;
             bool leadsOn = false;
             for (BodyTarget target : end.targets())
-                leadsOn |= head.quickGet(target.block().index());
-            if (!leadsOn) {
-                head.quickClear(id.index());
-                hasChanged = true;
-            }
-        }
+                leadsOn |= head.contains(target.block());
+            return !leadsOn;
+        });
     }
-    if (!head.quickGet(entryBlock.index()))
+    if (!head.contains(entryBlock))
         return std::nullopt;
-    for (BlockID id : queue) {
-        if (!head.quickGet(id.index()))
-            continue;
+    for (BlockID id : head) {
         BodyTerminator end = body.block(id).terminator();
         for (BodyTarget target : end.targets()) {
-            if (head.quickGet(target.block().index()))
+            if (head.contains(target.block()))
                 continue;
             BodyBlock behindHead = body.block(target.block());
             if (behindHead.hasHandler() || behindHead.isHandlerBlock() || !branchAsksFieldAtInlining(body, end))
                 return std::nullopt;
         }
     }
-    return head;
+    BitVector blocksOfHead(body.numberOfBlocks());
+    for (BlockID id : head)
+        blocksOfHead.quickSet(id.index());
+    return blocksOfHead;
 }
 
 static bool copyHeadThatAsksFieldsAtInlining(Walker& walker, const BodyValue& call, const Draft& site, FunctionID callee, std::span<const Reference> handedOver)
@@ -1169,12 +1169,15 @@ bool Walker::walkInline(const BodyValue& call, FunctionID callee, std::span<cons
         endAsUnreachable(originOfCall);
         continueIn(whereClaimHolds);
 
+        Reference asItCame = entryArguments[index];
         Draft narrowed(Opcode::Narrowed, originOfCall);
-        narrowed.setValueOperand(entryArguments[index]);
+        narrowed.setValueOperand(asItCame);
         narrowed.setTestOperand(passes);
         narrowed.setOperandIndex(OperandIndex::TypeTest::value);
         narrowed.setIsOnTakenEdge(true);
         entryArguments[index] = build(WTF::move(narrowed));
+        if (entryArguments[index] && !m_state.checkedNameOf(asItCame))
+            m_state.noteCheckedName(asItCame, entryArguments[index]);
     }
     if (m_hasFailed)
         return true;

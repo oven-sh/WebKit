@@ -1422,7 +1422,7 @@ bool Structure::refusesWriteToListedProperty(UniquedStringImpl* uid) const
     ImmutablePropertyNames* names = rareData()->immutablePropertyNames();
     if (!names)
         return false;
-    if (names->contains(uid))
+    if (names->refusesWrite(uid))
         return true;
     names->willWrite(uid);
     return false;

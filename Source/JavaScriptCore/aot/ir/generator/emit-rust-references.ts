@@ -4,7 +4,16 @@ import type { Entry, Field, Kind, Schema, SchemaType, Variant } from "./model.ts
 import { innermostKindOf, isStringKey, nameOf, wireFlagsOf, wireParametersOf, wireWordsOf } from "./model.ts";
 import { rustIdentifier, rustTypeName, snakeCase } from "./names.ts";
 import type { EmitContext, OutputFile } from "./outputs.ts";
-import { holdsReferences, isReference, listedTypesOf, referenceKind, rustTypeOf, wireFieldsOf } from "./rust-types.ts";
+import {
+  holdsReferences,
+  isReference,
+  listedTypesOf,
+  referenceKind,
+  rustTypeOf,
+  viewImports,
+  viewOfSlices,
+  wireFieldsOf,
+} from "./rust-types.ts";
 
 type FieldStatements = (field: Field, value: string, isByReference: boolean) => string[];
 
@@ -81,17 +90,26 @@ function matchOnCases(variant: Variant, statementsOf: FieldStatements): string[]
   return ["match self {", ...indent(arms), "}"];
 }
 
+function visitFieldOfView(field: Field, value: string): string[] {
+  return visitField(field, value, field.kind.tag === "Span" || field.kind.tag === "List");
+}
+
 function referencesImpl(type: SchemaType): string[] {
   const bodyOf = (statementsOf: FieldStatements): string[] =>
     type.tag === "Record"
       ? type.record.wireFields.flatMap(field => statementsOf(field, `self.${rustIdentifier(field.name)}`, false))
       : matchOnCases(type.variant, statementsOf);
+  const view = viewOfSlices(type);
+  const visitAll = (body: string[]) => [
+    "pub fn for_each_reference(&self, visit: &mut dyn FnMut(Reference)) {",
+    ...indent(body),
+    "}",
+  ];
   return [
+    ...(view === null ? [] : [`impl ${view}<'_> {`, ...indent(visitAll(bodyOf(visitFieldOfView))), "}", ""]),
     `impl ${rustTypeName(nameOf(type))} {`,
     ...indent([
-      "pub fn for_each_reference(&self, visit: &mut dyn FnMut(Reference)) {",
-      ...indent(bodyOf(visitField)),
-      "}",
+      ...visitAll(view === null ? bodyOf(visitField) : [`${view}::of(self).for_each_reference(visit);`]),
       "pub fn remap_ids(&mut self, map: &IdMap<'_>) {",
       ...indent(bodyOf(remapField)),
       "}",
@@ -110,6 +128,7 @@ function recordReferencesRs(schema: Schema): string[] {
     "use super::enums::{FunctionReferenceKind, ModuleReferenceKind};",
     "use super::records::*;",
     "use crate::ir::references::{IdMap, Reference, remap, remap_optional};",
+    ...viewImports(types),
     "",
     ...blocks(...types.map(referencesImpl)),
   ];

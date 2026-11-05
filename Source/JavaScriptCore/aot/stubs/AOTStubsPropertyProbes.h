@@ -167,6 +167,7 @@ struct FieldTableProbe {
     GPRReg placeInAccessTable { InvalidGPRReg };
     JumpList* hasFormAndOperand { nullptr };
     bool receiverIsCompiledObject { false };
+    bool waysOnwardAreCalls { false };
 };
 
 void readFieldByTable(StubAssembler&, const FieldTableProbe&, GPRReg result, JumpList& otherwise, const ScopedLambda<void()>& finish, const ScopedLambda<void()>* finishWhereAbsent = nullptr);
@@ -264,6 +265,10 @@ void loadSlotKind(StubAssembler&, const ProbedSlot&, GPRReg kind);
 void loadOwnInlineValue(StubAssembler&, GPRReg object, GPRReg cell, GPRReg result);
 
 void jumpToSlotHandler(StubAssembler&, SlotHandlerTable, GPRReg header, GPRReg scratch);
+#if CPU(X86_64)
+void callSlotHandler(StubAssembler&, SlotHandlerTable, GPRReg header, GPRReg scratch);
+#endif
+inline constexpr std::array<GPRReg, 2> registersThatWaysOnwardOfGetByIdLose { gprOf(StubRegister::T12), gprOf(StubRegister::T14) };
 void jumpToSlotHandlerOfKind(StubAssembler&, SlotHandlerTable, GPRReg header, GPRReg kind);
 void linkToSlotExit(StubAssembler&, JumpList&, SlotHandlerTable, SlotExit);
 void linkToSlotCannot(StubAssembler&, JumpList&, SlotHandlerTable, SlotFinisher, const CachedSlot&);

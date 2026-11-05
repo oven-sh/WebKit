@@ -26,7 +26,9 @@ static constexpr unsigned numberOfClosureStructures = classObjectClosureStructur
 static constexpr unsigned numberOfSlimClosureKinds = 2;
 
 struct FunctionKindData {
-    uint16_t closureStructure : 3;
+    uint16_t closuresGetOnlyListedNames : 1;
+    uint16_t prototypePropertyStaysAsMade : 1;
+    uint16_t unusedKindBits : 1 { 0 };
     uint16_t isSlim : 1;
     uint16_t isAsync : 1;
     uint16_t isGenerator : 1;
@@ -47,7 +49,6 @@ struct FunctionKindData {
     constexpr bool hasInitialNamePrefix() const { return accessor() != MethodKind::Method; }
 };
 static_assert(sizeof(FunctionKindData) == 2 && isImageRecord<FunctionKindData>);
-static_assert(classObjectClosureStructure < 1 << 3);
 
 struct FunctionTraceData {
     uint16_t visibilityBits : 2;

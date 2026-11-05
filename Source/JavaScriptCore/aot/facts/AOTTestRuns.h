@@ -60,6 +60,7 @@ public:
 
     void noteHolderOfSpy(const LinkType& holder, PropertyKeyID keyOrNull, FunctionID caller, ValueID site);
     void noteCallOutOfSight(FunctionID caller, ValueID site, FlowNodeID firstArgument);
+    void noteCallHandedObjectAndName(FunctionID caller, ValueID site, FlowNodeID firstArgument);
 
     Vector<NameAddedByTests> takeNamesAdded();
     Vector<VariableID> takeExportsSpiedOnThatWireLeavesShut();
@@ -98,6 +99,7 @@ private:
     Vector<WriterOfRunner, 4> m_writersOfRunner;
     HashMap<uint32_t, uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_membersThatLoaderFillsIn;
     Vector<SpyOutOfSight> m_spiesOutOfSight;
+    HashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_callsHandedObjectAndName;
     HashMap<uint32_t, uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_nodesOfNamesAdded;
     HashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_namesListed;
     Vector<NameAddedByTests> m_namesAdded;

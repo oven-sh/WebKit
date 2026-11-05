@@ -21,6 +21,8 @@ struct ListTestedInFrontOfLoop {
 
 std::optional<ListTestedInFrontOfLoop> findListTestedInFrontOfLoop(Walker&, const BodyValue& read);
 std::optional<ListTestedInFrontOfLoop> findListTestedInFrontOfLoop(Walker&, Reference list);
+std::optional<ListTestedInFrontOfLoop> askListInFrontOfTypedCopy(Walker&, const BodyValue& read, Reference list);
+bool readsListFoundByReadFromInFront(const Program&, const BodyIndex&, const BodyValue& operation, uint32_t firstValueOfLoop);
 void nameKindOfListTestedInFrontOfLoop(Draft& read, const ListTestedInFrontOfLoop&);
 void takeStorageAndLengthFromInFrontOfLoop(Walker&, Draft& read, const ListTestedInFrontOfLoop&);
 bool positionIsKnownToLieInsideList(Walker&, Reference list, Reference position);

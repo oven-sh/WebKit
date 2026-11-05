@@ -62,6 +62,7 @@
 #include "DateInstance.h"
 #include "DateTimeWriter.h"
 #include "DeferGC.h"
+#include "DeferTermination.h"
 #include <variant>
 #include <wtf/HashSet.h>
 #endif
@@ -3061,6 +3062,24 @@ static String stringifyAfterFirstFastCaseFailed(JSGlobalObject& globalObject, JS
     return { };
 }
 
+#if ENABLE(AOT)
+// A fast path only succeeds when no user code has to run, so the general path runs none either and must produce the same string.
+static NEVER_INLINE void checkAgainstGeneralStringifier(JSGlobalObject& globalObject, JSValue value, JSValue replacer, JSValue space, const String& written)
+{
+    VM& vm = globalObject.vm();
+    DeferTerminationForAWhile deferTermination(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    AOT::countEvent(vm, AOT::RuntimeCounterID::AnswersAskedAgain);
+    String general = Stringifier::stringify(globalObject, value, replacer, space);
+    if (scope.exception()) [[unlikely]] {
+        scope.clearException();
+        return;
+    }
+    if (general != written)
+        AOT::stopAtJSONTextMismatch(written, general);
+}
+#endif
+
 static NEVER_INLINE String stringify(JSGlobalObject& globalObject, JSValue value, JSValue replacer, JSValue space)
 {
     // Nothing is written for undefined, and without an object among the other arguments no code runs that could tell.
@@ -3072,10 +3091,20 @@ static NEVER_INLINE String stringify(JSGlobalObject& globalObject, JSValue value
         std::optional<FailureReason> failureReason;
         if (stringifyHints.isWideInStaticBuffer)
             failureReason = FailureReason::Found16BitEarly;
-        else if (String result = FastStringifier<Latin1Character, BufferMode::StaticBuffer>::stringify(globalObject, value, replacer, space, failureReason); !result.isNull())
+        else if (String result = FastStringifier<Latin1Character, BufferMode::StaticBuffer>::stringify(globalObject, value, replacer, space, failureReason); !result.isNull()) {
+#if ENABLE(AOT)
+            if (vm.aotState().verifiesFastPathAnswers) [[unlikely]]
+                checkAgainstGeneralStringifier(globalObject, value, replacer, space, result);
+#endif
             return result;
-        if (String result = stringifyAfterFirstFastCaseFailed(globalObject, value, replacer, space, failureReason); !result.isNull())
+        }
+        if (String result = stringifyAfterFirstFastCaseFailed(globalObject, value, replacer, space, failureReason); !result.isNull()) {
+#if ENABLE(AOT)
+            if (vm.aotState().verifiesFastPathAnswers) [[unlikely]]
+                checkAgainstGeneralStringifier(globalObject, value, replacer, space, result);
+#endif
             return result;
+        }
     }
 #if ENABLE(AOT)
     if (vm.hasCompiledCode()) [[unlikely]]

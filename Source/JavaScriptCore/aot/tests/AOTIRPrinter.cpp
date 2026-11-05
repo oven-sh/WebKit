@@ -384,6 +384,8 @@ void IRPrinter::printBlockHead(const BodyBlock& block)
         beginField("handler"_s);
         printTarget({ }, handler.block(), handler.arguments(), handler.proofs());
     }
+    if (block.frequency() != BlockFrequency::Normal)
+        field("frequency"_s, block.frequency());
     m_out.print(":"_s);
     endLine();
 }

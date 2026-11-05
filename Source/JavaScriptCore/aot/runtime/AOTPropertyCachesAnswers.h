@@ -173,6 +173,7 @@ std::optional<PropertyOffset> findOffset(VM&, Structure*, UniquedStringImpl*, Ch
 bool structureProvesOwnAbsence(VM&, JSCell* base, Structure*, UniquedStringImpl*, ChainWalkMode);
 bool hasOrdinaryDefineForName(VM&, JSCell* base, Structure*, UniquedStringImpl*);
 bool isHostObjectOverridingPut(Structure*);
+bool isWriteJudgedByWriter(Structure*, UniquedStringImpl*);
 bool flattenOnce(VM&, JSObject*);
 bool flattenForListing(VM&, JSObject*);
 bool isLastAdditionOfRun(Structure* before, Structure* after, UniquedStringImpl*);

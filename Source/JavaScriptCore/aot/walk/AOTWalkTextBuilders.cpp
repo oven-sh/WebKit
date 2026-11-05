@@ -699,9 +699,8 @@ void takeTextsOutOfStringBuildersOnEdge(Walker& walker, BlockID to, BodyTarget t
         });
 
         if (records.isEmpty()) {
-            Reference builder = walker.nameLastBoundTo(text.web.names.first().value);
-            if (isTextInStringBuilder(walker, builder))
-                discardTextInStringBuilder(walker, text, builder, origin);
+            if (isTextInStringBuilder(walker, walker.nameLastBoundTo(text.web.names.first().value)))
+                discardTextInStringBuilder(walker, text, text.builder, origin);
             return walker.isUnreachable() ? IterationStatus::Done : IterationStatus::Continue;
         }
 

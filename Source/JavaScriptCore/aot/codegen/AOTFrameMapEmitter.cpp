@@ -18,6 +18,7 @@
 #include "AOTSavedFrame.h"
 #include "AOTSavedFrameMap.h"
 #include "AOTStubRegisters.h"
+#include "AOTSweep.h"
 #include "CCallHelpers.h"
 #include "GPRInfo.h"
 #include "RegisterAtOffsetList.h"
@@ -72,7 +73,7 @@ FrameMapEmitter::Roots FrameMapEmitter::appendRoots(Machine::PatchOperation* pat
     auto addRoot = [&](ValueID id) {
         if (!id || id == suspension.id() || m_code.isConstant(id) || isDeferredClosure(id))
             return;
-        if (typeOf(id).isOpaque(OpaqueKind::StringBuilder)) {
+        if (typeOf(id).isOpaque(OpaqueKind::StringBuilder) && !stringBuilderIsCellOfHeap(m_code, id)) {
             fail(suspension, InternalErrorKind::FramePointerAcrossSuspension);
             return;
         }

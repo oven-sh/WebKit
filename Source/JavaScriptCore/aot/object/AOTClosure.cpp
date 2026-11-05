@@ -28,6 +28,7 @@
 #include "AOTState.h"
 #include "AOTStaticFields.h"
 #include "AOTStubEntrypoints.h"
+#include "AOTVMState.h"
 #include "ArgList.h"
 #include "AsyncGeneratorPrototype.h"
 #include "BuiltinNames.h"
@@ -333,7 +334,7 @@ bool Closure::isLazyClassObject() const
 
 bool Closure::hasStructureOfNewClosure(VM& vm) const
 {
-    unsigned index = kind().closureStructure;
+    unsigned index = kind().closureStructureOfKind();
     if (index == classObjectClosureStructure)
         return false;
     Structure* ofNewClosure = state().objects->closures.closureStructure(vm, index);
@@ -515,6 +516,80 @@ void Closure::getOwnSpecialPropertyNames(JSObject* object, JSGlobalObject* globa
         names.add(vm.propertyNames->prototype);
 }
 
+[[noreturn]] static void crashOnFalseProofOfClosure(uint32_t closureNumber, ASCIILiteral mutation)
+{
+    FunctionID function = closureFunctionWithNumber(closureNumber);
+    dataLogLn("AOT: ", mutation, " of a closure of the function f", function.index(), " (", initialNameProperty(function), "): the compiler has proven that it never happens, and compiled code takes such closures to be as they were made without a look. This is a bug in Bun.");
+    CRASH_WITH_INFO(function.index());
+}
+
+static std::optional<uint32_t> numberOfClosureHeldToListedNames(VM& vm, const JSCell* closure)
+{
+    std::optional<uint32_t> number = closureNumberOf(closure);
+    if (!number || !kindOfClosureNumber(*number).closuresGetOnlyListedNames || vm.aotState().nativeTestChangesObjectsUnseen)
+        return std::nullopt;
+    return number;
+}
+
+JSValue findOnChainAbove(VM& vm, const JSObject* object, UniquedStringImpl* uid, unsigned& attributes)
+{
+    for (JSValue above = object->getPrototypeDirect(); above.isObject(); above = asObject(above)->getPrototypeDirect()) {
+        if (JSValue found = asObject(above)->getDirect(vm, PropertyName(uid), attributes))
+            return found;
+    }
+    return { };
+}
+
+bool holdsWhatIsFoundAbove(VM& vm, const JSObject* object, UniquedStringImpl* uid, JSValue value, unsigned attributes)
+{
+    unsigned attributesAbove = 0;
+    JSValue above = findOnChainAbove(vm, object, uid, attributesAbove);
+    if (!above || ((attributes | attributesAbove) & PropertyAttribute::CustomAccessorOrValue))
+        return false;
+    if (!((attributes | attributesAbove) & PropertyAttribute::Accessor))
+        return above == value;
+    if (!(attributes & attributesAbove & PropertyAttribute::Accessor))
+        return false;
+    auto* own = uncheckedDowncast<GetterSetter>(value.asCell());
+    auto* found = uncheckedDowncast<GetterSetter>(above.asCell());
+    return own->getter() == found->getter() && own->setter() == found->setter();
+}
+
+void holdClosureToLackingNameSlowCase(VM& vm, const JSCell* closure, UniquedStringImpl* uid)
+{
+    std::optional<uint32_t> number = numberOfClosureHeldToListedNames(vm, closure);
+    if (!number)
+        return;
+    const CommonIdentifiers& names = *vm.propertyNames;
+    if (uid == names.name.impl() || uid == names.length.impl() || uid == names.prototype.impl() || uid == names.arguments.impl() || uid == names.caller.impl())
+        return;
+    if (uid->isSymbol() && static_cast<SymbolImpl*>(uid)->isPrivate())
+        return;
+    std::optional<uint32_t> name = identifiersOf(*Instance::owning(closure)).numberOf(uid);
+    if (name && std::ranges::binary_search(programTables().namesLaidOnClosures(), NameLaidOnClosuresData { closureFunctionWithNumber(*number).index(), *name }))
+        return;
+    const JSObject* object = static_cast<const JSObject*>(closure);
+    unsigned attributes = 0;
+    JSValue value = object->getDirect(vm, PropertyName(uid), attributes);
+    if (!value || holdsWhatIsFoundAbove(vm, object, uid, value, attributes))
+        return;
+    crashOnFalseProofOfClosure(*number, "AddName"_s);
+}
+
+void holdClosureToItsPrototype(VM& vm, const JSCell* closure)
+{
+    if (std::optional<uint32_t> number = numberOfClosureHeldToListedNames(vm, closure))
+        crashOnFalseProofOfClosure(*number, "ChangePrototype"_s);
+}
+
+static void holdClosureToItsPrototypeProperty(VM& vm, Closure& closure, const LayoutData& constructed)
+{
+    if (!closure.kind().prototypePropertyStaysAsMade || vm.aotState().nativeTestChangesObjectsUnseen)
+        return;
+    if (closure.state().objects->closures.closureIfCreated(FunctionID(constructed.classData().classConstructor)) == &closure)
+        crashOnFalseProofOfClosure(closure.closureNumber(), "ChangePrototypeProperty"_s);
+}
+
 static void didChangePrototypeProperty(Closure* closure)
 {
     VM& vm = closure->vm();
@@ -524,8 +599,10 @@ static void didChangePrototypeProperty(Closure* closure)
     if (const LayoutData* constructed = classes.classConstructedBy(classes.functionOfOwnClosure(*closure))) {
         classes.didChangeMember(*constructed, ClassSide::Static, vm.propertyNames->prototype.impl());
         JSObject* prototypeOfClass = classes.isDefinedByClass(*constructed) ? nullptr : classes.classPrototypeIfExists(*constructed);
-        if (prototypeOfClass && closure->getDirect(vm, vm.propertyNames->prototype) != JSValue(prototypeOfClass))
+        if (prototypeOfClass && closure->getDirect(vm, vm.propertyNames->prototype) != JSValue(prototypeOfClass)) {
+            holdClosureToItsPrototypeProperty(vm, *closure, *constructed);
             classes.disarmMemberGuards(*constructed);
+        }
     }
     if (JSValue prototype = closure->getDirect(vm, vm.propertyNames->prototype); prototype && prototype.isObject())
         asObject(prototype)->didBecomePrototype(vm);
@@ -655,12 +732,16 @@ bool Closure::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName name,
     if (name == vm.propertyNames->prototype)
         closure->ensurePrototypeProperty(vm);
     bool result = storesPropertyOfClosureBelowClosure(vm, *closure, name, slot) ? closure->putInlineFast(globalObject, name, value, slot) : Base::put(cell, globalObject, name, value, slot);
+    if (slot.thisValue() == JSValue(closure))
+        holdClosureToLackingNameSlowCase(vm, closure, name.uid());
     if (isStoreToClassObject) {
         bool replacesUndeclaredProperty = slot.type() == PutPropertySlot::ExistingProperty && !classes.hasStaticMethodNamed(*classLayout, name.uid());
         if (!replacesUndeclaredProperty)
             slot.disableCaching();
-        if (slot.type() != PutPropertySlot::SetterProperty)
+        if (slot.type() != PutPropertySlot::SetterProperty) {
+            classes.holdMemberToProof(vm, *classLayout, ClassSide::Static, closure, name.uid());
             classes.didChangeMember(*classLayout, ClassSide::Static, name.uid());
+        }
     }
     if (name == vm.propertyNames->prototype) [[unlikely]] {
         slot.disableCaching();
@@ -711,8 +792,11 @@ bool Closure::defineOwnProperty(JSObject* object, JSGlobalObject* globalObject, 
         closure->ensurePrototypeProperty(vm);
     bool result = Base::defineOwnProperty(object, globalObject, name, descriptor, shouldThrow);
     RETURN_IF_EXCEPTION(scope, false);
-    if (classLayout)
+    holdClosureToLackingNameSlowCase(vm, closure, name.uid());
+    if (classLayout) {
+        classes.holdMemberToProof(vm, *classLayout, ClassSide::Static, closure, name.uid());
         classes.didChangeMember(*classLayout, ClassSide::Static, name.uid());
+    }
     if (name == vm.propertyNames->prototype) [[unlikely]]
         didChangePrototypeProperty(closure);
     return result;
@@ -727,8 +811,11 @@ bool Closure::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, Propert
     if (name == vm.propertyNames->prototype)
         closure->ensurePrototypeProperty(vm);
     bool result = Base::deleteProperty(cell, globalObject, name, slot);
-    if (result && classLayout)
-        closure->state().objects->classes.didChangeMember(*classLayout, ClassSide::Static, name.uid());
+    if (result && classLayout) {
+        ClassTable& classes = closure->state().objects->classes;
+        classes.holdMemberToProof(vm, *classLayout, ClassSide::Static, closure, name.uid());
+        classes.didChangeMember(*classLayout, ClassSide::Static, name.uid());
+    }
     if (name == vm.propertyNames->prototype) [[unlikely]]
         didChangePrototypeProperty(closure);
     return result;
@@ -761,18 +848,27 @@ bool Closure::setPrototype(JSObject* object, JSGlobalObject* globalObject, JSVal
         return typeError(globalObject, scope, shouldThrow, prototypeChangeOfLockedBuiltinMessage("a built-in function"_s));
     }
     closure->ensureClassObject(vm);
-    if (const LayoutData* classLayout = closure->classData(); classLayout && object->getPrototypeDirect() != prototype)
+    const LayoutData* classLayout = closure->classData();
+    if (classLayout && object->getPrototypeDirect() != prototype)
         closure->state().objects->classes.didChangePrototypeLink(*classLayout, ClassSide::Static);
-    return Base::setPrototype(object, globalObject, prototype, shouldThrow);
+    JSValue prototypeBefore = object->getPrototypeDirect();
+    bool result = Base::setPrototype(object, globalObject, prototype, shouldThrow);
+    if (object->getPrototypeDirect() != prototypeBefore)
+        holdClosureToItsPrototype(vm, closure);
+    if (classLayout)
+        closure->state().objects->classes.holdLinkToProof(vm, *classLayout, ClassSide::Static, closure);
+    return result;
 }
 
-void PropertyWalk::didPutDirectOnClosure(VM&, JSObject* object, UniquedStringImpl* uid)
+void PropertyWalk::didPutDirectOnClosure(VM& vm, JSObject* object, UniquedStringImpl* uid)
 {
     Closure* closure = uncheckedDowncast<Closure>(object);
+    holdClosureToLackingNameSlowCase(vm, closure, uid);
     const LayoutData* classLayout = closure->classData();
     if (!classLayout)
         return;
     ClassTable& classes = closure->state().objects->classes;
+    classes.holdMemberToProof(vm, *classLayout, ClassSide::Static, closure, uid);
     ClassSide side;
     bool isEnteredHolder = classes.classHeldBy(closure, side) == classLayout && side == ClassSide::Static;
     if (isEnteredHolder || closure->isLazyClassObject())
@@ -996,6 +1092,8 @@ bool ReifiedSlimClosure::put(JSCell* cell, JSGlobalObject* globalObject, Propert
 {
     VM& vm = globalObject->vm();
     bool result = Base::put(cell, globalObject, name, value, slot);
+    if (slot.thisValue() == JSValue(cell))
+        holdClosureToLackingNameSlowCase(vm, cell, name.uid());
     if (name == vm.propertyNames->prototype) [[unlikely]]
         slot.disableCaching();
     return result;
@@ -1028,7 +1126,18 @@ bool SlimClosure::defineOwnProperty(JSObject* object, JSGlobalObject* globalObje
 
 bool ReifiedSlimClosure::defineOwnProperty(JSObject* object, JSGlobalObject* globalObject, PropertyName name, const PropertyDescriptor& descriptor, bool shouldThrow)
 {
-    return Base::defineOwnProperty(object, globalObject, name, descriptor, shouldThrow);
+    bool result = Base::defineOwnProperty(object, globalObject, name, descriptor, shouldThrow);
+    holdClosureToLackingNameSlowCase(globalObject->vm(), object, name.uid());
+    return result;
+}
+
+bool ReifiedSlimClosure::setPrototype(JSObject* object, JSGlobalObject* globalObject, JSValue prototype, bool shouldThrow)
+{
+    JSValue prototypeBefore = object->getPrototypeDirect();
+    bool result = Base::setPrototype(object, globalObject, prototype, shouldThrow);
+    if (object->getPrototypeDirect() != prototypeBefore)
+        holdClosureToItsPrototype(globalObject->vm(), object);
+    return result;
 }
 
 bool ReifiedSlimClosure::hasOrdinaryDefineOwnProperty(VM& vm, PropertyName name)
@@ -1048,7 +1157,7 @@ bool SlimClosure::setPrototype(JSObject* object, JSGlobalObject* globalObject, J
     if (object->getPrototypeDirect() == prototype)
         return true;
     uncheckedDowncast<SlimClosure>(object)->reify(globalObject->vm());
-    return JSObject::setPrototype(object, globalObject, prototype, shouldThrow);
+    return ReifiedSlimClosure::setPrototype(object, globalObject, prototype, shouldThrow);
 }
 
 } } // namespace JSC::AOT

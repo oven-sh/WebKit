@@ -118,7 +118,8 @@ UnitsOfFields collectUnitsOfFields(const Program& program, const LinkTables& lin
         LayoutID id(index);
         const Layout& layout = program.layouts[index];
         uint32_t numberListed = static_cast<uint32_t>(layout.fields.size());
-        for (uint32_t field = 0; field < numberListed; ++field) {
+        uint32_t numberNotRepeated = numberOfFieldsNotRepeated(program, storage.layoutsThatRepeatTheirBases, id);
+        for (uint32_t field = 0; field < numberNotRepeated; ++field) {
             PropertyKeyID key = layout.fields[field].key;
             if (key && layout.findField(key) == field)
                 noteRow({ id, field }, key);

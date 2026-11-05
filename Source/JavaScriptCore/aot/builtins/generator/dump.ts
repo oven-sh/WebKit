@@ -105,6 +105,7 @@ export type DumpedTypePart =
 
 export interface DumpedType {
   isAnything: boolean;
+  isMadeOfListedClasses: boolean;
   hasAnyObject: boolean;
   hasAnyFunction: boolean;
   hasPlainData: boolean;

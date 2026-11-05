@@ -29,6 +29,7 @@ public:
     }
 
     bool run();
+    bool runCheckOfDominanceAlone() { return checkDominance(); }
 
 private:
     static constexpr uint32_t notReached = UINT32_MAX;
@@ -787,6 +788,11 @@ bool validate(Procedure& procedure)
 bool validateBehindBlockPasses(Procedure& procedure)
 {
     return MachineValidator(procedure, true).run();
+}
+
+bool checkThatDefinitionsDominateUses(Procedure& procedure)
+{
+    return MachineValidator(procedure, false).runCheckOfDominanceAlone();
 }
 
 } } } // namespace JSC::AOT::Machine

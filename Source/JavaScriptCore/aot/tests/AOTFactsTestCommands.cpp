@@ -12,6 +12,7 @@
 #include "AOTFamilies.h"
 #include "AOTIRPrinter.h"
 #include "AOTLinkTables.h"
+#include "AOTRemovableFeature.h"
 #include "AOTThinSummary.h"
 #include "VM.h"
 #include "YarrFlags.h"
@@ -460,6 +461,10 @@ static void printCallOfSummary(IRPrinter& printer, const ThinSummary& summary, u
     if (call.passesOnGatheredArguments)
         out.print(" passes-on-gathered-arguments"_s);
     printNamedNodeOfSummary(printer, summary, "throws-to="_s, call.thrownTo);
+    if (call.expectedBuiltin) {
+        out.print(call.expectsCalleeItself ? " expected-to-call="_s : " on-what-is-expected-of="_s);
+        printer.print(call.expectedBuiltin);
+    }
     out.println();
 }
 
@@ -887,7 +892,7 @@ static void printTypeFieldInFactsText(IRPrinter& printer, ASCIILiteral name, Typ
     printer.print(type);
 }
 
-static void printLinkedCell(IRPrinter& printer, const LinkedCell& cell, bool isLaidLate = false, bool isStoredByFollowerOfMaker = false)
+static void printLinkedCell(IRPrinter& printer, const LinkedCell& cell, bool isLaidLate = false, bool isStoredByFollowerOfMaker = false, bool isShownToComparisons = false)
 {
     printTypeFieldInFactsText(printer, "proven"_s, cell.proven);
     if (cell.everyWriterIsKnown)
@@ -919,6 +924,8 @@ static void printLinkedCell(IRPrinter& printer, const LinkedCell& cell, bool isL
         printer.out().print(" laid-late"_s);
     if (isStoredByFollowerOfMaker)
         printer.out().print(" stored-by-follower-of-maker"_s);
+    if (isShownToComparisons)
+        printer.out().print(" shown-to-comparisons"_s);
     printer.out().println();
 }
 
@@ -1155,7 +1162,10 @@ static void printLinkedFields(IRPrinter& printer, const LinkTables& tables)
         for (uint32_t field = 0; field < numberOfFields; ++field) {
             printer.out().print("field "_s);
             printFieldInFactsText(printer, LayoutID(layout), field);
-            printLinkedCell(printer, tables.fields[tables.firstFieldOfLayout[layout] + field]);
+            const LinkedCell& cell = tables.fields[tables.firstFieldOfLayout[layout] + field];
+            const Field& written = printer.program().layouts[layout].fields[field];
+            bool isWrittenPrivateName = written.key && printer.program().at(written.key).kind == PropertyKeyKind::PrivateName && !written.flags.contains(FieldFlags::IsHidden);
+            printLinkedCell(printer, cell, false, false, isWrittenPrivateName && !cell.isKeptFromComparisons);
         }
         std::span<const PropertyKeyID> appendedKeys = tables.appendedKeysOf(LayoutID(layout));
         for (uint32_t place = 0; place < appendedKeys.size(); ++place) {
@@ -1928,6 +1938,19 @@ static void runLackedCommand(TestCommandContext& context)
         context.out.println("lacked "_s, tokenOf(stage.program().builtins(), function));
 }
 
+static void printFeature(PrintStream& out, uint32_t feature)
+{
+    switch (feature) {
+#define JSC_PRINT_REMOVABLE_FEATURE(name, index) \
+    case index: \
+        out.print(#name##_s); \
+        return;
+        FOR_EACH_ENGINE_REMOVABLE_FEATURE(JSC_PRINT_REMOVABLE_FEATURE)
+#undef JSC_PRINT_REMOVABLE_FEATURE
+    }
+    out.print(feature);
+}
+
 static void runFeaturesCommand(TestCommandContext& context)
 {
     StagedBuild stage = context.stage();
@@ -1938,9 +1961,17 @@ static void runFeaturesCommand(TestCommandContext& context)
     for (const FeatureUseRecord& record : facts->featureUses()) {
         if (record.builtin == Wire::none)
             continue;
-        context.out.print("feature "_s, record.feature, " by "_s);
+        context.out.print("feature "_s);
+        printFeature(context.out, record.feature);
+        context.out.print(" by "_s);
         printer.print(BuiltinID(record.builtin));
-        context.out.println(record.kind == FeatureUseKind::Named ? " named"_s : " unnamed"_s);
+        context.out.print(record.kind == FeatureUseKind::Named ? " named"_s : record.kind == FeatureUseKind::Unnamed ? " unnamed"_s : " named-at-run-time"_s);
+        if (hasFunction(record.witness)) {
+            context.out.print(" at f"_s, record.witness.function);
+            if (record.witness.value != Wire::none)
+                context.out.print(" v"_s, record.witness.value);
+        }
+        context.out.println();
     }
 }
 

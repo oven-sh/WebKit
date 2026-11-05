@@ -288,7 +288,8 @@ void Modules::forgetEndedMocksOfEarlierTestFiles()
     for (auto& entry : m_endedMocks) {
         Vector<EndedMock, 2> kept;
         JSObject* before = ensureLoaded(entry.key).endedMocks.get();
-        ensureLoaded(entry.key).namespacesOfEndedMocks.set(*this, nullptr);
+        JSObject* namespacesBefore = ensureLoaded(entry.key).namespacesOfEndedMocks.get();
+        JSObject* namespaces = nullptr;
         JSObject* objects = nullptr;
         for (unsigned index = 0; index < entry.value.size(); ++index) {
             if (!entry.value[index].wasLaidInPreload)
@@ -296,8 +297,14 @@ void Modules::forgetEndedMocksOfEarlierTestFiles()
             if (!objects)
                 objects = createTableOfExports();
             storeValue(realm, objects, static_cast<unsigned>(kept.size()), storedValue(realm, before, Identifier::from(vm, index)));
+            if (JSValue object = namespacesBefore ? namespacesBefore->getDirectIndex(realm, index) : JSValue()) {
+                if (!namespaces)
+                    namespaces = createTableOfExports();
+                storeValue(realm, namespaces, static_cast<unsigned>(kept.size()), object);
+            }
             kept.append(entry.value[index]);
         }
+        ensureLoaded(entry.key).namespacesOfEndedMocks.set(*this, namespaces);
         if (kept.isEmpty()) {
             emptied.append(entry.key);
             continue;
@@ -336,12 +343,20 @@ bool Modules::seesMockOf(ModuleID mocked, ModuleID importer) const
 void Modules::noteMomentMockComesInPlace(ModuleID fileOrModule, JSObject* mock, bool stoodInPlace, bool leavesEarlierMockToItsImporters)
 {
     std::optional<MomentMockWasLaid> waiting = m_momentsWaitingMocksWereLaid.takeOptional(fileOrModule);
-    if (JSObject* earlier = leavesEarlierMockToItsImporters ? mockInPlace(fileOrModule) : nullptr; earlier && earlier != mock && earlier == ensureLoaded(fileOrModule).mockLaidInPreload.get() && m_loadedInPreload.get(fileOrModule.index())) {
-        if (std::optional<MomentMockWasLaid> laid = m_momentsStandingMocksWereLaid.takeOptional(fileOrModule))
-            keepEndedMock(fileOrModule, earlier, *laid, waiting ? waiting->moment : 0);
+    if (JSObject* earlier = leavesEarlierMockToItsImporters ? mockInPlace(fileOrModule) : nullptr; earlier && earlier != mock && earlier == ensureLoaded(fileOrModule).mockLaidInPreload.get()) {
+        ModuleID module = moduleWithExportsOf(fileOrModule);
+        std::optional<MomentMockWasLaid> laid = m_loadedInPreload.get(module.index()) ? m_momentsStandingMocksWereLaid.takeOptional(fileOrModule) : std::nullopt;
+        std::optional<unsigned> ended = laid ? keepEndedMock(fileOrModule, earlier, *laid, waiting ? waiting->moment : 0, m_exportsLeftOut.get(module)) : std::nullopt;
+        if (waiting && waiting->hadNamespace && waiting->moment == m_instance.vm->aotState().momentOfLoads) {
+            keepNamespacesMadeUnder(fileOrModule, module, earlier, ended);
+            letGoOfNamespaceMadeUnderMock(module);
+        }
     }
     MomentMockWasLaid laid = waiting && !stoodInPlace ? *waiting : momentOfNow();
     LoadedModule& held = ensureLoaded(fileOrModule);
+    JSObject* ofPreload = held.mockLaidInPreload.get();
+    bool liesOverMockOfPreload = mockInPlace(fileOrModule) == ofPreload ? m_loadedInPreload.get(moduleWithExportsOf(fileOrModule).index()) : m_modulesWhoseMockOfPreloadIsPatched.get(fileOrModule.index());
+    m_modulesWhoseMockOfPreloadIsPatched.set(fileOrModule.index(), stoodInPlace && !leavesEarlierMockToItsImporters && ofPreload && mock != ofPreload && liesOverMockOfPreload);
     if (held.mockLaidInPreload.get() == mock) {
         laid = m_momentsMocksOfPreloadWereLaid.get(fileOrModule);
         if (auto ended = m_endedMocks.find(fileOrModule); ended != m_endedMocks.end()) {
@@ -350,6 +365,7 @@ void Modules::noteMomentMockComesInPlace(ModuleID fileOrModule, JSObject* mock, 
                     each.momentEnded = each.momentLaid;
             }
         }
+        bringBackNamespaceKeptFor(fileOrModule, mock);
     } else if (laid.isInPreload) {
         held.mockLaidInPreload.set(*this, mock);
         m_momentsMocksOfPreloadWereLaid.set(fileOrModule, laid);
@@ -365,6 +381,32 @@ void Modules::keepMockThatStoodInPlace(ModuleID fileOrModule, ModuleID module, J
     std::optional<unsigned> ended = laid && (endedInThisTestFile || laid->isInPreload) ? keepEndedMock(fileOrModule, endedMock, *laid, 0, WTF::move(exportsLeftOut)) : std::nullopt;
     if (!m_momentsOfLoads.isEmpty())
         keepNamespacesMadeUnder(fileOrModule, module, endedMock, ended);
+}
+
+void Modules::bringBackNamespaceKeptFor(ModuleID fileOrModule, JSObject* mock)
+{
+    LoadedModule& held = ensureLoaded(fileOrModule);
+    auto ended = m_endedMocks.find(fileOrModule);
+    if (ended == m_endedMocks.end() || !held.namespacesOfEndedMocks)
+        return;
+    for (unsigned index = 0; index < ended->value.size(); ++index) {
+        JSValue kept = endedMock(fileOrModule, index) == mock ? held.namespacesOfEndedMocks->getDirectIndex(m_instance.globalObject, index) : JSValue();
+        auto* object = kept ? dynamicDowncast<ModuleNamespace>(kept) : nullptr;
+        if (!object)
+            continue;
+        ModuleID module = object->module();
+        auto* madeSince = dynamicDowncast<ModuleNamespace>(namespaceIfCreated(module, ModulePhase::Evaluation));
+        if (madeSince == object)
+            return;
+        if (madeSince) {
+            madeSince->setKeepsToModule(true);
+            if (!ensureLoaded(module).namespaceBeforeMockInPlace)
+                ensureLoaded(module).namespaceBeforeMockInPlace.set(*this, madeSince);
+        }
+        object->clearMockOfView();
+        setNamespace(module, ModulePhase::Evaluation, object);
+        return;
+    }
 }
 
 void Modules::keepNamespacesMadeUnder(ModuleID fileOrModule, ModuleID module, JSObject* endedMock, std::optional<unsigned> ended)

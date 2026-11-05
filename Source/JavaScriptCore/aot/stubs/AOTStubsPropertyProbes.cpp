@@ -361,6 +361,14 @@ void readFieldByTable(StubAssembler& jit, const FieldTableProbe& probe, GPRReg r
             const StubSignature signature = signatureOf(stub);
             const GPRReg receiverOfStub = signature.operands[0].gpr();
             RELEASE_ASSERT(probe.name == *signature.immediate);
+            if (probe.waysOnwardAreCalls) {
+                jumps.link(&jit);
+                jit.callAndReturnPreservingRegisters({ .callee = StubCallee::CompiledCode, .returnsValue = true, .checksException = true, .registersThatCalleeLoses = registersThatWaysOnwardOfGetByIdLose }, scopedLambda<void()>([&] {
+                    jit.move(probe.receiver, receiverOfStub);
+                    jit.callStub(stub.withCallerFrame(CallerFrame::StubFrame));
+                }));
+                return;
+            }
             if (probe.receiver == receiverOfStub) {
                 jit.linkToStub(jumps, stub);
                 return;
@@ -697,16 +705,26 @@ void returnValueByAccessTable(StubAssembler& jit, const AccessTableRead& read, J
         jit.returnToCaller();
     });
 
-    const StubKey call = callGetterOfAnswer(jit.key().callerFrame());
+    const StubKey call = callGetterOfAnswer(read.waysOnwardAreCalls ? CallerFrame::StubFrame : jit.key().callerFrame());
     const StubSignature signature = signatureOfCallGetterOfAnswer(call);
     const GPRReg receiver = signature.operands[0].gpr();
-    const GPRReg getterSetter = r.cell == gprOf(StubRegister::T10) ? jit.clobberOperand(0) : jit.reuseScratch(StubRegister::T10);
+    const GPRReg getterSetter = read.waysOnwardAreCalls ? gprOf(StubRegister::T10) : r.cell == gprOf(StubRegister::T10) ? jit.clobberOperand(0) : jit.reuseScratch(StubRegister::T10);
     RELEASE_ASSERT(noOverlap(receiver, read.word, r.place) && noOverlap(getterSetter, receiver) && signature.operands[1] == Reg(getterSetter));
     findsGetterInOwnStorage.link(&jit);
-    jit.rshift64(TrustedImm32(AccessTable::answerShift), read.word);
-    jit.loadPtr(Address(r.cell, JSObject::butterflyOffset()), r.place);
-    jit.move(r.cell, receiver);
-    jit.load64(BaseIndex(r.place, read.word, CCallHelpers::TimesEight), getterSetter);
+    auto bringOperands = [&] {
+        jit.rshift64(TrustedImm32(AccessTable::answerShift), read.word);
+        jit.loadPtr(Address(r.cell, JSObject::butterflyOffset()), r.place);
+        jit.move(r.cell, receiver);
+        jit.load64(BaseIndex(r.place, read.word, CCallHelpers::TimesEight), getterSetter);
+    };
+    if (read.waysOnwardAreCalls) {
+        jit.callAndReturnPreservingRegisters({ .callee = StubCallee::CompiledCode, .returnsValue = true, .checksException = true, .registersThatCalleeLoses = registersThatWaysOnwardOfGetByIdLose }, scopedLambda<void()>([&] {
+            bringOperands();
+            jit.callStub(call);
+        }));
+        return;
+    }
+    bringOperands();
     jit.jumpToStub(call);
 }
 
@@ -1711,6 +1729,18 @@ void jumpToSlotHandler(StubAssembler& jit, SlotHandlerTable table, GPRReg header
     loadSlotKind(jit, { traitsOf(table).form, header }, scratch);
     jumpToSlotHandlerOfKind(jit, table, header, scratch);
 }
+
+#if CPU(X86_64)
+void callSlotHandler(StubAssembler& jit, SlotHandlerTable table, GPRReg header, GPRReg scratch)
+{
+    const SlotHandlerOperands operands = operandsOfSlotHandler(table);
+    const std::array handlers = slotHandlerKeys(table);
+    RELEASE_ASSERT(header == operands.header);
+    RELEASE_ASSERT(noOverlap(scratch, operands.receiver, operands.header, operands.payload, operands.value, operands.keyCell, operands.identifierNumber, instanceGPR));
+    loadSlotKind(jit, { traitsOf(table).form, header }, scratch);
+    jit.callThroughHandlerTable(BaseIndex(instanceGPR, scratch, CCallHelpers::TimesEight, static_cast<int32_t>(Instance::offsetOfSlotHandlers(table))), handlers, scratch);
+}
+#endif
 
 void jumpToSlotHandlerOfKind(StubAssembler& jit, SlotHandlerTable table, GPRReg header, GPRReg scratch)
 {

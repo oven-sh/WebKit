@@ -172,26 +172,6 @@ Reference buildDivisionOfIntegers(Walker& walker, Origin origin, Reference divid
     return walker.build(WTF::move(division));
 }
 
-TypeID typeOfDivisionOfIntegers(Walker& walker, QuotientRounding rounding, TypeID dividend, TypeID divisor)
-{
-    if (!dividend || !divisor)
-        return { };
-    TypeArena& types = walker.types();
-    Type dividendType = types.at(dividend);
-    Type divisorType = types.at(divisor);
-    if (!integersDivideAsNumbersDoInQuotients(rounding, dividendType, divisorType))
-        return { };
-    if (areBothKnownInQuotients(dividendType, divisorType))
-        return types.integer(Range::one(quotientOfKnownIntegersInQuotients(rounding, dividendType.integers.minimum, divisorType.integers.minimum)));
-    if (quotientIsDividendInQuotients(rounding, dividendType, divisorType))
-        return dividend;
-
-    Draft division(Opcode::DivideIntegers);
-    division.setRounding(rounding);
-    std::array<TypeID, 2> operands { dividend, divisor };
-    return resultTypeOf(walker.typing(), division, OperandTypes { operands });
-}
-
 TypeID typeOfWholeRemainder(Walker& walker, TypeID dividend, TypeID divisor)
 {
     if (!isExactIntegerInQuotients(walker, dividend) || !isExactIntegerInQuotients(walker, divisor))

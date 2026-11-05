@@ -89,9 +89,11 @@ public:
             uint32_t operandIndex { 0 };
             LValue cell { nullptr };
             LValue inFront { nullptr };
+            LValue secondInFront { nullptr };
+            VariableID variable;
         };
 
-        bool isSet() const { return entriesInFront || collectionsInFront || isHeldToThrowNothing || callHeldToThrowNothing || numberOfDigests; }
+        bool isSet() const { return entriesInFront || collectionsInFront || isHeldToThrowNothing || callHeldToThrowNothing || numberOfDigests || countsInFront; }
 
         uint32_t rows { 0 };
         LValue entriesInFront { nullptr };
@@ -100,14 +102,17 @@ public:
         uint64_t callHeldToThrowNothing { 0 };
         const WatchOfEffects* around { nullptr };
         uint8_t lanesNotWritten { 0 };
+        uint8_t secondLanesNotWritten { 0 };
         uint8_t countsHeld { 0 };
         LValue countsInFront { nullptr };
-        std::array<Digest, 6> digests { };
+        static constexpr unsigned mostOperandsDigested = 6;
+        std::array<Digest, 14> digests { };
         unsigned numberOfDigests { 0 };
     };
     void beginWatchOfOperation(const ValueContext&, WatchOfEffects&);
     void endWatchOfEffects(const OperationContext&, const WatchOfEffects&, LValue behind);
     void abandonWatchOfOperation(const WatchOfEffects&);
+    void countStoreForEffectsNet(CountInEffectsNet);
 
     Pointer argumentBuffer(std::span<const Boxed>);
     Pointer uninitializedArgumentBuffer(unsigned numberOfWords);
@@ -163,6 +168,11 @@ private:
     enum class EntersCompiledCode : bool { No, Yes };
     void beginWatchOfEffects(const OperationContext&, const Effects&, EntersCompiledCode, uint32_t rows, WatchOfEffects&);
     LValue readCountsForEffectsNet(uint8_t counts, LValue behind);
+    LValue digestForEffectsNet(LValue cell, uint64_t lanes);
+    void digestInFrontOfCall(WatchOfEffects&, uint32_t operandIndex, LValue cell, VariableID = { });
+    void digestVariablesThatUnitReads(const Effects&, WatchOfEffects&);
+    LValue loadVariableForEffectsNet(VariableID);
+    std::optional<Vector<VariableID, 8>> m_variablesThatUnitReads;
     LValue readWordForEffectsNet(ptrdiff_t offsetInInstance, std::optional<ptrdiff_t> offsetBehindPointer, LValue behind);
     LValue readCollectionsForEffectsNet(LValue behind);
     void noteCallHeldToThrowNothing(uint64_t call, uint32_t rows);

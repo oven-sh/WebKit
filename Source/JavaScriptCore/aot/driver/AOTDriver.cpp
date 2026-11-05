@@ -274,6 +274,35 @@ void BuildDriver::run()
     writeStatisticSection(m_context.statistics(), m_output);
 }
 
+static bool holdsInt32PromiseForDriver(const Typed::Function& function)
+{
+    bool holds = false;
+    function.body.forEachBlock([&](Typed::BodyBlock block) {
+        if (holds)
+            return;
+        for (Typed::BodyValue value : block.values()) {
+            if (value.opcode() == Typed::Opcode::Convert && value.as<Typed::Opcode::Convert>().declared().has(Typed::PositionFlags::IsInt32Promise)) {
+                holds = true;
+                return;
+            }
+        }
+        Typed::BodyTerminator terminator = block.terminator();
+        if (terminator.kind() != Typed::TerminatorKind::ReturnCall)
+            return;
+        for (Typed::TailCast cast : terminator.as<Typed::TerminatorKind::ReturnCall>().casts())
+            holds |= cast.declared.has(Typed::PositionFlags::IsInt32Promise);
+    });
+    return holds;
+}
+
+static bool walkJudgesSomethingOfProgramForDriver(const Typed::Program& program, const ParallelLoops& loops)
+{
+    return !findIndicesInParallel(loops, static_cast<unsigned>(program.functions.size()), [&](unsigned index) {
+        const Typed::Function& function = program.at(FunctionID(index));
+        return function.hasBody() && holdsInt32PromiseForDriver(function);
+    }).isEmpty();
+}
+
 void BuildDriver::runStagesAfterRead()
 {
     if (!m_prepared.program || hasErrors())
@@ -295,6 +324,8 @@ void BuildDriver::runStagesAfterRead()
         m_prepared.checkOfPlan = CheckOfPlan::LeftToCaller;
 
     if (!prepare())
+        return;
+    if (!makesImage && !m_prepared.compileInputs->walk.options.takesNotes && !walkJudgesSomethingOfProgramForDriver(*m_prepared.program, m_context.parallelLoops()))
         return;
     if (!compile())
         return;

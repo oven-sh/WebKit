@@ -27,7 +27,7 @@ public:
 
     static Structure* realmClosureStructure(VM&, JSGlobalObject*, unsigned index);
     Structure* closureStructure(VM&, unsigned index);
-    Structure* closureStructureFor(VM& vm, FunctionID function) { return closureStructure(vm, m_tables.kindOfFunction(function.index()).closureStructure); }
+    Structure* closureStructureFor(VM& vm, FunctionID function) { return closureStructure(vm, m_tables.kindOfFunction(function.index()).closureStructureOfKind()); }
     Structure* slimClosureStructure(FunctionKindData kind) { return m_slimClosureStructures[kind.slimClosureKind()]; }
     Structure* slimClosureStructure(VM&, FunctionID function) { return slimClosureStructure(m_tables.kindOfFunction(function.index())); }
     Structure* reifiedSlimClosureStructure(VM&, FunctionID);

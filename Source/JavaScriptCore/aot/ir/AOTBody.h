@@ -577,7 +577,7 @@ private:
 class BodyBlock {
 public:
     static constexpr uint32_t numberOfHeadWords = sizeof(Wire::BlockHead) / sizeof(uint32_t);
-    static_assert(!offsetof(Wire::BlockHead, parameterCount) && offsetof(Wire::BlockHead, valueCount) == 4 && offsetof(Wire::BlockHead, role) == 8 && offsetof(Wire::BlockHead, subject) == 12 && offsetof(Wire::BlockHead, hasHandler) == 16);
+    static_assert(!offsetof(Wire::BlockHead, parameterCount) && offsetof(Wire::BlockHead, valueCount) == 4 && offsetof(Wire::BlockHead, role) == 8 && offsetof(Wire::BlockHead, subject) == 12 && offsetof(Wire::BlockHead, hasHandler) == 16 && offsetof(Wire::BlockHead, frequency) == 20);
 
     BodyBlock() = default;
     BodyBlock(const uint32_t* head, const uint32_t* terminator, const UnitIDRemap* unit, BlockID id, ValueID firstParameter)
@@ -596,6 +596,7 @@ public:
     BlockRole role() const { return static_cast<BlockRole>(m_words[2]); }
     bool isHandlerBlock() const { return role() != BlockRole::Ordinary; }
     ValueID subject() const { return ValueID::fromBits(m_words[3]); }
+    BlockFrequency frequency() const { return static_cast<BlockFrequency>(m_words[5]); }
 
     uint32_t numberOfParameters() const { return m_words[0]; }
     ValueID firstParameter() const { return m_firstParameter; }

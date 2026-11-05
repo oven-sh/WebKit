@@ -197,7 +197,7 @@ static bool tryStoreToPermanentDictionary(const NamedAccess& access, JSObject* o
         return false;
     unsigned attributes = 0;
     PropertyOffset offset = object->type() == FinalObjectType ? structure->get(vm, uid, attributes) : invalidOffset;
-    if (!isValidOffset(offset) || attributes & PropertyAttribute::ReadOnlyOrAccessorOrCustomAccessorOrValue || structure->isImmutableProperty(uid) || structure->mayBePrototype()) {
+    if (!isValidOffset(offset) || attributes & PropertyAttribute::ReadOnlyOrAccessorOrCustomAccessorOrValue || structure->isImmutableProperty(uid) || isWriteJudgedByWriter(structure, uid) || structure->mayBePrototype()) {
         JSValue(object).putInline(access.instance->globalObject, access.ident, value, slot);
         return true;
     }
@@ -255,6 +255,7 @@ static void putToSlimClosureAndCache(const NamedAccess& access, SlimClosure& clo
     if (const Slot* filed = access.caches().findByKey(withoutProperty, access.ident.impl(), SlotAccess::Store); filed && filed->kind == Slot::Kind::Transition) {
         // As in operationAOTAddPropertyBySlot(): this pointer alone keeps the Structure alive across the allocations of the callee.
         closure.reifyWithAddedProperty(vm, WTF::opaque(filed->transition.newStructureID.decode()), filed->offsetInStorage(), value);
+        holdClosureToLackingNameSlowCase(vm, &closure, access.ident.impl());
         return;
     }
     Structure* structureOfSlimClosures = WTF::opaque(closure.structure());

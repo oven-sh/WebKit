@@ -151,6 +151,7 @@ export const operandRoles = [
   "ContentsOfContentsAreOnlyStored",
   "KeepsWhatCanBeReached",
   "MayReplaceLocale",
+  "PrivateFieldsAreCompared",
 ] as const;
 export type OperandRole = (typeof operandRoles)[number];
 
@@ -248,7 +249,7 @@ export interface CheckedNumber {
 export type Bound = number | CheckedNumber;
 
 export type TypeSpec =
-  | { type: "Anything"; freshness?: Freshness }
+  | { type: "Anything"; freshness?: Freshness; madeOf?: readonly ClassName[] }
   | { type: "Never" }
   | { type: "Primitive"; primitive: Primitive; freshness?: Freshness }
   | { type: "Integers"; minimum: Bound; maximum: Bound }
@@ -530,6 +531,7 @@ export const builtinMarks = [
   "IsCalledWithoutStartupLoads",
   "InstancesHaveMethodCalledWithStartupLoads",
   "InstancesArePrintedByCodeOfTheirOwn",
+  "PrintsWhatHandlersAnswer",
   "LoadsCodeWithoutJSAccess",
   "ReadLoadsCodeByName",
   "HoldsPathOfMainModule",
@@ -548,6 +550,7 @@ export const builtinMarks = [
   "AnswersWithPathOfModule",
   "IsKeyReadOnlyByRowsThatNameIt",
   "LaysOperandAbovePrototype",
+  "HandsOutNoOtherHostObject",
 ] as const;
 export type BuiltinMark = (typeof builtinMarks)[number];
 
@@ -674,7 +677,7 @@ export type IntrinsicSpec =
   | { intrinsic: "IfAbruptCloseIterator" }
   | { intrinsic: "SymbolKey"; symbol: string }
   | { intrinsic: "HasJSType"; first: string; last: string }
-  | { intrinsic: "Builtin" | "Construct"; path: BuiltinPath }
+  | { intrinsic: "Builtin" | "Construct" | "IsHolderWithoutAddedNames"; path: BuiltinPath }
   | { intrinsic: "LinkTimeConstant" }
   | { intrinsic: "Int"; value: number; cppExpression: string }
   | { intrinsic: "Bool"; value: boolean }

@@ -1,5 +1,5 @@
 # function sum(items: Item[] | null | undefined) { let total = 0; for (let i = 0; i < items.length; i++) total += items[i].price * items[i].count; return total; }
-# The function gets out, so nothing is proven of what the list holds: what an element is, that its slots are filled and that they hold numbers are guesses.
+# The function gets out, so nothing is proven of what the list holds: what an element is and that its slots hold numbers are guesses; that they are filled the mark of the cell answers, which the test of the shape asks.
 # Where one of their tests fails nobody has seen anything of the turn, so the other copy of the loop does the whole turn, from what the head held. No closed arm rejoins the typed copy:
 # the sum comes round as a raw number, the element is read and tested once, and the length and the storage of the list stand in front of the loop.
 # RUN: walk f1 mechanisms=all
@@ -22,7 +22,7 @@
 # CHECK: = Add [[sum]], {{*}}form=Numbers
 # RUN(COUNT): compile LoopsBuiltTwice TurnsThatBeginAgain mechanisms=all
 # COUNT: statistic LoopsBuiltTwice 1
-# COUNT: statistic TurnsThatBeginAgain 5
+# COUNT: statistic TurnsThatBeginAgain 3
 # RUN(ONCE): walk f1 mechanisms=all-LoopInvariants
 # ONCE: isLoopHead=true:
 # ONCE-NOT: isLoopHead=true:

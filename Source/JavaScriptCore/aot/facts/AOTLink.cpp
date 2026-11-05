@@ -10,6 +10,7 @@
 
 #include "AOTBuildContext.h"
 #include "AOTBuiltinIDs.h"
+#include "AOTBuiltinTable.h"
 #include "AOTBuiltinTypes.h"
 #include "AOTGroupingOnPool.h"
 #include "AOTIRProgram.h"
@@ -261,6 +262,47 @@ bool LinkTables::closuresLackName(FunctionID function, PropertyKeyID key) const
     return function.index() < functions.size() && functions[function.index()].closuresGetOnlyNamesThatAreListed && !findNameOnFunction(function, key);
 }
 
+bool LinkTables::holderIsChangedInSightAlone(const Program& program, LayoutID classLayout, ClassSide side) const
+{
+    if (classLayout.index() >= layouts.size())
+        return false;
+    const Layout& written = program.at(classLayout);
+    if (written.kind != LayoutKind::Instance || written.isDerived() || written.has(LayoutFlags::IsOfCreatedObject))
+        return false;
+    const LinkedLayout& linked = layouts[classLayout.index()];
+    return !linked.reachesUnseenCode && (side == ClassSide::Prototype ? linked.listsEveryMemberAbove : linked.listsEveryStaticMember);
+}
+
+bool LinkTables::memberHoldsOneFunction(const Program& program, LayoutID classLayout, ClassSide side, PropertyKeyID key, FunctionID written) const
+{
+    if (program.at(classLayout).has(LayoutFlags::IsConstructorFunction)) {
+        auto placeOf = [](const LinkedNameOnPrototype& name) {
+            return std::pair { name.layout, name.key };
+        };
+        if (std::ranges::binary_search(namesOnPrototypes, std::pair { classLayout, PropertyKeyID() }, { }, placeOf))
+            return false;
+        auto laid = std::ranges::equal_range(namesOnPrototypes, std::pair { classLayout, key }, { }, placeOf);
+        return side == ClassSide::Prototype && !laid.empty() && std::ranges::all_of(laid, [&](const LinkedNameOnPrototype& name) {
+            return name.function && name.function == written;
+        });
+    }
+    std::span<const uint32_t> places = membersUnder(classLayout, side, key);
+    return !places.empty() && std::ranges::all_of(places, [&](uint32_t place) {
+        return members[place].holdsOneFunction();
+    });
+}
+
+bool LinkTables::findsNothingOnClassObjects(const Program& program, LayoutID classLayout, PropertyKeyID key) const
+{
+    if (findMember(program, classLayout, ClassSide::Static, key).kind != MemberFound::Kind::Nothing)
+        return false;
+    bool mayBeHidden = false;
+    size_t stepsLeft = program.layouts.size();
+    for (LayoutID current = classLayout; current && stepsLeft; current = program.at(current).base, --stepsLeft)
+        mayBeHidden |= program.at(current).mayHaveStaticField(key);
+    return !mayBeHidden && stepsLeft;
+}
+
 bool LinkTables::findFunctionsLaidAbove(const Program& program, LayoutID layout, PropertyKeyID key, Vector<FunctionID, 4>& functions) const
 {
     if (!key || layout.index() >= layouts.size() || !layouts[layout.index()].listsEveryMemberAbove)
@@ -284,7 +326,7 @@ bool LinkTables::findFunctionsLaidAbove(const Program& program, LayoutID layout,
             return false;
         for (uint32_t place : places) {
             const LinkedMember& member = members[place];
-            if (member.kind != MethodKind::Method || !member.everyWriterIsKnown || !member.function)
+            if (member.kind != MethodKind::Method || !member.holdsOneFunction())
                 return false;
             functions.append(member.function);
         }
@@ -364,7 +406,7 @@ MemberFound LinkTables::findMember(const Program& program, LayoutID layout, Clas
         unsigned numberFound = 0;
         for (uint32_t place : someClassHasMemberUnderKey ? membersUnder(current, side, key) : std::span<const uint32_t> { }) {
             const LinkedMember& member = members[place];
-            if (!member.everyWriterIsKnown || !member.function)
+            if (!member.holdsOneFunction())
                 return { };
             ++numberFound;
             switch (member.kind) {
@@ -1334,17 +1376,25 @@ BitVector bodiesThatLoaderEntersAtMostOnce(const Program& program)
 {
     BitVector bodies(program.functions.size());
     BitVector bodiesOfSeveralModules(program.functions.size());
+    BitVector bodiesWrittenInOtherFiles(program.functions.size());
     for (const Module& module : program.modules) {
         if (!module.body)
             continue;
         if (bodies.quickSet(module.body.index()))
             bodiesOfSeveralModules.quickSet(module.body.index());
         const Function& body = program.at(module.body);
-        bool isEnteredOnce = body.isModuleBody() && body.module && &program.at(body.module) == &module && loaderEntersBodyAtMostOnce(module);
+        bool isEnteredOnce = body.isModuleBody() && body.module && loaderEntersBodyAtMostOnce(module);
         if (!isEnteredOnce)
             bodiesOfSeveralModules.quickSet(module.body.index());
+        else if (isBodyWrittenInAnotherFile(program, module.body))
+            bodiesWrittenInOtherFiles.quickSet(module.body.index());
     }
     bodies.exclude(bodiesOfSeveralModules);
+    for (size_t body : bodiesWrittenInOtherFiles) {
+        FunctionID bodyOfFile = program.at(program.at(FunctionID(static_cast<uint32_t>(body))).module).body;
+        if (!bodyOfFile || !bodies.get(bodyOfFile.index()))
+            bodies.quickClear(body);
+    }
     return bodies;
 }
 
@@ -1507,6 +1557,10 @@ void WriterOfLink::writeParameters(FunctionID id, const LinkedFunction& linked)
         switch (function.entryParameterKind(index)) {
         case EntryParameter::Capture:
             prove(typeIDOfCapture(id, index));
+            parameter.expected = declared && !declared->isEstablished() ? unlessAnything(widened(declared->written())) : TypeID();
+            if (parameter.expected && !singleBuiltinClassOf(typesAtHand(), typesAtHand().at(parameter.expected)))
+                parameter.expected = { };
+            parameter.expectedIsDeclared = !!parameter.expected;
             break;
         case EntryParameter::This:
         case EntryParameter::Parameter: {
@@ -2158,6 +2212,8 @@ static void stopWhereLinkFindsLessFromMore(Program& program, BuildContext& build
         if (saysMoreOfInstances(ofMore.staysAsItsClassMakesIt, ofProgram.staysAsItsClassMakesIt, ofProgram.proven, nothingArrivesInProgram))
             return true;
         if (!nothingArrivesInProgram && ((ofMore.isFilled && !ofProgram.isFilled) || (ofMore.isFilledAtEveryRead && !ofProgram.isFilledAtEveryRead)))
+            return true;
+        if (ofMore.isKeptFromComparisons && !ofProgram.isKeptFromComparisons)
             return true;
         return (ofProgram.isWrittenAfterConstruction && !ofMore.isWrittenAfterConstruction) || (ofProgram.isStoredInto && !ofMore.isStoredInto);
     };

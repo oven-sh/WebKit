@@ -32,7 +32,8 @@ static_assert(!static_cast<unsigned>(TailCallRequirement::Required));
 static_assert(!static_cast<unsigned>(OperatorForm::Unselected) && !static_cast<unsigned>(DataEncoding::Unselected));
 
 static constexpr OpcodeSet opcodesThatNeedChoices = Operation::opcodesWithForm | OpcodeSet {
-    Opcode::Data, Opcode::NewClosure, Opcode::NewObject, Opcode::NewArray, Opcode::ForInOpen, Opcode::ForInStep, Opcode::ResultAt, Opcode::CallDirect
+    Opcode::Data, Opcode::NewClosure, Opcode::NewObject, Opcode::NewArray, Opcode::ForInOpen, Opcode::ForInStep, Opcode::ResultAt, Opcode::CallDirect,
+    Opcode::TryPutByValDirect, Opcode::TryFillNewArray
 };
 
 static void becomeInChoices(Draft& draft, Opcode opcode)
@@ -650,6 +651,71 @@ static void chooseWhatListTakesFromItsSiteInChoices(Walker& walker, Draft& list)
         list.setLiteralStorage(ArrayLiteralStorage::Profiled);
 }
 
+static unsigned widthOfStorageInChoices(ArrayStorage storage)
+{
+    const ArrayStorageForm* form = findArrayStorageForm(storage);
+    return form ? static_cast<unsigned>(form - arrayStorageForms.data()) + 1 : 0;
+}
+static_assert(arrayStorageForms[0].kind == ArrayStorage::Int32 && arrayStorageForms[1].kind == ArrayStorage::Double && arrayStorageForms[2].kind == ArrayStorage::Contiguous);
+
+ArrayStorage askBirthOfListForStorage(Walker& walker, Reference list, ArrayStorage wanted)
+{
+    if (!list || !list.isValue() || !walker.has(Mechanism::TypedOperations))
+        return ArrayStorage::Other;
+    ValueID root = rootOfCellInSweptCode(walker.code(), list.id());
+    const Operation& born = walker.code().at(root);
+    if (born.opcode != Opcode::NewArrayLike)
+        return ArrayStorage::Other;
+    if (born.sourceOperand() && !walker.types().at(walker.code().at(born.sourceOperand()).type).isUndefinedOrNull())
+        return born.arrayStorage();
+    if (widthOfStorageInChoices(wanted) > widthOfStorageInChoices(born.arrayStorage()))
+        walker.code().bearListWithStorage(root, wanted);
+    return born.arrayStorage();
+}
+
+ArrayStorage askBirthOfListForStorageThatTakes(Walker& walker, Reference list, Reference stored)
+{
+    if (!stored || isNeverType(walker.typeOf(stored)))
+        return askBirthOfListForStorage(walker, list, ArrayStorage::Other);
+    Type type = walker.types().at(walker.typeOf(stored));
+    ArrayStorage taking = ArrayStorage::Other;
+    if (type.isInteger())
+        taking = ArrayStorage::Int32;
+    else if (type.isNumber())
+        taking = ArrayStorage::Double;
+    else if (!(type.primitives & Primitive::Number))
+        taking = ArrayStorage::Contiguous;
+    return askBirthOfListForStorage(walker, list, taking);
+}
+
+static bool isBornHereWithoutSourceInChoices(Walker& walker, Reference list)
+{
+    if (!list || !list.isValue())
+        return false;
+    const Operation& born = walker.code().at(rootOfCellInSweptCode(walker.code(), list.id()));
+    return born.opcode == Opcode::NewArrayLike && (!born.sourceOperand() || walker.types().at(walker.code().at(born.sourceOperand()).type).isUndefinedOrNull());
+}
+
+static void chooseStorageOfListBeingFilledInChoices(Walker& walker, Draft& store)
+{
+    Reference list = store.arrayOperand();
+    Reference stored = store.valueOperand();
+    if (!list || !stored)
+        return;
+    ArrayStorage born = askBirthOfListForStorageThatTakes(walker, list, stored);
+    if (store.opcode != Opcode::TryPutByValDirect)
+        return;
+    if (hasArrayStorageForm(born) || !isBornHereWithoutSourceInChoices(walker, list)) {
+        store.setArrayStorage(born);
+        return;
+    }
+    Reference position = store.positionOperand();
+    becomeInChoices(store, Opcode::TryPutIndex);
+    store.setArrayOperand(list);
+    store.setPositionOperand(position);
+    store.setValueOperand(stored);
+}
+
 static void becomeNodeOfDataInChoices(Walker& walker, Draft& draft, const DataNode& node)
 {
     if (const auto* object = node.tryAs<DataNode::Object>()) {
@@ -906,6 +972,10 @@ void Walker::chooseConservativeFields(Draft& draft)
     }
     if (opcode == Opcode::NewArray) {
         chooseWhatListTakesFromItsSiteInChoices(*this, draft);
+        return;
+    }
+    if (opcode == Opcode::TryPutByValDirect || opcode == Opcode::TryFillNewArray) {
+        chooseStorageOfListBeingFilledInChoices(*this, draft);
         return;
     }
     if (opcode == Opcode::Data) {

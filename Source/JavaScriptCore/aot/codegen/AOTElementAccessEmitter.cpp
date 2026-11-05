@@ -10,6 +10,7 @@
 
 #include "AOTAccessEmitter.h"
 #include "AOTBuiltinTypes.h"
+#include "AOTCompileUnit.h"
 #include "AOTConstantEmitter.h"
 #include "AOTConversionEmitter.h"
 #include "AOTGuessedAccessEmitter.h"
@@ -415,7 +416,7 @@ void ElementAccessEmitter::generateGetArrayStorage(const ValueContext& value)
 
 bool ElementAccessEmitter::testsEveryPosition()
 {
-    return AOT::hasFlag(build().options().testing, Wire::TestingSwitch::TestsEveryPosition);
+    return readsStorageWhereItIsUsedUnder(build().options().testing);
 }
 
 void ElementAccessEmitter::stopUnlessInside(const ValueContext& access, Condition isInside)
@@ -428,6 +429,17 @@ void ElementAccessEmitter::stopUnlessListIsAsMadeWhereNothingIsFound(const Value
     if (!Operation::opcodesWithAsksCellWhereNothingIsFound.contains(access.opcode()) || !access->asksCellWhereNothingIsFound())
         return;
     emitter<ThrowEmitter>().requireOrStopAtFalseProof(access, isPristineArray(list, { PristineAspects::Storage, PristineAspects::Names }), std::nullopt, ProofSource::OtherOperation);
+}
+
+void ElementAccessEmitter::holdKindOfList(const ValueContext& access, StorageIsWritten isWritten)
+{
+    const ArrayStorageForm* form = findArrayStorageForm(access->arrayStorage());
+    if (!form || !testsEveryPosition())
+        return;
+    CellPointer list = in<CellPointer>(access->arrayOperand());
+    bool admitsInt32Storage = Operation::opcodesWithAdmitsInt32Storage.contains(access.opcode()) && access->admitsInt32Storage();
+    Condition holds = admitsInt32Storage ? hasDoubleOrInt32Storage(list) : hasArrayStorage(list, form->kind, isWritten == StorageIsWritten::Yes);
+    emitter<ThrowEmitter>().requireOrStopAtFalseProof(access, holds, std::nullopt, ProofSource::WhatIsRemembered);
 }
 
 void ElementAccessEmitter::holdPositionInsideList(const ValueContext& access)
@@ -570,6 +582,7 @@ void ElementAccessEmitter::generateGetArrayElement(const ValueContext& value)
         return;
     const ArrayStorageForm* form = findArrayStorageForm(value->arrayStorage());
     RELEASE_ASSERT(!form || !value->asksCellWhereNothingIsFound());
+    holdKindOfList(value);
     if (!form)
         readWithAnyStorage(value);
     else if (value->admitsInt32Storage())
@@ -849,6 +862,7 @@ void ElementAccessEmitter::generateHasArrayElement(const ValueContext& value)
     CellPointer array = in<CellPointer>(value->arrayOperand());
     ValueID position = value->positionOperand();
     const ArrayStorageForm* knownForm = findArrayStorageForm(value->arrayStorage());
+    holdKindOfList(value);
     auto hasOutOfLine = [&] {
         return callOperation<Condition>(value, RuntimeOperation::InByValAndCache, { boxCell(array), boxedPosition(position) }, { .isOnRarePath = true });
     };
@@ -935,12 +949,15 @@ void ElementAccessEmitter::generateReserveArrayRoom(const ValueContext& value)
 {
     CellPointer array = in<CellPointer>(value->arrayOperand());
     Number room = in<Number>(value->roomOperand());
-    if (!generator().paysForCodeInLine(value.block())) {
+    if (!generator().paysForCodeInLine(value.block()) && value->heldOperands().empty()) {
         callStub(value, reserveArrayRoom(), { array.value(), room.value() });
         return;
     }
     LBasicBlock done = newBlock();
-    branchUnless(greaterThan(room, toNumber(vectorLength(elementsOf(array)))), done);
+    for (ValueID held : value->heldOperands())
+        branchUnless(logicalNot(emitter<ConversionEmitter>().isAbsent(get(held))), done);
+    if (generator().paysForCodeInLine(value.block()))
+        branchUnless(greaterThan(room, toNumber(vectorLength(elementsOf(array)))), done);
     callStub(value, reserveArrayRoom(), { array.value(), room.value() });
     m_out.jump(done);
 

@@ -48,6 +48,16 @@ NEVER_INLINE Latin1Character* appendQuotedAndEscapedJSONString(Latin1Character* 
     return cursor;
 }
 
+void stopAtJSONTextMismatch(const String& written, const String& writtenByGeneralWay)
+{
+    unsigned same = 0;
+    while (same < written.length() && same < writtenByGeneralWay.length() && written[same] == writtenByGeneralWay[same])
+        ++same;
+    unsigned start = same > 20 ? same - 20 : 0;
+    dataLogLn("AOT: the quick writer of JSON answered ", written.length(), " characters, and the general way writes ", writtenByGeneralWay.length(), ": they part at ", same, ": ", written.substring(start, 60), " | ", writtenByGeneralWay.substring(start, 60), ". This is a bug in Bun.");
+    CRASH();
+}
+
 } } // namespace JSC::AOT
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

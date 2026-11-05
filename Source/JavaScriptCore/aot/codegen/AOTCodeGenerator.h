@@ -122,8 +122,8 @@ public:
     bool takesFormOfLoops(const OperationContext&, StateOfKnowledge = StateOfKnowledge::Always) const;
     bool paysForCodeInLine(BlockID block) const { return isInLoop(block); }
     bool laterBarrierCovers(ValueID store) const { return code().marksOf(store).contains(SweepMark::LaterBarrierCovers); }
-    bool ownerIsYoung(ValueID store) const { return code().marksOf(store).contains(SweepMark::OwnerIsYoung); }
-    bool laterFenceCovers(ValueID allocation) const { return code().marksOf(allocation).contains(SweepMark::LaterFenceCovers); }
+    bool ownerIsYoung(ValueID store) const { return !m_keepsValuesInHeapFrame && code().marksOf(store).contains(SweepMark::OwnerIsYoung); }
+    bool laterFenceCovers(ValueID allocation) const { return !m_keepsValuesInHeapFrame && code().marksOf(allocation).contains(SweepMark::LaterFenceCovers); }
     bool isDeferredClosure(ValueID id) const { return isDeferredClosure(code().at(id)); }
     const PlacedSlot* slotOfScopeReadInPlaceOfClosure(ValueID id, const Operation& read) const
     {
@@ -143,6 +143,13 @@ public:
 
     Operand get(ValueID id) { return get(id, code().at(id)); }
     LValue wordOf(ValueID id) const { return m_values[id.index()]; }
+    void nameAgain(ValueID id, LValue lowered) { m_values[id.index()] = lowered; }
+    bool keepsValuesInHeapFrame() const { return m_keepsValuesInHeapFrame; }
+    void saveFramesOfGenerators() { m_savesFramesOfGenerators = true; }
+    void leaveFailuresWithHeapFrameUnsaid() { m_leavesFailuresWithHeapFrameUnsaid = true; }
+    std::span<const BlockID> order() const { return m_order; }
+    BlockID onlyPredecessorOf(BlockID block) const { return m_singlePredecessors[block.index()]; }
+    bool blockDominates(BlockID above, BlockID below);
     Operand getIn(ValueID id, Representation wanted)
     {
         if (wanted == Representation::Void)
@@ -268,7 +275,9 @@ private:
     bool leavesOutBlockThatNothingLeadsTo(BlockID);
     void generateBlock(BlockID id) { generateBlock(id, code().at(id)); }
     void generateBlock(BlockID, const Block&);
+    void enterBlockOfBodyWithHeapFrame(BlockID, const Block&);
     ValueID testReadByBranchAlone(BlockID, const Terminator&) const;
+    ValueID testReadByBranchBehindJumpAlone(BlockID, const Block&) const;
     bool isAwaitedAtOnce(const Operation& call, std::span<const ValueID> valuesOfBlock, size_t index) const;
     void generateValue(BlockID, ValueID, const Operation&, bool isAwaitedAtOnce, std::span<const ValueID> operationsBehind);
     void generateTerminator(BlockID, const Block&, bool generatesCondition);
@@ -387,6 +396,10 @@ private:
     bool m_notesForms { false };
     bool m_mayReleaseBehindLastReads { false };
     bool m_mayLendCells { false };
+    bool m_keepsValuesInHeapFrame { false };
+    bool m_savesFramesOfGenerators { false };
+    bool m_looksBehindEachOperation { false };
+    bool m_leavesFailuresWithHeapFrameUnsaid { false };
     PinnedValues m_pinned;
     std::span<LValue> m_values;
     std::span<ResultRange> m_resultRanges;

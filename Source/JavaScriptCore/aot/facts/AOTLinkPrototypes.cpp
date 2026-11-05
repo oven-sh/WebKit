@@ -383,6 +383,12 @@ private:
         End source;
         bool copiesAccessorsAsTheyAre { false };
     };
+    struct CallThatEnters {
+        FunctionID callee;
+        uint32_t call { 0 };
+
+        friend auto operator<=>(const CallThatEnters&, const CallThatEnters&) = default;
+    };
     enum class WayUp : uint8_t { None, ToCallers, ToMaker };
 
     const SummaryNode& nodeAt(const End& end) const LIFETIME_BOUND { return m_flow.summaries.at(end.function).nodes[end.node]; }
@@ -399,7 +405,8 @@ private:
     void take(const Copy&);
     void lookAt(const Copy&);
     void takeUp(const Copy&, bool targetIsKnown, bool sourceIsKnown);
-    std::span<const uint32_t> callsThatEnter(FunctionID);
+    void listCallsThatMayHandPrototypeObjectsOver();
+    void listCallsOf(FunctionID caller, std::optional<uint32_t> parameterHandedOn);
     std::optional<End> findWhatCallHandsOver(uint32_t call, const End&) const;
     std::optional<End> findWhatMakerCaptures(FunctionID maker, const End&);
 
@@ -411,10 +418,13 @@ private:
     LinkFlow& m_flow;
     const Program& m_program;
     bool m_hasLaidSome { false };
+    bool m_somePrototypeObjectHasEscaped { false };
     Vector<Copy> m_copiesToLookAt;
     HashSet<std::pair<uint64_t, uint64_t>> m_copiesTaken;
-    Vector<uint32_t> m_endsOfCallsThatEnter;
-    Vector<uint32_t> m_callsThatEnter;
+    bool m_callsAreListed { false };
+    Vector<CallThatEnters> m_callsThatEnter;
+    Vector<std::pair<FunctionID, uint32_t>> m_parametersToFollow;
+    HashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_parametersFollowed;
     HashSet<uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_makersWhoseCapturesAreListed;
     HashMap<uint64_t, uint32_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_nodesOfCaptures;
 };
@@ -464,11 +474,11 @@ bool LinkFlow::CopiesOfMembers::mayHoldPrototypeObjectAt(const End& end) const
     if (holdsOneKindAloneAt(end))
         return false;
     LinkType seen = typeSeenAt(end);
-    if (seen.holdsUnseen)
-        return true;
     if (end.isHolderOfPrototypeObject)
-        return seen.functions != LinkType::Functions::None;
-    return seen.objects == LinkType::Objects::Prototype || seen.objects == LinkType::Objects::Prototypes || seen.objects == LinkType::Objects::Lost;
+        return seen.holdsUnseen || seen.functions != LinkType::Functions::None;
+    if (seen.objects == LinkType::Objects::Prototype || seen.objects == LinkType::Objects::Prototypes)
+        return true;
+    return m_somePrototypeObjectHasEscaped && (seen.holdsUnseen || seen.objects == LinkType::Objects::Lost);
 }
 
 bool LinkFlow::CopiesOfMembers::mayHoldObjectAt(const End& end) const
@@ -564,9 +574,11 @@ void LinkFlow::CopiesOfMembers::takeUp(const Copy& copy, bool targetIsKnown, boo
     case WayUp::None:
         return;
     case WayUp::ToCallers:
-        for (uint32_t call : callsThatEnter(unknown.function)) {
+        if (!m_callsAreListed)
+            listCallsThatMayHandPrototypeObjectsOver();
+        for (const CallThatEnters& entering : std::ranges::equal_range(m_callsThatEnter, unknown.function, { }, &CallThatEnters::callee)) {
             takeWhatIsFoundBy([&](const End& end) {
-                return findWhatCallHandsOver(call, end);
+                return findWhatCallHandsOver(entering.call, end);
             });
         }
         return;
@@ -583,28 +595,67 @@ void LinkFlow::CopiesOfMembers::takeUp(const Copy& copy, bool targetIsKnown, boo
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-std::span<const uint32_t> LinkFlow::CopiesOfMembers::callsThatEnter(FunctionID function)
+void LinkFlow::CopiesOfMembers::listCallsThatMayHandPrototypeObjectsOver()
 {
-    if (m_endsOfCallsThatEnter.isEmpty()) {
-        m_endsOfCallsThatEnter.fill(0, m_program.functions.size());
-        size_t numberOfCalls = m_flow.calleesOfCalls.size();
-        for (size_t call = 0; call < numberOfCalls; ++call) {
-            for (FunctionID callee : m_flow.calleesOfCalls[call].listed())
-                ++m_endsOfCallsThatEnter[callee.index()];
+    m_callsAreListed = true;
+    for (size_t function : m_flow.functionsThatReadPrototypeObjects) {
+        if (m_flow.reached.get(function))
+            listCallsOf(FunctionID(static_cast<uint32_t>(function)), std::nullopt);
+    }
+    while (!m_parametersToFollow.isEmpty()) {
+        auto [function, parameter] = m_parametersToFollow.takeLast();
+        listCallsOf(function, parameter);
+    }
+    std::ranges::sort(m_callsThatEnter);
+    removeRepeatedElements(m_callsThatEnter);
+}
+
+void LinkFlow::CopiesOfMembers::listCallsOf(FunctionID caller, std::optional<uint32_t> parameterHandedOn)
+{
+    const ThinSummary& summary = m_flow.summaries.at(caller);
+    auto mayBePrototypeObjectOrItsHolder = [&](uint32_t node) {
+        if (!node || node == noSummaryNode)
+            return false;
+        End handedOver = originOf({ caller, node });
+        if (parameterHandedOn)
+            return nodeAt(handedOver).kind == SummaryNode::Kind::Parameter && nodeAt(handedOver).first == *parameterHandedOn;
+        return handedOver.isHolderOfPrototypeObject || findClassOfPrototypeObjectAt({ caller, node }) || findClassOfPrototypeObjectAt({ caller, node, true });
+    };
+    uint32_t firstCall = m_flow.firstCallOfFunction[caller.index()];
+    for (uint32_t index = 0; index < summary.calls.size(); ++index) {
+        const SummaryCall& record = summary.calls[index];
+        if (record.callee == SummaryCall::Callee::Builtin || record.isConstruction || record.passesList || record.isMadeByProtocol)
+            continue;
+        auto list = [&](const auto& findParameterOf) {
+            for (FunctionID callee : m_flow.calleesOfCalls[firstCall + index].listed()) {
+                std::optional<uint32_t> parameter = findParameterOf(m_program.at(callee));
+                if (!parameter)
+                    continue;
+                m_callsThatEnter.append({ callee, firstCall + index });
+                if (m_parametersFollowed.add(static_cast<uint64_t>(callee.index()) << 32 | *parameter).isNewEntry)
+                    m_parametersToFollow.append({ callee, *parameter });
+            }
+        };
+        bool passesEntryArguments = record.callee == SummaryCall::Callee::Binding;
+        if (!passesEntryArguments && mayBePrototypeObjectOrItsHolder(record.receiver)) {
+            list([](const Function& callee) -> std::optional<uint32_t> {
+                for (uint32_t parameter = 0; parameter < callee.numberOfEntryParameters(); ++parameter) {
+                    if (callee.entryParameterKind(parameter) == EntryParameter::This)
+                        return parameter;
+                }
+                return std::nullopt;
+            });
         }
-        uint32_t numberInFront = 0;
-        for (uint32_t& place : m_endsOfCallsThatEnter) {
-            uint32_t numberOfCallee = std::exchange(place, numberInFront);
-            numberInFront += numberOfCallee;
-        }
-        m_callsThatEnter.grow(numberInFront);
-        for (size_t call = 0; call < numberOfCalls; ++call) {
-            for (FunctionID callee : m_flow.calleesOfCalls[call].listed())
-                m_callsThatEnter[m_endsOfCallsThatEnter[callee.index()]++] = static_cast<uint32_t>(call);
+        for (uint32_t place = 0; place < record.numberOfArguments; ++place) {
+            if (!mayBePrototypeObjectOrItsHolder(summary.arguments[record.firstArgument + place]))
+                continue;
+            list([&](const Function& callee) -> std::optional<uint32_t> {
+                if (passesEntryArguments)
+                    return place < callee.numberOfEntryParameters() ? std::optional(place) : std::nullopt;
+                return place < callee.numberOfPositionalParameters() ? std::optional(callee.firstParameterIndex() + place) : std::nullopt;
+            });
         }
     }
-    uint32_t first = function.index() ? m_endsOfCallsThatEnter[function.index() - 1] : 0;
-    return m_callsThatEnter.span().subspan(first, m_endsOfCallsThatEnter[function.index()] - first);
 }
 
 auto LinkFlow::CopiesOfMembers::findWhatCallHandsOver(uint32_t call, const End& end) const -> std::optional<End>
@@ -735,6 +786,10 @@ bool LinkFlow::CopiesOfMembers::holdsAccessor(LayoutID layout, FlowNodeID node) 
 
 bool LinkFlow::CopiesOfMembers::lay()
 {
+    if (m_flow.m_layoutsOfConstructorFunctions.isEmpty())
+        return false;
+    for (size_t layout : m_flow.m_layoutsOfConstructorFunctions)
+        m_somePrototypeObjectHasEscaped |= m_flow.escapedLayouts.get(layout);
     for (FunctionID function : m_flow.summaries.functionsThatCopyMembers()) {
         if (!m_flow.reached.get(function.index()))
             continue;

@@ -97,11 +97,11 @@ struct LinkContext {
     macro(JSObject*, endedMocks) \
     macro(JSObject*, namespacesOfEndedMocks) \
     macro(JSObject*, mockLaidInPreload) \
+    macro(JSValue, whatRequireAnswersUnderMockLaidInPreload) \
     macro(JSValue, handedOnInPlaceOfNamespace) \
     macro(JSObject*, handedOnByMocks) \
     macro(JSValue, errorKeptByLoader) \
     macro(JSObject*, exportsWhileRequired) \
-    macro(JSObject*, exportsShownBeforeBody) \
     macro(JSObject*, capturedExports) \
     macro(JSObject*, deferredExportsSource) \
     macro(JSCellButterfly*, capturedFields) \
@@ -190,6 +190,11 @@ public:
         const LoadedModule* loaded = loadedIfExists(module);
         return loaded ? loaded->mockInPlace.get() : nullptr;
     }
+    bool mockInPlaceWasLaidInPreload(ModuleID module) const
+    {
+        JSObject* mock = mockInPlace(module);
+        return mock && loadedIfExists(module)->mockLaidInPreload.get() == mock;
+    }
     bool someMockStandsInPlace() const { return m_numberOfMocksInPlace; }
     bool someMockIsSeen() const { return m_numberOfMocksInPlace || !m_endedMocks.isEmpty(); }
     bool setMockInPlace(ModuleID, JSObject* mock, JSValue whatRequireAnswers, bool leavesEarlierMockToItsImporters = false);
@@ -220,6 +225,7 @@ public:
     void didReplaceNamespaceHandedOn(ModuleID handedOn);
     std::span<const ModuleID> modulesThatHandOnNamespaceOf(ModuleID handedOn);
     void letGoOfMockAtNextLoad(ModuleID);
+    void bringBackMockOfPreloadThatWasPatched(ModuleID fileOrModule);
     void letGoOfMockThatEnded(ModuleID);
     void letGoOfMockThatEndedSlow(ModuleID);
     bool letGoOfMockOfLibraryModuleAtNextLoad(ModuleID);
@@ -398,6 +404,7 @@ public:
     JSObject* capturedExports(ModuleID);
     JSValue capturedValue(ModuleID, const Identifier&);
     bool hasCapturedExport(ModuleID, const Identifier&);
+    bool isNativeModule(ModuleID) const;
     void forEachCapturedExport(ModuleID, const ScopedLambda<void(const Identifier&, JSValue)>&);
     static JSValue storedValue(JSGlobalObject*, JSObject* table, const Identifier& name);
     static void storeValue(JSGlobalObject*, JSObject* table, unsigned number, JSValue);
@@ -550,6 +557,7 @@ public:
     void evaluateModuleInRecord(ModuleID);
     bool beginModuleInRecord(ModuleID);
     bool evaluateImportedCommonJSFiles(ModuleID root, JobsOfImportedFiles = JobsOfImportedFiles::StayQueued, ErrorOfImportedFile = ErrorOfImportedFile::IsThrown, ModuleGraphLoadingState* = nullptr);
+    Vector<uint32_t, 16> placesOfFilesAsSynchronousLoadMakesThem(ModuleID root, const Vector<uint32_t, 16>& places);
     AbstractModuleRecord* recordOfRequestedModule(ModuleID);
     void queueJobsThatWaitForLoader();
     void handGraphsToLoader();
@@ -576,6 +584,14 @@ public:
         }
         return m_rootWhoseFilesRun == root;
     }
+    bool isRunningFilesAheadOfLoader(ModuleID root) const
+    {
+        for (const FilesBeingRun* files = m_innermostFilesBeingRun; files; files = files->outer) {
+            if (files->root == root)
+                return !files->fileHandedToLoader;
+        }
+        return m_rootWhoseFilesRun == root;
+    }
     bool stopLoadingBehindFile(ModuleID file);
     void evaluateLoadedCommonJSFile(ModuleID);
     void generateNativeModuleForLoader(ModuleID);
@@ -587,7 +603,8 @@ public:
     bool isImportedByLoader(ModuleID module) const { return isFileOfProgram(m_table.fileBehindFace(module).value_or(module)) || (data(module).kind == ModuleKind::Data && !data(module).isOfLibrary()); }
     bool isBuiltinModuleOfLoader(ModuleID) const;
     bool isBuiltinModuleNewToLoader(ModuleID) const;
-    bool needsLoaderForRequire(ModuleID);
+    enum class LoaderForRequire : uint8_t { IsNotNeeded, ComesBehindImportedFiles, IsNeeded };
+    LoaderForRequire loaderForRequire(ModuleID);
     bool canTellHowGraphIsLoaded(ModuleID root);
     void appendRequestsForLoader(ModuleID, ModuleRecord*, ModuleGraphLoadingState&);
     std::optional<ModuleFailureID> statementThatEndsLoad(ModuleID) const;
@@ -612,6 +629,8 @@ public:
     bool asyncLoadMustWaitFor(ModuleID fileOrFace) const;
     bool importsFileBeingEvaluated(ModuleID root) const;
     bool importsFileThatRunsAhead(ModuleID root) const;
+    bool importsOneOf(ModuleID root, std::span<const ModuleID> files) const;
+    bool loadFurtherOutWaitsForFileBeside(ModuleID);
     void evaluateRootThatWaitedForFile(ModuleID root);
     std::optional<ModuleID> fileToWaitFor(const Identifier& key);
     JSPromise* deferRequest(ModuleID file, ModuleLoadingContext*, bool useImportMap);
@@ -642,8 +661,6 @@ public:
     void evaluateCommonJS(ModuleID);
     JSValue commonJSExports(ModuleID) const;
     JSValue exportsGivenBackToCompiledCode(ModuleID) const;
-    bool hasYetToBegin(ModuleID file) const;
-    JSValue exportsShownByModuleObject(ModuleID);
     JSValue exportsSeenByLoader(ModuleID);
     void stopWhereExportsLeaveCompiledCode(ModuleID) const;
     void setCommonJSExports(ModuleID module, JSValue exports)
@@ -850,7 +867,6 @@ private:
     bool didCaptureExports(ModuleID) const;
     void captureExports(ModuleID);
     void copyExportsOfFinishedFile(ModuleID face);
-    bool isNativeModule(ModuleID) const;
     JSObject* generateNativeModuleExports(ModuleID, WTF::Vector<Identifier, 4>& names, MarkedArgumentBuffer& values);
     JSValue requireNativeModule(ModuleID);
     void bindLatestCapture(ModuleID);
@@ -920,6 +936,7 @@ private:
     void addToRequireCache(ModuleID, JSValue exports);
     void setRequireCacheValue(ModuleID, JSValue exports);
     JSValue requireThroughCache(ModuleID, ModuleID referrer);
+    JSValue exportsOnObjectMadeByRequire(const LoadedModule&);
     JSValue answerRequireWithMock(ModuleID, ModuleID referrer);
     JSValue answerOfRequireToMock(ModuleID);
     bool isMockedLibraryModule(ModuleID);
@@ -994,6 +1011,7 @@ private:
         size_t numberOfJobsInFrontOfFile { 0 };
         bool isAheadOfStepsOfLoader { false };
         std::optional<ModuleID> fileHandedToLoader { };
+        BitVector modulesOfLoad { };
         BitVector requested { };
         Vector<ModuleID> importersOfNextLevel { };
     };
@@ -1001,6 +1019,7 @@ private:
     bool hasLoaderAskedFor(FilesBeingRun&, ModuleID file);
     void handGraphToLoader(FilesBeingRun&, std::optional<ModuleID> finishedFile = std::nullopt);
     void handSynchronousLoadToLoader(FilesBeingRun&);
+    bool comesToLoadOf(FilesBeingRun&, ModuleID required);
     void runSynchronousStepsInFrontOf(ModuleID file);
     struct LoadHandedToLoader {
         ModuleID root;
@@ -1015,6 +1034,7 @@ private:
     void noteRequestByLoader(ModuleID fileOrFace);
     bool wasRequestedByLoader(ModuleID file);
     void letGoOfModuleObject(ModuleID file);
+    void layValueInPlaceOfExportsVariable(ModuleID file);
     void forgetTemplateObjects(ModuleID file);
     struct TemplateObjectOfFile {
         ModuleID file;
@@ -1429,6 +1449,7 @@ private:
         uint32_t moment { 0 };
         uint32_t momentOfTestFile { 0 };
         bool isInPreload { false };
+        bool hadNamespace { false };
     };
     UncheckedKeyHashMap<ModuleID, MomentMockWasLaid> m_momentsWaitingMocksWereLaid;
     UncheckedKeyHashMap<ModuleID, MomentMockWasLaid> m_momentsStandingMocksWereLaid;
@@ -1441,6 +1462,7 @@ private:
     JSValue wordWhereNoMockStands(ModuleID fileOrModule) const;
     void noteMomentMockComesInPlace(ModuleID fileOrModule, JSObject* mock, bool stoodInPlace, bool leavesEarlierMockToItsImporters);
     void keepMockThatStoodInPlace(ModuleID fileOrModule, ModuleID module, JSObject* endedMock, BitVector&& exportsLeftOut);
+    void bringBackNamespaceKeptFor(ModuleID fileOrModule, JSObject* mock);
     void giveBackNamespacesHandedOn(LoadedModule& mocked);
     bool isSomeLoadUnderWay() const;
     BitVector m_namespacesReplacedByMock;
@@ -1449,6 +1471,7 @@ private:
     BitVector m_modulesWithNothingOwedBelow;
     Vector<ModuleID, 4> m_mockedModulesPassedOverByWalks;
     BitVector m_modulesWithMockToLetGo;
+    BitVector m_modulesWhoseMockOfPreloadIsPatched;
     BitVector m_modulesThatLoaderLetGo;
     BitVector m_importersOfMockThatEnded;
     Vector<Vector<uint32_t, 2>> m_importersByStatement;

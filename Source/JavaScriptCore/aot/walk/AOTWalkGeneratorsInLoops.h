@@ -29,12 +29,14 @@ struct GeneratorTakenByConsumer {
     Vector<Reference, 8> entryArguments;
     Vector<BlockID, 8> region;
     Vector<ValueID, 8> valuesReadBehindRegion;
+    Vector<ValueID, 8> valuesThatRegionNamesFromOutside;
 };
 
 struct GeneratorWalkedInConsumer {
     uint32_t frameOfConsumer { 0 };
     uint32_t frameOfGenerator { 0 };
     uint32_t frameOfTurn { UINT32_MAX };
+    uint32_t numberOfLoopsAroundTurn { 0 };
     BlockID inputHead;
     ValueID step;
     Reference state;
@@ -46,7 +48,7 @@ struct GeneratorWalkedInConsumer {
     Vector<BlockID, 2> inputHeadsThatCarryValues;
     Vector<Vector<Reference, 4>, 2> carriedAtReturns;
     uint32_t namesAtHead { 0 };
-    Vector<Reference> namesInFrontOfLoop;
+    Vector<std::pair<ValueID, Reference>, 8> namesInFrontOfLoop;
     ValueID yieldStoodAt;
 };
 

@@ -23,6 +23,7 @@ enum class BlockAttributeInBodyText : uint8_t {
     Role = 1 << 0,
     Subject = 1 << 1,
     Handler = 1 << 2,
+    Frequency = 1 << 3,
 };
 
 template<typename WireHead>
@@ -207,6 +208,8 @@ void TextParser::parseBlockHead(uint32_t blockIndex, Wire::BlockHead& head)
             head.subject = parseValueUseWord();
         else if (acceptAttribute("handler"_s, BlockAttributeInBodyText::Handler))
             parseTarget();
+        else if (acceptAttribute("frequency"_s, BlockAttributeInBodyText::Frequency))
+            head.frequency = static_cast<uint32_t>(parseEnumerator<BlockFrequency>());
         else
             fail();
     }

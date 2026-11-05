@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTCollectionTestSupport.h"
+#include "AOTEmptyPages.h"
 #include "AOTHeapCacheRegistry.h"
 #include "AOTHeapHooks.h"
 #include "AOTVector.h"
@@ -20,7 +21,13 @@
 #include <optional>
 #include <type_traits>
 #include <wtf/Noncopyable.h>
+#include <wtf/OSAllocator.h>
+#include <wtf/PageBlock.h>
 #include <wtf/StdLibExtras.h>
+
+#if OS(LINUX)
+#include <sys/mman.h>
+#endif
 
 namespace JSC { namespace AOT {
 
@@ -220,6 +227,38 @@ static void testSpanIsClearedEveryTime()
     bytes[byteIndexInSecondRegion] = 1;
     registry.finalize(test.vm(), CollectionScope::Full);
     AOT_TEST_CHECK(!bytes[byteIndexInSecondRegion]);
+}
+
+static void testWholePagesOfSpanAreGivenBackAndWhatLiesBesideItStays()
+{
+    TestVM test;
+    CacheRegistry registry;
+    constexpr size_t sizeOfBorder = 8;
+    size_t size = 3 * pageSize();
+    std::span<uint8_t> pages { static_cast<uint8_t*>(OSAllocator::reserveAndCommit(size, OSAllocator::FastMallocPages)), size };
+    std::span<uint8_t> cleared = pages.subspan(sizeOfBorder, size - 2 * sizeOfBorder);
+    registry.addClearedAndGivenBackEachCollection("pages"_s, cleared);
+    auto holdsOnlyOnes = [](std::span<const uint8_t> bytes) {
+        return std::ranges::all_of(bytes, [](uint8_t byte) { return byte == 1; });
+    };
+    auto onlyMiddlePageIsAway = [&] {
+#if OS(LINUX)
+        std::array<unsigned char, 3> isThere { };
+        return !mincore(pages.data(), size, isThere.data()) && (isThere[0] & 1) && !(isThere[1] & 1) && (isThere[2] & 1);
+#else
+        return true;
+#endif
+    };
+
+    for (CollectionScope scope : { CollectionScope::Eden, CollectionScope::Full }) {
+        memsetSpan(pages, 1);
+        AOT_TEST_CHECK(holdsOnlyOnes(pages));
+        registry.finalize(test.vm(), scope);
+        AOT_TEST_CHECK(onlyMiddlePageIsAway());
+        AOT_TEST_CHECK(holdsOnlyOnes(pages.first(sizeOfBorder)) && holdsOnlyOnes(pages.last(sizeOfBorder)));
+        AOT_TEST_CHECK(holdsOnlyZeros(cleared));
+    }
+    OSAllocator::decommitAndRelease(pages.data(), size);
 }
 
 static void testWeakOwnerIsAskedAtEveryCollection()
@@ -483,6 +522,7 @@ std::span<const NativeTest> cacheRegistryTests()
     static constexpr NativeTest tests[] = {
         { "callsInRegistrationOrder"_s, testCallsInRegistrationOrder },
         { "spanIsClearedEveryTime"_s, testSpanIsClearedEveryTime },
+        { "wholePagesOfSpanAreGivenBackAndWhatLiesBesideItStays"_s, testWholePagesOfSpanAreGivenBackAndWhatLiesBesideItStays },
         { "weakOwnerIsAskedAtEveryCollection"_s, testWeakOwnerIsAskedAtEveryCollection },
         { "weakOwnerSweepsNoRegionInEdenUntilRecordAll"_s, testWeakOwnerSweepsNoRegionInEdenUntilRecordAll },
         { "weakOwnerSweepsScannedRegionsInFull"_s, testWeakOwnerSweepsScannedRegionsInFull },

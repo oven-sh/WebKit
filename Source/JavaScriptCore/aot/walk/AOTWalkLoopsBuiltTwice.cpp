@@ -224,12 +224,8 @@ bool Walker::askObjectAtHeadOfTypedCopy(const BodyValue& read)
         return false;
     BlockID passed = addBlock();
     BlockID failed = addBlock(BlockFrequency::Rare);
+    letGuessFailUnasked(failed, originOf(read));
     branch(test, passed, failed);
-    if (failsGuesses()) [[unlikely]] {
-        continueIn(passed);
-        letGuessFailUnasked(failed, originOf(read));
-        passed = currentBlock();
-    }
     continueIn(failed);
     leaveForClosedCopy(headOfTypedCopy, held.span());
     continueIn(passed);
@@ -303,17 +299,26 @@ bool Walker::askLesserBoundAt(const BodyValue& relation)
     m_waysIntoClosedCopies.last().headAsksLesserBound = true;
     m_waysIntoClosedCopies.last().testOfLesserBound = test;
     noteGuessOpened();
-    count(StatisticID::CountersHeldBelowRoomOfViews);
+    if (!m_waysIntoClosedCopies.last().accessesBelowRoomOfViews.isEmpty())
+        count(StatisticID::CountersHeldBelowRoomOfViews);
     return true;
 }
 
-bool Walker::counterHoldsAccessBelowRoomOfView(ValueID access, Reference view) const
+std::optional<PassedTest> Walker::findWhatHoldsAccessBelowRoomOfView(ValueID access, Reference view)
 {
     if (m_waysIntoClosedCopies.isEmpty())
-        return false;
+        return std::nullopt;
     const WayIntoClosedCopy& way = m_waysIntoClosedCopies.last();
-    return way.testOfLesserBound && way.frameIndex == m_frames.size() - 1 && way.accessesBelowRoomOfViews.get(access.index())
-        && findKnown(*this, KnownNote::CounterLiesBelowLesserBound, way.testOfLesserBound) && findKnown(*this, KnownNote::RoomOfViewIsAsInFrontOfLoop, view);
+    if (!way.testOfLesserBound || way.frameIndex != m_frames.size() - 1 || !findKnown(*this, KnownNote::RoomOfViewIsAsInFrontOfLoop, view))
+        return std::nullopt;
+    std::optional<PassedTest> belowLesserBound = findPassedTest(way.testOfLesserBound);
+    if (!belowLesserBound)
+        return std::nullopt;
+    for (const WayIntoClosedCopy::AccessBelowRoomOfView& held : way.accessesBelowRoomOfViews) {
+        if (held.access == access && held.view == view && stillHolds(held.askedInFront))
+            return held.askedInFront.with(*belowLesserBound);
+    }
+    return std::nullopt;
 }
 
 void Walker::proveWhatLooksCountOnAt(const BodyValue& operation)
@@ -354,7 +359,7 @@ bool Walker::turnsOfTypedCopyMayBeginAgain(BlockID inputHead, const LoopPreview&
     if (!preview.effects.mayRunOtherCode() || hasTextsInStringBuilders() || m_numberOfCopiesBuiltForSize || isUnderHandler()
         || (m_inputHeadsOfIterations.contains(inputHeadInFrame(m_frames[frameIndex].inlineFrame, inputHead)) && !iterationsSteppedAtHandOverPositionsAlone(inputHead)))
         return false;
-    return !preview.otherCodeRunsInLoopInside && currentBodyIndex().loop(currentBodyIndex().loopOf(inputHead)).numberOfLoopsWithin <= 1;
+    return currentBodyIndex().loop(currentBodyIndex().loopOf(inputHead)).numberOfLoopsWithin <= 1;
 }
 
 TypeID Walker::typeThatCounterIsHeldTo(BlockID inputHead, uint32_t parameter) const
@@ -470,6 +475,12 @@ bool Walker::turnsOfTypedCopyWriteNothingAboveValues() const
     return !ofTurns.mayRunOtherCode() && !ofTurns.writes.overlaps(LocationMasks(AbstractHeapSet { AbstractHeap::NamedProperties, AbstractHeap::PrototypeLinks }));
 }
 
+bool Walker::turnsOfTypedCopyLeaveListsAsTheyAre() const
+{
+    std::optional<uint32_t> loop = openLoopOfTypedCopy();
+    return loop && leavesListsTestedInFrontOfLoopAsTheyAre(m_openLoops[*loop].effects);
+}
+
 bool Walker::isBuiltInTurnThatMayBeginAgain(Reference reference) const
 {
     std::optional<uint32_t> loop = openLoopOfTypedCopy();
@@ -566,7 +577,7 @@ bool Walker::mayBuildLoopSeveralTimes(BlockID inputHead)
         return false;
     if (index.holdsParametersReadByReleaseHintsAlone())
         return false;
-    if (drawChoice(DrawnFor::LoopBuiltTwice, currentFunction().index(), inputHead.index()) == ChoiceOfCost::No)
+    if (drawChoice(DrawnFor::LoopBuiltTwice, currentFunction().index(), inputHead.index(), false) == ChoiceOfCost::No)
         return false;
     LoopID loop = index.loopOf(inputHead);
     if (m_inputHeadsOfIterations.contains(inputHeadInFrame(m_frames[frameIndex].inlineFrame, inputHead)) && !iterationsSteppedAtMayBeBuiltTwice(inputHead))
@@ -665,8 +676,11 @@ Vector<uint32_t, 8> Walker::nameValuesOnEdgesThatLeavePlainWalk(BlockID inputHea
     size_t frameIndex = m_frames.size() - 1;
     const BodyIndex& index = *m_frames[frameIndex].index;
     LoopID loop = index.loopOf(inputHead);
-    for (ValueID value : readBehindLoop)
-        m_frames[frameIndex].listAsBuiltTwice(value);
+    Vector<ValueID, 8> listedBehindWalk;
+    for (ValueID value : readBehindLoop) {
+        if (m_frames[frameIndex].listAsBuiltTwice(value))
+            listedBehindWalk.append(value);
+    }
     Vector<BlockID, 8> entered;
     for (BlockID member : index.membersOf(loop)) {
         for (BodyTarget target : index.terminator(member).targets()) {
@@ -688,7 +702,7 @@ Vector<uint32_t, 8> Walker::nameValuesOnEdgesThatLeavePlainWalk(BlockID inputHea
                 const Frame& frame = m_frames[frameIndex];
                 for (ValueID value : readBehindLoop) {
                     uint32_t slot = frame.valuesBuiltTwice->slotOf(value);
-                    if (Reference bound = frame.references[value.index()]; bound && !open.names.nameIn(slot))
+                    if (Reference bound = frame.references[value.index()]; bound && (!open.names.nameIn(slot) || listedBehindWalk.contains(value)))
                         open.names.setNameIn(slot, bound);
                 }
             }
@@ -946,7 +960,7 @@ bool Walker::buildLoopTwice(BlockID inputHead, const LoopPreview& preview, std::
             known = typeOf(built);
         return known ? known : TypeID(TypeTable::anything);
     };
-    auto everyOperationThatRanOtherCodeMayBeTyped = [&] {
+    auto everyOperationThatRanOtherCodeMayBeTyped = [&](bool countsOnListsFoundFromInFront) {
         if (m_operationsThatRanOtherCodeOfRow.isEmpty())
             return false;
         for (ValueID ran : m_operationsThatRanOtherCodeOfRow) {
@@ -955,13 +969,16 @@ bool Walker::buildLoopTwice(BlockID inputHead, const LoopPreview& preview, std::
             BodyValue operation = index.value(ran);
             bool storesIntoListTested = operation.opcode() == Opcode::ElemSet && listsRead.lists.containsIf([](const ListTestedInFrontOfLoop& list) { return list.isWritable; });
             bool readsListTested = !listsRead.lists.isEmpty() && (operation.opcode() == Opcode::ElemGet || storesIntoListTested || (operation.opcode() == Opcode::PropGet && !operation.isFreeName() && operation.key() == program().keyOf(BuiltinNames::length)) || findListSteppedByIndexAlone(*this, index, operation));
+            readsListTested |= countsOnListsFoundFromInFront && readsListFoundByReadFromInFront(program(), index, operation, index.block(inputHead).firstParameter().index());
             if (!readsListTested && effectRuleOf(operation.opcode()) != EffectRule::Operator && !guessesMayTypeOperationInCleanTurn(*this, operation, TypesOfInputs(typeInRow)))
                 return false;
         }
         return true;
     };
     std::unique_ptr<LoopPreview> ofTypedCopy;
-    if (turnsOfTypedCopyMayBeginAgain(inputHead, preview) && (m_rowSaysTurnsAreQuietOutsideArms || everyOperationThatRanOtherCodeMayBeTyped() || m_firstOtherCodeRanInCopyOfRow)) {
+    bool turnsAreQuietByRow = m_rowSaysTurnsAreQuietOutsideArms || everyOperationThatRanOtherCodeMayBeTyped(false) || m_firstOtherCodeRanInCopyOfRow;
+    bool turnsAreQuietBehindListsFoundFromInFrontAlone = !turnsAreQuietByRow && everyOperationThatRanOtherCodeMayBeTyped(true);
+    if (turnsOfTypedCopyMayBeginAgain(inputHead, preview) && (turnsAreQuietByRow || turnsAreQuietBehindListsFoundFromInFrontAlone)) {
         ofTypedCopy = makeUniqueWithoutFastMallocCheck<LoopPreview>();
         ofTypedCopy->effects = m_effectsOutsideArmsOfRow;
         ofTypedCopy->typesOfParameters = preview.typesOfParameters;
@@ -1195,6 +1212,10 @@ bool Walker::buildLoopTwice(BlockID inputHead, const LoopPreview& preview, std::
     if ((sharedCopyIsPlainWalk ? !checksVariableInFront : closedStart == sharedStart) && !hasTestInFront && !ofTypedCopy && !holdsCounterBelowRoom)
         return false;
     letGuessFailUnasked(closedStart, origin);
+    if (failsGuesses()) [[unlikely]] {
+        rareWayLeadsToClosedStart = true;
+        hasTestInFront = true;
+    }
     if (!guardsAskedOfObjectsOfTurns.isEmpty() && !isUnreachable()) {
         Vector<LayoutID, 4> begun;
         for (const MemberConditionRecord& condition : guardsAskedOfObjectsOfTurns) {
@@ -1217,8 +1238,95 @@ bool Walker::buildLoopTwice(BlockID inputHead, const LoopPreview& preview, std::
             noteGuardsShownByTest(*this, guardsAskedOfObjectsOfTurns.span(), holds);
         }
     }
+    RelationOfHeadOnNumber relationOfHeadOnNumber;
+    Reference boundRoundedInFront;
+    Reference lesserOfBoundAndGreatestInt32;
+    if (!holdsCounterBelowRoom && closedCopyHasEntry && steppedAtHead.asTheyEntered.isEmpty() && !asksAtHead && !m_numberOfCopiesBuiltForSize && !isUnderHandler() && !(ofTypedCopy ? ofTypedCopy->effects : preview.effects).maySuspend)
+        relationOfHeadOnNumber = findRelationOfHeadBetweenCounterThatEntersAsInt32AndNumber(*this, inputHead, entering, counters.span());
+    auto askBoundOfCounter = [&] {
+        Reference bound = referenceOf(relationOfHeadOnNumber.number);
+        bool isNumberByType = m_types.at(typeOf(bound)).isNumber();
+        BlockFrequency whereItIsRounded = isNumberByType ? BlockFrequency::Normal : BlockFrequency::Rare;
+        auto round = [&](Reference number) {
+            Draft rounding(Opcode::IntegerBound, origin);
+            chooseConservativeFields(rounding);
+            rounding.setNumberOperand(number);
+            rounding.setComparison(index.opcodeOf(relationOfHeadOnNumber.relation));
+            rounding.setNumberIsOnLeft(false);
+            return build(WTF::move(rounding));
+        };
+        Reference rounded = isNumberByType ? round(bound) : Reference();
+        if (isNumberByType && (!rounded || !rounded.isValue()))
+            return false;
+        Reference isInt32 = buildTestOfNumber(*this, isNumberByType ? rounded : bound, TypeTable::int32, origin);
+        if (!isInt32 || !isInt32.isValue())
+            return false;
+        if (!closedStart)
+            closedStart = addBlock(BlockFrequency::Rare);
+        rareWayLeadsToClosedStart = true;
+        auto goOnWhere = [&](Reference test) {
+            if (!test || !test.isValue() || isUnreachable())
+                return false;
+            BlockID passed = addBlock(BlockFrequency::Rare);
+            branch(test, passed, closedStart);
+            continueIn(passed);
+            return true;
+        };
+        Vector<ArmThatMeets, 3> arms;
+        Reference number = bound;
+        if (!isNumberByType) {
+            BlockID takesBound = addBlock();
+            BlockID isNoInt32 = addBlock(BlockFrequency::Rare);
+            branch(isInt32, takesBound, isNoInt32);
+            continueIn(takesBound);
+            Reference held = buildProofOfNumber(*this, bound, isInt32, origin);
+            if (!held)
+                return false;
+            arms.append(ArmThatMeets { takesBound, { held, held } });
+            continueIn(isNoInt32);
+            Reference isNumber = buildTestOfNumber(*this, bound, TypeTable::number, origin);
+            number = goOnWhere(isNumber) ? buildProofOfNumber(*this, bound, isNumber, origin) : Reference();
+        }
+        if (!isNumberByType && number && !isUnreachable())
+            rounded = round(number);
+        Reference roundedIsInt32 = isNumberByType ? isInt32 : rounded && rounded.isValue() && !isUnreachable() ? buildTestOfNumber(*this, rounded, TypeTable::int32, origin) : Reference();
+        if (roundedIsInt32 && roundedIsInt32.isValue()) {
+            BlockID takesRounded = addBlock(whereItIsRounded);
+            BlockID liesOutside = addBlock(BlockFrequency::Rare);
+            branch(roundedIsInt32, takesRounded, liesOutside);
+            continueIn(liesOutside);
+            Draft written(Opcode::Integer, origin);
+            written.setInteger(std::numeric_limits<int32_t>::max());
+            Reference greatest = constant(WTF::move(written));
+            if (goOnWhere(buildOperatorOnIntegersOfLoop(*this, Opcode::Less, greatest, rounded, origin)))
+                arms.append(ArmThatMeets { currentBlock(), { greatest, rounded } });
+            else if (!isUnreachable())
+                jumpTo(closedStart);
+            continueIn(takesRounded);
+            if (Reference held = buildProofOfNumber(*this, rounded, roundedIsInt32, origin))
+                arms.append(ArmThatMeets { takesRounded, { held, held } });
+        } else if (!isUnreachable())
+            jumpTo(closedStart);
+        if (arms.isEmpty())
+            return false;
+        std::array<Reference, 2> met;
+        if (isNumberByType) {
+            for (ArmThatMeets& arm : arms)
+                arm.values.shrink(1);
+        }
+        if (!letArmsMeet(arms.span(), addBlock(), std::span<Reference>(met).first(isNumberByType ? 1 : 2)))
+            return false;
+        lesserOfBoundAndGreatestInt32 = met[0];
+        boundRoundedInFront = isNumberByType ? rounded : met[1];
+        count(StatisticID::NumbersBesideCountersAskedInFrontOfLoops);
+        return true;
+    };
     Vector<Reference, 4> proofs;
     for (const GuessInFrontOfLoop& guess : guesses) {
+        if (relationOfHeadOnNumber.relation && !lesserOfBoundAndGreatestInt32 && !isUnreachable() && guess.value == referenceOf(relationOfHeadOnNumber.number) && m_types.at(guess.tested).isNumber() && askBoundOfCounter()) {
+            proofs.append(Reference());
+            continue;
+        }
         Reference test = isUnreachable() ? Reference() : buildTestInFrontOfLoop(*this, guess, origin);
         if (!test) {
             proofs.append(Reference());
@@ -1268,14 +1376,15 @@ bool Walker::buildLoopTwice(BlockID inputHead, const LoopPreview& preview, std::
         continueIn(passed);
         Reference proof = buildProofOfNumber(*this, read, test, origin);
         if (proof && field.variable) {
-            m_state.noteEndOfDeadZone(field.variable);
+            if (program().at(field.variable).initialization != VariableInitialization::Uninitialized || leavesDeadZoneForGood(program(), field.variable))
+                m_state.noteEndOfDeadZone(field.variable);
             m_state.noteVariable(field.variable, proof);
         } else if (proof)
             noteEnvironmentField(field.scope, field.field, proof);
     }
     Reference lesserBound;
     Reference viewWhoseLengthIsBound;
-    BitVector accessesBelowRoomOfViews;
+    Vector<WayIntoClosedCopy::AccessBelowRoomOfView, 4> accessesBelowRoomOfViews;
     if (holdsCounterBelowRoom && !isUnreachable()) {
         uint32_t firstValueOfLoop = index.block(inputHead).firstParameter().index();
         auto builtInFront = [&](ValueID written) -> Reference {
@@ -1295,29 +1404,22 @@ bool Walker::buildLoopTwice(BlockID inputHead, const LoopPreview& preview, std::
         auto isInteger = [&](Reference value) {
             return value && value.isRecord() && m_types.at(typeOf(value)).isInteger();
         };
-        UncheckedKeyHashSet<uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> askedForSign;
-        auto goOnWhereItIsNotNegative = [&](Reference asked) {
+        auto goOnWhereItIsNotNegative = [&](Reference asked) -> std::optional<PassedTest> {
             if (isUnreachable() || !isInteger(asked))
-                return false;
-            if (m_types.at(typeOf(asked)).integers.minimum >= 0 || askedForSign.contains(asked.bits()))
-                return true;
+                return std::nullopt;
+            if (std::optional<PassedTest> byItsType = findWhatHoldsFromZeroUp(asked))
+                return byItsType;
             Draft zero(Opcode::Integer, origin);
             zero.setInteger(0);
             Reference test = buildOperatorOnIntegersOfLoop(*this, Opcode::GreaterEq, asked, constant(WTF::move(zero)), origin);
-            if (!test || !test.isRecord())
-                return false;
-            if (!test.isValue())
-                return m_code.at(test.id()).opcode == Opcode::Boolean && m_code.at(test.id()).boolean();
-            BlockID passed = addBlock();
+            if (std::optional<PassedTest> known = findPassedTest(test))
+                return known;
+            if (!test || !test.isValue())
+                return std::nullopt;
             if (!closedStart)
                 closedStart = addBlock(BlockFrequency::Rare);
-            branch(test, passed, closedStart);
             rareWayLeadsToClosedStart = true;
-            continueIn(passed);
-            if (isUnreachable())
-                return false;
-            askedForSign.add(asked.bits());
-            return true;
+            return goOnWhereTestPasses(test, closedStart);
         };
         auto lesserOf = [&](Reference one, Reference other) -> Reference {
             Reference isLess = buildOperatorOnIntegersOfLoop(*this, Opcode::Less, one, other, origin);
@@ -1344,8 +1446,14 @@ bool Walker::buildLoopTwice(BlockID inputHead, const LoopPreview& preview, std::
         };
         Reference enters = enteringTypedCopy[heldBelowRoom.position];
         Reference bound = heldBelowRoom.viewWhoseLengthIsBound ? buildRoomOfViewBesideAddend(*this, builtInFront(heldBelowRoom.viewWhoseLengthIsBound), { }, origin) : builtInFront(heldBelowRoom.bound);
-        bool stepsUp = isInteger(enters) && isInteger(bound) && (!heldBelowRoom.stepThatMayBeNegative || goOnWhereItIsNotNegative(builtInFront(heldBelowRoom.stepThatMayBeNegative)));
-        UncheckedKeyHashSet<uint64_t, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> asked;
+        std::optional<PassedTest> stepsUp = !isInteger(enters) || !isInteger(bound) ? std::nullopt : heldBelowRoom.stepThatMayBeNegative ? goOnWhereItIsNotNegative(builtInFront(heldBelowRoom.stepThatMayBeNegative)) : std::optional(PassedTest());
+        struct AddendsAskedOfView {
+            Reference view;
+            Reference fromInFront;
+            Range written;
+            PassedTest leastIsNotNegative;
+        };
+        Vector<AddendsAskedOfView, 4> addendsAskedOfViews;
         UncheckedKeyHashMap<uint32_t, Range, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> writtenAddendsOfViews;
         auto writtenAddend = [&](const AccessUnderCounterOfLoop& access) -> std::optional<int64_t> {
             if (!access.addend)
@@ -1364,7 +1472,7 @@ bool Walker::buildLoopTwice(BlockID inputHead, const LoopPreview& preview, std::
         };
         for (const AccessUnderCounterOfLoop& access : heldBelowRoom.accesses) {
             Reference view = builtInFront(access.view);
-            if (std::optional<int64_t> written = view && !access.addend ? writtenAddend(access) : std::nullopt) {
+            if (std::optional<int64_t> written = view ? writtenAddend(access) : std::nullopt) {
                 Range& range = writtenAddendsOfViews.add(view.bits(), Range { *written, *written }).iterator->value;
                 range = Range { std::min(range.minimum, *written), std::max(range.maximum, *written) };
             }
@@ -1375,22 +1483,29 @@ bool Walker::buildLoopTwice(BlockID inputHead, const LoopPreview& preview, std::
             Reference view = builtInFront(access.view);
             bool isWritten = view && writtenAddend(access);
             Reference addend = isWritten ? integerOf(writtenAddendsOfViews.get(view.bits()).maximum) : builtInFront(access.addend);
-            if (access.addend || !view || !view.isValue() || !isViewOfNumbersReadInLine(*this, typeOf(view)) || (addend && !isInteger(addend)) || (!isWritten && !addend))
+            if (!view || !view.isValue() || !isViewOfNumbersReadInLine(*this, typeOf(view)) || (addend && !isInteger(addend)) || (!isWritten && !addend))
                 continue;
-            uint64_t viewAndAddend = static_cast<uint64_t>(view.bits()) << 32 | addend.bits();
-            if (!asked.contains(viewAndAddend)) {
-                Reference leastAddend = isWritten ? integerOf(writtenAddendsOfViews.get(view.bits()).minimum) : addend;
-                if (!goOnWhereItIsNotNegative(leastAddend ? buildOperatorOnIntegersOfLoop(*this, Opcode::Add, enters, leastAddend, origin) : enters))
+            Range written = isWritten ? writtenAddendsOfViews.get(view.bits()) : Range { 0, 0 };
+            size_t placeOfAsked = addendsAskedOfViews.findIf([&](const AddendsAskedOfView& asked) {
+                if (asked.view != view)
+                    return false;
+                return isWritten ? !asked.fromInFront && asked.written.minimum <= written.minimum && written.maximum <= asked.written.maximum : asked.fromInFront == addend;
+            });
+            if (placeOfAsked == notFound) {
+                Reference leastAddend = isWritten ? integerOf(written.minimum) : addend;
+                std::optional<PassedTest> leastIsNotNegative = goOnWhereItIsNotNegative(leastAddend ? buildOperatorOnIntegersOfLoop(*this, Opcode::Add, enters, leastAddend, origin) : enters);
+                if (!leastIsNotNegative)
                     continue;
                 Reference room = buildRoomOfViewBesideAddend(*this, view, addend, origin);
                 Reference least = room && leastRoom && !isUnreachable() ? lesserOf(room, leastRoom) : room;
                 if (!least || isUnreachable())
                     continue;
                 leastRoom = least;
-                asked.add(viewAndAddend);
+                placeOfAsked = addendsAskedOfViews.size();
+                addendsAskedOfViews.append(AddendsAskedOfView { view, isWritten ? Reference() : addend, written, *leastIsNotNegative });
                 noteKnown(*this, KnownNote::RoomOfViewIsAsInFrontOfLoop, view, { }, 0, LocationMasks(AbstractHeapSet { AbstractHeap::TypedArrayStorage }), 1, true);
             }
-            accessesBelowRoomOfViews.set(access.access.index());
+            accessesBelowRoomOfViews.append({ access.access, view, addendsAskedOfViews[placeOfAsked].leastIsNotNegative.with(*stepsUp) });
         }
         if (leastRoom && heldBelowRoom.viewWhoseLengthIsBound && !isUnreachable()) {
             viewWhoseLengthIsBound = builtInFront(heldBelowRoom.viewWhoseLengthIsBound);
@@ -1405,6 +1520,8 @@ bool Walker::buildLoopTwice(BlockID inputHead, const LoopPreview& preview, std::
             lesserBound = isInteger(leastRoom) ? lesserOf(bound, leastRoom) : Reference();
         }
     }
+    if (relationOfHeadOnNumber.relation && !lesserOfBoundAndGreatestInt32 && !isUnreachable())
+        askBoundOfCounter();
     {
         SetForScope asked(m_inputHeadAskedAboutTypedCopy, headOfLooksTriedForLists);
         buildTestsOfListsReadInLoop(*this, inputHead, entering, listsRead, guesses.span(), proofs.span(), closedStart, origin);
@@ -1513,7 +1630,7 @@ bool Walker::buildLoopTwice(BlockID inputHead, const LoopPreview& preview, std::
             m_waysIntoClosedCopies.append(WayIntoClosedCopy { frameIndex, inputHead, entryOfClosedCopy, { }, closedStart, { }, ofTypedCopy || (listsRead.areTested && headOfLooksTriedForLists == inputHead) });
         if (entryOfClosedCopy)
             m_waysIntoClosedCopies.last().variablesHeld.appendVector(fieldsTestedInFront);
-        turnsThatRunOtherCodeComeRound &= entryOfClosedCopy && !sharedEntry && !asksAtHead && !holdsCounterBelowRoom && listsRead.lists.isEmpty() && counters.isEmpty() && guardsAskedOfObjectsOfTurns.isEmpty() && variablesCheckedInTurns.isEmpty() && steppedAtHead.asTheyEntered.isEmpty()
+        turnsThatRunOtherCodeComeRound &= entryOfClosedCopy && !sharedEntry && !asksAtHead && !holdsCounterBelowRoom && listsRead.lists.isEmpty() && counters.isEmpty() && variablesCheckedInTurns.isEmpty() && steppedAtHead.asTheyEntered.isEmpty()
             && std::ranges::all_of(fieldsTestedInFront, [&](const FieldOfScope& field) {
                 return !field.variable || program().at(field.variable).initialization != VariableInitialization::Uninitialized || leavesDeadZoneForGood(program(), field.variable);
             });
@@ -1524,6 +1641,10 @@ bool Walker::buildLoopTwice(BlockID inputHead, const LoopPreview& preview, std::
             m_waysIntoClosedCopies.last().lesserBound = lesserBound;
             m_waysIntoClosedCopies.last().viewWhoseLengthIsBound = viewWhoseLengthIsBound;
             m_waysIntoClosedCopies.last().accessesBelowRoomOfViews = WTF::move(accessesBelowRoomOfViews);
+        } else if (entryOfClosedCopy && lesserOfBoundAndGreatestInt32) {
+            m_waysIntoClosedCopies.last().relationThatAsksLesserBound = relationOfHeadOnNumber.relation;
+            m_waysIntoClosedCopies.last().lesserBound = lesserOfBoundAndGreatestInt32;
+            m_waysIntoClosedCopies.last().boundBesideLesserBound = boundRoundedInFront;
         }
         for (const CounterTestedInFrontOfLoop& counter : counters) {
             if (entryOfClosedCopy && counter.isHeldWhereItComesRound)
@@ -1543,6 +1664,7 @@ bool Walker::buildLoopTwice(BlockID inputHead, const LoopPreview& preview, std::
             m_effectsSeededForNextRow = ofStores;
         }
         uint32_t guessesOpenedInFront = m_numberOfGuessesOpened;
+        uint32_t listsAskedInFront = m_numberOfListsAskedInFrontOfTypedCopies;
         m_walkOfLoopWasKept = false;
         m_buildsTestsBesidePlainWalk = false;
         {
@@ -1551,6 +1673,8 @@ bool Walker::buildLoopTwice(BlockID inputHead, const LoopPreview& preview, std::
             walkCopyOfLoop(inputHead, enteringTypedCopy.span());
         }
         m_typedBuildTestsNothing = !hasTestInFront && variablesCheckedInTurns.isEmpty() && m_numberOfGuessesOpened == guessesOpenedInFront;
+        m_typedBuildAskedNoListThatItWasBoughtFor = turnsAreQuietBehindListsFoundFromInFrontAlone && !hasTestInFront && variablesCheckedInTurns.isEmpty() && !holdsCounterBelowRoom && m_numberOfListsAskedInFrontOfTypedCopies == listsAskedInFront;
+        m_walkOfLoopWasKept &= m_headOfLoopKeptLast == inputHead && m_frameOfLoopKeptLast == frameIndex;
         if (m_walkOfLoopWasKept)
             m_reportOfTypedBuildMadeLast = ReportOfTypedBuild { m_effectsOfLoopKeptLast, otherCopyOpensItsGuesses, rareWayLeadsToClosedStart || !testsOfListsLeadToClosedStart };
         if (listsRead.areTested && !m_hasFailed && m_walkOfLoopWasKept && !leavesListsTestedInFrontOfLoopAsTheyAre(m_effectsOfLoopKeptLast))

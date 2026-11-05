@@ -41,6 +41,14 @@ constexpr std::optional<SlotInGranule> findSlotInGranule(unsigned offsetInGranul
 }
 
 constexpr StubKey getById() { return StubKey(StubFamily::GetById); }
+constexpr StubKey getByIdKeepingRegisters() { return StubKey(StubFamily::GetByIdKeepingRegisters); }
+constexpr StubKey getByIdCalledByCode() { return exists(getByIdKeepingRegisters()) ? getByIdKeepingRegisters() : getById(); }
+constexpr std::optional<StubKey> stubThatKeepsFewerRegisters(StubKey key)
+{
+    if (key.family() != StubFamily::GetByIdKeepingRegisters)
+        return std::nullopt;
+    return getById().withCallerFrame(key.callerFrame());
+}
 constexpr StubKey getByIdAfterFrontProbe() { return StubKey(StubFamily::GetByIdAfterFrontProbe); }
 constexpr StubKey getByIdHashed() { return StubKey(StubFamily::GetByIdHashed); }
 constexpr StubKey getByIdCheckingColumn() { return StubKey(StubFamily::GetByIdCheckingColumn); }
@@ -55,6 +63,7 @@ constexpr StubKey getByIdAtSite() { return StubKey(StubFamily::GetByIdAtSite); }
 constexpr StubKey getByIdOfObjectAtSite() { return StubKey(StubFamily::GetByIdOfObjectAtSite); }
 constexpr StubKey getByIdAtSiteHashed() { return StubKey(StubFamily::GetByIdAtSiteHashed); }
 constexpr StubKey getLengthAtSite() { return StubKey(StubFamily::GetLengthAtSite); }
+constexpr StubKey getSizeOfTable() { return StubKey(StubFamily::GetSizeOfTable); }
 enum class ReceiverAtSite : uint8_t { IsAnyValue, IsCell };
 enum class WayBehindSite : uint8_t { AfterMiss, WithoutMiss, OfFieldLeftOut };
 enum class NameAtSite : uint8_t { IsAnyName, HasColumn };
@@ -89,6 +98,7 @@ constexpr ReadBehindSiteForm readBehindSiteFormOf(StubKey key)
     return { static_cast<WayBehindSite>(key.form() % 2), static_cast<NameAtSite>(key.form() / 2) };
 }
 constexpr StubKey readLengthAtSite(NameAtSite name) { return StubKey(StubFamily::ReadLengthAtSite).withForm(static_cast<uint8_t>(name)); }
+constexpr StubKey readSizeOfTableAtSite(NameAtSite name) { return StubKey(StubFamily::ReadSizeOfTableAtSite).withForm(static_cast<uint8_t>(name)); }
 constexpr StubKey callMethodAtSite(unsigned count, unsigned lentArguments = 0) { return lentArguments ? StubKey(StubFamily::CallMethodAtSiteLending).withCount(count).withForm(static_cast<uint8_t>(lentArguments - 1)) : StubKey(StubFamily::CallMethodAtSite).withCount(count); }
 constexpr StubKey throughProxy(TrapOfProxy trap) { return StubKey(StubFamily::ThroughProxy).withForm(static_cast<uint8_t>(trap)); }
 constexpr StubKey inById(PresenceQuestion question) { return StubKey(StubFamily::InById).withForm(static_cast<uint8_t>(question)); }

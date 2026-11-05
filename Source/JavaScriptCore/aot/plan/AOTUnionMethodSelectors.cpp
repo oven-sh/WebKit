@@ -25,17 +25,6 @@ static bool isRawFormOfNumberInUnionSelectors(Representation form)
     return form == Representation::Int32 || form == Representation::Double;
 }
 
-static void noteReceiversInUnionSelectors(const Plan& plan, TypeArena& types, MethodFamily& family)
-{
-    Vector<LayoutID> receivers;
-    for (const MethodTableRow& row : family.rows) {
-        if (!plan.shapes().shapesOf(row.layout).isEmpty())
-            receivers.append(row.layout);
-    }
-    if (!receivers.isEmpty())
-        family.receivers = types.at(types.forLayouts(receivers.span())).layouts;
-}
-
 static void noteTypesOfArgumentsInUnionSelectors(const Program& program, const LinkTables& linked, const CallingConventions& conventions, TypeArena& types, MethodFamily& family)
 {
     family.typesOfArguments.fill(TypeID(), maxArgumentsOfTableCall);
@@ -136,18 +125,15 @@ void finishMethodTableForUnions(Program& program, const Facts& facts, Plan& plan
     if (conventions.methodFamilies().empty())
         return;
     const LinkTables& linked = facts.linked();
-    bool testsReceivers = facts.mechanisms().contains(Mechanism::Guesses);
     bool hasTypedSelectors = facts.mechanisms().contains(Mechanism::TypedOperations);
-    if (!testsReceivers && !hasTypedSelectors)
+    if (!hasTypedSelectors && !facts.mechanisms().contains(Mechanism::Guesses))
         return;
 
     MethodTablePlan table;
     table.families.append(conventions.methodFamilies());
     TypeArena types(program.types, ArenaKeeps::InProgram);
-    for (MethodFamily& family : table.families) {
-        if (testsReceivers)
-            noteReceiversInUnionSelectors(plan, types, family);
-        if (hasTypedSelectors)
+    if (hasTypedSelectors) {
+        for (MethodFamily& family : table.families)
             noteTypesOfArgumentsInUnionSelectors(program, linked, conventions, types, family);
     }
 

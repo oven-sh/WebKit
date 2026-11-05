@@ -87,7 +87,7 @@ constexpr SlotRepresentation representationWithCodeForRead(SlotRepresentation re
     return representation;
 }
 
-enum class CommonRepresentations : bool { AreRead, AreReadElsewhere };
+enum class CommonRepresentations : uint8_t { AreRead, EncodedValuesAreReadElsewhere, AreReadElsewhere };
 
 template<typename EmitBody>
 void emitDispatchOnRepresentationForRead(StubAssembler& jit, GPRReg representation, CommonRepresentations commonRepresentations, const EmitBody& emitBody)
@@ -98,6 +98,8 @@ void emitDispatchOnRepresentationForRead(StubAssembler& jit, GPRReg representati
         CCallHelpers::Jump isNotEncodedValue = jit.branch32(CCallHelpers::Above, representation, immediate(representationsReadAsEncodedValues.back()));
         emitBody(SlotRepresentation::JSValue);
         isNotEncodedValue.link(&jit);
+    }
+    if (commonRepresentations != CommonRepresentations::AreReadElsewhere) {
         CCallHelpers::Jump isNotNarrowReference = jit.branch32(CCallHelpers::Above, representation, immediate(representationsReadAsNarrowReferences.back()));
         emitBody(SlotRepresentation::OptionalCell32);
         isNotNarrowReference.link(&jit);

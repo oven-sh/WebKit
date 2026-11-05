@@ -108,11 +108,14 @@ private:
     TypeAsWritten cutByRelationsInFront(ValueAtPlace, TypeAsWritten) const;
     BuiltinID builtinWrittenAsCallee(ValueID) const;
     BuiltinID builtinBoundedByArguments(BodyValue) const;
+    BuiltinID methodCalledOnWrittenText(BodyValue) const;
     Parts partsOf(ValueAtPlace) const;
     Parts valuesThatMeetIn(ValueID parameter) const;
+    Parts valuesThatEnterLoopAt(ValueID parameter) const;
     std::optional<BodyEdgeResult> testThatFills(ValueID parameter) const;
     TypeAsWritten typeOfParameter(BodyValue) const;
     TypeAsWritten typeWhereWaysMeet(ValueID parameter, const Parts&) const;
+    TypeAsWritten typeAtHeadOfLoop(BodyValue parameter, const Parts& entering) const;
     TypeAsWritten typeBehindTest(ValueID parameter, const BodyEdgeResult&, const Parts& operandsOfTest) const;
     TypeAsWritten typeBehindConvert(BodyValue, BlockID place) const;
     TypeAsWritten compute(ValueAtPlace) const;
@@ -272,6 +275,26 @@ BuiltinID TypesAsWritten::builtinBoundedByArguments(BodyValue written) const
     return isBounded ? builtin : BuiltinID();
 }
 
+BuiltinID TypesAsWritten::methodCalledOnWrittenText(BodyValue written) const
+{
+    if (written.opcode() != Opcode::Call)
+        return { };
+    auto call = written.as<Opcode::Call>();
+    ValueID text = call.thisValueOperand() ? m_input.valueBehindCasts(call.thisValueOperand()) : ValueID();
+    ValueID read = call.calleeOperand() ? m_input.valueBehindCasts(call.calleeOperand()) : ValueID();
+    if (!text || !read || m_input.isParameter(read) || m_input.opcodeOf(read) != Opcode::PropGet || std::ranges::contains(call.argumentsOperands(), ValueID()))
+        return { };
+    BodyValue readOfMethod = m_input.value(read);
+    if (readOfMethod.isFreeName() || m_input.valueBehindCasts(readOfMethod.objectOperand()) != text)
+        return { };
+    TypeAsWritten ofText = typeWrittenOf(text);
+    bool isWritten = ofText.restsOnWrittenType || (!m_input.isParameter(text) && primitiveConstants.contains(m_input.opcodeOf(text)));
+    if (!isWritten || !ofText.type || isNeverType(ofText.type) || !m_walker.types().at(ofText.type).hasOnlyPrimitives(Primitive::AnyString))
+        return { };
+    BuiltinID method = findConstantMemberReadOff(std::as_const(m_walker), ofText.type, readOfMethod.key());
+    return method ? m_walker.program().builtins().canonicalID(method) : BuiltinID();
+}
+
 TypesAsWritten::Parts TypesAsWritten::partsOf(ValueAtPlace asked) const
 {
     BodyValue written = m_input.value(asked.value);
@@ -279,7 +302,7 @@ TypesAsWritten::Parts TypesAsWritten::partsOf(ValueAtPlace asked) const
     if (written.isParameter()) {
         std::optional<BodyEdgeResult> filled = testThatFills(asked.value);
         if (!filled)
-            return valuesThatMeetIn(asked.value);
+            return m_input.isLoopHead(m_input.blockOf(asked.value)) ? valuesThatEnterLoopAt(asked.value) : valuesThatMeetIn(asked.value);
         BodyValue test = m_input.value(filled->test);
         BlockID from = m_input.onlyIncomingEdge(m_input.blockOf(asked.value))->from;
         for (uint32_t operandIndex = 0; operandIndex < numberOfNamedOperandsOf(test.opcode()); ++operandIndex) {
@@ -296,6 +319,10 @@ TypesAsWritten::Parts TypesAsWritten::partsOf(ValueAtPlace asked) const
                 parts.append({ operand, asked.place });
         }
     } else if (builtinBoundedByArguments(written)) {
+        for (ValueID argument : written.as<Opcode::Call>().argumentsOperands())
+            parts.append({ argument, asked.place });
+    } else if (methodCalledOnWrittenText(written)) {
+        parts.append({ written.as<Opcode::Call>().thisValueOperand(), asked.place });
         for (ValueID argument : written.as<Opcode::Call>().argumentsOperands())
             parts.append({ argument, asked.place });
     }
@@ -325,6 +352,24 @@ TypesAsWritten::Parts TypesAsWritten::valuesThatMeetIn(ValueID parameter) const
     if (arriving.size() != numberOfEdges)
         return { };
     return arriving;
+}
+
+TypesAsWritten::Parts TypesAsWritten::valuesThatEnterLoopAt(ValueID parameter) const
+{
+    BlockID head = m_input.blockOf(parameter);
+    if (m_input.isEnteredByHandlerEdge(head) || m_input.hasIrreducibleFlow() || !writtenTypeKeepsInt32Promise(m_walker, m_input.value(parameter).parameterType()))
+        return { };
+    uint32_t index = *m_input.block(head).indexOfParameter(parameter);
+    Parts entering;
+    for (const BodyIncomingEdge& edge : m_walker.incomingEdgesOf(m_input, head)) {
+        if (edge.from >= head)
+            continue;
+        std::span<const ValueID> arguments = edge.target.arguments();
+        if (index >= arguments.size() || !arguments[index])
+            return { };
+        entering.append({ arguments[index], edge.from });
+    }
+    return entering;
 }
 
 std::optional<BodyEdgeResult> TypesAsWritten::testThatFills(ValueID parameter) const
@@ -377,6 +422,59 @@ TypeAsWritten TypesAsWritten::typeWhereWaysMeet(ValueID parameter, const Parts& 
     return met.restsOnWrittenType ? met : asWalkHasIt(parameter);
 }
 
+TypeAsWritten TypesAsWritten::typeAtHeadOfLoop(BodyValue parameter, const Parts& entering) const
+{
+    TypeAsWritten held = typeOfParameter(parameter);
+    if (!held.restsOnWrittenType)
+        return held;
+    TypeArena& types = m_walker.types();
+    TypingContext typing = typingForInt32Promises(m_walker);
+    auto isConstant = [&](ValueID value) {
+        return value && !m_input.isParameter(value) && primitiveConstants.contains(m_input.opcodeOf(value));
+    };
+    TypeAsWritten met = held;
+    met.type = { };
+    for (ValueAtPlace part : entering) {
+        ValueID made = m_input.valueBehindCasts(part.value);
+        TypeAsWritten typeOfPart = isConstant(made) ? TypeAsWritten { typeOfConstant(typing, m_input.value(made)), true } : known(part);
+        TypeID both = typeOfPart.type && typeOfPart.restsOnWrittenType ? types.intersectionOf(typeOfPart.type, held.type) : TypeID();
+        if (!both || isNeverType(both))
+            return held;
+        met.type = met.type ? types.unionOf(met.type, both) : both;
+        met.leavesOutWhoCalls |= typeOfPart.leavesOutWhoCalls;
+        met.standsBehindBrokenPromise |= typeOfPart.standsBehindBrokenPromise;
+    }
+    BlockID head = m_input.blockOf(parameter.id());
+    uint32_t index = *m_input.block(head).indexOfParameter(parameter.id());
+    for (const BodyIncomingEdge& edge : m_walker.incomingEdgesOf(m_input, head)) {
+        if (edge.from < head)
+            continue;
+        std::span<const ValueID> arguments = edge.target.arguments();
+        ValueID comesRound = index < arguments.size() ? m_input.valueBehindCasts(arguments[index]) : ValueID();
+        std::optional<std::array<BodyEdgeResult, 2>> bounds = comesRound ? boundsProvenOnEdge(m_input, m_input.terminator(edge.from), edge.targetIndex) : std::nullopt;
+        if (!bounds)
+            return held;
+        TypeID round = held.type;
+        for (const BodyEdgeResult& bound : *bounds) {
+            if (m_input.valueBehindCasts(bound.subject) != comesRound)
+                continue;
+            BodyValue relation = m_input.value(bound.test);
+            ValueID otherSide = relation.operand(1 - bound.operandIndex);
+            TypeID other = typeStatedByCastsOf(otherSide);
+            if (ValueID made = m_input.valueBehindCasts(otherSide); !other && made) {
+                TypeAsWritten written = typeWrittenOf(made);
+                if (written.restsOnWrittenType || isConstant(made))
+                    other = written.type;
+            }
+            TypeID cut = other ? narrowByComparison(typing, relation.opcode(), !bound.operandIndex, round, other, bound.isOnTakenEdge ? EdgeSide::Taken : EdgeSide::NotTaken) : TypeID();
+            if (cut && !isNeverType(cut))
+                round = cut;
+        }
+        met.type = met.type ? types.unionOf(met.type, round) : round;
+    }
+    return met.type ? met : held;
+}
+
 TypeAsWritten TypesAsWritten::typeBehindTest(ValueID parameter, const BodyEdgeResult& filled, const Parts& operandsOfTest) const
 {
     Vector<TypeID, 2> types;
@@ -417,6 +515,8 @@ TypeAsWritten TypesAsWritten::compute(ValueAtPlace asked) const
         if (parts.isEmpty())
             return cutByRelationsInFront(asked, typeOfParameter(written));
         std::optional<BodyEdgeResult> filled = testThatFills(asked.value);
+        if (!filled && m_input.isLoopHead(m_input.blockOf(asked.value)))
+            return cutByRelationsInFront(asked, typeAtHeadOfLoop(written, parts));
         return cutByRelationsInFront(asked, filled ? typeBehindTest(asked.value, *filled, parts) : typeWhereWaysMeet(asked.value, parts));
     }
     Opcode opcode = written.opcode();
@@ -443,6 +543,11 @@ TypeAsWritten TypesAsWritten::compute(ValueAtPlace asked) const
         BuiltinOperandTypes passed;
         passed.arguments.appendVector(typesOfParts);
         made.type = resultTypeOfReachableOverloads(BuiltinTypeContext { m_walker.program(), m_walker.types() }, builtin, BuiltinCallMode::Call, passed);
+    } else if (BuiltinID method = methodCalledOnWrittenText(written)) {
+        BuiltinOperandTypes passed;
+        passed.receiver = typesOfParts[0];
+        passed.arguments.append(typesOfParts.subspan(1));
+        made.type = resultTypeOfReachableOverloads(BuiltinTypeContext { m_walker.program(), m_walker.types() }, method, BuiltinCallMode::Call, passed);
     } else if (typesOfParts.size() == numberOfNamedOperandsOf(opcode))
         made.type = resultTypeOfOperator(typingForInt32Promises(m_walker), opcode, typesOfParts.span());
     return made.type ? cutByRelationsInFront(asked, made) : asWalkHasIt(written.id());

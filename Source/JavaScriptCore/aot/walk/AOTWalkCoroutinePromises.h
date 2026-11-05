@@ -17,7 +17,6 @@ Reference buildSuspensionInCoroutine(Walker&, Draft&& suspension);
 bool isProvenToHaveNoThen(Walker&, Reference);
 Reference buildTestForNoThen(Walker&, Reference value, Origin);
 
-void noteSuspensionOfCoroutine(Walker&, Draft& suspension);
 bool replaceSuspensionOfCoroutine(Walker&, const BodyValue&);
 Reference buildAwaitOfWhatHasNoThen(Walker&, Reference awaited, std::span<const Reference> held, Origin);
 void resolvePromiseThatNothingHasTaken(Walker&, Reference promise, Reference value, bool mayTest, Origin);

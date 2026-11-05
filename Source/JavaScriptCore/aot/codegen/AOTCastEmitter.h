@@ -26,6 +26,11 @@ public:
     void generateRequireObject(const ValueContext&);
     void generateTypeTest(const ValueContext&);
     void generateCheckProof(const ValueContext&);
+    struct KindsAndClosure {
+        uint32_t kinds;
+        std::optional<uint32_t> mentionOfUpperHalfOfClosureWord;
+    };
+    std::optional<KindsAndClosure> kindsAndClosureThatMakeUp(TypeID);
 
 private:
     const TypeTestPlan& planFor(ValueID operand, TypeID to) { return typeTestPlanFor(typeIDOf(operand), representationOf(operand), to); }

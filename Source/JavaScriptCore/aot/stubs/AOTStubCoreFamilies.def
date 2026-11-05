@@ -47,6 +47,7 @@ v(CreateConstantAtSite, CalledByCode, (String, Key, BuiltinCell), FormAxis | Ope
 v(ToBoolean, CalledByCode, (), OperandRegisterAxis | SlowPathRecurs, 0, 0, AllISAs, NoISA, AnyAllocatableRegister, Never, MayCall, ClobbersOnlyScratch, reads(StringStorage), ToBoolean)
 v(ValueIsTruthy, CalledByCode, (), OperandRegisterAxis, 0, 0, AllISAs, NoISA, AnyAllocatableRegister, Never, MayCall, ClobbersOnlyScratch, reads(StringStorage), ValueIsTruthy)
 v(ThrowUnlessCallable, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, ThrowUnlessCallable)
+v(CheckProofOfKinds, CalledByCode, (), OperandRegisterAxis, 0, 0, AllISAs, NoISA, AnyAllocatableRegister, Never, MayCall, ClobbersOnlyScratch, NoEffects, CheckProofOfKinds)
 v(ThrowUnlessForwardedCallCanBeMade, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, ThrowUnlessForwardedCallCanBeMade)
 
 v(GetGlobalBinding, CalledByCode, (ScriptsAndGlobalObject, GlobalObject), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, GetGlobalBinding)

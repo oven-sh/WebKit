@@ -89,6 +89,11 @@ struct Effects {
         return { .reads = LocationMasks::top(), .writes = LocationMasks::top(), .mayThrow = true, .mayCollect = true, .mayCallUnknownCode = true, .maySuspend = false, .mayBeTerminated = true };
     }
 
+    static constexpr Effects ofReadByNameThatRunsNoCode()
+    {
+        return { .reads = LocationMasks::top(), .writes = LocationMasks::top().restrictedTo(heapsWhoseWritesNobodySees), .mayThrow = ThrowEffect::onlyForLackOfMemory(), .mayCollect = true, .mayCallUnknownCode = false, .maySuspend = false, .mayBeTerminated = false };
+    }
+
     constexpr bool isPure() const { return reads.isEmpty() && writes.isEmpty() && mayThrow == ThrowEffect(false) && !mayCollect && !mayCallUnknownCode && !maySuspend && !mayBeTerminated; }
     constexpr bool isRemovableWhenUnused() const { return writes.containsOnly(heapsWhoseWritesNobodySees) && !mayThrowByRule() && !mayBeTerminated && !mayRunOtherCode(); }
     constexpr bool mayBeRunAgainUnseen() const { return writes.containsOnly(heapsWhoseWritesNobodySees) && !mayRunOtherCode(); }

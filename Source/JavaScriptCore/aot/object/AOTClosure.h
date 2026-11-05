@@ -91,6 +91,16 @@ static_assert(offsetOfCopyInHeapOfClosureInFrame(Closure::offsetOfCaptures(), 3)
 
 ALWAYS_INLINE bool isCompiledClosure(const JSCell* cell) { return cell->type() == CompiledClosureType; }
 
+JSValue findOnChainAbove(VM&, const JSObject*, UniquedStringImpl*, unsigned& attributes);
+bool holdsWhatIsFoundAbove(VM&, const JSObject*, UniquedStringImpl*, JSValue, unsigned attributes);
+void holdClosureToLackingNameSlowCase(VM&, const JSCell* closure, UniquedStringImpl*);
+ALWAYS_INLINE void holdClosureToLackingName(VM& vm, const JSCell* cell, UniquedStringImpl* uid)
+{
+    if (isCompiledCalleeType(cell->type())) [[unlikely]]
+        holdClosureToLackingNameSlowCase(vm, cell, uid);
+}
+void holdClosureToItsPrototype(VM&, const JSCell* closure);
+
 Structure* createStructureOfScopesInHeapSnapshots(VM&, JSGlobalObject*);
 JSCell* createScopeInHeapSnapshot(VM&, Structure*, JSCell* closure);
 bool hasScopeInHeapSnapshots(JSCell*);

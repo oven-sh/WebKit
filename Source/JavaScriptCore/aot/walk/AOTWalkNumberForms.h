@@ -46,7 +46,6 @@ struct WholeRemainder {
 };
 std::optional<WholeRemainder> findWholeRemainder(Walker&, ValueID number, const InputsOfTypedOperation&);
 Reference buildDivisionOfIntegers(Walker&, Origin, Reference dividend, Reference divisor, QuotientRounding);
-TypeID typeOfDivisionOfIntegers(Walker&, QuotientRounding, TypeID dividend, TypeID divisor);
 Reference buildWholeRemainder(Walker&, Origin, const WholeRemainder&);
 TypeID typeOfWholeRemainder(Walker&, TypeID dividend, TypeID divisor);
 Reference buildZeroWhereWholeRemainderIsZero(Walker&, Origin, const WholeRemainder&);
@@ -65,7 +64,6 @@ AOT_LINK_OF_WALK(buildNumberForm, opcodesThatBuildNumberFormTakes)
 
 Reference buildCallOnNumbers(Walker&, const CallByOneRow&);
 std::optional<PrimitiveKnownToFolding> foldExactly(Walker&, const CallByOneRow&);
-TypeID typeOfCallOnNumbersAhead(Walker&, const BodyIndex&, const BodyValue& call, const TypesOfInputs&);
 
 Reference buildCharCode(Walker&, const CallByOneRow&);
 Reference codeUnitBesideCharCode(Walker&, Reference number);

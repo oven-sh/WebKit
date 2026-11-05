@@ -84,6 +84,8 @@ struct PositionFacts {
 };
 
 struct LocationFacts {
+    friend bool operator==(const LocationFacts&, const LocationFacts&) = default;
+
     InitializationState initialization { InitializationState::Unknown };
 };
 
@@ -99,6 +101,8 @@ enum class FieldFact : uint8_t {
 };
 
 struct FieldFacts {
+    friend bool operator==(const FieldFacts&, const FieldFacts&) = default;
+
     LocationFacts location;
     OptionSet<FieldStability> stability;
     OptionSet<FieldForm> formOfValue;

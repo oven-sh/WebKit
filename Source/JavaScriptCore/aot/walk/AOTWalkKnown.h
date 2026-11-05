@@ -32,7 +32,6 @@ enum class KnownNote : uint8_t {
     MemberOfBuiltinIsAsBuilt,
     HolderOfBuiltinHasNoAddedNames,
     RoomOfViewIsAsInFrontOfLoop,
-    CounterLiesBelowLesserBound,
 };
 void noteKnown(Walker&, KnownNote, Reference subject, Reference other, uint32_t word, const LocationMasks& restsOn, uint64_t noted, bool endsAtSuspension = false);
 std::optional<uint64_t> findKnown(const Walker&, KnownNote, Reference subject, Reference other = { }, uint32_t word = 0);
@@ -58,6 +57,7 @@ ALWAYS_INLINE void endWhatOperationWrites(Walker& walker, const Draft& draft, co
     if (!effects.writes.isEmpty() || effects.mayRunOtherCode() || draft.opcode == Opcode::ReleaseEnvironment)
         endWhatOperationWritesOrRuns(walker, draft, effects);
 }
+bool writerEndsNoGuard(const Walker&, const Draft&);
 bool mayBeSameObject(Walker&, Reference, Reference);
 
 

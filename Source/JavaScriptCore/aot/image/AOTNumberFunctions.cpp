@@ -200,6 +200,14 @@ static void putNumberInThrowWordOfThunk(const CompiledCode& code, std::span<uint
     setSourceOfArgumentMove(moves, index, ArgumentSource::Constant, narrowWord ? *narrowWord : ThrowSiteWord::inRegister(firstWord, *number));
 }
 
+static void putNumberAboveConstantOfThunk(const CompiledCode& code, std::span<uint64_t> moves, size_t index, const ImageNumbers& numbers, BuildContext& context)
+{
+    uint32_t constant = static_cast<uint32_t>(moves[index + 1]);
+    uint32_t mention = static_cast<uint32_t>(moves[index + 1] >> 32);
+    if (std::optional<uint32_t> number = numberToPutInPlaceOfMention(code, mention, "the number that an argument thunk moves above a constant"_s, numbers, context))
+        setSourceOfArgumentMove(moves, index, ArgumentSource::Constant, constant | static_cast<uint64_t>(*number) << 32);
+}
+
 static void putNumbersInThrowWordsOfAccess(const CompiledCode& code, FaultingAccess& access, const ImageNumbers& numbers, BuildContext& context)
 {
     constexpr unsigned wordOfWideA = 1;
@@ -252,6 +260,8 @@ void applyNumbersToFunctions(LinkedFunctions& functions, const ImageNumbers& num
                 for (size_t index = numberOfHeaderWords; index < moves.size(); index += 2) {
                     if (sourceOfArgumentMove(moves, index) == ArgumentSource::ThrowWordWithMention)
                         putNumberInThrowWordOfThunk(code, moves, index, numbers, context);
+                    else if (sourceOfArgumentMove(moves, index) == ArgumentSource::ConstantBelowMention)
+                        putNumberAboveConstantOfThunk(code, moves, index, numbers, context);
                 }
             }
 

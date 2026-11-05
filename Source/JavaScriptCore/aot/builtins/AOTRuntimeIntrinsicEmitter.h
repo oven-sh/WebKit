@@ -22,7 +22,6 @@ public:
     void generateFindsDeclaredMember(const ValueContext&);
     void generateIsPlainInstanceOf(const ValueContext&);
     void generateIsPlainHeirOf(const ValueContext&);
-    void generateFindsNoMember(const ValueContext&);
     void generateGetInternalField(const ValueContext&);
     void generatePutInternalField(const ValueContext&);
 

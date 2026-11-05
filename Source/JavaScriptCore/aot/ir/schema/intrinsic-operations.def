@@ -8,7 +8,7 @@ enum SetNextResult { | engine HasEntry Entry Element }
 family EngineIntrinsic AsRead..Placed ; isIntrinsic = true
 operation IsConstructor (value: Any/inspects) -> natural(boolean) ; none ; runtime = IsConstructor ; flow = TableProves ; form = Runtime
 operation ReadsIteratorOfListUnseen (value: Any/inspects) -> natural(boolean) ; reads(NamedProperties, PrototypeLinks) ; runtime = ReadsIteratorOfListUnseen ; flow = TableProves ; form = Runtime
-operation ArraySpeciesCreate (length: Number/inspects, array: Any/inspects+runs(Species), room?: Number/inspects) -> unknown ; Allocates reads(ArrayStorage) throws ; runtime = ArraySpeciesCreate ; flow = Copies ; form = Runtime
+operation ArraySpeciesCreate (length: Number/inspects, array: Any/inspects+runs(Species), room?: Number/inspects, like?: Any/inspects) -> unknown ; Allocates reads(ArrayStorage) throws ; runtime = ArraySpeciesCreate ; flow = Copies ; form = Runtime
 operation GetByValWithThis (object: Any/retains, thisValue: Any/retains, property: Any/Converted) -> unknown ; unknownCode ; runtime = GetByValWithThis ; flow = Copies ; flowRule = Heap ; form = Closed
 operation GetOwnProperty (object: Any/retains, key: PropertyKey) -> unknown ; unknownCode ; runtime = GetOwnProperty ; flow = Copies ; flowRule = Heap ; form = Runtime
 operation ToLength (value: Any/Converted) -> natural(number) ; ResolvesRopes by Operator ; runtime = ToLength ; flow = TableProves ; form = Open
@@ -28,7 +28,6 @@ operation NativeBinding (builtin: Builtin) -> unknown ; Allocates UsesRuntime th
 operation LinkTimeConstant (constant: LinkTimeConstant) -> unknown ; CreatesConstant ; runtime = LinkTimeConstant ; flow = Unsound ; form = Open
 operation HasJSType (value: Any/inspects, first: CheckedJSType, last: CheckedJSType) -> natural(boolean) ; none ; branches = May ; flow = Checks ; hasOwnFoldingRule = true ; form = Open
 operation FindsDeclaredMember (object: Any/inspects, key: PropertyKey, declaredBy?: Any/inspects, with AccessStamp) -> natural(boolean) ; reads(MemberGuards) ; access = Has ; receiver = object ; branches = May ; flow = TableProves ; form = Open
-operation FindsNoMember (object: Any/inspects, key: PropertyKey, engine conditions: List<MemberConditionRecord>, with AccessStamp) [| engine asksForNoExtraProperties asksForNoFieldOutsideSlot asksForLayoutPrototype] -> natural(boolean) ; reads(OrderWords, NamedProperties, PrototypeLinks, MemberGuards[conditions]) ; access = Has ; receiver = object ; branches = May ; flow = TableProves ; form = Open
 operation IsPlainInstanceOf (object: Any/inspects, constructor?: Any/inspects, engine conditions: List<MemberConditionRecord>, with AccessStamp) -> natural(boolean) ; reads(ShapeWords, PrototypeLinks, NamedProperties, MemberGuards[conditions]) ; proves = Shape ; branches = May ; flow = TableProves ; form = Open
 operation IsPlainHeirOf (object: Any/inspects, constructor: Any/inspects) -> natural(boolean) ; none ; branches = May ; flow = TableProves ; form = Open
 operation GetInternalField (object: Object/inspects, index: UInt32) -> unknown ; reads(InternalFields, PromiseState, CollectionStorage) ; flow = Copies ; flowRule = Heap ; hasOwnFoldingRule = true ; interpreted = Read ; holder = object ; slotOfHolder = InternalField ; form = Open
@@ -60,7 +59,7 @@ operation TryPutByValDirect (array: Array/inspects+writesContents, position: Int
 operation TryPutIndex (array: Array/inspects+writesContents, position: Integer/inspects, value: Any/retains(array)) -> natural(boolean) ; reads(ArrayStorage, RuntimeState) writes(ArrayStorage, Elements[Array]) ; runsOwnerBarrier = true ; flow = TableProves ; flowRule = Heap ; form = Open
 operation TryCopyFilledElements (array: Array/inspects+writesContents, source: Array/inspects+readsContents+retainsContents, count: Integer/inspects) -> natural(boolean) ; reads(ArrayStorage, Elements[Array]) writes(ArrayStorage, Elements[Array]) ; flow = TableProves ; flowRule = Heap ; form = Open
 operation TryPutElements (array: Array/inspects+writesContents, source: Array/inspects+readsContents+retainsContents, count: Integer/inspects) -> natural(boolean) ; reads(ArrayStorage, Elements[Array]) writes(Elements[Array]) ; flow = TableProves ; flowRule = Heap ; form = Open
-operation TryFillNewArray (array: Array/inspects+writesContents, value: Any/retains(array)) -> natural(boolean) ; reads(ArrayStorage) writes(Elements[Array]) ; flow = TableProves ; flowRule = Heap ; form = Open
+operation TryFillNewArray (array: Array/inspects+writesContents, value: Any/retains(array)) -> natural(boolean) ; reads(ArrayStorage, RuntimeState) writes(ArrayStorage, Elements[Array]) ; flow = TableProves ; flowRule = Heap ; form = Open
 operation TruncateNewArray (array: Array/inspects+returns+writesContents, length: Integer/inspects) -> allocation(Array) => natural(same(array)) ; GrowsArray writes(ShapeWords) ; runtime = TruncateNewArray ; flow = Copies ; flowRule = Heap ; form = Open
 
 family CollectionIntrinsic AsRead..Placed ; isIntrinsic = true

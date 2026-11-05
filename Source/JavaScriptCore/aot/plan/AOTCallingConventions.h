@@ -42,6 +42,7 @@ struct FunctionConvention {
     bool takesArgumentsInBuffer : 1 { false };
     bool callEntryTakesNewTarget : 1 { false };
     bool coroutineNeverSuspends : 1 { false };
+    bool callEntryWalksBody : 1 { false };
     uint8_t borrowedArguments : 2 { 0 };
     uint16_t numberOfEntryParameters { 0 };
     uint16_t numberOfResults { 1 };
@@ -87,7 +88,6 @@ struct MethodFamily {
     Vector<FunctionID> methods;
     Vector<TypeID, 4> typesOfArguments;
     bool hasGuardedRow { false };
-    LayoutSetID receivers;
 };
 
 struct MethodSelector {
@@ -125,7 +125,13 @@ public:
     const FunctionConvention& of(FunctionID id) const LIFETIME_BOUND { return id.index() < m_parts.conventions.size() ? m_parts.conventions[id.index()] : m_conventionOfNoFunction; }
     uint32_t numberOfFunctions() const { return static_cast<uint32_t>(m_parts.conventions.size()); }
 
-    bool isSeedOfFunctionInQueueFromStart(CodeUnit unit) const { return !namesOnlyUnitsOfItsFunction(unit.role) && (unit.role != CodeRole::SlowBody || of(unit.function).has(CodeRole::ParameterGuard)); }
+    bool callEntryWalksBody(FunctionID id) const { return of(id).callEntryWalksBody; }
+    bool isSeedOfFunctionInQueueFromStart(CodeUnit unit) const
+    {
+        if (unit.role == CodeRole::GenericCallEntry)
+            return callEntryWalksBody(unit.function);
+        return !namesOnlyUnitsOfItsFunction(unit.role) && (unit.role != CodeRole::SlowBody || of(unit.function).has(CodeRole::ParameterGuard));
+    }
     bool exists(CodeUnit unit) const
     {
         if (isRoleOfOneFunction(unit.role))

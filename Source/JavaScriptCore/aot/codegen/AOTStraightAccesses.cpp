@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTAccessEmitter.h"
 #include "AOTFacts.h"
 #include "AOTFunctionKinds.h"
 #include "AOTNameClass.h"
@@ -130,7 +131,7 @@ static void generatePropGet(StraightEmitter& emitter, const BodyValue& value)
     }
     PropertyKeyID key = value.key();
     bool hasColumn = emitter.plan().slots().hasColumn(key);
-    StubKey stub = hasColumn && emitter.program().nameClassOf(key) == NameClass::Length ? getLengthAtSite() : hasColumn ? AOT::getById() : getByIdCheckingColumn();
+    StubKey stub = hasColumn && emitter.program().nameClassOf(key) == NameClass::Length ? getLengthAtSite() : hasColumn && namesSizeOfTables(emitter.program(), emitter.facts(), key) ? getSizeOfTable() : hasColumn ? getByIdCalledByCode() : getByIdCheckingColumn();
     if (isSymbolOfRealmInStraightForm(emitter, key))
         stub = getByIdOfSymbolOfRealm();
     emitter.callStub(value, stub, { value.objectOperand() }, optionsWithNameInStraightAccess(emitter, key));

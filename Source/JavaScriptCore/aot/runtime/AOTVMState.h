@@ -112,6 +112,9 @@ public:
     bool nativeTestChangesObjectsUnseen { false };
     bool didFinishCollection { false };
     bool hasObjectsBeingFilled { false };
+    bool verifiesFastPathAnswers { false };
+    bool someClassHasPrivateNames { false };
+    bool somePrivateNameLiesBesideFields { false };
     JSObject* classPrototypeBeingDefined { nullptr };
     JSGlobalObject* realmWhoseDatesAreWrittenInPlace { nullptr };
     Modules* modulesWhoseFilesRunAheadOfLoader { nullptr };
