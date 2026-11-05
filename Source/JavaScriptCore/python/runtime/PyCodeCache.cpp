@@ -101,9 +101,9 @@ bool constantParts(JSCell* cell, ConstantParts& parts)
         if (type != rt.frozensetType())
             return false;
         parts.kind = Kind::FrozenSet;
-        JSValue item;
-        for (size_t position = 0; uncheckedDowncast<PySet>(cell)->next(position, item);)
-            parts.items.append(item);
+        // Not in the order of the set, which goes by the hashes of this process: the same source is to give the same file. (CPython's marshal has this order
+        // for the same reason, and so what is read from a file is filled in the same order here and there.)
+        appendItemsInMarshalOrder(rt.globalObject(), uncheckedDowncast<PySet>(cell), parts.items);
         return true;
     }
     case PySliceType: {

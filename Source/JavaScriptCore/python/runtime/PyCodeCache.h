@@ -18,6 +18,7 @@ namespace Python {
 
 class PyBytes;
 class PyCode;
+class PySet;
 
 // Compiled code outside the process: what marshal writes for a code object, and so what is in a .pyc file.
 //
@@ -57,6 +58,9 @@ bool writeMarshalledCode(JSGlobalObject*, PyCode*, Vector<uint8_t>&);
 bool isOfThisBuild(const MarshalledCodeHeader&);
 // `payload` has the size the header says. Null: it is not what was written.
 PyCode* readMarshalledCode(JSGlobalObject*, const MarshalledCodeHeader&, std::span<const uint8_t> payload);
+
+// As marshal writes them: sorted(set, key=marshal.dumps). (PyMarshal.cpp)
+void appendItemsInMarshalOrder(JSGlobalObject*, PySet*, Vector<JSValue, 8>&);
 
 // code.co_filename = path, and the same for all the code in it (_imp._fix_co_filename).
 void setCodeFilename(JSGlobalObject*, PyCode*, const String& path);

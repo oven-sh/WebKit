@@ -134,6 +134,43 @@ public:
 
     Vector<uint8_t>& bytes() { return m_bytes; }
 
+    // The order of what each is written as on its own, which does not depend on hashes. False: m_error says why not.
+    bool putInOrder(PySet* set, MarkedArgumentBuffer& items, Vector<unsigned>& order)
+    {
+        VM& vm = m_runtime.vm();
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+        size_t size = set->size();
+        JSValue item;
+        for (size_t position = 0; set->next(position, item);)
+            items.append(item);
+        struct Entry {
+            Vector<uint8_t> dump;
+            unsigned index;
+        };
+        Vector<Entry> entries;
+        entries.reserveInitialCapacity(size);
+        for (unsigned i = 0; i < items.size(); ++i) {
+            MarshalWriter writer(m_globalObject, m_version, m_allowCode);
+            writer.m_depth = m_depth;
+            if (failed(scope, writer.write(items.at(i)))) {
+                m_error = Error::Unmarshallable;
+                return false;
+            }
+            entries.append(Entry { WTF::move(writer.m_bytes), i });
+        }
+        if (set->size() != size) {
+            m_error = Error::SetChangedSize;
+            return false;
+        }
+        std::ranges::sort(entries, [](const Entry& a, const Entry& b) {
+            if (auto order = std::lexicographical_compare_three_way(a.dump.begin(), a.dump.end(), b.dump.begin(), b.dump.end()); order != 0)
+                return order < 0;
+            return a.index < b.index;
+        });
+        order = entries.map([](auto& entry) { return entry.index; });
+        return true;
+    }
+
 private:
     using Key = uint64_t;
     template<typename Value> using KeyMap = UncheckedKeyHashMap<Key, Value, DefaultHash<Key>, WTF::UnsignedWithZeroKeyHashTraits<Key>>;
@@ -474,42 +511,14 @@ private:
 
     NEVER_INLINE void writeSet(PySet* set)
     {
-        VM& vm = m_runtime.vm();
-        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-        size_t size = set->size();
-        if (!writeSize(size))
+        if (!writeSize(set->size()))
             return;
-        // In the order of what each is written as on its own, which does not depend on hashes.
         MarkedArgumentBuffer items;
-        JSValue item;
-        for (size_t position = 0; set->next(position, item);)
-            items.append(item);
-        struct Entry {
-            Vector<uint8_t> dump;
-            unsigned index;
-        };
-        Vector<Entry> entries;
-        entries.reserveInitialCapacity(size);
-        for (unsigned i = 0; i < items.size(); ++i) {
-            MarshalWriter writer(m_globalObject, m_version, m_allowCode);
-            writer.m_depth = m_depth;
-            if (failed(scope, writer.write(items.at(i)))) {
-                m_error = Error::Unmarshallable;
-                return;
-            }
-            entries.append(Entry { WTF::move(writer.m_bytes), i });
-        }
-        if (set->size() != size) {
-            m_error = Error::SetChangedSize;
+        Vector<unsigned> order;
+        if (!putInOrder(set, items, order))
             return;
-        }
-        std::ranges::sort(entries, [](const Entry& a, const Entry& b) {
-            if (auto order = std::lexicographical_compare_three_way(a.dump.begin(), a.dump.end(), b.dump.begin(), b.dump.end()); order != 0)
-                return order < 0;
-            return a.index < b.index;
-        });
-        for (auto& entry : entries)
-            writeObject(items.at(entry.index));
+        for (unsigned index : order)
+            writeObject(items.at(index));
     }
 
     NEVER_INLINE void writeTuple(PyTuple* tuple, uint8_t flag)
@@ -1359,6 +1368,16 @@ static JSValue marshalLoads(JSGlobalObject* globalObject, JSValue bytes, JSValue
 }
 
 // For the runtime's own use: nobody is told.
+void appendItemsInMarshalOrder(JSGlobalObject* globalObject, PySet* set, Vector<JSValue, 8>& result)
+{
+    MarshalWriter writer(globalObject, marshalVersion, false);
+    MarkedArgumentBuffer items;
+    Vector<unsigned> order;
+    bool isInOrder = writer.putInOrder(set, items, order);
+    for (unsigned i = 0; i < items.size(); ++i)
+        result.append(items.at(isInOrder ? order[i] : i));
+}
+
 JSValue readMarshalled(JSGlobalObject* globalObject, std::span<const uint8_t> bytes)
 {
     MarshalReader reader(globalObject, bytes, true);
