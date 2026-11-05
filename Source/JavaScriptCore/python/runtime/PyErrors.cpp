@@ -204,6 +204,9 @@ JSValue raiseBadInternalCall(JSGlobalObject* globalObject, ThrowScope& scope)
 }
 
 // ---- The pending exception ----
+//
+// The VM remembers the last exception thrown when it has long been handled, until something else is thrown or code is entered from outside, for an embedder that has caught a
+// value and wants to report it. With it stay the traceback and all that the frames in it refer to. Whoever catches for Python makes the VM forget: here, and op_py_catch.
 
 // For a look at it that leaves nothing behind.
 static JSValue pendingExceptionToLookAt(JSGlobalObject* globalObject)
@@ -240,8 +243,10 @@ bool clearPendingExceptionIfMatches(JSGlobalObject* globalObject, PyType* type)
 {
     if (!pendingExceptionMatches(globalObject, type))
         return false;
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(getVM(globalObject));
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     scope.clearException();
+    vm.clearLastException();
     return true;
 }
 
@@ -250,8 +255,10 @@ JSValue takePendingException(JSGlobalObject* globalObject)
     JSValue exception = pendingException(globalObject);
     if (!exception)
         return { };
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(getVM(globalObject));
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     scope.clearException();
+    vm.clearLastException();
     return exception;
 }
 

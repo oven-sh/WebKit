@@ -997,6 +997,16 @@ so the aim is that everything Python *guarantees* holds, and that what it merely
     use that allocates, as raising an exception does in a loop.
   - It is about promptness only. What is not covered (anything that has been in a variable, a parameter, a container or a return
     value; objects made by a class written in Python) waits for the collector as before.
+- **An exception that has been caught is gone** as soon as the program lets go of it, with its traceback, the frames in that and their locals.
+  - *The VM remembers the last exception thrown* (`VM::lastException()`, a root) when it has long been handled: until the next throw, or the next entry from native code. It is there for a
+    host that has caught a value and wants to report it with the stack of the throw. So a function that had raised, once, kept its locals alive for as long as the thread raised nothing else and
+    called nothing from native code: a local with a `__del__` was not finalized after four million allocations, in seven of eight ways of catching. A collection that the program asks
+    for made the VM forget, but only the exception of the thread that asked: a thread without the GIL has its own with it (`JSLock::park`), and four calls of `gc.collect()` in the main thread
+    did not finalize what another thread's last exception held, until that thread ended. Now whoever catches for Python makes the VM forget: `op_py_catch`,
+    `clearPendingExceptionIfMatches`, `takePendingException`. And a thread that gives up the GIL takes none along (`Threads::release`): that is for the places in native code that clear an exception
+    themselves. Nothing changes where JS catches. Nobody misses it: it is read by the collector, by a function of `$vm`, and by the host where it has a value to report and no exception
+    (`reportException(JSGlobalObject*, JSValue)`), and every entry from native code clears it, so it could not be counted on beyond the return of the call that failed. That report was wrong
+    before: an event listener whose `handleEvent` cannot be called, after `hasattr()` had caught an `AttributeError`, was reported as that `AttributeError`.
 - **The collector marks while the program runs.** Its threads call `visitChildren` on cells that the program is changing at that
   moment. What every class of cell owes them:
   - Whatever `visitChildren` reads that is not a value is set by the constructor and never changes: the length of a tuple, the

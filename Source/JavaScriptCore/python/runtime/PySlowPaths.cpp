@@ -878,6 +878,8 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_catch)
     // What ends the thread goes on.
     if (!throwScope.tryClearException()) [[unlikely]]
         CHECK_EXCEPTION();
+    // From here on it is the program's, and lives as long as the program holds on to it. See PyErrors.cpp.
+    vm.clearLastException();
     GET(bytecode.m_exception) = exception;
     auto mode = static_cast<CatchMode>(bytecode.m_mode);
     if (mode == CatchMode::Thrown)

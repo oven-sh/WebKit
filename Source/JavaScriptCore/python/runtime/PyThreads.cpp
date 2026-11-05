@@ -306,6 +306,9 @@ void Threads::release(ThreadState& thread, JSLock::ParkedThread& parked, SavedSt
     thread.saved = &saved;
     if (m_vm.heap.hasPostponedEmbedderFinalizers() && !thread.isMain && !m_didTellMainThreadOfFinalizers) [[unlikely]]
         tellMainThreadOfFinalizers();
+    // Whatever has caught an exception without making the VM forget it (see PyErrors.cpp): a collection that the program asks for does that, but only for
+    // the thread that asks. So no thread takes one along.
+    m_vm.clearLastException();
     m_vm.apiLock().park(parked);
 }
 
