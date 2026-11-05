@@ -915,23 +915,30 @@ JSValue strGetItem(JSGlobalObject* globalObject, JSValue self, JSValue key)
         return { };
     if (indices.length <= 0)
         return jsEmptyString(vm);
-    if (indices.step == 1) {
-        if (view.isSimple())
-            return sliceOfUnits(vm, selfString, view.string(), indices.start, indices.stop);
-        return makeStr(vm, view.substring(indices.start, indices.stop));
-    }
+    if (indices.step == 1)
+        return sliceOfUnits(vm, selfString, view.string(), view.unitOffset(indices.start), view.unitOffset(indices.stop));
     StrBuilder builder;
     if (view.isSimple()) {
         int64_t position = indices.start;
         for (int64_t i = 0; i < indices.length; ++i, position += indices.step)
             builder.append(view.string()[position]);
     } else {
-        Vector<char32_t> characters;
-        for (char32_t character : view.view().codePoints())
-            characters.append(character);
-        int64_t position = indices.start;
-        for (int64_t i = 0; i < indices.length; ++i, position += indices.step)
-            appendCodePoint(builder, characters[position]);
+        auto units = view.string().span16();
+        size_t position = view.unitOffset(indices.start);
+        for (int64_t i = 0; i < indices.length; ++i) {
+            size_t next = position;
+            appendCodePoint(builder, nextCharacter(units, next));
+            if (i + 1 == indices.length)
+                break;
+            if (indices.step > 0) {
+                position = next;
+                for (int64_t j = 1; j < indices.step; ++j)
+                    nextCharacter(units, position);
+            } else {
+                for (int64_t j = 0; j > indices.step; --j)
+                    previousCharacter(units, position);
+            }
+        }
     }
     RELEASE_AND_RETURN(scope, makeStr(globalObject, builder));
 }
@@ -1511,23 +1518,25 @@ static JSValue strStrip(JSGlobalObject* globalObject, JSValue self, JSValue char
         }
         return sliceOfUnits(vm, selfString, string, start, end);
     }
-    Vector<char32_t> set;
-    for (char32_t character : characters.view().codePoints())
-        set.append(character);
-    Vector<char32_t> text;
-    for (char32_t character : view.view().codePoints())
-        text.append(character);
-    size_t first = 0;
-    size_t last = text.size();
-    if (side != StripSide::Right) {
-        while (first < last && set.contains(text[first]))
-            ++first;
-    }
-    if (side != StripSide::Left) {
-        while (last > first && set.contains(text[last - 1]))
-            --last;
-    }
-    return makeStr(vm, view.substring(first, last));
+    auto contains = [&](char32_t character) {
+        for (char32_t candidate : characters.view().codePoints()) {
+            if (candidate == character)
+                return true;
+        }
+        return false;
+    };
+    auto strip = [&](auto text) {
+        size_t first = 0;
+        size_t last = text.size();
+        if (side != StripSide::Right) {
+            for (size_t next = first; first < last && contains(nextCharacter(text, next)); first = next) { }
+        }
+        if (side != StripSide::Left) {
+            for (size_t previous = last; last > first && contains(previousCharacter(text, previous)); last = previous) { }
+        }
+        return sliceOfUnits(vm, selfString, string, first, last);
+    };
+    return string.is8Bit() ? strip(string.span8()) : strip(string.span16());
 }
 
 static bool fillCharacter(JSGlobalObject* globalObject, JSValue value, char32_t& result)
@@ -1674,32 +1683,45 @@ static void appendMapped(StringBuilder& builder, char32_t character, CaseMapping
         appendCodePoint(builder, mapped[i]);
 }
 
-// A capital sigma at the end of a word has a lowercase form of its own.
-static void appendLower(StringBuilder& builder, const Vector<char32_t>& text, size_t index)
+// The character is the one of `text` from `start` to `end`. A capital sigma at the end of a word has a lowercase form of its own.
+template<typename CharacterType>
+static void appendLower(StringBuilder& builder, std::span<const CharacterType> text, size_t start, size_t end, char32_t character)
 {
-    char32_t character = text[index];
     if (character != 0x3a3)
         return appendMapped(builder, character, CaseMapping::Lower);
-    size_t before = index;
-    while (before && isCaseIgnorable(text[before - 1]))
-        --before;
-    bool isFinal = before && isCased(text[before - 1]);
-    if (isFinal) {
-        size_t after = index + 1;
-        while (after < text.size() && isCaseIgnorable(text[after]))
-            ++after;
-        isFinal = after == text.size() || !isCased(text[after]);
+    bool isFinal = false;
+    while (start) {
+        char32_t before = previousCharacter(text, start);
+        if (!isCaseIgnorable(before)) {
+            isFinal = isCased(before);
+            break;
+        }
+    }
+    while (isFinal && end < text.size()) {
+        char32_t after = nextCharacter(text, end);
+        if (!isCaseIgnorable(after)) {
+            isFinal = !isCased(after);
+            break;
+        }
     }
     builder.append(static_cast<char16_t>(isFinal ? 0x3c2 : 0x3c3));
 }
 
-static Vector<char32_t> codePointsOf(const StrView& view)
+// functor(text, start, end, character) for each character of the text, which is a span of its units.
+template<typename Functor>
+static ALWAYS_INLINE void forEachCharacter(const StrView& view, const Functor& functor)
 {
-    Vector<char32_t> result;
-    result.reserveInitialCapacity(view.length());
-    for (char32_t character : view.view().codePoints())
-        result.append(character);
-    return result;
+    auto forEach = [&](auto text) ALWAYS_INLINE_LAMBDA {
+        for (size_t end = 0; end < text.size();) {
+            size_t start = end;
+            char32_t character = nextCharacter(text, end);
+            functor(text, start, end, character);
+        }
+    };
+    if (view.is8Bit())
+        forEach(view.string().span8());
+    else
+        forEach(view.string().span16());
 }
 
 static JSValue strLower(JSGlobalObject* globalObject, JSValue self)
@@ -1707,10 +1729,10 @@ static JSValue strLower(JSGlobalObject* globalObject, JSValue self)
     PY_STR_METHOD_PROLOGUE(view);
     if (view.string().containsOnlyASCII())
         return makeStr(vm, view.string().convertToASCIILowercase());
-    auto text = codePointsOf(view);
     StrBuilder builder;
-    for (size_t i = 0; i < text.size(); ++i)
-        appendLower(builder, text, i);
+    forEachCharacter(view, [&](auto text, size_t start, size_t end, char32_t character) {
+        appendLower(builder, text, start, end, character);
+    });
     RELEASE_AND_RETURN(scope, makeStr(globalObject, builder));
 }
 
@@ -1739,46 +1761,43 @@ static JSValue strCaseFold(JSGlobalObject* globalObject, JSValue self)
 static JSValue strSwapCase(JSGlobalObject* globalObject, JSValue self)
 {
     PY_STR_METHOD_PROLOGUE(view);
-    auto text = codePointsOf(view);
     StrBuilder builder;
-    for (size_t i = 0; i < text.size(); ++i) {
-        if (isUppercase(text[i]))
-            appendLower(builder, text, i);
-        else if (isLowercase(text[i]))
-            appendMapped(builder, text[i], CaseMapping::Upper);
+    forEachCharacter(view, [&](auto text, size_t start, size_t end, char32_t character) {
+        if (isUppercase(character))
+            appendLower(builder, text, start, end, character);
+        else if (isLowercase(character))
+            appendMapped(builder, character, CaseMapping::Upper);
         else
-            appendCodePoint(builder, text[i]);
-    }
+            appendCodePoint(builder, character);
+    });
     RELEASE_AND_RETURN(scope, makeStr(globalObject, builder));
 }
 
 static JSValue strCapitalize(JSGlobalObject* globalObject, JSValue self)
 {
     PY_STR_METHOD_PROLOGUE(view);
-    auto text = codePointsOf(view);
     StrBuilder builder;
-    for (size_t i = 0; i < text.size(); ++i) {
-        if (!i)
-            appendMapped(builder, text[i], CaseMapping::Title);
+    forEachCharacter(view, [&](auto text, size_t start, size_t end, char32_t character) {
+        if (!start)
+            appendMapped(builder, character, CaseMapping::Title);
         else
-            appendLower(builder, text, i);
-    }
+            appendLower(builder, text, start, end, character);
+    });
     RELEASE_AND_RETURN(scope, makeStr(globalObject, builder));
 }
 
 static JSValue strTitle(JSGlobalObject* globalObject, JSValue self)
 {
     PY_STR_METHOD_PROLOGUE(view);
-    auto text = codePointsOf(view);
     StrBuilder builder;
     bool previousIsCased = false;
-    for (size_t i = 0; i < text.size(); ++i) {
+    forEachCharacter(view, [&](auto text, size_t start, size_t end, char32_t character) {
         if (previousIsCased)
-            appendLower(builder, text, i);
+            appendLower(builder, text, start, end, character);
         else
-            appendMapped(builder, text[i], CaseMapping::Title);
-        previousIsCased = isCased(text[i]);
-    }
+            appendMapped(builder, character, CaseMapping::Title);
+        previousIsCased = isCased(character);
+    });
     RELEASE_AND_RETURN(scope, makeStr(globalObject, builder));
 }
 
@@ -1939,11 +1958,12 @@ static JSValue strMakeTrans(JSGlobalObject* globalObject, JSValue x, JSValue y, 
         RETURN_IF_EXCEPTION(scope, { });
         if (from.length() != to.length())
             return raiseValueError(globalObject, scope, "the first two maketrans arguments must have equal length"_s);
-        auto keys = codePointsOf(from);
-        auto values = codePointsOf(to);
-        for (size_t i = 0; i < keys.size(); ++i) {
-            result->set(globalObject, jsNumber(static_cast<uint32_t>(keys[i])), jsNumber(static_cast<uint32_t>(values[i])));
+        auto values = to.view().codePoints();
+        auto value = values.begin();
+        for (char32_t key : from.view().codePoints()) {
+            result->set(globalObject, jsNumber(static_cast<uint32_t>(key)), jsNumber(static_cast<uint32_t>(*value)));
             RETURN_IF_EXCEPTION(scope, { });
+            ++value;
         }
         if (z) {
             StrView removed(globalObject, strValue(z));
