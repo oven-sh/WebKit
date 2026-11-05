@@ -462,6 +462,7 @@ void CodeMonitor::findPointsWithoutTellingTheCollector(bool everyInstruction)
         unsigned lastJumpForwardFrom { 0 }; // The offset of the last of the jumps and branches before it that go to it.
         bool firstLineFollowsCatch { false };
         bool comesAfterNoLine { false };
+        bool firstLineFollowsSilentLine { false };
         bool fallsThrough { true };
         unsigned sharedLineStart { noLineStart };
 
@@ -487,6 +488,7 @@ void CodeMonitor::findPointsWithoutTellingTheCollector(bool everyInstruction)
                 item.fallsThrough = function != RuntimeFunction::Raise && function != RuntimeFunction::Reraise && function != RuntimeFunction::ReraiseOutOfHandler && function != RuntimeFunction::ReraiseUnseen && function != RuntimeFunction::ReraiseGroup && function != RuntimeFunction::ThrowIntoGenerator;
             }
             unsigned lineMarkCount = 0;
+            bool isOfSilentLine = false;
             for (; nextMark < marks.size() && marks[nextMark].offset <= item.offset; ++nextMark) {
                 auto& mark = marks[nextMark];
                 if (mark.kind() == PythonMark::NoLine && mark.value()) {
@@ -501,17 +503,21 @@ void CodeMonitor::findPointsWithoutTellingTheCollector(bool everyInstruction)
                 if (mark.kind() != PythonMark::Line && mark.kind() != PythonMark::NoLine && mark.kind() != PythonMark::Start)
                     continue;
                 int before = item.exitLine;
+                bool followsSilentLine = isOfSilentLine;
                 item.isMarked = true;
                 item.exitLine = mark.kind() == PythonMark::Line ? lineOfMarkValue(mark.value()) : -1;
+                isOfSilentLine = mark.kind() == PythonMark::Line && isSilentLine(mark.value());
                 if (mark.kind() != PythonMark::Line)
                     continue;
                 item.beginsStatement |= isStatementStart(mark.value());
                 bool isFirst = !lineMarkCount;
                 unsigned offset = item.offset + lineMarkCount++;
-                if (isSilentLine(mark.value()) || (!isFirst && item.exitLine == before))
+                if (isOfSilentLine || (!isFirst && item.exitLine == before))
                     continue;
                 if (isFirst)
                     item.entryLine = item.exitLine;
+                else if (lines.size() == item.firstLine)
+                    item.firstLineFollowsSilentLine = followsSilentLine;
                 lines.append({ item.exitLine, offset });
             }
             item.lineCount = lines.size() - item.firstLine;
@@ -601,11 +607,19 @@ void CodeMonitor::findPointsWithoutTellingTheCollector(bool everyInstruction)
     }
     // In CPython a line begins where the instruction before, as they are laid out, is of another line, or where a jump goes. Where
     // a `for` loop goes when it ends does not count as that. So `x = [i` is not told of again after the lines of `for i in y]`.
+    // What drops the iterator there does not count as the instruction before either: if a `return` in the loop, laid out before its end,
+    // has left a `with` statement, the line of the `with` is not told of when the loop ends and the statement is left.
     for (unsigned i = 1; i < items.size(); ++i) {
         Item& item = items[i];
-        if (item.entryLine >= 0 && !item.isJumpedTo && item.offset > start && lineAt(items[i - 1].offset) == item.entryLine) {
+        if (item.isJumpedTo || item.offset <= start || (item.entryLine < 0 && !item.firstLineFollowsSilentLine))
+            continue;
+        int lineBefore = lineAt(items[i - 1].offset);
+        if (item.entryLine >= 0 && lineBefore == item.entryLine) {
             item.linesBefore.clear();
             item.linesBefore.append(item.entryLine);
+        } else if (item.firstLineFollowsSilentLine && lineBefore == lines[item.firstLine].line) {
+            ++item.firstLine;
+            --item.lineCount;
         }
     }
     for (unsigned i = 0; i + 1 < items.size(); ++i) {
