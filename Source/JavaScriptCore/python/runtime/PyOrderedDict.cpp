@@ -286,9 +286,24 @@ static bool updateFrom(JSGlobalObject* globalObject, JSValue self, JSValue other
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (auto* dict = PyDict::tryFrom(other); dict && (dict->type() == rt.dictType() || dict->type() == rt.frozendictType())) {
         // Into an OrderedDict itself nothing of the program's runs but the methods of the keys.
-        if (auto* target = PyDict::tryFrom(self); target && isExactOrderedDict(globalObject, target))
+        auto* target = PyDict::tryFrom(self);
+        if (target && !isExactOrderedDict(globalObject, target))
+            target = nullptr;
+        if (target && dict->hasOnlyStringKeys())
             RELEASE_AND_RETURN(scope, (dictUpdate(globalObject, target, dict), !scope.exception()));
-        RELEASE_AND_RETURN(scope, addPairs(globalObject, self, PyDictView::create(globalObject, PyDictView::Kind::Items, dict)));
+        // The items as they are now are stored one by one, so each key is asked for its hash again.
+        JSValue iterator = getIter(globalObject, PyDictView::create(globalObject, PyDictView::Kind::Items, dict));
+        RETURN_IF_EXCEPTION(scope, false);
+        JSArray* items = listFromIterable(globalObject, iterator);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (!target)
+            RELEASE_AND_RETURN(scope, addPairs(globalObject, self, items));
+        for (unsigned i = 0; i < listLength(items); ++i) {
+            auto* pair = PyTuple::from(listGet(items, i));
+            target->set(globalObject, pair->at(0), pair->at(1));
+            RETURN_IF_EXCEPTION(scope, false);
+        }
+        return true;
     }
     JSValue keysMethod = getAttrIfPresent(globalObject, other, rt.names.keys());
     RETURN_IF_EXCEPTION(scope, false);
