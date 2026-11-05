@@ -522,6 +522,9 @@ void Runtime::releaseIteratorsOfLoopsLeft(CallFrame* callFrame, unsigned offset,
         auto scope = DECLARE_TOP_EXCEPTION_SCOPE(m_vm);
         JSC::Exception* pending = scope.exception();
         scope.clearException();
+        // Code of the program may run, which can ask for all the objects there are.
+        if (pending && !generator->isCompleted())
+            exceptionWillBeSeen(pending->value());
         {
             SetForScope topCallFrame(m_vm.topCallFrame, callFrame);
             framesToldOfException.append(callFrame);

@@ -480,7 +480,8 @@ public:
     // the program, until something of the program's could get hold of it: PyException::willBeSeen(). That is called by what gives out the
     // exception being handled or the pending one, by a handler that names it or hands it on (`as`, `with`, `except*`) or that can be
     // suspended, when it is raised otherwise than by the compiler's own instructions, when tools are told of it, when it comes up to a frame of JS or
-    // to a function of C++, and when the program is handed objects that it had no reference to. So while there is a note, only the slot, the
+    // to a function of C++, before the unwinder runs code of the program (to close what a loop that is left was going through), and when the program is
+    // handed objects that it had no reference to. So while there is a note, only the slot, the
     // registers of the handler and the VM refer to the exception, and when the handler is left the note can be dropped: nobody
     // will ever know.
     //
