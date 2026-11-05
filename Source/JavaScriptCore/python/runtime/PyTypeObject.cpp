@@ -533,7 +533,8 @@ static void objectSetClass(JSGlobalObject* globalObject, JSValue self, JSValue v
         return;
     PyType* oldType = rt.typeOf(self);
     bool areModules = oldType->isSubtypeOf(rt.moduleType()) && newType->isSubtypeOf(rt.moduleType());
-    if (!areModules && (!oldType->isHeapType() || !newType->isHeapType())) {
+    // (What an object of JS's is an instance of, its prototype says.)
+    if (!areModules && (!oldType->isHeapType() || !newType->isHeapType() || oldType->has(TypeFlag::AttributesAreProperties))) {
         raiseTypeError(globalObject, scope, "__class__ assignment only supported for mutable types or ModuleType subclasses"_s);
         return;
     }
@@ -618,6 +619,9 @@ static JSValue builtinInstanceGetDict(JSGlobalObject* globalObject, JSValue self
 {
     if (PyDict* dict = instanceDict(globalObject, self, true))
         return dict;
+    // class Both(Plain, js.Map): the __dict__ of Plain is found first. An object of JS's is the mapping of its attributes itself.
+    if (typeOf(globalObject, self)->has(TypeFlag::AttributesAreProperties))
+        return self;
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     return raise(globalObject, scope, runtime(globalObject).AttributeError(), "This object has no __dict__"_s);
@@ -1264,7 +1268,7 @@ static JSValue typeNewWithKeywordsAsGiven(JSGlobalObject* globalObject, JSValue 
 
     // ---- __slots__ ----
 
-    bool mayAddDict = !base->has(TypeFlag::HasDict);
+    bool mayAddDict = !base->has(TypeFlag::HasDict) && !base->has(TypeFlag::AttributesAreProperties);
     bool mayAddWeakref = !base->has(TypeFlag::HasWeakref);
     bool addDict = false;
     bool addWeakref = false;

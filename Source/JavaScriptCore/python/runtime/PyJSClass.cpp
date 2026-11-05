@@ -891,9 +891,9 @@ PyType* typeForClassOfJS(JSGlobalObject* globalObject, JSObject* constructor)
     JSValue made = call(globalObject, rt.typeType(), nameValue.isString() ? nameValue : JSValue(jsEmptyString(vm)), PyTuple::create(globalObject, { base }), ns);
     RETURN_IF_EXCEPTION(scope, nullptr);
     PyType* type = PyType::from(made);
-    // An instance is made by one class of JS, and its attributes are its properties: classes derived from this one add no __dict__.
+    // An instance is made by one class of JS.
     type->setSolidBase(vm, type);
-    type->add(TypeFlag::HasDict);
+    type->add(TypeFlag::AttributesAreProperties);
     type->setJSPrototype(vm, asObject(prototype));
     types->set(vm, constructor, type);
     return type;

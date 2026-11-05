@@ -43,6 +43,9 @@ enum class TypeFlag : uint32_t {
     // __eq__ and __hash__, though written in C++, pass the question on to another object, which may be a str, or have something else to
     // say to a str. See PyDict::searchAmongStringsFor().
     AnswersForAnother = 1 << 15,
+    // The instances are objects of JS's, and their attributes are their properties: they have no __dict__, and no class that derives
+    // from this one adds one. See typeForClassOfJS().
+    AttributesAreProperties = 1 << 25,
 
     // Derives from:
     IntSubclass = 1 << 16,
@@ -58,6 +61,7 @@ enum class TypeFlag : uint32_t {
 
 static constexpr OptionSet<TypeFlag> inheritedTypeFlags {
     TypeFlag::HasDict, TypeFlag::HasWeakref, TypeFlag::Sequence, TypeFlag::Mapping, TypeFlag::MatchSelf, TypeFlag::OwnsContainers,
+    TypeFlag::AttributesAreProperties,
     TypeFlag::IntSubclass, TypeFlag::FloatSubclass, TypeFlag::StrSubclass, TypeFlag::BytesSubclass, TypeFlag::ListSubclass,
     TypeFlag::TupleSubclass, TypeFlag::DictSubclass, TypeFlag::TypeSubclass, TypeFlag::ExceptionSubclass
 };
