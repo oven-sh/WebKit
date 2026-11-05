@@ -228,12 +228,13 @@ void Threads::takeGIL(ThreadState& thread)
     m_gilLock.lock();
     if (!thread.isMain && m_isFinalized.load() && !m_isStopping.load()) [[unlikely]] {
         // Somebody may be waiting for this thread to take it, and somebody else for it to be free.
-        m_switchCondition.notifyAll();
+        m_debtCondition.notifyAll();
         m_gilCondition.notifyOne();
         while (!m_isStopping.load())
             m_stopCondition.wait(m_gilLock);
     }
     ++m_waitingForGIL;
+    uint64_t number = ++m_numberOfAsks;
     while (m_gilIsHeld) {
         uint64_t switchNumber = m_switchNumber;
         bool wasNotified = m_gilCondition.waitFor(m_gilLock, Seconds::fromNanoseconds(static_cast<double>(switchInterval())));
@@ -259,7 +260,12 @@ void Threads::takeGIL(ThreadState& thread)
     // The host's objects belong to the main thread, dead ones too. This is said before the thread takes the lock of the VM: to take
     // it may be to finish a collection, which sweeps.
     m_vm.heap.setMayRunEmbedderFinalizers(thread.isMain);
-    m_switchCondition.notifyAll();
+    for (Debt* debt : m_debts) {
+        if (number > debt->asksUpTo || debt->isPaid)
+            continue;
+        debt->isPaid = true;
+        m_debtCondition.notifyAll();
+    }
     m_gilLock.unlock();
 }
 
@@ -269,12 +275,17 @@ void Threads::dropGIL(ThreadState&, bool isYielding)
     ASSERT(m_gilIsHeld);
     m_gilIsHeld = false;
     m_gilCondition.notifyOne();
-    if (!isYielding)
+    if (!isYielding || !m_waitingForGIL)
         return;
-    // This thread is about to ask for it again, and would as likely as not get it before the one that was notified wakes up.
-    uint64_t switchNumber = m_switchNumber;
-    while (m_switchNumber == switchNumber && m_waitingForGIL && !m_isFinalized.load())
-        m_switchCondition.wait(m_gilLock);
+    // This thread is about to ask for it again, and would as likely as not get it before the one that was notified wakes up. That
+    // somebody else has had it is not enough: a third thread that happens to be awake has it, and is done with it, before any of those
+    // that are asking now runs. Nobody but this thread is kept waiting. One of them is in the queue until the debt is paid, unless they
+    // all leave it because the interpreter has been finalized.
+    Debt debt { m_numberOfAsks };
+    m_debts.append(&debt);
+    while (!debt.isPaid && !m_isFinalized.load())
+        m_debtCondition.wait(m_gilLock);
+    m_debts.removeFirst(&debt);
 }
 
 void Threads::release(ThreadState& thread, JSLock::ParkedThread& parked, SavedStates& saved)
@@ -473,6 +484,7 @@ void Threads::didFinalize()
     m_isFinalized.store(true);
     Locker locker { m_gilLock };
     m_gilCondition.notifyAll();
+    m_debtCondition.notifyAll();
 }
 
 void Threads::stopAll()
@@ -489,6 +501,7 @@ void Threads::stopAll()
         Locker locker { m_gilLock };
         m_isStopping.store(true);
         m_stopCondition.notifyAll();
+        m_debtCondition.notifyAll();
     }
     ThreadState& thread = current();
     int64_t pause = 1000000;

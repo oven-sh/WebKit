@@ -1072,7 +1072,13 @@ up before it waits for events while a collection that it has asked for is under 
 
 - The lock changes hands where a thread is about to wait or to make a long system call (`AllowThreads`: sleep, locks, `join`, queues, `select`
   and its kin, sockets, files, `waitpid`), and where another thread has waited for longer than `sys.getswitchinterval()`: that
-  fires `VMTraps::NeedPythonCalls`, and the running thread hands over at its next safe point.
+  fires `VMTraps::NeedPythonCalls`, and the running thread hands over at its next safe point. It does not have the lock back before one of those
+  that were waiting for it has had it. In CPython it is enough that somebody else has had it. Those that wait are asleep, though, and no match for
+  a thread that is awake: a thread that collected again and again had the lock back each time before any of them ran, because the main thread,
+  which it wakes to finalize what it has found, came later and had it for a moment in between. Nobody else is kept waiting: whoever finds the lock
+  free takes it. One turn is all that is promised: it may be short, and the thread that handed over, awake by then, may well be next.
+  `Bun.serve` beside threads that collect and threads that compute answers a quarter to a half more requests for it, and those threads get
+  done what they did. Why is not understood.
 - Until a program starts its first thread none of this happens, and while there is no other thread blocking calls keep the lock.
 - **JavaScript stays on the main thread.** Only that thread turns the host's event loop; using a JS object or function from another thread
   raises `RuntimeError`. While the event loop idles, the lock is free.

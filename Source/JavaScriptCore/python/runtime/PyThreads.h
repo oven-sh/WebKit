@@ -28,7 +28,8 @@ namespace Python {
 // The GIL changes hands
 //   - where a thread is about to wait, or to do something long that needs nothing of the VM: AllowThreads;
 //   - where a thread that has waited for the GIL for longer than sys.getswitchinterval() asks for it: that fires
-//     VMTraps::NeedPythonCalls, and the running thread hands over at its next safe point (makeCallsOwed()).
+//     VMTraps::NeedPythonCalls, and the running thread hands over at its next safe point (makeCallsOwed()). It does not have the GIL
+//     back before one of those that were waiting has had it. Otherwise whoever finds the GIL free takes it.
 //
 // Until a program starts its first thread none of this happens: AllowThreads does nothing.
 //
@@ -318,12 +319,19 @@ private:
 
     Lock m_gilLock;
     Condition m_gilCondition; // It is free.
-    Condition m_switchCondition; // It has changed hands.
+    Condition m_debtCondition; // One of m_debts is paid, or the interpreter has been finalized.
     Condition m_stopCondition; // stopAll() has begun.
     bool m_gilIsHeld WTF_GUARDED_BY_LOCK(m_gilLock) { false };
     ThreadState* m_lastHolder WTF_GUARDED_BY_LOCK(m_gilLock) { nullptr };
     uint64_t m_switchNumber WTF_GUARDED_BY_LOCK(m_gilLock) { 0 };
     unsigned m_waitingForGIL WTF_GUARDED_BY_LOCK(m_gilLock) { 0 };
+    // A thread that is made to give up the GIL owes it to those that are asking for it then. See dropGIL().
+    struct Debt {
+        uint64_t asksUpTo;
+        bool isPaid { false };
+    };
+    uint64_t m_numberOfAsks WTF_GUARDED_BY_LOCK(m_gilLock) { 0 };
+    Vector<Debt*, 1> m_debts WTF_GUARDED_BY_LOCK(m_gilLock);
 #if !OS(WINDOWS)
     Lock m_interruptLock; // Held while a signal is sent.
 #endif
