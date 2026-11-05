@@ -826,7 +826,8 @@ JSValue staticMemberOfClassOfJS(JSGlobalObject* globalObject, PyType* type, JSSt
 }
 
 // To JS a class inherits from the class it extends: that is where it finds Symbol.species, which has no name in Python.
-static JSValue jsClassInitSubclass(JSGlobalObject* globalObject, JSValue, const CallArgs& args)
+// `self`: the type that has this method. It begins with super().__init_subclass__(**kwargs).
+static JSValue jsClassInitSubclass(JSGlobalObject* globalObject, JSValue self, const CallArgs& args)
 {
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
@@ -834,7 +835,15 @@ static JSValue jsClassInitSubclass(JSGlobalObject* globalObject, JSValue, const 
     PyType* cls = args.isEmpty() ? nullptr : PyType::tryFrom(args[0]);
     if (!cls)
         return raiseTypeError(globalObject, scope, "__init_subclass__() is a method of classes"_s);
-    JSValue inherited = bindDescriptor(globalObject, rt.objectType()->dict()->get(rt.name(Special::InitSubclass)), { }, cls);
+    JSValue next;
+    if (PyTuple* mro = cls->mro()) {
+        unsigned i = 0;
+        while (i < mro->length() && mro->at(i) != self)
+            ++i;
+        for (++i; i < mro->length() && !next; ++i)
+            next = PyType::from(mro->at(i))->dict()->get(rt.name(Special::InitSubclass));
+    }
+    JSValue inherited = bindDescriptor(globalObject, next ? next : rt.objectType()->dict()->get(rt.name(Special::InitSubclass)), { }, cls);
     RETURN_IF_EXCEPTION(scope, { });
     call(globalObject, inherited, args.withoutFirst());
     RETURN_IF_EXCEPTION(scope, { });
@@ -912,14 +921,16 @@ PyType* typeForClassOfJS(JSGlobalObject* globalObject, JSObject* constructor)
     ns->set(vm, rt.names.dSlots(), PyTuple::create(globalObject, 0));
     ns->set(vm, rt.name(Special::New), PyNativeFunction::create(globalObject, classOfJSNewDef, NativeKind::Function, constructor, { }));
     ns->set(vm, rt.name(Special::Init), PyNativeFunction::create(globalObject, classOfJSInitDef, NativeKind::Method, { }, rt.objectType()));
-    JSValue initSubclass = makeClassMethod(globalObject, PyNativeFunction::create(globalObject, jsClassInitSubclassDef, NativeKind::Function, jsUndefined(), { }));
-    RETURN_IF_EXCEPTION(scope, nullptr);
-    ns->set(vm, rt.name(Special::InitSubclass), initSubclass);
     JSValue made = call(globalObject, rt.typeType(), nameValue.isString() ? nameValue : JSValue(jsEmptyString(vm)), PyTuple::create(globalObject, { base }), ns);
     RETURN_IF_EXCEPTION(scope, nullptr);
     PyType* type = PyType::from(made);
-    if (!extendsClassOfJS)
+    if (!extendsClassOfJS) {
         addMethodsOfDerivedClasses(globalObject, type);
+        JSValue initSubclass = makeClassMethod(globalObject, PyNativeFunction::create(globalObject, jsClassInitSubclassDef, NativeKind::Function, type, { }));
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        type->dict()->set(vm, rt.name(Special::InitSubclass), initSubclass);
+        type->didChange(vm);
+    }
     // An instance is made by one class of JS.
     type->setSolidBase(vm, type);
     type->setJSPrototype(vm, asObject(prototype));
