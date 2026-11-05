@@ -461,6 +461,26 @@ static JSValue localNew(JSGlobalObject* globalObject, JSValue cls, const CallArg
     return self;
 }
 
+// As in CPython, which a name that is no plain str can tell, and a '__class__' in the dict: first whether the name is '__dict__'; then, unless the class is derived, the dict of the
+// thread before anything else.
+static NEVER_INLINE JSValue localGetAttributeByKey(JSGlobalObject* globalObject, JSValue self, JSString* string, JSValue name, bool isDerived)
+{
+    Runtime& rt = runtime(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(rt.vm());
+    bool isDict = richCompareBool(globalObject, name, rt.names.dDict(), CompareOperator::Eq);
+    RETURN_IF_EXCEPTION(scope, { });
+    PyDict* dict = instanceDict(globalObject, self, true);
+    if (isDict)
+        return dict;
+    if (!isDerived) {
+        JSValue value = dict->get(globalObject, name);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (value)
+            return value;
+    }
+    RELEASE_AND_RETURN(scope, genericGetAttrAsGiven(globalObject, self, string, name));
+}
+
 static JSValue localGetAttribute(JSGlobalObject* globalObject, JSValue self, JSValue name)
 {
     VM& vm = getVM(globalObject);
@@ -469,7 +489,21 @@ static JSValue localGetAttribute(JSGlobalObject* globalObject, JSValue self, JSV
     RETURN_IF_EXCEPTION(scope, { });
     if (failed(scope, localSwitchToCurrentThread(globalObject, self)))
         return { };
-    RELEASE_AND_RETURN(scope, genericGetAttrAsGiven(globalObject, self, string, name));
+    bool isDerived = PyInstance::from(self)->type()->isHeapType();
+    if (!name.isString()) [[unlikely]]
+        RELEASE_AND_RETURN(scope, localGetAttributeByKey(globalObject, self, string, name, isDerived));
+    if (!isDerived) {
+        JSValue value = instanceAttribute(globalObject, self, string);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (value) {
+            // ('__dict__' is what the search below finds first.)
+            bool isDict = string->length() == 8 && string->equal(globalObject, runtime(globalObject).names.dDict());
+            RETURN_IF_EXCEPTION(scope, { });
+            if (!isDict) [[likely]]
+                return value;
+        }
+    }
+    RELEASE_AND_RETURN(scope, genericGetAttr(globalObject, self, string));
 }
 
 // An empty value deletes.
@@ -480,12 +514,12 @@ static JSValue localSetAttr(JSGlobalObject* globalObject, JSValue self, JSValue 
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSString* string = attributeName(globalObject, name);
     RETURN_IF_EXCEPTION(scope, { });
-    bool isDict = string->equal(globalObject, rt.names.dDict());
-    RETURN_IF_EXCEPTION(scope, { });
-    if (isDict)
-        return raise(globalObject, scope, rt.AttributeError(), makeString('\'', rt.typeOf(self)->nameInMessages(), "' object attribute '__dict__' is read-only"_s));
     if (failed(scope, localSwitchToCurrentThread(globalObject, self)))
         return { };
+    bool isDict = name.isString() ? string->equal(globalObject, rt.names.dDict()) : richCompareBool(globalObject, name, rt.names.dDict(), CompareOperator::Eq);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (isDict)
+        return raise(globalObject, scope, rt.AttributeError(), makeString('\'', rt.typeOf(self)->nameInMessages(), "' object attribute '"_s, stringOf(string), "' is read-only"_s));
     genericSetAttrAsGiven(globalObject, self, string, name, value);
     RETURN_IF_EXCEPTION(scope, { });
     return jsUndefined();

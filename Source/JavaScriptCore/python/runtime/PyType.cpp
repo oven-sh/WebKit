@@ -315,13 +315,14 @@ JSValue PyType::lookupSlow(JSString* name)
 
 JSValue PyType::lookupKey(JSGlobalObject* globalObject, JSValue name)
 {
-    PyTuple* mro = m_mro.get();
     VM& vm = this->vm();
-    if (!mro || vm.hasPendingTerminationException()) [[unlikely]]
+    if (!m_mro || vm.hasPendingTerminationException()) [[unlikely]]
         return { };
     s_timesLookupRanCode.fetch_add(1, std::memory_order_relaxed);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     int64_t hash = Python::hash(globalObject, name);
+    // (Which may have given the class other bases. What an __eq__ does to them comes too late.)
+    PyTuple* mro = m_mro.get();
     JSValue value;
     for (unsigned i = 0; !value && !scope.exception() && i < mro->length(); ++i)
         value = uncheckedDowncast<PyType>(mro->at(i).asCell())->dict()->get(globalObject, name, hash);

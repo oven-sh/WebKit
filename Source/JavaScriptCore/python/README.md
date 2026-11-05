@@ -229,7 +229,14 @@ one that passes the question on to another object, `getAttrAsGiven()` and its ki
 time (`nameIsKey`), so the plain case runs the code it ran. As measured on 3.15.2: the classes are searched with one hash for all of them,
 and what the name raises there is lost; the dict of the object is searched with another, and what is raised there comes out; an instance
 that has its attributes as properties is given its dict first; `__getattribute__`, `__getattr__`, `__setattr__`, `__delattr__` and the
-`__getattr__` of a module get the name itself; it is what `setattr()` stores, and what an `AttributeError` has as its `name`.
+`__getattr__` of a module get the name itself; it is what `setattr()` stores, and what an `AttributeError` has as its `name`. The name is
+hashed before the classes to search are taken, so a `__hash__` that changes `__bases__` is in time and an `__eq__` is not. If the name gives
+the object another class on the way, a descriptor hears of the new one and the message names the one that was searched. A `KeyError` out of
+the dict of the object, in a store or a deletion, becomes the `AttributeError` for an attribute that is not there, whoever raised it; an
+`AttributeError` out of it, under `getattr()` with a default or `hasattr()`, says "not in the dict", and the class is still to come. (Both
+hold for a plain name too, where a key in the dict raises.) `operator.attrgetter()` and `methodcaller()` keep such a name, unless it has a
+dot in it. `threading.local` asks first whether the name is `'__dict__'`, and unless its class is derived it looks into the dict of the
+thread before anything else, so that a `'__class__'` in that dict wins, for plain names too.
 `type.__setattr__` and `type.__delattr__` take the text. `super()` asks each class with a hash of its own, and what is raised comes out. And
 a dict that has got such a key is no dict of strs any more, so a plain name is then looked for in it as any key is, in a module too. The
 plain case pays a test of the tag of the value, and gets more back, because `attributeName()` now has its common case inline: instructions

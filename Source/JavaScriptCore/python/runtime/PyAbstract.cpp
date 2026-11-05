@@ -317,14 +317,24 @@ JSValue bindDescriptor(JSGlobalObject* globalObject, JSValue descriptor, JSValue
 
 // ---- Attributes ----
 
-static NEVER_INLINE JSValue raiseNoAttribute(JSGlobalObject* globalObject, ThrowScope& scope, JSValue object, JSString* name, JSValue key = { })
+static NEVER_INLINE JSValue raiseNoAttribute(JSGlobalObject* globalObject, ThrowScope& scope, JSValue object, JSString* name, JSValue key = { }, PyType* typeSearched = nullptr)
 {
-    return raiseAttributeError(globalObject, scope, object, key ? key : JSValue(name), makeString('\'', typeName(globalObject, object), "' object has no attribute '"_s, stringOf(name), '\''));
+    return raiseAttributeError(globalObject, scope, object, key ? key : JSValue(name), makeString('\'', typeSearched ? typeSearched->nameInMessages() : typeName(globalObject, object), "' object has no attribute '"_s, stringOf(name), '\''));
 }
 
 // `nameIsKey`, here and below: getattr() and its kin were given an instance of a class derived from str, `key`, whose text is `name`.
 // CPython has names as the keys of dicts, so such a name is looked up as a dict looks up any key: its __hash__ and its __eq__ say what
 // it finds.
+// A key may give the object another class on the way. As in CPython, a descriptor then hears of the class that the object has by the time it is asked, and the message names the
+// class that was searched.
+template<bool nameIsKey>
+static ALWAYS_INLINE PyType* typeByNow(Runtime& rt, JSValue object, PyType* typeSearched)
+{
+    if constexpr (nameIsKey)
+        return rt.typeOf(object);
+    return typeSearched;
+}
+
 template<bool nameIsKey>
 static ALWAYS_INLINE JSValue genericGetAttrImpl(JSGlobalObject* globalObject, JSValue object, JSString* name, JSValue key, bool suppress)
 {
@@ -346,13 +356,13 @@ static ALWAYS_INLINE JSValue genericGetAttrImpl(JSGlobalObject* globalObject, JS
                 const ClassInfo* info = cell->classInfo();
                 if (info == PyGetSetDescriptor::info()) {
                     auto* getSet = uncheckedDowncast<PyGetSetDescriptor>(cell);
-                    if (!appliesToInstancesOf(getSet->owner(), type)) [[unlikely]]
+                    if (!appliesToInstancesOf(getSet->owner(), typeByNow<nameIsKey>(rt, object, type))) [[unlikely]]
                         RELEASE_AND_RETURN(scope, raiseDescriptorDoesNotApply(globalObject, getSet->def().name, getSet->owner(), object));
                     RELEASE_AND_RETURN(scope, getSet->def().getter(globalObject, object));
                 }
                 if (info == PyMemberDescriptor::info()) {
                     auto* member = uncheckedDowncast<PyMemberDescriptor>(cell);
-                    if (!appliesToInstancesOf(member->owner(), type)) [[unlikely]]
+                    if (!appliesToInstancesOf(member->owner(), typeByNow<nameIsKey>(rt, object, type))) [[unlikely]]
                         RELEASE_AND_RETURN(scope, raiseDescriptorDoesNotApply(globalObject, stringOf(member->name()), member->owner(), object));
                     RELEASE_AND_RETURN(scope, memberDescriptorGet(globalObject, member, object));
                 }
@@ -364,7 +374,7 @@ static ALWAYS_INLINE JSValue genericGetAttrImpl(JSGlobalObject* globalObject, JS
             }
             getter = descriptorType->lookup(Special::Get);
             if (getter && (descriptorType->lookup(Special::Set) || descriptorType->lookup(Special::Delete)))
-                RELEASE_AND_RETURN(scope, callGet(globalObject, getter, descriptor, object, type));
+                RELEASE_AND_RETURN(scope, callGet(globalObject, getter, descriptor, object, typeByNow<nameIsKey>(rt, object, type)));
         } else if (descriptor.isCell() && (descriptor.asCell()->type() == InternalFunctionType || descriptor.asCell()->type() == JSFunctionType))
             bindsDirectly = true; // A class method, a function of JS, or nothing to bind.
     }
@@ -373,7 +383,11 @@ static ALWAYS_INLINE JSValue genericGetAttrImpl(JSGlobalObject* globalObject, JS
     EXCEPTION_ASSERT(!scope.exception() || !value);
     if (value)
         return value;
-    RETURN_IF_EXCEPTION(scope, { });
+    if (scope.exception()) [[unlikely]] {
+        // A key has raised. For whoever only wants to know whether the attribute is there, an AttributeError says that it is not in the dict, as in CPython: the class is still to come.
+        if (!suppress || !clearPendingExceptionIfMatches(globalObject, rt.AttributeError()))
+            return { };
+    }
     // object.__getattribute__(cls, name): a class is an instance of its metaclass, and its dict the dict of that instance. So what
     // the class itself defines is found, as it is there.
     if (PyType* itself = PyType::tryFrom(object); itself && itself->isHeapType()) [[unlikely]] {
@@ -384,14 +398,14 @@ static ALWAYS_INLINE JSValue genericGetAttrImpl(JSGlobalObject* globalObject, JS
     }
 
     if (bindsDirectly)
-        RELEASE_AND_RETURN(scope, bindDescriptor(globalObject, descriptor, object, type));
+        RELEASE_AND_RETURN(scope, bindDescriptor(globalObject, descriptor, object, typeByNow<nameIsKey>(rt, object, type)));
     if (getter)
-        RELEASE_AND_RETURN(scope, callGet(globalObject, getter, descriptor, object, type));
+        RELEASE_AND_RETURN(scope, callGet(globalObject, getter, descriptor, object, typeByNow<nameIsKey>(rt, object, type)));
     if (descriptor)
         return descriptor;
     if (suppress)
         return { };
-    return raiseNoAttribute(globalObject, scope, object, name, key);
+    return raiseNoAttribute(globalObject, scope, object, name, key, nameIsKey ? type : nullptr);
 }
 
 JSValue genericGetAttr(JSGlobalObject* globalObject, JSValue object, JSString* name, bool suppress)
@@ -420,7 +434,7 @@ static ALWAYS_INLINE void genericSetAttrImpl(JSGlobalObject* globalObject, JSVal
             const ClassInfo* info = cell->classInfo();
             if (info == PyGetSetDescriptor::info()) {
                 auto& def = uncheckedDowncast<PyGetSetDescriptor>(cell)->def();
-                if (PyType* owner = uncheckedDowncast<PyGetSetDescriptor>(cell)->owner(); !appliesToInstancesOf(owner, type)) [[unlikely]] {
+                if (PyType* owner = uncheckedDowncast<PyGetSetDescriptor>(cell)->owner(); !appliesToInstancesOf(owner, typeByNow<nameIsKey>(rt, object, type))) [[unlikely]] {
                     scope.release();
                     raiseDescriptorDoesNotApply(globalObject, def.name, owner, object);
                     return;
@@ -436,7 +450,7 @@ static ALWAYS_INLINE void genericSetAttrImpl(JSGlobalObject* globalObject, JSVal
             }
             if (info == PyMemberDescriptor::info()) {
                 auto* member = uncheckedDowncast<PyMemberDescriptor>(cell);
-                if (!appliesToInstancesOf(member->owner(), type)) [[unlikely]] {
+                if (!appliesToInstancesOf(member->owner(), typeByNow<nameIsKey>(rt, object, type))) [[unlikely]] {
                     scope.release();
                     raiseDescriptorDoesNotApply(globalObject, stringOf(member->name()), member->owner(), object);
                     return;
@@ -496,21 +510,25 @@ static ALWAYS_INLINE void genericSetAttrImpl(JSGlobalObject* globalObject, JSVal
         }
         return;
     }
+    // CPython takes a KeyError out of the dict to mean that there is nothing to delete, whoever raised it, and when it stores too.
+    bool removed = true;
     if (value) {
-        if (nameIsKey || !dict->hasOnlyStringKeys()) [[unlikely]]
-            RELEASE_AND_RETURN(scope, dict->set(globalObject, nameIsKey ? key : JSValue(name), value));
-        dict->set(vm, name, value);
-        return;
-    }
-    bool removed;
-    if (!nameIsKey && dict->hasOnlyStringKeys()) [[likely]]
+        if (!nameIsKey && dict->hasOnlyStringKeys()) [[likely]] {
+            dict->set(vm, name, value);
+            return;
+        }
+        dict->set(globalObject, nameIsKey ? key : JSValue(name), value);
+    } else if (!nameIsKey && dict->hasOnlyStringKeys()) [[likely]]
         removed = dict->remove(vm, name);
-    else {
+    else
         removed = dict->remove(globalObject, nameIsKey ? key : JSValue(name));
-        RETURN_IF_EXCEPTION(scope, void());
+    if (scope.exception()) [[unlikely]] {
+        if (!clearPendingExceptionIfMatches(globalObject, rt.KeyError()))
+            return;
+        removed = false;
     }
     if (!removed)
-        raiseNoAttribute(globalObject, scope, object, name, key);
+        raiseNoAttribute(globalObject, scope, object, name, key, nameIsKey ? type : nullptr);
 }
 
 void genericSetAttr(JSGlobalObject* globalObject, JSValue object, JSString* name, JSValue value)
@@ -668,6 +686,13 @@ NEVER_INLINE JSValue getAttrByKey(JSGlobalObject* globalObject, JSValue object, 
     PyType* type = rt.typeOf(object);
     JSValue getAttribute = type->lookup(Special::GetAttribute);
     JSValue fallback = type->lookup(Special::GetAttr);
+    // (The search knows what to make of an AttributeError that the key raises half way.)
+    if (suppress && !fallback && isNative(getAttribute, objectGetAttribute)) {
+        JSValue result = genericGetAttrByKey(globalObject, object, strValue(key), key, true);
+        if (scope.exception()) [[unlikely]] // A descriptor has said so.
+            clearPendingExceptionIfMatches(globalObject, rt.AttributeError());
+        return result;
+    }
     JSValue result;
     if (getAttribute) [[likely]]
         result = callSpecial(globalObject, getAttribute, object, key);

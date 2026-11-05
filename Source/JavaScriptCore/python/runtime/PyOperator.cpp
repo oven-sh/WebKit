@@ -430,7 +430,9 @@ static PyType* operatorItemGetterType(JSGlobalObject* globalObject) { return run
 // ---- attrgetter ----
 
 namespace OperatorAttrGetter {
-enum : unsigned { Names, Paths, FieldCount }; // A tuple of the names as they were given, and one of what they stand for: a str, or for "a.b" a tuple of str.
+// A tuple of the names as they were given, and one of what they stand for: a str, or for "a.b" a tuple of str. An instance of a class derived from str stays what it is, unless
+// it has a dot in it.
+enum : unsigned { Names, Paths, FieldCount };
 }
 
 static PyType* operatorAttrGetterType(JSGlobalObject*);
@@ -451,6 +453,11 @@ static JSValue operatorAttrGetterNew(JSGlobalObject* globalObject, JSValue, cons
             return raiseTypeError(globalObject, scope, "attribute name must be a string"_s);
         String name = strValue(args[i])->value(globalObject);
         RETURN_IF_EXCEPTION(scope, { });
+        if (!args[i].isString() && name.find('.') == notFound) [[unlikely]] {
+            names->initializeAt(vm, i, args[i]);
+            paths->initializeAt(vm, i, args[i]);
+            continue;
+        }
         names->initializeAt(vm, i, internString(vm, name));
         if (name.find('.') == notFound) {
             paths->initializeAt(vm, i, names->at(i));
@@ -467,12 +474,14 @@ static JSValue operatorAttrGetterNew(JSGlobalObject* globalObject, JSValue, cons
     return record;
 }
 
-static JSValue operatorGetAttrByPath(JSGlobalObject* globalObject, JSValue object, JSValue path)
+static ALWAYS_INLINE JSValue operatorGetAttrByPath(JSGlobalObject* globalObject, JSValue object, JSValue path)
 {
     if (path.isString())
         return getAttr(globalObject, object, asString(path));
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
+    if (isStr(path)) [[unlikely]]
+        RELEASE_AND_RETURN(scope, getAttrByKey(globalObject, object, path, false));
     PyTuple* names = PyTuple::from(path);
     for (unsigned i = 0; i < names->length(); ++i) {
         object = getAttr(globalObject, object, asString(names->at(i)));
@@ -548,10 +557,13 @@ static JSValue operatorMethodCallerNew(JSGlobalObject* globalObject, JSValue, co
         return raiseTypeError(globalObject, scope, "methodcaller needs at least one argument, the method name"_s);
     if (!isStr(args[0]))
         return raiseTypeError(globalObject, scope, "method name must be a string"_s);
-    JSString* name = internString(globalObject, strValue(args[0]));
-    RETURN_IF_EXCEPTION(scope, { });
     PyTuple* values = PyTuple::create(globalObject, std::span { args.values(), args.totalCount() });
-    values->initializeAt(vm, 0, name);
+    // (An instance of a class derived from str stays what it is.)
+    if (args[0].isString()) [[likely]] {
+        JSString* name = internString(globalObject, asString(args[0]));
+        RETURN_IF_EXCEPTION(scope, { });
+        values->initializeAt(vm, 0, name);
+    }
     PyRecord* record = PyRecord::create(globalObject, operatorMethodCallerType(globalObject), OperatorMethodCaller::FieldCount);
     record->set(vm, OperatorMethodCaller::Values, values);
     if (args.hasKeywords())
@@ -578,7 +590,11 @@ static JSValue operatorMethodCallerCall(JSGlobalObject* globalObject, JSValue se
     CallArgs stored(values->span().data() + 1, positionalCount, keywordNames);
 
     JSValue receiver;
-    JSValue method = getMethod(globalObject, args[0], asString(values->at(0)), receiver);
+    JSValue method;
+    if (JSValue name = values->at(0); name.isString()) [[likely]]
+        method = getMethod(globalObject, args[0], asString(name), receiver);
+    else
+        method = getAttrByKey(globalObject, args[0], name, false);
     RETURN_IF_EXCEPTION(scope, { });
     scope.release();
     JSValue result = receiver ? withFirstArgument(receiver, stored, [&](const CallArgs& all) { return call(globalObject, method, all); }) : call(globalObject, method, stored);
