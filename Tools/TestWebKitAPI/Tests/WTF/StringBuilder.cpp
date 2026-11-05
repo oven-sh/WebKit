@@ -197,6 +197,21 @@ TEST(StringBuilderTest, VariadicAppend)
     }
 }
 
+TEST(StringBuilderTest, AppendAfterOverflow)
+{
+    // A builder that records overflow takes no more once it has overflowed, whatever is appended, and however.
+    StringBuilder builder(OverflowPolicy::RecordOverflow);
+    builder.didOverflow();
+    EXPECT_TRUE(builder.hasOverflowed());
+    builder.append('a');
+    builder.append(bullseye);
+    builder.append("abcd"_s);
+    builder.append("abcd"_s, 'e');
+    builder.append(bullseye, bullseye);
+    builder.append("abcd"_s, bullseye);
+    EXPECT_TRUE(builder.hasOverflowed());
+}
+
 TEST(StringBuilderTest, Interleave)
 {
     std::array strings { "a"_s, "b"_s, "c"_s };

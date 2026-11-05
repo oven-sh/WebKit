@@ -141,6 +141,8 @@ std::span<Latin1Character> StringBuilder::extendBufferForAppendingLatin1Characte
 std::span<char16_t> StringBuilder::extendBufferForAppendingWithUpconvert(unsigned requiredLength)
 {
     if (is8Bit()) {
+        if (hasOverflowed()) [[unlikely]]
+            return { };
         allocateBuffer<char16_t>(span8(), expandedCapacity(capacity(), requiredLength));
         if (hasOverflowed()) [[unlikely]]
             return { };
