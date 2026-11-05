@@ -587,10 +587,18 @@ void Threads::runThread(ThreadState& thread, Function<void()>&& body)
         body = nullptr;
 
         // What it owes, it pays before it goes.
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(m_vm);
         for (Runtime* runtime : Vector<Runtime*, 1>(m_vm.heap.pythonRuntimes())) {
             if (m_vm.heap.pythonRuntimes().contains(runtime) && runtime->hasPendingCalls())
                 runtime->runPendingCalls();
+            // The host is ending what runs here. That is left to the caller, and this is as far as it goes: whoever has the VM next
+            // is to find nothing in it.
+            if (m_vm.hasPendingTerminationException()) [[unlikely]] {
+                scope.clearException();
+                break;
+            }
         }
+        scope.assertNoException();
         for (Runtime* runtime : m_vm.heap.pythonRuntimes()) {
             Runtime::ThreadLocalState state;
             runtime->takeThreadLocalState(state);
