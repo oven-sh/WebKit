@@ -1193,12 +1193,25 @@ JSValue codecEncodeUTF8(JSGlobalObject* globalObject, JSString* string, const St
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     static constexpr auto reason = "surrogates not allowed"_s;
+    {
+        // Text without lone surrogates, which nearly all is, has nothing for the error handler.
+        auto view = string->view(globalObject);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (auto length = lengthInUTF8(view)) {
+            Runtime& rt = runtime(globalObject);
+            if (!*length)
+                return rt.emptyBytes();
+            PyBytes* result = PyBytes::tryCreateUninitialized(vm, rt.structure<PyBytes>(), rt.bytesType(), *length);
+            if (!result) [[unlikely]]
+                return raiseMemoryError(globalObject, scope, String());
+            writeUTF8(view, { result->mutableData(), *length });
+            return result;
+        }
+    }
     CodecEncoder encoder(globalObject, string, errors, "utf-8"_s);
     if (failed(scope, encoder.initialize()))
         return { };
     const CodecText& text = encoder.text;
-    if (text.isNarrow() && text.isASCII())
-        RELEASE_AND_RETURN(scope, PyBytes::create(globalObject, text.narrow()));
 
     ByteBuilder& out = encoder.out;
     unsigned size = text.length();

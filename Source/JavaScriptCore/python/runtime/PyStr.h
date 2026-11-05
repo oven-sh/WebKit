@@ -243,6 +243,10 @@ String asciiEscape(StringView);
 
 // UTF-8, with the handler "surrogatepass" if `allowSurrogates`; otherwise nullopt if there is a lone surrogate.
 std::optional<Vector<uint8_t>> tryEncodeUTF8(StringView, bool allowSurrogates = false);
+// How many bytes the text takes (nothing: it has halves of surrogate pairs on their own, which have no UTF-8), and the bytes, into room
+// of just that size.
+std::optional<size_t> lengthInUTF8(StringView);
+void writeUTF8(StringView, std::span<uint8_t>);
 // Never fails: what is not UTF-8 becomes U+FFFD... for messages only.
 String decodeUTF8Lenient(std::span<const uint8_t>);
 // As os.fsdecode() and os.fsencode(): UTF-8 with "surrogateescape".

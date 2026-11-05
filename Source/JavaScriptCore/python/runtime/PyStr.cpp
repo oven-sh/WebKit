@@ -21,6 +21,7 @@
 #include <unicode/uchar.h>
 #include <unicode/ustring.h>
 #include <wtf/HexNumber.h>
+#include <wtf/SIMDUTF.h>
 #include <wtf/text/StringBuilder.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -405,15 +406,40 @@ static void appendUTF8(Vector<uint8_t>& result, char32_t character)
     }
 }
 
+std::optional<size_t> lengthInUTF8(StringView text)
+{
+    if (text.is8Bit()) {
+        auto characters = byteCast<char>(text.span8());
+        return simdutf::utf8_length_from_latin1(characters.data(), characters.size());
+    }
+    auto units = text.span16();
+    if (!simdutf::validate_utf16(units.data(), units.size()))
+        return std::nullopt;
+    return simdutf::utf8_length_from_utf16(units.data(), units.size());
+}
+
+void writeUTF8(StringView text, std::span<uint8_t> result)
+{
+    size_t written;
+    if (!text.is8Bit())
+        written = simdutf::convert_valid_utf16_to_utf8(text.span16().data(), text.length(), byteCast<char>(result.data()));
+    else if (result.size() == text.length()) {
+        memcpySpan(result, text.span8());
+        return;
+    } else
+        written = simdutf::convert_latin1_to_utf8(byteCast<char>(text.span8().data()), text.length(), byteCast<char>(result.data()));
+    ASSERT_UNUSED(written, written == result.size());
+}
+
 std::optional<Vector<uint8_t>> tryEncodeUTF8(StringView text, bool allowSurrogates)
 {
     Vector<uint8_t> result;
-    result.reserveInitialCapacity(text.length());
-    if (text.is8Bit()) {
-        for (Latin1Character character : text.span8())
-            appendUTF8(result, character);
+    if (auto length = lengthInUTF8(text)) {
+        result.grow(*length);
+        writeUTF8(text, result.mutableSpan());
         return result;
     }
+    result.reserveInitialCapacity(text.length());
     for (char32_t character : text.codePoints()) {
         if (U_IS_SURROGATE(character) && !allowSurrogates)
             return std::nullopt;
