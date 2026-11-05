@@ -504,7 +504,7 @@ void CodeMonitor::findPointsWithoutTellingTheCollector(bool everyInstruction)
                         item.isHiddenJump = true;
                     else if (mark.value() == afterNoLineMark)
                         item.comesAfterNoLine = true;
-                    else
+                    else if (mark.value() != handlerOfLineMark)
                         item.asyncForMark = mark.value();
                     continue;
                 }
@@ -1635,7 +1635,10 @@ bool Monitoring::fire(JSGlobalObject* globalObject, CallFrame* callFrame, CodeMo
     unsigned count = fourth ? 4 : third ? 3 : 2;
     if (tools & ((1 << numberOfFreeMonitoringTools) - 1)) {
         arguments[0] = codeOf(globalObject, callFrame);
-        arguments[1] = jsNumber(shownOffset(visibleOffset(monitor.code()->pythonMarks(), shownOffsetOfPlace.value_or(offset))));
+        // What raises an exception again on its way out of a `with` has two marks: the line of the `with`, which is where a tool is told
+        // it is, and no line, which is what the frame goes by.
+        unsigned place = shownOffsetOfPlace.value_or(offset);
+        arguments[1] = jsNumber(shownOffset(event == Event::Reraise ? place : visibleOffset(monitor.code()->pythonMarks(), place)));
     }
     while (tools) {
         unsigned tool = 31 - std::countl_zero(static_cast<uint32_t>(tools));
@@ -2344,13 +2347,28 @@ bool Monitoring::exceptionEvent(JSGlobalObject* globalObject, CallFrame* callFra
     return fire(globalObject, callFrame, *monitor, offset, event, tools, exception);
 }
 
+static bool leavesHandler(CodeBlock* codeBlock, BytecodeIndex index)
+{
+    auto instruction = codeBlock->instructionAt(index);
+    return instruction->opcodeID() == op_py_runtime && static_cast<RuntimeFunction>(instruction->as<OpPyRuntime>().m_function) == RuntimeFunction::ReraiseOutOfHandler;
+}
+
+// Where the handlers begin: a place of no line, as the handler around a handler is.
+static unsigned whereHandlersBegin(CodeBlock* codeBlock)
+{
+    unsigned result = std::numeric_limits<unsigned>::max();
+    for (unsigned i = 0; i < codeBlock->numberOfExceptionHandlers(); ++i)
+        result = std::min<unsigned>(result, codeBlock->exceptionHandler(i).target);
+    return result;
+}
+
 // In CPython these are three steps: the exception is raised again; a handler around the handler catches it, and puts back what was being
-// handled; that raises it once more. Tools hear of them all, and of the last from the unwinder.
+// handled; that raises it once more. Tools hear of them all, and of the last from the unwinder. That handler is of no line.
 JSValue Monitoring::exceptionLeavesHandler(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue exception)
 {
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(m_runtime.vm());
-    unsigned offset = callFrame->bytecodeIndex().offset();
     for (unsigned event : { Event::Reraise, Event::ExceptionHandled }) {
+        unsigned offset = event == Event::Reraise ? callFrame->bytecodeIndex().offset() : whereHandlersBegin(callFrame->codeBlock());
         if (failed(scope, exceptionEvent(globalObject, callFrame, offset, event, exception))) {
             if (m_runtime.vm().isTerminationException(scope.exception()))
                 return { };
@@ -2485,10 +2503,16 @@ JSValue exceptionIsRaised(JSGlobalObject* globalObject, JSValue exception, CallF
     auto* instruction = codeBlock->instructionAt(index);
     if (isWanted && isRaisedAgain && instruction->opcodeID() == op_py_runtime && static_cast<RuntimeFunction>(instruction->as<OpPyRuntime>().m_function) == RuntimeFunction::ReraiseUnseen)
         isWanted = false;
+    auto tell = [&] {
+        if (!isRaisedAgain)
+            return tellOfException(globalObject, exception, callFrame, index.offset(), Event::Raise);
+        // (By the handler around the handler: see Monitoring::exceptionLeavesHandler().)
+        return tellOfException(globalObject, exception, callFrame, leavesHandler(codeBlock, index) ? whereHandlersBegin(codeBlock) : index.offset(), Event::Reraise);
+    };
     if (!isAwake) {
         if (!isWanted)
             return exception;
-        return tellOfException(globalObject, exception, callFrame, index.offset(), isRaisedAgain ? Event::Reraise : Event::Raise);
+        return tell();
     }
     // As above: in `with a, b, c():` the handler of `a` is on the line that the exception comes from, though it comes by way of the handler of `b`.
     if (!isRaisedAgain || !monitoring.isRaisedIn(callFrame) || lineItIsRaisedOn(codeBlock, index.offset()) >= 0)
@@ -2496,7 +2520,7 @@ JSValue exceptionIsRaised(JSGlobalObject* globalObject, JSValue exception, CallF
     if (isRaisedAgain || !isSendThatThrows(callFrame, instruction)) [[likely]] {
         if (!isWanted) [[likely]]
             return exception;
-        return tellOfException(globalObject, exception, callFrame, index.offset(), isRaisedAgain ? Event::Reraise : Event::Raise);
+        return tell();
     }
     // See Monitoring::lineOfSendIsToldOfAgain().
     for (unsigned event : { Event::PyThrow, Event::Raise, Event::ExceptionHandled })
@@ -2523,10 +2547,19 @@ JSValue exceptionStaysOrLeaves(JSGlobalObject* globalObject, JSValue exception, 
             if (handler->type() == HandlerType::SynthesizedCatch)
                 return exception;
             offset = handler->target;
+            auto [first, last] = std::ranges::equal_range(codeBlock->unlinkedCodeBlock()->pythonMarks(), offset, { }, &PythonMark::offset);
+            if (std::ranges::any_of(first, last, [](auto& mark) { return mark.kind() == PythonMark::NoLine && mark.value() == handlerOfLineMark; }))
+                offset = whereHandlerBegins(codeBlock, offset);
         }
-    }
+    } else if (leavesHandler(codeBlock, index))
+        offset = whereHandlersBegin(codeBlock);
     // In CPython all of a generator is in a handler, which makes a RuntimeError of a StopIteration and raises anything else again.
     if (!isCaught && codeInfoOf(callFrame).isGeneratorLike() && isPastStart(codeBlock->unlinkedCodeBlock()->pythonMarks(), index.offset())) {
+        // It is of no line: the compiler has left a place for it right before the code of the program.
+        auto marks = codeBlock->unlinkedCodeBlock()->pythonMarks();
+        auto start = std::ranges::find(marks, PythonMark::Start, &PythonMark::kind);
+        ASSERT(start != marks.begin() && start != marks.end() && (start - 1)->kind() == PythonMark::NoLine);
+        offset = (start - 1)->offset;
         exception = tellOfException(globalObject, exception, callFrame, offset, Event::ExceptionHandled);
         exception = tellOfException(globalObject, exception, callFrame, offset, Event::Reraise);
     }

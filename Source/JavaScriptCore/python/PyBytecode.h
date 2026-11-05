@@ -154,6 +154,8 @@ enum class CompareOperator : uint8_t {
 //     jump that comes next is not one the program makes. asyncForGoesOnMark, asyncForEndsMark: what comes next does nothing, and is where
 //     an `async for` loop has an item, or an exception in place of one: the two ways of a branch. afterNoLineMark: in a handler, CPython has
 //     instructions of no line before what comes next, so that the line which begins there is told of even if the exception comes from it.
+//     handlerOfLineMark: the op_py_catch that comes next begins the handler of a `with` or an `async for`, which in CPython is of the line
+//     of the statement from its first instruction: tools are told that the exception is handled where the handler goes on.
 // Start: where the program's own code begins, after the frame has been set up.
 // BlockBegin, BlockEnd: `value` numbers the block, `bits` is a TracedBlock.
 
@@ -161,6 +163,7 @@ constexpr unsigned hiddenJumpMark = 1;
 constexpr unsigned asyncForGoesOnMark = 2;
 constexpr unsigned asyncForEndsMark = 3;
 constexpr unsigned afterNoLineMark = 4;
+constexpr unsigned handlerOfLineMark = 5;
 
 // A statement begins: nothing is in a temporary register but what belongs to the blocks it is in.
 constexpr unsigned lineMarkValue(int line, bool isStatementStart, bool isSilent = false) { return static_cast<unsigned>(line) << 2 | isSilent << 1 | isStatementStart; }

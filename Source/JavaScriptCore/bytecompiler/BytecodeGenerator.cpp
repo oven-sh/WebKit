@@ -310,11 +310,17 @@ ParserError BytecodeGenerator::generate(unsigned& size)
     if (m_pythonCodeIsAbandoned) [[unlikely]]
         return ParserError(ParserError::SyntaxError);
 
+    bool hasMarkedPythonHandlers = false;
     for (auto& handler : m_exceptionHandlersToEmit) {
         Ref<Label> realCatchTarget = newLabel();
         TryData* tryData = handler.tryData;
 
         if (handler.isPython) {
+            // They are of no line, as what a handler begins with is in CPython.
+            if (!std::exchange(hasMarkedPythonHandlers, true))
+                addPythonMark(PythonMark::NoLine, 0);
+            if (handler.isShownWhereItGoesOn)
+                addPythonMark(PythonMark::NoLine, Python::handlerOfLineMark);
             bool becomesHandled = handler.exceptionRegister.isValid();
             auto mode = !becomesHandled ? Python::CatchMode::Thrown : handler.leavesItUnseen ? Python::CatchMode::HandledUnseen : Python::CatchMode::Handled;
             OpPyCatch::emit(this, handler.thrownValueRegister, becomesHandled ? handler.exceptionRegister : handler.thrownValueRegister, static_cast<unsigned>(mode));
@@ -5074,9 +5080,9 @@ void BytecodeGenerator::emitOutOfLineCatchHandler(RegisterID* thrownValueRegiste
     emitOutOfLineExceptionHandler(unused, thrownValueRegister, completionTypeRegister, data);
 }
 
-void BytecodeGenerator::emitOutOfLinePyCatchHandler(RegisterID* exception, RegisterID* previousIfItBecomesHandled, TryData* data)
+void BytecodeGenerator::emitOutOfLinePyCatchHandler(RegisterID* exception, RegisterID* previousIfItBecomesHandled, TryData* data, bool isShownWhereItGoesOn)
 {
-    m_exceptionHandlersToEmit.append({ data, previousIfItBecomesHandled ? previousIfItBecomesHandled : VirtualRegister(), exception, VirtualRegister(), true });
+    m_exceptionHandlersToEmit.append({ data, previousIfItBecomesHandled ? previousIfItBecomesHandled : VirtualRegister(), exception, VirtualRegister(), true, false, isShownWhereItGoesOn });
 }
 
 void BytecodeGenerator::pyCatchHandlerLeavesItUnseen(TryData* data)

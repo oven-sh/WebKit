@@ -1150,7 +1150,7 @@ namespace JSC {
         void popTry(TryData*, Label& end);
 
         void emitOutOfLineCatchHandler(RegisterID* thrownValueRegister, RegisterID* completionTypeRegister, TryData*);
-        void emitOutOfLinePyCatchHandler(RegisterID* exception, RegisterID* previousIfItBecomesHandled, TryData*);
+        void emitOutOfLinePyCatchHandler(RegisterID* exception, RegisterID* previousIfItBecomesHandled, TryData*, bool isShownWhereItGoesOn = false);
         void pyCatchHandlerLeavesItUnseen(TryData*); // Python::CatchMode::HandledUnseen
         void emitOutOfLineFinallyHandler(RegisterID* exceptionRegister, RegisterID* completionTypeRegister, TryData*);
 
@@ -1679,6 +1679,7 @@ namespace JSC {
             // op_py_catch: `thrownValueRegister` is its `exception`, `exceptionRegister` its `previous` if there is one.
             bool isPython { false };
             bool leavesItUnseen { false };
+            bool isShownWhereItGoesOn { false }; // Python::handlerOfLineMark
         };
         Vector<CatchEntry> m_exceptionHandlersToEmit;
 

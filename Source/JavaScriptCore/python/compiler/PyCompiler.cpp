@@ -1054,6 +1054,10 @@ void Unit::emitPrologue()
         Ref<Label> start = g.newLabel();
         g.emitPyJumpIfFalse(g.generatorResumeModeRegister(), start.get());
         callRuntimeForEffect(RuntimeFunction::ThrowIntoGenerator, { g.generatorValueRegister() });
+        // In CPython all of a generator is in a handler, of no line, which an exception that leaves it comes through. Tools are told so,
+        // and this is the place they are given.
+        noLine();
+        g.emitUnreachable();
         g.emitLabel(start.get());
     }
 
@@ -1365,7 +1369,7 @@ void Unit::endTry(Try& tryRange)
     g.popTry(tryRange.data, end.get());
 }
 
-Unit::Reg Unit::beginHandler(Try& tryRange, Reg* previous)
+Unit::Reg Unit::beginHandler(Try& tryRange, Reg* previous, bool isOfLine)
 {
     g.settlePythonLineMark();
     g.emitLabel(tryRange.handler.get());
@@ -1373,13 +1377,13 @@ Unit::Reg Unit::beginHandler(Try& tryRange, Reg* previous)
     Reg thrown = newTemporary();
     if (previous)
         *previous = newTemporary();
-    g.emitOutOfLinePyCatchHandler(thrown.get(), previous ? previous->get() : nullptr, tryRange.data);
+    g.emitOutOfLinePyCatchHandler(thrown.get(), previous ? previous->get() : nullptr, tryRange.data, isOfLine);
     return thrown;
 }
 
-Unit::Reg Unit::beginExceptionHandler(Try& tryRange, Reg& previous)
+Unit::Reg Unit::beginExceptionHandler(Try& tryRange, Reg& previous, bool isOfLine)
 {
-    return beginHandler(tryRange, &previous);
+    return beginHandler(tryRange, &previous, isOfLine);
 }
 
 void Unit::restoreHandledException(RegisterID* previous)
@@ -2003,7 +2007,7 @@ void Unit::asyncForLoop(For* node, Last isLast)
         jump(start.get());
     popBlock();
 
-    Reg thrown = beginHandler(guard);
+    Reg thrown = beginHandler(guard, nullptr, true);
     // The end of the loop is not told of as a line.
     silentLine(node->iter->range);
     g.emitPyAsyncForMark(asyncForEndsMark);
@@ -2453,7 +2457,7 @@ void Unit::withStatement(With* node, unsigned index, Last isLast)
 
     // An exception: __exit__ says whether it goes on.
     Reg previous;
-    Reg exception = beginExceptionHandler(body, previous);
+    Reg exception = beginExceptionHandler(body, previous, true);
     Try cleanup = beginTry();
     Reg result = newTemporary();
     loc(range);
@@ -2463,7 +2467,9 @@ void Unit::withStatement(With* node, unsigned index, Last isLast)
     Ref<Label> suppress = g.newLabel();
     g.emitPyJumpIfTrue(result.get(), suppress.get());
     endTry(cleanup);
-    // It goes on as if from where it was raised.
+    // It goes on as if from where it was raised: the frame stays on that line. To a tool, what raises it again is of the line of the
+    // `with`: see Monitoring::fire().
+    g.addPythonMark(PythonMark::Line, lineMarkValue(range.lineno, false));
     noLine();
     reraiseOutOfHandler(exception.get(), previous.get());
 

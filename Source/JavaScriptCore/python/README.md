@@ -1310,7 +1310,13 @@ coverage tools are CPython's own code on top. It is all in `runtime/PyMonitoring
   Where more than that leads to the target (`if` without `else` and with something behind it, `a and b`), `BRANCH_RIGHT` is told of at the branch, which stays replaced until it
   has jumped once. It may never: while that is all that is wanted there, the runtime only takes the branch (`Monitoring::takeBranch()`).
 - _Events to do with exceptions_ (`RAISE`, `RERAISE`, `EXCEPTION_HANDLED`, `PY_UNWIND`) come from the unwinder, which looks at one flag for each
-  Python frame an exception passes.
+  Python frame an exception passes. The places they name are of the lines they are of in CPython. `EXCEPTION_HANDLED` is at the `op_py_catch` of the
+  handler, which is of no line, as what a handler begins with is there: they stand behind all the rest of the code, and the generator marks them. The
+  handler of a `with` or an `async for` is of the line of the statement from its first instruction, so for those (`handlerOfLineMark`) the place is
+  where the handler goes on. What `ReraiseOutOfHandler` saves running, the handler around a handler, is of no line either, and so is where the frame
+  is left from then. So is the handler that all of a generator is in, in CPython: the body of a generator has a place for it, an instruction that is
+  never run, right before the code of the program. What raises an exception again on its way out of a `with` has two marks: the line of the `with` for
+  tools, no line for the frame, which stays on the line the exception came from.
 - `throw()` and `close()` of a generator that delegates go to the innermost one first in CPython, and the outer ones are resumed only if something
   comes back. Here every one on the way is resumed, from the outside in, to hand on what was thrown (`op_py_send`), so it says nothing while
   it does (`PyGenerator::throwIsWithDelegate`): no `PY_THROW` as it is resumed, no `PY_YIELD` if the inner one yields again. What CPython
