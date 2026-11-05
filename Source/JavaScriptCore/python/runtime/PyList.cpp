@@ -454,7 +454,7 @@ static int64_t lengthHintForList(JSGlobalObject* globalObject, JSValue iterable,
     return hint;
 }
 
-void listExtend(JSGlobalObject* globalObject, JSArray* list, JSValue iterable)
+void listExtend(JSGlobalObject* globalObject, JSArray* list, JSValue iterable, LengthHint lengthHint)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -481,12 +481,15 @@ void listExtend(JSGlobalObject* globalObject, JSArray* list, JSValue iterable)
     }
     Items items(globalObject, iterable);
     RETURN_IF_EXCEPTION(scope, void());
-    int64_t hint = lengthHintForList(globalObject, iterable, list->length());
-    RETURN_IF_EXCEPTION(scope, void());
     // We make room if it is one of our own types that says how many there are. What a class of the program's says is a guess.
-    if (hint && !typeOf(globalObject, iterable)->isHeapType()) {
-        if (ListStorage storage { vm, list })
-            storage.reserve(storage.length() + static_cast<uint64_t>(hint));
+    bool isOfTheProgram = typeOf(globalObject, iterable)->isHeapType();
+    if (!isOfTheProgram || lengthHint == LengthHint::Asked) {
+        int64_t hint = lengthHintForList(globalObject, iterable, list->length());
+        RETURN_IF_EXCEPTION(scope, void());
+        if (hint && !isOfTheProgram) {
+            if (ListStorage storage { vm, list })
+                storage.reserve(storage.length() + static_cast<uint64_t>(hint));
+        }
     }
     while (true) {
         JSValue item = items.next();

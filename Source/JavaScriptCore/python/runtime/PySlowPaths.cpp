@@ -1173,7 +1173,8 @@ static JSValue callArguments(JSGlobalObject* globalObject, JSValue, JSValue posi
     } else {
         array = newList(globalObject);
         RETURN_IF_EXCEPTION(scope, { });
-        listExtend(globalObject, array, positional);
+        // f(*x): CPython makes a tuple of x, as tuple(x) does.
+        listExtend(globalObject, array, positional, LengthHint::NotAsked);
         if (scope.exception()) [[unlikely]] {
             PyType* type = rt.typeOf(positional);
             if (pendingExceptionMatches(globalObject, rt.TypeError()) && !type->lookup(Special::Iter) && !type->lookup(Special::GetItem)) {

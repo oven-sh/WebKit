@@ -79,7 +79,9 @@ void listInsertGap(JSGlobalObject*, JSArray*, unsigned index, unsigned count);
 void listRemove(JSGlobalObject*, JSArray*, unsigned index, unsigned count = 1);
 void listTruncate(JSGlobalObject*, JSArray*, unsigned length);
 // list.extend(iterable)
-void listExtend(JSGlobalObject*, JSArray*, JSValue iterable);
+// list.extend() asks the iterable how many items are to come. NotAsked: an instance of a class of the program's is not.
+enum class LengthHint : bool { Asked, NotAsked };
+void listExtend(JSGlobalObject*, JSArray*, JSValue iterable, LengthHint = LengthHint::Asked);
 // list(iterable)
 JSArray* listFromIterable(JSGlobalObject*, JSValue iterable);
 // tuple(iterable)
