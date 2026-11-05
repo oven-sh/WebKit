@@ -1414,9 +1414,11 @@ static JSValue matchKeys(JSGlobalObject* globalObject, JSValue subject, PyTuple*
     unsigned count = keys->length();
     if (!count)
         return rt.emptyTuple();
-    // subject.get(key, dummy): one call tells whether the key is there, and a defaultdict is not made to grow.
+    // subject.get(key, dummy): one call tells whether the key is there, and a defaultdict is not made to grow. An object of JS's has the
+    // get() it has, which may know no default, or none: it is asked for its items.
+    bool isOfJS = rt.typeOf(subject)->has(TypeFlag::AttributesAreProperties);
     JSValue self;
-    JSValue get = getMethod(globalObject, subject, rt.names.get(), self);
+    JSValue get = isOfJS ? JSValue() : getMethod(globalObject, subject, rt.names.get(), self);
     RETURN_IF_EXCEPTION(scope, { });
     PySet* seen = PySet::create(globalObject);
     JSValue dummy = PyObject::create(vm, rt.structure<PyObject>(), rt.objectType());
@@ -1427,7 +1429,13 @@ static JSValue matchKeys(JSGlobalObject* globalObject, JSValue subject, PyTuple*
         RETURN_IF_EXCEPTION(scope, { });
         if (!isNew)
             return raiseValueError(globalObject, scope, "mapping pattern checks duplicate key ("_s, reprForMessage(globalObject, key), ')');
-        JSValue value = self ? call(globalObject, get, self, key, dummy) : call(globalObject, get, key, dummy);
+        JSValue value = dummy;
+        if (!isOfJS)
+            value = self ? call(globalObject, get, self, key, dummy) : call(globalObject, get, key, dummy);
+        else if (contains(globalObject, subject, key)) {
+            RETURN_IF_EXCEPTION(scope, { });
+            value = getItem(globalObject, subject, key);
+        }
         RETURN_IF_EXCEPTION(scope, { });
         if (value == dummy)
             return jsUndefined();
