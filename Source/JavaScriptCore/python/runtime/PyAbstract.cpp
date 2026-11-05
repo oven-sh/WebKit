@@ -212,12 +212,15 @@ void memberDescriptorSet(JSGlobalObject* globalObject, PyMemberDescriptor* descr
     JSObject::deleteProperty(holder, globalObject, key, slot);
 }
 
-// A class may have, as an attribute of its own, the method of a type it has nothing to do with: class C: __len__ = list.__len__
+// A class may have, as an attribute of its own, what belongs to a type it has nothing to do with: class C: __len__ = list.__len__
+static ALWAYS_INLINE bool appliesToInstancesOf(PyType* owner, PyType* type)
+{
+    return type == owner || type->isSubtypeOf(owner);
+}
+
 static ALWAYS_INLINE bool nativeMethodAppliesTo(Runtime& rt, PyNativeFunction* method, JSValue object)
 {
-    PyType* owner = method->ownerType();
-    PyType* type = rt.typeOf(object);
-    return type == owner || type->isSubtypeOf(owner);
+    return appliesToInstancesOf(method->ownerType(), rt.typeOf(object));
 }
 
 static NEVER_INLINE JSValue raiseDescriptorDoesNotApply(JSGlobalObject* globalObject, const String& name, PyType* owner, JSValue object)
@@ -288,7 +291,7 @@ JSValue bindDescriptor(JSGlobalObject* globalObject, JSValue descriptor, JSValue
                     return raiseDescriptorDoesNotApply(globalObject, native->def().name, native->ownerType(), object);
                 return PyNativeFunction::createBound(globalObject, native, object);
             case NativeKind::ClassMethod:
-                if (type != native->ownerType() && !type->isSubtypeOf(native->ownerType())) [[unlikely]] {
+                if (!appliesToInstancesOf(native->ownerType(), type)) [[unlikely]] {
                     auto scope = DECLARE_THROW_SCOPE(rt.vm());
                     return raiseTypeError(globalObject, scope, "descriptor '"_s, native->def().name, "' requires a subtype of '"_s, native->ownerType()->nameInMessages(), "' but received '"_s, type->nameInMessages(), '\'');
                 }
@@ -343,13 +346,13 @@ static ALWAYS_INLINE JSValue genericGetAttrImpl(JSGlobalObject* globalObject, JS
                 const ClassInfo* info = cell->classInfo();
                 if (info == PyGetSetDescriptor::info()) {
                     auto* getSet = uncheckedDowncast<PyGetSetDescriptor>(cell);
-                    if (type != getSet->owner() && !type->isSubtypeOf(getSet->owner())) [[unlikely]]
+                    if (!appliesToInstancesOf(getSet->owner(), type)) [[unlikely]]
                         RELEASE_AND_RETURN(scope, raiseDescriptorDoesNotApply(globalObject, getSet->def().name, getSet->owner(), object));
                     RELEASE_AND_RETURN(scope, getSet->def().getter(globalObject, object));
                 }
                 if (info == PyMemberDescriptor::info()) {
                     auto* member = uncheckedDowncast<PyMemberDescriptor>(cell);
-                    if (type != member->owner() && !type->isSubtypeOf(member->owner())) [[unlikely]]
+                    if (!appliesToInstancesOf(member->owner(), type)) [[unlikely]]
                         RELEASE_AND_RETURN(scope, raiseDescriptorDoesNotApply(globalObject, stringOf(member->name()), member->owner(), object));
                     RELEASE_AND_RETURN(scope, memberDescriptorGet(globalObject, member, object));
                 }
@@ -417,7 +420,7 @@ static ALWAYS_INLINE void genericSetAttrImpl(JSGlobalObject* globalObject, JSVal
             const ClassInfo* info = cell->classInfo();
             if (info == PyGetSetDescriptor::info()) {
                 auto& def = uncheckedDowncast<PyGetSetDescriptor>(cell)->def();
-                if (PyType* owner = uncheckedDowncast<PyGetSetDescriptor>(cell)->owner(); type != owner && !type->isSubtypeOf(owner)) [[unlikely]] {
+                if (PyType* owner = uncheckedDowncast<PyGetSetDescriptor>(cell)->owner(); !appliesToInstancesOf(owner, type)) [[unlikely]] {
                     scope.release();
                     raiseDescriptorDoesNotApply(globalObject, def.name, owner, object);
                     return;
@@ -433,7 +436,7 @@ static ALWAYS_INLINE void genericSetAttrImpl(JSGlobalObject* globalObject, JSVal
             }
             if (info == PyMemberDescriptor::info()) {
                 auto* member = uncheckedDowncast<PyMemberDescriptor>(cell);
-                if (type != member->owner() && !type->isSubtypeOf(member->owner())) [[unlikely]] {
+                if (!appliesToInstancesOf(member->owner(), type)) [[unlikely]] {
                     scope.release();
                     raiseDescriptorDoesNotApply(globalObject, stringOf(member->name()), member->owner(), object);
                     return;
@@ -858,9 +861,8 @@ static AttributeDescription describeAttributeOfObject(JSGlobalObject* globalObje
         description = OfThisObjectNow;
 
     // One of the __slots__.
-    if (descriptor && descriptor.isCell() && descriptor.asCell()->type() == PyObjectType && descriptor.asCell()->classInfo() == PyMemberDescriptor::info()) {
-        auto* member = uncheckedDowncast<PyMemberDescriptor>(descriptor.asCell());
-        if (type != member->owner() && !type->isSubtypeOf(member->owner()))
+    if (auto* member = PyMemberDescriptor::tryFrom(descriptor)) {
+        if (!appliesToInstancesOf(member->owner(), type))
             return None;
         cache.offset = structure->get(vm, PropertyName(&member->key()->uid()));
         return isValidOffset(cache.offset) ? description : None;
@@ -995,56 +997,64 @@ bool describeSpecialMethod(JSGlobalObject* globalObject, JSValue object, Special
     return !!cache.typeVersion;
 }
 
-bool describeSetAttribute(JSGlobalObject* globalObject, JSValue object, JSString* name, Structure* oldStructure, SetAttributeCache& cache)
+SetAttributeDescription describeSetAttribute(JSGlobalObject* globalObject, JSValue object, JSString* name)
 {
+    using Kind = SetAttributeDescription::Kind;
     // As in genericSetAttr().
     if (!object.isCell() || !isPyObjectType(object.asCell()->type()))
-        return false;
+        return { };
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
     auto* cell = uncheckedDowncast<PyObject>(object.asCell());
     PyType* type = cell->type();
     uint64_t timesLookupRanCode = PyType::timesLookupRanCode();
     if (!isNative(type->lookup(Special::SetAttr), objectSetAttr))
-        return false;
+        return { };
     JSValue descriptor = type->lookup(name);
-    if (mayBecomeAnotherKindOfDescriptor(rt, descriptor, type))
-        return false;
-    bool isSlot = descriptor && descriptor.isCell() && descriptor.asCell()->type() == PyObjectType && descriptor.asCell()->classInfo() == PyMemberDescriptor::info();
-    if (!isSlot && isDataDescriptor(rt, descriptor))
-        return false;
+    bool holdsForAllAlike = !mayBecomeAnotherKindOfDescriptor(rt, descriptor, type);
+    auto* slot = PyMemberDescriptor::tryFrom(descriptor);
+    if (slot ? !appliesToInstancesOf(slot->owner(), type) : isDataDescriptor(rt, descriptor))
+        return { };
     // As in describeAttributeOfObject(): the Structure is looked at when the lookups are over.
     if (PyType::timesLookupRanCode() != timesLookupRanCode) [[unlikely]]
-        return false;
+        return { };
 
     Structure* structure = cell->structure();
-    if (structure->isDictionary() || oldStructure->isDictionary())
-        return false;
     UniquedStringImpl* key;
-    if (isSlot)
-        key = &uncheckedDowncast<PyMemberDescriptor>(descriptor.asCell())->key()->uid();
+    if (slot)
+        key = &slot->key()->uid();
     else {
-        if (cell->JSCell::type() != PyInstanceType || !type->has(TypeFlag::HasDict))
-            return false;
-        // Whether the attributes are properties, so that the Structure tells which there are.
-        if (uncheckedDowncast<PyInstance>(cell)->dict() || isValidOffset(structure->get(vm, rt.instanceHasDictKey())))
-            return false;
+        if (!type->has(TypeFlag::HasDict))
+            return { };
+        PyDict* dict;
+        if (cell->JSCell::type() == PyInstanceType)
+            dict = uncheckedDowncast<PyInstance>(cell)->dict();
+        else {
+            if (cell->inherits<PyWrapperObject>() && uncheckedDowncast<PyWrapperObject>(cell)->copiesAttributesLater())
+                return { };
+            dict = instanceDict(globalObject, object, false);
+            if (!dict)
+                return { };
+        }
+        if (dict) {
+            if (!dict->hasOnlyStringKeys())
+                return { };
+            return { .kind = Kind::InDict, .dict = dict };
+        }
+        // The attributes are properties, so that the Structure tells which there are.
         key = propertyKeyOfAttribute(name);
-        if (!key)
-            return false;
+        if (!key || isValidOffset(structure->get(vm, rt.instanceHasDictKey())))
+            return { };
     }
-    cache.offset = structure->get(vm, PropertyName(key));
-    if (!isValidOffset(cache.offset))
-        return false;
-    cache.oldStructureID = oldStructure->id();
-    if (structure != oldStructure) {
-        // The instruction does not allocate.
-        if (structure->previousID() != oldStructure || structure->outOfLineCapacity() != oldStructure->outOfLineCapacity())
-            return false;
-        cache.newStructureID = structure->id();
-    }
-    cache.typeVersion = type->version();
-    return !!cache.typeVersion;
+    PropertyOffset offset = structure->get(vm, PropertyName(key));
+    return {
+        .kind = isValidOffset(offset) ? Kind::Replace : Kind::Add,
+        .holdsForAllAlike = holdsForAllAlike && !structure->isDictionary(),
+        .offset = offset,
+        .key = key,
+        .structureID = structure->id(),
+        .type = type,
+    };
 }
 
 JSValue lookupSpecial(JSGlobalObject* globalObject, JSValue object, Special special)

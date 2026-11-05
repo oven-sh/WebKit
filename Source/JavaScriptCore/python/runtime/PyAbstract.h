@@ -136,14 +136,25 @@ JSValue getAttrOfAbsent(JSGlobalObject*, JSValue object, JSString* name);
 // For getSpecialMethod().
 bool describeSpecialMethod(JSGlobalObject*, JSValue object, Special, AttributeCache&);
 
-// The same for op_py_set_attr, which has just set the attribute of an object that had the Structure.
-struct SetAttributeCache {
-    StructureID oldStructureID;
-    StructureID newStructureID; // Null: the object had the attribute already.
-    uint32_t typeVersion { 0 };
-    int32_t offset { 0 };
+// The same for op_py_set_attr: where `object.name = value` will put the value, under the conditions of describeAttribute(), setAttr()
+// being the lookup.
+struct SetAttributeDescription {
+    enum class Kind : uint8_t {
+        None, // Not to be said in these terms: that is for setAttr().
+        InDict, // In `dict`, under the name.
+        Replace, // The object has the attribute, at `offset`.
+        Add, // It will be a new property, with `key`.
+    };
+    Kind kind { Kind::None };
+    // Replace, Add: of every object that has the Structure, while `type` has the version it has now.
+    bool holdsForAllAlike { false };
+    PropertyOffset offset { invalidOffset };
+    PyDict* dict { nullptr };
+    UniquedStringImpl* key { nullptr };
+    StructureID structureID;
+    PyType* type { nullptr };
 };
-bool describeSetAttribute(JSGlobalObject*, JSValue object, JSString* name, Structure* oldStructure, SetAttributeCache&);
+SetAttributeDescription describeSetAttribute(JSGlobalObject*, JSValue object, JSString* name);
 
 // What object.__dict__[name] is, without asking for the dict, which costs an instance of a class its layout: see PyInstance.
 // Empty: there is no such item, or no dict; or an exception, which only the __eq__ of a key that is not a str can raise.

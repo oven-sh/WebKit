@@ -472,24 +472,52 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_set_attr)
     auto bytecode = pc->as<OpPySetAttr>();
     JSValue base = GET_C(bytecode.m_base).jsValue();
     JSString* name = asString(GET_C(bytecode.m_name).jsValue());
-    // opaque(): so that what is kept over the call is the pointer, which the collector knows, not the 32 bits it can be made of.
-    Structure* oldStructure = base.isCell() ? WTF::opaque(base.asCell()->structure()) : nullptr;
-    setAttr(globalObject, base, name, GET_C(bytecode.m_value).jsValue());
-    CHECK_EXCEPTION();
+    JSValue value = GET_C(bytecode.m_value).jsValue();
+    // One walk, as in findAttribute().
+    using Kind = SetAttributeDescription::Kind;
+    SetAttributeDescription description = describeSetAttribute(globalObject, base, name);
+    StructureID newStructureID;
+    switch (description.kind) {
+    case Kind::None:
+        setAttr(globalObject, base, name, value);
+        END();
+    case Kind::InDict:
+        description.dict->set(vm, name, value);
+        END_IMPL();
+    case Kind::Replace:
+        asObject(base)->putDirectOffset(vm, description.offset, value);
+        break;
+    case Kind::Add: {
+        JSObject* object = asObject(base);
+        // opaque(): so that what is kept over the call is the pointer, which the collector knows, not the 32 bits it can be made of.
+        Structure* oldStructure = WTF::opaque(object->structure());
+        PutPropertySlot slot(object);
+        object->putDirect(vm, PropertyName(description.key), value, static_cast<unsigned>(PropertyAttribute::DontEnum), slot);
+        // What llint_slow_path_put_by_id asks of a transition before it remembers it. (The instruction does not allocate.)
+        Structure* newStructure = object->structure();
+        if (slot.type() != PutPropertySlot::NewProperty || newStructure->isDictionary() || (vm.mayHaveUncacheableTransitions() && !newStructure->isCacheableTransitionFrom(oldStructure))
+            || newStructure->previousID() != oldStructure || oldStructure->outOfLineCapacity() != newStructure->outOfLineCapacity())
+            END_IMPL();
+        newStructureID = newStructure->id();
+        description.offset = slot.cachedOffset();
+        break;
+    }
+    }
+    // A type is asked for its version last: it has only so many to give.
+    uint32_t typeVersion = description.holdsForAllAlike ? description.type->version() : 0;
+    if (!typeVersion)
+        END_IMPL();
     auto& metadata = bytecode.metadata(codeBlock);
-    SetAttributeCache cache;
-    if (!describeSetAttribute(globalObject, base, name, oldStructure, cache))
-        cache = { };
     {
         // The collector reads these: CodeBlock::propagateTransitions().
         ConcurrentJSLocker locker(codeBlock->m_lock);
-        metadata.m_oldStructureID = cache.oldStructureID;
-        metadata.m_newStructureID = cache.newStructureID;
-        metadata.m_typeVersion = cache.typeVersion;
-        metadata.m_offset = cache.offset;
+        metadata.m_oldStructureID = description.structureID;
+        metadata.m_newStructureID = newStructureID;
+        metadata.m_typeVersion = typeVersion;
+        metadata.m_offset = description.offset;
     }
     vm.writeBarrier(codeBlock);
-    END();
+    END_IMPL();
 }
 
 static JSValue loadSpecialForWith(JSGlobalObject*, JSValue object, SpecialMethodForWith, JSValue& self, AttributeCache&);
