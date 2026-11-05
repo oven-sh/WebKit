@@ -738,6 +738,13 @@ PyCode* PyFrame::code(JSGlobalObject* globalObject) const { return codeOf(global
 
 PyFrame* PyFrame::of(JSGlobalObject* globalObject, CallFrame* callFrame)
 {
+    PyFrame* frame = ofForTracing(globalObject, callFrame);
+    frame->m_wasAskedFor = true;
+    return frame;
+}
+
+PyFrame* PyFrame::ofForTracing(JSGlobalObject* globalObject, CallFrame* callFrame)
+{
     if (PyFrame* frame = frameObjectIfAny(callFrame)) {
         ASSERT(!frame->m_lacksBack);
         frame->m_isKnownToTracebackOnly = false;
@@ -749,7 +756,7 @@ PyFrame* PyFrame::of(JSGlobalObject* globalObject, CallFrame* callFrame)
 ALWAYS_INLINE PyFrame* PyFrame::makeFor(JSGlobalObject* globalObject, CallFrame* callFrame)
 {
     // The body of a generator is called with the generator.
-    PyFrame* frame = isGeneratorBody(callFrame) ? of(globalObject, uncheckedDowncast<PyGenerator>(callFrame->uncheckedArgument(0).asCell())) : create(globalObject, functionOf(callFrame), executableOf(callFrame));
+    PyFrame* frame = isGeneratorBody(callFrame) ? findOrMakeFor(globalObject, uncheckedDowncast<PyGenerator>(callFrame->uncheckedArgument(0).asCell())) : create(globalObject, functionOf(callFrame), executableOf(callFrame));
     frame->m_callFrame = callFrame;
     callFrame->r(frameObjectRegister()) = JSValue(frame);
     if (Runtime& rt = runtime(globalObject); rt.tracedCallFrame == callFrame) {
@@ -769,6 +776,13 @@ PyFrame* PyFrame::ofForTraceback(JSGlobalObject* globalObject, CallFrame* callFr
 }
 
 PyFrame* PyFrame::of(JSGlobalObject* globalObject, PyGenerator* generator)
+{
+    PyFrame* frame = findOrMakeFor(globalObject, generator);
+    frame->m_wasAskedFor = true;
+    return frame;
+}
+
+PyFrame* PyFrame::findOrMakeFor(JSGlobalObject* globalObject, PyGenerator* generator)
 {
     if (PyFrame* frame = generator->frameObject())
         return frame;
@@ -1086,8 +1100,11 @@ PyFrame* topFrameOf(JSGlobalObject* globalObject, JSLock::ParkedThread& parked)
 static JSValue frameGetBack(JSGlobalObject* globalObject, JSValue self)
 {
     auto* frame = PyFrame::from(self);
-    if (JSValue back = frame->back())
+    if (JSValue back = frame->back()) {
+        if (auto* caller = PyFrame::tryFrom(back))
+            caller->isAskedFor();
         return back;
+    }
     CallFrame* callFrame = frame->callFrame();
     CallFrame* caller = callFrame ? pythonCallerOf(getVM(globalObject), callFrame) : nullptr;
     return caller ? JSValue(PyFrame::of(globalObject, caller)) : jsUndefined();
@@ -2035,7 +2052,12 @@ static void tracebackSetNext(JSGlobalObject* globalObject, JSValue self, JSValue
     PyTraceback::from(self)->setNext(vm, value);
 }
 
-static JSValue tracebackGetFrame(JSGlobalObject*, JSValue self) { return PyTraceback::from(self)->frame(); }
+static JSValue tracebackGetFrame(JSGlobalObject*, JSValue self)
+{
+    PyFrame* frame = PyTraceback::from(self)->frame();
+    frame->isAskedFor();
+    return frame;
+}
 static JSValue tracebackGetLineNo(JSGlobalObject* globalObject, JSValue self)
 {
     auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));

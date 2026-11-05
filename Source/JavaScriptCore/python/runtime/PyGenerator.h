@@ -202,6 +202,7 @@ void finalizeGeneratorNow(JSGlobalObject*, PyGenerator*);
 // (x for x in g()): what the generator expression goes through is a variable of its frame, `.0`, and nothing else refers to it. It goes when
 // the frame goes. That is known to be at once where the generator expression is closed, or dropped: nobody gets to see the GeneratorExit, whose
 // traceback has the frame. An exception that comes out of the generator expression has the frame for as long as it lasts, which only the collector knows.
+// So it is if the program has asked for the frame object (PyFrame::wasAskedFor()): what the generator expression called may have kept sys._getframe(1).
 // For what closes a generator that is suspended: made before, and told when it is over.
 class GeneratorsOwnedByFrame {
 public:

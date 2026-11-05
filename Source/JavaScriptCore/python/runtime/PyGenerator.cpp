@@ -362,8 +362,8 @@ void generatorIsDropped(JSGlobalObject* globalObject, PyGenerator* generator)
 {
     if (generator->isCompleted() || generator->isRunning())
         return;
-    // GeneratorExit would go through it unnoticed.
-    if (!generator->body()->functionExecutable()->unlinkedExecutable()->pythonCodeHasExceptionHandlers() && !runtime(globalObject).monitoring().wantsExceptions()) {
+    // GeneratorExit would go through it unnoticed. (A frame object is left the variables when the frame ends.)
+    if (!generator->frameObject() && !generator->body()->functionExecutable()->unlinkedExecutable()->pythonCodeHasExceptionHandlers() && !runtime(globalObject).monitoring().wantsExceptions()) {
         GeneratorsOwnedByFrame owned(runtime(globalObject), generator);
         generator->complete();
         owned.frameIsGone();

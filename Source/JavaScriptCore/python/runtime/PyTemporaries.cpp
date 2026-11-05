@@ -461,6 +461,9 @@ GeneratorsOwnedByFrame::GeneratorsOwnedByFrame(Runtime& runtime, PyGenerator* ge
 {
     if (!generator->body()->codeInfo().hasLoopThatOwnsItsIterator) [[likely]]
         return;
+    // Whoever has the frame object has the variables for as long as he keeps it.
+    if (PyFrame* frame = generator->frameObject(); frame && frame->wasAskedFor())
+        return;
     for (unsigned i = 0; i < generator->slotCount() && m_count < m_generators.size(); ++i) {
         if (auto* held = PyGenerator::tryFrom(generator->slot(i)); held && held->loopOwnership == runtime.ownershipEpoch())
             m_generators[m_count++] = held;

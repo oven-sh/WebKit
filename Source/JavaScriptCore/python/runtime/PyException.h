@@ -134,6 +134,11 @@ public:
     static PyFrame* of(JSGlobalObject*, CallFrame*);
     // That of a generator, which is the same one each time the generator runs.
     static PyFrame* of(JSGlobalObject*, PyGenerator*);
+    // For what tells tools of events, and keeps notes of its own here.
+    static PyFrame* ofForTracing(JSGlobalObject*, CallFrame*);
+    // The program has asked for it: sys._getframe(), gi_frame, f_back, tb_frame. False: at most a trace function has been handed it.
+    bool wasAskedFor() const { return m_wasAskedFor; }
+    void isAskedFor() { m_wasAskedFor = true; }
     // Of no call at all: as if the function had been called and had got nowhere.
     static PyFrame* createSuspended(JSGlobalObject*, PyFunction*, int32_t state);
 
@@ -215,6 +220,7 @@ private:
     PyFrame(VM&, Structure*, PyType*);
     static PyFrame* create(JSGlobalObject*, PyFunction*, FunctionExecutable*);
     static PyFrame* makeFor(JSGlobalObject*, CallFrame*);
+    static PyFrame* findOrMakeFor(JSGlobalObject*, PyGenerator*);
     void findPlace(CodeBlock*, BytecodeIndex);
 
     WriteBarrier<PyFunction> m_function;
@@ -230,6 +236,7 @@ private:
     bool m_isOnNoLine { false };
     bool m_isKnownToTracebackOnly { false };
     bool m_lacksBack { false };
+    bool m_wasAskedFor { false };
     // Not null while the call is in progress, except that the frame object of a generator may not have been told that it runs again.
     CallFrame* m_callFrame { nullptr };
     int m_lineNumber { 0 };

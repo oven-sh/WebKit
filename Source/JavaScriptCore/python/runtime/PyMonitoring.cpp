@@ -104,7 +104,7 @@ static ALWAYS_INLINE uint8_t byteOfOpcode(uint16_t opcode) { return static_cast<
 
 static constexpr uint16_t bit(unsigned event) { return static_cast<uint16_t>(1 << event); }
 
-// frameObjectIfAny(), and PyFrame::of(), for where every call counts.
+// frameObjectIfAny(), and PyFrame::ofForTracing(), for where every call counts.
 static ALWAYS_INLINE PyFrame* frameObjectIfThereIsOne(CallFrame* callFrame)
 {
     static const VirtualRegister reg = frameObjectRegister();
@@ -116,7 +116,7 @@ static ALWAYS_INLINE PyFrame* frameObjectOf(JSGlobalObject* globalObject, CallFr
 {
     if (PyFrame* frame = frameObjectIfThereIsOne(callFrame)) [[likely]]
         return frame;
-    return PyFrame::of(globalObject, callFrame);
+    return PyFrame::ofForTracing(globalObject, callFrame);
 }
 
 // ---- Lines ----
@@ -1143,7 +1143,7 @@ void Monitoring::wakeCodeOfCallsInProgress()
             // A frame that is under way when lines begin to be told of has been on its line for a while.
             if (!monitor->m_needsLastLine && !(m_globalTools[Event::Line] >> traceTool & 1))
                 continue;
-            PyFrame* frame = PyFrame::of(globalObject, callFrame);
+            PyFrame* frame = PyFrame::ofForTracing(globalObject, callFrame);
             if (frame->lastLine < 0)
                 frame->lastLine = lineOfMarks(callFrame->codeBlock()->unlinkedCodeBlock()->pythonMarks(), callFrame->bytecodeIndex().offset());
         }
@@ -2262,7 +2262,7 @@ JSValue exceptionIsRaised(JSGlobalObject* globalObject, JSValue exception, CallF
     bool isAwake = monitor && monitor->isAwake();
     CodeBlock* codeBlock = callFrame->codeBlock();
     // What raises it again on behalf of the program, from no line, does so as if from here: see PyFrame::findPlace().
-    PyFrame* frame = isWanted ? PyFrame::of(globalObject, callFrame) : frameObjectIfAny(callFrame);
+    PyFrame* frame = isWanted ? PyFrame::ofForTracing(globalObject, callFrame) : frameObjectIfAny(callFrame);
     // That of a generator may be from before it was last resumed.
     if (!frame && codeBlock->unlinkedCodeBlock()->parseMode() == SourceParseMode::GeneratorBodyMode)
         frame = generatorOf(callFrame)->frameObject();

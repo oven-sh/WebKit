@@ -836,7 +836,9 @@ so the aim is that everything Python *guarantees* holds, and that what it merely
     suspended, the frame is gone at once, for nobody gets to see the `GeneratorExit` whose traceback has it: whoever closes a generator closes what its frame owned
     afterwards (`GeneratorsOwnedByFrame`). So `next(x for x in g())`, `any(p(x) for x in g())` and a `sum()` that raises run the `finally` clauses of `g` before the next statement. An
     exception that comes out of the generator expression keeps the frame, as in CPython, and the collector finds out when that is over. What `f_locals` shows of `.0`
-    is owned no longer.
+    is owned no longer. If the program has asked for the frame object of the generator expression (something it called, by `sys._getframe(1)`; `gi_frame`, `f_back`, `tb_frame`), whoever has that has the
+    variables, and nothing is closed (`PyFrame::wasAskedFor()`). A trace function is handed the frame object unasked, and what tells tools of events makes one for notes of its own: that does not count, or nothing would be closed where
+    CPython closes it as soon as a program is traced.
   - The unwinder reads the iterator from its register, and no instruction shows that use. Nor does any show that a trace function may send the frame
     back to the head of a loop from where the code only leaves it (`frame.f_lineno = line`). So whoever asks which registers are live adds
     what the blocks that are open hold (`BlockPiece`): the collector, before it empties dead temporaries, and what decides
