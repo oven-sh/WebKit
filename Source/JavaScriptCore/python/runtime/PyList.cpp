@@ -36,23 +36,33 @@ PyListObject::PyListObject(VM& vm, Structure* structure, PyType* type, Butterfly
 
 Structure* PyListObject::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
 {
-    return Structure::create(vm, globalObject, prototype, TypeInfo(DerivedArrayType, StructureFlags), info(), ArrayWithUndecided);
+    // As the structures of the realm's own arrays: see JSGlobalObject::haveABadTime().
+    return Structure::create(vm, globalObject, prototype, TypeInfo(DerivedArrayType, StructureFlags), info(), globalObject->isHavingABadTime() ? ArrayWithSlowPutArrayStorage : ArrayWithUndecided);
 }
 
 PyListObject* PyListObject::create(VM& vm, Structure* structure, PyType* type)
 {
     // As JSArray::tryCreate(): an array always has a butterfly, which is where its length is.
-    unsigned outOfLineStorage = structure->outOfLineCapacity();
-    unsigned vectorLength = Butterfly::optimalContiguousVectorLength(structure, 0);
-    void* base = vm.auxiliarySpace().allocate(vm, Butterfly::totalSize(0, outOfLineStorage, true, vectorLength * sizeof(EncodedJSValue)), nullptr, AllocationFailureMode::Assert);
-    Butterfly* butterfly = Butterfly::fromBase(base, 0, outOfLineStorage);
-    butterfly->setVectorLength(vectorLength);
-    butterfly->setPublicLength(0);
-    Butterfly::clearRange(structure->indexingType(), butterfly, 0, vectorLength);
+    Butterfly* butterfly;
+    bool hasArrayStorage = hasAnyArrayStorage(structure->indexingType());
+    if (!hasArrayStorage) [[likely]] {
+        unsigned outOfLineStorage = structure->outOfLineCapacity();
+        unsigned vectorLength = Butterfly::optimalContiguousVectorLength(structure, 0);
+        void* base = vm.auxiliarySpace().allocate(vm, Butterfly::totalSize(0, outOfLineStorage, true, vectorLength * sizeof(EncodedJSValue)), nullptr, AllocationFailureMode::Assert);
+        butterfly = Butterfly::fromBase(base, 0, outOfLineStorage);
+        butterfly->setVectorLength(vectorLength);
+        butterfly->setPublicLength(0);
+        Butterfly::clearRange(structure->indexingType(), butterfly, 0, vectorLength);
+    } else {
+        butterfly = tryCreateArrayButterfly(vm, nullptr, 0);
+        RELEASE_ASSERT_RESOURCE_AVAILABLE(butterfly, MemoryExhaustion, "Crash intentionally because memory is exhausted.");
+        for (unsigned i = 0; i < BASE_ARRAY_STORAGE_VECTOR_LEN; ++i)
+            butterfly->arrayStorage()->m_vector[i].clear();
+    }
     auto* list = new (NotNull, allocateCell<PyListObject>(vm)) PyListObject(vm, structure, type, butterfly);
     list->finishCreation(vm);
-    // As every array of such a realm.
-    if (structure->realm()->isHavingABadTime()) [[unlikely]]
+    // The structure is from before the realm began to have a bad time: as every array of such a realm.
+    if (!hasArrayStorage && structure->realm()->isHavingABadTime()) [[unlikely]]
         list->switchToSlowPutArrayStorage(vm);
     return list;
 }
@@ -357,6 +367,9 @@ void listSet(JSGlobalObject* globalObject, JSArray* list, unsigned index, JSValu
         storage.set(index, value);
         return;
     }
+    // An item that is there, in storage of the other kind.
+    if (list->trySetIndexQuickly(vm, index, value)) [[likely]]
+        return;
     listSetSlow(globalObject, list, index, value);
 }
 

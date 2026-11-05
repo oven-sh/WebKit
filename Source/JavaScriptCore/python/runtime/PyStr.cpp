@@ -1323,11 +1323,15 @@ static JSValue strSplit(JSGlobalObject* globalObject, JSValue self, JSValue sepa
 
 static void reverseList(JSGlobalObject* globalObject, JSArray* list)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     unsigned length = listLength(list);
     for (unsigned i = 0; i < length / 2; ++i) {
         JSValue first = listGet(list, i);
         listSet(globalObject, list, i, listGet(list, length - 1 - i));
+        RETURN_IF_EXCEPTION(scope, void());
         listSet(globalObject, list, length - 1 - i, first);
+        RETURN_IF_EXCEPTION(scope, void());
     }
 }
 
@@ -1360,6 +1364,7 @@ static JSValue strRSplit(JSGlobalObject* globalObject, JSValue self, JSValue sep
             RETURN_IF_EXCEPTION(scope, { });
         }
         reverseList(globalObject, result);
+        RETURN_IF_EXCEPTION(scope, { });
         return result;
     }
     if (!isStr(separatorValue))
@@ -1386,6 +1391,7 @@ static JSValue strRSplit(JSGlobalObject* globalObject, JSValue self, JSValue sep
     listAppend(globalObject, result, sliceOfUnits(vm, selfString, string, 0, end));
     RETURN_IF_EXCEPTION(scope, { });
     reverseList(globalObject, result);
+    RETURN_IF_EXCEPTION(scope, { });
     return result;
 }
 
