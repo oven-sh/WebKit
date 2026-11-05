@@ -161,7 +161,7 @@ bool isPastStart(std::span<const PythonMark> marks, unsigned offset)
 
 CodeMonitor::CodeMonitor(Monitoring& monitoring, UnlinkedCodeBlock* code, const CodeInfo& info)
     : m_monitoring(&monitoring)
-    , m_code(monitoring.runtime().vm(), code)
+    , m_code(code)
     , m_instructions(bytesOf(code))
     , m_instructionsSize(code->instructions().sizeInBytes())
     , m_index(monitoring.m_monitors.size())
@@ -397,6 +397,22 @@ void CodeMonitor::putBackInstructions()
 }
 
 void CodeMonitor::findPoints(bool everyInstruction)
+{
+    findPointsWithoutTellingTheCollector(everyInstruction);
+    // These tables are several times the size of the code. The collector does not see them, and is to know what a program uses up that makes
+    // code, runs it under a tool and drops it. They only grow, are told of once however often they are filled, and go with the code.
+    // (Not with the lock held, which its threads take. It is not to collect here: code is woken where it is entered, and the frame does
+    // not say yet where it is.)
+    size_t size = m_points.capacity() * sizeof(Point) + m_lineStarts.capacity() * sizeof(LineStart) + m_indexOfPointAt.capacity() * sizeof(uint16_t);
+    if (size > m_sizeToldToCollector && m_monitoring) {
+        VM& vm = m_monitoring->runtime().vm();
+        DeferGCForAWhile deferGC(vm);
+        vm.heap.deprecatedReportExtraMemory(size - m_sizeToldToCollector);
+        m_sizeToldToCollector = size;
+    }
+}
+
+void CodeMonitor::findPointsWithoutTellingTheCollector(bool everyInstruction)
 {
     putBackInstructions();
     Locker locker { monitoredCodeLock };
@@ -1018,8 +1034,10 @@ template<typename Functor>
 void Monitoring::forEachMonitor(const Functor& functor)
 {
     AssertNoGC assertNoGC;
-    for (CodeMonitor* monitor : m_monitors)
-        functor(*monitor);
+    for (CodeMonitor* monitor : m_monitors) {
+        if (monitor->code())
+            functor(*monitor);
+    }
 }
 
 CodeMonitor* Monitoring::monitorFor(CodeBlock* codeBlock)
@@ -1036,6 +1054,7 @@ CodeMonitor* Monitoring::monitorFor(CodeBlock* codeBlock)
         return nullptr;
     if (!info->monitor)
         info->monitor = makeUnique<CodeMonitor>(*this, code, *info);
+    ASSERT(info->monitor->code() == code);
     return info->monitor.get();
 }
 

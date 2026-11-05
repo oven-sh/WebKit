@@ -376,6 +376,9 @@ bool UnlinkedFunctionExecutable::returnCodeToCache(VM& vm, const UncheckedKeyHas
     if (m_isCached)
         return false;
     ASSERT(!vm.heap.collectionScope() && !isCompilationThread());
+    // What sys.monitoring knows about the code goes by its instructions, some of which it has replaced.
+    if (m_isPython && pythonCodeInfo()->monitor)
+        return false;
 
     UnlinkedFunctionCodeBlock* forCall = m_unlinkedCodeBlockForCall.get();
     UnlinkedFunctionCodeBlock* forConstruct = m_unlinkedCodeBlockForConstruct.get();

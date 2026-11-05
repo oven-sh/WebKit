@@ -1139,6 +1139,10 @@ may have been compiled knowing that they have one.
 **Threads.** Trace and profile functions, and whether a callback is running, are the thread's (`Runtime::ThreadLocalState`). Tools 6 and 7 want their events
 while any thread has a function. The side tables are only changed with the GIL, and those the collector's threads read, with the lock of the table of monitored code as well.
 
+A monitor belongs to what is known about the code (`CodeInfo`), which belongs to the executable, and goes with it. It refers to the code weakly: the executable keeps its code for as long as it has a monitor
+(`UnlinkedFunctionExecutable::returnCodeToCache()` leaves it alone), the two die in the same collection, and are swept in no particular order. So code that a program makes, runs under a tool and drops goes like any other.
+The collector is told the size of the side tables, which are several times the size of the code.
+
 `sys.monitoring._places(code)` shows the places of a code object, and which are replaced right now (offsets as JSC has them).
 
 ## JavaScript sees Python objects

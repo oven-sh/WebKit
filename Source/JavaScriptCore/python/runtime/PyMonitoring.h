@@ -7,7 +7,7 @@
 
 #include "PyBytecode.h"
 #include "PyRuntime.h"
-#include "Strong.h"
+#include "WeakInlines.h"
 #include "UnlinkedCodeBlock.h"
 
 namespace JSC {
@@ -183,6 +183,7 @@ private:
     Point* searchForPointAt(unsigned offset);
     void findEntrances();
     void findPoints(bool everyInstruction);
+    void findPointsWithoutTellingTheCollector(bool everyInstruction);
     void noteLineTools();
     void noteLocalTools();
     void forget();
@@ -193,7 +194,9 @@ private:
     std::optional<uint16_t> opcodeThatMayBeReplacedAt(unsigned offset) const;
 
     Monitoring* m_monitoring; // Null once it is gone: when the VM ends, things go in no particular order.
-    Strong<UnlinkedCodeBlock> m_code;
+    // The executable that owns this (by way of the CodeInfo) keeps its code for as long as it lives: see UnlinkedFunctionExecutable::returnCodeToCache().
+    // They die together, and are swept in no particular order: null once the code is dead, and then the instructions may be gone.
+    Weak<UnlinkedCodeBlock> m_code;
     const uint8_t* m_instructions; // Of the code.
     unsigned m_instructionsSize;
     unsigned m_index; // In Monitoring::m_monitors.
@@ -205,6 +208,7 @@ private:
     Vector<uint16_t> m_indexOfPointAt;
     unsigned m_generation { 0 };
     Vector<LineStart> m_lineStarts;
+    size_t m_sizeToldToCollector { 0 };
     std::array<uint8_t, Event::ungroupedCount> m_localTools { };
     bool m_isAwake { false };
     bool m_entrancesAreReplaced { false };
