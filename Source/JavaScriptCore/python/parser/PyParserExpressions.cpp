@@ -934,7 +934,7 @@ static Expr* lastItemOf(Comprehension* comprehension)
 
 // After the '(' of a call or of the bases of a class, through the ')'.
 // `f(x for x in y)`: the generator expression, which takes the parentheses of the call for its own, is `soleGenerator`.
-bool Parser::parseArguments(Seq<Expr*>& resultArguments, Seq<Keyword*>& resultKeywords, Position openParenthesis, Expr*& soleGenerator)
+bool Parser::parseArguments(Seq<Expr*>& resultArguments, Seq<Keyword*>& resultKeywords, Position openParenthesis, Expr*& soleGenerator, bool isCall)
 {
     ExprVector arguments;
     Vector<Keyword*, 8> keywords;
@@ -978,6 +978,13 @@ bool Parser::parseArguments(Seq<Expr*>& resultArguments, Seq<Keyword*>& resultKe
             return false;
         }
         SetForScope diagnosing(m_diagnosing, m_diagnosing || !isFirst);
+        // What lacks parentheses is `x for ...`, or the last of several positional arguments and what follows it.
+        bool isTakenForGenerator = isFirst ? !element->is<Starred>() && !element->is<NamedExpr>() : !element->is<Starred>() || !arguments.isEmpty();
+        Range forToken = rangeOf(peek());
+        if (!isFirst && !isTakenForGenerator) {
+            invalidSyntax();
+            return false;
+        }
         Seq<Comprehension*> generators;
         if (!parseComprehensionClauses(generators))
             return false;
@@ -993,6 +1000,14 @@ bool Parser::parseArguments(Seq<Expr*>& resultArguments, Seq<Keyword*>& resultKe
         // Alone, it has to be followed by a comma to be taken for an argument that lacks parentheses.
         if (arguments.isEmpty() && keywords.isEmpty() && !at(TokenKind::Comma)) {
             invalidSyntax();
+            return false;
+        }
+        if (!isTakenForGenerator) {
+            // In a call, it was a generator expression up to the comma.
+            if (isCall)
+                invalidSyntax();
+            else
+                syntaxErrorAt(forToken, "invalid syntax"_s);
             return false;
         }
         // CPython's parser has looked at what follows the comma by now: if the lexer cannot read that, it says so first.

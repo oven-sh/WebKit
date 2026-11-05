@@ -229,7 +229,7 @@ private:
     Expr* parseBraceDisplay();
     Expr* parseSlices();
     Expr* parseSlice();
-    bool parseArguments(Seq<Expr*>& arguments, Seq<AST::Keyword*>& keywords, Position openParenthesis, Expr*& soleGenerator);
+    bool parseArguments(Seq<Expr*>& arguments, Seq<AST::Keyword*>& keywords, Position openParenthesis, Expr*& soleGenerator, bool isCall = true);
     bool parseComprehensionClauses(Seq<AST::Comprehension*>&);
     bool atComprehension() { return at(TokenKind::KwFor) || (at(TokenKind::KwAsync) && peek(1).kind == TokenKind::KwFor); }
     // Where there can be none: what follows an `async` is only read to explain the error.

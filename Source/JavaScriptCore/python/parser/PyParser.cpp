@@ -1921,7 +1921,7 @@ Stmt* Parser::parseClassDef(Seq<Expr*> decorators)
         advance();
         Expr* soleGenerator = nullptr;
         size_t firstIndex = m_index;
-        if (!parseArguments(bases, keywords, open, soleGenerator))
+        if (!parseArguments(bases, keywords, open, soleGenerator, false))
             return nullptr;
         size_t forTokenIndex = firstIndex;
         while (soleGenerator && m_tokens[forTokenIndex].kind != TokenKind::KwFor && m_tokens[forTokenIndex].kind != TokenKind::KwAsync)
