@@ -39,7 +39,8 @@ enum class TypeFlag : uint32_t {
     // A built-in type whose instances hold nothing but what those of a class may: a __dict__, weak references. So __new__ without
     // arguments and the __dict__ make a copy (PyReduce.cpp). In CPython: the size of the instances says so.
     NothingOfItsOwn = 1 << 14,
-    // __eq__ and __hash__, though written in C++, pass the question on to another object, which may be a str. See PyDict::searchAmongStringsFor().
+    // __eq__ and __hash__, though written in C++, pass the question on to another object, which may be a str, or have something else to
+    // say to a str. See PyDict::searchAmongStringsFor().
     AnswersForAnother = 1 << 15,
 
     // Derives from:

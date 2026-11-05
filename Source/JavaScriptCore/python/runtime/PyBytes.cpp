@@ -9,6 +9,7 @@
 #include "JSCInlines.h"
 #include "PyAbstract.h"
 #include "PyBuffer.h"
+#include "PyCommandLine.h"
 #include "PyErrors.h"
 #include "PyInternals.h"
 #include "PyIterators.h"
@@ -1003,6 +1004,16 @@ static JSValue bytesReprMethod(JSGlobalObject* globalObject, JSValue self)
     RELEASE_AND_RETURN(scope, makeStr(vm, makeString(typeName(globalObject, self), '(', text, ')')));
 }
 
+// With -b, what is most often a str that was forgotten to be encoded, or bytes that were forgotten to be decoded, is warned of.
+static JSValue bytesStrMethod(JSGlobalObject* globalObject, JSValue self)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (configuration().bytesWarning && failed(scope, warn(globalObject, runtime(globalObject).BytesWarning(), bytesIsArray(self) ? "str() on a bytearray instance"_s : "str() on a bytes instance"_s))) [[unlikely]]
+        return { };
+    RELEASE_AND_RETURN(scope, bytesReprMethod(globalObject, self));
+}
+
 static int64_t bytesHashMethod(JSGlobalObject*, JSValue self)
 {
     auto* bytes = PyBytes::from(self);
@@ -1020,8 +1031,16 @@ static JSValue bytesCompareMethod(JSGlobalObject* globalObject, JSValue self, JS
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     // bytes are compared with bytes; a bytearray, with anything that has bytes to show.
-    if (bytesIsArray(self) ? !isBytesLike(other) : !PyBytes::is(other))
+    if (bytesIsArray(self) ? !isBytesLike(other) : !PyBytes::is(other)) {
+        if ((op == CompareOperator::Eq || op == CompareOperator::NotEq) && configuration().bytesWarning) [[unlikely]] {
+            Runtime& rt = runtime(globalObject);
+            if (isStr(other) && failed(scope, warn(globalObject, rt.BytesWarning(), bytesIsArray(self) ? "Comparison between bytearray and string"_s : "Comparison between bytes and string"_s)))
+                return { };
+            if (!bytesIsArray(self) && isInt(other) && failed(scope, warn(globalObject, rt.BytesWarning(), "Comparison between bytes and int"_s)))
+                return { };
+        }
         RELEASE_AND_RETURN(scope, runtime(globalObject).notImplemented());
+    }
     std::span<const uint8_t> a;
     std::span<const uint8_t> b;
     bool selfRunsCode = bytesIsArray(self) && getBufferRunsCode(self);
@@ -3111,7 +3130,7 @@ static JSValue byteArrayReduceEx(JSGlobalObject* globalObject, JSValue self, JSV
 #define PY_BYTES_COMMON_METHODS \
     PY_SLOT("__buffer__", bufferMethod, "($self, flags, /)"), \
     PY_SLOT("__repr__", bytesReprMethod, "($self, /)"), \
-    PY_SLOT("__str__", bytesReprMethod, "($self, /)"), \
+    PY_SLOT("__str__", bytesStrMethod, "($self, /)"), \
     PY_SLOT("__eq__", bytesCompareMethod<CompareOperator::Eq>, "($self, value, /)"), \
     PY_SLOT("__ne__", bytesCompareMethod<CompareOperator::NotEq>, "($self, value, /)"), \
     PY_SLOT("__lt__", bytesCompareMethod<CompareOperator::Lt>, "($self, value, /)"), \
@@ -3211,6 +3230,9 @@ void initializeBytesTypes(JSGlobalObject* globalObject)
     VM& vm = rt.vm();
     rt.bytesType()->initializeBuiltin(globalObject, { "bytes"_s, { TypeFlag::Base, TypeFlag::OwnLayout, TypeFlag::BytesSubclass, TypeFlag::MatchSelf }, bytesMethods, { }, "bytes(iterable_of_ints) -> bytes\nbytes(string, encoding[, errors]) -> bytes\nbytes(bytes_or_buffer) -> immutable copy of bytes_or_buffer\nbytes(int) -> bytes object of size given by the parameter initialized with null bytes\nbytes() -> empty bytes object\n\nConstruct an immutable array of bytes from:\n  - an iterable yielding integers in range(256)\n  - a text string encoded using the specified encoding\n  - any object implementing the buffer API.\n  - an integer"_s }, rt.typeType(), rt.objectType());
     rt.bytearrayType()->initializeBuiltin(globalObject, { "bytearray"_s, { TypeFlag::Base, TypeFlag::OwnLayout, TypeFlag::MatchSelf }, byteArrayMethods, { }, "bytearray(iterable_of_ints) -> bytearray\nbytearray(string, encoding[, errors]) -> bytearray\nbytearray(bytes_or_buffer) -> mutable copy of bytes_or_buffer\nbytearray(int) -> bytes array of size given by the parameter initialized with null bytes\nbytearray() -> empty bytes array\n\nConstruct a mutable bytearray object from:\n  - an iterable yielding integers in range(256)\n  - a text string encoded using the specified encoding\n  - a bytes or a buffer object\n  - any object implementing the buffer API.\n  - an integer"_s }, rt.typeType(), rt.objectType());
+    // With -b a dict of strs is to ask them about a key that is bytes, for the sake of the warning: see PyDict::searchAmongStringsFor().
+    if (configuration().bytesWarning) [[unlikely]]
+        rt.bytesType()->add(TypeFlag::AnswersForAnother);
     // What can change cannot be a key.
     rt.bytearrayType()->dict()->set(vm, rt.name(Special::Hash), jsUndefined());
     rt.bytearrayType()->didChange(vm);
