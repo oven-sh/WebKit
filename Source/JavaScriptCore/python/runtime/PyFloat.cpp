@@ -91,24 +91,34 @@ struct Digits {
     int point { 0 };
 };
 
+// mantissa * 2**exponent, with an odd mantissa.
+struct OddTimesPowerOfTwo {
+    explicit OddTimesPowerOfTwo(double value)
+    {
+        ASSERT(std::isfinite(value) && value > 0);
+        uint64_t bits = std::bit_cast<uint64_t>(value);
+        mantissa = bits & ((static_cast<uint64_t>(1) << 52) - 1);
+        int biasedExponent = static_cast<int>((bits >> 52) & 0x7ff);
+        if (biasedExponent) {
+            mantissa |= static_cast<uint64_t>(1) << 52;
+            exponent = biasedExponent - 1075;
+        } else
+            exponent = -1074;
+        int trailingZeros = std::countr_zero(mantissa);
+        mantissa >>= trailingZeros;
+        exponent += trailingZeros;
+    }
+
+    uint64_t mantissa;
+    int exponent;
+};
+
 }
 
 // Every double has a finite decimal expansion.
-static void exactDigits(double value, Digits& result)
+static void exactDigits(OddTimesPowerOfTwo value, Digits& result)
 {
-    ASSERT(std::isfinite(value) && value > 0);
-    uint64_t bits = std::bit_cast<uint64_t>(value);
-    uint64_t mantissa = bits & ((static_cast<uint64_t>(1) << 52) - 1);
-    int biasedExponent = static_cast<int>((bits >> 52) & 0x7ff);
-    int exponent;
-    if (biasedExponent) {
-        mantissa |= static_cast<uint64_t>(1) << 52;
-        exponent = biasedExponent - 1075;
-    } else
-        exponent = -1074;
-    int trailingZeros = std::countr_zero(mantissa);
-    mantissa >>= trailingZeros;
-    exponent += trailingZeros;
+    auto [mantissa, exponent] = value;
 
     // mantissa * 2**exponent is an integer, or (mantissa * 5**-exponent) / 10**-exponent.
     Vector<uint32_t, 96> big;
@@ -193,8 +203,37 @@ static void digitsOf(double value, DigitsMode mode, int count, Digits& result)
         return;
     }
 
-    exactDigits(value, result);
-    int64_t keep = mode == DigitsMode::Significant ? std::max(count, 1) : static_cast<int64_t>(result.point) + count;
+    if (mode == DigitsMode::Significant)
+        count = std::max(count, 1);
+    OddTimesPowerOfTwo parts(value);
+
+    // double-conversion rounds the exact value too, but where that lies in the middle between two numbers it takes the greater. In the
+    // middle between two numbers of n decimals (n may be negative): twice the value times 10**n is odd, and so the exponent is -(n + 1)
+    // or more. Such a value has few digits: it goes the other way.
+    constexpr int mostDigits = 40;
+    int decimals = count;
+    if (mode == DigitsMode::Significant) {
+        // At most: the value has floor(log10(value)) + 1 digits before the point, and 1233 / 4096 is a little less than log10(2).
+        int binaryExponent = parts.exponent + 63 - std::countl_zero(parts.mantissa);
+        decimals -= (binaryExponent * 1233) >> 12;
+    }
+    if (parts.exponent + decimals + 1 < 0 && count >= 0 && count <= mostDigits) {
+        using Converter = WTF::double_conversion::DoubleToStringConverter;
+        // (In Fixed mode the exponent is negative here, so the value is below 2**53: 16 digits before the point.)
+        char buffer[16 + mostDigits + 2];
+        bool sign;
+        int length;
+        Converter::DoubleToAscii(value, mode == DigitsMode::Fixed ? Converter::FIXED : Converter::PRECISION, count, std::span<char> { buffer, sizeof(buffer) }, sign, length, result.point);
+        while (length && buffer[length - 1] == '0')
+            --length;
+        if (!length)
+            result.point = -count;
+        result.digits.append(std::span<const char> { buffer, static_cast<size_t>(length) });
+        return;
+    }
+
+    exactDigits(parts, result);
+    int64_t keep = mode == DigitsMode::Significant ? count : static_cast<int64_t>(result.point) + count;
     if (keep >= static_cast<int64_t>(result.digits.size()))
         return;
     auto becomeZero = [&] {
