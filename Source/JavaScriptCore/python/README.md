@@ -72,7 +72,9 @@ arrays, ones with holes, sparse, frozen, with accessors for indices, with any le
 for an index, *every* array of the realm, also the next one that Python makes, has `ArrayStorage`. So nothing outside `PyList.cpp`
 touches a butterfly. There, what changes a list asks `ListStorage` whether the items are values in a row, which makes them so if they are
 numbers in a row. What only reads asks `listValues()`, or `hasItemsInARow()` and then `copyItems()`. If they are not, each item goes
-through what works for any array. What is done to a whole list asks once, works on the row and has one barrier. C++ elsewhere
+through what works for any array. What is done to a whole list asks once, works on the row and has one barrier. A hole, which reads
+as `None`, stays a hole where the row is copied in one piece (`a[:]`, `+`, `*`, `extend`, `copy`, `list(a)`) and becomes `undefined` where
+items are taken one by one (`a[::-1]`, `b[1:1] = a`): to Python that is the same, JS sees `1 in result` false or true. C++ elsewhere
 gets the items one after the other from `Items` (`PyAbstract.h`: any iterable) or all at once from `AllItems` (`PyList.h`).
 A new list is made by `newListOf` or `tryNewListFilledBy`, with what `constructArray` uses, and is an array of values. (`PyListObject::create` lays out an empty butterfly, and `listSort`
 leaves a mark in one after looking at its shape.) The limit on the length of items in a row is `ListStorage::grow`'s; any other array
