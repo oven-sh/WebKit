@@ -442,15 +442,16 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTPoisonCell, void, (Instance* insta
 
 [[noreturn]] static void stopAtFalseProof(EncodedJSValue encodedFound, uint32_t function, const String& position, uint32_t source)
 {
-    static constexpr std::array<ASCIILiteral, 11> names {
-        "an entry parameter"_s, "the result of a call"_s, "what a field holds"_s, "what a variable holds"_s, "what was captured"_s, "what a slot of a scope holds"_s, "what a container holds"_s, "what a built-in or a call by value gives"_s, "what an operation gives"_s, "what a test has let pass"_s, "what memory holds where the compiler remembers another value"_s,
+    using Typed::ProofSource;
+    static constexpr std::array names {
+        "an entry parameter"_s, "the result of a call"_s, "what a field holds"_s, "what a variable holds"_s, "what was captured"_s, "what a slot of a scope holds"_s, "what a container holds"_s, "what a built-in or a call by value gives"_s, "what an operation gives"_s, "what a test has let pass"_s, "what memory holds where the compiler remembers another value"_s, "a cell that is read behind the end of its life"_s,
     };
+    static_assert(names.size() == numberOfEnumerators<ProofSource> && !static_cast<uint32_t>(ProofSource::EntryParameter) && static_cast<uint32_t>(ProofSource::Lifetime) + 1 == names.size());
     if (JSValue value = JSValue::decode(encodedFound); value && value.isCell() && value.asCell()->classInfo() == PoisonedCell::info())
         PoisonedCell::stop(value.asCell());
     StringPrintStream found;
-    constexpr uint32_t field = 2;
     if (!encodedFound)
-        found.print(source + 1 == names.size() ? "another value or a test that once passed fails"_s : source == field ? "nothing, undefined or null"_s : "nothing"_s);
+        found.print(source == static_cast<uint32_t>(ProofSource::WhatIsRemembered) ? "another value or a test that once passed fails"_s : source == static_cast<uint32_t>(ProofSource::Field) ? "nothing, undefined or null"_s : "nothing"_s);
     else if (JSValue value = JSValue::decode(encodedFound); value.isCell() && !kindOfNativeResult(value))
         found.print("a cell that is no value of the language"_s);
     else

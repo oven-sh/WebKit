@@ -5646,11 +5646,16 @@ JSValue requireModule(JSGlobalObject* realm, ModuleID module, std::optional<Modu
     return modules->require(module, referrer.value_or(ModuleID()), Modules::RequiredBy::Program);
 }
 
-JSValue runFileForDefaultLoader(JSGlobalObject* realm, ModuleID module)
+bool refusesToRunFileForDefaultLoader(JSGlobalObject* realm, ModuleID module)
 {
     Modules* modules = modulesOf(realm);
-    if (modules && modules->data(module).kind == ModuleKind::CommonJs && modules->status(module) > ModuleStatus::Linked) {
-        throwLoaderChangeRefused(realm, LoaderChange::RunFileAgain, modules->table().pathText(module));
+    return modules && modules->data(module).kind == ModuleKind::CommonJs && modules->status(module) > ModuleStatus::Linked;
+}
+
+JSValue runFileForDefaultLoader(JSGlobalObject* realm, ModuleID module)
+{
+    if (refusesToRunFileForDefaultLoader(realm, module)) {
+        throwLoaderChangeRefused(realm, LoaderChange::RunFileAgain, modulesOf(realm)->table().pathText(module));
         return { };
     }
     return requireModule(realm, module);

@@ -1364,7 +1364,7 @@ bool Walker::buildLoopTwice(BlockID inputHead, const LoopPreview& preview, std::
         };
         for (const AccessUnderCounterOfLoop& access : heldBelowRoom.accesses) {
             Reference view = builtInFront(access.view);
-            if (std::optional<int64_t> written = view ? writtenAddend(access) : std::nullopt) {
+            if (std::optional<int64_t> written = view && !access.addend ? writtenAddend(access) : std::nullopt) {
                 Range& range = writtenAddendsOfViews.add(view.bits(), Range { *written, *written }).iterator->value;
                 range = Range { std::min(range.minimum, *written), std::max(range.maximum, *written) };
             }
@@ -1375,7 +1375,7 @@ bool Walker::buildLoopTwice(BlockID inputHead, const LoopPreview& preview, std::
             Reference view = builtInFront(access.view);
             bool isWritten = view && writtenAddend(access);
             Reference addend = isWritten ? integerOf(writtenAddendsOfViews.get(view.bits()).maximum) : builtInFront(access.addend);
-            if (!view || !view.isValue() || !isViewOfNumbersReadInLine(*this, typeOf(view)) || (addend && !isInteger(addend)) || (!isWritten && !addend))
+            if (access.addend || !view || !view.isValue() || !isViewOfNumbersReadInLine(*this, typeOf(view)) || (addend && !isInteger(addend)) || (!isWritten && !addend))
                 continue;
             uint64_t viewAndAddend = static_cast<uint64_t>(view.bits()) << 32 | addend.bits();
             if (!asked.contains(viewAndAddend)) {

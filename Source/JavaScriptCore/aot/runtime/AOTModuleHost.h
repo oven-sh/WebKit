@@ -178,6 +178,7 @@ JS_EXPORT_PRIVATE void evaluateModuleSynchronously(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE JSObject* moduleNamespace(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE bool mayExport(JSGlobalObject*, ModuleID, UniquedStringImpl* name);
 JS_EXPORT_PRIVATE JSValue requireModule(JSGlobalObject*, ModuleID, std::optional<ModuleID> referrer = std::nullopt);
+JS_EXPORT_PRIVATE bool refusesToRunFileForDefaultLoader(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE JSValue runFileForDefaultLoader(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void throwTextRefusedToCompileOfProgram(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void didMakeModuleObjectForRequire(JSGlobalObject*, ModuleID, JSObject* moduleObject);
