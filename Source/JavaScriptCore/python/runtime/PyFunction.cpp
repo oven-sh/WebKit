@@ -526,11 +526,11 @@ static NEVER_INLINE bool bindArgumentsSlow(JSGlobalObject* globalObject, CallFra
                 if (info.parameterNames[index].impl() == impl)
                     break;
             }
-        }
-        if (index == namedCount && !impl->isAtom()) {
-            for (index = info.posOnlyCount; index < namedCount; ++index) {
-                if (WTF::equal(info.parameterNames[index].impl(), impl))
-                    break;
+            if (index == namedCount && !impl->isAtom()) {
+                for (index = info.posOnlyCount; index < namedCount; ++index) {
+                    if (WTF::equal(info.parameterNames[index].impl(), impl))
+                        break;
+                }
             }
         }
         if (index < namedCount) {

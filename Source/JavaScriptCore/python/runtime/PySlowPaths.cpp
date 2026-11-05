@@ -1226,7 +1226,9 @@ static JSValue callArguments(JSGlobalObject* globalObject, JSValue, JSValue posi
         if (!isStr(key))
             return raiseTypeError(globalObject, scope, "keywords must be strings"_s);
         namesAreKeys &= key.isString();
-        JSString* name = internString(globalObject, strValue(key));
+        // As it is: whoever takes keywords compares the texts of names that are no atoms. A program may have any number of names.
+        JSString* name = strValue(key);
+        name->value(globalObject);
         RETURN_IF_EXCEPTION(scope, { });
         names->initializeAt(vm, index++, name);
         listAppend(globalObject, array, value);

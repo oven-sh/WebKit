@@ -350,6 +350,9 @@ in Python, the instance is made and `__init__` called without leaving the interp
 Python function, and Python a JS function, with the engine's own call sequence and inline caches.
 When Python calls what is not Python, the frame is adapted on the way (`prepareForeignCall`, from `linkFor`): keyword arguments
 become a trailing object, whole floats become numbers.
+`f(*a, **k)` is `op_call_varargs` with an array that `callArguments()` makes, in CPython's order: `k` is read, then `a` is gone through.
+The names that come out of `k` are its keys as they are, not atoms: a program can make any number of them, and an atom is looked
+up in a table that all strs of the process share. So whoever takes keywords compares texts where the pointers differ.
 
 **Functions written in C++.** How the arguments of a call get from the frame to the C++ function depends on its signature and on the
 kind of function, so it is decided when the `PyNativeFunction` is made (`entryFor`): for a fixed number of parameters there is an
