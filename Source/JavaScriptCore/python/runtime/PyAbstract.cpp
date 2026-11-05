@@ -269,6 +269,38 @@ static ALWAYS_INLINE PyType* typeOfPossibleDescriptor(Runtime& rt, JSValue descr
     }
 }
 
+// The data descriptors written in C++, without a call of their __get__. False: it is none of them. `type`: that of the object.
+static ALWAYS_INLINE bool getFromBuiltinDataDescriptor(JSGlobalObject* globalObject, Runtime& rt, JSCell* descriptor, JSValue object, PyType* type, JSValue& result)
+{
+    if (descriptor->type() != PyObjectType)
+        return false;
+    const ClassInfo* info = descriptor->classInfo();
+    if (info == PyGetSetDescriptor::info()) {
+        auto* getSet = uncheckedDowncast<PyGetSetDescriptor>(descriptor);
+        if (!appliesToInstancesOf(getSet->owner(), type)) [[unlikely]]
+            result = raiseDescriptorDoesNotApply(globalObject, getSet->def().name, getSet->owner(), object);
+        else
+            result = getSet->def().getter(globalObject, object);
+        return true;
+    }
+    if (info == PyMemberDescriptor::info()) {
+        auto* member = uncheckedDowncast<PyMemberDescriptor>(descriptor);
+        if (!appliesToInstancesOf(member->owner(), type)) [[unlikely]]
+            result = raiseDescriptorDoesNotApply(globalObject, stringOf(member->name()), member->owner(), object);
+        else
+            result = memberDescriptorGet(globalObject, member, object);
+        return true;
+    }
+    // As property.__get__(). (A class derived from property may have its own.)
+    if (info == PyProperty::info() && uncheckedDowncast<PyProperty>(descriptor)->type() == rt.propertyType()) {
+        if (JSValue function = uncheckedDowncast<PyProperty>(descriptor)->getter.get(); !isNone(function)) {
+            result = call(globalObject, function, object);
+            return true;
+        }
+    }
+    return false;
+}
+
 JSValue bindDescriptor(JSGlobalObject* globalObject, JSValue descriptor, JSValue object, PyType* type)
 {
     if (!descriptor.isCell())
@@ -300,6 +332,10 @@ JSValue bindDescriptor(JSGlobalObject* globalObject, JSValue descriptor, JSValue
                 return descriptor;
             }
         }
+        break;
+    case PyObjectType:
+        if (JSValue result; object && getFromBuiltinDataDescriptor(globalObject, rt, cell, object, rt.typeOf(object), result))
+            return result;
         break;
     default:
         break;
@@ -351,28 +387,8 @@ static ALWAYS_INLINE JSValue genericGetAttrImpl(JSGlobalObject* globalObject, JS
         if (isMethodDescriptor(descriptor))
             bindsDirectly = true;
         else if (PyType* descriptorType = typeOfPossibleDescriptor(rt, descriptor)) {
-            JSCell* cell = descriptor.asCell();
-            // The data descriptors written in C++.
-            if (cell->type() == PyObjectType) {
-                const ClassInfo* info = cell->classInfo();
-                if (info == PyGetSetDescriptor::info()) {
-                    auto* getSet = uncheckedDowncast<PyGetSetDescriptor>(cell);
-                    if (!appliesToInstancesOf(getSet->owner(), typeByNow<nameIsKey>(rt, object, type))) [[unlikely]]
-                        RELEASE_AND_RETURN(scope, raiseDescriptorDoesNotApply(globalObject, getSet->def().name, getSet->owner(), object));
-                    RELEASE_AND_RETURN(scope, getSet->def().getter(globalObject, object));
-                }
-                if (info == PyMemberDescriptor::info()) {
-                    auto* member = uncheckedDowncast<PyMemberDescriptor>(cell);
-                    if (!appliesToInstancesOf(member->owner(), typeByNow<nameIsKey>(rt, object, type))) [[unlikely]]
-                        RELEASE_AND_RETURN(scope, raiseDescriptorDoesNotApply(globalObject, stringOf(member->name()), member->owner(), object));
-                    RELEASE_AND_RETURN(scope, memberDescriptorGet(globalObject, member, object));
-                }
-                // As property.__get__(). (A class derived from property may have its own.)
-                if (info == PyProperty::info() && uncheckedDowncast<PyProperty>(cell)->type() == rt.propertyType()) {
-                    if (JSValue function = uncheckedDowncast<PyProperty>(cell)->getter.get(); !isNone(function))
-                        RELEASE_AND_RETURN(scope, call(globalObject, function, object));
-                }
-            }
+            if (JSValue value; getFromBuiltinDataDescriptor(globalObject, rt, descriptor.asCell(), object, typeByNow<nameIsKey>(rt, object, type), value))
+                RELEASE_AND_RETURN(scope, value);
             getter = descriptorType->lookup(Special::Get);
             if (getter && (descriptorType->lookup(Special::Set) || descriptorType->lookup(Special::Delete)))
                 RELEASE_AND_RETURN(scope, callGet(globalObject, getter, descriptor, object, typeByNow<nameIsKey>(rt, object, type)));
