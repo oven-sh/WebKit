@@ -658,19 +658,28 @@ static JSValue frozendictRepr(JSGlobalObject* globalObject, JSValue self)
     RELEASE_AND_RETURN(scope, makeStr(globalObject, builder));
 }
 
-static JSValue frozendictHash(JSGlobalObject* globalObject, JSValue self)
+static int64_t frozendictHash(JSGlobalObject* globalObject, JSValue self)
 {
     PY_DICT_PROLOGUE();
-    // Before hashOfTuple() finds out.
-    if (!isSafeToRecurseWithMargin(vm, 96 * KB))
-        return raiseRecursionError(globalObject, scope, "maximum recursion depth exceeded while hashing a frozendict"_s);
-    // As for a frozenset of the (key, value) pairs.
+    if (dict->hasCachedHash())
+        return dict->cachedHash();
+    if (!isSafeToRecurseWithMargin(vm, 96 * KB)) {
+        raiseRecursionError(globalObject, scope, "maximum recursion depth exceeded while hashing a frozendict"_s);
+        return -1;
+    }
+    // As for a frozenset of the (key, value) pairs. The keys are not asked again: the table has kept their hashes (but not those of strs).
     uint64_t result = 0;
     JSValue key, value;
-    for (unsigned position = 0; dict->next(position, key, value);) {
-        int64_t pairHash = hashOfTuple(globalObject, PyTuple::create(globalObject, { key, value }));
-        RETURN_IF_EXCEPTION(scope, { });
-        uint64_t h = static_cast<uint64_t>(pairHash);
+    int64_t keyHash;
+    for (unsigned position = 0; dict->next(position, key, value, keyHash);) {
+        if (key.isString())
+            keyHash = hashOfString(asString(key)->tryGetValueImpl());
+        int64_t valueHash = hash(globalObject, value);
+        RETURN_IF_EXCEPTION(scope, -1);
+        TupleHasher pair;
+        pair.add(keyHash);
+        pair.add(valueHash);
+        uint64_t h = static_cast<uint64_t>(pair.finish());
         result ^= ((h ^ 89869747UL) ^ (h << 16)) * 3644798167UL;
     }
     result ^= (static_cast<uint64_t>(dict->size()) + 1) * 1927868237UL;
@@ -678,7 +687,8 @@ static JSValue frozendictHash(JSGlobalObject* globalObject, JSValue self)
     result = result * 69069U + 907133923UL;
     if (result == static_cast<uint64_t>(-1))
         result = 590923713UL;
-    RELEASE_AND_RETURN(scope, makeInt(globalObject, static_cast<int64_t>(result)));
+    dict->setCachedHash(static_cast<int64_t>(result));
+    return static_cast<int64_t>(result);
 }
 
 static JSValue frozendictOr(JSGlobalObject* globalObject, JSValue self, JSValue other)
@@ -712,7 +722,7 @@ static JSValue frozendictGetNewArgs(JSGlobalObject* globalObject, JSValue self)
 static constexpr NativeDef frozendictMethods[] = {
     PY_NEW(frozendictNew, "($type, *args, **kwargs)"),
     PY_SLOT("__repr__", frozendictRepr, "($self, /)"),
-    PY_SLOT("__hash__", frozendictHash, "($self, /)"),
+    PY_HASH(frozendictHash),
     PY_DICT_SHARED_METHODS,
     PY_SLOT("__or__", frozendictOr, "($self, value, /)"),
     PY_METHOD("copy", frozendictCopy, "($self, /)"),

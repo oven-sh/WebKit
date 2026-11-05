@@ -207,6 +207,11 @@ public:
     // For whatever else was concluded from the number and no longer holds.
     void renewWatchedVersion() { keysChanged(); }
 
+    // hash() of a frozendict, once it has been asked for.
+    bool hasCachedHash() const { return m_hash != -1; }
+    int64_t cachedHash() const { return m_hash; }
+    void setCachedHash(int64_t hash) { m_hash = hash; }
+
     static constexpr ptrdiff_t offsetOfStorage() { return OBJECT_OFFSETOF(PyDict, m_storage); }
     static constexpr ptrdiff_t offsetOfWatchedVersion() { return OBJECT_OFFSETOF(PyDict, m_watchedVersion); }
 
@@ -287,6 +292,7 @@ private:
     bool m_isKeyed { false };
     bool m_keepsWholeHashesOfStrings { false };
     unsigned m_firstEntry { 0 }; // The entries before this one are deleted, or were never used. Means nothing while the dict is empty.
+    int64_t m_hash { -1 }; // (The cell would be as large without: sizes go by 16 bytes.)
 };
 
 } // namespace Python

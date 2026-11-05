@@ -74,6 +74,8 @@ DEFINE_VISIT_CHILDREN(PyDictStorage);
 
 PY_DEFINE_CELL(PyDict);
 
+static_assert(sizeof(PyDict) <= 64);
+
 PyDict::PyDict(VM& vm, Structure* structure, PyType* type)
     : Base(vm, structure, type)
 {
