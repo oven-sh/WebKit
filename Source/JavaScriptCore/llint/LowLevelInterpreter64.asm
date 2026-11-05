@@ -4373,6 +4373,19 @@ llintOpWithJump(op_py_for_iter, OpPyForIter, macro (size, get, jump, dispatch)
         dispatch()
     end
 
+    # t0: the iterator, t1: the list, t2: the position.
+    macro itemOfList(step, behindTheItems)
+        loadb JSCell::m_indexingTypeAndMisc[t1], t5
+        loadp JSObjectWithButterfly::m_butterfly[t1], t1
+        btpz t1, behindTheItems
+        loadi -sizeof IndexingHeader + IndexingHeader::u.lengths.publicLength[t1], t3
+        bqaeq t2, t3, behindTheItems
+        loadListItem(t5, t1, t2, t3, .slow)
+        addq step, t2
+        storeq t2, (constexpr (Python::PyIterator::offsetOfPosition()))[t0]
+        storeItem(t3)
+    end
+
     get(m_iterator, t0)
     loadq [cfr, t0, 8], t0
     btqnz t0, notCellMask, .slow
@@ -4385,7 +4398,7 @@ llintOpWithJump(op_py_for_iter, OpPyForIter, macro (size, get, jump, dispatch)
     loadb (constexpr (Python::PyIterator::offsetOfKind()))[t0], t3
     bbeq t3, constexpr Python::PyIterator::Kind::Range, .range
     bbeq t3, constexpr Python::PyIterator::Kind::List, .list
-    bbneq t3, constexpr Python::PyIterator::Kind::Tuple, .slow
+    bbneq t3, constexpr Python::PyIterator::Kind::Tuple, .notTuple
     loadi (constexpr (Python::PyTuple::offsetOfLength()))[t1], t3
     bqaeq t2, t3, .ends
     loadq (constexpr (Python::PyTuple::offsetOfItems()))[t1, t2, 8], t3
@@ -4394,15 +4407,13 @@ llintOpWithJump(op_py_for_iter, OpPyForIter, macro (size, get, jump, dispatch)
     storeItem(t3)
 
 .list:
-    loadb JSCell::m_indexingTypeAndMisc[t1], t5
-    loadp JSObjectWithButterfly::m_butterfly[t1], t1
-    btpz t1, .ends
-    loadi -sizeof IndexingHeader + IndexingHeader::u.lengths.publicLength[t1], t3
-    bqaeq t2, t3, .ends
-    loadListItem(t5, t1, t2, t3, .slow)
-    addq 1, t2
-    storeq t2, (constexpr (Python::PyIterator::offsetOfPosition()))[t0]
-    storeItem(t3)
+    itemOfList(1, .ends)
+
+.notTuple:
+    bbneq t3, constexpr Python::PyIterator::Kind::ListReverse, .slow
+    # Having gone through the list it keeps it. A list that has shrunk under it is for the slow path.
+    bqlt t2, 0, .exhausted
+    itemOfList(-1, .slow)
 
 .range:
     loadq (constexpr (Python::PyIterator::offsetOfRemaining()))[t0], t1
