@@ -310,10 +310,17 @@ static ALWAYS_INLINE PyFunction* functionOf(CallFrame* callFrame)
     return uncheckedDowncast<PyFunction>(callFrame->jsCallee());
 }
 
-int lineNumberForBytecodeIndex(CodeBlock* codeBlock, BytecodeIndex index)
+// The instructions of a function and what goes with them. There need be no CodeBlock: the collector lets go of one that has not run for a
+// while and is on no stack, and that of a suspended generator is on none.
+static UnlinkedCodeBlock* unlinkedCodeOf(VM& vm, FunctionExecutable* executable)
 {
-    auto marks = codeBlock->unlinkedCodeBlock()->pythonMarks();
-    auto* executable = dynamicDowncast<FunctionExecutable>(codeBlock->ownerExecutable());
+    return executable->unlinkedExecutable()->codeBlocksDecodingCached(vm).first;
+}
+
+static int lineNumberForBytecodeIndex(ScriptExecutable* owner, UnlinkedCodeBlock* code, BytecodeIndex index)
+{
+    auto marks = code->pythonMarks();
+    auto* executable = dynamicDowncast<FunctionExecutable>(owner);
     CodeInfo* info = executable ? executable->unlinkedExecutable()->pythonCodeInfo() : nullptr;
     int lineDelta = info ? info->lineDelta : 0;
     int line = lineOfMarks(marks, index.offset());
@@ -322,8 +329,15 @@ int lineNumberForBytecodeIndex(CodeBlock* codeBlock, BytecodeIndex index)
     // What sets up the frame is of the line the code begins on.
     if (info && !marks.empty() && !isPastStart(marks, index.offset()))
         return info->firstLineNumber;
-    // What else the compiler added comes from no line. It is near one.
-    return static_cast<int>(codeBlock->lineColumnForBytecodeIndex(index).line) + lineDelta;
+    // What else the compiler added comes from no line. It is near one. (CodeBlock::lineColumnForBytecodeIndex())
+    const SourceCode& source = owner->source();
+    SourceProvider& provider = *source.provider();
+    return static_cast<int>(provider.documentLineColumn(code->lineColumnInTextForBytecodeIndex(index, provider, source.startOffset())).line) + lineDelta;
+}
+
+int lineNumberForBytecodeIndex(CodeBlock* codeBlock, BytecodeIndex index)
+{
+    return lineNumberForBytecodeIndex(codeBlock->ownerExecutable(), codeBlock->unlinkedCodeBlock(), index);
 }
 
 // The value of a variable of a call in progress. Empty: it has none.
@@ -497,7 +511,7 @@ public:
             for (unsigned i = 0; i < bytecode.m_count; ++i)
                 m_slots.append({ VirtualRegister(bytecode.m_first.offset() - static_cast<int>(i)), bytecode.m_offset + i });
         };
-        for (const auto& instruction : generator->body()->functionExecutable()->codeBlockForCall()->instructions()) {
+        for (const auto& instruction : unlinkedCodeOf(vm, generator->body()->functionExecutable())->instructions()) {
             if (instruction->opcodeID() == op_py_generator_registers)
                 note(instruction->as<OpPyGeneratorRegisters>());
             else if (instruction->opcodeID() == op_py_generator_suspend)
@@ -745,9 +759,9 @@ PyFrame* PyFrame::of(JSGlobalObject* globalObject, PyGenerator* generator)
 }
 
 // Where a generator in that state goes on. False: at the start.
-static bool bytecodeOffsetOfState(PyFunction* body, int32_t state, unsigned& result)
+static bool bytecodeOffsetOfState(int32_t state, unsigned& result)
 {
-    if (state <= 0 || !body->functionExecutable()->codeBlockForCall())
+    if (state <= 0)
         return false;
     result = state;
     return true;
@@ -756,8 +770,8 @@ static bool bytecodeOffsetOfState(PyFunction* body, int32_t state, unsigned& res
 PyFrame* PyFrame::createSuspended(JSGlobalObject* globalObject, PyFunction* function, int32_t state)
 {
     PyFrame* frame = create(globalObject, function, function->functionExecutable());
-    if (bytecodeOffsetOfState(function, state, frame->m_bytecodeOffset))
-        frame->m_lineNumber = lineNumberForBytecodeIndex(function->functionExecutable()->codeBlockForCall(), BytecodeIndex(frame->m_bytecodeOffset));
+    if (bytecodeOffsetOfState(state, frame->m_bytecodeOffset))
+        frame->m_lineNumber = lineNumberForBytecodeIndex(function->functionExecutable(), unlinkedCodeOf(getVM(globalObject), function->functionExecutable()), BytecodeIndex(frame->m_bytecodeOffset));
     return frame;
 }
 
@@ -826,8 +840,10 @@ unsigned PyFrame::bytecodeOffset()
         findPlace(m_codeBlockAtEnd.get(), BytecodeIndex(m_bytecodeOffset));
         m_codeBlockAtEnd.clear();
     } else if (PyGenerator* generator = this->generator()) {
-        if (bytecodeOffsetOfState(generator->body(), generator->state(), m_bytecodeOffset))
-            m_lineNumber = lineNumberForBytecodeIndex(generator->body()->functionExecutable()->codeBlockForCall(), BytecodeIndex(m_bytecodeOffset));
+        if (bytecodeOffsetOfState(generator->state(), m_bytecodeOffset)) {
+            FunctionExecutable* executable = generator->body()->functionExecutable();
+            m_lineNumber = lineNumberForBytecodeIndex(executable, unlinkedCodeOf(vm(), executable), BytecodeIndex(m_bytecodeOffset));
+        }
     }
     return m_bytecodeOffset;
 }
