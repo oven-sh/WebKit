@@ -832,8 +832,16 @@ void Heap::reconcileWeakReferencesAtGCEnd()
         clientData->reconcileWeakReferencesAtGCEnd(vm(), collectionScope);
 }
 
+void Heap::didMarkAllThatIsReachable()
+{
+    // Marking converges once more each time something has been kept.
+    if (!m_sizeMarkedWhenAllThatIsReachableWas)
+        m_sizeMarkedWhenAllThatIsReachableWas = m_bytesMarkedThisCycle.load(std::memory_order_relaxed) + m_extraMemorySize;
+}
+
 bool Heap::keepUnreachablePythonObjectsToFinalize(SlotVisitor& visitor)
 {
+    SetRootMarkReasonScope rootScope(visitor, RootMarkReason::KeptForFinalizers);
     bool keptSomething = false;
     for (auto* runtime : m_pythonRuntimes)
         keptSomething |= runtime->keepUnreachableObjectsToFinalize(visitor);
@@ -1013,7 +1021,9 @@ void Heap::endMarking()
     ASSERT(isInPhase(CollectorPhase::End));
     ASSERT(m_objectSpace.isMarking());
 
-    updateOldGenerationCellBytes(m_bytesMarkedThisCycle.exchange(0, std::memory_order_relaxed));
+    size_t bytesMarked = m_bytesMarkedThisCycle.exchange(0, std::memory_order_relaxed);
+    m_sizeKeptForFinalizers = bytesMarked + m_extraMemorySize - *std::exchange(m_sizeMarkedWhenAllThatIsReachableWas, std::nullopt);
+    updateOldGenerationCellBytes(bytesMarked);
 
     m_objectSpace.endMarking();
     setMutatorShouldBeFenced(Options::forceFencedBarrier());
@@ -2629,10 +2639,16 @@ void Heap::updateAllocationLimits()
         // To avoid pathological GC churn in very small and very large heaps, we set
         // the new allocation limit based on the current size of the heap, with a
         // fixed minimum.
+        //
+        // The size that counts is that of what is reachable. What was kept for its finalizers takes up room until the full collection
+        // after those have been called, but it is garbage, and there is the more of it the more was allocated in the cycle. If the
+        // next cycle were the larger for it, that one would leave still more, and a program that does nothing but make and drop
+        // objects with finalizers would have a heap that grows by a constant factor with each collection.
         size_t lastMaxHeapSize = m_maxHeapSize;
         size_t limit = memoryLimitForGrowth();
-        m_maxHeapSize = std::max(minHeapSize(m_heapType, limit), proportionalHeapSize(currentHeapSize, limit));
-        m_maxEdenSize = m_maxHeapSize - currentHeapSize;
+        size_t reachableSize = currentHeapSize - std::min(m_sizeKeptForFinalizers, currentHeapSize);
+        m_maxEdenSize = std::max(minHeapSize(m_heapType, limit), proportionalHeapSize(reachableSize, limit)) - reachableSize;
+        m_maxHeapSize = currentHeapSize + m_maxEdenSize;
         if (m_isInOpportunisticTask && !isCritical) {
             // After an Opportunistic Full GC, we allow eden to occupy all the space we recovered.
             // In this case, m_maxHeapSize may be larger than currentHeapSize + m_maxEdenSize.

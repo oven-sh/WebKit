@@ -886,7 +886,9 @@ private:
 
     void reconcileWeakReferencesAtGCEnd();
 
-    // Once marking has converged. True: more was marked.
+    // Once marking has converged, with the counts of all visitors flushed: all that is reachable is marked.
+    void didMarkAllThatIsReachable();
+    // After that. True: more was marked, and marking goes on until it converges again.
     bool keepUnreachablePythonObjectsToFinalize(SlotVisitor&);
 
     void deleteUnmarkedCompiledCode();
@@ -992,6 +994,11 @@ private:
     size_t m_oldGenerationCellBytesAtStartOfLastFullCollect { 0 };
     // Bytes the visitors have marked this cycle, gathered for the End step.
     Atomic<size_t> m_bytesMarkedThisCycle { 0 };
+    // What a collection marks after it has marked all that is reachable is garbage that is kept, with all it refers to, until its
+    // finalizers have been called. The first: m_bytesMarkedThisCycle + m_extraMemorySize when marking first converged in the collection
+    // that is under way. The second: the part of m_sizeAfterLastCollect that the last collection kept. See updateAllocationLimits().
+    std::optional<size_t> m_sizeMarkedWhenAllThatIsReachableWas;
+    size_t m_sizeKeptForFinalizers { 0 };
 
     double m_incrementBalance { 0 };
     

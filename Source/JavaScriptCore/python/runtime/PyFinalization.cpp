@@ -212,7 +212,7 @@ bool Runtime::keepUnreachableObjectsToFinalize(SlotVisitor& visitor)
     // This is called again and again until it finds no more, and in a collection that the engine began by itself the program may
     // run in between, while what this has kept is marked. So each time the lists are left as the program may find them: whatever is
     // registered and not queued is in one of them, and there is no hole.
-    // What is queued is kept, whoever queued it and whenever: the program does too, and need not tell the collector.
+    // What is queued is kept, whoever queued it and whenever: an earlier collection, or the program, which need not tell the collector. Nothing else marks it.
     {
         bool keptSomething = false;
         auto keep = [&](JSCell* cell) {
@@ -566,7 +566,6 @@ void Runtime::visitPendingCalls(Visitor& visitor)
 }
 
 template void Runtime::visitPendingCalls(AbstractSlotVisitor&);
-template void Runtime::visitPendingCalls(SlotVisitor&);
 
 // ---- Exceptions nobody can catch ----
 

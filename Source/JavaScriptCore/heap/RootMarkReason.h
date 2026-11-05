@@ -47,7 +47,8 @@ namespace JSC {
     v(JITWorkList) \
     v(CodeBlocks) \
     v(DOMGCOutput) \
-    v(PinballCompletionConservativeRoots)
+    v(PinballCompletionConservativeRoots) \
+    v(KeptForFinalizers)
 
 #define DECLARE_ROOT_MARK_REASON(reason) reason,
 

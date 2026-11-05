@@ -144,7 +144,10 @@ void Runtime::visit(Visitor& visitor)
     visitor.append(m_pendingKeywordNames);
     visitor.append(m_sendResult);
     visitor.append(m_exceptionGroupRest);
-    visitPendingCalls(visitor);
+    // What waits for a call that is owed is not the program's to reach. The collector keeps it once it has marked all that is, so that it does not
+    // count when the heap is sized: keepUnreachableObjectsToFinalize(). Whoever else goes through the heap finds it here.
+    if constexpr (!std::is_same_v<Visitor, SlotVisitor>)
+        visitPendingCalls(visitor);
     {
         Locker locker { m_moduleTypesLock };
         for (auto& entry : m_moduleTypes)

@@ -641,9 +641,15 @@ NEVER_INLINE bool Collector::runFixpointPhase(GCConductor conn)
         if (converged && visitor.isEmpty()) {
             assertMarkStacksEmpty();
             // All that is reachable is marked. A Python object that is not and has a finalizer is kept, with all it reaches,
-            // for the finalizer to find it whole; so there may be more to mark.
+            // for the finalizer to find it whole; so there may be more to mark. No marker is active: their counts stand still.
+            forEachSlotVisitor(
+                [&](SlotVisitor& visitor) {
+                    visitor.flushBytesMarked();
+                    visitor.flushExtraMemoryVisited();
+                });
             bool keptSomething = false;
             forEachHeap([&](Heap& heap) {
+                heap.didMarkAllThatIsReachable();
                 keptSomething |= heap.keepUnreachablePythonObjectsToFinalize(visitor);
             });
             if (!keptSomething)

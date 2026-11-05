@@ -634,6 +634,40 @@ so the aim is that everything Python *guarantees* holds, and that what it merely
   began (`Runtime::wasInterruptedByPendingCalls()`), unless the program asked for them (`gc.collect()`): the warning is about
   `<sys>`, line 0, as where there is no frame at all, and its registry is the runtime's own.
 - **Each finalizer runs once.** An object that is still unreachable at the next collection is freed.
+- **What waits for a finalizer does not make the heap grow.** After a full collection the heap lets the program allocate in proportion to what the
+  collection marked, before each of the next collections (`Heap::updateAllocationLimits`: twice as much in Bun). What is kept for a finalizer is
+  marked like anything else, but it is garbage, and a fixed share of what the cycle allocated: 0.70 for a small object with a `__del__`, 0.93
+  for one that holds a list of a hundred. Counted, it made the next cycle 2 x 0.70 times as long, which left as much more to keep, and so on:
+  the heap of `while True: [C() for _ in range(20)]` grew by 1.4 with every other collection, to 880 MB after 16 million objects, though every
+  finalizer had been called and `gc.collect()` got it all back. (With the factor at 3, 2, 1.7, 1.5 and 1.4 the size after a full collection grew by
+  2.11, 1.41, 1.21, 1.10 and 1.03; at 1.3 and below it settled. Every collector that sizes a cycle by what came through the last one has that
+  threshold, factor x share = 1: Go, whose factor is 1, is over it with `GOGC=200`, PyPy, with 0.82, with `PYPY_GC_MAJOR_COLLECT=3`. Measured.)
+  So the heap is sized by what was marked when marking first converged: all that the program can reach (`Heap::didMarkAllThatIsReachable`). What
+  is marked after that takes up room until it is freed and counts for nothing else:
+  - the objects that this collection found unreachable and keeps, with all that only they refer to. They are garbage as soon as their finalizers have been
+    called, at the next safe point of their thread, and the full collection after that frees them;
+  - what earlier collections queued and has not been called yet. So the queues are not visited with the runtime: the collector keeps them at that
+    point (`keepUnreachableObjectsToFinalize`; in a heap snapshot for debugging all that is kept there is a root, for the reason `KeptForFinalizers`). Finalizers that allocate bring about collections while the queue is being served, and what those find
+    stands behind the rest: with a `__del__` that makes five objects with a `__del__` the queue was two to four times what a cycle may allocate, and with
+    that counted as alive the heap still grew without bound;
+  - what is unreachable and kept for another reason: cyclic garbage that a collection of an idle thread leaves for later, callbacks of ctypes while finalizers are left.
+
+  An object that its finalizer brings back is reachable at the next full collection, which is the next time the heap is sized, and counts from then on: a
+  program all of whose finalizers do that collects as often as one that keeps the same objects in a list. In a collection that lets the program run while it
+  marks what it keeps, what the program makes and stores meanwhile may be taken for kept; that also lasts until the next full collection.
+  The rule is the heap's and knows nothing of Python: where nothing is marked after marking has converged, as in every program in JS, it changes
+  nothing (2,392 collections in 50 benchmarks: not a byte).
+  - *Measured.* That loop: 23 MB of heap before a collection (13 without the `__del__`, 585 and rising before), 34 MB more resident than without, flat over
+    40 million objects, 2.0 million objects a second as before. Objects that hold a list of a hundred: 22 MB more than without, was 1,150. Three threads whose
+    finalizers make five more each, beside a main thread that sleeps: 90 to 140 MB more, flat, and 150,000 to 620,000 calls behind; it was 7 GB after 50 s
+    and 87 million calls. The same three and a main thread that ends: 3.4 to 5.1 s and 270 MB, was 8.8 to 13.2 s and 1.4 GB.
+  - *The price.* A cycle is as long as the reachable heap warrants, 6.5 MB in a small program, and where most of what is allocated has to be kept every other
+    collection is a full one, because only that frees it: 6 ms for a program that has imported nothing, against 0.5 ms. The loop above is none the slower for it; objects of
+    1 KB take 15 to 26 % more processor time, suspended generators 4 to 6 %, and 200,000 files that are dropped open, whose buffers of 128 KB count as allocated, 37 us each where it
+    was 21 (the heap then took itself to be 5 GB large, and there were 23 collections, not 918).
+  - *A queue that stands still* while others allocate (its thread is in foreign code, or in a system call that is not to be interrupted) is marked again by every full collection,
+    and if it is more than some three times the reachable heap every other collection is one. With 229 MB queued for a thread that sat in `read()` by way of ctypes, another
+    thread's 8 million small objects took 9 to 10 s, not 1.5. It ends when the thread is back.
 - **An object registers when it is made**, if its class has a `__del__` then. A class that gets one later, by assignment to the
   attribute or to `__bases__`, has the heap searched for its instances (`registerInstancesForFinalization`), once; an object
   that is given such a class by assignment to `__class__` registers then.
@@ -1749,7 +1783,7 @@ What every program pays, with the sizes of a release build for x86-64:
 
 | Where | What |
 | --- | --- |
-| `VM` (one) | 72 bytes of 110,984: 56 in `Heap` (the list of runtimes, two more owners of finalizers, a subspace pointer), 8 in `VMTraps`, 8 of padding |
+| `VM` (one) | 96 bytes of 111,008: 80 in `Heap` (the list of runtimes, two more owners of finalizers, a subspace pointer, what a collection marked once all that is reachable was marked), 8 in `VMTraps`, 8 of padding |
 | `JSLock` (one per VM) | 72 bytes: the list of parked threads |
 | `JSGlobalObject` | 8 bytes: the pointer to the runtime |
 | `UnlinkedCodeBlock::RareData`, `UnlinkedFunctionExecutable::RareData` | 8 bytes each, where there is rare data; `FunctionExecutable::RareData` 16. `CodeBlock`, `UnlinkedCodeBlock`, `UnlinkedFunctionExecutable`, `CallLinkInfo`, `Structure`, `JSString`, `JSArray`, `JSFunction`: nothing |
@@ -1770,7 +1804,7 @@ What every program pays, with the sizes of a release build for x86-64:
 | Bytecode is generated, a code block is linked or asks to be compiled | a look at `isPython()`: for each loop and jump, each call site, each code block |
 | `Instruction::opcodeID()`, `size()` in C++ | nothing: `op_wide16`, `op_wide32`, `op_py_instrumented` and `op_page2` are the last four ids of one byte, and a narrow instruction is known by one compare, where upstream has two. The interpreter itself does not look |
 | The interpreter's three tables of handlers | 578 entries each for 338 ids, so that the byte behind `op_page2` is its own bound, as an opcode is; in the 16 KB that are set aside and protected for them anyway |
-| A collection | three walks over an empty list; four more kinds of metadata looked for in each code block that is visited |
+| A collection | three walks over an empty list; four more kinds of metadata looked for in each code block that is visited; the visitors' counts are added up when marking has converged, not only at the end |
 | The mutator leaves a collection to the collector's thread | a lock, and a look whether that thread is there |
 | No thread can be started | helpers of the collector are done without, and so is its thread; for any other thread, up to 2 s of waiting for room, a line that names it, and the crash that used to come at once |
 | The lock of the VM is taken, released | a store; two loads and branches |
