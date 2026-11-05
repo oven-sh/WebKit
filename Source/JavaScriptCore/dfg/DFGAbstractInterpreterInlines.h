@@ -2390,7 +2390,7 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
                 || node->isBinaryUseKind(StringIdentUse)
                 || (node->op() == CompareEq && node->isBinaryUseKind(ObjectUse))
                 || (node->op() == CompareEq && node->isSymmetricBinaryUseKind(ObjectUse, ObjectOrOtherUse))
-                || (node->op() == CompareEq && value.isType(SpecObject))
+                || (node->op() == CompareEq && value.isType(SpecObject & ~SpecPyObject)) // The class of a Python object says what it is equal to, itself included.
                 || value.isType(SpecInt32Only)
                 || value.isType(SpecInt52Any)
                 || value.isType(SpecAnyIntAsDouble)
