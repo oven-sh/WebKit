@@ -150,7 +150,16 @@ public:
             scope.clearException();
             return { };
         }
-        return result.utf8();
+        // (String::utf8() goes through a Vector with room for three bytes to the unit.)
+        auto length = lengthInUTF8(result);
+        if (length ? *length > SourceText::maxLength : result.length() > SourceText::maxLength / 3) [[unlikely]]
+            return { };
+        if (!length)
+            return result.utf8();
+        std::span<char8_t> room;
+        auto encoded = UTF8CString::newUninitialized(*length, room);
+        writeUTF8(result, byteCast<uint8_t>(room));
+        return encoded;
     }
 
 private:
@@ -198,6 +207,10 @@ JSValue raiseSyntaxErrorInfo(JSGlobalObject* globalObject, const SyntaxErrorInfo
     case Type::OverflowError:
         return raiseOverflowError(globalObject, scope, info.message);
     case Type::MemoryError:
+        if (info.message.isNull()) {
+            raiseMemoryError(globalObject, scope, String());
+            return { };
+        }
         return raiseWithArgs(globalObject, scope, rt.MemoryError(), { makeStr(vm, info.message) });
     case Type::RecursionError:
         return raiseRecursionError(globalObject, scope, info.message);

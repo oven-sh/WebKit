@@ -13,6 +13,7 @@
 #include "PyGenerator.h"
 #include "PyInternals.h"
 #include "PyIterators.h"
+#include "PyLexer.h"
 #include "PyList.h"
 #include "PyModule.h"
 #include "PyNumbers.h"
@@ -835,19 +836,28 @@ bool sourceBytes(JSGlobalObject* globalObject, JSValue source, ASCIILiteral func
     if (isStr(source)) {
         String text = strValue(source)->value(globalObject);
         RETURN_IF_EXCEPTION(scope, false);
-        auto encoded = tryEncodeUTF8(text);
-        if (!encoded) {
+        auto length = lengthInUTF8(text);
+        if (!length) {
             // As str.encode() would complain.
             strEncode(globalObject, strValue(source), nullptr, nullptr);
             ASSERT(scope.exception());
             return false;
         }
-        bytes = WTF::move(*encoded);
+        if (*length > SourceText::maxLength) [[unlikely]] {
+            raiseMemoryError(globalObject, scope, String());
+            return false;
+        }
+        bytes.grow(*length);
+        writeUTF8(text, bytes.mutableSpan());
         flags |= CompileIgnoreCookie;
     } else if (isBytesLike(source)) {
         std::span<const uint8_t> span;
         if (failed(scope, getBytesLike(globalObject, source, span)))
             return false;
+        if (span.size() > SourceText::maxLength) [[unlikely]] {
+            raiseMemoryError(globalObject, scope, String());
+            return false;
+        }
         bytes.append(span);
     } else {
         raiseTypeError(globalObject, scope, function, "() arg 1 must be a "_s, what, " object"_s);

@@ -200,7 +200,13 @@ bool SourceText::initialize(std::span<const uint8_t> input, OptionSet<Flag> flag
         error.endOffset = endOffset;
         return false;
     };
+    auto failForLength = [&] {
+        error.type = SyntaxErrorInfo::Type::MemoryError;
+        return false;
+    };
 
+    if (input.size() > maxLength) [[unlikely]]
+        return failForLength();
     if (auto* null = static_cast<const uint8_t*>(memchr(input.data(), 0, input.size()))) {
         if (!filename.isNull()) {
             // A file is read line by line, so it is known where: what is shown of the line ends there.
@@ -267,8 +273,13 @@ bool SourceText::initialize(std::span<const uint8_t> input, OptionSet<Flag> flag
             } else {
                 m_encoding = cookie;
                 if (cookie == "iso-8859-1"_s) {
+                    size_t length = m_bytes.size();
+                    for (uint8_t c : m_bytes)
+                        length += c >> 7;
+                    if (length > maxLength) [[unlikely]]
+                        return failForLength();
                     Vector<uint8_t> utf8;
-                    utf8.reserveInitialCapacity(m_bytes.size() + m_bytes.size() / 8);
+                    utf8.reserveInitialCapacity(length + 1);
                     for (uint8_t c : m_bytes) {
                         if (c < 0x80)
                             utf8.append(c);
@@ -282,6 +293,8 @@ bool SourceText::initialize(std::span<const uint8_t> input, OptionSet<Flag> flag
                     String message;
                     bool unknownEncoding = false;
                     UTF8CString decoded = host.decodeSource(m_bytes.span(), cookie, message, unknownEncoding);
+                    if (decoded.isNull() ? message.isNull() : decoded.length() > maxLength) [[unlikely]]
+                        return failForLength();
                     if (decoded.isNull()) {
                         // Of a file, CPython has what follows the declaration decoded by a reader that starts at the end of that line:
                         // that is where the position in the message counts from.

@@ -27,7 +27,11 @@ public:
         IgnoreCookie = 1 << 1, // The bytes are UTF-8 whatever a coding cookie says (the source was a str).
     };
 
-    // False: `error` says why.
+    // In bytes, as it comes and in UTF-8. The lexer and the parser make strings of parts of the source by ways that are for text that is
+    // not long: through Vectors, which hold 2**30 - 1 units of 16 bits at most, and end the process beyond.
+    static constexpr size_t maxLength = (1u << 30) - 1;
+
+    // False: `error` says why. (A MemoryError: it is longer than that.)
     bool initialize(std::span<const uint8_t>, OptionSet<Flag>, const String& filename, ParserHost&, SyntaxErrorInfo& error);
 
     std::span<const uint8_t> bytes() const { return m_bytes.span().first(m_bytes.size() - 1); }

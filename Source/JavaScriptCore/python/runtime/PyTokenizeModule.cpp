@@ -101,14 +101,19 @@ private:
         }
         String text = strValue(line)->value(m_globalObject);
         RETURN_IF_EXCEPTION(scope, false);
-        auto encoded = tryEncodeUTF8(text);
-        if (!encoded) {
+        auto length = lengthInUTF8(text);
+        if (!length) {
             // As str.encode() would complain.
             strEncode(m_globalObject, strValue(line), nullptr, nullptr);
             ASSERT(scope.exception());
             return false;
         }
-        bytes = WTF::move(*encoded);
+        if (*length > SourceText::maxLength) [[unlikely]] {
+            raiseMemoryError(m_globalObject, scope, String());
+            return false;
+        }
+        bytes.resize(*length);
+        writeUTF8(text, bytes.mutableSpan());
         return true;
     }
 

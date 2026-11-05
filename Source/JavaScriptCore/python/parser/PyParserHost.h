@@ -35,7 +35,7 @@ public:
     virtual WarningResult warn(const Warning&) { return WarningResult::Reported; }
 
     // The source in UTF-8, for a coding cookie that names neither UTF-8 nor Latin-1. A null string: `error` says why,
-    // and `unknownEncoding` whether the codec does not exist.
+    // and `unknownEncoding` whether the codec does not exist. If `error` is null as well, it would be longer than a source may be.
     virtual UTF8CString decodeSource(std::span<const uint8_t>, const ASCIICString& encoding, String& error, bool& unknownEncoding);
 
     // A line of the file the source is said to come from, in UTF-8 and with its line ending, if there is such a file:
