@@ -620,6 +620,17 @@ static JSValue callGetAttrHook(JSGlobalObject* globalObject, JSValue hook, JSVal
     return result;
 }
 
+JSValue getAttrFromDescriptor(JSGlobalObject* globalObject, JSValue object, JSString* name, JSValue descriptor, bool forCall)
+{
+    Runtime& rt = runtime(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(rt.vm());
+    JSValue result = bindDescriptor(globalObject, descriptor, object, rt.typeOf(object));
+    // (getMethod() leaves an AttributeError as it is, as CPython does.)
+    if (failed(scope, result) && !forCall) [[unlikely]]
+        completeAttributeError(globalObject, object, name);
+    return result;
+}
+
 JSValue getAttrOfAbsent(JSGlobalObject* globalObject, JSValue object, JSString* name)
 {
     auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
@@ -908,10 +919,12 @@ static AttributeDescription describeAttributeOfObject(JSGlobalObject* globalObje
     AttributeDescription description = mayBecomeAnotherKindOfDescriptor(rt, descriptor, typeOfObject) ? OfThisObjectNow : OfAllAlike;
 
     if (!isPython) {
-        if (!forCall || !descriptor || !isMethodDescriptor(descriptor))
+        if (!descriptor)
             return None;
-        cache.jsType = jsType;
         cache.payload = JSValue::encode(descriptor);
+        if (!forCall || !isMethodDescriptor(descriptor))
+            return ToBind;
+        cache.jsType = jsType;
         return description;
     }
 
@@ -932,11 +945,10 @@ static AttributeDescription describeAttributeOfObject(JSGlobalObject* globalObje
         description = OfThisObjectNow;
 
     // One of the __slots__.
-    if (auto* member = PyMemberDescriptor::tryFrom(descriptor)) {
-        if (!appliesToInstancesOf(member->owner(), type))
-            return None;
+    if (auto* member = PyMemberDescriptor::tryFrom(descriptor); member && appliesToInstancesOf(member->owner(), type)) {
         cache.offset = structure->get(vm, PropertyName(&member->key()->uid()));
-        return isValidOffset(cache.offset) ? description : None;
+        if (isValidOffset(cache.offset))
+            return description;
     }
     // A field of a named tuple.
     if (jsType == PyTupleType && !forCall) {
@@ -952,8 +964,15 @@ static AttributeDescription describeAttributeOfObject(JSGlobalObject* globalObje
         cache.payload = JSValue::encode(descriptor);
         return description;
     }
-    if (isData)
-        return None;
+    // From here on, where the attribute is what a descriptor gives. If that raises AttributeError, __getattr__ is asked: that is for getAttr().
+    AttributeDescription toBind = hasHook ? None : ToBind;
+    if (isData) {
+        // (One that has no __get__ does not come before what the object has itself.)
+        if (!rt.typeOf(descriptor)->lookup(Special::Get))
+            return None;
+        cache.payload = JSValue::encode(descriptor);
+        return toBind;
+    }
 
     // What the object holds itself. Its Structure tells, if the attributes are properties: those of an instance that has not been asked
     // for its __dict__.
@@ -996,7 +1015,7 @@ static AttributeDescription describeAttributeOfObject(JSGlobalObject* globalObje
     cache.payload = JSValue::encode(descriptor);
     if (isMethodDescriptor(descriptor)) {
         cache.offset = AttributeCache::classValue;
-        return forCall ? description : None; // Otherwise the attribute is a new bound method each time.
+        return forCall ? description : toBind; // Otherwise the attribute is a new bound method each time.
     }
     switch (methodWrapperKind(rt, descriptor)) {
     case MethodWrapper::StaticMethod:
@@ -1004,16 +1023,16 @@ static AttributeDescription describeAttributeOfObject(JSGlobalObject* globalObje
         return description;
     case MethodWrapper::ClassMethod:
         cache.offset = AttributeCache::classMethod;
-        return forCall ? description : None;
+        return forCall ? description : toBind;
     case MethodWrapper::None:
         break;
     }
     // What is left is the attribute as it is, if there is nothing to bind.
     if (descriptor.isCell()) {
         if (auto* native = PyNativeFunction::tryFrom(descriptor); native && native->kind() == NativeKind::ClassMethod)
-            return None;
+            return toBind;
         if (rt.typeOf(descriptor)->lookup(Special::Get))
-            return None;
+            return toBind;
     }
     cache.offset = forCall ? AttributeCache::unboundClassValue : AttributeCache::classValue;
     return description;
@@ -1022,9 +1041,18 @@ static AttributeDescription describeAttributeOfObject(JSGlobalObject* globalObje
 AttributeDescription describeAttribute(JSGlobalObject* globalObject, JSValue object, JSString* name, bool forCall, AttributeCache& cache)
 {
     using enum AttributeDescription;
-    if (!object.isCell())
-        return None;
     Runtime& rt = runtime(globalObject);
+    if (!object.isCell()) {
+        // An int, a float, a bool, None: it has nothing of its own, and its class is as it was built.
+        JSValue descriptor = rt.typeOf(object)->lookup(name);
+        if (!descriptor)
+            return None;
+        cache.payload = JSValue::encode(descriptor);
+        if (!forCall || !isMethodDescriptor(descriptor))
+            return ToBind;
+        cache.offset = AttributeCache::classValue;
+        return OfThisObjectNow;
+    }
     uint64_t timesLookupRanCode = PyType::timesLookupRanCode();
     JSCell* cell = object.asCell();
     PyType* type = nullptr;

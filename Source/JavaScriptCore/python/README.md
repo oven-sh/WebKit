@@ -313,12 +313,16 @@ unpacking, cells, the binding of arguments when they are simply the parameters, 
   another order, each is looked up anew, and once: `describeAttribute()` finds the attribute and says where it is in the terms of
   the cache, and whether that holds for all objects alike or for this one now (it keeps its attributes in a dict, its class has no
   number left), or that there is none. The slow path (`findAttribute()`) reads through the description and remembers it if it holds for all, so an
-  object of which nothing can be remembered leaves what is remembered as it is. What cannot be said in those terms goes to `getAttr()`.
+  object of which nothing can be remembered leaves what is remembered as it is. Where the attribute is what a descriptor gives for the object (a
+  method that is read and not called, a built-in getter such as `__class__`, a `__get__` written in Python), the description names the descriptor and
+  the slow path asks it (`getAttrFromDescriptor()`): nothing of that is remembered, but the walk is not made a second time. (So JS: one
+  `getPropertySlot()` gives the value and says whether it may be cached.) The rest goes to `getAttr()`: a `__getattribute__` of the program's, and a
+  descriptor in a class that has a `__getattr__`, which is asked if the descriptor raises `AttributeError`.
   The description comes before the lookup, not after one that has succeeded, so it has to keep what the lookup keeps:
   - Whatever `genericGetAttr()`, `getMethod()`, `typeGetAttr()` and `bindDescriptor()` check or raise before they return is checked, or the
     attribute is not described: a slot belongs to the class or a base of it; a method of a built-in type is bound first where the class
-    has a `__getattr__`; a data descriptor, a `__get__` written in Python, a class method of a built-in type are not described.
-  - No code of the program has run. Only one thing in the walk can run any: a key that is no str in the dict of a class
+    has a `__getattr__`; a data descriptor, a `__get__` written in Python, a class method of a built-in type are named, and asked afterwards.
+  - No code of the program has run when the description is there. Only one thing in the walk can run any: a key that is no str in the dict of a class
     (`type('C', (), {key: 1})`) is asked whether it equals the name. `PyType::lookupSlow()` counts that (`PyType::timesLookupRanCode()`), and
     a description during which the count has moved is thrown away: the class, the object or the frame may have changed. (JS's lookups say
     the like through the `PropertySlot`: `disableCaching()`, `isTaintedByOpaqueObject()`.) So for stores and for the methods of `with`.

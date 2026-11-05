@@ -415,6 +415,8 @@ static ALWAYS_INLINE JSValue findAttribute(JSGlobalObject* globalObject, Metadat
         return { };
     case AttributeDescription::Absent:
         return getAttrOfAbsent(globalObject, base, name);
+    case AttributeDescription::ToBind:
+        return getAttrFromDescriptor(globalObject, base, name, JSValue::decode(cache.payload), !!self);
     case AttributeDescription::OfAllAlike:
         remember(metadata, cache);
         break;
