@@ -588,14 +588,19 @@ public:
         }
         m_hasStarted = true;
         m_isFinal = isFinal;
-        m_raw.append(data);
 
         size_t start = m_resume;
         ExpatError error = ExpatErrorNone;
-        if (m_isChild)
-            error = accountForExpansion(data.size());
-        else
-            m_dtd->directBytes += data.size();
+        // One token of which there is no end. (Expat gives up when its buffer cannot be doubled any more; the Vectors here, earlier.)
+        if (data.size() > maxPendingInput - std::min(m_raw.size(), maxPendingInput)) [[unlikely]]
+            error = ExpatErrorNoMemory;
+        else {
+            m_raw.append(data);
+            if (m_isChild)
+                error = accountForExpansion(data.size());
+            else
+                m_dtd->directBytes += data.size();
+        }
         if (!error)
             error = run();
         if (error != ExpatErrorNone) {
@@ -4391,6 +4396,7 @@ private:
     int m_errorCode { ExpatErrorNone };
 
     // The input: as it came, from the byte numbered m_rawBase on, and decoded.
+    static constexpr size_t maxPendingInput = 1u << 29;
     Vector<uint8_t> m_raw;
     uint64_t m_rawBase { 0 };
     size_t m_rawDecoded { 0 };
@@ -4545,27 +4551,33 @@ static JSValue expatParse(JSGlobalObject* globalObject, JSValue self, const Call
     if (parser.isInCallback)
         return raiseRuntimeError(globalObject, scope, "cannot call Parse() from within a handler"_s);
 
+    // A megabyte at a time, as CPython hands it to Expat: the handlers see where one ends.
+    auto parse = [&](std::span<const uint8_t> bytes) {
+        constexpr size_t pieceSize = 1 << 20;
+        for (; bytes.size() > pieceSize; bytes = bytes.subspan(pieceSize)) {
+            if (!parser.parse(globalObject, bytes.first(pieceSize), false))
+                return false;
+        }
+        return parser.parse(globalObject, bytes, isFinal);
+    };
     JSValue data = args[0];
     bool ok;
     if (isStr(data)) {
-        String text = strValue(data)->value(globalObject);
-        RETURN_IF_EXCEPTION(scope, { });
-        auto encoded = tryEncodeUTF8(text);
-        if (!encoded) {
-            // For the sake of the exception.
-            strEncode(globalObject, strValue(data), nullptr, nullptr);
-            RETURN_IF_EXCEPTION(scope, { });
-            return raiseValueError(globalObject, scope, "surrogates not allowed"_s);
-        }
+        ByteBuilder encoded;
+        if (failed(scope, appendUTF8(globalObject, encoded, strValue(data))))
+            return { };
         parser.setEncodingIfNotStarted("utf-8"_s);
-        ok = parser.parse(globalObject, encoded->span(), isFinal);
+        ok = parse(encoded.span());
     } else {
         BufferHolder holder(globalObject);
         if (failed(scope, holder.get(data, BufferSimple)))
             return { };
         // The handlers may do as they like with the object, so this goes by a copy.
-        Vector<uint8_t> copy(holder.buffer.span());
-        ok = parser.parse(globalObject, copy.span(), isFinal);
+        ByteBuilder copy;
+        copy.append(holder.buffer.span());
+        if (copy.hasOverflowed()) [[unlikely]]
+            return raiseMemoryError(globalObject, scope, String());
+        ok = parse(copy.span());
     }
     RELEASE_AND_RETURN(scope, expatParseResult(globalObject, parser, ok));
 }
@@ -4589,18 +4601,21 @@ static JSValue expatParseFile(JSGlobalObject* globalObject, JSValue self, const 
     while (true) {
         JSValue data = call(globalObject, read, jsNumber(chunkSize));
         RETURN_IF_EXCEPTION(scope, { });
-        Vector<uint8_t> bytes;
+        // (The parser copies what it is given before it calls a handler, which may do as it likes with the object.)
+        std::span<const uint8_t> bytes;
         if (auto* object = PyBytes::tryFrom(data))
-            bytes.append(object->span());
+            bytes = object->span();
         else if (auto* array = PyByteArray::tryFrom(data))
-            bytes.append(array->span());
+            bytes = array->span();
         else
             return raiseTypeError(globalObject, scope, "read() did not return a bytes object (type="_s, typeName(globalObject, data), ')');
         if (bytes.size() > chunkSize)
             return raiseValueError(globalObject, scope, "read() returned too much data: "_s, chunkSize, " bytes requested, "_s, bytes.size(), " returned"_s);
-        ok = parser.parse(globalObject, bytes.span(), bytes.isEmpty());
+        bool isLast = bytes.empty();
+        ok = parser.parse(globalObject, bytes, isLast);
+        ensureStillAliveHere(data);
         RETURN_IF_EXCEPTION(scope, { });
-        if (!ok || bytes.isEmpty())
+        if (!ok || isLast)
             break;
     }
     RELEASE_AND_RETURN(scope, expatParseResult(globalObject, parser, ok));
