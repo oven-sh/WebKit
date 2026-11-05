@@ -668,7 +668,7 @@ static void setDictOfInstance(JSGlobalObject* globalObject, JSValue self, JSValu
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (value && !PyDict::is(value)) {
+    if (value && !isDict(value)) {
         raiseTypeError(globalObject, scope, "__dict__ must be set to a dictionary, not a '"_s, typeName(globalObject, value), '\'');
         return;
     }
