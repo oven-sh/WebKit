@@ -23,9 +23,6 @@ namespace JSC { namespace AOT { namespace Typed {
 
 static constexpr OpcodeSet opcodesOfNumberKeys { Opcode::ElemGet, Opcode::ElemSet, Opcode::ElemHas };
 
-// Of the primitives only a string has own properties.
-static constexpr uint16_t primitiveSourcesWithoutOwnProperties = Primitive::UndefinedOrNull | Primitive::Boolean | Primitive::Number | Primitive::AnySymbol | Primitive::BigInt;
-
 static Origin originInFrontOfAccessInNumberKeys(Walker& walker, const BodyValue& value)
 {
     Origin origin = walker.originOf(value);
@@ -223,77 +220,6 @@ bool buildElementAccessUnderNumber(Walker& walker, const BodyValue& value, const
 }
 
 // ---- A spread of a primitive
-
-// `{ ...base, ...(flag && extra) }`, `{ ...maybe }`. A source that is proven to have no own properties is not copied. One that may be such beside objects is asked once, and the copy stands in the arm of the objects.
-bool buildCopyOfPrimitive(Walker& walker, const BodyValue& copy)
-{
-    if (copy.opcode() != Opcode::CopyDataProperties || !walker.has(Mechanism::TypedOperations))
-        return false;
-    ValueID writtenSource = copy.sourceOperand();
-    ValueID writtenTarget = copy.targetOperand();
-    Reference source = walker.referenceOf(writtenSource);
-    TypeID id = source && source.isRecord() ? walker.typeOf(source) : TypeID();
-    if (!id || isNeverType(id))
-        return false;
-    Type type = walker.types().at(id);
-    if (!type.isJavaScriptValue() || type.mayBeUnspecified() || type.primitives & Primitive::Absent)
-        return false;
-    uint16_t kindsThatAreNotCopied = type.primitives & primitiveSourcesWithoutOwnProperties;
-    if (!kindsThatAreNotCopied)
-        return false;
-    if (type.hasOnlyPrimitives(primitiveSourcesWithoutOwnProperties))
-        return true;
-
-    // The test pays where it leaves objects alone of a type that lists them. Of anything the copy as written asks the same by itself.
-    if (!source.isValue() || !walker.opensGuesses() || type.anyObject || !type.hasObjects() || type.primitives != kindsThatAreNotCopied)
-        return false;
-    TypeID tested = TypeArena::fromPrimitives(kindsThatAreNotCopied);
-    if (walker.types().testablePartOf(tested) != tested)
-        return false;
-
-    const BodyIndex& index = walker.currentBodyIndex();
-    BodyBlock block = index.block(index.blockOf(copy.id()));
-    uint32_t place = copy.id().index() - block.firstValue().index();
-    Origin origin = originInFrontOfAccessInNumberKeys(walker, copy);
-
-    Draft test(Opcode::TypeTest, origin);
-    walker.chooseConservativeFields(test);
-    test.setValueOperand(source);
-    test.setTestedType(tested);
-    Reference hasNothingToCopy = walker.build(WTF::move(test));
-    if (!hasNothingToCopy)
-        return true;
-
-    BlockID skips = walker.addBlock();
-    BlockID copies = walker.addBlock();
-    BlockID meeting = walker.addBlock();
-    walker.branch(hasNothingToCopy, skips, copies);
-
-    // A typed copy makes the target anew, so the target has a name in each arm.
-    Reference targetInFront = walker.referenceBoundTo(writtenTarget);
-    WayInNumberForms wayOfCopy { };
-    walker.continueIn(copies);
-    if (Reference object = buildNarrowedInNumberForms(walker, source, hasNothingToCopy, OperandIndex::TypeTest::value, false, origin)) {
-        Reference bound = walker.referenceBoundTo(writtenSource);
-        walker.bind(writtenSource, object);
-        walker.walkStretch(block.id(), place, place + 1);
-        walker.bind(writtenSource, bound);
-        if (!walker.isUnreachable())
-            wayOfCopy = { walker.currentBlock(), walker.referenceBoundTo(writtenTarget), { } };
-    }
-    if (walker.hasFailed())
-        return true;
-    walker.bind(writtenTarget, targetInFront);
-
-    walker.continueIn(skips);
-    bool targetHasOneName = !wayOfCopy.end || wayOfCopy.brought == targetInFront;
-    if (targetHasOneName)
-        wayOfCopy.brought = { };
-    std::array<WayInNumberForms, 2> ways { wayOfCopy, WayInNumberForms { walker.currentBlock(), targetHasOneName ? Reference() : targetInFront, { } } };
-    if (Reference met = meetInNumberForms(walker, meeting, ways))
-        walker.bind(writtenTarget, met);
-    return true;
-}
 
 } } } // namespace JSC::AOT::Typed
 

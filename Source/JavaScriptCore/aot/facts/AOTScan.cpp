@@ -5,7 +5,6 @@
 
 #include "config.h"
 #include "AOTThinSummary.h"
-#include "AOTLinkStringParsers.h"
 
 #if ENABLE(AOT)
 
@@ -674,7 +673,6 @@ public:
         , m_namesUnderWhichEventsHang(namesUnderWhichEventsHang)
         , m_textsThatNameFieldsNeverWritten(textsThatNameFieldsNeverWritten)
         , m_walkFollowsConstants(mechanisms.contains(Mechanism::Folding))
-        , m_resultsOfParsers(mechanisms)
         , m_walkFollowsTests(mechanisms.contains(Mechanism::TypedOperations))
     {
     }
@@ -695,7 +693,6 @@ public:
 private:
     friend struct ResultRulesOfScan;
     friend struct ReferencesOfScan;
-    friend struct WhatNamesAskOfScan;
 
     static constexpr uint32_t parameterBit = 1u << 31;
     // The rest is the place in m_operators. It becomes a node behind the body, if the result is needed.
@@ -770,7 +767,6 @@ private:
     ListInScan listOfNode(uint32_t node);
     ListInScan listOf(ValueID);
     ListInScan readByName(uint32_t read);
-    void noteCheckThatHandsOn(const BodyValue&);
     void noteInspection(ValueID site, ThinSummary::Inspection::Kind, ListInScan);
     uint32_t takerOfMemberBesideFields(uint32_t object, PropertyKeyID);
     ListInScan internAtoms(Vector<uint32_t>&);
@@ -960,8 +956,6 @@ private:
     void noteHandlerOf(const BodyBlock&);
     // The Join, made at the first question.
     uint32_t nodeCaughtBy(BlockID handler);
-    // nodeCaughtBy() of the handler of the block, else the Thrown node.
-    uint32_t nodeTakingWhatIsThrownIn(uint32_t block);
     void settleWhereRecordsThrow();
     void removeRepeatedEdges();
     void listNamesSpelled();
@@ -977,7 +971,6 @@ private:
     void noteStoreThatBecameEdge(const StoreInScan&);
     void listOperandsOfOperatorsLeftApart();
     void tellWaysToReturnApart();
-    void listParametersThatAreResults();
     void finishKnownEffects();
     OriginInScan narrowerOfTwoTests(OriginInScan, TypeID passes);
 
@@ -1033,8 +1026,6 @@ private:
     Vector<bool> m_isConvertedToPrimitive;
     // The same way: the first of the calls that the conversion has left.
     Vector<uint32_t> m_firstCallOfConversion;
-    // ThinSummary::furtherConversions, with the place in m_atoms for the call.
-    Vector<ThinSummary::FurtherConversion> m_furtherConversions;
     Vector<OperatorInScan> m_operators;
     // Ascending. Nothing but primitives arrives at them.
     Vector<uint32_t> m_joinsOfPrimitives;
@@ -1043,7 +1034,6 @@ private:
     bool m_followsConstants { false };
     // False where the body is read a second time, as it is written.
     bool m_followsTests { false };
-    NamesBehindTestsInScan m_names;
     // An edge leads back into a block that was passed over, which only irreducible flow can do.
     bool m_hasEnteredBlockPassedOver { false };
     // By value: what primitiveHeldBy() has answered, in the body with that stamp. No body clears it.
@@ -1201,34 +1191,7 @@ private:
     Vector<uint32_t> m_nodesOfLists;
     Vector<uint32_t> m_fieldsStoredInto;
     Vector<ValueID> m_sitesOfRows;
-    ResultsOfParsersInScan m_resultsOfParsers;
     KnownEffectsOfScan m_knownEffects;
-};
-
-// What the generated applyResultRule() calls.
-struct WhatNamesAskOfScan final : ScanAskedByNames {
-    explicit WhatNamesAskOfScan(ScanOfBody& scan)
-        : scan(scan)
-    {
-    }
-
-    static WordsOfListInScan wordsOf(ListInScan list) { return { list.first, list.count }; }
-
-    BodyValue definitionOf(ValueID value) final { return scan.definitionOf(value.index()); }
-    WordsOfListInScan listOf(ValueID value) final { return wordsOf(scan.listOf(value)); }
-    bool mayGoUnderName(ValueID value) final { return !(scan.m_uses[scan.m_roots[value.index()]] & (ScanOfBody::isUnderConstruction | ScanOfBody::isFollowedWhileMade)); }
-    uint32_t newJoin() final { return scan.newJoin(); }
-    void flowInto(WordsOfListInScan list, uint32_t join, TypeID passes) final { scan.addSink(SinkKindInScan::Edge, { list.first, list.count }, join, passes); }
-    WordsOfListInScan listOfNode(uint32_t node) final { return wordsOf(scan.listOfNode(node)); }
-    uint32_t onlyNodeOf(WordsOfListInScan list) final
-    {
-        if (list.count != 1)
-            return noSummaryNode;
-        uint32_t atom = scan.m_atoms[list.first];
-        return atom & (ScanOfBody::parameterBit | ScanOfBody::operatorBit) ? noSummaryNode : atom;
-    }
-
-    ScanOfBody& scan;
 };
 
 struct ResultRulesOfScan {
@@ -1409,7 +1372,6 @@ void ScanOfBody::reset()
     m_nodesCaughtByBlocks.shrink(0);
     m_innermostLoopHeads.shrink(0);
     m_isConvertedToPrimitive.shrink(0);
-    m_furtherConversions.shrink(0);
     m_operators.shrink(0);
     m_joinsOfPrimitives.shrink(0);
     m_objectsBeingMade.shrink(0);
@@ -1949,16 +1911,6 @@ void ScanOfBody::addOperator(const BodyValue& value)
     addList(result);
 }
 
-// ---- unions-and-narrowing
-
-void ScanOfBody::noteCheckThatHandsOn(const BodyValue& value)
-{
-    if (!m_names.follows())
-        return;
-    WhatNamesAskOfScan asked(*this);
-    m_names.noteCheck(asked, m_program, value);
-}
-
 void ScanOfBody::noteInspection(ValueID site, ThinSummary::Inspection::Kind kind, ListInScan list)
 {
     if (list.count && isAlwaysPrimitive(list))
@@ -2461,8 +2413,6 @@ void ScanOfBody::readOperation(const BodyValue& value, uint32_t block)
     const Effects& effects = noteOwnEffects(value, block, access, *declaredEffects, effectsStorage);
     if (!effects.isPure())
         m_summary.ownEffects.merge(effects);
-    if (effects.mayCallUnknownCode && m_function->isModuleBody())
-        m_summary.sitesThatRunUnknownCode.append(value.id());
     if (effects.maySuspend)
         m_summary.traits.add(SummaryTrait::Suspends);
     if (raisesOf(opcode) == ProgramEvent::EvaluatesText)
@@ -2480,6 +2430,9 @@ void ScanOfBody::readOperation(const BodyValue& value, uint32_t block)
         readNewClass(value);
         return;
     }
+    // The run time makes a token by the record of the class and asks that record what a private name is called, whether or not anything evaluates the class.
+    if (opcode == Opcode::NewClassToken)
+        m_summary.classesEvaluated.append(value.as<Opcode::NewClassToken>().layout());
     if (opcode == Opcode::DefineMethod) {
         readDefineMethod(value);
         return;
@@ -3021,7 +2974,7 @@ void ScanOfBody::readOwnValues(const BodyValue& value, uint32_t operandIndex, Li
         handToCodeThatRuns(list);
 }
 
-// The calls are the same wherever one value is converted, so they are left once, at the first such operation. Three calls stand at that site, so Link lists no callee for it. Of the others the summary keeps the sites.
+// The calls are the same wherever one value is converted, so they are left once, at the first such operation. Three calls stand at that site, so Link lists no callee for it.
 // They are made behind the body, when it is known where the value comes from: applyConversionToPrimitive().
 void ScanOfBody::convertToPrimitive(ValueID site, ListInScan list)
 {
@@ -3029,10 +2982,8 @@ void ScanOfBody::convertToPrimitive(ValueID site, ListInScan list)
         return;
     while (m_isConvertedToPrimitive.size() <= list.first)
         m_isConvertedToPrimitive.append(false);
-    if (std::exchange(m_isConvertedToPrimitive[list.first], true)) {
-        m_furtherConversions.append({ site, list.first });
+    if (std::exchange(m_isConvertedToPrimitive[list.first], true))
         return;
-    }
     addSink(SinkKindInScan::ConvertedToPrimitive, list, site.index());
 }
 
@@ -3227,8 +3178,12 @@ void ScanOfBody::retain(const BodyValue& value, uint32_t operandIndex, const Ope
         // What the body yields, whoever has the generator by then: LinkedCoroutine::yielded.
         if (value.opcode() == Opcode::Yield && !m_function->has(FunctionFlags::IsAsync))
             flowInto(list, contentsNode(objectOfCoroutine(), SlotOfContents::yieldedAlone()));
-        if (value.opcode() == Opcode::PutModuleVariable)
-            flowInto(list, variableNode(value.as<Opcode::PutModuleVariable>().variable()));
+        if (value.opcode() == Opcode::PutModuleVariable) {
+            VariableID variable = value.as<Opcode::PutModuleVariable>().variable();
+            if (m_program.at(variable).initialization == VariableInitialization::Function)
+                m_summary.functionVariablesStoredInto.append(variable);
+            flowInto(list, variableNode(variable));
+        }
         else if (m_operandSettled == operandIndex && someResultIsReadOutOf(value, operandIndex))
             return;
         else if (std::optional<SlotOfContents> slot = slotNamedByRowOf(value); slot && !holderOf(value.opcode()) && m_function->isCoroutine() && !m_function->flags.containsAll({ FunctionFlags::IsGenerator, FunctionFlags::IsAsync }))
@@ -4893,10 +4848,6 @@ void ScanOfBody::applySinks()
             applyConversionToPrimitive(sink);
             break;
         }
-    }
-    for (const ThinSummary::FurtherConversion& further : m_furtherConversions) {
-        if (uint32_t firstCall = m_firstCallOfConversion[further.firstCall]; firstCall != noConversion)
-            m_summary.furtherConversions.append({ further.site, firstCall });
     }
     for (const OperatorInScan& found : m_operators)
         applyOperator(found);

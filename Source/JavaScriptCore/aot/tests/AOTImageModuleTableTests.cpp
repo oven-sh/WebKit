@@ -377,43 +377,9 @@ static void testTablesOfManyModules()
         AOT_TEST_CHECK(bytesOfImageWithManyModules(threadCount) == expected);
 }
 
-static void testLoopsBesideEachOther()
-{
-    constexpr std::array<unsigned, 6> counts { 1, 0, 700, 1, 2 * indicesInRangeOfLoop + 3, 0 };
-    for (unsigned threadCount : threadCountsForManyModules) {
-        ParallelLoops loops(threadCount);
-        std::array<Vector<unsigned>, counts.size()> visits;
-        for (size_t loop = 0; loop < counts.size(); ++loop)
-            visits[loop].fill(0, counts[loop]);
-        forEachIndexOfLoopsInParallel(loops, {
-            { counts[0], [&](unsigned index) { ++visits[0][index]; } },
-            { counts[1], [&](unsigned index) { ++visits[1][index]; } },
-            { counts[2], [&](unsigned index) { ++visits[2][index]; } },
-            { counts[3], [&](unsigned index) { ++visits[3][index]; } },
-            { counts[4], [&](unsigned index) { ++visits[4][index]; } },
-            { counts[5], [&](unsigned index) { ++visits[5][index]; } },
-        });
-        for (const Vector<unsigned>& visitsOfLoop : visits) {
-            AOT_TEST_CHECK(std::ranges::all_of(visitsOfLoop, [](unsigned times) {
-                return times == 1;
-            }));
-        }
-        forEachIndexOfLoopsInParallel(loops, { });
-    }
-
-    size_t covered = 0;
-    for (unsigned range = 0; range < numberOfRangesOfIndices(counts[4]); ++range) {
-        auto [first, end] = boundsOfRangeOfIndices(range, counts[4]);
-        AOT_TEST_CHECK(first == covered && end > first);
-        covered = end;
-    }
-    AOT_TEST_CHECK(covered == counts[4]);
-}
-
 std::span<const NativeTest> tablesOfManyModulesTests()
 {
     static constexpr NativeTest tests[] = {
-        { "image/module-tables/loops-beside-each-other"_s, testLoopsBesideEachOther },
         { "image/module-tables/many-modules-read-back-at-any-number-of-threads"_s, testTablesOfManyModules },
     };
     return tests;

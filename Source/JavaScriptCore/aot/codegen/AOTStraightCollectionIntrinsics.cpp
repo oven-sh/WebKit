@@ -54,9 +54,8 @@ static void generatePutCollectionIteratorTable(StraightEmitter& emitter, const B
 {
     CCallHelpers& jit = emitter.jit();
     GPRReg iterator = StraightEmitter::temporary(1);
-    GPRReg table = StraightEmitter::resultGPR;
     emitter.load(value.objectOperand(), iterator);
-    emitter.load(value.valueOperand(), table);
+    GPRReg table = emitter.loadIntoResultRegister(value.valueOperand());
     CCallHelpers::Jump isTable = jit.branch64(CCallHelpers::NotEqual, table, CCallHelpers::TrustedImm64(JSValue::encode(jsNull())));
     jit.move(CCallHelpers::TrustedImm32(0), table);
     isTable.link(&jit);
@@ -76,8 +75,9 @@ static void loadEntryOfCollectionStep(StraightEmitter& emitter, ValueID operand,
     }
     emitter.load(operand, entry);
     CCallHelpers::Jump isInt32 = jit.branchIfInt32(entry);
-    jit.unboxDoubleWithoutAssertions(entry, entry, StraightEmitter::resultFPR);
-    jit.truncateDoubleToInt64(StraightEmitter::resultFPR, entry);
+    FPRReg number = emitter.takeResultFPR();
+    jit.unboxDoubleWithoutAssertions(entry, entry, number);
+    jit.truncateDoubleToInt64(number, entry);
     isInt32.link(&jit);
 }
 
@@ -97,7 +97,7 @@ static void generateStepOfCollection(StraightEmitter& emitter, const BodyValue& 
         GPRReg boxed = StraightEmitter::temporary(3);
         switch (static_cast<MapNextResult>(part.index())) {
         case MapNextResult::HasEntry:
-            boxed = GPRInfo::returnValueGPR;
+            boxed = emitter.resultOfCall();
             emitter.boxInForm(Representation::Boolean, boxed);
             break;
         case MapNextResult::Entry:
@@ -118,29 +118,32 @@ static void generateStepOfCollection(StraightEmitter& emitter, const BodyValue& 
 void StraightEmitter::generateCollectionIntrinsic(const BodyValue& value)
 {
     switch (value.opcode()) {
-    case Opcode::CollectionTable:
-        load(value.collectionOperand(), resultGPR);
-        jit().loadPtr(CCallHelpers::Address(resultGPR, JSMap::offsetOfStorage()), resultGPR);
-        defineTableOrNull(*this, value, resultGPR);
+    case Opcode::CollectionTable: {
+        GPRReg result = loadIntoResultRegister(value.collectionOperand());
+        jit().loadPtr(CCallHelpers::Address(result, JSMap::offsetOfStorage()), result);
+        defineTableOrNull(*this, value, result);
         return;
+    }
     case Opcode::CollectionIteratorClosedMark:
-        loadClosedMarkOfCollectionIterators(*this, resultGPR);
+        loadClosedMarkOfCollectionIterators(*this, takeResultRegister());
         define(value);
         return;
-    case Opcode::GetCollectionIteratorTable:
-        load(value.objectOperand(), resultGPR);
-        jit().load64(tableOfCollectionIterator(resultGPR), resultGPR);
-        defineTableOrNull(*this, value, resultGPR);
+    case Opcode::GetCollectionIteratorTable: {
+        GPRReg result = loadIntoResultRegister(value.objectOperand());
+        jit().load64(tableOfCollectionIterator(result), result);
+        defineTableOrNull(*this, value, result);
         return;
+    }
     case Opcode::PutCollectionIteratorTable:
         generatePutCollectionIteratorTable(*this, value);
         return;
-    case Opcode::IsCollectionIteratorClosedMark:
+    case Opcode::IsCollectionIteratorClosedMark: {
         loadClosedMarkOfCollectionIterators(*this, temporary(1));
-        load(value.tableOperand(), resultGPR);
-        jit().compare64(CCallHelpers::Equal, resultGPR, temporary(1), resultGPR);
-        defineBoolean(value);
+        GPRReg result = loadIntoResultRegister(value.tableOperand());
+        jit().compare64(CCallHelpers::Equal, result, temporary(1), result);
+        defineBoolean(value, result);
         return;
+    }
     case Opcode::MapNext:
         generateStepOfCollection(*this, value, RuntimeOperation::MapNext, value.mapOperand());
         return;

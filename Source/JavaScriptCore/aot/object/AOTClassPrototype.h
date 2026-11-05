@@ -50,7 +50,6 @@ public:
     static bool hasMember(JSObject* classPrototype, PropertyName);
     // LayoutData::index of the class. ClassTable::classOf() finds the class.
     uint32_t classNumber() const { return m_classNumber; }
-    static constexpr ptrdiff_t offsetOfClassNumber() { return OBJECT_OFFSETOF(ClassPrototype, m_classNumber); }
     JSObject* classObject() const;
     static constexpr ptrdiff_t offsetOfMemberRow() { return OBJECT_OFFSETOF(ClassPrototype, m_memberRow); }
     std::optional<bool> tryGetDeclaredMember(VM&, PropertyName, PropertySlot&);

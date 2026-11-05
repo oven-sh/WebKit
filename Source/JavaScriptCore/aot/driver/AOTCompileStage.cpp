@@ -216,27 +216,6 @@ static Vector<Typed::WalkNotes> takeNotesOfCompileThreads(std::span<OutputOfComp
     return result;
 }
 
-// The code of a unit names its callees. A unit that failed has none, so every unit of each function that it may call is compiled: one build reports them too.
-static void forEachUnitThatFailedUnitMayCall(CodeUnit failed, const Typed::CompileInputs& inputs, NOESCAPE const Invocable<void(CodeUnit)> auto& functor)
-{
-    using Typed::CodeRole;
-    static constexpr CodeRole rolesOfCallees[] { CodeRole::Body, CodeRole::GenericCallEntry, CodeRole::GenericConstructEntry, CodeRole::AllocatingConstructEntry, CodeRole::CoroutineBody, CodeRole::SlowBody, CodeRole::ParameterGuard };
-    if (failed.function.index() >= inputs.walk.program.functions.size())
-        return;
-    const Typed::CallingConventions& conventions = inputs.walk.plan.conventions();
-    const Typed::FactCallGraph& calls = inputs.walk.facts.calls();
-    for (const Typed::FactCallSite& row : calls.sitesOfCaller.of(failed.function.index())) {
-        if (!row.callees)
-            continue;
-        for (Typed::FunctionID callee : calls.functionsOfList.of(row.callees.index())) {
-            for (CodeRole role : rolesOfCallees) {
-                if (CodeUnit unit(callee, role); conventions.exists(unit))
-                    functor(unit);
-            }
-        }
-    }
-}
-
 static UseOfCompileThreads describeUseOfCompileThreads(std::span<const OutputOfCompileThread> outputs)
 {
     using Unit = UseOfCompileThreads::Unit;
@@ -347,10 +326,6 @@ CompiledProgram compileQueuedUnits(const Typed::CompileInputs& inputs, Typed::Ty
                 keepCodeOfCompileThread(output, WTF::move(*code));
             } else {
                 didFail.store(true, std::memory_order_relaxed);
-                forEachUnitThatFailedUnitMayCall(*unit, inputs, [&](CodeUnit mentioned) {
-                    if (queue.leadsTo(unit->function, mentioned.function))
-                        queue.mention(thread, mentioned);
-                });
             }
             queue.didFinish(thread);
         }

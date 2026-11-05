@@ -15,7 +15,6 @@
 #include "AOTLinkTypesTurnedOnce.h"
 #include "AOTLinkUnions.h"
 #include "AOTLinkStrings.h"
-#include "AOTLinkValuesLaidAbove.h"
 #include "AOTNameClass.h"
 #include "AOTRowsOfLayouts.h"
 #include "AOTUnionTaggedMakers.h"
@@ -918,7 +917,6 @@ void LinkFlow::changeObserved(const FlowObserver& observer, const LinkType& now)
     case FlowObserver::Kind::SubjectOfAccess:
     case FlowObserver::Kind::KeyOfAccess:
     case FlowObserver::Kind::MemberOfAccess:
-    case FlowObserver::Kind::ArgumentOfWaitingCall:
     case FlowObserver::Kind::SymbolOfPreparation:
     case FlowObserver::Kind::OperandOfOperator:
     case FlowObserver::Kind::Inspected:
@@ -1384,6 +1382,11 @@ static bool isConstantUndefinedInLinkLayouts(const SummaryNode& node)
     return node.kind == SummaryNode::Kind::Constant && TypeID::fromBits(node.first) == TypeID(TypeTable::undefined);
 }
 
+static bool isConstantUndefinedOrNullInLinkLayouts(const SummaryNode& node)
+{
+    return node.kind == SummaryNode::Kind::Constant && (TypeID::fromBits(node.first) == TypeID(TypeTable::undefined) || TypeID::fromBits(node.first) == TypeID(TypeTable::null));
+}
+
 enum class TraitOfWriteInLinkLayouts : uint8_t {
     ComesAfterConstruction = 1 << 0,
     AddsWhatIsNotListed = 1 << 1,
@@ -1394,6 +1397,8 @@ enum class TraitOfWriteInLinkLayouts : uint8_t {
     GivesUndefinedToObjectBeingMade = 1 << 4,
     // `this.flags = flags`: the construction itself, or the body that constructs, stores anything else.
     FillsObjectBeingConstructed = 1 << 5,
+    // `this.socket = null`.
+    BringsUndefinedOrNull = 1 << 6,
 };
 
 } // anonymous namespace
@@ -1405,6 +1410,7 @@ public:
     WriterOfLinkLayouts(const LinkFlow&, LinkTables&);
 
     void lookAtSummaries();
+    void writeWhatMakesNoType(BitVector&& functionsWhoseCallersAreAllKnown);
     void write(TypeArena&);
 
 private:
@@ -1457,6 +1463,9 @@ private:
 
     void noteLostClassObjects();
     bool objectPrototypeMayGainName() const;
+    // LinkedFunction::everyCallerIsKnown, which WriterOfLink writes beside the look. While the summaries are looked at nobody has said, and it counts as not known: what the look answers may not hang on how far the other has come.
+    bool everyCallerIsKnown(FunctionID function) const { return m_functionsWhoseCallersAreAllKnown.get(function.index()); }
+    BitVector m_functionsWhoseCallersAreAllKnown;
     bool mayBeAllocated(LayoutID) const;
     bool mayBeKnownByFamily(LayoutID id) const { return m_flow.layoutsMetInFamilies.get(id.index()) || m_flow.lostLayouts.get(id.index()) || hasEscaped(id.index()); }
     bool canHoldAppendedFields(LayoutID) const;
@@ -1474,6 +1483,7 @@ private:
     void finishRunsOnObjectsInFieldsIn(FunctionID);
     void writeRunsBehindTaggedMakers();
     void writeLayouts();
+    void gatherAtDeclarationsOfFields();
     void writeFields();
     void writeAppendedFields();
     void writeVariables();
@@ -1499,7 +1509,7 @@ private:
     static thread_local TypesOfThreadInLink s_typesOfThread;
     TypeArena& types() const { return s_typesOfThread.types ? *s_typesOfThread.types : *m_types; }
     TypesOfFlowTurnedOnce& typesTurned() { return s_typesOfThread.turned ? *s_typesOfThread.turned : m_typesTurned; }
-    void writeOnAllThreads(unsigned numberOfPositions, const Invocable<void(unsigned position)> auto& write)
+    void writeOnAllThreads(unsigned numberOfPositions, const auto& write)
     {
         writeTypedPositionsOnAllThreads(m_flow, m_flow.program.types, numberOfPositions, [](TypesOfThreadInLink types) {
             s_typesOfThread = types;
@@ -1543,11 +1553,25 @@ private:
     // By cell: WrittenUnit::bits() of the one text, integer or boolean that allocations and constant data list there. 0: nothing has been listed yet. otherThanOneUnit: two of them, or anything else, or a write by name.
     static constexpr uint32_t otherThanOneUnit = UINT32_MAX;
     Vector<uint32_t> m_unitsListedForFields;
+    // lookAtEdges(), until lookAtSummaries() has united them with those of the same names.
+    struct SaidByEdges {
+        BitVector fieldsGivenValues;
+        BitVector fieldsGivenUndefinedByMakers;
+        BitVector fieldsFilledByConstructors;
+        BitVector fieldsWrittenLate;
+        BitVector layoutsGivenUndefinedByMakers;
+        Vector<uint32_t> unitsListedForFields;
+    };
+    SaidByEdges m_saidByEdges;
     // By key: some body tells holders apart by what it reads under the name. Of any other field the kind of value says all that anybody asks.
     BitVector m_keysOfTestedFields;
     // LinkedCell::isLeftUndefinedByMakers is the first without the second.
     BitVector m_fieldsGivenUndefinedByMakers;
     BitVector m_fieldsFilledByConstructors;
+    // The constant undefined or null: by a store behind the construction, by a maker. And what a maker gives that is neither.
+    BitVector m_fieldsGivenUndefinedOrNullLate;
+    BitVector m_fieldsGivenUndefinedOrNullByMakers;
+    BitVector m_fieldsGivenValuesByMakers;
     // By layout: some cell of it is in the first.
     BitVector m_layoutsGivenUndefinedByMakers;
     // SlotPlan reads the answer off Facts::held() alone.
@@ -1664,6 +1688,7 @@ private:
     uint32_t m_numberOfKeysStored { 0 };
 
     BitVector m_variablesWrittenLate;
+    BitVector m_variablesStoredInto;
     BitVector m_variablesSharedWithUnseenCode;
 
     Vector<LinkedMember> m_members;
@@ -1693,6 +1718,9 @@ WriterOfLinkLayouts::WriterOfLinkLayouts(const LinkFlow& flow, LinkTables& table
     m_keysOfTestedFields.ensureSize(m_program.types.numberOfPropertyKeys());
     m_fieldsGivenUndefinedByMakers.ensureSize(tables.fields.size());
     m_fieldsFilledByConstructors.ensureSize(tables.fields.size());
+    m_fieldsGivenUndefinedOrNullLate.ensureSize(tables.fields.size());
+    m_fieldsGivenUndefinedOrNullByMakers.ensureSize(tables.fields.size());
+    m_fieldsGivenValuesByMakers.ensureSize(tables.fields.size());
     m_layoutsGivenUndefinedByMakers.ensureSize(numberOfLayouts);
     m_asksWhatMakersGive = flow.reading() == WhatUnseenCodeDoes::OnlyReadsAndCalls;
     m_onlyFunctionsThatMakeObjects.fill(FunctionID(), m_asksWhatMakersGive ? numberOfLayouts : 0);
@@ -1702,6 +1730,7 @@ WriterOfLinkLayouts::WriterOfLinkLayouts(const LinkFlow& flow, LinkTables& table
     m_mentionsOfKeys.fill(0, m_program.types.numberOfPropertyKeys());
     m_placesOfFirstStoresOfKeys.fill(UINT32_MAX, m_program.types.numberOfPropertyKeys());
     m_variablesWrittenLate.ensureSize(tables.variables.size());
+    m_variablesStoredInto.ensureSize(tables.variables.size());
     m_variablesSharedWithUnseenCode.ensureSize(tables.variables.size());
 }
 
@@ -1747,9 +1776,9 @@ TypeID WriterOfLinkLayouts::typeOfWrittenUnit(WrittenUnit unit)
 {
     switch (unit.kind()) {
     case WrittenUnit::Kind::Text:
-        return m_types->stringLiteral(unit.text());
+        return types().stringLiteral(unit.text());
     case WrittenUnit::Kind::Integer:
-        return m_types->integer(Range::one(unit.integer()));
+        return types().integer(Range::one(unit.integer()));
     case WrittenUnit::Kind::Boolean:
         return TypeArena::fromPrimitives(unit.boolean() ? Primitive::True : Primitive::False);
     case WrittenUnit::Kind::None:
@@ -1770,6 +1799,8 @@ TypeID WriterOfLinkLayouts::narrowerOf(TypeID byFlow, const DeclaredType& declar
 // The scan lays a plain edge into a field only while the body that made the object has it alone, which is construction. An environment is stored into by every closure that holds it.
 void WriterOfLinkLayouts::lookAtEdges(FunctionID id, const ThinSummary& summary)
 {
+    for (VariableID variable : summary.functionVariablesStoredInto)
+        m_variablesStoredInto.quickSet(variable.index());
     m_layoutsAllocatedHere.shrink(0);
     for (const SummaryNode& node : summary.nodes) {
         if (node.kind == SummaryNode::Kind::Allocation)
@@ -1791,16 +1822,16 @@ void WriterOfLinkLayouts::lookAtEdges(FunctionID id, const ThinSummary& summary)
         const SummaryNode& to = summary.nodes[edge.to];
         if (to.kind == SummaryNode::Kind::Field) {
             LayoutID layout(to.first);
-            m_fieldsGivenValues.quickSet(cellOf({ layout, to.second }));
+            m_saidByEdges.fieldsGivenValues.quickSet(cellOf({ layout, to.second }));
             uint32_t listed = summary.nodes[edge.from].kind == SummaryNode::Kind::Constant && summary.nodes[edge.from].second && !edge.passes ? summary.nodes[edge.from].second : otherThanOneUnit;
-            if (uint32_t& unit = m_unitsListedForFields[cellOf({ layout, to.second })]; unit != listed)
+            if (uint32_t& unit = m_saidByEdges.unitsListedForFields[cellOf({ layout, to.second })]; unit != listed)
                 unit = unit ? otherThanOneUnit : listed;
             if (!m_asksWhatMakersGive) {
             } else if (isConstantUndefinedInLinkLayouts(summary.nodes[edge.from])) {
-                m_fieldsGivenUndefinedByMakers.quickSet(cellOf({ layout, to.second }));
-                m_layoutsGivenUndefinedByMakers.quickSet(layout.index());
+                m_saidByEdges.fieldsGivenUndefinedByMakers.quickSet(cellOf({ layout, to.second }));
+                m_saidByEdges.layoutsGivenUndefinedByMakers.quickSet(layout.index());
             } else
-                m_fieldsFilledByConstructors.quickSet(cellOf({ layout, to.second }));
+                m_saidByEdges.fieldsFilledByConstructors.quickSet(cellOf({ layout, to.second }));
             if (const SummaryNode& from = summary.nodes[edge.from]; from.kind == SummaryNode::Kind::Closure && !m_flow.taggedMakers.isEmpty()) {
                 if (PropertyKeyID key = fieldAt(m_program, { layout, to.second }).key) {
                     Vector<FunctionID, 4>& functions = m_functionsLaidIntoFieldsUnderKey.add(key.bits(), Vector<FunctionID, 4> { }).iterator->value;
@@ -1809,7 +1840,7 @@ void WriterOfLinkLayouts::lookAtEdges(FunctionID id, const ThinSummary& summary)
                 }
             }
             if (m_program.at(layout).isEnvironment() || !std::ranges::binary_search(m_layoutsAllocatedHere, layout))
-                m_fieldsWrittenLate.quickSet(cellOf({ layout, to.second }));
+                m_saidByEdges.fieldsWrittenLate.quickSet(cellOf({ layout, to.second }));
         } else if (to.kind == SummaryNode::Kind::Variable) {
             // A binding that cannot be assigned to is stored into once, where its module declares it, if the module runs once.
             const Variable& variable = m_program.variables[to.first];
@@ -1848,6 +1879,8 @@ void WriterOfLinkLayouts::lookAtAccesses(FunctionID id, const ThinSummary& summa
         }
         if (!access.isPartOfConstruction)
             traits.add(Trait::ComesAfterConstruction);
+        if (access.value != noSummaryNode && isConstantUndefinedOrNullInLinkLayouts(summary.nodes[access.value]))
+            traits.add(Trait::BringsUndefinedOrNull);
         // `meter.value = 1` on an object that somebody has made: where an accessor lies under the name the store runs it, and where nothing lies there the object was made without the field.
         if (!access.isPartOfConstruction && access.kind == SummaryAccess::Kind::Store)
             traits.remove(Trait::MayGiveValue);
@@ -2194,7 +2227,6 @@ void WriterOfLinkLayouts::writeWhosePrototypePropertyStaysAsMade()
         function.closuresGetOnlyNamesThatAreListed = function.everyCallerIsKnown && !m_someConstructorGetsName && !m_functionsWhoseClosuresGetWhatIsNotListed.get(index);
         bool isWrittenInNoOtherWay = function.everyCallerIsKnown && !m_prototypePropertyOfSomeConstructorIsWritten && !m_functionsWhosePrototypePropertyIsWritten.get(index);
         function.prototypePropertyStaysAsMade = isWrittenInNoOtherWay && !m_functionsGivenObjectMadeToBePrototype.get(index);
-        function.prototypePropertyIsStoredOnceWithObjectMadeForIt = isWrittenInNoOtherWay && m_functionsGivenObjectMadeToBePrototype.get(index);
     }
 }
 
@@ -2363,6 +2395,10 @@ void WriterOfLinkLayouts::noteWriteInto(LayoutID layout, PropertyKeyID key, Trai
     }
     if (traits.contains(Trait::FillsObjectBeingConstructed))
         m_fieldsFilledByConstructors.quickSet(cellOf(*found));
+    if (traits.contains(Trait::BringsUndefinedOrNull))
+        (traits.contains(Trait::ComesAfterConstruction) ? m_fieldsGivenUndefinedOrNullLate : m_fieldsGivenUndefinedOrNullByMakers).quickSet(cellOf(*found));
+    else if (traits.contains(Trait::FillsObjectBeingConstructed))
+        m_fieldsGivenValuesByMakers.quickSet(cellOf(*found));
 }
 
 // ---- The fields that are appended. A list claims nothing, so whom it names decides only how fast a name is found and how large the tables are.
@@ -3010,7 +3046,7 @@ bool WriterOfLinkLayouts::mayBeAllocated(LayoutID id) const
         if (!layout.constructor || !m_flow.reached.get(layout.constructor.index()))
             return false;
         // Every entry of the constructor is listed, and each is the `super()` of a class below: LinkFlow::allocatedLayouts has the class otherwise.
-        return m_program.at(layout.constructor).kind != FunctionKind::DerivedConstructor || !m_tables.functions[layout.constructor.index()].everyCallerIsKnown;
+        return m_program.at(layout.constructor).kind != FunctionKind::DerivedConstructor || !everyCallerIsKnown(layout.constructor);
     case LayoutKind::Container:
     case LayoutKind::Closure:
     case LayoutKind::CoroutineFrame:
@@ -3151,16 +3187,10 @@ bool WriterOfLinkLayouts::superCallMayAnswerWithOlderObject(LayoutID id) const
     });
 }
 
-void WriterOfLinkLayouts::writeFields()
+// What is said of a cell is gathered at the declaration of the field, because the classes below list it again and a reader may ask either cell. It makes no type.
+void WriterOfLinkLayouts::gatherAtDeclarationsOfFields()
 {
     uint32_t numberOfLayouts = static_cast<uint32_t>(m_tables.layouts.size());
-    Vector<TypeID> provenAtDeclaration;
-    provenAtDeclaration.fill(TypeID(), m_tables.fields.size());
-    BitVector anythingArrivesAtDeclaration;
-    anythingArrivesAtDeclaration.ensureSize(m_tables.fields.size());
-    BitVector somethingArrivesAtDeclaration;
-    somethingArrivesAtDeclaration.ensureSize(m_tables.fields.size());
-
     for (uint32_t index = 0; index < numberOfLayouts; ++index) {
         const Layout& layout = m_program.layouts[index];
         RELEASE_ASSERT(m_tables.firstFieldOfLayout[index + 1] - m_tables.firstFieldOfLayout[index] == layout.fields.size());
@@ -3169,9 +3199,8 @@ void WriterOfLinkLayouts::writeFields()
         bool isStoredIntoWhenOlder = superCallMayAnswerWithOlderObject(LayoutID(index));
         for (uint32_t field = 0; field < layout.fields.size(); ++field) {
             FieldReference reference { LayoutID(index), field };
-            FieldReference declared = declarationOf(m_program, reference);
             uint32_t cell = cellOf(reference);
-            uint32_t declaration = cellOf(declared);
+            uint32_t declaration = cellOf(declarationOf(m_program, reference));
             if ((hasUnseenWriters && !isPrivateNameInLink(m_program, layout.fields[field].key)) || m_fieldsWithUnseenWriters.quickGet(cell))
                 m_fieldsWithUnseenWriters.quickSet(declaration);
             if (isStoredIntoWhenOlder || m_fieldsWrittenLate.quickGet(cell) || m_flow.isWrittenAfterConstruction(cell) || (isLost && isWrittenLateThroughLost(LayoutID(index), layout.fields[field].key)))
@@ -3180,29 +3209,49 @@ void WriterOfLinkLayouts::writeFields()
                 m_fieldsGivenUndefinedByMakers.quickSet(declaration);
             if (cell != declaration && m_fieldsFilledByConstructors.quickGet(cell))
                 m_fieldsFilledByConstructors.quickSet(declaration);
-
-            FlowNodeID node = m_flow.field(reference);
-            if (cell != declaration && node == m_flow.field(declared))
-                continue;
-            if (m_flow.typeAt(node).isNothing())
-                continue;
-            somethingArrivesAtDeclaration.quickSet(declaration);
-            TypeID arrived = claimedTypeAt(node);
-            TypeID& proven = provenAtDeclaration[declaration];
-            if (arrived && proven)
-                arrived = unlessAnything(joinOf(types(), m_flow.families, proven, arrived));
-            proven = arrived;
-            if (!arrived)
-                anythingArrivesAtDeclaration.quickSet(declaration);
         }
     }
+}
+
+// A field has one node, that of its declaration (LinkFlow::numberNodes()). So what arrives is typed once, where the field is declared, and each layout is written by itself: AOTLinkTypesOnAllThreads.h.
+void WriterOfLinkLayouts::writeFields()
+{
+    uint32_t numberOfLayouts = static_cast<uint32_t>(m_tables.layouts.size());
+    Vector<TypeID> provenAtDeclaration;
+    provenAtDeclaration.fill(TypeID(), m_tables.fields.size());
+    static constexpr uint8_t somethingArrives = 1;
+    static constexpr uint8_t anythingArrives = 2;
+    Vector<uint8_t> arrivesAtDeclaration;
+    arrivesAtDeclaration.fill(0, m_tables.fields.size());
+
+    writeOnAllThreads(numberOfLayouts, [&](unsigned index) {
+        uint32_t numberOfFields = m_tables.firstFieldOfLayout[index + 1] - m_tables.firstFieldOfLayout[index];
+        bool isOfProgram = true;
+        for (uint32_t field = 0; field < numberOfFields; ++field) {
+            FieldReference reference { LayoutID(index), field };
+            FieldReference declared = declarationOf(m_program, reference);
+            FlowNodeID node = m_flow.field(reference);
+            if (declared != reference) {
+                RELEASE_ASSERT(node == m_flow.field(declared));
+                continue;
+            }
+            if (m_flow.typeAt(node).isNothing())
+                continue;
+            uint32_t cell = cellOf(reference);
+            TypeID arrived = claimedTypeAt(node);
+            provenAtDeclaration[cell] = arrived;
+            arrivesAtDeclaration[cell] = arrived ? somethingArrives : somethingArrives | anythingArrives;
+            isOfProgram &= isOfProgramInLink(arrived);
+        }
+        return isOfProgram;
+    });
 
     BitVector hasKnownAccessor;
     hasKnownAccessor.ensureSize(m_tables.fields.size());
     for (FieldReference field : m_flow.fieldsWithKnownAccessors)
         hasKnownAccessor.quickSet(cellOf(field));
 
-    for (uint32_t index = 0; index < numberOfLayouts; ++index) {
+    writeOnAllThreads(numberOfLayouts, [&](unsigned index) {
         uint32_t numberOfFields = m_tables.firstFieldOfLayout[index + 1] - m_tables.firstFieldOfLayout[index];
         // A deletion empties the slot, and so does a definition by a descriptor, which moves the field out to the extra properties.
         bool everyConstructionIsSeen = constructionsAreFollowedInLinkLayouts(m_program.layouts[index]) && !hasEscaped(index);
@@ -3211,33 +3260,36 @@ void WriterOfLinkLayouts::writeFields()
         bool keepsWhatLiesBesideAccessors = everyConstructionIsSeen && m_tables.layouts[index].isRedefinedByLiteralsAlone && !m_tables.layouts[index].possibleChanges.contains(LayoutChange::LosesProperty);
         // The loader fills all that a data module lists.
         bool isRecordThatIsMade = m_asksWhatMakersGive && m_program.layouts[index].kind == LayoutKind::Record && m_flow.allocatedLayouts.get(index) && !m_isMadeAtNoNode.quickGet(index);
+        bool isOfProgram = true;
         for (uint32_t field = 0; field < numberOfFields; ++field) {
             FieldReference reference { LayoutID(index), field };
             uint32_t declaration = cellOf(declarationOf(m_program, reference));
             LinkedCell& cell = m_tables.fields[cellOf(reference)];
             cell.everyWriterIsKnown = !m_fieldsWithUnseenWriters.quickGet(declaration);
             cell.isWrittenAfterConstruction = !cell.everyWriterIsKnown || m_fieldsWrittenLate.quickGet(declaration);
-            cell.proven = cell.everyWriterIsKnown && !anythingArrivesAtDeclaration.quickGet(declaration) ? provenAtDeclaration[declaration] : TypeID();
+            cell.proven = cell.everyWriterIsKnown && !(arrivesAtDeclaration[declaration] & anythingArrives) ? provenAtDeclaration[declaration] : TypeID();
             // A read of an environment's field is typed by this alone, and a read that gives `never` ends its block. So of such a field nothing is said where nothing arrives.
-            if (cell.everyWriterIsKnown && !somethingArrivesAtDeclaration.quickGet(declaration) && !m_program.layouts[index].isEnvironment())
+            if (cell.everyWriterIsKnown && !(arrivesAtDeclaration[declaration] & somethingArrives) && !m_program.layouts[index].isEnvironment())
                 cell.proven = TypeTable::never;
             cell.proven = narrowerOf(cell.proven, fieldAt(m_program, reference).declared);
             // `{ kind: "num", value }`: every value that arrives has been listed by an allocation or by constant data, all of them list one and the same, and nothing is stored there by name.
             // A PROOF, in Facts::linked() alone: what a slot is laid out for and held to stays the kind of value.
             if (uint32_t unit = m_unitsListedForFields[cellOf(reference)]; unit && unit != otherThanOneUnit && m_flow.reading() == WhatUnseenCodeDoes::Anything && fieldAt(m_program, reference).key && m_keysOfTestedFields.get(fieldAt(m_program, reference).key.index()) && cellOf(reference) == declaration && cell.proven && !cell.isWrittenAfterConstruction && m_program.layouts[index].kind == LayoutKind::Record) {
                 TypeID written = typeOfWrittenUnit(WrittenUnit::fromBits(unit));
-                if (m_types->isSubset(written, cell.proven))
+                if (types().isSubset(written, cell.proven))
                     cell.proven = written;
             }
             // An allocation may list the mark of an empty cell as the value of a field. Where no store brings anything there is no object to speak of.
             const Field& record = fieldAt(m_program, reference);
             bool liesBesideAccessors = keepsWhatLiesBesideAccessors && !hasKnownAccessor.quickGet(cellOf(reference)) && !hasKnownAccessor.quickGet(declaration);
             cell.isFilled = (keepsWhatConstructionsFill || liesBesideAccessors || (everyConstructionIsSeen && isPrivateNameInLink(m_program, record.key))) && record.key && record.form.isEmpty() && !m_flow.fieldsThatMayBeEmpty.get(cellOf(reference))
-                && somethingArrivesAtDeclaration.quickGet(declaration) && !(m_flow.typeAt(m_flow.field(reference)).primitives & Primitive::Absent);
+                && (arrivesAtDeclaration[declaration] & somethingArrives) && !(m_flow.typeAt(m_flow.field(reference)).primitives & Primitive::Absent);
             cell.isOfBirth = constructionsAreFollowedInLinkLayouts(m_program.layouts[index]) && m_flow.allocatedLayouts.get(index) && record.key && record.form.isEmpty() && !m_flow.fieldsNotOfBirth.get(cellOf(reference));
             cell.isFilledAtEveryRead = cell.isFilled && !m_fieldsReadInFrontOfDefinition.quickGet(cellOf(reference))
                 && !(m_flow.lostLayouts.get(index) && m_keysReadInFrontOfDefinitionThroughLost.contains(record.key.bits()));
             cell.isLeftUndefinedByMakers = m_layoutsGivenUndefinedByMakers.quickGet(index) && m_fieldsGivenUndefinedByMakers.quickGet(declaration) && !m_fieldsFilledByConstructors.quickGet(declaration);
+            // `flags: Flags;` in a class defines undefined, and the constructor stores the value behind it.
+            cell.isGivenUndefinedOrNullInSight = m_fieldsGivenUndefinedOrNullLate.quickGet(declaration) || (m_fieldsGivenUndefinedOrNullByMakers.quickGet(declaration) && !m_fieldsGivenValuesByMakers.quickGet(declaration));
             // `{ id, get extra() { .. } }`: the literal gives the field, as a pair of functions.
             cell.isGivenByNoMaker = isRecordThatIsMade && !m_fieldsGivenUndefinedByMakers.quickGet(declaration) && !m_fieldsFilledByConstructors.quickGet(declaration)
                 && !hasKnownAccessor.quickGet(cellOf(reference)) && !hasKnownAccessor.quickGet(declaration);
@@ -3246,8 +3298,10 @@ void WriterOfLinkLayouts::writeFields()
             cell.holdsAccessorFromBirth = cell.isFilledByAccessorsAlone && keepsWhatLiesBesideAccessors && m_flow.reading() == WhatUnseenCodeDoes::Anything && m_flow.allocatedLayouts.get(index)
                 && !m_flow.fieldsThatMayBeEmpty.get(cellOf(reference)) && !m_fieldsReadInFrontOfDefinition.quickGet(cellOf(reference))
                 && !(m_flow.lostLayouts.get(index) && m_keysReadInFrontOfDefinitionThroughLost.contains(record.key.bits()));
+            isOfProgram &= isOfProgramInLink(cell.proven);
         }
-    }
+        return isOfProgram;
+    });
 }
 
 thread_local TypesOfThreadInLink WriterOfLinkLayouts::s_typesOfThread;
@@ -3259,20 +3313,22 @@ void WriterOfLinkLayouts::writeVariables()
         LinkedCell& cell = m_tables.variables[index];
         cell.everyWriterIsKnown = !m_variablesSharedWithUnseenCode.quickGet(index) && !m_flow.escapedVariables.get(index);
         cell.isWrittenAfterConstruction = !cell.everyWriterIsKnown || m_variablesWrittenLate.quickGet(index);
+        cell.isStoredInto = !cell.everyWriterIsKnown || m_variablesStoredInto.quickGet(index);
         cell.isFilled = cell.isFilledAtEveryRead = m_flow.variablesStoredFirst.get(index);
         const DeclaredType& declared = m_program.variables[index].declared;
         cell.proven = typeEstablishedOf(declared);
         if (!cell.everyWriterIsKnown)
-            return;
+            return isOfProgramInLink(cell.proven);
         // What the variable holds at the start has arrived there. A type without `absent` says that no read comes in front of the first store: only the compiler can know that.
         cell.proven = narrowerOf(claimedTypeAt(m_flow.variable(VariableID(index))), declared);
         // As WriterOfLink::holdsOnlyInstancesThatStayAsMade().
         const LinkType& arrived = m_flow.typeAt(m_flow.variable(VariableID(index)));
         if (m_flow.reading() != WhatUnseenCodeDoes::Anything || arrived.classes != LinkType::Classes::Site || arrived.objects != LinkType::Objects::None || arrived.functions != LinkType::Functions::None
             || arrived.holdsUnseen || arrived.holdsLostBuiltins || arrived.builtin || m_flow.hasEscaped(arrived.site))
-            return;
+            return isOfProgramInLink(cell.proven);
         FlowNodeID underUnknownNames = m_flow.findContentsOf(arrived, SlotOfContents::underUnknownNames());
         cell.staysAsItsClassMakesIt = !underUnknownNames || (underUnknownNames != m_flow.unseen() && m_flow.typeAt(underUnknownNames).isNothing());
+        return isOfProgramInLink(cell.proven);
     });
 }
 
@@ -3281,17 +3337,20 @@ void WriterOfLinkLayouts::writeCaptures()
 {
     writeOnAllThreads(static_cast<unsigned>(m_program.functions.size()), [&](unsigned index) {
         if (!m_flow.reached.get(index))
-            return;
+            return true;
         FunctionID id(index);
         uint32_t first = m_tables.firstCaptureOfFunction[index];
         uint32_t numberOfCaptures = m_tables.firstCaptureOfFunction[index + 1] - first;
+        bool isOfProgram = true;
         for (uint32_t capture = 0; capture < numberOfCaptures; ++capture) {
             LinkedCell& cell = m_tables.captures[first + capture];
             cell.everyWriterIsKnown = true;
             cell.isWrittenAfterConstruction = false;
             cell.proven = claimedTypeAtEither(m_flow.capture(id, capture), m_flow.parameter(id, capture));
             cell.proven = narrowerOf(cell.proven, m_program.at(id).captures[capture]);
+            isOfProgram &= isOfProgramInLink(cell.proven);
         }
+        return isOfProgram;
     });
 }
 
@@ -3374,23 +3433,58 @@ void WriterOfLinkLayouts::lookAtSummaries()
         }
     }
 
-    for (size_t index : m_flow.reached) {
-        FunctionID id(index);
-        const ThinSummary& summary = m_flow.summaries.at(id);
-        lookAtEdges(id, summary);
-        lookAtAccesses(id, summary);
-        lookAtChanges(id, summary);
-        lookAtMembers(summary);
+    // THE EDGES BESIDE THE RECORDS. What both say of a cell or a layout is only ever added, so the edges say it in tables of their own, which are united with the others behind the two.
+    m_saidByEdges.fieldsGivenValues.ensureSize(m_tables.fields.size());
+    m_saidByEdges.fieldsGivenUndefinedByMakers.ensureSize(m_tables.fields.size());
+    m_saidByEdges.fieldsFilledByConstructors.ensureSize(m_tables.fields.size());
+    m_saidByEdges.fieldsWrittenLate.ensureSize(m_tables.fields.size());
+    m_saidByEdges.layoutsGivenUndefinedByMakers.ensureSize(m_program.layouts.size());
+    m_saidByEdges.unitsListedForFields.fill(0, m_tables.fields.size());
+    LinkFlow::ViewOfHeldReading* view = LinkFlow::ViewAtWork::current();
+    runLanes(m_flow.loopsOfReading().ofCurrentThread(), {
+        [&] {
+            for (size_t index : m_flow.reached) {
+                FunctionID id(index);
+                const ThinSummary& summary = m_flow.summaries.at(id);
+                lookAtAccesses(id, summary);
+                lookAtChanges(id, summary);
+                lookAtMembers(summary);
+            }
+        },
+        [&] {
+            LinkFlow::ViewAtWork viewAtWork(view);
+            for (size_t index : m_flow.reached)
+                lookAtEdges(FunctionID(index), m_flow.summaries.at(FunctionID(index)));
+        },
+    });
+    m_fieldsGivenValues.merge(m_saidByEdges.fieldsGivenValues);
+    m_fieldsGivenUndefinedByMakers.merge(m_saidByEdges.fieldsGivenUndefinedByMakers);
+    m_fieldsFilledByConstructors.merge(m_saidByEdges.fieldsFilledByConstructors);
+    m_fieldsWrittenLate.merge(m_saidByEdges.fieldsWrittenLate);
+    m_layoutsGivenUndefinedByMakers.merge(m_saidByEdges.layoutsGivenUndefinedByMakers);
+    for (size_t cell = 0; cell < m_unitsListedForFields.size(); ++cell) {
+        uint32_t listed = m_saidByEdges.unitsListedForFields[cell];
+        if (uint32_t& unit = m_unitsListedForFields[cell]; listed && unit != listed)
+            unit = unit ? otherThanOneUnit : listed;
     }
+    m_saidByEdges = { };
+}
+
+// Behind the look, in front of the turn at the table of types.
+void WriterOfLinkLayouts::writeWhatMakesNoType(BitVector&& functionsWhoseCallersAreAllKnown)
+{
+    m_functionsWhoseCallersAreAllKnown = WTF::move(functionsWhoseCallersAreAllKnown);
+    appendFields();
+    writeRunsOfMakers();
+    writeRunsBehindTaggedMakers();
+    gatherAtDeclarationsOfFields();
 }
 
 void WriterOfLinkLayouts::write(TypeArena& types)
 {
     m_types = &types;
     m_typesTurned = { };
-    appendFields();
-    writeRunsOfMakers();
-    writeRunsBehindTaggedMakers();
+    // WriterOfLink::writeFunctions() has said of which constructors every caller is known.
     writeLayouts();
     writeFields();
     writeAppendedFields();
@@ -3414,10 +3508,13 @@ void lookAtSummariesForLayoutsAndCells(const LinkFlow& flow, LinkTables& tables)
     flow.writerOfLayoutsOfReading()->lookAtSummaries();
 }
 
-void writeLayoutsAndCells(const LinkFlow& flow, TypeArena& types, LinkTables& tables)
+void writeLayoutsAndCellsAheadOfTypes(const LinkFlow& flow, BitVector&& functionsWhoseCallersAreAllKnown)
 {
-    if (!flow.writerOfLayoutsOfReading())
-        lookAtSummariesForLayoutsAndCells(flow, tables);
+    flow.writerOfLayoutsOfReading()->writeWhatMakesNoType(WTF::move(functionsWhoseCallersAreAllKnown));
+}
+
+void writeLayoutsAndCells(const LinkFlow& flow, TypeArena& types)
+{
     flow.writerOfLayoutsOfReading()->write(types);
     flow.writerOfLayoutsOfReading() = nullptr;
 }

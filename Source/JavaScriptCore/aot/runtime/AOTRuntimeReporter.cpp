@@ -9,6 +9,8 @@
 #if ENABLE(AOT)
 
 #include "AOTCompiledFrame.h"
+#include "AOTFunctionDescription.h"
+#include "AOTFunctionNames.h"
 #include "AOTImage.h"
 #include "AOTModuleTable.h"
 #include "AOTObject.h"
@@ -26,9 +28,11 @@
 #include <span>
 #include <utility>
 #include <wtf/FilePrintStream.h>
+#include <wtf/HexNumber.h>
 #include <wtf/Lock.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/ProcessID.h>
+#include <wtf/SetForScope.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/MakeString.h>
 
@@ -70,35 +74,6 @@ void writeToStandardError(const String& line)
             return;
     }
 #endif
-}
-
-static std::optional<std::pair<String, LineColumn>> shownPositionOf(const Image& image, const CompiledFrame& frame)
-{
-    if (image.isObfuscated())
-        return { { emptyString(), frame.lineColumn() } };
-    auto position = image.positionOf(frame.code.index(), frame.callSite);
-    if (!position)
-        return std::nullopt;
-    String path = position->source ? ModuleTable(image.programTables()).pathTextForLineColumns(position->source) : String();
-    if (path.isEmpty())
-        path = "unknown"_s;
-    return { { WTF::move(path), position->lineColumn } };
-}
-
-Vector<String, maxNumberOfReportedFrames> placesOfInnermostCompiledFrames(VM& vm)
-{
-    Vector<String, maxNumberOfReportedFrames> places;
-    const Image* image = vm.aotState().image;
-    if (!vm.topCallFrame || !image)
-        return places;
-    StackVisitor::visit(vm.topCallFrame, vm, [&](StackVisitor& visitor) {
-        if (!visitor->isCompiledFrame())
-            return IterationStatus::Continue;
-        if (auto position = shownPositionOf(*image, visitor->compiledFrame()))
-            places.append(makeString(position->first, ':', position->second.line, ':', position->second.column));
-        return places.size() < maxNumberOfReportedFrames ? IterationStatus::Continue : IterationStatus::Done;
-    });
-    return places;
 }
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RuntimeCounts);
@@ -245,6 +220,48 @@ void countFieldThatLeftSlot(VM& vm, uint32_t layout, uint16_t field, RuntimeCoun
         counts->didLeaveSlot(layout, field, counter, property);
     }
 }
+
+#if !defined(BUN_HARDENED)
+static String symbolNameOf(const Image& image, uint32_t function)
+{
+    if (image.isObfuscated())
+        return makeString('f', function);
+    FunctionDescription description(image.rootFunctionOf(function));
+    String name = description.codeType() == ModuleCode ? String("(module)"_s) : writtenFunctionName(description.sourceFunction());
+    if (name.isEmpty())
+        name = "(anonymous)"_s;
+    auto position = image.positionOf(function, CallSiteIndex(0));
+    if (!position || !position->source)
+        return name;
+    return makeString(name, ' ', ModuleTable(image.programTables()).pathTextForLineColumns(position->source), ':', position->lineColumn.line);
+}
+
+void writePerfMap(const Image& image)
+{
+    // Each entry point of an executable has an image of its own, and so has each layer of a test run. Whoever starts one adds its functions to the file.
+    static Lock lock;
+    static bool hasWrittenInThisProcess;
+    Locker locker { lock };
+    auto file = FilePrintStream::open(makeString("/tmp/perf-"_s, getCurrentProcessID(), ".map"_s).utf8(), std::exchange(hasWrittenInThisProcess, true) ? "a"_s : "w"_s);
+    if (!file)
+        return;
+    // A function is described by the image that runs, and the one that was just added does not run yet.
+    SetForScope runningImage(*Image::addressOfCurrentOfThread(), &image);
+    const uint8_t* code = image.code().data();
+    Vector<std::pair<size_t, String>> symbols;
+    for (uint32_t function = 0; function < image.header().counts.functions; ++function) {
+        if (image.sizeOfCodeOf(function))
+            symbols.append({ static_cast<size_t>(image.codeOf(function) - code), symbolNameOf(image, function) });
+    }
+    for (unsigned copy = 0; copy < image.sharedCodeCopies().size(); ++copy)
+        symbols.append({ static_cast<size_t>(image.sharedCodeCopy(copy) - code), String("(stubs of compiled code)"_s) });
+    AOT::sort(symbols, { }, &std::pair<size_t, String>::first);
+    for (size_t i = 0; i < symbols.size(); ++i) {
+        size_t end = i + 1 < symbols.size() ? symbols[i + 1].first : image.header().code.functionsEnd;
+        file->println(hex(reinterpret_cast<uintptr_t>(code) + symbols[i].first, Lowercase), " ", hex(end - symbols[i].first, Lowercase), " ", symbols[i].second);
+    }
+}
+#endif
 
 } } // namespace JSC::AOT
 

@@ -12,6 +12,7 @@
 #include "AOTFaultHandler.h"
 #include "AOTImage.h"
 #include "AOTLoadedObject.h"
+#include "AOTRuntimeReporter.h"
 #include "Options.h"
 #include "WasmCodeInImage.h"
 #include <wtf/AccessibleAddress.h>
@@ -517,6 +518,24 @@ static void unblockAccessFaults()
 #endif
 }
 
+#if OS(LINUX) && !defined(BUN_HARDENED)
+// perf reads /tmp/perf-<pid>.map for anonymous memory alone, and takes shared anonymous memory for anonymous. Nothing of the image has run yet: such memory takes the place of its code, at the address of the code.
+// It can be executed from the start and is filled through a second mapping of its pages: no mapping becomes executable later, which the process may have given up.
+static void moveCodeToAnonymousMemory(const Image& image)
+{
+    const ImageHeader& header = image.header();
+    std::span<uint8_t> code { const_cast<uint8_t*>(image.code().data()), static_cast<size_t>(header.size - header.codeOffset) };
+    Vector<uint8_t> kept(code);
+    RELEASE_ASSERT(mmap(code.data(), code.size(), PROT_READ | PROT_EXEC, MAP_SHARED | MAP_ANONYMOUS | MAP_FIXED, -1, 0) == code.data());
+    void* window = mremap(code.data(), 0, code.size(), MREMAP_MAYMOVE);
+    RELEASE_ASSERT(window != MAP_FAILED && !mprotect(window, code.size(), PROT_READ | PROT_WRITE));
+    memcpySpan(std::span { static_cast<uint8_t*>(window), code.size() }, kept.span());
+    munmap(window, code.size());
+    RELEASE_ASSERT(!mprotect(code.data() + header.executableSize, code.size() - header.executableSize, PROT_READ));
+    __builtin___clear_cache(byteCast<char>(code.data()), byteCast<char>(code.data()) + header.executableSize);
+}
+#endif
+
 static void didPublishImage(const Image& image)
 {
 #if ENABLE(WEBASSEMBLY_OMGJIT)
@@ -527,6 +546,12 @@ static void didPublishImage(const Image& image)
     // An image without fault sites still has returns that are diverted to a page without code.
     unblockAccessFaults();
     activateSignalHandlersFor(Signal::AccessFault);
+#if OS(LINUX) && !defined(BUN_HARDENED)
+    if (Options::useAOTPerfMap()) [[unlikely]] {
+        moveCodeToAnonymousMemory(image);
+        writePerfMap(image);
+    }
+#endif
 }
 
 #if OS(LINUX) && defined(BUN_REFUSES_EXECUTE_ONLY_START)

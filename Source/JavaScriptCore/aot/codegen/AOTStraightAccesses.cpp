@@ -38,13 +38,6 @@ OpcodeSet StraightEmitter::opcodesOfAccesses()
     };
 }
 
-// Link has heard of nothing that such a block alone names, and nothing enters it.
-static bool standsInBlockNeverEnteredInStraightAccess(StraightEmitter& emitter)
-{
-    const Vector<BlockID>& blocks = emitter.facts().summaries().at(emitter.function()).blocksNeverEntered;
-    return !blocks.isEmpty() && std::ranges::binary_search(blocks, emitter.currentBlock().id());
-}
-
 static bool isSymbolOfRealmInStraightForm(StraightEmitter& emitter, PropertyKeyID key)
 {
     return emitter.program().at(key).kind == PropertyKeyKind::CreatedSymbol && !emitter.plan().hasOneInstance();
@@ -78,7 +71,7 @@ static StraightArgument makeKeyCellInStraightAccess(StraightEmitter& emitter, co
         return StraightArgument::inRegister(operand);
     }
     emitter.callStub(value, createConstant(CreatedConstant::Key), { }, { .numberedImmediate = NumberedImmediate { emitter.mentions().add(NumberSpace::KeyCell, key) } });
-    emitter.jit().move(StraightEmitter::resultGPR, operand);
+    emitter.jit().move(emitter.resultOfCall(), operand);
     return StraightArgument::inRegister(operand);
 }
 
@@ -223,7 +216,7 @@ static void generateTryReExportFields(StraightEmitter& emitter, const BodyValue&
         return held == Representation::JSValue || held == Representation::Cell;
     };
     if (!conventions.exists(conventions.closureEntryOf(function)) || program.at(function).captures.size() != 2 || !isHeldAsBoxedWord(0) || !isHeldAsBoxedWord(1)) {
-        emitter.bring(StraightArgument::boxed(jsBoolean(false)), StraightEmitter::resultGPR);
+        emitter.bring(StraightArgument::boxed(jsBoolean(false)), emitter.takeResultRegister());
         emitter.define(value);
         return;
     }
@@ -252,9 +245,10 @@ static void generatePropertyCopy(StraightEmitter& emitter, const BodyValue& valu
     uint32_t word = 0;
     if (!hasRun) {
         for (uint32_t name : names) {
-            emitter.bring(nameAsArgumentInStraightAccess(emitter, PropertyKeyID(name)), StraightEmitter::resultGPR);
-            emitter.boxInForm(Representation::Int32, StraightEmitter::resultGPR);
-            emitter.jit().store64(StraightEmitter::resultGPR, emitter.wordOfScratchArea(word++));
+            GPRReg result = emitter.takeResultRegister();
+            emitter.bring(nameAsArgumentInStraightAccess(emitter, PropertyKeyID(name)), result);
+            emitter.boxInForm(Representation::Int32, result);
+            emitter.jit().store64(result, emitter.wordOfScratchArea(word++));
         }
     }
     for (ValueID key : computedKeys)
@@ -291,8 +285,6 @@ static void generateSuperSet(StraightEmitter& emitter, const BodyValue& value)
 
 void StraightEmitter::generateAccess(const BodyValue& value)
 {
-    if (standsInBlockNeverEnteredInStraightAccess(*this))
-        return;
     switch (value.opcode()) {
     case Opcode::PropGet:
         generatePropGet(*this, value);

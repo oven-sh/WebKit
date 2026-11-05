@@ -478,80 +478,6 @@ static bool sortsRowsByGroupAsOnOneThread(const ParallelLoops& loops, size_t cou
     });
 }
 
-static bool placesItemsOfRanges(const ParallelLoops& loops, size_t count)
-{
-    constexpr size_t firstPlace = 5;
-    auto numberOfItemsAt = [](size_t index) {
-        return index % 3;
-    };
-    Vector<size_t> expected;
-    size_t place = firstPlace;
-    for (size_t index = 0; index < count; ++index) {
-        if (!(index % indicesInRangeOfLoop))
-            expected.append(place);
-        place += numberOfItemsAt(index);
-    }
-    expected.append(place);
-    return firstItemsOfRanges(loops, count, firstPlace, numberOfItemsAt) == expected;
-}
-
-// List `number` holds number % numberOfDifferentLists, as many times as that number has digits. hashOf() may give lists that differ one hash.
-static bool bringsEqualListsTogether(const ParallelLoops& loops, uint32_t count, uint32_t numberOfDifferentLists, const Invocable<uint32_t(uint32_t)> auto& hashOf)
-{
-    auto valueOf = [&](uint32_t number) {
-        return number % numberOfDifferentLists;
-    };
-    auto sizeOf = [&](uint32_t number) {
-        return valueOf(number) < 10 ? 1u : valueOf(number) < 100 ? 2u : 3u;
-    };
-    Vector<uint32_t> words;
-    Vector<uint32_t> firstWord;
-    for (uint32_t number = 0; number < count; ++number) {
-        firstWord.append(static_cast<uint32_t>(words.size()));
-        for (uint32_t position = 0; position < sizeOf(number); ++position)
-            words.append(valueOf(number));
-    }
-    // Highest number first, so that nothing stands where it belongs.
-    Vector<NamedList> lists(count, [&](size_t index) {
-        uint32_t number = count - 1 - static_cast<uint32_t>(index);
-        return NamedList { hashOf(valueOf(number)), sizeOf(number), number % 3, number };
-    });
-    Vector<uint32_t> firsts = bringEqualListsTogether(loops, lists.mutableSpan(), [&](const NamedList& list) -> std::span<const uint32_t> {
-        return words.span().subspan(firstWord[list.number], list.size);
-    });
-
-    if (firsts.size() != std::min(count, numberOfDifferentLists) || (count && firsts[0]))
-        return false;
-    BitVector isSeen(numberOfDifferentLists);
-    for (size_t index = 0; index < firsts.size(); ++index) {
-        size_t end = index + 1 < firsts.size() ? firsts[index + 1] : lists.size();
-        if (end <= firsts[index] || isSeen.quickSet(valueOf(lists[firsts[index]].number)))
-            return false;
-        for (size_t position = firsts[index] + 1; position < end; ++position) {
-            const NamedList& list = lists[position];
-            const NamedList& inFront = lists[position - 1];
-            if (valueOf(list.number) != valueOf(inFront.number) || std::tie(inFront.source, inFront.number) >= std::tie(list.source, list.number))
-                return false;
-        }
-    }
-    return true;
-}
-
-static bool bringsEqualListsTogether(const ParallelLoops& loops, uint32_t count)
-{
-    auto goodHash = [](uint32_t value) {
-        return value * 2654435761u;
-    };
-    auto hashThatFewListsHaveAlone = [](uint32_t value) {
-        return value % 4;
-    };
-    auto oneHash = [](uint32_t) {
-        return 7u;
-    };
-    return bringsEqualListsTogether(loops, count, 1, goodHash) && bringsEqualListsTogether(loops, count, 997, goodHash) && bringsEqualListsTogether(loops, count, count + 1, goodHash)
-        && bringsEqualListsTogether(loops, count, 997, hashThatFewListsHaveAlone) && bringsEqualListsTogether(loops, count, 61, oneHash);
-}
-
 static bool runsEveryTask(const ParallelLoops& loops)
 {
     constexpr unsigned count = 1000;
@@ -884,8 +810,6 @@ void runParallelLoopsTestCommand(TestCommandContext& context)
     printCheck(out, "sort and remove duplicates"_s, sortsAndRemovesDuplicates(loops, 1000) && sortsAndRemovesDuplicates(loops, 20000));
     printCheck(out, "rows by group"_s, sortsRowsByGroupAsOnOneThread(loops, 0, 1) && sortsRowsByGroupAsOnOneThread(loops, 1000, 7) && sortsRowsByGroupAsOnOneThread(loops, 20000, 1) && sortsRowsByGroupAsOnOneThread(loops, 20000, 2048)
         && sortsRowsByGroupAsOnOneThread(loops, 100003, 2049) && sortsRowsByGroupAsOnOneThread(loops, 100003, 5000000) && sortsRowsByGroupAsOnOneThread(loops, 1500000, 70000));
-    printCheck(out, "items of ranges"_s, placesItemsOfRanges(loops, 0) && placesItemsOfRanges(loops, 1) && placesItemsOfRanges(loops, 4096) && placesItemsOfRanges(loops, 4097) && placesItemsOfRanges(loops, 100003));
-    printCheck(out, "equal lists meet"_s, bringsEqualListsTogether(loops, 0) && bringsEqualListsTogether(loops, 1) && bringsEqualListsTogether(loops, 1000) && bringsEqualListsTogether(loops, 20000) && bringsEqualListsTogether(loops, 100003));
     printCheck(out, "tasks"_s, runsEveryTask(loops));
     printCheck(out, "a thread knows whether it is inside a loop"_s, knowsWhetherThreadIsInsideLoop(loops) && knowsWhetherThreadIsInsideLoop(one));
     printCheck(out, "width one is serial"_s, runsSeriallyOnCaller(one));

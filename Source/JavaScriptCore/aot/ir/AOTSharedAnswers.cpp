@@ -21,32 +21,14 @@ ASCIILiteral nameOf(SharedQuestion question)
     switch (question) {
     case SharedQuestion::PartitionOfReceivers:
         return "PartitionOfReceivers"_s;
-    case SharedQuestion::PlanOfNamedAccess:
-        return "PlanOfNamedAccess"_s;
-    case SharedQuestion::EffectsOfNamedAccess:
-        return "EffectsOfNamedAccess"_s;
     case SharedQuestion::StateOfFieldArm:
         return "StateOfFieldArm"_s;
-    case SharedQuestion::TestsThatFieldArmInheritsNothing:
-        return "TestsThatFieldArmInheritsNothing"_s;
-    case SharedQuestion::FieldAccessOfReceivers:
-        return "FieldAccessOfReceivers"_s;
-    case SharedQuestion::PartitionOfMembers:
-        return "PartitionOfMembers"_s;
-    case SharedQuestion::MethodOfEachWithoutTests:
-        return "MethodOfEachWithoutTests"_s;
     case SharedQuestion::NamedObjectsOfIntersection:
         return "NamedObjectsOfIntersection"_s;
     case SharedQuestion::NamedObjectsOfDifference:
         return "NamedObjectsOfDifference"_s;
     case SharedQuestion::NamedObjectsOfUnionPartKind:
         return "NamedObjectsOfUnionPartKind"_s;
-    case SharedQuestion::CalleeListOfObjects:
-        return "CalleeListOfObjects"_s;
-    case SharedQuestion::FactsOfCalleeList:
-        return "FactsOfCalleeList"_s;
-    case SharedQuestion::EffectsOfTypedBodyAtCall:
-        return "EffectsOfTypedBodyAtCall"_s;
     case SharedQuestion::RoundOverSet:
         return "RoundOverSet"_s;
     }

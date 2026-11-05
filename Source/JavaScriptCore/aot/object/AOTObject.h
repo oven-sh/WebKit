@@ -137,9 +137,21 @@ public:
 
     template<typename T> T& at(uint32_t offset) const { return *reinterpret_cast<T*>(reinterpret_cast<uint8_t*>(const_cast<Object*>(this)) + offset); }
     uint32_t orderWord() const { return at<uint32_t>(offsetOfOrderWord); }
-    uint32_t shapeWord() const { return at<uint32_t>(offsetOfShapeWord); }
+    // For comparisons with the word of another object, or with one that was read so, alone.
+    uint32_t shapeWordWithMark() const { return at<uint32_t>(offsetOfShapeWord); }
+    uint64_t orderAndShapeWordsWithMark() const { return static_cast<uint64_t>(shapeWordWithMark()) << 32 | orderWord(); }
+    uint32_t shapeWord() const { return shapeWordWithoutMark(shapeWordWithMark()); }
     uint32_t shape() const { return shapeOf(shapeWord()); }
     uint64_t orderAndShapeWords() const { return static_cast<uint64_t>(shapeWord()) << 32 | orderWord(); }
+    // TWO SEATS. The bit of the cell's flags: a field has left its slot, or undefined | null lies where a raw value is due. It lies beside the other flags of the cell, and whoever reads a slot that may be empty asks them in one byte.
+    // The bit in the word of the shape says that too, and that the birth is not over, of an object whose layout has a field that the mark answers for.
+    bool bearsMark() const { return perCellBit() || !(shapeWordWithMark() & shapeWordIsUnmarked); }
+    void setIsInBirth(bool isInBirth) { at<uint32_t>(offsetOfShapeWord) = isInBirth && mayBearMark() ? shapeWordWithMark() & ~shapeWordIsUnmarked : shapeWord(); }
+    void setBearsMark(bool bearsMark)
+    {
+        setPerCellBit(bearsMark);
+        setIsInBirth(bearsMark);
+    }
     bool hasFlagsInOrderWord() const { return orderWord() & ~orderAndCountMask; }
     bool isFrozen() const { return orderWord() & orderWordIsFrozen; }
     bool isSealed() const { return orderWord() & orderWordIsSealed; }
@@ -201,6 +213,8 @@ public:
     bool tryMoveFieldBackToSlot(VM&, const FieldData&);
     void deleteField(VM&, const FieldData&);
     bool hasEveryFieldOfBirth() const;
+    // The layout has a field that the mark answers for. An object of any other layout never bears the mark, so whoever asks about such layouts alone takes the word as it lies.
+    bool mayBearMark() const;
     JS_EXPORT_PRIVATE void tryFinishBirth();
 
     enum class Integrity : uint8_t { NotExtensible, Sealed, Frozen };
@@ -216,7 +230,6 @@ public:
     bool putDirectFromNativeCode(VM&, PropertyName, JSValue, unsigned attributes);
     // The same, but a property that exists keeps its attributes.
     bool storeDirectFromNativeCode(VM&, PropertyName, JSValue);
-    bool tryDefineAbsentExtraProperty(VM&, PropertyName, JSValue valueOrAccessor, unsigned attributes);
     // The caller has already looked up the name: `field` is fieldNamed(name).
     bool tryDefineAbsentProperty(VM&, const FieldData*, PropertyName, JSValue valueOrAccessor, unsigned attributes);
     // What the properties that no field holds say of a name that is the name of no field.
@@ -275,12 +288,10 @@ public:
     ExtraPropertyStoreResult tryStoreExtraProperty(VM&, PropertyName, JSValue, OptionSet<ExtraPropertyStoreFlag>);
     void willAddExtraProperty(VM&, PropertyName, bool isSpelledByProgram = true);
 
-    using KeyOrderStorage = Vector<uint16_t, 16>;
-    std::span<const uint16_t> keyOrder(State&, KeyOrderStorage&) const;
+    std::span<const uint16_t> keyOrder(State&) const;
     void forEachKeyInOrder(State& state, const Invocable<void(uint16_t)> auto& functor) const
     {
-        KeyOrderStorage storage;
-        for (uint16_t key : keyOrder(state, storage))
+        for (uint16_t key : keyOrder(state))
             functor(key);
     }
     // For an order that counts extra keys. Returns how many of them it has listed: the rest come behind the last entry.
@@ -343,7 +354,6 @@ public:
     JSPropertyNameEnumerator* propertyNameEnumerator(JSGlobalObject*);
     bool keysDependOnlyOnStructureAndOrderWord() const;
 
-    static JSValue tryGetOwnDataProperty(VM&, JSCell*, PropertyName);
     static bool structureGuaranteesAbsence(Structure*, UniquedStringImpl*);
 
 private:
@@ -508,8 +518,7 @@ void Object::forEachFieldInKeyOrder(State& state, const Invocable<void(uint16_t)
 {
     // An entry at or above the number of fields is not a field index: it counts extra keys or, in a key order that belongs to one object, names one.
     uint32_t numberOfFields = layout().numberOfFields;
-    KeyOrderStorage storage;
-    for (uint16_t entry : keyOrder(state, storage)) {
+    for (uint16_t entry : keyOrder(state)) {
         if (entry < numberOfFields)
             functor(entry);
     }

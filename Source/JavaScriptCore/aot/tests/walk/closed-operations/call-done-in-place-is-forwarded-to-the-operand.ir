@@ -9,7 +9,7 @@
 # CHECK: = Call [[callee_f3]], [[receiver_f3]] traits
 # CHECK-LABEL: code f4:Body
 # CHECK: b0([[callee_f4]]: {{*}}, [[receiver_f4]]: {{*}}, [[given_f4]]:
-# CHECK: [[list_f4]]: Array @Cell = NewArgumentList [[callee_f4]], [[given_f4]] traits
+# CHECK: [[list_f4]]: Array @Cell = NewArgumentList [[given_f4]] traits
 # CHECK-NEXT: = CallList [[callee_f4]], [[receiver_f4]], [[list_f4]] traits
 # CHECK-LABEL: code f6:Body
 # CHECK: b0([[callee_f6]]: {{*}}, [[receiver_f6]]:

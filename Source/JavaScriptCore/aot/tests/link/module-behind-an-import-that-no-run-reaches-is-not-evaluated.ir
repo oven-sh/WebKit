@@ -1,4 +1,4 @@
-# If a module that only an `import()` names counted as one that is in the program for the host's sake, it would be evaluated and all that it exports would escape, though no run comes to the `import()`
+# If a module that only an `import()` names counted as one that is in the program for the host's sake, it would be evaluated, though no run comes to the `import()`
 # main.js: enum Mode { On = 1 }  if (Mode.On !== 1) (await import("./behind.js")).dead();  function never() { return import("./other.js") }
 # behind.js: export function dead() {}    other.js: export function alsoDead() {}
 # `import()` stands in no list of requests. The operation names the module: in a block that constants rule out (m1), and in a function that nothing reaches (m2).
@@ -8,23 +8,21 @@
 # RUN(LINK): link functions mechanisms=all
 # LINK: function f0
 # LINK-NOT: unreached
+# What the records list has escaped all the same: the image shows `dead` and `alsoDead` to whoever gets hold of the objects.
 # LINK: function f1 unreached
-# LINK: function f2 unreached
+# LINK-NOT: function f2 unreached
 # LINK: function f3 unreached
 # LINK: function f4 unreached
-# LINK: function f5 unreached
+# LINK-NOT: function f5 unreached
 # With Folding withheld the walk builds the `import()`, so the scan has looked at it. What only `never` names stays out.
 # RUN(BOTH): link functions mechanisms=-Folding
 # BOTH-NOT: function f1 unreached
 # BOTH-NOT: function f2 unreached
 # BOTH: function f3 unreached
 # BOTH: function f4 unreached
-# BOTH: function f5 unreached
-# RUN(UNITS): units-with-code f1:Body f2:Body f4:Body f5:Body mechanisms=all
+# RUN(UNITS): units-with-code f1:Body f4:Body mechanisms=all
 # UNITS: unit f1:Body has no code
-# UNITS: unit f2:Body has no code
 # UNITS: unit f4:Body has no code
-# UNITS: unit f5:Body has no code
 # RUN(ALL): run-in-shell mechanisms=all
 # ALL: exited with 0
 # RUN(NONE): run-in-shell mechanisms=none

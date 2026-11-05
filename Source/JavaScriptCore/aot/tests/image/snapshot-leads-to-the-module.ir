@@ -1,0 +1,103 @@
+# In a heap snapshot the cell that stands for a module hangs below the module loader of the realm, and every closure of a function that the module defines leads to it: also that of a function that reads no variable, and that of a class without a constructor of its own.
+# -- source: snapshot-leads-to-the-module.js
+# let keptInModule = fresh();
+# const reads = () => keptInModule;
+# const touchesNothing = n => n + 1;
+# class Empty {}
+# hold(reads, touchesNothing, Empty);
+# print(whoLeadsToTheModule());
+# -- end of source
+# records of 941147f3530b8624
+# RUN(TABLES): image ProgramTables
+# TABLES-LABEL: ProgramTables:
+# TABLES: moduleInHeapSnapshots place=0 module=m0 variables=
+# TABLES: closuresOfModule module=0 first=
+# RUN: run-in-shell globalThis.fresh = () => ({}); globalThis.held = []; globalThis.hold = (...values) => { held.push(...values); }; globalThis.whoLeadsToTheModule = () => { const snapshot = generateHeapSnapshot(); const classes = new Map(); for (let i = 0; i < snapshot.nodes.length; i += 4) classes.set(snapshot.nodes[i], snapshot.nodeClassNames[snapshot.nodes[i + 2]]); const out = new Map(); let list; for (let i = 0; i < snapshot.edges.length; i += 4) { if (!out.has(snapshot.edges[i])) out.set(snapshot.edges[i], []); out.get(snapshot.edges[i]).push(snapshot.edges[i + 1]); if (snapshot.edgeTypes[snapshot.edges[i + 2]] === "Property" && snapshot.edgeNames[snapshot.edges[i + 3]] === "held") list = snapshot.edges[i + 1]; } const below = new Set([...classes].filter(([, name]) => name === "ModuleLoader").map(([node]) => node)); for (const node of below) for (const to of out.get(node) ?? []) if (/^Module(RegistryEntry|Record)$|^JSModuleEnvironment$/.test(classes.get(to))) below.add(to); const functions = [...new Set(out.get(list))].filter(node => classes.get(node) === "Function"); return functions.filter(node => out.get(node).some(to => classes.get(to) === "JSModuleEnvironment" && below.has(to))).length + " of " + functions.length + " functions lead to an environment below the loader"; };
+# CHECK: 3 of 3 functions lead to an environment below the loader
+# CHECK-NEXT: exited with 0
+
+module m0 path="snapshot-leads-to-the-module.js" displayPath="snapshot-leads-to-the-module.js" body=f0 namespaceLayout=L(m0)
+module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
+module m2 path="/$bun/js/engine/JSIteratorPrototype.ts" displayPath="/$bun/js/engine/JSIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m2)
+entry module=m0
+layout L0 kind=Instance name="Empty" module=m0 position=103 constructor=f1
+variable g0 name="keptInModule" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+variable g1 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1 @97
+    v1 = NewClass v0 layout=L0 @97
+    PutModuleVariable v1 variable=g1 @97
+    v3 = FinishClass v1 layout=L0 @97
+    v4 = Convert v3 declared={type=f1 flags=[IsFromCompiler]} @97
+    v5 = Convert v3 declared={type=f1 flags=[IsFromCompiler]} @97
+    v6 = Builtin builtin=GlobalThis @19
+    v7 = PropGet v6 key="fresh" [isFreeName] @19
+    v8 = Call v7 calleeName="fresh" @19
+    PutModuleVariable v8 variable=g0 @4
+    v10 = NewClosure function=f2 @42
+    v11 = NewClosure function=f3 @85
+    v12 = Builtin builtin=GlobalThis @112
+    v13 = PropGet v12 key="hold" [isFreeName] @112
+    v14 = Call v13, -, v10, v11, v5 calleeName="hold" @112
+    v15 = Builtin builtin=GlobalThis @148
+    v16 = PropGet v15 key="print" [isFreeName] @148
+    v17 = Builtin builtin=GlobalThis @154
+    v18 = PropGet v17 key="whoLeadsToTheModule" [isFreeName] @154
+    v19 = Call v18 calleeName="whoLeadsToTheModule" @154
+    v20 = Call v16, -, v19 calleeName="print" @148
+    v21 = Undefined @148
+    Return v21 @148
+}
+function f1 name="Empty" module=m0 position=103 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0 @103
+    v2 = NewObject v1 layout=L0 @103
+    v3 = Convert v2 declared={type=L0} @103
+    Return v3 @103
+}
+function f2 name="reads" module=m0 position=42 kind=Arrow thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = GetModuleVariable variable=g0 @48
+    v1 = CheckInitialized v0 name="keptInModule" @48
+    Return v1 @48
+}
+function f3 name="touchesNothing" module=m0 position=85 kind=Arrow length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = Integer integer=1 @94
+    v2 = Add v0, v1 @94
+    Return v2 @94
+}
+function f4 name="next" module=m1 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = HasJSType v0 first=5 last=5 @78
+    v2 = ToBoolean v1 @78
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0) @78
+  b1(v3):
+    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @229
+    v5 = StepArrayIterator v4 @229
+    v6 = ResultAt v5 index=1 @286
+    v7 = ResultAt v5 @334
+    v8 = Convert v7 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @266
+    v9 = CreateIteratorResult v6, v8 @266
+    Return v9 @266
+  b2(v10):
+    v11 = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance" @110
+    Unreachable @110
+}
+function f5 name="[Symbol.dispose]" module=m2 position=14610 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=JSIteratorPrototypeDispose thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = Undefined @14610
+    v2 = PropGet v0 key="return" @14680
+    v3 = TypeTest v2 testedType=undefined|null @14702
+    Branch v3 -> taken b2(), notTaken b1(| 0) @14702
+  b1(v4):
+    v5 = NarrowByTest v2, v4 @14702
+    v6 = Call v5, v0 @14744
+    Jump -> next b2() @14744
+  b2():
+    v7 = Undefined @14744
+    Return v7 @14744
+}
+runtimefunction id=JSIteratorPrototypeDispose function=f5
+runtimefunction id=ArrayIteratorPrototypeNext function=f4 visibility=Private

@@ -67,9 +67,17 @@ TypedArrayElements ElementAccessEmitter::typedArrayElementsOf(ValueID id, LBasic
 // A test has found the view to have a fixed length and the position to be inside it. Nothing has written the storage of views since the vector that the access names was read.
 TypedArrayElements ElementAccessEmitter::typedArrayElementsInsideView(const ValueContext& value, CellPointer view)
 {
-    std::optional<Pointer> vector = inOptional<Pointer>(value->vectorOperand());
+    std::optional<Pointer> vector = testsEveryPosition() ? std::nullopt : inOptional<Pointer>(value->vectorOperand());
     TypedArrayElements elements { view, loadField<Integer>(view, m_heaps.JSArrayBufferView_length), vector ? *vector : loadField<Pointer>(view, m_heaps.JSArrayBufferView_vector) };
     return elements;
+}
+
+void ElementAccessEmitter::holdPositionInsideView(const ValueContext& access, Integer index, const TypedArrayElements& elements)
+{
+    if (testsEveryPosition())
+        stopUnlessInside(access, below(index, elements.length));
+    else
+        build().statistics().count(StatisticID::RangeChecksRemoved);
 }
 
 Operand ElementAccessEmitter::loadBytesOfTypedArrayElement(const TypedArrayElements& elements, Integer index, TypedArrayType type)
@@ -122,21 +130,6 @@ void ElementAccessEmitter::generateGetTypedArrayLength(const ValueContext& value
     define(value, TypedArraySupport(generator()).lengthOf(in<CellPointer>(value->viewOperand())));
 }
 
-// The length cannot change, the memory is there, and a position in it fits 31 bits.
-void ElementAccessEmitter::generateHasFixedBytes(const ValueContext& value)
-{
-    CellPointer view = in<CellPointer>(value->viewOperand());
-    Condition hasFixedLength = hasNoBits(loadByte(view, m_heaps.JSArrayBufferView_mode), resizabilityAndAutoLengthMask);
-    Condition hasMemory = isNotZero(Integer(loadField<Pointer>(view, m_heaps.JSArrayBufferView_vector).value()));
-    Condition isShort = belowOrEqual(loadField<Integer>(view, m_heaps.JSArrayBufferView_length), std::numeric_limits<int32_t>::max());
-    defineTest(value, logicalAnd(logicalAnd(hasFixedLength, hasMemory), isShort));
-}
-
-void ElementAccessEmitter::generateTypedArrayRange(const ValueContext& value)
-{
-    define(value, callOperation<CellPointer>(value, RuntimeOperation::TypedArrayRange, { in<CellPointer>(value->viewOperand()), integerOf(value->startOperand()), integerOf(value->endOperand()) }));
-}
-
 // Loaded under the heap of inner pointers, like every vector: the view outlives the last access that takes the result, however far from here it stands.
 void ElementAccessEmitter::generateGetTypedArrayVector(const ValueContext& value)
 {
@@ -167,6 +160,7 @@ void ElementAccessEmitter::generateGetTypedArrayElement(const ValueContext& valu
         build().statistics().count(StatisticID::AccessesInsideViews);
         Integer index = indexInsideLength(value->positionOperand());
         TypedArrayElements elements = typedArrayElementsInsideView(value, view);
+        holdPositionInsideView(value, index, elements);
         if (readsNumberOutOfBytes(value.value())) {
             define(value, generator().settleNaNOf(value, loadBytesOfTypedArrayElement(elements, index, type).as<Number>()));
             return;
@@ -222,6 +216,7 @@ void ElementAccessEmitter::generatePutTypedArrayElement(const ValueContext& valu
         build().statistics().count(StatisticID::AccessesInsideViews);
         Integer index = indexInsideLength(value->positionOperand());
         TypedArrayElements elements = typedArrayElementsInsideView(value, view);
+        holdPositionInsideView(value, index, elements);
         storeTypedArrayElement(elements, index, type, elementToStore());
         return;
     }

@@ -33,6 +33,8 @@ public:
     enum class ElementsBelowLength : bool { Cleared, NotCleared };
     enum class LengthIsSetBy : bool { Allocation, Caller };
     CellPointer allocateArrayOfHoles(const OperationContext&, Integer length, const ArrayStorageForm&, LBasicBlock slowPath, ElementsBelowLength = ElementsBelowLength::Cleared, LengthIsSetBy = LengthIsSetBy::Allocation);
+    // Without an element, and with room for `room` of them, which is no more than an empty list has anyway.
+    CellPointer allocateEmptyArrayWithRoom(const OperationContext&, Integer room, const ArrayStorageForm&, LBasicBlock slowPath);
     void setLengthOfNewArray(CellPointer, Integer length);
 
     CellPointer allocateArrayCell(Integer header, Pointer butterfly, LBasicBlock slowPath);

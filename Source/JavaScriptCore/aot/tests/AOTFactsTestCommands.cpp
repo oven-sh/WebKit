@@ -660,25 +660,10 @@ static void printSummaryInFactsText(IRPrinter& printer, FunctionID function, con
         }
         out.println();
     }
-    for (const ThinSummary::ParameterThatIsResult& entry : summary.knownEffectsApart.parametersThatAreResults()) {
-        out.print("  result "_s, entry.result, " is Parameter "_s, entry.entryParameter);
-        if (entry.passes) {
-            out.print(" passes="_s);
-            printer.print(entry.passes);
-        }
-        out.println();
-    }
     for (uint32_t index = 0; index < summary.operators.size(); ++index)
         printOperatorOfSummary(printer, summary, index);
     for (uint32_t index = 0; index < summary.changes.size(); ++index)
         printChangeOfSummary(printer, summary, index);
-    for (const ThinSummary::FurtherConversion& further : summary.furtherConversions) {
-        out.print("  conversion "_s);
-        printer.print(further.site);
-        out.print(" as at "_s);
-        printer.print(summary.calls[further.firstCall].site);
-        out.println();
-    }
     for (const ThinSummary::Inspection& inspection : summary.inspections) {
         out.print("  inspection "_s);
         printer.print(inspection.site);
@@ -789,11 +774,6 @@ static void printSummaryInFactsText(IRPrinter& printer, FunctionID function, con
         printer.print(definition.store);
         out.println();
     }
-    for (const SummaryTypeParsed& parsed : summary.typesParsedAtCalls) {
-        out.print("  parsed-at v"_s, parsed.site.index(), " "_s);
-        printer.print(parsed.type);
-        out.println();
-    }
     for (const ThinSummary::AnswerOfRequire& answer : summary.answersOfRequire)
         out.println("  answer-of-require m"_s, answer.module.index(), " -> n"_s, answer.node);
     for (const ThinSummary::AnswerOfRequire& answer : summary.objectsOfCompiledModules)
@@ -873,15 +853,6 @@ static void printSummaryInFactsText(IRPrinter& printer, FunctionID function, con
         printer.print(access.site);
         out.print(" "_s);
         printer.print(access.key);
-        out.println();
-    }
-    if (!summary.textsThatMeetOthers.isEmpty()) {
-        out.print("  texts-that-meet"_s);
-        CommaPrinter comma(", "_s, " "_s);
-        for (StringID text : summary.textsThatMeetOthers) {
-            out.print(comma);
-            printer.print(text);
-        }
         out.println();
     }
     if (!summary.modulesWhosePathIsRead.isEmpty()) {
@@ -1164,25 +1135,6 @@ static void printLinkedCallsThatFindBuiltins(IRPrinter& printer, const LinkTable
     }
 }
 
-//     several f0 v5 result=number layouts-written=none returns=[mayThrow, mayCollect] throws=[mayThrow, mayCollect]
-static void printLinkedCallsOfSeveral(IRPrinter& printer, const LinkTables& tables)
-{
-    PrintStream& out = printer.out();
-    for (const LinkedCallOfSeveral& call : tables.known.callsOfSeveral) {
-        out.print("several "_s);
-        printer.print(call.caller);
-        out.print(" "_s);
-        printer.print(call.site);
-        printTypeFieldInFactsText(printer, "result"_s, call.result);
-        printLayoutsWrittenInFactsText(out, "layouts-written"_s, call.layoutsWritten);
-        out.print(" returns="_s);
-        printEffectsInFactsText(out, tables.known.effectsOfCallsOfSeveral[call.effects]);
-        out.print(" throws="_s);
-        printEffectsInFactsText(out, tables.known.effectsOfCallsOfSeveral[call.effects + 1]);
-        out.println();
-    }
-}
-
 //     access f1 v2 under symbol("depth")@m0:0
 static void printLinkedAccesses(IRPrinter& printer, const LinkTables& tables)
 {
@@ -1348,8 +1300,6 @@ static void printLinkedMembers(IRPrinter& printer, const LinkTables& tables)
             out.print(" function="_s);
             printer.print(name.function);
         }
-        if (name.isLaidAheadOfEveryRead)
-            out.print(" laid-ahead"_s);
         out.print("\n"_s);
     }
     for (const LinkedNameOnPrototype& name : tables.namesOnPrototypes) {
@@ -1363,8 +1313,6 @@ static void printLinkedMembers(IRPrinter& printer, const LinkTables& tables)
         if (name.function) {
             out.print(" function="_s);
             printer.print(name.function);
-            if (name.isLaidAheadOfEveryObject)
-                out.print(" laid-ahead"_s);
         } else if (name.expected) {
             out.print(" expected="_s);
             printer.print(name.expected);
@@ -1410,8 +1358,6 @@ static void printLinkedLayouts(IRPrinter& printer, const LinkTables& tables)
             out.print(" own-objects-below"_s);
         if (layout.prototypeObjectIsSettledAheadOfEveryObject)
             out.print(" prototype-object-settled"_s);
-        if (layout.isLinkedBelowBaseAheadOfEveryObject)
-            out.print(" linked-ahead"_s);
         if (layout.heritage) {
             out.print(" heritage="_s);
             printer.print(layout.heritage);
@@ -1629,7 +1575,6 @@ static void printLinkCounts(PrintStream& out, const Program& program, const Fact
     out.println("counts summaries | operations of all bodies "_s, operationsOfAll, " | of reached bodies "_s, operationsOfReached, " | nodes "_s, nodes, " | edges "_s, edges, " | of them through a test "_s, edgesThroughTests, " | escapes "_s, escapes, " | subjects of computed keys "_s, subjectsOfComputedKeys, " | operators "_s, operators, " | of their operands may be objects "_s, operandsConverted);
     const SizeOfLinkFlow& flow = tables.sizeOfFlow;
     out.println("counts flow | nodes "_s, flow.nodes, " | edges "_s, flow.edges, " | observers "_s, flow.observers, " | nodes taken off the worklist "_s, flow.nodesTakenOffWorklist, " | observers told "_s, flow.observersTold);
-    out.println("counts sites of objects of the engine's classes | all "_s, flow.sites, " | families "_s, flow.familiesOfSites, " | united with others "_s, flow.sitesUnitedWithOthers, " | in the largest family "_s, flow.sitesOfLargestFamily, " | escaped "_s, flow.sitesEscaped, " | nodes of contents "_s, flow.contentsOfSites);
     parameters.print(out, "parameters of reached functions"_s);
     parametersOfCallersKnown.print(out, "parameters where every caller is known"_s);
     out.println("counts parameters of reached functions | expected "_s, expected, " | of them declared "_s, expectedDeclared, " | seen to arrive "_s, expected - expectedDeclared, " | expected and nothing proven "_s, expectedAndNothingProven, " | kept (does not escape) "_s, kept);
@@ -1644,11 +1589,6 @@ static void printLinkCounts(PrintStream& out, const Program& program, const Fact
         allWithOneCallee += callsWithOneCallee[kind];
         out.println("counts calls in summaries of reached functions | "_s, namesOfCalleeKinds[kind], " "_s, calls[kind], " | listed with one callee "_s, callsWithOneCallee[kind], " | in loops "_s, callsInLoops[kind], " | of them with one callee "_s, callsInLoopsWithOneCallee[kind], " | constructions "_s, constructions[kind]);
     }
-    const CallsByNameInLink& byName = tables.callsByName;
-    out.println("counts calls by name, each under the first that holds | all "_s, byName.all, " | listed "_s, byName.listed, " | of protocols "_s, byName.ofProtocols, " | nothing arrives at the receiver "_s, byName.nothingArrivesAtReceiver, " | only primitives arrive "_s, byName.onlyPrimitivesArrive,
-        " | the receiver holds unseen objects "_s, byName.receiverHoldsUnseen, " | is of the engine's classes "_s, byName.receiverIsOfEngine, " | is lost "_s, byName.receiverIsLost);
-    out.println("counts calls by name on objects, prototype objects and closures of the program | may enter unseen code "_s, byName.mayEnterUnseen, " | lost functions "_s, byName.mayEnterLost, " | a built-in "_s, byName.entersBuiltin, " | finds no function "_s, byName.findsNoFunction,
-        " | several "_s, byName.findsSeveralFunctions, " | may find unlisted names "_s, byName.mayFindUnlistedNames, " | finds what no call enters "_s, byName.findsWhatNoCallEnters, " | shares its site "_s, byName.sharesItsSite);
     out.println("counts calls in summaries of reached functions | all "_s, allCalls, " | listed with one callee "_s, allWithOneCallee, " | rows of LinkTables::calls "_s, tables.calls.size());
     out.println("counts who may name a function | groups "_s, tables.groups.size(), " | referrers "_s, tables.referrers.size(), " | cycles, those of groups alone too "_s, tables.rankOfCycle.size(), " | cycles awaited "_s, tables.cyclesAwaited.size());
     uint64_t mayTakeArrivals = 0, takeArrivals = 0, inQueueFromStart = 0, mostFunctionsInOneCycle = 0;
@@ -1896,7 +1836,6 @@ static void runLinkCommand(TestCommandContext& context)
         case PartOfLinkTables::Calls:
             printLinkedCalls(printer, tables);
             printLinkedCallsThatFindBuiltins(printer, tables);
-            printLinkedCallsOfSeveral(printer, tables);
             break;
         case PartOfLinkTables::Accesses:
             printLinkedAccesses(printer, tables);

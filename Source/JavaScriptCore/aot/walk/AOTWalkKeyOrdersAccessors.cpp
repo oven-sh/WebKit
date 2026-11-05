@@ -34,16 +34,6 @@ static constexpr uint32_t closedOperationsOfAccessThatCallsAccessorInKeyOrdersAc
 
 // ---- A store that creates a property which nobody lists
 
-bool creatingStoreListsNoKey(const Walker& walker, std::span<const LayoutID> receivers, PropertyKeyID key)
-{
-    const Plan& plan = walker.plan();
-    return !receivers.empty() && std::ranges::all_of(receivers, [&](LayoutID receiver) {
-        // Storage out of line is made by the store that adds.
-        std::optional<FieldIndex> field = plan.layout(receiver).keysAreNeverEnumerated ? plan.slots().findField(walker.program(), receiver, key) : std::nullopt;
-        return field && plan.slot(receiver, *field).hasStorage() && !plan.slot(receiver, *field).isOutOfLine();
-    });
-}
-
 // ---- An accessor in a slot
 
 static LayoutID onlyLayoutOfInKeyOrdersAccessors(const Walker& walker, TypeID listed)
@@ -77,7 +67,7 @@ static FunctionID findAccessorExpectedInKeyOrdersAccessors(const Walker& walker,
     const LinkTables& linked = walker.facts().linked();
     const LinkedAccessorsOfField* expected = linked.findAccessorsExpectedIn(field);
     FunctionID accessor = expected ? (isStore ? expected->setter : expected->getter) : FunctionID();
-    return accessor && linked.mayBeMentionedBy(walker.unit().function, accessor) ? accessor : FunctionID();
+    return accessor && linked.mayBeMentionedBy(walker.unit(), accessor) ? accessor : FunctionID();
 }
 
 // LinkedAccessorsOfField::getterIsProven, setterIsProven.
@@ -85,6 +75,24 @@ static bool isProvenHalfInKeyOrdersAccessors(const Walker& walker, FieldReferenc
 {
     const LinkedAccessorsOfField* laid = walker.facts().linked().findAccessorsExpectedIn(field);
     return laid && (isStore ? laid->setterIsProven : laid->getterIsProven);
+}
+
+// TestingSwitch::CheckProofsAtRunTime. The call leans on Link's word with no record that has the type. So the half is loaded for its check alone: build() asks the slot whether it is filled, and what it holds whether it is a closure of the function.
+static void checkProvenHalfInKeyOrdersAccessors(Walker& walker, const BodyValue& access, Reference object, FieldReference field)
+{
+    if (!walker.checksProofs())
+        return;
+    bool isStore = access.opcode() == Opcode::PropSet;
+    Origin origin = walker.originOf(access);
+    origin.isTailCall = false;
+    Draft load(isStore ? Opcode::GetSlotSetter : Opcode::GetSlotGetter, origin);
+    load.setObjectOperand(object);
+    load.setKey(access.key());
+    load.setReceivers(walker.types().at(walker.types().forLayout(field.layout)).layouts);
+    load.setLevel(KnowledgeLevel::Proven);
+    if (isStore)
+        load.setIsInStrictCode(access.mode() == ECMAMode::Strict);
+    walker.build(WTF::move(load));
 }
 
 // Off an object that is proven to be of the layout the access IS a call of the one function, with the object as `this`. Nothing is asked of the object, and there is no other arm.
@@ -108,7 +116,10 @@ bool callProvenAccessorOfItsOpcodes(Walker& walker, const BodyValue& access)
     if (!field || !isProvenHalfInKeyOrdersAccessors(walker, *field, isStore))
         return false;
     FunctionID half = findAccessorExpectedInKeyOrdersAccessors(walker, *field, isStore);
-    return half && callAccessor(walker, access, half, object, stored);
+    if (!half)
+        return false;
+    checkProvenHalfInKeyOrdersAccessors(walker, access, object, *field);
+    return walker.isUnreachable() || callAccessor(walker, access, half, object, stored);
 }
 
 FunctionID findGetterExpectedInSlot(Walker& walker, TypeID lookedAt, PropertyKeyID key)
@@ -223,6 +234,8 @@ bool callAccessorInSlot(Walker& walker, const BodyValue& access)
             object = buildProof(object, hasShape, OperandIndex::ShapeTest::object);
             goesOn = !!object;
             // Behind the test of the shape the half is proven as well.
+            if (goesOn && provenHalf)
+                checkProvenHalfInKeyOrdersAccessors(walker, access, object, *field);
             if (goesOn && provenHalf && callAccessor(walker, access, provenHalf, object, stored)) {
                 endArm(isStore || walker.isUnreachable() ? Reference() : walker.referenceOf(access.id()));
                 goesOn = false;
@@ -478,103 +491,6 @@ bool accessStaticFieldInVariable(Walker& walker, const BodyValue& access)
 }
 
 // ---- A lookup past own names
-
-// From `start` upward the table lists no member under the key. Each object that the lookup passes by can never get the key, and stays below what it stands below, up to the one that stands below nothing.
-static bool nothingAnswersFromInKeyOrdersAccessors(const Program& program, BuiltinID start, PropertyKeyID key)
-{
-    const BuiltinTable& table = program.builtins();
-    MembersUnderKey members(program, key);
-    BuiltinID holder = table.canonicalID(start);
-    while (true) {
-        // Compiled code makes the object of such a module, and each module has its own of an object of that scope: the table speaks of neither.
-        if (compiledModuleWithObject(program, holder) || table.at(table.rootOf(holder)).scope != BuiltinScope::Realm)
-            return false;
-        if (members.findOwnMember(holder) || !listsEveryMemberUnder(program, holder, key) || !members.isClosedKey(holder) || !table.hasLockedPrototypeLink(holder))
-            return false;
-        const Builtin& object = table.at(holder);
-        switch (object.prototypeLink) {
-        case BuiltinPrototypeLink::Unknown:
-            return false;
-        case BuiltinPrototypeLink::Null:
-            return true;
-        case BuiltinPrototypeLink::Builtin:
-            holder = table.canonicalID(object.inheritsFrom);
-            break;
-        }
-    }
-}
-
-// The closures of the one function stay as they are made: nobody stores into one, defines on one, deletes off one or lays one below something else, and every caller is known, so none has left the program.
-// What a function object has of its own by its kind is not lacking.
-static bool closuresLackNameInKeyOrdersAccessors(const Walker& walker, const Type& type, PropertyKeyID key)
-{
-    const Program& program = walker.program();
-    const LinkTables& linked = walker.facts().linked();
-    FunctionID function = singleFunctionOf(walker.types(), type);
-    if (!function || function.index() >= linked.functions.size() || !linked.function(function).closuresStayAsMade)
-        return false;
-    // A coroutine's function object stands below a prototype of its own kind.
-    const Function& record = program.at(function);
-    if (record.isCoroutine() || record.constructedClass)
-        return false;
-    for (BuiltinName own : { BuiltinName(BuiltinNames::name), BuiltinName(BuiltinNames::length), BuiltinName(BuiltinNames::prototype), BuiltinName(BuiltinNames::arguments), BuiltinName(BuiltinNames::caller) }) {
-        if (program.keyOf(own) == key)
-            return false;
-    }
-    return nothingAnswersFromInKeyOrdersAccessors(program, Builtins::FunctionPrototype, key);
-}
-
-// The state has seen the object as its class makes it: it has no name of its own but those that the class gives it, and stands below the prototypes that it was made below.
-static bool objectAsMadeLacksNameInKeyOrdersAccessors(Walker& walker, Reference object, const Type& type, PropertyKeyID key)
-{
-    const Program& program = walker.program();
-    const BuiltinTable& table = program.builtins();
-    const ClassPart* part = singleBuiltinClassOf(walker.types(), type);
-    if (!part || !table.mayHavePristineInstances(part->builtinClass) || !isListAsMade(walker, object))
-        return false;
-    BuiltinName name = program.builtinNameOf(key);
-    if (name && table.isRedefinedBelow(part->builtinClass, name))
-        return false;
-    // `error.name + error.stack`: what a constructor lays on each object that it makes is listed with the class, and not with the prototype.
-    if (table.mayDefineOnNewInstances(part->builtinClass, name))
-        return false;
-    BuiltinID prototype;
-    for (BuiltinClassID current = part->builtinClass; current && !prototype; current = table.at(current).parent)
-        prototype = table.at(current).prototype;
-    // What the class gives each instance is listed with the prototype, so a name of that kind counts as found.
-    return prototype && nothingAnswersFromInKeyOrdersAccessors(program, prototype, key);
-}
-
-bool foldLookupPastOwnNames(Walker& walker, const BodyValue& access)
-{
-    Opcode opcode = access.opcode();
-    if ((opcode != Opcode::PropGet && opcode != Opcode::PropHas) || !walker.has(Mechanism::Folding) || !walker.has(Mechanism::TypedOperations))
-        return false;
-    if (opcode == Opcode::PropGet && access.isFreeName())
-        return false;
-    const Program& program = walker.program();
-    PropertyKeyID key = access.key();
-    if (!key || liesInThread(key) || program.at(key).kind != PropertyKeyKind::Text || program.isIndexLike(key) || program.nameClassOf(key) == NameClass::Proto)
-        return false;
-    Reference object = walker.referenceOf(access.objectOperand());
-    TypeID proven = object ? walker.typeOf(object) : TypeID();
-    if (!proven)
-        return false;
-    Type type = walker.types().at(proven);
-    if (!type.isObject() || !type.isJavaScriptValue())
-        return false;
-    if (!closuresLackNameInKeyOrdersAccessors(walker, type, key) && !objectAsMadeLacksNameInKeyOrdersAccessors(walker, object, type, key))
-        return false;
-
-    Draft answer = walker.draftOf(access);
-    if (walker.hasFailed())
-        return true;
-    answer.become(opcode == Opcode::PropGet ? Opcode::Undefined : Opcode::Boolean);
-    if (opcode == Opcode::PropHas)
-        answer.setBoolean(false);
-    walker.bind(access.id(), walker.constant(WTF::move(answer)));
-    return true;
-}
 
 } } } // namespace JSC::AOT::Typed
 

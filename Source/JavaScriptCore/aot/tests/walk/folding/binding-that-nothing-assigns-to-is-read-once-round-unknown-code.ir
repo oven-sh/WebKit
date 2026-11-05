@@ -4,7 +4,7 @@
 # function top() { const a = limits.x; print("between"); return a + limits.x; }
 # print(make(() => ({ x: 2 }))(), top());
 # -- end of source
-# `const cfg = load()`, read in a function that is declared in front of it: nothing assigns to the name. The store stands above the only point at which f leaves, so nobody sees the dead zone and no check is built (environments-filled-1, 16:53). What the first read found is what the slot holds for good,
+# `const cfg = load()`, read in a function that is declared in front of it: nothing assigns to the name. The store stands above the only point at which f leaves, so nobody sees the dead zone and no check is built. What the first read found is what the slot holds for good,
 # so the read behind code that nobody knows is the value that the first read found.
 # RUN: walk f4 mechanisms=all
 # CHECK: = GetEnvironmentField

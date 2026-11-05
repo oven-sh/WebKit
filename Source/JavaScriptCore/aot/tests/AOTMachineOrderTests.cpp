@@ -311,298 +311,6 @@ static bool orderTestLoopHoldsExactly(const Order& order, uint32_t loop, std::in
     });
 }
 
-static void testMachineOrderPlacesRareBlockAheadOfItsRejoin()
-{
-    OrderTest test;
-    Output& out = test.out;
-    LBasicBlock slow = out.newBlock();
-    LBasicBlock usual = out.newBlock();
-    LBasicBlock join = out.newBlock();
-    LValue result = out.phiIn(join, Int64);
-    out.branch(test.first, rareEdge(slow), normalEdge(usual));
-    test.passAndJump(slow, test.second, result, join);
-    out.appendTo(usual);
-    out.upsilon(out.add(test.second, 7), result);
-    out.jump(join);
-    test.returnValue(join, result);
-    test.compile();
-
-    AOT_ORDER_TEST_CHECK(test, test.printedOrder() ==
-        "#0: head = 0\n"
-        "#2: head = 10 <- #0\n"
-        "#1: head = 16, rare region 0, enters it, leaves it <- #0\n"
-        "#3: head = 20 <- #2 #1\n"
-        "rare region 0: entry #1\n"
-        "layout: #0 #2 #3 #1\n"_s);
-    AOT_ORDER_TEST_CHECK(test, test.run(0, 5) == 12 && test.run(1, 5) == 5);
-}
-
-static void testMachineOrderPlacesRareBlockThatNeverRejoinsBehindItsBranch()
-{
-    OrderTest test;
-    Output& out = test.out;
-    LBasicBlock fails = out.newBlock();
-    LBasicBlock next = out.newBlock();
-    LBasicBlock last = out.newBlock();
-    out.branch(test.first, rareEdge(fails), normalEdge(next));
-    test.returnConstant(fails, -1);
-    out.appendTo(next);
-    LValue sum = out.add(test.second, 7);
-    out.jump(last);
-    test.returnValue(last, sum);
-    const Order& order = test.compile();
-
-    const BlockPlace& place = order.of(fails);
-    AOT_ORDER_TEST_CHECK(test, place.isRare() && place.entersRareRegion && !place.leavesRareRegion);
-    AOT_ORDER_TEST_CHECK(test, place.orderIndex == 1 && order.of(next).orderIndex == 2 && order.blocksInLayout().back() == fails);
-    AOT_ORDER_TEST_CHECK(test, order.rareRegions().size() == 1 && order.rareRegions()[0].onlyEntry == fails);
-    AOT_ORDER_TEST_CHECK(test, test.run(0, 5) == 12 && test.run(1, 5) == -1);
-}
-
-static void testMachineOrderPlacesUnlikelySuccessorBehindNormalOne()
-{
-    for (EdgeClass classOfFirstWay : { EdgeClass::Normal, EdgeClass::Unlikely }) {
-        OrderTest test;
-        LBasicBlock firstWay = test.out.newBlock();
-        LBasicBlock secondWay = test.out.newBlock();
-        test.out.branch(test.first, Edge(firstWay, classOfFirstWay), normalEdge(secondWay));
-        test.returnConstant(firstWay, 10);
-        test.returnConstant(secondWay, 20);
-        const Order& order = test.compile();
-
-        AOT_ORDER_TEST_CHECK(test, (order.of(firstWay).orderIndex < order.of(secondWay).orderIndex) == (classOfFirstWay == EdgeClass::Normal));
-        AOT_ORDER_TEST_CHECK(test, order.rareRegions().empty() && std::ranges::equal(order.blocksInOrder(), order.blocksInLayout()));
-        AOT_ORDER_TEST_CHECK(test, test.run(1) == 10 && test.run(0) == 20);
-    }
-}
-
-static void testMachineOrderKeepsLoopContiguous()
-{
-    OrderTest test;
-    Output& out = test.out;
-    LBasicBlock head = out.newBlock();
-    LBasicBlock body = out.newBlock();
-    LBasicBlock sideExit = out.newBlock();
-    LBasicBlock latch = out.newBlock();
-    LBasicBlock exit = out.newBlock();
-    LValue index = out.phiIn(head, Int64);
-    out.upsilon(out.int64Zero, index);
-    out.jump(head);
-    out.appendTo(head);
-    out.branch(out.below(index, test.first), normalEdge(body), normalEdge(exit));
-    // The way out comes first among the successors, so a plain reverse postorder has it between two blocks of the loop.
-    out.appendTo(body);
-    out.branch(out.equal(index, test.second), normalEdge(sideExit), normalEdge(latch));
-    out.appendTo(sideExit);
-    out.ret(out.add(index, 100));
-    out.appendTo(latch);
-    out.upsilon(out.add(index, 1), index);
-    out.jump(head);
-    test.returnValue(exit, index);
-    const Order& order = test.compile();
-
-    AOT_ORDER_TEST_CHECK(test, order.loops().size() == 1 && orderTestLoopHoldsExactly(order, 0, { head, body, latch }));
-    AOT_ORDER_TEST_CHECK(test, test.printedOrder() ==
-        "#0: head = 0\n"
-        "#1: head = 10, loop 0, loop head <- #0 #4\n"
-        "#2: head = 16, loop 0 <- #1\n"
-        "#4: head = 22, loop 0 <- #2\n"
-        "#3: head = 28 <- #2\n"
-        "#5: head = 34 <- #1\n"
-        "loop 0: #1 to #4, positions 10 to 28\n"
-        "layout: #0 #4 #1 #2 #3 #5\n"_s);
-    AOT_ORDER_TEST_CHECK(test, test.run(5, 9) == 5 && test.run(5, 3) == 103);
-}
-
-static bool orderTestLayoutIs(const Order& order, std::initializer_list<const Block*> blocks)
-{
-    return std::ranges::equal(order.blocksInLayout(), blocks);
-}
-
-// while (index < first) index++. The body falls through to the test, which branches back to it: one branch a turn.
-static void testMachineOrderEndsLoopWithItsTest()
-{
-    OrderTest test;
-    Output& out = test.out;
-    LBasicBlock head = out.newBlock();
-    LBasicBlock body = out.newBlock();
-    LBasicBlock exit = out.newBlock();
-    LValue index = out.phiIn(head, Int64);
-    out.upsilon(out.int64Zero, index);
-    out.jump(head);
-    out.appendTo(head);
-    out.branch(out.below(index, test.first), normalEdge(body), normalEdge(exit));
-    out.appendTo(body);
-    out.upsilon(out.add(index, 1), index);
-    out.jump(head);
-    test.returnValue(exit, index);
-    const Order& order = test.compile();
-
-    AOT_ORDER_TEST_CHECK(test, order.of(head).isLoopHead && order.of(head).orderIndex < order.of(body).orderIndex);
-    AOT_ORDER_TEST_CHECK(test, orderTestLayoutIs(order, { test.entry, body, head, exit }));
-    AOT_ORDER_TEST_CHECK(test, !test.run(0) && test.run(1) == 1 && test.run(5) == 5);
-}
-
-// The head only counts, and the test stands in the block behind it. The loop ends with the block that holds the test.
-static void testMachineOrderEndsLoopWithTestBehindItsHead()
-{
-    OrderTest test;
-    Output& out = test.out;
-    LBasicBlock head = out.newBlock();
-    LBasicBlock slow = out.newBlock();
-    LBasicBlock tests = out.newBlock();
-    LBasicBlock body = out.newBlock();
-    LBasicBlock exit = out.newBlock();
-    LValue index = out.phiIn(head, Int64);
-    TypedPointer counter = out.address(test.testProcedure.heaps().argumentBuffer, test.third);
-    out.upsilon(out.int64Zero, index);
-    out.jump(head);
-    out.appendTo(head);
-    out.branch(out.equal(index, test.second), rareEdge(slow), normalEdge(tests));
-    out.appendTo(slow);
-    out.store64(out.add(out.load64(counter), 1), counter);
-    out.jump(tests);
-    out.appendTo(tests);
-    out.branch(out.below(index, test.first), normalEdge(body), normalEdge(exit));
-    out.appendTo(body);
-    out.upsilon(out.add(index, 1), index);
-    out.jump(head);
-    test.returnValue(exit, index);
-    const Order& order = test.compile();
-
-    AOT_ORDER_TEST_CHECK(test, order.of(head).isLoopHead && order.of(slow).isRare());
-    AOT_ORDER_TEST_CHECK(test, order.of(body).layoutIndex == 1 && order.of(head).layoutIndex == 2 && order.of(exit).layoutIndex == order.of(tests).layoutIndex + 1);
-    int64_t count = 0;
-    AOT_ORDER_TEST_CHECK(test, test.run(5, 3, reinterpret_cast<int64_t>(&count)) == 5 && count == 1 && !test.run(0, 9, reinterpret_cast<int64_t>(&count)) && count == 1);
-}
-
-// A block of the loop leads to rare blocks alone, one of which leads on within the loop. The block is one of the loop all the same: it stands ahead of the jump back, and the interval ends with that jump.
-static void testMachineOrderEndsLoopWithItsTestWhereRareBlockLeadsBackIntoIt()
-{
-    OrderTest test;
-    Output& out = test.out;
-    LBasicBlock head = out.newBlock();
-    LBasicBlock body = out.newBlock();
-    LBasicBlock odd = out.newBlock();
-    LBasicBlock slow = out.newBlock();
-    LBasicBlock fails = out.newBlock();
-    LBasicBlock latch = out.newBlock();
-    LBasicBlock exit = out.newBlock();
-    LValue index = out.phiIn(head, Int64);
-    out.upsilon(out.int64Zero, index);
-    out.jump(head);
-    out.appendTo(head);
-    out.branch(out.below(index, test.first), normalEdge(body), normalEdge(exit));
-    out.appendTo(body);
-    out.branch(out.equal(index, test.second), normalEdge(odd), normalEdge(latch));
-    out.appendTo(odd);
-    out.branch(test.third, rareEdge(slow), rareEdge(fails));
-    out.appendTo(slow);
-    out.jump(latch);
-    test.returnConstant(fails, -1);
-    out.appendTo(latch);
-    out.upsilon(out.add(index, 1), index);
-    out.jump(head);
-    test.returnValue(exit, index);
-    const Order& order = test.compile();
-
-    AOT_ORDER_TEST_CHECK(test, !order.of(odd).isRare() && order.of(body).orderIndex < order.of(odd).orderIndex && order.of(odd).orderIndex < order.of(latch).orderIndex);
-    AOT_ORDER_TEST_CHECK(test, order.loops().size() == 1 && order.loops()[0].firstBlock == order.of(head).orderIndex && order.loops()[0].endBlock == order.of(latch).orderIndex + 1);
-    // The way out of the head falls through, so the head ends what is rotated.
-    AOT_ORDER_TEST_CHECK(test, order.of(odd).layoutIndex == order.of(body).layoutIndex + 1 && order.of(head).layoutIndex == order.of(latch).layoutIndex + 1 && order.of(exit).layoutIndex == order.of(head).layoutIndex + 1);
-    AOT_ORDER_TEST_CHECK(test, test.run(5, 3, 1) == 5 && test.run(5, 3, 0) == -1 && test.run(5, 9, 0) == 5);
-}
-
-// for (row..) for (column..) count++. Each loop ends with its own test, the inner one in one piece within the outer one.
-static void testMachineOrderEndsEachNestedLoopWithItsTest()
-{
-    OrderTest test;
-    Output& out = test.out;
-    LBasicBlock outerHead = out.newBlock();
-    LBasicBlock entersInner = out.newBlock();
-    LBasicBlock innerHead = out.newBlock();
-    LBasicBlock innerBody = out.newBlock();
-    LBasicBlock outerLatch = out.newBlock();
-    LBasicBlock done = out.newBlock();
-    LValue row = out.phiIn(outerHead, Int64);
-    LValue column = out.phiIn(innerHead, Int64);
-    TypedPointer counter = out.address(test.testProcedure.heaps().argumentBuffer, test.third);
-    out.upsilon(out.int64Zero, row);
-    out.jump(outerHead);
-    out.appendTo(outerHead);
-    out.branch(out.below(row, test.first), normalEdge(entersInner), normalEdge(done));
-    out.appendTo(entersInner);
-    out.upsilon(out.int64Zero, column);
-    out.jump(innerHead);
-    out.appendTo(innerHead);
-    out.branch(out.below(column, test.second), normalEdge(innerBody), normalEdge(outerLatch));
-    out.appendTo(innerBody);
-    out.store64(out.add(out.load64(counter), 1), counter);
-    out.upsilon(out.add(column, 1), column);
-    out.jump(innerHead);
-    out.appendTo(outerLatch);
-    out.upsilon(out.add(row, 1), row);
-    out.jump(outerHead);
-    test.returnValue(done, row);
-    const Order& order = test.compile();
-
-    AOT_ORDER_TEST_CHECK(test, orderTestLayoutIs(order, { test.entry, entersInner, innerBody, innerHead, outerLatch, outerHead, done }));
-    int64_t rounds = 0;
-    AOT_ORDER_TEST_CHECK(test, test.run(3, 4, reinterpret_cast<int64_t>(&rounds)) == 3 && rounds == 12);
-}
-
-// do { index++ } while (index < first). The test stands at the end as written, and what the edge back moves stands ahead of the head.
-static void testMachineOrderLeavesLoopThatEndsWithItsTest()
-{
-    OrderTest test;
-    Output& out = test.out;
-    LBasicBlock body = out.newBlock();
-    LBasicBlock exit = out.newBlock();
-    LValue index = out.phiIn(body, Int64);
-    out.upsilon(out.int64Zero, index);
-    out.jump(body);
-    out.appendTo(body);
-    LValue next = out.add(index, 1);
-    out.upsilon(next, index);
-    out.branch(out.below(next, test.first), normalEdge(body), normalEdge(exit));
-    test.returnValue(exit, next);
-    const Order& order = test.compile();
-
-    Block* blockOnEdgeBack = body->successor(0).block();
-    AOT_ORDER_TEST_CHECK(test, blockOnEdgeBack != body && order.of(body).isLoopHead);
-    AOT_ORDER_TEST_CHECK(test, orderTestLayoutIs(order, { test.entry, blockOnEdgeBack, body, exit }));
-    AOT_ORDER_TEST_CHECK(test, test.run(0) == 1 && test.run(5) == 5);
-}
-
-// The likely arm falls through to the join. The unlikely one stands behind everything likely and ahead of everything rare.
-static void testMachineOrderPlacesUnlikelyArmBehindLikelyBlocks()
-{
-    OrderTest test;
-    Output& out = test.out;
-    LBasicBlock seldom = out.newBlock();
-    LBasicBlock usual = out.newBlock();
-    LBasicBlock join = out.newBlock();
-    LBasicBlock fails = out.newBlock();
-    LBasicBlock done = out.newBlock();
-    LValue result = out.phiIn(join, Int64);
-    out.branch(test.first, unlikelyEdge(seldom), normalEdge(usual));
-    out.appendTo(seldom);
-    out.upsilon(out.add(test.second, 100), result);
-    out.jump(join);
-    out.appendTo(usual);
-    out.upsilon(out.add(test.second, 7), result);
-    out.jump(join);
-    out.appendTo(join);
-    out.branch(test.third, rareEdge(fails), normalEdge(done));
-    test.returnConstant(fails, -1);
-    test.returnValue(done, result);
-    const Order& order = test.compile();
-
-    AOT_ORDER_TEST_CHECK(test, order.of(seldom).orderIndex < order.of(join).orderIndex && !order.of(seldom).isRare() && order.numberOfBlocksOutsideRareRegions() == 5);
-    AOT_ORDER_TEST_CHECK(test, orderTestLayoutIs(order, { test.entry, usual, join, done, seldom, fails }));
-    AOT_ORDER_TEST_CHECK(test, test.run(0, 5) == 12 && test.run(1, 5) == 105 && test.run(0, 5, 1) == -1);
-}
-
 // An unlikely arm in a loop stands outside the loop, which is rotated as if the arm were not there.
 static void testMachineOrderTakesUnlikelyArmOutOfLoop()
 {
@@ -634,169 +342,6 @@ static void testMachineOrderTakesUnlikelyArmOutOfLoop()
     AOT_ORDER_TEST_CHECK(test, test.run(5, 3) == 6 && test.run(5, 9) == 5);
 }
 
-// for (;;) { if (index == first) leave; index++ }, and the way out is rare. The loop ends with the test all the same, and the conditional jump goes round the loop.
-static void testMachineOrderEndsLoopWithTestThatLeavesRarely()
-{
-    OrderTest test;
-    Output& out = test.out;
-    LBasicBlock fails = out.newBlock();
-    LBasicBlock enters = out.newBlock();
-    LBasicBlock head = out.newBlock();
-    LBasicBlock body = out.newBlock();
-    LBasicBlock exit = out.newBlock();
-    LValue index = out.phiIn(head, Int64);
-    out.branch(test.third, rareEdge(fails), normalEdge(enters));
-    test.returnConstant(fails, -1);
-    test.passAndJump(enters, out.int64Zero, index, head);
-    out.appendTo(head);
-    out.branch(out.equal(index, test.first), rareEdge(exit), normalEdge(body));
-    out.appendTo(body);
-    out.upsilon(out.add(index, 1), index);
-    out.jump(head);
-    out.appendTo(exit);
-    out.ret(out.add(index, 100));
-    const Order& order = test.compile();
-
-    // The other rare block stands between the test and the way out, so neither way falls through.
-    AOT_ORDER_TEST_CHECK(test, orderTestLayoutIs(order, { test.entry, enters, body, head, fails, exit }));
-    AOT_ORDER_TEST_CHECK(test, order.successorOfConditionalJump(head) == 1);
-    AOT_ORDER_TEST_CHECK(test, test.run(5) == 105 && test.run(0) == 100 && test.run(5, 0, 1) == -1);
-}
-
-// for (row = 0;; row++) { for (column = 0; column < second; column++) { if (row + column == third) return row + 100; } if (row + 1 >= first) return row + 1; }
-// The block that the inner loop returns through stands behind the outer loop, so the way out of the outer loop does not fall through.
-// The outer loop ends with its test all the same, and the conditional jump goes round the loop whichever successor that is.
-template<unsigned successorThatStays>
-static void testMachineOrderEndsLoopWithTestWhoseWayOutDoesNotFallThrough()
-{
-    OrderTest test;
-    Output& out = test.out;
-    LBasicBlock outerHead = out.newBlock();
-    LBasicBlock innerHead = out.newBlock();
-    LBasicBlock innerBody = out.newBlock();
-    LBasicBlock found = out.newBlock();
-    LBasicBlock innerLatch = out.newBlock();
-    LBasicBlock afterInner = out.newBlock();
-    LBasicBlock outerLatch = out.newBlock();
-    LBasicBlock done = out.newBlock();
-    LValue row = out.phiIn(outerHead, Int64);
-    LValue column = out.phiIn(innerHead, Int64);
-    out.upsilon(out.int64Zero, row);
-    out.jump(outerHead);
-    test.passAndJump(outerHead, out.int64Zero, column, innerHead);
-    out.appendTo(innerHead);
-    out.branch(out.below(column, test.second), normalEdge(innerBody), normalEdge(afterInner));
-    out.appendTo(innerBody);
-    out.branch(out.equal(out.add(row, column), test.third), normalEdge(found), normalEdge(innerLatch));
-    out.appendTo(found);
-    out.ret(out.add(row, 100));
-    out.appendTo(innerLatch);
-    out.upsilon(out.add(column, 1), column);
-    out.jump(innerHead);
-    out.appendTo(afterInner);
-    LValue next = out.add(row, 1);
-    if (successorThatStays)
-        out.branch(out.aboveOrEqual(next, test.first), normalEdge(done), normalEdge(outerLatch));
-    else
-        out.branch(out.below(next, test.first), normalEdge(outerLatch), normalEdge(done));
-    test.passAndJump(outerLatch, next, row, outerHead);
-    test.returnValue(done, next);
-    const Order& order = test.compile();
-
-    AOT_ORDER_TEST_CHECK(test, orderTestLayoutIs(order, { test.entry, outerLatch, outerHead, innerBody, innerLatch, innerHead, afterInner, found, done }));
-    AOT_ORDER_TEST_CHECK(test, afterInner->successor(successorThatStays).block() == outerLatch && order.successorOfConditionalJump(afterInner) == successorThatStays);
-    AOT_ORDER_TEST_CHECK(test, test.run(3, 4, 100) == 3 && test.run(3, 4, 5) == 102 && test.run(3, 4, 0) == 100 && test.run(0, 0, 0) == 1);
-}
-
-static void testMachineOrderMakesNestedLoopsNestedIntervals()
-{
-    OrderTest test;
-    Output& out = test.out;
-    LBasicBlock outerHead = out.newBlock();
-    LBasicBlock innerHead = out.newBlock();
-    LBasicBlock innerBody = out.newBlock();
-    LBasicBlock outerLatch = out.newBlock();
-    LBasicBlock done = out.newBlock();
-    LValue row = out.phiIn(outerHead, Int64);
-    LValue column = out.phiIn(innerHead, Int64);
-    out.upsilon(out.int64Zero, row);
-    out.jump(outerHead);
-    out.appendTo(outerHead);
-    out.upsilon(out.int64Zero, column);
-    out.branch(out.below(row, test.first), normalEdge(innerHead), normalEdge(done));
-    out.appendTo(innerHead);
-    out.branch(out.below(column, test.second), normalEdge(innerBody), normalEdge(outerLatch));
-    out.appendTo(innerBody);
-    TypedPointer counter = out.address(test.testProcedure.heaps().argumentBuffer, test.third);
-    out.store64(out.add(out.load64(counter), 1), counter);
-    out.upsilon(out.add(column, 1), column);
-    out.jump(innerHead);
-    out.appendTo(outerLatch);
-    out.upsilon(out.add(row, 1), row);
-    out.jump(outerHead);
-    test.returnValue(done, row);
-    const Order& order = test.compile();
-
-    uint32_t outer = order.of(outerHead).loop;
-    uint32_t inner = order.of(innerHead).loop;
-    Block* blockOnEdgeIntoInnerLoop = outerHead->successor(0).block();
-    AOT_ORDER_TEST_CHECK(test, order.loops().size() == 2 && outer < 2 && inner < 2 && blockOnEdgeIntoInnerLoop != innerHead);
-    AOT_ORDER_TEST_CHECK(test, order.loops()[outer].parent == noLoop && order.loops()[inner].parent == outer);
-    AOT_ORDER_TEST_CHECK(test, orderTestLoopHoldsExactly(order, inner, { innerHead, innerBody }));
-    AOT_ORDER_TEST_CHECK(test, orderTestLoopHoldsExactly(order, outer, { outerHead, blockOnEdgeIntoInnerLoop, innerHead, innerBody, outerLatch }));
-    int64_t rounds = 0;
-    AOT_ORDER_TEST_CHECK(test, test.run(3, 4, reinterpret_cast<int64_t>(&rounds)) == 3 && rounds == 12);
-}
-
-static int64_t orderTestCountDown(bool isInFirst, int64_t left, int64_t step)
-{
-    for (;; isInFirst = true) {
-        if (isInFirst)
-            left -= step;
-        if (--left <= 0)
-            return left;
-    }
-}
-
-// The step is defined ahead of the cycle and read inside it, so it has to live to the end of the interval whichever way the cycle is entered.
-static void testMachineOrderCoversCycleEnteredInTwoPlaces()
-{
-    OrderTest test;
-    Output& out = test.out;
-    LBasicBlock firstBlock = out.newBlock();
-    LBasicBlock secondBlock = out.newBlock();
-    LBasicBlock exit = out.newBlock();
-    LValue leftInFirst = out.phiIn(firstBlock, Int64);
-    LValue leftInSecond = out.phiIn(secondBlock, Int64);
-    out.upsilon(test.second, leftInFirst);
-    out.upsilon(test.second, leftInSecond);
-    out.branch(test.first, normalEdge(firstBlock), normalEdge(secondBlock));
-    out.appendTo(firstBlock);
-    out.upsilon(out.sub(leftInFirst, test.third), leftInSecond);
-    out.jump(secondBlock);
-    out.appendTo(secondBlock);
-    LValue left = out.sub(leftInSecond, 1);
-    out.upsilon(left, leftInFirst);
-    out.branch(out.greaterThan(left, out.int64Zero), normalEdge(firstBlock), normalEdge(exit));
-    test.returnValue(exit, left);
-    const Order& order = test.compile();
-
-    AOT_ORDER_TEST_CHECK(test, order.loops().size() == 1 && !order.of(firstBlock).loop && !order.of(secondBlock).loop);
-    AOT_ORDER_TEST_CHECK(test, order.of(firstBlock).isLoopHead != order.of(secondBlock).isLoopHead);
-    AOT_ORDER_TEST_CHECK(test, order.of(test.entry).loop == noLoop && order.of(exit).loop == noLoop);
-    for (const Block* block : { firstBlock, secondBlock }) {
-        AOT_ORDER_TEST_CHECK(test, std::ranges::any_of(order.of(block).predecessors, [&](const Block* predecessor) {
-            return order.of(predecessor).loop == noLoop;
-        }));
-    }
-    for (int64_t entersAtFirst : { 0, 1 }) {
-        for (int64_t iterations : { 1, 4, 7 }) {
-            for (int64_t step : { 1, 2 })
-                AOT_ORDER_TEST_CHECK(test, test.run(entersAtFirst, iterations, step) == orderTestCountDown(entersAtFirst, iterations, step));
-        }
-    }
-}
-
 // As a twin is entered: behind the head of a loop.
 static void testMachineOrderStartsAtEveryEntrypoint()
 {
@@ -826,102 +371,6 @@ static void testMachineOrderStartsAtEveryEntrypoint()
     AOT_ORDER_TEST_CHECK(test, order.loops().size() == 1 && !order.of(head).loop && !order.of(body).loop);
     AOT_ORDER_TEST_CHECK(test, order.of(head).isLoopHead != order.of(body).isLoopHead);
     AOT_ORDER_TEST_CHECK(test, order.of(test.entry).loop == noLoop && order.of(laterEntry).loop == noLoop && order.of(exit).loop == noLoop);
-}
-
-static void testMachineOrderKeepsRareBlockWithinItsLoop()
-{
-    OrderTest test;
-    Output& out = test.out;
-    LBasicBlock head = out.newBlock();
-    LBasicBlock body = out.newBlock();
-    LBasicBlock slow = out.newBlock();
-    LBasicBlock latch = out.newBlock();
-    LBasicBlock exit = out.newBlock();
-    LValue index = out.phiIn(head, Int64);
-    LValue step = out.phiIn(latch, Int64);
-    out.upsilon(out.int64Zero, index);
-    out.jump(head);
-    out.appendTo(head);
-    out.branch(out.below(index, test.first), normalEdge(body), normalEdge(exit));
-    out.appendTo(body);
-    out.upsilon(out.constInt64(1), step);
-    out.branch(out.equal(index, test.second), rareEdge(slow), normalEdge(latch));
-    test.passAndJump(slow, out.constInt64(3), step, latch);
-    out.appendTo(latch);
-    out.upsilon(out.add(index, step), index);
-    out.jump(head);
-    test.returnValue(exit, index);
-    const Order& order = test.compile();
-
-    AOT_ORDER_TEST_CHECK(test, order.of(slow).isRare() && order.of(slow).orderIndex + 1 == order.of(latch).orderIndex);
-    AOT_ORDER_TEST_CHECK(test, order.loops().size() == 1 && order.of(head).isLoopHead && !order.of(slow).loop && order.of(exit).loop == noLoop);
-    AOT_ORDER_TEST_CHECK(test, order.blocksInLayout().back() == slow);
-    AOT_ORDER_TEST_CHECK(test, test.run(5, 3) == 6 && test.run(5, 9) == 5);
-}
-
-static void testMachineOrderCoversRareBlockThatLeadsBack()
-{
-    OrderTest test;
-    Output& out = test.out;
-    LBasicBlock often = out.newBlock();
-    LBasicBlock seldom = out.newBlock();
-    LBasicBlock exit = out.newBlock();
-    LValue left = out.phiIn(often, Int64);
-    LValue count = out.phiIn(often, Int64);
-    out.upsilon(test.first, left);
-    out.upsilon(out.int64Zero, count);
-    out.jump(often);
-    out.appendTo(often);
-    out.branch(left, rareEdge(seldom), normalEdge(exit));
-    out.appendTo(seldom);
-    out.upsilon(out.sub(left, 1), left);
-    out.upsilon(out.add(count, 1), count);
-    out.jump(often);
-    test.returnValue(exit, count);
-    const Order& order = test.compile();
-
-    AOT_ORDER_TEST_CHECK(test, order.of(seldom).isRare() && order.of(seldom).entersRareRegion && order.of(seldom).leavesRareRegion);
-    AOT_ORDER_TEST_CHECK(test, order.loops().size() == 1 && orderTestLoopHoldsExactly(order, order.of(often).loop, { often, seldom }));
-    AOT_ORDER_TEST_CHECK(test, order.blocksInLayout().back() == seldom);
-    AOT_ORDER_TEST_CHECK(test, test.run(3) == 3 && !test.run(0));
-}
-
-// As a loop over a list is opened: the usual way leads to the head, the other way leads there through a rare block alone.
-// The other way stands ahead of the head, so no edge but the one of the loop leads back, and what is live in the loop ends with it.
-static void testMachineOrderPlacesBlockAheadOfWhatItLeadsToThroughRareBlocks()
-{
-    OrderTest test;
-    Output& out = test.out;
-    LBasicBlock usual = out.newBlock();
-    LBasicBlock other = out.newBlock();
-    LBasicBlock slow = out.newBlock();
-    LBasicBlock fails = out.newBlock();
-    LBasicBlock head = out.newBlock();
-    LBasicBlock body = out.newBlock();
-    LBasicBlock exit = out.newBlock();
-    LBasicBlock last = out.newBlock();
-    LValue index = out.phiIn(head, Int64);
-    out.branch(test.first, unlikelyEdge(other), normalEdge(usual));
-    test.passAndJump(usual, out.int64Zero, index, head);
-    out.appendTo(other);
-    out.branch(test.third, rareEdge(slow), rareEdge(fails));
-    test.passAndJump(slow, out.constInt64(2), index, head);
-    test.returnConstant(fails, -1);
-    out.appendTo(head);
-    out.branch(out.below(index, test.second), normalEdge(body), normalEdge(exit));
-    out.appendTo(body);
-    out.upsilon(out.add(index, 1), index);
-    out.jump(head);
-    out.appendTo(exit);
-    LValue sum = out.add(index, 100);
-    out.jump(last);
-    test.returnValue(last, sum);
-    const Order& order = test.compile();
-
-    AOT_ORDER_TEST_CHECK(test, !order.of(other).isRare() && order.of(slow).isRare() && order.of(slow).leavesRareRegion);
-    AOT_ORDER_TEST_CHECK(test, order.of(usual).orderIndex < order.of(other).orderIndex && order.of(other).orderIndex < order.of(slow).orderIndex && order.of(slow).orderIndex < order.of(head).orderIndex);
-    AOT_ORDER_TEST_CHECK(test, order.loops().size() == 1 && orderTestLoopHoldsExactly(order, 0, { head, body }));
-    AOT_ORDER_TEST_CHECK(test, test.run(0, 5, 0) == 105 && test.run(1, 5, 1) == 105 && test.run(1, 1, 1) == 102 && test.run(1, 5, 0) == -1);
 }
 
 // An unlikely arm of a loop goes round through a rare block alone. It is one of the loop, so what stands behind the loop is not in the interval.
@@ -992,85 +441,6 @@ static void testMachineOrderSplitsCriticalEdge()
     }
 }
 
-// The join has no Phi, and both ways bring everything in the same registers. So no block stands on the edge from the Branch to the join.
-static void testMachineOrderLeavesEdgeThatGetsNoMoveWhole()
-{
-    for (EdgeClass classOfEdge : { EdgeClass::Normal, EdgeClass::Unlikely }) {
-        OrderTest test;
-        Output& out = test.out;
-        LBasicBlock arm = out.newBlock();
-        LBasicBlock join = out.newBlock();
-        out.branch(test.first, normalEdge(arm), Edge(join, classOfEdge));
-        out.appendTo(arm);
-        out.store64(test.second, out.address(test.testProcedure.heaps().argumentBuffer, test.third));
-        out.jump(join);
-        test.returnValue(join, test.second);
-        const Order& order = test.compile();
-
-        AOT_ORDER_TEST_CHECK(test, test.entry->successor(1).block() == join && test.entry->successor(1).edgeClass() == classOfEdge);
-        AOT_ORDER_TEST_CHECK(test, Order::isUnsplit(test.entry, order.of(join)) && order.blocksInOrder().size() == 3 && test.procedure().numberOfBlocks() == 3);
-        AOT_ORDER_TEST_CHECK(test, order.of(join).predecessors.size() == 2 && order.of(join).predecessors.front() == test.entry && order.of(join).predecessors.back() == arm);
-        int64_t word = 0;
-        AOT_ORDER_TEST_CHECK(test, test.run(1, 5, reinterpret_cast<int64_t>(&word)) == 5 && word == 5);
-        AOT_ORDER_TEST_CHECK(test, test.run(0, 6, reinterpret_cast<int64_t>(&word)) == 6 && word == 5);
-    }
-}
-
-// Three tests fail to one rare block, which blocks outside rare regions alone lead to. It is where its region is entered, and no block stands on any of the three edges.
-static void testMachineOrderLeavesRareEdgesIntoOneRareBlockWhole()
-{
-    OrderTest test;
-    Output& out = test.out;
-    LBasicBlock second = out.newBlock();
-    LBasicBlock third = out.newBlock();
-    LBasicBlock passes = out.newBlock();
-    LBasicBlock fails = out.newBlock();
-    out.branch(out.below(test.first, out.constInt64(10)), normalEdge(second), rareEdge(fails));
-    out.appendTo(second);
-    out.branch(out.below(test.second, out.constInt64(10)), normalEdge(third), rareEdge(fails));
-    out.appendTo(third);
-    out.branch(out.below(test.third, out.constInt64(10)), normalEdge(passes), rareEdge(fails));
-    out.appendTo(passes);
-    out.ret(out.add(test.first, test.second));
-    test.returnConstant(fails, -1);
-    const Order& order = test.compile();
-
-    const BlockPlace& place = order.of(fails);
-    AOT_ORDER_TEST_CHECK(test, place.isRare() && place.entersRareRegion && place.predecessors.size() == 3 && order.blocksInOrder().size() == 5);
-    AOT_ORDER_TEST_CHECK(test, place.predecessors[0] == test.entry && place.predecessors[1] == second && place.predecessors[2] == third);
-    // Nothing sinks into a region that is entered over several edges.
-    AOT_ORDER_TEST_CHECK(test, !order.rareRegions()[place.rareRegion].onlyEntry);
-    AOT_ORDER_TEST_CHECK(test, test.run(1, 2, 3) == 3 && test.run(11, 2, 3) == -1 && test.run(1, 12, 3) == -1 && test.run(1, 2, 13) == -1);
-}
-
-// An edge from within the region leads to the rare block too. A frame that covers the region is set up where the region is entered, so each edge from outside has its block.
-static void testMachineOrderSplitsRareEdgesIntoBlockThatItsRegionLeadsTo()
-{
-    OrderTest test;
-    Output& out = test.out;
-    LBasicBlock second = out.newBlock();
-    LBasicBlock passes = out.newBlock();
-    LBasicBlock slow = out.newBlock();
-    LBasicBlock fails = out.newBlock();
-    out.branch(out.below(test.first, out.constInt64(10)), normalEdge(second), rareEdge(fails));
-    out.appendTo(second);
-    out.branch(out.below(test.second, out.constInt64(10)), normalEdge(passes), rareEdge(slow));
-    out.appendTo(passes);
-    out.ret(out.add(test.first, test.second));
-    out.appendTo(slow);
-    out.store64(test.second, out.address(test.testProcedure.heaps().argumentBuffer, test.third));
-    out.jump(fails);
-    test.returnConstant(fails, -1);
-    const Order& order = test.compile();
-
-    Block* middle = test.entry->successor(1).block();
-    AOT_ORDER_TEST_CHECK(test, middle != fails && middle->size() == 1 && middle->successor(0).block() == fails && !order.of(middle).wasSplitLate);
-    AOT_ORDER_TEST_CHECK(test, order.of(middle).isRare() && order.of(middle).entersRareRegion && order.of(slow).entersRareRegion && !order.of(fails).entersRareRegion);
-    int64_t word = 0;
-    AOT_ORDER_TEST_CHECK(test, test.run(1, 2, reinterpret_cast<int64_t>(&word)) == 3 && test.run(11, 2, reinterpret_cast<int64_t>(&word)) == -1 && !word);
-    AOT_ORDER_TEST_CHECK(test, test.run(1, 12, reinterpret_cast<int64_t>(&word)) == -1 && word == 12);
-}
-
 // One Upsilon serves both edges until the second of them has a block of its own.
 static void testMachineOrderSplitsEachOfTwoEdgesToOneBlock()
 {
@@ -1094,32 +464,6 @@ static void testMachineOrderSplitsEachOfTwoEdgesToOneBlock()
         AOT_ORDER_TEST_CHECK(test, middle->upsilons()[0]->child(0) == test.second && middle->upsilons()[0]->phi() == result);
     }
     AOT_ORDER_TEST_CHECK(test, test.run(0, 7) == 7 && test.run(1, 7) == 7 && test.run(2, 7) == 20);
-}
-
-// No Phi asks for a move. Each edge gets a block of its own as long as another edge of the Switch leads to the same block, so the last of them stays whole.
-static void testMachineOrderLeavesLastOfSeveralEdgesOfSwitchToOneBlockWhole()
-{
-    OrderTest test;
-    Output& out = test.out;
-    LBasicBlock same = out.newBlock();
-    LBasicBlock alone = out.newBlock();
-    LBasicBlock otherwise = out.newBlock();
-    SwitchCase cases[] = { { 0, normalEdge(same) }, { 1, normalEdge(alone) }, { 2, normalEdge(same) }, { 3, normalEdge(same) } };
-    out.switchOn(test.first, cases, normalEdge(otherwise));
-    out.appendTo(same);
-    out.ret(out.add(test.second, test.third));
-    out.appendTo(alone);
-    out.store64(test.second, out.address(test.testProcedure.heaps().argumentBuffer, test.third));
-    out.jump(same);
-    test.returnConstant(otherwise, 20);
-    const Order& order = test.prepare();
-
-    for (unsigned successorIndex : { 0u, 2u }) {
-        const Block* middle = test.entry->successor(successorIndex).block();
-        AOT_ORDER_TEST_CHECK(test, middle != same && middle->size() == 1 && middle->successor(0).block() == same && !order.of(middle).wasSplitLate);
-    }
-    AOT_ORDER_TEST_CHECK(test, test.entry->successor(0).block() != test.entry->successor(2).block() && test.entry->successor(1).block() == alone);
-    AOT_ORDER_TEST_CHECK(test, test.entry->successor(3).block() == same && Order::isUnsplit(test.entry, order.of(same)) && order.of(same).predecessors.size() == 4);
 }
 
 // A table with many rows that come to a few answers.
@@ -1165,31 +509,6 @@ static void testMachineOrderGrowsAsEdgesOfSwitchDo()
     AOT_TEST_CHECK(growsAsSizeDoes(smaller, large));
 }
 
-// anchor(value), then a Branch whose other way never rejoins. The Phi asks for a move though one edge alone leads to its block.
-static void testMachineOrderSplitsEdgeToBlockWithPhisAndOnePredecessor()
-{
-    for (bool handsOnTestedValue : { false, true }) {
-        OrderTest test;
-        Output& out = test.out;
-        LBasicBlock continuation = out.newBlock();
-        LBasicBlock fails = out.newBlock();
-        LValue handedOn = handsOnTestedValue ? test.first : test.second;
-        LValue result = out.phiIn(continuation, Int64);
-        out.upsilon(handedOn, result);
-        out.branch(test.first, normalEdge(continuation), rareEdge(fails));
-        test.returnValue(continuation, result);
-        test.returnConstant(fails, -1);
-        const Order& order = test.compile();
-
-        Block* middle = test.entry->successor(0).block();
-        AOT_ORDER_TEST_CHECK(test, middle != continuation && middle->size() == 1 && middle->last()->opcode() == Jump && middle->successor(0) == normalEdge(continuation));
-        AOT_ORDER_TEST_CHECK(test, test.entry->upsilons().empty() && middle->upsilons().size() == 1);
-        AOT_ORDER_TEST_CHECK(test, middle->upsilons()[0]->child(0) == handedOn && middle->upsilons()[0]->phi() == result);
-        AOT_ORDER_TEST_CHECK(test, order.of(continuation).predecessors.size() == 1 && test.entry->successor(1).block() == fails);
-        AOT_ORDER_TEST_CHECK(test, test.run(3, 5) == (handsOnTestedValue ? 3 : 5) && test.run(0, 5) == -1);
-    }
-}
-
 static ProcedureTraits orderTestTraitsWithHandlers()
 {
     ProcedureTraits traits;
@@ -1212,59 +531,6 @@ static void orderTestAppendThrowingCall(Output& out, PatchGenerator* generator, 
     out.appendSuccessor(rareEdge(landingPad));
     call->clobberLateOnSuccessor(1, RegisterSet());
     call->effects.terminal = true;
-}
-
-static void testMachineOrderLeavesEdgesToLandingPadWhole()
-{
-    OrderTest test(orderTestTraitsWithHandlers());
-    Output& out = test.out;
-    LBasicBlock next = out.newBlock();
-    LBasicBlock done = out.newBlock();
-    LBasicBlock pad = out.newBlock();
-    PatchGenerator* generator = orderTestCreateCallGenerator(test);
-    orderTestAppendThrowingCall(out, generator, next, pad);
-    out.appendTo(next);
-    orderTestAppendThrowingCall(out, generator, done, pad);
-    test.returnValue(done, test.first);
-    test.returnConstant(pad, -1);
-    const Order& order = test.prepare();
-
-    AOT_ORDER_TEST_CHECK(test, pad->isLandingPad() && test.entry->successor(1).block() == pad && next->successor(1).block() == pad);
-    AOT_ORDER_TEST_CHECK(test, order.of(pad).predecessors.size() == 2 && order.of(pad).isRare() && order.of(pad).entersRareRegion);
-    AOT_ORDER_TEST_CHECK(test, test.procedure().numberOfBlocks() == 4);
-}
-
-// The Patch has one way out, which leads to no landing pad. Where it stands in a rare region, the block on the edge is the one that leaves the region.
-static void testMachineOrderSplitsEdgeOfPatchToJoin()
-{
-    for (EdgeClass classOfWayToCall : { EdgeClass::Normal, EdgeClass::Rare }) {
-        bool isRare = classOfWayToCall == EdgeClass::Rare;
-        OrderTest test;
-        Output& out = test.out;
-        LBasicBlock calls = out.newBlock();
-        LBasicBlock other = out.newBlock();
-        LBasicBlock join = out.newBlock();
-        LValue result = out.phiIn(join, Int64);
-        PatchGenerator* generator = orderTestCreateCallGenerator(test);
-        out.branch(test.first, Edge(calls, classOfWayToCall), normalEdge(other));
-        out.appendTo(calls);
-        out.upsilon(test.second, result);
-        PatchOperation* call = out.patchpoint(Void);
-        call->setGenerator(generator);
-        out.appendSuccessor(normalEdge(join));
-        call->effects.terminal = true;
-        test.passAndJump(other, test.third, result, join);
-        test.returnValue(join, result);
-        const Order& order = test.prepare();
-
-        Block* middle = calls->successor(0).block();
-        AOT_ORDER_TEST_CHECK(test, middle != join && middle->size() == 1 && middle->last()->opcode() == Jump && middle->successor(0) == normalEdge(join));
-        AOT_ORDER_TEST_CHECK(test, calls->upsilons().empty() && middle->upsilons().size() == 1);
-        AOT_ORDER_TEST_CHECK(test, middle->upsilons()[0]->child(0) == test.second && middle->upsilons()[0]->phi() == result);
-        AOT_ORDER_TEST_CHECK(test, other->successor(0).block() == join && order.of(join).predecessors.size() == 2);
-        AOT_ORDER_TEST_CHECK(test, order.of(calls).isRare() == isRare && order.of(middle).isRare() == isRare && !order.of(join).isRare());
-        AOT_ORDER_TEST_CHECK(test, !order.of(calls).leavesRareRegion && order.of(middle).leavesRareRegion == isRare);
-    }
 }
 
 // The allocator looks for the Extracts at the head of the first successor. In a block on the edge it would find none.
@@ -1352,34 +618,6 @@ struct OrderTestTwoThrowingArms {
     OrderTestThrowingArm second;
 };
 
-static void testMachineOrderGivesEachThrowingArmItsOwnRegion()
-{
-    OrderTest test(orderTestTraitsWithHandlers());
-    OrderTestTwoThrowingArms arms(test, OrderTestCallBehindArms::Yes);
-    const Order& order = test.prepare();
-
-    const BlockPlace& pad = order.of(arms.pad);
-    AOT_ORDER_TEST_CHECK(test, order.rareRegions().size() == 3 && order.loops().empty());
-    AOT_ORDER_TEST_CHECK(test, arms.first.isRareRegion(order, 0) && order.of(arms.first.continuation).orderIndex + 1 == order.of(arms.first.rejoin).orderIndex);
-    AOT_ORDER_TEST_CHECK(test, arms.second.isRareRegion(order, 1) && order.of(arms.second.continuation).orderIndex + 1 == order.of(arms.second.rejoin).orderIndex);
-    AOT_ORDER_TEST_CHECK(test, pad.rareRegion == 2 && pad.entersRareRegion && order.rareRegions()[2].onlyEntry == arms.pad && pad.predecessors.size() == 3);
-    AOT_ORDER_TEST_CHECK(test, pad.orderIndex == order.of(arms.second.rejoin).orderIndex + 1);
-}
-
-// No block outside the rare regions leads to the landing pad.
-static void testMachineOrderPlacesLandingPadBehindLastThrowingArm()
-{
-    OrderTest test(orderTestTraitsWithHandlers());
-    OrderTestTwoThrowingArms arms(test, OrderTestCallBehindArms::No);
-    const Order& order = test.prepare();
-
-    const BlockPlace& pad = order.of(arms.pad);
-    AOT_ORDER_TEST_CHECK(test, order.rareRegions().size() == 3 && order.loops().empty());
-    AOT_ORDER_TEST_CHECK(test, arms.first.isRareRegion(order, 0) && arms.second.isRareRegion(order, 1));
-    AOT_ORDER_TEST_CHECK(test, pad.rareRegion == 2 && pad.entersRareRegion && order.rareRegions()[2].onlyEntry == arms.pad && pad.predecessors.size() == 2);
-    AOT_ORDER_TEST_CHECK(test, order.of(arms.second.continuation).orderIndex + 1 == pad.orderIndex && pad.orderIndex + 1 == order.of(arms.second.rejoin).orderIndex);
-}
-
 // try { try { call(); } catch { call(); } call(); } catch { }
 static void testMachineOrderPlacesNestedHandlerAheadOfItsRejoin()
 {
@@ -1455,31 +693,6 @@ static void testMachineOrderJoinsThrowingArmsWithoutFrameAtEntry()
     for (const Block* block : { arms.first.call, arms.first.continuation, arms.second.call, arms.second.continuation, arms.pad })
         AOT_ORDER_TEST_CHECK(test, !order.of(block).rareRegion && order.of(block).orderIndex > order.of(arms.second.rejoin).orderIndex);
     AOT_ORDER_TEST_CHECK(test, order.loops().size() == 2 && order.of(arms.first.rejoin).isLoopHead && order.of(arms.second.rejoin).isLoopHead);
-}
-
-static void testMachineOrderDropsBlocksThatNothingReaches()
-{
-    OrderTest test;
-    Output& out = test.out;
-    LBasicBlock taken = out.newBlock();
-    LBasicBlock notTaken = out.newBlock();
-    LBasicBlock join = out.newBlock();
-    LBasicBlock neverFilled = out.newBlock();
-    LValue result = out.phiIn(join, Int64);
-    out.branch(out.booleanTrue, normalEdge(taken), normalEdge(notTaken));
-    test.passAndJump(taken, test.first, result, join);
-    test.passAndJump(notTaken, test.second, result, join);
-    test.returnValue(join, result);
-    const Order& order = test.compile();
-
-    AOT_ORDER_TEST_CHECK(test, !order.of(notTaken).isReached() && !order.of(neverFilled).isReached());
-    AOT_ORDER_TEST_CHECK(test, join->numberOfIncomingEdges() == 2 && order.of(join).predecessors.size() == 1);
-    AOT_ORDER_TEST_CHECK(test, test.printedOrder() ==
-        "#0: head = 0\n"
-        "#1: head = 10 <- #0\n"
-        "#3: head = 14 <- #1\n"
-        "layout: #0 #1 #3\n"_s);
-    AOT_ORDER_TEST_CHECK(test, test.run(5, 6) == 5);
 }
 
 // What PrimitiveEmitter::asBoolean() makes of a comparison of the first two arguments. Output stands in the join, which holds the Phi alone so far.
@@ -1563,32 +776,6 @@ static void testMachineThreadingKeepsClassOfOnlyReachedEdge()
     for (const OrderTestBooleanJoin& blocks : joins)
         AOT_ORDER_TEST_CHECK(test, !order.of(blocks.join).isReached() && blocks.taken->successor(0).block() == blocks.join);
     AOT_ORDER_TEST_CHECK(test, test.run(0) == 20);
-}
-
-// The block that passes no constant ends in a Jump, so it tests what it passes in the place of the join.
-static void testMachineThreadingTestsValueAheadOfJoin()
-{
-    OrderTest test;
-    Output& out = test.out;
-    LBasicBlock left = out.newBlock();
-    LBasicBlock right = out.newBlock();
-    LBasicBlock join = out.newBlock();
-    LBasicBlock whenNotZero = out.newBlock();
-    LBasicBlock whenZero = out.newBlock();
-    LValue tested = out.phiIn(join, Int64);
-    out.branch(test.first, normalEdge(left), normalEdge(right));
-    test.passAndJump(left, out.int64Zero, tested, join);
-    test.passAndJump(right, test.second, tested, join);
-    out.appendTo(join);
-    out.branch(tested, normalEdge(whenNotZero), normalEdge(whenZero));
-    test.returnConstant(whenNotZero, 10);
-    test.returnConstant(whenZero, 20);
-    const Order& order = test.compile();
-
-    AOT_ORDER_TEST_CHECK(test, orderTestTargetOf(test.entry, 0) == whenZero && !order.of(join).isReached());
-    AOT_ORDER_TEST_CHECK(test, right->last()->opcode() == Branch && right->last()->child(0) == test.second && right->upsilons().empty());
-    AOT_ORDER_TEST_CHECK(test, orderTestTargetOf(right, 0) == whenNotZero && orderTestTargetOf(right, 1) == whenZero);
-    AOT_ORDER_TEST_CHECK(test, test.run(1, 1) == 20 && test.run(0, 1) == 10 && test.run(0, 0) == 20);
 }
 
 // c ? a < b : a == b, then a Branch on the answer. Each arm compares and branches, and no answer is made a word. The join tests for zero, so the ways change places.
@@ -1679,42 +866,6 @@ static void testMachineThreadingPassesJoinThatHandsItsPhiOn()
     AOT_ORDER_TEST_CHECK(test, test.run(1, 2, 1) == 10 && test.run(2, 1, 1) == 20 && test.run(1, 2, 0) == 20);
 }
 
-static void testMachineThreadingKeepsJoinWhosePhiIsReadAgain()
-{
-    OrderTest test;
-    Output& out = test.out;
-    OrderTestBooleanJoin blocks(test);
-    LBasicBlock whenTrue = out.newBlock();
-    LBasicBlock whenFalse = out.newBlock();
-    out.branch(blocks.condition, normalEdge(whenTrue), normalEdge(whenFalse));
-    out.appendTo(whenTrue);
-    out.ret(out.zeroExtPtr(blocks.condition));
-    test.returnConstant(whenFalse, 20);
-    const Order& order = test.compile();
-
-    AOT_ORDER_TEST_CHECK(test, blocks.isKept(order) && orderTestNumberOfReached(order, Branch) == 2);
-    AOT_ORDER_TEST_CHECK(test, test.run(1, 2) == 1 && test.run(2, 1) == 20);
-}
-
-// An edge that passed the join by would bring the Phi behind it no value.
-static void testMachineThreadingKeepsJoinThatHoldsUpsilon()
-{
-    OrderTest test;
-    Output& out = test.out;
-    OrderTestBooleanJoin blocks(test);
-    LBasicBlock other = out.newBlock();
-    LBasicBlock last = out.newBlock();
-    LValue result = out.phiIn(last, Int64);
-    out.upsilon(test.third, result);
-    out.branch(blocks.condition, normalEdge(last), normalEdge(other));
-    test.passAndJump(other, out.constInt64(20), result, last);
-    test.returnValue(last, result);
-    const Order& order = test.compile();
-
-    AOT_ORDER_TEST_CHECK(test, blocks.isKept(order));
-    AOT_ORDER_TEST_CHECK(test, test.run(1, 2, 5) == 5 && test.run(2, 1, 5) == 20);
-}
-
 static void testMachineThreadingKeepsJoinThatHoldsStore()
 {
     OrderTest test;
@@ -1733,25 +884,6 @@ static void testMachineThreadingKeepsJoinThatHoldsStore()
         int64_t word = 0;
         AOT_ORDER_TEST_CHECK(test, test.run(first, 2, reinterpret_cast<int64_t>(&word)) == (first < 2 ? 10 : 20) && word == 5);
     }
-}
-
-// Builder::branch() tests the Phi itself. The comparison stays behind in the join, where nothing reads it and the scan would drop it.
-static void testMachineThreadingPassesJoinThatHoldsUnreadComparison()
-{
-    OrderTest test;
-    Output& out = test.out;
-    OrderTestBooleanJoin blocks(test);
-    LBasicBlock whenTrue = out.newBlock();
-    LBasicBlock whenFalse = out.newBlock();
-    out.branch(out.notZero32(blocks.condition), normalEdge(whenTrue), normalEdge(whenFalse));
-    test.returnConstant(whenTrue, 10);
-    test.returnConstant(whenFalse, 20);
-    const Order& order = test.compile();
-
-    AOT_ORDER_TEST_CHECK(test, blocks.join->size() == 2 && blocks.join->at(0)->opcode() == NotEqual && !blocks.join->at(0)->useCount());
-    AOT_ORDER_TEST_CHECK(test, orderTestTargetOf(test.entry, 0) == whenTrue && orderTestTargetOf(test.entry, 1) == whenFalse);
-    AOT_ORDER_TEST_CHECK(test, !order.of(blocks.join).isReached() && orderTestNumberOfReached(order, Branch) == 1);
-    AOT_ORDER_TEST_CHECK(test, test.run(1, 2) == 10 && test.run(2, 1) == 20);
 }
 
 static void testMachineThreadingLeavesHeadOfLoop()
@@ -1842,11 +974,6 @@ static void testMachineThreadingOfTestThatWayHasDecided()
     }
 }
 
-enum class OrderTestUseOfPick : uint8_t {
-    Reads,
-    Stores,
-};
-
 enum OrderTestWordOfObject : unsigned {
     OrderTestKey,
     OrderTestNumber,
@@ -1856,91 +983,6 @@ enum OrderTestWordOfObject : unsigned {
 static TypedPointer orderTestWordOf(OrderTest& test, LValue object, OrderTestWordOfObject word)
 {
     return test.out.address(test.testProcedure.heaps().argumentBuffer, object, word * sizeof(int64_t));
-}
-
-// `side = flag ? a : b; n = flag ? a.n : b.n; if (n && side.c) ..`, the flag out of `exact ? key == a.k : key < b.k`, with n and c of both objects read and tested in front.
-// Each arm that picks n tests the word that it has read, so the join of n goes. The flag is asked twice and `side` is read behind its join, so those two joins stay, and c is read, or written, through `side`.
-template<OrderTestUseOfPick use>
-static void testMachineThreadingOfValuesPickedByOneFlag()
-{
-    OrderTest test;
-    Output& out = test.out;
-    LBasicBlock none = out.newBlock();
-    LBasicBlock leaf = out.newBlock();
-    auto goOnIfNotZero = [&](LValue tested) {
-        LBasicBlock next = out.newBlock();
-        out.branch(tested, normalEdge(next), normalEdge(none));
-        out.appendTo(next);
-    };
-    LValue numberOfFirst = out.load64(orderTestWordOf(test, test.first, OrderTestNumber));
-    goOnIfNotZero(numberOfFirst);
-    LValue numberOfSecond = out.load64(orderTestWordOf(test, test.second, OrderTestNumber));
-    goOnIfNotZero(numberOfSecond);
-    goOnIfNotZero(out.load64(orderTestWordOf(test, test.first, OrderTestChild)));
-    goOnIfNotZero(out.load64(orderTestWordOf(test, test.second, OrderTestChild)));
-
-    LBasicBlock asksForEqual = out.newBlock();
-    LBasicBlock asksForLess = out.newBlock();
-    LBasicBlock joinOfFlag = out.newBlock();
-    LBasicBlock picksFirst = out.newBlock();
-    LBasicBlock picksSecond = out.newBlock();
-    LBasicBlock joinOfSide = out.newBlock();
-    LBasicBlock picksNumberOfFirst = out.newBlock();
-    LBasicBlock picksNumberOfSecond = out.newBlock();
-    LBasicBlock joinOfNumber = out.newBlock();
-    LBasicBlock looks = out.newBlock();
-    LBasicBlock found = out.newBlock();
-    LValue flag = out.phiIn(joinOfFlag, Int32);
-    LValue side = out.phiIn(joinOfSide, Int64);
-    LValue number = out.phiIn(joinOfNumber, Int64);
-    LValue key = out.lShr(test.third, 1);
-    out.branch(out.bitAnd(test.third, out.constInt64(1)), normalEdge(asksForEqual), normalEdge(asksForLess));
-    out.appendTo(asksForEqual);
-    out.upsilon(out.equal(key, out.load64(orderTestWordOf(test, test.first, OrderTestKey))), flag);
-    out.jump(joinOfFlag);
-    out.appendTo(asksForLess);
-    out.upsilon(out.lessThan(key, out.load64(orderTestWordOf(test, test.second, OrderTestKey))), flag);
-    out.jump(joinOfFlag);
-    out.appendTo(joinOfFlag);
-    out.branch(flag, normalEdge(picksFirst), normalEdge(picksSecond));
-    test.passAndJump(picksFirst, test.first, side, joinOfSide);
-    test.passAndJump(picksSecond, test.second, side, joinOfSide);
-    out.appendTo(joinOfSide);
-    out.branch(flag, normalEdge(picksNumberOfFirst), normalEdge(picksNumberOfSecond));
-    test.passAndJump(picksNumberOfFirst, numberOfFirst, number, joinOfNumber);
-    test.passAndJump(picksNumberOfSecond, numberOfSecond, number, joinOfNumber);
-    out.appendTo(joinOfNumber);
-    out.branch(number, normalEdge(looks), normalEdge(leaf));
-    out.appendTo(looks);
-    LValue child = out.load64(orderTestWordOf(test, side, OrderTestChild));
-    out.branch(child, normalEdge(found), normalEdge(leaf));
-    out.appendTo(found);
-    if (use == OrderTestUseOfPick::Stores) {
-        out.store64(out.constInt64(100), orderTestWordOf(test, side, OrderTestChild));
-        out.ret(out.add(out.mul(out.load64(orderTestWordOf(test, test.first, OrderTestChild)), out.constInt64(1000)), out.load64(orderTestWordOf(test, test.second, OrderTestChild))));
-    } else
-        out.ret(child);
-    test.returnConstant(leaf, -1);
-    test.returnConstant(none, -2);
-    const Order& order = test.compile();
-
-    AOT_ORDER_TEST_CHECK(test, order.of(joinOfFlag).isReached() && order.of(joinOfSide).isReached() && !order.of(joinOfNumber).isReached());
-    AOT_ORDER_TEST_CHECK(test, picksNumberOfFirst->last()->opcode() == Branch && picksNumberOfFirst->last()->child(0) == numberOfFirst);
-    AOT_ORDER_TEST_CHECK(test, picksNumberOfSecond->last()->opcode() == Branch && picksNumberOfSecond->last()->child(0) == numberOfSecond);
-    AOT_ORDER_TEST_CHECK(test, child->child(0) == side);
-    for (int64_t asked = 0; asked < 8; ++asked) {
-        for (int64_t exact = 0; exact < 2; ++exact) {
-            int64_t first[] { 1, 2, 10 };
-            int64_t second[] { 5, 3, 50 };
-            bool picksFirstObject = exact ? asked == first[OrderTestKey] : asked < second[OrderTestKey];
-            int64_t expected = picksFirstObject ? 10 : 50;
-            if (use == OrderTestUseOfPick::Stores)
-                expected = picksFirstObject ? 100050 : 10100;
-            AOT_ORDER_TEST_CHECK(test, test.run(reinterpret_cast<int64_t>(first), reinterpret_cast<int64_t>(second), asked << 1 | exact) == expected);
-            second[OrderTestNumber] = 0;
-            AOT_ORDER_TEST_CHECK(test, test.run(reinterpret_cast<int64_t>(first), reinterpret_cast<int64_t>(second), asked << 1 | exact) == -2);
-        }
-    }
 }
 
 // `if (flag) a.n = 8; else b.n = 9; if (flag) return a.n * 100 + b.n; return b.n * 100 + a.n;`: each arm has decided the second test and passes it by. What stands behind the test reads the words again.
@@ -2115,32 +1157,6 @@ static void testMachineThreadingOfTestThatNextTestImplies()
         AOT_ORDER_TEST_CHECK(test, test.run(0, 3, third) == 20 && test.run(2000, 3, third) == 10);
 }
 
-template<unsigned numberOfHops, EdgeClass classOfLastJump>
-static void testMachineThreadingPassesBlocksThatOnlyJump()
-{
-    OrderTest test;
-    Output& out = test.out;
-    LBasicBlock target = out.newBlock();
-    LBasicBlock other = out.newBlock();
-    Vector<LBasicBlock> hops;
-    for (unsigned index = 0; index < numberOfHops; ++index)
-        hops.append(out.newBlock());
-    out.branch(test.first, normalEdge(hops[0]), normalEdge(other));
-    for (unsigned index = 0; index < numberOfHops; ++index) {
-        out.appendTo(hops[index]);
-        out.jump(index + 1 < numberOfHops ? normalEdge(hops[index + 1]) : Edge(target, classOfLastJump));
-    }
-    test.returnConstant(target, 10);
-    test.returnConstant(other, 20);
-    const Order& order = test.compile();
-
-    AOT_ORDER_TEST_CHECK(test, test.entry->successor(0).block() == target && test.entry->successor(0).edgeClass() == classOfLastJump);
-    for (LBasicBlock hop : hops)
-        AOT_ORDER_TEST_CHECK(test, !order.of(hop).isReached());
-    AOT_ORDER_TEST_CHECK(test, order.of(target).isRare() == (classOfLastJump == EdgeClass::Rare));
-    AOT_ORDER_TEST_CHECK(test, test.run(1) == 10 && test.run(0) == 20);
-}
-
 static void testMachineThreadingEndsInCycleOfJumps()
 {
     OrderTest test;
@@ -2211,85 +1227,6 @@ static void testMachineMergingOfThrowBlocks()
     AOT_ORDER_TEST_CHECK(test, test.run(1, 0) == 11 && test.run(0, 1) == answerOfSecondThrow && test.run(0, 0) == 7);
 }
 
-static void testMachineMergingComparesChildren()
-{
-    OrderTest test;
-    Output& out = test.out;
-    LBasicBlock addsFive = out.newBlock();
-    LBasicBlock next = out.newBlock();
-    LBasicBlock addsFiveToo = out.newBlock();
-    LBasicBlock addsSix = out.newBlock();
-    out.branch(test.first, normalEdge(addsFive), normalEdge(next));
-    out.appendTo(next);
-    out.branch(test.second, normalEdge(addsFiveToo), normalEdge(addsSix));
-    auto fill = [&](LBasicBlock block, int64_t addend) {
-        out.appendTo(block);
-        out.ret(out.add(test.third, addend));
-    };
-    fill(addsFive, 5);
-    fill(addsFiveToo, 5);
-    fill(addsSix, 6);
-    const Order& order = test.compile();
-
-    AOT_ORDER_TEST_CHECK(test, orderTestTargetOf(test.entry, 0) == addsFive && orderTestTargetOf(next, 0) == addsFive && orderTestTargetOf(next, 1) == addsSix);
-    AOT_ORDER_TEST_CHECK(test, !order.of(addsFiveToo).isReached());
-    AOT_ORDER_TEST_CHECK(test, test.run(1, 0, 10) == 15 && test.run(0, 1, 10) == 15 && test.run(0, 0, 10) == 16);
-}
-
-enum class OrderTestWayIntoArm : uint8_t { AsArmOfEmitter, AsSuccessorInCode };
-
-// if (a) return a * b + c; if (b) return a * b + c; return 7. Each block goes on in the scope of the one block that leads to it, and both arms find the product that the entry has computed.
-template<OrderTestWayIntoArm way>
-static void testMachineMergingOfBlocksThatContinueScope()
-{
-    OrderTest test;
-    Output& out = test.out;
-    LBasicBlock adds = out.newBlock();
-    LBasicBlock next = out.newBlock();
-    LBasicBlock addsToo = out.newBlock();
-    LBasicBlock done = out.newBlock();
-    LValue product = out.mul(test.first, test.second);
-
-    auto branch = [&](LValue tested, LBasicBlock taken, LBasicBlock notTaken) {
-        if (way == OrderTestWayIntoArm::AsArmOfEmitter) {
-            ScopeFork fork = out.forkScope();
-            out.branch(tested, normalEdge(taken), normalEdge(notTaken));
-            return fork;
-        }
-        out.branch(tested, normalEdge(taken), normalEdge(notTaken));
-        return out.forkScope();
-    };
-    auto enter = [&](LBasicBlock block, const ScopeFork& fork) {
-        if (way == OrderTestWayIntoArm::AsArmOfEmitter)
-            out.appendToArm(block, fork);
-        else
-            out.appendToSuccessor(block, fork);
-    };
-    bool bothFoundProduct = true;
-    auto fill = [&](LBasicBlock block, const ScopeFork& fork) {
-        enter(block, fork);
-        bothFoundProduct &= out.mul(test.first, test.second) == product;
-        out.ret(out.add(product, test.third));
-    };
-
-    ScopeFork outer = branch(test.first, adds, next);
-    fill(adds, outer);
-    enter(next, outer);
-    ScopeFork inner = branch(test.second, addsToo, done);
-    fill(addsToo, inner);
-    enter(done, inner);
-    out.ret(out.constInt64(7));
-    bool bothWentOnInScope = adds->hasOnlyOnePredecessor() && addsToo->hasOnlyOnePredecessor();
-    bool bothReadProduct = product->useCount() == 2;
-    const Order& order = test.compile();
-
-    AOT_ORDER_TEST_CHECK(test, bothFoundProduct && bothWentOnInScope);
-    AOT_ORDER_TEST_CHECK(test, bothReadProduct && product->useCount() == 1);
-    AOT_ORDER_TEST_CHECK(test, orderTestTargetOf(test.entry, 0) == adds && orderTestTargetOf(next, 0) == adds && orderTestTargetOf(next, 1) == done);
-    AOT_ORDER_TEST_CHECK(test, !order.of(addsToo).isReached() && order.of(adds).predecessors.size() == 2 && !adds->hasOnlyOnePredecessor());
-    AOT_ORDER_TEST_CHECK(test, test.run(2, 3, 10) == 16 && test.run(0, 3, 10) == 10 && test.run(0, 0, 10) == 7);
-}
-
 // The block that stays is as likely as the likeliest way into either.
 static void testMachineMergingOfRareArmWithLikelyArm()
 {
@@ -2355,27 +1292,6 @@ static void testMachineMergingLeavesTestToItsOneReader()
     AOT_ORDER_TEST_CHECK(test, test.run(2, 3, 1) == 2 && test.run(5, 4, 1) == 4 && test.run(2, 3, 0) == 2 && test.run(5, 4, 0) == 4 && test.run(0, 3, 0) == 7);
 }
 
-template<bool passSameValue>
-static void testMachineMergingComparesUpsilons()
-{
-    OrderTest test;
-    Output& out = test.out;
-    LBasicBlock left = out.newBlock();
-    LBasicBlock right = out.newBlock();
-    LBasicBlock join = out.newBlock();
-    LValue result = out.phiIn(join, Int64);
-    out.branch(test.first, normalEdge(left), normalEdge(right));
-    test.passAndJump(left, test.second, result, join);
-    test.passAndJump(right, passSameValue ? test.second : test.first, result, join);
-    test.returnValue(join, result);
-    const Order& order = test.compile();
-
-    AOT_ORDER_TEST_CHECK(test, orderTestTargetOf(test.entry, 0) == left && test.entry->numSuccessors() == (passSameValue ? 1u : 2u));
-    AOT_ORDER_TEST_CHECK(test, passSameValue || orderTestTargetOf(test.entry, 1) == right);
-    AOT_ORDER_TEST_CHECK(test, order.of(right).isReached() == !passSameValue);
-    AOT_ORDER_TEST_CHECK(test, test.run(3, 5) == 5 && test.run(0, 5) == (passSameValue ? 5 : 0));
-}
-
 // function f(o: A | B) { return o.x }, with x at one offset in both: the arms load the same word, so one stands for both and nothing is left to choose between.
 static void testMachineOrderDropsTestWhoseArmsMerge()
 {
@@ -2429,104 +1345,6 @@ static void testMachineOrderKeepsWhatElseReadsTestedValue()
     AOT_ORDER_TEST_CHECK(test, test.run(1, 2, reinterpret_cast<int64_t>(&count)) == 1 && !test.run(2, 1, reinterpret_cast<int64_t>(&count)) && count == 2);
 }
 
-// The block that comes first fixes the head of the join with the two values in each other's registers. The moves of the other edge stand ahead of the Branch, which reads no register that they write.
-static void testMachineOrderMovesRegistersAheadOfBranchThatTestsNothing()
-{
-    OrderTest test;
-    Output& out = test.out;
-    LBasicBlock exchanges = out.newBlock();
-    LBasicBlock tests = out.newBlock();
-    LBasicBlock left = out.newBlock();
-    LBasicBlock right = out.newBlock();
-    LBasicBlock join = out.newBlock();
-    out.branch(test.first, normalEdge(exchanges), normalEdge(tests));
-    out.appendTo(exchanges);
-    PatchOperation* exchange = out.patchpoint(Void);
-    exchange->append(test.second, ValueRep::reg(test.third->argumentReg()));
-    exchange->append(test.third, ValueRep::reg(test.second->argumentReg()));
-    exchange->setGenerator([](CCallHelpers&, const PatchParameters&) { });
-    out.jump(join);
-    out.appendTo(tests);
-    out.branch(out.below(test.second, test.third), normalEdge(left), normalEdge(right));
-    for (LBasicBlock arm : { left, right }) {
-        out.appendTo(arm);
-        out.jump(join);
-    }
-    out.appendTo(join);
-    out.ret(out.sub(test.second, test.third));
-    const Order& order = test.compile();
-
-    const BlockSteps& steps = test.procedure().allocation().stepsOf(tests);
-    AOT_ORDER_TEST_CHECK(test, tests->last()->opcode() == Branch && tests->last()->isUnconditionalJump() && tests->successor(0) == normalEdge(join));
-    AOT_ORDER_TEST_CHECK(test, order.of(join).predecessors.size() == 2 && order.of(exchanges).orderIndex < order.of(tests).orderIndex);
-    AOT_ORDER_TEST_CHECK(test, steps.beginOfEdgeMoves != steps.endOfEdgeMoves);
-    AOT_ORDER_TEST_CHECK(test, test.run(1, 9, 4) == 5 && test.run(0, 9, 4) == 5);
-}
-
-// The block that leaves a rare region tears the frame of the region down ahead of its last operation, which then may write no way out but a jump.
-static void testMachineOrderLeavesRareRegionThroughBranchThatTestsNothing()
-{
-    OrderTest test;
-    Output& out = test.out;
-    LBasicBlock slow = out.newBlock();
-    LBasicBlock left = out.newBlock();
-    LBasicBlock right = out.newBlock();
-    LBasicBlock rejoin = out.newBlock();
-    out.branch(test.first, rareEdge(slow), normalEdge(rejoin));
-    out.appendTo(slow);
-    PatchOperation* call = out.patchpoint(Void);
-    call->setGenerator([](CCallHelpers& jit, const PatchParameters&) {
-        jit.nop();
-    });
-    out.branch(test.second, normalEdge(left), normalEdge(right));
-    for (LBasicBlock arm : { left, right }) {
-        out.appendTo(arm);
-        out.jump(rejoin);
-    }
-    test.returnValue(rejoin, test.third);
-    const Order& order = test.compile();
-
-    AOT_ORDER_TEST_CHECK(test, slow->last()->opcode() == Branch && slow->last()->isUnconditionalJump() && slow->successor(0).block() == rejoin);
-    AOT_ORDER_TEST_CHECK(test, order.of(slow).isRare() && order.of(slow).entersRareRegion && order.of(slow).leavesRareRegion);
-    AOT_ORDER_TEST_CHECK(test, test.procedure().frame().coverage() == FrameCoverage::RareRegions);
-    AOT_ORDER_TEST_CHECK(test, test.run(1, 0, 7) == 7 && test.run(1, 1, 7) == 7 && test.run(0, 0, 7) == 7);
-}
-
-enum class OrderTestChildrenOfBits : uint8_t { TwoThatAreReadAgain, TwoThatAreNotReadAgain, OneThatIsNotReadAgain };
-
-// Bits are asked for ahead of a diamond and branched on behind it. Where both children are read again behind the Branch, the Branch tests them itself and the bits take no register on the way.
-// So it does where the one child beside a constant is not read again: that child lives as far as the bits would have. Two such children would take two registers where the bits take one.
-template<OrderTestChildrenOfBits children>
-static void testMachineFusionOfTestInLaterBlock()
-{
-    constexpr bool childrenAreReadBehindTest = children == OrderTestChildrenOfBits::TwoThatAreReadAgain;
-    OrderTest test;
-    Output& out = test.out;
-    LBasicBlock left = out.newBlock();
-    LBasicBlock right = out.newBlock();
-    LBasicBlock join = out.newBlock();
-    LBasicBlock whenSet = out.newBlock();
-    LBasicBlock whenClear = out.newBlock();
-    LValue sum = out.phiIn(join, Int64);
-    LValue bits = children == OrderTestChildrenOfBits::OneThatIsNotReadAgain ? out.bitAnd(test.first, 3) : out.bitAnd(test.first, test.second);
-    out.branch(test.third, normalEdge(left), normalEdge(right));
-    out.appendTo(left);
-    out.upsilon(out.add(test.third, 1), sum);
-    out.jump(join);
-    test.passAndJump(right, out.constInt64(5), sum, join);
-    out.appendTo(join);
-    out.branch(bits, normalEdge(whenSet), normalEdge(whenClear));
-    out.appendTo(whenSet);
-    out.ret(childrenAreReadBehindTest ? out.add(out.add(sum, test.first), test.second) : sum);
-    test.returnConstant(whenClear, -1);
-    test.compile();
-
-    constexpr int64_t addend = childrenAreReadBehindTest ? 9 : 0;
-    AOT_ORDER_TEST_CHECK(test, bits->owner() == test.entry && bits->useCount() == 1);
-    AOT_ORDER_TEST_CHECK(test, test.procedure().liveness().isFused(bits) == (children != OrderTestChildrenOfBits::TwoThatAreNotReadAgain));
-    AOT_ORDER_TEST_CHECK(test, test.run(6, 3, 1) == 2 + addend && test.run(6, 3, 0) == 5 + addend && test.run(4, 3, 1) == -1);
-}
-
 // The number would keep a register of its bank as far as the Branch, where the answer keeps one of the other bank.
 static void testMachineFusionLeavesComparisonOfNumberThatIsNotReadAgain()
 {
@@ -2555,35 +1373,6 @@ static void testMachineFusionLeavesComparisonOfNumberThatIsNotReadAgain()
     };
     AOT_ORDER_TEST_CHECK(test, isBelow->owner() == test.entry && isBelow->useCount() == 1 && !test.procedure().liveness().isFused(isBelow));
     AOT_ORDER_TEST_CHECK(test, run(1, 3.5) == 2 && run(0, 3.5) == 5 && run(1, 4) == -1);
-}
-
-// if (a < 4 && b == c), if (a < 4 || b == c), as an emitter asks with bitAnd() and bitOr(): neither answer is made a word.
-template<Opcode combination>
-static void testMachineFusionOfBranchOnTwoComparisons()
-{
-    constexpr bool isOr = combination == BitOr;
-    for (EdgeClass classOfWayThatHolds : { EdgeClass::Normal, EdgeClass::Unlikely, EdgeClass::Rare }) {
-        OrderTest test;
-        Output& out = test.out;
-        LBasicBlock holds = out.newBlock();
-        LBasicBlock fails = out.newBlock();
-        LValue isBelow = out.below(test.first, out.constInt64(4));
-        LValue isEqual = out.equal(test.second, test.third);
-        LValue tested = out.binary(combination, isBelow, isEqual);
-        out.branch(tested, Edge(holds, classOfWayThatHolds), normalEdge(fails));
-        test.returnConstant(holds, 10);
-        test.returnConstant(fails, 20);
-        test.compile();
-
-        const Liveness& liveness = test.procedure().liveness();
-        AOT_ORDER_TEST_CHECK(test, test.entry->last()->child(0) == tested && liveness.isFused(tested) && liveness.isFused(isBelow) && liveness.isFused(isEqual));
-        for (int64_t first : { 3, 4 }) {
-            for (int64_t second : { 7, 8 }) {
-                bool expected = isOr ? first < 4 || second == 7 : first < 4 && second == 7;
-                AOT_ORDER_TEST_CHECK(test, test.run(first, second, 7) == (expected ? 10 : 20));
-            }
-        }
-    }
 }
 
 // if (*p < 4 && b == c), if (a < 4 && *q == c), if (*p < 4 && *q == c). On x86-64 one of the two comparisons reads its word where it lies.
@@ -2617,68 +1406,6 @@ static void testMachineFusionOfLoadBelowTwoComparisons()
                 int64_t words[] = { smallWord, otherWord };
                 bool expected = isOr ? smallWord < 4 || otherWord == 7 : smallWord < 4 && otherWord == 7;
                 AOT_ORDER_TEST_CHECK(test, test.run(loaded & firstIsLoaded ? otherWord : smallWord, 7, reinterpret_cast<int64_t>(words)) == (expected ? 10 : 20));
-            }
-        }
-    }
-}
-
-static bool orderTestRelationHolds(Opcode relation, double left, double right)
-{
-    switch (relation) {
-    case Equal:
-        return left == right;
-    case NotEqual:
-        return left != right;
-    case LessThan:
-        return left < right;
-    case GreaterThan:
-        return left > right;
-    case LessEqual:
-        return left <= right;
-    case GreaterEqual:
-        return left >= right;
-    case EqualOrUnordered:
-        return !(left < right) && !(left > right);
-    default:
-        RELEASE_ASSERT_NOT_REACHED();
-    }
-}
-
-// A comparison of numbers beside one of integers, in both orders. The jump for a comparison that does not hold is taken for unordered operands as well.
-template<Opcode combination>
-static void testMachineFusionOfBranchOnComparisonOfNumbers()
-{
-    constexpr bool isOr = combination == BitOr;
-    static constexpr double numbers[] = { std::numeric_limits<double>::quiet_NaN(), -0.0, 0.0, 1.5, -2.0 };
-    for (Opcode relation : { Equal, NotEqual, LessThan, GreaterThan, LessEqual, GreaterEqual, EqualOrUnordered }) {
-        for (bool numbersComeFirst : { true, false }) {
-            OrderTest test;
-            Output& out = test.out;
-            LValue left = test.testProcedure.argumentFPR(0);
-            LValue right = test.testProcedure.argumentFPR(1);
-            LBasicBlock holds = out.newBlock();
-            LBasicBlock fails = out.newBlock();
-            LValue ofNumbers = numbersComeFirst ? out.binary(relation, left, right) : nullptr;
-            LValue ofIntegers = out.equal(test.first, test.second);
-            if (!numbersComeFirst)
-                ofNumbers = out.binary(relation, left, right);
-            LValue tested = out.binary(combination, ofNumbers, ofIntegers);
-            out.branch(tested, normalEdge(holds), normalEdge(fails));
-            test.returnConstant(holds, 10);
-            test.returnConstant(fails, 20);
-            test.compile();
-
-            const Liveness& liveness = test.procedure().liveness();
-            AOT_ORDER_TEST_CHECK(test, liveness.isFused(tested) && liveness.isFused(ofNumbers) && liveness.isFused(ofIntegers));
-            AOT_ORDER_TEST_CHECK(test, (tested->child(0) == ofNumbers) == numbersComeFirst);
-            for (double leftNumber : numbers) {
-                for (double rightNumber : numbers) {
-                    for (int64_t second : { 7, 8 }) {
-                        bool numbersHold = orderTestRelationHolds(relation, leftNumber, rightNumber);
-                        bool expected = isOr ? numbersHold || second == 7 : numbersHold && second == 7;
-                        AOT_ORDER_TEST_CHECK(test, test.testProcedure.call<int64_t>(int64_t { 7 }, second, int64_t { 0 }, leftNumber, rightNumber) == (expected ? 10 : 20));
-                    }
-                }
             }
         }
     }
@@ -2783,27 +1510,6 @@ static void testMachineFusionOfBitsOfLoadBesideComparison()
     }
 }
 
-// The answer of one comparison is read again, so it is a word, and the Branch tests the bits of two words.
-static void testMachineFusionLeavesComparisonThatIsReadAgain()
-{
-    OrderTest test;
-    Output& out = test.out;
-    LBasicBlock holds = out.newBlock();
-    LBasicBlock fails = out.newBlock();
-    LValue isBelow = out.below(test.first, out.constInt64(4));
-    LValue isEqual = out.equal(test.second, test.third);
-    LValue tested = out.bitAnd(isBelow, isEqual);
-    out.branch(tested, normalEdge(holds), normalEdge(fails));
-    test.returnConstant(holds, 10);
-    out.appendTo(fails);
-    out.ret(out.zeroExtPtr(isBelow));
-    test.compile();
-
-    const Liveness& liveness = test.procedure().liveness();
-    AOT_ORDER_TEST_CHECK(test, liveness.isFused(tested) && !liveness.isFused(isBelow) && !liveness.isFused(isEqual));
-    AOT_ORDER_TEST_CHECK(test, test.run(3, 7, 7) == 10 && test.run(3, 8, 7) == 1 && !test.run(4, 7, 7));
-}
-
 #undef AOT_ORDER_TEST_CHECK
 
 } // namespace Machine
@@ -2811,116 +1517,48 @@ static void testMachineFusionLeavesComparisonThatIsReadAgain()
 std::span<const NativeTest> machineOrderTests()
 {
     using Machine::EdgeClass;
-    using Machine::OrderTestChildrenOfBits;
     using Machine::OrderTestNextTest;
     using Machine::OrderTestSecondTest;
     using Machine::OrderTestThrowBlocks;
-    using Machine::OrderTestWayIntoArm;
     static constexpr NativeTest tests[] = {
-        { "machine-order/rare-block-stands-ahead-of-its-rejoin-and-last-in-the-layout"_s, Machine::testMachineOrderPlacesRareBlockAheadOfItsRejoin },
-        { "machine-order/rare-block-that-never-rejoins-stands-behind-its-branch"_s, Machine::testMachineOrderPlacesRareBlockThatNeverRejoinsBehindItsBranch },
-        { "machine-order/unlikely-successor-stands-behind-the-normal-one"_s, Machine::testMachineOrderPlacesUnlikelySuccessorBehindNormalOne },
-        { "machine-order/loop-is-contiguous"_s, Machine::testMachineOrderKeepsLoopContiguous },
-        { "machine-order/loop-ends-with-its-test"_s, Machine::testMachineOrderEndsLoopWithItsTest },
-        { "machine-order/loop-ends-with-the-test-behind-its-head"_s, Machine::testMachineOrderEndsLoopWithTestBehindItsHead },
-        { "machine-order/loop-ends-with-its-test-where-a-rare-block-leads-back-into-it"_s, Machine::testMachineOrderEndsLoopWithItsTestWhereRareBlockLeadsBackIntoIt },
-        { "machine-order/each-nested-loop-ends-with-its-test"_s, Machine::testMachineOrderEndsEachNestedLoopWithItsTest },
-        { "machine-order/loop-written-with-its-test-at-the-end-keeps-it-there"_s, Machine::testMachineOrderLeavesLoopThatEndsWithItsTest },
-        { "machine-order/loop-ends-with-a-test-that-leaves-it-rarely"_s, Machine::testMachineOrderEndsLoopWithTestThatLeavesRarely },
-        { "machine-order/loop-ends-with-a-test-whose-way-out-does-not-fall-through"_s, Machine::testMachineOrderEndsLoopWithTestWhoseWayOutDoesNotFallThrough<0> },
-        { "machine-order/conditional-jump-goes-round-the-loop-where-the-second-successor-stays"_s, Machine::testMachineOrderEndsLoopWithTestWhoseWayOutDoesNotFallThrough<1> },
-        { "machine-order/unlikely-arm-stands-behind-the-likely-blocks"_s, Machine::testMachineOrderPlacesUnlikelyArmBehindLikelyBlocks },
         { "machine-order/unlikely-arm-stands-outside-its-loop"_s, Machine::testMachineOrderTakesUnlikelyArmOutOfLoop },
-        { "machine-order/nested-loops-are-nested-intervals"_s, Machine::testMachineOrderMakesNestedLoopsNestedIntervals },
-        { "machine-order/cycle-entered-in-two-places-is-one-interval"_s, Machine::testMachineOrderCoversCycleEnteredInTwoPlaces },
         { "machine-order/every-entrypoint-is-a-start"_s, Machine::testMachineOrderStartsAtEveryEntrypoint },
-        { "machine-order/rare-block-lies-within-the-interval-of-its-loop"_s, Machine::testMachineOrderKeepsRareBlockWithinItsLoop },
-        { "machine-order/rare-block-that-leads-back-is-covered-by-the-loop"_s, Machine::testMachineOrderCoversRareBlockThatLeadsBack },
-        { "machine-order/block-stands-ahead-of-what-it-leads-to-through-rare-blocks"_s, Machine::testMachineOrderPlacesBlockAheadOfWhatItLeadsToThroughRareBlocks },
         { "machine-order/arm-that-goes-round-through-a-rare-block-lies-within-its-loop"_s, Machine::testMachineOrderKeepsArmThatGoesRoundThroughRareBlockWithinItsLoop },
         { "machine-order/critical-edge-is-split"_s, Machine::testMachineOrderSplitsCriticalEdge },
-        { "machine-order/edge-that-gets-no-move-stays-whole"_s, Machine::testMachineOrderLeavesEdgeThatGetsNoMoveWhole },
-        { "machine-order/rare-edges-into-one-rare-block-stay-whole"_s, Machine::testMachineOrderLeavesRareEdgesIntoOneRareBlockWhole },
-        { "machine-order/rare-edges-into-a-block-that-its-region-leads-to-are-split"_s, Machine::testMachineOrderSplitsRareEdgesIntoBlockThatItsRegionLeadsTo },
         { "machine-order/two-edges-to-one-block-are-split-apart"_s, Machine::testMachineOrderSplitsEachOfTwoEdgesToOneBlock },
-        { "machine-order/last-of-several-edges-of-a-switch-to-one-block-stays-whole"_s, Machine::testMachineOrderLeavesLastOfSeveralEdgesOfSwitchToOneBlockWhole },
         { "machine-order/work-grows-as-the-edges-of-a-switch-do"_s, Machine::testMachineOrderGrowsAsEdgesOfSwitchDo },
-        { "machine-order/edge-to-a-block-with-phis-and-one-predecessor-is-split"_s, Machine::testMachineOrderSplitsEdgeToBlockWithPhisAndOnePredecessor },
-        { "machine-order/edges-to-a-landing-pad-stay-whole"_s, Machine::testMachineOrderLeavesEdgesToLandingPadWhole },
-        { "machine-order/edge-of-a-patch-to-a-join-is-split"_s, Machine::testMachineOrderSplitsEdgeOfPatchToJoin },
         { "machine-order/edge-that-holds-the-extracts-of-a-patch-stays-whole"_s, Machine::testMachineOrderLeavesEdgeThatHoldsExtractsWhole },
-        { "machine-order/each-throwing-arm-under-a-handler-is-its-own-region"_s, Machine::testMachineOrderGivesEachThrowingArmItsOwnRegion },
-        { "machine-order/landing-pad-reached-only-from-arms-stands-behind-the-last-arm"_s, Machine::testMachineOrderPlacesLandingPadBehindLastThrowingArm },
         { "machine-order/nested-handler-stands-ahead-of-its-rejoin"_s, Machine::testMachineOrderPlacesNestedHandlerAheadOfItsRejoin },
         { "machine-order/landing-pads-that-lead-into-each-other-are-one-region"_s, Machine::testMachineOrderJoinsLandingPadsThatLeadIntoEachOther },
         { "machine-order/throwing-arms-are-one-region-without-a-frame-at-entry"_s, Machine::testMachineOrderJoinsThrowingArmsWithoutFrameAtEntry },
-        { "machine-order/blocks-that-nothing-reaches-vanish"_s, Machine::testMachineOrderDropsBlocksThatNothingReaches },
         { "machine-order/branch-on-a-join-of-constants-is-threaded"_s, Machine::testMachineThreadingResolvesBranchOnJoinOfConstants },
-        { "machine-order/only-reached-edge-into-a-join-of-constants-keeps-its-class"_s, Machine::testMachineThreadingKeepsClassOfOnlyReachedEdge<1> },
         { "machine-order/only-reached-edge-keeps-its-class-through-two-joins"_s, Machine::testMachineThreadingKeepsClassOfOnlyReachedEdge<2> },
-        { "machine-order/block-that-passes-no-constant-tests-it-ahead-of-the-join"_s, Machine::testMachineThreadingTestsValueAheadOfJoin },
         { "machine-order/comparisons-ahead-of-a-join-are-fused-into-branches"_s, Machine::testMachineThreadingFusesComparisonsAheadOfJoin },
         { "machine-order/edge-of-a-branch-that-passes-no-constant-stays"_s, Machine::testMachineThreadingLeavesEdgeOfBranchThatPassesNoConstant },
         { "machine-order/join-that-hands-its-phi-to-a-second-join-is-threaded"_s, Machine::testMachineThreadingPassesJoinThatHandsItsPhiOn },
-        { "machine-order/join-whose-phi-is-read-again-stays"_s, Machine::testMachineThreadingKeepsJoinWhosePhiIsReadAgain },
-        { "machine-order/join-that-holds-an-upsilon-stays"_s, Machine::testMachineThreadingKeepsJoinThatHoldsUpsilon },
         { "machine-order/join-that-holds-a-store-stays"_s, Machine::testMachineThreadingKeepsJoinThatHoldsStore },
-        { "machine-order/join-that-holds-an-unread-comparison-is-threaded"_s, Machine::testMachineThreadingPassesJoinThatHoldsUnreadComparison },
         { "machine-order/head-of-a-loop-is-not-threaded"_s, Machine::testMachineThreadingLeavesHeadOfLoop },
-        { "machine-order/way-that-has-decided-a-test-passes-it-by"_s, Machine::testMachineThreadingOfTestThatWayHasDecided<OrderTestSecondTest::IsAlone> },
         { "machine-order/way-that-has-decided-a-test-passes-its-negation-by"_s, Machine::testMachineThreadingOfTestThatWayHasDecided<OrderTestSecondTest::IsAskedTheOtherWayRound> },
         { "machine-order/decided-test-behind-a-store-stays"_s, Machine::testMachineThreadingOfTestThatWayHasDecided<OrderTestSecondTest::StandsBehindStore> },
-        { "machine-order/decided-test-whose-answer-is-read-again-stays"_s, Machine::testMachineThreadingOfTestThatWayHasDecided<OrderTestSecondTest::IsReadAgain> },
-        { "machine-order/test-stays-for-the-way-that-has-not-decided-it"_s, Machine::testMachineThreadingOfTestThatWayHasDecided<OrderTestSecondTest::IsComeToByThirdWay> },
-        { "machine-order/word-is-read-through-the-object-that-a-flag-asked-twice-has-picked"_s, Machine::testMachineThreadingOfValuesPickedByOneFlag<Machine::OrderTestUseOfPick::Reads> },
-        { "machine-order/word-is-written-through-the-object-that-a-flag-asked-twice-has-picked"_s, Machine::testMachineThreadingOfValuesPickedByOneFlag<Machine::OrderTestUseOfPick::Stores> },
         { "machine-order/words-are-read-again-behind-a-decided-test-whose-arms-have-stored"_s, Machine::testMachineThreadingPastTestBehindArmsThatStore },
         { "machine-order/decided-test-at-the-head-of-a-loop-stays"_s, Machine::testMachineThreadingLeavesDecidedTestAtHeadOfLoop },
         { "machine-order/work-grows-as-the-decided-tests-in-a-row-do"_s, Machine::testMachineThreadingGrowsAsTestsInRowDo<true> },
         { "machine-order/work-grows-as-the-undecided-tests-in-a-row-do"_s, Machine::testMachineThreadingGrowsAsTestsInRowDo<false> },
-        { "machine-order/test-for-zero-is-asked-behind-a-test-that-zero-fails-too"_s, Machine::testMachineThreadingOfTestThatNextTestImplies<OrderTestNextTest::LeavesForZeroToo> },
         { "machine-order/test-for-zero-is-asked-behind-a-test-that-leaves-by-its-first-way"_s, Machine::testMachineThreadingOfTestThatNextTestImplies<OrderTestNextTest::LeavesForZeroTooByItsFirstWay> },
-        { "machine-order/test-for-zero-stays-ahead-of-a-test-that-zero-passes"_s, Machine::testMachineThreadingOfTestThatNextTestImplies<OrderTestNextTest::LetsZeroPass> },
-        { "machine-order/test-for-zero-stays-ahead-of-a-load"_s, Machine::testMachineThreadingOfTestThatNextTestImplies<OrderTestNextTest::StandsBehindLoad> },
-        { "machine-order/test-for-zero-stays-ahead-of-a-test-that-another-way-enters"_s, Machine::testMachineThreadingOfTestThatNextTestImplies<OrderTestNextTest::IsEnteredByAnotherWay> },
         { "machine-order/test-of-bits-is-asked-behind-a-bound-that-words-without-them-fail"_s, Machine::testMachineThreadingOfTestThatNextTestImplies<OrderTestNextTest::FollowsTestOfBits> },
         { "machine-order/test-of-bits-stays-ahead-of-a-bound-that-a-word-without-them-passes"_s, Machine::testMachineThreadingOfTestThatNextTestImplies<OrderTestNextTest::FollowsTestOfBitsThatReachAboveItsBound> },
-        { "machine-order/edge-that-passes-a-rare-jump-is-rare"_s, Machine::testMachineThreadingPassesBlocksThatOnlyJump<1, EdgeClass::Rare> },
-        { "machine-order/edge-passes-a-chain-of-jumps"_s, Machine::testMachineThreadingPassesBlocksThatOnlyJump<3, EdgeClass::Normal> },
         { "machine-order/cycle-of-jumps-ends-the-search"_s, Machine::testMachineThreadingEndsInCycleOfJumps },
         { "machine-order/identical-throw-blocks-merge"_s, Machine::testMachineMergingOfThrowBlocks<OrderTestThrowBlocks::AreAlike> },
-        { "machine-order/throw-blocks-with-different-origins-stay-apart"_s, Machine::testMachineMergingOfThrowBlocks<OrderTestThrowBlocks::DifferInOrigin> },
         { "machine-order/throw-blocks-with-generators-of-their-own-stay-apart"_s, Machine::testMachineMergingOfThrowBlocks<OrderTestThrowBlocks::DifferInGenerator> },
-        { "machine-order/blocks-merge-by-their-children"_s, Machine::testMachineMergingComparesChildren },
-        { "machine-order/arms-of-an-emitter-that-go-on-in-a-scope-merge"_s, Machine::testMachineMergingOfBlocksThatContinueScope<OrderTestWayIntoArm::AsArmOfEmitter> },
-        { "machine-order/blocks-of-code-that-go-on-in-a-scope-merge"_s, Machine::testMachineMergingOfBlocksThatContinueScope<OrderTestWayIntoArm::AsSuccessorInCode> },
         { "machine-order/rare-arm-and-likely-arm-merge-into-a-likely-block"_s, Machine::testMachineMergingOfRareArmWithLikelyArm },
         { "machine-order/test-read-by-two-arms-that-merge-is-made-by-the-branch-that-is-left"_s, Machine::testMachineMergingLeavesTestToItsOneReader },
-        { "machine-order/arms-that-pass-one-value-merge"_s, Machine::testMachineMergingComparesUpsilons<true> },
-        { "machine-order/arms-that-pass-different-values-stay-apart"_s, Machine::testMachineMergingComparesUpsilons<false> },
         { "machine-order/test-whose-arms-merge-goes"_s, Machine::testMachineOrderDropsTestWhoseArmsMerge },
         { "machine-order/value-tested-for-nothing-stays-for-its-other-reader"_s, Machine::testMachineOrderKeepsWhatElseReadsTestedValue },
-        { "machine-order/moves-stand-ahead-of-a-branch-that-tests-nothing"_s, Machine::testMachineOrderMovesRegistersAheadOfBranchThatTestsNothing },
-        { "machine-order/branch-that-tests-nothing-leaves-a-rare-region"_s, Machine::testMachineOrderLeavesRareRegionThroughBranchThatTestsNothing },
-        { "machine-order/test-in-a-later-block-absorbs-bits-whose-children-live-on"_s, Machine::testMachineFusionOfTestInLaterBlock<OrderTestChildrenOfBits::TwoThatAreReadAgain> },
-        { "machine-order/test-in-a-later-block-absorbs-bits-whose-one-child-dies"_s, Machine::testMachineFusionOfTestInLaterBlock<OrderTestChildrenOfBits::OneThatIsNotReadAgain> },
-        { "machine-order/test-in-a-later-block-leaves-bits-whose-two-children-die"_s, Machine::testMachineFusionOfTestInLaterBlock<OrderTestChildrenOfBits::TwoThatAreNotReadAgain> },
         { "machine-order/test-in-a-later-block-leaves-a-comparison-of-a-number-that-dies"_s, Machine::testMachineFusionLeavesComparisonOfNumberThatIsNotReadAgain },
-        { "machine-order/branch-on-both-of-two-comparisons-is-two-jumps"_s, Machine::testMachineFusionOfBranchOnTwoComparisons<Machine::BitAnd> },
-        { "machine-order/branch-on-either-of-two-comparisons-is-two-jumps"_s, Machine::testMachineFusionOfBranchOnTwoComparisons<Machine::BitOr> },
         { "machine-order/one-of-two-comparisons-that-both-have-to-hold-reads-its-load-where-it-lies"_s, Machine::testMachineFusionOfLoadBelowTwoComparisons<Machine::BitAnd> },
-        { "machine-order/one-of-two-comparisons-either-of-which-is-enough-reads-its-load-where-it-lies"_s, Machine::testMachineFusionOfLoadBelowTwoComparisons<Machine::BitOr> },
-        { "machine-order/branch-on-both-a-comparison-of-numbers-and-one-of-integers"_s, Machine::testMachineFusionOfBranchOnComparisonOfNumbers<Machine::BitAnd> },
-        { "machine-order/branch-on-either-a-comparison-of-numbers-or-one-of-integers"_s, Machine::testMachineFusionOfBranchOnComparisonOfNumbers<Machine::BitOr> },
-        { "machine-order/branch-on-one-bit-of-a-word-of-32-bits-shifts-nothing"_s, Machine::testMachineFusionOfShiftBelowBitTest<Machine::ZShr, Machine::Int32> },
         { "machine-order/branch-on-one-bit-of-a-word-of-64-bits-shifts-nothing"_s, Machine::testMachineFusionOfShiftBelowBitTest<Machine::ZShr, Machine::Int64> },
-        { "machine-order/branch-on-one-bit-of-a-signed-word-of-32-bits-shifts-nothing"_s, Machine::testMachineFusionOfShiftBelowBitTest<Machine::SShr, Machine::Int32> },
-        { "machine-order/branch-on-one-bit-of-a-signed-word-of-64-bits-shifts-nothing"_s, Machine::testMachineFusionOfShiftBelowBitTest<Machine::SShr, Machine::Int64> },
-        { "machine-order/branch-on-both-a-comparison-and-one-bit-tests-twice"_s, Machine::testMachineFusionOfComparisonBesideBitTest<Machine::BitAnd> },
         { "machine-order/branch-on-either-a-comparison-or-one-bit-tests-twice"_s, Machine::testMachineFusionOfComparisonBesideBitTest<Machine::BitOr> },
-        { "machine-order/branch-on-both-bits-of-a-load-and-a-comparison-tests-twice"_s, Machine::testMachineFusionOfBitsOfLoadBesideComparison<Machine::BitAnd> },
         { "machine-order/branch-on-either-bits-of-a-load-or-a-comparison-tests-twice"_s, Machine::testMachineFusionOfBitsOfLoadBesideComparison<Machine::BitOr> },
-        { "machine-order/comparison-that-is-read-again-stays-a-word-beside-a-branch"_s, Machine::testMachineFusionLeavesComparisonThatIsReadAgain },
     };
     return tests;
 }

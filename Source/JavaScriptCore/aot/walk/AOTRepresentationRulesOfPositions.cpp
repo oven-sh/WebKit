@@ -90,10 +90,9 @@ Representation representationOfVariable(const RepresentationContext& context, Va
     PlannedVariable variable = context.plan.variable(id);
     switch (variable.storage) {
     case VariableStorage::Statics:
-        return representationOf(variable.representation);
-    case VariableStorage::None:
+    // A read gives the closure in the form in which the word would have held it.
     case VariableStorage::ClosureTable:
-        return Representation::Unchosen;
+        return representationOf(variable.representation);
     }
     RELEASE_ASSERT_NOT_REACHED();
 }

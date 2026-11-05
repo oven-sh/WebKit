@@ -61,11 +61,6 @@ bool mayHoldConstructedInstances(const BuiltinTable&, BuiltinClassID holder, Bui
 bool isInsideSomeClassPart(TypeReader, LayoutID, std::span<const ClassPart>);
 bool mayBeInsideSomeClassPart(TypeReader, LayoutID, std::span<const ClassPart>);
 
-// The layouts that an object with ObjectTrait::HasLayout may have: the one in its record, the members of the tagged family that this one makes,
-// and where `new.target` may have selected a layout below, what is written below with the members of the families made there. In no order, and a layout may come twice.
-// Type::layouts lists them, describedByShape() puts them in place of the object, and surelyFitsUnknownOf() and mayFitUnknownOf() go over them: isSubset(type, forLayoutSet(type.layouts)) rests on that.
-void forEachPossibleLayoutOf(const ObjectTable&, const Program&, const ObjectRecord&, NOESCAPE const ScopedLambda<void(LayoutID)>&);
-
 // Of one named object against the `unknown` of a type: anyObject, anyFunction, unnamedLayouts, unnamedClasses.
 bool surelyFitsUnknownOf(TypeReader, ObjectID, const Type&);
 bool mayFitUnknownOf(TypeReader, ObjectID, const Type&);

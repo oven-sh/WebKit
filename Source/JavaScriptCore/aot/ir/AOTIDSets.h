@@ -330,6 +330,10 @@ public:
         freeOutgrownSlots();
     }
     bool isFrozen() const { return m_isFrozen; }
+    // A ROUND IN WHICH NOBODY ADDS, on a table that goes on growing behind it: TypeTable::RoundWithoutAdditions. To an arena that keeps what it makes to itself the table is as good as frozen. Whoever adds meanwhile stops the build.
+    void beginRoundWithoutAdditions() { m_numberOfRoundsWithoutAdditions.fetch_add(1, std::memory_order_relaxed); }
+    void endRoundWithoutAdditions() { m_numberOfRoundsWithoutAdditions.fetch_sub(1, std::memory_order_relaxed); }
+    bool takesNoAdditions() const { return m_isFrozen || m_numberOfRoundsWithoutAdditions.load(std::memory_order_relaxed); }
     JS_EXPORT_PRIVATE size_t sizeInBytes() const;
 
     // For a log of what a stage holds.
@@ -342,21 +346,6 @@ public:
         uint64_t bytesOfIndexes { 0 };
     };
     JS_EXPORT_PRIVATE Contents contents() const;
-    // Every set of several members, in no order that means anything. By one thread, while nobody adds.
-    JS_EXPORT_PRIVATE void forEachSet(NOESCAPE const ScopedLambda<void(uint32_t set)>&) const;
-
-    // For the solve of Facts, which interns a set for every state that a value goes through. IDSetForm::ListsAndChunks alone. All four while nobody else is at the table.
-    // The sets that the table holds now last as long as it does, and so do the views of them. By one thread.
-    JS_EXPORT_PRIVATE void keepAllSetsMadeSoFar();
-    // beginCollection() by one thread, then markAsNamed() from any thread for every set that anything names, then collectShard() once for each shard below numberOfShards, each by one thread.
-    // A set made since keepAllSetsMadeSoFar() that was not marked is gone, and its list of chunks is given back. Its id is never handed out again: an equal set that is made later gets another, and viewOf() stops the build at the old one.
-    // One that was marked keeps its id, and its list of chunks moves: no view of a set made since keepAllSetsMadeSoFar() outlives collectShard().
-    // So whoever forgets to mark a set that something names gets no wrong answer.
-    JS_EXPORT_PRIVATE void beginCollection();
-    JS_EXPORT_PRIVATE void markAsNamed(uint32_t set);
-    JS_EXPORT_PRIVATE void collectShard(uint32_t shard);
-    // False: collectShard() has taken the set. For whoever goes through every record that may name a set, held by somebody or not. Whoever holds a set asks viewOf(), which stops.
-    JS_EXPORT_PRIVATE bool holds(uint32_t set) const;
 
 private:
     friend class IDSetArena;
@@ -376,6 +365,7 @@ private:
     const IDSetForm m_form;
     const uint32_t m_numberOfAttachedWords;
     bool m_isFrozen { false };
+    std::atomic<unsigned> m_numberOfRoundsWithoutAdditions { 0 };
     Vector<uint32_t> m_allMembers;
     std::unique_ptr<Shard[]> m_shards;
 };

@@ -112,7 +112,6 @@ public:
 
     size_t bytesInUse() const { return static_cast<size_t>(m_numberInUse) * sizeof(Element); }
     // Every index that was handed out is below it.
-    uint32_t endOfIndexes() const { return m_next; }
 
 private:
     static constexpr uint32_t segmentOf(uint32_t index) { return static_cast<uint32_t>(std::bit_width(index + sizeOfFirstSegment)) - 1 - log2OfFirstSegment; }
@@ -176,27 +175,6 @@ public:
         for (Slots* slots = m_slots.load(std::memory_order_relaxed); slots; slots = slots->outgrown)
             size += sizeof(Slots) + (slots->mask + 1) * sizeof(std::atomic<uint64_t>);
         return size;
-    }
-
-    // By one thread, while nobody searches or adds. The functor is called once for each id.
-    void removeIf(NOESCAPE const Invocable<bool(uint32_t)> auto& shouldRemove)
-    {
-        Slots* former = m_slots.load(std::memory_order_relaxed);
-        if (!former)
-            return;
-        Vector<uint64_t> kept;
-        for (size_t place = 0; place <= former->mask; ++place) {
-            uint64_t slot = former->at(place).load(std::memory_order_relaxed);
-            if (slot && !shouldRemove(static_cast<uint32_t>(slot)))
-                kept.append(slot);
-        }
-        m_slots.store(nullptr, std::memory_order_relaxed);
-        m_size = 0;
-        while (former)
-            fastFree(std::exchange(former, former->outgrown));
-        for (uint64_t slot : kept)
-            add(static_cast<uint32_t>(slot >> 32), static_cast<uint32_t>(slot));
-        freeOutgrownSlots();
     }
 
     // Both under the shard's lock.
@@ -271,31 +249,6 @@ public:
 
     // Under the shard's lock. The blocks whole, with the room that nothing has taken.
     size_t sizeInBytes() const { return m_sizeInBytes; }
-
-    // Under the shard's lock, while nobody reads a word of the blocks that go.
-    void replaceWith(IDSetTableWordBlocks& other)
-    {
-        for (Block* block = m_newest; block;)
-            fastFree(std::exchange(block, block->older));
-        m_newest = std::exchange(other.m_newest, nullptr);
-        m_free = std::exchange(other.m_free, { });
-        m_wordsOfNextBlock = other.m_wordsOfNextBlock;
-        m_sizeInBytes = std::exchange(other.m_sizeInBytes, 0);
-    }
-
-    // Under the shard's lock. No word moves. The room that nothing has taken in the blocks of the other is left as it is.
-    void takeBlocksOf(IDSetTableWordBlocks& other)
-    {
-        Block* oldestOfOther = other.m_newest;
-        if (!oldestOfOther)
-            return;
-        while (oldestOfOther->older)
-            oldestOfOther = oldestOfOther->older;
-        oldestOfOther->older = m_newest;
-        m_newest = std::exchange(other.m_newest, nullptr);
-        m_sizeInBytes += std::exchange(other.m_sizeInBytes, 0);
-        other.m_free = { };
-    }
 
 private:
     // The words follow it in memory.
@@ -385,11 +338,6 @@ struct alignas(alignmentInIDSetTable) IDSetTable::Shard {
     IDSetTableSegments<IDSetChunk, 6> chunks;
     // The members or entries of long sets, and the lazy lists.
     IDSetTableWordBlocks wordsOutsideRecords;
-    // A record at a lower index lasts as long as the table, and what lies outside it lies here and never moves: IDSetTable::keepAllSetsMadeSoFar().
-    uint32_t firstRecordThatMayGo { UINT32_MAX };
-    IDSetTableWordBlocks wordsOutsideRecordsThatLast;
-    // From beginCollection() to collectShard(): a byte for each index of `records`.
-    Vector<uint8_t> isNamed;
     Lock lock;
 };
 
@@ -451,7 +399,6 @@ IDSetView IDSetTable::viewOf(uint32_t set) const
         return view;
     case IDHome::Program: {
         IDSetHeader* header = m_shards[shardOfIDInIDSetTable(set)].records.at(indexOfIDInIDSetTable(set));
-        // collectShard() took the set for one that nothing names.
         RELEASE_ASSERT(header->size);
         view.m_size = header->size;
         view.m_numberOfChunks = header->numberOfChunks;
@@ -504,7 +451,7 @@ size_t IDSetTable::sizeInBytes() const
     for (uint32_t shardIndex = 0; shardIndex < numberOfShards; ++shardIndex) {
         Shard& shard = m_shards[shardIndex];
         Locker locker { shard.lock };
-        size += shard.indexOfRecords.sizeInBytes() + shard.indexOfChunks.sizeInBytes() + shard.records.bytesInUse() + shard.wordsOutsideRecords.sizeInBytes() + shard.wordsOutsideRecordsThatLast.sizeInBytes() + shard.chunks.bytesInUse();
+        size += shard.indexOfRecords.sizeInBytes() + shard.indexOfChunks.sizeInBytes() + shard.records.bytesInUse() + shard.wordsOutsideRecords.sizeInBytes() + shard.chunks.bytesInUse();
     }
     return size;
 }
@@ -518,88 +465,10 @@ IDSetTable::Contents IDSetTable::contents() const
         contents.numberOfSets += shard.indexOfRecords.size();
         contents.numberOfChunks += shard.indexOfChunks.size();
         contents.bytesOfRecords += shard.records.bytesInUse();
-        contents.bytesOutsideRecords += shard.wordsOutsideRecords.sizeInBytes() + shard.wordsOutsideRecordsThatLast.sizeInBytes();
+        contents.bytesOutsideRecords += shard.wordsOutsideRecords.sizeInBytes();
         contents.bytesOfIndexes += shard.indexOfRecords.sizeInBytes() + shard.indexOfChunks.sizeInBytes();
     }
     return contents;
-}
-
-void IDSetTable::forEachSet(NOESCAPE const ScopedLambda<void(uint32_t set)>& functor) const
-{
-    for (uint32_t shardIndex = 0; shardIndex < numberOfShards; ++shardIndex) {
-        Shard& shard = m_shards[shardIndex];
-        Locker locker { shard.lock };
-        shard.indexOfRecords.forEachID([&](uint32_t id) {
-            // A record of one member is a list that lastingListOfOne() keeps. No id is handed out for it.
-            if (shard.records.at(indexOfIDInIDSetTable(id))->size > 1)
-                functor(id);
-        });
-    }
-}
-
-void IDSetTable::keepAllSetsMadeSoFar()
-{
-    RELEASE_ASSERT(m_form == IDSetForm::ListsAndChunks);
-    for (uint32_t shardIndex = 0; shardIndex < numberOfShards; ++shardIndex) {
-        Shard& shard = m_shards[shardIndex];
-        Locker locker { shard.lock };
-        shard.firstRecordThatMayGo = shard.records.endOfIndexes();
-        shard.wordsOutsideRecordsThatLast.takeBlocksOf(shard.wordsOutsideRecords);
-    }
-}
-
-void IDSetTable::beginCollection()
-{
-    for (uint32_t shardIndex = 0; shardIndex < numberOfShards; ++shardIndex)
-        m_shards[shardIndex].isNamed.fill(0, m_shards[shardIndex].records.endOfIndexes());
-}
-
-void IDSetTable::markAsNamed(uint32_t set)
-{
-    if (static_cast<IDHome>(set >> idHomeShift) != IDHome::Program)
-        return;
-    // Every thread stores the same.
-    uint8_t* isNamed = &m_shards[shardOfIDInIDSetTable(set)].isNamed[indexOfIDInIDSetTable(set)];
-    if (!WTF::atomicLoad(isNamed, std::memory_order_relaxed))
-        WTF::atomicStore(isNamed, uint8_t { 1 }, std::memory_order_relaxed);
-}
-
-bool IDSetTable::holds(uint32_t set) const
-{
-    if (set == UINT32_MAX || static_cast<IDHome>(set >> idHomeShift) != IDHome::Program)
-        return true;
-    return m_shards[shardOfIDInIDSetTable(set)].records.at(indexOfIDInIDSetTable(set))->size;
-}
-
-void IDSetTable::collectShard(uint32_t shardIndex)
-{
-    RELEASE_ASSERT(m_form == IDSetForm::ListsAndChunks && !m_isFrozen);
-    Shard& shard = m_shards[shardIndex];
-    Locker locker { shard.lock };
-    // What stays moves together, so the blocks go whole.
-    IDSetTableWordBlocks wordsThatStay;
-    shard.indexOfRecords.removeIf([&](uint32_t id) {
-        uint32_t index = indexOfIDInIDSetTable(id);
-        if (index < shard.firstRecordThatMayGo)
-            return false;
-        IDSetHeader* record = shard.records.at(index);
-        bool wordsLieOutside = wordsOfIDSetLieOutside(*record);
-        if (!shard.isNamed[index]) {
-            if (wordsLieOutside)
-                wordsOutsideIDSetRecord(record) = nullptr;
-            record->size = 0;
-            return true;
-        }
-        if (wordsLieOutside) {
-            std::span<const uint32_t> words = unsafeMakeSpan(wordsOutsideIDSetRecord(record), record->numberOfChunks * sizeof(IDSetChunkEntry) / sizeof(uint32_t));
-            uint32_t* moved = wordsThatStay.allocate(words.size());
-            std::ranges::copy(words, moved);
-            wordsOutsideIDSetRecord(record) = moved;
-        }
-        return false;
-    });
-    shard.wordsOutsideRecords.replaceWith(wordsThatStay);
-    shard.isNamed = { };
 }
 
 std::optional<uint32_t> IDSetTable::find(uint32_t hash, const IDSetView& members) const
@@ -634,6 +503,7 @@ uint32_t IDSetTable::findOrAdd(uint32_t hash, const IDSetView& members, std::spa
     Locker locker { shard.lock };
     if (uint32_t found = shard.indexOfRecords.find(hash, isWanted))
         return found;
+    RELEASE_ASSERT(!takesNoAdditions());
     // A chunk of a thread dies with its arena.
     for (const IDSetChunkEntry& entry : members.chunkEntries())
         RELEASE_ASSERT(static_cast<IDHome>(entry.chunk >> idHomeShift) == IDHome::Program);
@@ -673,6 +543,7 @@ uint32_t IDSetTable::findOrAddChunk(uint32_t hash, const IDSetChunk& chunk, bool
     Locker locker { shard.lock };
     if (uint32_t found = shard.indexOfChunks.find(hash, isWanted))
         return found;
+    RELEASE_ASSERT(!takesNoAdditions());
     isNew = true;
     uint32_t index = shard.chunks.allocate(1);
     *shard.chunks.at(index) = chunk;

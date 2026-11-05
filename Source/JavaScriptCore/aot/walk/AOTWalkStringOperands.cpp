@@ -21,7 +21,6 @@
 #include "AOTOpcodeSets.h"
 #include "AOTTypeArena.h"
 #include "AOTTypeTable.h"
-#include "AOTWalkStringParsers.h"
 #include <optional>
 #include <utility>
 

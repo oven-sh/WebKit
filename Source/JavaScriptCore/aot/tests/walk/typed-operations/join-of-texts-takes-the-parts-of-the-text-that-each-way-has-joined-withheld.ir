@@ -1,9 +1,0 @@
-# the same function with TypedOperations withheld: each join of texts is the operation that is written, and the last one takes what the ways bring together
-# function tag(c, x, y) { const s = c ? "a" + (x | 0) : "b" + (y | 0); return s + "!"; }
-# RUN: walk f1 mechanisms=none
-# CHECK-LABEL: code f1:Body
-# CHECK-COUNT-3: = Add
-# CHECK-NOT: = Add
-# RUN(NEVER): walk f1 mechanisms=none
-# NEVER-NOT: = Strcat
-# PROGRAM-OF: join-of-texts-takes-the-parts-of-the-text-that-each-way-has-joined.ir

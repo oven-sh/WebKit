@@ -130,7 +130,7 @@ static ALWAYS_INLINE bool fusionCanAbsorbIntoTest(const ValueFacts* values, cons
 }
 
 // Step::sources of a Check holds the leaves of its predicate alone.
-static unsigned fusionLeavesInStepOf(const BackwardScan& scan, const Operation* root)
+[[maybe_unused]] static unsigned fusionLeavesInStepOf(const BackwardScan& scan, const Operation* root)
 {
     if (root->opcode() != Check)
         return scan.numberOfLeavesOf(root);
@@ -891,27 +891,7 @@ static NEVER_INLINE bool fuseIntoOtherThanBranch(ValueFacts* values, Operation* 
         return kinds && fuseIntoComputation(values, user, children, 2, kinds);
     }
 
-    case Nop:
-    case Opaque:
-    case Const32:
-    case Const64:
-    case ConstFloat:
-    case ConstDouble:
-    case FramePointer:
-    case SlotBase:
-    case AddressOf:
-    case NumberOf:
-    case InstanceAddressOf:
-    case ArgumentReg:
-    case Fence:
-    case Phi:
-    case Upsilon:
-    case Extract:
-    case Patch:
-    case Jump:
-    case Switch:
-    case Return:
-    case Oops:
+    default:
         return false;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -925,25 +905,6 @@ void BackwardScan::fuseInto(Operation* user)
         fuseIntoBranch(values, user, fusionChildrenOf(user)[0], *this);
     else
         fuseIntoOtherThanBranch(values, user, *this);
-}
-
-bool BackwardScan::tryFusePredicate(Operation* user, Operation* predicate)
-{
-    ASSERT((user->opcode() == Select || user->opcode() == Check || user->opcode() == Branch) && user->child(0) == predicate);
-    return fusePredicateBelow(*this, m_liveness.m_values.begin(), user, predicate);
-}
-
-bool BackwardScan::tryFuseAddress(Operation* access)
-{
-    ASSERT(isMemoryAccess(access->opcode()) && !m_liveness.isFused(access));
-    return !!fuseAddressBelow(m_liveness.m_values.begin(), fusionLeavesInStepOf(*this, access), access, access->lastChild());
-}
-
-bool BackwardScan::tryFuseLoad(Operation* user, unsigned childIndex)
-{
-    ASSERT(!m_liveness.isFused(user));
-    // A load has one child, so the user has as many leaves with the load fused as without.
-    return fuseLoadBelowComputation(m_liveness.m_values.begin(), user, childIndex, user->child(childIndex), fusionLeavesInStepOf(*this, user));
 }
 
 bool BackwardScan::tryFuseScaledIndex(Operation* sum)

@@ -21,7 +21,7 @@
 #include "AOTSweep.h"
 #include "AOTThinSummary.h"
 #include "AOTWalkCoroutinePromises.h"
-#include "AOTWalkKnownJoins.h"
+#include "AOTWalkKnown.h"
 #include <algorithm>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -115,7 +115,7 @@ static bool copyPaysAtInlining(const Walker& walker, FunctionID callee, size_t n
         // A copy that adds code pays where it is repeated: in a loop of the unit, or in a function that may be entered again from below itself (LinkedFunction::isNamedInItsCycle): words on the text, no heat.
         // Elsewhere leaves cost the application 21 G of build for each G that TypeScript 6 ran less, here 5. So the body of a module, too, is the same code in an executable and in a test run.
         && (place.isInLoop || walker.facts().linked().function(walker.unit().function).isNamedInItsCycle)
-        // TODO(filled-fields, 11-03 23:18): an object that the unit's own code makes outside of loops and hands to a call stays in sight of the collector from the unit's frame while the callee runs; what a call answers does not.
+        // TODO: an object that the unit's own code makes outside of loops and hands to a call stays in sight of the collector from the unit's frame while the callee runs; what a call answers does not.
         // `parameter(make())`, test/aot/parallel/gc/: until that is mended where it is, a callee that answers with an object of its own making is called.
         && (place.isInLoop || !walker.facts().linked().function(callee).resultIsFresh))
         return true;
@@ -253,21 +253,8 @@ static bool copyOfClosureHandedOverPaysAtInlining(const Walker& walker, Function
     return summary.numberOfOperations <= inlineLimitInLoops && !summary.has(SummaryTrait::HasLoops);
 }
 
-// The Body of a function that enters files begins with a test that fills the words of its group, and a copy has no such test. Where a body of the same group runs those words are filled.
-static bool staticsAreFilledAtInlining(const Walker& walker, FunctionID callee, FunctionID caller)
-{
-    const Plan& plan = walker.plan();
-    if (!plan.entersFile(callee))
-        return true;
-    if (!walksInputBody(walker.unit().role))
-        return false;
-    const StaticsGroups& groups = plan.staticsGroups();
-    std::optional<uint32_t> group = groups.groupFilledWhenEntered(walker.program().at(callee).module);
-    return group && group == groups.groupFilledWhenEntered(walker.program().at(caller).module);
-}
-
 // All that hangs neither on the operands, nor on the size, nor on the frames. It builds nothing.
-static bool mayBeWalkedAtInlining(const Walker& walker, FunctionID callee, FunctionID caller)
+static bool mayBeWalkedAtInlining(const Walker& walker, FunctionID callee)
 {
     const Program& program = walker.program();
     const Function& function = program.at(callee);
@@ -284,7 +271,7 @@ static bool mayBeWalkedAtInlining(const Walker& walker, FunctionID callee, Funct
         return false;
 
     // The inline frame names the Body of the callee for the stack trace.
-    if (!walker.plan().conventions().exists({ callee, CodeRole::Body }) || !staticsAreFilledAtInlining(walker, callee, caller))
+    if (!walker.plan().conventions().exists({ callee, CodeRole::Body }))
         return false;
     if (walker.code().inlineFrames().size() >= mostInlineFramesAtInlining)
         return false;
@@ -299,7 +286,7 @@ static bool mayBeWalkedAtInlining(const Walker& walker, FunctionID callee, Funct
         returns = body->isReachable(BlockID(block)) && endsInReturnAtInlining(body->terminator(BlockID(block)));
     // A copy mentions what the callee names. A callee that was found under a name behind a guess, or that is lost to Link, has no referrer (LinkedFunction::isInQueueFromStart): it is called, unless it names nothing that a mention could bring.
     const LinkTables& link = walker.facts().linked();
-    return returns && (link.function(callee).namesOnlyWhatEveryFunctionLeadsTo || link.leadsTo(walker.unit().function, callee));
+    return returns && (link.function(callee).namesOnlyWhatEveryFunctionLeadsTo || link.leadsTo(walker.unit(), callee));
 }
 
 // ---- The callee
@@ -610,7 +597,7 @@ static bool callAdmitsCopyAtInlining(const Walker& walker, const Draft& site, Fu
 bool mayCopyCallee(const Walker& walker, const Draft& site, FunctionID callee, const PlaceOfCall& place)
 {
     return walker.has(Mechanism::Inlining) && opcodesOfInlining.contains(site.opcode) && callAdmitsCopyAtInlining(walker, site, callee, place, nullptr)
-        && !walker.isBeingWalked(callee) && mayBeWalkedAtInlining(walker, callee, place.caller);
+        && !walker.isBeingWalked(callee) && mayBeWalkedAtInlining(walker, callee);
 }
 
 bool shouldCopyCallee(const Walker& walker, const Draft& site, FunctionID callee, std::span<const Reference> handedOver, bool callsParameterOfCopy)
@@ -618,7 +605,7 @@ bool shouldCopyCallee(const Walker& walker, const Draft& site, FunctionID callee
     OperandsInSightAtInlining inSight { handedOver, callsParameterOfCopy, false };
     PlaceOfCall place { walker.currentFunction(), walker.isInLoop() };
     return walker.has(Mechanism::Inlining) && opcodesOfInlining.contains(site.opcode) && callAdmitsCopyAtInlining(walker, site, callee, place, &inSight)
-        && !walker.isBeingWalked(callee) && mayBeWalkedAtInlining(walker, callee, place.caller);
+        && !walker.isBeingWalked(callee) && mayBeWalkedAtInlining(walker, callee);
 }
 
 Vector<Reference, 8> operandsHandedToCopy(const Draft& site, const Function& callee)
@@ -830,7 +817,7 @@ bool Walker::walkInline(const BodyValue& call, FunctionID callee, std::span<cons
         written.closure = closureCalledAtInlining(site);
         written.arguments = site.argumentsOperands();
     }
-    if (!mayBeWalkedAtInlining(*this, callee, currentFunction()) || !operandsFitAtInlining(*this, written, function, arguments))
+    if (!mayBeWalkedAtInlining(*this, callee) || !operandsFitAtInlining(*this, written, function, arguments))
         return false;
     if (!depthOfCopies())
         m_operationsCopiedAtWrittenCall = 0;
@@ -1022,7 +1009,7 @@ bool Walker::walkInline(const BodyValue& call, FunctionID callee, std::span<cons
             Vector<ReturnOfCopy, 2> returnsOfOneKind;
             for (ReturnOfCopy* returned : ways)
                 returnsOfOneKind.append(WTF::move(*returned));
-            goOnBehindReturnsOfCopy(call, function, isConstruction, linked, heldByCallAlone, originOfCall, returnsOfOneKind);
+            goOnBehindReturnsOfCopy(call, function, linked, heldByCallAlone, originOfCall, returnsOfOneKind);
             walkEndOfBlockBehindReturnsOfCopy(call.id());
         };
         {
@@ -1040,11 +1027,11 @@ bool Walker::walkInline(const BodyValue& call, FunctionID callee, std::span<cons
         m_calleeAccountedFor = callee;
         return true;
     }
-    return goOnBehindReturnsOfCopy(call, function, isConstruction, linked, heldByCallAlone, originOfCall, returns);
+    return goOnBehindReturnsOfCopy(call, function, linked, heldByCallAlone, originOfCall, returns);
 }
 
 // The caller goes on behind the call with what these ways out of the copy hand back.
-bool Walker::goOnBehindReturnsOfCopy(const BodyValue& call, const Function& function, bool isConstruction, const LinkedFunction& linked, const Vector<Reference, 2>& heldByCallAlone, Origin originOfCall, Vector<Frame::ReturnOfCopy, 2>& returns)
+bool Walker::goOnBehindReturnsOfCopy(const BodyValue& call, const Function& function, const LinkedFunction& linked, const Vector<Reference, 2>& heldByCallAlone, Origin originOfCall, Vector<Frame::ReturnOfCopy, 2>& returns)
 {
     using ReturnOfCopy = Frame::ReturnOfCopy;
 
@@ -1052,7 +1039,7 @@ bool Walker::goOnBehindReturnsOfCopy(const BodyValue& call, const Function& func
     if (returns.size() == 1 && !returns[0].isUnderHandlerOfCallee) {
         m_block = returns[0].block;
         m_state = WTF::move(returns[0].state);
-        if (checksProofsOf(ProofSource::ResultOfCall) && !function.isCoroutine() && !isConstruction)
+        if (checksProofsOf(ProofSource::ResultOfCall) && !function.isCoroutine())
             checkProofOfResultOfCopy(returns[0].value, linked.result, originOfCall);
         letGoWhatCopyHeld(*this, heldByCallAlone.span(), originOfCall);
         bind(call.id(), returns[0].value);
@@ -1080,7 +1067,7 @@ bool Walker::goOnBehindReturnsOfCopy(const BodyValue& call, const Function& func
             stateBehindCall = WTF::move(m_state);
     }
     m_state = WTF::move(stateBehindCall);
-    if (checksProofsOf(ProofSource::ResultOfCall) && !function.isCoroutine() && !isConstruction)
+    if (checksProofsOf(ProofSource::ResultOfCall) && !function.isCoroutine())
         checkProofOfResultOfCopy(result, linked.result, originOfCall);
     letGoWhatCopyHeld(*this, heldByCallAlone.span(), originOfCall);
     bind(call.id(), result);

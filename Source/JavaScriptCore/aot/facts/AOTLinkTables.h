@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTCellFormat.h"
+#include "AOTCodeRole.h"
 #include "AOTEffects.h"
 #include "AOTFamilies.h"
 #include "AOTLinkCoroutineTables.h"
@@ -80,9 +81,6 @@ struct LinkedFunction {
     // A PROOF, in Facts::linked() alone. Every caller is known, and no reached code stores, defines or deletes under `prototype` of a closure of the function, under a key that nobody knows, by a descriptor or by a copy.
     // So `prototype` of each closure holds the object that the closure was made with. The default claims nothing.
     bool prototypePropertyStaysAsMade { false };
-    // A PROOF, in Facts::linked() alone. As above, but for ONE reached store under `prototype`, of an object that its body has made for that store (SummaryAccess::storesObjectMadeForIt): `F.prototype = Object.create(above)`, `F.prototype = { }`.
-    // How often that store runs, and when, it does not say.
-    bool prototypePropertyIsStoredOnceWithObjectMadeForIt { false };
     // Functions that may name one another, straight or through others, have one number (LinkTables::referrers). Alone: a number of its own.
     // The default puts every function into one cycle: nothing is ordered then, and no arrival is used.
     uint32_t cycle { 0 };
@@ -109,6 +107,8 @@ struct LinkedCell {
     TypeID proven;
     bool everyWriterIsKnown { false };
     bool isWrittenAfterConstruction { true };
+    // Of a variable that is born as a function: some reached body stores into it, or somebody out of sight may. Of any other variable it says nothing.
+    bool isStoredInto { true };
     // Of a variable: `const ansi = /\u001b\[[0-9;]*m/g`. A PROOF, in Facts::linked() alone, as LinkedParameter::staysAsItsClassMakesIt says of a parameter: all the objects that arrive there are of one of the engine's classes and stay as that class makes them.
     bool staysAsItsClassMakesIt { false };
     // Of a field of a record or of an instance. Every construction of the layout defines the field before the object can be seen from outside that construction, and no object of the layout loses a property or gets an accessor.
@@ -134,6 +134,9 @@ struct LinkedCell {
     // Of a field that the layout lists: `this.exports = undefined` in the constructor. Some maker gives it the constant undefined, the construction itself gives it nothing else, and no second constructor (WriterOfLinkLayouts::appendFields()) does.
     // A GUESS at which objects come to hold anything there, which decides where the slot lies and nothing else: SlotPlan lays it out of line where the written type lets the field be left out.
     bool isLeftUndefinedByMakers { false };
+    // Of a field that the layout lists: `this.socket = null`. A store in sight behind the construction brings the constant undefined or null, or the makers bring that and nothing else.
+    // A GUESS at what the objects hold, which decides whether the mark of the cell answers for the value of the field: PlannedLayout::holdsRawValueFromBirth().
+    bool isGivenUndefinedOrNullInSight { false };
     // Of a field of a record of which objects are made: `interface Message { text: string; isMeta?: boolean; .. }   { text }`. No literal in sight lists it and no maker goes on to store it: it comes by a later store, by a copy,
     // out of a text that the run time parses, or never. A GUESS of the same kind, with the same use.
     bool isGivenByNoMaker { false };
@@ -153,7 +156,8 @@ enum class LayoutChange : uint8_t {
     GetsAccessor = 1 << 4,
 };
 
-// LinkTables::appendedKeys, but for those that the plan lays in the cell: appendedFieldsThatTypeOfThisRequires. A slot of the widest form takes a granule of the Extension, so the plan has room for all of them.
+// LinkTables::appendedKeys, but for those that the plan lays in the cell: appendedFieldsThatTypeOfThisRequires. A slot of the widest form takes a granule of the Extension, so the plan has room for all of them
+// where no listed field has left the cell. Those come first: placeAppendedFieldsForSlotPlan().
 inline constexpr uint32_t maxAppendedFieldsOutOfLine = maxExtensionGranules;
 
 struct LinkedLayout {
@@ -181,12 +185,10 @@ struct LinkedLayout {
     bool keysMayBeListed { true };
     // Whatever stands below the prototype object of the class is an object of the layout, or of a member that the tag of its maker picks. So `x instanceof C` asks for those shapes. Ask Facts::linked(): in Facts::held() it stays as it is here.
     bool onlyOwnObjectsStandBelowPrototype { false };
-    // Of the layout of a constructor function that is made once. PROOFS, in Facts::linked() alone. AOTLinkEffects.cpp, "The order in which a program starts".
-    // Every object of the layout, and of a layout below it, is made below ONE object, which `prototype` of the function holds from before the first of them on: the one that the function was made with, or the one that the body of its module
-    // has made and stored there. Nothing lies on that object but what LinkTables::namesOnPrototypes lists, no object of the layout gets a name of its own that its fields do not list, another prototype or an accessor, and none has left.
+    // Of the layout of a constructor function that is made once. A PROOF, in Facts::linked() alone: writePrototypeObjectsThatAreSettled().
+    // Nobody ever stores `prototype` of the function (LinkedFunction::prototypePropertyStaysAsMade), so every object of the layout, and of a layout below it, is made below ONE object: the one that the function was made with.
+    // Nothing lies on that object but what LinkTables::namesOnPrototypes lists, no object of the layout gets a name of its own that its fields do not list, another prototype or an accessor, and none has left.
     bool prototypeObjectIsSettledAheadOfEveryObject { false };
-    // And from before the first of them on that object stands below the settled prototype object of Layout::base, for good.
-    bool isLinkedBelowBaseAheadOfEveryObject { false };
     // `class Socket extends NetSocket { }`, of a class that is written without a base: closures of the constructor of this one class, or of this one constructor function, are all that arrives as its heritage.
     // What the record of the class expects above it (ClassFacts::prototypeBase): the definition looks at what it is handed.
     LayoutID heritage;
@@ -222,10 +224,6 @@ struct LinkedNameOnPrototype {
     // NO PROOF either.
     FunctionID expectedGetter;
     FunctionID expectedSetter;
-    // A PROOF, in Facts::linked() alone. `function` is set, the function is made once, and every object of `layout` is made behind the store that lays the name on the object that the function was made with.
-    // So a lookup from an object of the layout finds a closure of `function`, as it finds a method of a class. A read off the prototype object itself may still come in front of the store.
-    // AOTLinkEffects.cpp, "The order in which a program starts".
-    bool isLaidAheadOfEveryObject { false };
 };
 
 // What the program lays under a name on a function of its own: LinkFlow::laidOnClosuresOf(). PROOFS, in Facts::linked() alone.
@@ -234,8 +232,6 @@ struct LinkedNameOnFunction {
     PropertyKeyID key;
     // Closures of this one function are all that is ever stored there, and every caller of the holder is known. Null: nobody can tell.
     FunctionID function;
-    // And the holder is made once, and whoever reads or calls the name off it does so behind the store. AOTLinkEffects.cpp, "The order in which a program starts".
-    bool isLaidAheadOfEveryRead { false };
 };
 
 struct LinkTables;
@@ -389,35 +385,6 @@ struct SizeOfLinkFlow {
     uint64_t nodesTakenOffWorklist { 0 };
     uint64_t observersTold { 0 };
     uint64_t rounds { 0 };
-    // Allocation sites of objects of the engine's classes.
-    uint64_t sites { 0 };
-    uint64_t familiesOfSites { 0 };
-    uint64_t sitesUnitedWithOthers { 0 };
-    uint64_t sitesOfLargestFamily { 0 };
-    uint64_t sitesEscaped { 0 };
-    uint64_t contentsOfSites { 0 };
-};
-
-// The calls by name in the summaries of reached functions, each counted under the first line that holds of it. For `testaot link .. counts`.
-struct CallsByNameInLink {
-    uint64_t all { 0 };
-    // No operation that is written as a call stands at the site: a protocol looks the key up.
-    uint64_t ofProtocols { 0 };
-    uint64_t nothingArrivesAtReceiver { 0 };
-    uint64_t onlyPrimitivesArrive { 0 };
-    uint64_t receiverHoldsUnseen { 0 };
-    uint64_t receiverIsOfEngine { 0 };
-    uint64_t receiverIsLost { 0 };
-    // From here on the receiver is an object of one layout or one family, a prototype object or a closure, perhaps beside primitives.
-    uint64_t mayEnterUnseen { 0 };
-    uint64_t mayEnterLost { 0 };
-    uint64_t entersBuiltin { 0 };
-    uint64_t findsNoFunction { 0 };
-    uint64_t findsSeveralFunctions { 0 };
-    uint64_t mayFindUnlistedNames { 0 };
-    uint64_t findsWhatNoCallEnters { 0 };
-    uint64_t sharesItsSite { 0 };
-    uint64_t listed { 0 };
 };
 
 // An operation of the program writes on what the flow says is that built-in and nothing else. For the report of the writes that a lock turns away.
@@ -495,7 +462,6 @@ class FieldsOfNumbers {
 public:
     void add(LayoutID declarer, PropertyKeyID key) { m_fields.add(wordOf(declarer, key)); }
     bool contains(LayoutID declarer, PropertyKeyID key) const { return m_fields.contains(wordOf(declarer, key)); }
-    bool isEmpty() const { return m_fields.isEmpty(); }
     // The text names a field by what is written of the receiver: the layout itself, the one that it is declared as, or one of the types that its objects are written as. AOTEnforcedFields.cpp.
     bool names(const Program&, LayoutID, PropertyKeyID) const;
 
@@ -631,7 +597,6 @@ struct LinkTables {
     // Ascending by family and key. In Facts::linked() alone.
     Vector<LinkedUseThroughFamily> usesThroughFamilies;
     SizeOfLinkFlow sizeOfFlow;
-    CallsByNameInLink callsByName;
     LookupsPastProgramObjects lookups;
     // JavaScript that the build has not seen: text that is evaluated, code from disk.
     bool unseenCodeCanRun { true };
@@ -649,9 +614,12 @@ struct LinkTables {
     // From node to node of `referrers`. With the tables at their defaults every function leads to every other.
     bool cycleLeadsTo(uint32_t referrer, uint32_t named) const;
     bool leadsTo(FunctionID referrer, FunctionID function) const { return cycleLeadsTo(functions[referrer.index()].cycle, functions[function.index()].cycle); }
+    // UnitQueue brings such a unit whenever it is mentioned, and no cycle waits for it. So its code may name only what is in the queue from the start, wherever its function leads.
+    bool standsOutsideCycles(CodeUnit unit) const { return namesOnlyUnitsOfItsFunction(unit.role) && functions[unit.function.index()].isInQueueFromStart; }
+    bool leadsTo(CodeUnit referrer, FunctionID function) const { return leadsTo(referrer.function, function) && (!standsOutsideCycles(referrer) || functions[function.index()].isInQueueFromStart); }
     // THE WALK ASKS BEFORE IT TAKES A VALUE FOR A FUNCTION: before it calls the function straight, and before it tests for its closure. A guess may expect what no door has brought: what held() has somewhere, a layout that is known by its names alone.
     // False: code of `referrer` that mentioned the function could bring a unit for which nobody has waited. The call goes by the value, and nothing is tested.
-    bool mayBeMentionedBy(FunctionID referrer, FunctionID function) const { return functions[function.index()].isInQueueFromStart || leadsTo(referrer, function); }
+    bool mayBeMentionedBy(CodeUnit referrer, FunctionID function) const { return functions[function.index()].isInQueueFromStart || leadsTo(referrer, function); }
     const LinkedCell& field(FieldReference field) const LIFETIME_BOUND { return fields[firstFieldOfLayout[field.layout.index()] + field.field]; }
     std::span<const PropertyKeyID> appendedKeysOf(LayoutID id) const LIFETIME_BOUND
     {
@@ -737,8 +705,6 @@ struct LinkTables {
     const LinkedCallThatFindsBuiltin* findCallThatFindsBuiltin(FunctionID caller, ValueID site) const LIFETIME_BOUND;
     // Null: the access goes by the value of its key. AOTLink.cpp.
     PropertyKeyID keyAt(FunctionID, ValueID site) const;
-    // Null: nothing is expected. AOTLink.cpp.
-    FunctionID getterExpectedAt(FunctionID, ValueID site) const;
     // Null: nothing is proven. AOTLink.cpp.
     TypeID resultOfReadByKey(FunctionID, ValueID site) const;
     const LinkedContentsAtOperation* contentsAtOperation(FunctionID, ValueID site) const;
@@ -764,8 +730,6 @@ struct LinkTables {
     const LinkedNameOnFunction* findNameOnFunction(FunctionID holder, PropertyKeyID) const LIFETIME_BOUND;
     // No closure of the function has the name for itself, and each stands where it was made.
     bool closuresLackName(FunctionID, PropertyKeyID) const;
-    // `F.prototype.m = function () { }` ahead of every `new F()`: what a lookup under the name from an object of the layout of F finds for sure, on the prototype object of F or, up a row of functions that is linked ahead of every object, on one above. Of objects alone.
-    FunctionID findMethodLaidAheadOfObjectsOf(const Program&, LayoutID, PropertyKeyID) const;
 };
 
 // AOTLink.cpp. An operation in the text of the function may name a property by the symbol.
@@ -777,6 +741,7 @@ bool isSymbolOfLibrary(const Program&, PropertyKeyID);
 
 // AOTLink.cpp. Sized for the program, every entry at its default: what Link leaves with every mechanism withheld.
 LinkTables conservativeLinkTables(const Program&);
+LinkTables conservativeLinkTables(const Program&, const ParallelLoops&);
 
 // AOTLink.cpp. By function, by the records alone, reached or not. In one realm.
 BitVector bodiesThatLoaderEntersAtMostOnce(const Program&);

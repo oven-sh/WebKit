@@ -26,6 +26,7 @@ class VM;
 
 namespace AOT {
 
+class Image;
 enum class Entry : uint16_t;
 using RuntimeCounterID = Wire::RuntimeCounterID;
 
@@ -79,9 +80,11 @@ constexpr RuntimeCounterID counterFor(CodeType codeType)
 static_assert(counterFor(GlobalCode) == RuntimeCounterID::InterpretedGlobalCode && counterFor(EvalCode) == RuntimeCounterID::InterpretedEvalCode);
 static_assert(counterFor(FunctionCode) == RuntimeCounterID::InterpretedFunctionCode && counterFor(ModuleCode) == RuntimeCounterID::InterpretedModuleCode);
 
+#if !defined(BUN_HARDENED)
+// Options::useAOTPerfMap(): a line of /tmp/perf-<pid>.map for each function of the image: where its code lies, how long it is, its name and where it is written.
+void writePerfMap(const Image&);
+#endif
 void writeToStandardError(const String& line);
-// The program's current position, on its own thread: the positions of the innermost compiled frames.
-Vector<String, maxNumberOfReportedFrames> placesOfInnermostCompiledFrames(VM&);
 
 } } // namespace JSC::AOT
 

@@ -201,48 +201,7 @@ static IntegerRange computeIntegerRange(const Operation* operation, unsigned lev
         return { std::min(whenNotZero.min, whenZero.min), std::max(whenNotZero.max, whenZero.max) };
     }
 
-    case Nop:
-    case Opaque:
-    case ConstFloat:
-    case ConstDouble:
-    case FramePointer:
-    case SlotBase:
-    case AddressOf:
-    case NumberOf:
-    case InstanceAddressOf:
-    case ArgumentReg:
-    case MulHigh:
-    case UMulHigh:
-    case Div:
-    case UDiv:
-    case Mod:
-    case UMod:
-    case Abs:
-    case Ceil:
-    case Floor:
-    case FTrunc:
-    case Sqrt:
-    case FMin:
-    case FMax:
-    case BitwiseCast:
-    case IToD:
-    case FloatToDouble:
-    case DoubleToFloat:
-    case Load:
-    case Store8:
-    case Store16:
-    case Store:
-    case Fence:
-    case Phi:
-    case Upsilon:
-    case Extract:
-    case Patch:
-    case Check:
-    case Jump:
-    case Branch:
-    case Switch:
-    case Return:
-    case Oops:
+    default:
         break;
     }
     return widest;
@@ -476,73 +435,7 @@ Operation* foldIntegerArithmetic(Builder& builder, Opcode opcode, Type type, Ope
     case UMod:
         return folder.foldUnsignedDivision(opcode, left, rightOrNull);
 
-    case Nop:
-    case Opaque:
-    case Const32:
-    case Const64:
-    case ConstFloat:
-    case ConstDouble:
-    case FramePointer:
-    case SlotBase:
-    case AddressOf:
-    case NumberOf:
-    case InstanceAddressOf:
-    case ArgumentReg:
-    case BitAnd:
-    case BitOr:
-    case BitXor:
-    case Shl:
-    case SShr:
-    case ZShr:
-    case Clz:
-    case PopCount:
-    case Abs:
-    case Ceil:
-    case Floor:
-    case FTrunc:
-    case Sqrt:
-    case FMin:
-    case FMax:
-    case BitwiseCast:
-    case SExt8:
-    case SExt16:
-    case SExt32:
-    case ZExt32:
-    case Trunc:
-    case IToD:
-    case FloatToDouble:
-    case DoubleToFloat:
-    case Equal:
-    case NotEqual:
-    case LessThan:
-    case GreaterThan:
-    case LessEqual:
-    case GreaterEqual:
-    case Above:
-    case Below:
-    case AboveEqual:
-    case BelowEqual:
-    case EqualOrUnordered:
-    case Select:
-    case Load8Z:
-    case Load8S:
-    case Load16Z:
-    case Load16S:
-    case Load:
-    case Store8:
-    case Store16:
-    case Store:
-    case Fence:
-    case Phi:
-    case Upsilon:
-    case Extract:
-    case Patch:
-    case Check:
-    case Jump:
-    case Branch:
-    case Switch:
-    case Return:
-    case Oops:
+    default:
         break;
     }
     ASSERT_NOT_REACHED();

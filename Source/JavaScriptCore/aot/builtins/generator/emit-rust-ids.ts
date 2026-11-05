@@ -44,7 +44,6 @@ export function emitRustIds(model: TableModel, schema: Schema): string {
     ...enums.map(emitEnum),
     ...enums.map(({ countName, variants }) => emitCount(countName, variants.length)),
     emitCount("NAME_COUNT", model.names.length),
-    `const RUNTIME_FUNCTION_LIMIT: u32 = ${computeRuntimeFunctionLimit(model.functions)};\n`,
     ...enums.map(emitTokenTables),
     emitFunctionTokens(model.functions),
     emitNameConstants(nameConstants),
@@ -127,10 +126,6 @@ function checkMemberNames(typeName: string, members: readonly string[], problems
     if (seen.has(member)) problems.add(null, `${typeName}::${member} is declared twice`);
     seen.add(member);
   }
-}
-
-function computeRuntimeFunctionLimit(functions: readonly ModelFunction[]): number {
-  return functions.reduce((limit, { id }) => Math.max(limit, id + 1), 0);
 }
 
 function emitTokenTables({ name, countName, variants, tokenTables }: IdEnum): string {

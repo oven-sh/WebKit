@@ -20,33 +20,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-IllTypedCause causeOf(UnknownSeed seed)
-{
-    switch (seed) {
-    case UnknownSeed::ResultOfUnknownCallee:
-        return IllTypedCause::UnprovenCallee;
-    case UnknownSeed::CaughtException:
-    case UnknownSeed::DataFromOutside:
-        return IllTypedCause::OutsideData;
-    case UnknownSeed::UndescribedNativeResult:
-        return IllTypedCause::DeclarationWithoutBody;
-    case UnknownSeed::ParameterOfEscapedFunction:
-        return IllTypedCause::UnseenCaller;
-    case UnknownSeed::ContentsOfEscapedObject:
-    case UnknownSeed::UnseenCode:
-        return IllTypedCause::UnseenWriter;
-    case UnknownSeed::UncheckedConversion:
-        return IllTypedCause::Assertion;
-    case UnknownSeed::ObjectWithoutLayout:
-        return IllTypedCause::MemberWithoutSlot;
-    case UnknownSeed::WrittenAsLoose:
-        return IllTypedCause::FromLooseType;
-    case UnknownSeed::LostByWalk:
-        return IllTypedCause::None;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
 TypeID ClassPart::writtenContentsAt(unsigned positionInType) const
 {
     if (positionInType >= writtenContents.size() || !writtenContents[positionInType])

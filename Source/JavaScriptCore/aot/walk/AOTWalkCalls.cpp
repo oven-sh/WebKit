@@ -99,7 +99,7 @@ FunctionID findOnlyCallee(Walker& walker, const BodyValue& call, TypeID proven)
     FunctionID listed = link.calleeAt(walker.currentFunction(), call.id());
     // The function whose body this is names the one callee of its call, and whoever has a copy of the body leads to that function or to all that it names.
     if (FunctionID only = singleFunctionOf(types, type))
-        return only == listed || link.mayBeMentionedBy(walker.unit().function, only) ? only : FunctionID();
+        return only == listed || link.mayBeMentionedBy(walker.unit(), only) ? only : FunctionID();
 
     if (!listed || !type.hasOnlyClosures() || !namesFunction(types, type, listed))
         return { };
@@ -951,10 +951,10 @@ bool listOfSuperCallCanBeHandedOver(Walker& walker, const BodyValue& call, Funct
     Reference list = walker.referenceOf(call.as<Opcode::SuperConstructList>().listOperand());
     if (!list)
         return false;
-    if (elementsOfFreshList(walker, list))
-        return true;
     const Function& constructor = walker.program().at(callee);
-    return isClassConstructorOf(constructor.kind) && !constructor.has(FunctionFlags::HasThis) && parametersAreReadOutOfListInWalkCalls(walker, constructor, list);
+    if (!isClassConstructorOf(constructor.kind) || constructor.has(FunctionFlags::HasThis))
+        return false;
+    return elementsOfFreshList(walker, list) || parametersAreReadOutOfListInWalkCalls(walker, constructor, list);
 }
 
 // `super(...args)`, `new C(...[a, b])`: the state knows what the list holds, so the constructor of a class is entered as by the construction that writes the elements out.
@@ -1325,7 +1325,7 @@ bool callGetterExpectedAtRead(Walker& walker, const BodyValue& read)
 {
     if (read.opcode() != Opcode::PropGet)
         return false;
-    // LinkTables::getterExpectedAt(), with the reads of the function found once.
+    // The reads of the function are found once.
     Walker::GettersExpectedInFunction& expected = walker.gettersExpectedInFunction;
     if (FunctionID function = walker.currentFunction(); expected.function != function) {
         auto reads = std::ranges::equal_range(walker.facts().held().gettersExpectedAtReads, function, { }, &LinkedGetterAtRead::function);
@@ -1554,9 +1554,6 @@ FunctionID findLibraryFunctionBehindBuiltin(const Walker& walker, TypeID typeOfC
     BuiltinID builtin = type.isObject() ? singleBuiltinOf(walker.types(), type) : BuiltinID();
     return builtin ? findLibraryFunctionOfBuiltinInWalkCalls(walker.program(), walker.program().builtins().canonicalID(builtin)) : FunctionID();
 }
-
-// The call of the method, and a call for each turn of its loop.
-static constexpr uint32_t closedOperationsOfCallOfLibraryFunction = 2;
 
 static BuiltinID findBuiltinWithoutFunctionObjectInWalkCalls(const Walker& walker, TypeID typeOfCallee)
 {

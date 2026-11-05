@@ -121,18 +121,6 @@ TypedPointer StaticsEmitter::wordOfEnvironmentHandedBack(LayoutID layout)
     return instanceWord(m_heaps.collectorState, m_mentions.add(NumberSpace::EnvironmentHandedBack, layout));
 }
 
-void StaticsEmitter::fillVariablesOfEnteredFile()
-{
-    if (!m_plan.entersFile(m_id))
-        return;
-    uint32_t group = m_plan.staticsGroups().groupFilledWhenEntered(function().module).value();
-    Word32 isFilled(m_out.load8ZeroExt32(instanceWord(m_heaps.entire(AbstractHeap::ModuleVariables), m_mentions.add(NumberSpace::FilledFiles, group))));
-    ifElse(notEqual(isFilled, word32(0)), [] { }, [&] {
-        Operand arguments[] { word32(static_cast<int32_t>(group)) };
-        callWithoutSite(RuntimeOperation::FillVariablesOfFiles, arguments, Representation::Void, { .isOnRarePath = true });
-    });
-}
-
 } } } // namespace JSC::AOT::Typed
 
 #endif // ENABLE(AOT)

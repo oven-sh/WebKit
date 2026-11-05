@@ -1,7 +1,7 @@
 # `o.own(1)` on an object that unseen code has in hand, where the closure under the name holds a capture: the closure table has no cell for it, so the call needs the closure that lies on the holder.
 # The guard of the name says what a lookup finds. That is knowledge of the heap at one moment, and Code has no word for it: the record of a read by name says `anything`.
 # So the read stands among the looks in front of the arms, the value is asked whether it is a closure of the function, and a Narrowed carries the answer to the capture and to the call.
-# Until 11-03 the walk noted what the value is a closure of in its state alone, and typed the Unbox behind the read by the note: the verifier of types stopped (TypeOutOfDate: the record claims more).
+# The walk once noted what the value is a closure of in its state alone, and typed the Unbox behind the read by the note: the verifier of types stopped (TypeOutOfDate: the record claims more).
 # class Meter { own(x) { return [sink, x]; } }  function both(o: Meter, n) { let x; while (n()) x = o.own(1); return x; }
 # RUN: walk f3 mechanisms=none+TypedOperations+Guesses+DirectCalls
 # CHECK-LABEL: code f3:Body

@@ -38,7 +38,7 @@ bool Modules::tryReplaceNamespaceHandedOn(ModuleID handedOn, JSValue value)
     target.mocksThatReplaceNamespace.append(*m_moduleWithMockBeingLaid);
     if (!target.handedOnByMocks)
         target.handedOnByMocks.set(*this, createTableOfExports());
-    target.handedOnByMocks.get()->putDirectMayBeIndex(m_instance.globalObject, Identifier::from(*m_instance.vm, m_moduleWithMockBeingLaid->index()), value);
+    storeValue(m_instance.globalObject, target.handedOnByMocks.get(), m_moduleWithMockBeingLaid->index(), value);
     target.handedOnInPlaceOfNamespace.set(*this, value);
     m_namespacesReplacedByMock.set(handedOn.index());
     didReplaceNamespaceHandedOn(handedOn);
@@ -112,7 +112,7 @@ void Modules::keepEndedMock(ModuleID fileOrModule, JSObject* mock, MomentMockWas
     LoadedModule& loaded = ensureLoaded(fileOrModule);
     if (!loaded.endedMocks)
         loaded.endedMocks.set(*this, createTableOfExports());
-    loaded.endedMocks.get()->putDirectMayBeIndex(m_instance.globalObject, Identifier::from(*m_instance.vm, static_cast<unsigned>(ended.size())), mock);
+    storeValue(m_instance.globalObject, loaded.endedMocks.get(), static_cast<unsigned>(ended.size()), mock);
     ended.append({ laid.moment, momentEnded, state.momentOfTestFile, laid.isInPreload });
 }
 
@@ -249,7 +249,7 @@ void Modules::forgetEndedMocksOfEarlierTestFiles()
                 continue;
             if (!objects)
                 objects = createTableOfExports();
-            objects->putDirectMayBeIndex(realm, Identifier::from(vm, static_cast<unsigned>(kept.size())), storedValue(realm, before, Identifier::from(vm, index)));
+            storeValue(realm, objects, static_cast<unsigned>(kept.size()), storedValue(realm, before, Identifier::from(vm, index)));
             kept.append(entry.value[index]);
         }
         if (kept.isEmpty()) {
@@ -337,22 +337,8 @@ void Modules::keepMockThatStoodInPlace(ModuleID fileOrModule, ModuleID module, J
         if (!held.namespacesOfEndedMocks)
             held.namespacesOfEndedMocks.set(*this, createTableOfExports());
         unsigned& number = m_numbersOfNamespacesOfEndedMocks.add(fileOrModule, 0).iterator->value;
-        held.namespacesOfEndedMocks.get()->putDirectMayBeIndex(m_instance.globalObject, Identifier::from(*m_instance.vm, number++), object);
+        storeValue(m_instance.globalObject, held.namespacesOfEndedMocks.get(), number++, object);
     }
-}
-
-// The object in the slot of the module goes to whoever asks by name. The first that a mock finds there is the module's own; a later one is the object of the mock before, which keeps that mock.
-void Modules::setAsideNamespaceUnderMock(ModuleID module)
-{
-    auto* object = dynamicDowncast<ModuleNamespace>(namespaceIfCreated(module, ModulePhase::Evaluation));
-    if (!object)
-        return;
-    LoadedModule& loaded = ensureLoaded(module);
-    if (!loaded.namespaceBeforeMockInPlace) {
-        object->setKeepsToModule(true);
-        loaded.namespaceBeforeMockInPlace.set(*this, object);
-    }
-    setNamespace(module, ModulePhase::Evaluation, nullptr);
 }
 
 } } // namespace JSC::AOT

@@ -24,8 +24,6 @@ void Reader::readFunctions()
     size_t numberOfFunctions = m_sections.functions.size();
     RELEASE_ASSERT(!m_externalBodies || m_externalBodies->bodyCount == numberOfFunctions);
 
-    // Facts puts the parsers behind these: Program::appendParsers(). The room that the first of them would make is here from the start, so no function moves for it. Nobody touches it until then.
-    m_program.functions.reserveInitialCapacity(numberOfFunctions + numberOfFunctions / 4 + 1);
     growFromEmpty(loops, m_program.functions, numberOfFunctions);
     readInChunks(loops, numberOfFunctions, functionsPerChunk, [&](uint32_t index) {
         readFunction(index, m_program.functions[index]);

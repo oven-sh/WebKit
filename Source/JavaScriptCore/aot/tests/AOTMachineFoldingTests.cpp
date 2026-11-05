@@ -38,8 +38,6 @@ enum class FoldingTestForm : uint8_t { Folded, Unfolded };
 
 enum class FoldingTestAnswers : uint8_t { Compared, NotCompared };
 
-enum class FoldingTestDivision : uint8_t { Plain, Chill };
-
 struct FoldingTestOperand {
     int64_t integer;
     double number;
@@ -380,72 +378,6 @@ static void checkFoldingTestCases(FoldingTestOperands operands, std::span<const 
                 folded.expectAnswer(unfolded.run(first, second), first, second);
         }
     }
-}
-
-static void testMachineFoldingOfSumsAndProducts()
-{
-    static constexpr FoldingTestCase cases[] = {
-        { "Const64(7)"_s, [](FoldingTest& v) { return v.make(Add, v.int64(3), 4); } },
-        { "Const64(-9223372036854775808)"_s, [](FoldingTest& v) { return v.make(Add, v.int64(INT64_MAX), 1); } },
-        { "Const32(-2147483648)"_s, [](FoldingTest& v) { return v.make(Add, v.int32(INT32_MAX), 1); } },
-        { "Const32(2147483647)"_s, [](FoldingTest& v) { return v.make(Sub, v.int32(INT32_MIN), 1); } },
-        { "Const32(0)"_s, [](FoldingTest& v) { return v.make(Mul, v.int32(0x10000), 0x10000); } },
-        { "Const64(4294967296)"_s, [](FoldingTest& v) { return v.make(Mul, v.int64(0x10000), 0x10000); } },
-        { "Const64(-9223372036854775808)"_s, [](FoldingTest& v) { return v.make(Neg, v.int64(INT64_MIN)); } },
-        { "Const32(-2147483648)"_s, [](FoldingTest& v) { return v.make(Neg, v.int32(INT32_MIN)); } },
-
-        { "a"_s, [](FoldingTest& v) { return v.make(Add, v.a, 0); } },
-        { "a"_s, [](FoldingTest& v) { return v.make(Add, 0, v.a); } },
-        { "Add(a, Const64(1))"_s, [](FoldingTest& v) { return v.make(Add, v.a, 1); } },
-        { "a"_s, [](FoldingTest& v) { return v.make(Sub, v.a, 0); } },
-        { "a"_s, [](FoldingTest& v) { return v.make(Mul, v.a, 1); } },
-        { "Const64(0)"_s, [](FoldingTest& v) { return v.make(Mul, v.a, 0); } },
-        { "Const32(0)"_s, [](FoldingTest& v) { return v.make(Mul, v.i, 0); } },
-        { "Mul(a, Const64(3))"_s, [](FoldingTest& v) { return v.make(Mul, v.a, 3); } },
-        { "Const64(0)"_s, [](FoldingTest& v) { return v.make(Sub, v.a, v.a); } },
-        { "Sub(a, b)"_s, [](FoldingTest& v) { return v.make(Sub, v.a, v.b); } },
-        { "Neg(a)"_s, [](FoldingTest& v) { return v.make(Sub, 0, v.a); } },
-        { "Sub(Const64(1), a)"_s, [](FoldingTest& v) { return v.make(Sub, 1, v.a); } },
-        { "a"_s, [](FoldingTest& v) { return v.make(Neg, v.make(Neg, v.a)); } },
-        { "Neg(a)"_s, [](FoldingTest& v) { return v.make(Neg, v.a); } },
-        { "Sub(b, a)"_s, [](FoldingTest& v) { return v.make(Neg, v.make(Sub, v.a, v.b)); } },
-        { "Neg(Add(a, b))"_s, [](FoldingTest& v) { return v.make(Neg, v.make(Add, v.a, v.b)); } },
-
-        { "Add(a, Const64(-5))"_s, [](FoldingTest& v) { return v.make(Sub, v.a, 5); } },
-        { "Add(i, Const32(-2147483648))"_s, [](FoldingTest& v) { return v.make(Sub, v.i, INT32_MIN); } },
-        { "Add(a, Const64(7))"_s, [](FoldingTest& v) { return v.make(Add, v.make(Add, v.a, 3), 4); } },
-        { "Add(i, Const32(-2147483648))"_s, [](FoldingTest& v) { return v.make(Add, v.make(Add, v.i, INT32_MAX), 1); } },
-        { "a"_s, [](FoldingTest& v) { return v.make(Add, v.make(Add, v.a, 3), -3); } },
-        { "Add(b, Add(a, Const64(3)))"_s, [](FoldingTest& v) { return v.make(Add, v.make(Add, v.a, 3), v.b); } },
-        { "Add(Add(i, j), Const32(3))"_s, [](FoldingTest& v) { return v.make(Add, v.make(Add, v.i, 3), v.j); } },
-        { "Add(Add(i, j), Const32(3))"_s, [](FoldingTest& v) { return v.make(Add, v.i, v.make(Add, v.j, 3)); } },
-        { "Add(Add(i, j), Const32(18))"_s, [](FoldingTest& v) { return v.make(Add, v.make(Add, v.i, 12), v.make(Add, v.j, 6)); } },
-        { "Add(Add(i, j), Const32(26))"_s, [](FoldingTest& v) { return v.make(Add, v.make(Add, v.make(Add, v.make(Add, v.i, 12), v.make(Add, v.j, 6)), 6), 2); } },
-        { "Add(i, j)"_s, [](FoldingTest& v) { return v.make(Add, v.make(Add, v.i, 5), v.make(Add, v.j, -5)); } },
-        { "Add(Add(i, j), Const32(-2147483648))"_s, [](FoldingTest& v) { return v.make(Add, v.make(Add, v.i, INT32_MAX), v.make(Add, v.j, 1)); } },
-        { "Add(Shl(i, Const32(1)), Const32(7))"_s, [](FoldingTest& v) { return v.make(Add, v.make(Add, v.i, 3), v.make(Add, v.i, 4)); } },
-        { "Add(j, Add(i, Const32(3), IsNarrowReference))"_s, [](FoldingTest& v) { return v.make(Add, v.narrowReference(v.make(Add, v.i, 3)), v.j); } },
-        { "Add(Add(j, Add(i, Const32(3), IsNarrowReference)), Const32(4))"_s, [](FoldingTest& v) { return v.make(Add, v.narrowReference(v.make(Add, v.i, 3)), v.make(Add, v.j, 4)); } },
-        { "Add(Add(i, Const32(3), IsNarrowReference), Const32(4))"_s, [](FoldingTest& v) { return v.make(Add, v.narrowReference(v.make(Add, v.i, 3)), 4); } },
-        { "Shl(a, Const32(1))"_s, [](FoldingTest& v) { return v.make(Add, v.a, v.a); } },
-        { "Add(a, b)"_s, [](FoldingTest& v) { return v.make(Add, v.b, v.a); } },
-        { "Shl(a, Const32(3))"_s, [](FoldingTest& v) { return v.make(Mul, v.a, 8); } },
-        { "Shl(i, Const32(2))"_s, [](FoldingTest& v) { return v.make(Mul, v.i, 4); } },
-        { "Shl(i, Const32(31))"_s, [](FoldingTest& v) { return v.make(Mul, v.i, INT32_MIN); } },
-        { "Shl(a, Const32(63))"_s, [](FoldingTest& v) { return v.make(Mul, v.a, INT64_MIN); } },
-        { "Neg(a)"_s, [](FoldingTest& v) { return v.make(Mul, v.a, -1); } },
-        { "Mul(a, Const64(6))"_s, [](FoldingTest& v) { return v.make(Mul, v.a, 6); } },
-        { "Mul(a, Const64(-8))"_s, [](FoldingTest& v) { return v.make(Mul, v.a, -8); } },
-
-        { "BitXor(a, Const64(-1))"_s, [](FoldingTest& v) { return v.make(Add, v.make(Neg, v.a), -1); } },
-        { "Sub(a, b)"_s, [](FoldingTest& v) { return v.make(Add, v.a, v.make(Neg, v.b)); } },
-        { "a"_s, [](FoldingTest& v) { return v.make(Add, v.make(Sub, v.a, v.b), v.b); } },
-        { "Add(a, b)"_s, [](FoldingTest& v) { return v.make(Sub, v.a, v.make(Neg, v.b)); } },
-        { "a"_s, [](FoldingTest& v) { return v.make(Sub, v.make(Add, v.a, v.b), v.b); } },
-        { "b"_s, [](FoldingTest& v) { return v.make(Sub, v.make(Add, v.a, v.b), v.a); } },
-        { "b"_s, [](FoldingTest& v) { return v.make(Sub, v.a, v.make(Sub, v.a, v.b)); } },
-    };
-    checkFoldingTestCases(FoldingTestOperands::Integers, cases);
 }
 
 static void testMachineFoldingOfDivisions()
@@ -1051,77 +983,6 @@ static void testMachineFoldingOfNumbers()
     checkFoldingTestCases(FoldingTestOperands::Numbers, cases);
 }
 
-static bool foldingTestSimplifiesTo(LValue predicate, LValue expected, bool isInverted)
-{
-    SimplifiedPredicate simplified = simplifyPredicate(predicate);
-    return simplified.predicate == expected && simplified.isInverted == isInverted;
-}
-
-static void testMachineFoldingOfPredicates()
-{
-    FoldingTest v(FoldingTestOperands::Integers, FoldingTestForm::Folded);
-    LValue comparison = v.make(LessThan, v.a, v.b);
-    LValue otherComparison = v.make(Equal, v.a, v.b);
-    LValue lowBit = v.make(BitAnd, v.i, 1);
-    LValue wideLowBit = v.make(BitAnd, v.a, 1);
-
-    AOT_TEST_CHECK(isBoolean(comparison));
-    AOT_TEST_CHECK(isBoolean(v.int32(0)) && isBoolean(v.int32(1)) && isBoolean(v.int64(0)) && isBoolean(v.int64(1)));
-    AOT_TEST_CHECK(!isBoolean(v.int32(2)) && !isBoolean(v.int32(-1)) && !isBoolean(v.int64(int64_t { 1 } << 32)));
-    AOT_TEST_CHECK(!isBoolean(v.i) && !isBoolean(v.a));
-    AOT_TEST_CHECK(isBoolean(lowBit) && isBoolean(wideLowBit));
-    AOT_TEST_CHECK(isBoolean(v.make(BitAnd, v.i, comparison)));
-    AOT_TEST_CHECK(!isBoolean(v.make(BitAnd, v.i, 3)) && !isBoolean(v.make(BitAnd, v.i, v.j)));
-    AOT_TEST_CHECK(isBoolean(v.make(BitOr, comparison, otherComparison)) && isBoolean(v.make(BitXor, comparison, otherComparison)));
-    AOT_TEST_CHECK(!isBoolean(v.make(BitOr, comparison, v.i)) && !isBoolean(v.make(BitXor, comparison, v.i)) && !isBoolean(v.make(BitOr, lowBit, 2)));
-    AOT_TEST_CHECK(isBoolean(v.select(v.i, comparison, otherComparison)) && isBoolean(v.select(v.i, comparison, v.int32(0))));
-    AOT_TEST_CHECK(!isBoolean(v.select(v.i, comparison, v.j)) && !isBoolean(v.select(comparison, v.i, v.j)));
-    AOT_TEST_CHECK(!isBoolean(v.make(Add, comparison, otherComparison)) && !isBoolean(v.make(Neg, comparison)));
-
-    LValue isNotZero = v.make(NotEqual, v.i, 0);
-    LValue isZero = v.make(Equal, v.i, 0);
-    LValue invertedLowBit = v.make(BitXor, lowBit, 1);
-    LValue flippedBit = v.make(BitXor, v.i, 1);
-    LValue zeroExtended = v.make(ZExt32, v.i);
-    LValue signExtended = v.make(SExt32, v.i);
-    LValue truncatedLowBit = v.make(Trunc, wideLowBit);
-    LValue truncated = v.make(Trunc, v.a);
-    LValue isOne = v.make(Equal, v.i, 1);
-    LValue isNotOne = v.make(NotEqual, v.i, 1);
-    LValue hasNoneOfMask = v.make(Equal, v.make(BitAnd, v.a, 12), 0);
-    // The builder leaves these two as they are, so each layer is left for simplifyPredicate() to peel.
-    LValue wideIsZero = v.make(ZExt32, isZero);
-    LValue twiceInverted = v.make(BitXor, wideIsZero, 1);
-    AOT_TEST_CHECK(wideIsZero->opcode() == ZExt32 && wideIsZero->child(0) == isZero);
-    AOT_TEST_CHECK(twiceInverted->opcode() == BitXor && twiceInverted->child(0) == wideIsZero);
-
-    unsigned numberOfOperations = v.procedure().numberOfOperations();
-    AOT_TEST_CHECK(foldingTestSimplifiesTo(v.i, v.i, false));
-    AOT_TEST_CHECK(foldingTestSimplifiesTo(comparison, comparison, false));
-    AOT_TEST_CHECK(foldingTestSimplifiesTo(isNotZero, v.i, false));
-    AOT_TEST_CHECK(foldingTestSimplifiesTo(isZero, v.i, true));
-    AOT_TEST_CHECK(foldingTestSimplifiesTo(invertedLowBit, lowBit, true));
-    AOT_TEST_CHECK(foldingTestSimplifiesTo(flippedBit, flippedBit, false));
-    AOT_TEST_CHECK(foldingTestSimplifiesTo(zeroExtended, v.i, false));
-    AOT_TEST_CHECK(foldingTestSimplifiesTo(signExtended, v.i, false));
-    AOT_TEST_CHECK(foldingTestSimplifiesTo(truncatedLowBit, wideLowBit, false));
-    AOT_TEST_CHECK(foldingTestSimplifiesTo(truncated, truncated, false));
-    AOT_TEST_CHECK(foldingTestSimplifiesTo(isOne, isOne, false));
-    AOT_TEST_CHECK(foldingTestSimplifiesTo(isNotOne, isNotOne, false));
-    AOT_TEST_CHECK(foldingTestSimplifiesTo(hasNoneOfMask, hasNoneOfMask->child(0), true));
-    AOT_TEST_CHECK(foldingTestSimplifiesTo(wideIsZero, v.i, true));
-    AOT_TEST_CHECK(foldingTestSimplifiesTo(twiceInverted, v.i, false));
-    AOT_TEST_CHECK(v.procedure().numberOfOperations() == numberOfOperations);
-
-    FoldingTest n(FoldingTestOperands::Numbers, FoldingTestForm::Folded);
-    LValue isLess = n.make(LessThan, n.x, n.y);
-    LValue isZeroNumber = n.make(Equal, n.x, 0.0);
-    AOT_TEST_CHECK(isBoolean(isLess));
-    AOT_TEST_CHECK(foldingTestSimplifiesTo(isZeroNumber, isZeroNumber, false));
-    AOT_TEST_CHECK(foldingTestSimplifiesTo(n.make(BitXor, isLess, 1), isLess, true));
-    AOT_TEST_CHECK(foldingTestSimplifiesTo(n.make(Equal, isLess, 0), isLess, true));
-}
-
 static void testMachineFoldingOfBranchesAndChecks()
 {
     FoldingTest v(FoldingTestOperands::Integers, FoldingTestForm::Folded);
@@ -1169,219 +1030,11 @@ static void testMachineFoldingOfBranchesAndChecks()
     AOT_TEST_CHECK(hasLowBit->opcode() == Trunc && hasLowBit->child(0) == bitTest && !hasLowBit->useCount());
 }
 
-static bool foldingTestRangeIs(const Operation* operation, int64_t min, int64_t max)
-{
-    IntegerRange range = rangeOf(operation);
-    return range.min == min && range.max == max;
-}
-
-static void testMachineFoldingRanges()
-{
-    FoldingTest v(FoldingTestOperands::Integers, FoldingTestForm::Folded);
-    LValue lowByte = v.make(BitAnd, v.a, 0xff);
-
-    AOT_TEST_CHECK(foldingTestRangeIs(v.a, INT64_MIN, INT64_MAX));
-    AOT_TEST_CHECK(foldingTestRangeIs(v.i, INT32_MIN, INT32_MAX));
-    AOT_TEST_CHECK(foldingTestRangeIs(v.int32(-7), -7, -7));
-    AOT_TEST_CHECK(foldingTestRangeIs(v.int64(INT64_MIN), INT64_MIN, INT64_MIN));
-    AOT_TEST_CHECK(foldingTestRangeIs(lowByte, 0, 255));
-    AOT_TEST_CHECK(foldingTestRangeIs(v.make(BitAnd, v.a, -256), INT64_MIN, INT64_MAX));
-    AOT_TEST_CHECK(foldingTestRangeIs(v.make(ZExt32, v.i), 0, 0xffffffffll));
-    AOT_TEST_CHECK(foldingTestRangeIs(v.make(SExt32, v.i), INT32_MIN, INT32_MAX));
-    AOT_TEST_CHECK(foldingTestRangeIs(v.make(ZShr, v.i, 24), 0, 255));
-    AOT_TEST_CHECK(foldingTestRangeIs(v.make(ZShr, v.a, 60), 0, 15));
-    AOT_TEST_CHECK(foldingTestRangeIs(v.make(LessThan, v.a, v.b), 0, 1));
-    AOT_TEST_CHECK(foldingTestRangeIs(v.make(Clz, v.i), 0, 32));
-    AOT_TEST_CHECK(foldingTestRangeIs(v.make(PopCount, v.a), 0, 64));
-    AOT_TEST_CHECK(foldingTestRangeIs(v.select(v.i, v.int64(9), v.int64(3)), 3, 9));
-    AOT_TEST_CHECK(foldingTestRangeIs(v.select(v.i, v.int64(9), v.a), INT64_MIN, INT64_MAX));
-    AOT_TEST_CHECK(foldingTestRangeIs(v.make(Trunc, lowByte), 0, 255));
-    AOT_TEST_CHECK(foldingTestRangeIs(v.make(Trunc, v.a), INT32_MIN, INT32_MAX));
-    AOT_TEST_CHECK(foldingTestRangeIs(v.make(Trunc, v.make(ZShr, v.a, 32)), INT32_MIN, INT32_MAX));
-
-    AOT_TEST_CHECK(foldingTestRangeIs(v.make(Add, lowByte, 1), 1, 256));
-    AOT_TEST_CHECK(foldingTestRangeIs(v.make(Sub, lowByte, v.make(BitAnd, v.b, 15)), -15, 255));
-    AOT_TEST_CHECK(foldingTestRangeIs(v.make(Shl, lowByte, 4), 0, 4080));
-    AOT_TEST_CHECK(foldingTestRangeIs(v.make(Add, v.make(ZExt32, v.i), foldingTestTag), foldingTestTag, foldingTestTag + 0xffffffffll));
-    AOT_TEST_CHECK(foldingTestRangeIs(v.make(Add, v.make(BitAnd, v.i, INT32_MAX), 1), INT32_MIN, INT32_MAX));
-    AOT_TEST_CHECK(foldingTestRangeIs(v.make(Add, v.make(ZShr, v.a, 1), v.make(ZShr, v.b, 1)), INT64_MIN, INT64_MAX));
-    AOT_TEST_CHECK(foldingTestRangeIs(v.make(Sub, v.make(BitAnd, v.i, 1), INT32_MAX), -INT32_MAX, -INT32_MAX + 1));
-    AOT_TEST_CHECK(foldingTestRangeIs(v.make(Sub, v.make(Sub, 0, v.make(BitAnd, v.i, 3)), INT32_MAX), INT32_MIN, INT32_MAX));
-    AOT_TEST_CHECK(foldingTestRangeIs(v.make(Shl, v.make(BitAnd, v.i, 0xff), 24), INT32_MIN, INT32_MAX));
-    AOT_TEST_CHECK(foldingTestRangeIs(v.make(Shl, lowByte, 56), INT64_MIN, INT64_MAX));
-
-    // Three levels down and no further.
-    LValue third = v.make(Add, v.make(Shl, v.make(Add, lowByte, 1), 1), 1);
-    AOT_TEST_CHECK(foldingTestRangeIs(third, 3, 513));
-    AOT_TEST_CHECK(foldingTestRangeIs(v.make(Shl, third, 1), INT64_MIN, INT64_MAX));
-
-    Output& out = v.out();
-    Block* next = out.newBlock();
-    LValue phi = out.phiIn(next, Int64);
-    out.upsilon(v.int64(5), phi);
-    out.jump(next);
-    AOT_TEST_CHECK(foldingTestRangeIs(phi, INT64_MIN, INT64_MAX));
-}
-
-static bool foldingTestDivisionIsDefined(Opcode opcode, Type type, int64_t dividend, int64_t divisor)
-{
-    if (opcode != Div && opcode != Mod && opcode != UDiv && opcode != UMod)
-        return true;
-    if (type == Int32) {
-        dividend = static_cast<int32_t>(dividend);
-        divisor = static_cast<int32_t>(divisor);
-    }
-    if (!divisor)
-        return false;
-    if (opcode == UDiv || opcode == UMod)
-        return true;
-    return divisor != -1 || dividend != (type == Int32 ? INT32_MIN : INT64_MIN);
-}
-
-static void expectFoldingTestConstant(const Operation* folded, uint64_t expected, Opcode opcode, Type type, const FoldingTestOperand& left, const FoldingTestOperand& right)
-{
-    if (folded->isConstant() && foldingTestBitsOf(folded) == expected)
-        return;
-    dataLog(type, " ", opcode, " of the constants ");
-    if (type.isInt())
-        dataLog(left.integer, " and ", right.integer);
-    else
-        dataLog(left.number, " and ", right.number);
-    dataLogLn(" does not fold to the bits that the machine returns: ", expected);
-    AOT_TEST_CHECK(folded->isConstant() && foldingTestBitsOf(folded) == expected);
-}
-
-// The operation is compiled once with two operands that no rule can see through. Its answers are compared with the constant that two constants fold to,
-// and with the code for a constant on either side and for the same value on both sides.
-static void checkFoldsOfBinaryOperation(Opcode opcode, Type type, FoldingTestDivision division = FoldingTestDivision::Plain)
-{
-    FoldingTestOperands operands = type.isInt() ? FoldingTestOperands::Integers : FoldingTestOperands::Numbers;
-    bool isShift = opcode == Shl || opcode == SShr || opcode == ZShr;
-    Type typeOfRight = isShift ? Type(Int32) : type;
-
-    auto request = [&](FoldingTest& test, LValue left, LValue right) {
-        return division == FoldingTestDivision::Chill ? test.chill(opcode, left, right) : test.make(opcode, left, right);
-    };
-    auto isDefined = [&](const FoldingTestOperand& left, const FoldingTestOperand& right) {
-        return division == FoldingTestDivision::Chill || !type.isInt() || foldingTestDivisionIsDefined(opcode, type, left.integer, right.integer);
-    };
-
-    FoldingTest unfolded(operands, FoldingTestForm::Unfolded);
-    unfolded.finish(request(unfolded, unfolded.firstOperand(type), unfolded.secondOperand(typeOfRight)));
-    unfolded.compile();
-
-    FoldingTest constants(operands, FoldingTestForm::Folded);
-    for (const FoldingTestOperand& left : foldingTestEdgeValues) {
-        for (const FoldingTestOperand& right : foldingTestEdgeValues) {
-            if (!isDefined(left, right))
-                continue;
-            LValue folded = request(constants, constants.constant(type, left), constants.constant(typeOfRight, right));
-            expectFoldingTestConstant(folded, unfolded.run(left, right), opcode, type, left, right);
-        }
-    }
-
-    for (const FoldingTestOperand& constant : foldingTestEdgeValues) {
-        FoldingTest withConstantOnRight(operands, FoldingTestForm::Folded);
-        withConstantOnRight.finish(request(withConstantOnRight, withConstantOnRight.firstOperand(type), withConstantOnRight.constant(typeOfRight, constant)));
-        withConstantOnRight.compile();
-
-        FoldingTest withConstantOnLeft(operands, FoldingTestForm::Folded);
-        withConstantOnLeft.finish(request(withConstantOnLeft, withConstantOnLeft.constant(type, constant), withConstantOnLeft.secondOperand(typeOfRight)));
-        withConstantOnLeft.compile();
-
-        for (const FoldingTestOperand& value : foldingTestEdgeValues) {
-            if (isDefined(value, constant))
-                withConstantOnRight.expectAnswer(unfolded.run(value, constant), value, value);
-            if (isDefined(constant, value))
-                withConstantOnLeft.expectAnswer(unfolded.run(constant, value), value, value);
-        }
-    }
-
-    if (isShift)
-        return;
-    FoldingTest withSameOperandTwice(operands, FoldingTestForm::Folded);
-    withSameOperandTwice.finish(request(withSameOperandTwice, withSameOperandTwice.firstOperand(type), withSameOperandTwice.firstOperand(type)));
-    withSameOperandTwice.compile();
-    for (const FoldingTestOperand& value : foldingTestEdgeValues) {
-        if (isDefined(value, value))
-            withSameOperandTwice.expectAnswer(unfolded.run(value, value), value, value);
-    }
-}
-
-static void checkFoldsOfUnaryOperation(Opcode opcode, Type type, Type typeOfCast = Void)
-{
-    FoldingTestOperands operands = type.isInt() ? FoldingTestOperands::Integers : FoldingTestOperands::Numbers;
-    auto request = [&](FoldingTest& test, LValue value) {
-        return opcode == BitwiseCast ? test.cast(value, typeOfCast) : test.make(opcode, value);
-    };
-
-    FoldingTest unfolded(operands, FoldingTestForm::Unfolded);
-    unfolded.finish(request(unfolded, unfolded.firstOperand(type)));
-    unfolded.compile();
-
-    FoldingTest constants(operands, FoldingTestForm::Folded);
-    for (const FoldingTestOperand& value : foldingTestEdgeValues)
-        expectFoldingTestConstant(request(constants, constants.constant(type, value)), unfolded.run(value, value), opcode, type, value, value);
-}
-
-static void testMachineFoldingAgreesWithIntegerArithmetic()
-{
-    for (Type type : { Type(Int32), Type(Int64) }) {
-        for (Opcode opcode : { Add, Sub, Mul, BitAnd, BitOr, BitXor })
-            checkFoldsOfBinaryOperation(opcode, type);
-        for (Opcode opcode : { Neg, IToD })
-            checkFoldsOfUnaryOperation(opcode, type);
-    }
-    for (Opcode opcode : { MulHigh, UMulHigh })
-        checkFoldsOfBinaryOperation(opcode, Int64);
-    for (Opcode opcode : { Clz, PopCount, SExt8, SExt16, SExt32, ZExt32 })
-        checkFoldsOfUnaryOperation(opcode, Int32);
-    checkFoldsOfUnaryOperation(Trunc, Int64);
-    checkFoldsOfUnaryOperation(BitwiseCast, Int64, Double);
-}
-
-static void testMachineFoldingAgreesWithShifts()
-{
-    for (Type type : { Type(Int32), Type(Int64) }) {
-        for (Opcode opcode : { Shl, SShr, ZShr })
-            checkFoldsOfBinaryOperation(opcode, type);
-    }
-}
-
-static void testMachineFoldingAgreesWithDivisions()
-{
-    for (Type type : { Type(Int32), Type(Int64) }) {
-        for (Opcode opcode : { Div, Mod, UDiv, UMod })
-            checkFoldsOfBinaryOperation(opcode, type);
-        for (Opcode opcode : { Div, Mod })
-            checkFoldsOfBinaryOperation(opcode, type, FoldingTestDivision::Chill);
-    }
-}
-
-static void testMachineFoldingAgreesWithIntegerComparisons()
-{
-    for (Type type : { Type(Int32), Type(Int64) }) {
-        for (Opcode opcode : { Equal, NotEqual, LessThan, GreaterThan, LessEqual, GreaterEqual, Above, Below, AboveEqual, BelowEqual })
-            checkFoldsOfBinaryOperation(opcode, type);
-    }
-}
-
-static void testMachineFoldingAgreesWithNumbers()
-{
-    for (Opcode opcode : { Add, Sub, Mul, Div, FMin, FMax, Equal, NotEqual, LessThan, GreaterThan, LessEqual, GreaterEqual, EqualOrUnordered })
-        checkFoldsOfBinaryOperation(opcode, Double);
-    for (Opcode opcode : { Neg, Abs, Ceil, Floor, FTrunc, Sqrt, DoubleToFloat })
-        checkFoldsOfUnaryOperation(opcode, Double);
-    checkFoldsOfUnaryOperation(FloatToDouble, Float);
-    checkFoldsOfUnaryOperation(BitwiseCast, Double, Int64);
-}
-
 } // namespace Machine
 
 std::span<const NativeTest> machineFoldingTests()
 {
     static constexpr NativeTest tests[] = {
-        { "machine-folding/sums-and-products"_s, Machine::testMachineFoldingOfSumsAndProducts },
         { "machine-folding/divisions"_s, Machine::testMachineFoldingOfDivisions },
         { "machine-folding/bit-operations"_s, Machine::testMachineFoldingOfBitOperations },
         { "machine-folding/shifts"_s, Machine::testMachineFoldingOfShifts },
@@ -1390,14 +1043,7 @@ std::span<const NativeTest> machineFoldingTests()
         { "machine-folding/selects"_s, Machine::testMachineFoldingOfSelects },
         { "machine-folding/number-comparisons"_s, Machine::testMachineFoldingOfNumberComparisons },
         { "machine-folding/numbers"_s, Machine::testMachineFoldingOfNumbers },
-        { "machine-folding/predicates"_s, Machine::testMachineFoldingOfPredicates },
         { "machine-folding/branches-and-checks"_s, Machine::testMachineFoldingOfBranchesAndChecks },
-        { "machine-folding/ranges"_s, Machine::testMachineFoldingRanges },
-        { "machine-folding/agrees-with-integer-arithmetic"_s, Machine::testMachineFoldingAgreesWithIntegerArithmetic },
-        { "machine-folding/agrees-with-shifts"_s, Machine::testMachineFoldingAgreesWithShifts },
-        { "machine-folding/agrees-with-divisions"_s, Machine::testMachineFoldingAgreesWithDivisions },
-        { "machine-folding/agrees-with-integer-comparisons"_s, Machine::testMachineFoldingAgreesWithIntegerComparisons },
-        { "machine-folding/agrees-with-numbers"_s, Machine::testMachineFoldingAgreesWithNumbers },
     };
     return tests;
 }

@@ -55,9 +55,6 @@ TypeID tryTypeOfElementRead(const TypingContext&, TypeID container, TypeID key);
 TypeID tryTypeOfArrayElementRead(const TypingContext&, TypeID array, ArrayStorage storage, bool findsElement, bool readsHoleAsNaN);
 TypeID tryTypeOfAwaited(const TypingContext&, TypeID awaited);
 
-// AOTResultRulesConvert.cpp. isSubset() passes over what is written of the contents of a class. True: `cut` writes contents of a class that `proven` does not write the same.
-bool writtenContentsSayMoreThan(TypeArena&, TypeID proven, TypeID cut);
-
 // What the generated applyResultRule() and applyEdgeResultRule() call. One is made for one operation.
 // The member templates are defined in AOTResultRulesInlines.h, which AOTResultRules.cpp alone includes: each takes what it needs out of the operation and calls a function that is no template.
 struct ResultRules {

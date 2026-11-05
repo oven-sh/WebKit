@@ -114,6 +114,7 @@
 # CHECK-NEXT: exited with 0
 
 module m0 path="exec-and-match-of-receivers-that-nobody-typed.ts" displayPath="exec-and-match-of-receivers-that-nobody-typed.ts" body=f0 namespaceLayout=L(m0)
+module m1 path="/$bun/js/engine/FunctionPrototype.ts" displayPath="/$bun/js/engine/FunctionPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
 entry module=m0
 layout L0 kind=Instance name="Shelf" module=m0 position=717 constructor=f5
 layout L1 kind=Instance name="Loud" module=m0 position=572 constructor=f8 flags=[HasHeritage]
@@ -127,6 +128,8 @@ layout L8 module=m0 position=2537
 layout L9 module=m0 position=2655
 data d0 root=Object{layout=L8} module=m0
 data d1 root=Object{layout=L9} module=m0
+data d2 root=Array{contents=anything} module=m1
+data d3 root=Array{contents=anything} module=m1
 variable g0 name="shown" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
 variable g1 name="ran" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
 variable g2 name="matched" module=m0 declared={type=f3 flags=[IsFromCompiler]} initialization=Function function=f3 flags=[IsImmutable]
@@ -1023,3 +1026,84 @@ function f31 module=m0 position=3722 kind=Arrow flags=[IsChecked] thisType={type
 function f32 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
 function f33 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
 function f34 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f35 name="call" module=m1 kind=Method role=Library flags=[HasThis, HasArgumentCount, HasHiddenRest, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=FunctionPrototypeCall thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything, v1: int[0, 4294967295], v2: anything, v3: anything, v4: anything, v5: anything, v6: anything, v7: Array):
+    Jump -> next b1() @0
+  b1():
+    v8 = CreateUnmappedArguments v1, v7, v2, v3, v4, v5, v6 @0
+    v9 = Builtin builtin=FunctionPrototypeCall [isNotReadFromHolder] @194
+    v10 = StrictEq v0, v9 @194
+    Branch v10 -> taken b3(), notTaken b2() @194
+  b2():
+    v11 = Builtin builtin=FunctionPrototypeApply [isNotReadFromHolder] @229
+    v12 = StrictEq v0, v11 @229
+    Branch v12 -> taken b3(), notTaken b8() @229
+  b3():
+    v13 = Data data=d2 @288
+    v14 = Integer integer=1 @313
+    v15 = Convert v14 declared={type=number} @313
+    Jump -> next b4(v15) @309
+  b4(v16: number):
+    LoopHint @309
+    v18 = Less v16, v1 @320
+    Branch v18 -> taken b5(), notTaken b7() @320
+  b5():
+    v19 = Integer integer=1 @392
+    v20 = Sub v16, v19 @392
+    v21 = ElemGet v8, v16 @395
+    v22 = Convert v13 declared={type=object flags=[IsFromCompiler, IsClaim]} @355
+    ElemDefine v22, v20, v21 @355
+    Jump -> next b6() @355
+  b6():
+    v24 = Increment v16 @338
+    v25 = Convert v24 declared={type=number} @338
+    Jump -> next b4(v25) @338
+  b7():
+    v26 = Builtin builtin=FunctionPrototypeApply [isNotReadFromHolder] @433
+    v27 = Call v26, v0, v2, v13 [isDoneInPlace] @433
+    ReturnCall v27 @433
+  b8():
+    Switch v1 cases=[0, 1, 2, 3, 4, 5] -> case b9(), case b9(), case b10(), case b11(), case b12(), case b13(), otherwise b14() @548
+  b9():
+    v28 = Call v0, v2 @578
+    ReturnCall v28 @578
+  b10():
+    v29 = Call v0, v2, v3 @631
+    ReturnCall v29 @631
+  b11():
+    v30 = Call v0, v2, v3, v4 @698
+    ReturnCall v30 @698
+  b12():
+    v31 = Call v0, v2, v3, v4, v5 @779
+    ReturnCall v31 @779
+  b13():
+    v32 = Call v0, v2, v3, v4, v5, v6 @874
+    ReturnCall v32 @874
+  b14():
+    Jump -> next b15() @548
+  b15():
+    v33 = Data data=d3 @990
+    v34 = Integer integer=1 @1011
+    v35 = Convert v34 declared={type=number} @1011
+    Jump -> next b16(v35) @1007
+  b16(v36: number):
+    LoopHint @1007
+    v38 = Less v36, v1 @1018
+    Branch v38 -> taken b17(), notTaken b19() @1018
+  b17():
+    v39 = Integer integer=1 @1085
+    v40 = Sub v36, v39 @1085
+    v41 = ElemGet v8, v36 @1088
+    v42 = Convert v33 declared={type=object flags=[IsFromCompiler, IsClaim]} @1049
+    ElemDefine v42, v40, v41 @1049
+    Jump -> next b18() @1049
+  b18():
+    v44 = Increment v36 @1036
+    v45 = Convert v44 declared={type=number} @1036
+    Jump -> next b16(v45) @1036
+  b19():
+    v46 = Builtin builtin=FunctionPrototypeApply [isNotReadFromHolder] @1115
+    v47 = Call v46, v0, v2, v33 [isDoneInPlace] @1115
+    ReturnCall v47 @1115
+}
+runtimefunction id=FunctionPrototypeCall function=f35

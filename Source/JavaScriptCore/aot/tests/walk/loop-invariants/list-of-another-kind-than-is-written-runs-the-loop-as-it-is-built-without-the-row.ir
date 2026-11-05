@@ -3,7 +3,7 @@
 # one text among the numbers fails it, for every turn. So the other copy is the loop as it is built without the row: its turns open their own guesses (the element is tested for a number),
 # and the way there is not rare, or the allocator would spill in it.
 # Link has followed both lists, so that copy asks the list nothing either (LinkTables::receiversThatStayAsMade): it names no kind and goes by the one that it finds, and what it reads is a number, a text or undefined (resultsOfReadsByKey).
-# RED UNTIL lists-read-in-loops-are-tested-in-front-again-1: with the door as it was at 11-03 20:30 the other copy was closed and rare: families-erased:f91 x1.126.
+# The other copy was once closed and rare: x1.126 on one benchmark.
 # RUN: walk f1 mechanisms=all
 # CHECK-LABEL: code f1:Body
 # CHECK: = HasArrayStorage {{*}}arrayStorage=Double

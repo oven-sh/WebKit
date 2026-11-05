@@ -109,7 +109,7 @@ void StraightEmitter::testType(GPRReg boxed, TypeID tested, GPRReg zeroOrOne)
         isAbsent = jit.branchTest64(CCallHelpers::Zero, boxed);
     StraightArgument arguments[] { StraightArgument::inRegister(boxed), StraightArgument::number(mentions().add(NumberSpace::Type, tested.bits())) };
     callOperation(Origin { }, RuntimeOperation::ValueHasType, arguments, { });
-    jit.move(resultGPR, zeroOrOne);
+    jit.move(resultOfCall(), zeroOrOne);
     if (!absentPasses)
         return;
     CCallHelpers::Jump isTested = jit.jump();

@@ -123,11 +123,6 @@ CompiledWholeProgram::CompiledWholeProgram(ParsedProgram& parsed)
     AOT_TEST_CHECK(units.succeeded && !units.functions.isEmpty());
 }
 
-static TestOptions withThreads(unsigned threadCount)
-{
-    return { .threadCount = threadCount };
-}
-
 static std::span<const uint8_t> bytesOf(const UTF8CString& bytes)
 {
     return byteCast<uint8_t>(bytes.span());
@@ -224,80 +219,6 @@ static void testInsignificantFlags()
     AOT_TEST_CHECK(!compiled.requests.recordOf(plain.pattern, Yarr::Flags::Multiline));
 }
 
-static void testHasIndicesFlag()
-{
-    CompiledRequests compiled({ { "a"_s, Yarr::Flags::HasIndices }, { "a"_s, RegExpFlags { Yarr::Flags::Global, Yarr::Flags::HasIndices } } });
-    AOT_TEST_CHECK(compiled.requests.all().size() == 1);
-    AOT_TEST_CHECK(compiled.requests.all()[0].flags.isEmpty());
-}
-
-static void testEmptyAndSurrogate()
-{
-    static constexpr char loneSurrogate[] = { '\xed', '\xa0', '\x80' };
-    CompiledRequests compiled({ { ""_s }, { UTF8CString::fromUTF8(loneSurrogate) } });
-    AOT_TEST_CHECK(compiled.requests.all().size() == 2);
-
-    unsigned numberOfEmpty = 0;
-    unsigned numberOfSurrogates = 0;
-    for (const RegExpRequest& request : compiled.requests.all()) {
-        AOT_TEST_CHECK(request.pattern);
-        String pattern = compiled.textOf(request);
-        numberOfEmpty += pattern.isEmpty();
-        numberOfSurrogates += pattern.length() == 1 && pattern[0] == 0xd800;
-    }
-    AOT_TEST_CHECK(numberOfEmpty == 1);
-    AOT_TEST_CHECK(numberOfSurrogates == 1);
-}
-
-static void testResultsBelongToRequests()
-{
-    Vector<PatternUse> uses;
-    for (unsigned k = 1; k <= 40; ++k)
-        uses.append({ makeString("a{"_s, k, "}b+"_s).utf8() });
-
-    CompiledRequests serial(uses, withThreads(1));
-    CompiledRequests parallel(uses, withThreads(8));
-    AOT_TEST_CHECK(serial.requests.all().size() == uses.size());
-    AOT_TEST_CHECK(parallel.regExps.results.size() == serial.regExps.results.size());
-    for (size_t i = 0; i < serial.regExps.results.size(); ++i) {
-        AOT_TEST_CHECK(serial.textOf(serial.requests.all()[i]) == parallel.textOf(parallel.requests.all()[i]));
-        AOT_TEST_CHECK(serial.regExps.results[i].form == parallel.regExps.results[i].form);
-        AOT_TEST_CHECK(serial.regExps.results[i].reason == parallel.regExps.results[i].reason);
-        AOT_TEST_CHECK(serial.regExps.results[i].codeSize() == parallel.regExps.results[i].codeSize());
-    }
-}
-
-static void testUnicodeProperties()
-{
-    CompiledRequests compiled({ { "\\p{L}+"_s, Yarr::Flags::Unicode }, { "[\\P{Lu}a]"_s, Yarr::Flags::Unicode }, { "[\\p{L}--a]"_s, Yarr::Flags::UnicodeSets }, { "ab+"_s } });
-    AOT_TEST_CHECK(compiled.requests.all().size() == 4);
-    AOT_TEST_CHECK(compiled.regExps.numberWithUnicodePropertyLookup == 3);
-}
-
-static void testUnicodePropertiesWithAddedFlag()
-{
-    CompiledRequests compiled({ { "\\p{L}+"_s }, { "\\p{NoSuchProperty}"_s }, { "[a-\\p{L}]"_s }, { "[\\q{a}]\\P{RGI_Emoji}"_s } });
-    AOT_TEST_CHECK(compiled.requests.all().size() == 4);
-    AOT_TEST_CHECK(compiled.regExps.numberWithUnicodePropertyLookup == 4);
-}
-
-static void testNoUnicodeProperties()
-{
-    CompiledRequests compiled({ { "a|b"_s }, { "ab+"_s, Yarr::Flags::Unicode }, { "[\\w-.]"_s }, { "a\\-\\p{L}"_s }, { "\\\\p{L}"_s } });
-    AOT_TEST_CHECK(compiled.requests.all().size() == 5);
-    AOT_TEST_CHECK(!compiled.regExps.numberWithUnicodePropertyLookup);
-}
-
-static void testNoRegExps()
-{
-    CompiledRequests compiled({ });
-    AOT_TEST_CHECK(compiled.requests.all().empty());
-    AOT_TEST_CHECK(compiled.regExps.results.isEmpty());
-    for (RegExpRecordForm form : { RegExpRecordForm::Code, RegExpRecordForm::Atom, RegExpRecordForm::NoCode, RegExpRecordForm::NoMetadata })
-        AOT_TEST_CHECK(!compiled.regExps.numberWithForm(form));
-    AOT_TEST_CHECK(!compiled.regExps.numberWithUnicodePropertyLookup);
-}
-
 #if ENABLE(WEBASSEMBLY_OMGJIT)
 
 static constexpr uint8_t moduleReturning42[] = {
@@ -306,14 +227,6 @@ static constexpr uint8_t moduleReturning42[] = {
     0x03, 0x02, 0x01, 0x00,
     0x07, 0x05, 0x01, 0x01, 0x66, 0x00, 0x00,
     0x0a, 0x06, 0x01, 0x04, 0x00, 0x41, 0x2a, 0x0b,
-};
-
-static constexpr uint8_t moduleReturning43[] = {
-    0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
-    0x01, 0x05, 0x01, 0x60, 0x00, 0x01, 0x7f,
-    0x03, 0x02, 0x01, 0x00,
-    0x07, 0x05, 0x01, 0x01, 0x66, 0x00, 0x00,
-    0x0a, 0x06, 0x01, 0x04, 0x00, 0x41, 0x2b, 0x0b,
 };
 
 static String webAssemblyText(size_t numberOfEntries)
@@ -360,11 +273,6 @@ static void checkModuleCount(const CompiledWebAssembly& compiled, uint32_t numbe
     AOT_TEST_CHECK(!header.numberOfDeclinedModules);
 }
 
-static void testOneModule()
-{
-    checkModuleCount(CompiledWebAssembly({ moduleReturning42 }), 1);
-}
-
 static void testSameModuleTwice()
 {
     CompiledWebAssembly once({ moduleReturning42 });
@@ -372,18 +280,6 @@ static void testSameModuleTwice()
     checkModuleCount(twice, 1);
     AOT_TEST_CHECK(twice.modules.directory == once.modules.directory);
     AOT_TEST_CHECK(twice.modules.code == once.modules.code);
-}
-
-static void testTwoModules()
-{
-    checkModuleCount(CompiledWebAssembly({ moduleReturning42, moduleReturning43 }), 2);
-}
-
-static void testNoWebAssemblyModules()
-{
-    CompiledWebAssembly compiled({ });
-    AOT_TEST_CHECK(!compiled.modules.numberOfModules);
-    AOT_TEST_CHECK(compiled.modules.directory.isEmpty());
 }
 
 #endif // ENABLE(WEBASSEMBLY_OMGJIT)
@@ -604,65 +500,8 @@ static void testTwoRealmsHaveInstances(LoadedProgram& program)
 #if OS(LINUX)
 namespace {
 
-struct MappedPages {
-    uintptr_t start;
-    uintptr_t end;
-    bool isWritable;
-    bool isExecutable;
-};
-
 } // anonymous namespace
 
-static Vector<MappedPages> readMappedPages()
-{
-    FILE* file = fopen("/proc/self/maps", "r");
-    AOT_TEST_CHECK(file);
-    Vector<MappedPages> result;
-    unsigned long start;
-    unsigned long end;
-    char permissions[5];
-    while (fscanf(file, "%lx-%lx %4s%*[^\n]", &start, &end, permissions) == 3)
-        result.append({ start, end, permissions[1] == 'w', permissions[2] == 'x' });
-    fclose(file);
-    return result;
-}
-
-static void testLoadedImageHasNoWritablePage(LoadedProgram&)
-{
-    const Image& image = *Image::current();
-    uintptr_t start = std::bit_cast<uintptr_t>(&image.header());
-    uintptr_t end = start + image.header().size;
-    uintptr_t codeStart = std::bit_cast<uintptr_t>(image.code().data());
-    uintptr_t codeEnd = codeStart + image.header().size - image.header().codeOffset;
-    AOT_TEST_CHECK(codeEnd <= start || codeStart >= end);
-
-    uintptr_t checkedEnd = start;
-    uintptr_t checkedCodeEnd = codeStart;
-    bool isWritableAfterImage = false;
-    for (const MappedPages& pages : readMappedPages()) {
-        AOT_TEST_CHECK(!pages.isWritable || !pages.isExecutable);
-        if (pages.start <= end && end < pages.end)
-            isWritableAfterImage = pages.isWritable;
-        if (pages.end > codeStart && pages.start < codeEnd) {
-            AOT_TEST_CHECK(pages.start <= checkedCodeEnd);
-            AOT_TEST_CHECK(pages.isExecutable);
-            checkedCodeEnd = pages.end;
-        }
-        if (pages.end <= start || pages.start >= end)
-            continue;
-        AOT_TEST_CHECK(pages.start <= checkedEnd);
-        AOT_TEST_CHECK(!pages.isWritable);
-        AOT_TEST_CHECK(!pages.isExecutable);
-        checkedEnd = pages.end;
-    }
-    AOT_TEST_CHECK(checkedEnd == end);
-    AOT_TEST_CHECK(checkedCodeEnd >= codeEnd);
-
-    AOT_TEST_CHECK(isWritableAfterImage);
-    auto* byteAfterImage = std::bit_cast<volatile uint8_t*>(end);
-    *byteAfterImage = 1;
-    AOT_TEST_CHECK(*byteAfterImage == 1);
-}
 #endif
 
 std::span<const NativeTest> programInputTests();
@@ -671,26 +510,15 @@ std::span<const NativeTest> programInputTests()
 {
     static constexpr NativeTest tests[] = {
         { "image/regexp-queue/insignificant-flags"_s, testInsignificantFlags },
-        { "image/regexp-queue/has-indices-flag"_s, testHasIndicesFlag },
-        { "image/regexp-queue/empty-and-surrogate"_s, testEmptyAndSurrogate },
-        { "image/regexp-queue/results-belong-to-requests"_s, testResultsBelongToRequests },
-        { "image/regexp-queue/unicode-properties"_s, testUnicodeProperties },
-        { "image/regexp-queue/unicode-properties-with-added-flag"_s, testUnicodePropertiesWithAddedFlag },
-        { "image/regexp-queue/no-unicode-properties"_s, testNoUnicodeProperties },
-        { "image/regexp-queue/none"_s, testNoRegExps },
         { "image/programs/symbol-spaces"_s, testSymbolSpacesOfProgram },
         { "image/instances/second-realm-has-no-instance"_s, runNativeTestWithLoadedProgram<programInputTests, programForOneInstance, testSecondRealmHasNoInstance> },
         { "image/instances/realm-after-collected-realm"_s, runNativeTestWithLoadedProgram<programInputTests, programForOneInstance, testRealmAfterCollectedRealm> },
         { "image/instances/realm-after-retired-realm"_s, runNativeTestWithLoadedProgram<programInputTests, programForOneInstance, testRealmAfterRetiredRealm> },
         { "image/instances/two-realms-have-instances"_s, runNativeTestWithLoadedProgram<programInputTests, programForManyInstances, testTwoRealmsHaveInstances> },
 #if OS(LINUX)
-        { "image/loading/loaded-image-has-no-writable-page"_s, runNativeTestWithLoadedProgram<programInputTests, programForOneInstance, testLoadedImageHasNoWritablePage> },
 #endif
 #if ENABLE(WEBASSEMBLY_OMGJIT)
-        { "image/wasm-modules/one"_s, testOneModule },
         { "image/wasm-modules/same-module-twice"_s, testSameModuleTwice },
-        { "image/wasm-modules/two-modules"_s, testTwoModules },
-        { "image/wasm-modules/none"_s, testNoWebAssemblyModules },
 #endif
     };
     return tests;

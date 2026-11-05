@@ -47,6 +47,8 @@ WalkOptions walkOptionsOf(const BuildContext& build)
         .hidesNames = options.obfuscates(),
         .checksProofs = !!sourcesOfProofsCheckedUnder(options.testing),
         .sourcesOfProofsChecked = sourcesOfProofsCheckedUnder(options.testing),
+        .testsEveryPosition = AOT::hasFlag(options.testing, Wire::TestingSwitch::TestsEveryPosition),
+        .takesPositionsToLieInside = AOT::hasFlag(options.testing, Wire::TestingSwitch::PositionsAreTakenToLieInside),
         .writesBodiesStraight = AOT::hasFlag(options.testing, Wire::TestingSwitch::WritesBodiesStraight),
     };
 }
@@ -76,7 +78,6 @@ static std::span<const uint32_t> arenaIDsInUnitMentionKey(NumberSpace space, std
     case NumberSpace::ModuleValue:
     case NumberSpace::ModuleNamespace:
     case NumberSpace::ModuleBuiltinCell:
-    case NumberSpace::FilledFiles:
     case NumberSpace::DataCell:
     case NumberSpace::DataStorage:
     case NumberSpace::DataElements:
@@ -132,7 +133,7 @@ static bool verifyCodeOfCompileUnit(const WalkInputs& inputs, BuildContext& buil
     String brokenRule = verifyCode(CodeTextContext { inputs.program, types, &inputs.plan }, code, &kindOfBrokenRule);
     if (brokenRule.isNull()) {
         kindOfBrokenRule = InternalErrorKind::TypeOutOfDate;
-        brokenRule = verifyTypesOfCode(TypingContext { inputs.program, types, positions }, inputs.plan.conventions(), inputs.facts, inputs.arrivals, code);
+        brokenRule = verifyTypesOfCode(TypingContext { inputs.program, types, positions }, inputs.plan.conventions(), inputs.arrivals, code);
     }
     if (brokenRule.isNull())
         return true;
@@ -154,8 +155,6 @@ static bool notesAreTakenOfCompileUnit(CodeRole role)
     case CodeRole::GenericConstructEntry:
     case CodeRole::AllocatingConstructEntry:
     case CodeRole::ModuleStart:
-    case CodeRole::BoundFunction:
-    case CodeRole::GenericEntryOfBoundFunction:
     case CodeRole::TableEntry:
     case CodeRole::TableLookup:
     case CodeRole::Serializer:
@@ -199,7 +198,6 @@ bool CompileWorker::walkAndSweep(CodeUnit unit)
         m_build.statistics().count(StatisticID::TestsThatRejoin, guesses);
         m_build.statistics().count(StatisticID::LoopsBuiltTwice, m_walker->numberOfLoopsBuiltTwice());
         m_build.statistics().count(StatisticID::TurnsThatBeginAgain, m_walker->numberOfTurnsThatBeginAgain());
-        m_build.statistics().count(StatisticID::EmptySlotsTakenAsCases, m_walker->numberOfEmptySlotsTakenAsCases());
     }
     if (uint32_t assignments = m_walker->numberOfAssignmentsWrittenOut())
         m_build.statistics().count(StatisticID::AssignmentsWrittenOutFieldByField, assignments);
@@ -321,8 +319,6 @@ std::optional<CompiledCode> CompileWorker::compile(CodeUnit unit)
 
     Statistics& statistics = m_build.statistics();
     statistics.count(StatisticID::UnitsCompiled);
-    if (m_inputs.walk.program.at(unit.function).role == FunctionRole::Parser)
-        statistics.count(StatisticID::ParsersCreated);
     if (unit.role == CodeRole::Serializer)
         statistics.count(StatisticID::SerializersCreated);
     if (uint32_t selected = m_walker->numberOfTypedResultsSelected())

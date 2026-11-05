@@ -198,6 +198,50 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 }
 )IR"_s;
 
+static constexpr ASCIILiteral startsWorkerFromTextOfURL = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=URL
+    v1 = String string="./other.js"
+    v2 = ModuleBuiltin builtin=ImportMeta module=m0
+    v3 = PropGet v2 key="url"
+    v4 = Construct v0, -, v1, v3
+    v5 = PropGet v4 key="href"
+    v6 = Builtin builtin=Worker
+    v7 = Construct v6, -, v5
+    Return
+}
+)IR"_s;
+
+static constexpr ASCIILiteral startsWorkerFromAnotherMemberOfURL = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=URL
+    v1 = String string="./other.js"
+    v2 = ModuleBuiltin builtin=ImportMeta module=m0
+    v3 = PropGet v2 key="url"
+    v4 = Construct v0, -, v1, v3
+    v5 = PropGet v4 key="search"
+    v6 = Builtin builtin=Worker
+    v7 = Construct v6, -, v5
+    Return
+}
+)IR"_s;
+
+static constexpr ASCIILiteral startsWorkerFromTextOfUnknownURL = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=URL
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="name" [isFreeName]
+    v3 = Construct v0, -, v2
+    v4 = PropGet v3 key="href"
+    v5 = Builtin builtin=Worker
+    v6 = Construct v5, -, v4
+    Return
+}
+)IR"_s;
+
 static constexpr ASCIILiteral callsUnknownFunction = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
@@ -730,6 +774,9 @@ static void testStartOfWorkerHasPlaceOnlyWhereConstructorWasSeen()
     AOT_TEST_CHECK(startHasPlace(handsOnGlobalObjectBesideWorkerWithName) == false);
     AOT_TEST_CHECK(startHasPlace(handsOnConstructorOfWorkers) == true);
     AOT_TEST_CHECK(startHasPlace(startsWorkerFromUnknownValue) == true);
+    AOT_TEST_CHECK(startHasPlace(startsWorkerFromTextOfURL) == std::nullopt);
+    AOT_TEST_CHECK(startHasPlace(startsWorkerFromAnotherMemberOfURL) == true);
+    AOT_TEST_CHECK(startHasPlace(startsWorkerFromTextOfUnknownURL) == true);
 }
 
 static void testLoadByUnknownNameOnlyExposesModules()

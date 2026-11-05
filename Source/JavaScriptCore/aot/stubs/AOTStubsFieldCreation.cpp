@@ -59,14 +59,6 @@ static void computeTransitionHash(StubAssembler& jit, const KeyOrderRegisters& r
 #endif
 }
 
-// Nobody lists the keys of the objects of such a layout, so they keep no order.
-static Jump branchIfKeepsNoKeyOrder(StubAssembler& jit, GPRReg layout)
-{
-    LayoutData testedBits { };
-    testedBits.keysAreNeverEnumerated = true;
-    return jit.branchTest32(CCallHelpers::NonZero, Address(layout), TrustedImm32(static_cast<int32_t>(testedBits.firstWord())));
-}
-
 // The orders that the compiler listed lie in the image. Whoever knows the layout and the index of the field in it saves the way to both.
 static JumpList stepInsideOrderOfImage(StubAssembler& jit, const KeyOrderRegisters& r, std::optional<FieldOfLayout> known)
 {
@@ -88,7 +80,6 @@ static JumpList stepInsideOrderOfImage(StubAssembler& jit, const KeyOrderRegiste
         loadStructure(jit, r.object, layout);
         jit.loadPtr(Address(layout, CompiledStructure::offsetOfLayout()), layout);
     }
-    isListed.append(branchIfKeepsNoKeyOrder(jit, layout));
     jit.and32(TrustedImm32(orderWordOrderMask), r.words, r.entry);
     doesNotApply.append(jit.branch32(CCallHelpers::AboveOrEqual, r.entry, Address(layout, OBJECT_OFFSETOF(LayoutData, numberOfOrders))));
     jit.lshift32(TrustedImm32(2), r.entry);
@@ -134,8 +125,6 @@ void appendFieldToKeyOrder(StubAssembler& jit, const KeyOrderRegisters& r, JumpL
     loadStructure(jit, r.object, r.scratch);
     // What is cached about the objects below a prototype relies on the run time's report of a field that the prototype gets.
     hasNoTransition.append(jit.branchTest32(CCallHelpers::NonZero, Address(r.scratch, Structure::bitFieldOffset()), TrustedImm32(Structure::s_mayBePrototypeBits)));
-    jit.loadPtr(Address(r.scratch, CompiledStructure::offsetOfLayout()), r.entry);
-    isListed.append(branchIfKeepsNoKeyOrder(jit, r.entry));
     // The extra keys come in front of the field, so the step also goes by their number, which the Structure says once the run time has counted them.
     jit.load16(Address(r.scratch, CompiledStructure::offsetOfNumberOfExtraKeys()), r.scratch);
     hasNoTransition.append(jit.branch32(CCallHelpers::Equal, r.scratch, TrustedImm32(CompiledStructure::unknownNumberOfExtraKeys)));
@@ -144,6 +133,8 @@ void appendFieldToKeyOrder(StubAssembler& jit, const KeyOrderRegisters& r, JumpL
     jit.or32(r.scratch, r.slotKey);
     hasNoExtraProperties.link(&jit);
     jit.and64(TrustedImm64(static_cast<int64_t>(orderCountAndShapeMask)), r.words);
+    // The run time files a transition under the word of the layout, and who creates fields is mostly an object that is being born.
+    jit.or64(TrustedImm64(static_cast<int64_t>(orderAndShapeWordsAreUnmarked)), r.words);
     computeTransitionHash(jit, r);
 
     Label probe = jit.label();

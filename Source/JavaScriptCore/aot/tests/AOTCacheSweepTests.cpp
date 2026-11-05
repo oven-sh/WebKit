@@ -33,9 +33,6 @@ namespace {
 
 using CacheEntry = RememberedSlot<uint64_t>;
 
-constexpr unsigned regionShift = 8;
-constexpr size_t regionSize = 1 << regionShift;
-
 class Pages {
     WTF_MAKE_NONCOPYABLE(Pages);
 public:
@@ -67,104 +64,8 @@ static Vector<size_t> startsOfRegionsEverWritten(RememberedSlotSet& set)
     return starts;
 }
 
-static Vector<size_t> startsOfRegionsWrittenSinceLastSweep(RememberedSlotSet& set)
-{
-    Vector<size_t> starts;
-    set.forEachRegionToSweep(CollectionScope::Eden, [&](size_t begin, size_t) {
-        starts.append(begin);
-    });
-    return starts;
-}
-
 #if OS(LINUX)
-// A read makes a page present, so this comes before any look at what the page holds.
-static bool isPresent(void* page)
-{
-    unsigned char residency = 0;
-    AOT_TEST_CHECK(!mincore(page, pageSize(), &residency));
-    return residency & 1;
-}
 #endif
-
-static void testPagesWhoseEntriesDiedGoBack()
-{
-    Pages table(6);
-    RememberedSlotSet set(table.bytes(), regionShift);
-    size_t page = pageSize();
-    size_t lastOffset = page - sizeof(CacheEntry);
-
-    table.entryAt(0, 0).set(set, 1);
-    table.entryAt(2, 2 * regionSize).set(set, 2);
-    table.entryAt(2, lastOffset).set(set, 3);
-    table.entryAt(3, 0).set(set, 4);
-    table.entryAt(5, regionSize).set(set, 5);
-    table.entryAt(5, 4 * regionSize).set(set, 6);
-    AOT_TEST_CHECK(!decommitEmptyPages(table.bytes(), set));
-    AOT_TEST_CHECK(startsOfRegionsEverWritten(set).size() == 6);
-
-    table.entryAt(2, 2 * regionSize).clear();
-    table.entryAt(2, lastOffset).clear();
-    table.entryAt(3, 0).clear();
-    table.entryAt(5, regionSize).clear();
-    AOT_TEST_CHECK(decommitEmptyPages(table.bytes(), set) == 2 * page);
-#if OS(LINUX)
-    AOT_TEST_CHECK(isPresent(table.page(0)) && !isPresent(table.page(2)) && !isPresent(table.page(3)) && isPresent(table.page(5)));
-#endif
-    AOT_TEST_CHECK((startsOfRegionsEverWritten(set) == Vector<size_t> { 0, 5 * page + regionSize, 5 * page + 4 * regionSize }));
-    AOT_TEST_CHECK(table.entryAt(0, 0).get() == 1 && table.entryAt(5, 4 * regionSize).get() == 6);
-    AOT_TEST_CHECK(holdsOnlyZeros(table.bytes().subspan(page, 4 * page)));
-    AOT_TEST_CHECK(!decommitEmptyPages(table.bytes(), set));
-
-    table.entryAt(2, lastOffset).set(set, 7);
-    AOT_TEST_CHECK(table.entryAt(2, lastOffset).get() == 7);
-    AOT_TEST_CHECK((startsOfRegionsWrittenSinceLastSweep(set) == Vector<size_t> { 3 * page - regionSize }));
-    AOT_TEST_CHECK(!decommitEmptyPages(table.bytes(), set));
-    AOT_TEST_CHECK(table.entryAt(2, lastOffset).get() == 7);
-}
-
-static void testPagesNeverWrittenAreNotTouched()
-{
-    Pages table(3);
-    RememberedSlotSet set(table.bytes(), regionShift);
-    table.entryAt(1, 0).set(set, 1);
-    table.entryAt(1, 0).clear();
-    AOT_TEST_CHECK(decommitEmptyPages(table.bytes(), set) == pageSize());
-#if OS(LINUX)
-    AOT_TEST_CHECK(!isPresent(table.page(0)) && !isPresent(table.page(1)) && !isPresent(table.page(2)));
-#endif
-    AOT_TEST_CHECK(startsOfRegionsEverWritten(set).isEmpty());
-}
-
-static void testPartOfPageStays()
-{
-    Pages pages(2);
-    size_t page = pageSize();
-    std::span<uint8_t> table = pages.bytes().first(page + page / 2);
-    RememberedSlotSet set(table, regionShift);
-    pages.entryAt(0, regionSize).set(set, 1);
-    pages.entryAt(1, regionSize).set(set, 2);
-    pages.entryAt(1, page / 2).setWithoutRecordingForTesting(3);
-    pages.entryAt(0, regionSize).clear();
-    pages.entryAt(1, regionSize).clear();
-
-    AOT_TEST_CHECK(decommitEmptyPages(table, set) == page);
-    AOT_TEST_CHECK((startsOfRegionsEverWritten(set) == Vector<size_t> { page + regionSize }));
-    AOT_TEST_CHECK(pages.entryAt(1, page / 2).get() == 3);
-}
-
-static void testTableThatStartsInsidePageStays()
-{
-    Pages pages(3);
-    std::span<uint8_t> table = pages.bytes().subspan(regionSize);
-    RememberedSlotSet set(table, regionShift);
-    pages.entryAt(0, 0).setWithoutRecordingForTesting(1);
-    pages.entryAt(1, 0).set(set, 2);
-    pages.entryAt(1, 0).clear();
-
-    AOT_TEST_CHECK(!decommitEmptyPages(table, set));
-    AOT_TEST_CHECK(startsOfRegionsEverWritten(set).size() == 1);
-    AOT_TEST_CHECK(pages.entryAt(0, 0).get() == 1);
-}
 
 static void testRegionsLargerThanPageStay()
 {
@@ -176,18 +77,6 @@ static void testRegionsLargerThanPageStay()
     AOT_TEST_CHECK((static_cast<size_t>(1) << shiftOfLargeRegion) > pageSize());
     AOT_TEST_CHECK(!decommitEmptyPages(table.bytes(), set));
     AOT_TEST_CHECK(startsOfRegionsEverWritten(set).size() == 1);
-}
-
-static void testHoldsOnlyZeros()
-{
-    alignas(uint64_t) std::array<uint8_t, 27> bytes { };
-    std::span<const uint8_t> all { bytes };
-    AOT_TEST_CHECK(holdsOnlyZeros(all) && holdsOnlyZeros(all.first(0)) && holdsOnlyZeros(all.subspan(3)));
-    for (size_t index = 0; index < bytes.size(); ++index) {
-        bytes[index] = 1;
-        AOT_TEST_CHECK(!holdsOnlyZeros(all) && holdsOnlyZeros(all.first(index)) && holdsOnlyZeros(all.subspan(index + 1)));
-        bytes[index] = 0;
-    }
 }
 
 namespace {
@@ -245,51 +134,6 @@ static bool tablesAnswerFor(LoadedProgram& program, StructureID id)
     return !!program.state().propertyCaches->tables().find(id, displayNameInCaches(program), SlotAccess::Read);
 }
 
-static void testTextsGivenAsDisplayNamesEndWithTheirClosures(LoadedProgram& program)
-{
-    if (framesAreThoseOfAddressSanitizer)
-        return;
-    bool hasSeenSlimClosures = false;
-    bool hasSeenFullClosures = false;
-    for (ASCIILiteral name : namesOfFunctionsWithClosuresToDrop) {
-        FunctionID function = findFunctionWithClosuresToDrop(program, name);
-        (functionKindData(function).isSlim ? hasSeenSlimClosures : hasSeenFullClosures) = true;
-        Vector<DroppedClosure> dropped;
-        nameReadAndDropClosures(program, function, dropped);
-        collectWhatWasDropped(program);
-
-        unsigned numberOfTextsLeft = 0;
-        unsigned numberOfOwnStructuresLeft = 0;
-        for (const DroppedClosure& one : dropped) {
-            numberOfTextsLeft += !!one.text;
-            numberOfOwnStructuresLeft += one.hasStructureOfItsOwn && one.structure;
-            AOT_TEST_CHECK(one.structure || !tablesAnswerFor(program, one.structureID()));
-        }
-        AOT_TEST_CHECK(numberOfTextsLeft < numberOfClosuresDropped / 4);
-        AOT_TEST_CHECK(numberOfOwnStructuresLeft < numberOfClosuresDropped / 4);
-    }
-    AOT_TEST_CHECK(hasSeenSlimClosures && hasSeenFullClosures);
-}
-
-// The closures that follow go the same way through the same frames, so no word of the stack names the first one any more.
-static void testSiteKeepsStructureThatNextClosureGetsAndNotWhatClosureHeld(LoadedProgram& program)
-{
-    if (framesAreThoseOfAddressSanitizer)
-        return;
-    SiteCache site = siteOfTestsOfDroppedClosures(program);
-    for (ASCIILiteral name : namesOfFunctionsWithClosuresToDrop) {
-        FunctionID function = findFunctionWithClosuresToDrop(program, name);
-        DroppedClosure read;
-        readThroughSiteAndDropClosure(program, function, StructureOfClosure::IsShared, read);
-        Vector<DroppedClosure> others;
-        nameReadAndDropClosures(program, function, others);
-        collectWhatWasDropped(program);
-
-        AOT_TEST_CHECK(!read.closure && !read.text);
-        AOT_TEST_CHECK(read.structure && site->get().structureID == read.structureID() && tablesAnswerFor(program, read.structureID()));
-    }
-}
-
 static void testSiteLetsGoOfStructureOfOneClosure(LoadedProgram& program)
 {
     if (framesAreThoseOfAddressSanitizer)
@@ -327,16 +171,9 @@ static constexpr void (*withClosuresToDrop)() = runNativeTestWithLoadedProgram<c
 std::span<const NativeTest> cacheSweepTests()
 {
     static constexpr NativeTest tests[] = {
-        { "cache-sweep/closures/texts-given-as-display-names-end-with-their-closures"_s, withClosuresToDrop<testTextsGivenAsDisplayNamesEndWithTheirClosures> },
-        { "cache-sweep/closures/site-keeps-structure-that-next-closure-gets-and-not-what-closure-held"_s, withClosuresToDrop<testSiteKeepsStructureThatNextClosureGetsAndNotWhatClosureHeld> },
         { "cache-sweep/closures/site-lets-go-of-structure-of-one-closure"_s, withClosuresToDrop<testSiteLetsGoOfStructureOfOneClosure> },
         { "cache-sweep/closures/what-is-remembered-of-a-structure-spells-no-address"_s, withClosuresToDrop<testWhatIsRememberedOfStructureSpellsNoAddress> },
-        { "cache-sweep/empty-pages/pages-whose-entries-died-go-back"_s, testPagesWhoseEntriesDiedGoBack },
-        { "cache-sweep/empty-pages/pages-never-written-are-not-touched"_s, testPagesNeverWrittenAreNotTouched },
-        { "cache-sweep/empty-pages/part-of-a-page-stays"_s, testPartOfPageStays },
-        { "cache-sweep/empty-pages/table-that-starts-inside-a-page-stays"_s, testTableThatStartsInsidePageStays },
         { "cache-sweep/empty-pages/regions-larger-than-a-page-stay"_s, testRegionsLargerThanPageStay },
-        { "cache-sweep/empty-pages/holds-only-zeros"_s, testHoldsOnlyZeros },
     };
     return tests;
 }

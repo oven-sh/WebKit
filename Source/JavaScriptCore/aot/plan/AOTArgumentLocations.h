@@ -75,10 +75,6 @@ constexpr bool haveSameRegisterRepresentation(Representation returned, Represent
         || (isInt64OrMarker(returned) && isInt64OrMarker(expected));
 }
 
-// The direct convention: each value takes the next register of its bank (directArgumentGPR(), directArgumentFPR() of AOTConvention.h), then the next stack word.
-// Results go by the same scheme, counted from the first register again. One result lies in the return register of its bank.
-JS_EXPORT_PRIVATE ArgumentLocations locationsOfDirectSignature(std::span<const Representation> parameters, std::span<const Representation> results);
-
 } } } // namespace JSC::AOT::Typed
 
 #endif // ENABLE(AOT)

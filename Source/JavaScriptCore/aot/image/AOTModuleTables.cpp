@@ -395,13 +395,8 @@ static ModuleID moduleThatStartsFromWord(const TableEncoder& encoder, VariableID
     const Typed::Plan& plan = encoder.plan;
     if (const Typed::PromotedVariable* promoted = plan.promotedEnvironments().find(id))
         return initialWordMayBeRead(promoted->location, placed) ? promoted->module : ModuleID();
-    // Any other variable that the plan added stands for an object that its first read makes.
-    if (FunctionID body = plan.deferredDefinitions().bodyOfAddedVariable(id))
-        return program.at(body).module;
-    bool standsBesideVariable = id.index() >= program.variables.size();
-    VariableID written = standsBesideVariable ? plan.deferredDefinitions().variableBesideAdded(id) : id;
-    const Typed::Variable& variable = program.at(written);
-    if (variable.owner || (!standsBesideVariable && !initialWordMayBeRead(encoder.facts.variable(id).location, placed)))
+    const Typed::Variable& variable = program.at(id);
+    if (variable.owner || !initialWordMayBeRead(encoder.facts.variable(id).location, placed))
         return { };
     return variable.module;
 }

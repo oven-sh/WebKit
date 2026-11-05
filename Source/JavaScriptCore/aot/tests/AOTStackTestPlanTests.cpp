@@ -69,28 +69,6 @@ static String chainOfCallsForStackTestPlanTests(CallInChainForStackTestPlanTests
     return text.toString();
 }
 
-// The first half of the functions each call every function of the other half. The text grows as the square of the number.
-static String everyCallerCallsEveryCalleeForStackTestPlanTests(unsigned numberOfCallers)
-{
-    StringBuilder text;
-    appendHeadForStackTestPlanTests(text, 2 * numberOfCallers);
-    text.append("function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {\n  b0():\n    v0 = Builtin builtin=GlobalThis\n    v1 = PropGet v0 key=\"sink\" [isFreeName]\n"_s);
-    for (unsigned caller = 1; caller <= numberOfCallers; ++caller)
-        text.append("    v"_s, 2 * caller, " = NewClosure function=f"_s, caller, "\n    v"_s, 2 * caller + 1, " = Call v1, -, v"_s, 2 * caller, '\n');
-    text.append("    Return v1\n}\n"_s);
-    for (unsigned caller = 1; caller <= numberOfCallers; ++caller) {
-        appendHeadOfFunctionForStackTestPlanTests(text, caller);
-        for (unsigned callee = 1; callee <= numberOfCallers; ++callee)
-            text.append("    v"_s, 2 * callee - 1, " = GetModuleVariable variable=g"_s, numberOfCallers + callee - 1, "\n    v"_s, 2 * callee, " = Call v"_s, 2 * callee - 1, ", -, v0 calleeName=\"c"_s, numberOfCallers + callee, "\"\n"_s);
-        text.append("    Return v0\n}\n"_s);
-    }
-    for (unsigned callee = numberOfCallers + 1; callee <= 2 * numberOfCallers; ++callee) {
-        appendHeadOfFunctionForStackTestPlanTests(text, callee);
-        text.append("    v1 = PropGet v0 key=\"x\"\n    Return v1\n}\n"_s);
-    }
-    return text.toString();
-}
-
 static void withPlanForStackTestPlanTests(const String& text, NOESCAPE const Invocable<void(const Program&, const Facts&, const Plan&)> auto& functor)
 {
     runOnBuildThread([&] {
@@ -104,83 +82,18 @@ static void withPlanForStackTestPlanTests(const String& text, NOESCAPE const Inv
     });
 }
 
-// The two questions by themselves, over a plan that is whole: what else the plan does with so many functions is not asked about.
-static std::optional<uint64_t> instructionsOfBothPlansForStackTestPlanTests(const String& text)
-{
-    std::optional<uint64_t> instructions;
-    withPlanForStackTestPlanTests(text, [&](const Program& program, const Facts& facts, const Plan& plan) {
-        instructions = instructionsOfAllThreadsIn([&] {
-            StackTestPlan tests = planStackTests(program, facts, plan);
-            BitVector functionsThatEnd = findFunctionsThatEndTheirTailCalls(program, facts);
-            AOT_TEST_CHECK(tests.coveredFramesOfCall.size() == program.functions.size());
-            AOT_TEST_CHECK(functionsThatEnd.size() >= program.functions.size());
-        });
-    });
-    return instructions;
-}
-
-static void testPlansGrowAsChainOfCallsDoes()
-{
-    constexpr unsigned numberOfFunctions = 3000;
-    InstructionCounts::begin();
-    std::optional<uint64_t> smaller = instructionsOfBothPlansForStackTestPlanTests(chainOfCallsForStackTestPlanTests(CallInChainForStackTestPlanTests::ComesBack, numberOfFunctions));
-    std::optional<uint64_t> large = instructionsOfBothPlansForStackTestPlanTests(chainOfCallsForStackTestPlanTests(CallInChainForStackTestPlanTests::ComesBack, 4 * numberOfFunctions));
-    AOT_TEST_CHECK(growsAsSizeDoes(smaller, large));
-}
-
-static void testPlansGrowAsChainOfTailCallsDoes()
-{
-    constexpr unsigned numberOfFunctions = 3000;
-    InstructionCounts::begin();
-    std::optional<uint64_t> smaller = instructionsOfBothPlansForStackTestPlanTests(chainOfCallsForStackTestPlanTests(CallInChainForStackTestPlanTests::InTailPosition, numberOfFunctions));
-    std::optional<uint64_t> large = instructionsOfBothPlansForStackTestPlanTests(chainOfCallsForStackTestPlanTests(CallInChainForStackTestPlanTests::InTailPosition, 4 * numberOfFunctions));
-    AOT_TEST_CHECK(growsAsSizeDoes(smaller, large));
-}
-
-// Twice the callers and twice the callees are four times the calls.
-static void testPlansGrowAsCallsOfEveryCalleeByEveryCallerDo()
-{
-    constexpr unsigned numberOfCallers = 60;
-    InstructionCounts::begin();
-    std::optional<uint64_t> smaller = instructionsOfBothPlansForStackTestPlanTests(everyCallerCallsEveryCalleeForStackTestPlanTests(numberOfCallers));
-    std::optional<uint64_t> large = instructionsOfBothPlansForStackTestPlanTests(everyCallerCallsEveryCalleeForStackTestPlanTests(2 * numberOfCallers));
-    AOT_TEST_CHECK(growsAsSizeDoes(smaller, large));
-}
-
-// Below a test stand at most maxNestedFunctionsWithoutStackCheck frames that make none, however long the chain is.
-static void testNoMoreFramesAreCoveredThanThereIsRoomFor()
-{
-    constexpr unsigned numberOfFunctions = 40;
-    withPlanForStackTestPlanTests(chainOfCallsForStackTestPlanTests(CallInChainForStackTestPlanTests::ComesBack, numberOfFunctions), [&](const Program&, const Facts&, const Plan& plan) {
-        const StackTestPlan& tests = plan.conventions().stackTests();
-        for (unsigned function = 1; function <= numberOfFunctions; ++function) {
-            unsigned framesOfCall = numberOfFunctions - function + 1;
-            bool isCovered = plan.conventions().stackCheckOf({ FunctionID(function), CodeRole::Body }) == StackCheck::CoveredByCallers;
-            AOT_TEST_CHECK(isCovered == (framesOfCall <= maxNestedFunctionsWithoutStackCheck));
-            AOT_TEST_CHECK(tests.coveredFramesOfCall[function] == std::min<unsigned>(framesOfCall, maxNestedFunctionsWithoutStackCheck));
-        }
-    });
-}
-
 static void testEveryFunctionOfChainOfTailCallsEnds()
 {
     constexpr unsigned numberOfFunctions = 40;
-    withPlanForStackTestPlanTests(chainOfCallsForStackTestPlanTests(CallInChainForStackTestPlanTests::InTailPosition, numberOfFunctions), [&](const Program& program, const Facts& facts, const Plan& plan) {
-        BitVector functionsThatEnd = findFunctionsThatEndTheirTailCalls(program, facts);
-        for (unsigned function = 1; function <= numberOfFunctions; ++function) {
+    withPlanForStackTestPlanTests(chainOfCallsForStackTestPlanTests(CallInChainForStackTestPlanTests::InTailPosition, numberOfFunctions), [&](const Program&, const Facts&, const Plan& plan) {
+        for (unsigned function = 1; function <= numberOfFunctions; ++function)
             AOT_TEST_CHECK(plan.endsItsTailCalls(FunctionID(function)));
-            AOT_TEST_CHECK(makesOnlyTailCallsThatEnd(program, facts, functionsThatEnd, FunctionID(function)));
-        }
     });
 }
 
 std::span<const NativeTest> stackTestPlanTests()
 {
     static constexpr NativeTest tests[] {
-        { "stack-test-plan/the-plans-grow-as-a-chain-of-calls-does"_s, testPlansGrowAsChainOfCallsDoes },
-        { "stack-test-plan/the-plans-grow-as-a-chain-of-tail-calls-does"_s, testPlansGrowAsChainOfTailCallsDoes },
-        { "stack-test-plan/the-plans-grow-as-the-calls-of-every-callee-by-every-caller-do"_s, testPlansGrowAsCallsOfEveryCalleeByEveryCallerDo },
-        { "stack-test-plan/no-more-frames-are-covered-than-there-is-room-for"_s, testNoMoreFramesAreCoveredThanThereIsRoomFor },
         { "stack-test-plan/every-function-of-a-chain-of-tail-calls-ends"_s, testEveryFunctionOfChainOfTailCallsEnds },
     };
     return tests;

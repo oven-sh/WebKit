@@ -12,6 +12,7 @@
 #include "AOTClassTable.h"
 #include "AOTClosureTable.h"
 #include "AOTCompiledCall.h"
+#include "AOTCompiledCallee.h"
 #include "AOTErrorMessages.h"
 #include "AOTFunctionDescription.h"
 #include "AOTFunctionNames.h"
@@ -21,6 +22,7 @@
 #include "AOTModuleTable.h"
 #include "AOTObjectModel.h"
 #include "AOTProgramIdentifiers.h"
+#include "AOTProgramStatics.h"
 #include "AOTProgramStrings.h"
 #include "AOTPropertyWalk.h"
 #include "AOTSlimClosure.h"
@@ -60,6 +62,13 @@ const ClassInfo ReifiedSlimClosure::s_info = { "Function"_s, &Base::s_info, null
 
 static void analyzeCaptures(JSCell* cell, uint32_t closureNumber, std::span<const uint64_t> captures, unsigned numberOfReferences, HeapAnalyzer& analyzer)
 {
+    // Under the interpreter a function holds the scope that it was made in, and that scope leads to the environment of its module.
+    Instance* instance = cell->structure()->realm()->aotInstance();
+    if (JSCell* environment = instance ? instance->state->statics->environmentOfModuleThatDefines(closureNumber) : nullptr)
+        analyzer.analyzeEdge(cell, environment, RootMarkReason::None);
+    // A snapshot asks a JSFunction for its name by itself.
+    if (String name = cell->inherits<JSFunction>() ? String() : CompiledCallee::displayName(asObject(cell)); !name.isEmpty())
+        analyzer.setLabelForCell(cell, name);
     const ProgramIdentifiers& identifiers = *cell->vm().aotState().identifiers;
     for (unsigned i = 0; i < numberOfReferences; ++i) {
         JSValue reference = JSValue::decode(captures[i]);

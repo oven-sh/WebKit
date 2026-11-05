@@ -48,15 +48,6 @@ Vector<InternalError> findErrorsInWords(FunctionID id, const Body& body)
     return verifier.takeErrors();
 }
 
-Vector<InternalError> findErrorsInBody(const Program& program, FunctionID id, const Function& function)
-{
-    CurrentWorkScope work(program, id, "verify"_s);
-    BodyVerifierScratch scratch(&program);
-    BodyVerifier verifier(&program, id, &function, function.body, scratch);
-    verifier.run();
-    return verifier.takeErrors();
-}
-
 static void printBodyThatVerifierRefused(const Program& program, FunctionID id)
 {
     if (!printerOfBodiesForVerifier || id.index() >= program.functions.size())
@@ -66,16 +57,6 @@ static void printBodyThatVerifierRefused(const Program& program, FunctionID id)
     BodyVerifierScratch scratch(&program);
     if (BodyVerifier(&program, id, &function, function.body, scratch).runWords())
         printerOfBodiesForVerifier(program, id, "REFUSED BY THE VERIFIER OF BODIES"_s);
-}
-
-bool verifyBody(const Program& program, FunctionID id, const Function& function, BuildContext& build)
-{
-    Vector<InternalError> errors = findErrorsInBody(program, id, function);
-    if (errors.isEmpty())
-        return true;
-    build.diagnostics().add(errors.first());
-    printBodyThatVerifierRefused(program, id);
-    return false;
 }
 
 bool verifyBodies(const Program& program, BuildContext& build)

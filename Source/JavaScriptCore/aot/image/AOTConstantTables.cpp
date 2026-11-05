@@ -189,6 +189,20 @@ static Vector<uint32_t> listConstantAndUnlockedBuiltinMembers(const TableEncoder
     return words;
 }
 
+static Vector<uint32_t> listNamesTakenForAbsent(const TableEncoder& encoder)
+{
+    const Typed::Program& program = encoder.program;
+    Vector<uint32_t> numbers;
+    for (PropertyKeyID key : program.keysTakenForAbsent())
+        numbers.append(ProgramTables::numberOfNameTakenForAbsent(program.string(program.at(key).text)));
+    // What the engine reads off a function by itself, whatever the program reads.
+    for (ASCIILiteral name : { "prototype"_s, "displayName"_s })
+        numbers.append(ProgramTables::numberOfNameTakenForAbsent(byteCast<uint8_t>(name.span())));
+    AOT::sortInLine(numbers);
+    numbers.shrink(std::unique(numbers.begin(), numbers.end()) - numbers.begin());
+    return numbers;
+}
+
 void encodeConstantTables(TableEncoder& encoder)
 {
     const ImageNumbers& numbers = encoder.numbers;
@@ -198,6 +212,7 @@ void encodeConstantTables(TableEncoder& encoder)
     });
     encoder.part.setTable(ProgramTableIndex::eagerBuiltinCells, numbers.eagerBuiltinCells());
     encoder.part.setTable(ProgramTableIndex::constantAndUnlockedBuiltinMembers, listConstantAndUnlockedBuiltinMembers(encoder));
+    encoder.part.setTable(ProgramTableIndex::namesTakenForAbsent, listNamesTakenForAbsent(encoder));
     setConstantTableOfWords(encoder, ProgramTableIndex::bigIntConstants, numbers.bigIntConstants(), [&](StringID digits) {
         return encoder.stringNumber(digits);
     });

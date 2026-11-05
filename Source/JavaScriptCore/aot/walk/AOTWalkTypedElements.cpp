@@ -437,7 +437,7 @@ static bool buildArrayTestOfTypedElements(const AccessOfTypedElements& access)
 
 static void nameVectorOfViewInTypedElements(Walker& walker, Draft& access, Reference view, TypedArrayType typedArrayType)
 {
-    if (!access.isInsideView() || !hasInlineElementAccess(typedArrayType))
+    if (!access.isInsideView() || !hasInlineElementAccess(typedArrayType) || walker.testsEveryPosition())
         return;
     Draft vector(Opcode::GetTypedArrayVector, access.origin());
     walker.chooseConservativeFields(vector);

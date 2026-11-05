@@ -31,7 +31,6 @@ namespace JSC { namespace AOT {
 static Typed::FactsRequest factsRequestForPreparedProgram(const CompileOptions& options, Typed::Mechanisms mechanisms)
 {
     Typed::FactsRequest request;
-    request.tracesUnknownValues = hasFlag(options.reports, ReportSet::Flow);
     request.mechanisms = Typed::withoutMechanismsMissingDependencies(mechanisms);
     // Link answers the same in every order of its worklist and on any number of lanes. One thread tells a small program, so what only lanes get wrong shows in large ones alone, unless a test asks for lanes.
     if (hasFlag(options.testing, Wire::TestingSwitch::DelayFlowRules))

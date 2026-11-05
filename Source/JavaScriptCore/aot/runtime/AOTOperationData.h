@@ -63,19 +63,44 @@ struct FunctionVariableData {
 static_assert(sizeof(FunctionVariableData) == 8 && isImageRecord<FunctionVariableData>);
 
 // namedVariables: the variables in the statics and in the closure table that a heap snapshot shows under their names, those of one module side by side. A slot of the kind DeferredClosure names the function whose one closure the variable stands for.
-// Only a heap snapshot reads them, from the first to the last. So the table holds bytes, for each module that has such variables: how many, then each of them, in the order of their names:
+// Only a heap snapshot reads them, from the first to the last. So the table holds bytes, for each module whose variables a snapshot shows, in the order of the modules:
+// its number less that of the module before, how many such variables it has, which may be none, then each of them, in the order of their names:
 // its name less the one before, then a word: above its lowest bit, its place less the last place of its kind in any module. A place in the statics counts words of four bytes.
 // The bit is set where the representation is not that of the variable before, in any module, and then the representation follows. The first variable of all comes behind a JSValue.
+// Behind the variables stand the closure numbers of the functions that the module defines, as runs: how many runs, then of each its first number less the end of the run before, in any module, and its length.
 class NamedVariablesWriter {
 public:
     static constexpr uint32_t bytesInUnitOfStatics = 4;
     static constexpr SlotRepresentation representationInFrontOfFirst = SlotRepresentation::JSValue;
 
-    void beginModule(size_t numberOfVariables)
+    void beginModule(uint32_t module, size_t numberOfVariables)
     {
-        RELEASE_ASSERT(numberOfVariables);
+        RELEASE_ASSERT(m_bytes.isEmpty() || module > m_lastModule);
+        appendVarint(m_bytes, module - m_lastModule);
         appendVarint(m_bytes, numberOfVariables);
+        m_lastModule = module;
         m_lastName = 0;
+    }
+    // Ascending, each once.
+    void endModule(std::span<const uint32_t> closureNumbers)
+    {
+        auto endOfRunFrom = [&](size_t first) {
+            size_t end = first + 1;
+            while (end < closureNumbers.size() && closureNumbers[end] == closureNumbers[end - 1] + 1)
+                ++end;
+            return end;
+        };
+        size_t numberOfRuns = 0;
+        for (size_t first = 0; first < closureNumbers.size(); first = endOfRunFrom(first))
+            ++numberOfRuns;
+        appendVarint(m_bytes, numberOfRuns);
+        for (size_t first = 0; first < closureNumbers.size();) {
+            size_t end = endOfRunFrom(first);
+            appendVarint(m_bytes, zigZagEncode(static_cast<int64_t>(closureNumbers[first]) - m_endOfLastRun));
+            appendVarint(m_bytes, end - first);
+            m_endOfLastRun = closureNumbers[end - 1] + 1;
+            first = end;
+        }
     }
     void append(const VariableData& variable)
     {
@@ -95,23 +120,30 @@ public:
 
 private:
     Vector<uint8_t> m_bytes;
+    uint32_t m_lastModule { 0 };
     uint32_t m_lastName { 0 };
     uint32_t m_lastPlace[2] { };
+    uint32_t m_endOfLastRun { 0 };
     SlotRepresentation m_lastRepresentation { representationInFrontOfFirst };
 };
 
 // False if the bytes do not end where a module ends, or hold a number that no row holds.
-bool forEachNamedVariable(std::span<const uint8_t> bytes, const auto& beginModule, const auto& visit)
+bool forEachNamedVariable(std::span<const uint8_t> bytes, const auto& beginModule, const auto& visit, const auto& visitRunOfClosureNumbers)
 {
     const uint8_t* cursor = bytes.data();
     const uint8_t* end = cursor + bytes.size();
     int64_t lastPlace[2] { };
     uint64_t representation = static_cast<uint64_t>(NamedVariablesWriter::representationInFrontOfFirst);
+    uint64_t module = 0;
+    int64_t endOfLastRun = 0;
     while (cursor < end) {
-        uint64_t numberOfVariables = readVarint(cursor);
-        if (!numberOfVariables)
+        bool isFirstModule = cursor == bytes.data();
+        uint64_t modulesFurther = readVarint(cursor);
+        module += modulesFurther;
+        if ((!modulesFurther && !isFirstModule) || module > UINT32_MAX || cursor >= end)
             return false;
-        beginModule(static_cast<size_t>(numberOfVariables));
+        uint64_t numberOfVariables = readVarint(cursor);
+        beginModule(static_cast<uint32_t>(module), static_cast<size_t>(numberOfVariables));
         uint64_t name = 0;
         for (uint64_t index = 0; index < numberOfVariables; ++index) {
             if (cursor >= end)
@@ -134,6 +166,20 @@ bool forEachNamedVariable(std::span<const uint8_t> bytes, const auto& beginModul
             if (place < 0 || offset > static_cast<int64_t>(SlotData::maxOffset))
                 return false;
             visit(VariableData { static_cast<uint32_t>(name), SlotData::create(static_cast<uint32_t>(offset), static_cast<SlotRepresentation>(representation)) });
+        }
+        if (cursor >= end)
+            return false;
+        for (uint64_t runsLeft = readVarint(cursor); runsLeft; --runsLeft) {
+            if (cursor >= end)
+                return false;
+            int64_t first = endOfLastRun + zigZagDecode(readVarint(cursor));
+            if (cursor >= end)
+                return false;
+            uint64_t length = readVarint(cursor);
+            if (first < 0 || !length || length > UINT32_MAX || first + static_cast<int64_t>(length) > UINT32_MAX)
+                return false;
+            visitRunOfClosureNumbers(static_cast<uint32_t>(first), static_cast<uint32_t>(length));
+            endOfLastRun = first + static_cast<int64_t>(length);
         }
     }
     return cursor == end;
@@ -430,7 +476,6 @@ struct ThrowSiteWord {
     static constexpr uint32_t narrowNone = (1u << 17) - 1;
     static constexpr uint32_t maxNarrowA = narrowNone - 1;
     static constexpr unsigned numberOfRegistersPerBank = 32;
-    static constexpr unsigned maxMethodReadColumnDelta = numberOfRegistersPerBank - 2;
     // What the stub stores for the operation: the general registers that a value may be in, by their numbers, and behind them the floating-point registers, by theirs.
 #if CPU(X86_64)
     static constexpr unsigned numberOfStoredGPRs = 16;
@@ -505,6 +550,7 @@ static_assert(static_cast<unsigned>(ThrowKind::NullishUpdate) < 1u << 3 && numbe
     v(builtinCells, uint32_t) \
     v(eagerBuiltinCells, uint32_t) \
     v(constantAndUnlockedBuiltinMembers, uint32_t) \
+    v(namesTakenForAbsent, uint32_t) \
     v(globalBindings, uint32_t) \
     v(entryPoints, uint32_t)
 

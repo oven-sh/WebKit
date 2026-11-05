@@ -53,7 +53,7 @@ static void generateIsGeneratorSuspendedAtStart(StraightEmitter& emitter, const 
     CCallHelpers& jit = emitter.jit();
     GPRReg generator = StraightEmitter::temporary(1);
     emitter.load(value.generatorOperand(), generator);
-    jit.move(CCallHelpers::TrustedImm32(0), StraightEmitter::resultGPR);
+    jit.move(CCallHelpers::TrustedImm32(0), emitter.takeResultRegister());
     CCallHelpers::Jump isNotCell = jit.branchIfNotCell(generator);
     emitter.callOperation(value, RuntimeOperation::IsGeneratorSuspendedAtStart, { StraightArgument::inRegister(generator) });
     isNotCell.link(&jit);
@@ -96,9 +96,9 @@ static void generateCreateIteratorResult(StraightEmitter& emitter, const BodyVal
     }
 
     CCallHelpers& jit = emitter.jit();
-    GPRReg cell = StraightEmitter::resultGPR;
     GPRReg stored = StraightEmitter::temporary(1);
     emitter.callStub(value, allocateCell(CellInitialization::HeaderAndWordsAndZeros), { StraightArgument::number(emitter.mentions().allocation(*placed, fields)) });
+    GPRReg cell = emitter.resultOfCall();
     emitter.load(value.valueOperand(), stored);
     jit.store64(stored, CCallHelpers::Address(cell, static_cast<int32_t>(planned.slots[*valueField].offset)));
     emitter.load(value.doneOperand(), stored);
@@ -111,7 +111,7 @@ static void generateCreateIteratorResult(StraightEmitter& emitter, const BodyVal
 static void generateStepOfEngineIterator(StraightEmitter& emitter, const BodyValue& value, RuntimeOperation step)
 {
     emitter.callOperation(value, step, { value.iteratorOperand() });
-    emitter.defineResult(value, static_cast<uint32_t>(StepArrayIteratorResult::Done), GPRInfo::returnValueGPR);
+    emitter.defineResult(value, static_cast<uint32_t>(StepArrayIteratorResult::Done), emitter.resultOfCall());
     emitter.defineResult(value, static_cast<uint32_t>(StepArrayIteratorResult::Value), GPRInfo::returnValueGPR2);
 }
 

@@ -254,32 +254,6 @@ TypeID TypeArena::intersectionOf(TypeID a, TypeID b, DeclaredParts declared)
     return result;
 }
 
-TypeID TypeArena::passingFilter(TypeID value, TypeID typeOfFilter)
-{
-    ASSERT(value && typeOfFilter);
-    if (value == typeOfFilter)
-        return value;
-    if (isNeverType(value) || isNeverType(typeOfFilter))
-        return TypeTable::never;
-    if (holdsOnlyPrimitives(value) && holdsOnlyPrimitives(typeOfFilter))
-        return typeOfPrimitivesInArena(*this, primitivesInID(value) & primitivesInID(typeOfFilter), integersInID(value).intersectWith(integersInID(typeOfFilter)));
-
-    if (std::optional<uint32_t> known = remembered(Operation::PassingFilter, value.bits(), typeOfFilter.bits()))
-        return TypeID::fromBits(*known);
-    Type filter = at(typeOfFilter);
-    bool someMergedFormBecomesUnknown = false;
-    TypeID result = intern(typeThatPassesFilter(*this, at(value), filter, someMergedFormBecomesUnknown));
-    if (someMergedFormBecomesUnknown) {
-        TypeParts unknownWithinFilter;
-        unknownWithinFilter.seeds = filter.seeds;
-        unknownWithinFilter.unnamedLayouts = filter.unnamedLayouts;
-        unknownWithinFilter.unnamedClasses = filter.unnamedClasses;
-        result = unionOf(result, intern(unknownWithinFilter));
-    }
-    remember(Operation::PassingFilter, value.bits(), typeOfFilter.bits(), result.bits());
-    return result;
-}
-
 TypeID TypeArena::differenceOf(TypeID value, TypeID removed)
 {
     ASSERT(value && removed);

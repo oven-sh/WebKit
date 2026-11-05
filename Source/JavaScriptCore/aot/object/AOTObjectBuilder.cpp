@@ -134,7 +134,7 @@ static bool canBeExtraProperty(VM& vm, const LayoutData& layout, UniquedStringIm
 
 bool ObjectBuilder::canBuildWithoutCompilerKnowledge(const LayoutData& layout)
 {
-    if (layout.keysAreNeverEnumerated || layout.isDerived || !layout.impossibleMutations().isEmpty())
+    if (layout.isDerived || !layout.impossibleMutations().isEmpty())
         return false;
     return std::ranges::none_of(layout.fields(), [](const FieldData& field) {
         return field.flags & (fieldIsStoredOnce | fieldIsNeverStoredWithOtherType | fieldIsNeverDeleted | fieldIsNeverRedefined);
@@ -207,7 +207,7 @@ std::unique_ptr<ObjectBuilderPlan> ObjectBuilder::tryCreatePlan(State& state, co
     }
 
     std::optional<uint32_t> orderAndCount = unorderedOrderWord;
-    if (!layout.keysAreNeverEnumerated && plan->m_extraPropertyNames.isEmpty())
+    if (plan->m_extraPropertyNames.isEmpty())
         orderAndCount = state.objects->keyOrders.orderStartingWith(layout, plan->m_keyOrder.span());
     if (!orderAndCount)
         return nullptr;
@@ -340,7 +340,7 @@ JSObject* ObjectBuilder::finish()
     std::span<const uint8_t> body = cellBytes().subspan(sizeof(JSCell), m_plan.m_initialBody.size());
     Object* object = Object::create(m_vm, structure, layout, layout.size, unorderedOrderWord);
     memcpySpan(std::span { &object->at<uint8_t>(sizeof(JSCell)), body.size() }, body);
-    object->setPerCellBit(object->orderWord() & orderWordHasFieldOutsideSlot || !object->hasEveryFieldOfBirth());
+    object->setBearsMark(object->orderWord() & orderWordHasFieldOutsideSlot || !object->hasEveryFieldOfBirth());
     if (m_granuleBits) {
         object->ensureExtensionGranules(m_vm, m_granuleBits);
         // The first Extension of an object holds what every maker fills besides: a granule has its place by the bits of the Extension, not by those that were stored.
@@ -364,14 +364,12 @@ JSObject* ObjectBuilder::finish()
     CompiledStructure* structureWithExtraProperties = existing ? existing : structures.withExtraProperties(m_vm, *structure, nullptr);
 
     std::span<const uint16_t> keys = m_plan.m_keyOrder.span();
-    uint32_t orderAndCount = unorderedOrderWord;
-    if (!layout.keysAreNeverEnumerated) {
-        if (std::optional<uint32_t> numbered = state.objects->keyOrders.orderStartingWith(layout, keys))
-            orderAndCount = *numbered;
-        else {
-            orderAndCount = outOfLineOrderWordFor(keys.size());
-            structureWithExtraProperties = structures.withOutOfLineKeyOrder(m_vm, *structureWithExtraProperties, keys);
-        }
+    uint32_t orderAndCount;
+    if (std::optional<uint32_t> numbered = state.objects->keyOrders.orderStartingWith(layout, keys))
+        orderAndCount = *numbered;
+    else {
+        orderAndCount = outOfLineOrderWordFor(keys.size());
+        structureWithExtraProperties = structures.withOutOfLineKeyOrder(m_vm, *structureWithExtraProperties, keys);
     }
     object->setOrderAndCount(orderAndCount);
     object->setExtraProperties(m_vm, extra, structureWithExtraProperties);

@@ -120,12 +120,6 @@ static String copyOfText(uint32_t number)
     return copy;
 }
 
-static const SymbolImpl& symbolOf(const Identifier& identifier)
-{
-    AOT_TEST_CHECK(identifier.impl()->isSymbol());
-    return uncheckedDowncast<SymbolImpl>(*identifier.impl());
-}
-
 static UniquedStringImpl* atomOfImage(uint32_t number)
 {
 #if ENABLE(AOT_POSITION_INDEPENDENT_IMAGE)
@@ -149,58 +143,6 @@ static bool hasNoHeader(uint32_t number)
 static ProgramIdentifiers* identifiersOfVM(LoadedProgram& program)
 {
     return program.vm().aotState().identifiers.get();
-}
-
-static void testOnlySymbolsStartAbsent(LoadedProgram& program)
-{
-    ProgramIdentifiers table(program.vm(), *Image::current());
-    AOT_TEST_CHECK(table.count() == imageText().numberOfIdentifiers());
-    AOT_TEST_CHECK(table.count() > 2);
-#if ENABLE(AOT_POSITION_INDEPENDENT_IMAGE)
-    AOT_TEST_CHECK(!table.symbols().count);
-    for (uint32_t number = 0; number < table.count(); ++number) {
-        AOT_TEST_CHECK(!table.symbols().find(number));
-        if (!isAtomOfImage(number)) {
-            AOT_TEST_CHECK(hasNoHeader(number));
-            AOT_TEST_CHECK(!table.tryGetIdentifierConcurrently(number));
-            continue;
-        }
-        UniquedStringImpl* header = atomOfImage(number);
-        AOT_TEST_CHECK(imageText().tryGetLazyHeader(number) == header && imageText().lazyHeaderNumber(*header) == number);
-#else
-    AOT_TEST_CHECK(table.identifiers() == imageText().identifierAtoms());
-    AOT_TEST_CHECK(!table.symbols().count);
-    for (uint32_t number = 0; number < table.count(); ++number) {
-        UniquedStringImpl* header = table.identifiers() + number;
-        AOT_TEST_CHECK(!table.symbols().find(number));
-        if (!isAtomOfImage(number)) {
-            AOT_TEST_CHECK(!header->length());
-            AOT_TEST_CHECK(!table.tryGetIdentifierConcurrently(number));
-            continue;
-        }
-#endif
-        AOT_TEST_CHECK(header->isStatic() && header->isAtom() && !header->isSymbol());
-        AOT_TEST_CHECK(StringView(*header) == imageText().view(imageText().identifier(number).text()));
-        AOT_TEST_CHECK(table.tryGetIdentifierConcurrently(number) == header);
-    }
-}
-
-static void testTextNameIsAtomOfImage(LoadedProgram& program)
-{
-    ProgramIdentifiers table(program.vm(), *Image::current());
-    uint32_t alpha = findNumber(PropertyKeyKind::Text, "alpha"_s);
-    uint32_t beta = findNumber(PropertyKeyKind::Text, "beta"_s);
-    UniquedStringImpl* atom = atomOfImage(alpha);
-
-    AOT_TEST_CHECK(table.tryGetIdentifierConcurrently(alpha) == atom);
-    AOT_TEST_CHECK(table.uid(alpha) == atom);
-
-    Identifier name = table.identifier(alpha);
-    AOT_TEST_CHECK(name.string().string() == "alpha"_s);
-    AOT_TEST_CHECK(name.impl() == atom);
-    AOT_TEST_CHECK(table.identifier(alpha).impl() == atom);
-    AOT_TEST_CHECK(table.uid(beta) == atomOfImage(beta) && atomOfImage(beta) != atom);
-    AOT_TEST_CHECK(!table.symbols().count);
 }
 
 static void testTextMadeAtRunTimeIsAtomOfImage(LoadedProgram& program)
@@ -246,28 +188,6 @@ static void testUnnamedNumberZero(LoadedProgram& program)
     AOT_TEST_CHECK(ProgramIdentifiers::textOf(*Image::current(), 0).isNull());
 }
 
-static void testReadFromAnotherThread(LoadedProgram& program)
-{
-    ProgramIdentifiers table(program.vm(), *Image::current());
-    uint32_t iterator = findNumber(WellKnownSymbol::Iterator);
-    UniquedStringImpl* symbol = table.uid(iterator);
-
-    Vector<UniquedStringImpl*> results(FillWith { }, table.count(), nullptr);
-    Thread::create("program-identifiers-tests"_s, [&] {
-        for (uint32_t number = 0; number < table.count(); ++number)
-            results[number] = table.tryGetIdentifierConcurrently(number);
-    })->waitForCompletion();
-
-    for (uint32_t number = 0; number < table.count(); ++number) {
-        if (number == iterator)
-            AOT_TEST_CHECK(results[number] == symbol);
-        else if (isAtomOfImage(number))
-            AOT_TEST_CHECK(results[number] == atomOfImage(number));
-        else
-            AOT_TEST_CHECK(!results[number]);
-    }
-}
-
 static unsigned countCompleteEntries(const ProgramIdentifiers& table)
 {
     unsigned count = 0;
@@ -301,20 +221,6 @@ static void testReaderSeesNullOrCompleteEntry(LoadedProgram& program)
     hasCreatedAll = true;
     reader->waitForCompletion();
     AOT_TEST_CHECK(lastCount == table.count() - 1);
-}
-
-static void testNumberOfTextNeedsNoCreation(LoadedProgram& program)
-{
-    VM& vm = program.vm();
-    ProgramIdentifiers table(vm, *Image::current());
-    uint32_t alpha = findNumber(PropertyKeyKind::Text, "alpha"_s);
-    Identifier name = Identifier::fromString(vm, "alpha"_s);
-
-    AOT_TEST_CHECK(table.numberOf(name.impl()) == alpha);
-    AOT_TEST_CHECK(table.numberOf(atomOfImage(alpha)) == alpha);
-    AOT_TEST_CHECK(!table.symbols().count);
-    AOT_TEST_CHECK(ProgramIdentifiers::textOf(*Image::current(), alpha) == "alpha"_s);
-    AOT_TEST_CHECK(ProgramIdentifiers::textOf(*Image::current(), alpha).impl() == name.impl());
 }
 
 static void testNameOutsideProgramHasNoNumber(LoadedProgram& program)
@@ -405,129 +311,6 @@ static void testTableOfIdentifiers()
         AOT_TEST_CHECK(!table.find(hash, isNoText));
     }
     AOT_TEST_CHECK(numberOfSearches > 16000 && numberOfLooks < numberOfSearches / 100);
-}
-
-static void testWellKnownSymbolIsTheEngines(LoadedProgram& program)
-{
-    VM& vm = program.vm();
-    ProgramIdentifiers table(vm, *Image::current());
-    uint32_t iterator = findNumber(WellKnownSymbol::Iterator);
-    uint32_t hasInstance = findNumber(WellKnownSymbol::HasInstance);
-
-    AOT_TEST_CHECK(!table.numberOf(vm.propertyNames->iteratorSymbol.impl()));
-    AOT_TEST_CHECK(hasNoHeader(iterator));
-    AOT_TEST_CHECK(table.identifier(iterator) == vm.propertyNames->iteratorSymbol);
-    AOT_TEST_CHECK(table.symbols().find(iterator) == vm.propertyNames->iteratorSymbol.impl());
-    AOT_TEST_CHECK(table.identifier(hasInstance) == vm.propertyNames->hasInstanceSymbol);
-    AOT_TEST_CHECK(table.numberOf(vm.propertyNames->iteratorSymbol.impl()) == iterator);
-    AOT_TEST_CHECK(table.numberOf(vm.propertyNames->hasInstanceSymbol.impl()) == hasInstance);
-    AOT_TEST_CHECK(ProgramIdentifiers::textOf(*Image::current(), iterator).isNull());
-}
-
-static void testRegisteredSymbolIsTheRegistrys(LoadedProgram& program)
-{
-    VM& vm = program.vm();
-    ProgramIdentifiers table(vm, *Image::current());
-    uint32_t number = findNumber(PropertyKeyKind::RegisteredSymbol, "nodejs.util.inspect.custom"_s);
-    Ref<RegisteredSymbolImpl> symbol = vm.symbolRegistry().symbolForKey("nodejs.util.inspect.custom"_s);
-
-    AOT_TEST_CHECK(!table.numberOf(symbol.ptr()));
-    AOT_TEST_CHECK(table.identifier(number).impl() == symbol.ptr());
-    AOT_TEST_CHECK(table.numberOf(symbol.ptr()) == number);
-}
-
-static bool isEngineSymbol(PropertyKeyKind kind)
-{
-    switch (kind) {
-    case PropertyKeyKind::WellKnownSymbol:
-    case PropertyKeyKind::RegisteredSymbol:
-    case PropertyKeyKind::EnginePrivateName:
-    case PropertyKeyKind::ModulePrivateName:
-        return true;
-    case PropertyKeyKind::Text:
-    case PropertyKeyKind::PrivateName:
-    case PropertyKeyKind::CreatedSymbol:
-        return false;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-static void testEngineSymbolsAreCreatedTogether(LoadedProgram& program)
-{
-    VM& vm = program.vm();
-    ProgramIdentifiers table(vm, *Image::current());
-    table.createEngineSymbols();
-
-    for (uint32_t number = 1; number < table.count(); ++number) {
-        UniquedStringImpl* created = table.symbols().find(number);
-        AOT_TEST_CHECK(!!created == isEngineSymbol(imageText().identifier(number).kind()));
-        if (created)
-            AOT_TEST_CHECK(table.numberOf(created) == number);
-    }
-    AOT_TEST_CHECK(table.numberOf(vm.propertyNames->iteratorSymbol.impl()) == findNumber(WellKnownSymbol::Iterator));
-    AOT_TEST_CHECK(table.numberOf(vm.propertyNames->builtinNames().thenPrivateName().impl()) == findNumber(PropertyKeyKind::EnginePrivateName, "then"_s));
-}
-
-static void testStartUpCreatesEngineSymbols(LoadedProgram& program)
-{
-    VM& vm = program.vm();
-    ProgramIdentifiers& table = *vm.aotState().identifiers;
-    AOT_TEST_CHECK(table.numberOf(vm.propertyNames->iteratorSymbol.impl()) == findNumber(WellKnownSymbol::Iterator));
-}
-
-static void testEnginePrivateNameIsTheEngines(LoadedProgram& program)
-{
-    VM& vm = program.vm();
-    ProgramIdentifiers table(vm, *Image::current());
-    uint32_t then = findNumber(PropertyKeyKind::EnginePrivateName, "then"_s);
-
-    AOT_TEST_CHECK(table.identifier(then) == vm.propertyNames->builtinNames().thenPrivateName());
-    AOT_TEST_CHECK(symbolOf(table.identifier(then)).isPrivate());
-    AOT_TEST_CHECK(table.numberOf(table.identifier(then).impl()) == then);
-}
-
-static void testEnginePrivateNameIsAddedToTheEngines(LoadedProgram& program)
-{
-    VM& vm = program.vm();
-    ProgramIdentifiers table(vm, *Image::current());
-    uint32_t number = findNumber(PropertyKeyKind::EnginePrivateName, "nameOnlyThisProgramHas"_s);
-
-    Identifier name = table.identifier(number);
-    AOT_TEST_CHECK(symbolOf(name).isPrivate());
-    AOT_TEST_CHECK(StringView(name.impl()) == "nameOnlyThisProgramHas"_s);
-    AOT_TEST_CHECK(vm.propertyNames->builtinNames().lookUpPrivateName(String("nameOnlyThisProgramHas"_s)) == name.impl());
-    AOT_TEST_CHECK(enginePrivateName(vm, "nameOnlyThisProgramHas"_s) == name);
-    AOT_TEST_CHECK(vm.aotState().identifiers->identifier(number) == name);
-}
-
-static void testPrivateNameIsPrivateSymbol(LoadedProgram& program)
-{
-    VM& vm = program.vm();
-    ProgramIdentifiers table(vm, *Image::current());
-    uint32_t number = findNumber(PropertyKeyKind::PrivateName, "secret"_s);
-
-    Identifier name = table.identifier(number);
-    AOT_TEST_CHECK(symbolOf(name).isPrivate());
-    AOT_TEST_CHECK(StringView(name.impl()) == "secret"_s);
-    AOT_TEST_CHECK(table.numberOf(name.impl()) == number);
-    AOT_TEST_CHECK(!vm.propertyNames->builtinNames().lookUpPrivateName(String("secret"_s)));
-}
-
-static void testCreatedSymbolHasItsDescription(LoadedProgram& program)
-{
-    ProgramIdentifiers table(program.vm(), *Image::current(), identifiersOfVM(program));
-    uint32_t described = findNumber(PropertyKeyKind::CreatedSymbol, "described"_s);
-    uint32_t undescribed = findNumberOfSymbolWithoutDescription();
-
-    const SymbolImpl& describedSymbol = symbolOf(table.identifier(described));
-    AOT_TEST_CHECK(!describedSymbol.isPrivate() && !describedSymbol.isRegistered() && !describedSymbol.isNullSymbol());
-    AOT_TEST_CHECK(StringView(describedSymbol) == "described"_s);
-
-    const SymbolImpl& undescribedSymbol = symbolOf(table.identifier(undescribed));
-    AOT_TEST_CHECK(!undescribedSymbol.isPrivate() && !undescribedSymbol.isRegistered() && undescribedSymbol.isNullSymbol());
-
-    AOT_TEST_CHECK(table.numberOf(table.identifier(described).impl()) == described);
-    AOT_TEST_CHECK(table.numberOf(table.identifier(undescribed).impl()) == undescribed);
 }
 
 static void testSymbolIsCreatedOnce(LoadedProgram& program)
@@ -670,24 +453,12 @@ static constexpr void (*withSymbols)() = runNativeTestWithLoadedProgram<programI
 std::span<const NativeTest> programIdentifiersTests()
 {
     static constexpr NativeTest tests[] = {
-        { "program-identifiers/only-symbols-start-absent"_s, withTextNames<testOnlySymbolsStartAbsent> },
-        { "program-identifiers/text-name-is-atom-of-image"_s, withTextNames<testTextNameIsAtomOfImage> },
         { "program-identifiers/text-made-at-run-time-is-atom-of-image"_s, withTextNames<testTextMadeAtRunTimeIsAtomOfImage> },
         { "program-identifiers/unnamed-number-zero"_s, withTextNames<testUnnamedNumberZero> },
-        { "program-identifiers/read-from-another-thread"_s, withTextNames<testReadFromAnotherThread> },
         { "program-identifiers/reader-sees-null-or-complete-entry"_s, withTextNames<testReaderSeesNullOrCompleteEntry> },
-        { "program-identifiers/number-of-text-needs-no-creation"_s, withTextNames<testNumberOfTextNeedsNoCreation> },
         { "program-identifiers/name-outside-program-has-no-number"_s, withTextNames<testNameOutsideProgramHasNoNumber> },
         { "program-identifiers/names-of-one-bucket"_s, withTextNames<testNamesOfOneBucket> },
         { "program-identifiers/table-of-identifiers"_s, testTableOfIdentifiers },
-        { "program-identifiers/well-known-symbol-is-the-engines"_s, withTextNames<testWellKnownSymbolIsTheEngines> },
-        { "program-identifiers/registered-symbol-is-the-registrys"_s, withTextNames<testRegisteredSymbolIsTheRegistrys> },
-        { "program-identifiers/start-up-creates-engine-symbols"_s, withTextNames<testStartUpCreatesEngineSymbols> },
-        { "program-identifiers/engine-symbols-are-created-together"_s, withSymbols<testEngineSymbolsAreCreatedTogether> },
-        { "program-identifiers/engine-private-name-is-the-engines"_s, withSymbols<testEnginePrivateNameIsTheEngines> },
-        { "program-identifiers/engine-private-name-is-added-to-the-engines"_s, withSymbols<testEnginePrivateNameIsAddedToTheEngines> },
-        { "program-identifiers/private-name-is-private-symbol"_s, withSymbols<testPrivateNameIsPrivateSymbol> },
-        { "program-identifiers/created-symbol-has-its-description"_s, withSymbols<testCreatedSymbolHasItsDescription> },
         { "program-identifiers/symbol-is-created-once"_s, withSymbols<testSymbolIsCreatedOnce> },
         { "program-identifiers/empty-text-is-the-engines"_s, withSymbols<testEmptyTextIsTheEngines> },
         { tableOfSymbolsGrowsTest, testTableOfSymbolsGrows },

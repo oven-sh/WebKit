@@ -112,8 +112,6 @@ bool tryAssignCallingGetters(JSGlobalObject*, JSObject* target, JSObject* source
 bool wouldPerformFastPut(VM&, JSObject* target);
 JS_EXPORT_PRIVATE void didBecomePrototype(VM&, JSObject*);
 JS_EXPORT_PRIVATE void didPutDirectOnClosure(VM&, JSObject* closure, UniquedStringImpl*);
-// A store gave a data property of an object that may be a prototype another value. No name and no attribute changed.
-JS_EXPORT_PRIVATE void didReplaceValueOnPrototype(VM&, JSObject* holder, UniquedStringImpl*);
 bool hasIndexedProperties(JSObject*);
 JSObject* objectHoldingIndexedProperties(const JSObject*);
 

@@ -612,10 +612,10 @@ static void checkObjectRecordReadBack(const TestBuild& build, const ProgramTable
     const LayoutData& record = tables.layoutForShape(shape);
     AOT_TEST_CHECK(record.index == id.index() && record.shape == shape && record.kind() == build.program().at(id).kind);
     AOT_TEST_CHECK(record.size == planned.size && record.numberOfFields == planned.numberOfRecordFields);
-    AOT_TEST_CHECK(!!record.keysAreNeverEnumerated == placed.keysAreNeverEnumerated && record.impossibleMutations() == placed.impossibleMutations);
+    AOT_TEST_CHECK(record.impossibleMutations() == placed.impossibleMutations);
 
     const Typed::KeyOrders& keyOrders = plan.keyOrders();
-    AOT_TEST_CHECK(record.numberOfOrders == (placed.keysAreNeverEnumerated ? 0 : keyOrders.numberOfOrdersOf(id)));
+    AOT_TEST_CHECK(record.numberOfOrders == keyOrders.numberOfOrdersOf(id));
     AOT_TEST_CHECK(!record.ordersOffset == !record.numberOfOrders);
     for (uint32_t order = 0; order < record.numberOfOrders; ++order) {
         std::span<const FieldIndex> fields = keyOrders.order(id, order);

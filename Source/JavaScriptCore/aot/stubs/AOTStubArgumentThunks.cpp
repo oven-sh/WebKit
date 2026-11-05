@@ -32,15 +32,6 @@ static void forEachThunkMove(std::span<const uint64_t> moves, const Functor& fun
     }
 }
 
-RegisterSet destinationRegistersOf(const ArgumentMoves& movesWithoutHeader)
-{
-    RegisterSet destinations;
-    forEachThunkMove(movesWithoutHeader.span(), [&](ArgumentSource, GPRReg destination, uint64_t) {
-        destinations.add(destination, IgnoreVectors);
-    });
-    return destinations;
-}
-
 static bool isOperandOfThunkCallee(StubKey key, const StubSignature& signature, GPRReg reg)
 {
     for (unsigned i = 0; i < signature.numberOfOperands; ++i) {

@@ -31,14 +31,10 @@ namespace JSC { namespace AOT { namespace Typed {
 
 static constexpr OpcodeSet readsOfPlacesInNumberExpectations { Opcode::PropGet, Opcode::PrivateGet, Opcode::GetModuleVariable, Opcode::GetEnvironmentField, Opcode::GetCapture };
 static constexpr OpcodeSet callsWithResultsInNumberExpectations { Opcode::Call, Opcode::CallList };
-static constexpr OpcodeSet callsOnNoRoadInNumberExpectations { Opcode::Call, Opcode::CallList, Opcode::Construct };
 static constexpr OpcodeSet testsThatCutNumberExpectations = allRelations | allEqualities | OpcodeSet { Opcode::TypeTest };
 static constexpr OpcodeSet sumsFollowedInNumberExpectations { Opcode::Add, Opcode::Sub, Opcode::Increment, Opcode::Decrement };
 static constexpr OpcodeSet operatorsWithZeroAsIdentityInNumberExpectations { Opcode::BitOr, Opcode::BitXor, Opcode::LShift, Opcode::RShift, Opcode::URShift };
 static constexpr OpcodeSet operatorsThatMakeFractions { Opcode::Div, Opcode::Pow };
-static constexpr OpcodeSet operatorsThatMakeNumbersOfNumbers { Opcode::Add, Opcode::Sub, Opcode::Mul, Opcode::Div, Opcode::Mod, Opcode::Pow };
-// Each starts by applying ToNumber to undefined, null, booleans and numbers, or compares.
-static constexpr OpcodeSet operatorsBesideNumbersInNumberExpectations = allBitwiseOperators | allRelations | allEqualities | operatorsThatMakeNumbersOfNumbers;
 static constexpr OpcodeSet accessesByKeyInNumberExpectations { Opcode::ElemGet, Opcode::ElemSet, Opcode::ElemHas };
 static_assert(OperandIndex::ElemGet::property == OperandIndex::ElemSet::property && OperandIndex::ElemGet::property == OperandIndex::ElemHas::property);
 
@@ -383,7 +379,8 @@ static bool turnsStepOrUseEnvironmentFieldAsInt32(Walker& walker, const BodyInde
     return false;
 }
 
-bool turnsTakeEnvironmentFieldForInt32(Walker& walker, LoopID loop, LayoutID layout, uint32_t field)
+// By the body: what the turns of the loop do with the variable speaks for an int32: usesSpeakForInt32() of one of its reads, a step (`pos++`, `pos += size`), a relation with a variable that is so stepped.
+static bool turnsTakeEnvironmentFieldForInt32(Walker& walker, LoopID loop, LayoutID layout, uint32_t field)
 {
     const BodyIndex& index = walker.currentBodyIndex();
     if (turnsStepOrUseEnvironmentFieldAsInt32(walker, index, loop, layout, field))
@@ -545,75 +542,6 @@ static ExpectationOfNumber unitedWithWhatWasSeenInNumberExpectations(Walker& wal
     return { united, someWrittenLayoutHasObjects, true };
 }
 
-// ---- What an operator or a row takes as a number
-
-// By what is written alone, so of a value that is not walked yet too: `(a.w + a.h) * 2` has its constant behind the sum.
-static bool isNumberAsWrittenInNumberExpectations(Walker& walker, const BodyValue& written)
-{
-    TypeID type;
-    if (written.isParameter())
-        type = written.parameterType();
-    else if (written.opcode() == Opcode::Integer || written.opcode() == Opcode::Double)
-        return true;
-    else if (written.opcode() == Opcode::Convert)
-        type = written.as<Opcode::Convert>().declared().expected().predicted();
-    return type && walker.types().at(walker.types().withoutNullish(type)).isNumber();
-}
-
-static bool isNumberBesideOperandInNumberExpectations(Walker& walker, ValueID value)
-{
-    if (!value)
-        return false;
-    if (TypeID proven = provenTypeInNumberExpectations(walker, value); proven && walker.types().at(proven).isNumberOrNullish())
-        return true;
-    return isNumberAsWrittenInNumberExpectations(walker, walker.currentBodyIndex().value(value));
-}
-
-// `sum += shape.width + shape.height`, where nothing is known of the shapes: the other operand is a number, or what the operator gives goes into a position that is written as a number or beside a number into another operator,
-// and it is a number only if both operands are.
-static bool isTakenAsNumberInNumberExpectations(Walker& walker, ValueID input)
-{
-    const BodyIndex& index = walker.currentBodyIndex();
-    NamesInNumberExpectations names { input };
-    // The names from here on stand for what operators make of the value.
-    Vector<bool, mostNamesFollowedInNumberExpectations> isResult { false };
-    bool isTakenAsNumber = false;
-    for (size_t place = 0; place < names.size() && !isTakenAsNumber; ++place) {
-        ValueID name = names[place];
-        bool nameIsResult = isResult[place];
-        auto follow = [&](ValueID next, bool nextIsResult) {
-            if (!next || names.contains(next) || names.size() == mostNamesFollowedInNumberExpectations)
-                return;
-            names.append(next);
-            isResult.append(nextIsResult);
-        };
-        visitMentionsForNumberExpectations(index, name, [&](const MentionInNumberExpectations& mention) {
-            if (!mention.user) {
-                if (!mention.handedOnAs)
-                    return;
-                isTakenAsNumber |= nameIsResult && isNumberAsWrittenInNumberExpectations(walker, index.value(mention.handedOnAs));
-                follow(mention.handedOnAs, nameIsResult);
-                return;
-            }
-            BodyValue user = index.value(mention.user);
-            Opcode opcode = user.opcode();
-            if (opcodesThatStateTypes.contains(opcode) && !mention.operandIndex) {
-                isTakenAsNumber |= nameIsResult && isNumberAsWrittenInNumberExpectations(walker, user);
-                follow(mention.user, nameIsResult);
-                return;
-            }
-            if (operatorsBesideNumbersInNumberExpectations.contains(opcode) && numberOfNamedOperandsOf(opcode) == 2 && mention.operandIndex < 2) {
-                isTakenAsNumber |= isNumberBesideOperandInNumberExpectations(walker, user.operand(1 - mention.operandIndex));
-                if (operatorsThatMakeNumbersOfNumbers.contains(opcode))
-                    follow(mention.user, true);
-                return;
-            }
-            isTakenAsNumber |= !nameIsResult && rowsTakeArgumentAsPositionInNumberExpectations(walker, user, mention.operandIndex);
-        });
-    }
-    return isTakenAsNumber;
-}
-
 // ---- Whoever asks with no test behind the answer
 
 // In the list of what is remembered: nothing is known of the value, and what is found of it is left as it is found. findExpectationForGuesses() writes what it finds over the mark.
@@ -724,10 +652,7 @@ ExpectationOfNumber numbersExpectedOf(Walker& walker, ValueID input, Expectation
         TypeID cut = withNumbersCutToInt32(types, type);
         return cut ? ExpectationOfNumber { cut, true, false } : found;
     }
-    // Nobody wrote it and nobody holds it: the weakest kind.
-    if (!type.isJavaScriptValue() || !(type.primitives & Primitive::Number) || !isTakenAsNumberInNumberExpectations(walker, input))
-        return found;
-    return { usesSpeakForInt32(walker, input) ? TypeID(TypeTable::int32) : TypeID(TypeTable::number), false, false };
+    return found;
 }
 
 } } } // namespace JSC::AOT::Typed

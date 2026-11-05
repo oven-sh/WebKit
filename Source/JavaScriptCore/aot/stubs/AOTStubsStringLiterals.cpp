@@ -45,7 +45,7 @@ StubSignature signatureOfValueEqualsLiteral(StubKey) { return tableComparisonSig
 StubSignature signatureOfStringEqualsLiteralOfLength(StubKey) { return registerComparisonSignature(); }
 StubSignature signatureOfValueEqualsLiteralOfLength(StubKey) { return registerComparisonSignature(); }
 StubSignature signatureOfToLiteralString(StubKey) { return StubSignature::withGPRResult({ gprOf(StubRegister::T11) }); }
-StubSignature signatureOfShortStringOfValue(StubKey) { return StubSignature::withGPRResult({ gprOf(StubRegister::T11) }); }
+StubSignature signatureOfNarrowCharactersOfString(StubKey) { return StubSignature::withGPRResult({ gprOf(StubRegister::T11) }); }
 
 void generateStringEqualsLiteral(StubAssembler& jit)
 {
@@ -371,69 +371,9 @@ void generateToLiteralString(StubAssembler& jit)
     callLiteralStringOperationAndReturn(jit, Entry::operationAOTToLiteralString, value);
 }
 
-void generateShortStringOfValue(StubAssembler& jit)
+void generateNarrowCharactersOfString(StubAssembler& jit)
 {
-    const GPRReg value = jit.operand(0);
-    const GPRReg result = jit.result();
-    const GPRReg characters = jit.allocateScratch(StubRegister::T12);
-    const GPRReg length = jit.allocateScratch(StubRegister::T13);
-    const GPRReg shift = jit.allocateScratch(StubRegister::T14);
-    constexpr int32_t smallestPageSize = 4096;
-    static_assert(maxShortStringLength == 7 && noShortString == UINT64_MAX);
-    JumpList notShortString;
-    JumpList slowCases;
-
-    notShortString.append(jit.branchIfNotCell(value));
-    notShortString.append(jit.branchIfNotType(value, StringType));
-    jit.loadPtr(Address(value, JSString::offsetOfValue()), characters);
-    Jump isRope = jit.branchTestPtr(CCallHelpers::NonZero, characters, TrustedImm32(JSString::isRopeInPointer));
-    jit.load32(Address(characters, StringImpl::lengthMemoryOffset()), length);
-    notShortString.append(jit.branch32(CCallHelpers::Above, length, TrustedImm32(maxShortStringLength)));
-    slowCases.append(jit.branchTest32(CCallHelpers::Zero, Address(characters, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIs8Bit())));
-    Jump isEmpty = jit.branchTest32(CCallHelpers::Zero, length);
-    jit.loadPtr(Address(characters, StringImpl::dataOffset()), characters);
-    Label hasCharacters = jit.label();
-    jit.lshift32(length, TrustedImm32(3), shift);
-    jit.neg32(shift);
-    jit.add32(TrustedImm32(8 * maxShortStringLength), shift);
-    // An eight-byte load at the first character could reach into the next page, which may not be mapped.
-    jit.and32(TrustedImm32(smallestPageSize - 1), characters, result);
-    Jump isNearEndOfPage = jit.branch32(CCallHelpers::Above, result, TrustedImm32(smallestPageSize - static_cast<int32_t>(sizeof(uint64_t))));
-    jit.load64(Address(characters), result);
-    jit.lshift64(shift, result);
-    jit.lshift64(TrustedImm32(8), result);
-    jit.add32(TrustedImm32(8 - shortStringLengthBits), shift);
-    jit.urshift64(shift, result);
-    jit.or64(length, result);
-    jit.returnToCaller();
-
-    isNearEndOfPage.link(&jit);
-    jit.load64(BaseIndex(characters, length, CCallHelpers::TimesOne, -static_cast<int32_t>(sizeof(uint64_t))), result);
-    jit.urshift64(shift, result);
-    jit.urshift64(TrustedImm32(8), result);
-    jit.lshift64(TrustedImm32(shortStringLengthBits), result);
-    jit.or64(length, result);
-    jit.returnToCaller();
-
-    isEmpty.link(&jit);
-    returnResult(jit, TrustedImm32(0));
-
-    isRope.link(&jit);
-    jit.load32(Address(value, JSRopeString::offsetOfLength()), length);
-    notShortString.append(jit.branch32(CCallHelpers::Above, length, TrustedImm32(maxShortStringLength)));
-    slowCases.append(jit.branchTestPtr(CCallHelpers::Zero, characters, TrustedImm32(JSRopeString::isSubstringInPointer)));
-    loadSubstringBaseAndOffset(jit, value, characters, shift);
-    jit.loadPtr(Address(characters, JSString::offsetOfValue()), characters);
-    slowCases.append(jit.branchTest32(CCallHelpers::Zero, Address(characters, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIs8Bit())));
-    jit.loadPtr(Address(characters, StringImpl::dataOffset()), characters);
-    jit.addPtr(shift, characters);
-    jit.jump().linkTo(hasCharacters, &jit);
-
-    notShortString.link(&jit);
-    returnResult(jit, TrustedImm64(-1));
-
-    slowCases.link(&jit);
-    callLiteralStringOperationAndReturn(jit, Entry::operationAOTShortStringOfString, value);
+    callLiteralStringOperationAndReturn(jit, Entry::operationAOTNarrowCharactersOfString, jit.operand(0));
 }
 
 } } // namespace JSC::AOT

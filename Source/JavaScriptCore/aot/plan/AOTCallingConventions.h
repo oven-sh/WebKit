@@ -30,7 +30,6 @@ namespace Typed {
 
 class Facts;
 class Program;
-struct Function;
 
 enum class StackCheck : uint8_t { Required, CoveredByCallers };
 
@@ -74,32 +73,6 @@ struct GenericEntryPlan {
     // Of the entry for calls: what a construction enters in its place, if anything.
     CodeUnit constructEntry;
 };
-
-enum class BoundCaptureKind : uint8_t { TargetCapture, BoundThis, BoundArgument, TargetClosure };
-
-struct BoundCapture {
-    BoundCaptureKind kind { BoundCaptureKind::BoundArgument };
-    // A number that the run time hands on as a value when it constructs through the bound function.
-    bool isHeldAsValue { false };
-    Representation representation { Representation::JSValue };
-    // Among the captures of the target, or among its positional parameters.
-    uint16_t index { 0 };
-};
-// The entry parameter of the target that the capture is passed to. nullopt for TargetClosure: it is passed to none.
-std::optional<unsigned> targetEntryParameterOf(const Function& target, const BoundCapture&);
-
-struct BoundFunctionPlan {
-    FunctionID target;
-    uint16_t numberOfBoundArguments { 0 };
-    uint16_t numberOfCapturedArguments { 0 };
-    bool capturesTargetClosure { false };
-    // Full or Slim: the form of every closure that NewBoundClosure makes for the plan.
-    ClosureForm closureForm { ClosureForm::Full };
-    uint32_t length { 0 };
-    // The captures of the bound function's closure, in their order.
-    Vector<BoundCapture, 8> captures;
-};
-
 
 // A generic call entry that only moves is emitted in front of the primary entry of its target, as this entry of that unit, and is never compiled as a unit.
 inline constexpr uint16_t fusedCallEntry = UINT16_MAX;
@@ -171,8 +144,6 @@ struct CallingConventionParts {
     Vector<Representation> formsOfEntryParameters;
     // The entry parameters of each function with a ParameterGuard side by side: ParameterGuardPlan::typesBehindGuard. Milestone one: empty.
     Vector<TypeID> typesBehindGuards;
-    // Ascending by target, then by the number of bound arguments.
-    Vector<BoundFunctionPlan> boundFunctions;
     MethodTablePlan methodTable;
     // By layout: CodeUnit::function of its serializer. Null: the layout has none. Empty: no layout has one, and no unit has a place. planSerializers().
     Vector<FunctionID> functionsOfSerializers;
@@ -189,7 +160,7 @@ public:
     const FunctionConvention& of(FunctionID id) const LIFETIME_BOUND { return id.index() < m_parts.conventions.size() ? m_parts.conventions[id.index()] : m_conventionOfNoFunction; }
     uint32_t numberOfFunctions() const { return static_cast<uint32_t>(m_parts.conventions.size()); }
 
-    // Milestone one: of a role of one function, the bit in FunctionConvention::roles and numberOfBoundArguments == 0. Of a bound role, a plan in boundFunctions(). No unit of the table exists.
+    // Milestone one: of a role of one function, the bit in FunctionConvention::roles and numberOfBoundArguments == 0. No unit of the table exists.
     // Of a function with LinkedFunction::isInQueueFromStart: the unit is in the queue of Compile from the start, so whoever mentions it needs no place in the order.
     // Whoever finds such a function may have seen a test of its guard fail, and enters the slow version at its start. Without a guard only a fast version that is left enters the slow one, and Link leads from there to the function.
     bool isSeedOfFunctionInQueueFromStart(CodeUnit unit) const { return !namesOnlyUnitsOfItsFunction(unit.role) && (unit.role != CodeRole::SlowBody || of(unit.function).has(CodeRole::ParameterGuard)); }
@@ -235,11 +206,11 @@ public:
         return m_functionsWithGenericEntry.findBit(lower.index() + 1, true) >= higher.index();
     }
 
-    // A dense number for each unit that a role and a function, or a planned bound function, can name, whether or not the unit exists:
-    // function * numberOfCodeRolesOfOneFunction + role, and behind all of those, for the k-th of boundFunctions(), 2 * k + (role - numberOfCodeRolesOfOneFunction). placeInCodeOf() of image/AOTCompiledCode.h leans on it.
-    // Behind the bound functions: MethodSelector::firstUnit for the lookup of a selector, and behind it an entry for each method of the family, in their order.
+    // A dense number for each unit that a role and a function can name, whether or not the unit exists:
+    // function * numberOfCodeRolesOfOneFunction + role. placeInCodeOf() of image/AOTCompiledCode.h leans on it.
+    // Behind all of those: MethodSelector::firstUnit for the lookup of a selector, and behind it an entry for each method of the family, in their order.
     // Behind the units of the table: a place for each layout, whether or not it has a serializer, or none at all.
-    uint32_t numberOfUnits() const { return static_cast<uint32_t>(m_parts.conventions.size() * numberOfCodeRolesOfOneFunction + m_parts.boundFunctions.size() * numberOfBoundRoles) + m_parts.methodTable.numberOfUnits + numberOfPlacesOfSerializers(); }
+    uint32_t numberOfUnits() const { return static_cast<uint32_t>(m_parts.conventions.size() * numberOfCodeRolesOfOneFunction) + m_parts.methodTable.numberOfUnits + numberOfPlacesOfSerializers(); }
     uint32_t firstSerializer() const { return numberOfUnits() - numberOfPlacesOfSerializers(); }
     uint32_t indexOf(CodeUnit unit) const
     {
@@ -268,9 +239,8 @@ public:
     //   SlowBody             the same, each in its boxed form
     //   CoroutineBody        those, then the driver: Cell of a generator, JSValue of every other coroutine, where undefined stands for no promise
     //   GenericBuffer        the closure (Cell) and `this` (JSValue) alone. Everything else is read out of the buffer
-    //   GenericRegisters     those two, then new.target where genericEntry().takesNewTarget, then the positional parameters (of a bound entry: those behind the captured arguments), each a JSValue
-    //   BoundFunction        BoundFunctionPlan::captures in their forms, then the positional parameters of the target behind the captured arguments, as its Body takes them
-    //   a table role         never asked in milestone one, because no CallTable is built. RELEASE_ASSERT_NOT_REACHED
+    //   GenericRegisters     those two, then new.target where genericEntry().takesNewTarget, then the positional parameters, each a JSValue
+    //   a table role        never asked, because no CallTable is built. RELEASE_ASSERT_NOT_REACHED
     //   Serializer           SerializerParameter: Cell, Cell, Int32
     Representation parameterRepresentation(const Program& program, CodeUnit unit, unsigned parameterIndex) const
     {
@@ -299,7 +269,7 @@ public:
         return isTableRole(unit.role) ? methodSelector(unit.numberOfBoundArguments).result : Representation::JSValue;
     }
     // The parameters that parameterRepresentation() lists for the unit, no more and no fewer, and numberOfResults() results.
-    // Milestone one: Direct is locationsOfDirectSignature() of those forms. A generic entry takes the closure in calleeGPR, `this` in thisGPR, and what follows them, counted from 0, in argumentGPR(i) and then in stack word i - numberOfArgumentGPRs.
+    // Direct: each value takes the next register of its bank (directArgumentGPR(), directArgumentFPR() of AOTConvention.h), then the next stack word. A generic entry takes the closure in calleeGPR, `this` in thisGPR, and what follows them, counted from 0, in argumentGPR(i) and then in stack word i - numberOfArgumentGPRs.
     // It returns in returnValueGPR: AOTConvention.h. A table role: never asked, as above.
     JS_EXPORT_PRIVATE ArgumentLocations locationsOf(const Program&, CodeUnit) const;
     // The callers of all units of a function leave the same room, so that one unit can hand its arguments on to another.
@@ -310,20 +280,15 @@ public:
     bool savesRegistersOfCallers(CodeUnit unit) const { return m_tailCalls.savesRegistersOfCallers(unit); }
 
     // CoveredByCallers: the unit tests the stack only where its frame is larger than maxFrameSizeWithoutStackCheck of AOTConvention.h.
-    // Milestone one: a generic entry, a BoundFunction and a ParameterGuard are covered, because each goes on to a unit that tests. Every other unit tests, but for a small frame of a unit that calls nothing and jumps to nothing.
+    // Milestone one: a generic entry and a ParameterGuard are covered, because each goes on to a unit that tests. Every other unit tests, but for a small frame of a unit that calls nothing and jumps to nothing.
     StackCheck stackCheckOf(CodeUnit unit) const { return m_stackTests.isCoveredByCallers(isBodyOfCoroutine(unit.role, isCoroutine(unit.function)) ? CodeUnit(unit.function, CodeRole::CoroutineBody) : unit) ? StackCheck::CoveredByCallers : StackCheck::Required; }
     // A unit that tests the stack does so in front of a tail call too: the test is the poll of a cycle of tail calls. Milestone one: what stackCheckOf() says.
     bool testsStackInFrontOfTailCalls(CodeUnit unit) const { return unit.role != CodeRole::TableEntry && stackCheckOf(unit) == StackCheck::Required; }
 
     // Of a unit for which isGenericEntry() holds.
-    // Milestone one: the target is directEntryOf(), the ModuleStart where the function has one and the entry is for calls, and the BoundFunction of a GenericEntryOfBoundFunction.
+    // Milestone one: the target is directEntryOf(), and the ModuleStart where the function has one and the entry is for calls.
     // The entry for calls takes new.target where FunctionConvention::callEntryTakesNewTarget, and names the construct entry that the function has. Both construct entries take new.target, and the allocating one allocates `this`.
     JS_EXPORT_PRIVATE GenericEntryPlan genericEntry(CodeUnit) const;
-
-    // Milestone one: none. computeCallingConventions() says why.
-    std::span<const BoundFunctionPlan> boundFunctions() const LIFETIME_BOUND { return m_parts.boundFunctions.span(); }
-    // None: whoever binds so calls the built-in function. Milestone one: none.
-    JS_EXPORT_PRIVATE const BoundFunctionPlan* boundFunction(FunctionID target, unsigned numberOfBoundArguments) const LIFETIME_BOUND;
 
     const TailCallPlan& tailCalls() const LIFETIME_BOUND { return m_tailCalls; }
     const StackTestPlan& stackTests() const LIFETIME_BOUND { return m_stackTests; }
@@ -353,7 +318,7 @@ public:
     CodeUnit unitEnteredThroughTable(const Program&, const MethodSelector& selector, FunctionID method) const { return { method, CodeRole::TableEntry, placeOf(selector) }; }
 
 private:
-    // Every other unit returns one boxed value: an entry by value, the ramp and the body of a coroutine, and a bound function, whose target has one result.
+    // Every other unit returns one boxed value: an entry by value, and the ramp and the body of a coroutine.
     static bool returnsAsDeclared(CodeRole role, const FunctionConvention& convention) { return (returnsResultOfFunction(role) || role == CodeRole::ModuleStart) && !convention.has(CodeRole::CoroutineBody); }
     static constexpr bool isRoleOfOneFunction(CodeRole role) { return static_cast<unsigned>(role) < numberOfCodeRolesOfOneFunction; }
     static constexpr bool takesEntryParametersAsListed(CodeRole role) { return role == CodeRole::Body || role == CodeRole::ModuleStart || role == CodeRole::ParameterGuard; }
@@ -402,7 +367,7 @@ JS_EXPORT_PRIVATE std::optional<Vector<CallEntryMove, 8>> planCallEntryMoves(con
 // `layoutsMadeAsCompiledObjects`: the objects of the layout are compiled objects, and some may be allocated.
 // takesArgumentsInBuffer must be true where the function reads the list: HasRestParameter, HasHiddenRest or HasArgumentCount, reached or not.
 // A body gets at `arguments` through those parameters alone: CreateUnmappedArguments and CreateMappedArguments take the count and the hidden rest as operands.
-// It plans no bound function and no method table. Milestone one's walk builds no NewBoundClosure, so `f.bind(..)` stays a call of the built-in function, and only tests fill CallingConventionParts::boundFunctions.
+// It plans no method table.
 JS_EXPORT_PRIVATE CallingConventions computeCallingConventions(const Program&, const Facts&, const BitVector& bodiesWithModuleStart, const BitVector& layoutsMadeAsCompiledObjects);
 
 } } } // namespace JSC::AOT::Typed

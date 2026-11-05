@@ -58,6 +58,11 @@ struct WalkOptions {
     bool checksProofs { false };
     // A bit for each ProofSource that is checked. TestingSwitch::CheckProofsAtRunTime: all. CheckProofsAtEntries, CheckProofsAtEntriesAndFields: two, three. checksProofs says whether there is any.
     uint16_t sourcesOfProofsChecked { 0 };
+    // TestingSwitch::TestsEveryPosition, --aot-harden=ignore-told-ranges. Nothing that a turn of a loop needs to test a position is read in front of the loop, and a read of a character tests its position whatever is known of it.
+    // The emitters do the rest: ElementAccessEmitter::testsEveryPosition().
+    bool testsEveryPosition { false };
+    // TestingSwitch::PositionsAreTakenToLieInside. No option of a build.
+    bool takesPositionsToLieInside { false };
     // TestingSwitch::WritesBodiesStraight: every body that has a straight form takes it. No option of a build.
     bool writesBodiesStraight { false };
     // Set only by `testaot why-closed`: explainClosedAccess() writes there.

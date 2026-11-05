@@ -25,13 +25,6 @@ OpcodeSet StraightEmitter::opcodesOfModules()
     };
 }
 
-// The plan has read no site out of such a block, and ModuleEvaluationPlan::siteOf() stops the build at one. Nothing enters it.
-static bool standsInBlockNeverEnteredInStraightModule(StraightEmitter& emitter)
-{
-    const Vector<BlockID>& blocks = emitter.facts().summaries().at(emitter.function()).blocksNeverEntered;
-    return !blocks.isEmpty() && std::ranges::binary_search(blocks, emitter.currentBlock().id());
-}
-
 static StraightArgument moduleIndexInStraightForm(ModuleID module)
 {
     return StraightArgument::word(module.index());
@@ -189,8 +182,6 @@ static void generateRequireModule(StraightEmitter& emitter, const BodyValue& val
 
 void StraightEmitter::generateModule(const BodyValue& value)
 {
-    if (standsInBlockNeverEnteredInStraightModule(*this))
-        return;
     switch (value.opcode()) {
     case Opcode::ModuleNamespace:
         if (value.ofModuleItself())

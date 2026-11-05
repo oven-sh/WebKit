@@ -15,9 +15,8 @@
 
 #include "AOTEffectsDeclared.h"
 #include "AOTIRProgram.h"
-#include "AOTWalkListReadsInLoops.h"
-#include "AOTWalkNumberGuesses.h"
 #include "AOTWalkCountersOfLoops.h"
+#include "AOTWalkListReadsInLoops.h"
 #include "AOTWalkNumberGuesses.h"
 #include "AOTWalkTextBuilders.h"
 #include <algorithm>
@@ -195,64 +194,8 @@ void Walker::noteHeadOfTurn(BlockID inputHead)
     way.isEntered = true;
     way.numberOfTurn = ++m_numberOfTypedCopiesEntered;
     m_state.noteHeadOfTurn(way.numberOfTurn);
-    if (way.looksCountOnTurnsThatBeginAgain)
-        testEnvironmentFieldsAtHeadOfTurn(inputHead);
 }
 
-void Walker::testEnvironmentFieldsAtHeadOfTurn(BlockID inputHead)
-{
-    Origin origin = m_origin;
-    origin.isTailCall = false;
-    for (const EnvironmentFieldTestedAtHeadOfTurn& field : findEnvironmentFieldsTestedAtHeadsOfTurns(*this, inputHead)) {
-        if (!mayBeginTurnAgainInClosedCopy() || m_hasFailed)
-            return;
-        Reference environment = referenceOf(field.environment);
-        if (!environment)
-            continue;
-        FieldReference place { field.layout, field.field };
-        Reference value = m_state.environmentField(environment, place);
-        if (!value) {
-            Draft read(Opcode::GetEnvironmentField, origin);
-            chooseConservativeFields(read);
-            read.setEnvironmentOperand(environment);
-            read.setLayout(field.layout);
-            read.setField(field.field);
-            value = build(WTF::move(read));
-        }
-        if (!value || !value.isValue())
-            continue;
-        if (m_types.isSubset(typeOf(value), field.tested)) {
-            noteEnvironmentField(environment, place, value);
-            continue;
-        }
-        // As proveExpectedTypeOrBeginTurnAgain(): a field that no turn writes is read in front of the loop by build(), and asked there, once.
-        Reference test;
-        {
-            InFrontOfTypedCopy inFront(*this, standsInFrontOfTypedCopy(value));
-            test = buildTestOfNumber(*this, value, field.tested, origin);
-        }
-        if (!test)
-            continue;
-        bool isAskedInFront = branchInFrontOfTypedCopy(test, true);
-        if (!isAskedInFront) {
-            BlockID passed = addBlock();
-            BlockID failed = addBlock(BlockFrequency::Rare);
-            branch(test, passed, failed);
-            continueIn(failed);
-            if (!isUnreachable())
-                beginTurnAgainInClosedCopy();
-            continueIn(passed);
-        }
-        noteGuessOpened();
-        Reference proven;
-        {
-            InFrontOfTypedCopy inFront(*this, isAskedInFront);
-            proven = buildProofOfNumber(*this, value, test, origin);
-        }
-        if (proven && proven.isValue() && !isUnreachable())
-            noteEnvironmentField(environment, place, proven);
-    }
-}
 void Walker::proveWhatLooksCountOnAt(const BodyValue& operation)
 {
     const WayIntoClosedCopy& way = m_waysIntoClosedCopies.last();
@@ -288,7 +231,7 @@ std::unique_ptr<LoopPreview> Walker::previewTypedCopy(BlockID inputHead, const L
             Reference built = referenceOf(input);
             return built ? typeOf(built) : TypeID();
         };
-        if (!guessesMayTypeOperationInCleanTurn(*this, currentBodyIndex().value(first), TypesOfInputs(typeInLooks)) && findEnvironmentFieldsTestedAtHeadsOfTurns(*this, inputHead).isEmpty())
+        if (!guessesMayTypeOperationInCleanTurn(*this, currentBodyIndex().value(first), TypesOfInputs(typeInLooks)))
             return nullptr;
     }
     Vector<TypeID, 8> entryTypes;
@@ -335,6 +278,12 @@ bool Walker::standsInFrontOfTypedCopy(Reference reference) const
     std::optional<uint32_t> loop = openLoopOfTypedCopy();
     // What the state knows of it beyond its own type may have been learned in the loop.
     return loop && reference && reference.isRecord() && standsInFrontOfLoop(*loop, reference) && typeOf(reference) == ownTypeOf(reference);
+}
+
+bool Walker::isBuiltInTurnThatMayBeginAgain(Reference reference) const
+{
+    std::optional<uint32_t> loop = openLoopOfTypedCopy();
+    return loop && reference && reference.isValue() && !standsInFrontOfLoop(*loop, reference);
 }
 
 bool Walker::branchInFrontOfTypedCopy(Reference test, bool passesWithYes)
@@ -479,12 +428,52 @@ bool Walker::buildLoopTwice(BlockID inputHead, const LoopPreview& preview, std::
     for (const GuessInFrontOfLoop& guess : guesses)
         testedInFront.append({ guess.value, guess.tested });
     bool asksAtHead = !!findReadAskedAtHeadOfLoop(inputHead, testedInFront.span());
+    // `for (..) total += new Point(i, 2).sum()`: each turn checks the dead zone of `Point`. A variable of a body that runs once never goes back into its dead zone, whatever the turns run: it is asked once, in front.
+    // Where it is empty the other copy runs, which checks in its turns and throws where the program does.
+    Vector<VariableID, 4> variablesCheckedInTurns;
+    for (BlockID member : index.membersOf(loop)) {
+        if (!has(Mechanism::Folding) || m_numberOfCopiesBuiltForSize)
+            break;
+        for (BodyValue operation : index.block(member).values()) {
+            ValueID read = operation.opcode() == Opcode::CheckInitialized ? index.valueBehindCasts(operation.operand(0)) : ValueID();
+            if (!read || index.isParameter(read) || index.opcodeOf(read) != Opcode::GetModuleVariable)
+                continue;
+            VariableID variable = index.value(read).variable();
+            if (variablesCheckedInTurns.contains(variable) || !leavesDeadZoneForGood(program(), variable) || m_state.isPastDeadZone(variable))
+                continue;
+            // The empty word is the mark of such a variable.
+            const DeferredVariable* deferred = plan().deferredDefinitions().findDeferred(variable);
+            if (deferred && deferred->mark == Primitive::Absent)
+                continue;
+            TypeID widest = widestTypeOfOperation(*this, index.value(read));
+            if (widest && (m_types.at(widest).primitives & Primitive::Absent))
+                variablesCheckedInTurns.append(variable);
+        }
+    }
     bool hasTestInFront = !guesses.isEmpty() || !listsRead.lists.isEmpty() || !counters.isEmpty() || asksAtHead;
     bool otherCopyOpensItsGuesses = guesses.isEmpty() && counters.isEmpty() && !asksAtHead;
+    // `const point = new Point(..); total += point.sum();`: of an object that the turn itself makes nothing is asked but the guard of the member. In one copy the arm as written takes the object, so every turn makes it.
+    Vector<MemberConditionRecord, 4> guardsAskedOfObjectsOfTurns;
+    for (BlockID member : index.membersOf(loop)) {
+        for (BodyValue operation : index.block(member).values()) {
+            if (operation.opcode() != Opcode::PropGet || operation.isFreeName())
+                continue;
+            ValueID object = index.valueBehindCasts(operation.objectOperand());
+            if (index.isParameter(object) || index.opcodeOf(object) != Opcode::Construct || !index.isInLoop(index.blockOf(object), loop))
+                continue;
+            FunctionID constructor = facts().linked().calleeAt(currentFunction(), object);
+            if (TypeID made = constructor ? typeOfObjectsMadeBy(*this, constructor) : TypeID())
+                findGuardsOfMethodAboveObjectsOf(*this, made, operation.key(), guardsAskedOfObjectsOfTurns);
+        }
+    }
+    hasTestInFront |= !guardsAskedOfObjectsOfTurns.isEmpty();
+    otherCopyOpensItsGuesses &= guardsAskedOfObjectsOfTurns.isEmpty();
     // The look is told of the lists whether or not a look has found them left as they are: it asks that by itself (LooksAtLoops::preview()), and claims nothing where a turn writes one.
     std::unique_ptr<LoopPreview> ofTypedCopy = previewTypedCopy(inputHead, preview, entering, listsRead.lists.span());
-    if (!hasTestInFront && !ofTypedCopy)
+    if (!hasTestInFront && variablesCheckedInTurns.isEmpty() && !ofTypedCopy)
         return false;
+    // Nobody expects a loop to be entered in the dead zone of what it reads: a copy that is there for that alone is built for its size.
+    otherCopyOpensItsGuesses &= variablesCheckedInTurns.isEmpty() || ofTypedCopy || !listsRead.lists.isEmpty();
     // `total += area(box)`: what a turn expects of a parameter of the head is asked of what enters, once. What comes round is typed by the turns.
     for (size_t place = 0; ofTypedCopy && place < ofTypedCopy->guessesCountedOn.size(); ++place) {
         ValueID parameter = index.valueBehindCasts(ofTypedCopy->guessesCountedOn[place].operand);
@@ -504,7 +493,7 @@ bool Walker::buildLoopTwice(BlockID inputHead, const LoopPreview& preview, std::
             counters.append({ position, tested });
     }
     // A SECOND COPY PAYS WHERE SOMETHING LEAVES THE TURNS: a test that answers the same in every turn, with the reads behind it, or the box of what goes round. `while (node) node = node.parent` asks each turn anew in either copy.
-    if (!hasTestInFront && counters.isEmpty()) {
+    if (!hasTestInFront && variablesCheckedInTurns.isEmpty() && counters.isEmpty()) {
         uint32_t firstValueOfLoop = index.block(inputHead).firstParameter().index();
         const Effects& ofTurns = ofTypedCopy->effects;
         auto isTheSameInEveryTurn = [&](auto& self, ValueID written, unsigned depth) -> bool {
@@ -533,7 +522,7 @@ bool Walker::buildLoopTwice(BlockID inputHead, const LoopPreview& preview, std::
         bool somethingLeavesTheTurns = ofTypedCopy->guessesCountedOn.containsIf([&](const GuessCountedOnByLooks& guess) {
             return isTheSameInEveryTurn(isTheSameInEveryTurn, guess.operand, 4);
         });
-        if (!somethingLeavesTheTurns && findEnvironmentFieldsTestedAtHeadsOfTurns(*this, inputHead).isEmpty())
+        if (!somethingLeavesTheTurns)
             return false;
     }
 
@@ -576,6 +565,63 @@ bool Walker::buildLoopTwice(BlockID inputHead, const LoopPreview& preview, std::
 
     Origin origin = m_origin;
     BlockID closedStart;
+    for (VariableID variable : variablesCheckedInTurns) {
+        Draft read(Opcode::GetModuleVariable, origin);
+        read.setVariable(variable);
+        Reference found = isUnreachable() ? Reference() : build(WTF::move(read));
+        if (!found || !found.isValue() || !(m_types.at(typeOf(found)).primitives & Primitive::Absent))
+            continue;
+        Draft test(Opcode::TypeTest, origin);
+        test.setValueOperand(found);
+        test.setTestedType(TypeArena::fromPrimitives(Primitive::Absent));
+        Reference isEmpty = build(WTF::move(test));
+        if (!isEmpty || !isEmpty.isValue())
+            continue;
+        BlockID filled = addBlock();
+        if (!closedStart)
+            closedStart = addBlock(BlockFrequency::Rare);
+        branch(isEmpty, closedStart, filled);
+        continueIn(filled);
+        Draft narrowed(Opcode::Narrowed, origin);
+        narrowed.setValueOperand(found);
+        narrowed.setTestOperand(isEmpty);
+        narrowed.setOperandIndex(OperandIndex::TypeTest::value);
+        narrowed.setIsOnTakenEdge(false);
+        Reference held = build(WTF::move(narrowed));
+        if (!held)
+            continue;
+        m_state.noteEndOfDeadZone(variable);
+        if (takeObjectOfDeferredVariable(*this, variable, held, origin))
+            continue;
+        m_state.noteVariable(variable, held);
+        noteValueOfStableBinding(*this, variable, held);
+    }
+    // Nothing but reads was built.
+    if (!closedStart && !hasTestInFront && !ofTypedCopy)
+        return false;
+    if (!guardsAskedOfObjectsOfTurns.isEmpty() && !isUnreachable()) {
+        // The first object begins the guards of a constructor function, and the typed turns make none.
+        Vector<LayoutID, 4> begun;
+        for (const MemberConditionRecord& condition : guardsAskedOfObjectsOfTurns) {
+            if (!program().at(condition.layout).has(LayoutFlags::IsConstructorFunction) || begun.contains(condition.layout))
+                continue;
+            begun.append(condition.layout);
+            Draft begin(Opcode::BeginMemberGuards, origin);
+            begin.setLayout(condition.layout);
+            build(WTF::move(begin));
+        }
+        Draft test(Opcode::AreMembersUnchanged, origin);
+        test.setConditions(guardsAskedOfObjectsOfTurns.span());
+        if (Reference holds = build(WTF::move(test))) {
+            BlockID passed = addBlock();
+            if (!closedStart)
+                closedStart = addBlock(BlockFrequency::Rare);
+            branch(holds, passed, closedStart);
+            continueIn(passed);
+            for (const MemberConditionRecord& condition : guardsAskedOfObjectsOfTurns)
+                m_state.noteGuardOfReadsHolds(condition.layout, condition.key, holds);
+        }
+    }
     Vector<Reference, 4> proofs;
     for (const GuessInFrontOfLoop& guess : guesses) {
         Reference test = isUnreachable() ? Reference() : buildTestInFrontOfLoop(*this, guess, origin);

@@ -2,6 +2,7 @@
 # What is written behind `extends` is the guess, as for `super(a)`: super-call-enters-what-is-written-above-the-class.ir. Without it the call was the closed construction, its list written out or not.
 # class Above { constructor(a) { note(a); } }  class Meter extends Above { }  sink(Above, Meter)  function many(n) { let x; while (n()) x = new Meter(7); return x; }
 # In a copy the state knows what the list holds: the constructor above is copied behind the test and takes the element.
+# OPTIONS: check=Validate
 # RUN: walk f3 mechanisms=all
 # CHECK-LABEL: code f3:Body
 # CHECK: [[seven]]: 7 {{*}} = Integer integer=7

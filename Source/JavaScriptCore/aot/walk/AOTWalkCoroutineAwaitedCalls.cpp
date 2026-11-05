@@ -42,26 +42,16 @@ std::optional<WaitOfCallInCoroutine> findWaitOfCallInCoroutine(Walker& walker, c
     wait.placeOfCall = call.index() - firstValue;
 
     ValueID name = call;
-    if (ValueID taker = followCastsToOnlyTaker(index, name)) {
-        if (index.opcodeOf(taker) != Opcode::Await || !block.holds(taker))
-            return std::nullopt;
-        BodyValue await = index.value(taker);
-        if (await.valueOperand() != name || await.takesExtraTurn())
-            return std::nullopt;
-        wait.await = taker;
-        wait.endOfWait = taker.index() - firstValue;
-        if (wait.endOfWait >= walker.endOfStretchBeingWalked())
-            return std::nullopt;
-    } else {
-        // The note that the value which the jump brings is awaited already is a note of the unit, and the arms of a guess undo bindings alone. In an arm the other arm's call gives a promise that nobody would wait for.
-        if (walker.walksStretchInsideAnother() || walker.endOfStretchBeingWalked() != block.numberOfValues())
-            return std::nullopt;
-        wait.await = findAwaitThatJumpBringsValueTo(walker, index, block, name);
-        if (!wait.await)
-            return std::nullopt;
-        wait.endOfWait = block.numberOfValues();
-        wait.brought = name;
-    }
+    ValueID taker = followCastsToOnlyTaker(index, name);
+    if (!taker || index.opcodeOf(taker) != Opcode::Await || !block.holds(taker))
+        return std::nullopt;
+    BodyValue await = index.value(taker);
+    if (await.valueOperand() != name || await.takesExtraTurn())
+        return std::nullopt;
+    wait.await = taker;
+    wait.endOfWait = taker.index() - firstValue;
+    if (wait.endOfWait >= walker.endOfStretchBeingWalked())
+        return std::nullopt;
 
     for (uint32_t place = wait.placeOfCall + 1; place < wait.endOfWait; ++place) {
         ValueID between(firstValue + place);
@@ -88,13 +78,6 @@ bool walkUpToAwaitOfCall(Walker& walker, const BodyIndex& index, BodyBlock block
             return false;
     }
 
-    if (wait.brought) {
-        std::optional<Vector<Reference, 4>> heldOnWay = findWhatAwaitHoldsOnWayThrough(walker, index, block.terminator().targets()[0], wait.await);
-        if (!heldOnWay)
-            return false;
-        held = WTF::move(*heldOnWay);
-        return true;
-    }
     for (ValueID operand : index.value(wait.await).heldOperands()) {
         Reference reference = walker.referenceOf(operand);
         if (!reference) {
@@ -108,12 +91,6 @@ bool walkUpToAwaitOfCall(Walker& walker, const BodyIndex& index, BodyBlock block
 
 void finishWaitOfCall(Walker& walker, BodyBlock block, const WaitOfCallInCoroutine& wait, Reference given)
 {
-    if (wait.brought) {
-        walker.bind(wait.brought, given);
-        keptByCallsOfCoroutines(walker).broughtValuesAwaited.append(wait.brought);
-        walker.walkStretch(block.id(), wait.endOfWait, wait.endOfWait);
-        return;
-    }
     walker.bind(wait.await, given);
     leaveAnythingForSwallowedOperation(walker, wait.await);
     walker.walkStretch(block.id(), wait.endOfWait + 1, wait.endOfWait + 1);
@@ -229,7 +206,7 @@ static bool isAsyncFunctionInAwaitedCalls(const Function& function)
 // `const get = id => load(id); await get(1)`. Where the callee is copied, the call that its body returns at once is the call that the Await waits for.
 static void noteAwaitForCopyInAwaitedCalls(Walker& walker, const BodyIndex& index, BodyBlock block, const BodyValue& call, const WaitOfCallInCoroutine& wait, Reference driver)
 {
-    if (!walker.has(Mechanism::Inlining) || wait.brought || call.isDoneInPlace())
+    if (!walker.has(Mechanism::Inlining) || call.isDoneInPlace())
         return;
     FunctionID callee = findOnlyCallee(walker, call, walker.referenceOf(call.calleeOperand()));
     // Beside the copy of a function with a guard stands a call of its slow version, which awaits nothing.
@@ -356,38 +333,34 @@ bool buildAwaitedCall(Walker& walker, const BodyValue& call)
 
 // ---- C4
 
-bool isAwaitThatArmsOfCallGoOnTo(const BodyIndex& index, const BodyValue& operation)
+// ---- Where the walk comes to an Await that a call in a copy has awaited for
+
+bool takeWhatCallInCopyHasAwaited(Walker& walker, const BodyValue& await)
 {
-    if (operation.opcode() != Opcode::Await || operation.takesExtraTurn())
+    KeptByCallsOfCoroutines* kept = findKeptByCallsOfCoroutines(walker);
+    if (await.opcode() != Opcode::Await || walker.depthOfCopies() || !kept || !kept->awaitsTakenInCopies.removeFirst(await.id()))
         return false;
-    ValueID call = index.valueBehindCasts(operation.valueOperand());
-    if (!call || index.isParameter(call) || index.opcodeOf(call) != Opcode::Call)
-        return false;
-    BodyValue written = index.value(call);
-    if (written.expectedResult() || written.isDoneInPlace())
-        return false;
-    for (uint32_t value = call.index(); value < operation.id().index(); ++value) {
-        if (index.onlyUsingValue(ValueID(value)) != ValueID(value + 1))
-            return false;
+    Reference given = walker.referenceOf(await.valueOperand());
+    if (!given) {
+        walker.fail("nothing was built for what an await takes that was built ahead of its place"_s);
+        return true;
     }
-    return index.blockOf(call) == index.blockOf(operation.id());
+    walker.bind(await.id(), given);
+    return true;
 }
 
-// For findStretchOfGuess(), of an Await for which the above holds. A second await costs about 60 bytes, and pays where the arm with the proof enters the body of an async function without a promise.
-bool armsOfCallGoOnToAwait(Walker&, const BodyValue& await, TypeID typeOfCalleeWithProof);
-bool armsOfCallGoOnToAwait(Walker& walker, const BodyValue& await, TypeID typeOfCalleeWithProof)
+bool nameCastInFrontOfAwaitTakenInCopy(Walker& walker, const BodyValue& cast)
 {
-    if (!walker.has(Mechanism::DirectCalls) || walker.depthOfCopies())
+    KeptByCallsOfCoroutines* kept = findKeptByCallsOfCoroutines(walker);
+    if (!kept || walker.depthOfCopies() || kept->awaitsTakenInCopies.isEmpty())
         return false;
-    std::optional<AwaitingBodyOfCoroutine> body = findAwaitingBodyOfCoroutine(walker);
-    if (!body || body->kind != CoroutineKind::AsyncFunction)
+    if (!kept->awaitsTakenInCopies.contains(findOnlyTakerBehindCasts(walker.currentBodyIndex(), cast.id())))
         return false;
-    const BodyIndex& index = walker.currentBodyIndex();
-    FunctionID callee = findOnlyCallee(walker, index.value(index.valueBehindCasts(await.valueOperand())), typeOfCalleeWithProof);
-    if (!callee)
+    Reference given = walker.referenceOf(cast.operand(0));
+    if (!given)
         return false;
-    const Function& function = walker.program().at(callee);
-    return isAsyncFunctionInAwaitedCalls(function) && !function.isModuleBody() && function.hasBody() && walker.plan().conventions().exists({ callee, CodeRole::CoroutineBody });
+    walker.bind(cast.id(), given);
+    return true;
 }
 
 } } } // namespace JSC::AOT::Typed

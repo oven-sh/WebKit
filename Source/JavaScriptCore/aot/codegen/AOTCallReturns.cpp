@@ -22,6 +22,7 @@
 #include "AOTStubsCalls.h"
 #include "AOTStubsValues.h"
 #include "AOTTypeArena.h"
+#include "AOTTypeTestEmitter.h"
 #include "AOTTypeTestPlan.h"
 #include "AOTVector.h"
 #include "AllowMacroScratchRegisterUsage.h"
@@ -276,7 +277,7 @@ static Origin originAtTailCall(const OperationContext& context)
 }
 
 // The stub that calls finds out too late that there is nothing to call: the frame that the error names is gone by then.
-void CallEmitter::requireCallable(const OperationContext& context, Boxed callee, std::optional<ThrowSite> siteThatNamesCallee, bool isAtTailCall)
+void CallEmitter::requireCallable(const OperationContext& context, Boxed callee, std::optional<ThrowSite> siteThatNamesCallee, bool isAtTailCall, std::optional<Boxed> listOfCall)
 {
     ClosureTestEmitter& closures = emitter<ClosureTestEmitter>();
     LBasicBlock mayNotBeCallable = newBlock();
@@ -286,6 +287,14 @@ void CallEmitter::requireCallable(const OperationContext& context, Boxed callee,
     m_out.branch(isKnownToBeCallable.value(), normalEdge(continuation), rareEdge(mayNotBeCallable));
 
     m_out.appendTo(mayNotBeCallable);
+    if (listOfCall) {
+        LBasicBlock cannotBeCalled = newBlock();
+        branchUnless(isCell(callee), cannotBeCalled);
+        m_out.branch(emitter<TypeTestEmitter>().isCallable(unboxCell(callee)).value(), normalEdge(continuation), rareEdge(cannotBeCalled));
+
+        m_out.appendTo(cannotBeCalled);
+        callOperation<CellPointer>(context, RuntimeOperation::NewArgumentList, { *listOfCall }, { .origin = isAtTailCall ? originAtTailCall(context) : context.origin(), .isOnRarePath = true });
+    }
     callStub(context, throwUnlessCallable(), { callee.value() }, { .origin = isAtTailCall ? originAtTailCall(context) : context.origin(), .throwSite = siteThatNamesCallee, .isOnRarePath = true });
     m_out.jump(continuation);
 
@@ -304,11 +313,11 @@ bool CallEmitter::mayForwardCallToReceiver(const ValueContext& value)
     return !types().isSubset(typeIDOf(value->thisValueOperand()), TypeTable::function);
 }
 
-void CallEmitter::requireCallableBeforeTailCall(const ValueContext& value, Boxed callee, Boxed thisValue)
+void CallEmitter::requireCallableBeforeTailCall(const ValueContext& value, Boxed callee, Boxed thisValue, std::optional<Boxed> listOfCall)
 {
     if (!mayForwardCallToReceiver(value)) {
         if (!types().isSubset(typeIDOf(value->calleeOperand()), TypeTable::function))
-            requireCallableBeforeTailCall(value, callee, siteThatNamesCallee(value));
+            requireCallableBeforeTailCall(value, callee, siteThatNamesCallee(value), listOfCall);
         return;
     }
 

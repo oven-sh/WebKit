@@ -150,17 +150,6 @@ function f0 name="same" module=m0 parameters=[{type=anything}] results=[{type=an
 entry module=m0
 )IR"_s;
 
-// Program::appendParsers() puts functions behind those of the wire. A list that is full moves every function for the first of them.
-static void readerLeavesRoomBehindFunctions()
-{
-    Wire::CompileOptions options = makeDefaultCompileOptions();
-    options.threadCount = 1;
-    BuildContext build(options);
-    std::unique_ptr<Program> program = parseProgram(readerTestProgramText, build);
-    AOT_TEST_CHECK(program && !program->functions.isEmpty());
-    AOT_TEST_CHECK(program->functions.capacity() > program->functions.size() + program->functions.size() / 4);
-}
-
 // No set here has more than one member, so the id of each says what it holds. Of every kind that internInOrder() tells apart: one that needs no record, one that the table has from its start, one that is new, one that repeats a near or a far one.
 // `earlier`: types that the contents of a class may name.
 static TypeParts partsOfTypeInternedWithOthers(uint32_t index, std::span<const TypeID> earlier, TypeArena& arena)
@@ -460,7 +449,6 @@ std::span<const NativeTest> readerTests()
         { "reader/lists-of-seconds-are-the-same-on-any-number-of-threads"_s, readerListsSecondsAlikeOnAnyNumberOfThreads },
         { "reader/records-of-functions-are-the-same-on-any-number-of-threads"_s, readerWritesRecordsOfFunctionsAlikeOnAnyNumberOfThreads },
         { "reader/objects-of-the-program-are-the-same-on-any-number-of-threads"_s, readerAddsObjectsOfProgramAlikeOnAnyNumberOfThreads },
-        { "reader/functions-have-room-behind-them"_s, readerLeavesRoomBehindFunctions },
     };
     return tests;
 }

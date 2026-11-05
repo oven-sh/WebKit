@@ -46,8 +46,6 @@ static bool runTimeMayMakeClosureOfVariable(const Typed::PlannedVariable& planne
         return true;
     case Typed::VariableStorage::ClosureTable:
         return planned.isDescribedToRunTime;
-    case Typed::VariableStorage::None:
-        return false;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -62,11 +60,10 @@ static StringID nameOfVariableInHeapSnapshots(const TableInputs& inputs, Variabl
         module = promoted->module;
         name = promoted->name;
     } else {
-        VariableID written = id.index() < program.variables.size() ? id : inputs.plan.deferredDefinitions().variableBesideAdded(id);
-        if (!written || program.at(written).owner)
+        if (id.index() >= program.variables.size() || program.at(id).owner)
             return { };
-        module = program.at(written).module;
-        name = program.at(written).name;
+        module = program.at(id).module;
+        name = program.at(id).name;
     }
     return showsVariablesOf(inputs, module) ? name : StringID();
 }
@@ -79,8 +76,6 @@ static bool mayHoldCellForHeapSnapshots(const Typed::PlannedVariable& planned)
         return traitsOf(planned.representation).holdsCell && planned.representation != SlotRepresentation::DeferredClosure;
     case Typed::VariableStorage::ClosureTable:
         return true;
-    case Typed::VariableStorage::None:
-        return false;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -117,8 +112,6 @@ void nameVariablesThatHeapSnapshotsShow(const TableInputs& inputs, const Gathere
             FunctionID function = planned.function || id.index() >= program.variables.size() ? planned.function : program.at(id).function;
             return function && inputs.plan.hasClosureCell(function);
         }
-        case Typed::VariableStorage::None:
-            return false;
         }
         RELEASE_ASSERT_NOT_REACHED();
     };
@@ -146,45 +139,6 @@ static Vector<StaticsRange> joinAdjacentRoots(std::span<const uint32_t> ascendin
     return ranges;
 }
 
-// Code has the number of a group from the plan. It tests the byte with that number behind the last word of the groups, and hands the number to the run time, which takes it for a row of the table.
-// There a group ends where the next one begins.
-static void encodeGroupsOfFilesInStatics(TableEncoder& encoder, const PlacedStatics& statics)
-{
-    const Typed::StaticsGroups& planned = encoder.plan.staticsGroups();
-    uint32_t numberOfGroups = static_cast<uint32_t>(statics.groupsOfFilesFilledWhenEntered.size());
-
-    Vector<StaticsOfFiles> files;
-    Vector<uint32_t> importedFiles;
-    bool agreesWithCode = numberOfGroups == planned.groups.size();
-    uint32_t endOfPreviousGroup = statics.firstWordFilledWithFiles;
-    for (const PlacedStaticsOfFiles& group : statics.groupsOfFilesFilledWhenEntered) {
-        agreesWithCode &= group.firstWord == endOfPreviousGroup;
-        endOfPreviousGroup = group.firstWord + group.numberOfWords;
-        files.append({ group.firstWord, static_cast<uint32_t>(importedFiles.size()) });
-        importedFiles.appendVector(group.importedGroups);
-    }
-    if (numberOfGroups) {
-        uint64_t endOfWords = static_cast<uint64_t>(statics.endWordFilledWithFiles) * sizeOfStaticsWord;
-        agreesWithCode &= endOfPreviousGroup == statics.endWordFilledWithFiles && statics.offsetOfFilledFiles == endOfWords && endOfWords + numberOfGroups <= statics.size;
-        files.append({ statics.endWordFilledWithFiles, static_cast<uint32_t>(importedFiles.size()) });
-    }
-    agreesWithCode &= std::ranges::all_of(importedFiles, [&](uint32_t group) {
-        return group < numberOfGroups;
-    });
-    if (!agreesWithCode)
-        encoder.fail("GroupsOfFilesDifferFromWhatCodeTests"_s);
-
-    for (size_t index : planned.functionsThatEnterFiles) {
-        FunctionID function(index);
-        std::optional<uint32_t> group = planned.groupFilledWhenEntered(encoder.program.at(function).module);
-        if (!group || *group >= numberOfGroups)
-            encoder.fail("FunctionEntersFileWithoutGroup"_s, function);
-    }
-
-    encoder.part.setTable(ProgramTableIndex::staticsOfFiles, files);
-    encoder.part.setTable(ProgramTableIndex::staticsOfImportedFiles, importedFiles);
-}
-
 namespace {
 
 class StaticsWordTables {
@@ -201,8 +155,6 @@ public:
     {
         for (uint32_t index = 0; index < m_statics.variables.size(); ++index)
             recordVariable(VariableID(index), m_statics.variables[index]);
-        for (const PlacedStaticsPadding& padding : m_statics.paddingOfFilesFilledWhenEntered)
-            recordPadding(padding);
         for (const PlacedClassGuardCount& count : m_statics.classGuardCounts)
             recordClassGuardCount(count);
 
@@ -217,45 +169,11 @@ public:
     }
 
 private:
-    bool hasGroupsOfFiles() const { return !m_statics.groupsOfFilesFilledWhenEntered.isEmpty(); }
-
     // One broken row says that the layout is broken. The rows behind it would say the same thing.
     void fail(ASCIILiteral rule, RowOwner owner = { })
     {
         if (!std::exchange(m_hasFailed, true))
             m_encoder.fail(rule, owner);
-    }
-
-    std::optional<uint32_t> groupOfFilesOf(VariableID id) const
-    {
-        // A variable that the plan added has the module of the variable that it stands beside.
-        VariableID written = id.index() < m_encoder.program.variables.size() ? id : m_encoder.plan.deferredDefinitions().variableBesideAdded(id);
-        if (!written)
-            return std::nullopt;
-        return m_encoder.plan.staticsGroups().groupFilledWhenEntered(m_encoder.program.at(written).module);
-    }
-
-    bool isPlacedInItsRegion(VariableID id, const PlacedVariable& placed) const
-    {
-        uint32_t word = placed.offset / sizeOfStaticsWord;
-        switch (placed.plan.region) {
-        case StaticsRegion::FilledAtProgramEntry:
-            return placed.offset < m_statics.sizeFilledAtProgramEntry;
-        case StaticsRegion::FilledAtInstanceCreation:
-            // The words in front are read-only until the program is entered. From the first group of files on, the run time fills nothing with the instance.
-            if (placed.offset < m_statics.sizeFilledAtProgramEntry)
-                return false;
-            return !placed.initialWord || !hasGroupsOfFiles() || word < m_statics.firstWordFilledWithFiles;
-        case StaticsRegion::FilledWithFile: {
-            // Whoever enters a file fills the group of that file, and the groups that it imports.
-            std::optional<uint32_t> group = groupOfFilesOf(id);
-            if (!group || *group >= m_statics.groupsOfFilesFilledWhenEntered.size())
-                return false;
-            const PlacedStaticsOfFiles& files = m_statics.groupsOfFilesFilledWhenEntered[*group];
-            return word - files.firstWord < files.numberOfWords;
-        }
-        }
-        RELEASE_ASSERT_NOT_REACHED();
     }
 
     // Null where the slot is recorded, else the rule that it breaks.
@@ -283,7 +201,8 @@ private:
             fail(brokenRule, id);
             return;
         }
-        if (!isPlacedInItsRegion(id, placed))
+        // The words in front are read-only until the program is entered.
+        if (placed.offset < m_statics.sizeFilledAtProgramEntry)
             fail("VariableOutsideItsRegionOfStatics"_s, id);
         if (isFunctionVariableInStatics(placed.plan))
             recordFunctionVariable(id, placed);
@@ -300,23 +219,12 @@ private:
             fail("FunctionVariableWithoutClosureCell"_s, id);
     }
 
-    void recordPadding(const PlacedStaticsPadding& padding)
-    {
-        uint32_t word = padding.offset / sizeOfStaticsWord;
-        if (word < m_statics.firstWordFilledWithFiles || word >= m_statics.endWordFilledWithFiles) {
-            fail("PaddingOutsideGroupsOfFiles"_s);
-            return;
-        }
-        if (ASCIILiteral brokenRule = recordSlot(padding.offset, padding.representation, padding.initialWord); !brokenRule.isNull())
-            fail(brokenRule);
-    }
-
     // The run time counts from the first class on, so the word is writable and filled from the start of the instance.
     void recordClassGuardCount(const PlacedClassGuardCount& count)
     {
         uint32_t word = count.offset / sizeOfStaticsWord;
         bool liesInStatics = !(count.offset % sizeof(uint32_t)) && static_cast<uint64_t>(count.offset) + sizeof(uint32_t) <= m_statics.size;
-        bool isFilledWithInstance = count.offset >= m_statics.sizeFilledAtProgramEntry && (!hasGroupsOfFiles() || word < m_statics.firstWordFilledWithFiles);
+        bool isFilledWithInstance = count.offset >= m_statics.sizeFilledAtProgramEntry;
         if (!liesInStatics || !isFilledWithInstance) {
             fail("ClassGuardCountOutsideWordsFilledWithInstance"_s);
             return;
@@ -324,18 +232,17 @@ private:
         m_initialWords[word] |= static_cast<uint64_t>(count.firstValue) << (bitsInByteOfStatics * (count.offset % sizeOfStaticsWord));
     }
 
-    // Divided as ProgramStatics divides the words. A run goes on from one group of files into the next.
+    // Divided as ProgramStatics divides the words.
     Vector<StaticsRun> collectRuns() const
     {
         uint32_t firstWordFilledAtInstanceCreation = m_statics.sizeFilledAtProgramEntry / sizeOfStaticsWord;
-        uint32_t firstWordFilledWithFiles = hasGroupsOfFiles() ? m_statics.firstWordFilledWithFiles : UINT32_MAX;
         uint32_t numberOfWords = static_cast<uint32_t>(m_initialWords.size());
         Vector<StaticsRun> runs;
         for (uint32_t first = 0; first < numberOfWords;) {
             uint64_t bits = m_initialWords[first];
             uint32_t end = first + 1;
             if (bits) {
-                while (end < numberOfWords && m_initialWords[end] == bits && end != firstWordFilledAtInstanceCreation && end != firstWordFilledWithFiles)
+                while (end < numberOfWords && m_initialWords[end] == bits && end != firstWordFilledAtInstanceCreation)
                     ++end;
                 runs.append({ first, end - first, static_cast<uint32_t>(bits), static_cast<uint32_t>(bits >> 32) });
             }
@@ -406,16 +313,35 @@ static void encodeNamesOfVariables(TableEncoder& encoder)
         return std::tuple(variable.module, variable.data.name, variable.data.slot.encoded());
     });
 
+    // [module]
+    Vector<Vector<uint32_t>> closureNumbers(encoder.program.modules.size());
+    uint32_t firstClosureFunction = encoder.numbers.functions().firstClosureFunction().index();
+    uint32_t endOfClosureFunctions = encoder.numbers.functions().endOfClosureFunctions().index();
+    for (uint32_t index = 0; index < encoder.program.functions.size(); ++index) {
+        ModuleID module = encoder.program.at(FunctionID(index)).module;
+        std::optional<FunctionID> entry = showsVariablesOf(encoder.inputs, module) ? encoder.findEntrypoint(FunctionID(index)) : std::nullopt;
+        if (entry && entry->index() >= firstClosureFunction && entry->index() < endOfClosureFunctions)
+            closureNumbers[module.index()].append(entry->index() - firstClosureFunction);
+    }
+
+    // A module without such a variable is listed too: its functions lead to the cell that stands for it.
     NamedVariablesWriter writer;
-    for (size_t first = 0; first < named.size();) {
+    size_t first = 0;
+    for (uint32_t module = 0; module < encoder.program.modules.size(); ++module) {
+        if (!showsVariablesOf(encoder.inputs, ModuleID(module)))
+            continue;
         size_t end = first;
-        while (end < named.size() && named[end].module == named[first].module)
+        while (end < named.size() && named[end].module == module)
             ++end;
-        writer.beginModule(end - first);
+        writer.beginModule(module, end - first);
         for (const NamedVariable& variable : named.span().subspan(first, end - first))
             writer.append(variable.data);
         first = end;
+        AOT::sort(closureNumbers[module]);
+        closureNumbers[module].shrink(std::ranges::unique(closureNumbers[module]).begin() - closureNumbers[module].begin());
+        writer.endModule(closureNumbers[module].span());
     }
+    RELEASE_ASSERT(first == named.size());
     encoder.part.setTable(ProgramTableIndex::namedVariables, writer.bytes());
 }
 
@@ -426,7 +352,8 @@ void encodeStaticsTables(TableEncoder& encoder)
     layout.sizeFilledAtProgramEntry = statics.sizeFilledAtProgramEntry;
     layout.distanceFromArrayProfileToLastArray = statics.distanceFromArrayProfileToLastArray;
     encoder.part.setTable(ProgramTableIndex::staticsLayout, Vector<StaticsLayout, 1> { layout });
-    encodeGroupsOfFilesInStatics(encoder, statics);
+    encoder.part.setTable(ProgramTableIndex::staticsOfFiles, Vector<StaticsOfFiles> { });
+    encoder.part.setTable(ProgramTableIndex::staticsOfImportedFiles, Vector<uint32_t> { });
     StaticsWordTables(encoder).encode();
     encodeNamesOfVariables(encoder);
     encoder.part.setTable(ProgramTableIndex::staticsClearedEachCollection, statics.clearedEachCollection);

@@ -49,10 +49,10 @@ bool slotsOfLayoutMayBeHeldToTypes(const Program& program, const LinkTables& lin
     // The engine fills the results of its built-ins and the elements of a container by itself, and a value that does not fit an environment has nowhere to go.
     LayoutKind kind = program.at(id).kind;
     // THE OBJECTS OF CLASSES AND OF CONSTRUCTOR FUNCTIONS, AND THE LITERALS THAT LIE AT THEIR PLACES. A literal fills its fields where it is made, with whatever stands there: `{ a: i, b: 1 }`. Held to what is written, each value that is not proven
-    // is tested in front of the allocation, the arms meet, and an object that never leaves, of which nothing was left, is made after all. One freeze (11-03 23:04:16), nothing held | literals too | instances alone:
+    // is tested in front of the allocation, the arms meet, and an object that never leaves, of which nothing was left, is made after all. Nothing held | literals too | instances alone:
     // the application's build 346.6 | 351.8 | 346.6 G, its code 142.09 | 145.05 | 142.02 MB, the TypeScript-compiler benchmark 40.49 | 40.31 | 40.25 G.
     // `{ kind, pos, end, .. } as SourceFile`: the literal is a member of the family of the nodes and lies at their places, and what lies at one place is held to one type or to none.
-    // Left out, the one layout took the type from `kind`, `id` and `flags` of every node of the TypeScript-compiler benchmark (held-slots, 11-04 00:2x).
+    // Left out, the one layout took the type from `kind`, `id` and `flags` of every node of the TypeScript-compiler benchmark.
     if (kind != LayoutKind::Instance && (kind != LayoutKind::Record || !familiesOfInstances.sharesFamilyWithInstance(id)))
         return false;
     // `counts[word] = 1`: a store under a key that is no name asks the type again each time it comes to a field.
@@ -82,7 +82,7 @@ bool enforcedTypeSparesTestOfStoresByName(const TypeArena& types, TypeID slotTyp
 
 // The slot of an accessor holds its functions and a brand the token of its class, a store by name creates a field that is declared with other attributes beside its slot, and only an allocation fills a hidden field.
 // UNDER A PRIVATE NAME THE SLOT ITSELF SAYS WHO HAS THE NAME. A value that does not fit has nowhere to go: moved out, the empty slot would say that the name is not there. So the walk builds no typed form under a name
-// that some store may move out (buildAccessUnderPrivateNameForTypedAccess()), and what is closed there is a call of the run time. `#raw: number` with `this.#raw = raw`: 2,088 > 5,082 M (whole/quality/classes/fields-with-arrows.ts).
+// that some store may move out (buildAccessUnderPrivateNameForTypedAccess()), and what is closed there is a call of the run time. `#raw: number` with `this.#raw = raw`: 2,088 > 5,082 M.
 // Where every store is proven to fit, linked() says so to every read, and a held type adds nothing.
 static bool holdsPlainValueInEnforcedFields(const Program& program, const Field& declaration)
 {
@@ -227,7 +227,7 @@ static bool numberIsInt32ByGuessInEnforcedFields(const Program& program, const L
     return isDeclaredInCheckedCodeOfProgramInEnforcedFields(program, reference.layout);
 }
 
-// Some body that may open a guess names the key on a receiver that may be the layout. Nobody counts that in the live tree (UsesOfField of fields-and-objects-2 is out of it), so every field counts as named and nothing is taken back for want of a reader.
+// Some body that may open a guess names the key on a receiver that may be the layout. Nobody counts that, so every field counts as named and nothing is taken back for want of a reader.
 static bool fieldIsNamedWhereGuessesOpenInEnforcedFields(FieldReference)
 {
     return true;

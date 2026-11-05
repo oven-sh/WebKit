@@ -87,11 +87,6 @@ StringID charactersKnownOf(Walker& walker, Reference text)
     return known.isText() ? known.asText() : StringID();
 }
 
-bool isTextMadeByProgram(Walker& walker, Reference text)
-{
-    return !primitiveHeldInKnownTexts(walker, text) && charactersNotedInKnownTexts(walker, text);
-}
-
 void noteCharactersOf(Walker& walker, Reference text, StringID characters)
 {
     if (text.isValue() && characters)

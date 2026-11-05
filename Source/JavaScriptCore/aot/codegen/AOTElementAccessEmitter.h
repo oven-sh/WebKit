@@ -41,26 +41,25 @@ public:
     explicit ElementAccessEmitter(CodeGenerator& generator) : OperationEmitter(generator) { }
 
     void generateGetArrayLength(const ValueContext&);
-    void generateGetArrayCapacity(const ValueContext&);
     void generateGetArrayStorage(const ValueContext&);
     void generateGetArrayElement(const ValueContext&);
     void generatePutArrayElement(const ValueContext&);
     void generateHasArrayElement(const ValueContext&);
     void generateAppendElements(const ValueContext&);
     void generateAppendMembers(const ValueContext&);
-    void generateNewArrayOfMembers(const ValueContext&);
-    void generateReserveArrayCapacity(const ValueContext&);
-    void generateConvertToDoubleStorage(const ValueContext&);
     void generateGetTypedArrayLength(const ValueContext&);
     void generateGetTypedArrayVector(const ValueContext&);
     void generateGetTypedArrayElement(const ValueContext&);
     void generatePutTypedArrayElement(const ValueContext&);
-    void generateHasFixedBytes(const ValueContext&);
     void generateGetEnumeratorIndexedLength(const ValueContext&);
     void generateIsElementInStorage(const ValueContext&);
-    void generateTypedArrayRange(const ValueContext&);
     void generateGetStringLength(const ValueContext&);
     void generateGetStringCodeUnit(const ValueContext&);
+
+    // TestingSwitch::TestsEveryPosition, --aot-harden=ignore-told-ranges. What the walk has found out about a position is held against the length that the list, the view or the text has where the access stands.
+    // The process stops where it is not so: operationAOTStopAtFalseProof().
+    bool testsEveryPosition();
+    void stopUnlessInside(const ValueContext& access, Condition isInside);
 
     Condition isPristineArray(CellPointer, OptionSet<PristineAspects>);
     Condition isPristineInstance(CellPointer, OptionSet<PristineAspects>);
@@ -175,6 +174,9 @@ private:
     Integer lengthNamedOrRead(const ValueContext& store, const ArrayElements&);
     void branchUnlessHasRoomBehindLength(const ValueContext& store, const ArrayElements&, Integer length, LBasicBlock isFull);
 
+    // Of an access to a list that is marked as needing no test of its position. It counts the access, or builds the test.
+    void holdPositionInsideList(const ValueContext& access);
+    void holdPositionInsideView(const ValueContext& access, Integer index, const TypedArrayElements&);
     // Of IsElementPresent. With isInBounds nothing is tested: the position is an index.
     Integer indexOfPresenceTest(const ValueContext& test, LBasicBlock isNotAnIndex);
     // No form: storage that holdsBoxedElements().

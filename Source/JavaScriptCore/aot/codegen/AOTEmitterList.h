@@ -43,8 +43,6 @@
     v(StringBuilderPartEmitter) \
     v(JSONWriteEmitter) \
     v(ResolvedCallEmitter) \
-    v(JSONParseEmitter) \
-    v(ExpectedRowsEmitter) \
     v(InlineBuiltinEmitter) \
     v(RepresentationEmitter)
 

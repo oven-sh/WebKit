@@ -1,5 +1,5 @@
 # `o.own(1)` on an expected receiver, in a function without a loop: the method is declared above the objects of the layout, so the call gets two arms: behind the looks the function is called itself, beside them stands the closed call.
-# Until 11-03 23:2x the walk built that in loops alone ("no field: a method above, outside of loops"): the heat of an application is calls, not loops: 23 M of its main thread's 2,369.
+# The walk once built that in loops alone ("no field: a method above, outside of loops"): the heat of an application is calls, not loops: 23 M of its main thread's 2,369.
 # class Meter { own(x) { return [sink, x]; } }  function once(o: Meter) { return o.own(1); }
 # RUN: walk f3 mechanisms=none+TypedOperations+Guesses+DirectCalls
 # CHECK-LABEL: code f3:Body

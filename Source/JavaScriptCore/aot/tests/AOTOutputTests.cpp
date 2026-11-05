@@ -582,7 +582,7 @@ static void testOutputValuesAnswerWhatTheEmittersAsk()
     AOT_TEST_CHECK(seven->opcode() == Const32 && seven->type() == Int32 && seven->isConstant() && seven->hasNoPosition() && !seven->numChildren());
     AOT_TEST_CHECK(seven->hasInt() && seven->hasInt32() && !seven->hasInt64() && !seven->hasDouble() && seven->asInt() == 7 && seven->isInt32(7) && !seven->isInt32(8));
     LValue minusOne = out.constInt64(-1);
-    AOT_TEST_CHECK(minusOne->hasInt() && minusOne->hasInt64() && minusOne->hasIntPtr() && !minusOne->hasInt32() && minusOne->asInt() == -1 && minusOne->isInt64(-1));
+    AOT_TEST_CHECK(minusOne->hasInt() && minusOne->hasInt64() && !minusOne->hasInt32() && minusOne->asInt() == -1 && minusOne->isInt64(-1));
     AOT_TEST_CHECK(out.constDouble(1.5)->hasDouble() && !out.constDouble(1.5)->hasInt() && out.constDouble(1.5)->asDouble() == 1.5);
     AOT_TEST_CHECK(out.constInt32(7) == seven && out.constBool(true) == out.booleanTrue && out.constInt32(0) == out.booleanFalse && out.constIntPtr(8) == out.intPtrEight);
     AOT_TEST_CHECK(out.constInt32(-1) != minusOne && out.constDouble(0.0) != out.constDouble(-0.0));

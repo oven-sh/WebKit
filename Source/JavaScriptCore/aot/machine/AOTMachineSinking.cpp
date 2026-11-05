@@ -81,32 +81,7 @@ static bool canSinkIntoRareRegion(const Operation* operation)
         return patch->effects.maySink() && !patch->isSuspension();
     }
 
-    // An Opaque stays where the emitter put it. An ArgumentReg is in its register at the entrypoint alone.
-    case Opaque:
-    case ArgumentReg:
-    case Phi:
-    case Extract:
-    case Nop:
-    case Const32:
-    case Const64:
-    case ConstFloat:
-    case ConstDouble:
-    case FramePointer:
-    case SlotBase:
-    case AddressOf:
-    case NumberOf:
-    case InstanceAddressOf:
-    case Store8:
-    case Store16:
-    case Store:
-    case Fence:
-    case Upsilon:
-    case Check:
-    case Jump:
-    case Branch:
-    case Switch:
-    case Return:
-    case Oops:
+    default:
         return false;
     }
     RELEASE_ASSERT_NOT_REACHED();

@@ -68,9 +68,6 @@ struct Proven {
     static ProvenInEveryVersion byPosition(TypeID type) { return ProvenInEveryVersion(type); }
     // Every member has been listed: the layouts that a type names or a test asks for. It holds of a value as far as the type or the test does.
     template<typename T> static ProvenValue<T> byClosedSet(T members) { return ProvenValue<T>(std::move(members)); }
-
-    // From now on every store into the position is tested for the type.
-    static ProvenInEveryVersion byTestsAtStores(ExpectedType expected) { return ProvenInEveryVersion(expected.predicted()); }
 };
 
 } } } // namespace JSC::AOT::Typed

@@ -119,12 +119,6 @@ bool hasOperatorForm(Opcode opcode)
     return operatorsWithForm.contains(opcode);
 }
 
-bool isNumericOperand(const TypeArena& types, TypeID type)
-{
-    RELEASE_ASSERT(type);
-    return OperandOfForm(types.at(type)).isNumeric();
-}
-
 bool canCompareBits(const TypeArena& types, TypeID left, TypeID right)
 {
     RELEASE_ASSERT(left && right);
@@ -562,11 +556,6 @@ Effects effectsBoundOf(Opcode opcode, OperatorForm form)
         return effectsOfFormThatTakesAnyValue(opcode);
     }
     RELEASE_ASSERT_NOT_REACHED();
-}
-
-bool canOverflow(Opcode opcode, OperatorForm form)
-{
-    return form == OperatorForm::CheckedIntegers && isLegalOperatorForm(opcode, form);
 }
 
 } } } // namespace JSC::AOT::Typed

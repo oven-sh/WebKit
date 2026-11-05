@@ -193,7 +193,6 @@ inline TypeID typeOfSlotReadInResultRules(ResultRules& rules, Opcode read, TypeI
 }
 
 // What `return` hands over in a coroutine is not what the caller of its ramp gets, and the other units make their own answer.
-// A bound function hands back what its target hands back.
 inline bool unitHandsBackResultsInResultRules(const Function& callee, CodeRole entered)
 {
     if (callee.isCoroutine())
@@ -203,8 +202,6 @@ inline bool unitHandsBackResultsInResultRules(const Function& callee, CodeRole e
     case CodeRole::SlowBody:
     case CodeRole::ParameterGuard:
     case CodeRole::GenericCallEntry:
-    case CodeRole::BoundFunction:
-    case CodeRole::GenericEntryOfBoundFunction:
     case CodeRole::TableEntry:
         return true;
     case CodeRole::GenericConstructEntry:
@@ -218,10 +215,10 @@ inline bool unitHandsBackResultsInResultRules(const Function& callee, CodeRole e
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// The ramp hands back the promise or the generator, and a bound function what the ramp of its target hands back. The start of a module returns undefined, whatever its body is.
+// The ramp hands back the promise or the generator. The start of a module returns undefined, whatever its body is.
 inline bool unitHandsBackObjectOfCoroutineInResultRules(CodeRole entered)
 {
-    return entered == CodeRole::Body || entered == CodeRole::BoundFunction;
+    return entered == CodeRole::Body;
 }
 
 // How many results a direct call hands back is Plan's to say, so PositionTypes may know of one that the record of the function does not list.

@@ -72,6 +72,12 @@ public:
 
     void setWidths(Tmp, Width useWidth, Width defWidth);
 
+    // Such a pair of a Shuffle is a Move: it hands on what is known of the high bits of its source. It still reads all of its source.
+    static bool isCopyOfWholeGeneralRegister(const Arg& source, const Arg& destination, Width width)
+    {
+        return source.isTmp() && destination.isTmp() && source.isGP() && destination.isGP() && width == pointerWidth();
+    }
+
 private:
     struct Widths {
         Widths() { }
@@ -106,7 +112,12 @@ private:
     template <Bank bank>
     void ensureSize(Tmp);
 
-    void fixpointMoves(const Vector<Inst*>&);
+    struct Copy {
+        Tmp source;
+        Tmp destination;
+    };
+
+    void fixpointMoves(const Vector<Copy>&);
 
     Vector<Widths> m_widthGP;
     Vector<Widths> m_widthFP;

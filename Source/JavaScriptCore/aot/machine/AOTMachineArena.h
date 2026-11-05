@@ -207,12 +207,6 @@ public:
         m_capacity = capacity;
     }
 
-    void appendSpan(Arena& arena, std::span<const T> values)
-    {
-        for (const T& value : values)
-            append(arena, value);
-    }
-
     // New elements are value-initialized.
     void grow(Arena& arena, uint32_t newSize)
     {
@@ -296,8 +290,6 @@ public:
         ASSERT(bit < size());
         m_words[bit / 64] &= ~(uint64_t { 1 } << (bit % 64));
     }
-    // Sets the bits 64 * word + n for each n that is set in `bits`.
-    void setBitsOfWord(size_t word, uint64_t bits) { m_words[word] |= bits; }
     // In rising order.
     template<typename Functor>
     void forEachSetBit(const Functor& functor) const

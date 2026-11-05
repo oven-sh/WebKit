@@ -336,7 +336,7 @@ void BodyVerifier::verifyOperationByOpcode(const BodyBlock& block, uint32_t inde
     case Opcode::Expect: case Opcode::AssumeType: case Opcode::ReportMismatch: case Opcode::CallTable: case Opcode::BeginMemberGuards: case Opcode::ForInOpenCountingNames:
     case Opcode::ShapeTest: case Opcode::IsSlotFilled: case Opcode::HasNoExtraProperties: case Opcode::HasNoFieldOutsideSlot: case Opcode::HasBirthFieldsFilled: case Opcode::IsNotFrozen:
     case Opcode::HasLayoutPrototype: case Opcode::BelongsToInstance: case Opcode::IsPristine: case Opcode::HasArrayStorage: case Opcode::IsInBounds: case Opcode::IsElementPresent:
-    case Opcode::IsInsideView: case Opcode::IsPrototypeOfClass: case Opcode::IsNotThenable: case Opcode::AreMembersUnchanged: case Opcode::HasKeyOrder: case Opcode::IsBoundClosureOf:
+    case Opcode::IsInsideView: case Opcode::IsPrototypeOfClass: case Opcode::IsNotThenable: case Opcode::AreMembersUnchanged: case Opcode::HasKeyOrder:
     case Opcode::IsEnumeratorCurrent:
     case Opcode::AllGuards: case Opcode::Entered: case Opcode::Specified:
     case Opcode::GetSlot: case Opcode::GetSlotOrUndefined: case Opcode::GetSlotGetter: case Opcode::GetSlotSetter: case Opcode::GetDeferredClosureSlot: case Opcode::GetDeferredClosureSlotOrUndefined:
@@ -351,7 +351,7 @@ void BodyVerifier::verifyOperationByOpcode(const BodyBlock& block, uint32_t inde
     case Opcode::GetTypedArrayLength: case Opcode::GetTypedArrayVector: case Opcode::GetTypedArrayElement: case Opcode::PutTypedArrayElement: case Opcode::HasFixedBytes:
     case Opcode::GetEnumeratorIndexedLength: case Opcode::IsElementInStorage: case Opcode::ToEnumeratorPosition: case Opcode::TypedArrayRange: case Opcode::GetStringLength: case Opcode::GetStringCodeUnit:
     case Opcode::GetArgument: case Opcode::GetRestLength: case Opcode::CreateRest: case Opcode::GetMyArgumentByVal: case Opcode::CallForwardVarargs: case Opcode::ConstructSuperForwardVarargs:
-    case Opcode::NewBoundClosure: case Opcode::GetBoundCapture: case Opcode::MarkEnvironmentEscaped: case Opcode::ReleaseEnvironment: case Opcode::RecordCallee: case Opcode::KeepCalleeInFrame:
+    case Opcode::MarkEnvironmentEscaped: case Opcode::ReleaseEnvironment: case Opcode::RecordCallee: case Opcode::KeepCalleeInFrame:
     case Opcode::KeepEnvironmentOfCalleeInFrame: case Opcode::AreFunctionNamesUnchanged:
     case Opcode::CallBuiltin: case Opcode::DivideIntegers: case Opcode::RemainderOfIntegers: case Opcode::ToInt32: case Opcode::ToUint32: case Opcode::ToIntegerOrInfinity: case Opcode::NewSetFromData: case Opcode::NewMapFromData:
     case Opcode::NewFormatterWithPattern: case Opcode::SetUpFormatterWithOptions: case Opcode::FormatDateWithPattern: case Opcode::FormatNumberWithPattern: case Opcode::NewArgumentList:
@@ -385,7 +385,7 @@ void BodyVerifier::verifyOperationByOpcode(const BodyBlock& block, uint32_t inde
     case Opcode::Box: case Opcode::Unbox: case Opcode::IntegerToNumber: case Opcode::NumberToInteger: case Opcode::WidenInteger: case Opcode::NarrowInteger: case Opcode::Decode: case Opcode::Compress:
     case Opcode::JSONSourceOpen: case Opcode::JSONSourceStart: case Opcode::JSONSourceClose: case Opcode::JSONSourceAbandon: case Opcode::JSONGetByte: case Opcode::JSONStartsWith: case Opcode::JSONAdvance:
     case Opcode::JSONSkipByte: case Opcode::JSONSkipWhitespace: case Opcode::JSONParseString: case Opcode::JSONParseKey: case Opcode::JSONParseNumber: case Opcode::JSONParseInteger: case Opcode::JSONParseValue:
-    case Opcode::JSONParseNode: case Opcode::JSONFindMember: case Opcode::JSONMemberRepeats: case Opcode::JSONKeyHasEscapes: case Opcode::JSONObjectBegin: case Opcode::JSONObjectKey:
+    case Opcode::JSONFindMember: case Opcode::JSONMemberRepeats: case Opcode::JSONKeyHasEscapes: case Opcode::JSONObjectBegin: case Opcode::JSONObjectKey:
     case Opcode::JSONObjectFinish: case Opcode::JSONParseExtraMembers: case Opcode::ExpectRows:
     case Opcode::Narrowed: case Opcode::ClearFrameCell: case Opcode::CheckProof: case Opcode::Leave:
     case Opcode::LeaveCopies:

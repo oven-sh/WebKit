@@ -95,11 +95,6 @@ public:
         RELEASE_ASSERT_UNDER_CONSTEXPR_CONTEXT(isVirtual());
         return VirtualObjectID(m_bits & indexMask);
     }
-    constexpr uint32_t postponedIndex() const
-    {
-        RELEASE_ASSERT_UNDER_CONSTEXPR_CONTEXT(isPostponed());
-        return m_bits & indexMask;
-    }
 
     friend constexpr bool operator==(Reference, Reference) = default;
 
@@ -197,7 +192,6 @@ public:
         return { reinterpret_cast<const T*>(words), elements.size() };
     }
 
-    Mark mark() const { return { m_current, m_used }; }
     void rewindTo(Mark);
     void clear() { rewindTo({ }); }
 
@@ -240,13 +234,6 @@ public:
     }
     ValueID child(unsigned index) const { return index < numberOfNamedOperands() ? operand(index) : ValueID(); }
     std::span<const ValueID> variadicOperands() const LIFETIME_BOUND { return operands().subspan(numberOfNamedOperands()); }
-    std::optional<uint32_t> variadicOperandIndex(uint32_t operandIndex) const
-    {
-        uint32_t numberOfNamedOperands = this->numberOfNamedOperands();
-        if (operandIndex < numberOfNamedOperands)
-            return std::nullopt;
-        return operandIndex - numberOfNamedOperands;
-    }
 
     void forEachOperand(NOESCAPE const Invocable<void(ValueID, uint32_t operandIndex)> auto& functor) const
     {
@@ -501,7 +488,6 @@ public:
     static constexpr uint32_t noPosition = UINT32_MAX;
 
     std::span<const Reference> operands() const LIFETIME_BOUND { return m_operands.span(); }
-    std::span<Reference> mutableOperands() LIFETIME_BOUND { return m_operands.mutableSpan(); }
     uint32_t numberOfOperands() const { return m_operands.size(); }
     uint32_t numberOfNamedOperands() const { return m_numberOfNamedOperands; }
     uint32_t numberOfVariadicOperands() const { return numberOfOperands() - m_numberOfNamedOperands; }
@@ -735,8 +721,6 @@ public:
 
     // In the order in which the walk added them. Ascending by record once the sweep has run.
     std::span<const FactUse> factUses() const LIFETIME_BOUND { return m_factUses.span(); }
-    // Behind the sweep.
-    std::span<const FactUse> factsUsedBy(ValueID) const LIFETIME_BOUND;
     // In the order in which loops were closed. No poll is listed twice.
     std::span<const PollWithFate> pollsWithFates() const LIFETIME_BOUND { return m_pollsWithFates.span(); }
 
@@ -745,8 +729,6 @@ public:
     bool hasLoops() const { return m_hasLoops; }
     // Some operation allocates in the frame of the unit. It stays set when the walk cuts back, which errs on the side of a frame.
     bool holdsFrameCells() const { return m_holdsFrameCells; }
-    // Some closure or environment in the frame is not isMadeForOneUse, so an edge may list it. It stays set when the walk cuts back.
-    bool holdsFrameCellsThatOutliveOneUse() const { return m_holdsFrameCellsThatOutliveOneUse; }
     // Some direct call enters code that counts on the stack checks of its callers, and Plan has not counted the frames of that code below this unit. So the unit tests the stack in its own frame, whatever Plan says of it.
     // It stays set when the walk cuts back, which errs on the side of a test.
     bool holdsCallThatPlanHasNotCounted() const { return m_holdsCallThatPlanHasNotCounted; }
@@ -819,37 +801,12 @@ public:
     // For a call that is walked here. reset() has made [0]. A frame that names the function itself, handed in before the first block is added, describes [0] and takes its place.
     uint32_t addInlineFrame(const InlineFrame&);
     uint16_t addEntry(BlockID);
-    // Once the walk is over and the verifiers have run: the entry keeps its number and stands at `block`, which has ended. The block that it stood at is a block like any other, and the sweep drops what nothing else reaches.
-    void moveEntryTo(uint16_t entry, BlockID);
     void addFactUse(const FactUse&);
     void addFateOfPoll(ValueID poll, FateOfPoll);
     void reserveFrameWords(uint32_t numberOfWords) { m_numberOfFrameWords = std::max(m_numberOfFrameWords, numberOfWords); }
     void noteCallThatPlanHasNotCounted() { m_holdsCallThatPlanHasNotCounted = true; }
     void noteThatCallsOfFunctionNeverCollect() { m_callsOfFunctionNeverCollect = true; }
 
-    // Cutting back. Everything appended since the mark goes: records, blocks, edges, side words, inline frames, entries, uses of facts, fates of polls.
-    // A block older than the mark gets back the last operation, the terminator and the handler it had. `openBlocks` are the blocks older than the mark that may have grown since.
-    struct OpenBlock {
-        BlockID block;
-        ValueID last;
-        bool hadEnded { false };
-        bool hadHandler { false };
-    };
-    struct Mark {
-        uint32_t numberOfOperations { 0 };
-        uint32_t numberOfBlocks { 0 };
-        uint32_t numberOfEdges { 0 };
-        uint32_t numberOfInlineFrames { 0 };
-        uint32_t numberOfEntries { 0 };
-        uint32_t numberOfFrameWords { 0 };
-        uint32_t numberOfFactUses { 0 };
-        uint32_t numberOfPollsWithFates { 0 };
-        SideWords::Mark sideWords;
-        bool hasHandlers { false };
-    };
-    Mark mark() const;
-    OpenBlock stateOf(BlockID) const;
-    void cutBackTo(const Mark&, std::span<const OpenBlock> openBlocks);
 
 private:
     friend class Sweep;
@@ -872,7 +829,6 @@ private:
     bool m_hasLoops { false };
     // True until reset() clears it, which it may do only where append() and addConstant() set it.
     bool m_holdsFrameCells { true };
-    bool m_holdsFrameCellsThatOutliveOneUse { true };
     bool m_holdsCallThatPlanHasNotCounted { false };
     bool m_callsOfFunctionNeverCollect { false };
     bool m_readsNumbersOutOfBytes { false };
@@ -993,8 +949,8 @@ private:
 // A parameter of a join holds the union of its arguments. A parameter of a loop head holds every argument, which makes the types a solution.
 // Or it is a tally: every back edge hands it itself plus integer constants, and its type holds what enters and that change for as many turns as an integer parameter of the same head, which every turn moves one way, has values.
 // A direct call whose result Plan splits is derived as the walk types it: the call as undefined, each ResultAt over it by the slot of its field.
-// Where a record bears the mark of a fact, Facts is asked once more: the summaries of a call's callees over the derived types of its operands, what a bound function holds. Of an entry parameter Arrivals::provenAt() is.
-String verifyTypesOfCode(const TypingContext&, const CallingConventions&, const Facts&, const Arrivals&, const Code&);
+// Where a record bears the mark of a fact, Facts is asked once more: the summaries of a call's callees over the derived types of its operands. Of an entry parameter Arrivals::provenAt() is.
+String verifyTypesOfCode(const TypingContext&, const CallingConventions&, const Arrivals&, const Code&);
 
 // AOTCode.cpp
 // No emitter stands behind them. The walk lowers each, so none may be appended.

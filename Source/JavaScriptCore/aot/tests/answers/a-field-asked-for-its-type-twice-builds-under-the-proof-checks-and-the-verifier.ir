@@ -1,0 +1,140 @@
+# under testing=CheckProofsAtRunTime a field that is read a second time is read again and held against what was remembered. Where both reads are known the comparison folds, and the Box of the second read is left as a pure operation that nothing reads. It names the BitAnd of the first read, which stands between two tests whether the slot is filled. The second test is decided by the first, so threadJumps() leads past that block: what the dead Box names no longer dominates it. The validator behind the block passes took that for a malformed procedure and stopped the build: nothing was wrong with the code.
+# OPTIONS: check=Validate testing=CheckProofsAtRunTime
+# const usual = { plain: false, wide: false, label: "usual" };
+# function settle(chosen: any = usual) { if (typeof chosen.plain !== "undefined" && typeof chosen.plain !== "boolean") throw new TypeError("plain must be true or false"); if (typeof chosen.wide !== "undefined" && typeof chosen.wide !== "boolean") throw new TypeError("wide must be true or false"); return (chosen.plain ? 1 : 0) + (chosen.wide ? 2 : 0); }
+# function outer(given: any = {}) { return settle(given); }
+# report(settle());
+# report(outer());
+# report(outer({ plain: true }));
+# report(outer({ wide: true, plain: false }));
+# report("end");
+# x
+# At the end the shell runs the same text itself: every answer is the same.
+# RUN: run-in-shell (function () { "use strict"; const show = value => typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value); const twin = async report => { const usual = { plain: false, wide: false, label: "usual" }; function settle(chosen = usual) { if (typeof chosen.plain !== "undefined" && typeof chosen.plain !== "boolean") throw new TypeError("plain must be true or false"); if (typeof chosen.wide !== "undefined" && typeof chosen.wide !== "boolean") throw new TypeError("wide must be true or false"); return (chosen.plain ? 1 : 0) + (chosen.wide ? 2 : 0); } function outer(given = {}) { return settle(given); } report(settle()); report(outer()); report(outer({ plain: true })); report(outer({ wide: true, plain: false })); report("end"); }; const got = []; globalThis.report = value => { got.push(show(value)); if (value !== "end") return; const expected = []; twin(value => { expected.push(show(value)); if (value !== "end") return; let same = 0; for (let n = 0; n < expected.length; n++) { if (got[n] === expected[n]) same++; else print("answer " + n + ": " + String(got[n]).slice(0, 90) + " and not " + expected[n].slice(0, 90)); } print(same + " of " + expected.length + " of " + got.length); }); }; })();
+# CHECK: 5 of 5 of 5
+# CHECK-NEXT: exited with 0
+
+module m0 path="a-field-asked-for-its-type-twice-builds-under-the-proof-checks-and-the-verifier.ts" displayPath="a-field-asked-for-its-type-twice-builds-under-the-proof-checks-and-the-verifier.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 module=m0 position=442
+layout L1 module=m0 position=552 fields=[{key="plain" declared={type=anything} flags=[IsRequired]}, {key="wide" declared={type=anything} flags=[IsRequired]}] declaredOrder=[1, 0] ownFieldCount=2
+layout L2 module=m0 position=520 fields=[{key="plain" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+layout L3 module=m0 position=14 fields=[{key="label" declared={type=anything} flags=[IsRequired]}, {key="plain" declared={type=anything} flags=[IsRequired]}, {key="wide" declared={type=anything} flags=[IsRequired]}] declaredOrder=[1, 2, 0] ownFieldCount=3
+data d0 root=Object{layout=L3 members=[{key="plain" value=Boolean{}}, {key="wide" value=Boolean{}}, {key="label" value=String{value="usual"}}]} module=m0
+data d1 root=Object{layout=L2 members=[{key="plain" value=Boolean{value=true}}]} module=m0
+data d2 root=Object{layout=L1 members=[{key="wide" value=Boolean{value=true}}, {key="plain" value=Boolean{}}]} module=m0
+data d3 root=Object{layout=L0} module=m0
+variable g0 name="settle" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="usual" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f2 @0
+    v1 = Convert v0 declared={type=f2 flags=[IsFromCompiler]} @0
+    v2 = Data data=d0 @14
+    PutModuleVariable v2 variable=g1 @6
+    v4 = Builtin builtin=GlobalThis @472
+    v5 = PropGet v4 key="report" [isFreeName] @472
+    v6 = GetModuleVariable variable=g0 @479
+    v7 = Call v6 calleeName="settle" @479
+    v8 = Call v5, -, v7 calleeName="report" @472
+    v9 = Builtin builtin=GlobalThis @490
+    v10 = PropGet v9 key="report" [isFreeName] @490
+    v11 = Call v1 calleeName="outer" @497
+    v12 = Call v10, -, v11 calleeName="report" @490
+    v13 = Builtin builtin=GlobalThis @507
+    v14 = PropGet v13 key="report" [isFreeName] @507
+    v15 = Data data=d1 @520
+    v16 = Call v1, -, v15 calleeName="outer" @514
+    v17 = Call v14, -, v16 calleeName="report" @507
+    v18 = Builtin builtin=GlobalThis @539
+    v19 = PropGet v18 key="report" [isFreeName] @539
+    v20 = Data data=d2 @552
+    v21 = Call v1, -, v20 calleeName="outer" @546
+    v22 = Call v19, -, v21 calleeName="report" @539
+    v23 = Builtin builtin=GlobalThis @584
+    v24 = PropGet v23 key="report" [isFreeName] @584
+    v25 = String string="end" @591
+    v26 = Call v24, -, v25 calleeName="report" @584
+    v27 = Undefined @584
+    Return v27 @584
+}
+function f1 name="settle" module=m0 position=61 flags=[IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=undefined @77
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0) @77
+  b1(v2):
+    v3 = GetModuleVariable variable=g1 @91
+    v4 = CheckInitialized v3 name="usual" @91
+    Jump -> next b3(v4) @91
+  b2(v5):
+    Jump -> next b3(v5) @77
+  b3(v6):
+    v7 = PropGet v6 key="plain" @111
+    v8 = TypeTest v7 testedType=undefined @104
+    Branch v8 -> taken b5(), notTaken b4(| 0) @104
+  b4(v9):
+    v10 = PropGet v6 key="plain" @150
+    v11 = TypeTest v10 testedType=boolean @143
+    Branch v11 -> taken b5(), notTaken b15(| 0) @143
+  b5():
+    v12 = PropGet v6 key="wide" @241
+    v13 = TypeTest v12 testedType=undefined @234
+    Branch v13 -> taken b7(), notTaken b6(| 0) @234
+  b6(v14):
+    v15 = PropGet v6 key="wide" @279
+    v16 = TypeTest v15 testedType=boolean @272
+    Branch v16 -> taken b7(), notTaken b14(| 0) @272
+  b7():
+    v17 = PropGet v6 key="plain" @365
+    v18 = ToBoolean v17 @365
+    Branch v18 -> taken b8(| 0), notTaken b9(| 0) @365
+  b8(v19):
+    v20 = Integer integer=1 @380
+    Jump -> next b10(v20) @380
+  b9(v21):
+    v22 = Integer @384
+    Jump -> next b10(v22) @384
+  b10(v23):
+    v24 = PropGet v6 key="wide" @390
+    v25 = ToBoolean v24 @390
+    Branch v25 -> taken b11(| 0), notTaken b12(| 0) @390
+  b11(v26):
+    v27 = Integer integer=2 @404
+    Jump -> next b13(v27) @404
+  b12(v28):
+    v29 = Integer @408
+    Jump -> next b13(v29) @408
+  b13(v30):
+    v31 = Add v23, v30 @408
+    Return v31 @408
+  b14(v32):
+    v33 = Builtin builtin=GlobalThis @316
+    v34 = PropGet v33 key="TypeError" [isFreeName] @316
+    v35 = Convert v34 declared={type=builtin(TypeError) flags=[IsExpected]} @316
+    v36 = String string="wide must be true or false" @326
+    v37 = Construct v35, -, v36 calleeName="TypeError" @316
+    v38 = Convert v37 declared={type=undefined|null|TypeError flags=[IsExpected, OmitsNull, OmitsUndefined]} @312
+    Throw v38 @312
+  b15(v39):
+    v40 = Builtin builtin=GlobalThis @188
+    v41 = PropGet v40 key="TypeError" [isFreeName] @188
+    v42 = Convert v41 declared={type=builtin(TypeError) flags=[IsExpected]} @188
+    v43 = String string="plain must be true or false" @198
+    v44 = Construct v42, -, v43 calleeName="TypeError" @188
+    v45 = Convert v44 declared={type=undefined|null|TypeError flags=[IsExpected, OmitsNull, OmitsUndefined]} @184
+    Throw v45 @184
+}
+function f2 name="outer" module=m0 position=414 flags=[IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=undefined @429
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0) @429
+  b1(v2):
+    v3 = Data data=d3 @442
+    Jump -> next b3(v3) @442
+  b2(v4):
+    Jump -> next b3(v4) @429
+  b3(v5):
+    v6 = GetModuleVariable variable=g0 @455
+    v7 = Call v6, -, v5 calleeName="settle" @455
+    ReturnCall v7 @455
+}

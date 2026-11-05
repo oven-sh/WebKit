@@ -1,6 +1,6 @@
 # made of 44f18fbbad19fd68
 # `const a = list[k]; const b: any = k === 0 ? 1 : "x"; a + b` in an inner loop whose two turns are written out, over a list with a hole. The read of `list[k]` looks AHEAD at the other operand of its one user.
-# Until 11-04 Frame::references kept what the turn before had bound: in the second turn the look found the Integer 1 of the first, took the hole for NaN, and the sum spelled "NaNx" for "undefinedx": 0 hits for 300.
+# Once Frame::references kept what the turn before had bound: in the second turn the look found the Integer 1 of the first, took the hole for NaN, and the sum spelled "NaNx" for "undefinedx": 0 hits for 300.
 # f1 = id, f2 = count, f3 = left, f4 = numbers
 # function id<T>(value: T): T { (globalThis as any).leaked = value; return (globalThis as any).leaked; }
 # function count(list: number[], rounds: number): number { let hits = 0; for (let r = 0; r < rounds; r++) { for (let k = 0; k < 2; k++) { if (k < list.length) { const a = list[k]; const b: any = k === 0 ? 1 : "x"; if (a + b === "undefinedx") hits++; } } } return hits; }

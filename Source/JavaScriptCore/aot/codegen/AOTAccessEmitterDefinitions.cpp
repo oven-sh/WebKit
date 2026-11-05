@@ -337,7 +337,7 @@ std::optional<CellPointer> AccessEmitter::tryAllocateCopyOfFields(const ValueCon
     const PlannedLayout& planned = m_plan.layout(layout);
     const ShapeTable& shapes = m_plan.shapes();
     ShapeRange shapesOfLayout = shapes.shapesOf(layout);
-    if (!planned.holdsCompiledObjects() || planned.isEscapedOffset || shapesOfLayout.count != 1 || shapes.shape(shapesOfLayout.first).keysAreNeverEnumerated)
+    if (!planned.holdsCompiledObjects() || planned.isEscapedOffset || shapesOfLayout.count != 1)
         return std::nullopt;
     if (mentioned.placed.layout != layout || m_plan.slots().extensionWord(layout).hasStorage() || planned.size <= offsetOfFirstField)
         return std::nullopt;
@@ -355,7 +355,7 @@ std::optional<CellPointer> AccessEmitter::tryAllocateCopyOfFields(const ValueCon
     {
         // The words of the source are read for the TryCopyFields, which declares the reads and appends none.
         Machine::DeclaredAccessesSuspension readsForCopy(m_out);
-        branch(equal(shapeTests.shapeWordOf(source), static_cast<int32_t>(AOT::shapeWordOf(shapesOfLayout.first))), { normalEdge(hasShape), rareEdge(fills) });
+        branch(equal(shapeTests.shapeWordWithMarkOf(source), static_cast<int32_t>(AOT::shapeWordOf(shapesOfLayout.first))), { normalEdge(hasShape), rareEdge(fills) });
 
         m_out.appendTo(hasShape);
         Word32 orderWord = shapeTests.orderWordOf(source);
@@ -392,7 +392,7 @@ void AccessEmitter::generateTryCopyFields(const ValueContext& value)
     const PlannedLayout& planned = m_plan.layout(layout);
     const ShapeTable& shapes = m_plan.shapes();
     ShapeRange shapesOfLayout = shapes.shapesOf(layout);
-    if (!planned.holdsCompiledObjects() || planned.isEscapedOffset || shapesOfLayout.isEmpty() || shapes.shape(shapesOfLayout.first).keysAreNeverEnumerated) {
+    if (!planned.holdsCompiledObjects() || planned.isEscapedOffset || shapesOfLayout.isEmpty()) {
         defineTest(value, boolean(false));
         return;
     }
@@ -407,13 +407,13 @@ void AccessEmitter::generateTryCopyFields(const ValueContext& value)
     CellPointer target = in<CellPointer>(value->objectOperand());
     CellPointer source = in<CellPointer>(value->sourceOperand());
     const Machine::AbstractHeap& fields = m_heaps.entire(AbstractHeap::ObjectFields);
-    auto hasGeneralShape = [&](CellPointer cell) {
-        return equal(shapeTests.shapeWordOf(cell), static_cast<int32_t>(AOT::shapeWordOf(shapesOfLayout.first)));
+    auto isGeneralShape = [&](Word32 shapeWord) {
+        return equal(shapeWord, static_cast<int32_t>(AOT::shapeWordOf(shapesOfLayout.first)));
     };
     auto refuse = [&] {
         return boolean(false);
     };
-    defineTest(value, either<Condition>(hasGeneralShape(source), [&] {
+    defineTest(value, either<Condition>(isGeneralShape(shapeTests.shapeWordWithMarkOf(source)), [&] {
         Word32 orderWord = shapeTests.orderWordOf(source);
         Condition hasNoOtherBits = hasNoBits(orderWord, ~orderAndCountMask);
         Condition hasOnlyFields = logicalAnd(hasNoOtherBits, notEqual(bitAnd(orderWord, orderWordOrderMask), orderStoredOutOfLine));
@@ -434,7 +434,7 @@ void AccessEmitter::generateTryCopyFields(const ValueContext& value)
                 emitter<CellAllocationEmitter>().copyFieldWords(source, target, static_cast<unsigned>(WTF::roundUpToMultipleOf<copyChunkBytes>(planned.size)) - offsetOfFirstField);
             LValue orderWordOfTarget = orderWord.value();
             if (shapesOfLayout.count > 1)
-                orderWordOfTarget = m_out.select(hasGeneralShape(target).value(), orderWordOfTarget, m_out.constInt32(unorderedOrderWord));
+                orderWordOfTarget = m_out.select(isGeneralShape(shapeTests.shapeWordOf(target)).value(), orderWordOfTarget, m_out.constInt32(unorderedOrderWord));
             m_out.store32(orderWordOfTarget, m_out.address(m_heaps.AOTObject_orderWord, target.value(), offsetOfOrderWord));
             if (mayCopyCell)
                 emitter<BarrierEmitter>().barrier(value, target);

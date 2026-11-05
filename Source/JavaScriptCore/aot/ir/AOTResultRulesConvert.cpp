@@ -78,58 +78,6 @@ bool describesBagOfOptions(const TypeArena& types, TypeID written)
     return namesBag;
 }
 
-// Returns never where the declaration says nothing about the value.
-static TypeID writtenTypeCutByPossibleValues(TypeArena& types, TypeID possible, TypeID written)
-{
-    TypeID cut = types.castTo(possible, written);
-    if (isNeverType(cut) || holdsOnlyPrimitives(possible) || holdsOnlyPrimitives(written))
-        return cut;
-    // `list?: { length: number }` is a layout, and arrays are passed in. Keeping only the primitives that both sides share would guess that no object ever arrives.
-    if (!types.at(cut).hasObjects() && types.at(possible).hasObjects() && types.at(written).hasObjects())
-        return TypeTable::never;
-    return cut;
-}
-
-// isSubset() ignores the written contents of a class, and the rules at TypeLevel::Expected know nothing else about contents.
-bool writtenContentsSayMoreThan(TypeArena& types, TypeID proven, TypeID cut)
-{
-    if (holdsOnlyPrimitives(cut))
-        return false;
-    Type cutType = types.at(cut);
-    Type provenType = types.at(proven);
-    if (!cutType.unnamedClasses || cutType.unnamedClasses == provenType.unnamedClasses)
-        return false;
-
-    return std::ranges::any_of(types.at(cutType.unnamedClasses), [&](const ClassPart& part) {
-        if (!part.hasWrittenContents())
-            return false;
-        const ClassPart* known = findClassPart(types, provenType, part.builtinClass);
-        return !known || known->writtenContents != part.writtenContents;
-    });
-}
-
-static bool writtenTypeSaysMoreThan(TypeArena& types, TypeID proven, TypeID cut)
-{
-    if (cut == proven)
-        return false;
-    return !types.isSubset(proven, cut) || writtenContentsSayMoreThan(types, proven, cut);
-}
-
-ExpectedType expectationFromWrittenType(TypeArena& types, TypeID proven, ExpectedType before, TypeID written)
-{
-    if (!proven || !written)
-        return { };
-
-    TypeID cut = TypeTable::never;
-    if (before)
-        cut = writtenTypeCutByPossibleValues(types, before.predicted(), written);
-    if (isNeverType(cut))
-        cut = writtenTypeCutByPossibleValues(types, proven, written);
-    if (isNeverType(cut) || !writtenTypeSaysMoreThan(types, proven, cut))
-        return { };
-    return ExpectedType(cut);
-}
-
 } } } // namespace JSC::AOT::Typed
 
 #endif // ENABLE(AOT)

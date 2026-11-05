@@ -49,25 +49,6 @@ enum class SymbolSpace : uint8_t {
 static constexpr unsigned numberOfSymbolSpaces = 10;
 static_assert(static_cast<unsigned>(SymbolSpace::FFI) + 1 == numberOfSymbolSpaces);
 
-constexpr bool namesMention(SymbolSpace space)
-{
-    switch (space) {
-    case SymbolSpace::Number:
-    case SymbolSpace::InstanceWord:
-    case SymbolSpace::RegExp:
-        return true;
-    case SymbolSpace::Function:
-    case SymbolSpace::Stub:
-    case SymbolSpace::ArgumentThunk:
-    case SymbolSpace::Constant:
-    case SymbolSpace::JumpTable:
-    case SymbolSpace::WebAssembly:
-    case SymbolSpace::FFI:
-        return false;
-    }
-    RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
-}
-
 // What a constant of CodeBody::constants is, as its maker says. No code follows from it: the pool counts its bytes by it.
 enum class ConstantKind : uint8_t {
     Unlabeled,
@@ -181,7 +162,6 @@ public:
         m_jit.nearTailCall();
         return append(site, RelocationKind::Jump, symbol);
     }
-    void emitDistance32(CodeSymbol, int32_t addend);
 
     // SymbolSpace::Number, RelocationKind::Number32. The upper half of dest is zero. ARM64: movz, movk. x86-64: mov r32, imm32.
     void moveNumber(CodeSymbol symbol, GPRReg dest) { append(m_jit.moveNumber32WithPatch(dest), RelocationKind::Number32, symbol); }

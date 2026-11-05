@@ -1328,7 +1328,7 @@ uint32_t IDSetArena::intern(const IDSetView& members, std::optional<IDSetOperati
     if (m_keeps == ArenaKeeps::InProgram)
         return addToTable(attachedWords.span());
 
-    ASSERT(m_table.isFrozen());
+    ASSERT(m_table.takesNoAdditions());
     uint32_t position = static_cast<uint32_t>(m_firstWordOfRecord.size());
     uint32_t set = idSetInThread(position);
     makeRoomKeepingOutgrownBuffer(m_words, m_outgrownWords, wordsOfIDSetHeader + numberOfAttachedWords + words.size());
@@ -1368,7 +1368,7 @@ uint32_t IDSetArena::internChunk(const IDSetChunk& chunk, std::optional<IDSetOpe
     if (known)
         return idSetInThread(*known);
 
-    ASSERT(m_table.isFrozen());
+    ASSERT(m_table.takesNoAdditions());
     uint32_t position = static_cast<uint32_t>(m_chunks.size());
     uint32_t encodedChunk = idSetInThread(position);
     makeRoomKeepingOutgrownBuffer(m_chunks, m_outgrownChunks, 1);

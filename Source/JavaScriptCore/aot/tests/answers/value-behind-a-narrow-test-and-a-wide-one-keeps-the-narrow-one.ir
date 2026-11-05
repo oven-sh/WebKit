@@ -1,7 +1,7 @@
 # made of 04b98c666f908535
 # the value has passed a test for a string and then a test that only turns numbers away: what flows on is a string, and the wider test does not take the place of the narrower
 # f1 = textOnly
-# TODO: unions-and-narrowing-4: the front end tests and returns the value from in front of both tests (TypeTest v0, Return v0, not the parameters of the blocks that the tests prove), so the edge to the result bears no test until listOf() answers with the name behind the test
+# TODO: narrowing on edges: the front end tests and returns the value from in front of both tests (TypeTest v0, Return v0, not the parameters of the blocks that the tests prove), so the edge to the result bears no test until listOf() answers with the name behind the test
 # OPTIONS: testing=CheckProofsAtRunTime
 # RUN(FORM): summary f1
 # FORM: edge Parameter 0 -> Result 0 passes=string

@@ -89,7 +89,7 @@ static bool isMadeByRunTimeAloneForLinkReach(LayoutKind kind)
 }
 
 // Native code answers with a record, the loader makes a namespace object and what a data module exports, Object.create(). A layout may be handed over more than once.
-// The constant of a Data operation is made where the operation stands: the scan lays its tree out. What a parser makes by a written type is stated where a call that parses by it is reached: stateObjectsMadeByParsersInLink().
+// The constant of a Data operation is made where the operation stands: the scan lays its tree out.
 template<typename Functor>
 static void forEachLayoutMadeAtNoNodeForLinkReach(const Program& program, const Functor& functor)
 {
@@ -210,7 +210,7 @@ private:
     void bringAlive(FunctionID);
     void prefetchSummaryOf(FunctionID) const;
     void prefetchRecordsOf(FunctionID, const ThinSummary&) const;
-    SiteID siteAt(FunctionID, uint32_t classInstanceInSummary);
+    SiteID siteAt(FunctionID, std::span<const uint32_t> classInstancesInSummary, uint32_t classInstanceInSummary);
     void fillStateThatNoSummaryFollows(SiteID, bool isObjectOfCoroutine);
     void fillEntryParameters(FunctionID, const Function&);
     void arriveWhatIsEstablished(FlowNodeID, const DeclaredType*);
@@ -254,6 +254,7 @@ private:
     BitVector m_escapedPrototypes;
     Vector<FlowNodeID> m_parametersThatUnseenCodePasses;
     BitVector m_openClassObjects;
+    BitVector m_variablesReadByUnseenCode;
     BitVector m_evaluatedModules;
     BitVector m_modulesWithReachedCode;
     BitVector m_modulesWithEscapedExports;
@@ -310,7 +311,7 @@ StateOfLinkReach::StateOfLinkReach(LinkFlow& flow)
     m_familiesWithEscapedConstructors = BitVector(flow.families.size());
     m_escapedPrototypes = BitVector(m_numberOfLayouts);
     m_openClassObjects = BitVector(m_numberOfLayouts);
-    flow.variablesReadByUnseenCode = BitVector(m_program.variables.size());
+    m_variablesReadByUnseenCode = BitVector(m_program.variables.size());
     m_evaluatedModules = BitVector(m_program.modules.size());
     m_modulesWithReachedCode = BitVector(m_program.modules.size());
     m_modulesWithEscapedExports = BitVector(m_program.modules.size());
@@ -607,6 +608,9 @@ void StateOfLinkReach::enterProgram()
         const Module& module = m_program.modules[index];
         bool isOfProgram = isProgramModuleOf(module.kind) && !module.flags.contains(ModuleFlags::IsLibrary);
         bool isHandedOut = module.flags.containsAny({ ModuleFlags::IsHandedOutByTestRunner, ModuleFlags::IsShownByEntryOfCache });
+        // What the record lists, the namespace object shows to whoever gets hold of it. The front end lists a name where a site hands the object out, and nothing here need reach that site.
+        if (isOfProgram && module.kind == ModuleKind::SourceText)
+            escapeExportsOf(ModuleID(index));
         // A module that no module asks for is in the program for the host's sake. One of the library is there for whoever loads it: enterLibraryInReach().
         if (!isHandedOut && !isAskedFor.get(index) && (!isOfProgram || isRequested.get(index)))
             continue;
@@ -840,7 +844,7 @@ void StateOfLinkReach::escapeExportsOf(ModuleID first)
     while (!modules.isEmpty()) {
         const Module& module = m_program.at(modules.takeLast());
         for (const ModuleExport& exported : module.exports) {
-            if (exported.variable && !m_flow.variablesReadByUnseenCode.set(exported.variable.index()))
+            if (exported.variable && !m_variablesReadByUnseenCode.set(exported.variable.index()))
                 m_flow.addEdge(m_flow.variable(exported.variable), m_flow.unseen());
             add(exported.module);
         }
@@ -1080,16 +1084,11 @@ bool StateOfLinkReach::enterLibraryInReach()
         m_builtinsInReach.noteAtUnseen(builtin);
     if (m_flow.lostBuiltinsReachUnseen())
         m_builtinsInReach.noteLostBuiltinsReachUnseen();
-    for (uint32_t index = 0; index < m_flow.numberOfSites(); ++index) {
-        SiteID site(index);
-        BuiltinClassID builtinClass = m_flow.classOf(site);
-        if (!builtinClass)
-            continue;
-        if (m_flow.hasEscaped(site))
-            m_builtinsInReach.noteInstanceAtUnseen(builtinClass);
-        if (m_flow.isClimbedFrom(site))
-            m_builtinsInReach.noteLost(m_flow.prototypeOfInstancesOf(builtinClass));
-    }
+    LinkFlow::ClassesOfSites classes = m_flow.findClassesOfSitesThatHaveEscapedOrAreClimbedFrom();
+    for (size_t builtinClass : classes.haveEscaped)
+        m_builtinsInReach.noteInstanceAtUnseen(BuiltinClassID(static_cast<uint32_t>(builtinClass)));
+    for (size_t builtinClass : classes.areClimbedFrom)
+        m_builtinsInReach.noteLost(m_flow.prototypeOfInstancesOf(BuiltinClassID(static_cast<uint32_t>(builtinClass))));
     m_builtinsThatCameIntoReach.shrink(0);
     m_builtinsThatCameOutOfSight.shrink(0);
     m_builtinsInReach.settle(m_builtinsThatCameIntoReach, m_builtinsThatCameOutOfSight);
@@ -1200,6 +1199,14 @@ void StateOfLinkReach::bringAlive(FunctionID id)
     // No node stands for what a call throws, so whoever catches it has `anything` in hand, and the host prints what nobody catches.
     m_flow.addEdge(m_flow.thrown(id), m_flow.unseen());
 
+    // The sites of a summary are numbered in the order of its nodes.
+    Vector<uint32_t, 16> classInstances;
+    if (m_flow.numberOfSitesOfSummary(id)) {
+        for (uint32_t index = 0; index < summary.nodes.size(); ++index) {
+            if (summary.nodes[index].kind == SummaryNode::Kind::ClassInstance)
+                classInstances.append(index);
+        }
+    }
     for (uint32_t index = 0; index < summary.nodes.size(); ++index) {
         const SummaryNode& node = summary.nodes[index];
         switch (node.kind) {
@@ -1220,7 +1227,7 @@ void StateOfLinkReach::bringAlive(FunctionID id)
         case SummaryNode::Kind::Contents:
             // What a body yields and returns is the body's, whoever has got hold of the object.
             if (!slotSpeaksOfBodyOfCoroutine(SlotOfContents::fromNumber(node.second)))
-                m_flow.takeAsContents(siteAt(id, node.first), SlotOfContents::fromNumber(node.second), m_flow.nodeOf(id, index));
+                m_flow.takeAsContents(siteAt(id, classInstances.span(), node.first), SlotOfContents::fromNumber(node.second), m_flow.nodeOf(id, index));
             break;
         case SummaryNode::Kind::Constant:
             m_flow.arriveFromSource(m_flow.nodeOf(id, index), m_flow.fromTypeID(TypeID::fromBits(node.first)));
@@ -1235,7 +1242,7 @@ void StateOfLinkReach::bringAlive(FunctionID id)
             break;
         }
         case SummaryNode::Kind::ClassInstance: {
-            SiteID site = siteAt(id, index);
+            SiteID site = siteAt(id, classInstances.span(), index);
             m_flow.arrive(m_flow.nodeOf(id, index), m_flow.typeOf(site));
             fillStateThatNoSummaryFollows(site, !node.second);
             break;
@@ -1335,11 +1342,12 @@ void StateOfLinkReach::fillStateThatNoSummaryFollows(SiteID site, bool isObjectO
     }
 }
 
-SiteID StateOfLinkReach::siteAt(FunctionID id, uint32_t classInstanceInSummary)
+SiteID StateOfLinkReach::siteAt(FunctionID id, std::span<const uint32_t> classInstancesInSummary, uint32_t classInstanceInSummary)
 {
     const SummaryNode& node = m_flow.summaries.at(id).nodes[classInstanceInSummary];
     RELEASE_ASSERT(node.kind == SummaryNode::Kind::ClassInstance);
-    return m_flow.siteOf(LinkFlow::MakerOfSite::NodeOfSummary, m_flow.nodeOf(id, classInstanceInSummary).index(), 0, BuiltinClassID(node.first));
+    auto found = std::ranges::lower_bound(classInstancesInSummary, classInstanceInSummary);
+    return m_flow.siteOfSummary(id, static_cast<uint32_t>(found - classInstancesInSummary.begin()), BuiltinClassID(node.first));
 }
 
 // What holds whoever enters.

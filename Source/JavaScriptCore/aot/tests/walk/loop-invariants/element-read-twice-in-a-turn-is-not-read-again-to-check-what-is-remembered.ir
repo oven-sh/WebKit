@@ -1,6 +1,6 @@
 # `if (list[i & 7] > 3) .. else if (list[i & 7] > 1) ..`: the second read is answered by what the first has found. Where proofs are checked at run time such a read is built once more, without the answers of the state, to hold memory against what was remembered:
 # behind a row in front of the loop that read would test for itself, and the look at the loop has counted on no other code. It is left out there
-# red from 20:04:06 to 20:30:14 on 11-03 (health, T 20:11:02): "an access in a loop does what the look at the loop has not counted on"
+# It was "an access in a loop does what the look at the loop has not counted on"
 # OPTIONS: check=Validate testing=CheckProofsAtRunTime
 # f1 = onSomeWays
 # -- source: element-read-twice-in-a-turn-is-not-read-again-to-check-what-is-remembered.ts

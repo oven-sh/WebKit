@@ -12,7 +12,7 @@
 # WALK: key="imul"
 
 module m0 path="/a.test.js" displayPath="a.test.js" body=f0 requests=[{target=m1 completes=true}]
-module m1 path="/tools.js" displayPath="tools.js" body=f1 exports=[{name="put" variable=g0}]
+module m1 path="/tools.js" displayPath="tools.js" body=f1
 entry module=m0
 variable g0 name="put" module=m1 declared={type=anything}
 function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {

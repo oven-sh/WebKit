@@ -113,14 +113,6 @@ void StubAssembler::exitOnCannot(Entry finisher, const OperationCall& operationC
     callOperationAndReturn(finisher, operationCall);
 }
 
-void StubAssembler::callEngineThunk(Entry pointer, GPRReg scratch)
-{
-    RELEASE_ASSERT(!isOperation(pointer) && canWrite(scratch));
-    recordClobber(scratch);
-    loadRuntimePointer(pointer, scratch);
-    call(scratch, JSEntryPtrTag);
-}
-
 void StubAssembler::callCode(CodeSymbol symbol)
 {
     RELEASE_ASSERT(symbol.space == SymbolSpace::RegExp);

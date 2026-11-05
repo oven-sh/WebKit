@@ -1,9 +1,0 @@
-# the same function with escape analysis withheld: the object is made where it is written, in front of the branch, and the call takes it
-# RUN: walk f1 mechanisms=none+TypedOperations+Folding
-# CHECK-LABEL: code f1:Body
-# CHECK: = NewObject {{*}}layout=L0
-# CHECK: Branch
-# CHECK-NOT: = NewObject
-# CHECK: = Call
-# CHECK: Throw
-# PROGRAM-OF: object-is-made-again-where-a-rare-way-hands-it-out.ir

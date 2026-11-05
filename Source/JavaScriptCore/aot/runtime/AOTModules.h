@@ -412,6 +412,9 @@ public:
     void countMockStates(ASCIILiteral door, const String& before, ModuleID);
     void noteCallOfMock(ModuleID fileOrModule);
     void letMockWaitBehindLateFailure(ModuleID module) { m_modulesWithMockToRun.set(module.index()); }
+    bool requireAsksFor(ModuleID module) const { return m_moduleThatRequireAsksFor == module; }
+    bool importAsksFor(ModuleID module) const { return m_moduleThatImportAsksFor && fileOf(m_moduleThatImportAsksFor) == fileOf(module); }
+    bool importThatWaitedAsksFor(ModuleID module) const { return m_importThatAsksHasWaited && importAsksFor(module); }
     void forgetCallOfMock(ModuleID fileOrModule);
     bool isBeingEvaluated(ModuleID module) const { return status(module) == ModuleStatus::Evaluating || status(module) == ModuleStatus::EvaluatingAsync; }
     static const MockOperations& mockOperations();
@@ -423,6 +426,7 @@ public:
     void forEachCapturedExport(ModuleID, const ScopedLambda<void(const Identifier&, JSValue)>&);
     // What a table of exports holds under the name. In the captured exports of a module the table itself stands for a deferred export: capturedValue() reads that one.
     static JSValue storedValue(JSGlobalObject*, JSObject* table, const Identifier& name);
+    static void storeValue(JSGlobalObject*, JSObject* table, unsigned number, JSValue);
     // As AbstractModuleRecord::getModuleNamespace(): the caller that creates the object decides whether it is extensible.
     JSObject* moduleNamespace(ModuleID, ModulePhase, bool shouldPreventExtensions = true);
     bool mayExport(ModuleID, UniquedStringImpl* name) const;
@@ -530,8 +534,11 @@ public:
     // A function of the program that the host calls on its way runs there too: a loader in require.extensions, a callback of a plugin. What it asks for, the program asks for.
     bool isAskingHost() const { return m_isAskingHost && !hasEnteredCodeOfProgramSinceAskingHost(); }
     bool hasEnteredCodeOfProgramSinceAskingHost() const;
+    // What the engine asks for lies in the image: the host asks back for it and for what it imports. Where it lies outside, the host has no file of the image to ask for,
+    // and whoever asks for one has been let in on the way: a plugin that answers with its path, natives that the program has bound together.
+    bool isAskingHostForFileOfImage() const { return m_isAskingHost.isForFileOfImage() && isAskingHost(); }
     // A name that the build did not follow finds an entry point and no other file of the image with code.
-    bool refusesRequestFromHost(ModuleID module) const { return !m_admitsInspector && !data(module).isEntryPoint() && (data(module).kind != ModuleKind::Data || !m_findsDataFilesByName) && m_table.hasFilePath(module) && !data(module).isLibraryCodeWithFilePath() && !m_runsCopyFromDisk && !isAskingHost(); }
+    bool refusesRequestFromHost(ModuleID module) const { return !m_admitsInspector && !data(module).isEntryPoint() && (data(module).kind != ModuleKind::Data || !m_findsDataFilesByName) && m_table.hasFilePath(module) && !data(module).isLibraryCodeWithFilePath() && !m_runsCopyFromDisk && !isAskingHostForFileOfImage(); }
     bool isRootThatCompiledCodeLoads(ModuleID module) const { return m_rootThatCompiledCodeLoads && fileOf(*m_rootThatCompiledCodeLoads) == fileOf(module); }
     bool refusesOriginalsBesideMocks() const { return m_refusesOriginalsBesideMocks; }
     // A mock stands for the module, and the host's own loader would give this importer the module itself beside it. False: the importer gets the mock.
@@ -587,8 +594,8 @@ public:
     void handGraphsToLoader();
     void didLoadGraph(ModuleID root);
     void didFailToLoadGraph(ModuleID root);
-    void resumeImportsBehindLoad(ModuleID root, bool graphRunsInThisJob = false);
-    void resumeImportsBehindSettledLoads();
+    bool holdGraphBehindEarlierCalls(ModuleRecord&, JSCell* payload, bool isDeferred);
+    void letGoGraphsHeldBehindEarlierCalls();
     void noteStepOfLoader() { ++m_stepsOfLoader; }
     void didSettlePromiseOfImport(JSPromise* promise) { m_loadsInFlight.didSettle(promise); }
     void runFileThatWaitsForItsTurn(ModuleID);
@@ -669,7 +676,9 @@ public:
     bool isLoadedModuleWithoutRecord(ModuleID) const;
     bool wasLoadedWithEarlierGraph(ModuleID);
     bool wasLoadedWithGraph(ModuleID) const;
-    ALWAYS_INLINE bool setIsAskingHost(bool isAskingHost) { return !!std::exchange(m_isAskingHost, RequestToHost(isAskingHost)); }
+    // For a caller outside that can keep a bit and no more. The request under way comes back whole: where it was made tells the questions of the host from those of the program.
+    ALWAYS_INLINE void setRequestToHostAside(bool isAskingHost) { m_requestsToHostSetAside.append(std::exchange(m_isAskingHost, RequestToHost(isAskingHost))); }
+    void takeUpRequestToHost() { m_isAskingHost = m_requestsToHostSetAside.takeLast(); }
     // The loader walks the import statements of a module of the image, and asks the host for what one of them names.
     bool isStatementAskingHost() const { return m_isStatementAskingHost; }
     bool setIsStatementAskingHost(bool isAsking) { return std::exchange(m_isStatementAskingHost, isAsking); }
@@ -711,7 +720,8 @@ public:
     JSObject* parentModuleObject(ModuleID);
     bool forEachNewChild(ModuleID, const ScopedLambda<void(JSObject*)>&);
     void dropNewChildren(ModuleID);
-    JSValue requireSpecifier(JSValue specifier, ModuleID referrer, bool isNamedByBuild);
+    enum class NamedByBuild : uint8_t { No, FileOfImage, WhatLiesOutsideImage };
+    JSValue requireSpecifier(JSValue specifier, ModuleID referrer, NamedByBuild);
     JSValue resolveDynamic(JSValue specifier, ModuleID referrer, ResolvedSpecifierForm);
 
     JSPromise* import(ModuleID, ModuleID referrer, JSValue options = jsUndefined());
@@ -735,7 +745,6 @@ public:
     // No text of the program is read.
     bool loadsAsExecutableDoes() const;
     bool isTestRun() const;
-    bool isAnythingBeingLoaded() const;
     // `requested`: the root of a graph that a call has asked the loader for by its key, and the promise is that of the fetch. Null: the call is made again, and the promise is the one that its caller has.
     void holdTextOfCall(JSPromise*, ModuleID, ModuleRecord* requested, std::optional<int64_t> referrerAsyncOrder, ImportCaller);
     void willDeliverText() { ++m_turnOfDeliveries; }
@@ -830,12 +839,36 @@ private:
         bool isBeingLoadedByLoader { false };
         BitVector ambiguousExports;
         std::unique_ptr<SourceOrigin> sourceOrigin;
-        Vector<ModuleID> requiredModules;
-        unsigned numberOfChildrenShown { 0 };
-        std::optional<ModuleID> firstRequirer;
         // Of a CommonJS file whose body the run time called: m_synchronousLoadCount at that call.
         std::optional<uint32_t> synchronousLoadCountAtStart;
     };
+
+    // Who required whom: what a require() leaves behind for `module.parent` and `module.children`. It holds no cell. It lies apart from LoadedModule: of most files that compiled code requires nothing else is ever asked.
+    struct WaysToModule {
+        WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(WaysToModule);
+
+        Vector<ModuleID> requiredModules;
+        unsigned numberOfChildrenShown { 0 };
+        std::optional<ModuleID> firstRequirer;
+    };
+    WaysToModule& ensureWaysTo(ModuleID module)
+    {
+        return *m_waysToModules.ensure(module, [] {
+            return makeUnique<WaysToModule>();
+        }).iterator->value;
+    }
+    WaysToModule* waysToIfRecorded(ModuleID module) const { return m_waysToModules.get(module); }
+    std::optional<ModuleID> firstRequirerOf(ModuleID module) const
+    {
+        WaysToModule* ways = waysToIfRecorded(module);
+        return ways ? ways->firstRequirer : std::nullopt;
+    }
+    void forgetFirstRequirerOf(ModuleID module)
+    {
+        if (WaysToModule* ways = waysToIfRecorded(module))
+            ways->firstRequirer = std::nullopt;
+    }
+    UncheckedKeyHashMap<ModuleID, std::unique_ptr<WaysToModule>> m_waysToModules;
 
     struct DynamicExport {
         Identifier name;
@@ -1128,21 +1161,30 @@ private:
     bool m_loadsModulesByName;
     const bool m_findsDataFilesByName;
     const bool m_refusesOriginalsBesideMocks;
-    // Where on the stack the engine turned to the host. Nowhere: it has not.
+    // Where on the stack the engine turned to the host, and whether for a file of the image. Nowhere: it has not.
     class RequestToHost {
     public:
         ALWAYS_INLINE RequestToHost(bool isMade = false)
             : m_madeAt(isMade ? currentStackPointer() : nullptr)
         {
         }
+        static ALWAYS_INLINE RequestToHost forWhatLiesOutsideImage()
+        {
+            RequestToHost request(true);
+            request.m_isForFileOfImage = false;
+            return request;
+        }
         explicit operator bool() const { return m_madeAt; }
+        bool isForFileOfImage() const { return m_isForFileOfImage; }
         // The stack grows downward.
         bool wasMadeBeforeEntering(const void* frame) const { return frame < m_madeAt; }
 
     private:
         const void* m_madeAt;
+        bool m_isForFileOfImage { true };
     };
     RequestToHost m_isAskingHost;
+    Vector<RequestToHost, 4> m_requestsToHostSetAside;
     std::optional<ModuleID> m_rootThatCompiledCodeLoads;
     bool m_isStatementAskingHost { false };
     bool m_isWalkingRequests { false };
@@ -1156,15 +1198,10 @@ private:
         // LoadsInFlight writes the two, and counts by them.
         bool isLoaded { false };
         bool isKnownToBeSettled { false };
-        bool hasText { false };
+        // The later calls that do not settle ahead of this one, in their order: settleCallsInLine().
+        Strong<JSArray> callsThatSettleBehind;
         // m_stepsOfLoader at the call. The loader takes no step in the job of a call: whoever finds another number calls in a later job.
         uint32_t stepsOfLoaderAtCall { 0 };
-        // No other text was on its way at the call. `bun run` reads the texts on other threads: such a text comes ahead of whatever is asked for later, and of those that wait together the last often comes first.
-        bool cameFirst { false };
-        // What lay below the root and had not begun to run when a later call first asked.
-        std::unique_ptr<BitVector> modulesLeftToRun;
-        // Of those: a search has gone through them and found no cycle.
-        std::unique_ptr<BitVector> modulesAboveNoCycle;
         // How many files the loader had run at the call.
         uint64_t numberOfFilesRunAtCall { 0 };
         // Among all the loads that there have been.
@@ -1220,8 +1257,8 @@ private:
                 functor(*load);
         }
         LoadInFlight* find(JSPromise* promise) const { return m_byPromise.get(promise); }
-        // The only one of them: whatever is asked for while it is here finds its text on the way.
-        LoadInFlight* loadThatCameFirst() const { return m_loadThatCameFirst; }
+        LoadInFlight* withNumber(uint64_t number) const { return number >= m_numberAtPlaceZero && number < numberBehindLast() ? m_inOrder[static_cast<size_t>(number - m_numberAtPlaceZero)].get() : nullptr; }
+        uint64_t numberBehindLast() const { return m_numberAtPlaceZero + m_inOrder.size(); }
 
         bool isBeingLoaded(const LoadInFlight& load) const { return !load.isLoaded && !load.isKnownToBeSettled && load.promise->status() == JSPromise::Status::Pending; }
         unsigned numberBeingLoaded() const
@@ -1241,23 +1278,18 @@ private:
             return m_size != m_settled.size();
         }
 
-        LoadInFlight& append(VM& vm, JSPromise* promise, ModuleID root, bool hasText, SettlingOfLoad settling)
+        LoadInFlight& append(VM& vm, JSPromise* promise, ModuleID root, SettlingOfLoad settling)
         {
             auto owned = makeUnique<LoadInFlight>();
             LoadInFlight& load = *owned;
             load.promise.set(vm, promise);
             load.root = root;
-            load.hasText = hasText;
-            load.cameFirst = hasText && !m_numberWithText;
             load.numberOfFilesRunAtCall = m_numberOfFilesRun;
             load.number = m_numberAtPlaceZero + m_inOrder.size();
             m_inOrder.append(WTF::move(owned));
             m_byRoot.add(root, Vector<LoadInFlight*, 1> { }).iterator->value.append(&load);
             if (!m_byPromise.add(promise, &load).isNewEntry || settling == SettlingOfLoad::IsLookedFor)
                 m_promisesThatNobodyTellsOf.append(&load);
-            if (load.cameFirst)
-                m_loadThatCameFirst = &load;
-            m_numberWithText += hasText;
             ++m_numberBeingLoaded;
             ++m_size;
             return load;
@@ -1314,9 +1346,7 @@ private:
             m_byPromise.clear();
             m_promisesThatNobodyTellsOf.clear();
             m_settled.clear();
-            m_loadThatCameFirst = nullptr;
             m_size = 0;
-            m_numberWithText = 0;
             m_numberBeingLoaded = 0;
             m_numberBeingLoadedThatSawFileRun = 0;
         }
@@ -1358,9 +1388,6 @@ private:
                 m_byRoot.remove(ofRoot);
             if (auto ofPromise = m_byPromise.find(load.promise.get()); ofPromise != m_byPromise.end() && ofPromise->value == &load)
                 m_byPromise.remove(ofPromise);
-            if (m_loadThatCameFirst == &load)
-                m_loadThatCameFirst = nullptr;
-            m_numberWithText -= load.hasText;
             --m_size;
             m_inOrder[static_cast<size_t>(load.number - m_numberAtPlaceZero)] = nullptr;
             while (m_firstPlace < m_inOrder.size() && !m_inOrder[m_firstPlace])
@@ -1382,9 +1409,7 @@ private:
         // The host's own loads, and the import() of a module that exports a `then`.
         mutable Vector<LoadInFlight*, 2> m_promisesThatNobodyTellsOf;
         mutable Vector<LoadInFlight*, 2> m_settled;
-        LoadInFlight* m_loadThatCameFirst { nullptr };
         unsigned m_size { 0 };
-        unsigned m_numberWithText { 0 };
         // Neither loaded nor settled.
         mutable unsigned m_numberBeingLoaded { 0 };
         mutable unsigned m_numberBeingLoadedThatSawFileRun { 0 };
@@ -1509,6 +1534,8 @@ private:
     };
     Vector<std::pair<ModuleID, JSObject*>, 4> m_namespacesBeingMade;
     UncheckedKeyHashMap<ModuleID, MockOverModuleThatHasRun> m_mocksOverModulesThatHaveRun;
+    // willLeaveModuleAlone() let the face of a CommonJS file take its copies, which no import had asked for.
+    BitVector m_facesThatTookCopiesForMock;
     struct FirstMockInTestFile {
         uint32_t moment;
         uint32_t momentOfTestFile;
@@ -1551,7 +1578,6 @@ private:
     void noteMomentMockComesInPlace(ModuleID fileOrModule, JSObject* mock, bool stoodInPlace, bool leavesEarlierMockToItsImporters);
     void keepMockThatStoodInPlace(ModuleID fileOrModule, ModuleID module, JSObject* endedMock);
     void giveBackNamespacesHandedOn(LoadedModule& mocked);
-    void setAsideNamespaceUnderMock(ModuleID);
     bool isSomeLoadUnderWay() const;
     BitVector m_namespacesReplacedByMock;
     // A mock stood in place of the module while its importers ran, and has ended. They read the names of the module itself now, whose body has yet to run.
@@ -1594,6 +1620,11 @@ private:
     // The factory of a mock failed while they were loaded, and they import the mocked module by statements, one through another. The loader of `bun test` keeps the record of each with that error:
     // whoever loads one, or comes to one by a statement, gets the error, until the module is taken out of require.cache or the module below is mocked anew.
     BitVector m_modulesWithLoadEndedByMock;
+    // While VMState::requireRunsMocks.
+    ModuleID m_moduleThatRequireAsksFor;
+    // While a call of import() walks over the mocks below its module and asks for the factories that it has to wait for.
+    ModuleID m_moduleThatImportAsksFor;
+    bool m_importThatAsksHasWaited { false };
     // A statement came to them when the factory failed, so the loader keeps their records too: the next statement gets the error, and the factory is not asked. An import() of such a module drops the
     // record and asks the factory; a require() asks the factory and leaves the record.
     BitVector m_mockedModulesWithErrorKeptByLoader;
@@ -1603,24 +1634,28 @@ private:
     BitVector m_modulesLoadedBeforeMockThatWaited;
     // runBodyOfRequiredFileAheadOfMock(). The mock may wait on: a require() calls no factory that awaits.
     BitVector m_filesThatRanAheadOfMock;
-    // The loader has only the root of a graph in its hands, so it cannot tell that a module belongs to a graph that was asked for earlier.
-    struct ImportBehindLoad {
-        ModuleID root;
-        ModuleID module;
-        std::optional<int64_t> referrerAsyncOrder;
-        Strong<JSPromise> promise;
-    };
-    Vector<ImportBehindLoad> m_importsBehindLoads;
-    // Their graphs were linked, and ran in that job.
-    Vector<ImportBehindLoad> m_importsBehindEvaluations;
     uint32_t m_stepsOfLoader { 0 };
-    LoadInFlight* findEarlierLoadAbove(ModuleID);
+    // The loader has only the root of a graph in its hands, so it cannot tell that a module belongs to a graph that was asked for earlier.
+    // By module: one more than the number of the load that holds it. Empty until a call finds a load of an earlier job.
+    Vector<uint64_t> m_loadsThatHoldModules;
+    uint64_t m_numberOfNextLoadToGoThrough { 0 };
+    void goThroughLoadsOfEarlierJobs();
+    LoadInFlight* loadBeingLoadedThatHolds(ModuleID) const;
     bool leadsToModuleLeftToRun(const ModuleRequestData&) const;
     bool leadsTo(ModuleID from, ModuleID to);
-    const BitVector& modulesLeftToRunBelow(LoadInFlight&);
-    bool isAboveCycleLeftToRun(LoadInFlight&, ModuleID);
     bool asksForLastTextBelow(const LoadInFlight&, ModuleID);
-    void makeImportAgain(const ImportBehindLoad&);
+    bool runsFirstBelow(ModuleID root, ModuleID);
+    LoadInFlight* earlierLoadToRunFirst(const LoadInFlight&);
+    LoadInFlight* earlierLoadToSettleFirst(ModuleID);
+    // The arguments of the job of the loader that comes again. In the order of the calls.
+    struct GraphHeldBehindEarlierCall {
+        Strong<JSCell> root;
+        Strong<JSCell> payload;
+        bool isDeferred;
+        uint64_t numberOfLoad;
+        uint64_t numberOfEarlierLoad;
+    };
+    Vector<GraphHeldBehindEarlierCall, 2> m_graphsHeldBehindEarlierCalls;
     bool hasFileOfGraphBeingLoadedBegun() const;
     bool isTextLeftToRead(ModuleID);
     JSPromise* startImportInLaterTurn(ModuleID, std::optional<int64_t> referrerAsyncOrder);
@@ -1633,8 +1668,11 @@ private:
         // Null for a call.
         Strong<JSCell> requested;
         std::optional<int64_t> referrerAsyncOrder;
+        // LoadInFlight::stepsOfLoaderAtCall, for the load that begins when the text has come.
+        std::optional<uint32_t> stepsOfLoaderAtCall;
     };
     Vector<TextOnItsWay, 2> m_textsOnTheirWay;
+    std::optional<uint32_t> m_stepsOfLoaderAtCallWhoseTextHasCome;
     uint32_t m_turnOfTexts { 0 };
     uint32_t m_numberOfTextsAskedFor { 0 };
     // By file. `bun run` takes every step that a text allows in the turn in which the text comes: a module asks for what it imports, and a file runs and calls import().
@@ -1723,10 +1761,11 @@ private:
 };
 
 // What the host asks the engine for while the engine asks it for a module that the image names is no load by a name that the build did not follow.
+// The module is one of the library or a value of the host's: it lies outside the image.
 class RequestToHostScope {
 public:
-    explicit RequestToHostScope(Modules& modules)
-        : m_isAskingHost(modules.m_isAskingHost, true)
+    ALWAYS_INLINE explicit RequestToHostScope(Modules& modules)
+        : m_isAskingHost(modules.m_isAskingHost, Modules::RequestToHost::forWhatLiesOutsideImage())
     {
     }
 

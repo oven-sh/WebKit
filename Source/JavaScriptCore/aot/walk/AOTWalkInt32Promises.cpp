@@ -121,6 +121,8 @@ private:
     TypeAsWritten asWalkHasIt(ValueID) const;
     // Of a value that is made of no other: by what is written of it alone.
     TypeAsWritten typeWrittenOf(ValueID) const;
+    TypeID typeStatedByCastsOf(ValueID) const;
+    Parts otherSidesOfRelationsInFront(ValueAtPlace) const;
     TypeAsWritten cutByRelationsInFront(ValueAtPlace, TypeAsWritten) const;
     BuiltinID builtinWrittenAsCallee(ValueID) const;
     BuiltinID builtinBoundedByArguments(BodyValue) const;
@@ -183,6 +185,46 @@ static std::optional<std::array<BodyEdgeResult, 2>> sidesOfEqualityOnEdgeForInt3
 
 // Up the blocks that stand above the place, as far as the block that makes the value: every run that comes to the place has come through each of them, and by the edge where one edge alone enters.
 // `for (let i: int32 = 0; i < to; i++) { if (c) .. }`: ways part and meet between the test and the step, and the test holds all the same.
+// `i < point[key]`: the front end states behind a read that is an operand what the checker has for it, where that is an int32. As typeBehindConvert(): a cast into a position with the promise proves nothing,
+// and what is only expected of a value is written nowhere.
+TypeID TypesAsWritten::typeStatedByCastsOf(ValueID value) const
+{
+    while (value && !m_input.isParameter(value) && m_input.opcodeOf(value) == Opcode::Convert) {
+        BodyValue convert = m_input.value(value);
+        DeclaredType declared = convert.as<Opcode::Convert>().declared();
+        TypeID stated = targetOfConvert(typingForInt32Promises(m_walker), declared);
+        if (stated && !declared.has(PositionFlags::IsInt32Promise) && !declared.isExpected() && writtenTypeKeepsInt32Promise(m_walker, stated))
+            return stated;
+        value = convert.operand(0);
+    }
+    return { };
+}
+
+// `i <= point[key] - 1`: what bounds the value is made of other values, as the value that enters a promise is. Each other side, in the block of its relation: of() judges it in front of the value that it cuts.
+// That block stands above the place that asks, so the places climb and this ends. The climb is that of cutByRelationsInFront().
+TypesAsWritten::Parts TypesAsWritten::otherSidesOfRelationsInFront(ValueAtPlace asked) const
+{
+    Parts otherSides;
+    BlockID made = m_input.blockOf(asked.value);
+    for (BlockID below = asked.place, block = m_input.immediateDominator(below); below != made && block; below = block, block = m_input.immediateDominator(below)) {
+        std::optional<BodyIncomingEdge> edge = m_input.onlyIncomingEdge(below);
+        if (!edge)
+            continue;
+        std::optional<std::array<BodyEdgeResult, 2>> bounds = boundsProvenOnEdge(m_input, m_input.terminator(block), edge->targetIndex);
+        if (!bounds)
+            bounds = sidesOfEqualityOnEdgeForInt32Promises(m_input, m_input.terminator(block), edge->targetIndex);
+        if (!bounds)
+            continue;
+        for (const BodyEdgeResult& bound : *bounds) {
+            if (m_input.valueBehindCasts(bound.subject) != asked.value)
+                continue;
+            if (ValueID otherSide = m_input.value(bound.test).operand(1 - bound.operandIndex))
+                otherSides.append({ otherSide, block });
+        }
+    }
+    return otherSides;
+}
+
 TypeAsWritten TypesAsWritten::cutByRelationsInFront(ValueAtPlace asked, TypeAsWritten written) const
 {
     if (!written.type)
@@ -202,7 +244,13 @@ TypeAsWritten TypesAsWritten::cutByRelationsInFront(ValueAtPlace asked, TypeAsWr
             if (m_input.valueBehindCasts(bound.subject) != asked.value)
                 continue;
             BodyValue relation = m_input.value(bound.test);
-            TypeID other = typeWrittenOf(m_input.valueBehindCasts(relation.operand(1 - bound.operandIndex))).type;
+            ValueID otherSide = relation.operand(1 - bound.operandIndex);
+            TypeAsWritten judged = known({ otherSide, block });
+            TypeID other = judged.restsOnWrittenType ? judged.type : TypeID();
+            if (!other)
+                other = typeStatedByCastsOf(otherSide);
+            if (!other)
+                other = typeWrittenOf(m_input.valueBehindCasts(otherSide)).type;
             if (!other)
                 continue;
             TypeID cut = narrowByComparison(typing, relation.opcode(), !bound.operandIndex, written.type, other, bound.isOnTakenEdge ? EdgeSide::Taken : EdgeSide::NotTaken);
@@ -452,6 +500,10 @@ TypeAsWritten TypesAsWritten::of(ValueID root)
             if (!m_known.contains(keyOf(part)))
                 pending.append(part);
         }
+        for (ValueAtPlace otherSide : otherSidesOfRelationsInFront(asked)) {
+            if (!m_known.contains(keyOf(otherSide)))
+                pending.append(otherSide);
+        }
         if (pending.size() != numberPending)
             continue;
         m_known.add(keyOf(asked), compute(asked));
@@ -514,7 +566,8 @@ void checkInt32Promise(Walker& walker, const DeclaredType& position, ValueID ent
     auto keepsPromise = [&](TypeID type) {
         return numbersKeepInt32Promise(walker.types().at(type)) && mayLieInPositionOfInt32Promise(walker, type, position);
     };
-    TypesAsWritten typesAsWritten(walker, walker.currentBodyIndex().blockOf(entering));
+    // Where the promise is made, not where the value is: `for (let i = 0; i < point[key]; i++) take(i)`: `i` is a parameter of the head of the loop, and the relation stands on the way from there into the body.
+    TypesAsWritten typesAsWritten(walker, walker.inputBlockBeingWalked());
     TypeAsWritten asWritten = typesAsWritten.of(entering);
     bool isJudgedAsWritten = asWritten.type && asWritten.restsOnWrittenType;
     // Of what is written the walk may make more than the rules do one by one: a read that it has seen tested.

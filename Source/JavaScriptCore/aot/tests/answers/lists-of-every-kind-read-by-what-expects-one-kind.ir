@@ -1,6 +1,6 @@
 # reads that are written of `string[]`, `number[]`, `unknown[]` meet lists of every kind of storage: texts, int32, doubles, none yet, shared with a literal, holes, far elements, accessors, frozen; lists below other lists and below nothing; a class below Array, Array.prototype itself, objects below it, proxies, views, texts, nothing
-# the program is list-reads-in-loops-1's lists-of-every-kind-read-in-loops-that-leave-them-alone.ts, with Array.prototype and what stands below it added: the test of the kind by its bits takes a cell without storage for elements for Contiguous
-# the turn of countsTextsBesideACall calls what nobody knows, so no row stands in front of its loop (list-reads-in-loops-1) and the read tests for itself in every turn
+# the program is that of lists-of-every-kind-read-in-loops-that-leave-them-alone.ir, with Array.prototype and what stands below it added: the test of the kind by its bits takes a cell without storage for elements for Contiguous
+# the turn of countsTextsBesideACall calls what nobody knows, so no row stands in front of its loop and the read tests for itself in every turn
 # f8 = countsTextsBesideACall
 # RUN(FORM): walk f8 mechanisms=all
 # FORM-LABEL: code f8:Body

@@ -121,6 +121,7 @@ private:
 
     void forEachArg(Air::Inst&, NOESCAPE const ScopedLambda<Air::Inst::EachArgCallback>&) final;
     bool isValid(Air::Inst&) final;
+    bool hasFixedForms(Air::Inst&) final;
     bool admitsStack(Air::Inst&, unsigned argIndex) final;
     bool admitsExtendedOffsetAddr(Air::Inst&, unsigned) final;
     std::optional<unsigned> shouldTryAliasingDef(Air::Inst&) final;

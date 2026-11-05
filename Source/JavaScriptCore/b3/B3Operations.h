@@ -27,9 +27,9 @@
 
 #if ENABLE(B3_JIT)
 
-#include <JavaScriptCore/JITOperationValidation.h>
-#include <JavaScriptCore/OperationResult.h>
-#include <JavaScriptCore/UGPRPair.h>
+#include "JITOperationValidation.h"
+#include "OperationResult.h"
+#include "UGPRPair.h"
 #include <wtf/Platform.h>
 
 namespace JSC::B3 {

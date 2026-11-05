@@ -83,7 +83,7 @@ static TestOfStraightSwitch testCaseOfStraightSwitch(StraightEmitter& emitter, O
 
     StubKey stub = AOT::equalsLiteral(ComparedOperand::Value);
     emitter.callStub(origin, stub, { &subject, 1 }, { .numberedImmediate = NumberedImmediate { emitter.mentions().add(NumberSpace::String, literal) } });
-    return { jit.branchTest32(jumpsIfEqual ? CCallHelpers::NonZero : CCallHelpers::Zero, StraightEmitter::resultGPR), keepsSubjectOfStraightSwitch(stub, emitter.catalog().summaryOf(stub)) };
+    return { jit.branchTest32(jumpsIfEqual ? CCallHelpers::NonZero : CCallHelpers::Zero, emitter.resultOfCall()), keepsSubjectOfStraightSwitch(stub, emitter.catalog().summaryOf(stub)) };
 }
 
 void StraightEmitter::generateSwitchOnString(const BodyTerminator& terminator)
@@ -101,6 +101,8 @@ void StraightEmitter::generateSwitchOnString(const BodyTerminator& terminator)
         ++targetIndex;
     }
     if (edges.isEmpty()) {
+        if (waitsInRegister(terminator.subjectOperand()))
+            m_valueInRegister = { };
         m_jit->breakpoint();
         return;
     }

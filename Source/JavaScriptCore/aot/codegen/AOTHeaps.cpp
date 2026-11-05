@@ -46,6 +46,7 @@ static constexpr SharedHeap sharedHeaps[] = {
     { &AOTHeaps::JSCell_header, { IRHeap::NamedProperties, IRHeap::PrototypeLinks, IRHeap::ArrayStorage } },
     { &AOTHeaps::JSObject_butterfly, { IRHeap::NamedProperties } },
     { &AOTHeaps::AOTObject_orderWord, { IRHeap::NamedProperties } },
+    { &AOTHeaps::AOTObject_shapeWord, { IRHeap::NamedProperties } },
     { &AOTHeaps::AOTSlimClosure_word, { IRHeap::NamedProperties, IRHeap::PrototypeLinks } },
     // The bits of a Structure that generated code tests speak of the properties of its objects and of the objects above them.
     { &AOTHeaps::Structure_bitField, { IRHeap::NamedProperties, IRHeap::PrototypeLinks } },
@@ -227,6 +228,7 @@ void AOTHeaps::appendHeapsOfConvertedCells(HeapList& list, ConvertedCells cells)
         list.append(&JSNonArray_butterfly);
     }
     list.append(&AOTSlimClosure_word);
+    list.append(&AOTObject_shapeWord);
 }
 
 // The end of a collection removes the dead entries of weak tables, and may replace their buffers.

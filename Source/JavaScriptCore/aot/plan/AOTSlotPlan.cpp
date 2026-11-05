@@ -22,10 +22,8 @@
 #include "AOTFamilies.h"
 #include "AOTFieldsStorage.h"
 #include "AOTIRProgram.h"
-#include "AOTKeyOrdersOfLayouts.h"
 #include "AOTLayoutData.h"
 #include "AOTLinkTables.h"
-#include "AOTLinkValuesLaidAbove.h"
 #include "AOTMechanisms.h"
 #include "AOTResultRules.h"
 #include "AOTSort.h"
@@ -744,6 +742,12 @@ static void placeFieldsSharedByFamiliesForSlotPlan(const Program& program, const
 }
 
 // The same for the fields that Link appended and that lie out of line: a name that every member of a family has so takes one granule in all of them.
+// For all that Link has proven, a property may come to an object of the layout under a name that it has no field for.
+static bool mayGainPropertiesInSlotPlan(const LinkTables& link, LayoutID id)
+{
+    return id.index() < link.layouts.size() && link.layout(id).possibleChanges.contains(LayoutChange::GainsProperty);
+}
+
 // What is stored under a name without a slot is an extra property. So nothing in sight stores under the name, or the layout may gain properties for all that Link has proven: then whoever leans on its objects looks,
 // and the run time lets the property be added. Link finds the declared field at a store and notes no such change for it.
 static bool mayBeNoFieldInSlotPlan(const LinkTables& link, FieldReference reference)
@@ -885,9 +889,16 @@ static void placeAppendedFieldsForSlotPlan(const Program& program, const LinkTab
             } else
                 granule = PlacesOfFieldsInSlotPlan::inCell;
         }
+        // Link appends as many names as an Extension has granules, and the listed fields that leave the cell come first. A NAME THAT FINDS NO GRANULE IS NO FIELD: a list of appended names claims nothing,
+        // and a name that is missing from it is an extra property. In the cell it would take the room that a listed field has just given up: a type of a hundred optional members, on whose objects the program stores under sixty more names.
+        // Where Link has ruled out that the objects gain properties it has counted on the field, which lies in the cell.
         for (uint8_t& granule : result.granulesOfAppendedFields[index]) {
-            if (granule == noGranule)
-                granule = numbersOfGranulesTaken[index] < maxExtensionGranules ? numbersOfGranulesTaken[index]++ : PlacesOfFieldsInSlotPlan::inCell;
+            if (granule != noGranule)
+                continue;
+            if (numbersOfGranulesTaken[index] < maxExtensionGranules)
+                granule = numbersOfGranulesTaken[index]++;
+            else
+                granule = mayGainPropertiesInSlotPlan(link, LayoutID(index)) ? PlacesOfFieldsInSlotPlan::withoutSlot : PlacesOfFieldsInSlotPlan::inCell;
         }
     };
     for (uint32_t index = 0; index < numberOfLayouts; ++index)
@@ -1282,9 +1293,11 @@ static PlannedLayout planLayoutForSlotPlan(const Program& program, const Facts& 
         && WTF::roundUpToMultipleOf<MarkedSpace::sizeStep>(endOfSlotsInCell) - endOfSlotsInCell >= bytesPerSlotInSlotPlan;
     for (FieldIndex field = numberOfDeclaredFields; field < numberOfFields; ++field) {
         PlacedSlot& slot = planned.slots[field];
+        uint8_t granule = places.granulesOfAppendedFields[id.index()][field - numberOfDeclaredFields];
+        if (granule == PlacesOfFieldsInSlotPlan::withoutSlot)
+            continue;
         slot.indexInLayoutRecord = planned.numberOfRecordFields++;
         slot.holdsAccessor = facts.field({ id, field }).facts.contains(FieldFact::IsAccessor);
-        uint8_t granule = places.granulesOfAppendedFields[id.index()][field - numberOfDeclaredFields];
         if (hasWordLeftOver && facts.linked().isAppendedFieldNamedMostOften({ id, field }) && !places.appendedFieldsThatShareGranule[id.index()].get(field - numberOfDeclaredFields))
             granule = PlacesOfFieldsInSlotPlan::inCell;
         TypeID held = hasTypedSlots ? places.typesHeldOfAppendedFields[id.index()][field - numberOfDeclaredFields] : TypeID();
@@ -1351,7 +1364,7 @@ void planNames(const Program&, const MentionsOfKeys&, BuildContext&, SlotPlanPar
 SlotPlanParts computeSlotPlanParts(Program&, const Facts&, BuildContext&);
 // A NUMBER THAT IS LEFT IN A BOXED SLOT IS HELD TO NOTHING, WHATEVER FACTS SAY OF THE FIELD. Without a type a guess tests `i32` or `number`, one compare, and unboxes an int32 or a double. With undefined|null|i32 the two markers drag the
 // operation into floating point: the value is unboxed into an optional double, whose markers each operation decodes: `value * this.step`: +6 instructions a turn for an enum, +7 for a number
-// (whole/hoist/programs/q/p/p13-method.ts x1.189, p4-callback.ts x1.031). And every store by name pays the test of the type. One freeze (11-04 01:10:13), int32 held | not: the TypeScript-compiler benchmark 36.34 | 36.24 G.
+// (x1.189 in a method, x1.031 in a callback). And every store by name pays the test of the type. Int32 held | not: the TypeScript-compiler benchmark 36.34 | 36.24 G.
 // BEHIND WHOEVER CHOOSES RAW FORMS: he reads the type of a slot that is still boxed, and in a raw form the optional value is a plain load. Booleans, texts and references gain boxed too.
 static void dropTypesOfNumbersLeftBoxedInSlotPlan(const Program& program, SlotPlanParts& parts)
 {

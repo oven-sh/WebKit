@@ -25,6 +25,16 @@ void BindingEmitter::failAndDefineZero(const ValueContext& value, InternalErrorK
     define(value, emitter<ConstantEmitter>().zeroOf(value.representation()));
 }
 
+// No closure holds an environment that is never made, so what reads or writes one never runs: as SlotAccessEmitter::resultWithoutSlot() has it for objects.
+bool BindingEmitter::endsWayAtEnvironmentThatIsNeverMade(LayoutID layout)
+{
+    if (m_plan.isInUse(layout))
+        return false;
+    m_out.unreachable();
+    m_out.appendTo(newBlock());
+    return true;
+}
+
 void BindingEmitter::generateParameter(const ValueContext&)
 {
     RELEASE_ASSERT_NOT_REACHED();
@@ -74,9 +84,6 @@ void BindingEmitter::generateGetModuleVariable(const ValueContext& value)
     case VariableStorage::ClosureTable:
         defineSingletonClosure(value, planned.function);
         return;
-    case VariableStorage::None:
-        failAndDefineZero(value, InternalErrorKind::SlotAccessNotPlaced);
-        return;
     }
 
     // The read is proven to give closures of the function that the variable is born as AND NOTHING ELSE, no undefined and no null (singleFunctionOf() asks the objects of a type alone), and that function has one closure:
@@ -106,17 +113,6 @@ void BindingEmitter::generateGetModuleVariable(const ValueContext& value)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-void BindingEmitter::generateGetEncodedModuleVariable(const ValueContext& value)
-{
-    VariableID variable = value->variable();
-    PlannedVariable planned = m_plan.variable(variable);
-    if (!planned.hasWordInStatics() || planned.encoding != VariableEncoding::UndefinedAsZero) {
-        failAndDefineZero(value, InternalErrorKind::SlotAccessNotPlaced);
-        return;
-    }
-    define(value, emitter<StaticsEmitter>().loadEncodedVariable(variable));
-}
-
 void BindingEmitter::generatePutModuleVariable(const ValueContext& value)
 {
     VariableID variable = value->variable();
@@ -125,7 +121,6 @@ void BindingEmitter::generatePutModuleVariable(const ValueContext& value)
         emitter<StaticsEmitter>().storeVariable(variable, get(value->valueOperand()), typeOf(value->valueOperand()));
         return;
     case VariableStorage::ClosureTable:
-    case VariableStorage::None:
         fail(value, InternalErrorKind::SlotAccessNotPlaced);
         return;
     }
@@ -163,6 +158,10 @@ void BindingEmitter::generateGetEnvironmentField(const ValueContext& value)
     LayoutID layout = value->layout();
     uint32_t field = value->field();
     const PlacedSlot& slot = m_plan.slot(layout, field);
+    if (endsWayAtEnvironmentThatIsNeverMade(layout)) {
+        define(value, emitter<ConstantEmitter>().zeroOf(value.representation()));
+        return;
+    }
     if (!isPlacedInEnvironment(slot)) {
         failAndDefineZero(value, InternalErrorKind::SlotAccessNotPlaced);
         return;
@@ -176,6 +175,8 @@ void BindingEmitter::generatePutEnvironmentField(const ValueContext& value)
     LayoutID layout = value->layout();
     uint32_t field = value->field();
     const PlacedSlot& slot = m_plan.slot(layout, field);
+    if (endsWayAtEnvironmentThatIsNeverMade(layout))
+        return;
     if (!isPlacedInEnvironment(slot)) {
         fail(value, InternalErrorKind::SlotAccessNotPlaced);
         return;

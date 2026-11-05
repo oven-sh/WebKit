@@ -1,7 +1,7 @@
 # made of 9998dcd70dd29c63
 # `try { if (got < floor) throw 1; } catch { throw "below the floor"; }` in a callee that is copied into the typed copy of a loop: the throw is a jump behind the head of the handler block, past its catch.
 # The handler block only throws, and nothing of the turn was done: the turn begins again in the other copy and the block is not walked. The next block of the frame, the handler of the `try` in front, is walked from its first operation: `e` is what was caught.
-# Until 11-04 10:2x the place behind the catch stayed noted in the frame and the next handler block lost its CatchValue: the compiler stopped in the walk of `total`.
+# The place behind the catch once stayed noted in the frame and the next handler block lost its CatchValue: the compiler stopped in the walk of `total`.
 # f1 = pick, f2 = id, f3 = total
 # RUN(COUNT): compile TurnsThatBeginAgain mechanisms=all
 # COUNT: statistic TurnsThatBeginAgain 1

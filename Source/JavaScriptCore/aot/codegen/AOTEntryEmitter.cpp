@@ -39,18 +39,16 @@ static uint8_t numberOfRegisterParameters(const CodeGenerationInputs& inputs, Co
 {
     const CallingConventions& conventions = inputs.plan.conventions();
     const Function& function = inputs.program.at(unit.function);
-    const BoundFunctionPlan* bound = isBoundRole(unit.role) ? conventions.boundFunction(unit.function, unit.numberOfBoundArguments) : nullptr;
-    RELEASE_ASSERT(bound || !isBoundRole(unit.role));
 
     size_t numberOfArguments = 0;
     switch (conventions.entryConventionOf(unit)) {
     case EntryConvention::Direct:
         return 0;
     case EntryConvention::GenericBuffer:
-        numberOfArguments = bound ? bound->length : function.length;
+        numberOfArguments = function.length;
         break;
     case EntryConvention::GenericRegisters:
-        numberOfArguments = function.numberOfPositionalParameters() - (bound ? bound->numberOfCapturedArguments : 0u);
+        numberOfArguments = function.numberOfPositionalParameters();
         break;
     }
     numberOfArguments += conventions.genericEntry(unit).takesNewTarget;

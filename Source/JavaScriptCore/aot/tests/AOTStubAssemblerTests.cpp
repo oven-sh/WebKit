@@ -689,7 +689,7 @@ static void checkLeafAssertion(StubKey plain)
     });
 }
 
-// Whoever holds the scratch register of the assembler forbids the assembler to take it, and a second holder. The first pair is the fault of 11-03: the length of a view, compared with 64 bits of immediate.
+// Whoever holds the scratch register of the assembler forbids the assembler to take it, and a second holder. The first pair was a real fault: the length of a view, compared with 64 bits of immediate.
 static void checkScratchRegisterAssertions(StubKey plain)
 {
     constexpr int32_t largest = std::numeric_limits<int32_t>::max();

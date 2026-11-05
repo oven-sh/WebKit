@@ -405,62 +405,7 @@ void Encoder::encodeInteger(const Step& step)
         m_jit.move(integerSourceInRegister(*this, step), destination);
         return;
 
-    case Nop:
-    case Const32:
-    case Const64:
-    case ConstFloat:
-    case ConstDouble:
-    case FramePointer:
-    case SlotBase:
-    case AddressOf:
-    case NumberOf:
-    case InstanceAddressOf:
-    case ArgumentReg:
-    case Abs:
-    case Ceil:
-    case Floor:
-    case FTrunc:
-    case Sqrt:
-    case FMin:
-    case FMax:
-    case BitwiseCast:
-    case IToD:
-    case FloatToDouble:
-    case DoubleToFloat:
-    case Equal:
-    case NotEqual:
-    case LessThan:
-    case GreaterThan:
-    case LessEqual:
-    case GreaterEqual:
-    case Above:
-    case Below:
-    case AboveEqual:
-    case BelowEqual:
-    case EqualOrUnordered:
-    case Select:
-    case Load8Z:
-    case Load8S:
-    case Load16Z:
-    case Load16S:
-    case Load:
-    case Store8:
-    case Store16:
-    case Store:
-    case Fence:
-    case Phi:
-    case Upsilon:
-    case Extract:
-    case Patch:
-    case Check:
-    case Jump:
-    case Branch:
-    case Switch:
-    case Return:
-    case Oops:
-    // The builder makes Sub(a, Mul(Div(a, b), b)) of both.
-    case Mod:
-    case UMod:
+    default:
         break;
     }
     RELEASE_ASSERT_NOT_REACHED();

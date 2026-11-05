@@ -84,24 +84,6 @@ CellPointer CellAllocationEmitter::allocateHeapCell(Pointer allocator, std::opti
     return CellPointer(allocation);
 }
 
-// A size class has its allocator from the first allocation that goes through the heap.
-Pointer CellAllocationEmitter::allocatorForSize(Pointer subspace, Integer size, LBasicBlock isTooLarge, LBasicBlock hasNoAllocator)
-{
-    static_assert(!(MarkedSpace::sizeStep & (MarkedSpace::sizeStep - 1)), "MarkedSpace::sizeStep must be a power of two.");
-    constexpr unsigned stepShift = getLSBSet(MarkedSpace::sizeStep);
-    LValue sizeClassIndex = m_out.lShr(m_out.add(size.value(), MarkedSpace::sizeStep - 1), stepShift);
-    branchUnless(Condition(m_out.belowOrEqual(sizeClassIndex, m_out.constIntPtr(MarkedSpace::largeCutoff >> stepShift))), isTooLarge);
-    Pointer allocator(m_out.loadPtr(m_out.baseIndex(m_heaps.CompleteSubspace_allocatorForSizeStep, subspace.value(), sizeClassIndex)));
-    branchUnless(Condition(m_out.notNull(allocator.value())), hasNoAllocator);
-    return allocator;
-}
-
-Pointer CellAllocationEmitter::allocatorForSize(Pointer subspace, size_t size)
-{
-    RELEASE_ASSERT(size <= MarkedSpace::largeCutoff);
-    return Pointer(m_out.loadPtr(subspace.value(), m_heaps.CompleteSubspace_allocatorForSizeStep[MarkedSpace::sizeClassToIndex(size)]));
-}
-
 void CellAllocationEmitter::storeHeader(CellPointer cell, Integer header)
 {
     static_assert(!JSCell::structureIDOffset());
@@ -327,6 +309,10 @@ LValue CellAllocationEmitter::slotOfFrameCell(const OperationContext& context, s
 
 CellPointer CellAllocationEmitter::allocateInFrame(const OperationContext& context, size_t size)
 {
+    // Whoever lays a cell in a frame asks Mechanism::CellsInFrames, which TestingSwitch::KeepsCellsOutOfFrames withholds. One that has not asked stops the build here.
+    if (AOT::hasFlag(build().options().testing, Wire::TestingSwitch::KeepsCellsOutOfFrames))
+        generator().fail(context, InternalErrorKind::OpcodeWithoutCode, "a cell lies in a frame in a build that keeps cells out of frames"_s);
+    build().statistics().count(StatisticID::AllocateInFramesChanges);
     return CellPointer(slotOfFrameCell(context, size));
 }
 

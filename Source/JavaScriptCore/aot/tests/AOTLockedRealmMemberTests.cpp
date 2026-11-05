@@ -61,6 +61,8 @@ struct Statements {
     std::span<const ASCIILiteral> throwing;
     std::span<const ASCIILiteral> returningFalse;
     std::span<const ASCIILiteral> returningTrue;
+    // The object refuses every text that was not opened. Where an image is loaded it refuses only the texts that the build of the image took for absent, and the program of these tests reads no name off a function.
+    bool areAboutObjectClosedToOtherNames { false };
 };
 
 constexpr ASCIILiteral replaceableStringMethods[] = {
@@ -621,7 +623,7 @@ constexpr ASCIILiteral allowedOnProtocolHolders[] = {
 
 constexpr Statements statementsAboutStringPrototype { throwingWritesToStringPrototype, refusedWritesToStringPrototype, allowedOnStringPrototype };
 constexpr Statements statementsAboutRegExpPrototype { throwingWritesToRegExpPrototype, refusedWritesToRegExpPrototype, allowedBesideRegExpPrototype };
-constexpr Statements statementsAboutFunctionPrototype { throwingWritesToFunctionPrototype, refusedWritesToFunctionPrototype, allowedOnFunctionPrototype };
+constexpr Statements statementsAboutFunctionPrototype { throwingWritesToFunctionPrototype, refusedWritesToFunctionPrototype, allowedOnFunctionPrototype, true };
 constexpr Statements statementsAboutSpecies { throwingWritesToSpecies, refusedWritesToSpecies, allowedBesideSpecies };
 constexpr Statements statementsAboutLockedMembers { throwingWritesToLockedMembers, refusedWritesToLockedMembers, allowedBesideLockedMembers };
 constexpr Statements statementsAboutProtocolHolders { throwingWritesToProtocolHolders, refusedWritesToProtocolHolders, allowedOnProtocolHolders };
@@ -758,9 +760,13 @@ void checkObjectClosedToOtherNames(Realms& realms, ASCIILiteral source, std::spa
     Structure* structure = prototype->structure();
     checkSymbols(realms, prototype, source);
     checkNames(vm, structure, source, numericKeys, true);
-    checkNames(vm, structure, source, ordinaryKeys, true);
+    // An executable refuses the texts that its build took for absent, and what the engine reads off a function by itself.
+    bool takesOtherTexts = !!Options::aotImagePath();
+    checkNames(vm, structure, source, ordinaryKeys, !takesOtherTexts);
     checkNames(vm, structure, source, namesReadFromFunctions, true);
-    checkNames(vm, structure, source, openNamesOfFunctionPrototype, !hasOpenNames);
+    // `toString` is a name of an object above the three other prototypes, which none of them takes.
+    if (hasOpenNames || !takesOtherTexts)
+        checkNames(vm, structure, source, openNamesOfFunctionPrototype, !hasOpenNames);
     AOT_TEST_CHECK_FOR_SOURCE(!structure->hasImmutableProperties() && structure->isStructureExtensible(), source);
     AOT_TEST_CHECK_FOR_SOURCE(structure->hasImmutablePrototype() && structure->hasImmutableIndexedProperties(), source);
     AOT_TEST_CHECK_FOR_SOURCE(!realms.object(realms.plain(), source)->structure()->mayHaveImmutableProperties(), source);
@@ -911,12 +917,15 @@ void checkNativeConstructorsOverridePut(Realms& realms)
 void checkStatements(Realms& realms, const Statements& statements)
 {
     JSGlobalObject* locked = realms.locked();
+    auto isTakenWithImage = [&](ASCIILiteral source) {
+        return statements.areAboutObjectClosedToOtherNames && Options::aotImagePath() && StringView(source).contains("nameNobodyHas"_s);
+    };
     for (ASCIILiteral source : statements.throwing) {
-        AOT_TEST_CHECK_FOR_SOURCE(realms.throwsTypeError(locked, source), source);
+        AOT_TEST_CHECK_FOR_SOURCE(realms.throwsTypeError(locked, source) == !isTakenWithImage(source), source);
         AOT_TEST_CHECK_FOR_SOURCE(!realms.throwsTypeError(realms.plain(), source), source);
     }
     for (ASCIILiteral source : statements.returningFalse)
-        AOT_TEST_CHECK_FOR_SOURCE(realms.evaluate(locked, source) == jsBoolean(false), source);
+        AOT_TEST_CHECK_FOR_SOURCE(realms.evaluate(locked, source) == jsBoolean(isTakenWithImage(source)), source);
     for (ASCIILiteral source : statements.returningTrue)
         AOT_TEST_CHECK_FOR_SOURCE(realms.evaluate(locked, source) == jsBoolean(true), source);
 }

@@ -1,38 +1,33 @@
 enum JSONOutcome { | engine Unknown Parsed Rejected }
 enum JSONMemberSearch { | engine Unknown Found Absent }
-enum JSONWord { | engine None True False Null }
 enum JSONPosition { | engine Root Property Element }
 enum JSONToken { | engine OpenObject CloseObject OpenArray CloseArray Comma Colon Null EmptyObject EmptyArray CloseObjectOverComma }
 
 family JSONParse Prepared..Placed
-operation JSONSourceOpen (text: Any/inspects) -> natural(boolean) ; Allocates reads(ParserState, StringStorage, TypedArrayStorage, TypedArrayElements, RuntimeState) writes(ParserState, StringStorage, RuntimeState) ; branches = May ; runtime = JSONSourceOpen ; form = Runtime
-operation JSONSourceStart () -> natural(Cursor) ; reads(ParserState) ; form = Open
-operation JSONSourceClose (cursor: Cursor/inspects) -> natural(boolean) ; reads(ParserState) writes(ParserState, RuntimeState) ; branches = May ; runtime = JSONSourceClose ; form = Runtime
-operation JSONSourceAbandon () -> none ; reads(ParserState) writes(ParserState, RuntimeState) ; runtime = JSONSourceAbandon ; form = Runtime
-operation JSONGetByte (cursor: Cursor/inspects) -> natural(int[0, 255]) ; reads(ParserState) ; form = Open
-operation JSONStartsWith (string?: String, cursor: Cursor/inspects, engine literalWord: JSONWord) [isLikely | engine isQuoted isFollowedByColon] -> natural(boolean) ; reads(ParserState) ; branches = May ; form = Open
-operation JSONAdvance (string?: String, cursor: Cursor/inspects, engine literalWord: JSONWord) [| engine isQuoted isFollowedByColon] -> natural(Cursor) ; none ; form = Open
-operation JSONSkipByte (cursor: Cursor/inspects) -> natural(Cursor) ; reads(ParserState) ; form = Open
-operation JSONSkipWhitespace (cursor: Cursor/inspects) -> natural(Cursor) ; reads(ParserState) ; form = Open
-operation JSONParseString (cursor: Cursor/inspects) -> results(natural(boolean), natural(string), natural(Cursor)) ; Allocates reads(ParserState) ; runtime = JSONParseString ; form = Runtime
-operation JSONParseKey (cursor: Cursor/inspects) -> results(natural(boolean), natural(string), natural(Cursor)) ; Allocates reads(ParserState) ; runtime = JSONParseKey ; form = Runtime
-operation JSONParseNumber (cursor: Cursor/inspects) -> results(natural(boolean), natural(number), natural(Cursor)) ; reads(ParserState) ; runtime = JSONParseNumber ; form = Runtime
-operation JSONParseInteger (cursor: Cursor/inspects) -> results(natural(boolean), natural(int[-9007199254740991, 9007199254740991]), natural(Cursor)) ; reads(ParserState) ; runtime = JSONParseInteger ; form = Open
-operation JSONParseValue (cursor: Cursor/inspects) -> results(natural(boolean), natural(null | boolean | number | string | object), natural(Cursor)) ; Allocates reads(ParserState) ; runtime = JSONParseValue ; form = Runtime
-engine operation JSONParseNode (function: Function(Call), cursor: Cursor/inspects) -> results(natural(JSONOutcome), natural(null | boolean | number | string | object), natural(Cursor)) ; Allocates reads(ParserState, NamedProperties, Elements, StringStorage, RuntimeState) writes(NamedProperties, Elements, ArrayStorage, StringStorage, RuntimeState) throws terminates ; form = Open
-operation JSONFindMember (key: PropertyKey, cursor: Cursor/inspects) -> results(natural(JSONMemberSearch), natural(Cursor)) ; reads(ParserState) ; runtime = JSONFindMember ; form = Open
-operation JSONMemberRepeats (key: PropertyKey, valueStart: Cursor/inspects) -> natural(boolean) ; reads(ParserState) ; runtime = JSONMemberRepeats ; form = Runtime
-operation JSONKeyHasEscapes (cursor: Cursor/inspects) -> natural(boolean) ; reads(ParserState) ; form = Open
+operation JSONSourceOpen (text: Any/inspects) -> natural(boolean) ; none ; form = Open
+operation JSONSourceStart () -> natural(Cursor) ; none ; form = Open
+operation JSONSourceClose (cursor: Cursor/inspects) -> natural(boolean) ; none ; form = Open
+operation JSONSourceAbandon () -> none ; none ; form = Open
+operation JSONGetByte (cursor: Cursor/inspects) -> natural(int[0, 255]) ; none ; form = Open
+operation JSONStartsWith (string?: String, cursor: Cursor/inspects) [isLikely] -> natural(boolean) ; none ; form = Open
+operation JSONAdvance (string?: String, cursor: Cursor/inspects) -> natural(Cursor) ; none ; form = Open
+operation JSONSkipByte (cursor: Cursor/inspects) -> natural(Cursor) ; none ; form = Open
+operation JSONSkipWhitespace (cursor: Cursor/inspects) -> natural(Cursor) ; none ; form = Open
+operation JSONParseString (cursor: Cursor/inspects) -> results(natural(boolean), natural(string), natural(Cursor)) ; none ; form = Open
+operation JSONParseKey (cursor: Cursor/inspects) -> results(natural(boolean), natural(string), natural(Cursor)) ; none ; form = Open
+operation JSONParseNumber (cursor: Cursor/inspects) -> results(natural(boolean), natural(number), natural(Cursor)) ; none ; form = Open
+operation JSONParseInteger (cursor: Cursor/inspects) -> results(natural(boolean), natural(int[-9007199254740991, 9007199254740991]), natural(Cursor)) ; none ; form = Open
+operation JSONParseValue (cursor: Cursor/inspects) -> results(natural(boolean), natural(null | boolean | number | string | object), natural(Cursor)) ; none ; form = Open
+operation JSONFindMember (key: PropertyKey, cursor: Cursor/inspects) -> results(natural(JSONMemberSearch), natural(Cursor)) ; none ; form = Open
+operation JSONMemberRepeats (key: PropertyKey, valueStart: Cursor/inspects) -> natural(boolean) ; none ; form = Open
+operation JSONKeyHasEscapes (cursor: Cursor/inspects) -> natural(boolean) ; none ; form = Open
 operation JSONObjectBegin (layout: Layout) -> natural(KeyOrder) ; none ; form = Open
-# allocationClass, here and below: that of the NewObject that makes the object, which says what shape it has. An order is numbered within a shape.
-operation JSONObjectKey (order: KeyOrder/inspects, layout: Layout, field: Field, engine allocationClass?: AllocationClass) -> natural(KeyOrder) ; reads(RuntimeState) writes(RuntimeState) ; runtime = JSONObjectKey ; form = Open
-operation JSONObjectFinish (order: KeyOrder/inspects, object: Layout/inspects, extra: Any/retains(object), layout: Layout, engine allocationClass?: AllocationClass) -> natural(JSONOutcome) ; Allocates reads(OrderWords, ObjectFields) writes(OrderWords, NamedProperties, RuntimeState) ; runtime = JSONObjectFinish ; form = Open
-# parsesWholeObject: the cursor stands at the opening brace and `extra` is null. Where the run time has parsed an object of the same form before, the object comes back in place of `extra`.
-# list: the cursor stands at the first element of the list and `extra` is undefined. The run time appends the objects of the layout whose forms it has parsed before, and the cursor comes back behind them.
-operation JSONParseExtraMembers (layout: Layout, cursor: Cursor/inspects, extra: Any/returns, order: KeyOrder/inspects, engine list?: Array/inspects+writesContents, engine allocationClass?: AllocationClass) [| engine parsesWholeObject] -> results(natural(JSONOutcome), unknown, natural(Cursor), natural(KeyOrder)) ; Allocates reads(ParserState, NamedProperties, Elements, StringStorage, RuntimeState) writes(NamedProperties, Elements, ArrayStorage, StringStorage, RuntimeState) ; runtime = JSONParseExtraMembers ; form = Runtime
+operation JSONObjectKey (order: KeyOrder/inspects, layout: Layout, field: Field) -> natural(KeyOrder) ; none ; form = Open
+operation JSONObjectFinish (order: KeyOrder/inspects, object: Layout/inspects, extra: Any/retains(object), layout: Layout) -> natural(JSONOutcome) ; none ; form = Open
+operation JSONParseExtraMembers (layout: Layout, cursor: Cursor/inspects, extra: Any/returns, order: KeyOrder/inspects) -> results(natural(JSONOutcome), unknown, natural(Cursor), natural(KeyOrder)) ; none ; form = Open
 
 family ExpectedRows Prepared..Placed
-operation ExpectRows (target: Any/inspects, layout: Layout) -> none ; Allocates writes(NamedProperties) ; runtime = ExpectRows ; form = Runtime
+operation ExpectRows (target: Any/inspects, layout: Layout) -> none ; none ; form = Open
 
 family JSONWrite Prepared..Placed ; base = builder
 operation StringBuilderReserve (builder: StringBuilder/inspects, size: UInt32) -> natural(BuilderCursor) ; Allocates reads(StringBuilderContents) writes(StringBuilderContents, RuntimeState) throws ; runtime = StringBuilderReserve ; form = Open

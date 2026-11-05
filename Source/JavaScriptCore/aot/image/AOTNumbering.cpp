@@ -51,7 +51,7 @@ static std::optional<uint32_t> placedOffsetAt(const Vector<uint32_t>& offsets, u
     return offsets[index];
 }
 
-// CallingConventions::indexOf() of closureEntryOf(). Neither asks the plan anything about a unit that is not bound.
+// CallingConventions::indexOf() of closureEntryOf(). Neither asks the plan anything.
 static std::optional<uint32_t> unitIndexOfClosureEntry(uint32_t function)
 {
     uint64_t index = static_cast<uint64_t>(function) * Typed::numberOfCodeRolesOfOneFunction + static_cast<uint64_t>(Typed::CodeRole::GenericCallEntry);
@@ -122,7 +122,6 @@ static std::optional<uint32_t> offsetOfMentionedWordInStatics(const ImageNumbers
     case NumberSpace::RequireEdge:
     case NumberSpace::CardOfVariable:
     case NumberSpace::CardOfWord:
-    case NumberSpace::FilledFiles:
     case NumberSpace::DataElements:
     case NumberSpace::ClassGuard:
     case NumberSpace::ClassRank:
@@ -145,7 +144,6 @@ static std::optional<uint32_t> offsetOfMentionedWordInStatics(const ImageNumbers
 
 static std::optional<int64_t> distanceFromInstanceToMentionedWord(const ImageNumbers& numbers, NumberSpace space, std::span<const uint32_t> key)
 {
-    const PlacedStatics& statics = numbers.statics();
     InstanceSizes sizes = numbers.instanceSizes();
     auto byteOfStatics = [&](std::optional<uint32_t> offset) -> std::optional<int64_t> {
         if (!offset || *offset >= sizes.sizeOfStatics)
@@ -203,10 +201,6 @@ static std::optional<int64_t> distanceFromInstanceToMentionedWord(const ImageNum
         if (key.size() < 2 || key[0] >= numberOfNumberSpaces)
             return std::nullopt;
         return cardOfStatics(offsetOfMentionedWordInStatics(numbers, static_cast<NumberSpace>(key[0]), key.subspan(1)));
-    case NumberSpace::FilledFiles:
-        if (key.size() != 1 || key[0] >= statics.groupsOfFilesFilledWhenEntered.size())
-            return std::nullopt;
-        return byteOfStatics(statics.offsetOfFilledFiles + key[0]);
     case NumberSpace::ClassGuard: {
         std::optional<uint32_t> bit = numbers.numberOf(space, key);
         if (!bit || maskOfClassGuardBit(*bit) != 1)
@@ -323,7 +317,6 @@ std::optional<uint32_t> ImageNumbers::numberOf(NumberSpace space, std::span<cons
     }
     case NumberSpace::CardOfVariable:
     case NumberSpace::CardOfWord:
-    case NumberSpace::FilledFiles:
         return std::nullopt;
     case NumberSpace::MethodSelector:
         return placedOffsetAt(m_originsOfMethodSelectors, key[0]);
@@ -476,7 +469,6 @@ static uint64_t countThingsNumbered(const ImageNumbers& numbers)
     count += numbers.propertyRuns().size();
     count += numbers.typesNeededAtRunTime().size();
     count += static_cast<uint64_t>(std::ranges::count_if(statics.variables, &PlacedVariable::hasWordInStatics));
-    count += statics.groupsOfFilesFilledWhenEntered.size();
     count += statics.moduleBuiltinCells.size();
     count += numberPlaced(statics.moduleValueOffsets, PlacedStatics::noOffset);
     count += numberPlaced(statics.moduleNamespaceOffsets, PlacedStatics::noOffset);

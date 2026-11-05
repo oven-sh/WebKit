@@ -373,8 +373,8 @@ Three mistakes that are easy to make:
 `testaot list commands` prints every command with its arguments.
 
 `f` is a function, `f3`. Without one, a command takes every function with a body. A `unit` is one piece of machine code that the compiler makes
-of a function: `f3`, `f3:GenericCallEntry`, `f3:BoundFunction:2`. That is a function, a `CodeRole` by its C++ name (`ir/schema/operations.def`)
-and, of a bound role, the number of bound arguments. Without a role it is `Body`. Without a unit, a Machine command and `same-bytes-alone` take
+of a function: `f3`, `f3:GenericCallEntry`. That is a function and a `CodeRole` by its C++ name (`ir/schema/operations.def`).
+Without a role it is `Body`. Without a unit, a Machine command and `same-bytes-alone` take
 every unit that the build compiles: entries and units of the library too.
 
 **Wire IR** (`AOTIRTestCommands.cpp`)
@@ -416,7 +416,7 @@ every unit that the build compiles: entries and units of the library too.
   - `change h0 v8 Freezes Parameter 0`, `change h1 v9 DefinesByDescriptor Parameter 0 "x" other=Parameter 1`.
   - `inspection v3 WalksChain Parameter 0`, `inspection v5 ListsKeys n2`: the operation walks up the chain of what lies at the node, or lists its keys, which runs a trap on a proxy.
   - `on-no-way-to-return` at a call, an access or a change: no way leads from it to a Return. On the head line `writes-less-on-return`, `operators=<effects>` with `may-join-texts` (the operators that are left out of `effects=`),
-    `has-handler`, `own-writes-in=any|<n>`. `operands-of-operators Parameter 0, a1`: where the operands of those operators come from. `result 0 is Parameter 1 passes=string`: all that the result can be is what the caller hands over.
+    `has-handler`, `own-writes-in=any|<n>`. `operands-of-operators Parameter 0, a1`: where the operands of those operators come from.
   - `change h2 v3 CopiesInto Allocation L1 other=Parameter 0 defines`: the copy defines each property, as `{ ...other }` does, and no setter takes a value.
   - `handler b3 caught=n7`: the join with what the handler block catches, which its `CatchValue` gives. A call or an access under the handler ends in `throws-to=n7`. Without that word it throws to `Thrown`.
   - `member L0 Prototype 0 Method "size" = Closure f2`, `member L0 Static 1 Getter [computed] = Closure f4`, `classes L0` for the classes it evaluates, and
@@ -427,7 +427,7 @@ every unit that the build compiles: entries and units of the library too.
   - `edge Parameter 1 -> Field L0.1 "x"`, with `passes=<type>` where a test of the program stands between. `edge Parameter 0 -> Unknown` is an escape: there is
     no list of what escapes, and none of the names that are read, called or stored.
   - `under-constant-key v2 "kind"`: an access under a computed key that the constants of the body make one under a name; its `access` line has the name. ` begins-with "on"` at the end of an `access` line: `o["on" + kind]`.
-    `texts-that-meet "dec", "hex"`: the written texts that edges hand to parameters of blocks, that a Return hands back, and the cases of a SwitchString. `reads-paths-of m0`, `may-read-path-of-any-module`: `Facts::isPathReadByOperation()`.
+    `reads-paths-of m0`, `may-read-path-of-any-module`: `Facts::isPathReadByOperation()`.
   - Behind the layouts `link` prints `parsers-may-make L0` (`Facts::parsersMayMake()`) and `path-unread m1` (`!Facts::isPathReadByOperation()`).
 - `test-run [oldest-first|scattered]` prints what the build knows of a test run (`facts/AOTTestRuns.h`; `# OPTIONS: admit=ReplacedBuiltins` makes one): `through-mock m1 "space"` for each export that may be a mock's
   (`mayComeThroughMock()`), by module and place, and behind them `any-other-name m1` where that holds of a name that the module lacks . `replaces MathImul` for each member that the table locks and the image opens because a write was followed to it . `adds FunctionPrototype "marked"` for each opened name, those
@@ -467,7 +467,6 @@ every unit that the build compiles: entries and units of the library too.
   `function=`: the one function whose closure the member holds in every run. Effects are `anything`, `none`, or the traits of Code text.
   Behind `throws=`, where no unknown code runs: `fields-written-on-return=1 fields-written=2` (how many of the 64 places of the fields of objects are written, `all` for the entire heap, nothing where none is) and
   `layouts-written=none|any|<n>` (`LinkKnownEffects::layoutsWrittenBy()`: how many bits). Below a function `given-arguments as-expected=[0] called=[1] layouts-written=.. returns=.. throws=..` (`LinkedEffectsGivenArguments`).
-  Behind the calls `several f0 v5 result=number layouts-written=none returns=.. throws=..` (`LinkedCallOfSeveral`).
   A type that is `anything` is not printed. So where anything is the right answer, a test checks with `-NOT` that each narrower answer is absent.
 
 **Plan** (`AOTPlanTestCommands.cpp`)
@@ -538,8 +537,8 @@ the order, the liveness and the allocation as far as they were made, and the lin
   `the shell cannot run the source itself`.
 - `image [section..]` prints the flags of the image (`flags ShowsWaysBetweenModuleObjects ..`: what the run time lets in and what it refuses), the sizes of its sections and the text form of the named ones. Of `ProgramTables` it prints
   `<table> <rows>` for each table that has rows, and `compiledRuntimeFunction <token> function=f<entry>` for each function of the library that
-  the host finds compiled. Then what a heap snapshot names: `namedVariable module=<place> name=s<string> offset=<in the statics>` (or
-  `closureOf=f<entry>`) and `namedCapture closure=<number> slot=<slot> name=s<string>`.
+  the host finds compiled. Then what a heap snapshot names: `moduleInHeapSnapshots place=<place> module=m<module> variables=<how many>`, `namedVariable module=<place> name=s<string> offset=<in the statics>` (or
+  `closureOf=f<entry>`), `closuresOfModule module=<place> first=<closure number> length=<how many>` and `namedCapture closure=<number> slot=<slot> name=s<string>`.
 - `units-with-code [unit..]` compiles the whole program as a build does and prints which units got code: `unit f3:Body 184 bytes`,
   and `unit f5:Body has no code` for a named unit that the queue never came to. `unit f7:GenericCallEntry fused into f7:Body, 3 bytes` stands for a generic call entry that only
   moves words (`CallingConventions::hasFusedCallEntry()`): it is no unit, and its moves lie in front of the primary entry of that unit.
@@ -600,8 +599,9 @@ not of the type that the compiler has proven of it. It is: string. This is a bug
   THAT NO READ COMES IN FRONT OF THE FIRST STORE is believed of no place: a read of a variable or of a field of an environment that Link calls filled asks whether it is.
 - The one callee among several closures: `checkProofOfOnlyCallee()`.
 - **THAT A SLOT IS FILLED** (`checkProofThatSlotIsFilled()`), whoever said so: Link, a birth's mark, a tag taken for the layout, an order word that the walk remembers. In front of every `GetSlot` and `PutSlot` at
-  level Proven whose object no passed `IsSlotFilled` of that key has narrowed stands that test, with a `CheckProof` on its answer: `what a field holds .. It is: nothing`. A read that counts on the declared type
-  of a raw slot asks for a value that is no mark (`holdsDeclaredType`).
+  level Proven whose object no passed `IsSlotFilled` of that key has narrowed stands that test, with a `CheckProof` on its answer: `what a field holds .. It is: nothing, undefined or null`. A read that counts on the declared type
+  of a raw slot asks for a value that is no mark (`holdsDeclaredType`), and so does every read that gives a raw number or boolean: its type leaves no room for undefined and null, which pass every door into such a slot, and no test tells anything of a raw word.
+- **THE HALF OF AN ACCESSOR THAT Link HAS PROVEN** (`callProvenAccessor()`): the access is the call, with no record that has the type. Under the switch `GetSlotGetter` | `GetSlotSetter` is built for its check alone.
 - **THE HELD TYPE OF A SLOT** (`PlacedSlot::type`) is the word of the doors, and is not believed: the positions that `checkProof()` asks do not give it, so every typed read of a boxed slot is checked against it.
 - **WHAT THE WALK ITSELF REMEMBERS** (`checkWhatIsRememberedOf()`, asked by `walkOperation()`): a read, or a test for a name, that was given a constant or an older value is walked once more without the answers
   of the state, and `StrictEq` holds what memory gives against what was remembered: `what memory holds where the compiler remembers another value ..`. It stops a false `fresh`, a forgotten effect of a callee,
@@ -637,8 +637,8 @@ testaot compile main.bin --output=main.image
 jsc --aotImagePath=main.image -e "runCompiledEntryPoint(1)"
 ```
 
-**Bring-up.** A Bun built from the tag `before-one-walk-1101` writes the IR of any program to a file too, and `testaot` feeds that file to this
-engine. So an engine bug and a front-end bug can be told apart: what is wrong with the new front end's bytes and right with the tag's is the front
+**Bring-up.** A Bun built from an earlier commit writes the IR of any program to a file too, and `testaot` feeds that file to this
+engine. So an engine bug and a front-end bug can be told apart: what is wrong with the new front end's bytes and right with the earlier one's is the front
 end's. Compare `testaot print` of both.
 
 ```

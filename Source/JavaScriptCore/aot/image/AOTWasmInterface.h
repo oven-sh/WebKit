@@ -113,13 +113,6 @@ enum class ImageCodeFailure : uint8_t {
     OutOfMemory,
 };
 
-enum class InterpreterFallbackReason : uint8_t {
-    VectorsAreDisabled,
-};
-
-static constexpr unsigned numberOfInterpreterFallbackReasons = 1;
-static_assert(static_cast<unsigned>(InterpreterFallbackReason::VectorsAreDisabled) + 1 == numberOfInterpreterFallbackReasons);
-
 // A function is compiled for each of the two where its code tells them apart, and once where it does not.
 enum class ImageCodeFlavor : uint8_t {
     // Tests the bounds of every access to memory and every reference for null. Runs with any memory, and without the fault handler.

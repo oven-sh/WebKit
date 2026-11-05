@@ -1,6 +1,6 @@
 # function down(depth) { return down(depth + 1) + 1; }
 # export function first() { down(0); return new RegExp("^" + String("a+")); }
-# Calls go so deep and no deeper: what the deepest gives nobody knows, and what stands behind the first is reached. The bound is a number, so the stack of the thread is not used up, which would end the rehearsal.
+# Calls go so deep and no deeper: what the deepest gives nobody knows, and what stands behind the first is reached. The bound is a number, so that the list is the same on every host; where frames are so large that the stack is used up first, the call that finds no room is the deepest.
 # RUN: regexp-texts mechanisms=all
 # CHECK: text /^a+/
 # CHECK-NOT: text /

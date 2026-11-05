@@ -1,6 +1,6 @@
 # made of 483188a9c29e2528
 # the parameter of the turns laid out that stands for a sum kept as an integer is an Int64. A Phi of the sum's own type was made for it first and left behind: nothing read it and no Upsilon fed it,
-# so every answer was right and the machine level's own verifier stopped: "the machine operations that the emitters appended do not hold together ... Jump() -> #8" (health, T 06:22:17, eleven tests under check=Validate).
+# so every answer was right and the machine level's own verifier stopped: "the machine operations that the emitters appended do not hold together ... Jump() -> #8".
 # f1 = sumBytes, f2 = sumTwice
 # OPTIONS: check=Validate
 # RUN(ONE): emit f1 mechanisms=all

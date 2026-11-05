@@ -40,23 +40,6 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC { namespace AOT {
 
-JSValue Object::tryGetOwnDataProperty(VM& vm, JSCell* cell, PropertyName name)
-{
-    if (!isCompiledObject(cell))
-        return { };
-    Object* object = uncheckedDowncast<Object>(cell);
-    if (const FieldData* field = object->fieldNamed(object->state(), name)) {
-        FieldProperty property = findFieldProperty(vm, *object, *field);
-        return property.attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue ? JSValue() : property.valueOrAccessor;
-    }
-    JSObject* extra = object->extraProperties();
-    if (!extra)
-        return { };
-    unsigned attributes;
-    JSValue value = extra->getDirect(vm, name, attributes);
-    return value && !(attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue) ? value : JSValue();
-}
-
 bool Object::structureGuaranteesAbsence(Structure* structure, UniquedStringImpl* name)
 {
     const CompiledStructure* compiled = compiledObjectStructureOrNull(structure);

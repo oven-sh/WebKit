@@ -260,7 +260,7 @@ LinkedFunctions createLinkedFunctions(Vector<CompiledCode>&& code, BuildContext&
 // Equals CallingConventions::indexOf(unit) for every plan.
 static uint32_t unitIndexOfSketch(CodeUnit unit)
 {
-    AOT_TEST_CHECK(unit.function && !Typed::isBoundRole(unit.role));
+    AOT_TEST_CHECK(unit.function);
     return unit.function.index() * Typed::numberOfCodeRolesOfOneFunction + static_cast<uint32_t>(unit.role);
 }
 

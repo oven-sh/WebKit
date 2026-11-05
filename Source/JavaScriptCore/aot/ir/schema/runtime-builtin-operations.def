@@ -111,7 +111,7 @@ runtime StringLocaleCompare : size_t (JSCell* string, JSCell* other) ; RuntimeCr
 runtime StringToLowerCase, StringToUpperCase : JSCell* (JSCell* string) ; RuntimeCreatesString
 runtime StringRepeat : JSCell* (JSCell* string, uint32_t count) ; RuntimeCreatesString
 runtime StringPad : JSCell* (JSCell* string, uint32_t length, JSCell* filler, uint32_t isAtStart) ; RuntimeCreatesString
-runtime ShortStringOfString : EncodedJSValue (EncodedJSValue string) ; reads(all)
+runtime NarrowCharactersOfString : size_t (JSCell* string) ; reads(all)
 
 effects RuntimeMatchesRegExp = reads(all) writes(RegExpState, StringStorage, AllocatorState, RuntimeState) throws collects
 runtime RegExpExec : EncodedJSValue (JSCell* regExp, JSCell* string) ; unknownCode
@@ -137,14 +137,4 @@ runtime JSONAppendInteger : uint8_t* (uint8_t* cursor, int64_t integer) ; writes
 runtime JSONAppendNumber : uint8_t* (uint8_t* cursor, double number) ; writes(StringBuilderContents) ; leaf
 runtime JSONAppendDate : uint8_t* (uint8_t* cursor, double timeValue) ; writes(StringBuilderContents) ; leaf
 runtime JSONAppendValue : UGPRPair (JSCell* builder, uint8_t* cursor, EncodedJSValue value, uint32_t positionAndLevels) ; reads(all) writes(StringBuilderContents, StringStorage, AllocatorState, RuntimeState) throws collects
-runtime JSONSourceOpen : size_t (EncodedJSValue text, void* stackPointer) ; reads(all) writes(ParserState, StringStorage, AllocatorState, RuntimeState) collects
-runtime JSONSourceClose : size_t (const uint8_t* cursor) ; reads(all) writes(ParserState, RuntimeState)
-runtime JSONSourceAbandon : void () ; reads(all) writes(ParserState, RuntimeState)
-runtime JSONParseString, JSONParseKey, JSONParseValue : UGPRPair (const uint8_t* cursor) ; reads(all) writes(AllocatorState, RuntimeState) collects
-runtime JSONParseNumber, JSONParseInteger : UGPRPair (const uint8_t* cursor) ; reads(all)
-runtime JSONFindMember : UGPRPair (const uint8_t* cursor, uint32_t name) ; reads(all)
-runtime JSONMemberRepeats : size_t (const uint8_t* valueStart, uint32_t name) ; reads(all)
-runtime JSONObjectKey : uint64_t (uint64_t order, uint32_t shape, uint32_t field) ; reads(all) writes(RuntimeState)
-runtime JSONObjectFinish : size_t (JSCell* object, EncodedJSValue extra, uint64_t order) ; reads(all) writes(OrderWords, NamedProperties, AllocatorState, RuntimeState) collects
-runtime JSONParseExtraMembers : const uint8_t* (uint32_t shape, const uint8_t* cursor, uint64_t* extraAndOrder) ; reads(all) writes(NamedProperties, Elements, ArrayStorage, StringStorage, AllocatorState, RuntimeState) collects
 runtime JSONStringifyPrimitive : JSCell* (EncodedJSValue value) ; RuntimeCreatesString

@@ -17,7 +17,14 @@ const entriesWithoutEmitter: ReadonlySet<string> = new Set(
    ReportMismatch
    TryPutDoubleIndex HasSpareArrayCapacity
    ToEnumeratorPosition
-   IsBuiltinLocationUnchanged NewHeapFrame GetResumeIndex SuspendInHeapFrame SubstringOrUndefined`.split(/\s+/),
+   IsBuiltinLocationUnchanged NewHeapFrame GetResumeIndex SuspendInHeapFrame SubstringOrUndefined
+   IsGeneratorRunning IsGeneratorUnstarted IsUnmodifiedAsyncGenerator MarkGeneratorRunning TakeGeneratorStepStatus
+   GetAccessorOfMember GetCachedValue GetOwnPropertyFields GetEncodedModuleVariable ConvertToDoubleStorage
+   GetArrayCapacity HasFixedBytes ReserveArrayCapacity TypedArrayRange NewArrayOfMembers AbandonModuleEvaluation
+   StopLoadingBehindFile TryStrcat CallForwardVarargs ConstructSuperForwardVarargs
+   GetMyArgumentByVal
+   JSONSourceOpen JSONSourceStart JSONSourceClose JSONSourceAbandon JSONGetByte JSONStartsWith JSONAdvance JSONSkipByte JSONSkipWhitespace JSONParseString JSONParseKey
+   JSONParseNumber JSONParseInteger JSONParseValue JSONFindMember JSONMemberRepeats JSONKeyHasEscapes JSONObjectBegin JSONObjectKey JSONObjectFinish JSONParseExtraMembers ExpectRows`.split(/\s+/),
 );
 
 // The same for the rows of inline-builtins.def.

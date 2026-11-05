@@ -25,7 +25,7 @@ class BodyIndexTable;
 //       a built-in     the effects of its row on the operands at hand, worked out in walk/AOTWalkBuiltins.cpp and handed to Walker::build()
 // Under every rule an operand that the row calls or runs a protocol on adds the code that this may run, given its type: effectsOfProtocolsOn(). The declared bound does not hold that part.
 // Every answer lies inside the declared bound united with that part: what is handed in is cut by the two together. Less is said only for a reason that holds in every run.
-// WalkState is ended by these, the sweep drops by these, and checking builds hold every load and store of the emitted code to them: AOTEffectsCheck.h.
+// WalkState is ended by these, the sweep drops by these, and checking builds hold every load and store of the emitted code to them: CodeGenerator::declareAccessesOf().
 
 // `foundByCaller` null: nobody knows more than the schema.
 // It may be handed in under every rule. Under Declared and Operator it stands in place of what the protocols of the operands add:
@@ -45,10 +45,6 @@ Effects effectsOfProtocolsOn(const TypingContext&, OptionSet<Protocol>, TypeID o
 bool operandsMayRunCode(Opcode);
 // Until the operation is over nothing runs but the operation itself, whatever its operands are: it always completes, it throws nothing, and no operand of it runs code.
 bool letsNothingElseRun(Opcode);
-// `class Pool { static made = 0; static limit = 8; static all = load(); static last = 0 }`: two. `definer` holds the NewClass.
-// The first so many of Layout::staticFields are plain properties of the class object before anything but the definition can look at it:
-// from the NewClass to the definition of each stand only operations that let nothing else run, so none of them throws on the way either.
-uint32_t numberOfStaticFieldsDefinedBeforeOtherCodeRuns(const Program&, const BodyIndexTable&, const BodyIndex& definer, ValueID newClass);
 
 // The one question in front of dropping an operation whose result nobody uses: it neither throws by a rule of the language nor runs code, and writes nothing that anybody sees.
 inline bool neitherThrowsNorRunsCode(const Effects& effects) { return effects.isRemovableWhenUnused(); }

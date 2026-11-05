@@ -1,5 +1,5 @@
 # the same functions with unboxed numbers withheld: the char code is compared as the number that it is, and the character is switched on as a text
-# the one relation on integers that stays is the test of the bounds in the read, which strings-1 builds in front of the code unit
+# the one relation on integers that stays is the test of the bounds in the read, which stands in front of the code unit
 # RUN: walk f4 mechanisms=all-UnboxedNumbers-TypedSlots
 # CHECK-LABEL: code f4:Body
 # CHECK: SwitchString

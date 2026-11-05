@@ -75,7 +75,6 @@ public:
     {
     }
 
-    void generateTryStrcat(const ValueContext&);
     void generateSubstring(const ValueContext&);
     void generateFlattenString(const ValueContext&);
     void generateStringRange(const ValueContext&);

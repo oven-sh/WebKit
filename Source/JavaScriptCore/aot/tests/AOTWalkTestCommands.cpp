@@ -38,7 +38,6 @@ public:
     bool isReady() const { return m_worker.has_value(); }
 
     const Program& program() const { return m_inputs->walk.program; }
-    const Facts& facts() const { return m_inputs->walk.facts; }
     const Arrivals& arrivals() const { return m_inputs->walk.arrivals; }
     const Plan& plan() const { return m_inputs->walk.plan; }
     Walker& walker() { return m_worker->walker(); }
@@ -141,7 +140,7 @@ static void runVerifyCodeCommand(TestCommandContext& context)
     // A record that bears the mark of a fact is held to what Facts says when it is asked once more.
     if (brokenRule.isNull()) {
         kindOfBrokenRule = InternalErrorKind::TypeOutOfDate;
-        brokenRule = verifyTypesOfCode(TypingContext { walks.program(), walks.types(), walks.walker().positions() }, walks.plan().conventions(), walks.facts(), walks.arrivals(), code);
+        brokenRule = verifyTypesOfCode(TypingContext { walks.program(), walks.types(), walks.walker().positions() }, walks.plan().conventions(), walks.arrivals(), code);
     }
     if (brokenRule.isNull())
         context.out.println("verified"_s);
@@ -172,6 +171,7 @@ static void runSweepCodeCommand(TestCommandContext& context)
 //     ..
 //     }
 // Where a unit fails: `the walk of f1:Body failed`, and the build's diagnostics say why. No unit follows it.
+// A unit that the plan has not: the bare line `code f1:CoroutineBody` and a sentence under it, and the next unit follows: test/aot/shell/toolchain.py asks for both roles of every function.
 static void runWalkCommand(TestCommandContext& context)
 {
     std::optional<Vector<CodeUnit>> units = unitsInOrderOfWords(*context.program, context.arguments, context.out);
@@ -183,6 +183,13 @@ static void runWalkCommand(TestCommandContext& context)
     printMechanisms(context.out, stage.mechanisms());
     context.out.println();
     for (CodeUnit unit : *units) {
+        if (const Plan* plan = stage.plan(); plan && !plan->conventions().exists(unit)) {
+            context.out.print("code "_s);
+            printCodeUnit(context.out, unit);
+            context.out.println();
+            context.out.println("the plan has no such unit"_s);
+            continue;
+        }
         const Code* code = stage.code(unit);
         if (!code) {
             context.out.print("the walk of "_s);

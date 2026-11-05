@@ -1,16 +1,16 @@
 # `watch` hands its scope to `note`, which is entered itself, and proposes to hand the cell back when it has done with it. On one way `note` makes a closure over the scope that it was handed: the callee sets the byte there, in front of the closure
 # function watch(start) { let seen = start; function note(keep) { seen++; if (keep) hold(() => seen); } note(false); note(true); return seen; }  sink(watch);
-# RUN: walk f2 mechanisms=none+TypedOperations+Folding+EscapeAnalysis+DirectCalls
+# RUN: walk f2 mechanisms=none+TypedOperations+Folding+EscapeAnalysis+CellsInFrames+DirectCalls
 # CHECK-LABEL: code f2:Body
 # CHECK: MarkEnvironmentEscaped
 # CHECK: = NewClosure {{*}}function=f3
-# RUN(NEVER): walk f2 mechanisms=none+TypedOperations+Folding+EscapeAnalysis+DirectCalls
+# RUN(NEVER): walk f2 mechanisms=none+TypedOperations+Folding+EscapeAnalysis+CellsInFrames+DirectCalls
 # NEVER-NOT: ReleaseEnvironment
-# RUN(MAKER): walk f1 mechanisms=none+TypedOperations+Folding+EscapeAnalysis+DirectCalls
+# RUN(MAKER): walk f1 mechanisms=none+TypedOperations+Folding+EscapeAnalysis+CellsInFrames+DirectCalls
 # MAKER-LABEL: code f1:Body
 # MAKER: = CallDirect {{*}}function=f2
 # MAKER: ReleaseEnvironment
-# RUN(UNMARKED): walk f1 mechanisms=none+TypedOperations+Folding+EscapeAnalysis+DirectCalls
+# RUN(UNMARKED): walk f1 mechanisms=none+TypedOperations+Folding+EscapeAnalysis+CellsInFrames+DirectCalls
 # UNMARKED-NOT: MarkEnvironmentEscaped
 
 layout L0 kind=Environment module=m0 fields=[{key=@"0" declared={type=anything} variableName="seen"}] ownFieldCount=1

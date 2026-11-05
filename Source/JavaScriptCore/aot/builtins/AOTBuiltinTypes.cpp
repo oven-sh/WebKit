@@ -107,11 +107,6 @@ static TypeID primitivePartOfBuiltinType(const BuiltinTypeContext& context, cons
     return result;
 }
 
-TypeID primitivesWrittenByBuiltinType(const BuiltinTypeContext& context, BuiltinTypeID id)
-{
-    return primitivePartOfBuiltinType(context, context.program.builtins().at(id));
-}
-
 static TypeID anyValueWrittenByTable(const BuiltinTypeReading& reading, UnknownSeed seed = UnknownSeed::UndescribedNativeResult)
 {
     return reading.role == BuiltinTypeRole::Value ? reading.context.types.anything(seed) : TypeTable::anything;
@@ -334,16 +329,6 @@ TypeID typeOfBuiltinType(const BuiltinTypeContext& context, BuiltinTypeID id, co
     return typeOfBuiltinTypeRead({ context, operands }, id);
 }
 
-TypeID typeOfBuiltinTypePart(const BuiltinTypeContext& context, const BuiltinTypePart& part, BuiltinFreshness, const BuiltinOperandTypes* operands)
-{
-    return typeOfBuiltinTypePartRead({ context, operands }, part);
-}
-
-TypeID typeOfBuiltinLayout(const BuiltinTypeContext& context, BuiltinLayoutID id)
-{
-    return typeOfBuiltinLayoutRead({ context }, id);
-}
-
 TypeID typeOfBuiltinLayoutField(const BuiltinTypeContext& context, const BuiltinLayoutField& field)
 {
     return typeOfBuiltinTypeRead({ context, nullptr, BuiltinTypeRole::Bound, true }, field.type);
@@ -458,26 +443,6 @@ TypedArrayType typedArrayTypeOf(const BuiltinTypeContext& context, TypeID id)
             return NotTypedArray;
     }
     return common;
-}
-
-bool hasOnlyMapsAndSets(const BuiltinTypeContext& context, TypeID id)
-{
-    if (!id)
-        return false;
-    Type type = context.types.at(id);
-    if (!type.isObject() || type.hasUnboundedUnknown() || type.traitsOfNamed.contains(ObjectTrait::HasNoShape))
-        return false;
-
-    auto isMapOrSet = [](BuiltinClassID builtinClass) {
-        return builtinClass == BuiltinClasses::Map || builtinClass == BuiltinClasses::Set;
-    };
-    for (const ClassPart& part : classPartsOf(context.types, type)) {
-        if (!isMapOrSet(part.builtinClass))
-            return false;
-    }
-    return std::ranges::all_of(membersOf(context.types, type), [&](LayoutID layout) {
-        return !context.program.at(layout).mayBeOrdinaryObject && isMapOrSet(builtinClassWrittenAbove(context.types, layout));
-    });
 }
 
 PristineAspectSet pristineAspectsProvenBy(const BuiltinTypeContext& context, TypeID id, BuiltinClassID builtinClass)

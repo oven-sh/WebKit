@@ -107,7 +107,7 @@ static void generateDefineMethod(StraightEmitter& emitter, const BodyValue& valu
     StubKey makesCell = createConstant(CreatedConstant::Key);
     std::optional<StubKey> makesCellInRegister = tryWithOperandRegister(makesCell, registerOfProperty);
     emitter.callStub(value, makesCellInRegister.value_or(makesCell), { }, { .numberedImmediate = NumberedImmediate { emitter.mentions().add(NumberSpace::KeyCell, key) } });
-    StraightArgument property = StraightArgument::inRegister(makesCellInRegister ? registerOfProperty : StraightEmitter::resultGPR);
+    StraightArgument property = StraightArgument::inRegister(makesCellInRegister ? registerOfProperty : emitter.resultOfCall());
     emitter.callOperation(value, RuntimeOperation::DefineMethod, { definition.classObjectOperand(), property, definition.functionOperand(), sideAndKind });
 }
 
@@ -141,6 +141,10 @@ void StraightEmitter::generateClass(const BodyValue& value)
         defineSameAs(value, value.classObjectOperand());
         return;
     case Opcode::NewClassToken:
+        if (!plan().hasClassRecord(value.layout())) {
+            fail(value);
+            return;
+        }
         callOperation(value, RuntimeOperation::NewClassToken, { StraightArgument::word(value.layout().index()) });
         define(value);
         return;

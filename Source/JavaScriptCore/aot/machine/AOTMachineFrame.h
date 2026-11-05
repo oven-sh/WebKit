@@ -65,8 +65,6 @@ public:
     // Those of the saved registers that a suspension does not keep.
     RegisterSet calleeSavesClobberedAtSuspensions() const { return registerSetOf(m_calleeSavesClobberedAtSuspensions); }
 
-    // The registers that the allocator hands out in this function, whether or not it has.
-    RegisterSet mutableRegs() const { return registerSetOf(m_mutableRegisters); }
     JS_EXPORT_PRIVATE bool isPinned(Reg) const;
 
     int32_t offsetFromFPOf(SpillIndex spill) const { return m_offsetOfSpill[spill]; }

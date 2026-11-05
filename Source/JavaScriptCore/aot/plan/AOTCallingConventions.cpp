@@ -145,15 +145,6 @@ static ALWAYS_INLINE ArgumentLocations locationsOfDirectConvention(size_t number
     return locations;
 }
 
-ArgumentLocations locationsOfDirectSignature(std::span<const Representation> parameters, std::span<const Representation> results)
-{
-    return locationsOfDirectConvention(parameters.size(), [&](size_t index) {
-        return parameters[index];
-    }, results.size(), [&](size_t index) {
-        return results[index];
-    });
-}
-
 static ArgumentLocations locationsOfGenericConvention(EntryConvention convention, unsigned numberOfArguments)
 {
     ArgumentLocations locations;
@@ -200,37 +191,10 @@ static Representation formOfCoroutineDriver(const Function& coroutine)
     return coroutine.has(FunctionFlags::IsGenerator) ? Representation::Cell : Representation::JSValue;
 }
 
-static std::optional<size_t> findPlaceOfBoundFunction(std::span<const BoundFunctionPlan> plans, FunctionID target, unsigned numberOfBoundArguments)
-{
-    auto found = std::ranges::lower_bound(plans, std::pair(target, numberOfBoundArguments), { }, [](const BoundFunctionPlan& plan) {
-        return std::pair(plan.target, static_cast<unsigned>(plan.numberOfBoundArguments));
-    });
-    if (found == plans.end() || found->target != target || found->numberOfBoundArguments != numberOfBoundArguments)
-        return std::nullopt;
-    return static_cast<size_t>(found - plans.begin());
-}
-
-static const BoundFunctionPlan& boundFunctionOfUnit(const CallingConventions& conventions, CodeUnit unit)
-{
-    const BoundFunctionPlan* plan = conventions.boundFunction(unit.function, unit.numberOfBoundArguments);
-    RELEASE_ASSERT(plan);
-    return *plan;
-}
-
-static unsigned numberOfParametersBehindCapturedArguments(const Program& program, const BoundFunctionPlan& plan)
-{
-    unsigned numberOfPositionalParameters = program.at(plan.target).numberOfPositionalParameters();
-    RELEASE_ASSERT(plan.numberOfCapturedArguments <= numberOfPositionalParameters);
-    return numberOfPositionalParameters - plan.numberOfCapturedArguments;
-}
-
 // new.target comes first where the entry takes it.
 static unsigned numberOfArgumentsTakenInRegistersBy(const CallingConventions& conventions, const Program& program, CodeUnit entry)
 {
-    unsigned numberOfPositionalParameters = isBoundRole(entry.role)
-        ? numberOfParametersBehindCapturedArguments(program, boundFunctionOfUnit(conventions, entry))
-        : program.at(entry.function).numberOfPositionalParameters();
-    return numberOfPositionalParameters + conventions.genericEntry(entry).takesNewTarget;
+    return program.at(entry.function).numberOfPositionalParameters() + conventions.genericEntry(entry).takesNewTarget;
 }
 
 static unsigned numberOfParametersInConventionOf(const CallingConventions& conventions, const Program& program, CodeUnit unit)
@@ -246,7 +210,6 @@ static unsigned numberOfParametersInConventionOf(const CallingConventions& conve
     case CodeRole::GenericCallEntry:
     case CodeRole::GenericConstructEntry:
     case CodeRole::AllocatingConstructEntry:
-    case CodeRole::GenericEntryOfBoundFunction:
         switch (conventions.entryConventionOf(unit)) {
         case EntryConvention::Direct:
             break;
@@ -256,10 +219,6 @@ static unsigned numberOfParametersInConventionOf(const CallingConventions& conve
             return numberOfParametersInFrontOfGenericArguments;
         }
         break;
-    case CodeRole::BoundFunction: {
-        const BoundFunctionPlan& plan = boundFunctionOfUnit(conventions, unit);
-        return static_cast<unsigned>(plan.captures.size()) + numberOfParametersBehindCapturedArguments(program, plan);
-    }
     case CodeRole::TableEntry:
     case CodeRole::TableLookup:
         return 1 + conventions.methodSelector(unit.numberOfBoundArguments).numberOfArguments;
@@ -289,9 +248,6 @@ CallingConventions::CallingConventions(CallingConventionParts&& parts)
 bool CallingConventions::existsBehindUnitsOfFunctions(CodeUnit unit) const
 {
     switch (unit.role) {
-    case CodeRole::BoundFunction:
-    case CodeRole::GenericEntryOfBoundFunction:
-        return !!boundFunction(unit.function, unit.numberOfBoundArguments);
     case CodeRole::Serializer:
         return unit && serializerOf(unit.layoutOfSerializer()) == unit;
     case CodeRole::TableEntry:
@@ -333,18 +289,12 @@ std::optional<uint32_t> CallingConventions::findMethodSelector(PropertyKeyID key
 
 uint32_t CallingConventions::indexBehindUnitsOfFunctions(CodeUnit unit) const
 {
-    uint32_t firstBoundUnit = numberOfFunctions() * numberOfCodeRolesOfOneFunction;
+    uint32_t firstUnitBehindFunctions = numberOfFunctions() * numberOfCodeRolesOfOneFunction;
     switch (unit.role) {
-    case CodeRole::BoundFunction:
-    case CodeRole::GenericEntryOfBoundFunction: {
-        std::optional<size_t> place = findPlaceOfBoundFunction(boundFunctions(), unit.function, unit.numberOfBoundArguments);
-        RELEASE_ASSERT(place);
-        return firstBoundUnit + static_cast<uint32_t>(*place) * numberOfBoundRoles + (static_cast<unsigned>(unit.role) - numberOfCodeRolesOfOneFunction);
-    }
     case CodeRole::TableEntry:
     case CodeRole::TableLookup: {
         const MethodSelector& selector = methodSelector(unit.numberOfBoundArguments);
-        uint32_t lookup = firstBoundUnit + static_cast<uint32_t>(m_parts.boundFunctions.size()) * numberOfBoundRoles + selector.firstUnit;
+        uint32_t lookup = firstUnitBehindFunctions + selector.firstUnit;
         if (unit.role == CodeRole::TableLookup)
             return lookup;
         const Vector<FunctionID>& methods = familyOf(selector).methods;
@@ -374,18 +324,11 @@ CodeUnit CallingConventions::unitAt(uint32_t index) const
     if (index < numberOfUnitsOfFunctions)
         return { FunctionID(index / numberOfCodeRolesOfOneFunction), static_cast<CodeRole>(index % numberOfCodeRolesOfOneFunction) };
 
-    uint32_t indexAmongBoundUnits = index - numberOfUnitsOfFunctions;
-    uint32_t numberOfBoundUnits = static_cast<uint32_t>(m_parts.boundFunctions.size()) * numberOfBoundRoles;
-    if (indexAmongBoundUnits < numberOfBoundUnits) {
-        const BoundFunctionPlan& plan = m_parts.boundFunctions[indexAmongBoundUnits / numberOfBoundRoles];
-        return { plan.target, static_cast<CodeRole>(numberOfCodeRolesOfOneFunction + indexAmongBoundUnits % numberOfBoundRoles), plan.numberOfBoundArguments };
-    }
-
     // Null: the layout of the place has no serializer.
     if (index >= firstSerializer() && index - firstSerializer() < numberOfPlacesOfSerializers())
         return serializerOf(LayoutID(index - firstSerializer()));
 
-    uint32_t indexAmongTableUnits = indexAmongBoundUnits - numberOfBoundUnits;
+    uint32_t indexAmongTableUnits = index - numberOfUnitsOfFunctions;
     RELEASE_ASSERT(indexAmongTableUnits < m_parts.methodTable.numberOfUnits);
     std::span<const MethodSelector> selectors = methodSelectors();
     const MethodSelector& selector = *std::prev(std::ranges::upper_bound(selectors, indexAmongTableUnits, { }, &MethodSelector::firstUnit));
@@ -428,17 +371,8 @@ Representation CallingConventions::parameterRepresentationByRole(const Program& 
     case CodeRole::GenericCallEntry:
     case CodeRole::GenericConstructEntry:
     case CodeRole::AllocatingConstructEntry:
-    case CodeRole::GenericEntryOfBoundFunction:
         RELEASE_ASSERT(parameterIndex < numberOfParametersInConventionOf(*this, program, unit));
         return parameterIndex ? Representation::JSValue : Representation::Cell;
-    case CodeRole::BoundFunction: {
-        const BoundFunctionPlan& plan = boundFunctionOfUnit(*this, unit);
-        if (parameterIndex < plan.captures.size())
-            return plan.captures[parameterIndex].representation;
-        unsigned indexBehindCapturedArguments = parameterIndex - static_cast<unsigned>(plan.captures.size());
-        RELEASE_ASSERT(indexBehindCapturedArguments < numberOfParametersBehindCapturedArguments(program, plan));
-        return formOfEntryParameterInConvention(m_parts, program, unit.function, program.at(unit.function).firstParameterIndex() + plan.numberOfCapturedArguments + indexBehindCapturedArguments);
-    }
     case CodeRole::Serializer:
         RELEASE_ASSERT(parameterIndex < numberOfSerializerParameters);
         return static_cast<SerializerParameter>(parameterIndex) == SerializerParameter::LevelsAround ? Representation::Int32 : Representation::Cell;
@@ -493,7 +427,7 @@ uint32_t CallingConventions::stackWordsReservedByCallersOf(const Program& progra
         return stackWordsTakenInConventionOf(*this, program, callee);
 
     const FunctionConvention& convention = of(callee.function);
-    if (callee.role != CodeRole::BoundFunction && std::max<unsigned>(convention.numberOfEntryParameters + 1, convention.numberOfResults) <= numberOfValuesThatNeverNeedStackWords)
+    if (std::max<unsigned>(convention.numberOfEntryParameters + 1, convention.numberOfResults) <= numberOfValuesThatNeverNeedStackWords)
         return 0;
 
     uint32_t words = stackWordsTakenInConventionOf(*this, program, callee);
@@ -528,16 +462,11 @@ GenericEntryPlan CallingConventions::genericEntry(CodeUnit unit) const
         plan.takesNewTarget = true;
         plan.allocatesThis = true;
         return plan;
-    case CodeRole::GenericEntryOfBoundFunction:
-        RELEASE_ASSERT(exists(unit));
-        plan.target = { unit.function, CodeRole::BoundFunction, unit.numberOfBoundArguments };
-        return plan;
     case CodeRole::Body:
     case CodeRole::CoroutineBody:
     case CodeRole::ModuleStart:
     case CodeRole::SlowBody:
     case CodeRole::ParameterGuard:
-    case CodeRole::BoundFunction:
     case CodeRole::TableEntry:
     case CodeRole::TableLookup:
     case CodeRole::Serializer:
@@ -643,30 +572,6 @@ void CallingConventions::fuseCallEntriesThatOnlyMove(const Program& program, con
     }
 }
 
-std::optional<unsigned> targetEntryParameterOf(const Function& target, const BoundCapture& capture)
-{
-    switch (capture.kind) {
-    case BoundCaptureKind::TargetCapture:
-        RELEASE_ASSERT(capture.index < target.captures.size());
-        return capture.index;
-    case BoundCaptureKind::BoundThis:
-        RELEASE_ASSERT(target.thisParameterIndex());
-        return target.thisParameterIndex();
-    case BoundCaptureKind::BoundArgument:
-        RELEASE_ASSERT(capture.index < target.numberOfPositionalParameters());
-        return target.firstParameterIndex() + capture.index;
-    case BoundCaptureKind::TargetClosure:
-        return std::nullopt;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-const BoundFunctionPlan* CallingConventions::boundFunction(FunctionID target, unsigned numberOfBoundArguments) const
-{
-    std::optional<size_t> place = findPlaceOfBoundFunction(boundFunctions(), target, numberOfBoundArguments);
-    return place ? &m_parts.boundFunctions[*place] : nullptr;
-}
-
 static bool isRunTimeCodeForConventions(const Program& program, const Function& function)
 {
     if (function.role == FunctionRole::Library || function.enclosingRuntimeFunction)
@@ -711,12 +616,6 @@ static void chooseRolesOfConvention(const Program& program, const Facts& facts, 
 {
     // A model describes native code, and a signature has no body.
     const Function& function = program.at(id);
-    // The walk writes a parser out of the type that it is made for. Compiled code alone enters it, directly.
-    if (function.role == FunctionRole::Parser) {
-        if (facts.mayBeReached(id))
-            convention.roles |= bitOfRoleInConvention(CodeRole::Body);
-        return;
-    }
     if (!function.hasBody() || !hasSourceBodyOf(function.role) || !canBeCalledByValueOf(function.role))
         return;
 
@@ -853,7 +752,7 @@ CallingConventions computeCallingConventions(const Program& program, const Facts
         chooseRolesOfConvention(program, facts, id, bodiesWithModuleStart, layoutsMadeAsCompiledObjects, convention);
 
         for (const DeclaredType& result : function.results)
-            parts.formsOfResults.append(function.role == FunctionRole::Parser ? representationOf(program.at(program.provenTypeOf(result))) : boxedFormOfDeclaredPosition(program, result));
+            parts.formsOfResults.append(boxedFormOfDeclaredPosition(program, result));
         if (returnsRawValues && convention.has(CodeRole::Body) && mayReturnInFormOfItsOwn(function) && parts.formsOfResults.last() == Representation::JSValue) {
             const LinkedFunction& proven = linked.function(id);
             if (proven.everyCallHasOneCallee && proven.ringsOfTailCallsAreListed)

@@ -142,18 +142,6 @@ static BitVector findFunctionsWhoseClosuresAreMadeWhileModulesLoad(const Numberi
     return functions;
 }
 
-// The row of a bound function that holds no closure of its target names the target, and the run time takes the closure that instanceof asks out of the cell: encodeBoundFunctionRows() of AOTLayoutTables.cpp.
-static BitVector findTargetsWhoseClosuresBoundFunctionsLeaveOut(const Typed::CallingConventions& conventions, const FunctionNumbers& functions, uint32_t numberOfFunctions)
-{
-    BitVector targets(numberOfFunctions);
-    for (const Typed::BoundFunctionPlan& bound : conventions.boundFunctions()) {
-        CodeUnit entry { bound.target, Typed::CodeRole::GenericEntryOfBoundFunction, bound.numberOfBoundArguments };
-        if (!bound.capturesTargetClosure && functions.idOf(conventions.indexOf(entry)))
-            targets.quickSet(bound.target.index());
-    }
-    return targets;
-}
-
 void ImageNumbersBuilder::numberClosureCellsAndClassRanks()
 {
     const Typed::Program& program = inputs.program;
@@ -163,11 +151,10 @@ void ImageNumbersBuilder::numberClosureCellsAndClassRanks()
     const BitVector& cellsMentionedByCode = mentions.byID(NumberSpace::ClosureCell).isMentioned;
     const BitVector functionsMadeWhileModulesLoad = findFunctionsWhoseClosuresAreMadeWhileModulesLoad(inputs, tables);
     uint32_t numberOfFunctions = static_cast<uint32_t>(program.functions.size());
-    const BitVector targetsNamedByBoundFunctions = findTargetsWhoseClosuresBoundFunctionsLeaveOut(conventions, numbers.m_functions, numberOfFunctions);
     Vector<PlaceOfClosureCell> cells;
     for (uint32_t index = 0; index < numberOfFunctions; ++index) {
         FunctionID id(index);
-        if (!plan.hasClosureCell(id) || !(cellsMentionedByCode.get(index) || tables.functionsWithClosureCell.get(index) || targetsNamedByBoundFunctions.get(index)))
+        if (!plan.hasClosureCell(id) || !(cellsMentionedByCode.get(index) || tables.functionsWithClosureCell.get(index)))
             continue;
         // The run time finds the cell by the entry that the word of a closure names, and makes no closure of a function without one.
         if (!numbers.m_functions.idOf(conventions.indexOf(conventions.closureEntryOf(id))))

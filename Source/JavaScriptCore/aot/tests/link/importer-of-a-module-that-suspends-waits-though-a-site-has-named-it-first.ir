@@ -1,9 +1,0 @@
-# `import("./named.mjs")` in zero.mjs names the module first, so the start has it evaluated at a time that nobody knows. It suspends, and f.mjs, which imports it by a statement, waits for it as for any other: e.mjs overtakes f.mjs.
-# A module that was evaluated "sometime" never said that it waits: f.mjs was followed, `lateOfF` (the one variable of the program's own that holds a text and has a dead zone) lost its dead zone, and `readOfF` counted as laid ahead of every object.
-# RUN: link variables mechanisms=all
-# REQUIRES: entries-of-bun
-# CHECK: proven=string|absent writers-known written-at-construction-alone
-# RUN(NEVER): link members mechanisms=all
-# REQUIRES(NEVER): entries-of-bun
-# NEVER-NOT: "readOfF" {{*}}laid-ahead
-# PROGRAM-OF: importer-of-a-member-of-a-cycle-waits-for-the-root-of-the-cycle.ir

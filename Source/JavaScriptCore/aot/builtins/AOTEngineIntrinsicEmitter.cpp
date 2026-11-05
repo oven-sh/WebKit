@@ -63,7 +63,17 @@ void EngineIntrinsicEmitter::generateArraySpeciesCreate(const ValueContext& valu
     branchUnless(logicalAnd(hasCellType(array, ArrayType), emitter<ElementAccessEmitter>().isPristineArray(array, { PristineAspects::Storage, PristineAspects::Names })), asksRunTime);
     branchUnless(emitter<GuardEmitter>().belongsToInstance(array), asksRunTime);
     branchUnless(emitter<GuardEmitter>().realmWatchesSpeciesOfLists(), asksRunTime);
-    CellPointer list = ArrayAllocationEmitter(generator()).allocateArrayOfHoles(value, count, arrayStorageFormOf(ArrayStorage::Contiguous), asksRunTime);
+    // `list.filter(..)`: the text says how many the new list can come to hold. Most lists that are asked hold one or two, so it has room for as many, and for no more than an empty list has anyway.
+    bool isEmpty = count.value()->hasInt64() && !count.value()->asInt64();
+    ArrayAllocationEmitter allocation(generator());
+    const ArrayStorageForm& form = arrayStorageFormOf(ArrayStorage::Contiguous);
+    CellPointer list = CellPointer(m_out.int64Zero);
+    if (Operand room = value->roomOperand() ? get(value->roomOperand()) : Operand(); isEmpty && value->roomOperand() && room.is<Number>()) {
+        Integer most = integer(BASE_CONTIGUOUS_VECTOR_LEN_EMPTY);
+        Integer asked = emitter<ConversionEmitter>().toInteger(room.as<Number>());
+        list = allocation.allocateEmptyArrayWithRoom(value, select(below(asked, most), asked, most), form, asksRunTime);
+    } else
+        list = allocation.allocateArrayOfHoles(value, count, form, asksRunTime);
     join.add(Boxed(list.value()));
 
     m_out.appendTo(asksRunTime);

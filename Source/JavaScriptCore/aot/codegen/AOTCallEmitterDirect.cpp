@@ -81,9 +81,7 @@ Operand CallEmitter::callDirect(const OperationContext& context, CodeUnit callee
 
 Vector<Operand, 2> CallEmitter::callEntry(const OperationContext& context, CodeUnit callee, uint16_t entry, const ArgumentLocations& locations, std::span<const Operand> arguments, const CallOptions& options)
 {
-    // The walk writes the code of a parser out of its type, so its record has no body.
-    const Function& calledFunction = m_program.at(callee.function);
-    RELEASE_ASSERT(calledFunction.hasBody() || (calledFunction.role == FunctionRole::Parser && conventions().exists(callee)));
+    RELEASE_ASSERT(m_program.at(callee.function).hasBody());
     std::span<const ArgumentLocation> results = locations.results.span();
     PlacedArguments placed = placeArguments(callee, locations, arguments);
     Machine::PatchOperation* call = emitCall(context, CallTarget::unit(callee, entry), placed, results, options);
@@ -210,9 +208,9 @@ void CallEmitter::callThroughMethodTable(const ValueContext& value, uint32_t pla
 
     // What the callees do says nothing of what finding them reads. Whatever writes a guard of a class may write the table.
     m_out.clearDeclaredAccesses();
-    Word32 shapeWord = shapes.shapeWordOf(arguments[0].as<CellPointer>());
+    ShapeTestEmitter::IndexByShape row = shapes.indexByShapeOf(arguments[0].as<CellPointer>());
     TypedPointer wordOfSelector = instanceWord(m_heaps.AOTInstance_classGuards, m_mentions.add(NumberSpace::MethodSelector, placeOfSelector));
-    Word32 codeOffset(m_out.load32(m_out.baseIndex(*wordOfSelector.heap(), wordOfSelector.base(), signExtended(shapeWord).value(), ScaleFour, wordOfSelector.offset())));
+    Word32 codeOffset(m_out.load32(m_out.baseIndex(*wordOfSelector.heap(), wordOfSelector.base(), row.index.value(), ScaleFour, wordOfSelector.offset() + row.offset)));
     Pointer entry = offsetBy(loadImmutablePointer(AOT_INSTANCE_OFFSET(image.code)), zeroExtended(codeOffset), WTF::fastLog2(static_cast<unsigned>(codeOffsetUnit)));
 
     CallTarget target = CallTarget::address(entry.value(), takesAndReturnsAlike);

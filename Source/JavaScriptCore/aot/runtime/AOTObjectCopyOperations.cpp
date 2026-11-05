@@ -635,9 +635,12 @@ static NEVER_INLINE JSObject* tryCopyCompiledObjectWithout(Instance* instance, J
     Object* copy = Object::tryCreateCopyOfFields(vm, source);
     if (!copy)
         return nullptr;
+    // The copy is new and each of the fields may leave its slot: nothing is thrown.
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     for (uint32_t number : excluded.identifiers) {
         DeletePropertySlot slot;
         bool isGone = Object::deleteProperty(copy, globalObject, identifierAt(instance, number), slot);
+        scope.assertNoException();
         RELEASE_ASSERT(isGone);
     }
     return copy;

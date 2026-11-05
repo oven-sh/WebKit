@@ -28,7 +28,6 @@
 #include "Nodes.h"
 #include "NodeConstructors.h"
 
-#include "AOTObjectBuilder.h"
 #include "AbstractModuleRecord.h"
 #include "BuiltinNames.h"
 #include "BytecodeGenerator.h"
@@ -693,7 +692,7 @@ RegisterID* ObjectLiteralNode::emitBytecode(BytecodeGenerator& generator, Regist
 
 #if ENABLE(AOT)
     if (!newObject && Options::runsCompiledImage()) {
-        constexpr unsigned maxNumberOfValues = AOT::ObjectBuilderPlan::maxNumberOfWholeWordFastFields;
+        constexpr unsigned maxNumberOfValues = 16;
         Vector<PropertyNode*, maxNumberOfValues> properties;
         bool canEvaluateValuesFirst = true;
         for (auto* p = propertyList; p && canEvaluateValuesFirst; p = p->m_next) {

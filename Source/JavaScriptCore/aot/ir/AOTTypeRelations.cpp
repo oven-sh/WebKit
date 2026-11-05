@@ -324,14 +324,6 @@ static bool everyPossibleLayoutOf(const ObjectTable& objects, const Program& pro
     });
 }
 
-void forEachPossibleLayoutOf(const ObjectTable& objects, const Program& program, const ObjectRecord& record, NOESCAPE const ScopedLambda<void(LayoutID)>& visit)
-{
-    anyPossibleLayoutOf(objects, program, record, [&](LayoutID layout) {
-        visit(layout);
-        return false;
-    });
-}
-
 // Code that the build did not compile made the cell, or may have, so a test may find more than the record says.
 // A constructor of the engine makes the instances of the classes that the program writes below it. What `super()` gets from a parent that nobody knows is a site without a shape.
 static bool mayBeCellNobodyDescribes(const ObjectRecord& record)

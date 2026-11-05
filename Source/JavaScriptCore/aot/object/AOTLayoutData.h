@@ -115,6 +115,8 @@ struct alignas(64) FieldExit {
     uint16_t offsetOfExtraPropertiesWord;
     bool wasInSlot;
     // Four or eight for a slot in the cell. Zero for any other and for a definition, which the stubs leave to the run time.
+    // Beside the width.
+    static constexpr uint8_t objectMayBearMark = 1;
     uint8_t widthOfSlot;
     bool isDefinition;
     // Bits of PropertyAttribute that the property has outside the slot.
@@ -230,14 +232,13 @@ static_assert(offsetof(ExtensionLayoutData, granulesOfFirstExtensionHigh) == off
 struct LayoutData {
     static constexpr uint32_t noBase = UINT32_MAX;
 
-    static constexpr unsigned impossibleMutationBits = 13;
+    static constexpr unsigned impossibleMutationBits = 14;
 
     uint32_t kindBits : 4;
     // A layout that the compiler derived from its base: the base plus the names that some of its objects get. Its objects are instances of the class of the base.
     uint32_t isDerived : 1;
     uint32_t impossibleMutationsRaw : impossibleMutationBits;
     uint32_t evaluationBits : 2;
-    uint32_t keysAreNeverEnumerated : 1;
     uint32_t hasFieldsWithSymbolKeys : 1;
     // The bits of every slot are all there is to its field, so a copy of the slots is a copy of the fields.
     uint32_t hasOnlyPlainSlots : 1;

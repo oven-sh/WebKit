@@ -58,22 +58,6 @@ struct TypeTestPlan {
     bool someCellPasses() const { return (passingPrimitives & cellPrimitives) || !cellTests.isEmpty() || objects == ObjectsVerdict::AllPass; }
     bool everyCellPasses() const { return !(failingPrimitives & cellPrimitives) && stringLiterals.isEmpty() && (objects == ObjectsVerdict::DoNotOccur || objects == ObjectsVerdict::AllPass); }
     bool everyNonCellPasses() const { return !(failingPrimitives & ~cellPrimitives) && !integers; }
-    bool looksIntoCells() const { return verdict == TypeTestVerdict::NeedsTest && cellsOccur() && someCellPasses() && !everyCellPasses(); }
-    // The emitter writes what the tests say, and the walk takes BelongsToInstance for answered behind the passing edge.
-    bool asksEveryPassingObjectForInstance() const
-    {
-        if (verdict != TypeTestVerdict::NeedsTest || objects != ObjectsVerdict::NeedTest)
-            return false;
-        bool someObjectMayPass = false;
-        for (const CellTest& test : cellTests) {
-            if (test.kind == CellTestKind::IsSymbol)
-                continue;
-            if (!test.asksForInstance)
-                return false;
-            someObjectMayPass = true;
-        }
-        return someObjectMayPass;
-    }
 };
 
 // What the code of a test goes by beside the two types.

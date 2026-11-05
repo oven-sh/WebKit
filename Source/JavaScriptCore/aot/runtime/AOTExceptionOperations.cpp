@@ -403,8 +403,10 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTStopAtFalseProof, void, (Instance*
         "an entry parameter"_s, "the result of a call"_s, "what a field holds"_s, "what a variable holds"_s, "what was captured"_s, "what a container holds"_s, "the function that is called"_s, "what an operation gives"_s, "what a test has let pass"_s, "what memory holds where the compiler remembers another value"_s,
     };
     StringPrintStream found;
+    // The answer of a test comes without a value. Of a field: whether its slot is filled, and whether a slot for raw numbers holds one of its marks.
+    constexpr uint32_t field = 2;
     if (!encodedFound)
-        found.print(source + 1 == names.size() ? "another value or a test that once passed fails"_s : "nothing"_s);
+        found.print(source + 1 == names.size() ? "another value or a test that once passed fails"_s : source == field ? "nothing, undefined or null"_s : "nothing"_s);
     else if (JSValue value = JSValue::decode(encodedFound); value.isCell() && !kindOfNativeResult(value))
         found.print("a cell that is no value of the language"_s);
     else

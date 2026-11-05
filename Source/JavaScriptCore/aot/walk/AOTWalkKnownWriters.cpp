@@ -38,7 +38,7 @@ static_assert(perObjectHeaps.containsAll(heapsOfObjectsJudgedInKnownWriters));
 static_assert(!perObjectHeaps.contains(AbstractHeap::MemberGuards));
 
 static constexpr OptionSet<FactOfCell> factsOfCellKnownInKnownWriters {
-    FactOfCell::NotFrozen, FactOfCell::NoFieldOutsideSlot, FactOfCell::NoExtraProperties, FactOfCell::HasLayoutPrototype, FactOfCell::OrderWordIsKnown, FactOfCell::IsLikelyAsAllocated, FactOfCell::IsLikelyAsConstructed
+    FactOfCell::NotFrozen, FactOfCell::NoFieldOutsideSlot, FactOfCell::NoExtraProperties, FactOfCell::HasLayoutPrototype, FactOfCell::OrderWordIsKnown, FactOfCell::IsLikelyAsAllocated, FactOfCell::IsLikelyAsConstructed, FactOfCell::BearsNoMark
 };
 
 // factsOfCellEndedInWalkState(). A fact that another file has added since rests on what this file does not know: it ends with any write into its holder.
@@ -46,9 +46,9 @@ static OptionSet<FactOfCell> factsOfCellEndedInKnownWriters(const LocationMasks&
 {
     OptionSet<FactOfCell> ended = OptionSet<FactOfCell>::fromRaw(static_cast<OptionSet<FactOfCell>::StorageType>(~factsOfCellKnownInKnownWriters.toRaw()));
     if (writes.contains(AbstractHeap::ShapeWords))
-        ended.add({ FactOfCell::NotFrozen, FactOfCell::OrderWordIsKnown, FactOfCell::IsLikelyAsAllocated, FactOfCell::IsLikelyAsConstructed });
+        ended.add({ FactOfCell::NotFrozen, FactOfCell::OrderWordIsKnown, FactOfCell::IsLikelyAsAllocated, FactOfCell::IsLikelyAsConstructed, FactOfCell::BearsNoMark });
     if (writes.contains(AbstractHeap::NamedProperties))
-        ended.add({ FactOfCell::NoFieldOutsideSlot, FactOfCell::NoExtraProperties, FactOfCell::OrderWordIsKnown, FactOfCell::IsLikelyAsAllocated, FactOfCell::IsLikelyAsConstructed });
+        ended.add({ FactOfCell::NoFieldOutsideSlot, FactOfCell::NoExtraProperties, FactOfCell::OrderWordIsKnown, FactOfCell::IsLikelyAsAllocated, FactOfCell::IsLikelyAsConstructed, FactOfCell::BearsNoMark });
     if (writes.contains(AbstractHeap::OrderWords))
         ended.add({ FactOfCell::OrderWordIsKnown, FactOfCell::IsLikelyAsAllocated, FactOfCell::IsLikelyAsConstructed });
     if (writes.contains(AbstractHeap::PrototypeLinks))
@@ -65,11 +65,7 @@ void WalkState::invalidate(const Effects& effects, NOESCAPE const ScopedLambda<b
     noteWhatOperationDoes(effects);
 
     auto endsAnswer = [&](const KnownAnswer& answer, bool isWrittenOutsideObjects) {
-        // Outside of objects it rests on the guards of its class alone.
-        bool isGuard = answer.family == KnownAnswer::Family::Note && answer.note == static_cast<uint8_t>(KnownNote::GuardOnWay);
-        if (isWrittenOutsideObjects)
-            return !isGuard || mayEndGuard(LayoutID(static_cast<uint32_t>(answer.noted)));
-        return !answer.holder || mayBeWritten(answer.holder);
+        return isWrittenOutsideObjects || !answer.holder || mayBeWritten(answer.holder);
     };
     m_answers.endWhatIsWritten(effects, endsAnswer);
     if (!holdsNoRecord() && !effects.writes.isEmpty())
@@ -291,8 +287,6 @@ using ObjectsWrittenAloneInKnownWriters = Vector<Reference, 2>;
 
 struct ElementStoreInKnownWriters {
     Reference array;
-    Reference position;
-    Reference value;
 };
 
 } // anonymous namespace
@@ -369,11 +363,11 @@ static std::optional<ElementStoreInKnownWriters> findElementStoreWithoutOtherCod
     if (writer.opcode == Opcode::PutArrayElement) {
         if (writer.level() != KnowledgeLevel::Proven)
             return std::nullopt;
-        return ElementStoreInKnownWriters { writer.arrayOperand(), writer.positionOperand(), writer.valueOperand() };
+        return ElementStoreInKnownWriters { writer.arrayOperand() };
     }
     if (writer.opcode != Opcode::ElemSet || !effects.writes.isSubsetOf(declaredBoundInTable(Opcode::PutArrayElement).writes))
         return std::nullopt;
-    return ElementStoreInKnownWriters { writer.objectOperand(), writer.propertyOperand(), writer.valueOperand() };
+    return ElementStoreInKnownWriters { writer.objectOperand() };
 }
 
 // `counts[k] = 1; out.push(k)`, `p.z = 1; o.c`: whatever the writer writes of the heaps that belong to one object, it writes in these. Nothing: nobody can tell.
@@ -461,6 +455,22 @@ static GuardsEndedInKnownWriters guardsEndedByInKnownWriters(const Walker& walke
     return { };
 }
 
+// `function Below(a, b) { Base.call(this, a); this.b = b; }`, copied into a turn: a store into an object that this very turn has made is gone with the object where the turn begins again.
+static bool writesObjectsOfTurnAloneInKnownWriters(Walker& walker, const Draft& draft, const Effects& effects)
+{
+    if (effects.mayRunOtherCode() || !effects.writes.containsAny(perObjectHeaps) || !walker.mayBeginTurnAgainInClosedCopy())
+        return false;
+    Effects beside = effects;
+    beside.writes.remove(perObjectHeaps);
+    if (!beside.mayBeRunAgainUnseen())
+        return false;
+    std::optional<ObjectsWrittenAloneInKnownWriters> written = objectsWrittenAloneByInKnownWriters(walker, draft, effects, findElementStoreWithoutOtherCodeInKnownWriters(draft, effects));
+    return written && std::ranges::all_of(*written, [&](Reference object) {
+        Reference root = rootInKnownWriters(walker.code(), object);
+        return walker.state().isFresh(root) && walker.isBuiltInTurnThatMayBeginAgain(root);
+    });
+}
+
 // ---- What build() asks
 
 static constexpr AbstractHeapSet heapsEndedByWriterInKnownWriters = perObjectHeaps | AbstractHeapSet { AbstractHeap::MemberGuards };
@@ -471,8 +481,9 @@ void endWhatOperationWrites(Walker& walker, const Draft& draft, const Effects& e
 {
     WalkState& state = walker.state();
     // The effects as they are: below, what is written into a fresh object is taken out of them, and an object that is fresh since in front of the loop would be written twice.
-    state.noteWhatOperationDoes(effects);
-    // What hands memory back does it once, though nobody sees what it writes: the other copy would be handed a released cell (walk-floor-build, 06:2x).
+    if (!writesObjectsOfTurnAloneInKnownWriters(walker, draft, effects))
+        state.noteWhatOperationDoes(effects);
+    // What hands memory back does it once, though nobody sees what it writes: the other copy would be handed a released cell.
     if (draft.opcode == Opcode::ReleaseEnvironment)
         state.noteSomethingWasDoneInTurn();
     if (!walker.has(Mechanism::TypedOperations) || effects.mayRunOtherCode() || !effects.writes.containsAny(heapsEndedByWriterInKnownWriters) || state.isEmpty()) {
@@ -504,11 +515,6 @@ void endWhatOperationWrites(Walker& walker, const Draft& draft, const Effects& e
     std::optional<ElementStoreInKnownWriters> elementStore = findElementStoreWithoutOtherCodeInKnownWriters(draft, effects);
     std::optional<ObjectsWrittenAloneInKnownWriters> written = objectsWrittenAloneByInKnownWriters(walker, draft, effects, elementStore);
     uint64_t layoutsWritten = !written && effectRuleOf(draft.opcode) == EffectRule::Call ? layoutsWrittenBy(walker, draft) : objectsOfAnyLayoutInKnownWriters;
-
-    // K7: what a store into a list leaves of that very list is noted again behind the ending.
-    KnownLeftByElementStore leftByStore;
-    if (elementStore)
-        leftByStore = findKnownLeftByElementStore(walker, elementStore->array, elementStore->position, elementStore->value);
 
     // `const n = new Node(); n.left = a; n.right = b`, a thousand times over: nothing else can be a fresh object, so nobody else is asked, however much the state holds.
     // What WalkState itself knows of a fresh object no effect ends: markEscapingOperands() has followed the store.
@@ -561,90 +567,6 @@ void endWhatOperationWrites(Walker& walker, const Draft& draft, const Effects& e
         };
         state.invalidate(ended, mayBeWritten, mayEndGuard);
     }
-
-    if (elementStore)
-        noteAgainKnownLeftByElementStore(walker, leftByStore);
-}
-
-// ---- Cells that meet at a join
-
-void noteKnownOfCellsThatMeet(Walker& walker, WalkState& met, Reference parameter, std::span<const Reference> cells, std::span<const WalkState* const> states)
-{
-    if (!walker.has(Mechanism::Folding) || cells.empty() || cells.size() != states.size() || !parameter.isValue())
-        return;
-    AnswersOfWalk* table = walker.state().answers().table();
-    if (!table)
-        return;
-    const Code& code = walker.code();
-
-    // Under the key of a note stand its kind, its word, the holder and the other value. The same key of another holder is made of the same words.
-    struct NoteOfFirstCell {
-        KnownAnswer answer;
-        AnswersOfWalk::WordsOfKey wordsBehindHolder;
-        uint32_t head { 0 };
-        uint32_t word { 0 };
-    };
-    Reference firstCell = rootInKnownWriters(code, cells[0]);
-    if (!firstCell.isValue())
-        return;
-    Vector<NoteOfFirstCell, 4> notes;
-    auto collect = [&](const KnownAnswer& answer) {
-        std::span<const uint32_t> words = table->wordsOf(table->keyAt(answer.key));
-        // A holder that is a value stands in its key by one word, behind the head and the word of the note.
-        if (words.size() < 3 || words[2] != firstCell.bits())
-            return;
-        NoteOfFirstCell note;
-        note.answer = answer;
-        note.head = words[0];
-        note.word = words[1];
-        note.wordsBehindHolder.append(words.subspan(3));
-        notes.append(WTF::move(note));
-    };
-    states[0]->answers().forEachNoteOf(firstCell, collect);
-
-    auto keyFor = [&](const NoteOfFirstCell& note, Reference holder) {
-        AnswersOfWalk::WordsOfKey words;
-        words.append(note.head);
-        words.append(note.word);
-        words.append(holder.bits());
-        words.appendVector(note.wordsBehindHolder);
-        return words;
-    };
-    met.answers().setTable(*table);
-    for (NoteOfFirstCell& note : notes) {
-        bool isBirth = note.answer.note == static_cast<uint8_t>(KnownNote::Birth);
-        uint64_t noted = note.answer.noted;
-        bool everyWayHoldsIt = true;
-        for (size_t way = 1; way < cells.size() && everyWayHoldsIt; ++way) {
-            Reference cell = rootInKnownWriters(code, cells[way]);
-            const KnownAnswer* held = cell.isValue() ? states[way]->answers().find(keyFor(note, cell).span()) : nullptr;
-            bool endsAlike = held && held->endsAtSuspension == note.answer.endsAtSuspension && !held->restsOn == !note.answer.restsOn
-                && (!held->restsOn || table->whatAnswerRestsOn(*held) == table->whatAnswerRestsOn(note.answer));
-            if (!endsAlike || (!isBirth && held->noted != noted)) {
-                everyWayHoldsIt = false;
-                break;
-            }
-            // A field is filled, and a mark stands, where it does on every way.
-            noted &= held->noted;
-        }
-        if (!everyWayHoldsIt)
-            continue;
-        LocationMasks restsOn = note.answer.restsOn ? table->whatAnswerRestsOn(note.answer) : LocationMasks();
-        KnownAnswer ofParameter = note.answer;
-        ofParameter.holder = parameter;
-        ofParameter.noted = noted;
-        met.answers().note(keyFor(note, parameter).span(), ofParameter, restsOn, true, met.isFresh(parameter));
-    }
-
-    // What a branch has decided stands in no row of a holder: KnownAnswers::noteOutcome().
-    std::optional<bool> outcome = states[0]->answers().outcomeOf(firstCell);
-    for (size_t way = 1; way < cells.size() && outcome; ++way) {
-        Reference cell = rootInKnownWriters(code, cells[way]);
-        if (!cell.isValue() || states[way]->answers().outcomeOf(cell) != outcome)
-            outcome = std::nullopt;
-    }
-    if (outcome)
-        met.answers().noteOutcome(parameter, *outcome);
 }
 
 } } } // namespace JSC::AOT::Typed

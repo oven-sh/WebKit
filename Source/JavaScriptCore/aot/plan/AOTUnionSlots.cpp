@@ -35,7 +35,7 @@ static constexpr unsigned numberOfWidthsInUnionSlots = 4;
 static constexpr uint32_t widestSlotInUnionSlots = 1u << (numberOfWidthsInUnionSlots - 1);
 static_assert(widestSlotInUnionSlots == widthOf(SlotRepresentation::JSValue) && !(offsetOfFirstField % widestSlotInUnionSlots));
 
-// How often reached code, as written, names the field through ONE layout. fields-and-objects-2 counts that (usesOfField()): whoever brings the two packages together forwards it. It only ranks.
+// How often reached code, as written, names the field through ONE layout. Nobody counts that yet. It only ranks.
 static uint32_t mentionsOfFieldForUnionSlots(const LinkTables&, FieldReference)
 {
     return 0;

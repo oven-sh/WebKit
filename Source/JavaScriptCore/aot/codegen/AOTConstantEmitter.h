@@ -20,8 +20,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-struct BoundFunctionPlan;
-
 class ConstantEmitter final : public OperationEmitter {
 public:
     explicit ConstantEmitter(CodeGenerator& generator)
@@ -41,7 +39,6 @@ public:
     void generateModuleBuiltin(const ValueContext&);
     void generateData(const ValueContext&);
     void generateNewClosure(const ValueContext&);
-    void generateNewBoundClosure(const ValueContext&);
     void generateKeyConstant(const ValueContext&);
     void generateUnspecified(const ValueContext& value) { define(value, zeroOf(value.representation())); }
     void generateEmptyArgumentList(const ValueContext& value) { defineCell(value, CellPointer(loadImmutablePointer(AOT_INSTANCE_OFFSET(realm.emptyArgumentList)).value())); }
@@ -88,15 +85,11 @@ public:
 private:
     struct NewClosureRequest {
         FunctionID function;
-        // What the word of the closure names: CallingConventions::closureEntryOf(function), or the generic entry of a bound function of it.
-        CodeUnit entry;
         FunctionKindData kind;
         MentionedAllocation allocation;
         AllocationStorage storage;
         ClosureForm form;
         std::span<const ValueID> captures;
-        // Of a bound function: what lays the closure out. Null: the record of the function does.
-        const BoundFunctionPlan* bound { nullptr };
         // How many of `captures` the closure holds. The record lists an operand for a capture that is removed too.
         unsigned numberOfWords { 0 };
     };
@@ -114,7 +107,6 @@ private:
     CellPointer newCopyOnWriteArrayByStub(const ValueContext&);
 
     CellPointer closureCreatedBy(const ValueContext&);
-    CellPointer boundClosureCreatedBy(const ValueContext&);
     bool canUseClosureStub(const NewClosureRequest&) const;
     CellPointer newFullClosure(const ValueContext&, const NewClosureRequest&);
     CellPointer newSlimClosure(const ValueContext&, const NewClosureRequest&);
@@ -123,7 +115,7 @@ private:
     Operand captureOf(const NewClosureRequest&, unsigned index) const;
     Vector<LValue, 4> captureWordsBySlot(const NewClosureRequest&);
     void storeCaptures(CellPointer closure, const NewClosureRequest&, const Machine::IndexedAbstractHeap&);
-    // The mention of the closure number of NewClosureRequest::entry.
+    // The mention of the closure number of NewClosureRequest::function.
     uint32_t closureNumberMentionedBy(const NewClosureRequest&, int32_t addend = 0);
     Integer closureWordOf(const NewClosureRequest&);
 

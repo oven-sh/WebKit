@@ -153,8 +153,7 @@ void Modules::forgetUnfinishedLoads()
     m_filesAskedForOnBehalfOfRoot.clear();
     m_deferredRequests.clear();
     m_deferredImports.clear();
-    m_importsBehindLoads.clear();
-    m_importsBehindEvaluations.clear();
+    m_graphsHeldBehindEarlierCalls.clear();
     m_textsOnTheirWay.clear();
     forgetTextsThatWait();
 }
@@ -687,7 +686,7 @@ void didSettleLoad(JSPromise* settled)
     JSGlobalObject* realm = settled->realm();
     if (Modules* modules = modulesOf(realm)) {
         modules->didSettlePromiseOfImport(settled);
-        modules->resumeImportsBehindSettledLoads();
+        modules->letGoGraphsHeldBehindEarlierCalls();
         modules->retireRecordsOfSettledLoads();
     }
 }
@@ -990,7 +989,7 @@ bool Modules::tryReplaceExport(ModuleID module, UniquedStringImpl* name, JSValue
                 Identifier place = Identifier::from(*m_instance.vm, moduleExport.variable.encoded());
                 JSValue replaced = ProgramStatics::readVariable(m_instance, moduleExport.variable);
                 if (replaced && !storedValue(m_instance.globalObject, mocked.variablesBeforeMock, place))
-                    mocked.variablesBeforeMock.get()->putDirectMayBeIndex(m_instance.globalObject, place, replaced);
+                    storeValue(m_instance.globalObject, mocked.variablesBeforeMock.get(), moduleExport.variable.encoded(), replaced);
             }
             ProgramStatics::writeVariable(m_instance, moduleExport.variable, value);
             return true;
@@ -1343,7 +1342,7 @@ void Modules::letGoOfMockInRequireCache(ModuleID module)
     setRequireCacheValue(module, before);
     if (!before) {
         loaded->objectMadeByRequire.set(*this, nullptr);
-        loaded->firstRequirer = std::nullopt;
+        forgetFirstRequirerOf(module);
         loaded->firstRequirerOutsideImage.set(*this, nullptr);
         m_libraryModulesInRequireCache.removeFirst(module);
         return;
@@ -1363,7 +1362,8 @@ auto Modules::mockThatAnswersForSlow(ModuleID passingOn, const ModuleExportData&
     std::optional<ModuleID> declaringModule = m_table.moduleThatDeclares(passedOn);
     if (!declaringModule)
         return std::nullopt;
-    // `export { v } from "./m"`, or the same in two statements. Where a file on the way of the name is mocked the build lists the statement among the required names, with the module that it names.
+    // `export { v } from "./m"`, the same in two statements, or the star that brings `v`. The build lists every step of the way of a name that a mocked module hands on among the required names, with
+    // the module that the statement names.
     auto moduleNamedByStatement = [&](ModuleID module, uint32_t& name) -> std::optional<ModuleID> {
         String exportName = identifier(name).string();
         for (const RequiredNameData& requiredName : m_table.requiredNames(module)) {
@@ -1375,43 +1375,16 @@ auto Modules::mockThatAnswersForSlow(ModuleID passingOn, const ModuleExportData&
         }
         return std::nullopt;
     };
-    // Otherwise the tables name the variable, not the module that a statement names: of what a module names itself, the one that exports the variable is where it has it from. Two: nobody knows.
     auto comesThroughMock = [&](ModuleID module, ModuleID mocked, ModuleID faceOfMocked) {
         BitVector seen(m_table.size());
-        auto exportsVariable = [&](const ModuleExportData& entry) { return entry.kind() == ModuleExportKind::Variable && entry.variable == passedOn.variable; };
         uint32_t name = passedOn.name;
         while (module != *declaringModule && !seen.quickSet(module.index())) {
-            if (std::optional<ModuleID> named = moduleNamedByStatement(module, name)) {
-                if (named == mocked || named == faceOfMocked)
-                    return true;
-                module = *named;
-                continue;
-            }
-            std::optional<ModuleID> from;
-            std::optional<ModuleID> onlyOther;
-            unsigned others = 0;
-            for (const ModuleRequestData& request : m_table.requests(module)) {
-                ModuleID named = moduleLoadedBy(request);
-                // In a ring a module that the walk came by has the variable from here.
-                if (request.isRequire || seen.quickGet(named.index()) || named == from || named == onlyOther)
-                    continue;
-                if (named != mocked && named != faceOfMocked && named != *declaringModule && !std::ranges::any_of(m_table.exports(named), exportsVariable)) {
-                    onlyOther = named;
-                    ++others;
-                    continue;
-                }
-                if (from)
-                    return false;
-                from = named;
-            }
-            // A table lists what somebody reads off the object of its module: a module on the way may lack the name.
-            if (!from && others == 1)
-                from = onlyOther;
-            if (!from)
+            std::optional<ModuleID> named = moduleNamedByStatement(module, name);
+            if (!named)
                 return false;
-            if (from == mocked || from == faceOfMocked)
+            if (named == mocked || named == faceOfMocked)
                 return true;
-            module = *from;
+            module = *named;
         }
         return false;
     };
@@ -1829,6 +1802,13 @@ bool Modules::willLeaveModuleAlone(ModuleID module, bool onlyIfLoadedInPreload, 
         return false;
     // ES modules read the copies that the face of a CommonJS file took, and those stay. Nobody has noted when the file itself was loaded.
     ModuleID withExports = moduleWithExportsOf(module);
+    // A require() has run the file and no import has come to it: its face has taken no copies. It takes them now, as the first import would. No code of the program runs by that: the body has run.
+    if (ModuleStatus face = status(withExports); isFile && !onlyIfLoadedInPreload && withExports != module && (face == ModuleStatus::Unlinked || face == ModuleStatus::Linked)) {
+        auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+        evaluateSynchronously(withExports, SynchronousEvaluationReason::Require);
+        RETURN_IF_EXCEPTION(scope, false);
+        m_facesThatTookCopiesForMock.set(withExports.index());
+    }
     if (isFile && (onlyIfLoadedInPreload || withExports == module || status(withExports) != ModuleStatus::Evaluated || !didCaptureExports(withExports)))
         return false;
     if (onlyIfLoadedInPreload && !m_loadedInPreload.get(module.index()))
@@ -2013,8 +1993,13 @@ void Modules::endMockOverModuleThatHasRun(ModuleID module)
     bringBackRecord(module);
     if (isFile)
         bringBackRecord(withExports);
-    if (!kept.isInPlace)
+    // No import had come to the file when the mock came: the first one behind the mock finds what the file exports by then.
+    bool takesCopiesAnew = isFile && m_facesThatTookCopiesForMock.clear(withExports.index());
+    if (!kept.isInPlace) {
+        if (takesCopiesAnew)
+            RELEASE_AND_RETURN(scope, captureExportsAgain(withExports));
         return;
+    }
     LoadedModule& exporting = ensureLoaded(withExports);
     takeNamesOfMockInPlace(withExports, nullptr);
     scope.assertNoExceptionExceptTermination();
@@ -2073,6 +2058,8 @@ void Modules::endMockOverModuleThatHasRun(ModuleID module)
         if (kept.namespaceIsHeld)
             setNamespace(withExports, ModulePhase::Evaluation, own);
     }
+    if (takesCopiesAnew)
+        RELEASE_AND_RETURN(scope, captureExportsAgain(withExports));
 }
 
 JSObject* Modules::namespaceOfModuleItself(ModuleID module)
@@ -2725,6 +2712,10 @@ JSPromise* Modules::rejectImportWithErrorOfLoad(ModuleID module, ImportCaller ca
 }
 
 static JSC_DECLARE_HOST_FUNCTION(importBehindFactories);
+static JSC_DECLARE_HOST_FUNCTION(settleCallsBehindEarlierCall);
+static JSC_DECLARE_HOST_FUNCTION(settleCallBehindOwnLoad);
+// A line: whether the earlier call has settled, the place of the first call that has not, the calls. A call: the promise of the program, that of the loader, whether that one has settled, the line.
+static constexpr unsigned firstCallInLine = 2;
 static JSC_DECLARE_HOST_FUNCTION(importByKeyBehindFactories);
 
 static JSC_DECLARE_HOST_FUNCTION(continueImportWithModuleItself);
@@ -2768,6 +2759,8 @@ JSPromise* Modules::import(ModuleID module, ModuleID referrer, JSValue options)
     {
         // The error that is kept is for the call that the factory made, which goes on in a later job.
         SetForScope moduleThatProgramImportsNow(m_moduleThatProgramImportsNow, m_modulesWhoseFactoryRuns.get(module.index()) ? std::nullopt : std::optional(module));
+        SetForScope moduleThatImportAsksFor(m_moduleThatImportAsksFor, module);
+        SetForScope importThatAsksHasWaited(m_importThatAsksHasWaited, false);
         walkStopped = runMocksBelow(module);
     }
     RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
@@ -2797,7 +2790,9 @@ JSPromise* Modules::import(ModuleID module, ModuleID referrer, JSValue options)
             // A statement that the loader links, or code from disk, has asked for the file first: the loader has what that made, for every type of the same kind.
             if (registryEntry(key, attributes)) [[unlikely]]
                 RELEASE_AND_RETURN(scope, importUncompiled(key, referrer, WTF::move(*fetchParameters)));
-            if (std::optional<ModuleID> form = findWithAttributes(key, attributes))
+            std::optional<ModuleID> form = findWithAttributes(key, attributes);
+            RETURN_IF_EXCEPTION(scope, importPromiseRejectedByLoader(realm, scope));
+            if (form)
                 module = m_table.faceOfFile(*form).value_or(*form);
             else
                 noteFormAnsweredFirst(key, *attributes, file);
@@ -2815,7 +2810,9 @@ JSPromise* Modules::import(ModuleID module, ModuleID referrer, JSValue options)
         RETURN_IF_EXCEPTION(scope, importPromiseRejectedByLoader(realm, scope));
     }
     // The build has left the call to the loader, with its type.
-    if (std::optional<ModuleID> found = findWithAttributes(key, fetchParameters->get(), FormWithoutAttributes::IsAnotherModule))
+    std::optional<ModuleID> found = findWithAttributes(key, fetchParameters->get(), FormWithoutAttributes::IsAnotherModule);
+    RETURN_IF_EXCEPTION(scope, importPromiseRejectedByLoader(realm, scope));
+    if (found)
         return start(*found);
     // The loader answers with the object that carries the bindings.
     if (m_uncompiledNamespacesNotShownYet.get(module.index())) [[unlikely]] {
@@ -2872,7 +2869,7 @@ void Modules::takeOutOfRequireCache(ModuleID module)
         LoadedModule& loaded = ensureLoaded(module);
         loaded.valueInRequireCache.set(*this, JSValue());
         loaded.objectMadeByRequire.set(*this, nullptr);
-        loaded.firstRequirer = std::nullopt;
+        forgetFirstRequirerOf(module);
         loaded.firstRequirerOutsideImage.set(*this, nullptr);
         setRequireCacheValue(module, JSValue());
         m_libraryModulesInRequireCache.removeFirst(module);
@@ -3177,7 +3174,7 @@ void Modules::holdText(JSPromise* promise, ModuleID module, ModuleRecord* reques
     size_t index = m_textsOnTheirWay.size();
     while (index && m_textsOnTheirWay[index - 1].place > place)
         --index;
-    m_textsOnTheirWay.insert(index, TextOnItsWay { place, Strong<JSPromise>(vm, promise), module, Strong<JSCell>(vm, requested), referrerAsyncOrder });
+    m_textsOnTheirWay.insert(index, TextOnItsWay { place, Strong<JSPromise>(vm, promise), module, Strong<JSCell>(vm, requested), referrerAsyncOrder, m_stepsOfLoader });
     // In a test run the host brings it, behind the `describe` callbacks of a test file that has just been loaded: deliverTextThatWaits().
     if (host().callInLaterTurn && isTestRun()) {
         host().callInLaterTurn(m_instance.globalObject);
@@ -3199,8 +3196,10 @@ void Modules::deliverFirstTextOnItsWay()
     noteThatTextHasCome(text.module);
     if (text.requested)
         text.promise->fulfill(*m_instance.vm, text.requested.get());
-    else
+    else {
+        SetForScope stepsOfLoaderAtCall(m_stepsOfLoaderAtCallWhoseTextHasCome, text.stepsOfLoaderAtCall);
         startImportWhoseTextHasCome(text.promise.get(), text.module, text.referrerAsyncOrder);
+    }
 }
 
 // While no text is on its way nobody can tell when one comes: they come in the order in which they are asked for. While a require() loads a graph `bun run` reads each text itself.
@@ -3254,6 +3253,11 @@ JSPromise* Modules::startImport(ModuleID module, std::optional<int64_t> referrer
             ensureLoaded(file).isAwaitedByCallThatComesInLaterJob = status(file) == ModuleStatus::Evaluating || !m_instance.vm->synchronousModuleQueue();
     }
 
+    // Until the call is held or goes on to its graph.
+    std::optional<SetForScope<ModuleID>> moduleThatImportAsksFor;
+    std::optional<SetForScope<bool>> importThatAsksHasWaited;
+    moduleThatImportAsksFor.emplace(m_moduleThatImportAsksFor, module);
+    importThatAsksHasWaited.emplace(m_importThatAsksHasWaited, !!stateOfWait);
     bool walkStopped = answerOfWalkAlreadyMade ? *answerOfWalkAlreadyMade : runMocksBelow(module);
     RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
     if (m_innermostFilesBeingRun) [[unlikely]] {
@@ -3290,6 +3294,8 @@ JSPromise* Modules::startImport(ModuleID module, std::optional<int64_t> referrer
         factories->performPromiseThenWithContext(vm, realm, goOn, jsUndefined(), promise, heldCall);
         return promise;
     }
+    importThatAsksHasWaited.reset();
+    moduleThatImportAsksFor.reset();
     // An executable has every text, so a call finds its graph at once. What a file of a graph that is being loaded asks for, itself or in a job or a tick that it has queued, still comes a turn later,
     // and a later call does not overtake a text that is on its way.
     if (text == TextOfImport::MayComeLater && (!m_textsOnTheirWay.isEmpty() || hasFileOfGraphBeingLoadedBegun()) && isTextLeftToRead(module)) [[unlikely]]
@@ -3322,14 +3328,6 @@ JSPromise* Modules::startImport(ModuleID module, std::optional<int64_t> referrer
                 return promise;
             }
         }
-        // `import("./a.mjs")`, and in a later job `import("./b.mjs")`, where each imports the other: the graph that was asked for first runs first, so the cycle is entered at a.
-        if (isCalledByProgram && isFile && !m_loadsInFlight.isEmpty() && !m_innermostFilesBeingRun && m_textsOnTheirWay.isEmpty()) {
-            if (LoadInFlight* earlier = findEarlierLoadAbove(module)) {
-                JSPromise* promise = promiseForCaller();
-                m_importsBehindLoads.append(ImportBehindLoad { earlier->root, module, referrerAsyncOrder, Strong<JSPromise>(vm, promise) });
-                return promise;
-            }
-        }
         // A call is no part of the graph that a require() loads: it waits for the file as it does where nothing is loaded synchronously.
         bool isCalledUnderRequire = vm.synchronousModuleQueue() && isCommonJSFileOrFace(module) && isEvaluatedByLoader(fileOf(module));
         if (isCalledUnderRequire || (asyncLoadMustWaitFor(module) && !loader()->registryEntry(moduleKey(module)))) [[unlikely]] {
@@ -3344,10 +3342,37 @@ JSPromise* Modules::startImport(ModuleID module, std::optional<int64_t> referrer
             if (ModuleRegistryEntry* entry = loader()->registryEntry(record->moduleKey()); entry && entry->record() == record)
                 entry->markLoaded();
         }
+        LoadInFlight* earlierLoad = isCalledByProgram && isFile && !m_innermostFilesBeingRun && m_textsOnTheirWay.isEmpty() ? earlierLoadToSettleFirst(module) : nullptr;
         JSPromise* loaded = askLoaderForImport(module, referrerAsyncOrder, isCalledByProgram ? nullptr : promiseOfCaller);
         RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
         if (!isCalledByProgram)
             return loaded;
+        if (earlierLoad) [[unlikely]] {
+            JSPromise* promise = promiseForCaller();
+            JSArray* line = earlierLoad->callsThatSettleBehind.get();
+            if (!line) {
+                MarkedArgumentBuffer head;
+                head.append(jsBoolean(false));
+                head.append(jsNumber(firstCallInLine));
+                line = constructArray(realm, static_cast<JSC::ArrayAllocationProfile*>(nullptr), head);
+                RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
+                earlierLoad->callsThatSettleBehind.set(vm, line);
+                JSFunction* behindEarlierCall = JSFunction::create(vm, realm, 2, String(), settleCallsBehindEarlierCall, ImplementationVisibility::Private);
+                earlierLoad->promise->performPromiseThenWithContext(vm, realm, behindEarlierCall, behindEarlierCall, jsUndefined(), line);
+            }
+            MarkedArgumentBuffer parts;
+            parts.append(promise);
+            parts.append(loaded);
+            parts.append(jsBoolean(false));
+            parts.append(line);
+            JSArray* call = constructArray(realm, static_cast<JSC::ArrayAllocationProfile*>(nullptr), parts);
+            RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
+            line->push(realm, call);
+            RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
+            JSFunction* behindOwnLoad = JSFunction::create(vm, realm, 2, String(), settleCallBehindOwnLoad, ImplementationVisibility::Private);
+            loaded->performPromiseThenWithContext(vm, realm, behindOwnLoad, behindOwnLoad, jsUndefined(), call);
+            return promise;
+        }
         if (promiseOfCaller) {
             scope.release();
             settleAsLoaderDoes(realm, promiseOfCaller, loaded);
@@ -3377,23 +3402,6 @@ bool Modules::leadsToModuleLeftToRun(const ModuleRequestData& request) const
     return !request.isHoisted && !request.isRequire && status(request.targetModule()) < ModuleStatus::Evaluating;
 }
 
-const BitVector& Modules::modulesLeftToRunBelow(LoadInFlight& load)
-{
-    if (load.modulesLeftToRun)
-        return *load.modulesLeftToRun;
-    load.modulesLeftToRun = makeUnique<BitVector>(m_table.size());
-    BitVector& below = *load.modulesLeftToRun;
-    below.quickSet(load.root.index());
-    Vector<ModuleID, 16> modules { load.root };
-    while (!modules.isEmpty()) {
-        for (const ModuleRequestData& request : m_table.requests(modules.takeLast())) {
-            if (leadsToModuleLeftToRun(request) && !below.quickSet(request.target()))
-                modules.append(request.targetModule());
-        }
-    }
-    return below;
-}
-
 bool Modules::leadsTo(ModuleID from, ModuleID to)
 {
     if (from == to)
@@ -3410,41 +3418,6 @@ bool Modules::leadsTo(ModuleID from, ModuleID to)
                 return true;
             modules.append(request.targetModule());
         }
-    }
-    return false;
-}
-
-// Every cycle closes with a request for a module that the search is going through.
-bool Modules::isAboveCycleLeftToRun(LoadInFlight& load, ModuleID root)
-{
-    if (!load.modulesAboveNoCycle)
-        load.modulesAboveNoCycle = makeUnique<BitVector>(m_table.size());
-    BitVector& isAboveNone = *load.modulesAboveNoCycle;
-    if (isAboveNone.quickGet(root.index()))
-        return false;
-
-    const uint32_t isBeingGoneThrough = takeMarkOfSearch();
-    std::span<uint32_t> placesSeen = m_placesSeenByPlans.mutableSpan();
-    struct Visit {
-        ModuleID module;
-        uint32_t nextRequest;
-    };
-    Vector<Visit, 16> visits { Visit { root, 0 } };
-    placesSeen[root.index()] = isBeingGoneThrough;
-    while (!visits.isEmpty()) {
-        Visit& visit = visits.last();
-        std::span<const ModuleRequestData> requests = m_table.requests(visit.module);
-        if (visit.nextRequest == requests.size()) {
-            isAboveNone.quickSet(visit.module.index());
-            visits.removeLast();
-            continue;
-        }
-        const ModuleRequestData& request = requests[visit.nextRequest++];
-        if (!leadsToModuleLeftToRun(request) || isAboveNone.quickGet(request.target()))
-            continue;
-        if (std::exchange(placesSeen[request.target()], isBeingGoneThrough) == isBeingGoneThrough)
-            return true;
-        visits.append(Visit { request.targetModule(), 0 });
     }
     return false;
 }
@@ -3478,78 +3451,178 @@ bool Modules::asksForLastTextBelow(const LoadInFlight& load, ModuleID module)
     return placesSeen[inOrder.last().index()] == isAskedForByLoad && leadsTo(module, inOrder.last());
 }
 
-// A cycle is entered by the graph that is loaded first. What two graphs share outside of a cycle runs the same whichever of them comes to it first, and the loader's own timing decides.
-// An executable has every text, and its loader would come to the end of the smaller graph first, whichever `bun run` loads first.
-Modules::LoadInFlight* Modules::findEarlierLoadAbove(ModuleID module)
+Modules::LoadInFlight* Modules::loadBeingLoadedThatHolds(ModuleID module) const
 {
-    if (status(module) >= ModuleStatus::Evaluating)
+    uint64_t holder = m_loadsThatHoldModules[module.index()];
+    LoadInFlight* load = holder ? m_loadsInFlight.withNumber(holder - 1) : nullptr;
+    return load && m_loadsInFlight.isBeingLoaded(*load) ? load : nullptr;
+}
+
+// A module that is left to run belongs to the first graph, in the order of the calls, that holds it. A load is gone through once, when a call of a later job first asks,
+// and the search stops at what an earlier load holds: the searches cost what the graphs hold, however many there are.
+void Modules::goThroughLoadsOfEarlierJobs()
+{
+    for (uint64_t end = m_loadsInFlight.numberBehindLast(); m_numberOfNextLoadToGoThrough < end; ++m_numberOfNextLoadToGoThrough) {
+        LoadInFlight* load = m_loadsInFlight.withNumber(m_numberOfNextLoadToGoThrough);
+        // What the host has to fetch may come late or never: nothing waits for such a graph.
+        if (!load || !m_loadsInFlight.isBeingLoaded(*load) || data(load->root).reachesUncompiledCode())
+            continue;
+        if (load->stepsOfLoaderAtCall == m_stepsOfLoader)
+            return;
+        if (m_loadsThatHoldModules.isEmpty())
+            m_loadsThatHoldModules.fill(0, m_table.size());
+        Vector<ModuleID, 16> modules;
+        auto take = [&](ModuleID module) {
+            if (loadBeingLoadedThatHolds(module))
+                return;
+            m_loadsThatHoldModules[module.index()] = load->number + 1;
+            modules.append(module);
+        };
+        if (status(load->root) < ModuleStatus::Evaluating)
+            take(load->root);
+        while (!modules.isEmpty()) {
+            for (const ModuleRequestData& request : m_table.requests(modules.takeLast())) {
+                if (leadsToModuleLeftToRun(request))
+                    take(request.targetModule());
+            }
+        }
+    }
+}
+
+// The evaluation of the root goes down by the first request that leads to something left to run: what lies on that way runs first, with all that is below it.
+bool Modules::runsFirstBelow(ModuleID root, ModuleID module)
+{
+    const uint32_t isOnWay = takeMarkOfSearch();
+    std::span<uint32_t> placesSeen = m_placesSeenByPlans.mutableSpan();
+    for (ModuleID next = root; next != module;) {
+        placesSeen[next.index()] = isOnWay;
+        std::span<const ModuleRequestData> requests = m_table.requests(next);
+        auto down = std::ranges::find_if(requests, [&](const ModuleRequestData& request) {
+            return leadsToModuleLeftToRun(request) && placesSeen[request.target()] != isOnWay;
+        });
+        if (down == requests.end())
+            return false;
+        next = down->targetModule();
+    }
+    return true;
+}
+
+// An executable has every text, and its loader comes to the end of the shorter way first, whichever call came first.
+// `import("./a.mjs")`, and in a later job `import("./b.mjs")`, where b.mjs comes to a cycle below a.mjs: the graph that was asked for first enters the cycle.
+// `import("./a.mjs")`, where a.mjs imports b.mjs and c.mjs, and in a later job `import("./c.mjs")`: c.mjs does not run ahead of b.mjs.
+Modules::LoadInFlight* Modules::earlierLoadToRunFirst(const LoadInFlight& load)
+{
+    goThroughLoadsOfEarlierJobs();
+    if (m_loadsThatHoldModules.isEmpty() || status(load.root) >= ModuleStatus::Evaluating)
         return nullptr;
-    LoadInFlight* load = m_loadsInFlight.loadThatCameFirst();
-    if (!load || load->stepsOfLoaderAtCall == m_stepsOfLoader || !m_loadsInFlight.isBeingLoaded(*load))
-        return nullptr;
-    if (load->root == module)
-        return load;
-    if (modulesLeftToRunBelow(*load).quickGet(module.index()) && isAboveCycleLeftToRun(*load, module) && asksForLastTextBelow(*load, module))
-        return load;
+    auto earlierLoadThatHolds = [&](ModuleID module) -> LoadInFlight* {
+        LoadInFlight* earlier = loadBeingLoadedThatHolds(module);
+        return earlier && earlier->number < load.number && earlier->stepsOfLoaderAtCall != load.stepsOfLoaderAtCall ? earlier : nullptr;
+    };
+    if (LoadInFlight* earlier = earlierLoadThatHolds(load.root); earlier && !runsFirstBelow(earlier->root, load.root))
+        return earlier;
+    // Every cycle closes with a request for a module that the search is going through.
+    Vector<LoadInFlight*, 2> withCycle;
+    const uint32_t isBeingGoneThrough = takeMarkOfSearch();
+    const uint32_t isGoneThrough = takeMarkOfSearch();
+    std::span<uint32_t> placesSeen = m_placesSeenByPlans.mutableSpan();
+    struct Visit {
+        ModuleID module;
+        uint32_t nextRequest;
+    };
+    Vector<Visit, 16> visits { Visit { load.root, 0 } };
+    placesSeen[load.root.index()] = isBeingGoneThrough;
+    while (!visits.isEmpty()) {
+        Visit& visit = visits.last();
+        std::span<const ModuleRequestData> requests = m_table.requests(visit.module);
+        if (visit.nextRequest == requests.size()) {
+            placesSeen[visit.module.index()] = isGoneThrough;
+            visits.removeLast();
+            continue;
+        }
+        const ModuleRequestData& request = requests[visit.nextRequest++];
+        if (!leadsToModuleLeftToRun(request))
+            continue;
+        uint32_t seen = placesSeen[request.target()];
+        if (seen == isBeingGoneThrough) {
+            if (LoadInFlight* earlier = earlierLoadThatHolds(request.targetModule()); earlier && !withCycle.contains(earlier))
+                withCycle.append(earlier);
+        } else if (seen != isGoneThrough) {
+            placesSeen[request.target()] = isBeingGoneThrough;
+            visits.append(Visit { request.targetModule(), 0 });
+        }
+    }
+    for (LoadInFlight* earlier : withCycle) {
+        if (asksForLastTextBelow(*earlier, load.root))
+            return earlier;
+    }
     return nullptr;
 }
 
-void Modules::makeImportAgain(const ImportBehindLoad& import)
+bool ModuleRecord::holdGraphBehindEarlierCalls(JSCell* payload, bool isDeferred)
 {
-    VM& vm = *m_instance.vm;
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    JSPromise* promise = import.promise.get();
-    JSPromise* loaded = startImport(import.module, import.referrerAsyncOrder, ImportCaller::CompiledCode, TextOfImport::HasCome, promise);
-    if (scope.exception()) [[unlikely]] {
-        if (!vm.isTerminationException(scope.exception()))
-            promise->rejectWithCaughtException(vm, scope);
-        return;
-    }
-    if (loaded != promise)
-        settleAsLoaderDoes(m_instance.globalObject, promise, loaded);
+    return modules().holdGraphBehindEarlierCalls(*this, payload, isDeferred);
 }
 
-// The loader evaluates the root in the job in which it links it, and a call that is made now comes to its graph later than that.
-void Modules::resumeImportsBehindLoad(ModuleID root, bool graphRunsInThisJob)
+// The loads go on side by side, job for job. Only the job that links and evaluates the later graph waits.
+bool Modules::holdGraphBehindEarlierCalls(ModuleRecord& root, JSCell* payload, bool isDeferred)
 {
-    if (m_importsBehindLoads.isEmpty()) [[likely]]
+    if (m_loadsInFlight.numberBeingLoaded() < 2) [[likely]]
+        return false;
+    LoadInFlight* load = nullptr;
+    m_loadsInFlight.forEachOfRoot(root.module(), [&](LoadInFlight& ofRoot) {
+        if (!load && m_loadsInFlight.isBeingLoaded(ofRoot))
+            load = &ofRoot;
+    });
+    LoadInFlight* earlier = load ? earlierLoadToRunFirst(*load) : nullptr;
+    if (!earlier)
+        return false;
+    VM& vm = *m_instance.vm;
+    size_t place = m_graphsHeldBehindEarlierCalls.size();
+    while (place && m_graphsHeldBehindEarlierCalls[place - 1].numberOfLoad > load->number)
+        --place;
+    m_graphsHeldBehindEarlierCalls.insert(place, GraphHeldBehindEarlierCall { Strong<JSCell>(vm, &root), Strong<JSCell>(vm, payload), isDeferred, load->number, earlier->number });
+    countEvent(vm, RuntimeCounterID::GraphsHeldBehindEarlierCalls);
+    return true;
+}
+
+// Wherever a load ends: it is linked, it fails, its promise settles. The job asks again when it comes: the graph may come to a cycle of yet another load.
+void Modules::letGoGraphsHeldBehindEarlierCalls()
+{
+    if (m_graphsHeldBehindEarlierCalls.isEmpty()) [[likely]]
         return;
-    auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
-    Vector<ImportBehindLoad, 2> due;
-    m_importsBehindLoads.removeAllMatching([&](ImportBehindLoad& import) {
-        if (import.root != root)
+    Vector<GraphHeldBehindEarlierCall, 2> letGo;
+    m_graphsHeldBehindEarlierCalls.removeAllMatching([&](GraphHeldBehindEarlierCall& held) {
+        LoadInFlight* earlier = m_loadsInFlight.withNumber(held.numberOfEarlierLoad);
+        if (earlier && m_loadsInFlight.isBeingLoaded(*earlier))
             return false;
-        due.append(WTF::move(import));
+        letGo.append(WTF::move(held));
         return true;
     });
-    for (ImportBehindLoad& import : due) {
-        // The module runs with the graph: the call has nothing of its own to load, and settles right behind the call for the graph.
-        if (graphRunsInThisJob && data(root).isSynchronous() && import.promise->isThenFastAndNonObservable()) {
-            queueStepOfImport(import.promise.get(), moduleForJob(import.module), numberOfJobsBehindEvaluation + 1);
-            m_importsBehindEvaluations.append(WTF::move(import));
-            continue;
-        }
-        makeImportAgain(import);
-        RETURN_IF_EXCEPTION(scope, void());
+    if (letGo.isEmpty())
+        return;
+    // Right behind the job that runs now, which goes on to evaluate the earlier graph, and ahead of the jobs of the calls that came later.
+    VM& vm = *m_instance.vm;
+    MicrotaskQueue& queue = vm.defaultMicrotaskQueue();
+    Ref<MicrotaskQueue> jobsThatWait = MicrotaskQueue::create(vm);
+    queue.moveTasksBehind(0, jobsThatWait.get());
+    for (GraphHeldBehindEarlierCall& held : letGo) {
+        InternalMicrotask job = held.isDeferred ? InternalMicrotask::DynamicImportDeferLoadSettled : InternalMicrotask::DynamicImportLoadSettled;
+        m_instance.globalObject->queueMicrotask(vm, job, static_cast<uint8_t>(JSPromise::Status::Fulfilled), held.root.get(), jsUndefined(), held.payload.get());
     }
+    jobsThatWait->moveTasksBehind(0, queue);
+    countEvent(vm, RuntimeCounterID::GraphsLetGoBehindEarlierCalls, letGo.size());
 }
 
-// Compiled code may come to the root first, by a road on which the loader links nothing.
-void Modules::resumeImportsBehindSettledLoads()
+// `import("./a.mjs")`, where a.mjs imports b.mjs, and in a later job `import("./b.mjs")`: the later call loads and runs what it names as any call does, and it does not settle ahead of the call for the graph.
+// A graph that waits somewhere may settle long behind the module, or never: then only a call for its own root follows it.
+Modules::LoadInFlight* Modules::earlierLoadToSettleFirst(ModuleID module)
 {
-    if (m_importsBehindLoads.isEmpty()) [[likely]]
-        return;
-    Vector<ModuleID, 2> roots;
-    for (const ImportBehindLoad& import : m_importsBehindLoads) {
-        bool isBeingLoaded = false;
-        m_loadsInFlight.forEachOfRoot(import.root, [&](LoadInFlight& load) {
-            isBeingLoaded |= m_loadsInFlight.isBeingLoaded(load);
-        });
-        if (!isBeingLoaded && !roots.contains(import.root))
-            roots.append(import.root);
-    }
-    for (ModuleID root : roots)
-        resumeImportsBehindLoad(root);
+    if (m_loadsInFlight.isEmpty() || status(module) >= ModuleStatus::Evaluating)
+        return nullptr;
+    goThroughLoadsOfEarlierJobs();
+    LoadInFlight* earlier = m_loadsThatHoldModules.isEmpty() ? nullptr : loadBeingLoadedThatHolds(module);
+    return earlier && (earlier->root == module || (data(earlier->root).isSynchronous() && asksForLastTextBelow(*earlier, module))) ? earlier : nullptr;
 }
 
 void Modules::resumeDeferredImports(ModuleID file, uint8_t jobsUntilLoaded)
@@ -3575,7 +3648,7 @@ JSPromise* Modules::askLoaderForImport(ModuleID module, std::optional<int64_t> r
     // A file of the graph was taken out of the program between the call and this step. The loader reads the graph from disk, as for a call that comes now: import().
     if (isLeftToHost(module)) [[unlikely]]
         RELEASE_AND_RETURN(scope, loader()->requestImportModuleForKey(m_instance.globalObject, keyWithoutForm(fileOf(module)), Identifier(), nullptr, nullptr, false, referrerAsyncOrder.value_or(-1), nullptr, resultPromise));
-    bool wasAskingHost = setIsAskingHost(true);
+    RequestToHost requestUnderWay = std::exchange(m_isAskingHost, RequestToHost(true));
     // What the host would answer when it is asked to fetch the module.
     ModuleRecord* record = nullptr;
     {
@@ -3586,7 +3659,7 @@ JSPromise* Modules::askLoaderForImport(ModuleID module, std::optional<int64_t> r
         record = isCommonJSFileOrFace(module) ? recordOfCommonJSFile(module, isMadeInline ? LoadOfFile::IsAskedFor : LoadOfFile::IsRootOfImport) : exposeRecord(module, RecordHolder::Loader);
     }
     JSPromise* loaded = scope.exception() ? nullptr : loader()->requestImportModuleForKey(m_instance.globalObject, record->moduleKey(), Identifier(), nullptr, nullptr, false, referrerAsyncOrder.value_or(-1), record, resultPromise);
-    setIsAskingHost(wasAskingHost);
+    m_isAskingHost = requestUnderWay;
     RETURN_IF_EXCEPTION(scope, nullptr);
     didStartLoad(loaded, module);
     return loaded;
@@ -3614,16 +3687,6 @@ void Modules::finishImportOfEvaluatedModule(JSPromise* importPromise, ModuleID m
         return runJobOfRound(module);
     if (!m_callsToMakeAgain.isEmpty() && makeCallAgain(importPromise)) [[unlikely]]
         return;
-    if (!m_importsBehindEvaluations.isEmpty()) [[unlikely]] {
-        size_t index = m_importsBehindEvaluations.findIf([&](const ImportBehindLoad& import) { return import.promise.get() == importPromise; });
-        if (index != notFound) {
-            ImportBehindLoad import = WTF::move(m_importsBehindEvaluations[index]);
-            m_importsBehindEvaluations.removeAt(index);
-            // The graph has failed.
-            if (!loaderOnlyHandsOverNamespace(module))
-                return makeImportAgain(import);
-        }
-    }
     JSPromise* loaded = JSPromise::create(vm, m_instance.globalObject->promiseStructure());
     loaded->markAsHandled();
     if (error) [[unlikely]]
@@ -3755,7 +3818,9 @@ JSPromise* Modules::importDynamic(JSValue specifier, JSValue options, ModuleID r
         key = loader()->resolve(realm, text, pathString(referrer), nullptr, true);
     }
     RETURN_IF_EXCEPTION(scope, importPromiseRejectedByLoader(realm, scope));
-    if (std::optional<ModuleID> found = *fetchParameters ? findWithAttributes(key, fetchParameters->get()) : findByName(key)) {
+    std::optional<ModuleID> found = *fetchParameters ? findWithAttributes(key, fetchParameters->get()) : findByName(key);
+    RETURN_IF_EXCEPTION(scope, importPromiseRejectedByLoader(realm, scope));
+    if (found) {
         willAnswerWithModule(realm, *found, LoadByName::Import);
         RETURN_IF_EXCEPTION(scope, importPromiseRejectedByLoader(realm, scope));
         // An import() that names a file in its text names the face of the file.
@@ -4475,7 +4540,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTImportDynamic, EncodedJSValue, (Instance* i
 JSC_DEFINE_JIT_OPERATION(operationAOTRequireDynamic, EncodedJSValue, (Instance* instance, EncodedJSValue specifier, uint32_t referrer))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTRequireDynamic);
-    OPERATION_RETURN(scope, JSValue::encode(modulesOf(*instance).requireSpecifier(JSValue::decode(specifier), ModuleID(referrer), false)));
+    OPERATION_RETURN(scope, JSValue::encode(modulesOf(*instance).requireSpecifier(JSValue::decode(specifier), ModuleID(referrer), Modules::NamedByBuild::No)));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTResolveDynamic, EncodedJSValue, (Instance* instance, EncodedJSValue specifier, uint32_t referrer, uint32_t isURL, uint32_t isForRequire))
@@ -5382,6 +5447,24 @@ bool isResolvingImportCall(VM& vm)
     return vm.aotState().isResolvingImportCall;
 }
 
+bool requireAsksFor(JSGlobalObject* realm, ModuleID module)
+{
+    Modules* modules = modulesOf(realm);
+    return modules && realm->vm().aotState().requireRunsMocks && modules->requireAsksFor(module);
+}
+
+bool importAsksFor(JSGlobalObject* realm, ModuleID module)
+{
+    Modules* modules = modulesOf(realm);
+    return modules && modules->importAsksFor(module);
+}
+
+bool importThatWaitedAsksFor(JSGlobalObject* realm, ModuleID module)
+{
+    Modules* modules = modulesOf(realm);
+    return modules && modules->importThatWaitedAsksFor(module);
+}
+
 bool requireRunsMocks(VM& vm)
 {
     return vm.aotState().requireRunsMocks;
@@ -5488,6 +5571,43 @@ AbstractModuleRecord* moduleRecord(JSGlobalObject* realm, ModuleID module)
 bool isCompiledModuleRecord(AbstractModuleRecord* record)
 {
     return record->inherits<ModuleRecord>();
+}
+
+// The promise of the program settles in the job in which it would follow the loader's own, if the earlier call and the calls in front of it in the line have settled by then. Else in the job in which the last of those does, behind it.
+static void settleCallsInLine(VM& vm, JSArray* line)
+{
+    if (!line->getIndexQuickly(0).asBoolean())
+        return;
+    unsigned next = line->getIndexQuickly(1).asUInt32();
+    for (; next < line->length(); ++next) {
+        JSArray* call = asArray(line->getIndexQuickly(next));
+        if (!call->getIndexQuickly(2).asBoolean())
+            break;
+        auto* promise = uncheckedDowncast<JSPromise>(call->getIndexQuickly(0));
+        auto* loaded = uncheckedDowncast<JSPromise>(call->getIndexQuickly(1));
+        if (loaded->status() == JSPromise::Status::Fulfilled)
+            promise->fulfill(vm, loaded->result());
+        else
+            promise->reject(vm, loaded->result());
+    }
+    line->setIndexQuickly(vm, 1, jsNumber(next));
+}
+
+// Behind the job in which the promise of the earlier call follows the loader's.
+JSC_DEFINE_HOST_FUNCTION(settleCallsBehindEarlierCall, (JSGlobalObject* realm, CallFrame* callFrame))
+{
+    JSArray* line = asArray(callFrame->argument(1));
+    line->setIndexQuickly(realm->vm(), 0, jsBoolean(true));
+    settleCallsInLine(realm->vm(), line);
+    return JSValue::encode(jsUndefined());
+}
+
+JSC_DEFINE_HOST_FUNCTION(settleCallBehindOwnLoad, (JSGlobalObject* realm, CallFrame* callFrame))
+{
+    JSArray* call = asArray(callFrame->argument(1));
+    call->setIndexQuickly(realm->vm(), 2, jsBoolean(true));
+    settleCallsInLine(realm->vm(), asArray(call->getIndexQuickly(3)));
+    return JSValue::encode(jsUndefined());
 }
 
 JSC_DEFINE_HOST_FUNCTION(importBehindFactories, (JSGlobalObject* realm, CallFrame* callFrame))
@@ -5855,6 +5975,7 @@ void willMockModule(JSGlobalObject* realm, ModuleID module, JSObject* exports, b
     bool isFirstMock = !modules.isMocked(module);
     modules.willMock(module);
     if (modules.data(module).kind != ModuleKind::CommonJs) {
+        auto scope = DECLARE_THROW_SCOPE(realm->vm());
         ModuleStatus status = modules.status(module);
         bool comesAheadOfLoad = (status == ModuleStatus::Unlinked || status == ModuleStatus::Linked) && !modules.wasLoadedWhenMockWasMade(module);
         if (!comesAheadOfLoad)
@@ -5864,6 +5985,7 @@ void willMockModule(JSGlobalObject* realm, ModuleID module, JSObject* exports, b
         if (comesAheadOfLoad) {
             modules.fillExportsOfBodyThatNeverRuns(module);
             modules.leaveOutWhatMockLacks(module, exports);
+            RETURN_IF_EXCEPTION(scope, void());
         }
         modules.takeWhatMockAdds(module, comesAheadOfLoad);
         modules.mockWhatRequireAnswered(module, exports);
@@ -6109,16 +6231,18 @@ bool ModuleRecord::isRunningCommonJSFile()
 
 BitVector ModuleRecord::letAllImagesAskHost(JSGlobalObject* globalObject)
 {
-    BitVector wereAsking;
-    if (Modules* modules = modulesOf(globalObject); modules && modules->setIsAskingHost(true))
-        wereAsking.set(0);
-    return wereAsking;
+    BitVector haveSetRequestAside;
+    if (Modules* modules = modulesOf(globalObject)) {
+        modules->setRequestToHostAside(true);
+        haveSetRequestAside.set(0);
+    }
+    return haveSetRequestAside;
 }
 
-void ModuleRecord::restoreImagesThatAskHost(JSGlobalObject* globalObject, const BitVector& wereAsking)
+void ModuleRecord::restoreImagesThatAskHost(JSGlobalObject* globalObject, const BitVector& haveSetRequestAside)
 {
-    if (Modules* modules = modulesOf(globalObject))
-        modules->setIsAskingHost(wereAsking.get(0));
+    if (haveSetRequestAside.get(0))
+        modulesOf(globalObject)->takeUpRequestToHost();
 }
 
 uint8_t ModuleRecord::willAskHostForRequest()
@@ -6126,14 +6250,14 @@ uint8_t ModuleRecord::willAskHostForRequest()
     // A module that the loader walks asks it for compiled modules. One that compiled code loads asks only for what the loader links, and a compiled file among that
     // is the root of a graph of its own.
     bool wasWalkingRequests = modules().setIsWalkingRequests(!m_compiledRequests.isEmpty());
-    bool wasAskingHost = modules().setIsAskingHost(true);
+    modules().setRequestToHostAside(true);
     bool wasStatementAskingHost = modules().setIsStatementAskingHost(true);
-    return static_cast<uint8_t>(wasAskingHost) | static_cast<uint8_t>(wasWalkingRequests) << 1 | static_cast<uint8_t>(wasStatementAskingHost) << 2;
+    return static_cast<uint8_t>(wasWalkingRequests) << 1 | static_cast<uint8_t>(wasStatementAskingHost) << 2;
 }
 
 void ModuleRecord::didAskHostForRequest(uint8_t flagsBefore)
 {
-    modules().setIsAskingHost(flagsBefore & 1);
+    modules().takeUpRequestToHost();
     modules().setIsWalkingRequests(flagsBefore & 2);
     modules().setIsStatementAskingHost(flagsBefore & 4);
 }
@@ -6144,17 +6268,18 @@ uint8_t ModuleRecord::willAskHostForUncompiledModule(JSGlobalObject* globalObjec
     if (!modules)
         return 0;
     bool wasWalkingRequests = modules->setIsWalkingRequests(false);
-    bool wasAskingHost = modules->setIsAskingHost(false);
+    modules->setRequestToHostAside(false);
     bool wasStatementAskingHost = modules->setIsStatementAskingHost(false);
-    return static_cast<uint8_t>(wasAskingHost) | static_cast<uint8_t>(wasWalkingRequests) << 1 | static_cast<uint8_t>(wasStatementAskingHost) << 2;
+    constexpr uint8_t hasSetRequestAside = 1;
+    return hasSetRequestAside | static_cast<uint8_t>(wasWalkingRequests) << 1 | static_cast<uint8_t>(wasStatementAskingHost) << 2;
 }
 
 void ModuleRecord::didAskHostForUncompiledModule(JSGlobalObject* globalObject, uint8_t flagsBefore)
 {
     Modules* modules = modulesOf(globalObject);
-    if (!modules)
+    if (!modules || !(flagsBefore & 1))
         return;
-    modules->setIsAskingHost(flagsBefore & 1);
+    modules->takeUpRequestToHost();
     modules->setIsWalkingRequests(flagsBefore & 2);
     modules->setIsStatementAskingHost(flagsBefore & 4);
 }
@@ -6690,8 +6815,10 @@ JSValue ModuleNamespace::readDynamicExport(JSGlobalObject* globalObject, Propert
     // So does this object: the next read finds it above, and capturedValueWithoutAllocating() finds it for the caches.
     JSValue made = modules().capturedValue(m_module, identifier);
     RETURN_IF_EXCEPTION(scope, { });
-    if (made)
+    if (made) {
         m_capturedValues->putDirectMayBeIndex(globalObject, identifier, made);
+        RETURN_IF_EXCEPTION(scope, { });
+    }
     return made;
 }
 

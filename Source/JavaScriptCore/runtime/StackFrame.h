@@ -63,7 +63,6 @@ struct WasmFrameData {
 #if ENABLE(AOT)
 struct CompiledFrameData {
     AOT::TraceFrame frame;
-    WriteBarrier<JSCell> callee;
 };
 static_assert(sizeof(CompiledFrameData) <= sizeof(JSFrameData) && std::is_trivially_copyable_v<CompiledFrameData>);
 #endif
@@ -89,15 +88,9 @@ public:
 
 #if ENABLE(AOT)
     explicit StackFrame(const AOT::TraceFrame& frame, bool isAsyncFrame = false)
-        : m_frameData(CompiledFrameData { frame, { } })
+        : m_frameData(CompiledFrameData { frame })
     {
         std::get<CompiledFrameData>(m_frameData).frame.isAsyncFrame = isAsyncFrame;
-    }
-    StackFrame(VM&, JSCell* owner, const AOT::TraceFrame&, JSCell* callee);
-    // Whoever comes to own the frame tells the collector.
-    StackFrame(const AOT::TraceFrame& frame, JSCell* callee, WriteBarrierEarlyInitTag)
-        : m_frameData(CompiledFrameData { frame, WriteBarrier<JSCell>(callee, WriteBarrierEarlyInit) })
-    {
     }
     static void appendCompiledFrames(const AOT::ReturnAddressTrace&, Vector<StackFrame>&);
     const AOT::TraceFrame& compiledFrame() const { return std::get<CompiledFrameData>(m_frameData).frame; }
@@ -131,10 +124,6 @@ public:
     {
         if (auto* jsFrame = std::get_if<JSFrameData>(&m_frameData))
             return jsFrame->callee.get();
-#if ENABLE(AOT)
-        if (auto* compiledFrame = std::get_if<CompiledFrameData>(&m_frameData))
-            return compiledFrame->callee.get();
-#endif
         return nullptr;
     }
 

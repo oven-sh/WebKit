@@ -1,6 +1,6 @@
 # by proofs alone, native code lists the keys and reads the values of all that the operand reaches, and calls nothing: the call ends nothing that the state knows, and throws by no rule of the language
 # function show() { return JSON.stringify({ x: 1 }); }
-# Guesses are withheld so that the call stays a call: with them string-builders-5 writes the text in its place.
+# Guesses are withheld so that the call stays a call: with them the walk writes the text in its place.
 # RUN: walk f1 mechanisms=-Guesses
 # CHECK-LABEL: code f1:Body
 # CHECK: = CallBuiltin {{*}}overload=JSONStringify

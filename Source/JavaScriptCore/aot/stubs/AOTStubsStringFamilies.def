@@ -30,4 +30,4 @@ v(ValueEqualsLiteral, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, 
 v(StringEqualsLiteralOfLength, CalledByCode, (), CountAxis, 0, 8, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(StringStorage), StringEqualsLiteralOfLength)
 v(ValueEqualsLiteralOfLength, CalledByCode, (), CountAxis, 0, 8, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(StringStorage), StringEqualsLiteralOfLength)
 v(ToLiteralString, CalledByCode, (OfValue, OfString), FormAxis | SlowPathRecurs, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(StringStorage, RuntimeState), ToLiteralString)
-v(ShortStringOfValue, CalledByCode, (), SlowPathRecurs, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(StringStorage), ShortStringOfValue)
+v(NarrowCharactersOfString, CalledByCode, (), SlowPathRecurs, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(StringStorage), NarrowCharactersOfString)

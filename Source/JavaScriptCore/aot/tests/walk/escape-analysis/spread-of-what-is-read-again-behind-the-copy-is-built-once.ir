@@ -1,5 +1,5 @@
 # what arrives at the join is spread and then handed out, so it is a cell on every way. Each way brings a literal that only it has, with its keys in sight: each walks the join for itself, and the copy is made with the properties of that way
-# THE NAME OF THE FILE IS OUT OF DATE since object-assign-into-a-literal-is-written-out-1: the copy is built once for each way. No hook takes a file out
+# The name of the file is out of date: the copy is built once for each way
 # function widen(c, a, b) { const more = c ? { a } : { a, b }; return a({ ...more }, more); }
 # RUN: walk f1 mechanisms=none+TypedOperations+Folding+EscapeAnalysis
 # CHECK-LABEL: code f1:Body

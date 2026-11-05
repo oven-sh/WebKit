@@ -106,11 +106,9 @@ Reference buildComparisonOfRangeWithText(Walker&, const PieceOfString&, StringID
 Reference buildNumberOfRange(Walker&, const PieceOfString&, Origin);
 Reference buildParsedIntegerOfRange(Walker&, const PieceOfString&, Reference radixOrNull, Origin);
 
-// ---- Called by hooks in files of other owners.
+// ---- Called from other files.
 // AOTWalkStringSearches.cpp. For buildMatchByCodeOfRegExp(), where RegExpSummary::atom is set. Null: nothing was built.
 Reference buildSearchForAtomOfRegExp(Walker&, const BodyValue& call, BuiltinOverloadID, const RegExpWrittenForCall&, Reference string, Origin);
-// AOTWalkStringCharacters.cpp. For stepByIndex() of AOTWalkIteration.cpp: `piece`, `codePoint` and `numberOfCodeUnits` are parameters of one block.
-void noteCodePointOfSteppedPiece(Walker&, Reference piece, Reference codePoint, Reference numberOfCodeUnits);
 
 // ---- From one file of the mechanism to another, and to nobody else.
 bool buildCharacterByIndex(Walker&, const BodyValue&, const InputsOfTypedOperation&); // AOTWalkStringCharacters.cpp
@@ -197,7 +195,7 @@ bool testThatLedHereProvesPositionBelowLength(Walker&, const BodyValue&, Referen
 // AOTWalkStringRangesAbsent.cpp. For a piece from the start of its string or up to its end, where buildComparisonOfRangeWithText() has answered null. It may build arms. Null: nothing was built.
 Reference buildComparisonOfPieceAtEndOfStringWithText(Walker&, const PieceOfString&, StringID, Origin);
 
-// AOTWalkStringFlattening.cpp, which calls what loops-3 and known-state-and-effects-2 add where they are in.
+// AOTWalkStringFlattening.cpp.
 // For a reader of characters. The flat string to read through: made in front of the innermost open loop that the string stands in front of, or where the second reader on one way stands. Null: the reader takes the string.
 Reference flatStringForReaderOfCharacters(Walker&, Reference string, Origin);
 // It builds nothing. Null: none is known where the walk stands.

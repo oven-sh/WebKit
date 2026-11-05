@@ -84,38 +84,7 @@ static constexpr MachineBuilderFoldFamily machineBuilderFoldFamilyOf(Opcode opco
     case BelowEqual:
     case EqualOrUnordered:
         return MachineBuilderFoldFamily::Comparison;
-    case Nop:
-    case Opaque:
-    case Const32:
-    case Const64:
-    case ConstFloat:
-    case ConstDouble:
-    case FramePointer:
-    case SlotBase:
-    case AddressOf:
-    case NumberOf:
-    case InstanceAddressOf:
-    case ArgumentReg:
-    case Select:
-    case Load8Z:
-    case Load8S:
-    case Load16Z:
-    case Load16S:
-    case Load:
-    case Store8:
-    case Store16:
-    case Store:
-    case Fence:
-    case Phi:
-    case Upsilon:
-    case Extract:
-    case Patch:
-    case Check:
-    case Jump:
-    case Branch:
-    case Switch:
-    case Return:
-    case Oops:
+    default:
         return MachineBuilderFoldFamily::None;
     }
     return MachineBuilderFoldFamily::None;
@@ -178,38 +147,7 @@ static constexpr TypeKind machineBuilderKindOfResult(Opcode opcode)
     case BelowEqual:
     case EqualOrUnordered:
         return Int32;
-    case Nop:
-    case Const32:
-    case Const64:
-    case ConstFloat:
-    case ConstDouble:
-    case FramePointer:
-    case SlotBase:
-    case AddressOf:
-    case NumberOf:
-    case InstanceAddressOf:
-    case ArgumentReg:
-    case BitwiseCast:
-    case Select:
-    case Load8Z:
-    case Load8S:
-    case Load16Z:
-    case Load16S:
-    case Load:
-    case Store8:
-    case Store16:
-    case Store:
-    case Fence:
-    case Phi:
-    case Upsilon:
-    case Extract:
-    case Patch:
-    case Check:
-    case Jump:
-    case Branch:
-    case Switch:
-    case Return:
-    case Oops:
+    default:
         break;
     }
     return machineBuilderKindThatOpcodeDoesNotSay;

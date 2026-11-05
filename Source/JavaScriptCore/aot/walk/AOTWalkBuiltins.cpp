@@ -28,7 +28,6 @@
 #include "AOTSweep.h"
 #include "AOTTypeArena.h"
 #include "AOTTypeRelations.h"
-#include "AOTWalkStringParsers.h"
 #include "AOTWalkJSONWritePlan.h"
 #include "AOTWalkTextBuilderRows.h"
 #include "AOTWalkNumberForms.h"
@@ -149,7 +148,7 @@ static BuiltinID findMemberReadOffInWalkBuiltins(const Walker& walker, TypeID ob
     BuiltinName name = builtinClass && !liesInThread(key) ? program.builtinNameOf(key) : BuiltinName();
     if (!name || table.isRedefinedBelow(builtinClass, name))
         return { };
-    // TODO(known-state-and-effects-1b): findOwnPropertyOfInstancesReadByRows() (E21) answered here. It took `list.length` away from GetArrayLength when a guess counts ahead, so `i === tasks.length` opened none (row u10-series +7.5%).
+    // TODO: the own properties of instances that rows read were once answered here. That took `list.length` away from GetArrayLength when a guess counts ahead, so `i === tasks.length` opened none (+7.5% on one benchmark).
 
     BuiltinID prototype;
     for (BuiltinClassID current = builtinClass; current && !prototype; current = table.at(current).parent)
@@ -971,7 +970,7 @@ bool CallInWalkBuiltins::matchOverload()
 
 // `date.toJSON()` calls the toISOString that it finds, `list.toString()` the join, `/b+/.test(text)` the exec, `a.isSubsetOf(b)` the has of b, `promise.catch(f)` the then: native code looks them up by name.
 // A row that takes its operand as its class makes it says nothing of that: in an executable each of those members is locked. A test run may replace them, and the bit of the cell speaks of the object's own names alone.
-// So in such a run no row takes an instance so unless every member of the objects above the class is what the table lists and none of those objects has taken a new name. By the class, as the old compiler judged the holders:
+// So in such a run no row takes an instance so unless every member of the objects above the class is what the table lists and none of those objects has taken a new name. By the class:
 // the rows' own lists of the names that are looked up say less than the language does.
 static bool membersAboveInstancesAreAsBuiltInWalkBuiltins(const Walker& walker, BuiltinClassID builtinClass)
 {
@@ -1012,7 +1011,7 @@ PristineAspectSet CallInWalkBuiltins::aspectsSeenOf(const Operand& operand) cons
     }
     if (!operand.written)
         return seen;
-    return seen | (isListAsMade(m_walker, operand.written) ? aspectsOfObjectAsMade : PristineAspectSet()) | aspectsSeenAsMade(m_walker, operand.written);
+    return seen | (isListAsMade(m_walker, operand.written) ? aspectsOfObjectAsMade : PristineAspectSet());
 }
 
 bool CallInWalkBuiltins::isProvenToLieIn(const Operand& operand, BuiltinTypeID tested) const

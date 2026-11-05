@@ -94,8 +94,7 @@ static JSArray* tryListKeysAsCreated(JSGlobalObject* globalObject, Object& compi
     if (kind == OwnKeysKind::Symbols || hasIndexedProperties(extra->indexingType()))
         return nullptr;
     State& state = compiled.state();
-    Object::KeyOrderStorage storage;
-    size_t maxNumberOfKeys = compiled.keyOrder(state, storage).size() + extra->structure()->propertyTableInOrderOfAddition(vm)->size();
+    size_t maxNumberOfKeys = compiled.keyOrder(state).size() + extra->structure()->propertyTableInOrderOfAddition(vm)->size();
     if (maxNumberOfKeys >= MIN_ARRAY_STORAGE_CONSTRUCTION_LENGTH)
         return nullptr;
     JSArray* list = JSArray::tryCreate(vm, globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous), static_cast<unsigned>(maxNumberOfKeys));
@@ -620,7 +619,7 @@ static bool tryReadBySlots(VM& vm, JSObject* cell, PropertiesInSlots& properties
     if (!source)
         return false;
     const LayoutData& layout = source->layout();
-    if (source->hasExtraProperties() || layout.keysAreNeverEnumerated) {
+    if (source->hasExtraProperties()) {
         auto result = PropertyWalk::forEachOwnPropertyInline(vm, source, PropertyWalk::Filter::StringsAndSymbols, [&](const PropertyWalk::OwnProperty& property) {
             properties.append(property.name, property.value, property.attributes);
             return IterationStatus::Continue;

@@ -1,6 +1,5 @@
 # what is read out of a place that is written as a number asks for a proof, whatever a guess would ask it for. The body takes the read into a bit operator, so int32 is EXPECTED of it, and a test stands behind every guess. None stands behind the report: reported
 # class Cursor { line: number }  function lineOf(c: Cursor): int32 { const line = c.line; sink(line & 255); return line; }
-# Green without the port too: it holds what the port may not take away. Its red control: RED.txt, "what is written as a number is reported as written"
 # DIAGNOSTIC: UnprovenInt32 1
 # What is written of a parameter comes by Link, so the run has every mechanism. The build has an error, so no unit is printed
 # RUN: walk f1 mechanisms=all

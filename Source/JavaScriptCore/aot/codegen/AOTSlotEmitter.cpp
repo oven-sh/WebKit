@@ -615,20 +615,38 @@ bool SlotEmitter::holdsRawValueFromBirthInSomeMember(LayoutSetID receivers, Prop
 {
     return m_generator.inputs().types.at(receivers).anyOf([&](LayoutID layout) {
         std::optional<FieldIndex> field = m_plan.slots().findField(m_program, layout, key);
-        return field && m_facts.field({ layout, *field }).facts.contains(FieldFact::HoldsRawValueFromBirth);
+        return field && m_plan.layout(layout).holdsRawValueFromBirth(*field);
     });
 }
 
 // For a store into the slot of a number or a boolean for whose raw value the mark of the cell answers.
-void SlotEmitter::markCellIfMarkerIsStored(CellPointer cell, ValueID stored)
+void SlotEmitter::markCellIfMarkerIsStored(CellPointer cell, ValueID stored, LayoutSetID possible)
 {
     const Type& type = typeOf(stored);
     if (!type.mayBeUndefinedOrNull())
         return;
     auto mark = [&] {
-        CodeGenerator::InitializationScope scope(generator());
-        Word32 flags = loadByte(cell, m_heaps.JSCell_typeInfoFlags);
-        m_out.store32As8(bitOr(flags, word32(TypeInfoPerCellBit)).value(), cell.value(), m_heaps.JSCell_typeInfoFlags);
+        ShapeTestEmitter& shapes = emitter<ShapeTestEmitter>();
+        // An object of any other layout never bears the mark: whoever asks about such layouts takes the word as it lies.
+        Vector<LayoutID, 8> bearers;
+        if (possible) {
+            for (LayoutID member : membersOf(m_generator.inputs().types, possible)) {
+                if (m_plan.layout(member).mayBearMark)
+                    bearers.append(member);
+            }
+        }
+        if (!possible || bearers.size() == membersOf(m_generator.inputs().types, possible).size()) {
+            shapes.setMark(cell);
+            return;
+        }
+        LBasicBlock mayBearIt = newBlock();
+        LBasicBlock behind = newBlock();
+        ScopeFork fork = m_out.forkScope();
+        shapes.branchOnShapeIn(cell, types().layoutSets().ofSorted(bearers.span()), types().at(types().forLayoutSet(possible)), { normalEdge(mayBearIt), normalEdge(behind) });
+        m_out.appendToArm(mayBearIt, fork);
+        shapes.setMark(cell);
+        m_out.jump(behind);
+        m_out.appendToJoin(behind, fork);
     };
     if (type.isUndefinedOrNull()) {
         mark();

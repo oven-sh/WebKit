@@ -31,8 +31,6 @@ public:
     bool bringUpToDate(const Modules&);
     // Such a walk enters the root only. Of the modules below it, didLeave() hears of those that resolve names, whether another link has finished them or not.
     bool hasPlan() const { return !m_plan.empty(); }
-    // Of a plan other than the entry point's.
-    std::optional<ModuleID> memberOfCycle() const { return m_memberOfCycle; }
 
     // shouldEnter(module) answers for a module with requests, visitLeaf(leaf, module) may throw, didLeave(module, resolvesNames) follows the requests of an entered module.
     template<typename ShouldEnterFunctor, typename VisitLeafFunctor, typename DidLeaveFunctor>

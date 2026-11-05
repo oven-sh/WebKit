@@ -57,6 +57,7 @@ protected:
     void reportUsedRegisters(Air::Inst&, const RegisterSet&) final;
     RegisterSet extraEarlyClobberedRegs(Air::Inst&) final;
     RegisterSet extraClobberedRegs(Air::Inst&) final;
+    bool needsFrame(Air::Inst&) final;
 
     // Note that this does not override generate() or dumpImpl()/deepDumpImpl(). We have many
     // subclasses that implement that.

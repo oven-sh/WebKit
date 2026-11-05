@@ -1102,11 +1102,12 @@ void ClassTable::defineClass(JSGlobalObject* globalObject, Closure* classObject,
         return;
     bool isProvenOnce = classLayout.evaluation() == EvaluationState::ProvenOnce;
     ClosureTable& closures = m_state.objects->closures;
+    JSCell* registered = closures.closureIfCreated(functionOfOwnClosure(*classObject));
+    // The build has proven that the class is evaluated once, and forty places take its class object, its prototype object and its shapes for the only ones. A second class object stops here, aloud.
+    RELEASE_ASSERT(!isProvenOnce || !registered || registered == classObject);
     if (isProvenOnce && (classObject->getDirect(vm, vm.propertyNames->prototype) || (!classLayout.createsPrototypeBeforeClassObject && classPrototypeIfExists(classLayout))))
         return;
-    JSCell* registered = closures.closureIfCreated(functionOfOwnClosure(*classObject));
     if (registered && registered != classObject) {
-        RELEASE_ASSERT(!isProvenOnce);
         didEvaluateClassAgain(m_state, classLayout);
         if (tryDefineAgainWithKeptStructures(globalObject, classObject, classLayout, parent, prototypeParent))
             return;

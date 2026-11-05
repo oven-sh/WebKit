@@ -1,7 +1,7 @@
 # `o instanceof V` with V a function that is constructed: code may give V another `prototype` or a Symbol.hasInstance at any time, so the guards of the class are asked first, and the operator as written stands on their failing side
 # an object with the shape of V says itself whether it stands where it was made. Whatever has another shape is asked as written: V.prototype may stand above anything
 # function V(x) { this.x = x; }  function isV(o, C) { return o instanceof C; }  isV(input, V); isV(new V(1), V);
-# TODO: unions-and-narrowing-3: no guard answers for Symbol.hasInstance on a function or a class object. findClassMember() of classes-and-construction-2 knows texts alone and says nothing of a name that the static side lacks, so findsOrdinaryHasInstanceForInstanceOf() refuses every constructor function, and every class that Link has not proven to stay as written
+# TODO: instanceof: no guard answers for Symbol.hasInstance on a function or a class object. findClassMember() knows texts alone and says nothing of a name that the static side lacks, so findsOrdinaryHasInstanceForInstanceOf() refuses every constructor function, and every class that Link has not proven to stay as written
 # RUN: walk f2 mechanisms=none+TypedOperations+Guesses+DirectCalls+Arrivals
 # CHECK-LABEL: code f2:Body
 # CHECK: = AreMembersUnchanged

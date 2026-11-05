@@ -54,9 +54,9 @@ static void storeClosureCaptureWords(Output& out, CellPointer closure, std::span
 }
 
 // In the place of a capture that is removed the record lists a word that says nothing.
-static bool closureHoldsWordForListedCapture(const Program& program, const CallingConventions& conventions, const BoundFunctionPlan* bound, FunctionID function, unsigned index)
+static bool closureHoldsWordForListedCapture(const Program& program, const CallingConventions& conventions, FunctionID function, unsigned index)
 {
-    return bound || closureCaptureRepresentationOf(program, conventions, function, index) != Representation::Void;
+    return closureCaptureRepresentationOf(program, conventions, function, index) != Representation::Void;
 }
 
 void ConstantEmitter::generateNewClosure(const ValueContext& value)
@@ -74,7 +74,7 @@ CellPointer ConstantEmitter::closureCreatedBy(const ValueContext& value)
     if (!conventions().exists(entry))
         return failWithoutCell(value, InternalErrorKind::OpcodeWithoutCode);
 
-    NewClosureRequest request { function, entry, m_plan.functionKind(m_program, entry), { }, value->storage(), value->closureForm(), captures };
+    NewClosureRequest request { function, m_plan.functionKind(m_program, entry), { }, value->storage(), value->closureForm(), captures };
     request.numberOfWords = closureCaptureCountsOf(m_program, conventions(), function).captures;
     if (value->isLent() && (request.form != ClosureForm::Slim || request.storage != AllocationStorage::Frame))
         return failWithoutCell(value, InternalErrorKind::OpcodeWithoutCode);
@@ -90,43 +90,6 @@ CellPointer ConstantEmitter::closureCreatedBy(const ValueContext& value)
         return failWithoutCell(value, InternalErrorKind::OpcodeWithoutCode);
     case ClosureForm::Singleton:
         return singletonClosure(value, function);
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-void ConstantEmitter::generateNewBoundClosure(const ValueContext& value)
-{
-    defineCell(value, boundClosureCreatedBy(value));
-}
-
-// A closure like any other of its form, whose word names the generic entry of the bound function.
-// The run time gives it the Structure of bound functions when somebody first looks at it as an object: Closure::prepareForGenericAccess(), SlimClosure::reify().
-CellPointer ConstantEmitter::boundClosureCreatedBy(const ValueContext& value)
-{
-    FunctionID target = value->function();
-    std::span<const ValueID> captures = value->capturesOperands();
-    const BoundFunctionPlan* bound = conventions().boundFunction(target, value->numberOfBoundArguments());
-    if (!bound)
-        return failWithoutCell(value, InternalErrorKind::OpcodeWithoutCode);
-    RELEASE_ASSERT(captures.size() == bound->captures.size() && captures.size() <= Closure::maxNumberOfCaptures);
-
-    CodeUnit entry { target, CodeRole::GenericEntryOfBoundFunction, bound->numberOfBoundArguments };
-    if (!conventions().exists(entry))
-        return failWithoutCell(value, InternalErrorKind::OpcodeWithoutCode);
-
-    NewClosureRequest request { target, entry, m_plan.functionKind(m_program, entry), { }, value->storage(), bound->closureForm, captures, bound };
-    request.numberOfWords = static_cast<unsigned>(captures.size());
-    switch (request.form) {
-    case ClosureForm::Slim:
-        return newSlimClosure(value, request);
-    case ClosureForm::Full:
-        if (request.storage != AllocationStorage::Heap)
-            return newFullClosure(value, request);
-        request.allocation = emitter<CellAllocationEmitter>().closureAllocationOf(static_cast<unsigned>(captures.size()));
-        return canUseClosureStub(request) ? newClosureByStub(value, request) : newFullClosure(value, request);
-    case ClosureForm::Deferred:
-    case ClosureForm::Singleton:
-        return failWithoutCell(value, InternalErrorKind::OpcodeWithoutCode);
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -226,7 +189,7 @@ bool ConstantEmitter::canUseClosureStub(const NewClosureRequest& request) const
     if (request.kind.closureStructure || request.numberOfWords > ClosureRequest::maxNumberOfCaptures)
         return false;
     for (unsigned index = 0; index < request.captures.size(); ++index) {
-        if (closureHoldsWordForListedCapture(m_program, m_plan.conventions(), request.bound, request.function, index) && machineTypeOf(representationOf(request.captures[index])) == Machine::Double)
+        if (closureHoldsWordForListedCapture(m_program, m_plan.conventions(), request.function, index) && machineTypeOf(representationOf(request.captures[index])) == Machine::Double)
             return false;
     }
     return true;
@@ -245,6 +208,7 @@ CellPointer ConstantEmitter::newSlimClosure(const ValueContext& value, const New
     }
 
     m_out.noteForm(Form::Open, StateOfKnowledge::SlimInFrame);
+    build().statistics().count(StatisticID::ClosuresInFrames);
     CellPointer cell = emitter<CellAllocationEmitter>().allocateInFrame(value, SlimClosure::allocationSize(count));
     CodeGenerator::InitializationScope scope(generator());
     emitter<CellAllocationEmitter>().storeHeader(cell, loadImmutable64(AOT_INSTANCE_OFFSET(slimClosureHeaders) + request.kind.slimClosureKind() * sizeof(uint64_t)));
@@ -301,6 +265,7 @@ CellPointer ConstantEmitter::newFullClosure(const ValueContext& value, const New
         break;
     case AllocationStorage::Frame:
         cell = cellAllocation.allocateInFrame(value, Closure::allocationSize(request.numberOfWords));
+        build().statistics().count(StatisticID::ClosuresInFrames);
         break;
     }
 
@@ -319,11 +284,9 @@ CellPointer ConstantEmitter::newFullClosure(const ValueContext& value, const New
     return cell;
 }
 
-// In the form in which the closure keeps it, which is the form in which GetCapture and GetBoundCapture read it.
+// In the form in which the closure keeps it, which is the form in which GetCapture reads it.
 Operand ConstantEmitter::captureOf(const NewClosureRequest& request, unsigned index) const
 {
-    if (request.bound)
-        return m_generator.getIn(request.captures[index], request.bound->captures[index].representation);
     RepresentationContext context { m_program, m_plan, m_generator.inputs().types, m_unit };
     return m_generator.getIn(request.captures[index], representationOfCapture(context, request.function, index));
 }
@@ -333,12 +296,12 @@ Vector<LValue, 4> ConstantEmitter::captureWordsBySlot(const NewClosureRequest& r
     unsigned count = request.captures.size();
     Vector<LValue, 4> words(FillWith { }, request.numberOfWords, nullptr);
     for (unsigned i = 0; i < count; ++i) {
-        if (!closureHoldsWordForListedCapture(m_program, conventions(), request.bound, request.function, i))
+        if (!closureHoldsWordForListedCapture(m_program, conventions(), request.function, i))
             continue;
         Operand capture = captureOf(request, i);
         LType type = machineTypeOf(capture.representation);
         LValue word = type == Machine::Int32 ? m_out.zeroExtPtr(capture.value) : type == Machine::Double ? m_out.bitCast(capture.value, Machine::Int64) : capture.value;
-        words[request.bound ? closureCaptureSlotOf(m_program, *request.bound, i) : closureCaptureSlotOf(m_program, conventions(), request.function, i)] = word;
+        words[closureCaptureSlotOf(m_program, conventions(), request.function, i)] = word;
     }
     return words;
 }
@@ -352,9 +315,7 @@ void ConstantEmitter::storeCaptures(CellPointer closure, const NewClosureRequest
 
 uint32_t ConstantEmitter::closureNumberMentionedBy(const NewClosureRequest& request, int32_t addend)
 {
-    if (!request.bound)
-        return m_mentions.add(NumberSpace::ClosureFunction, request.function, addend);
-    return m_mentions.closureNumberOfEntry(conventions().indexOf(request.entry), static_cast<uint32_t>(m_program.functions.size()), addend);
+    return m_mentions.add(NumberSpace::ClosureFunction, request.function, addend);
 }
 
 Integer ConstantEmitter::closureWordOf(const NewClosureRequest& request)

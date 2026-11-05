@@ -219,7 +219,7 @@ static TextInStringBuilder* beginTextInTextBuilders(Walker& walker, const BodyIn
     text.web = WTF::move(web);
     text.frameIndex = static_cast<uint32_t>(walker.indexOfFrameOnTop());
     // The copy of a callee appends through a record of its own, which speaks of no cursor.
-    text.liesInFrame = !text.web.growsInCallees && textBegunHereMayLieInFrame(walker, inputHead, text.web);
+    text.liesInFrame = textBegunHereMayLieInFrame(walker, inputHead, text.web);
 
     Draft begin(text.liesInFrame ? Opcode::StackStringBuilderBegin : Opcode::StringBuilderBegin, origin);
     walker.chooseConservativeFields(begin);
@@ -305,7 +305,7 @@ void beginTextsInStringBuilders(Walker& walker, BlockID inputHead, LoopPreview& 
                 return;
             }
             // `for (..) s += a; for (..) s += b`: the second loop goes on with the builder of the first.
-            if (web && (!before->liesInFrame || (!web->growsInCallees && textBegunHereMayLieInFrame(walker, inputHead, *web)))) {
+            if (web && (!before->liesInFrame || textBegunHereMayLieInFrame(walker, inputHead, *web))) {
                 TextInStringBuilder text;
                 text.web = WTF::move(*web);
                 text.frameIndex = before->frameIndex;
@@ -644,27 +644,6 @@ void discardTextInStringBuilder(Walker& walker, TextInStringBuilder& text, Refer
     walker.chooseConservativeFields(discard);
     discard.setBuilderOperand(name);
     walker.build(WTF::move(discard));
-}
-
-void finishTextsInStringBuildersHandedOver(Walker& walker, Vector<Reference, 8>& values)
-{
-    for (size_t place = 0; place < values.size() && !walker.isUnreachable(); ++place) {
-        Reference name = values[place];
-        if (!isTextInStringBuilder(walker, name))
-            continue;
-        TextInStringBuilder* text = findTextByRecordInTextBuilders(walker, name);
-        if (!text) {
-            walker.fail("a text in a builder is met under a value that no scan has named"_s);
-            return;
-        }
-        Reference string = finishTextInStringBuilder(walker, *text, name, walker.originOfOperation());
-        if (!string)
-            return;
-        for (Reference& value : values) {
-            if (value == name)
-                value = string;
-        }
-    }
 }
 
 void takeTextsOutOfStringBuildersOnEdge(Walker& walker, BlockID to, BodyTarget target, Vector<Reference, 8>& arguments, TextsTakenOutOnEdge& taken)

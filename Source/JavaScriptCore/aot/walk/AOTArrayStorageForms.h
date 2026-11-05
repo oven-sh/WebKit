@@ -96,24 +96,12 @@ bool readTakesIndexOfProvenList(TypeReader, TypeID array, TypeID position);
 inline bool storeTakesIndexOfProvenList(TypeReader types, TypeID array, TypeID position) { return readTakesIndexOfProvenList(types, array, position); }
 ArrayStorage arrayStorageAtAllocation(const TypeArena&, TypeID elements);
 
-struct ArrayLiteralParts {
-    bool hasElements { false };
-    bool hasHoles { false };
-    bool hasCapacity { false };
-};
-
-// The kind that a literal has for certain once it is allocated.
-ArrayStorage arrayStorageOfLiteral(const Program&, const TypeArena&, TypeID array, ArrayLiteralParts);
 // The kind that an array of constant data has once it is made, in the table of the image too.
 JS_EXPORT_PRIVATE ArrayStorage arrayStorageOfData(const Program&, const DataNode::Array&);
 // No element is a cell, so what the table of the image holds is what the storage of the array holds, and the array points at it until it is written to.
 JS_EXPORT_PRIVATE bool isStorageOfArray(const DataNode::Array&);
 // A tree of constant data of at most this many nodes is written out as allocations.
 inline constexpr uint32_t maxNodesOfExpandedData = 16;
-// Arrays alone, and no more nodes than that: the walk writes the tree out whatever else holds. So each of its arrays is a literal, which is born with the kind that Facts decides for it.
-JS_EXPORT_PRIVATE bool isDataWrittenOutForItsSizeAlone(const DataNode& root);
-// The kind of an array that is created with a length and nothing in it: NewContiguousArray, NewDoubleArray, or what NewArrayLike and NewArrayWithCapacity name.
-std::optional<ArrayStorage> arrayStorageOfNewHoles(Opcode allocation, ArrayStorage named);
 // NaN marks a hole in Double storage, so an array that is given one gets the storage that holds everything.
 bool canStoreWithoutConversion(const TypeArena&, ArrayStorage, TypeID stored);
 bool canStoreWithoutConversion(ArrayStorage, double stored);

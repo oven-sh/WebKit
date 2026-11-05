@@ -197,6 +197,9 @@ void chooseFormsOfSlots(Program& program, const Facts& facts, BuildContext& buil
             bool hasCells = hasCellsForFields(parts, row.layout);
             if (!hasCells && !layoutsAboveCells.quickGet(row.layout.index()))
                 continue;
+            // `name`, `type`, `expression`: appended out of line to the maker of all nodes, in the cell of each kind of node that has them. What lies out of line keeps its granule and its box, and no access finds it at the location of the others.
+            if (hasCells && parts.layouts[row.layout.index()].slots[row.field].isOutOfLine())
+                continue;
             const LinkedCell* cell = linked.findCellOfField(row);
             bool isProven = cell && cell->everyWriterIsKnown && cell->proven;
             TypeID held;
@@ -269,7 +272,7 @@ void chooseFormsOfSlots(Program& program, const Facts& facts, BuildContext& buil
         if (holdsReferences && unitsWithSlotHeldToType.quickGet(unit)) {
             std::optional<TypeID> heldOfAll;
             bool allAreHeldAlike = std::ranges::all_of(rows, [&](FieldReference row) {
-                if (!hasCellsForFields(parts, row.layout))
+                if (!hasCellsForFields(parts, row.layout) || parts.layouts[row.layout.index()].slots[row.field].isOutOfLine())
                     return true;
                 TypeID held = parts.layouts[row.layout.index()].slots[row.field].type;
                 bool isAlike = held && heldOfAll.value_or(held) == held;
@@ -281,7 +284,7 @@ void chooseFormsOfSlots(Program& program, const Facts& facts, BuildContext& buil
         }
         TypeID type = widestTypeOfRepresentationForSlotForms(types, representation);
         for (FieldReference row : rows) {
-            if (!hasCellsForFields(parts, row.layout))
+            if (!hasCellsForFields(parts, row.layout) || parts.layouts[row.layout.index()].slots[row.field].isOutOfLine())
                 continue;
             PlacedSlot& slot = parts.layouts[row.layout.index()].slots[row.field];
             // A number or a boolean is held to all that its form has, so that a store by name needs no test of the type. A reference goes on being held to what it was held to.

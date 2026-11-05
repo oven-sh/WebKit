@@ -1,4 +1,4 @@
-# a direct call that the Straight emitter writes brings its numbers into the argument FPRs and then its integers into the GPRs. An int32 that arrives boxed as a double, out of a slot that two classes of one union share, is converted through no argument register: the first number stays what it was (R226: mix was entered with ratio = 3)
+# a direct call that the Straight emitter writes brings its numbers into the argument FPRs and then its integers into the GPRs. An int32 that arrives boxed as a double, out of a slot that two classes of one union share, is converted through no argument register: the first number stays what it was (mix was once entered with ratio = 3)
 # weigh and weighLast are handed an object that is not of their parameter's class, so their slow versions run, which are written straight. weighLast leaves by the call
 # RUN(FORM): plan units mechanisms=all
 # FORM: :Body (Double, Int32) -> (Double)

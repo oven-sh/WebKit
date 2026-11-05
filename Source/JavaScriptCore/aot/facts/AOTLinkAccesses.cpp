@@ -1828,7 +1828,9 @@ void AccessInLinkAccesses::resolveContentsOfInstances(const LinkType& instances)
             m_flow.observe(node, FlowObserver { FlowObserver::Kind::MemberOfAccess, m_function, m_record });
         return !m_flow.typeAt(node).isNothing();
     };
-    if (mayHoldSomething(m_flow.contentsOf(instances, SlotOfContents::underUnknownNames())) && !settlesPromiseThatCallHasJustMade()) {
+    // Asked first: it lays its observers when the subject tells, whether or not anything lies under a name by then. Asked first when a name arrives, it would watch nothing.
+    bool hasJustBeenMade = settlesPromiseThatCallHasJustMade();
+    if (mayHoldSomething(m_flow.contentsOf(instances, SlotOfContents::underUnknownNames())) && !hasJustBeenMade) {
         m_flow.addEdge(m_subject, m_flow.unseen());
         giveAnything();
     }
@@ -2198,13 +2200,6 @@ void LinkFlow::tellAccessesUnderSymbolsWithPreparation()
         if (hasPreparation(symbol))
             tell(observer, typeAt(nodeOf(observer.function, summaries.at(observer.function).accesses[observer.record].keyNode)), LinkType { });
     }
-}
-
-void LinkFlow::stopNamingSymbolsWithPreparation()
-{
-    if (!std::exchange(m_symbolsWithPreparationAreNames, false))
-        return;
-    tellAccessesUnderSymbolsWithPreparation();
 }
 
 void LinkFlow::noteUnknownSymbolHandedToPreparation(UnknownSymbolIs unknownSymbolIs)

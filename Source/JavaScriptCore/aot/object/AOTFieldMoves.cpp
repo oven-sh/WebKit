@@ -327,7 +327,7 @@ using PropertiesMovedToOrdinaryCopy = Vector<PropertyMovedToOrdinaryCopy, 16>;
 // False where moves alone make no copy: a getter is called, a property that is not enumerable is left out, the library is asked to prepare a field.
 static bool listFieldsMovedToOrdinaryCopy(VM& vm, State& state, const Object& source, PropertiesMovedToOrdinaryCopy& properties)
 {
-    ASSERT(!source.hasExtraProperties() && !source.hasOutOfLineKeyOrder() && !source.layout().keysAreNeverEnumerated);
+    ASSERT(!source.hasExtraProperties() && !source.hasOutOfLineKeyOrder());
     RuntimeLayoutTable& layouts = state.objects->layouts;
     const LayoutData& layout = source.layout();
     uint32_t orderWord = source.orderWord();
@@ -429,7 +429,7 @@ JSFinalObject* tryCopyAsOrdinaryObject(VM& vm, JSGlobalObject* realm, JSObject* 
     Object* compiled = compiledObjectOrNull(source);
     FieldMovePlanKey key { .targetWords = excluded.numberPlusOne };
     if (compiled) {
-        if (compiled->hasExtraProperties() || compiled->hasOutOfLineKeyOrder() || compiled->layout().keysAreNeverEnumerated)
+        if (compiled->hasExtraProperties() || compiled->hasOutOfLineKeyOrder())
             return nullptr;
         key.sourceWords = compiled->orderAndShapeWords() & orderCountAndShapeMask;
     } else {

@@ -308,10 +308,10 @@ static void testMarkerStoredByTextMarksCell(LoadedProgram& program)
             AOT_TEST_CHECK(!layouts.fieldAccepts(*field, marker));
 
             storeUntilNameIsFiled(program, stores, object, name, fitting);
-            AOT_TEST_CHECK(!object->perCellBit() && object->isInSlot(*field));
+            AOT_TEST_CHECK(!object->bearsMark() && object->isInSlot(*field));
 
             storeWith(program, stores, object, marker);
-            AOT_TEST_CHECK(object->perCellBit());
+            AOT_TEST_CHECK(object->bearsMark());
             AOT_TEST_CHECK(object->get(program.realm(), name) == marker);
         }
     }
@@ -332,7 +332,7 @@ static void testMarkerThatFieldNeverTakesLeavesSlot(LoadedProgram& program)
     storeUntilNameIsFiled(program, stores, object, note, jsNontrivialString(vm, "another note"_s));
     AOT_TEST_CHECK(object->isInSlot(*field));
 
-    object->setPerCellBit(true);
+    object->setBearsMark(true);
     storeWith(program, stores, object, jsNull());
     AOT_TEST_CHECK(!object->isInSlot(*field));
     AOT_TEST_CHECK(object->get(program.realm(), note) == jsNull());

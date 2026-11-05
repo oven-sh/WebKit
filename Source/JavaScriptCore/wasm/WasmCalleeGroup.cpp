@@ -65,10 +65,8 @@ void CalleeGroup::takeEntrypoints(const ModuleInformation& moduleInformation)
 #if ENABLE(WEBASSEMBLY_OMGJIT)
     // Bytes that the build never saw are to WebAssembly what text evaluated at run time is to JavaScript.
     m_crashesOnInterpreterUse = Options::crashIfInterpreterIsUsed() && CodeInImage::isModuleOfProgram(moduleInformation);
-    if (!m_codeInImage || !m_codeInImage->serves(moduleInformation, m_mode)) {
+    if (!m_codeInImage || !m_codeInImage->serves(moduleInformation, m_mode))
         m_codeInImage = m_calleeCount ? CodeInImage::tryCreate(moduleInformation, m_ipintCallees.get(), m_mode) : nullptr;
-        m_interpreterFallbackReason = m_codeInImage ? std::nullopt : CodeInImage::fallbackReason(moduleInformation);
-    }
     if (m_codeInImage) {
         for (unsigned i = 0; i < m_calleeCount; ++i)
             m_wasmIndirectCallEntrypoints[i] = m_codeInImage->entrypoint(i);
@@ -81,15 +79,6 @@ void CalleeGroup::takeEntrypoints(const ModuleInformation& moduleInformation)
 #endif
     for (unsigned i = 0; i < m_calleeCount; ++i)
         m_wasmIndirectCallEntrypoints[i] = interpreterEntrypoint(i);
-}
-
-void CalleeGroup::countInterpreterFallbackOnce()
-{
-#if ENABLE(WEBASSEMBLY_OMGJIT)
-    if (!runnable() || !m_interpreterFallbackReason || m_didCountInterpreterFallback.exchange(true))
-        return;
-    CodeInImage::didFallBackToInterpreter(*m_interpreterFallbackReason);
-#endif
 }
 
 CalleeGroup::CalleeGroup(MemoryMode mode, const CalleeGroup& other, const ModuleInformation& moduleInformation)
@@ -214,7 +203,6 @@ void CalleeGroup::waitUntilFinished()
         worklist.completePlanSynchronously(*plan.get());
     }
     // else, if we don't have a plan, we're already compiled.
-    countInterpreterFallbackOnce();
 }
 
 void CalleeGroup::compileAsync(VM& vm, AsyncCompilationCallback&& task)
@@ -230,14 +218,12 @@ void CalleeGroup::compileAsync(VM& vm, AsyncCompilationCallback&& task)
         // We don't need to keep a RefPtr on the Plan because the worklist will keep
         // a RefPtr on the Plan until the plan finishes notifying all of its callbacks.
         isAsync = plan->addCompletionTaskIfNecessary(vm, createSharedTask<Plan::CallbackType>([this, task, protectedThis = Ref { *this }, isAsync](Plan&) {
-            countInterpreterFallbackOnce();
             task->run(Ref { *this }, isAsync);
         }));
         if (isAsync)
             return;
     }
 
-    countInterpreterFallbackOnce();
     task->run(Ref { *this }, isAsync);
 }
 

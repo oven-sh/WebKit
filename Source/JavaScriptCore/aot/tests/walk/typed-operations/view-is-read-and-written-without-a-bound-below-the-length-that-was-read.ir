@@ -4,7 +4,7 @@
 # function stored(view: Uint8Array, i) { const k = i >>> 0; if (k < view.length) { view[k] = 7; return view[k]; } }
 # The length that was read is noted of the view until something may write the storage of views. A position that is an index below it lies inside the view: the access asks no bound, and a read gives no undefined.
 # Code that nobody has seen may resize a buffer or hand it away, so behind it the read asks again. The position behind one that lies inside may be the length itself.
-# RED UNTIL views-read-inside-their-length-1: GetTypedArrayElement and PutTypedArrayElement have had the mark, its result rule and its code all along, and nobody set it.
+# GetTypedArrayElement and PutTypedArrayElement once had the mark, its result rule and its code, and nobody set it.
 # RUN: walk f1 f2 f3 f4 mechanisms=all
 # CHECK-LABEL: code f1:Body
 # CHECK: [[length]]: {{*}} = GetTypedArrayLength

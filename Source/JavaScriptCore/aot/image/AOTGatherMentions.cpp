@@ -225,7 +225,6 @@ private:
         case NumberSpace::ModuleValue:
         case NumberSpace::ModuleNamespace:
         case NumberSpace::ModuleBuiltinCell:
-        case NumberSpace::FilledFiles:
         case NumberSpace::DataCell:
         case NumberSpace::DataStorage:
         case NumberSpace::DataElements:

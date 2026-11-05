@@ -1,6 +1,6 @@
 # `start` goes on while `later` is suspended, and comes to where it has done with its scope. The saved frame of `later` holds that scope, so the body of the coroutine sets the byte where it is entered, in front of everything else
 # function start(v) { let held = v - 1; function bump() { held++; } async function later() { await 0; return held; } bump(); if (v) return later(); return held; }  sink(start);
-# RUN: walk f2:CoroutineBody mechanisms=none+TypedOperations+Folding+EscapeAnalysis+DirectCalls
+# RUN: walk f2:CoroutineBody mechanisms=none+TypedOperations+Folding+EscapeAnalysis+CellsInFrames+DirectCalls
 # CHECK-LABEL: code f2:CoroutineBody
 # CHECK: MarkEnvironmentEscaped
 # CHECK: = AwaitBySavingFrame

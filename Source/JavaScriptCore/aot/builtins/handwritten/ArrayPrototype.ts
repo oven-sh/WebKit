@@ -269,7 +269,7 @@ export function filterOfList(callback /*, thisArg */)
         $throwTypeError("Array.prototype.filter callback must be a function");
     
     var thisArg = $argument(1);
-    var result = $newArrayWithSpecies(0, array);
+    var result = $newArrayWithSpecies(0, array, length);
 
     var nextIndex = 0;
     for (var i = 0; i < length; i++) {
@@ -312,7 +312,7 @@ export function filter(callback /*, thisArg */)
         $throwTypeError("Array.prototype.filter callback must be a function");
     
     var thisArg = $argument(1);
-    var result = $newArrayWithSpecies(0, array);
+    var result = $newArrayWithSpecies(0, array, length);
 
     var nextIndex = 0;
     var i = 0;

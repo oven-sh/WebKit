@@ -55,10 +55,6 @@ struct AccessTableStore {
     GPRReg scratch;
 };
 
-// For a store that is no definition. At both lists the receiver, the name and the value are as they were.
-// At isStoredByFieldTable the order word forbids nothing and answer holds the form and the operand: FieldTableProbe::hasFormAndOperand.
-void storeByAccessTableAndReturn(StubAssembler&, const AccessTableStore&, JumpList& isNotStored, JumpList& isStoredByFieldTable);
-
 // AccessTable::answerOfFieldTable().
 void makeAnswerOfFieldTable(StubAssembler&, GPRReg formAndOperand, GPRReg answer);
 // AccessTable::answerInOwnStorage(), of an index with its sign in all 64 bits.
@@ -85,7 +81,6 @@ void fileValueAboveFieldLeftOutInAccessTable(StubAssembler&, const AccessTableRe
 void fileAbsenceAboveFieldLeftOutInAccessTable(StubAssembler&, const AccessTableRegisters&, GPRReg answer);
 // answer: AccessTable::Store::answer.
 void fileStoreToFieldInAccessTable(StubAssembler&, const AccessTableRegisters&, GPRReg answer, uint32_t orderWordBitsThatForbid);
-void fileStoreToOrdinaryCellInAccessTable(StubAssembler&, const AccessTableRegisters&, GPRReg answer);
 // The second half of the Read of the receiver and the name was found a moment ago, it is an address, and the word there holds the callee. closureWord, which is written, is the word of the callee, and says that a call with so many arguments enters it as it is.
 void fileCallInAccessTable(StubAssembler&, const AccessTableRegisters&, unsigned numberOfArguments, GPRReg callee, GPRReg closureWord);
 

@@ -25,6 +25,10 @@
 
 #include "config.h"
 #include "testb3.h"
+#include "testb3_bun_heaps.h"
+#include "testb3_bun_validate.h"
+#include "testb3_bun_validate_terminal_results.h"
+#include "testb3_bun_values.h"
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -509,6 +513,10 @@ void run(const TestConfig* config)
 
     RUN_UNARY(testClzArg64, int64Operands());
     RUN_UNARY(testClzMem64, int64Operands());
+    RUN_UNARY(testPopCountArg64, int64Operands());
+    RUN_UNARY(testPopCountMem64, int64Operands());
+    RUN_UNARY(testPopCountArg32, int32Operands());
+    RUN_UNARY(testPopCountConstant64, int64Operands());
     RUN_UNARY(testClzArg32, int32Operands());
     RUN_UNARY(testClzMem32, int64Operands());
 
@@ -782,6 +790,7 @@ void run(const TestConfig* config)
     RUN(testBranchLoad16S());
     RUN(testBranchLoad16Z());
     RUN(testBranch8WithLoad8ZIndex());
+    RUN(testBranch16WithLoad16Z());
 
     RUN(testComplex(64, 128));
     RUN(testComplex(4, 128));
@@ -877,6 +886,11 @@ void run(const TestConfig* config)
 
     addLoadTests(config, tasks);
     addTupleTests(config, tasks);
+    addBunTests(config, tasks);
+    addBunHeapTests(config, tasks);
+    addBunValidateTests(config, tasks);
+    addBunValidateTerminalResultTests(config, tasks);
+    addBunValueTests(config, tasks);
 
     RUN(testSpillGP());
     RUN(testSpillFP());

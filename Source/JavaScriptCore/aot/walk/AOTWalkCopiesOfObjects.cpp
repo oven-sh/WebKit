@@ -115,33 +115,6 @@ static bool isPlainPropertyInWalkCopies(const Walker& walker, FieldReference fie
     return declared.key && !declared.computedKey && declared.form.isEmpty() && !declared.flags.containsAny({ FieldFlags::IsPrivate, FieldFlags::IsBrand, FieldFlags::IsBrandOfMethods, FieldFlags::IsHidden });
 }
 
-// The pattern converts each computed key where it is written, in front of the copy. False: some key is known only when the program runs.
-static bool collectExcludedKeysInWalkCopies(Walker& walker, const auto& namedKeys, std::span<const ValueID> computedKeys, Vector<PropertyKeyID, 8>& excludedKeys)
-{
-    for (PropertyKeyID key : namedKeys)
-        excludedKeys.append(key);
-    const Code& code = walker.code();
-    for (ValueID computed : computedKeys) {
-        Reference key = walker.referenceOf(computed);
-        if (!key || !key.isRecord())
-            return false;
-        // A text is its own key.
-        ValueID record = key.id();
-        if (!code.isConstant(record) && code.at(record).opcode == Opcode::ToPropertyKey)
-            record = code.at(record).operand(0);
-        if (!code.isConstant(record))
-            return false;
-        const Operation& constant = code.at(record);
-        if (constant.opcode == Opcode::String)
-            excludedKeys.append(walker.types().textKey(constant.string()));
-        else if (constant.opcode == Opcode::KeyConstant)
-            excludedKeys.append(constant.key());
-        else
-            return false;
-    }
-    return true;
-}
-
 static bool isMadeWithoutPropertiesInWalkCopies(const Walker& walker, const BodyValue& made)
 {
     if (made.opcode() == Opcode::NewDictionary)
@@ -458,66 +431,6 @@ static Reference buildArmsInWalkCopies(Walker& walker, Reference source, std::sp
 }
 
 // ---- { c, ...source }, const { a, ...rest } = source
-
-bool buildCopyOfProperties(Walker& walker, const BodyValue& value)
-{
-    if (value.opcode() != Opcode::CopyDataProperties || !walker.has(Mechanism::TypedOperations))
-        return false;
-    auto operation = value.as<Opcode::CopyDataProperties>();
-    if (sourceIsEmptyDictionaryInWalkCopies(walker, value.id(), operation.sourceOperand()))
-        return true;
-
-    Reference source = walker.referenceOf(operation.sourceOperand());
-    ObjectCopyInWalkCopies copy { walker, KindOfCopyInWalkCopies::DefinesOnLiteral, { }, { } };
-    if (!source || !source.isValue() || !collectExcludedKeysInWalkCopies(walker, operation.excludedKeys(), operation.excludedOperands(), copy.excludedKeys))
-        return false;
-    std::optional<LiteralInSightInWalkCopies> literal = findLiteralInSightInWalkCopies(walker, value, operation.targetOperand());
-    if (!literal)
-        return false;
-    copy.layoutOfLiteral = literal->properties.layout;
-    Origin origin = walker.originOf(value);
-
-    if (std::optional<OwnKeyOrder> listed = ownKeysInSight(walker, source)) {
-        CopiedOrderInWalkCopies order;
-        if (fillCopiedOrderInWalkCopies(copy, *listed, true, order)) {
-            if (order.fields.isEmpty())
-                return true;
-            if (takeFieldsOfSourceInWalkCopies(walker, order, source, origin, literal->properties)) {
-                if (Reference object = buildLiteralInWalkCopies(walker, origin, literal->properties))
-                    bindLiteralInWalkCopies(walker, *literal, object);
-            }
-            return true;
-        }
-    }
-
-    OwnKeyPlan plan = planOwnKeyWalk(walker, operation.sourceOperand(), source);
-    Vector<CopiedOrderInWalkCopies, 2> orders = planCopyByLayoutsInWalkCopies(copy, plan);
-    if (orders.isEmpty() || !shouldOpenGuess(walker, source, walker.types().forLayout(orders[0].keys.layout), plan.isDeclared, closedOperationsOfCopyInWalkCopies))
-        return false;
-    Draft written = walker.draftOf(value);
-    if (walker.hasFailed())
-        return true;
-
-    Reference filled = buildArmsInWalkCopies(walker, source, orders.span(), plan.layoutsAreProven, origin, [&](const CopiedOrderInWalkCopies& order, Reference tested) -> Reference {
-        PropertiesInWalkCopies properties = literal->properties;
-        if (!takeFieldsOfSourceInWalkCopies(walker, order, tested, origin, properties))
-            return { };
-        return buildLiteralInWalkCopies(walker, origin, properties);
-    }, [&]() -> Reference {
-        Reference object = buildLiteralInWalkCopies(walker, origin, literal->properties);
-        if (!object)
-            return { };
-        // A getter of the source may throw, and whoever catches that finds this object under the names of the literal.
-        bindLiteralInWalkCopies(walker, *literal, object);
-        written.setTargetOperand(object);
-        walker.chooseConservativeFields(written);
-        walker.build(WTF::move(written));
-        return walker.isUnreachable() ? Reference() : object;
-    });
-    if (filled)
-        bindLiteralInWalkCopies(walker, *literal, filled);
-    return true;
-}
 
 // ---- { ...source } where no type says which names the object will have
 

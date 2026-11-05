@@ -94,7 +94,7 @@ static void generateStrcat(StraightEmitter& emitter, const BodyValue& value)
 {
     std::span<const ValueID> parts = value.partsOperands();
     if (parts.empty()) {
-        emitter.jit().loadPtr(CCallHelpers::Address(instanceGPR, AOT_INSTANCE_PREFIX_OFFSET(emptyString)), StraightEmitter::resultGPR);
+        emitter.jit().loadPtr(CCallHelpers::Address(instanceGPR, AOT_INSTANCE_PREFIX_OFFSET(emptyString)), emitter.takeResultRegister());
         emitter.define(value);
         return;
     }
@@ -121,7 +121,7 @@ static void generateStrcat(StraightEmitter& emitter, const BodyValue& value)
             emitter.callStub(value, AOT::concatenate(3), { joined, parts[next], parts[next + 1] });
         else
             emitter.callStub(value, AOT::concatenate(2), { joined, parts[next] });
-        joined = StraightArgument::inRegister(StraightEmitter::resultGPR);
+        joined = StraightArgument::inRegister(emitter.resultOfCall());
     }
     emitter.define(value);
 }
@@ -156,11 +156,12 @@ void StraightEmitter::generateOperator(const BodyValue& value)
         callStub(value, AOT::toBoolean(), { value.valueOperand() });
         defineBoolean(value);
         return;
-    case Opcode::LogicalNot:
-        load(value.valueOperand(), resultGPR);
-        jit().xor32(CCallHelpers::TrustedImm32(1), resultGPR);
-        define(value);
+    case Opcode::LogicalNot: {
+        GPRReg result = loadIntoResultRegister(value.valueOperand());
+        jit().xor32(CCallHelpers::TrustedImm32(1), result);
+        define(value, result);
         return;
+    }
     case Opcode::TypeOf:
         callOperation(value, RuntimeOperation::TypeOf, { value.valueOperand() });
         define(value);

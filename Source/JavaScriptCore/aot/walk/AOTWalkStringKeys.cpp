@@ -97,7 +97,7 @@ static bool nameFindsOnlyFunctionsThatUnitLeadsToInStringKeys(const Walker& walk
     const Program& program = walker.program();
     const LinkTables& linked = walker.facts().linked();
     TypeArena& types = walker.types();
-    FunctionID unit = walker.unit().function;
+    CodeUnit unit = walker.unit();
     auto mayBeMentioned = [&](FunctionID function) {
         return !function || linked.mayBeMentionedBy(unit, function);
     };
@@ -196,7 +196,7 @@ bool buildReadByPartsOfKey(Walker& walker, const BodyValue& read, const InputsOf
     return true;
 }
 
-// Struck: settle/strings.txt gives before/walk/AOTWalkUnionAccesses.cpp:planArmsOfLiteralKeys to environments-and-variables-3. The door of strings-1 asks all the same, and hears what claims nothing.
+// Not built. The caller asks all the same, and hears what claims nothing.
 bool buildAccessUnderOneOfFewTexts(Walker&, const BodyValue&, const InputsOfTypedOperation&)
 {
     return false;

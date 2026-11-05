@@ -7,7 +7,7 @@
 # sink(Ok.of(1), of("text"));
 # -- end of source
 # `pick.of`: a read by name through two functions that have met gives anything, and a call of that enters unseen code. If what is laid on Ok did not go there, the function would be entered with arguments that Link never saw:
-# its parameter was proven an integer, and the program ended in an illegal instruction (11-04 09:12 to 09:3x).
+# its parameter was proven an integer, and the program ended in an illegal instruction.
 # f3 = what is laid on Ok: it returns what it is handed, of which nothing is known
 # RUN: link functions mechanisms=all
 # CHECK-NOT: function f3 {{*}}result=

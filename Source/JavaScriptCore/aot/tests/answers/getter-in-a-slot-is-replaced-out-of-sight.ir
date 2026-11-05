@@ -1,6 +1,6 @@
 # made of 46afbf18122b5230
 # a literal (row K8) lays a getter in the place of a field, and through a name that the compiler cannot follow the property gets another getter, becomes a value, loses its getter, and goes: each read answers as the language does
-# one literal alone makes such objects (beside a second one with another getter the walk builds the read as written), and no stranger arrives at `read` in plain sight: in accessors-in-slots-are-loaded-and-called.ts they do, and there the walk builds the read as written (live tree, 11-03 17:09). By invariant-tests, out of programs/accessors/getter-in-a-slot-is-replaced-out-of-sight.ts
+# one literal alone makes such objects (beside a second one with another getter the walk builds the read as written), and no stranger arrives at `read` in plain sight: where one does, the walk builds the read as written
 # f2 = read
 # RUN(FORM): walk f2 mechanisms=all
 # FORM-LABEL: code f2:Body

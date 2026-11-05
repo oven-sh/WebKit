@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTConversionEmitter.h"
+#include "AOTElementAccessEmitter.h"
 #include "AOTIRProgram.h"
 #include "AOTPropertyCachesStringKeys.h"
 #include "AOTRepresentationRules.h"
@@ -487,7 +488,13 @@ Integer StringEmitter::indexInString(Integer x, Word32 length, bool isRelativeTo
 void StringEmitter::generateSubstring(const ValueContext& value)
 {
     CellPointer string = in<CellPointer>(value->stringOperand());
-    define(value, substring(value, string, { word32Of(value->startOperand()), word32Of(value->endOperand()) }));
+    Word32 start = word32Of(value->startOperand());
+    Word32 end = word32Of(value->endOperand());
+    if (ElementAccessEmitter& elements = emitter<ElementAccessEmitter>(); elements.testsEveryPosition()) {
+        elements.stopUnlessInside(value, belowOrEqual(start, end));
+        elements.stopUnlessInside(value, belowOrEqual(end, lengthOf(string)));
+    }
+    define(value, substring(value, string, { start, end }));
 }
 
 void StringEmitter::generateFlattenString(const ValueContext& value)
@@ -553,14 +560,6 @@ CellPointer StringEmitter::concatenateKey(const OperationContext& context, std::
         return CellPointer(callStub(context, concatenateKeyOfPair(keyUse == KeyUse::NameOfProperty ? ConcatenatedKeyForm::Name : ConcatenatedKeyForm::Key), { primitives[0].value(), primitives[1].value() }).first);
     UseOfJoinedText use = keyUse == KeyUse::NameOfProperty ? UseOfJoinedText::LikelyName : UseOfJoinedText::LikelyKey;
     return callOperation<CellPointer>(context, RuntimeOperation::Concatenate, { word32(static_cast<int32_t>(primitives.size())), argumentBuffer(primitives), word32(static_cast<int32_t>(use)) });
-}
-
-void StringEmitter::generateTryStrcat(const ValueContext& value)
-{
-    Vector<Boxed, 8> primitives;
-    for (ValueID part : value->partsOperands())
-        primitives.append(in<Boxed>(part));
-    define(value, callOperation<Boxed>(value, RuntimeOperation::TryConcatenate, { word32(static_cast<int32_t>(primitives.size())), argumentBuffer(primitives.span()) }));
 }
 
 CellPointer StringEmitter::integerToString(const OperationContext& context, Integer value)

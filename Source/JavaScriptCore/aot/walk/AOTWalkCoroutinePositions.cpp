@@ -43,25 +43,6 @@ static TypeID unlessNeverInWalkCoroutinePositions(TypeID type)
     return type && !isNeverType(type) ? type : TypeID();
 }
 
-TypeID contentsOfObjectOfCoroutine(TypeArena& types, const LinkTables& tables, ObjectID object, ContentsSlot slot)
-{
-    const LinkedCoroutine* coroutine = findCoroutineInWalkCoroutinePositions(types.objects(), tables, object);
-    if (!coroutine)
-        return { };
-    switch (slot) {
-    case ContentsSlot::Value:
-        return unlessNeverInWalkCoroutinePositions(coroutine->fulfilledWith);
-    // A generator that has not begun or has ended hands back what return() is passed, and a step behind the end gives undefined. Both are among what is sent.
-    case ContentsSlot::Element:
-        if (!coroutine->yielded || !coroutine->returned || !coroutine->sent)
-            return { };
-        return types.unionOf(types.unionOf(coroutine->yielded, coroutine->returned), coroutine->sent);
-    case ContentsSlot::Key:
-        return { };
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
 TypeID awaitedOfObjectOfCoroutine(TypeArena& types, const LinkTables& tables, bool tablesAreProof, ObjectID object)
 {
     const LinkedCoroutine* coroutine = findCoroutineInWalkCoroutinePositions(types.objects(), tables, object);
@@ -94,56 +75,6 @@ TypeID typeOfPromiseExpectedToGive(Walker& walker, TypeID settledWith)
     if (!settledWith || !types.at(settledWith).isJavaScriptValue())
         return { };
     return types.builtinClass(BuiltinClasses::Promise, singleElementSpan(settledWith));
-}
-
-// Null unless every object of the type is what the calls of a generator function answer with, and something is known of what each of the functions yields.
-static TypeID typeYieldedByInWalkCoroutinePositions(Walker& walker, TypeID generators)
-{
-    TypeArena& types = walker.types();
-    if (!generators || holdsOnlyPrimitives(generators))
-        return { };
-    Type type = types.at(generators);
-    if (!type.isObject() || !type.hasOnlyNamedObjects())
-        return { };
-
-    const Facts& facts = walker.facts();
-    Vector<TypeID, 4> yieldedByEach;
-    bool everyFunctionIsDescribed = types.at(type.objects).allOf([&](ObjectID object) {
-        const LinkedCoroutine* proven = findCoroutineInWalkCoroutinePositions(types.objects(), facts.linked(), object);
-        TypeID yielded = proven ? proven->yielded : TypeID();
-        if (!yielded) {
-            const LinkedCoroutine* held = findCoroutineInWalkCoroutinePositions(types.objects(), facts.held(), object);
-            yielded = held ? held->yielded : TypeID();
-        }
-        if (!yielded)
-            return false;
-        yieldedByEach.append(yielded);
-        return true;
-    });
-    if (!everyFunctionIsDescribed)
-        return { };
-
-    TypeID joined = TypeTable::never;
-    for (TypeID yielded : yieldedByEach)
-        joined = joinOf(types, facts.families(), joined, yielded);
-    return isNeverType(joined) ? TypeID() : types.describedByShape(joined);
-}
-
-TypeID typeExpectedOfValueSteppedOutOf(Walker& walker, ValueID iterable)
-{
-    TypeArena& types = walker.types();
-    Reference reference = walker.referenceOf(iterable);
-    TypeID proven = reference && reference.isValue() ? walker.typeOf(reference) : TypeID();
-    if (TypeID yielded = proven ? typeYieldedByInWalkCoroutinePositions(walker, types.withoutNullish(proven)) : TypeID())
-        return yielded;
-    ExpectationOfValue expectation = findExpectation(walker, iterable);
-    return expectation.type ? typeYieldedByInWalkCoroutinePositions(walker, types.withoutNullish(expectation.type)) : TypeID();
-}
-
-TypeID typeExpectedOfValueSentIn(Walker& walker)
-{
-    const LinkedCoroutine* coroutine = walker.facts().linked().findCoroutine(walker.currentFunction());
-    return coroutine ? coroutine->sent : TypeID();
 }
 
 } } } // namespace JSC::AOT::Typed

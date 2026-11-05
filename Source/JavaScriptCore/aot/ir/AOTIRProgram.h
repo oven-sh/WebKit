@@ -26,6 +26,7 @@
 #include <span>
 #include <utility>
 #include <wtf/BitVector.h>
+#include <wtf/Lock.h>
 #include <wtf/HashSet.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/StdLibExtras.h>
@@ -57,11 +58,6 @@ public:
 
     // The executable may hold a function that allocates an error and throws it in place of this built-in's native code.
     bool mayBeTrimmed(BuiltinID builtin) const { return builtin && m_builtinsThatMayBeTrimmed.get(builtin.index()); }
-    void setBuiltinsThatMayBeTrimmed(BitVector&& builtins) { m_builtinsThatMayBeTrimmed = WTF::move(builtins); }
-    // No: neither the table of built-ins nor a statement of the program lays an accessor under the key by name. One that is laid there under a computed key is filed under the key that nobody knows.
-    // Until Facts has listed the keys, every key may name one.
-    bool mayNameAccessor(PropertyKeyID) const;
-    void setKeysThatNameAccessors(BitVector&& keys) { m_keysThatNameAccessors = WTF::move(keys); }
     const BuiltinTable& builtins() const { return m_builtins; }
     // Once, when `replaceableBuiltins` and `openedNames` are whole and nothing has asked the table about a lock.
     void unlockReplaceableBuiltins();
@@ -75,6 +71,10 @@ public:
     // A test run adds a property of this name to the object, which takes no other new name.
     bool isOpened(BuiltinID canonicalHolder, StringID name) const { return m_namesOpened.contains(static_cast<uint64_t>(canonicalHolder.index()) << 32 | name.index()); }
     bool isOpenedSomewhere(StringID name) const { return m_namesOpenedSomewhere.get(name.index()); }
+    // The build of an executable has taken the text for absent on an object that is closed to other names: MembersUnderKey::isClosedKey(). The run time refuses such a name there, and takes every other. From any thread.
+    void noteTakenForAbsent(PropertyKeyID) const;
+    // Ascending.
+    Vector<PropertyKeyID> keysTakenForAbsent() const;
     bool isSomeNameOpenedOn(BuiltinID canonicalHolder) const { return m_holdersOfOpenedNames.get(canonicalHolder.index()); }
     bool testsReplaceBuiltins() const { return m_testsReplaceBuiltins; }
     std::span<const uint8_t> buffer() const { return m_bytes.borrowed; }
@@ -180,12 +180,6 @@ public:
 
     void appendBuiltinLayouts();
     void appendNamespaceLayouts(const ParallelLoops&);
-    // walk/AOTWalkStringParserNodes.cpp. A function without a body for each container type below the types of expectedResults, behind every other function. The walk writes its code out of the type. Once.
-    void appendParsers();
-    // The same for the types that the scan has found. A type that has a parser gets no second one.
-    void appendParsersFor(std::span<const TypeID> roots);
-    // The parser of each type that has one, ascending by TypeID::bits(): parserFunctionOf().
-    Vector<std::pair<uint32_t, FunctionID>> parsersByType;
     LayoutID layoutOfWholeNamespace(ModuleID) const;
     void internBuiltinNameKeys();
     // `L<n>` in every text. The layouts of built-ins and namespaces stand between the wire's and the derived ones and have no number: `L(<token>)`, `L(m<n>)`.
@@ -247,12 +241,13 @@ private:
 
     const BuiltinTable& m_builtins;
     BitVector m_namesOpenedSomewhere;
+    mutable Lock m_keysTakenForAbsentLock;
+    mutable BitVector m_keysTakenForAbsent WTF_GUARDED_BY_LOCK(m_keysTakenForAbsentLock);
     BitVector m_holdersOfOpenedNames;
     // `openedNames`, for isOpened(): a large test run opens names by the hundred thousand.
     HashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_namesOpened;
     bool m_testsReplaceBuiltins { false };
     BitVector m_builtinsThatMayBeTrimmed;
-    std::optional<BitVector> m_keysThatNameAccessors;
     Bytes m_bytes;
     Vector<Vector<ConstructionStart>> m_constructionStartsOfModules;
     DerivedTables m_derivedTables;
@@ -260,12 +255,6 @@ private:
 
 BitVector functionsCalledByHost(const Program&);
 BitVector functionsCalledByHost(const Program&, const ParallelLoops&);
-
-void forEachFunctionCalledByHost(const Program& program, NOESCAPE const Invocable<void(FunctionID)> auto& functor)
-{
-    for (size_t index : functionsCalledByHost(program))
-        functor(FunctionID(index));
-}
 
 const RuntimeFunctionEntry* findRuntimeFunction(const Program&, RuntimeFunctionID);
 bool isLibraryCode(const Program&, const Function&);
@@ -292,8 +281,6 @@ bool requireMayAnswerWithMock(const Program&, const Module&);
 bool requireReadsModuleValue(const Program&, const Module&);
 // overridableRequire() in CommonJS.ts.
 bool requireAddsToRequireCache(const Program&, ModuleID referrer, ModuleID target);
-// createRequireCache() in CommonJS.ts also lists what the loader holds, unless the name begins with `node:` or `bun:`. Modules::libraryModulesInRequireCache().
-Vector<ModuleID> libraryModulesListedInRequireCacheForStatements(const Program&);
 
 } } } // namespace JSC::AOT::Typed
 

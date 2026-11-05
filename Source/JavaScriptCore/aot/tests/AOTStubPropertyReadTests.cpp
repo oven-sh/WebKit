@@ -1060,7 +1060,8 @@ static void testInstructionsOfReadsOfFiledFields()
         { SlotRepresentation::OptionalDouble, jsDoubleNumber(0.5), 76 },
         { SlotRepresentation::OptionalDouble, jsNumber(7), 76 },
         { SlotRepresentation::Boolean, jsBoolean(true), 71 },
-        { SlotRepresentation::OptionalBoolean, jsBoolean(true), 73 },
+        // Whoever indexes the field table by the word of the shape takes the mark out of it: one instruction each time.
+        { SlotRepresentation::OptionalBoolean, jsBoolean(true), 75 },
     };
     bool isWithinBudget = true;
     for (const Read& read : readsByRepresentation) {

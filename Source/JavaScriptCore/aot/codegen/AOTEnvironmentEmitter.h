@@ -16,7 +16,6 @@ public:
     explicit EnvironmentEmitter(CodeGenerator& generator) : OperationEmitter(generator) { }
 
     void generateGetCapture(const ValueContext&);
-    void generateGetBoundCapture(const ValueContext&);
     void generateMarkEnvironmentEscaped(const ValueContext&);
     void generateReleaseEnvironment(const ValueContext&);
 

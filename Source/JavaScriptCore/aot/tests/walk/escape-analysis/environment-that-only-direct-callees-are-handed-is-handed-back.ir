@@ -1,17 +1,17 @@
 # `add` is entered itself, so the scope of `total` is handed to direct callees alone and no operation of the unit keeps it: nothing is marked, and behind the last read of the scope the cell is proposed for the next call
 # function total() { let sum = 0; function add(x) { sum += x; } add(1); add(2); return sum; }  sink(total);
-# RUN: walk f1 mechanisms=none+TypedOperations+Folding+EscapeAnalysis+DirectCalls
+# RUN: walk f1 mechanisms=none+TypedOperations+Folding+EscapeAnalysis+CellsInFrames+DirectCalls
 # CHECK-LABEL: code f1:Body
 # CHECK: = NewObject {{*}}layout=L0
 # CHECK: = CallDirect {{*}}function=f2
 # CHECK: = CallDirect {{*}}function=f2
 # CHECK: ReleaseEnvironment
-# RUN(NEVER): walk f1 mechanisms=none+TypedOperations+Folding+EscapeAnalysis+DirectCalls
+# RUN(NEVER): walk f1 mechanisms=none+TypedOperations+Folding+EscapeAnalysis+CellsInFrames+DirectCalls
 # NEVER-NOT: MarkEnvironmentEscaped
-# RUN(CALLEE): walk f2 mechanisms=none+TypedOperations+Folding+EscapeAnalysis+DirectCalls
+# RUN(CALLEE): walk f2 mechanisms=none+TypedOperations+Folding+EscapeAnalysis+CellsInFrames+DirectCalls
 # CALLEE-NOT: MarkEnvironmentEscaped
 # CALLEE-NOT: ReleaseEnvironment
-# RUN(PLAN): plan layouts mechanisms=none+TypedOperations+Folding+EscapeAnalysis+DirectCalls
+# RUN(PLAN): plan layouts mechanisms=none+TypedOperations+Folding+EscapeAnalysis+CellsInFrames+DirectCalls
 # PLAN: layout L0 Environment {{*}}escaped-at=
 
 layout L0 kind=Environment module=m0 fields=[{key=@"0" declared={type=anything} variableName="sum"}] ownFieldCount=1

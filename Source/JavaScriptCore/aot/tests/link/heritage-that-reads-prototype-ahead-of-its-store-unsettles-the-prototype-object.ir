@@ -9,7 +9,7 @@
 # sink(measure());
 # -- end of source
 # `class Round extends Shape` reads Shape.prototype and lays Round.prototype below what it finds: the object that Shape was made with. If that read did not count, the one store behind it would settle the prototype object,
-# and `area`, laid on the OLD object through Round.prototype.__proto__, would count as laid ahead of every object of Shape: `new Shape().area()` answered 7 where it throws (11-04 06:06 to 09:3x).
+# and `area`, laid on the OLD object through Round.prototype.__proto__, would count as laid ahead of every object of Shape: `new Shape().area()` answered 7 where it throws.
 # RUN: link layouts mechanisms=all
 # CHECK-NOT: prototype-object-settled
 # RUN(NAME): link members mechanisms=all

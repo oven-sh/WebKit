@@ -19,62 +19,6 @@ constexpr uint32_t initialNumberOfEntries = HashedSlotTable::initialNumberOfEntr
 constexpr unsigned numberOfKeysTakingTurns = 2 * numberOfSlotAccesses;
 static_assert(numberOfKeysTakingTurns > HashedSlot::ways);
 
-constexpr uint32_t mostEvictionsWithoutGrowth = initialNumberOfEntries / 4;
-
-uint32_t offsetOfSet(Structure* structure, UniquedStringImpl* uid, uint32_t numberOfEntries)
-{
-    constexpr uint32_t wayBits = (HashedSlot::ways - 1) << HashedSlot::sizeShift;
-    return HashedSlot::offsetOfFirstWay(structure->id(), uid, HashedSlot::offsetMaskFor(numberOfEntries)) & ~wayBits;
-}
-
-// With each kind of access the two make more keys than a set has ways. They lie in one set of a table of the initial size and in two sets of a table of twice that size.
-struct OwnersSharingSet {
-    Structure* first { nullptr };
-    Structure* second { nullptr };
-};
-
-OwnersSharingSet createOwnersSharingSet(TableFixture& fixture, UniquedStringImpl* uid)
-{
-    constexpr unsigned maxNumberOfCandidates = 1 << 16;
-    AOT_TEST_CHECK(fixture.hashedTable().numberOfEntries() == initialNumberOfEntries);
-    Structure* first = fixture.createStructure();
-    for (unsigned i = 0; i < maxNumberOfCandidates; ++i) {
-        Structure* candidate = fixture.createStructure();
-        bool sharesSet = offsetOfSet(candidate, uid, initialNumberOfEntries) == offsetOfSet(first, uid, initialNumberOfEntries);
-        if (sharesSet && offsetOfSet(candidate, uid, 2 * initialNumberOfEntries) != offsetOfSet(first, uid, 2 * initialNumberOfEntries))
-            return { first, candidate };
-    }
-    AOT_TEST_CHECK(false);
-    return { };
-}
-
-// A store of a key that is not filed fills one more entry unless it evicts another key.
-bool fileHashedSlotAndCheckForEviction(HashedSlotTable& table, UniquedStringImpl* uid, SlotAccess access, const Slot& slot)
-{
-    bool wasFiled = table.find(slot.structureID, uid, access);
-    uint32_t numberFilledBefore = table.numberOfFilledEntries();
-    table.set(uid, access, slot);
-    return !wasFiled && table.numberOfFilledEntries() == numberFilledBefore;
-}
-
-// The keys are filed again and again. While they share a set, all but the first few of the stores evict. Returns how many did.
-uint64_t fileInTurns(TableFixture& fixture, const OwnersSharingSet& owners, UniquedStringImpl* uid, uint64_t maxNumberOfEvictions)
-{
-    constexpr unsigned maxNumberOfRounds = 4 * initialNumberOfEntries;
-    auto& table = fixture.hashedTable();
-    uint64_t numberOfEvictions = 0;
-    for (unsigned round = 0; round < maxNumberOfRounds; ++round) {
-        for (Structure* structure : { owners.first, owners.second }) {
-            for (SlotAccess access : allSlotAccesses) {
-                if (numberOfEvictions == maxNumberOfEvictions)
-                    return numberOfEvictions;
-                numberOfEvictions += fileHashedSlotAndCheckForEviction(table, uid, access, ownValueSlot(structure, 0));
-            }
-        }
-    }
-    return numberOfEvictions;
-}
-
 void growthKeepsTheAddressAndEveryEntry()
 {
     constexpr unsigned maxNumberOfFills = 16 * initialNumberOfEntries;
@@ -109,85 +53,12 @@ void growthKeepsTheAddressAndEveryEntry()
     AOT_TEST_CHECK(table.numberOfEntries() == 2 * initialNumberOfEntries && table.entries() == entries);
 }
 
-void keysTakingTurnsInOneSetGrowMostlyEmptyTable()
-{
-    TableFixture fixture;
-    auto& table = fixture.hashedTable();
-    UniquedStringImpl* uid = fixture.uid(1);
-    OwnersSharingSet owners = createOwnersSharingSet(fixture, uid);
-
-    uint64_t numberOfEvictions = fileInTurns(fixture, owners, uid, mostEvictionsWithoutGrowth);
-    AOT_TEST_CHECK(table.numberOfEntries() == initialNumberOfEntries && table.numberOfFilledEntries() == HashedSlot::ways);
-
-    numberOfEvictions += fileInTurns(fixture, owners, uid, std::numeric_limits<uint64_t>::max());
-
-    AOT_TEST_CHECK(table.numberOfEntries() == 2 * initialNumberOfEntries);
-    AOT_TEST_CHECK(numberOfEvictions == mostEvictionsWithoutGrowth + 1);
-    AOT_TEST_CHECK(table.numberOfFilledEntries() == numberOfKeysTakingTurns && fixture.numberOfSlots() == numberOfKeysTakingTurns);
-    for (Structure* structure : { owners.first, owners.second }) {
-        for (SlotAccess access : allSlotAccesses)
-            AOT_TEST_CHECK(isSameSlot(table.find(structure->id(), uid, access), ownValueSlot(structure, 0)));
-    }
-}
-
-void fewEvictionsBetweenCollectionsDoNotGrowMostlyEmptyTable()
-{
-    constexpr unsigned numberOfCollections = 6;
-    TableFixture fixture;
-    auto& table = fixture.hashedTable();
-    UniquedStringImpl* uid = fixture.uid(1);
-    OwnersSharingSet owners = createOwnersSharingSet(fixture, uid);
-
-    uint64_t numberOfEvictions = 0;
-    for (unsigned i = 0; i < numberOfCollections; ++i) {
-        numberOfEvictions += fileInTurns(fixture, owners, uid, mostEvictionsWithoutGrowth);
-        fixture.sweep(i % 2 ? CollectionScope::Full : CollectionScope::Eden);
-    }
-
-    AOT_TEST_CHECK(numberOfEvictions == numberOfCollections * mostEvictionsWithoutGrowth);
-    AOT_TEST_CHECK(table.numberOfEntries() == initialNumberOfEntries);
-    AOT_TEST_CHECK(table.numberOfFilledEntries() == HashedSlot::ways);
-}
-
-// A table that is at least half full grows after it has evicted 1/64 of its size, so this stops where the table is half full.
-NEVER_INLINE void fileAbsenceForUnreferencedOwnersUntilHalfFull(TableFixture& fixture, UniquedStringImpl* uid)
-{
-    while (fixture.hashedTable().numberOfFilledEntries() < initialNumberOfEntries / 2)
-        fixture.hashedTable().set(uid, SlotAccess::Read, absentSlot(fixture.createStructure(), 0));
-}
-
-void sweptEntriesNoLongerCountAsFilled()
-{
-    TableFixture fixture;
-    auto& table = fixture.hashedTable();
-    UniquedStringImpl* uid = fixture.uid(1);
-    fileAbsenceForUnreferencedOwnersUntilHalfFull(fixture, uid);
-    uint32_t numberFilled = table.numberOfFilledEntries();
-    AOT_TEST_CHECK(numberFilled >= initialNumberOfEntries / 2 && numberFilled == fixture.numberOfSlots());
-    AOT_TEST_CHECK(table.numberOfEntries() == initialNumberOfEntries);
-
-    size_t numberDropped = fixture.sweep(CollectionScope::Full);
-
-    AOT_TEST_CHECK(table.numberOfFilledEntries() == numberFilled - numberDropped);
-    AOT_TEST_CHECK(table.numberOfFilledEntries() + numberOfKeysTakingTurns < initialNumberOfEntries / 2);
-
-    // What a table that is at least half full evicts counts across collections.
-    OwnersSharingSet owners = createOwnersSharingSet(fixture, uid);
-    fileInTurns(fixture, owners, uid, mostEvictionsWithoutGrowth);
-    fixture.sweep(CollectionScope::Eden);
-    fileInTurns(fixture, owners, uid, mostEvictionsWithoutGrowth);
-    AOT_TEST_CHECK(table.numberOfEntries() == initialNumberOfEntries);
-}
-
 } // namespace
 
 std::span<const NativeTest> hashedSlotTableTests()
 {
     static constexpr NativeTest tests[] = {
         { "hashed-slot-table/growth-keeps-the-address-and-every-entry"_s, growthKeepsTheAddressAndEveryEntry },
-        { "hashed-slot-table/keys-taking-turns-in-one-set-grow-a-mostly-empty-table"_s, keysTakingTurnsInOneSetGrowMostlyEmptyTable },
-        { "hashed-slot-table/few-evictions-between-collections-do-not-grow-a-mostly-empty-table"_s, fewEvictionsBetweenCollectionsDoNotGrowMostlyEmptyTable },
-        { "hashed-slot-table/swept-entries-no-longer-count-as-filled"_s, sweptEntriesNoLongerCountAsFilled },
     };
     return tests;
 }

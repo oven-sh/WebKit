@@ -25,7 +25,7 @@
 namespace JSC { namespace AOT { namespace Typed {
 
 static constexpr GPRReg registerOfValueInStraightAllocation = GPRInfo::argumentGPR1;
-static_assert(registerOfValueInStraightAllocation != StraightEmitter::resultGPR);
+static_assert(!StraightEmitter::isResultRegister(registerOfValueInStraightAllocation));
 
 static_assert([] {
     for (SlotRepresentation representation : allMembersOf<SlotRepresentation>) {
@@ -110,13 +110,14 @@ static void defineBehindStraightAllocation(StraightEmitter& emitter, const BodyV
 {
     CCallHelpers& jit = emitter.jit();
     CCallHelpers::Address object = emitter.wordOfScratchArea(0);
-    jit.store64(StraightEmitter::resultGPR, object);
+    jit.store64(emitter.resultOfCall(), object);
+    GPRReg result = emitter.takeResultRegister();
     for (size_t index = 0; index < keys.size(); ++index) {
         if (index)
-            jit.load64(object, StraightEmitter::resultGPR);
-        emitter.callStub(value, stubThatDefinesBehindStraightAllocation(emitter, keys[index]), { StraightArgument::inRegister(StraightEmitter::resultGPR), values[index] }, { .numberedImmediate = NumberedImmediate { emitter.mentionOfName(keys[index]) } });
+            jit.load64(object, result);
+        emitter.callStub(value, stubThatDefinesBehindStraightAllocation(emitter, keys[index]), { StraightArgument::inRegister(result), values[index] }, { .numberedImmediate = NumberedImmediate { emitter.mentionOfName(keys[index]) } });
     }
-    jit.load64(object, StraightEmitter::resultGPR);
+    jit.load64(object, result);
 }
 
 static bool isZeroWhileEmptyInStraightAllocation(const PlacedSlot& slot)
@@ -128,13 +129,14 @@ static bool isZeroWhileEmptyInStraightAllocation(const PlacedSlot& slot)
 static void storeWhatEmptySlotsHoldInStraightAllocation(StraightEmitter& emitter, const PlannedLayout& planned, std::span<const FieldIndex> listed)
 {
     CCallHelpers& jit = emitter.jit();
+    GPRReg cell = emitter.resultOfCall();
     std::optional<uint64_t> bitsInRegister;
     for (FieldIndex field = 0; field < planned.slots.size(); ++field) {
         const PlacedSlot& slot = planned.slots[field];
         if (isZeroWhileEmptyInStraightAllocation(slot) || std::ranges::contains(listed, field))
             continue;
         SlotTraits traits = traitsOf(slot.representation);
-        CCallHelpers::Address address(StraightEmitter::resultGPR, static_cast<int32_t>(slot.offset));
+        CCallHelpers::Address address(cell, static_cast<int32_t>(slot.offset));
         if (traits.width == sizeof(uint32_t)) {
             jit.store32(CCallHelpers::TrustedImm32(static_cast<int32_t>(traits.absentBits)), address);
             continue;
@@ -223,9 +225,10 @@ static void generateNewObject(StraightEmitter& emitter, const BodyValue& value)
         } else {
             CellInitialization initialization = isObjectLayout(program.at(layout).kind) ? CellInitialization::HeaderAndWordsAndZeros : CellInitialization::HeaderAndZeros;
             emitter.callStub(value, AOT::allocateCell(initialization, cellSize), { row });
+            GPRReg cell = emitter.resultOfCall();
             for (size_t index = 0; index < numberListed; ++index) {
                 const PlacedSlot& slot = plan.slot(layout, fields[index]);
-                CCallHelpers::Address address(StraightEmitter::resultGPR, static_cast<int32_t>(slot.offset));
+                CCallHelpers::Address address(cell, static_cast<int32_t>(slot.offset));
                 if (std::optional<JSValue> constant = emitter.constantOf(values[index])) {
                     jit.store64(CCallHelpers::TrustedImm64(static_cast<int64_t>(*bitsOfConstantInSlotOfStraightAllocation(slot.representation, *constant))), address);
                     continue;
@@ -277,15 +280,16 @@ static void generateNewTemplateObject(StraightEmitter& emitter, const BodyValue&
 
     CCallHelpers& jit = emitter.jit();
     RelocationRecorder& relocations = emitter.relocations();
-    relocations.loadInstanceWord(siteCell, InstanceWordWidth::Word64, instanceGPR, StraightEmitter::resultGPR);
-    CCallHelpers::Jump isMade = jit.branchTest64(CCallHelpers::NonZero, StraightEmitter::resultGPR);
+    GPRReg result = emitter.takeResultRegister();
+    relocations.loadInstanceWord(siteCell, InstanceWordWidth::Word64, instanceGPR, result);
+    CCallHelpers::Jump isMade = jit.branchTest64(CCallHelpers::NonZero, result);
     emitter.callOperation(value, RuntimeOperation::NewTemplateObject, { StraightArgument::number(request), StraightArgument::word(written.module), StraightArgument::number(mentions.templateObjectCell(written)) });
     jit.storeFence();
-    relocations.storeInstanceWord(siteCell, InstanceWordWidth::Word64, StraightEmitter::resultGPR, instanceGPR);
+    relocations.storeInstanceWord(siteCell, InstanceWordWidth::Word64, emitter.resultOfCall(), instanceGPR);
     jit.move(CCallHelpers::TrustedImm32(RememberedSlotSet::writtenCard), registerOfValueInStraightAllocation);
     relocations.storeInstanceWord(cardOfSiteCell, InstanceWordWidth::Byte, registerOfValueInStraightAllocation, instanceGPR);
     isMade.link(&jit);
-    emitter.define(value);
+    emitter.define(value, result);
 }
 
 static void generateNewRuntimeError(StraightEmitter& emitter, const BodyValue& value)

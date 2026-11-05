@@ -7,7 +7,7 @@
 # function converts(a, b) { return a * b + b * a; }
 # async function later(a, b, p) { if (typeof a !== "number" || typeof b !== "number") return 0; const first = a * b; await p; return first + a * b; }
 # sink(twice, converts, later);
-# the records are by hand, and behind each test they read the value that the edge hands on. The front end writes the parameter itself there, of which the walk proves nothing until unions-and-narrowing-2 is in
+# the records are by hand, and behind each test they read the value that the edge hands on. The front end writes the parameter itself there, of which the walk proves nothing
 # an edge narrows with typed operations alone, so they stand in every RUN
 # RUN: walk f1 mechanisms=none+Folding+TypedOperations
 # CHECK-LABEL: code f1:Body

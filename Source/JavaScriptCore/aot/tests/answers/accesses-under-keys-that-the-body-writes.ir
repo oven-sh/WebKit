@@ -11,7 +11,7 @@
 # FORM: access f8 {{*}} under "true"
 # RUN(NEVER): walk f1 f6 mechanisms=all
 # NEVER-NOT: ElemGet
-# with Folding withheld Link lists none of them. There TypedOperations reads a key that is one written text off the body by itself (strings-2), so in the walk that is withheld too
+# with Folding withheld Link lists none of them. There TypedOperations reads a key that is one written text off the body by itself, so in the walk that is withheld too
 # RUN(UNLISTED): link accesses mechanisms=-Folding
 # UNLISTED-NOT: under "kind"
 # UNLISTED-NOT: under "undefined"

@@ -1331,10 +1331,6 @@ bool JSArray::appendMemcpy(JSGlobalObject* globalObject, VM& vm, unsigned startI
     if (!canFastAppend(otherArray))
         return false;
 
-    // A species constructor may answer an array that holds something already, and an index at which the other array has a hole is passed over: what is there stays. The copy below would lay the hole over it.
-    if (startIndex < length()) [[unlikely]]
-        return false;
-
     // (ensureLength() below converts copy-on-write storage. False: the caller's generic path, whose puts are refused.)
     if (isCopyOnWrite(indexingMode()) && structure()->hasImmutableProperties()) [[unlikely]]
         return false;

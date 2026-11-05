@@ -1,0 +1,188 @@
+# As a-counter-that-leaves-the-turns-has-the-name-of-its-way-behind-a-block-walked-apart.ir, and the sum of the turns is read behind the loop as well: no constant stands for it,
+# so the name that the walk of the passing ways had bound was a value of a block that does not dominate `return -1 - i - seen`: the build stopped: UseNotDominated
+# f1 = readsTheSumToo
+# -- source: a-sum-that-leaves-the-turns-has-the-name-of-its-way-behind-a-block-walked-apart.ts
+# const unseen = (x: any): any => [x][JSON.parse("0")];
+# class Item { flags: number = 0; kind: number = 0; constructor(flags: number, kind: number) { this.flags = flags; this.kind = kind; } }
+# function readsTheSumToo(items: Item[], j: number, limit: number, rounds: number): number { let work = 0; for (let w = 0; w < rounds; w++) work = (work + w) | 0; const node = items[j]; let seen = 0; let i = 0; for (; i < 2; i++) { if (node.kind === undefined) break; seen = seen + node.kind; if (seen === limit) seen = 0; } if (i < 2) return -1 - i - seen; return seen + work; }
+# const two: number = unseen(2);
+# const good: Item[] = [new Item(1, 5), new Item(2, 7)];
+# const odd: Item[] = [JSON.parse('{"flags":3}')];
+# let sum = 0;
+# for (let r = 0; r < 300; r++) sum += readsTheSumToo(good, r & 1, 1000, two);
+# console.log(sum, readsTheSumToo(odd, 0, 1000, two));
+# -- end of source
+# RUN: walk f1 mechanisms=all
+# REQUIRES: entries-of-bun
+# CHECK-LABEL: code f1:Body
+
+module m0 path="a-sum-that-leaves-the-turns-has-the-name-of-its-way-behind-a-block-walked-apart.ts" displayPath="a-sum-that-leaves-the-turns-has-the-name-of-its-way-behind-a-block-walked-apart.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+expectedresult x0 type=L0 layouts=[L0]
+layout L0 kind=Instance name="Item" module=m0 position=60 constructor=f2 fields=[{key="flags" declared={type=number} flags=[IsRequired]}, {key="kind" declared={type=number} flags=[IsRequired]}] ownFieldCount=2
+variable g0 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f2 @54
+    v3 = NewClass v2 layout=L0 @54
+    PutModuleVariable v3 variable=g0 @54
+    v5 = FinishClass v3 layout=L0 @54
+    v6 = Convert v5 declared={type=f2 flags=[IsFromCompiler]} @54
+    v7 = Convert v5 declared={type=f2 flags=[IsFromCompiler]} @54
+    v8 = NewClosure function=f3 @15
+    v9 = Integer integer=2 @594
+    v10 = Call v8, -, v9 calleeName="unseen" @587
+    v11 = Convert v10 declared={type=number} @587
+    v12 = Integer integer=1 @629
+    v13 = Integer integer=5 @632
+    v14 = Construct v7, -, v12, v13 calleeName="Item" @624
+    v15 = Integer integer=2 @645
+    v16 = Integer integer=7 @648
+    v17 = Construct v7, -, v15, v16 calleeName="Item" @640
+    v18 = NewArray v14, v17 contents=undefined|null|L0 @619
+    v19 = Convert v18 declared={type=undefined|null|Array<undefined|null|L0> flags=[OmitsNull, OmitsUndefined]} @619
+    v20 = Builtin builtin=JSON @674
+    v21 = PropGet v20 key="parse" @674
+    v22 = Convert v21 declared={type=builtin(JSONParse) flags=[IsExpected]} @674
+    v23 = String string="{\"flags\":3}" @685
+    v24 = Call v22, v20, v23 calleeKey="parse" calleeName="JSON.parse" expectedResult=x0 @679
+    v25 = NewArray v24 contents=undefined|null|L0 @673
+    v26 = Convert v25 declared={type=undefined|null|Array<undefined|null|L0> flags=[OmitsNull, OmitsUndefined]} @673
+    v27 = Integer @712
+    v28 = Convert v27 declared={type=number} @712
+    v29 = Integer @728
+    v30 = Convert v29 declared={type=number} @728
+    Jump -> next b1(v28, v30) @724
+  b1(v31: number, v32: number):
+    LoopHint @724
+    v34 = Integer integer=300 @735
+    v35 = Less v32, v34 @735
+    Branch v35 -> taken b2(), notTaken b3() @735
+  b2():
+    v36 = Integer integer=1 @777
+    v37 = BitAnd v32, v36 @777
+    v38 = Integer integer=1000 @780
+    v39 = Call v1, -, v19, v37, v38, v11 calleeName="readsTheSumToo" @752
+    v40 = Add v31, v39 @752
+    v41 = Convert v40 declared={type=number} @745
+    v42 = Increment v32 @740
+    v43 = Convert v42 declared={type=number} @740
+    Jump -> next b1(v41, v43) @740
+  b3():
+    v44 = Builtin builtin=GlobalThis @792
+    v45 = PropGet v44 key="console" [isFreeName] @792
+    v46 = Convert v45 declared={type=builtin(Console) flags=[IsExpected]} @792
+    v47 = PropGet v46 key="log" @792
+    v48 = Convert v47 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @792
+    v49 = Integer @829
+    v50 = Integer integer=1000 @832
+    v51 = Call v1, -, v26, v49, v50, v11 calleeName="readsTheSumToo" @809
+    v52 = Call v48, v46, v31, v51 calleeKey="log" calleeName="console.log" @800
+    v53 = Undefined @792
+    Return v53 @792
+}
+function f1 name="readsTheSumToo" module=m0 position=189 flags=[IsChecked, HasExplicitName] length=4 thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|L0> flags=[OmitsNull, OmitsUndefined]}, {type=number}, {type=number}, {type=number}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array<undefined|null|L0>, v1: number, v2: number, v3: number):
+    v4 = Integer @291
+    v5 = Convert v4 declared={type=number} @291
+    v6 = Integer @307
+    v7 = Convert v6 declared={type=number} @307
+    Jump -> next b1(v5, v7) @303
+  b1(v8: number, v9: number):
+    LoopHint @303
+    v11 = Less v9, v3 @314
+    Branch v11 -> taken b2(), notTaken b3() @314
+  b2():
+    v12 = Add v8, v9 @342
+    v13 = Integer @347
+    v14 = BitOr v12, v13 @347
+    v15 = Convert v14 declared={type=number} @327
+    v16 = Increment v9 @322
+    v17 = Convert v16 declared={type=number} @322
+    Jump -> next b1(v15, v17) @322
+  b3():
+    v18 = ElemGet v0, v1 @363
+    v19 = Integer @384
+    v20 = Convert v19 declared={type=number} @384
+    v21 = Integer @395
+    v22 = Convert v21 declared={type=number} @395
+    Jump -> next b4(v20, v22) @398
+  b4(v23: number, v24: number):
+    LoopHint @398
+    v26 = Integer integer=2 @409
+    v27 = Less v24, v26 @409
+    Branch v27 -> taken b5(), notTaken b9() @409
+  b5():
+    v28 = PropGet v18 key="kind" @423
+    v29 = TypeTest v28 testedType=undefined @423
+    Branch v29 -> taken b9(), notTaken b6(| 0) @423
+  b6(v30):
+    v31 = PropGet v18 key="kind" @469
+    v32 = Add v23, v31 @469
+    v33 = Convert v32 declared={type=number} @455
+    v34 = StrictEq v33, v2 @493
+    Branch v34 -> taken b7(), notTaken b8(v33) @493
+  b7():
+    v35 = Integer @507
+    v36 = Convert v35 declared={type=number} @500
+    Jump -> next b8(v36) @500
+  b8(v37: number):
+    v38 = Increment v24 @412
+    v39 = Convert v38 declared={type=number} @412
+    Jump -> next b4(v37, v39) @412
+  b9():
+    v40 = Integer integer=2 @520
+    v41 = Less v24, v40 @520
+    Branch v41 -> taken b10(), notTaken b11() @520
+  b10():
+    v42 = Integer integer=-1 @530
+    v43 = Sub v42, v24 @535
+    v44 = Sub v43, v23 @539
+    v45 = Convert v44 declared={type=number} @539
+    Return v45 @539
+  b11():
+    v46 = Add v23, v8 @559
+    v47 = Convert v46 declared={type=number} @559
+    Return v47 @559
+}
+function f2 name="Item" module=m0 position=115 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=number}, {type=number}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: anything, v1: number, v2: number):
+    v3 = GetConstructPrototype v0 layout=L0 @115
+    v4 = NewObject v3 layout=L0 @115
+    v5 = Convert v4 declared={type=L0} @115
+    v6 = CallDirect v5 function=f4 @115
+    PropSet v5, v1 key="flags" @147
+    PropSet v5, v2 key="kind" @167
+    v9 = Undefined @167
+    v10 = TypeTest v9 testedType=object @167
+    Branch v10 -> taken b1(| 0), notTaken b2(v5) @167
+  b1(v11):
+    Jump -> next b2(v11) @167
+  b2(v12):
+    Return v12 @167
+}
+function f3 name="unseen" module=m0 position=15 kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = NewArray v0 contents=anything @32
+    v2 = Builtin builtin=JSON @36
+    v3 = PropGet v2 key="parse" @36
+    v4 = Convert v3 declared={type=builtin(JSONParse) flags=[IsExpected]} @36
+    v5 = String string="0" @47
+    v6 = Call v4, v2, v5 calleeKey="parse" calleeName="JSON.parse" @41
+    v7 = ElemGet v1, v6 @32
+    Return v7 @32
+}
+function f4 module=m0 position=60 kind=Initializer flags=[HasThis, IsChecked, IsHiddenInStackTraces] thisType={type=L0} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0):
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @60
+    v2 = Integer @83
+    v3 = Convert v2 declared={type=number} @83
+    PropDefine v1, v3 key="flags" @67
+    v5 = Integer @101
+    v6 = Convert v5 declared={type=number} @101
+    PropDefine v1, v6 key="kind" @86
+    v8 = Undefined @60
+    Return v8 @60
+}

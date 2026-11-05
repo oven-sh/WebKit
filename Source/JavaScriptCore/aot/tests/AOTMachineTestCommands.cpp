@@ -91,7 +91,7 @@ namespace JSC { namespace AOT { namespace Typed {
 
 namespace {
 
-enum class WordOfMentionKey : uint8_t { Number, Key, Text, Module, Variable, Layout, Function, Unit, Data, Type, Builtin, BuiltinCell, GroupOfFiles, ClassSide };
+enum class WordOfMentionKey : uint8_t { Number, Key, Text, Module, Variable, Layout, Function, Unit, Data, Type, Builtin, BuiltinCell, ClassSide };
 
 class NamesInBytesText {
     WTF_MAKE_NONCOPYABLE(NamesInBytesText);
@@ -289,10 +289,7 @@ void NamesInBytesText::printFunctionName(FunctionID id)
 
 void NamesInBytesText::printUnitName(CodeUnit unit)
 {
-    m_out.print(nameOf(unit.role));
-    if (isBoundRole(unit.role))
-        m_out.print(":"_s, unit.numberOfBoundArguments);
-    m_out.print(" "_s);
+    m_out.print(nameOf(unit.role), " "_s);
     printFunctionName(unit.function);
 }
 
@@ -340,13 +337,7 @@ void NamesInBytesText::printLayoutName(LayoutID id)
 
 void NamesInBytesText::printVariableName(VariableID id)
 {
-    size_t numberOfVariables = m_program.variables.size();
-    const DeferredDefinitions& deferred = m_plan.deferredDefinitions();
-    if (id && id.index() >= numberOfVariables && id.index() - numberOfVariables < deferred.numberOfAddedVariables()) {
-        m_out.print("object beside "_s);
-        id = deferred.variableBesideAdded(id);
-    }
-    if (!namesRecord(id, numberOfVariables))
+    if (!namesRecord(id, m_program.variables.size()))
         return;
     const Variable& variable = m_program.at(id);
     m_printer.print(variable.name);
@@ -482,8 +473,6 @@ static WordOfMentionKey wordOfMentionKeyAt(NumberSpace space, std::span<const ui
         return WordOfMentionKey::Module;
     case NumberSpace::ModuleBuiltinCell:
         return index ? WordOfMentionKey::Module : WordOfMentionKey::Builtin;
-    case NumberSpace::FilledFiles:
-        return WordOfMentionKey::GroupOfFiles;
     case NumberSpace::DataCell:
     case NumberSpace::DataStorage:
     case NumberSpace::DataElements:
@@ -594,12 +583,6 @@ void NamesInBytesText::printWord(WordOfMentionKey kind, uint32_t word)
             m_out.print(WTF::enumName(key->kind()), " "_s);
             m_printer.print(key->builtin());
         } else
-            m_out.print("?"_s, word);
-        return;
-    case WordOfMentionKey::GroupOfFiles:
-        if (word < m_plan.staticsGroups().groups.size())
-            printModuleName(m_plan.staticsGroups().groups[word].firstFile);
-        else
             m_out.print("?"_s, word);
         return;
     case WordOfMentionKey::ClassSide:

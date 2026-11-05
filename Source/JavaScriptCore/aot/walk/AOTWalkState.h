@@ -152,6 +152,9 @@ enum class FactOfCell : uint8_t {
     IsLikelyAsConstructed = 1 << 5,
     // It has no property of its own but under the names that its layout has fields for, and no element: orderWordHasExtraProperties is clear. Whatever lays one there is declared as a write of NamedProperties.
     NoExtraProperties = 1 << 6,
+    // shapeWordIsUnmarked is set: its birth is over, and every field of the birth lies filled in its slot. More than NoFieldOutsideSlot, which holds of a new object from its allocation on.
+    // Whatever takes a field out of its slot or empties one is declared as a write of NamedProperties or of ShapeWords.
+    BearsNoMark = 1 << 7,
 };
 
 // What holds at the present point of the walk beyond the proven type of each value, which Code has.
@@ -421,23 +424,6 @@ public:
     void meetWith(const WalkState& other);
     // AOTWalkKnownHandlers.cpp. Of the objects that are not fresh: each place and element whose value the lambda names is known no longer.
     void endPlacesHolding(NOESCAPE const ScopedLambda<bool(Reference value)>& isEnded);
-
-    // ---- AOTWalkStateKnownJoins.cpp. What KnownJoin asks of the states of the ways into a join before they are met.
-    struct NameOfPlace {
-        // As PlaceKind, number for number.
-        enum class Kind : uint8_t { Slot, Variable, EnvironmentField, Element, GuardOfStores, GuardOfReads };
-
-        Kind kind { Kind::Slot };
-        // Null for a variable and for a guard.
-        Reference holder;
-        // As Place::first and Place::second.
-        uint32_t first { 0 };
-        uint32_t second { 0 };
-
-        friend bool operator==(const NameOfPlace&, const NameOfPlace&) = default;
-    };
-    // Null: not known.
-    Reference valueAt(const NameOfPlace&) const;
 
     // That nothing was done is something that the state knows: whoever passes over a meet with an empty state may not pass over this.
     bool isEmpty() const { return !m_turnInWhichNothingWasDone && (!m_held || m_held->isEmpty()) && m_answers.isEmpty(); }

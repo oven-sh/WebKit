@@ -105,19 +105,6 @@ ArrayStorage arrayStorageAtAllocation(const TypeArena& types, TypeID elements)
     return arrayStorageWithFormFor(arrayStorageHolding(types, elements));
 }
 
-ArrayStorage arrayStorageOfLiteral(const Program& program, const TypeArena& types, TypeID array, ArrayLiteralParts parts)
-{
-    // The run time gives a long run of holes storage without a form, and the parts do not say how long the run is.
-    if (parts.hasHoles)
-        return ArrayStorage::Other;
-    ArrayStorage declared = arrayStorageDeclaredBy(program, types, array).predicted();
-    // A literal without an element has the declared kind, or a more general one that the arrays of its site have turned into, and none is more general than Contiguous.
-    if (!parts.hasElements)
-        return declared == ArrayStorage::Contiguous ? ArrayStorage::Contiguous : ArrayStorage::Other;
-    // A list of numbers that does not fit its kind is found when code is generated or when the literal runs.
-    return arrayStorageWithFormFor(declared) == ArrayStorage::Contiguous ? ArrayStorage::Contiguous : ArrayStorage::Other;
-}
-
 ArrayStorage arrayStorageOfData(const Program& program, const DataNode::Array& array)
 {
     bool areInt32 = true;
@@ -151,38 +138,6 @@ bool isStorageOfArray(const DataNode::Array& array)
         }
         RELEASE_ASSERT_NOT_REACHED();
     });
-}
-
-// Every node counts, leaves and holes too.
-bool isDataWrittenOutForItsSizeAlone(const DataNode& root)
-{
-    uint32_t numberOfNodes = 0;
-    Vector<const DataNode*, maxNodesOfExpandedData> pending { &root };
-    while (!pending.isEmpty()) {
-        const DataNode& node = *pending.takeLast();
-        if (node.is<DataNode::Object>() || ++numberOfNodes > maxNodesOfExpandedData)
-            return false;
-        const auto* array = node.tryAs<DataNode::Array>();
-        if (!array)
-            continue;
-        if (array->elements.size() > maxNodesOfExpandedData)
-            return false;
-        for (const DataNode& element : array->elements)
-            pending.append(&element);
-    }
-    return true;
-}
-
-// Only NewContiguousArray and NewDoubleArray always make their kind. At a length where the engine makes sparse arrays, NewArrayLike and NewArrayWithCapacity make what the engine makes.
-std::optional<ArrayStorage> arrayStorageOfNewHoles(Opcode allocation, ArrayStorage named)
-{
-    if (allocation == Opcode::NewContiguousArray)
-        return ArrayStorage::Contiguous;
-    if (allocation == Opcode::NewDoubleArray)
-        return ArrayStorage::Double;
-    if (allocation == Opcode::NewArrayLike || allocation == Opcode::NewArrayWithCapacity)
-        return arrayStorageWithFormFor(named);
-    return std::nullopt;
 }
 
 bool canStoreWithoutConversion(const TypeArena& types, ArrayStorage kind, TypeID stored)

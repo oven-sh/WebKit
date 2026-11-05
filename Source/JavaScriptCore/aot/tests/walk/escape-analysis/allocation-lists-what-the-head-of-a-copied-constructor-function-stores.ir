@@ -16,13 +16,13 @@
 # FEWEST: = NewObject {{*}}fields=[0, 1, 2, 3, 4, 5]
 # RUN(NEVER): walk f2 mechanisms=all
 # NEVER-NOT: PutSlot
-# NEVER-NOT: TryFinishBirth
 # the looks stand behind the allocation, and the other way is a call of the body on another cell
 # RUN(LOOKS): walk f2 mechanisms=all
 # LOOKS-LABEL: code f2:Body
 # LOOKS: [[made]]: {{*}} = NewObject {{*}}fields=[
 # LOOKS: = HasLayoutPrototype [[made]]
 # LOOKS: = CallDirect {{*}}function=f1 {{*}}[isConstruction]
+# LOOKS-NEXT: = TryFinishBirth
 
 module m0 path="allocation-lists-what-the-head-of-a-copied-constructor-function-stores.ts" displayPath="allocation-lists-what-the-head-of-a-copied-constructor-function-stores.ts" body=f0 namespaceLayout=L(m0)
 module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)

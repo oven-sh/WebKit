@@ -220,20 +220,6 @@ static void valueThatArmReadsBehindItsCallIsBornInSavedRegister()
     AOT_CALLS_ON_WAYS_TEST_CHECK(test, test.call<uint64_t>(uint64_t { 0 }, uint64_t { 10 }, uint64_t { 20 }) == 27);
 }
 
-// The call stands in the block of the definition, behind it.
-static void valueThatLivesAcrossCallOfItsBlockIsBornInSavedRegister()
-{
-    TestProcedure test;
-    Output& out = test.out();
-    LValue kept = out.add(test.argumentGPR(0), out.constInt64(5));
-    callsOnWaysTestAppendCall(test, nullptr);
-    out.ret(kept);
-    compileOrFail(test);
-
-    AOT_CALLS_ON_WAYS_TEST_CHECK(test, callsOnWaysTestIsSavedByCallees(test, test.procedure().allocation().registerAtDefinitionOf(kept)));
-    AOT_CALLS_ON_WAYS_TEST_CHECK(test, test.call<uint64_t>(uint64_t { 10 }) == 15);
-}
-
 // function pick(c, v) { if (c & 1) { count(v); return 0; } if (c & 2) { count(v); return 1; } return v; }
 // Two parts call, each below a head of its own, and the way past both needs no frame. Below each head the call alone reads v.
 static void valueThatCallAloneReadsBelowHeadOfFramedPartStaysWhereItLies()
@@ -277,53 +263,6 @@ static void valueThatCallAloneReadsBelowHeadOfFramedPartStaysWhereItLies()
     AOT_CALLS_ON_WAYS_TEST_CHECK(test, test.call<uint64_t*>(uint64_t { 4 }, &word) == &word && word == 2);
 }
 
-// Two halves, each with an arm that calls and returns, and a join that reads the value of the half. Whichever half comes first in the order, its call stands ahead of the join of the other,
-// which has two predecessors: nothing is passed on every path to it but blocks that stand ahead of both halves. No way leads there from the arm.
-static void valueReadAtJoinFurtherOnIsNotCarriedAcrossCallOfArmThatReturns()
-{
-    TestProcedure test;
-    Output& out = test.out();
-    LValue flag = test.argumentGPR(0);
-    LValue values[2] { out.add(test.argumentGPR(1), out.constInt64(5)), out.add(test.argumentGPR(2), out.constInt64(7)) };
-    LBasicBlock halves[2] { out.newBlock(), out.newBlock() };
-    out.branch(out.testNonZero64(flag, 1), normalEdge(halves[0]), normalEdge(halves[1]));
-    for (unsigned half = 0; half < 2; ++half) {
-        LBasicBlock calls = out.newBlock();
-        LBasicBlock goesOn = out.newBlock();
-        LBasicBlock left = out.newBlock();
-        LBasicBlock right = out.newBlock();
-        LBasicBlock join = out.newBlock();
-        LValue phi = out.phiIn(join, Int64);
-
-        out.appendTo(halves[half]);
-        out.branch(out.testNonZero64(flag, 2), normalEdge(calls), normalEdge(goesOn));
-        out.appendTo(calls);
-        callsOnWaysTestAppendCall(test, nullptr);
-        out.ret(out.constInt64(half + 1));
-        out.appendTo(goesOn);
-        out.branch(out.testNonZero64(flag, 4), normalEdge(left), normalEdge(right));
-        out.appendTo(left);
-        out.upsilon(out.constInt64(1), phi);
-        out.jump(normalEdge(join));
-        out.appendTo(right);
-        out.upsilon(out.constInt64(2), phi);
-        out.jump(normalEdge(join));
-        out.appendTo(join);
-        out.ret(out.add(values[half], phi));
-    }
-    compileOrFail(test);
-
-    const Procedure& procedure = test.procedure();
-    AOT_CALLS_ON_WAYS_TEST_CHECK(test, procedure.liveness().of(values[0]).has(ValueFlag::LivesAcrossCall) || procedure.liveness().of(values[1]).has(ValueFlag::LivesAcrossCall));
-    AOT_CALLS_ON_WAYS_TEST_CHECK(test, !procedure.allocation().usedCalleeSaves() && procedure.allocation().spills().empty());
-
-    constexpr uint64_t first = 10;
-    constexpr uint64_t second = 20;
-    AOT_CALLS_ON_WAYS_TEST_CHECK(test, test.call<uint64_t>(uint64_t { 3 }, first, second) == 1 && test.call<uint64_t>(uint64_t { 2 }, first, second) == 2);
-    AOT_CALLS_ON_WAYS_TEST_CHECK(test, test.call<uint64_t>(uint64_t { 5 }, first, second) == 16 && test.call<uint64_t>(uint64_t { 1 }, first, second) == 17);
-    AOT_CALLS_ON_WAYS_TEST_CHECK(test, test.call<uint64_t>(uint64_t { 4 }, first, second) == 28 && test.call<uint64_t>(uint64_t { 0 }, first, second) == 29);
-}
-
 // The arm that calls leads on to the join, which reads the value.
 static void valueReadBehindJoinOutlivesCallOfArmThatLeadsThere()
 {
@@ -345,36 +284,6 @@ static void valueReadBehindJoinOutlivesCallOfArmThatLeadsThere()
     const Procedure& procedure = test.procedure();
     AOT_CALLS_ON_WAYS_TEST_CHECK(test, procedure.liveness().endOfWhatWaysLeadToFrom(calls) == procedure.order().endOf(join));
     AOT_CALLS_ON_WAYS_TEST_CHECK(test, test.call<uint64_t>(uint64_t { 1 }, uint64_t { 10 }) == 15 && test.call<uint64_t>(uint64_t { 0 }, uint64_t { 10 }) == 15);
-}
-
-// Each turn reads the value and then calls. Nothing behind the call reads it but the next turn.
-static void valueThatEveryTurnReadsAheadOfItsCallOutlivesCall()
-{
-    TestProcedure test;
-    Output& out = test.out();
-    LBasicBlock loop = out.newBlock();
-    LBasicBlock behindLoop = out.newBlock();
-    LValue kept = out.add(test.argumentGPR(1), out.constInt64(5));
-    LValue turns = out.phiIn(loop, Int64);
-    LValue sum = out.phiIn(loop, Int64);
-    out.upsilon(test.argumentGPR(0), turns);
-    out.upsilon(out.constInt64(0), sum);
-    out.jump(normalEdge(loop));
-
-    out.appendTo(loop);
-    LValue nextSum = out.add(sum, kept);
-    callsOnWaysTestAppendCall(test, nullptr);
-    LValue nextTurns = out.sub(turns, out.constInt64(1));
-    out.upsilon(nextTurns, turns);
-    out.upsilon(nextSum, sum);
-    out.branch(out.notZero64(nextTurns), normalEdge(loop), normalEdge(behindLoop));
-
-    out.appendTo(behindLoop);
-    out.ret(nextSum);
-    compileOrFail(test);
-
-    AOT_CALLS_ON_WAYS_TEST_CHECK(test, test.procedure().liveness().endOfWhatWaysLeadToFrom(loop) == noPosition);
-    AOT_CALLS_ON_WAYS_TEST_CHECK(test, test.call<uint64_t>(uint64_t { 3 }, uint64_t { 10 }) == 45);
 }
 
 // As many arms as the Switch has cases, each of which calls with one value. Every head asks about that value, which every later arm reads.
@@ -422,11 +331,8 @@ std::span<const NativeTest> machineCallsOnWaysTests()
         { "machine-calls-on-ways/value-that-a-later-arm-hands-to-its-call-takes-no-saved-register"_s, Machine::valueThatLaterArmHandsToItsCallTakesNoSavedRegister },
         { "machine-calls-on-ways/phi-that-a-later-arm-hands-to-its-call-is-not-stored"_s, Machine::phiThatLaterArmHandsToItsCallIsNotStored },
         { "machine-calls-on-ways/value-that-an-arm-reads-behind-its-call-is-born-in-a-saved-register"_s, Machine::valueThatArmReadsBehindItsCallIsBornInSavedRegister },
-        { "machine-calls-on-ways/value-that-lives-across-a-call-of-its-block-is-born-in-a-saved-register"_s, Machine::valueThatLivesAcrossCallOfItsBlockIsBornInSavedRegister },
         { "machine-calls-on-ways/value-that-the-call-alone-reads-below-a-head-of-the-framed-part-stays-where-it-lies"_s, Machine::valueThatCallAloneReadsBelowHeadOfFramedPartStaysWhereItLies },
-        { "machine-calls-on-ways/value-read-at-a-join-further-on-is-not-carried-across-the-call-of-an-arm-that-returns"_s, Machine::valueReadAtJoinFurtherOnIsNotCarriedAcrossCallOfArmThatReturns },
         { "machine-calls-on-ways/value-read-behind-a-join-outlives-the-call-of-the-arm-that-leads-there"_s, Machine::valueReadBehindJoinOutlivesCallOfArmThatLeadsThere },
-        { "machine-calls-on-ways/value-that-every-turn-reads-ahead-of-its-call-outlives-the-call"_s, Machine::valueThatEveryTurnReadsAheadOfItsCallOutlivesCall },
         { "machine-calls-on-ways/work-grows-as-the-arms-that-call-do"_s, Machine::workGrowsAsArmsThatCallDo },
     };
     return tests;

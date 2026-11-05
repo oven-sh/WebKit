@@ -29,7 +29,7 @@
 
 #if ENABLE(B3_JIT)
 
-#include <JavaScriptCore/MacroAssembler.h>
+#include "MacroAssembler.h"
 #include <wtf/SequesteredMalloc.h>
 #include <wtf/TZoneMalloc.h>
 

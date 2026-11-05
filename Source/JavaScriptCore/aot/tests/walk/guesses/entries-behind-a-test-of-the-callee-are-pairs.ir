@@ -1,7 +1,7 @@
 # const entries = given.entries, other = given.other;
 # function clone(object, made) { for (const [property, value] of entries(object)) made[property] = value; return made; }   function cloneByOther(object, made) { .. of other(object) .. }
 # DOMPurify's clone(), in a module that may run again. What is called is only expected to be Object.entries, so the call stands behind a test of the callee, and the arm as written brings a list of pairs.
-# Until 11-04 01:4x the typed arm made the flat list of keys and values that only the loop behind it can read, the two met in front of the loop, and the loop read what had met as flat:
+# The typed arm once made the flat list of keys and values that only the loop behind it can read, the two met in front of the loop, and the loop read what had met as flat:
 # the walk stopped ("GetArrayLength, operand 0: it is anything?ResultOfUnknownCallee, and Array is taken"); had the types fitted, the pairs would have been read as keys and values.
 # OPTIONS: check=Validate
 # RUN: walk f1:Body mechanisms=all

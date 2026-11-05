@@ -1,0 +1,57 @@
+# The wait stands right behind a call whose one callee is an async function: the promise has just been made, so a `then` that the program has laid on another promise of that function is not asked, and the value is what the function returns.
+# f1 = kindOf
+# -- source: wait-behind-a-call-of-one-async-function-takes-the-value-of-its-promise.js
+# async function load() { return 1; }
+# function kindOf(v) { return typeof v; }
+# async function use(f) { const v = await f(); return kindOf(v); }
+# const kept = load();
+# kept.then = function (done) { done("text"); };
+# use(load);
+# -- end of source
+# records of e58980311a5712fb
+# RUN(LINK): link functions mechanisms=all
+# LINK: function f1
+# LINK-NEXT: parameter 0 expected=i32 proven=i32
+
+module m0 path="wait-behind-a-call-of-one-async-function-takes-the-value-of-its-promise.js" displayPath="wait-behind-a-call-of-one-async-function-takes-the-value-of-its-promise.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+variable g0 name="kindOf" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f2 @0
+    v1 = Convert v0 declared={type=f2 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f3 @0
+    v3 = Convert v2 declared={type=f3 flags=[IsFromCompiler]} @0
+    v4 = Call v1 calleeName="load" @154
+    v5 = NewClosure function=f4 @174
+    PropSet v4, v5 key="then" @162
+    v7 = Call v3, -, v1 calleeName="use" @209
+    v8 = Undefined @209
+    Return v8 @209
+}
+function f1 name="kindOf" module=m0 position=36 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = TypeOf v0 @64
+    Return v1 @64
+}
+function f2 name="load" module=m0 flags=[IsAsync, HasThis, HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = Integer integer=1 @31
+    Return v1 @31
+}
+function f3 name="use" module=m0 position=76 flags=[IsAsync, HasThis, HasExplicitName] length=1 syntax=[HasWrittenAwait] thisType={type=anything} parameters=[{type=undefined|null|function flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, IsNeverCalledByHost] {
+  b0(v0: anything, v1: undefined|null|function):
+    v2 = Call v1 calleeName="f" @116
+    v3 = Await v2, v1 @116
+    v4 = GetModuleVariable variable=g0 @128
+    v5 = Call v4, -, v3 calleeName="kindOf" @128
+    Return v5 @128
+}
+function f4 module=m0 position=174 length=1 thisType={type=anything} parameters=[{type=undefined|null|function flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|function):
+    v1 = String string="text" @197
+    v2 = Call v0, -, v1 calleeName="done" @192
+    v3 = Undefined @192
+    Return v3 @192
+}
+function f5 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]

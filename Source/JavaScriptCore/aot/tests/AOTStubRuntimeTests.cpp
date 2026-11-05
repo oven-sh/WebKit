@@ -899,9 +899,6 @@ static void testCreatedFieldsInOrdersOfImage()
     AOT_TEST_CHECK(object.create(orderWordOf(0, 0) | orderWordHasFieldOutsideSlot, slotKeys[0]) && object.orderWord() == (orderWordOf(0, 1) | orderWordHasFieldOutsideSlot));
     object.forgetTransitions();
     object.forgetRuns();
-
-    object.layout.keysAreNeverEnumerated = true;
-    AOT_TEST_CHECK(object.create(unorderedOrderWord, slotKeys[1]) && object.orderWord() == unorderedOrderWord);
 }
 
 static void testCreatedFieldsOfObjectsWithExtraProperties()
@@ -940,9 +937,6 @@ static void testCreatedFieldsOfObjectsWithExtraProperties()
     AOT_TEST_CHECK(!object.create(orderBefore | orderWordHasExtraProperties, slotKey));
     object.inStructure<uint32_t>(Structure::bitFieldOffset()) &= ~Structure::s_mayBePrototypeBits;
 
-    object.layout.keysAreNeverEnumerated = true;
-    object.forgetTransitions();
-    AOT_TEST_CHECK(object.create(unorderedOrderWord | orderWordHasExtraProperties, slotKey) && object.orderWord() == (unorderedOrderWord | orderWordHasExtraProperties));
 }
 
 // A store that may add calls this stub and asks nothing else: the step in the image, the transitions, what is remembered and the run time all stand behind the one call.

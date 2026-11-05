@@ -54,10 +54,6 @@ public:
     void stopUnlessNativeResultIsAsWritten(const ValueContext&, Boxed result, BuiltinID called, bool constructs);
 
 private:
-    Boxed readCachedGetter(const ValueContext&, const BuiltinOverload&, uint32_t offsetOfCachedValue);
-    Boxed loadProperty(CellPointer object, PropertyOffset);
-    Vector<BuiltinOverloadID, 4> ownSlotsReadBy(const ValueContext&, const BuiltinOverload&);
-    Boxed readOwnSlot(const ValueContext&, const BuiltinOverload&);
     Boxed callCustomGetter(const OperationContext&, BuiltinOverloadID, Boxed receiver, bool receiverIsMatched);
     struct DirectOperands {
         Vector<LValue, 8> words;

@@ -137,7 +137,6 @@ JS_EXPORT_PRIVATE DistancesByShape distancesByShape(std::span<const DistanceOfSh
 
 struct PlacedShape {
     LayoutID layout;
-    bool keysAreNeverEnumerated { false };
     OptionSet<ObjectMutation> impossibleMutations;
 };
 

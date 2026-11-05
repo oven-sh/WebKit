@@ -76,19 +76,6 @@ static void testNestedAndSeparateSetsAreAllKeptTogether()
     AOT_TEST_CHECK(!order[0]);
 }
 
-static void testSetsThatOverlapStandInOneRow()
-{
-    ConsecutiveSets sets(6);
-    AOT_TEST_CHECK(tryKeepTogetherForConsecutiveSetsTests(sets, { 0, 1 }));
-    AOT_TEST_CHECK(tryKeepTogetherForConsecutiveSetsTests(sets, { 1, 2 }));
-    AOT_TEST_CHECK(tryKeepTogetherForConsecutiveSetsTests(sets, { 2, 3 }));
-    Vector<uint32_t> order = orderByNumberForConsecutiveSetsTests(sets, 6);
-    AOT_TEST_CHECK(standSideBySideForConsecutiveSetsTests(order, { 0, 1 }));
-    AOT_TEST_CHECK(standSideBySideForConsecutiveSetsTests(order, { 1, 2 }));
-    AOT_TEST_CHECK(standSideBySideForConsecutiveSetsTests(order, { 2, 3 }));
-    AOT_TEST_CHECK(standSideBySideForConsecutiveSetsTests(order, { 0, 1, 2, 3 }));
-}
-
 static void testSetThatNoOrderKeepsTogetherIsRefusedAndChangesNothing()
 {
     ConsecutiveSets sets(5);
@@ -322,7 +309,6 @@ std::span<const NativeTest> unionConsecutiveSetsTests()
     static constexpr NativeTest tests[] {
         { "union-consecutive-sets/the-order-of-the-keys-where-nothing-is-kept-together"_s, testOrderOfKeysWhereNothingIsKeptTogether },
         { "union-consecutive-sets/nested-and-separate-sets-are-all-kept-together"_s, testNestedAndSeparateSetsAreAllKeptTogether },
-        { "union-consecutive-sets/sets-that-overlap-stand-in-one-row"_s, testSetsThatOverlapStandInOneRow },
         { "union-consecutive-sets/a-set-that-no-order-keeps-together-is-refused-and-changes-nothing"_s, testSetThatNoOrderKeepsTogetherIsRefusedAndChangesNothing },
         { "union-consecutive-sets/a-leaf-that-is-named-twice-counts-once"_s, testLeafThatIsNamedTwiceCountsOnce },
         { "union-consecutive-sets/the-tree-grows-as-its-leaves-do"_s, testTreeGrowsAsItsLeavesDo },

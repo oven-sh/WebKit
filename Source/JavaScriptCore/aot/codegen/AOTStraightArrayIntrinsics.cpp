@@ -21,9 +21,7 @@ OpcodeSet StraightEmitter::opcodesOfArrayIntrinsics()
 {
     return {
         Opcode::IsPristineArray, Opcode::ArrayStorageKind,
-        Opcode::HasContiguousIndex, Opcode::GetContiguousIndex, Opcode::GetDoubleIndex, Opcode::PutContiguousIndex, Opcode::PutDoubleIndex,
-        Opcode::GetOwnContiguousIndex, Opcode::GetOwnDoubleIndex, Opcode::GetOwnInt32Index,
-        Opcode::PutOwnContiguousIndex, Opcode::PutOwnDoubleIndex, Opcode::PutOwnInt32Index,
+        Opcode::HasContiguousIndex, Opcode::GetContiguousIndex, Opcode::GetDoubleIndex,
         Opcode::NewContiguousArray, Opcode::NewDoubleArray, Opcode::NewArrayLike, Opcode::NewArrayWithCapacity,
         Opcode::TryPutByValDirect, Opcode::TryPutIndex, Opcode::TryCopyFilledElements, Opcode::TryPutElements, Opcode::TryFillNewArray,
         Opcode::GrowNewArray, Opcode::TruncateNewArray,
@@ -54,22 +52,13 @@ static void loadIntegerOperandOfList(StraightEmitter& emitter, ValueID operand, 
     }
     emitter.load(operand, integer);
     CCallHelpers::Jump isInt32 = jit.branchIfInt32(integer);
-    jit.unboxDoubleWithoutAssertions(integer, integer, StraightEmitter::resultFPR);
-    jit.truncateDoubleToInt64(StraightEmitter::resultFPR, integer);
+    FPRReg number = emitter.takeResultFPR();
+    jit.unboxDoubleWithoutAssertions(integer, integer, number);
+    jit.truncateDoubleToInt64(number, integer);
     CCallHelpers::Jump isConverted = jit.jump();
     isInt32.link(&jit);
     jit.signExtend32ToPtr(integer, integer);
     isConverted.link(&jit);
-}
-
-static CCallHelpers::BaseIndex elementOfList(StraightEmitter& emitter, const BodyValue& value)
-{
-    GPRReg storage = StraightEmitter::temporary(1);
-    GPRReg position = StraightEmitter::temporary(2);
-    emitter.load(value.arrayOperand(), storage);
-    emitter.jit().loadPtr(CCallHelpers::Address(storage, JSObject::butterflyOffset()), storage);
-    loadIntegerOperandOfList(emitter, value.positionOperand(), position);
-    return CCallHelpers::BaseIndex(storage, position, CCallHelpers::TimesEight);
 }
 
 static CCallHelpers::BaseIndex elementBelowLengthOfList(StraightEmitter& emitter, const BodyValue& value, ArrayStorage kind, CCallHelpers::JumpList& isAbsent)
@@ -118,13 +107,14 @@ static void generateIsPristineArray(StraightEmitter& emitter, const BodyValue& v
     CCallHelpers& jit = emitter.jit();
     GPRReg tested = StraightEmitter::temporary(1);
     emitter.load(value.valueOperand(), tested);
-    jit.move(CCallHelpers::TrustedImm32(0), StraightEmitter::resultGPR);
+    GPRReg result = emitter.takeResultRegister();
+    jit.move(CCallHelpers::TrustedImm32(0), result);
     CCallHelpers::JumpList isNoArray;
     isNoArray.append(jit.branchIfNotCell(tested));
     isNoArray.append(jit.branchIfNotType(tested, JSTypeRange { ArrayType, DerivedArrayType }));
-    jit.test8(CCallHelpers::NonZero, CCallHelpers::Address(tested, JSCell::typeInfoFlagsOffset()), CCallHelpers::TrustedImm32(JSC::IsPristine), StraightEmitter::resultGPR);
+    jit.test8(CCallHelpers::NonZero, CCallHelpers::Address(tested, JSCell::typeInfoFlagsOffset()), CCallHelpers::TrustedImm32(JSC::IsPristine), result);
     isNoArray.link(&jit);
-    emitter.defineBoolean(value);
+    emitter.defineBoolean(value, result);
 }
 
 static void generateArrayStorageKind(StraightEmitter& emitter, const BodyValue& value)
@@ -132,8 +122,7 @@ static void generateArrayStorageKind(StraightEmitter& emitter, const BodyValue& 
     static_assert(Int32Shape + 2 == DoubleShape && DoubleShape + 2 == ContiguousShape && Int32Shape >= 2);
     static_assert(!static_cast<int32_t>(ArrayStorage::Other) && static_cast<int32_t>(ArrayStorage::Int32) == 1 && static_cast<int32_t>(ArrayStorage::Double) == 2 && static_cast<int32_t>(ArrayStorage::Contiguous) == 3);
     CCallHelpers& jit = emitter.jit();
-    GPRReg kind = StraightEmitter::resultGPR;
-    emitter.load(value.arrayOperand(), kind);
+    GPRReg kind = emitter.loadIntoResultRegister(value.arrayOperand());
     jit.load8(CCallHelpers::Address(kind, JSCell::indexingTypeAndMiscOffset()), kind);
     jit.and32(CCallHelpers::TrustedImm32(arrayStorageTestMask), kind);
     jit.sub32(CCallHelpers::TrustedImm32(Int32Shape - 2), kind);
@@ -142,18 +131,6 @@ static void generateArrayStorageKind(StraightEmitter& emitter, const BodyValue& 
     jit.move(CCallHelpers::TrustedImm32(static_cast<int32_t>(ArrayStorage::Other)), kind);
     hasForm.link(&jit);
     emitter.defineInt32(value, kind);
-}
-
-static void generatePutContiguousIndex(StraightEmitter& emitter, const BodyValue& value)
-{
-    CCallHelpers::BaseIndex element = elementOfList(emitter, value);
-    emitter.load(value.valueOperand(), StraightEmitter::resultGPR);
-    emitter.jit().store64(StraightEmitter::resultGPR, element);
-    if (emitter.isConstant(value.valueOperand()))
-        return;
-    GPRReg array = StraightEmitter::temporary(1);
-    emitter.load(value.arrayOperand(), array);
-    emitter.barrierAfterStore(array);
 }
 
 static void generateNewArrayOfHoles(StraightEmitter& emitter, const BodyValue& value, ValueID source, ArrayStorage kind, uint32_t flags)
@@ -196,55 +173,29 @@ void StraightEmitter::generateArrayIntrinsic(const BodyValue& value)
     case Opcode::ArrayStorageKind:
         generateArrayStorageKind(*this, value);
         return;
-    case Opcode::HasContiguousIndex:
-        loadContiguousElementOrEmpty(*this, value, resultGPR);
-        jit().test64(CCallHelpers::NonZero, resultGPR, resultGPR, resultGPR);
-        defineBoolean(value);
+    case Opcode::HasContiguousIndex: {
+        GPRReg result = takeResultRegister();
+        loadContiguousElementOrEmpty(*this, value, result);
+        jit().test64(CCallHelpers::NonZero, result, result, result);
+        defineBoolean(value, result);
         return;
+    }
     case Opcode::GetContiguousIndex: {
-        loadContiguousElementOrEmpty(*this, value, resultGPR);
-        CCallHelpers::Jump isFilled = jit().branchTest64(CCallHelpers::NonZero, resultGPR);
-        jit().move(CCallHelpers::TrustedImm64(JSValue::encode(jsUndefined())), resultGPR);
+        GPRReg result = takeResultRegister();
+        loadContiguousElementOrEmpty(*this, value, result);
+        CCallHelpers::Jump isFilled = jit().branchTest64(CCallHelpers::NonZero, result);
+        jit().move(CCallHelpers::TrustedImm64(JSValue::encode(jsUndefined())), result);
         isFilled.link(&jit());
-        define(value);
+        define(value, result);
         return;
     }
     case Opcode::GetDoubleIndex: {
         CCallHelpers::JumpList isAbsent;
-        jit().move(CCallHelpers::TrustedImm64(static_cast<int64_t>(arrayStorageFormOf(ArrayStorage::Double).hole)), resultGPR);
-        jit().load64(elementBelowLengthOfList(*this, value, ArrayStorage::Double, isAbsent), resultGPR);
+        GPRReg result = takeResultRegister();
+        jit().move(CCallHelpers::TrustedImm64(static_cast<int64_t>(arrayStorageFormOf(ArrayStorage::Double).hole)), result);
+        jit().load64(elementBelowLengthOfList(*this, value, ArrayStorage::Double, isAbsent), result);
         isAbsent.link(&jit());
-        defineBitsOfDouble(*this, value, resultGPR);
-        return;
-    }
-    case Opcode::GetOwnContiguousIndex:
-        jit().load64(elementOfList(*this, value), resultGPR);
-        define(value);
-        return;
-    case Opcode::GetOwnDoubleIndex:
-        jit().load64(elementOfList(*this, value), resultGPR);
-        defineBitsOfDouble(*this, value, resultGPR);
-        return;
-    case Opcode::GetOwnInt32Index:
-        jit().load32(elementOfList(*this, value), resultGPR);
-        defineInt32(value);
-        return;
-    case Opcode::PutContiguousIndex:
-    case Opcode::PutOwnContiguousIndex:
-        generatePutContiguousIndex(*this, value);
-        return;
-    case Opcode::PutDoubleIndex:
-    case Opcode::PutOwnDoubleIndex: {
-        CCallHelpers::BaseIndex element = elementOfList(*this, value);
-        load(value.valueOperand(), resultGPR);
-        unboxNumber(resultGPR, resultFPR);
-        jit().storeDouble(resultFPR, element);
-        return;
-    }
-    case Opcode::PutOwnInt32Index: {
-        CCallHelpers::BaseIndex element = elementOfList(*this, value);
-        loadIntegerOperandOfList(*this, value.valueOperand(), resultGPR);
-        jit().store32(resultGPR, element);
+        defineBitsOfDouble(*this, value, result);
         return;
     }
     case Opcode::NewContiguousArray:
@@ -269,7 +220,7 @@ void StraightEmitter::generateArrayIntrinsic(const BodyValue& value)
     case Opcode::TryPutIndex:
     case Opcode::TryPutElements:
     case Opcode::TryFillNewArray:
-        jit().move(CCallHelpers::TrustedImm32(JSValue::ValueFalse), resultGPR);
+        jit().move(CCallHelpers::TrustedImm32(JSValue::ValueFalse), takeResultRegister());
         define(value);
         return;
     case Opcode::GrowNewArray:

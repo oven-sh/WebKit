@@ -1,6 +1,5 @@
 # the twin from source of what-is-written-as-a-number-is-reported-though-int32-is-expected.ir: what is read out of a place that is written as a number asks for a proof, whatever a guess would ask it for
 # the body takes the read into a bit operator, so int32 is expected of it, and a test stands behind every guess. None stands behind the report, so the build reports
-# green without the port too: it holds what the port may not take away. Its red control stands in RED.txt under "what is written as a number is reported as written", and it speaks only in a build that calls numbersExpectedOf()
 # f1 = lineOf
 # -- source: what-is-written-as-a-number-is-reported-though-int32-is-expected-from-source.ts
 # declare function sink(...values: unknown[]): void;

@@ -48,20 +48,6 @@ inline const X86EmittedJump& findEmittedJump(std::span<const X86EmittedJump> emi
     return *found;
 }
 
-inline void assignX86JumpKinds(Vector<X86LinkedJump>& linkedJumps, std::span<const X86EmittedJump> emittedJumps)
-{
-    if (!std::ranges::is_sorted(linkedJumps, { }, &X86LinkedJump::from))
-        std::ranges::sort(linkedJumps, { }, &X86LinkedJump::from);
-    size_t next = 0;
-    for (X86LinkedJump& jump : linkedJumps) {
-        while (next < emittedJumps.size() && emittedJumps[next].from < jump.from)
-            ++next;
-        RELEASE_ASSERT(next < emittedJumps.size() && emittedJumps[next].from == jump.from);
-        jump.kind = emittedJumps[next].kind;
-        jump.condition = emittedJumps[next].condition;
-    }
-}
-
 inline void collectX86LinkedJumps(std::span<const uint8_t> code, std::span<const X86EmittedJump> emittedJumps, Vector<uint32_t>& jumpsToNextInstruction, Vector<X86LinkedJump>& linkedJumps)
 {
     ASSERT(linkedJumps.isEmpty());
@@ -83,30 +69,6 @@ inline void collectX86LinkedJumps(std::span<const uint8_t> code, std::span<const
         linkedJumps.append(X86LinkedJump { jump.from, jump.from + distance, jump.kind, jump.condition });
     }
     RELEASE_ASSERT(nextListed == endListed);
-}
-
-inline uint32_t shortenedJumpShiftAt(std::span<const X86JumpShift> shifts, uint32_t offset, size_t& cursor)
-{
-    static constexpr size_t maxLinearSteps = 8;
-    auto upperBound = [&](size_t begin, size_t end) {
-        auto found = std::upper_bound(shifts.begin() + begin, shifts.begin() + end, offset, [](uint32_t offset, const X86JumpShift& entry) {
-            return offset < entry.from;
-        });
-        return static_cast<size_t>(found - shifts.begin());
-    };
-
-    size_t index = cursor;
-    if (index && offset < shifts[index - 1].from)
-        index = upperBound(0, index - 1);
-    else {
-        size_t limit = std::min(shifts.size(), index + maxLinearSteps);
-        while (index < limit && shifts[index].from <= offset)
-            ++index;
-        if (index == limit)
-            index = upperBound(limit, shifts.size());
-    }
-    cursor = index;
-    return index ? shifts[index - 1].shift : 0;
 }
 
 template<size_t inlineCapacity>

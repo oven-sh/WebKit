@@ -21,12 +21,6 @@ namespace JSC { namespace AOT { namespace Typed {
 class Facts;
 class Program;
 
-// What `typeof` answers. Names of the built-ins' table, which every program holds.
-inline constexpr NamedBuiltinName namesAnsweredByTypeOf[] {
-    BuiltinNames::undefined, BuiltinNames::bigint, BuiltinNames::boolean, BuiltinNames::number,
-    BuiltinNames::string, BuiltinNames::symbol, BuiltinNames::object, BuiltinNames::function,
-};
-
 // The types that the built-ins' table writes, in the one type domain. Pure functions of their arguments: the Facts rules, the result rules and the walk ask the same ones.
 
 struct BuiltinTypeContext {
@@ -82,8 +76,6 @@ struct OperandFit {
 // AOTBuiltinTypes.cpp
 // `operands`: what a type that is relative to the operands of a call is relative to. Without them such a part is any value of its kind.
 TypeID typeOfBuiltinType(const BuiltinTypeContext&, BuiltinTypeID, const BuiltinOperandTypes* operands = nullptr);
-TypeID typeOfBuiltinTypePart(const BuiltinTypeContext&, const BuiltinTypePart&, BuiltinFreshness, const BuiltinOperandTypes* operands = nullptr);
-TypeID typeOfBuiltinLayout(const BuiltinTypeContext&, BuiltinLayoutID);
 TypeID typeOfBuiltinLayoutField(const BuiltinTypeContext&, const BuiltinLayoutField&);
 TypeID typeOfBuiltinConstant(const BuiltinTypeContext&, BuiltinID);
 TypeID parameterTypeOfOverload(const BuiltinTypeContext&, BuiltinOverloadID, BuiltinOperand);
@@ -94,10 +86,7 @@ TypeID typeExpectedByLibraryFunction(const Program&, TypeArena&, FunctionID, uin
 uint16_t primitivesOfBuiltinType(const BuiltinType&);
 // Of a type that has Primitive::Integer among those.
 Range integerRangeWrittenBy(const BuiltinType&);
-// What typeOfBuiltinType() makes of the type without its flags for objects and without its parts: the kinds, the range of the integers, the literals. The solve states the objects and the parts of a row one by one.
-TypeID primitivesWrittenByBuiltinType(const BuiltinTypeContext&, BuiltinTypeID);
 TypedArrayType typedArrayTypeOf(const BuiltinTypeContext&, TypeID);
-bool hasOnlyMapsAndSets(const BuiltinTypeContext&, TypeID);
 // A type says nothing of it. Storage, Names, NamesKeptBelow and Prototype where Facts::everyObjectHas(ObjectFact::IsPristine) of the type, else none.
 // Never Dense or AsCreated by that fact alone: it speaks of members and of prototype links, not of holes or of what was stored since the object was made.
 // Dense only where every object has ObjectFact::HasNoHoles as well, AsCreated only where every object has ObjectFact::IsAsCreated as well.
@@ -107,10 +96,8 @@ PristineAspectSet pristineAspectsProvenBy(const BuiltinTypeContext&, TypeID, Bui
 // AOTBuiltinTypeFit.cpp
 OperandFit fitOf(const BuiltinTypeContext&, TypeID operandOrNotPassed, BuiltinTypeID tested);
 bool fitsIfPristine(const BuiltinTypeContext&, TypeID operandOrNotPassed, BuiltinTypeID tested);
-PristineRequirement pristineRequirementOf(const BuiltinTypeContext&, TypeID operand, BuiltinTypeID tested);
 // What fitOf() goes by for one primitive of the operand, for whoever has the values one by one: the solve. `integers`: those of the operand, read for Integer alone. Never LiteralString, whose texts are asked one by one.
 TypeFit fitOfPrimitiveInBuiltinType(const BuiltinType& tested, PrimitiveSet, Range integers);
-TypeFit fitOfStringLiteralInBuiltinType(const Program&, const BuiltinType& tested, StringID);
 // Of an operand that the call leaves out.
 TypeFit fitOfOmittedOperandInBuiltinType(const BuiltinType& tested);
 

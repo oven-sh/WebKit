@@ -1,7 +1,7 @@
 # the program stores numbers alone, but the object is handed to unknown code, which may store anything: not every writer is known, so the slot keeps the form that holds any value.
 # It is HELD to what the stores of the program bring (Facts::held()): whoever stores anything else takes the field out of its slot.
 # const o = { x: 1.5 }; sink(o)
-# TODO: no slot is held to a type since 11-03 08:25: held types bought nothing on any judge and cost the servers 1 to 5% (plan/AOTSlotPlan.cpp, typeHeldOfFieldForSlotPlan())
+# TODO: no slot is held to a type: held types bought nothing and cost the servers 1 to 5% (plan/AOTSlotPlan.cpp, typeHeldOfFieldForSlotPlan())
 # RUN: plan layouts mechanisms=none+TypedOperations+UnboxedNumbers+TypedSlots
 # CHECK: layout L0 CompiledObject
 # CHECK-NEXT: slot 0 "x" JSValue Inline {{*}} type=fractional

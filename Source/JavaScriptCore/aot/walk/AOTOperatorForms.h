@@ -45,11 +45,7 @@ OperatorForm chooseConversionForm(const Program&, const TypeArena&, Opcode, Type
 bool isLegalOperatorForm(Opcode, OperatorForm);
 bool mayCallRuntime(Opcode, OperatorForm);
 Effects effectsBoundOf(Opcode, OperatorForm);
-bool isNumericOperand(const TypeArena&, TypeID);
 bool canCompareBits(const TypeArena&, TypeID left, TypeID right);
-// True of CheckedIntegers alone: both operands are integers, in one width, and the result is not proven to be one. It may be -0, NaN, a fraction or lie past 2^53.
-// The operation gives the true number as a Double. It never fails.
-bool canOverflow(Opcode, OperatorForm);
 
 } } } // namespace JSC::AOT::Typed
 

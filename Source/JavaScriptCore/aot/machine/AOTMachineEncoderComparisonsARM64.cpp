@@ -47,72 +47,7 @@ static ConditionsOfComparison conditionsOfComparison(Opcode comparison)
     case EqualOrUnordered:
         return { std::nullopt, MacroAssembler::DoubleEqualOrUnordered };
 
-    case Nop:
-    case Opaque:
-    case Const32:
-    case Const64:
-    case ConstFloat:
-    case ConstDouble:
-    case FramePointer:
-    case SlotBase:
-    case AddressOf:
-    case NumberOf:
-    case InstanceAddressOf:
-    case ArgumentReg:
-    case Add:
-    case Sub:
-    case Mul:
-    case MulHigh:
-    case UMulHigh:
-    case Div:
-    case UDiv:
-    case Mod:
-    case UMod:
-    case Neg:
-    case BitAnd:
-    case BitOr:
-    case BitXor:
-    case Shl:
-    case SShr:
-    case ZShr:
-    case Clz:
-    case PopCount:
-    case Abs:
-    case Ceil:
-    case Floor:
-    case FTrunc:
-    case Sqrt:
-    case FMin:
-    case FMax:
-    case BitwiseCast:
-    case SExt8:
-    case SExt16:
-    case SExt32:
-    case ZExt32:
-    case Trunc:
-    case IToD:
-    case FloatToDouble:
-    case DoubleToFloat:
-    case Select:
-    case Load8Z:
-    case Load8S:
-    case Load16Z:
-    case Load16S:
-    case Load:
-    case Store8:
-    case Store16:
-    case Store:
-    case Fence:
-    case Phi:
-    case Upsilon:
-    case Extract:
-    case Patch:
-    case Check:
-    case Jump:
-    case Branch:
-    case Switch:
-    case Return:
-    case Oops:
+    default:
         break;
     }
     RELEASE_ASSERT_NOT_REACHED();

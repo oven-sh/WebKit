@@ -8,7 +8,6 @@
 
 #if ENABLE(AOT)
 
-#include "AOTBodyIndex.h"
 #include "AOTBuiltinMembers.h"
 #include "AOTBuiltinTable.h"
 #include "AOTEffectsOfOperations.h"
@@ -168,12 +167,6 @@ public:
     CalleeSummarizerForLinkEffects(const LinkFlow&, LinkTables&);
 
     void findComponentsOfCallees();
-    // Both go by findComponentsOfCallees(), callees first, and neither reads what the other writes.
-    void summarizeEffects();
-    void summarizeValues();
-    // Behind summarizeEffects().
-    void findVariablesInitializedAtEveryRead();
-    TypesFoundOfCallees takeTypesFound() { return WTF::move(m_typesFound); }
 
 private:
     enum class Fate : uint8_t {
@@ -247,7 +240,7 @@ private:
     static std::span<const uint32_t> argumentsOf(const ThinSummary& summary, const SummaryCall& call) { return summary.arguments.span().subspan(call.firstArgument, call.numberOfArguments); }
     std::span<const FunctionID> functionsOf(const CodeEntered& code) const LIFETIME_BOUND { return m_functionsEntered.span().subspan(code.firstFunction, code.numberOfFunctions); }
     std::span<const FunctionID> calleesOf(uint32_t function) const LIFETIME_BOUND { return m_callees.span().subspan(m_firstCallee[function], m_firstCallee[function + 1] - m_firstCallee[function]); }
-    void prefetchSummaryOfMemberBehind(size_t place) const;
+    void prefetchSummariesBehind(std::span<const uint32_t> order, size_t place) const;
     const CodeEntered& codeOfCall(FunctionID function, uint32_t call) const LIFETIME_BOUND { return m_codeOfCalls[m_flow.firstCallOfFunction[function.index()] + call]; }
     const CodeEntered& codeOfAccess(FunctionID function, uint32_t access) const LIFETIME_BOUND { return m_codeOfAccesses[m_firstAccessOfFunction[function.index()] + access]; }
 
@@ -281,132 +274,12 @@ private:
     Effects effectsOfCallItself(FunctionID, const ThinSummary&, uint32_t call) const;
     bool handsObjectToCodeNobodyNames(FunctionID, const ThinSummary&) const;
     bool changeMayRunCode(FunctionID, const SummaryChange&) const;
-    void mergeEffectsOfCodeOutside(const CodeEntered&, uint32_t component, const ComponentsOfLinkEffects&, Effects&) const;
-    Effects effectsOfBodyAndOfCodeOutside(uint32_t function, const ComponentsOfLinkEffects&) const;
-
-    // ---- The order in which a program starts
-    struct StartOfProgram {
-        enum class StateOfModule : uint8_t { NotStarted, Followed, NotFollowed };
-        static constexpr uint32_t never = UINT32_MAX;
-
-        // One start after the other is walked on these tables. A walk lists what it writes, and costs what it has been to.
-        ModuleID entry;
-        Vector<StateOfModule> modules;
-        Vector<uint32_t> modulesStarted;
-        // By function, with the node of the lost functions behind them: the earliest tick at which anything may enter it.
-        Vector<uint32_t> firstEntry;
-        Vector<uint32_t> nodesEntered;
-        BitVector bodiesFollowed;
-        // Somebody who has run names it, so code that nobody knows may have got hold of it.
-        BitVector isAvailable;
-        Vector<uint32_t> functionsMadeAvailable;
-        Vector<uint32_t> availableToUnseenCode;
-        // By variable: the tick of the store that ends its dead zone.
-        Vector<uint32_t> endOfDeadZone;
-        Vector<uint32_t> variablesInitialized;
-        Vector<uint32_t> worklist;
-        uint32_t clock { 1 };
-        uint32_t lastTickOfUnseenCode { 0 };
-        // From this tick on the other entries may have been loaded: whatever they lead to, and this start has not been to, counts as evaluated or entered then.
-        uint32_t tickOfOtherEntries { never };
-        // The first walk of a program with several entries: they count as leading to everything, and nobody has to find what they lead to.
-        bool otherEntriesLeadToEverything { false };
-        // Something that the program made has been handed to it. Until then it has nothing of the program to enter.
-        bool unseenCodeHoldsObjects { false };
-
-        // Of all the starts that were walked on these tables.
-        BitVector isInitializedInSomeStart;
-        BitVector isReadTooEarly;
-        // Where the other entries lead to everything: its dead zone ends behind their tick, so whether it is read too early hangs on what they lead to.
-        BitVector isLeftOpen;
-        bool someModuleIsLeftOpen { false };
-        // By module: in how many of the starts in which another entry leads to it the start has been there itself.
-        Vector<uint32_t> startsThatCameFirst;
-        uint32_t numberOfStartsWithOtherEntries { 0 };
-    };
-    // What evaluating an entry at a time that nobody knows leads to, with unseen code at every step: the same in every start.
-    struct LedTo {
-        static constexpr uint32_t byNothing = UINT32_MAX;
-        static constexpr uint32_t bySeveral = UINT32_MAX - 1;
-
-        bool isEmpty() const { return entryOfModule.isEmpty(); }
-
-        // The module of the one entry that leads there.
-        Vector<uint32_t> entryOfModule;
-        Vector<uint32_t> entryOfNode;
-        // The one module whose body leads to the node, by calls and names alone.
-        Vector<uint32_t> moduleOfNode;
-        // By the module of an entry: the functions which that entry alone leads to and which may call unknown code. Then of all entries.
-        Vector<uint32_t> callersOfUnknownCodeOfEntry;
-        uint32_t callersOfUnknownCode { 0 };
-        // By variable, one more than there are variables: the functions that read it, without the body of its own module. Into readers.
-        Vector<uint32_t> firstReader;
-        Vector<uint32_t> readers;
-    };
-    struct RecordAtSite {
-        enum class Kind : uint8_t { Call, Access, Change, UnknownCode };
-        uint32_t site { 0 };
-        Kind kind { Kind::Call };
-        uint32_t index { 0 };
-    };
-    bool isFollowedAtStart(ModuleID) const;
-    // `F.prototype.m = function () { }`: A NAME THAT THE PROGRAM LAYS ON THE PROTOTYPE OBJECT OF A CONSTRUCTOR FUNCTION IS ONE MORE VARIABLE, of the module of the function, numbered behind the variables by its place in
-    // LinkTables::namesOnPrototypes. The store ends its dead zone, and whoever enters the function reads it: no object of the layout is made without that.
-    // So are, of each constructor function, behind the names: THE STORE OF AN OBJECT MADE TO BE ITS PROTOTYPE OBJECT, which whoever reads `prototype` off the function reads too, and THE LINK of its prototype object below that of its base.
-    // Whoever enters a function reads what is said of it and of every function above it in the row.
-    // And, last, A NAME THAT THE PROGRAM LAYS ON A FUNCTION ITSELF (LinkTables::namesOnFunctions): whoever reads or calls it off the function reads it.
-    size_t firstNameOnFunction() const { return m_program.variables.size() + m_tables.namesOnPrototypes.size() + 2 * m_layoutsOfConstructorFunctions.size(); }
-    size_t numberOfVariablesAndNames() const { return firstNameOnFunction() + m_tables.namesOnFunctions.size(); }
-    std::optional<uint32_t> numberOfNameOnFunction(const LinkType& subject, PropertyKeyID) const;
-    void lookAtNameOnFunctionAtStart(StartOfProgram&, FunctionID body, const LinkType& subject, PropertyKeyID, bool isStore, bool endsDeadZones) const;
-    void forEachNameOnFunctionReadBy(FunctionID reader, const Invocable<void(uint32_t)> auto&) const;
-    // The keys of the rows under which one function is proven: no other row is asked about.
-    BitVector m_keysOfNamesOnFunctions;
-    enum class SaidOfPrototypeObject : uint8_t { IsStored, IsLinked };
-    std::optional<uint32_t> numberOf(SaidOfPrototypeObject, LayoutID) const;
-    const LinkedFunction& constructorFunctionOf(LayoutID layout) const { return m_tables.functions[m_program.at(layout).constructor.index()]; }
-    bool prototypeObjectIsSettledAtStart(const StartOfProgram&, LayoutID) const;
-    LinkType typeOfPrototypeObjectOf(LayoutID) const;
-    void lookAtPrototypePropertyAtStart(StartOfProgram&, FunctionID body, const SummaryAccess&, bool endsDeadZones) const;
-    void endDeadZoneOfLinkLaidBy(StartOfProgram&, FunctionID body, const SummaryChange&, bool makesObjectHere) const;
-    void forEachFunctionWhosePrototypeIsReadBy(FunctionID reader, const Invocable<void(uint32_t)> auto&) const;
-    Vector<LayoutID> m_layoutsOfConstructorFunctions;
-    bool m_someFunctionIsGivenItsPrototypeObject { false };
-    ModuleID moduleOfVariableOrName(size_t) const;
-    void forEachNameReadByEntering(uint32_t function, const Invocable<void(uint32_t)> auto&) const;
-    void endDeadZoneOfNameLaidBy(StartOfProgram&, FunctionID body, const SummaryAccess&) const;
-    void forEachPlaceLedToBy(uint32_t node, const Invocable<void(uint32_t)> auto& toModule, const Invocable<void(uint32_t)> auto& toNode) const;
-    void findWhatEntriesLeadTo();
-    bool mayCallUnknownCodeAtStart(uint32_t function) const;
-    bool otherEntriesLeadTo(const StartOfProgram& start, uint32_t ledToBy) const { return ledToBy != LedTo::byNothing && ledToBy != start.entry.index(); }
-    StartOfProgram::StateOfModule stateAtStart(const StartOfProgram&, ModuleID) const;
-    bool isEnteredByOtherEntries(const StartOfProgram&, uint32_t node) const;
-    void findModulesThatMayWait();
-    void walkStart(StartOfProgram&, const BodyIndexTable&, ModuleID entry, std::span<const uint32_t> firstVariableOfModule, std::span<const uint32_t> variablesOfModules) const;
-    void makeAvailableAtStart(StartOfProgram&, FunctionID namer) const;
-    void makeFunctionsBornBehindNamespaceAvailableAtStart(StartOfProgram&, ModuleID) const;
-    void enterAtStart(StartOfProgram&, uint32_t function) const;
-    void enterAtStart(StartOfProgram&, const CodeEntered&) const;
-    enum class HandedToUnseenCode : uint8_t { Nothing, WhatProgramMade };
-    void letUnseenCodeRunAtStart(StartOfProgram&, HandedToUnseenCode) const;
-    HandedToUnseenCode handedOverBy(FunctionID, const ThinSummary&, const SummaryCall&) const;
-    HandedToUnseenCode handedOverBy(FunctionID, const SummaryAccess&) const;
-    void evaluateSometimeFrom(StartOfProgram&, ModuleID) const;
-    void evaluateAtStart(StartOfProgram&, const BodyIndexTable&, ModuleID) const;
-    void followBodyAtStart(StartOfProgram&, const BodyIndexTable&, const BodyIndex&, FunctionID body) const;
-    // A BODY THAT ONE CALL ENTERS ONCE IS PART OF THE START. `(function () { .. })()`, `function setUp() { .. }  setUp();`: every caller of the function is known, one site in the whole program may enter it,
-    // that site is a plain call of the function itself, and it stands where the start passes once: in a block of a followed body that every way to a Return passes, outside of loops and handlers.
-    // So the body runs once, there and then, and what it lays in such a block of its own is laid from that tick on. Null: the call enters as ever.
-    const BodyIndex* bodyFollowedInPlaceOf(const StartOfProgram&, const BodyIndexTable&, FunctionID caller, const SummaryCall&, const CodeEntered&) const;
-    void countSitesThatEnter();
-    // By function: the calls and the accesses that may enter it, no further than two.
-    Vector<uint8_t> m_numberOfSitesThatEnter;
 
     // ---- Values
     void leave(uint32_t node)
     {
         if (node != noSummaryNode)
-            m_fates[node].add(Fate::Leaves);
+            s_hand->fates[node].add(Fate::Leaves);
     }
     bool escapesIn(FunctionID callee, std::optional<unsigned> entryParameter) const;
     void noteEdges(const ThinSummary&);
@@ -420,8 +293,8 @@ private:
 
     // ---- AOTLinkKnownEffectsInlines.h
 public:
-    // In the place of summarizeEffects().
-    void summarizeKnownEffects();
+    // What a function does and what becomes of what it is handed, in one visit.
+    void summarizeKnownEffectsAndValues();
     // Behind the lanes: LinkTables::known.
     void writeKnownEffects();
 
@@ -437,16 +310,6 @@ private:
     struct GivenArgumentsInKnownEffects {
         uint32_t parametersTakenAsExpected { 0 };
         uint32_t parametersCalled { 0 };
-    };
-    struct CallOfSeveralInKnownEffects {
-        FunctionID caller;
-        ValueID site;
-        // Null: nobody takes what the call gives.
-        FlowNodeID result;
-        EffectsOfComponentInKnownEffects effects;
-        bool entersOwnComponent { false };
-        // The shared call that is all that it enters, or the number of shared calls for the lost functions. UINT32_MAX: it enters something else.
-        uint32_t sharesEffectsWith { UINT32_MAX };
     };
 
     static EffectsOfComponentInKnownEffects knownEffectsOfUnknownCode() { return { Effects::unknownCode(), LocationMasks::top(), objectsOfAnyLayout }; }
@@ -473,10 +336,8 @@ private:
     void addFunctionsCalledUnder(LayoutID, PropertyKeyID, CodeFound&) const;
     bool judgeAccessGivenArguments(FunctionID, const ThinSummary&, const SummaryAccess&, PropertyKeyID, uint32_t component, WayInKnownEffects, EffectsOfComponentInKnownEffects&, GivenArgumentsInKnownEffects&);
     bool judgeCallGivenArguments(FunctionID, const ThinSummary&, const SummaryCall&, uint32_t component, WayInKnownEffects, EffectsOfComponentInKnownEffects&, GivenArgumentsInKnownEffects&);
-    static bool mayBeCallOfSeveral(const SummaryCall&, const CodeEntered&);
-    void indexCallsOf(FunctionID, const ThinSummary&);
-    void noteIfCallOfSeveral(FunctionID, const ThinSummary&, uint32_t call, const CodeEntered&, const EffectsOfComponentInKnownEffects& ofCall, bool entersOwnComponent);
     EffectsOfComponentInKnownEffects knownEffectsOfBody(uint32_t function);
+    EffectsOfComponentInKnownEffects knownEffectsOfMember(uint32_t component, uint32_t member);
     static void finishKnownEffectsOfCall(EffectsOfComponentInKnownEffects&, bool mayEnterItself);
 
     // By function.
@@ -489,12 +350,35 @@ private:
     Vector<uint64_t> m_bitsOfFamilies;
     // By layout: holdsOnlyPlainObjectsOfOneLayout().
     BitVector m_layoutsOfPlainObjects;
+    // Gathered from the hands behind the last rank.
     Vector<LinkedEffectsGivenArguments> m_effectsGivenArguments;
-    Vector<CallOfSeveralInKnownEffects> m_callsOfSeveral;
-    // indexCallsOf(): by call of that summary the node of its first result, and the sites of its calls, ascending.
-    FunctionID m_functionWhoseCallsAreIndexed;
-    Vector<uint32_t> m_resultNodesOfCalls;
-    Vector<ValueID> m_sitesOfCalls;
+
+    // ---- By rank
+    // WHAT A THREAD HAS IN HAND WHILE IT SUMMARIZES A FUNCTION, and what it has found that is put in order later. The components of one rank are summarized on all threads.
+    struct HandOfSummarizer {
+        // By node of the summary at hand.
+        Vector<OptionSet<Fate>> fates;
+        Vector<uint32_t> firstSourceOfJoin;
+        Vector<uint32_t> sourcesOfJoins;
+        Vector<uint32_t> joinsToVisit;
+        Vector<LinkedEffectsGivenArguments> effectsGivenArguments;
+    };
+    static thread_local HandOfSummarizer* s_hand;
+    void prepareKnownEffects();
+    void findComponentsThatExpectationsLeadTo();
+    void rankComponents();
+    void prefetchSummaryOfMemberBehindInRanks(size_t position) const;
+    void summarizeKnownEffectsOf(uint32_t component, std::span<const uint32_t> members, size_t positionOfFirstMember);
+    void closeKnownEffectsOf(uint32_t component, std::span<const uint32_t> members, EffectsOfComponentInKnownEffects&);
+    void summarizeValuesOf(uint32_t member);
+    // A component above the one that something expected of a parameter finds there. Ascending.
+    Vector<uint64_t> m_componentsThatExpectationsLeadTo;
+    // By rank, and one more: into m_componentsInRanks. A component leads only to components of lower ranks.
+    Vector<uint32_t> m_firstComponentOfRank;
+    Vector<uint32_t> m_componentsInRanks;
+    // By place in m_componentsInRanks, and one more: into m_membersInRanks.
+    Vector<uint32_t> m_firstMemberInRanks;
+    Vector<uint32_t> m_membersInRanks;
 
     // ---- AOTLinkKnownRowsInlines.h
     bool indexesAreAbsentAboveInstancesOf(BuiltinClassID) const;
@@ -508,10 +392,9 @@ private:
     const Program& m_program;
     const BuiltinTable& m_builtins;
     LinkTables& m_tables;
-    // It keeps nothing: whatever a question of m_typing makes lies here and dies with it. What is to be typed is left in m_typesFound.
+    // It keeps nothing: whatever a question of m_typing makes lies here and dies with it.
     TypeArena m_types;
     TypingContext m_typing;
-    TypesFoundOfCallees m_typesFound;
     uint32_t m_numberOfFunctions;
 
     BitVector m_isSummarized;
@@ -536,29 +419,16 @@ private:
     Vector<uint32_t> m_firstAccessOfFunction;
     Vector<CodeEntered> m_codeOfAccesses;
     Vector<FunctionID> m_functionsEntered;
-    Effects m_effectsOfLostFunctions { Effects::none() };
-    // Both by shared call.
-    Vector<Effects> m_effectsOfSharedCalls;
+    // By shared call.
     Vector<OperandsOfSharedCall> m_operandsOfSharedCalls;
     // By node: the functions, nodeOfLostFunctions(), and the shared calls. Into m_callees.
     Vector<uint32_t> m_firstCallee;
     Vector<FunctionID> m_callees;
     ComponentsOfLinkEffects m_components;
-    // Empty where the program has one entry, and until somebody has to know.
-    LedTo m_ledTo;
-    // It has a top-level await, or something below it has. WHETHER A MODULE WAITS IS READ OFF THE IMPORTS AS THEY ARE WRITTEN, NEVER OFF THE ORDER IN WHICH A START COMES TO THEM:
-    // whoever imports a member of a cycle waits for the root of the cycle, and a module that a site has evaluated at a time that nobody knows makes its importers wait as any other.
-    // A member of a cycle below whose root something suspends runs at once, and counts as waiting: it is not followed.
-    BitVector m_modulesThatMayWait;
-    // `export function f() { .. }`: the variable is born as the function at the link, and no operation of any body names it. Those that unseen code finds on a namespace object (LinkFlow::variablesReadByUnseenCode).
-    Vector<uint32_t> m_functionsBornInSightOfUnseenCode;
 
-    // By node of the summary at hand.
-    Vector<OptionSet<Fate>> m_fates;
-    Vector<uint32_t> m_firstSourceOfJoin;
-    Vector<uint32_t> m_sourcesOfJoins;
-    Vector<uint32_t> m_joinsToVisit;
 };
+
+thread_local CalleeSummarizerForLinkEffects::HandOfSummarizer* CalleeSummarizerForLinkEffects::s_hand = nullptr;
 
 CalleeSummarizerForLinkEffects::CalleeSummarizerForLinkEffects(const LinkFlow& flow, LinkTables& tables)
     : m_flow(flow)
@@ -1209,23 +1079,6 @@ Effects CalleeSummarizerForLinkEffects::effectsOfCallItself(FunctionID id, const
     return effects;
 }
 
-void CalleeSummarizerForLinkEffects::mergeEffectsOfCodeOutside(const CodeEntered& code, uint32_t component, const ComponentsOfLinkEffects& components, Effects& effects) const
-{
-    for (FunctionID callee : functionsOf(code)) {
-        if (components.componentOfFunction[callee.index()] == component)
-            continue;
-        if (isSharedCall(callee.index())) {
-            effects.merge(m_effectsOfSharedCalls[callee.index() - nodeOfSharedCall(0)]);
-            continue;
-        }
-        const LinkedFunction& linked = m_tables.function(callee);
-        effects.merge(linked.effectsOnReturn);
-        effects.merge(linked.effectsOnThrow);
-    }
-    if (code.mayBeLost && components.componentOfFunction[nodeOfLostFunctions()] != component)
-        effects.merge(m_effectsOfLostFunctions);
-}
-
 // ThinSummary::ownEffects is made of the declared bounds, which leave out the code that an operation runs on an operand (ir/AOTEffectsOfOperations.h).
 // Where no call by name stands for that code the scan lays the operand into node 0 and marks the edge: an object that goes there may have its code run there and then.
 // An edge without the mark only lets the value go: what is thrown, what is stored where nobody looks.
@@ -1257,40 +1110,6 @@ bool CalleeSummarizerForLinkEffects::changeMayRunCode(FunctionID id, const Summa
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-Effects CalleeSummarizerForLinkEffects::effectsOfBodyAndOfCodeOutside(uint32_t function, const ComponentsOfLinkEffects& components) const
-{
-    FunctionID id(function);
-    const ThinSummary& summary = m_flow.summaries.at(id);
-    // Listing the keys of a proxy runs a trap, and so does a walk up a chain that a proxy stands in: ThinSummary::inspections.
-    if (keepsDefaults(id, summary, { SummaryTrait::Suspends, SummaryTrait::HasDirectEval }) || someInspectionMayRunCode(m_flow, m_tables, id))
-        return Effects::unknownCode();
-    if (handsObjectToCodeNobodyNames(id, summary))
-        return Effects::unknownCode();
-    for (const SummaryChange& change : summary.changes) {
-        if (changeMayRunCode(id, change))
-            return Effects::unknownCode();
-    }
-
-    uint32_t component = components.componentOfFunction[function];
-    Effects effects = summary.ownEffects;
-    for (uint32_t call = 0; call < summary.calls.size(); ++call) {
-        const CodeEntered& code = codeOfCall(id, call);
-        if (code.mayBeUnseen)
-            return Effects::unknownCode();
-        effects.merge(effectsOfCallItself(id, summary, call));
-        mergeEffectsOfCodeOutside(code, component, components, effects);
-    }
-    for (uint32_t access = 0; access < summary.accesses.size(); ++access) {
-        const CodeEntered& code = codeOfAccess(id, access);
-        if (code.mayBeUnseen)
-            return Effects::unknownCode();
-        if (!summary.accesses[access].isToContents())
-            effects.merge(effectsOfLookupItself(summary.accesses[access].kind, m_flow.keyOf(id, summary.accesses[access])));
-        mergeEffectsOfCodeOutside(code, component, components, effects);
-    }
-    return effects;
-}
-
 // ---- Values
 
 bool CalleeSummarizerForLinkEffects::escapesIn(FunctionID callee, std::optional<unsigned> entryParameter) const
@@ -1306,7 +1125,7 @@ void CalleeSummarizerForLinkEffects::noteEdges(const ThinSummary& summary)
     for (const SummaryEdge& edge : summary.edges) {
         switch (summary.nodes[edge.to].kind) {
         case SummaryNode::Kind::Result:
-            m_fates[edge.from].add(Fate::IsReturned);
+            s_hand->fates[edge.from].add(Fate::IsReturned);
             break;
         // carryFatesBackThroughJoins().
         case SummaryNode::Kind::Join:
@@ -1451,33 +1270,33 @@ void CalleeSummarizerForLinkEffects::carryFatesBackThroughJoins(const ThinSummar
         return summary.nodes[edge.to].kind == SummaryNode::Kind::Join;
     };
 
-    m_firstSourceOfJoin.fill(0, numberOfNodes + 2);
+    s_hand->firstSourceOfJoin.fill(0, numberOfNodes + 2);
     for (const SummaryEdge& edge : summary.edges) {
         if (entersJoin(edge))
-            ++m_firstSourceOfJoin[edge.to + 2];
+            ++s_hand->firstSourceOfJoin[edge.to + 2];
     }
     for (uint32_t node = 0; node < numberOfNodes; ++node)
-        m_firstSourceOfJoin[node + 2] += m_firstSourceOfJoin[node + 1];
-    m_sourcesOfJoins.fill(0, m_firstSourceOfJoin.last());
+        s_hand->firstSourceOfJoin[node + 2] += s_hand->firstSourceOfJoin[node + 1];
+    s_hand->sourcesOfJoins.fill(0, s_hand->firstSourceOfJoin.last());
     for (const SummaryEdge& edge : summary.edges) {
         if (entersJoin(edge))
-            m_sourcesOfJoins[m_firstSourceOfJoin[edge.to + 1]++] = edge.from;
+            s_hand->sourcesOfJoins[s_hand->firstSourceOfJoin[edge.to + 1]++] = edge.from;
     }
 
-    m_joinsToVisit.shrink(0);
+    s_hand->joinsToVisit.shrink(0);
     for (uint32_t node = 0; node < numberOfNodes; ++node) {
-        if (summary.nodes[node].kind == SummaryNode::Kind::Join && !m_fates[node].isEmpty())
-            m_joinsToVisit.append(node);
+        if (summary.nodes[node].kind == SummaryNode::Kind::Join && !s_hand->fates[node].isEmpty())
+            s_hand->joinsToVisit.append(node);
     }
-    while (!m_joinsToVisit.isEmpty()) {
-        uint32_t join = m_joinsToVisit.takeLast();
-        for (uint32_t place = m_firstSourceOfJoin[join]; place < m_firstSourceOfJoin[join + 1]; ++place) {
-            uint32_t source = m_sourcesOfJoins[place];
-            if (m_fates[source].containsAll(m_fates[join]))
+    while (!s_hand->joinsToVisit.isEmpty()) {
+        uint32_t join = s_hand->joinsToVisit.takeLast();
+        for (uint32_t place = s_hand->firstSourceOfJoin[join]; place < s_hand->firstSourceOfJoin[join + 1]; ++place) {
+            uint32_t source = s_hand->sourcesOfJoins[place];
+            if (s_hand->fates[source].containsAll(s_hand->fates[join]))
                 continue;
-            m_fates[source].add(m_fates[join]);
+            s_hand->fates[source].add(s_hand->fates[join]);
             if (summary.nodes[source].kind == SummaryNode::Kind::Join)
-                m_joinsToVisit.append(source);
+                s_hand->joinsToVisit.append(source);
         }
     }
 }
@@ -1510,7 +1329,7 @@ bool CalleeSummarizerForLinkEffects::everyCalleeReturnsFreshResult(FunctionID id
 
 bool CalleeSummarizerForLinkEffects::isFreshAndOnlyReturned(FunctionID id, const ThinSummary& summary, uint32_t node) const
 {
-    if (m_fates[node].contains(Fate::Leaves))
+    if (s_hand->fates[node].contains(Fate::Leaves))
         return false;
     switch (summary.nodes[node].kind) {
     case SummaryNode::Kind::Allocation:
@@ -1548,7 +1367,7 @@ void CalleeSummarizerForLinkEffects::summarizeValues(FunctionID id)
     if (keepsDefaults(id, summary, { SummaryTrait::Suspends, SummaryTrait::HasDirectEval, SummaryTrait::UsesArguments }))
         return;
 
-    m_fates.fill({ }, summary.nodes.size());
+    s_hand->fates.fill({ }, summary.nodes.size());
     noteEdges(summary);
     noteOperandsOfCalls(id, summary);
     noteOperandsOfAccessesAndChanges(id, summary);
@@ -1565,9 +1384,9 @@ void CalleeSummarizerForLinkEffects::summarizeValues(FunctionID id)
     bool everySourceIsFresh = true;
     for (uint32_t index = 0; index < summary.nodes.size(); ++index) {
         const SummaryNode& node = summary.nodes[index];
-        if (node.kind == SummaryNode::Kind::Parameter && node.first >= numberOfCaptures && node.first < parameters.size() && !m_fates[index].isEmpty())
+        if (node.kind == SummaryNode::Kind::Parameter && node.first >= numberOfCaptures && node.first < parameters.size() && !s_hand->fates[index].isEmpty())
             parameters[node.first].escapes = true;
-        if (node.kind == SummaryNode::Kind::Join || !m_fates[index].contains(Fate::IsReturned))
+        if (node.kind == SummaryNode::Kind::Join || !s_hand->fates[index].contains(Fate::IsReturned))
             continue;
         returnsSomething = true;
         everySourceIsFresh = everySourceIsFresh && isFreshAndOnlyReturned(id, summary, index);
@@ -1608,7 +1427,6 @@ void CalleeSummarizerForLinkEffects::findComponentsOfCallees()
         m_callees.appendVector(shared.listed);
     }
     m_firstCallee.append(m_callees.size());
-    m_effectsOfSharedCalls.fill(Effects { }, m_flow.calleesOfSharedCalls.size());
     m_operandsOfSharedCalls.fill(OperandsOfSharedCall { }, m_flow.calleesOfSharedCalls.size());
 
     m_components = findComponentsForLinkEffects(numberOfNodesOfCallees(), [&](uint32_t function) {
@@ -1617,14 +1435,14 @@ void CalleeSummarizerForLinkEffects::findComponentsOfCallees()
 }
 
 // The order is known, and a summary lies in a dozen places: those of the members that come next are on their way.
-void CalleeSummarizerForLinkEffects::prefetchSummaryOfMemberBehind(size_t place) const
+void CalleeSummarizerForLinkEffects::prefetchSummariesBehind(std::span<const uint32_t> order, size_t place) const
 {
     static constexpr size_t distanceOfSummary = 8;
     static constexpr size_t distanceOfRecords = 4;
     auto memberAt = [&](size_t position) -> std::optional<uint32_t> {
-        if (position >= m_components.members.size() || !isFunction(m_components.members[position]))
+        if (position >= order.size() || !isFunction(order[position]))
             return std::nullopt;
-        return m_components.members[position];
+        return order[position];
     };
     if (std::optional<uint32_t> member = memberAt(place + distanceOfSummary)) {
         const char* summary = reinterpret_cast<const char*>(&m_flow.summaries.at(FunctionID(*member)));
@@ -1651,65 +1469,9 @@ void CalleeSummarizerForLinkEffects::prefetchSummaryOfMemberBehind(size_t place)
     }
 }
 
-void CalleeSummarizerForLinkEffects::summarizeEffects()
+void CalleeSummarizerForLinkEffects::prefetchSummaryOfMemberBehindInRanks(size_t position) const
 {
-    const ComponentsOfLinkEffects& components = m_components;
-    uint32_t componentOfLostFunctions = components.componentOfFunction[nodeOfLostFunctions()];
-    for (uint32_t component = 0; component < components.size(); ++component) {
-        std::span<const uint32_t> members = components.membersOf(component);
-        // A function that is not summarized was given no callees above, so it is alone in its component.
-        if (isFunction(members.front()) && !isSummarized(members.front()))
-            continue;
-
-        Effects effects = Effects::none();
-        for (size_t place = components.firstMember[component]; place < components.firstMember[component + 1]; ++place) {
-            prefetchSummaryOfMemberBehind(place);
-            uint32_t member = components.members[place];
-            if (isFunction(member)) {
-                effects.merge(effectsOfBodyAndOfCodeOutside(member, components));
-                continue;
-            }
-            for (FunctionID lost : calleesOf(member)) {
-                if (components.componentOfFunction[lost.index()] == component)
-                    continue;
-                effects.merge(m_tables.function(lost).effectsOnReturn);
-                effects.merge(m_tables.function(lost).effectsOnThrow);
-            }
-        }
-        bool mayEnterItself = members.size() > 1 || std::ranges::any_of(calleesOf(members.front()), [&](FunctionID callee) {
-            return callee.index() == members.front();
-        });
-        // No caller's check of the stack covers recursive calls: the overflow is an error like any other.
-        effects.mayThrow |= mayEnterItself ? ThrowEffect(true) : ThrowEffect::onlyStackOverflow();
-        // The check of the stack at frame setup is a poll too, and the collector may stop the thread there.
-        effects.mayCollect = true;
-        // A call never suspends its caller. The sweep and the emitters take an operation that may suspend for a suspension of its own frame.
-        effects.maySuspend = false;
-
-        if (component == componentOfLostFunctions)
-            m_effectsOfLostFunctions = effects;
-        for (uint32_t member : members) {
-            if (isSharedCall(member))
-                m_effectsOfSharedCalls[member - nodeOfSharedCall(0)] = effects;
-            if (!isFunction(member))
-                continue;
-            LinkedFunction& linked = m_tables.functions[member];
-            linked.effectsOnReturn = effects;
-            linked.effectsOnThrow = effects;
-        }
-    }
-}
-
-void CalleeSummarizerForLinkEffects::summarizeValues()
-{
-    for (size_t place = 0; place < m_components.members.size(); ++place) {
-        prefetchSummaryOfMemberBehind(place);
-        uint32_t member = m_components.members[place];
-        if (isSharedCall(member))
-            summarizeOperandsOfSharedCall(member - nodeOfSharedCall(0));
-        else if (isFunction(member) && isSummarized(member))
-            summarizeValues(FunctionID(member));
-    }
+    prefetchSummariesBehind(m_membersInRanks.span(), position);
 }
 
 // Behind all that it lists, but for those that lead back to it, of which nothing is known yet.
@@ -1822,1107 +1584,17 @@ void rankReferrersFirst(LinkTables& tables)
     }
 }
 
-// ---- The order in which a program starts
-
-// The loader evaluates what a module imports in the order of Module::requests and then enters its body, on one thread: that order is followed here from each entry.
-// The clock ticks at each operation of such a body that runs whenever the body gets that far: in a block that every way to a Return passes, outside of loops. What stands in another block runs, if at all,
-// behind the last such block above it. A function is stamped with the earliest tick at which anything may enter it, a variable with the tick of the store that ends its dead zone.
-// Code that nobody knows runs only while an operation has entered it. It enters nothing before something that the program made was handed to it, and then only what somebody who has run has named.
-// What throws its way out of a followed body ends the start, since no handler stands around the loader's list. Behind that the host calls what was handed to it, which is stamped.
-// JavaScript that nobody has seen may then call whatever it finds, so where such code can run it counts as running at every tick.
-// Unseen code may also load every other entry by its name, and every file that is found by its name (ModuleFlags::IsFoundByName). From its first tick on, what those lead to counts as evaluated and entered, but for what the start has been to itself.
-// No start walks through the other entries: a thousand entries are a thousand short walks. At first they count as leading to everything. Where that leaves a variable open that nothing else stands against,
-// what they lead to is found once for the program (findWhatEntriesLeadTo()), which is at least what a walk through them at that tick would come to, and the starts are walked again.
-bool CalleeSummarizerForLinkEffects::isFollowedAtStart(ModuleID id) const
-{
-    const Module& module = m_program.at(id);
-    if (module.kind != ModuleKind::SourceText || !module.body || !m_flow.reached.get(module.body.index()))
-        return false;
-    if (module.flags.containsAny({ ModuleFlags::HasTopLevelAwait, ModuleFlags::RunsAgain, ModuleFlags::MayBeEvicted, ModuleFlags::MayBeMocked }))
-        return false;
-    const Function& body = m_program.at(module.body);
-    return body.isModuleBody() && body.module == id && !body.isCoroutine() && std::ranges::none_of(module.requests, &ModuleRequest::isHoisted);
-}
-
-ModuleID CalleeSummarizerForLinkEffects::moduleOfVariableOrName(size_t number) const
-{
-    if (number < m_program.variables.size())
-        return m_program.variables[number].module;
-    if (number >= firstNameOnFunction()) {
-        const LinkedNameOnFunction& name = m_tables.namesOnFunctions[number - firstNameOnFunction()];
-        return name.function ? m_program.at(name.holder).module : ModuleID();
-    }
-    if (size_t first = m_program.variables.size() + m_tables.namesOnPrototypes.size(); number >= first) {
-        LayoutID layout = m_layoutsOfConstructorFunctions[(number - first) / 2];
-        bool isAsked = (number - first) % 2 ? !!m_program.at(layout).base : constructorFunctionOf(layout).prototypePropertyIsStoredOnceWithObjectMadeForIt;
-        return isAsked ? m_program.at(m_program.at(layout).constructor).module : ModuleID();
-    }
-    const LinkedNameOnPrototype& name = m_tables.namesOnPrototypes[number - m_program.variables.size()];
-    FunctionID constructor = m_program.at(name.layout).constructor;
-    return name.key && name.function && constructor && m_flow.isOfConstructorFunction(name.layout) ? m_program.at(constructor).module : ModuleID();
-}
-
-void CalleeSummarizerForLinkEffects::forEachNameReadByEntering(uint32_t function, const Invocable<void(uint32_t)> auto& functor) const
-{
-    size_t numberOfLayoutsLeft = m_program.layouts.size();
-    for (LayoutID layout = m_flow.layoutOfConstructorFunction(FunctionID(function)); layout && m_flow.isOfConstructorFunction(layout) && numberOfLayoutsLeft--; layout = m_program.at(layout).base) {
-        auto names = std::ranges::equal_range(m_tables.namesOnPrototypes, layout, { }, &LinkedNameOnPrototype::layout);
-        for (const LinkedNameOnPrototype& name : names)
-            functor(static_cast<uint32_t>(m_program.variables.size() + (&name - m_tables.namesOnPrototypes.begin())));
-        if (std::optional<uint32_t> stored = numberOf(SaidOfPrototypeObject::IsStored, layout)) {
-            functor(*stored);
-            functor(*stored + 1);
-        }
-    }
-}
-
-std::optional<uint32_t> CalleeSummarizerForLinkEffects::numberOf(SaidOfPrototypeObject said, LayoutID layout) const
-{
-    auto found = std::ranges::lower_bound(m_layoutsOfConstructorFunctions, layout);
-    if (found == m_layoutsOfConstructorFunctions.end() || *found != layout)
-        return std::nullopt;
-    return static_cast<uint32_t>(m_program.variables.size() + m_tables.namesOnPrototypes.size() + 2 * (found - m_layoutsOfConstructorFunctions.begin()) + (said == SaidOfPrototypeObject::IsLinked));
-}
-
-bool CalleeSummarizerForLinkEffects::prototypeObjectIsSettledAtStart(const StartOfProgram& start, LayoutID layout) const
-{
-    const LinkedFunction& function = constructorFunctionOf(layout);
-    return function.prototypePropertyStaysAsMade || (function.prototypePropertyIsStoredOnceWithObjectMadeForIt && start.endOfDeadZone[*numberOf(SaidOfPrototypeObject::IsStored, layout)] != StartOfProgram::never);
-}
-
-LinkType CalleeSummarizerForLinkEffects::typeOfPrototypeObjectOf(LayoutID layout) const
-{
-    LinkType type;
-    type.objects = LinkType::Objects::Prototype;
-    type.layout = layout;
-    return type;
-}
-
-// `Below.prototype = Object.create(Base.prototype)`: until that store has run, `prototype` holds the object that the function was made with. Whoever reads it by then may keep that object, which the types do not tell from the other.
-// EVERY READ COUNTS, whatever operation makes it: `class Round extends Shape` reads Shape.prototype and lays Round.prototype below what it finds. But for the scan's own, which stands for the object that is stored.
-void CalleeSummarizerForLinkEffects::lookAtPrototypePropertyAtStart(StartOfProgram& start, FunctionID body, const SummaryAccess& access, bool endsDeadZones) const
-{
-    if (!m_someFunctionIsGivenItsPrototypeObject || access.isToContents())
-        return;
-    PropertyKeyID key = m_flow.keyOf(body, access);
-    if (key && m_program.nameClassOf(key) != NameClass::Prototype)
-        return;
-    LinkType subject = typeAt(body, access.subject);
-    if (subject.functions != LinkType::Functions::Closure)
-        return;
-    LayoutID layout = m_flow.layoutOfConstructorFunction(subject.function);
-    if (!layout || !constructorFunctionOf(layout).prototypePropertyIsStoredOnceWithObjectMadeForIt)
-        return;
-    uint32_t number = *numberOf(SaidOfPrototypeObject::IsStored, layout);
-    if (start.endOfDeadZone[number] != StartOfProgram::never)
-        return;
-    if (access.kind == SummaryAccess::Kind::Store && access.storesObjectMadeForIt) {
-        LinkType closures;
-        closures.functions = LinkType::Functions::Closure;
-        closures.function = subject.function;
-        if (endsDeadZones && key && subject == closures && moduleOfVariableOrName(number) == m_program.at(body).module) {
-            start.endOfDeadZone[number] = start.clock;
-            start.variablesInitialized.append(number);
-        }
-        return;
-    }
-    if (!access.standsForObjectMadeAtSite)
-        start.isReadTooEarly.set(number);
-}
-
-// The prototype object of the layout, and nothing else, is laid below the settled prototype object of the base, and nothing else. `makesObjectHere`: it is the object that the one store is going to lay under `prototype`.
-void CalleeSummarizerForLinkEffects::endDeadZoneOfLinkLaidBy(StartOfProgram& start, FunctionID body, const SummaryChange& change, bool makesObjectHere) const
-{
-    if (change.kind != SummaryChange::Kind::ChangesPrototype || change.other == noSummaryNode)
-        return;
-    LinkType subject = typeAt(body, change.subject);
-    if (!subject.layout || !(subject == typeOfPrototypeObjectOf(subject.layout)) || !m_flow.isOfConstructorFunction(subject.layout))
-        return;
-    LayoutID base = m_program.at(subject.layout).base;
-    if (!base || !m_flow.isOfConstructorFunction(base) || !(typeAt(body, change.other) == typeOfPrototypeObjectOf(base)) || !prototypeObjectIsSettledAtStart(start, base))
-        return;
-    if (!prototypeObjectIsSettledAtStart(start, subject.layout) && !(makesObjectHere && constructorFunctionOf(subject.layout).prototypePropertyIsStoredOnceWithObjectMadeForIt))
-        return;
-    uint32_t number = *numberOf(SaidOfPrototypeObject::IsLinked, subject.layout);
-    if (moduleOfVariableOrName(number) != m_program.at(body).module || start.endOfDeadZone[number] != StartOfProgram::never)
-        return;
-    start.endOfDeadZone[number] = start.clock;
-    start.variablesInitialized.append(number);
-}
-
-std::optional<uint32_t> CalleeSummarizerForLinkEffects::numberOfNameOnFunction(const LinkType& subject, PropertyKeyID key) const
-{
-    if (!key || subject.functions != LinkType::Functions::Closure || !m_keysOfNamesOnFunctions.get(key.index()))
-        return std::nullopt;
-    const LinkedNameOnFunction* name = m_tables.findNameOnFunction(subject.function, key);
-    if (!name || !name->function)
-        return std::nullopt;
-    return static_cast<uint32_t>(firstNameOnFunction() + (name - m_tables.namesOnFunctions.begin()));
-}
-
-void CalleeSummarizerForLinkEffects::lookAtNameOnFunctionAtStart(StartOfProgram& start, FunctionID body, const LinkType& subject, PropertyKeyID key, bool isStore, bool endsDeadZones) const
-{
-    std::optional<uint32_t> number = numberOfNameOnFunction(subject, key);
-    if (!number || start.endOfDeadZone[*number] != StartOfProgram::never)
-        return;
-    if (!isStore) {
-        start.isReadTooEarly.set(*number);
-        return;
-    }
-    LinkType closures;
-    closures.functions = LinkType::Functions::Closure;
-    closures.function = subject.function;
-    if (!endsDeadZones || !(subject == closures) || moduleOfVariableOrName(*number) != m_program.at(body).module)
-        return;
-    start.endOfDeadZone[*number] = start.clock;
-    start.variablesInitialized.append(*number);
-}
-
-void CalleeSummarizerForLinkEffects::forEachNameOnFunctionReadBy(FunctionID reader, const Invocable<void(uint32_t)> auto& functor) const
-{
-    if (m_keysOfNamesOnFunctions.isEmpty())
-        return;
-    const ThinSummary& summary = m_flow.summaries.at(reader);
-    for (const SummaryAccess& access : summary.accesses) {
-        if (access.isToContents() || !access.key || !m_keysOfNamesOnFunctions.get(access.key.index()))
-            continue;
-        if (std::optional<uint32_t> number = numberOfNameOnFunction(typeAt(reader, access.subject), access.key))
-            functor(*number);
-    }
-    for (const SummaryCall& call : summary.calls) {
-        if (call.callee != SummaryCall::Callee::Name || !call.key || call.receiver == noSummaryNode || !m_keysOfNamesOnFunctions.get(call.key.index()))
-            continue;
-        if (std::optional<uint32_t> number = numberOfNameOnFunction(typeAt(reader, call.receiver), call.key))
-            functor(*number);
-    }
-}
-
-void CalleeSummarizerForLinkEffects::forEachFunctionWhosePrototypeIsReadBy(FunctionID reader, const Invocable<void(uint32_t)> auto& functor) const
-{
-    if (!m_someFunctionIsGivenItsPrototypeObject)
-        return;
-    for (const SummaryAccess& access : m_flow.summaries.at(reader).accesses) {
-        if (access.isToContents() || (access.key && m_program.nameClassOf(access.key) != NameClass::Prototype))
-            continue;
-        LinkType subject = typeAt(reader, access.subject);
-        if (subject.functions != LinkType::Functions::Closure)
-            continue;
-        LayoutID layout = m_flow.layoutOfConstructorFunction(subject.function);
-        if (layout && constructorFunctionOf(layout).prototypePropertyIsStoredOnceWithObjectMadeForIt)
-            functor(*numberOf(SaidOfPrototypeObject::IsStored, layout));
-    }
-}
-
-// The subject is the prototype object of that one function and nothing else, and the store stands in the body of the module of the function.
-void CalleeSummarizerForLinkEffects::endDeadZoneOfNameLaidBy(StartOfProgram& start, FunctionID body, const SummaryAccess& access) const
-{
-    if (!access.laysValueInSightUnderName())
-        return;
-    PropertyKeyID key = m_flow.keyOf(body, access);
-    LinkType subject = typeAt(body, access.subject);
-    LinkType prototypeObject;
-    prototypeObject.objects = LinkType::Objects::Prototype;
-    prototypeObject.layout = subject.layout;
-    if (!key || !subject.layout || !(subject == prototypeObject) || !m_flow.isOfConstructorFunction(subject.layout) || !prototypeObjectIsSettledAtStart(start, subject.layout))
-        return;
-    auto placeOf = [](const LinkedNameOnPrototype& laid) {
-        return std::pair { laid.layout, laid.key };
-    };
-    for (const LinkedNameOnPrototype& name : std::ranges::equal_range(m_tables.namesOnPrototypes, std::pair { subject.layout, key }, { }, placeOf)) {
-        uint32_t number = static_cast<uint32_t>(m_program.variables.size() + (&name - m_tables.namesOnPrototypes.begin()));
-        if (moduleOfVariableOrName(number) != m_program.at(body).module || start.endOfDeadZone[number] != StartOfProgram::never)
-            continue;
-        start.endOfDeadZone[number] = start.clock;
-        start.variablesInitialized.append(number);
-    }
-}
-
-bool CalleeSummarizerForLinkEffects::mayCallUnknownCodeAtStart(uint32_t function) const
-{
-    const LinkedFunction& linked = m_tables.functions[function];
-    return !isSummarized(function) || linked.effectsOnReturn.mayCallUnknownCode || linked.effectsOnThrow.mayCallUnknownCode;
-}
-
-// What enterAtStart() and makeAvailableAtStart() go on to from a node while unseen code runs and holds objects.
-void CalleeSummarizerForLinkEffects::forEachPlaceLedToBy(uint32_t node, const Invocable<void(uint32_t)> auto& toModule, const Invocable<void(uint32_t)> auto& toNode) const
-{
-    if (isFunction(node)) {
-        for (FunctionID named : m_flow.summaries.at(FunctionID(node)).functionsNamed) {
-            const Function& function = m_program.at(named);
-            if (function.isModuleBody()) {
-                if (function.module && named.index() != node)
-                    toModule(function.module.index());
-                continue;
-            }
-            bool isEnteredWithoutCall = function.kind == FunctionKind::Getter || function.kind == FunctionKind::Setter;
-            if (m_flow.reached.get(named.index()) && (!m_tables.functions[named.index()].everyCallerIsKnown || isEnteredWithoutCall))
-                toNode(named.index());
-        }
-    }
-    for (FunctionID callee : calleesOf(node))
-        toNode(callee.index());
-}
-
-void CalleeSummarizerForLinkEffects::findWhatEntriesLeadTo()
-{
-    uint32_t numberOfNodes = numberOfNodesOfCallees();
-    uint32_t numberOfModules = static_cast<uint32_t>(m_program.modules.size());
-    // A mark goes from nothing to one to several, so each place is left at most twice.
-    Vector<uint32_t> worklist;
-    auto arrive = [&](Vector<uint32_t>& marks, uint32_t place, uint32_t placeInWorklist, uint32_t mark) {
-        uint32_t& held = marks[place];
-        if (held == mark || held == LedTo::bySeveral)
-            return;
-        held = held == LedTo::byNothing ? mark : LedTo::bySeveral;
-        worklist.append(placeInWorklist);
-    };
-
-    // In the worklist the modules stand behind the nodes.
-    m_ledTo.entryOfModule.fill(LedTo::byNothing, numberOfModules);
-    m_ledTo.entryOfNode.fill(LedTo::byNothing, numberOfNodes);
-    for (const Entry& entry : m_program.entries)
-        arrive(m_ledTo.entryOfModule, entry.module.index(), numberOfNodes + entry.module.index(), entry.module.index());
-    // A file that is found by its name answers to it as a further entry does.
-    for (uint32_t index = 0; index < numberOfModules; ++index) {
-        if (m_program.at(ModuleID(index)).flags.contains(ModuleFlags::IsFoundByName))
-            arrive(m_ledTo.entryOfModule, index, numberOfNodes + index, index);
-    }
-    while (!worklist.isEmpty()) {
-        uint32_t place = worklist.takeLast();
-        uint32_t mark = place < numberOfNodes ? m_ledTo.entryOfNode[place] : m_ledTo.entryOfModule[place - numberOfNodes];
-        auto toModule = [&](uint32_t module) {
-            arrive(m_ledTo.entryOfModule, module, numberOfNodes + module, mark);
-        };
-        auto toNode = [&](uint32_t node) {
-            arrive(m_ledTo.entryOfNode, node, node, mark);
-        };
-        if (place < numberOfNodes) {
-            forEachPlaceLedToBy(place, toModule, toNode);
-            continue;
-        }
-        const Module& module = m_program.at(ModuleID(place - numberOfNodes));
-        for (const ModuleRequest& request : module.requests)
-            toModule(request.target.index());
-        if (module.body && m_flow.reached.get(module.body.index()))
-            toNode(module.body.index());
-        // Whoever has loaded the module has its namespace object.
-        for (const ModuleExport& exported : module.exports) {
-            FunctionID born = exported.variable ? m_program.at(exported.variable).function : FunctionID();
-            if (born && m_flow.reached.get(born.index()) && !m_tables.functions[born.index()].everyCallerIsKnown)
-                toNode(born.index());
-        }
-    }
-
-    m_ledTo.moduleOfNode.fill(LedTo::byNothing, numberOfNodes);
-    for (uint32_t index = 0; index < numberOfModules; ++index) {
-        const Module& module = m_program.at(ModuleID(index));
-        if (m_ledTo.entryOfModule[index] != LedTo::byNothing && module.body && m_flow.reached.get(module.body.index()))
-            arrive(m_ledTo.moduleOfNode, module.body.index(), module.body.index(), index);
-    }
-    while (!worklist.isEmpty()) {
-        uint32_t node = worklist.takeLast();
-        uint32_t mark = m_ledTo.moduleOfNode[node];
-        forEachPlaceLedToBy(node, [](uint32_t) { }, [&](uint32_t next) {
-            arrive(m_ledTo.moduleOfNode, next, next, mark);
-        });
-    }
-
-    m_ledTo.callersOfUnknownCodeOfEntry.fill(0, numberOfModules);
-    size_t numberOfVariables = numberOfVariablesAndNames();
-    m_ledTo.firstReader.fill(0, numberOfVariables + 1);
-    auto forEachVariableRead = [&](const auto& functor) {
-        for (uint32_t function = 0; function < m_numberOfFunctions; ++function) {
-            if (m_ledTo.entryOfNode[function] == LedTo::byNothing)
-                continue;
-            forEachNameReadByEntering(function, [&](uint32_t name) {
-                functor(function, name);
-            });
-            forEachFunctionWhosePrototypeIsReadBy(FunctionID(function), [&](uint32_t stored) {
-                functor(function, stored);
-            });
-            forEachNameOnFunctionReadBy(FunctionID(function), [&](uint32_t name) {
-                functor(function, name);
-            });
-            const Function& reader = m_program.at(FunctionID(function));
-            for (const SummaryNode& node : m_flow.summaries.at(FunctionID(function)).nodes) {
-                // Where the body of its own module is entered at a time that nobody knows, the module is not followed, and none of its variables counts.
-                if (node.kind == SummaryNode::Kind::Variable && !(reader.isModuleBody() && reader.module == m_program.variables[node.first].module))
-                    functor(function, node.first);
-            }
-        }
-    };
-    for (uint32_t function = 0; function < m_numberOfFunctions; ++function) {
-        uint32_t entry = m_ledTo.entryOfNode[function];
-        if (entry == LedTo::byNothing || !mayCallUnknownCodeAtStart(function))
-            continue;
-        ++m_ledTo.callersOfUnknownCode;
-        if (entry != LedTo::bySeveral)
-            ++m_ledTo.callersOfUnknownCodeOfEntry[entry];
-    }
-    forEachVariableRead([&](uint32_t, uint32_t variable) {
-        ++m_ledTo.firstReader[variable + 1];
-    });
-    for (size_t variable = 0; variable < numberOfVariables; ++variable)
-        m_ledTo.firstReader[variable + 1] += m_ledTo.firstReader[variable];
-    m_ledTo.readers.fill(0, m_ledTo.firstReader.last());
-    Vector<uint32_t> nextReader(m_ledTo.firstReader.span().first(numberOfVariables));
-    forEachVariableRead([&](uint32_t function, uint32_t variable) {
-        m_ledTo.readers[nextReader[variable]++] = function;
-    });
-}
-
-void CalleeSummarizerForLinkEffects::findModulesThatMayWait()
-{
-    uint32_t numberOfModules = static_cast<uint32_t>(m_program.modules.size());
-    m_modulesThatMayWait.ensureSize(numberOfModules);
-    Vector<uint32_t> worklist;
-    for (uint32_t index = 0; index < numberOfModules; ++index) {
-        if (m_program.at(ModuleID(index)).flags.contains(ModuleFlags::HasTopLevelAwait)) {
-            m_modulesThatMayWait.set(index);
-            worklist.append(index);
-        }
-    }
-    if (worklist.isEmpty())
-        return;
-    auto forEachModuleAwaited = [&](const auto& functor) {
-        for (uint32_t index = 0; index < numberOfModules; ++index) {
-            for (const ModuleRequest& request : m_program.at(ModuleID(index)).requests) {
-                // `import defer * as space from "./slow.mjs"`: what suspends below a module that is deferred is evaluated at once, and the importer waits for it.
-                if (request.kind == ModuleRequestKind::Import)
-                    functor(index, request.target.index());
-            }
-        }
-    };
-    Vector<uint32_t> firstImporter;
-    firstImporter.fill(0, numberOfModules + 1);
-    forEachModuleAwaited([&](uint32_t, uint32_t target) {
-        ++firstImporter[target + 1];
-    });
-    for (uint32_t index = 0; index < numberOfModules; ++index)
-        firstImporter[index + 1] += firstImporter[index];
-    Vector<uint32_t> importers;
-    importers.fill(0, firstImporter.last());
-    Vector<uint32_t> nextImporter(firstImporter.span().first(numberOfModules));
-    forEachModuleAwaited([&](uint32_t importer, uint32_t target) {
-        importers[nextImporter[target]++] = importer;
-    });
-    while (!worklist.isEmpty()) {
-        uint32_t module = worklist.takeLast();
-        for (uint32_t importer : importers.span().subspan(firstImporter[module], firstImporter[module + 1] - firstImporter[module])) {
-            if (!m_modulesThatMayWait.set(importer))
-                worklist.append(importer);
-        }
-    }
-}
-
-auto CalleeSummarizerForLinkEffects::stateAtStart(const StartOfProgram& start, ModuleID id) const -> StartOfProgram::StateOfModule
-{
-    StartOfProgram::StateOfModule state = start.modules[id.index()];
-    if (state != StartOfProgram::StateOfModule::NotStarted || start.tickOfOtherEntries == StartOfProgram::never)
-        return state;
-    if (start.otherEntriesLeadToEverything)
-        return StartOfProgram::StateOfModule::NotFollowed;
-    return !m_ledTo.isEmpty() && otherEntriesLeadTo(start, m_ledTo.entryOfModule[id.index()]) ? StartOfProgram::StateOfModule::NotFollowed : state;
-}
-
-// At tickOfOtherEntries. A body that the start has evaluated itself was not entered then, nor was what that body alone leads to.
-bool CalleeSummarizerForLinkEffects::isEnteredByOtherEntries(const StartOfProgram& start, uint32_t node) const
-{
-    if (start.tickOfOtherEntries == StartOfProgram::never)
-        return false;
-    if (start.otherEntriesLeadToEverything)
-        return true;
-    if (m_ledTo.isEmpty() || !otherEntriesLeadTo(start, m_ledTo.entryOfNode[node]))
-        return false;
-    uint32_t module = m_ledTo.moduleOfNode[node];
-    if (module == LedTo::bySeveral || module == LedTo::byNothing)
-        return true;
-    return start.modules[module] == StartOfProgram::StateOfModule::NotStarted && otherEntriesLeadTo(start, m_ledTo.entryOfModule[module]);
-}
-
-// Whoever names a module may hold its namespace object, and has what that shows, whoever has run: `hub[key]`, `cond ? hub.f : other`. What is read there meets what nobody knows, and a settled type no longer names it.
-// As escapeExportsOf() goes: an export may be the namespace object of another module, and a star may hand on what only the run tells.
-void CalleeSummarizerForLinkEffects::makeFunctionsBornBehindNamespaceAvailableAtStart(StartOfProgram& start, ModuleID first) const
-{
-    Vector<ModuleID, 8> modules { first };
-    auto add = [&](ModuleID id) {
-        if (id && !modules.contains(id))
-            modules.append(id);
-    };
-    for (size_t place = 0; place < modules.size(); ++place) {
-        const Module& module = m_program.at(modules[place]);
-        for (const ModuleExport& exported : module.exports) {
-            add(exported.module);
-            FunctionID born = exported.variable ? m_program.at(exported.variable).function : FunctionID();
-            if (!born || !m_flow.reached.get(born.index()) || m_tables.functions[born.index()].everyCallerIsKnown || start.isAvailable.set(born.index()))
-                continue;
-            start.functionsMadeAvailable.append(born.index());
-            if (start.lastTickOfUnseenCode == start.clock)
-                enterAtStart(start, born.index());
-            else
-                start.availableToUnseenCode.append(born.index());
-        }
-        for (const ModuleRequest& request : module.requests) {
-            if (request.isDynamicStarExport)
-                add(request.target);
-        }
-    }
-}
-
-void CalleeSummarizerForLinkEffects::makeAvailableAtStart(StartOfProgram& start, FunctionID namer) const
-{
-    for (FunctionID named : m_flow.summaries.at(namer).functionsNamed) {
-        const Function& function = m_program.at(named);
-        // In front of the question below: a body that asks for the namespace object of its own module is available by then.
-        if (function.isModuleBody() && function.module)
-            makeFunctionsBornBehindNamespaceAvailableAtStart(start, function.module);
-        if (start.isAvailable.set(named.index()))
-            continue;
-        start.functionsMadeAvailable.append(named.index());
-        // A site evaluates the module at a time that nobody knows.
-        if (function.isModuleBody()) {
-            if (function.module && named != namer)
-                evaluateSometimeFrom(start, function.module);
-            continue;
-        }
-        // A read, a store or a copy enters an accessor, and no call is written there. The flow may know all such places of one that an operation lays (`{ get rate() { .. } }`, `static get rate() { .. }`),
-        // but no list of callees has them: whoever looks the name up counts as entering code that nobody knows, so that is what the accessor is entered by.
-        bool isEnteredWithoutCall = function.kind == FunctionKind::Getter || function.kind == FunctionKind::Setter;
-        if (!m_flow.reached.get(named.index()) || (m_tables.functions[named.index()].everyCallerIsKnown && !isEnteredWithoutCall))
-            continue;
-        if (start.lastTickOfUnseenCode == start.clock)
-            enterAtStart(start, named.index());
-        else
-            start.availableToUnseenCode.append(named.index());
-    }
-}
-
-void CalleeSummarizerForLinkEffects::enterAtStart(StartOfProgram& start, uint32_t first) const
-{
-    // Whoever is entered again may enter unseen code again, which can have got hold of more since. The effects hold for all that the function enters in turn.
-    if (isFunction(first) && mayCallUnknownCodeAtStart(first))
-        letUnseenCodeRunAtStart(start, HandedToUnseenCode::WhatProgramMade);
-    if (start.firstEntry[first] != StartOfProgram::never || isEnteredByOtherEntries(start, first))
-        return;
-    start.firstEntry[first] = start.clock;
-    start.nodesEntered.append(first);
-    bool isOutermost = start.worklist.isEmpty();
-    start.worklist.append(first);
-    if (!isOutermost)
-        return;
-    // The list is never empty while somebody below appends to it.
-    for (size_t place = 0; place < start.worklist.size(); ++place) {
-        uint32_t function = start.worklist[place];
-        if (isFunction(function))
-            makeAvailableAtStart(start, FunctionID(function));
-        for (FunctionID callee : calleesOf(function))
-            enterAtStart(start, callee.index());
-    }
-    start.worklist.shrink(0);
-}
-
-void CalleeSummarizerForLinkEffects::enterAtStart(StartOfProgram& start, const CodeEntered& code) const
-{
-    if (code.mayBeLost)
-        enterAtStart(start, nodeOfLostFunctions());
-    for (FunctionID entered : functionsOf(code))
-        enterAtStart(start, entered.index());
-}
-
-// An object of the engine's classes may hold what the program made. A built-in brings it nothing new.
-// `const f = given || (() => late)`: what has escaped is among what is unseen, and a settled type no longer names it (LinkFlow::settleTypes()). So what is unseen may be the closure itself, with no unseen code in between.
-static bool mayBeMadeByProgramForLinkEffects(const LinkType& type)
-{
-    return type.holdsUnseen || type.objects != LinkType::Objects::None || type.functions != LinkType::Functions::None || type.classes != LinkType::Classes::None;
-}
-
-auto CalleeSummarizerForLinkEffects::handedOverBy(FunctionID id, const ThinSummary& summary, const SummaryCall& call) const -> HandedToUnseenCode
-{
-    auto isMadeByProgram = [&](uint32_t node) {
-        return node != noSummaryNode && mayBeMadeByProgramForLinkEffects(typeAt(id, node));
-    };
-    bool handsOver = call.passesList || isMadeByProgram(call.subject) || isMadeByProgram(call.receiver) || isMadeByProgram(call.newTarget) || std::ranges::any_of(argumentsOf(summary, call), isMadeByProgram);
-    return handsOver ? HandedToUnseenCode::WhatProgramMade : HandedToUnseenCode::Nothing;
-}
-
-auto CalleeSummarizerForLinkEffects::handedOverBy(FunctionID id, const SummaryAccess& access) const -> HandedToUnseenCode
-{
-    auto isMadeByProgram = [&](uint32_t node) {
-        return node != noSummaryNode && mayBeMadeByProgramForLinkEffects(typeAt(id, node));
-    };
-    bool storesWhatProgramMade = access.kind != SummaryAccess::Kind::Read && access.kind != SummaryAccess::Kind::Has && isMadeByProgram(access.value);
-    bool handsOver = isMadeByProgram(access.subject) || isMadeByProgram(access.receiver) || isMadeByProgram(access.keyNode) || storesWhatProgramMade;
-    return handsOver ? HandedToUnseenCode::WhatProgramMade : HandedToUnseenCode::Nothing;
-}
-
-void CalleeSummarizerForLinkEffects::letUnseenCodeRunAtStart(StartOfProgram& start, HandedToUnseenCode handed) const
-{
-    // A further entry point answers to its name: `require(path)`, with a path that the build does not know, loads it here and now, while the modules that wait for this one are unfinished. It takes nothing of the program to do that.
-    if (start.tickOfOtherEntries == StartOfProgram::never) {
-        start.tickOfOtherEntries = start.clock;
-        if (start.otherEntriesLeadToEverything || (!m_ledTo.isEmpty() && m_ledTo.callersOfUnknownCode > m_ledTo.callersOfUnknownCodeOfEntry[start.entry.index()]))
-            start.unseenCodeHoldsObjects = true;
-    }
-    if (handed == HandedToUnseenCode::WhatProgramMade)
-        start.unseenCodeHoldsObjects = true;
-    if (!start.unseenCodeHoldsObjects || start.lastTickOfUnseenCode == start.clock)
-        return;
-    start.lastTickOfUnseenCode = start.clock;
-    Vector<uint32_t> available = std::exchange(start.availableToUnseenCode, { });
-    for (uint32_t function : available)
-        enterAtStart(start, function);
-}
-
-void CalleeSummarizerForLinkEffects::evaluateSometimeFrom(StartOfProgram& start, ModuleID id) const
-{
-    if (stateAtStart(start, id) != StartOfProgram::StateOfModule::NotStarted)
-        return;
-    start.modules[id.index()] = StartOfProgram::StateOfModule::NotFollowed;
-    start.modulesStarted.append(id.index());
-    const Module& module = m_program.at(id);
-    for (const ModuleRequest& request : module.requests)
-        evaluateSometimeFrom(start, request.target);
-    if (module.body && m_flow.reached.get(module.body.index()))
-        enterAtStart(start, module.body.index());
-    else
-        letUnseenCodeRunAtStart(start, HandedToUnseenCode::Nothing);
-}
-
-void CalleeSummarizerForLinkEffects::evaluateAtStart(StartOfProgram& start, const BodyIndexTable& bodies, ModuleID id) const
-{
-    if (start.modules[id.index()] != StartOfProgram::StateOfModule::NotStarted)
-        return;
-    // Its body waits for a module that suspends, so the loop of events turns in front of it, and whatever does not wait overtakes it.
-    bool waits = m_modulesThatMayWait.get(id.index());
-    // Nobody says that unseen code has loaded it: the loader may evaluate it here and now.
-    if (stateAtStart(start, id) != StartOfProgram::StateOfModule::NotStarted) {
-        start.someModuleIsLeftOpen |= waits && start.otherEntriesLeadToEverything;
-        return;
-    }
-    const Module& module = m_program.at(id);
-    // Unseen code that finds the file by its name may have evaluated it, caught what it threw and gone on.
-    if (module.flags.contains(ModuleFlags::IsFoundByName) && start.lastTickOfUnseenCode) {
-        evaluateSometimeFrom(start, id);
-        return;
-    }
-    // The loader of the run time loads such a graph in steps, and an imported CommonJS file runs in one of them: what it requires is evaluated ahead of what Module::requests lists in front of the file. No prefix is written for it.
-    // Whatever leads to such a module is one itself, so the whole graph goes without an order.
-    if (module.flags.contains(ModuleFlags::IsLoadedByLoader)) {
-        evaluateSometimeFrom(start, id);
-        return;
-    }
-    const BodyIndex* index = isFollowedAtStart(id) ? bodies.find(module.body) : nullptr;
-    if (index && index->hasIrreducibleFlow())
-        index = nullptr;
-
-    // The loader evaluates what it imports here and now, whatever its own body is like.
-    start.modules[id.index()] = StartOfProgram::StateOfModule::Followed;
-    start.modulesStarted.append(id.index());
-    for (const ModuleRequest& request : module.requests) {
-        if (request.kind != ModuleRequestKind::Import)
-            continue;
-        if (request.phase == ImportPhase::Evaluation)
-            evaluateAtStart(start, bodies, request.target);
-        else
-            evaluateSometimeFrom(start, request.target);
-    }
-    if (waits || !index) {
-        start.modules[id.index()] = StartOfProgram::StateOfModule::NotFollowed;
-        ++start.clock;
-        if (waits || !module.body || !m_flow.reached.get(module.body.index()))
-            letUnseenCodeRunAtStart(start, HandedToUnseenCode::Nothing);
-        if (module.body && m_flow.reached.get(module.body.index()))
-            enterAtStart(start, module.body.index());
-        return;
-    }
-    // A site in what ran meanwhile may have evaluated it.
-    if (start.firstEntry[module.body.index()] != StartOfProgram::never) {
-        start.modules[id.index()] = StartOfProgram::StateOfModule::NotFollowed;
-        return;
-    }
-    followBodyAtStart(start, bodies, *index, module.body);
-}
-
-void CalleeSummarizerForLinkEffects::countSitesThatEnter()
-{
-    m_numberOfSitesThatEnter.fill(0, m_numberOfFunctions);
-    auto count = [&](const CodeEntered& code) {
-        for (FunctionID entered : functionsOf(code)) {
-            // A call that several share stands in the list as a node of its own. Whoever is entered through one is not asked about: everyCallHasOneCallee.
-            if (!isFunction(entered.index()))
-                continue;
-            uint8_t& sites = m_numberOfSitesThatEnter[entered.index()];
-            sites += sites < 2;
-        }
-    };
-    for (const CodeEntered& code : m_codeOfCalls)
-        count(code);
-    for (const CodeEntered& code : m_codeOfAccesses)
-        count(code);
-}
-
-const BodyIndex* CalleeSummarizerForLinkEffects::bodyFollowedInPlaceOf(const StartOfProgram& start, const BodyIndexTable& bodies, FunctionID caller, const SummaryCall& call, const CodeEntered& entered) const
-{
-    if (entered.numberOfFunctions != 1 || entered.mayBeLost || entered.mayBeUnseen || call.isConstruction || call.isMadeByProtocol || call.passesList || call.waitsFor != noSummaryNode)
-        return nullptr;
-    FunctionID callee = functionsOf(entered)[0];
-    if (!isFunction(callee.index()))
-        return nullptr;
-    // A built-in that is handed the function may enter it any number of times.
-    switch (call.callee) {
-    case SummaryCall::Callee::Binding:
-        if (call.function != callee)
-            return nullptr;
-        break;
-    case SummaryCall::Callee::Value: {
-        LinkType closures;
-        closures.functions = LinkType::Functions::Closure;
-        closures.function = callee;
-        if (call.builtin || call.subject == noSummaryNode || !(typeAt(caller, call.subject) == closures))
-            return nullptr;
-        break;
-    }
-    case SummaryCall::Callee::Name:
-    case SummaryCall::Callee::Builtin:
-        return nullptr;
-    }
-    const Function& function = m_program.at(callee);
-    if (function.isCoroutine() || (function.kind != FunctionKind::Plain && function.kind != FunctionKind::Arrow) || function.module != m_program.at(caller).module)
-        return nullptr;
-    if (!m_tables.functions[callee.index()].everyCallerIsKnown || !m_tables.functions[callee.index()].everyCallHasOneCallee || m_numberOfSitesThatEnter[callee.index()] != 1)
-        return nullptr;
-    if (start.firstEntry[callee.index()] != StartOfProgram::never || isEnteredByOtherEntries(start, callee.index()))
-        return nullptr;
-    const BodyIndex* index = bodies.find(callee);
-    return index && !index->hasIrreducibleFlow() ? index : nullptr;
-}
-
-// `o.m(args)`: the operation that looks `m` up. The scan leaves one record of the two, at the call. Null: the call looks no name up in an operation of its own.
-static ValueID lookupOfCallByNameForLinkEffects(const BodyIndex& index, const SummaryCall& call)
-{
-    if (call.callee != SummaryCall::Callee::Name || call.isMadeByProtocol)
-        return { };
-    BodyValue site = index.value(call.site);
-    ValueID callee;
-    site.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
-        if (site.operandUses(operandIndex).contains(OperandUse::Calls))
-            callee = operand;
-    });
-    while (callee && inputOperationsThatHandOn.contains(index.opcodeOf(callee)))
-        callee = index.value(callee).operand(0);
-    return callee && index.opcodeOf(callee) == Opcode::PropGet ? callee : ValueID();
-}
-
-void CalleeSummarizerForLinkEffects::followBodyAtStart(StartOfProgram& start, const BodyIndexTable& bodies, const BodyIndex& index, FunctionID body) const
-{
-    const ThinSummary& summary = m_flow.summaries.at(body);
-    ModuleID module = m_program.at(body).module;
-    ++start.clock;
-    start.firstEntry[body.index()] = start.clock;
-    start.nodesEntered.append(body.index());
-    start.bodiesFollowed.set(body.index());
-    if (!start.isAvailable.set(body.index()))
-        start.functionsMadeAvailable.append(body.index());
-    makeAvailableAtStart(start, body);
-
-    // Of these nobody says where in the body they are.
-    bool unseenCodeRunsAnywhere = !isSummarized(body.index()) || keepsDefaults(body, summary, { SummaryTrait::Suspends, SummaryTrait::HasDirectEval }) || someInspectionMayRunCode(m_flow, m_tables, body) || handsObjectToCodeNobodyNames(body, summary);
-
-    Vector<RecordAtSite> records;
-    for (uint32_t call = 0; call < summary.calls.size(); ++call) {
-        records.append(RecordAtSite { summary.calls[call].site.index(), RecordAtSite::Kind::Call, call });
-        // The name is looked up in front of the arguments: what the lookup runs finds nothing that they lay. Such a call is never followed in place, so whoever is entered here too is only entered earlier.
-        if (ValueID lookup = lookupOfCallByNameForLinkEffects(index, summary.calls[call]))
-            records.append(RecordAtSite { lookup.index(), RecordAtSite::Kind::Call, call });
-    }
-    uint32_t callsOfConversion = static_cast<uint32_t>(m_builtins.keysReadBy(Protocol::ToPrimitive).size());
-    for (const ThinSummary::FurtherConversion& further : summary.furtherConversions) {
-        for (uint32_t call = further.firstCall; call < further.firstCall + callsOfConversion; ++call)
-            records.append(RecordAtSite { further.site.index(), RecordAtSite::Kind::Call, call });
-    }
-    for (uint32_t access = 0; access < summary.accesses.size(); ++access)
-        records.append(RecordAtSite { summary.accesses[access].site.index(), RecordAtSite::Kind::Access, access });
-    for (uint32_t change = 0; change < summary.changes.size(); ++change)
-        records.append(RecordAtSite { summary.changes[change].site.index(), RecordAtSite::Kind::Change, change });
-    for (ValueID site : summary.sitesThatRunUnknownCode)
-        records.append(RecordAtSite { site.index(), RecordAtSite::Kind::UnknownCode, 0 });
-    std::ranges::stable_sort(records, { }, &RecordAtSite::site);
-
-    auto isEntered = [&](BlockID block) {
-        return index.isReachable(block) && !std::ranges::binary_search(summary.blocksNeverEntered, block);
-    };
-    auto run = [&](const BodyValue& value, bool endsDeadZones) {
-        if (unseenCodeRunsAnywhere)
-            letUnseenCodeRunAtStart(start, HandedToUnseenCode::WhatProgramMade);
-        else if (m_tables.unseenCodeCanRun)
-            letUnseenCodeRunAtStart(start, HandedToUnseenCode::Nothing);
-        for (const RecordAtSite& record : std::ranges::equal_range(records, value.id().index(), { }, &RecordAtSite::site)) {
-            switch (record.kind) {
-            case RecordAtSite::Kind::Call:
-                if (codeOfCall(body, record.index).mayBeUnseen || effectsOfCallItself(body, summary, record.index).mayCallUnknownCode)
-                    letUnseenCodeRunAtStart(start, handedOverBy(body, summary, summary.calls[record.index]));
-                if (const BodyIndex* inPlace = endsDeadZones ? bodyFollowedInPlaceOf(start, bodies, body, summary.calls[record.index], codeOfCall(body, record.index)) : nullptr)
-                    followBodyAtStart(start, bodies, *inPlace, functionsOf(codeOfCall(body, record.index))[0]);
-                else
-                    enterAtStart(start, codeOfCall(body, record.index));
-                if (const SummaryCall& call = summary.calls[record.index]; call.callee == SummaryCall::Callee::Name && call.receiver != noSummaryNode && call.key && m_keysOfNamesOnFunctions.get(call.key.index()))
-                    lookAtNameOnFunctionAtStart(start, body, typeAt(body, call.receiver), call.key, false, false);
-                break;
-            case RecordAtSite::Kind::Access:
-                if (codeOfAccess(body, record.index).mayBeUnseen)
-                    letUnseenCodeRunAtStart(start, handedOverBy(body, summary.accesses[record.index]));
-                enterAtStart(start, codeOfAccess(body, record.index));
-                if (endsDeadZones)
-                    endDeadZoneOfNameLaidBy(start, body, summary.accesses[record.index]);
-                lookAtPrototypePropertyAtStart(start, body, summary.accesses[record.index], endsDeadZones);
-                if (const SummaryAccess& access = summary.accesses[record.index]; !access.isToContents() && access.key && m_keysOfNamesOnFunctions.get(access.key.index()))
-                    lookAtNameOnFunctionAtStart(start, body, typeAt(body, access.subject), access.key, access.laysValueInSightUnderName(), endsDeadZones);
-                break;
-            case RecordAtSite::Kind::Change:
-                if (changeMayRunCode(body, summary.changes[record.index]))
-                    letUnseenCodeRunAtStart(start, HandedToUnseenCode::WhatProgramMade);
-                if (endsDeadZones)
-                    endDeadZoneOfLinkLaidBy(start, body, summary.changes[record.index], std::ranges::any_of(std::ranges::equal_range(records, value.id().index(), { }, &RecordAtSite::site), [&](const RecordAtSite& other) {
-                        return other.kind == RecordAtSite::Kind::Access && summary.accesses[other.index].standsForObjectMadeAtSite;
-                    }));
-                break;
-            case RecordAtSite::Kind::UnknownCode:
-                letUnseenCodeRunAtStart(start, HandedToUnseenCode::WhatProgramMade);
-                break;
-            }
-        }
-        if (value.opcode() == Opcode::GetModuleVariable) {
-            VariableID variable = value.as<Opcode::GetModuleVariable>().variable();
-            if (start.endOfDeadZone[variable.index()] == StartOfProgram::never)
-                start.isReadTooEarly.set(variable.index());
-        } else if (value.opcode() == Opcode::PutModuleVariable && endsDeadZones) {
-            VariableID variable = value.as<Opcode::PutModuleVariable>().variable();
-            if (m_program.at(variable).module == module && start.endOfDeadZone[variable.index()] == StartOfProgram::never) {
-                start.endOfDeadZone[variable.index()] = start.clock;
-                start.variablesInitialized.append(variable.index());
-            }
-        }
-    };
-
-    // The blocks that every way passes behind which the caller goes on, from the entry downward. `return f();` is such a way.
-    // What is thrown out of a followed body ends the start: no handler stands round it.
-    BlockID lowest;
-    for (uint32_t number = 0; number < index.numberOfBlocks(); ++number) {
-        BlockID block(number);
-        BodyTerminator end = index.terminator(block);
-        if (!isEntered(block) || end.numberOfTargets() || end.kind() == TerminatorKind::Throw || end.kind() == TerminatorKind::Rethrow || end.kind() == TerminatorKind::Unreachable)
-            continue;
-        if (!lowest) {
-            lowest = block;
-            continue;
-        }
-        while (!index.dominates(lowest, block))
-            lowest = index.immediateDominator(lowest);
-    }
-    Vector<BlockID, 16> passedByEveryWay;
-    for (BlockID block = lowest ? lowest : entryBlock; block; block = index.immediateDominator(block)) {
-        if (!index.loopOf(block))
-            passedByEveryWay.append(block);
-        if (block == entryBlock)
-            break;
-    }
-    passedByEveryWay.reverse();
-    if (passedByEveryWay.isEmpty() || passedByEveryWay[0] != entryBlock)
-        passedByEveryWay.insert(0, entryBlock);
-
-    for (size_t place = 0; place < passedByEveryWay.size(); ++place) {
-        BlockID certain = passedByEveryWay[place];
-        // What is thrown in a block with a handler leaves the rest of the block out and goes on in the body.
-        bool endsDeadZones = !index.block(certain).hasHandler() && !index.loopOf(certain);
-        for (BodyValue value : index.block(certain).values()) {
-            ++start.clock;
-            run(value, endsDeadZones);
-        }
-        ++start.clock;
-        // What `certain` dominates and the next of them does not. In the order of dominators a block stands in front of all that it dominates, and those stand in a row:
-        // so these are the stretch from `certain` to the next, and the stretch behind all that the next dominates. Each block of the body is looked at once.
-        BlockID next = place + 1 < passedByEveryWay.size() ? passedByEveryWay[place + 1] : BlockID();
-        uint32_t endOfAllBelow = index.lastDominatorNumberBelow(certain) + 1;
-        std::pair<uint32_t, uint32_t> stretches[] {
-            { index.dominatorNumber(certain) + 1, next ? index.dominatorNumber(next) : endOfAllBelow },
-            { next ? index.lastDominatorNumberBelow(next) + 1 : endOfAllBelow, endOfAllBelow },
-        };
-        for (auto [begin, end] : stretches) {
-            for (BlockID block : index.blocksInDominatorOrder().subspan(begin, end - begin)) {
-                if (!isEntered(block))
-                    continue;
-                for (BodyValue value : index.block(block).values())
-                    run(value, false);
-            }
-        }
-    }
-    ++start.clock;
-}
-
-void CalleeSummarizerForLinkEffects::walkStart(StartOfProgram& start, const BodyIndexTable& bodies, ModuleID entry, std::span<const uint32_t> firstVariableOfModule, std::span<const uint32_t> variablesOfModules) const
-{
-    start.entry = entry;
-    // They are there from the link on, whoever has run.
-    for (uint32_t function : m_functionsBornInSightOfUnseenCode) {
-        start.isAvailable.set(function);
-        start.functionsMadeAvailable.append(function);
-        start.availableToUnseenCode.append(function);
-    }
-    evaluateAtStart(start, bodies, entry);
-
-    for (uint32_t function : start.nodesEntered) {
-        if (!isFunction(function) || start.bodiesFollowed.get(function))
-            continue;
-        uint32_t firstEntry = start.firstEntry[function];
-        for (const SummaryNode& node : m_flow.summaries.at(FunctionID(function)).nodes) {
-            if (node.kind == SummaryNode::Kind::Variable && firstEntry <= start.endOfDeadZone[node.first])
-                start.isReadTooEarly.set(node.first);
-        }
-        forEachNameReadByEntering(function, [&](uint32_t name) {
-            if (firstEntry <= start.endOfDeadZone[name])
-                start.isReadTooEarly.set(name);
-        });
-        forEachFunctionWhosePrototypeIsReadBy(FunctionID(function), [&](uint32_t stored) {
-            if (firstEntry <= start.endOfDeadZone[stored])
-                start.isReadTooEarly.set(stored);
-        });
-        forEachNameOnFunctionReadBy(FunctionID(function), [&](uint32_t name) {
-            if (firstEntry <= start.endOfDeadZone[name])
-                start.isReadTooEarly.set(name);
-        });
-    }
-    bool otherEntriesWereLoaded = start.tickOfOtherEntries != StartOfProgram::never && (start.otherEntriesLeadToEverything || !m_ledTo.isEmpty());
-    if (otherEntriesWereLoaded) {
-        ++start.numberOfStartsWithOtherEntries;
-        for (uint32_t variable : start.variablesInitialized) {
-            if (start.endOfDeadZone[variable] < start.tickOfOtherEntries || start.isReadTooEarly.get(variable))
-                continue;
-            if (start.otherEntriesLeadToEverything) {
-                start.isLeftOpen.set(variable);
-                continue;
-            }
-            for (uint32_t reader : m_ledTo.readers.span().subspan(m_ledTo.firstReader[variable], m_ledTo.firstReader[variable + 1] - m_ledTo.firstReader[variable])) {
-                if (start.firstEntry[reader] == StartOfProgram::never && isEnteredByOtherEntries(start, reader)) {
-                    start.isReadTooEarly.set(variable);
-                    break;
-                }
-            }
-        }
-    }
-    for (uint32_t module : start.modulesStarted) {
-        bool moduleWasFollowed = start.modules[module] == StartOfProgram::StateOfModule::Followed;
-        for (uint32_t variable : variablesOfModules.subspan(firstVariableOfModule[module], firstVariableOfModule[module + 1] - firstVariableOfModule[module])) {
-            if (moduleWasFollowed && start.endOfDeadZone[variable] != StartOfProgram::never)
-                start.isInitializedInSomeStart.set(variable);
-            else
-                start.isReadTooEarly.set(variable);
-        }
-        if (otherEntriesWereLoaded && (start.otherEntriesLeadToEverything || otherEntriesLeadTo(start, m_ledTo.entryOfModule[module])))
-            ++start.startsThatCameFirst[module];
-    }
-
-    for (uint32_t module : start.modulesStarted)
-        start.modules[module] = StartOfProgram::StateOfModule::NotStarted;
-    for (uint32_t node : start.nodesEntered) {
-        start.firstEntry[node] = StartOfProgram::never;
-        if (isFunction(node))
-            start.bodiesFollowed.clear(node);
-    }
-    for (uint32_t function : start.functionsMadeAvailable)
-        start.isAvailable.clear(function);
-    for (uint32_t variable : start.variablesInitialized)
-        start.endOfDeadZone[variable] = StartOfProgram::never;
-    start.modulesStarted.shrink(0);
-    start.nodesEntered.shrink(0);
-    start.functionsMadeAvailable.shrink(0);
-    start.variablesInitialized.shrink(0);
-    start.availableToUnseenCode.shrink(0);
-    start.clock = 1;
-    start.lastTickOfUnseenCode = 0;
-    start.tickOfOtherEntries = StartOfProgram::never;
-    start.unseenCodeHoldsObjects = false;
-}
-
-void CalleeSummarizerForLinkEffects::findVariablesInitializedAtEveryRead()
-{
-    const BodyIndexTable& bodies = bodiesLookedAt(m_flow.looks);
-    for (size_t layout = 0; layout < m_program.layouts.size(); ++layout) {
-        if (!m_flow.isOfConstructorFunction(LayoutID(layout)) || !m_program.layouts[layout].constructor)
-            continue;
-        m_layoutsOfConstructorFunctions.append(LayoutID(layout));
-        m_someFunctionIsGivenItsPrototypeObject |= constructorFunctionOf(LayoutID(layout)).prototypePropertyIsStoredOnceWithObjectMadeForIt;
-    }
-    for (const LinkedNameOnFunction& name : m_tables.namesOnFunctions) {
-        if (name.function)
-            m_keysOfNamesOnFunctions.set(name.key.index());
-    }
-    for (size_t variable : m_flow.variablesReadByUnseenCode) {
-        FunctionID born = m_program.variables[variable].function;
-        if (born && m_flow.reached.get(born.index()) && !m_tables.functions[born.index()].everyCallerIsKnown)
-            m_functionsBornInSightOfUnseenCode.append(born.index());
-    }
-    size_t numberOfVariables = numberOfVariablesAndNames();
-    size_t numberOfModules = m_program.modules.size();
-
-    // Two entries at one module are one start.
-    Vector<ModuleID> entries;
-    BitVector isEntry(numberOfModules);
-    for (const Entry& entry : m_program.entries) {
-        if (!isEntry.set(entry.module.index()))
-            entries.append(entry.module);
-    }
-    // It has no start of its own: the host does not ask for it. In every start it is among what unseen code may load.
-    bool unseenCodeMayLoadOtherFiles = entries.size() > 1;
-    for (size_t index = 0; index < numberOfModules && !unseenCodeMayLoadOtherFiles; ++index)
-        unseenCodeMayLoadOtherFiles = !isEntry.get(index) && m_program.modules[index].flags.contains(ModuleFlags::IsFoundByName);
-    findModulesThatMayWait();
-
-    Vector<uint32_t> firstVariableOfModule;
-    firstVariableOfModule.fill(0, numberOfModules + 1);
-    for (uint32_t variable = 0; variable < numberOfVariables; ++variable) {
-        if (ModuleID module = moduleOfVariableOrName(variable))
-            ++firstVariableOfModule[module.index() + 1];
-    }
-    for (size_t module = 0; module < numberOfModules; ++module)
-        firstVariableOfModule[module + 1] += firstVariableOfModule[module];
-    Vector<uint32_t> variablesOfModules;
-    variablesOfModules.fill(0, firstVariableOfModule.last());
-    Vector<uint32_t> nextVariableOfModule(firstVariableOfModule.span().first(numberOfModules));
-    for (uint32_t variable = 0; variable < numberOfVariables; ++variable) {
-        if (ModuleID module = moduleOfVariableOrName(variable))
-            variablesOfModules[nextVariableOfModule[module.index()]++] = variable;
-    }
-
-    BitVector isInitializedInSomeStart;
-    BitVector isReadTooEarly;
-    BitVector isLeftOpen;
-    bool someModuleIsLeftOpen = false;
-    Vector<uint32_t> startsThatCameFirst;
-    uint32_t numberOfStartsWithOtherEntries = 0;
-    BitVector otherEntriesWereLoadedInStartOf;
-    bool otherEntriesLeadToEverything = unseenCodeMayLoadOtherFiles;
-    countSitesThatEnter();
-    auto walkStarts = [&] {
-        // Each entry has a start of its own, and a walk writes nothing but the tables that it is walked on: they go side by side, each thread on tables of its own.
-        Vector<StartOfProgram> startsOfWorkers(m_flow.loops.width());
-        Vector<uint8_t> otherEntriesWereLoaded;
-        otherEntriesWereLoaded.fill(0, entries.size());
-        forEachIndexInParallel(m_flow.loops, static_cast<unsigned>(entries.size()), [&](unsigned indexOfEntry, unsigned worker) {
-            StartOfProgram& start = startsOfWorkers[worker];
-            if (start.modules.isEmpty()) {
-                start.otherEntriesLeadToEverything = otherEntriesLeadToEverything;
-                start.modules.fill(StartOfProgram::StateOfModule::NotStarted, numberOfModules);
-                start.firstEntry.fill(StartOfProgram::never, numberOfNodesOfCallees());
-                start.bodiesFollowed.ensureSize(m_numberOfFunctions);
-                start.isAvailable.ensureSize(m_numberOfFunctions);
-                start.endOfDeadZone.fill(StartOfProgram::never, numberOfVariables);
-                start.isInitializedInSomeStart.ensureSize(numberOfVariables);
-                start.isReadTooEarly.ensureSize(numberOfVariables);
-                start.isLeftOpen.ensureSize(numberOfVariables);
-                start.startsThatCameFirst.fill(0, numberOfModules);
-            }
-            uint32_t startsBefore = start.numberOfStartsWithOtherEntries;
-            walkStart(start, bodies, entries[indexOfEntry], firstVariableOfModule.span(), variablesOfModules.span());
-            otherEntriesWereLoaded[indexOfEntry] = start.numberOfStartsWithOtherEntries != startsBefore;
-        });
-
-        isInitializedInSomeStart = BitVector(numberOfVariables);
-        isReadTooEarly = BitVector(numberOfVariables);
-        isLeftOpen = BitVector(numberOfVariables);
-        someModuleIsLeftOpen = false;
-        startsThatCameFirst.fill(0, numberOfModules);
-        for (const StartOfProgram& start : startsOfWorkers) {
-            if (start.modules.isEmpty())
-                continue;
-            isInitializedInSomeStart.merge(start.isInitializedInSomeStart);
-            isReadTooEarly.merge(start.isReadTooEarly);
-            isLeftOpen.merge(start.isLeftOpen);
-            someModuleIsLeftOpen |= start.someModuleIsLeftOpen;
-            for (size_t module = 0; module < numberOfModules; ++module)
-                startsThatCameFirst[module] += start.startsThatCameFirst[module];
-        }
-        numberOfStartsWithOtherEntries = 0;
-        otherEntriesWereLoadedInStartOf = BitVector(numberOfModules);
-        for (size_t index = 0; index < entries.size(); ++index) {
-            if (!otherEntriesWereLoaded[index])
-                continue;
-            ++numberOfStartsWithOtherEntries;
-            otherEntriesWereLoadedInStartOf.set(entries[index].index());
-        }
-    };
-    // A start in which the other entries were loaded, and which has not been to the module in front of them, has not followed it.
-    auto everyStartCameFirst = [&](ModuleID module) {
-        uint32_t startsOfOthers = numberOfStartsWithOtherEntries;
-        if (!otherEntriesLeadToEverything && startsOfOthers) {
-            uint32_t entry = m_ledTo.entryOfModule[module.index()];
-            if (entry != LedTo::bySeveral && entry != LedTo::byNothing && otherEntriesWereLoadedInStartOf.get(entry))
-                --startsOfOthers;
-        }
-        return startsThatCameFirst[module.index()] == startsOfOthers;
-    };
-    auto isInitializedAtEveryRead = [&](size_t variable) {
-        return !isReadTooEarly.get(variable) && (variable >= m_program.variables.size() || m_tables.variables[variable].proven) && everyStartCameFirst(moduleOfVariableOrName(variable));
-    };
-
-    walkStarts();
-    if (otherEntriesLeadToEverything) {
-        // In one start alone: what that entry alone leads to is followed there, and no other start stands against it.
-        bool hangsOnWhatTheyLeadTo = someModuleIsLeftOpen || numberOfStartsWithOtherEntries == 1;
-        for (size_t variable : isLeftOpen)
-            hangsOnWhatTheyLeadTo |= isInitializedAtEveryRead(variable);
-        if (hangsOnWhatTheyLeadTo) {
-            findWhatEntriesLeadTo();
-            otherEntriesLeadToEverything = false;
-            walkStarts();
-        }
-    }
-
-    for (size_t variable : isInitializedInSomeStart) {
-        if (!isInitializedAtEveryRead(variable))
-            continue;
-        if (variable >= firstNameOnFunction()) {
-            m_typesFound.namesOnFunctionsLaidAheadOfEveryRead.append(static_cast<uint32_t>(variable - firstNameOnFunction()));
-            continue;
-        }
-        if (size_t first = m_program.variables.size() + m_tables.namesOnPrototypes.size(); variable >= first) {
-            ((variable - first) % 2 ? m_typesFound.linksLaidAheadOfEveryEntry : m_typesFound.prototypeObjectsStoredAheadOfEveryEntry).append(m_layoutsOfConstructorFunctions[(variable - first) / 2].index());
-            continue;
-        }
-        if (variable >= m_program.variables.size()) {
-            m_typesFound.namesLaidAheadOfEveryEntry.append(static_cast<uint32_t>(variable - m_program.variables.size()));
-            continue;
-        }
-        // Of a variable the clock claims nothing: a hole in it would be the empty word read raw, and the check that it spared is a compare. In the body that stores, the state of the walk holds what was stored.
-    }
-}
-
 void summarizeCallees(const LinkFlow& flow, LinkTables& tables)
 {
     CalleeSummarizerForLinkEffects summarizer(flow, tables);
     summarizer.findComponentsOfCallees();
-    // Neither reads what the other writes.
-    runLanes(flow.loops, {
-        [&] {
-            summarizer.summarizeKnownEffects();
-        },
-        [&] {
-            summarizer.summarizeValues();
-        },
-    });
+    summarizer.summarizeKnownEffectsAndValues();
     summarizer.writeKnownEffects();
-    summarizer.findVariablesInitializedAtEveryRead();
-    flow.typesFoundOfCallees = summarizer.takeTypesFound();
 }
 
-void writeTypesFoundOfCallees(const LinkFlow& flow, LinkTables& tables)
+void writePrototypeObjectsThatAreSettled(const LinkFlow& flow, LinkTables& tables)
 {
-    TypeArena types(flow.program.types, ArenaKeeps::InProgram);
-    for (const TypesFoundOfCallees::ResultOfCallOfSeveral& result : flow.typesFoundOfCallees.resultsOfCallsOfSeveral) {
-        TypeID type = flow.toTypeID(types, result.type);
-        if (type != TypeTable::anything)
-            tables.known.callsOfSeveral[result.place].result = type;
-    }
-    // The clock says when. That nothing else comes to lie under the name, on the prototype object, in front of it on an object, or in the place of the prototype object, the tables say.
+    // Nobody ever stores `prototype` of the function, so whenever an object is made it is made below the object that the function was made with. That nothing else comes to lie on that object, in front of it on an object, or above it, the tables say.
     auto placeOf = [](const LinkedNameOnPrototype& laid) {
         return std::pair { laid.layout, laid.key };
     };
@@ -2936,11 +1608,8 @@ void writeTypesFoundOfCallees(const LinkFlow& flow, LinkTables& tables)
         if (std::ranges::binary_search(tables.namesOnPrototypes, std::pair { LayoutID(index), PropertyKeyID() }, { }, placeOf))
             continue;
         const LinkedFunction& function = tables.functions[record.constructor.index()];
-        layout.prototypeObjectIsSettledAheadOfEveryObject = function.prototypePropertyStaysAsMade
-            || (function.prototypePropertyIsStoredOnceWithObjectMadeForIt && std::ranges::binary_search(flow.typesFoundOfCallees.prototypeObjectsStoredAheadOfEveryEntry, static_cast<uint32_t>(index)));
-        layout.isLinkedBelowBaseAheadOfEveryObject = layout.prototypeObjectIsSettledAheadOfEveryObject && std::ranges::binary_search(flow.typesFoundOfCallees.linksLaidAheadOfEveryEntry, static_cast<uint32_t>(index));
+        layout.prototypeObjectIsSettledAheadOfEveryObject = function.prototypePropertyStaysAsMade;
     }
-    flow.typesFoundOfCallees = { };
 }
 
 } } } // namespace JSC::AOT::Typed

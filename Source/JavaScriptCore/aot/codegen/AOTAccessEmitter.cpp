@@ -67,6 +67,16 @@ std::optional<Pointer> AccessEmitter::siteOf(const OperationContext& context, Pr
     return siteCacheAddress(context, key, access);
 }
 
+// A store has no answers at its place, and in front of the handler that adds a property the shared tables are asked three times over: 57 instructions against the dozen of a site.
+std::optional<Pointer> AccessEmitter::siteOfStore(const OperationContext& context, PropertyKeyID key, SlotAccess access)
+{
+    if (isSymbolOfRealm(key) || !comesAgain(context))
+        return std::nullopt;
+    if (m_code.at(context.block()).frequency == BlockFrequency::Rare || (context.valueID() && testsItsOwnGuess(m_code.at(context.valueID()))))
+        return std::nullopt;
+    return siteCacheAddress(context, key, access);
+}
+
 std::optional<NumberedImmediate> AccessEmitter::answersOf(const OperationContext& context, PropertyKeyID key, SiteUse use)
 {
     if (isSymbolOfRealm(key) || !comesAgain(context))
@@ -387,48 +397,6 @@ void AccessEmitter::generateSetGlobalBinding(const ValueContext& value)
     m_out.appendTo(continuation);
 }
 
-// What the front cell of the Structure and the name says holds of every object with that Structure: an accessor that lies in an object above, in the cell or in the butterfly. The stub that reads by name goes by the same cell, and files it.
-// Everything else is no answer. An accessor of the object's own is none: a compiled object keeps it in a field or among its extra properties, and the cell then says so.
-CellPointer AccessEmitter::accessorAboveObjectByFrontCell(CellPointer object, PropertyKeyID key, LBasicBlock findsNoGetter)
-{
-    constexpr ptrdiff_t front = AOT_INSTANCE_OFFSET(propertyCaches) + PropertyCacheWords::offsetOfFront(SlotAccess::Read);
-    constexpr int32_t everyBitButIsOutOfLine = static_cast<uint8_t>(~PackedSlot::isOutOfLine);
-    static_assert(sizeof(PackedSlot) == sizeof(uint64_t) && Slot::payloadOf(Slot::Kind::Getter) == SlotPayload::Holder && Slot::locationOf(Slot::Kind::Getter) == SlotLocation::WordIndex);
-    const Machine::AbstractHeap& tables = m_heaps.AOTPropertyCaches_front;
-    // The table grows by moving, and the pages that it leaves are unmapped. Many a stub that declares no write files in it behind a miss. So no lookup goes by what an earlier one has read of it.
-    Machine::PatchOperation* endsEarlierReads = m_out.patchpoint(Machine::Void);
-    endsEarlierReads->effects = Machine::Effects::none();
-    m_heaps.decoratePatchpointWrite(&tables, endsEarlierReads);
-    endsEarlierReads->append(object.value(), Machine::ValueRep::ColdAny);
-    endsEarlierReads->setRunsWithoutFrame(true);
-    endsEarlierReads->onlyKeepsChildrenAlive = true;
-    const Machine::AbstractHeap& values = m_heaps.properties.atAnyNumber();
-
-    Word32 name = identifierNumber(key);
-    // Without a promise of a column Image may give the name a number behind the last column, and no row reaches that far.
-    if (!m_plan.slots().hasColumn(key))
-        branchUnless(belowOrEqual(name, static_cast<int32_t>(RowDisplacementTable::maxColumn)), findsNoGetter);
-
-    Integer granule = zeroExtended(shiftRightUnsigned(loadStructureID(object), static_cast<int32_t>(StructureRowWords::granuleShift)));
-    Pointer rows = loadImmutablePointer(front + OBJECT_OFFSETOF(FrontWords, rowsForStructureIDZero));
-    Word32 row(m_out.load32(m_out.address(tables, offsetBy(rows, granule, StructureRowWords::wordShift).value())));
-    Pointer plane(m_out.loadPtr(instanceField(tables, front + OBJECT_OFFSETOF(FrontWords, plane))));
-    Pointer cell = offsetBy(plane, zeroExtended(add(row, name)), 3);
-    auto partOfCell = [&](ptrdiff_t offset) {
-        return m_out.address(tables, cell.value(), offset);
-    };
-
-    branchUnless(equal(Word32(m_out.load16ZeroExt32(partOfCell(PackedSlot::offsetOfName()))), name), findsNoGetter);
-    Word32 kindAndFlags = bitXor(Word32(m_out.load8ZeroExt32(partOfCell(PackedSlot::offsetOfBiasedKindAndFlags()))), static_cast<int32_t>(PackedSlot::ownInlineValueBits));
-    branchUnless(equal(bitAnd(kindAndFlags, everyBitButIsOutOfLine), static_cast<int32_t>(Slot::Kind::Getter)), findsNoGetter);
-
-    CellPointer holder = decode(NarrowReference(m_out.load32(partOfCell(PackedSlot::offsetOfPayload()))));
-    Pointer butterfly = loadField<Pointer>(holder, m_heaps.JSObject_butterfly);
-    Pointer storage = select(hasBits(kindAndFlags, PackedSlot::isOutOfLine), butterfly, asPointer(holder));
-    Integer wordIndex = signExtended(Word32(m_out.load8SignExt32(partOfCell(PackedSlot::offsetOfLocation()))));
-    return CellPointer(m_out.load64(m_out.address(values, offsetBy(storage, wordIndex, 3).value())));
-}
-
 void AccessEmitter::generateGetCachedGetter(const ValueContext& value)
 {
     if (value.representation() == Representation::Void) {
@@ -449,59 +417,6 @@ void AccessEmitter::generateGetCachedGetter(const ValueContext& value)
         return;
     }
     define(value, Boxed(callStub(value, getterByAccessTable(), { object.value() }, { .numberedImmediate = NumberedImmediate { mentionOfName(key) } }).first));
-}
-
-// The tests in front of it say that the lookup finds the accessor where its class has defined it. Where the front cell does not say where that is, the run time looks.
-void AccessEmitter::generateGetAccessorOfMember(const ValueContext& value)
-{
-    if (value.representation() == Representation::Void) {
-        define(value, { });
-        return;
-    }
-    PropertyKeyID key = value->key();
-    // The walk builds none under such a key: canCallAccessorOfMember().
-    if (isSymbolOfRealm(key)) {
-        fail(value, InternalErrorKind::OpcodeWithoutCode);
-        define(value, emitter<ConstantEmitter>().zeroOf(value.representation()));
-        return;
-    }
-
-    CellPointer object = in<CellPointer>(value->objectOperand());
-    LBasicBlock asksRunTime = newBlock();
-    Join<CellPointer> join(m_out);
-    CellPointer accessor = accessorAboveObjectByFrontCell(object, key, asksRunTime);
-    ptrdiff_t offsetOfHalf = value->isSetter() ? GetterSetter::offsetOfSetter() : GetterSetter::offsetOfGetter();
-    join.add(CellPointer(m_out.load64(m_out.address(m_heaps.properties.atAnyNumber(), accessor.value(), offsetOfHalf))));
-
-    m_out.appendTo(asksRunTime);
-    Word32 isSetter(m_out.constInt32(value->isSetter()));
-    join.add(callOperation<CellPointer>(value, RuntimeOperation::FindAccessorOfMember, { object, identifierNumber(key), isSetter }, { .isOnRarePath = true }));
-    define(value, join.finish());
-}
-
-// It stands in front of a loop and runs once for all the turns, so it asks the run time. The empty value: only a read by name can answer.
-void AccessEmitter::generateGetCachedValue(const ValueContext& value)
-{
-    if (value.representation() == Representation::Void) {
-        define(value, { });
-        return;
-    }
-    PropertyKeyID key = value->key();
-    Boxed nothing = boxedConstant(JSValue());
-    if (isSymbolOfRealm(key)) {
-        define(value, nothing);
-        return;
-    }
-
-    Boxed receiver = in<Boxed>(value->objectOperand());
-    LBasicBlock isNoCell = newBlock();
-    Join<Boxed> join(m_out);
-    branchUnless(isCell(receiver), isNoCell);
-    join.add(callOperation<Boxed>(value, RuntimeOperation::ReadValueWithoutCode, { unboxCell(receiver), identifierNumber(key) }));
-
-    m_out.appendTo(isNoCell);
-    join.add(nothing);
-    define(value, join.finish());
 }
 
 bool AccessEmitter::isReadOfMethodCalledNext(const ValueContext& read)
@@ -734,7 +649,7 @@ void AccessEmitter::putNamedProperty(const ValueContext& value, Boxed object, Pu
         callStub(value, store->stub, { object.value(), stored.value() }, { .immediate = store->offsetOfRecord });
         return;
     }
-    std::optional<Pointer> site = value.opcode() == Opcode::PropSet ? siteOf(value, key, accessFor(mode)) : std::nullopt;
+    std::optional<Pointer> site = value.opcode() == Opcode::PropSet ? siteOfStore(value, key, accessFor(mode)) : std::nullopt;
     putById(value, object, key, stored, mode, site);
 }
 

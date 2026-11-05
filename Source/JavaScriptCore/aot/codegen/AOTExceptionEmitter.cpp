@@ -315,6 +315,7 @@ TypedPointer ExceptionEmitter::wordKeptBy(BlockID cleanup)
 
 void ExceptionEmitter::keep(BlockID cleanup, LValue kept)
 {
+    RELEASE_ASSERT(!functionSuspends());
     m_out.store64(kept, wordKeptBy(cleanup));
 }
 

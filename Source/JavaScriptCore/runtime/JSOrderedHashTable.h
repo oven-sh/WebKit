@@ -227,7 +227,6 @@ public:
 
     WriteBarrier<JSCell> m_storage;
 #if ENABLE(AOT)
-    // AOT::CompactTable::deletedPrefixOf(). It lies in what the size class of the object leaves unused.
     uint32_t m_deletedPrefix { 0 };
 #endif
 };

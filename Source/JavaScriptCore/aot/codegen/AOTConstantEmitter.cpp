@@ -344,7 +344,7 @@ CellPointer ConstantEmitter::makeConstantAtSite(const OperationContext* context,
 // The stub reads the word before it makes anything. On x86-64 a string in line is 24 bytes and 6 instructions, the cell of a built-in 16 bytes and 3 instructions. The rare arm of either is 15 bytes: makeConstantAtSite() and the jump back.
 // By the stub they are 10 and 5 bytes, 4 and 3 instructions more beside the call and the return, and a frame in a function that has no other use for one.
 // So the rows name the stub wherever no loop of the unit stands around, and in a block of a loop that is rare or unlikely.
-// (Build 440, one binary: for strings the servers are 3.0% smaller and ten of their routes 0.1 to 0.6% slower, the compiler benchmark 3.3% smaller and 0.2% slower;
+// (One binary: for strings the servers are 3.0% smaller and ten of their routes 0.1 to 0.6% slower, the compiler benchmark 3.3% smaller and 0.2% slower;
 // for the cells of built-ins the servers are 1.7% smaller and thirteen routes 0.1 to 0.5% slower; for keys nothing changes.)
 // The cell is a root for good, so the call may be found again behind a suspension.
 CellPointer ConstantEmitter::cellMadeByStub(const OperationContext& context, StubKey stub, CallOptions options, bool isNarrow, NOESCAPE const Invocable<TypedPointer()> auto& cellWord)

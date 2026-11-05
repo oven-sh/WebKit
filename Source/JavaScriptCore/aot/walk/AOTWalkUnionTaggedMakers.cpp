@@ -423,7 +423,7 @@ bool buildObjectOfTaggedClassConstructor(Walker& walker, const BodyValue& alloca
         return true;
     }
 
-    if (!walker.has(Mechanism::Guesses) || !walker.opensGuesses() || !newTarget.isValue() || !walker.facts().linked().mayBeMentionedBy(walker.unit().function, maker->constructor))
+    if (!walker.has(Mechanism::Guesses) || !walker.opensGuesses() || !newTarget.isValue() || !walker.facts().linked().mayBeMentionedBy(walker.unit(), maker->constructor))
         return false;
     Draft written = walker.draftOf(allocation);
     if (walker.hasFailed())

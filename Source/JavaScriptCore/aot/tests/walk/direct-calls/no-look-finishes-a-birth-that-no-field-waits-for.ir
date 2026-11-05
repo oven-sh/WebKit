@@ -1,4 +1,5 @@
-# the mark of a cell answers for the fields of the birth. Of this layout no field is one, so the mark is set only where a field has left its slot for good, and the look behind the body could clear nothing: it is not built
+# the mark of a cell answers for the fields of the birth. Where no slot is typed no field is one, so the mark is set only where a field has left its slot for good, and the look behind the body could clear nothing: it is not built
+# where x and y are fields of the birth the look stands behind the call, and where the body is copied the birth ends behind its last store
 # f1 = Point, f2 = make
 # -- source: no-look-finishes-a-birth-that-no-field-waits-for.ts
 # declare function sink(...values: unknown[]): void;
@@ -12,12 +13,18 @@
 # CHECK-LABEL: code f2:Body
 # CHECK: = NewObject
 # CHECK: = CallDirect {{*}}function=f1 {{*}}[isConstruction]
-# RUN(NEVER): walk f2 mechanisms=all-Inlining
+# RUN(NEVER): walk f2 mechanisms=all-Inlining-TypedSlots
 # NEVER-NOT: TryFinishBirth
+# RUN(WAITS): walk f2 mechanisms=all-Inlining
+# WAITS: = CallDirect {{*}}function=f1 {{*}}[isConstruction]
+# WAITS: = TryFinishBirth
 # RUN(FEWEST): walk f2 mechanisms=none+DirectCalls
 # FEWEST-NOT: TryFinishBirth
-# RUN(COPIED): walk f2 mechanisms=all
+# RUN(COPIED): walk f2 mechanisms=all-TypedSlots
 # COPIED-NOT: TryFinishBirth
+# RUN(INSIGHT): walk f2 mechanisms=all
+# INSIGHT: = PutSlotOrAdd {{*}}key="y"
+# INSIGHT-NEXT: = FinishBirth
 
 module m0 path="no-look-finishes-a-birth-that-no-field-waits-for.ts" displayPath="no-look-finishes-a-birth-that-no-field-waits-for.ts" body=f0 namespaceLayout=L(m0)
 module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)

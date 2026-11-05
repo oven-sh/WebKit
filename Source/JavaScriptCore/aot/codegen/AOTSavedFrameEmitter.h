@@ -19,11 +19,6 @@ public:
     void generateNewGenerator(const ValueContext&);
     void generateNewAsyncGenerator(const ValueContext&);
     void generateTakeGeneratorPrototype(const ValueContext&);
-    void generateIsGeneratorUnstarted(const ValueContext&);
-    void generateIsGeneratorRunning(const ValueContext&);
-    void generateMarkGeneratorRunning(const ValueContext&);
-    void generateTakeGeneratorStepStatus(const ValueContext&);
-    void generateIsUnmodifiedAsyncGenerator(const ValueContext&);
     void generateStepAsyncGenerator(const ValueContext&);
     void generateAwaitMayContinue(const ValueContext&);
     void generateAwaitBySavingFrame(const ValueContext&);
@@ -45,14 +40,9 @@ public:
     void generateGetHeapFrameWord(const ValueContext&);
     void generatePutHeapFrameWord(const ValueContext&);
 
-    // What lives across a yield of a generator lies in the words of a heap frame: a yield is a few stores and a return, and a step is a call of the resume entry.
-    void generateNewHeapFrame(const ValueContext&);
-    void generateGetResumeIndex(const ValueContext&);
-    void generateSuspendInHeapFrame(const ValueContext&);
 
 private:
     CoroutineKind kindOfFunction() const;
-    CellPointer allocateHeapFrame(uint32_t numberOfWords, Pointer resumeAddress, LBasicBlock slowPath);
     CellPointer allocateGenerator(std::optional<CellPointer> closure, LBasicBlock slowPath);
     LValue cellOrZero(ValueID driver);
     LValue driverAsPassed(ValueID driver);

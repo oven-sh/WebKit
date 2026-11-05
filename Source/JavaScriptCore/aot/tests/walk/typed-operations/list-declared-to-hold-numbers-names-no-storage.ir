@@ -1,7 +1,7 @@
 # `number[]` says nothing of fractions, and most such lists hold integers: a read names no storage and goes by the kind that it finds, and the list is made as an empty list of the engine is
 # made with storage for doubles, each integer was asked at every read whether it is an int32 before it was boxed: nine to twelve instructions more at every read than without the type
 # f1 = total: a list of numbers. f3 = inner: a list of lists and then a list of numbers. Of the outer list Link says that it stays as made (LinkTables::receiversThatStayAsMade): the read asks it nothing and goes by the kind that it finds
-# LoopInvariants is withheld in the runs on f1 and f3: with it a row of tests stands in front of a loop that leaves its list alone, and behind it the read names the storage and the sum is raw (list-reads-in-loops-1)
+# LoopInvariants is withheld in the runs on f1 and f3: with it a row of tests stands in front of a loop that leaves its list alone, and behind it the read names the storage and the sum is raw
 # RUN(NUMBERS): walk f1 mechanisms=all-Inlining-LoopInvariants
 # REQUIRES(NUMBERS): entries-of-bun
 # NUMBERS-LABEL: code f1:Body

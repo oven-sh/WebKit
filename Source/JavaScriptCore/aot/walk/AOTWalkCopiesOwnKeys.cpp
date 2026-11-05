@@ -42,7 +42,7 @@ enum class FieldInOwnKeyPlan : uint8_t {
 bool orderWordTellsOwnKeysOf(const Walker& walker, LayoutID layout)
 {
     const Plan& plan = walker.plan();
-    return plan.layout(layout).holdsCompiledObjects() && !plan.layout(layout).keysAreNeverEnumerated && plan.shapes().shapesOf(layout).count == 1;
+    return plan.layout(layout).holdsCompiledObjects() && plan.shapes().shapesOf(layout).count == 1;
 }
 
 static FieldInOwnKeyPlan classifyFieldInCopiesOwnKeys(const Walker& walker, LayoutID layout, FieldIndex field)

@@ -529,7 +529,8 @@ std::expected<MacroAssemblerCodeRef<WasmEntryPtrTag>, BindingFailure> wasmToJS(c
     JIT jit;
     emitWasmToJS(jit, info, importIndex);
 
-    LinkBuffer patchBuffer(jit, GLOBAL_THUNK_ID, LinkBuffer::Profile::WasmThunk, JITCompilationMustSucceed);
+    bool onlyThrows = signature.argumentsOrResultsIncludeV128() || signature.argumentsOrResultsIncludeExnref();
+    LinkBuffer patchBuffer(jit, GLOBAL_THUNK_ID, LinkBuffer::Profile::WasmThunk, onlyThrows ? JITCompilationCanFail : JITCompilationMustSucceed);
     if (patchBuffer.didFailToAllocate()) [[unlikely]]
         return makeUnexpected(BindingFailure::OutOfMemory);
 

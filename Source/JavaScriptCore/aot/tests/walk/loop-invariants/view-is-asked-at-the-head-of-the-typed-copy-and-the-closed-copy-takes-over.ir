@@ -2,7 +2,7 @@
 # Nobody knows who calls it, so the view is asked when the code runs. The loop is built twice. The test whether the view is as its class makes it stands in the HEAD of the typed copy, where nothing of the turn has run,
 # and its failing edge leads into the closed copy, which takes what the head holds: the sum and the counter. So the typed copy has no closed arm and no join: the length is an integer, the counter lies below it, the read asks no bound.
 # `keep(i)` may do anything to the view: the next head asks again.
-# RED UNTIL views-are-asked-at-the-head-of-the-typed-copy-1: the test stood in the loop with a closed arm, and the join made the length `anything`: 34 instructions a turn, 15 since.
+# The test once stood in the loop with a closed arm, and the join made the length `anything`: 34 instructions a turn, 15 since.
 # RUN: walk f1 mechanisms=all
 # CHECK-LABEL: code f1:Body
 # CHECK: frequency=Rare isLoopHead=true

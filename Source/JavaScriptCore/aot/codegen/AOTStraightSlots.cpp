@@ -55,22 +55,22 @@ static void boxNumberOfSlotInStraightForm(StraightEmitter& emitter, BoxedNumberF
     jit.move(signature.firstResult.gpr(), boxedResult);
 }
 
-static void convertToNumberOfSlotInStraightForm(CCallHelpers& jit, SlotRepresentation representation, GPRReg word)
+static void convertToNumberOfSlotInStraightForm(CCallHelpers& jit, SlotRepresentation representation, GPRReg word, FPRReg number)
 {
     bool holdsIntegers = representation == SlotRepresentation::OptionalInt64;
     CCallHelpers::Jump isMarker = jit.branchIfNotNumber(word);
     CCallHelpers::Jump isInt32 = jit.branchIfInt32(word);
-    jit.unboxDoubleWithoutAssertions(word, word, StraightEmitter::resultFPR);
+    jit.unboxDoubleWithoutAssertions(word, word, number);
     if (holdsIntegers)
-        jit.truncateDoubleToInt64(StraightEmitter::resultFPR, word);
+        jit.truncateDoubleToInt64(number, word);
     CCallHelpers::Jump isConvertedFromDouble = jit.jump();
 
     isInt32.link(&jit);
     if (holdsIntegers)
         jit.signExtend32ToPtr(word, word);
     else {
-        jit.convertInt32ToDouble(word, StraightEmitter::resultFPR);
-        jit.moveDoubleTo64(StraightEmitter::resultFPR, word);
+        jit.convertInt32ToDouble(word, number);
+        jit.moveDoubleTo64(number, word);
     }
     CCallHelpers::Jump isConvertedFromInt32 = jit.jump();
 
@@ -123,7 +123,7 @@ void StraightEmitter::storeSlot(GPRReg cell, const PlacedSlot& slot, GPRReg boxe
             return;
         case SlotRepresentation::OptionalInt64:
         case SlotRepresentation::OptionalDouble:
-            convertToNumberOfSlotInStraightForm(*m_jit, slot.representation, boxed);
+            convertToNumberOfSlotInStraightForm(*m_jit, slot.representation, boxed, takeResultFPR());
             m_jit->store64(boxed, address);
             return;
         default:
@@ -137,7 +137,7 @@ void StraightEmitter::loadVariable(VariableID variable, GPRReg boxedResult)
 {
     PlannedVariable planned = plan().variable(variable);
     bool isBornAsFunction = planned.storage == VariableStorage::ClosureTable || planned.encoding == VariableEncoding::FunctionAsZero;
-    if (planned.storage == VariableStorage::None || planned.encoding == VariableEncoding::UndefinedAsZero || planned.representation != SlotRepresentation::JSValue
+    if (planned.encoding == VariableEncoding::UndefinedAsZero || planned.representation != SlotRepresentation::JSValue
         || plan().deferredDefinitions().findDeferred(variable) || (isBornAsFunction && !closureTableHoldsClosureInStraightForm(*this, planned.function))) {
         fail(Opcode::GetModuleVariable);
         return;
@@ -154,7 +154,7 @@ void StraightEmitter::loadVariable(VariableID variable, GPRReg boxedResult)
     // The stub alone reads the cell of the closure table, and Image numbers the cells that code mentions.
     mentions().add(NumberSpace::ClosureCell, planned.function);
     callStub(Origin { }, closureOfTable(), { }, { .numberedImmediate = NumberedImmediate { mentions().add(NumberSpace::ClosureFunction, planned.function) } });
-    m_jit->move(resultGPR, boxedResult);
+    m_jit->move(resultOfCall(), boxedResult);
     if (isStored.isSet())
         isStored.link(m_jit);
 }

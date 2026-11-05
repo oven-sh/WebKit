@@ -41,33 +41,17 @@ struct LinkedEffectsGivenArguments {
     Effects onThrow;
 };
 
-// A call that LinkTables::calls does not list and that enters functions of the program alone, whichever: several that are listed, what a shared call lists, lost closures.
-struct LinkedCallOfSeveral {
-    FunctionID caller;
-    ValueID site;
-    // Null: nothing is proven.
-    TypeID result;
-    uint64_t layoutsWritten { objectsOfAnyLayout };
-    // Into LinkKnownEffects::effectsOfCallsOfSeveral: on return, and at the next place on throw. Calls that go by one shared call share the two, and so do calls of the lost closures alone.
-    uint32_t effects { 0 };
-};
-
 struct LinkKnownEffects {
     // By function. Empty: objectsOfAnyLayout for each.
     Vector<uint64_t> layoutsWrittenByFunction;
     // Ascending by function, one at most for each: only where it says less than LinkedFunction does.
     Vector<LinkedEffectsGivenArguments> givenArguments;
-    // Ascending by caller and site. A site at which the summary has several calls is not listed.
-    Vector<LinkedCallOfSeveral> callsOfSeveral;
-    Vector<Effects> effectsOfCallsOfSeveral;
 
     // Whatever the function and all that it may call write in a heap of perObjectHeaps, by whichever exit, they write in an object of a layout whose bit is set, in an object that the call itself has made,
     // or in an object of one of the engine's classes. It says something only beside effects that run no other code.
     uint64_t layoutsWrittenBy(FunctionID) const;
     // Null: LinkedFunction says all there is.
     const LinkedEffectsGivenArguments* findEffectsGivenArguments(FunctionID) const;
-    // Null: the call may enter anything.
-    const LinkedCallOfSeveral* findCallOfSeveral(FunctionID caller, ValueID site) const;
 };
 
 } } } // namespace JSC::AOT::Typed

@@ -1,6 +1,5 @@
 # a pattern checks what it takes apart for undefined and null, and a test of the shape proves that and more. So the test stands in front of the check: the typed run has no check, and the closed arm has the one that is written
 # function sum(options: Options) { const { a, b } = options; return a + b; }  sink(sum, { a: 1, b: 2 });
-# it takes the three blocks under ASK in this package's HOOKS.txt, and package 3's buildFormOnShapes()
 # RUN: walk f1 mechanisms=none+TypedOperations+Guesses
 # CHECK-LABEL: code f1:Body
 # CHECK: = ShapeTest {{*}}layouts=[L0]

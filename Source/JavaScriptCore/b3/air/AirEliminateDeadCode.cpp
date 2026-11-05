@@ -140,17 +140,65 @@ bool eliminateDeadCode(Code& code)
         return changed;
     };
 
-    for (;;) {
-        // Propagating backward is most likely to be profitable.
-        if (!runBackward())
-            break;
-        if (!runBackward())
-            break;
+    // Visits a candidate when something it defines becomes live, so the work does not grow with the number of rounds.
+    auto runFromDefsThatBecomeLive = [&] {
+        struct Def {
+            uint64_t key;
+            unsigned candidate;
+        };
+        auto keyOfTmp = [](Tmp tmp) { return static_cast<uint64_t>(static_cast<uint32_t>(tmp.internalValue())); };
+        auto keyOfStackSlot = [](StackSlot* slot) { return 1ull << 32 | slot->index(); };
 
-        // Occasionally propagating forward greatly reduces the likelihood of pathologies.
-        if (!runForward())
-            break;
-    }
+        Vector<Def> defs;
+        for (unsigned candidate = 0; candidate < deadCandidatesInBackwardOrder.size(); ++candidate) {
+            deadCandidatesInBackwardOrder[candidate]->forEachArg(
+                [&] (Arg& arg, Arg::Role role, Bank, Width) {
+                    if (!Arg::isAnyDef(role) || role == Arg::Scratch)
+                        return;
+                    if (arg.isTmp())
+                        defs.append({ keyOfTmp(arg.tmp()), candidate });
+                    else if (arg.isStack())
+                        defs.append({ keyOfStackSlot(arg.stackSlot()), candidate });
+                });
+        }
+        std::ranges::sort(defs, { }, &Def::key);
+
+        Vector<uint64_t> keysThatBecameLive;
+        BitVector isCandidateLive(deadCandidatesInBackwardOrder.size());
+        auto markLive = [&](unsigned candidate) {
+            if (isCandidateLive.quickSet(candidate))
+                return;
+            for (Arg& arg : deadCandidatesInBackwardOrder[candidate]->args()) {
+                if (arg.isStack() && !arg.stackSlot()->isLocked() && liveStackSlots.add(arg.stackSlot()))
+                    keysThatBecameLive.append(keyOfStackSlot(arg.stackSlot()));
+                arg.forEachTmpFast(
+                    [&] (Tmp& tmp) {
+                        if (!tmp.isReg() && liveTmps.add(tmp))
+                            keysThatBecameLive.append(keyOfTmp(tmp));
+                    });
+            }
+        };
+
+        for (unsigned candidate = 0; candidate < deadCandidatesInBackwardOrder.size(); ++candidate) {
+            if (isInstLiveByDefs(*deadCandidatesInBackwardOrder[candidate]))
+                markLive(candidate);
+        }
+        while (!keysThatBecameLive.isEmpty()) {
+            for (const Def& def : std::ranges::equal_range(defs, keysThatBecameLive.takeLast(), { }, &Def::key))
+                markLive(def.candidate);
+        }
+
+        size_t numberOfDeadCandidates = 0;
+        for (unsigned candidate = 0; candidate < deadCandidatesInBackwardOrder.size(); ++candidate) {
+            if (!isCandidateLive.quickGet(candidate))
+                deadCandidatesInBackwardOrder[numberOfDeadCandidates++] = deadCandidatesInBackwardOrder[candidate];
+        }
+        deadCandidatesInBackwardOrder = deadCandidatesInBackwardOrder.first(numberOfDeadCandidates);
+    };
+
+    // Propagating backward is most likely to be profitable. Occasionally propagating forward greatly reduces the likelihood of pathologies.
+    if (runBackward() && runBackward() && runForward())
+        runFromDefsThatBecomeLive();
 
     // After the fixpoint, deadCandidatesInBackwardOrder holds exactly the dead Insts. Null them
     // out and sweep with the cheap !inst predicate.

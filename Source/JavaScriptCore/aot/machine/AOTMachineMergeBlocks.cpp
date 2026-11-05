@@ -171,17 +171,7 @@ ALWAYS_INLINE uint64_t MachineBlockMerger::payloadOf(const Operation* operation)
     case Return:
     case Oops:
         return 0;
-    // None of these stands among the operations or the Upsilons of a block.
-    case Const32:
-    case Const64:
-    case ConstFloat:
-    case ConstDouble:
-    case FramePointer:
-    case SlotBase:
-    case AddressOf:
-    case NumberOf:
-    case InstanceAddressOf:
-    case Phi:
+    default:
         break;
     }
     RELEASE_ASSERT_NOT_REACHED();

@@ -831,7 +831,7 @@ static void checkManyKeyOrdersOnOneLayout(LoadedProgram& program)
     constexpr unsigned numberOfOrders = 65536 + 512;
     static_assert(numberOfOrders > maxKeyOrdersPerLayout);
     const LayoutData& layout = layoutNamed(program, "Bag"_s);
-    AOT_TEST_CHECK(declaredFieldsOf(program, layout).size() == numberOfBagFields && !layout.keysAreNeverEnumerated);
+    AOT_TEST_CHECK(declaredFieldsOf(program, layout).size() == numberOfBagFields);
 
     CreationOrder order;
     std::iota(order.begin(), order.end(), 0);
@@ -839,8 +839,7 @@ static void checkManyKeyOrdersOnOneLayout(LoadedProgram& program)
     for (unsigned count = 0; count < numberOfOrders; ++count) {
         Object* bag = createBag(program, order, [](Object&, const FieldData&, uint64_t) { });
         AOT_TEST_CHECK(isCompiledObject(bag) && bag->shapeWord() == shapeWordOf(layout.shape) && !bag->hasExtraProperties());
-        Object::KeyOrderStorage storage;
-        AOT_TEST_CHECK(std::ranges::equal(bag->keyOrder(program.state(), storage), order));
+        AOT_TEST_CHECK(std::ranges::equal(bag->keyOrder(program.state()), order));
         AOT_TEST_CHECK(keysOf(program, bag) == keysInOrder(order));
         for (const FieldData& field : declaredFieldsOf(program, layout))
             AOT_TEST_CHECK(bag->read(field) == jsNumber(layout.indexOf(field)));

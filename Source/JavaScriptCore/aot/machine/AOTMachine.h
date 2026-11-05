@@ -144,7 +144,6 @@ public:
 
     constexpr Kind kind() const { return m_kind; }
     constexpr bool isAny() const { return m_kind == WarmAny || m_kind == ColdAny || m_kind == LateColdAny; }
-    constexpr bool isCold() const { return m_kind == ColdAny || m_kind == LateColdAny; }
     constexpr bool isLate() const { return m_kind == LateColdAny || m_kind == SomeLateRegister; }
     constexpr bool isReg() const { return m_kind == Register; }
     constexpr bool isGPR() const { return isReg() && m_reg.isGPR(); }
@@ -398,8 +397,6 @@ public:
     bool hasInt() const { return hasInt32() || hasInt64(); }
     int64_t asInt() const { return hasInt32() ? asInt32() : asInt64(); }
     bool isInt(int64_t value) const { return hasInt() && asInt() == value; }
-    bool hasIntPtr() const { return hasInt64(); }
-    intptr_t asIntPtr() const { return asInt64(); }
     bool hasDouble() const { return m_opcode == ConstDouble; }
     double asDouble() const
     {
@@ -632,7 +629,6 @@ public:
     std::span<Operation* const> operands() const { return m_operands.span(); }
     // By the index of the child.
     const ValueRep& constraintOf(unsigned child) const { return m_constraints[child]; }
-    ConstrainedValue constrainedChild(unsigned child) const { return ConstrainedValue(m_operands[child], m_constraints[child]); }
 
     // An early clobbered register holds no operand, a late clobbered one no result. Behind a Patch neither holds a value that is read again.
     // A Check writes them on its late path alone: on the passing side they keep what they hold.

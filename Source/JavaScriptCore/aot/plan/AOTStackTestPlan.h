@@ -54,7 +54,7 @@ inline bool StackTestPlan::isCoveredByCallers(CodeUnit unit) const
     if (unit.role == CodeRole::CoroutineBody)
         return coroutineBodiesCoveredByCallers.get(unit.function.index());
     // Any other role tests, a role that comes to the list later too: nobody has counted its frame.
-    return isGenericEntry(unit.role) || unit.role == CodeRole::BoundFunction || unit.role == CodeRole::ParameterGuard || unit.role == CodeRole::TableEntry;
+    return isGenericEntry(unit.role) || unit.role == CodeRole::ParameterGuard || unit.role == CodeRole::TableEntry;
 }
 
 inline bool StackTestPlan::hasCountedAtBareSite(FunctionID caller, FunctionID callee) const

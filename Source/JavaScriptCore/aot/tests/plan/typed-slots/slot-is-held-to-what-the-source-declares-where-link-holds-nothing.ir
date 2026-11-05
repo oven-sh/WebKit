@@ -14,7 +14,7 @@
 # node:http's `socket: Socket` is stored an object of another class at every request, and held to the one class the field left its slot each time (fastify: 8 to 10% of a request). Which objects arrive is for the flow to see.
 # `tag` lies at one slot in both members of the family, and a store through the family asks not which member it has: the two are held to one type.
 # Nothing is held of `any`, of a private name, whose empty slot says that the object lacks the name, and of a literal, which fills its fields where it is made with whatever stands there.
-# TODO: no slot is held to a type since 11-03 08:25: held types bought nothing on any judge and cost the servers 1 to 5% (plan/AOTSlotPlan.cpp, typeHeldOfFieldForSlotPlan())
+# TODO: no slot is held to a type: held types bought nothing and cost the servers 1 to 5% (plan/AOTSlotPlan.cpp, typeHeldOfFieldForSlotPlan())
 # RUN: plan layouts mechanisms=all
 # CHECK: layout L0 CompiledObject
 # CHECK: slot 1 "tag" JSValue Inline {{*}} type=undefined|null|number|string

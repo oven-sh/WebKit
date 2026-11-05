@@ -37,10 +37,7 @@ struct Function;
 // The words, without the program's tables: ids are checked against the unit's tables only. And of the flow what BodyIndexTable::build() leans on:
 // every block but the entry is the target of an earlier block, and the operands of a terminator stand in front of it. Whoever finds nothing here may build an index.
 Vector<InternalError> findErrorsInWords(FunctionID, const Body&);
-Vector<InternalError> findErrorsInBody(const Program&, FunctionID, const Function&);
 
-// Reports the first error of each function that has one. False where any has.
-bool verifyBody(const Program&, FunctionID, const Function&, BuildContext&);
 // Every function, in parallel. The errors are reported in the order of the functions. Where there is none: verifyModulesNamedInBodies() of AOTProgramVerifier.h.
 bool verifyBodies(const Program&, BuildContext&);
 // The index that the flow stage goes over is built in the table and stays there, so that Facts does not build it a second time. The table has a place for each function and as many workers as the loops are wide.

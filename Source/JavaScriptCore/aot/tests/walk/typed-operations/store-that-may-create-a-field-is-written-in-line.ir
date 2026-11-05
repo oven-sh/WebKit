@@ -1,0 +1,183 @@
+# -- source: store-that-may-create-a-field-is-written-in-line.ts
+# declare function report(value: unknown): void;
+# interface Parcel { weight: number; sent: boolean; sentAt?: number; carrier?: string; }
+# function Parcel(this: Parcel, weight: number) { this.weight = weight; this.sent = false; }
+# function mark(parcel: Parcel, at: number) { parcel.sent = true; parcel.sentAt = at; parcel.carrier = "van" + at; }
+# for (let i = 0; i < 6; i++) {
+#   const parcel = new (Parcel as any)(i) as Parcel;
+#   if (i & 1) parcel.sentAt = -1;
+#   if (i === 4) Object.freeze(parcel);
+#   if (i === 5) delete (parcel as any).sent;
+#   try { mark(parcel, i); mark(parcel, i + 10); } catch (e) { report((e as Error).constructor.name); }
+#   report(parcel);
+#   report(Object.keys(parcel).join() + ":" + JSON.stringify(parcel));
+# }
+# -- end of source
+# records of 38a167fb35e44159
+# OPTIONS: report=Flow mechanisms=all
+# RUN: bytes-by-form
+# REQUIRES: entries-of-bun
+# CHECK-NOT: the build failed
+# CHECK: PutSlotOrAdd Always Anywhere Open
+# CHECK-NOT: not named: PutSlotOrAdd
+
+module m0 path="store-that-may-create-a-field-is-written-in-line.ts" displayPath="store-that-may-create-a-field-is-written-in-line.ts" body=f0 namespaceLayout=L(m0)
+module m1 path="/$bun/js/builtins/CommonJS.ts" displayPath="/$bun/js/builtins/CommonJS.ts" flags=[IsLibrary] namespaceLayout=L(m1)
+entry module=m0
+layout L0 kind=Instance name="Parcel" module=m0 position=134 constructor=f1 fields=[{key="weight" declared={type=number} flags=[IsRequired] originLayout=L1 originField=3}, {key="sent" declared={type=boolean} flags=[IsRequired] originLayout=L1 originField=1}] supertypes=[L1] flags=[IsConstructorFunction] ownFieldCount=2
+layout L1 module=m0 position=57 fields=[{key="carrier" declared={type=undefined|null|string flags=[OmitsNull]}}, {key="sent" declared={type=boolean} flags=[IsRequired]}, {key="sentAt" declared={type=undefined|number}}, {key="weight" declared={type=number} flags=[IsRequired]}] flags=[IsNeverAllocated] declaredOrder=[3, 1, 2, 0] ownFieldCount=4
+layout L2 module=m1 position=7222
+layout L3 module=m1 position=860 fields=[{key="paths" declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull]} flags=[IsNeverWritten]}] ownFieldCount=1
+data d0 root=Object{layout=L3} module=m1
+data d1 root=Object{layout=L2} module=m1
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f2 @0
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} @0
+    v4 = Integer @353
+    v5 = Convert v4 declared={type=number} @353
+    Jump -> next b1(v5) @349
+  b1(v6: number):
+    LoopHint @349
+    v8 = Integer integer=6 @360
+    v9 = Less v6, v8 @360
+    Branch v9 -> taken b2(), notTaken b12() @360
+  b2():
+    v10 = Construct v1, -, v6 calleeName="Parcel" @392
+    v11 = Convert v10 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} illTypedCause=Assertion @387
+    v12 = Integer integer=1 @431
+    v13 = BitAnd v6, v12 @431
+    v14 = ToBoolean v13 @427
+    Branch v14 -> taken b3(| 0), notTaken b4() @427
+  b3(v15):
+    v16 = Integer integer=-1 @450
+    PropSet v11, v16 key="sentAt" @434
+    Jump -> next b4() @434
+  b4():
+    v18 = Integer integer=4 @466
+    v19 = StrictEq v6, v18 @466
+    Branch v19 -> taken b5(), notTaken b6() @466
+  b5():
+    v20 = Builtin builtin=Object @469
+    v21 = Builtin builtin=ObjectFreeze @469
+    v22 = Call v21, v20, v11 calleeName="Object.freeze" @476
+    v23 = Convert v22 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType @469
+    Jump -> next b6() @469
+  b6():
+    v24 = Integer integer=5 @504
+    v25 = StrictEq v6, v24 @504
+    Branch v25 -> taken b7(), notTaken b8() @504
+  b7():
+    v26 = PropDelete v11 key="sent" @515
+    Jump -> next b8() @515
+  b8():
+    Jump -> next b9() @538
+  b9() handler=b10():
+    v27 = Call v3, -, v11, v6 calleeName="mark" @544
+    v28 = Integer integer=10 @578
+    v29 = Add v6, v28 @578
+    v30 = Call v3, -, v11, v29 calleeName="mark" @561
+    Jump -> next b11() @561
+  b10() role=CatchHandler:
+    v31 = CatchValue @595
+    v32 = Builtin builtin=GlobalThis @597
+    v33 = PropGet v32 key="report" [isFreeName] @597
+    v34 = Convert v31 declared={type=undefined|null|Error flags=[IsExpected, OmitsNull, OmitsUndefined]} @605
+    v35 = PropGet v34 key="constructor" @605
+    v36 = PropGet v35 key="name" @617
+    v37 = Call v33, -, v36 calleeName="report" @597
+    Jump -> next b11() @597
+  b11():
+    v38 = Builtin builtin=GlobalThis @640
+    v39 = PropGet v38 key="report" [isFreeName] @640
+    v40 = Call v39, -, v11 calleeName="report" @640
+    v41 = Builtin builtin=GlobalThis @658
+    v42 = PropGet v41 key="report" [isFreeName] @658
+    v43 = Builtin builtin=Object @665
+    v44 = Builtin builtin=ObjectKeys @665
+    v45 = Call v44, v43, v11 calleeName="Object.keys" @672
+    v46 = Convert v45 declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @665
+    v47 = PropGet v46 key="join" @683
+    v48 = Call v47, v46 calleeKey="join" calleeName="join" @685
+    v49 = Convert v48 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @665
+    v50 = String string=":" @694
+    v51 = Add v49, v50 @694
+    v52 = Builtin builtin=JSON @700
+    v53 = PropGet v52 key="stringify" @700
+    v54 = Convert v53 declared={type=builtin(JSONStringify) flags=[IsExpected]} @700
+    v55 = Call v54, v52, v11 calleeKey="stringify" calleeName="JSON.stringify" @705
+    v56 = Convert v55 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @700
+    v57 = Add v51, v56 @700
+    v58 = Call v42, -, v57 calleeName="report" @658
+    v59 = Increment v6 @363
+    v60 = Convert v59 declared={type=number} @363
+    Jump -> next b1(v60) @363
+  b12():
+    v61 = Undefined @363
+    Return v61 @363
+}
+function f1 name="Parcel" module=m0 position=134 flags=[HasThis, IsChecked, HasExplicitName] length=1 thisType={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} parameters=[{type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: undefined|null|L0, v1: number):
+    PropSet v0, v1 key="weight" @182
+    v3 = Boolean @216
+    PropSet v0, v3 key="sent" @204
+    v5 = Undefined @204
+    Return v5 @204
+}
+function f2 name="mark" module=m0 position=225 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0, v1: number):
+    v2 = Boolean boolean=true @283
+    PropSet v0, v2 key="sent" @269
+    PropSet v0, v1 key="sentAt" @289
+    v5 = String string="van" @326
+    v6 = Add v5, v1 @334
+    PropSet v0, v6 key="carrier" @309
+    v8 = Undefined @309
+    Return v8 @309
+}
+function f3 module=m1 position=6801 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces] length=1 enclosingRuntimeFunction=CommonJSRequireResolve thisType={type=anything flags=[IsExpected]} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|number|string|symbol|bigint|L3 flags=[IsExpected, OmitsNull]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything, v1: undefined|null|string, v2: undefined|null|number|string|symbol|bigint|L3):
+    v3 = TypeTest v2 testedType=undefined @6868
+    Branch v3 -> taken b1(| 0), notTaken b2(| 0) @6868
+  b1(v4):
+    v5 = Data data=d0 @6900
+    v6 = Convert v5 declared={type=undefined|null|number|string|symbol|bigint|L3 flags=[IsExpected, OmitsNull, OmitsUndefined]} @6900
+    Jump -> next b3(v6) @6900
+  b2(v7):
+    Jump -> next b3(v7) @6868
+  b3(v8):
+    v9 = TypeTest v8 testedType=function @7067
+    Branch v9 -> taken b7(), notTaken b4(| 0) @7067
+  b4(v10):
+    v11 = TypeTest v10 testedType=null|object @7067
+    Branch v11 -> taken b5(| 0), notTaken b7() @7067
+  b5(v12):
+    v13 = TypeTest v8 testedType=null @7098
+    Branch v13 -> taken b7(), notTaken b6(| 0) @7098
+  b6(v14):
+    v15 = NarrowByTest v8, v14 @7098
+    v16 = PropGet v15 key="paths" @7117
+    Jump -> next b8(v16) @7117
+  b7():
+    v17 = Undefined @7133
+    Jump -> next b8(v17) @7133
+  b8(v18):
+    v19 = Builtin builtin=GlobalThis @7153
+    v20 = PropGet v19 key=@"resolveSync" [isFreeName] @7153
+    v21 = PropGet v0 key="filename" @7170
+    v22 = Boolean @7185
+    v23 = Boolean boolean=true @7192
+    v24 = TypeTest v8 testedType=undefined|null @7211
+    Branch v24 -> taken b9(| 0), notTaken b10(| 0) @7211
+  b9(v25):
+    v26 = Data data=d1 @7222
+    Jump -> next b11(v26) @7222
+  b10(v27):
+    Jump -> next b11(v27) @7211
+  b11(v28):
+    v29 = Call v20, -, v1, v21, v22, v23, v18, v0, v28 @7153
+    ReturnCall v29 @7153
+}
+runtimefunction id=CommonJSRequireResolve function=f3 visibility=Private

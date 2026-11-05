@@ -11,8 +11,8 @@
 # records of f6f890315521204f
 # RUN: walk f1 mechanisms=all-ParameterGuards
 # CHECK-LABEL: code f1:Body
-# CHECK: [[closed]]: anything{{*}} = PropGet {{*}}key="objectFlags"
 # CHECK: int{{*}} @Int32 = GetSlot {{*}}key="objectFlags" {{*}}level=Proven
+# CHECK: [[closed]]: anything{{*}} = PropGet {{*}}key="objectFlags"
 # CHECK: frequency=Rare:
 # CHECK: = BitAnd [[closed]], {{*}}form=Generic
 # CHECK: ([[passing]]: int{{*}} @Int32{{*}}):

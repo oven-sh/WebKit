@@ -22,7 +22,7 @@ enum StatisticID {
     InnerPointersAcrossSafepoints NullChecksFoldedIntoAccesses
     # Of the image.
     InlineFramesEmitted FrameMapBytesEmitted RegExpCandidatesCompiled
-    # Counted by nothing yet: what each of them counted in the old compiler is not ported. A stored program asks for it with `Todo:` behind its bound, which fails the day the port counts.
+    # Counted by nothing yet: what each of them counted in an earlier compiler has no counterpart here. A stored program asks for it with `Todo:` behind its bound, which fails the day it is counted.
     EnvironmentsPromotedToVariables UnreadVariableStoresRemoved LiteralArgumentsTakenApart GetsAnsweredByHas SlotStoreRunGroups KeyPartsLookupGroups
     StoresLeftInLoopsForOthers ElementPresenceTestsPlaced ArrayChainsFused ArrayCapacitiesPlanned AllocationsSunk SwitchesTestedByWindow
     InitializersDeferred ClosuresDeferredInVariables ClassesDeferredInVariables FlowListsNeverToldApart RestartsInGenericVersion
@@ -33,7 +33,7 @@ enum StatisticID {
     UnitsCompiled UnitsWrittenStraight ValuesWalked ValuesWalkedAndKept LoopsWalkedAgain CallsInlined OperationsBuilt OperationsSwept OperationsEmitted
     MachineOperationsAppended MachineOperationsScanned MachineOperationsAllocated MachineOperationsEncoded ValuesSpilled
     FormsThatDifferFromSchema FormsPickedByPlaceOtherThanLoop
-    DirectCalls IndirectCalls TestsThatRejoin LoopsBuiltTwice TurnsThatBeginAgain EmptySlotsTakenAsCases
+    DirectCalls IndirectCalls TestsThatRejoin LoopsBuiltTwice TurnsThatBeginAgain
     AssignmentsWrittenOutFieldByField JoinsWalkedOnceForEachWay
     # TestingSwitch::CheckProofsAtRunTime: the CheckProof operations that were built, by ProofSource, and the values whose proven type says more than any test can tell.
     ProofsCheckedOfEntryParameters ProofsCheckedOfResultsOfCalls ProofsCheckedOfFields ProofsCheckedOfVariables ProofsCheckedOfCaptures ProofsCheckedOfContents ProofsCheckedOfCallees ProofsCheckedOfOtherOperations ProofsCheckedOfTests ProofsCheckedOfWhatIsRemembered
@@ -53,6 +53,10 @@ enum StatisticID {
     UnlabeledConstantBytes ConstantBytesOfJumpTables PaddingBytesBetweenConstants
     # The units of parsers that are written out of types. An outside build script fails a build that does not report the name with 0.
     ParsersCreated
+    # The same script wants each of these four with 0, which --aot-harden=proof-checks,ignore-told-ranges brings about. The names are those of the compiler that the script was written for.
+    # AllocateInFramesChanges: the cells that are emitted into frames and the layouts of scopes whose cells the plan hands back (Mechanism::CellsInFrames). ClosuresInFrames: the closures among the first.
+    # RangeChecksRemoved: the accesses by position that are emitted without a test of the position. KnownInductionsUsed: the pointers into storage and the lengths that a read in a loop takes from in front of the loop.
+    AllocateInFramesChanges ClosuresInFrames RangeChecksRemoved KnownInductionsUsed
     # The calls that are built to parse by a written type. The same script prints the name.
     TypedResultsSelected
     # The calls of Array.prototype.slice that are a list of elements which the walk had in sight.
@@ -82,4 +86,5 @@ enum RuntimeCounterID {
     StackListingsAfterGivenUpCaptures
     ModulesForRequireCache ModulesForWhatHasRun LinksBelowRoots StacksOfThrows RunsBelowListedFrames
     ReadsOffNoCellThatFaulted
+    GraphsHeldBehindEarlierCalls GraphsLetGoBehindEarlierCalls
 }

@@ -1636,6 +1636,10 @@ static void dynamicImportLoadSettled(JSGlobalObject* globalObject, VM& vm, Throw
     }
 
     // Step-6 linkAndEvaluateClosure
+#if ENABLE(AOT)
+    if (auto* compiled = dynamicDowncast<AOT::ModuleRecord>(module); compiled && compiled->holdGraphBehindEarlierCalls(dynamicPayload, deferred))
+        return;
+#endif
     // 6.a. Let link be Completion(module.Link()).
     module->link(globalObject, nullptr);
 

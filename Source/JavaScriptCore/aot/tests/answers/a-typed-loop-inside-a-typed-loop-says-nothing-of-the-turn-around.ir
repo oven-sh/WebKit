@@ -1,6 +1,6 @@
 # made of 4f44f501e8c6a3b1
 # A typed loop stands inside a typed loop. The head of the inner typed copy begins a turn of its own; what leaves the inner loop says nothing of the turn of the loop around, which has done a deed in front of it.
-# Until 11-04 09:1x the one bit of the state was cleared at the inner head and carried out, and the failing test of `extra.value` began the OUTER turn again: `deeds` counted 41 for 40.
+# The one bit of the state was once cleared at the inner head and carried out, and the failing test of `extra.value` began the OUTER turn again: `deeds` counted 41 for 40.
 # f1 = id, f2 = run
 # function id<T>(value: T): T { (globalThis as any).leaked = value; return (globalThis as any).leaked; }
 # type Box = { value: number };

@@ -53,16 +53,16 @@ ScratchRealm* scratchRealmOfWalk(Walker&);
 // AOTWalkStringKeys.cpp. For CallInWalkBuiltins::addEffectsOn(), in the place of effectsOfProtocolsOn() on an operand that may be an object. Nothing: nobody resolves the members, as today.
 std::optional<Effects> effectsOfProtocolsResolvedOn(Walker&, OptionSet<Protocol>, TypeID operand);
 
-// ---- Called by hooks, beside what the plan lists.
+// ---- Called from other files.
 // AOTWalkStringFolds.cpp. For buildTypedJoinOfTexts() of AOTWalkTypedTexts.cpp, where findJoinThatAloneTakesInWalkTexts() finds none: the join that alone takes the text, further on in the stretch that is being walked,
 // past whatever mayStandBetweenLinksOfJoinedText(). Null: the row ends.
 ValueID findJoinThatTakesLinkPastCode(Walker&, ValueID text, std::span<const Reference> partsSoFar);
 // AOTWalkStringFolds.cpp. For buildRegExpOfKnownTexts() of AOTWalkRegExps.cpp. A pattern that is no text is spelled as ToString spells it: `new RegExp(404)`, `new RegExp(null)`. None, or undefined: the empty text. Null: the text is not known.
 StringID textOfKnownPatternOfRegExp(Walker&, Reference patternOrNull);
 
-// ---- From one file of strings-2 to another, and to nobody else.
+// ---- From one file of the package to another, and to nobody else.
 inline constexpr size_t mostBytesOfTextMadeByStringFolds = 65536;
-// Image compiles no longer pattern: FRESH.md, the rehearsal of RegExp's texts.
+// Image compiles no longer pattern.
 inline constexpr size_t mostBytesOfPatternMadeByStringFolds = 1048576;
 
 // AOTWalkStringFolds.cpp.

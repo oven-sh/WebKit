@@ -80,16 +80,6 @@ static bool findsNoToJSONFrom(const AccessContext& context, BuiltinID start)
 
 // ---- What has no text
 
-// A class object inherits from the class that it extends, which may have a static method of the name. The function objects of coroutines have prototypes of their own.
-static bool findsNoToJSONUnderFunction(const AccessContext& context, FunctionID function)
-{
-    if (classOfClassObject(context.program, function) || context.program.at(function).isCoroutine())
-        return false;
-    if (!context.plan.closuresStayAsCreated(function))
-        return false;
-    return findsNoToJSONFrom(context, Builtins::FunctionPrototype);
-}
-
 bool hasNoJSONText(const AccessContext& context, TypeID id)
 {
     if (!id)
@@ -97,18 +87,7 @@ bool hasNoJSONText(const AccessContext& context, TypeID id)
     Type type = context.types.at(id);
     if (type.isNever() || !type.isJavaScriptValue() || (type.primitives & ~primitivesWithoutJSONText))
         return false;
-    if (!type.hasObjects())
-        return true;
-    if (!context.types.at(context.types.withOnlyObjects(id)).hasOnlyClosures())
-        return false;
-    // A copy: a list of the thread's arena need not outlive what is asked while it is gone through.
-    Vector<FunctionID, 4> functions;
-    forEachFunctionOf(context.types, type, scopedLambda<void(FunctionID)>([&](FunctionID function) {
-        functions.append(function);
-    }));
-    return std::ranges::all_of(functions, [&](FunctionID function) {
-        return findsNoToJSONUnderFunction(context, function);
-    });
+    return !type.hasObjects();
 }
 
 // ---- Objects
@@ -426,7 +405,7 @@ std::optional<JSONObjectPlan> planJSONObject(const AccessContext& context, Layou
 
     // An order is numbered within its shape.
     const PlannedLayout& planned = context.plan.layout(layout);
-    if (planned.keysAreNeverEnumerated || context.plan.shapes().shapesOf(layout).count != 1)
+    if (context.plan.shapes().shapesOf(layout).count != 1)
         return std::nullopt;
     // An index is listed in front of every name, wherever the order of the keys has it.
     for (uint32_t field = 0; field < planned.numberOfFields(); ++field) {

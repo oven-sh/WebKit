@@ -48,6 +48,13 @@ static bool keepsNamespaceInValueWord(const Module& module, ImportPhase phase)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+bool ModuleEmitter::asksRunTimeForNamespaceAtEveryRead(const Program& program, const Plan& plan, ModuleID module, ImportPhase phase)
+{
+    if (keepsNamespaceInValueWord(program.at(module), phase) && plan.hasModuleValue(module))
+        return false;
+    return phase != ImportPhase::Evaluation || !plan.hasModuleNamespaceWord(module);
+}
+
 bool ModuleEmitter::hasSingleNamespaceInValueWord(ModuleID id)
 {
     const Module& module = m_program.at(id);
@@ -106,7 +113,7 @@ void ModuleEmitter::generateModuleNamespace(const ValueContext& value)
         return;
     }
     if (!keepsNamespaceInValueWord(m_program.at(module), phase) || !m_plan.hasModuleValue(module)) {
-        if (phase != ImportPhase::Evaluation || !m_plan.hasModuleNamespaceWord(module)) {
+        if (asksRunTimeForNamespaceAtEveryRead(m_program, m_plan, module, phase)) {
             define(value, getInSlowPath({ }));
             return;
         }
@@ -271,24 +278,6 @@ void ModuleEmitter::generateFinishModuleEvaluation(const ValueContext& value)
     });
 }
 
-// Whatever queues a job calls the run time, so the words of the queue are run-time state.
-void ModuleEmitter::generateStopLoadingBehindFile(const ValueContext& value)
-{
-    const Machine::AbstractHeap& queueWords = m_heaps.entire(AbstractHeap::RuntimeState);
-    defineTest(value, either<Condition>(equal(loadMutable32(AOT_INSTANCE_OFFSET(modules.runsImportedFilesAlone)), word32(0)), [&] {
-        return boolean(false);
-    }, [&] {
-        LValue queue = m_out.loadPtr(mutableInstanceField(offsetOfMicrotaskQueue));
-        Integer start(m_out.load64(m_out.address(queueWords, queue, MicrotaskQueue::offsetOfStart())));
-        Integer end(m_out.load64(m_out.address(queueWords, queue, MicrotaskQueue::offsetOfEnd())));
-        return either<Condition>(equal(start, end), [&] {
-            return boolean(false);
-        }, [&] {
-            return callOperation<Condition>(value, RuntimeOperation::StopLoadingBehindFile, { moduleIndex(value->module()) }, { .isOnRarePath = true });
-        });
-    }));
-}
-
 void ModuleEmitter::generateEvaluateRequiredModule(const ValueContext& value)
 {
     ModuleID module = value->module();
@@ -306,11 +295,6 @@ void ModuleEmitter::generateEvaluateRequiredModule(const ValueContext& value)
     ifElse(equal(status, word32(static_cast<int32_t>(StoredModuleStatus::Evaluated))), [] { }, [&] {
         askRunTime({ .isOnRarePath = true });
     });
-}
-
-void ModuleEmitter::generateAbandonModuleEvaluation(const ValueContext& value)
-{
-    callVoidOperation(value, RuntimeOperation::AbandonModuleEvaluation, { moduleIndex(value->module()), get(value->exceptionOperand()) });
 }
 
 } } } // namespace JSC::AOT::Typed

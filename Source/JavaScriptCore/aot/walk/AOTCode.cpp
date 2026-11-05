@@ -36,7 +36,15 @@ static constexpr OpcodeSet opcodesWithoutEmitterByList = opcodesThatStateTypes |
     Opcode::TryPutDoubleIndex, Opcode::HasSpareArrayCapacity,
     Opcode::ToEnumeratorPosition,
     Opcode::IsBuiltinLocationUnchanged, Opcode::SubstringOrUndefined,
-    Opcode::StringBuilderAppend
+    Opcode::StringBuilderAppend,
+    // Nobody builds these.
+    Opcode::NewHeapFrame, Opcode::GetResumeIndex, Opcode::SuspendInHeapFrame, Opcode::IsGeneratorRunning, Opcode::IsGeneratorUnstarted, Opcode::IsUnmodifiedAsyncGenerator,
+    Opcode::MarkGeneratorRunning, Opcode::TakeGeneratorStepStatus, Opcode::GetAccessorOfMember, Opcode::GetCachedValue, Opcode::GetOwnPropertyFields,
+    Opcode::GetEncodedModuleVariable, Opcode::ConvertToDoubleStorage, Opcode::GetArrayCapacity, Opcode::HasFixedBytes, Opcode::ReserveArrayCapacity, Opcode::TypedArrayRange,
+    Opcode::NewArrayOfMembers, Opcode::AbandonModuleEvaluation, Opcode::StopLoadingBehindFile, Opcode::TryStrcat, Opcode::CallForwardVarargs,
+    Opcode::ConstructSuperForwardVarargs, Opcode::GetMyArgumentByVal,
+    Opcode::JSONSourceOpen, Opcode::JSONSourceStart, Opcode::JSONSourceClose, Opcode::JSONSourceAbandon, Opcode::JSONGetByte, Opcode::JSONStartsWith, Opcode::JSONAdvance, Opcode::JSONSkipByte, Opcode::JSONSkipWhitespace, Opcode::JSONParseString, Opcode::JSONParseKey,
+    Opcode::JSONParseNumber, Opcode::JSONParseInteger, Opcode::JSONParseValue, Opcode::JSONFindMember, Opcode::JSONMemberRepeats, Opcode::JSONKeyHasEscapes, Opcode::JSONObjectBegin, Opcode::JSONObjectKey, Opcode::JSONObjectFinish, Opcode::JSONParseExtraMembers, Opcode::ExpectRows
 };
 
 static_assert([]() consteval {
@@ -134,14 +142,6 @@ static ALWAYS_INLINE void checkShapeOfDraftForCode(Entry entry, const DraftWords
 static ALWAYS_INLINE bool allocatesInFrameOfUnit(const Draft& draft)
 {
     return PayloadWord::storage(draft.opcode) && draft.storage() != AllocationStorage::Heap;
-}
-
-// Of an allocation in the frame. A list and the closure of a bound function lie there for one operation alone, and NewClosure[isLent] for its call.
-static ALWAYS_INLINE bool outlivesOneUse(const Draft& allocationInFrame)
-{
-    if (allocationInFrame.opcode == Opcode::NewClosure)
-        return !allocationInFrame.isMadeForOneUse() && !allocationInFrame.isLent();
-    return allocationInFrame.opcode == Opcode::NewObject && !allocationInFrame.isMadeForOneUse();
 }
 
 static ALWAYS_INLINE ValueID appendRecordToCode(StableArray<Operation, 10>& operations, const Operation& operation)
@@ -247,7 +247,6 @@ void Code::reset(CodeUnit unit)
     m_hasSuspensions = false;
     m_hasLoops = false;
     m_holdsFrameCells = false;
-    m_holdsFrameCellsThatOutliveOneUse = false;
     m_holdsCallThatPlanHasNotCounted = false;
     m_callsOfFunctionNeverCollect = false;
     m_readsNumbersOutOfBytes = false;
@@ -267,14 +266,6 @@ void Code::reset(CodeUnit unit)
     InlineFrame functionItself { };
     functionItself.callee = unit.function;
     m_inlineFrames.append(functionItself);
-}
-
-std::span<const FactUse> Code::factsUsedBy(ValueID id) const
-{
-    RELEASE_ASSERT(m_isSwept);
-    std::span<const FactUse> uses = m_factUses.span();
-    auto found = std::ranges::equal_range(uses, id.index(), { }, [](const FactUse& use) { return use.record.index(); });
-    return uses.subspan(found.begin() - uses.begin(), found.size());
 }
 
 Wire::SourceLocation Code::locationOf(const Program& program, Origin origin) const
@@ -404,10 +395,8 @@ ValueID Code::append(BlockID blockID, const Draft& draft, TypeID proven, EffectT
     ValueID id = appendRecordToCode(m_operations, operation);
     block.m_last = id;
     m_opcodesOfValues.add(draft.opcode);
-    if (allocatesInFrameOfUnit(draft)) {
+    if (allocatesInFrameOfUnit(draft))
         m_holdsFrameCells = true;
-        m_holdsFrameCellsThatOutliveOneUse |= outlivesOneUse(draft);
-    }
     if (traits.maySuspend())
         m_hasSuspensions = true;
     if (readsNumberOutOfBytes(operation))
@@ -464,10 +453,8 @@ ValueID Code::addConstant(const Draft& draft, TypeID proven)
         RELEASE_ASSERT(!operand || isConstant(operand));
 
     m_opcodesOfValues.add(draft.opcode);
-    if (allocatesInFrameOfUnit(draft)) {
+    if (allocatesInFrameOfUnit(draft))
         m_holdsFrameCells = true;
-        m_holdsFrameCellsThatOutliveOneUse |= outlivesOneUse(draft);
-    }
     return appendRecordToCode(m_operations, constant);
 }
 
@@ -564,16 +551,6 @@ uint16_t Code::addEntry(BlockID blockID)
     return static_cast<uint16_t>(m_entries.size() - 1);
 }
 
-void Code::moveEntryTo(uint16_t entry, BlockID blockID)
-{
-    RELEASE_ASSERT(!m_isSwept && entry < m_entries.size());
-    Block& block = m_blocks[checkedIndexInCode(blockID, m_blocks.size())];
-    RELEASE_ASSERT(!block.isEntry && block.hasEnded());
-    m_blocks[m_entries[entry].block.index()].isEntry = false;
-    block.isEntry = true;
-    m_entries[entry].block = blockID;
-}
-
 void Code::addFactUse(const FactUse& use)
 {
     RELEASE_ASSERT(!m_isSwept);
@@ -586,97 +563,6 @@ void Code::addFateOfPoll(ValueID poll, FateOfPoll fate)
     RELEASE_ASSERT(!m_isSwept);
     RELEASE_ASSERT(m_operations[checkedIndexInCode(poll, m_operations.size())].opcode == Opcode::LoopHint);
     m_pollsWithFates.append(PollWithFate { poll, fate });
-}
-
-Code::Mark Code::mark() const
-{
-    Mark sizes;
-    sizes.numberOfOperations = m_operations.size();
-    sizes.numberOfBlocks = m_blocks.size();
-    sizes.numberOfEdges = m_edges.size();
-    sizes.numberOfInlineFrames = static_cast<uint32_t>(m_inlineFrames.size());
-    sizes.numberOfEntries = static_cast<uint32_t>(m_entries.size());
-    sizes.numberOfFrameWords = m_numberOfFrameWords;
-    sizes.numberOfFactUses = static_cast<uint32_t>(m_factUses.size());
-    sizes.numberOfPollsWithFates = static_cast<uint32_t>(m_pollsWithFates.size());
-    sizes.hasHandlers = m_hasHandlers;
-    sizes.sideWords = m_sideWords.mark();
-    return sizes;
-}
-
-Code::OpenBlock Code::stateOf(BlockID blockID) const
-{
-    const Block& block = m_blocks[checkedIndexInCode(blockID, m_blocks.size())];
-    return { blockID, block.m_last, block.hasEnded(), !!block.handler };
-}
-
-void Code::cutBackTo(const Mark& mark, std::span<const OpenBlock> openBlocks)
-{
-    RELEASE_ASSERT(!m_isSwept);
-    RELEASE_ASSERT(mark.numberOfOperations <= m_operations.size() && mark.numberOfBlocks <= m_blocks.size() && mark.numberOfEdges <= m_edges.size());
-    RELEASE_ASSERT(mark.numberOfInlineFrames && mark.numberOfInlineFrames <= m_inlineFrames.size() && mark.numberOfEntries <= m_entries.size());
-    RELEASE_ASSERT(mark.numberOfFactUses <= m_factUses.size());
-
-    // The discarded records show which older blocks grew. The first operation a block gained after the mark has, as its previous, the block's last operation at the mark.
-    for (uint32_t index = mark.numberOfOperations; index < m_operations.size(); ++index) {
-        const Operation& operation = m_operations[index];
-        if (operation.blockIndex >= mark.numberOfBlocks)
-            continue;
-        Block& block = m_blocks[operation.blockIndex];
-        if (operation.opcode == Opcode::Parameter) {
-            block.m_parameters = nullptr;
-            block.m_numberOfParameters = 0;
-        } else if (!operation.previous || operation.previous.index() < mark.numberOfOperations)
-            block.m_last = operation.previous;
-    }
-    for (uint32_t index = mark.numberOfEdges; index < m_edges.size(); ++index) {
-        BlockID from = m_edges[index].from;
-        if (from.index() >= mark.numberOfBlocks)
-            continue;
-        Block& block = m_blocks[from.index()];
-        if (block.handler == EdgeID(index))
-            block.handler = EdgeID();
-        else
-            block.terminator = Terminator();
-    }
-    for (uint32_t index = mark.numberOfEntries; index < m_entries.size(); ++index) {
-        BlockID entered = m_entries[index].block;
-        if (entered.index() < mark.numberOfBlocks)
-            m_blocks[entered.index()].isEntry = false;
-    }
-    // A terminator without edges leaves no trace in the discarded records, so only the caller's list can say that the block had not ended.
-    for (const OpenBlock& open : openBlocks) {
-        Block& block = m_blocks[checkedIndexInCode(open.block, mark.numberOfBlocks)];
-        if (!open.hadEnded)
-            block.terminator = Terminator();
-        RELEASE_ASSERT(block.m_last == open.last);
-        RELEASE_ASSERT(block.hasEnded() == open.hadEnded);
-        RELEASE_ASSERT(!!block.handler == open.hadHandler);
-    }
-
-#if ASSERT_ENABLED
-    for (uint32_t index = 0; index < mark.numberOfBlocks; ++index) {
-        const Block& block = m_blocks[index];
-        ASSERT(!block.subject || block.subject.index() < mark.numberOfOperations);
-        block.terminator.forEachChild([&](ValueID operand) {
-            ASSERT(operand.index() < mark.numberOfOperations);
-        });
-    }
-    for (uint32_t index = 0; index < mark.numberOfEdges; ++index)
-        ASSERT(m_edges[index].isOpen() || m_edges[index].to.index() < mark.numberOfBlocks);
-#endif
-
-    m_operations.shrink(mark.numberOfOperations);
-    m_blocks.shrink(mark.numberOfBlocks);
-    m_edges.shrink(mark.numberOfEdges);
-    m_sideWords.rewindTo(mark.sideWords);
-    m_inlineFrames.shrink(mark.numberOfInlineFrames);
-    m_entries.shrink(mark.numberOfEntries);
-    m_numberOfFrameWords = mark.numberOfFrameWords;
-    m_hasHandlers = mark.hasHandlers;
-    m_factUses.shrink(mark.numberOfFactUses);
-    RELEASE_ASSERT(mark.numberOfPollsWithFates <= m_pollsWithFates.size());
-    m_pollsWithFates.shrink(mark.numberOfPollsWithFates);
 }
 
 } } } // namespace JSC::AOT::Typed

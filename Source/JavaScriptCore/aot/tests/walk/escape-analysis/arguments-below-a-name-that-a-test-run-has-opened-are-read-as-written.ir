@@ -2,7 +2,6 @@
 # so no copy stands for the object, and the read stays as it is written
 # function pick() { return arguments[key]; }   Object.defineProperty(Object.prototype, "poke", { get() { this[0] = 9; return 0; } })
 # The records are those of the twin, arguments-read-under-any-key-are-read-out-of-the-list.ir, where `= GetArrayElement` is found, and one more: the last line
-# Green without the port too. Its red control: RED.txt, "a name that a test run has opened above the object"
 # RUN: walk f1 mechanisms=all-ParameterGuards-Inlining
 # CHECK-LABEL: code f1:Body
 # CHECK: = ElemGet

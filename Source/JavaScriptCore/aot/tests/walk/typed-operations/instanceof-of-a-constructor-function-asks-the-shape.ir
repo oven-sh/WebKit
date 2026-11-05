@@ -25,7 +25,7 @@
 # RUN(GUARD): walk f6 f7 mechanisms=all
 # REQUIRES(GUARD): entries-of-bun
 # GUARD-NOT: AreMembersUnchanged
-# A row of functions: which objects are made in front of the store and the link of `Below.prototype` nobody can tell (R299): the operation as written answers.
+# A row of functions: which objects are made in front of the store and the link of `Below.prototype` nobody can tell: the operation as written answers.
 # RUN(ROW): walk f7 mechanisms=all
 # REQUIRES(ROW): entries-of-bun
 # ROW: = InstanceOf

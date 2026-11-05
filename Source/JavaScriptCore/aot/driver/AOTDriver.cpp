@@ -513,6 +513,15 @@ void logTimeToEnterEngine(const BuildContext& context, MonotonicTime entered)
     dataLog(toUTF8CString("AOT phase times: ReadAndVerify | enter the engine | wall ", (MonotonicTime::now() - entered).milliseconds(), " ms\n"));
 }
 
+// --aot-harden. Every other mechanism is withheld by tests and by testaot alone.
+template<typename Switches>
+Typed::Mechanisms withoutMechanismsThatOptionsWithhold(Typed::Mechanisms mechanisms, Switches testing)
+{
+    if (AOT::hasFlag(testing, Wire::TestingSwitch::KeepsCellsOutOfFrames))
+        mechanisms.remove(Typed::Mechanism::CellsInFrames);
+    return mechanisms;
+}
+
 std::unique_ptr<CompileOutput> compileBytesWithBuildDriver(std::span<const uint8_t> program, const Wire::CompileOptions& options, const HostThreadPool* hostPool, const ProgramOwner& owner, Typed::Mechanisms mechanisms)
 {
     MonotonicTime entered = MonotonicTime::now();
@@ -521,7 +530,7 @@ std::unique_ptr<CompileOutput> compileBytesWithBuildDriver(std::span<const uint8
         BuildContext context(options, hostPool);
         context.setFunctionTexts(owner.functionTexts);
         BuildDriver driver(context, *output, owner);
-        driver.setMechanisms(mechanisms);
+        driver.setMechanisms(withoutMechanismsThatOptionsWithhold(mechanisms, options.testing));
         logTimeToEnterEngine(context, entered);
         driver.read(program);
         driver.run();
@@ -536,7 +545,7 @@ std::unique_ptr<CompileOutput> compileRecordsWithBuildDriver(std::unique_ptr<Typ
         BuildDriver driver(context, *output, { });
         driver.setProgram(WTF::move(program));
         driver.setChangeOfPlan(changePlan);
-        driver.setMechanisms(mechanisms);
+        driver.setMechanisms(withoutMechanismsThatOptionsWithhold(mechanisms, context.options().testing));
         driver.run();
     });
     return output;

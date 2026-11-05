@@ -59,6 +59,7 @@ export default b.declarations(
     "%bun:bundle%",
     "node:module",
     "node:module.createRequire",
+    "node:vm",
     "process.getBuiltinModule",
     "process.mainModule",
   ),

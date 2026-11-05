@@ -48,7 +48,8 @@ public:
     // Whether the slot holds a value of the type of its field, which lists neither undefined nor null: it is filled, and with no marker.
     Condition holdsDeclaredType(CellPointer, const PlacedSlot&, const MemoryLocation&, const PlacedSlot* extensionWord = nullptr);
     bool holdsRawValueFromBirthInSomeMember(LayoutSetID receivers, PropertyKeyID) const;
-    void markCellIfMarkerIsStored(CellPointer, ValueID stored);
+    // possible: the cell is of one of these layouts. None: of a layout that may bear the mark.
+    void markCellIfMarkerIsStored(CellPointer, ValueID stored, LayoutSetID possible = { });
 
     Pointer extensionOf(CellPointer, const PlacedSlot& extensionWord);
     // Goes to hasNone where the object has no extra properties.

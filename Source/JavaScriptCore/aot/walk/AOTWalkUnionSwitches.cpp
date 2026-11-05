@@ -227,7 +227,6 @@ public:
             return false;
         m_isDisjunction = !first.isNegated;
         m_comparesTexts = first.constant.isText;
-        m_comparisonOfHead = first.comparison;
         m_rootOfSubject = m_index.valueBehindCasts(first.subject);
         m_subject = m_walker.referenceOf(first.subject);
         if (!m_rootOfSubject || !m_subject || !m_subject.isValue())
@@ -252,7 +251,6 @@ public:
     // `||`: whatever equals a constant answers true. `&&`: false.
     bool isDisjunction() const { return m_isDisjunction; }
     Reference subject() const { return m_subject; }
-    ValueID comparisonOfHead() const { return m_comparisonOfHead; }
     Vector<CaseOfUnionSwitches, 16>& cases() { return m_cases; }
     // Of the outermost operator: the block that hands the answer of the left side on to the join, with the parameter that it hands on, and the block of the last comparison, with what that gives.
     BlockID blockThatAnswersAtOnce() const { return m_blockThatAnswersAtOnce; }
@@ -413,7 +411,6 @@ private:
     BodyBlock m_head;
     bool m_isDisjunction { true };
     bool m_comparesTexts { false };
-    ValueID m_comparisonOfHead;
     ValueID m_rootOfSubject;
     Reference m_subject;
     ReadOfSubjectInUnionSwitches m_readOfSubject;

@@ -50,7 +50,6 @@ constexpr uint32_t idOfEmptyIDSet = ObjectSetID().bits();
 constexpr uint32_t largestSmallIDSetSize = 257;
 constexpr uint32_t largestTestedIDSetSize = 100000;
 constexpr std::array<uint32_t, 11> testedIDSetSizes { 0, 1, 16, 17, 255, 256, largestSmallIDSetSize, membersPerSetChunk - 1, membersPerSetChunk, membersPerSetChunk + 1, largestTestedIDSetSize };
-static_assert(IDSetTable::mostMembersOfList == 16 && membersPerSetChunk > largestSmallIDSetSize, "the sizes stand on both sides of each border");
 
 enum class IDSetPattern : uint8_t { Dense, OneInEachChunk, Random, AtTheTop };
 constexpr std::array<IDSetPattern, 4> testedIDSetPatterns { IDSetPattern::Dense, IDSetPattern::OneInEachChunk, IDSetPattern::Random, IDSetPattern::AtTheTop };
@@ -270,48 +269,6 @@ private:
     const uint32_t m_numberOfAttachedWords;
 };
 
-std::vector<std::pair<uint32_t, uint32_t>> chunksOfIDSetExcept(const IDSetView& view, uint32_t excludedChunkNumber)
-{
-    std::vector<std::pair<uint32_t, uint32_t>> chunks;
-    for (const IDSetChunkEntry& entry : view.chunkEntries()) {
-        if (entry.firstMemberDividedBySize != excludedChunkNumber)
-            chunks.emplace_back(entry.firstMemberDividedBySize, entry.chunk);
-    }
-    return chunks;
-}
-
-std::vector<std::pair<uint32_t, uint32_t>> chunksOfIDSetThatOtherLacks(const IDSetView& view, const IDSetView& other)
-{
-    constexpr uint32_t numberOfNoChunk = UINT32_MAX;
-    std::vector<std::pair<uint32_t, uint32_t>> chunks = chunksOfIDSetExcept(view, numberOfNoChunk);
-    std::vector<std::pair<uint32_t, uint32_t>> chunksOfOther = chunksOfIDSetExcept(other, numberOfNoChunk);
-    std::vector<std::pair<uint32_t, uint32_t>> lacking;
-    std::ranges::set_difference(chunks, chunksOfOther, std::back_inserter(lacking));
-    return lacking;
-}
-
-void checkIDSetsShareOtherChunks(IDSetArenaUnderTest& tested, IDSetModel& model, WeakRandom& random)
-{
-    IDSetArena& arena = tested.arena;
-    uint32_t set = tested.make(model).set;
-    AOT_TEST_CHECK(arena.viewOf(set).chunkEntries().size() >= model.size() / membersPerSetChunk);
-
-    uint32_t last = *model.rbegin();
-    IDSetMembers toggled { *model.begin(), last, last + 10 * membersPerSetChunk };
-    for (unsigned count = 0; count < 6; ++count) {
-        toggled.push_back(random.getUint32(last));
-        toggled.push_back(*model.lower_bound(toggled.back()));
-    }
-    for (uint32_t member : toggled) {
-        bool wasMember = toggleInIDSetModel(model, member);
-        uint32_t changed = wasMember ? arena.without(set, member) : arena.with(set, member);
-        tested.checkHolds(changed, membersOfIDSetModel(model));
-        toggleInIDSetModel(model, member);
-        uint32_t chunkNumber = member / membersPerSetChunk;
-        AOT_TEST_CHECK(chunksOfIDSetExcept(arena.viewOf(changed), chunkNumber) == chunksOfIDSetExcept(arena.viewOf(set), chunkNumber));
-    }
-}
-
 std::vector<IDSetMembers> contentsOfIDSetsToCompare()
 {
     WeakRandom random(9);
@@ -505,23 +462,6 @@ static void idSetsAreFilteredAndReplaced()
     }
 }
 
-static void idSetsThatDifferInOneMemberShareOtherChunks()
-{
-    IDSetTable table(IDSetForm::ListsAndChunks, 0);
-    WeakRandom random(5);
-    std::array<IDSetModel, 3> models {
-        modelOfIDSet(IDSetPattern::Dense, largestTestedIDSetSize, random),
-        modelOfIDSet(IDSetPattern::OneInEachChunk, largestTestedIDSetSize, random),
-        modelOfIDSet(IDSetPattern::Random, largestTestedIDSetSize, random),
-    };
-    for (ArenaKeeps keeps : { ArenaKeeps::InProgram, ArenaKeeps::UntilReset }) {
-        IDSetArenaUnderTest tested(table, keeps);
-        for (IDSetModel& model : models)
-            checkIDSetsShareOtherChunks(tested, model, random);
-        table.freeze();
-    }
-}
-
 template<IDSetForm form>
 static void idSetsOfThreadLastUntilReset()
 {
@@ -689,196 +629,6 @@ static void unionsOfManyIDSetsAgreeWithModel()
     }
 }
 
-// What meets at a hub of the solver: many wide sets that hold nearly the same. Under one number a few chunks come again and again, and most of them bring nothing.
-static void unionsOfIDSetsThatHoldNearlyTheSame()
-{
-    constexpr uint32_t endOfMembers = 12 * membersPerSetChunk;
-    constexpr unsigned numberOfSets = 48;
-    IDSetTable table(IDSetForm::ListsAndChunks, 0);
-    WeakRandom random(11);
-    for (ArenaKeeps keeps : { ArenaKeeps::InProgram, ArenaKeeps::UntilReset }) {
-        IDSetArenaUnderTest tested(table, keeps);
-        IDSetModel all;
-        for (uint32_t member = 0; member < endOfMembers; ++member) {
-            if (random.getUint32(2))
-                all.insert(member);
-        }
-
-        // Each lacks up to five members, so it shares every other chunk with the rest.
-        std::vector<IDSetWithMembers> sets;
-        for (unsigned index = 0; index < numberOfSets; ++index) {
-            IDSetModel model = all;
-            for (unsigned count = 0; count <= index % 5; ++count)
-                model.erase(*model.lower_bound(random.getUint32(endOfMembers - membersPerSetChunk)));
-            sets.push_back(tested.make(model));
-        }
-        std::vector<const IDSetWithMembers*> operands;
-        for (const IDSetWithMembers& set : sets)
-            operands.push_back(&set);
-        uint32_t united = tested.checkUnionOfMany(operands, random);
-
-        // A set that holds all the others is the answer itself, also the second time, when the arena may remember that they lie inside it.
-        IDSetWithMembers holdsAll { united, membersOfIDSetView(tested.arena.viewOf(united)) };
-        operands.insert(operands.begin() + numberOfSets / 2, &holdsAll);
-        for (unsigned repetition = 0; repetition < 2; ++repetition)
-            AOT_TEST_CHECK(tested.checkUnionOfMany(operands, random) == united);
-
-        // One member more, from a list and from a wide set, under a number that all have and under one that none has.
-        uint32_t leastMemberThatAllLack = 0;
-        while (all.contains(leastMemberThatAllLack))
-            ++leastMemberThatAllLack;
-        AOT_TEST_CHECK(leastMemberThatAllLack < membersPerSetChunk);
-        for (uint32_t member : { leastMemberThatAllLack, endOfMembers + 5 * membersPerSetChunk }) {
-            IDSetWithMembers one = tested.make(IDSetModel { member });
-            IDSetModel modelOfWide(sets[0].members.begin(), sets[0].members.end());
-            modelOfWide.insert(member);
-            IDSetWithMembers wide = tested.make(modelOfWide);
-            for (const IDSetWithMembers* added : { &one, &wide }) {
-                operands.push_back(added);
-                uint32_t withMember = tested.checkUnionOfMany(operands, random);
-                AOT_TEST_CHECK(withMember == tested.arena.with(united, member));
-                operands.pop_back();
-            }
-        }
-        table.freeze();
-    }
-}
-
-// Two sets bring the same chunk and nothing else, so the one that comes second brings nothing new. It still does not lie inside the largest set, and the arena must not remember that it does.
-static void unionOfManyIDSetsRemembersOnlyWhatLiesInside()
-{
-    constexpr uint32_t memberThatLargestLacks = membersPerSetChunk + 1;
-    auto modelWithChunks = [](uint32_t numberOfChunks) {
-        IDSetModel model;
-        for (uint32_t chunk = 0; chunk < numberOfChunks; ++chunk) {
-            for (uint32_t index = 0; index < 40; ++index)
-                model.insert(chunk * membersPerSetChunk + 3 * index);
-        }
-        return model;
-    };
-
-    for (ArenaKeeps keeps : { ArenaKeeps::InProgram, ArenaKeeps::UntilReset }) {
-        IDSetTable table(IDSetForm::ListsAndChunks, 0);
-        if (keeps == ArenaKeeps::UntilReset)
-            table.freeze();
-        IDSetArenaUnderTest tested(table, keeps);
-        IDSetArena& arena = tested.arena;
-
-        uint32_t largest = tested.make(modelWithChunks(4)).set;
-        uint32_t inside = tested.make(modelWithChunks(3)).set;
-        // Under the number that gains it has a chunk of its own, which adds nothing.
-        IDSetModel modelWithOwnChunk = modelWithChunks(3);
-        modelWithOwnChunk.erase(membersPerSetChunk + 3);
-        uint32_t insideWithOwnChunk = tested.make(modelWithOwnChunk).set;
-        std::array<uint32_t, 2> bringSameChunk;
-        for (uint32_t index = 0; index < bringSameChunk.size(); ++index) {
-            IDSetModel model = modelWithChunks(2 + index);
-            model.insert(memberThatLargestLacks);
-            bringSameChunk[index] = tested.make(model).set;
-        }
-        IDSetModel modelOfUnion = modelWithChunks(4);
-        modelOfUnion.insert(memberThatLargestLacks);
-        uint32_t expected = tested.make(modelOfUnion).set;
-
-        // A build with assertions withholds one hit in sixteen, never two in a row.
-        auto rememberedUnionWithLargest = [&](uint32_t set) {
-            auto find = [&] {
-                return arena.lastingMemo().find(static_cast<uint32_t>(IDSetOperation::Union), std::min(set, largest), std::max(set, largest));
-            };
-            std::optional<uint32_t> answer = find();
-            return answer ? answer : find();
-        };
-
-        for (unsigned repetition = 0; repetition < 2; ++repetition) {
-            AOT_TEST_CHECK(arena.unionOf(std::array { largest, inside, insideWithOwnChunk, bringSameChunk[0], bringSameChunk[1] }) == expected);
-            // The unions of two below remember by themselves.
-            if (keeps == ArenaKeeps::InProgram && !repetition) {
-                AOT_TEST_CHECK(rememberedUnionWithLargest(inside) == largest && rememberedUnionWithLargest(insideWithOwnChunk) == largest);
-                AOT_TEST_CHECK(rememberedUnionWithLargest(bringSameChunk[0]) != largest && rememberedUnionWithLargest(bringSameChunk[1]) != largest);
-            }
-            AOT_TEST_CHECK(arena.unionOf(largest, bringSameChunk[0]) == expected && arena.unionOf(largest, bringSameChunk[1]) == expected);
-            AOT_TEST_CHECK(arena.unionOf(largest, inside) == largest && arena.unionOf(largest, insideWithOwnChunk) == largest);
-            AOT_TEST_CHECK(arena.unionOf(std::array { largest, inside, insideWithOwnChunk }) == largest);
-            AOT_TEST_CHECK(arena.unionOf(std::array { largest, inside, bringSameChunk[1] }) == expected && arena.unionOf(std::array { largest, inside, bringSameChunk[0] }) == expected);
-        }
-    }
-}
-
-// The same where ids follow the order of making. So the two sets stand next to each other among the operands, whichever way those are sorted, and the walk drops every chunk that the second of them brings.
-// Whoever takes "it added no candidate" for "it lies inside the largest set" remembers that, and the next union with the largest set lacks members. Nothing else is remembered in front of that union.
-static void unionOfIDSetsThatBringSameChunksHoldsTheirMembers()
-{
-    constexpr std::array<uint32_t, 2> membersThatLargestLacks { membersPerSetChunk + 1, 3 * membersPerSetChunk + 2 };
-    auto modelWithChunks = [](uint32_t numberOfChunks) {
-        IDSetModel model;
-        for (uint32_t chunk = 0; chunk < numberOfChunks; ++chunk) {
-            for (uint32_t index = 0; index < 40; ++index)
-                model.insert(chunk * membersPerSetChunk + 3 * index);
-        }
-        return model;
-    };
-
-    IDSetTable table(IDSetForm::ListsAndChunks, 0);
-    table.freeze();
-    IDSetArenaUnderTest tested(table, ArenaKeeps::UntilReset);
-    IDSetArena& arena = tested.arena;
-
-    for (bool asksForUnionOfTwoFirst : { true, false }) {
-        for (size_t askedFirst = 0; askedFirst < 2; ++askedFirst) {
-            IDSetWithMembers largest = tested.make(modelWithChunks(6));
-            std::array<IDSetWithMembers, 2> bringSameChunks;
-            for (uint32_t index = 0; index < bringSameChunks.size(); ++index) {
-                IDSetModel model = modelWithChunks(4 + index);
-                model.insert(membersThatLargestLacks.begin(), membersThatLargestLacks.end());
-                bringSameChunks[index] = tested.make(model);
-            }
-            uint32_t oneMemberOfLargest = tested.make(IDSetModel { 0 }).set;
-            IDSetMembers expected = combineIDSetMembers(IDSetOperation::Union, largest.members, IDSetMembers(membersThatLargestLacks.begin(), membersThatLargestLacks.end()));
-
-            IDSetView viewOfLargest = arena.viewOf(largest.set);
-            std::vector<std::pair<uint32_t, uint32_t>> brought = chunksOfIDSetThatOtherLacks(arena.viewOf(bringSameChunks[0].set), viewOfLargest);
-            AOT_TEST_CHECK(liesInThread(ObjectSetID::fromBits(largest.set)) && bringSameChunks[0].set == largest.set + 1 && bringSameChunks[1].set == largest.set + 2);
-            AOT_TEST_CHECK(brought.size() == membersThatLargestLacks.size() && brought == chunksOfIDSetThatOtherLacks(arena.viewOf(bringSameChunks[1].set), viewOfLargest));
-            for (const std::pair<uint32_t, uint32_t>& chunk : brought)
-                AOT_TEST_CHECK(std::ranges::binary_search(viewOfLargest.chunkEntries(), chunk.first, { }, &IDSetChunkEntry::firstMemberDividedBySize));
-
-            tested.checkHolds(arena.unionOf(std::array { largest.set, bringSameChunks[0].set, bringSameChunks[1].set }), expected);
-            for (size_t index : { askedFirst, 1 - askedFirst }) {
-                for (bool isUnionOfTwo : { asksForUnionOfTwoFirst, !asksForUnionOfTwoFirst }) {
-                    // A list is not looked up, so beside one the set alone is asked about.
-                    uint32_t united = isUnionOfTwo ? arena.unionOf(largest.set, bringSameChunks[index].set) : arena.unionOf(std::array { largest.set, oneMemberOfLargest, bringSameChunks[index].set });
-                    tested.checkHolds(united, expected);
-                }
-            }
-            arena.reset();
-        }
-    }
-}
-
-static void scratchOfIDSetsIsCountedWithMemosOfTypeArena()
-{
-    constexpr uint32_t numberOfChunks = 64;
-    TypeTable table(BuiltinTable::singleton());
-    table.setObjects(makeUniqueWithoutFastMallocCheck<ObjectTable>(BuiltinTable::singleton(), std::span<const FunctionInOrderOfObjects>()));
-    TypeArena types(table, ArenaKeeps::InProgram);
-    LayoutSets& sets = types.layoutSets();
-
-    // No two share a chunk and none lies inside another. So the union lays out every chunk of two of them and a new chunk under every number, and it remembers nothing.
-    std::array<LayoutSetID, 3> operands;
-    for (uint32_t index = 0; index < operands.size(); ++index) {
-        std::vector<LayoutID> members;
-        for (uint32_t chunk = 0; chunk < numberOfChunks; ++chunk)
-            members.push_back(LayoutID(chunk * membersPerSetChunk + index));
-        operands[index] = sets.ofSorted(members);
-    }
-    size_t sizeOfMemos = types.sizeOfMemosInBytes();
-    size_t sizeOfScratch = sets.untyped().sizeOfScratchInBytes();
-    AOT_TEST_CHECK(sets.sizeOf(sets.unionOf(operands)) == operands.size() * numberOfChunks);
-    size_t gained = sets.untyped().sizeOfScratchInBytes() - sizeOfScratch;
-    AOT_TEST_CHECK(gained >= 2 * numberOfChunks * sizeof(IDSetChunkEntry) + numberOfChunks * sizeof(IDSetChunk));
-    AOT_TEST_CHECK(types.sizeOfMemosInBytes() == sizeOfMemos + gained);
-}
-
 namespace {
 
 struct IDSetsForAnnotatorThatComesBack {
@@ -961,18 +711,6 @@ private:
     const WayBackIntoIDSetArena& m_way;
 };
 
-void setWayBackIntoIDSetArena(const char* name)
-{
-#if OS(WINDOWS)
-    SetEnvironmentVariableA(wayBackIntoIDSetArenaVariable, name);
-#else
-    if (name)
-        setenv(wayBackIntoIDSetArenaVariable, name, 1);
-    else
-        unsetenv(wayBackIntoIDSetArenaVariable);
-#endif
-}
-
 } // anonymous namespace
 
 static void annotatorComesBackIntoIDSetArenaOnRequest()
@@ -1004,21 +742,6 @@ static void annotatorComesBackIntoIDSetArenaOnRequest()
     IDSetView united = arena.viewOf(arena.unionOf(first, second));
     IDSetMembers expected { 1, 2, 3, 4 };
     AOT_TEST_CHECK(!annotator.comesBackNextTime && membersOfIDSetView(united) == expected && united.attachedWords()[0] == expected.size());
-}
-
-static void layingOutInScratchWhileIDSetIsInternedStopsTheBuild()
-{
-    for (const WayBackIntoIDSetArena& way : waysBackIntoIDSetArena) {
-        std::array<String, 3> arguments { String(nativeSubcommandName), String(singleProcessFlag), String(idSetTestOfAnnotatorOnRequest) };
-        setWayBackIntoIDSetArena(way.name.characters());
-        ChildProcessResult result = ChildProcessLauncher(String(programPath()), { }).run(arguments);
-        setWayBackIntoIDSetArena(nullptr);
-        AOT_TEST_CHECK(result.output.contains(lineAheadOfWayBackIntoIDSetArena));
-        if (way.stopsTheBuild)
-            AOT_TEST_CHECK(result.outcome == ChildProcessOutcome::Crashed && !result.output.contains(lineBehindWayBackIntoIDSetArena));
-        else
-            AOT_TEST_CHECK(result.exitedWith(0) && result.output.contains(lineBehindWayBackIntoIDSetArena));
-    }
 }
 
 // What comes over an edge of the solver: a source that grows, handed over whole beside what it was when it last sent.
@@ -1112,74 +835,6 @@ static void unionOfIDSetsWithEarlierStateRemembersOnlyWhatLiesInside()
     }
 }
 
-// What was made in front of keepAllSetsMadeSoFar() and what is marked stays as it is, under its id. The rest is gone, and an equal set gets another id.
-static void idSetsThatNothingNamesAreCollected()
-{
-    IDSetTable table(IDSetForm::ListsAndChunks, IDSetArenaUnderTest::numberOfAttachedWords);
-    IDSetArenaUnderTest tested(table, ArenaKeeps::InProgram);
-    IDSetArena& arena = tested.arena;
-    WeakRandom random(13);
-    auto collect = [&](const std::vector<IDSetWithMembers>& named) {
-        table.beginCollection();
-        table.markAsNamed(idOfEmptyIDSet);
-        for (const IDSetWithMembers& set : named)
-            table.markAsNamed(set.set);
-        for (uint32_t shard = 0; shard < IDSetTable::numberOfShards; ++shard)
-            table.collectShard(shard);
-        arena.lastingMemo().clear();
-    };
-    auto checkAllHold = [&](const std::vector<IDSetWithMembers>& sets) {
-        for (const IDSetWithMembers& set : sets)
-            tested.checkHolds(set.set, set.members);
-    };
-
-    std::vector<IDSetWithMembers> madeBefore = tested.makePool(random);
-    table.keepAllSetsMadeSoFar();
-    IDSetTable::Contents contentsBefore = table.contents();
-    collect({ });
-    checkAllHold(madeBefore);
-    AOT_TEST_CHECK(table.contents().numberOfSets == contentsBefore.numberOfSets);
-
-    // Lists, sets whose entries lie in their records, and sets whose entries lie outside.
-    auto makeSets = [&](uint32_t offset) {
-        std::vector<IDSetWithMembers> sets;
-        for (uint32_t numberOfChunks : { 1u, 2u, 15u, 16u, 17u, 300u }) {
-            for (uint32_t membersInChunk : { 1u, 2u, 40u }) {
-                IDSetModel model;
-                for (uint32_t chunk = 0; chunk < numberOfChunks; ++chunk) {
-                    for (uint32_t index = 0; index < membersInChunk; ++index)
-                        model.insert(chunk * membersPerSetChunk + 5 * index + offset);
-                }
-                if (model.size() > 1)
-                    sets.push_back(tested.make(model));
-            }
-        }
-        return sets;
-    };
-    std::vector<IDSetWithMembers> named = makeSets(1);
-    IDSetTable::Contents contentsWithNamed = table.contents();
-    std::vector<IDSetWithMembers> notNamed = makeSets(2);
-    AOT_TEST_CHECK(table.contents().numberOfSets == contentsWithNamed.numberOfSets + notNamed.size());
-
-    collect(named);
-    AOT_TEST_CHECK(table.contents().numberOfSets == contentsWithNamed.numberOfSets);
-    checkAllHold(madeBefore);
-    checkAllHold(named);
-
-    std::vector<IDSetWithMembers> madeAgain = makeSets(2);
-    AOT_TEST_CHECK(madeAgain.size() == notNamed.size());
-    for (size_t index = 0; index < madeAgain.size(); ++index)
-        AOT_TEST_CHECK(madeAgain[index].set != notNamed[index].set);
-    checkAllHold(madeAgain);
-
-    // What stays is united as before.
-    for (size_t index = 0; index < named.size(); ++index)
-        tested.checkOperations(named[index], madeAgain[index]);
-    collect(madeAgain);
-    checkAllHold(madeBefore);
-    checkAllHold(madeAgain);
-}
-
 static void typedIDSetsAnswerLikeUntypedOnes()
 {
     IDSetTable table(IDSetForm::ChunksWithLazyList, 0);
@@ -1238,83 +893,7 @@ static void typedIDSetsAnswerLikeUntypedOnes()
 
 namespace {
 
-// How many of the lists of words begin where the list in front of them in their shard ends.
-class AdjacentWordListCounter {
-public:
-    void note(uint32_t set, std::span<const uint32_t> words)
-    {
-        const uint32_t*& endOfLast = m_endOfLastInShard[(set & idPositionMask) >> (idHomeShift - std::countr_zero(IDSetTable::numberOfShards))];
-        m_count += words.data() == endOfLast;
-        endOfLast = words.data() + words.size();
-    }
-
-    uint32_t count() const { return m_count; }
-
-private:
-    std::array<const uint32_t*, IDSetTable::numberOfShards> m_endOfLastInShard { };
-    uint32_t m_count { 0 };
-};
-
 } // anonymous namespace
-
-// The table frees them block by block. Were each an allocation of its own, its destructor would have to go over every set to find them.
-static void wordsOutsideRecordsOfIDSetsLieInBlocks()
-{
-    constexpr uint32_t numberOfSets = 32 * IDSetTable::numberOfShards;
-    constexpr uint32_t size = IDSetTable::mostMembersOfList + 1;
-    static_assert(numberOfSets <= membersPerSetChunk);
-    static_assert(size * sizeof(uint32_t) % 16 && size * sizeof(IDSetChunkEntry) % 16, "an allocation begins at a multiple of sixteen bytes, so none begins where one of these ends");
-
-    IDSetTable tableWithLists(IDSetForm::ChunksWithLazyList, 0);
-    IDSetArena arenaWithLists(tableWithLists, ArenaKeeps::InProgram);
-    AdjacentWordListCounter lazyLists;
-    for (uint32_t number = 0; number < numberOfSets; ++number) {
-        IDSetMembers members(size);
-        std::iota(members.begin(), members.end(), number * size);
-        uint32_t set = arenaWithLists.makeFromSorted(members);
-        AOT_TEST_CHECK(std::ranges::equal(tableWithLists.listOf(set), members));
-        lazyLists.note(set, tableWithLists.listOf(set));
-    }
-    AOT_TEST_CHECK(lazyLists.count() > numberOfSets / 2);
-
-    // One member in each of so many chunks that the entries lie outside the record.
-    IDSetTable table(IDSetForm::ListsAndChunks, 0);
-    IDSetArena arena(table, ArenaKeeps::InProgram);
-    AdjacentWordListCounter entries;
-    for (uint32_t number = 0; number < numberOfSets; ++number) {
-        IDSetMembers members;
-        for (uint32_t chunk = 0; chunk < size; ++chunk)
-            members.push_back(chunk * membersPerSetChunk + number);
-        uint32_t set = arena.makeFromSorted(members);
-        std::span<const IDSetChunkEntry> entriesOfSet = arena.viewOf(set).chunkEntries();
-        AOT_TEST_CHECK(entriesOfSet.size() == size && membersOfIDSetView(arena.viewOf(set)) == members);
-        entries.note(set, unsafeMakeSpan(reinterpret_cast<const uint32_t*>(entriesOfSet.data()), 2 * entriesOfSet.size()));
-    }
-    AOT_TEST_CHECK(entries.count() > numberOfSets / 2);
-}
-
-static void freezingIDSetTableFreesOutgrownSlots()
-{
-    constexpr uint32_t numberOfSets = 64 * IDSetTable::numberOfShards;
-    auto membersOf = [](uint32_t number) {
-        return std::array { number, number + numberOfSets };
-    };
-
-    IDSetTable table(IDSetForm::ListsAndChunks, 0);
-    std::vector<uint32_t> sets;
-    {
-        IDSetArena arena(table, ArenaKeeps::InProgram);
-        for (uint32_t number = 0; number < numberOfSets; ++number)
-            sets.push_back(arena.makeFromSorted(membersOf(number)));
-    }
-    size_t sizeWhileItGrew = table.sizeInBytes();
-    table.freeze();
-    AOT_TEST_CHECK(table.sizeInBytes() < sizeWhileItGrew);
-
-    IDSetArena arena(table, ArenaKeeps::UntilReset);
-    for (uint32_t number = 0; number < numberOfSets; ++number)
-        AOT_TEST_CHECK(arena.makeFromSorted(membersOf(number)) == sets[number]);
-}
 
 // Types, keys and parts of classes each have an index of their own, so each grows in a table of its own: what another index frees hides nothing.
 // One arena is told what each value held before and the other is not. They share a table, so equal answers have equal ids, and neither sees what the other remembers.
@@ -1404,105 +983,6 @@ static void freezingTypeTableFreesOutgrownSlots()
     }));
 }
 
-// Some texts have their keys when the rest get theirs, in an order that is not that of the texts, with keys of another kind between them.
-static void keysOfTextsAreNumberedByTextOnAnyNumberOfThreads()
-{
-    constexpr uint32_t numberOfStrings = 5 * indicesInRangeOfLoop + 77;
-    auto numbersOfKeys = [](const auto& addKeysOfOtherTexts) {
-        TypeTable table(BuiltinTable::singleton());
-        table.setObjects(makeUniqueWithoutFastMallocCheck<ObjectTable>(BuiltinTable::singleton(), std::span<const FunctionInOrderOfObjects>()));
-        {
-            TypeArena types(table, ArenaKeeps::InProgram);
-            for (uint32_t text = numberOfStrings; text--;) {
-                if (!(text % 7))
-                    types.textKey(StringID(text));
-                if (!(text % 1000))
-                    types.registeredSymbolKey(StringID(text));
-            }
-            // A whole range that lacks nothing.
-            for (uint32_t text = 2 * indicesInRangeOfLoop; text < 3 * indicesInRangeOfLoop; ++text)
-                types.textKey(StringID(text));
-        }
-        addKeysOfOtherTexts(table);
-
-        std::vector<uint32_t> numbers;
-        for (uint32_t text = 0; text < numberOfStrings; ++text) {
-            std::optional<PropertyKeyID> key = table.find(PropertyKey { .kind = PropertyKeyKind::Text, .text = StringID(text) });
-            AOT_TEST_CHECK(key && table.at(*key).text == StringID(text) && table.at(*key).kind == PropertyKeyKind::Text);
-            numbers.push_back(key->index());
-        }
-        numbers.push_back(table.numberOfPropertyKeys());
-        return numbers;
-    };
-
-    std::vector<uint32_t> oneByOne = numbersOfKeys([](TypeTable& table) {
-        TypeArena types(table, ArenaKeeps::InProgram);
-        for (uint32_t text = 0; text < numberOfStrings; ++text)
-            types.textKey(StringID(text));
-    });
-    for (unsigned numberOfThreads : { 1u, 3u, 8u }) {
-        AOT_TEST_CHECK(oneByOne == numbersOfKeys([&](TypeTable& table) {
-            ParallelLoops loops(numberOfThreads);
-            table.addKeysOfTexts(numberOfStrings, loops);
-            // Nothing is left to add.
-            table.addKeysOfTexts(numberOfStrings, loops);
-        }));
-    }
-}
-
-static void idPairMemoKeepsWhatIsAskedFor()
-{
-    constexpr uint32_t numberAskedAgain = IDPairMemo::leastAnswersInGeneration;
-    auto answerTo = [](uint32_t pair) {
-        return pair * 1000003 + 7;
-    };
-    auto add = [&](IDPairMemo& memo, uint32_t pair) {
-        memo.add(pair % 3, pair, pair / 2, answerTo(pair));
-    };
-    // A build with assertions withholds one hit in sixteen, never two in a row.
-    auto find = [&](IDPairMemo& memo, uint32_t pair) {
-        std::optional<uint32_t> answer = memo.find(pair % 3, pair, pair / 2);
-        return answer ? answer : memo.find(pair % 3, pair, pair / 2);
-    };
-
-    IDPairMemo memo;
-    AOT_TEST_CHECK(!memo.find(0, 1, 2) && !memo.sizeInBytes());
-    for (uint32_t pair = 0; pair < numberAskedAgain; ++pair) {
-        AOT_TEST_CHECK(!find(memo, pair));
-        add(memo, pair);
-    }
-    for (uint32_t pair = 0; pair < numberAskedAgain; ++pair) {
-        AOT_TEST_CHECK(find(memo, pair) == answerTo(pair));
-        AOT_TEST_CHECK(!memo.find(pair % 3 + 3, pair, pair / 2) && !memo.find(pair % 3, pair / 2, pair + 1));
-    }
-
-    // What is asked for again stays, beside as many answers that nobody asks for again.
-    uint32_t next = numberAskedAgain;
-    for (unsigned round = 0; round < 12; ++round) {
-        for (uint32_t pair = 0; pair < numberAskedAgain; ++pair) {
-            AOT_TEST_CHECK(find(memo, pair) == answerTo(pair));
-            add(memo, next++);
-        }
-    }
-    AOT_TEST_CHECK(!find(memo, numberAskedAgain));
-
-    // What nobody asks for again takes no room for long.
-    size_t sizeWithWhatIsAskedAgain = memo.sizeInBytes();
-    for (unsigned count = 0; count < 64 * numberAskedAgain; ++count)
-        add(memo, next++);
-    AOT_TEST_CHECK(memo.sizeInBytes() < sizeWithWhatIsAskedAgain && find(memo, next - 1) == answerTo(next - 1) && !find(memo, 0));
-
-    memo.clear();
-    AOT_TEST_CHECK(!memo.find(0, 0, 0) && !memo.sizeInBytes());
-
-    IDPairMemo memoThatKeepsEverything;
-    memoThatKeepsEverything.keepEverything();
-    for (uint32_t pair = 0; pair < 8 * numberAskedAgain; ++pair)
-        add(memoThatKeepsEverything, pair);
-    for (uint32_t pair = 0; pair < 8 * numberAskedAgain; ++pair)
-        AOT_TEST_CHECK(find(memoThatKeepsEverything, pair) == answerTo(pair));
-}
-
 static void idListMemoKeepsWhatIsAskedFor()
 {
     std::vector<uint32_t> list;
@@ -1573,46 +1053,6 @@ static IDSetMembers listForSharedAnswers(uint32_t number)
     for (uint32_t index = 0; index < 1 + number % 90; ++index)
         list.push_back(number * 131 + index * index);
     return list;
-}
-
-static void sharedAnswersGiveEqualListsOneNumber()
-{
-    constexpr uint32_t numberOfLists = 20000;
-    SharedAnswers answers;
-    std::vector<uint32_t> numbers;
-    for (uint32_t index = 0; index < numberOfLists; ++index)
-        numbers.push_back(answers.internList(listForSharedAnswers(index)));
-
-    std::set<uint32_t> distinct(numbers.begin(), numbers.end());
-    AOT_TEST_CHECK(distinct.size() == numberOfLists);
-    for (uint32_t index = 0; index < numberOfLists; ++index) {
-        IDSetMembers list = listForSharedAnswers(index);
-        AOT_TEST_CHECK(numbers[index] < 1u << 30 && !liesInThread(LayoutSetID::fromBits(numbers[index])));
-        AOT_TEST_CHECK(answers.internList(list) == numbers[index]);
-        AOT_TEST_CHECK(std::ranges::equal(answers.listAt(numbers[index]), list));
-    }
-    // A list is no prefix of another, and an order is not a set.
-    AOT_TEST_CHECK(answers.internList(IDSetMembers { 1, 2 }) != answers.internList(IDSetMembers { 1, 2, 0 }));
-    AOT_TEST_CHECK(answers.internList(IDSetMembers { 1, 2 }) != answers.internList(IDSetMembers { 2, 1 }));
-}
-
-// The first look compares one list of the hash outside the lock. Where that is another list, the search goes on under the lock.
-static void sharedAnswersTellListsWithOneHashApart()
-{
-    constexpr uint32_t numberOfLists = 300;
-    constexpr uint64_t hashes[] = { 0, 0x123456789abcdef0ull, UINT64_MAX };
-    SharedAnswers answers;
-    std::vector<uint32_t> numbers;
-    for (uint32_t index = 0; index < numberOfLists; ++index)
-        numbers.push_back(answers.internListWithHash(listForSharedAnswers(index), hashes[index % 3]));
-
-    std::set<uint32_t> distinct(numbers.begin(), numbers.end());
-    AOT_TEST_CHECK(distinct.size() == numberOfLists);
-    for (uint32_t index = numberOfLists; index--;) {
-        IDSetMembers list = listForSharedAnswers(index);
-        AOT_TEST_CHECK(answers.internListWithHash(list, hashes[index % 3]) == numbers[index]);
-        AOT_TEST_CHECK(std::ranges::equal(answers.listAt(numbers[index]), list));
-    }
 }
 
 // A thread compares the words of a list outside the lock while the others add lists to the same shard, which moves the records of the lists and not their words.
@@ -1701,64 +1141,6 @@ static void sharedAnswersKeepFirstAnswerOfEightThreads()
     SharedAnswers::Question ofAnotherAsker = question;
     ofAnotherAsker.kind = static_cast<SharedQuestion>(numberOfSharedQuestions - 1);
     AOT_TEST_CHECK(!answers.find(ofAnotherAsker));
-}
-
-static void sharedAnswersWorkOutOnceAndCountWhatTheyHold()
-{
-    SharedAnswers answers;
-    size_t sizeWhileEmpty = answers.sizeInBytes();
-    SharedAnswers::Question question { SharedQuestion::StateOfFieldArm, 1, 2, 3, 4, 5 };
-    unsigned timesWorkedOut = 0;
-    auto workOut = [&] {
-        ++timesWorkedOut;
-        return makeUniqueWithoutFastMallocCheck<NumberKeptInSharedAnswers>(7u);
-    };
-    const NumberKeptInSharedAnswers& first = answers.findOrAdd<NumberKeptInSharedAnswers>(question, workOut);
-    AOT_TEST_CHECK(first.number == 7 && timesWorkedOut == 1);
-    const NumberKeptInSharedAnswers& second = answers.findOrAdd<NumberKeptInSharedAnswers>(question, workOut);
-    AOT_TEST_CHECK(&second == &first);
-    AOT_TEST_CHECK(timesWorkedOut == (SharedAnswers::worksFoundAnswersOutAgain ? 2u : 1u));
-    AOT_TEST_CHECK(answers.sizeInBytes() >= sizeWhileEmpty + sizeof(NumberKeptInSharedAnswers));
-
-    answers.internList(IDSetMembers { 4, 5, 6 });
-    StringPrintStream counts;
-    answers.dumpCounts(counts);
-    String text = counts.toString();
-    AOT_TEST_CHECK(text.contains("| lists 1 | words of lists 3\n"_s));
-    AOT_TEST_CHECK(text.contains("| StateOfFieldArm | asked 2 | found 1 | answers 1 | bytes "_s));
-    AOT_TEST_CHECK(text.contains("| PartitionOfMembers | asked 0 | found 0 | answers 0 | bytes 0\n"_s));
-}
-
-// What SharedAnswers cannot keep because a word of the question or the answer lies in the thread: TypeArena::keepAnswerUntilReset().
-static void arenaKeepsAnswersUnderListsOfWordsUntilReset()
-{
-    TypeTable table(BuiltinTable::singleton());
-    table.setObjects(makeUniqueWithoutFastMallocCheck<ObjectTable>(BuiltinTable::singleton(), std::span<const FunctionInOrderOfObjects>()));
-    table.freeze();
-    TypeArena types(table, ArenaKeeps::UntilReset);
-
-    constexpr uint32_t numberOfQuestions = 300;
-    auto questionAt = [](uint32_t number) {
-        return std::array<uint32_t, 4> { 1, 0xc0000000u + number, UINT32_MAX, number % 3 };
-    };
-    for (unsigned turn = 0; turn < 2; ++turn) {
-        for (uint32_t number = 0; number < numberOfQuestions; ++number) {
-            AOT_TEST_CHECK(!types.answerKeptUntilReset(questionAt(number)));
-            const SharedAnswers::Answer& kept = types.keepAnswerUntilReset(questionAt(number), makeUniqueWithoutFastMallocCheck<NumberKeptInSharedAnswers>(number + turn));
-            AOT_TEST_CHECK(types.answerKeptUntilReset(questionAt(number)) == &kept);
-        }
-        for (uint32_t number = 0; number < numberOfQuestions; ++number) {
-            const SharedAnswers::Answer* found = types.answerKeptUntilReset(questionAt(number));
-            AOT_TEST_CHECK(found && static_cast<const NumberKeptInSharedAnswers&>(*found).number == number + turn);
-        }
-        // A list that begins like another, and one that goes on behind it, are other questions.
-        std::array<uint32_t, 4> whole = questionAt(7);
-        std::array<uint32_t, 5> longer { whole[0], whole[1], whole[2], whole[3], 0 };
-        AOT_TEST_CHECK(!types.answerKeptUntilReset(std::span<const uint32_t>(whole).first(3)));
-        AOT_TEST_CHECK(!types.answerKeptUntilReset(longer));
-        types.reset();
-    }
-    AOT_TEST_CHECK(!types.answerKeptUntilReset(questionAt(7)));
 }
 
 namespace {
@@ -1854,30 +1236,6 @@ private:
 
 } // anonymous namespace
 
-static void cutOfProgramSetAsksNoMember()
-{
-    ProgramForCutsOfIDSets program;
-    TypeArena types(program.table, ArenaKeeps::UntilReset);
-    ObjectSets& sets = types.objectSets();
-    AOT_TEST_CHECK(sets.sizeOf(program.all) == largestTestedIDSetSize && sets.setOfProgramBehind(program.all) == program.all);
-
-    ObjectsPickedOutOfCutsByTrait closures(types, ObjectTrait::IsClosure);
-    closures.checkPicks(program.all, largestTestedIDSetSize);
-    closures.checkPicks(program.all, 0);
-
-    auto cutIn = [&](TypeArena& arena) {
-        return program.allWithout(arena, { program.objectOf(ObjectKind::Closure, 7), program.objectOf(ObjectKind::FunctionPrototype, 7), program.objectOf(ObjectKind::ConstructedObject, ProgramForCutsOfIDSets::numberOfFunctionsInSet - 1) });
-    };
-    ObjectSetID cut = cutIn(types);
-    closures.checkPicks(cut, 0);
-    AOT_TEST_CHECK(sets.sizeOf(closures.pick(cut)) == ProgramForCutsOfIDSets::numberOfFunctionsInSet - 1);
-
-    // Another thread finds what the first has left.
-    TypeArena typesOfOtherThread(program.table, ArenaKeeps::UntilReset);
-    ObjectsPickedOutOfCutsByTrait closuresOfOtherThread(typesOfOtherThread, ObjectTrait::IsClosure);
-    closuresOfOtherThread.checkPicks(cutIn(typesOfOtherThread), 0);
-}
-
 // Nobody has asked about the set of the program. Its members are asked, once for the build, and the answer serves it and whatever is cut out of it.
 static void cutOfProgramSetAnswersForWholeSet()
 {
@@ -1938,40 +1296,6 @@ static void cutOfCutOfProgramSetAsksNoMember()
     withoutShape.checkPicks(picked, 0);
 }
 
-static void joinOfCutsOfProgramSetAsksNoMember()
-{
-    ProgramForCutsOfIDSets program;
-    TypeArena types(program.table, ArenaKeeps::UntilReset);
-    ObjectSets& sets = types.objectSets();
-    ObjectsPickedOutOfCutsByTrait closures(types, ObjectTrait::IsClosure);
-    closures.checkPicks(program.all, largestTestedIDSetSize);
-
-    auto closure = [&](uint32_t function) {
-        return program.objectOf(ObjectKind::Closure, function);
-    };
-    std::array<ObjectSetID, 3> cuts { program.allWithout(types, { closure(1), closure(2), closure(5000) }), program.allWithout(types, { closure(2), closure(5000), closure(6000) }), program.allWithout(types, { closure(5000), closure(19000) }) };
-
-    ObjectSetID joined = sets.unionOf(cuts[0], cuts[1]);
-    AOT_TEST_CHECK(joined == program.allWithout(types, { closure(2), closure(5000) }));
-    closures.checkPicks(joined, 0);
-
-    ObjectSetID joinedOfThree = sets.unionOf(cuts);
-    AOT_TEST_CHECK(joinedOfThree == program.allWithout(types, { closure(5000) }));
-    closures.checkPicks(joinedOfThree, 0);
-
-    // In an arena that has made neither result before.
-    TypeArena typesOfOtherThread(program.table, ArenaKeeps::UntilReset);
-    ObjectSets& setsOfOtherThread = typesOfOtherThread.objectSets();
-    ObjectSetID joinedThere = setsOfOtherThread.unionOf(program.allWithout(typesOfOtherThread, { closure(1), closure(2) }), program.allWithout(typesOfOtherThread, { closure(2), closure(3) }));
-    AOT_TEST_CHECK(liesInThread(joinedThere) && setsOfOtherThread.sizeOf(joinedThere) == largestTestedIDSetSize - 1 && setsOfOtherThread.setOfProgramBehind(joinedThere) == program.all);
-    std::array<ObjectSetID, 3> cutsThere { program.allWithout(typesOfOtherThread, { closure(4), closure(5) }), program.allWithout(typesOfOtherThread, { closure(5), closure(6) }), program.allWithout(typesOfOtherThread, { closure(5), closure(7) }) };
-    ObjectSetID joinedOfThreeThere = setsOfOtherThread.unionOf(cutsThere);
-    AOT_TEST_CHECK(liesInThread(joinedOfThreeThere) && setsOfOtherThread.sizeOf(joinedOfThreeThere) == largestTestedIDSetSize - 1 && setsOfOtherThread.setOfProgramBehind(joinedOfThreeThere) == program.all);
-    ObjectsPickedOutOfCutsByTrait closuresOfOtherThread(typesOfOtherThread, ObjectTrait::IsClosure);
-    closuresOfOtherThread.checkPicks(joinedThere, 0);
-    closuresOfOtherThread.checkPicks(joinedOfThreeThere, 0);
-}
-
 static void cutOfProgramSetAsksMembersFromElsewhere()
 {
     ProgramForCutsOfIDSets program;
@@ -1988,234 +1312,15 @@ static void cutOfProgramSetAsksMembersFromElsewhere()
     AOT_TEST_CHECK(sets.sizeOf(closures.pick(joined)) == endOfFunctions - 1);
 }
 
-static void setUnderChunkAsksEachMember()
-{
-    ProgramForCutsOfIDSets program;
-    TypeArena types(program.table, ArenaKeeps::UntilReset);
-    ObjectSets& sets = types.objectSets();
-    ObjectsPickedOutOfCutsByTrait closures(types, ObjectTrait::IsClosure);
-    closures.checkPicks(program.all, largestTestedIDSetSize);
-
-    AOT_TEST_CHECK(sets.sizeOf(program.shortSet) <= membersPerSetChunk && !sets.setOfProgramBehind(program.shortSet));
-    ObjectSetID fewLeft = sets.filtered(program.all, [](ObjectID object) {
-        return object.index() % 64 == 1;
-    });
-    AOT_TEST_CHECK(liesInThread(fewLeft) && sets.sizeOf(fewLeft) > IDSetTable::mostMembersOfList && sets.sizeOf(fewLeft) <= membersPerSetChunk && !sets.setOfProgramBehind(fewLeft));
-    for (unsigned repetition = 0; repetition < 2; ++repetition) {
-        closures.checkPicks(program.shortSet, sets.sizeOf(program.shortSet));
-        closures.checkPicks(fewLeft, sets.sizeOf(fewLeft));
-    }
-}
-
-static void cutOfProgramSetIsForgottenAtReset()
-{
-    ProgramForCutsOfIDSets program;
-    TypeArena types(program.table, ArenaKeeps::UntilReset);
-    ObjectSets& sets = types.objectSets();
-    ObjectsPickedOutOfCutsByTrait closures(types, ObjectTrait::IsClosure);
-    closures.checkPicks(program.all, largestTestedIDSetSize);
-
-    for (unsigned round = 0; round < 3; ++round) {
-        for (uint32_t function = 0; function < 40; ++function)
-            closures.checkPicks(program.allWithout(types, { program.objectOf(ObjectKind::Closure, function * 500) }), 0);
-        types.reset();
-        // The places of the arena hold other sets now, which came of no set.
-        for (uint32_t begin = 1; begin < 4; ++begin) {
-            ObjectSetID made = program.objectsOfFunctions(types, begin, ProgramForCutsOfIDSets::numberOfFunctionsInSet + 1);
-            AOT_TEST_CHECK(liesInThread(made) && !sets.setOfProgramBehind(made));
-            closures.checkPicks(made, sets.sizeOf(made));
-        }
-        types.reset();
-    }
-}
-
-static void cutOfProgramSetAnnotatesChangedChunksAlone()
-{
-    IDSetTable table(IDSetForm::ListsAndChunks, IDSetArenaUnderTest::numberOfAttachedWords);
-    WeakRandom random(11);
-    IDSetWithMembers whole;
-    {
-        IDSetArenaUnderTest tested(table, ArenaKeeps::InProgram);
-        whole = tested.make(modelOfIDSet(IDSetPattern::Dense, largestTestedIDSetSize, random));
-        AOT_TEST_CHECK(!tested.numberOfUnionsAnnotated && tested.numberOfMembersAnnotated == whole.members.size());
-    }
-    table.freeze();
-
-    IDSetArenaUnderTest tested(table, ArenaKeeps::UntilReset);
-    auto checkIsCut = [&](uint32_t cut, const IDSetMembers& cutAway) {
-        AOT_TEST_CHECK(liesInThread(ObjectSetID::fromBits(cut)));
-        IDSetWithMembers made { cut, combineIDSetMembers(IDSetOperation::Difference, whole.members, cutAway) };
-        tested.checkHolds(made.set, made.members);
-        return made;
-    };
-    uint32_t inFirstChunk = whole.members[10];
-    uint32_t alsoInFirstChunk = whole.members[20];
-    uint32_t inTheMiddle = whole.members[whole.members.size() / 2];
-    AOT_TEST_CHECK(inFirstChunk / membersPerSetChunk == alsoInFirstChunk / membersPerSetChunk && inFirstChunk / membersPerSetChunk != inTheMiddle / membersPerSetChunk);
-
-    for (unsigned round = 0; round < 2; ++round) {
-        // Behind a reset the members of each chunk are read once.
-        tested.numberOfMembersAnnotated = 0;
-        IDSetWithMembers first = checkIsCut(tested.arena.without(whole.set, inFirstChunk), { inFirstChunk });
-        AOT_TEST_CHECK(tested.numberOfMembersAnnotated == first.members.size());
-
-        // The chunk that this cut changes, and the first chunk as the whole set has it.
-        tested.numberOfMembersAnnotated = 0;
-        IDSetWithMembers second = checkIsCut(tested.arena.without(whole.set, inTheMiddle), { inTheMiddle });
-        AOT_TEST_CHECK(tested.numberOfMembersAnnotated && tested.numberOfMembersAnnotated < 2 * membersPerSetChunk);
-
-        tested.numberOfMembersAnnotated = 0;
-        checkIsCut(tested.arena.filtered(second.set, [&](uint32_t member) {
-            return member != alsoInFirstChunk;
-        }), { alsoInFirstChunk, inTheMiddle });
-        AOT_TEST_CHECK(tested.numberOfMembersAnnotated && tested.numberOfMembersAnnotated < membersPerSetChunk);
-
-        // Both of its changed chunks have been read.
-        tested.numberOfMembersAnnotated = 0;
-        checkIsCut(tested.arena.intersectionOf(first.set, second.set), { inFirstChunk, inTheMiddle });
-        AOT_TEST_CHECK(!tested.numberOfMembersAnnotated);
-
-        tested.checkOperations(first, second);
-        tested.arena.reset();
-    }
-
-    // A long set with few members in a chunk is read as ever.
-    unsigned numberOfUnionsAnnotated = tested.numberOfUnionsAnnotated;
-    tested.numberOfMembersAnnotated = 0;
-    IDSetWithMembers sparse = tested.make(modelOfIDSet(IDSetPattern::OneInEachChunk, largestTestedIDSetSize, random));
-    AOT_TEST_CHECK(tested.numberOfMembersAnnotated == sparse.members.size() && tested.numberOfUnionsAnnotated == numberOfUnionsAnnotated);
-    tested.checkHolds(sparse.set, sparse.members);
-
-    IDSetWithMembers scattered = tested.make(modelOfIDSet(IDSetPattern::Random, largestTestedIDSetSize, random));
-    AOT_TEST_CHECK(tested.numberOfUnionsAnnotated > numberOfUnionsAnnotated);
-    tested.checkHolds(scattered.set, scattered.members);
-}
-
-static bool sweepValueSetHolds(const SweepValueSets& sets, SweepValueSets::Set set, const IDSetModel& model)
-{
-    IDSetMembers members;
-    sets.forEachMember(set, [&](uint32_t member) {
-        members.push_back(member);
-    });
-    return std::ranges::equal(members, model) && std::ranges::all_of(model, [&](uint32_t member) {
-        return sets.contains(set, member);
-    });
-}
-
-// One set is changed step by step, as the sweep changes the live set on its way through a block. Now and then it is kept, as the set at the head of a block is.
-// Whatever becomes of the sets that are made out of it, a kept set holds what it held.
-static void sweepValueSetsAgreeWithModel()
-{
-    for (uint32_t range : { 60u, 700u, 150000u, UINT32_MAX }) {
-        WeakRandom random(range);
-        SweepValueSets sets;
-        std::vector<std::pair<SweepValueSets::Set, IDSetModel>> kept;
-        SweepValueSets::Set set = SweepValueSets::empty;
-        IDSetModel model;
-        for (unsigned step = 0; step < 6000; ++step) {
-            uint32_t member = random.getUint32(range);
-            switch (random.getUint32(10)) {
-            case 0:
-            case 1:
-            case 2:
-            case 3:
-                set = sets.with(set, member);
-                model.insert(member);
-                break;
-            case 4:
-                set = sets.without(set, member);
-                model.erase(member);
-                break;
-            case 5:
-            case 6:
-            case 7: {
-                auto found = model.lower_bound(member);
-                if (found == model.end())
-                    break;
-                member = *found;
-                set = sets.without(set, member);
-                model.erase(found);
-                break;
-            }
-            case 8:
-                kept.push_back({ set, model });
-                sets.keepSetsMadeSoFar();
-                break;
-            default: {
-                if (kept.empty())
-                    break;
-                const auto& [other, membersOfOther] = kept[random.getUint32(static_cast<uint32_t>(kept.size()))];
-                set = sets.unite(set, other);
-                model.insert(membersOfOther.begin(), membersOfOther.end());
-                break;
-            }
-            }
-            AOT_TEST_CHECK(sets.contains(set, member) == !!model.count(member));
-            if (!(step % 300))
-                AOT_TEST_CHECK(sweepValueSetHolds(sets, set, model));
-        }
-        AOT_TEST_CHECK(sweepValueSetHolds(sets, set, model));
-        for (const auto& [keptSet, membersOfKeptSet] : kept)
-            AOT_TEST_CHECK(sweepValueSetHolds(sets, keptSet, membersOfKeptSet));
-    }
-}
-
-static void sweepValueSetsShareWhatTheyHaveInCommon()
-{
-    constexpr uint32_t mostNodesOnOneWayDown = 32;
-    SweepValueSets sets;
-    SweepValueSets::Set large = SweepValueSets::empty;
-    for (uint32_t member = 0; member < 100000; member += 7)
-        large = sets.with(large, member);
-    sets.keepSetsMadeSoFar();
-
-    // What changes nothing makes nothing.
-    uint32_t numberOfNodes = sets.numberOfNodes();
-    AOT_TEST_CHECK(sets.with(large, 700) == large && sets.without(large, 701) == large);
-    AOT_TEST_CHECK(sets.unite(large, large) == large && sets.unite(large, SweepValueSets::empty) == large && sets.unite(SweepValueSets::empty, large) == large);
-    AOT_TEST_CHECK(sets.numberOfNodes() == numberOfNodes);
-
-    // One member more costs the way down to it, however many the set holds, and leaves the set as it was.
-    SweepValueSets::Set withOneMore = sets.with(large, 701);
-    sets.keepSetsMadeSoFar();
-    SweepValueSets::Set withAnother = sets.with(large, 99999);
-    sets.keepSetsMadeSoFar();
-    AOT_TEST_CHECK(sets.numberOfNodes() - numberOfNodes <= 2 * mostNodesOnOneWayDown);
-    AOT_TEST_CHECK(!sets.contains(large, 701) && sets.contains(withOneMore, 701) && !sets.contains(withOneMore, 99999) && sets.contains(withAnother, 99999));
-
-    // Two sets that were made out of one are united where they differ.
-    numberOfNodes = sets.numberOfNodes();
-    SweepValueSets::Set united = sets.unite(withOneMore, withAnother);
-    AOT_TEST_CHECK(sets.numberOfNodes() - numberOfNodes <= 2 * mostNodesOnOneWayDown);
-    AOT_TEST_CHECK(sets.contains(united, 701) && sets.contains(united, 99999) && sets.contains(united, 700) && !sets.contains(united, 702));
-    numberOfNodes = sets.numberOfNodes();
-    AOT_TEST_CHECK(sets.unite(united, withOneMore) == united && sets.unite(united, large) == united && sets.numberOfNodes() == numberOfNodes);
-
-    // Until it is kept a set is changed in place.
-    sets.keepSetsMadeSoFar();
-    SweepValueSets::Set changing = sets.with(united, 702);
-    numberOfNodes = sets.numberOfNodes();
-    changing = sets.with(changing, 703);
-    changing = sets.without(changing, 702);
-    AOT_TEST_CHECK(sets.numberOfNodes() == numberOfNodes && sets.contains(changing, 703) && !sets.contains(changing, 702) && !sets.contains(united, 703));
-}
-
 std::span<const NativeTest> idSetTests()
 {
 #define AOT_ID_SET_TEST_OF_BOTH_FORMS(name, function) \
     { "id-sets/" name "-lazy-lists"_s, function<IDSetForm::ChunksWithLazyList> }, \
     { "id-sets/" name "-chunks"_s, function<IDSetForm::ListsAndChunks> },
     static constexpr NativeTest tests[] = {
-        { "id-sets/sweep-value-sets-agree-with-model"_s, sweepValueSetsAgreeWithModel },
-        { "id-sets/sweep-value-sets-share-what-they-have-in-common"_s, sweepValueSetsShareWhatTheyHaveInCommon },
-        { "id-sets/cut-of-a-program-set-asks-no-member"_s, cutOfProgramSetAsksNoMember },
         { "id-sets/cut-of-a-program-set-answers-for-the-whole-set"_s, cutOfProgramSetAnswersForWholeSet },
         { "id-sets/cut-of-a-program-set-cut-again"_s, cutOfCutOfProgramSetAsksNoMember },
-        { "id-sets/cut-of-a-program-set-joined"_s, joinOfCutsOfProgramSetAsksNoMember },
         { "id-sets/cut-of-a-program-set-with-members-from-elsewhere"_s, cutOfProgramSetAsksMembersFromElsewhere },
-        { "id-sets/cut-of-a-program-set-under-a-chunk-takes-the-plain-way"_s, setUnderChunkAsksEachMember },
-        { "id-sets/cut-of-a-program-set-is-forgotten-at-reset"_s, cutOfProgramSetIsForgottenAtReset },
-        { "id-sets/cut-of-a-program-set-annotates-changed-chunks-alone"_s, cutOfProgramSetAnnotatesChangedChunksAlone },
         AOT_ID_SET_TEST_OF_BOTH_FORMS("sizes", idSetsOfEverySizeHoldTheirMembers)
         AOT_ID_SET_TEST_OF_BOTH_FORMS("operations", idSetOperationsAgreeWithModel)
         AOT_ID_SET_TEST_OF_BOTH_FORMS("with-and-without", idSetsGrowAndShrinkByOneMember)
@@ -2224,31 +1329,16 @@ std::span<const NativeTest> idSetTests()
         AOT_ID_SET_TEST_OF_BOTH_FORMS("attached-words", attachedWordsOfIDSetsFollowTheirMembers)
         AOT_ID_SET_TEST_OF_BOTH_FORMS("eight-threads", eightThreadsGetTheSameIDSets)
         AOT_ID_SET_TEST_OF_BOTH_FORMS("unions-of-many", unionsOfManyIDSetsAgreeWithModel)
-        { "id-sets/union-hub"_s, unionsOfIDSetsThatHoldNearlyTheSame },
-        { "id-sets/union-memo"_s, unionOfManyIDSetsRemembersOnlyWhatLiesInside },
-        { "id-sets/union-memo-of-sets-that-bring-the-same-chunks"_s, unionOfIDSetsThatBringSameChunksHoldsTheirMembers },
-        { "id-sets/scratch-is-counted-with-memos"_s, scratchOfIDSetsIsCountedWithMemosOfTypeArena },
         { idSetTestOfAnnotatorOnRequest, annotatorComesBackIntoIDSetArenaOnRequest },
-        { "id-sets/laying-out-in-scratch-while-a-set-is-interned-stops-the-build"_s, layingOutInScratchWhileIDSetIsInternedStopsTheBuild },
         { "id-sets/unions-with-earlier-states"_s, unionsOfIDSetsWithEarlierStatesAgreeWithModel },
         { "id-sets/union-with-earlier-state-memo"_s, unionOfIDSetsWithEarlierStateRemembersOnlyWhatLiesInside },
         { "id-sets/unions-of-types-with-earlier-states"_s, unionsOfTypesWithEarlierStatesAreTheUnions },
-        { "id-sets/sets-that-nothing-names-are-collected"_s, idSetsThatNothingNamesAreCollected },
-        { "id-sets/shared-chunks"_s, idSetsThatDifferInOneMemberShareOtherChunks },
         { "id-sets/compare-by-content"_s, idSetsCompareByContent },
         { "id-sets/typed-sets"_s, typedIDSetsAnswerLikeUntypedOnes },
-        { "id-sets/words-outside-records-lie-in-blocks"_s, wordsOutsideRecordsOfIDSetsLieInBlocks },
-        { "id-sets/freezing-frees-outgrown-slots"_s, freezingIDSetTableFreesOutgrownSlots },
         { "id-sets/freezing-type-table-frees-outgrown-slots"_s, freezingTypeTableFreesOutgrownSlots },
-        { "id-sets/keys-of-texts-are-numbered-by-text-on-any-number-of-threads"_s, keysOfTextsAreNumberedByTextOnAnyNumberOfThreads },
-        { "id-sets/pair-memo"_s, idPairMemoKeepsWhatIsAskedFor },
         { "id-sets/list-memo"_s, idListMemoKeepsWhatIsAskedFor },
-        { "id-sets/shared-answers-number-lists"_s, sharedAnswersGiveEqualListsOneNumber },
-        { "id-sets/shared-answers-tell-lists-with-one-hash-apart"_s, sharedAnswersTellListsWithOneHashApart },
         { "id-sets/shared-answers-eight-threads-number-lists"_s, eightThreadsGetOneNumberForEachSharedList },
         { "id-sets/shared-answers-keep-the-first"_s, sharedAnswersKeepFirstAnswerOfEightThreads },
-        { "id-sets/shared-answers-work-out-once-and-count"_s, sharedAnswersWorkOutOnceAndCountWhatTheyHold },
-        { "id-sets/arena-keeps-answers-under-lists-of-words-until-reset"_s, arenaKeepsAnswersUnderListsOfWordsUntilReset },
     };
 #undef AOT_ID_SET_TEST_OF_BOTH_FORMS
     return tests;

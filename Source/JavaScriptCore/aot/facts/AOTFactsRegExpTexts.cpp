@@ -62,8 +62,8 @@ static constexpr uint64_t operationsInAllForEachOfProgram = 4;
 // A text that is found costs this much, and nothing else: `for (let i = 0; ; i++) new RegExp("a" + i)` ends too.
 static constexpr uint64_t operationsForText = 1 << 8;
 static constexpr uint64_t operationsInAllOfSmallestProgram = 8 * operationsFromOneStart;
-// A router lays a path into a tree of its characters, one call a character. A call takes 3 KB of the stack, of which the engine allows 5 MB; where a built-in finds no room it throws, and that ends the rehearsal.
-// The bound is a number, and not the room that is left, so that the list is the same on every host.
+// A router lays a path into a tree of its characters, one call a character. A call takes 3 KB of the stack, of which the engine allows 5 MB: the bound is a number, so that the list is the same on every host.
+// Where frames are many times as large (the address sanitizer's) the stack is the bound: the call that finds no room gives what nobody knows, like the deepest.
 static constexpr unsigned deepestCall = 256;
 // To enter a function costs as many operations as it has values, divided by this: room is made for each value.
 static constexpr uint32_t valuesMadeRoomForAtPriceOfOneOperation = 16;
@@ -73,7 +73,7 @@ static constexpr uint8_t timesThroughBlockWhileGoingBothWays = 4;
 // One that is handed a RegExp may match, and a match may go back over its subject again and again: it costs this much, and an operation for each character. A pattern with a repeat inside a repeat is not matched at all.
 static constexpr uint32_t operationsForBuiltinHandedRegExp = 1 << 10;
 // With this many bytes in the realm, or that many characters made in all, the rehearsal is over, with what it has found. So it is where the engine reports that a limit of its own is reached:
-// no memory, no stack, a termination.
+// no memory, a termination.
 static constexpr size_t mostBytesOfRealm = 256 * MB;
 
 // `(a+)+$`: a match goes back over its subject in as many ways as there are to deal it out among the turns, and gives up at Yarr::matchLimit: half a second.
@@ -180,6 +180,17 @@ private:
     bool payForBuiltin(JSValue thisValue, std::span<const JSValue> arguments);
     bool mayMatchWithoutEnd(RegExp*);
     void noteThrown(Exception*);
+    // EVERY CALL INTO THE ENGINE THAT MAY THROW IS LOOKED AT BEFORE THE NEXT ONE IS MADE: JavaScriptCore's own check of exception scopes holds a build with assertions to that.
+    // True: it threw. What it was to give nobody knows.
+    bool hasThrown(TopExceptionScope&);
+    // Null, false, what nobody knows: it threw.
+    JSArray* newList();
+    bool append(JSArray*, JSValue);
+    bool storeAt(JSObject*, unsigned index, JSValue);
+    bool storeUnder(JSObject*, const Identifier&, JSValue);
+    bool setLengthOf(JSArray*, unsigned);
+    JSValue elementAt(JSArray*, unsigned index);
+    bool areStrictlyEqual(JSValue, JSValue);
     void end()
     {
         m_operationsLeftInAll = 0;
@@ -252,6 +263,9 @@ private:
     // By function. Of one that is being gone through: m_openRegions when it was last entered, and one more.
     Vector<unsigned> m_regionsOpenAtEntryPlusOne;
     bool m_sawTextThatNobodyKnows { false };
+    // The operation that is being gone through, as its function and its number, and for each that has called RegExp whether a text has arrived there.
+    uint64_t m_operation { 0 };
+    UncheckedKeyHashMap<uint64_t, bool, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_callsOfRegExp;
 
     UncheckedKeyHashMap<std::pair<String, uint32_t>, bool> m_patternsThatMayMatchWithoutEnd;
     UncheckedKeyHashSet<std::pair<String, uint32_t>> m_seen;
@@ -346,19 +360,78 @@ JSValue RehearsalOfRegExpTexts::builtinInRealm(BuiltinID id)
     return found;
 }
 
+bool RehearsalOfRegExpTexts::hasThrown(TopExceptionScope& scope)
+{
+    Exception* exception = scope.exception();
+    if (!exception)
+        return false;
+    noteThrown(exception);
+    scope.clearException();
+    return true;
+}
+
+JSArray* RehearsalOfRegExpTexts::newList()
+{
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(*m_vm);
+    JSArray* list = constructEmptyArray(m_realm.get(), nullptr);
+    return hasThrown(scope) ? nullptr : list;
+}
+
+bool RehearsalOfRegExpTexts::append(JSArray* list, JSValue element)
+{
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(*m_vm);
+    list->push(m_realm.get(), element);
+    return !hasThrown(scope);
+}
+
+bool RehearsalOfRegExpTexts::storeAt(JSObject* object, unsigned index, JSValue stored)
+{
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(*m_vm);
+    object->putDirectIndex(m_realm.get(), index, stored);
+    return !hasThrown(scope);
+}
+
+bool RehearsalOfRegExpTexts::storeUnder(JSObject* object, const Identifier& name, JSValue stored)
+{
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(*m_vm);
+    object->putDirectMayBeIndex(m_realm.get(), name, stored);
+    return !hasThrown(scope);
+}
+
+bool RehearsalOfRegExpTexts::setLengthOf(JSArray* list, unsigned length)
+{
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(*m_vm);
+    list->setLength(m_realm.get(), length);
+    return !hasThrown(scope);
+}
+
+JSValue RehearsalOfRegExpTexts::elementAt(JSArray* list, unsigned index)
+{
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(*m_vm);
+    JSValue element = list->getIndex(m_realm.get(), index);
+    return hasThrown(scope) ? unknown() : element;
+}
+
+// To compare two texts the engine may have to join one that it has put off joining.
+bool RehearsalOfRegExpTexts::areStrictlyEqual(JSValue first, JSValue second)
+{
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(*m_vm);
+    bool areEqual = JSValue::strictEqual(m_realm.get(), first, second);
+    return !hasThrown(scope) && areEqual;
+}
+
 JSValue RehearsalOfRegExpTexts::listOf(std::span<const JSValue> elements)
 {
-    JSGlobalObject* realm = m_realm.get();
-    JSArray* list = constructEmptyArray(realm, nullptr);
-    for (JSValue element : elements)
-        list->push(realm, element);
-    return list;
+    JSArray* list = newList();
+    for (JSValue element : elements) {
+        if (!list || !append(list, element))
+            return unknown();
+    }
+    return list ? JSValue(list) : unknown();
 }
 
 JSValue RehearsalOfRegExpTexts::valueOfData(const DataNode& node)
 {
-    VM& vm = *m_vm;
-    JSGlobalObject* realm = m_realm.get();
     if (node.is<DataNode::Undefined>())
         return jsUndefined();
     if (node.is<DataNode::Null>())
@@ -370,25 +443,23 @@ JSValue RehearsalOfRegExpTexts::valueOfData(const DataNode& node)
     if (const auto* string = node.tryAs<DataNode::String>())
         return textOf(string->value);
     if (const auto* array = node.tryAs<DataNode::Array>()) {
-        JSArray* list = constructEmptyArray(realm, nullptr);
+        JSArray* list = newList();
         unsigned index = 0;
         for (const DataNode& element : array->elements) {
-            if (!element.is<DataNode::Hole>())
-                list->putDirectIndex(realm, index, valueOfData(element));
+            if (!list || (!element.is<DataNode::Hole>() && !storeAt(list, index, valueOfData(element))))
+                return unknown();
             ++index;
         }
-        list->setLength(realm, index);
-        return list;
+        return list && setLengthOf(list, index) ? JSValue(list) : unknown();
     }
     if (const auto* object = node.tryAs<DataNode::Object>()) {
-        JSObject* made = constructEmptyObject(realm);
+        JSObject* made = constructEmptyObject(m_realm.get());
         for (const DataMember& member : object->members) {
-            if (Identifier name = nameOf(member.key); !name.isNull())
-                made->putDirectMayBeIndex(realm, name, valueOfData(member.value));
+            if (Identifier name = nameOf(member.key); !name.isNull() && !storeUnder(made, name, valueOfData(member.value)))
+                return unknown();
         }
         return made;
     }
-    UNUSED_PARAM(vm);
     return unknown();
 }
 
@@ -398,7 +469,10 @@ JSValue RehearsalOfRegExpTexts::closureOf(FunctionID function, std::span<const J
     // The function object keeps the list alive.
     VM& vm = *m_vm;
     JSGlobalObject* realm = m_realm.get();
-    JSArray* held = asArray(listOf(captures));
+    JSValue list = listOf(captures);
+    if (!isKnown(list))
+        return unknown();
+    JSArray* held = asArray(list);
     // A generator is a function like any other to whoever is handed it. What a call of it gives nobody knows.
     bool isGoneThrough = !record.has(FunctionFlags::IsGenerator) && record.hasBody();
     JSObject* made = JSNativeStdFunction::create(vm, realm, record.length, String(), [this, function, held, isGoneThrough](JSGlobalObject*, CallFrame* frame) {
@@ -607,6 +681,9 @@ void RehearsalOfRegExpTexts::noteTexts(std::span<const JSValue> arguments)
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(*m_vm);
     JSValue pattern = arguments.size() > 0 ? arguments[0] : jsUndefined();
     JSValue flags = arguments.size() > 1 ? arguments[1] : jsUndefined();
+    // What turns the pattern into a text may be code of the program.
+    uint64_t site = m_operation;
+    m_callsOfRegExp.add(site, false);
     if (!isKnown(pattern)) {
         m_sawTextThatNobodyKnows = true;
         return;
@@ -638,6 +715,7 @@ void RehearsalOfRegExpTexts::noteTexts(std::span<const JSValue> arguments)
         }
         flagsOfText = Yarr::parseFlags(written);
     }
+    m_callsOfRegExp.set(site, true);
     if (!flagsOfText || text.isNull() || text.length() > m_longestText)
         return;
 
@@ -756,7 +834,7 @@ bool RehearsalOfRegExpTexts::payForBuiltin(JSValue thisValue, std::span<const JS
 void RehearsalOfRegExpTexts::noteThrown(Exception* exception)
 {
     auto* error = dynamicDowncast<ErrorInstance>(exception->value());
-    if (m_vm->isTerminationException(exception) || (error && (error->isOutOfMemoryError() || error->isStackOverflowError())))
+    if (m_vm->isTerminationException(exception) || (error && error->isOutOfMemoryError()))
         end();
 }
 
@@ -844,11 +922,8 @@ JSValue RehearsalOfRegExpTexts::execute(Activation& activation, const BodyValue&
         return at(activation, id);
     };
     auto settle = [&](JSValue result) -> JSValue {
-        if (Exception* exception = scope.exception()) {
-            noteThrown(exception);
-            scope.clearException();
+        if (hasThrown(scope))
             return unknown();
-        }
         if (!result || (result.isString() && asString(result)->length() > m_longestText))
             return unknown();
         if (result.isString())
@@ -865,6 +940,7 @@ JSValue RehearsalOfRegExpTexts::execute(Activation& activation, const BodyValue&
         return of.toNumber(realm);
     };
 
+    m_operation = static_cast<uint64_t>(activation.function.index()) << 32 | value.id().index();
     Opcode opcode = value.opcode();
     switch (opcode) {
     case Opcode::Undefined:
@@ -930,14 +1006,15 @@ JSValue RehearsalOfRegExpTexts::execute(Activation& activation, const BodyValue&
             if (index >= values.size())
                 break;
             JSValue stored = operand(values[index++]);
-            if (isEnvironmentKind(layout.kind))
-                made->putDirectIndex(realm, static_cast<unsigned>(field), stored);
-            else if (PropertyKeyID key = layout.fields[static_cast<unsigned>(field)].key) {
-                if (Identifier name = nameOf(key); !name.isNull())
-                    made->putDirectMayBeIndex(realm, name, stored);
+            if (isEnvironmentKind(layout.kind)) {
+                if (!storeAt(made, static_cast<unsigned>(field), stored))
+                    return unknown();
+            } else if (PropertyKeyID key = layout.fields[static_cast<unsigned>(field)].key) {
+                if (Identifier name = nameOf(key); !name.isNull() && !storeUnder(made, name, stored))
+                    return unknown();
             }
         }
-        return settle(made);
+        return made;
     }
     case Opcode::NewDictionary:
         return constructEmptyObject(realm);
@@ -960,7 +1037,9 @@ JSValue RehearsalOfRegExpTexts::execute(Activation& activation, const BodyValue&
 
     case Opcode::NewArray: {
         auto allocation = value.as<Opcode::NewArray>();
-        JSArray* list = constructEmptyArray(realm, nullptr);
+        JSArray* list = newList();
+        if (!list)
+            return unknown();
         auto holes = allocation.holes();
         auto nextHole = holes.begin();
         unsigned index = 0;
@@ -969,12 +1048,12 @@ JSValue RehearsalOfRegExpTexts::execute(Activation& activation, const BodyValue&
                 ++index;
                 ++nextHole;
             }
-            list->putDirectIndex(realm, index++, operand(element));
+            if (!storeAt(list, index++, operand(element)))
+                return unknown();
         }
         for (; nextHole != holes.end(); ++nextHole)
             ++index;
-        list->setLength(realm, index);
-        return settle(list);
+        return setLengthOf(list, index) ? JSValue(list) : unknown();
     }
     case Opcode::AppendElement: {
         auto append = value.as<Opcode::AppendElement>();
@@ -1014,14 +1093,16 @@ JSValue RehearsalOfRegExpTexts::execute(Activation& activation, const BodyValue&
         return RegExpObject::create(vm, realm->regExpStructure(), regExp);
     }
     case Opcode::NewTemplateObject: {
-        JSArray* cooked = constructEmptyArray(realm, nullptr);
-        JSArray* raw = constructEmptyArray(realm, nullptr);
+        JSArray* cooked = newList();
+        JSArray* raw = cooked ? newList() : nullptr;
+        if (!raw)
+            return unknown();
         for (TemplateString part : value.as<Opcode::NewTemplateObject>().templateStrings()) {
-            cooked->push(realm, part.cooked ? textOf(part.cooked) : jsUndefined());
-            raw->push(realm, textOf(part.raw));
+            if (!append(cooked, part.cooked ? textOf(part.cooked) : jsUndefined()) || !append(raw, textOf(part.raw)))
+                return unknown();
         }
         cooked->putDirect(vm, vm.propertyNames->raw, raw);
-        return settle(cooked);
+        return cooked;
     }
 
     case Opcode::PropGet: {
@@ -1178,29 +1259,39 @@ JSValue RehearsalOfRegExpTexts::execute(Activation& activation, const BodyValue&
         bool isArithmetic = opcode != Opcode::Less && opcode != Opcode::LessEq && opcode != Opcode::Greater && opcode != Opcode::GreaterEq && opcode != Opcode::Eq && opcode != Opcode::StrictEq;
         if (isArithmetic && (left.isBigInt() || right.isBigInt() || left.isObject() || right.isObject()))
             return unknown();
+        double first = 0;
+        double second = 0;
+        if (isArithmetic) {
+            first = number(left);
+            if (hasThrown(scope))
+                return unknown();
+            second = number(right);
+            if (hasThrown(scope))
+                return unknown();
+        }
         switch (opcode) {
         case Opcode::Mod:
-            return settle(jsNumber(fmod(number(left), number(right))));
+            return jsNumber(fmod(first, second));
         case Opcode::Pow:
-            return settle(jsNumber(operationMathPow(number(left), number(right))));
+            return jsNumber(operationMathPow(first, second));
         case Opcode::BitAnd:
-            return settle(jsNumber(left.toInt32(realm) & right.toInt32(realm)));
+            return jsNumber(toInt32(first) & toInt32(second));
         case Opcode::BitOr:
-            return settle(jsNumber(left.toInt32(realm) | right.toInt32(realm)));
+            return jsNumber(toInt32(first) | toInt32(second));
         case Opcode::BitXor:
-            return settle(jsNumber(left.toInt32(realm) ^ right.toInt32(realm)));
+            return jsNumber(toInt32(first) ^ toInt32(second));
         case Opcode::LShift:
-            return settle(jsNumber(static_cast<int32_t>(static_cast<uint32_t>(left.toInt32(realm)) << (right.toUInt32(realm) & 31))));
+            return jsNumber(static_cast<int32_t>(toUInt32(first) << (toUInt32(second) & 31)));
         case Opcode::RShift:
-            return settle(jsNumber(left.toInt32(realm) >> (right.toUInt32(realm) & 31)));
+            return jsNumber(toInt32(first) >> (toUInt32(second) & 31));
         case Opcode::URShift:
-            return settle(jsNumber(left.toUInt32(realm) >> (right.toUInt32(realm) & 31)));
+            return jsNumber(toUInt32(first) >> (toUInt32(second) & 31));
         case Opcode::Sub:
-            return settle(jsNumber(number(left) - number(right)));
+            return jsNumber(first - second);
         case Opcode::Mul:
-            return settle(jsNumber(number(left) * number(right)));
+            return jsNumber(first * second);
         case Opcode::Div:
-            return settle(jsNumber(number(left) / number(right)));
+            return jsNumber(first / second);
         case Opcode::Less:
             return settle(jsBoolean(jsLess<true>(realm, left, right)));
         case Opcode::LessEq:
@@ -1383,7 +1474,7 @@ JSValue RehearsalOfRegExpTexts::execute(Activation& activation, const BodyValue&
         if (!isKnown(target) || !target.isObject())
             return { };
         if (definition.side() == ClassSide::Prototype)
-            target = target.get(realm, vm.propertyNames->prototype);
+            target = settle(target.get(realm, vm.propertyNames->prototype));
         Identifier name;
         if (definition.key())
             name = nameOf(definition.key());
@@ -1419,7 +1510,10 @@ JSValue RehearsalOfRegExpTexts::execute(Activation& activation, const BodyValue&
         if (scope.exception() || !isKnown(base) || !base.isObject() || name.isNull())
             return settle({ });
         PropertySlot slot(receiver, PropertySlot::InternalMethodType::Get);
-        return settle(asObject(base)->getPropertySlot(realm, name, slot) ? slot.getValue(realm, name) : jsUndefined());
+        bool isFound = asObject(base)->getPropertySlot(realm, name, slot);
+        if (hasThrown(scope))
+            return unknown();
+        return isFound ? settle(slot.getValue(realm, name)) : jsUndefined();
     }
     case Opcode::SuperConstruct: {
         auto written = value.as<Opcode::SuperConstruct>();
@@ -1461,27 +1555,32 @@ JSValue RehearsalOfRegExpTexts::execute(Activation& activation, const BodyValue&
         JSValue object = operand(value.operand(0));
         if (!isKnown(object))
             return unknown();
-        JSArray* state = constructEmptyArray(realm, nullptr);
-        state->push(realm, jsNumber(1));
+        JSArray* state = newList();
+        if (!state || !append(state, jsNumber(1)))
+            return unknown();
         if (object.isObject() && object != JSValue(realm)) {
             PropertyNameArrayBuilder names(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
             asObject(object)->getPropertyNames(realm, names, DontEnumPropertiesMode::Exclude);
             if (scope.exception())
                 return settle({ });
-            for (const Identifier& name : names)
-                state->push(realm, jsString(vm, name.string()));
+            for (const Identifier& name : names) {
+                if (!append(state, jsString(vm, name.string())))
+                    return unknown();
+            }
         }
-        return settle(state);
+        return state;
     }
     case Opcode::ForInStep: {
         auto* state = dynamicDowncast<JSArray>(operand(value.operand(0)));
         if (!state)
             return unknown();
-        unsigned next = state->getIndex(realm, 0).toUInt32(realm);
+        JSValue place = elementAt(state, 0);
+        if (!place.isUInt32())
+            return unknown();
+        unsigned next = place.asUInt32();
         bool isDone = next >= state->length();
-        JSValue parts[] { jsBoolean(isDone), isDone ? jsUndefined() : state->getIndex(realm, next) };
-        state->putDirectIndex(realm, 0, jsNumber(next + 1));
-        return settle(listOf(parts));
+        JSValue parts[] { jsBoolean(isDone), isDone ? jsUndefined() : elementAt(state, next) };
+        return storeAt(state, 0, jsNumber(next + 1)) ? listOf(parts) : unknown();
     }
     case Opcode::CallDirect: {
         auto written = value.as<Opcode::CallDirect>();
@@ -1511,7 +1610,8 @@ JSValue RehearsalOfRegExpTexts::execute(Activation& activation, const BodyValue&
         auto* state = dynamicDowncast<JSArray>(operand(resume.iteratorOperand()));
         if (!state || resume.resumeMode() != ResumeMode::Next)
             return unknown();
-        IterationRecord record { state->getIndex(realm, 0), state->getIndex(realm, 1) };
+        JSValue iterator = elementAt(state, 0);
+        IterationRecord record { iterator, elementAt(state, 1) };
         JSValue step = iteratorStep(realm, record);
         if (scope.exception())
             return settle({ });
@@ -1560,7 +1660,6 @@ JSValue RehearsalOfRegExpTexts::execute(Activation& activation, const BodyValue&
 
 bool RehearsalOfRegExpTexts::takeEdge(Activation& activation, const BodyTerminator& terminator, uint32_t targetIndex, BodyTarget target)
 {
-    JSGlobalObject* realm = m_realm.get();
     BodyBlock block = activation.index.block(target.block());
     std::span<const ValueID> arguments = target.arguments();
     // Read first: an edge back to the head of a loop may pass one parameter in the place of another.
@@ -1568,7 +1667,7 @@ bool RehearsalOfRegExpTexts::takeEdge(Activation& activation, const BodyTerminat
     for (ValueID argument : arguments)
         passed.append(at(activation, argument));
     auto isSame = [&](JSValue held, JSValue brought) {
-        return held == brought || (held.isString() && brought.isString() && asString(held)->equal(realm, asString(brought)));
+        return held == brought || (held.isString() && brought.isString() && areStrictlyEqual(held, brought));
     };
     bool arrivesAtJoin = activation.goesBothWays() && activation.regions.last().join == block.id();
     bool bringsOtherValues = false;
@@ -1692,7 +1791,6 @@ BlockID RehearsalOfRegExpTexts::joinBehind(Activation& activation, BlockID block
 
 BlockID RehearsalOfRegExpTexts::goEachWayFrom(Activation& activation, BodyBlock block, JSValue& result)
 {
-    JSGlobalObject* realm = m_realm.get();
     if (!m_vm->isSafeToRecurse())
         return { };
     if (activation.timesEnteredWhileGoingBothWays.isEmpty())
@@ -1755,7 +1853,7 @@ BlockID RehearsalOfRegExpTexts::goEachWayFrom(Activation& activation, BodyBlock 
                 continue;
             if (!known)
                 known = brought;
-            else if (known != brought && !(known.isString() && brought.isString() && asString(known)->equal(realm, asString(brought))))
+            else if (known != brought && !(known.isString() && brought.isString() && areStrictlyEqual(known, brought)))
                 differsHere = true;
         }
         agreed.append(known && !differsHere ? known : unknown());
@@ -1799,7 +1897,7 @@ void RehearsalOfRegExpTexts::runFrom(Activation& activation, BlockID current, JS
     auto answer = [&](JSValue returned) {
         if (!result || !isKnown(result))
             result = activation.waysDifferInWhatTheyReturn ? unknown() : returned;
-        else if (isKnown(returned) && !JSValue::strictEqual(realm, result, returned)) {
+        else if (isKnown(returned) && !areStrictlyEqual(result, returned)) {
             activation.waysDifferInWhatTheyReturn = true;
             result = unknown();
         }
@@ -1856,9 +1954,11 @@ void RehearsalOfRegExpTexts::runFrom(Activation& activation, BlockID current, JS
                     ++position;
                 }
             } else if (terminator.kind() == TerminatorKind::SwitchString && subject.isString()) {
+                auto scope = DECLARE_TOP_EXCEPTION_SCOPE(*m_vm);
                 String text = asString(subject)->value(realm);
+                bool isRead = !hasThrown(scope);
                 for (StringID written : terminator.as<TerminatorKind::SwitchString>().strings()) {
-                    if (charactersOf(written) == text) {
+                    if (isRead && charactersOf(written) == text) {
                         chosen = position;
                         break;
                     }
@@ -2089,6 +2189,16 @@ void RehearsalOfRegExpTexts::storeTexts(ProgramFactTables& program)
     program.regExpTextsWorkedOut.reserveInitialCapacity(textsWorkedOut.size());
     for (TextWithBytes& text : textsWorkedOut)
         program.regExpTextsWorkedOut.append(WTF::move(text.text));
+
+    // What the library hands RegExp is the process's: a variable of the environment, the value to print.
+    for (auto& [site, hasText] : m_callsOfRegExp) {
+        FunctionID function(static_cast<uint32_t>(site >> 32));
+        if (!hasText && !isLibraryCode(m_program, m_program.at(function)))
+            program.regExpCallsWithoutText.append(RegExpCallWithoutText { function, ValueID(static_cast<uint32_t>(site)) });
+    }
+    AOT::sort(program.regExpCallsWithoutText, { }, [](const RegExpCallWithoutText& call) {
+        return std::tuple(call.function, call.site);
+    });
 }
 
 // Ascending. `new RegExp("a+", "g")`: of texts that are written the walk makes the literal, and nobody need work them out.
@@ -2136,8 +2246,6 @@ void workOutRegExpTexts(const Program& program, const BodyIndexTable& bodies, co
     // The one thread does it all: a build starts the threads that it counts, and says so where it is refused one.
     RuntimeHooks::NoHelperThreadsScope noHelperThreads;
     RefPtr<VM> vm = VM::create(HeapType::Small);
-    Collector& collector = vm->heap.collector();
-    collector.willCollectWithoutHelpers();
     {
         JSLockHolder locker(*vm);
         {
@@ -2148,9 +2256,6 @@ void workOutRegExpTexts(const Program& program, const BodyIndexTable& bodies, co
         // The lock holder is left with the last reference, so the VM dies under its lock.
         vm = nullptr;
     }
-    // A collector of its own has died with the VM.
-    if (Options::useGlobalGC())
-        collector.didCollectWithoutHelpers();
 }
 
 } } } // namespace JSC::AOT::Typed

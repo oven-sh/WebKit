@@ -37,10 +37,6 @@ MocksOfProgram findMocksOfProgram(const Program&);
 inline constexpr uint32_t nameThatModuleLacks = UINT32_MAX;
 bool mayComeThroughMock(const Program&, const MocksOfProgram&, ModuleID exporter, uint32_t indexOfExport);
 
-// namespacesHandedOnByMockedModules merged with modulesThatMayBeMocked: the modules in the place of whose object something else may be found.
-// All three may be asked in front of the check of the records, as Program::appendNamespaceLayouts() asks: an id outside its list is passed by.
-BitVector namespacesThatMocksMayStandFor(const Program&);
-
 } } } // namespace JSC::AOT::Typed
 
 #endif // ENABLE(AOT)

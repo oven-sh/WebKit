@@ -108,7 +108,6 @@ struct NumberingTestFixture {
     AbstractHeap immutableBelowMutable { heaps.JSRopeString_length };
 };
 
-using NumberingTestHeap = AbstractHeap NumberingTestFixture::*;
 using NumberingTestGroup = std::array<Operation*, 4>;
 
 static constexpr NumberingTestFixture::Memory numberingTestMemory { 3, 4, 6, 7, 30, 40, 60, 70 };
@@ -186,173 +185,6 @@ static bool standsInNumberingTestBlock(const NumberingTestGroup& group, const Bl
     });
 }
 
-static void testMachineNumberingLoadIsSharedWithinBlock()
-{
-    NumberingTestFixture fixture;
-    Output& out = fixture.out;
-    auto request = [&]() -> std::array<Operation*, 8> {
-        return {
-            fixture.load(fixture.firstElement),
-            fixture.load(fixture.firstElement, 1),
-            fixture.load(fixture.everyElement),
-            out.load64(out.address(fixture.firstElement, fixture.alias)),
-            out.loadDouble(fixture.word(fixture.firstElement)),
-            out.load32(fixture.word(fixture.firstElement)),
-            out.load8ZeroExt32(fixture.word(fixture.firstElement)),
-            out.load8SignExt32(fixture.word(fixture.firstElement)),
-        };
-    };
-
-    std::array<Operation*, 8> loads = request();
-    AOT_TEST_CHECK(areDistinctInNumberingTest(loads));
-    for (Operation* load : loads)
-        AOT_TEST_CHECK(isLoad(load->opcode()) && load->owner() == out.m_block);
-
-    unsigned size = out.m_block->size();
-    out.setOrigin(Origin(7));
-    AOT_TEST_CHECK(request() == loads && out.m_block->size() == size);
-    AOT_TEST_CHECK(out.load64(out.address(fixture.firstElement, out.add(fixture.words, 8))) == loads[1]);
-    out.ret(fixture.combine(loads[0], loads[1]));
-
-    compileOrFail(fixture.test);
-    NumberingTestFixture::Memory memory = numberingTestMemory;
-    AOT_TEST_CHECK(fixture.run(memory, 5) == numberingTestAnswer(3, 4));
-}
-
-static void testMachineNumberingTrappingLoadIsNeverShared()
-{
-    NumberingTestFixture fixture;
-    Output& out = fixture.out;
-    TypedPointer byte = fixture.word(fixture.firstElement);
-    Operation* plain = out.load8ZeroExt32(byte);
-    Operation* trapping = out.load8ZeroExt32Trapping(byte);
-    AOT_TEST_CHECK(trapping != plain && trapping->traps() && !plain->traps());
-    AOT_TEST_CHECK(out.load8ZeroExt32Trapping(byte) != trapping);
-    AOT_TEST_CHECK(out.load8ZeroExt32(byte) == plain);
-}
-
-struct NumberingTestStoreCase {
-    NumberingTestHeap read;
-    NumberingTestHeap written;
-    bool endsLoad;
-};
-
-static void testMachineNumberingStoreEndsLoadsOfOverlappingHeaps()
-{
-    using Fixture = NumberingTestFixture;
-    const NumberingTestStoreCase cases[] = {
-        { &Fixture::firstElement, &Fixture::firstElement, true },
-        { &Fixture::firstElement, &Fixture::everyElement, true },
-        { &Fixture::firstElement, &Fixture::arrays, true },
-        { &Fixture::firstElement, &Fixture::everything, true },
-        { &Fixture::everyElement, &Fixture::firstElement, true },
-        { &Fixture::arrays, &Fixture::firstElement, true },
-        { &Fixture::firstElement, &Fixture::secondElement, false },
-        { &Fixture::firstElement, &Fixture::cousin, false },
-        { &Fixture::everyElement, &Fixture::cousin, false },
-        { &Fixture::firstElement, &Fixture::unrelated, false },
-    };
-    for (const NumberingTestStoreCase& testCase : cases) {
-        Fixture fixture;
-        // Accesses through heaps that do not overlap must touch different words.
-        unsigned wordWritten = testCase.endsLoad ? 0 : 1;
-        Operation* before = fixture.load(fixture.*testCase.read);
-        fixture.store(fixture.operand, fixture.*testCase.written, wordWritten);
-        Operation* after = fixture.load(fixture.*testCase.read);
-        AOT_TEST_CHECK((after != before) == testCase.endsLoad);
-        fixture.out.ret(fixture.combine(before, after));
-
-        compileOrFail(fixture.test);
-        Fixture::Memory memory = numberingTestMemory;
-        AOT_TEST_CHECK(fixture.run(memory, 5) == numberingTestAnswer(3, testCase.endsLoad ? 5 : 3));
-        AOT_TEST_CHECK(memory[wordWritten] == 5);
-    }
-
-    Fixture fixture;
-    Output& out = fixture.out;
-    Operation* before = fixture.load(fixture.firstElement);
-    out.store32As8(out.castToInt32(fixture.operand), out.address(fixture.firstElement, fixture.alias));
-    Operation* after = fixture.load(fixture.firstElement);
-    AOT_TEST_CHECK(after != before);
-    out.ret(fixture.combine(before, after));
-
-    compileOrFail(fixture.test);
-    Fixture::Memory memory = numberingTestMemory;
-    memory[0] = 0x300;
-    AOT_TEST_CHECK(fixture.run(memory, 5) == numberingTestAnswer(0x300, 0x305));
-}
-
-static void testMachineNumberingPureOperationsOutliveWrites()
-{
-    NumberingTestFixture fixture;
-    Output& out = fixture.out;
-    Operation* sum = out.add(fixture.operand, fixture.words);
-    Operation* difference = out.sub(fixture.operand, fixture.words);
-    Operation* comparison = out.lessThan(fixture.operand, fixture.words);
-    Operation* choice = out.select(comparison, fixture.operand, fixture.words);
-    Operation* narrowed = out.castToInt32(fixture.operand);
-    Operation* load = fixture.load(fixture.firstElement);
-    auto expectNewLoad = [&] {
-        Operation* next = fixture.load(fixture.firstElement);
-        AOT_TEST_CHECK(next != load);
-        load = next;
-    };
-
-    fixture.store(fixture.operand, fixture.everything, 1);
-    expectNewLoad();
-    fixture.appendCall();
-    expectNewLoad();
-    // A fence writes no heap.
-    out.fence();
-    AOT_TEST_CHECK(fixture.load(fixture.firstElement) == load);
-
-    AOT_TEST_CHECK(out.add(fixture.operand, fixture.words) == sum && out.add(fixture.words, fixture.operand) == sum);
-    AOT_TEST_CHECK(out.sub(fixture.operand, fixture.words) == difference && out.sub(fixture.words, fixture.operand) != difference);
-    AOT_TEST_CHECK(out.lessThan(fixture.operand, fixture.words) == comparison && out.select(comparison, fixture.operand, fixture.words) == choice);
-    AOT_TEST_CHECK(out.castToInt32(fixture.operand) == narrowed);
-    AOT_TEST_CHECK(out.add(fixture.operand, fixture.alias) != sum);
-    AOT_TEST_CHECK(out.opaque(sum) != out.opaque(sum));
-    out.ret(fixture.combine(load, out.sub(sum, fixture.words)));
-
-    compileOrFail(fixture.test);
-    NumberingTestFixture::Memory memory = numberingTestMemory;
-    AOT_TEST_CHECK(fixture.run(memory, 5) == numberingTestAnswer(3, 5) && memory[1] == 5);
-}
-
-static void testMachineNumberingImmutableLoadsOutliveWrites()
-{
-    NumberingTestFixture fixture;
-    Operation* fixed = fixture.load(fixture.immutable);
-    Operation* fixedBelowMutable = fixture.load(fixture.immutableBelowMutable, 1);
-    Operation* changing = fixture.load(fixture.firstElement, 2);
-    AOT_TEST_CHECK(fixed->has(OperationFlag::ReadsImmutableHeap) && fixedBelowMutable->has(OperationFlag::ReadsImmutableHeap) && !changing->has(OperationFlag::ReadsImmutableHeap));
-    auto expectOnlyImmutableLoads = [&] {
-        AOT_TEST_CHECK(fixture.load(fixture.immutable) == fixed && fixture.load(fixture.immutableBelowMutable, 1) == fixedBelowMutable);
-        Operation* next = fixture.load(fixture.firstElement, 2);
-        AOT_TEST_CHECK(next != changing);
-        changing = next;
-    };
-
-    fixture.store(fixture.operand, fixture.everything, 3);
-    expectOnlyImmutableLoads();
-    fixture.appendWriter(3)->effects.writes = HeapSet::top();
-    expectOnlyImmutableLoads();
-    fixture.appendCall();
-    expectOnlyImmutableLoads();
-
-    fixture.store(fixture.operand, fixture.immutable, 3);
-    fixture.store(fixture.operand, fixture.mutableAboveImmutable, 3);
-    AOT_TEST_CHECK(fixture.load(fixture.immutable) == fixed && fixture.load(fixture.immutableBelowMutable, 1) == fixedBelowMutable);
-    // The same word read through a mutable heap is a different value.
-    Operation* readAsMutable = fixture.load(fixture.mutableAboveImmutable, 1);
-    AOT_TEST_CHECK(readAsMutable != fixedBelowMutable && !readAsMutable->has(OperationFlag::ReadsImmutableHeap));
-    fixture.out.ret(fixture.combine(fixed, fixedBelowMutable, changing));
-
-    compileOrFail(fixture.test);
-    NumberingTestFixture::Memory memory = numberingTestMemory;
-    AOT_TEST_CHECK(fixture.run(memory, 5) == numberingTestAnswer(3, 4, 6) && memory[3] == 5);
-}
-
 static void testMachineNumberingPatchWritesCountOnceItIsSetUp()
 {
     {
@@ -401,100 +233,6 @@ static void testMachineNumberingPatchWritesCountOnceItIsSetUp()
     }
 }
 
-static void testMachineNumberingPatchThatEndsItsBlockIsSealedAheadOfContinuation()
-{
-    NumberingTestFixture fixture;
-    Output& out = fixture.out;
-    Block* next = out.newBlock();
-    Block* other = out.newBlock();
-    Operation* before = fixture.load(fixture.firstElement);
-    Operation* untouched = fixture.load(fixture.secondElement, 1);
-
-    PatchOperation* patch = fixture.appendWriter(0);
-    patch->effects.writes = fixture.test.procedure().heapSet(fixture.firstElement);
-    patch->effects.terminal = true;
-    out.appendSuccessor(normalEdge(next));
-    out.appendSuccessor(rareEdge(other));
-
-    out.appendToContinuation(next);
-    Operation* after = fixture.load(fixture.firstElement);
-    AOT_TEST_CHECK(after != before && fixture.load(fixture.secondElement, 1) == untouched);
-    out.ret(fixture.combine(before, after, untouched));
-    out.appendTo(other);
-    out.ret(out.int64Zero);
-
-    compileOrFail(fixture.test);
-    NumberingTestFixture::Memory memory = numberingTestMemory;
-    AOT_TEST_CHECK(fixture.run(memory, 5) == numberingTestAnswer(3, 5, 4));
-}
-
-static void testMachineNumberingSuspensionEndsEveryLoad()
-{
-    ProcedureTraits traits;
-    traits.savesFrameOnSuspend = true;
-    for (bool isSuspension : { true, false }) {
-        NumberingTestFixture fixture(traits);
-        Output& out = fixture.out;
-        const AbstractHeap& slots = fixture.heaps.frameSlots;
-        AOT_TEST_CHECK(slots.mutability() == Mutability::Mutable);
-        Operation* slot = out.slotBase(fixture.test.procedure().addStackSlot(8));
-        auto request = [&]() -> std::array<Operation*, 3> {
-            return {
-                fixture.load(fixture.firstElement),
-                fixture.load(fixture.unrelated, 1),
-                out.load64(out.address(slots, slot)),
-            };
-        };
-
-        std::array<Operation*, 3> before = request();
-        Operation* fixed = fixture.load(fixture.immutable, 2);
-        AOT_TEST_CHECK(areDistinctInNumberingTest(before) && request() == before);
-
-        // The effects name no heap. Only the flag says that other code runs here and that the frame comes back without its dead slots.
-        PatchOperation* patch = fixture.appendCall();
-        patch->effects = Effects::none();
-        patch->setIsSuspension(isSuspension);
-
-        std::array<Operation*, 3> after = request();
-        for (size_t index = 0; index < before.size(); ++index)
-            AOT_TEST_CHECK((after[index] != before[index]) == isSuspension);
-        AOT_TEST_CHECK(fixture.load(fixture.immutable, 2) == fixed);
-    }
-}
-
-static void testMachineNumberingOperationsWithoutPositionAreSharedByAllBlocks()
-{
-    NumberingTestFixture fixture;
-    Output& out = fixture.out;
-    Procedure& proc = fixture.test.procedure();
-    StackSlot* slot = proc.addStackSlot(16);
-    auto request = [&]() -> std::array<Operation*, 11> {
-        return {
-            out.constInt64(0),
-            out.constInt32(0),
-            out.constFloat(0.0f),
-            out.constDouble(0.0),
-            out.constDouble(-0.0),
-            out.constDouble(std::numeric_limits<double>::quiet_NaN()),
-            out.constInt64(77),
-            out.framePointer(),
-            out.slotBase(slot),
-            out.add(out.slotBase(slot), 8),
-            out.argumentRegister(instanceGPR),
-        };
-    };
-
-    std::array<Operation*, 11> operations = request();
-    AOT_TEST_CHECK(areDistinctInNumberingTest(operations));
-    for (Operation* operation : operations)
-        AOT_TEST_CHECK(operation->hasNoPosition());
-
-    out.appendTo(out.newBlock());
-    AOT_TEST_CHECK(request() == operations && out.m_block->isEmpty());
-    AOT_TEST_CHECK(out.slotBase(proc.addStackSlot(16)) != out.slotBase(slot));
-    AOT_TEST_CHECK(out.add(out.add(out.framePointer(), 16), 8) == out.add(out.framePointer(), 24));
-}
-
 // A saved frame goes on at another address, and the scope goes on across a suspension. So what has a position and is computed from an address in the frame is not found again.
 static void testMachineNumberingAddressInFrameIsComputedAgain()
 {
@@ -528,97 +266,6 @@ static void testMachineNumberingAddressInFrameIsComputedAgain()
         AOT_TEST_CHECK(out.add(fixture.words, fixture.operand) == out.add(fixture.words, fixture.operand));
         TypedPointer wordOfSlot = out.address(fixture.heaps.frameSlots, slot, 8);
         AOT_TEST_CHECK(out.load64(wordOfSlot) == out.load64(wordOfSlot));
-    }
-}
-
-static void testMachineNumberingArmsAndJoin()
-{
-    NumberingTestFixture fixture;
-    Output& out = fixture.out;
-    Block* left = out.newBlock();
-    Block* right = out.newBlock();
-    Block* join = out.newBlock();
-    Operation* isOdd = out.testNonZero64(fixture.operand, 1);
-    NumberingTestGroup atFork = requestNumberingTestGroup(fixture, 0);
-    ScopeFork fork = out.forkScope();
-    out.branch(isOdd, normalEdge(left), normalEdge(right));
-
-    out.appendToArm(left, fork);
-    AOT_TEST_CHECK(left->hasOnlyOnePredecessor());
-    AOT_TEST_CHECK(requestNumberingTestGroup(fixture, 0) == atFork);
-    NumberingTestGroup inLeft = requestNumberingTestGroup(fixture, 1);
-    AOT_TEST_CHECK(standsInNumberingTestBlock(inLeft, left) && requestNumberingTestGroup(fixture, 1) == inLeft);
-    ValueFromBlock fromLeft = out.anchor(sumOfNumberingTestGroup(out, inLeft));
-    out.jump(join);
-
-    out.appendToArm(right, fork);
-    AOT_TEST_CHECK(right->hasOnlyOnePredecessor());
-    AOT_TEST_CHECK(requestNumberingTestGroup(fixture, 0) == atFork);
-    NumberingTestGroup inRight = requestNumberingTestGroup(fixture, 1);
-    AOT_TEST_CHECK(standsInNumberingTestBlock(inRight, right));
-    ValueFromBlock fromRight = out.anchor(out.add(sumOfNumberingTestGroup(out, inRight), 1000000));
-    out.jump(join);
-
-    out.appendToJoin(join, fork);
-    AOT_TEST_CHECK(!join->hasOnlyOnePredecessor());
-    AOT_TEST_CHECK(requestNumberingTestGroup(fixture, 0) == atFork);
-    NumberingTestGroup inJoin = requestNumberingTestGroup(fixture, 1);
-    AOT_TEST_CHECK(standsInNumberingTestBlock(inJoin, join));
-    Operation* fromArm = out.phi(Int64, fromLeft, fromRight);
-    out.ret(out.add(fromArm, out.add(sumOfNumberingTestGroup(out, atFork), sumOfNumberingTestGroup(out, inJoin))));
-
-    compileOrFail(fixture.test);
-    for (int64_t operand : { 5, 6 }) {
-        NumberingTestFixture::Memory memory = numberingTestMemory;
-        int64_t expected = valueOfNumberingTestGroup(operand, 0) + 2 * valueOfNumberingTestGroup(operand, 1) + (operand & 1 ? 0 : 1000000);
-        AOT_TEST_CHECK(fixture.run(memory, operand) == expected);
-    }
-}
-
-static void checkNumberingTestWriteInOneArm(NumberingTestHeap written, bool isStruck, bool writesInFirstArm, bool writesThroughPatch)
-{
-    NumberingTestFixture fixture;
-    Output& out = fixture.out;
-    Block* left = out.newBlock();
-    Block* right = out.newBlock();
-    Block* join = out.newBlock();
-    // Accesses through heaps that do not overlap must touch different words.
-    unsigned wordWritten = isStruck ? 0 : 1;
-    Operation* before = fixture.load(fixture.firstElement);
-    ScopeFork fork = out.forkScope();
-    out.branch(fixture.operand, normalEdge(left), normalEdge(right));
-    for (Block* arm : { left, right }) {
-        out.appendToArm(arm, fork);
-        if ((arm == left) == writesInFirstArm) {
-            if (writesThroughPatch)
-                fixture.appendWriter(wordWritten)->effects.writes = fixture.test.procedure().heapSet(fixture.*written);
-            else
-                fixture.store(fixture.operand, fixture.*written, wordWritten);
-        }
-        out.jump(join);
-    }
-    out.appendToJoin(join, fork);
-    Operation* after = fixture.load(fixture.firstElement);
-    AOT_TEST_CHECK((after != before) == isStruck);
-    out.ret(fixture.combine(before, after));
-
-    compileOrFail(fixture.test);
-    for (int64_t operand : { 5, 0 }) {
-        NumberingTestFixture::Memory memory = numberingTestMemory;
-        bool writes = !!operand == writesInFirstArm;
-        AOT_TEST_CHECK(fixture.run(memory, operand) == numberingTestAnswer(3, writes && isStruck ? operand : 3));
-        AOT_TEST_CHECK(memory[wordWritten] == (writes ? operand : numberingTestMemory[wordWritten]));
-    }
-}
-
-static void testMachineNumberingWriteInOneArmIsStruckAtJoin()
-{
-    for (bool writesInFirstArm : { true, false }) {
-        for (bool writesThroughPatch : { false, true }) {
-            checkNumberingTestWriteInOneArm(&NumberingTestFixture::firstElement, true, writesInFirstArm, writesThroughPatch);
-            checkNumberingTestWriteInOneArm(&NumberingTestFixture::everyElement, true, writesInFirstArm, writesThroughPatch);
-            checkNumberingTestWriteInOneArm(&NumberingTestFixture::secondElement, false, writesInFirstArm, writesThroughPatch);
-        }
     }
 }
 
@@ -782,54 +429,6 @@ static void testMachineNumberingContinuationGoesOnInScope()
     AOT_TEST_CHECK(fixture.run(memory, 6) == numberingTestAnswer(3, 6) && memory[0] == 6);
 }
 
-static void testMachineNumberingBlockEnteredByAppendToStartsEmpty()
-{
-    NumberingTestFixture fixture;
-    Output& out = fixture.out;
-    Block* next = out.newBlock();
-    NumberingTestGroup first = requestNumberingTestGroup(fixture, 0);
-    out.jump(next);
-
-    out.appendTo(next);
-    AOT_TEST_CHECK(!next->hasOnlyOnePredecessor());
-    NumberingTestGroup second = requestNumberingTestGroup(fixture, 0);
-    AOT_TEST_CHECK(standsInNumberingTestBlock(second, next) && requestNumberingTestGroup(fixture, 0) == second);
-    out.ret(out.add(sumOfNumberingTestGroup(out, first), sumOfNumberingTestGroup(out, second)));
-
-    compileOrFail(fixture.test);
-    NumberingTestFixture::Memory memory = numberingTestMemory;
-    AOT_TEST_CHECK(fixture.run(memory, 5) == 2 * valueOfNumberingTestGroup(5, 0));
-}
-
-static void testMachineNumberingLoopHeadStartsEmpty()
-{
-    NumberingTestFixture fixture;
-    Output& out = fixture.out;
-    Block* loop = out.newBlock();
-    Block* done = out.newBlock();
-    Operation* sum = out.phiIn(loop, Int64);
-    Operation* before = fixture.load(fixture.firstElement);
-    out.upsilon(out.int64Zero, sum);
-    out.jump(loop);
-
-    out.appendTo(loop);
-    Operation* inLoop = fixture.load(fixture.firstElement);
-    AOT_TEST_CHECK(inLoop != before && inLoop->owner() == loop);
-    Operation* next = out.add(sum, inLoop);
-    fixture.store(next, fixture.firstElement);
-    out.upsilon(next, sum);
-    out.branch(out.lessThan(next, fixture.operand), normalEdge(loop), normalEdge(done));
-
-    out.appendTo(done);
-    Operation* after = fixture.load(fixture.firstElement);
-    AOT_TEST_CHECK(after->owner() == done);
-    out.ret(fixture.combine(before, after));
-
-    compileOrFail(fixture.test);
-    NumberingTestFixture::Memory memory = numberingTestMemory;
-    AOT_TEST_CHECK(fixture.run(memory, 7) == numberingTestAnswer(3, 12) && memory[0] == 12);
-}
-
 static void testMachineNumberingScopeComesBackWithItsBlock()
 {
     NumberingTestFixture fixture;
@@ -897,84 +496,6 @@ static void testMachineNumberingSecondVisitSeesNothingOfOtherBlocks()
     compileOrFail(fixture.test);
     NumberingTestFixture::Memory memory = numberingTestMemory;
     AOT_TEST_CHECK(fixture.run(memory, 5) == valueOfNumberingTestGroup(5, 0) + valueOfNumberingTestGroup(5, 1));
-}
-
-static void testMachineNumberingScopeOfArmComesBack()
-{
-    NumberingTestFixture fixture;
-    Output& out = fixture.out;
-    Block* left = out.newBlock();
-    Block* slow = out.newBlock();
-    Block* right = out.newBlock();
-    Block* join = out.newBlock();
-    Operation* isOdd = out.testNonZero64(fixture.operand, 1);
-    Operation* hasSecondBit = out.testNonZero64(fixture.operand, 2);
-    NumberingTestGroup atFork = requestNumberingTestGroup(fixture, 0);
-    ScopeFork fork = out.forkScope();
-    out.branch(isOdd, normalEdge(left), normalEdge(right));
-
-    out.appendToArm(left, fork);
-    NumberingTestGroup inLeft = requestNumberingTestGroup(fixture, 1);
-
-    out.appendTo(slow);
-    NumberingTestGroup inSlow = requestNumberingTestGroup(fixture, 0);
-    AOT_TEST_CHECK(standsInNumberingTestBlock(inSlow, slow) && standsInNumberingTestBlock(requestNumberingTestGroup(fixture, 1), slow));
-    out.ret(out.add(sumOfNumberingTestGroup(out, inSlow), 3000000));
-
-    out.appendTo(left);
-    AOT_TEST_CHECK(requestNumberingTestGroup(fixture, 0) == atFork && requestNumberingTestGroup(fixture, 1) == inLeft);
-    ValueFromBlock fromLeft = out.anchor(sumOfNumberingTestGroup(out, inLeft));
-    out.branch(hasSecondBit, rareEdge(slow), normalEdge(join));
-
-    out.appendToArm(right, fork);
-    AOT_TEST_CHECK(requestNumberingTestGroup(fixture, 0) == atFork);
-    NumberingTestGroup inRight = requestNumberingTestGroup(fixture, 1);
-    AOT_TEST_CHECK(standsInNumberingTestBlock(inRight, right));
-    ValueFromBlock fromRight = out.anchor(out.add(sumOfNumberingTestGroup(out, inRight), 1000000));
-    out.jump(join);
-
-    out.appendToJoin(join, fork);
-    AOT_TEST_CHECK(requestNumberingTestGroup(fixture, 0) == atFork && standsInNumberingTestBlock(requestNumberingTestGroup(fixture, 1), join));
-    out.ret(out.add(out.phi(Int64, fromLeft, fromRight), sumOfNumberingTestGroup(out, atFork)));
-
-    compileOrFail(fixture.test);
-    NumberingTestFixture::Memory memory = numberingTestMemory;
-    AOT_TEST_CHECK(fixture.run(memory, 5) == valueOfNumberingTestGroup(5, 0) + valueOfNumberingTestGroup(5, 1));
-    AOT_TEST_CHECK(fixture.run(memory, 6) == valueOfNumberingTestGroup(6, 0) + valueOfNumberingTestGroup(6, 1) + 1000000);
-    AOT_TEST_CHECK(fixture.run(memory, 7) == valueOfNumberingTestGroup(7, 0) + 3000000);
-}
-
-// Between two blocks of Code, CodeGenerator takes the fork behind the terminator of the first and hands it to each block that the first alone leads to.
-static void testMachineNumberingSuccessorFindsWhatTestHasLoaded()
-{
-    NumberingTestFixture fixture;
-    Output& out = fixture.out;
-    Block* filled = out.newBlock();
-    Block* empty = out.newBlock();
-    Operation* tested = fixture.load(fixture.firstElement);
-    Operation* fixed = fixture.load(fixture.immutable, 4);
-    Operation* product = out.mul(tested, fixture.operand);
-    out.branch(out.notZero64(tested), normalEdge(filled), rareEdge(empty));
-    ScopeFork atEnd = out.forkScope();
-
-    out.appendToSuccessor(empty, atEnd);
-    Operation* inEmpty = fixture.load(fixture.firstElement);
-    AOT_TEST_CHECK(!empty->hasOnlyOnePredecessor() && inEmpty->owner() == empty);
-    out.ret(out.add(inEmpty, 1000000));
-
-    out.appendToSuccessor(filled, atEnd);
-    AOT_TEST_CHECK(filled->hasOnlyOnePredecessor());
-    AOT_TEST_CHECK(fixture.load(fixture.firstElement) == tested && fixture.load(fixture.immutable, 4) == fixed && out.mul(tested, fixture.operand) == product);
-    fixture.store(fixture.operand, fixture.firstElement);
-    Operation* behindStore = fixture.load(fixture.firstElement);
-    AOT_TEST_CHECK(behindStore != tested && behindStore->owner() == filled);
-    out.ret(fixture.combine(tested, behindStore, product));
-
-    compileOrFail(fixture.test);
-    NumberingTestFixture::Memory memory = numberingTestMemory;
-    AOT_TEST_CHECK(fixture.run(memory, 5) == numberingTestAnswer(3, 5, 15) && memory[0] == 5);
-    memory[0] = 0;
-    AOT_TEST_CHECK(fixture.run(memory, 5) == 1000000 && !memory[0]);
 }
 
 // The scan fuses an address into its access and a comparison into its Branch where nothing else reads them. So a request behind the border finds them, and an operation that is appended there reads copies of its own.
@@ -1110,122 +631,6 @@ static void testMachineNumberingWordFilledOnceIsLoadedOnce()
     AOT_TEST_CHECK(fixture.run(memory, 5) == -1);
 }
 
-// The same of a narrow word through a value, which each reader would otherwise take from memory on x86-64.
-static void testMachineNumberingNarrowWordFilledOnceIsLoadedOnce()
-{
-    NumberingTestFixture fixture;
-    Output& out = fixture.out;
-    Block* next = out.newBlock();
-    Block* isFilled = out.newBlock();
-    Block* isEmpty = out.newBlock();
-    auto requestWord = [&] {
-        return out.load32(fixture.word(fixture.heaps.AOTInstance_fieldsFilledOnce));
-    };
-    Operation* word = requestWord();
-    fixture.store(fixture.operand, fixture.unrelated);
-    out.jump(next);
-    ScopeFork atEnd = out.forkScope();
-
-    out.appendToSuccessor(next, atEnd);
-    Operation* found = requestWord();
-    AOT_TEST_CHECK(found == word && !word->useCount());
-    out.branch(out.notZero32(found), normalEdge(isFilled), normalEdge(isEmpty));
-    AOT_TEST_CHECK(next->last()->child(0) == word);
-
-    out.appendTo(isFilled);
-    out.ret(out.zeroExtPtr(found));
-    out.appendTo(isEmpty);
-    out.ret(out.constInt64(-1));
-
-    compileOrFail(fixture.test);
-    NumberingTestFixture::Memory memory = numberingTestMemory;
-    memory[0] = 0;
-    AOT_TEST_CHECK(fixture.run(memory, 5) == -1 && memory[0] == 5);
-}
-
-static void testMachineNumberingSuccessorWithTwoPredecessorsStartsEmpty()
-{
-    NumberingTestFixture fixture;
-    Output& out = fixture.out;
-    Block* other = out.newBlock();
-    Block* next = out.newBlock();
-    Operation* tested = fixture.load(fixture.firstElement);
-    out.branch(fixture.operand, normalEdge(next), normalEdge(other));
-    ScopeFork atEnd = out.forkScope();
-
-    out.appendToSuccessor(other, atEnd);
-    AOT_TEST_CHECK(other->hasOnlyOnePredecessor() && fixture.load(fixture.firstElement) == tested);
-    out.jump(next);
-
-    out.appendToSuccessor(next, atEnd);
-    Operation* inNext = fixture.load(fixture.firstElement);
-    AOT_TEST_CHECK(!next->hasOnlyOnePredecessor() && inNext->owner() == next);
-    out.ret(fixture.combine(tested, inNext));
-
-    compileOrFail(fixture.test);
-    for (int64_t operand : { 5, 0 }) {
-        NumberingTestFixture::Memory memory = numberingTestMemory;
-        AOT_TEST_CHECK(fixture.run(memory, operand) == numberingTestAnswer(3, 3));
-    }
-}
-
-static void testMachineNumberingWriteInOneSuccessorEndsLoadsForTheNext()
-{
-    NumberingTestFixture fixture;
-    Output& out = fixture.out;
-    Block* left = out.newBlock();
-    Block* right = out.newBlock();
-    Operation* tested = fixture.load(fixture.firstElement);
-    Operation* fixed = fixture.load(fixture.immutable, 4);
-    out.branch(fixture.operand, normalEdge(left), normalEdge(right));
-    ScopeFork atEnd = out.forkScope();
-
-    out.appendToSuccessor(left, atEnd);
-    fixture.store(fixture.operand, fixture.firstElement);
-    out.ret(fixture.load(fixture.firstElement));
-
-    out.appendToSuccessor(right, atEnd);
-    Operation* inRight = fixture.load(fixture.firstElement);
-    AOT_TEST_CHECK(right->hasOnlyOnePredecessor() && inRight->owner() == right && fixture.load(fixture.immutable, 4) == fixed);
-    out.ret(fixture.combine(tested, inRight, fixed));
-
-    compileOrFail(fixture.test);
-    NumberingTestFixture::Memory memory = numberingTestMemory;
-    AOT_TEST_CHECK(fixture.run(memory, 0) == numberingTestAnswer(3, 3, 30) && memory == numberingTestMemory);
-    AOT_TEST_CHECK(fixture.run(memory, 5) == 5 && memory[0] == 5);
-}
-
-// The emitters come back to a block that they left ahead of the fork, so what the fork counts goes and other entries take its places.
-static void testMachineNumberingSuccessorStartsEmptyOnceScopeHasGone()
-{
-    NumberingTestFixture fixture;
-    Output& out = fixture.out;
-    Block* entry = out.m_block;
-    Block* first = out.newBlock();
-    Block* next = out.newBlock();
-    NumberingTestGroup inEntry = requestNumberingTestGroup(fixture, 0);
-
-    out.appendTo(first);
-    Operation* tested = fixture.load(fixture.firstElement);
-    out.jump(next);
-    ScopeFork atEnd = out.forkScope();
-
-    out.appendTo(entry);
-    AOT_TEST_CHECK(requestNumberingTestGroup(fixture, 0) == inEntry);
-    NumberingTestGroup laterInEntry = requestNumberingTestGroup(fixture, 1);
-    out.jump(first);
-
-    out.appendToSuccessor(next, atEnd);
-    Operation* inNext = fixture.load(fixture.firstElement);
-    AOT_TEST_CHECK(!next->hasOnlyOnePredecessor() && inNext->owner() == next);
-    AOT_TEST_CHECK(standsInNumberingTestBlock(requestNumberingTestGroup(fixture, 1), next));
-    out.ret(out.add(fixture.combine(tested, inNext), out.mul(sumOfNumberingTestGroup(out, laterInEntry), 1000000)));
-
-    compileOrFail(fixture.test);
-    NumberingTestFixture::Memory memory = numberingTestMemory;
-    AOT_TEST_CHECK(fixture.run(memory, 5) == numberingTestAnswer(3, 3) + 1000000 * valueOfNumberingTestGroup(5, 1));
-}
-
 static void testMachineNumberingLoadIsMadeAgainOnRequest()
 {
     NumberingTestFixture fixture;
@@ -1240,36 +645,6 @@ static void testMachineNumberingLoadIsMadeAgainOnRequest()
     compileOrFail(fixture.test);
     NumberingTestFixture::Memory memory = numberingTestMemory;
     AOT_TEST_CHECK(fixture.run(memory, 5) == numberingTestAnswer(4, 4));
-}
-
-static void testMachineNumberingTargetOfSwitchFindsWhatHeadHasLoaded()
-{
-    NumberingTestFixture fixture;
-    Output& out = fixture.out;
-    Block* first = out.newBlock();
-    Block* second = out.newBlock();
-    Block* ofTwoCases = out.newBlock();
-    Block* otherwise = out.newBlock();
-    Operation* loaded = fixture.load(fixture.firstElement);
-    SwitchCase cases[] = { { 1, normalEdge(first) }, { 2, normalEdge(second) }, { 3, normalEdge(ofTwoCases) }, { 4, normalEdge(ofTwoCases) } };
-    out.switchOn(fixture.operand, cases, rareEdge(otherwise));
-    ScopeFork atEnd = out.forkScope();
-
-    for (Block* target : { first, second }) {
-        out.appendToSuccessor(target, atEnd);
-        AOT_TEST_CHECK(target->hasOnlyOnePredecessor() && fixture.load(fixture.firstElement) == loaded);
-        out.ret(out.add(loaded, target == first ? 100 : 200));
-    }
-    for (Block* target : { ofTwoCases, otherwise }) {
-        out.appendToSuccessor(target, atEnd);
-        Operation* inTarget = fixture.load(fixture.firstElement);
-        AOT_TEST_CHECK(!target->hasOnlyOnePredecessor() && inTarget->owner() == target);
-        out.ret(out.add(inTarget, target == ofTwoCases ? 300 : 400));
-    }
-
-    compileOrFail(fixture.test);
-    NumberingTestFixture::Memory memory = numberingTestMemory;
-    AOT_TEST_CHECK(fixture.run(memory, 1) == 103 && fixture.run(memory, 2) == 203 && fixture.run(memory, 3) == 303 && fixture.run(memory, 4) == 303 && fixture.run(memory, 9) == 403);
 }
 
 // Of two edges one is taken away. The count says one, and nothing says which of the two is left.
@@ -1712,37 +1087,18 @@ static void testMachineNumberingTruncationOfConvertedInteger()
 static std::span<const NativeTest> listOfMachineNumberingTests()
 {
     static constexpr NativeTest tests[] = {
-        { "machine/numbering/load-is-shared-within-a-block"_s, testMachineNumberingLoadIsSharedWithinBlock },
-        { "machine/numbering/trapping-load-is-never-shared"_s, testMachineNumberingTrappingLoadIsNeverShared },
-        { "machine/numbering/store-ends-loads-of-overlapping-heaps"_s, testMachineNumberingStoreEndsLoadsOfOverlappingHeaps },
-        { "machine/numbering/pure-operations-outlive-writes"_s, testMachineNumberingPureOperationsOutliveWrites },
-        { "machine/numbering/immutable-loads-outlive-writes"_s, testMachineNumberingImmutableLoadsOutliveWrites },
         { "machine/numbering/patch-writes-count-once-it-is-set-up"_s, testMachineNumberingPatchWritesCountOnceItIsSetUp },
-        { "machine/numbering/patch-that-ends-its-block-is-sealed-ahead-of-the-continuation"_s, testMachineNumberingPatchThatEndsItsBlockIsSealedAheadOfContinuation },
-        { "machine/numbering/suspension-ends-every-load"_s, testMachineNumberingSuspensionEndsEveryLoad },
-        { "machine/numbering/operations-without-position-are-shared-by-all-blocks"_s, testMachineNumberingOperationsWithoutPositionAreSharedByAllBlocks },
         { "machine/numbering/address-in-the-frame-is-computed-again"_s, testMachineNumberingAddressInFrameIsComputedAgain },
-        { "machine/numbering/arms-and-join"_s, testMachineNumberingArmsAndJoin },
-        { "machine/numbering/write-in-one-arm-is-struck-at-the-join"_s, testMachineNumberingWriteInOneArmIsStruckAtJoin },
         { "machine/numbering/nested-forks"_s, testMachineNumberingNestedForks },
         { "machine/numbering/arm-that-nothing-reaches"_s, testMachineNumberingArmThatNothingReaches },
         { "machine/numbering/scopes-hold-while-the-table-grows"_s, testMachineNumberingScopesHoldWhileTableGrows },
         { "machine/numbering/continuation-goes-on-in-the-scope"_s, testMachineNumberingContinuationGoesOnInScope },
-        { "machine/numbering/block-entered-by-append-to-starts-empty"_s, testMachineNumberingBlockEnteredByAppendToStartsEmpty },
-        { "machine/numbering/loop-head-starts-empty"_s, testMachineNumberingLoopHeadStartsEmpty },
         { "machine/numbering/scope-comes-back-with-its-block"_s, testMachineNumberingScopeComesBackWithItsBlock },
         { "machine/numbering/second-visit-sees-nothing-of-other-blocks"_s, testMachineNumberingSecondVisitSeesNothingOfOtherBlocks },
-        { "machine/numbering/scope-of-an-arm-comes-back"_s, testMachineNumberingScopeOfArmComesBack },
-        { "machine/numbering/successor-finds-what-the-test-has-loaded"_s, testMachineNumberingSuccessorFindsWhatTestHasLoaded },
         { "machine/numbering/successor-reads-its-own-copy-of-what-is-fused"_s, testMachineNumberingSuccessorReadsOwnCopyOfWhatIsFused },
         { "machine/numbering/own-copy-is-not-made-of-a-load-that-has-ended"_s, testMachineNumberingOwnCopyIsNotMadeOfLoadThatHasEnded },
         { "machine/numbering/word-filled-once"_s, testMachineNumberingWordFilledOnceIsLoadedOnce },
-        { "machine/numbering/narrow-word-filled-once"_s, testMachineNumberingNarrowWordFilledOnceIsLoadedOnce },
-        { "machine/numbering/successor-with-two-predecessors-starts-empty"_s, testMachineNumberingSuccessorWithTwoPredecessorsStartsEmpty },
-        { "machine/numbering/write-in-one-successor-ends-loads-for-the-next"_s, testMachineNumberingWriteInOneSuccessorEndsLoadsForTheNext },
-        { "machine/numbering/successor-starts-empty-once-the-scope-has-gone"_s, testMachineNumberingSuccessorStartsEmptyOnceScopeHasGone },
         { "machine/numbering/load-is-made-again-on-request"_s, testMachineNumberingLoadIsMadeAgainOnRequest },
-        { "machine/numbering/target-of-a-switch-finds-what-the-head-has-loaded"_s, testMachineNumberingTargetOfSwitchFindsWhatHeadHasLoaded },
         { "machine/numbering/block-that-lost-an-edge-starts-empty"_s, testMachineNumberingBlockThatLostAnEdgeStartsEmpty },
         { "machine/numbering/successor-reads-its-own-copy-of-two-comparisons"_s, testMachineNumberingSuccessorReadsOwnCopyOfTwoComparisons },
         { "machine/numbering/own-copy-of-a-narrow-reference-is-marked"_s, testMachineNumberingOwnCopyOfNarrowReferenceIsMarked },

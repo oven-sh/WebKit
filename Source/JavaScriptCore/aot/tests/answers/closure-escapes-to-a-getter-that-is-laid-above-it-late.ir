@@ -1,7 +1,7 @@
 # made of 33c13e973b9e2164
 # `victim.toString`, read off a plain closure: Function.prototype.toString is a constant unless the program writes it, so Link takes it for one: no code runs, the closure goes nowhere.
 # Then the flow comes to a function that lays a getter there. The member is let go again, and the getter gets the closure as `this`: whoever has read under the name has let the closure escape.
-# Until 11-03 19:13 "no code runs above a closure under this name" was remembered from the first asking: victim kept `callers-known` and `result=int`, and the call of what the getter had kept ended the executable (an illegal instruction).
+# "no code runs above a closure under this name" was once remembered from the first asking: victim kept `callers-known` and `result=int`, and the call of what the getter had kept ended the executable (an illegal instruction).
 # The writer has to be reached LATER than the first read: it is called through a value that takes four calls to arrive.
 # f1 = victim
 # RUN(LINK): link functions mechanisms=all

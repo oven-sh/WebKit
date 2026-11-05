@@ -214,6 +214,8 @@ OptionSet<ImageFlag> flagsForUnseenCode(const Typed::Facts& facts, const Compile
         flags.add(imageFlagsAdmittedBy(record.cause));
     // What is proven of the whole program rests on unseenCodeCanRun(). A record that admits code where that answer is no would let in what those proofs rule out.
     RELEASE_ASSERT(facts.unseenCodeCanRun() || !flags.contains(ImageFlag::AdmitsUnknownJavaScript));
+    // The flow has gone by its own answer, which came first. Where it ran closed, nothing opens the gate behind it.
+    RELEASE_ASSERT(!facts.unseenCodeCanRun() || facts.linked().unseenCodeCanRun);
     if (facts.unseenCodeCanRun() || facts.unseenScriptsCanRun())
         flags.add(ImageFlag::AdmitsUnknownJavaScript);
     if (facts.findsFilesOfProgramByName())
@@ -908,6 +910,7 @@ BuiltImage buildImage(ImageInputs&& inputs, BuildContext& context)
             StubOptions stubOptions = inputs.stubCatalog.options();
             stubOptions.maxNameInFieldTable = numbers.identifiers().countWithFieldTableColumn() - 1;
             StubPolicy stubPolicy = stubPolicyOf(inputs.plan.slots());
+            stubPolicy.shapesFitHalfword = inputs.plan.shapes().numberOfShapes() <= 1u << 16;
             const StubCatalog stubCatalogOfImage(stubOptions, WTF::move(stubPolicy));
             steps.didFinish("create stub catalog"_s);
             std::optional<CalledSharedCode> calledSharedCode = collectCalledSharedCode(functions, context);

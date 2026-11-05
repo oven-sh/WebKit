@@ -24,7 +24,7 @@ ALWAYS_INLINE bool buildCoroutineOperation(Walker& walker, const BodyValue& valu
     return opcodesThatBuildCoroutineOperationTakes.contains(value.opcode()) && buildCoroutineOperationOfItsOpcodes(walker, value);
 }
 
-// A door of AOTWalkCalls.cpp, which the hook of coroutines-3 puts behind callAccessor(): planOperandsInWalkCalls() and buildOperandInWalkCalls() over the Call as written.
+// A door of AOTWalkCalls.cpp, behind callAccessor(): planOperandsInWalkCalls() and buildOperandInWalkCalls() over the Call as written.
 // One reference for each entry parameter of the callee, in the forms in which `entered` takes them. Nothing: NOTHING WAS BUILT, the unit does not take the call. A list that is too short: the walk cannot go on.
 std::optional<Vector<Reference, 8>> layOutEntryOperandsOfCall(Walker&, const BodyValue& call, FunctionID callee, CodeUnit entered);
 
@@ -34,21 +34,12 @@ FunctionID findCoroutineCalledBy(Walker&, const BodyValue& call);
 Reference buildStartOfBodyOfCoroutine(Walker&, const BodyValue& call, FunctionID callee, std::span<const Reference> entryOperands, Reference driver);
 // The one operation that takes the value, as it is or through opcodesThatStateTypes. Null: several take it, none, or a terminator or an edge does.
 ValueID findOnlyTakerBehindCasts(const BodyIndex&, ValueID);
-// By the input alone, of a block of the unit's own body. The Await at its head that each edge into it builds for itself. Null: there is none.
-ValueID awaitTakenByEdgesInto(Walker&, BlockID inputBlock);
-// For replaceSuspensionOfCoroutine(). The edges, or a call in a copy (C3), have awaited what the Await takes: it is bound to its operand. False: nothing was done.
-bool takeWhatEdgesHaveAwaited(Walker&, const BodyValue& await);
-// Walker::walkTerminator(), behind the lines that set m_origin. readOperandsOfTerminatorOutOfHeapWords() (5) > of a Jump whose target has awaitTakenByEdgesInto(): the await of what the jump brings, bound in the place of the argument.
-void walkInFrontOfTerminatorOfCoroutine(Walker&, const BodyTerminator&);
-// standsInNoStretchOfGuess(). The operation is an Await that alone takes what the Call in front of it gives: the stretch of a guess may end WITH it, so that each arm builds call and await for itself.
-bool isAwaitThatArmsOfCallGoOnTo(const BodyIndex&, const BodyValue& operation);
+// For replaceSuspensionOfCoroutine(). A call in a copy (C3) has awaited what the Await takes: it is bound to its operand. False: nothing was done.
+bool takeWhatCallInCopyHasAwaited(Walker&, const BodyValue& await);
 
 // ---- C8. AOTWalkCoroutineGuards.cpp
 // The ramp of the coroutine tests its parameters: the function has a CoroutineBody AND a SlowBody. CallingConventions::typeBehindGuard() then speaks of the CoroutineBody. False: one body.
 bool rampTestsParametersOf(const CallingConventions&, FunctionID);
-// walkRampOfCoroutine(), in front of the draft of the start. `operands`: the entry parameters, then the driver. The tests in a row, the start of the CoroutineBody where all pass, of the SlowBody where one fails, and the two meet.
-// What the start gives. Null: rampTestsParametersOf() is false and nothing was built, or the walk cannot go on.
-Reference buildStartBehindTestsOfRamp(Walker&, std::span<const Reference> operands, Origin);
 
 } } } // namespace JSC::AOT::Typed
 

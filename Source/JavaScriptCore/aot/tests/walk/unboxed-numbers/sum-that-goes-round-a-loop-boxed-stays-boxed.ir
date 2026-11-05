@@ -32,7 +32,7 @@
 # console.log(total(list), less(list), inner([list, list]), halves(4));
 # -- end of source
 # records of 4c918c546bed57b5
-# LoopInvariants is withheld in the runs on f1 and f3: with it a row of tests stands in front of a loop that leaves its list alone, and behind it the read names the storage and the sum is raw (lists-read-in-loops-are-tested-in-front-again-1)
+# LoopInvariants is withheld in the runs on f1 and f3: with it a row of tests stands in front of a loop that leaves its list alone, and behind it the read names the storage and the sum is raw
 # RUN(TOTAL): walk f1 mechanisms=all-Inlining-LoopInvariants
 # REQUIRES(TOTAL): entries-of-bun
 # TOTAL-LABEL: code f1:Body

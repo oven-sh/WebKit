@@ -13,7 +13,7 @@
 # The slot defers its closure, and the type lets the field be left out: the read takes an empty slot for undefined. What such a read has given is remembered of the slot, and proves nothing of whether the slot is filled:
 # the question that stands right behind the read, with nothing between that ends what is remembered, asks the slot. It was folded to true, off the record that was made without the function too
 # THE TWO RECORDS COME BACK OUT OF THE LIST: of a cell that the walk has made itself it knows the order word, which lists the keys, and answers both the read and the question without asking the slot
-# (literals-know-what-they-have-1, 11-04 05:56:57): then nothing here would be asked. RED ON provesSlotFilledForTypedAccess() WITHOUT THE TWIN: shown 11-04 06:0x.
+# and then nothing here would be asked.
 # RUN: walk f0 mechanisms=all
 # CHECK-LABEL: code f0:Body
 # CHECK: = GetDeferredClosureSlotOrUndefined {{*}}key="isExpected"

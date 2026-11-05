@@ -35,7 +35,6 @@ public:
     TypedPointer countOfGuards(std::span<const ClassGuardKey>);
     // Of a layout with PlannedLayout::isEscapedOffset. Zero, or a cell of the layout that nothing holds: the next allocation takes it. Every collection clears the word.
     TypedPointer wordOfEnvironmentHandedBack(LayoutID);
-    void fillVariablesOfEnteredFile();
 };
 
 } } } // namespace JSC::AOT::Typed

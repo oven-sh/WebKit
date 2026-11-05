@@ -115,8 +115,6 @@ public:
         return named && !named->isDictionary();
     }
     uint16_t extraPropertiesCellSize() const { return hasExtraProperties() ? m_extraKeysAndCellSize.extraPropertiesCellSize : 0; }
-    // What an object of this Structure went on to when a private name was last put among its extra properties. It names their Structure, which says which name that was.
-    CompiledStructure* successorByPrivateName() const { return m_successorByPrivateName.get(); }
     void setSuccessorByPrivateName(VM& vm, CompiledStructure* successor) { m_successorByPrivateName.set(vm, this, successor); }
     // Where the layout has no word for the extra properties, an object that gets some gets a Structure of its own, which holds them.
     JSObject* heldExtraProperties() const

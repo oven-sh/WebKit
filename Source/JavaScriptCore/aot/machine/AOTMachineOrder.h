@@ -128,14 +128,6 @@ public:
 
     // The one way an edge changes its target. The Upsilons of `from` for Phis of the old target are dead from here on.
     static void retarget(Block* from, unsigned successorIndex, Block* newTarget);
-    // retarget() makes an edge that skips its old target as rare as the rarer of the two edges it replaces. This one keeps the class of the edge.
-    // It is for skipping a Branch that goes one way for every block that reaches it: the class of that way says nothing.
-    static void retargetKeepingClass(Block* from, unsigned successorIndex, Block* newTarget)
-    {
-        EdgeClass edgeClass = from->successor(successorIndex).edgeClass();
-        retarget(from, successorIndex, newTarget);
-        from->m_successors[successorIndex].m_class = edgeClass;
-    }
     // The Jump that ends `from` leads to the block of the Phi, which a Branch on the Phi ends. The Jump becomes a Branch on what `from` hands the Phi, to the same two blocks, the other way round where `isInverted`.
     // Each edge is as rare as the rarer of the two that it replaces. The read of the Upsilon, which is dead from here on, is the read of the Branch.
     static void replaceJumpWithBranch(Block* from, const Operation* phi, bool isInverted);

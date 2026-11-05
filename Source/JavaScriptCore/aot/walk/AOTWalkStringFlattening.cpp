@@ -5,7 +5,7 @@
 
 // Strings: FlattenString. A reader of characters in a loop takes the flat string that is made once in front of the loop, and the second reader on one way makes it for himself and all that follow.
 // A flat string is no value of JavaScript and no saved frame keeps it: in front of a loop that suspends nothing can be built, and the note ends at a suspension. It throws only for lack of memory, so under a handler it stays out of the block in front.
-// It calls what loops-3 (Walker::innermostOpenLoop() and its neighbors), loops-4 (outermostLoopToMakeTextInFrontOf()) and known-state-and-effects-2 (AOTWalkKnown.h) add, and asks the compiler whether they are there: without them every reader takes the string.
+// It calls Walker::innermostOpenLoop() and its neighbors, outermostLoopToMakeTextInFrontOf() and what AOTWalkKnown.h declares, and asks the compiler whether they are there: without them every reader takes the string.
 // Withheld (LoopInvariants, Folding): the same.
 
 #include "config.h"

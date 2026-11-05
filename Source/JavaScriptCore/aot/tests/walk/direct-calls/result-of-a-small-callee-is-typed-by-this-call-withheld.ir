@@ -1,7 +1,0 @@
-# the same program with direct calls withheld: nothing is applied, and no direct call is built
-# RUN: walk f4 mechanisms=none+TypedOperations
-# CHECK-LABEL: code f4:Body
-# CHECK: = Call
-# RUN(NEVER): walk f4 mechanisms=none+TypedOperations
-# NEVER-NOT: CallDirect
-# PROGRAM-OF: result-of-a-small-callee-is-typed-by-this-call.ir

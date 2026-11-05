@@ -2,7 +2,7 @@
 # Link knows every caller, and what arrives stays as its class makes it. But reached code reads `grow` off shared memory, so the program may grow it, in another thread too,
 # and a view that follows such memory is longer from then on. A read off a view that has neither a test nor a closed arm leaves a loop that runs no other code: `while (view.length === 4) { }` would spin for ever.
 # So nothing is said of views there: the read is closed here, which runs once, and has a test and a closed arm in a loop: either holds it in its turn. A table follows no memory: it is still read without a test.
-# RED UNTIL views-that-another-thread-may-lengthen-1: GetTypedArrayLength alone in `size`.
+# It was once GetTypedArrayLength alone in `size`.
 # RUN: link functions mechanisms=all
 # CHECK: function f1
 # CHECK: parameter 0 {{*}}proven=Uint8Array{{*}} stays-as-made

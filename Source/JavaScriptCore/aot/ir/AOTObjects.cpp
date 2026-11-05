@@ -9,7 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTBuiltinTable.h"
-#include "AOTFlowRules.h"
+#include "AOTFactRecords.h"
 #include "AOTIRProgram.h"
 #include "AOTLayout.h"
 #include "AOTThreads.h"
@@ -648,26 +648,6 @@ ObjectID ObjectTable::addObjectsOfInstances(std::span<const ObjectOfInstance> wi
         m_records.append(record);
     }
     return ObjectID(first);
-}
-
-ObjectID ObjectTable::reserveObjectsOfInstances(uint32_t count)
-{
-    uint32_t first = size();
-    RELEASE_ASSERT(static_cast<size_t>(first) + count <= largestIDPosition);
-    m_records.grow(static_cast<size_t>(first) + count);
-    return ObjectID(first);
-}
-
-void ObjectTable::defineObjectOfInstance(ObjectID object, ObjectOfInstance wanted)
-{
-    RELEASE_ASSERT(object.index() >= firstObjectOfInstances() && object.index() < size());
-    ObjectRecord record = at(wanted.sharedForm);
-    RELEASE_ASSERT(!record.has(ObjectTrait::IsOfInstance));
-    RELEASE_ASSERT(!record.has(SiteTrait::IsTemplateObject));
-    record.traits.add(ObjectTrait::IsOfInstance);
-    record.sharedForm = wanted.sharedForm;
-    record.instance = wanted.instance;
-    m_records[object.index()] = record;
 }
 
 ObjectID ObjectTable::objectOf(BuiltinID builtin) const

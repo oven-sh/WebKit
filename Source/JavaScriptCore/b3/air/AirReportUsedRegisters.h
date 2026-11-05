@@ -34,7 +34,7 @@ class Code;
 // Performs a liveness analysis over registers and reports the live registers to every Special. Takes
 // the opportunity to kill dead assignments to registers, since it has access to register liveness.
 
-bool reportUsedRegisters(Code&);
+JS_EXPORT_PRIVATE bool reportUsedRegisters(Code&);
 
 } } } // namespace JSC::B3::Air
 

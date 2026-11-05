@@ -59,15 +59,7 @@ struct DeferredVariable {
     Opcode opcode { Opcode::Data };
 };
 
-// The numbers of the variables that the plan adds follow the program's own: first these, then those of PromotedEnvironments.
 struct DeferredDefinitions {
-    struct AddedVariable {
-        // The variable with a dead zone that it stands beside, whose module and name it has. Null: it stands beside none.
-        VariableID beside;
-        // Of a variable that stands beside none: the body whose module it belongs to.
-        FunctionID body;
-    };
-
     // Null: the variable holds what the program stores in it.
     const DeferredVariable* findDeferred(VariableID id) const LIFETIME_BOUND
     {
@@ -88,30 +80,12 @@ struct DeferredDefinitions {
         return found != variablesByMaker.end() && variables[*found].body == body && variables[*found].made == made ? &variables[*found] : nullptr;
     }
 
-    uint32_t numberOfAddedVariables() const { return static_cast<uint32_t>(addedVariables.size()); }
-    VariableID objectBeside(VariableID withDeadZone) const { return withDeadZone.index() < objectsBeside.size() ? objectsBeside[withDeadZone.index()] : VariableID(); }
-    VariableID variableBesideAdded(VariableID added) const { return find(added).beside; }
-    FunctionID bodyOfAddedVariable(VariableID added) const { return find(added).body; }
-
     // Ascending by variable.
     Vector<DeferredVariable> variables;
     // Places in `variables`, ascending by body and operation.
     Vector<uint32_t> variablesByMaker;
     BitVector isDeferred;
     BitVector bodiesThatDefine;
-
-    VariableID firstAddedVariable;
-    Vector<AddedVariable> addedVariables;
-    // By variable of the program: the added variable that stands for the object. The variable itself holds `absent` or undefined.
-    Vector<VariableID> objectsBeside;
-
-private:
-    AddedVariable find(VariableID id) const
-    {
-        if (!id || !firstAddedVariable || id.index() < firstAddedVariable.index() || id.index() - firstAddedVariable.index() >= addedVariables.size())
-            return { };
-        return addedVariables[id.index() - firstAddedVariable.index()];
-    }
 };
 
 // A variable that stands for a field of an environment that is never made, or for a capture that no closure holds.
@@ -137,29 +111,6 @@ struct PromotedEnvironments {
     Vector<uint32_t> numbersOfRemovedCaptures;
 };
 
-// Whoever enters a file fills the first words of the variables of its group.
-struct StaticsGroup {
-    ModuleID firstFile;
-    // Ascending.
-    Vector<uint32_t> importedGroups;
-};
-
-struct StaticsGroups {
-    static constexpr uint32_t noGroup = UINT32_MAX;
-
-    std::optional<uint32_t> groupFilledWhenEntered(ModuleID module) const
-    {
-        if (!module || module.index() >= groupOfFile.size() || groupOfFile[module.index()] == noGroup)
-            return std::nullopt;
-        return groupOfFile[module.index()];
-    }
-
-    Vector<StaticsGroup> groups;
-    Vector<uint32_t> groupOfFile;
-    // Their bodies begin with the test.
-    BitVector functionsThatEnterFiles;
-};
-
 struct GlobalNameUse {
     bool isStoredByName { false };
     // A read looks at the location alone.
@@ -168,7 +119,6 @@ struct GlobalNameUse {
 
 // A set that is empty claims nothing, but for the four that say what exists: modulesWithValue, modulesWithRequireCacheValue, layoutsWithClassRecord, functionsWithClosureCell.
 struct PlanParts {
-    // Milestone one: no variable is added.
     DeferredDefinitions deferredDefinitions;
     // Milestone one: empty. Nothing is promoted, and no capture is removed.
     PromotedEnvironments promotedEnvironments;
@@ -183,8 +133,6 @@ struct PlanParts {
     CallingConventions conventions;
     // Milestone one: the empty string alone.
     LiteralStringTable literalStrings;
-    // Milestone one: empty. Every word is filled when the instance is made.
-    StaticsGroups staticsGroups;
 
     // Which words of the statics a module has. Milestone one: every module but a CommonJs one.
     BitVector modulesWithValue;
@@ -201,7 +149,7 @@ struct PlanParts {
     LayoutID closureLayout;
     // Milestone one: every layout of the kind Instance.
     BitVector layoutsWithClassRecord;
-    // The closure table may have a cell for the function. Image numbers only the cells that code or a table mentions. It says nothing of how many closures there are: closureIdentityOf() does.
+    // The closure table may have a cell for the function. Image numbers only the cells that code or a table mentions. It says nothing of how many closures there are.
     // Milestone one: of the functions with a GenericCallEntry, those without captures, and every Layout::constructor whatever it captures. ClosureTable::registerClassObject() stops at a constructor without a cell.
     BitVector functionsWithClosureCell;
     // TestingSwitch::CheckProofsAtRunTime alone fills it. What a call of such a function gives may have come through no return of a body of the program: the function ends in a call of something that nobody lists,
@@ -209,17 +157,13 @@ struct PlanParts {
     BitVector functionsWhoseResultsPassNoReturn;
     // TestingSwitch::CheckProofsAtRunTime alone fills it. The run time stores into such a variable with no operation of compiled code: ProgramStatics::writeVariable(). So what Link has proven of it is held against what a read finds.
     BitVector variablesThatRunTimeMayFill;
-    // Milestone one: none.
-    BitVector functionsWhoseClosureIsTableCell;
     // The names that no body stores on the global object as it is written.
     BitVector globalNamesNeverStoredByName;
     BitVector globalNamesNeverStoredThroughBinding;
 
-    // What Facts says, where emitted code takes a form by the answer whichever operation it is emitted for. Milestone one: Facts::hasOneInstance(), and none in the three sets.
+    // What Facts says, where emitted code takes a form by the answer whichever operation it is emitted for. 
     bool hasOneInstance { false };
-    BitVector functionsWhoseClosuresStayAsCreated;
     BitVector functionsThatEndTheirTailCalls;
-    BitVector layoutsThatGetFieldsOnlyAtConstruction;
 
     // RecordedOptions::useWideReferences().
     bool usesWideReferences { false };
@@ -269,8 +213,6 @@ public:
     JS_EXPORT_PRIVATE PlacedAllocation closureAllocation(unsigned numberOfCaptures) const;
 
     PlannedVariable variable(VariableID id) const { return slots().variable(id); }
-    const StaticsGroups& staticsGroups() const { return m_parts.staticsGroups; }
-    bool entersFile(FunctionID id) const { return m_parts.staticsGroups.functionsThatEnterFiles.get(id.index()); }
 
     bool hasModuleValue(ModuleID id) const { return m_parts.modulesWithValue.get(id.index()); }
     bool hasRequireCacheValue(ModuleID id) const { return m_parts.modulesWithRequireCacheValue.get(id.index()); }
@@ -292,16 +234,12 @@ public:
     bool hasClosureCell(FunctionID id) const { return m_parts.functionsWithClosureCell.get(id.index()); }
     bool resultsPassNoReturn(FunctionID id) const { return m_parts.functionsWhoseResultsPassNoReturn.get(id.index()); }
     bool runTimeMayFill(VariableID id) const { return m_parts.variablesThatRunTimeMayFill.get(id.index()); }
-    ClosureIdentity closureIdentityOf(FunctionID id) const { return m_parts.functionsWhoseClosureIsTableCell.get(id.index()) ? ClosureIdentity::TableCell : ClosureIdentity::Unknown; }
 
     GlobalNameUse globalName(PropertyKeyID key) const { return { !m_parts.globalNamesNeverStoredByName.get(key.index()), !m_parts.globalNamesNeverStoredThroughBinding.get(key.index()) }; }
 
     // The stubs and the tables of the image go by Facts::hasOneInstance() too.
     bool hasOneInstance() const { return m_parts.hasOneInstance; }
-    // No closure of the function ever gets a property, another prototype or another integrity level, and none is compared.
-    bool closuresStayAsCreated(FunctionID id) const { return m_parts.functionsWhoseClosuresStayAsCreated.get(id.index()); }
     bool endsItsTailCalls(FunctionID id) const { return m_parts.functionsThatEndTheirTailCalls.get(id.index()); }
-    bool getsFieldsOnlyAtConstruction(LayoutID id) const { return m_parts.layoutsThatGetFieldsOnlyAtConstruction.get(id.index()); }
 
 private:
     PlanParts m_parts;

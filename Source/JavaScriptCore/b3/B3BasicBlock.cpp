@@ -39,8 +39,6 @@ namespace JSC { namespace B3 {
 
 const char* const BasicBlock::dumpPrefix = "#";
 
-WTF_MAKE_SEQUESTERED_ARENA_ALLOCATED_IMPL(BasicBlock);
-
 BasicBlock::BasicBlock(unsigned index, double frequency)
     : m_index(index)
     , m_frequency(frequency)

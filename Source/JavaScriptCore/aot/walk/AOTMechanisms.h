@@ -11,7 +11,7 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// Closed operations are never withheld. Each of these can be, by a test or by testaot and by nothing else.
+// Closed operations are never withheld. Each of these can be, by a test or by testaot. A build of Bun withholds CellsInFrames alone, where it is asked to: TestingSwitch::KeepsCellsOutOfFrames.
 // With any of them withheld the code is still correct.
 enum class Mechanism : uint16_t {
     TypedOperations = 1 << 0,
@@ -29,13 +29,15 @@ enum class Mechanism : uint16_t {
     ParameterGuards = 1 << 12,
     // The plan decides it for the whole program: the body that defines and every function that reads go by DeferredDefinitions.
     Deferral = 1 << 13,
+    // A cell lies in the frame of its maker, or the cell of a scope is handed back and taken again, because Link has found that nobody keeps it. Withheld: every cell lies in the heap until the collector finds it dead.
+    CellsInFrames = 1 << 14,
 };
 using Mechanisms = OptionSet<Mechanism>;
 
 inline constexpr Mechanisms allMechanisms {
     Mechanism::TypedOperations, Mechanism::Guesses, Mechanism::Arrivals, Mechanism::DirectCalls, Mechanism::Inlining, Mechanism::UnboxedNumbers,
     Mechanism::EscapeAnalysis, Mechanism::LoopInvariants, Mechanism::Folding, Mechanism::TypedSlots, Mechanism::Handlers, Mechanism::BuiltinCalls,
-    Mechanism::ParameterGuards, Mechanism::Deferral
+    Mechanism::ParameterGuards, Mechanism::Deferral, Mechanism::CellsInFrames
 };
 
 constexpr Mechanisms dependenciesOf(Mechanism mechanism)
@@ -47,6 +49,8 @@ constexpr Mechanisms dependenciesOf(Mechanism mechanism)
         return { Mechanism::TypedOperations };
     case Mechanism::EscapeAnalysis:
         return { Mechanism::TypedOperations, Mechanism::Folding };
+    case Mechanism::CellsInFrames:
+        return { Mechanism::EscapeAnalysis };
     case Mechanism::LoopInvariants:
         return { Mechanism::TypedOperations, Mechanism::Guesses, Mechanism::Folding };
     case Mechanism::Arrivals:

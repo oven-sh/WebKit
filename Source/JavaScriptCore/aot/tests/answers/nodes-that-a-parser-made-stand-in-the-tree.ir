@@ -1,0 +1,360 @@
+# made of f6a8fb702c5ff92e
+# The walk up a tree of nodes of an untyped file. One layout of the program has all the names that the loop's variable is asked for, so it is expected; objects that JSON.parse made, with the same names in another order, stand in the tree too.
+# function TreeNode(tag) { this.tag = tag; this.lanes = 0; this.childLanes = 0; this.return = this.child = this.sibling = this.alternate = null; this.stateNode = null; }
+# function attach(parent, child) { child.return = parent; child.sibling = parent.child; parent.child = child; }
+# function twin(node) { var other = node.alternate; if (null === other) { other = new TreeNode(node.tag); other.alternate = node; node.alternate = other; } return other; }
+# function markUp(source, lane) {
+#   source.lanes |= lane;
+#   var alternate = source.alternate;
+#   null !== alternate && (alternate.lanes |= lane);
+#   for (var parent = source.return; null !== parent; parent = parent.return) {
+#     parent.childLanes |= lane;
+#     alternate = parent.alternate;
+#     null !== alternate && (alternate.childLanes |= lane);
+#     source = parent;
+#   }
+#   return 3 === source.tag ? source.stateNode : null;
+# }
+# var root = new TreeNode(3);
+# root.stateNode = { name: "root" };
+# var leaves = [];
+# (function grow(parent, depth) {
+#   for (var i = 0; i < 3; i++) {
+#     var node = new TreeNode(depth);
+#     attach(parent, node);
+#     if (i === 1) twin(node);
+#     if (depth < 5) grow(node, depth + 1);
+#     else leaves.push(node);
+#   }
+# })(root, 4);
+# var made = JSON.parse('{"stateNode":"made","tag":3,"return":null,"alternate":null,"childLanes":"c","lanes":0}');
+# var below = JSON.parse('{"alternate":null,"childLanes":256,"lanes":0,"tag":8,"stateNode":null,"return":null}');
+# below.return = made;
+# var lowest = new TreeNode(9);
+# lowest.return = below;
+# leaves.push(lowest, below);
+# globalThis.seen = root;
+# Reflect.ownKeys(root);
+# var found = 0;
+# for (var turn = 0; turn < 3; turn++) {
+#   for (var at = 0; at < leaves.length; at++) found += markUp(leaves[at], 1 << (turn & 15)) === root.stateNode ? 1 : 0;
+# }
+# report(found); report(made.childLanes); report(below.childLanes); report(markUp(lowest, 2)); report(markUp(below, 4)); report(made.childLanes); report(below.childLanes); report(below.lanes); report(root.childLanes); report(leaves.length); report(leaves[1].alternate.lanes); report(leaves[0].return.childLanes);
+# report("end");
+# At the end the shell runs the same text itself: every answer is the same.
+# RUN: run-in-shell (function () { "use strict"; const show = value => typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value); const twin = async report => { function TreeNode(tag) { this.tag = tag; this.lanes = 0; this.childLanes = 0; this.return = this.child = this.sibling = this.alternate = null; this.stateNode = null; } function attach(parent, child) { child.return = parent; child.sibling = parent.child; parent.child = child; } function twin(node) { var other = node.alternate; if (null === other) { other = new TreeNode(node.tag); other.alternate = node; node.alternate = other; } return other; } function markUp(source, lane) {   source.lanes |= lane;   var alternate = source.alternate;   null !== alternate && (alternate.lanes |= lane);   for (var parent = source.return; null !== parent; parent = parent.return) {     parent.childLanes |= lane;     alternate = parent.alternate;     null !== alternate && (alternate.childLanes |= lane);     source = parent;   }   return 3 === source.tag ? source.stateNode : null; } var root = new TreeNode(3); root.stateNode = { name: "root" }; var leaves = []; (function grow(parent, depth) {   for (var i = 0; i < 3; i++) {     var node = new TreeNode(depth);     attach(parent, node);     if (i === 1) twin(node);     if (depth < 5) grow(node, depth + 1);     else leaves.push(node);   } })(root, 4); var made = JSON.parse('{"stateNode":"made","tag":3,"return":null,"alternate":null,"childLanes":"c","lanes":0}'); var below = JSON.parse('{"alternate":null,"childLanes":256,"lanes":0,"tag":8,"stateNode":null,"return":null}'); below.return = made; var lowest = new TreeNode(9); lowest.return = below; leaves.push(lowest, below); globalThis.seen = root; Reflect.ownKeys(root); var found = 0; for (var turn = 0; turn < 3; turn++) {   for (var at = 0; at < leaves.length; at++) found += markUp(leaves[at], 1 << (turn & 15)) === root.stateNode ? 1 : 0; } report(found); report(made.childLanes); report(below.childLanes); report(markUp(lowest, 2)); report(markUp(below, 4)); report(made.childLanes); report(below.childLanes); report(below.lanes); report(root.childLanes); report(leaves.length); report(leaves[1].alternate.lanes); report(leaves[0].return.childLanes); report("end"); }; const got = []; globalThis.report = value => { got.push(show(value)); if (value !== "end") return; const expected = []; twin(value => { expected.push(show(value)); if (value !== "end") return; let same = 0; for (let n = 0; n < expected.length; n++) { if (got[n] === expected[n]) same++; else print("answer " + n + ": " + String(got[n]).slice(0, 90) + " and not " + expected[n].slice(0, 90)); } print(same + " of " + expected.length + " of " + got.length); }); }; })();
+# CHECK: 13 of 13 of 13
+# CHECK-NEXT: exited with 0
+
+module m0 path="nodes-that-a-parser-made-stand-in-the-tree.js" displayPath="nodes-that-a-parser-made-stand-in-the-tree.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 kind=Instance name="TreeNode" module=m0 constructor=f1 fields=[{key="tag" declared={type=anything} flags=[IsRequired]}, {key="lanes" declared={type=anything} flags=[IsRequired]}, {key="childLanes" declared={type=anything} flags=[IsRequired]}, {key="return" declared={type=anything} flags=[IsRequired]}, {key="child" declared={type=anything} flags=[IsRequired]}, {key="sibling" declared={type=anything} flags=[IsRequired]}, {key="alternate" declared={type=anything} flags=[IsRequired]}, {key="stateNode" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=8
+layout L1 module=m0 position=917 fields=[{key="name" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+data d0 root=Object{layout=L1 members=[{key="name" value=String{value="root"}}]} module=m0
+data d1 root=Array{contents=anything} module=m0
+variable g0 name="TreeNode" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="attach" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+variable g2 name="twin" module=m0 declared={type=f3 flags=[IsFromCompiler]} initialization=Function function=f3 flags=[IsImmutable]
+variable g3 name="leaves" module=m0 declared={type=anything} initialization=Undefined flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Undefined @0
+    v1 = NewClosure function=f4 @0
+    v2 = Convert v1 declared={type=f4 flags=[IsFromCompiler]} @0
+    v3 = GetModuleVariable variable=g0 @887
+    v4 = Integer integer=3 @896
+    v5 = Construct v3, -, v4 calleeName="TreeNode" @887
+    v6 = Data data=d0 @917
+    PropSet v5, v6 key="stateNode" @900
+    v8 = Data data=d1 @948
+    PutModuleVariable v8 variable=g3 @939
+    v10 = NewClosure function=f5 @953
+    v11 = Integer integer=4 @1190
+    v12 = Call v10, -, v5, v11 @953
+    v13 = Builtin builtin=JSON @1205
+    v14 = PropGet v13 key="parse" @1205
+    v15 = Convert v14 declared={type=builtin(JSONParse) flags=[IsExpected]} @1205
+    v16 = String string="{\"stateNode\":\"made\",\"tag\":3,\"return\":null,\"alternate\":null,\"childLanes\":\"c\",\"lanes\":0}" @1216
+    v17 = Call v15, v13, v16 calleeKey="parse" calleeName="JSON.parse" @1210
+    v18 = Builtin builtin=JSON @1319
+    v19 = PropGet v18 key="parse" @1319
+    v20 = Convert v19 declared={type=builtin(JSONParse) flags=[IsExpected]} @1319
+    v21 = String string="{\"alternate\":null,\"childLanes\":256,\"lanes\":0,\"tag\":8,\"stateNode\":null,\"return\":null}" @1330
+    v22 = Call v20, v18, v21 calleeKey="parse" calleeName="JSON.parse" @1324
+    PropSet v22, v17 key="return" @1419
+    v24 = GetModuleVariable variable=g0 @1457
+    v25 = Integer integer=9 @1466
+    v26 = Construct v24, -, v25 calleeName="TreeNode" @1457
+    PropSet v26, v22 key="return" @1470
+    v28 = PropGet v8 key="push" @1493
+    v29 = Call v28, v8, v26, v22 calleeKey="push" calleeName="leaves.push" @1500
+    v30 = Builtin builtin=GlobalThis @1521
+    v31 = PropGet v30 key="globalThis" [isFreeName] @1521
+    v32 = Convert v31 declared={type=builtin(GlobalThis) flags=[IsExpected]} @1521
+    PropSet v32, v5 key="seen" @1521
+    v34 = Builtin builtin=Reflect @1545
+    v35 = Builtin builtin=ReflectOwnKeys @1545
+    v36 = Call v35, v34, v5 calleeName="Reflect.ownKeys" @1553
+    v37 = Integer @1580
+    v38 = Convert v37 declared={type=undefined|number flags=[IsExpected]} @1580
+    v39 = Integer @1599
+    v40 = Convert v39 declared={type=undefined|i32 flags=[IsExpected]} @1599
+    Jump -> next b1(v38, v40, v0) @1592
+  b1(v41, v42, v43):
+    LoopHint @1592
+    v45 = Integer integer=3 @1609
+    v46 = Less v42, v45 @1609
+    Branch v46 -> taken b2(), notTaken b9() @1609
+  b2():
+    v47 = Integer @1638
+    v48 = Convert v47 declared={type=undefined|i32 flags=[IsExpected]} @1638
+    Jump -> next b3(v41, v48) @1633
+  b3(v49, v50):
+    LoopHint @1633
+    v52 = PropGet v8 key="length" @1646
+    v53 = Less v50, v52 @1646
+    Branch v53 -> taken b4(), notTaken b8() @1646
+  b4():
+    v54 = ElemGet v8, v50 @1683
+    v55 = Integer integer=1 @1695
+    v56 = Integer integer=15 @1708
+    v57 = BitAnd v42, v56 @1708
+    v58 = LShift v55, v57 @1708
+    v59 = Call v2, -, v54, v58 calleeName="markUp" @1676
+    v60 = PropGet v5 key="stateNode" @1717
+    v61 = StrictEq v59, v60 @1717
+    Branch v61 -> taken b5(), notTaken b6() @1717
+  b5():
+    v62 = Integer integer=1 @1734
+    Jump -> next b7(v62) @1734
+  b6():
+    v63 = Integer @1738
+    Jump -> next b7(v63) @1738
+  b7(v64):
+    v65 = Add v49, v64 @1738
+    v66 = Convert v65 declared={type=undefined|number flags=[IsExpected]} @1667
+    v67 = Increment v50 @1661
+    v68 = Convert v67 declared={type=undefined|i32 flags=[IsExpected]} @1661
+    Jump -> next b3(v66, v68) @1661
+  b8():
+    v69 = Increment v42 @1612
+    v70 = Convert v69 declared={type=undefined|i32 flags=[IsExpected]} @1612
+    Jump -> next b1(v49, v70, v50) @1612
+  b9():
+    v71 = Builtin builtin=GlobalThis @1743
+    v72 = PropGet v71 key="report" [isFreeName] @1743
+    v73 = Call v72, -, v41 calleeName="report" @1743
+    v74 = Builtin builtin=GlobalThis @1758
+    v75 = PropGet v74 key="report" [isFreeName] @1758
+    v76 = PropGet v17 key="childLanes" @1765
+    v77 = Call v75, -, v76 calleeName="report" @1758
+    v78 = Builtin builtin=GlobalThis @1783
+    v79 = PropGet v78 key="report" [isFreeName] @1783
+    v80 = PropGet v22 key="childLanes" @1790
+    v81 = Call v79, -, v80 calleeName="report" @1783
+    v82 = Builtin builtin=GlobalThis @1809
+    v83 = PropGet v82 key="report" [isFreeName] @1809
+    v84 = Integer integer=2 @1831
+    v85 = Call v2, -, v26, v84 calleeName="markUp" @1816
+    v86 = Call v83, -, v85 calleeName="report" @1809
+    v87 = Builtin builtin=GlobalThis @1836
+    v88 = PropGet v87 key="report" [isFreeName] @1836
+    v89 = Integer integer=4 @1857
+    v90 = Call v2, -, v22, v89 calleeName="markUp" @1843
+    v91 = Call v88, -, v90 calleeName="report" @1836
+    v92 = Builtin builtin=GlobalThis @1862
+    v93 = PropGet v92 key="report" [isFreeName] @1862
+    v94 = PropGet v17 key="childLanes" @1869
+    v95 = Call v93, -, v94 calleeName="report" @1862
+    v96 = Builtin builtin=GlobalThis @1887
+    v97 = PropGet v96 key="report" [isFreeName] @1887
+    v98 = PropGet v22 key="childLanes" @1894
+    v99 = Call v97, -, v98 calleeName="report" @1887
+    v100 = Builtin builtin=GlobalThis @1913
+    v101 = PropGet v100 key="report" [isFreeName] @1913
+    v102 = PropGet v22 key="lanes" @1920
+    v103 = Call v101, -, v102 calleeName="report" @1913
+    v104 = Builtin builtin=GlobalThis @1934
+    v105 = PropGet v104 key="report" [isFreeName] @1934
+    v106 = PropGet v5 key="childLanes" @1941
+    v107 = Call v105, -, v106 calleeName="report" @1934
+    v108 = Builtin builtin=GlobalThis @1959
+    v109 = PropGet v108 key="report" [isFreeName] @1959
+    v110 = PropGet v8 key="length" @1966
+    v111 = Call v109, -, v110 calleeName="report" @1959
+    v112 = Builtin builtin=GlobalThis @1982
+    v113 = PropGet v112 key="report" [isFreeName] @1982
+    v114 = Integer integer=1 @1989
+    v115 = ElemGet v8, v114 @1989
+    v116 = PropGet v115 key="alternate" @1996
+    v117 = PropGet v116 key="lanes" @1999
+    v118 = Call v113, -, v117 calleeName="report" @1982
+    v119 = Builtin builtin=GlobalThis @2017
+    v120 = PropGet v119 key="report" [isFreeName] @2017
+    v121 = Integer @2024
+    v122 = ElemGet v8, v121 @2024
+    v123 = PropGet v122 key="return" @2031
+    v124 = PropGet v123 key="childLanes" @2034
+    v125 = Call v120, -, v124 calleeName="report" @2017
+    v126 = Builtin builtin=GlobalThis @2054
+    v127 = PropGet v126 key="report" [isFreeName] @2054
+    v128 = String string="end" @2061
+    v129 = Call v127, -, v128 calleeName="report" @2054
+    v130 = Undefined @2054
+    Return v130 @2054
+}
+function f1 name="TreeNode" module=m0 flags=[HasThis, HasExplicitName] length=1 thisType={type=L0 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: L0, v1: anything):
+    PropSet v0, v1 key="tag" @25
+    v3 = Integer @54
+    PropSet v0, v3 key="lanes" @41
+    v5 = Integer @75
+    PropSet v0, v5 key="childLanes" @57
+    v7 = Null @137
+    PropSet v0, v7 key="alternate" @120
+    PropSet v0, v7 key="sibling" @105
+    PropSet v0, v7 key="child" @92
+    PropSet v0, v7 key="return" @78
+    v12 = Null @160
+    PropSet v0, v12 key="stateNode" @143
+    v14 = Undefined @143
+    Return v14 @143
+}
+function f2 name="attach" module=m0 position=168 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything flags=[IsExpected]}, {type=anything flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything):
+    PropSet v1, v0 key="return" @201
+    v3 = PropGet v0 key="child" @240
+    PropSet v1, v3 key="sibling" @224
+    PropSet v0, v1 key="child" @254
+    v6 = Undefined @254
+    Return v6 @254
+}
+function f3 name="twin" module=m0 position=278 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = Undefined @292
+    v2 = PropGet v0 key="alternate" @312
+    v3 = Convert v2 declared={type=anything flags=[IsExpected]} @312
+    v4 = TypeTest v3 testedType=null @332
+    Branch v4 -> taken b1(| 0), notTaken b2(| 0) @332
+  b1(v5):
+    v6 = GetModuleVariable variable=g0 @362
+    v7 = PropGet v0 key="tag" @371
+    v8 = Construct v6, -, v7 calleeName="TreeNode" @362
+    v9 = Convert v8 declared={type=anything flags=[IsExpected]} @350
+    PropSet v9, v0 key="alternate" @382
+    PropSet v0, v9 key="alternate" @406
+    Jump -> next b3(v9) @406
+  b2(v12):
+    v13 = NarrowByTest v3, v12 @332
+    Jump -> next b3(v13) @332
+  b3(v14):
+    Return v14 @439
+}
+function f4 name="markUp" module=m0 position=448 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything flags=[IsExpected]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything):
+    v2 = Undefined @472
+    v3 = PropGet v0 key="lanes" @482
+    v4 = BitOr v3, v1 @498
+    PropSet v0, v4 key="lanes" @482
+    v6 = PropGet v0 key="alternate" @522
+    v7 = Convert v6 declared={type=anything flags=[IsExpected]} @522
+    v8 = TypeTest v7 testedType=null @542
+    v9 = LogicalNot v8 @542
+    v10 = ToBoolean v9 @542
+    Branch v10 -> taken b1(| 0), notTaken b2() @542
+  b1(v11):
+    v12 = PropGet v7 key="lanes" @565
+    v13 = BitOr v12, v1 @584
+    PropSet v7, v13 key="lanes" @565
+    Jump -> next b2() @565
+  b2():
+    v15 = PropGet v0 key="return" @611
+    v16 = Convert v15 declared={type=anything flags=[IsExpected]} @611
+    Jump -> next b3(v0, v7, v16) @602
+  b3(v17, v18, v19):
+    LoopHint @602
+    v21 = TypeTest v19 testedType=null @626
+    Branch v21 -> taken b4(| 0), notTaken b8(| 0) @626
+  b4(v22):
+    v23 = Integer integer=3 @826
+    v24 = PropGet v17 key="tag" @832
+    v25 = StrictEq v23, v24 @832
+    Branch v25 -> taken b5(| 1), notTaken b6(| 1) @832
+  b5(v26):
+    v27 = NarrowByField v17, v26 key="tag" @832
+    v28 = PropGet v27 key="stateNode" @845
+    Jump -> next b7(v28) @845
+  b6(v29):
+    v30 = NarrowByField v17, v29 key="tag" @832
+    v31 = Null @864
+    Jump -> next b7(v31) @864
+  b7(v32):
+    Return v32 @864
+  b8(v33):
+    v34 = NarrowByTest v19, v33 @626
+    v35 = PropGet v34 key="childLanes" @673
+    v36 = BitOr v35, v1 @694
+    PropSet v34, v36 key="childLanes" @673
+    v38 = PropGet v34 key="alternate" @716
+    v39 = Convert v38 declared={type=anything flags=[IsExpected]} @704
+    v40 = TypeTest v39 testedType=null @738
+    v41 = LogicalNot v40 @738
+    v42 = ToBoolean v41 @738
+    Branch v42 -> taken b9(| 0), notTaken b10() @738
+  b9(v43):
+    v44 = PropGet v39 key="childLanes" @761
+    v45 = BitOr v44, v1 @785
+    PropSet v39, v45 key="childLanes" @761
+    Jump -> next b10() @761
+  b10():
+    v47 = Convert v34 declared={type=anything flags=[IsExpected]} @796
+    v48 = PropGet v34 key="return" @652
+    v49 = Convert v48 declared={type=anything flags=[IsExpected]} @643
+    Jump -> next b3(v47, v39, v49) @643
+}
+function f5 name="grow" module=m0 position=953 flags=[TakesCallee, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything flags=[IsExpected]}, {type=number flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: function, v1: anything, v2: number):
+    v3 = Undefined @975
+    v4 = Integer @999
+    v5 = Convert v4 declared={type=undefined|number flags=[IsExpected]} @999
+    Jump -> next b1(v5, v3) @995
+  b1(v6, v7):
+    LoopHint @995
+    v9 = Integer integer=3 @1006
+    v10 = Less v6, v9 @1006
+    Branch v10 -> taken b2(), notTaken b8() @1006
+  b2():
+    v11 = GetModuleVariable variable=g0 @1035
+    v12 = Construct v11, -, v2 calleeName="TreeNode" @1035
+    v13 = Convert v12 declared={type=anything flags=[IsExpected]} @1031
+    v14 = GetModuleVariable variable=g1 @1056
+    v15 = Call v14, -, v1, v13 calleeName="attach" @1056
+    v16 = Integer integer=1 @1092
+    v17 = StrictEq v6, v16 @1092
+    Branch v17 -> taken b3(), notTaken b4() @1092
+  b3():
+    v18 = GetModuleVariable variable=g2 @1095
+    v19 = Call v18, -, v13 calleeName="twin" @1095
+    Jump -> next b4() @1095
+  b4():
+    v20 = Integer integer=5 @1123
+    v21 = Less v2, v20 @1123
+    Branch v21 -> taken b5(), notTaken b6() @1123
+  b5():
+    v22 = Integer integer=1 @1145
+    v23 = Add v2, v22 @1145
+    v24 = Call v0, -, v13, v23 calleeName="grow" @1126
+    Jump -> next b7() @1126
+  b6():
+    v25 = GetModuleVariable variable=g3 @1158
+    v26 = PropGet v25 key="push" @1158
+    v27 = Call v26, v25, v13 calleeKey="push" calleeName="leaves.push" @1165
+    Jump -> next b7() @1158
+  b7():
+    v28 = Increment v6 @1009
+    v29 = Convert v28 declared={type=undefined|number flags=[IsExpected]} @1009
+    Jump -> next b1(v29, v13) @1009
+  b8():
+    v30 = Undefined @1009
+    Return v30 @1009
+}

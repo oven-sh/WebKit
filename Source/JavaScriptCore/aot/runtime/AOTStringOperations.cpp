@@ -644,18 +644,29 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTStringEqualsLiteralInRegister, siz
     return WTF::unalignedLoad<uint64_t>(characters.data()) == text;
 }
 
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTShortStringOfString, EncodedJSValue, (Instance*, EncodedJSValue encoded))
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNarrowCharactersOfString, size_t, (Instance*, JSCell* cell))
 {
-    auto* string = cellArgument<JSString>(JSValue::decode(encoded).asCell(), Entry::operationAOTShortStringOfString);
+    // Nothing runs between the call and the compares that read it.
+    static thread_local NarrowCharactersOfString answer;
+    auto* string = cellArgument<JSString>(cell, Entry::operationAOTNarrowCharactersOfString);
     unsigned length = string->length();
-    RELEASE_ASSERT(length <= maxShortStringLength);
-    std::array<char16_t, maxShortStringLength> units;
+    answer.length = length;
+    if (length > answer.characters.size())
+        return reinterpret_cast<size_t>(&answer);
+    if (string->is8Bit()) {
+        string->resolveToBuffer(std::span { byteCast<Latin1Character>(answer.characters.data()), length });
+        return reinterpret_cast<size_t>(&answer);
+    }
+    std::array<char16_t, std::tuple_size_v<decltype(answer.characters)>> units;
     string->resolveToBuffer(std::span { units }.first(length));
     for (unsigned i = 0; i < length; ++i) {
-        if (!WTF::isLatin1(units[i]))
-            return static_cast<EncodedJSValue>(noShortString);
+        if (!WTF::isLatin1(units[i])) {
+            answer.length = NarrowCharactersOfString::lengthOfNoNarrowText;
+            break;
+        }
+        answer.characters[i] = static_cast<uint8_t>(units[i]);
     }
-    return static_cast<EncodedJSValue>(shortStringWord(std::span<const char16_t> { units }.first(length)));
+    return reinterpret_cast<size_t>(&answer);
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTStringEqualsLiteral, size_t, (Instance*, JSCell* cell, uint32_t text))

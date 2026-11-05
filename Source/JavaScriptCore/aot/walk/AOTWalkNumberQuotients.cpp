@@ -141,28 +141,6 @@ static bool integersDivideAsNumbersDoInQuotients(QuotientRounding rounding, cons
     return quotients.minimum >= 0 || quotients.maximum < 0;
 }
 
-// Two known integers have a known quotient, which is no division.
-bool canDivideQuotientAsIntegers(QuotientRounding rounding, const Type& dividend, const Type& divisor)
-{
-    return integersDivideAsNumbersDoInQuotients(rounding, dividend, divisor) && !areBothKnownInQuotients(dividend, divisor);
-}
-
-std::optional<QuotientRounding> quotientRoundingOf(InlineBuiltin builtin)
-{
-    switch (builtin) {
-    case InlineBuiltin::MathFloor:
-        return QuotientRounding::Floor;
-    case InlineBuiltin::MathCeil:
-        return QuotientRounding::Ceil;
-    case InlineBuiltin::MathTrunc:
-        return QuotientRounding::Truncate;
-    case InlineBuiltin::MathRound:
-        return QuotientRounding::Round;
-    default:
-        return std::nullopt;
-    }
-}
-
 static int64_t floorOfQuotientInQuotients(int64_t dividend, int64_t divisor)
 {
     int64_t quotient = dividend / divisor;

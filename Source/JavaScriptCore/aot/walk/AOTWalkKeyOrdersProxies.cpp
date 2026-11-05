@@ -337,7 +337,7 @@ static FunctionID findTrapThatHandlerWasMadeWithInKeyOrdersProxies(Walker& walke
             continue;
         Type type = walker.types().at(code.at(values[index]).type);
         FunctionID function = type.isObject() ? singleFunctionOf(walker.types(), type) : FunctionID();
-        return function && walker.facts().linked().mayBeMentionedBy(walker.unit().function, function) ? function : FunctionID();
+        return function && walker.facts().linked().mayBeMentionedBy(walker.unit(), function) ? function : FunctionID();
     }
     return { };
 }

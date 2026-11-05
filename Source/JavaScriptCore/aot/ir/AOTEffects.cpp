@@ -64,7 +64,6 @@ constinit const OpcodeSet opcodesWithPureBoundInTable = [] {
     return opcodes;
 }();
 
-
 namespace {
 
 // A bound names entire heaps. When an opcode's row never names a location within a heap, the bound equals the declared effects of every operation with that opcode.
@@ -120,12 +119,6 @@ constexpr LocationMasks unionOf(LocationMasks target, const LocationMasks& sourc
 {
     target.merge(source);
     return target;
-}
-
-constexpr ThrowEffect commonThrowOf(ThrowEffect first, ThrowEffect second)
-{
-    first &= second;
-    return first;
 }
 
 constexpr Effects readOf(const LocationMasks& masks)
@@ -244,30 +237,9 @@ static_assert(!fieldA.intersectedWith(fieldB).contains(AbstractHeap::ObjectField
 static_assert(fieldA.without({ AbstractHeap::ObjectFields }).isEmpty());
 static_assert(!fieldA.containsEntire(AbstractHeap::ObjectFields));
 static_assert(objectFields.containsEntire(AbstractHeap::ObjectFields));
-static_assert(!readOf(fieldA).interferesWith(writeOf(fieldB)));
-static_assert(readOf(fieldA).interferesWith(writeOf(fieldsAB)));
-static_assert(!writeOf(fieldA).interferesWith(writeOf(fieldB)));
 static_assert(masksAt(AbstractHeap::ObjectFields, 0).isEmpty());
 static_assert(masksAt(AbstractHeap::OrderWords, 1).maskOf(AbstractHeap::OrderWords) == LocationMasks::entireHeap);
 
-static_assert(commonThrowOf(throwsByRule, throwsByRule) == throwsByRule);
-static_assert(commonThrowOf(lackOfMemory, lackOfMemory) == lackOfMemory);
-static_assert(commonThrowOf(stackOverflow, stackOverflow) == stackOverflow);
-static_assert(commonThrowOf(neverThrows, neverThrows) == neverThrows);
-static_assert(commonThrowOf(throwsByRule, lackOfMemory) == lackOfMemory);
-static_assert(commonThrowOf(lackOfMemory, throwsByRule) == lackOfMemory);
-static_assert(commonThrowOf(throwsByRule, stackOverflow) == stackOverflow);
-static_assert(commonThrowOf(stackOverflow, throwsByRule) == stackOverflow);
-static_assert(commonThrowOf(lackOfMemory, stackOverflow) == stackOverflow);
-static_assert(commonThrowOf(stackOverflow, lackOfMemory) == stackOverflow);
-static_assert(commonThrowOf(throwsByRule, neverThrows) == neverThrows);
-static_assert(commonThrowOf(neverThrows, throwsByRule) == neverThrows);
-static_assert(commonThrowOf(lackOfMemory, neverThrows) == neverThrows);
-static_assert(commonThrowOf(neverThrows, stackOverflow) == neverThrows);
-static_assert(commonThrowOf(throwsByRule, lackOfMemory) && commonThrowOf(throwsByRule, lackOfMemory).isDeclaredOnlyForLackOfMemory());
-static_assert(commonThrowOf(throwsByRule, lackOfMemory).otherThanStackOverflow() && !commonThrowOf(throwsByRule, lackOfMemory).byRule());
-static_assert(commonThrowOf(throwsByRule, stackOverflow) && !commonThrowOf(throwsByRule, stackOverflow).otherThanStackOverflow());
-static_assert(!commonThrowOf(throwsByRule, neverThrows));
 
 static_assert(Effects() != unknownCode);
 static_assert(withSuspension(unknownCode) == Effects());
@@ -289,53 +261,6 @@ static_assert(readOf(top).isRemovableWhenUnused());
 static_assert(!writeOf(objectFields).isRemovableWhenUnused());
 static_assert(!writeOf(unionOf(objectFields, runtimeState)).isRemovableWhenUnused());
 static_assert(!writeOf(unionOf(objectFields, allocatorState)).isRemovableWhenUnused());
-
-static_assert(readOf(objectFields).interferesWith(writeOf(objectFields)));
-static_assert(writeOf(objectFields).interferesWith(readOf(objectFields)));
-static_assert(!readOf(objectFields).interferesWith(writeOf(moduleVariables)));
-static_assert(!writeOf(moduleVariables).interferesWith(readOf(objectFields)));
-static_assert(writeOf(objectFields).interferesWith(writeOf(objectFields)));
-static_assert(!writeOf(objectFields).interferesWith(writeOf(moduleVariables)));
-static_assert(!readOf(objectFields).interferesWith(readOf(objectFields)));
-static_assert(withThrow(noEffects).interferesWith(withThrow(noEffects)));
-static_assert(withThrow(noEffects).interferesWith(withSuspension(noEffects)));
-static_assert(withUnknownCall(noEffects).interferesWith(withThrow(noEffects)));
-static_assert(!withThrow(noEffects).interferesWith(readOf(objectFields)));
-static_assert(!readOf(objectFields).interferesWith(withThrow(noEffects)));
-static_assert(withThrow(noEffects).interferesWith(writeOf(objectFields)));
-static_assert(writeOf(objectFields).interferesWith(withThrow(noEffects)));
-static_assert(writeOf(objectFields).interferesWith(withSuspension(noEffects)));
-static_assert(withSuspension(noEffects).interferesWith(readOf(objectFields)));
-static_assert(readOf(objectFields).interferesWith(withSuspension(noEffects)));
-static_assert(withUnknownCall(noEffects).interferesWith(readOf(objectFields)));
-static_assert(readOf(objectFields).interferesWith(withUnknownCall(noEffects)));
-static_assert(!withSuspension(noEffects).interferesWith(withCollection(noEffects)));
-static_assert(!withUnknownCall(noEffects).interferesWith(noEffects));
-static_assert(!withCollection(noEffects).interferesWith(withCollection(noEffects)));
-static_assert(!withCollection(noEffects).interferesWith(writeOf(objectFields)));
-static_assert(!withCollection(noEffects).interferesWith(withThrow(noEffects)));
-static_assert(!noEffects.interferesWith(unknownCode));
-static_assert(readOf(objectFields).interferesWith(unknownCode));
-static_assert(!allocation.interferesWith(unknownCode));
-static_assert(!unknownCode.interferesWith(allocation));
-static_assert(!withCollection(writeOf(allocatorState)).interferesWith(unknownCode));
-static_assert(!unknownCode.interferesWith(withCollection(writeOf(allocatorState))));
-static_assert(!allocation.interferesWith(Effects()));
-static_assert(!Effects().interferesWith(allocation));
-static_assert(!allocation.interferesWith(allocation));
-static_assert(!allocation.interferesWith(withThrow(noEffects)));
-static_assert(!withSuspension(noEffects).interferesWith(allocation));
-static_assert(!allocation.interferesWith(runtimeStateUpdate));
-static_assert(runtimeStateUpdate.interferesWith(unknownCode));
-static_assert(unknownCode.interferesWith(runtimeStateUpdate));
-static_assert(withCollection(writeOf(runtimeState)).interferesWith(unknownCode));
-static_assert(unknownCode.interferesWith(withCollection(writeOf(runtimeState))));
-static_assert(runtimeStateUpdate.interferesWith(runtimeStateUpdate));
-static_assert(readOf(runtimeState).interferesWith(unknownCode));
-static_assert(withThrow(allocation).interferesWith(unknownCode));
-static_assert(merged(allocation, writeOf(objectFields)).interferesWith(readOf(objectFields)));
-static_assert(readOf(objectFields).interferesWith(merged(allocation, writeOf(objectFields))));
-static_assert(merged(allocation, readOf(objectFields)).interferesWith(unknownCode));
 
 static_assert(merged(unknownCode, withSuspension(noEffects)) == Effects());
 static_assert(merged(readOf(objectFields), withThrow(writeOf(moduleVariables))) == withThrow(merged(writeOf(moduleVariables), readOf(objectFields))));
@@ -381,7 +306,6 @@ static_assert(!withTermination(noEffects).isRemovableWhenUnused());
 static_assert(!withTermination(noEffects).alwaysCompletes());
 static_assert(withThrow(noEffects).alwaysCompletes());
 static_assert(!unknownCode.alwaysCompletes());
-static_assert(withTermination(noEffects).interferesWith(writeOf(objectFields)));
 static_assert(unknownCode.mayBeTerminated);
 
 static_assert(EffectTraits(noEffects).isPure());

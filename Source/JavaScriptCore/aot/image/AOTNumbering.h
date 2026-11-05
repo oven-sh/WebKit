@@ -51,7 +51,6 @@ using Typed::DataID;
 using Typed::FieldIndex;
 using Typed::LayoutID;
 using Typed::PropertyKeyID;
-using Typed::StaticsRegion;
 using Typed::TypeID;
 using Typed::VariableID;
 
@@ -109,8 +108,7 @@ enum class NumberSpace : uint8_t {
     ModuleValue,        // ModuleID                                     the offset in the statics               its word; the word of require.cache follows
     ModuleNamespace,    // ModuleID                                     the offset in the statics               its word
     ModuleBuiltinCell,  // BuiltinID, ModuleID                          the offset in the statics               its word
-    FilledFiles,        // the number of a group of StaticsGroups       -                                       the byte that says the group is filled
-    DataCell,           // DataID                                       the offset in the statics               the word of the one cell every evaluation hands out
+    DataCell,           // DataID                                      the offset in the statics               the word of the one cell every evaluation hands out
     DataStorage,        // DataID                                       the offset in the statics               the word of the storage that copies share
     DataElements,       // DataID                                       the offset in bytes from ProgramTables::data() to the first element of the array's node    -
     RegExpLiteralCell,  // ModuleID, position where written, StringID pattern, Yarr::Flags      the offset in the statics       the word of the object that evaluations of the literal share
@@ -133,7 +131,7 @@ enum class NumberSpace : uint8_t {
     MethodSelector,     // the place in CallingConventions::methodSelectors()   the number of that word in the table    the word of the method table in which an object with the shape 0 would find its entry
     RegExp,             // StringID pattern, Yarr::Flags                the number of the record                -
 };
-inline constexpr unsigned numberOfNumberSpaces = 38;
+inline constexpr unsigned numberOfNumberSpaces = 37;
 static_assert(static_cast<unsigned>(NumberSpace::RegExp) + 1 == numberOfNumberSpaces);
 
 // The id of a type follows the order in which threads arrived, in Facts and in Plan too. So it is a key that is only compared for equality: the records of types lie in the order of their content,
@@ -213,12 +211,6 @@ public:
     // The word that counts two guards or more, of whatever classes and sides. Each of the guards counts as mentioned too, so it has a bit.
     JS_EXPORT_PRIVATE uint32_t classGuardCount(std::span<const ClassGuardKey> guards);
     uint32_t builtinCell(BuiltinCellKey key) { return add(NumberSpace::BuiltinCell, key.encoded()); }
-    // The closure number of a generic entry that ClosureFunction cannot name: that of a bound function. `unitIndex` is CallingConventions::indexOf() of the entry.
-    // The generic entries follow the functions of the program, so the number is the FunctionID of the unit in the image less the number of those: FunctionNumbers::closureNumberOf().
-    uint32_t closureNumberOfEntry(uint32_t unitIndex, uint32_t numberOfFunctionsOfProgram, int32_t addend = 0)
-    {
-        return add(NumberSpace::Function, unitIndex, static_cast<int32_t>(static_cast<uint32_t>(addend) - numberOfFunctionsOfProgram));
-    }
     uint32_t globalBinding(PropertyKeyID key, OptionSet<GlobalBindingFlags> flags) { return addPair(NumberSpace::GlobalBinding, key.index(), flags.toRaw()); }
     // What a Slot says holds for a Structure, a name and a kind of access, wherever it is asked. So the name and the access are part of the key: accesses that are written at one place share a site only where they ask the same question.
     // The places keep the sites apart: a helper that is inlined at two calls meets the objects of each at a site of its own. `access` is a SlotAccess, or for a place with SiteAnswers its SiteUse counted from firstUseOfSiteAnswers.
@@ -329,7 +321,7 @@ private:
     uint32_t m_numberOfClosureFunctions { 0 };
 };
 
-// A variable that no code and no table mentions has no word, whatever the plan allows it. Its region is plan.region.
+// A variable that no code and no table mentions has no word, whatever the plan allows it.
 struct PlacedVariable {
     bool hasWordInStatics() const { return hasWord; }
 
@@ -344,20 +336,6 @@ struct ModuleBuiltinCell {
     BuiltinID builtin;
     ModuleID module;
     uint32_t offset { 0 };
-};
-
-struct PlacedStaticsOfFiles {
-    ModuleID firstFile;
-    uint32_t firstWord { 0 };
-    uint32_t numberOfWords { 0 };
-    Vector<uint32_t> importedGroups;
-};
-
-// What is left of the last word of a group of files. It is filled like the variable in front of it, so that the words of one group go on as those of the next.
-struct PlacedStaticsPadding {
-    uint32_t offset { 0 };
-    SlotRepresentation representation { SlotRepresentation::JSValue };
-    uint64_t initialWord { 0 };
 };
 
 // A name that one function spells as a key of the program and another as a text has two guards, and the record of the class lists both under the number of the name.
@@ -397,12 +375,6 @@ struct PlacedStatics {
 
     // [VariableID]
     Vector<PlacedVariable> variables;
-    // [group of StaticsGroups]
-    Vector<PlacedStaticsOfFiles> groupsOfFilesFilledWhenEntered;
-    Vector<PlacedStaticsPadding> paddingOfFilesFilledWhenEntered;
-    uint32_t firstWordFilledWithFiles { 0 };
-    uint32_t endWordFilledWithFiles { 0 };
-    uint32_t offsetOfFilledFiles { 0 };
     // [ModuleID], noOffset where the module has none.
     Vector<uint32_t> moduleValueOffsets;
     Vector<uint32_t> moduleNamespaceOffsets;
@@ -523,7 +495,6 @@ public:
     const NumberedKeys& regExpLiteralCells() const { return m_regExpLiteralCells; }
     const NumberedKeys& templateObjectCells() const { return m_templateObjectCells; }
     const NumberedKeys& arrayProfiles() const { return m_arrayProfiles; }
-    const NumberedKeys& classGuards() const { return m_classGuards; }
     // The sites of one module lie side by side, in the order in which they are written, and their numbers ascend with their places.
     const NumberedKeys& siteCaches() const { return m_siteCaches; }
     // [place in siteCaches()]: the number of the site. Behind the last: the number of numbers, InstanceSizes::numberOfSiteCaches.
@@ -650,7 +621,6 @@ constexpr bool hasOneIDAsKey(NumberSpace space)
     case NumberSpace::CardOfVariable:
     case NumberSpace::ModuleValue:
     case NumberSpace::ModuleNamespace:
-    case NumberSpace::FilledFiles:
     case NumberSpace::DataCell:
     case NumberSpace::DataStorage:
     case NumberSpace::DataElements:

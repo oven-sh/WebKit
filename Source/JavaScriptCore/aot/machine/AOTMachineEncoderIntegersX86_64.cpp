@@ -868,67 +868,7 @@ void Encoder::encodeInteger(const Step& step)
         encodeX86PopulationCount(*this, step);
         return;
 
-    // The builder makes Patches of these, and of a shift by a register: appendWithFixedRegisters().
-    case MulHigh:
-    case UMulHigh:
-    case Div:
-    case UDiv:
-    case Mod:
-    case UMod:
-
-    case Nop:
-    case Const32:
-    case Const64:
-    case ConstFloat:
-    case ConstDouble:
-    case FramePointer:
-    case SlotBase:
-    case AddressOf:
-    case NumberOf:
-    case InstanceAddressOf:
-    case ArgumentReg:
-    case Abs:
-    case Ceil:
-    case Floor:
-    case FTrunc:
-    case Sqrt:
-    case FMin:
-    case FMax:
-    case BitwiseCast:
-    case IToD:
-    case FloatToDouble:
-    case DoubleToFloat:
-    case Equal:
-    case NotEqual:
-    case LessThan:
-    case GreaterThan:
-    case LessEqual:
-    case GreaterEqual:
-    case Above:
-    case Below:
-    case AboveEqual:
-    case BelowEqual:
-    case EqualOrUnordered:
-    case Select:
-    case Load8Z:
-    case Load8S:
-    case Load16Z:
-    case Load16S:
-    case Load:
-    case Store8:
-    case Store16:
-    case Store:
-    case Fence:
-    case Phi:
-    case Upsilon:
-    case Extract:
-    case Patch:
-    case Check:
-    case Jump:
-    case Branch:
-    case Switch:
-    case Return:
-    case Oops:
+    default:
         break;
     }
     RELEASE_ASSERT_NOT_REACHED();

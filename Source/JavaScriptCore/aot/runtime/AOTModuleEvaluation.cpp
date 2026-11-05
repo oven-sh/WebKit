@@ -517,8 +517,8 @@ JSValue Modules::callBody(ModuleID module)
     SetForScope isStatementAskingHost(m_isStatementAskingHost, false);
     if (!moduleData.isOfLibrary())
         didStartThread(&vm);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     if (!m_formsAnsweredFirst.isEmpty()) [[unlikely]] {
-        auto scope = DECLARE_THROW_SCOPE(vm);
         // No start of an importer calls the body of a form whose importer awaits at its top level: the evaluation comes to the form by itself.
         if (moduleData.kind == ModuleKind::Data) {
             bool hasTaken = takeWhatFormAnsweredFirstHolds(module);
@@ -533,9 +533,9 @@ JSValue Modules::callBody(ModuleID module)
     if ((moduleData.kind == ModuleKind::SourceText && !moduleData.hasTopLevelAwait()) || moduleData.kind == ModuleKind::CommonJs) {
         EncodedJSValue function = JSValue::encode(jsNumber(static_cast<int32_t>(closureNumberOf(*body))));
         CallData entry = CallData::forCompiledCode(moduleBodyEntrypoint().taggedPtr(), realm);
-        return callCompiledCode(vm, closures.calleeOfModuleBodies(vm, *body), entry, jsUndefined(), nullptr, ArgList(&function, 1));
+        RELEASE_AND_RETURN(scope, callCompiledCode(vm, closures.calleeOfModuleBodies(vm, *body), entry, jsUndefined(), nullptr, ArgList(&function, 1)));
     }
-    return callCompiledCode(realm, closures.createClosureForOneCall(vm, *body), jsUndefined(), ArgList());
+    RELEASE_AND_RETURN(scope, callCompiledCode(realm, closures.createClosureForOneCall(vm, *body), jsUndefined(), ArgList()));
 }
 
 // What the evaluation begins, unless one under it comes there first and notes its own mark.
@@ -640,11 +640,14 @@ void Modules::forgetRunThatThrew(ModuleID file)
     forgetTemplateObjects(file);
     if (LoadedModule* loaded = loadedIfExists(file)) {
         loaded->requiredValue.set(*this, JSValue());
-        loaded->requiredModules.clear();
-        loaded->numberOfChildrenShown = 0;
-        loaded->firstRequirer = std::nullopt;
         loaded->firstRequirerOutsideImage.set(*this, nullptr);
         loaded->synchronousLoadCountAtStart = std::nullopt;
+    }
+    // It stays where it lies: forEachNewChild() may be going through it.
+    if (WaysToModule* ways = waysToIfRecorded(file)) {
+        ways->requiredModules.clear();
+        ways->numberOfChildrenShown = 0;
+        ways->firstRequirer = std::nullopt;
     }
     m_recordedRequires.removeIf([&](const auto& recorded) {
         return static_cast<uint32_t>(recorded.key) == file.index();
@@ -792,11 +795,12 @@ bool Modules::beginModuleInRecord(ModuleID module)
         throwException(realm, scope, loaded->result());
         return false;
     }
+    auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
     // The first load of a CommonJS file that a mock waits for.
     if (m_modulesWithMockToRun.get(module.index())) [[unlikely]] {
-        auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
         // An import has run what waits below it before it comes here. This is a require() that compiled code answers itself.
         SetForScope requireRunsMocks(m_instance.vm->aotState().requireRunsMocks, true);
+        SetForScope moduleThatRequireAsksFor(m_moduleThatRequireAsksFor, module);
         runMockThatWaits(module);
         RETURN_IF_EXCEPTION(scope, false);
         if (mockInPlace(module))
@@ -809,7 +813,6 @@ bool Modules::beginModuleInRecord(ModuleID module)
         // A load that began before the file was taken out of the program has come to it. Under `bun run` it is the loader that evaluates the file then: once, for every import()
         // that waits for it, and a failure stays with the loader. What require() finds behind that is the host's own affair.
         JSGlobalObject* realm = m_instance.globalObject;
-        auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
         JSPromise* loaded = nullptr;
         {
             SetForScope isAskingHost(m_isAskingHost, true);
@@ -831,6 +834,7 @@ bool Modules::beginModuleInRecord(ModuleID module)
     // The start of an importer passes it: letStartsAskWhereSomethingIsDueBelow().
     if (moduleStatus == ModuleStatus::Evaluated || moduleStatus == ModuleStatus::EvaluatingAsync) {
         BitVector isPassed;
+        scope.release();
         passModuleThatHasRun(module, isPassed);
         return false;
     }
@@ -844,6 +848,7 @@ bool Modules::beginModuleInRecord(ModuleID module)
         m_storedStatuses[module.index()] = static_cast<uint8_t>(m_instance.modules.evaluatingMark);
         return true;
     }
+    scope.release();
     evaluateModuleInRecord(module);
     return false;
 }
@@ -1565,7 +1570,7 @@ void Modules::didFailToLoadGraph(ModuleID root)
             return file.plan->found[0].module == root;
         });
     }
-    resumeImportsBehindLoad(root);
+    letGoGraphsHeldBehindEarlierCalls();
     if (m_rootWhoseFilesRanAhead != root)
         return;
     m_rootWhoseFilesRanAhead = std::nullopt;
@@ -1580,8 +1585,7 @@ void Modules::didLoadGraph(ModuleID root)
         resumeDeferredLoadsOfFinishedFiles();
     }
     m_loadsInFlight.didLoad(root);
-    constexpr bool graphRunsInThisJob = true;
-    resumeImportsBehindLoad(root, graphRunsInThisJob);
+    letGoGraphsHeldBehindEarlierCalls();
 }
 
 unsigned Modules::numberOfGraphsBeingLoaded()
@@ -1688,7 +1692,7 @@ void Modules::didStartLoad(JSPromise* load, ModuleID root, SettlingOfLoad settli
     m_loadsInFlight.removeSettledIf([&](const LoadInFlight& earlier) {
         return m_rootWhoseFilesRanAhead != earlier.root;
     });
-    m_loadsInFlight.append(*m_instance.vm, load, root, isFileOfProgram(fileOf(root)), settling).stepsOfLoaderAtCall = m_stepsOfLoader;
+    m_loadsInFlight.append(*m_instance.vm, load, root, settling).stepsOfLoaderAtCall = m_stepsOfLoaderAtCallWhoseTextHasCome.value_or(m_stepsOfLoader);
 }
 
 // `bun run` loads the graph of a required ES module in steps, all of them before require() returns. A program can tell only where the steps of another graph come due among them.
@@ -3112,7 +3116,7 @@ JSValue Modules::loadEvictedFile(ModuleID file)
     JSString* path = pathString(file);
     if (String text = m_table.pathText(file); text.contains('?')) [[unlikely]]
         path = jsString(*m_instance.vm, text.left(text.reverseFind('?')));
-    JSValue value = requireSpecifier(path, file, true);
+    JSValue value = requireSpecifier(path, file, NamedByBuild::FileOfImage);
     if (scope.exception()) [[unlikely]] {
         // A load that throws leaves nothing in the cache, and the next require() tries again.
         if (storesExports) {
@@ -3143,7 +3147,7 @@ JSValue Modules::requireThroughCache(ModuleID target, ModuleID referrer)
     RETURN_IF_EXCEPTION(scope, { });
     addToRequireCache(target, answered);
     if (referrer)
-        ensureLoaded(target).firstRequirer = referrer;
+        ensureWaysTo(target).firstRequirer = referrer;
     return answered;
 }
 
@@ -3158,7 +3162,7 @@ JSValue Modules::answerRequireWithMock(ModuleID target, ModuleID referrer)
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
     // The loader, which holds what stands in place of the module, asks nobody.
     if (referrer && m_libraryModulesThatMockReplaces.get(target.index()))
-        RELEASE_AND_RETURN(scope, requireSpecifier(pathString(target), referrer, true));
+        RELEASE_AND_RETURN(scope, requireSpecifier(pathString(target), referrer, NamedByBuild::WhatLiesOutsideImage));
     JSValue answer = answerOfRequireToMock(target);
     RETURN_IF_EXCEPTION(scope, { });
     if (answer)
@@ -3206,6 +3210,7 @@ JSValue Modules::answerRequire(ModuleID target, ModuleID referrer, RequiredBy re
     bool isRequiredByProgram = requiredBy == RequiredBy::Program || (referrer && !data(referrer).isOfLibrary());
     if (!targetData.isOfLibrary() || isRequiredByProgram) {
         SetForScope requireRunsMocks(vm.aotState().requireRunsMocks, true);
+        SetForScope moduleThatRequireAsksFor(m_moduleThatRequireAsksFor, target);
         runMocksBelow(target);
     } else
         evaluateModulesOwedBelow(target);
@@ -3228,7 +3233,7 @@ JSValue Modules::answerRequire(ModuleID target, ModuleID referrer, RequiredBy re
     if (targetData.isUncompiledCode()) {
         m_runsCopyFromDisk |= m_table.pathText(target).contains('?');
         m_uncompiledNamespacesNotShownYet.clear(target.index());
-        RELEASE_AND_RETURN(scope, requireSpecifier(pathString(target), *targetData.referrerModule(), true));
+        RELEASE_AND_RETURN(scope, requireSpecifier(pathString(target), *targetData.referrerModule(), NamedByBuild::WhatLiesOutsideImage));
     }
     if (!targetData.hasExportTable()) {
         if (LoadedModule* loaded = targetData.mayBeImportedWhileItRuns() ? loadedIfExists(target) : nullptr; loaded && loaded->isAnsweredWithNamespace) [[unlikely]] {
@@ -3372,7 +3377,8 @@ JSValue Modules::exportsShownByModuleObject(ModuleID file)
 {
     if (!hasYetToBegin(file))
         return commonJSExports(file);
-    auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+    // Nothing is thrown here, so nobody is owed a look: letGoOfModuleObject() and those above it have no scope.
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(*m_instance.vm);
     LoadedModule& loaded = ensureLoaded(file);
     if (!loaded.exportsShownBeforeBody) {
         JSObject* empty = constructEmptyObject(m_instance.globalObject);
@@ -3551,10 +3557,10 @@ void Modules::recordRequire(ModuleID target, ModuleID referrer)
     auto recorded = m_recordedRequires.add(pair, RecordedRequire::Begun);
     if (recorded.isNewEntry) {
         lookForMainCommonJSModule();
-        LoadedModule& required = ensureLoaded(target);
-        if (required.firstRequirer || required.firstRequirerOutsideImage || (isCommonJSFile && wasRequestedByLoader(target)))
+        LoadedModule* required = loadedIfExists(target);
+        if (firstRequirerOf(target) || (required && required->firstRequirerOutsideImage) || (isCommonJSFile && wasRequestedByLoader(target)))
             return;
-        required.firstRequirer = referrer;
+        ensureWaysTo(target).firstRequirer = referrer;
         m_firstRequires.append({ referrer, target });
         if (targetData.kind == ModuleKind::SourceText)
             recorded.iterator->value = RecordedRequire::BegunAndMadeObjectOfESModule;
@@ -3580,10 +3586,10 @@ void Modules::recordRequire(ModuleID target, ModuleID referrer)
         recorded.iterator->value = RecordedRequire::Returned;
         if (!m_isMainCommonJSModuleDecided)
             decideMainCommonJSModule(std::nullopt);
-        LoadedModule& requirer = ensureLoaded(referrer);
-        requirer.requiredModules.append(target);
-        if (requirer.requirer && host().showChildren)
-            RELEASE_AND_RETURN(scope, host().showChildren(m_instance.globalObject, requirer.requirer, nullptr));
+        ensureWaysTo(referrer).requiredModules.append(target);
+        LoadedModule* requirer = loadedIfExists(referrer);
+        if (requirer && requirer->requirer && host().showChildren)
+            RELEASE_AND_RETURN(scope, host().showChildren(m_instance.globalObject, requirer->requirer, nullptr));
         return;
     }
     case RecordedRequire::Returned: {
@@ -3616,7 +3622,7 @@ void Modules::recordRequireFromOutsideImage(ModuleID target, JSObject* moduleObj
         return;
     lookForMainCommonJSModule();
     LoadedModule& required = ensureLoaded(target);
-    if (required.firstRequirer || required.firstRequirerOutsideImage || (isCommonJSFile && wasRequestedByLoader(target)))
+    if (firstRequirerOf(target) || required.firstRequirerOutsideImage || (isCommonJSFile && wasRequestedByLoader(target)))
         return;
     required.firstRequirerOutsideImage.set(*this, moduleObjectOfRequirer);
     if (!m_isMainCommonJSModuleDecided)
@@ -3756,24 +3762,25 @@ JSObject* Modules::parentModuleObject(ModuleID module)
     LoadedModule* loaded = loadedIfExists(module);
     if (loaded && loaded->firstRequirerOutsideImage && mainCommonJSModule() != module)
         return loaded->firstRequirerOutsideImage;
-    if (!loaded || !loaded->firstRequirer || mainCommonJSModule() == module || !mayHandOutModuleObject(*loaded->firstRequirer))
+    std::optional<ModuleID> firstRequirer = firstRequirerOf(module);
+    if (!firstRequirer || mainCommonJSModule() == module || !mayHandOutModuleObject(*firstRequirer))
         return nullptr;
-    return moduleObject(*loaded->firstRequirer);
+    return moduleObject(*firstRequirer);
 }
 
 bool Modules::forEachNewChild(ModuleID module, const ScopedLambda<void(JSObject*)>& functor)
 {
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
-    LoadedModule* loaded = loadedIfExists(module);
-    if (!loaded)
+    WaysToModule* ways = waysToIfRecorded(module);
+    if (!ways)
         return true;
-    for (ModuleID child : loaded->requiredModules) {
+    for (ModuleID child : ways->requiredModules) {
         if (!mayHandOutModuleObject(child))
             return false;
     }
     // The functor may run code of the program, which may require more.
-    while (loaded->numberOfChildrenShown < loaded->requiredModules.size()) {
-        JSObject* childObject = moduleObjectMadeByRequire(loaded->requiredModules[loaded->numberOfChildrenShown++]);
+    while (ways->numberOfChildrenShown < ways->requiredModules.size()) {
+        JSObject* childObject = moduleObjectMadeByRequire(ways->requiredModules[ways->numberOfChildrenShown++]);
         RETURN_IF_EXCEPTION(scope, true);
         functor(childObject);
         RETURN_IF_EXCEPTION(scope, true);
@@ -3783,12 +3790,13 @@ bool Modules::forEachNewChild(ModuleID module, const ScopedLambda<void(JSObject*
 
 void Modules::dropNewChildren(ModuleID module)
 {
-    if (LoadedModule* loaded = loadedIfExists(module))
-        loaded->numberOfChildrenShown = loaded->requiredModules.size();
+    if (WaysToModule* ways = waysToIfRecorded(module))
+        ways->numberOfChildrenShown = ways->requiredModules.size();
 }
 
-JSValue Modules::requireSpecifier(JSValue specifier, ModuleID referrer, bool isNamedByBuild)
+JSValue Modules::requireSpecifier(JSValue specifier, ModuleID referrer, NamedByBuild namedByBuild)
 {
+    bool isNamedByBuild = namedByBuild != NamedByBuild::No;
     JSGlobalObject* realm = m_instance.globalObject;
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
 
@@ -3799,7 +3807,8 @@ JSValue Modules::requireSpecifier(JSValue specifier, ModuleID referrer, bool isN
     RETURN_IF_EXCEPTION(scope, { });
     JSObject* requirer = moduleObject(referrer);
     RETURN_IF_EXCEPTION(scope, { });
-    SetForScope isAskingHost(m_isAskingHost, this->isAskingHost() || isNamedByBuild);
+    // The library asks on behalf of the host: the request under way goes on as it was made.
+    SetForScope isAskingHost(m_isAskingHost, namedByBuild == NamedByBuild::FileOfImage ? RequestToHost(true) : isNamedByBuild ? RequestToHost::forWhatLiesOutsideImage() : this->isAskingHost() ? m_isAskingHost : RequestToHost());
     SetForScope askerLoadsCompiledFilesAlone(m_instance.vm->aotState().askerLoadsCompiledFilesAlone, !isNamedByBuild && loadsCompiledFilesAlone(referrer));
     RELEASE_AND_RETURN(scope, host().requireSpecifier(realm, requirer, specifier));
 }

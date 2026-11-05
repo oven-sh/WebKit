@@ -17,10 +17,12 @@ void seedCellsSharedWithUnseenCode(LinkFlow&);
 
 // Behind LinkFlow::run(). LinkTables::layouts, fields, variables, captures and members. The tables come sized as conservativeLinkTables() leaves them.
 // LinkedLayout::possibleChanges is the whole answer. LinkFlow::possibleChanges lacks what is done through a lost value, a store under `__proto__` or under a computed key, and a name that Object.prototype may gain.
-void writeLayoutsAndCells(const LinkFlow&, TypeArena&, LinkTables&);
-// It begins with a look at every summary that is reached, which MAKES NO TYPE and of the tables writes LinkedFunction::closuresAreChanged alone. Whoever has to wait for his turn at the table of types takes it first:
-// it is left in LinkFlow::writerOfLayouts.
+// IN THREE STEPS, in this order. Only the last makes types: whoever has to wait for his turn at the table of types takes the first two in front of it. What goes from step to step is left in LinkFlow::writerOfLayouts.
+// A look at every summary that is reached. Of the tables it writes LinkedFunction::closuresAreChanged alone, and it reads none.
 void lookAtSummariesForLayoutsAndCells(const LinkFlow&, LinkTables&);
+// The fields that are appended, the runs of makers, and what is said of a field gathered at its declaration. WriterOfLink::functionsWhoseCallersAreAllKnown().
+void writeLayoutsAndCellsAheadOfTypes(const LinkFlow&, BitVector&& functionsWhoseCallersAreAllKnown);
+void writeLayoutsAndCells(const LinkFlow&, TypeArena&);
 
 } } } // namespace JSC::AOT::Typed
 

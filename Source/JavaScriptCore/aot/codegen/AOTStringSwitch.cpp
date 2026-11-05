@@ -82,6 +82,7 @@ public:
 private:
     static constexpr unsigned maxLiteralsComparedOneByOne = 1;
     static constexpr unsigned minStringsForWordDispatch = 3;
+    static constexpr size_t mostCharactersWrittenDown = std::tuple_size_v<decltype(NarrowCharactersOfString::characters)>;
     static constexpr uint16_t otherCellPrimitives = cellPrimitives & ~Primitive::AnyString;
 
     // No two cases have the same text.
@@ -231,14 +232,6 @@ private:
         }
         bool hasWideText = narrowCases.size() != cases.size();
 
-        bool textsAreShort = !hasWideText && std::ranges::all_of(cases, [](const SwitchCase* switchCase) {
-            return !switchCase->text.isEmpty() && switchCase->text.length() <= maxShortStringLength;
-        });
-        if (textsAreShort) {
-            switchByShortString(subject, type, cases);
-            return;
-        }
-
         CellPointer string = requireString(subject, type);
         if (hasWideText)
             switchByLengthThenWord(string, narrowCases, cases);
@@ -266,56 +259,38 @@ private:
         return { characters, loadField<Word32>(impl, m_heaps.StringImpl_length), boolean(true), string };
     }
 
-    // For a rope, a 16-bit string and a text that is too long to be compared in place: nothing in line could answer.
+    // For a text that is too long to be compared in place.
     void compareByCall(CellPointer string, const SwitchCase& switchCase, BlockEdge next)
     {
         m_strings.branchOnEqualsLiteralByStub(m_terminator, ComparedOperand::String, string.value(), switchCase.string, { switchCase.target, next });
     }
 
-    void switchByShortString(Boxed subject, const Type& type, const CaseGroup& cases)
-    {
-        LBasicBlock needsStub = newBlock();
-        CellPointer string = requireString(subject, type);
-        switchOverLengthGroups(string, viewOfFlatNarrowStringOrElse(string, unlikelyEdge(needsStub)), cases);
-
-        // The stub resolves ropes and 16-bit strings without flattening them.
-        m_out.appendTo(needsStub);
-        Vector<SwitchTarget, 8> byWord;
-        for (const SwitchCase* switchCase : cases)
-            byWord.append(SwitchTarget { static_cast<int64_t>(shortStringWord(switchCase->text.span8())), switchCase->target });
-        switchOn(Integer(callStub(m_terminator, shortStringOfValue(), { subject.value() }).first), byWord.span());
-    }
-
     // As bun_core::comptime_string_map! compiles: a jump by the length, then words of the characters against words of the texts. What stands in front is what it takes to have the characters and the length of a string in hand.
     void switchByCharactersOfNarrowString(CellPointer string, const CaseGroup& cases)
     {
-        LBasicBlock needsCalls = newBlock();
-        switchOverLengthGroups(string, viewOfFlatNarrowStringOrElse(string, unlikelyEdge(needsCalls)), cases);
+        LBasicBlock needsStub = newBlock();
+        LBasicBlock hasCharacters = newBlock();
+        ScopeFork fork = m_out.forkScope();
+        // Rare: the block that calls sets up a frame of its own and takes it down again, and whoever brings a flat 8-bit string passes through without one.
+        CharacterView flat = viewOfFlatNarrowStringOrElse(string, rareEdge(needsStub));
+        LValue characters = m_out.phiIn(hasCharacters, flat.characters.value()->type());
+        LValue length = m_out.phiIn(hasCharacters, flat.length.value()->type());
+        auto goOnWith = [&](Pointer itsCharacters, Word32 itsLength) {
+            m_out.upsilon(itsCharacters.value(), characters);
+            m_out.upsilon(itsLength.value(), length);
+            m_out.jump(normalEdge(hasCharacters));
+        };
+        goOnWith(flat.characters, flat.length);
 
-        // The stubs answer for a rope and for a 16-bit string without flattening, and only for a text of its length: a rope that is made for the switch and dropped behind it is never copied.
-        m_out.appendTo(needsCalls);
-        enterFrameOnceForCallsBelow(string);
-        switchByLengthThenCalls(string, m_strings.lengthOf(string), cases);
-    }
+        // One call for the whole switch, whatever the number of its texts: the stub writes the characters down as 8-bit characters, and the same compares read them. A rope that is made for the switch and dropped behind it is never made flat.
+        static_assert(maxLengthOfTextComparedInPlace <= mostCharactersWrittenDown);
+        m_out.appendTo(needsStub);
+        Pointer answer(callStub(m_terminator, narrowCharactersOfString(), { string.value() }).first);
+        Word32 lengthWrittenDown(loadBytes(m_out, sizeof(uint32_t), m_out.address(m_heaps.characters8.atAnyIndex(), answer.value(), OBJECT_OFFSETOF(NarrowCharactersOfString, length))));
+        goOnWith(Pointer(m_out.add(answer.value(), m_out.constIntPtr(OBJECT_OFFSETOF(NarrowCharactersOfString, characters)))), lengthWrittenDown);
 
-    // Each arm below calls, and by itself each would set a frame up and test the stack. No code stands here: it is where the framed part begins.
-    void enterFrameOnceForCallsBelow(CellPointer string)
-    {
-        Machine::PatchOperation* entersFrame = m_out.patchpoint(Machine::Void);
-        entersFrame->effects = Machine::Effects::none();
-        entersFrame->effects.writesLocalState = true;
-        entersFrame->effects.reads = Machine::HeapSet::top();
-        entersFrame->append(string.value(), Machine::ValueRep::ColdAny);
-        entersFrame->onlyKeepsChildrenAlive = true;
-    }
-
-    void switchByLengthThenCalls(CellPointer string, Word32 length, const CaseGroup& cases)
-    {
-        switchOverLength(length, cases, [&](const CaseGroup& group) {
-            emitTestChain(group, [&](const SwitchCase& switchCase, BlockEdge next) {
-                compareByCall(string, switchCase, next);
-            });
-        });
+        m_out.appendToJoin(hasCharacters, fork);
+        switchOverLengthGroups(string, { Pointer(characters), Word32(length), boolean(true), string }, cases);
     }
 
     void switchByLengthThenWord(CellPointer string, const CaseGroup& narrowCases, const CaseGroup& allCases)
@@ -330,12 +305,7 @@ private:
 
         // Whoever writes a case that only a 16-bit string can equal expects such strings.
         m_out.appendTo(wide);
-        if (narrowCases.size() != allCases.size())
-            switchOverLengthGroups(string, { view.characters, view.length, boolean(false), view.owner }, allCases);
-        else {
-            enterFrameOnceForCallsBelow(string);
-            switchByLengthThenCalls(string, view.length, allCases);
-        }
+        switchOverLengthGroups(string, { view.characters, view.length, boolean(false), view.owner }, allCases);
     }
 
     void switchOverLengthGroups(CellPointer string, const CharacterView& viewOfKnownWidth, const CaseGroup& cases)
@@ -347,6 +317,8 @@ private:
 
     Word32 loadWord(const CharacterView& viewOfKnownWidth, DistinguishingWord word)
     {
+        // The characters may be what the stub has written down.
+        RELEASE_ASSERT(!viewOfKnownWidth.is8Bit.value()->asInt() || word.offset + word.width <= mostCharactersWrittenDown);
         const Machine::AbstractHeap& heap = viewOfKnownWidth.is8Bit.value()->asInt() ? m_heaps.characters8.atAnyIndex() : m_heaps.characters16.atAnyIndex();
         return Word32(loadBytes(m_out, word.width, m_out.address(heap, viewOfKnownWidth.characters.value(), word.offset)));
     }
@@ -355,6 +327,11 @@ private:
     void emitLengthGroup(CellPointer string, const CharacterView& view, const CaseGroup& group)
     {
         bool is8Bit = view.is8Bit.value()->asInt();
+        // Of a subject that is longer than what the stub writes down no character may be read: such texts are compared off the cell, one after the other.
+        if (group[0]->text.length() > mostCharactersWrittenDown) {
+            compareSequentially(string, view, group);
+            return;
+        }
         Vector<TextBytes, 8> texts = group.map<Vector<TextBytes, 8>>([&](const SwitchCase* switchCase) {
             return bytesOf(switchCase->text, is8Bit);
         });

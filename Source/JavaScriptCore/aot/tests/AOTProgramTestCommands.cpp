@@ -415,8 +415,25 @@ static void printStartsOfModulesInImage(PrintStream& out, const ProgramTables& t
     }
 }
 
+// The texts lie in this binary. The table that leads to them is the program's, and goes with it.
+using TokensOfRuntimeFunctions = Vector<std::pair<RuntimeFunctionID, StringView>>;
+
+static TokensOfRuntimeFunctions collectTokensOfRuntimeFunctions(const BuiltinTable& builtins)
+{
+    TokensOfRuntimeFunctions tokens;
+    for (const RuntimeFunctionData& function : builtins.runtimeFunctions())
+        tokens.append({ function.id, tokenOf(builtins, function.id) });
+    return tokens;
+}
+
+static StringView tokenOf(const TokensOfRuntimeFunctions& tokens, RuntimeFunctionID id)
+{
+    auto found = std::ranges::find(tokens, id, &std::pair<RuntimeFunctionID, StringView>::first);
+    return found == tokens.end() ? StringView() : found->second;
+}
+
 // Each table that has rows with their number, and the rows of the tables that have a form here.
-static void printImageProgramTables(PrintStream& out, const BuiltinTable& builtins, std::span<const uint8_t> bytes)
+static void printImageProgramTables(PrintStream& out, const TokensOfRuntimeFunctions& tokens, std::span<const uint8_t> bytes)
 {
     if (bytes.size() < sizeof(ProgramTables)) {
         out.println("  shorter than its header");
@@ -431,13 +448,16 @@ static void printImageProgramTables(PrintStream& out, const BuiltinTable& builti
     for (const SourceStampData& row : tables.sourceStamps())
         out.println("  sourceStamp module=m", row.module, " low=", row.low, " high=", row.high);
     for (const CompiledRuntimeFunctionData& row : tables.compiledRuntimeFunctions())
-        out.println("  compiledRuntimeFunction ", tokenOf(builtins, RuntimeFunctionID(row.id)), " function=f", row.function);
+        out.println("  compiledRuntimeFunction ", tokenOf(tokens, RuntimeFunctionID(row.id)), " function=f", row.function);
     printStartsOfModulesInImage(out, tables);
     size_t modulesWithNamedVariables = 0;
-    forEachNamedVariable(tables.namedVariables(), [&](size_t) {
+    forEachNamedVariable(tables.namedVariables(), [&](uint32_t module, size_t numberOfVariables) {
+        out.println("  moduleInHeapSnapshots place=", modulesWithNamedVariables, " module=m", module, " variables=", numberOfVariables);
         ++modulesWithNamedVariables;
     }, [&](const VariableData& row) {
         out.println("  namedVariable module=", modulesWithNamedVariables - 1, " name=s", row.name, row.slot.representation() == SlotRepresentation::DeferredClosure ? " closureOf=f"_s : " offset="_s, row.slot.offset);
+    }, [&](uint32_t first, uint32_t length) {
+        out.println("  closuresOfModule module=", modulesWithNamedVariables - 1, " first=", first, " length=", length);
     });
     forEachNamedCapture(tables.namedCaptures(), [&](const NamedCaptureData& row) {
         out.println("  namedCapture closure=", static_cast<uint32_t>(row.closureNumber), " slot=", static_cast<unsigned>(row.slot), " name=s", row.name);
@@ -445,10 +465,10 @@ static void printImageProgramTables(PrintStream& out, const BuiltinTable& builti
 }
 
 // The list of sections is the header's. A section without a form of its own here is printed as bytes.
-static void printTextOfImageSection(PrintStream& out, const BuiltinTable& builtins, ImageSection section, std::span<const uint8_t> bytes)
+static void printTextOfImageSection(PrintStream& out, const TokensOfRuntimeFunctions& tokens, ImageSection section, std::span<const uint8_t> bytes)
 {
     if (section == ImageSection::ProgramTables) {
-        printImageProgramTables(out, builtins, bytes);
+        printImageProgramTables(out, tokens, bytes);
         return;
     }
     if (section == ImageSection::Functions) {
@@ -516,7 +536,7 @@ static void runImageCommand(TestCommandContext& context)
         printedSections.append(*named);
     }
 
-    const BuiltinTable& builtins = context.program->builtins();
+    TokensOfRuntimeFunctions tokens = collectTokensOfRuntimeFunctions(context.program->builtins());
     std::unique_ptr<CompileOutput> output = compileProgramOfCommand(context);
     std::span<const uint8_t> image = output->section(Wire::ResultSection::Image);
     if (image.size() < sizeof(ImageHeader)) {
@@ -543,7 +563,7 @@ static void runImageCommand(TestCommandContext& context)
             context.out.println("  outside the image");
             continue;
         }
-        printTextOfImageSection(context.out, builtins, named.section, image.subspan(range.offset, range.size));
+        printTextOfImageSection(context.out, tokens, named.section, image.subspan(range.offset, range.size));
     }
 }
 

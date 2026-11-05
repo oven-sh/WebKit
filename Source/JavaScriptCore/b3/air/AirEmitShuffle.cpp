@@ -94,22 +94,22 @@ Vector<Inst, 2> ShufflePair::insts(Code& code, Value* origin) const
     if (src().isMemory() && dst().isMemory()) [[unlikely]]
         return { Inst(moveFor(bank(), width()), origin, src(), dst(), code.newTmp(bank())) };
 
-    if (isValidForm(moveFor(bank(), width()), src().kind(), dst().kind()))
+    if (isValidForm(code.targetFeatures(), moveFor(bank(), width()), src().kind(), dst().kind()))
         return { Inst(moveFor(bank(), width()), origin, src(), dst()) };
 
     // We must be a store immediate or a move immediate if we reach here. The reason:
     // 1. We're not a mem->mem move, given the above check.
     // 2. It's always valid to do a load from Addr into a tmp using Move/Move32/MoveFloat/MoveDouble.
-    ASSERT(isValidForm(moveFor(bank(), width()), Arg::Addr, Arg::Tmp));
+    ASSERT(isValidForm(code.targetFeatures(), moveFor(bank(), width()), Arg::Addr, Arg::Tmp));
     // 3. It's also always valid to do a Tmp->Tmp move.
-    ASSERT(isValidForm(moveFor(bank(), width()), Arg::Tmp, Arg::Tmp));
+    ASSERT(isValidForm(code.targetFeatures(), moveFor(bank(), width()), Arg::Tmp, Arg::Tmp));
     // 4. It's always valid to do a Tmp->Addr store.
-    ASSERT(isValidForm(moveFor(bank(), width()), Arg::Tmp, Arg::Addr));
+    ASSERT(isValidForm(code.targetFeatures(), moveFor(bank(), width()), Arg::Tmp, Arg::Addr));
 
     ASSERT(src().isSomeImm());
     Tmp tmp = code.newTmp(bank());
-    ASSERT(isValidForm(Move, Arg::BigImm, Arg::Tmp));
-    ASSERT(isValidForm(moveFor(bank(), width()), Arg::Tmp, dst().kind()));
+    ASSERT(isValidForm(code.targetFeatures(), Move, Arg::BigImm, Arg::Tmp));
+    ASSERT(isValidForm(code.targetFeatures(), moveFor(bank(), width()), Arg::Tmp, dst().kind()));
     return {
         Inst(Move, origin, Arg::bigImm(src().value()), tmp),
         Inst(moveFor(bank(), width()), origin, tmp, dst()),
@@ -178,6 +178,10 @@ Vector<Inst> emitShuffle(
     // starting source.
     UncheckedKeyHashMap<Arg, Vector<ShufflePair>> shifts;
 
+    // A stack Arg hashes by its StackSlot's address, so the iteration order of these tables is not reproducible.
+    const bool emitsInPairOrder = code.policy().peepholes.emitsShufflesInPairOrder;
+    Vector<Arg, 8> shiftSources;
+
     // We interpret these as Swaps over src()'s that should be executed backwards, i.e. for a list
     // of size 3 we would do "Swap list[1].src(), list[2].src(); Swap list[0].src(), list[1].src()".
     // Note that we actually can't do that if the widths don't match or other bad things happen.
@@ -192,9 +196,19 @@ Vector<Inst> emitShuffle(
 
         Vector<ShufflePair> currentPairs;
 
-        while (!mapping.isEmpty()) {
+        size_t nextPair = 0;
+        auto takeNextSource = [&]() -> Arg {
+            if (!emitsInPairOrder)
+                return mapping.isEmpty() ? Arg() : mapping.begin()->key;
+            for (; nextPair < pairs.size(); ++nextPair) {
+                if (mapping.contains(pairs[nextPair].src()))
+                    return pairs[nextPair].src();
+            }
+            return Arg();
+        };
+
+        while (Arg originalSrc = takeNextSource()) {
             ASSERT(currentPairs.isEmpty());
-            Arg originalSrc = mapping.begin()->key;
             ASSERT(!shifts.contains(originalSrc));
             if (AirEmitShuffleInternal::verbose)
                 dataLog("Processing from ", originalSrc, "\n");
@@ -291,9 +305,24 @@ Vector<Inst> emitShuffle(
                 if (AirEmitShuffleInternal::verbose)
                     dataLog("It's a shift.\n");
                 shifts.add(originalSrc, WTF::move(currentPairs));
+                shiftSources.append(originalSrc);
             }
         }
+        ASSERT(mapping.isEmpty());
     }
+
+    // A shift that became the tail of a longer one is no longer in the table.
+    auto forEachShift = [&](const Invocable<void(Vector<ShufflePair>&)> auto& functor) {
+        if (!emitsInPairOrder) {
+            for (auto& entry : shifts)
+                functor(entry.value);
+            return;
+        }
+        for (const Arg& source : shiftSources) {
+            if (auto found = shifts.find(source); found != shifts.end())
+                functor(found->value);
+        }
+    };
 
     if (AirEmitShuffleInternal::verbose) {
         dataLog("Shifts:\n");
@@ -349,11 +378,11 @@ Vector<Inst> emitShuffle(
     auto handleShiftPair = [&] (const ShufflePair& pair, unsigned scratchIndex) {
         Opcode move = moveForWidth(pair.width());
         
-        if (!isValidForm(move, pair.src().kind(), pair.dst().kind())) {
+        if (!isValidForm(code.targetFeatures(), move, pair.src().kind(), pair.dst().kind())) {
             Tmp scratch =
                 getScratch(scratchIndex, findPossibleScratch(code, bank, pair.src(), pair.dst()));
             RELEASE_ASSERT(scratch);
-            if (isValidForm(move, pair.src().kind(), Arg::Tmp))
+            if (isValidForm(code.targetFeatures(), move, pair.src().kind(), Arg::Tmp))
                 result.append(Inst(moveForWidth(pair.width()), origin, pair.src(), scratch));
             else {
                 ASSERT(pair.src().isSomeImm());
@@ -396,20 +425,18 @@ Vector<Inst> emitShuffle(
     // These end up last in the final sequence, so the final destination of these shifts will be
     // available as a scratch location for anything emitted prior (so, after, since we're emitting in
     // reverse).
-    for (auto& entry : shifts) {
-        Vector<ShufflePair>& shift = entry.value;
+    forEachShift([&](Vector<ShufflePair>& shift) {
         if (shift.last().dst().isTmp())
             handleShift(shift, UpdateScratch);
         commitResult();
-    }
+    });
 
     // Now handle the rest of the shifts.
-    for (auto& entry : shifts) {
-        Vector<ShufflePair>& shift = entry.value;
+    forEachShift([&](Vector<ShufflePair>& shift) {
         if (!shift.last().dst().isTmp())
             handleShift(shift, UpdateScratch);
         commitResult();
-    }
+    });
 
     // From now on, we cannot use new shift destinations as scratches.
     // The final order of these operations after all of the reversing is:
@@ -453,14 +480,14 @@ Vector<Inst> emitShuffle(
                 hasIndex |= pair.src().isIndex() || pair.dst().isIndex();
             }
             
-            canSwap = isValidForm(swap, Arg::Tmp, Arg::Tmp);
+            canSwap = isValidForm(code.targetFeatures(), swap, Arg::Tmp, Arg::Tmp);
 
             // We can totally use swaps even if there are shuffles involving memory. But, we play it
             // safe in that case. There are corner cases we don't handle, and our ability to do it is
             // contingent upon swap form availability.
             
             if (hasMemory) {
-                canSwap &= isValidForm(swap, Arg::Tmp, Arg::Addr);
+                canSwap &= isValidForm(code.targetFeatures(), swap, Arg::Tmp, Arg::Addr);
                 
                 // We don't take the swapping path if there is a mix of widths and some of the
                 // shuffles involve memory. That gets too confusing. We might be able to relax this
@@ -475,7 +502,7 @@ Vector<Inst> emitShuffle(
             }
 
             if (hasIndex)
-                canSwap &= isValidForm(swap, Arg::Tmp, Arg::Index);
+                canSwap &= isValidForm(code.targetFeatures(), swap, Arg::Tmp, Arg::Index);
         }
 
         if (canSwap) {

@@ -250,16 +250,6 @@ TypeFit fitOfPrimitiveInBuiltinType(const BuiltinType& tested, PrimitiveSet prim
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-TypeFit fitOfStringLiteralInBuiltinType(const Program& program, const BuiltinType& tested, StringID text)
-{
-    if (tested.primitives.contains(BuiltinPrimitive::String))
-        return TypeFit::Inside;
-    bool isListed = std::ranges::any_of(tested.stringLiterals, [&](BuiltinName name) {
-        return program.stringOf(name) == text;
-    });
-    return isListed ? TypeFit::Inside : TypeFit::Outside;
-}
-
 TypeFit fitOfOmittedOperandInBuiltinType(const BuiltinType& tested)
 {
     return tested.primitives.containsAny({ BuiltinPrimitive::NotPassed, BuiltinPrimitive::Undefined }) ? TypeFit::Inside : TypeFit::Outside;
@@ -511,12 +501,6 @@ OperandFit fitOf(const BuiltinTypeContext& context, TypeID operandOrNotPassed, B
 bool fitsIfPristine(const BuiltinTypeContext& context, TypeID operandOrNotPassed, BuiltinTypeID tested)
 {
     return fitWithoutPristineProofs(context, operandOrNotPassed, tested).fitsIfPristine;
-}
-
-PristineRequirement pristineRequirementOf(const BuiltinTypeContext& context, TypeID operand, BuiltinTypeID tested)
-{
-    std::optional<PristineAspectsOfOperand> aspects = pristineAspectsAskedOf(context, operand, tested);
-    return aspects ? unprovenPristineRequirementOf(*aspects) : PristineRequirement();
 }
 
 } } } // namespace JSC::AOT::Typed

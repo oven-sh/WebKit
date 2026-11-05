@@ -10,7 +10,7 @@
 # LINK: access f1 v2 under "kind"
 # LINK-NEXT: access f2 v3 under "kind"
 # LINK: field L0.0 "kind" proven=string writers-known
-# which integer is proven of `size` is another row's business (i32, and 1 with the exact types of numbers-3): that the store does not come to it shows in what stands behind the type
+# which integer is proven of `size` is another row's business (i32, and 1 where the types of numbers are exact): that the store does not come to it shows in what stands behind the type
 # LINK: field L0.1 "size" proven={{*}} writers-known written-at-construction-alone
 # LINK: layout L0 changes=[]
 # with Folding withheld the scan asks nothing of constants, and the access goes by the value of its key

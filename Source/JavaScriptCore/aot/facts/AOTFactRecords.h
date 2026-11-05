@@ -34,8 +34,6 @@ namespace JSC { namespace AOT { namespace Typed {
 
 // What the answers of Facts are made of. Every record claims nothing as it is default-constructed.
 
-using CalleeListID = ID<struct CalleeListIDTag>;
-
 inline constexpr Witness noWitness { Wire::none, Wire::none, noSourceLocation };
 
 constexpr bool hasFunction(const Witness& witness) { return witness.function != Wire::none; }
@@ -85,22 +83,6 @@ struct Summary {
     // In operations of the body as written.
     uint32_t sizeOfBody { 0 };
     bool hasNoLoops { false };
-};
-
-// ---- Who calls whom
-
-struct FactCallSite {
-    ValueID site;
-    // None: the row lists no function.
-    CalleeListID callees;
-};
-
-struct FactCallGraph {
-    // By caller, ascending by site.
-    FactRows<FactCallSite> sitesOfCaller;
-    // By list, ascending. Sites with the same callees share the list.
-    FactRows<FunctionID> functionsOfList;
-    FactRows<CalleeListID> listsOfFunction;
 };
 
 // ---- Types at positions
@@ -177,7 +159,6 @@ enum class LayoutFact : uint8_t {
 
 struct LayoutFacts {
     OptionSet<LayoutFact> facts;
-    std::optional<uint32_t> closureEnvironmentField;
 };
 
 struct ClassFacts {
@@ -215,6 +196,12 @@ struct RegExpTextWorkedOut {
     bool isOneOfAllAtSomeCall { false };
 };
 
+// A call of RegExp in the program's own code at which no text has been worked out: whatever arrives there is compiled when the program runs.
+struct RegExpCallWithoutText {
+    FunctionID function;
+    ValueID site;
+};
+
 struct WorkerEntry {
     StringID path;
     bool isGuess { false };
@@ -228,14 +215,6 @@ struct MutationWitness {
     ObjectID object;
     ObjectMutation mutation { ObjectMutation::ReachNativeCode };
     Witness witness { noWitness };
-};
-
-struct UnknownOrigin {
-    UnprovenCause cause { UnprovenCause::Unknown };
-    Witness witness { noWitness };
-    uint32_t distance { 0 };
-    bool hasOtherRoots { false };
-    std::array<Wire::SourceLocation, 3> otherOrigins { noSourceLocation, noSourceLocation, noSourceLocation };
 };
 
 // ---- The table of built-ins

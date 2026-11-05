@@ -30,11 +30,11 @@ static constexpr uint32_t mostOperationsOfBodyBuiltIntoFrameOfCaller = 40;
 
 static_assert(maxNestedFunctionsWithoutStackCheck <= std::numeric_limits<uint8_t>::max());
 
-// Besides the frames counted here, four entry frames may stand below a stack check: that of a generic entry, which is entered right after the check made by whoever calls through the word of a closure,
-// that of the bound function that such an entry goes on to, that of an entry of the method table above a method that tests, and that of a parameter guard in front of the version that makes the next check.
+// Besides the frames counted here, three entry frames may stand below a stack check: that of a generic entry, which is entered right after the check made by whoever calls through the word of a closure,
+// that of an entry of the method table above a method that tests, and that of a parameter guard in front of the version that makes the next check.
 // The body that a generic entry leads to may be covered too. Its frames are among those counted here.
 // The room that is left has to hold the argument registers that a generic entry spills, and the frame of a stub or the frame record that a function pushes before its own check.
-static constexpr size_t maxEntryFramesWithoutStackCheck = 4;
+static constexpr size_t maxEntryFramesWithoutStackCheck = 3;
 static_assert((maxNestedFunctionsWithoutStackCheck + maxEntryFramesWithoutStackCheck) * (maxFrameSizeWithoutStackCheck + 2 * sizeof(void*)) + sizeOfSpilledArgumentRegisters + maxUncheckedFrameSize + 2 * sizeof(void*) <= maxStackUsedWithoutCheck);
 
 namespace {
@@ -170,9 +170,6 @@ auto CounterOfCoveredFrames::traitsOf(FunctionID id, const StronglyConnectedComp
     bool isCoroutine = function.isCoroutine();
     // The Body of a coroutine is its ramp, which suspends nowhere. The loader enters that of a module's body.
     if (!convention.has(CodeRole::Body) || (isCoroutine ? function.isModuleBody() : m_facts.summaries().at(id).has(SummaryTrait::Suspends)))
-        return { };
-    // The walk writes a parser and every call of one, so nobody lists either, and the parsers of a type that holds itself call each other in a cycle.
-    if (function.role == FunctionRole::Parser)
         return { };
     // A start tests the stack in its own frame, the calls at bare sites are counted, and the run time enters by value, right behind the check of whoever calls through the word of a closure.
     if (function.isModuleBody())
@@ -352,7 +349,7 @@ void checkStackTests(const Program& program, const Facts& facts, const Plan& pla
         FunctionConvention convention = conventions.of(id);
         // A caller that has the ramp written out at the call enters a body that never suspends past whatever test the ramp makes. So the body counts on whoever the ramp counts on.
         expect(!bodyOfCoroutineIsCovered(id) || (convention.has(CodeRole::CoroutineBody) && convention.coroutineNeverSuspends && isCovered(id)), id, 0, "the body of a coroutine makes no stack test, and it may suspend or its ramp tests"_s);
-        expect(!isCovered(id) || (convention.has(CodeRole::Body) && function.role != FunctionRole::Parser && !(function.isCoroutine() && function.isModuleBody())), id, 0, "a body makes no stack test, and somebody enters it whom nobody counts"_s);
+        expect(!isCovered(id) || (convention.has(CodeRole::Body) && !(function.isCoroutine() && function.isModuleBody())), id, 0, "a body makes no stack test, and somebody enters it whom nobody counts"_s);
         expect(!tests.slowBodiesCoveredByCallers.get(index) || (isCovered(id) && (!convention.has(CodeRole::CoroutineBody) || bodyOfCoroutineIsCovered(id))), id, 0, "a slow version makes no stack test, and the body whose place it takes tests"_s);
     }
     for (const MethodFamily& family : conventions.methodFamilies()) {

@@ -11,7 +11,6 @@
 #include "AOTAccessEmitter.h"
 #include "AOTArrayBuiltinEmitter.h"
 #include "AOTBuiltinMembers.h"
-#include "AOTBuiltinOwnSlots.h"
 #include "AOTBuiltinTableBindings.h"
 #include "AOTBuiltinTypes.h"
 #include "AOTCallEmitter.h"
@@ -353,12 +352,7 @@ void BuiltinCallEmitter::generateCallBuiltin(const ValueContext& value)
             failBuiltinOperationWithZero(generator(), value, InternalErrorKind::OpcodeWithoutCode);
             return;
         }
-        std::optional<uint32_t> offsetOfCachedValue = BuiltinBindings::cachedValueOffsetOf(id);
-        if (!offsetOfCachedValue) {
-            callFunction();
-            return;
-        }
-        defineResult(readCachedGetter(value, overload, *offsetOfCachedValue));
+        callFunction();
         return;
     }
     case BuiltinImplementationKind::OwnSlot:
@@ -366,98 +360,15 @@ void BuiltinCallEmitter::generateCallBuiltin(const ValueContext& value)
             failBuiltinOperationWithZero(generator(), value, InternalErrorKind::OpcodeWithoutCode);
             return;
         }
-        defineResult(readOwnSlot(value, overload));
+        defineResult(emitter<AccessEmitter>().getById(value, boxedOperand(value, receiver), keyOf(overload)));
         return;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-Boxed BuiltinCallEmitter::readCachedGetter(const ValueContext& value, const BuiltinOverload& overload, uint32_t offsetOfCachedValue)
-{
-    RELEASE_ASSERT(overload.mode == BuiltinCallMode::Get);
-    Boxed receiver = boxedOperand(value, value->receiverOperand());
-    Boxed cached(m_out.load64(m_out.address(m_heaps.hostObjectCachedValues, unboxCell(receiver).value(), offsetOfCachedValue)));
-    return either<Boxed>(isNotEmpty(cached), [&] {
-        return cached;
-    }, [&] {
-        return callBuiltinFunction(value, value->overload(), receiver, { });
-    });
-}
-
 PropertyKeyID BuiltinCallEmitter::keyOf(const BuiltinOverload& overload) const
 {
     return m_program.keyOf(m_builtins.at(overload.builtin).name);
-}
-
-Boxed BuiltinCallEmitter::loadProperty(CellPointer object, PropertyOffset offset)
-{
-    const Machine::AbstractHeap& properties = m_heaps.entire(AbstractHeap::NamedProperties);
-    if (isInlineOffset(offset))
-        return Boxed(m_out.load64(m_out.address(properties, object.value(), JSObject::offsetOfInlineStorage() + offset * static_cast<ptrdiff_t>(sizeof(EncodedJSValue)))));
-
-    Pointer butterfly = loadField<Pointer>(object, m_heaps.JSObject_butterfly);
-    Boxed property(m_out.load64(m_out.address(properties, butterfly.value(), offsetInButterfly(offset) * static_cast<ptrdiff_t>(sizeof(EncodedJSValue)))));
-    ensureStillAliveHere(object);
-    return property;
-}
-
-// One for each class that the receiver may be an instance of, where every class has the slot and one load reads them all. Otherwise the one that the call names.
-Vector<BuiltinOverloadID, 4> BuiltinCallEmitter::ownSlotsReadBy(const ValueContext& value, const BuiltinOverload& overload)
-{
-    auto hasWord = [&](BuiltinOverloadID id) {
-        return m_builtins.at(id).code.implementation.ownSlot.structure.index() < BuiltinWords::numberOfOwnSlotStructures;
-    };
-    BuiltinOverloadID named = value->overload();
-    if (!m_builtins.receiverClassOf(overload.builtin) || !hasWord(named))
-        return { };
-
-    Vector<BuiltinOverloadID, 4> slots;
-    Type receiver = typeOf(value->receiverOperand());
-    bool everyClassHasSlot = receiver.isObject() && receiver.hasOnlyClassObjects() && std::ranges::all_of(classPartsOf(types(), receiver), [&](const ClassPart& part) {
-        BuiltinOverloadID slot = findOwnSlotOfInstances(m_builtins, part.builtinClass, m_builtins.at(overload.builtin).name);
-        if (!slot || !hasWord(slot) || !liesAtSamePlace(m_builtins, slot, named))
-            return false;
-        slots.append(slot);
-        return true;
-    });
-    if (!everyClassHasSlot || slots.isEmpty())
-        return { named };
-    return slots;
-}
-
-// An object that has the Structure that the constructor of its class leaves it with holds the property where that constructor lays it. Any other object is read by name.
-Boxed BuiltinCallEmitter::readOwnSlot(const ValueContext& value, const BuiltinOverload& overload)
-{
-    RELEASE_ASSERT(overload.mode == BuiltinCallMode::Get);
-    Boxed receiver = boxedOperand(value, value->receiverOperand());
-    auto readByName = [&] {
-        return emitter<AccessEmitter>().getById(value, receiver, keyOf(overload));
-    };
-    Vector<BuiltinOverloadID, 4> slots = ownSlotsReadBy(value, overload);
-    if (slots.isEmpty())
-        return readByName();
-
-    CellPointer object = unboxCell(receiver);
-    Word32 structureOfObject = loadStructureID(object);
-    Condition hasSlot;
-    uint32_t wordsAsked = 0;
-    for (BuiltinOverloadID slot : slots) {
-        unsigned word = m_builtins.at(slot).code.implementation.ownSlot.structure.index();
-        wordsAsked |= 1u << word;
-        hasSlot = logicalOr(hasSlot, equal(structureOfObject, loadMutable32(AOT_INSTANCE_OFFSET(builtins.ownSlotStructureIDs) + word * static_cast<ptrdiff_t>(sizeof(uint32_t)))));
-    }
-    PropertyOffset offset = propertyOffsetOfOwnSlot(m_builtins.at(m_builtins.receiverClassOf(overload.builtin)).type, overload.code.implementation.ownSlot.offset);
-    return either<Boxed>(hasSlot, [&] {
-        return loadProperty(object, offset);
-    }, [&] {
-        // A word is zero until somebody has looked for its Structure.
-        Word32 lookedFor = bitAnd(loadMutable32(AOT_INSTANCE_OFFSET(builtins.ownSlotStructuresLookedFor)), static_cast<int32_t>(wordsAsked));
-        ifElse(equal(lookedFor, static_cast<int32_t>(wordsAsked)), [] { }, [&] {
-            for (BuiltinOverloadID slot : slots)
-                callVoidOperation(value, RuntimeOperation::FindOwnSlotStructure, { word32(static_cast<int32_t>(slot.index())) }, { .isOnRarePath = true });
-        });
-        return readByName();
-    });
 }
 
 Boxed BuiltinCallEmitter::callCustomGetter(const OperationContext& context, BuiltinOverloadID id, Boxed receiver, bool receiverIsMatched)
@@ -755,7 +666,7 @@ void BuiltinCallEmitter::generateFormatNumberWithPattern(const ValueContext& val
 
 void BuiltinCallEmitter::generateNewArgumentList(const ValueContext& value)
 {
-    define(value, callOperation<CellPointer>(value, RuntimeOperation::NewArgumentList, { in<Boxed>(value->calleeOperand()), in<Boxed>(value->arrayLikeOperand()) }));
+    define(value, callOperation<CellPointer>(value, RuntimeOperation::NewArgumentList, { in<Boxed>(value->arrayLikeOperand()) }));
 }
 
 bool BuiltinCallEmitter::canShareRegExpLiteral(const Operation& literal) const

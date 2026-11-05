@@ -34,7 +34,6 @@ public:
     ParsedName parseNameAndColon(const uint8_t* quote);
 
     // An ordinary object with the first `count` properties of the Structure. `values` has room for the inline capacity of the Structure, and what lies behind the count is overwritten.
-    static JSObject* createObjectWithStructure(VM&, Structure*, EncodedJSValue* values, unsigned count);
 
     class LearnedNames;
 
@@ -137,9 +136,6 @@ private:
 
     NamesOfElementInFront m_entries[numberOfEntries];
 };
-
-// One value of the open source, from its first byte on. A number, a word and a string that the cache holds are answered without a parser.
-ParsedJSONValue parseJSONValueAt(Instance&, VM&, JSGlobalObject*, const uint8_t* start);
 
 } } // namespace JSC::AOT
 

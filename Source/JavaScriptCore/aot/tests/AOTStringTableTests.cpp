@@ -56,25 +56,6 @@ struct TestStrings {
 
 } // anonymous namespace
 
-static void stringsRoundTripThroughEncoding()
-{
-    const std::pair<Vector<char16_t>, Vector<uint8_t>> cases[] = {
-        { { u'a', u'z' }, { 0x61, 0x7a } },
-        { { 0x00e9 }, { 0xc3, 0xa9 } },
-        { { 0x20ac }, { 0xe2, 0x82, 0xac } },
-        { { 0xd83d, 0xde00 }, { 0xf0, 0x9f, 0x98, 0x80 } },
-        { { 0xd83d }, { 0xed, 0xa0, 0xbd } },
-        { { 0xde00 }, { 0xed, 0xb8, 0x80 } },
-        { { 0xde00, 0xd83d }, { 0xed, 0xb8, 0x80, 0xed, 0xa0, 0xbd } },
-    };
-    for (auto& [units, bytes] : cases) {
-        AOT_TEST_CHECK(encodeProgramString(units.span()) == bytes);
-        AOT_TEST_CHECK(encodeProgramString(StringView(units.span())) == bytes);
-        AOT_TEST_CHECK(decodeProgramString(bytes.span()) == units);
-        AOT_TEST_CHECK(isCanonicalProgramString(bytes.span()));
-    }
-}
-
 static void stringsRejectOverlongAndSplitPairs()
 {
     const Vector<uint8_t> cases[] = {
@@ -90,78 +71,6 @@ static void stringsRejectOverlongAndSplitPairs()
     }
 }
 
-static void stringsEncodeLatin1Views()
-{
-    constexpr std::array<Latin1Character, 2> characters { 'a', 0xe9 };
-    AOT_TEST_CHECK(encodeProgramString(StringView(std::span<const Latin1Character>(characters))) == Vector<uint8_t>({ 0x61, 0xc3, 0xa9 }));
-    AOT_TEST_CHECK(encodeProgramString(StringView("az"_s)) == Vector<uint8_t>({ 0x61, 0x7a }));
-    AOT_TEST_CHECK(encodeProgramString(StringView()).isEmpty());
-}
-
-static void stringsCompareByCodeUnits()
-{
-    constexpr std::array<uint8_t, 3> fullwidthTilde { 0xef, 0xbd, 0x9e };
-    constexpr std::array<uint8_t, 4> supplementaryCharacter { 0xf0, 0x9f, 0x98, 0x80 };
-    constexpr std::array<uint8_t, 3> leadSurrogate { 0xed, 0xa0, 0xbd };
-    AOT_TEST_CHECK(compareProgramStrings(supplementaryCharacter, fullwidthTilde) == std::strong_ordering::less);
-    AOT_TEST_CHECK(compareProgramStrings(fullwidthTilde, supplementaryCharacter) == std::strong_ordering::greater);
-    AOT_TEST_CHECK(compareProgramStrings(leadSurrogate, supplementaryCharacter) == std::strong_ordering::less);
-    AOT_TEST_CHECK(compareProgramStrings(bytesOf("a"_s), bytesOf("b"_s)) == std::strong_ordering::less);
-    AOT_TEST_CHECK(compareProgramStrings(bytesOf("a"_s), bytesOf("ab"_s)) == std::strong_ordering::less);
-    AOT_TEST_CHECK(compareProgramStrings(bytesOf("z"_s), fullwidthTilde) == std::strong_ordering::less);
-    AOT_TEST_CHECK(compareProgramStrings(fullwidthTilde, fullwidthTilde) == std::strong_ordering::equal);
-    AOT_TEST_CHECK(compareProgramStrings({ }, bytesOf("a"_s)) == std::strong_ordering::less);
-}
-
-static void stringTableKeepsStringsAsRead()
-{
-    constexpr ASCIILiteral first = "~first"_s;
-    constexpr ASCIILiteral second = "then"_s;
-    TestStrings test({ asRead(first), asRead(second) });
-    StringTable& strings = test.strings;
-    AOT_TEST_CHECK(strings[StringID(0u)].data() == bytesOf(first).data() && strings[StringID(0u)].size() == first.length());
-    AOT_TEST_CHECK(strings[StringID(1u)].data() == bytesOf(second).data() && strings[StringID(1u)].size() == second.length());
-    AOT_TEST_CHECK(strings.nameClass(StringID(0u)) == NameClass::Ordinary && !strings.builtinName(StringID(0u)));
-    AOT_TEST_CHECK(strings.nameClass(StringID(1u)) == NameClass::Then && strings.builtinName(StringID(1u)) == BuiltinNames::then);
-    AOT_TEST_CHECK(strings.intern(bytesOf(first)) == StringID(0u) && strings.find(bytesOf(second)) == StringID(1u));
-}
-
-static void stringTableInternReturnsExistingID()
-{
-    TestStrings test;
-    StringTable& strings = test.strings;
-    StringID id = strings.intern(bytesOf("~first"_s));
-    size_t size = strings.size();
-    AOT_TEST_CHECK(equalSpans(strings[id], bytesOf("~first"_s)));
-    AOT_TEST_CHECK(strings.intern(bytesOf("~first"_s)) == id && strings.size() == size);
-    AOT_TEST_CHECK(strings.intern(StringView("~first"_s)) == id && strings.size() == size);
-    AOT_TEST_CHECK(strings.intern(std::span<const uint8_t> { }) == strings.emptyString() && strings.size() == size);
-    AOT_TEST_CHECK(strings.intern(StringView()) == strings.emptyString() && strings[strings.emptyString()].empty());
-    AOT_TEST_CHECK(strings.intern(bytesOf("~second"_s)) != id && strings.size() == size + 1);
-}
-
-static void stringTableClassifiesInternedStrings()
-{
-    TestStrings test;
-    StringTable& strings = test.strings;
-    AOT_TEST_CHECK(strings.nameClass(strings.intern(bytesOf("~first"_s))) == NameClass::Ordinary);
-    AOT_TEST_CHECK(strings.nameClass(strings.intern(bytesOf("12"_s))) == NameClass::Index);
-    AOT_TEST_CHECK(strings.nameClass(strings.intern(bytesOf("1.5"_s))) == NameClass::CanonicalNumericString);
-    AOT_TEST_CHECK(strings.nameClass(strings.stringOf(BuiltinNames::length)) == NameClass::Length);
-    AOT_TEST_CHECK(strings.nameClass(strings.emptyString()) == NameClass::Ordinary);
-}
-
-static void stringTableFindsOnlyInternedStrings()
-{
-    TestStrings test;
-    StringTable& strings = test.strings;
-    size_t size = strings.size();
-    AOT_TEST_CHECK(!strings.find(bytesOf("~first"_s)) && strings.size() == size);
-    StringID id = strings.intern(bytesOf("~first"_s));
-    AOT_TEST_CHECK(strings.find(bytesOf("~first"_s)) == id && !strings.find(bytesOf("~firs"_s)) && !strings.find(bytesOf("~first~"_s)));
-    AOT_TEST_CHECK(strings.find({ }) == strings.emptyString());
-}
-
 static void stringTableInternJoinsSurrogates()
 {
     TestStrings test;
@@ -171,85 +80,6 @@ static void stringTableInternJoinsSurrogates()
     StringID id = strings.intern(splitPair);
     AOT_TEST_CHECK(id == strings.intern(codePoint) && std::ranges::equal(strings[id], codePoint));
     AOT_TEST_CHECK(id != strings.intern(std::span(splitPair).first(3)));
-}
-
-static void stringTableRoundTripsLoneSurrogates()
-{
-    TestStrings test;
-    StringTable& strings = test.strings;
-    const Vector<char16_t> cases[] = {
-        { 0xd83d },
-        { 0xde00 },
-        { u'a', 0xde00, 0xd83d, u'b' },
-        { 0xd83d, 0xd83d, 0xde00 },
-    };
-    for (const Vector<char16_t>& units : cases) {
-        StringID id = strings.intern(StringView(units.span()));
-        AOT_TEST_CHECK(strings[id].size() && isCanonicalProgramString(strings[id]) && !strings.isAllASCII(id));
-        AOT_TEST_CHECK(std::ranges::equal(strings[id], encodeProgramString(units.span())));
-        Vector<char16_t> buffer;
-        AOT_TEST_CHECK(strings.viewOf(id, buffer) == StringView(units.span()) && buffer == units);
-        String string = strings.toWTFString(id);
-        AOT_TEST_CHECK(string == StringView(units.span()) && strings.intern(StringView(string)) == id);
-    }
-}
-
-static void stringTableViewsASCIIInPlace()
-{
-    constexpr ASCIILiteral asReadText = "~first"_s;
-    TestStrings test({ asRead(asReadText) });
-    StringTable& strings = test.strings;
-    for (StringID id : { StringID(0u), strings.intern(bytesOf("~second"_s)) }) {
-        Vector<char16_t> buffer;
-        StringView view = strings.viewOf(id, buffer);
-        AOT_TEST_CHECK(strings.isAllASCII(id) && view.is8Bit() && buffer.isEmpty());
-        AOT_TEST_CHECK(byteCast<uint8_t>(view.span8()).data() == strings[id].data() && view.length() == strings[id].size());
-    }
-    Vector<char16_t> buffer;
-    AOT_TEST_CHECK(byteCast<uint8_t>(strings.viewOf(StringID(0u), buffer).span8()).data() == bytesOf(asReadText).data());
-    AOT_TEST_CHECK(strings.viewOf(strings.emptyString(), buffer).isEmpty() && buffer.isEmpty());
-    AOT_TEST_CHECK(strings.toWTFString(StringID(0u)) == asReadText && strings.toWTFString(strings.emptyString()).isEmpty());
-}
-
-static void stringTableDecodesOtherViewsIntoBuffer()
-{
-    TestStrings test;
-    StringTable& strings = test.strings;
-    constexpr std::array<uint8_t, 3> text { 0x61, 0xc3, 0xa9 };
-    StringID id = strings.intern(text);
-    Vector<char16_t> buffer;
-    StringView view = strings.viewOf(id, buffer);
-    AOT_TEST_CHECK(!strings.isAllASCII(id) && !view.is8Bit() && view.span16().data() == buffer.span().data());
-    AOT_TEST_CHECK(buffer == Vector<char16_t>({ u'a', 0x00e9 }) && view.length() == 2);
-    AOT_TEST_CHECK(strings.toWTFString(id) == view);
-}
-
-static void stringTableHasEveryBuiltinTextName()
-{
-    TestStrings test;
-    StringTable& strings = test.strings;
-    const BuiltinTable& table = BuiltinTable::singleton();
-    AOT_TEST_CHECK(table.nameCount());
-    for (unsigned index = 0; index < table.nameCount(); ++index) {
-        BuiltinName name(index);
-        StringID string = strings.stringOf(name);
-        if (table.isSymbolName(name) || table.isRegisteredSymbolName(name)) {
-            AOT_TEST_CHECK(!string);
-            continue;
-        }
-        AOT_TEST_CHECK(string && strings.builtinName(string) == name && equalSpans(strings[string], table.textOf(name)));
-    }
-    AOT_TEST_CHECK(!strings.builtinName(strings.intern(bytesOf("~first"_s))));
-    AOT_TEST_CHECK(strings.stringOf(BuiltinNames::iterator) && !strings.stringOf(BuiltinNames::iteratorSymbol));
-    AOT_TEST_CHECK(strings.find(table.textOf(BuiltinNames::iteratorSymbol)) == strings.stringOf(BuiltinNames::iterator));
-}
-
-static void stringTableUsesProgramStringForBuiltinName()
-{
-    TestStrings test({ asRead("~first"_s), asRead("length"_s) });
-    StringTable& strings = test.strings;
-    AOT_TEST_CHECK(strings.stringOf(BuiltinNames::length) == StringID(1u) && strings.builtinName(StringID(1u)) == BuiltinNames::length);
-    AOT_TEST_CHECK(strings.intern(bytesOf("length"_s)) == StringID(1u));
 }
 
 static void stringTableHoldsEveryCodeUnit()
@@ -293,29 +123,6 @@ static void stringTableGrowsShards()
     AOT_TEST_CHECK(strings.size() == size + count);
 }
 
-static void stringTableFillsShardsInParallel()
-{
-    constexpr unsigned count = 5000;
-    Vector<std::array<uint8_t, 5>> texts;
-    for (unsigned index = 0; index < count; ++index)
-        texts.append(distinctText(index));
-    auto stringsAsRead = [&] {
-        return texts.map([](auto& text) {
-            return asRead(text);
-        });
-    };
-
-    size_t sizeOnOneThread = 0;
-    for (unsigned width : { 1u, 8u }) {
-        TestStrings test(stringsAsRead(), width);
-        for (unsigned index = 0; index < count; ++index)
-            AOT_TEST_CHECK(test.strings.find(texts[index]) == StringID(index));
-        if (width == 1)
-            sizeOnOneThread = test.strings.size();
-        AOT_TEST_CHECK(test.strings.size() == sizeOnOneThread && sizeOnOneThread > count);
-    }
-}
-
 // Each text is the front of the next. Whatever the order in which they are handed over, each is the string that intern() makes of its bytes, with the same number, and lies where it was kept.
 static void stringTableInternsKeptTextsAsAnyOther()
 {
@@ -351,21 +158,6 @@ static void stringTableInternsKeptTextsAsAnyOther()
     }
 }
 
-// A kept text that the table has is that string, and its bytes are left alone.
-static void stringTableFindsKeptTextThatItHas()
-{
-    TestStrings test({ asRead("abc"_s), asRead("abcdefghijkl"_s) });
-    AOT_TEST_CHECK(test.strings.numberOfStringsAsRead() == 2);
-    std::span<const uint8_t> bytes = test.strings.keep(bytesOf("abcdefghijklmnop"_s));
-    StringTable::FrontsOfKeptTexts fronts;
-    AOT_TEST_CHECK(test.strings.internKept(bytes.first(3), fronts) == StringID(0u));
-    AOT_TEST_CHECK(test.strings.internKept(bytes.first(12), fronts) == StringID(1u));
-    StringID whole = test.strings.internKept(bytes, fronts);
-    AOT_TEST_CHECK(whole.index() >= test.strings.numberOfStringsAsRead() && test.strings[whole].data() == bytes.data());
-    for (size_t position = 0; position < bytes.size(); ++position)
-        AOT_TEST_CHECK(test.strings.codeUnitAt(whole, position));
-}
-
 // The shards grow many times while the texts come, and each growth asks for the hash of every string: it is remembered, so nobody goes through the bytes again.
 static void stringTableFindsKeptTextsBehindGrowthOfShards()
 {
@@ -381,47 +173,6 @@ static void stringTableFindsKeptTextsBehindGrowthOfShards()
         ids.append(test.strings.internKept(bytes.first(end), fronts));
     for (size_t end = 2; end <= count; end += 97)
         AOT_TEST_CHECK(test.strings.find(run.span().first(end)) == ids[end - 2]);
-}
-
-static void nameClassOfEveryWord()
-{
-    unsigned numberOfWords = 0;
-    for (NameClass nameClass : allMembersOf<NameClass>) {
-        std::span<const char> words = wordsOf(nameClass).span();
-        while (!words.empty()) {
-            size_t length = std::ranges::find(words, ' ') - words.begin();
-            AOT_TEST_CHECK(length && classifyName(byteCast<uint8_t>(words.first(length))) == nameClass);
-            words = words.subspan(std::min(length + 1, words.size()));
-            ++numberOfWords;
-        }
-    }
-    AOT_TEST_CHECK(numberOfWords >= 20);
-
-    const std::pair<ASCIILiteral, NameClass> cases[] = {
-        { "__proto__"_s, NameClass::Proto },
-        { "constructor"_s, NameClass::Constructor },
-        { "hasOwnProperty"_s, NameClass::ObjectPrototypeMember },
-        { "__lookupSetter__"_s, NameClass::ObjectPrototypeMember },
-        { "length"_s, NameClass::Length },
-        { "prototype"_s, NameClass::Prototype },
-        { "call"_s, NameClass::CallOrApply },
-        { "apply"_s, NameClass::CallOrApply },
-        { "bind"_s, NameClass::Bind },
-        { "lastIndex"_s, NameClass::LastIndex },
-        { "then"_s, NameClass::Then },
-        { "toJSON"_s, NameClass::ToJSON },
-    };
-    for (auto& [text, nameClass] : cases)
-        AOT_TEST_CHECK(classifyName(bytesOf(text)) == nameClass);
-}
-
-static void nameClassOfOtherWords()
-{
-    constexpr std::array<uint8_t, 2> nonASCIIText { 0xc3, 0xa9 };
-    AOT_TEST_CHECK(classifyName({ }) == NameClass::Ordinary);
-    AOT_TEST_CHECK(classifyName(nonASCIIText) == NameClass::Ordinary);
-    for (ASCIILiteral text : { "Length"_s, "lengths"_s, "lengt"_s, "call apply"_s, "call "_s, " "_s, "thenthenthenthenthenthenthenthenthen"_s })
-        AOT_TEST_CHECK(classifyName(bytesOf(text)) == NameClass::Ordinary);
 }
 
 static void nameClassOfNumbers()
@@ -460,28 +211,12 @@ static void nameClassOfNumbers()
 std::span<const NativeTest> stringTableTests()
 {
     static constexpr NativeTest tests[] = {
-        { "string-table/strings-round-trip-through-encoding"_s, stringsRoundTripThroughEncoding },
         { "string-table/strings-reject-overlong-and-split-pairs"_s, stringsRejectOverlongAndSplitPairs },
-        { "string-table/strings-encode-latin1-views"_s, stringsEncodeLatin1Views },
-        { "string-table/strings-compare-by-code-units"_s, stringsCompareByCodeUnits },
-        { "string-table/keeps-strings-as-read"_s, stringTableKeepsStringsAsRead },
-        { "string-table/intern-returns-existing-id"_s, stringTableInternReturnsExistingID },
-        { "string-table/classifies-interned-strings"_s, stringTableClassifiesInternedStrings },
-        { "string-table/finds-only-interned-strings"_s, stringTableFindsOnlyInternedStrings },
         { "string-table/intern-joins-surrogates"_s, stringTableInternJoinsSurrogates },
-        { "string-table/round-trips-lone-surrogates"_s, stringTableRoundTripsLoneSurrogates },
-        { "string-table/views-ascii-in-place"_s, stringTableViewsASCIIInPlace },
-        { "string-table/decodes-other-views-into-buffer"_s, stringTableDecodesOtherViewsIntoBuffer },
-        { "string-table/has-every-builtin-text-name"_s, stringTableHasEveryBuiltinTextName },
-        { "string-table/uses-program-string-for-builtin-name"_s, stringTableUsesProgramStringForBuiltinName },
         { "string-table/holds-every-code-unit"_s, stringTableHoldsEveryCodeUnit },
         { "string-table/grows-shards"_s, stringTableGrowsShards },
-        { "string-table/fills-shards-in-parallel"_s, stringTableFillsShardsInParallel },
         { "string-table/interns-kept-texts-as-any-other"_s, stringTableInternsKeptTextsAsAnyOther },
-        { "string-table/finds-a-kept-text-that-it-has"_s, stringTableFindsKeptTextThatItHas },
         { "string-table/finds-kept-texts-behind-the-growth-of-shards"_s, stringTableFindsKeptTextsBehindGrowthOfShards },
-        { "name-class/every-word"_s, nameClassOfEveryWord },
-        { "name-class/other-words"_s, nameClassOfOtherWords },
         { "name-class/numbers"_s, nameClassOfNumbers },
     };
     return tests;

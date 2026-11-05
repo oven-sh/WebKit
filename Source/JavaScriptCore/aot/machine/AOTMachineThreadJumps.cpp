@@ -152,8 +152,6 @@ private:
     static ALWAYS_INLINE bool canGainPredecessor(const Block*);
     static ALWAYS_INLINE bool isEmptyJumpBlock(const Block*);
     static const Operation* incomingValue(const Operation* phi, const Block* from);
-    static NEVER_INLINE bool handsPhisWhatSkippedBlockHandsThem(const Block* from, const Block* skipped, const Block* target);
-    static ALWAYS_INLINE bool bringsWhatSkippedBlockBrings(const Block* from, const Block* skipped, const Block* target);
     static ALWAYS_INLINE SimplifiedPredicate simplifyPredicateOfBranch(Operation* predicate);
     static ALWAYS_INLINE Opcode lowerOfComparisonAndItsInverse(Opcode);
 
@@ -668,32 +666,6 @@ void JumpThreader::passTestOfUpperHalfBy(Block* from)
     ++m_reachedIncomingEdgeCounts[passing->index()];
 }
 
-// `from` has Upsilons for the Phis of the target. They hand each Phi what those of the skipped block hand it.
-bool JumpThreader::handsPhisWhatSkippedBlockHandsThem(const Block* from, const Block* skipped, const Block* target)
-{
-    for (const Operation* phi : target->phis()) {
-        const Operation* brought = incomingValue(phi, from);
-        if (!brought || brought != incomingValue(phi, skipped))
-            return false;
-    }
-    return true;
-}
-
-// Another edge of `from` leads to the target, which few blocks have, so `from` has Upsilons for the Phis there.
-// A block that a Switch ends has an Upsilon for a Phi only where one of its edges leads to the block of the Phi, so the Upsilons answer, and nobody goes through its edges once for each of them.
-ALWAYS_INLINE bool JumpThreader::bringsWhatSkippedBlockBrings(const Block* from, const Block* skipped, const Block* target)
-{
-    if (from->last()->opcode() == Switch && !target->phis().empty())
-        return !target->isLandingPad() && handsPhisWhatSkippedBlockHandsThem(from, skipped, target);
-    const Edge* edge = from->successors().data();
-    const Edge* end = edge + from->numSuccessors();
-    while (edge != end && edge->block() != target)
-        ++edge;
-    if (edge == end || target->isLandingPad())
-        return false;
-    return handsPhisWhatSkippedBlockHandsThem(from, skipped, target);
-}
-
 ALWAYS_INLINE void JumpThreader::skipEmptyJumpBlock(Block* from, unsigned successorIndex)
 {
     Block* skipped = from->successor(successorIndex).block();
@@ -708,7 +680,7 @@ ALWAYS_INLINE void JumpThreader::skipForwardedBlock(Block* from, unsigned succes
     Block* target = skipped->successor(0).block();
     if (target == skipped)
         return;
-    if (skipped->upsilons().empty() ? !canGainPredecessor(target) : !bringsWhatSkippedBlockBrings(from, skipped, target))
+    if (!skipped->upsilons().empty() || !canGainPredecessor(target))
         return;
     Order::retarget(from, successorIndex, target);
     if (!has(from, IsVisited))

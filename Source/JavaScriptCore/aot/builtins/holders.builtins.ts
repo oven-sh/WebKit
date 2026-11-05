@@ -1,7 +1,6 @@
 import * as b from "bun-builtins-table";
 
 const internalFields = "InternalFields";
-const collectionHeaps = ["CollectionStorage", "CollectionEntries"];
 const hostSettings = "ExternalState";
 
 const undeclared = b.otherwiseBy(b.generic);

@@ -62,7 +62,7 @@ void Walker::noteDirectCallForStackTests(const Draft& draft)
     if (conventions.stackCheckOf(unitThatSetsUpFrame) == StackCheck::Required)
         return;
 
-    // A bound function, like any other entrance, may wait above what it goes on to, in a frame that is counted for no caller.
+    // An entrance may wait above what it goes on to, in a frame that is counted for no caller.
     bool entersBodyOfFunction = returnsResultOfFunction(entered.role) || entered.role == CodeRole::CoroutineBody;
     bool bodyBeingReadIsCounted = m_frames.size() == 1 || m_frames.last().callsAreCountedByPlan;
     if (!entersBodyOfFunction || !bodyBeingReadIsCounted || !planHasCountedCallForStackTests(*this, currentFunction(), draft.inputValueGiven, entered.function))

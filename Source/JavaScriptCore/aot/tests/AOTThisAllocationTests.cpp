@@ -387,16 +387,12 @@ static Object* allocate(LoadedProgram& program, ASCIILiteral className, std::ini
     VM& vm = program.vm();
     ObjectModel& objects = *program.state().objects;
     const LayoutData& layout = classNamed(program, className);
-    uint32_t orderWord = unorderedOrderWord;
-    if (!layout.keysAreNeverEnumerated) {
-        Vector<uint16_t> entries;
-        for (const ListedField& field : listed)
-            entries.append(layout.indexOf(fieldNamed(program, layout, field.name)));
-        std::optional<uint32_t> numbered = objects.keyOrders.orderStartingWith(layout, entries.span());
-        AOT_TEST_CHECK(numbered);
-        orderWord = *numbered;
-    }
-    Object* object = Object::create(vm, objects.structures.objectStructure(vm, layout.shape), layout, layout.size, orderWord);
+    Vector<uint16_t> entries;
+    for (const ListedField& field : listed)
+        entries.append(layout.indexOf(fieldNamed(program, layout, field.name)));
+    std::optional<uint32_t> numbered = objects.keyOrders.orderStartingWith(layout, entries.span());
+    AOT_TEST_CHECK(numbered);
+    Object* object = Object::create(vm, objects.structures.objectStructure(vm, layout.shape), layout, layout.size, *numbered);
     for (const ListedField& field : listed)
         AOT_TEST_CHECK(object->store(vm, fieldNamed(program, layout, field.name), AcceptedValue::provenAtBuildTime(field.value)));
     return object;
@@ -475,7 +471,6 @@ static void checkKeysAreInCreationOrder(LoadedProgram& program)
 {
     DeferGC deferGC(program.vm());
     const LayoutData& derived = classNamed(program, "Derived"_s);
-    AOT_TEST_CHECK(!derived.keysAreNeverEnumerated);
     AOT_TEST_CHECK(derived.indexOf(fieldNamed(program, derived, "y"_s)) < derived.indexOf(fieldNamed(program, derived, "x"_s)));
     JSObject* prototype = prototypeOf(program, "Derived"_s);
 
@@ -545,7 +540,6 @@ static void checkCreateThisStartsWithoutKeys(LoadedProgram& program)
 {
     DeferGC deferGC(program.vm());
     const LayoutData& point = classNamed(program, "Point"_s);
-    AOT_TEST_CHECK(!point.keysAreNeverEnumerated);
     AOT_TEST_CHECK(point.indexOf(fieldNamed(program, point, "px"_s)) < point.indexOf(fieldNamed(program, point, "py"_s)));
     JSObject* constructor = constructorOf(program, "Point"_s);
     JSObject* prototype = asObject(constructor->get(program.realm(), program.vm().propertyNames->prototype));
@@ -624,56 +618,6 @@ static void checkClassBelowConstructorFunction(LoadedProgram& program)
     AOT_TEST_CHECK(constructorOf(program, "Unrelated"_s)->getPrototypeDirect() == JSValue(program.realm()->functionPrototype()));
 }
 
-static void checkPlaceholderIsNotDefinedOnTheInstance(LoadedProgram& program)
-{
-    DeferGC deferGC(program.vm());
-    const RuntimeLayoutTable& layouts = program.state().objects->layouts;
-    AOT_TEST_CHECK(classNamed(program, "Base"_s).keysAreNeverEnumerated);
-    for (ASCIILiteral className : { "Base"_s, "Derived"_s, "Other"_s }) {
-        const LayoutData& layout = classNamed(program, className);
-        AOT_TEST_CHECK(!layout.extraPropertiesSlot());
-        // A slot has the kind of the one value that is stored, and no state for anything else.
-        const FieldData& x = fieldNamed(program, layout, "x"_s);
-        AOT_TEST_CHECK(!x.canLeaveSlot());
-        AOT_TEST_CHECK(!layouts.fieldAccepts(x, jsNumber(0.5)));
-        AOT_TEST_CHECK(!layouts.fieldAccepts(x, jsUndefined()));
-        // Facts state a slot in the words of tests, and the test of a boolean asks for either one: FieldTypesPass::slotTypesFor(). That `true` alone arrives is in the position, which reads go by.
-        const FieldData& on = fieldNamed(program, layout, "on"_s);
-        AOT_TEST_CHECK(!on.canLeaveSlot());
-        AOT_TEST_CHECK(on.slot.representation() == SlotRepresentation::Boolean);
-        AOT_TEST_CHECK(!layouts.fieldAccepts(on, jsNumber(1)));
-        AOT_TEST_CHECK(!layouts.fieldAccepts(on, jsUndefined()));
-    }
-
-    for (ASCIILiteral className : { "Derived"_s, "Other"_s }) {
-        JSObject* prototype = prototypeOf(program, className);
-        Object* allocated = allocate(program, "Base"_s, { });
-        Object* instance = instanceFor(program, allocated, prototype);
-        AOT_TEST_CHECK(instance != allocated && isInstanceOf(program, instance, className, prototype));
-
-        Object* filled = instanceFor(program, allocate(program, "Base"_s, { { "x"_s, jsNumber(1) }, { "on"_s, jsBoolean(true) } }), prototype);
-        AOT_TEST_CHECK(isInstanceOf(program, filled, className, prototype));
-        AOT_TEST_CHECK(valueOf(program, filled, "x"_s) == jsNumber(1) && valueOf(program, filled, "on"_s) == jsBoolean(true));
-    }
-}
-
-static void checkOneStoreByNameFillsSlotWithoutAbsentState(LoadedProgram& program)
-{
-    VM& vm = program.vm();
-    DeferGC deferGC(vm);
-    const FieldData& field = fieldNamed(program, classNamed(program, "Derived"_s), "y"_s);
-    // The run time is told that a field is stored once only where the slot has an absent state: the one store of any other field is a store like any other.
-    AOT_TEST_CHECK(!field.canLeaveSlot());
-    AOT_TEST_CHECK(!(field.flags & fieldIsStoredOnce));
-    JSObject* prototype = prototypeOf(program, "Derived"_s);
-    Object* instance = instanceFor(program, allocate(program, "Base"_s, { }), prototype);
-
-    AOT_TEST_CHECK(!instance->tryStore(vm, field, jsNumber(0.5)) && !instance->tryStore(vm, field, jsUndefined()));
-    storeByName(program, instance, "y"_s, jsNumber(2));
-    AOT_TEST_CHECK(isInstanceOf(program, instance, "Derived"_s, prototype));
-    AOT_TEST_CHECK(valueOf(program, instance, "y"_s) == jsNumber(2));
-}
-
 static std::unique_ptr<CompileOutput> compileOnThisThread(const ShellRun& run, ASCIILiteral way, OptionWords optionWords)
 {
     Wire::CompileOptions options = makeOptionsOfTestedProgram();
@@ -741,11 +685,7 @@ static void testDeferredClosureDefinedByName()
 template<LoadedProgramTest body>
 static constexpr void (*withEnumeratedClasses)() = runNativeTestWithLoadedProgram<thisAllocationTests, enumeratedClassesText, body>;
 
-template<LoadedProgramTest body>
-static constexpr void (*withNeverEnumeratedClasses)() = runNativeTestWithLoadedProgram<thisAllocationTests, neverEnumeratedClassesText, body>;
-
 static constexpr ASCIILiteral noClassAboveInRecord = "facts/AOTFacts.h, classOf(): the class above in the record of a class: no class has BaseState::Layout"_s;
-static constexpr ASCIILiteral noKeysNeverEnumerated = "plan/AOTSlotPlan.cpp: layouts whose keys are never enumerated, with slots without an absent state: the plan says so of no layout"_s;
 
 std::span<const NativeTest> thisAllocationTests()
 {
@@ -759,8 +699,6 @@ std::span<const NativeTest> thisAllocationTests()
         { "this-allocation/create-this-starts-without-keys"_s, withEnumeratedClasses<checkCreateThisStartsWithoutKeys> },
         { "this-allocation/create-this-fast-paths-create-same-cells"_s, withEnumeratedClasses<checkCreateThisFastPathsCreateSameCells> },
         { "this-allocation/class-below-constructor-function"_s, withEnumeratedClasses<checkClassBelowConstructorFunction>, noClassAboveInRecord },
-        { "this-allocation/placeholder-is-not-defined-on-the-instance"_s, withNeverEnumeratedClasses<checkPlaceholderIsNotDefinedOnTheInstance>, noKeysNeverEnumerated },
-        { "this-allocation/one-store-by-name-fills-slot-without-absent-state"_s, withNeverEnumeratedClasses<checkOneStoreByNameFillsSlotWithoutAbsentState>, noKeysNeverEnumerated },
         { "this-allocation/construction-from-native-code"_s, testConstructionFromNativeCode },
         { "this-allocation/construction-of-one-of-two-subclasses"_s, testConstructionOfOneOfTwoSubclasses },
         { "this-allocation/deferred-closure-defined-by-name"_s, testDeferredClosureDefinedByName },

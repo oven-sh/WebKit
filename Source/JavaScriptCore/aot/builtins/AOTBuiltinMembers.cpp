@@ -8,7 +8,6 @@
 
 #if ENABLE(AOT)
 
-#include "AOTBuiltinOwnSlots.h"
 #include "AOTPrimitives.h"
 #include "AOTSort.h"
 #include "AOTTypeRelations.h"
@@ -96,6 +95,7 @@ TypeID typeOfValuesThatLookUpAsInstancesOf(TypeArena& types, BuiltinClassID buil
 
 MembersUnderKey::MembersUnderKey(const Program& program, PropertyKeyID key)
     : m_program(program)
+    , m_key(key)
     , m_table(program.builtins())
     , m_memberName(builtinMemberNameOf(program, key))
     , m_name(program.builtinNameOf(key))
@@ -123,9 +123,12 @@ bool MembersUnderKey::isClosedKey(BuiltinID holder) const
         return true;
     if (m_isIndexLike)
         return m_table.closesIndexKeys(holder);
-    if (m_name)
-        return m_table.isClosedKey(holder, m_name);
-    return m_table.at(holder).flags.contains(BuiltinFlag::IsClosedToOtherNames) && m_kind == PropertyKeyKind::Text;
+    bool isClosedToOtherNames = m_table.at(holder).flags.contains(BuiltinFlag::IsClosedToOtherNames) && m_kind == PropertyKeyKind::Text;
+    bool isClosed = m_name ? m_table.isClosedKey(holder, m_name) : isClosedToOtherNames;
+    // An executable refuses on such an object the names for which this was answered, and no other. A test run refuses every name that it has not seen a test add.
+    if (isClosed && isClosedToOtherNames && !m_program.admitsReplacedBuiltins)
+        m_program.noteTakenForAbsent(m_key);
+    return isClosed;
 }
 
 bool MembersUnderKey::isLockedLocation(BuiltinID holder) const
@@ -150,64 +153,11 @@ bool isLockedLocation(const Program& program, BuiltinID holder, PropertyKeyID ke
     return MembersUnderKey(program, key).isLockedLocation(holder);
 }
 
-Vector<MemberOfClasses, 4> methodsNamed(const BuiltinTable& table, BuiltinName name)
-{
-    Vector<MemberOfClasses, 4> methods;
-    for (BuiltinClassID builtinClass : table.classesWithInstanceMember(name)) {
-        BuiltinMemberLookup found = table.findForInstance(builtinClass, name);
-        if (found.outcome != BuiltinMemberLookup::Outcome::Found)
-            continue;
-        BuiltinID member = table.canonicalID(found.member);
-        if (table.at(member).kind != BuiltinKind::Method)
-            continue;
-        auto existing = std::ranges::find(methods, member, &MemberOfClasses::member);
-        if (existing == methods.end()) {
-            methods.append(MemberOfClasses { member, { builtinClass } });
-            continue;
-        }
-        existing->classes.append(builtinClass);
-    }
-    AOT::sortInLine(methods, { }, &MemberOfClasses::member);
-    return methods;
-}
-
-BuiltinOverloadID findOwnSlotOfInstances(const BuiltinTable& table, BuiltinClassID builtinClass, BuiltinName name)
-{
-    BuiltinID member = table.findOwnPropertyOfInstances(builtinClass, name);
-    if (!member || table.receiverClassOf(member) != builtinClass)
-        return { };
-    for (BuiltinOverloadID id : table.overloadIDsOf(member)) {
-        if (table.at(id).code.implementation.kind == BuiltinImplementationKind::OwnSlot)
-            return id;
-    }
-    return { };
-}
-
-bool liesAtSamePlace(const BuiltinTable& table, BuiltinOverloadID ownSlot, BuiltinOverloadID otherOwnSlot)
-{
-    auto placeOf = [&](BuiltinOverloadID id) {
-        const BuiltinOverload& overload = table.at(id);
-        return propertyOffsetOfOwnSlot(table.at(table.receiverClassOf(overload.builtin)).type, overload.code.implementation.ownSlot.offset);
-    };
-    return placeOf(ownSlot) == placeOf(otherOwnSlot);
-}
-
-// The holder adds the member behind the properties that it has when the member is first read. From the first copy of the holder on, its keys stand in that order.
-bool firstReadChangesListedKeys(const BuiltinTable& table, BuiltinID member)
-{
-    return table.at(member).isAddedAtFirstRead;
-}
-
 bool standsForFirstReadOffHolder(const BuiltinTable& table, BuiltinID written, bool isNotReadFromHolder)
 {
     if (!written || isNotReadFromHolder)
         return false;
     return isMadeWithCodeOfLibrary(table, written) || (table.at(written).isAddedAtFirstRead && table.at(written).holder);
-}
-
-bool onlyAddsMemberToHolder(const BuiltinTable& table, BuiltinID member)
-{
-    return !isMadeWithCodeOfLibrary(table, member);
 }
 
 } } } // namespace JSC::AOT::Typed

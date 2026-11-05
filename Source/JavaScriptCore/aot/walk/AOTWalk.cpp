@@ -32,7 +32,6 @@
 #include "AOTWalkCoroutinePositions.h"
 #include "AOTWalkCoroutinePromises.h"
 #include "AOTWalkCoroutineCalls.h"
-#include "AOTWalkStringParsers.h"
 #include "AOTWalkJSONWrites.h"
 #include "AOTWalkNumberGuesses.h"
 #include "AOTWalkTextBuilders.h"
@@ -43,7 +42,6 @@
 #include "AOTWalkKnownCalls.h"
 #include "AOTWalkListReadsInLoops.h"
 #include "AOTWalkKnown.h"
-#include "AOTWalkKnownJoins.h"
 #include "AOTWalkListedOwnKeys.h"
 #include "AOTWalkResolvedCalls.h"
 #include "AOTWalkBirths.h"
@@ -141,8 +139,6 @@ public:
 
     TypeID variable(TypeLevel level, VariableID variable) const final
     {
-        if (m_plan.deferredDefinitions().objectBeside(variable))
-            return TypeArena::fromPrimitives(Primitive::Absent | Primitive::Undefined);
         bool isFilledByCompiledCodeAlone = m_believesTables || !m_plan.runTimeMayFill(variable);
         TypeID proven = variable.index() < m_linked.variables.size() && isFilledByCompiledCodeAlone ? filledByCompiledCode(level, &m_linked.variables[variable.index()]) : TypeID();
         if (proven && !m_believesTables) {
@@ -548,11 +544,10 @@ void Walker::beginUnit(CodeUnit unit)
     m_positions = isSlowBody ? m_positionsOfSlowBody.get() : m_positionsOfBuild.get();
 
     m_code.reset(unit);
-    m_keptByLadderOfNames = nullptr;
     m_state.clear();
     m_numbersOfStates.clear();
     m_answersOfStates.clear();
-    // Two doors ask whether it is computed (KnownJoin::keepWhatLastWayKnewOf(), KnownThreading::letTerminatorBeWalkedForEachWay()): by this unit, not by whatever the worker walked before.
+    // Two doors ask whether it is computed (ArgumentsMadeWhereTheyLeave, KnownThreading::letTerminatorBeWalkedForEachWay()): by this unit, not by whatever the worker walked before.
     m_liveness.forget();
     m_block = { };
     m_frames.shrink(0);
@@ -563,7 +558,6 @@ void Walker::beginUnit(CodeUnit unit)
     m_numberOfAssignmentsWrittenOut = 0;
     m_numberOfJoinsWalkedForEachWay = 0;
     m_numberOfTurnsThatBeginAgain = 0;
-    m_numberOfEmptySlotsTakenAsCases = 0;
     m_fillersOfAllocations.clear();
     m_numberOfTypedResultsSelected = 0;
     m_numberOfSlicesMadeOfElementsInSight = 0;
@@ -580,7 +574,6 @@ void Walker::beginUnit(CodeUnit unit)
     m_failure = { };
     m_origin = { .position = function.position, .inlineFrame = 0, .isTailCall = false, .isPartOfConstruction = false };
     m_openEdges.shrink(0);
-    m_holdersAskedAboutLast = { };
     m_firstFreeOpenEdge = noOpenEdge;
     m_pendingBlocks.shrink(0);
     m_bindings.shrink(0);
@@ -600,7 +593,6 @@ void Walker::beginUnit(CodeUnit unit)
     m_placesOfLoopsBehindBlocks.shrink(0);
     m_numberOfLoopsThatMayBeLeft = UINT32_MAX;
     m_numberOfScopesWhereProofsHoldEverywhere = 0;
-    m_tableCallsHaveTailForm = callsWithTailFormInWalk.contains(Opcode::CallTable);
     m_isWalkingAccess = false;
     m_numberOfCopiesBuiltForSize = 0;
     m_coroutineState = { };
@@ -610,8 +602,6 @@ void Walker::beginUnit(CodeUnit unit)
     m_environmentCellsOfUnit.mayNameSome = isHandedEnvironmentWithByte(*this, unit.function);
     m_textsInStringBuilders.shrink(0);
     m_hasURLsThatAreNeverMade = false;
-    if (m_keptByNumbers)
-        notesOfNumbers(*this).clear();
 
     InlineFrame ownFrame { };
     ownFrame.callee = unit.function;
@@ -649,9 +639,6 @@ bool Walker::walk(CodeUnit unit)
     bool bodyStandsBehindUnit = walksInputBody(unit.role) && (unit.role != CodeRole::Body || !program().at(unit.function).isCoroutine());
 
     bool isBuilt;
-    if (program().at(unit.function).role == FunctionRole::Parser)
-        isBuilt = walkParserUnit(*this);
-    else
     if (bodyStandsBehindUnit)
         isBuilt = walkBody();
     else if (unit.role == CodeRole::Body)
@@ -908,11 +895,14 @@ void Walker::checkProofThatSlotIsFilled(const Draft& read)
     // A read on a guess asks the cell for itself, and does the read as written where it finds no value.
     if (!checksProofs() || isUnreachable() || read.level() != KnowledgeLevel::Proven)
         return;
+    // A RAW NUMBER OR BOOLEAN: the type of the read, cut to what Link has proven of the field, leaves no room for undefined and null, and no test tells anything of the word that the read gives.
+    Representation form = read.opcode != Opcode::GetSlot || read.representation != Representation::Unchosen ? read.representation : resultRepresentationOf(*this, read);
+    bool givesRawWord = read.opcode == Opcode::GetSlot && (numberRepresentations.contains(form) || form == Representation::Boolean);
     for (Reference object = read.objectOperand(); object && object.isValue();) {
         const Operation& record = m_code.at(object.id());
         if (record.opcode != Opcode::Narrowed)
             break;
-        if (ValueID test = record.testOperand(); test && m_code.at(test).opcode == Opcode::IsSlotFilled && m_code.at(test).key() == read.key())
+        if (ValueID test = record.testOperand(); test && m_code.at(test).opcode == Opcode::IsSlotFilled && m_code.at(test).key() == read.key() && (!givesRawWord || m_code.at(test).holdsDeclaredType()))
             return;
         object = Reference::value(record.valueOperand());
     }
@@ -921,8 +911,8 @@ void Walker::checkProofThatSlotIsFilled(const Draft& read)
     test.setKey(read.key());
     test.setReceivers(read.receivers());
     test.setLevel(read.level());
-    // A raw form: the read takes a mark (absent, undefined, null) for a number or a reference where it counts on the declared type. SlotEmitter::holdsDeclaredType() tells a mark from a value.
-    test.setHoldsDeclaredType(read.opcode == Opcode::GetSlot && read.holdsDeclaredType());
+    // A raw form: the read takes a mark (absent, undefined, null) for a number or a reference where it counts on the declared type, and wherever it gives a raw word. SlotEmitter::holdsDeclaredType() tells a mark from a value.
+    test.setHoldsDeclaredType(read.opcode == Opcode::GetSlot && (read.holdsDeclaredType() || givesRawWord));
     Reference isFilled = build(WTF::move(test));
     if (isFilled && isFilled.isValue() && !isUnreachable())
         checkProof(isFilled, TypeArena::fromPrimitives(Primitive::True), TypeTable::boolean, ProofSource::Field, read.origin());
@@ -1002,7 +992,7 @@ static ProofSource sourceOfProofInWalk(Opcode opcode)
 // the pair of an accessor, an environment, a table of the run time. CastEmitter::generateCheckProof() asks that of every value, so a read that claims nothing else gets a check that asks nothing else.
 static constexpr OpcodeSet readsThatHandOverWhatLies {
     Opcode::GetSlot, Opcode::GetSlotOrUndefined, Opcode::GetDeferredClosureSlot, Opcode::GetDeferredClosureSlotOrUndefined, Opcode::GetStaticFieldOrAbsent, Opcode::GetEnvironmentField, Opcode::GetModuleVariable,
-    Opcode::GetCapture, Opcode::GetBoundCapture, Opcode::GetGlobalBinding, Opcode::GetArrayElement, Opcode::GetContiguousIndex, Opcode::GetOwnContiguousIndex,
+    Opcode::GetCapture, Opcode::GetGlobalBinding, Opcode::GetArrayElement, Opcode::GetContiguousIndex, Opcode::GetOwnContiguousIndex,
 };
 
 // The rule of the row is asked a second time, by somebody who believes nothing that Link says of a position and takes of each operand only what a test could have shown:
@@ -1127,7 +1117,7 @@ void Walker::checkProof(Reference value, TypeID proven, TypeID withoutProof, Pro
     if (Type type = m_types.at(checked); type.hasObjects()) {
         auto isInReach = [&](FunctionID function) {
             return m_functionsInReachOfUnit.ensure(function.index(), [&] {
-                return facts().linked().leadsTo(unit().function, function);
+                return facts().linked().leadsTo(unit(), function);
             }).iterator->value;
         };
         bool namesWhatIsOutOfReach = false;
@@ -1225,16 +1215,6 @@ bool Walker::isBeingWalked(FunctionID function) const
     for (size_t index = m_frames.size(); index-- && !m_frames[index].countAmongFramesOfFunction;)
         m_frames[index].countAmongFramesOfFunction.count(numberOfFramesOf(m_frames[index].function));
     return numberOfFramesOf(function);
-}
-
-bool Walker::Frame::listOfNarrowerNamesHolds(uint32_t first, uint32_t place) const
-{
-    uint32_t length = placesOfNarrowerNames[place].length;
-    while (lengthOfNarrowerNames(first) > length) {
-        uint32_t jump = placesOfNarrowerNames[first].jump;
-        first = lengthOfNarrowerNames(jump) >= length ? jump : narrowerNames[first].next;
-    }
-    return first == place;
 }
 
 void Walker::Frame::numberReferencesOfNarrowerName(uint32_t place)
@@ -1872,7 +1852,7 @@ TypeID Walker::withoutFunctionsThatMayNotBeMentioned(TypeID type)
         return type;
     Vector<FunctionID, 4> refused;
     forEachFunctionOf(m_types, m_types.at(type), scopedLambda<void(FunctionID)>([&](FunctionID named) {
-        if (!facts().linked().mayBeMentionedBy(unit().function, named))
+        if (!facts().linked().mayBeMentionedBy(unit(), named))
             refused.append(named);
     }));
     for (FunctionID function : refused)
@@ -2254,7 +2234,6 @@ bool Walker::copy(const BodyValue& value)
     if (draft.opcode == Opcode::StrictEq && has(Mechanism::Guesses) && m_opensGuesses)
         sayWhatIsExpectedOfComparedOperands(*this, value, draft);
     bool givesResult = resultRuleOf(draft.opcode) != ResultRule::None;
-    // TODO(known-state-and-effects-1b): buildAsWrittenWithWhatIsKnown() (E9 E10 E15) stood here. It cost virtual calls on one receiver 8 to 13% of their instructions (rows f16, f61, f62) and gave TypeScript 6 nothing.
     if (draft.opcode == Opcode::Builtin && has(Mechanism::Folding)) {
         if (Reference cell = cellThatRunTimeKeeps(draft)) {
             bind(value.id(), cell);
@@ -4123,9 +4102,6 @@ void Walker::walkTerminator(const BodyTerminator& terminator)
     size_t frameIndex = m_frames.size() - 1;
     m_origin = terminator.origin();
     m_origin.inlineFrame = m_frames[frameIndex].inlineFrame;
-    walkInFrontOfTerminatorOfCoroutine(*this, terminator);
-    if (isUnreachable())
-        return;
     if (hasTextsInStringBuilders())
         takeTextsOutOfStringBuildersAtEndOfWay(*this, terminator);
 
@@ -4323,6 +4299,8 @@ void Walker::walkReturn(const BodyTerminator& terminator)
         }
     }
 
+    if (terminator.kind() == TerminatorKind::Return)
+        finishBirthAtReturnOfClassConstructor(*this, returned, m_origin);
     if (terminator.kind() == TerminatorKind::ReturnCall)
         returnAtOnce(returned);
     else
@@ -4344,6 +4322,8 @@ void Walker::noteReturnOfCopy(const BodyTerminator& terminator)
         fail("a return of a callee is walked where nobody goes on behind the call"_s);
         return;
     }
+    if (terminator.kind() == TerminatorKind::Return)
+        finishBirthAtReturnOfClassConstructor(*this, value, m_origin);
     frame.returnsOfCopy->append(Frame::ReturnOfCopy { m_block, value, WTF::move(m_state), frame.index->block(terminator.block()).hasHandler(), !m_opensGuesses });
     m_block = { };
     m_state.clear();

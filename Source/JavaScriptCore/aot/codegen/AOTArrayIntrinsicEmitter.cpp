@@ -150,6 +150,16 @@ void ArrayIntrinsicEmitter::generateGetContiguousIndex(const ValueContext& value
     defineAs(value, select(isFilled, element, undefined()), typeOf(value.id()));
 }
 
+Integer ArrayIntrinsicEmitter::positionThatLibraryVouchesFor(const ValueContext& value, const ArrayElements& storage)
+{
+    Integer index = integerOperand(value->positionOperand());
+    if (elements().testsEveryPosition())
+        elements().stopUnlessInside(value, below(index, elements().publicLength(storage)));
+    else
+        build().statistics().count(StatisticID::RangeChecksRemoved);
+    return index;
+}
+
 // The GetOwn and PutOwn operations check nothing: the library's code guarantees the storage kind and that the index is below the length.
 void ArrayIntrinsicEmitter::generateGetOwnContiguousIndex(const ValueContext& value)
 {
@@ -159,7 +169,7 @@ void ArrayIntrinsicEmitter::generateGetOwnContiguousIndex(const ValueContext& va
     }
     CellPointer array = in<CellPointer>(value->arrayOperand());
     ArrayElements storage = elements().elementsOf(value, array);
-    Boxed element(m_out.load64(elements().elementOfUnknownForm(storage, integerOperand(value->positionOperand()))));
+    Boxed element(m_out.load64(elements().elementOfUnknownForm(storage, positionThatLibraryVouchesFor(value, storage))));
     ensureStillAliveHere(array);
     defineAs(value, element, typeOf(value.id()));
 }
@@ -168,14 +178,14 @@ void ArrayIntrinsicEmitter::generateGetOwnDoubleIndex(const ValueContext& value)
 {
     CellPointer array = in<CellPointer>(value->arrayOperand());
     ArrayElements storage = elements().elementsOf(value, array);
-    define(value, elements().loadRawElement(doubles, storage, integerOperand(value->positionOperand())).as<Number>());
+    define(value, elements().loadRawElement(doubles, storage, positionThatLibraryVouchesFor(value, storage)).as<Number>());
 }
 
 void ArrayIntrinsicEmitter::generateGetOwnInt32Index(const ValueContext& value)
 {
     CellPointer array = in<CellPointer>(value->arrayOperand());
     ArrayElements storage = elements().elementsOf(value, array);
-    define(value, Word32(m_out.load32(elements().elementOfUnknownForm(storage, integerOperand(value->positionOperand())))));
+    define(value, Word32(m_out.load32(elements().elementOfUnknownForm(storage, positionThatLibraryVouchesFor(value, storage)))));
 }
 
 void ArrayIntrinsicEmitter::generatePutOwnContiguousIndex(const ValueContext& value)
@@ -184,14 +194,16 @@ void ArrayIntrinsicEmitter::generatePutOwnContiguousIndex(const ValueContext& va
     ValueID stored = value->valueOperand();
     Boxed rawElement = in<Boxed>(stored);
     // The storage may be Int32 storage: see loadBoxedElement().
-    m_out.store64(rawElement.value(), elements().elementOfUnknownForm(elements().elementsOf(value, array), integerOperand(value->positionOperand())));
+    ArrayElements storage = elements().elementsOf(value, array);
+    m_out.store64(rawElement.value(), elements().elementOfUnknownForm(storage, positionThatLibraryVouchesFor(value, storage)));
     barrierAfterStore(value, array, rawElement, typeOf(stored));
 }
 
 void ArrayIntrinsicEmitter::generatePutOwnDoubleIndex(const ValueContext& value)
 {
     CellPointer array = in<CellPointer>(value->arrayOperand());
-    elements().storeRawElement(doubles, elements().elementsOf(value, array), integerOperand(value->positionOperand()), in<Number>(value->valueOperand()));
+    ArrayElements storage = elements().elementsOf(value, array);
+    elements().storeRawElement(doubles, storage, positionThatLibraryVouchesFor(value, storage), in<Number>(value->valueOperand()));
 }
 
 // The element already holds a boxed int32, so only the low 32 bits are written: the tag in the upper half is the same for every int32.
@@ -199,18 +211,19 @@ void ArrayIntrinsicEmitter::generatePutOwnInt32Index(const ValueContext& value)
 {
     static_assert(std::endian::native == std::endian::little);
     CellPointer array = in<CellPointer>(value->arrayOperand());
-    m_out.store32(low32(integerOperand(value->valueOperand())).value(), elements().elementOfUnknownForm(elements().elementsOf(value, array), integerOperand(value->positionOperand())));
+    ArrayElements storage = elements().elementsOf(value, array);
+    Integer index = positionThatLibraryVouchesFor(value, storage);
+    m_out.store32(low32(integerOperand(value->valueOperand())).value(), elements().elementOfUnknownForm(storage, index));
 }
 
 void ArrayIntrinsicEmitter::putInBounds(const ValueContext& value, const ArrayStorageForm& form)
 {
     RELEASE_ASSERT(form.kind != ArrayStorage::Int32);
     CellPointer array = in<CellPointer>(value->arrayOperand());
-    Integer index = integerOperand(value->positionOperand());
     ValueID stored = value->valueOperand();
     Operand rawElement = generator().getIn(stored, form.element);
     ArrayElements storage = elements().elementsOf(value, array);
-    elements().storeRawElement(form, storage, index, rawElement);
+    elements().storeRawElement(form, storage, positionThatLibraryVouchesFor(value, storage), rawElement);
     if (form.holdsCells)
         barrierAfterStore(value, array, rawElement, typeOf(stored));
 }
@@ -370,7 +383,7 @@ Condition ArrayIntrinsicEmitter::isOneOfBoxedForms(Word32 mode, IndexingType ofI
 
 // The library has just allocated `array` with contiguous storage for at least `count` elements, and nothing else can reach it yet. `source` belongs to the program.
 // False if `source` has no Int32, Double or Contiguous storage, is shorter than `count`, or holds a hole or undefined below `count`. `array` then has length 0.
-// No barrier: nothing has run since `array` was allocated, so the collector has not marked it.
+// No barrier: nothing has run since `array` was allocated, so the collector has not marked it. The barrier would have fenced: so a fence keeps these stores in front of the store that hands `array` on.
 void ArrayIntrinsicEmitter::generateTryCopyFilledElements(const ValueContext& value)
 {
     CellPointer array = in<CellPointer>(value->arrayOperand());
@@ -423,6 +436,7 @@ void ArrayIntrinsicEmitter::generateTryCopyFilledElements(const ValueContext& va
 
     m_out.appendTo(copied);
     ensureStillAliveHere(source);
+    emitter<BarrierEmitter>().fenceAfterInitialization();
     join.add(boolean(true));
 
     m_out.appendTo(otherwise);
@@ -481,7 +495,7 @@ void ArrayIntrinsicEmitter::generateTryPutElements(const ValueContext& value)
 }
 
 // The library has just allocated `array` with holes up to its length, and nothing else can reach it yet. False, with nothing stored, if its storage does not hold boxed values.
-// No barrier: nothing has run since `array` was allocated, so the collector has not marked it.
+// No barrier: nothing has run since `array` was allocated, so the collector has not marked it. The barrier would have fenced: so a fence keeps these stores in front of the store that hands `array` on.
 void ArrayIntrinsicEmitter::generateTryFillNewArray(const ValueContext& value)
 {
     CellPointer array = in<CellPointer>(value->arrayOperand());
@@ -493,6 +507,7 @@ void ArrayIntrinsicEmitter::generateTryFillNewArray(const ValueContext& value)
     forEachPositionBelow(elements().publicLength(storage), [&](Integer position) {
         m_out.store64(filler.value(), elements().elementOfUnknownForm(storage, position));
     });
+    emitter<BarrierEmitter>().fenceAfterInitialization();
     join.add(boolean(true));
 
     m_out.appendTo(otherwise);

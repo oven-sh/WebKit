@@ -141,50 +141,7 @@ constexpr bool clearsUpperHalfOfRegister(Opcode opcode)
     case Load:
     case NumberOf:
         return true;
-    case Nop:
-    case Opaque:
-    case Const32:
-    case Const64:
-    case ConstFloat:
-    case ConstDouble:
-    case FramePointer:
-    case SlotBase:
-    case AddressOf:
-    case InstanceAddressOf:
-    case ArgumentReg:
-    case MulHigh:
-    case UMulHigh:
-    case Mod:
-    case UMod:
-    case Abs:
-    case Ceil:
-    case Floor:
-    case FTrunc:
-    case Sqrt:
-    case FMin:
-    case FMax:
-    case BitwiseCast:
-    case SExt32:
-    case ZExt32:
-    case Trunc:
-    case IToD:
-    case FloatToDouble:
-    case DoubleToFloat:
-    case Select:
-    case Store8:
-    case Store16:
-    case Store:
-    case Fence:
-    case Phi:
-    case Upsilon:
-    case Extract:
-    case Patch:
-    case Check:
-    case Jump:
-    case Branch:
-    case Switch:
-    case Return:
-    case Oops:
+    default:
         return false;
     }
     RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();

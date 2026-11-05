@@ -290,6 +290,8 @@ void ElementAccessEmitter::storeInsideLength(const ValueContext& value, const Ar
 
 void ElementAccessEmitter::generatePutArrayElement(const ValueContext& value)
 {
+    if (value->isInBounds())
+        holdPositionInsideList(value);
     if (GuessedAccessEmitter::testsForItself(value)) {
         emitter<GuessedAccessEmitter>().generateElementStore(value);
         return;
@@ -523,21 +525,6 @@ Condition ElementAccessEmitter::tryStoreElement(const ValueContext& store, CellP
     return join.finish();
 }
 
-void ElementAccessEmitter::generateReserveArrayCapacity(const ValueContext& value)
-{
-    RuntimeOperation operation = value->isSureToBeFilled() ? RuntimeOperation::ReserveWholeArrayCapacity : RuntimeOperation::ReserveArrayCapacity;
-    callVoidOperation(value, operation, { in<CellPointer>(value->arrayOperand()), integerOf(value->additionalOperand()) });
-}
-
-// It stands behind a failed test for Double storage, and the run time looks at the array.
-void ElementAccessEmitter::generateConvertToDoubleStorage(const ValueContext& value)
-{
-    uint32_t place = value->isExpectedToHoldNumbers() ? value.id().index() % ArrayWords::numberOfCounts : ArrayWords::numberOfCounts;
-    CellPointer array = in<CellPointer>(value->arrayOperand());
-    CellPointer copiedFrom = value->copiedFromOperand() ? in<CellPointer>(value->copiedFromOperand()) : array;
-    callVoidOperation(value, RuntimeOperation::ConvertToDoubleStorage, { array, copiedFrom, word32(static_cast<int32_t>(place)) }, { .isOnRarePath = true });
-}
-
 void ElementAccessEmitter::generateAppendElements(const ValueContext& value)
 {
     CellPointer array = in<CellPointer>(value->arrayOperand());
@@ -550,18 +537,6 @@ void ElementAccessEmitter::generateAppendMembers(const ValueContext& value)
     CellPointer array = in<CellPointer>(value->arrayOperand());
     CellPointer source = in<CellPointer>(value->sourceOperand());
     callStub(value, appendMembers(), { array.value(), source.value() });
-}
-
-static ArrayElementKind elementKindOfListBornFilled(ArrayStorage named)
-{
-    const ArrayStorageForm* form = findArrayStorageForm(named);
-    return arrayElementKindOf(form ? form->indexingType : ArrayWithContiguous);
-}
-
-void ElementAccessEmitter::generateNewArrayOfMembers(const ValueContext& value)
-{
-    CellPointer source = in<CellPointer>(value->sourceOperand());
-    define(value, CellPointer(callStub(value, newArrayOfMembers(elementKindOfListBornFilled(value->arrayStorage())), { source.value() }).first));
 }
 
 } } } // namespace JSC::AOT::Typed

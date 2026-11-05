@@ -99,6 +99,8 @@ public:
     // The loader reports the module as loaded so many steps later.
     void setStepsBehindLoad(uint32_t steps) { m_stepsBehindLoad = steps; }
     bool takeStepBehindLoad() { return m_stepsBehindLoad && m_stepsBehindLoad--; }
+    // The loader is about to link and evaluate the graph of an import(). True: the job comes again, when a graph that was asked for earlier, and that runs a part of this one first, is loaded.
+    bool holdGraphBehindEarlierCalls(JSCell* payload, bool isDeferred);
     void takeStatus();
     bool isRunningCommonJSFile();
     void setRunsWhenLoaded() { m_runsWhenLoaded = true; }

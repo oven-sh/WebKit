@@ -1,7 +1,7 @@
 # function sum(view: Uint8Array) { let total = 0; for (let i = 0; i < view.length; i++) total += view[i]; return total; }   sink(sum(new Uint8Array(4)));
 # Link says that what arrives stays as made, so the length is GetTypedArrayLength. No turn writes the storage of views or runs other code, so it is read once, in front of the loop, with the name of the view that it takes.
 # The counter is an integer below it, so the read asks no bound.
-# RED UNTIL lengths-of-views-leave-loops-1: the look typed the length `anything`, and the Unbox of the view stayed in the loop because it makes no code: 12 instructions a turn, 9 since.
+# The look once typed the length `anything`, and the Unbox of the view stayed in the loop because it makes no code: 12 instructions a turn, 9 since.
 # RUN: walk f1 mechanisms=all
 # CHECK-LABEL: code f1:Body
 # CHECK: = GetTypedArrayLength

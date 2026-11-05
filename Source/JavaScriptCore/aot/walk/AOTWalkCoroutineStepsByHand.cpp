@@ -280,7 +280,7 @@ static bool buildAwaitedStepInStepsByHand(Walker& walker, const BodyValue& call,
         if (!someWayArrives || walker.hasFailed())
             return true;
         walker.continueIn(meeting);
-        result = buildResultObjectInStepsByHand(walker, layout, valueOfResult, doneOfResult, wait->brought ? ValueID() : wait->await, origin);
+        result = buildResultObjectInStepsByHand(walker, layout, valueOfResult, doneOfResult, wait->await, origin);
     } else {
         result = walker.addParameter(meeting, { }, Representation::JSValue);
         walker.branch(isResult, isAnsweredByAwait, isAnswered);

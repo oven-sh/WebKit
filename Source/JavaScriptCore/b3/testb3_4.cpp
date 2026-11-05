@@ -3028,6 +3028,60 @@ void testBranch8WithLoad8ZIndex()
     CHECK_EQ(invoke<int32_t>(*code, &cond - 2, (sizeof(uint32_t) * 2) >> logScale), 0);
 }
 
+void testBranch16WithLoad16Z()
+{
+    constexpr uint32_t constant = 0xfffe;
+    for (B3::Opcode opcode : { Equal, NotEqual, AboveEqual, Below, Above, BelowEqual }) {
+        Procedure proc;
+        BasicBlock* root = proc.addBlock();
+        auto arguments = cCallArgumentValues<uint8_t*>(proc, root);
+        BasicBlock* thenCase = proc.addBlock();
+        BasicBlock* elseCase = proc.addBlock();
+
+        root->setSuccessors(FrequentedBlock(thenCase), FrequentedBlock(elseCase));
+        root->appendNew<Value>(proc, Branch, Origin(), root->appendNew<Value>(
+                proc, opcode, Origin(),
+                root->appendNew<MemoryValue>(proc, Load16Z, Origin(), arguments[0], 13),
+                root->appendNew<Const32Value>(proc, Origin(), constant)));
+
+        thenCase->clearSuccessors();
+        thenCase->appendNew<Value>(proc, Return, Origin(), thenCase->appendNew<Const32Value>(proc, Origin(), 1));
+
+        elseCase->clearSuccessors();
+        elseCase->appendNew<Value>(proc, Return, Origin(), elseCase->appendNew<Const32Value>(proc, Origin(), 0));
+
+        auto code = compileProc(proc);
+        for (uint32_t halfword : { 0u, 0x7fu, 0xfeu, 0x7fffu, 0x8000u, 0xff00u, 0xfffdu, 0xfffeu, 0xffffu }) {
+            uint8_t bytes[16];
+            memset(bytes, 0xa5, sizeof(bytes));
+            bytes[13] = halfword & 0xff;
+            bytes[14] = halfword >> 8;
+            bool expected = false;
+            switch (opcode) {
+            case Equal:
+                expected = halfword == constant;
+                break;
+            case NotEqual:
+                expected = halfword != constant;
+                break;
+            case AboveEqual:
+                expected = halfword >= constant;
+                break;
+            case Below:
+                expected = halfword < constant;
+                break;
+            case Above:
+                expected = halfword > constant;
+                break;
+            default:
+                expected = halfword <= constant;
+                break;
+            }
+            CHECK_EQ(invoke<int32_t>(*code, bytes), static_cast<int32_t>(expected));
+        }
+    }
+}
+
 void testComplex(unsigned numVars, unsigned numConstructs)
 {
     MonotonicTime before = MonotonicTime::now();

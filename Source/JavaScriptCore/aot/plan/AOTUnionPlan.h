@@ -33,7 +33,7 @@ struct RowsOfSlotPlan {
     std::span<const uint8_t> widths { };
 };
 // WHERE IN THE CELL A SLOT LIES. Behind placeFieldsSharedByFamiliesForSlotPlan(), in front of the layouts one by one. It places rows that have no place yet and never moves one that has. Whatever it leaves, the caller lays at the end as today.
-// WHOEVER LAYS THE CELLS AGAIN LATER (fields-and-objects-3: chooseStorageOfFields(), once storage and forms are chosen) CALLS IT AGAIN over its own arrays, every row at noPlace, with `widths`: else what was agreed here is packed apart.
+// WHOEVER LAYS THE CELLS AGAIN LATER (chooseStorageOfFields(), once storage and forms are chosen) CALLS IT AGAIN over its own arrays, every row at noPlace, with `widths`: else what was agreed here is packed apart.
 // `hasCells`: objects of the layout are compiled objects with cells of their own. `addPlace`: a new number for RowsOfSlotPlan::places. `bytesKeptZero`: by layout, emptied and grown here; PlannedLayout::bytesKeptZero takes it.
 void placeFieldsOfUnions(const Program&, const LinkTables&, const Families&, RowsOfSlotPlan, NOESCAPE const ScopedLambda<bool(LayoutID)>& hasCells, NOESCAPE const ScopedLambda<uint32_t()>& addPlace, Vector<Vector<ReservedBytes>>& bytesKeptZero); // plan/AOTUnionSlots.cpp
 

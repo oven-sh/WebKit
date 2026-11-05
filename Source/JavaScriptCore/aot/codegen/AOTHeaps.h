@@ -38,7 +38,6 @@ using HeapList = Vector<const Machine::AbstractHeap*, 16>;
     v(weakTableStorage, Mutable) \
     v(weakTableEntries, Mutable)
 
-// AOTObject_shapeWord is read of every cell. In one that is no compiled object other things lie there and change. None of them has compiledObjectShapeBit, so every test of the word fails for them all.
 // A word of AOTInstance_fieldsFilledOnce is zero until it gets its value and keeps that value. Whoever reads zero goes the way that needs no word, so a read may stand anywhere.
 // So it is with the one flag of AOTCompiledStructure_flags that is set behind the creation of the Structure: EveryFieldIsBornConfigurable.
 #define FOR_EACH_AOT_FIELD_HEAP_UNDER_ROOT(v) \
@@ -47,7 +46,7 @@ using HeapList = Vector<const Machine::AbstractHeap*, 16>;
     v(AOTInstance_fixedFields, 0, ImmutablePermanentCell) \
     v(AOTInstance_fieldsFilledOnce, 0, FilledOnce) \
     v(AOTClosure_entry, offsetOfClosureEntry, Immutable) \
-    v(AOTObject_shapeWord, offsetOfShapeWord, Immutable) \
+    v(AOTObject_shapeNumber, offsetOfShapeWord, Immutable) \
     v(ArrayBuffer_shared, ArrayBuffer::offsetOfShared(), Immutable) \
     v(JSArrayBuffer_impl, JSArrayBuffer::offsetOfImpl(), ImmutableInnerPointer) \
     v(JSGlobalObject_nullSetterStrictFunction, JSGlobalObject::offsetOfNullSetterStrictFunction(), Immutable) \
@@ -56,6 +55,8 @@ using HeapList = Vector<const Machine::AbstractHeap*, 16>;
     v(JSPropertyNameEnumerator_endOwnPropertyIndex, JSPropertyNameEnumerator::endOwnPropertyIndexOffset(), Immutable) \
     v(AOTImage_tables, 0, ImmutablePermanentCell)
 
+// AOTObject_shapeWord is read of every cell. In one that is no compiled object other things lie there and change. None of them has compiledObjectShapeBit, so every test of the word fails for them all.
+// In a compiled object the number stays and the mark changes: shapeWordIsUnmarked.
 // AOTObject_hiddenWords and AOTInstance_classGuards lie beside the buckets of their parents, so every mask that names one of those buckets names them too:
 // whatever adds a field may give the object another Extension, and what ends the guard of a class ends the guards of the classes below it.
 // No program can tell whether the closure table has made a closure yet, or whether the value word of a module is filled. Both heaps stay below RuntimeState, so whatever writes that ends a numbered load.
@@ -77,8 +78,8 @@ using HeapList = Vector<const Machine::AbstractHeap*, 16>;
     v(AOTStringBuilderStorage_fields, 0, Mutable, StringBuilderContents) \
     v(AOTStackStringBuilder_fields, 0, Mutable, StringBuilderContents) \
     v(stringBuilderBytes, 0, Mutable, StringBuilderContents) \
-    v(hostObjectCachedValues, 0, Mutable, ExternalState) \
     v(AOTObject_orderWord, offsetOfOrderWord, Mutable, OrderWords) \
+    v(AOTObject_shapeWord, offsetOfShapeWord, Mutable, ShapeWords) \
     v(AOTSlimClosure_word, offsetOfSlimClosureWord, Mutable, ShapeWords) \
     v(AOTExtension_granuleBits, offsetOfExtensionGranuleBits, Mutable, ObjectFields) \
     v(AOTObject_hiddenWords, 0, Mutable, ObjectFields) \

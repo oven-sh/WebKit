@@ -72,8 +72,6 @@ constexpr size_t sizeOfArrayWithStorage(unsigned capacity, unsigned propertyRoom
 JSArray* tryCreateArrayWithStorage(VM&, Structure*, unsigned publicLength, unsigned vectorLength, unsigned propertyRoom = 0);
 // In the count that NewArray takes: the number of values is at most this, the capacity of an empty array lies from capacityShiftInArrayLiteralCount up, and every bit between the two is zero.
 inline constexpr uint32_t maxValuesInArrayLiteral = (1u << 25) - 1;
-// The first number of values that NewArray does not take.
-inline constexpr uint32_t int32ValuesInArrayLiteralCount = maxValuesInArrayLiteral + 1;
 
 // Makes room for `additional` more elements, unless the next step of the usual growth does. Changes nothing a program can see.
 void reserveArrayCapacity(VM&, JSArray*, uint64_t additional);

@@ -54,6 +54,7 @@
 #include <optional>
 #include <wtf/CommaPrinter.h>
 #include <wtf/ListDump.h>
+#include <wtf/SmallSet.h>
 #include <wtf/StackTrace.h>
 #include <wtf/StringPrintStream.h>
 #include <wtf/TZoneMallocInlines.h>
@@ -205,6 +206,7 @@ void Value::replaceWithOops()
 void Value::replaceWith(Kind kind, Type type, BasicBlock* owner)
 {
     unsigned index = m_index;
+    bool isInArena = m_isInArena;
 
     this->~Value();
 
@@ -212,11 +214,13 @@ void Value::replaceWith(Kind kind, Type type, BasicBlock* owner)
 
     this->m_index = index;
     this->owner = owner;
+    m_isInArena = isInArena;
 }
 
 void Value::replaceWith(Kind kind, Type type, BasicBlock* owner, Value* value)
 {
     unsigned index = m_index;
+    bool isInArena = m_isInArena;
 
     this->~Value();
 
@@ -224,6 +228,7 @@ void Value::replaceWith(Kind kind, Type type, BasicBlock* owner, Value* value)
 
     this->m_index = index;
     this->owner = owner;
+    m_isInArena = isInArena;
 }
 
 void Value::dump(PrintStream& out) const
@@ -602,23 +607,35 @@ bool Value::isRounded() const
     }
 }
 
-bool Value::returnsBool() const
+static bool returnsBool(const Value* value, SmallSet<const Value*>& booleans, SmallSet<const Value*>& others)
 {
-    if (type() != Int32)
+    if (value->type() != Int32)
         return false;
 
-    switch (opcode()) {
+    auto ask = [&](unsigned index) {
+        return returnsBool(value->child(index), booleans, others);
+    };
+    auto answerOnce = [&](NOESCAPE const Invocable<bool()> auto& compute) {
+        if (booleans.contains(value))
+            return true;
+        if (others.contains(value))
+            return false;
+        bool result = compute();
+        (result ? booleans : others).add(value);
+        return result;
+    };
+    switch (value->opcode()) {
     case Const32:
-        return asInt32() == 0 || asInt32() == 1;
+        return value->asInt32() == 0 || value->asInt32() == 1;
     case BitAnd:
-        return child(0)->returnsBool() || child(1)->returnsBool();
+        return answerOnce([&] { return ask(0) || ask(1); });
     case BitOr:
     case BitXor:
-        return child(0)->returnsBool() && child(1)->returnsBool();
+        return answerOnce([&] { return ask(0) && ask(1); });
     case Select:
-        return child(1)->returnsBool() && child(2)->returnsBool();
+        return answerOnce([&] { return ask(1) && ask(2); });
     case Identity:
-        return child(0)->returnsBool();
+        return ask(0);
     case Equal:
     case NotEqual:
     case LessThan:
@@ -639,6 +656,13 @@ bool Value::returnsBool() const
     default:
         return false;
     }
+}
+
+bool Value::returnsBool() const
+{
+    SmallSet<const Value*> booleans;
+    SmallSet<const Value*> others;
+    return B3::returnsBool(this, booleans, others);
 }
 
 TriState Value::asTriState() const
@@ -932,6 +956,7 @@ ValueKey Value::key() const
     case SExt32:
     case ZExt32:
     case Clz:
+    case PopCount:
     case Trunc:
     case IToD:
     case IToF:
@@ -1000,6 +1025,14 @@ ValueKey Value::key() const
         return ValueKey(
             SlotBase, type(),
             static_cast<int64_t>(as<SlotBaseValue>()->slot()->index()));
+    case Relocatable: {
+        const RelocatableValue* relocatable = as<RelocatableValue>();
+        v128_t bits;
+        bits.u32x4[0] = relocatable->symbol().index;
+        bits.u32x4[1] = relocatable->symbol().space;
+        bits.u64x2[1] = static_cast<uint64_t>(relocatable->addend());
+        return ValueKey(Relocatable, type(), bits);
+    }
     case Extract:
         return ValueKey(kind(), type(), child(0), as<ExtractValue>()->index());
     case VectorNot:
@@ -1222,6 +1255,7 @@ Type Value::typeFor(Kind kind, Value* firstChild, Value* secondChild)
     case RotR:
     case RotL:
     case Clz:
+    case PopCount:
     case Abs:
     case Ceil:
     case Floor:
@@ -1233,6 +1267,7 @@ Type Value::typeFor(Kind kind, Value* firstChild, Value* secondChild)
     case Depend:
         return firstChild->type();
     case FramePointer:
+    case Relocatable:
         return pointerType();
     case SExt8:
     case SExt16:

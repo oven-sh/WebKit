@@ -30,26 +30,29 @@ static void generateHasJSType(StraightEmitter& emitter, const BodyValue& value)
     CCallHelpers& jit = emitter.jit();
     JSType first = toJSType(value.first());
     JSType last = toJSType(value.last());
-    jit.move(CCallHelpers::TrustedImm32(JSValue::ValueFalse), StraightEmitter::resultGPR);
+    GPRReg result = emitter.takeResultRegister();
+    jit.move(CCallHelpers::TrustedImm32(JSValue::ValueFalse), result);
     if (first <= last) {
         GPRReg tested = StraightEmitter::temporary(1);
         emitter.load(value.valueOperand(), tested);
         CCallHelpers::JumpList hasOtherType;
         hasOtherType.append(jit.branchIfNotCell(tested));
         hasOtherType.append(jit.branchIfNotType(tested, JSTypeRange { first, last }));
-        jit.move(CCallHelpers::TrustedImm32(JSValue::ValueTrue), StraightEmitter::resultGPR);
+        jit.move(CCallHelpers::TrustedImm32(JSValue::ValueTrue), result);
         hasOtherType.link(&jit);
     }
-    emitter.define(value);
+    emitter.define(value, result);
 }
 
 static void generatePutInternalField(StraightEmitter& emitter, const BodyValue& value)
 {
+    // The result is another name of the operand's word: so the operand gets its word first, also where it waits in the result register.
+    CCallHelpers& jit = emitter.jit();
     GPRReg object = StraightEmitter::temporary(0);
     GPRReg stored = StraightEmitter::temporary(1);
     emitter.load(value.objectOperand(), object);
     emitter.load(value.valueOperand(), stored);
-    emitter.jit().store64(stored, internalFieldInStraightForm(object, value));
+    jit.store64(stored, internalFieldInStraightForm(object, value));
     if (!emitter.isConstant(value.valueOperand()))
         emitter.barrierAfterStore(object);
     emitter.defineSameAs(value, value.valueOperand());
@@ -74,14 +77,15 @@ void StraightEmitter::generateRuntimeIntrinsic(const BodyValue& value)
         generateHasJSType(*this, value);
         return;
     case Opcode::FindsDeclaredMember:
-        jit().move(CCallHelpers::TrustedImm32(JSValue::ValueFalse), resultGPR);
+        jit().move(CCallHelpers::TrustedImm32(JSValue::ValueFalse), takeResultRegister());
         define(value);
         return;
-    case Opcode::GetInternalField:
-        load(value.objectOperand(), resultGPR);
-        jit().load64(internalFieldInStraightForm(resultGPR, value), resultGPR);
-        define(value);
+    case Opcode::GetInternalField: {
+        GPRReg result = loadIntoResultRegister(value.objectOperand());
+        jit().load64(internalFieldInStraightForm(result, value), result);
+        define(value, result);
         return;
+    }
     case Opcode::PutInternalField:
         generatePutInternalField(*this, value);
         return;

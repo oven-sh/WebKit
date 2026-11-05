@@ -28,7 +28,7 @@ namespace JSC { namespace AOT { namespace Typed {
 // The text of Code.
 //
 //   text        = "code" unit [ "frameWords=" n ] [ "holdsCallThatPlanHasNotCounted=true" ] [ "callsOfFunctionNeverCollect=true" ] "{" EOL { line } "}" EOL
-//   unit        = f<n> [ ":" CodeRole [ ":" n ] ]                         n: the number of bound arguments, behind a bound role alone
+//   unit        = f<n> [ ":" CodeRole ]
 //   line        = frame | "constants" ":" EOL | head | record | terminator | fact | poll
 //   frame       = "frame" n { member "=" value } EOL                     the members of InlineFrame. Ascending without a gap. Frame 0, the function of the unit itself, may be left out
 //   head        = b<n> "(" [ parameter { "," parameter } ] ")" { "role=" BlockRole | "subject=" v<n> | "frequency=" BlockFrequency
@@ -1296,17 +1296,10 @@ void CodeTextParser::scanUnit()
     if (!hasFailed() && function == absentPayloadWord)
         fail("the unit names no function"_s);
     CodeRole role = CodeRole::Body;
-    uint32_t numberOfBoundArguments = 0;
-    if (accept(TokenKind::Colon)) {
+    if (accept(TokenKind::Colon))
         role = parseEnumerator<CodeRole>("a role of code"_s);
-        if (accept(TokenKind::Colon)) {
-            if (!isBoundRole(role))
-                fail(makeString(nameOf(role), " binds no arguments"_s));
-            numberOfBoundArguments = parseUInt32("a number of bound arguments"_s, UINT16_MAX);
-        }
-    }
     if (!hasFailed())
-        m_unit = CodeUnit(FunctionID(function), role, static_cast<uint16_t>(numberOfBoundArguments));
+        m_unit = CodeUnit(FunctionID(function), role);
 }
 
 void CodeTextParser::scanLine()

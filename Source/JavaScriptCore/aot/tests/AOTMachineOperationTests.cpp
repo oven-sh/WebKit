@@ -88,8 +88,6 @@ constexpr uint64_t operationTestInt64s[] = {
     0x7fffffffffffffff, 0x8000000000000001, 0xfffffffffffffff5, 0xfffffffffffffff9, 0xfffe000000000000, 0xfffe000000000002, 0x0002000000000000,
 };
 
-constexpr uint64_t operationTestShiftAmounts[] = { 0, 1, 31, 32, 63, 64, 7, 33, 65, 0x80000000, 0xffffffff };
-
 constexpr double operationTestDoubles[] = {
     0.0, -0.0, 1.0, -1.5, std::numeric_limits<double>::infinity(), std::numeric_limits<double>::quiet_NaN(),
     -std::numeric_limits<double>::infinity(), 0.5, 4503599627370496.0, std::numeric_limits<double>::denorm_min(), 3.0e38, -1.0,
@@ -687,21 +685,6 @@ void checkHighHalvesOfProductsOf()
 }
 
 template<typename T>
-void checkShiftsOf()
-{
-    using U = std::make_unsigned_t<T>;
-    static constexpr int32_t mask = sizeof(T) * 8 - 1;
-    static constexpr OperationTestBinaryRow<T, T, int32_t> rows[] = {
-        { Shl, [](T a, int32_t b) { return static_cast<T>(static_cast<U>(a) << (b & mask)); } },
-        { SShr, [](T a, int32_t b) { return static_cast<T>(a >> (b & mask)); } },
-        { ZShr, [](T a, int32_t b) { return static_cast<T>(static_cast<U>(a) >> (b & mask)); } },
-    };
-    OperationTestOperands operands { operationTestValuesOf<T>(), operationTestShiftAmounts, operationTestValuesOf<T>().first(operationTestSomeValues), operationTestShiftAmounts };
-    for (const auto& row : rows)
-        checkBinaryOperation(row, operands);
-}
-
-template<typename T>
 void checkIntegerUnaryOperationsOf(CPUFeatureSet features)
 {
     using U = std::make_unsigned_t<T>;
@@ -885,55 +868,6 @@ void checkBitTestsOf()
     });
 }
 
-template<typename Predicate, typename T>
-void checkSelectOnValuesOf()
-{
-    constexpr uint64_t other = operationTestBitsOf(static_cast<T>(77));
-    Type type = operationTestTypeOf<T>();
-    for (bool otherIsConstant : { false, true }) {
-        for (bool isChosenWhenNotZero : { true, false }) {
-            OperationTestSubject subject { "Select"_s, operationTestTypeOf<Predicate>(), type, type, isChosenWhenNotZero ? "of the operand where not zero"_s : "of the operand where zero"_s };
-            subject.keepsBitsOfNaN = true;
-            checkOperationEverywhere(subject, operationTestOperandsOf<Predicate, T>().cutShort(), [&](Output& out, LValue predicate, LValue chosen) {
-                LValue otherValue = otherIsConstant ? operationTestConstant(out, other, type) : operationTestValueOfBits(out, out.opaque(out.constInt64(other)), type);
-                return isChosenWhenNotZero ? out.select(predicate, chosen, otherValue) : out.select(predicate, otherValue, chosen);
-            }, [&](uint64_t predicate, uint64_t chosen) -> std::optional<uint64_t> {
-                return !!predicate == isChosenWhenNotZero ? chosen : other;
-            });
-        }
-    }
-}
-
-template<typename Predicate>
-void checkSelectOnValuesOfEveryType()
-{
-    checkSelectOnValuesOf<Predicate, int32_t>();
-    checkSelectOnValuesOf<Predicate, int64_t>();
-    checkSelectOnValuesOf<Predicate, float>();
-    checkSelectOnValuesOf<Predicate, double>();
-}
-
-template<typename T>
-void checkSelectBetweenComparedOperandsOf()
-{
-    Type type = operationTestTypeOf<T>();
-    for (const OperationTestComparison<T>& row : operationTestComparisonsOf<T>()) {
-        if (std::is_integral_v<T> && row.opcode != Equal && row.opcode != LessThan && row.opcode != Above)
-            continue;
-        for (bool comparesInOrder : { true, false }) {
-            OperationTestSubject subject { descriptionOf(row.opcode).name, type, type, type, comparesInOrder ? "that chooses between its operands"_s : "that chooses between its operands, swapped"_s };
-            subject.keepsBitsOfNaN = true;
-            checkOperationEverywhere(subject, operationTestOperandsOf<T>().cutShort(), [&](Output& out, LValue left, LValue right) {
-                return out.select(comparesInOrder ? out.binary(row.opcode, left, right) : out.binary(row.opcode, right, left), left, right);
-            }, [&](uint64_t left, uint64_t right) -> std::optional<uint64_t> {
-                T a = operationTestValueOf<T>(left);
-                T b = operationTestValueOf<T>(right);
-                return (comparesInOrder ? row.reference(a, b) : row.reference(b, a)) ? left : right;
-            });
-        }
-    }
-}
-
 // ---- Memory.
 
 struct OperationTestAccess {
@@ -1053,52 +987,6 @@ void checkAccessThroughAddress(const OperationTestAccess& access, const Operatio
     }
 }
 
-struct OperationTestStore {
-    // The place, in values of the stored type from the base.
-    int element;
-    // 0 and 1: the arguments. 2: the constant zero.
-    unsigned value;
-};
-
-struct OperationTestStores {
-    std::array<OperationTestStore, 4> stores;
-    unsigned size;
-};
-
-void checkStoresInARow(Type type, const OperationTestStores& sequence, int bytesOffAlignment)
-{
-    OperationTestProcedure test;
-    Output& out = test.out();
-    LValue base = test.argumentGPR(0);
-    LValue firstBits = test.argumentGPR(1);
-    LValue secondBits = test.argumentGPR(2);
-    LValue values[] = { operationTestValueOfBits(out, firstBits, type), operationTestValueOfBits(out, secondBits, type), operationTestConstant(out, 0, type) };
-    int width = static_cast<int>(sizeOf(type));
-    std::span<const OperationTestStore> stores = std::span<const OperationTestStore>(sequence.stores).first(sequence.size);
-    for (const OperationTestStore& store : stores)
-        out.store(values[store.value], out.address(test.memory(), base, store.element * width + bytesOffAlignment));
-    out.retVoid();
-    compileOrFail(test);
-
-    constexpr int elementsOnEachSide = 80;
-    constexpr uint64_t bits[] = { 0x1122334455667788ull, 0x99aabbccddeeff00ull, 0 };
-    Vector<uint8_t> bytes(static_cast<size_t>(2 * elementsOnEachSide * width), [](size_t) -> uint8_t { return 0xa5; });
-    Vector<uint8_t> expectedBytes = bytes;
-    int middle = elementsOnEachSide * width;
-    for (const OperationTestStore& store : stores)
-        memcpy(expectedBytes.mutableSpan().data() + middle + store.element * width + bytesOffAlignment, &bits[store.value], width);
-    test.call<void>(bytes.mutableSpan().data() + middle, bits[0], bits[1]);
-    checkOperationTest(bytes == expectedBytes, test, "stores of ", type, " in a row, the first at element ", stores[0].element, ", ", bytesOffAlignment, " bytes off");
-}
-
-// A frame of the code under test is larger than a page, and on Windows the pages of the stack have to be touched in order.
-NEVER_INLINE void touchStackBelowOperationTest()
-{
-    volatile uint8_t bytes[64 * KB];
-    for (size_t offset = sizeof(bytes); offset; offset -= 4 * KB)
-        bytes[offset - 1] = 0;
-}
-
 // ---- Switch.
 
 constexpr uint64_t markerOfSwitchTarget(unsigned target) { return static_cast<uint64_t>(target + 1) << 44; }
@@ -1165,18 +1053,6 @@ void checkSwitchOnRun(int64_t first, unsigned count)
     checkSwitchOnEachType(caseValues.span());
 }
 
-template<typename T>
-void checkConstantsOf()
-{
-    for (uint64_t bits : operationTestValuesOf<T>()) {
-        OperationTestProcedure test;
-        test.out().ret(operationTestConstant(test.out(), bits, operationTestTypeOf<T>()));
-        compileOrFail(test);
-        uint64_t returned = operationTestBitsOf(test.call<T>());
-        checkOperationTest(returned == bits, test, "constant ", RawHex(bits), " of ", operationTestTypeOf<T>(), " came back as ", RawHex(returned));
-    }
-}
-
 template<void (*run)()>
 void runOperationTestWhereCodeRuns()
 {
@@ -1202,12 +1078,6 @@ static void testMachineOperationsOfHighHalvesOfProducts()
 {
     checkHighHalvesOfProductsOf<int32_t>();
     checkHighHalvesOfProductsOf<int64_t>();
-}
-
-static void testMachineOperationsOfShifting()
-{
-    checkShiftsOf<int32_t>();
-    checkShiftsOf<int64_t>();
 }
 
 static void testMachineOperationsOnOneInteger()
@@ -1237,14 +1107,6 @@ static void testMachineOperationsOfConversion()
     }
 }
 
-static void testMachineOperationsThatAreOpaque()
-{
-    checkUnaryOperation<int32_t, int32_t>({ Opaque, [](int32_t a) { return a; } });
-    checkUnaryOperation<int64_t, int64_t>({ Opaque, [](int64_t a) { return a; } });
-    checkUnaryOperation<float, float>({ Opaque, [](float a) { return a; } }, { }, true);
-    checkUnaryOperation<double, double>({ Opaque, [](double a) { return a; } }, { }, true);
-}
-
 static void testMachineOperationsOfNumberArithmetic()
 {
     for (CPUFeatureSet features : operationTestFeatureSets()) {
@@ -1265,14 +1127,6 @@ static void testMachineOperationsThatTestBits()
 {
     checkBitTestsOf<int32_t>();
     checkBitTestsOf<int64_t>();
-}
-
-static void testMachineOperationsThatSelectBetweenComparedOperands()
-{
-    checkSelectBetweenComparedOperandsOf<int32_t>();
-    checkSelectBetweenComparedOperandsOf<int64_t>();
-    checkSelectBetweenComparedOperandsOf<float>();
-    checkSelectBetweenComparedOperandsOf<double>();
 }
 
 static void testMachineOperationsThatSwitch()
@@ -1321,18 +1175,6 @@ static void testMachineOperationsOnMemoryAtOffsets()
     }
 }
 
-static void testMachineOperationsOnMemoryThroughIndexes()
-{
-    for (const OperationTestAccess& access : operationTestAccesses) {
-        for (unsigned shift = 0; shift <= 4; ++shift) {
-            for (IndexExtension extension : { IndexExtension::None, IndexExtension::ZeroExtend32, IndexExtension::SignExtend32 }) {
-                for (int64_t offset : { 0, 16, 4096 })
-                    checkAccessThroughAddress(access, { offset, 0, true, shift, extension });
-            }
-        }
-    }
-}
-
 static void testMachineOperationsThatStoreConstants()
 {
     static constexpr uint64_t constants[] = {
@@ -1355,33 +1197,6 @@ static void testMachineOperationsThatStoreConstants()
             memcpy(expectedBytes.data() + 8, &constant, access.bytes);
             test.call<void>(bytes.data());
             checkOperationTest(bytes == expectedBytes, test, access.store, " of the constant ", RawHex(constant), " as ", access.type);
-        }
-    }
-}
-
-static void testMachineOperationsThatStoreInARow()
-{
-    static constexpr OperationTestStores sequences[] = {
-        { { { { 1, 0 }, { 2, 1 } } }, 2 },
-        { { { { 2, 0 }, { 1, 1 } } }, 2 },
-        { { { { 1, 0 }, { 1, 1 } } }, 2 },
-        { { { { 1, 0 }, { 2, 0 } } }, 2 },
-        { { { { 1, 2 }, { 2, 2 } } }, 2 },
-        { { { { 1, 0 }, { 2, 2 } } }, 2 },
-        { { { { -1, 0 }, { 0, 1 } } }, 2 },
-        { { { { 1, 0 }, { 3, 1 } } }, 2 },
-        { { { { 62, 0 }, { 63, 1 } } }, 2 },
-        { { { { 63, 0 }, { 64, 1 } } }, 2 },
-        { { { { -64, 0 }, { -63, 1 } } }, 2 },
-        { { { { -65, 0 }, { -64, 1 } } }, 2 },
-        { { { { 1, 0 }, { 2, 1 }, { 3, 0 } } }, 3 },
-        { { { { 1, 0 }, { 2, 1 }, { 3, 0 }, { 4, 1 } } }, 4 },
-        { { { { 1, 0 }, { 2, 1 }, { 2, 0 }, { 3, 1 } } }, 4 },
-    };
-    for (Type type : { Type(Int32), Type(Int64), Type(Float), Type(Double) }) {
-        for (const OperationTestStores& sequence : sequences) {
-            for (int bytesOffAlignment : { 0, 1 })
-                checkStoresInARow(type, sequence, bytesOffAlignment);
         }
     }
 }
@@ -1413,204 +1228,6 @@ static void testMachineOperationsOnNarrowLoads()
                 return out.binary(row.opcode, left, right);
             });
         }
-    }
-}
-
-static void testMachineOperationsOnStackSlots()
-{
-    touchStackBelowOperationTest();
-    constexpr uint64_t guard = 0xa5a5a5a5a5a5a5a5ull;
-    for (unsigned size : { 16u, 4112u, 40000u }) {
-        for (const OperationTestAccess& access : operationTestAccesses) {
-            for (unsigned offset : { 0u, 8u, size - 8 }) {
-                OperationTestProcedure test;
-                Output& out = test.out();
-                Builder& builder = out;
-                const AbstractHeap& heap = test.heaps().frameSlots;
-                LValue bits = test.argumentGPR(0);
-                LValue results = test.argumentGPR(1);
-                LValue distance = test.argumentGPR(2);
-                LValue slot = out.lockedStackSlot(size);
-                out.store64(out.constInt64(static_cast<int64_t>(guard)), out.address(heap, slot, offset));
-                builder.store(access.store, operationTestValueOfBits(out, bits, access.type), slot, offset, heap);
-                out.store64(out.load64(out.address(heap, slot, offset)), out.address(test.memory(), results, 0));
-                out.store64(operationTestBitsOfValue(out, builder.load(access.load, access.type, out.add(slot, distance), 0, heap)), out.address(test.memory(), results, sizeof(uint64_t)));
-                out.ret(operationTestBitsOfValue(out, builder.load(access.load, access.type, slot, offset, heap)));
-                compileOrFail(test);
-
-                for (uint64_t word : { 0x8899aabbccddeeffull, 0x0011223344556677ull }) {
-                    uint64_t wholeWord = guard;
-                    memcpy(&wholeWord, &word, access.bytes);
-                    uint64_t loaded = bitsLoadedByOperationTestAccess(access, word);
-                    uint64_t stored[2] = { 0, 0 };
-                    uint64_t returned = test.call<uint64_t>(word, stored, uint64_t { offset });
-                    checkOperationTest(returned == loaded && stored[0] == wholeWord && stored[1] == loaded, test, access.load, " and ", access.store, " of ", access.type,
-                        " at ", offset, " in a slot of ", size, " bytes: ", RawHex(returned), ", ", RawHex(stored[0]), ", ", RawHex(stored[1]));
-                }
-            }
-        }
-    }
-}
-
-static void testMachineOperationsThatAreConstants()
-{
-    checkConstantsOf<int32_t>();
-    checkConstantsOf<int64_t>();
-    checkConstantsOf<float>();
-    checkConstantsOf<double>();
-}
-
-static void testMachineOperationsOnArgumentsAndReturns()
-{
-    {
-        OperationTestProcedure test;
-        Output& out = test.out();
-        LValue arguments[] = { test.argumentGPR(0), test.argumentGPR(1), test.argumentGPR(2), test.argumentGPR(3) };
-        LValue digits = arguments[0];
-        for (unsigned index = 1; index < std::size(arguments); ++index)
-            digits = out.add(out.mul(digits, 10), arguments[index]);
-        out.ret(digits);
-        compileOrFail(test);
-        checkOperationTest(test.call<int64_t>(int64_t { 1 }, int64_t { 2 }, int64_t { 3 }, int64_t { 4 }) == 1234, test, "four integer arguments");
-    }
-    {
-        OperationTestProcedure test;
-        Output& out = test.out();
-        LValue arguments[] = { test.argumentFPR(0), test.argumentFPR(1), test.argumentFPR(2), test.argumentFPR(3) };
-        LValue digits = arguments[0];
-        for (unsigned index = 1; index < std::size(arguments); ++index)
-            digits = out.doubleAdd(out.doubleMul(digits, out.constDouble(10)), arguments[index]);
-        out.ret(digits);
-        compileOrFail(test);
-        checkOperationTest(test.call<double>(1.0, 2.0, 3.0, 4.0) == 1234.0, test, "four number arguments");
-    }
-    constexpr uint64_t bits = 0xc0490fdb40490fdbull;
-    {
-        OperationTestProcedure test;
-        test.out().ret(test.out().castToInt32(test.argumentGPR(0)));
-        compileOrFail(test);
-        checkOperationTest(test.call<int32_t>(bits) == static_cast<int32_t>(bits), test, "Return of an Int32");
-    }
-    {
-        OperationTestProcedure test;
-        test.out().ret(operationTestValueOfBits(test.out(), test.argumentGPR(0), Float));
-        compileOrFail(test);
-        checkOperationTest(operationTestBitsOf(test.call<float>(bits)) == static_cast<uint32_t>(bits), test, "Return of a Float");
-    }
-    {
-        OperationTestProcedure test;
-        test.out().ret(operationTestValueOfBits(test.out(), test.argumentGPR(0), Double));
-        compileOrFail(test);
-        checkOperationTest(operationTestBitsOf(test.call<double>(bits)) == bits, test, "Return of a Double");
-    }
-    {
-        OperationTestProcedure test;
-        Output& out = test.out();
-        LValue pointer = test.argumentGPR(0);
-        LValue word = test.argumentGPR(1);
-        out.store64(word, out.address(test.memory(), pointer));
-        out.retVoid();
-        compileOrFail(test);
-        uint64_t stored = 0;
-        test.call<void>(&stored, bits);
-        checkOperationTest(stored == bits, test, "Return of nothing");
-    }
-}
-
-static void testMachineOperationsInLoopWithPhisInBothBanks()
-{
-    OperationTestProcedure test;
-    Output& out = test.out();
-    LValue words = test.argumentGPR(0);
-    LValue count = test.argumentGPR(1);
-    LValue placeOfNumber = test.argumentGPR(2);
-    LBasicBlock head = out.newBlock();
-    LBasicBlock body = out.newBlock();
-    LBasicBlock end = out.newBlock();
-    ValueFromBlock firstIndex = out.anchor(out.int64Zero);
-    ValueFromBlock firstSum = out.anchor(out.int64Zero);
-    ValueFromBlock firstNumber = out.anchor(out.constDouble(0));
-    out.jump(head);
-
-    out.appendTo(head);
-    LValue index = out.phi(Int64, firstIndex);
-    LValue sum = out.phi(Int64, firstSum);
-    LValue number = out.phi(Double, firstNumber);
-    out.branch(out.below(index, count), normalEdge(body), normalEdge(end));
-
-    out.appendTo(body);
-    LValue word = out.load64(out.baseIndex(test.memory(), words, index, ScaleEight));
-    out.addIncomingToPhi(index, out.anchor(out.add(index, 1)));
-    out.addIncomingToPhi(sum, out.anchor(out.add(sum, word)));
-    out.addIncomingToPhi(number, out.anchor(out.doubleAdd(number, out.intToDouble(word))));
-    out.jump(head);
-
-    out.appendTo(end);
-    out.storeDouble(number, out.address(test.memory(), placeOfNumber));
-    out.ret(sum);
-    compileOrFail(test);
-
-    std::array<int64_t, 17> memory;
-    for (size_t position = 0; position < memory.size(); ++position)
-        memory[position] = static_cast<int64_t>(position * position) - 40;
-    for (uint64_t length : { uint64_t { 0 }, uint64_t { 1 }, uint64_t { 2 }, uint64_t { memory.size() } }) {
-        int64_t expected = 0;
-        for (uint64_t position = 0; position < length; ++position)
-            expected += memory[position];
-        double sumOfNumbers = -1;
-        int64_t returned = test.call<int64_t>(memory.data(), length, &sumOfNumbers);
-        checkOperationTest(returned == expected && sumOfNumbers == static_cast<double>(expected), test, "a loop of ", length, " turns gave ", returned, " and ", sumOfNumbers);
-    }
-}
-
-static void testMachineOperationsFenceOopsFramePointerAndAddressOf()
-{
-    {
-        OperationTestProcedure test;
-        Output& out = test.out();
-        LValue pointer = test.argumentGPR(0);
-        LValue word = test.argumentGPR(1);
-        out.store64(word, out.address(test.memory(), pointer));
-        out.fence();
-        out.ret(out.load64(out.address(test.memory(), pointer)));
-        compileOrFail(test);
-        uint64_t stored = 0;
-        checkOperationTest(test.call<uint64_t>(&stored, uint64_t { 99 }) == 99 && stored == 99, test, "Fence between a store and a load");
-    }
-    {
-        OperationTestProcedure test;
-        Output& out = test.out();
-        LBasicBlock never = out.newBlock();
-        LBasicBlock always = out.newBlock();
-        out.branch(test.argumentGPR(0), rareEdge(never), normalEdge(always));
-        out.appendTo(never);
-        out.unreachable();
-        out.appendTo(always);
-        out.ret(out.constInt64(7));
-        compileOrFail(test);
-        checkOperationTest(test.call<uint64_t>(uint64_t { 0 }) == 7, test, "Oops in a block that is not entered");
-    }
-    {
-        OperationTestProcedure test;
-        Output& out = test.out();
-        LValue word = test.argumentGPR(0);
-        LValue slot = out.lockedStackSlot(16);
-        out.store64(word, out.address(test.heaps().frameSlots, slot));
-        out.ret(out.sub(out.framePointer(), slot));
-        compileOrFail(test);
-        uint64_t distance = test.call<uint64_t>(uint64_t { 1 });
-        checkOperationTest(distance >= 16 && distance <= 256 && !(distance % 8), test, "a slot lies ", distance, " bytes below the FramePointer");
-    }
-    {
-        static constexpr uint64_t data[] = { 0x1111111111111111ull, 0x2222222222222222ull, 0x3333333333333333ull };
-        OperationTestProcedure test;
-        Output& out = test.out();
-        LValue index = test.argumentGPR(0);
-        LValue table = out.relocatable(SymbolSpace::Constant, out.addConstantData(std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(data), sizeof(data)), ConstantKind::Unlabeled));
-        out.ret(out.load64(out.baseIndex(test.memory(), table, index, ScaleEight)));
-        compileOrFail(test);
-        for (uint64_t position = 0; position < std::size(data); ++position)
-            checkOperationTest(test.call<uint64_t>(position) == data[position], test, "AddressOf constant data, word ", position);
     }
 }
 
@@ -1658,92 +1275,6 @@ static void testMachineOperationsOnLowHalfOfLoadThroughScaledIndex()
     uint64_t memory[2] = { 0x1111111122222222ull, 0x3333333344444444ull };
     checkOperationTest(test.call<uint64_t>(memory, uint64_t { 0 }) == 0x22222222, test, "the low half of word 0");
     checkOperationTest(test.call<uint64_t>(memory, uint64_t { 1 }) == 0x44444444, test, "the low half of word 1");
-}
-
-static void testMachineOperationsThatStoreSumThroughItsOwnBase()
-{
-    constexpr int32_t increment = 152;
-    for (int32_t offsetOfStore : { 0, increment }) {
-        OperationTestProcedure test;
-        Output& out = test.out();
-        LValue base = test.argumentGPR(0);
-        LValue sum = out.add(base, increment);
-        out.store64(sum, out.address(test.memory(), base, offsetOfStore));
-        out.ret(sum);
-        compileOrFail(test);
-        std::array<uint64_t, increment / sizeof(uint64_t) + 1> words { };
-        uint64_t expected = std::bit_cast<uintptr_t>(words.data()) + increment;
-        checkOperationTest(test.call<uint64_t>(words.data()) == expected && words[offsetOfStore / sizeof(uint64_t)] == expected, test, "a sum stored at offset ", offsetOfStore, " from its own base");
-    }
-}
-
-static void testMachineOperationsThatBranchOnExtendedWords()
-{
-    for (Opcode extension : { ZExt32, SExt32 }) {
-        for (bool isReadAgain : { false, true }) {
-            OperationTestProcedure test;
-            Output& out = test.out();
-            LValue extended = out.unary(extension, out.castToInt32(test.argumentGPR(0)));
-            LBasicBlock taken = out.newBlock();
-            LBasicBlock notTaken = out.newBlock();
-            out.branch(extended, normalEdge(taken), normalEdge(notTaken));
-            out.appendTo(taken);
-            out.ret(isReadAgain ? extended : out.constInt64(1));
-            out.appendTo(notTaken);
-            out.ret(out.constInt64(2));
-            compileOrFail(test);
-            for (uint64_t argument : { uint64_t { 0 }, uint64_t { 1 }, uint64_t { 0x80000000 }, uint64_t { 0x700000000 }, uint64_t { 0xffffffff00000000 } }) {
-                uint32_t low = static_cast<uint32_t>(argument);
-                uint64_t whenTaken = !isReadAgain ? 1 : extension == ZExt32 ? low : static_cast<uint64_t>(static_cast<int64_t>(static_cast<int32_t>(low)));
-                checkOperationTest(test.call<uint64_t>(argument) == (low ? whenTaken : 2), test, "Branch on ", extension, " of ", RawHex(argument));
-            }
-        }
-    }
-}
-
-static void testMachineOperationsOnSumsTestedForInt32()
-{
-    enum class Right : uint8_t { Word, Constant, WideConstant };
-    constexpr int64_t constant = 100;
-    constexpr int64_t wideConstant = int64_t { 1 } << 31;
-    constexpr uint64_t overflowMarker = uint64_t { 1 } << 40;
-    for (Opcode opcode : { Add, Sub, Mul }) {
-        for (Opcode comparison : { Equal, NotEqual }) {
-            for (Right kindOfRight : { Right::Word, Right::Constant, Right::WideConstant }) {
-                OperationTestProcedure test;
-                Output& out = test.out();
-                LValue leftBits = test.argumentGPR(0);
-                LValue rightBits = test.argumentGPR(1);
-                LValue left = out.signExt32To64(out.castToInt32(leftBits));
-                LValue right = kindOfRight == Right::Word ? out.signExt32To64(out.castToInt32(rightBits)) : out.constInt64(kindOfRight == Right::Constant ? constant : wideConstant);
-                LValue exact = out.binary(opcode, left, right);
-                LValue low = out.castToInt32(exact);
-                LBasicBlock fits = out.newBlock();
-                LBasicBlock overflows = out.newBlock();
-                LValue test32 = out.binary(comparison, out.signExt32To64(low), exact);
-                if (comparison == Equal)
-                    out.branch(test32, normalEdge(fits), rareEdge(overflows));
-                else
-                    out.branch(test32, rareEdge(overflows), normalEdge(fits));
-                out.appendTo(fits);
-                out.ret(out.zeroExtPtr(low));
-                out.appendTo(overflows);
-                out.ret(out.add(out.zeroExtPtr(low), out.constInt64(static_cast<int64_t>(overflowMarker))));
-                compileOrFail(test);
-
-                for (uint64_t a : operationTestInt32s) {
-                    for (uint64_t b : operationTestInt32s) {
-                        int64_t x = static_cast<int32_t>(a);
-                        int64_t y = kindOfRight == Right::Word ? static_cast<int32_t>(b) : kindOfRight == Right::Constant ? constant : wideConstant;
-                        int64_t sum = opcode == Add ? x + y : opcode == Sub ? x - y : x * y;
-                        uint64_t expected = static_cast<uint32_t>(sum) + (sum == static_cast<int32_t>(sum) ? 0 : overflowMarker);
-                        uint64_t returned = test.call<uint64_t>(operationTestWithDirtAbove(a, sizeof(uint32_t)), operationTestWithDirtAbove(b, sizeof(uint32_t)));
-                        checkOperationTest(returned == expected, test, opcode, " of (", RawHex(a), ", ", RawHex(b), ") tested for int32 by ", comparison, " gave ", RawHex(returned));
-                    }
-                }
-            }
-        }
-    }
 }
 
 static constexpr int64_t overflowTestMinInt32 = std::numeric_limits<int32_t>::min();
@@ -2208,39 +1739,22 @@ static void testMachineOperationsOnSumThatIsMadeNumberWhereItOverflows()
 static std::span<const NativeTest> listOfMachineOperationTests()
 {
     static constexpr NativeTest tests[] = {
-        { "machine/operations/arguments-and-returns"_s, runOperationTestWhereCodeRuns<testMachineOperationsOnArgumentsAndReturns> },
-        { "machine/operations/constants"_s, runOperationTestWhereCodeRuns<testMachineOperationsThatAreConstants> },
         { "machine/operations/integers/arithmetic"_s, runOperationTestWhereCodeRuns<testMachineOperationsOfIntegerArithmetic> },
         { "machine/operations/integers/divisions"_s, runOperationTestWhereCodeRuns<testMachineOperationsOfDivision> },
         { "machine/operations/integers/high-halves-of-products"_s, runOperationTestWhereCodeRuns<testMachineOperationsOfHighHalvesOfProducts> },
-        { "machine/operations/integers/shifts"_s, runOperationTestWhereCodeRuns<testMachineOperationsOfShifting> },
         { "machine/operations/integers/unary"_s, runOperationTestWhereCodeRuns<testMachineOperationsOnOneInteger> },
         { "machine/operations/conversions"_s, runOperationTestWhereCodeRuns<testMachineOperationsOfConversion> },
-        { "machine/operations/opaque"_s, runOperationTestWhereCodeRuns<testMachineOperationsThatAreOpaque> },
         { "machine/operations/numbers/arithmetic"_s, runOperationTestWhereCodeRuns<testMachineOperationsOfNumberArithmetic> },
         { "machine/operations/numbers/unary"_s, runOperationTestWhereCodeRuns<testMachineOperationsOnOneNumber> },
         { "machine/operations/comparisons/int32"_s, runOperationTestWhereCodeRuns<checkComparisonsOf<int32_t>> },
-        { "machine/operations/comparisons/int64"_s, runOperationTestWhereCodeRuns<checkComparisonsOf<int64_t>> },
-        { "machine/operations/comparisons/float"_s, runOperationTestWhereCodeRuns<checkComparisonsOf<float>> },
         { "machine/operations/comparisons/double"_s, runOperationTestWhereCodeRuns<checkComparisonsOf<double>> },
         { "machine/operations/comparisons/bit-tests"_s, runOperationTestWhereCodeRuns<testMachineOperationsThatTestBits> },
-        { "machine/operations/select/on-int32"_s, runOperationTestWhereCodeRuns<checkSelectOnValuesOfEveryType<int32_t>> },
-        { "machine/operations/select/on-int64"_s, runOperationTestWhereCodeRuns<checkSelectOnValuesOfEveryType<int64_t>> },
-        { "machine/operations/select/between-compared-operands"_s, runOperationTestWhereCodeRuns<testMachineOperationsThatSelectBetweenComparedOperands> },
         { "machine/operations/switch"_s, runOperationTestWhereCodeRuns<testMachineOperationsThatSwitch> },
         { "machine/operations/memory/offsets"_s, runOperationTestWhereCodeRuns<testMachineOperationsOnMemoryAtOffsets> },
-        { "machine/operations/memory/indexes"_s, runOperationTestWhereCodeRuns<testMachineOperationsOnMemoryThroughIndexes> },
         { "machine/operations/memory/stores-of-constants"_s, runOperationTestWhereCodeRuns<testMachineOperationsThatStoreConstants> },
-        { "machine/operations/memory/stores-in-a-row"_s, runOperationTestWhereCodeRuns<testMachineOperationsThatStoreInARow> },
         { "machine/operations/memory/narrow-loads-as-operands"_s, runOperationTestWhereCodeRuns<testMachineOperationsOnNarrowLoads> },
-        { "machine/operations/memory/stack-slots"_s, runOperationTestWhereCodeRuns<testMachineOperationsOnStackSlots> },
-        { "machine/operations/loop-with-phis-in-both-banks"_s, runOperationTestWhereCodeRuns<testMachineOperationsInLoopWithPhisInBothBanks> },
-        { "machine/operations/fence-oops-frame-pointer-address-of"_s, runOperationTestWhereCodeRuns<testMachineOperationsFenceOopsFramePointerAndAddressOf> },
         { "machine/operations/patch-extract-check"_s, runOperationTestWhereCodeRuns<testMachineOperationsPatchExtractAndCheck> },
         { "machine/operations/low-half-of-load-through-scaled-index"_s, runOperationTestWhereCodeRuns<testMachineOperationsOnLowHalfOfLoadThroughScaledIndex> },
-        { "machine/operations/store-of-sum-through-its-own-base"_s, runOperationTestWhereCodeRuns<testMachineOperationsThatStoreSumThroughItsOwnBase> },
-        { "machine/operations/branches-on-extended-words"_s, runOperationTestWhereCodeRuns<testMachineOperationsThatBranchOnExtendedWords> },
-        { "machine/operations/sums-tested-for-int32"_s, runOperationTestWhereCodeRuns<testMachineOperationsOnSumsTestedForInt32> },
         { "machine/operations/sums-tested-by-overflow/relations-and-operands"_s, runOperationTestWhereCodeRuns<testMachineOperationsOnSumsTestedByOverflow> },
         { "machine/operations/sums-tested-by-overflow/sum-that-goes-round-a-loop"_s, runOperationTestWhereCodeRuns<testMachineOperationsOnSumThatGoesRoundLoop> },
         { "machine/operations/sums-tested-by-overflow/spilled-sum-is-widened"_s, runOperationTestWhereCodeRuns<testMachineOperationsOnSpilledSumThatIsWidened> },

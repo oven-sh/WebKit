@@ -3,9 +3,8 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-// Known summaries: the type of what a call gives that stays as it is written, where the rows of the built-ins that it calls or Link's list of its callees say more than the row of the operation. The rule of the call is handed the type (PositionTypes::resultOfCallBeingTyped()), and the record keeps it among its facts.
+// Known summaries: the type of what a call gives that stays as it is written, where its caller has proven more than the row of the operation says. The rule of the call is handed the type (PositionTypes::resultOfCallBeingTyped()), and the record keeps it among its facts.
 // At a suspension: nothing is kept here. At a throw: a call that throws gives nothing, so the type speaks of what is returned alone.
-// Withheld: without DirectCalls no list of callees is read, without BuiltinCalls no row is asked. The row's own type stands.
 
 #include "config.h"
 #include "AOTWalk.h"
@@ -56,18 +55,6 @@ static void fileTypeHandedToRuleForKnownSummaries(Walker& walker, Reference reco
     });
 }
 
-static TypeID typeOfResultOfCallAsWrittenForKnownSummaries(Walker& walker, const BodyValue& call, const TypesOfInputs& typeOf)
-{
-    if (walker.has(Mechanism::BuiltinCalls)) {
-        if (TypeID byRows = resultOfCallOfBuiltinsByRows(walker, call, typeOf))
-            return byRows;
-    }
-    if (!walker.has(Mechanism::DirectCalls))
-        return { };
-    const LinkedCallOfSeveral* listed = walker.facts().linked().known.findCallOfSeveral(walker.currentFunction(), call.id());
-    return listed ? listed->result : TypeID();
-}
-
 Reference buildCallAsWrittenThatGives(Walker& walker, Draft&& draft, TypeID given)
 {
     RELEASE_ASSERT(callsAsWrittenTypedForKnownSummaries.contains(draft.opcode));
@@ -75,30 +62,6 @@ Reference buildCallAsWrittenThatGives(Walker& walker, Draft&& draft, TypeID give
     Opcode opcode = draft.opcode;
     walker.setResultOfCallBeingTyped(proven);
     Reference built = walker.build(WTF::move(draft));
-    walker.setResultOfCallBeingTyped({ });
-    if (proven && built && built.isValue() && walker.code().at(built.id()).opcode == opcode)
-        fileTypeHandedToRuleForKnownSummaries(walker, built, proven);
-    return built;
-}
-
-Reference buildAsWrittenWithWhatIsKnown(Walker& walker, const BodyValue& value, Draft&& draft)
-{
-    if (draft.opcode != value.opcode())
-        return walker.build(WTF::move(draft));
-
-    auto typeOfInput = [&](ValueID input) {
-        Reference built = input ? walker.referenceOf(input) : Reference();
-        return built ? walker.typeOf(built) : TypeID();
-    };
-    TypesOfInputs typeOf(typeOfInput);
-    std::optional<Effects> effects = effectsOfOperationAsWritten(walker, walker.currentFunction(), value, typeOf);
-    TypeID proven;
-    if (callsAsWrittenTypedForKnownSummaries.contains(draft.opcode))
-        proven = typeHeardByRuleForKnownSummaries(walker, draft, typeOfResultOfCallAsWrittenForKnownSummaries(walker, value, typeOf));
-
-    Opcode opcode = draft.opcode;
-    walker.setResultOfCallBeingTyped(proven);
-    Reference built = walker.build(WTF::move(draft), effects ? &*effects : nullptr);
     walker.setResultOfCallBeingTyped({ });
     if (proven && built && built.isValue() && walker.code().at(built.id()).opcode == opcode)
         fileTypeHandedToRuleForKnownSummaries(walker, built, proven);

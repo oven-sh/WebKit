@@ -485,14 +485,6 @@ void BodyLiveness::compute(const BodyIndex& index)
         delete made;
 }
 
-void BodyLiveness::computeAsSuspensionsHold(const BodyIndex& index, std::span<const ValueID> heldUntilEnd)
-{
-    forget();
-    BodyLivenessSolver(index, true, heldUntilEnd, m_ownData, m_scratch).run();
-    m_data = &m_ownData;
-    m_index = &index;
-}
-
 } } } // namespace JSC::AOT::Typed
 
 #endif // ENABLE(AOT)

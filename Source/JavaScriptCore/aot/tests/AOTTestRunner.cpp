@@ -469,21 +469,6 @@ static void count(TestRunSummary& summary, FileOutcome outcome)
     }
 }
 
-static FileResult runOneFileInChildProcess(const ChildProcessLauncher& launcher, const String& path, const TestRunRequest& request)
-{
-    ChildProcessResult result = launcher.run(childArguments(singleElementSpan(path), request).span());
-
-    StringView output = result.output;
-    if (result.exitedWith(exitCodeForFailure))
-        return { FileOutcome::Failed, output.left(startOfLastLines(output, 1)).toString() };
-    if (result.exitedWith(exitCodeForSuccess))
-        return { output.startsWith(todoLineStart) ? FileOutcome::Todo : FileOutcome::Passed, output.left(startOfLastLines(output, 1)).toString() };
-
-    StringView lastLines = output.substring(startOfLastLines(output, maxCrashOutputLinesShown));
-    ASCIILiteral lineEnd = lastLines.isEmpty() || lastLines.endsWith('\n') ? ""_s : "\n"_s;
-    return { FileOutcome::Failed, makeString(lastLines, lineEnd, "FAIL "_s, path, ":1: "_s, result.description(), '\n') };
-}
-
 // "<passed> passed, <failed> failed, <todo> todo": the last line of a run.
 static std::optional<TestRunSummary> parseSummaryLine(StringView line)
 {
@@ -501,6 +486,25 @@ static std::optional<TestRunSummary> parseSummaryLine(StringView line)
         *counts[index++] = *number;
     }
     return index == std::size(words) ? std::optional(summary) : std::nullopt;
+}
+
+static FileResult runOneFileInChildProcess(const ChildProcessLauncher& launcher, const String& path, const TestRunRequest& request)
+{
+    ChildProcessResult result = launcher.run(childArguments(singleElementSpan(path), request).span());
+
+    StringView output = result.output;
+    // A run that has come to its end says so in its last line. A sanitizer ends the process with the code of a failed run, and no line of its report names the file.
+    size_t summaryStart = startOfLastLines(output, 1);
+    std::optional<TestRunSummary> summary = parseSummaryLine(output.substring(summaryStart));
+    bool hasComeToItsEnd = summary && summary->passed + summary->failed + summary->todo == 1;
+    if (hasComeToItsEnd && result.exitedWith(exitCodeForFailure))
+        return { FileOutcome::Failed, output.left(summaryStart).toString() };
+    if (hasComeToItsEnd && result.exitedWith(exitCodeForSuccess))
+        return { output.startsWith(todoLineStart) ? FileOutcome::Todo : FileOutcome::Passed, output.left(summaryStart).toString() };
+
+    StringView lastLines = output.substring(startOfLastLines(output, maxCrashOutputLinesShown));
+    ASCIILiteral lineEnd = lastLines.isEmpty() || lastLines.endsWith('\n') ? ""_s : "\n"_s;
+    return { FileOutcome::Failed, makeString(lastLines, lineEnd, "FAIL "_s, path, ":1: "_s, result.description(), '\n') };
 }
 
 // Starting a process costs more than most tests, so a child runs several files. A child that crashes or hangs says nothing about

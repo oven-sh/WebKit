@@ -1,0 +1,95 @@
+# -- source: main.ts
+# function run(n: number): number { let sum = 0; for (let i = 0; i < n; i++) sum = (sum + steps[i & 1]) | 0; return sum; }
+# function attempt(n: number): number { try { return run(n); } catch (error) { return -1; } }
+# const withNoTurn = attempt(0);
+# const withTurns = attempt(3);
+# const steps: number[] = [1, 2];
+# print(withNoTurn, withTurns, attempt(0), attempt(3));
+# -- end of source
+# records of c9e8aeaa73821e65
+# The list is made by whoever reads `steps` first: the word is empty in the dead zone, holds a mark from the declaration on, and then the list. Each turn read the word, tested for the mark, and checked the dead zone.
+# In front of the loop the word is read once: empty: the other copy . the mark: the list is made here, which nobody sees . and from there on the variable holds it: no turn of the typed copy reads the word.
+# OPTIONS: check=Validate
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = GetModuleVariable
+# CHECK-NEXT: = TypeTest {{*}}testedType=absent
+# CHECK: = TypeTest {{*}}testedType=undefined
+# CHECK: = PutModuleVariable
+# CHECK: frequency=Rare isLoopHead=true
+# CHECK: = CheckInitialized {{*}}name="steps"
+# CHECK: isInLoop=true isLoopHead=true
+# CHECK-NOT: = CheckInitialized
+# CHECK-NOT: = GetModuleVariable
+# CHECK: Return
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 0 -1 0 4
+
+module m0 path="main.ts" displayPath="main.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+data d0 root=Array{contents=number elements=[Number{value=1}, Number{value=2}]} module=m0
+variable g0 name="run" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="steps" module=m0 declared={type=undefined|null|absent|Array<number> flags=[OmitsNull, OmitsUndefined]} flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f2 @0
+    v1 = Convert v0 declared={type=f2 flags=[IsFromCompiler]} @0
+    v2 = Integer @240
+    v3 = Call v1, -, v2 calleeName="attempt" @232
+    v4 = Integer integer=3 @270
+    v5 = Call v1, -, v4 calleeName="attempt" @262
+    v6 = Data data=d0 @298
+    v7 = Convert v6 declared={type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]} @298
+    PutModuleVariable v7 variable=g1 @280
+    v9 = Builtin builtin=GlobalThis @306
+    v10 = PropGet v9 key="print" [isFreeName] @306
+    v11 = Integer @343
+    v12 = Call v1, -, v11 calleeName="attempt" @335
+    v13 = Integer integer=3 @355
+    v14 = Call v1, -, v13 calleeName="attempt" @347
+    v15 = Call v10, -, v3, v5, v12, v14 calleeName="print" @306
+    v16 = Undefined @306
+    Return v16 @306
+}
+function f1 name="run" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    v1 = Integer @44
+    v2 = Convert v1 declared={type=number} @44
+    v3 = Integer @60
+    v4 = Convert v3 declared={type=number} @60
+    Jump -> next b1(v2, v4) @56
+  b1(v5: number, v6: number):
+    LoopHint @56
+    v8 = Less v6, v0 @67
+    Branch v8 -> taken b2(), notTaken b3() @67
+  b2():
+    v9 = GetModuleVariable variable=g1 @88
+    v10 = CheckInitialized v9 name="steps" @88
+    v11 = Integer integer=1 @98
+    v12 = BitAnd v6, v11 @98
+    v13 = ElemGet v10, v12 @88
+    v14 = Add v5, v13 @88
+    v15 = Integer @104
+    v16 = BitOr v14, v15 @104
+    v17 = Convert v16 declared={type=number} @75
+    v18 = Increment v6 @70
+    v19 = Convert v18 declared={type=number} @70
+    Jump -> next b1(v17, v19) @70
+  b3():
+    v20 = Convert v5 declared={type=number} @114
+    Return v20 @114
+}
+function f2 name="attempt" module=m0 position=121 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    Jump -> next b1() @159
+  b1() handler=b2():
+    v1 = GetModuleVariable variable=g0 @172
+    v2 = Call v1, -, v0 calleeName="run" @172
+    v3 = Convert v2 declared={type=number} @172
+    Return v3 @172
+  b2() role=CatchHandler:
+    v4 = CatchValue @196
+    v5 = Integer integer=-1 @205
+    v6 = Convert v5 declared={type=number} @205
+    Return v6 @205
+}

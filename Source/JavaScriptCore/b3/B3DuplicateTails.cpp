@@ -50,8 +50,8 @@ public:
     DuplicateTails(Procedure& proc)
         : m_proc(proc)
         , m_insertionSet(proc)
-        , m_maxSize(Options::maxB3TailDupBlockSize())
-        , m_maxSuccessors(Options::maxB3TailDupBlockSuccessors())
+        , m_maxSize(proc.policy().upstream.maxTailDuplicationBlockSize)
+        , m_maxSuccessors(proc.policy().upstream.maxTailDuplicationBlockSuccessors)
     {
     }
 

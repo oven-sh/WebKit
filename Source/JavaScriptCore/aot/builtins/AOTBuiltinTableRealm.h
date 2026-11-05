@@ -108,7 +108,8 @@ public:
 
 // unlockedMembers: ProgramTables::unlockedBuiltinMembers(). openedNames: those of ProgramTables::openedNames() that are opened on the holder.
 // A wholly locked object gets these names in a test run, and where the program adds a name to it: everything but what the two lists say stays closed.
-JS_EXPORT_PRIVATE Ref<ImmutablePropertyNames> immutablePropertyNamesOf(VM&, BuiltinID holder, std::span<const uint32_t> constantMembers = { }, WritesToBuiltinMembers* = nullptr, std::span<const uint32_t> unlockedMembers = { }, bool reflectThrows = false, std::span<const Identifier> openedNames = { });
+// namesTakenForAbsent: ProgramTables::namesTakenForAbsent() of an executable: an object that is closed to other names refuses those and takes every other text. Nothing: it refuses every text but the opened ones.
+JS_EXPORT_PRIVATE Ref<ImmutablePropertyNames> immutablePropertyNamesOf(VM&, BuiltinID holder, std::span<const uint32_t> constantMembers = { }, WritesToBuiltinMembers* = nullptr, std::span<const uint32_t> unlockedMembers = { }, bool reflectThrows = false, std::span<const Identifier> openedNames = { }, std::optional<std::span<const uint32_t>> namesTakenForAbsent = std::nullopt);
 
 } // namespace AOT
 } // namespace JSC

@@ -31,13 +31,13 @@ constexpr StubKey equalsLiteralOfLength(ComparedOperand operand, unsigned length
 
 // The operand is a string cell or, unless the caller knows otherwise, not a cell. The stub does not check the cell's type.
 constexpr StubKey toLiteralString(ComparedOperand operand) { return StubKey(StubFamily::ToLiteralString).withForm(operand == ComparedOperand::String); }
-// The operand is any boxed value. The result is shortStringWord() of a string of at most maxShortStringLength units, none above 0xFF, and noShortString for every other value.
-constexpr StubKey shortStringOfValue() { return StubKey(StubFamily::ShortStringOfValue); }
+// The operand is a string cell. The result is the address of a NarrowCharactersOfString, which holds until the thread calls the stub again. The string stays as it is: a rope is not made flat.
+constexpr StubKey narrowCharactersOfString() { return StubKey(StubFamily::NarrowCharactersOfString); }
 
 static_assert(bodyOf(equalsLiteral(ComparedOperand::Value)) == equalsLiteral(ComparedOperand::String));
 static_assert(bodyOf(equalsLiteralOfLength(ComparedOperand::Value, 1)) == equalsLiteralOfLength(ComparedOperand::String, 1));
 static_assert(exists(equalsLiteralOfLength(ComparedOperand::String, 0)) && exists(equalsLiteralOfLength(ComparedOperand::String, 8)) && !exists(equalsLiteralOfLength(ComparedOperand::String, 9)));
-static_assert(exists(toLiteralString(ComparedOperand::Value)) && exists(toLiteralString(ComparedOperand::String)) && exists(shortStringOfValue()));
+static_assert(exists(toLiteralString(ComparedOperand::Value)) && exists(toLiteralString(ComparedOperand::String)) && exists(narrowCharactersOfString()));
 
 } } // namespace JSC::AOT
 

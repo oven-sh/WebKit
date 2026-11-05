@@ -56,7 +56,6 @@ public:
     ~BuiltinsInReach();
 
     // In two halves: what lookAtBodies() has found in the body . of which classes of the engine it makes objects.
-    void noteReached(FunctionID);
     void noteFindingsIn(FunctionID);
     void noteWhatBodyMakes(FunctionID);
     // The half would add nothing. They read alone, and may be asked by a thread while another tells something: what is told only adds, so a no that comes too early costs one call.
@@ -125,7 +124,6 @@ private:
     std::unique_ptr<LinkTables> m_linked;
     std::unique_ptr<InputsOfProgramFacts> m_inputs;
     std::unique_ptr<BuilderOfProgramFacts> m_builder;
-    BitVector m_membersThatNoBodyWrites;
     BitVector m_builtinsWorthFollowingToWrites;
     Vector<BuiltinID> m_membersWrittenAfterAll;
     bool m_wasToldSomethingNew { true };

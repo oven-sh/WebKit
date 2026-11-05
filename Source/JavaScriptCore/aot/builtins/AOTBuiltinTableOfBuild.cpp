@@ -57,6 +57,9 @@ bool BuiltinTable::canBeReplacedInTestRuns(BuiltinID id) const
     case BuiltinKind::Constructor:
     case BuiltinKind::Namespace:
         // `globalThis.Set = Fake`, `globalThis.Math = Object.create(Math)`. Under any other holder a constructor is the `constructor` of a prototype object.
+        // The host makes `Bun` read-only and not configurable: no store replaces it under `bun test` either, and a build reads it without a lookup in a test run too.
+        if (canonicalID(id) == canonicalID(Builtins::Bun))
+            return false;
         if (!at(member.holder).flags.contains(BuiltinFlag::IsGlobalObject))
             return false;
         break;
@@ -163,6 +166,21 @@ void BuiltinTableOfBuild::unlock(std::span<const BuiltinID> members, std::span<c
 }
 
 namespace Typed {
+
+void Program::noteTakenForAbsent(PropertyKeyID key) const
+{
+    Locker locker { m_keysTakenForAbsentLock };
+    m_keysTakenForAbsent.set(key.index());
+}
+
+Vector<PropertyKeyID> Program::keysTakenForAbsent() const
+{
+    Locker locker { m_keysTakenForAbsentLock };
+    Vector<PropertyKeyID> keys;
+    for (size_t index : m_keysTakenForAbsent)
+        keys.append(PropertyKeyID(static_cast<uint32_t>(index)));
+    return keys;
+}
 
 void Program::unlockReplaceableBuiltins()
 {

@@ -194,7 +194,7 @@ using FlowNodeID = ID<struct FlowNodeIDTag>;
 
 // Who must be told when the type at a node climbs.
 struct FlowObserver {
-    enum class Kind : uint8_t { SubjectOfCall, ReceiverOfCall, SubjectOfAccess, KeyOfAccess, SubjectOfChange, OtherOfChange, OperandOfOperator, Inspected, MemberOfSharedCall, MemberOfSharedAccess, MemberOfAccess, SymbolOfPreparation, ArgumentOfWaitingCall };
+    enum class Kind : uint8_t { SubjectOfCall, ReceiverOfCall, SubjectOfAccess, KeyOfAccess, SubjectOfChange, OtherOfChange, OperandOfOperator, Inspected, MemberOfSharedCall, MemberOfSharedAccess, MemberOfAccess, SymbolOfPreparation };
 
     Kind kind { Kind::SubjectOfCall };
     FunctionID function;
@@ -253,25 +253,6 @@ struct DeleterOfWriterOfLinkLayouts {
     void operator()(WriterOfLinkLayouts*) const;
 };
 
-// What summarizeCallees() found and has not typed: it runs beside a reading that is at the table of types.
-struct TypesFoundOfCallees {
-    struct ResultOfCallOfSeveral {
-        // In LinkKnownEffects::callsOfSeveral.
-        uint32_t place { 0 };
-        LinkType type;
-    };
-    Vector<ResultOfCallOfSeveral> resultsOfCallsOfSeveral;
-    // Ascending.
-    Vector<uint32_t> variablesInitializedAtEveryRead;
-    // Places in LinkTables::namesOnPrototypes, ascending: the store that lays the name stands in front of every entry of the function.
-    Vector<uint32_t> namesLaidAheadOfEveryEntry;
-    // Layouts of constructor functions, ascending: the one store of an object made to be the prototype object, and the link of the prototype object below that of the base, stand in front of every entry of the function and of those below it.
-    Vector<uint32_t> prototypeObjectsStoredAheadOfEveryEntry;
-    Vector<uint32_t> linksLaidAheadOfEveryEntry;
-    // Places in LinkTables::namesOnFunctions, ascending: the store stands in front of whatever reads or calls the name off the function.
-    Vector<uint32_t> namesOnFunctionsLaidAheadOfEveryRead;
-};
-
 // `#x`. Only the body of the class that declares it can name it, and text that is evaluated there (Program::evalScopes). So whoever gets hold of an object gets hold of nothing under such a name:
 // a layout that escapes, is lost or is written under a key that nobody knows keeps the field to itself.
 bool isPrivateNameInLink(const Program&, PropertyKeyID);
@@ -301,7 +282,6 @@ public:
     FlowNodeID member(LayoutID classLayout, ClassSide, uint32_t index) const;
     // ---- Sites, and what the objects that are made at them hold.
     enum class MakerOfSite : uint8_t {
-        NodeOfSummary, // the number of the ClassInstance node in the flow
         PartOfRow, // the number of the call in calleesOfCalls, and which part of which type of the table
         WrapperAtCall, // the number of the call: native code makes an object of a primitive
         PairAtCall, // the number of the call: the pairs that an iterator made there hands out
@@ -309,8 +289,10 @@ public:
     };
     // The one site of that maker and class. Made when first asked for.
     SiteID siteOf(MakerOfSite, uint32_t number, uint32_t part, BuiltinClassID);
-    // Under the lock of what is shared.
-    SiteID makeSite(std::pair<uint64_t, uint32_t> words, BuiltinClassID);
+    // The site of a ClassInstance node: of the one that has `rank` of them in front of it in the summary of the function. THE NUMBER IS KNOWN AHEAD (numberNodes()): no table, no lock, and the same in every run.
+    // Asked by whoever brings the function alive, and by nobody else.
+    SiteID siteOfSummary(FunctionID, uint32_t rank, BuiltinClassID);
+    uint32_t numberOfSitesOfSummary(FunctionID function) const { return m_firstSiteOfFunction[function.index() + 1] - m_firstSiteOfFunction[function.index()]; }
     // The list of the rest parameter, written or hidden. Whoever enters the function stores what the list gathers into its elements.
     SiteID listOfArgumentsOf(FunctionID);
     BuiltinClassID classOf(SiteID site) const
@@ -333,6 +315,12 @@ public:
         return m_sites[m_familiesOfSites.representativeOf(site.index())].mayHoldCellsOfCompiledLayouts;
     }
     size_t numberOfSites() const { return m_sites.size(); }
+    // By class: some site of it has. There are a thousand sites to a class: all threads go through the sites.
+    struct ClassesOfSites {
+        BitVector haveEscaped;
+        BitVector areClimbedFrom;
+    };
+    ClassesOfSites findClassesOfSitesThatHaveEscapedOrAreClimbedFrom() const;
     static LinkType typeOf(SiteID, BuiltinClassID);
     LinkType typeOf(SiteID site) const { return typeOf(site, classOf(site)); }
     // Of the family of the site. Made when first asked for.
@@ -580,8 +568,6 @@ public:
     };
     static bool isUnknownByEscapeAloneIfAtAll(const LinkType& type) { return !type.holdsUnseenInSight(); }
 
-    // What summarizeCallees() leaves for writeTypesFoundOfCallees().
-    mutable TypesFoundOfCallees typesFoundOfCallees;
     // What lookAtSummariesForLayoutsAndCells() leaves for writeLayoutsAndCells().
     mutable std::unique_ptr<WriterOfLinkLayouts, DeleterOfWriterOfLinkLayouts> writerOfLayouts;
 
@@ -592,7 +578,7 @@ public:
     LinkType passedBy(const LinkType&, TypeID test) const;
     // What it must make lost or let escape is queued, and done by the next arrive(), joinOf() or run().
     LinkType fromTypeID(TypeID) const;
-    // With the two restrictions of FRESH.md. Lost, Prototype and Prototypes are anyObject, Functions::Lost and Constructors are anyFunction. Nothing is null.
+    // Lost, Prototype and Prototypes are anyObject, Functions::Lost and Constructors are anyFunction. Nothing is null.
     TypeID toTypeID(TypeArena&, const LinkType&) const;
     // ONLY WHAT THE PROVEN READING REACHES GETS CODE, and whoever tests for a function or calls it mentions its code. The held reading reaches more: it knows a built-in where the proven one has `anything`, and enters the library's code behind it.
     // So its tables name no function but these: a type says `function` in place of another, and a call lists no other. Null: every function may be named.
@@ -644,7 +630,7 @@ public:
     // what is noted of a built-in, a layout, a name), IS UNDER THIS ONE LOCK. It may be taken again by the thread that has it. With one thread it costs a test.
     // OBSERVERS OF CALLS, ACCESSES AND OPERATORS, AND bringAlive(), RUN ON SEVERAL THREADS: all of one function on one thread, those of different functions at once.
     // EVERY TABLE THAT A UNIT ADDS TO LinkFlow OR TO ONE OF ITS STATES, AND THAT SUCH CODE READS OR WRITES, IS A Shared<T>, OR IS KEPT BY LANE (a Vector by indexOfLaneAtWork()), OR IS WRITTEN BY note() ALONE.
-    // of(flow) stops the build where several threads are at work and the caller does not hold LockerOfWhatIsShared. A plain member filled from there is a crash once in fifty runs (AOTLinkTestRuns.cpp, 11-03 15:33).
+    // of(flow) stops the build where several threads are at work and the caller does not hold LockerOfWhatIsShared. A plain member filled from there is a crash once in fifty runs (AOTLinkTestRuns.cpp).
     void assertHasWhatIsSharedToItself() const { RELEASE_ASSERT((!m_severalThreadsTell && !s_laneAtWork) || s_depthOfLockOfWhatIsShared); }
     template<typename T>
     class Shared {
@@ -676,22 +662,8 @@ public:
     private:
         const LinkFlow* m_flow;
     };
-    class BuiltinsInReachUnderLock {
-    public:
-        explicit BuiltinsInReachUnderLock(LinkFlow& flow)
-            : m_locker(flow)
-            , m_builtins(flow.builtinsInReach())
-        {
-        }
-        BuiltinsInReach* operator->() { return &m_builtins; }
-
-    private:
-        LockerOfWhatIsShared m_locker;
-        BuiltinsInReach& m_builtins;
-    };
-    BuiltinsInReachUnderLock builtinsInReachUnderLock() { return BuiltinsInReachUnderLock(*this); }
     // WHAT IS MADE ON DEMAND STAYS WHAT IT IS: whoever asks again with the same words gets the same node. So each thread keeps what it was given, and takes the lock once for each.
-    enum class MadeOnDemand : uint8_t { Contents, ContentsOfFamily, SiteOfMaker, TakenForConstant, FieldReadThroughLost, FieldStoredThroughLost, FieldReadThrough, FieldStoredThrough, FoundOnPrototypesAbove, FoundBesideFieldsUnder, FoundBesideFieldsOf, StoredBesideFieldsOf, FoundWhereFieldIsEmpty, AppendedField, FoundOnClosuresOf, LaidOnClosuresOf, WrittenAtMember, ParameterOfLostFunctions, ReceiverOfLostFunctions, ResultOfLostFunctions, NameAddedByTests, ResultOfOperator };
+    enum class MadeOnDemand : uint8_t { Contents, ContentsOfFamily, TakenForConstant, FieldReadThroughLost, FieldStoredThroughLost, FieldReadThrough, FieldStoredThrough, FoundOnPrototypesAbove, FoundBesideFieldsUnder, FoundBesideFieldsOf, StoredBesideFieldsOf, FoundWhereFieldIsEmpty, AppendedField, FoundOnClosuresOf, LaidOnClosuresOf, WrittenAtMember, ParameterOfLostFunctions, ReceiverOfLostFunctions, ResultOfLostFunctions, NameAddedByTests, FunctionOnObjectPrototype, ResultOfOperator };
     static constexpr size_t numberOfKindsMadeOnDemand = static_cast<size_t>(MadeOnDemand::ResultOfOperator) + 1;
     uint32_t askedOnceByLane(MadeOnDemand kind, uint64_t words, const Invocable<uint32_t()> auto& make) const
     {
@@ -699,9 +671,19 @@ public:
             return make();
         if (std::optional<uint32_t> known = findWhatLaneWasGiven(kind, words))
             return *known;
-        LockerOfWhatIsShared locker(*this);
-        uint32_t made = make();
+        // Sixteen lanes ask for most things. One of them makes it.
+        if (std::optional<uint32_t> known = findWhatSomeLaneWasGiven(kind, words)) {
+            keepWhatLaneWasGiven(kind, words, *known);
+            return *known;
+        }
+        uint32_t made;
+        {
+            LockerOfWhatIsShared locker(*this);
+            made = make();
+        }
+        // Behind the lock: whoever asks meanwhile takes the lock and finds it made.
         keepWhatLaneWasGiven(kind, words, made);
+        keepWhatSomeLaneWasGiven(kind, words, made);
         return made;
     }
     FlowNodeID nodeAskedOnceByLane(MadeOnDemand kind, uint64_t words, const Invocable<FlowNodeID()> auto& make) const
@@ -712,8 +694,12 @@ public:
     }
     std::optional<uint32_t> findWhatLaneWasGiven(MadeOnDemand, uint64_t words) const;
     void keepWhatLaneWasGiven(MadeOnDemand, uint64_t words, uint32_t) const;
+    // What any lane was given, in parts by the words. The lock of a part is held for one lookup, and never while LockerOfWhatIsShared is asked for.
+    std::optional<uint32_t> findWhatSomeLaneWasGiven(MadeOnDemand, uint64_t words) const;
+    void keepWhatSomeLaneWasGiven(MadeOnDemand, uint64_t words, uint32_t) const;
+    void forgetWhatSomeLaneWasGiven(MadeOnDemand);
     // WHAT IS ONLY NOTED, and read when the observers are through, waits in a list of the thread.
-    enum class Note : uint8_t { NameRead, NameCalled, ReadUnderKeyNobodyKnows, BuiltinRead, BuiltinCalled, BuiltinCalledOutOfSight, FunctionEnteredByPlainCall, FieldWrittenAfterConstruction, LayoutAllocated, ChangeOfLayout, WriteOnBuiltin, WriteThroughLostBuiltins, ReadThroughLostBuiltins, WriteThroughUnseenByProgram, NameWrittenThroughUnseenByLibrary, OptionThatRunsCodePassed };
+    enum class Note : uint8_t { NameRead, NameCalled, ReadUnderKeyNobodyKnows, BuiltinRead, BuiltinCalled, BuiltinCalledOutOfSight, FunctionEnteredByPlainCall, FieldWrittenAfterConstruction, LayoutAllocated, ChangeOfLayout, WriteOnBuiltin, WriteThroughLostBuiltins, ReadThroughLostBuiltins, WriteThroughUnseenByProgram, NameWrittenThroughUnseenByLibrary, OptionThatRunsCodePassed, BuiltinReadThroughAggregate };
     void note(Note, uint32_t number, uint32_t more = 0);
     unsigned numberOfLanes() const { return static_cast<unsigned>(m_lanes.size()); }
     // For StateOfLinkReach: each function by the thread that tells its observers. False: it does not pay, or what is laid down is not held back, and nothing was done.
@@ -828,8 +814,6 @@ public:
     void noteSomethingBefell(FamilyID family) const { m_outermostFamiliesWhereSomethingBefell.quickSet(m_outermostFamilies[family.index()].index()); }
     // Unseen code stores into them. One that it only reads is not among them.
     BitVector escapedVariables;
-    // Unseen code reads them: a namespace object that shows them has come to it, or it may load the module. AOTLinkReach.cpp, escapeExportsOf().
-    BitVector variablesReadByUnseenCode;
     // Nobody ever finds in them what they held at first: AOTLinkReach.cpp, findVariablesStoredFirst().
     BitVector variablesStoredFirst;
     OrderOfScopes orderOfScopes;
@@ -858,7 +842,6 @@ public:
     // The observer's `record` is the node.
     void noteKeyOfAccessInLibrary(FunctionID, uint32_t record, const SummaryAccess&);
     void changeObserved(const FlowObserver&, const LinkType&); // AOTLinkLayouts.cpp
-    void waitingCallObserved(const FlowObserver&, const LinkType&); // AOTLinkNarrowing.cpp
     void operatorObserved(const FlowObserver&, const LinkType&); // AOTLinkOperators.cpp
 
     // AOTLinkCalls.cpp. Written as calls find their callees. By function: where its calls begin, in the order of ThinSummary::calls. One more entry than there are functions.
@@ -945,8 +928,6 @@ public:
     // AOTLinkLayouts.cpp. By layout. It starts empty and grows. An escaped layout has them all.
     // ONLY WHAT IS DONE THROUGH ONE LAYOUT, A FAMILY OR A PROTOTYPE OBJECT. What is done through a lost value is gathered behind the flow, when every member of Lost is known: behind run(), ask LinkTables::layouts[].possibleChanges.
     Vector<OptionSet<LayoutChange>> possibleChanges;
-    // What a row of a built-in that was applied in the flow has listed the keys of, and what an inspection came to: AOTLinkKeyOrders.h. It only grows.
-    KeysListedInLink keysListed;
     // By layKnownAccessorInLinkLayouts(), in whatever order the flow came there: whoever reads it sorts it.
     Vector<AccessorLaidInField> accessorsLaidInFields;
     // An accessor whose function is known is laid on objects of the layout, in the place of a field: what the getter returns flows into the field, and what is stored into the field flows into the setter.
@@ -1030,7 +1011,6 @@ private:
         bool hasPreparation(PropertyKeyID symbol) const { return everySymbolOfLibraryMayHaveOne || withPreparation.contains(symbol.bits()); }
     };
     SymbolsWithPreparationInSight m_symbolsInSight;
-    void stopNamingSymbolsWithPreparation();
     // WHETHER A SYMBOL IS A NAME STANDS STILL WHILE OBSERVERS ARE TOLD, like the types: what they note of symbols is taken in behind the last of them. True: something was.
     bool takeInWhatWasNotedOfSymbols();
     Vector<PropertyKeyID> m_symbolsNotedBesideOtherKeys;
@@ -1105,6 +1085,13 @@ private:
         }
     }
     static thread_local unsigned s_depthOfLockOfWhatIsShared;
+    struct alignas(128) PartOfWhatSomeLaneWasGiven {
+        std::atomic<bool> isLocked { false };
+        HashMap<uint64_t, uint32_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> given;
+    };
+    static constexpr size_t numberOfPartsOfWhatSomeLaneWasGiven = 16;
+    mutable std::array<std::array<PartOfWhatSomeLaneWasGiven, numberOfPartsOfWhatSomeLaneWasGiven>, numberOfKindsMadeOnDemand> m_givenToSomeLane;
+    PartOfWhatSomeLaneWasGiven& lockPartOfWhatSomeLaneWasGiven(MadeOnDemand, uint64_t words) const;
     static const LinkType s_nothing;
     // With those that have no place in m_nodes yet.
     std::atomic<size_t> m_numberOfNodesMade { 0 };
@@ -1112,6 +1099,7 @@ private:
     FlowNodeID contentsFoundOrMadeByLane(SiteID, SlotOfContents);
     void makeContentsInLane(uint32_t family, SlotOfContents, FlowNodeID);
     void listContentsThatLanesMade();
+    void listContentsThatLanesMadeIn(unsigned part);
     static bool isToldByOneThread(FlowObserver::Kind);
     void tellOnLanes();
     void prepareAccessesForSeveralThreads();
@@ -1181,7 +1169,6 @@ private:
     BitVector m_familiesThatHaveEscaped;
     BitVector m_lostFamiliesThatHaveEscaped;
     BitVector m_isOnWorklist;
-    uint64_t m_numberOfNodesTakenOffWorklist { 0 };
     uint64_t m_numberOfObserversTold { 0 };
     // What belongs to one function lies side by side: whoever is at one of its nodes is soon at another. Its entry parameters, its results, what it throws, then a node for each node of its summary.
     struct NodesOfFunction {
@@ -1335,6 +1322,31 @@ private:
     LayoutID memberStandingFor(const LinkType&) const;
     void uniteLost(LayoutID, LayoutID);
     void loseFamiliesOfMembersThatMeet(uint32_t kept, uint32_t absorbed);
+    // THE LOOP OVER THE MEMBERS THAT TIES THEM TO A NEW AGGREGATE, LEFT FOR ALL LANES: layTiesThatLanesLeft(). A large lost family has members by the hundred thousand, and the one lock was held while one lane went through them.
+    struct TiesToLay {
+        enum class Members : uint8_t { HoldersOfLostKey, LostFamily, DeclaredFamily, Listed };
+        enum class Access : uint8_t { Read, Store, StoreInConstruction, ReadOfAnyField, ReadOfAnyFieldUnderNumbers };
+        Members members;
+        Access access;
+        FlowNodeID aggregate;
+        // The first holder in m_holdersOfLostKeys | the representative | the family | the first in m_membersOfTiesLeftBySettling.
+        uint32_t number;
+        PropertyKeyID key;
+        // Listed: behind the last.
+        uint32_t end { 0 };
+        // As they stood for whoever asked first: what a tie lets arrive goes by them.
+        UnknownByEscapeAlone::Marks marks { UnknownByEscapeAlone::Marks::Nothing };
+        bool codeAtWorkIsOfLibrary { false };
+    };
+    // False: one thread tells, and the caller ties at once.
+    bool leavesTiesToLanes(TiesToLay);
+    void layTiesThatLanesLeft();
+    // settle() unites on one thread. What that ties waits here, with the members as they stood, until nothing is left to settle.
+    bool settlingLeavesTies() const { return m_isSettling && m_holdsBack && !m_severalThreadsTell && !s_laneAtWork && !m_breachesOfClosure; }
+    void layTiesThatSettlingLeft();
+    Vector<TiesToLay> m_tiesLeftBySettling;
+    Vector<LayoutID> m_membersOfTiesLeftBySettling;
+    void layTie(const TiesToLay&, LayoutID member);
     // UINT32_MAX: no declared family holds it.
     uint32_t placeInForestOfFamilies(LayoutID);
     // By layout, and the other way round. Made when the first layout is lost.
@@ -1528,7 +1540,7 @@ private:
         bool isToldToEscape { false };
         bool isClimbedFrom { false };
         bool mayHoldCellsOfCompiledLayouts { false };
-        // Into m_contentsOfSites. UINT32_MAX: none. Of a site that is no representative any more: the nodes that it had, and those that it has been given since.
+        // Into contentsListedOf() the site. UINT32_MAX: none. Of a site that is no representative any more: the nodes that it had, and those that it has been given since.
         uint32_t newestContents { UINT32_MAX };
         uint32_t numberOfContents { 0 };
     };
@@ -1537,40 +1549,87 @@ private:
         FlowNodeID node;
         uint32_t next { UINT32_MAX };
     };
-    // Sites are made under the lock while several threads tell observers, and read without it. So a site never moves: the blocks double, and there are as many as a number has bits.
-    // Whoever knows the number of a site has it from the lock, or from a type that arrived in an earlier round: the site was whole by then.
+    // SITES ARE MADE WHILE SEVERAL THREADS TELL OBSERVERS, WITHOUT THE LOCK OF WHAT IS SHARED, and are read without any. So a site never moves: the blocks double, and there are as many as a number has bits.
+    // Whoever knows the number of a site has made it, or has it from the part of the table that names it, under that part's lock, or from a type that arrived in an earlier round: the site was whole by then.
     class ListOfSites {
         WTF_MAKE_NONCOPYABLE(ListOfSites);
     public:
         ListOfSites() = default;
-        size_t size() const { return m_size; }
+        ~ListOfSites()
+        {
+            for (auto& block : m_blocks)
+                delete[] block.load(std::memory_order_relaxed);
+        }
+        size_t size() const { return m_size.load(std::memory_order_relaxed); }
         Site& operator[](size_t index)
         {
             size_t position = index + (static_cast<size_t>(1) << log2OfFirstBlock);
             unsigned block = static_cast<unsigned>(std::bit_width(position)) - 1 - log2OfFirstBlock;
-            return m_blocks[block][position - (static_cast<size_t>(1) << (block + log2OfFirstBlock))];
+            return m_blocks[block].load(std::memory_order_acquire)[position - (static_cast<size_t>(1) << (block + log2OfFirstBlock))];
         }
-        void append(const Site& site)
+        // By several threads at once.
+        uint32_t append(const Site& site)
         {
-            size_t position = m_size + (static_cast<size_t>(1) << log2OfFirstBlock);
-            unsigned block = static_cast<unsigned>(std::bit_width(position)) - 1 - log2OfFirstBlock;
-            if (!m_blocks[block])
-                m_blocks[block] = std::make_unique<Site[]>(static_cast<size_t>(1) << (block + log2OfFirstBlock));
-            ++m_size;
-            (*this)[m_size - 1] = site;
+            size_t index = m_size.fetch_add(1, std::memory_order_relaxed);
+            RELEASE_ASSERT(index < UINT32_MAX);
+            ensureBlockOf(index);
+            (*this)[index] = site;
+            return static_cast<uint32_t>(index);
+        }
+        // By one thread. The new ones are not made yet: they have no class.
+        void growTo(size_t size)
+        {
+            if (size <= this->size())
+                return;
+            // The first of each block.
+            for (size_t index = 0; index < size; index = 2 * index + (static_cast<size_t>(1) << log2OfFirstBlock))
+                ensureBlockOf(index);
+            m_size.store(size, std::memory_order_relaxed);
         }
 
     private:
+        // One lays the block out, and whoever needs it meanwhile waits: there are a dozen blocks in all.
+        void ensureBlockOf(size_t index)
+        {
+            size_t position = index + (static_cast<size_t>(1) << log2OfFirstBlock);
+            unsigned block = static_cast<unsigned>(std::bit_width(position)) - 1 - log2OfFirstBlock;
+            if (m_blocks[block].load(std::memory_order_acquire))
+                return;
+            while (m_blockIsLaidOut.exchange(true, std::memory_order_acquire))
+                simde_mm_pause();
+            if (!m_blocks[block].load(std::memory_order_relaxed))
+                m_blocks[block].store(new Site[static_cast<size_t>(1) << (block + log2OfFirstBlock)], std::memory_order_release);
+            m_blockIsLaidOut.store(false, std::memory_order_release);
+        }
+
         static constexpr unsigned log2OfFirstBlock = 10;
-        std::array<std::unique_ptr<Site[]>, 33 - log2OfFirstBlock> m_blocks;
-        size_t m_size { 0 };
+        std::array<std::atomic<Site*>, 33 - log2OfFirstBlock> m_blocks { };
+        std::atomic<size_t> m_size { 0 };
+        std::atomic<bool> m_blockIsLaidOut { false };
     };
     mutable ListOfSites m_sites;
     UnitedFamilies m_familiesOfSites;
-    Vector<ContentsOfSite> m_contentsOfSites;
-    // Of the families with more slots than are looked through: the representative above the number of the slot. A large family is asked under every name that is called on a list.
-    HashMap<uint64_t, uint32_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_contentsOfFamiliesWithManySlots;
-    HashMap<std::pair<uint64_t, uint32_t>, uint32_t, DefaultHash<std::pair<uint64_t, uint32_t>>, WTF::PairHashTraits<WTF::UnsignedWithZeroKeyHashTraits<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>> m_sitesOfMakers;
+    // THE LISTS OF CONTENTS LIE IN AS MANY PARTS AS THERE ARE LANES, the sites dealt to them by blocks. What lanes have made in a pass is listed behind it, each part by a thread of its own.
+    struct PartOfContentsOfSites {
+        WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(PartOfContentsOfSites);
+        Vector<ContentsOfSite> listed;
+        // Of the families with more slots than are looked through: the representative above the number of the slot. A large family is asked under every name that is called on a list.
+        HashMap<uint64_t, uint32_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> ofFamiliesWithManySlots;
+    };
+    Vector<std::unique_ptr<PartOfContentsOfSites>> m_contentsOfSites;
+    unsigned partOfContentsOf(uint32_t site) const { return (site >> 6) & m_maskOfLanes; }
+    Vector<ContentsOfSite>& contentsListedOf(uint32_t site) const { return m_contentsOfSites[partOfContentsOf(site)]->listed; }
+    // IN PARTS BY THE WORDS, EACH WITH A LOCK OF ITS OWN, which is held for one lookup: nearly every ask makes a site, so what a lane remembers of its asks saves nothing, and one lock for all was held a quarter of the time that observers were told.
+    struct alignas(128) PartOfSitesOfMakers {
+        std::atomic<bool> isLocked { false };
+        HashMap<std::pair<uint64_t, uint32_t>, uint32_t, DefaultHash<std::pair<uint64_t, uint32_t>>, WTF::PairHashTraits<WTF::UnsignedWithZeroKeyHashTraits<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>> sites;
+    };
+    static constexpr unsigned log2OfPartsOfSitesOfMakers = 8;
+    std::unique_ptr<std::array<PartOfSitesOfMakers, 1 << log2OfPartsOfSitesOfMakers>> m_sitesOfMakers { makeUniqueWithoutFastMallocCheck<std::array<PartOfSitesOfMakers, 1 << log2OfPartsOfSitesOfMakers>>() };
+    // By function, and one more: the first of the sites of its summary.
+    Vector<uint32_t> m_firstSiteOfFunction;
+    // Right behind the making, by whoever has made it.
+    void fillSiteJustMade(SiteID);
     // By function. UINT32_MAX: not made.
     Vector<uint32_t> m_nodesFoundOnClosures;
     bool m_hasStoresThroughLost { false };
@@ -1624,7 +1683,7 @@ private:
 struct TurnsOfReadings {
     LinkTables held;
     BinarySemaphore provingTablesAreWritten;
-    // Kept for writeTypesFoundOfCallees().
+    // Kept for writePrototypeObjectsThatAreSettled().
     std::unique_ptr<LinkFlow> provingFlow;
 };
 // It answers the proving reading. `turns`: the held one is left there. Null: nobody asks for it, and link() does all of the proving one.
@@ -1634,9 +1693,9 @@ void finishReadingsOfLink(Program&, Mechanisms, TurnsOfReadings&, LinkTables& pr
 // For the tests. The flow in each OrderOfWorklist, and a line for each BreachOfClosure. Nothing: it ends closed in all of them.
 void printBreachesOfClosureOfLink(PrintStream&, Program&, const ThinSummaries&, const Families&, const LooksAtBodies&, Mechanisms, BuildContext&);
 // AOTLinkEffects.cpp. Behind the flow, callees first: effects, which parameters escape, which results are fresh.
-// IT ADDS NOTHING TO THE PROGRAM's TABLE OF TYPES: TurnsOfReadings. What is to be typed it leaves in LinkFlow::typesFoundOfCallees.
+// IT ADDS NOTHING TO THE PROGRAM's TABLE OF TYPES: TurnsOfReadings.
 void summarizeCallees(const LinkFlow&, LinkTables&);
-void writeTypesFoundOfCallees(const LinkFlow&, LinkTables&);
+void writePrototypeObjectsThatAreSettled(const LinkFlow&, LinkTables&);
 // BEHIND BOTH READINGS, on the thread that began them: neither lane waits for the other's graph.
 // AOTLink.cpp. Code may test for a function that the held tables name, and mentions it then. So the held reading's graph of referrers is laid over the proven one's. Nobody asks the held tables for theirs: they are left as conservativeLinkTables() has them.
 void layReferrersOfHeldReadingOver(LinkTables& proven, LinkTables& held, const ParallelLoops&);

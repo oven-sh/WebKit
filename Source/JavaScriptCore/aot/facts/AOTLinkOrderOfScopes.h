@@ -23,7 +23,6 @@ class ThinSummaries;
 // So a function over the scope runs behind one of the points at which the body lets go of a thing that leads to it (SummaryOrderOfScope::entries, holds, ThinSummary::functionsNamed, and the slots that its summary reads).
 // A store that stands above all those points has run. The scope of each turn of a loop, and of each run of the body, is another object: all this is said of one of them.
 struct OrderOfScopes {
-    bool isEmpty() const { return stores.isEmpty(); }
     // Whenever the function runs, the slot of the scope that it has captured, or made, has been stored into wherever it reads the slot.
     bool isFilledWhenever(FunctionID runs, FieldReference) const;
 

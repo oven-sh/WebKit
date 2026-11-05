@@ -214,7 +214,6 @@ public:
     void exitOnMiss(Entry cachingOperation, const OperationCall&);
     void exitOnCannot(Entry finisher, const OperationCall&);
 
-    void callEngineThunk(Entry pointer, GPRReg scratch);
     void callCode(CodeSymbol);
 
     void callStub(StubKey);

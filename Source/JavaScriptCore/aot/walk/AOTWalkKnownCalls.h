@@ -14,16 +14,14 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// What the hooks of known-state-and-effects-1 call beside walk/AOTWalkKnown.h.
+// What other files of the walk call beside walk/AOTWalkKnown.h.
 
 // AOTWalkKnownEffects.cpp. What entering a function by its value does in front of the body.
 void addEffectsOfEnteringByValue(Effects&);
 // For whoever takes effects out of Link's tables: in built code a field of a promoted environment is a variable, and Link goes on speaking of the field.
 void addVariablesThatStandForFields(const Plan&, Effects&);
 
-// AOTWalkKnownSummaries.cpp. For Walker::copy(): the operation as it is written, with effectsOfOperationAsWritten() and, of a call, the type that Link or the rows prove.
-Reference buildAsWrittenWithWhatIsKnown(Walker&, const BodyValue&, Draft&&);
-// A call or a construction as it is written, of which the caller has proven what it gives. `given` may be null.
+// AOTWalkKnownSummaries.cpp. A call or a construction as it is written, of which the caller has proven what it gives. `given` may be null.
 Reference buildCallAsWrittenThatGives(Walker&, Draft&&, TypeID given);
 
 // AOTWalkKnownRows.cpp. Each goes by the table of built-ins and by types alone.
@@ -31,16 +29,10 @@ Reference buildCallAsWrittenThatGives(Walker&, Draft&&, TypeID given);
 Effects effectsOfLibraryFunctionBehindRow(const Walker&, const BuiltinOverload&);
 // `xs.indexOf(n)`, `xs.includes(o)`: nothing: the code in line does what the schema declares for it.
 std::optional<Effects> effectsOfSearchForWhatIsNoString(const TypeArena&, InlineBuiltin, TypeID searchedOrNotPassed);
-// Of a call, or of a super call, whose callee is proven to be built-ins and nothing else: the union over the rows that these operands reach. Nothing: some row says too little.
-std::optional<Effects> effectsOfCallOfBuiltinsByRows(Walker&, const BodyValue& call, const TypesOfInputs&);
-// The join of what those rows give. Null: nothing is proven, or the rule finds it alone.
-TypeID resultOfCallOfBuiltinsByRows(Walker&, const BodyValue& call, const TypesOfInputs&);
 // `n.toString()`, `flag.toString()`, `big.toString(10)`: the conversion. True: the call is built and bound.
 bool buildToStringOfPrimitiveByRows(Walker&, const BodyValue& call);
 // A built-in whose rows all name one function of the library: the direct call, or a copy. True: the call is built and bound.
 bool callLibraryFunctionBehindRows(Walker&, const BodyValue& call);
-// `re.lastIndex`: the member lies on the instance itself, nothing stands in front of it, and its rows of mode Get need no function to call. Null: there is none.
-BuiltinID findOwnPropertyOfInstancesReadByRows(const Walker&, TypeID object, BuiltinClassID, BuiltinName);
 // `$push`, `$Array`: only the host stores under such a key.
 bool isPrivateAliasOfBuiltinMember(const Program&, PropertyKeyID);
 

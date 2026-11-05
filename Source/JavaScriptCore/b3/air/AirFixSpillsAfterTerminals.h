@@ -36,7 +36,7 @@ class Code;
 // the terminal. If we left the graph in this state, it'd be invalid
 // because a terminal must be the last instruction in a block.
 // We fix that here.
-void fixSpillsAfterTerminals(Code&);
+JS_EXPORT_PRIVATE bool fixSpillsAfterTerminals(Code&);
 
 } } } // namespace JSC::B3::Air
 

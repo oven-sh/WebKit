@@ -290,8 +290,7 @@ static void defineFieldOnInstance(VM& vm, State& state, const Object& allocated,
 JSObject* ClassTable::instanceWithPrototype(VM& vm, Object* allocated, JSObject* prototype, bool holdsNoField)
 {
     const LayoutData& allocatedLayout = allocated->layout();
-    // Where the keys are never enumerated, the order word lists nothing whatever the slots hold: only who allocated the object knows.
-    bool listsNoField = holdsNoField || (!allocatedLayout.keysAreNeverEnumerated && allocated->orderWord() == orderWordOf(0, 0));
+    bool listsNoField = holdsNoField || allocated->orderWord() == orderWordOf(0, 0);
     const LayoutData& allocatedClass = classOfInstances(allocatedLayout);
     const LayoutData* requested = isDefinedByClass(allocatedClass) ? classWithPrototype(prototype) : nullptr;
     if (!requested || requested->index == allocatedClass.index) {

@@ -23,7 +23,6 @@ namespace JSC { namespace AOT { namespace Typed {
 
 // ---- Mocks, by the records alone
 
-// namespacesThatMocksMayStandFor() comes here in front of the check of the records, which reports an id outside its list.
 static bool namesModuleInTestRunsOfProgram(const Program& program, ModuleID id)
 {
     return id && id.index() < program.modules.size();
@@ -157,16 +156,6 @@ bool mayComeThroughMock(const Program& program, const MocksOfProgram& mocks, Mod
         return mocks.isAnyModuleMocked;
     }
     RELEASE_ASSERT_NOT_REACHED();
-}
-
-BitVector namespacesThatMocksMayStandFor(const Program& program)
-{
-    BitVector mocked;
-    if (!markModulesThatMayBeMockedInTestRunsOfProgram(program, mocked))
-        return mocked;
-    BitVector all = namespacesHandedOnInTestRunsOfProgram(program, mocked);
-    all.merge(mocked);
-    return all;
 }
 
 // ---- Names that tests add to built-ins

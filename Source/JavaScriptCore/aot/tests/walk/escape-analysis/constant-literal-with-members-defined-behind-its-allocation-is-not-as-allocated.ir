@@ -1,5 +1,5 @@
 # `{ 1: 10, style: 7 }` is constant data, and the layout that it is written of lists `style` and `width` alone. AN INDEX IS NO FIELD AND GETS NO SLOT (canNameAppendedField()); any other name that the layout does not list
-# has been appended by Link since literals-know-what-they-have-1 (11-04 05:56:57): see constant-literal-with-a-member-that-its-layout-does-not-list-is-allocated-whole.ir. The cell holds a property outside its slots,
+# is appended by Link: see constant-literal-with-a-member-that-its-layout-does-not-list-is-allocated-whole.ir. The cell holds a property outside its slots,
 # so it is not as an allocation of the layout leaves it: nothing is known of its order word, and a store that may create a field looks at the cell first
 # function grow() { const o = { 1: 10, style: 7 }; o.width = 5; return o; }
 # RUN: walk f1 mechanisms=all

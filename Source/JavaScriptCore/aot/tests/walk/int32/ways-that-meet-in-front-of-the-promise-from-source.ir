@@ -1,7 +1,7 @@
 # the promise of a conditional stands where its arms meet: what arrives there is what each arm brings, judged in the block that the arm leaves, where the relation in front of the arm holds
 # f1 previous, f2 next: unequal to the end of the range . f3 opposite: the relation cuts what an operator gives, and 0 is gone in front of the minus . f4 nested . f5 byAnd, f6 byOr: two tests in front of one arm
 # f7 defaultThenStep: what `??` lets through is what is written without undefined . f8 twice: what has met meets again . f9 chain . f10 behindLoop: behind a loop the walk types the variable, and `!==` cuts that
-# RED UNTIL 0-int32-promises-2: eight of the ten were reported (TS100031 stopped the build of a right program)
+# Eight of the ten were once reported (TS100031 stopped the build of a right program)
 # -- source: ways-that-meet-in-front-of-the-promise-from-source.ts
 # declare function sink(...values: unknown[]): void;
 # function previous(a: Bun.int32): Bun.int32 { return a !== -2147483648 ? a - 1 : a; }

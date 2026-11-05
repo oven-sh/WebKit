@@ -32,9 +32,6 @@ public:
     CellPointer allocateHeapCell(Pointer allocatorOrNull, LBasicBlock slowPath);
     // cellSize is the size of the allocator's cells, which is the size asked for only up to MarkedSpace::preciseCutoff.
     CellPointer allocateHeapCell(Pointer allocator, std::optional<size_t> cellSize, LBasicBlock slowPath);
-    Pointer allocatorForSize(Pointer subspace, Integer size, LBasicBlock isTooLarge, LBasicBlock hasNoAllocator);
-    // Null until the subspace has an allocator for the size step.
-    Pointer allocatorForSize(Pointer subspace, size_t);
     void storeHeader(CellPointer, Integer header);
 
     CellPointer allocateObject(InlineAllocation, LBasicBlock slowPath);

@@ -255,10 +255,7 @@ static CodeUnit closureEntryThatDescribes(const Typed::CallingConventions& conve
     case Typed::CodeRole::GenericCallEntry:
     case Typed::CodeRole::GenericConstructEntry:
     case Typed::CodeRole::AllocatingConstructEntry:
-    case Typed::CodeRole::GenericEntryOfBoundFunction:
         return unit;
-    case Typed::CodeRole::BoundFunction:
-        return { unit.function, Typed::CodeRole::GenericEntryOfBoundFunction, unit.numberOfBoundArguments };
     case Typed::CodeRole::Body:
     case Typed::CodeRole::CoroutineBody:
     case Typed::CodeRole::ModuleStart:
@@ -361,15 +358,9 @@ void FunctionTablesByRange::collectName(uint32_t index, std::optional<BuiltinID>
 
 static CountsOfClosureFunction countsOfClosureFunction(const TableEncoder& encoder, CodeUnit entry)
 {
-    if (!Typed::isBoundRole(entry.role)) {
-        const Typed::Function& function = encoder.program.at(entry.function);
-        Typed::ClosureCaptureCounts counts = Typed::closureCaptureCountsOf(encoder.program, encoder.plan.conventions(), entry.function);
-        return { function.length, counts.references, counts.captures };
-    }
-    const Typed::BoundFunctionPlan* bound = encoder.plan.conventions().boundFunction(entry.function, entry.numberOfBoundArguments);
-    RELEASE_ASSERT(bound);
-    Typed::ClosureCaptureCounts counts = Typed::closureCaptureCountsOf(encoder.program, *bound);
-    return { bound->length, counts.references, counts.captures };
+    const Typed::Function& function = encoder.program.at(entry.function);
+    Typed::ClosureCaptureCounts counts = Typed::closureCaptureCountsOf(encoder.program, encoder.plan.conventions(), entry.function);
+    return { function.length, counts.references, counts.captures };
 }
 
 void FunctionTablesByRange::collectClosureFunction(uint32_t index, CodeUnit unit, FunctionKindData kind, Vector<FunctionWithLargeCountsData>& functionsWithLargeCounts)

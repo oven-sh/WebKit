@@ -21,7 +21,7 @@ namespace Typed {
 class Plan;
 class Program;
 
-// ---- What the hooks in shared files call
+// ---- What other files call
 
 // computeSlotPlanParts(), behind the layouts and in front of planNames(). With TypedSlots withheld it does nothing.
 void chooseStorageOfFields(Program&, const Facts&, BuildContext&, SlotPlanParts&); // AOTFieldsStorage.cpp

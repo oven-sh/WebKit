@@ -100,7 +100,20 @@ void loadLiteralString(StubAssembler&, GPRReg wordAndResult, GPRReg scratch, Jum
 void decodeStructureID(CCallHelpers&, GPRReg idAndResult);
 void loadStructure(StubAssembler&, GPRReg cell, GPRReg result);
 void extractBits(StubAssembler&, GPRReg source, unsigned shift, unsigned width, GPRReg result);
+// Without the mark: a number of the image.
 void loadShapeWord(StubAssembler&, GPRReg cell, GPRReg result);
+// Extended by its sign, for the tables that are indexed by the word.
+void loadShapeWordAsIndex(StubAssembler&, GPRReg cell, GPRReg result);
+// The index counts words of four bytes from this offset on: the lower half of the word of shape s is (1 << 16) - s.
+int32_t offsetOfRowsByShapeIndex(StubAssembler&);
+bool loadsShapeAsHalfword(StubAssembler&);
+// As it lies, for comparisons that a marked object is meant to fail, or with a word that was read so.
+void loadShapeWordWithMark(StubAssembler&, GPRReg cell, GPRReg result);
+void setMarkOfCell(StubAssembler&, GPRReg cell, GPRReg scratch);
+// Object::setBearsMark() sets both.
+void setFlagThatFieldHasLeft(StubAssembler&, GPRReg cell, GPRReg scratch);
+Jump branchIfCellBearsMark(StubAssembler&, GPRReg cell);
+Jump branchUnlessCellBearsMark(StubAssembler&, GPRReg cell);
 JumpList branchIfNotCompiledObjectOfThisImage(StubAssembler&, GPRReg cell);
 inline JumpList branchIfNotCompiledObject(StubAssembler& jit, GPRReg cell) { return branchIfNotCompiledObjectOfThisImage(jit, cell); }
 void loadCellVM(StubAssembler&, GPRReg cellAndResult);

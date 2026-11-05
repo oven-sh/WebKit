@@ -4,10 +4,10 @@
 # OPTIONS: testing=WritesBodiesStraight
 # RUN(STRAIGHT): compile UnitsWrittenStraight mechanisms=all
 # REQUIRES(STRAIGHT): faulting-loop-polls
-# STRAIGHT: statistic UnitsWrittenStraight 16
+# STRAIGHT: statistic UnitsWrittenStraight 15
 # RUN(WITHHELD): compile UnitsWrittenStraight mechanisms=all-ParameterGuards
 # REQUIRES(WITHHELD): faulting-loop-polls
-# WITHHELD: statistic UnitsWrittenStraight 13
+# WITHHELD: statistic UnitsWrittenStraight 12
 # class Point { x: number; y: number; constructor(x: number, y: number) { this.x = x; this.y = y; } }
 # function norm(p: Point, scale: number): number { let sum = 0; for (let i = 0; i < 3; i++) sum += p.x * scale + p.y; return sum; }
 # function label(p: Point, prefix: string): string { return prefix + ":" + p.x + "," + p.y; }

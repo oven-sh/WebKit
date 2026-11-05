@@ -318,10 +318,6 @@ constexpr unsigned rankInCodeOf(Typed::CodeRole role)
         return 6;
     case Typed::CodeRole::SlowBody:
         return 7;
-    case Typed::CodeRole::BoundFunction:
-        return 1;
-    case Typed::CodeRole::GenericEntryOfBoundFunction:
-        return 0;
     // Each has an index of its own, and goes on to no unit that lies beside it.
     case Typed::CodeRole::TableEntry:
     case Typed::CodeRole::TableLookup:
@@ -331,7 +327,7 @@ constexpr unsigned rankInCodeOf(Typed::CodeRole role)
     RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
 }
 
-// unitIndex is CallingConventions::indexOf(unit): function * numberOfCodeRolesOfOneFunction + role, and the two units of each planned bound function behind all of those.
+// unitIndex is CallingConventions::indexOf(unit): function * numberOfCodeRolesOfOneFunction + role.
 // Behind those come the units of the method table, which lie in the order of their indexes.
 // The answer is as dense, and tells all units apart.
 constexpr uint32_t placeInCodeOf(Typed::CodeUnit unit, uint32_t unitIndex)
@@ -340,8 +336,7 @@ constexpr uint32_t placeInCodeOf(Typed::CodeUnit unit, uint32_t unitIndex)
         return unitIndex;
     if (Typed::isTableRole(unit.role))
         return unitIndex;
-    unsigned firstRole = Typed::isBoundRole(unit.role) ? Typed::numberOfCodeRolesOfOneFunction : 0;
-    return unitIndex - (static_cast<unsigned>(unit.role) - firstRole) + rankInCodeOf(unit.role);
+    return unitIndex - static_cast<unsigned>(unit.role) + rankInCodeOf(unit.role);
 }
 
 // All that is left of a unit once its thread goes on to the next.

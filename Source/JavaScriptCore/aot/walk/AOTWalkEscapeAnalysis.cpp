@@ -246,7 +246,6 @@ static void noteWhatNewArrayFillsIn(Walker& walker, Reference object, const Oper
     }
     state.noteElement(object, keyOfLengthOfFreshList(walker), positionInFreshList(walker, position + static_cast<uint32_t>(holes.size())));
     state.noteShape(object, made.type);
-    // TODO(known-state-and-effects-2a): noteKnownOfNewList(walker, object) (K9 K10) stood here. Every operation that runs other code went through the notes of every fresh list: the square of the number of lists (65 G against 16 at 6,000). It comes back when the notes of fresh holders are kept apart from those that any other code ends.
 }
 
 // The variable of a parameter of sloppy code is a word of the object, whether or not an argument was passed for it. The element under the same number is that word only where so many arguments were passed,

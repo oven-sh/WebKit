@@ -58,14 +58,6 @@ enum class UnknownSeed : uint16_t {
 
 using UnknownSeeds = OptionSet<UnknownSeed>;
 
-IllTypedCause causeOf(UnknownSeed);
-
-// What a parser has made of data from outside has no layout of the program: a test for one would turn it away every time. So no layout is guessed from a name for such an `unknown`.
-inline bool standsOnlyForObjectsWithoutLayout(UnknownSeeds seeds)
-{
-    return !seeds.isEmpty() && seeds.containsOnly({ UnknownSeed::DataFromOutside, UnknownSeed::ObjectWithoutLayout });
-}
-
 // The enumerator as it is spelled above, which is how the text of a type writes a seed.
 inline ASCIILiteral nameOf(UnknownSeed seed)
 {
@@ -178,7 +170,6 @@ struct Type : TypeParts {
     bool isAnyString() const { return !isNever() && hasOnlyPrimitives(Primitive::AnyString); }
     bool isUndefinedOrNull() const { return !isNever() && hasOnlyPrimitives(Primitive::UndefinedOrNull); }
     bool isNumberOrNullish() const { return primitives & Primitive::Number && hasOnlyPrimitives(Primitive::Number | Primitive::UndefinedOrNull); }
-    bool isStringOrNullish() const { return primitives & Primitive::String && hasOnlyPrimitives(Primitive::String | Primitive::UndefinedOrNull); }
     bool isAnyStringOrNullish() const { return primitives & Primitive::AnyString && hasOnlyPrimitives(Primitive::AnyString | Primitive::UndefinedOrNull); }
     bool isObject() const { return hasObjects() && !primitives; }
     bool mayBeUndefinedOrNull() const { return primitives & Primitive::UndefinedOrNull; }
@@ -198,8 +189,6 @@ struct Type : TypeParts {
     bool hasOnlyClassObjects() const { return hasOnlyListedObjects() && !unnamedLayouts && (traitsOfNamed & traitsOfShape).containsOnly({ ObjectTrait::HasClass }); }
     bool hasOnlyClosures() const { return hasOnlyListedObjects() && !hasUnknown() && (traitsOfNamed & traitsOfIdentity).containsOnly({ ObjectTrait::IsClosure }); }
     bool hasOnlyBuiltins() const { return hasOnlyListedObjects() && !hasUnknown() && (traitsOfNamed & traitsOfIdentity).containsOnly({ ObjectTrait::IsBuiltin }); }
-    // Where a member is asked for, undefined and null throw: what goes on is an object of one of the engine's classes.
-    bool isClassObjectOrNullish() const { return hasOnlyClassObjects(); }
 
 private:
     bool hasOnlyListedObjects() const { return hasObjects() && !hasUnboundedUnknown() && !(primitives & ~Primitive::UndefinedOrNull); }

@@ -206,7 +206,7 @@ private:
 };
 
 // BodyOperation<Opcode::PropGet>, BodyOperation<TerminatorKind::Branch>: the fields of one entry of the schema under their names, each at an offset known when the engine is compiled.
-// AOTSchemaBodyOperations.h specializes it for every entry that is on the wire. ir/AOTSchemaBodyOperations.reference.h shows what that header holds.
+// AOTSchemaBodyOperations.h specializes it for every entry that is on the wire.
 // A getter has the name the schema gives the parameter: key(), layout(), mode(). An operand's ends in Operand, a variadic operand's in Operands: objectOperand(), argumentsOperands().
 // A flag's getter has the flag's name: isFreeName().
 template<auto entry> class BodyOperation;

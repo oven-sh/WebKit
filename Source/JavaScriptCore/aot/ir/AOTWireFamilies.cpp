@@ -14,6 +14,7 @@
 #include "AOTPhaseTimes.h"
 #include "AOTRowsOfLayouts.h"
 #include "AOTSort.h"
+#include <compare>
 #include <functional>
 #include <optional>
 #include <utility>
@@ -211,10 +212,23 @@ struct LayoutConversion {
     uint32_t target;
 };
 
+// findLayoutsThatMeetWireTypesByNames(). Types that require the same names are met by the same layouts, but for what a telling field turns away: they are one group, and the list is made once for the group.
+struct LayoutsThatMeetTypesByNames {
+    static constexpr uint32_t noGroup = UINT32_MAX;
+
+    bool meetNone(uint32_t type) const { return heldAgainstType[type].isEmpty() && (groupOfType[type] == noGroup || withoutTellingFields[groupOfType[type]].isEmpty()); }
+
+    // By type. None: all that meets the type stands in heldAgainstType.
+    Vector<uint32_t> groupOfType;
+    // By group, ascending: the layouts that have the names and no telling field. A type of the group may be among them.
+    Vector<Vector<LayoutID>> withoutTellingFields;
+    // By type, ascending: who meets it besides. Each has been held against the type by itself.
+    Vector<Vector<LayoutID>> heldAgainstType;
+};
+
 struct LayoutConversions {
     const Wire::Sections& checkedSections;
-    // findLayoutsThatMeetWireTypesByNames().
-    Vector<Vector<LayoutID>> layoutsThatMeetTypesByNames;
+    LayoutsThatMeetTypesByNames layoutsThatMeetTypesByNames;
     const TellingFields& tellingFields;
     NamesOfLayoutFamilies names;
     std::span<const TaggedFamily> taggedFamilies;
@@ -447,8 +461,8 @@ static void addNamesOfTaggedFamilies(NamesOfLayoutFamilies& names, const Wire::S
     }
 }
 
-// By structural type, ascending: the layouts whose objects have the names that it requires.
-static Vector<Vector<LayoutID>> findLayoutsThatMeetWireTypesByNames(const BuildContext& build, const Wire::Sections& checkedSections, const TellingFields& tellingFields)
+// By structural type: the layouts whose objects have the names that it requires.
+static LayoutsThatMeetTypesByNames findLayoutsThatMeetWireTypesByNames(const BuildContext& build, const Wire::Sections& checkedSections, const TellingFields& tellingFields)
 {
     const ParallelLoops& loops = build.parallelLoops();
     StepTimes steps(build, "ReadAndVerify: types met by names"_s);
@@ -508,43 +522,105 @@ static Vector<Vector<LayoutID>> findLayoutsThatMeetWireTypesByNames(const BuildC
         });
         return lacksOne;
     };
-    // A list for each type, not for each few hundred: one type may have tens of thousands of layouts to look at and its neighbors as many.
-    Vector<Vector<LayoutID>> layoutsThatMeetTypes(numberOfLayouts);
-    forEachIndexInParallel(loops, numberOfLayouts, [&](unsigned type) {
-        Vector<LayoutID>& found = layoutsThatMeetTypes[type];
+    NamesByWireLayout requiredOfRecords(loops, numberOfLayouts, [&](uint32_t type, Vector<uint32_t>& found) {
+        if (!isStructuralWireType(layouts[type]))
+            return;
+        forEachRequiredMember(type, [&](const Wire::Field& field) {
+            found.append(field.key);
+        });
+    });
+    NamesByWireLayout requiredOfInstances(loops, numberOfLayouts, [&](uint32_t type, Vector<uint32_t>& found) {
         if (!isStructuralWireType(layouts[type]))
             return;
         bool isDeclaredNowhere = layouts[type].name == Wire::none && layouts[type].module == Wire::none;
-        Vector<uint32_t, 16> requiredOfRecords;
-        Vector<uint32_t, 16> requiredOfInstances;
         forEachRequiredMember(type, [&](const Wire::Field& field) {
-            requiredOfRecords.append(field.key);
             if (!isDeclaredNowhere || isRequiredWireField(field))
-                requiredOfInstances.append(field.key);
+                found.append(field.key);
         });
+    });
+    // `interface Item7 { id: number; name: string; own7?: number }`, and as many literals as there are such types: each type by itself looked at each literal.
+    Vector<uint32_t> typesByNames;
+    for (uint32_t type = 0; type < numberOfLayouts; ++type) {
+        if (!requiredOfInstances.of(type).empty())
+            typesByNames.append(type);
+    }
+    auto orderOfNames = [&](uint32_t first, uint32_t second) {
+        auto order = std::lexicographical_compare_three_way(requiredOfInstances.of(first).begin(), requiredOfInstances.of(first).end(), requiredOfInstances.of(second).begin(), requiredOfInstances.of(second).end());
+        if (order != 0)
+            return order;
+        return std::lexicographical_compare_three_way(requiredOfRecords.of(first).begin(), requiredOfRecords.of(first).end(), requiredOfRecords.of(second).begin(), requiredOfRecords.of(second).end());
+    };
+    AOT::sort(typesByNames, [&](uint32_t first, uint32_t second) {
+        return orderOfNames(first, second) < 0;
+    });
+    // The place in typesByNames of the first type of each group, and the end.
+    Vector<uint32_t> firstOfGroup;
+    for (uint32_t place = 0; place < typesByNames.size(); ++place) {
+        if (!place || orderOfNames(typesByNames[place - 1], typesByNames[place]) != 0)
+            firstOfGroup.append(place);
+    }
+    uint32_t numberOfGroups = static_cast<uint32_t>(firstOfGroup.size());
+    firstOfGroup.append(static_cast<uint32_t>(typesByNames.size()));
+    steps.didFinish("types by the names that they require"_s);
+
+    LayoutsThatMeetTypesByNames result;
+    result.groupOfType.fill(LayoutsThatMeetTypesByNames::noGroup, numberOfLayouts);
+    result.withoutTellingFields.grow(numberOfGroups);
+    result.heldAgainstType.grow(numberOfLayouts);
+    // By group, ascending: the layouts that have the names and a telling field.
+    Vector<Vector<uint32_t>> withTellingFieldsOfGroup(numberOfGroups);
+    // A task for each group, not for each few hundred: one group may have tens of thousands of layouts to look at and its neighbors as many.
+    forEachIndexInParallel(loops, numberOfGroups, [&](unsigned group) {
+        uint32_t firstType = typesByNames[firstOfGroup[group]];
+        std::span<const uint32_t> ofRecords = requiredOfRecords.of(firstType);
+        std::span<const uint32_t> ofInstances = requiredOfInstances.of(firstType);
         const Vector<uint32_t>* fewest = nullptr;
-        for (uint32_t name : requiredOfInstances) {
+        for (uint32_t name : ofInstances) {
             if (!fewest || layoutsWithName[name].size() < fewest->size())
                 fewest = &layoutsWithName[name];
         }
-        if (!fewest)
-            return;
-        AOT::sort(requiredOfRecords);
-        removeRepeatedElements(requiredOfRecords);
-        AOT::sort(requiredOfInstances);
-        removeRepeatedElements(requiredOfInstances);
         for (uint32_t layout : *fewest) {
-            if (layout == type)
+            if (!std::ranges::includes(names.of(layout), wireLayoutDeclaresEveryName(layouts[layout]) ? ofRecords : ofInstances))
                 continue;
-            std::span<const uint32_t> required = wireLayoutDeclaresEveryName(layouts[layout]) ? requiredOfRecords.span() : requiredOfInstances.span();
-            if (std::ranges::includes(names.of(layout), required) && !tellingFields.tellApart(layout, type) && !isToldByNameThatTypeLacks(layout, type))
-                found.append(LayoutID(layout));
+            if (tellingFields.tellsNothingApartFrom(layout))
+                result.withoutTellingFields[group].append(LayoutID(layout));
+            else
+                withTellingFieldsOfGroup[group].append(layout);
         }
+        for (uint32_t place = firstOfGroup[group]; place < firstOfGroup[group + 1]; ++place)
+            result.groupOfType[typesByNames[place]] = group;
+    });
+    steps.didFinish("layouts by group"_s);
+    forEachIndexInParallel(loops, static_cast<unsigned>(typesByNames.size()), [&](unsigned place) {
+        uint32_t type = typesByNames[place];
+        uint32_t group = result.groupOfType[type];
+        const Vector<uint32_t>& withTellingFields = withTellingFieldsOfGroup[group];
+        Vector<LayoutID>& found = result.heldAgainstType[type];
+        auto holdAgainstType = [&](uint32_t layout) {
+            if (layout != type && !tellingFields.tellApart(layout, type) && !isToldByNameThatTypeLacks(layout, type))
+                found.append(LayoutID(layout));
+        };
+        if (tellingFields.tellsNothingApartFrom(type)) {
+            for (uint32_t layout : withTellingFields)
+                holdAgainstType(layout);
+            return;
+        }
+        // Its own telling fields may turn any of them away. Both lists ascend.
+        result.groupOfType[type] = LayoutsThatMeetTypesByNames::noGroup;
+        size_t next = 0;
+        for (LayoutID layout : result.withoutTellingFields[group]) {
+            for (; next < withTellingFields.size() && withTellingFields[next] < layout.index(); ++next)
+                holdAgainstType(withTellingFields[next]);
+            holdAgainstType(layout.index());
+        }
+        for (; next < withTellingFields.size(); ++next)
+            holdAgainstType(withTellingFields[next]);
     });
     steps.didFinish("layouts by type"_s);
     destroyLists(loops, layoutsWithName);
+    destroyLists(loops, withTellingFieldsOfGroup);
     steps.didFinish("free the lists"_s);
-    return layoutsThatMeetTypes;
+    return result;
 }
 
 static void forEachWireConversionTarget(const Wire::Sections& checkedSections, uint32_t source, NOESCAPE const Invocable<void(uint32_t)> auto& functor)
@@ -604,7 +680,11 @@ static LayoutFamilies collectLayoutFamilies(const BuildContext& build, const Lay
     });
     Vector<Vector<uint32_t>> sources(numberOfLayouts);
     listSecondsByFirst(build.parallelLoops(), sourcesOfTargets.span(), sources);
-    const Vector<Vector<LayoutID>>& metByNames = conversions.layoutsThatMeetTypesByNames;
+    const LayoutsThatMeetTypesByNames& metByNames = conversions.layoutsThatMeetTypesByNames;
+    Vector<LayoutSetID> metByNamesOfGroup(metByNames.withoutTellingFields.size());
+    forEachIndexInParallel(build.parallelLoops(), static_cast<unsigned>(metByNamesOfGroup.size()), [&](unsigned group, unsigned worker) {
+        metByNamesOfGroup[group] = arenas.of(worker).layoutSets().ofSorted(metByNames.withoutTellingFields[group].span());
+    });
     Vector<uint32_t> numberOfSourcesLeft(numberOfLayouts, [&](size_t index) {
         return static_cast<uint32_t>(sources[index].size());
     });
@@ -615,13 +695,19 @@ static LayoutFamilies collectLayoutFamilies(const BuildContext& build, const Lay
     Vector<LayoutSetID> membersAsked(numberOfLayouts);
     auto makeFamilyOf = [&](uint32_t type, LayoutSets& sets) {
         // Most layouts: nothing converts to them.
-        bool standsAlone = sources[type].isEmpty() && metByNames[type].isEmpty() && conversions.tellingFields.tellsNothingApartFrom(type);
+        bool standsAlone = sources[type].isEmpty() && metByNames.meetNone(type) && conversions.tellingFields.tellsNothingApartFrom(type);
         if (standsAlone || isWireEnvironment(layouts[type]))
             return LayoutSets::of(LayoutID(type));
+        LayoutSetID metByNamesOfItsGroup = metByNames.groupOfType[type] == LayoutsThatMeetTypesByNames::noGroup ? LayoutSetID() : metByNamesOfGroup[metByNames.groupOfType[type]];
+        // Most types that are met by names: the set of the group as it is.
+        if (sources[type].isEmpty() && metByNames.heldAgainstType[type].isEmpty() && metByNamesOfItsGroup)
+            return sets.contains(metByNamesOfItsGroup, LayoutID(type)) ? metByNamesOfItsGroup : sets.with(metByNamesOfItsGroup, LayoutID(type));
         Vector<LayoutSetID, 8> wholeFamilies;
+        if (metByNamesOfItsGroup)
+            wholeFamilies.append(metByNamesOfItsGroup);
         Vector<LayoutID, 8> membersByThemselves;
         membersByThemselves.append(LayoutID(type));
-        membersByThemselves.append(metByNames[type].span());
+        membersByThemselves.append(metByNames.heldAgainstType[type].span());
         for (uint32_t source : sources[type]) {
             // Else the source alone may pass.
             if (passesEveryMemberOnToFamily(conversions, { source, type }))
@@ -700,14 +786,36 @@ static LayoutFamilies collectLayoutFamilies(const BuildContext& build, const Lay
     return families;
 }
 
+// Types that require the same names and have the same family lose the same members: they are asked once.
 static void removeFamilyMembersThatLackRequiredNames(const ParallelLoops& loops, ArenasOfWorkers& arenas, const NamesOfLayoutFamilies& names, LayoutFamilies& families)
 {
-    forEachIndexInParallel(loops, static_cast<unsigned>(families.members.size()), [&](unsigned type, unsigned worker) {
-        if (names.required.of(type).empty())
-            return;
-        families.members[type] = arenas.of(worker).layoutSets().filtered(families.members[type], [&](LayoutID member) {
+    Vector<uint32_t> types;
+    for (uint32_t type = 0; type < families.members.size(); ++type) {
+        if (!names.required.of(type).empty())
+            types.append(type);
+    }
+    auto order = [&](uint32_t first, uint32_t second) {
+        if (auto orderOfFamilies = families.members[first].bits() <=> families.members[second].bits(); orderOfFamilies != 0)
+            return orderOfFamilies;
+        return std::lexicographical_compare_three_way(names.required.of(first).begin(), names.required.of(first).end(), names.required.of(second).begin(), names.required.of(second).end());
+    };
+    AOT::sort(types, [&](uint32_t first, uint32_t second) {
+        return order(first, second) < 0;
+    });
+    Vector<uint32_t> firstOfGroup;
+    for (uint32_t place = 0; place < types.size(); ++place) {
+        if (!place || order(types[place - 1], types[place]) != 0)
+            firstOfGroup.append(place);
+    }
+    unsigned numberOfGroups = static_cast<unsigned>(firstOfGroup.size());
+    firstOfGroup.append(static_cast<uint32_t>(types.size()));
+    forEachIndexInParallel(loops, numberOfGroups, [&](unsigned group, unsigned worker) {
+        uint32_t type = types[firstOfGroup[group]];
+        LayoutSetID left = arenas.of(worker).layoutSets().filtered(families.members[type], [&](LayoutID member) {
             return !names.lacksRequiredName(member, type);
         });
+        for (uint32_t other : types.subspan(firstOfGroup[group], firstOfGroup[group + 1] - firstOfGroup[group]))
+            families.members[other] = left;
     });
 }
 
@@ -795,7 +903,7 @@ bool WireTypeReader::computeDeclaredMembers()
 
     TellingFields tellingFields(loops, m_sections);
     steps.didFinish("telling fields"_s);
-    Vector<Vector<LayoutID>> layoutsThatMeetTypesByNames = findLayoutsThatMeetWireTypesByNames(m_build, m_sections, tellingFields);
+    LayoutsThatMeetTypesByNames layoutsThatMeetTypesByNames = findLayoutsThatMeetWireTypesByNames(m_build, m_sections, tellingFields);
     steps.didFinish("types met by names"_s);
     LayoutConversions conversions { m_sections, WTF::move(layoutsThatMeetTypesByNames), tellingFields, collectNamesOfLayoutFamilies(loops, m_sections), { } };
     steps.didFinish("names of families"_s);
@@ -866,7 +974,8 @@ bool WireTypeReader::computeDeclaredMembers()
     m_declaredMembers.grow(numberOfLayouts + m_numberOfDerivedLayouts);
     for (uint32_t index = 0; index < m_numberOfDerivedLayouts; ++index)
         m_declaredMembers[numberOfLayouts + index] = LayoutSets::of(LayoutID(numberOfLayouts + index));
-    destroyLists(loops, conversions.layoutsThatMeetTypesByNames);
+    destroyLists(loops, conversions.layoutsThatMeetTypesByNames.withoutTellingFields);
+    destroyLists(loops, conversions.layoutsThatMeetTypesByNames.heldAgainstType);
     steps.didFinish("free the lists"_s);
     return true;
 }

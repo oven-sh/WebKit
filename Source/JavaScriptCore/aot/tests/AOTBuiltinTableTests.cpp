@@ -123,7 +123,6 @@ static void testMarks()
     AOT_TEST_CHECK(table().has(BuiltinMark::IsSpy, hostBuiltin("BunTestSpyOn"_s)) && !table().has(BuiltinMark::HoldsLoader, hostBuiltin("BunTestSpyOn"_s)) && !table().has(BuiltinMark::IsSpy, BuiltinID()));
     AOT_TEST_CHECK(table().marked(BuiltinMark::IsNotEnumerable).size() == 2 && table().has(BuiltinMark::IsNotEnumerable, hostBuiltin("Console_stdout"_s)));
     AOT_TEST_CHECK(table().has(BuiltinMark::MayBeAbsent, Builtins::SharedArrayBuffer) && !table().has(BuiltinMark::MayBeAbsent, Builtins::ArrayBuffer));
-    AOT_TEST_CHECK(table().marked(BuiltinMark::AnswersCopyOfOperand).size() == 1 && table().has(BuiltinMark::AnswersCopyOfOperand, hostBuiltin("StructuredClone"_s)));
     // Beside one entry alone the build counts on no lock.
     AOT_TEST_CHECK(table().marked(BuiltinMark::RunsCodeThatLocksDoNotBind).size() == 1 && table().has(BuiltinMark::RunsCodeThatLocksDoNotBind, Builtins::BunServe));
     AOT_TEST_CHECK(table().has(BuiltinMark::RunsCodeWithLoader, hostBuiltin("BunPlugin"_s)) && !table().has(BuiltinMark::RunsCodeWithLoader, hostBuiltin("BunBuild"_s)));

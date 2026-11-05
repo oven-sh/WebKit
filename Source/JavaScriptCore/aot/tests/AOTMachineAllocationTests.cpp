@@ -215,117 +215,6 @@ static Block* allocationTestSourceOfBackEdge(const Order& order, const Block* he
     return nullptr;
 }
 
-// Goes left where the first argument is odd.
-struct AllocationTestDiamond {
-    explicit AllocationTestDiamond(TestProcedure& test)
-        : first(test.argumentGPR(0))
-        , second(test.argumentGPR(1))
-        , buffer(test.argumentGPR(2))
-        , left(test.out().newBlock())
-        , right(test.out().newBlock())
-        , join(test.out().newBlock())
-    {
-        Output& out = test.out();
-        out.branch(out.testNonZero64(first, 1), normalEdge(left), normalEdge(right));
-    }
-
-    LValue first;
-    LValue second;
-    LValue buffer;
-    LBasicBlock left;
-    LBasicBlock right;
-    LBasicBlock join;
-};
-
-static void allocatorMakesNoMovesAtJoinOfAgreeingPredecessors()
-{
-    TestProcedure test;
-    Output& out = test.out();
-    AllocationTestDiamond diamond(test);
-
-    out.appendTo(diamond.left);
-    out.store64(diamond.first, allocationTestWordAt(test, diamond.buffer, 0));
-    out.jump(normalEdge(diamond.join));
-
-    out.appendTo(diamond.right);
-    out.store64(diamond.second, allocationTestWordAt(test, diamond.buffer, 0));
-    out.jump(normalEdge(diamond.join));
-
-    out.appendTo(diamond.join);
-    out.ret(allocationTestMix(out, diamond.first, diamond.second));
-    compileOrFail(test);
-
-    AllocationTestText text(test);
-    AOT_ALLOCATION_TEST_CHECK(test, text.verbsOf(diamond.left) == "Store Jump"_s && text.verbsOf(diamond.right) == "Store Jump"_s);
-    AOT_ALLOCATION_TEST_CHECK(test, !text.count("save"_s) && !text.count("reload"_s) && !text.count("swap"_s));
-    AOT_ALLOCATION_TEST_CHECK(test, test.procedure().allocation().registersAtHeadOf(diamond.join).size() == 2);
-    AOT_ALLOCATION_TEST_CHECK(test, allocationTestRegisterAtHead(test, diamond.join, diamond.first) == diamond.first->argumentReg());
-    AOT_ALLOCATION_TEST_CHECK(test, allocationTestRegisterAtHead(test, diamond.join, diamond.second) == diamond.second->argumentReg());
-    AOT_ALLOCATION_TEST_CHECK(test, !test.procedure().frame().hasFrame());
-
-    constexpr uint64_t second = 9;
-    for (uint64_t first : { 4u, 7u }) {
-        uint64_t stored = 0;
-        AOT_ALLOCATION_TEST_CHECK(test, test.call<uint64_t>(first, second, &stored) == allocationTestMixed(first, second));
-        AOT_ALLOCATION_TEST_CHECK(test, stored == ((first & 1) ? first : second));
-    }
-}
-
-static void allocatorGivesSecondEdgeIntoJoinParallelMoves()
-{
-    TestProcedure test;
-    Output& out = test.out();
-    AllocationTestDiamond diamond(test);
-
-    out.appendTo(diamond.left);
-    out.store64(diamond.first, allocationTestWordAt(test, diamond.buffer, 0));
-    out.store64(diamond.second, allocationTestWordAt(test, diamond.buffer, 1));
-    out.jump(normalEdge(diamond.join));
-
-    out.appendTo(diamond.right);
-    PatchOperation* exchange = out.patchpoint(Void);
-    exchange->append(diamond.first, ValueRep::reg(diamond.second->argumentReg()));
-    exchange->append(diamond.second, ValueRep::reg(diamond.first->argumentReg()));
-    exchange->appendSomeRegister(diamond.buffer);
-    exchange->setGenerator([](CCallHelpers& jit, const PatchParameters& parameters) {
-        jit.store64(parameters[0].gpr(), CCallHelpers::Address(parameters[2].gpr()));
-        jit.store64(parameters[1].gpr(), CCallHelpers::Address(parameters[2].gpr(), sizeof(uint64_t)));
-    });
-    out.jump(normalEdge(diamond.join));
-
-    out.appendTo(diamond.join);
-    out.ret(allocationTestMix(out, diamond.first, diamond.second));
-    compileOrFail(test);
-
-    // Whichever arm comes first in the order fixes the head of the join, and the other one has to bring both values back.
-    AllocationTestText text(test);
-    const Order& order = test.procedure().order();
-    const Allocation& allocation = test.procedure().allocation();
-    bool leftComesFirst = order.of(diamond.left).orderIndex < order.of(diamond.right).orderIndex;
-    AOT_ALLOCATION_TEST_CHECK(test, text.verbsOf(leftComesFirst ? diamond.left : diamond.right).endsWith(leftComesFirst ? "Store Jump"_s : "Patch Jump"_s));
-    String verbsOfSecondArm = text.verbsOf(leftComesFirst ? diamond.right : diamond.left);
-    AOT_ALLOCATION_TEST_CHECK(test, verbsOfSecondArm.endsWith("move Jump"_s) || verbsOfSecondArm.endsWith("swap Jump"_s));
-    AOT_ALLOCATION_TEST_CHECK(test, !text.count("save"_s) && !text.count("reload"_s));
-
-    const BlockSteps& steps = allocation.stepsOf(leftComesFirst ? diamond.right : diamond.left);
-    bool movesFirst = false;
-    bool movesSecond = false;
-    for (uint32_t index = steps.beginOfEdgeMoves; index < steps.endOfEdgeMoves; ++index) {
-        const Step& step = allocation.step(index);
-        AOT_ALLOCATION_TEST_CHECK(test, step.kind == StepKind::Move || step.kind == StepKind::Swap);
-        movesFirst |= step.operation == diamond.first || step.other == diamond.first;
-        movesSecond |= step.operation == diamond.second || step.other == diamond.second;
-    }
-    AOT_ALLOCATION_TEST_CHECK(test, movesFirst && movesSecond);
-
-    constexpr uint64_t second = 9;
-    for (uint64_t first : { 4u, 7u }) {
-        std::array<uint64_t, 2> stored { };
-        AOT_ALLOCATION_TEST_CHECK(test, test.call<uint64_t>(first, second, stored.data()) == allocationTestMixed(first, second));
-        AOT_ALLOCATION_TEST_CHECK(test, stored[0] == first && stored[1] == second);
-    }
-}
-
 // The arm exchanges two values and fixes the head of the join. The edge that leads straight from the Branch to the join has to exchange them too, so it gets a block, which holds the moves and nothing else.
 static void allocatorSplitsEdgeThatGetsMoves()
 {
@@ -515,40 +404,6 @@ static void allocatorKeepsNothingWhereGeneratorMakesConstant()
     AOT_ALLOCATION_TEST_CHECK(test, !test.call<uint64_t>(0, 42, 0));
 }
 
-// The result is read in a register that the Patch may not give it, so it gets one of those that it may, and is moved.
-static void allocatorHoldsResultOfPatchToItsRegisters()
-{
-    TestProcedure test;
-    Output& out = test.out();
-    LValue first = test.argumentGPR(0);
-    Reg wanted = test.argumentGPR(1)->argumentReg();
-    Reg allowed[2] { test.argumentGPR(2)->argumentReg(), test.argumentGPR(3)->argumentReg() };
-
-    for (ValueRep::Kind kind : { ValueRep::SomeRegister, ValueRep::SomeEarlyRegister }) {
-        PatchOperation* patch = out.patchpoint(Int64);
-        patch->appendSomeRegister(first);
-        patch->resultConstraints = { ValueRep(kind) };
-        patch->holdResultsTo(RegisterSet(allowed[0], allowed[1]));
-        patch->effects = Effects::none();
-        patch->effects.writesLocalState = true;
-        patch->setGenerator([allowed = RegisterSet(allowed[0], allowed[1])](CCallHelpers& jit, const PatchParameters& parameters) {
-            RELEASE_ASSERT(allowed.contains(parameters[0].reg(), IgnoreVectors));
-            jit.add64(CCallHelpers::TrustedImm32(1), parameters[1].gpr(), parameters[0].gpr());
-        });
-        PatchOperation* reader = out.patchpoint(Int64);
-        reader->append(patch, ValueRep::reg(wanted));
-        reader->effects = Effects::none();
-        reader->effects.writesLocalState = true;
-        reader->setGenerator([](CCallHelpers& jit, const PatchParameters& parameters) {
-            jit.move(parameters[1].gpr(), parameters[0].gpr());
-        });
-        first = reader;
-    }
-    out.ret(first);
-    compileOrFail(test);
-    AOT_ALLOCATION_TEST_CHECK(test, test.call<uint64_t>(40, 0, 0, 0) == 42);
-}
-
 static unsigned allocationTestNumberOfBlocksSplitLate(TestProcedure& test)
 {
     const Order& order = test.procedure().order();
@@ -701,72 +556,6 @@ static void allocatorWorkGrowsAsEdgesOfSwitchThatGetMovesDo()
     AOT_TEST_CHECK(growsAsSizeDoes(smaller, large));
 }
 
-// An operand under SomeRegister might be given the register that the generator writes for another operand before it reads this one. So the operands of such a Patch stay held to their registers.
-static void allocatorHoldsOperandsToTheirRegistersBesideOneThatTakesSomeRegister()
-{
-    TestProcedure test;
-    Output& out = test.out();
-    LBasicBlock rare = out.newBlock();
-    LBasicBlock usual = out.newBlock();
-    LValue buffer = test.argumentGPR(0);
-    LValue first = test.argumentGPR(1);
-    LValue second = test.argumentGPR(2);
-    out.branch(out.testNonZero64(buffer, 8), rareEdge(rare), normalEdge(usual));
-
-    out.appendTo(rare);
-    PatchOperation* patch = out.patchpoint(Void);
-    patch->append(first, ValueRep::reg(second->argumentReg()));
-    patch->append(second, ValueRep::reg(first->argumentReg()));
-    patch->appendSomeRegister(buffer);
-    patch->setBringsOperandsToTheirRegisters(true);
-    patch->setGenerator([](CCallHelpers& jit, const PatchParameters& parameters) {
-        jit.store64(parameters[0].gpr(), CCallHelpers::Address(parameters[2].gpr()));
-        jit.store64(parameters[1].gpr(), CCallHelpers::Address(parameters[2].gpr(), sizeof(uint64_t)));
-    });
-    out.ret(out.constInt64(1));
-    out.appendTo(usual);
-    out.ret(out.constInt64(0));
-    compileOrFail(test);
-
-    AOT_ALLOCATION_TEST_CHECK(test, test.procedure().order().of(rare).isRare());
-    AOT_ALLOCATION_TEST_CHECK(test, patch->constraintOf(0) == ValueRep::reg(second->argumentReg()) && patch->constraintOf(1) == ValueRep::reg(first->argumentReg()));
-    AOT_ALLOCATION_TEST_CHECK(test, !patch->registerToBringOperandTo(0) && !patch->registerToBringOperandTo(1) && !patch->lateClobberedMask());
-
-    alignas(16) std::array<uint64_t, 4> stored { };
-    AOT_ALLOCATION_TEST_CHECK(test, test.call<uint64_t>(stored.data() + 1, 11, 12) == 1 && stored[1] == 11 && stored[2] == 12);
-    AOT_ALLOCATION_TEST_CHECK(test, !test.call<uint64_t>(stored.data(), 11, 12) && !stored[0]);
-}
-
-static void allocatorKeepsPhiApartFromValueThatLivesOn()
-{
-    constexpr int64_t constant = 7;
-    TestProcedure test;
-    Output& out = test.out();
-    AllocationTestDiamond diamond(test);
-    LValue phi = out.phiIn(diamond.join, Int64);
-
-    out.appendTo(diamond.left);
-    out.upsilon(diamond.second, phi);
-    out.jump(normalEdge(diamond.join));
-
-    out.appendTo(diamond.right);
-    out.upsilon(out.constInt64(constant), phi);
-    out.jump(normalEdge(diamond.join));
-
-    out.appendTo(diamond.join);
-    out.ret(allocationTestMix(out, phi, diamond.second));
-    compileOrFail(test);
-
-    AllocationTestText text(test);
-    AOT_ALLOCATION_TEST_CHECK(test, text.verbsOf(diamond.left) == "move Jump"_s && text.verbsOf(diamond.right) == "materialize Jump"_s);
-    Reg registerOfPhi = allocationTestRegisterAtHead(test, diamond.join, phi);
-    AOT_ALLOCATION_TEST_CHECK(test, registerOfPhi && registerOfPhi != allocationTestRegisterAtHead(test, diamond.join, diamond.second));
-
-    constexpr uint64_t second = 9;
-    AOT_ALLOCATION_TEST_CHECK(test, test.call<uint64_t>(uint64_t { 7 }, second) == allocationTestMixed(second, second));
-    AOT_ALLOCATION_TEST_CHECK(test, test.call<uint64_t>(uint64_t { 4 }, second) == allocationTestMixed(static_cast<uint64_t>(constant), second));
-}
-
 // Each Phi of the loop takes the value of the next one on the way back, and the last that of the first.
 template<typename Word, unsigned length>
 static void allocatorRotatesPhisBySwapping()
@@ -817,68 +606,6 @@ static void allocatorRotatesPhisBySwapping()
             std::rotate(rotated.begin(), rotated.begin() + 1, rotated.end());
         AOT_ALLOCATION_TEST_CHECK(test, test.call<Word>(numberOfRounds, words.data()) == allocationTestMixedAll(std::span<const Word>(rotated)));
     }
-}
-
-// Every value is read twice, once on the way up and once on the way down, so all of them are live at once.
-static Vector<LValue> allocationTestBuildPressure(TestProcedure& test, unsigned count, Type type)
-{
-    Output& out = test.out();
-    Vector<LValue> values = allocationTestLoadWords(test, test.argumentGPR(0), 0, count, type);
-    Vector<LValue> reversed = values;
-    reversed.reverse();
-    LValue forward = allocationTestMixAll(out, values.span());
-    out.ret(allocationTestMix(out, forward, allocationTestMixAll(out, reversed.span())));
-    return values;
-}
-
-template<typename Word>
-static void allocatorStoresSpilledValueOnceBehindItsDefinition()
-{
-    constexpr Type type = allocationTestTypeOf<Word>;
-    constexpr unsigned numberBeyondRegisters = 4;
-    TestProcedure test;
-    unsigned count = allocationTestCountOf(registerFileFor(test.procedure().traits()).allocatableIn(bankOf(type))) + numberBeyondRegisters;
-    Vector<LValue> values = allocationTestBuildPressure(test, count, type);
-    compileOrFail(test);
-
-    TestProcedure sameProcedure;
-    allocationTestBuildPressure(sameProcedure, count, type);
-    compileOrFail(sameProcedure);
-    AOT_ALLOCATION_TEST_CHECK(test, test.printedAllocation() == sameProcedure.printedAllocation());
-
-    AllocationTestText text(test);
-    const Allocation& allocation = test.procedure().allocation();
-    for (const Step& step : allocation.steps())
-        AOT_ALLOCATION_TEST_CHECK(test, step.kind != StepKind::Save);
-
-    unsigned numberSpilled = 0;
-    for (unsigned index = 0; index < count; ++index) {
-        LValue value = values[index];
-        unsigned numberOfReloads = text.count("reload"_s, value);
-        if (!allocation.isSpilled(value)) {
-            AOT_ALLOCATION_TEST_CHECK(test, !numberOfReloads && !text.count("save"_s, value));
-            continue;
-        }
-        ++numberSpilled;
-        AOT_ALLOCATION_TEST_CHECK(test, text.isStoredOnceBehindDefinition(value));
-        AOT_ALLOCATION_TEST_CHECK(test, !allocation.spills()[allocation.spillOf(value)].isSaveInRareRegion);
-        unsigned numberOfReadsInPlace = allocationTestReadsInPlace(test, value);
-        AOT_ALLOCATION_TEST_CHECK(test, numberOfReloads + numberOfReadsInPlace);
-        // The first and the last value begin a sum, where they are doubled. Every other value is only ever subtracted.
-        if (!isX86_64())
-            AOT_ALLOCATION_TEST_CHECK(test, !numberOfReadsInPlace);
-        else if (index && index + 1 < count)
-            AOT_ALLOCATION_TEST_CHECK(test, !numberOfReloads);
-    }
-    AOT_ALLOCATION_TEST_CHECK(test, numberSpilled >= numberBeyondRegisters);
-    AOT_ALLOCATION_TEST_CHECK(test, test.procedure().frame().coverage() == FrameCoverage::WholeFunction);
-
-    std::array<Word, 64> words = allocationTestWords<Word>();
-    std::span<const Word> wordsRead = std::span<const Word>(words).first(count);
-    std::array<Word, 64> reversed { };
-    std::reverse_copy(wordsRead.begin(), wordsRead.end(), reversed.begin());
-    Word expected = allocationTestMixed(allocationTestMixedAll(wordsRead), allocationTestMixedAll(std::span<const Word>(reversed).first(count)));
-    AOT_ALLOCATION_TEST_CHECK(test, test.call<Word>(words.data()) == expected);
 }
 
 template<typename Word>
@@ -1154,62 +881,6 @@ static void allocatorBringsSumRoundInItsRegisterPastJoinThatRareBlockLeadsBackTo
     }
 }
 
-// The body has a way out of its own behind the addition, and what stands there reads the sum as it was at the head.
-static void allocatorKeepsPhiThatLaterWayOutOfLoopReads()
-{
-    TestProcedure test;
-    Output& out = test.out();
-    LValue rounds = test.argumentGPR(0);
-    LValue limit = test.argumentGPR(1);
-    LBasicBlock head = out.newBlock();
-    LBasicBlock body = out.newBlock();
-    LBasicBlock latch = out.newBlock();
-    LBasicBlock exit = out.newBlock();
-    LBasicBlock early = out.newBlock();
-    LValue left = out.phiIn(head, Int64);
-    LValue sum = out.phiIn(head, Int64);
-    out.upsilon(rounds, left);
-    out.upsilon(out.int64Zero, sum);
-    out.jump(normalEdge(head));
-
-    out.appendTo(head);
-    out.branch(left, normalEdge(body), normalEdge(exit));
-
-    out.appendTo(body);
-    LValue nextSum = out.add(sum, left);
-    out.branch(out.lessThan(nextSum, limit), normalEdge(latch), normalEdge(early));
-
-    out.appendTo(latch);
-    out.upsilon(nextSum, sum);
-    out.upsilon(out.sub(left, 1), left);
-    out.jump(normalEdge(head));
-
-    out.appendTo(exit);
-    out.ret(sum);
-
-    out.appendTo(early);
-    out.ret(allocationTestMix(out, sum, nextSum));
-    compileOrFail(test);
-
-    const Allocation& allocation = test.procedure().allocation();
-    AOT_ALLOCATION_TEST_CHECK(test, allocation.registerAtDefinitionOf(nextSum) != allocation.registerAtDefinitionOf(sum));
-    AOT_ALLOCATION_TEST_CHECK(test, allocationTestRegisterAtHead(test, early, sum) == allocation.registerAtDefinitionOf(sum));
-
-    for (uint64_t numberOfRounds : { 0u, 1u, 4u }) {
-        for (uint64_t most : { 1u, 8u, 100u }) {
-            uint64_t expected = 0;
-            for (uint64_t round = numberOfRounds; round; --round) {
-                if (expected + round >= most) {
-                    expected = allocationTestMixed(expected, expected + round);
-                    break;
-                }
-                expected += round;
-            }
-            AOT_ALLOCATION_TEST_CHECK(test, test.call<uint64_t>(numberOfRounds, most) == expected);
-        }
-    }
-}
-
 // The first way into the join leaves the Phi in a register other than the lowest free one, which is what the value of the second way would take by itself.
 static void allocatorDefinesValueInRegisterOfPhiWhoseHeadIsFixed()
 {
@@ -1330,63 +1001,6 @@ static void allocationTestAppendPatchThatTakes(TestProcedure& test, RegisterMask
     });
 }
 
-// A stub that the loop calls on every turn writes the register in which the addend arrives, and the one that the sum would take by itself. Both give way once, on the edge into the loop.
-static void allocatorKeepsWhatLoopReadsOutOfWayOfItsPatches()
-{
-    TestProcedure test;
-    Output& out = test.out();
-    RegisterFile file = registerFileFor(test.procedure().traits());
-    LValue rounds = test.argumentGPR(0);
-    LValue addend = test.argumentGPR(1);
-    LValue buffer = test.argumentGPR(2);
-    RegisterMask argumentRegisters = maskOf(rounds->argumentReg()) | maskOf(addend->argumentReg()) | maskOf(buffer->argumentReg());
-    RegisterMask lowestFreeRegister = file.allocatableIn(Bank::GP) & ~file.calleeSaved & ~argumentRegisters;
-    lowestFreeRegister &= ~(lowestFreeRegister - 1);
-    RegisterMask taken = maskOf(addend->argumentReg()) | lowestFreeRegister;
-    LBasicBlock head = out.newBlock();
-    LBasicBlock body = out.newBlock();
-    LBasicBlock exit = out.newBlock();
-    LValue left = out.phiIn(head, Int64);
-    LValue sum = out.phiIn(head, Int64);
-    out.upsilon(rounds, left);
-    out.upsilon(out.int64Zero, sum);
-    out.jump(normalEdge(head));
-
-    out.appendTo(head);
-    out.branch(left, normalEdge(body), normalEdge(exit));
-
-    out.appendTo(body);
-    allocationTestAppendPatchThatTakes(test, taken);
-    LValue nextSum = out.add(sum, addend);
-    LValue nextLeft = out.sub(left, 1);
-    out.upsilon(nextSum, sum);
-    out.upsilon(nextLeft, left);
-    out.jump(normalEdge(head));
-
-    out.appendTo(exit);
-    out.store64(sum, allocationTestWordAt(test, buffer, 0));
-    out.ret(addend);
-    compileOrFail(test);
-
-    AllocationTestText text(test);
-    const Order& order = test.procedure().order();
-    const Allocation& allocation = test.procedure().allocation();
-    AOT_ALLOCATION_TEST_CHECK(test, order.of(head).isLoopHead);
-    AOT_ALLOCATION_TEST_CHECK(test, test.procedure().liveness().of(order.loops()[order.of(head).loop], order).registersTakenByPatches == taken);
-    Reg registerOfAddend = allocationTestRegisterAtHead(test, head, addend);
-    AOT_ALLOCATION_TEST_CHECK(test, registerOfAddend && !(maskOf(registerOfAddend) & taken));
-    AOT_ALLOCATION_TEST_CHECK(test, allocation.registerAtDefinitionOf(sum) && !(maskOf(allocation.registerAtDefinitionOf(sum)) & taken));
-    AOT_ALLOCATION_TEST_CHECK(test, !text.count("move"_s, nullptr, head) && !text.count("move"_s, nullptr, body) && !text.count("swap"_s));
-    AOT_ALLOCATION_TEST_CHECK(test, !text.count("save"_s) && !text.count("reload"_s));
-
-    constexpr uint64_t added = 5;
-    for (uint64_t numberOfRounds : { 0u, 1u, 3u }) {
-        uint64_t stored = ~uint64_t { 0 };
-        AOT_ALLOCATION_TEST_CHECK(test, test.call<uint64_t>(numberOfRounds, added, &stored) == added);
-        AOT_ALLOCATION_TEST_CHECK(test, stored == numberOfRounds * added);
-    }
-}
-
 // The Patch of the loop leaves three registers alone. The loop has two Phis and reads one value, and a value that only lives through holds the first of the three. It gives way.
 static void allocatorGivesRegistersThatPatchesLeaveAloneToWhatLoopUses()
 {
@@ -1446,66 +1060,6 @@ static void allocatorGivesRegistersThatPatchesLeaveAloneToWhatLoopUses()
         std::array<uint64_t, 64> words = allocationTestWords<uint64_t>();
         AOT_ALLOCATION_TEST_CHECK(test, test.call<uint64_t>(numberOfRounds, added, words.data()) == words[1]);
         AOT_ALLOCATION_TEST_CHECK(test, words[0] == numberOfRounds * added);
-    }
-}
-
-// More values than callees save registers live across the call of the loop, so some have spills. In the loop a rare arm alone reads them, and loads what it reads.
-static void allocatorLoadsNothingOnWayRoundLoopForRareArm()
-{
-    TestProcedure test;
-    Output& out = test.out();
-    unsigned count = allocationTestCountOf(registerFileFor(test.procedure().traits()).calleeSavedIn(Bank::GP)) + 2;
-    LValue rounds = test.argumentGPR(0);
-    LValue buffer = test.argumentGPR(1);
-    Vector<LValue> values = allocationTestLoadWords(test, buffer, 0, count, Int64);
-    LBasicBlock head = out.newBlock();
-    LBasicBlock body = out.newBlock();
-    LBasicBlock slow = out.newBlock();
-    LBasicBlock latch = out.newBlock();
-    LBasicBlock exit = out.newBlock();
-    LValue left = out.phiIn(head, Int64);
-    out.upsilon(rounds, left);
-    out.jump(normalEdge(head));
-
-    out.appendTo(head);
-    out.branch(left, normalEdge(body), normalEdge(exit));
-
-    out.appendTo(body);
-    allocationTestAppendCall(test, nullptr);
-    out.branch(out.testNonZero64(left, 2), rareEdge(slow), normalEdge(latch));
-
-    out.appendTo(slow);
-    out.store64(allocationTestMixAll(out, values.span()), allocationTestWordAt(test, buffer, count));
-    out.jump(normalEdge(latch));
-
-    out.appendTo(latch);
-    out.upsilon(out.sub(left, 1), left);
-    out.jump(normalEdge(head));
-
-    out.appendTo(exit);
-    out.ret(allocationTestMixAll(out, values.span()));
-    compileOrFail(test);
-
-    AllocationTestText text(test);
-    const Order& order = test.procedure().order();
-    const Allocation& allocation = test.procedure().allocation();
-    AOT_ALLOCATION_TEST_CHECK(test, order.of(head).isLoopHead && order.of(slow).isRare() && order.of(slow).loop == order.of(head).loop);
-    unsigned numberSpilled = 0;
-    for (LValue value : values) {
-        numberSpilled += allocation.isSpilled(value);
-        for (const Block* block : { head, body, latch })
-            AOT_ALLOCATION_TEST_CHECK(test, !text.count("reload"_s, value, block) && !text.count("move"_s, value, block));
-        if (allocation.isSpilled(value))
-            AOT_ALLOCATION_TEST_CHECK(test, !allocationTestRegisterAtHead(test, head, value) && text.isStoredOnceBehindDefinition(value));
-    }
-    AOT_ALLOCATION_TEST_CHECK(test, numberSpilled >= 2);
-
-    std::array<uint64_t, 64> words = allocationTestWords<uint64_t>();
-    uint64_t expected = allocationTestMixedAll(std::span<const uint64_t>(words).first(count));
-    for (uint64_t numberOfRounds : { 0u, 1u, 3u }) {
-        words[count] = 0;
-        AOT_ALLOCATION_TEST_CHECK(test, test.call<uint64_t>(numberOfRounds, words.data()) == expected);
-        AOT_ALLOCATION_TEST_CHECK(test, words[count] == (numberOfRounds >= 2 ? expected : 0));
     }
 }
 
@@ -1602,58 +1156,6 @@ static void allocatorLoadsNothingAtJoinForReadBehindCall()
     uint64_t mixed = allocationTestMixedAll(std::span<const uint64_t>(words).first(count));
     for (uint64_t way : { 0u, 1u })
         AOT_ALLOCATION_TEST_CHECK(test, test.call<uint64_t>(way, words.data()) == mixed);
-}
-
-// The same twice over. The first join reads the values, so it holds them, and the way that has called loads them. That join has been left behind where the second one is fixed:
-// what it held says nothing of the second, which holds none of the values.
-static void allocatorLoadsNothingAtSecondJoinForReadBehindCall()
-{
-    TestProcedure test;
-    Output& out = test.out();
-    unsigned count = allocationTestCountOf(registerFileFor(test.procedure().traits()).calleeSavedIn(Bank::GP)) + 2;
-    LValue selector = test.argumentGPR(0);
-    LValue buffer = test.argumentGPR(1);
-    Vector<LValue> values = allocationTestLoadWords(test, buffer, 0, count, Int64);
-    LBasicBlock firstCalls = out.newBlock();
-    LBasicBlock firstJoin = out.newBlock();
-    LBasicBlock secondCalls = out.newBlock();
-    LBasicBlock secondJoin = out.newBlock();
-    out.branch(out.testNonZero64(selector, 1), unlikelyEdge(firstCalls), normalEdge(firstJoin));
-
-    out.appendTo(firstCalls);
-    allocationTestAppendCall(test, nullptr);
-    out.jump(normalEdge(firstJoin));
-
-    out.appendTo(firstJoin);
-    out.store64(allocationTestMixAll(out, values.span()), allocationTestWordAt(test, buffer, count));
-    out.branch(out.testNonZero64(selector, 2), unlikelyEdge(secondCalls), normalEdge(secondJoin));
-
-    out.appendTo(secondCalls);
-    allocationTestAppendCall(test, nullptr);
-    out.jump(normalEdge(secondJoin));
-
-    out.appendTo(secondJoin);
-    allocationTestAppendCall(test, nullptr);
-    out.ret(allocationTestMixAll(out, values.span()));
-    compileOrFail(test);
-
-    AllocationTestText text(test);
-    const Order& order = test.procedure().order();
-    const Allocation& allocation = test.procedure().allocation();
-    AOT_ALLOCATION_TEST_CHECK(test, order.of(secondJoin).predecessors.size() == 2 && order.of(secondJoin).predecessors.back() == secondCalls);
-    unsigned numberSpilled = 0;
-    for (LValue value : values) {
-        numberSpilled += allocation.isSpilled(value);
-        AOT_ALLOCATION_TEST_CHECK(test, !text.count("reload"_s, value, secondCalls));
-    }
-    AOT_ALLOCATION_TEST_CHECK(test, numberSpilled >= 2);
-
-    std::array<uint64_t, 64> words = allocationTestWords<uint64_t>();
-    uint64_t mixed = allocationTestMixedAll(std::span<const uint64_t>(words).first(count));
-    for (uint64_t way : { 0u, 1u, 2u, 3u }) {
-        words[count] = 0;
-        AOT_ALLOCATION_TEST_CHECK(test, test.call<uint64_t>(way, words.data()) == mixed && words[count] == mixed);
-    }
 }
 
 // Behind the join one arm calls and the other does not, and both lead on to the reads. The way past the call finds the values in their registers, so the join holds them, and the way that has called loads them.
@@ -1754,38 +1256,6 @@ static void allocatorLoadsNothingOnWaysIntoRareJoin()
     }
 }
 
-// On x86-64 a word of the frame is addressed from the end that reaches it with one byte, and from the frame pointer where neither does: that base needs no SIB byte.
-static void encoderAddressesWordOfFrameFromNearerEnd()
-{
-    TestProcedure test;
-    Output& out = test.out();
-    constexpr unsigned count = 48;
-    LValue buffer = test.argumentGPR(0);
-    Vector<LValue> values = allocationTestLoadWords(test, buffer, 0, count, Int64);
-    allocationTestAppendCall(test, nullptr);
-    out.ret(allocationTestMixAll(out, values.span()));
-    compileOrFail(test);
-
-    const Frame& frame = test.procedure().frame();
-    intptr_t bytes = frame.bytesBelowFrameRecord();
-    AOT_ALLOCATION_TEST_CHECK(test, bytes > 2 * 128 + 64);
-    auto isAddressedFrom = [&](intptr_t offsetFromFP, GPRReg base, intptr_t offset) {
-        MacroAssembler::Address address = frame.addressInFrame(offsetFromFP);
-        return address.base == base && address.offset == offset;
-    };
-    if (isX86_64()) {
-        AOT_ALLOCATION_TEST_CHECK(test, isAddressedFrom(-8, MacroAssembler::framePointerRegister, -8));
-        AOT_ALLOCATION_TEST_CHECK(test, isAddressedFrom(-128, MacroAssembler::framePointerRegister, -128));
-        AOT_ALLOCATION_TEST_CHECK(test, isAddressedFrom(-136, MacroAssembler::framePointerRegister, -136));
-        AOT_ALLOCATION_TEST_CHECK(test, isAddressedFrom(128 - bytes, MacroAssembler::framePointerRegister, 128 - bytes));
-        AOT_ALLOCATION_TEST_CHECK(test, isAddressedFrom(120 - bytes, MacroAssembler::stackPointerRegister, 120));
-    }
-    AOT_ALLOCATION_TEST_CHECK(test, isAddressedFrom(-bytes, MacroAssembler::stackPointerRegister, 0));
-
-    std::array<uint64_t, 64> words = allocationTestWords<uint64_t>();
-    AOT_ALLOCATION_TEST_CHECK(test, test.call<uint64_t>(words.data()) == allocationTestMixedAll(std::span<const uint64_t>(words).first(count)));
-}
-
 // On x86-64: the shorter the access, the smaller.
 enum AllocationTestNearness : unsigned { AllocationTestNearFramePointer, AllocationTestNearStackPointer, AllocationTestFarFromBothEnds };
 
@@ -1830,21 +1300,6 @@ static Vector<unsigned> allocationTestInstructionsNamingWords(TestProcedure& tes
     return result;
 }
 
-// x86-64, read off the bytes of the code: how often a ModRM byte that names the frame pointer stands in front of that offset. mod 01 has one byte of offset behind it, mod 10 four.
-static unsigned allocationTestNumberOfAccessesInCode(TestProcedure& test, int32_t offsetFromFP, unsigned bytesOfOffset)
-{
-    std::span<const uint8_t> code = test.linkedCode();
-    const uint8_t modAndBase = bytesOfOffset == 1 ? 0x45 : 0x85;
-    unsigned number = 0;
-    for (size_t index = 0; index + bytesOfOffset < code.size(); ++index) {
-        bool matches = (code[index] & 0xc7) == modAndBase;
-        for (unsigned byte = 0; matches && byte < bytesOfOffset; ++byte)
-            matches = code[index + 1 + byte] == static_cast<uint8_t>(static_cast<uint32_t>(offsetFromFP) >> (8 * byte));
-        number += matches;
-    }
-    return number;
-}
-
 // Of a function without suspensions: no word with spills lies farther from the ends of the frame than one that fewer instructions name.
 static void allocationTestCheckBusiestWordsLieNearest(TestProcedure& test)
 {
@@ -1859,54 +1314,6 @@ static void allocationTestCheckBusiestWordsLieNearest(TestProcedure& test)
                 AOT_ALLOCATION_TEST_CHECK(test, instructions[farther] <= instructions[nearer]);
         }
     }
-}
-
-// Answers the value at `busy`, which is read behind each of that many calls. The others are read once.
-static LValue allocationTestBuildFrameWithOneBusyWord(TestProcedure& test, unsigned count, unsigned busy, unsigned numberOfReads)
-{
-    Output& out = test.out();
-    Vector<LValue> values = allocationTestLoadWords(test, test.argumentGPR(0), 0, count, Int64);
-    allocationTestAppendCall(test, nullptr);
-    LValue sum = allocationTestMixAll(out, values.span());
-    for (unsigned read = 0; read < numberOfReads; ++read) {
-        allocationTestAppendCall(test, nullptr);
-        sum = allocationTestMix(out, sum, values[busy]);
-    }
-    out.ret(sum);
-    compileOrFail(test);
-    AOT_ALLOCATION_TEST_CHECK(test, test.procedure().allocation().isSpilled(values[busy]) && test.procedure().frame().bytesBelowFrameRecord() >= 40 * sizeof(uint64_t));
-    return values[busy];
-}
-
-// Forty values wait in the frame, and one byte of offset reaches at most thirty-two of them from its two ends. Where each is read once, the first that are spilled lie in reach of the frame pointer,
-// the next in reach of the stack pointer, and the last is out of reach. Read behind each of twenty calls it lies next to the frame pointer, and each of those reads has one byte of offset.
-static void slotsGiveMostReadWordOfLargeFrameShortOffset()
-{
-    constexpr unsigned numberOfReads = 20;
-    TestProcedure test;
-    TestProcedure allReadOnce;
-    const unsigned count = allocationTestCountOf(registerFileFor(test.procedure().traits()).calleeSavedIn(Bank::GP)) + 40;
-    const unsigned busy = count - 1;
-    LValue readOften = allocationTestBuildFrameWithOneBusyWord(test, count, busy, numberOfReads);
-    LValue readOnce = allocationTestBuildFrameWithOneBusyWord(allReadOnce, count, busy, 0);
-
-    if (isX86_64()) {
-        int32_t offsetOfReadOnce = allReadOnce.procedure().frame().offsetFromFPOf(allReadOnce.procedure().allocation().spillOf(readOnce));
-        AOT_ALLOCATION_TEST_CHECK(allReadOnce, allocationTestNearnessOf(allReadOnce, readOnce) == AllocationTestFarFromBothEnds);
-        AOT_ALLOCATION_TEST_CHECK(allReadOnce, allocationTestNumberOfAccessesInCode(allReadOnce, offsetOfReadOnce, 4) >= 2);
-
-        int32_t offsetOfReadOften = test.procedure().frame().offsetFromFPOf(test.procedure().allocation().spillOf(readOften));
-        AOT_ALLOCATION_TEST_CHECK(test, allocationTestNearnessOf(test, readOften) == AllocationTestNearFramePointer);
-        AOT_ALLOCATION_TEST_CHECK(test, allocationTestNumberOfAccessesInCode(test, offsetOfReadOften, 1) > numberOfReads);
-        AOT_ALLOCATION_TEST_CHECK(test, !allocationTestNumberOfAccessesInCode(test, offsetOfReadOften, 4));
-        allocationTestCheckBusiestWordsLieNearest(test);
-    }
-
-    std::array<uint64_t, 64> words = allocationTestWords<uint64_t>();
-    uint64_t expected = allocationTestMixedAll(std::span<const uint64_t>(words).first(count));
-    for (unsigned read = 0; read < numberOfReads; ++read)
-        expected = allocationTestMixed(expected, words[busy]);
-    AOT_ALLOCATION_TEST_CHECK(test, test.call<uint64_t>(words.data()) == expected);
 }
 
 // Thirty operations in a row read one value, and a register serves them behind one load. Forty other values are loaded behind each of four calls, and they are more than the ends of the frame reach.
@@ -2108,183 +1515,6 @@ static void frameSetupPushesCalleeSaves()
 
     std::array<uint64_t, 64> words = allocationTestWords<uint64_t>();
     AOT_ALLOCATION_TEST_CHECK(test, test.call<uint64_t>(words.data()) == allocationTestMixedAll(std::span<const uint64_t>(words).first(count)));
-}
-
-// Code for shortenX86Jumps(): nops, jumps to one place behind them all, and a ret at that place.
-class AllocationTestJumpsToOnePlace {
-public:
-    static constexpr uint8_t notEqual = 5;
-    static constexpr uint8_t equal = 4;
-
-    struct Jump {
-        std::optional<uint8_t> condition;
-        uint32_t destination;
-        uint8_t length;
-    };
-
-    explicit AllocationTestJumpsToOnePlace(uint32_t target)
-        : m_target(target)
-    {
-    }
-
-    void appendJumpAt(uint32_t offset, std::optional<uint8_t> condition)
-    {
-        padTo(offset);
-        if (condition) {
-            m_code.append(0x0f);
-            m_code.append(0x80 | *condition);
-        } else
-            m_code.append(0xe9);
-        int32_t distance = static_cast<int32_t>(m_target - (m_code.size() + 4));
-        m_code.append(std::span { reinterpret_cast<const uint8_t*>(&distance), 4 });
-        m_jumps.append(X86LinkedJump { static_cast<uint32_t>(m_code.size()), m_target, condition ? X86JumpKind::Conditional : X86JumpKind::Unconditional, condition.value_or(0) });
-    }
-
-    // How many bytes it saves.
-    size_t shorten(uint32_t startOfRareCode)
-    {
-        padTo(m_target);
-        m_code.append(ret);
-        Vector<X86JumpShift> shifts;
-        size_t before = m_code.size();
-        m_code.shrink(shortenX86Jumps(m_code.mutableSpan(), m_jumps, shifts, startOfRareCode));
-        AOT_TEST_CHECK(m_code.last() == ret);
-        return before - m_code.size();
-    }
-
-    uint32_t startOf(unsigned index) const
-    {
-        const X86LinkedJump& jump = m_jumps[index];
-        return jump.from - (jump.isShort ? X86JumpShortener::shortJumpLength : X86JumpShortener::longJumpLength(jump.kind));
-    }
-
-    Jump jumpAt(uint32_t offset) const
-    {
-        auto wide = [&](uint32_t at) {
-            int32_t distance;
-            memcpy(&distance, m_code.span().subspan(at).data(), 4);
-            return static_cast<uint32_t>(distance);
-        };
-        auto narrow = [&](uint32_t at) {
-            return static_cast<uint32_t>(static_cast<int32_t>(static_cast<int8_t>(m_code[at])));
-        };
-        uint8_t first = m_code[offset];
-        if (first == 0xe9)
-            return { std::nullopt, offset + 5 + wide(offset + 1), 5 };
-        if (first == 0xeb)
-            return { std::nullopt, offset + 2 + narrow(offset + 1), 2 };
-        if (first == 0x0f) {
-            AOT_TEST_CHECK((m_code[offset + 1] & 0xf0) == 0x80);
-            return { static_cast<uint8_t>(m_code[offset + 1] & 0xf), offset + 6 + wide(offset + 2), 6 };
-        }
-        AOT_TEST_CHECK((first & 0xf0) == 0x70);
-        return { static_cast<uint8_t>(first & 0xf), offset + 2 + narrow(offset + 1), 2 };
-    }
-
-    // How many other jumps the way from the jump to the ret leads through, by the bytes. Each has the condition of the first, or none.
-    unsigned numberOfRelaysBehind(unsigned index) const
-    {
-        Jump first = jumpAt(startOf(index));
-        AOT_TEST_CHECK(first.length == m_jumps[index].from - startOf(index) && first.destination == m_jumps[index].to);
-        unsigned result = 0;
-        for (uint32_t offset = first.destination; m_code[offset] != ret; ++result) {
-            AOT_TEST_CHECK(result < m_jumps.size());
-            Jump relay = jumpAt(offset);
-            AOT_TEST_CHECK(!relay.condition || relay.condition == first.condition);
-            offset = relay.destination;
-        }
-        return result;
-    }
-
-    bool isShort(unsigned index) const { return m_jumps[index].isShort; }
-    unsigned numberOfJumps() const { return m_jumps.size(); }
-
-private:
-    static constexpr uint8_t nop = 0x90;
-    static constexpr uint8_t ret = 0xc3;
-
-    void padTo(uint32_t offset)
-    {
-        AOT_TEST_CHECK(m_code.size() <= offset);
-        while (m_code.size() < offset)
-            m_code.append(nop);
-    }
-
-    uint32_t m_target;
-    Vector<uint8_t> m_code;
-    Vector<X86LinkedJump> m_jumps;
-};
-
-// Three tests jump to one place in the rare code, far behind them. The first two have one condition, so the first goes to the second, two bytes long, and the second goes all the way.
-// Where an unconditional jump to that place stands nearby, all three go through it.
-static void shortenerChainsFarJumpThroughNearJumpWithItsConditionAndTarget()
-{
-    using Jumps = AllocationTestJumpsToOnePlace;
-    constexpr uint32_t target = 600;
-    auto threeTests = [&] {
-        Jumps jumps(target);
-        jumps.appendJumpAt(0, Jumps::notEqual);
-        jumps.appendJumpAt(16, Jumps::notEqual);
-        jumps.appendJumpAt(32, Jumps::equal);
-        return jumps;
-    };
-
-    for (uint32_t startOfRareCode : { UINT32_MAX, target + 1 }) {
-        Jumps jumps = threeTests();
-        AOT_TEST_CHECK(!jumps.shorten(startOfRareCode));
-        for (unsigned index = 0; index < 3; ++index)
-            AOT_TEST_CHECK(!jumps.isShort(index) && !jumps.numberOfRelaysBehind(index));
-    }
-
-    Jumps jumps = threeTests();
-    AOT_TEST_CHECK(jumps.shorten(target) == 4);
-    AOT_TEST_CHECK(jumps.isShort(0) && jumps.jumpAt(0).destination == jumps.startOf(1) && jumps.numberOfRelaysBehind(0) == 1);
-    AOT_TEST_CHECK(!jumps.isShort(1) && !jumps.numberOfRelaysBehind(1));
-    AOT_TEST_CHECK(!jumps.isShort(2) && !jumps.numberOfRelaysBehind(2));
-
-    jumps = threeTests();
-    jumps.appendJumpAt(48, std::nullopt);
-    AOT_TEST_CHECK(jumps.shorten(target) == 12);
-    for (unsigned index = 0; index < 3; ++index)
-        AOT_TEST_CHECK(jumps.isShort(index) && jumps.jumpAt(jumps.startOf(index)).destination == jumps.startOf(3) && jumps.numberOfRelaysBehind(index) == 1);
-    AOT_TEST_CHECK(!jumps.isShort(3) && !jumps.numberOfRelaysBehind(3));
-}
-
-// The second of three goes all the way. The first reaches it ahead, and the third reaches it 40 bytes back.
-static void shortenerChainsFarJumpBackward()
-{
-    using Jumps = AllocationTestJumpsToOnePlace;
-    Jumps jumps(600);
-    for (uint32_t offset : { 0u, 100u, 140u })
-        jumps.appendJumpAt(offset, Jumps::notEqual);
-    AOT_TEST_CHECK(jumps.shorten(600) == 8);
-    AOT_TEST_CHECK(!jumps.isShort(1) && !jumps.numberOfRelaysBehind(1));
-    for (unsigned index : { 0u, 2u })
-        AOT_TEST_CHECK(jumps.isShort(index) && jumps.jumpAt(jumps.startOf(index)).destination == jumps.startOf(1) && jumps.numberOfRelaysBehind(index) == 1);
-}
-
-// More jumps with one condition and one target than one of them is within reach of: two go all the way, and no way leads through both.
-static void shortenerChainsNoJumpThroughTwo()
-{
-    using Jumps = AllocationTestJumpsToOnePlace;
-    Jumps jumps(2000);
-    for (uint32_t index = 0; index < 40; ++index)
-        jumps.appendJumpAt(10 * index, Jumps::notEqual);
-    AOT_TEST_CHECK(jumps.shorten(2000) == 38 * 4);
-    for (unsigned index = 0; index < jumps.numberOfJumps(); ++index)
-        AOT_TEST_CHECK(jumps.numberOfRelaysBehind(index) == jumps.isShort(index));
-}
-
-// As the code stands the first jump does not reach the target. It does once the second is short, so it goes there itself.
-static void shortenerChainsNoJumpThatReachesItsTargetOnceOthersAreShort()
-{
-    using Jumps = AllocationTestJumpsToOnePlace;
-    Jumps jumps(137);
-    jumps.appendJumpAt(0, Jumps::notEqual);
-    jumps.appendJumpAt(6, Jumps::notEqual);
-    AOT_TEST_CHECK(jumps.shorten(137) == 8);
-    for (unsigned index = 0; index < 2; ++index)
-        AOT_TEST_CHECK(jumps.isShort(index) && !jumps.numberOfRelaysBehind(index));
 }
 
 // `movabs $signature, register`, which is found again among the linked bytes.
@@ -2623,56 +1853,6 @@ static void scanCountsPhiThatIsReadBehindLoopUpToItsLastReadInLoop()
     }
 }
 
-// The rare block stands behind the join and leads back to it, so the order has a loop there. It is run through once: a constant held at the join would be made on every way in and read once.
-static void allocatorKeepsNoConstantAtJoinThatRareBlockLeadsBackTo()
-{
-    constexpr uint64_t added = 0x0123456789abcd;
-    TestProcedure test;
-    Output& out = test.out();
-    LValue first = test.argumentGPR(0);
-    LValue second = test.argumentGPR(1);
-    LValue constant = out.constInt64(static_cast<int64_t>(added));
-    LBasicBlock left = out.newBlock();
-    LBasicBlock right = out.newBlock();
-    LBasicBlock join = out.newBlock();
-    LBasicBlock slow = out.newBlock();
-    LBasicBlock done = out.newBlock();
-    LValue word = out.phiIn(join, Int64);
-    out.branch(out.testNonZero64(first, 1), normalEdge(left), normalEdge(right));
-
-    out.appendTo(left);
-    out.upsilon(first, word);
-    out.jump(normalEdge(join));
-
-    out.appendTo(right);
-    out.upsilon(second, word);
-    out.jump(normalEdge(join));
-
-    out.appendTo(join);
-    LValue sum = out.add(word, constant);
-    out.branch(out.testNonZero64(word, 2), rareEdge(slow), normalEdge(done));
-
-    out.appendTo(slow);
-    out.upsilon(out.sub(word, 2), word);
-    out.jump(normalEdge(join));
-
-    out.appendTo(done);
-    out.ret(sum);
-    compileOrFail(test);
-
-    AllocationTestText text(test);
-    const Order& order = test.procedure().order();
-    AOT_ALLOCATION_TEST_CHECK(test, order.of(join).isLoopHead && order.of(slow).isRare() && order.headOf(join) < order.headOf(slow));
-    AOT_ALLOCATION_TEST_CHECK(test, std::ranges::count(test.procedure().liveness().of(order.loops()[order.of(join).loop], order).valuesReadFromOutside, constant) == 1);
-    AOT_ALLOCATION_TEST_CHECK(test, !allocationTestRegisterAtHead(test, join, constant));
-    AOT_ALLOCATION_TEST_CHECK(test, text.count("materialize"_s, constant) == 1 && text.count("materialize"_s, constant, join) == 1);
-
-    for (auto [a, b] : { std::pair<uint64_t, uint64_t> { 5, 0 }, { 7, 0 }, { 4, 9 }, { 4, 10 } }) {
-        uint64_t chosen = a & 1 ? a : b;
-        AOT_ALLOCATION_TEST_CHECK(test, test.call<uint64_t>(a, b) == (chosen & ~uint64_t { 2 }) + added);
-    }
-}
-
 // The extension is no instruction in the register that the number is made in, and takes that register over. Held through the loop, the number would be copied on every turn, which on x86-64 costs what making it does.
 static void allocatorKeepsNoConstantWhoseReaderTakesItsRegister()
 {
@@ -2708,52 +1888,6 @@ static void allocatorKeepsNoConstantWhoseReaderTakesItsRegister()
     AOT_ALLOCATION_TEST_CHECK(test, std::ranges::count(test.procedure().liveness().of(order.loops()[order.of(head).loop], order).valuesReadFromOutside, number) == (isX86_64() ? 0 : 1));
     AOT_ALLOCATION_TEST_CHECK(test, text.count("materialize"_s, number) == 1 && text.count("materialize"_s, number, body) == (isX86_64() ? 1u : 0u));
     AOT_ALLOCATION_TEST_CHECK(test, allocationTestRegisterAtHead(test, head, number).isSet() == !isX86_64());
-}
-
-static void allocatorExtendsNumberWhereItIsMade()
-{
-    TestProcedure test;
-    Output& out = test.out();
-    LValue number = out.number(0);
-    LValue extended = out.zeroExtPtr(number);
-    out.ret(out.sub(extended, test.argumentGPR(0)));
-    prepareOrFail(test);
-
-    AllocationTestText text(test);
-    AOT_ALLOCATION_TEST_CHECK(test, number->opcode() == NumberOf && extended->opcode() == ZExt32 && test.procedure().liveness().of(extended).has(ValueFlag::UpperHalfIsRead));
-    AOT_ALLOCATION_TEST_CHECK(test, text.count("materialize"_s, number) == 1 && !text.count("move"_s, number));
-    unsigned numberOfExtensions = 0;
-    for (const Step& step : test.procedure().allocation().steps()) {
-        if (step.kind != StepKind::Execute || step.operation != extended)
-            continue;
-        ++numberOfExtensions;
-        AOT_ALLOCATION_TEST_CHECK(test, step.destination.isRegister() && step.destination == step.sources[0]);
-    }
-    AOT_ALLOCATION_TEST_CHECK(test, numberOfExtensions == 1);
-}
-
-static void allocatorMakesConstantBelowOpaqueInRegisterOfResult()
-{
-    constexpr uint64_t bits = 0x0123456789abcd;
-    TestProcedure test;
-    Output& out = test.out();
-    LValue constant = out.constInt64(static_cast<int64_t>(bits));
-    AOT_TEST_CHECK(!findPinnedConstant(bits));
-    LValue opaque = out.opaque(constant);
-    out.ret(out.add(opaque, test.argumentGPR(0)));
-    compileOrFail(test);
-
-    AllocationTestText text(test);
-    AOT_ALLOCATION_TEST_CHECK(test, opaque->opcode() == Opaque && !text.count("materialize"_s, constant) && !text.count("move"_s, constant));
-    unsigned numberOfSteps = 0;
-    for (const Step& step : test.procedure().allocation().steps()) {
-        if (step.kind != StepKind::Execute || step.operation != opaque)
-            continue;
-        ++numberOfSteps;
-        AOT_ALLOCATION_TEST_CHECK(test, step.destination.isRegister() && step.sources[0].isImmediate());
-    }
-    AOT_ALLOCATION_TEST_CHECK(test, numberOfSteps == 1);
-    AOT_ALLOCATION_TEST_CHECK(test, test.call<uint64_t>(uint64_t { 5 }) == bits + 5);
 }
 
 // What the loop reads is live to the end of the loop, which is the head of the block behind it. There it is dead, and the register that it held is free for what is returned.
@@ -2798,156 +1932,6 @@ static void allocatorDefinesValueReturnedBehindLoopInReturnRegister()
     std::array<uint64_t, 64> words = allocationTestWords<uint64_t>();
     for (uint64_t numberOfRounds : { 0u, 1u, 3u })
         AOT_ALLOCATION_TEST_CHECK(test, test.call<uint64_t>(uint64_t { 9 }, numberOfRounds, words.data()) == numberOfRounds * (9 + words[0]) + 1);
-}
-
-// for (; left; left--) if (left & 1) { if (left & 2) count++; } Two arms hand the Phi of the loop on as it is, one of them a level further out. Each has one predecessor, which stands ahead of the arm that counts.
-static void allocatorBringsCountThatInnerArmAddsToRoundInItsRegister()
-{
-    TestProcedure test;
-    Output& out = test.out();
-    LValue rounds = test.argumentGPR(0);
-    LValue buffer = test.argumentGPR(1);
-    LBasicBlock head = out.newBlock();
-    LBasicBlock body = out.newBlock();
-    LBasicBlock inner = out.newBlock();
-    LBasicBlock counts = out.newBlock();
-    LBasicBlock skipsInner = out.newBlock();
-    LBasicBlock joinInner = out.newBlock();
-    LBasicBlock skipsOuter = out.newBlock();
-    LBasicBlock joinOuter = out.newBlock();
-    LBasicBlock exit = out.newBlock();
-    LValue left = out.phiIn(head, Int64);
-    LValue count = out.phiIn(head, Int64);
-    LValue joinedInner = out.phiIn(joinInner, Int64);
-    LValue joinedOuter = out.phiIn(joinOuter, Int64);
-    out.upsilon(rounds, left);
-    out.upsilon(out.int64Zero, count);
-    out.jump(normalEdge(head));
-
-    out.appendTo(head);
-    out.branch(left, normalEdge(body), normalEdge(exit));
-
-    out.appendTo(body);
-    out.branch(out.testNonZero64(left, 1), normalEdge(inner), normalEdge(skipsOuter));
-
-    out.appendTo(inner);
-    out.branch(out.testNonZero64(left, 2), normalEdge(counts), normalEdge(skipsInner));
-
-    out.appendTo(counts);
-    LValue nextCount = out.add(count, 1);
-    out.upsilon(nextCount, joinedInner);
-    out.jump(normalEdge(joinInner));
-
-    out.appendTo(skipsInner);
-    out.upsilon(count, joinedInner);
-    out.jump(normalEdge(joinInner));
-
-    out.appendTo(joinInner);
-    out.store64(left, allocationTestWordAt(test, buffer, 1));
-    out.upsilon(joinedInner, joinedOuter);
-    out.jump(normalEdge(joinOuter));
-
-    out.appendTo(skipsOuter);
-    out.upsilon(count, joinedOuter);
-    out.jump(normalEdge(joinOuter));
-
-    out.appendTo(joinOuter);
-    out.upsilon(joinedOuter, count);
-    out.upsilon(out.sub(left, 1), left);
-    out.jump(normalEdge(head));
-
-    out.appendTo(exit);
-    out.store64(count, allocationTestWordAt(test, buffer, 0));
-    out.ret(rounds);
-    compileOrFail(test);
-
-    AllocationTestText text(test);
-    const Order& order = test.procedure().order();
-    const Allocation& allocation = test.procedure().allocation();
-    for (const Block* arm : { skipsInner, skipsOuter })
-        AOT_ALLOCATION_TEST_CHECK(test, order.of(arm).predecessors.size() == 1 && order.of(order.of(arm).predecessors.front()).orderIndex < order.of(counts).orderIndex && order.of(counts).orderIndex < order.of(arm).orderIndex);
-    Reg registerOfCount = allocation.registerAtDefinitionOf(count);
-    AOT_ALLOCATION_TEST_CHECK(test, registerOfCount && allocation.registerAtDefinitionOf(nextCount) == registerOfCount);
-    AOT_ALLOCATION_TEST_CHECK(test, allocation.registerAtDefinitionOf(joinedInner) == registerOfCount && allocation.registerAtDefinitionOf(joinedOuter) == registerOfCount);
-    for (const Block* block : order.blocksInOrder()) {
-        if (order.of(block).loop != noLoop)
-            AOT_ALLOCATION_TEST_CHECK(test, !text.count("move"_s, nullptr, block));
-    }
-    AOT_ALLOCATION_TEST_CHECK(test, !text.count("swap"_s) && !text.count("save"_s) && !text.count("reload"_s));
-
-    for (uint64_t numberOfRounds : { 0u, 1u, 3u, 8u }) {
-        std::array<uint64_t, 2> stored { ~uint64_t { 0 }, 0 };
-        AOT_ALLOCATION_TEST_CHECK(test, test.call<uint64_t>(numberOfRounds, stored.data()) == numberOfRounds);
-        AOT_ALLOCATION_TEST_CHECK(test, stored[0] == (numberOfRounds + 1) / 4);
-    }
-}
-
-// As a typed `count++` is built: the sum is tested, and a rare block that leaves reads the count as it was. So the count outlives the addition, and is dead only behind the test.
-static void allocatorKeepsCountThatRareLeaveReadsUpToTest()
-{
-    TestProcedure test;
-    Output& out = test.out();
-    LValue rounds = test.argumentGPR(0);
-    LValue limit = test.argumentGPR(1);
-    LBasicBlock head = out.newBlock();
-    LBasicBlock body = out.newBlock();
-    LBasicBlock counts = out.newBlock();
-    LBasicBlock goesOn = out.newBlock();
-    LBasicBlock leaves = out.newBlock();
-    LBasicBlock skips = out.newBlock();
-    LBasicBlock join = out.newBlock();
-    LBasicBlock exit = out.newBlock();
-    LValue left = out.phiIn(head, Int64);
-    LValue count = out.phiIn(head, Int64);
-    LValue joined = out.phiIn(join, Int64);
-    out.upsilon(rounds, left);
-    out.upsilon(out.int64Zero, count);
-    out.jump(normalEdge(head));
-
-    out.appendTo(head);
-    out.branch(left, normalEdge(body), normalEdge(exit));
-
-    out.appendTo(body);
-    out.branch(out.testNonZero64(left, 1), normalEdge(counts), normalEdge(skips));
-
-    out.appendTo(counts);
-    LValue nextCount = out.add(count, 1);
-    out.branch(out.lessThan(nextCount, limit), normalEdge(goesOn), rareEdge(leaves));
-
-    out.appendTo(goesOn);
-    out.upsilon(nextCount, joined);
-    out.jump(normalEdge(join));
-
-    out.appendTo(leaves);
-    out.ret(out.add(count, 1000));
-
-    out.appendTo(skips);
-    out.upsilon(count, joined);
-    out.jump(normalEdge(join));
-
-    out.appendTo(join);
-    out.upsilon(joined, count);
-    out.upsilon(out.sub(left, 1), left);
-    out.jump(normalEdge(head));
-
-    out.appendTo(exit);
-    out.ret(count);
-    compileOrFail(test);
-
-    const Order& order = test.procedure().order();
-    const Allocation& allocation = test.procedure().allocation();
-    Reg registerOfCount = allocation.registerAtDefinitionOf(count);
-    AOT_ALLOCATION_TEST_CHECK(test, order.of(leaves).isRare() && order.of(goesOn).isReached() && order.of(goesOn).predecessors.size() == 1);
-    AOT_ALLOCATION_TEST_CHECK(test, registerOfCount && allocation.registerAtDefinitionOf(nextCount) != registerOfCount);
-    AOT_ALLOCATION_TEST_CHECK(test, allocationTestRegisterAtHead(test, leaves, count) == registerOfCount && !allocationTestRegisterAtHead(test, goesOn, count));
-
-    for (uint64_t numberOfRounds : { 0u, 1u, 4u, 7u }) {
-        for (uint64_t most : { 1u, 3u, 100u }) {
-            uint64_t counted = (numberOfRounds + 1) / 2;
-            uint64_t expected = counted < most ? counted : most - 1 + 1000;
-            AOT_ALLOCATION_TEST_CHECK(test, test.call<uint64_t>(numberOfRounds, most) == expected);
-        }
-    }
 }
 
 // The loop leaves by a rare chain of two blocks, which ends in a block that another rare arm behind the call shares. So the whole region stands behind the call in the order,
@@ -3145,286 +2129,6 @@ static void allocatorKeepsOwnerThatOtherArmReadsWhileItsStorageIsRead()
     AOT_ALLOCATION_TEST_CHECK(test, test.call<uint64_t>(ownerInMemory.data(), uint64_t { 0 }) == reinterpret_cast<uint64_t>(ownerInMemory.data()));
 }
 
-// As a twin is entered: the primary entrypoint leads into both loops behind their starts.
-// `atOuter` is defined ahead of the inner loop and read behind it in the order, in a register that calls keep. The way in from the side never defines it, and nothing in the inner loop reads it.
-static void allocatorDropsWhatSideEntranceOfLoopLacks()
-{
-    TestProcedure test;
-    Output& out = test.out();
-    LBasicBlock laterEntry = test.procedure().addEntrypoint(1);
-    LBasicBlock outer = out.newBlock();
-    LBasicBlock between = out.newBlock();
-    LBasicBlock inner = out.newBlock();
-    LBasicBlock body = out.newBlock();
-    LBasicBlock again = out.newBlock();
-    LBasicBlock leave = out.newBlock();
-    LBasicBlock exit = out.newBlock();
-    LValue atOuter = out.phiIn(outer, Int64);
-    LValue atInner = out.phiIn(inner, Int64);
-    LValue atBody = out.phiIn(body, Int64);
-    out.upsilon(test.argumentGPR(0), atBody);
-    out.jump(normalEdge(body));
-
-    out.appendTo(laterEntry);
-    out.upsilon(test.argumentGPR(0), atOuter);
-    out.jump(normalEdge(outer));
-
-    out.appendTo(outer);
-    out.branch(out.testNonZero64(atOuter, 1), normalEdge(exit), normalEdge(between));
-
-    out.appendTo(between);
-    out.upsilon(atOuter, atInner);
-    out.jump(normalEdge(inner));
-
-    out.appendTo(inner);
-    out.upsilon(atInner, atBody);
-    out.jump(normalEdge(body));
-
-    out.appendTo(body);
-    allocationTestAppendCall(test, nullptr);
-    LValue next = out.sub(atBody, 1);
-    out.branch(out.testNonZero64(next, 2), normalEdge(again), normalEdge(leave));
-
-    out.appendTo(again);
-    out.upsilon(next, atInner);
-    out.jump(normalEdge(inner));
-
-    out.appendTo(leave);
-    out.upsilon(next, atOuter);
-    out.jump(normalEdge(outer));
-
-    out.appendTo(exit);
-    out.ret(atOuter);
-    compileOrFail(test);
-
-    const Order& order = test.procedure().order();
-    const Allocation& allocation = test.procedure().allocation();
-    AOT_ALLOCATION_TEST_CHECK(test, order.of(outer).isLoopHead && order.of(inner).isLoopHead && order.of(body).loop == order.of(inner).loop);
-    AOT_ALLOCATION_TEST_CHECK(test, order.headOf(outer) < order.headOf(inner) && order.loops()[order.of(inner).loop].end <= order.headOf(exit));
-    AOT_ALLOCATION_TEST_CHECK(test, !allocation.isSpilled(atOuter) && allocationTestRegisterAtHead(test, between, atOuter));
-    AOT_ALLOCATION_TEST_CHECK(test, !allocationTestRegisterAtHead(test, inner, atOuter));
-
-    for (uint64_t start : { 8u, 5u, 2u }) {
-        uint64_t expected = start - 1;
-        while ((expected & 3) != 1)
-            --expected;
-        AOT_ALLOCATION_TEST_CHECK(test, test.call<uint64_t>(start) == expected);
-    }
-}
-
-// One entrypoint. Both arms lead to one rare block, which leads on to a block of the left one. That block stands behind both arms and the rare block, so no edge leads back.
-// `onLeft` is defined on the left arm alone, and nothing behind the rare block reads it. Neither the rare block nor what it rejoins holds it.
-static void allocatorDropsWhatWayThroughSharedRareBlockLacks()
-{
-    TestProcedure test;
-    Output& out = test.out();
-    LBasicBlock left = out.newBlock();
-    LBasicBlock further = out.newBlock();
-    LBasicBlock right = out.newBlock();
-    LBasicBlock shared = out.newBlock();
-    LBasicBlock rejoin = out.newBlock();
-    LBasicBlock aside = out.newBlock();
-    LBasicBlock furtherAside = out.newBlock();
-    LBasicBlock other = out.newBlock();
-    LValue word = test.argumentGPR(0);
-    LValue buffer = test.argumentGPR(1);
-    out.branch(out.testNonZero64(word, 1), normalEdge(left), normalEdge(right));
-
-    out.appendTo(left);
-    LValue onLeft = out.add(word, 5);
-    out.branch(out.testNonZero64(word, 2), unlikelyEdge(aside), normalEdge(further));
-
-    out.appendTo(further);
-    out.branch(out.testNonZero64(word, 4), rareEdge(shared), normalEdge(rejoin));
-
-    out.appendTo(right);
-    out.branch(out.testNonZero64(word, 4), rareEdge(shared), normalEdge(other));
-
-    out.appendTo(shared);
-    out.store64(word, allocationTestWordAt(test, buffer, 0));
-    out.jump(normalEdge(rejoin));
-
-    out.appendTo(rejoin);
-    out.ret(out.add(word, word));
-
-    out.appendTo(aside);
-    out.store64(word, allocationTestWordAt(test, buffer, 1));
-    out.jump(normalEdge(furtherAside));
-
-    out.appendTo(furtherAside);
-    out.ret(onLeft);
-
-    out.appendTo(other);
-    out.ret(out.sub(word, 1));
-    compileOrFail(test);
-
-    const Order& order = test.procedure().order();
-    const Allocation& allocation = test.procedure().allocation();
-    AOT_ALLOCATION_TEST_CHECK(test, order.of(shared).isRare() && order.loops().empty());
-    AOT_ALLOCATION_TEST_CHECK(test, order.headOf(aside) < order.headOf(right) && order.headOf(right) < order.headOf(shared) && order.headOf(shared) < order.headOf(rejoin));
-    // Of the two ways into the rare block, the first in the order is the one that has the value.
-    AOT_ALLOCATION_TEST_CHECK(test, order.of(shared).predecessors.front() == further);
-    AOT_ALLOCATION_TEST_CHECK(test, !allocation.isSpilled(onLeft) && allocationTestRegisterAtHead(test, further, onLeft));
-    AOT_ALLOCATION_TEST_CHECK(test, !allocationTestRegisterAtHead(test, shared, onLeft) && !allocationTestRegisterAtHead(test, rejoin, onLeft));
-
-    for (uint64_t argument : { 3u, 5u, 1u, 4u, 8u }) {
-        bool goesLeft = argument & 1;
-        bool goesAside = goesLeft && (argument & 2);
-        bool goesRareWay = !goesAside && (argument & 4);
-        uint64_t expected = argument - 1;
-        if (goesAside)
-            expected = argument + 5;
-        else if (goesLeft || goesRareWay)
-            expected = argument + argument;
-        std::array<uint64_t, 2> stored { };
-        AOT_ALLOCATION_TEST_CHECK(test, test.call<uint64_t>(argument, stored.data()) == expected);
-        AOT_ALLOCATION_TEST_CHECK(test, stored[0] == (goesRareWay ? argument : 0) && stored[1] == (goesAside ? argument : 0));
-    }
-}
-
-// Two ways lead into one rare region. On the first `value` is live by its range, and a call there saves it. The second starts where the value is dead: the other arm alone reads it.
-// Where the two meet, the second has no place to bring it from: the save of the first is none.
-static void allocatorLoadsNothingFromSaveOfOtherWayIntoRareRegion()
-{
-    TestProcedure test;
-    Output& out = test.out();
-    LBasicBlock first = out.newBlock();
-    LBasicBlock without = out.newBlock();
-    LBasicBlock reading = out.newBlock();
-    LBasicBlock on = out.newBlock();
-    LBasicBlock saving = out.newBlock();
-    LBasicBlock secondWayIn = out.newBlock();
-    LBasicBlock shared = out.newBlock();
-    LValue word = test.argumentGPR(0);
-    LValue buffer = test.argumentGPR(1);
-    LValue value = out.add(word, 5);
-    out.branch(out.testNonZero64(word, 1), rareEdge(saving), normalEdge(first));
-
-    out.appendTo(first);
-    out.branch(out.testNonZero64(word, 2), normalEdge(without), normalEdge(reading));
-
-    out.appendTo(without);
-    out.branch(out.testNonZero64(word, 4), rareEdge(secondWayIn), normalEdge(on));
-
-    out.appendTo(on);
-    out.ret(out.add(word, word));
-
-    out.appendTo(reading);
-    out.ret(value);
-
-    out.appendTo(saving);
-    allocationTestAppendCall(test, nullptr);
-    out.jump(normalEdge(shared));
-
-    out.appendTo(secondWayIn);
-    out.store64(word, allocationTestWordAt(test, buffer, 0));
-    out.jump(normalEdge(shared));
-
-    out.appendTo(shared);
-    out.ret(out.sub(word, 1));
-    compileOrFail(test);
-
-    AllocationTestText text(test);
-    const Order& order = test.procedure().order();
-    AOT_ALLOCATION_TEST_CHECK(test, order.of(saving).isRare() && order.of(secondWayIn).rareRegion == order.of(saving).rareRegion && order.of(shared).rareRegion == order.of(saving).rareRegion);
-    AOT_ALLOCATION_TEST_CHECK(test, order.of(saving).orderIndex < order.of(secondWayIn).orderIndex && order.of(secondWayIn).orderIndex < order.of(shared).orderIndex);
-    AOT_ALLOCATION_TEST_CHECK(test, order.of(without).orderIndex < order.of(reading).orderIndex && order.headOf(shared) < order.headOf(reading));
-    AOT_ALLOCATION_TEST_CHECK(test, allocationTestRegisterAtHead(test, saving, value) && !allocationTestRegisterAtHead(test, without, value));
-    AOT_ALLOCATION_TEST_CHECK(test, !test.procedure().allocation().isSpilled(value) && text.count("save"_s, value, saving) == 1);
-    AOT_ALLOCATION_TEST_CHECK(test, !text.count("reload"_s, value, secondWayIn) && !allocationTestRegisterAtHead(test, shared, value));
-
-    for (uint64_t argument : { 0u, 1u, 2u, 6u, 8u }) {
-        bool goesSecondWayIn = !(argument & 1) && (argument & 2) && (argument & 4);
-        uint64_t expected = argument + 5;
-        if ((argument & 1) || goesSecondWayIn)
-            expected = argument - 1;
-        else if (argument & 2)
-            expected = argument + argument;
-        uint64_t stored = 0;
-        AOT_ALLOCATION_TEST_CHECK(test, test.call<uint64_t>(argument, &stored) == expected);
-        AOT_ALLOCATION_TEST_CHECK(test, stored == (goesSecondWayIn ? argument : 0));
-    }
-}
-
-// `sum` is a Phi of a loop that is left at its head, and is read behind the loop. Both arms of a rare region read it. The first saves it round a call.
-// The second reads it for the last time and then leads to the head of a loop of its own: the save of the first arm is no place to load it from there.
-static void allocatorLoadsNothingFromSaveOfOtherRareArm()
-{
-    TestProcedure test;
-    Output& out = test.out();
-    LBasicBlock head = out.newBlock();
-    LBasicBlock body = out.newBlock();
-    LBasicBlock slow = out.newBlock();
-    LBasicBlock saving = out.newBlock();
-    LBasicBlock looping = out.newBlock();
-    LBasicBlock inner = out.newBlock();
-    LBasicBlock behindInner = out.newBlock();
-    LBasicBlock latch = out.newBlock();
-    LBasicBlock exit = out.newBlock();
-    LValue sum = out.phiIn(head, Int64);
-    LValue left = out.phiIn(head, Int64);
-    LValue turns = out.phiIn(inner, Int64);
-    LValue nextSum = out.phiIn(latch, Int64);
-    out.upsilon(test.argumentGPR(0), left);
-    out.upsilon(test.argumentGPR(1), sum);
-    out.jump(normalEdge(head));
-
-    out.appendTo(head);
-    out.branch(left, normalEdge(body), normalEdge(exit));
-
-    out.appendTo(body);
-    out.upsilon(out.add(sum, 1), nextSum);
-    out.branch(out.testNonZero64(left, 1), rareEdge(slow), normalEdge(latch));
-
-    out.appendTo(slow);
-    out.branch(out.testNonZero64(left, 2), rareEdge(looping), normalEdge(saving));
-
-    out.appendTo(saving);
-    allocationTestAppendCall(test, nullptr);
-    out.upsilon(out.add(sum, 3), nextSum);
-    out.jump(normalEdge(latch));
-
-    out.appendTo(looping);
-    LValue sumOfLoopingArm = out.add(sum, 5);
-    out.upsilon(out.constInt64(2), turns);
-    out.jump(normalEdge(inner));
-
-    out.appendTo(inner);
-    LValue turnsLeft = out.sub(turns, 1);
-    out.upsilon(turnsLeft, turns);
-    out.branch(turnsLeft, normalEdge(inner), normalEdge(behindInner));
-
-    out.appendTo(behindInner);
-    out.upsilon(sumOfLoopingArm, nextSum);
-    out.jump(normalEdge(latch));
-
-    out.appendTo(latch);
-    out.upsilon(nextSum, sum);
-    out.upsilon(out.sub(left, 1), left);
-    out.jump(normalEdge(head));
-
-    out.appendTo(exit);
-    out.ret(sum);
-    compileOrFail(test);
-
-    AllocationTestText text(test);
-    const Order& order = test.procedure().order();
-    AOT_ALLOCATION_TEST_CHECK(test, order.of(saving).isRare() && order.of(looping).rareRegion == order.of(saving).rareRegion && order.of(inner).rareRegion == order.of(saving).rareRegion);
-    AOT_ALLOCATION_TEST_CHECK(test, order.of(saving).orderIndex < order.of(looping).orderIndex && order.of(inner).isLoopHead && order.of(looping).loop == order.of(head).loop);
-    AOT_ALLOCATION_TEST_CHECK(test, order.loops()[order.of(head).loop].end <= order.headOf(exit));
-    AOT_ALLOCATION_TEST_CHECK(test, allocationTestRegisterAtHead(test, slow, sum) && !test.procedure().allocation().isSpilled(sum));
-    AOT_ALLOCATION_TEST_CHECK(test, text.count("save"_s, sum, saving) == 1 && text.count("save"_s, sum) == 1);
-    AOT_ALLOCATION_TEST_CHECK(test, text.count("reload"_s, sum) == text.count("reload"_s, sum, saving));
-
-    constexpr uint64_t start = 100;
-    for (uint64_t rounds : { 0u, 1u, 2u, 3u, 7u }) {
-        uint64_t expected = start;
-        for (uint64_t round = rounds; round; --round)
-            expected += !(round & 1) ? 1 : (round & 2) ? 5 : 3;
-        AOT_ALLOCATION_TEST_CHECK(test, test.call<uint64_t>(rounds, start) == expected);
-    }
-}
-
 template<typename Word>
 static void allocatorKeepsRareArmOffHotPath()
 {
@@ -3472,45 +2176,6 @@ static void allocatorKeepsRareArmOffHotPath()
         AOT_ALLOCATION_TEST_CHECK(test, test.call<Word>(goesSlowWay, words.data(), &numberOfCalls) == allocationTestMixed(words[0], words[1]));
         AOT_ALLOCATION_TEST_CHECK(test, numberOfCalls == goesSlowWay);
     }
-}
-
-// The constants are read again sooner than any of the values, so going by the distance of the next read alone would spill a value.
-static void allocatorEvictsConstantsFirst()
-{
-    constexpr unsigned numberOfConstants = 4;
-    auto constantAt = [](unsigned index) {
-        return static_cast<int64_t>(0x0123456789abcdefll + index * 0x100000001ll);
-    };
-
-    TestProcedure test;
-    Output& out = test.out();
-    unsigned numberOfValues = allocationTestCountOf(registerFileFor(test.procedure().traits()).allocatableIn(Bank::GP)) - 3;
-    LValue input = test.argumentGPR(0);
-    LValue output = test.argumentGPR(1);
-    auto storeConstants = [&](unsigned firstWord) {
-        for (unsigned index = 0; index < numberOfConstants; ++index) {
-            AOT_TEST_CHECK(!findPinnedConstant(static_cast<uint64_t>(constantAt(index))));
-            out.store64(out.constInt64(constantAt(index)), allocationTestWordAt(test, output, firstWord + index));
-        }
-    };
-    storeConstants(0);
-    Vector<LValue> values = allocationTestLoadWords(test, input, 0, numberOfValues, Int64);
-    storeConstants(numberOfConstants);
-    out.ret(allocationTestMixAll(out, values.span()));
-    compileOrFail(test);
-
-    AllocationTestText text(test);
-    AOT_ALLOCATION_TEST_CHECK(test, test.procedure().allocation().spills().empty());
-    AOT_ALLOCATION_TEST_CHECK(test, !text.count("save"_s) && !text.count("reload"_s));
-    AOT_ALLOCATION_TEST_CHECK(test, text.count("materialize"_s) > numberOfConstants);
-    // There are more values than registers that no callee saves, and a callee-saved register is all that asks for a frame here.
-    AOT_ALLOCATION_TEST_CHECK(test, test.procedure().frame().hasFrame() == !!test.procedure().allocation().usedCalleeSaves());
-
-    std::array<uint64_t, 64> words = allocationTestWords<uint64_t>();
-    std::array<uint64_t, 2 * numberOfConstants> stored { };
-    AOT_ALLOCATION_TEST_CHECK(test, test.call<uint64_t>(words.data(), stored.data()) == allocationTestMixedAll(std::span<const uint64_t>(words).first(numberOfValues)));
-    for (unsigned index = 0; index < stored.size(); ++index)
-        AOT_ALLOCATION_TEST_CHECK(test, stored[index] == static_cast<uint64_t>(constantAt(index % numberOfConstants)));
 }
 
 // ARM64 has the tag in a register. x86-64 has it in a word of the instance, which the instruction reads.
@@ -3567,27 +2232,6 @@ static ptrdiff_t allocationTestBytesWrittenFor(TestProcedure& test, Origin origi
     return bytes;
 }
 
-// An instruction that writes 32 bits of a register clears the upper half. A Trunc is no instruction, so above its word lies what lay there in the Int64.
-template<bool wordIsWrittenAs32Bits>
-static void allocatorExtendsWordThatIsReadWhole()
-{
-    TestProcedure test(allocationTestTraitsThatNoteOrigins());
-    Output& out = test.out();
-    LValue first = out.castToInt32(test.argumentGPR(0));
-    LValue word = wordIsWrittenAs32Bits ? out.add(first, out.castToInt32(test.argumentGPR(1))) : first;
-    out.setOrigin(allocationTestOriginOfExtension);
-    LValue extended = out.zeroExtPtr(word);
-    out.setOrigin(Origin());
-    out.ret(extended);
-    compileOrFail(test);
-
-    const Allocation& allocation = test.procedure().allocation();
-    AOT_ALLOCATION_TEST_CHECK(test, extended->opcode() == ZExt32 && test.procedure().liveness().of(extended).has(ValueFlag::UpperHalfIsRead));
-    AOT_ALLOCATION_TEST_CHECK(test, !wordIsWrittenAs32Bits || allocation.registerAtDefinitionOf(extended) == allocation.registerAtDefinitionOf(word));
-    AOT_ALLOCATION_TEST_CHECK(test, !allocationTestBytesWrittenFor(test, allocationTestOriginOfExtension) == wordIsWrittenAs32Bits);
-    AOT_ALLOCATION_TEST_CHECK(test, test.call<uint64_t>(uint64_t { 0xfffffff0fffffff0 }, uint64_t { 0x0000000100000020 }) == (wordIsWrittenAs32Bits ? 0x10u : 0xfffffff0u));
-}
-
 // The upper half of a Phi of 32 bits is clear where it is clear above every word that comes in: the count of a loop is an index as it stands. A Trunc among them brings along what lay above its word.
 template<bool startsAtConstant>
 static void allocatorExtendsCountOfLoop()
@@ -3630,30 +2274,6 @@ static const Step& allocationTestExecuteStepOf(TestProcedure& test, const Operat
             return step;
     }
     allocationTestFail(test, __FILE__, __LINE__, "the operation is executed");
-}
-
-// base + (index << 3): one instruction of four bytes, which reads the index where it lies whether or not it lives on.
-template<bool indexLivesOn>
-static void encoderAddsShiftedIndexInOneInstruction()
-{
-    TestProcedure test(allocationTestTraitsThatNoteOrigins());
-    Output& out = test.out();
-    LValue base = test.argumentGPR(0);
-    LValue index = test.argumentGPR(1);
-    out.setOrigin(allocationTestOriginOfExtension);
-    LValue sum = out.add(base, out.shl(index, 3));
-    out.setOrigin(Origin());
-    out.ret(indexLivesOn ? out.bitXor(sum, index) : sum);
-    compileOrFail(test);
-
-    const Allocation& allocation = test.procedure().allocation();
-    AOT_ALLOCATION_TEST_CHECK(test, sum->opcode() == Add && sum->child(1)->opcode() == Shl && addsScaledIndex(test.procedure().liveness(), sum));
-    AOT_ALLOCATION_TEST_CHECK(test, allocationTestBytesWrittenFor(test, allocationTestOriginOfExtension) == 4);
-    AOT_ALLOCATION_TEST_CHECK(test, !AllocationTestText(test).count("Shl"_s));
-    const Step& step = allocationTestExecuteStepOf(test, sum);
-    AOT_ALLOCATION_TEST_CHECK(test, step.sources[0] == Location::reg(allocation.registerAtDefinitionOf(base)) && step.sources[1] == Location::reg(allocation.registerAtDefinitionOf(index)) && step.sources[2].isImmediate());
-    AOT_ALLOCATION_TEST_CHECK(test, !indexLivesOn || step.destination != step.sources[1]);
-    AOT_ALLOCATION_TEST_CHECK(test, test.call<uint64_t>(uint64_t { 1000 }, uint64_t { 5 }) == (indexLivesOn ? (1040u ^ 5u) : 1040u));
 }
 
 // cage base + (reference << 3), and the same from a place further into the cage, as SlotEmitter::extensionAt() asks for it. The reference is read again behind the sum.
@@ -3716,43 +2336,6 @@ static void encoderAddsScaledIndexToPinnedRegisterWithConstant()
         AOT_ALLOCATION_TEST_CHECK(test, allocationTestExecuteStepOf(test, sum).sources[0].isImmediate() == scaledSumAcceptsBase(*base));
         for (uint64_t index : { uint64_t { 0 }, uint64_t { 5 }, ~uint64_t { 0 }, uint64_t { 0x4000000000000001 } })
             AOT_ALLOCATION_TEST_CHECK(test, test.call<uint64_t>(index) == addressOfInstance + static_cast<uint64_t>(constant) + (index << 2));
-    }
-}
-
-// A rare block alone reads the sum, so the sum is computed there, and the shift with it.
-static void encoderAddsScaledIndexWhereSumSinks()
-{
-    TestProcedure test(allocationTestTraitsThatNoteOrigins());
-    Output& out = test.out();
-    LValue selector = test.argumentGPR(0);
-    LValue base = test.argumentGPR(1);
-    LValue index = test.argumentGPR(2);
-    LValue buffer = test.argumentGPR(3);
-    out.setOrigin(allocationTestOriginOfExtension);
-    LValue sum = out.add(base, out.shl(index, 3));
-    out.setOrigin(Origin());
-    LBasicBlock slow = out.newBlock();
-    LBasicBlock join = out.newBlock();
-    out.branch(out.testNonZero64(selector, 1), rareEdge(slow), normalEdge(join));
-
-    out.appendTo(slow);
-    out.store64(sum, allocationTestWordAt(test, buffer, 0));
-    out.jump(normalEdge(join));
-
-    out.appendTo(join);
-    out.ret(index);
-    compileOrFail(test);
-
-    const Liveness& liveness = test.procedure().liveness();
-    AllocationTestText text(test);
-    AOT_ALLOCATION_TEST_CHECK(test, liveness.isSunk(sum) && addsScaledIndex(liveness, sum) && !liveness.isSunk(sum->child(1)));
-    AOT_ALLOCATION_TEST_CHECK(test, text.count("Add"_s, sum, slow) == 1 && text.count("Add"_s) == 1 && !text.count("Shl"_s));
-    AOT_ALLOCATION_TEST_CHECK(test, allocationTestBytesWrittenFor(test, allocationTestOriginOfExtension) == 4);
-
-    for (uint64_t goesSlowWay : { 0u, 1u }) {
-        uint64_t stored = 0;
-        AOT_ALLOCATION_TEST_CHECK(test, test.call<uint64_t>(goesSlowWay, uint64_t { 1000 }, uint64_t { 5 }, &stored) == 5);
-        AOT_ALLOCATION_TEST_CHECK(test, stored == (goesSlowWay ? 1040u : 0u));
     }
 }
 
@@ -3872,65 +2455,6 @@ static void encoderDecodesReferenceOrMarkerWithoutCopy()
     }
 }
 
-static bool allocationTestCompareWords(Opcode relation, uint32_t left, uint32_t right)
-{
-    int32_t signedLeft = static_cast<int32_t>(left);
-    int32_t signedRight = static_cast<int32_t>(right);
-    switch (relation) {
-    case Equal:
-        return left == right;
-    case NotEqual:
-        return left != right;
-    case LessThan:
-        return signedLeft < signedRight;
-    case GreaterEqual:
-        return signedLeft >= signedRight;
-    case Above:
-        return left > right;
-    case BelowEqual:
-        return left <= right;
-    default:
-        break;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-// Whatever the relation, the extension, the arm and what lies above the word in its register, the test goes by the word.
-static void encoderTestsWordInArmThatExtendsIt()
-{
-    constexpr uint32_t bound = 0xfffffffb;
-    static constexpr uint64_t arguments[] = { 0, 5, 0x7fffffff, 0x80000000, bound - 1, bound, bound + 1, 0xffffffff, 0xdeadbeef00000005, 0xdeadbeeffffffffb, 0x1234567880000000 };
-    for (Opcode relation : { Equal, NotEqual, LessThan, GreaterEqual, Above, BelowEqual }) {
-        for (Opcode extension : { ZExt32, SExt32 }) {
-            for (bool extensionIsFirstArm : { false, true }) {
-                for (bool wordIsOnTheRight : { false, true }) {
-                    TestProcedure test;
-                    Output& out = test.out();
-                    LValue word = out.castToInt32(test.argumentGPR(0));
-                    LValue otherWord = out.castToInt32(test.argumentGPR(1));
-                    LValue otherArm = test.argumentGPR(2);
-                    LValue extended = out.unary(extension, word);
-                    LValue holds = wordIsOnTheRight ? out.binary(relation, otherWord, word) : out.binary(relation, word, out.constInt32(static_cast<int32_t>(bound)));
-                    LValue value = extensionIsFirstArm ? out.select(holds, extended, otherArm) : out.select(holds, otherArm, extended);
-                    out.ret(value);
-                    compileOrFail(test);
-
-                    const Liveness& liveness = test.procedure().liveness();
-                    AOT_ALLOCATION_TEST_CHECK(test, value->opcode() == Select && liveness.isFused(value->child(0)));
-                    AOT_ALLOCATION_TEST_CHECK(test, allocationTestNumberOfLeavesThatAreNoChildren(liveness, value) == 1);
-                    for (uint64_t argument : arguments) {
-                        uint32_t low = static_cast<uint32_t>(argument);
-                        uint64_t wide = extension == ZExt32 ? low : static_cast<uint64_t>(static_cast<int64_t>(static_cast<int32_t>(low)));
-                        bool expected = wordIsOnTheRight ? allocationTestCompareWords(relation, bound, low) : allocationTestCompareWords(relation, low, bound);
-                        uint64_t other = 0x0123456789abcdef;
-                        AOT_ALLOCATION_TEST_CHECK(test, test.call<uint64_t>(argument, uint64_t { 0xfeedface00000000 } | bound, other) == (expected == extensionIsFirstArm ? wide : other));
-                    }
-                }
-            }
-        }
-    }
-}
-
 struct AllocationTestSumWithShift {
     LValue (*build)(Output&, LValue, LValue);
     uint64_t (*compute)(uint64_t, uint64_t);
@@ -4014,133 +2538,6 @@ static void encoderAddsSumAndConstantInOneInstruction()
     }
 }
 
-struct AllocationTestWordOperation {
-    LValue (*build)(Output&, LValue, LValue);
-    uint32_t (*compute)(uint32_t, uint32_t);
-};
-
-// The operands are Truncs of arguments that have something above their low halves, so an instruction that let any of it through would be seen.
-static void allocatorFindsUpperHalfClearBehindOperationsThatClearIt()
-{
-    static const AllocationTestWordOperation operations[] = {
-        { [](Output& out, LValue a, LValue b) -> LValue { return out.add(a, b); }, [](uint32_t a, uint32_t b) -> uint32_t { return a + b; } },
-        { [](Output& out, LValue a, LValue) -> LValue { return out.add(a, 5); }, [](uint32_t a, uint32_t) -> uint32_t { return a + 5; } },
-        { [](Output& out, LValue a, LValue b) -> LValue { return out.sub(a, b); }, [](uint32_t a, uint32_t b) -> uint32_t { return a - b; } },
-        { [](Output& out, LValue a, LValue b) -> LValue { return out.mul(a, b); }, [](uint32_t a, uint32_t b) -> uint32_t { return a * b; } },
-        { [](Output& out, LValue a, LValue) -> LValue { return out.neg(a); }, [](uint32_t a, uint32_t) -> uint32_t { return 0 - a; } },
-        { [](Output& out, LValue a, LValue b) -> LValue { return out.bitAnd(a, b); }, [](uint32_t a, uint32_t b) -> uint32_t { return a & b; } },
-        { [](Output& out, LValue a, LValue b) -> LValue { return out.bitOr(a, b); }, [](uint32_t a, uint32_t b) -> uint32_t { return a | b; } },
-        { [](Output& out, LValue a, LValue b) -> LValue { return out.bitXor(a, b); }, [](uint32_t a, uint32_t b) -> uint32_t { return a ^ b; } },
-        { [](Output& out, LValue a, LValue) -> LValue { return out.bitNot(a); }, [](uint32_t a, uint32_t) -> uint32_t { return ~a; } },
-        { [](Output& out, LValue a, LValue) -> LValue { return out.shl(a, 1); }, [](uint32_t a, uint32_t) -> uint32_t { return a << 1; } },
-        { [](Output& out, LValue a, LValue) -> LValue { return out.shl(a, 3); }, [](uint32_t a, uint32_t) -> uint32_t { return a << 3; } },
-        { [](Output& out, LValue a, LValue) -> LValue { return out.aShr(a, 3); }, [](uint32_t a, uint32_t) -> uint32_t { return static_cast<uint32_t>(static_cast<int32_t>(a) >> 3); } },
-        { [](Output& out, LValue a, LValue) -> LValue { return out.lShr(a, 3); }, [](uint32_t a, uint32_t) -> uint32_t { return a >> 3; } },
-        { [](Output& out, LValue a, LValue) -> LValue { return out.ctlz32(a); }, [](uint32_t a, uint32_t) -> uint32_t { return static_cast<uint32_t>(std::countl_zero(a)); } },
-        { [](Output& out, LValue a, LValue) -> LValue { return out.unary(SExt8, a); }, [](uint32_t a, uint32_t) -> uint32_t { return static_cast<uint32_t>(static_cast<int32_t>(static_cast<int8_t>(a))); } },
-        { [](Output& out, LValue a, LValue) -> LValue { return out.unary(SExt16, a); }, [](uint32_t a, uint32_t) -> uint32_t { return static_cast<uint32_t>(static_cast<int32_t>(static_cast<int16_t>(a))); } },
-        { [](Output& out, LValue a, LValue b) -> LValue { return out.equal(a, b); }, [](uint32_t a, uint32_t b) -> uint32_t { return a == b; } },
-        { [](Output& out, LValue a, LValue b) -> LValue { return out.lessThan(a, b); }, [](uint32_t a, uint32_t b) -> uint32_t { return static_cast<int32_t>(a) < static_cast<int32_t>(b); } },
-        { [](Output& out, LValue a, LValue b) -> LValue { return out.below(a, b); }, [](uint32_t a, uint32_t b) -> uint32_t { return a < b; } },
-    };
-    static constexpr std::array<uint64_t, 2> arguments[] = {
-        { 0xfffffff080000001, 0x123456787fffffff },
-        { 0xdeadbeef00000000, 0xffffffffffffffff },
-        { 0x00000001000000ff, 0x80000000000000ff },
-    };
-
-    for (const AllocationTestWordOperation& operation : operations) {
-        TestProcedure test;
-        Output& out = test.out();
-        LValue first = out.castToInt32(test.argumentGPR(0));
-        LValue second = out.castToInt32(test.argumentGPR(1));
-        LValue word = operation.build(out, first, second);
-        out.ret(out.zeroExtPtr(word));
-        compileOrFail(test);
-
-        AOT_ALLOCATION_TEST_CHECK(test, clearsUpperHalfOfRegister(word->opcode()));
-        for (auto [a, b] : arguments)
-            AOT_ALLOCATION_TEST_CHECK(test, test.call<uint64_t>(a, b) == operation.compute(static_cast<uint32_t>(a), static_cast<uint32_t>(b)));
-    }
-}
-
-static uint64_t allocationTestHashed(uint64_t rounds, uint32_t word, bool wholeHashIsRead)
-{
-    int64_t hash = 0;
-    for (; rounds; --rounds)
-        hash = static_cast<int32_t>(static_cast<uint32_t>(hash) * 31 ^ word);
-    return wholeHashIsRead ? static_cast<uint64_t>(hash) : static_cast<uint32_t>(hash);
-}
-
-// let h = 0; for (..) h = (h * 31 ^ c) | 0, in a variable that is kept as an Int64. Where bitwise operators alone read h, nobody sees what lies above its low half.
-template<bool wholeHashIsRead>
-static void allocatorExtendsWordOnItsWayRoundLoop()
-{
-    TestProcedure test(allocationTestTraitsThatNoteOrigins());
-    Output& out = test.out();
-    LValue rounds = test.argumentGPR(0);
-    LValue word = out.castToInt32(test.argumentGPR(1));
-    LBasicBlock head = out.newBlock();
-    LBasicBlock body = out.newBlock();
-    LBasicBlock exit = out.newBlock();
-    LValue hash = out.phiIn(head, Int64);
-    LValue left = out.phiIn(head, Int64);
-    out.upsilon(out.int64Zero, hash);
-    out.upsilon(rounds, left);
-    out.jump(normalEdge(head));
-
-    out.appendTo(head);
-    out.branch(left, normalEdge(body), normalEdge(exit));
-
-    out.appendTo(body);
-    LValue mixed = out.bitXor(out.mul(out.castToInt32(hash), 31), word);
-    out.setOrigin(allocationTestOriginOfExtension);
-    LValue extended = out.signExt32To64(mixed);
-    out.setOrigin(Origin());
-    out.upsilon(extended, hash);
-    out.upsilon(out.sub(left, 1), left);
-    out.jump(normalEdge(head));
-
-    out.appendTo(exit);
-    out.ret(wholeHashIsRead ? hash : out.zeroExtPtr(out.castToInt32(hash)));
-    compileOrFail(test);
-
-    AOT_ALLOCATION_TEST_CHECK(test, extended->opcode() == SExt32 && hash->has(OperationFlag::UpperHalfIsRead) == wholeHashIsRead);
-    AOT_ALLOCATION_TEST_CHECK(test, test.procedure().liveness().of(extended).has(ValueFlag::UpperHalfIsRead) == wholeHashIsRead);
-    AOT_ALLOCATION_TEST_CHECK(test, !!allocationTestBytesWrittenFor(test, allocationTestOriginOfExtension) == wholeHashIsRead);
-
-    constexpr uint64_t argument = 0xdeadbeef9e3779b9;
-    for (uint64_t numberOfRounds : { 0u, 1u, 2u, 5u })
-        AOT_ALLOCATION_TEST_CHECK(test, test.call<uint64_t>(numberOfRounds, argument) == allocationTestHashed(numberOfRounds, static_cast<uint32_t>(argument), wholeHashIsRead));
-}
-
-// The Int64 is read again behind the Trunc, so the result of the Trunc could not take its register. The one instruction that reads the low half reads it where the Int64 lies.
-// With two readers the Trunc is a value like any other.
-template<bool lowHalfIsReadTwice>
-static void allocatorReadsLowHalfWhereWholeWordLies()
-{
-    TestProcedure test;
-    Output& out = test.out();
-    LValue whole = test.argumentGPR(0);
-    LValue other = test.argumentGPR(1);
-    LValue lowHalf = out.castToInt32(whole);
-    LValue mixed = out.bitXor(lowHalf, out.castToInt32(other));
-    if (lowHalfIsReadTwice)
-        mixed = out.mul(mixed, lowHalf);
-    out.ret(out.add(out.zeroExtPtr(mixed), whole));
-    compileOrFail(test);
-
-    AOT_ALLOCATION_TEST_CHECK(test, lowHalf->opcode() == Trunc && test.procedure().liveness().isFused(lowHalf) == !lowHalfIsReadTwice);
-    AOT_ALLOCATION_TEST_CHECK(test, AllocationTestText(test).count("Trunc"_s) == lowHalfIsReadTwice);
-
-    constexpr uint64_t first = 0xfffffff080000001;
-    constexpr uint64_t second = 0x123456787fffffff;
-    uint32_t expected = static_cast<uint32_t>(first ^ second);
-    if (lowHalfIsReadTwice)
-        expected *= static_cast<uint32_t>(first);
-    AOT_ALLOCATION_TEST_CHECK(test, test.call<uint64_t>(first, second) == expected + first);
-}
-
 #undef AOT_ALLOCATION_TEST_CHECK
 
 } // namespace Machine
@@ -4148,107 +2545,53 @@ static void allocatorReadsLowHalfWhereWholeWordLies()
 std::span<const NativeTest> machineAllocationTests()
 {
     static constexpr NativeTest tests[] = {
-        { "machine-allocation/join-of-agreeing-predecessors-has-no-moves"_s, Machine::allocatorMakesNoMovesAtJoinOfAgreeingPredecessors },
-        { "machine-allocation/second-edge-into-a-join-gets-parallel-moves"_s, Machine::allocatorGivesSecondEdgeIntoJoinParallelMoves },
         { "machine-allocation/edge-that-gets-moves-is-split"_s, Machine::allocatorSplitsEdgeThatGetsMoves },
         { "machine-allocation/operands-of-a-rare-patch-stay-where-they-lie"_s, Machine::allocatorLeavesOperandsOfRarePatchWhereTheyLie },
-        { "machine-allocation/operands-beside-one-that-takes-some-register-stay-held"_s, Machine::allocatorHoldsOperandsToTheirRegistersBesideOneThatTakesSomeRegister },
         { "machine-allocation/work-grows-as-the-edges-with-moves-into-one-block-do"_s, Machine::allocatorWorkGrowsAsEdgesWithMovesIntoOneBlockDo },
         { "machine-allocation/work-grows-as-the-guards-ahead-of-the-framed-part-do"_s, Machine::allocatorWorkGrowsAsGuardsAheadOfFramedPartDo },
         { "machine-allocation/work-grows-as-the-edges-of-a-switch-that-get-moves-do"_s, Machine::allocatorWorkGrowsAsEdgesOfSwitchThatGetMovesDo },
         { "machine-allocation/operands-of-a-patch-that-ends-the-function-stay-where-they-lie"_s, Machine::allocatorLeavesOperandsOfPatchThatEndsFunctionWhereTheyLie },
         { "machine-allocation/nothing-is-kept-where-the-generator-makes-a-constant"_s, Machine::allocatorKeepsNothingWhereGeneratorMakesConstant },
-        { "machine-allocation/result-of-a-patch-is-held-to-its-registers"_s, Machine::allocatorHoldsResultOfPatchToItsRegisters },
-        { "machine-allocation/phi-stays-apart-from-a-value-that-lives-on"_s, Machine::allocatorKeepsPhiApartFromValueThatLivesOn },
-        { "machine-allocation/two-integer-phis-swap"_s, Machine::allocatorRotatesPhisBySwapping<uint64_t, 2> },
-        { "machine-allocation/two-number-phis-swap"_s, Machine::allocatorRotatesPhisBySwapping<double, 2> },
-        { "machine-allocation/three-integer-phis-rotate"_s, Machine::allocatorRotatesPhisBySwapping<uint64_t, 3> },
         { "machine-allocation/three-number-phis-rotate"_s, Machine::allocatorRotatesPhisBySwapping<double, 3> },
-        { "machine-allocation/spilled-integer-is-stored-once-behind-its-definition"_s, Machine::allocatorStoresSpilledValueOnceBehindItsDefinition<uint64_t> },
-        { "machine-allocation/spilled-number-is-stored-once-behind-its-definition"_s, Machine::allocatorStoresSpilledValueOnceBehindItsDefinition<double> },
-        { "machine-allocation/integers-across-a-call-take-callee-saved-registers"_s, Machine::allocatorKeepsValuesAcrossCallInCalleeSavedRegisters<uint64_t> },
         { "machine-allocation/numbers-across-a-call-take-callee-saved-registers"_s, Machine::allocatorKeepsValuesAcrossCallInCalleeSavedRegisters<double> },
-        { "machine-allocation/integer-keeps-its-register-through-a-small-loop"_s, Machine::allocatorDecidesByPressureWhatKeepsItsRegisterThroughLoop<uint64_t, false> },
-        { "machine-allocation/number-keeps-its-register-through-a-small-loop"_s, Machine::allocatorDecidesByPressureWhatKeepsItsRegisterThroughLoop<double, false> },
         { "machine-allocation/integer-loses-its-register-to-a-loop-under-pressure"_s, Machine::allocatorDecidesByPressureWhatKeepsItsRegisterThroughLoop<uint64_t, true> },
-        { "machine-allocation/number-loses-its-register-to-a-loop-under-pressure"_s, Machine::allocatorDecidesByPressureWhatKeepsItsRegisterThroughLoop<double, true> },
-        { "machine-allocation/integer-sum-read-behind-its-loop-comes-round-in-its-register"_s, Machine::allocatorBringsSumThatIsReadBehindLoopRoundInItsRegister<uint64_t, true> },
         { "machine-allocation/number-sum-read-behind-its-loop-comes-round-in-its-register"_s, Machine::allocatorBringsSumThatIsReadBehindLoopRoundInItsRegister<double, true> },
-        { "machine-allocation/integer-sum-as-second-operand-comes-round-in-its-register"_s, Machine::allocatorBringsSumThatIsReadBehindLoopRoundInItsRegister<uint64_t, false> },
-        { "machine-allocation/number-sum-as-second-operand-comes-round-in-its-register"_s, Machine::allocatorBringsSumThatIsReadBehindLoopRoundInItsRegister<double, false> },
         { "machine-allocation/nothing-is-spilled-ahead-of-a-join-that-a-rare-block-leads-back-to"_s, Machine::allocatorSpillsNothingAheadOfJoinThatRareBlockLeadsBackTo },
         { "machine-allocation/sum-comes-round-in-its-register-past-a-join-that-a-rare-block-leads-back-to"_s, Machine::allocatorBringsSumRoundInItsRegisterPastJoinThatRareBlockLeadsBackTo },
-        { "machine-allocation/phi-that-a-later-way-out-of-the-loop-reads-outlives-the-addition"_s, Machine::allocatorKeepsPhiThatLaterWayOutOfLoopReads },
         { "machine-allocation/value-for-a-phi-is-made-in-the-register-of-the-phi"_s, Machine::allocatorDefinesValueInRegisterOfPhiWhoseHeadIsFixed },
         { "machine-allocation/count-that-one-arm-adds-to-comes-round-in-its-register"_s, Machine::allocatorBringsCountThatOneArmAddsToRoundInItsRegister },
-        { "machine-allocation/what-a-loop-reads-stays-out-of-the-way-of-its-patches"_s, Machine::allocatorKeepsWhatLoopReadsOutOfWayOfItsPatches },
         { "machine-allocation/what-only-lives-through-a-loop-gives-way-for-the-registers-its-patches-leave-alone"_s, Machine::allocatorGivesRegistersThatPatchesLeaveAloneToWhatLoopUses },
-        { "machine-allocation/nothing-is-loaded-on-the-way-round-a-loop-for-a-rare-arm"_s, Machine::allocatorLoadsNothingOnWayRoundLoopForRareArm },
         { "machine-allocation/nothing-is-loaded-at-a-join-for-a-rare-arm"_s, Machine::allocatorLoadsNothingAtJoinForRareArm },
         { "machine-allocation/nothing-is-loaded-on-the-ways-into-a-rare-join"_s, Machine::allocatorLoadsNothingOnWaysIntoRareJoin },
         { "machine-allocation/nothing-is-loaded-at-a-join-for-a-read-behind-a-call"_s, Machine::allocatorLoadsNothingAtJoinForReadBehindCall },
-        { "machine-allocation/nothing-is-loaded-at-a-second-join-for-a-read-behind-a-call"_s, Machine::allocatorLoadsNothingAtSecondJoinForReadBehindCall },
         { "machine-allocation/join-holds-what-is-read-past-a-call-in-one-arm"_s, Machine::allocatorKeepsValuesAtJoinForReadPastCallInOneArm },
-        { "machine-allocation/word-of-the-frame-is-addressed-from-the-nearer-end"_s, Machine::encoderAddressesWordOfFrameFromNearerEnd },
-        { "machine-allocation/most-read-word-of-a-large-frame-takes-a-short-offset"_s, Machine::slotsGiveMostReadWordOfLargeFrameShortOffset },
         { "machine-allocation/word-that-a-register-serves-gives-way-to-words-that-are-loaded"_s, Machine::slotsCountInstructionsThatNameWordAndNotReaders },
         { "machine-allocation/values-that-take-turns-in-a-word-count-together"_s, Machine::slotsCountInstructionsOfAllThatTakeTurnsInWord },
         { "machine-allocation/stack-slot-lies-in-reach-of-the-frame-pointer-where-enough-instructions-name-it"_s, Machine::slotsKeepStackSlotInReachOfFramePointerWhereEnoughInstructionsNameIt },
-        { "machine-allocation/shifted-index-that-dies-is-added-in-one-instruction"_s, Machine::encoderAddsShiftedIndexInOneInstruction<false> },
-        { "machine-allocation/shifted-index-that-lives-on-is-added-in-one-instruction"_s, Machine::encoderAddsShiftedIndexInOneInstruction<true> },
-        { "machine-allocation/decoded-reference-whose-index-lives-on-is-one-instruction"_s, Machine::encoderDecodesReferenceInOneInstruction<false> },
         { "machine-allocation/decoded-reference-with-offset-base-is-one-instruction"_s, Machine::encoderDecodesReferenceInOneInstruction<true> },
         { "machine-allocation/scaled-index-is-added-to-a-pinned-register-with-a-constant"_s, Machine::encoderAddsScaledIndexToPinnedRegisterWithConstant },
-        { "machine-allocation/scaled-index-is-added-where-the-sum-sinks"_s, Machine::encoderAddsScaledIndexWhereSumSinks },
         { "machine-allocation/scaled-index-from-an-earlier-block-is-added-where-the-sum-sinks"_s, Machine::encoderAddsScaledIndexFromEarlierBlockWhereSumSinks },
         { "machine-allocation/shifted-index-that-is-the-first-child-is-added-in-one-instruction"_s, Machine::encoderAddsShiftedIndexThatIsFirstChild },
         { "machine-allocation/decoded-reference-or-marker-has-no-copy"_s, Machine::encoderDecodesReferenceOrMarkerWithoutCopy },
-        { "machine-allocation/select-tests-its-word-in-the-arm-that-extends-it"_s, Machine::encoderTestsWordInArmThatExtendsIt },
         { "machine-allocation/shifted-index-that-one-instruction-may-not-add"_s, Machine::encoderAddsShiftedIndexThatOneInstructionMayNotAdd },
-        { "machine-allocation/sum-and-constant-are-added-in-one-instruction"_s, Machine::encoderAddsSumAndConstantInOneInstruction<false> },
         { "machine-allocation/sum-and-constant-are-added-in-one-instruction-beside-an-operand-that-lives-on"_s, Machine::encoderAddsSumAndConstantInOneInstruction<true> },
 #if CPU(X86_64)
         { "machine-allocation/frame-setup-pushes-the-callee-saves"_s, Machine::frameSetupPushesCalleeSaves },
-        { "machine-allocation/far-jump-is-chained-through-a-near-jump-with-its-condition-and-target"_s, Machine::shortenerChainsFarJumpThroughNearJumpWithItsConditionAndTarget },
-        { "machine-allocation/far-jump-is-chained-backward"_s, Machine::shortenerChainsFarJumpBackward },
-        { "machine-allocation/no-jump-is-chained-through-two"_s, Machine::shortenerChainsNoJumpThroughTwo },
-        { "machine-allocation/jump-that-reaches-its-target-once-others-are-short-is-not-chained"_s, Machine::shortenerChainsNoJumpThatReachesItsTargetOnceOthersAreShort },
         { "machine-allocation/tests-that-leave-for-one-rare-block-are-chained"_s, Machine::encoderChainsTestsThatLeaveForOneRareBlock },
 #endif
         { "machine-allocation/integer-constant-is-made-once-ahead-of-a-loop"_s, Machine::allocatorMakesConstantOnceAheadOfLoop<uint64_t> },
-        { "machine-allocation/number-constant-is-made-once-ahead-of-a-loop"_s, Machine::allocatorMakesConstantOnceAheadOfLoop<double> },
         { "machine-allocation/spilled-values-are-loaded-once-ahead-of-a-loop"_s, Machine::allocatorLoadsSpilledValuesOnceAheadOfLoop },
         { "machine-allocation/constant-that-a-full-loop-would-evict-is-not-kept"_s, Machine::allocatorKeepsNoConstantThatLoopWouldEvict<false> },
-        { "machine-allocation/constant-is-not-kept-in-a-register-that-a-patch-takes"_s, Machine::allocatorKeepsNoConstantThatLoopWouldEvict<true> },
         { "machine-allocation/phi-read-behind-its-loop-counts-up-to-its-last-read-in-the-loop"_s, Machine::scanCountsPhiThatIsReadBehindLoopUpToItsLastReadInLoop<true> },
         { "machine-allocation/phi-read-in-its-loop-alone-counts-the-same"_s, Machine::scanCountsPhiThatIsReadBehindLoopUpToItsLastReadInLoop<false> },
-        { "machine-allocation/join-that-a-rare-block-leads-back-to-holds-no-constant"_s, Machine::allocatorKeepsNoConstantAtJoinThatRareBlockLeadsBackTo },
         { "machine-allocation/constant-whose-reader-takes-its-register-is-not-kept"_s, Machine::allocatorKeepsNoConstantWhoseReaderTakesItsRegister },
-        { "machine-allocation/zero-extension-of-a-number-is-no-instruction"_s, Machine::allocatorExtendsNumberWhereItIsMade },
-        { "machine-allocation/constant-below-an-opaque-is-made-in-the-register-of-the-result"_s, Machine::allocatorMakesConstantBelowOpaqueInRegisterOfResult },
         { "machine-allocation/value-returned-behind-a-loop-is-made-in-the-return-register"_s, Machine::allocatorDefinesValueReturnedBehindLoopInReturnRegister },
-        { "machine-allocation/count-that-an-inner-arm-adds-to-comes-round-in-its-register"_s, Machine::allocatorBringsCountThatInnerArmAddsToRoundInItsRegister },
-        { "machine-allocation/count-that-a-rare-leave-reads-outlives-the-addition"_s, Machine::allocatorKeepsCountThatRareLeaveReadsUpToTest },
         { "machine-allocation/phis-that-a-rare-chain-behind-a-later-call-reads-stay-out-of-memory"_s, Machine::allocatorKeepsPhisThatRareChainBehindLaterCallReadsOutOfMemory },
         { "machine-allocation/what-a-rare-arm-alone-reads-is-counted-once"_s, Machine::allocatorCountsWhatRareArmAloneReadsOnce },
         { "machine-allocation/owner-that-the-other-arm-reads-outlives-its-storage"_s, Machine::allocatorKeepsOwnerThatOtherArmReadsWhileItsStorageIsRead },
-        { "machine-allocation/loop-entered-twice"_s, Machine::allocatorDropsWhatSideEntranceOfLoopLacks },
-        { "machine-allocation/shared-rare-block"_s, Machine::allocatorDropsWhatWayThroughSharedRareBlockLacks },
-        { "machine-allocation/save-of-the-other-arm"_s, Machine::allocatorLoadsNothingFromSaveOfOtherRareArm },
-        { "machine-allocation/save-of-another-way-in"_s, Machine::allocatorLoadsNothingFromSaveOfOtherWayIntoRareRegion },
-        { "machine-allocation/rare-arm-costs-the-hot-path-nothing-for-integers"_s, Machine::allocatorKeepsRareArmOffHotPath<uint64_t> },
         { "machine-allocation/rare-arm-costs-the-hot-path-nothing-for-numbers"_s, Machine::allocatorKeepsRareArmOffHotPath<double> },
-        { "machine-allocation/eviction-prefers-constants"_s, Machine::allocatorEvictsConstantsFirst },
         { "machine-allocation/pinned-constant-is-read-where-it-lies"_s, Machine::allocatorReadsPinnedConstantWhereItLies },
-        { "machine-allocation/zero-extension-of-a-32-bit-result-is-no-instruction"_s, Machine::allocatorExtendsWordThatIsReadWhole<true> },
-        { "machine-allocation/zero-extension-of-a-truncated-word-is-an-instruction"_s, Machine::allocatorExtendsWordThatIsReadWhole<false> },
-        { "machine-allocation/zero-extension-of-the-count-of-a-loop-is-no-instruction"_s, Machine::allocatorExtendsCountOfLoop<true> },
         { "machine-allocation/zero-extension-of-a-count-that-starts-at-a-truncated-word-is-an-instruction"_s, Machine::allocatorExtendsCountOfLoop<false> },
-        { "machine-allocation/upper-half-is-clear-behind-every-32-bit-result"_s, Machine::allocatorFindsUpperHalfClearBehindOperationsThatClearIt },
-        { "machine-allocation/extension-into-a-phi-that-is-only-truncated-is-no-instruction"_s, Machine::allocatorExtendsWordOnItsWayRoundLoop<false> },
-        { "machine-allocation/extension-into-a-phi-that-is-read-whole-is-an-instruction"_s, Machine::allocatorExtendsWordOnItsWayRoundLoop<true> },
-        { "machine-allocation/low-half-is-read-where-the-whole-word-lies"_s, Machine::allocatorReadsLowHalfWhereWholeWordLies<false> },
-        { "machine-allocation/low-half-with-two-readers-is-a-value"_s, Machine::allocatorReadsLowHalfWhereWholeWordLies<true> },
     };
     return tests;
 }

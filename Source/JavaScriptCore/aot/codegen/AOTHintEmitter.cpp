@@ -138,7 +138,7 @@ void HintEmitter::release(ValueID operand)
 void HintEmitter::generateClearFrameCell(const ValueContext& value)
 {
     const Operation& made = operationAt(definitionOf(value->cellOperand()));
-    RELEASE_ASSERT((made.opcode == Opcode::NewObject || made.opcode == Opcode::NewClosure || made.opcode == Opcode::NewBoundClosure || made.opcode == Opcode::NewArray) && made.storage() == AllocationStorage::Frame);
+    RELEASE_ASSERT((made.opcode == Opcode::NewObject || made.opcode == Opcode::NewClosure || made.opcode == Opcode::NewArray) && made.storage() == AllocationStorage::Frame);
 
     // In a realm without a header for such a cell the array lies on the heap, so its elements are found through it. Nobody has the array any more, wherever it lies.
     if (made.opcode == Opcode::NewArray) {
@@ -155,11 +155,6 @@ void HintEmitter::generateClearFrameCell(const ValueContext& value)
         // The operation lists a capture that is removed, and the cell has no word for it.
         unsigned numberOfWords = closureCaptureCountsOf(m_program, conventions(), made.function()).captures;
         end = made.closureForm() == ClosureForm::Slim ? SlimClosure::allocationSize(numberOfWords) : Closure::allocationSize(numberOfWords);
-    } else if (made.opcode == Opcode::NewBoundClosure) {
-        unsigned numberOfCaptures = static_cast<unsigned>(made.capturesOperands().size());
-        const BoundFunctionPlan* bound = conventions().boundFunction(made.function(), made.numberOfBoundArguments());
-        RELEASE_ASSERT(bound);
-        end = bound->closureForm == ClosureForm::Slim ? SlimClosure::allocationSize(numberOfCaptures) : Closure::allocationSize(numberOfCaptures);
     } else {
         end = m_plan.layout(made.layout()).size;
         if (isObjectLayout(m_program.at(made.layout()).kind)) {

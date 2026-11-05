@@ -85,19 +85,15 @@ static constexpr uint32_t literalStringIndex(uint32_t word) { return (word - emp
 static_assert(literalStringWord(maxLiteralStrings) <= minCell32 && absentDeferredClosure < emptyLiteralStringWord);
 inline bool isLiteralStringWord(uint64_t word) { return word - emptyLiteralStringWord < minCell32 - emptyLiteralStringWord; }
 
-static constexpr size_t maxShortStringLength = 7;
-static constexpr unsigned shortStringLengthBits = 3;
-static_assert(maxShortStringLength < 1u << shortStringLengthBits && 8 * maxShortStringLength + shortStringLengthBits <= 64);
-static constexpr uint64_t noShortString = UINT64_MAX;
+// What a switch over written texts is handed for a subject that is a rope or a 16-bit string.
+struct NarrowCharactersOfString {
+    static constexpr uint32_t lengthOfNoNarrowText = UINT32_MAX;
 
-template<typename CharacterType>
-inline uint64_t shortStringWord(std::span<const CharacterType> text)
-{
-    uint64_t characters = 0;
-    for (size_t i = 0; i < text.size(); ++i)
-        characters |= static_cast<uint64_t>(text[i]) << (8 * i);
-    return characters << shortStringLengthBits | text.size();
-}
+    // lengthOfNoNarrowText where some unit is above 0xFF.
+    uint32_t length;
+    // As far as the length goes, where the length is at most their number. OTHERWISE THEY ARE WHAT AN EARLIER CALL LEFT: whoever reads a character of the subject asks first whether a text of that length fits in here.
+    alignas(8) std::array<uint8_t, 128> characters;
+};
 
 static constexpr unsigned literalStringCacheIndexBits = 8;
 static constexpr unsigned literalStringCacheIndexShift = 5;

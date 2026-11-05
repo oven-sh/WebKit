@@ -158,13 +158,6 @@ struct ObjectSite {
     DataID data;
 };
 
-// `const config: Config = JSON.parse(text)`: what a parser by a written type makes at a call, each a site of SiteOrigin::BuiltinResult that stands for every such object that the call answers with.
-// From this ordinal on: one for each layout that the parser makes, ascending by layout, one for each type with an array, in the order of FactTables::typedResultAt(), and the array of untyped values.
-inline constexpr uint32_t firstOrdinalOfTypedResult = 2;
-// ``await sql<User[]>`select * from users` ``: the rows that the host makes for the query that a call answers with, each a site of SiteOrigin::BuiltinResult that has escaped from birth.
-// From this ordinal on, by the place of the layout in ExpectedResult::layouts. No typed result has as many objects, so the two never meet at one call.
-inline constexpr uint32_t firstOrdinalOfRowMadeByHost = 1u << 31;
-
 // A fresh object: what `sharedForm` stands for where its creator is entered through one call as written. Statements absorbed there and the walk's inline frames name the same object.
 // It is not always all that is made through the call. A copy of the caller in which the creator is one of several callees enters its shared nodes there: the object is `sharedForm`.
 // So an inline frame names the copy only where Facts::copyOf() answers it.
@@ -208,21 +201,9 @@ public:
     // Once, behind the scan, with a number for each function of the program. Then each function's sites are written by whoever scanned it, in parallel.
     JS_EXPORT_PRIVATE void reserveSites(std::span<const uint32_t> numberOfSitesOfFunctions, const ParallelLoops&);
     JS_EXPORT_PRIVATE void defineSites(FunctionID, std::span<const ObjectSite> sortedByValueAndOrdinal);
-    // By Program::appendParsersFor(), on one thread, in front of reserveSites() or behind it, for the functions that the program has got since the table was made: none of them has a site.
-    // sitesOf() is all that may be asked of one. The five objects of a function are those of the functions that the constructor has counted.
-    void addFunctionsWithoutSites(uint32_t numberOfFunctions)
-    {
-        RELEASE_ASSERT(!m_firstSiteOfFunction.isEmpty());
-        while (m_firstSiteOfFunction.size() <= numberOfFunctions)
-            m_firstSiteOfFunction.append(uint32_t { m_firstSiteOfFunction.last() });
-    }
     // Between two rounds of the solve, by one thread. Answers the first of the new numbers, which follow the order of the list: the order in which the solver's logs first asked for them.
     // Each gets a copy of the record of its shared form, with IsOfInstance, sharedForm and instance.
     JS_EXPORT_PRIVATE ObjectID addObjectsOfInstances(std::span<const ObjectOfInstance> withoutRepeats);
-    // The same in two steps. By one thread, while no other looks at the table: room for that many, and the first of their numbers.
-    JS_EXPORT_PRIVATE ObjectID reserveObjectsOfInstances(uint32_t count);
-    // By any thread, once for each of those numbers, before anybody names the object.
-    JS_EXPORT_PRIVATE void defineObjectOfInstance(ObjectID, ObjectOfInstance);
 
     uint32_t size() const { return m_records.size(); }
     const ObjectRecord& at(ObjectID object) const { return m_records[object.index()]; }

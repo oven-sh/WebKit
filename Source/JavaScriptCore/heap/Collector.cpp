@@ -23,6 +23,7 @@
 #include "Collector.h"
 
 #include "AOTHeapHooks.h"
+#include "AOTRuntimeHooks.h"
 #include "CagedAlignedMemoryAllocator.h"
 #include "CodeBlock.h"
 #include "CodeBlockSetInlines.h"
@@ -566,7 +567,11 @@ bool Collector::canSkipMarking()
 
 void Collector::startHelpers()
 {
-    if (m_collectionsWithoutHelpers.load(std::memory_order_relaxed))
+#if ENABLE(AOT)
+    if (AOT::RuntimeHooks::isInNoHelperThreadsScope())
+        return;
+#endif
+    if (startsHelpersLazily() && m_collectionsWithoutHelpers.load(std::memory_order_relaxed))
         return;
     if (m_hasStartedHelpers.exchange(true))
         return;

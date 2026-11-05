@@ -5,7 +5,6 @@
 
 #include "config.h"
 #include "AOTFacts.h"
-#include "AOTLinkStringParsers.h"
 
 #if ENABLE(AOT)
 
@@ -30,52 +29,12 @@ namespace JSC { namespace AOT { namespace Typed {
 ASCIILiteral nameOf(FactKind kind)
 {
     switch (kind) {
-    case FactKind::ProvenLayoutSets:
-        return "ProvenLayoutSets"_s;
     case FactKind::NarrowedTypes:
         return "NarrowedTypes"_s;
-    case FactKind::RemovedNullish:
-        return "RemovedNullish"_s;
-    case FactKind::LiteralValues:
-        return "LiteralValues"_s;
-    case FactKind::ExactFunctions:
-        return "ExactFunctions"_s;
     case FactKind::ProvenContents:
         return "ProvenContents"_s;
-    case FactKind::ArrayStorageKinds:
-        return "ArrayStorageKinds"_s;
-    case FactKind::PristineInstances:
-        return "PristineInstances"_s;
-    case FactKind::ConstantBuiltinLocations:
-        return "ConstantBuiltinLocations"_s;
-    case FactKind::CalleeSets:
-        return "CalleeSets"_s;
-    case FactKind::ReceiverSets:
-        return "ReceiverSets"_s;
-    case FactKind::ClassBases:
-        return "ClassBases"_s;
-    case FactKind::AppendedFields:
-        return "AppendedFields"_s;
-    case FactKind::HolderMutations:
-        return "HolderMutations"_s;
-    case FactKind::OwnNames:
-        return "OwnNames"_s;
-    case FactKind::ClassEvaluations:
-        return "ClassEvaluations"_s;
-    case FactKind::StoreCounts:
-        return "StoreCounts"_s;
-    case FactKind::Initialization:
-        return "Initialization"_s;
-    case FactKind::ConstructorFieldOrders:
-        return "ConstructorFieldOrders"_s;
     case FactKind::OperandSummaries:
         return "OperandSummaries"_s;
-    case FactKind::ObjectUses:
-        return "ObjectUses"_s;
-    case FactKind::ReachedFunctions:
-        return "ReachedFunctions"_s;
-    case FactKind::ExecutionCounts:
-        return "ExecutionCounts"_s;
     case FactKind::HeapWords:
         return "HeapWords"_s;
     }
@@ -819,6 +778,18 @@ std::unique_ptr<Facts> computeFacts(Program& program, BuildContext& build, const
                 workOutRegExpTexts(program, *parts.bodies, *parts.summaries, parts.tables.program);
         },
     });
+    // The lane says nothing itself: Link reports beside it.
+    for (const RegExpCallWithoutText& call : parts.tables.program.regExpCallsWithoutText) {
+        const BodyIndex& index = *parts.bodies->find(call.function);
+        build.diagnostics().add(UserDiagnostic {
+            .kind = UserDiagnosticKind::RegExpTextKnownAtRunTime,
+            .function = call.function,
+            .block = index.blockOf(call.site),
+            .value = call.site,
+            .count = 1,
+            .location = program.at(call.function).locationOf(index.value(call.site)),
+        });
+    }
     const SizeOfLinkFlow& sizeOfFlow = parts.linked.sizeOfFlow;
     build.statistics().count(StatisticID::FactNodes, sizeOfFlow.nodes);
     build.statistics().count(StatisticID::FactEdges, sizeOfFlow.edges);
@@ -846,17 +817,10 @@ std::unique_ptr<Facts> computeFacts(Program& program, BuildContext& build, const
         [&] { fillTablesOfProgramForFacts(program, looks, build, parts); },
         [&] { fillTablesOfFunctionsForFacts(program, request, build, parts); },
     });
-    // Each closure of a function has a prototype object of its own, and the store has laid the name on one.
-    for (LinkedNameOnPrototype& name : parts.linked.namesOnPrototypes)
-        name.isLaidAheadOfEveryObject &= parts.tables.classes[name.layout.index()].evaluations == ExecutionCount::AtMostOnce;
-    // Each closure of the holder has properties of its own. A constructor function is counted with its class; of any other function nobody counts the closures.
-    for (LinkedNameOnFunction& name : parts.linked.namesOnFunctions) {
-        LayoutID constructed = program.at(name.holder).constructedClass;
-        name.isLaidAheadOfEveryRead &= constructed && program.at(constructed).constructor == name.holder && parts.tables.classes[constructed.index()].evaluations == ExecutionCount::AtMostOnce;
-    }
+    // Each closure of a function has a prototype object of its own.
     for (size_t layout = 0; layout < parts.linked.layouts.size() && layout < parts.tables.classes.size(); ++layout) {
         if (parts.tables.classes[layout].evaluations != ExecutionCount::AtMostOnce)
-            parts.linked.layouts[layout].prototypeObjectIsSettledAheadOfEveryObject = parts.linked.layouts[layout].isLinkedBelowBaseAheadOfEveryObject = false;
+            parts.linked.layouts[layout].prototypeObjectIsSettledAheadOfEveryObject = false;
     }
     // It interns types, so it runs beside nobody. No lane reads what it writes.
     parts.linked.fieldsReadAsIntegers = fieldsReadAsIntegersIn(*looks);

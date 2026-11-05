@@ -89,20 +89,6 @@ bool Modules::textOfImportComesInLaterTurn(ModuleID module, AskedBy askedBy)
     return true;
 }
 
-bool Modules::isAnythingBeingLoaded() const
-{
-    if (m_instance.vm->synchronousModuleQueue() || m_rootWhoseFilesRun || m_rootWhoseFilesRanAhead || m_fileWhoseJobsWaitForLoader || !m_levelsOfLoads.isEmpty() || !m_textsOnTheirWay.isEmpty())
-        return true;
-    // The host loads the graph of the entry point.
-    if (!m_firstModuleRequestedByHost || status(*m_firstModuleRequestedByHost) < ModuleStatus::Evaluating)
-        return true;
-    for (const LoadInFlight& load : m_loadsInFlight) {
-        if (load.promise->status() == JSPromise::Status::Pending)
-            return true;
-    }
-    return false;
-}
-
 void Modules::holdTextOfCall(JSPromise* promise, ModuleID module, ModuleRecord* requested, std::optional<int64_t> referrerAsyncOrder, ImportCaller caller)
 {
     VM& vm = *m_instance.vm;
@@ -133,7 +119,7 @@ void Modules::putCallsThatWaitApartInLine()
         // As startImportInLaterTurn().
         if (!text.requestedRecord)
             m_modulesOfQueuedImports.set(text.module.index());
-        m_textsOnTheirWay.insert(index, TextOnItsWay { text.place, WTF::move(text.promise), text.module, WTF::move(text.requestedRecord), text.referrerAsyncOrder });
+        m_textsOnTheirWay.insert(index, TextOnItsWay { text.place, WTF::move(text.promise), text.module, WTF::move(text.requestedRecord), text.referrerAsyncOrder, std::nullopt });
     }
     m_textsThatWait.clear();
     m_numberOfTextsThatHaveCome = 0;

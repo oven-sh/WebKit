@@ -29,6 +29,7 @@
 
 #include "AirFrequentedBlock.h"
 #include "AirInst.h"
+#include "B3Arena.h"
 #include "B3SuccessorCollection.h"
 #include <wtf/Noncopyable.h>
 #include <wtf/SequesteredMalloc.h>
@@ -47,7 +48,21 @@ class PhaseInsertionSet;
 
 class BasicBlock {
     WTF_MAKE_NONCOPYABLE(BasicBlock);
-    WTF_MAKE_SEQUESTERED_ARENA_ALLOCATED(BasicBlock);
+public:
+    static constexpr bool mayLiveInArena = true;
+    void* operator new(size_t size, Arena* arena) { return arena ? arena->allocate(size, alignof(BasicBlock)) : SequesteredArenaMalloc::malloc(size); }
+    void operator delete(void* memory, Arena* arena)
+    {
+        if (!arena)
+            SequesteredArenaMalloc::free(memory);
+    }
+    void operator delete(BasicBlock* block, std::destroying_delete_t)
+    {
+        bool isInArena = block->m_isInArena;
+        block->~BasicBlock();
+        if (!isInArena)
+            SequesteredArenaMalloc::free(block);
+    }
 public:
     static const char* const dumpPrefix;
     static constexpr unsigned uninsertedIndex = UINT_MAX;
@@ -153,6 +168,7 @@ private:
     SuccessorList m_successors;
     PredecessorList m_predecessors;
     double m_frequency;
+    bool m_isInArena { false };
 };
 
 class DeepBasicBlockDump {

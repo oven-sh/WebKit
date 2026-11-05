@@ -359,9 +359,9 @@ void locateFieldOfObject(StubAssembler& jit, const ObjectLookupRegisters& r, Obj
 {
     static_assert(sizeof(FieldTableEntry) == 1u << CCallHelpers::TimesFour && FieldTableEntry::nameShift == 16);
     loadNumberOfName(jit, r, name, hasNoField, isUnknown);
-    jit.load32SignedExtendTo64(Address(r.object, offsetOfShapeWord), r.index);
+    loadShapeWordAsIndex(jit, r.object, r.index);
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.fieldTableEntries)), r.vector);
-    jit.load32(BaseIndex(r.vector, r.index, CCallHelpers::TimesFour), r.index);
+    jit.load32(BaseIndex(r.vector, r.index, CCallHelpers::TimesFour, offsetOfRowsByShapeIndex(jit)), r.index);
     jit.add32(r.name, r.index);
     jit.load16(BaseIndex(r.vector, r.index, CCallHelpers::TimesFour, FieldTableEntry::nameShift / 8), r.vector);
     hasNoField.append(jit.branch32(CCallHelpers::NotEqual, r.vector, r.name));

@@ -5,7 +5,7 @@
 # function flag(b) { return typeof b === "boolean" ? b.toString() : ""; }
 # function big(i) { return typeof i === "bigint" ? i.toString() : ""; }
 # function binary(n) { return typeof n === "number" ? n.toString(2) : ""; }
-# by hand, so that each function reads the value that its test hands on. The front end writes the tested parameter itself behind the test, and the walk gives that the narrower name only with unions-and-narrowing-2 in
+# by hand, so that each function reads the value that its test hands on. The front end writes the tested parameter itself behind the test, and the walk does not give that the narrower name
 # REPEAT: f = 1 2 3 4; name = DECIMAL TEN FLAG BIG
 # RUN(%(name)): walk f%(f) mechanisms=none+TypedOperations+DirectCalls+BuiltinCalls
 # %(name)-LABEL: code f%(f):Body

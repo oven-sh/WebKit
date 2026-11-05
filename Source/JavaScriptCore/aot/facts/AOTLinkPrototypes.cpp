@@ -212,6 +212,7 @@ void LinkFlow::passPrototypesAboveUnderNumbers(LayoutID layout)
 {
     if (!m_layoutsBelowConstructorFunctions.get(layout.index()))
         return;
+    LockerOfWhatIsShared lockerOfWhatIsShared(*this);
     size_t stepsLeft = program.layouts.size();
     for (LayoutID current = layout; current && stepsLeft; current = program.at(current).base, --stepsLeft) {
         if (!isOfConstructorFunction(current) || m_prototypesPassedByNumbers.set(current.index()) || !m_prototypesWithDefinitions.get(current.index()))
@@ -227,9 +228,11 @@ void LinkFlow::passPrototypesAboveUnderNumbers(LayoutID layout)
 
 void LinkFlow::lookForSetterOnPrototypesAbove(LayoutID layout, PropertyKeyID key)
 {
+    // The set is filled before the flow starts.
+    if (!m_layoutsBelowConstructorFunctions.get(layout.index()))
+        return;
     LockerOfWhatIsShared lockerOfWhatIsShared(*this);
-    if (m_layoutsBelowConstructorFunctions.get(layout.index()))
-        forEachPrototypePassedAbove(layout, key, [](uint32_t) { });
+    forEachPrototypePassedAbove(layout, key, [](uint32_t) { });
 }
 
 bool LinkFlow::mayNotBeLinkedYetBelow(LayoutID from, LayoutID classAbove) const

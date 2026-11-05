@@ -119,7 +119,6 @@ struct ResumeClosureRequest {
     static constexpr unsigned stubFrameWord = 2;
     static constexpr unsigned allocationShiftForStub = ClosureRequest::executableShift;
     static constexpr uint32_t maxAllocationForStub = (1u << (32 - allocationShiftForStub)) - 1;
-    static constexpr uint32_t encodeForStub(uint32_t function, uint32_t allocation) { return function | allocation << allocationShiftForStub; }
 };
 
 static_assert(numberOfArgumentGPRs <= numberOfDirectArgumentGPRs);

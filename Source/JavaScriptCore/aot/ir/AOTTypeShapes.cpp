@@ -266,92 +266,6 @@ TypeID TypeArena::describedByShape(TypeID type)
     return result;
 }
 
-TypeID TypeArena::withOnlyNamedObjects(TypeID type)
-{
-    ASSERT(type);
-    if (holdsOnlyPrimitives(type))
-        return type;
-
-    Type record = at(type);
-    if (!record.hasUnknown())
-        return type;
-    TypeParts parts = record;
-    parts.seeds = { };
-    parts.anyObject = false;
-    parts.anyFunction = false;
-    parts.unnamedLayouts = { };
-    parts.unnamedClasses = { };
-    return intern(parts);
-}
-
-// A merged member goes only where the `unknown` beside it stands for the same objects.
-static bool unknownStandsForMergedObject(const TypeArena& arena, const Type& holder, ObjectID object)
-{
-    const ObjectRecord& record = arena.at(object);
-    if (!record.has(ObjectTrait::IsMerged))
-        return false;
-    if (holder.anyObject)
-        return true;
-    if (holder.anyFunction && record.has(ObjectTrait::IsCallable))
-        return true;
-    if (record.layout && holder.unnamedLayouts && arena.at(holder.unnamedLayouts).contains(record.layout))
-        return true;
-    if (!record.builtinClass || !holder.unnamedClasses)
-        return false;
-    return std::ranges::any_of(arena.at(holder.unnamedClasses), [&](const ClassPart& part) {
-        return part.builtinClass == record.builtinClass;
-    });
-}
-
-// Many nodes hold one value: n nodes that hold n objects cost n + n.
-TypeID TypeArena::withoutMergedObjectsInsideUnknown(TypeID type)
-{
-    ASSERT(type);
-    if (holdsOnlyPrimitives(type))
-        return type;
-    Type record = at(type);
-    if (!record.hasUnknown() || !record.namesMergedObjects())
-        return type;
-
-    if (std::optional<uint32_t> known = remembered(Operation::WithoutMergedObjectsInsideUnknown, type.bits(), noSecondOperandInShapeMemo))
-        return TypeID::fromBits(*known);
-    TypeID result = type;
-    ObjectSetID standingByRight = m_objectSets.filtered(record.objects, [&](ObjectID object) {
-        return !unknownStandsForMergedObject(*this, record, object);
-    });
-    if (standingByRight != record.objects) {
-        TypeParts parts = record;
-        parts.objects = standingByRight;
-        result = intern(parts);
-    }
-    remember(Operation::WithoutMergedObjectsInsideUnknown, type.bits(), noSecondOperandInShapeMemo, result.bits());
-    return result;
-}
-
-TypeID TypeArena::withoutCopiesBesideSharedForms(TypeID type)
-{
-    if (!type || holdsOnlyPrimitives(type))
-        return type;
-    Type record = at(type);
-    if (!record.traitsOfNamed.contains(ObjectTrait::IsOfInstance))
-        return type;
-
-    if (std::optional<uint32_t> known = remembered(Operation::WithoutCopiesBesideSharedForms, type.bits(), noSecondOperandInShapeMemo))
-        return TypeID::fromBits(*known);
-    TypeID result = type;
-    SetView<ObjectID, ObjectSetID> named = at(record.objects);
-    ObjectSetID kept = m_objectSets.filtered(record.objects, [&](ObjectID object) {
-        return !named.contains(at(object).sharedForm);
-    });
-    if (kept != record.objects) {
-        TypeParts parts = record;
-        parts.objects = kept;
-        result = intern(parts);
-    }
-    remember(Operation::WithoutCopiesBesideSharedForms, type.bits(), noSecondOperandInShapeMemo, result.bits());
-    return result;
-}
-
 TypeID TypeArena::testablePartOf(TypeID type)
 {
     ASSERT(type);
@@ -367,27 +281,6 @@ TypeID TypeArena::testablePartOf(TypeID type)
     TypeID result = internDescriptionByShape(*this, type, record, ShapeDescription::OfTest);
     remember(Operation::TestablePart, type.bits(), noSecondOperandInShapeMemo, result.bits());
     return result;
-}
-
-TypeID TypeArena::withObjectsReplaced(TypeID type, NOESCAPE const ScopedLambda<ObjectID(ObjectID)>& replacement)
-{
-    ASSERT(type);
-    if (holdsOnlyPrimitives(type))
-        return type;
-
-    Type record = at(type);
-    if (!record.objects)
-        return type;
-    ObjectSetID replaced = m_objectSets.replaced(record.objects, [&](ObjectID object) {
-        ObjectID objectInItsPlace = replacement(object);
-        RELEASE_ASSERT(objectInItsPlace && objectInItsPlace != ObjectTable::unknown());
-        return objectInItsPlace;
-    });
-    if (replaced == record.objects)
-        return type;
-    TypeParts parts = record;
-    parts.objects = replaced;
-    return intern(parts);
 }
 
 } } } // namespace JSC::AOT::Typed

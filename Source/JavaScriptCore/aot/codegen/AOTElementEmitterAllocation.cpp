@@ -324,6 +324,15 @@ CellPointer ArrayAllocationEmitter::allocateArrayOfHoles(const OperationContext&
     return elementsBelowLength == ElementsBelowLength::NotCleared ? array : setLength(array);
 }
 
+CellPointer ArrayAllocationEmitter::allocateEmptyArrayWithRoom(const OperationContext& context, Integer room, const ArrayStorageForm& form, LBasicBlock slowPath)
+{
+    static_assert((BASE_CONTIGUOUS_VECTOR_LEN_EMPTY | 1) <= maxHoleArrayCapacity);
+    Integer capacity = bitOr(room, integer(1));
+    CellPointer array = callNewArrayWithLength(context, form, Integer(m_out.shl(capacity.value(), m_out.constInt32(holeArrayCapacityShift))));
+    branchUnless(Condition(m_out.notNull(array.value())), slowPath);
+    return array;
+}
+
 CellPointer ArrayAllocationEmitter::newArrayOfHoles(const OperationContext& context, Integer length, const ArrayStorageForm& form, BuiltinID calledBuiltin)
 {
     LBasicBlock slowPath = newBlock();

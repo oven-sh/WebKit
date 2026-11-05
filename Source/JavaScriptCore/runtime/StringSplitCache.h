@@ -99,13 +99,10 @@ private:
 
     static bool wasSplitBefore(const StringImpl& subject)
     {
-        // Two to a row, the newer in front: two texts that fall on one row and are split in turns each find their own entry beside the other's.
-        size_t row = std::bit_cast<uintptr_t>(&subject) / alignof(StringImpl) % (s_splitOnce.size() / 2) * 2;
-        const StringImpl* newer = s_splitOnce[row].load(std::memory_order_relaxed);
-        if (newer == &subject || s_splitOnce[row + 1].load(std::memory_order_relaxed) == &subject)
+        auto& splitBefore = s_splitOnce[std::bit_cast<uintptr_t>(&subject) / alignof(StringImpl) % s_splitOnce.size()];
+        if (splitBefore.load(std::memory_order_relaxed) == &subject)
             return true;
-        s_splitOnce[row + 1].store(newer, std::memory_order_relaxed);
-        s_splitOnce[row].store(&subject, std::memory_order_relaxed);
+        splitBefore.store(&subject, std::memory_order_relaxed);
         return false;
     }
 

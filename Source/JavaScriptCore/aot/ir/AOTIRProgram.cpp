@@ -160,25 +160,6 @@ NameClass Program::nameClassOf(PropertyKeyID id) const
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-bool Program::mayNameAccessor(PropertyKeyID id) const
-{
-    if (!m_keysThatNameAccessors)
-        return true;
-    switch (at(id).kind) {
-    case PropertyKeyKind::Text:
-    case PropertyKeyKind::WellKnownSymbol:
-    case PropertyKeyKind::CreatedSymbol:
-    case PropertyKeyKind::RegisteredSymbol:
-        return m_keysThatNameAccessors->get(id.index());
-    // No computed key is one of these.
-    case PropertyKeyKind::EnginePrivateName:
-    case PropertyKeyKind::ModulePrivateName:
-    case PropertyKeyKind::PrivateName:
-        return true;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
 void Program::setDeclaredMembers(LayoutID id, LayoutSetID set)
 {
     Vector<LayoutSetID>& declaredMembers = m_derivedTables.declaredMembers;
@@ -1098,23 +1079,6 @@ bool requireAddsToRequireCache(const Program& program, ModuleID referrer, Module
         return false;
     std::span<const uint8_t> name = program.string(program.at(target).path);
     return !spanHasPrefix(name, byteCast<uint8_t>("node:"_span)) && !equalSpans(name, byteCast<uint8_t>("bun"_span)) && !equalSpans(name, byteCast<uint8_t>("bun:test"_span));
-}
-
-Vector<ModuleID> libraryModulesListedInRequireCacheForStatements(const Program& program)
-{
-    Vector<ModuleID> listed;
-    for (uint32_t index = 0; index < program.modules.size(); ++index) {
-        const Module& importer = program.modules[index];
-        if (importer.kind != ModuleKind::SourceText)
-            continue;
-        for (const ModuleRequest& request : importer.requests) {
-            if (request.kind != ModuleRequestKind::Import || request.phase != ImportPhase::Evaluation || !requireAddsToRequireCache(program, ModuleID(index), request.target))
-                continue;
-            if (!spanHasPrefix(program.string(program.at(request.target).path), byteCast<uint8_t>("bun:"_span)) && !listed.contains(request.target))
-                listed.append(request.target);
-        }
-    }
-    return listed;
 }
 
 BuiltinID functionOfHostThatRequireCallsFor(const Module& module)

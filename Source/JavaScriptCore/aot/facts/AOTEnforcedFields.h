@@ -37,7 +37,7 @@ struct EnforcedField {
 };
 
 // WHICH LAYOUTS SHARE A FAMILY WITH AN OBJECT OF A CLASS OR OF A CONSTRUCTOR FUNCTION. One look over the layouts and two over the families, whatever the program, and then one bit a question.
-// Asked member by member it was a square: n literals in one family without an instance (11-04 00:41 to 01:08).
+// Asked member by member it was a square: n literals in one family without an instance.
 class FamiliesOfInstances {
 public:
     JS_EXPORT_PRIVATE FamiliesOfInstances(const Program&, const Families&);

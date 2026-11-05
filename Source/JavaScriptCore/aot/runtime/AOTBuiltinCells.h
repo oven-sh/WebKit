@@ -52,8 +52,6 @@ public:
     JSCell* findObject(BuiltinID);
     // The key of a cell that is filled with the object. A cell holds what the realm was created with, whatever the program has put in its place since. It looks at every cell, so it is for rare paths only.
     std::optional<BuiltinCellKey> keyOfCellHolding(JSCell*) const;
-    // A cell whose built-in the realm no longer has, or never had, is filled with a function that refuses every call.
-    static bool isFunctionThatRefusesCalls(JSCell*);
     JSCell* readMember(JSGlobalObject*, JSObject* holder, BuiltinID member);
     // What the host makes at the first read of a member, and only a write replaces.
     EncodedJSValue* addressOfValue(BuiltinCellKey);

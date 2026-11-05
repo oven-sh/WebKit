@@ -475,9 +475,6 @@ public:
 
     // A ReleaseHint reads nothing, and an edge reads nothing that it brings to a parameter of which BodyIndex::isReadByReleaseHintsAlone() holds.
     JS_EXPORT_PRIVATE void compute(const BodyIndex&);
-    // Of the body of a coroutine, as its suspensions hold values: an iteration that is read counts as a reader of what it walks, a closure of what it captures,
-    // and each operation that may suspend of `heldUntilEnd`, the parameters of the entry block that a suspended coroutine holds whoever reads them.
-    JS_EXPORT_PRIVATE void computeAsSuspensionsHold(const BodyIndex&, std::span<const ValueID> heldUntilEnd);
     bool isComputedFor(const BodyIndex& index) const { return m_index == &index; }
     void forget() { m_index = nullptr; }
 

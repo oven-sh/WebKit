@@ -32,7 +32,6 @@ static constexpr uint32_t frontOperandInTextBuilderWebs = 0;
 static_assert(OperandIndex::Add::left == frontOperandInTextBuilderWebs);
 static_assert(OperandIndex::Strcat::parts == frontOperandInTextBuilderWebs);
 
-static constexpr OpcodeSet callsInTextBuilderWebs { Opcode::Call, Opcode::CallDirect };
 // A text is initialized, and is neither undefined nor null: each of them hands it on and does nothing else. RequireObject throws for a text, so it reads.
 static constexpr OpcodeSet castsInTextBuilderWebs = opcodesThatStateTypes | OpcodeSet { Opcode::CheckInitialized, Opcode::RequireObjectCoercible };
 
@@ -75,7 +74,6 @@ struct CandidateInTextBuilderWeb {
     bool isOnlyConcatenated { true };
     bool takesTextOfJSONStringify { false };
     bool hasPartsThatMayRunCode { false };
-    bool growsInCallees { false };
 };
 
 // One forward scan of the blocks of a loop of the input, for all the parameters of its head at once.
@@ -99,8 +97,6 @@ private:
     void findCandidates();
     void scanBlock(BodyBlock);
     void scanOperation(const BodyValue&);
-    // True: the call takes a text at the place that placeOfArgumentHandedBackWithMoreBehind() names, and all that it does to the texts is noted.
-    bool scanCallThatGrowsText(const BodyValue& call);
     // What holds in every turn. Of a value from in front of the loop: the type of what the walk has built for it.
     TypeID typeInLooks(ValueID) const;
     bool isProvenToBeText(ValueID) const;
@@ -288,9 +284,6 @@ void TextBuilderWebScan::findCandidates()
     auto joinsText = [&](ValueID root) {
         return operationsThatJoinTexts.contains(m_index.opcodeOf(root)) && isProvenToBeText(root);
     };
-    auto growsInCallee = [&](ValueID root) {
-        return callsInTextBuilderWebs.contains(m_index.opcodeOf(root)) && placeOfArgumentHandedBackWithMoreBehind(m_walker, m_index, m_index.value(root));
-    };
 
     auto lookAtBackEdge = [&](std::span<const ValueID> arguments) {
         for (uint32_t parameterIndex = 0; parameterIndex < numberOfParameters; ++parameterIndex) {
@@ -306,7 +299,7 @@ void TextBuilderWebScan::findCandidates()
             bool isMadeInLoop = root.index() >= m_head.firstValue().index();
             if (isMadeInLoop && isWrittenWithoutText[parameterIndex] && (m_index.isParameter(root) || !joinsText(root)))
                 cannotGrow[parameterIndex] = true;
-            else if (isMadeInLoop && (m_index.isParameter(root) || operationsThatJoinTexts.contains(m_index.opcodeOf(root)) || growsInCallee(root)))
+            else if (isMadeInLoop && (m_index.isParameter(root) || operationsThatJoinTexts.contains(m_index.opcodeOf(root))))
                 changesOnSomeBackEdge[parameterIndex] = true;
             else
                 cannotGrow[parameterIndex] = true;
@@ -350,10 +343,7 @@ bool TextBuilderWebScan::makesTextThatIsOnlyRead(const BodyValue& join)
             made = reader.id();
             continue;
         }
-        if (!callsInTextBuilderWebs.contains(opcode))
-            return true;
-        std::optional<uint32_t> placeHandedBack = placeOfArgumentHandedBackWithMoreBehind(m_walker, m_index, reader);
-        return !placeHandedBack || reader.variadicOperands()[*placeHandedBack] != made;
+        return true;
     }
 }
 
@@ -392,51 +382,12 @@ bool TextBuilderWebScan::takesTextOfJSONStringifyBehindFront(const BodyValue& jo
     return false;
 }
 
-bool TextBuilderWebScan::scanCallThatGrowsText(const BodyValue& call)
-{
-    std::span<const ValueID> operands = call.variadicOperands();
-    bool takesText = std::ranges::any_of(operands, [&](ValueID operand) {
-        NameInTextBuilderWeb* name = operand ? findName(operand) : nullptr;
-        return name && isOpen(name->text);
-    });
-    std::optional<uint32_t> place = takesText ? placeOfArgumentHandedBackWithMoreBehind(m_walker, m_index, call) : std::nullopt;
-    NameInTextBuilderWeb* grown = place && *place < operands.size() && operands[*place] ? findName(operands[*place]) : nullptr;
-    if (!grown || !isOpen(grown->text))
-        return false;
-
-    uint32_t text = grown->text;
-    uint32_t numberOfMentionsOfText = 0;
-    call.forEachOperand([&](ValueID operand, uint32_t) {
-        NameInTextBuilderWeb* name = noteMention(operand);
-        if (!name)
-            return;
-        noteThatStateIsSeen(*name);
-        numberOfMentionsOfText += name->text == text;
-    });
-    if (!isOpen(text))
-        return true;
-    // Under a second name the callee would read the text as it was. The rows stand in another function, where nothing is known of what this loop hands over but that it is a text.
-    if (numberOfMentionsOfText != 1 || !isProvenToBeText(m_head.parameter(m_candidates[text].parameterIndex))) {
-        refuse(text);
-        return true;
-    }
-    giveName(call.id(), text, call.id());
-    m_versions[text] = call.id();
-    m_candidates[text].grows = true;
-    m_candidates[text].growsInCallees = true;
-    // What the callee does behind its first append may throw.
-    m_mayThrowBehindGrowth[text] = true;
-    return true;
-}
-
 // Any other use of the current version than a cast, a conversion to a text and a growth is a read, and refuses nothing: `if (x.flush) out.push(s)`. The walk has a string made of what the builder holds there, and the builder goes on.
 void TextBuilderWebScan::scanOperation(const BodyValue& operation)
 {
     Opcode opcode = operation.opcode();
     // It reads nothing: no value is live for the sake of a hint.
     if (opcode == Opcode::ReleaseHint)
-        return;
-    if (callsInTextBuilderWebs.contains(opcode) && scanCallThatGrowsText(operation))
         return;
 
     bool joinsTexts = operationsThatJoinTexts.contains(opcode);
@@ -709,7 +660,6 @@ void TextBuilderWebScan::run(Vector<GrowingText, 2>& texts)
         grown.takesTextOfJSONStringify = candidate.takesTextOfJSONStringify;
         grown.standsUnderHandlers = m_standsUnderHandlers;
         grown.hasPartsThatMayRunCode = candidate.hasPartsThatMayRunCode;
-        grown.growsInCallees = candidate.growsInCallees;
         for (const NameInTextBuilderWeb& name : m_names) {
             if (name.text != text)
                 continue;
@@ -732,7 +682,7 @@ void findGrowingTexts(Walker& walker, BlockID inputHead, const LoopPreview& prev
 {
     const BodyIndex& index = walker.currentBodyIndex();
     // The looks found no invariant: nothing is known of what a sum gives.
-    if (preview.typesOfValues.isEmpty() || !index.holdsAnyOf(operationsThatJoinTexts | callsInTextBuilderWebs) || index.hasIrreducibleFlow())
+    if (preview.typesOfValues.isEmpty() || !index.holdsAnyOf(operationsThatJoinTexts) || index.hasIrreducibleFlow())
         return;
     if (!index.isLoopHead(inputHead) || index.isEnteredByHandlerEdge(inputHead))
         return;

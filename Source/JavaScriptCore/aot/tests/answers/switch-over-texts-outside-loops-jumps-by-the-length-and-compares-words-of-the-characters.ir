@@ -1,31 +1,47 @@
-# made of 84c2170dfc7dc4c8
+# made of 04ccbb7033d70881
 # A switch over written texts, in a function that stands in no loop: as bun_core::comptime_string_map! compiles: a jump by the length, then words of the characters against words of the texts, in line.
-# Until 11-04 such a switch jumped by the length and then CALLED a stub for each text of that length, unless three texts had one length; one of two texts called a stub for each: slower than plain Bun (115.7 | 100.9 and 106.0 | 73.0 instructions a lookup; now 47.1 and 40.9).
-# A rope and a 16-bit string take the calls, as before: the stubs answer for them without flattening. Each key and its near misses come flat, as a rope, as a piece of a longer string, as a piece of a 16-bit string and as a 16-bit string without a unit above 0xFF.
+# Such a switch once jumped by the length and then called a stub for each text of that length, unless three texts had one length; one of two texts called a stub for each: slower than plain Bun.
+# A rope and a 16-bit string take ONE call for the whole switch: the stub writes their characters down as 8-bit characters without making them flat, and the same jump and the same compares read them: one Switch.
+# The block that calls is rare, by both tests that lead to it (is it flat, is it 8-bit): a rare region sets up a frame of its own, and whoever brings a flat 8-bit string passes through without one.
+# (What `frame` says is not asked here: where proofs are checked at run time their calls give the whole function a frame, and a second call has a result.)
+# Each key and its near misses come flat, as a rope, as a piece of a longer string, as a piece of a 16-bit string and as a 16-bit string. A unit above 0xFF has no 8-bit character, whatever its low byte spells.
 # f1 = classify, f2 = two
 # RUN(EIGHT): emit f1:Body mechanisms=all
 # EIGHT-LABEL: unit f1:Body
-# EIGHT: StringImpl_length
 # EIGHT: = Switch(
-# EIGHT: characters8
+# EIGHT-NOT: = Switch(
+# RUN(RARE): emit f1:Body mechanisms=all
+# RARE-LABEL: unit f1:Body
+# RARE: = Branch({{*}}) -> rare #
+# RARE: = Branch({{*}}, rare #
+# RUN(CALL): emit f1:Body mechanisms=all
+# CALL: resultConstraints = [Register(
+# RUN(LENGTH): emit f1:Body mechanisms=all
+# LENGTH: StringImpl_length
+# RUN(WORDS): emit f1:Body mechanisms=all
+# WORDS: characters8
 # RUN(TWO): emit f2:Body mechanisms=all
 # TWO-LABEL: unit f2:Body
-# TWO: StringImpl_length
-# TWO: characters8
+# TWO: = Switch(
+# TWO-NOT: = Switch(
+# RUN(TWORARE): emit f2:Body mechanisms=all
+# TWORARE-LABEL: unit f2:Body
+# TWORARE: = Branch({{*}}) -> rare #
+# TWORARE: = Branch({{*}}, rare #
 # LIBRARY: own
 # function classify(subject: unknown, depth: number): number { if (depth > 0) return classify(subject, depth - 1); switch (subject) { case "content-type": return 1; case "content-length": return 2; case "accept": return 3; case "authorization": return 4; case "host": return 5; case "user-agent": return 6; case "connection": return 7; case "cookie": return 8; default: return 0; } }
 # function two(subject: unknown, depth: number): number { if (depth > 0) return two(subject, depth - 1); switch (subject) { case "content-type": return 1; case "authorization": return 2; default: return 0; } }
 # function all(text: string): string { const half = text.length >> 1; const rope = text.slice(0, half) + text.slice(half); const piece = (JSON.parse(JSON.stringify("<<" + text + ">>")) as string).slice(2, 2 + text.length); const widePiece = (JSON.parse(JSON.stringify("€" + text)) as string).slice(1); const wide = ("€" + text).split("€").join(""); return "" + classify(text, 1) + classify(rope, 1) + classify(piece, 1) + classify(widePiece, 1) + classify(wide, 1) + two(text, 1) + two(rope, 1) + two(widePiece, 1) + two(wide, 1); }
-# const texts: string[] = JSON.parse('["content-type","content-length","accept","authorization","host","user-agent","connection","cookie","content-typo","bontent-type","accepted","hos","","content-typ\\u0100"]');
+# const texts: string[] = JSON.parse('["content-type","content-length","accept","authorization","host","user-agent","connection","cookie","content-typo","bontent-type","accepted","hos","","content-typ\\u0100","\\u0168ost","ho\\u2073t","hos\\uff74","\\u0163ontent-type","authori\\u017aation","hosthost","content-typecontent-typecontent-type"]');
 # for (const text of texts) report(all(text));
 # report("" + classify(0, 1) + classify(null, 1) + classify(undefined, 1) + classify({}, 1) + classify(["host"], 1) + classify(true, 1) + two(1.5, 1) + two(Symbol("host"), 1));
 # report("end");
 # At the end the shell runs the same text itself: every answer is the same.
-# RUN: run-in-shell (function () { "use strict"; const show = value => typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value); const twin = async report => { function classify(subject, depth) { if (depth > 0) return classify(subject, depth - 1); switch (subject) { case "content-type": return 1; case "content-length": return 2; case "accept": return 3; case "authorization": return 4; case "host": return 5; case "user-agent": return 6; case "connection": return 7; case "cookie": return 8; default: return 0; } } function two(subject, depth) { if (depth > 0) return two(subject, depth - 1); switch (subject) { case "content-type": return 1; case "authorization": return 2; default: return 0; } } function all(text) { const half = text.length >> 1; const rope = text.slice(0, half) + text.slice(half); const piece = JSON.parse(JSON.stringify("<<" + text + ">>")).slice(2, 2 + text.length); const widePiece = JSON.parse(JSON.stringify("€" + text)).slice(1); const wide = ("€" + text).split("€").join(""); return "" + classify(text, 1) + classify(rope, 1) + classify(piece, 1) + classify(widePiece, 1) + classify(wide, 1) + two(text, 1) + two(rope, 1) + two(widePiece, 1) + two(wide, 1); } const texts = JSON.parse('["content-type","content-length","accept","authorization","host","user-agent","connection","cookie","content-typo","bontent-type","accepted","hos","","content-typ\\u0100"]'); for (const text of texts) report(all(text)); report("" + classify(0, 1) + classify(null, 1) + classify(undefined, 1) + classify({}, 1) + classify(["host"], 1) + classify(true, 1) + two(1.5, 1) + two(Symbol("host"), 1)); report("end"); }; const got = []; globalThis.report = value => { got.push(show(value)); if (value !== "end") return; const expected = []; twin(value => { expected.push(show(value)); if (value !== "end") return; let same = 0; for (let n = 0; n < expected.length; n++) { if (got[n] === expected[n]) same++; else print("answer " + n + ": " + String(got[n]).slice(0, 90) + " and not " + expected[n].slice(0, 90)); } print(same + " of " + expected.length + " of " + got.length); }); }; })();
-# CHECK: 16 of 16 of 16
+# RUN: run-in-shell (function () { "use strict"; const show = value => typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value); const twin = async report => { function classify(subject, depth) { if (depth > 0) return classify(subject, depth - 1); switch (subject) { case "content-type": return 1; case "content-length": return 2; case "accept": return 3; case "authorization": return 4; case "host": return 5; case "user-agent": return 6; case "connection": return 7; case "cookie": return 8; default: return 0; } } function two(subject, depth) { if (depth > 0) return two(subject, depth - 1); switch (subject) { case "content-type": return 1; case "authorization": return 2; default: return 0; } } function all(text) { const half = text.length >> 1; const rope = text.slice(0, half) + text.slice(half); const piece = JSON.parse(JSON.stringify("<<" + text + ">>")).slice(2, 2 + text.length); const widePiece = JSON.parse(JSON.stringify("€" + text)).slice(1); const wide = ("€" + text).split("€").join(""); return "" + classify(text, 1) + classify(rope, 1) + classify(piece, 1) + classify(widePiece, 1) + classify(wide, 1) + two(text, 1) + two(rope, 1) + two(widePiece, 1) + two(wide, 1); } const texts = JSON.parse('["content-type","content-length","accept","authorization","host","user-agent","connection","cookie","content-typo","bontent-type","accepted","hos","","content-typ\\u0100","\\u0168ost","ho\\u2073t","hos\\uff74","\\u0163ontent-type","authori\\u017aation","hosthost","content-typecontent-typecontent-type"]'); for (const text of texts) report(all(text)); report("" + classify(0, 1) + classify(null, 1) + classify(undefined, 1) + classify({}, 1) + classify(["host"], 1) + classify(true, 1) + two(1.5, 1) + two(Symbol("host"), 1)); report("end"); }; const got = []; globalThis.report = value => { got.push(show(value)); if (value !== "end") return; const expected = []; twin(value => { expected.push(show(value)); if (value !== "end") return; let same = 0; for (let n = 0; n < expected.length; n++) { if (got[n] === expected[n]) same++; else print("answer " + n + ": " + String(got[n]).slice(0, 90) + " and not " + expected[n].slice(0, 90)); } print(same + " of " + expected.length + " of " + got.length); }); }; })();
+# CHECK: 23 of 23 of 23
 # CHECK-NEXT: exited with 0
-# RUN(ALSO1): run-in-shell mechanisms=-Guesses (function () { "use strict"; const show = value => typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value); const twin = async report => { function classify(subject, depth) { if (depth > 0) return classify(subject, depth - 1); switch (subject) { case "content-type": return 1; case "content-length": return 2; case "accept": return 3; case "authorization": return 4; case "host": return 5; case "user-agent": return 6; case "connection": return 7; case "cookie": return 8; default: return 0; } } function two(subject, depth) { if (depth > 0) return two(subject, depth - 1); switch (subject) { case "content-type": return 1; case "authorization": return 2; default: return 0; } } function all(text) { const half = text.length >> 1; const rope = text.slice(0, half) + text.slice(half); const piece = JSON.parse(JSON.stringify("<<" + text + ">>")).slice(2, 2 + text.length); const widePiece = JSON.parse(JSON.stringify("€" + text)).slice(1); const wide = ("€" + text).split("€").join(""); return "" + classify(text, 1) + classify(rope, 1) + classify(piece, 1) + classify(widePiece, 1) + classify(wide, 1) + two(text, 1) + two(rope, 1) + two(widePiece, 1) + two(wide, 1); } const texts = JSON.parse('["content-type","content-length","accept","authorization","host","user-agent","connection","cookie","content-typo","bontent-type","accepted","hos","","content-typ\\u0100"]'); for (const text of texts) report(all(text)); report("" + classify(0, 1) + classify(null, 1) + classify(undefined, 1) + classify({}, 1) + classify(["host"], 1) + classify(true, 1) + two(1.5, 1) + two(Symbol("host"), 1)); report("end"); }; const got = []; globalThis.report = value => { got.push(show(value)); if (value !== "end") return; const expected = []; twin(value => { expected.push(show(value)); if (value !== "end") return; let same = 0; for (let n = 0; n < expected.length; n++) { if (got[n] === expected[n]) same++; else print("answer " + n + ": " + String(got[n]).slice(0, 90) + " and not " + expected[n].slice(0, 90)); } print(same + " of " + expected.length + " of " + got.length); }); }; })();
-# ALSO1: 16 of 16 of 16
+# RUN(ALSO1): run-in-shell mechanisms=-Guesses (function () { "use strict"; const show = value => typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value); const twin = async report => { function classify(subject, depth) { if (depth > 0) return classify(subject, depth - 1); switch (subject) { case "content-type": return 1; case "content-length": return 2; case "accept": return 3; case "authorization": return 4; case "host": return 5; case "user-agent": return 6; case "connection": return 7; case "cookie": return 8; default: return 0; } } function two(subject, depth) { if (depth > 0) return two(subject, depth - 1); switch (subject) { case "content-type": return 1; case "authorization": return 2; default: return 0; } } function all(text) { const half = text.length >> 1; const rope = text.slice(0, half) + text.slice(half); const piece = JSON.parse(JSON.stringify("<<" + text + ">>")).slice(2, 2 + text.length); const widePiece = JSON.parse(JSON.stringify("€" + text)).slice(1); const wide = ("€" + text).split("€").join(""); return "" + classify(text, 1) + classify(rope, 1) + classify(piece, 1) + classify(widePiece, 1) + classify(wide, 1) + two(text, 1) + two(rope, 1) + two(widePiece, 1) + two(wide, 1); } const texts = JSON.parse('["content-type","content-length","accept","authorization","host","user-agent","connection","cookie","content-typo","bontent-type","accepted","hos","","content-typ\\u0100","\\u0168ost","ho\\u2073t","hos\\uff74","\\u0163ontent-type","authori\\u017aation","hosthost","content-typecontent-typecontent-type"]'); for (const text of texts) report(all(text)); report("" + classify(0, 1) + classify(null, 1) + classify(undefined, 1) + classify({}, 1) + classify(["host"], 1) + classify(true, 1) + two(1.5, 1) + two(Symbol("host"), 1)); report("end"); }; const got = []; globalThis.report = value => { got.push(show(value)); if (value !== "end") return; const expected = []; twin(value => { expected.push(show(value)); if (value !== "end") return; let same = 0; for (let n = 0; n < expected.length; n++) { if (got[n] === expected[n]) same++; else print("answer " + n + ": " + String(got[n]).slice(0, 90) + " and not " + expected[n].slice(0, 90)); } print(same + " of " + expected.length + " of " + got.length); }); }; })();
+# ALSO1: 23 of 23 of 23
 # ALSO1-NEXT: exited with 0
 
 module m0 path="switch-over-texts-outside-loops-jumps-by-the-length-and-compares-words-of-the-characters.ts" displayPath="switch-over-texts-outside-loops-jumps-by-the-length-and-compares-words-of-the-characters.ts" body=f0 namespaceLayout=L(m0)
@@ -33,7 +49,7 @@ entry module=m0
 expectedresult x0 type=Array<undefined|null|string>
 expectedresult x1 type=string
 expectedresult x2 type=string
-layout L0 module=m0 position=1513
+layout L0 module=m0 position=1645
 data d0 root=Object{layout=L0} module=m0
 data d1 root=Array{contents=anything elements=[String{value="host"}]} module=m0
 variable g0 name="classify" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
@@ -45,83 +61,83 @@ function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} res
     v2 = Builtin builtin=JSON @1198
     v3 = PropGet v2 key="parse" @1198
     v4 = Convert v3 declared={type=builtin(JSONParse) flags=[IsExpected]} @1198
-    v5 = String string="[\"content-type\",\"content-length\",\"accept\",\"authorization\",\"host\",\"user-agent\",\"connection\",\"cookie\",\"content-typo\",\"bontent-type\",\"accepted\",\"hos\",\"\",\"content-typ\\u0100\"]" @1209
+    v5 = String string="[\"content-type\",\"content-length\",\"accept\",\"authorization\",\"host\",\"user-agent\",\"connection\",\"cookie\",\"content-typo\",\"bontent-type\",\"accepted\",\"hos\",\"\",\"content-typ\\u0100\",\"\\u0168ost\",\"ho\\u2073t\",\"hos\\uff74\",\"\\u0163ontent-type\",\"authori\\u017aation\",\"hosthost\",\"content-typecontent-typecontent-type\"]" @1209
     v6 = Call v4, v2, v5 calleeKey="parse" calleeName="JSON.parse" expectedResult=x0 @1203
     v7 = Convert v6 declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]} @1198
-    v8 = IteratorOpen v7 @1385
-    Jump -> next b1() @1385
+    v8 = IteratorOpen v7 @1517
+    Jump -> next b1() @1517
   b1():
-    LoopHint @1385
-    v10 = IteratorResume v8 @1385
-    v11 = ResultAt v10 @1385
-    v12 = ResultAt v10 index=1 @1385
-    Branch v11 -> taken b2(), notTaken b3() @1385
+    LoopHint @1517
+    v10 = IteratorResume v8 @1517
+    v11 = ResultAt v10 @1517
+    v12 = ResultAt v10 index=1 @1517
+    Branch v11 -> taken b2(), notTaken b3() @1517
   b2():
-    v13 = Builtin builtin=GlobalThis @1430
-    v14 = PropGet v13 key="report" [isFreeName] @1430
-    v15 = String string="" @1437
-    v16 = GetModuleVariable variable=g0 @1442
-    v17 = Integer @1451
-    v18 = Integer integer=1 @1454
-    v19 = Call v16, -, v17, v18 calleeName="classify" @1442
-    v20 = Add v15, v19 @1442
-    v21 = GetModuleVariable variable=g0 @1459
-    v22 = Null @1468
-    v23 = Integer integer=1 @1474
-    v24 = Call v21, -, v22, v23 calleeName="classify" @1459
-    v25 = Add v20, v24 @1459
-    v26 = GetModuleVariable variable=g0 @1479
-    v27 = Undefined @1488
-    v28 = Integer integer=1 @1499
-    v29 = Call v26, -, v27, v28 calleeName="classify" @1479
-    v30 = Add v25, v29 @1479
-    v31 = GetModuleVariable variable=g0 @1504
-    v32 = Data data=d0 @1513
-    v33 = Integer integer=1 @1517
-    v34 = Call v31, -, v32, v33 calleeName="classify" @1504
-    v35 = Add v30, v34 @1504
-    v36 = GetModuleVariable variable=g0 @1522
-    v37 = Data data=d1 @1531
-    v38 = Integer integer=1 @1541
-    v39 = Call v36, -, v37, v38 calleeName="classify" @1522
-    v40 = Add v35, v39 @1522
-    v41 = GetModuleVariable variable=g0 @1546
-    v42 = Boolean boolean=true @1555
-    v43 = Integer integer=1 @1561
-    v44 = Call v41, -, v42, v43 calleeName="classify" @1546
-    v45 = Add v40, v44 @1546
-    v46 = GetModuleVariable variable=g1 @1566
-    v47 = Double number=1.5 @1570
-    v48 = Integer integer=1 @1575
-    v49 = Call v46, -, v47, v48 calleeName="two" @1566
-    v50 = Add v45, v49 @1566
-    v51 = GetModuleVariable variable=g1 @1580
-    v52 = Builtin builtin=Symbol @1584
-    v53 = String string="host" @1591
-    v54 = Call v52, -, v53 calleeName="Symbol" callNumber=31 @1584
-    v55 = Convert v54 declared={type=undefined|null|symbol flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @1584
-    v56 = Integer integer=1 @1600
-    v57 = Call v51, -, v55, v56 calleeName="two" @1580
-    v58 = Add v50, v57 @1580
-    v59 = Call v14, -, v58 calleeName="report" @1430
-    v60 = Builtin builtin=GlobalThis @1605
-    v61 = PropGet v60 key="report" [isFreeName] @1605
-    v62 = String string="end" @1612
-    v63 = Call v61, -, v62 calleeName="report" @1605
-    v64 = Undefined @1605
-    Return v64 @1605
+    v13 = Builtin builtin=GlobalThis @1562
+    v14 = PropGet v13 key="report" [isFreeName] @1562
+    v15 = String string="" @1569
+    v16 = GetModuleVariable variable=g0 @1574
+    v17 = Integer @1583
+    v18 = Integer integer=1 @1586
+    v19 = Call v16, -, v17, v18 calleeName="classify" @1574
+    v20 = Add v15, v19 @1574
+    v21 = GetModuleVariable variable=g0 @1591
+    v22 = Null @1600
+    v23 = Integer integer=1 @1606
+    v24 = Call v21, -, v22, v23 calleeName="classify" @1591
+    v25 = Add v20, v24 @1591
+    v26 = GetModuleVariable variable=g0 @1611
+    v27 = Undefined @1620
+    v28 = Integer integer=1 @1631
+    v29 = Call v26, -, v27, v28 calleeName="classify" @1611
+    v30 = Add v25, v29 @1611
+    v31 = GetModuleVariable variable=g0 @1636
+    v32 = Data data=d0 @1645
+    v33 = Integer integer=1 @1649
+    v34 = Call v31, -, v32, v33 calleeName="classify" @1636
+    v35 = Add v30, v34 @1636
+    v36 = GetModuleVariable variable=g0 @1654
+    v37 = Data data=d1 @1663
+    v38 = Integer integer=1 @1673
+    v39 = Call v36, -, v37, v38 calleeName="classify" @1654
+    v40 = Add v35, v39 @1654
+    v41 = GetModuleVariable variable=g0 @1678
+    v42 = Boolean boolean=true @1687
+    v43 = Integer integer=1 @1693
+    v44 = Call v41, -, v42, v43 calleeName="classify" @1678
+    v45 = Add v40, v44 @1678
+    v46 = GetModuleVariable variable=g1 @1698
+    v47 = Double number=1.5 @1702
+    v48 = Integer integer=1 @1707
+    v49 = Call v46, -, v47, v48 calleeName="two" @1698
+    v50 = Add v45, v49 @1698
+    v51 = GetModuleVariable variable=g1 @1712
+    v52 = Builtin builtin=Symbol @1716
+    v53 = String string="host" @1723
+    v54 = Call v52, -, v53 calleeName="Symbol" callNumber=31 @1716
+    v55 = Convert v54 declared={type=undefined|null|symbol flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @1716
+    v56 = Integer integer=1 @1732
+    v57 = Call v51, -, v55, v56 calleeName="two" @1712
+    v58 = Add v50, v57 @1712
+    v59 = Call v14, -, v58 calleeName="report" @1562
+    v60 = Builtin builtin=GlobalThis @1737
+    v61 = PropGet v60 key="report" [isFreeName] @1737
+    v62 = String string="end" @1744
+    v63 = Call v61, -, v62 calleeName="report" @1737
+    v64 = Undefined @1737
+    Return v64 @1737
   b3():
-    Jump -> next b4() @1385
+    Jump -> next b4() @1517
   b4() handler=b5():
-    v65 = Builtin builtin=GlobalThis @1411
-    v66 = PropGet v65 key="report" [isFreeName] @1411
-    v67 = Call v1, -, v12 calleeName="all" @1418
-    v68 = Call v66, -, v67 calleeName="report" @1411
-    Jump -> next b1() @1411
+    v65 = Builtin builtin=GlobalThis @1543
+    v66 = PropGet v65 key="report" [isFreeName] @1543
+    v67 = Call v1, -, v12 calleeName="all" @1550
+    v68 = Call v66, -, v67 calleeName="report" @1543
+    Jump -> next b1() @1543
   b5() role=IterationCleanup subject=v8:
-    v69 = CatchException @1385
-    IteratorClose v8 completion=Throw @1385
-    Rethrow v69 @1385
+    v69 = CatchException @1517
+    IteratorClose v8 completion=Throw @1517
+    Rethrow v69 @1517
 }
 function f1 name="classify" module=m0 position=47 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=number}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: anything, v1: number):

@@ -39,7 +39,7 @@ void CallEmitter::generateCallList(const ValueContext& value)
         return;
     }
 
-    requireCallableBeforeTailCall(value, callee, thisValue);
+    requireCallableBeforeTailCall(value, callee, thisValue, boxCell(in<CellPointer>(value->listOperand())));
     tailCallByConvention(value, call);
 }
 

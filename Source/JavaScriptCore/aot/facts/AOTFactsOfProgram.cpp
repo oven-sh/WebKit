@@ -151,9 +151,11 @@ struct RowsOfProgramFacts {
     // Bit i: argument i may be the file. Bit 31 stands for every argument from 31 on.
     uint32_t fileArguments { 0 };
     BuiltinID constructorOfURLs;
+    BuiltinName href;
     // callOrReadOfBuiltinIsEvent().
     BitVector areEvents;
     // A row writes on an operand under a key that the call brings: `Reflect.set(target, key, value)`, `Object.assign(target, source)`.
+    // Or changes what an operand inherits from: `Object.setPrototypeOf(target, above)`.
     BitVector writeUnderKeysOfCalls;
 };
 
@@ -226,7 +228,7 @@ RowsOfProgramFacts::RowsOfProgramFacts(const BuiltinTable& builtins)
         for (const BuiltinOverload& overload : builtins.overloadsOf(entry)) {
             if (overload.isUndeclared() && std::ranges::any_of(builtins.featureUsesOf(row), readsDataOfLocalesInProgramFacts, &BuiltinFeatureUse::feature))
                 readLocalesWithoutDescription.quickSet(row.index());
-            if (std::ranges::any_of(overload.flow.propertyActions, writesUnderKeyOfCallInProgramFacts))
+            if (std::ranges::any_of(overload.flow.propertyActions, writesUnderKeyOfCallInProgramFacts) || std::ranges::contains(overload.flow.propertyActions, BuiltinPropertyActionKind::ChangesPrototype, &BuiltinPropertyAction::kind))
                 writeUnderKeysOfCalls.quickSet(row.index());
             if (const BuiltinParameter* receiver = overload.receiver.get())
                 noteParameter(overload.mode, *receiver);
@@ -243,6 +245,7 @@ RowsOfProgramFacts::RowsOfProgramFacts(const BuiltinTable& builtins)
     BuiltinClassID classOfURLs = BuiltinClasses::URL;
     if (BuiltinID constructor = classOfURLs ? builtins.at(classOfURLs).constructor : BuiltinID())
         constructorOfURLs = builtins.canonicalID(constructor);
+    href = builtins.nameOf(byteCast<uint8_t>("href"_s.span()));
 }
 
 // ---- The look at one body
@@ -253,7 +256,8 @@ struct FindingOfProgramFacts {
     // NameReadOffUnknownValue: code of the program spells a name of the table in a read off a value that the look does not follow.
     // ReadThatNoRowAnswers: off a built-in that the look follows, under a name that the table neither lists there nor rules out.
     // KeysOfBuiltinListed: an operation, or a row that a call in sight may enter, goes through the own keys of a built-in that the look follows, or may run code of the program with it for `this`.
-    enum class Kind : uint8_t { UseOfBuiltin, ReadOfAnyMember, WriteOnBuiltin, NameStoredByRow, NameReadOffUnknownValue, ReadThatNoRowAnswers, KeysOfBuiltinListed, OptionThatRunsCode, UnseenCode, LocaleUse, WorkerEntry, WorkerStartWithoutName, URLThatStartsWorker, URLThatLeavesBody, NamedModule };
+    // PrototypeChangeOfBuiltin: a row that a call in sight enters changes what a built-in that the look follows inherits from.
+    enum class Kind : uint8_t { UseOfBuiltin, ReadOfAnyMember, WriteOnBuiltin, PrototypeChangeOfBuiltin, NameStoredByRow, NameReadOffUnknownValue, ReadThatNoRowAnswers, KeysOfBuiltinListed, OptionThatRunsCode, UnseenCode, LocaleUse, WorkerEntry, WorkerStartWithoutName, URLThatStartsWorker, URLThatLeavesBody, NamedModule, LoaderHandedToText };
 
     Kind kind { Kind::UseOfBuiltin };
     // UseOfBuiltin, ReadOfAnyMember: OptionSet<BuiltinUse>. UnseenCode: UnseenCodeCause. LocaleUse: LocaleUseKind. WorkerEntry: whether the start may have options.
@@ -377,6 +381,7 @@ private:
     // Null too where the value may be something else.
     BuiltinID builtinSurelyAt(ValueID value) const { return value && !m_mayBeSomethingElse.get(value.index()) ? m_builtinOfValue[value.index()] : BuiltinID(); }
     ValueID originOfURL(ValueID value) const { return value && !m_originOfURLOfValue.isEmpty() ? m_originOfURLOfValue[value.index()] : ValueID(); }
+    ValueID originOfURLOrOfItsText(ValueID) const;
     bool isFollowed(ValueID value) const { return builtinAt(value) || originOfURL(value); }
     BodyValue valueBehindCasts(ValueID value) const { return m_index.value(m_index.valueBehindCasts(value)); }
 
@@ -401,6 +406,7 @@ private:
     void noteObjectOfModule(RuntimeModuleID, const BodyValue& load);
     void accessMember(const BodyValue&, BuiltinID holder);
     void lookAtCall(const BodyValue&);
+    void noteLoaderHandedToText(const BodyValue&);
     void noteLocalesPassed(const BodyValue& call, BuiltinID row, BuiltinCallMode, bool spellsOutArguments);
     void noteStartOfWorker(const BodyValue& call, bool spellsOutArguments);
     bool listKeysOfLiteral(ValueID, Vector<PropertyKeyID, 4>&) const;
@@ -422,6 +428,7 @@ private:
     const FunctionID m_id;
     const Function& m_function;
     const bool m_isOfProgram;
+    bool m_readsOffNodeVm { false };
     const BodyIndex& m_index;
     // ThinSummary::blocksNeverEntered.
     std::span<const BlockID> m_blocksNeverEntered;
@@ -587,6 +594,7 @@ void BodyLookOfProgramFacts::accessMember(const BodyValue& value, BuiltinID hold
 
     if (use == BuiltinUse::Written)
         noteWrite(holder, key, value);
+    m_readsOffNodeVm |= use == BuiltinUse::Read && m_builtins.canonicalID(holder) == m_builtins.canonicalID(Builtins::NodeVm);
     BuiltinID member = memberFoundOn(holder, key);
     // An accessor that the program has laid above the holder is called with the holder for `this`.
     bool mayRunAccessorAbove = use == BuiltinUse::Written || (use == BuiltinUse::Read && (!member || (m_builtins.at(m_builtins.canonicalID(member)).kind == BuiltinKind::Accessor && m_builtins.canonicalID(m_builtins.at(member).holder) != m_builtins.canonicalID(holder))));
@@ -723,6 +731,22 @@ void BodyLookOfProgramFacts::noteLocalesPassed(const BodyValue& call, BuiltinID 
     }
 }
 
+// `new URL("./job.ts", import.meta.url).href`
+ValueID BodyLookOfProgramFacts::originOfURLOrOfItsText(ValueID value) const
+{
+    if (ValueID origin = originOfURL(value))
+        return origin;
+    BodyValue read = valueBehindCasts(value);
+    if (!m_rows.href || read.opcode() != Opcode::PropGet || builtinMemberNameOf(m_program, read.as<Opcode::PropGet>().key()).name != m_rows.href)
+        return { };
+    ValueID origin = originOfURL(read.operand(0));
+    if (!origin || !callsThatSpellOutArgumentsInProgramFacts.contains(m_index.opcodeOf(origin)))
+        return { };
+    // A URL whose text nobody knows is warned of here: the object itself says nothing.
+    std::span<const ValueID> written = m_index.value(origin).variadicOperands();
+    return !written.empty() && valueBehindCasts(written[0]).opcode() == Opcode::String ? origin : ValueID();
+}
+
 void BodyLookOfProgramFacts::noteStartOfWorker(const BodyValue& call, bool spellsOutArguments)
 {
     if (!spellsOutArguments)
@@ -744,7 +768,7 @@ void BodyLookOfProgramFacts::noteStartOfWorker(const BodyValue& call, bool spell
         }
         if (opcode == Opcode::String)
             paths.append(passed.as<Opcode::String>().string());
-        else if (ValueID origin = originOfURL(arguments[argument])) {
+        else if (ValueID origin = originOfURLOrOfItsText(arguments[argument])) {
             namesFile = true;
             note(Finding::Kind::URLThatStartsWorker, 0, Wire::none, witnessAt(m_index.value(origin)));
         } else
@@ -803,6 +827,11 @@ void BodyLookOfProgramFacts::noteWritesOfRow(const BodyValue& call, BuiltinID ro
         if (overload.mode != mode)
             continue;
         for (const BuiltinPropertyAction& action : overload.flow.propertyActions) {
+            if (action.kind == BuiltinPropertyActionKind::ChangesPrototype) {
+                if (BuiltinID target = builtinAt(passedAs(action.object)))
+                    note(Finding::Kind::PrototypeChangeOfBuiltin, 0, target.index(), witnessAt(call));
+                continue;
+            }
             if (!writesUnderKeyOfCallInProgramFacts(action))
                 continue;
             BuiltinID target = builtinAt(passedAs(action.object));
@@ -871,8 +900,38 @@ bool BodyLookOfProgramFacts::mayPass(const BodyValue& call, const BuiltinConditi
     return false;
 }
 
+// `vm.runInNewContext(text, { require })`, `{ require: createRequire(import.meta.url) }`: a literal of this function hands a text a loader. Nobody follows one that goes a longer way.
+// What is read off node:vm is code of the library, which this look does not follow: it goes by the holder.
+void BodyLookOfProgramFacts::noteLoaderHandedToText(const BodyValue& call)
+{
+    auto definitionBy = [&](Opcode opcode, ValueID value) {
+        ValueID behind = value ? m_index.valueBehindCasts(value) : ValueID();
+        return behind && !m_index.isParameter(behind) && m_index.opcodeOf(behind) == opcode ? behind : ValueID();
+    };
+    auto isAt = [&](BuiltinID wanted, ValueID value) {
+        BuiltinID found = builtinAt(value);
+        return found && m_builtins.canonicalID(found) == m_builtins.canonicalID(wanted);
+    };
+    ValueID read = m_isOfProgram && callsThatSpellOutArgumentsInProgramFacts.contains(call.opcode()) ? definitionBy(Opcode::PropGet, call.operand(0)) : ValueID();
+    if (!read || !isAt(Builtins::NodeVm, m_index.value(read).operand(0)))
+        return;
+    for (ValueID argument : call.variadicOperands()) {
+        ValueID finished = definitionBy(Opcode::FinishObject, argument);
+        ValueID literal = definitionBy(Opcode::NewObject, finished ? m_index.value(finished).operand(0) : argument);
+        if (!literal)
+            continue;
+        m_index.value(literal).forEachOperand([&](ValueID field, uint32_t) {
+            ValueID made = definitionBy(Opcode::Call, field);
+            if (made ? isAt(Builtins::NodeModuleCreateRequire, m_index.value(made).operand(0)) : isAt(Builtins::ModuleRequire, field))
+                note(Finding::Kind::LoaderHandedToText, 0, Wire::none, witnessAt(call));
+        });
+    }
+}
+
 void BodyLookOfProgramFacts::lookAtCall(const BodyValue& call)
 {
+    if (m_readsOffNodeVm)
+        noteLoaderHandedToText(call);
     BuiltinID callee = builtinAt(call.operand(0));
     if (!callee)
         return;
@@ -1644,8 +1703,6 @@ public:
     // In front of the questions, behind whatever the lookups have come to hold.
     void settle();
 
-    // False: the program calls, constructs or lets go a built-in of which runsCodeThatNoLockIsLaidBeside() holds.
-    bool locksAreLaid() const { return m_locksAreLaid; }
     bool canLockAtStartUp(BuiltinID member) const;
     // None: a lock on the member turns away nothing that the build has seen coming.
     ReasonBuiltinStaysOpen reasonToLeaveOpen(BuiltinID member) const { return reasonToLeaveOpen(member, m_isLostOutOfPlaceThatHolds); }
@@ -1877,6 +1934,7 @@ void WritesOnBuiltinsInProgramFacts::take(const FindingOfProgramFacts& finding)
     case Kind::NameReadOffUnknownValue:
         m_namesReadByProgram.set(finding.subject);
         break;
+    case Kind::PrototypeChangeOfBuiltin:
     case Kind::ReadThatNoRowAnswers:
     case Kind::KeysOfBuiltinListed:
     case Kind::UnseenCode:
@@ -1886,6 +1944,7 @@ void WritesOnBuiltinsInProgramFacts::take(const FindingOfProgramFacts& finding)
     case Kind::URLThatStartsWorker:
     case Kind::URLThatLeavesBody:
     case Kind::NamedModule:
+    case Kind::LoaderHandedToText:
         break;
     }
 }
@@ -2076,12 +2135,11 @@ private:
 
     bool isConstantLocation(BuiltinID member) const;
     BuiltinID builtinReadByPath(const BodyIndex&, ValueID) const;
+    BuiltinID builtinSpelledByPath(const BodyIndex&, ValueID) const;
     bool isSurelyNot(const BodyIndex&, ValueID, BuiltinID member) const;
     bool changesMember(const BodyIndex&, ValueID descriptor, BuiltinID member, bool& isCertain) const;
     bool holdsNoCodeOfProgram(const BodyIndex&, ValueID) const;
     bool namesBuiltinThatEndsProcess(const BodyIndex&, const BodyValue&) const;
-    bool objectsFindNothingUnder(LayoutID, PropertyKeyID) const;
-    bool findsNoThen(FunctionID, const BodyIndex&, ValueID awaited) const;
     bool codeThatNobodyNamesMayLeave();
     bool mayLeave(FunctionID, const BodyIndex&, const BodyValue&);
     bool bodyMayLeave(FunctionID);
@@ -2174,6 +2232,8 @@ private:
     bool m_nativeCodeMayHoldObjects { false };
     // By canonical built-in: takeBuiltinsThatCameIntoReach() has listed it.
     BitVector m_hasComeIntoReach;
+    // By class: it has listed the constructor for the sake of the objects.
+    BitVector m_constructorIsListedForObjects;
 
     BitVector m_modulesEvaluated;
     Vector<ModuleID> m_modulesToFollow;
@@ -2185,6 +2245,7 @@ private:
     Vector<LocaleUse> m_localeUsesAtCalls;
     Vector<Witness> m_urlsThatLeaveBodies;
     bool m_isStartedWithoutName { false };
+    bool m_loaderIsHandedToText { false };
     Witness m_startWithoutName { noWitness };
     // `hand(Worker)`: by an operation that names it. Where a holder above it is let go is no such place.
     Witness m_whereConstructorOfWorkersIsLetGo { noWitness };
@@ -2232,6 +2293,7 @@ BuilderOfProgramFacts::BuilderOfProgramFacts(const InputsOfProgramFacts& inputs,
     , m_writes(inputs.program, m_refused, inputs.linked.lookups)
     , m_namesOfProtocols(m_builtins.nameCount())
     , m_hasComeIntoReach(m_builtins.builtinCount())
+    , m_constructorIsListedForObjects(m_builtins.classCount())
     , m_modulesEvaluated(inputs.program.modules.size())
 {
     m_uses.fill(OptionSet<BuiltinUse>(), m_builtins.builtinCount());
@@ -2311,6 +2373,10 @@ void BuilderOfProgramFacts::take(std::span<const Finding> findings)
             }
             break;
         }
+        case Finding::Kind::PrototypeChangeOfBuiltin:
+            if (!isLibraryCode(m_source, m_source.at(FunctionID(finding.witness.function))))
+                m_writesOfProgramOnBuiltins.append(finding.witness);
+            break;
         case Finding::Kind::NameStoredByRow:
             // Under a key that nobody knows: the symbol under which the host looks for an inspector may be the key.
             if (finding.subject == Wire::none)
@@ -2344,6 +2410,9 @@ void BuilderOfProgramFacts::take(std::span<const Finding> findings)
             break;
         case Finding::Kind::WorkerStartWithoutName:
             noteStartWithoutName(finding.witness);
+            break;
+        case Finding::Kind::LoaderHandedToText:
+            m_loaderIsHandedToText = true;
             break;
         case Finding::Kind::URLThatStartsWorker:
             m_program.urlsThatStartWorkers.append(finding.witness);
@@ -2548,7 +2617,8 @@ static bool isLibraryModuleWithoutCodeInProgramFacts(const Program& program, con
 void BuilderOfProgramFacts::evaluate(ModuleID id, const Witness& witness)
 {
     const Module& module = m_source.at(id);
-    if (isCodeOutsideImageInProgramFacts(module))
+    // A test writes the file anew before it is first loaded: what runs then is a text that nobody has read, as that of a file that was not there when the run was built.
+    if (isCodeOutsideImageInProgramFacts(module) || module.flags.contains(ModuleFlags::IsChangedOnDiskByRun))
         add(m_program.unseenCode, UnseenCodeCause::ImportsUncompiledModule, { }, witness);
     // `import { heapStats } from "bun:jsc"`: where the loader fills a variable for a name out of the object of a module of native code, nobody follows the variable.
     BuiltinID object = module.runtimeModule ? m_builtins.namespaceOf(module.runtimeModule) : BuiltinID();
@@ -2887,6 +2957,19 @@ BuiltinID BuilderOfProgramFacts::builtinReadByPath(const BodyIndex& index, Value
     }
 }
 
+// `Array.prototype` where some test may replace `Array`: what the text spells, whether or not each member on the way stays what it is. For a warning: it says what happens if nobody has replaced one.
+BuiltinID BuilderOfProgramFacts::builtinSpelledByPath(const BodyIndex& index, ValueID value) const
+{
+    if (BuiltinID read = builtinReadByPath(index, value))
+        return read;
+    value = value ? index.valueBehindCasts(value) : ValueID();
+    if (!value || index.isParameter(value) || index.opcodeOf(value) != Opcode::PropGet)
+        return { };
+    BodyValue read = index.value(value);
+    BuiltinID holder = builtinSpelledByPath(index, read.operand(0));
+    return holder ? findOwnMember(m_source, m_builtins.canonicalID(holder), read.as<Opcode::PropGet>().key()) : BuiltinID();
+}
+
 bool BuilderOfProgramFacts::isSurelyNot(const BodyIndex& index, ValueID value, BuiltinID member) const
 {
     if (BuiltinID builtin = builtinReadByPath(index, value))
@@ -3019,40 +3102,6 @@ bool BuilderOfProgramFacts::namesBuiltinThatEndsProcess(const BodyIndex& index, 
     }
 }
 
-// On an object of the layout, and on whatever the program has laid above it. Above that stands an object of the engine that the program cannot extend.
-bool BuilderOfProgramFacts::objectsFindNothingUnder(LayoutID layout, PropertyKeyID key) const
-{
-    const LinkTables& linked = m_inputs.linked;
-    const LinkedLayout& claims = linked.layout(layout);
-    if (claims.reachesUnseenCode || !claims.listsEveryMemberAbove || claims.possibleChanges.containsAny({ LayoutChange::GainsProperty, LayoutChange::ChangesPrototype, LayoutChange::GetsAccessor }))
-        return false;
-    if (findField(m_source, layout, key) || std::ranges::contains(linked.appendedKeysOf(layout), key))
-        return false;
-    return linked.findMember(m_source, layout, ClassSide::Prototype, key).kind == MemberFound::Kind::Nothing;
-}
-
-// `await 2`, `await new Point()`: what finds no `then` is handed back in a later turn, whatever else happens.
-bool BuilderOfProgramFacts::findsNoThen(FunctionID id, const BodyIndex& index, ValueID awaited) const
-{
-    awaited = awaited ? index.valueBehindCasts(awaited) : ValueID();
-    if (!awaited || index.isParameter(awaited))
-        return false;
-    Opcode opcode = index.opcodeOf(awaited);
-    if (primitiveConstants.contains(opcode) || widestPrimitiveResultOf(opcode))
-        return true;
-    FunctionID callee = callsByValueInProgramFacts.contains(opcode) ? m_inputs.linked.calleeAt(id, awaited) : FunctionID();
-    TypeID result = callee ? m_inputs.linked.function(callee).result : TypeID();
-    if (!result)
-        return false;
-    Type type = m_source.at(result);
-    if (!type.hasObjects())
-        return type.isJavaScriptValue();
-    PropertyKeyID then = m_source.keyOf(BuiltinNames::then);
-    return type.hasOnlyLayouts() && std::ranges::all_of(membersOf(m_source, type), [&](LayoutID layout) {
-        return objectsFindNothingUnder(layout, then);
-    });
-}
-
 // What nobody names is text, native code, a built-in that somebody has in hand or a function of the program.
 // Each function is asked while such code counts for nothing: where none leaves by what is in sight, none leaves.
 bool BuilderOfProgramFacts::codeThatNobodyNamesMayLeave()
@@ -3117,7 +3166,7 @@ bool BuilderOfProgramFacts::mayLeave(FunctionID id, const BodyIndex& index, cons
         || (opcode == Opcode::IteratorResume && value.as<Opcode::IteratorResume>().iteratorKind() != IteratorKind::Sync)
         || (opcode == Opcode::IteratorClose && value.as<Opcode::IteratorClose>().iteratorKind() != IteratorKind::Sync);
     // A function that waits has returned to its caller.
-    if (waits && m_source.at(id).isModuleBody() && (opcode != Opcode::Await || !findsNoThen(id, index, value.operand(0))))
+    if (waits && m_source.at(id).isModuleBody())
         return true;
     if (opcode == Opcode::RequireModule || opcode == Opcode::EvaluateModule) {
         const Module& target = m_source.at(opcode == Opcode::RequireModule ? value.as<Opcode::RequireModule>().module() : value.as<Opcode::EvaluateModule>().module());
@@ -3137,6 +3186,12 @@ bool BuilderOfProgramFacts::mayLeave(FunctionID id, const BodyIndex& index, cons
         // An accessor, a trap of a proxy.
         if (!holder)
             return codeThatNobodyNamesMayLeave();
+        // `Array.prototype.last = f`: what no lock turns away is stored, or taken by a setter that the program has laid above. In a test run the program lays some of the locks, and nobody asks here which.
+        if (opcode == Opcode::PropSet && !m_source.admitsReplacedBuiltins) {
+            PropertyKeyID key = value.as<Opcode::PropSet>().key();
+            if (m_source.nameClassOf(key) != NameClass::Proto && !isLockedLocation(m_source, m_builtins.canonicalID(holder), key))
+                return codeThatNobodyNamesMayLeave();
+        }
         if (opcode != Opcode::PropGet)
             return true;
         auto read = value.as<Opcode::PropGet>();
@@ -3221,7 +3276,6 @@ bool BuilderOfProgramFacts::everyRunComesTo(const Witness& site)
     if (position == order.end())
         return false;
 
-    bool waits = false;
     for (BlockID other : index.blocksInDominatorOrder()) {
         if (index.strictlyDominates(blockOfSite, other))
             continue;
@@ -3231,7 +3285,6 @@ bool BuilderOfProgramFacts::everyRunComesTo(const Witness& site)
                 break;
             if (mayLeave(id, index, value))
                 return false;
-            waits |= value.opcode() == Opcode::Await;
         }
         TerminatorKind kind = block.terminator().kind();
         if (other != blockOfSite && (kind == TerminatorKind::Return || kind == TerminatorKind::ReturnCall || kind == TerminatorKind::Throw))
@@ -3240,8 +3293,7 @@ bool BuilderOfProgramFacts::everyRunComesTo(const Witness& site)
     // The loader runs a CommonJS file that an ES module imports while it loads the graph: ahead of every ES module, wherever the import stands.
     for (auto other = order.begin(); other != order.end(); ++other) {
         const Module& module = m_source.at(*other);
-        // While a module waits the loader goes on with those that do not wait for it.
-        if (other == position || (other > position && module.kind != ModuleKind::CommonJs && !waits))
+        if (other == position || (other > position && module.kind != ModuleKind::CommonJs))
             continue;
         if (module.flags.contains(ModuleFlags::ThrowsAtLoad))
             return false;
@@ -3413,7 +3465,8 @@ std::optional<UserDiagnosticKind> BuilderOfProgramFacts::refusalOfWriteAt(const 
     BodyValue write = index.value(ValueID(site.value));
     Opcode opcode = write.opcode();
     auto holderAt = [&](ValueID value) {
-        BuiltinID holder = builtinReadByPath(index, value);
+        // In a test run no refusal stops the build: each is a warning.
+        BuiltinID holder = m_source.admitsReplacedBuiltins ? builtinSpelledByPath(index, value) : builtinReadByPath(index, value);
         return holder ? m_builtins.canonicalID(holder) : value ? followed : BuiltinID();
     };
 
@@ -3432,7 +3485,7 @@ std::optional<UserDiagnosticKind> BuilderOfProgramFacts::refusalOfWriteAt(const 
         return refusalOf(index, site, holder, { }, BuiltinPropertyActionKind::StoresByKey, { }, true);
     }
 
-    BuiltinID callee = builtinReadByPath(index, write.operand(0));
+    BuiltinID callee = m_source.admitsReplacedBuiltins ? builtinSpelledByPath(index, write.operand(0)) : builtinReadByPath(index, write.operand(0));
     if (!callee || !callsThatSpellOutArgumentsInProgramFacts.contains(opcode))
         return std::nullopt;
     callee = m_builtins.canonicalID(callee);
@@ -3456,6 +3509,12 @@ std::optional<UserDiagnosticKind> BuilderOfProgramFacts::refusalOfWriteAt(const 
         if (overload.mode != mode)
             continue;
         for (const BuiltinPropertyAction& action : overload.flow.propertyActions) {
+            // `Object.setPrototypeOf(Request.prototype, null)`. Whether it names what the object inherits from already is not asked: it stops no build.
+            if (BuiltinID changed = action.kind == BuiltinPropertyActionKind::ChangesPrototype ? holderAt(passedAs(action.object)) : BuiltinID(); changed && m_builtins.hasLockedPrototypeLink(changed)) {
+                UserDiagnosticKind kind = throwsWhereRefused ? UserDiagnosticKind::LockedBuiltinWriteMayRun : UserDiagnosticKind::LockedBuiltinWriteIsIgnored;
+                if (!worst || kind < *worst)
+                    worst = kind;
+            }
             BuiltinID holder = writesUnderKeyOfCallInProgramFacts(action) ? holderAt(passedAs(action.object)) : BuiltinID();
             if (!holder)
                 continue;
@@ -3523,6 +3582,9 @@ void BuilderOfProgramFacts::reportLoadsUnderNamesThatNobodyHasRead()
     if (!m_refused.codeOutsideImage || m_source.admitsInspector)
         return;
     Vector<UserDiagnostic> diagnostics;
+    // The text names the file, and nobody has read the text. Once, of no place: what helps is an entry point or an option of the build.
+    if (m_loaderIsHandedToText)
+        diagnostics.append(UserDiagnostic { .kind = UserDiagnosticKind::LoaderIsHeldByUnseenCode });
     for (const Witness& site : m_loadsOfProgramByName) {
         const BodyIndex* index = m_inputs.bodies.find(FunctionID(site.function));
         if (!index || site.value == Wire::none)
@@ -3836,6 +3898,16 @@ void BuilderOfProgramFacts::settle()
 
 void BuilderOfProgramFacts::takeBuiltinsThatCameIntoReach(Vector<BuiltinID>& list)
 {
+    // What native code calls and loads on behalf of a class hangs on the constructor. An object of the class counts as a use of the class there, whoever hands it out:
+    // the promise of an async function is reported when it is rejected without a handler, and nothing in that program names `Promise`. The constructor itself gets no use by that.
+    for (size_t index : m_classesWithObjects) {
+        BuiltinClassID builtinClass(static_cast<uint32_t>(index));
+        // Every function of the program is an object of `Function`. What hangs on that constructor and on those below it is what the evaluation of a text calls.
+        if (m_constructorIsListedForObjects.quickSet(index) || m_builtins.isSameOrSubclassOf(builtinClass, BuiltinClasses::Function))
+            continue;
+        if (BuiltinID constructor = m_builtins.at(builtinClass).constructor)
+            list.append(m_builtins.canonicalID(constructor));
+    }
     for (uint32_t index = 0; index < m_uses.size(); ++index) {
         BuiltinID builtin(index);
         if (m_builtins.canonicalID(builtin) != builtin || (m_uses[index] - OptionSet<BuiltinUse> { BuiltinUse::Tested }).isEmpty())
@@ -3971,12 +4043,6 @@ void BuiltinsInReach::noteWhatBodyMakes(FunctionID id)
 {
     m_wasToldSomethingNew = true;
     m_builder->noteObjectsThatBodyMakes(id);
-}
-
-void BuiltinsInReach::noteReached(FunctionID id)
-{
-    m_wasToldSomethingNew = true;
-    m_builder->noteReached(id);
 }
 
 void BuiltinsInReach::noteEvaluated(ModuleID id)

@@ -32,7 +32,7 @@ operation StringOrderToCharacter (string: String/inspects, codeUnit: UInt32) -> 
 # `flat`: the flat string that was made of the subject. A comparison that is handed it reads the characters through it. The subject stays the operand that the outcome narrows.
 # Handed neither (Always), a comparison asks in line for the atom of the text, and the stub answers for a subject that holds none: a rope, a piece of a longer string, a 16-bit string, a text that the program only stores. The listing has that form as longer than a call.
 # A text that is compared anywhere is an atom wherever the image makes a cell of it (NumberSpace::AtomOfString), so another tag of the program is told apart by its address.
-# In a loop the characters of a subject without an atom are read in line. The characters in line at every site: 121 bytes a site, 7.7 MB of the application's bodies and 17.2 MB over all roles (build 412).
+# In a loop the characters of a subject without an atom are read in line. The characters in line at every site: 121 bytes a site, 7.7 MB of the application's bodies and 17.2 MB over all roles.
 # NOT MEASURED YET.
 # Eq, StrictEq and SwitchString take the same code where an operand is a written text, and the loop is asked by the row of ValueEqualsLiteral.
 operation StringEqualsLiteral (string: String/inspects, length?: Integer/inspects, flat?: String/inspects, literal: String) -> natural(boolean) ; reads(StringStorage) ; proves = Equality ; branches = May ; replaces = StrictEq, Eq ; runtime = StringEqualsLiteral ; formDependsOnLoop = true ; openUnder = EmptyLiteral, LengthOfSubject, FlatSubject ; closedUnder = Always, LiteralComparedByStub ; openIn = Loop

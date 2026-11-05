@@ -115,9 +115,6 @@ public:
 
     bool isInUse(LayoutID layout) const { return layout.index() + 1 < m_firstNameOfLayout.size() && m_firstNameOfLayout[layout.index()] < m_firstNameOfLayout[layout.index() + 1]; }
 
-    // A name that no layout in use has says nothing about layouts.
-    bool isHeldBySomeLayout(PropertyKeyID name) const { return !holdersOf(name).empty(); }
-
     bool hasAll(LayoutID layout, std::span<const PropertyKeyID> names) const
     {
         return layout.index() + 1 < m_firstNameOfLayout.size() && std::ranges::all_of(names, [&](PropertyKeyID name) { return has(layout.index(), name); });

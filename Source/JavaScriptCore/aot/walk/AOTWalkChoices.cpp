@@ -101,7 +101,7 @@ static void chooseFormOfClosureInChoices(Walker& walker, Draft& closure)
         return;
     }
 
-    if (closure.isHeldByClosureTable() || plan.closureIdentityOf(function) == ClosureIdentity::TableCell || isOnlyClassObjectInChoices(walker, function)) {
+    if (closure.isHeldByClosureTable() || isOnlyClassObjectInChoices(walker, function)) {
         if (closuresHoldCapturesInChoices(walker, function)) {
             walker.fail("the closure table makes closures that capture nothing"_s);
             return;

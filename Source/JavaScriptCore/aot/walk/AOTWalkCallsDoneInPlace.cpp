@@ -257,7 +257,6 @@ static bool buildForwardedCall(Walker& walker, const BodyValue& call, const Draf
         // Function.prototype.apply up to the call. It says of a value that is no list what apply says.
         Draft newList(Opcode::NewArgumentList, originBeforeCall);
         walker.chooseConservativeFields(newList);
-        newList.setCalleeOperand(callee);
         newList.setArrayLikeOperand(list);
         list = walker.build(WTF::move(newList));
         if (behindList) {

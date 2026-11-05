@@ -30,6 +30,7 @@
 #include "ObjectConstructor.h"
 #include "PropertyNameArray.h"
 #include "SyntheticModuleRecord.h"
+#include "TopExceptionScope.h"
 #include <algorithm>
 #include <wtf/BitVector.h>
 #include <wtf/text/StringView.h>
@@ -44,6 +45,14 @@ JSValue Modules::storedValue(JSGlobalObject* realm, JSObject* table, const Ident
     if (std::optional<uint32_t> index = parseIndex(name))
         return table->getDirectIndex(realm, *index);
     return table->getDirect(realm->vm(), name);
+}
+
+// Under a number, in a table of the run time's own. Nothing is thrown, so nobody is owed a look.
+void Modules::storeValue(JSGlobalObject* realm, JSObject* table, unsigned number, JSValue value)
+{
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(realm->vm());
+    table->putDirectMayBeIndex(realm, Identifier::from(realm->vm(), number), value);
+    scope.assertNoExceptionExceptTermination();
 }
 
 void Modules::forEachCapturedExport(ModuleID module, const ScopedLambda<void(const Identifier&, JSValue)>& functor)

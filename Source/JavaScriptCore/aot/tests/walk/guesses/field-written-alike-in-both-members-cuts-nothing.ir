@@ -1,4 +1,4 @@
-# `kind` is written as any text in both members, so what was read there leaves both: the tag cuts nothing. Behind the test, at the access, the one member left that lists the name is expected all the same (since 11-03: narrowedByNameAskedForGuesses())
+# `kind` is written as any text in both members, so what was read there leaves both: the tag cuts nothing. Behind the test, at the access, the one member left that lists the name is expected all the same (narrowedByNameAskedForGuesses())
 # the program of tested-field-cuts-what-is-expected-of-its-holder.ir with the two written types of `kind` changed
 # RUN: walk f1 mechanisms=none+TypedOperations+Guesses
 # CHECK-LABEL: code f1:Body

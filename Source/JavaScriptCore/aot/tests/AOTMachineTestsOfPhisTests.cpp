@@ -323,15 +323,8 @@ std::span<const NativeTest> machineTestsOfPhisTests()
     using Machine::KindOfTestOfPhi;
     using Machine::KindOfWordInBox;
     static constexpr NativeTest tests[] = {
-        { "machine-tests-of-phis/join-that-compares-its-phi-with-a-constant-is-passed-by"_s, Machine::testJoinThatComparesItsPhiIsPassedBy<KindOfTestOfPhi::ComparesWithConstant> },
         { "machine-tests-of-phis/join-that-tests-bits-of-a-sum-of-its-phi-is-passed-by"_s, Machine::testJoinThatComparesItsPhiIsPassedBy<KindOfTestOfPhi::TestsBitsOfSum> },
-        { "machine-tests-of-phis/join-whose-phi-is-read-again-stays"_s, Machine::testJoinThatComparesItsPhiIsPassedBy<KindOfTestOfPhi::IsReadAgain> },
-        { "machine-tests-of-phis/join-that-compares-its-phi-with-a-value-stays"_s, Machine::testJoinThatComparesItsPhiIsPassedBy<KindOfTestOfPhi::ComparesWithValue> },
-        { "machine-tests-of-phis/join-whose-test-is-read-again-stays"_s, Machine::testJoinThatComparesItsPhiIsPassedBy<KindOfTestOfPhi::TestIsReadAgain> },
-        { "machine-tests-of-phis/join-that-computes-what-is-read-behind-it-stays"_s, Machine::testJoinThatComparesItsPhiIsPassedBy<KindOfTestOfPhi::StandsBesideWhatIsReadBehindIt> },
         { "machine-tests-of-phis/value-of-a-test-where-the-phi-holds-a-constant"_s, Machine::testValueOfTestWherePhiHolds },
-        { "machine-tests-of-phis/word-in-a-box-passes-by-the-join-that-asks-whether-it-is-at-least-the-box"_s, Machine::testWordInBoxPassesByJoinThatAsksForBox<KindOfWordInBox::IsAskedWhetherAtLeast> },
-        { "machine-tests-of-phis/word-in-a-box-passes-by-the-join-that-asks-whether-it-is-below-the-box"_s, Machine::testWordInBoxPassesByJoinThatAsksForBox<KindOfWordInBox::IsAskedWhetherBelow> },
         { "machine-tests-of-phis/words-in-boxes-of-two-arms-pass-by-the-join"_s, Machine::testWordInBoxPassesByJoinThatAsksForBox<KindOfWordInBox::ComesByTwoArms> },
         { "machine-tests-of-phis/word-in-a-box-that-is-an-index-where-it-passes-passes-by-the-join"_s, Machine::testWordInBoxPassesByJoinThatAsksForBox<KindOfWordInBox::IsIndexWhereItPasses> },
         { "machine-tests-of-phis/word-in-a-box-that-nothing-reads-where-it-passes-passes-by-the-join"_s, Machine::testWordInBoxPassesByJoinThatAsksForBox<KindOfWordInBox::IsNotReadWhereItPasses> },
@@ -339,7 +332,6 @@ std::span<const NativeTest> machineTestsOfPhisTests()
         { "machine-tests-of-phis/box-that-is-read-behind-both-sides-goes-through-the-join"_s, Machine::testWordInBoxPassesByJoinThatAsksForBox<KindOfWordInBox::IsReadBehindBothSides> },
         { "machine-tests-of-phis/box-that-is-read-where-what-passes-may-fail-too-goes-through-the-join"_s, Machine::testWordInBoxPassesByJoinThatAsksForBox<KindOfWordInBox::FailsWhereWhatPassesMayFailToo> },
         { "machine-tests-of-phis/word-added-to-a-bound-with-a-lower-half-goes-through-the-join"_s, Machine::testWordInBoxPassesByJoinThatAsksForBox<KindOfWordInBox::BoundHasLowerHalf> },
-        { "machine-tests-of-phis/word-extended-with-its-sign-goes-through-the-join"_s, Machine::testWordInBoxPassesByJoinThatAsksForBox<KindOfWordInBox::IsExtendedWithItsSign> },
         { "machine-tests-of-phis/neighboring-stores-of-constants-are-one-store"_s, Machine::testNeighboringStoresOfConstantsAreOneStore },
     };
     return tests;

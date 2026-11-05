@@ -602,8 +602,6 @@ export const builtinMarks = [
   "IsSpy",
   // Whoever goes over the enumerable properties of its holder passes it by: Object.keys, values, entries and assign, a spread, JSON.stringify.
   "IsNotEnumerable",
-  // An accessor of the host stands under its name. The getter answers what the entry says. The setter puts the value that it is given in the accessor's place, on the holder, whatever its receiver is.
-  "IsReplacedBySetter",
   // It, or what it makes, runs the jobs that wait before a call returns: the reactions of promises, and the modules that an import() loads.
   "RunsWaitingJobs",
   // It stands under a name of methods that are called with what the host loads at start-up. For this one the host loads nothing.
@@ -612,9 +610,6 @@ export const builtinMarks = [
   "InstancesHaveMethodCalledWithStartupLoads",
   // The native code it loads only receives and returns numbers and pointers. It never gets a JSValue or the global object, so it cannot create objects, register symbols or touch properties.
   "LoadsCodeWithoutJSAccess",
-  // A lookup goes on to the object that the table names above it. Whoever asks what stands above it is told null: Object.getPrototypeOf, __proto__.
-  // The host keeps what the table lists on it on an object in between, which nobody gets to see. Object.setPrototypeOf takes all of that away.
-  "AnswersNullAsItsPrototype",
   // What it answers loads files with code under names that the build does not see, and the table has no entry for the function that does. So the read itself counts as such a load.
   "ReadLoadsCodeByName",
   // The file at the path that it holds is the main module: `require.main` and `process.mainModule` answer the module object of that file.
@@ -625,8 +620,6 @@ export const builtinMarks = [
   "IsResolverThatLoaderCalls",
   // The host calls what the program has stored under it for each require() that is answered at run time: on the module object of the file that asks. What it answers is the module.
   "IsRequireThatLoaderCalls",
-  // A prototype object. The host prints the instances below it with code of their own, which asks none of the getters on it.
-  "InstancesArePrintedWithoutTheirGetters",
   // Calling it may terminate the process, so code after the call may never run.
   "MayTerminateProcess",
   // Puts what its second operand answers in the place of the module that its first operand names.
@@ -637,8 +630,6 @@ export const builtinMarks = [
   "FakesTimers",
   // The function marked FakesTimers stores a value of the test runner in its place. The mark stands on the member as its holder lists it, not on another entry that is the same object.
   "IsReplacedByFakeTimers",
-  // What it answers is a copy that native code makes of what an operand holds. An instance of a class of the host is among it only where the operand holds one of that class, and no object of a layout of the program is.
-  "AnswersCopyOfOperand",
   // How far the code reaches that an entry with runsUnseenCode lets in. Without a mark it reaches what a text reaches that is evaluated in this realm: the global scope and what it is handed,
   // and a loader where an operand of the entry names a module. The locks are laid before any code runs in the realm and turn away whoever writes, so they bind that code too.
   // With this mark the build counts on no lock beside the entry. Whoever marks an entry says there by which road its code gets past the locks.

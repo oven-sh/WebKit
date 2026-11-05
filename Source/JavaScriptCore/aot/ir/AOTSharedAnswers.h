@@ -26,27 +26,13 @@ namespace JSC { namespace AOT { namespace Typed {
 enum class SharedQuestion : uint32_t {
     // walk/AOTAccessPlan.cpp
     PartitionOfReceivers,
-    PlanOfNamedAccess,
-    // walk/AOTAccessEffects.cpp, in the arena alone: TypeArena::keepAnswerUntilReset().
-    EffectsOfNamedAccess,
     // walk/AOTAccessPlanOfFields.cpp
     StateOfFieldArm,
-    TestsThatFieldArmInheritsNothing,
-    // plan/AOTSlotPlan.cpp
-    FieldAccessOfReceivers,
-    // walk/AOTMemberPartition.cpp
-    PartitionOfMembers,
-    MethodOfEachWithoutTests,
     // ir/AOTTypeIntersection.cpp
     NamedObjectsOfIntersection,
     NamedObjectsOfDifference,
     // walk/AOTReceivers.cpp
     NamedObjectsOfUnionPartKind,
-    // walk/AOTCalleeCandidates.cpp
-    CalleeListOfObjects,
-    FactsOfCalleeList,
-    // walk/AOTLoopScanEffects.cpp
-    EffectsOfTypedBodyAtCall,
     // ir/AOTTypeArena.cpp: TypeArena::rememberRound().
     RoundOverSet,
 };

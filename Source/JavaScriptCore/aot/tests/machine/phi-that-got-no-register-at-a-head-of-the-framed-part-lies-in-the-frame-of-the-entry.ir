@@ -46,6 +46,7 @@
 # CHECK-LABEL: unit f5:Body
 # CHECK: needsFrameAheadOfFramedPart
 # RUN(LOOPED): allocate f4:Body mechanisms=all
+# REQUIRES(LOOPED): x86_64 unsanitized-code
 # LOOPED-LABEL: unit f4:Body
 # LOOPED: needsFrameAheadOfFramedPart
 # RUN(ANSWER): run-in-shell

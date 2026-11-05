@@ -272,54 +272,7 @@ bool acceptsImmediate(const Operation& user, unsigned childIndex, const Operatio
     case Opaque:
         return user.type().isInt() && constant.opcode() != SlotBase;
 
-    case Nop:
-    case Const32:
-    case Const64:
-    case ConstFloat:
-    case ConstDouble:
-    case FramePointer:
-    case SlotBase:
-    case AddressOf:
-    case NumberOf:
-    case InstanceAddressOf:
-    case ArgumentReg:
-    case Mul:
-    case MulHigh:
-    case UMulHigh:
-    case Div:
-    case UDiv:
-    case Mod:
-    case UMod:
-    case Neg:
-    case Clz:
-    case PopCount:
-    case Abs:
-    case Ceil:
-    case Floor:
-    case FTrunc:
-    case Sqrt:
-    case FMin:
-    case FMax:
-    case BitwiseCast:
-    case SExt8:
-    case SExt16:
-    case SExt32:
-    case ZExt32:
-    case Trunc:
-    case IToD:
-    case FloatToDouble:
-    case DoubleToFloat:
-    case Select:
-    case Fence:
-    case Phi:
-    case Upsilon:
-    case Extract:
-    case Patch:
-    case Jump:
-    case Branch:
-    case Switch:
-    case Return:
-    case Oops:
+    default:
         return false;
     }
     RELEASE_ASSERT_NOT_REACHED();

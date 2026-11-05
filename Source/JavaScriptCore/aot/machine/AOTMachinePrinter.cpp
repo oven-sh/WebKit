@@ -514,62 +514,7 @@ void MachinePrinter::printPayload(PrintStream& out, CommaPrinter& comma, const O
     case Check:
         printPatch(out, comma, *static_cast<const PatchOperation*>(operation));
         return;
-    case Nop:
-    case Opaque:
-    case FramePointer:
-    case Add:
-    case Sub:
-    case Mul:
-    case MulHigh:
-    case UMulHigh:
-    case Div:
-    case UDiv:
-    case Mod:
-    case UMod:
-    case Neg:
-    case BitAnd:
-    case BitOr:
-    case BitXor:
-    case Shl:
-    case SShr:
-    case ZShr:
-    case Clz:
-    case PopCount:
-    case Abs:
-    case Ceil:
-    case Floor:
-    case FTrunc:
-    case Sqrt:
-    case FMin:
-    case FMax:
-    case BitwiseCast:
-    case SExt8:
-    case SExt16:
-    case SExt32:
-    case ZExt32:
-    case Trunc:
-    case IToD:
-    case FloatToDouble:
-    case DoubleToFloat:
-    case Equal:
-    case NotEqual:
-    case LessThan:
-    case GreaterThan:
-    case LessEqual:
-    case GreaterEqual:
-    case Above:
-    case Below:
-    case AboveEqual:
-    case BelowEqual:
-    case EqualOrUnordered:
-    case Select:
-    case Fence:
-    case Phi:
-    case Jump:
-    case Branch:
-    case Switch:
-    case Return:
-    case Oops:
+    default:
         return;
     }
     RELEASE_ASSERT_NOT_REACHED();

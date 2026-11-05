@@ -175,7 +175,6 @@ struct CodeLinker {
         AOT_NAME_OF_NUMBER_SPACE(ModuleValue)
         AOT_NAME_OF_NUMBER_SPACE(ModuleNamespace)
         AOT_NAME_OF_NUMBER_SPACE(ModuleBuiltinCell)
-        AOT_NAME_OF_NUMBER_SPACE(FilledFiles)
         AOT_NAME_OF_NUMBER_SPACE(DataCell)
         AOT_NAME_OF_NUMBER_SPACE(DataStorage)
         AOT_NAME_OF_NUMBER_SPACE(DataElements)

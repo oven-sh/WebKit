@@ -37,7 +37,9 @@ namespace JSC { namespace B3 {
 template<typename ValueType, typename... Arguments>
 ValueType* Procedure::add(Arguments... arguments)
 {
-    return static_cast<ValueType*>(addValueImpl(Value::allocate<ValueType>(arguments...)));
+    if constexpr (std::is_same_v<ValueType, ConstPtrValue>)
+        didAddPointerConstant(arguments...);
+    return static_cast<ValueType*>(addValueImpl(Value::allocateIn<ValueType>(arenaOrNull(), arguments...)));
 }
 
 inline Type Procedure::extractFromTuple(Type tuple, unsigned index) const

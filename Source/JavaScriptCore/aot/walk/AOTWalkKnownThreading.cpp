@@ -30,9 +30,7 @@
 #include "AOTWalkKnown.h"
 #include <algorithm>
 #include <array>
-#include <bit>
 #include <optional>
-#include <wtf/ScopedLambda.h>
 #include <wtf/SetForScope.h>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -41,23 +39,13 @@ namespace JSC { namespace AOT { namespace Typed {
 // a way that decides a test saves the test and its branch, one that has a typed form saves the call of a stub, and an operation costs about what either saves.
 static constexpr uint32_t mostOperationsOfJoinWalkedForEachWay = 8;
 
-static constexpr OpcodeSet testsThatTypesDecideInKnownThreading = opcodesWhere([](Opcode opcode) {
-    Proof proof = provesOf(opcode);
-    bool narrowsType = proof == Proof::TestedType || proof == Proof::ExactFunction || proof == Proof::Truthiness || proof == Proof::Equality || proof == Proof::IntegerBound;
-    return narrowsType && hasRuleForFolding(opcode);
-});
-
 // Where an iteration stands the walk keeps beside the state, and what is bound to its frame, its function or its site stands once in a unit.
 static constexpr OpcodeSet operationsWalkedOnceInKnownThreading = opcodesOfFamily(OperationFamily::Iteration) | opcodesOfFamily(OperationFamily::ForIn) | opcodesOfFamily(OperationFamily::Coroutine)
     | opcodesOfFamily(OperationFamily::Exception) | opcodesWhere([](Opcode opcode) { return boundToOf(opcode) != BoundTo::Nothing; }) | OpcodeSet { Opcode::LoopHint };
 
-static constexpr OpcodeSet callsOfValuesInKnownThreading { Opcode::Call, Opcode::Construct, Opcode::CallList };
 // Closed, each calls a stub. A bitwise operator converts a number to int32, which costs nothing where the number is an integer.
 static constexpr OpcodeSet operationsTypedByWayInKnownThreading = allRelations | allBitwiseOperators
     | OpcodeSet { Opcode::ToBoolean, Opcode::PropGet, Opcode::PropSet, Opcode::ElemGet, Opcode::ElemSet, Opcode::Call, Opcode::Construct };
-static constexpr OpcodeSet callsThatLayOutListsInKnownThreading { Opcode::CallList, Opcode::ConstructList };
-static constexpr OpcodeSet operationsThatWaysDecideInKnownThreading = operationsTypedByWayInKnownThreading | callsThatLayOutListsInKnownThreading | operationsThatJoinTexts | OpcodeSet { Opcode::CopyDataProperties };
-static constexpr OpcodeSet constructionsCopiedInKnownThreading { Opcode::Construct, Opcode::SuperConstruct };
 static constexpr OpcodeSet operationsThatBuildNothingInKnownThreading = opcodesThatStateTypes | primitivesWrittenForFolding;
 
 // ---- What is asked of the body alone
@@ -102,7 +90,7 @@ static bool mustBeNamedByDefinitionInKnownThreading(const BodyIndex& index, Valu
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// coroutines-5 keeps what lives across a suspension in words of the heap. It stores them where the body of the coroutine is walked at the outermost level, each block once, and what arms define where the arms have met.
+// What lives across a suspension is kept in words of the heap (AOTWalkCoroutineHeapWordPlan.h). They are stored where the body of the coroutine is walked at the outermost level, each block once, and what arms define where the arms have met.
 // So in that body no block is walked again, and no arm leaves by the terminator: a word would stay as it was on the second way. A callee that is walked in line has no such words.
 static bool bodyKeepsValuesInWordsOfHeapInKnownThreading(const Walker& walker)
 {
@@ -112,36 +100,6 @@ static bool bodyKeepsValuesInWordsOfHeapInKnownThreading(const Walker& walker)
     UNUSED_PARAM(walker);
     return false;
 #endif
-}
-
-// ---- What the rows and the links of the chain answer ahead
-
-static PrimitiveKnownToFolding onlyValueOfTypeInKnownThreading(const TypeArena& types, TypeID id)
-{
-    if (!id)
-        return { };
-    Type type = types.at(id);
-    if (!type.isJavaScriptValue() || type.hasObjects())
-        return { };
-
-    switch (type.primitives) {
-    case Primitive::Undefined:
-        return PrimitiveKnownToFolding::undefined();
-    case Primitive::Null:
-        return PrimitiveKnownToFolding::null();
-    case Primitive::False:
-        return PrimitiveKnownToFolding::boolean(false);
-    case Primitive::True:
-        return PrimitiveKnownToFolding::boolean(true);
-    case Primitive::Integer:
-        return type.integers.isSingleValue() ? PrimitiveKnownToFolding::integer(type.integers.minimum) : PrimitiveKnownToFolding();
-    case Primitive::LiteralString: {
-        StringID literal = singleStringLiteralOf(type);
-        return literal ? PrimitiveKnownToFolding::text(literal) : PrimitiveKnownToFolding();
-    }
-    default:
-        return { };
-    }
 }
 
 // ---- The ways through one block of the body being read
@@ -172,84 +130,8 @@ public:
     bool letReturnsOfCopyWalkEndOfBlockApart(ValueID call, std::span<ReturnOfCopy* const> passing, std::span<ReturnOfCopy* const> closed);
 
 private:
-    using Name = std::pair<ValueID, Reference>;
-
-    struct ValueOnWay {
-        // What stands for the value on the way. Null: the stretch computes it.
-        Reference reference;
-        PrimitiveKnownToFolding known;
-        TypeID type;
-
-        bool isDecided() const { return reference || known; }
-    };
-
-    // One of the ways that are about to meet in front of a stretch of the block.
-    struct Way {
-        // For each value that every way brings for itself.
-        std::span<const Reference> brought;
-        // OpenEdge::names.
-        std::span<const Name> names;
-        WalkState* state { nullptr };
-
-        // Asked ahead. The target of the terminator that it decides, and how many operations it builds on the way there.
-        std::optional<uint32_t> target;
-        uint32_t numberOfOperationsBuilt { 0 };
-        // A bit for each place from the begin of the stretch on: the operation there has a form on this way that it lacks where the ways have met.
-        uint32_t placesDecided { 0 };
-    };
-
-    // The stretch from its begin to the end of the block as it would run on one way. The state of the walk is what holds on the way. It builds nothing but constants, which lie in no block.
-    class Evaluation {
-    public:
-        Evaluation(KnownThreading& threading, const Way& way)
-            : m_threading(threading)
-            , m_walker(threading.m_walker)
-            , m_way(way)
-        {
-        }
-
-        std::optional<uint32_t> decidedTarget();
-        uint32_t numberOfOperationsBuilt();
-
-    private:
-        ValueOnWay at(ValueID);
-        ValueOnWay valueOf(Reference);
-        ValueOnWay evaluate(const BodyValue&);
-        std::optional<bool> answerThatTypesDecide(const BodyValue& test);
-        ValueOnWay answerOfEqualTestBuilt(const BodyValue& test);
-        ValueOnWay valueReadOffObjectInSight(const BodyValue& read);
-
-        KnownThreading& m_threading;
-        Walker& m_walker;
-        const Way& m_way;
-        std::array<ValueOnWay, mostOperationsOfJoinWalkedForEachWay> m_values { };
-        uint32_t m_evaluated { 0 };
-    };
-
-    // The types of the values of the stretch by the rows of their operations, given the types of what is brought.
-    struct TypesOfStretch {
-        Vector<TypeID, 4> brought;
-        std::array<TypeID, mostOperationsOfJoinWalkedForEachWay> byRow { };
-        uint32_t known { 0 };
-    };
-
-    // A way that has come through a stretch.
-    struct Arm {
-        // Left open.
-        BlockID block;
-        WalkState state;
-        // What it has for each value that is read behind the stretch.
-        Vector<Reference, 8> values;
-    };
-
     Walker::Frame& frame() { return m_walker.m_frames[m_frameIndex]; }
     uint32_t firstValue() const { return m_block.firstValue().index(); }
-    std::optional<uint32_t> positionAmongBrought(ValueID value) const
-    {
-        uint32_t position = value.index() - m_firstBrought.index();
-        return value.index() >= m_firstBrought.index() && position < m_numberBrought ? std::optional(position) : std::nullopt;
-    }
-
     bool operationsMayBeWalkedAgain(uint32_t begin, uint32_t end);
     bool terminatorMayBeWalkedAgain(bool targetsLieInLoopOfBlock);
     bool letTerminatorBeWalkedForEachWay(ValueID firstBuiltOnEachWay);
@@ -291,7 +173,6 @@ private:
     uint32_t numberOfOperationsBuiltIn(uint32_t begin, uint32_t end);
 
     void walkBlockOnWays(std::span<const uint32_t> places, uint32_t namesAtHead);
-    void meet(Vector<Arm, 4>&, std::span<const ValueID> values);
 
     Walker& m_walker;
     size_t m_frameIndex;
@@ -299,172 +180,7 @@ private:
     BodyBlock m_block;
     // Among the operations of the block: where the ways begin to walk for themselves.
     uint32_t m_begin { 0 };
-    // The values that every way brings for itself: the parameters of the block, or the operation in front of the stretch.
-    ValueID m_firstBrought;
-    uint32_t m_numberBrought { 0 };
 };
-
-// ---- One way, asked ahead
-
-KnownThreading::ValueOnWay KnownThreading::Evaluation::valueOf(Reference reference)
-{
-    if (!reference || !reference.isRecord())
-        return { };
-    while (Reference checked = m_walker.state().checkedNameOf(reference))
-        reference = checked;
-
-    TypeID type = m_walker.typeOf(reference);
-    // No type tells two doubles apart, and none names a made text: those two are read off the constant.
-    const Operation& record = m_walker.code().at(reference.id());
-    if (record.opcode == Opcode::Double)
-        return { reference, PrimitiveKnownToFolding::number(record.number()), type };
-    if (record.opcode == Opcode::String)
-        return { reference, PrimitiveKnownToFolding::text(record.string()), type };
-    return { reference, onlyValueOfTypeInKnownThreading(m_walker.types(), type), type };
-}
-
-KnownThreading::ValueOnWay KnownThreading::Evaluation::at(ValueID value)
-{
-    if (!value)
-        return { };
-    if (std::optional<uint32_t> position = m_threading.positionAmongBrought(value))
-        return valueOf(m_way.brought[*position]);
-
-    uint32_t first = m_threading.firstValue() + m_threading.m_begin;
-    if (value.index() >= first && value.index() < m_threading.m_block.endOfValues().index()) {
-        uint32_t position = value.index() - first;
-        if (!(m_evaluated >> position & 1)) {
-            m_evaluated |= 1u << position;
-            m_values[position] = evaluate(m_walker.asWalked(m_threading.m_index.value(value)));
-        }
-        return m_values[position];
-    }
-
-    for (auto [named, name] : m_way.names) {
-        if (named == value)
-            return valueOf(name);
-    }
-    return valueOf(m_walker.referenceOf(value));
-}
-
-// As answerThatTypesDecideInFolding(): an operand that one side of the test leaves nothing of decides it.
-std::optional<bool> KnownThreading::Evaluation::answerThatTypesDecide(const BodyValue& test)
-{
-    std::array<TypeID, 2> typesOfOperands;
-    uint32_t numberOfOperands = 0;
-    for (; numberOfOperands < typesOfOperands.size(); ++numberOfOperands) {
-        ValueID operand = test.operand(numberOfOperands);
-        if (!operand)
-            break;
-        TypeID type = at(operand).type;
-        if (!type || isNeverType(type) || m_walker.types().at(type).mayBeUnspecified())
-            return std::nullopt;
-        typesOfOperands[numberOfOperands] = type;
-    }
-
-    TypingContext context { m_walker.program(), m_walker.types(), PositionTypes::knowingNothing() };
-    OperandTypes operands { std::span<const TypeID>(typesOfOperands.data(), numberOfOperands) };
-    for (uint32_t operandIndex = 0; operandIndex < numberOfOperands; ++operandIndex) {
-        if (isNeverType(typeOfEdgeResult(context, test, operands, operandIndex, EdgeSide::Taken)))
-            return false;
-        if (isNeverType(typeOfEdgeResult(context, test, operands, operandIndex, EdgeSide::NotTaken)))
-            return true;
-    }
-    return std::nullopt;
-}
-
-// `if (a === b) ..; if (a === b) ..`: the way has come by a branch on the same test of the same values.
-KnownThreading::ValueOnWay KnownThreading::Evaluation::answerOfEqualTestBuilt(const BodyValue& test)
-{
-    Draft draft(test.opcode(), m_walker.originOf(test));
-    draft.flags = static_cast<uint8_t>(test.flags());
-    bool lacksOperand = false;
-    copyFields(test, draft, [&](ValueID operand) {
-        Reference reference = at(operand).reference;
-        lacksOperand |= !reference;
-        return reference;
-    });
-    if (lacksOperand)
-        return { };
-    m_walker.chooseConservativeFields(draft);
-    return valueOf(findEqualOperationBuilt(m_walker, draft, declaredBoundInTable(test.opcode())));
-}
-
-// `while (!(r = step()).done)`: the way brings a literal, and the state knows what it holds.
-KnownThreading::ValueOnWay KnownThreading::Evaluation::valueReadOffObjectInSight(const BodyValue& read)
-{
-    auto operation = read.as<Opcode::PropGet>();
-    if (operation.isFreeName())
-        return { };
-    ValueOnWay object = at(operation.objectOperand());
-    if (!object.reference || !object.type || isNeverType(object.type))
-        return { };
-    TypeArena& types = m_walker.types();
-    LayoutID layout = singleLayoutOf(types, types.at(object.type));
-    std::optional<FieldReference> field = layout ? findField(m_walker.program(), layout, operation.key()) : std::nullopt;
-    ValueOnWay held = valueOf(field ? m_walker.state().slot(object.reference, *field) : Reference());
-    return held.type && !(types.at(held.type).primitives & Primitive::Absent) ? held : ValueOnWay();
-}
-
-KnownThreading::ValueOnWay KnownThreading::Evaluation::evaluate(const BodyValue& operation)
-{
-    Opcode opcode = operation.opcode();
-    if (opcodesThatStateTypes.contains(opcode))
-        return at(operation.operand(0));
-    if (primitivesWrittenForFolding.contains(opcode)) {
-        Draft written = m_walker.draftOf(operation);
-        m_walker.chooseConservativeFields(written);
-        return valueOf(m_walker.constant(WTF::move(written)));
-    }
-
-    ValueOnWay result;
-    if (operationsOnPrimitivesInFolding.contains(opcode)) {
-        result.known = primitiveMadeOfConstants(m_walker.program(), operation, scopedLambda<PrimitiveKnownToFolding(ValueID)>([&](ValueID operand) {
-            // It reads texts out of the table of the program, where a text that the walk has made does not lie.
-            PrimitiveKnownToFolding known = at(operand).known;
-            return known.isText() && liesInThread(known.asText()) ? PrimitiveKnownToFolding() : known;
-        }));
-    }
-    if (!result.known && testsThatTypesDecideInKnownThreading.contains(opcode)) {
-        if (std::optional<bool> answer = answerThatTypesDecide(operation))
-            result.known = PrimitiveKnownToFolding::boolean(*answer);
-    }
-    if (!result.known && (opcode == Opcode::ToBoolean || opcode == Opcode::LogicalNot)) {
-        Reference operand = at(operation.operand(0)).reference;
-        if (std::optional<bool> outcome = operand ? outcomeKnownOf(m_walker, operand) : std::nullopt)
-            result.known = PrimitiveKnownToFolding::boolean(*outcome == (opcode == Opcode::ToBoolean));
-    }
-    if (!result.known && branchesOf(opcode) != Branches::No)
-        return answerOfEqualTestBuilt(operation);
-    if (!result.known && opcode == Opcode::PropGet)
-        return valueReadOffObjectInSight(operation);
-    return result;
-}
-
-std::optional<uint32_t> KnownThreading::Evaluation::decidedTarget()
-{
-    BodyTerminator terminator = m_threading.m_block.terminator();
-    ValueOnWay operand = at(terminator.operand(0));
-    // onlyTargetKnownToFolding() goes by a constant. What the stretch computes and this knows, Folding binds to one.
-    if (!operand.reference || operand.reference.isConstant()) {
-        if (std::optional<uint32_t> target = onlyTargetWith(m_walker.types(), terminator, operand.known))
-            return target;
-    }
-    if (terminator.kind() != TerminatorKind::Branch || !operand.reference)
-        return std::nullopt;
-    std::optional<bool> outcome = outcomeKnownOf(m_walker, operand.reference);
-    return outcome ? std::optional<uint32_t>(*outcome ? 0 : 1) : std::nullopt;
-}
-
-uint32_t KnownThreading::Evaluation::numberOfOperationsBuilt()
-{
-    uint32_t number = 0;
-    for (uint32_t id = m_threading.firstValue() + m_threading.m_begin; id < m_threading.m_block.endOfValues().index(); ++id) {
-        if (!operationsThatBuildNothingInKnownThreading.contains(m_threading.m_index.opcodeOf(ValueID(id))))
-            number += !at(ValueID(id)).isDecided();
-    }
-    return number;
-}
 
 // ---- What may be walked more than once
 
@@ -531,7 +247,7 @@ bool KnownThreading::letTerminatorBeWalkedForEachWay(ValueID firstBuiltOnEachWay
 {
     if (frame().blocksWalkedForEachWay.contains(m_block.id()))
         return true;
-    // What is live at the heads of a body grows as the body does since 11-03 17:49:55, and it is made once a build.
+    // What is live at the heads of a body grows as the body does, and it is made once a build.
     BodyLiveness& liveness = m_walker.m_liveness;
     if (!liveness.isComputedFor(m_index))
         liveness.compute(m_index);
@@ -622,68 +338,6 @@ uint32_t KnownThreading::numberOfOperationsBuiltIn(uint32_t begin, uint32_t end)
     return number;
 }
 
-// ---- Arms
-
-// As at any join, what arrives under one name keeps it. The walk goes on where the arms have met, or nowhere where none has come through.
-void KnownThreading::meet(Vector<Arm, 4>& arms, std::span<const ValueID> values)
-{
-    Walker& walker = m_walker;
-    walker.m_block = { };
-    walker.m_state.clear();
-    if (arms.isEmpty() || walker.m_hasFailed)
-        return;
-    if (arms.size() == 1) {
-        walker.m_block = arms[0].block;
-        walker.m_state = WTF::move(arms[0].state);
-        for (size_t position = 0; position < values.size(); ++position)
-            walker.bind(values[position], arms[0].values[position]);
-        return;
-    }
-
-    BlockFrequency frequency = BlockFrequency::Rare;
-    for (const Arm& arm : arms)
-        frequency = std::min(frequency, walker.m_code.at(arm.block).frequency);
-    BlockID meeting = walker.addBlock(frequency);
-    Vector<size_t, 8> positionsOfParameters;
-    Vector<Representation, 4> forms;
-    for (size_t position = 0; position < values.size(); ++position) {
-        Reference first = arms[0].values[position];
-        bool allBringOneValue = std::ranges::all_of(arms, [&](const Arm& arm) {
-            return arm.values[position] == first;
-        });
-        if (allBringOneValue) {
-            walker.bind(values[position], first);
-            continue;
-        }
-        TypeID type;
-        forms.shrink(0);
-        for (const Arm& arm : arms) {
-            TypeID arriving = walker.ownTypeOf(arm.values[position]);
-            type = type ? walker.joinTypes(type, arriving) : arriving;
-            forms.append(walker.representationOf(arm.values[position]));
-        }
-        walker.bind(values[position], walker.addParameter(meeting, type, walker.formOfParameter(type, forms.span())));
-        positionsOfParameters.append(position);
-    }
-
-    // jumpTo() lets leave whatever a parameter becomes a second name of, and brings each argument into the form of its parameter.
-    WalkState met;
-    Vector<Reference, 8> arguments;
-    for (size_t number = 0; number < arms.size() && !walker.m_hasFailed; ++number) {
-        arguments.shrink(0);
-        for (size_t position : positionsOfParameters)
-            arguments.append(arms[number].values[position]);
-        walker.m_block = arms[number].block;
-        walker.m_state = WTF::move(arms[number].state);
-        walker.jumpTo(meeting, arguments.span());
-        if (number)
-            met.meetWith(walker.m_state);
-        else
-            met = WTF::move(walker.m_state);
-    }
-    walker.m_state = WTF::move(met);
-}
-
 // ---- A join
 
 void KnownThreading::walkBlockOnWays(std::span<const uint32_t> places, uint32_t namesAtHead)
@@ -707,8 +361,6 @@ void KnownThreading::walkBlockOnWays(std::span<const uint32_t> places, uint32_t 
     frame().block = { };
     walker.walkBlock(m_block.id());
 }
-
-// ---- What stands behind an operation that several ways have come through
 
 // ---- An arm that walks the terminator of its block
 

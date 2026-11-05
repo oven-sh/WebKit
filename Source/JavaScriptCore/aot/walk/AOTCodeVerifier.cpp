@@ -41,10 +41,7 @@ public:
     {
         if (!m_plan)
             return { };
-        const DeferredDefinitions& definitions = m_plan->deferredDefinitions();
-        if (definitions.objectBeside(variable))
-            return TypeArena::fromPrimitives(Primitive::Absent | Primitive::Undefined);
-        if (definitions.findDeferred(variable))
+        if (m_plan->deferredDefinitions().findDeferred(variable))
             return TypeTable::anythingOrAbsent;
         return { };
     }

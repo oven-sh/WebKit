@@ -56,6 +56,8 @@ void StackSlot::dump(PrintStream& out) const
 void StackSlot::deepDump(PrintStream& out) const
 {
     out.print("byteSize = ", m_byteSize, ", offsetFromFP = ", m_offsetFromFP, ", kind = ", m_kind);
+    if (m_isDeadAtSuspensions)
+        out.print(", dead at suspensions");
 }
 
 StackSlot::StackSlot(uint64_t byteSize, StackSlotKind kind, intptr_t offsetFromFP)

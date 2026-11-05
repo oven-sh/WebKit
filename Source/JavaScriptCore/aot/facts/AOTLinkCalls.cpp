@@ -5,8 +5,6 @@
 
 #include "config.h"
 #include "AOTLinkFlow.h"
-#include "AOTLinkStringParsers.h"
-#include "AOTWalkStringParsers.h"
 
 #if ENABLE(AOT)
 
@@ -486,7 +484,6 @@ public:
         // A shared call is told for all who go by it.
         return sharedCallsOfUnseen.set(number - callsOfUnseen.size()) ? 2 : 0;
     }
-    uint8_t levelOfCallOfUnseen(uint32_t number) const { return number < callsOfUnseen.size() ? callsOfUnseen[number] : sharedCallsOfUnseen.get(number - callsOfUnseen.size()) ? 2 : 0; }
     // Told in this round. By call, and by member of a shared call.
     Vector<uint8_t> callsToResolve;
     BitVector membersToResolve;
@@ -726,10 +723,6 @@ private:
     Values objectsConstructed(const Passed&, FunctionID callee);
     LinkType objectsThatNoNodeHolds(LayoutID);
     Values resultOf(FunctionID callee, uint32_t index, bool isConstruction, const Values& constructed, uint8_t distance);
-    // AOTLinkKnownCalleesInlines.h
-    template<typename Functor> std::optional<Values> resultThatIsParameter(FunctionID callee, uint32_t index, const Functor& passedAt);
-    Values resultGivenTo(FunctionID callee, uint32_t index, const Passed&, const Values& constructed);
-    Values resultGivenToCallByBinding(FunctionID callee, uint32_t index, const Values& constructed);
     Values passToLostFunctions(const Passed&, const LinkType& callee, const Source*);
     Values passToUnseen(const Passed&);
     // What native code calls.
@@ -4215,6 +4208,5 @@ void LinkFlow::enter(FunctionID caller, uint32_t callInSummary, FunctionID calle
 
 } } } // namespace JSC::AOT::Typed
 
-#include "AOTLinkKnownCalleesInlines.h"
 
 #endif // ENABLE(AOT)

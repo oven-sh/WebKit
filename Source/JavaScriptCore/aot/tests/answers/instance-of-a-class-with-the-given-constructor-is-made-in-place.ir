@@ -5,6 +5,7 @@
 # FORM: PutSlotOrAdd {{*}}key="id" receivers=[L1]
 # FORM: PutSlotOrAdd {{*}}key="stamp" receivers=[L1]
 # RUN(NEVER): walk f1 mechanisms=all
+# NEVER: isInLoop=true isLoopHead=true
 # NEVER-NOT: SuperConstruct
 # NEVER-NOT: NewArray
 # NEVER-NOT: CallDirect

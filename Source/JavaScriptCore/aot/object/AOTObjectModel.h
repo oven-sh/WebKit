@@ -49,7 +49,6 @@ public:
     const AllocationData& allocation(uint32_t number) const { return m_tables.allocations()[number]; }
     const RuntimeType& typeAt(uint32_t byteOffset) const { return m_tables.typeAt(byteOffset); }
     const RuntimeType& typeOf(const FieldData& field) const { return typeAt(field.type); }
-    const RuntimeType* typeWithIndex(uint32_t typeIndex) const;
 
     const FieldData* field(VM&, const LayoutData&, UniquedStringImpl*);
     UniquedStringImpl* nameOf(VM&, const FieldData&);

@@ -370,32 +370,12 @@ void TypeArena::reset()
     emptyTypeArenaIndex(m_textIndex);
     m_outgrownBytesOfTexts.shrink(0);
 
-    m_answersUntilReset.shrink(0);
-    m_wordsOfAnswersUntilReset.shrink(0);
-    emptyTypeArenaIndex(m_indexOfAnswersUntilReset);
-
     if (m_epoch == largestEpochOfTypeMemo) {
         m_memoUntilReset.fill(MemoEntry { });
         m_epoch = 0;
     }
     ++m_epoch;
     forgetUnionsOfMany();
-}
-
-void TypeArena::forgetResults()
-{
-    m_lastingMemo.clear();
-    m_memoUntilReset.fill(MemoEntry { });
-    forgetUnionsOfMany();
-}
-
-void TypeArena::forgetResultsOfTypesAndSets()
-{
-    forgetResults();
-    m_layoutSets.untyped().lastingMemo().clear();
-    m_objectSets.untyped().lastingMemo().clear();
-    m_stringSets.untyped().lastingMemo().clear();
-    m_keySets.untyped().lastingMemo().clear();
 }
 
 void TypeArena::forgetUnionsOfMany()
@@ -697,8 +677,10 @@ TypeID TypeArena::internCanonical(const TypeParts& parts)
     static_cast<TypeParts&>(wanted) = parts;
     if (std::optional<uint32_t> position = m_table.m_types.find(hash, wanted))
         return idAt<TypeID>(IDHome::Program, *position);
-    if (typeArenaAddsToProgram(m_table, m_keeps))
+    if (typeArenaAddsToProgram(m_table, m_keeps)) {
+        RELEASE_ASSERT(!m_table.takesNoAdditions());
         return idAt<TypeID>(IDHome::Program, m_table.m_types.addAfterMiss(hash, complete(parts)));
+    }
     RELEASE_ASSERT(m_keeps == ArenaKeeps::UntilReset);
 
     std::optional<uint32_t> known = findInTypeArenaIndex(m_typeIndex, hash, [&](uint32_t candidate) {
@@ -999,12 +981,6 @@ TypeArena::SetOfRound TypeArena::setOfRound(ObjectSetID set)
     return setOfRoundIn(*this, set, AnswerKeptInArena::NumberOfObjectList, AnswerKeptInArena::ObjectSetOfList);
 }
 
-TypeArena::SetOfRound TypeArena::numberOfRound(uint32_t number)
-{
-    RELEASE_ASSERT(!wordOfTypeMemoLiesInThread(number));
-    return { number, !!answersThatKeepRounds(*this) };
-}
-
 std::optional<TypeArena::WordsOfRound> TypeArena::rememberedRound(uint8_t question, size_t numberOfWords, SetOfRound set, uint32_t second)
 {
     RELEASE_ASSERT(numberOfWords && numberOfWords <= mostWordsOfRound);
@@ -1049,40 +1025,6 @@ void TypeArena::rememberRound(uint8_t question, size_t numberOfWords, uint8_t ty
             round->types[index] = partsOfTypeInThread(*this, answers, TypeID::fromBits(words[index]));
     }
     answers.add({ SharedQuestion::RoundOverSet, question, set.word, second }, WTF::move(round));
-}
-
-static uint32_t hashOfQuestionKeptUntilReset(std::span<const uint32_t> question)
-{
-    uint64_t hash = 0xcbf29ce484222325ull ^ question.size();
-    for (uint32_t word : question) {
-        hash = (hash ^ word) * 0x9e3779b97f4a7c15ull;
-        hash ^= hash >> 29;
-    }
-    return static_cast<uint32_t>(hash >> 32);
-}
-
-const SharedAnswers::Answer* TypeArena::answerKeptUntilReset(std::span<const uint32_t> question) const
-{
-    uint32_t hash = hashOfQuestionKeptUntilReset(question);
-    std::optional<uint32_t> known = findInTypeArenaIndex(m_indexOfAnswersUntilReset, hash, [&](uint32_t candidate) {
-        const AnswerUntilReset& kept = m_answersUntilReset[candidate];
-        return kept.hash == hash && std::ranges::equal(m_wordsOfAnswersUntilReset.subspan(kept.firstWord, kept.numberOfWords), question);
-    });
-    return known ? m_answersUntilReset[*known].answer.get() : nullptr;
-}
-
-const SharedAnswers::Answer& TypeArena::keepAnswerUntilReset(std::span<const uint32_t> question, std::unique_ptr<SharedAnswers::Answer> answer)
-{
-    RELEASE_ASSERT(m_keeps == ArenaKeeps::UntilReset && answer);
-    ASSERT(!answerKeptUntilReset(question));
-    uint32_t hash = hashOfQuestionKeptUntilReset(question);
-    uint32_t position = m_answersUntilReset.size();
-    m_answersUntilReset.append(AnswerUntilReset { hash, static_cast<uint32_t>(m_wordsOfAnswersUntilReset.size()), static_cast<uint32_t>(question.size()), WTF::move(answer) });
-    m_wordsOfAnswersUntilReset.append(question);
-    addToTypeArenaIndex(m_indexOfAnswersUntilReset, hash, position, [&](uint32_t earlier) {
-        return m_answersUntilReset[earlier].hash;
-    });
-    return *m_answersUntilReset.last().answer;
 }
 
 PropertyKeyID TypeArena::intern(const PropertyKey& key)

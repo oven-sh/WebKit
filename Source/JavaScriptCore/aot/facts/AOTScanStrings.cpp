@@ -16,33 +16,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// ---- Texts that meet others
-
-// Where texts meet, a value is one of a few texts that no written type need name: at a parameter of a block, and behind a call of a function that returns them.
-void noteTextThatMeetsOthersInScan(const BodyValue& definition, ThinSummary& summary)
-{
-    if (!definition || definition.isParameter() || definition.opcode() != Opcode::String)
-        return;
-    StringID text = definition.as<Opcode::String>().string();
-    Vector<StringID>& texts = summary.textsThatMeetOthers;
-    if (text && (texts.isEmpty() || texts.last() != text))
-        texts.append(text);
-}
-
-void noteTextsThatMeetBehindTerminatorInScan(const BodyTerminator& terminator, const BodyValue& definitionOfWhatIsReturned, ThinSummary& summary)
-{
-    if (terminator.kind() == TerminatorKind::Return) {
-        noteTextThatMeetsOthersInScan(definitionOfWhatIsReturned, summary);
-        return;
-    }
-    if (terminator.kind() != TerminatorKind::SwitchString)
-        return;
-    for (StringID text : terminator.as<TerminatorKind::SwitchString>().strings()) {
-        if (text)
-            summary.textsThatMeetOthers.append(text);
-    }
-}
-
 // ---- Paths of modules
 
 static constexpr OpcodeSet opcodesThatNameModulesInScanStrings = opcodesWhere([](Opcode opcode) {
@@ -172,7 +145,6 @@ static void sortWithoutRepeatsInScanStrings(Vector<IDType>& list)
 
 void finishListsOfStringsInScan(ThinSummary& summary)
 {
-    sortWithoutRepeatsInScanStrings(summary.textsThatMeetOthers);
     sortWithoutRepeatsInScanStrings(summary.modulesWhosePathIsRead);
 }
 

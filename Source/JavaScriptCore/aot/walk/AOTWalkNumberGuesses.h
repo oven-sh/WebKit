@@ -26,8 +26,6 @@ ExpectationOfNumber numbersExpectedOf(Walker&, ValueID input, ExpectationOfNumbe
 TypeID typeHeldAtPositionOf(Walker&, ValueID input);
 // By the body: behind casts and sums every mention of the value leads to a bit operator, an index, or a position or a count of a row of the table.
 bool usesSpeakForInt32(Walker&, ValueID input);
-// By the body: what the turns of the loop do with the variable speaks for an int32: usesSpeakForInt32() of one of its reads, a step (`pos++`, `pos += size`), a relation with a variable that is so stepped.
-bool turnsTakeEnvironmentFieldForInt32(Walker&, LoopID, LayoutID, uint32_t field);
 // `source.position < source.text.length`, `source.text.charCodeAt(source.position)`, `source.position++`: of a read by name in a loop. Each mention of the slot is a read of its own, as of a variable that closures share.
 // By the body alone: the turns step the slot by one, or usesSpeakForInt32() of one of its reads. `found` wherever they do not: what was seen to arrive in a slot says little of what data will bring, and `particle.x += particle.speed` says nothing.
 ExpectationOfNumber numbersExpectedOfSlotThatTurnsStep(Walker&, ValueID input, ExpectationOfNumber found);
@@ -46,9 +44,6 @@ Reference buildTestOfNumber(Walker&, Reference value, TypeID tested, Origin);
 Reference buildProofOfNumber(Walker&, Reference value, Reference test, Origin);
 
 // ---- AOTWalkNumberUpdatesOfFields.cpp
-// For buildReadForTypedAccess(), asked ahead. By the body: what the PropGet gives is sure to be stored back under the same name on the same object behind arithmetic alone,
-// with nothing between that can ask for the property: `o.n++`, `o.n += s`.
-bool isReadOfUpdateOfField(const Walker&, const BodyValue& read);
 
 // ---- AOTWalkNumberPaths.cpp
 // A link of the chain in front of callBuiltin(), behind `has(Mechanism::Guesses) && m_opensGuesses`.

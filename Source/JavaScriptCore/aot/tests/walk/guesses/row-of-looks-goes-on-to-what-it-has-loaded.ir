@@ -12,7 +12,7 @@
 # The objects reach code that the build has not seen, so Link has proven nothing of their fields. Each slot is HELD to a type (PlacedSlot::type): every store is held to it, so a slot that is filled holds a value of it.
 # A read behind the look at its slot has that type with no test of its own. So the row of looks in front of the arms goes on to the slots of what it has loaded: `a.b.c` has one closed arm and no test of a shape.
 # What may be undefined or null is asked for that, and the closed arm throws in its turn.
-# TODO: no slot is held to a type since 11-03 08:25: held types bought nothing on any judge and cost the servers 1 to 5% (plan/AOTSlotPlan.cpp, typeHeldOfFieldForSlotPlan())
+# TODO: no slot is held to a type: held types bought nothing and cost the servers 1 to 5% (plan/AOTSlotPlan.cpp, typeHeldOfFieldForSlotPlan())
 # RUN(PLAN): plan layouts mechanisms=all
 # PLAN: layout L0 CompiledObject
 # PLAN-NEXT: slot 0 "weight" JSValue Inline {{*}} type=undefined|i32|fractional

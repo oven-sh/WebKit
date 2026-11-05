@@ -938,6 +938,78 @@ public:
         return resultsOf(done, key);
     }
 
+    // `for (const [key, value] of map)`, `for (const value of set)`: the one step, at the head of its loop, is walked on two ways apart, the one that finds an entry and the one that ends, and each ends with the block's own Branch.
+    // What the step hands out meets nothing: it keeps its type and its form,
+    // and whoever takes the pair of a Map apart at once finds its two elements, so the pair is never made. A close of such an iteration does nothing, so nothing is kept for behind the loop.
+    bool stepTableOnWaysApart(Reference state, const BodyValue& resume)
+    {
+        // It is asked at every step of every iteration by index, and the record of a pattern holds all that the pattern has taken: nothing of it is copied before it is known to be a table's.
+        const Walker::IterationByIndex& record = m_walker.iterationByIndex(state);
+        if (record.mayGoByProtocol || record.isTakenAtOpen || record.holdsFlatEntries || record.literal || !record.table || !stepsThroughTable(record.contents) || !record.head || !findWayOfIteration(m_walker.currentBodyIndex(), resume.operand(0)).onlyStepStandsAtHeadOfLoop)
+            return false;
+        // What is built below may move the records.
+        Walker::IterationByIndex entered = record;
+        // Each way knows whether it is the last, and the Branch has to go by that: a way that led both edges would bring the turn a position and a table of its own.
+        const BodyIndex& index = m_walker.currentBodyIndex();
+        BodyTerminator end = index.terminator(index.blockOf(resume.id()));
+        ValueID condition = end.kind() == TerminatorKind::Branch ? end.operand(0) : ValueID();
+        if (!m_walker.has(Mechanism::Folding) || !condition || index.isParameter(condition) || index.opcodeOf(condition) != Opcode::ResultAt)
+            return false;
+        auto asked = index.value(condition).as<Opcode::ResultAt>();
+        if (asked.resultsOperand() != resume.id() || asked.index() != static_cast<uint32_t>(IteratorResumeResult::Done))
+            return false;
+        if (entered.otherForm != Walker::IterationByIndex::OtherForm::None || !m_walker.armsMayEndWithBranchBehind(resume))
+            return false;
+        Draft isClosed = draft(Opcode::IsCollectionIteratorClosedMark);
+        isClosed.setTableOperand(entered.table);
+        Reference wasClosed = build(WTF::move(isClosed));
+        if (m_walker.isUnreachable())
+            return true;
+        BlockID finished = addBlock();
+        BlockID stepping = addBlock();
+        branch(wasClosed, finished, stepping);
+
+        continueIn(stepping);
+        bool isMap = entered.contents == ContentsStepped::Map;
+        Draft next = draft(isMap ? Opcode::MapNext : Opcode::SetNext);
+        next.setOperand(0, entered.list);
+        next.setTableOperand(entered.table);
+        next.setEntryOperand(entered.position);
+        Reference found = build(WTF::move(next));
+        BlockID giving = addBlock();
+        branch(resultAt(found, MapNextResult::HasEntry), giving, finished);
+
+        continueIn(finished);
+        m_walker.iterationByIndex(state).table = build(draft(Opcode::CollectionIteratorClosedMark));
+        m_walker.bind(resume.id(), resultsOf(boolean(true), undefined()));
+        if (!m_walker.endArmWithBranchBehind(resume)) {
+            m_walker.fail("a way of a step does not walk the end of its block"_s);
+            return true;
+        }
+
+        continueIn(giving);
+        Reference key = resultAt(found, MapNextResult::Key, isMap ? entered.keysProven : entered.valuesProven);
+        Reference value = isMap ? resultAt(found, MapNextResult::Value, entered.valuesProven) : key;
+        Reference given = entered.kind == JSC::IterationKind::Keys ? key : value;
+        if (entered.kind == JSC::IterationKind::Entries) {
+            Draft pair = draft(Opcode::NewArray);
+            pair.setContents(TypeTable::anything);
+            pair.setElementsOperands(std::array { key, value });
+            given = build(WTF::move(pair));
+        }
+        m_walker.iterationByIndex(state).position = operatorOnNumbers(Opcode::Increment, resultAt(found, MapNextResult::Entry));
+        m_walker.iterationByIndex(state).table = tableOf(entered.list);
+        if (m_walker.isUnreachable())
+            return true;
+        m_walker.bind(resume.id(), resultsOf(boolean(false), given));
+        // The record of what a step gives is no holder: whoever reads the value out of it gets the name that went in.
+        if (entered.kind == JSC::IterationKind::Entries)
+            noteFreshList(m_walker, given);
+        if (!m_walker.endArmWithBranchBehind(resume))
+            m_walker.fail("a way of a step does not walk the end of its block"_s);
+        return true;
+    }
+
     // No `return` lies on the iterator of a list or above it, and nobody can put one there: there is nothing to call.
     void closeByIndex(Walker::IterationByIndex& iteration, IteratorCompletion completion)
     {
@@ -1470,7 +1542,7 @@ private:
 
     TypeID typeOfLists() { return m_walker.types().builtinClass(BuiltinClasses::Array); }
 
-    // As makeListAgainInKnownLeaving(): where nothing needs the first allocation any more the sweep drops it. `room`: null for none.
+    // Where nothing needs the first allocation any more the sweep drops it. `room`: null for none.
     Reference makeListAgain(const BodyValue& made, std::span<const Reference> elements, Reference room)
     {
         if (m_walker.isUnreachable())
@@ -2861,6 +2933,8 @@ bool buildTypedIterationOfItsOpcodes(Walker& walker, const BodyValue& value)
         builder.expectNoGenerator();
     if (isExpectedToBeSteppedUnseen(walker, value.operand(0)))
         builder.expectNoStepByProtocol();
+    if (builder.stepTableOnWaysApart(state, value))
+        return true;
     Reference results;
     if (std::optional<StepOfListLiteral> step = stepOfListLiteral(walker, walker.currentBodyIndex(), value))
         results = builder.resultsOf(builder.booleanValue(step->isDone), step->element ? walker.referenceOf(step->element) : builder.undefinedValue());

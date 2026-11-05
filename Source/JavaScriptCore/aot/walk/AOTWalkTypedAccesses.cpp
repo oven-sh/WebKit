@@ -16,7 +16,6 @@
 #include "AOTIRProgram.h"
 #include "AOTLayout.h"
 #include "AOTLinkTables.h"
-#include "AOTLinkValuesLaidAbove.h"
 #include "AOTNameClass.h"
 #include "AOTRepresentationRules.h"
 #include "AOTSlotRepresentation.h"
@@ -26,7 +25,7 @@
 #include "AOTWalkNumberGuesses.h"
 #include "AOTWalkNumberForms.h"
 #include "AOTWalkKnownCalls.h"
-#include "AOTWalkKnownJoins.h"
+#include "AOTWalkKnown.h"
 #include "AOTWalkBirths.h"
 #include <algorithm>
 #include <bit>
@@ -87,6 +86,10 @@ struct FieldOfTypedAccess {
     bool isAppendedByConstructors { true };
     // LinkedCell::isOfBirth in every receiver. False: `const node = createBaseNode(kind); node.name = name;`: the type says that the property is there, and a store by name outside of the maker puts it there.
     bool isOfBirth { true };
+    // PlacedSlot::isFilledAtBirth in every receiver: while an object bears no mark, the slot is filled.
+    bool markAnswersForSlot { true };
+    // PlannedLayout::holdsRawValueFromBirth() in every receiver: while an object bears no mark, the slot holds neither undefined nor null.
+    bool markAnswersForValue { true };
     // In every receiver the slot has a form with marks for absent, undefined and null. JSValue has none: there a look for "filled" and a load are all that there is.
     bool liesInFormWithMarks { true };
     // In every receiver that form holds numbers or booleans.
@@ -122,6 +125,11 @@ struct KeptByTypedAccesses final : Walker::KeptForBuild {
     // The same two of a wide set that is no family: by TypeArena::setOfRound() of it and the key, and by the rest of what is asked.
     HashMap<std::pair<uint64_t, uint64_t>, FieldOfTypedAccess> fieldsOfSets;
     HashMap<std::pair<uint64_t, uint64_t>, AnswersAbove> answersAboveSets;
+    // By class: whether the classes from it up pass all that whoAnswersForWhatStandsAboveObjectsOf() asks of them whatever the name. What the class above answers is kept for the class below.
+    enum class RowAbove : uint8_t { NotAsked, IsAsked, Passes, Fails };
+    Vector<RowAbove> rowsAboveClasses;
+    // By key of the program: some class has a member of its prototype object under it, by its record or as Link has seen.
+    std::optional<BitVector> keysOfMembersOfPrototypes;
 };
 
 struct OperandsOfTypedAccess {
@@ -527,6 +535,8 @@ static FieldOfTypedAccess describeFieldAnewForTypedAccess(Walker& walker, const 
         staysInSlot &= takesEveryValue || everyStoreFits;
         field.isFilledByEveryConstruction &= cell.isFilled;
         field.isFilledAtEveryRead &= cell.isFilledAtEveryRead;
+        field.markAnswersForSlot &= slot.isFilledAtBirth;
+        field.markAnswersForValue &= walker.plan().layout(member).holdsRawValueFromBirth(*index);
         // Link follows the constructions of the layout that has the constructor. What a layout below has from it is created by the same constructor.
         field.isOfBirth &= cell.isOfBirth || (recordOrNull && recordOrNull->flags.contains(FieldFlags::IsInherited) && cellOfFieldForTypedAccess(link, declarationOf(program, reference)).isOfBirth);
         if (stored)
@@ -939,6 +949,23 @@ static TypedForm buildReadThatFindsNothingBehindLooksForTypedAccess(Walker&, con
 static TypedForm buildAccessToAccessorBehindLooksForTypedAccess(Walker&, const BodyValue&, const OperandsOfTypedAccess&, const ReceiversOfTypedAccess&, PropertyKeyID);
 static bool orderWordShowsThatCellLacksFieldForTypedAccess(Walker&, Reference object, const ReceiversOfTypedAccess&, PropertyKeyID);
 
+// NO MARK, SO THE SLOT IS FILLED: every maker in sight has filled the field when it is through with the object, an object that is not through bears the mark, and whatever empties the slot later sets it.
+static bool markOfCellAnswersForFieldInTypedAccess(const Walker& walker, const ReceiversOfTypedAccess& receivers, const FieldOfTypedAccess& field, PropertyKeyID key, ValueID object)
+{
+    // lookAsksForValueOfWrittenType(): such a look asks that the slot holds neither undefined nor null.
+    bool lookAsksForValue = field.isRequired && field.liesInFormWithMarks && (field.liesInFormOfNumbersOrBooleans || field.isWrittenWithoutUndefinedAndNull) && !field.markAnswersForValue;
+    return field.liesInOneSlot && field.coverage == CoverageOfTypedAccess::EveryReceiver && field.markAnswersForSlot && !lookAsksForValue && !field.isAppended && paysToLookAtSlotForTypedAccess(walker, field, key)
+        && !possibleChangesForbid(receivers.possibleChanges, TypedAccess::ReadsFilledSlot) && !isBeingMadeByBodyBeingReadInTypedAccess(walker, object);
+}
+
+bool markOfCellAnswersForRead(Walker& walker, const BodyValue& read, TypeID typeOfObject)
+{
+    if (read.opcode() != Opcode::PropGet)
+        return false;
+    std::optional<ReceiversOfTypedAccess> receivers = findReceiversOfTypedAccess(walker, typeOfObject);
+    return receivers && markOfCellAnswersForFieldInTypedAccess(walker, *receivers, describeFieldOfTypedAccess(walker, *receivers, read.key(), { }, true), read.key(), read.objectOperand());
+}
+
 static TypedForm buildReadForTypedAccess(Walker& walker, const BodyValue& value, const OperandsOfTypedAccess& operands, PropertyKeyID key)
 {
     std::optional<ReceiversOfTypedAccess> receivers = findReceiversOfTypedAccess(walker, operands.typeOfObject);
@@ -991,6 +1018,8 @@ static TypedForm buildReadForTypedAccess(Walker& walker, const BodyValue& value,
     Reference object = operands.object;
     Reference held = valueInSlotForTypedAccess(walker, object, field);
     bool isFilled = isFilledByConstructions || (provesSlotFilledForTypedAccess(walker, held, key) && !possibleChangesForbid(receivers->possibleChanges, TypedAccess::ReadsFilledSlot));
+    bool markAnswers = walker.state().factsOfCell(object).contains(FactOfCell::BearsNoMark) && markOfCellAnswersForFieldInTypedAccess(walker, *receivers, field, key, value.objectOperand());
+    isFilled |= markAnswers;
     if (!isFilled && !mayFindSlotEmpty)
         mayFindSlotEmpty = mayFindSlotEmptyBehindLooksInTypedRead(walker, *receivers, field, key, walker.state().factsOfCell(object), &walker.state());
     if (!isFilled && !mayFindSlotEmpty)
@@ -1001,12 +1030,7 @@ static TypedForm buildReadForTypedAccess(Walker& walker, const BodyValue& value,
     }
 
     // `render({ width })`, copied in line: `height`, `style`, `onDone` of an object that was made a moment ago. The word of the cell lists its keys and this one is not among them: the slot is empty, and here an empty slot is undefined.
-    // Or a look has found the slot empty: noteSlotFoundEmpty().
-    auto wasFoundEmpty = [&] {
-        Reference noted = walker.state().slot(object, field.place);
-        return noted && noted.isRecord() && walker.code().at(noted.id()).opcode == Opcode::Absent;
-    };
-    if (!isFilled && walker.has(Mechanism::Folding) && (orderWordShowsThatCellLacksFieldForTypedAccess(walker, object, *receivers, key) || wasFoundEmpty())) {
+    if (!isFilled && walker.has(Mechanism::Folding) && orderWordShowsThatCellLacksFieldForTypedAccess(walker, object, *receivers, key)) {
         walker.bind(value.id(), walker.constant(Draft(Opcode::Undefined)));
         return TypedForm::Built;
     }
@@ -1017,7 +1041,11 @@ static TypedForm buildReadForTypedAccess(Walker& walker, const BodyValue& value,
         filledWhereverObjectIs.emplace(walker);
     bool holdsMark = slotHoldsMarkForTypedAccess(walker, *receivers, key);
     Opcode opcodeOfRead = isFilled ? (holdsMark ? Opcode::GetDeferredClosureSlot : Opcode::GetSlot) : (holdsMark ? Opcode::GetDeferredClosureSlotOrUndefined : Opcode::GetSlotOrUndefined);
-    Reference read = walker.build(draftOfSlotOperationForTypedAccess(walker, value, opcodeOfRead, object, *receivers, key));
+    Draft draft = draftOfSlotOperationForTypedAccess(walker, value, opcodeOfRead, object, *receivers, key);
+    // No mark: neither undefined nor null lies there.
+    if (markAnswers && field.markAnswersForValue && opcodeOfRead == Opcode::GetSlot)
+        draft.setHoldsDeclaredType(true);
+    Reference read = walker.build(WTF::move(draft));
     readScopeBesideSlotForTypedAccess(walker, walker.originOf(value), read);
     walker.bind(value.id(), read);
     if (read)
@@ -1138,6 +1166,66 @@ static bool objectPrototypeMayGainNameForTypedAccess(const Program& program)
     return program.isSomeNameOpenedOn(objectPrototype);
 }
 
+// What whoAnswersForWhatStandsAboveObjectsOf() asks of each class on the way up, but for the name.
+static bool rowAboveClassPassesWhateverTheNameForTypedAccess(const Walker& walker, KeptByTypedAccesses& kept, LayoutID classLayout)
+{
+    using RowAbove = KeptByTypedAccesses::RowAbove;
+    const Program& program = walker.program();
+    const LinkTables& link = linkTablesForTypedAccesses(walker);
+    if (kept.rowsAboveClasses.isEmpty())
+        kept.rowsAboveClasses.fill(RowAbove::NotAsked, program.layouts.size());
+    auto hasMemberUnderComputedKey = [](const auto& declared) {
+        return declared.side == ClassSide::Prototype && !declared.key;
+    };
+    Vector<LayoutID, 16> asked;
+    RowAbove answer = RowAbove::Passes;
+    for (LayoutID current = classLayout; current;) {
+        // A row that comes back to a class that is being asked has no end.
+        if (RowAbove known = kept.rowsAboveClasses[current.index()]; known != RowAbove::NotAsked) {
+            answer = known == RowAbove::Passes ? RowAbove::Passes : RowAbove::Fails;
+            break;
+        }
+        kept.rowsAboveClasses[current.index()] = RowAbove::IsAsked;
+        asked.append(current);
+        const Layout& layout = program.at(current);
+        LayoutID parent;
+        if (layout.kind != LayoutKind::Instance || !layout.constructor || !walker.plan().hasClassRecord(current)
+            || (layout.has(LayoutFlags::IsConstructorFunction) && program.at(layout.constructor).captures.size() != walker.plan().promotedEnvironments().numberOfRemovedCapturesOf(layout.constructor))
+            || std::ranges::any_of(walker.facts().membersOf(current), hasMemberUnderComputedKey)
+            || std::ranges::any_of(std::ranges::equal_range(link.members, current, { }, &LinkedMember::classLayout), hasMemberUnderComputedKey)
+            || !findParentNamedByClassRecordForTypedAccess(walker, current, parent)) {
+            answer = RowAbove::Fails;
+            break;
+        }
+        current = parent;
+    }
+    for (LayoutID layout : asked)
+        kept.rowsAboveClasses[layout.index()] = answer;
+    return answer == RowAbove::Passes;
+}
+
+static bool someClassHasMemberOfPrototypeUnderForTypedAccess(const Walker& walker, KeptByTypedAccesses& kept, PropertyKeyID key)
+{
+    // The table of the program lacks it, so no record names it.
+    if (liesInThread(key))
+        return false;
+    if (!kept.keysOfMembersOfPrototypes) {
+        BitVector keys;
+        auto note = [&](const auto& declared) {
+            if (declared.side == ClassSide::Prototype && declared.key)
+                keys.set(positionOf(declared.key));
+        };
+        for (uint32_t index = 0; index < walker.program().layouts.size(); ++index)
+            std::ranges::for_each(walker.facts().membersOf(LayoutID(index)), note);
+        std::ranges::for_each(linkTablesForTypedAccesses(walker).members, note);
+        kept.keysOfMembersOfPrototypes = WTF::move(keys);
+    }
+    return kept.keysOfMembersOfPrototypes->get(positionOf(key));
+}
+
+// So many classes are gone through sooner than anything is looked up.
+static constexpr unsigned classesGoneThroughBeforeRowIsLookedUp = 8;
+
 static WhoAnswersForWhatStandsAbove whoAnswersForWhatStandsAboveObjectsOf(const Walker& walker, LayoutID member, PropertyKeyID key, LookupAbove lookup, LayoutID& classLayout, ASCIILiteral* whyNobody = nullptr)
 {
     auto nobody = [&](ASCIILiteral why) {
@@ -1161,7 +1249,16 @@ static WhoAnswersForWhatStandsAbove whoAnswersForWhatStandsAboveObjectsOf(const 
     if (!walker.facts().isEvaluatedAtMostOnce(classLayout))
         return nobody("the class may be evaluated again"_s);
     size_t numberOfClassesLeft = program.layouts.size();
+    unsigned numberOfClassesGoneThrough = 0;
     for (LayoutID current = classLayout; current;) {
+        // Most names are those of fields alone. Of such a name the rest of a long row is asked what it is asked whatever the name: a store in each class of a row went up the whole row.
+        if (!whyNobody && numberOfClassesGoneThrough++ == classesGoneThroughBeforeRowIsLookedUp) {
+            KeptByTypedAccesses& kept = keptByTypedAccesses(const_cast<Walker&>(walker));
+            if (!rowAboveClassPassesWhateverTheNameForTypedAccess(walker, kept, current))
+                return WhoAnswersForWhatStandsAbove::Nobody;
+            if (!someClassHasMemberOfPrototypeUnderForTypedAccess(walker, kept, key))
+                return WhoAnswersForWhatStandsAbove::GuardOfClass;
+        }
         const Layout& layout = program.at(current);
         if (!numberOfClassesLeft-- || layout.kind != LayoutKind::Instance || !layout.constructor || !walker.plan().hasClassRecord(current))
             return nobody("a class on the way up has no record"_s);
@@ -1512,6 +1609,31 @@ static bool recordsDeclareMemberAboveObjectsOfLayout(const Walker& walker, Layou
         current = parent;
     }
     return false;
+}
+
+bool findGuardsOfMethodAboveObjectsOf(Walker& walker, TypeID typeOfObjects, PropertyKeyID key, Vector<MemberConditionRecord, 4>& conditions)
+{
+    std::optional<ReceiversOfTypedAccess> receivers = findReceiversOfTypedAccess(walker, typeOfObjects);
+    if (!receivers || describeFieldOfTypedAccess(walker, *receivers, key, { }, true).coverage != CoverageOfTypedAccess::NoReceiver)
+        return false;
+    // What Link proves of a member is read without a guard.
+    if (findMemberAboveReceiversForTypedAccess(walker, *receivers, key).kind != MemberFound::Kind::Unknown)
+        return false;
+    Vector<LayoutID, 4> classes;
+    for (LayoutID member : receivers->members) {
+        LayoutID classLayout;
+        if (!findMethodDeclaredAboveObjectsOf(walker, member, key, classLayout))
+            return false;
+        classes.append(classLayout);
+    }
+    for (LayoutID classLayout : classes) {
+        bool isListed = conditions.containsIf([&](const MemberConditionRecord& listed) {
+            return listed.layout == classLayout && listed.key == key;
+        });
+        if (!isListed)
+            conditions.append(MemberConditionRecord { MemberConditionKind::MemberUnchanged, classLayout, ClassSide::Prototype, key });
+    }
+    return !classes.isEmpty();
 }
 
 bool recordsDeclareMemberAboveObjectsOf(Walker& walker, TypeID typeOfObjects, PropertyKeyID key)
@@ -1893,7 +2015,7 @@ static TypedStoreAskedAhead askAheadAboutTypedStore(const Walker& walker, const 
 static bool orderWordTellsKeysOfObjectsOf(const Walker& walker, LayoutID layout)
 {
     const Plan& plan = walker.plan();
-    return plan.layout(layout).holdsCompiledObjects() && !plan.layout(layout).keysAreNeverEnumerated && plan.shapes().shapesOf(layout).count == 1;
+    return plan.layout(layout).holdsCompiledObjects() && plan.shapes().shapesOf(layout).count == 1;
 }
 
 // Nothing: the word says nothing of the field. A slot without an absent state counts as filled from the allocation on, and no order lists it.
@@ -1938,6 +2060,51 @@ static bool orderWordShowsThatCellLacksFieldForTypedAccess(Walker& walker, Refer
     std::optional<uint32_t> orderWord = walker.state().orderWordOf(object);
     std::optional<FieldInKnownOrder> inKnownOrder = orderWord ? findFieldInKnownOrderOfEveryReceiver(walker, receivers.members.span(), key, *orderWord) : std::nullopt;
     return inKnownOrder && !inKnownOrder->isListed;
+}
+
+// `function Node(kind, pos, end) { this.pos = pos; this.end = end; this.kind = kind; .. }`: the store has filled the last field of the birth of an object that the body being read makes.
+// The state holds a value for each of them, and no field lies outside its slot: what the state holds is so at this point of the walk whoever else has the object. The birth is over, and no look at the slots is paid for it.
+static void finishBirthBehindStoreForTypedAccess(Walker& walker, const BodyValue& store, Reference object, const ReceiversOfTypedAccess& receivers, const FieldOfTypedAccess& stored)
+{
+    if (!stored.markAnswersForSlot || walker.isUnreachable() || !isBeingMadeByBodyBeingReadInTypedAccess(walker, store.objectOperand()))
+        return;
+    OptionSet<FactOfCell> known = walker.state().factsOfCell(object);
+    if (known.contains(FactOfCell::BearsNoMark) || !known.contains(FactOfCell::NoFieldOutsideSlot))
+        return;
+    const Plan& plan = walker.plan();
+    auto numberOfFieldsOfBirth = [&](LayoutID layout) {
+        const PlannedLayout& planned = plan.layout(layout);
+        return std::ranges::count_if(planned.slots.span().first(planned.numberOfFields()), &PlacedSlot::isFilledAtBirth);
+    };
+    // A constructor stores its fields as the layout lists them, so the last one is what is missing until the set is whole.
+    LayoutID first = receivers.members[0];
+    for (uint32_t index = plan.layout(first).numberOfFields(); index--;) {
+        if (!plan.slot(first, index).isFilledAtBirth)
+            continue;
+        PropertyKeyID key = plan.slots().keyOf(walker.program(), { first, index });
+        if (!key)
+            return;
+        FieldOfTypedAccess field = describeFieldOfTypedAccess(walker, receivers, key, { }, true);
+        Reference inSlot = valueInSlotForTypedAccess(walker, object, field);
+        if (field.coverage != CoverageOfTypedAccess::EveryReceiver || !field.markAnswersForSlot || !field.liesInOneSlot || !provesSlotFilledForTypedAccess(walker, inSlot, key))
+            return;
+        if (plan.layout(first).holdsRawValueFromBirth(index) && (!field.markAnswersForValue || !walker.typeOf(inSlot) || walker.types().at(walker.typeOf(inSlot)).mayBeUndefinedOrNull()))
+            return;
+    }
+    // No receiver waits for a field that the first does not have.
+    auto numberInFirst = numberOfFieldsOfBirth(first);
+    for (LayoutID member : receivers.members) {
+        if (numberOfFieldsOfBirth(member) != numberInFirst)
+            return;
+    }
+    Origin origin = walker.originOf(store);
+    origin.isTailCall = false;
+    Draft finish(Opcode::FinishBirth, origin);
+    finish.setObjectOperand(object);
+    walker.chooseConservativeFields(finish);
+    walker.build(WTF::move(finish));
+    if (!walker.isUnreachable())
+        walker.state().noteFactsOfCell(object, FactOfCell::BearsNoMark);
 }
 
 static TypedForm buildStoreForTypedAccess(Walker& walker, const BodyValue& value, const OperandsOfTypedAccess& operands, PropertyKeyID key, ECMAMode mode, bool isDefinition)
@@ -2000,6 +2167,7 @@ static TypedForm buildStoreForTypedAccess(Walker& walker, const BodyValue& value
     walker.state().noteSlot(object, field.place, stored);
     if (opcode == Opcode::PutSlotOrAdd)
         walker.state().noteOrderWord(object, orderWordAfter);
+    finishBirthBehindStoreForTypedAccess(walker, value, object, *receivers, field);
     return TypedForm::Built;
 }
 
@@ -2225,7 +2393,8 @@ TypeID typeTakenBySlotOfStore(Walker& walker, const BodyValue& store, TypeID typ
     TypeID taken;
     for (LayoutID member : receivers->members) {
         std::optional<FieldIndex> field = slots.findField(walker.program(), member, store.key());
-        TypeID type = field ? slots.slot(member, *field).type : TypeID();
+        // Of a field for whose value the mark answers a value is asked for: whoever brings undefined or null stores by name, and the run time sets the mark.
+        TypeID type = field && slots.slot(member, *field).type ? slots.slot(member, *field).typeInLayoutRecord() : TypeID();
         if (type)
             taken = taken ? walker.types().intersectionOf(taken, type) : type;
     }
@@ -2242,6 +2411,10 @@ Reference buildReadThatTestsShapeAndSlot(Walker& walker, const BodyValue& read, 
     Draft draft = draftOfSlotOperationForTypedAccess(walker, read, Opcode::GetSlot, object, *receivers, read.key());
     draft.setHoldsDeclaredType(lookAsksForValueOfWrittenType(walker, *receivers, read.key()));
     draft.setLevel(KnowledgeLevel::Expected);
+    // Where the read tests the shape for itself. Of a receiver that was proven earlier somebody may have taken a field out since. A look that asks for a value of the written type asks more than the mark answers.
+    if (!walker.types().isSubset(walker.typeOf(object), guessed) && markOfCellAnswersForFieldInTypedAccess(walker, *receivers, describeFieldOfTypedAccess(walker, *receivers, read.key(), { }, true), read.key(), read.objectOperand()))
+        draft.setIsFilledWhereShapeFits(true);
+    draft.setReceiverMayBeInBirth(isBeingMadeByBodyBeingReadInTypedAccess(walker, read.objectOperand()));
     if (resultRepresentationOf(walker, draft) != Representation::JSValue)
         return { };
     draft.setExpectsCell(expectsCell);
@@ -2279,6 +2452,7 @@ Reference buildReadThatTestsShapeAndCell(Walker& walker, const BodyValue& read, 
     if (resultRepresentationOf(walker, draft) != Representation::JSValue)
         return { };
     draft.setExpectsCell(expectsCell);
+    draft.setReceiverMayBeInBirth(isBeingMadeByBodyBeingReadInTypedAccess(walker, read.objectOperand()));
     draft.setConditions(conditions.span());
     // The closed read may hand the object to a getter.
     walker.letLeave(object);
@@ -2358,24 +2532,15 @@ bool buildStoreThatTestsForItself(Walker& walker, const BodyValue& store, Refere
     return !walker.hasFailed();
 }
 
-bool emptySlotIsUndefinedBehindLooks(Walker& walker, const BodyValue& read, Reference object)
-{
-    if (read.opcode() != Opcode::PropGet || !walker.has(Mechanism::Folding))
-        return false;
-    std::optional<ReceiversOfTypedAccess> receivers = findReceiversOfTypedAccess(walker, walker.typeOf(object));
-    if (!receivers)
-        return false;
-    FieldOfTypedAccess field = describeFieldOfTypedAccess(walker, *receivers, read.key(), { }, true);
-    // `flags`, `kind`: what a maker fills is there in every object that anybody has. An arm for its empty slot is never taken, and what it brings is met by what the typed run brings.
-    if (field.coverage != CoverageOfTypedAccess::EveryReceiver || !field.liesInOneSlot || field.isOfBirth)
-        return false;
-    return !!askAheadAboutReadOfSlotThatMayBeEmpty(walker, *receivers, field, read.key());
-}
-
 void noteSlotFoundEmpty(Walker& walker, const BodyValue& access, Reference object)
 {
     if (std::optional<ReceiversOfTypedAccess> receivers = findReceiversOfTypedAccess(walker, walker.typeOf(object)))
         walker.state().noteSlot(object, describeFieldOfTypedAccess(walker, *receivers, keyOfAccessToSlot(walker.program(), access), { }).place, walker.constant(Draft(Opcode::Absent)));
+}
+
+bool isBeingMadeByBodyBeingRead(const Walker& walker, ValueID object)
+{
+    return isBeingMadeByBodyBeingReadInTypedAccess(walker, object);
 }
 
 bool looksAtSlotOfObjectBeingMade(const Walker& walker, const BodyValue& access)

@@ -45,11 +45,6 @@ bool ClosureTestEmitter::closureWordNames(FunctionID function) const
     return hasOneInstance() && closureKindOf(function).isSlim && conventions().exists(conventions().closureEntryOf(function));
 }
 
-bool ClosureTestEmitter::closuresStayAsCreated(FunctionID function) const
-{
-    return m_plan.closuresStayAsCreated(function);
-}
-
 // A closure that gained a property, a different prototype or a different integrity level has a butterfly where its word was, so comparing the word rejects it.
 // On the failing edge, TypeArena::differenceOf() removes the function from a type that names it. So the word alone may decide only when the tested type does not name the function.
 // The walk expects a changed closure to be rejected only among values with unbounded `unknown`: falseRefusalsOfTest() in walk/AOTWalkTypeTests.cpp.
@@ -57,7 +52,7 @@ bool ClosureTestEmitter::isDecidedByClosureWord(FunctionID function, const Type&
 {
     if (!closureWordNames(function))
         return false;
-    return closuresStayAsCreated(function) || (!m_passesChangedClosures && tested.hasUnboundedUnknown() && !namesFunction(types(), tested, function));
+    return !m_passesChangedClosures && tested.hasUnboundedUnknown() && !namesFunction(types(), tested, function);
 }
 
 Condition ClosureTestEmitter::hasClosureWordThatDecides(CellPointer cell, FunctionID function)
@@ -108,24 +103,7 @@ void ClosureTestEmitter::branchOnClosureTest(CellPointer cell, FunctionID functi
         branch(hasClosureWordThatDecides(cell, function), targets);
         return;
     }
-    if (m_plan.closureIdentityOf(function) == ClosureIdentity::TableCell) {
-        branch(isTableCell(cell, function), targets);
-        return;
-    }
     bool isSlim = closureKindOf(function).isSlim;
-
-    auto continueIf = [&](Condition condition) {
-        LBasicBlock continuation = newBlock();
-        m_out.branch(condition.value(), normalEdge(continuation), targets.notTaken);
-        m_out.appendToContinuation(continuation);
-    };
-
-    // Each instance has its own Structures, so that of a closure as it was created says whose closure it is too.
-    if (!closureWordNames(function) && closuresStayAsCreated(function)) {
-        continueIf(hasClosureStructure(cell, function));
-        branch(hasClosureWordOf(cell, isSlim, function), targets);
-        return;
-    }
 
     LBasicBlock hasOtherStructure = newBlock();
     if (closureWordNames(function)) {
@@ -148,44 +126,6 @@ void ClosureTestEmitter::branchOnClosureTest(CellPointer cell, FunctionID functi
         m_out.appendTo(hasOtherStructure);
     }
     branchOnIsChangedClosureWithNumber(cell, isSlim, m_mentions.add(NumberSpace::ClosureFunction, function), targets);
-}
-
-// A bound function is made with the Structure of any other closure of its form, and gets that of bound functions when somebody first looks at it as an object. A slim one then has a butterfly where its word was.
-void ClosureTestEmitter::branchOnIsBoundClosureOf(CellPointer cell, CodeUnit genericEntry, BranchTargets targets)
-{
-    if (!conventions().exists(genericEntry)) {
-        m_out.jump(targets.notTaken.block());
-        return;
-    }
-    FunctionKindData kind = m_plan.functionKind(m_program, genericEntry);
-    RELEASE_ASSERT(kind.isBound());
-
-    auto mentionOfClosureNumberOfEntry = [&](int32_t addend) {
-        return m_mentions.closureNumberOfEntry(conventions().indexOf(genericEntry), static_cast<uint32_t>(m_program.functions.size()), addend);
-    };
-    auto closureNumberOfEntry = [&](int32_t addend) {
-        return numberOf(mentionOfClosureNumberOfEntry(addend));
-    };
-    auto hasWordOfEntry = [&] {
-        EntryDescription entry = describeEntry(inputs(), genericEntry);
-        ClosureWord::Flags flags = closureWordFlags(kind);
-        flags.borrowedArguments = entry.borrowedArguments;
-        flags.endsItsTailCalls = entry.endsItsTailCalls;
-        int32_t otherFieldsOfHalf = static_cast<int32_t>(ClosureWord::encodeUpperHalf(entry.numberOfParameters, 0, flags));
-        const Machine::AbstractHeap& word = kind.isSlim ? m_heaps.AOTSlimClosure_word : m_heaps.AOTClosure_entry;
-        Word32 upperHalf(m_out.load32(m_out.address(cell.value(), word, sizeof(uint32_t))));
-        return equal(upperHalf, closureNumberOfEntry(otherFieldsOfHalf));
-    };
-
-    LBasicBlock hasInitialStructure = newBlock();
-    LBasicBlock hasOtherStructure = newBlock();
-    m_out.branch(equal(loadStructureID(cell), loadImmutable32(offsetOfClosureHeader(kind))).value(), normalEdge(hasInitialStructure), rareEdge(hasOtherStructure));
-
-    m_out.appendTo(hasInitialStructure);
-    branch(hasWordOfEntry(), targets);
-
-    m_out.appendTo(hasOtherStructure);
-    branchOnIsChangedClosureWithNumber(cell, kind.isSlim, mentionOfClosureNumberOfEntry(0), targets);
 }
 
 Condition ClosureTestEmitter::isClosureOfAny(CellPointer cell, std::span<const FunctionID> functions, const Type& tested)
@@ -404,13 +344,6 @@ Condition ClosureTestEmitter::hasFunctionCellType(CellPointer cell)
 {
     Condition isFunction = hasCellTypeIn(cell, functionTypes);
     return logicalOr(isFunction, hasCellTypeIn(cell, slimClosureTypes));
-}
-
-Condition ClosureTestEmitter::isTableCell(CellPointer cell, FunctionID function)
-{
-    if (m_plan.usesWideReferences())
-        return equal(cell, closureIfCreated(function));
-    return equal(cell, decode(NarrowReference(add(closureTableEntry(function), 1).value())));
 }
 
 CellPointer ClosureTestEmitter::closureIfCreated(FunctionID function)

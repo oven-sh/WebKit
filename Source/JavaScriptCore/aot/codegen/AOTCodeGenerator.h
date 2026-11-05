@@ -92,8 +92,6 @@ public:
     ~CodeGenerator();
 
     GenerationResult run();
-    // How often an operation has been handed to its emitter: each one that a block lists, as generate() comes to it. Not a constant, which lies in no block and is made at each use.
-    uint32_t numberOfOperationsEmitted() const { return m_numberOfOperationsEmitted; }
 
     const FunctionInputs& inputs() const LIFETIME_BOUND { return m_inputs; }
     BuildContext& build() { return m_inputs.build; }
@@ -166,15 +164,10 @@ public:
     Operand get(ValueID);
     // In every build: the block of a definition dominates the block of whoever asks for the value. Nothing behind this notices a breach: on some way the code would read a register that holds something else.
     void verifyThatDefinitionDominates(ValueID, BlockID user);
-    // Of what lies in a block. False for what is not generated yet, for what its user generates, and for a producer that holds none of its results.
-    bool hasWordOf(ValueID id) const { return !!m_values[id.index()]; }
     // For whoever compares the word and reads nothing through it. Null where hasWordOf() is false.
     LValue wordOf(ValueID id) const { return m_values[id.index()]; }
     // Fails the build unless the operand is in that form or in another spelling of the same word.
     Operand getIn(ValueID, Representation);
-    // The code of an operation once more, where Output stands, while another operation or a terminator is generated. What get() answers for the operation stays as it is.
-    // For whoever knows that its operands are in sight there and that it gives there what it gave where it stands.
-    Operand rematerialize(ValueID id) { return makeConstant(id); }
     // The word of the value may spell any NaN: it was read out of bytes, or arithmetic made it of such a word. get() makes that the one NaN for whoever asks, each time.
     bool holdsAnyNaN(ValueID id) const { return m_followsNumbersOutOfBytes && m_valuesHoldingAnyNaN.quickGet(id.index()); }
     // The word as it is, for the code of an operation of which takesAnyNaN() holds.
@@ -222,7 +215,6 @@ public:
     };
 
     bool isInitializingCell() const { return m_initializationDepth; }
-    bool isPassingHandlerArguments() const { return m_isPassingHandlerArguments; }
 
 private:
     struct EmittersMade {
@@ -395,7 +387,6 @@ private:
     // By the index of the block, once it is generated: the scope of Output behind its terminator.
     std::span<ScopeFork> m_scopeAtEndOfBlock;
     BlockID m_onlyEntryBlock;
-    BlockID m_blockEnteringFile;
     // Every way into each reached block that has no single predecessor.
     Vector<WayIntoBlock, 16> m_waysIntoJoins;
     // By the index of the block: its position in m_order plus one, and zero for a block that is not in it. Place 0 is a root above the entries.
@@ -417,7 +408,6 @@ private:
     Operand* m_definitionTaken { nullptr };
     EmittersMade m_emitters;
     unsigned m_initializationDepth { 0 };
-    uint32_t m_numberOfOperationsEmitted { 0 };
     bool m_isPassingHandlerArguments { false };
     // The arguments of a handler edge stand in front of the first operation of the block that may throw: Code::addHandlerEdge(). What stands ahead of that operation may be one of them.
     bool m_isAheadOfWhatMayThrow { false };

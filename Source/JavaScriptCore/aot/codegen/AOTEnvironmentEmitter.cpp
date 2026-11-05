@@ -47,18 +47,6 @@ void EnvironmentEmitter::generateGetCapture(const ValueContext& value)
     define(value, closureCapture(in<CellPointer>(value->closureOperand()), value->function(), value->index()));
 }
 
-// In the form in which NewBoundClosure stores the word, and at the slot where it stores it.
-void EnvironmentEmitter::generateGetBoundCapture(const ValueContext& value)
-{
-    const BoundFunctionPlan* bound = conventions().boundFunction(value->function(), value->numberOfBoundArguments());
-    RELEASE_ASSERT(bound && value->index() < bound->captures.size());
-    Representation representation = bound->captures[value->index()].representation;
-    CodeUnit genericEntry { bound->target, CodeRole::GenericEntryOfBoundFunction, bound->numberOfBoundArguments };
-    const Machine::IndexedAbstractHeap& captureWords = m_plan.functionKind(m_program, genericEntry).isSlim ? m_heaps.AOTSlimClosure_captures : m_heaps.AOTClosure_captures;
-    TypedPointer word = m_out.address(in<CellPointer>(value->closureOperand()).value(), captureWords[closureCaptureSlotOf(m_program, *bound, value->index())]);
-    define(value, Operand(representation, m_out.load(word, machineTypeOf(representation))));
-}
-
 TypedPointer EnvironmentEmitter::escapeMarkOf(ValueID environment)
 {
     std::optional<uint32_t> isEscapedOffset = m_plan.layout(typeOf(environment).environment).isEscapedOffset;

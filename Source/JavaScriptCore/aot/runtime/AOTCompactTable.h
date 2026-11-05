@@ -202,7 +202,6 @@ public:
         return **at<const TableInImage*>(offsetOfIndex());
     }
     bool isFull() const { return isLive() && m_used == m_capacity; }
-    bool isFullHeapTable() const { return isFull(); }
 
     uint32_t size() const
     {

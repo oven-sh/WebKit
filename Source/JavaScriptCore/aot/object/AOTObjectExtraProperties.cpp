@@ -369,8 +369,6 @@ static InternalFieldTuple* pendingStarsOf(const Object& object)
 static void listFieldsBoundByStars(VM& vm, State& state, Object& target, std::span<const Object::ExtraProperty> properties)
 {
     const LayoutData& layout = target.layout();
-    if (layout.keysAreNeverEnumerated)
-        return;
     Vector<uint16_t, 32> keys;
     ExtraKeyCounter positioned(layout.numberOfFields);
     uint32_t numberOfExtraKeys = 0;
@@ -384,8 +382,7 @@ static void listFieldsBoundByStars(VM& vm, State& state, Object& target, std::sp
         else
             ++numberOfExtraKeys;
     };
-    Object::KeyOrderStorage storage;
-    size_t next = Object::forEachPositionedKey(target.keyOrder(state, storage), layout.numberOfFields, properties.size(), listField, listKeyOfStars);
+    size_t next = Object::forEachPositionedKey(target.keyOrder(state), layout.numberOfFields, properties.size(), listField, listKeyOfStars);
     for (; next < properties.size(); ++next)
         listKeyOfStars(next);
     target.setKeyOrder(vm, state, keys.span());
@@ -448,14 +445,14 @@ static bool hasEnumerableStringKeysOfItsOwn(VM& vm, JSObject* object)
 
 static bool hasKeyOrderThatStaysKnown(const Object& object)
 {
-    return !(object.orderWord() & orderWordIntegrityBits) && !object.layout().keysAreNeverEnumerated && !object.hasOutOfLineKeyOrder() && !object.isInFrame();
+    return !(object.orderWord() & orderWordIntegrityBits) && !object.hasOutOfLineKeyOrder() && !object.isInFrame();
 }
 
 static bool hasEveryFieldOfLayout(const Object& object)
 {
     const LayoutData& layout = object.layout();
     // The order of an object with extra properties may also count those.
-    if (!layout.keysAreNeverEnumerated && !object.hasExtraProperties())
+    if (!object.hasExtraProperties())
         return countOf(object.orderWord()) == layout.numberOfFields;
     return std::ranges::all_of(layout.fields(), [&](const FieldData& field) {
         return object.isInSlot(field);
@@ -465,8 +462,7 @@ static bool hasEveryFieldOfLayout(const Object& object)
 static bool canGetPendingStars(const Object& target)
 {
     const LayoutData& layout = target.layout();
-    bool hasNoOrderToKeep = layout.keysAreNeverEnumerated && !(target.orderWord() & orderWordIntegrityBits) && !target.isInFrame();
-    if ((!hasNoOrderToKeep && !hasKeyOrderThatStaysKnown(target)) || target.structure()->mayBePrototype())
+    if (!hasKeyOrderThatStaysKnown(target) || target.structure()->mayBePrototype())
         return false;
     if (layout.isClass() || !layout.extraPropertiesSlot() || layout.impossibleMutations().contains(ObjectMutation::AddProperty))
         return false;
@@ -539,7 +535,7 @@ static bool tryBindFieldsThatTargetLacks(VM& vm, Object& target, Star star)
     for (const FieldData& field : layout.fields()) {
         if (field.isPrivate() || !layouts.hasStringKey(field) || target.isInSlot(field))
             continue;
-        if (field.flags & fieldMayExistWithoutStorage && !layout.keysAreNeverEnumerated && orderListsField(state, layout, target.orderWord() & orderAndCountMask, field))
+        if (field.flags & fieldMayExistWithoutStorage && orderListsField(state, layout, target.orderWord() & orderAndCountMask, field))
             continue;
         uint16_t index = layout.indexOf(field);
         if (starThatBindsFieldOfTarget(star.previous(), index) || !starBindsName(vm, state, star, layouts.nameOf(vm, field)))
@@ -552,7 +548,7 @@ static bool tryBindFieldsThatTargetLacks(VM& vm, Object& target, Star star)
         return true;
     star.setFieldsOfTarget(vm, bound.span());
     target.at<uint32_t>(offsetOfOrderWord) |= orderWordHasFieldOutsideSlot;
-    target.setPerCellBit(true);
+    target.setBearsMark(true);
     return true;
 }
 
@@ -770,18 +766,6 @@ std::optional<uint32_t> numberOfKeysOfPendingStars(VM& vm, const Object& target)
     Star last = Star::lastOf(pendingStars);
     listNamesOfStarsUpTo(vm, target.state(), last, target.layout());
     return last.numberOfNamesUpToHere();
-}
-
-void forEachKeyOfPendingStars(VM& vm, const Object& target, const ScopedLambda<void(UniquedStringImpl*, unsigned attributes)>& functor)
-{
-    InternalFieldTuple* pendingStars = pendingStarsOf(target);
-    if (!pendingStars)
-        return;
-    DeferGCForAWhile deferGC(vm);
-    Star last = Star::lastOf(pendingStars);
-    PropertyTable* names = listNamesOfStarsUpTo(vm, target.state(), last, target.layout());
-    for (unsigned entry = 1; entry <= last.numberOfNamesUpToHere(); ++entry)
-        functor(names->keyOfEntry(entry), attributesOfStarBinding);
 }
 
 std::optional<bool> isBoundByPendingStar(const Object& target, const FieldData& field)

@@ -1,5 +1,5 @@
 # a loop steps a generator where `next` is the engine's own: one that goes on, one that has ended, one that is running (it steps itself: TypeError), one that return() has closed
-# only generators come to each() in plain sight: beside an iterator of another layout what is expected of the parameter names no one class (numbers-2 unites what is written with what was seen), and the arm that steps a generator is not built
+# only generators come to each() in plain sight: beside an iterator of another layout what is expected of the parameter names no one class (what is written is united with what was seen), and the arm that steps a generator is not built
 # f1 = count, f2 = each
 # LIBRARY: own
 # RUN(FORM): walk f2 mechanisms=none+TypedOperations+UnboxedNumbers+Guesses+DirectCalls+BuiltinCalls

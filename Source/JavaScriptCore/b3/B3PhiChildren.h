@@ -39,18 +39,18 @@ namespace JSC { namespace B3 {
 class PhiChildren {
     WTF_MAKE_SEQUESTERED_ARENA_ALLOCATED(PhiChildren);
 public:
-    PhiChildren(Procedure&);
-    ~PhiChildren();
+    JS_EXPORT_PRIVATE PhiChildren(Procedure&);
+    JS_EXPORT_PRIVATE ~PhiChildren();
 
     class ValueCollection {
     public:
-        ValueCollection(Vector<UpsilonValue*>* values = nullptr)
+        ValueCollection(std::span<UpsilonValue* const> values = { })
             : m_values(values)
         {
         }
 
-        unsigned size() const { return m_values->size(); }
-        Value* at(unsigned index) const { return m_values->at(index)->child(0); }
+        unsigned size() const { return m_values.size(); }
+        Value* at(unsigned index) const { return m_values[index]->child(0); }
         Value* operator[](unsigned index) const { return at(index); }
 
         bool contains(Value* value) const
@@ -64,7 +64,7 @@ public:
 
         class iterator {
         public:
-            iterator(Vector<UpsilonValue*>* values = nullptr, unsigned index = 0)
+            iterator(std::span<UpsilonValue* const> values = { }, unsigned index = 0)
                 : m_values(values)
                 , m_index(index)
             {
@@ -72,7 +72,7 @@ public:
 
             Value* operator*() const
             {
-                return m_values->at(m_index)->child(0);
+                return m_values[m_index]->child(0);
             }
 
             iterator& operator++()
@@ -83,20 +83,20 @@ public:
 
             bool operator==(const iterator& other) const
             {
-                ASSERT(m_values == other.m_values);
+                ASSERT(m_values.data() == other.m_values.data());
                 return m_index == other.m_index;
             }
 
         private:
-            Vector<UpsilonValue*>* m_values;
+            std::span<UpsilonValue* const> m_values;
             unsigned m_index;
         };
 
         iterator begin() const { return iterator(m_values); }
-        iterator end() const { return iterator(m_values, m_values->size()); }
+        iterator end() const { return iterator(m_values, m_values.size()); }
 
     private:
-        Vector<UpsilonValue*>* m_values;
+        std::span<UpsilonValue* const> m_values;
     };
     
     class UpsilonCollection {
@@ -105,22 +105,22 @@ public:
         {
         }
         
-        UpsilonCollection(PhiChildren* phiChildren, Value* value, Vector<UpsilonValue*>* values)
+        UpsilonCollection(PhiChildren* phiChildren, Value* value, std::span<UpsilonValue* const> values)
             : m_phiChildren(phiChildren)
             , m_value(value)
             , m_values(values)
         {
         }
 
-        unsigned size() const { return m_values->size(); }
-        Value* at(unsigned index) const { return m_values->at(index); }
+        unsigned size() const { return m_values.size(); }
+        Value* at(unsigned index) const { return m_values[index]; }
         Value* operator[](unsigned index) const { return at(index); }
 
-        bool contains(Value* value) const { return m_values->contains(value); }
+        bool contains(Value* value) const { return std::ranges::find(m_values, value) != m_values.end(); }
 
-        typedef Vector<UpsilonValue*>::const_iterator iterator;
-        Vector<UpsilonValue*>::const_iterator begin() const { return m_values->begin(); }
-        Vector<UpsilonValue*>::const_iterator end() const { return m_values->end(); }
+        using iterator = std::span<UpsilonValue* const>::iterator;
+        iterator begin() const { return m_values.begin(); }
+        iterator end() const { return m_values.end(); }
 
         ValueCollection values() { return ValueCollection(m_values); }
         
@@ -157,16 +157,28 @@ public:
     private:
         PhiChildren* m_phiChildren { nullptr };
         Value* m_value { nullptr };
-        Vector<UpsilonValue*>* m_values { nullptr };
+        std::span<UpsilonValue* const> m_values;
     };
 
-    UpsilonCollection at(Value* value) { return UpsilonCollection(this, value, &m_upsilons[value]); }
+    UpsilonCollection at(Value* value)
+    {
+        if (m_ranges.isEmpty())
+            return UpsilonCollection(this, value, { });
+        Range range = m_ranges[value->index()];
+        return UpsilonCollection(this, value, m_upsilons.span().subspan(range.begin, range.size));
+    }
     UpsilonCollection operator[](Value* value) { return at(value); }
 
     const Vector<Value*, 8>& phis() const LIFETIME_BOUND { return m_phis; }
 
 private:
-    IndexMap<Value*, Vector<UpsilonValue*>> m_upsilons;
+    struct Range {
+        unsigned begin { 0 };
+        unsigned size { 0 };
+    };
+
+    Vector<Range> m_ranges;
+    Vector<UpsilonValue*> m_upsilons;
     Vector<Value*, 8> m_phis;
 };
 

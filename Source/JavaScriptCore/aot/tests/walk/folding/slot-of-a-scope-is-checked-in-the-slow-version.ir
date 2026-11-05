@@ -3,7 +3,7 @@
 #                   function start() { return first; }
 #                   function run(point: Point, scale: number) { const across = point.x * scale; const down = point.y * scale; return across * down + point.x + limit; } }
 # `run` leaves behind the store into `limit`, and nothing that leaves earlier leads to it: Link's order of scopes calls the slot filled, and the fast version reads it without a check.
-# The slow version reads none of Link's tables (FRESH.md): it is what runs where a proof has not held. There the check stays.
+# The slow version reads none of Link's tables: it is what runs where a proof has not held. There the check stays.
 # RUN(FAST): walk f3:Body mechanisms=all
 # FAST-LABEL: code f3:Body
 # FAST-NOT: CheckInitialized

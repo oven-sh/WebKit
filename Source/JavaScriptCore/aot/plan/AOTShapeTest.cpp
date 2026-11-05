@@ -846,6 +846,8 @@ ShapeTable computeShapeTable(const Program& program, const LinkTables& linked, c
 
     // A layout has one shape, and an id of a layout has fewer bits than a shape word: every word has the bit that tells a compiled object from any other cell.
     RELEASE_ASSERT(parts.shapes.size() - 1 <= compiledObjectShapeBit);
+    // And the bit that says that the object bears no mark.
+    RELEASE_ASSERT(parts.shapes.size() - 1 <= maxNumberOfShapes);
     return ShapeTable(WTF::move(parts));
 }
 

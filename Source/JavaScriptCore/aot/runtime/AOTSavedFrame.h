@@ -135,9 +135,6 @@ public:
     }
     static constexpr uint32_t clearedWordsOf(uint64_t siteWord) { return static_cast<uint32_t>(siteWord >> clearedWordsShift) & maxClearedWords; }
 
-    // It decodes as a cell and is mapped nowhere, so the first use traps.
-    static constexpr uint64_t poisonedWord = 0x0000dead00000000ULL;
-
     static SavedFrame* create(VM&, Instance&, CoroutineKind, size_t numberOfWords, uint32_t savedRegistersOrPairs, uint32_t skippedAtBottom);
     static SavedFrame* create(VM&, Instance&, CoroutineKind, const SuspendedMachineFrame&);
     static SavedFrame* saveAsyncFunction(VM&, Instance&, const SuspendedMachineFrame&);
@@ -207,8 +204,6 @@ public:
     static constexpr ptrdiff_t offsetOfPromiseOrWaiter() { return OBJECT_OFFSETOF(SavedFrame, m_promiseOrWaiter); }
     static constexpr ptrdiff_t offsetOfAsyncContext() { return OBJECT_OFFSETOF(SavedFrame, m_asyncContext); }
     static constexpr ptrdiff_t offsetOfPreservedRegister() { return OBJECT_OFFSETOF(SavedFrame, m_preservedRegister); }
-    // A heap frame needs no preserved register, and this word says behind which yield it goes on.
-    static constexpr ptrdiff_t offsetOfResumeIndex() { return offsetOfPreservedRegister(); }
     static constexpr ptrdiff_t offsetOfWords() { return sizeof(SavedFrame); }
     static constexpr size_t allocationSize(size_t numberOfWords) { return sizeof(SavedFrame) + numberOfWords * sizeof(uint64_t); }
 

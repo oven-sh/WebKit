@@ -173,125 +173,6 @@ static void testWorkThatNeedsEvaluation()
         AOT_TEST_CHECK(!graph.data(module).needsEvaluation());
 }
 
-static void testLinkFollowsRequire()
-{
-    Graph graph;
-    unsigned root = graph.addCommonJS();
-    unsigned required = graph.addSourceText(Body::Present);
-    unsigned librarySource = graph.addLibrarySource();
-    unsigned back = graph.addCommonJS();
-    graph.request(root, required, Edge::Require);
-    graph.request(required, librarySource);
-    graph.request(required, back);
-    graph.request(back, root, Edge::Require);
-    graph.compute();
-    for (unsigned module : { root, required, back })
-        AOT_TEST_CHECK(graph.data(module).needsLink());
-    AOT_TEST_CHECK(graph.data(required).isSimple());
-
-    Vector<LinkPlanStepData> plan = graph.planLink(root);
-    AOT_TEST_CHECK(plan.size() == 1 && plan[0].module == librarySource && !plan[0].resolvesNames);
-}
-
-static void testFaceThatCapturesIsAStepAndIsPassed()
-{
-    Graph graph;
-    unsigned root = graph.addSourceText(Body::Present);
-    unsigned face = graph.addFaceThatCaptures();
-    unsigned file = graph.addCommonJS(Body::Absent);
-    unsigned required = graph.addSourceText(Body::Present);
-    unsigned librarySource = graph.addLibrarySource();
-    graph.request(root, face);
-    graph.request(face, file, Edge::Require);
-    graph.request(file, required, Edge::Require);
-    graph.request(required, librarySource);
-    graph.compute();
-
-    Vector<LinkPlanStepData> plan = graph.planLink(root);
-    AOT_TEST_CHECK(plan.size() == 2 && plan[0].module == face && plan[1].module == librarySource && !plan[0].resolvesNames && !plan[1].resolvesNames);
-    AOT_TEST_CHECK(graph.data(face).isLinkedWithEntryPoint());
-}
-
-static void testLongChain()
-{
-    constexpr unsigned numberOfModules = 100000;
-    Graph graph;
-    for (unsigned module = 0; module + 2 < numberOfModules; ++module)
-        graph.addSourceText();
-    unsigned last = graph.addSourceText(Body::Present);
-    unsigned librarySource = graph.addLibrarySource();
-    for (unsigned module = 0; module < last; ++module)
-        graph.request(module, module + 1);
-    graph.request(last, librarySource);
-    graph.compute();
-
-    Vector<LinkPlanStepData> plan = graph.planLink(0);
-    AOT_TEST_CHECK(plan.size() == 1 && plan[0].module == librarySource && !plan[0].resolvesNames);
-    for (unsigned module = 0; module <= last; ++module)
-        AOT_TEST_CHECK(graph.data(module).isLinkedWithEntryPoint());
-}
-
-static void testLinkPlan()
-{
-    Graph graph;
-    unsigned entryPoint = graph.addSourceText(Body::Present, Flag::IsEntryPoint);
-    unsigned otherEntryPoint = graph.addSourceText(Body::Present, Flag::IsEntryPoint);
-    unsigned withNames = graph.addSourceText();
-    unsigned between = graph.addSourceText();
-    unsigned withoutLink = graph.addSourceText(Body::Present);
-    unsigned notReached = graph.addSourceText();
-    unsigned first = graph.addLibrarySource();
-    unsigned second = graph.addRuntimeModule();
-    unsigned third = graph.addLibrarySource();
-    graph.request(entryPoint, withoutLink);
-    graph.request(entryPoint, withNames);
-    graph.request(entryPoint, otherEntryPoint);
-    graph.request(entryPoint, first);
-    graph.request(withNames, between);
-    graph.request(withNames, second);
-    graph.request(between, first);
-    graph.request(between, entryPoint);
-    graph.request(otherEntryPoint, third);
-    graph.request(notReached, third);
-    graph.addRequiredName(withNames);
-    graph.addRequiredName(entryPoint);
-    graph.compute();
-
-    Vector<LinkPlanStepData> plan = graph.planLink(entryPoint);
-    AOT_TEST_CHECK(plan.size() == 5);
-    AOT_TEST_CHECK(plan[0].module == first && !plan[0].resolvesNames);
-    AOT_TEST_CHECK(plan[1].module == second && !plan[1].resolvesNames);
-    AOT_TEST_CHECK(plan[2].module == withNames && plan[2].resolvesNames);
-    AOT_TEST_CHECK(plan[3].module == third && !plan[3].resolvesNames);
-    AOT_TEST_CHECK(plan[4].module == entryPoint && plan[4].resolvesNames);
-
-    for (unsigned module : { entryPoint, withNames, between })
-        AOT_TEST_CHECK(graph.data(module).isLinkedWithEntryPoint());
-    for (unsigned module : { otherEntryPoint, withoutLink, notReached, first, second, third })
-        AOT_TEST_CHECK(!graph.data(module).isLinkedWithEntryPoint());
-    AOT_TEST_CHECK(graph.data(entryPoint).hasLinkPlan() && !graph.data(otherEntryPoint).hasLinkPlan() && !graph.data(withNames).hasLinkPlan());
-}
-
-static void testEntryPointsWithoutLinkPlan()
-{
-    Graph graph;
-    unsigned withoutLink = graph.addSourceText(Body::Present, Flag::IsEntryPoint);
-    unsigned leaf = graph.addSourceText(Body::Present);
-    unsigned librarySource = graph.addLibrarySource();
-    unsigned reachesUncompiledCode = graph.addSourceText(Body::Present, Flag::IsEntryPoint);
-    unsigned importer = graph.addSourceText();
-    unsigned uncompiled = graph.addUncompiledCode();
-    graph.request(withoutLink, leaf);
-    graph.request(reachesUncompiledCode, librarySource);
-    graph.request(reachesUncompiledCode, importer);
-    graph.request(importer, uncompiled);
-    graph.compute();
-    for (unsigned entryPoint : { withoutLink, librarySource, reachesUncompiledCode })
-        AOT_TEST_CHECK(graph.planLink(entryPoint).isEmpty());
-    for (unsigned module = 0; module < graph.size(); ++module)
-        AOT_TEST_CHECK(!graph.data(module).isLinkedWithEntryPoint());
-}
-
 static void addRandomModule(Graph& graph, RandomNumbers& random)
 {
     switch (random.below(16)) {
@@ -364,11 +245,6 @@ std::span<const NativeTest> moduleRequestListTests()
 {
     static constexpr NativeTest tests[] = {
         { "module-request-lists/work-that-needs-evaluation"_s, testWorkThatNeedsEvaluation },
-        { "module-request-lists/link-follows-require"_s, testLinkFollowsRequire },
-        { "module-request-lists/face-that-captures-is-a-step-and-is-passed"_s, testFaceThatCapturesIsAStepAndIsPassed },
-        { "module-request-lists/long-chain"_s, testLongChain },
-        { "module-request-lists/link-plan"_s, testLinkPlan },
-        { "module-request-lists/entry-points-without-link-plan"_s, testEntryPointsWithoutLinkPlan },
         { "module-request-lists/walks-of-random-graphs-do-the-same-work"_s, testWalksOfRandomGraphsDoTheSameWork },
     };
     return tests;

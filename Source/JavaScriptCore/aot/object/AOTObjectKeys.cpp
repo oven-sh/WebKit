@@ -37,23 +37,9 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC { namespace AOT {
 
-static bool isPresent(VM& vm, const Object& object, const FieldData& field)
-{
-    return object.isInSlot(field) || (object.hasExtraProperties() && livesInExtraProperties(vm, object, field));
-}
-
-std::span<const uint16_t> Object::keyOrder(State& state, KeyOrderStorage& storage) const
+std::span<const uint16_t> Object::keyOrder(State& state) const
 {
     const LayoutData& layout = this->layout();
-    if (layout.keysAreNeverEnumerated) {
-        VM& vm = this->vm();
-        storage.shrink(0);
-        for (const FieldData& field : layout.fields()) {
-            if (isPresent(vm, *this, field))
-                storage.append(layout.indexOf(field));
-        }
-        return storage.span();
-    }
     uint32_t word = orderWord();
     if (isOrderStoredOutOfLine(word)) {
         std::span<const uint16_t> held = compiledStructure().outOfLineKeyOrder();
@@ -64,10 +50,7 @@ std::span<const uint16_t> Object::keyOrder(State& state, KeyOrderStorage& storag
 
 bool Object::isInKeyOrder(State& state, const FieldData& field) const
 {
-    if (layout().keysAreNeverEnumerated)
-        return isPresent(vm(), *this, field);
-    KeyOrderStorage storage;
-    auto keys = keyOrder(state, storage);
+    auto keys = keyOrder(state);
     uint16_t index = indexOf(field);
     if (index < keys.size() && keys[index] == index)
         return true;
@@ -77,11 +60,10 @@ bool Object::isInKeyOrder(State& state, const FieldData& field) const
 static uint32_t numberOfExtraKeysCountedByOrder(State& state, const Object& object)
 {
     const LayoutData& layout = object.layout();
-    if (layout.keysAreNeverEnumerated || object.hasKeyOrderOfItsOwn())
+    if (object.hasKeyOrderOfItsOwn())
         return 0;
     ExtraKeyCounter positioned(layout.numberOfFields);
-    Object::KeyOrderStorage storage;
-    positioned.addAll(object.keyOrder(state, storage));
+    positioned.addAll(object.keyOrder(state));
     return positioned.count();
 }
 
@@ -97,7 +79,7 @@ static CountsOfPositionedKeys countPositionedExtraKeys(State& state, const Objec
 {
     CountsOfPositionedKeys counts;
     const LayoutData& layout = object.layout();
-    if (layout.keysAreNeverEnumerated || object.hasKeyOrderOfItsOwn())
+    if (object.hasKeyOrderOfItsOwn())
         return counts;
     ExtraKeyCounter positioned(layout.numberOfFields);
     auto noteCount = [&] {
@@ -224,7 +206,7 @@ private:
 
 void Object::takeKeyOrderOfItsOwn(VM& vm, State& state)
 {
-    ASSERT(!hasKeyOrderOfItsOwn() && !layout().keysAreNeverEnumerated);
+    ASSERT(!hasKeyOrderOfItsOwn());
     forgetPlacesOfPositionedKeys(state);
     KeyOrderOfOneObject order(layout().numberOfFields);
     if (keyOrderCountsExtraKeys()) {
@@ -438,8 +420,7 @@ static void appendEntriesToUnnumberedKeyOrder(VM& vm, State& state, Object& obje
 {
     if (tryStepInOutOfLineKeyOrder(object, added))
         return;
-    Object::KeyOrderStorage storage;
-    Vector<uint16_t, 32> entries(object.keyOrder(state, storage));
+    Vector<uint16_t, 32> entries(object.keyOrder(state));
     entries.append(added);
     if (!trySearchForHeldKeyOrder(vm, state, object, entries.span()))
         storeKeyOrderOutOfLine(vm, state, object, entries.span(), StructureTable::HeldKeyOrder::IsFoundByNobody);
@@ -526,8 +507,7 @@ static EntriesAddedToKeyOrder entriesCountingExtraKeys(State& state, const Objec
     if (!object.hasOutOfLineKeyOrder() && state.objects->keyOrders.positionsExtraKeys(layout, object.orderWord() & orderAndCountMask, numberOfExtraKeys))
         return entries;
     ExtraKeyCounter positioned(layout.numberOfFields);
-    Object::KeyOrderStorage storage;
-    positioned.addAll(object.keyOrder(state, storage));
+    positioned.addAll(object.keyOrder(state));
     positioned.appendEntriesCountingTo(numberOfExtraKeys, entries);
     return entries;
 }
@@ -545,8 +525,6 @@ void Object::didCreateField(State& state, const FieldData& field, bool withStora
     const LayoutData& layout = this->layout();
     if (layout.isClass())
         state.objects->classes.didShadowMember(layout, field);
-    if (layout.keysAreNeverEnumerated)
-        return;
     KeyOrderTable& keyOrders = state.objects->keyOrders;
     uint16_t index = indexOf(field);
     if (std::optional<uint32_t> after = keyOrders.stepInsideOrderOfImage(layout, orderWord(), index)) {
@@ -606,7 +584,7 @@ void Object::didCreateField(State& state, const FieldData& field, bool withStora
 ALWAYS_INLINE bool Object::trySetNumberedKeyOrder(VM& vm, State& state, std::span<const uint16_t> keys)
 {
     const LayoutData& layout = this->layout();
-    ASSERT(!layout.keysAreNeverEnumerated && !hasKeyOrderOfItsOwn());
+    ASSERT(!hasKeyOrderOfItsOwn());
     auto numbered = state.objects->keyOrders.orderStartingWith(layout, keys);
     if (!numbered)
         return false;
@@ -625,10 +603,7 @@ void Object::setKeyOrder(VM& vm, State& state, std::span<const uint16_t> keys)
 
 void Object::removeExtraKeyFromOrder(VM& vm, State& state, uint32_t ordinal)
 {
-    const LayoutData& layout = this->layout();
-    if (layout.keysAreNeverEnumerated)
-        return;
-    uint32_t numberOfFields = layout.numberOfFields;
+    uint32_t numberOfFields = layout().numberOfFields;
     ExtraKeyCounter positionedBefore(numberOfFields);
     ExtraKeyCounter positionedAfter(numberOfFields);
     bool isChanged = false;
@@ -651,8 +626,6 @@ void Object::removeExtraKeyFromOrder(VM& vm, State& state, uint32_t ordinal)
 
 void removeFieldFromKeyOrder(VM& vm, State& state, Object& object, const FieldData& field)
 {
-    if (object.layout().keysAreNeverEnumerated)
-        return;
     object.forgetPlacesOfPositionedKeys(state);
     uint16_t index = object.indexOf(field);
     bool sharesStep = sharesStepsOfKeyOrder(object);
@@ -704,7 +677,7 @@ void removeFieldFromKeyOrder(VM& vm, State& state, Object& object, const FieldDa
 
 static bool hasNumberedKeyOrder(const Object& object)
 {
-    return !object.hasOutOfLineKeyOrder() && !object.layout().keysAreNeverEnumerated;
+    return !object.hasOutOfLineKeyOrder();
 }
 
 static bool holdsValue(const Object& object, const FieldData& listedField)
@@ -840,8 +813,7 @@ CachedPropertyList* cachedPropertyList(VM& vm, const Object& object)
         return nullptr;
     Vector<PropertyListEntry> properties;
     bool hasAllFields = true;
-    Object::KeyOrderStorage storage;
-    size_t nextExtraKey = Object::forEachPositionedKey(object.keyOrder(state, storage), layout.numberOfFields, extraKeys.size(), [&](uint16_t index) {
+    size_t nextExtraKey = Object::forEachPositionedKey(object.keyOrder(state), layout.numberOfFields, extraKeys.size(), [&](uint16_t index) {
         const FieldData& field = fields[index];
         if (!layouts.hasStringKey(field)) {
             hasAllFields &= !layouts.hasSymbolKey(field);

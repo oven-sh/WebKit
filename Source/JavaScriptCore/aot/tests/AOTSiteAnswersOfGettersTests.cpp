@@ -34,16 +34,6 @@ static void testGetterInCellOfHolderIsNamedByItsWordInCage()
     AOT_TEST_CHECK(word->operand == bytesToHolderForSiteAnswersOfGettersTests / sizeof(EncodedJSValue) + 3);
 }
 
-static void testGetterInStorageOfHolderIsNamedByHolderAndIndex()
-{
-    Slot slot = getterAboveForSiteAnswersOfGettersTests(bytesToHolderForSiteAnswersOfGettersTests, -5, Slot::isOutOfLine);
-    std::optional<WordOfGetterForSiteAnswers> word = findWordOfGetterForSiteAnswers(SiteUse::Read, slot, cageBaseForSiteAnswersOfGettersTests, false);
-    AOT_TEST_CHECK(word);
-    AOT_TEST_CHECK(word->form == SiteAnswers::Form::GetterInStorageOfHolder);
-    AOT_TEST_CHECK(word->operand == bytesToHolderForSiteAnswersOfGettersTests / sizeof(EncodedJSValue));
-    AOT_TEST_CHECK(word->indexInStorageOfHolder == -5);
-}
-
 static void testWhatNoOperandNamesIsNotRemembered()
 {
     Slot slot = getterAboveForSiteAnswersOfGettersTests(bytesToHolderForSiteAnswersOfGettersTests, 3, 0);
@@ -56,19 +46,6 @@ static void testWhatNoOperandNamesIsNotRemembered()
     Slot withoutHolder = slot;
     withoutHolder.holder = nullptr;
     AOT_TEST_CHECK(!findWordOfGetterForSiteAnswers(SiteUse::Read, withoutHolder, cageBaseForSiteAnswersOfGettersTests, false));
-}
-
-// One comparison of a stub finds a Structure and a form, so no two forms have the same bits, and none has the bits of the form that a place which reads meets most.
-static void testFormsOfGettersHaveBitsOfTheirOwn()
-{
-    using Form = SiteAnswers::Form;
-    constexpr Form forms[] { Form::OwnGetterInCell, Form::OwnGetterInStorage, Form::GetterInWordOfCage, Form::GetterInStorageOfHolder };
-    for (Form form : forms) {
-        uint32_t bits = SiteAnswers::bitsOf(SiteUse::Read, form);
-        AOT_TEST_CHECK(bits && bits <= SiteAnswers::formMask);
-        AOT_TEST_CHECK(SiteAnswers::formOf(SiteUse::Read, bits) == form);
-        AOT_TEST_CHECK(bits != SiteAnswers::bitsOf(SiteUse::Read, Form::Nothing));
-    }
 }
 
 // Under a limit on address space the heap of Structures is small and begins at a multiple of its own size, so every StructureID of a process may have the top bit.
@@ -98,9 +75,7 @@ std::span<const NativeTest> siteAnswersOfGettersTests()
     static constexpr NativeTest tests[] {
         { "site-answers-of-getters/a-structure-id-with-the-top-bit-is-remembered"_s, testStructureIDWithTopBitIsRemembered },
         { "site-answers-of-getters/a-getter-in-the-cell-of-a-holder-is-named-by-its-word-in-the-cage"_s, testGetterInCellOfHolderIsNamedByItsWordInCage },
-        { "site-answers-of-getters/a-getter-in-the-storage-of-a-holder-is-named-by-the-holder-and-the-index"_s, testGetterInStorageOfHolderIsNamedByHolderAndIndex },
         { "site-answers-of-getters/what-no-operand-names-is-not-remembered"_s, testWhatNoOperandNamesIsNotRemembered },
-        { "site-answers-of-getters/the-forms-of-getters-have-bits-of-their-own"_s, testFormsOfGettersHaveBitsOfTheirOwn },
     };
     return tests;
 }

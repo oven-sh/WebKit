@@ -13,8 +13,8 @@
 #include "AOTGroupingOnPool.h"
 #include "AOTIRProgram.h"
 #include "AOTLinkCoroutines.h"
+#include "AOTLinkLargeLists.h"
 #include "AOTLinkLayouts.h"
-#include "AOTLinkStringParsers.h"
 #include "AOTLinkTypesOnAllThreads.h"
 #include "AOTLinkTypesTurnedOnce.h"
 #include "AOTLinkUnions.h"
@@ -174,26 +174,6 @@ bool LinkTables::closuresLackName(FunctionID function, PropertyKeyID key) const
     return function.index() < functions.size() && functions[function.index()].closuresGetOnlyNamesThatAreListed && !findNameOnFunction(function, key);
 }
 
-FunctionID LinkTables::findMethodLaidAheadOfObjectsOf(const Program& program, LayoutID layout, PropertyKeyID key) const
-{
-    if (!key || std::ranges::contains(appendedKeysOf(layout), key))
-        return { };
-    auto placeOf = [](const LinkedNameOnPrototype& laid) {
-        return std::pair { laid.layout, laid.key };
-    };
-    size_t numberOfLayoutsLeft = program.layouts.size();
-    for (LayoutID current = layout; current && numberOfLayoutsLeft--; current = program.at(current).base) {
-        if (!program.at(current).has(LayoutFlags::IsConstructorFunction) || !layouts[current.index()].prototypeObjectIsSettledAheadOfEveryObject)
-            return { };
-        auto laidHere = std::ranges::equal_range(namesOnPrototypes, std::pair { current, key }, { }, placeOf);
-        if (!laidHere.empty())
-            return laidHere.size() == 1 && laidHere.front().isLaidAheadOfEveryObject ? laidHere.front().function : FunctionID();
-        if (!layouts[current.index()].isLinkedBelowBaseAheadOfEveryObject)
-            return { };
-    }
-    return { };
-}
-
 bool LinkTables::findFunctionsLaidAbove(const Program& program, LayoutID layout, PropertyKeyID key, Vector<FunctionID, 4>& functions) const
 {
     if (!key || layout.index() >= layouts.size() || !layouts[layout.index()].listsEveryMemberAbove)
@@ -252,15 +232,6 @@ TypeID LinkTables::resultOfReadByKey(FunctionID function, ValueID site) const
     };
     auto found = std::ranges::lower_bound(resultsOfReadsByKey, std::pair { function, site }, { }, placeOf);
     return found != resultsOfReadsByKey.end() && found->function == function && found->site == site ? found->proven : TypeID();
-}
-
-FunctionID LinkTables::getterExpectedAt(FunctionID function, ValueID site) const
-{
-    auto placeOf = [](const LinkedGetterAtRead& read) {
-        return std::pair { read.function, read.site };
-    };
-    auto found = std::ranges::lower_bound(gettersExpectedAtReads, std::pair { function, site }, { }, placeOf);
-    return found != gettersExpectedAtReads.end() && found->function == function && found->site == site ? found->getter : FunctionID();
 }
 
 bool isSymbolOfLibrary(const Program& program, PropertyKeyID symbol)
@@ -349,27 +320,36 @@ MemberFound LinkTables::findMember(const Program& program, LayoutID layout, Clas
 
 LinkTables conservativeLinkTables(const Program& program)
 {
+    ParallelLoops onOneThread(1);
+    return conservativeLinkTables(program, onOneThread);
+}
+
+// The lists are as long as the program, and a record of the program lies in a line of memory of its own: all threads touch the pages and read the records, and one adds up.
+LinkTables conservativeLinkTables(const Program& program, const ParallelLoops& loops)
+{
     LinkTables tables;
     size_t numberOfFunctions = program.functions.size();
     size_t numberOfLayouts = program.layouts.size();
 
-    tables.functions.fill(LinkedFunction { }, numberOfFunctions);
+    fillLargeListInLinkFlow(loops, tables.functions, LinkedFunction { }, numberOfFunctions, numberOfFunctions);
     tables.firstCallOfCaller.fill(0, numberOfFunctions + 1);
-    tables.firstCaptureOfFunction.reserveInitialCapacity(numberOfFunctions + 1);
+    tables.firstCaptureOfFunction.fill(0, numberOfFunctions + 1);
+    forEachRangeOfIndicesInParallel(loops, numberOfFunctions, [&](size_t first, size_t end) {
+        for (size_t index = first; index < end; ++index) {
+            const Function& function = program.functions[index];
+            tables.functions[index].numberOfParameters = function.numberOfEntryParameters();
+            tables.firstCaptureOfFunction[index + 1] = static_cast<uint32_t>(function.captures.size());
+        }
+    });
     uint32_t numberOfParameters = 0;
-    uint32_t numberOfCaptures = 0;
     for (size_t index = 0; index < numberOfFunctions; ++index) {
-        const Function& function = program.functions[index];
         LinkedFunction& linked = tables.functions[index];
         linked.firstParameter = numberOfParameters;
-        linked.numberOfParameters = function.numberOfEntryParameters();
         numberOfParameters += linked.numberOfParameters;
-        tables.firstCaptureOfFunction.append(numberOfCaptures);
-        numberOfCaptures += static_cast<uint32_t>(function.captures.size());
+        tables.firstCaptureOfFunction[index + 1] += tables.firstCaptureOfFunction[index];
     }
-    tables.firstCaptureOfFunction.append(numberOfCaptures);
-    tables.parameters.fill(LinkedParameter { }, numberOfParameters);
-    tables.captures.fill(LinkedCell { }, numberOfCaptures);
+    fillLargeListInLinkFlow(loops, tables.parameters, LinkedParameter { }, numberOfParameters, numberOfParameters);
+    fillLargeListInLinkFlow(loops, tables.captures, LinkedCell { }, tables.firstCaptureOfFunction.last(), tables.firstCaptureOfFunction.last());
     tables.firstReferrer.fill(0, numberOfFunctions + 1);
     tables.rankOfCycle.fill(0, 1);
     tables.firstCycleAwaited.fill(0, 2);
@@ -382,9 +362,9 @@ LinkTables conservativeLinkTables(const Program& program)
         numberOfFields += static_cast<uint32_t>(layout.fields.size());
     }
     tables.firstFieldOfLayout.append(numberOfFields);
-    tables.fields.fill(LinkedCell { }, numberOfFields);
-    tables.variables.fill(LinkedCell { }, program.variables.size());
-    tables.layouts.fill(LinkedLayout { }, numberOfLayouts);
+    fillLargeListInLinkFlow(loops, tables.fields, LinkedCell { }, numberOfFields, numberOfFields);
+    fillLargeListInLinkFlow(loops, tables.variables, LinkedCell { }, program.variables.size(), program.variables.size());
+    fillLargeListInLinkFlow(loops, tables.layouts, LinkedLayout { }, numberOfLayouts, numberOfLayouts);
     return tables;
 }
 
@@ -417,6 +397,8 @@ public:
     void writeWhatMakesNoType();
     void writeWhatMakesTypes(TypeArena&);
     void writeProofsThatMakeNoType();
+    // LinkedFunction::everyCallerIsKnown of each, for whoever cannot wait for writeWhatMakesTypes(). It waits for the first step of writeWhatMakesNoType(), which may run on another thread.
+    BitVector functionsWhoseCallersAreAllKnown();
     // Where it goes on in another lane than it began in.
     void goOnWith(const ParallelLoops& loops) { m_loops = &loops; }
     // Behind writeLayoutsAndCells(): whoever is handed a type by the tables may name what the type names.
@@ -447,13 +429,12 @@ private:
     };
 
     void findFunctionsThatNoSummaryNames();
+    BinarySemaphore m_functionsThatNoSummaryNamesAreFound;
     void findLayoutsWithUnlistedNames();
     bool mayFindUnlistedNames(const LinkType& receiver) const;
     FunctionID oneCalleeOf(FunctionID caller, const SummaryCall&, const LinkFlow::CalleesOfCall&) const;
-    void countCallByName(FunctionID caller, const SummaryCall&, const LinkFlow::CalleesOfCall&, CallsByNameInLink&) const;
     void findRingsOfTailCalls();
     void findFunctionsThatRunAtMostOnce();
-    void countCallsByName();
     uint32_t weighAsLeaf(FunctionID, unsigned depth, bool& levelsRanOut);
     void weighLeaves();
     BitVector m_functionsThatAreNoLeaves;
@@ -489,7 +470,6 @@ private:
     TypeID typeIDOf(const LinkType&);
     TypeID typeIDOfCapture(FunctionID, uint32_t capture);
 
-    void noteHolder(PropertyKeyID, LayoutID classLayout, FunctionID);
     // Null: none, or nobody says which.
     FunctionID closureAloneAt(FlowNodeID node) const { return m_flow.typeAt(node).functions == LinkType::Functions::Closure ? m_flow.typeAt(node).function : FunctionID(); }
     bool mayTakeArrivals(FunctionID id) const { return m_tables.function(id).everyCallerIsKnown && m_tables.function(id).everyCallHasOneCallee; }
@@ -552,16 +532,27 @@ WriterOfLink::WriterOfLink(const LinkFlow& flow, LinkTables& tables)
     RELEASE_ASSERT(flow.firstCallOfFunction.size() == m_numberOfFunctions + 1 && flow.calleesOfCalls.size() == flow.firstCallOfFunction.last());
 }
 
+BitVector WriterOfLink::functionsWhoseCallersAreAllKnown()
+{
+    m_functionsThatNoSummaryNamesAreFound.wait();
+    BitVector known = m_flow.reached;
+    known.exclude(m_flow.lostFunctions);
+    known.exclude(m_flow.escapedFunctions);
+    known.exclude(m_functionsEnteredByHost);
+    known.exclude(m_functionsThatNoSummaryNames);
+    return known;
+}
+
 void WriterOfLink::writeWhatMakesNoType()
 {
     findFunctionsThatNoSummaryNames();
+    m_functionsThatNoSummaryNamesAreFound.signal();
     findLayoutsWithUnlistedNames();
     writeCalls();
     writeAccessesUnderOneKey();
     writeGettersExpectedAtReads();
     writeCallsThatFindBuiltins();
     noteCallersThatFindBuiltins();
-    countCallsByName();
 }
 
 void WriterOfLink::writeWhatMakesTypes(TypeArena& types)
@@ -689,7 +680,7 @@ FunctionID WriterOfLink::oneCalleeOf(FunctionID caller, const SummaryCall& call,
         LinkType called = *subject;
         called.primitives = 0;
         // What is named beside what is unseen is what was seen to arrive: whoever goes by what is held tests what is called.
-        // By value a construction asks the run time for `this`. A plain call by value costs a few instructions more than the test and the direct call do: with those the application's build is 0.4 G dearer (11-03 21:40).
+        // By value a construction asks the run time for `this`. A plain call by value costs a few instructions more than the test and the direct call do: with those the application's build is 0.4 G dearer.
         if (writesWhatIsExpected() && call.isConstruction) {
             called.holdsUnseen = false;
             called.holdsLostBuiltins = false;
@@ -706,35 +697,6 @@ FunctionID WriterOfLink::oneCalleeOf(FunctionID caller, const SummaryCall& call,
         return { };
     }
     RELEASE_ASSERT_NOT_REACHED();
-}
-
-void WriterOfLink::countCallByName(FunctionID caller, const SummaryCall& call, const LinkFlow::CalleesOfCall& callees, CallsByNameInLink& counts) const
-{
-    ++counts.all;
-    bool isListed = !!m_tables.calleeAt(caller, call.site);
-    LinkType receiver = call.receiver && call.receiver != noSummaryNode ? m_flow.typeAt(m_flow.nodeOf(caller, call.receiver)) : LinkType::anything();
-    bool holdsObjects = receiver.objects != LinkType::Objects::None || receiver.functions != LinkType::Functions::None || receiver.classes != LinkType::Classes::None || receiver.builtin || receiver.holdsUnseen;
-
-    size_t numberListed = callees.listed.size();
-    for (uint32_t shared : callees.shared)
-        numberListed += m_flow.calleesOfSharedCallsAsSettled()[shared].listed.size();
-
-    uint64_t& count = isListed ? counts.listed
-        : call.isMadeByProtocol ? counts.ofProtocols
-        : receiver.isNothing() ? counts.nothingArrivesAtReceiver
-        : !holdsObjects ? counts.onlyPrimitivesArrive
-        : receiver.holdsUnseen ? counts.receiverHoldsUnseen
-        : receiver.classes != LinkType::Classes::None || receiver.builtin ? counts.receiverIsOfEngine
-        : receiver.objects == LinkType::Objects::Lost || receiver.functions == LinkType::Functions::Lost ? counts.receiverIsLost
-        : callees.mayEnterUnseen ? counts.mayEnterUnseen
-        : callees.mayEnterLost ? counts.mayEnterLost
-        : !callees.builtins.isEmpty() ? counts.entersBuiltin
-        : !numberListed ? counts.findsNoFunction
-        : numberListed > 1 ? counts.findsSeveralFunctions
-        : mayFindUnlistedNames(receiver) ? counts.mayFindUnlistedNames
-        : !oneCalleeOf(caller, call, callees) ? counts.findsWhatNoCallEnters
-        : counts.sharesItsSite;
-    ++count;
 }
 
 // An answer that is a weight needed no more levels than were left, so it is the same at every depth, and so is a no that no want of levels has a part in: both are kept. A no because the levels ran out is kept at the first level alone.
@@ -783,32 +745,6 @@ void WriterOfLink::weighLeaves()
         bool levelsRanOut = false;
         weighAsLeaf(FunctionID(index), 0, levelsRanOut);
     }
-}
-
-void WriterOfLink::countCallsByName()
-{
-    static_assert(!(sizeof(CallsByNameInLink) % sizeof(uint64_t)));
-    Lock lock;
-    LinkFlow::ViewOfHeldReading* view = LinkFlow::ViewAtWork::current();
-    forEachRangeOfIndicesInParallel(loops(), m_numberOfFunctions, [&](size_t first, size_t end) {
-        LinkFlow::ViewAtWork viewAtWork(view);
-        CallsByNameInLink counts;
-        for (size_t index = first; index < end; ++index) {
-            if (!m_flow.reached.get(index))
-                continue;
-            FunctionID caller(static_cast<uint32_t>(index));
-            const ThinSummary& summary = m_flow.summaries.at(caller);
-            for (uint32_t call = 0; call < summary.calls.size(); ++call) {
-                if (summary.calls[call].callee == SummaryCall::Callee::Name)
-                    countCallByName(caller, summary.calls[call], m_flow.calleesOfCallsAsSettled()[m_flow.firstCallOfFunction[index] + call], counts);
-            }
-        }
-        Locker locker { lock };
-        std::span<uint64_t> sums { reinterpret_cast<uint64_t*>(&m_tables.callsByName), sizeof(CallsByNameInLink) / sizeof(uint64_t) };
-        std::span<const uint64_t> added { reinterpret_cast<const uint64_t*>(&counts), sums.size() };
-        for (size_t place = 0; place < sums.size(); ++place)
-            sums[place] += added[place];
-    });
 }
 
 void WriterOfLink::writeCalls()
@@ -1073,62 +1009,70 @@ void WriterOfLink::writeReceiversThatStayAsMade()
         BuiltinClassID builtinClass = m_flow.classOf(receiver.site);
         return builtins.typedArrayTypeOf(builtinClass) == NotTypedArray && builtinClass != BuiltinClasses::DataView;
     };
-    Vector<LinkedReceiverAsMade>& receivers = m_tables.receiversThatStayAsMade;
-    Vector<ValueID, 16> sitesOfOtherReceivers;
     // ScanOfBody::openIterator(): whoever iterates calls the method under @@iterator on what is iterated over.
     PropertyKeyID keyOfIterators = m_program.keyOf(builtins.nameOf(WellKnownSymbol::Iterator));
-    Vector<LinkedReceiverAsMade>& iterables = m_tables.iterablesThatStayAsMade;
-    Vector<ValueID, 4> sitesOfOtherIterables;
-    for (uint32_t index = 0; index < m_numberOfFunctions; ++index) {
-        if (!m_flow.reached.get(index))
-            continue;
-        FunctionID function(index);
-        const ThinSummary& summary = m_flow.summaries.at(function);
-        size_t first = receivers.size();
-        sitesOfOtherReceivers.shrink(0);
-        size_t firstIterable = iterables.size();
-        sitesOfOtherIterables.shrink(0);
-        auto note = [&](ValueID site, uint32_t node) {
-            if (staysAsMade(function, node))
-                receivers.append(LinkedReceiverAsMade { function, site });
-            else
-                sitesOfOtherReceivers.append(site);
-        };
-        for (const SummaryAccess& access : summary.accesses) {
-            if (access.kind == SummaryAccess::Kind::Read && access.site && !access.isToContents() && access.receiver == noSummaryNode)
-                note(access.site, access.subject);
-        }
-        for (const SummaryCall& call : summary.calls) {
-            if (call.callee != SummaryCall::Callee::Name || !call.site || call.receiver == noSummaryNode)
+    // Each function by itself, on all threads. What is found comes in the order of the functions.
+    ChunksOfIndices division = divideIntoChunks(m_numberOfFunctions);
+    Vector<Vector<LinkedReceiverAsMade>> receiversOfChunks(division.size());
+    Vector<Vector<LinkedReceiverAsMade>> iterablesOfChunks(division.size());
+    forEachIndexInParallel(loops(), division.size(), [&](unsigned chunk) {
+        Vector<LinkedReceiverAsMade>& receivers = receiversOfChunks[chunk];
+        Vector<ValueID, 16> sitesOfOtherReceivers;
+        Vector<LinkedReceiverAsMade>& iterables = iterablesOfChunks[chunk];
+        Vector<ValueID, 4> sitesOfOtherIterables;
+        for (uint32_t index = division.firstIndexOf[chunk]; index < division.firstIndexOf[chunk + 1]; ++index) {
+            if (!m_flow.reached.get(index))
                 continue;
-            note(call.site, call.receiver);
-            if (!call.isMadeByProtocol || call.key != keyOfIterators)
+            FunctionID function(index);
+            const ThinSummary& summary = m_flow.summaries.at(function);
+            size_t first = receivers.size();
+            sitesOfOtherReceivers.shrink(0);
+            size_t firstIterable = iterables.size();
+            sitesOfOtherIterables.shrink(0);
+            auto note = [&](ValueID site, uint32_t node) {
+                if (staysAsMade(function, node))
+                    receivers.append(LinkedReceiverAsMade { function, site });
+                else
+                    sitesOfOtherReceivers.append(site);
+            };
+            for (const SummaryAccess& access : summary.accesses) {
+                if (access.kind == SummaryAccess::Kind::Read && access.site && !access.isToContents() && access.receiver == noSummaryNode)
+                    note(access.site, access.subject);
+            }
+            for (const SummaryCall& call : summary.calls) {
+                if (call.callee != SummaryCall::Callee::Name || !call.site || call.receiver == noSummaryNode)
+                    continue;
+                note(call.site, call.receiver);
+                if (!call.isMadeByProtocol || call.key != keyOfIterators)
+                    continue;
+                if (staysAsMade(function, call.receiver))
+                    iterables.append(LinkedReceiverAsMade { function, call.site });
+                else
+                    sitesOfOtherIterables.append(call.site);
+            }
+            if (iterables.size() != firstIterable) {
+                // An operation may iterate over several operands: each has to stay as made.
+                iterables.removeAllMatching([&](const LinkedReceiverAsMade& iterable) {
+                    return sitesOfOtherIterables.contains(iterable.site);
+                }, firstIterable);
+                std::ranges::sort(iterables.mutableSpan().subspan(firstIterable));
+                auto repeats = std::ranges::unique(iterables.mutableSpan().subspan(firstIterable));
+                iterables.shrink(iterables.size() - repeats.size());
+            }
+            if (receivers.size() == first)
                 continue;
-            if (staysAsMade(function, call.receiver))
-                iterables.append(LinkedReceiverAsMade { function, call.site });
-            else
-                sitesOfOtherIterables.append(call.site);
+            // An operation may read off several operands, and a protocol may look names up at the site of another operation: each has to stay as made.
+            std::ranges::sort(sitesOfOtherReceivers);
+            receivers.removeAllMatching([&](const LinkedReceiverAsMade& receiver) {
+                return std::ranges::binary_search(sitesOfOtherReceivers, receiver.site);
+            }, first);
+            std::ranges::sort(receivers.mutableSpan().subspan(first));
+            auto repeats = std::ranges::unique(receivers.mutableSpan().subspan(first));
+            receivers.shrink(receivers.size() - repeats.size());
         }
-        if (iterables.size() != firstIterable) {
-            // An operation may iterate over several operands: each has to stay as made.
-            iterables.removeAllMatching([&](const LinkedReceiverAsMade& iterable) {
-                return sitesOfOtherIterables.contains(iterable.site);
-            }, firstIterable);
-            std::ranges::sort(iterables.mutableSpan().subspan(firstIterable));
-            auto repeats = std::ranges::unique(iterables.mutableSpan().subspan(firstIterable));
-            iterables.shrink(iterables.size() - repeats.size());
-        }
-        if (receivers.size() == first)
-            continue;
-        // An operation may read off several operands, and a protocol may look names up at the site of another operation: each has to stay as made.
-        std::ranges::sort(sitesOfOtherReceivers);
-        receivers.removeAllMatching([&](const LinkedReceiverAsMade& receiver) {
-            return std::ranges::binary_search(sitesOfOtherReceivers, receiver.site);
-        }, first);
-        std::ranges::sort(receivers.mutableSpan().subspan(first));
-        auto repeats = std::ranges::unique(receivers.mutableSpan().subspan(first));
-        receivers.shrink(receivers.size() - repeats.size());
-    }
+    });
+    m_tables.receiversThatStayAsMade = joinChunks<LinkedReceiverAsMade>(loops(), WTF::move(receiversOfChunks));
+    m_tables.iterablesThatStayAsMade = joinChunks<LinkedReceiverAsMade>(loops(), WTF::move(iterablesOfChunks));
 }
 
 // From what lies at the nodes when the flow has ended.
@@ -1137,19 +1081,40 @@ void WriterOfLink::writeResultsOfReadsByKey()
     // A hole and the place behind the end ask upward. The run time refuses every index on the prototypes, but for what a test run has opened: then nothing is said.
     if (!writesWhatIsExpected() && !m_program.openedNames.isEmpty())
         return;
-    Vector<LinkedResultOfRead>& reads = m_tables.resultsOfReadsByKey;
-    for (uint32_t index = 0; index < m_numberOfFunctions; ++index) {
+    // All threads look for the reads, and type what they give: AOTLinkTypesOnAllThreads.h. One thread puts them in order.
+    struct Read {
+        FunctionID function;
+        ValueID site;
+        FlowNodeID value;
+    };
+    Vector<Read> found = collectInParallel<Read>(loops(), m_numberOfFunctions, [&](unsigned index, Vector<Read>& readsOfChunk) {
         if (!m_flow.reached.get(index))
-            continue;
+            return;
         FunctionID function(index);
-        size_t first = reads.size();
         for (const SummaryAccess& access : m_flow.summaries.at(function).accesses) {
             if (access.kind != SummaryAccess::Kind::Read || access.key || !access.site || access.isToContents() || access.value == noSummaryNode)
                 continue;
-            // Null where nothing has arrived, too: then the read may stand where nothing ever comes, and nobody gains.
-            TypeID seen = typeIDOf(m_flow.typeAt(m_flow.nodeOf(function, access.value)));
-            reads.append(LinkedResultOfRead { function, access.site, seen ? typesAtHand().withPrimitives(seen, Primitive::Undefined) : TypeID() });
+            readsOfChunk.append(Read { function, access.site, m_flow.nodeOf(function, access.value) });
         }
+    });
+    Vector<TypeID> proven;
+    proven.fill(TypeID(), found.size());
+    writeTypedPositionsOnAllThreads(m_flow, m_flow.program.types, static_cast<unsigned>(found.size()), [](TypesOfThreadInLink types) {
+        s_typesOfThread = types;
+    }, [&](unsigned place) {
+        // Null where nothing has arrived, too: then the read may stand where nothing ever comes, and nobody gains.
+        TypeID seen = typeIDOf(m_flow.typeAt(found[place].value));
+        proven[place] = seen ? typesAtHand().withPrimitives(seen, Primitive::Undefined) : TypeID();
+        return isOfProgramInLink(proven[place]);
+    });
+
+    Vector<LinkedResultOfRead>& reads = m_tables.resultsOfReadsByKey;
+    size_t endOfFunction = 0;
+    for (size_t firstOfFunction = 0; firstOfFunction < found.size(); firstOfFunction = endOfFunction) {
+        FunctionID function = found[firstOfFunction].function;
+        size_t first = reads.size();
+        for (; endOfFunction < found.size() && found[endOfFunction].function == function; ++endOfFunction)
+            reads.append(LinkedResultOfRead { function, found[endOfFunction].site, proven[endOfFunction] });
         std::ranges::sort(reads.mutableSpan().subspan(first), { }, &LinkedResultOfRead::site);
         // An operation that reads off several operands has an access for each: it gives what any of them gives, and nothing is said of it here.
         size_t kept = first;
@@ -1264,6 +1229,10 @@ void WriterOfLink::writeFunctions()
         s_typesOfThread = types;
     }, [&](unsigned index) {
         writeFunction(FunctionID(index));
+        const LinkedFunction& linked = m_tables.functions[index];
+        return isOfProgramInLink(linked.result) && isOfProgramInLink(linked.thrown) && std::ranges::all_of(m_tables.parametersOf(FunctionID(index)), [](const LinkedParameter& parameter) {
+            return isOfProgramInLink(parameter.proven) && isOfProgramInLink(parameter.expected);
+        });
     });
 }
 
@@ -1392,12 +1361,12 @@ void WriterOfLink::findRingsOfTailCalls()
     };
     // One node stands for whichever of the lost functions a call may enter.
     uint32_t anyLostFunction = m_numberOfFunctions;
-    Vector<TailCall> tailCalls;
-    for (uint32_t index = 0; index < m_numberOfFunctions; ++index) {
+    Vector<TailCall> tailCalls = collectInParallel<TailCall>(loops(), m_numberOfFunctions, [&, view = LinkFlow::ViewAtWork::current()](unsigned index, Vector<TailCall>& tailCalls) {
+        LinkFlow::ViewAtWork viewAtWork(view);
         if (m_flow.lostFunctions.get(index))
             tailCalls.append(TailCall { anyLostFunction, index, false });
         if (!m_flow.reached.get(index))
-            continue;
+            return;
         FunctionID caller(index);
         const ThinSummary& summary = m_flow.summaries.at(caller);
         for (uint32_t place = 0; place < summary.calls.size(); ++place) {
@@ -1421,7 +1390,7 @@ void WriterOfLink::findRingsOfTailCalls()
             if (callees.mayEnterLost)
                 tailCalls.append(TailCall { index, anyLostFunction, false });
         }
-    }
+    });
     // A node for each shared call, between those who go by it and what it lists.
     uint32_t numberOfSharedCalls = static_cast<uint32_t>(m_flow.calleesOfSharedCallsAsSettled().size());
     for (uint32_t shared = 0; shared < numberOfSharedCalls; ++shared) {
@@ -1527,73 +1496,91 @@ void WriterOfLink::writeParameters(FunctionID id, const LinkedFunction& linked)
 // Whatever else a guess may come to expect, the walk asks before it takes a value for a function: LinkTables::mayBeMentionedBy().
 // UnitQueue holds each mention of finished code that may bring a unit against the graph, in every build.
 
-void WriterOfLink::noteHolder(PropertyKeyID key, LayoutID classLayout, FunctionID held)
-{
-    if (!held)
-        return;
-    if (key)
-        m_functionsUnderKeys.append(FunctionUnderKey { key, held });
-    if (classLayout)
-        m_functionsOfClasses.append(FunctionOfClass { classLayout, held });
-}
-
+// The lists are sorted behind this, so they are gathered on all threads, each with lists of its own.
 void WriterOfLink::indexFunctionsThatAreHeld()
 {
-    for (uint32_t index = 0; index < m_numberOfFunctions; ++index) {
+    struct Holders {
+        Vector<FunctionUnderKey> functionsUnderKeys;
+        Vector<FunctionOfClass> functionsOfClasses;
+        Vector<FunctionOfClass> functionsThatSlotsOfRecordsMayDefer;
+
+        void note(PropertyKeyID key, LayoutID classLayout, FunctionID held)
+        {
+            if (!held)
+                return;
+            if (key)
+                functionsUnderKeys.append(FunctionUnderKey { key, held });
+            if (classLayout)
+                functionsOfClasses.append(FunctionOfClass { classLayout, held });
+        }
+    };
+    Vector<Holders> holdersOfWorkers(loops().width());
+    LinkFlow::ViewOfHeldReading* view = LinkFlow::ViewAtWork::current();
+    auto forEachIndexOnAllThreads = [&](size_t count, const auto& functor) {
+        forEachIndexInParallel(loops(), static_cast<unsigned>(numberOfRangesOfIndices(count)), [&](unsigned range, unsigned worker) {
+            LinkFlow::ViewAtWork viewAtWork(view);
+            size_t end = std::min(count, (static_cast<size_t>(range) + 1) * indicesInRangeOfLoop);
+            for (size_t index = static_cast<size_t>(range) * indicesInRangeOfLoop; index < end; ++index)
+                functor(static_cast<uint32_t>(index), holdersOfWorkers[worker]);
+        });
+    };
+
+    forEachIndexOnAllThreads(m_numberOfFunctions, [&](uint32_t index, Holders& holders) {
         const ThinSummary& summary = m_flow.summaries.at(FunctionID(index));
         for (const SummaryMember& member : summary.members) {
             // The record of the class names what the class was given, whatever was stored over it since. A lookup by name finds only what the tables say lies there.
             if (const SummaryNode& given = summary.nodes[member.value]; given.kind == SummaryNode::Kind::Closure)
-                noteHolder(member.key, member.classLayout, FunctionID(given.first));
-            noteHolder(member.key, member.classLayout, closureAloneAt(m_flow.member(member.classLayout, member.side, member.index)));
+                holders.note(member.key, member.classLayout, FunctionID(given.first));
+            holders.note(member.key, member.classLayout, closureAloneAt(m_flow.member(member.classLayout, member.side, member.index)));
         }
-    }
+    });
+    Holders& holders = holdersOfWorkers[0];
     for (const LinkFlow::NameOnPrototype& name : m_flow.namesOnPrototypes()) {
-        noteHolder(name.key, name.layout, closureAloneAt(name.stored));
-        noteHolder(name.key, name.layout, closureAloneAt(name.storedInSight));
+        holders.note(name.key, name.layout, closureAloneAt(name.stored));
+        holders.note(name.key, name.layout, closureAloneAt(name.storedInSight));
     }
-    for (uint32_t index = 0; index < m_program.layouts.size(); ++index) {
+    forEachIndexOnAllThreads(m_program.layouts.size(), [&](uint32_t index, Holders& holders) {
         const Layout& layout = m_program.layouts[index];
         for (uint32_t field = 0; field < layout.fields.size(); ++field) {
             PropertyKeyID key = layout.fields[field].key;
             if (!key)
                 continue;
             FieldReference reference { LayoutID(index), field };
-            noteHolder(key, { }, closureAloneAt(m_flow.field(reference)));
+            holders.note(key, { }, closureAloneAt(m_flow.field(reference)));
             const LinkedCell& cell = m_tables.field(reference);
             bool constructionAloneFillsRecord = layout.kind == LayoutKind::Record && cell.everyWriterIsKnown && !cell.isWrittenAfterConstruction;
             forEachFunctionOfType(cell.proven, [&](FunctionID held) {
-                noteHolder(key, { }, held);
+                holders.note(key, { }, held);
                 if (constructionAloneFillsRecord && m_program.at(held).captures.size() == 1)
-                    m_functionsThatSlotsOfRecordsMayDefer.append(FunctionOfClass { LayoutID(index), held });
+                    holders.functionsThatSlotsOfRecordsMayDefer.append(FunctionOfClass { LayoutID(index), held });
             });
         }
         for (const StaticField& field : layout.staticFields) {
             if (!field.key || !field.variable)
                 continue;
-            noteHolder(field.key, { }, closureAloneAt(m_flow.variable(field.variable)));
+            holders.note(field.key, { }, closureAloneAt(m_flow.variable(field.variable)));
             forEachFunctionOfType(m_tables.variable(field.variable).proven, [&](FunctionID held) {
-                noteHolder(field.key, { }, held);
+                holders.note(field.key, { }, held);
             });
         }
-    }
+    });
     m_flow.forEachAppendedField([&](PropertyKeyID key, FlowNodeID holder) {
-        noteHolder(key, { }, closureAloneAt(holder));
+        holders.note(key, { }, closureAloneAt(holder));
     });
     for (size_t place = 0; place < m_tables.appendedKeys.size(); ++place) {
         forEachFunctionOfType(m_tables.appendedFields[place].proven, [&](FunctionID held) {
-            noteHolder(m_tables.appendedKeys[place], { }, held);
+            holders.note(m_tables.appendedKeys[place], { }, held);
         });
     }
 
-    auto sortWithoutRepeats = [](auto& list) {
-        std::ranges::sort(list);
-        auto repeats = std::ranges::unique(list);
-        list.shrink(repeats.begin() - list.begin());
-    };
-    sortWithoutRepeats(m_functionsUnderKeys);
-    sortWithoutRepeats(m_functionsOfClasses);
-    sortWithoutRepeats(m_functionsThatSlotsOfRecordsMayDefer);
+    for (Holders& ofWorker : holdersOfWorkers) {
+        m_functionsUnderKeys.appendVector(ofWorker.functionsUnderKeys);
+        m_functionsOfClasses.appendVector(ofWorker.functionsOfClasses);
+        m_functionsThatSlotsOfRecordsMayDefer.appendVector(ofWorker.functionsThatSlotsOfRecordsMayDefer);
+    }
+    sortAndRemoveDuplicates(loops(), m_functionsUnderKeys);
+    sortAndRemoveDuplicates(loops(), m_functionsOfClasses);
+    sortAndRemoveDuplicates(loops(), m_functionsThatSlotsOfRecordsMayDefer);
 
     auto putInQueueFromStart = [&](FunctionID id) {
         m_tables.functions[id.index()].liesUnderNameOrIsLost = m_program.at(id).hasBody();
@@ -2042,9 +2029,8 @@ LinkTables link(Program& program, const ThinSummaries& summaries, const Families
 
     // held(), by the same writers, out of the same flow, beside linked().
     std::unique_ptr<LinkFlow::ViewOfHeldReading> view = flow.makeViewOfHeldReading();
-    turns->held = conservativeLinkTables(program);
-    turns->held.sizeOfFlow = flow.size();
-    turns->held.unseenCodeCanRun = flow.builtinsInReach().unseenCodeCanRun();
+    SizeOfLinkFlow sizeOfFlow = flow.size();
+    bool unseenCodeCanRun = flow.builtinsInReach().unseenCodeCanRun();
     LinkTables tables;
     runLanes(flow.loops, 2, [&](unsigned lane, const ParallelLoops& loopsOfLane) {
         if (!lane) {
@@ -2055,6 +2041,9 @@ LinkTables link(Program& program, const ThinSummaries& summaries, const Families
         {
             view->loops = &loopsOfLane;
             LinkFlow::ViewAtWork viewAtWork(view.get());
+            turns->held = conservativeLinkTables(program, loopsOfLane);
+            turns->held.sizeOfFlow = sizeOfFlow;
+            turns->held.unseenCodeCanRun = unseenCodeCanRun;
             LinkTables& expected = turns->held;
             if (!mechanisms.containsAny({ Mechanism::DirectCalls, Mechanism::TypedOperations })) {
                 for (size_t index = 0; index < expected.functions.size(); ++index)
@@ -2066,11 +2055,12 @@ LinkTables link(Program& program, const ThinSummaries& summaries, const Families
             WriterOfLink writer(flow, expected);
             lookAtSummariesForLayoutsAndCells(flow, expected);
             writer.writeWhatMakesNoType();
+            writeLayoutsAndCellsAheadOfTypes(flow, writer.functionsWhoseCallersAreAllKnown());
             turns->provingTablesAreWritten.wait();
             {
                 TypeArena types(program.types, ArenaKeeps::InProgram);
                 writer.writeWhatMakesTypes(types);
-                writeLayoutsAndCells(flow, types, expected);
+                writeLayoutsAndCells(flow, types);
                 writeTablesOfUnions(flow, expected);
             }
             writer.writeReferrers();
@@ -2085,7 +2075,7 @@ static LinkTables writeTablesOfProvingReading(Program& program, Mechanisms mecha
     flow.settleTypes();
     flow.settleSharedCalls();
 
-    LinkTables tables = conservativeLinkTables(program);
+    LinkTables tables = conservativeLinkTables(program, flow.loops);
     tables.sizeOfFlow = flow.size();
     tables.unseenCodeCanRun = flow.builtinsInReach().unseenCodeCanRun();
     tables.lookups = flow.builtinsInReach().takeLookups();
@@ -2118,9 +2108,10 @@ static LinkTables writeTablesOfProvingReading(Program& program, Mechanisms mecha
             },
             [&] {
                 lookAtSummariesForLayoutsAndCells(flow, tables);
+                writeLayoutsAndCellsAheadOfTypes(flow, writer.functionsWhoseCallersAreAllKnown());
             },
         });
-        writeLayoutsAndCells(flow, types, tables);
+        writeLayoutsAndCells(flow, types);
         writeTablesOfUnions(flow, tables);
     }
     endTurnOfProvingReading();
@@ -2134,11 +2125,11 @@ static LinkTables writeTablesOfProvingReading(Program& program, Mechanisms mecha
         writer.writeProofsThatMakeNoType();
         writer.writeReferrers();
     });
-    // What a callee does, what becomes of what it is passed and in what order the program starts are proofs. One of them shows in the types of held() too: finishReadingsOfLink().
+    // What a callee does and what becomes of what it is passed are proofs. One of them shows in the types of held() too: finishReadingsOfLink().
     if (turns)
         turns->provingFlow = WTF::move(ownedFlow);
     else
-        writeTypesFoundOfCallees(flow, tables);
+        writePrototypeObjectsThatAreSettled(flow, tables);
     return tables;
 }
 
@@ -2146,7 +2137,7 @@ void finishReadingsOfLink(Program& program, Mechanisms mechanisms, TurnsOfReadin
 {
     if (!mechanisms.containsAny({ Mechanism::DirectCalls, Mechanism::TypedOperations }))
         return;
-    writeTypesFoundOfCallees(*turns.provingFlow, proven);
+    writePrototypeObjectsThatAreSettled(*turns.provingFlow, proven);
     turns.provingFlow = nullptr;
     // A variable that is proven never to be read in its dead zone is not read there whatever else is held of it.
     TypeArena types(program.types, ArenaKeeps::InProgram);

@@ -72,15 +72,6 @@ inline FunctionID functionOfIterationHelper(const Program& program, IterationHel
     return { };
 }
 
-inline bool isIterationHelper(const Program& program, FunctionID function)
-{
-    for (IterationHelper helper : { IterationHelper::OpenIterator, IterationHelper::OpenWrappedIterator, IterationHelper::StepIterator, IterationHelper::CloseIterator, IterationHelper::CloseIteratorAfterThrow, IterationHelper::AppendGenerator, IterationHelper::AppendIterable, IterationHelper::TakeFromIterable, IterationHelper::NextOfStepsOverText }) {
-        if (functionOfIterationHelper(program, helper) == function)
-            return true;
-    }
-    return false;
-}
-
 } } } // namespace JSC::AOT::Typed
 
 #endif // ENABLE(AOT)

@@ -26,67 +26,6 @@ namespace JSC { namespace AOT { namespace Typed {
 
 // ---- AOTWalkNumberNotes.cpp
 
-class NotesOfNumbers final : public Walker::KeptForBuild {
-public:
-    // Walker::beginUnit()
-    void clear();
-
-    // For good, no effect ends it: `integer` says in integers what `record` is. Of what charCodeAt, s[i], charAt, at gave: the code unit, -1 outside the text. Of a piece that a step over a text cut: its code point.
-    void noteIntegerBeside(ValueID record, Reference integer);
-    Reference integerBeside(ValueID record) const;
-    void noteLengthOfPiece(ValueID piece, Reference numberOfCodeUnits);
-    Reference lengthOfPiece(ValueID piece) const;
-
-    // Of the one block of Code that is appended to. Asked with another block: nothing is found, and the next note empties the lists.
-    Reference findConversion(BlockID, Reference value, Representation wanted) const;
-    void noteConversion(BlockID, Reference value, Representation wanted, Reference converted);
-    // Same opcode, form, payload, flags and operands. It cannot throw, writes nothing, and nothing built since writes what it reads.
-    Reference findOperation(BlockID, const Draft&) const;
-    void noteOperation(BlockID, const Draft&, const Effects&, Reference built);
-    void endWhatIsWritten(const Effects&);
-
-    // The call whose result rule runs. Walker::resultTypeOf() sets and clears it. Null: none.
-    const Draft* callBeingTyped { nullptr };
-
-private:
-    using ReferencesByRecord = HashMap<uint32_t, uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>;
-    // By Reference::bits() of the value above the form that is wanted.
-    using ConversionsMade = HashMap<uint64_t, uint32_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>;
-
-    struct OperationBuilt {
-        unsigned hash { 0 };
-        uint32_t firstWord { 0 };
-        uint32_t numberOfWords { 0 };
-        // 0: it reads nothing that can be written. Else it answers while m_timesReadsWereEnded has not moved on.
-        uint32_t readsAsOf { 0 };
-        Reference built;
-    };
-
-    static constexpr uint32_t noOperation = UINT32_MAX;
-
-    void standIn(BlockID);
-    void forgetBlock();
-    void growPlacesOfOperations();
-    static uint64_t keyOfConversion(Reference value, Representation wanted) { return static_cast<uint64_t>(value.bits()) << 8 | static_cast<uint64_t>(wanted); }
-    static void collectWords(const Draft&, Vector<uint32_t, 24>&);
-    static unsigned hashOf(std::span<const uint32_t>);
-
-    ReferencesByRecord m_integersBesideRecords;
-    ReferencesByRecord m_lengthsOfPieces;
-
-    BlockID m_block;
-    ConversionsMade m_conversions;
-    Vector<OperationBuilt, 16> m_operations;
-    Vector<uint32_t, 64> m_words;
-    // A power of two of places, at most half of them taken, each found from the hash of its words on.
-    Vector<uint32_t, 32> m_placesOfOperations;
-    LocationMasks m_readsOfOperations { Effects::none().reads };
-    uint32_t m_timesReadsWereEnded { 1 };
-};
-
-// Made where it is first asked for.
-NotesOfNumbers& notesOfNumbers(Walker&);
-
 // What the files of the package share.
 // TypedOperations and UnboxedNumbers: every rule here gives or takes a raw integer.
 bool hasMechanismsOfNumberForms(const Walker&);
@@ -134,8 +73,6 @@ struct WholeRemainder {
 };
 // The same of a Mod. What stands for it gives 0 where `%` gives -0 or NaN: whether the asker can tell is the asker's to know.
 std::optional<WholeRemainder> findWholeRemainder(Walker&, ValueID number, const InputsOfTypedOperation&);
-bool canDivideQuotientAsIntegers(QuotientRounding, const Type& dividend, const Type& divisor);
-std::optional<QuotientRounding> quotientRoundingOf(InlineBuiltin);
 // The dividend itself by a divisor of 1, a constant of two known integers.
 Reference buildDivisionOfIntegers(Walker&, Origin, Reference dividend, Reference divisor, QuotientRounding);
 // Null exactly where buildDivisionOfIntegers() builds nothing for these or narrower types.
@@ -195,10 +132,7 @@ TypeID typeOfCallOnNumbersAhead(Walker&, const BodyIndex&, const BodyValue& call
 
 // ---- AOTWalkNumberCodeUnits.cpp
 
-// The three belong to AOTWalkStringCharacters.cpp, which writes the reads of characters out. Each gives the default.
-bool isPositionProvenInsideText(Walker&, Reference string, Reference position);
 Reference buildCharCode(Walker&, const CallByOneRow&);
-Reference buildCharacterOfString(Walker&, ValueID read, Reference string, Reference position, Origin);
 // The integer that says what charCodeAt() gave: the code unit, and -1 where the number is NaN. Null: it is no such number, or nobody has the integer.
 Reference codeUnitBesideCharCode(Walker&, Reference number);
 // The same of what s[i], charAt() or at() gave: -1 where that is undefined or the empty text.
@@ -212,8 +146,6 @@ bool buildComparisonByCodeUnit(Walker&, const BodyValue& comparison, const Input
 
 // ---- AOTWalkNumberKeys.cpp. For buildTypedElementAccess(.., inputs), first line.
 bool buildElementAccessUnderNumber(Walker&, const BodyValue&, const InputsOfTypedOperation&);
-// For buildCopyOfPropertiesForTypedAccess().
-bool buildCopyOfPrimitive(Walker&, const BodyValue& copy);
 
 // ---- AOTWalkNumberSwitches.cpp. For Walker::walkTerminator(), behind copyFields().
 struct SwitchOnNumbers {
@@ -227,14 +159,6 @@ struct SwitchOnNumbers {
 std::optional<SwitchOnNumbers> planSwitchOnNumbers(Walker&, const BodyTerminator&);
 
 // ---- AOTWalkNumberTallies.cpp. Counters and tallies are AOTWalkLoopCounters.cpp's and AOTWalkLoopTallies.cpp's. Each gives the default.
-TypeID rangeOfTallyInLook(Walker&, const BodyIndex&, LoopID, uint32_t parameter, std::span<const TypeID> assumedAtHead, TypeID united);
-struct TestOfSteppedCounter {
-    ValueID relation;
-    uint32_t operandIndex { 0 };
-    ValueID stepped;
-    int64_t distance { 0 };
-};
-std::optional<TestOfSteppedCounter> findTestOfSteppedCounter(const BodyIndex&, const BodyTerminator&);
 
 } } } // namespace JSC::AOT::Typed
 

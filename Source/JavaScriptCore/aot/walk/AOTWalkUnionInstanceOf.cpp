@@ -41,7 +41,6 @@ struct ChainsForInstanceOf {
     // Both ascending.
     Vector<LayoutID, 8> decided;
     Vector<LayoutID, 8> instances;
-    ConditionsOfInstanceOf conditions;
     // An object with the shape of an instance may stand below something else by now.
     bool testsObjects { false };
     bool hasUndecidedLayouts { false };
@@ -68,7 +67,6 @@ struct FormOfInstanceOf {
     bool testsPrototypeOfInstance { false };
 };
 
-enum class AnswerOfBuiltinInstanceOf : uint8_t { Unknown, No, Yes, YesIfObject };
 
 struct BuiltinTestedByInstanceOf {
     BuiltinID constructor;
@@ -278,31 +276,9 @@ static std::optional<ClassTestedByInstanceOf> describeClassTestedByInstanceOf(co
 
 // ---- A class of the program: the chains of the layouts that the left side may have
 
-// parentNamedByClassRecord() of image/AOTClassRecords.cpp. False: above the class stands what no record of the program describes.
-static bool findParentNamedByClassRecordForInstanceOf(const Walker& walker, LayoutID classLayout, LayoutID& parent)
-{
-    const Layout& layout = walker.program().at(classLayout);
-    ClassFacts facts = walker.facts().classOf(classLayout);
-    parent = { };
-    switch (facts.baseState) {
-    case BaseState::Layout:
-        parent = facts.base;
-        break;
-    case BaseState::Unknown:
-        parent = writtenBaseOf(layout);
-        break;
-    case BaseState::None:
-        parent = facts.prototypeBase;
-        break;
-    case BaseState::BuiltinClass:
-        return false;
-    }
-    return parent || !layout.has(LayoutFlags::HasHeritage);
-}
-
-// That a chain meets the class is proven by Link, link by link, or said by the guard of the class that the walk starts from, which answers for every link above it. That a chain misses the class only Link proves.
+// That a chain meets the class, and that it misses it, is proven by Link, link by link.
 // `function Meter() {}`, `Meter.prototype = first`, `class Fine extends Meter {}`, `Meter.prototype = second`: the class below is linked to the object that the property held when it was defined. So no chain is followed up into a constructor function, or out of one.
-static ChainEndForInstanceOf followChainForInstanceOf(const Walker& walker, LayoutID layout, LayoutID tested, ConditionsOfInstanceOf& conditions)
+static ChainEndForInstanceOf followChainForInstanceOf(const Walker& walker, LayoutID layout, LayoutID tested)
 {
     const Program& program = walker.program();
     const LinkTables& link = walker.facts().linked();
@@ -315,37 +291,23 @@ static ChainEndForInstanceOf followChainForInstanceOf(const Walker& walker, Layo
     if (start.kind != LayoutKind::Instance)
         return ChainEndForInstanceOf::Unknown;
 
-    const LayoutID classWalkedFrom = declaredLayoutOf(program, layout);
-    LayoutID current = classWalkedFrom;
-    bool everyLinkIsProven = true;
+    LayoutID current = declaredLayoutOf(program, layout);
     for (size_t unvisitedClasses = program.layouts.size(); current && unvisitedClasses; --unvisitedClasses) {
         if (current == tested)
             return ChainEndForInstanceOf::MeetsClass;
         const Layout& passed = program.at(current);
         if (passed.kind != LayoutKind::Instance || !passed.constructor)
             return ChainEndForInstanceOf::Unknown;
-        // A row of functions: each prototype object is settled, and linked below the next, ahead of every object. Above the last stands Object.prototype: whatever else is laid above a prototype object lets the layout go.
+        // The prototype object of a function that is settled stands below Object.prototype: whatever else is laid above a prototype object lets the layout go.
+        // A store or a call of the program links it below that of a base, and nobody can tell which objects are made in front of that.
         if (passed.has(LayoutFlags::IsConstructorFunction)) {
-            const LinkedLayout& linked = link.layouts[current.index()];
-            if (!everyLinkIsProven || !linked.prototypeObjectIsSettledAheadOfEveryObject)
-                return ChainEndForInstanceOf::Unknown;
-            if (!passed.base)
-                return ChainEndForInstanceOf::MissesClass;
-            if (!linked.isLinkedBelowBaseAheadOfEveryObject)
-                return ChainEndForInstanceOf::Unknown;
-            current = passed.base;
-            continue;
+            bool standsBelowObjectPrototype = !passed.base && link.layouts[current.index()].prototypeObjectIsSettledAheadOfEveryObject;
+            return standsBelowObjectPrototype ? ChainEndForInstanceOf::MissesClass : ChainEndForInstanceOf::Unknown;
         }
 
         LayoutID next = classProvenAbove(program, link, current);
-        if (!next) {
-            if (classStaysAsWrittenForInstanceOf(link, current))
-                return everyLinkIsProven && !passed.has(LayoutFlags::HasHeritage) ? ChainEndForInstanceOf::MissesClass : ChainEndForInstanceOf::Unknown;
-            if (!walker.plan().hasClassRecord(classWalkedFrom) || !walker.plan().hasClassRecord(current) || !findParentNamedByClassRecordForInstanceOf(walker, current, next) || !next)
-                return ChainEndForInstanceOf::Unknown;
-            everyLinkIsProven = false;
-            addConditionOfInstanceOf(conditions, { MemberConditionKind::PrototypeLinkUnchanged, classWalkedFrom, ClassSide::Prototype, { } });
-        }
+        if (!next)
+            return classStaysAsWrittenForInstanceOf(link, current) && !passed.has(LayoutFlags::HasHeritage) ? ChainEndForInstanceOf::MissesClass : ChainEndForInstanceOf::Unknown;
         if (program.at(next).has(LayoutFlags::IsConstructorFunction))
             return ChainEndForInstanceOf::Unknown;
         current = next;
@@ -365,8 +327,7 @@ static ChainsForInstanceOf followChainsForInstanceOf(const Walker& walker, std::
         if (!walker.plan().isInUse(layout))
             continue;
 
-        ConditionsOfInstanceOf conditions;
-        ChainEndForInstanceOf end = followChainForInstanceOf(walker, layout, tested, conditions);
+        ChainEndForInstanceOf end = followChainForInstanceOf(walker, layout, tested);
         // The run time defines the class of a constructor function at the first construction that is carried out, with whatever the function has as its `prototype` then. What is made once that is replaced says so itself.
         bool isMadeByConstructorFunction = program.at(layout).kind == LayoutKind::Instance && program.at(declaredLayoutOf(program, layout)).has(LayoutFlags::IsConstructorFunction)
             && !link.layouts[declaredLayoutOf(program, layout).index()].prototypeObjectIsSettledAheadOfEveryObject;
@@ -389,8 +350,6 @@ static ChainsForInstanceOf followChainsForInstanceOf(const Walker& walker, std::
         chains.decided.append(layout);
         if (end == ChainEndForInstanceOf::MeetsClass)
             chains.instances.append(layout);
-        for (const MemberConditionRecord& condition : conditions)
-            addConditionOfInstanceOf(chains.conditions, condition);
         chains.testsObjects |= testsObject;
     }
     return chains;
@@ -455,8 +414,6 @@ static std::optional<FormOfInstanceOf> planFormOfInstanceOf(const Walker& walker
     form.tested = tested->layout;
     form.testedIsConstructorFunction = tested->isConstructorFunction;
     form.conditions = WTF::move(tested->conditions);
-    for (const MemberConditionRecord& condition : chains.conditions)
-        addConditionOfInstanceOf(form.conditions, condition);
     form.valueIsSurelyObject = value.isObject();
     form.testsPrototypeOfInstance = chains.testsObjects;
 
@@ -640,75 +597,13 @@ static std::optional<BuiltinTestedByInstanceOf> describeBuiltinTestedByInstanceO
     return tested;
 }
 
-// ---- A built-in class: the chain above an object
+// ---- A built-in class
 
-// Nothing stands above Object.prototype, and the language lets nobody lay it below another object.
-static AnswerOfBuiltinInstanceOf answerRightBelowObjectPrototypeForInstanceOf(const BuiltinTable& table, BuiltinID soughtPrototype)
-{
-    return table.canonicalID(Builtins::ObjectPrototype) == soughtPrototype ? AnswerOfBuiltinInstanceOf::Yes : AnswerOfBuiltinInstanceOf::No;
-}
-
-// Of an object right below the prototype object of its layout. No prototype object of a class of the program is the one sought, so each is passed where Link has proven its own link. What stands at `extends` beside a class of the program is only written.
-static AnswerOfBuiltinInstanceOf searchAboveLayoutForBuiltinInstanceOf(const Walker& walker, LayoutID layout, BuiltinID soughtPrototype)
-{
-    const Program& program = walker.program();
-    const BuiltinTable& table = program.builtins();
-    const LinkTables& link = walker.facts().linked();
-    const Layout& start = program.at(layout);
-    bool isMadeBelowWhatCodeChooses = start.has(LayoutFlags::IsOfCreatedObject) || (start.kind == LayoutKind::Record && (start.constructor || start.has(LayoutFlags::IsConstructorFunction)));
-    if (isMadeBelowWhatCodeChooses || (start.kind != LayoutKind::Record && start.kind != LayoutKind::Instance))
-        return AnswerOfBuiltinInstanceOf::Unknown;
-    if (start.kind == LayoutKind::Record)
-        return answerRightBelowObjectPrototypeForInstanceOf(table, soughtPrototype);
-
-    LayoutID current = declaredLayoutOf(program, layout);
-    for (size_t unvisitedClasses = program.layouts.size(); current && unvisitedClasses; --unvisitedClasses) {
-        const Layout& passed = program.at(current);
-        // `function Meter() {}`, `Meter.prototype = other`: which object stands above an instance goes by when that was made.
-        if (passed.kind != LayoutKind::Instance || !passed.constructor || passed.has(LayoutFlags::IsConstructorFunction) || !classStaysAsWrittenForInstanceOf(link, current))
-            return AnswerOfBuiltinInstanceOf::Unknown;
-        if (LayoutID above = passed.base) {
-            current = above;
-            continue;
-        }
-        if (passed.has(LayoutFlags::HasHeritage) || passed.writtenBuiltinBase)
-            return AnswerOfBuiltinInstanceOf::Unknown;
-        return answerRightBelowObjectPrototypeForInstanceOf(table, soughtPrototype);
-    }
-    return AnswerOfBuiltinInstanceOf::Unknown;
-}
-
-// Any object may be a proxy. A cell that is known by its kind alone may have been given any prototype, at its creation or since, and no record says what stands above a named object.
-static AnswerOfBuiltinInstanceOf answerOfBuiltinInstanceOfForType(const Walker& walker, const BuiltinTestedByInstanceOf& tested, TypeID typeOfValue)
+// The ordinary @@hasInstance turns a primitive away before it reads anything.
+static bool holdsNoObjectForInstanceOf(const Walker& walker, TypeID typeOfValue)
 {
     Type subject = walker.types().at(typeOfValue);
-    if (!subject.isJavaScriptValue() || subject.mayBeUnspecified())
-        return AnswerOfBuiltinInstanceOf::Unknown;
-    // The ordinary @@hasInstance turns a primitive away before it reads anything.
-    if (!subject.hasObjects())
-        return AnswerOfBuiltinInstanceOf::No;
-    if (!tested.prototype || subject.hasUnboundedUnknown() || subject.unnamedClasses || subject.objects || !subject.unnamedLayouts)
-        return AnswerOfBuiltinInstanceOf::Unknown;
-
-    const LinkTables& link = walker.facts().linked();
-    std::optional<AnswerOfBuiltinInstanceOf> joined;
-    for (LayoutID layout : membersOf(walker.types(), subject.unnamedLayouts)) {
-        if (!walker.plan().isInUse(layout))
-            continue;
-        if (possibleChangesForInstanceOf(link, layout).contains(LayoutChange::ChangesPrototype))
-            return AnswerOfBuiltinInstanceOf::Unknown;
-        AnswerOfBuiltinInstanceOf ofLayout = searchAboveLayoutForBuiltinInstanceOf(walker, layout, tested.prototype);
-        if (ofLayout == AnswerOfBuiltinInstanceOf::Unknown || (joined && *joined != ofLayout))
-            return AnswerOfBuiltinInstanceOf::Unknown;
-        joined = ofLayout;
-    }
-    if (!joined)
-        return AnswerOfBuiltinInstanceOf::Unknown;
-    if (*joined != AnswerOfBuiltinInstanceOf::Yes)
-        return *joined;
-    // An object of another instance of the program inherits from the prototype objects of that one's realm.
-    AnswerOfBuiltinInstanceOf inOneRealm = subject.primitives ? AnswerOfBuiltinInstanceOf::YesIfObject : AnswerOfBuiltinInstanceOf::Yes;
-    return walker.plan().hasOneInstance() ? inOneRealm : AnswerOfBuiltinInstanceOf::Unknown;
+    return subject.isJavaScriptValue() && !subject.mayBeUnspecified() && !subject.hasObjects();
 }
 
 // A cell of the class that is as its class makes it has the prototype that its class gave it. The state keeps what the test has found only while EscapeAnalysis is on, and the test is built by the type of its operand.
@@ -770,42 +665,6 @@ static Reference buildClassTestsOfBuiltinInstanceOf(Walker& walker, const Builti
     return answers.meet();
 }
 
-// The lookup of @@hasInstance is answered, and no constant stands for the object: the steps of the ordinary @@hasInstance are written out in its order.
-// Where it finds no object under `prototype` it throws, which is left to the operation as written.
-static Reference buildWalkOfChainBehindReadOfPrototypeForInstanceOf(Walker& walker, const BodyValue& test, Reference value, Reference constructor, Origin origin)
-{
-    AnswersOfInstanceOf answers(walker);
-    walker.noteGuessOpened();
-    if (walker.types().at(walker.typeOf(value)).primitives) {
-        Reference isObject = buildTypeTestOfInstanceOf(walker, value, TypeTable::object, origin);
-        if (!isObject)
-            return { };
-        BlockID object = walker.addBlock();
-        BlockID primitive = walker.addBlock();
-        walker.branch(isObject, object, primitive);
-        walker.continueIn(primitive);
-        answers.arrive(booleanAnswerOfInstanceOf(walker, false));
-        walker.continueIn(object);
-    }
-
-    Draft read(Opcode::PropGet, origin);
-    walker.chooseConservativeFields(read);
-    read.setObjectOperand(constructor);
-    read.setKey(walker.program().keyOf(BuiltinNames::prototype));
-    Reference prototype = walker.build(WTF::move(read));
-    Reference isObject = prototype && prototype.isValue() ? buildTypeTestOfInstanceOf(walker, prototype, TypeTable::object, origin) : Reference();
-    if (!isObject)
-        return { };
-    BlockID findsObject = walker.addBlock();
-    BlockID findsNoObject = walker.addBlock(BlockFrequency::Rare);
-    walker.branch(isObject, findsObject, findsNoObject);
-    walker.continueIn(findsNoObject);
-    answers.arrive(buildInstanceOfAsWritten(walker, test));
-    walker.continueIn(findsObject);
-    answers.arrive(buildWalkOfChainForInstanceOf(walker, value, buildProofOfInstanceOf(walker, prototype, isObject, OperandIndex::TypeTest::value, origin), origin));
-    return answers.meet();
-}
-
 // buildInstanceOfBuiltin() keeps the rest: the walk of the chain from whatever the value is.
 static bool buildInstanceOfBuiltinByValue(Walker& walker, const BodyValue& test, const InputsOfTypedOperation& inputs)
 {
@@ -817,22 +676,15 @@ static bool buildInstanceOfBuiltinByValue(Walker& walker, const BodyValue& test,
     if (!tested)
         return false;
 
-    AnswerOfBuiltinInstanceOf byType = answerOfBuiltinInstanceOfForType(walker, *tested, typeOfValue);
-    if (byType != AnswerOfBuiltinInstanceOf::YesIfObject && !walker.has(Mechanism::Folding))
-        byType = AnswerOfBuiltinInstanceOf::Unknown;
+    bool holdsNoObject = walker.has(Mechanism::Folding) && holdsNoObjectForInstanceOf(walker, typeOfValue);
     bool testsClass = false;
-    bool readsPrototype = false;
-    if (byType == AnswerOfBuiltinInstanceOf::Unknown && mayBuildArmsForInstanceOf(walker)) {
-        if (!tested->prototype)
-            readsPrototype = walker.isInLoop();
-        else if (classTestAnswersBuiltinInstanceOf(walker, *tested, typeOfValue)) {
-            // A bit test and a rare call in the place of a call: where the code comes again and again, or the value is expected to be of the class.
-            TypeID expected = walker.isInLoop() ? TypeID() : findExpectation(walker, test.valueOperand()).type;
-            testsClass = walker.isInLoop() || (expected && walker.types().overlap(expected, walker.types().builtinClass(tested->builtinClass)));
-        }
+    if (!holdsNoObject && tested->prototype && mayBuildArmsForInstanceOf(walker) && classTestAnswersBuiltinInstanceOf(walker, *tested, typeOfValue)) {
+        // A bit test and a rare call in the place of a call: where the code comes again and again, or the value is expected to be of the class.
+        TypeID expected = walker.isInLoop() ? TypeID() : findExpectation(walker, test.valueOperand()).type;
+        testsClass = walker.isInLoop() || (expected && walker.types().overlap(expected, walker.types().builtinClass(tested->builtinClass)));
     }
     if (inputs.areOnlyTypes())
-        return byType != AnswerOfBuiltinInstanceOf::Unknown || testsClass || readsPrototype;
+        return holdsNoObject || testsClass;
 
     Reference value = walker.referenceOf(test.valueOperand());
     Reference constructor = walker.referenceOf(test.constructorOperand());
@@ -840,29 +692,17 @@ static bool buildInstanceOfBuiltinByValue(Walker& walker, const BodyValue& test,
         return false;
     Origin origin = walker.originOf(test);
     Reference answer;
-    switch (byType) {
-    case AnswerOfBuiltinInstanceOf::No:
+    if (holdsNoObject)
         answer = booleanAnswerOfInstanceOf(walker, false);
-        break;
-    case AnswerOfBuiltinInstanceOf::Yes:
-        answer = booleanAnswerOfInstanceOf(walker, true);
-        break;
-    case AnswerOfBuiltinInstanceOf::YesIfObject:
-        answer = buildTypeTestOfInstanceOf(walker, value, TypeTable::object, origin);
-        break;
-    case AnswerOfBuiltinInstanceOf::Unknown: {
+    else {
         // The state has seen the object as its class makes it.
         bool isSeenAsMade = tested->builtinClass && walker.has(Mechanism::Folding) && walker.plan().hasOneInstance() && walker.types().isSubset(walker.typeOf(value), walker.types().builtinClass(tested->builtinClass)) && isListAsMade(walker, value);
         if (isSeenAsMade)
             answer = booleanAnswerOfInstanceOf(walker, true);
         else if (testsClass && value.isValue())
             answer = buildClassTestsOfBuiltinInstanceOf(walker, *tested, value, origin);
-        else if (readsPrototype && value.isValue())
-            answer = buildWalkOfChainBehindReadOfPrototypeForInstanceOf(walker, test, value, constructor, origin);
         else
             return false;
-        break;
-    }
     }
     if (answer)
         walker.bind(test.id(), answer);

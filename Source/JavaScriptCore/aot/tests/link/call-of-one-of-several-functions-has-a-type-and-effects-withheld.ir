@@ -1,6 +1,0 @@
-# the same program with every mechanism withheld: a call without one callee may enter anything, and no list says otherwise
-# RUN: link functions calls mechanisms=none
-# CHECK: function f0 {{*}}returns=anything throws=anything
-# RUN(NEVER): link functions calls mechanisms=none
-# NEVER-NOT: several
-# PROGRAM-OF: call-of-one-of-several-functions-has-a-type-and-effects.ir

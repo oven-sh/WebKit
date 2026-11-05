@@ -31,6 +31,7 @@
 #include "AirCode.h"
 #include "AirValidate.h"
 #include "B3Common.h"
+#include "B3Procedure.h"
 #include <wtf/StringPrintStream.h>
 
 namespace JSC { namespace B3 { namespace Air {
@@ -52,7 +53,7 @@ PhaseScope::PhaseScope(Code& code, ASCIILiteral name)
 PhaseScope::~PhaseScope()
 {
     m_code.setLastPhaseName(m_name);
-    if (shouldValidateIRAtEachPhase())
+    if (!m_code.proc().report().failure && shouldValidateIRAtEachPhase(m_code.proc()))
         validate(m_code, m_dumpBefore);
 
     if (Options::dumpIonGraph()) [[unlikely]]

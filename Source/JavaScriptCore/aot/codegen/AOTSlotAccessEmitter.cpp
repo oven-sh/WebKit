@@ -575,8 +575,9 @@ void SlotAccessEmitter::markCellIfMarkerReplacesRawValue(CellPointer cell, const
     if (!typeOf(stored).mayBeUndefinedOrNull())
         return;
     SlotEmitter& slots = emitter<SlotEmitter>();
-    if (slots.holdsRawValueFromBirthInSomeMember(setOfMembersWithField(access), access.key))
-        slots.markCellIfMarkerIsStored(cell, stored);
+    LayoutSetID members = setOfMembersWithField(access);
+    if (slots.holdsRawValueFromBirthInSomeMember(members, access.key))
+        slots.markCellIfMarkerIsStored(cell, stored, members);
 }
 
 void SlotAccessEmitter::generatePutSlot(const ValueContext& value)
@@ -876,7 +877,7 @@ static std::optional<KeyOrderContinuation> findSlotContinuationOfEveryMember(con
     std::optional<KeyOrderContinuation> common;
     for (LayoutID member : members) {
         // An order is numbered within its shape.
-        if (plan.layout(member).keysAreNeverEnumerated || plan.shapes().shapesOf(member).count != 1)
+        if (plan.shapes().shapesOf(member).count != 1)
             return std::nullopt;
         std::optional<KeyOrderContinuation> continuation = firstContinuationCreatingSlots(program, plan, member, createdKeys);
         if (!continuation || (common && *common != *continuation))
@@ -897,13 +898,14 @@ std::optional<KeyOrderStep> SlotAccessEmitter::testLikeliestKeyOrderStep(CellPoi
     // An order is numbered within its shape, and the two words lie side by side.
     static_assert(offsetOfShapeWord == offsetOfOrderWord + sizeof(uint32_t) && !(offsetOfOrderWord % sizeof(uint64_t)) && std::endian::native == std::endian::little);
     for (LayoutID member : members) {
-        if (m_plan.layout(member).keysAreNeverEnumerated)
-            continue;
         std::optional<KeyOrderContinuation> continuation = firstContinuationCreatingSlots(m_program, m_plan, member, createdKeys);
         if (!continuation)
             continue;
         uint64_t wordsBefore = static_cast<uint64_t>(AOT::shapeWordOf(shapes.generalShapeOf(member))) << 32 | continuation->orderWordBefore;
         Integer words(m_out.load64(m_out.address(m_heaps.AOTObject_orderWord, cell.value(), offsetOfOrderWord)));
+        // Who creates fields is mostly an object that is being born. The load goes by the heap of the order word: the number never changes, and the mark is taken out.
+        if (m_plan.layout(member).mayBearMark)
+            words = bitOr(words, integer(static_cast<int64_t>(orderAndShapeWordsAreUnmarked)));
         return KeyOrderStep { equal(words, integer(static_cast<int64_t>(wordsBefore))), word32(static_cast<int32_t>(continuation->orderWordAfter)) };
     }
     return std::nullopt;

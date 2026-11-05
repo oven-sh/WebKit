@@ -107,8 +107,7 @@ void forEachKeyAsCreated(VM& vm, State& state, const Object& object, const Invoc
     uint32_t numberOfFields = object.layout().numberOfFields;
     // Stars that wait are carried out here, which may give the object another order.
     JSObject* extra = object.extraProperties();
-    Object::KeyOrderStorage storage;
-    std::span<const uint16_t> entries = object.keyOrder(state, storage);
+    std::span<const uint16_t> entries = object.keyOrder(state);
     std::span<const RefPtr<UniquedStringImpl>> namedKeys;
     if (object.hasKeyOrderOfItsOwn())
         namedKeys = object.compiledStructure().keysNamedByOrder();

@@ -292,22 +292,6 @@ TypeID edgeResultTypeOf(const TypingContext& context, const Terminator& terminat
     return applyEdgeResultRule(rules, terminator, targetIndex, resultIndex, ResultSide::Unproven);
 }
 
-ExpectedType expectationBeside(TypeArena& types, TypeID proven, TypeID computedAtLevelExpected)
-{
-    if (!proven || !computedAtLevelExpected || computedAtLevelExpected == proven)
-        return { };
-    TypeID met = types.intersectionOf(proven, computedAtLevelExpected);
-    if (isNeverType(met) || met == proven)
-        return { };
-    // What an intersection keeps of `unknown` may lie outside one of its sides.
-    if (!types.isSubset(met, proven))
-        return { };
-    // Two types that differ in their seeds alone say the same. What is written of the contents of a class says more, and isSubset() passes over it.
-    if (types.isSubset(proven, met) && !writtenContentsSayMoreThan(types, proven, met))
-        return { };
-    return ExpectedType(met);
-}
-
 // What `return` hands over in a coroutine is not what its caller gets, and a constructor's caller gets the object where the result is none.
 static bool calleeHandsBackItsDeclaredResult(const Function& function)
 {

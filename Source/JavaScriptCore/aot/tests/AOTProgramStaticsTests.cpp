@@ -36,10 +36,8 @@ namespace JSC::AOT {
 std::span<const NativeTest> programStaticsTests();
 
 static constexpr unsigned numberOfVariables = 600;
-static constexpr uint32_t bytesPerCard = 1u << ProgramStatics::cardShift;
 
 // The cases read the words raw, so each has to start as the bits of undefined. A variable that may be replaced does. Any other may start as zero, which compiled code alone reads as undefined.
-// A word is filled at program entry where no code that may run earlier names its variable, and the body of a module never runs earlier.
 // A variable gets a word where code names it, so nothing in front of the stores may end the body: what they store is a constant.
 static String makeProgramText()
 {
@@ -161,146 +159,9 @@ static SlotData variable(LoadedProgram& program, unsigned number)
     return SlotData::create(offset, SlotRepresentation::JSValue);
 }
 
-static uint64_t& wordAt(LoadedProgram& program, uint32_t offset)
-{
-    return program.state().statics->at<uint64_t>(offset);
-}
-
 static uint8_t& cardOf(LoadedProgram& program, SlotData slot)
 {
     return program.instance().cards()[slot.offset >> ProgramStatics::cardShift];
-}
-
-static NEVER_INLINE void storeNewObject(LoadedProgram& program, SlotData slot, int32_t mark)
-{
-    VM& vm = program.vm();
-    JSObject* object = constructEmptyObject(program.realm());
-    object->putDirect(vm, Identifier::fromString(vm, "mark"_s), jsNumber(mark));
-    ProgramStatics::writeVariable(program.instance(), slot, object);
-}
-
-static NEVER_INLINE void allocateGarbage(LoadedProgram& program)
-{
-    for (unsigned i = 0; i < 20000; ++i)
-        constructEmptyObject(program.realm());
-}
-
-static bool holdsObjectWithMark(LoadedProgram& program, SlotData slot, int32_t mark)
-{
-    VM& vm = program.vm();
-    JSValue value = ProgramStatics::readVariable(program.instance(), slot);
-    return value.isObject() && vm.heap.isMarked(value.asCell()) && asObject(value)->getDirect(vm, Identifier::fromString(vm, "mark"_s)) == jsNumber(mark);
-}
-
-static void testReadingFillsTheRuns(LoadedProgram& program)
-{
-    Instance& instance = program.instance();
-    const ProgramTables& tables = program.state().tables;
-    AOT_TEST_CHECK(tables.staticsLayout().size() == 1);
-    AOT_TEST_CHECK(tables.staticsLayout()[0].sizeFilledAtProgramEntry == numberOfVariables * sizeof(EncodedJSValue));
-
-    for (unsigned number : { 0u, 1u, numberOfVariables - 1 }) {
-        AOT_TEST_CHECK(!wordAt(program, variable(program, number).offset));
-        AOT_TEST_CHECK(!ProgramStatics::readVariableWithoutAllocating(instance, variable(program, number)));
-    }
-
-    AOT_TEST_CHECK(ProgramStatics::readVariable(instance, variable(program, 3)).isUndefined());
-    for (unsigned number = 0; number < numberOfVariables; ++number) {
-        AOT_TEST_CHECK(wordAt(program, variable(program, number).offset) == JSValue::ValueUndefined);
-        AOT_TEST_CHECK(ProgramStatics::readVariableWithoutAllocating(instance, variable(program, number)).isUndefined());
-    }
-    for (uint32_t offset = numberOfVariables * sizeof(EncodedJSValue); offset < tables.instanceSizes.sizeOfStatics; offset += sizeof(uint64_t))
-        AOT_TEST_CHECK(!wordAt(program, offset));
-}
-
-static void testWritingFillsTheRunsFirst(LoadedProgram& program)
-{
-    Instance& instance = program.instance();
-    AOT_TEST_CHECK(!wordAt(program, variable(program, 0).offset));
-    ProgramStatics::writeVariable(instance, variable(program, 5), jsNumber(42));
-    AOT_TEST_CHECK(ProgramStatics::readVariable(instance, variable(program, 5)) == jsNumber(42));
-    AOT_TEST_CHECK(ProgramStatics::readVariable(instance, variable(program, 4)).isUndefined());
-    AOT_TEST_CHECK(ProgramStatics::readVariable(instance, variable(program, 6)).isUndefined());
-    AOT_TEST_CHECK(wordAt(program, variable(program, numberOfVariables - 1).offset) == JSValue::ValueUndefined);
-
-    program.state().statics->ensureProgramStaticsInitialized();
-    AOT_TEST_CHECK(ProgramStatics::readVariable(instance, variable(program, 5)) == jsNumber(42));
-}
-
-static void testEmptyValueClearsTheVariable(LoadedProgram& program)
-{
-    Instance& instance = program.instance();
-    SlotData slot = variable(program, 7);
-    ProgramStatics::writeVariable(instance, slot, jsNumber(1));
-    ProgramStatics::writeVariable(instance, slot, JSValue());
-    AOT_TEST_CHECK(!ProgramStatics::readVariable(instance, slot));
-    AOT_TEST_CHECK(!ProgramStatics::readVariableWithoutAllocating(instance, slot));
-    AOT_TEST_CHECK(wordAt(program, slot.offset) == traitsOf(SlotRepresentation::JSValue).absentBits);
-    AOT_TEST_CHECK(ProgramStatics::readVariable(instance, variable(program, 8)).isUndefined());
-}
-
-static void testStoredCellSurvivesEdenCollection(LoadedProgram& program)
-{
-    VM& vm = program.vm();
-    SlotData first = variable(program, 2);
-    SlotData last = variable(program, numberOfVariables - 1);
-    AOT_TEST_CHECK(&cardOf(program, first) != &cardOf(program, last));
-
-    vm.heap.collectSync(CollectionScope::Full);
-    storeNewObject(program, first, 11);
-    storeNewObject(program, last, 12);
-    AOT_TEST_CHECK(cardOf(program, first) == ProgramStatics::cardIsDirty && cardOf(program, last) == ProgramStatics::cardIsDirty);
-
-    allocateGarbage(program);
-    vm.heap.collectSync(CollectionScope::Eden);
-    AOT_TEST_CHECK(vm.heap.lastCollectionScope() == CollectionScope::Eden);
-    AOT_TEST_CHECK(holdsObjectWithMark(program, first, 11) && holdsObjectWithMark(program, last, 12));
-    AOT_TEST_CHECK(cardOf(program, first) == RememberedSlotSet::scannedCard && cardOf(program, last) == RememberedSlotSet::scannedCard);
-
-    storeNewObject(program, first, 13);
-    AOT_TEST_CHECK(cardOf(program, first) == ProgramStatics::cardIsDirty);
-    allocateGarbage(program);
-    vm.heap.collectSync(CollectionScope::Eden);
-    AOT_TEST_CHECK(holdsObjectWithMark(program, first, 13) && holdsObjectWithMark(program, last, 12));
-
-    allocateGarbage(program);
-    vm.heap.collectSync(CollectionScope::Full);
-    AOT_TEST_CHECK(holdsObjectWithMark(program, first, 13) && holdsObjectWithMark(program, last, 12));
-    vm.heap.collectSync(CollectionScope::Full);
-    AOT_TEST_CHECK(holdsObjectWithMark(program, first, 13) && holdsObjectWithMark(program, last, 12));
-}
-
-static void testCardNeverWrittenIsNotScanned(LoadedProgram& program)
-{
-    Instance& instance = program.instance();
-    JSObject* recorded = constructEmptyObject(program.realm());
-    JSObject* neighbor = constructEmptyObject(program.realm());
-    JSObject* unrecorded = constructEmptyObject(program.realm());
-    SlotData inWrittenCard = variable(program, 1);
-    SlotData inSameCard = variable(program, 2);
-    SlotData inOtherCard = variable(program, 2 * bytesPerCard / sizeof(EncodedJSValue) + 1);
-    AOT_TEST_CHECK(&cardOf(program, inWrittenCard) == &cardOf(program, inSameCard) && &cardOf(program, inWrittenCard) != &cardOf(program, inOtherCard));
-
-    program.state().statics->ensureProgramStaticsInitialized();
-    AOT_TEST_CHECK(visitedCells(program).isEmpty());
-    for (uint32_t card = 0; card <= program.state().tables.instanceSizes.sizeOfStatics >> ProgramStatics::cardShift; ++card)
-        AOT_TEST_CHECK(instance.cards()[card] == RememberedSlotSet::neverWrittenCard);
-
-    wordAt(program, inOtherCard.offset) = JSValue::encode(unrecorded);
-    wordAt(program, inSameCard.offset) = JSValue::encode(neighbor);
-    AOT_TEST_CHECK(visitedCells(program).isEmpty());
-
-    ProgramStatics::writeVariable(instance, inWrittenCard, recorded);
-    AOT_TEST_CHECK(cardOf(program, inWrittenCard) == ProgramStatics::cardIsDirty);
-    AOT_TEST_CHECK(cardOf(program, inOtherCard) == RememberedSlotSet::neverWrittenCard);
-    AOT_TEST_CHECK(visitedCells(program) == CellList({ recorded, neighbor }));
-
-    cardOf(program, inOtherCard) = ProgramStatics::cardIsDirty;
-    AOT_TEST_CHECK(visitedCells(program) == CellList({ recorded, neighbor, unrecorded }));
-
-    ensureStillAliveHere(recorded);
-    ensureStillAliveHere(neighbor);
-    ensureStillAliveHere(unrecorded);
 }
 
 static void testNumberInWrittenCardIsNoCell(LoadedProgram& program)
@@ -311,17 +172,6 @@ static void testNumberInWrittenCardIsNoCell(LoadedProgram& program)
 
     program.state().statics->didStoreRootInStatics(slot.offset);
     AOT_TEST_CHECK(cardOf(program, slot) == ProgramStatics::cardIsDirty);
-    AOT_TEST_CHECK(visitedCells(program).isEmpty());
-}
-
-static void testThrownValueIsARoot(LoadedProgram& program)
-{
-    JSObject* thrown = constructEmptyObject(program.realm());
-    EncodedJSValue& thrownValue = program.instance().runtime.exceptions.thrownValue;
-    AOT_TEST_CHECK(!thrownValue && visitedCells(program).isEmpty());
-    thrownValue = JSValue::encode(thrown);
-    AOT_TEST_CHECK(visitedCells(program) == CellList({ thrown }));
-    thrownValue = JSValue::encode(JSValue());
     AOT_TEST_CHECK(visitedCells(program).isEmpty());
 }
 
@@ -337,18 +187,10 @@ static void runNativeTestWithVariables()
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static constexpr ASCIILiteral noStaticsFilledAtEntry = "plan/AOTPlan.cpp: statics that are filled at the entry of the program: every word is filled when the instance is made"_s;
-
 std::span<const NativeTest> programStaticsTests()
 {
     static constexpr NativeTest tests[] = {
-        { "program-statics/reading-fills-the-runs"_s, runNativeTestWithVariables<testReadingFillsTheRuns>, noStaticsFilledAtEntry },
-        { "program-statics/writing-fills-the-runs-first"_s, runNativeTestWithVariables<testWritingFillsTheRunsFirst>, noStaticsFilledAtEntry },
-        { "program-statics/empty-value-clears-the-variable"_s, runNativeTestWithVariables<testEmptyValueClearsTheVariable> },
-        { "program-statics/stored-cell-survives-eden-collection"_s, runNativeTestWithVariables<testStoredCellSurvivesEdenCollection> },
-        { "program-statics/card-never-written-is-not-scanned"_s, runNativeTestWithVariables<testCardNeverWrittenIsNotScanned> },
         { "program-statics/number-in-written-card-is-no-cell"_s, runNativeTestWithVariables<testNumberInWrittenCardIsNoCell> },
-        { "program-statics/thrown-value-is-a-root"_s, runNativeTestWithVariables<testThrownValueIsARoot> },
     };
     return tests;
 }

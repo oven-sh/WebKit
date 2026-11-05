@@ -71,6 +71,8 @@ static Reference makeObjectOfDeferredVariable(Walker& walker, const DeferredVari
     return walker.build(WTF::move(operation));
 }
 
+static Reference findOrMakeObjectOfDeferredVariable(Walker&, const DeferredVariable&, Reference held, Origin);
+
 static void buildReadOfDeferredVariable(Walker& walker, const BodyValue& read, const DeferredVariable& deferred)
 {
     // Only what has filled the variable, or was found in it behind the test, is noted under it. Once it is there it stays.
@@ -85,15 +87,21 @@ static void buildReadOfDeferredVariable(Walker& walker, const BodyValue& read, c
         return;
     }
 
-    Origin origin = walker.originOfOperation();
     Draft asWritten = walker.draftOf(read);
     walker.chooseConservativeFields(asWritten);
     Reference held = walker.build(WTF::move(asWritten));
     if (!held)
         return;
+    if (Reference result = findOrMakeObjectOfDeferredVariable(walker, deferred, held, walker.originOfOperation()))
+        walker.bind(read.id(), result);
+}
+
+// `held`: what a read has found in the variable. Null: the walk has failed, or nothing goes on from here.
+static Reference findOrMakeObjectOfDeferredVariable(Walker& walker, const DeferredVariable& deferred, Reference held, Origin origin)
+{
     if (!(walker.types().at(walker.typeOf(held)).primitives & deferred.mark)) {
         walker.fail("a variable that its first read fills is typed as if it never held the mark"_s);
-        return;
+        return { };
     }
 
     Draft test(Opcode::TypeTest, origin);
@@ -101,7 +109,7 @@ static void buildReadOfDeferredVariable(Walker& walker, const BodyValue& read, c
     test.setTestedType(TypeArena::fromPrimitives(deferred.mark));
     Reference isNotMade = walker.build(WTF::move(test));
     if (!isNotMade)
-        return;
+        return { };
 
     BlockID makes = walker.addBlock(BlockFrequency::Rare);
     BlockID finds = walker.addBlock();
@@ -112,7 +120,7 @@ static void buildReadOfDeferredVariable(Walker& walker, const BodyValue& read, c
     walker.continueIn(makes);
     Reference made = makeObjectOfDeferredVariable(walker, deferred);
     if (!made)
-        return;
+        return { };
     buildStoreIntoDeferredVariable(walker, deferred, made);
     walker.jumpTo(meet, std::array { made });
 
@@ -124,13 +132,22 @@ static void buildReadOfDeferredVariable(Walker& walker, const BodyValue& read, c
     narrowed.setIsOnTakenEdge(false);
     Reference found = walker.build(WTF::move(narrowed));
     if (!found)
-        return;
+        return { };
     walker.jumpTo(meet, std::array { found });
 
-    walker.bind(read.id(), result);
     // What the variable held in front of its declaration is ended by the store as it is written, which the effects of the body name.
     walker.state().noteVariable(deferred.variable, result);
     noteObjectOfVariablePutOff(walker, deferred.variable, result);
+    return result;
+}
+
+bool takeObjectOfDeferredVariable(Walker& walker, VariableID variable, Reference held, Origin origin)
+{
+    const DeferredVariable* deferred = walker.plan().deferredDefinitions().findDeferred(variable);
+    if (!deferred)
+        return false;
+    findOrMakeObjectOfDeferredVariable(walker, *deferred, held, origin);
+    return true;
 }
 
 constinit const OpcodeSet opcodesThatBuildDeferredDefinitionTakes = opcodesOfDeferredDefinitions;

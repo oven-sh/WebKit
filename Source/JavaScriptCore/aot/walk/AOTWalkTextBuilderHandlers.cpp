@@ -292,9 +292,6 @@ bool mayKeepTextUnderHandlers(Walker& walker, BlockID inputHead, const GrowingTe
     BodyBlock head = index.block(inputHead);
     if (head.hasHandler() && index.isInLoop(head.handler().block(), index.loopOf(inputHead)))
         return false;
-    // What a callee does behind its first append may throw.
-    if (web.growsInCallees)
-        return false;
     return HandlersOfTextScan(walker, index, inputHead, web).run();
 }
 

@@ -49,11 +49,6 @@ interface DirectFunctionEntry {
   directEntry: DirectEntrySpec;
 }
 
-interface CppSignature {
-  result: string;
-  parameters: readonly string[];
-}
-
 type SwitchCase = readonly [label: string, result: string];
 
 const engineHeaders: readonly string[] = [

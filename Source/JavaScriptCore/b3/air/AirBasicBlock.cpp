@@ -36,8 +36,6 @@ namespace JSC { namespace B3 { namespace Air {
 
 const char* const BasicBlock::dumpPrefix = "#";
 
-WTF_MAKE_SEQUESTERED_ARENA_ALLOCATED_IMPL(BasicBlock);
-
 void BasicBlock::setSuccessors(FrequentedBlock target)
 {
     m_successors.resize(1);

@@ -24,7 +24,6 @@ inline constexpr unsigned numberOfJSONShapeBits = 256;
 enum class JSONSourceEncoding : uint8_t {
     Latin1,
     UTF16,
-    UTF8,
 };
 
 struct JSONWords {

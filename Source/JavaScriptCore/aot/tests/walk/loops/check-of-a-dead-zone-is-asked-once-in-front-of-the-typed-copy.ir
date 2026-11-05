@@ -16,11 +16,11 @@
 # OPTIONS: check=Validate
 # RUN: walk f1 mechanisms=all
 # CHECK-LABEL: code f1:Body
-# CHECK: isInLoop=true isLoopHead=true
-# CHECK: = CheckInitialized {{*}}name="table"
 # CHECK: = GetModuleVariable
 # CHECK-NEXT: = TypeTest {{*}}testedType=absent
 # CHECK-NEXT: Branch
+# CHECK: isInLoop=true isLoopHead=true
+# CHECK: = CheckInitialized {{*}}name="table"
 # CHECK: isInLoop=true isLoopHead=true
 # CHECK-NOT: = CheckInitialized
 # CHECK-NOT: = ShapeTest

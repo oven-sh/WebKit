@@ -15,7 +15,7 @@
 # -- end of source
 # records of de6f7619d9019889
 # RUN(PLAN): plan layouts mechanisms=all
-# PLAN: "flags" OptionalInt32 Inline
+# PLAN: "flags" OptionalInt32 Inline {{*}}raw=int{{*}} filled-at-birth
 # PLAN: "ready" OptionalBoolean Inline
 # PLAN: "name" OptionalCell32 Inline
 # PLAN: "other" OptionalCell32 Inline
@@ -25,10 +25,11 @@
 # WITHHELD-NOT: OptionalCell32
 # RUN: walk f1 f2 f3 f4 mechanisms=all-Inlining-ParameterGuards
 # CHECK-LABEL: code f1:Body
-# CHECK: IsSlotFilled {{*}}key="flags" {{*}}[holdsDeclaredType]
+# CHECK: = ShapeTest {{*}}[{{*}}refusesMarkedObjects]
+# CHECK-NOT: IsSlotFilled
 # CHECK: @Int32 = GetSlot {{*}}key="flags" {{*}}[holdsDeclaredType]
 # CHECK-LABEL: code f2:Body
-# CHECK: GetSlot {{*}}key="flags" {{*}}level=Expected [holdsDeclaredType
+# CHECK: GetSlot {{*}}key="flags" {{*}}level=Expected [holdsDeclaredType{{*}}isFilledWhereShapeFits]
 # CHECK-LABEL: code f3:Body
 # CHECK: L{{*}} @Cell32 = GetSlot {{*}}key="other"
 # CHECK-NOT: ShapeTest

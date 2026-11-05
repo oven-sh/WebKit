@@ -3,7 +3,7 @@
 # Link knows every caller of both. All that arrives at `size` comes out of a site whose objects have not left the program and on which no reached code lays a name, defines anything by a descriptor or puts another object above:
 # each has the names that its class gives it and no other, for as long as it lives. So the read needs no test, and there is no closed arm behind it.
 # A name is laid on what arrives at `sizeOfMarked`: nothing is said of it, and the view is asked when the code runs.
-# RED UNTIL instances-that-stay-as-made-1: both asked. ObjectFact::IsPristine had readers and no writer.
+# Both once asked: ObjectFact::IsPristine had readers and no writer.
 # RUN: link functions mechanisms=all
 # CHECK: function f1
 # CHECK: parameter 0 {{*}}proven=Uint8Array{{*}} stays-as-made

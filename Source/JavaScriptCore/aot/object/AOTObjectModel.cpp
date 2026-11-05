@@ -211,12 +211,6 @@ RuntimeLayoutTable::~RuntimeLayoutTable()
     }
 }
 
-const RuntimeType* RuntimeLayoutTable::typeWithIndex(uint32_t typeIndex) const
-{
-    uint32_t offset = m_tables.offsetOfType(typeIndex);
-    return offset ? &typeAt(offset) : nullptr;
-}
-
 const FieldData* RuntimeLayoutTable::field(VM& vm, const LayoutData& layout, UniquedStringImpl* name)
 {
     if (name->isSymbol() && !layout.hasFieldsWithSymbolKeys && !static_cast<SymbolImpl*>(name)->isPrivate())
@@ -994,9 +988,10 @@ void StructureTable::rememberStepOfKeyOrder(StructureID before, uint32_t orderAn
     (*m_stepsOfKeyOrders)[newer] = { before, orderAndCountBefore, fieldAndKind, after, orderAndCountAfter };
 }
 
-static constexpr uint64_t orderAndShapeWordsFor(uint32_t shape, uint32_t orderWord)
+static uint64_t orderAndShapeWordsFor(const AllocationData& allocation)
 {
-    return static_cast<uint64_t>(shapeWordOf(shape)) << 32 | orderWord;
+    uint32_t shapeWord = shapeWordOf(allocation.shape);
+    return static_cast<uint64_t>(allocation.isBornUnfinished ? shapeWord & ~shapeWordIsUnmarked : shapeWord) << 32 | allocation.orderWord();
 }
 
 static bool fillsSameRecord(const ProgramTables& tables, uint32_t first, uint32_t second)
@@ -1043,12 +1038,6 @@ ALWAYS_INLINE AllocationSiteRecord& StructureTable::ensureRecord(uint32_t number
     return *record;
 }
 
-static uint64_t objectHeaderFor(Structure* structure, const AllocationData& allocation)
-{
-    static_assert(JSCell::typeInfoFlagsOffset() == 6);
-    return cellHeaderFor(structure) | (allocation.isBornUnfinished ? static_cast<uint64_t>(TypeInfoPerCellBit) << 48 : 0);
-}
-
 AllocationSiteRecord& StructureTable::ensureRecord(uint32_t number)
 {
     return ensureRecord(number, m_tables.allocations()[number].shape);
@@ -1083,8 +1072,8 @@ AllocationSiteRecord& StructureTable::fillAllocationSite(VM& vm, uint32_t number
     // No size class holds a cell beyond MarkedSpace::largeCutoff, so no allocator does. Compiled code finds no room and leaves every such cell to the operation.
     void* allocator = space.allocatorFor(allocation.size(), AllocatorForMode::EnsureAllocator).localAllocator();
     record = AllocationSiteRecord {
-        .header = kind == AllocatedCellKind::Environment ? Environment::headerFor(structure, allocation.shape) : objectHeaderFor(structure, allocation),
-        .orderAndShapeWords = orderAndShapeWordsFor(allocation.shape, allocation.orderWord()),
+        .header = kind == AllocatedCellKind::Environment ? Environment::headerFor(structure, allocation.shape) : cellHeaderFor(structure),
+        .orderAndShapeWords = orderAndShapeWordsFor(allocation),
         .allocator = allocator ? allocator : &m_allocatorWithoutRoom,
         .prototype = kind == AllocatedCellKind::Object ? static_cast<uint64_t>(JSValue::encode(structure->storedPrototype())) : 0,
     };
@@ -1102,7 +1091,7 @@ void StructureTable::predictStructure(VM&, uint32_t number, CompiledStructure* s
     AllocationSiteRecord* record = m_state.instance.objects.allocationSite(number);
     if (!usual || !record || !usual->hasOtherPrototype() || structureIDOf(number) != usual->id())
         return;
-    record->header = objectHeaderFor(structure, allocation);
+    record->header = cellHeaderFor(structure);
     record->prototype = static_cast<uint64_t>(JSValue::encode(structure->storedPrototype()));
     m_writtenRecords.record(record);
 }
@@ -1129,7 +1118,7 @@ void StructureTable::forgetStructuresOf(const LayoutData& classLayout)
 
     // Allocations that share a record have the same shape, which the record stores once it is filled.
     for (AllocationSiteRecord& record : std::span { m_state.instance.objects.emptyAllocationSite() - m_numberOfAllocationSiteRecords, m_numberOfAllocationSiteRecords }) {
-        uint32_t shape = shapeWordOf(static_cast<uint32_t>(record.orderAndShapeWords >> 32));
+        uint32_t shape = shapeOf(shapeWordWithoutMark(static_cast<uint32_t>(record.orderAndShapeWords >> 32)));
         if (record.header && shape < m_tables.firstEnvironmentShape && belongsToClass(shape))
             record = emptyAllocationSiteRecord();
     }
@@ -1155,7 +1144,7 @@ JSCell* StructureTable::allocate(VM& vm, uint32_t number)
     switch (allocatedCellKindOf(m_tables, allocation.shape)) {
     case AllocatedCellKind::Object: {
         Object* object = Object::create(vm, structure, m_tables.layoutForShape(allocation.shape), allocation.size(), allocation.orderWord());
-        object->setPerCellBit(allocation.isBornUnfinished);
+        object->setIsInBirth(allocation.isBornUnfinished);
         return object;
     }
     case AllocatedCellKind::Closure:

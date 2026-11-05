@@ -6,8 +6,8 @@
 #pragma once
 
 // Members of CalleeSummarizerForLinkEffects, which AOTLinkEffects.cpp declares. That file includes this one at its foot.
-// ONE traversal, callees first, in the place of summarizeEffects(): what a function does by whichever exit, what it has written when it returns, and whose objects it writes.
-// On the way it leaves what a call of several functions does, and what a function does where its arguments are as expected. No list here holds functions x functions or members x calls.
+// ONE traversal, callees first: what a function does by whichever exit, what it has written when it returns, and whose objects it writes.
+// On the way it leaves what a function does where its arguments are as expected. No list here holds functions x functions or members x calls.
 
 #if ENABLE(AOT)
 
@@ -16,7 +16,7 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// ---- What neighbors of the port lay into the summaries. Where one of them is not in the tree the scan says what it says today, and each of these answers that there is nothing.
+// ---- What other parts of the scan lay into the summaries. Where one of them is not in the tree the scan says what it says today, and each of these answers that there is nothing.
 
 // key-orders-and-copies: Joins that only objects pass into. An operation of the body runs Protocol::OwnKeys or OwnValues on what lies there.
 template<typename Summary>
@@ -484,61 +484,9 @@ bool CalleeSummarizerForLinkEffects::judgeCallGivenArguments(FunctionID id, cons
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// ---- Calls of several functions
-
-bool CalleeSummarizerForLinkEffects::mayBeCallOfSeveral(const SummaryCall& call, const CodeEntered& code)
-{
-    bool findsCalleeAtRunTime = call.callee == SummaryCall::Callee::Name || call.callee == SummaryCall::Callee::Value;
-    return call.site && !call.isMadeByProtocol && findsCalleeAtRunTime && !code.mayBeUnseen && !code.isNone();
-}
-
-// One look at the nodes and the calls of a summary, at the first call of it that is asked about.
-void CalleeSummarizerForLinkEffects::indexCallsOf(FunctionID id, const ThinSummary& summary)
-{
-    if (m_functionWhoseCallsAreIndexed == id)
-        return;
-    m_functionWhoseCallsAreIndexed = id;
-    m_resultNodesOfCalls.fill(noSummaryNode, summary.calls.size());
-    for (uint32_t node = 0; node < summary.nodes.size(); ++node) {
-        if (summary.nodes[node].kind == SummaryNode::Kind::ResultOfCall && !summary.nodes[node].second)
-            m_resultNodesOfCalls[summary.nodes[node].first] = node;
-    }
-    m_sitesOfCalls.shrink(0);
-    for (const SummaryCall& call : summary.calls)
-        m_sitesOfCalls.append(call.site);
-    std::ranges::sort(m_sitesOfCalls);
-}
-
-// `visitors[node.kind](node)`, `shape.area()` over a family. `ofCall`: what the operation does, but for what it enters in the component of its caller.
-void CalleeSummarizerForLinkEffects::noteIfCallOfSeveral(FunctionID id, const ThinSummary& summary, uint32_t index, const CodeEntered& code, const EffectsOfComponentInKnownEffects& ofCall, bool entersOwnComponent)
-{
-    const SummaryCall& call = summary.calls[index];
-    if (!mayBeCallOfSeveral(call, code) || !builtinsEnteredBy(id, summary, index).empty() || m_tables.calleeAt(id, call.site))
-        return;
-    indexCallsOf(id, summary);
-    // The table answers for a site.
-    if (std::ranges::equal_range(m_sitesOfCalls, call.site).size() != 1)
-        return;
-
-    CallOfSeveralInKnownEffects found;
-    found.caller = id;
-    found.site = call.site;
-    if (uint32_t node = m_resultNodesOfCalls[index]; node != noSummaryNode)
-        found.result = m_flow.nodeOf(id, node);
-    found.effects = ofCall;
-    found.entersOwnComponent = entersOwnComponent;
-    // Behind the shared calls stands a place for the lost functions.
-    std::span<const FunctionID> entered = functionsOf(code);
-    if (entered.size() == 1 && isSharedCall(entered[0].index()) && !code.mayBeLost)
-        found.sharesEffectsWith = entered[0].index() - nodeOfSharedCall(0);
-    else if (entered.empty())
-        found.sharesEffectsWith = static_cast<uint32_t>(m_flow.calleesOfSharedCalls.size());
-    m_callsOfSeveral.append(WTF::move(found));
-}
-
 // ---- The traversal
 
-// In the place of effectsOfBodyAndOfCodeOutside(). What the members of the component do to one another is left out: it is united with this.
+// What the members of the component do to one another is left out: it is united with this.
 auto CalleeSummarizerForLinkEffects::knownEffectsOfBody(uint32_t function) -> EffectsOfComponentInKnownEffects
 {
     FunctionID id(function);
@@ -573,26 +521,22 @@ auto CalleeSummarizerForLinkEffects::knownEffectsOfBody(uint32_t function) -> Ef
     // From the first record on that is judged by what is expected of a parameter, or left out because a parameter is called, `effects` holds what the function does given its arguments. By Link's own word it may then do anything.
     GivenArgumentsInKnownEffects given;
     bool entersOwnComponent = false;
-    for (uint32_t index = 0; index < summary.calls.size(); ++index) {
+    for (uint32_t index = 0; isKnown && index < summary.calls.size(); ++index) {
         const SummaryCall& call = summary.calls[index];
         const CodeEntered& code = codeOfCall(id, index);
-        // A call of several functions is told of whatever else its caller does.
-        if ((!isKnown && !mayBeCallOfSeveral(call, code)) || callNeverRuns(id, call))
+        if (callNeverRuns(id, call))
             continue;
         WayInKnownEffects way = wayOf(call.liesOnNoWayToReturn);
         Effects itself = code.mayBeUnseen ? Effects::unknownCode() : effectsOfCallItself(id, summary, index);
         if (itself.mayCallUnknownCode) {
-            isKnown = isKnown && judgeCallGivenArguments(id, summary, call, component, way, effects, given);
+            isKnown = judgeCallGivenArguments(id, summary, call, component, way, effects, given);
             continue;
         }
         EffectsOfComponentInKnownEffects ofCall { itself, itself.writes, layoutsChangedByRowsOf(id, summary, index, itself) };
         // `new Promise(executor)`, the close of an iterator: native code and the engine's own protocols may catch what the function throws that they have called, and go on.
         bool isEnteredByCallAsWritten = !call.isMadeByProtocol && builtinsEnteredBy(id, summary, index).empty();
-        bool everythingStandsOutside = mergeKnownEffectsOfCodeOutside(code, component, isEnteredByCallAsWritten ? WayInKnownEffects::ToReturn : WayInKnownEffects::ToReturnUnderHandler, ofCall);
-        noteIfCallOfSeveral(id, summary, index, code, ofCall, !everythingStandsOutside);
-        entersOwnComponent |= !everythingStandsOutside;
-        if (isKnown)
-            takeKnownEffects(ofCall.all, ofCall.writesOnReturn, ofCall.layoutsWritten, way, effects);
+        entersOwnComponent |= !mergeKnownEffectsOfCodeOutside(code, component, isEnteredByCallAsWritten ? WayInKnownEffects::ToReturn : WayInKnownEffects::ToReturnUnderHandler, ofCall);
+        takeKnownEffects(ofCall.all, ofCall.writesOnReturn, ofCall.layoutsWritten, way, effects);
     }
 
     for (uint32_t index = 0; isKnown && index < summary.accesses.size(); ++index) {
@@ -627,7 +571,7 @@ auto CalleeSummarizerForLinkEffects::knownEffectsOfBody(uint32_t function) -> Ef
         finishKnownEffectsOfCall(effects, false);
         Effects onReturn = effects.all;
         onReturn.writes = effects.writesOnReturn;
-        m_effectsGivenArguments.append(LinkedEffectsGivenArguments { id, given.parametersTakenAsExpected, given.parametersCalled, effects.layoutsWritten, onReturn, effects.all });
+        s_hand->effectsGivenArguments.append(LinkedEffectsGivenArguments { id, given.parametersTakenAsExpected, given.parametersCalled, effects.layoutsWritten, onReturn, effects.all });
     }
     return knownEffectsOfUnknownCode();
 }
@@ -645,9 +589,8 @@ void CalleeSummarizerForLinkEffects::finishKnownEffectsOfCall(EffectsOfComponent
         effects.writesOnReturn = effects.all.writes;
 }
 
-void CalleeSummarizerForLinkEffects::summarizeKnownEffects()
+void CalleeSummarizerForLinkEffects::prepareKnownEffects()
 {
-    const ComponentsOfLinkEffects& components = m_components;
     m_layoutsWrittenByFunction.fill(objectsOfAnyLayout, m_numberOfFunctions);
     m_knownEffectsOfSharedCalls.fill(knownEffectsOfUnknownCode(), m_flow.calleesOfSharedCalls.size());
     m_bitsOfLayouts = bitsOfLayoutsInKnownEffects(m_program);
@@ -663,101 +606,273 @@ void CalleeSummarizerForLinkEffects::summarizeKnownEffects()
             m_bitsOfFamilies[above.index()] |= m_bitsOfFamilies[family];
     }
     findLayoutsOfPlainObjects();
+}
 
-    uint32_t componentOfLostFunctions = components.componentOfFunction[nodeOfLostFunctions()];
+// mergeKnownEffectsOfCodeFound() takes what a component with a lower number does, and no edge of the graph of callees leads there. So that such a component is closed in time, it is listed here, for every record that
+// judgeCallGivenArguments() or judgeAccessGivenArguments() may come to look at. More than they look at: what is listed only puts one component behind another.
+void CalleeSummarizerForLinkEffects::findComponentsThatExpectationsLeadTo()
+{
+    m_componentsThatExpectationsLeadTo = collectInParallel<uint64_t>(m_flow.loops, m_numberOfFunctions, [&](unsigned index, Vector<uint64_t>& found) {
+        if (!isSummarized(index))
+            return;
+        FunctionID id(index);
+        const ThinSummary& summary = m_flow.summaries.at(id);
+        uint32_t component = m_components.componentOfFunction[index];
+        auto list = [&](const CodeFound& code) {
+            if (code.mayBeUnseen || code.mayBeLost)
+                return;
+            for (FunctionID callee : code.functions) {
+                if (isFunction(callee.index()) && m_components.componentOfFunction[callee.index()] < component)
+                    found.append(static_cast<uint64_t>(component) << 32 | m_components.componentOfFunction[callee.index()]);
+            }
+        };
+        for (const SummaryCall& call : summary.calls) {
+            if (call.callee != SummaryCall::Callee::Name || !call.key || call.isConstruction || call.newTarget != noSummaryNode)
+                continue;
+            std::optional<uint32_t> parameter = entryParameterAt(summary, call.receiver);
+            std::optional<LinkType> expected = parameter ? typeExpectedOfParameter(id, *parameter) : std::nullopt;
+            if (!expected)
+                continue;
+            CodeFound code;
+            findCodeBehindLookup(*expected, call.key, SummaryAccess::Kind::Read, false, true, code);
+            addFunctionsCalledUnder(expected->layout, call.key, code);
+            list(code);
+        }
+        for (uint32_t place = 0; place < summary.accesses.size(); ++place) {
+            const SummaryAccess& access = summary.accesses[place];
+            if (access.isToContents() || access.receiver != noSummaryNode || !codeOfAccess(id, place).mayBeUnseen)
+                continue;
+            std::optional<uint32_t> parameter = entryParameterAt(summary, access.subject);
+            std::optional<LinkType> expected = parameter ? typeExpectedOfParameter(id, *parameter) : std::nullopt;
+            if (!expected)
+                continue;
+            CodeFound code;
+            findCodeBehindLookup(*expected, m_flow.keyOf(id, access), access.kind, false, false, code);
+            list(code);
+        }
+    });
+    std::ranges::sort(m_componentsThatExpectationsLeadTo);
+}
+
+// One more than the highest rank among the components that it leads to. Whatever a component leads to has a lower number, so one look at each in the order of the numbers will do.
+void CalleeSummarizerForLinkEffects::rankComponents()
+{
+    const ComponentsOfLinkEffects& components = m_components;
+    Vector<uint32_t> rankOfComponent;
+    rankOfComponent.fill(0, components.size());
+    Vector<uint32_t> numberOfRank;
+    size_t nextExpectation = 0;
     for (uint32_t component = 0; component < components.size(); ++component) {
-        std::span<const uint32_t> members = components.membersOf(component);
-        // A function that is not summarized was given no callees, so it is alone in its component.
-        if (isFunction(members.front()) && !isSummarized(members.front()))
+        uint32_t rank = 0;
+        for (uint32_t member : components.membersOf(component)) {
+            for (FunctionID callee : calleesOf(member)) {
+                uint32_t ledTo = components.componentOfFunction[callee.index()];
+                if (ledTo != component)
+                    rank = std::max(rank, rankOfComponent[ledTo] + 1);
+            }
+        }
+        for (; nextExpectation < m_componentsThatExpectationsLeadTo.size() && m_componentsThatExpectationsLeadTo[nextExpectation] >> 32 == component; ++nextExpectation)
+            rank = std::max(rank, rankOfComponent[static_cast<uint32_t>(m_componentsThatExpectationsLeadTo[nextExpectation])] + 1);
+        rankOfComponent[component] = rank;
+        while (numberOfRank.size() <= rank)
+            numberOfRank.append(0);
+        ++numberOfRank[rank];
+    }
+
+    m_firstComponentOfRank.reserveInitialCapacity(numberOfRank.size() + 1);
+    uint32_t first = 0;
+    for (uint32_t number : numberOfRank) {
+        m_firstComponentOfRank.append(first);
+        first += number;
+    }
+    m_firstComponentOfRank.append(first);
+    Vector<uint32_t> next = m_firstComponentOfRank;
+    m_componentsInRanks.grow(components.size());
+    for (uint32_t component = 0; component < components.size(); ++component)
+        m_componentsInRanks[next[rankOfComponent[component]]++] = component;
+    m_firstMemberInRanks.reserveInitialCapacity(components.size() + 1);
+    m_membersInRanks.reserveInitialCapacity(components.members.size());
+    for (uint32_t component : m_componentsInRanks) {
+        m_firstMemberInRanks.append(m_membersInRanks.size());
+        m_membersInRanks.append(components.membersOf(component));
+    }
+    m_firstMemberInRanks.append(m_membersInRanks.size());
+}
+
+void CalleeSummarizerForLinkEffects::closeKnownEffectsOf(uint32_t component, std::span<const uint32_t> members, EffectsOfComponentInKnownEffects& effects)
+{
+    bool mayEnterItself = members.size() > 1 || std::ranges::any_of(calleesOf(members.front()), [&](FunctionID callee) {
+        return callee.index() == members.front();
+    });
+    finishKnownEffectsOfCall(effects, mayEnterItself);
+
+    if (component == m_components.componentOfFunction[nodeOfLostFunctions()])
+        m_knownEffectsOfLostFunctions = effects;
+    Effects onReturn = effects.all;
+    onReturn.writes = effects.writesOnReturn;
+    for (uint32_t member : members) {
+        if (isSharedCall(member))
+            m_knownEffectsOfSharedCalls[member - nodeOfSharedCall(0)] = effects;
+        if (!isFunction(member))
             continue;
-
-        size_t firstCallOfSeveral = m_callsOfSeveral.size();
-        EffectsOfComponentInKnownEffects effects;
-        for (size_t place = components.firstMember[component]; place < components.firstMember[component + 1]; ++place) {
-            prefetchSummaryOfMemberBehind(place);
-            uint32_t member = components.members[place];
-            if (isFunction(member)) {
-                EffectsOfComponentInKnownEffects ofBody = knownEffectsOfBody(member);
-                takeKnownEffects(ofBody.all, ofBody.writesOnReturn, ofBody.layoutsWritten, WayInKnownEffects::ToReturn, effects);
-                continue;
-            }
-            for (FunctionID listed : calleesOf(member)) {
-                if (components.componentOfFunction[listed.index()] != component)
-                    takeKnownEffectsOfFunction(listed, WayInKnownEffects::ToReturn, effects);
-            }
-        }
-        bool mayEnterItself = members.size() > 1 || std::ranges::any_of(calleesOf(members.front()), [&](FunctionID callee) {
-            return callee.index() == members.front();
-        });
-        finishKnownEffectsOfCall(effects, mayEnterItself);
-
-        if (component == componentOfLostFunctions)
-            m_knownEffectsOfLostFunctions = effects;
-        Effects onReturn = effects.all;
-        onReturn.writes = effects.writesOnReturn;
-        for (uint32_t member : members) {
-            if (isSharedCall(member))
-                m_knownEffectsOfSharedCalls[member - nodeOfSharedCall(0)] = effects;
-            if (!isFunction(member))
-                continue;
-            LinkedFunction& linked = m_tables.functions[member];
-            linked.effectsOnReturn = onReturn;
-            linked.effectsOnThrow = effects.all;
-            m_layoutsWrittenByFunction[member] = effects.layoutsWritten;
-        }
-        for (size_t place = firstCallOfSeveral; place < m_callsOfSeveral.size(); ++place) {
-            if (m_callsOfSeveral[place].entersOwnComponent)
-                takeKnownEffects(effects.all, effects.writesOnReturn, effects.layoutsWritten, WayInKnownEffects::ToReturn, m_callsOfSeveral[place].effects);
-        }
+        LinkedFunction& linked = m_tables.functions[member];
+        linked.effectsOnReturn = onReturn;
+        linked.effectsOnThrow = effects.all;
+        m_layoutsWrittenByFunction[member] = effects.layoutsWritten;
     }
 }
 
-// On one thread, behind the lanes: it makes types.
+auto CalleeSummarizerForLinkEffects::knownEffectsOfMember(uint32_t component, uint32_t member) -> EffectsOfComponentInKnownEffects
+{
+    if (isFunction(member))
+        return knownEffectsOfBody(member);
+    EffectsOfComponentInKnownEffects effects;
+    for (FunctionID listed : calleesOf(member)) {
+        if (m_components.componentOfFunction[listed.index()] != component)
+            takeKnownEffectsOfFunction(listed, WayInKnownEffects::ToReturn, effects);
+    }
+    return effects;
+}
+
+void CalleeSummarizerForLinkEffects::summarizeKnownEffectsOf(uint32_t component, std::span<const uint32_t> members, size_t positionOfFirstMember)
+{
+    EffectsOfComponentInKnownEffects effects;
+    for (size_t place = 0; place < members.size(); ++place) {
+        prefetchSummaryOfMemberBehindInRanks(positionOfFirstMember + place);
+        EffectsOfComponentInKnownEffects ofMember = knownEffectsOfMember(component, members[place]);
+        takeKnownEffects(ofMember.all, ofMember.writesOnReturn, ofMember.layoutsWritten, WayInKnownEffects::ToReturn, effects);
+    }
+    closeKnownEffectsOf(component, members, effects);
+}
+
+void CalleeSummarizerForLinkEffects::summarizeValuesOf(uint32_t member)
+{
+    if (isSharedCall(member))
+        summarizeOperandsOfSharedCall(member - nodeOfSharedCall(0));
+    else if (isFunction(member) && isSummarized(member))
+        summarizeValues(FunctionID(member));
+}
+
+// RANK BY RANK, THE COMPONENTS OF ONE RANK ON ALL THREADS: none of them leads to another, and all that they lead to is closed. What a function does and what becomes of what it is handed are summarized in one visit: neither reads what the other writes.
+// What a component does is united over its members, in whichever order. What becomes of values goes member by member: one that has not had its turn stands at its defaults.
+// So the members of a large component are dealt to all threads for the one, while one thread goes through them for the other.
+void CalleeSummarizerForLinkEffects::summarizeKnownEffectsAndValues()
+{
+    prepareKnownEffects();
+    findComponentsThatExpectationsLeadTo();
+    rankComponents();
+
+    static constexpr uint32_t membersOfLargeComponent = 256;
+    static constexpr uint32_t membersInStretch = 32;
+    const ParallelLoops& loops = m_flow.loops;
+    Vector<HandOfSummarizer> hands(loops.width());
+    struct Stretch {
+        enum class Kind : uint8_t { Components, MembersOfLargeComponent, ValuesOfLargeComponent };
+        Kind kind;
+        // Into m_componentsInRanks: the first and the end, or the large component.
+        uint32_t first;
+        uint32_t end;
+        // Into m_membersInRanks.
+        uint32_t firstMember { 0 };
+        uint32_t endOfMembers { 0 };
+    };
+    Vector<Stretch> stretches;
+    Vector<EffectsOfComponentInKnownEffects> effectsOfStretches;
+    auto isSkipped = [&](uint32_t place) {
+        // A function that is not summarized was given no callees, so it is alone in its component.
+        uint32_t front = m_membersInRanks[m_firstMemberInRanks[place]];
+        return isFunction(front) && !isSummarized(front);
+    };
+
+    for (uint32_t rank = 0; rank + 1 < m_firstComponentOfRank.size(); ++rank) {
+        stretches.shrink(0);
+        uint32_t endOfRank = m_firstComponentOfRank[rank + 1];
+        bool hasLargeComponent = false;
+        // The longest first.
+        for (uint32_t place = m_firstComponentOfRank[rank]; place < endOfRank; ++place) {
+            if (m_firstMemberInRanks[place + 1] - m_firstMemberInRanks[place] < membersOfLargeComponent)
+                continue;
+            hasLargeComponent = true;
+            stretches.append(Stretch { Stretch::Kind::ValuesOfLargeComponent, place, place + 1 });
+        }
+        for (uint32_t place = m_firstComponentOfRank[rank]; hasLargeComponent && place < endOfRank; ++place) {
+            if (m_firstMemberInRanks[place + 1] - m_firstMemberInRanks[place] < membersOfLargeComponent)
+                continue;
+            for (uint32_t member = m_firstMemberInRanks[place]; member < m_firstMemberInRanks[place + 1]; member += membersInStretch)
+                stretches.append(Stretch { Stretch::Kind::MembersOfLargeComponent, place, place + 1, member, std::min(member + membersInStretch, m_firstMemberInRanks[place + 1]) });
+        }
+        for (uint32_t place = m_firstComponentOfRank[rank]; place < endOfRank;) {
+            uint32_t first = place;
+            uint32_t numberOfMembers = 0;
+            for (; place < endOfRank && numberOfMembers < membersInStretch; ++place) {
+                uint32_t size = m_firstMemberInRanks[place + 1] - m_firstMemberInRanks[place];
+                if (size >= membersOfLargeComponent)
+                    break;
+                numberOfMembers += size;
+            }
+            if (place > first)
+                stretches.append(Stretch { Stretch::Kind::Components, first, place });
+            else
+                ++place;
+        }
+        effectsOfStretches.fill(EffectsOfComponentInKnownEffects { }, hasLargeComponent ? stretches.size() : 0);
+
+        forEachIndexInParallel(loops, static_cast<unsigned>(stretches.size()), [&](unsigned index, unsigned worker) {
+            s_hand = &hands[worker];
+            const Stretch& stretch = stretches[index];
+            switch (stretch.kind) {
+            case Stretch::Kind::Components:
+                for (uint32_t place = stretch.first; place < stretch.end; ++place) {
+                    if (isSkipped(place))
+                        continue;
+                    std::span<const uint32_t> members = m_membersInRanks.span().subspan(m_firstMemberInRanks[place], m_firstMemberInRanks[place + 1] - m_firstMemberInRanks[place]);
+                    summarizeKnownEffectsOf(m_componentsInRanks[place], members, m_firstMemberInRanks[place]);
+                    for (uint32_t member : members)
+                        summarizeValuesOf(member);
+                }
+                break;
+            case Stretch::Kind::MembersOfLargeComponent:
+                for (uint32_t position = stretch.firstMember; position < stretch.endOfMembers; ++position) {
+                    prefetchSummaryOfMemberBehindInRanks(position);
+                    EffectsOfComponentInKnownEffects ofMember = knownEffectsOfMember(m_componentsInRanks[stretch.first], m_membersInRanks[position]);
+                    takeKnownEffects(ofMember.all, ofMember.writesOnReturn, ofMember.layoutsWritten, WayInKnownEffects::ToReturn, effectsOfStretches[index]);
+                }
+                break;
+            case Stretch::Kind::ValuesOfLargeComponent:
+                for (uint32_t position = m_firstMemberInRanks[stretch.first]; position < m_firstMemberInRanks[stretch.first + 1]; ++position) {
+                    prefetchSummaryOfMemberBehindInRanks(position);
+                    summarizeValuesOf(m_membersInRanks[position]);
+                }
+                break;
+            }
+            s_hand = nullptr;
+        });
+
+        for (size_t index = 0; hasLargeComponent && index < stretches.size(); ++index) {
+            if (stretches[index].kind != Stretch::Kind::ValuesOfLargeComponent)
+                break;
+            uint32_t place = stretches[index].first;
+            uint32_t component = m_componentsInRanks[place];
+            EffectsOfComponentInKnownEffects effects;
+            for (size_t other = 0; other < stretches.size(); ++other) {
+                if (stretches[other].kind == Stretch::Kind::MembersOfLargeComponent && stretches[other].first == place)
+                    takeKnownEffects(effectsOfStretches[other].all, effectsOfStretches[other].writesOnReturn, effectsOfStretches[other].layoutsWritten, WayInKnownEffects::ToReturn, effects);
+            }
+            closeKnownEffectsOf(component, m_membersInRanks.span().subspan(m_firstMemberInRanks[place], m_firstMemberInRanks[place + 1] - m_firstMemberInRanks[place]), effects);
+        }
+    }
+
+    for (HandOfSummarizer& hand : hands)
+        m_effectsGivenArguments.appendVector(WTF::move(hand.effectsGivenArguments));
+}
+
+// On one thread, behind the lanes.
 void CalleeSummarizerForLinkEffects::writeKnownEffects()
 {
-    constexpr uint32_t none = UINT32_MAX;
     LinkKnownEffects& known = m_tables.known;
     known.layoutsWrittenByFunction = WTF::move(m_layoutsWrittenByFunction);
     known.givenArguments = WTF::move(m_effectsGivenArguments);
     std::ranges::sort(known.givenArguments, { }, &LinkedEffectsGivenArguments::function);
-
-    // In which order components are closed follows from the graph of callees alone, and the table goes by caller and site.
-    m_callsOfSeveral.removeAllMatching([](const CallOfSeveralInKnownEffects& call) {
-        return call.effects.all.mayCallUnknownCode;
-    });
-    std::ranges::sort(m_callsOfSeveral, { }, [](const CallOfSeveralInKnownEffects& call) {
-        return std::tuple { call.caller, call.site };
-    });
-
-    // By shared call, and one more for the lost functions: where the effects of the newest call lie that enters nothing else.
-    Vector<uint32_t> effectsThatAreShared;
-    effectsThatAreShared.fill(none, m_flow.calleesOfSharedCalls.size() + 1);
-    known.callsOfSeveral.reserveInitialCapacity(m_callsOfSeveral.size());
-    for (const CallOfSeveralInKnownEffects& call : m_callsOfSeveral) {
-        Effects onReturn = call.effects.all;
-        onReturn.maySuspend = false;
-        Effects onThrow = onReturn;
-        onReturn.writes = call.effects.writesOnReturn;
-
-        // What the operation does in front of its callee may differ from call to call: a list that is passed, a name that is looked up.
-        uint32_t place = call.sharesEffectsWith != none ? effectsThatAreShared[call.sharesEffectsWith] : none;
-        if (place == none || known.effectsOfCallsOfSeveral[place] != onReturn || known.effectsOfCallsOfSeveral[place + 1] != onThrow) {
-            place = static_cast<uint32_t>(known.effectsOfCallsOfSeveral.size());
-            known.effectsOfCallsOfSeveral.append(onReturn);
-            known.effectsOfCallsOfSeveral.append(onThrow);
-            if (call.sharesEffectsWith != none)
-                effectsThatAreShared[call.sharesEffectsWith] = place;
-        }
-
-        if (call.result) {
-            LinkType type = m_flow.withoutObjectsThatHaveEscaped(m_flow.typeAt(call.result));
-            if (!type.isNothing() && !type.isAnything())
-                m_typesFound.resultsOfCallsOfSeveral.append({ static_cast<uint32_t>(known.callsOfSeveral.size()), type });
-        }
-        // Its result: writeTypesFoundOfCallees().
-        known.callsOfSeveral.append(LinkedCallOfSeveral { call.caller, call.site, { }, call.effects.layoutsWritten, place });
-    }
-    m_callsOfSeveral.clear();
 }
 
 } } } // namespace JSC::AOT::Typed

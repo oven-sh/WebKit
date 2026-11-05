@@ -199,9 +199,7 @@ public:
     LValue div(LValue left, LValue right) { return binary(Machine::Div, left, right); }
     LValue uDiv(LValue left, LValue right) { return binary(Machine::UDiv, left, right); }
     LValue mod(LValue left, LValue right) { return binary(Machine::Mod, left, right); }
-    LValue uMod(LValue left, LValue right) { return binary(Machine::UMod, left, right); }
     LValue chillDiv(LValue left, LValue right) { return chill(Machine::Div, left, right); }
-    LValue chillMod(LValue left, LValue right) { return chill(Machine::Mod, left, right); }
     LValue neg(LValue value) { return unary(Machine::Neg, value); }
 
     LValue doubleAdd(LValue left, LValue right) { return add(left, right); }
@@ -330,7 +328,6 @@ public:
     LValue load16SignExt32(TypedPointer pointer) { return loadAs(Machine::Load16S, Machine::Int32, pointer, Trapping::No); }
     LValue load16ZeroExt32(TypedPointer pointer) { return loadAs(Machine::Load16Z, Machine::Int32, pointer, Trapping::No); }
     LValue load32(TypedPointer pointer) { return load(pointer, Machine::Int32); }
-    LValue load32NonNegative(TypedPointer pointer) { return load32(pointer); }
     LValue load64(TypedPointer pointer) { return load(pointer, Machine::Int64); }
     LValue loadPtr(TypedPointer pointer) { return load(pointer, Machine::pointerType()); }
     LValue loadFloat(TypedPointer pointer) { return load(pointer, Machine::Float); }
@@ -343,7 +340,6 @@ public:
     LValue load16SignExt32(LValue base, const Machine::AbstractHeap& field) { return load16SignExt32(address(base, field)); }
     LValue load16ZeroExt32(LValue base, const Machine::AbstractHeap& field) { return load16ZeroExt32(address(base, field)); }
     LValue load32(LValue base, const Machine::AbstractHeap& field) { return load32(address(base, field)); }
-    LValue load32NonNegative(LValue base, const Machine::AbstractHeap& field) { return load32(address(base, field)); }
     LValue load64(LValue base, const Machine::AbstractHeap& field) { return load64(address(base, field)); }
     LValue loadPtr(LValue base, const Machine::AbstractHeap& field) { return loadPtr(address(base, field)); }
     LValue loadDouble(LValue base, const Machine::AbstractHeap& field) { return loadDouble(address(base, field)); }

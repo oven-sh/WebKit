@@ -39,7 +39,6 @@ public:
     // PropHasOwn with receivers: receiversWhoseCellsAnswerForOwnProperty() of walk/AOTWalkGuesses.cpp. It leaves for `targets` where the cell answers, and for `asksRunTime` where it does not.
     void branchOnOwnPropertyByCell(const ValueContext&, BranchTargets, LBasicBlock asksRunTime);
     void generateIsClosureOf(const ValueContext&);
-    void generateIsBoundClosureOf(const ValueContext&);
     void generateIsEnumeratorCurrent(const ValueContext&);
 
     // AOTClassGuards.h. A null name: the guard of the side, which says nothing of any member.

@@ -213,6 +213,12 @@ JS_EXPORT_PRIVATE void willLoadByName(JSGlobalObject*, JSValue specifier, LoadBy
 JS_EXPORT_PRIVATE bool isResolvingImportCall(VM&);
 // In ModuleHost::runMock: a require() has come to the module, so what the mock loads is loaded at once.
 JS_EXPORT_PRIVATE bool requireRunsMocks(VM&);
+// The same, and it is this module that the require() names: not one that a statement below it asks for.
+JS_EXPORT_PRIVATE bool requireAsksFor(JSGlobalObject*, ModuleID);
+// In ModuleHost::runMock and ModuleHost::factoryThatWaits: a call of import() names this module itself, or the CommonJS file behind it: no statement below what is imported asks for it.
+JS_EXPORT_PRIVATE bool importAsksFor(JSGlobalObject*, ModuleID);
+// The same, and the call was held behind a factory and goes on now.
+JS_EXPORT_PRIVATE bool importThatWaitedAsksFor(JSGlobalObject*, ModuleID);
 // A module outside the image asked a compiled module for a name that the build left out of its table.
 using MissingExportListener = void (*)(const String& name, const String& exporter, const String& importer);
 JS_EXPORT_PRIVATE void setMissingExportListener(MissingExportListener);

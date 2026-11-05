@@ -21,7 +21,6 @@ namespace AOT {
 class StringBuilderStorage;
 
 JSValue tryParseJSON(JSGlobalObject*, StringView);
-JS_EXPORT_PRIVATE JSValue tryParseUTF8JSON(JSGlobalObject*, std::span<const uint8_t>);
 
 // A part in the middle of a text that compiled code writes: the text that JSON.stringify(value) gives, at the cursor, where no code of the program has to run for it.
 // `levelsAround`: the objects and lists that are open around the value. They count as those inside it do.

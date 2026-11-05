@@ -73,9 +73,6 @@ struct ArgumentThunks {
 // Image passes each distinct list once, sorted by its words.
 std::expected<ArgumentThunks, LinkFailure> generateArgumentThunks(BuildContext&, const StubCatalog&, const Vector<const ArgumentMoves*>&);
 
-// A thunk writes the destinations of its moves and the immediate register of its callee, on top of what the callee's summary lists.
-RegisterSet destinationRegistersOf(const ArgumentMoves& movesWithoutHeader);
-
 // An immediate that only Image can count: an index into the MentionList of the function, of a mention that has a Number.
 // Where StubCatalog::bindsImmediate() the key of the call waits for the number: CodeBody::numberedStubKeys. Under ImmediateBinding::InThunk a thunk moves it: immediateIsMention.
 // Elsewhere the site moves it into the immediate register of the stub with RelocationRecorder::moveNumber.

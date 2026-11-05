@@ -476,12 +476,6 @@ struct SummaryHandler {
     uint32_t caught { 0 };
 };
 
-// `JSON.parse(text) as Config`, `const config: Config = JSON.parse(text)`: what the call at `site` gives is parsed by the type. facts/AOTLinkStringParsers.h.
-struct SummaryTypeParsed {
-    ValueID site;
-    TypeID type;
-};
-
 // There is no list of what escapes: a value escapes by an edge into node 0.
 struct ThinSummary {
     Vector<SummaryNode> nodes;
@@ -496,6 +490,8 @@ struct ThinSummary {
     Vector<SummaryMember> members;
     Vector<SummaryConstruction> constructions;
     Vector<SummaryConstruction::Key> keysOfConstructions;
+    // `function helper() { }  helper = other`: the variables that are born as functions and that an operation of the body stores into, whatever it stores: `helper = helper` leaves no edge. One for each store.
+    Vector<VariableID> functionVariablesStoredInto;
     Vector<SummaryConstruction::Part> partsOfConstructions;
     // Sorted, without repeats. Of a layout that is no record and no instance nothing is listed: no field of such a layout counts as filled.
     Vector<FieldReference> fieldsLeftEmpty;
@@ -565,9 +561,6 @@ struct ThinSummary {
         VariableID variable;
     };
     Vector<NameThatLoaderTakes> namesThatLoaderTakes;
-    // Ascending by site. Of a call that may enter a built-in whose row has a typed result: the type of the record that the call names, or what the users of the result ask for.
-    // Whether the call enters such a row shows in Link. Behind appendParsersOfTypesThatScanHasFound() a site stands once.
-    Vector<SummaryTypeParsed> typesParsedAtCalls;
     // An operation walks up the chain of what lies at `subject`, or lists its keys. On a proxy either runs a trap, and ownEffects leaves that out: someInspectionMayRunCode() of AOTLinkUnionEffects.cpp.
     struct Inspection {
         enum class Kind : uint8_t { WalksChain, ListsKeys };
@@ -586,15 +579,6 @@ struct ThinSummary {
             rest = rest.subspan(2 + rest[1]);
         }
     }
-    // Of the body of a module alone, ascending: the operations whose part of ownEffects may run code that nobody knows. Whoever follows the order in which a program starts asks where that is.
-    Vector<ValueID> sitesThatRunUnknownCode;
-    // The calls of a conversion to a primitive are left once for each value, at the first operation in the order of the blocks that converts it. That need not be the first that runs: the code behind a loop may be numbered in front of the rest of a turn.
-    // The other operations that convert the value, and the first of its calls. Whoever follows the order in which a program starts enters the calls at each.
-    struct FurtherConversion {
-        ValueID site;
-        uint32_t firstCall { 0 };
-    };
-    Vector<FurtherConversion> furtherConversions;
     // The names that the operations of the body spell, drawn from the records above, and those of the stores that became edges. Each sorted, without repeats. Link reads none of them: AOTFactsOfProgram.cpp does.
     Vector<PropertyKeyID> namesRead;
     Vector<PropertyKeyID> namesCalled;
@@ -603,12 +587,6 @@ struct ThinSummary {
     // A default Effects is every effect: the scan starts from Effects::none().
     Effects ownEffects;
     // ---- AOTScanKnownEffectsInlines.h fills what follows, AOTLinkKnownEffectsInlines.h reads it. ownEffects LEAVES OUT what an access under a written key does: its record, or the call by name that stands for it, is Link's to judge.
-    struct ParameterThatIsResult {
-        uint32_t result { 0 };
-        uint32_t entryParameter { 0 };
-        // As SummaryEdge::passes.
-        TypeID passes;
-    };
     // What most bodies lack lies apart, behind one word: there are 293,000 summaries.
     class KnownEffectsApart {
     public:
@@ -619,8 +597,6 @@ struct ThinSummary {
             Vector<Effects> ownEffectsOfOperators;
             // The nodes that the operands of those operators come from. Ascending, without repeats. A number, a boolean, undefined or null that is written is left out.
             Vector<uint32_t> operandsOfOperatorsLeftApart;
-            // `function id(x) { return x }`: the results all of whose sources are entry parameters, an entry for each edge. Ascending by result and parameter. Of no coroutine, and of no body that has an arguments object or evaluates text.
-            Vector<ParameterThatIsResult> parametersThatAreResults;
         };
 
         KnownEffectsApart() = default;
@@ -647,7 +623,6 @@ struct ThinSummary {
         const LocationMasks* ownWritesOnWaysToReturn() const LIFETIME_BOUND { return m_lists && !m_lists->ownWritesOnWaysToReturn.isEmpty() ? &m_lists->ownWritesOnWaysToReturn[0] : nullptr; }
         const Effects* ownEffectsOfOperators() const LIFETIME_BOUND { return m_lists && !m_lists->ownEffectsOfOperators.isEmpty() ? &m_lists->ownEffectsOfOperators[0] : nullptr; }
         std::span<const uint32_t> operandsOfOperatorsLeftApart() const LIFETIME_BOUND { return m_lists ? m_lists->operandsOfOperatorsLeftApart.span() : std::span<const uint32_t>(); }
-        std::span<const ParameterThatIsResult> parametersThatAreResults() const LIFETIME_BOUND { return m_lists ? m_lists->parametersThatAreResults.span() : std::span<const ParameterThatIsResult>(); }
 
     private:
         std::unique_ptr<Lists> m_lists;
@@ -667,8 +642,6 @@ struct ThinSummary {
     uint32_t numberOfOperations { 0 };
     // What a copy of the body pays for: its operations but for constants, conversions to a boolean and reads of module variables, which fold or are one load; and one for every four cases of a switch. No proof: bytes and time go by it.
     uint32_t weightOfOperations { 0 };
-    // AOTScanStrings.cpp. The written texts that an edge hands to a parameter of a block, that a Return hands back, and the cases of a SwitchString. Sorted, without repeats. The plan gives each a number: computeLiteralStrings().
-    Vector<StringID> textsThatMeetOthers;
     // Text of the program alone. The written texts under which the table has a function whose call or read is an event: `emitter.rawListeners("constructor")`. Whoever is handed one may read under it. Sorted, without repeats.
     Vector<PropertyKeyID> textsThatNameEvents;
     // `const k = "kind"; node[k]`: the accesses under computed keys that the constants of the body make accesses under one name. The records above have them under that name. Ascending by site.

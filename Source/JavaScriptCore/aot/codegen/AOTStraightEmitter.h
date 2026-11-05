@@ -73,11 +73,9 @@ struct PlacedSlot;
 
 class StraightEmitter {
     WTF_MAKE_NONCOPYABLE(StraightEmitter);
-public:
     static constexpr GPRReg resultGPR = GPRInfo::returnValueGPR;
-    static constexpr GPRReg resultGPR2 = GPRInfo::returnValueGPR2;
     static constexpr FPRReg resultFPR = FPRInfo::returnValueFPR;
-
+public:
     StraightEmitter(BuildContext&, TypeArena&, const CodeGenerationInputs&, CodeUnit, const BodyIndex&, CodeRecords&, Machine::Arena&);
 
     static bool covers(const CodeGenerationInputs&, CodeUnit, const BodyIndex&);
@@ -111,9 +109,34 @@ public:
     BodyBlock currentBlock() const { return m_block; }
     // ThinSummary::blocksNeverEntered: no code is made for such a block and no edge leads there.
     bool isNeverEntered(BlockID block) const { return !m_blocksNeverEntered.empty() && std::ranges::binary_search(m_blocksNeverEntered, block); }
-    bool isInLoop() const;
 
-    // None of them is resultGPR.
+    // A value may wait in the result register for the next operation. Whoever is about to write the register takes it, at the place of the first write.
+    GPRReg takeResultRegister()
+    {
+        storeWhatWaitsInRegister();
+        m_valueCopiedInRegister = { };
+        return resultGPR;
+    }
+    // What a call, a stub or an operation has just left.
+    GPRReg resultOfCall() const
+    {
+        RELEASE_ASSERT(!m_valueInRegister);
+        return resultGPR;
+    }
+    // What waits is read where it lies.
+    GPRReg registerOfWaitingValue(ValueID value) const
+    {
+        RELEASE_ASSERT(waitsInRegister(value));
+        return resultGPR;
+    }
+    // Nothing waits in an FPR.
+    FPRReg takeResultFPR() { return resultFPR; }
+    FPRReg numberOfCall() const { return resultFPR; }
+    // It is no argument register on either processor: a conversion may go through it while those are filled.
+    static constexpr FPRReg conversionFPR = CCallHelpers::fpTempRegister;
+    static constexpr bool isResultRegister(GPRReg reg) { return reg == resultGPR; }
+
+    // None of them is the result register.
     static GPRReg temporary(unsigned index) { return GPRInfo::toArgumentRegister(index + (GPRInfo::argumentGPR0 == resultGPR)); }
     static constexpr unsigned numberOfTemporaries = GPRInfo::numberOfArgumentRegisters - (GPRInfo::argumentGPR0 == resultGPR);
 
@@ -125,15 +148,28 @@ public:
     CCallHelpers::Address wordOfScratchArea(uint32_t word) const;
 
     void load(ValueID, GPRReg);
+    // A value that waits there, or of which a copy lies there, stays where it is. To take the register first would store it and load it again.
+    GPRReg loadIntoResultRegister(ValueID value)
+    {
+        if (!waitsInRegister(value))
+            storeWhatWaitsInRegister();
+        load(value, resultGPR);
+        return resultGPR;
+    }
     void bring(const StraightArgument&, GPRReg);
     void storeInScratchArea(ValueID, uint32_t word);
 
-    void define(const BodyValue&, GPRReg boxed = resultGPR);
-    void defineBoolean(const BodyValue&, GPRReg zeroOrOne = resultGPR);
-    void defineInt32(const BodyValue&, GPRReg = resultGPR);
-    void defineDouble(const BodyValue&, FPRReg = resultFPR);
+    // Without a register: the value lies in the result register.
+    void define(const BodyValue&, GPRReg boxed);
+    void define(const BodyValue& value) { define(value, resultGPR); }
+    void defineBoolean(const BodyValue&, GPRReg zeroOrOne);
+    void defineBoolean(const BodyValue& value) { defineBoolean(value, resultGPR); }
+    void defineInt32(const BodyValue&, GPRReg);
+    void defineInt32(const BodyValue& value) { defineInt32(value, resultGPR); }
+    void defineDouble(const BodyValue&, FPRReg);
+    void defineDouble(const BodyValue& value) { defineDouble(value, resultFPR); }
     void defineSameAs(const BodyValue&, ValueID);
-    // The word to test lies in resultGPR, and the Branch of the block makes the test.
+    // The word to test lies in the result register, and the Branch of the block makes the test.
     bool isReadByBranchAlone(const BodyValue&) const;
     void defineTest(const BodyValue&, StraightTest);
     void throwIfEmpty(const BodyValue& check, ValueID checked, const ThrowSite&);
@@ -231,7 +267,7 @@ public:
     void jumpTo(BlockID);
     void jumpTo(CCallHelpers::Jump, BlockID);
     void tearDownFrame();
-    // The boxed value lies in resultGPR.
+    // The boxed value lies in the result register.
     void returnToCaller();
 
 private:

@@ -226,11 +226,7 @@ public:
 
 private:
     std::span<const FieldIndex> fieldsOf(const CandidateForKeyOrders& candidate) const { return m_fields.span().subspan(candidate.firstField, candidate.numberOfFields); }
-    bool hasOrders(LayoutID id) const
-    {
-        const PlannedLayout& planned = m_slots.layout(id);
-        return planned.holdsCompiledObjects() && !planned.keysAreNeverEnumerated;
-    }
+    bool hasOrders(LayoutID id) const { return m_slots.layout(id).holdsCompiledObjects(); }
     // What the compiler keeps for the closures of an object is no property, so no order lists it. Neither is what a type alone spells: it has no place in the record.
     static bool isListedInOrders(const PlannedLayout& planned, FieldIndex field) { return field < planned.numberOfFields() && planned.slots[field].hasStorage() && planned.slots[field].indexInLayoutRecord && planned.environmentOfDeferredClosures != field; }
 

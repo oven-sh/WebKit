@@ -47,17 +47,6 @@ void OwnAccessEmitter::generatePropHasOwn(const ValueContext& value)
     });
 }
 
-void OwnAccessEmitter::generateGetOwnPropertyFields(const ValueContext& value)
-{
-    constexpr unsigned numberOfFields = 7;
-    Pointer buffer = emitter<RuntimeCallEmitter>().uninitializedArgumentBuffer(numberOfFields);
-    callVoidOperation(value, RuntimeOperation::GetOwnPropertyFields, { in<Boxed>(value->objectOperand()), in<Boxed>(value->propertyOperand()), buffer }, { .calledBuiltin = value->calledBuiltin() });
-    auto fieldAt = [&](unsigned index) {
-        return Boxed(m_out.load64(m_out.address(m_heaps.argumentBuffer, buffer.value(), index * sizeof(EncodedJSValue))));
-    };
-    defineResults(value, { unboxBoolean(fieldAt(0)), fieldAt(1), fieldAt(2), fieldAt(3), fieldAt(4), unboxBoolean(fieldAt(5)), unboxBoolean(fieldAt(6)) });
-}
-
 } } } // namespace JSC::AOT::Typed
 
 #endif // ENABLE(AOT)

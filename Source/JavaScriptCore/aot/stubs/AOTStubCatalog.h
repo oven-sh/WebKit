@@ -54,6 +54,8 @@ struct StubPolicy {
     // FieldTableProbePlan. Plan chooses the two, so the catalog of Compile has them as well. They change the order of the tests in a stub, and none of what a catalog says of it.
     bool readsTestOutOfLineValuesSecond { false };
     bool readsTestDoublesSecond { false };
+    // No shape of the image is above 1 << 16, so the lower half of the word of a shape is the number, with the mark or without. It chooses between two ways to one index. Image says it of every image.
+    bool shapesFitHalfword { true };
 };
 
 // What Plan knows, for the catalog of Compile and for that of Image.

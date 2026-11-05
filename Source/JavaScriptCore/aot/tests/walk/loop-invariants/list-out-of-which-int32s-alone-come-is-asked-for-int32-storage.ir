@@ -1,7 +1,7 @@
 # function sum(list: number[]) { let total = 0; for (let i = 0; i < list.length; i++) total += list[i]; return total; }   sink(sum([1, 2, 3]));
 # Link has seen all that comes out of `list[i]`: int32s, and undefined where nothing lies. So the row in front of the loop asks for Int32 storage alone, and the read behind it has one arm.
 # The kind is still a guess that is tested when the code runs: an empty list, or one whose storage the engine has given up, runs the other copy.
-# RED UNTIL lists-of-int32s-are-asked-for-int32-storage-1: Double [admitsInt32Storage]: two arms in every turn, an integer made of each and converted again for the sum: 19 instructions a turn, 15 since.
+# It was once Double [admitsInt32Storage]: two arms in every turn, an integer made of each and converted again for the sum: 19 instructions a turn, 15 since.
 # RUN: walk f1 mechanisms=all
 # CHECK-LABEL: code f1:Body
 # CHECK: = HasArrayStorage {{*}}arrayStorage=Int32

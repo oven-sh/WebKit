@@ -405,7 +405,6 @@ static void intersectUnknownObjects(TypeParts& result, TypeArena& arena, const T
 
 // DeclaredParts chooses among written contents and decides nothing else. With FromEither the answer for (a, b) must equal the answer for (b, a): the arena's memo sorts the two ids.
 // Apart from written contents, the answer loses no value when an operand grows. It loses a part in one case: a merged form gives way once the operand that names it has gained enough `unknown`.
-// So a filter of Facts, which unites what it lets through of each gain, asks typeThatPassesFilter().
 TypeParts intersectTypes(TypeArena& arena, const Type& a, const Type& b, DeclaredParts declared)
 {
     TypeParts result;
@@ -423,51 +422,6 @@ TypeParts intersectTypes(TypeArena& arena, const Type& a, const Type& b, Declare
     result.objects = arena.objectSets().unionOf(namedByFirst, namedBySecond);
     if (result.anyObject || result.anyFunction || result.unnamedLayouts || result.unnamedClasses)
         result.seeds = a.seeds | b.seeds;
-    return result;
-}
-
-// As intersectNamedObjects(), but each object stays or goes by itself and the filter, whatever stands beside it.
-// A merged form stands only for escaped objects, and so does `unknown`. So the part of a form that only may fit the layouts and classes of the filter is `unknown` within them, and comes through as that.
-// No form becomes any function, which would be a callee nobody knows: one that may be a function stays named.
-static ObjectSetID namedObjectsThatPassFilter(TypeArena& arena, const Type& value, const Type& filter, bool& someMergedFormBecomesUnknown)
-{
-    if (!value.objects || filter.anyObject || value.objects == filter.objects)
-        return value.objects;
-
-    TypeReader reader(arena);
-    bool filterMayHoldAnyClosure = mayContainAnyClosure(reader, filter);
-    Type layoutsAndClassesOfFilter = filter;
-    layoutsAndClassesOfFilter.anyFunction = false;
-    Type functionsOfFilter = filter;
-    functionsOfFilter.unnamedLayouts = { };
-    functionsOfFilter.unnamedClasses = { };
-
-    const ObjectTable& objects = arena.objects();
-    // Two of the three types list the same layouts and the third lists none.
-    LayoutsFoundForCellsNobodyDescribes found;
-    return membersNamedByOtherOrFitting(arena, value.objects, filter.objects, filter.hasUnknown() || filterMayHoldAnyClosure, [&](ObjectID object) {
-        if (!objects.at(object).has(ObjectTrait::IsMerged))
-            return mayIntersectUnknownOf(reader, object, filter, filterMayHoldAnyClosure, found);
-        if (surelyFitsUnknownOf(reader, object, filter))
-            return true;
-        someMergedFormBecomesUnknown |= mayIntersectUnknownOf(reader, object, layoutsAndClassesOfFilter, false, found);
-        return mayIntersectUnknownOf(reader, object, functionsOfFilter, filterMayHoldAnyClosure, found);
-    });
-}
-
-TypeParts typeThatPassesFilter(TypeArena& arena, const Type& value, const Type& filter, bool& someMergedFormBecomesUnknown)
-{
-    TypeParts result;
-    intersectPrimitiveParts(result, arena, value, filter);
-    if (!value.hasObjects() || !filter.hasObjects())
-        return result;
-
-    intersectUnknownObjects(result, arena, value, filter, DeclaredParts::FromEither);
-    ObjectSetID namedByValue = namedObjectsThatPassFilter(arena, value, filter, someMergedFormBecomesUnknown);
-    ObjectSetID namedByFilter = intersectNamedObjects(arena, filter, value, false);
-    result.objects = arena.objectSets().unionOf(namedByValue, namedByFilter);
-    if (result.anyObject || result.anyFunction || result.unnamedLayouts || result.unnamedClasses)
-        result.seeds = value.seeds | filter.seeds;
     return result;
 }
 

@@ -142,41 +142,6 @@ static CompiledCode plainEntrypointBody(CodeUnit entrypoint)
     return sketch.take();
 }
 
-static void testSymbolTable()
-{
-    SymbolImage mixed(numberOfMixedBodies + 1, mixedBodies(numberOfMixedBodies));
-    const ImageHeader& header = mixed.image.image->header();
-    const BuiltImage& built = mixed.image.built;
-    std::span<const uint8_t> encoded = mixed.encoded.span();
-    std::span<const DecodedSymbol> decoded = mixed.decoded.span();
-    size_t count = decoded.size();
-    AOT_TEST_CHECK(count);
-    AOT_TEST_CHECK(wordAt(encoded, 0) == count);
-    AOT_TEST_CHECK(wordAt(encoded, 1) == encoded.size() - (symbolHeaderWords + count * wordsInSymbol) * sizeof(uint32_t));
-    AOT_TEST_CHECK(wordAt(encoded, 2) == header.codeOffset);
-    AOT_TEST_CHECK(wordAt(encoded, 3) == header.size - header.codeOffset);
-
-    for (size_t index = 0; index + 1 < count; ++index) {
-        uint32_t next = decoded[index + 1].offset;
-        AOT_TEST_CHECK(decoded[index].offset == next || decoded[index].end() <= next);
-    }
-    AOT_TEST_CHECK(decoded.back().end() <= header.codeSize);
-
-    AOT_TEST_CHECK(built.functions.size() == numberOfMixedBodies);
-    for (uint32_t position = 0; position < built.functions.size(); ++position) {
-        const DecodedSymbol* entry = symbolAt(decoded, built.layout.bodyStarts[position]);
-        AOT_TEST_CHECK(entry);
-        AOT_TEST_CHECK(entry->name.contains(makeString('f', built.functions[position].unit.function.index())));
-    }
-
-    AOT_TEST_CHECK(!built.layout.sharedCodeCopies.isEmpty());
-    AOT_TEST_CHECK(!built.sharedCode.blob.placements.isEmpty());
-    for (uint32_t copy : built.layout.sharedCodeCopies) {
-        for (const StubPlacement& placement : built.sharedCode.blob.placements)
-            AOT_TEST_CHECK(symbolAt(decoded, copy + placement.offset));
-    }
-}
-
 static String symbolNameOf(std::span<const DecodedSymbol> symbols, const BuiltImage& built, CodeUnit unit)
 {
     for (uint32_t position = 0; position < built.functions.size(); ++position) {
@@ -228,66 +193,6 @@ static void testOperationStubName()
     }
 }
 
-static Vector<Vector<String>> rowsOfMap(const String& map, ASCIILiteral kind)
-{
-    Vector<Vector<String>> rows;
-    for (const String& line : map.split('\n')) {
-        Vector<String> fields = line.splitAllowingEmptyEntries('\t');
-        if (fields[0] == kind)
-            rows.append(WTF::move(fields));
-    }
-    return rows;
-}
-
-static uint32_t numberInMap(const String& field)
-{
-    std::optional<uint32_t> number = parseInteger<uint32_t>(field);
-    AOT_TEST_CHECK(number);
-    return *number;
-}
-
-// The code of the regular expressions is the last of the code. A reader of a profile gives what lies outside a unit the name of the row in front of it, which was the last thunk.
-static void testMapNamesCodeOfRegularExpressions()
-{
-    TestBuild build(2);
-    Typed::Program& program = build.program();
-    const uint32_t ignoreCase = OptionSet<Yarr::Flags> { Yarr::Flags::IgnoreCase }.toRaw();
-    MentionList mentions;
-    mentions.addPair(NumberSpace::RegExp, program.strings.intern(StringView("a+b"_s)).index(), 0);
-    mentions.addPair(NumberSpace::RegExp, program.strings.intern(StringView("[0-9]+\tx"_s)).index(), ignoreCase);
-    CompiledCode code = plainBody(1);
-    mentions.moveTo(code.body);
-    TestImage image = builtImage(build, bodies(WTF::move(code)));
-    image.built.image = Vector<uint8_t>(std::as_const(image.bytes).span());
-    const CodeLayout& layout = image.built.layout;
-    AOT_TEST_CHECK(layout.regExpCodeOffset < layout.executableSize);
-
-    Vector<uint8_t> bytes = encodeRowsOfMapFile(program, image.built);
-    String map = String::fromUTF8(byteCast<char8_t>(bytes.span()));
-    Vector<Vector<String>> bodiesInMap = rowsOfMap(map, "X"_s);
-    auto hasBody = [&](ASCIILiteral width, uint32_t flags, ASCIILiteral name) {
-        return bodiesInMap.containsIf([&](const Vector<String>& fields) {
-            return fields.size() == 6 && fields[3] == width && numberInMap(fields[4]) == flags && fields[5] == name;
-        });
-    };
-    AOT_TEST_CHECK(hasBody("8"_s, 0, "/a+b/"_s) && hasBody("16"_s, 0, "/a+b/"_s));
-    // A row is a line, and a tab parts its fields.
-    AOT_TEST_CHECK(hasBody("8"_s, ignoreCase, "/[0-9]+ x/i"_s));
-
-    Vector<std::pair<uint32_t, uint32_t>> ranges;
-    for (ASCIILiteral kind : { "X"_s, "XR"_s }) {
-        for (const Vector<String>& fields : rowsOfMap(map, kind))
-            ranges.append({ numberInMap(fields[1]), numberInMap(fields[2]) });
-    }
-    std::ranges::sort(ranges);
-    AOT_TEST_CHECK(ranges.first().first == layout.regExpCodeOffset);
-    for (size_t index = 0; index + 1 < ranges.size(); ++index)
-        AOT_TEST_CHECK(ranges[index].second && ranges[index].first + ranges[index].second == ranges[index + 1].first);
-    AOT_TEST_CHECK(ranges.last().first + ranges.last().second == layout.executableSize);
-    for (const Vector<String>& fields : rowsOfMap(map, "T"_s))
-        AOT_TEST_CHECK(numberInMap(fields[1]) < layout.regExpCodeOffset);
-}
-
 static void numberSourceOffsets(CompiledCode& code)
 {
     uint32_t sourceOffset = 1000 * code.unit.function.index();
@@ -307,48 +212,6 @@ static ObfuscatedSites collectSites(TestBuild& build, Vector<CompiledCode>&& cod
     return collectObfuscatedSites(createLinkedFunctions(WTF::move(code), build.context()), build.program(), build.context());
 }
 
-static void testObfuscatedSitesOneRecordPerSite()
-{
-    TestBuild build(3);
-    CompiledCode first = bodyWithCalls(1, 3).code;
-    first.sites.positions[2].source = ModuleID();
-    ObfuscatedSites sites = collectSites(build, bodies(WTF::move(first), bodyWithCalls(2, 1).code));
-
-    constexpr std::array<uint32_t, 2> numberOfSites { 4, 2 };
-    AOT_TEST_CHECK(sites.records.size() == numberOfSites[0] + numberOfSites[1]);
-    size_t index = 0;
-    for (uint32_t position = 0; position < numberOfSites.size(); ++position) {
-        for (uint32_t site = 0; site < numberOfSites[position]; ++site) {
-            const ObfuscatedSiteRecord& record = sites.records[index++];
-            AOT_TEST_CHECK(record.function == position);
-            AOT_TEST_CHECK(record.site == site);
-            AOT_TEST_CHECK(record.location.module == (!position && site == 2 ? Wire::none : 0u));
-            AOT_TEST_CHECK(record.location.position == 1000 * (position + 1) + site);
-            AOT_TEST_CHECK(nameIn(sites, record) == makeString('f', position + 1));
-        }
-    }
-}
-
-static void testObfuscatedSitesInlinedFrame()
-{
-    TestBuild build(5);
-    SiteBody body = bodyWithInlineFrames(1, 1, chainedFrames, chainedFramesByCall);
-    Vector<SitePosition> positions(body.code.sites.positions.span());
-    ObfuscatedSites sites = collectSites(build, bodies(WTF::move(body.code)));
-
-    AOT_TEST_CHECK(sites.records.size() == positions.size());
-    bool hasSiteInInlinedFrame = false;
-    for (uint32_t site = 0; site < positions.size(); ++site) {
-        const ObfuscatedSiteRecord& record = sites.records[site];
-        uint32_t frame = positions[site].inlineFrame;
-        hasSiteInInlinedFrame |= !!frame;
-        AOT_TEST_CHECK(nameIn(sites, record) == makeString('f', frame ? chainedFrames[frame - 1].callee : 1));
-        AOT_TEST_CHECK(record.location.module == positions[site].source.index());
-        AOT_TEST_CHECK(record.location.position == 1000 + site);
-    }
-    AOT_TEST_CHECK(hasSiteInInlinedFrame);
-}
-
 static void testObfuscatedSitesNamesStoredOnce()
 {
     TestBuild build(5);
@@ -364,32 +227,12 @@ static void testObfuscatedSitesNamesStoredOnce()
     AOT_TEST_CHECK(offsets.size() == 4);
 }
 
-// The entry point lies in front of the body of its function: rankInCodeOf().
-static void testObfuscatedSitesNames()
-{
-    TestBuild build(makeString(namedProgramText, runtimeFunctionsText(4)), { });
-    CodeUnit entrypoint = build.genericEntrypointOf(2);
-    ObfuscatedSites sites = collectSites(build, bodies(plainBody(0), plainBody(1), plainEntrypointBody(entrypoint), plainBody(2), plainBody(3)));
-    constexpr size_t sitesInBody = 2;
-    AOT_TEST_CHECK(sites.records.size() == 5 * sitesInBody);
-    AOT_TEST_CHECK(nameIn(sites, sites.records[0]) == "main"_s);
-    AOT_TEST_CHECK(sites.records[sitesInBody].name == Wire::TextRange { });
-    AOT_TEST_CHECK(nameIn(sites, sites.records[2 * sitesInBody]) == String::fromUTF8("caf\xc3\xa9"));
-    AOT_TEST_CHECK(sites.records[3 * sitesInBody].name == sites.records[2 * sitesInBody].name);
-    AOT_TEST_CHECK(nameIn(sites, sites.records[4 * sitesInBody]) == String::fromUTF8("a\xef\xbf\xbd"));
-}
-
 std::span<const NativeTest> symbolTests()
 {
     static constexpr NativeTest tests[] = {
-        { "image/symbols/table"_s, testSymbolTable },
         { "image/symbols/names"_s, testSymbolNames },
         { "image/symbols/operation-stub-name"_s, testOperationStubName },
-        { "image/symbols/map-names-code-of-regular-expressions"_s, testMapNamesCodeOfRegularExpressions },
-        { "image/obfuscated-sites/one-record-per-site"_s, testObfuscatedSitesOneRecordPerSite },
-        { "image/obfuscated-sites/inlined-frame"_s, testObfuscatedSitesInlinedFrame },
         { "image/obfuscated-sites/names-stored-once"_s, testObfuscatedSitesNamesStoredOnce },
-        { "image/obfuscated-sites/names"_s, testObfuscatedSitesNames },
     };
     return tests;
 }

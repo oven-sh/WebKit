@@ -1,5 +1,5 @@
 # a text grows in a loop by a part that is an object with a toString() of its own; nothing is written of the part (the types are erased). The walk of the loop comes to its end: every block has one
-# RED SINCE THE LIVE TREE OF 17:18:12 (right at 17:07:45): "the walk is over and an edge leads to a block that has no end", in f0 (the copy) and in f1; gone without LoopInvariants | Guesses | Folding. By invariant-tests, 11-03
+# It was "the walk is over and an edge leads to a block that has no end", in f0 (the copy) and in f1; gone without LoopInvariants | Guesses | Folding.
 # f1 = grow
 # -- source: text-that-grows-in-a-loop-by-an-object-written-as-a-text.ts
 # // Flags: --aot-erase-types

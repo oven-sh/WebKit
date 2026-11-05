@@ -36,31 +36,26 @@ static Vector<Representation, 8> formsOfClosureCaptureWords(const Program& progr
 }
 
 static bool closureKeepsAsReference(Representation held) { return holdsCells(held); }
-static bool closureKeepsAsReference(const BoundCapture& capture) { return holdsCells(capture.representation); }
 
 static bool closureHasWordFor(Representation held) { return held != Representation::Void; }
-static bool closureHasWordFor(const BoundCapture&) { return true; }
 
-template<typename Capture>
-static unsigned numberOfReferencesAmongCaptures(std::span<const Capture> captures)
+static unsigned numberOfReferencesAmongCaptures(std::span<const Representation> captures)
 {
     unsigned count = 0;
-    for (const Capture& capture : captures)
+    for (Representation capture : captures)
         count += closureKeepsAsReference(capture);
     return count;
 }
 
-template<typename Capture>
-static unsigned numberOfWordsAmongCaptures(std::span<const Capture> captures)
+static unsigned numberOfWordsAmongCaptures(std::span<const Representation> captures)
 {
     unsigned count = 0;
-    for (const Capture& capture : captures)
+    for (Representation capture : captures)
         count += closureHasWordFor(capture);
     return count;
 }
 
-template<typename Capture>
-static unsigned slotAmongClosureCaptures(std::span<const Capture> captures, unsigned capture)
+static unsigned slotAmongClosureCaptures(std::span<const Representation> captures, unsigned capture)
 {
     RELEASE_ASSERT(capture < captures.size() && closureHasWordFor(captures[capture]));
     unsigned referencesInFront = numberOfReferencesAmongCaptures(captures.first(capture));
@@ -79,16 +74,6 @@ unsigned closureCaptureSlotOf(const Program& program, const CallingConventions& 
 {
     const Vector<Representation, 8> held = formsOfClosureCaptureWords(program, conventions, function);
     return slotAmongClosureCaptures(held.span(), capture);
-}
-
-ClosureCaptureCounts closureCaptureCountsOf(const Program&, const BoundFunctionPlan& bound)
-{
-    return { numberOfReferencesAmongCaptures(bound.captures.span()), static_cast<unsigned>(bound.captures.size()) };
-}
-
-unsigned closureCaptureSlotOf(const Program&, const BoundFunctionPlan& bound, unsigned capture)
-{
-    return slotAmongClosureCaptures(bound.captures.span(), capture);
 }
 
 static std::optional<CoroutineKind> coroutineKindWrittenFor(const Function& function)
@@ -216,10 +201,7 @@ static CodeUnit entryNamedByClosureWordsFor(CodeUnit unit)
     case CodeRole::GenericCallEntry:
     case CodeRole::GenericConstructEntry:
     case CodeRole::AllocatingConstructEntry:
-    case CodeRole::GenericEntryOfBoundFunction:
         return unit;
-    case CodeRole::BoundFunction:
-        return { unit.function, CodeRole::GenericEntryOfBoundFunction, unit.numberOfBoundArguments };
     case CodeRole::Body:
     case CodeRole::CoroutineBody:
     case CodeRole::ModuleStart:
@@ -236,7 +218,7 @@ static CodeUnit entryNamedByClosureWordsFor(CodeUnit unit)
 static bool closureEntryTakesNewTarget(const Function& function, const CallingConventions& conventions, CodeUnit entry)
 {
     if (!conventions.exists(entry))
-        return !isBoundRole(entry.role) && function.has(FunctionFlags::HasNewTarget);
+        return function.has(FunctionFlags::HasNewTarget);
     GenericEntryPlan plan = conventions.genericEntry(entry);
     return plan.takesNewTarget || plan.constructEntry;
 }
@@ -246,26 +228,13 @@ FunctionKindData functionKindOf(const Program& program, const SlotPlan& slots, c
     CodeUnit entry = entryNamedByClosureWordsFor(closureEntry);
     const Function& function = program.at(entry.function);
 
-    // A bound function is made of its target, but it is a function object of its own: of the target it has only that it is async.
-    bool isBound = isBoundRole(entry.role);
-    FunctionKindData kind { };
-    ClosureForm form;
-    if (isBound) {
-        const BoundFunctionPlan* bound = conventions.boundFunction(entry.function, entry.numberOfBoundArguments);
-        RELEASE_ASSERT(bound && !function.has(FunctionFlags::IsGenerator));
-        kind.callableKind = static_cast<unsigned>(CallableKind::Bound);
-        form = bound->closureForm;
-    } else {
-        kind = functionKindDataOfWrittenKind(function.kind);
-        form = slots.closureFormOf(entry.function);
-    }
-
+    FunctionKindData kind = functionKindDataOfWrittenKind(function.kind);
     kind.isAsync = function.has(FunctionFlags::IsAsync);
     kind.isGenerator = function.has(FunctionFlags::IsGenerator);
     kind.takesNewTarget = closureEntryTakesNewTarget(function, conventions, entry);
-    kind.hasInferredName = isBound || !function.has(FunctionFlags::HasExplicitName);
+    kind.hasInferredName = !function.has(FunctionFlags::HasExplicitName);
     kind.isInRuntimeModule = functionObjectsLieInRuntimeModule(program, function);
-    kind.isSlim = form == ClosureForm::Slim;
+    kind.isSlim = slots.closureFormOf(entry.function) == ClosureForm::Slim;
     kind.closureStructure = kind.closureStructureOfKind();
     return kind;
 }
@@ -291,8 +260,6 @@ static TraceVisibility traceVisibilityOfUnit(const Function& function, CodeRole 
     case CodeRole::AllocatingConstructEntry:
     case CodeRole::ModuleStart:
     case CodeRole::ParameterGuard:
-    case CodeRole::BoundFunction:
-    case CodeRole::GenericEntryOfBoundFunction:
     case CodeRole::TableEntry:
         return TraceVisibility::VisibleOnlyOnTop;
     // It is listed under a function that it is no part of. What it does is a part of the call of JSON.stringify.
@@ -323,8 +290,6 @@ static bool unitRejectsOnThrow(const Function& function, CodeRole role, bool bod
     case CodeRole::ModuleStart:
     case CodeRole::SlowBody:
     case CodeRole::ParameterGuard:
-    case CodeRole::BoundFunction:
-    case CodeRole::GenericEntryOfBoundFunction:
     case CodeRole::TableEntry:
     case CodeRole::TableLookup:
         return false;
@@ -440,7 +405,7 @@ static CodeType codeTypeOfTracedFunction(const Function& function)
 static_assert(static_cast<unsigned>(TraceVisibility::Hidden) < 1 << 2 && static_cast<unsigned>(StackTraceBuiltinKind::HostFunction) < 1 << 2);
 static_assert(static_cast<unsigned>(EvalCode) < 1 << 2 && static_cast<unsigned>(FunctionCode) < 1 << 2 && static_cast<unsigned>(ModuleCode) < 1 << 2);
 
-// All but the visibility, the rejection and the naming by the owner is said of the function, so that every unit of it is shown as that function. A bound function is shown as its target.
+// All but the visibility, the rejection and the naming by the owner is said of the function, so that every unit of it is shown as that function.
 FunctionTraceRecord functionTraceOf(const Program& program, const CallingConventions& conventions, CodeUnit unit)
 {
     const Function& function = program.at(unit.function);

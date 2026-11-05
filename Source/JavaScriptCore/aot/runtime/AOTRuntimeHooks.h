@@ -73,7 +73,7 @@ JSObject* targetThatProxyDefinesOn(VM&, JSValue receiver);
 JSArray* tryCreateArrayOfPairs(JSGlobalObject*, JSCell* items);
 
 // A build runs code in a realm of its own, on one of its threads (facts/AOTFactsRegExpTexts.cpp). The system may refuse a build a thread, so the engine starts none for what runs in the scope:
-// bytecode stays in the interpreter, and no thread makes blocks of the heap ready. The collector is told by Collector::willCollectWithoutHelpers().
+// bytecode stays in the interpreter, no thread makes blocks of the heap ready, and a collection marks on the thread that runs it.
 class NoHelperThreadsScope {
     WTF_MAKE_NONCOPYABLE(NoHelperThreadsScope);
 public:

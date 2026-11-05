@@ -30,13 +30,10 @@ struct Function : FunctionRecord {
 
     bool isModuleBody() const;
     bool isCoroutine() const { return hasAny({ FunctionFlags::IsAsync, FunctionFlags::IsGenerator }); }
-    // A stack frame shows the property `name` of the function object from the first look for it on. Before that it shows the displayName, and the name of an accessor without "get " or "set ".
-    bool framesTellWhetherNameWasLookedFor() const { return has(FunctionCapabilities::NotesLooksForName) || kind == FunctionKind::Getter || kind == FunctionKind::Setter; }
     ConstructorForm constructorForm() const;
     // The construct call allocates `this` for a plain function. A class constructor allocates its own.
     bool takesThisFromConstruction() const { return kind == FunctionKind::Plain && constructorForm() == ConstructorForm::Base; }
 
-    bool hasOnlyDirectCallers() const { return has(FunctionCapabilities::HasOnlyDirectCallers); }
     bool mayBeCalledByHost() const { return !has(FunctionCapabilities::IsNeverCalledByHost); }
     bool isHiddenInStackTraces() const { return has(FunctionCapabilities::IsHiddenInStackTraces) || has(FunctionFlags::IsHiddenInStackTraces); }
 

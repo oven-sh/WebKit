@@ -21,21 +21,12 @@ OpcodeSet StraightEmitter::opcodesOfEvals()
     return { Opcode::DirectEval };
 }
 
-// Link has heard of nothing that such a block alone names, and nothing enters it.
-static bool standsInBlockNeverEnteredInStraightEval(StraightEmitter& emitter)
-{
-    const Vector<BlockID>& blocks = emitter.facts().summaries().at(emitter.function()).blocksNeverEntered;
-    return !blocks.isEmpty() && std::ranges::binary_search(blocks, emitter.currentBlock().id());
-}
-
 void StraightEmitter::generateEval(const BodyValue& value)
 {
     if (value.opcode() != Opcode::DirectEval) {
         fail(value);
         return;
     }
-    if (standsInBlockNeverEnteredInStraightEval(*this))
-        return;
 
     constexpr uint32_t numberOfOperandsInFrontOfEnvironments = 2;
     std::span<const ValueID> environments = value.environmentsOperands();

@@ -58,7 +58,7 @@ void enterHandlerWithWhatIsKnown(Walker& walker, BlockID inputHandler)
         if (reference && reference.isValue())
             rootsAtHand.append(rootOfCellInSweptCode(code, reference.id()).index());
     };
-    // TODO(known-state-and-effects-2b): what is live at the head is at hand too. What is live at every head of a body grows faster than the body, so it is not asked for: more ends here than has to.
+    // TODO: what is live at the head is at hand too. What is live at every head of a body grows faster than the body, so it is not asked for: more ends here than has to.
     const auto& block = index.block(inputHandler);
     for (uint32_t parameter = 0; parameter < block.numberOfParameters(); ++parameter)
         noteAtHand(block.parameter(parameter));

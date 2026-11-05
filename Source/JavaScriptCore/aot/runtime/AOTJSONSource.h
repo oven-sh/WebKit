@@ -34,12 +34,6 @@ public:
     {
     }
 
-    ALWAYS_INLINE JSONSourceScope(Instance& instance, std::span<const uint8_t> utf8)
-        : m_instance(instance)
-        , m_isOpen(open(utf8, currentStackPointer()))
-    {
-    }
-
     ~JSONSourceScope();
 
     explicit operator bool() const { return m_isOpen; }
@@ -47,7 +41,6 @@ public:
 
 private:
     bool open(StringView, void* stackPointer);
-    bool open(std::span<const uint8_t> utf8, void* stackPointer);
 
     Instance& m_instance;
     bool m_isOpen;

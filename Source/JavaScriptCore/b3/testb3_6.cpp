@@ -2663,7 +2663,14 @@ void testTerminalPatchpointThatNeedsToBeSpilled()
 void testTerminalPatchpointThatNeedsToBeSpilled2()
 {
     // This is a unit test for how FTL's heap allocation fast paths behave.
-    Procedure proc;
+
+    // Tail duplication will break the critical edge we're trying to test because it
+    // will clone the slowPath block for both edges to it!
+    Policy policy = Policy::fromProcessOptions();
+    policy.upstream.maxTailDuplicationBlockSize = 0;
+    policy.upstream.maxTailDuplicationBlockSuccessors = 0;
+
+    Procedure proc(policy);
 
     // FIXME: Air O0/O1 allocator can't handle such programs. We rely on WasmAirIRGenerator
     // to not use any such constructs where the register allocator is cornered in such
@@ -2739,21 +2746,10 @@ void testTerminalPatchpointThatNeedsToBeSpilled2()
 
     slowPath->appendNew<Value>(proc, Return, Origin(), arg);
 
-    auto original1 = Options::maxB3TailDupBlockSize();
-    auto original2 = Options::maxB3TailDupBlockSuccessors();
-
-    // Tail duplication will break the critical edge we're trying to test because it
-    // will clone the slowPath block for both edges to it!
-    Options::maxB3TailDupBlockSize() = 0;
-    Options::maxB3TailDupBlockSuccessors() = 0;
-
     auto code = compileProc(proc);
     CHECK_EQ(invoke<int>(*code, 1), 1);
     CHECK_EQ(invoke<int>(*code, 0), 0);
     CHECK_EQ(invoke<int>(*code, 42), 666);
-
-    Options::maxB3TailDupBlockSize() = original1;
-    Options::maxB3TailDupBlockSuccessors() = original2;
 }
 
 void testPatchpointTerminalReturnValue(bool successIsRare)

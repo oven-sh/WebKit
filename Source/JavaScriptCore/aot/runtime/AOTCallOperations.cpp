@@ -315,17 +315,17 @@ JSC_DEFINE_JIT_OPERATION(operationAOTConstruct, EncodedJSValue, (Instance* insta
 JSC_DEFINE_JIT_OPERATION(operationAOTApply, EncodedJSValue, (Instance* instance, EncodedJSValue callee, EncodedJSValue thisValue, EncodedJSValue list))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTApply);
+    MarkedArgumentBuffer arguments;
+    bool didAppend = appendArrayLike(globalObject, vm, arguments, JSValue::decode(list));
+    EXCEPTION_ASSERT(didAppend == !scope.exception());
+    if (!didAppend) [[unlikely]]
+        OPERATION_RETURN(scope, encodedJSValue());
     JSValue function = JSValue::decode(callee);
     auto callData = JSC::getCallData(function);
     if (callData.type == CallData::Type::None) {
         throwException(globalObject, scope, createNotAFunctionError(globalObject, function, StringView()));
         OPERATION_RETURN(scope, encodedJSValue());
     }
-    MarkedArgumentBuffer arguments;
-    bool didAppend = appendArrayLike(globalObject, vm, arguments, JSValue::decode(list));
-    EXCEPTION_ASSERT(didAppend == !scope.exception());
-    if (!didAppend) [[unlikely]]
-        OPERATION_RETURN(scope, encodedJSValue());
     OPERATION_RETURN(scope, JSValue::encode(call(globalObject, function, callData, JSValue::decode(thisValue), arguments)));
 }
 
@@ -405,14 +405,10 @@ static JSArray* tryCopyMappedArguments(Instance* instance, JSValue arrayLike)
     return list;
 }
 
-// Function.prototype.apply up to the call: the callee is tested before the list is read.
-JSC_DEFINE_JIT_OPERATION(operationAOTNewArgumentList, JSCell*, (Instance* instance, EncodedJSValue callee, EncodedJSValue arrayLike))
+// `f.apply(t, list)` up to the call. The list is read whatever f is: the call that follows looks at f, as call_varargs does.
+JSC_DEFINE_JIT_OPERATION(operationAOTNewArgumentList, JSCell*, (Instance* instance, EncodedJSValue arrayLike))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTNewArgumentList);
-    JSValue function = JSValue::decode(callee);
-    // The call that follows throws.
-    if (!function.isCallable())
-        OPERATION_RETURN(scope, constructEmptyArray(globalObject, nullptr));
     if (JSArray* list = tryCopyUnmappedArguments(instance, JSValue::decode(arrayLike)))
         OPERATION_RETURN(scope, list);
     if (JSArray* list = tryCopyMappedArguments(instance, JSValue::decode(arrayLike)))

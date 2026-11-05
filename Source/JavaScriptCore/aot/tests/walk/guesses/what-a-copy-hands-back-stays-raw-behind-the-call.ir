@@ -12,8 +12,9 @@
 # records of 6a7a3bd112d050f6
 # RUN: walk f2 mechanisms=all-ParameterGuards
 # CHECK-LABEL: code f2:Body
+# CHECK: [[closed]]: anything{{*}} = PropGet {{*}}key="objectFlags"
 # CHECK: int{{*}} @Int32 = GetSlot {{*}}key="objectFlags" {{*}}level=Proven
-# CHECK: ([[closed]]: anything{{*}} @JSValue{{*}}) frequency=Rare:
+# CHECK: frequency=Rare:
 # CHECK: = BitAnd [[closed]], {{*}}form=Generic
 # CHECK: ([[passing]]: int{{*}} @Int32{{*}}):
 # CHECK: = BitAnd [[passing]], {{*}}form=Integers

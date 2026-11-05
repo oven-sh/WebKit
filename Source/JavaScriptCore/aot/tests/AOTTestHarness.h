@@ -162,7 +162,7 @@ private:
     std::unique_ptr<State> m_state;
 };
 
-// `f3`, `f3:GenericCallEntry`, `f3:BoundFunction:2`: a function, a CodeRole by its C++ name, the number of bound arguments. Without a role: CodeRole::Body.
+// `f3`, `f3:GenericCallEntry`, `f3:Serializer:2`: a function, a CodeRole by its C++ name, the layout of a serializer. Without a role: CodeRole::Body.
 std::optional<CodeUnit> parseCodeUnit(StringView);
 void printCodeUnit(PrintStream&, CodeUnit);
 

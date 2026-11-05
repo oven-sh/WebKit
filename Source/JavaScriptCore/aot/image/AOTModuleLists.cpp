@@ -182,9 +182,6 @@ struct NumbersOfImageForModuleLists {
             uint32_t entrypoint = encoder.entrypointOf(functionOfVariableInClosureTable(encoder.inputs, id), "what a table reads from the variable"_s, id);
             return entrypoint == UINT32_MAX ? SlotData { } : slotAtOffsetForModuleLists(encoder, entrypoint, SlotRepresentation::DeferredClosure);
         }
-        case Typed::VariableStorage::None:
-            encoder.fail("VariableReadByTableHasNoStorage"_s, id);
-            return { };
         }
         RELEASE_ASSERT_NOT_REACHED();
     }
@@ -256,7 +253,6 @@ struct NamesNotedForModuleLists {
                 noted.functionsWithClosureCell.append(function.index());
             break;
         case Typed::VariableStorage::Statics:
-        case Typed::VariableStorage::None:
             break;
         }
         return { };

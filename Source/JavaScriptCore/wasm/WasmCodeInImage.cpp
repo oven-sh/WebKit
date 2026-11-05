@@ -39,7 +39,6 @@ struct CodeInImage::PublishedImage {
 };
 
 constinit std::atomic<const CodeInImage::PublishedImage*> CodeInImage::s_lastPublished { nullptr };
-constinit std::array<std::atomic<unsigned>, numberOfInterpreterFallbackReasons> CodeInImage::s_interpreterFallbackCounts { };
 
 static std::array<void*, ImagePointerTable::numberOfOperations> imageCodeOperations()
 {
@@ -170,13 +169,6 @@ static bool usesDisabledVectors(const ModuleInImage& module)
     return module.usesVectors && !Options::useWasmSIMD();
 }
 
-static std::optional<InterpreterFallbackReason> fallbackReasonFor(const ModuleInImage& module)
-{
-    if (usesDisabledVectors(module))
-        return InterpreterFallbackReason::VectorsAreDisabled;
-    return std::nullopt;
-}
-
 ImageCodeFlavor CodeInImage::flavorFor(const ModuleInformation& info, MemoryMode mode)
 {
     // A signaling memory exists only where the fault handler does.
@@ -214,16 +206,10 @@ std::span<const FunctionInImage> CodeInImage::functionsOf(const ModuleInImage& m
     return { reinterpret_cast<const FunctionInImage*>(imageHolding(module).directory.data() + module.functions[static_cast<size_t>(flavor)]), module.numberOfFunctions };
 }
 
-std::optional<InterpreterFallbackReason> CodeInImage::fallbackReason(const ModuleInformation& info)
-{
-    const ModuleInImage* module = findRecord(info);
-    return module ? fallbackReasonFor(*module) : std::nullopt;
-}
-
 RefPtr<CodeInImage> CodeInImage::tryCreate(const ModuleInformation& info, const IPIntCallees& ipintCallees, MemoryMode mode)
 {
     const ModuleInImage* module = findRecord(info);
-    if (!module || fallbackReasonFor(*module))
+    if (!module || usesDisabledVectors(*module))
         return nullptr;
     return adoptRef(*new CodeInImage(info, ipintCallees, *module, flavorFor(info, mode)));
 }
@@ -301,16 +287,6 @@ CodeInImage::CodeInImage(const ModuleInformation& info, const IPIntCallees& ipin
         m_importStubs[index] = CodePtr<WasmEntryPtrTag>::fromUntaggedPtr(const_cast<uint8_t*>(image.code.data() + importStubs[index]));
         m_javaScriptImportStubs[index] = CodePtr<WasmEntryPtrTag>::fromUntaggedPtr(const_cast<uint8_t*>(image.code.data() + javaScriptImportStubs[index]));
     }
-}
-
-void CodeInImage::didFallBackToInterpreter(InterpreterFallbackReason reason)
-{
-    s_interpreterFallbackCounts[static_cast<size_t>(reason)].fetch_add(1, std::memory_order_relaxed);
-}
-
-unsigned CodeInImage::interpreterFallbackCount(InterpreterFallbackReason reason)
-{
-    return s_interpreterFallbackCounts[static_cast<size_t>(reason)].load(std::memory_order_relaxed);
 }
 
 CodeInImage::~CodeInImage() = default;

@@ -24,7 +24,7 @@ void StraightEmitter::generateForIn(const BodyValue& value)
         return;
     case Opcode::ForInStep:
         callOperation(value, RuntimeOperation::StepEnumeration, { value.enumeratorOperand(), value.objectOperand() });
-        defineResult(value, static_cast<uint32_t>(ForInStepResult::Done), GPRInfo::returnValueGPR);
+        defineResult(value, static_cast<uint32_t>(ForInStepResult::Done), resultOfCall());
         defineResult(value, static_cast<uint32_t>(ForInStepResult::Key), GPRInfo::returnValueGPR2);
         return;
     default:

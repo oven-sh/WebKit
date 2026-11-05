@@ -48,7 +48,7 @@ static std::optional<uint8_t> singleLatin1CharacterInStraightForm(std::span<cons
 static void generateStringConstant(StraightEmitter& emitter, const BodyValue& value)
 {
     CCallHelpers& jit = emitter.jit();
-    GPRReg cell = StraightEmitter::resultGPR;
+    GPRReg cell = emitter.takeResultRegister();
     StringID string = value.string();
     std::span<const uint8_t> text = emitter.program().string(string);
     if (text.empty())
@@ -189,7 +189,7 @@ static void generateData(StraightEmitter& emitter, const BodyValue& value)
 static bool mayMentionFunctionInStraightForm(StraightEmitter& emitter, FunctionID function)
 {
     const LinkTables& linked = emitter.facts().linked();
-    return function.index() >= linked.functions.size() || linked.mayBeMentionedBy(emitter.function(), function);
+    return function.index() >= linked.functions.size() || linked.mayBeMentionedBy(emitter.unit(), function);
 }
 
 static bool closuresHoldCapturesInStraightForm(StraightEmitter& emitter, FunctionID function)
@@ -199,8 +199,6 @@ static bool closuresHoldCapturesInStraightForm(StraightEmitter& emitter, Functio
 
 static bool closureIsHeldByTableInStraightForm(StraightEmitter& emitter, FunctionID function)
 {
-    if (emitter.plan().closureIdentityOf(function) == ClosureIdentity::TableCell)
-        return true;
     const Program& program = emitter.program();
     LayoutID constructed = program.at(function).constructedClass;
     if (!constructed || closuresHoldCapturesInStraightForm(emitter, function))
@@ -221,7 +219,7 @@ static void callClosureStubInStraightForm(StraightEmitter& emitter, const BodyVa
 static void fillFullClosureInStraightForm(StraightEmitter& emitter, FunctionKindData kind, uint32_t closureNumber, std::span<const ValueID> words)
 {
     CCallHelpers& jit = emitter.jit();
-    GPRReg cell = StraightEmitter::resultGPR;
+    GPRReg cell = emitter.resultOfCall();
     GPRReg word = StraightEmitter::temporary(1);
     GPRReg number = StraightEmitter::temporary(2);
     auto storeWordOfInstance = [&](ptrdiff_t offsetInInstance, ptrdiff_t offsetInCell) {
@@ -302,8 +300,9 @@ static void generateNewClosure(StraightEmitter& emitter, const BodyValue& value)
         uint64_t restOfRequest = ClosureRequest::encode(0, static_cast<unsigned>(FunctionTables::executableKind(kind)), 0);
         emitter.relocations().moveNumber({ SymbolSpace::Number, allocation }, request);
         emitter.jit().lshift64(CCallHelpers::TrustedImm32(ClosureRequest::allocationShift), request);
-        emitter.relocations().moveNumber({ SymbolSpace::Number, mentions.add(NumberSpace::ClosureFunction, function, static_cast<int32_t>(restOfRequest)) }, StraightEmitter::resultGPR);
-        emitter.jit().or64(StraightEmitter::resultGPR, request);
+        GPRReg functionAndRest = emitter.takeResultRegister();
+        emitter.relocations().moveNumber({ SymbolSpace::Number, mentions.add(NumberSpace::ClosureFunction, function, static_cast<int32_t>(restOfRequest)) }, functionAndRest);
+        emitter.jit().or64(functionAndRest, request);
         callClosureStubInStraightForm(emitter, value, stub, StraightArgument::inRegister(request), words.span());
         return;
     }
@@ -329,7 +328,7 @@ void StraightEmitter::generateConstant(const BodyValue& value)
         defineConstant(value);
         return;
     case Opcode::Absent:
-        jit().move(CCallHelpers::TrustedImm64(JSValue::encode(JSValue())), resultGPR);
+        jit().move(CCallHelpers::TrustedImm64(JSValue::encode(JSValue())), takeResultRegister());
         define(value);
         return;
     case Opcode::String:

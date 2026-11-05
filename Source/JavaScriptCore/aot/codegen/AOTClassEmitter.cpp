@@ -115,6 +115,11 @@ void ClassEmitter::generateBeginMemberGuards(const ValueContext& value)
 
 void ClassEmitter::generateNewClassToken(const ValueContext& value)
 {
+    if (!m_plan.hasClassRecord(value->layout())) {
+        fail(value, InternalErrorKind::OpcodeWithoutCode);
+        define(value, emitter<ConstantEmitter>().zeroOf(value.representation()));
+        return;
+    }
     define(value, callOperation<CellPointer>(value, RuntimeOperation::NewClassToken, { word32(value->layout().index()) }));
 }
 

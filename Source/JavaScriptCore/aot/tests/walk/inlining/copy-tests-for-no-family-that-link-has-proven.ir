@@ -13,6 +13,7 @@
 # RUN: walk f2 mechanisms=all
 # CHECK-LABEL: code f2:Body
 # CHECK: frame 1 callee=f1
+# CHECK: isInLoop=true isLoopHead=true
 # CHECK: [[element]]: anything{{*}} = Call
 # CHECK-NOT: = TypeTest [[element]]
 # CHECK: = PropGet [[element]] key="a"

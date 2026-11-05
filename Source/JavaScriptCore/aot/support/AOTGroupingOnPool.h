@@ -9,11 +9,10 @@
 
 #include "AOTThreads.h"
 #include <array>
-#include <tuple>
 
 namespace JSC { namespace AOT {
 
-// What AOTGrouping.h does on one thread, on all of them. Whatever comes out is the same at any number of threads.
+// A counting sort on all threads. Whatever comes out is the same at any number of threads.
 
 // The rows come ascending by group. Where the rows of each group begin, and one more for the end. A group may have no rows.
 Vector<uint32_t> firstRowsOfGroups(const ParallelLoops& loops, uint32_t numberOfGroups, size_t numberOfRows, const Invocable<uint32_t(size_t)> auto& groupOfRow)
@@ -33,24 +32,6 @@ Vector<uint32_t> firstRowsOfGroups(const ParallelLoops& loops, uint32_t numberOf
     for (uint32_t group = firstGroupBehindRows; group <= numberOfGroups; ++group)
         firstRow[group] = static_cast<uint32_t>(numberOfRows);
     return firstRow;
-}
-
-// Each index brings some items, and the items of all indices stand in one row from `firstPlace` on.
-// Where the items of each range of forEachRangeOfIndicesInParallel() begin, and one more for the end.
-Vector<size_t> firstItemsOfRanges(const ParallelLoops& loops, size_t count, size_t firstPlace, const Invocable<size_t(size_t)> auto& numberOfItemsAt)
-{
-    Vector<size_t> firstItem;
-    firstItem.grow(numberOfRangesOfIndices(count) + 1);
-    forEachRangeOfIndicesInParallel(loops, count, [&](size_t first, size_t end) {
-        size_t numberOfItems = 0;
-        for (size_t index = first; index < end; ++index)
-            numberOfItems += numberOfItemsAt(index);
-        firstItem[first / indicesInRangeOfLoop] = numberOfItems;
-    });
-    firstItem.last() = 0;
-    for (size_t& first : firstItem)
-        firstPlace += std::exchange(first, firstPlace);
-    return firstItem;
 }
 
 // A row has its group in the high half. The rows of a group stay in the order in which they came. A counting sort by eleven bits at a time, lowest first:
@@ -106,52 +87,6 @@ inline void sortRowsByGroup(const ParallelLoops& loops, Vector<uint64_t>& rows, 
         });
         std::swap(rows, scratch);
     }
-}
-
-// A list of words that lies with whoever made it, who knows it by `source` and `number`. Equal lists have the same hash.
-struct NamedList {
-    uint32_t hash;
-    uint32_t size;
-    uint32_t source;
-    uint32_t number;
-};
-
-// Puts equal lists side by side, those by source and number, and says where the first of each stands, ascending. No list is looked at more than a few times, however many are equal to it.
-Vector<uint32_t> bringEqualListsTogether(const ParallelLoops& loops, std::span<NamedList> lists, const Invocable<std::span<const uint32_t>(const NamedList&)> auto& wordsOf)
-{
-    RELEASE_ASSERT(lists.size() <= UINT32_MAX);
-    unsigned count = static_cast<unsigned>(lists.size());
-    parallelSort(loops, lists, [](const NamedList& first, const NamedList& second) {
-        return std::tie(first.hash, first.size, first.source, first.number) < std::tie(second.hash, second.size, second.source, second.number);
-    });
-    Vector<uint32_t> firstOfHash = findIndicesInParallel(loops, count, [&](unsigned index) {
-        return !index || lists[index].hash != lists[index - 1].hash || lists[index].size != lists[index - 1].size;
-    });
-
-    Vector<uint8_t> isFirstOfEqualLists;
-    isFirstOfEqualLists.grow(count);
-    forEachIndexInParallel(loops, static_cast<unsigned>(firstOfHash.size()), [&](unsigned run) {
-        size_t first = firstOfHash[run];
-        size_t end = run + 1 < firstOfHash.size() ? firstOfHash[run + 1] : count;
-        std::span<NamedList> ofOneHash = lists.subspan(first, end - first);
-        auto differsFromListInFront = [&](size_t position) {
-            return !std::ranges::equal(wordsOf(ofOneHash[position]), wordsOf(ofOneHash[position - 1]));
-        };
-        bool someDiffer = false;
-        for (size_t position = 1; position < ofOneHash.size() && !someDiffer; ++position)
-            someDiffer = differsFromListInFront(position);
-        if (someDiffer) {
-            AOT::sortInLine(ofOneHash, [&](const NamedList& one, const NamedList& other) {
-                return std::ranges::lexicographical_compare(wordsOf(one), wordsOf(other));
-            });
-        }
-        isFirstOfEqualLists[first] = true;
-        for (size_t position = 1; position < ofOneHash.size(); ++position)
-            isFirstOfEqualLists[first + position] = someDiffer && differsFromListInFront(position);
-    });
-    return findIndicesInParallel(loops, count, [&](unsigned index) {
-        return !!isFirstOfEqualLists[index];
-    });
 }
 
 } } // namespace JSC::AOT

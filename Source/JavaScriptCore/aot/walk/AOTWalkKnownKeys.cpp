@@ -3,10 +3,9 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-// TypedOperations: a key that is one name is the name (`{ get [KEY]() { .. } }`), and a field that constructions alone write keeps what was read out of it once.
-// At a suspension: neither rests on anything that other code can change, so both hold on.
-// At a throw: a definition by name throws where the definition by key would. A read is noted behind its record.
-// Withheld: the definition stays under its computed key, and every read of a field is built where it is written.
+// TypedOperations: a key that is one name is the name (`{ get [KEY]() { .. } }`).
+// At a suspension: it rests on nothing that other code can change, so it holds on. At a throw: a definition by name throws where the definition by key would.
+// Withheld: the definition stays under its computed key.
 
 #include "config.h"
 #include "AOTWalkKnown.h"
@@ -79,73 +78,6 @@ bool defineAccessorUnderNameThatKeyIs(Walker& walker, const BodyValue& definitio
     byName.setKey(name);
     walker.build(WTF::move(byName));
     return true;
-}
-
-// ---- Fields of objects that are written once
-
-// An object that lies in memory, or that a call hands back, has left the body that made it. A store of a construction stands in front of the first point at which its body lets the object leave: SummaryAccess::isPartOfConstruction.
-static constexpr OpcodeSet readsOutOfMemoryInKnownKeys {
-    Opcode::GetSlot, Opcode::GetSlotOrUndefined, Opcode::GetModuleVariable, Opcode::GetEnvironmentField, Opcode::GetCapture, Opcode::PropGet, Opcode::ElemGet, Opcode::GetArrayElement
-};
-
-// Such a body is handed an object that it goes on making: `this` of an initializer of fields and of a function that `new` hands the object (isFilledForBodyBeingReadInTypedAccess()).
-// A constructor of a class makes its own, or has it from `super()`, in the body as it is written. An entry that is handed what its caller has allocated is no different from the two above.
-static bool mayBeHandedObjectToGoOnMakingInKnownKeys(const Function& function)
-{
-    switch (function.kind) {
-    case FunctionKind::Plain:
-        return function.takesThisFromConstruction() && function.constructedClass;
-    case FunctionKind::BaseConstructor:
-    case FunctionKind::DerivedConstructor:
-    case FunctionKind::Initializer:
-        return true;
-    case FunctionKind::Arrow:
-    case FunctionKind::Method:
-    case FunctionKind::Getter:
-    case FunctionKind::Setter:
-    case FunctionKind::Module:
-    case FunctionKind::CommonJsModule:
-        return false;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-// An allocation of this code, what `super()` answers (a direct call of a construction too) and a parameter of a join, which may be either, are not among them.
-static bool hasLeftBodyThatMadeItInKnownKeys(const Walker& walker, Reference object)
-{
-    if (!object.isValue())
-        return false;
-    const Code& code = walker.code();
-    ValueID root = rootOfCellInSweptCode(code, object.id());
-    if (code.isConstant(root))
-        return false;
-    const Operation& record = code.at(root);
-    if (readsOutOfMemoryInKnownKeys.contains(record.opcode) || callsByValue.contains(record.opcode))
-        return true;
-    if (record.opcode == Opcode::CallDirect)
-        return !record.isConstruction();
-    if (record.opcode != Opcode::Parameter || !code.at(code.blockOf(root)).isEntry)
-        return false;
-    return !mayBeHandedObjectToGoOnMakingInKnownKeys(walker.program().at(walker.unit().function));
-}
-
-bool slotKeepsValueOnceFilled(Walker& walker, const Draft& read)
-{
-    if (read.opcode != Opcode::GetSlot || read.level() != KnowledgeLevel::Proven || !walker.has(Mechanism::TypedOperations))
-        return false;
-    Reference object = read.objectOperand();
-    TypeID typeOfObject = object ? walker.typeOf(object) : TypeID();
-    if (!typeOfObject)
-        return false;
-    TypeArena& types = walker.types();
-    LayoutID layout = singleLayoutOf(types, types.at(typeOfObject));
-    std::optional<FieldReference> field = layout ? findField(walker.program(), layout, read.key()) : std::nullopt;
-    if (!field)
-        return false;
-    const LinkedCell* cell = walker.facts().linked().findCellOfField(*field);
-    if (!cell || !cell->everyWriterIsKnown || cell->isWrittenAfterConstruction || !cell->isFilled)
-        return false;
-    return hasLeftBodyThatMadeItInKnownKeys(walker, object);
 }
 
 } } } // namespace JSC::AOT::Typed

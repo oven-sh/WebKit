@@ -1,0 +1,81 @@
+# `function size(): int32 { return box.size; }` is only ever copied in line: its own body is walked for nobody, so the promise is judged in the copy alone. What the caller expects of the answer is the callee's own `int32`:
+# taken for what is expected of `box.size` inside the copy, the promise would vouch for itself and the build would go through (it once did).
+# f1 = size, f2 = caller
+# -- source: promise-of-a-function-that-is-only-copied-in-line-does-not-vouch-for-itself.ts
+# declare function sink(...values: unknown[]): void;
+# declare const box: { size: any };
+# function size(): Bun.int32 { return box.size; }
+# function caller(): number { const at = size(); return at + 1; }
+# sink(caller);
+# -- end of source
+# records of 783d4caa75cede74
+# DIAGNOSTIC: UnprovenInt32 1
+# RUN: walk f2 mechanisms=all
+# CHECK: the walk of f2:Body failed
+
+module m0 path="promise-of-a-function-that-is-only-copied-in-line-does-not-vouch-for-itself.ts" displayPath="promise-of-a-function-that-is-only-copied-in-line-does-not-vouch-for-itself.ts" body=f0 namespaceLayout=L(m0)
+module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
+module m2 path="/$bun/js/engine/JSIteratorPrototype.ts" displayPath="/$bun/js/engine/JSIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m2)
+entry module=m0
+variable g0 name="size" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f2 @0
+    v1 = Convert v0 declared={type=f2 flags=[IsFromCompiler]} @0
+    v2 = Builtin builtin=GlobalThis @197
+    v3 = PropGet v2 key="sink" [isFreeName] @197
+    v4 = Call v3, -, v1 calleeName="sink" @197
+    v5 = Undefined @197
+    Return v5 @197
+}
+function f1 name="size" module=m0 position=85 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=i32 flags=[IsInt32Promise]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=GlobalThis @121
+    v1 = PropGet v0 key="box" [isFreeName] @121
+    v2 = PropGet v1 key="size" @121
+    v3 = Convert v2 declared={type=i32 flags=[IsInt32Promise]} @121
+    Return v3 @121
+}
+function f2 name="caller" module=m0 position=133 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = GetModuleVariable variable=g0 @172
+    v1 = Call v0 calleeName="size" @172
+    v2 = Convert v1 declared={type=i32} @172
+    v3 = Integer integer=1 @192
+    v4 = Add v2, v3 @192
+    v5 = Convert v4 declared={type=number} @192
+    Return v5 @192
+}
+function f3 name="next" module=m1 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = HasJSType v0 first=5 last=5 @78
+    v2 = ToBoolean v1 @78
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0) @78
+  b1(v3):
+    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @229
+    v5 = StepArrayIterator v4 @229
+    v6 = ResultAt v5 index=1 @286
+    v7 = ResultAt v5 @334
+    v8 = Convert v7 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @266
+    v9 = CreateIteratorResult v6, v8 @266
+    Return v9 @266
+  b2(v10):
+    v11 = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance" @110
+    Unreachable @110
+}
+function f4 name="[Symbol.dispose]" module=m2 position=14610 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=JSIteratorPrototypeDispose thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = Undefined @14610
+    v2 = PropGet v0 key="return" @14680
+    v3 = TypeTest v2 testedType=undefined|null @14702
+    Branch v3 -> taken b2(), notTaken b1(| 0) @14702
+  b1(v4):
+    v5 = NarrowByTest v2, v4 @14702
+    v6 = Call v5, v0 @14744
+    Jump -> next b2() @14744
+  b2():
+    v7 = Undefined @14744
+    Return v7 @14744
+}
+runtimefunction id=JSIteratorPrototypeDispose function=f4
+runtimefunction id=ArrayIteratorPrototypeNext function=f3 visibility=Private

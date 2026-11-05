@@ -72,13 +72,6 @@ void RelocationRecorder::load64(CodeSymbol symbol, GPRReg dest)
     append(m_jit.loadPCRelative64(dest), RelocationKind::Load64, symbol);
 }
 
-void RelocationRecorder::emitDistance32(CodeSymbol symbol, int32_t addend)
-{
-    CCallHelpers::Label site = m_jit.label();
-    m_jit.m_assembler.buffer().putInt(addend);
-    append(site, RelocationKind::Distance32, symbol);
-}
-
 void RelocationRecorder::emitNumber32(CodeSymbol symbol)
 {
     CCallHelpers::Label site = m_jit.label();

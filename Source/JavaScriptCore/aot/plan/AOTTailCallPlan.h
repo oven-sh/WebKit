@@ -36,9 +36,6 @@ struct TailCallPlan {
 // So whoever calls it in tail position may keep his frame until it returns, at the price of one frame. Clear claims nothing: the call has to be a jump.
 // A call in tail position that Link does not list ends nothing. Nor does a built-in whose row forwards the call to an operand: the walk puts the operand's call in its place. A function on a ring, be it of itself alone, does not end.
 JS_EXPORT_PRIVATE BitVector findFunctionsThatEndTheirTailCalls(const Program&, const Facts&);
-// For results-in-parts. Each call that the function makes in tail position is written as a direct call of the function itself or enters what ends its tail calls:
-// so it may return in a form that its tail callees do not return in, because each of those calls comes back. False claims nothing.
-JS_EXPORT_PRIVATE bool makesOnlyTailCallsThatEnd(const Program&, const Facts&, const BitVector& functionsThatEndTheirTailCalls, FunctionID);
 // checkPlan(), where the build validates. By a graph of its own, off linked() and the summaries: round a ring of calls in tail position that each name their one callee all bodies return in one form,
 // and in a raw one only where each of those calls is written as a direct one: a unit that returns a raw value cannot leave by a call of a value. Else InternalErrorKind::PlacementCheckFailed, with the caller and the call.
 void checkFormsRoundRingsOfTailCalls(const Program&, const Facts&, const Plan&, BuildContext&);

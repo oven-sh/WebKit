@@ -255,7 +255,9 @@ export default b.declarations(
           args: { onFinally: b.any.optional },
           returns: newPromiseHolding({ value: settledValue }),
           uses: {
-            this: contentsUpdate,
+            // The new promise is rejected with the reason of this one, with what onFinally throws, or with what a promise that it returns is rejected with.
+            // Whatever has become a reason has left the sight of the program where it became one, so the slot is said to hold anything.
+            this: [...contentsUpdate, b.createdIn(b.any, b.resultSlot("reason"))],
             onFinally: [b.called({ afterwards: "TouchesOnlyWhatRowNames", times: "Later", this: b.undefined, args: [], result: "Stored", resultTo: b.resultSlot("value") })],
           },
           implementation: b.hostCall,

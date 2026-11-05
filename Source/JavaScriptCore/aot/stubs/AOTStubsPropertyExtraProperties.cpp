@@ -82,18 +82,6 @@ void readExtraPropertyAndReturn(StubAssembler& jit, const CachedSlot& slot, cons
     jit.returnToCaller();
 }
 
-void loadExtraPropertyBySlot(StubAssembler& jit, const CachedSlot& slot, GPRReg object, GPRReg result, GPRReg scratch, JumpList& miss)
-{
-    RELEASE_ASSERT(Slot::payloadOf(slot.kind()) == SlotPayload::ExtraProperty && noOverlap(slot.header(), object, result, scratch));
-    slot.loadHiddenWordOffset(jit, scratch);
-    loadExtraProperties(jit, object, scratch, result, miss);
-    loadWordIndex(jit, slot, scratch);
-    Jump isInline = slot.branchUnlessFlag(jit, Slot::isOutOfLine);
-    jit.loadPtr(Address(result, JSObject::butterflyOffset()), result);
-    isInline.link(&jit);
-    jit.load64(BaseIndex(result, scratch, CCallHelpers::TimesEight), result);
-}
-
 static_assert(PackedSlot::hiddenWordOffsetShift == CCallHelpers::TimesFour && cell32Shift == CCallHelpers::TimesEight && Slot::wordIndexFor(0) > 0);
 
 void loadExtraPropertyByFrontCell(StubAssembler& jit, GPRReg cell, GPRReg object, GPRReg storage, GPRReg wordIndex, GPRReg result, JumpList& hasNone)

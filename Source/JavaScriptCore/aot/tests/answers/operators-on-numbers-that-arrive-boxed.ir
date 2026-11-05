@@ -1,6 +1,6 @@
 # numbers that the program has tested, and what a closed call of Number gives, arrive boxed. A chain walked on integers and on doubles, a sum that stays boxed and a truncation that reads the tag give what the operators as written give:
 # at the ends of int32, past 2 ** 53, for -0, NaN, the infinities and fractions, each beside each
-# the forms behind `typeof a === "number"` (f1 to f10) are asked for in ../walk/unboxed-numbers/numbers-that-the-program-has-tested-arrive-boxed-from-source.ir, which waits for a hook of unions-and-narrowing-2
+# the forms behind `typeof a === "number"` (f1 to f10) are asked for in ../walk/unboxed-numbers/numbers-that-the-program-has-tested-arrive-boxed-from-source.ir, which waits for narrowing on edges
 # with built-in calls withheld the call of Number stays a call, and with copies withheld the bodies that are shown here are the bodies that run
 # f1 = mix, f2 = chain, f3 = sum, f4 = less, f5 = step, f6 = whole, f7 = unsigned, f8 = flipped, f9 = wrap, f10 = scaled, f11 = total, f12 = gap, f13 = half, f14 = area
 # RUN(BOXED): walk f11 mechanisms=all-BuiltinCalls-Inlining

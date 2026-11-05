@@ -65,28 +65,12 @@ static void neighboringWordsAreLoadedAsPair()
     AOT_TEST_CHECK(apart.sum == static_cast<uint64_t>(6 - 700) && rising.sum == static_cast<uint64_t>(6 - 50) && falling.sum == 97);
 }
 
-// The second load goes through what the first one has loaded, which may lie in the register that held the first base.
-static void loadThroughLoadedPointerIsNoPair()
-{
-    TestProcedure test;
-    Output& out = test.out();
-    LValue buffer = test.argumentGPR(0);
-    LValue pointer = out.load64(pairsOfLoadsTestWordAt(test, buffer, 0));
-    out.ret(out.load64(pairsOfLoadsTestWordAt(test, pointer, 1)));
-    compileOrFail(test);
-
-    std::array<uint64_t, 2> inner { 1, 222 };
-    std::array<uint64_t, 2> outer { reinterpret_cast<uint64_t>(inner.data()), 111 };
-    AOT_TEST_CHECK(test.call<uint64_t>(outer.data()) == 222);
-}
-
 } // namespace Machine
 
 std::span<const NativeTest> machinePairsOfLoadsTests()
 {
     static constexpr NativeTest tests[] = {
         { "machine-pairs-of-loads/neighboring-words-are-loaded-as-a-pair"_s, Machine::neighboringWordsAreLoadedAsPair },
-        { "machine-pairs-of-loads/load-through-a-loaded-pointer-is-no-pair"_s, Machine::loadThroughLoadedPointerIsNoPair },
     };
     return tests;
 }

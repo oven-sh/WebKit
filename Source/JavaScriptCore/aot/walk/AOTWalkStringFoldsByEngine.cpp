@@ -61,7 +61,6 @@ void ScratchRealm::makeAtFirstQuestion()
         return;
     m_noHelperThreads.emplace();
     m_vm = VM::create(HeapType::Small);
-    m_vm->heap.collector().willCollectWithoutHelpers();
     m_lockOfWholeLife.emplace(*m_vm);
     m_realm.set(*m_vm, JSGlobalObject::create(*m_vm, JSGlobalObject::createStructure(*m_vm, jsNull())));
 }

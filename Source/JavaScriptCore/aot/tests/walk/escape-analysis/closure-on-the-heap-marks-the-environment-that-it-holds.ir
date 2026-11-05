@@ -1,6 +1,6 @@
 # the cell of `counter`'s scope has the byte. The closure that is returned is a cell of the heap and holds the environment, so the byte is set in front of it. On the way that keeps nothing the cell is proposed for the next call
 # function counter(keep) { let id = 0; function bump() { id++; } bump(); if (keep) return () => ++id; return id; }  sink(counter);
-# RUN: walk f1 mechanisms=none+TypedOperations+Folding+EscapeAnalysis
+# RUN: walk f1 mechanisms=none+TypedOperations+Folding+EscapeAnalysis+CellsInFrames
 # CHECK-LABEL: code f1:Body
 # CHECK: = NewObject {{*}}layout=L0
 # CHECK: MarkEnvironmentEscaped

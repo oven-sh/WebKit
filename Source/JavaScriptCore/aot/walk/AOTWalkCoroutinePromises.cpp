@@ -240,12 +240,6 @@ Reference valueOfPromiseFulfilledHere(Walker& walker, Reference promise)
 
 // ---- The frame
 
-// The stream may hold the body of a loop behind all that follows the loop (BodyIndex::membersOf()), so behind the head of a loop a suspension that lies on a way to here may be built yet.
-bool frameWasNeverSuspended(const Walker& walker)
-{
-    return !walker.coroutineState().hasBuiltSuspension && !walker.depthOfCopies() && !walker.isInLoop() && !walker.code().hasLoops();
-}
-
 void noteSuspensionOfCoroutine(Walker& walker, Draft&)
 {
     walker.coroutineState().hasBuiltSuspension = true;
@@ -327,79 +321,11 @@ Reference buildAwaitOfWhatHasNoThen(Walker& walker, Reference awaited, std::span
 
 // ---- Results that are returned in front of the first suspension
 
-// The ramp has allocated the promise and still stands in the call that started the body, so nobody else has it. A caller that awaits the call itself hands in undefined, and takes the value out of the call.
-Reference buildResultInFrontOfFirstSuspension(Walker& walker, Reference driver, Reference returned, Origin origin)
-{
-    if (!walker.has(Mechanism::TypedOperations) || !frameWasNeverSuspended(walker) || !isProvenToHaveNoThen(walker, returned))
-        return { };
-    TypeArena& types = walker.types();
-    TypeID typeOfDriver = driver ? walker.typeOf(driver) : TypeID();
-    if (!typeOfDriver || isNeverType(typeOfDriver))
-        return { };
-    Type type = types.at(typeOfDriver);
-    if (!type.isJavaScriptValue() || (type.primitives & ~Primitive::Undefined))
-        return { };
-    if (!type.hasObjects())
-        return returned;
-    if (!types.isSubset(types.withOnlyObjects(typeOfDriver), typeOfPromisesInCoroutinePromises(walker)))
-        return { };
-    if (!type.primitives) {
-        buildFulfillmentInCoroutinePromises(walker, driver, returned, origin);
-        return walker.isUnreachable() ? Reference() : driver;
-    }
-
-    Draft test = draftInCoroutinePromises(walker, Opcode::TypeTest, origin);
-    test.setValueOperand(driver);
-    test.setTestedType(TypeTable::undefined);
-    Reference hasNoPromise = walker.build(WTF::move(test));
-    if (!hasNoPromise)
-        return { };
-
-    BlockID givesValue = walker.addBlock();
-    BlockID fulfills = walker.addBlock();
-    BlockID meet = walker.addBlock();
-    Reference result = walker.addParameter(meet, { }, Representation::JSValue);
-    walker.branch(hasNoPromise, givesValue, fulfills);
-
-    walker.continueIn(givesValue);
-    walker.jumpTo(meet, std::array { returned });
-
-    walker.continueIn(fulfills);
-    Draft narrowed = draftInCoroutinePromises(walker, Opcode::Narrowed, origin);
-    narrowed.setValueOperand(driver);
-    narrowed.setTestOperand(hasNoPromise);
-    narrowed.setOperandIndex(OperandIndex::TypeTest::value);
-    narrowed.setIsOnTakenEdge(false);
-    Reference promise = walker.build(WTF::move(narrowed));
-    if (promise)
-        buildFulfillmentInCoroutinePromises(walker, promise, returned, origin);
-    walker.jumpTo(meet, std::array { promise });
-    return walker.isUnreachable() ? Reference() : result;
-}
-
-// `yield v` in an async generator is one suspension since async-yields-1 (walk/AOTWalkCoroutines.cpp): its Yield asks whether the Await still stands for its own operand, so an Await that is taken here is seen there.
+// `yield v` in an async generator is one suspension (walk/AOTWalkCoroutines.cpp): its Yield asks whether the Await still stands for its own operand, so an Await that is taken here is seen there.
 
 bool replaceSuspensionOfCoroutine(Walker& walker, const BodyValue& value)
 {
-    return value.opcode() == Opcode::Await && takeWhatEdgesHaveAwaited(walker, value);
-}
-
-BlockFrequency frequencyOfBlockBehindResumption(const Walker& walker, const BodyTerminator& terminator, uint32_t targetIndex)
-{
-    if (terminator.kind() != TerminatorKind::Switch)
-        return BlockFrequency::Normal;
-    auto modeSwitch = terminator.as<TerminatorKind::Switch>();
-    BodyList<int64_t> cases = modeSwitch.cases();
-    if (targetIndex >= cases.size() || cases[targetIndex] == static_cast<int64_t>(ResumeMode::Next))
-        return BlockFrequency::Normal;
-
-    const BodyIndex& index = walker.currentBodyIndex();
-    ValueID subject = modeSwitch.subjectOperand();
-    if (!subject || index.opcodeOf(subject) != Opcode::ResultAt)
-        return BlockFrequency::Normal;
-    auto read = index.value(subject).as<Opcode::ResultAt>();
-    bool readsModeOfYield = read.index() == static_cast<uint32_t>(YieldResult::Mode) && index.opcodeOf(read.resultsOperand()) == Opcode::Yield;
-    return readsModeOfYield ? BlockFrequency::Rare : BlockFrequency::Normal;
+    return value.opcode() == Opcode::Await && takeWhatCallInCopyHasAwaited(walker, value);
 }
 
 // ---- The operations of promises

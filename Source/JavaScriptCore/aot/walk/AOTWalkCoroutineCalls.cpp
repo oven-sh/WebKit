@@ -187,19 +187,6 @@ ValueID findOnlyTakerBehindCasts(const BodyIndex& index, ValueID value)
     return followCastsToOnlyTaker(index, value);
 }
 
-// The ramp of a function that enters files begins with a test that fills the words of its group, and whoever starts the body goes round the ramp: staticsAreFilledAtInlining().
-static bool staticsAreFilledInCoroutineCalls(const Walker& walker, FunctionID callee)
-{
-    const Plan& plan = walker.plan();
-    if (!plan.entersFile(callee))
-        return true;
-    if (!walksInputBody(walker.unit().role))
-        return false;
-    const StaticsGroups& groups = plan.staticsGroups();
-    std::optional<uint32_t> group = groups.groupFilledWhenEntered(walker.program().at(callee).module);
-    return group && group == groups.groupFilledWhenEntered(walker.program().at(walker.currentFunction()).module);
-}
-
 FunctionID findCoroutineCalledBy(Walker& walker, const BodyValue& call)
 {
     if (call.opcode() != Opcode::Call || call.isDoneInPlace() || !walker.has(Mechanism::DirectCalls))
@@ -211,7 +198,7 @@ FunctionID findCoroutineCalledBy(Walker& walker, const BodyValue& call)
     if (!function.isCoroutine() || function.isModuleBody() || !function.hasBody() || function.results.size() != 1)
         return { };
     const CallingConventions& conventions = walker.plan().conventions();
-    if (!conventions.exists({ callee, CodeRole::CoroutineBody }) || !staticsAreFilledInCoroutineCalls(walker, callee))
+    if (!conventions.exists({ callee, CodeRole::CoroutineBody }))
         return { };
     // Whoever goes round the ramp goes round its tests.
     if (rampTestsParametersOf(conventions, callee) && !writtenOperandsMayStartBodyOfCoroutine(walker, walker.draftOf(call), callee))
@@ -389,9 +376,9 @@ bool buildCoroutineOperationOfItsOpcodes(Walker& walker, const BodyValue& value)
 {
     Opcode opcode = value.opcode();
     if (opcodesThatStateTypes.contains(opcode))
-        return nameCastInFrontOfAwaitTakenByEdges(walker, value);
+        return nameCastInFrontOfAwaitTakenInCopy(walker, value);
     if (opcode == Opcode::Await)
-        return takeWhatEdgesHaveAwaited(walker, value);
+        return takeWhatCallInCopyHasAwaited(walker, value);
     if (buildPromiseOperation(walker, value))
         return true;
     if (opcode != Opcode::Call)

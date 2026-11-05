@@ -564,10 +564,18 @@ static void checkNamesForHeapSnapshots(const JoinedTables& check)
 {
     const ProgramTables& tables = check.tables;
     Vector<VariableData> variables;
-    bool endsWhereModuleEnds = forEachNamedVariable(tables.namedVariables(), [](size_t) { }, [&](const VariableData& variable) {
+    uint32_t lastModule = 0;
+    uint32_t endOfClosureNumbers = 0;
+    bool endsWhereModuleEnds = forEachNamedVariable(tables.namedVariables(), [&](uint32_t module, size_t) {
+        lastModule = module;
+    }, [&](const VariableData& variable) {
         variables.append(variable);
+    }, [&](uint32_t first, uint32_t length) {
+        endOfClosureNumbers = std::max(endOfClosureNumbers, first + length);
     });
     check.expect(endsWhereModuleEnds, "TableNotSorted"_s, { }, "namedVariables"_s);
+    check.expect(tables.namedVariables().empty() || lastModule < tables.modules().size(), "TableOutOfBounds"_s, { }, "namedVariables"_s);
+    check.expect(endOfClosureNumbers <= tables.closureFunctions.end - tables.closureFunctions.first, "TableOutOfBounds"_s, { }, "namedVariables"_s);
     check.expect(std::ranges::all_of(variables, [&](const VariableData& variable) {
         if (!check.stringWithNumber(variable.name))
             return false;
@@ -595,10 +603,6 @@ static void checkListedFunctions(const JoinedTables& check)
     auto functionInImage = [&](CodeUnit unit) {
         return unit && conventions.exists(unit) && check.encoder.hasCode(unit) ? functions.idOf(conventions.indexOf(unit)) : FunctionID();
     };
-    for (const Typed::BoundFunctionPlan& bound : conventions.boundFunctions()) {
-        FunctionID entry = functionInImage({ bound.target, Typed::CodeRole::GenericEntryOfBoundFunction, bound.numberOfBoundArguments });
-        check.expect(!entry || std::ranges::binary_search(tables.boundFunctions(), entry.index(), { }, &BoundFunctionData::function), "FunctionNotListed"_s, bound.target, "boundFunctions"_s);
-    }
     for (size_t index = 0; index < check.program.functions.size(); ++index) {
         FunctionID id(index);
         CodeUnit callEntry = conventions.closureEntryOf(id);

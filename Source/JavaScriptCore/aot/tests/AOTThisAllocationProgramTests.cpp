@@ -637,7 +637,7 @@ static void checkPrivateFieldsMoveToTheSubclassInstance(LoadedProgram& program)
         JSObject* prototype = definePrototypeOfSubclass(program, base, subclass);
         JSCell* token = ClassToken::create(vm, base);
         uint16_t listed[] { base.indexOf(brand), base.indexOf(field) };
-        std::optional<uint32_t> orderWord = base.keysAreNeverEnumerated ? std::optional<uint32_t>(unorderedOrderWord) : objects.keyOrders.orderStartingWith(base, listed);
+        std::optional<uint32_t> orderWord = objects.keyOrders.orderStartingWith(base, listed);
         AOT_TEST_CHECK(orderWord);
         Object* allocated = Object::create(vm, objects.structures.objectStructure(vm, base.shape), base, base.size, *orderWord);
         AOT_TEST_CHECK(allocated->store(vm, brand, AcceptedValue::provenAtBuildTime(token)) && allocated->store(vm, field, AcceptedValue::provenAtBuildTime(jsNumber(7))));

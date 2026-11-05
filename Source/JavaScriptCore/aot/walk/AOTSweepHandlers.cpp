@@ -10,6 +10,7 @@
 
 #include "AOTEffectsDeclared.h"
 #include "AOTIRProgram.h"
+#include "AOTPlan.h"
 #include "AOTStringTable.h"
 #include "AOTTypeArena.h"
 #include <algorithm>
@@ -504,7 +505,7 @@ void Sweep::endCoverageAtHeadOf(BlockID id)
 static constexpr uint8_t laterFenceCoversMarkOfSweep = static_cast<uint8_t>(SweepMark::LaterFenceCovers);
 
 // The allocations whose code describeFenceOfSweptOperation() knows. Any other one keeps its fence and stands for no earlier one.
-constexpr OpcodeSet sweptAllocationsWithFences { Opcode::NewObject, Opcode::NewClosure, Opcode::NewBoundClosure, Opcode::NewArray, Opcode::CreateRest };
+constexpr OpcodeSet sweptAllocationsWithFences { Opcode::NewObject, Opcode::NewClosure, Opcode::NewArray, Opcode::CreateRest };
 
 // By the schema it writes the state of the allocator alone, and what it keeps of its operands it keeps in its result. So a cell that it hands on is one that it has made, and whoever makes a cell fences in front of handing it on.
 // The state of the run time is no such heap.
@@ -561,10 +562,6 @@ static FenceOfSweptOperation describeFenceOfSweptOperation(const Program& progra
         // The fence stands in line, in the stub, or in the operation behind the stub: ConstantEmitter::newFullClosure(), generateNewClosure(), generateNewSlimClosure(), operationAOTNewClosureSlow.
         // A singleton is made once, and a deferred closure is not made here.
         bool isMadeInHeap = operation.storage() == AllocationStorage::Heap && (operation.closureForm() == ClosureForm::Full || operation.closureForm() == ClosureForm::Slim);
-        return { .alwaysFences = isMadeInHeap, .mayLeaveFenceToLaterOne = isMadeInHeap };
-    }
-    case Opcode::NewBoundClosure: {
-        bool isMadeInHeap = operation.storage() == AllocationStorage::Heap;
         return { .alwaysFences = isMadeInHeap, .mayLeaveFenceToLaterOne = isMadeInHeap };
     }
     case Opcode::NewArray:

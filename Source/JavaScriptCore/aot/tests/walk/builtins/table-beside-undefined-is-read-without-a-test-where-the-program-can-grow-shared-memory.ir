@@ -2,7 +2,7 @@
 # sink(count(new Map())); sink(size(new Uint8Array(4))); if (sink.never) { count(undefined); size(undefined); }   new SharedArrayBuffer(4).grow;
 # The program can grow shared memory, so nothing is said of views (view-is-asked-where-the-program-can-grow-shared-memory.ir). A table follows no memory, and it is a table that stays as made
 # whether or not undefined arrives beside it: `var table = new WeakMap()` is undefined until its line has run. So the table is read without a test, and the view behind one, with a closed arm.
-# RED UNTIL views-that-another-thread-may-lengthen-2: beside undefined no class was found, and nothing was said of the table either: classes:v6-weakmap-private x1.215.
+# Beside undefined no class was once found, and nothing was said of the table either: x1.215 on one benchmark.
 # RUN: link functions mechanisms=all
 # CHECK: function f1
 # CHECK: parameter 0 {{*}}proven=undefined|Map{{*}} stays-as-made

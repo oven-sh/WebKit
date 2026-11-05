@@ -40,7 +40,7 @@ struct LinkTables;
 // What gets code is the closure of the mentions, so neither the order in which units are taken nor the number of threads changes it.
 // A unit that nothing mentions gets no code: a function that every caller inlined, an entry that nobody enters.
 //
-// CALLERS FIRST. The queue works by the cycles of Link (LinkedFunction::cycle). A unit goes with the cycle of CodeUnit::function, entries and bound functions too.
+// CALLERS FIRST. The queue works by the cycles of Link (LinkedFunction::cycle). A unit goes with the cycle of CodeUnit::function, entries too.
 //   Waiting   some other cycle that holds a referrer of a member is not done. A mention of a member sets its bit and nothing else.
 //   Ready     all of them are done. The members that have their bit come into the queue, and so does at once each member that is mentioned from here on.
 //   Done      all of them are done, and no mentioned member is in the queue or being compiled. Nobody is left who could name the others: they are dropped, and the cycles that this one may name wait for one fewer.
@@ -65,7 +65,6 @@ struct LinkTables;
 //   Allocation                                   F is PlacedAllocation::constructedBy, or PlacedSlot::deferredFunction of a slot of the layout
 //   MethodSelector                               the family lists F, or F is the function of tableLookupOf()
 //   ModuleValue, RequireEdge                     F is the body of the module
-//   Function                                     the unit is a bound function of F
 class UnitQueue {
     WTF_MAKE_NONCOPYABLE(UnitQueue);
 public:
@@ -128,7 +127,7 @@ private:
         std::atomic<uint32_t> numberOfOpenUnits;
         std::atomic<CycleState> state;
     };
-    // A unit of a bound function or of the method table. Its number says nothing of its function.
+    // A unit of the method table. Its number says nothing of its function.
     struct UnitBehindRoles {
         uint32_t function { 0 };
         uint32_t unit { 0 };
@@ -139,7 +138,7 @@ private:
     uint32_t cycleOf(FunctionID function) const { return m_cycleOfFunction.isEmpty() ? 0 : m_cycleOfFunction[function.index()]; }
     bool isInQueueFromStart(FunctionID) const;
     // It names nothing but units of its own function, which are among the seeds or such units themselves. So it may come when the cycle of the function is done, and no cycle counts it.
-    bool standsOutsideCycles(Typed::CodeUnit unit) const { return Typed::namesOnlyUnitsOfItsFunction(unit.role) && isInQueueFromStart(unit.function); }
+    bool standsOutsideCycles(Typed::CodeUnit unit) const { return m_link && m_link->standsOutsideCycles(unit); }
     void orderCycles();
     std::span<const uint32_t> cyclesNamedBy(uint32_t cycle) const LIFETIME_BOUND;
     bool cycleLeadsTo(uint32_t referrer, uint32_t named) const;

@@ -1,5 +1,5 @@
 # `if (type.flags & 1 && (type as Union).objectFlags & 2) .. else if (type.flags & 4) ..`: the parameter is tested once; on the way that has passed every later read, behind a cast or not, is built on the proof, and the way of the closed arm stays apart
-# until 11-04 00:1x the cast, which stands in the block of the read, hid that the block leans on the parameter: each read tested the cell and its shape for itself
+# the cast, which stands in the block of the read, once hid that the block leans on the parameter: each read tested the cell and its shape for itself
 # f1 = reduced
 # -- source: passed-test-holds-for-a-read-behind-a-cast.ts
 # declare function sink(...values: unknown[]): void;

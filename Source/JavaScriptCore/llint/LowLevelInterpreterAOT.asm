@@ -128,13 +128,6 @@ macro loadAnyInstanceOfRealm(instance, hasNone)
     btpz instance, hasNone
 end
 
-macro loadInstanceOfCompiledObject(object, instance, scratch, hasNone)
-    loadp CodeBlock[cfr], instance
-    loadp CodeBlock::m_globalObject[instance], instance
-    loadp JSGlobalObject::m_aotInstance[instance], instance
-    btpz instance, hasNone
-end
-
 macro loadIdentifier(size, opcodeStruct, fieldName, uid, scratch)
     getu(size, opcodeStruct, fieldName, scratch)
     loadp CodeBlock[cfr], uid
@@ -482,7 +475,7 @@ end
 
 # t3: the compiled object, t1: the uid. Leaves the value in t0.
 macro getFromCompiledObject(slow, done)
-    loadInstanceOfCompiledObject(t3, t5, t2, slow)
+    loadAnyInstanceOfRealm(t5, slow)
     loadi JSCell::m_structureID[t3], t2
     findHashedSlot(t5, t2, t1, makeKeyOfRead, t6, t0, slow)
     loadb SlotKind[t6], t0
@@ -530,12 +523,7 @@ end
 
 # t3: the object, t1: the uid.
 macro testPresenceInObject(slow, isPresent, isAbsent)
-    bbeq JSCell::m_type[t3], CompiledObjectType, .isCompiledObject
     loadAnyInstanceOfRealm(t5, slow)
-    jmp .hasInstance
-.isCompiledObject:
-    loadInstanceOfCompiledObject(t3, t5, t2, slow)
-.hasInstance:
     loadi JSCell::m_structureID[t3], t2
     findHashedSlot(t5, t2, t1, makeKeyOfRead, t6, t0, slow)
     loadb SlotKind[t6], t0
@@ -854,7 +842,6 @@ aotOp(op_instanceof, OpInstanceof, macro (size, get, dispatch, metadata, return)
     dispatch()
 end)
 
-# JSPropertyNameEnumerator::computeNext() for an enumerator that is current for a compiled object, whose mode is always GenericMode, and at both ends of a loop, which the ordinary handler leaves to the slow path.
 # The enumerator that a loop over a compiled object with this Structure and order word got last. KeyOrderTable::publishEnumerator() lays it there, and compiled code reads it as this does: ForInEmitter.
 # Of any other object, as the ordinary handler has it.
 aotOp(op_get_property_enumerator, OpGetPropertyEnumerator, macro (size, get, dispatch, metadata, return)
@@ -894,6 +881,7 @@ aotOp(op_get_property_enumerator, OpGetPropertyEnumerator, macro (size, get, dis
     dispatch()
 end)
 
+# JSPropertyNameEnumerator::computeNext() for an enumerator that is current for a compiled object, whose mode is always GenericMode, and at both ends of a loop, which the ordinary handler leaves to the slow path.
 aotOp(op_enumerator_next, OpEnumeratorNext, macro (size, get, dispatch, metadata, return)
     enumeratorNext(size, get, dispatch, macro ()
         loadVariable(get, m_mode, t0)
@@ -1089,7 +1077,7 @@ aotOp(op_put_by_id, OpPutById, macro (size, get, dispatch, metadata, return)
 .compiledObject:
     getu(size, OpPutById, m_flags, t1)
     btinz t1, constexpr PutByIdFlagsFits::s_isDirectBit, .slow
-    loadInstanceOfCompiledObject(t0, t5, t2, .slow)
+    loadAnyInstanceOfRealm(t5, .slow)
     loadIdentifier(size, OpPutById, m_property, t1, t2)
     loadi JSCell::m_structureID[t0], t2
     findHashedSlot(t5, t2, t1, makeKeyOfStore, t6, t3, .slow)
@@ -1678,7 +1666,7 @@ aotOp(op_new_array, OpNewArray, macro (size, get, dispatch, metadata, return)
     return(t1)
 
 .slow:
-    callSlowPath(_llint_slow_path_aot_new_array)
+    callSlowPath(_llint_slow_path_new_array)
     dispatch()
 end)
 
@@ -1720,7 +1708,7 @@ macro aotJumpOnTruthiness(opcodeName, opcodeStruct, ifTruthy, ifFalsy)
         bbbeq t1, constexpr LastValueCompareCellType, .slow
         btbz JSCell::m_flags[t0], constexpr MasqueradesAsUndefined, .truthy
     .slow:
-        callSlowPath(_llint_slow_path_aot_%opcodeName%)
+        callSlowPath(_llint_slow_path_%opcodeName%)
         nextInstruction()
 
     .conditionIsConstant:

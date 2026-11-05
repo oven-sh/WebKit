@@ -1,6 +1,5 @@
 # made of b6a215a8725d33db
 # the same literals where each object is handed to Object.keys, JSON.stringify and Object.getOwnPropertyDescriptor: it leaves the program, so every slot takes every value and nothing is a misfit
-# kept because ON THE TREE WITHOUT THE PORT one of the two runs of the suite said 12 of 13 of 13 (TESTS.txt of 09:37): a fault of the tree or of the program, not of row 3.9
 # f1 = row, f2 = two, f3 = describe, f4 = tell
 # RUN(FORM): walk f1 mechanisms=all-Arrivals
 # FORM-LABEL: code f1:Body

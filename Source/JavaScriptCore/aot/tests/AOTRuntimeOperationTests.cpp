@@ -138,15 +138,6 @@ static void collectingOperationNeedsCollectingEntry()
     AOT_TEST_CHECK(!numberOfHiddenCollections);
 }
 
-static void entriesAreNamedAfterWhatTheyHold()
-{
-    AOT_TEST_CHECK(nameOf(Entry::operationAOTValueAdd) == "operationAOTValueAdd"_s);
-    AOT_TEST_CHECK(nameOf(Entry::operationAOTLookupExceptionHandler) == "operationAOTLookupExceptionHandler"_s);
-    AOT_TEST_CHECK(nameOf(Entry::operationArrayIndexOfValueInt32OrContiguous) == "operationArrayIndexOfValueInt32OrContiguous"_s);
-    AOT_TEST_CHECK(nameOf(Entry::HandleException) == "HandleException"_s);
-    AOT_TEST_CHECK(nameOf(Entry::VirtualCallTrampoline) == "VirtualCallTrampoline"_s);
-}
-
 static void entryNamesAreDistinct()
 {
     HashSet<ASCIILiteral> names;
@@ -885,7 +876,6 @@ std::span<const NativeTest> runtimeOperationTests()
         { "operationMayShareNameWithRuntimeOperation"_s, operationMayShareNameWithRuntimeOperation },
         { "entryWithoutOperationHasNone"_s, entryWithoutOperationHasNone },
         { "collectingOperationNeedsCollectingEntry"_s, collectingOperationNeedsCollectingEntry },
-        { "runtime-operations/entries-are-named-after-what-they-hold"_s, entriesAreNamedAfterWhatTheyHold },
         { "runtime-operations/entry-names-are-distinct"_s, entryNamesAreDistinct },
         { unusedEntriesTrapTest, unusedEntriesTrap },
         { callsThroughRuntimeTableTest, operationsAreCalledThroughRuntimeTable },

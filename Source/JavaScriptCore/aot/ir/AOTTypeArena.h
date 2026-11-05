@@ -70,10 +70,6 @@ public:
     ~TypeArena();
 
     void reset();
-    // Where something that the relations of types lean on has changed: noteSubclassesOfBuiltinClasses().
-    void forgetResults();
-    // Where sets are gone: IDSetTable::collectShard(). Nothing that is remembered may answer with one of them.
-    void forgetResultsOfTypesAndSets();
     // With the scratch of its sets, which lasts as long as they do.
     size_t sizeOfMemosInBytes() const;
 
@@ -164,9 +160,6 @@ public:
     //   the seeds of both sides stay
     TypeID intersectionOf(TypeID, TypeID, DeclaredParts = DeclaredParts::FromEither);
     TypeID castTo(TypeID value, TypeID castType) { return intersectionOf(value, castType, DeclaredParts::FromSecond); }
-    // intersectionOf() for a filter of Facts, which is handed a value piece by piece and unites the answers: the answer for a union is the union of the answers.
-    // A merged form that only may fit the layouts and classes of the filter comes through as `unknown` within them, whatever stands beside it.
-    TypeID passingFilter(TypeID value, TypeID typeOfFilter);
     // What is left of `value` where a test for `removed` has failed: only what would surely have passed goes.
     TypeID differenceOf(TypeID value, TypeID removed);
     // Every value of the first is one of the second. Seeds are not looked at. A named object lies inside `unknown` if its shape surely does.
@@ -190,18 +183,9 @@ public:
     // The type in the words of tests, which is how an expected type speaks: each named object that no comparison of pointers finds gives way to its layout or class,
     // a closure stays, and one without a shape makes it anyObject or anyFunction. For the guess that merged members beside `unknown` make, hand in withOnlyNamedObjects().
     TypeID describedByShape(TypeID);
-    // Without `unknown`: the primitives and the named objects.
-    TypeID withOnlyNamedObjects(TypeID);
-    // Without the merged objects for which the `unknown` beside them stands, so it holds the same values.
-    TypeID withoutMergedObjectsInsideUnknown(TypeID);
-    // Without each copy for an instance whose shared form the type names too, so it holds the same values. A copy whose shared form is not named stays: it says more than the form. A null type stays null.
-    TypeID withoutCopiesBesideSharedForms(TypeID);
     // No test finds a built-in that each module has one of, and none tells the instances of a class without an instance test: both widen to any object or any function.
     // Primitives stay as they are, a range of integers among them: TypeTest of an Int64 against int32 is how an overflow is found. Bounds of fractions go.
     TypeID testablePartOf(TypeID);
-
-    // Facts: escaped objects give way to their merged forms.
-    TypeID withObjectsReplaced(TypeID, NOESCAPE const ScopedLambda<ObjectID(ObjectID)>&);
 
     // The walk's loops: a bound that moved since `previous` goes to the next landmark, so a range settles in a few steps.
     TypeID widenedFrom(TypeID now, TypeID previous);
@@ -222,15 +206,9 @@ public:
     };
     SetOfRound setOfRound(LayoutSetID);
     SetOfRound setOfRound(ObjectSetID);
-    // For a round over what a number of the program stands for: the copies of a function.
-    SetOfRound numberOfRound(uint32_t);
     std::optional<WordsOfRound> rememberedRound(uint8_t question, size_t numberOfWords, SetOfRound, uint32_t second);
     // Bit n of `typesAmongWords`: word n is a type.
     void rememberRound(uint8_t question, size_t numberOfWords, uint8_t typesAmongWords, SetOfRound, uint32_t second, const WordsOfRound&);
-    // The same for an answer that is more than a word, worked out from any number of words, the first of which is the asker's SharedQuestion. What SharedAnswers cannot keep because a word or the answer lies in the thread.
-    // It dies at reset() and is never overwritten. Null: nobody has answered.
-    const SharedAnswers::Answer* answerKeptUntilReset(std::span<const uint32_t> question) const;
-    const SharedAnswers::Answer& keepAnswerUntilReset(std::span<const uint32_t> question, std::unique_ptr<SharedAnswers::Answer>);
 
     // By content, the same at any number of threads. For whoever must sort types.
     std::strong_ordering compareByContent(TypeID, TypeID) const;
@@ -264,7 +242,7 @@ public:
 private:
     friend class ArenasOfWorkers;
 
-    enum class Operation : uint8_t { Union, Intersection, Cast, Difference, Subset, Overlap, SameObject, DescribedByShape, TestablePart, WithoutMergedObjectsInsideUnknown, WithoutCopiesBesideSharedForms, MembersWithAlias, PassingFilter, WithoutPrimitives };
+    enum class Operation : uint8_t { Union, Intersection, Cast, Difference, Subset, Overlap, SameObject, DescribedByShape, TestablePart, MembersWithAlias, WithoutPrimitives };
 
     struct MemoEntry {
         uint32_t first { UINT32_MAX };
@@ -337,15 +315,6 @@ private:
     IDPairMemo m_lastingMemo;
     IDListMemo m_unionsOfMany;
     Vector<MemoEntry> m_memoUntilReset;
-    struct AnswerUntilReset {
-        uint32_t hash { 0 };
-        uint32_t firstWord { 0 };
-        uint32_t numberOfWords { 0 };
-        std::unique_ptr<SharedAnswers::Answer> answer;
-    };
-    Vector<AnswerUntilReset> m_answersUntilReset;
-    Vector<uint32_t> m_wordsOfAnswersUntilReset;
-    Vector<uint32_t> m_indexOfAnswersUntilReset;
 };
 
 // An arena that keeps InProgram for each thread of the loops, and what those threads intern together.
@@ -376,7 +345,6 @@ private:
 // Defined in AOTTypeUnion.cpp and AOTTypeIntersection.cpp. Only TypeArena calls them, behind its shortcuts and its memo.
 TypeParts uniteTypes(TypeArena&, const Type&, const Type&);
 TypeParts intersectTypes(TypeArena&, const Type&, const Type&, DeclaredParts);
-TypeParts typeThatPassesFilter(TypeArena&, const Type& value, const Type& filter, bool& someMergedFormBecomesUnknown);
 TypeParts subtractTypes(TypeArena&, const Type& value, const Type& removed);
 
 inline TypeReader::TypeReader(const TypeArena& arena)

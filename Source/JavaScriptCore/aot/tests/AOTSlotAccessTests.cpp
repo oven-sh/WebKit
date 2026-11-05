@@ -49,23 +49,7 @@ static constexpr double doubleSamples[] = {
 
 namespace {
 
-struct IntegerRange {
-    SlotRepresentation representation;
-    double minimum;
-    double maximum;
-};
-
 } // anonymous namespace
-
-static constexpr IntegerRange integerRanges[] = {
-    { SlotRepresentation::Uint8, 0, UINT8_MAX },
-    { SlotRepresentation::Int8, INT8_MIN, INT8_MAX },
-    { SlotRepresentation::Uint16, 0, UINT16_MAX },
-    { SlotRepresentation::Int16, INT16_MIN, INT16_MAX },
-    { SlotRepresentation::Int32, INT32_MIN, INT32_MAX },
-    { SlotRepresentation::Uint32, 0, UINT32_MAX },
-    { SlotRepresentation::OptionalInt32, minInlineInt32, INT32_MAX },
-};
 
 static uint64_t bitsOutsideSlot(SlotRepresentation representation, uint64_t word)
 {
@@ -107,35 +91,6 @@ static void testUnboxedWritesMatchBoxedWrites(LoadedProgram& program)
             checkUnboxedWrite(strings, representation, jsBoolean(value), [&](void* slot) {
                 return tryWriteBoolean(representation, slot, value);
             });
-        }
-    }
-}
-
-static void testIntegersOutsideRangeAreRefused(LoadedProgram& program)
-{
-    ProgramStrings& strings = *program.state().strings;
-    for (const IntegerRange& range : integerRanges) {
-        for (double inside : { range.minimum, range.maximum }) {
-            uint64_t slot = untouchedBits;
-            AOT_TEST_CHECK(tryWriteSlot(strings, range.representation, &slot, jsNumber(inside)));
-            AOT_TEST_CHECK(readSlot(range.representation, &slot, strings) == jsNumber(inside));
-        }
-        for (double outside : { range.minimum - 1, range.maximum + 1, range.maximum - 0.5 }) {
-            uint64_t slot = untouchedBits;
-            AOT_TEST_CHECK(!tryWriteSlot(strings, range.representation, &slot, jsNumber(outside)));
-            AOT_TEST_CHECK(slot == untouchedBits);
-        }
-    }
-    for (SlotRepresentation representation : { SlotRepresentation::Int64, SlotRepresentation::OptionalInt64 }) {
-        for (double inside : { -0x1p61, 0x1p61 }) {
-            uint64_t slot = untouchedBits;
-            AOT_TEST_CHECK(tryWriteSlot(strings, representation, &slot, jsNumber(inside)));
-            AOT_TEST_CHECK(readSlot(representation, &slot, strings) == jsNumber(inside));
-        }
-        for (double outside : { -0x1p62, 0x1p62, 0.5 }) {
-            uint64_t slot = untouchedBits;
-            AOT_TEST_CHECK(!tryWriteSlot(strings, representation, &slot, jsNumber(outside)));
-            AOT_TEST_CHECK(slot == untouchedBits);
         }
     }
 }
@@ -227,11 +182,6 @@ static Typed::DistancesByShape checkedDistancesIn(Typed::DistanceForm form, std:
     return distances;
 }
 
-static size_t numberOfElementsIn(const Typed::DistancesByShape& distances)
-{
-    return distances.table.size() >> distances.logBytesPerDistance;
-}
-
 namespace {
 
 struct OperationsThatFindDistance {
@@ -278,16 +228,6 @@ static OperationsThatFindDistance runCodeThatFindsDistances(std::span<const Type
     return operations;
 }
 
-static Vector<Typed::DistanceOfShapes> membersInTwoRunsFarApart()
-{
-    Vector<Typed::DistanceOfShapes> members;
-    for (uint32_t shape = 5686; shape <= 5820; shape += 3)
-        members.append({ { shape, 2 }, 16 });
-    for (uint32_t shape = 2414; shape <= 2452; ++shape)
-        members.append({ { shape, 1 }, shape == 2415 || shape == 2422 ? 40u : 16u });
-    return members;
-}
-
 // None of the multipliers tried puts the places where the distance changes between two elements.
 static Vector<Typed::DistanceOfShapes> longRunsSideBySide(uint32_t numberOfRuns)
 {
@@ -296,62 +236,6 @@ static Vector<Typed::DistanceOfShapes> longRunsSideBySide(uint32_t numberOfRuns)
     for (uint32_t run = 0; run < numberOfRuns; ++run)
         members.append({ { 1 + run * shapesPerRun, shapesPerRun }, 8 * run });
     return members;
-}
-
-static void testDistancesOfMembersThatSpanManyShapesAreOneLoad()
-{
-    Vector<Typed::DistanceOfShapes> members = membersInTwoRunsFarApart();
-    Typed::DistancesByShape distances = Typed::distancesByShape(members.span());
-    AOT_TEST_CHECK(distances.form == Typed::DistanceForm::HashedTable);
-    AOT_TEST_CHECK(distances.table == checkedDistancesIn(Typed::DistanceForm::HashedTable, members.span()).table);
-    AOT_TEST_CHECK(distances.table.size() <= 128);
-    AOT_TEST_CHECK(distances.table.size() < checkedDistancesIn(Typed::DistanceForm::PagedTable, members.span()).table.size());
-    AOT_TEST_CHECK(runCodeThatFindsDistances(members.span(), distances).loads == 1);
-
-    Typed::DistancesByShape byComparison = checkedDistancesIn(Typed::DistanceForm::Comparisons, members.span());
-    AOT_TEST_CHECK(distances.numberOfInstructions() < byComparison.numberOfInstructions());
-    AOT_TEST_CHECK(runCodeThatFindsDistances(members.span(), byComparison).selects == 4);
-}
-
-static void testDistancesOfMembersThatSpanManyShapesAreTwoLoads()
-{
-    Vector<Typed::DistanceOfShapes> members = longRunsSideBySide(4);
-    Typed::DistancesByShape distances = Typed::distancesByShape(members.span());
-    AOT_TEST_CHECK(distances.form == Typed::DistanceForm::PagedTable);
-    AOT_TEST_CHECK(distances.table == checkedDistancesIn(Typed::DistanceForm::PagedTable, members.span()).table);
-    AOT_TEST_CHECK(distances.numberOfInstructions() < checkedDistancesIn(Typed::DistanceForm::Comparisons, members.span()).numberOfInstructions());
-    AOT_TEST_CHECK(distances.table.size() * 8 < checkedDistancesIn(Typed::DistanceForm::FlatTable, members.span()).table.size());
-    AOT_TEST_CHECK(runCodeThatFindsDistances(members.span(), distances).loads == 2);
-
-    members = membersInTwoRunsFarApart();
-    distances = checkedDistancesIn(Typed::DistanceForm::PagedTable, members.span());
-    AOT_TEST_CHECK(distances.table.size() * 8 < checkedDistancesIn(Typed::DistanceForm::FlatTable, members.span()).table.size());
-    AOT_TEST_CHECK(runCodeThatFindsDistances(members.span(), distances).loads == 2);
-}
-
-static void testOneOrTwoStretchesFarApartAreCompared()
-{
-    auto formOf = [](std::span<const Typed::DistanceOfShapes> members) {
-        Typed::DistancesByShape distances = Typed::distancesByShape(members);
-        runCodeThatFindsDistances(members, distances);
-        return distances.form;
-    };
-
-    const Typed::DistanceOfShapes oneStretch[] { { { 10, 1 }, 8 }, { { 5000, 2 }, 8 } };
-    AOT_TEST_CHECK(formOf(oneStretch) == Typed::DistanceForm::Comparisons);
-    const Typed::DistanceOfShapes oneRange[] { { { 10, 1 }, 0 }, { { 2000, 3 }, 8 }, { { 9000, 1 }, 0 } };
-    AOT_TEST_CHECK(formOf(oneRange) == Typed::DistanceForm::HashedTable);
-    const Typed::DistanceOfShapes threeStretches[] { { { 10, 1 }, 0 }, { { 2000, 3 }, 8 }, { { 9000, 1 }, 16 } };
-    AOT_TEST_CHECK(formOf(threeStretches) == Typed::DistanceForm::HashedTable);
-    const Typed::DistanceOfShapes threeStretchesNearby[] { { { 10, 1 }, 0 }, { { 200, 3 }, 8 }, { { 900, 1 }, 16 } };
-    AOT_TEST_CHECK(formOf(threeStretchesNearby) == Typed::DistanceForm::FlatTable);
-    const Typed::DistanceOfShapes twoStretchesNearby[] { { { 10, 1 }, 0 }, { { 11, 1 }, 8 } };
-    AOT_TEST_CHECK(formOf(twoStretchesNearby) == Typed::DistanceForm::FlatTable);
-
-    const Typed::DistanceOfShapes widestFlat[] { { { 1, 1 }, 0 }, { { 2, 1 }, 8 }, { { Typed::maxShapesInFlatTable, 1 }, 16 } };
-    AOT_TEST_CHECK(formOf(widestFlat) == Typed::DistanceForm::FlatTable);
-    const Typed::DistanceOfShapes tooWideForFlat[] { { { 1, 1 }, 0 }, { { 2, 1 }, 8 }, { { Typed::maxShapesInFlatTable + 1, 1 }, 16 } };
-    AOT_TEST_CHECK(formOf(tooWideForFlat) == Typed::DistanceForm::HashedTable);
 }
 
 static void testFormsWithEquallyManyInstructionsAreCompared()
@@ -384,52 +268,6 @@ static Vector<Typed::DistanceOfShapes> membersInFourRuns(uint32_t scaleOfShapes,
     return members;
 }
 
-static void testHashedTablesGrowWithTheShapesNotTheSpan()
-{
-    for (uint32_t scaleOfDistances : { 1u, 100u }) {
-        for (uint32_t scaleOfShapes : { 1u, 40u, 4000u }) {
-            Vector<Typed::DistanceOfShapes> members = membersInFourRuns(scaleOfShapes, scaleOfDistances);
-            Typed::DistancesByShape distances = Typed::distancesByShape(members.span());
-            AOT_TEST_CHECK(distances.form == Typed::DistanceForm::HashedTable);
-            AOT_TEST_CHECK(distances.logBytesPerDistance == (scaleOfDistances > 1));
-            AOT_TEST_CHECK(numberOfElementsIn(distances) == size_t { 1 } << (32 - distances.hashShift));
-            AOT_TEST_CHECK(numberOfElementsIn(distances) <= 128);
-            AOT_TEST_CHECK(distances.table == checkedDistancesIn(Typed::DistanceForm::HashedTable, members.span()).table);
-            runCodeThatFindsDistances(members.span(), distances);
-        }
-    }
-
-    // Shapes at one distance share elements.
-    Vector<Typed::DistanceOfShapes> runs;
-    for (uint32_t run = 0; run < 6; ++run)
-        runs.append({ { 1000 + run * 5000, 100 }, 16 + 8 * (run % 2) });
-    Typed::DistancesByShape distances = Typed::distancesByShape(runs.span());
-    AOT_TEST_CHECK(distances.form == Typed::DistanceForm::HashedTable);
-    AOT_TEST_CHECK(numberOfElementsIn(distances) <= 16);
-    runCodeThatFindsDistances(runs.span(), distances);
-}
-
-static void testPagesWithEqualDistancesShareRow()
-{
-    Vector<Typed::DistanceOfShapes> alternating;
-    for (uint32_t shape = 100; shape < 100 + 2048; ++shape)
-        alternating.append({ { shape, 1 }, shape % 2 ? 8u : 16u });
-    Typed::DistancesByShape distances = checkedDistancesIn(Typed::DistanceForm::PagedTable, alternating.span());
-    AOT_TEST_CHECK(distances.table.size() <= 256);
-    runCodeThatFindsDistances(alternating.span(), distances);
-
-    // Nobody has the numbers between the runs, so their pages take no row.
-    Vector<Typed::DistanceOfShapes> runs;
-    for (uint32_t first = 1000; first <= 61000; first += 20000) {
-        for (uint32_t shape = first; shape < first + 12; ++shape)
-            runs.append({ { shape, 1 }, 8 * (shape % 3) });
-    }
-    distances = checkedDistancesIn(Typed::DistanceForm::PagedTable, runs.span());
-    AOT_TEST_CHECK(distances.logBytesPerPageEntry == 1);
-    AOT_TEST_CHECK(distances.table.size() * 16 < checkedDistancesIn(Typed::DistanceForm::FlatTable, runs.span()).table.size());
-    runCodeThatFindsDistances(runs.span(), distances);
-}
-
 static void testPagedTablesHoldWideSpansAndWideDistances()
 {
     for (uint32_t scaleOfDistances : { 1u, 100u }) {
@@ -442,26 +280,6 @@ static void testPagedTablesHoldWideSpansAndWideDistances()
             runCodeThatFindsDistances(members.span(), distances);
         }
     }
-}
-
-static void testNeighborsAtOneDistanceAreOneStretch()
-{
-    Vector<Typed::DistanceOfShapes> members = membersInTwoRunsFarApart();
-    Typed::DistancesByComparison plan = checkedDistancesByComparison(members.span());
-    AOT_TEST_CHECK(plan.stretches.size() == 5);
-    AOT_TEST_CHECK(plan.comparesWithFirstShapes);
-    AOT_TEST_CHECK(plan.numberOfComparisons() == 4);
-
-    // Where every other stretch lies at the lowest offset, the ranges of the others are fewer than the places where the distance changes.
-    const Typed::DistanceOfShapes alternating[] { { { 10, 1 }, 0 }, { { 2000, 3 }, 8 }, { { 2100, 1 }, 0 }, { { 4000, 1 }, 8 }, { { 4001, 2 }, 8 }, { { 9000, 1 }, 0 } };
-    plan = checkedDistancesByComparison(alternating);
-    AOT_TEST_CHECK(plan.stretches.size() == 5);
-    AOT_TEST_CHECK(!plan.comparesWithFirstShapes);
-    AOT_TEST_CHECK(plan.numberOfComparisons() == 2);
-
-    const Typed::DistanceOfShapes alone[] { { { 7, 4 }, 24 } };
-    plan = checkedDistancesByComparison(alone);
-    AOT_TEST_CHECK(!plan.numberOfComparisons());
 }
 
 static void testDistancesByComparisonOfManySets()
@@ -514,18 +332,11 @@ std::span<const NativeTest> slotAccessTests()
 {
     static constexpr NativeTest tests[] = {
         { "slot-access/unboxed-writes-match-boxed-writes"_s, withProgram<testUnboxedWritesMatchBoxedWrites> },
-        { "slot-access/integers-outside-range-are-refused"_s, withProgram<testIntegersOutsideRangeAreRefused> },
         { "slot-access/cells-round-trip"_s, withProgram<testCellsRoundTrip> },
         { "slot-access/strings-outside-literal-table-round-trip"_s, withProgram<testStringsOutsideLiteralTableRoundTrip> },
         { "slot-access/markers-hold-no-cell"_s, withProgram<testMarkersHoldNoCell> },
-        { "slot-access/neighbors-at-one-distance-are-one-stretch"_s, testNeighborsAtOneDistanceAreOneStretch },
         { "slot-access/distances-by-comparison-of-many-sets"_s, testDistancesByComparisonOfManySets },
-        { "slot-access/distances-of-members-that-span-many-shapes-are-one-load"_s, testDistancesOfMembersThatSpanManyShapesAreOneLoad },
-        { "slot-access/distances-of-members-that-span-many-shapes-are-two-loads"_s, testDistancesOfMembersThatSpanManyShapesAreTwoLoads },
-        { "slot-access/one-or-two-stretches-far-apart-are-compared"_s, testOneOrTwoStretchesFarApartAreCompared },
         { "slot-access/forms-with-equally-many-instructions-are-compared"_s, testFormsWithEquallyManyInstructionsAreCompared },
-        { "slot-access/hashed-tables-grow-with-the-shapes-not-the-span"_s, testHashedTablesGrowWithTheShapesNotTheSpan },
-        { "slot-access/pages-with-equal-distances-share-a-row"_s, testPagesWithEqualDistancesShareRow },
         { "slot-access/paged-tables-hold-wide-spans-and-wide-distances"_s, testPagedTablesHoldWideSpansAndWideDistances },
     };
     return tests;

@@ -1,7 +1,7 @@
 # `process[name] = 1` under a name that nobody can read: no member of `process` is locked, so the place of `process.env` is no constant. The instance keeps what the first read found all the same, under a watch of the engine that empties the word
 # as soon as anybody puts something else there: the read is a load of the word, typed `anything`, and it is made each time: two reads with a call between them are two loads
 # `process.execArgv = list` in the same program: a member that is seen to be written under its own name is read by name as before: behind that write nothing could be kept
-# RED UNTIL 0-watched-values-of-built-ins-1: both were `PropGet`
+# Both were once `PropGet`
 # function open(name) { process[name] = 1; }  function twice(f) { const a = process.env; f(); return a === process.env; }  function written(list) { process.execArgv = list; return process.execArgv; }
 # RUN: walk f2 f3 mechanisms=all
 # REQUIRES: entries-of-bun

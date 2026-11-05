@@ -379,21 +379,46 @@ void ElementAccessEmitter::generateGetArrayLength(const ValueContext& value)
     define(value, arrayLength(in<CellPointer>(value->arrayOperand())));
 }
 
-void ElementAccessEmitter::generateGetArrayCapacity(const ValueContext& value)
-{
-    define(value, vectorLength(elementsOf(in<CellPointer>(value->arrayOperand()))));
-}
-
 // Loaded under the heap of inner pointers: the array outlives the last access that takes the result, however far from here it stands.
 void ElementAccessEmitter::generateGetArrayStorage(const ValueContext& value)
 {
     define(value, elementsOf(in<CellPointer>(value->arrayOperand())).butterfly);
 }
 
+bool ElementAccessEmitter::testsEveryPosition()
+{
+    return AOT::hasFlag(build().options().testing, Wire::TestingSwitch::TestsEveryPosition);
+}
+
+void ElementAccessEmitter::stopUnlessInside(const ValueContext& access, Condition isInside)
+{
+    LBasicBlock stops = newBlock();
+    LBasicBlock continuation = newBlock();
+    ScopeFork fork = m_out.forkScope();
+    m_out.branch(isInside.value(), normalEdge(continuation), rareEdge(stops));
+    m_out.appendToArm(stops, fork);
+    FunctionID writtenIn = m_code.inlineFrames()[access->inlineFrame].callee;
+    m_out.suspendDeclaredAccesses();
+    callVoidOperation(access, RuntimeOperation::StopAtFalseProof, { Boxed(m_out.constInt64(JSValue::encode(JSValue()))), word32(static_cast<int32_t>(writtenIn.index())), word32(static_cast<int32_t>(access->position)), word32(static_cast<int32_t>(ProofSource::WhatIsRemembered)) });
+    m_out.resumeDeclaredAccesses();
+    m_out.unreachable();
+    m_out.appendToArm(continuation, fork);
+}
+
+void ElementAccessEmitter::holdPositionInsideList(const ValueContext& access)
+{
+    if (!testsEveryPosition()) {
+        build().statistics().count(StatisticID::RangeChecksRemoved);
+        return;
+    }
+    ArrayElements elements = elementsOf(in<CellPointer>(access->arrayOperand()));
+    stopUnlessInside(access, testLength(indexInsideLength(access->positionOperand()), elements).isInside);
+}
+
 ArrayElements ElementAccessEmitter::elementsOf(const ValueContext& access, CellPointer array)
 {
     std::optional<Pointer> storage = inOptional<Pointer>(access->storageOperand());
-    if (!storage)
+    if (!storage || testsEveryPosition())
         return elementsOf(array);
     return { array, *storage };
 }
@@ -431,7 +456,7 @@ LengthTest ElementAccessEmitter::testLength(const ValueContext& value, Integer i
 {
     if (liesInsideLength(value))
         return { boolean(true), index.value()->opcode() == Machine::SExt32 ? zeroExtended(Word32(index.value()->child(0))) : index };
-    if (!VariadicOperandPosition::length(value->opcode) || value->lengthOperands().empty())
+    if (!VariadicOperandPosition::length(value->opcode) || value->lengthOperands().empty() || testsEveryPosition())
         return testLength(index, elements);
     auto lengths = value->lengthOperands();
     Operand length = get(lengths[0]);
@@ -518,6 +543,8 @@ Boxed ElementAccessEmitter::readBoxedElement(const ValueContext& value, const Ar
 
 void ElementAccessEmitter::generateGetArrayElement(const ValueContext& value)
 {
+    if (value->isInBounds() || value->isPresent())
+        holdPositionInsideList(value);
     if (GuessedAccessEmitter::testsForItself(value)) {
         emitter<GuessedAccessEmitter>().generateElementRead(value);
         return;
@@ -764,6 +791,7 @@ Integer ElementAccessEmitter::indexOfPresenceTest(const ValueContext& test, LBas
     ValueID position = test->positionOperand();
     if (!liesInsideLength(test))
         return indexOrElse(position, test->keyIsIntegral(), isNotAnIndex, NaNIndexMode::ProduceOutOfBoundsIndex);
+    holdPositionInsideList(test);
     return indexInsideLength(position);
 }
 
@@ -882,6 +910,8 @@ void ElementAccessEmitter::generateGetStringCodeUnit(const ValueContext& value)
     StringEmitter& strings = emitter<StringEmitter>();
     CharacterView view = strings.viewOf(value, value->stringOperand());
     Word32 position = strings.word32Of(value->positionOperand());
+    if (testsEveryPosition())
+        stopUnlessInside(value, below(position, view.length));
     define(value, strings.codeUnitAt(view, position));
 }
 

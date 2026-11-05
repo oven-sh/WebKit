@@ -16,6 +16,7 @@
 #include "AOTBuiltinTable.h"
 #include "AOTFacts.h"
 #include "AOTIRProgram.h"
+#include "AOTLinkTypesOnAllThreads.h"
 #include "AOTObjects.h"
 #include "AOTTypeArena.h"
 #include <algorithm>
@@ -46,7 +47,7 @@ static TypeID typeHeldInLinkCoroutines(const LinkFlow& flow, TypeArena& types, L
         return TypeTable::never;
     if (held.isAnything())
         return { };
-    // Facts::held() gets no expectation of its own here: tried 11-04 (what is unseen taken out of the type for that reading): no row of 382 moved, and the application's image grew by 180 KB.
+    // Facts::held() gets no expectation of its own here: tried (what is unseen taken out of the type for that reading): no row of 382 moved, and the application's image grew by 180 KB.
     held = flow.withoutObjectsThatHaveEscaped(held);
 
     TypeID written = flow.toTypeID(types, held);
@@ -76,8 +77,14 @@ static NodesOfBodyInLinkCoroutines findNodesOfBodyInLinkCoroutines(const ThinSum
 static BitVector findGeneratorsTakenOtherwiseInLinkCoroutines(const Program& program, const LinkFlow& flow, const LinkTables& tables)
 {
     BitVector takenOtherwise(program.functions.size());
+    // A record of the program lies in a line of memory of its own, and there are more calls than functions.
+    BitVector isGenerator(program.functions.size());
+    for (uint32_t index = 0; index < program.functions.size(); ++index) {
+        if (program.functions[index].has(FunctionFlags::IsGenerator))
+            isGenerator.quickSet(index);
+    }
     auto entersGenerator = [&](const LinkedCall& call) {
-        return program.at(call.callee).has(FunctionFlags::IsGenerator);
+        return isGenerator.quickGet(call.callee.index());
     };
 
     Vector<ValueID, 8> sitesOnlyIterated;
@@ -104,6 +111,8 @@ static BitVector findGeneratorsTakenOtherwiseInLinkCoroutines(const Program& pro
     return takenOtherwise;
 }
 
+static thread_local TypesOfThreadInLink s_typesOfThreadInLinkCoroutines;
+
 void writeCoroutinesOfLink(const Program& program, const LinkFlow& flow, TypeArena& types, LinkTables& tables)
 {
     BitVector generatorsTakenOtherwise = findGeneratorsTakenOtherwiseInLinkCoroutines(program, flow, tables);
@@ -114,22 +123,34 @@ void writeCoroutinesOfLink(const Program& program, const LinkFlow& flow, TypeAre
         return member && !program.isUnlocked(member) && !program.isUnlocked(builtins.canonicalID(member));
     });
 
-    for (uint32_t index = 0; index < program.functions.size(); ++index) {
+    // All threads look for the coroutines, and each is written by itself: AOTLinkTypesOnAllThreads.h.
+    LinkFlow::ViewOfHeldReading* view = LinkFlow::ViewAtWork::current();
+    Vector<uint32_t> coroutines = findIndicesInParallel(flow.loopsOfReading(), static_cast<unsigned>(program.functions.size()), [&](unsigned index) {
+        LinkFlow::ViewAtWork viewAtWork(view);
         FunctionID id(index);
         const Function& function = program.at(id);
         // No call stands for what enters the body of a module, and the loader has its promise.
         if (!function.isCoroutine() || !function.hasBody() || function.isModuleBody() || function.results.size() != 1 || !flow.reached.get(index))
-            continue;
+            return false;
         // A summary that has read the body leads the object of the coroutine into the result, and nothing else. Of any other summary a node that is missing says nothing.
+        return flow.typeAt(flow.result(id, 0)).classes == LinkType::Classes::Site;
+    });
+    auto typesOfThread = [&]() -> TypeArena& {
+        return s_typesOfThreadInLinkCoroutines.types ? *s_typesOfThreadInLinkCoroutines.types : types;
+    };
+    tables.coroutines.fill(LinkedCoroutine { }, coroutines.size());
+    writeTypedPositionsOnAllThreads(flow, flow.program.types, static_cast<unsigned>(coroutines.size()), [](TypesOfThreadInLink typesHanded) {
+        s_typesOfThreadInLinkCoroutines = typesHanded;
+    }, [&](unsigned place) {
+        uint32_t index = coroutines[place];
+        FunctionID id(index);
+        const Function& function = program.at(id);
         const LinkType& objects = flow.typeAt(flow.result(id, 0));
-        if (objects.classes != LinkType::Classes::Site)
-            continue;
-
         bool isGenerator = function.has(FunctionFlags::IsGenerator);
         NodesOfBodyInLinkCoroutines nodes = findNodesOfBodyInLinkCoroutines(flow.summaries.at(id));
         // A node that is missing says nothing: a summary made without the lines of the scan that lay it looks the same as a body that never yields.
         auto typeHeldAt = [&](uint32_t nodeInSummary) {
-            return nodeInSummary == noSummaryNode ? TypeID() : typeHeldInLinkCoroutines(flow, types, flow.typeAt(flow.nodeOf(id, nodeInSummary)));
+            return nodeInSummary == noSummaryNode ? TypeID() : typeHeldInLinkCoroutines(flow, typesOfThread(), flow.typeAt(flow.nodeOf(id, nodeInSummary)));
         };
 
         LinkedCoroutine coroutine;
@@ -140,7 +161,7 @@ void writeCoroutinesOfLink(const Program& program, const LinkFlow& flow, TypeAre
 
         // A family that has escaped holds anything in every slot that somebody has asked for.
         if (FlowNodeID value = isGenerator || !promisesFindThenOfTable ? FlowNodeID() : flow.findContentsOf(objects, ContentsSlot::Value))
-            coroutine.fulfilledWith = typeHeldInLinkCoroutines(flow, types, flow.typeAt(value));
+            coroutine.fulfilledWith = typeHeldInLinkCoroutines(flow, typesOfThread(), flow.typeAt(value));
 
         // A store or a definition under a name lands in a slot that flows into this one. A deletion, a definition by a descriptor, another prototype, and a look at the prototype let the object escape: AOTLinkLayouts.cpp, CallInLinkCalls::addPrototypes().
         // The object under `prototype` of a generator function is come by through the function, which then escapes and its results with it (AccessInLinkAccesses::resolveOnClosure(), StateOfLinkReach::openFunction()), or through a generator.
@@ -157,78 +178,9 @@ void writeCoroutinesOfLink(const Program& program, const LinkFlow& flow, TypeAre
             coroutine.objectsStayAsMade = true;
             coroutine.sent = TypeTable::undefined;
         }
-        tables.coroutines.append(coroutine);
-    }
-}
-
-// What a family of sites holds, proven or seen, is written into types by one writer, which is not this file: the table by family of sites. So the default, which claims nothing of the contents.
-TypeID typeOfInstancesWithContentsSeen(const LinkFlow&, TypeArena& types, const LinkType& instances)
-{
-    return types.builtinClass(instances.builtinClass);
-}
-
-static FunctionID functionWhoseClosuresAloneArriveInLinkCoroutines(const LinkType& type)
-{
-    bool holdsClosuresAlone = type.functions == LinkType::Functions::Closure && !type.primitives && type.objects == LinkType::Objects::None && type.classes == LinkType::Classes::None && !type.holdsUnseen && !type.builtin;
-    return holdsClosuresAlone ? type.function : FunctionID();
-}
-
-// The operand that every row for the mode calls, once, in front of its return, and nothing else that any of them calls. `reduce` on an iterator has a record for the first call and one for each element: two records.
-static std::optional<BuiltinOperand> findOperandCalledOnceInLinkCoroutines(const BuiltinTable& builtins, BuiltinID builtin, BuiltinCallMode mode)
-{
-    std::optional<BuiltinOperand> called;
-    for (const BuiltinOverload& overload : builtins.overloadsOf(builtin)) {
-        if (overload.mode != mode)
-            continue;
-        bool callsHandlers = std::ranges::any_of(overload.flow.handlerCalls, [](const BuiltinHandlerCall&) {
-            return true;
-        });
-        if (overload.isUndeclared() || callsHandlers)
-            return std::nullopt;
-        unsigned numberOfCallbacks = 0;
-        for (const BuiltinCallback& callback : overload.flow.callbacks) {
-            if (++numberOfCallbacks > 1 || callback.times != BuiltinCallbackTimes::Once || callback.constructs || callback.callee.kind() != BuiltinOperand::Kind::Argument)
-                return std::nullopt;
-            if (called && *called != callback.callee)
-                return std::nullopt;
-            called = callback.callee;
-        }
-        if (!numberOfCallbacks)
-            return std::nullopt;
-    }
-    return called;
-}
-
-FunctionID findCallbackCalledOnce(const Program& program, const LinkFlow& flow, FunctionID caller, const SummaryCall& call, const LinkFlow::CalleesOfCall& callees)
-{
-    if (callees.mayEnterLost || callees.mayEnterUnseen || !callees.shared.isEmpty() || call.passesList || call.callee == SummaryCall::Callee::Binding)
-        return { };
-
-    const BuiltinTable& builtins = program.builtins();
-    BuiltinCallMode mode = call.isConstruction ? BuiltinCallMode::Construct : BuiltinCallMode::Call;
-    std::optional<BuiltinOperand> called;
-    auto isCalledOnceBy = [&](BuiltinID builtin) {
-        std::optional<BuiltinOperand> calledByBuiltin = findOperandCalledOnceInLinkCoroutines(builtins, builtin, mode);
-        if (!calledByBuiltin || (called && *called != *calledByBuiltin))
-            return false;
-        called = calledByBuiltin;
-        return true;
-    };
-    if (call.callee == SummaryCall::Callee::Builtin && !isCalledOnceBy(call.builtin))
-        return { };
-    if (!std::ranges::all_of(callees.builtins, isCalledOnceBy))
-        return { };
-    if (!called || called->argumentIndex() >= call.numberOfArguments)
-        return { };
-
-    uint32_t operand = flow.summaries.at(caller).arguments[call.firstArgument + called->argumentIndex()];
-    if (operand == noSummaryNode)
-        return { };
-    FunctionID callback = functionWhoseClosuresAloneArriveInLinkCoroutines(flow.typeAt(flow.nodeOf(caller, operand)));
-    // Whatever else runs because of the call would share the site with it.
-    if (!callback || callees.listed.size() != 1 || callees.listed[0] != callback || !flow.tablesMayName(callback))
-        return { };
-    return callback;
+        tables.coroutines[place] = coroutine;
+        return isOfProgramInLink(coroutine.returned) && isOfProgramInLink(coroutine.yielded) && isOfProgramInLink(coroutine.fulfilledWith) && isOfProgramInLink(coroutine.sent);
+    });
 }
 
 void forEachFunctionNamedByCoroutinesCalledBy(const LinkTables& tables, TypeReader reader, FunctionID referrer, const ScopedLambda<void(FunctionID)>& functor)
@@ -244,40 +196,6 @@ void forEachFunctionNamedByCoroutinesCalledBy(const LinkTables& tables, TypeRead
                 forEachFunctionOf(reader, reader.at(type), functor);
         }
     }
-}
-
-// The objects of coroutines lie side by side in the table of objects, the coroutines in front, far from the sites. So they have a list of their own, which is as long as there are coroutines.
-// FactTables has that list once the two blocks for AOTFacts.h are in, which stand under ASK. Until then this compiles, writes nothing, and nothing is claimed of any such object.
-void fillFactsOfObjectsOfCoroutines(const Program& program, const LinkTables& linked, FactTables& tables)
-{
-    auto fill = [&](auto& tablesWithList) {
-        if constexpr (requires { tablesWithList.objectsOfCoroutines; }) {
-            const ObjectTable& objects = program.types.objects();
-            uint32_t first = objects.firstOf(ObjectKind::CoroutineResult);
-            uint32_t numberOfPlaces = 0;
-            for (const LinkedCoroutine& coroutine : linked.coroutines)
-                numberOfPlaces = std::max(numberOfPlaces, objects.coroutineResultOf(coroutine.function).index() - first + 1);
-            tablesWithList.firstObjectOfCoroutines = first;
-            tablesWithList.objectsOfCoroutines.fill(ObjectFacts { }, numberOfPlaces);
-            for (const LinkedCoroutine& coroutine : linked.coroutines) {
-                if (coroutine.objectsStayAsMade && program.at(coroutine.function).has(FunctionFlags::IsGenerator))
-                    tablesWithList.objectsOfCoroutines[objects.coroutineResultOf(coroutine.function).index() - first].facts.add(ObjectFact::IsPristine);
-            }
-        }
-    };
-    fill(tables);
-}
-
-bool callRunsWholeBodyOfCoroutine(const Program& program, const ThinSummary& summary, FunctionID id)
-{
-    const Function& function = program.at(id);
-    if (!function.has(FunctionFlags::IsAsync) || function.has(FunctionFlags::IsGenerator) || function.isModuleBody() || summary.has(SummaryTrait::Suspends))
-        return false;
-    // The promise is resolved in front of the caller's next operation, and an object that it is resolved with is asked for `then`: a getter runs, on a promise too, of which the summary has no lookup.
-    // Where the scan has seen that primitives alone are returned it has left no such record: ScanOfBody::settle(). A terminator has no site.
-    return std::ranges::none_of(summary.accesses, [](const SummaryAccess& access) {
-        return !access.site && access.whatHoldsNothing != noSummaryNode;
-    });
 }
 
 } } } // namespace JSC::AOT::Typed

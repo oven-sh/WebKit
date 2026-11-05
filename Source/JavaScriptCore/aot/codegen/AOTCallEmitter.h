@@ -74,9 +74,10 @@ public:
     Vector<Operand, 8> operandsOf(std::span<const ValueID>, const ArgumentLocations&);
 
     void tailCallByConvention(const OperationContext&, const ConventionCall&);
-    void requireCallable(const OperationContext&, Boxed callee, std::optional<ThrowSite> siteThatNamesCallee, bool isAtTailCall);
-    void requireCallableBeforeTailCall(const OperationContext& context, Boxed callee, std::optional<ThrowSite> siteThatNamesCallee = std::nullopt) { requireCallable(context, callee, siteThatNamesCallee, true); }
-    void requireCallableBeforeTailCall(const ValueContext&, Boxed callee, Boxed thisValue);
+    // `listOfCall`: what the call would read. It is read in front of the throw.
+    void requireCallable(const OperationContext&, Boxed callee, std::optional<ThrowSite> siteThatNamesCallee, bool isAtTailCall, std::optional<Boxed> listOfCall = std::nullopt);
+    void requireCallableBeforeTailCall(const OperationContext& context, Boxed callee, std::optional<ThrowSite> siteThatNamesCallee = std::nullopt, std::optional<Boxed> listOfCall = std::nullopt) { requireCallable(context, callee, siteThatNamesCallee, true, listOfCall); }
+    void requireCallableBeforeTailCall(const ValueContext&, Boxed callee, Boxed thisValue, std::optional<Boxed> listOfCall = std::nullopt);
     void didEmitTailCall();
     // Says what the program calls the callee, where it calls it anything.
     std::optional<ThrowSite> siteThatNamesCallee(const ValueContext&);

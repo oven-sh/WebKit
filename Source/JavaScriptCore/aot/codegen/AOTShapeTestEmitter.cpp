@@ -35,7 +35,65 @@ TypeReader ShapeTestEmitter::typeReader() const
 
 Word32 ShapeTestEmitter::shapeWordOf(CellPointer cell)
 {
-    return loadField<Word32>(cell, m_heaps.AOTObject_shapeWord);
+    return bitOr(loadField<Word32>(cell, m_heaps.AOTObject_shapeNumber), word32(static_cast<int32_t>(shapeWordIsUnmarked)));
+}
+
+Word32 ShapeTestEmitter::shapeWordOf(CellPointer cell, LayoutSetID possible)
+{
+    return mayBearMark(possible) ? shapeWordOf(cell) : shapeWordWithMarkOf(cell);
+}
+
+bool ShapeTestEmitter::mayBearMark(LayoutSetID layouts)
+{
+    if (!layouts)
+        return true;
+    return m_setsThatMayBearMark.ensure(layouts, [&] {
+        return std::ranges::any_of(membersOf(typeReader(), layouts), [&](LayoutID member) {
+            return m_plan.layout(member).mayBearMark;
+        });
+    }).iterator->value;
+}
+
+ShapeTestEmitter::IndexByShape ShapeTestEmitter::indexByShapeOf(CellPointer cell)
+{
+    // No shape is above 1 << 16: the lower half of the word of shape s is (1 << 16) - s, with the mark or without.
+    if (isX86_64() && m_plan.shapes().numberOfShapes() <= 1u << 16)
+        return { zeroExtended(Word32(m_out.load16ZeroExt32(m_out.address(m_heaps.AOTObject_shapeNumber, cell.value(), offsetOfShapeWord)))), -static_cast<int32_t>(sizeof(uint32_t) << 16) };
+    return { signExtended(shapeWordOf(cell)), 0 };
+}
+
+bool ShapeTestEmitter::paysForMark(LayoutSetID tested, const Type& known)
+{
+    return mayBearMark(tested) && (!known.hasOnlyLayouts() || known.traitsOfNamed.contains(ObjectTrait::MayHaveLayoutBelow));
+}
+
+Word32 ShapeTestEmitter::shapeWordWithMarkOf(CellPointer cell)
+{
+    return loadField<Word32>(cell, m_wordIsAskedForMark ? m_heaps.AOTObject_shapeWord : m_heaps.AOTObject_shapeNumber);
+}
+
+Condition ShapeTestEmitter::bearsMark(CellPointer cell)
+{
+    return hasNoBits(Word32(m_out.load8ZeroExt32(m_out.address(m_heaps.AOTObject_shapeWord, cell.value(), offsetOfByteWithMark))), byteWithMarkIsUnmarked);
+}
+
+Condition ShapeTestEmitter::bearsNoMark(CellPointer cell)
+{
+    return hasBits(Word32(m_out.load8ZeroExt32(m_out.address(m_heaps.AOTObject_shapeWord, cell.value(), offsetOfByteWithMark))), byteWithMarkIsUnmarked);
+}
+
+void ShapeTestEmitter::setMark(CellPointer cell)
+{
+    CodeGenerator::InitializationScope scope(generator());
+    TypedPointer byteWithMark = m_out.address(m_heaps.AOTObject_shapeWord, cell.value(), offsetOfByteWithMark);
+    m_out.store32As8(bitAnd(Word32(m_out.load8ZeroExt32(byteWithMark)), word32(static_cast<uint8_t>(~byteWithMarkIsUnmarked))).value(), byteWithMark);
+}
+
+void ShapeTestEmitter::clearMark(CellPointer cell)
+{
+    CodeGenerator::InitializationScope scope(generator());
+    TypedPointer byteWithMark = m_out.address(m_heaps.AOTObject_shapeWord, cell.value(), offsetOfByteWithMark);
+    m_out.store32As8(bitOr(Word32(m_out.load8ZeroExt32(byteWithMark)), word32(byteWithMarkIsUnmarked)).value(), byteWithMark);
 }
 
 Word32 ShapeTestEmitter::orderWordOf(CellPointer cell)
@@ -60,7 +118,7 @@ bool ShapeTestEmitter::mayBeOtherThanCompiledObject(const Type& type) const
 
 Condition ShapeTestEmitter::isCompiledObject(CellPointer cell)
 {
-    return hasBits(shapeWordOf(cell), compiledObjectShapeBit);
+    return hasBits(shapeWordWithMarkOf(cell), compiledObjectShapeBit);
 }
 
 ShapeTest ShapeTestEmitter::testOf(LayoutSetID tested) const
@@ -70,11 +128,16 @@ ShapeTest ShapeTestEmitter::testOf(LayoutSetID tested) const
     return test;
 }
 
-Condition ShapeTestEmitter::hasShapeIn(CellPointer cell, LayoutSetID tested, const Type& known)
+Condition ShapeTestEmitter::hasShapeIn(CellPointer cell, LayoutSetID tested, const Type& known, MarkedObjects marked)
 {
+    SetForScope wordIsAskedForMark(m_wordIsAskedForMark, marked != MarkedObjects::Pass && marked != MarkedObjects::AreAskedAgain && mayBearMark(tested));
+    // Every form that holds for any cell fails for the word of a marked object.
+    m_lastTestRefusesMarkedObjects = marked != MarkedObjects::Pass;
+    // No object of a tested layout bears the mark, and the word of a marked object is the number of none: the word as it lies says the same.
+    WordOfTest word = m_lastTestRefusesMarkedObjects || !mayBearMark(tested) ? WordOfTest::AsItLies : WordOfTest::WithoutMark;
     // `new.target` may give an object a layout that the type does not list.
-    if (!known.hasOnlyLayouts() || known.traitsOfNamed.contains(ObjectTrait::MayHaveLayoutBelow))
-        return passes(cell, tested, testOf(tested));
+    if (marked == MarkedObjects::AreRefused || marked == MarkedObjects::AreAskedAgain || !known.hasOnlyLayouts() || known.traitsOfNamed.contains(ObjectTrait::MayHaveLayoutBelow))
+        return passes(cell, tested, testOf(tested), word);
     // Of a type that has layouts alone both go by the set.
     const ShapeTable& shapes = m_plan.shapes();
     if (m_setWhoseShapesAreKept != known.layouts) {
@@ -84,27 +147,29 @@ Condition ShapeTestEmitter::hasShapeIn(CellPointer cell, LayoutSetID tested, con
         shapes.appendMemberShapes(membersOf(typeReader(), known), m_shapesKept);
     }
     if (!m_keptSetHoldsCompiledObjectsAlone)
-        return passes(cell, tested, testOf(tested));
+        return passes(cell, tested, testOf(tested), word);
 
     // The test tells the tested shapes from the known ones alone. A known layout that is never allocated has no shape, so it counts for nothing.
+    // Some of its forms pass whatever lies below a word, and its failing side says "one of the others": it goes by the number.
+    m_lastTestRefusesMarkedObjects = false;
     ShapeTable::ShapeList testedShapes;
     shapes.appendMemberShapes(membersOf(typeReader(), tested), testedShapes);
     const ShapeTable::ShapeList& knownShapes = m_shapesKept;
     ShapeTest test = shapes.testOfShapes(testedShapes.span(), knownShapes.span());
 
     if (test.form == ShapeTestForm::BitSet) {
-        if (std::optional<Condition> passesTest = passesBitSetThatHoldsEveryKnownShape(shapeWordOf(cell), tested, known.layouts, testedShapes.span(), knownShapes.span()))
+        if (std::optional<Condition> passesTest = passesBitSetThatHoldsEveryKnownShape(shapeWordOf(cell, known.layouts), tested, known.layouts, testedShapes.span(), knownShapes.span()))
             return *passesTest;
     }
-    return passes(cell, tested, test);
+    return passes(cell, tested, test, mayBearMark(known.layouts) ? WordOfTest::WithoutMark : WordOfTest::AsItLies);
 }
 
-std::optional<Condition> ShapeTestEmitter::hasShapeInThoughNoCell(Boxed value, LayoutSetID tested, const Type& known)
+std::optional<Condition> ShapeTestEmitter::hasShapeInThoughNoCell(Boxed value, LayoutSetID tested, const Type& known, MarkedObjects marked)
 {
     if (!readsOffNoCellFault)
         return std::nullopt;
     // As hasShapeIn().
-    if (known.hasOnlyLayouts() && !known.traitsOfNamed.contains(ObjectTrait::MayHaveLayoutBelow))
+    if (marked != MarkedObjects::AreRefused && known.hasOnlyLayouts() && !known.traitsOfNamed.contains(ObjectTrait::MayHaveLayoutBelow))
         return std::nullopt;
     ShapeTest test = testOf(tested);
     switch (test.form) {
@@ -121,7 +186,9 @@ std::optional<Condition> ShapeTestEmitter::hasShapeInThoughNoCell(Boxed value, L
     case ShapeTestForm::BlockOrEarlier:
         return std::nullopt;
     }
-    return passes(Word32(m_out.load32OffWhatMayBeNoCell(value.value(), m_heaps.AOTObject_shapeWord)), tested, test);
+    m_lastTestRefusesMarkedObjects = marked != MarkedObjects::Pass;
+    Word32 word(m_out.load32OffWhatMayBeNoCell(value.value(), m_lastTestRefusesMarkedObjects && mayBearMark(tested) ? m_heaps.AOTObject_shapeWord : m_heaps.AOTObject_shapeNumber));
+    return passes(m_lastTestRefusesMarkedObjects || !mayBearMark(tested) ? word : bitOr(word, word32(static_cast<int32_t>(shapeWordIsUnmarked))), tested, test);
 }
 
 Condition ShapeTestEmitter::isShapeOf(Word32 shapeWord, LayoutID layout)
@@ -132,9 +199,15 @@ Condition ShapeTestEmitter::isShapeOf(Word32 shapeWord, LayoutID layout)
     return passesRange(shapeWord, ShapeTest { .form = ShapeTestForm::Range, .first = shapes.first, .count = shapes.count });
 }
 
-void ShapeTestEmitter::branchOnShapeIn(CellPointer cell, LayoutSetID tested, const Type& known, BranchTargets targets)
+void ShapeTestEmitter::branchOnShapeIn(CellPointer cell, LayoutSetID tested, const Type& known, BranchTargets targets, MarkedObjects marked)
 {
-    branch(hasShapeIn(cell, tested, known), targets);
+    // An object without the mark pays nothing for the mark: the word is asked as it lies first. Neither test depends on the mark of now: the number stays.
+    if (marked == MarkedObjects::Pass && paysForMark(tested, known)) {
+        LBasicBlock failsAsItLies = newBlock();
+        branch(hasShapeIn(cell, tested, known, MarkedObjects::AreAskedAgain), { targets.taken, unlikelyEdge(failsAsItLies) });
+        m_out.appendTo(failsAsItLies);
+    }
+    branch(hasShapeIn(cell, tested, known, marked), targets);
 }
 
 // The list alone does not say what hasShapeIn() asks of the objects that the type of the operand names.
@@ -145,7 +218,7 @@ void ShapeTestEmitter::branchOnShapeAmongReceivers(const ValueContext& access, C
 }
 
 // A test of a block reads two bytes of the shape word, and a test that is decided reads none.
-Condition ShapeTestEmitter::passes(CellPointer cell, LayoutSetID tested, const ShapeTest& test)
+Condition ShapeTestEmitter::passes(CellPointer cell, LayoutSetID tested, const ShapeTest& test, WordOfTest word)
 {
     switch (test.form) {
     case ShapeTestForm::NeverPasses:
@@ -154,7 +227,7 @@ Condition ShapeTestEmitter::passes(CellPointer cell, LayoutSetID tested, const S
         return boolean(true);
     case ShapeTestForm::Block:
     case ShapeTestForm::BlockOrEarlier:
-        return passesBlockByte(cell, test);
+        return passesBlockByte(cell, test, word);
     case ShapeTestForm::OneShape:
     case ShapeTestForm::UpTo:
     case ShapeTestForm::From:
@@ -163,7 +236,7 @@ Condition ShapeTestEmitter::passes(CellPointer cell, LayoutSetID tested, const S
     case ShapeTestForm::BitSet:
         break;
     }
-    return passes(shapeWordOf(cell), tested, test);
+    return passes(word == WordOfTest::AsItLies ? shapeWordWithMarkOf(cell) : shapeWordOf(cell), tested, test);
 }
 
 // The word of a cell that is no compiled object lacks compiledObjectShapeBit, which the word of every shape has. It is below each of those words, and the sum of it and a shape does not wrap: every form that holdsForAnyCell() refuses it.
@@ -205,13 +278,17 @@ Condition ShapeTestEmitter::passesRange(Word32 shapeWord, const ShapeTest& test)
 }
 
 // The halfword of a cell that is no compiled object lacks shapeBlockMarker, so it is below that of every block.
-Condition ShapeTestEmitter::passesBlockByte(CellPointer cell, const ShapeTest& test)
+Condition ShapeTestEmitter::passesBlockByte(CellPointer cell, const ShapeTest& test, WordOfTest word)
 {
-    TypedPointer pointer = m_out.address(m_heaps.AOTObject_shapeWord, cell.value(), offsetOfShapeWord + 1);
+    TypedPointer pointer = m_out.address(m_wordIsAskedForMark ? m_heaps.AOTObject_shapeWord : m_heaps.AOTObject_shapeNumber, cell.value(), offsetOfShapeWord + 1);
     uint16_t expectedHalfword = blockTestHalfword(test.blockByte);
     // Extended by its sign, the halfword of a block that can be tested fits the immediate of a comparison on arm64.
     Word32 halfword(isX86_64() ? m_out.load16ZeroExt32(pointer) : m_out.load16SignExt32(pointer));
     Word32 expected = word32(isX86_64() ? expectedHalfword : static_cast<int16_t>(expectedHalfword));
+    if (word == WordOfTest::WithoutMark) {
+        constexpr uint16_t halfwordIsUnmarked = shapeWordIsUnmarked >> 8;
+        halfword = bitOr(halfword, word32(isX86_64() ? halfwordIsUnmarked : static_cast<int16_t>(halfwordIsUnmarked)));
+    }
     if (test.form == ShapeTestForm::Block)
         return equal(halfword, expected);
     RELEASE_ASSERT(test.form == ShapeTestForm::BlockOrEarlier);
@@ -294,6 +371,9 @@ void ShapeTestEmitter::switchOnShape(CellPointer cell, std::span<const LayoutSet
     tests.reserveInitialCapacity(cases.size());
     for (LayoutSetID layouts : cases)
         tests.append(testOf(layouts));
+    bool someCaseMayBearMark = std::ranges::any_of(cases, [&](LayoutSetID layouts) {
+        return mayBearMark(layouts);
+    });
     bool hasAtMostOneShapePerCase = std::ranges::all_of(tests, [](const ShapeTest& test) {
         return test.form == ShapeTestForm::OneShape || test.form == ShapeTestForm::NeverPasses;
     });
@@ -312,14 +392,14 @@ void ShapeTestEmitter::switchOnShape(CellPointer cell, std::span<const LayoutSet
             m_out.jump(otherwise.block());
             return;
         }
-        m_out.switchOn(shapeWordOf(cell).value(), switchTargets.span(), otherwise);
+        m_out.switchOn((someCaseMayBearMark ? shapeWordOf(cell) : shapeWordWithMarkOf(cell)).value(), switchTargets.span(), otherwise);
         return;
     }
 
     for (size_t index = 0; index < cases.size(); ++index) {
         bool isLast = index + 1 == cases.size();
         BlockEdge next = isLast ? otherwise : normalEdge(newBlock());
-        branch(passes(cell, cases[index], tests[index]), { targets[index], next });
+        branch(passes(cell, cases[index], tests[index], someCaseMayBearMark ? WordOfTest::WithoutMark : WordOfTest::AsItLies), { targets[index], next });
         if (!isLast)
             m_out.appendToContinuation(next.block());
     }

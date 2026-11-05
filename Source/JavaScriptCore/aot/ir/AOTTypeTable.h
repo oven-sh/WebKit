@@ -155,8 +155,6 @@ public:
         return unsafeMakeSpan(reinterpret_cast<const LayoutID*>(numbers.data()), numbers.size());
     }
     SetView<ObjectID, ObjectSetID> at(ObjectSetID set) const { return SetView<ObjectID, ObjectSetID>(m_objectSets.viewOf(set.bits())); }
-    // False: the solve of Facts has given the set back, and only a type that nothing holds still names it: IDSetTable::holds().
-    bool holds(ObjectSetID set) const { return m_objectSets.holds(set.bits()); }
     SetView<StringID, StringSetID> at(StringSetID set) const { return SetView<StringID, StringSetID>(m_stringSets.viewOf(set.bits())); }
     SetView<PropertyKeyID, KeySetID> at(KeySetID set) const { return SetView<PropertyKeyID, KeySetID>(m_keySets.viewOf(set.bits())); }
     std::span<const ClassPart> at(ClassPartsID) const;
@@ -199,8 +197,6 @@ public:
         return contentOf(at(first)) <=> contentOf(at(second));
     }
     std::optional<PropertyKeyID> find(const PropertyKey&) const;
-    // What TypeArena::forObject() answers, where an arena that keeps InProgram has made it. It adds nothing. Any thread, while the table grows and once it is frozen.
-    std::optional<TypeID> findTypeOfObject(ObjectID) const;
 
     // What holds of a position without a guard and without a fact: the written type of an established position, else anything, with absent where the written type has it.
     ProvenInEveryVersion provenTypeOf(const DeclaredType&) const;
@@ -209,11 +205,33 @@ public:
     void beginKeepingMemosAtRest();
     // Where something that the relations of types lean on has changed: noteSubclassesOfBuiltinClasses(), noteLayoutsOfDictionaries(). An arena that lives on calls TypeArena::forgetResults() itself.
     void invalidateMemosAtRest();
-    size_t sizeOfMemosAtRestInBytes() const;
 
     // In front of Compile, by one thread.
     void freeze();
     bool isFrozen() const { return m_isFrozen; }
+    // WHILE ONE LIVES NOBODY ADDS A TYPE OR A SET, on any thread, and many threads may look with arenas that keep what they make to themselves (ArenaKeeps::UntilReset), as over a frozen table. Behind it the table goes on growing.
+    // An arena that adds meanwhile stops the build: what another arena has kept to itself would get a second id.
+    class RoundWithoutAdditions {
+        WTF_MAKE_NONCOPYABLE(RoundWithoutAdditions);
+    public:
+        explicit RoundWithoutAdditions(TypeTable& table)
+            : m_table(table)
+        {
+            m_table.m_numberOfRoundsWithoutAdditions.fetch_add(1, std::memory_order_relaxed);
+            for (IDSetTable* sets : { &m_table.m_layoutSets, &m_table.m_objectSets, &m_table.m_stringSets, &m_table.m_keySets })
+                sets->beginRoundWithoutAdditions();
+        }
+        ~RoundWithoutAdditions()
+        {
+            for (IDSetTable* sets : { &m_table.m_layoutSets, &m_table.m_objectSets, &m_table.m_stringSets, &m_table.m_keySets })
+                sets->endRoundWithoutAdditions();
+            m_table.m_numberOfRoundsWithoutAdditions.fetch_sub(1, std::memory_order_relaxed);
+        }
+
+    private:
+        TypeTable& m_table;
+    };
+    bool takesNoAdditions() const { return m_isFrozen || m_numberOfRoundsWithoutAdditions.load(std::memory_order_relaxed); }
     // Null until freeze(), which stands behind Plan. Any thread.
     SharedAnswers* sharedAnswers() const { return m_sharedAnswers.get(); }
 
@@ -247,6 +265,7 @@ private:
     InternedRecords<Type> m_types;
     // By position, from freeze() on: the records never move. The walk asks for a type some twenty times an operation.
     Vector<const Type*> m_typesOnceFrozen;
+    std::atomic<unsigned> m_numberOfRoundsWithoutAdditions { 0 };
     IDSetTable m_layoutSets { IDSetForm::ChunksWithLazyList, 0 };
     IDSetTable m_objectSets { IDSetForm::ListsAndChunks, wordsOfObjectSetSummary };
     IDSetTable m_stringSets { IDSetForm::ListsAndChunks, 0 };

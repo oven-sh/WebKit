@@ -25,7 +25,7 @@
 
 #pragma once
 
-#include <JavaScriptCore/JSExportMacros.h>
+#include "JSExportMacros.h"
 #include <wtf/Platform.h>
 
 #if ENABLE(B3_JIT)

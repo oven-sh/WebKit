@@ -1,8 +1,0 @@
-# the same function with folding withheld: the join gets no parameter, and the variable is read
-# RUN: walk f1 mechanisms=none+TypedOperations
-# CHECK-LABEL: code f1:Body
-# CHECK: PutModuleVariable
-# CHECK: PutModuleVariable
-# CHECK: [[read]]: {{*}} = GetModuleVariable {{*}}variable=g0
-# CHECK: Return [[read]]
-# PROGRAM-OF: place-that-the-ways-know-apart-gets-a-parameter.ir

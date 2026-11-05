@@ -47,8 +47,6 @@ JSValue valueInSnapshotOfPendingStars(VM&, const Object& target, JSCellButterfly
 void forEachBindingInSnapshotOfPendingStars(VM&, const Object& target, JSCellButterfly* snapshot, const ScopedLambda<void(UniquedStringImpl*, JSValue)>&);
 // How many keys the pending stars will give the object, for whoever lists a field behind them. Makes none of them. Nothing for an object without pending stars. A key under the name of a field of the object counts like the others: it gets a place of its own in the order when the stars are carried out.
 std::optional<uint32_t> numberOfKeysOfPendingStars(VM&, const Object& target);
-// The keys that the pending stars will give the object, in their order, each with the attributes that it will have. Makes none of them.
-void forEachKeyOfPendingStars(VM&, const Object& target, const ScopedLambda<void(UniquedStringImpl*, unsigned attributes)>&);
 // Whether the accessor of a pending star will lie under the name of the field. Nothing for an object without pending stars.
 std::optional<bool> isBoundByPendingStar(const Object& target, const FieldData&);
 // For whoever must not allocate, as during a walk over the heap. Nothing for an object with pending stars.

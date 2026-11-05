@@ -644,7 +644,7 @@ template<LoadedProgramTest body>
 static constexpr void (*withProgram)() = runNativeTestWithLoadedProgram<runtimeTypeTests, programText, body>;
 
 static constexpr ASCIILiteral noLiteralStringWords = "plan/AOTLiteralStrings.cpp: literal-string words: the table holds the empty string alone"_s;
-static constexpr ASCIILiteral noSlotIsHeldToType = "plan/AOTSlotPlan.cpp: typeHeldOfFieldForSlotPlan() holds no slot to a type since 11-03 08:25, so the image has no record of a type with shapes"_s;
+static constexpr ASCIILiteral noSlotIsHeldToType = "plan/AOTSlotPlan.cpp: typeHeldOfFieldForSlotPlan() holds no slot to a type, so the image has no record of a type with shapes"_s;
 
 std::span<const NativeTest> runtimeTypeTests()
 {

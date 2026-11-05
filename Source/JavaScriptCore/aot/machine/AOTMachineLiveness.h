@@ -106,8 +106,6 @@ class Liveness {
     WTF_MAKE_NONCOPYABLE(Liveness);
 public:
     const ValueFacts& of(const Operation* operation) const { return m_values[operation->index()]; }
-    // By Operation::index(), for whoever goes through all of them and has no other use for the operation.
-    const ValueFacts& ofOperationAt(uint32_t index) const { return m_values[index]; }
     // By Operation::index(), for a loop that asks about many values.
     const ValueFacts* valueFacts() const { return m_values.begin(); }
     bool isDropped(const Operation* operation) const { return of(operation).has(ValueFlag::IsDropped); }
@@ -538,9 +536,6 @@ public:
 
     // AOTMachineFusion.cpp. Called for an operation that stays, ahead of the reads of its children.
     void fuseInto(Operation* user);
-    bool tryFusePredicate(Operation* user, Operation* predicate);
-    bool tryFuseAddress(Operation* access);
-    bool tryFuseLoad(Operation* user, unsigned childIndex);
     // Also called for an operation that sinks.
     bool tryFuseScaledIndex(Operation* sum);
     // Called for a trapping load that nothing reads. The accesses behind it have been scanned.

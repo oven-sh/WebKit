@@ -67,14 +67,15 @@ public:
     static JSValue readVariableWithoutAllocating(const Instance&, SlotData);
     // Nothing has been stored to it. Allocates nothing.
     static bool isVariableEmpty(const Instance&, SlotData);
-    // Null if the variable does not hold a string.
-    static String readStringWithoutAllocating(const Instance&, SlotData);
     static void writeVariable(Instance&, SlotData, JSValue);
 
     template<typename Visitor> void visitRoots(Visitor&);
 
-    // The variables are roots, and a heap snapshot shows a root without a name. So a cell stands for each module whose variables hold a cell, and lists what they hold under their names.
+    // The variables are roots, and a heap snapshot shows a root without a name. So a cell stands for each module of ProgramTables::namedVariables() that has begun, and lists what its variables hold under their names.
+    // It hangs where the environment of a module hangs under the interpreter: below the loader of the realm, and below every closure of a function that the module defines.
     void willAnalyzeHeap(VM&);
+    // Null: the module had not begun when the snapshot was, or no snapshot shows its variables. A thread that marks may ask.
+    JSCell* environmentOfModuleThatDefines(uint32_t closureNumber) const;
     // By its place among the modules of ProgramTables::namedVariables().
     void analyzeVariablesOfModule(JSCell* standIn, uint32_t module, HeapAnalyzer&) const;
 
@@ -99,6 +100,9 @@ private:
     // ProgramTables::namedVariables() as rows, and where the rows of each module begin and those of the last one end. Empty until the first heap snapshot.
     Vector<VariableData> m_namedVariables;
     Vector<uint32_t> m_firstNamedVariablesOfModules;
+    // The numbers of those modules. And for each closure number the place in that list of the module that defines the function, or the size of the list.
+    Vector<uint32_t> m_modulesInHeapSnapshots;
+    Vector<uint32_t> m_placesOfModulesOfClosureNumbers;
     // Both are empty until the first heap snapshot, and immortal cells from then on. Null for a module that has had no cell in a snapshot.
     Structure* m_structureOfModuleEnvironments { nullptr };
     Vector<JSCell*> m_environmentsOfModules;

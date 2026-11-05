@@ -1,6 +1,6 @@
 # const first = import("./a.js"); await null; const second = import("./b.js")        a.js: import "./b.js"        b.js: import "./a.js"
 # A ring is entered where the first call enters it, so b.js runs ahead of a.js, however many jobs lie between the two calls: here one, two and seven.
-# The loader has only the root of the first graph in its hands. The second call waits behind that load, and is made again when the graph is linked.
+# The two loads go on side by side. The job that links and evaluates the second graph comes again when the first graph is loaded.
 # RUN: run-in-shell globalThis.report = name => print(name + " runs"); globalThis.register = (...closures) => { globalThis.registered = closures; }; const start = globalThis.runCompiledEntryPoint; globalThis.runCompiledEntryPoint = entry => { const result = start(entry); Promise.resolve(result).then(async () => { const jobsBetween = [1, 2, 7]; for (let ring = 0; ring < jobsBetween.length; ++ring) { const first = registered[2 * ring](); first.then(() => print("first settled")); for (let job = 0; job < jobsBetween[ring]; ++job) await null; const second = registered[2 * ring + 1](); second.then(() => print("second settled")); await Promise.all([first, second]); } }); return result; };
 # CHECK: b1.js runs
 # CHECK-NEXT: a1.js runs

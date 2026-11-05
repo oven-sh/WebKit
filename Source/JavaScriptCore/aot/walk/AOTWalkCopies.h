@@ -24,9 +24,6 @@ AOT_LINK_OF_WALK(buildCopyOrKeyOrderForm, opcodesThatBuildCopyOrKeyOrderFormTake
 // Every access by name or by key is its operation, and next to none goes through a proxy: the chain asks Walker::makesProxyInUnit() in front of it, so that an access costs one test of a byte.
 inline constexpr OpcodeSet opcodesThatBuildAccessThroughProxyMadeInUnitTakes { Opcode::PropGet, Opcode::PropSet, Opcode::PropHas, Opcode::PropDelete, Opcode::ElemGet, Opcode::ElemSet, Opcode::ElemHas, Opcode::ElemDelete };
 AOT_LINK_OF_WALK(buildAccessThroughProxyMadeInUnit, opcodesThatBuildAccessThroughProxyMadeInUnitTakes)
-// foldLookupPastOwnNames() (K11) HAS NO CALLER: of closures it goes by LinkedFunction::closuresStayAsMade, which nobody writes yet (the round over the summaries of key-orders-and-copies-1), and a read pays for the question.
-// AOTWalkCopiesOfObjects.cpp. For buildTypedAccess(), of a CopyDataProperties that buildCopyOfPropertiesForTypedAccess() has refused. False: nothing was built, and the copy stays as written.
-bool buildCopyOfProperties(Walker&, const BodyValue& copy);
 // AOTWalkCopies.cpp. A term of the row of openGuessAt(): callAccessorInSlot. True: both arms are built, have left what they had to leave, and have met. False: nothing was built.
 inline constexpr OpcodeSet opcodesThatOpenGuessOfKeyOrdersTakes { Opcode::PropGet, Opcode::PropSet };
 AOT_LINK_OF_WALK(openGuessOfKeyOrders, opcodesThatOpenGuessOfKeyOrdersTakes)
@@ -53,7 +50,7 @@ struct OwnKeyPlan {
     // An object in a layout or an order without an arm comes by right: the operation as written takes it.
     bool hasArmForEveryExpectedOrder { false };
 };
-// Thresholds of the cost model: FRESH.md row 2 (750 B a copy for sources with optional fields bought nothing outside loops). Outside a loop a plan has one arm, for the order that lists every field of a layout whose fields are all required.
+// Thresholds of the cost model: 750 B a copy for sources with optional fields bought nothing outside loops. Outside a loop a plan has one arm, for the order that lists every field of a layout whose fields are all required.
 inline constexpr unsigned mostArmsOfOwnKeyWalk = 2;
 inline constexpr size_t mostFieldsOfOwnKeyWalk = 12;
 // The state knows every own key without a test: nothing but this code has the object (propertiesOfFreshObject()), or WalkState::orderWordOf() has its word and its type proves one layout. Nothing: it does not.
@@ -77,7 +74,6 @@ bool orderWordTellsOwnKeysOf(const Walker&, LayoutID);
 
 // ---- The parts. Each: false = nothing was built.
 bool foldComparisonOfValueWithItself(Walker&, const BodyValue& comparison); // AOTWalkCopies.cpp . Folding
-bool foldLookupPastOwnNames(Walker&, const BodyValue& access); // AOTWalkKeyOrdersAccessors.cpp . Folding, TypedOperations
 bool callAccessorInSlot(Walker&, const BodyValue& access); // AOTWalkKeyOrdersAccessors.cpp . Guesses, DirectCalls
 // `Meter.raw`, `Meter.raw = 1`, off the one class object of the class that declares the static field: the word of its variable, where the field lies there; else as written. Guesses, TypedOperations. True: the arms are built and have met.
 bool accessStaticFieldInVariable(Walker&, const BodyValue& access);
@@ -86,13 +82,8 @@ bool assignSourcesFieldByField(Walker&, const BodyValue& call); // AOTWalkCopies
 bool buildCopyThatMakesObject(Walker&, const BodyValue& copy); // AOTWalkCopiesOfObjects.cpp . of a CopyObject
 inline constexpr OpcodeSet opcodesThatBuildCopyWithWhatFollowsTakes { Opcode::CopyObject };
 AOT_LINK_OF_WALK(buildCopyWithWhatFollows, opcodesThatBuildCopyWithWhatFollowsTakes) // AOTWalkCopiesFused.cpp . TypedOperations . of a CopyObject
-// A link of its own, in front of whoever writes `Object.keys(o)` out as a literal of names: of an object that something else has too, with its keys in sight.
-inline constexpr OpcodeSet opcodesThatBuildListOfOwnKeysOverSharedStorageTakes { Opcode::Call };
-AOT_LINK_OF_WALK(buildListOfOwnKeysOverSharedStorage, opcodesThatBuildListOfOwnKeysOverSharedStorageTakes) // AOTWalkCopiesOwnKeyLists.cpp . BuiltinCalls, EscapeAnalysis
 
 // ---- What single lines of shared files ask.
-// For buildStoreForTypedAccess(): no receiver keeps an order of keys and the slot lies in the cell of each, so a store that creates the property is a PutSlot. Default false: PutSlotOrAdd.
-bool creatingStoreListsNoKey(const Walker&, std::span<const LayoutID> receivers, PropertyKeyID); // AOTWalkKeyOrdersAccessors.cpp
 // For findGetterOfRead(), so that the looks at loops see what callAccessorInSlot() may copy. Null: none is expected.
 FunctionID findGetterExpectedInSlot(Walker&, TypeID lookedAt, PropertyKeyID); // AOTWalkKeyOrdersAccessors.cpp
 

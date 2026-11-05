@@ -114,8 +114,6 @@ struct CompileOptions {
     OutputOptions output { };
     LoggingOptions logging;
 
-    bool isVerifyOnly() const { return action == CompileAction::VerifyOnly; }
-    bool isCheckOnly() const { return action == CompileAction::CheckOnly; }
     // Code that nobody has read comes in wherever unknown code may run, names every binding and holds every object of the heap.
     bool admitsUnseenCode() const { return hasFlag(recorded.admitted(), AdmittedCode::Inspector); }
     // A test run: what a test replaces on a built-in object is unlocked, and the build is told of what it still finds locked.
@@ -124,14 +122,10 @@ struct CompileOptions {
     bool excludesHostEvaluatedText() const { return hasFlag(excludedCode, ExcludedCode::HostEvaluatedText); }
     bool excludesForeignCalls() const { return hasFlag(excludedCode, ExcludedCode::ForeignCalls); }
     bool excludesForeignCallsOfUnseenCode() const { return hasFlag(excludedCode, ExcludedCode::ForeignCallsOfUnseenCode); }
-    // The image holds every module of the library that the run can load, so none runs from its text.
-    bool excludesLibraryText() const { return hasFlag(excludedCode, ExcludedCode::LibraryText); }
     bool excludesCodeOutsideImage() const { return runsOnlyCodeOfImage || hasFlag(excludedCode, ExcludedCode::CodeOutsideImage); }
     bool obfuscates() const { return hasFlag(output, OutputOptions::Obfuscate); }
     // The host runs the image in one realm of the VM after another, each with an instance of its own, and what it carries from one realm to the next may hold a function of the earlier one.
     bool runsInSeveralRealms() const { return hasFlag(output, OutputOptions::RunsInSeveralRealms); }
-    // `bun run --aot`, `bun test --aot`: no executable. The build folds no read of BuiltinHostObject::lockedNames there, and the host locks none of them.
-    bool runsInPlaceOfFiles() const { return hasFlag(output, OutputOptions::RunsInPlaceOfFiles); }
 
     JS_EXPORT_PRIVATE static CompileOptions fromWire(const Wire::CompileOptions&, Diagnostics&);
 };

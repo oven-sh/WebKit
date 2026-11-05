@@ -1,4 +1,4 @@
-# the call names its callee, the callee writes what it returns, and Link has not established it: what is written is a guess, as it is of a parameter. Until 11-04 nothing was expected of such a result
+# the call names its callee, the callee writes what it returns, and Link has not established it: what is written is a guess, as it is of a parameter. Once nothing was expected of such a result
 # function pick(box): Point { return box.point; }  function sum(box) { const p = pick(box); return [p.x, p.y]; }
 # RUN: walk f2 mechanisms=none+TypedOperations+Guesses
 # CHECK-LABEL: code f2:Body

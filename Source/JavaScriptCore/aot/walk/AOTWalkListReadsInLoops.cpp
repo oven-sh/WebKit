@@ -127,7 +127,7 @@ static Reference buildInFrontOfTurnsInListReadsInLoops(Walker& walker, Draft&& d
 
 void takeStorageAndLengthFromInFrontOfLoop(Walker& walker, Draft& read, const ListTestedInFrontOfLoop& tested)
 {
-    if (!walker.isInLoop())
+    if (!walker.isInLoop() || walker.testsEveryPosition())
         return;
     Origin origin = read.origin();
     origin.isTailCall = false;
@@ -135,8 +135,10 @@ void takeStorageAndLengthFromInFrontOfLoop(Walker& walker, Draft& read, const Li
         Draft storage(Opcode::GetArrayStorage, origin);
         walker.chooseConservativeFields(storage);
         storage.setArrayOperand(tested.name);
-        if (Reference pointer = buildInFrontOfTurnsInListReadsInLoops(walker, WTF::move(storage)))
+        if (Reference pointer = buildInFrontOfTurnsInListReadsInLoops(walker, WTF::move(storage))) {
             read.setStorageOperand(pointer);
+            walker.count(StatisticID::KnownInductionsUsed);
+        }
     }
     // Such a read looks at no length.
     if (read.isInBounds())
@@ -144,13 +146,15 @@ void takeStorageAndLengthFromInFrontOfLoop(Walker& walker, Draft& read, const Li
     Draft length(Opcode::GetArrayLength, origin);
     walker.chooseConservativeFields(length);
     length.setArrayOperand(tested.name);
-    if (Reference lengthInFront = buildInFrontOfTurnsInListReadsInLoops(walker, WTF::move(length)))
+    if (Reference lengthInFront = buildInFrontOfTurnsInListReadsInLoops(walker, WTF::move(length))) {
         read.setLengthOperands(singleElementSpan(lengthInFront));
+        walker.count(StatisticID::KnownInductionsUsed);
+    }
 }
 
 bool positionIsKnownToLieInsideList(Walker& walker, Reference list, Reference position)
 {
-    return knownOfElementAccess(walker, list, position).isInBounds;
+    return isKnownToLieInsideList(walker, list, position);
 }
 
 // ---- The looks

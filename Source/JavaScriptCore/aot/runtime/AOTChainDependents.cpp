@@ -245,14 +245,6 @@ void didChangeChainObject(VM& vm, JSObject* changed, UniquedStringImpl* uidOrNul
     }
 }
 
-void PropertyWalk::didReplaceValueOnPrototype(VM& vm, JSObject* holder, UniquedStringImpl* uid)
-{
-    for (Instance* instance : vm.aotState().instances) {
-        if (State* state = instance->state; state && state->objects)
-            didChangeClassHolder(vm, *state, holder, uid);
-    }
-}
-
 void RuntimeHooks::didStartWatchingReplacements(VM& vm)
 {
     if (VMPropertyCaches* caches = vm.aotState().propertyCaches.get())
@@ -507,7 +499,7 @@ static StepResult passEmptySlot(const ChainWalkStart& start, Object& object, con
     if (field.slot.representation() == SlotRepresentation::DeferredClosure || field.flags & (fieldIsReadOnly | fieldIsAccessor))
         return stopAt(&object, walk);
     // Compiled code leaves the creation of a field to the run time, which reports it, where the object has extra properties and its layout lists its keys.
-    if (!object.hasExtraProperties() || object.layout().keysAreNeverEnumerated || field.flags & fieldMayExistWithoutStorage) {
+    if (!object.hasExtraProperties() || field.flags & fieldMayExistWithoutStorage) {
         switch (start.use) {
         case ChainWalkUse::KeptForReads:
             return stopAt(&object, walk);
@@ -546,7 +538,7 @@ static StepResult lookUpExtraPropertyOfCompiledObject(const ChainWalkStart& star
         return StepResult::Continue;
     }
     // Only the key order says that such a field exists where its slot holds nothing. Its value is undefined then.
-    if (field->flags & fieldMayExistWithoutStorage && !object.layout().keysAreNeverEnumerated && object.isInKeyOrder(object.state(), *field))
+    if (field->flags & fieldMayExistWithoutStorage && object.isInKeyOrder(object.state(), *field))
         return stopAtField(object, *field, invalidOffset, walk);
     return passEmptySlot(start, object, *field, walk);
 }

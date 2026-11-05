@@ -116,7 +116,6 @@ export const typePartKinds = [
   "CallbackResult",
   "Prototype",
 ] as const;
-export type TypePartKind = (typeof typePartKinds)[number];
 
 export const placeKinds = [
   "None",
@@ -133,10 +132,8 @@ export const placeKinds = [
   "Member",
   "NativeCell",
 ] as const;
-export type PlaceKind = (typeof placeKinds)[number];
 
 export const keyKinds = ["None", "Any", "Indexes", "Names", "Operand", "ElementsOf"] as const;
-export type KeyKind = (typeof keyKinds)[number];
 
 export const implementationKinds = [
   "Generic",
@@ -154,7 +151,6 @@ export const prototypeLinks = ["Unknown", "Null", "Builtin"] as const;
 export type PrototypeLink = (typeof prototypeLinks)[number];
 
 export const hostReadUses = ["Inspected", "Called", "PassedTo", "Kept", "IsValueOf"] as const;
-export type HostReadUseKind = (typeof hostReadUses)[number];
 
 /** Of a function that native code makes and hands over by itself: the host answers it to nobody who asks. */
 export const noHostNumber = 0xffff;

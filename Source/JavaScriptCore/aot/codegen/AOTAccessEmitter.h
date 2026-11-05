@@ -27,8 +27,6 @@ public:
     void generateGetGlobalBinding(const ValueContext&);
     void generateSetGlobalBinding(const ValueContext&);
     void generateGetCachedGetter(const ValueContext&);
-    void generateGetAccessorOfMember(const ValueContext&);
-    void generateGetCachedValue(const ValueContext&);
     void generateElemGet(const ValueContext&);
     void generateElemGetByKeyParts(const ValueContext&);
     void generateElemSet(const ValueContext&);
@@ -62,6 +60,7 @@ public:
     void putById(const OperationContext&, Boxed receiver, PropertyKeyID, Boxed value, PutMode, std::optional<Pointer> site = std::nullopt);
     // For an operation with `siteCaches` in the schema: the Slot that remembers what the access found last, where the access takes one.
     std::optional<Pointer> siteOf(const OperationContext&, PropertyKeyID, SlotAccess);
+    std::optional<Pointer> siteOfStore(const OperationContext&, PropertyKeyID, SlotAccess);
     // For a closed read or call under a name: the SiteAnswers of the place, where the place comes again.
     std::optional<NumberedImmediate> answersOf(const OperationContext&, PropertyKeyID, SiteUse);
     StubKey stubThatReadsAtSite(PropertyKeyID, ValueID receiver);
@@ -119,8 +118,6 @@ private:
     // The one place in the cell where every receiver keeps the field, where the bytes there say whether the object has it.
     std::optional<PlacedSlot> findSlotInCellOfEveryReceiver(const Type& receiver, PropertyKeyID);
     Boxed getFreeName(const ValueContext&);
-    // The GetterSetter. The key is no symbol of a realm.
-    CellPointer accessorAboveObjectByFrontCell(CellPointer object, PropertyKeyID, LBasicBlock findsNoGetter);
     void putFreeName(const ValueContext&);
     CellPointer globalObject();
     // The record of the binding, by NumberSpace::GlobalBinding.

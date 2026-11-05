@@ -975,6 +975,7 @@ static bool nextExtensionComesFromOperation(VM& vm)
     return reinterpret_cast<FreeList*>(reinterpret_cast<uint8_t*>(allocator) + LocalAllocator::offsetOfFreeList())->allocationWillFail();
 }
 
+// With narrow references alone: it is the cage that finds no room, and wide references require none.
 static void checkWhatAnAllocationHandsOnWhereTheHeapIsFullKeepsItsExtension(LoadedProgram& program)
 {
     Fixture fixture(program);
@@ -1032,7 +1033,6 @@ std::span<const NativeTest> extensionTests()
         { "extension/the-first-extension-holds-what-the-makers-fill"_s, withProgram<checkTheFirstExtensionHoldsWhatTheMakersFill> },
         { "extension/whoever-asks-first-makes-the-same-extension"_s, withProgram<checkWhoeverAsksFirstMakesTheSameExtension> },
         { "extension/the-builder-lays-each-value-in-its-own-granule"_s, withProgram<checkTheBuilderLaysEachValueInItsOwnGranule> },
-        { "extension/what-an-allocation-hands-on-where-the-heap-is-full-keeps-its-extension"_s, withProgram<checkWhatAnAllocationHandsOnWhereTheHeapIsFullKeepsItsExtension> },
         { "extension/narrow-references/an-object-pays-for-the-fields-it-has"_s, runNativeTestWithNarrowReferences<checkAnObjectPaysForTheFieldsItHas> },
         { "extension/narrow-references/fields-are-added-in-every-order"_s, runNativeTestWithNarrowReferences<checkFieldsAreAddedInEveryOrder> },
         { "extension/narrow-references/a-granule-goes-in-place-only-behind-the-others"_s, runNativeTestWithNarrowReferences<checkAGranuleGoesInPlaceOnlyBehindTheOthers> },

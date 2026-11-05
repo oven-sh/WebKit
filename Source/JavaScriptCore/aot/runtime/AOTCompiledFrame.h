@@ -307,7 +307,6 @@ public:
     JS_EXPORT_PRIVATE void listConstructedFunctionsThatLeft();
     const std::optional<TraceFrame>& constructedFunctionThatLeft() const { return m_constructedFunctionThatLeft; }
     bool hasNoMachineFrame() const { return m_hasNoMachineFrame; }
-    void* callerStackPointer() const { return AOT::stackPointerOfCaller(m_cursor.callFrame, m_cursor.bytesAboveReturnAddress); }
     bool isAtFirstReadSite() const { return m_cursor.isAtFirstReadSite && m_callSite.site.firstReadSite; }
     bool calleeWasEntered() const { return m_calleeWasEntered; }
     // TraceFrame::isAtFailedTailCall of frame().

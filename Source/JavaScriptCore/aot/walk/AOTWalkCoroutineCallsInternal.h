@@ -13,7 +13,7 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// What the six files of AOTWalkCoroutine{Calls, AwaitedCalls, AwaitsAtJoins, StepsByHand, PromiseAll, Guards}.cpp share, and nobody else reads.
+// What the five files of AOTWalkCoroutine{Calls, AwaitedCalls, StepsByHand, PromiseAll, Guards}.cpp share, and nobody else reads.
 
 // CoroutineStateOfUnit::keptByCalls.
 struct KeptByCallsOfCoroutines final : KeptForUnitOfCoroutines {
@@ -30,12 +30,6 @@ struct KeptByCallsOfCoroutines final : KeptForUnitOfCoroutines {
     // A call in a copy has awaited for them. Each goes when the walk comes to it.
     Vector<ValueID, 2> awaitsTakenInCopies;
 
-    // C5. By block of the unit's own body.
-    BitVector blocksAskedForAwaitTakenByEdges;
-    Vector<ValueID> awaitsTakenByEdges;
-    bool someAwaitIsTakenByEdges { false };
-    // What a jump brings is bound to what the await has given already: the call that made it went on to the await. Each goes when the walk comes to the jump.
-    Vector<ValueID, 2> broughtValuesAwaited;
 
     // C7. The operations between a listed call and Promise.all are walked one at a time, and none of them begins the same again.
     bool isTakingListOfPromiseAllApart { false };
@@ -49,7 +43,7 @@ KeptByCallsOfCoroutines& keptByCallsOfCoroutines(Walker&);
 bool buildRampAtCall(Walker&, const BodyValue& call);
 
 // The body of an async function, and no body of a module, where the walk stands in it: an await may be built ahead of its place.
-// The body of an async generator stores what lives on at its suspensions as they are written (HeapWordPlan of coroutines-5), so there each is built where it stands.
+// The body of an async generator stores what lives on at its suspensions as they are written (HeapWordPlan), so there each is built where it stands.
 struct AwaitingBodyOfCoroutine {
     CoroutineKind kind;
     Reference driver;
@@ -84,10 +78,8 @@ struct WaitOfCallInCoroutine {
     ValueID await;
     // Among the operations of the block of the call.
     uint32_t placeOfCall { 0 };
-    // The place of the Await, or the number of operations of the block where the jump at its end brings the value to the Await.
+    // The place of the Await.
     uint32_t endOfWait { 0 };
-    // The name under which the jump brings it. Null: the Await stands in the block.
-    ValueID brought;
 };
 // The Await alone takes what the operation gives, it takes no extra turn, it lies in the stretch being walked, and whatever stands between the two may as well stand in front of both.
 std::optional<WaitOfCallInCoroutine> findWaitOfCallInCoroutine(Walker&, const BodyIndex&, BodyBlock, ValueID call);
@@ -96,14 +88,8 @@ bool walkUpToAwaitOfCall(Walker&, const BodyIndex&, BodyBlock, const WaitOfCallI
 // `given` stands for what the Await gives, and the walk goes on behind the wait.
 void finishWaitOfCall(Walker&, BodyBlock, const WaitOfCallInCoroutine&, Reference given);
 
-// ---- AOTWalkCoroutineAwaitsAtJoins.cpp
-
-// The jump at the end of the block alone takes the value, and brings it to where awaitTakenByEdgesInto() takes it. Null: it does not.
-ValueID findAwaitThatJumpBringsValueTo(Walker&, const BodyIndex&, BodyBlock, ValueID brought);
-// What the Await holds, under the names that it has where the jump to `target` stands. Nothing: the build has failed.
-std::optional<Vector<Reference, 4>> findWhatAwaitHoldsOnWayThrough(Walker&, const BodyIndex&, BodyTarget, ValueID await);
-// A cast between a parameter that the edges have awaited for and the Await speaks of the promise. It is bound to its operand, whatever it claims. False: the operation is no such cast.
-bool nameCastInFrontOfAwaitTakenByEdges(Walker&, const BodyValue& cast);
+// A cast in front of an Await that a call in a copy has awaited for speaks of the promise. It is bound to its operand, whatever it claims. False: the operation is no such cast.
+bool nameCastInFrontOfAwaitTakenInCopy(Walker&, const BodyValue& cast);
 
 // ---- AOTWalkCoroutineStepsByHand.cpp, AOTWalkCoroutinePromiseAll.cpp
 

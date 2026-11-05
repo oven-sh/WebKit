@@ -186,10 +186,6 @@ static void addSymbolsOfUnits(ImageSymbolTable& table, const Typed::Program& pro
             table.append(" "_s);
             table.append(nameOf(code.unit.role));
         }
-        if (Typed::isBoundRole(code.unit.role)) {
-            table.append(" "_s);
-            table.appendNumber(code.unit.numberOfBoundArguments);
-        }
         table.add(layout.bodyStarts[position], layout.functionsEnd, table.endName());
     }
 }

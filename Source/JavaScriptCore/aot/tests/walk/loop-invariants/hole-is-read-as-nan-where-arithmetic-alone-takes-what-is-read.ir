@@ -2,7 +2,7 @@
 # function holes(list: number[]) { let count = 0; for (let i = 0; i < list.length; i++) if (list[i] === undefined) count++; return count; }   sink(sum([1, 2, 3]), holes([1, 2, 3]));
 # Behind the row in front of the loop the read is inside the length and out of storage for numbers. In `sum` the sum alone takes what is read, and beside a number it makes NaN of undefined:
 # so a hole is read as NaN: no test for it, no number that may be missing. In `holes` the reader tells undefined from NaN: nothing changes there.
-# RED UNTIL holes-are-read-as-nan-for-arithmetic-1: [readsHoleAsNaN] had an emitter and a rule, and nobody set it.
+# [readsHoleAsNaN] once had an emitter and a rule, and nobody set it.
 # RUN: walk f1 f2 mechanisms=all
 # CHECK-LABEL: code f1:Body
 # CHECK: @Double = GetArrayElement {{*}}level=Proven {{*}}readsHoleAsNaN

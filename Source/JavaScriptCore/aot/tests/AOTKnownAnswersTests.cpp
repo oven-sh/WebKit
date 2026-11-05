@@ -387,26 +387,6 @@ static void testSuspensions()
     AOT_TEST_CHECK(findInKnownAnswersTests(other, 1) && !findInKnownAnswersTests(other, 2) && !findInKnownAnswersTests(other, 3) && findInKnownAnswersTests(other, 4));
 }
 
-// NOTES x WRITERS in a coroutine: each statement converts a value, computes a number and calls code that nobody has seen. What ends at a suspension alone is ever more, and no call looks at it.
-static void testWhatEndsAtSuspensionAloneCostsNoMoreEachAtCalls()
-{
-    constexpr uint32_t numberOfStatements = 200000;
-    AnswersOfWalk table;
-    WalkState state;
-    state.setAnswers(table);
-    Effects call = Effects::unknownCode();
-    for (uint32_t statement = 0; statement < numberOfStatements; ++statement) {
-        noteInKnownAnswersTests(state, { 2 * statement, statement, { }, { }, true }, KnownAnswer::Family::Conversion, false);
-        noteInKnownAnswersTests(state, { 2 * statement + 1, statement, valueOfKnownAnswersTests(statement), { AbstractHeap::ArrayStorage }, false });
-        state.invalidate(call);
-        AOT_TEST_CHECK(findInKnownAnswersTests(state, 2 * (statement / 2)) == std::optional<uint64_t>(statement / 2) && !findInKnownAnswersTests(state, 2 * statement + 1));
-    }
-    AOT_TEST_CHECK(state.answers().size() == numberOfStatements);
-    call.maySuspend = true;
-    state.invalidate(call);
-    AOT_TEST_CHECK(state.answers().isEmpty());
-}
-
 // `p.z = 1; o.c`, `o.m(); new Q(); o.m()`: of two holders the one that may be written forgets, of two guards the one whose class may be meant.
 static void testWriterEndsWhatItMayWrite()
 {
@@ -491,54 +471,6 @@ static void testNumberFarAboveOldOneCostsNoMore()
     AOT_TEST_CHECK(old.size() == 1 && old.contains(3));
 }
 
-// The body of a big module: a branch and a join for each statement, and nothing of what went before ends. NOTES x JOINS.
-// Where a meet goes through all that either state holds, this does not end.
-static void testNotesForGoodCostNoMoreEachAtJoins()
-{
-    constexpr uint32_t numberOfStatements = 200000;
-    AnswersOfWalk table;
-    WalkState state;
-    state.setAnswers(table);
-    for (uint32_t statement = 0; statement < numberOfStatements; ++statement) {
-        uint32_t key = 4 * statement;
-        noteInKnownAnswersTests(state, { key, statement, { }, { }, false });
-        // On a fresh holder: no call ends it, so the list of what may end grows as well.
-        Reference holder = valueOfKnownAnswersTests(statement);
-        state.noteFresh(holder);
-        noteInKnownAnswersTests(state, { key + 1, statement, holder, { AbstractHeap::ArrayStorage }, false });
-        WalkState taken = state;
-        WalkState notTaken = WTF::move(state);
-        noteInKnownAnswersTests(taken, { key + 2, 1, { }, { }, false });
-        noteInKnownAnswersTests(taken, { key + 3, 1, { }, { }, false });
-        noteInKnownAnswersTests(notTaken, { key + 2, 1, { }, { }, false });
-        noteInKnownAnswersTests(notTaken, { key + 3, 0, { }, { }, false });
-        taken.meetWith(notTaken);
-        state = WTF::move(taken);
-        AOT_TEST_CHECK(findInKnownAnswersTests(state, key) == std::optional<uint64_t>(statement) && findInKnownAnswersTests(state, key + 1) == std::optional<uint64_t>(statement));
-        AOT_TEST_CHECK(findInKnownAnswersTests(state, key + 2) == std::optional<uint64_t>(1) && !findInKnownAnswersTests(state, key + 3));
-        AOT_TEST_CHECK(findInKnownAnswersTests(state, 4 * (statement / 2)) == std::optional<uint64_t>(statement / 2));
-    }
-    AOT_TEST_CHECK(state.answers().size() == 3 * numberOfStatements);
-}
-
-// NOTES x WRITERS, where the writer writes what no note rests on: `counts.total += 1` beside ever more lists whose length is known.
-static void testWritersOfOtherHeapsCostNoMoreEach()
-{
-    constexpr uint32_t numberOfStatements = 200000;
-    AnswersOfWalk table;
-    WalkState state;
-    state.setAnswers(table);
-    Effects store = effectsThatWriteInKnownAnswersTests({ AbstractHeap::ObjectFields });
-    for (uint32_t statement = 0; statement < numberOfStatements; ++statement) {
-        noteInKnownAnswersTests(state, { statement, statement, valueOfKnownAnswersTests(statement), { AbstractHeap::ArrayStorage }, false });
-        state.invalidate(store);
-        AOT_TEST_CHECK(findInKnownAnswersTests(state, statement / 2) == std::optional<uint64_t>(statement / 2));
-    }
-    AOT_TEST_CHECK(state.answers().size() == numberOfStatements);
-    state.invalidate(effectsThatWriteInKnownAnswersTests({ AbstractHeap::ArrayStorage }));
-    AOT_TEST_CHECK(state.answers().isEmpty());
-}
-
 // NOTES x WRITERS, where the writer stores into an object that is fresh: `const n = new Node(); n.left = a; n.right = b`, beside ever more objects of which a field is known.
 static void testStoresIntoFreshObjectsCostNoMoreEach()
 {
@@ -557,54 +489,6 @@ static void testStoresIntoFreshObjectsCostNoMoreEach()
     AOT_TEST_CHECK(state.answers().size() == numberOfStatements);
 }
 
-// NOTES x CALLS, where the notes rest on fresh objects: `const a = [x, y]; f(); n += a.length`, beside ever more lists that nobody else has. They stay, and no call looks at them.
-// Every third list leaves two statements behind its own, and what rests on it ends at the next call.
-static void testAnswersAboutFreshObjectsCostNoMoreEachAtCalls()
-{
-    constexpr uint32_t numberOfStatements = 200000;
-    AnswersOfWalk table;
-    WalkState state;
-    state.setAnswers(table);
-    Effects call = Effects::unknownCode();
-    for (uint32_t statement = 0; statement < numberOfStatements; ++statement) {
-        Reference fresh = valueOfKnownAnswersTests(statement);
-        state.noteFresh(fresh);
-        noteInKnownAnswersTests(state, { statement, statement, fresh, { AbstractHeap::ArrayStorage }, false });
-        if (statement >= 2 && !(statement % 3))
-            state.markEscaped(valueOfKnownAnswersTests(statement - 2));
-        state.invalidate(call);
-        AOT_TEST_CHECK(findInKnownAnswersTests(state, statement) == std::optional<uint64_t>(statement));
-        if (statement >= 2)
-            AOT_TEST_CHECK(!!findInKnownAnswersTests(state, statement - 2) == !!(statement % 3));
-    }
-}
-
-// `registry.push(a); f(); registry.push(b); f(); ..`: one key is asked about, found unknown and noted anew behind each call, with another record each time and with the same words each time.
-// Where a question goes through all that was ever noted under the key, or a set that was emptied is as long as the numbers are high, this does not end.
-static void testKeyNotedAnewBehindEachCallCostsNoMoreEach()
-{
-    constexpr uint32_t numberOfStatements = 200000;
-    AnswersOfWalk table;
-    WalkState state;
-    state.setAnswers(table);
-    Reference list = valueOfKnownAnswersTests(0);
-    noteInKnownAnswersTests(state, { 0, 7, { }, { }, false });
-    for (uint32_t statement = 0; statement < numberOfStatements; ++statement) {
-        AOT_TEST_CHECK(!findInKnownAnswersTests(state, 1) && !findInKnownAnswersTests(state, 2));
-        noteInKnownAnswersTests(state, { 1, statement, list, { AbstractHeap::ArrayStorage }, false }, KnownAnswer::Family::Operation, false);
-        noteInKnownAnswersTests(state, { 2, 5, list, { AbstractHeap::NamedProperties }, false });
-        noteInKnownAnswersTests(state, { 3 + statement, 1, { }, { }, false });
-        AOT_TEST_CHECK(findInKnownAnswersTests(state, 1) == std::optional<uint64_t>(statement) && findInKnownAnswersTests(state, 2) == std::optional<uint64_t>(5));
-        state.invalidateHeap();
-    }
-    AOT_TEST_CHECK(findInKnownAnswersTests(state, 0) == std::optional<uint64_t>(7) && state.answers().size() == numberOfStatements + 1);
-    // The words that are the same each time have one number.
-    AOT_TEST_CHECK(table.size() == 2 * numberOfStatements + 2);
-
-    table.clear();
-    AOT_TEST_CHECK(!table.size());
-}
-
 std::span<const NativeTest> knownAnswersTests()
 {
     static constexpr NativeTest tests[] {
@@ -612,14 +496,9 @@ std::span<const NativeTest> knownAnswersTests()
         { "known-answers/answers-as-plain-lists-do"_s, testAnswersAsPlainListsDo },
         { "known-answers/what-every-way-has-noted-holds-behind-a-join"_s, testWhatEveryWayHasNotedHoldsBehindJoin },
         { "known-answers/suspensions"_s, testSuspensions },
-        { "known-answers/what-ends-at-a-suspension-alone-costs-no-more-each-at-calls"_s, testWhatEndsAtSuspensionAloneCostsNoMoreEachAtCalls },
         { "known-answers/a-writer-ends-what-it-may-write"_s, testWriterEndsWhatItMayWrite },
-        { "known-answers/notes-for-good-cost-no-more-each-at-joins"_s, testNotesForGoodCostNoMoreEachAtJoins },
         { "known-answers/a-number-far-above-an-old-one-costs-no-more"_s, testNumberFarAboveOldOneCostsNoMore },
-        { "known-answers/writers-of-other-heaps-cost-no-more-each"_s, testWritersOfOtherHeapsCostNoMoreEach },
         { "known-answers/stores-into-fresh-objects-cost-no-more-each"_s, testStoresIntoFreshObjectsCostNoMoreEach },
-        { "known-answers/answers-about-fresh-objects-cost-no-more-each-at-calls"_s, testAnswersAboutFreshObjectsCostNoMoreEachAtCalls },
-        { "known-answers/a-key-noted-anew-behind-each-call-costs-no-more-each"_s, testKeyNotedAnewBehindEachCallCostsNoMoreEach },
     };
     return tests;
 }

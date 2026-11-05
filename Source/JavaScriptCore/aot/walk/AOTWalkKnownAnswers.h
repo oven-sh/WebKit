@@ -448,9 +448,6 @@ public:
             endWhatIsWrittenOutsideFreshObjects(Effects(), state);
     }
 
-    // Each answer of the family Note that the state holds and whose holder is that object, the newest first.
-    void forEachNoteOf(Reference holder, NOESCAPE const ScopedLambda<void(const KnownAnswer&)>&) const;
-
 private:
     // States are moved for every block and edge, and cleared: a state that holds nothing has none, and a move is a word.
     struct Held {

@@ -20,7 +20,7 @@ namespace JSC { namespace AOT { namespace Typed {
 // (a) at each point of the loop one version is current, and only names of that version are mentioned there;
 // (b) an edge inside the loop hands a name only to a parameter that is a name, and every edge into such a parameter brings the same text;
 // (c) on each edge out of the loop, every name that is live at the head of the target and every argument that is a name is of the version current on that edge;
-// (d) a growth is an Add or a Strcat with a name as operand 0 that gives a string by the types of the looks, or, with growsInCallees, a call for which placeOfArgumentHandedBackWithMoreBehind() answers;
+// (d) a growth is an Add or a Strcat with a name as operand 0 that gives a string by the types of the looks;
 // (e) the flow is reducible, and no handler edge enters the head.
 void findGrowingTexts(Walker&, BlockID inputHead, const LoopPreview&, Vector<GrowingText, 2>&);
 
@@ -105,8 +105,6 @@ void takeTextsOutOfStringBuildersAtEndOfWay(Walker&, const BodyTerminator&);
 // It asks finishTextInFrame() and lastPartOrFinishedText().
 Reference finishTextInStringBuilder(Walker&, TextInStringBuilder&, Reference name, Origin);
 void discardTextInStringBuilder(Walker&, TextInStringBuilder&, Reference name, Origin);
-// For whoever leaves the loop of a text by a way that is no edge of the body, with what a turn begins with or brings round: each text in a builder among the values is finished where the walk stands, and its string takes its place.
-void finishTextsInStringBuildersHandedOver(Walker&, Vector<Reference, 8>& values);
 
 // ---- Questions that the functions above ask. Each keeps the text out of a builder, or takes it out, while nobody answers more.
 // Asked by StringsInPlaceOfTextsInBuilders in front of making a string. The operation reads only the length, the emptiness or the truth of the text `name`: it is built on StringBuilderLength and bound.
@@ -121,8 +119,6 @@ bool mayKeepTextUnderHandlers(Walker&, BlockID inputHead, const GrowingText&);
 bool everyHandlerLetsTextGo(Walker&, const GrowingText&);
 // In the place of appendPartsToStringBuilder() under a handler that is handed the text: a checkpoint, the parts, and a roll back where a part fails.
 void appendPartsRolledBackWhereTheyFail(Walker&, TextInStringBuilder&, Reference name, std::span<const Reference> parts, Origin);
-// For the scan. The place among the variadic operands of the call of the argument that the only callee hands back with more behind it, and the walk is sure to copy the callee here. Nothing: the call is a reader.
-std::optional<uint32_t> placeOfArgumentHandedBackWithMoreBehind(Walker&, const BodyIndex&, const BodyValue& call);
 // False: no builder is begun for a text that hasPartsThatMayRunCode.
 bool convertsPartsThatMayRunCode();
 // The part as written may run code: ToPrimitive (of an Add) or ToString (of a Strcat) is built where the walk stands, in the order of the parts. What to append.

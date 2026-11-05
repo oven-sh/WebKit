@@ -69,7 +69,6 @@ public:
     void setFunctionTexts(const HostFunctionTexts& texts) { m_functionTexts = texts; }
 
     Diagnostics takeDiagnostics() { return WTF::move(m_diagnostics); }
-    Statistics takeStatistics() { return std::exchange(m_statistics, Statistics()); }
 
 private:
     Diagnostics m_diagnostics;

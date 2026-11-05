@@ -1,6 +1,6 @@
 # made of 11234378e483bd4d
 # an operation that is written twice is built once, and a branch that a branch on the way has decided is a jump: the answers are those of the text for numbers, NaN, -0, texts, and operands that convert and count
-# behind its tests each function takes its numbers through a unary plus. What that gives is a number by its own row, whatever the walk makes of the tests: the front end reads the parameter itself behind a test, which no edge narrows until unions-and-narrowing-2 is in
+# behind its tests each function takes its numbers through a unary plus. What that gives is a number by its own row, whatever the walk makes of the tests: the front end reads the parameter itself behind a test, which no edge narrows
 # f1 = twice, f2 = converts, f3 = again, f4 = reversed, f5 = turns, f6 = texts, f7 = truth, f8 = signs, f9 = sides, f10 = negated, f11 = tell
 # RUN(FORM): walk f1 mechanisms=none+Folding+TypedOperations
 # FORM-LABEL: code f1:Body

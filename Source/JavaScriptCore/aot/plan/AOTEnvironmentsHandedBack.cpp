@@ -121,7 +121,7 @@ static bool someWayKeepsNothing(const BodyIndex& index, ValueID environment)
 void planEnvironmentsHandedBack(const Program& program, const Facts& facts, BuildContext& build, SlotPlanParts& parts)
 {
     // A debugger stands at any operation and keeps whatever it finds in the scope.
-    if (program.admitsInspector || !withoutMechanismsMissingDependencies(facts.mechanisms()).contains(Mechanism::EscapeAnalysis))
+    if (program.admitsInspector || !withoutMechanismsMissingDependencies(facts.mechanisms()).contains(Mechanism::CellsInFrames))
         return;
 
     Vector<FunctionID> makers;
@@ -170,6 +170,7 @@ void planEnvironmentsHandedBack(const Program& program, const Facts& facts, Buil
             if (size > build.limit(LimitID::MaxFieldOffset))
                 continue;
             planned.isEscapedOffset = static_cast<uint32_t>(endOfFields);
+            build.statistics().count(StatisticID::AllocateInFramesChanges);
             planned.size = static_cast<uint32_t>(size);
         }
     }

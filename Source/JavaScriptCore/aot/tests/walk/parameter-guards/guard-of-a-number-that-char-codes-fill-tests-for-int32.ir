@@ -1,6 +1,6 @@
 # a parameter that is written `number` is filled with char codes alone: int32 but for the NaN behind the end of the text. NaN does not count against int32, so the guard tests for int32, and NaN takes the slow version
 # function isLetter(ch: number) { return ch >= 65; }   isLetter("abc".charCodeAt(1)); sink(isLetter)
-# TODO: numbers-2's reader: the row of charCodeAt writes `number`, fractions and all (builtins/string.builtins.ts: b.f64; the table has no word for "an integer or NaN"). So that is what Link holds at `ch`, a fraction counts against int32, the guard asks for a number and the fast version compares doubles
+# TODO: types of numbers: the row of charCodeAt writes `number`, fractions and all (builtins/string.builtins.ts: b.f64; the table has no word for "an integer or NaN"). So that is what Link holds at `ch`, a fraction counts against int32, the guard asks for a number and the fast version compares doubles
 # RUN: plan units mechanisms=all
 # CHECK: unit f1:ParameterGuard {{*}} tests (i32)
 

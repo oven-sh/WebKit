@@ -174,8 +174,6 @@ template<typename Operation> TypeID resultTypeOf(const TypingContext&, const Ope
 // What the target of an edge takes from the terminator itself: the results of TryCallInline and its like. What a test proves on an edge is AOTTypeNarrowing.h.
 template<typename Terminator> TypeID edgeResultTypeOf(const TypingContext&, const Terminator&, OperandTypes, uint32_t targetIndex, uint32_t resultIndex);
 template<typename Operation> std::optional<uint32_t> numberOfResultsOf(const Program&, const Operation&);
-// What is worth keeping of a type computed at the level Expected beside the proven one: their intersection, or nothing where it says no more or contradicts.
-ExpectedType expectationBeside(TypeArena&, TypeID proven, TypeID computedAtLevelExpected);
 
 inline constexpr OpcodeSet opcodesThatMayHaveSeveralResults = []() consteval {
     OpcodeSet opcodes;
@@ -258,9 +256,6 @@ bool changesCodeWhereProven(const TypeArena&, TypeID tested);
 // so a test for the type would fail nearly every time. Neither an entry nor a cast nor an operation that takes the value into a position tests for it. The value goes on as it came, and its guess is a weak one (GuessSource::NamesRead).
 // It looks at the layouts of the written type alone. The walk, Facts' scan, typeTestedAtEntry() of facts/AOTSummary.h and computePositionTypes() all go by it.
 bool describesBagOfOptions(const TypeArena&, TypeID written);
-// The expectation that a value has from a Convert, a Check or an Expect on: the written type cut by what the value may be. Empty where that is nothing, or no more than `proven` says.
-// Where the written objects are none of those proven to come the declaration says nothing: `list: { length: number }` with arrays handed in.
-ExpectedType expectationFromWrittenType(TypeArena&, TypeID proven, ExpectedType before, TypeID written);
 // In a summary a Convert is Filter(targetOfConvert()): TypeArena::intersectionOf().
 // Upcast is Copy everywhere: it only widens, so the value keeps the type it has. NarrowByField is narrowHolderByFieldValue() on the passing edge of the test of the field that was read.
 

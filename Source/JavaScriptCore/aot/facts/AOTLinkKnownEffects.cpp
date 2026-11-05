@@ -73,15 +73,6 @@ const LinkedEffectsGivenArguments* LinkKnownEffects::findEffectsGivenArguments(F
     return found != givenArguments.end() && found->function == function ? &*found : nullptr;
 }
 
-const LinkedCallOfSeveral* LinkKnownEffects::findCallOfSeveral(FunctionID caller, ValueID site) const
-{
-    auto placeOf = [](const LinkedCallOfSeveral& call) {
-        return std::tuple { call.caller, call.site };
-    };
-    auto found = std::ranges::lower_bound(callsOfSeveral, std::tuple { caller, site }, { }, placeOf);
-    return found != callsOfSeveral.end() && found->caller == caller && found->site == site ? &*found : nullptr;
-}
-
 } } } // namespace JSC::AOT::Typed
 
 #endif // ENABLE(AOT)

@@ -38,12 +38,13 @@ void StraightEmitter::generateException(const BodyValue& value)
         return;
     case Opcode::CatchValue:
         if (exception) {
-            if (exception.index() > value.id().index()) {
+            // It is no operand of this operation: where nothing else reads it, it has no word.
+            if (exception.index() > value.id().index() || m_index.isUnused(exception)) {
                 fail(value);
                 return;
             }
-            load(exception, resultGPR);
-            jit().load64(CCallHelpers::Address(resultGPR, JSC::Exception::valueOffset()), resultGPR);
+            GPRReg result = loadIntoResultRegister(exception);
+            jit().load64(CCallHelpers::Address(result, JSC::Exception::valueOffset()), result);
         } else
             callOperation(value, RuntimeOperation::Catch, { }, { .followsThrow = true });
         define(value);

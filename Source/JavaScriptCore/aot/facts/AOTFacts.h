@@ -27,33 +27,11 @@ class Program;
 
 // What the walk marks a record with where it leans on a fact: FactUse of walk/AOTCode.h.
 enum class FactKind : uint8_t {
-    ProvenLayoutSets,
     NarrowedTypes,
-    RemovedNullish,
-    LiteralValues,
-    ExactFunctions,
     ProvenContents,
-    ArrayStorageKinds,
-    PristineInstances,
-    ConstantBuiltinLocations,
-    CalleeSets,
-    ReceiverSets,
-    ClassBases,
-    AppendedFields,
-    HolderMutations,
-    OwnNames,
-    ClassEvaluations,
-    StoreCounts,
-    Initialization,
-    ConstructorFieldOrders,
     OperandSummaries,
-    ObjectUses,
-    ReachedFunctions,
-    ExecutionCounts,
     HeapWords,
 };
-inline constexpr unsigned numberOfFactKinds = 24;
-static_assert(static_cast<unsigned>(FactKind::HeapWords) + 1 == numberOfFactKinds);
 ASCIILiteral nameOf(FactKind);
 
 struct FactsRequest {
@@ -61,8 +39,6 @@ struct FactsRequest {
     Mechanisms mechanisms { allMechanisms };
     // Set only by tests and by testaot.
     OrderOfWorklist orderOfWorklist { OrderOfWorklist::NewestFirst };
-    // --explain was asked for.
-    bool tracesUnknownValues { false };
 };
 
 // What a fact is about.
@@ -71,8 +47,6 @@ public:
     enum class Kind : uint8_t { Program, Function, EntryParameter, Result, Thrown, Variable, Field, Layout, Object, Cell, Builtin, Module, InputOfOperation, Operation };
 
     constexpr FactSubject() = default;
-
-    static constexpr FactSubject fromParts(Kind kind, uint32_t first, uint32_t second) { return { kind, first, second }; }
 
     constexpr Kind kind() const { return m_kind; }
     constexpr uint32_t first() const { return m_first; }
@@ -92,11 +66,6 @@ private:
     Kind m_kind { Kind::Program };
     uint32_t m_first { 0 };
     uint32_t m_second { 0 };
-};
-
-struct UnknownOriginOfSubject {
-    FactSubject subject;
-    UnknownOrigin origin;
 };
 
 // The queries of Facts say what each list and flag means.
@@ -129,6 +98,8 @@ struct ProgramFactTables {
     Vector<RegExpTextInSight> regExpTextsInSight;
     // Ascending by compareProgramStrings() of the pattern, then by flags, each pair once. No pattern is a string of the program.
     Vector<RegExpTextWorkedOut> regExpTextsWorkedOut;
+    // Ascending. For the warning alone.
+    Vector<RegExpCallWithoutText> regExpCallsWithoutText;
 };
 
 // Flat tables. An empty one claims nothing, but for the lists that the queries mark "Must be true".
@@ -164,7 +135,6 @@ public:
     Vector<FunctionEffects> effects;
     // By function and entry parameter, captures first, in the order of EntryParameter.
     FactRows<PositionFacts> entryParameters;
-    FactCallGraph calls;
 
     Vector<VariableFacts> variables;
     // One more entry than there are layouts.
@@ -212,9 +182,8 @@ public:
 
     ProgramFactTables program;
 
-    // Both only for --explain. Ascending by object and mutation, ascending by subject.
+    // Only for --explain. Ascending by object and mutation.
     Vector<MutationWitness> witnessesOfMutations;
-    Vector<UnknownOriginOfSubject> originsOfUnknown;
 };
 
 // All that Plan, Compile, Image and the driver may ask about the whole program. Made once, then read by any thread and never changed.
@@ -290,8 +259,6 @@ public:
     bool mayBeReached(FunctionID id) const { return !m_tables.functionsNeverReached.get(id.index()); }
     // Claims nothing: false.
     bool everyCallerIsKnown(FunctionID id) const { return id.index() < m_linked.functions.size() && m_linked.function(id).everyCallerIsKnown; }
-    // Claims nothing: Unknown. Link has no table that says more.
-    ClosureUse closureUse(FunctionID) const { return ClosureUse::Unknown; }
     // Claims nothing: false. In one realm: LinkedFunction::runsAtMostOnce.
     bool runsAtMostOnce(FunctionID id) const { return id.index() < m_linked.functions.size() && m_linked.function(id).runsAtMostOnce; }
     // Claims nothing: Effects::unknownCode().
@@ -303,8 +270,6 @@ public:
         std::span<const PositionFacts> rows = m_tables.entryParameters.of(id);
         return entryParameter < rows.size() ? rows[entryParameter] : PositionFacts { };
     }
-    // Claims nothing: no site has a row and there is no list.
-    const FactCallGraph& calls() const { return m_tables.calls; }
 
     // ---- Variables and fields
     // Claims nothing: VariableFacts { }.
@@ -430,14 +395,6 @@ public:
     std::span<const RuntimeFunctionID> libraryFunctionsLacked() const LIFETIME_BOUND { return m_tables.program.libraryFunctionsLacked.span(); }
 
     // ---- --explain
-    // Claims nothing: false.
-    bool tracesUnknownValues() const { return !m_tables.originsOfUnknown.isEmpty(); }
-    // Claims nothing: UnprovenCause::Unknown.
-    UnknownOrigin originOfUnknownAt(const FactSubject& subject) const
-    {
-        const UnknownOriginOfSubject* row = findFactRow(m_tables.originsOfUnknown.span(), subject, &UnknownOriginOfSubject::subject);
-        return row ? row->origin : UnknownOrigin { };
-    }
     // Claims nothing: noWitness.
     Witness witnessOf(ObjectID object, ObjectMutation mutation) const
     {

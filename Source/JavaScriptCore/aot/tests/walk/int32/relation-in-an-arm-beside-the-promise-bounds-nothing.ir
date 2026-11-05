@@ -1,0 +1,60 @@
+# THE LYING CONTROL of relation-between-where-a-value-is-made-and-where-it-enters-the-promise.ir: the relation stands in an arm that the way to the promise does not lead through: IT IS REPORTED.
+# f2 = beside
+# -- source: relation-in-an-arm-beside-the-promise-bounds-nothing.ts
+# declare function sink(...values: unknown[]): void;
+# class Point { x: Bun.int32 = 7; y: Bun.int32 = 12; }
+# function take(n: Bun.int32): Bun.int32 { return n; }
+# function beside(point: Point, key: "x" | "y", list: number[], c: boolean): number { const n = list.length; let r = 0; if (c) { if (n < point[key]) r = 1; } return take(n) + r; }
+# sink(beside);
+# -- end of source
+# records of 4ae8935715229a6b
+# DIAGNOSTIC: UnprovenInt32 1
+# RUN: walk f2 mechanisms=all
+# CHECK: the walk of f2:Body failed
+
+module m0 path="relation-in-an-arm-beside-the-promise-bounds-nothing.ts" displayPath="relation-in-an-arm-beside-the-promise-bounds-nothing.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 kind=Instance name="Point" module=m0 position=57 fields=[{key="x" declared={type=i32 flags=[IsInt32Promise]} flags=[IsRequired]}, {key="y" declared={type=i32 flags=[IsInt32Promise]} flags=[IsRequired]}] ownFieldCount=2
+variable g0 name="take" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f2 @0
+    v1 = Convert v0 declared={type=f2 flags=[IsFromCompiler]} @0
+    v2 = Builtin builtin=GlobalThis @335
+    v3 = PropGet v2 key="sink" [isFreeName] @335
+    v4 = Call v3, -, v1 calleeName="sink" @335
+    v5 = Undefined @335
+    Return v5 @335
+}
+function f1 name="take" module=m0 position=104 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=i32 flags=[IsInt32Promise]}] results=[{type=i32 flags=[IsInt32Promise]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: i32):
+    v1 = Convert v0 declared={type=i32} @152
+    Return v1 @152
+}
+function f2 name="beside" module=m0 position=157 flags=[IsChecked, HasExplicitName] length=4 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|"x"|"y" flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}, {type=boolean}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0, v1: undefined|null|"x"|"y", v2: undefined|null|Array<number>, v3: boolean):
+    v4 = PropGet v2 key="length" @251
+    v5 = Integer @272
+    v6 = Convert v5 declared={type=number} @272
+    v7 = ToBoolean v3 @279
+    Branch v7 -> taken b1(| 0), notTaken b4(v6) @279
+  b1(v8):
+    v9 = ElemGet v0, v1 @292
+    v10 = Convert v9 declared={type=i32} @292
+    v11 = Less v4, v10 @292
+    Branch v11 -> taken b2(), notTaken b3(v6) @292
+  b2():
+    v12 = Integer integer=1 @308
+    v13 = Convert v12 declared={type=number} @304
+    Jump -> next b3(v13) @304
+  b3(v14: number):
+    Jump -> next b4(v14) @304
+  b4(v15: number):
+    v16 = GetModuleVariable variable=g0 @320
+    v17 = Convert v4 declared={type=i32 flags=[IsInt32Promise]} @325
+    v18 = Call v16, -, v17 calleeName="take" @320
+    v19 = Convert v18 declared={type=i32} @320
+    v20 = Add v19, v15 @330
+    v21 = Convert v20 declared={type=number} @330
+    Return v21 @330
+}

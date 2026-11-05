@@ -14,7 +14,6 @@
 #include "AOTObjectVisiting.h"
 #include "AOTPhaseTimes.h"
 #include "AOTPlan.h"
-#include "AOTRepresentation.h"
 #include "AOTSort.h"
 #include "AOTThreads.h"
 #include "AOTTypeRelations.h"
@@ -211,13 +210,6 @@ void nameWhatLayoutTablesName(const TableInputs& inputs, const GatheredMentions&
         else
             nameWhatEnvironmentRecordNames(inputs, id, names);
     });
-    // boundFunctionTarget() of object/AOTClosure.cpp takes the closure of the target from the closure table where the bound function holds none.
-    const Typed::CallingConventions& conventions = inputs.plan.conventions();
-    for (const Typed::BoundFunctionPlan& bound : conventions.boundFunctions()) {
-        CodeUnit entry { bound.target, Typed::CodeRole::GenericEntryOfBoundFunction, bound.numberOfBoundArguments };
-        if (!bound.capturesTargetClosure && inputs.functions.positionOfUnit(entry, conventions.indexOf(entry)))
-            names.functionsWithClosureCell.set(bound.target.index());
-    }
 }
 
 // ---- Records of layouts
@@ -328,7 +320,7 @@ static FieldsOfLayoutRecord collectFieldsOfLayoutRecord(const TableEncoder& enco
         FieldData data { };
         data.name = name;
         data.isFilledAtBirth = slot.isFilledAtBirth;
-        data.holdsRawValueFromBirth = facts.facts.contains(Typed::FieldFact::HoldsRawValueFromBirth);
+        data.holdsRawValueFromBirth = planned.holdsRawValueFromBirth(index);
         data.keepsStateOfBirth = fieldOfLayoutRecordKeepsStateOfBirth(program, field, facts, slot);
         data.slotHoldsUndefinedAndNull = facts.facts.contains(Typed::FieldFact::SlotHoldsUndefinedAndNull);
         data.flags = flagsOfFieldInLayoutRecord(field, facts, slot, slotOfLayoutRecordTakesWhatIsProven(encoder, reference, slot));
@@ -524,7 +516,7 @@ static uint32_t findShapeThatParsersMake(const TableEncoder& encoder, LayoutID i
     if (encoder.program.at(id).kind != LayoutKind::Record || !encoder.plan.isInUse(id) || !encoder.plan.layout(id).holdsCompiledObjects() || !encoder.facts.parsersMayMake(id))
         return 0;
     uint32_t shape = shapes.generalShapeOf(id);
-    if (!shapes.isAssigned(shape) || shapes.shape(shape).keysAreNeverEnumerated || !shapes.shape(shape).impossibleMutations.isEmpty())
+    if (!shapes.isAssigned(shape) || !shapes.shape(shape).impossibleMutations.isEmpty())
         return 0;
     if (shape > Number24::max) {
         encoder.fail("ShapeDoesNotFitRowOfParsedRecordFields"_s, id);
@@ -627,7 +619,7 @@ static Vector<LayoutRecordParts> collectLayoutRecordParts(TableEncoder& encoder)
             encoder.fail(isShapeOfObject ? "ShapeOfObjectGivenToEnvironment"_s : "ShapeOfEnvironmentGivenToObjectLayout"_s, id);
             return;
         }
-        if (isShapeOfObject && !(shape && shapes.shape(shape).keysAreNeverEnumerated))
+        if (isShapeOfObject)
             keepsKeyOrder.quickSet(id.index());
         if (!isListed.quickSet(id.index()))
             layouts.append(id);
@@ -687,7 +679,7 @@ static uint32_t appendObjectLayoutRecord(TableEncoder& encoder, LayoutID id, con
     TablePart& part = encoder.part;
 
     // Whatever appends to the part comes in front of the allocation of the record: an append may move the bytes.
-    uint32_t ordersOffset = shape.keysAreNeverEnumerated ? 0 : appendKeyOrdersOfLayout(part, parts);
+    uint32_t ordersOffset = appendKeyOrdersOfLayout(part, parts);
     uint32_t referencesOffset = appendReferencesOfLayout(part, parts);
     ClassData classData { };
     if (asked.isClass()) {
@@ -701,9 +693,8 @@ static uint32_t appendObjectLayoutRecord(TableEncoder& encoder, LayoutID id, con
     if (encoder.facts.linked().layout(id).reachesUnseenCode && !shape.impossibleMutations.isEmpty())
         encoder.fail("RecordRulesOutWhatUnseenCodeMayDo"_s, id);
     record.impossibleMutationsRaw = shape.impossibleMutations.toRaw();
-    record.keysAreNeverEnumerated = shape.keysAreNeverEnumerated;
     record.shape = shapeNumber;
-    record.numberOfOrders = shape.keysAreNeverEnumerated ? 0 : parts.numberOfKeyOrders;
+    record.numberOfOrders = parts.numberOfKeyOrders;
     record.referencesOffset = distanceFromLayoutRecord(offset, referencesOffset);
     record.ordersOffset = ordersOffset;
 
@@ -838,7 +829,7 @@ static void encodeParsedRecordFields(TableEncoder& encoder, std::span<const Layo
     setSortedLayoutTable(encoder, ProgramTableIndex::parsedRecordFields, rows, std::ranges::less { }, &ParsedRecordFieldData::key);
 }
 
-// ---- Tables that map a function to its layout or its bound target
+// ---- Tables that map a function to its layout
 
 static void encodeConstructorsOfLayouts(TableEncoder& encoder)
 {
@@ -854,78 +845,6 @@ static void encodeConstructorsOfLayouts(TableEncoder& encoder)
     setSortedLayoutTable(encoder, ProgramTableIndex::constructors, constructors, [](const ConstructorData& a, const ConstructorData& b) {
         return std::tie(a.function, a.layoutIndex) < std::tie(b.function, b.layoutIndex);
     });
-}
-
-static bool boundCaptureIsKeptAsReference(const Typed::BoundCapture& capture)
-{
-    return capture.isHeldAsValue || Typed::holdsCells(capture.representation);
-}
-
-// A closure keeps its references in front of its other captures: closureCaptureSlotOf() of plan/AOTFunctionKinds.h.
-static unsigned closureSlotOfBoundCapture(const Typed::BoundFunctionPlan& bound, size_t capture)
-{
-    unsigned references = 0;
-    unsigned referencesInFront = 0;
-    for (size_t index = 0; index < bound.captures.size(); ++index) {
-        if (!boundCaptureIsKeptAsReference(bound.captures[index]))
-            continue;
-        ++references;
-        referencesInFront += index < capture;
-    }
-    if (boundCaptureIsKeptAsReference(bound.captures[capture]))
-        return referencesInFront;
-    return references + static_cast<unsigned>(capture) - referencesInFront;
-}
-
-static void encodeBoundFunctionRows(TableEncoder& encoder)
-{
-    const Typed::CallingConventions& conventions = encoder.plan.conventions();
-    Vector<BoundFunctionData> boundFunctions;
-    for (const Typed::BoundFunctionPlan& bound : conventions.boundFunctions()) {
-        CodeUnit entry { bound.target, Typed::CodeRole::GenericEntryOfBoundFunction, bound.numberOfBoundArguments };
-        if (!encoder.hasCode(entry))
-            continue;
-        FunctionID function = encoder.numbers.functions().idOf(conventions.indexOf(entry));
-        if (!function) {
-            encoder.fail("BoundFunctionWithoutNumber"_s, bound.target);
-            continue;
-        }
-        BoundFunctionData data { };
-        data.function = function.index();
-        // The run time makes a closure of the target from this number only where the bound function holds none. One that is held may be of a function that no code creates a closure of.
-        data.target = bound.capturesTargetClosure
-            ? encoder.findEntrypoint(bound.target).value_or(FunctionID()).index()
-            : encoder.entrypointOf(bound.target, "the target of a bound function of"_s, bound.target);
-        if (!bound.capturesTargetClosure && !encoder.numbers.closureCellNumber(bound.target))
-            encoder.fail("TargetOfBoundFunctionWithoutClosureCell"_s, bound.target);
-        data.numberOfBoundArguments = bound.numberOfBoundArguments;
-        if (bound.capturesTargetClosure) {
-            bool holdsClosureLast = !bound.captures.isEmpty() && bound.captures.last().kind == Typed::BoundCaptureKind::TargetClosure && bound.captures.last().representation == Typed::Representation::Cell;
-            if (holdsClosureLast)
-                data.targetClosureSlotPlusOne = closureSlotOfBoundCapture(bound, bound.captures.size() - 1) + 1;
-            else
-                encoder.fail("BoundFunctionDoesNotHoldClosureOfTargetLast"_s, bound.target);
-        }
-        if (encoder.program.at(bound.target).constructorForm() != Typed::ConstructorForm::NotConstructor) {
-            size_t firstArgument = 0;
-            while (firstArgument < bound.captures.size() && bound.captures[firstArgument].kind != Typed::BoundCaptureKind::BoundArgument)
-                ++firstArgument;
-            data.constructs = true;
-            data.numberOfCapturedArguments = bound.numberOfCapturedArguments;
-            bool isAsRunTimeExpects = data.targetClosureSlotPlusOne && firstArgument + bound.numberOfCapturedArguments <= bound.captures.size();
-            if (isAsRunTimeExpects && bound.numberOfCapturedArguments)
-                data.firstArgumentSlot = closureSlotOfBoundCapture(bound, firstArgument);
-            for (size_t argument = 0; isAsRunTimeExpects && argument < bound.numberOfCapturedArguments; ++argument) {
-                const Typed::BoundCapture& capture = bound.captures[firstArgument + argument];
-                isAsRunTimeExpects = capture.kind == Typed::BoundCaptureKind::BoundArgument && boundCaptureIsKeptAsReference(capture)
-                    && closureSlotOfBoundCapture(bound, firstArgument + argument) == data.firstArgumentSlot + argument;
-            }
-            if (!isAsRunTimeExpects)
-                encoder.fail("BoundArgumentsAreNotValuesSideBySide"_s, bound.target);
-        }
-        boundFunctions.append(data);
-    }
-    setSortedLayoutTable(encoder, ProgramTableIndex::boundFunctions, boundFunctions, std::ranges::less { }, &BoundFunctionData::function);
 }
 
 void encodeLayoutTables(TableEncoder& encoder)
@@ -948,7 +867,7 @@ void encodeLayoutTables(TableEncoder& encoder)
     encodeAllocationRows(encoder);
     times.didFinish("allocation rows"_s);
     encodeConstructorsOfLayouts(encoder);
-    encodeBoundFunctionRows(encoder);
+    encoder.part.setTable(ProgramTableIndex::boundFunctions, Vector<BoundFunctionData>());
     times.didFinish("constructors, bound functions"_s);
 }
 

@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-// A check that the types pass already, for TypedOperations. (The narrowing on edges that stood here had no caller: rows 1 and 17 of whole/port/READERS-WITHOUT-WRITERS.md, closed 11-04.)
+// A check that the types pass already, for TypedOperations.
 
 #include "config.h"
 #include "AOTWalk.h"

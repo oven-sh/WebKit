@@ -406,15 +406,6 @@ JSCell* BuiltinCells::cellReadWithoutTest(uint32_t number)
     return refusing;
 }
 
-bool BuiltinCells::isFunctionThatRefusesCalls(JSCell* cell)
-{
-    auto* function = dynamicDowncast<JSFunction>(cell);
-    if (!function || !function->isHostFunction())
-        return false;
-    TaggedNativeFunction native = function->nativeFunction();
-    return native == toTagged(NativeFunction(refuseCallOfBuiltinChangedBeforeFirstUse)) || native == toTagged(NativeFunction(exitForFunctionOfMissingHost));
-}
-
 JSCell* BuiltinCells::findObject(BuiltinID id)
 {
     if (std::optional<uint32_t> number = numberOf(BuiltinCellKey::object(id)))
@@ -1220,7 +1211,8 @@ private:
         // A holder may only lie on the path to what is locked.
         if (!hasFixedNames && !tellsOfWrites)
             return;
-        if (object->makePropertiesImmutable(m_vm, immutablePropertyNamesOf(m_vm, id, constantMembers, m_cells, m_tables.unlockedBuiltinMembers(), m_isTestRun, openedNames.span()).get())) [[likely]]
+        std::optional<std::span<const uint32_t>> namesTakenForAbsent = m_isTestRun ? std::nullopt : std::optional(m_tables.namesTakenForAbsent());
+        if (object->makePropertiesImmutable(m_vm, immutablePropertyNamesOf(m_vm, id, constantMembers, m_cells, m_tables.unlockedBuiltinMembers(), m_isTestRun, openedNames.span(), namesTakenForAbsent).get())) [[likely]]
             return;
         if (hasFixedNames)
             crashOnBuiltinHolder(id, "cannot be made immutable"_s);

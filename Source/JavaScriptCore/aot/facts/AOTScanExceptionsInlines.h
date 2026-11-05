@@ -38,12 +38,6 @@ inline uint32_t ScanOfBody::nodeCaughtBy(BlockID handler)
     return m_nodesCaughtByBlocks[handler.index()];
 }
 
-inline uint32_t ScanOfBody::nodeTakingWhatIsThrownIn(uint32_t block)
-{
-    BlockID handler = m_handlersOfBlocks.isEmpty() ? BlockID() : m_handlersOfBlocks[block];
-    return handler ? nodeCaughtBy(handler) : nodeFor(SummaryNode::Kind::Thrown);
-}
-
 inline void ScanOfBody::settleWhereRecordsThrow()
 {
     if (m_summary.handlers.isEmpty())

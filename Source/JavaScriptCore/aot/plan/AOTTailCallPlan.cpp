@@ -103,23 +103,6 @@ BitVector findFunctionsThatEndTheirTailCalls(const Program& program, const Facts
     return functionsThatEnd;
 }
 
-// Only a call that is written as a direct one is sure to be one in every unit. A call of a value may be left to the word of the closure, whose entry returns in the form of entries.
-bool makesOnlyTailCallsThatEnd(const Program& program, const Facts& facts, const BitVector& functionsThatEndTheirTailCalls, FunctionID function)
-{
-    const LinkTables& linked = facts.linked();
-    if (function.index() >= linked.functions.size() || !linked.function(function).isReached || !program.at(function).hasBody())
-        return false;
-    return std::ranges::all_of(facts.summaries().at(function).calls, [&](const SummaryCall& call) {
-        if (!call.isInTailPosition)
-            return true;
-        if (call.callee == SummaryCall::Callee::Binding && call.function == function)
-            return true;
-        bool comesBack;
-        FunctionID callee = calleeOfTailCallInTailCallPlan(program, linked, function, call, comesBack);
-        return callee ? functionsThatEndTheirTailCalls.get(callee.index()) : comesBack;
-    });
-}
-
 void checkFormsRoundRingsOfTailCalls(const Program& program, const Facts& facts, const Plan& plan, BuildContext& build)
 {
     uint32_t numberOfFunctions = static_cast<uint32_t>(program.functions.size());

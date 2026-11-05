@@ -40,7 +40,6 @@ void loadExtraProperties(StubAssembler&, GPRReg object, GPRReg hiddenWordOffset,
 // The property is at BaseIndex(extraProperties, wordIndex, TimesEight): extraProperties has the cell or its butterfly.
 void locateExtraProperty(StubAssembler&, const CachedSlot&, const ExtraPropertyRegisters&, JumpList& miss);
 void readExtraPropertyAndReturn(StubAssembler&, const CachedSlot&, const ExtraPropertyRegisters&, GPRReg result, JumpList& miss);
-void loadExtraPropertyBySlot(StubAssembler&, const CachedSlot&, GPRReg object, GPRReg result, GPRReg scratch, JumpList& miss);
 // cell holds a cell of the front table of the kind ExtraProperty. At hasNone only storage is written.
 void loadExtraPropertyByFrontCell(StubAssembler&, GPRReg cell, GPRReg object, GPRReg storage, GPRReg wordIndex, GPRReg result, JumpList& hasNone);
 #if CPU(X86_64)

@@ -1,7 +1,7 @@
 # made of ffe01f2cb6bf93c9
 # The variable of a function declaration is born as its function: its word is zero until something is stored, and zero stands for the one closure that the function has.
 # Where the read is proven to give closures of that function alone, nothing else was ever stored: the word is not loaded and not tested, and the closure comes out of its cell of the closure table.
-# Where a store may have put another function there, or undefined or null (which are no objects of the type: the fault of 11-04 04:11), the word is asked as before.
+# Where a store may have put another function there, or undefined or null (which are no objects of the type), the word is asked as before.
 # f1 = plain, f2 = replaced, f3 = other, f5 = handPlain, f6 = handReplaced, f9 = handCleared
 # RUN(FORM): bytes f5:Body f6:Body f9:Body mechanisms=all
 # FORM-LABEL: unit f5:Body

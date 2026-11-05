@@ -40,7 +40,6 @@ public:
         , m_tables(tables)
         , m_context(context)
         , m_limit(context.limit(LimitID::MaxStaticsSize))
-        , m_numberOfGroupsOfFiles(inputs.plan.staticsGroups().groups.size())
     {
     }
 
@@ -68,7 +67,7 @@ public:
 private:
     using PlannedVariable = Typed::PlannedVariable;
 
-    // The variables of a region lie in this order, so that equal first words lie side by side and nothing is lost to alignment.
+    // The variables lie in this order, so that equal first words lie side by side and nothing is lost to alignment.
     // The words that the collector visits lie together, so the image lists them as a few ranges.
     enum class WordKind : uint8_t {
         UndefinedValue,
@@ -89,11 +88,10 @@ private:
         ZeroWord1,
     };
 
-    // The variables of one kind in one region, or in one group of files, in the order of their ids.
+    // The variables of one kind, in the order of their ids.
     struct Bucket {
         uint64_t size { 0 };
         uint32_t nextOffset { 0 };
-        uint32_t lastVariable { 0 };
         unsigned width { 0 };
     };
 
@@ -170,56 +168,9 @@ private:
         RELEASE_ASSERT_NOT_REACHED();
     }
 
-    // Filling a word at instance creation is always correct: no code that names the variable has run yet.
-    static StaticsRegion regionOf(const PlannedVariable& planned, std::optional<uint32_t> groupOfFiles)
-    {
-        // Zero words lie after the words of the files, where the run time fills nothing.
-        if (!planned.initialWord)
-            return StaticsRegion::FilledAtInstanceCreation;
-        switch (planned.region) {
-        case StaticsRegion::FilledAtInstanceCreation:
-            return StaticsRegion::FilledAtInstanceCreation;
-        case StaticsRegion::FilledAtProgramEntry:
-            // Until the program is entered these words are neither filled nor writable.
-            return planned.isUsedBeforeProgramEntry ? StaticsRegion::FilledAtInstanceCreation : StaticsRegion::FilledAtProgramEntry;
-        case StaticsRegion::FilledWithFile:
-            ASSERT(groupOfFiles);
-            return groupOfFiles ? StaticsRegion::FilledWithFile : StaticsRegion::FilledAtInstanceCreation;
-        }
-        RELEASE_ASSERT_NOT_REACHED();
-    }
-
     bool isNamed(VariableID id, const PlannedVariable& planned) const
     {
         return isVariableOfStaticsNamed(planned, id, m_tables, m_mentions);
-    }
-
-    std::optional<uint32_t> groupOfFilesOf(VariableID id, const PlannedVariable& planned) const
-    {
-        if (planned.region != StaticsRegion::FilledWithFile)
-            return std::nullopt;
-        VariableID written = id.index() < m_program.variables.size() ? id : m_plan.deferredDefinitions().variableBesideAdded(id);
-        return m_plan.staticsGroups().groupFilledWhenEntered(m_program.at(written).module);
-    }
-
-    // The buckets in order: filled at program entry, filled at instance creation, filled with each group of files, zero.
-    unsigned firstBucketOfFiles(uint32_t group) const { return numberOfFilledWordKinds * (2 + group); }
-    unsigned firstBucketOfZeroes() const { return firstBucketOfFiles(m_numberOfGroupsOfFiles); }
-
-    unsigned bucketOf(const PlannedVariable& planned, std::optional<uint32_t> groupOfFiles) const
-    {
-        unsigned kind = static_cast<unsigned>(kindOfWord(planned));
-        if (kind >= numberOfFilledWordKinds)
-            return firstBucketOfZeroes() + kind - numberOfFilledWordKinds;
-        switch (planned.region) {
-        case StaticsRegion::FilledAtProgramEntry:
-            return kind;
-        case StaticsRegion::FilledAtInstanceCreation:
-            return numberOfFilledWordKinds + kind;
-        case StaticsRegion::FilledWithFile:
-            return firstBucketOfFiles(*groupOfFiles) + kind;
-        }
-        RELEASE_ASSERT_NOT_REACHED();
     }
 
     uint32_t allocate(uint64_t size, unsigned alignment)
@@ -258,11 +209,6 @@ private:
         RELEASE_ASSERT(numberOfVariables >= m_program.variables.size());
         m_statics.variables = Vector<PlacedVariable>(numberOfVariables);
 
-        const Vector<Typed::StaticsGroup>& groups = m_plan.staticsGroups().groups;
-        m_statics.groupsOfFilesFilledWhenEntered = Vector<PlacedStaticsOfFiles>(groups.size(), [&](size_t index) {
-            return PlacedStaticsOfFiles { groups[index].firstFile, 0, 0, groups[index].importedGroups };
-        });
-
         auto withoutOffsets = [](size_t size) {
             return Vector<uint32_t>(FillWith { }, size, PlacedStatics::noOffset);
         };
@@ -277,24 +223,12 @@ private:
         m_statics.classGuardBits = Vector<uint32_t>(FillWith { }, m_program.layouts.size() * numberOfClassSides, noClassGuardBit);
     }
 
-    // Returns the last bucket that holds a variable, or null.
-    const Bucket* placeBuckets(std::span<Bucket> buckets)
+    void placeBuckets(std::span<Bucket> buckets)
     {
-        const Bucket* last = nullptr;
         for (Bucket& bucket : buckets) {
-            if (!bucket.size)
-                continue;
-            bucket.nextOffset = allocate(bucket.size, bucket.width);
-            last = &bucket;
+            if (bucket.size)
+                bucket.nextOffset = allocate(bucket.size, bucket.width);
         }
-        return last;
-    }
-
-    void fillRestOfWordLike(const PlacedVariable& variable)
-    {
-        unsigned width = widthOf(variable.plan.representation);
-        while (m_end % wordSize)
-            m_statics.paddingOfFilesFilledWhenEntered.append({ allocate(width, width), variable.plan.representation, variable.initialWord });
     }
 
     // The counts come behind every guard: firstWordOfClassGuardCountKey.
@@ -372,7 +306,7 @@ private:
 
     bool placeVariables()
     {
-        Vector<Bucket> buckets(firstBucketOfZeroes() + numberOfWordKinds - numberOfFilledWordKinds);
+        Vector<Bucket> buckets(numberOfWordKinds);
         Vector<uint32_t> bucketOfVariable(FillWith { }, m_statics.variables.size(), noBucket);
         // What is asked of the plan, the tables and the mentions is asked of each variable by itself. Only the sums go through the variables in their order.
         forEachRangeOfIndicesInParallel(m_context.parallelLoops(), m_statics.variables.size(), [&](size_t first, size_t end) {
@@ -385,9 +319,7 @@ private:
                 if (!placed.hasWord)
                     continue;
                 placed.initialWord = placed.plan.initialWord;
-                std::optional<uint32_t> groupOfFiles = groupOfFilesOf(id, placed.plan);
-                placed.plan.region = regionOf(placed.plan, groupOfFiles);
-                bucketOfVariable[index] = bucketOf(placed.plan, groupOfFiles);
+                bucketOfVariable[index] = static_cast<uint32_t>(kindOfWord(placed.plan));
             }
         });
         for (uint32_t index = 0; index < m_statics.variables.size(); ++index) {
@@ -398,29 +330,13 @@ private:
             RELEASE_ASSERT(!bucket.size || bucket.width == width);
             bucket.width = width;
             bucket.size += width;
-            bucket.lastVariable = index;
         }
 
         std::span<Bucket> allBuckets = buckets.mutableSpan();
-        placeBuckets(allBuckets.first(numberOfFilledWordKinds));
         m_statics.sizeFilledAtProgramEntry = alignToWord();
-        placeBuckets(allBuckets.subspan(numberOfFilledWordKinds, numberOfFilledWordKinds));
+        placeBuckets(allBuckets.first(numberOfFilledWordKinds));
         placeClassGuardCounts();
-        if (m_numberOfGroupsOfFiles) {
-            m_statics.firstWordFilledWithFiles = alignToWord() / wordSize;
-            // A group without words begins where the next one does.
-            for (uint32_t group = 0; group < m_numberOfGroupsOfFiles; ++group) {
-                PlacedStaticsOfFiles& files = m_statics.groupsOfFilesFilledWhenEntered[group];
-                files.firstWord = alignToWord() / wordSize;
-                if (const Bucket* last = placeBuckets(allBuckets.subspan(firstBucketOfFiles(group), numberOfFilledWordKinds)))
-                    fillRestOfWordLike(m_statics.variables[last->lastVariable]);
-                files.numberOfWords = alignToWord() / wordSize - files.firstWord;
-            }
-            // The run time expects one byte per group right after the last word.
-            m_statics.endWordFilledWithFiles = alignToWord() / wordSize;
-            m_statics.offsetOfFilledFiles = allocate(m_numberOfGroupsOfFiles, 1);
-        }
-        placeBuckets(allBuckets.subspan(firstBucketOfZeroes()));
+        placeBuckets(allBuckets.subspan(numberOfFilledWordKinds));
 
         for (uint32_t index = 0; index < m_statics.variables.size(); ++index) {
             if (bucketOfVariable[index] == noBucket)
@@ -652,7 +568,6 @@ private:
     const NamesOfTables& m_tables;
     BuildContext& m_context;
     const uint64_t m_limit;
-    const uint32_t m_numberOfGroupsOfFiles;
     PlacedStatics m_statics;
     Vector<uint32_t> m_originsOfMethodSelectors;
     // In the order of their keys.

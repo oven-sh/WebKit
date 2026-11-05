@@ -97,14 +97,11 @@ inline constexpr bool framesAreThoseOfAddressSanitizer = ASAN_ENABLED;
     v(slimClosureTests) \
     v(slotAccessTests) \
     v(structuredCloneTests) \
-    v(moduleGraphTests) \
     v(moduleTableTests) \
     v(removableFeatureTests) \
-    v(operationScopeTests) \
     v(stringSearchTests) \
     v(stringBuilderStorageTests) \
     v(driverTests) \
-    v(testFileTests) \
     v(childProcessTests) \
     v(boxedCallProgramTests) \
     v(builtinResultObjectTests) \
@@ -184,7 +181,6 @@ inline constexpr bool framesAreThoseOfAddressSanitizer = ASAN_ENABLED;
     v(siteAnswersOfGettersTests) \
     v(unionConsecutiveSetsTests) \
     v(stringStraysTests) \
-    v(knownEffectsTests) \
     v(knownJoinsTests) \
     v(knownThreadingTests) \
     v(branchesGrowthTests) \

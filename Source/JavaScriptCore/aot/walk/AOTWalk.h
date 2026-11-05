@@ -55,6 +55,9 @@ void markEnvironmentsThatCoroutineIsHanded(Walker&);
 // AOTWalkDeferredDefinitions.cpp. A read of the variable may find the mark, and then makes the object and stores it. Whatever runs between two such reads may fill the variable: a callee, another turn of a loop.
 // So the read stands where it is written: it is neither shared nor built in front of a loop.
 bool isVariableFilledAtFirstRead(const Plan&, VariableID);
+// For Walker::buildLoopTwice(), in front of a loop whose turns read the variable. `held`: what a read has just found in it, past its dead zone. Where that is the mark the object is made here, which nobody sees,
+// and from here on the variable holds it. False: the variable holds what the program stores in it, and nothing was built.
+bool takeObjectOfDeferredVariable(Walker&, VariableID, Reference held, Origin);
 bool foldOperation(Walker&, const BodyValue&); // AOTWalkFolding.cpp . Folding
 bool buildFreshObject(Walker&, const BodyValue&); // AOTWalkEscapeAnalysis.cpp . EscapeAnalysis: an allocation is built as ever, and noted as fresh with what its fields hold
 bool callBuiltin(Walker&, const BodyValue&); // AOTWalkBuiltins.cpp . BuiltinCalls
@@ -65,10 +68,6 @@ inline constexpr OpcodeSet opcodesThatCallFunctionGivenToVariableTakes { Opcode:
 AOT_LINK_OF_WALK(callFunctionGivenToVariable, opcodesThatCallFunctionGivenToVariableTakes) // AOTWalkGuesses.cpp . Guesses
 inline constexpr OpcodeSet opcodesThatOpenGuessAtElementOfNumbersTakes { Opcode::ElemGet };
 AOT_LINK_OF_WALK(openGuessAtElementOfNumbers, opcodesThatOpenGuessAtElementOfNumbersTakes) // AOTWalkGuesses.cpp . Guesses. True: both arms are built and have met.
-// AOTWalkTextBuilderCallees.cpp . Inlining. Of a Call or a CallDirect that findGrowingTexts() has taken for a growth of a text in a builder: `s = join(s, x)`. The copy of the callee appends.
-// Where no copy is made the call takes a string, and the builder is filled anew with what the call gives. False: the call is no such growth, and nothing was built.
-extern const OpcodeSet opcodesThatGrowTextThroughCalleeTakes;
-AOT_LINK_OF_WALK(growTextThroughCallee, opcodesThatGrowTextThroughCalleeTakes)
 bool inlineCallee(Walker&, const BodyValue&); // AOTWalkInlining.cpp . Inlining
 bool callDirectly(Walker&, const BodyValue&); // AOTWalkCalls.cpp . DirectCalls
 bool buildTypedOperation(Walker&, const BodyValue&); // AOTWalkTyped.cpp . TypedOperations. It hands on by family to the three below.
@@ -94,7 +93,6 @@ bool buildTypedOperator(Walker&, const BodyValue&); // AOTWalkTypedOperators.cpp
 bool buildTypedConstruction(Walker&, const BodyValue&); // AOTWalkCalls.cpp: what the constructor of a class allocates where new.target is proven to be one class object
 std::optional<uint32_t> positionOfTagAmongArguments(const Walker&, FunctionID constructor); // AOTWalkUnionTaggedMakers.cpp: among the positional arguments of a construction. Nothing: whoever makes `this` for the function has no layout to choose
 bool buildObjectOfTaggedClassConstructor(Walker&, const BodyValue& allocation); // AOTWalkUnionTaggedMakers.cpp: TaggedMaker::allocation, by the tag where new.target is the class itself. False: nothing was built
-Reference fillerForSlotInAllocation(Walker&, FieldReference); // AOTWalkUnionFolds.cpp: what an allocation lists in the place of a value that is not proven to fit the slot. Null: the allocation ends in front of the field
 bool everyReceiverKeepsFieldInSlotThatIsNeverEmpty(const Walker&, std::span<const LayoutID> receivers, PropertyKeyID); // AOTWalkUnionSlots.cpp: the form of the slot has no empty state, so the property is there for the life of each object
 TypeID typeOfPairsThatStepsHandOut(Walker&, TypeID iterable); // AOTWalkIteration.cpp
 // AOTWalkIteration.cpp. By the rows of the table nobody can see a list that is as it was made being iterated.
@@ -120,30 +118,7 @@ bool forwardCallOfBuiltin(Walker&, const BodyValue&); // AOTWalkCallsDoneInPlace
 bool forwardCallBehindTestOfCallee(Walker&, const BodyValue&); // AOTWalkCallsDoneInPlace.cpp
 class InputsOfTypedOperation;
 using TypesOfInputs = ScopedLambda<TypeID(ValueID)>;
-// A CallDirect of the input whose function linked() does not reach: Link has proven that no run comes here: Walker::endAsUnreachable(). WHATEVER IS WITHHELD, in every role: there is no code to call. With the tables at their defaults every function is reached. False: nothing was built.
-bool endWhereCalleeIsNeverReached(Walker&, const BodyValue& call); // AOTWalkUnionCalls.cpp
-// A ResolveHeritage whose operand can only be class objects, constructors of the table and null: built as written with effects that only allocate. False: nothing was built.
-bool buildLookAtHeritage(Walker&, const BodyValue&); // AOTWalkUnionFolds.cpp
-// Folding: a read by a known index or of `length` off a NewTemplateObject in sight. False: nothing was built.
-bool foldReadOfTemplateObject(Walker&, const BodyValue& read); // AOTWalkUnionFolds.cpp
-// DirectCalls: a Call whose callee is a read by name off its `this`, whose receiver is PROVEN of layouts that all have a row, and which findOnlyCallee() does not answer. It builds a CallTable and leaves arrivals. False: nothing was built.
-bool callThroughMethodTable(Walker&, const BodyValue& call); // AOTWalkUnionCalls.cpp
-// For Guesses, a TERM of the row in openGuessAt(): the same behind ONE test of the receiver. True: both arms are built and have met.
-bool callThroughMethodTableBehindTest(Walker&, const BodyValue& call); // AOTWalkUnionCalls.cpp
-// For typedFormForGuesses(), in front of `FunctionID callee;`: with operands of these types callThroughMethodTable() builds.
-bool wouldCallThroughMethodTable(Walker&, const BodyValue& call, const TypesOfInputs&); // AOTWalkUnionCalls.cpp
 // A look at a typed copy whose failing tests begin the turn again has typed the operation, and all behind it that the block dominates, as if the operand had passed the test for what is expected of it.
-// `while (pos < end) { .. text.charCodeAt(pos) .. pos++; .. flags |= 1; }` where closures share pos, end and flags. In a typed copy whose failing tests begin the turn again, the field is read and tested AT THE HEAD OF EACH TURN,
-// while nothing of the turn is done (in front of the loop where no turn writes it). The state answers the reads of the turn with what has passed. By the text of the body alone: the looks and the walk ask one function.
-struct EnvironmentFieldTestedAtHeadOfTurn {
-    // Of the body, from in front of the loop.
-    ValueID environment;
-    LayoutID layout;
-    uint32_t field { 0 };
-    TypeID tested;
-};
-// AOTWalkLoops.cpp. Of a loop of the body that the walk stands in.
-Vector<EnvironmentFieldTestedAtHeadOfTurn, 4> findEnvironmentFieldsTestedAtHeadsOfTurns(Walker&, BlockID inputHead);
 struct GuessCountedOnByLooks {
     ValueID operation;
     ValueID operand;
@@ -378,6 +353,8 @@ bool cellAnswersForOwnProperty(Walker&, TypeID typeOfObject, PropertyKeyID);
 // AOTWalkTypedAccesses.cpp. No object of the type has a field under the key, and from the class of each upward the first record that declares anything under it declares a method or an accessor whose functions it names.
 // Whether that still lies there, and nothing in front of it, the guards say.
 bool recordsDeclareMemberAboveObjectsOf(Walker&, TypeID typeOfObjects, PropertyKeyID);
+// The guards that a read of the method which the records declare there asks, added to the list. False: they declare no method, and nothing is added.
+bool findGuardsOfMethodAboveObjectsOf(Walker&, TypeID typeOfObjects, PropertyKeyID, Vector<MemberConditionRecord, 4>&);
 // The getter that a PropGet or a SuperGet under the key enters, given the type of what the lookup starts at. Null: it enters none, or nobody can tell.
 FunctionID findGetterOfRead(Walker&, Opcode, TypeID lookedAt, PropertyKeyID);
 // `forwarded`: a Call or a CallList that stands in the place of `call`, which is written as a call of something else. Where it surely enters one function: a copy of the callee where Inlining would copy such a call, else a direct call.
@@ -457,8 +434,6 @@ struct GrowingText {
     bool standsUnderHandlers { false };
     // Some part behind the front is not hasTextByItself() by the types of the looks.
     bool hasPartsThatMayRunCode { false };
-    // Some growth is a call.
-    bool growsInCallees { false };
 };
 // Walker::m_textsInStringBuilders, in the order in which they were begun. A record stays to the end of the unit: a loop built twice has two, and the later one is the one being walked.
 struct TextInStringBuilder {
@@ -528,9 +503,6 @@ public:
     TypeID typeArrivingAtEntryParameter(unsigned entryParameter, bool believesCallers = true);
     // False in the closed arm of an opened guess.
     bool opensGuesses() const { return m_opensGuesses; }
-    // unions-and-narrowing. callThroughMethodTable() builds a CallTable. Walker::staysTailCall() takes one. Both are set where a unit begins.
-    bool buildsTableCalls() const { return m_buildsTableCalls; }
-    bool tableCallsHaveTailForm() const { return m_tableCallsHaveTailForm; }
     Origin originOfOperation() const { return m_origin; }
     // The function whose body is being read: that of the unit, or a callee that is walked in line.
     ALWAYS_INLINE FunctionID currentFunction() const { return m_frames.last().function; }
@@ -574,8 +546,6 @@ public:
     uint32_t operationsCopiedAtWrittenCall() const { return m_operationsCopiedAtWrittenCall; }
     // Of the allocation that is being walked, where its layout has slots that hold marks: the closures that its own block has made and that it alone takes.
     std::span<const Reference> closuresThatAllocationAloneTakes() const LIFETIME_BOUND { return m_closuresThatAllocationAloneTakes.span(); }
-    // The call in whose place the body being read is walked stands in a loop of the unit.
-    bool copyStandsInLoop() const { return m_frames.last().loopDepthAtCall; }
     BlockID currentBlock() const { return m_block; }
     // With the inline frame of the body being read.
     Origin originOf(const BodyValue& value) const
@@ -850,8 +820,6 @@ public:
     void noteAssignmentWrittenOut() { ++m_numberOfAssignmentsWrittenOut; }
     uint32_t numberOfJoinsWalkedForEachWay() const { return m_numberOfJoinsWalkedForEachWay; }
     uint32_t numberOfTurnsThatBeginAgain() const { return m_numberOfTurnsThatBeginAgain; }
-    uint32_t numberOfEmptySlotsTakenAsCases() const { return m_numberOfEmptySlotsTakenAsCases; }
-    void noteEmptySlotTakenAsCase() { ++m_numberOfEmptySlotsTakenAsCases; }
     // StatisticID::TypedResultsSelected, of the unit.
     void noteTypedResultSelected() { ++m_numberOfTypedResultsSelected; }
     uint32_t numberOfTypedResultsSelected() const { return m_numberOfTypedResultsSelected; }
@@ -885,6 +853,8 @@ public:
     bool checksProofs() const { return m_positionsWithoutProofs && m_inputs.options.sourcesOfProofsChecked == everySourceOfProofs && (unit().role == CodeRole::Body || unit().role == CodeRole::CoroutineBody); }
     // Asked wherever a check is built: TestingSwitch::CheckProofsAtEntries, CheckProofsAtEntriesAndFields build those of a few sources.
     bool checksProofsOf(ProofSource source) const { return m_positionsWithoutProofs && (m_inputs.options.sourcesOfProofsChecked & bitOfSourceOfProofs(source)); }
+    bool testsEveryPosition() const { return m_inputs.options.testsEveryPosition; }
+    bool takesPositionsToLieInside() const { return m_inputs.options.takesPositionsToLieInside; }
     void checkProof(Reference value, TypeID withoutProof, ProofSource, Origin);
     // The value is of `proven`, though its record does not say so.
     void checkProof(Reference value, TypeID proven, TypeID withoutProof, ProofSource, Origin);
@@ -951,10 +921,7 @@ public:
         Vector<Name, 4> names;
     };
     EnvironmentCellsOfUnit& environmentCellsOfUnit() { return m_environmentCellsOfUnit; }
-    // AOTWalkStringStrays.cpp. By function whose body is read in this unit. beginUnit() drops it.
-    std::unique_ptr<KeptForBuild>& keptByLadderOfNames() { return m_keptByLadderOfNames; }
     // AOTWalkNumberNotes.cpp
-    std::unique_ptr<KeptForBuild>& keptByNumbers() { return m_keptByNumbers; }
     // AOTWalkStrings.h, NotesOfStrings. Of the unit being walked: beginUnit() drops it.
     std::unique_ptr<KeptForBuild>& keptByStrings() { return m_keptByStrings; }
     // AOTWalkPositionsInTexts.cpp. From unit to unit: it follows from the program alone.
@@ -1044,10 +1011,10 @@ public:
     void setLooksTakeFormsBehindLooksAsBuilt(bool take) { m_looksTakeFormsBehindLooksAsBuilt = take; }
     // The walk stands nowhere behind it.
     void beginTurnAgainInClosedCopy();
-    // AOTWalkLoopsBuiltTwice.cpp. The walk stands at the head of a turn that may begin again.
-    void testEnvironmentFieldsAtHeadOfTurn(BlockID inputHead);
     // A TEST THAT ANSWERS THE SAME IN EVERY TURN IS ASKED ONCE. mayBeginTurnAgainInClosedCopy() holds, and the reference stands in front of the typed copy, whose block in front is open.
     bool standsInFrontOfTypedCopy(Reference) const;
+    // mayBeginTurnAgainInClosedCopy() holds, and the value was built in the typed copy: where the turn begins again nobody has it.
+    bool isBuiltInTurnThatMayBeginAgain(Reference) const;
     // The test stands in front of the typed copy. True: the block in front of the copy has ended with the branch, its failing edge enters the closed copy from in front, and a new block in front is open behind the passing edge.
     // The walk stands where it stood. False: nothing was built.
     bool branchInFrontOfTypedCopy(Reference test, bool passesWithYes);
@@ -1071,7 +1038,7 @@ private:
     friend class InFrontOfTypedCopy;
     friend class OpenArm;
     friend class ProofsHoldEverywhere;
-    friend class KnownJoin;
+    friend class ArgumentsMadeWhereTheyLeave;
     friend class KnownThreading;
 
     static constexpr uint32_t noOpenEdge = UINT32_MAX;
@@ -1282,7 +1249,6 @@ private:
         mutable uint32_t listInTables { noNarrowerName };
 
         uint32_t lengthOfNarrowerNames(uint32_t first) const { return first == noNarrowerName ? 0 : placesOfNarrowerNames[first].length; }
-        bool listOfNarrowerNamesHolds(uint32_t first, uint32_t place) const;
         void numberReferencesOfNarrowerName(uint32_t place);
         void bringTablesOfNarrowerNamesTo(uint32_t first) const;
         void addNarrowerName(uint32_t& first, Reference value, Reference name);
@@ -1575,7 +1541,7 @@ private:
     bool walkBlockApartFromClosedWays(BlockID inputBlock);
     bool letReturnsOfCopyWalkEndOfBlockApart(ValueID call, std::span<Frame::ReturnOfCopy* const> passing, std::span<Frame::ReturnOfCopy* const> closed);
     void walkEndOfBlockBehindReturnsOfCopy(ValueID call);
-    bool goOnBehindReturnsOfCopy(const BodyValue& call, const Function&, bool isConstruction, const LinkedFunction&, const Vector<Reference, 2>& heldByCallAlone, Origin originOfCall, Vector<Frame::ReturnOfCopy, 2>& returns);
+    bool goOnBehindReturnsOfCopy(const BodyValue& call, const Function&, const LinkedFunction&, const Vector<Reference, 2>& heldByCallAlone, Origin originOfCall, Vector<Frame::ReturnOfCopy, 2>& returns);
     // AOTWalkKnownThreading.cpp. Each way that enters brings an object that it has made, and the block takes it apart. True: every way has walked the block for itself.
     bool walkBlockForEachWayThatBringsObjectInSight(BlockID inputBlock);
     // For walkThroughChain(): inlineCallee(), as the link of the chain. Behind that link alone nobody goes on with the call.
@@ -1653,32 +1619,8 @@ private:
     // walkTerminator(), in front of endBlockInAnotherWay(). TypedOperations. `if (n.kind === A || n.kind === B) ..`, `if (n.kind === A) .. else if (n.kind === B) ..`, n a local: a Branch on a StrictEq with a constant whose two edges hand on the proof of a field that was read out of its slot.
     // The block ends in ONE Switch | SwitchString, and the blocks between the comparisons are never walked. True: the block has ended, or the walk has failed. False: nothing was built.
     bool endBlockWithSwitchOverTestsOfField(const BodyTerminator&);
-    struct NameOnEdge {
-        // As referenceOf() gives it in the block that the edge leaves.
-        Reference latest;
-        // What a Narrowed on the edge takes: the newest name that the verifier can follow back to what the test has looked at.
-        Reference name;
-        // `latest` is no such name: a check or a parameter of a join stands between.
-        bool isOlderThanLatest { false };
-    };
-    struct EdgeBeingNarrowed {
-        EdgeID& edge;
-        BlockID to;
-        bool entersAlone;
-        // False: the edge comes round to the head of a loop, where nobody asks for the names of an edge.
-        bool keepsNames;
-        Vector<Reference, 8>& arguments;
-        // For TestingSwitch::CheckProofsAtRunTime: each holder that a field has narrowed, with the type that it had in front.
-        Vector<std::pair<Reference, TypeID>, 2> holdersNarrowed;
-    };
     // From narrowFurtherOnEdge() to the OpenEdge: the list of the block that the edge leaves, and in front of it what the edge itself has narrowed.
     uint32_t m_firstNarrowerNameOnEdge { noNarrowerName };
-    // Set by whoever hands closeEdgesInto() every edge that enters the block. Any other caller closes some of them, and they agree on nothing.
-    bool m_closesEveryEdgeIntoBlock { false };
-    // The last question of fieldTellsHoldersApart(). It is emptied with each unit: a set of the thread dies with it.
-    LayoutSetID m_holdersAskedAboutLast;
-    PropertyKeyID m_keyAskedAboutLast;
-    bool m_fieldTellsHoldersApart { false };
     void endWithoutEdges(TerminatorDraft&);
 
     void walkReturn(const BodyTerminator&);
@@ -1765,7 +1707,6 @@ private:
     uint32_t m_numberOfAssignmentsWrittenOut { 0 };
     uint32_t m_numberOfJoinsWalkedForEachWay { 0 };
     uint32_t m_numberOfTurnsThatBeginAgain { 0 };
-    uint32_t m_numberOfEmptySlotsTakenAsCases { 0 };
     UncheckedKeyHashMap<uint32_t, Vector<FieldIndex, 2>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_fillersOfAllocations;
     uint32_t m_numberOfTypedResultsSelected { 0 };
     uint32_t m_numberOfSlicesMadeOfElementsInSight { 0 };
@@ -1777,7 +1718,7 @@ private:
     HashMap<uint64_t, Vector<uint32_t, 1>, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_numbersOfListsOfNames;
     std::array<uint32_t, numberOfEnumerators<ProofSource>> m_numbersOfProofsChecked { };
     uint32_t m_numberOfProofsThatNoTestTells { 0 };
-    // LinkTables::leadsTo() from the function of the unit, as far as checkProof() has asked.
+    // LinkTables::leadsTo() from the unit, as far as checkProof() has asked.
     HashMap<uint32_t, bool, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_functionsInReachOfUnit;
     bool m_callIsAccountedFor { false };
     // Whose arrivals that speaks of.
@@ -1855,8 +1796,6 @@ private:
     LoopsOverGeneratorsOfUnit m_loopsOverGenerators;
     bool m_makesProxyInUnit { false };
     EnvironmentCellsOfUnit m_environmentCellsOfUnit;
-    std::unique_ptr<KeptForBuild> m_keptByLadderOfNames;
-    std::unique_ptr<KeptForBuild> m_keptByNumbers;
     std::unique_ptr<KeptForBuild> m_keptByStrings;
     std::unique_ptr<KeptForBuild> m_keptByPositionsInTexts;
     BodyLiveness m_liveness;
@@ -1867,8 +1806,6 @@ private:
     uint32_t m_numberOfCopiesBuiltForSize { 0 };
     // The operation being walked has the rule of effects Access.
     bool m_isWalkingAccess { false };
-    bool m_buildsTableCalls { false };
-    bool m_tableCallsHaveTailForm { false };
     Vector<TextInStringBuilder, 2> m_textsInStringBuilders;
     bool m_hasURLsThatAreNeverMade { false };
 };
@@ -2146,6 +2083,8 @@ Reference buildReadThatTestsShapeAndSlot(Walker&, const BodyValue& read, Referen
 // The same of a PropGet for which typedFormOf() answers BuiltBehindLookAtCell: a property that objects leave out. A filled slot is right whatever has become of the object, so the operation asks the cell and the guards of
 // its classes only where it finds the slot empty: behind them that is undefined. Null, and nothing is built: a method above, a raw number, a look that reads do not make.
 Reference buildReadThatTestsShapeAndCell(Walker&, const BodyValue& read, Reference object, TypeID guessed, bool expectsCell);
+// Of a PropGet off an object of that type: while the object bears no mark (FactOfCell::BearsNoMark), the read is a load.
+bool markOfCellAnswersForRead(Walker&, const BodyValue& read, TypeID typeOfObject);
 bool buildStoreThatTestsForItself(Walker&, const BodyValue& store, Reference object, TypeID guessed, bool expectsCell);
 // It answers with what it has read.
 Reference readSlotFoundFilled(Walker&, const BodyValue& access, Reference object);
@@ -2156,8 +2095,6 @@ TypeID typeSeenToArriveInFilledSlot(Walker&, const BodyValue& read, TypeID typeO
 // Of a store by name into an object of that type: what every slot that it may go to takes (PlacedSlot::type). Null: any value.
 TypeID typeTakenBySlotOfStore(Walker&, const BodyValue& store, TypeID typeOfObject);
 void noteSlotFoundEmpty(Walker&, const BodyValue& access, Reference object);
-// A read by name of a field that lies in one slot, off an object of which looks at the cell can show that an empty slot means undefined: lookAtCellInFrontOfStores() builds them.
-bool emptySlotIsUndefinedBehindLooks(Walker&, const BodyValue& read, Reference object);
 // For Guesses, of the stores for which typedFormOf() answers BuiltBehindLookAtCell or BuiltBehindFilledSlotAndLookAtCell with the type that `object` has by now.
 // However many stores there are, each thing is asked once for all of them: a byte of the order word, its keys, a bit of the cell for the prototype, a word for the guards of the class.
 // Each test is built and handed to `goOnWhereTestPasses`, which ends the block on it, and then the state is told what it has shown.
@@ -2168,6 +2105,8 @@ std::optional<uint32_t> findLikelyOrderWordInFrontOfStores(Walker&, ValueID firs
 void testOrderWordInFrontOfStores(Walker&, ValueID firstStore, Reference object, uint32_t orderWord, NOESCAPE const ScopedLambda<void(Reference test)>& goOnWhereTestPasses);
 // For Guesses, of an access for which typedFormOf() asks for a filled slot: the body that is being read is making the object, so a look at the slot fails unless something in front has filled it.
 bool looksAtSlotOfObjectBeingMade(const Walker&, const BodyValue& access);
+// Of a value of the body: `this` of an initializer of fields and of a function that `new` hands the object, what `super()` answers, what the body allocates.
+bool isBeingMadeByBodyBeingRead(const Walker&, ValueID object);
 // Walker::takeEntryParameters(), of `this` of a Body.
 void noteThisAtEntry(Walker&, Reference thisValue);
 

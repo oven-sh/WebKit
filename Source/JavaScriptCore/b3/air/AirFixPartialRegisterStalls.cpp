@@ -29,6 +29,7 @@
 #if ENABLE(B3_JIT)
 
 #include "AirBasicBlock.h"
+#include "AirFormTable.h"
 #include "AirCode.h"
 #include "AirInsertionSet.h"
 #include "AirInst.h"
@@ -106,8 +107,22 @@ struct FPDefDistance {
             distance[index] = static_cast<unsigned char>(registerDistance);
     }
 
+    bool LEGACY_NODELETE hasNoInformation() const
+    {
+        static_assert(!(sizeof(distance) % sizeof(uint64_t)));
+        for (unsigned i = 0; i < sizeof(distance); i += sizeof(uint64_t)) {
+            uint64_t word;
+            memcpy(&word, distance + i, sizeof(uint64_t));
+            if (~word)
+                return false;
+        }
+        return true;
+    }
+
     bool LEGACY_NODELETE updateFromPrecessor(FPDefDistance& precessorDistance, unsigned constantOffset = 0)
     {
+        if (precessorDistance.hasNoInformation())
+            return false;
         bool changed = false;
         for (unsigned i = 0; i < MacroAssembler::numberOfFPRegisters(); ++i) {
             unsigned regDistance = precessorDistance.distance[i] + constantOffset;
@@ -129,6 +144,17 @@ void updateDistances(Inst& inst, FPDefDistance& localDistance, unsigned& distanc
     if (isDependencyBreaking(inst)) {
         // MoveFloat/MoveDouble/MoveVector with FPImm zero: fpImm is args[0], dest tmp is args[1]
         localDistance.reset(inst.args()[1].tmp().fpr());
+        return;
+    }
+
+    unsigned argIndex = 0;
+    if (const uint8_t* forms = inst.fixedForms(argIndex)) [[likely]] {
+        Arg* args = inst.args().data();
+        for (unsigned numberOfArgs = inst.args().size(); argIndex < numberOfArgs; ++argIndex) {
+            Arg& arg = args[argIndex];
+            if (arg.isTmp() && arg.tmp().isFPR() && Arg::isAnyDef(decodeFormRole(forms[argIndex])))
+                localDistance.add(arg.tmp().fpr(), distanceToBlockEnd);
+        }
         return;
     }
 

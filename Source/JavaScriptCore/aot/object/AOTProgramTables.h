@@ -162,6 +162,14 @@ struct ProgramTables {
     std::span<const uint32_t> unlockedBuiltinMembers() const { return constantAndUnlockedBuiltinMembers().first(numberOfWordsBelow(openedName)).subspan(numberOfWordsBelow(unlockedBuiltinMember)); }
     std::span<const uint32_t> openedNames() const { return constantAndUnlockedBuiltinMembers().subspan(numberOfWordsBelow(openedName)); }
     static bool isUnlocked(std::span<const uint32_t> unlockedBuiltinMembers, uint32_t member) { return std::ranges::binary_search(unlockedBuiltinMembers, member | unlockedBuiltinMember); }
+    // namesTakenForAbsent(): a number for each text of Program::keysTakenForAbsent(), ascending. The image need not hold the texts. Where two texts share a number the run time refuses one name more than it has to.
+    static constexpr uint32_t numberOfNameTakenForAbsent(std::span<const uint8_t> utf8)
+    {
+        uint32_t number = 2166136261u;
+        for (uint8_t byte : utf8)
+            number = (number ^ byte) * 16777619u;
+        return number;
+    }
 
     uint32_t constructorOfAllocation(uint32_t number) const
     {

@@ -72,6 +72,7 @@
 #include "JSCInlines.h"
 #include "JSCJSValueInlines.h"
 #include "JSFunction.h"
+#include "JSModuleLoader.h"
 #include "JSPromise.h"
 #include "LLIntData.h"
 #include "LLIntThunks.h"
@@ -1600,17 +1601,6 @@ bool ProgramStatics::isVariableEmpty(const Instance& instance, SlotData slot)
     return !findFunctionVariable(statics.m_tables, slot.offset);
 }
 
-String ProgramStatics::readStringWithoutAllocating(const Instance& instance, SlotData slot)
-{
-    if (JSValue value = readVariableWithoutAllocating(instance, slot))
-        return value.isString() ? asString(value)->tryGetValueWithoutGC() : String();
-    const ProgramStatics& statics = *instance.state->statics;
-    if (slot.representation() == SlotRepresentation::DeferredClosure || !statics.isInitialized(slot.offset))
-        return String();
-    std::optional<uint32_t> literal = literalStringWithoutCell(instance, slot.representation(), instance.statics() + slot.offset);
-    return literal ? ProgramStrings::text(statics.m_tables, StringID(statics.m_tables.literalStrings()[*literal])) : String();
-}
-
 void ProgramStatics::writeVariable(Instance& instance, SlotData slot, JSValue value)
 {
     SlotRepresentation representation = slot.representation();
@@ -1706,10 +1696,14 @@ void ProgramStatics::willAnalyzeHeap(VM& vm)
     if (m_tables.namedVariables().empty())
         return;
     if (m_firstNamedVariablesOfModules.isEmpty()) {
-        bool endsWhereModuleEnds = forEachNamedVariable(m_tables.namedVariables(), [&](size_t) {
+        m_placesOfModulesOfClosureNumbers.fill(UINT32_MAX, m_tables.closureFunctions.end - m_tables.closureFunctions.first);
+        bool endsWhereModuleEnds = forEachNamedVariable(m_tables.namedVariables(), [&](uint32_t module, size_t) {
+            m_modulesInHeapSnapshots.append(module);
             m_firstNamedVariablesOfModules.append(static_cast<uint32_t>(m_namedVariables.size()));
         }, [&](const VariableData& variable) {
             m_namedVariables.append(variable);
+        }, [&](uint32_t first, uint32_t length) {
+            std::ranges::fill(m_placesOfModulesOfClosureNumbers.mutableSpan().subspan(first, length), static_cast<uint32_t>(m_modulesInHeapSnapshots.size() - 1));
         });
         RELEASE_ASSERT(endsWhereModuleEnds);
         m_firstNamedVariablesOfModules.append(static_cast<uint32_t>(m_namedVariables.size()));
@@ -1728,8 +1722,14 @@ void ProgramStatics::willAnalyzeHeap(VM& vm)
         m_environmentsOfModules.fill(nullptr, numberOfModules);
     }
     for (uint32_t module = 0; module < numberOfModules; ++module) {
-        // A module that has not run yet holds nothing.
-        bool hasSomethingToList = !m_environmentsOfModules[module] && std::ranges::any_of(namedVariablesOfModule(module), [&](const VariableData& variable) {
+        if (m_environmentsOfModules[module])
+            continue;
+        // A function of a module that has not begun may have its closure: whoever imports it in a cycle has asked for it.
+        // A body that has nothing to run is never begun: the module is there once it is linked.
+        const Modules& modules = *m_instance.state->modules;
+        ModuleID id(m_modulesInHeapSnapshots[module]);
+        bool hasBegun = modules.status(id) >= ModuleStatus::Evaluating || (modules.status(id) == ModuleStatus::Linked && !modules.data(id).needsEvaluation());
+        bool hasSomethingToList = hasBegun || std::ranges::any_of(namedVariablesOfModule(module), [&](const VariableData& variable) {
             return !!cellIn(variable.slot);
         });
         if (!hasSomethingToList)
@@ -1739,8 +1739,17 @@ void ProgramStatics::willAnalyzeHeap(VM& vm)
     }
 }
 
+JSCell* ProgramStatics::environmentOfModuleThatDefines(uint32_t closureNumber) const
+{
+    if (closureNumber >= m_placesOfModulesOfClosureNumbers.size())
+        return nullptr;
+    uint32_t place = m_placesOfModulesOfClosureNumbers[closureNumber];
+    return place < m_environmentsOfModules.size() ? m_environmentsOfModules[place] : nullptr;
+}
+
 void ProgramStatics::analyzeVariablesOfModule(JSCell* standIn, uint32_t module, HeapAnalyzer& analyzer) const
 {
+    analyzer.analyzeEdge(m_instance.globalObject->moduleLoader(), standIn, RootMarkReason::None);
     const ProgramIdentifiers& identifiers = *m_instance.vm->aotState().identifiers;
     for (const VariableData& variable : namedVariablesOfModule(module)) {
         JSCell* held = cellIn(variable.slot);

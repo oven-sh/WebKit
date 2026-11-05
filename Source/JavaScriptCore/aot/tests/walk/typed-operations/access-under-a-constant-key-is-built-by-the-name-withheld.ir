@@ -1,5 +1,5 @@
 # the same functions with Folding withheld: the scan asks nothing of constants, Link lists no key, and the accesses go by the values of their keys
-# where Link lists no key, TypedOperations reads a key that is one written text off the body by itself (strings-2, keyOfKnownTextThatAccessGoesBy()), so in the walk that is withheld too
+# where Link lists no key, TypedOperations reads a key that is one written text off the body by itself (keyOfKnownTextThatAccessGoesBy()), so in the walk that is withheld too
 # RUN: walk f1 f2 mechanisms=-Folding-TypedOperations
 # CHECK-LABEL: code f1:Body
 # CHECK: = ElemGet

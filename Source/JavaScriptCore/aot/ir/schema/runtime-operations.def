@@ -29,7 +29,7 @@ runtime SetLiteralPrototype : void (JSCell* object, EncodedJSValue prototype, ui
 
 runtime Construct : EncodedJSValue (EncodedJSValue callee, EncodedJSValue newTarget, uint32_t count, const EncodedJSValue* arguments) ; unknownCode
 runtime Apply : EncodedJSValue (EncodedJSValue callee, EncodedJSValue thisValue, EncodedJSValue list) ; unknownCode
-runtime NewArgumentList : JSCell* (EncodedJSValue callee, EncodedJSValue arrayLike) ; unknownCode
+runtime NewArgumentList : JSCell* (EncodedJSValue arrayLike) ; unknownCode
 runtime ReadArgumentList : JSCell* (JSCell* list) ; unknownCode
 runtime ConstructWithArray : EncodedJSValue (EncodedJSValue callee, EncodedJSValue newTarget, EncodedJSValue list) ; unknownCode
 runtime SuperConstruct : EncodedJSValue (EncodedJSValue parent, EncodedJSValue newTarget, uint32_t count, const EncodedJSValue* arguments) ; unknownCode
@@ -56,7 +56,6 @@ runtime CopyDataProperties : void (JSCell* target, EncodedJSValue source, uint32
 runtime CopyObject, AssignToNewObject : JSCell* (EncodedJSValue source, uint32_t excludedRun, uint32_t count, const EncodedJSValue* excludedKeys) ; unknownCode
 runtime CopyObjectAndDefine : JSCell* (EncodedJSValue source, uint32_t firstName, uint32_t count, const EncodedJSValue* list) ; unknownCode
 runtime TryCopyTwoObjects : JSCell* (EncodedJSValue first, EncodedJSValue second) ; reads(all) writes(ObjectFields, ShapeWords, OrderWords, NamedProperties, MemberGuards, AllocatorState, RuntimeState) collects
-runtime ExpectRows : void (EncodedJSValue target, uint32_t shape) ; reads(all) writes(NamedProperties, AllocatorState, RuntimeState) collects
 runtime NewClosureSlow : JSCell* (uint64_t request, uint64_t, uint64_t, uint64_t, uint64_t) ; RuntimeAllocates
 runtime MoveClosureToHeap : JSCell* (JSCell* closureInFrame) ; RuntimeAllocates
 runtime BarrierSlow, BarrierSlowPreservingRegisters : void (JSCell* cell) ; reads(all) writes(RuntimeState)

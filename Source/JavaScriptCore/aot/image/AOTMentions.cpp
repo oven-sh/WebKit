@@ -67,7 +67,6 @@ static bool mentionKeyHasNoThreadLocalIDs(NumberSpace space, std::span<const uin
     case NumberSpace::CardOfVariable:
     case NumberSpace::ModuleValue:
     case NumberSpace::ModuleNamespace:
-    case NumberSpace::FilledFiles:
     case NumberSpace::DataCell:
     case NumberSpace::DataStorage:
     case NumberSpace::DataElements:
@@ -577,7 +576,6 @@ void UnitsBehindMention::addClosureIfPlanned(FunctionID function) const
 }
 
 // Once the entry for calls has code, the tables take the function for one that closures are made of, however the entry was named.
-// The row of a bound function that holds no closure of its target names the entry of the target.
 void UnitsBehindMention::addUnit(CodeUnit unit) const
 {
     if (unit == m_conventions.closureEntryOf(unit.function)) {
@@ -585,8 +583,6 @@ void UnitsBehindMention::addUnit(CodeUnit unit) const
         return;
     }
     m_functor(unit, MentionKind::Call);
-    if (Typed::isBoundRole(unit.role))
-        addClosureIfPlanned(unit.function);
 }
 
 // Nothing for a module that compiled code alone evaluates. The loader never enters it, so the table of modules names no entry for it, and the step that calls its body or its start names that unit in a relocation.
@@ -702,7 +698,6 @@ void forEachUnitBehind(const Mention& mention, std::span<const uint32_t> mention
     case NumberSpace::CardOfWord:
     case NumberSpace::ModuleNamespace:
     case NumberSpace::ModuleBuiltinCell:
-    case NumberSpace::FilledFiles:
     case NumberSpace::DataCell:
     case NumberSpace::DataStorage:
     case NumberSpace::DataElements:

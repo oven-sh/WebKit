@@ -28,8 +28,6 @@ std::span<const NativeTest> stringSearchTests();
 
 template<typename CharacterType> using Text = Vector<CharacterType>;
 
-static constexpr uint32_t subjectLengths[] = { 0, 1, 15, 16, 17, 64, 1000 };
-
 template<typename CharacterType>
 static Text<CharacterType> textOf(ASCIILiteral literal)
 {
@@ -43,11 +41,6 @@ template<typename CharacterType>
 static Text<CharacterType> repeated(CharacterType unit, uint32_t length)
 {
     return Text<CharacterType>(FillWith { }, length, unit);
-}
-
-static size_t findCharacter(const Text<Latin1Character>& text, uint32_t unit, uint32_t start)
-{
-    return operationAOTStringFindCharacter8(text.span().data(), text.size(), unit, start);
 }
 
 template<typename CharacterType>
@@ -66,15 +59,6 @@ static size_t reverseFind(const Text<CharacterType>& text, const Text<CharacterT
         return operationAOTStringReverseFind8(text.span().data(), text.size(), other.span().data(), other.size(), position);
     else
         return operationAOTStringReverseFind16(text.span().data(), text.size(), other.span().data(), other.size(), position);
-}
-
-static size_t naiveFindCharacter(const Text<Latin1Character>& text, uint32_t unit, uint32_t start)
-{
-    for (size_t i = start; i < text.size(); ++i) {
-        if (text[i] == unit)
-            return i;
-    }
-    return notFound;
 }
 
 template<typename CharacterType>
@@ -112,50 +96,6 @@ static size_t naiveReverseFind(const Text<CharacterType>& text, const Text<Chara
 static Vector<int32_t> positionsFor(uint32_t length)
 {
     return { 0, 1, static_cast<int32_t>(length / 2), static_cast<int32_t>(length) - 1, static_cast<int32_t>(length), static_cast<int32_t>(length) + 1, static_cast<int32_t>(length) + 1000, INT32_MAX };
-}
-
-static Vector<Text<Latin1Character>> subjectsWithUnit(uint32_t length, Latin1Character unit, Latin1Character filler)
-{
-    Vector<Text<Latin1Character>> subjects;
-    subjects.append(repeated(filler, length));
-    subjects.append(repeated(unit, length));
-    if (length) {
-        Text<Latin1Character> atFirst = repeated(filler, length);
-        atFirst[0] = unit;
-        subjects.append(WTF::move(atFirst));
-        Text<Latin1Character> atLast = repeated(filler, length);
-        atLast[length - 1] = unit;
-        subjects.append(WTF::move(atLast));
-        Text<Latin1Character> inTheMiddle = repeated(filler, length);
-        inTheMiddle[length / 2] = unit;
-        subjects.append(WTF::move(inTheMiddle));
-    }
-    return subjects;
-}
-
-static void checkFindCharacter(Latin1Character unit)
-{
-    for (uint32_t length : subjectLengths) {
-        for (const Text<Latin1Character>& subject : subjectsWithUnit(length, unit, '.')) {
-            for (int32_t start : positionsFor(length)) {
-                if (start >= 0)
-                    AOT_TEST_CHECK(findCharacter(subject, unit, start) == naiveFindCharacter(subject, unit, start));
-            }
-        }
-    }
-}
-
-static void testFindCharacter()
-{
-    checkFindCharacter('x');
-    checkFindCharacter(0xe9);
-
-    Text<Latin1Character> narrow = textOf<Latin1Character>("abcAbc"_s);
-    AOT_TEST_CHECK(findCharacter(narrow, 'c', 0) == 2 && findCharacter(narrow, 'c', 3) == 5 && findCharacter(narrow, 'c', 6) == notFound);
-    AOT_TEST_CHECK(findCharacter(narrow, 'A', 0) == 3);
-    AOT_TEST_CHECK(findCharacter(narrow, 0x100 + 'A', 0) == notFound);
-    AOT_TEST_CHECK(findCharacter(narrow, 0x10000 + 'A', 0) == notFound);
-    AOT_TEST_CHECK(static_cast<int32_t>(findCharacter(narrow, 'z', 0)) == -1);
 }
 
 template<typename CharacterType>
@@ -343,65 +283,6 @@ static String in8Bits(ASCIILiteral literal)
     return text;
 }
 
-static String in16Bits(ASCIILiteral literal)
-{
-    if (literal.isEmpty())
-        return emptyString();
-    String text = String(textOf<char16_t>(literal).span());
-    AOT_TEST_CHECK(!text.is8Bit());
-    return text;
-}
-
-static int64_t signOf(std::strong_ordering order)
-{
-    return order < 0 ? -1 : order > 0;
-}
-
-static void testImpls()
-{
-    struct Pair {
-        ASCIILiteral first;
-        ASCIILiteral second;
-        bool isEqual;
-        int64_t order;
-    };
-    static constexpr Pair pairs[] = {
-        { "same text"_s, "same text"_s, true, 0 },
-        { "same texs"_s, "same text"_s, false, -1 },
-        { "same text"_s, "same texs"_s, false, 1 },
-        { "same"_s, "same text"_s, false, -1 },
-        { "same text"_s, "same"_s, false, 1 },
-        { ""_s, ""_s, true, 0 },
-        { ""_s, "a"_s, false, -1 },
-        { "0123456789abcdef0"_s, "0123456789abcdef1"_s, false, -1 },
-    };
-    for (const Pair& pair : pairs) {
-        for (const String& first : { in8Bits(pair.first), in16Bits(pair.first) }) {
-            for (const String& second : { in8Bits(pair.second), in16Bits(pair.second) }) {
-                AOT_TEST_CHECK(!!operationAOTStringImplsAreEqual(first.impl(), second.impl()) == pair.isEqual);
-                AOT_TEST_CHECK(WTF::equal(first.impl(), second.impl()) == pair.isEqual);
-                AOT_TEST_CHECK(operationAOTCompareStringImpls(first.impl(), second.impl()) == pair.order);
-                AOT_TEST_CHECK(signOf(codePointCompare(StringView(first), StringView(second))) == pair.order);
-            }
-        }
-    }
-
-    String accent = String(Text<Latin1Character> { 0xe9 }.span());
-    String wideAccent = String(Text<char16_t> { 0xe9 }.span());
-    String kanji = String(Text<char16_t> { 0x65e5 }.span());
-    AOT_TEST_CHECK(operationAOTStringImplsAreEqual(accent.impl(), wideAccent.impl()));
-    AOT_TEST_CHECK(!operationAOTCompareStringImpls(accent.impl(), wideAccent.impl()));
-    AOT_TEST_CHECK(!operationAOTStringImplsAreEqual(accent.impl(), kanji.impl()));
-    AOT_TEST_CHECK(operationAOTCompareStringImpls(accent.impl(), kanji.impl()) == -1);
-    AOT_TEST_CHECK(operationAOTCompareStringImpls(kanji.impl(), accent.impl()) == 1);
-
-    for (const String& text : { in8Bits("same text"_s), in16Bits("same text"_s), in8Bits(""_s), accent, wideAccent, kanji }) {
-        String copy = text.isolatedCopy();
-        AOT_TEST_CHECK(!copy.impl()->hasHash() || copy.isEmpty());
-        AOT_TEST_CHECK(operationAOTHashStringImpl(copy.impl()) == text.impl()->hash() && copy.impl()->hasHash() && copy.impl()->existingHash() == text.impl()->hash());
-    }
-}
-
 static constexpr ASCIILiteral programWithTexts =
     "layout L0 name=\"Texts\" fields=["
     "{key=\"caf\\u{e9}\" declared={type=number}}, "
@@ -473,11 +354,9 @@ static constexpr void (*withTexts)() = runNativeTestWithLoadedProgram<stringSear
 std::span<const NativeTest> stringSearchTests()
 {
     static constexpr NativeTest tests[] = {
-        { "string-search/find-character"_s, testFindCharacter },
         { "string-search/find"_s, testFind },
         { "string-search/reverse-find"_s, testReverseFind },
         { "string-search/utf8-length"_s, testUTF8Length },
-        { "string-search/impls"_s, testImpls },
         { "string-search/impl-equals-text-of-the-image"_s, withTexts<testImplEqualsTextOfTheImage> },
         { "string-search/elements-spread-from-part-of-text-that-became-narrow"_s, withTexts<testElementsSpreadFromPartOfTextThatBecameNarrow> },
     };

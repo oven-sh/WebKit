@@ -643,7 +643,7 @@ static NEVER_INLINE size_t JIT_OPERATION_ATTRIBUTES hasExtraPropertyByLookup(Ins
         OPERATION_RETURN(scope, object->isInSlot(*field));
     bool readsAsValue = !!object->read(*field);
     uint32_t orderWord = object->orderWord();
-    bool dependsOnOrderAlone = !(orderWord & orderWordHasFieldOutsideSlot) && !object->perCellBit() && !isOrderStoredOutOfLine(orderWord) && !object->layout().keysAreNeverEnumerated;
+    bool dependsOnOrderAlone = !(orderWord & orderWordHasFieldOutsideSlot) && !object->perCellBit() && !isOrderStoredOutOfLine(orderWord);
     if (dependsOnOrderAlone && object->isInKeyOrder(*instance->state, *field) == readsAsValue)
         instance->state->objects->keyOrders.rememberWhetherOrderLists(object->shape(), orderWord & orderAndCountMask, key, readsAsValue);
     OPERATION_RETURN(scope, readsAsValue);

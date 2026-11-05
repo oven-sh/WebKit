@@ -313,6 +313,8 @@ bool BuilderOfCharacterRead::build(Reference position)
     bool isInside = type.integers.minimum >= 0 && (isBelowLength || nameProvesPositionBelowLengthForStrings(m_walker, position, m_string) || testThatLedHereProvesPositionBelowLength(m_walker, m_value, m_string, position));
     // at() may have counted from the end, and reads at another value than the test has seen.
     isInside = isInside || (m_method != CharacterReadInWalkStrings::At && type.integers.minimum >= 0 && testOfBodyHoldsPositionOfCharacterReadBelowLength(m_walker, m_value));
+    if (isInside && !m_walker.testsEveryPosition())
+        m_walker.count(StatisticID::RangeChecksRemoved);
     if (!isInside) {
         // As an unsigned word a negative int32 lies behind every length.
         if (type.integers.minimum < 0 && type.isInt32())
@@ -492,14 +494,6 @@ Reference codeUnitOfCharCodeInSight(Walker& walker, Reference number)
     if (!root.isValue() || !walker.types().at(walker.typeOf(root)).isNumber())
         return { };
     return notesOfStrings(walker).codeUnitsBesideCharCodes.get(root.id().index());
-}
-
-void noteCodePointOfSteppedPiece(Walker& walker, Reference piece, Reference codePoint, Reference numberOfCodeUnits)
-{
-    Reference root = rootForStrings(walker, piece);
-    if (!root.isValue() || !codePoint || !numberOfCodeUnits)
-        return;
-    notesOfStrings(walker).codePointsOfSteppedPieces.set(root.id().index(), NotesOfStrings::CodePointOfPiece { codePoint, numberOfCodeUnits });
 }
 
 } } } // namespace JSC::AOT::Typed

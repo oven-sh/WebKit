@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuildContext.h"
 #include "AOTBuiltinIDs.h"
 #include "AOTBuiltinMembers.h"
 #include "AOTBuiltinTypes.h"
@@ -150,7 +151,7 @@ static std::optional<DirectCallInStraightForm> planStraightDirectCall(StraightEm
         return std::nullopt;
     // A block that the scan has passed over names what Link has not heard of.
     const LinkTables& linked = emitter.facts().linked();
-    if (!linked.functions.isEmpty() && !linked.mayBeMentionedBy(emitter.function(), callee.function))
+    if (!linked.functions.isEmpty() && !linked.mayBeMentionedBy(emitter.unit(), callee.function))
         return std::nullopt;
 
     DirectCallInStraightForm call { callee, conventions.locationsOf(program, callee) };
@@ -165,6 +166,9 @@ static std::optional<DirectCallInStraightForm> planStraightDirectCall(StraightEm
     for (const ArgumentLocation& result : call.locations.results) {
         if (!crossesStraightCall(result) || result.kind == ArgumentLocation::Kind::Stack)
             return std::nullopt;
+        // The stub that boxes one number writes the register in which the next lies.
+        if (call.locations.results.size() > 1 && result.kind == ArgumentLocation::Kind::FPR)
+            return std::nullopt;
     }
     call.stackWords = std::max(conventions.stackWordsReservedByCallersOf(program, callee), call.locations.numberOfStackWords());
     if (call.stackWords > emitter.wordsOfScratchArea())
@@ -172,11 +176,44 @@ static std::optional<DirectCallInStraightForm> planStraightDirectCall(StraightEm
     return call;
 }
 
+// Under Validate. Each argument that lies in a register is made again out of its word, in registers that hold no argument, and held against that register.
+// Whoever has written over an argument that was already brought stops the program here.
+static void checkArgumentsOfStraightDirectCall(StraightEmitter& emitter, const BodyValue& value, const ArgumentLocations& locations)
+{
+    constexpr FPRReg numberAgain = StraightEmitter::conversionFPR;
+    CCallHelpers& jit = emitter.jit();
+    AllowMacroScratchRegisterUsage allowScratch(jit);
+    std::span<const ValueID> arguments = value.argumentsOperands();
+    CCallHelpers::JumpList differs;
+    for (size_t index = 0; index < arguments.size(); ++index) {
+        const ArgumentLocation& location = locations.parameters[index];
+        if (location.kind != ArgumentLocation::Kind::GPR && location.kind != ArgumentLocation::Kind::FPR)
+            continue;
+        GPRReg again = jit.scratchRegister();
+        emitter.load(arguments[index], again);
+        if (location.kind == ArgumentLocation::Kind::GPR) {
+            emitter.unboxIntoForm(location.representation, again);
+            differs.append(jit.branch64(CCallHelpers::NotEqual, again, location.reg.gpr()));
+            continue;
+        }
+        emitter.unboxNumber(again, numberAgain);
+        CCallHelpers::Jump isSame = jit.branchDouble(CCallHelpers::DoubleEqualAndOrdered, numberAgain, location.reg.fpr());
+        // NaN equals nothing: then both must be NaN.
+        differs.append(jit.branchDouble(CCallHelpers::DoubleEqualAndOrdered, numberAgain, numberAgain));
+        differs.append(jit.branchDouble(CCallHelpers::DoubleEqualAndOrdered, location.reg.fpr(), location.reg.fpr()));
+        isSame.link(&jit);
+    }
+    if (differs.empty())
+        return;
+    CCallHelpers::Jump isRight = jit.jump();
+    differs.link(&jit);
+    jit.breakpoint();
+    isRight.link(&jit);
+}
+
 // The stack words and the numbers go through the result registers, which are argument registers too: so the GPRs come last, and what converts one of them writes no argument register but its own.
 static void bringArgumentsOfStraightDirectCall(StraightEmitter& emitter, const BodyValue& value, const ArgumentLocations& locations, StackWordsOfStraightCall stackWords)
 {
-    constexpr GPRReg word = StraightEmitter::resultGPR;
-    constexpr FPRReg number = StraightEmitter::resultFPR;
     CCallHelpers& jit = emitter.jit();
     std::span<const ValueID> arguments = value.argumentsOperands();
     for (ArgumentLocation::Kind kind : { ArgumentLocation::Kind::Stack, ArgumentLocation::Kind::FPR, ArgumentLocation::Kind::GPR }) {
@@ -189,7 +226,7 @@ static void bringArgumentsOfStraightDirectCall(StraightEmitter& emitter, const B
                 emitter.unboxIntoForm(location.representation, location.reg.gpr());
                 continue;
             }
-            emitter.load(arguments[index], word);
+            GPRReg word = emitter.loadIntoResultRegister(arguments[index]);
             if (kind == ArgumentLocation::Kind::FPR) {
                 emitter.unboxNumber(word, location.reg.fpr());
                 continue;
@@ -198,6 +235,7 @@ static void bringArgumentsOfStraightDirectCall(StraightEmitter& emitter, const B
                 ? CCallHelpers::Address(GPRInfo::callFrameRegister, offsetOfStackWordFromFrame(location.stackIndex))
                 : emitter.wordOfScratchArea(location.stackIndex);
             if (location.representation == Representation::Double) {
+                FPRReg number = emitter.takeResultFPR();
                 emitter.unboxNumber(word, number);
                 jit.storeDouble(number, destination);
             } else {
@@ -206,6 +244,8 @@ static void bringArgumentsOfStraightDirectCall(StraightEmitter& emitter, const B
             }
         }
     }
+    if (emitter.build().options().recorded.validates) [[unlikely]]
+        checkArgumentsOfStraightDirectCall(emitter, value, locations);
 }
 
 static bool isReadByPartsRightBehindAlone(StraightEmitter& emitter, const BodyValue& producer, size_t numberOfParts)
@@ -221,11 +261,11 @@ static void defineResultsOfStraightDirectCall(StraightEmitter& emitter, const Bo
     CCallHelpers& jit = emitter.jit();
     if (results.size() == 1) {
         if (results[0].kind == ArgumentLocation::Kind::None)
-            jit.move(CCallHelpers::TrustedImm64(JSValue::encode(jsUndefined())), StraightEmitter::resultGPR);
+            jit.move(CCallHelpers::TrustedImm64(JSValue::encode(jsUndefined())), emitter.takeResultRegister());
         else if (results[0].kind == ArgumentLocation::Kind::FPR)
-            emitter.boxDouble(StraightEmitter::resultFPR, StraightEmitter::resultGPR);
+            emitter.boxDouble(emitter.numberOfCall(), emitter.takeResultRegister());
         else
-            emitter.boxInForm(results[0].representation, StraightEmitter::resultGPR);
+            emitter.boxInForm(results[0].representation, emitter.resultOfCall());
         emitter.define(value);
         return;
     }
@@ -272,8 +312,7 @@ static void generateStraightResults(StraightEmitter& emitter, const BodyValue& v
     for (uint32_t index = 0; index < values.size(); ++index) {
         if (!emitter.resultIsRead(value, index))
             continue;
-        emitter.load(values[index], StraightEmitter::resultGPR);
-        emitter.defineResult(value, index, StraightEmitter::resultGPR);
+        emitter.defineResult(value, index, emitter.loadIntoResultRegister(values[index]));
     }
 }
 
@@ -422,7 +461,7 @@ void StraightEmitter::generateReturnCall(const BodyTerminator& terminator)
     generateCall(call);
     if (m_hasFailed)
         return;
-    load(call.id(), resultGPR);
+    loadIntoResultRegister(call.id());
     returnToCaller();
 }
 

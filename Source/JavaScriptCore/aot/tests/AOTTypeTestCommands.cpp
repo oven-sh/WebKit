@@ -209,7 +209,6 @@ static TypeID unionUnderTest(TypeArena& arena, TypeID a, TypeID b) { return aren
 static TypeID intersectionUnderTest(TypeArena& arena, TypeID a, TypeID b) { return arena.intersectionOf(a, b); }
 static TypeID differenceUnderTest(TypeArena& arena, TypeID a, TypeID b) { return arena.differenceOf(a, b); }
 static TypeID castUnderTest(TypeArena& arena, TypeID a, TypeID b) { return arena.castTo(a, b); }
-static TypeID passingFilterUnderTest(TypeArena& arena, TypeID value, TypeID filter) { return arena.passingFilter(value, filter); }
 
 static bool typesHaveUpperBound(const Type& a, const Type& b)
 {
@@ -563,39 +562,6 @@ static void runIntersect(TestCommandContext& context)
     checkIntersectLaws(laws, arena, types->span(), intersections, differences);
     checkTypeOperationInThreadArena(laws, program, types->span(), intersectionUnderTest, intersections);
     checkTypeOperationInThreadArena(laws, program, types->span(), differenceUnderTest, differences);
-    laws.finish();
-}
-
-// A filter of Facts is handed a value piece by piece, in whichever order the pieces come, and unites the answers.
-static void runPassFilter(TestCommandContext& context)
-{
-    auto types = typesOfTypeTest(context);
-    if (!types)
-        return;
-    Program& program = *context.program;
-    unsigned size = types->size();
-
-    TypeArena arena(program.types, ArenaKeeps::InProgram);
-    TypePairTable<TypeID> passing(size, [&](unsigned i, unsigned j) {
-        return arena.passingFilter(types->at(i), types->at(j));
-    });
-    for (unsigned i = 0; i < size; ++i) {
-        for (unsigned j = 0; j < size; ++j) {
-            if (i != j)
-                context.out.println("t"_s, i, " through t"_s, j, " = "_s, TypeInText { arena, passing(i, j) });
-        }
-    }
-
-    TypeLawChecker laws(context.out);
-    for (unsigned i = 0; i < size; ++i) {
-        for (unsigned j = 0; j < size; ++j) {
-            laws.check(!arena.overlap(types->at(i), types->at(j)) || !isNeverType(passing(i, j)), "loses-nothing-that-may-be-both"_s, i, j);
-            laws.check(isCanonicalType(arena, passing(i, j)), "canonical"_s, i, j);
-            for (unsigned k = 0; k < size; ++k)
-                laws.check(arena.passingFilter(arena.unionOf(types->at(i), types->at(k)), types->at(j)) == arena.unionOf(passing(i, j), passing(k, j)), "answer-for-union-is-union-of-answers"_s, i, j, k);
-        }
-    }
-    checkTypeOperationInThreadArena(laws, program, types->span(), passingFilterUnderTest, passing);
     laws.finish();
 }
 
@@ -1516,7 +1482,6 @@ std::span<const TestCommand> typeTestCommands()
         { "subset"_s, runSubset, ProgramOfCommand::AsWritten, ""_s },
         { "union"_s, runUnion, ProgramOfCommand::AsWritten, ""_s },
         { "intersect"_s, runIntersect, ProgramOfCommand::AsWritten, ""_s },
-        { "pass-filter"_s, runPassFilter, ProgramOfCommand::AsWritten, ""_s },
         { "cast"_s, runCast, ProgramOfCommand::AsWritten, ""_s },
         { "canonical"_s, runCanonical, ProgramOfCommand::AsWritten, ""_s },
         { "rep"_s, runRepresentation, ProgramOfCommand::AsWritten, ""_s },

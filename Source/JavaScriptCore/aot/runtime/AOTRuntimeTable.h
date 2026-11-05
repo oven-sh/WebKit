@@ -160,19 +160,6 @@ constexpr ArgumentBufferAccess argumentBufferAccessOf(Entry entry)
     v(OperationsOnProxies, ValidateAnswerOfProxyTrap) \
     v(OperationsOnProxies, ValidateConsentOfDeleteTrap) \
     v(OperationsOnProxies, ValidateDenialOfHasTrap) \
-    v(OperationsOfJSONParse, JSONFindMember) \
-    v(OperationsOfJSONParse, JSONMemberRepeats) \
-    v(OperationsOfJSONParse, JSONObjectFinish) \
-    v(OperationsOfJSONParse, JSONObjectKey) \
-    v(OperationsOfJSONParse, JSONParseExtraMembers) \
-    v(OperationsOfJSONParse, JSONParseInteger) \
-    v(OperationsOfJSONParse, JSONParseKey) \
-    v(OperationsOfJSONParse, JSONParseNumber) \
-    v(OperationsOfJSONParse, JSONParseString) \
-    v(OperationsOfJSONParse, JSONParseValue) \
-    v(OperationsOfJSONParse, JSONSourceAbandon) \
-    v(OperationsOfJSONParse, JSONSourceClose) \
-    v(OperationsOfJSONParse, JSONSourceOpen) \
     v(OperationsOfJSONStringify, JSONAppendString) \
     v(OperationsOfJSONStringify, JSONAppendValue) \
     v(OperationsOfJSONStringify, JSONEnterWatchedLevel) \
@@ -373,13 +360,13 @@ constexpr ArgumentBufferAccess argumentBufferAccessOf(Entry entry)
     v(OperationsThatMakeStrings, LiteralStringToString) \
     v(OperationsThatMakeStrings, NumberToStringWithRadix) \
     v(OperationsThatMakeStrings, ObjectToStringOfAnyValue) \
-    v(OperationsThatMakeStrings, ShortStringOfString) \
     v(OperationsThatMakeStrings, StringOfAnyValue) \
     v(OperationsThatMakeStrings, StringPad) \
     v(OperationsThatMakeStrings, StringRepeat) \
     v(OperationsThatMakeStrings, ToLiteralString) \
     v(OperationsThatMakeStrings, ToString) \
     v(OperationsThatCompareStrings, CompareStrings) \
+    v(OperationsThatCompareStrings, NarrowCharactersOfString) \
     v(OperationsThatCompareStrings, StringEqualsLiteral) \
     v(OperationsThatCompareStrings, StringEqualsLiteralInRegister) \
     v(OperationsThatCompareStrings, StringsAreEqual) \
@@ -454,7 +441,6 @@ constexpr ArgumentBufferAccess argumentBufferAccessOf(Entry entry)
     v(OperationsOfErrors, ThrowToHandlerInFunction) \
     v(OperationsOnDates, DateNow) \
     v(OperationsOnDates, DateToISOString) \
-    v(OperationsOnData, ExpectRows) \
     v(OperationsOnData, NewDictionary) \
     v(OperationsOnData, NewFromData) \
     v(OperationsOnData, NewMapFromData) \

@@ -40,6 +40,12 @@ static constexpr uint32_t bitsInWordOfUnitQueue = 32;
     CRASH();
 }
 
+[[noreturn]] static NEVER_INLINE void crashOnMentionByUnitOutsideCycles(Typed::CodeUnit unit, Typed::CodeUnit mentionedBy)
+{
+    dataLogLn("AOT: the code of function ", mentionedBy.function.index(), ", ", nameOf(mentionedBy.role), ", mentions function ", unit.function.index(), ", ", nameOf(unit.role), ", and no cycle waits for the unit that mentions: LinkTables::standsOutsideCycles()");
+    CRASH();
+}
+
 [[noreturn]] static NEVER_INLINE void crashOnRanksOutOfOrder(uint32_t awaited, uint32_t cycle)
 {
     dataLogLn("AOT: cycle ", cycle, " of LinkTables::cyclesAwaited waits for cycle ", awaited, ", which has no lower rank");
@@ -179,8 +185,9 @@ void UnitQueue::checkMentionByTakenUnit(unsigned thread, Typed::CodeUnit unit) c
     if (m_isTakingSeeds)
         return;
     const UnitsOfThread& unitsOfThread = m_unitsOfThreads[thread];
-    // No cycle waits for a unit that stands outside of them.
-    if (unitsOfThread.takenUnitStandsOutsideCycles || !cycleLeadsTo(unitsOfThread.cycleOfTakenUnit, cycleOf(unit.function))) [[unlikely]]
+    if (unitsOfThread.takenUnitStandsOutsideCycles) [[unlikely]]
+        crashOnMentionByUnitOutsideCycles(unit, m_conventions.unitAt(unitsOfThread.takenUnit));
+    if (!cycleLeadsTo(unitsOfThread.cycleOfTakenUnit, cycleOf(unit.function))) [[unlikely]]
         crashOnMentionWithoutReferrer(unit, m_conventions.unitAt(unitsOfThread.takenUnit));
 }
 

@@ -148,7 +148,7 @@ void FunctionBuiltinEmitter::generateFunctionApply(const InlineCall& call)
     // Apply is not told what the program calls the callee, so its TypeError cannot name it.
     if (!types().isSubset(typeIDOf(call.receiver()), TypeTable::function)) {
         CallEmitter& calls = emitter<CallEmitter>();
-        calls.requireCallable(call.context(), function, calls.siteThatNamesCallee(*call.value()), call.context().origin().isTailCall);
+        calls.requireCallable(call.context(), function, calls.siteThatNamesCallee(*call.value()), call.context().origin().isTailCall, list);
     }
     finish(call, callOperation<Boxed>(call.context(), RuntimeOperation::Apply, { function, thisValue, list }));
 }

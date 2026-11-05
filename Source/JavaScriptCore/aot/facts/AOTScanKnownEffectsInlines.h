@@ -269,40 +269,6 @@ void ScanOfBody::tellWaysToReturnApart()
     onWaysToReturn.append(writes);
 }
 
-// `function id(x) { return x }`, `function or(a, b) { return a ?? b }`: all that a result can be is what the caller has handed over. Link lets each call have what that call passes.
-// Behind removeRepeatedEdges().
-void ScanOfBody::listParametersThatAreResults()
-{
-    // An arguments object and evaluated text store into a parameter where no operation shows it, and what a coroutine returns goes into its promise or its generator.
-    if (m_function->isCoroutine() || m_summary.traits.containsAny({ SummaryTrait::UsesArguments, SummaryTrait::HasDirectEval }))
-        return;
-    Vector<bool, 2> hasOtherSource;
-    hasOtherSource.fill(false, m_function->results.size());
-    Vector<ThinSummary::ParameterThatIsResult, 4> found;
-    for (const SummaryEdge& edge : m_summary.edges) {
-        const SummaryNode& to = m_summary.nodes[edge.to];
-        if (to.kind != SummaryNode::Kind::Result)
-            continue;
-        const SummaryNode& from = m_summary.nodes[edge.from];
-        if (from.kind == SummaryNode::Kind::Parameter)
-            found.append(ThinSummary::ParameterThatIsResult { to.first, from.first, edge.passes });
-        else
-            hasOtherSource[to.first] = true;
-    }
-    found.removeAllMatching([&](const ThinSummary::ParameterThatIsResult& entry) {
-        return hasOtherSource[entry.result];
-    });
-    // The number of a type is never sorted by.
-    std::stable_sort(found.begin(), found.end(), [](const ThinSummary::ParameterThatIsResult& first, const ThinSummary::ParameterThatIsResult& second) {
-        return std::pair { first.result, first.entryParameter } < std::pair { second.result, second.entryParameter };
-    });
-    if (found.isEmpty())
-        return;
-    Vector<ThinSummary::ParameterThatIsResult>& kept = m_summary.knownEffectsApart.ensureLists().parametersThatAreResults;
-    kept.reserveInitialCapacity(found.size());
-    kept.appendVector(found);
-}
-
 void ScanOfBody::finishKnownEffects()
 {
     listOperandsOfOperatorsLeftApart();

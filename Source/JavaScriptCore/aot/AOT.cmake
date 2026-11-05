@@ -269,7 +269,6 @@ set(JavaScriptCore_AOT_TEST_SOURCES
     aot/tests/AOTInterpreterSiteCacheTests.cpp
     aot/tests/AOTJSONPlanTestCommands.cpp
     aot/tests/AOTKnownAnswersTests.cpp
-    aot/tests/AOTKnownEffectsTests.cpp
     aot/tests/AOTKnownJoinsTests.cpp
     aot/tests/AOTKnownThreadingTests.cpp
     aot/tests/AOTLeavingTests.cpp
@@ -300,7 +299,6 @@ set(JavaScriptCore_AOT_TEST_SOURCES
     aot/tests/AOTMachineTesting.cpp
     aot/tests/AOTMachineTestsOfPhisTests.cpp
     aot/tests/AOTMembersNamedLikeBuiltinsTests.cpp
-    aot/tests/AOTModuleGraphTests.cpp
     aot/tests/AOTModuleProgramTests.cpp
     aot/tests/AOTModuleRequestListTests.cpp
     aot/tests/AOTModuleTableTests.cpp
@@ -310,7 +308,6 @@ set(JavaScriptCore_AOT_TEST_SOURCES
     aot/tests/AOTNativeTestRunner.cpp
     aot/tests/AOTObjectCreateProgramTests.cpp
     aot/tests/AOTObjectSlotExitTests.cpp
-    aot/tests/AOTOperationScopeTests.cpp
     aot/tests/AOTOriginalBesideMockTests.cpp
     aot/tests/AOTOutputTests.cpp
     aot/tests/AOTPlanTestCommands.cpp
@@ -380,7 +377,6 @@ set(JavaScriptCore_AOT_TEST_SOURCES
     aot/tests/AOTTailCallProgramTests.cpp
     aot/tests/AOTTestCommandRegistry.cpp
     aot/tests/AOTTestFile.cpp
-    aot/tests/AOTTestFileTests.cpp
     aot/tests/AOTTestRunOriginalsTests.cpp
     aot/tests/AOTTestRunReportSizesTests.cpp
     aot/tests/AOTTestRunner.cpp

@@ -96,18 +96,6 @@ struct Effects {
     constexpr bool mayRunOtherCode() const { return maySuspend || mayCallUnknownCode; }
     constexpr bool mayExitSideways() const { return mayThrow || mayBeTerminated || mayRunOtherCode(); }
 
-    constexpr bool interferesWith(const Effects& other) const
-    {
-        return writes.overlapsWithin(orderedHeaps, other.writes)
-            || writes.overlapsWithin(orderedHeaps, other.reads)
-            || reads.overlapsWithin(orderedHeaps, other.writes)
-            || (mayExitSideways() && other.mayExitSideways())
-            || (mayExitSideways() && other.writes.containsAny(orderedHeaps))
-            || (other.mayExitSideways() && writes.containsAny(orderedHeaps))
-            || (mayRunOtherCode() && other.reads.containsAny(orderedHeaps))
-            || (other.mayRunOtherCode() && reads.containsAny(orderedHeaps));
-    }
-
     constexpr void merge(const Effects& other)
     {
         reads.merge(other.reads);

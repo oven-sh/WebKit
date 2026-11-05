@@ -66,7 +66,7 @@ static bool variableStaysAsFilled(const Walker& walker, VariableID id, Definitio
         return false;
     // No operation stands for such a store, or what lies in the word is a mark.
     const Plan& plan = walker.plan();
-    if (plan.runTimeMayFill(id) || plan.deferredDefinitions().objectBeside(id))
+    if (plan.runTimeMayFill(id))
         return false;
     return !!plan.deferredDefinitions().findDeferred(id) == (definition == DefinitionOfStableVariable::IsPutOff);
 }

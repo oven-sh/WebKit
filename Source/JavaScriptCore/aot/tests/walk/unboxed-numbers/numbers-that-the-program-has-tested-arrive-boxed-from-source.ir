@@ -1,6 +1,6 @@
 # behind `typeof a === "number"`, as the front end writes it, the value is a proven number that lies boxed: a chain is walked on integers and on doubles, a sum that a return takes stays boxed, a truncation reads the tag
 # the program is that of the answers test, so what is shown here is what gives the answers there
-# TODO: unions-and-narrowing-2: behind `typeof a === "number"` nothing is proven of `a`: the front end hands the proof to a parameter of the block that no operation names (bun-walk/src/aot/lower/condition.rs, finish_split()), and Walker::leadEdge() narrows that parameter alone. So `a + b` is Generic, and P1, 3.7 and 3.8 meet no boxed number on this road. Walker::narrowFurtherOnEdge() narrows the value under its own name: it lies in the tree and has no caller yet
+# TODO: narrowing on edges: behind `typeof a === "number"` nothing is proven of `a`: the front end hands the proof to a parameter of the block that no operation names (Bun's src/aot/lower/condition.rs, finish_split()), and Walker::leadEdge() narrows that parameter alone. So `a + b` is Generic, and no rule for boxed numbers meets one on this road
 # f1 = mix, f3 = sum, f6 = whole, f10 = scaled
 # RUN(FORM): walk f1 mechanisms=all-ParameterGuards-Inlining
 # FORM-LABEL: code f1:Body

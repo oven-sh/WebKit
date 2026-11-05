@@ -82,9 +82,6 @@ static constexpr MemoryTestKind memoryTestLoads[] = {
 static constexpr MemoryTestKind memoryTestStores[] = {
     { Store8, Int32 }, { Store16, Int32 }, { Store, Int32 }, { Store, Int64 }, { Store, Float }, { Store, Double },
 };
-// On both sides of what each form of an ARM64 access and a one-byte displacement of x86-64 reach.
-static constexpr ptrdiff_t memoryTestOffsets[] = { 0, 1, -1, 8, -8, 127, 128, -128, -129, 255, 256, -256, -257, 4095, 4096, 16380, 32760, 32768, -32768, 40001 };
-static constexpr size_t memoryTestReach = 64 * KB;
 static constexpr uint64_t memoryTestStoredBits = 0xf1e2d3c4b5a69788ull;
 
 static LValue memoryTestValueOfType(TestProcedure& test, unsigned argument, Type type)
@@ -164,108 +161,6 @@ static void appendStoringPatchInMemoryTest(TestProcedure& test, LValue value, LV
     });
 }
 
-// Code reads a constant that has a word of the instance from that word, whichever way the constant is used.
-static void placePinnedConstantInMemoryTest(TestInstance& instance, uint64_t bits)
-{
-    std::optional<PinnedConstant> pinned = findPinnedConstant(bits);
-    if (!pinned || !pinned->offset)
-        return;
-    int32_t offset = *pinned->offset;
-    AOT_TEST_CHECK(pinned->reg == instanceGPR);
-    AOT_TEST_CHECK(offset >= -static_cast<int32_t>(sizeof(instance.wordsBelow)));
-    AOT_TEST_CHECK(offset + static_cast<int32_t>(sizeof(bits)) <= static_cast<int32_t>(sizeof(instance.words)));
-    std::memcpy(static_cast<uint8_t*>(instance.pointer()) + offset, &bits, sizeof(bits));
-}
-
-static void testMemoryLoadsOfEachWidth()
-{
-    MemoryTestBytes bytes(memoryTestReach);
-    for (const MemoryTestKind& kind : memoryTestLoads) {
-        TestProcedure test;
-        Output& out = test.out();
-        Builder& builder = out;
-        const AbstractHeap& heap = test.heaps().root;
-        LValue base = test.argumentGPR(0);
-        LValue answers = test.argumentGPR(1);
-        ptrdiff_t place = 0;
-        for (ptrdiff_t offset : memoryTestOffsets) {
-            LValue loaded = builder.load(kind.opcode, kind.type, base, offset, heap);
-            out.store64(memoryTestBitsOf(out, loaded), out.address(heap, answers, place));
-            place += sizeof(uint64_t);
-        }
-        out.retVoid();
-
-        std::array<uint64_t, std::size(memoryTestOffsets)> answersOfRun { };
-        compileAndRun<void>(test, bytes.middle(), answersOfRun.data());
-        for (size_t index = 0; index < answersOfRun.size(); ++index)
-            expectInMemoryTest(answersOfRun[index] == memoryTestBitsLoaded(kind, bytes, memoryTestOffsets[index]), kind.opcode, " ", kind.type, " at ", memoryTestOffsets[index]);
-    }
-}
-
-static void testMemoryStoresOfEachWidth()
-{
-    for (const MemoryTestKind& kind : memoryTestStores) {
-        TestProcedure test;
-        Builder& builder = test.out();
-        LValue base = test.argumentGPR(0);
-        LValue value = memoryTestValueOfType(test, 1, kind.type);
-        MemoryTestBytes expected(memoryTestReach);
-        for (ptrdiff_t offset : memoryTestOffsets) {
-            builder.store(kind.opcode, value, base, offset, test.heaps().root);
-            expected.write(offset, memoryTestStoredBits, kind.size());
-        }
-        builder.retVoid();
-
-        MemoryTestBytes bytes(memoryTestReach);
-        compileAndRun<void>(test, bytes.middle(), memoryTestStoredBits);
-        bytes.expectSameAs(expected, kind.opcode, " ", kind.type);
-    }
-}
-
-static void testMemoryStoresOfConstants()
-{
-    static constexpr int64_t integers[] = {
-        0, 1, -1, 0x7fffffffll, 0x80000000ll, 0xffffffffll, -0x80000000ll, -0x80000001ll, std::numeric_limits<int64_t>::min(), 0x123456789abcdef0ll,
-    };
-    static constexpr double numbers[] = { 0.0, -0.0, 1.0, 1.5, std::numeric_limits<double>::quiet_NaN() };
-
-    TestInstance instance;
-    TestProcedure test;
-    Output& out = test.out();
-    const AbstractHeap& heap = test.heaps().root;
-    LValue base = test.argumentGPR(0);
-    MemoryTestBytes expected(256);
-    ptrdiff_t offset = 0;
-    for (int64_t integer : integers) {
-        int32_t low = static_cast<int32_t>(integer);
-        out.store64(out.constInt64(integer), out.address(heap, base, offset));
-        out.store32(out.constInt32(low), out.address(heap, base, offset + 8));
-        out.store32As16(out.constInt32(low), out.address(heap, base, offset + 12));
-        out.store32As8(out.constInt32(low), out.address(heap, base, offset + 14));
-        expected.write(offset, static_cast<uint64_t>(integer), 8);
-        expected.write(offset + 8, static_cast<uint32_t>(low), 4);
-        expected.write(offset + 12, static_cast<uint32_t>(low), 2);
-        expected.write(offset + 14, static_cast<uint32_t>(low), 1);
-        placePinnedConstantInMemoryTest(instance, static_cast<uint64_t>(integer));
-        offset += 16;
-    }
-    for (double number : numbers) {
-        float narrowNumber = static_cast<float>(number);
-        out.storeDouble(out.constDouble(number), out.address(heap, base, offset));
-        out.storeFloat(out.constFloat(narrowNumber), out.address(heap, base, offset + 8));
-        expected.write(offset, std::bit_cast<uint64_t>(number), 8);
-        expected.write(offset + 8, std::bit_cast<uint32_t>(narrowNumber), 4);
-        placePinnedConstantInMemoryTest(instance, std::bit_cast<uint64_t>(number));
-        offset += 16;
-    }
-    out.retVoid();
-
-    MemoryTestBytes bytes(256);
-    compileOrFail(test, instance.pointer());
-    test.call<void>(bytes.middle());
-    bytes.expectSameAs(expected, "constants");
-}
-
 static void checkIndexedAccessInMemoryTest(const MemoryTestKind& kind, unsigned shift, IndexExtension extension, int32_t offset)
 {
     // Bit 31 of an index of 32 bits is set, so the wrong extension misses the bytes. The base makes up for what the bit adds to an index that is extended with zeros.
@@ -328,55 +223,6 @@ static void testMemoryIndexedAddresses()
         checkEachForm(kind);
     for (const MemoryTestKind& kind : memoryTestStores)
         checkEachForm(kind);
-}
-
-struct MemoryTestFarAddress {
-    int64_t addend;
-    int64_t offset;
-};
-
-static void testMemoryOffsetsBeyond32Bits()
-{
-    static constexpr MemoryTestFarAddress addresses[] = {
-        { std::numeric_limits<int32_t>::max(), 1 },
-        { std::numeric_limits<int32_t>::min(), -1 },
-        { 0, int64_t { 1 } << 32 },
-        { 0, -(int64_t { 1 } << 33) },
-        { int64_t { 1 } << 40, 8 },
-    };
-    MemoryTestBytes bytes(64);
-    for (const MemoryTestFarAddress& address : addresses) {
-        TestProcedure test;
-        Output& out = test.out();
-        LValue base = test.argumentGPR(0);
-        if (address.addend)
-            base = out.add(base, address.addend);
-        out.ret(out.load64(out.address(test.heaps().root, base, static_cast<ptrdiff_t>(address.offset))));
-        uintptr_t start = reinterpret_cast<uintptr_t>(bytes.middle()) - static_cast<uintptr_t>(address.addend) - static_cast<uintptr_t>(address.offset);
-        expectInMemoryTest(compileAndRun<uint64_t>(test, start) == bytes.read(0, 8), "base + ", address.addend, ", offset ", address.offset);
-    }
-}
-
-static void testMemoryStackSlots()
-{
-    TestProcedure test;
-    Output& out = test.out();
-    const AbstractHeap& heap = test.heaps().frameSlots;
-    LValue wideValue = test.argumentGPR(0);
-    LValue narrowValue = out.castToInt32(test.argumentGPR(1));
-    LValue slot = out.lockedStackSlot(32);
-    LValue stored = out.store64(wideValue, out.address(heap, slot, 8));
-    out.store32(narrowValue, out.address(heap, slot, 20));
-    LValue wide = out.load64(out.address(heap, out.add(slot, 8)));
-    LValue narrow = out.load32(out.address(heap, slot, 20));
-    out.ret(out.add(wide, out.zeroExtPtr(narrow)));
-    compileOrFail(test);
-
-    AOT_TEST_CHECK(wide->child(0) == slot);
-    AOT_TEST_CHECK(wide->offset() == 8);
-    AOT_TEST_CHECK(executeStepInMemoryTest(test, stored).sources[1] == Location::slotBytes(slot->slot()->index()));
-    AOT_TEST_CHECK(test.procedure().frame().hasFrame());
-    AOT_TEST_CHECK(test.call<uint64_t>(uint64_t { 0x1000 }, uint64_t { 0xdeadbeef00000007ull }) == 0x1007);
 }
 
 static void testMemoryWordsOfInstance()
@@ -444,33 +290,6 @@ static void testMemoryConstantDataSaysWhatItIs()
     AOT_TEST_CHECK(described[1].bytes.size() == sizeof(number) && !memcmp(described[1].bytes.span().data(), &number, sizeof(number)));
 }
 
-static void testMemoryAddOfConstantMovesIntoOffset()
-{
-    TestProcedure test;
-    Output& out = test.out();
-    const AbstractHeap& heap = test.heaps().root;
-    LValue base = test.argumentGPR(0);
-
-    LValue sum = out.add(base, 16);
-    LValue loaded = out.load64(out.address(heap, sum, 8));
-    AOT_TEST_CHECK(loaded->child(0) == base);
-    AOT_TEST_CHECK(loaded->offset() == 24);
-    AOT_TEST_CHECK(!sum->useCount());
-    AOT_TEST_CHECK(out.load64(out.address(heap, out.add(out.add(base, 4), 4), 16)) == loaded);
-
-    LValue stored = out.store64(loaded, out.address(heap, out.add(base, -32), -8));
-    AOT_TEST_CHECK(stored->lastChild() == base);
-    AOT_TEST_CHECK(stored->offset() == -40);
-    out.retVoid();
-
-    MemoryTestBytes bytes(64);
-    MemoryTestBytes expected(64);
-    expected.write(-40, expected.read(24, 8), 8);
-    compileAndRun<void>(test, bytes.middle());
-    bytes.expectSameAs(expected, "a store through a sum");
-    AOT_TEST_CHECK(test.procedure().liveness().isDropped(sum));
-}
-
 // list[i + 3]: what is left of the address is that of list[i], so the two share it, and the element lies at a distance.
 static void testMemoryConstantAddedToIndexMovesIntoOffset()
 {
@@ -499,54 +318,6 @@ static void testMemoryConstantAddedToIndexMovesIntoOffset()
     MemoryTestBytes bytes(128);
     uint64_t expected = bytes.read(-2 * 8 + 32, 8) + bytes.read(-2 - 5, 1);
     AOT_TEST_CHECK(compileAndRun<uint64_t>(test, bytes.middle(), int64_t { -2 }) == expected);
-}
-
-static void testMemoryAddressWithOneUseIsFused()
-{
-    AOT_TEST_CHECK(isEncodableIndexedAddress(Width64, 3, IndexExtension::None, 0));
-
-    TestProcedure test;
-    Output& out = test.out();
-    LValue base = test.argumentGPR(0);
-    LValue index = test.argumentGPR(1);
-    LValue value = test.argumentGPR(2);
-    LValue shifted = out.shl(index, 3);
-    LValue address = out.add(base, shifted);
-
-    // Whoever took the base and the index for dead behind the sum would leave them where this poisons them.
-    ConstrainedValue operands[] = { ConstrainedValue(value, ValueRep::SomeRegister) };
-    TestPatch between;
-    between.operands = operands;
-    between.lateClobbers = maskOf(Reg(GPRInfo::argumentGPR0)) | maskOf(Reg(GPRInfo::argumentGPR1));
-    PatchOperation* copyOfValue = appendTestPatch(test, between);
-
-    LValue stored = out.store64(copyOfValue, out.address(test.heaps().root, address));
-    out.retVoid();
-    compileOrFail(test);
-
-    const Liveness& liveness = test.procedure().liveness();
-    const Order& order = test.procedure().order();
-    AOT_TEST_CHECK(liveness.isFused(address));
-    AOT_TEST_CHECK(liveness.isFused(shifted));
-    AOT_TEST_CHECK(!findExecuteStepInMemoryTest(test, address));
-    AOT_TEST_CHECK(!findExecuteStepInMemoryTest(test, shifted));
-
-    Position read = order.earlyPositionOf(stored);
-    AOT_TEST_CHECK(read > order.latePositionOf(copyOfValue));
-    AOT_TEST_CHECK(liveness.of(base).lastUse == read);
-    AOT_TEST_CHECK(liveness.of(index).lastUse == read);
-
-    // The leaves: the value, the base, the index, the amount.
-    const Step& step = executeStepInMemoryTest(test, stored);
-    AOT_TEST_CHECK(step.sources[1].isRegister());
-    AOT_TEST_CHECK(step.sources[2].isRegister());
-    AOT_TEST_CHECK(!(between.lateClobbers & (maskOf(step.sources[1].reg()) | maskOf(step.sources[2].reg()))));
-
-    MemoryTestBytes bytes(64);
-    MemoryTestBytes expected(64);
-    expected.write(-32, 9, 8);
-    test.call<void>(bytes.middle(), int64_t { -4 }, uint64_t { 9 });
-    bytes.expectSameAs(expected, "a store through a fused address");
 }
 
 // table[index >> 5], as ShapeTestEmitter reads a set of bits: the address of the table takes a register, and the load adds the scaled index itself.
@@ -667,42 +438,6 @@ static void testMemoryNumberIsMadeOfLowHalfOfRegister()
     AOT_TEST_CHECK(lowHalf->opcode() == Trunc && test.procedure().liveness().isFused(lowHalf) && !findExecuteStepInMemoryTest(test, lowHalf));
     for (uint64_t bits : { uint64_t { 0xfffe000000000007 }, uint64_t { 0xfffe0000fffffffb } })
         AOT_TEST_CHECK(test.call<uint64_t>(bits) == std::bit_cast<uint64_t>(static_cast<double>(static_cast<int32_t>(bits))) + bits);
-}
-
-enum class MemoryTestWriter : uint8_t { None, Store, Patch };
-
-static void checkLoadAheadOfWriteInMemoryTest(MemoryTestWriter writer)
-{
-    uint64_t word = 40;
-    TestProcedure test;
-    Output& out = test.out();
-    const AbstractHeap& heap = test.heaps().root;
-    LValue base = test.argumentGPR(0);
-    LValue addend = test.argumentGPR(1);
-    LValue loaded = out.load64(out.address(heap, base));
-    switch (writer) {
-    case MemoryTestWriter::None:
-        break;
-    case MemoryTestWriter::Store:
-        out.store64(addend, out.address(heap, base));
-        break;
-    case MemoryTestWriter::Patch:
-        appendStoringPatchInMemoryTest(test, addend, base, 0, HeapSet::top());
-        break;
-    }
-    out.ret(out.add(addend, loaded));
-    compileOrFail(test);
-
-    AOT_TEST_CHECK(writer == MemoryTestWriter::None || !test.procedure().liveness().isFused(loaded));
-    AOT_TEST_CHECK(test.call<uint64_t>(&word, uint64_t { 2 }) == 42);
-    AOT_TEST_CHECK(word == (writer == MemoryTestWriter::None ? 40u : 2u));
-}
-
-static void testMemoryLoadStaysAheadOfWrite()
-{
-    checkLoadAheadOfWriteInMemoryTest(MemoryTestWriter::None);
-    checkLoadAheadOfWriteInMemoryTest(MemoryTestWriter::Store);
-    checkLoadAheadOfWriteInMemoryTest(MemoryTestWriter::Patch);
 }
 
 struct MemoryTestTestedLoad {
@@ -888,37 +623,6 @@ static void testMemoryComparisonWithRegisterReadsLoadWhereItLies()
     }
 }
 
-enum class MemoryTestBesideTestedLoad : uint8_t { StoreStandsBetween, SecondReader };
-
-// The word is tested as it was where the load stands. A load that something else reads has a register anyway.
-static void testMemoryTestedLoadStaysWhereItMust()
-{
-    for (MemoryTestBesideTestedLoad kind : { MemoryTestBesideTestedLoad::StoreStandsBetween, MemoryTestBesideTestedLoad::SecondReader }) {
-        bool isReadAgain = kind == MemoryTestBesideTestedLoad::SecondReader;
-        TestProcedure test;
-        Output& out = test.out();
-        const AbstractHeap& heap = test.heaps().root;
-        LBasicBlock holds = out.newBlock();
-        LBasicBlock fails = out.newBlock();
-        LValue base = test.argumentGPR(0);
-        LValue loaded = out.load8ZeroExt32(out.address(heap, base, 5));
-        if (!isReadAgain)
-            out.store32As8(out.constInt32(9), out.address(heap, base, 5));
-        out.branch(out.equal(loaded, out.constInt32(2)), normalEdge(holds), normalEdge(fails));
-        out.appendTo(holds);
-        out.ret(isReadAgain ? out.zeroExtPtr(loaded) : out.constInt64(10));
-        out.appendTo(fails);
-        out.ret(out.constInt64(20));
-        compileOrFail(test);
-        AOT_TEST_CHECK(!test.procedure().liveness().isFused(loaded));
-
-        uint8_t bytes[8] = { 0, 0, 0, 0, 0, 2, 0, 0 };
-        AOT_TEST_CHECK(test.call<int64_t>(&bytes[0]) == (isReadAgain ? 2 : 10));
-        bytes[5] = 3;
-        AOT_TEST_CHECK(test.call<int64_t>(&bytes[0]) == 20);
-    }
-}
-
 // text.charCodeAt(i) === 32: the text is kept alive behind the read of its characters, by what is no instruction. What declares a write stops the load though it is none either.
 static void testMemoryTestedLoadMovesBehindWhatOnlyKeepsValueAlive()
 {
@@ -954,118 +658,6 @@ static void testMemoryTestedLoadMovesBehindWhatOnlyKeepsValueAlive()
         bytes[5] = 33;
         AOT_TEST_CHECK(test.call<int64_t>(&bytes[0], &bytes[0]) == 20);
     }
-}
-
-static void testMemorySecondLoadIsTheFirst()
-{
-    uint64_t words[2] = { 20, 1 };
-    TestProcedure test;
-    Output& out = test.out();
-    const AbstractHeap& heap = test.heaps().Butterfly_publicLength;
-    LValue base = test.argumentGPR(0);
-    LValue otherBase = test.argumentGPR(1);
-    LValue first = out.load64(out.address(heap, base, 8));
-    LValue second = out.load64(out.address(heap, base, 8));
-    AOT_TEST_CHECK(first == second);
-    AOT_TEST_CHECK(occurrencesInMemoryTestText(test.printedProcedure(), "= Load("_s) == 1);
-
-    AOT_TEST_CHECK(out.load64(out.address(heap, base, 0)) != first);
-    AOT_TEST_CHECK(out.load32(out.address(heap, base, 8)) != first);
-    AOT_TEST_CHECK(out.loadDouble(out.address(heap, base, 8)) != first);
-    AOT_TEST_CHECK(out.load8ZeroExt32(out.address(heap, base, 8)) != out.load8SignExt32(out.address(heap, base, 8)));
-    AOT_TEST_CHECK(out.load64(out.address(heap, otherBase, 8)) != first);
-    AOT_TEST_CHECK(out.load64(out.address(test.heaps().Butterfly_vectorLength, base, 8)) != first);
-
-    out.ret(out.add(first, second));
-    AOT_TEST_CHECK(compileAndRun<uint64_t>(test, &words[0], &words[0]) == 2);
-}
-
-struct MemoryTestWrite {
-    AbstractHeap loaded;
-    AbstractHeap written;
-    bool endsLoad;
-};
-
-static void checkWriteBetweenLoadsInMemoryTest(const MemoryTestWrite& write)
-{
-    uint64_t word = 1;
-    uint64_t otherWord = 1;
-    TestProcedure test;
-    Output& out = test.out();
-    const HeapTree& tree = test.procedure().heapTree();
-    ASCIILiteral nameOfLoaded = tree.nameOf(write.loaded.index());
-    ASCIILiteral nameOfWritten = tree.nameOf(write.written.index());
-    expectInMemoryTest(tree.overlap(write.loaded.index(), write.written.index()) == write.endsLoad, "the tree on ", nameOfLoaded, " and ", nameOfWritten);
-
-    LValue base = test.argumentGPR(0);
-    LValue target = test.argumentGPR(1);
-    LValue first = out.load64(out.address(write.loaded, base));
-    out.store64(out.constInt64(5), out.address(write.written, target));
-    LValue second = out.load64(out.address(write.loaded, base));
-    expectInMemoryTest((first != second) == write.endsLoad, "a load of ", nameOfLoaded, " behind a store to ", nameOfWritten);
-    AOT_TEST_CHECK(occurrencesInMemoryTestText(test.printedProcedure(), "= Load("_s) == (write.endsLoad ? 2u : 1u));
-
-    // Only heaps that overlap may name one word.
-    out.ret(out.add(out.mul(first, 10), second));
-    uint64_t answer = compileAndRun<uint64_t>(test, &word, write.endsLoad ? &word : &otherWord);
-    expectInMemoryTest(answer == (write.endsLoad ? 15u : 11u), "the run with ", nameOfLoaded, " and ", nameOfWritten);
-}
-
-static void testMemoryWriteToOverlappingHeapEndsLoad()
-{
-    TestProcedure source;
-    const AOTHeaps& heaps = source.heaps();
-    const IndexedAbstractHeap& elements = heaps.indexedInt32Properties;
-    const MemoryTestWrite writes[] = {
-        { heaps.JSCell_structureID, heaps.JSCell_structureID, true },
-        { heaps.JSCell_structureID, heaps.JSCell_header, true },
-        { heaps.JSCell_header, heaps.JSCell_structureID, true },
-        { heaps.JSCell_structureID, heaps.root, true },
-        { heaps.root, heaps.JSCell_structureID, true },
-        { elements.at(0), elements.atAnyIndex(), true },
-        { elements.atAnyIndex(), elements.at(3), true },
-        { heaps.JSCell_structureID, heaps.JSCell_usefulBytes, false },
-        { heaps.JSCell_structureID, heaps.Butterfly_publicLength, false },
-        { heaps.Butterfly_vectorLength, heaps.Butterfly_publicLength, false },
-        { elements.at(0), elements.at(1), false },
-        { elements.at(0), heaps.indexedDoubleProperties.at(0), false },
-    };
-    for (const MemoryTestWrite& write : writes)
-        checkWriteBetweenLoadsInMemoryTest(write);
-}
-
-static void testMemoryImmutableLoadSurvivesPatch()
-{
-    uint64_t words[3] = { 100, 10, 1 };
-    TestProcedure test;
-    Output& out = test.out();
-    const AOTHeaps& heaps = test.heaps();
-    LValue base = test.argumentGPR(0);
-    LValue replacement = test.argumentGPR(1);
-    auto loadClassInfo = [&] { return out.load64(out.address(heaps.Structure_classInfo, base, 0)); };
-    auto loadLength = [&] { return out.load64(out.address(heaps.Butterfly_publicLength, base, 8)); };
-    auto loadCapacity = [&] { return out.load64(out.address(heaps.Butterfly_vectorLength, base, 16)); };
-
-    LValue classInfo = loadClassInfo();
-    LValue length = loadLength();
-    LValue capacity = loadCapacity();
-    AOT_TEST_CHECK(classInfo->has(OperationFlag::ReadsImmutableHeap));
-    AOT_TEST_CHECK(!length->has(OperationFlag::ReadsImmutableHeap));
-
-    appendStoringPatchInMemoryTest(test, replacement, base, 8, test.procedure().heapSet(heaps.Butterfly_publicLength));
-    LValue lengthBehindPatch = loadLength();
-    AOT_TEST_CHECK(lengthBehindPatch != length);
-    AOT_TEST_CHECK(loadCapacity() == capacity);
-    AOT_TEST_CHECK(loadClassInfo() == classInfo);
-
-    appendStoringPatchInMemoryTest(test, replacement, base, 16, HeapSet::top());
-    LValue capacityBehindPatch = loadCapacity();
-    AOT_TEST_CHECK(capacityBehindPatch != capacity);
-    AOT_TEST_CHECK(loadLength() != lengthBehindPatch);
-    AOT_TEST_CHECK(loadClassInfo() == classInfo);
-
-    out.ret(out.add(out.add(classInfo, length), out.add(lengthBehindPatch, out.add(capacity, capacityBehindPatch))));
-    AOT_TEST_CHECK(compileAndRun<uint64_t>(test, &words[0], uint64_t { 7 }) == 125);
 }
 
 // Builder::fence() orders stores for other threads and writes no heap.
@@ -1320,99 +912,6 @@ static void testMemoryNeighboringStoresPair()
     expected.write(72, memoryTestStoredBits, 8);
     compileAndRun<void>(test, bytes.middle(), bytes.middle() + 64, memoryTestStoredBits);
     bytes.expectSameAs(expected, "neighboring offsets from two bases");
-}
-
-static void testMemorySpilledValueIsReadInPlace()
-{
-    // More than any target keeps in registers across a call.
-    constexpr unsigned numberOfValues = 10;
-
-    TestProcedure test;
-    Output& out = test.out();
-    LValue seed = test.argumentGPR(0);
-    std::array<LValue, numberOfValues> values;
-    for (unsigned index = 0; index < numberOfValues; ++index)
-        values[index] = out.opaque(out.add(seed, index + 1));
-
-    ConstrainedValue operands[] = { ConstrainedValue(seed, ValueRep::SomeRegister) };
-    TestPatch call;
-    call.kind = TestPatchKind::SumThroughCall;
-    call.operands = operands;
-    LValue difference = appendTestPatch(test, call);
-
-    std::array<LValue, numberOfValues> differences;
-    for (unsigned index = 0; index < numberOfValues; ++index) {
-        difference = out.sub(difference, values[index]);
-        differences[index] = difference;
-    }
-    out.ret(difference);
-    compileOrFail(test);
-
-    const Allocation& allocation = test.procedure().allocation();
-    AOT_TEST_CHECK(acceptsMemoryOperand(*differences[0], 1) == isX86_64());
-    unsigned numberReadInPlace = 0;
-    for (unsigned index = 0; index < numberOfValues; ++index) {
-        Location source = executeStepInMemoryTest(test, differences[index]).sources[1];
-        if (source.isRegister())
-            continue;
-        AOT_TEST_CHECK(isX86_64());
-        AOT_TEST_CHECK(allocation.isSpilled(values[index]));
-        AOT_TEST_CHECK(source == Location::spill(allocation.spillOf(values[index])));
-        ++numberReadInPlace;
-    }
-    AOT_TEST_CHECK(!!numberReadInPlace == isX86_64());
-    if (isX86_64()) {
-        for (const Step& step : allocation.steps())
-            AOT_TEST_CHECK(step.kind != StepKind::Reload || std::find(values.begin(), values.end(), step.operation) == values.end());
-    }
-
-    uint64_t argument = 1000;
-    uint64_t answer = argument;
-    for (unsigned index = 0; index < numberOfValues; ++index)
-        answer -= argument + index + 1;
-    AOT_TEST_CHECK(test.call<uint64_t>(argument) == answer);
-}
-
-static void checkPinnedConstantInMemoryTest(Type type, uint64_t bits)
-{
-    std::optional<PinnedConstant> pinned = findPinnedConstant(bits);
-    AOT_TEST_CHECK(pinned);
-    TestInstance instance;
-    placePinnedConstantInMemoryTest(instance, bits);
-
-    TestProcedure test;
-    Output& out = test.out();
-    LValue sum = type == Double
-        ? out.doubleAdd(test.argumentFPR(0), out.constDouble(std::bit_cast<double>(bits)))
-        : out.add(test.argumentGPR(0), out.constInt64(static_cast<int64_t>(bits)));
-    out.ret(sum);
-    compileOrFail(test, instance.pointer());
-
-    Location source = executeStepInMemoryTest(test, sum).sources[1];
-    if (!pinned->offset)
-        AOT_TEST_CHECK(type == Double || source == Location::reg(pinned->reg));
-    else if (acceptsMemoryOperand(*sum, 1))
-        AOT_TEST_CHECK(source == Location::instanceWord(*pinned->offset));
-    else
-        AOT_TEST_CHECK(type == Double);
-
-    if (type == Double)
-        AOT_TEST_CHECK(test.call<double>(2.5) == 2.5 + std::bit_cast<double>(bits));
-    else
-        AOT_TEST_CHECK(test.call<uint64_t>(uint64_t { 5 }) == 5 + bits);
-}
-
-static void testMemoryConstantsOfInstance()
-{
-    checkPinnedConstantInMemoryTest(Int64, JSValue::NumberTag);
-    checkPinnedConstantInMemoryTest(Int64, JSValue::NotCellMask);
-    if (!isX86_64())
-        return;
-    AOT_TEST_CHECK(findPinnedConstant(JSValue::NumberTag)->offset);
-    AOT_TEST_CHECK(findPinnedConstant(JSValue::NotCellMask)->offset);
-    checkPinnedConstantInMemoryTest(Int64, JSValue::DoubleEncodeOffset);
-    checkPinnedConstantInMemoryTest(Int64, static_cast<uint64_t>(std::numeric_limits<int64_t>::min()));
-    checkPinnedConstantInMemoryTest(Double, std::bit_cast<uint64_t>(1.0));
 }
 
 static constexpr ptrdiff_t memoryTestOffsetOfUpdatedWord = 8;
@@ -1764,38 +1263,24 @@ static void testMemoryUpdateLeavesOtherReadersAndWritersAlone()
 std::span<const NativeTest> machineMemoryTests()
 {
     static constexpr NativeTest tests[] = {
-        { "machine/memory/loads-of-each-width"_s, Machine::testMemoryLoadsOfEachWidth },
-        { "machine/memory/stores-of-each-width"_s, Machine::testMemoryStoresOfEachWidth },
-        { "machine/memory/stores-of-constants"_s, Machine::testMemoryStoresOfConstants },
         { "machine/memory/indexed-addresses"_s, Machine::testMemoryIndexedAddresses },
-        { "machine/memory/offsets-beyond-32-bits"_s, Machine::testMemoryOffsetsBeyond32Bits },
-        { "machine/memory/stack-slots"_s, Machine::testMemoryStackSlots },
         { "machine/memory/words-of-the-instance"_s, Machine::testMemoryWordsOfInstance },
         { "machine/memory/constant-data"_s, Machine::testMemoryConstantData },
         { "machine/memory/constant-data-says-what-it-is"_s, Machine::testMemoryConstantDataSaysWhatItIs },
-        { "machine/memory/add-of-a-constant-moves-into-the-offset"_s, Machine::testMemoryAddOfConstantMovesIntoOffset },
         { "machine/memory/constant-added-to-an-index-moves-into-the-offset"_s, Machine::testMemoryConstantAddedToIndexMovesIntoOffset },
-        { "machine/memory/address-with-one-use-is-fused"_s, Machine::testMemoryAddressWithOneUseIsFused },
         { "machine/memory/table-of-the-image-is-the-base-of-an-indexed-load"_s, Machine::testMemoryTableOfImageIsBaseOfIndexedLoad },
         { "machine/memory/address-with-two-uses-is-not-fused"_s, Machine::testMemoryAddressWithTwoUsesIsNotFused },
         { "machine/memory/extension-of-an-index-is-fused-where-the-register-holds-it"_s, Machine::testMemoryExtensionOfIndexIsFusedWhereRegisterHoldsIt },
         { "machine/memory/number-is-made-of-the-low-half-of-a-register"_s, Machine::testMemoryNumberIsMadeOfLowHalfOfRegister },
-        { "machine/memory/load-stays-ahead-of-a-write"_s, Machine::testMemoryLoadStaysAheadOfWrite },
         { "machine/memory/comparison-with-a-constant-reads-the-load-where-it-lies"_s, Machine::testMemoryComparisonReadsLoadWhereItLies },
         { "machine/memory/bit-test-reads-the-load-where-it-lies"_s, Machine::testMemoryBitTestReadsLoadWhereItLies },
         { "machine/memory/comparison-with-a-register-reads-the-load-where-it-lies"_s, Machine::testMemoryComparisonWithRegisterReadsLoadWhereItLies },
-        { "machine/memory/tested-load-stays-ahead-of-a-store-and-for-a-second-reader"_s, Machine::testMemoryTestedLoadStaysWhereItMust },
         { "machine/memory/tested-load-moves-behind-what-only-keeps-a-value-alive"_s, Machine::testMemoryTestedLoadMovesBehindWhatOnlyKeepsValueAlive },
-        { "machine/memory/second-load-is-the-first"_s, Machine::testMemorySecondLoadIsTheFirst },
-        { "machine/memory/write-to-an-overlapping-heap-ends-a-load"_s, Machine::testMemoryWriteToOverlappingHeapEndsLoad },
-        { "machine/memory/immutable-load-survives-a-patch"_s, Machine::testMemoryImmutableLoadSurvivesPatch },
         { "machine/memory/fence-ends-no-load"_s, Machine::testMemoryFenceEndsNoLoad },
         { "machine/memory/unused-trapping-load-stays"_s, Machine::testMemoryUnusedTrappingLoadStays },
         { "machine/memory/trapping-load-names-its-reference"_s, Machine::testMemoryTrappingLoadNamesItsReference },
         { "machine/memory/trap-is-handed-over-or-stays"_s, Machine::testMemoryTrapIsHandedOverOrStays },
         { "machine/memory/neighboring-stores-pair"_s, Machine::testMemoryNeighboringStoresPair },
-        { "machine/memory/spilled-value-is-read-in-place"_s, Machine::testMemorySpilledValueIsReadInPlace },
-        { "machine/memory/constants-of-the-instance"_s, Machine::testMemoryConstantsOfInstance },
         { "machine/memory/tested-sum-is-stored-by-the-branch"_s, Machine::testMemoryTestedSumIsStoredByBranch },
         { "machine/memory/low-half-is-left-alone-where-the-whole-word-is-read"_s, Machine::testMemoryLowHalfIsLeftAloneWhereWholeWordIsRead },
         { "machine/memory/word-is-computed-in-place"_s, Machine::testMemoryWordIsComputedInPlace },

@@ -70,8 +70,6 @@ constexpr bool isObjectKind(BuiltinKind kind)
 
 inline constexpr OptionSet<BuiltinPlatform> everyBuiltinPlatform { BuiltinPlatform::Darwin, BuiltinPlatform::Linux, BuiltinPlatform::Windows, BuiltinPlatform::FreeBSD, BuiltinPlatform::Android };
 
-inline constexpr OptionSet<BuiltinArchitecture> everyBuiltinArchitecture { BuiltinArchitecture::ARM64, BuiltinArchitecture::X86_64 };
-
 struct BuiltinTarget {
     BuiltinPlatform platform;
     BuiltinArchitecture architecture;
@@ -770,24 +768,20 @@ enum class BuiltinMark : uint8_t {
     HoldsLoader,
     IsSpy,
     IsNotEnumerable,
-    IsReplacedBySetter,
     RunsWaitingJobs,
     IsCalledWithoutStartupLoads,
     InstancesHaveMethodCalledWithStartupLoads,
     LoadsCodeWithoutJSAccess,
-    AnswersNullAsItsPrototype,
     ReadLoadsCodeByName,
     HoldsPathOfMainModule,
     IsReplacedByHostThatSaysSo,
     IsResolverThatLoaderCalls,
     IsRequireThatLoaderCalls,
-    InstancesArePrintedWithoutTheirGetters,
     MayTerminateProcess,
     MocksModule,
     ExtendsMatchers,
     FakesTimers,
     IsReplacedByFakeTimers,
-    AnswersCopyOfOperand,
     RunsCodeThatLocksDoNotBind,
     RunsCodeWithLoader,
     HandsOutWhatNativeCodeHolds,
@@ -1046,11 +1040,7 @@ public:
     // An object that takes no new names, and a text that a test run may open on it. No name: a text that the table does not have.
     JS_EXPORT_PRIVATE bool canTakeNameInTestRuns(BuiltinID holder, BuiltinName) const;
     JS_EXPORT_PRIVATE bool isHostFunctionOfEngine(BuiltinID) const;
-    // Of the engine or of the host. A realm that locks its built-ins gives every native function one structure, which keeps the prototype.
-    bool isNativeFunction(BuiltinID) const;
     JS_EXPORT_PRIVATE bool isFunctionOfEngine(BuiltinID) const;
-    // `formatter.format`: the accessor answers a function that it has bound to the receiver, the same at every read. What a call of that function does stands among the overloads of the accessor.
-    bool answersFunctionBoundToReceiver(BuiltinID member) const { return at(member).kind == BuiltinKind::Accessor && dispatchOf(member, BuiltinCallMode::Call); }
     bool hasLockedPrototypeLink(BuiltinID holder) const { return at(holder).flags.containsAny({ BuiltinFlag::IsLockedObject, BuiltinFlag::HasLockedMembers }) || isFunctionOfEngine(holder) || closesOnlyNamesOfCalls(holder); }
     bool closesOnlyNamesOfCalls(BuiltinID holder) const { return at(holder).kind == BuiltinKind::Constructor && !at(holder).flags.containsAny({ BuiltinFlag::IsLockedObject, BuiltinFlag::HasLockedMembers }) && !closedKeysOf(holder).empty(); }
     bool closesIndexKeys(BuiltinID holder) const { return at(holder).flags.contains(BuiltinFlag::IsLockedObject) || (at(holder).flags.contains(BuiltinFlag::HasLockedMembers) && at(holder).kind == BuiltinKind::Prototype); }

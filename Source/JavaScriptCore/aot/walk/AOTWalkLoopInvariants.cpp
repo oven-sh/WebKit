@@ -99,7 +99,7 @@ std::optional<Effects> effectsOfTypedFormAhead(Walker& walker, const BodyValue& 
     walker.takeFormAskedAhead();
     TypedForm typedForm = typedFormOf(walker, operation, types);
     // The look that such a form wants stands in front of it, and where it fails the turn begins again in the closed copy.
-    // Not the form on an object as made: `while (view.length === 4)`: with turns that run no other code the length would leave the loop, and another thread's grow() is no effect of a turn (walk-floor-build, 06:2x).
+    // Not the form on an object as made: `while (view.length === 4)`: with turns that run no other code the length would leave the loop, and another thread's grow() is no effect of a turn.
     bool isBuiltBehindLooks = !isByKey && walker.looksTakeFormsBehindLooksAsBuilt() && typedForm != TypedForm::None && typedForm != TypedForm::BuiltAsCall && typedForm != TypedForm::BuiltOnObjectAsMade;
     if (typedForm != TypedForm::Built && !isBuiltBehindLooks)
         return std::nullopt;

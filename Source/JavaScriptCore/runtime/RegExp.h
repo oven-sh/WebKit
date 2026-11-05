@@ -274,9 +274,9 @@ private:
     void finishCreationFromImage(VM&, const AOT::ImageRegExp&);
     bool takeCodeFromImage(VM&);
     int matchWithImageCode(JSGlobalObject* nullOrGlobalObject, VM&, StringView, unsigned startOffset, int* offsetVector);
-    void crashIfLiteralIsInterpreted() const;
     static void countInterpretedMatch(VM&);
     void countBytecodeCompilation(VM&, BytecodeIsFor) const;
+    void crashIfLiteralIsInterpreted() const;
 #endif
 
     enum RegExpState : uint8_t {

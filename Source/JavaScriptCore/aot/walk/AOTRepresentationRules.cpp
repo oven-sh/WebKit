@@ -56,8 +56,6 @@ enum class RepresentationRule : uint8_t {
     Variable,
     Capture,
     NewClosure,
-    BoundCapture,
-    NewBoundClosure,
     DirectCall,
     TableCall,
     Results,
@@ -114,7 +112,7 @@ static constexpr RepresentationRule representationRuleOf(Opcode opcode)
         return RepresentationRule::Concatenation;
     case Opcode::StringBuilderAppendNumber: case Opcode::StackStringBuilderAppendNumber:
         return RepresentationRule::AppendedNumber;
-    case Opcode::ShapeTest: case Opcode::IsPristine: case Opcode::IsClosureOf: case Opcode::IsBoundClosureOf:
+    case Opcode::ShapeTest: case Opcode::IsPristine: case Opcode::IsClosureOf:
         return RepresentationRule::TestOfCellOrValue;
     case Opcode::CallBuiltin: case Opcode::CallInline:
         return RepresentationRule::BuiltinCall;
@@ -138,10 +136,6 @@ static constexpr RepresentationRule representationRuleOf(Opcode opcode)
         return RepresentationRule::Capture;
     case Opcode::NewClosure:
         return RepresentationRule::NewClosure;
-    case Opcode::GetBoundCapture:
-        return RepresentationRule::BoundCapture;
-    case Opcode::NewBoundClosure:
-        return RepresentationRule::NewBoundClosure;
     case Opcode::CallDirect: case Opcode::AwaitCallBySavingFrame:
         return RepresentationRule::DirectCall;
     case Opcode::CallTable:
@@ -208,7 +202,7 @@ static constexpr RepresentationRule representationRuleOf(Opcode opcode)
     case Opcode::ImportDynamic: case Opcode::RequireDynamic: case Opcode::ResolveDynamic: case Opcode::TryDefineLiveBinding: case Opcode::TryReExportFields: case Opcode::CountExecution:
     case Opcode::JSONSourceOpen: case Opcode::JSONSourceStart: case Opcode::JSONSourceClose: case Opcode::JSONSourceAbandon: case Opcode::JSONGetByte: case Opcode::JSONStartsWith: case Opcode::JSONAdvance:
     case Opcode::JSONSkipByte: case Opcode::JSONSkipWhitespace: case Opcode::JSONParseString: case Opcode::JSONParseKey: case Opcode::JSONParseNumber: case Opcode::JSONParseInteger: case Opcode::JSONParseValue:
-    case Opcode::JSONParseNode: case Opcode::JSONFindMember: case Opcode::JSONMemberRepeats: case Opcode::JSONKeyHasEscapes: case Opcode::JSONObjectBegin: case Opcode::JSONObjectKey:
+    case Opcode::JSONFindMember: case Opcode::JSONMemberRepeats: case Opcode::JSONKeyHasEscapes: case Opcode::JSONObjectBegin: case Opcode::JSONObjectKey:
     case Opcode::JSONObjectFinish: case Opcode::JSONParseExtraMembers: case Opcode::ExpectRows:
 
     // Nobody builds what follows.
@@ -255,7 +249,7 @@ static constexpr RepresentationRuleSet rulesThatTakeOperandsAsBuilt {
 };
 static constexpr RepresentationRuleSet rulesThatTakeOperandsByKind {
     RepresentationRule::BySchema, RepresentationRule::BoxedResult, RepresentationRule::SlotRead, RepresentationRule::AccessorRead,
-    RepresentationRule::Capture, RepresentationRule::BoundCapture, RepresentationRule::ResultAt
+    RepresentationRule::Capture, RepresentationRule::ResultAt
 };
 
 constinit const std::array<OperandsAreTaken, numberOfOpcodes> howOperandsAreTakenByOpcode = []() consteval {
@@ -477,7 +471,7 @@ private:
     static constexpr RepresentationSet stringSubjectForms { Representation::Cell, Representation::LiteralString };
     static constexpr RepresentationRuleSet rulesThatGiveFormWithoutType {
         RepresentationRule::Narrowed, RepresentationRule::Forwarding, RepresentationRule::BoxedResult, RepresentationRule::AccessorRead,
-        RepresentationRule::EnvironmentField, RepresentationRule::Capture, RepresentationRule::BoundCapture, RepresentationRule::DirectCall, RepresentationRule::TableCall, RepresentationRule::Results
+        RepresentationRule::EnvironmentField, RepresentationRule::Capture, RepresentationRule::DirectCall, RepresentationRule::TableCall, RepresentationRule::Results
     };
     static_assert(opcodesThatMayHaveSeveralResults.contains(Opcode::CallDirect));
 
@@ -966,13 +960,6 @@ private:
         return stored == Representation::Cell32 && heldFormAt(operandIndex) == Representation::Cell ? Representation::Unchosen : stored;
     }
 
-    const BoundCapture& plannedBoundCapture(uint32_t index) const
-    {
-        const BoundFunctionPlan* bound = m_context.plan.conventions().boundFunction(m_subject.function(), m_subject.numberOfBoundArguments());
-        RELEASE_ASSERT(bound && index < bound->captures.size());
-        return bound->captures[index];
-    }
-
     CodeUnit unitOfSelector() const
     {
         const CallingConventions& conventions = m_context.plan.conventions();
@@ -1024,7 +1011,6 @@ private:
         case RepresentationRule::SlotRead:
         case RepresentationRule::AccessorRead:
         case RepresentationRule::Capture:
-        case RepresentationRule::BoundCapture:
         case RepresentationRule::ResultAt:
             return wantedByKind(operandIndex);
         case RepresentationRule::OwnForm:
@@ -1085,8 +1071,6 @@ private:
             return m_context.plan.variable(m_subject.variable()).hasWordInStatics() ? representationOfVariable(m_context, m_subject.variable()) : Representation::Unchosen;
         case RepresentationRule::NewClosure:
             return isDeclaredPosition(operandIndex) ? representationOfCapture(m_context, m_subject.function(), *variadicIndexOf(operandIndex)) : wantedByKind(operandIndex);
-        case RepresentationRule::NewBoundClosure:
-            return plannedBoundCapture(*variadicIndexOf(operandIndex)).representation;
         case RepresentationRule::DirectCall:
             if (!isDeclaredPosition(operandIndex) || isHeldAtSuspension(operandIndex))
                 return wantedByKind(operandIndex);
@@ -1178,7 +1162,6 @@ private:
         case RepresentationRule::SlotStore:
         case RepresentationRule::NewObject:
         case RepresentationRule::PrivateDefinition:
-        case RepresentationRule::NewBoundClosure:
             return resultBySchema(resultIndex);
         case RepresentationRule::OwnForm:
             return isConstantWithoutChosenForm() ? byType() : m_subject.representation;
@@ -1220,8 +1203,6 @@ private:
         }
         case RepresentationRule::Capture:
             return representationOfCapture(m_context, m_subject.function(), m_subject.index());
-        case RepresentationRule::BoundCapture:
-            return plannedBoundCapture(m_subject.index()).representation;
         case RepresentationRule::NewClosure:
             return m_subject.closureForm() == ClosureForm::Deferred ? Representation::Void : byType();
         case RepresentationRule::DirectCall:
@@ -1378,7 +1359,7 @@ constinit const std::array<Representation, numberOfOpcodes> formsOfResultsByOpco
     constexpr RepresentationRuleSet rulesThatGoBySchema {
         RepresentationRule::BySchema, RepresentationRule::AsItIs, RepresentationRule::Truncation, RepresentationRule::KeyedAccess, RepresentationRule::ArgumentByValue, RepresentationRule::StringLength,
         RepresentationRule::NewElement, RepresentationRule::Concatenation, RepresentationRule::AppendedNumber, RepresentationRule::TestOfCellOrValue, RepresentationRule::SlotStore,
-        RepresentationRule::NewObject, RepresentationRule::PrivateDefinition, RepresentationRule::NewBoundClosure
+        RepresentationRule::NewObject, RepresentationRule::PrivateDefinition
     };
     std::array<Representation, numberOfOpcodes> forms { };
     for (Opcode opcode : allMembersOf<Opcode>) {
@@ -1403,7 +1384,7 @@ constinit const OpcodeSet opcodesWhoseResultsHaveFormsOfTheirTypes = []() conste
     constexpr RepresentationRuleSet rulesThatGoBySchema {
         RepresentationRule::BySchema, RepresentationRule::AsItIs, RepresentationRule::Truncation, RepresentationRule::KeyedAccess, RepresentationRule::ArgumentByValue, RepresentationRule::StringLength,
         RepresentationRule::NewElement, RepresentationRule::Concatenation, RepresentationRule::AppendedNumber, RepresentationRule::TestOfCellOrValue, RepresentationRule::SlotStore,
-        RepresentationRule::NewObject, RepresentationRule::PrivateDefinition, RepresentationRule::NewBoundClosure
+        RepresentationRule::NewObject, RepresentationRule::PrivateDefinition
     };
     OpcodeSet opcodes;
     for (Opcode opcode : allMembersOf<Opcode>) {

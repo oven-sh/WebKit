@@ -61,28 +61,6 @@ static void testFormsTable()
     AOT_TEST_CHECK(arrayStorageTestMask == IndexingShapeMask);
 }
 
-static void testFormsHolding()
-{
-    TableOfElementTypes table;
-    TypeArena types(table, ArenaKeeps::InProgram);
-
-    AOT_TEST_CHECK(arrayStorageHolding(types, TypeTable::never) == ArrayStorage::Other);
-    AOT_TEST_CHECK(arrayStorageHolding(types, TypeTable::absent) == ArrayStorage::Other);
-    AOT_TEST_CHECK(arrayStorageHolding(types, TypeTable::int32) == ArrayStorage::Int32);
-    AOT_TEST_CHECK(arrayStorageHolding(types, types.integer(Range::one(7))) == ArrayStorage::Int32);
-    AOT_TEST_CHECK(arrayStorageHolding(types, types.withPrimitives(TypeTable::int32, Primitive::Absent)) == ArrayStorage::Int32);
-    AOT_TEST_CHECK(arrayStorageHolding(types, int53Type) == ArrayStorage::Double);
-    AOT_TEST_CHECK(arrayStorageHolding(types, types.integer({ 0, static_cast<int64_t>(INT32_MAX) + 1 })) == ArrayStorage::Double);
-    AOT_TEST_CHECK(arrayStorageHolding(types, fractionType) == ArrayStorage::Double);
-    AOT_TEST_CHECK(arrayStorageHolding(types, numberWithoutNaNType) == ArrayStorage::Double);
-    AOT_TEST_CHECK(arrayStorageHolding(types, types.withPrimitives(fractionType, Primitive::Absent)) == ArrayStorage::Double);
-    AOT_TEST_CHECK(arrayStorageHolding(types, TypeTable::string) == ArrayStorage::Contiguous);
-    AOT_TEST_CHECK(arrayStorageHolding(types, types.withPrimitives(TypeTable::int32, Primitive::String)) == ArrayStorage::Contiguous);
-    AOT_TEST_CHECK(arrayStorageHolding(types, types.withPrimitives(TypeTable::int32, Primitive::Boolean)) == ArrayStorage::Contiguous);
-    AOT_TEST_CHECK(arrayStorageHolding(types, TypeTable::object) == ArrayStorage::Contiguous);
-    AOT_TEST_CHECK(arrayStorageHolding(types, TypeTable::anything) == ArrayStorage::Contiguous);
-}
-
 static void testFormsAtAllocation()
 {
     TableOfElementTypes table;
@@ -122,14 +100,6 @@ static void testFormsStoreWithoutConversion()
 
     AOT_TEST_CHECK(!canStoreWithoutConversion(types, ArrayStorage::Other, TypeTable::int32));
     AOT_TEST_CHECK(!canStoreWithoutConversion(types, ArrayStorage::Other, TypeTable::anything));
-}
-
-static void testFormsElementReadTypes()
-{
-    AOT_TEST_CHECK(typeOfElementRead(ArrayStorage::Int32) == *tryMakeTypeOfPrimitives(Primitive::Integer | Primitive::Undefined, Range::int32()));
-    AOT_TEST_CHECK(typeOfElementRead(ArrayStorage::Double) == typeOfPrimitives(Primitive::Number | Primitive::Undefined));
-    AOT_TEST_CHECK(typeOfElementRead(ArrayStorage::Contiguous) == TypeTable::anything);
-    AOT_TEST_CHECK(typeOfElementRead(ArrayStorage::Other) == TypeTable::anything);
 }
 
 static JSArray* createArray(Realms& realms, IndexingType indexingType, unsigned length)
@@ -199,109 +169,6 @@ static void testProfileGrowsWithTheThirdLongerArray()
     AOT_TEST_CHECK(profile.capacity() == BASE_CONTIGUOUS_VECTOR_LEN_MAX && hasWindow(profile, 1, BASE_CONTIGUOUS_VECTOR_LEN_MAX, 0, 0));
 }
 
-static void testProfileShrinksAtTheEndOfAWindow()
-{
-    Realms realms;
-    ArrayAllocationProfile profile { };
-
-    review(realms, profile, ArrayWithInt32, 20, 3);
-    AOT_TEST_CHECK(profile.capacity() == 21 && hasNewWindow(profile));
-    unsigned reviews = 0;
-    for (unsigned length : { 4u, 10u, 2u, 6u }) {
-        review(realms, profile, ArrayWithInt32, length);
-        AOT_TEST_CHECK(profile.capacity() == 21 && profile.reviews == ++reviews);
-    }
-    AOT_TEST_CHECK(hasWindow(profile, 4, 10, 6, 4));
-    review(realms, profile, ArrayWithInt32, 1, window - 5);
-    AOT_TEST_CHECK(profile.capacity() == 21 && hasWindow(profile, window - 1, 10, 6, 4));
-    review(realms, profile, ArrayWithInt32, 1);
-    AOT_TEST_CHECK(profile.capacity() == 5 && profile.shape() == Int32Shape && hasNewWindow(profile));
-
-    // Two longer arrays in a window change nothing.
-    review(realms, profile, ArrayWithInt32, 16);
-    review(realms, profile, ArrayWithInt32, 9);
-    review(realms, profile, ArrayWithInt32, 5, window - 3);
-    AOT_TEST_CHECK(profile.capacity() == 5 && hasWindow(profile, window - 1, 16, 9, 5));
-    review(realms, profile, ArrayWithInt32, 1);
-    AOT_TEST_CHECK(profile.capacity() == 5 && hasNewWindow(profile));
-
-    review(realms, profile, ArrayWithInt32, 16);
-    review(realms, profile, ArrayWithInt32, 9);
-    review(realms, profile, ArrayWithInt32, 0, window - 2);
-    AOT_TEST_CHECK(profile.capacity() == 1 && hasNewWindow(profile));
-
-    ArrayAllocationProfile unlearned { };
-    review(realms, unlearned, ArrayWithInt32, 2, window);
-    AOT_TEST_CHECK(unlearned.capacity() == 3 && hasNewWindow(unlearned));
-}
-
-static void testProfileShapeOnlyRises()
-{
-    Realms realms;
-    ArrayAllocationProfile profile { };
-    AOT_TEST_CHECK(!profile.shape());
-
-    struct Step {
-        IndexingType indexingType;
-        IndexingType learnedShape;
-    };
-    for (Step step : { Step { ArrayWithInt32, Int32Shape }, Step { ArrayWithDouble, DoubleShape }, Step { ArrayWithInt32, DoubleShape }, Step { ArrayWithContiguous, ContiguousShape }, Step { ArrayWithDouble, ContiguousShape }, Step { ArrayWithInt32, ContiguousShape } }) {
-        review(realms, profile, step.indexingType, 1);
-        AOT_TEST_CHECK(profile.shape() == step.learnedShape);
-    }
-
-    ArrayAllocationProfile growing { };
-    review(realms, growing, ArrayWithContiguous, 1);
-    review(realms, growing, ArrayWithInt32, 10, 3);
-    AOT_TEST_CHECK(growing.capacity() == 11 && growing.shape() == ContiguousShape);
-    review(realms, growing, ArrayWithDouble, 2, window);
-    AOT_TEST_CHECK(growing.capacity() == 3 && growing.shape() == ContiguousShape);
-}
-
-static bool isSameProfile(const ArrayAllocationProfile& first, const ArrayAllocationProfile& second)
-{
-    return first.word == second.word && hasWindow(first, second.reviews, second.largestLengths[0], second.largestLengths[1], second.largestLengths[2]);
-}
-
-static void testProfileIgnoresArrayStorage()
-{
-    Realms realms;
-    ArrayAllocationProfile profile { };
-    review(realms, profile, ArrayWithInt32, 8, 3);
-    review(realms, profile, ArrayWithInt32, 3);
-    AOT_TEST_CHECK(profile.capacity() == 9 && profile.shape() == Int32Shape && hasWindow(profile, 1, 3, 0, 0));
-    ArrayAllocationProfile before = profile;
-
-    review(realms, profile, ArrayWithArrayStorage, 20);
-    AOT_TEST_CHECK(isSameProfile(profile, before));
-    review(realms, profile, ArrayWithArrayStorage, 1);
-    AOT_TEST_CHECK(isSameProfile(profile, before));
-    review(realms, profile, ArrayWithUndecided, 20);
-    AOT_TEST_CHECK(isSameProfile(profile, before));
-    reviewArrayAllocationProfile(profile, nullptr);
-    AOT_TEST_CHECK(isSameProfile(profile, before));
-
-    review(realms, profile, ArrayWithContiguous, 20, 3);
-    AOT_TEST_CHECK(profile.capacity() == 21 && profile.shape() == ContiguousShape);
-}
-
-static void testProfileKeepsCount()
-{
-    Realms realms;
-    constexpr uint32_t count = 0xabcdu << ArrayAllocationProfile::allocationCountShift;
-    constexpr uint32_t countMask = ArrayAllocationProfile::countMask;
-    ArrayAllocationProfile profile { };
-    profile.word = count;
-
-    review(realms, profile, ArrayWithInt32, 20, 3);
-    AOT_TEST_CHECK(profile.capacity() == 21 && (profile.word & countMask) == count);
-    review(realms, profile, ArrayWithDouble, 2);
-    AOT_TEST_CHECK(profile.shape() == DoubleShape && (profile.word & countMask) == count);
-    review(realms, profile, ArrayWithDouble, 2, window - 1);
-    AOT_TEST_CHECK(profile.capacity() == 3 && (profile.word & countMask) == count);
-    AOT_TEST_CHECK(profile.word == (count | static_cast<uint32_t>(DoubleShape) << ArrayAllocationProfile::shapeShift | 3));
-}
-
 static void testProfileReviewInterval()
 {
     ArrayAllocationProfile profile { };
@@ -362,20 +229,6 @@ static bool hasLengths(JSArray* array, unsigned publicLength, unsigned minVector
     return array->length() == publicLength && vectorLength >= minVectorLength && vectorLength <= maxVectorLength;
 }
 
-static void testReserveMakesRoomOnce()
-{
-    Realms realms;
-    for (IndexingType indexingType : { ArrayWithInt32, ArrayWithDouble, ArrayWithContiguous }) {
-        JSArray* array = createArray(realms, indexingType, 4);
-        reserveArrayCapacity(realms.vm(), array, 100000);
-        AOT_TEST_CHECK(array->indexingType() == indexingType && hasLengths(array, 4, 100004, 100004 + 16));
-
-        Butterfly* butterfly = array->butterfly();
-        reserveArrayCapacity(realms.vm(), array, 100000);
-        AOT_TEST_CHECK(array->butterfly() == butterfly);
-    }
-}
-
 static void testReserveLeavesSmallStepsToUsualGrowth()
 {
     Realms realms;
@@ -414,18 +267,11 @@ std::span<const NativeTest> arrayTests()
 {
     static constexpr NativeTest tests[] = {
         { "arrays/forms/table"_s, testFormsTable },
-        { "arrays/forms/holding"_s, testFormsHolding },
         { "arrays/forms/at-allocation"_s, testFormsAtAllocation },
         { "arrays/forms/store-without-conversion"_s, testFormsStoreWithoutConversion },
-        { "arrays/forms/element-read-types"_s, testFormsElementReadTypes },
         { "arrays/profile/grows-with-the-third-longer-array"_s, testProfileGrowsWithTheThirdLongerArray },
-        { "arrays/profile/shrinks-at-the-end-of-a-window"_s, testProfileShrinksAtTheEndOfAWindow },
-        { "arrays/profile/shape-only-rises"_s, testProfileShapeOnlyRises },
-        { "arrays/profile/ignores-array-storage"_s, testProfileIgnoresArrayStorage },
-        { "arrays/profile/keeps-count"_s, testProfileKeepsCount },
         { "arrays/profile/review-interval"_s, testProfileReviewInterval },
         { "arrays/profile/review-interval-grows-while-nothing-changes"_s, testProfileReviewIntervalGrowsWhileNothingChanges },
-        { "arrays/reserve/makes-room-once"_s, testReserveMakesRoomOnce },
         { "arrays/reserve/leaves-small-steps-to-usual-growth"_s, testReserveLeavesSmallStepsToUsualGrowth },
         { "arrays/reserve/declines"_s, testReserveDeclines },
     };

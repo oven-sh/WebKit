@@ -254,53 +254,6 @@ static void checkFrameTestLayout(TestProcedure& test)
         addPlace(slot->offsetFromFP(), slot->byteSize(), slot->byteSize() >= 16 ? 16 : 8, slots.distanceOf(slot), 0, noPosition);
 }
 
-// The most spills of the width that hold their values at one place of the order.
-static unsigned mostFrameTestSpillsAtOnce(const Allocation& allocation, Width width)
-{
-    unsigned most = 0;
-    for (const SpillFacts& spill : allocation.spills()) {
-        if (spill.width != width)
-            continue;
-        unsigned count = 0;
-        for (const SpillFacts& other : allocation.spills())
-            count += other.width == width && other.begin <= spill.begin && spill.begin <= other.end;
-        most = std::max(most, count);
-    }
-    return most;
-}
-
-static void testMachineFrameOfLeafIsNone()
-{
-    TestProcedure test;
-    Output& out = test.out();
-    Procedure& proc = test.procedure();
-    FrameTestSetups setups;
-    FrameTestMark mark;
-    proc.setStackCheckGenerator(noteFrameTestSetup, &setups);
-    Operation* a = test.argumentGPR(0);
-    Operation* b = test.argumentGPR(1);
-    Block* whenOdd = out.newBlock();
-    Block* join = out.newBlock();
-
-    appendFrameTestMark(out, mark, true);
-    ValueFromBlock fromEntry = out.anchor(b);
-    out.branch(out.testNonZero64(a, 1), normalEdge(whenOdd), normalEdge(join));
-    out.appendTo(whenOdd);
-    ValueFromBlock fromArm = out.anchor(out.mul(b, 3));
-    out.jump(join);
-    out.appendTo(join);
-    out.ret(out.add(a, out.phi(Int64, fromEntry, fromArm)));
-
-    compileOrFail(test);
-    const Frame& frame = proc.frame();
-    AOT_FRAME_TEST_CHECK(test, test.printedFrame() == "coverage = None\nsize = 0\n"_s);
-    AOT_FRAME_TEST_CHECK(test, frame.coverage() == FrameCoverage::None && !frame.hasFrame() && !frame.bytesBelowFrameRecord() && !frame.numberOfCalleeSaves());
-    AOT_FRAME_TEST_CHECK(test, proc.frameRanges().empty() && setups.labels.isEmpty());
-    AOT_FRAME_TEST_CHECK(test, mark.runs == 1 && !mark.frameIsSetUp);
-    AOT_FRAME_TEST_CHECK(test, test.call<uint64_t>(uint64_t { 4 }, uint64_t { 10 }) == 14);
-    AOT_FRAME_TEST_CHECK(test, test.call<uint64_t>(uint64_t { 5 }, uint64_t { 10 }) == 35);
-}
-
 // Where the first argument is odd: a rare block with a call that comes back. Where its bit 1 is set: a rare block with a call that returns 1000. Else the sum of both arguments.
 struct FrameTestWithRareCalls {
     explicit FrameTestWithRareCalls(const ProcedureTraits& traits)
@@ -477,36 +430,6 @@ static void testMachineFrameIsSetUpAtEntryWhereTraitsAskForIt()
     }
 }
 
-static void testMachineFrameIsSetUpAtEveryEntrypoint()
-{
-    ProcedureTraits traits;
-    traits.hasHandlers = true;
-    TestProcedure test(traits);
-    Output& out = test.out();
-    Procedure& proc = test.procedure();
-    FrameTestSetups setups;
-    std::array<FrameTestMark, 2> marks;
-    proc.setStackCheckGenerator(noteFrameTestSetup, &setups);
-
-    Operation* a = test.argumentGPR(0);
-    appendFrameTestMark(out, marks[0], true);
-    out.ret(out.add(a, appendFrameTestProbe(out)));
-    out.appendTo(proc.addEntrypoint(1));
-    appendFrameTestMark(out, marks[1], true);
-    out.ret(out.constInt64(2));
-
-    compileOrFail(test);
-    AOT_FRAME_TEST_CHECK(test, proc.frame().coverage() == FrameCoverage::WholeFunction);
-    AOT_FRAME_TEST_CHECK(test, proc.entrypoints().size() == 2 && setups.labels.size() == 2 && setups.sizesAgree);
-    checkFrameTestRanges(test);
-    for (unsigned index = 0; index < 2; ++index) {
-        AOT_FRAME_TEST_CHECK(test, proc.entrypointLabel(index).isSet() && !frameTestRangesCover(proc, proc.entrypointLabel(index)));
-        AOT_FRAME_TEST_CHECK(test, marks[index].runs == 1 && marks[index].frameIsSetUp && frameTestRangesCover(proc, marks[index].label));
-        AOT_FRAME_TEST_CHECK(test, MacroAssembler::differenceBetween(proc.entrypointLabel(index), marks[index].label) > 0);
-    }
-    AOT_FRAME_TEST_CHECK(test, test.call<uint64_t>(uint64_t { 41 }) == 41);
-}
-
 // By Reg::index(): what each callee-saved register held at the entry. Then the frame pointer of the function, then the sum that it computed.
 static constexpr unsigned framePointerInFrameTestRecord = 64;
 static constexpr unsigned sumInFrameTestRecord = 65;
@@ -620,78 +543,6 @@ static void testMachineFrameCalleeSavesAscendBelowRecord()
         }
     }
     AOT_TEST_CHECK(sawOddNumber && sawEvenNumber);
-}
-
-static Operation* appendFrameTestValuesAcrossCall(TestProcedure& test, Operation* seed, unsigned count)
-{
-    Output& out = test.out();
-    Vector<Operation*> values = defineFrameTestValues(out, seed, count);
-    appendFrameTestCall(test);
-    return addUpFrameTestValues(out, out.int64Zero, values.span());
-}
-
-static void buildFrameTestWithTwoCalls(TestProcedure& test, unsigned numberAcrossEachCall)
-{
-    Operation* first = appendFrameTestValuesAcrossCall(test, test.argumentGPR(0), numberAcrossEachCall);
-    test.out().ret(appendFrameTestValuesAcrossCall(test, first, numberAcrossEachCall));
-    compileOrFail(test);
-}
-
-static void testMachineFrameSharesSlotsOfDisjointRangesAlone()
-{
-    constexpr uint64_t a = 70;
-    constexpr unsigned numberBeyondRegisters = 3;
-    TestProcedure test;
-    unsigned count = numberOfCalleeSavedGPRsInFrameTests() + numberBeyondRegisters;
-    buildFrameTestWithTwoCalls(test, count);
-    TestProcedure sameProcedure;
-    buildFrameTestWithTwoCalls(sameProcedure, count);
-    AOT_FRAME_TEST_CHECK(test, test.printedFrame() == sameProcedure.printedFrame());
-
-    const Allocation& allocation = test.procedure().allocation();
-    const SlotAssignment& slots = test.procedure().slots();
-    checkFrameTestLayout(test);
-    unsigned most = mostFrameTestSpillsAtOnce(allocation, Width64);
-    AOT_FRAME_TEST_CHECK(test, most >= numberBeyondRegisters && allocation.spills().size() >= 2 * numberBeyondRegisters && allocation.spills().size() > most);
-    AOT_FRAME_TEST_CHECK(test, !mostFrameTestSpillsAtOnce(allocation, Width32));
-    AOT_FRAME_TEST_CHECK(test, slots.bytesInAll() == most * sizeof(uint64_t) && !slots.bytesKeptAtSuspensions());
-    AOT_FRAME_TEST_CHECK(test, test.call<uint64_t>(a) == sumOfFrameTestValues(sumOfFrameTestValues(a, count), count));
-}
-
-static void testMachineFramePairsHalfWordPlaces()
-{
-    constexpr uint64_t a = (uint64_t { 0x12345678 } << 32) + 900;
-    constexpr unsigned wordsBeyondRegisters = 2;
-    constexpr unsigned halfWordsBeyondRegisters = 5;
-    TestProcedure test;
-    Output& out = test.out();
-    unsigned numberOfWords = numberOfCalleeSavedGPRsInFrameTests() + wordsBeyondRegisters;
-    unsigned numberOfHalfWords = numberOfCalleeSavedGPRsInFrameTests() + halfWordsBeyondRegisters;
-    Operation* seed = test.argumentGPR(0);
-    Vector<Operation*> words = defineFrameTestValues(out, seed, numberOfWords);
-    Vector<Operation*> halfWords;
-    for (unsigned index = 0; index < numberOfHalfWords; ++index)
-        halfWords.append(out.opaque(out.castToInt32(out.add(seed, 100 + index))));
-    appendFrameTestCall(test);
-    Operation* sum = addUpFrameTestValues(out, out.int64Zero, words.span());
-    for (Operation* halfWord : halfWords)
-        sum = out.add(sum, out.zeroExtPtr(halfWord));
-    out.ret(sum);
-
-    compileOrFail(test);
-    const Allocation& allocation = test.procedure().allocation();
-    checkFrameTestLayout(test);
-    for (const SpillFacts& spill : allocation.spills())
-        AOT_FRAME_TEST_CHECK(test, spill.width == widthOf(spill.value->type()));
-    unsigned mostWords = mostFrameTestSpillsAtOnce(allocation, Width64);
-    unsigned mostHalfWords = mostFrameTestSpillsAtOnce(allocation, Width32);
-    AOT_FRAME_TEST_CHECK(test, mostWords >= wordsBeyondRegisters && mostHalfWords >= halfWordsBeyondRegisters);
-    AOT_FRAME_TEST_CHECK(test, test.procedure().slots().bytesInAll() == (mostWords + (mostHalfWords + 1) / 2) * sizeof(uint64_t));
-
-    uint64_t expected = sumOfFrameTestValues(a, numberOfWords);
-    for (unsigned index = 0; index < numberOfHalfWords; ++index)
-        expected += static_cast<uint32_t>(a + 100 + index);
-    AOT_FRAME_TEST_CHECK(test, test.call<uint64_t>(a) == expected);
 }
 
 static RegisterMask registersLostAtFrameTestSuspension(TestProcedure& test)
@@ -1330,76 +1181,6 @@ static bool oneByteReachesFrameTestSpill(TestProcedure& test, const Operation* v
     return isRepresentableAs<int8_t>(static_cast<int64_t>(address.offset));
 }
 
-// Forty values live across both suspensions and forty more across calls in front of them, so each part of the frame is larger than one byte of offset reaches.
-// One value of each part is read behind each of twelve calls. In the order in which they are spilled both would lie out of reach of either end.
-// Twenty values are defined behind the first suspension and live across the second, so the first has words to clear, by a number and by stores.
-static void testMachineFrameThatIsSavedHasItsMostReadWordsNearItsEnds()
-{
-    constexpr uint64_t a = 23000;
-    constexpr unsigned numberOfEach = 40;
-    constexpr unsigned numberDefinedLate = 20;
-    constexpr unsigned busyAmongKept = 30;
-    constexpr unsigned busyAcrossCalls = 10;
-    constexpr unsigned numberOfReads = 12;
-    ProcedureTraits traits;
-    traits.savesFrameOnSuspend = true;
-    TestProcedure test(traits);
-    Output& out = test.out();
-    Operation* argumentWithSeed = test.argumentGPR(0);
-    Operation* argumentWithSums = test.argumentGPR(1);
-    appendFrameTestLeftovers(out);
-    Operation* seed = out.opaque(argumentWithSeed);
-    Operation* sums = out.opaque(argumentWithSums);
-    Vector<Operation*> kept = defineFrameTestValues(out, seed, numberOfEach);
-    Vector<Operation*> acrossCalls = defineFrameTestValues(out, out.add(seed, 1000), numberOfEach);
-    appendFrameTestCall(test);
-    Operation* sum = addUpFrameTestValues(out, out.int64Zero, acrossCalls.span());
-    for (unsigned read = 0; read < numberOfReads; ++read) {
-        appendFrameTestCall(test);
-        sum = out.add(sum, acrossCalls[busyAcrossCalls]);
-    }
-
-    PatchOperation* first = appendFrameTestSuspension(test, sums, kept.span(), FrameTestSuspension::IsFirst);
-    for (unsigned read = 0; read < numberOfReads; ++read) {
-        appendFrameTestCall(test);
-        sum = out.add(sum, kept[busyAmongKept]);
-    }
-    Vector<Operation*> definedLate = defineFrameTestValues(out, out.add(kept[0], 2000), numberDefinedLate);
-    Vector<Operation*> rootsOfSecond = kept;
-    rootsOfSecond.appendVector(definedLate);
-    PatchOperation* second = appendFrameTestSuspension(test, sums, rootsOfSecond.span());
-    out.ret(addUpFrameTestValues(out, sum, rootsOfSecond.span()));
-
-    compileOrFail(test);
-    const Allocation& allocation = test.procedure().allocation();
-    AOT_FRAME_TEST_CHECK(test, allocation.suspensions().size() == 2 && allocation.suspensions()[0] == first && allocation.suspensions()[1] == second);
-    checkFrameTestLayout(test);
-    checkFrameTestSavesOfSavedFrame(test);
-    checkFrameTestPartsOfSavedFrame(test);
-    checkFrameTestDeadWords(test);
-    AOT_FRAME_TEST_CHECK(test, first->numberOfFrameWordsToClearAtFirstSuspension() + numberOfFrameTestWordsClearedInFrontOf(first) >= numberDefinedLate - 1);
-
-    AOT_FRAME_TEST_CHECK(test, allocation.isSpilled(kept[busyAmongKept]) && allocation.spills()[allocation.spillOf(kept[busyAmongKept])].livesAcrossSuspension);
-    AOT_FRAME_TEST_CHECK(test, allocation.isSpilled(acrossCalls[busyAcrossCalls]) && !allocation.spills()[allocation.spillOf(acrossCalls[busyAcrossCalls])].livesAcrossSuspension);
-    if (isX86_64()) {
-        for (const Vector<Operation*>& values : { kept, acrossCalls }) {
-            unsigned numberOutOfReach = 0;
-            for (Operation* value : values)
-                numberOutOfReach += allocation.isSpilled(value) && !oneByteReachesFrameTestSpill(test, value);
-            AOT_FRAME_TEST_CHECK(test, numberOutOfReach);
-        }
-        AOT_FRAME_TEST_CHECK(test, oneByteReachesFrameTestSpill(test, kept[busyAmongKept]));
-        AOT_FRAME_TEST_CHECK(test, oneByteReachesFrameTestSpill(test, acrossCalls[busyAcrossCalls]));
-    }
-
-    uint64_t sumOfKept = sumOfFrameTestValues(a, numberOfEach);
-    uint64_t sumOfDefinedLate = sumOfFrameTestValues(a + 1 + 2000, numberDefinedLate);
-    uint64_t expected = sumOfFrameTestValues(a + 1000, numberOfEach) + numberOfReads * (a + 1000 + busyAcrossCalls + 1) + numberOfReads * (a + busyAmongKept + 1) + sumOfKept + sumOfDefinedLate;
-    std::array<uint64_t, 3> words { 0, poison, poison };
-    AOT_FRAME_TEST_CHECK(test, test.call<uint64_t>(a, words.data()) == expected);
-    AOT_FRAME_TEST_CHECK(test, words[0] == 2 * sumOfKept + sumOfDefinedLate && !words[1]);
-}
-
 // A frame that is saved, each part of it larger than one byte of offset reaches.
 //  - Three instructions name a StackSlot of twenty words that suspensions keep and that was made first. It gives way to the words that more instructions name, and what it holds is read back behind both suspensions.
 //  - A StackSlot of two words that no suspension keeps is named in front of and behind each of twelve calls, so the stack pointer reaches it.
@@ -1615,45 +1396,6 @@ static void testMachineFrameClearsAtSetupWordsThatSavesWrite()
     AOT_FRAME_TEST_CHECK(test, !words[0] && words[1] == poison && words[3] == a + 1);
 }
 
-// The allocator has an order of its own for the callee-saved registers, so a Patch names the only register that the function writes.
-static RegisterMask savesOfFrameTestThatWrites(Reg written)
-{
-    ProcedureTraits traits;
-    traits.savesFrameOnSuspend = true;
-    TestProcedure test(traits);
-    Output& out = test.out();
-    PatchOperation* patch = out.patch(Int64);
-    patch->resultConstraints = { ValueRep::reg(written) };
-    patch->setGenerator([](CCallHelpers& jit, const PatchParameters& params) {
-        jit.move(CCallHelpers::TrustedImm32(77), params[0].gpr());
-    });
-    out.ret(patch);
-
-    compileOrFail(test);
-    AOT_FRAME_TEST_CHECK(test, test.procedure().allocation().usedCalleeSaves() == (maskOf(written) & registerFileOfFrameTest(test).calleeSaved));
-    checkFrameTestLayout(test);
-    checkFrameTestSavesOfSavedFrame(test);
-    AOT_FRAME_TEST_CHECK(test, test.call<uint64_t>() == 77);
-    return test.procedure().frame().calleeSavesMask();
-}
-
-static void testMachineFrameSavesWhatSavedFrameCanDescribe()
-{
-    ProcedureTraits traits;
-    traits.savesFrameOnSuspend = true;
-    RegisterMask calleeSaved = registerFileFor(traits).calleeSaved;
-    AOT_TEST_CHECK(!savesOfFrameTestThatWrites(Reg(GPRInfo::returnValueGPR)));
-
-    unsigned numberOfSets = 0;
-    RegisterMask previousSaves = 0;
-    forEachRegister(calleeSaved, [&](Reg written) {
-        RegisterMask saves = savesOfFrameTestThatWrites(written);
-        numberOfSets += saves != previousSaves;
-        previousSaves = saves;
-    });
-    AOT_TEST_CHECK(numberOfSets == numberOfFrameTestRegisters(calleeSaved) / (isARM64() ? 2 : 1));
-}
-
 static SpillIndex findFrameTestPointerBeside(const Allocation& allocation, const Operation* reference)
 {
     SpillIndex result = noSpill;
@@ -1666,72 +1408,6 @@ static SpillIndex findFrameTestPointerBeside(const Allocation& allocation, const
     }
     return result;
 }
-
-static void runFrameTestOfNarrowReferenceAcrossSafepoint(bool safepointIsRare)
-{
-    TestProcedure test;
-    Output& out = test.out();
-    Procedure& proc = test.procedure();
-    RegisterMask clobbered = callerSavedRegistersOfFrameTest(test);
-    Operation* argument = test.argumentGPR(0);
-    Operation* destination = test.argumentGPR(1);
-    Operation* reference = out.opaque(out.castToInt32(argument));
-    reference->markAsNarrowReference();
-    Block* end = out.newBlock();
-    if (safepointIsRare) {
-        Block* slow = out.newBlock();
-        out.branch(out.testNonZero64(argument, 1), rareEdge(slow), normalEdge(end));
-        out.appendTo(slow);
-    }
-
-    // Hands on the word that a conservative scan would find beside the reference.
-    PatchOperation* safepoint = out.patch(Void);
-    safepoint->appendSomeRegister(destination);
-    safepoint->clobberLate(clobbered);
-    safepoint->setGenerator([clobbered, reference](CCallHelpers& jit, const PatchParameters& params) {
-        AllowMacroScratchRegisterUsage allowScratch(jit);
-        GPRReg pointer = params[0].gpr() == GPRInfo::argumentGPR0 ? GPRInfo::argumentGPR1 : GPRInfo::argumentGPR0;
-        SpillIndex spill = findFrameTestPointerBeside(params.proc().allocation(), reference);
-        AOT_TEST_CHECK(params.frameIsSetUp() && spill != noSpill);
-        jit.load64(CCallHelpers::Address(CCallHelpers::framePointerRegister, params.frame().offsetFromFPOf(spill)), pointer);
-        jit.store64(pointer, CCallHelpers::Address(params[0].gpr()));
-        emitFrameTestPoison(jit, clobbered);
-    });
-    out.jump(end);
-    out.appendTo(end);
-    out.ret(out.zeroExtPtr(reference));
-
-    compileOrFail(test);
-    const Allocation& allocation = proc.allocation();
-    const ValueFacts& facts = proc.liveness().of(reference);
-    AOT_FRAME_TEST_CHECK(test, facts.has(ValueFlag::LivesAcrossSafepoint) && facts.has(ValueFlag::NeedsPointerBesideIt));
-    AOT_FRAME_TEST_CHECK(test, facts.has(ValueFlag::LivesAcrossCall) == !safepointIsRare);
-    SpillIndex pointer = findFrameTestPointerBeside(allocation, reference);
-    AOT_FRAME_TEST_CHECK(test, pointer != noSpill && pointer != allocation.spillOf(reference));
-    const SpillFacts& spill = allocation.spills()[pointer];
-    AOT_FRAME_TEST_CHECK(test, spill.width == Width64 && !spill.isSaveInRareRegion);
-    AOT_FRAME_TEST_CHECK(test, spill.begin <= proc.order().earlyPositionOf(safepoint) && spill.end >= proc.order().latePositionOf(safepoint));
-    unsigned numberOfStores = 0;
-    for (const Step& step : allocation.steps()) {
-        if (step.kind != StepKind::KeepPointer)
-            continue;
-        ++numberOfStores;
-        AOT_FRAME_TEST_CHECK(test, step.destination == Location::spill(pointer) && step.sources[0].isRegister());
-    }
-    AOT_FRAME_TEST_CHECK(test, numberOfStores == 1);
-    AOT_FRAME_TEST_CHECK(test, proc.frame().coverage() == FrameCoverage::WholeFunction);
-    checkFrameTestLayout(test);
-
-    for (uint64_t word : { (uint64_t { 7 } << 32) + 0x80000101u, (uint64_t { 7 } << 32) + 0x80000100u }) {
-        uint64_t found = 0;
-        bool passesSafepoint = !safepointIsRare || (word & 1);
-        AOT_FRAME_TEST_CHECK(test, test.call<uint64_t>(word, &found) == static_cast<uint32_t>(word));
-        AOT_FRAME_TEST_CHECK(test, found == (passesSafepoint ? static_cast<uint64_t>(static_cast<uint32_t>(word)) << cell32Shift : 0));
-    }
-}
-
-static void testMachineFrameKeepsPointerBesideNarrowReference() { runFrameTestOfNarrowReferenceAcrossSafepoint(false); }
-static void testMachineFrameKeepsPointerBesideNarrowReferenceForRareSafepoint() { runFrameTestOfNarrowReferenceAcrossSafepoint(true); }
 
 enum class FrameTestReference : uint8_t {
     LivesAcrossSafepoint,
@@ -1773,31 +1449,6 @@ static void testMachineFrameKeepsPointerOnlyWhereCollectorNeedsIt()
     AOT_TEST_CHECK(!frameTestReferenceGetsPointer(FrameTestReference::LivesAcrossPatchThatCannotCollect));
     AOT_TEST_CHECK(!frameTestReferenceGetsPointer(FrameTestReference::NamesPermanentCell));
     AOT_TEST_CHECK(!frameTestReferenceGetsPointer(FrameTestReference::IsNotMarked));
-}
-
-// One instruction makes either sum of the reference. The decoded reference is the address of its cell and keeps it alive by itself.
-// A place further into the cage keeps nothing alive, so the reference lives as long as that does and gets its pointer.
-static void testMachineFrameSumOfNarrowReferenceLivesAcrossSafepoint()
-{
-    constexpr uint64_t word = (uint64_t { 7 } << 32) + 0x80000100u;
-    for (int64_t offset : { int64_t { 0 }, int64_t { 0x800000 } }) {
-        TestProcedure test;
-        Output& out = test.out();
-        Operation* reference = out.opaque(out.castToInt32(test.argumentGPR(0)));
-        reference->markAsNarrowReference();
-        Operation* base = out.add(out.argumentRegister(cellCageBaseGPR), out.constIntPtr(offset));
-        Operation* sum = out.add(base, out.shl(out.zeroExtPtr(reference), cell32Shift));
-        appendFrameTestCall(test)->effects.mayCollect = true;
-        out.ret(sum);
-        compileOrFail(test);
-
-        const Liveness& liveness = test.procedure().liveness();
-        AOT_FRAME_TEST_CHECK(test, base->hasNoPosition() && addsScaledIndex(liveness, sum) && !liveness.isFused(reference));
-        AOT_FRAME_TEST_CHECK(test, liveness.of(sum).has(ValueFlag::LivesAcrossSafepoint));
-        AOT_FRAME_TEST_CHECK(test, liveness.of(reference).has(ValueFlag::NeedsPointerBesideIt) == !!offset);
-        AOT_FRAME_TEST_CHECK(test, (findFrameTestPointerBeside(test.procedure().allocation(), reference) != noSpill) == !!offset);
-        AOT_FRAME_TEST_CHECK(test, test.call<uint64_t>(word) == (static_cast<uint64_t>(static_cast<uint32_t>(word)) << cell32Shift) + static_cast<uint64_t>(offset));
-    }
 }
 
 // The sum sinks to the head of a rare block, ahead of a safepoint there, and takes in its shift and its extension. The rules of the collector come to it behind that.
@@ -1879,67 +1530,6 @@ static void testMachineFrameOwnerOutlivesInnerPointer()
 {
     runFrameTestOfPointerIntoStorage(true);
     runFrameTestOfPointerIntoStorage(false);
-}
-
-static void testMachineFrameAddressIsMadeAgainBehindSuspension()
-{
-    ProcedureTraits traits;
-    traits.savesFrameOnSuspend = true;
-    TestProcedure test(traits);
-    Output& out = test.out();
-    const AbstractHeap& frameSlots = test.heaps().frameSlots;
-    Operation* value = test.argumentGPR(0);
-    Operation* sums = out.opaque(test.argumentGPR(1));
-    Operation* slot = out.lockedStackSlot(2 * sizeof(uint64_t));
-    Operation* secondWord = out.add(slot, 8);
-    AOT_TEST_CHECK(slot->hasNoPosition() && secondWord->hasNoPosition() && out.framePointer()->hasNoPosition());
-    out.store64(value, out.address(frameSlots, secondWord));
-    appendFrameTestSuspension(test, sums, { });
-    out.ret(out.load64(out.address(frameSlots, secondWord)));
-
-    compileOrFail(test);
-    const ValueFacts& facts = test.procedure().liveness().of(slot);
-    AOT_FRAME_TEST_CHECK(test, facts.has(ValueFlag::IsRematerialized) && !facts.has(ValueFlag::LivesAcrossSuspension));
-    AOT_FRAME_TEST_CHECK(test, !test.procedure().allocation().isSpilled(slot));
-    checkFrameTestPartsOfSavedFrame(test);
-    checkFrameTestDeadWords(test);
-    uint64_t sumOfRoots = 0;
-    AOT_FRAME_TEST_CHECK(test, test.call<uint64_t>(uint64_t { 4242 }, &sumOfRoots) == 4242 && !sumOfRoots);
-}
-
-// The address has two readers, so it is fused into neither and has a range of its own.
-static std::optional<FailureKind> failureOfFrameTestWithComputedAddress(bool isBasedOnFramePointer, bool isReadBehindSuspension)
-{
-    ProcedureTraits traits;
-    traits.savesFrameOnSuspend = true;
-    TestProcedure test(traits);
-    Output& out = test.out();
-    const AbstractHeap& frameSlots = test.heaps().frameSlots;
-    Operation* value = test.argumentGPR(0);
-    Operation* index = test.argumentGPR(1);
-    Operation* sums = out.opaque(test.argumentGPR(2));
-    Operation* base = isBasedOnFramePointer ? out.framePointer() : out.lockedStackSlot(4 * sizeof(uint64_t));
-    Operation* address = out.add(base, out.shl(index, 3));
-    AOT_TEST_CHECK(!address->hasNoPosition());
-    out.store64(value, out.address(frameSlots, address));
-    Operation* read = isReadBehindSuspension ? nullptr : out.load64(out.address(frameSlots, address));
-    appendFrameTestSuspension(test, sums, { });
-    if (isReadBehindSuspension)
-        read = out.load64(out.address(frameSlots, address));
-    out.ret(read);
-
-    if (test.prepare())
-        return std::nullopt;
-    AOT_TEST_CHECK(test.procedure().failure());
-    return test.procedure().failure()->kind;
-}
-
-static void testMachineFrameAddressAcrossSuspensionIsRefused()
-{
-    AOT_TEST_CHECK(failureOfFrameTestWithComputedAddress(false, true) == FailureKind::FrameAddressAcrossSuspension);
-    AOT_TEST_CHECK(failureOfFrameTestWithComputedAddress(true, true) == FailureKind::FrameAddressAcrossSuspension);
-    AOT_TEST_CHECK(!failureOfFrameTestWithComputedAddress(false, false));
-    AOT_TEST_CHECK(!failureOfFrameTestWithComputedAddress(true, false));
 }
 
 enum class FrameTestAddressCarrier : uint8_t {
@@ -2071,36 +1661,6 @@ static void testMachineFrameNarrowReferenceAcrossSuspensionIsRoot()
     runFrameTestOfNarrowReferenceAcrossSuspension(false);
 }
 
-// No root, and behind the suspension the word is compared with a constant and nothing else: that follows no cell. Compared with another word it is refused.
-static void testMachineFrameNarrowReferenceComparedBehindSuspension()
-{
-    for (bool isComparedWithConstant : { true, false }) {
-        constexpr uint64_t word = (uint64_t { 7 } << 32) + 0x80000100u;
-        ProcedureTraits traits;
-        traits.savesFrameOnSuspend = true;
-        TestProcedure test(traits);
-        Output& out = test.out();
-        Operation* argument = test.argumentGPR(0);
-        Operation* sums = out.opaque(test.argumentGPR(1));
-        Operation* reference = out.opaque(out.castToInt32(argument));
-        reference->markAsNarrowReference();
-        Operation* other = out.opaque(out.constInt32(18));
-        appendFrameTestSuspension(test, sums, { });
-        out.ret(out.zeroExtPtr(out.equal(reference, isComparedWithConstant ? out.constInt32(18) : other)));
-
-        if (!isComparedWithConstant) {
-            AOT_TEST_CHECK(!test.prepare());
-            const std::optional<Failure>& failure = test.procedure().failure();
-            AOT_TEST_CHECK(failure && failure->kind == FailureKind::NarrowReferenceWithoutPointer && failure->operation == reference->index());
-            continue;
-        }
-        compileOrFail(test);
-        uint64_t sumOfRoots = 0;
-        AOT_FRAME_TEST_CHECK(test, !test.call<uint64_t>(word, &sumOfRoots));
-        AOT_FRAME_TEST_CHECK(test, test.call<uint64_t>(uint64_t { 18 }, &sumOfRoots) == 1);
-    }
-}
-
 static void runFrameTestOfAlignment(unsigned numberAcrossCall, unsigned bytesOfOutgoingWords, unsigned bytesOfSlot)
 {
     constexpr uint64_t a = 640;
@@ -2181,82 +1741,6 @@ static void noteAndCountFrameTestSetup(void* context, CCallHelpers& jit, const F
     jit.popToRestore(address);
 }
 
-// Guard g returns the second argument plus g at once where bit g of the first argument is set. Behind the guards: a call, and the sum of both arguments.
-struct FrameTestWithGuards {
-    explicit FrameTestWithGuards(unsigned count, const ProcedureTraits& traits = { })
-        : test(traits)
-        , numberOfGuards(count)
-    {
-        Output& out = test.out();
-        test.procedure().setStackCheckGenerator(noteAndCountFrameTestSetup, &setups);
-        Operation* a = test.argumentGPR(0);
-        Operation* b = test.argumentGPR(1);
-        for (unsigned guard = 0; guard < numberOfGuards; ++guard) {
-            Block* returning = out.newBlock();
-            behindGuards = out.newBlock();
-            out.branch(out.testNonZero64(a, uint64_t { 1 } << guard), normalEdge(returning), normalEdge(behindGuards));
-            out.appendTo(returning);
-            appendFrameTestMark(out, marksOfGuards[guard], true);
-            out.ret(out.add(b, guard));
-            out.appendTo(behindGuards);
-        }
-        appendFrameTestMark(out, markBehindGuards, false);
-        appendFrameTestCall(test);
-        out.ret(out.add(out.add(a, b), appendFrameTestProbe(out)));
-        compileOrFail(test);
-    }
-
-    void checkAnswers(bool guardsRunInFrame)
-    {
-        for (unsigned guard = 0; guard < numberOfGuards; ++guard) {
-            uint64_t numberRun = setups.numberRun;
-            AOT_FRAME_TEST_CHECK(test, marksOfGuards[guard].runs == 1 && marksOfGuards[guard].frameIsSetUp == guardsRunInFrame);
-            AOT_FRAME_TEST_CHECK(test, test.call<uint64_t>(uint64_t { 1 } << guard, uint64_t { 10 }) == 10 + guard);
-            AOT_FRAME_TEST_CHECK(test, setups.numberRun == numberRun + guardsRunInFrame);
-        }
-        uint64_t numberRun = setups.numberRun;
-        uint64_t passesGuards = uint64_t { 1 } << numberOfGuards;
-        AOT_FRAME_TEST_CHECK(test, markBehindGuards.runs == 1 && markBehindGuards.frameIsSetUp);
-        AOT_FRAME_TEST_CHECK(test, test.call<uint64_t>(passesGuards, uint64_t { 10 }) == passesGuards + 10);
-        AOT_FRAME_TEST_CHECK(test, setups.numberRun == numberRun + 1);
-    }
-
-    TestProcedure test;
-    unsigned numberOfGuards;
-    FrameTestSetupsThatCount setups;
-    std::array<FrameTestMark, 2> marksOfGuards;
-    FrameTestMark markBehindGuards;
-    Block* behindGuards { nullptr };
-};
-
-static void runFrameTestOfGuards(unsigned numberOfGuards)
-{
-    FrameTestWithGuards function(numberOfGuards);
-    TestProcedure& test = function.test;
-    Procedure& proc = test.procedure();
-    const Allocation& allocation = proc.allocation();
-    const Frame& frame = proc.frame();
-
-    AOT_FRAME_TEST_CHECK(test, frame.coverage() == FrameCoverage::FramedPart && test.printedFrame().startsWith("coverage = FramedPart\n"_s));
-    AOT_FRAME_TEST_CHECK(test, allocation.onlyHeadOfFramedPart() == function.behindGuards && !allocation.needsFrameAheadOfFramedPart());
-    AOT_FRAME_TEST_CHECK(test, frame.isSetUpAtHeadOf(function.behindGuards) && proc.order().of(function.behindGuards).loop == noLoop);
-    for (const Block* block : proc.order().blocksInOrder())
-        AOT_FRAME_TEST_CHECK(test, frame.holdsStepsOf(block) == allocation.isInFramedPart(block) && frame.isSetUpAtHeadOf(block) == (block == function.behindGuards));
-    // Both arguments are defined ahead of the frame and live across the call.
-    AOT_FRAME_TEST_CHECK(test, allocation.usedCalleeSaves() && frame.calleeSavesMask() == allocation.usedCalleeSaves());
-    checkFrameTestLayout(test);
-
-    const FrameTestSetups& setups = function.setups.setups;
-    AOT_FRAME_TEST_CHECK(test, setups.labels.size() == 1 && setups.sizesAgree);
-    checkFrameTestRanges(test);
-    AOT_FRAME_TEST_CHECK(test, !frameTestRangesCover(proc, proc.entrypointLabel(0)) && !frameTestRangesCover(proc, setups.labels[0]));
-    AOT_FRAME_TEST_CHECK(test, MacroAssembler::differenceBetween(proc.entrypointLabel(0), setups.labels[0]) > 0);
-    for (unsigned guard = 0; guard < numberOfGuards; ++guard)
-        AOT_FRAME_TEST_CHECK(test, !frameTestRangesCover(proc, function.marksOfGuards[guard].label));
-    AOT_FRAME_TEST_CHECK(test, frameTestRangesCover(proc, function.markBehindGuards.label));
-    function.checkAnswers(false);
-}
-
 // Two parts call, each behind a test that needs no frame, and the way past both returns at once: each part sets the frame up at its own head. Each has a rare way out behind its call, and the two meet in one rare block,
 // which stands below the head of neither.
 static void runFrameTestOfRareBlockSharedByTwoFramedParts(bool sharedBlockReads, bool sharedBlockGoesOnWithoutFrame = false)
@@ -2320,24 +1804,7 @@ static void runFrameTestOfRareBlockSharedByTwoFramedParts(bool sharedBlockReads,
     AOT_FRAME_TEST_CHECK(test, test.call<uint64_t>(uint64_t { 6 }, uint64_t { 7 }) == 6 + 7 + 100);
 }
 
-// The end that nobody comes to, which every rare arm shares. It runs in the frame of whichever part led there, and no way into it tears the frame down: the allocation checker took each for a way out of the framed part.
-static void testMachineFrameEndSharedByTwoFramedPartsRunsInFrame() { runFrameTestOfRareBlockSharedByTwoFramedParts(false); }
 static void testMachineFrameRareBlockSharedByTwoFramedPartsReadsWhatLivesAcrossTheirCalls() { runFrameTestOfRareBlockSharedByTwoFramedParts(true); }
-static void testMachineFrameRareBlockSharedByTwoFramedPartsGoesOnWithoutFrame() { runFrameTestOfRareBlockSharedByTwoFramedParts(false, true); }
-
-static void testMachineFrameIsSetUpBehindGuard() { runFrameTestOfGuards(1); }
-static void testMachineFrameIsSetUpBehindTwoGuards() { runFrameTestOfGuards(2); }
-
-static void testMachineFrameOfFunctionWithHandlersIsSetUpAheadOfGuard()
-{
-    ProcedureTraits traits;
-    traits.hasHandlers = true;
-    FrameTestWithGuards function(1, traits);
-    TestProcedure& test = function.test;
-    AOT_FRAME_TEST_CHECK(test, test.procedure().frame().coverage() == FrameCoverage::WholeFunction && !test.procedure().allocation().onlyHeadOfFramedPart());
-    AOT_FRAME_TEST_CHECK(test, function.setups.setups.labels.size() == 1);
-    function.checkAnswers(true);
-}
 
 // An odd first argument returns the second at once. Otherwise a loop calls once for every two of the first argument.
 static void testMachineFrameIsSetUpAheadOfLoopThatNeedsIt()
@@ -2382,37 +1849,6 @@ static void testMachineFrameIsSetUpAheadOfLoopThatNeedsIt()
     AOT_FRAME_TEST_CHECK(test, setups.setups.labels.size() == 1 && !markOfGuard.frameIsSetUp);
     AOT_FRAME_TEST_CHECK(test, test.call<uint64_t>(uint64_t { 7 }, uint64_t { 100 }) == 100 && !setups.numberRun);
     AOT_FRAME_TEST_CHECK(test, test.call<uint64_t>(uint64_t { 6 }, uint64_t { 100 }) == 112 && setups.numberRun == 1);
-}
-
-// The way that returns leaves a loop whose other way calls: a frame that waited for the call would be set up in every turn.
-static void testMachineFrameIsNotSetUpInLoop()
-{
-    TestProcedure test;
-    Output& out = test.out();
-    Procedure& proc = test.procedure();
-    FrameTestSetupsThatCount setups;
-    proc.setStackCheckGenerator(noteAndCountFrameTestSetup, &setups);
-    Operation* a = test.argumentGPR(0);
-    Block* loop = out.newBlock();
-    Block* returning = out.newBlock();
-    Block* calling = out.newBlock();
-
-    ValueFromBlock firstCount = out.anchor(out.int64Zero);
-    out.jump(loop);
-    out.appendTo(loop);
-    Operation* count = out.phi(Int64, firstCount);
-    out.branch(out.equal(count, a), normalEdge(returning), normalEdge(calling));
-    out.appendTo(returning);
-    out.ret(out.add(count, 40));
-    out.appendTo(calling);
-    appendFrameTestCall(test);
-    out.addIncomingToPhi(count, out.anchor(out.add(count, 1)));
-    out.jump(loop);
-
-    compileOrFail(test);
-    AOT_FRAME_TEST_CHECK(test, proc.frame().coverage() == FrameCoverage::WholeFunction && !proc.allocation().onlyHeadOfFramedPart());
-    AOT_FRAME_TEST_CHECK(test, setups.setups.labels.size() == 1);
-    AOT_FRAME_TEST_CHECK(test, test.call<uint64_t>(uint64_t { 3 }) == 43 && setups.numberRun == 1);
 }
 
 // A setup may stop the function for lack of stack. Whoever catches that must not find half of the function done.
@@ -2512,45 +1948,6 @@ static void testMachineFrameStoresAtHeadWhatIsDefinedAheadOfIt()
     AOT_FRAME_TEST_CHECK(test, test.call<uint64_t>(uint64_t { 2 }, b, x) == sumOfFrameTestValues(b, count) + std::bit_cast<uint64_t>(x + 1.5));
 }
 
-static void testMachineFrameCheckersRefuseDamagedFramedPart()
-{
-    {
-        TestProcedure test;
-        buildFrameTestWithValuesDefinedAheadOfGuard(test, 1);
-        prepareOrFail(test);
-        Procedure& proc = test.procedure();
-        AOT_FRAME_TEST_CHECK(test, proc.frame().coverage() == FrameCoverage::FramedPart);
-        proc.frameForTesting().setHoldsStepsForTesting(proc.allocation().onlyHeadOfFramedPart(), false);
-        AOT_TEST_CHECK(!checkFrame(proc) && proc.failure()->kind == FailureKind::NeedsFrameWhereNoneIsSetUp);
-    }
-    {
-        // The block of the entrypoint would run in a frame that nothing has set up.
-        TestProcedure test;
-        buildFrameTestWithValuesDefinedAheadOfGuard(test, 1);
-        prepareOrFail(test);
-        Procedure& proc = test.procedure();
-        proc.frameForTesting().setHoldsStepsForTesting(proc.entrypoints()[0].block, true);
-        AOT_TEST_CHECK(!checkFrame(proc) && proc.failure()->kind == FailureKind::NeedsFrameWhereNoneIsSetUp);
-    }
-    {
-        // A store at the head from a register that holds something else.
-        TestProcedure test;
-        buildFrameTestWithValuesDefinedAheadOfGuard(test, numberOfCalleeSavedGPRsInFrameTests() + 2);
-        prepareOrFail(test);
-        Procedure& proc = test.procedure();
-        Allocation& allocation = proc.allocationForTesting();
-        uint32_t begin = allocation.headsOfFramedPart()[0].beginOfSteps;
-        AOT_FRAME_TEST_CHECK(test, allocation.headsOfFramedPart()[0].endOfSteps >= begin + 2);
-        std::span<Step> steps = allocation.stepsForTesting();
-        uint32_t other = begin + 1;
-        while (other < allocation.headsOfFramedPart()[0].endOfSteps && bankOf(steps[other].sources[0].reg()) != bankOf(steps[begin].sources[0].reg()))
-            ++other;
-        AOT_FRAME_TEST_CHECK(test, other < allocation.headsOfFramedPart()[0].endOfSteps);
-        steps[begin].sources[0] = steps[other].sources[0];
-        AOT_TEST_CHECK(!checkAllocation(proc));
-    }
-}
-
 // The first argument is a narrow reference, made ahead of the guard and read behind a safepoint. An odd one returns at once.
 // `passesRareSafepoint`: ahead of the guard a rare block that comes back may collect as well, where bit 1 is set.
 static void runFrameTestOfNarrowReferenceAheadOfGuard(bool passesRareSafepoint)
@@ -2621,44 +2018,6 @@ static void runFrameTestOfNarrowReferenceAheadOfGuard(bool passesRareSafepoint)
 static void testMachineFrameKeepsPointerAtHeadOfFramedPart() { runFrameTestOfNarrowReferenceAheadOfGuard(false); }
 static void testMachineFrameKeepsPointerAtDefinitionForSafepointAheadOfFramedPart() { runFrameTestOfNarrowReferenceAheadOfGuard(true); }
 
-// More references than there are registers are made ahead of the guard, so the entry itself needs the frame and no part is framed by itself. Some of them reach the call in their spills, and each has its pointer at the safepoint all the same.
-static void testMachineFrameKeepsPointersOfReferencesThatLostTheirRegistersAheadOfFramedPart()
-{
-    constexpr uint64_t word = (uint64_t { 7 } << 32) + 0x1000;
-    TestProcedure test;
-    Output& out = test.out();
-    Procedure& proc = test.procedure();
-    unsigned count = numberOfFrameTestRegisters(registerFileOfFrameTest(test).allocatableIn(Bank::GP)) + 2;
-    Operation* argument = test.argumentGPR(0);
-    Vector<Operation*> references;
-    for (unsigned index = 0; index < count; ++index) {
-        references.append(out.opaque(out.castToInt32(out.add(argument, 2 * index))));
-        references.last()->markAsNarrowReference();
-    }
-    Block* returning = out.newBlock();
-    Block* calling = out.newBlock();
-    out.branch(out.testNonZero64(argument, 1), normalEdge(returning), normalEdge(calling));
-    out.appendTo(returning);
-    out.ret(out.constInt64(5));
-    out.appendTo(calling);
-    appendFrameTestCall(test);
-    Operation* sum = out.int64Zero;
-    for (Operation* reference : references)
-        sum = out.add(sum, out.zeroExtPtr(reference));
-    out.ret(sum);
-
-    compileOrFail(test);
-    const Allocation& allocation = proc.allocation();
-    AOT_FRAME_TEST_CHECK(test, !allocation.onlyHeadOfFramedPart() && proc.frame().coverage() == FrameCoverage::WholeFunction);
-    for (Operation* reference : references)
-        AOT_FRAME_TEST_CHECK(test, findFrameTestPointerBeside(allocation, reference) != noSpill);
-    uint64_t expected = 0;
-    for (unsigned index = 0; index < count; ++index)
-        expected += static_cast<uint32_t>(word + 2 * index);
-    AOT_FRAME_TEST_CHECK(test, test.call<uint64_t>(word + 1) == 5);
-    AOT_FRAME_TEST_CHECK(test, test.call<uint64_t>(word) == expected);
-}
-
 // No call anywhere. One arm holds more values at one place than there are registers that no caller counts on: it is framed by itself, and the way around it runs in the frame of the caller.
 static void testMachineFrameIsSetUpForArmThatRunsOutOfRegisters()
 {
@@ -2690,124 +2049,6 @@ static void testMachineFrameIsSetUpForArmThatRunsOutOfRegisters()
         expected += word + 2 * index;
     AOT_FRAME_TEST_CHECK(test, test.call<uint64_t>(word + 1) == 5);
     AOT_FRAME_TEST_CHECK(test, test.call<uint64_t>(word) == expected);
-}
-
-// Two operations ahead of the guard may collect and need no frame. The reference is made between them and read behind the second.
-static void testMachineFrameKeepsPointerAtDefinitionBetweenSafepointsAheadOfFramedPart()
-{
-    constexpr uint64_t word = (uint64_t { 7 } << 32) + 0x80000100u;
-    TestProcedure test;
-    Output& out = test.out();
-    Procedure& proc = test.procedure();
-    Operation* argument = test.argumentGPR(0);
-    auto appendSafepointWithoutFrame = [&] {
-        PatchOperation* safepoint = out.patch(Void);
-        safepoint->effects = Effects::none();
-        safepoint->effects.mayCollect = true;
-        safepoint->setRunsWithoutFrame(true);
-        safepoint->setGenerator([](CCallHelpers& jit, const PatchParameters&) {
-            jit.nop();
-        });
-    };
-    appendSafepointWithoutFrame();
-    Operation* reference = out.opaque(out.castToInt32(argument));
-    reference->markAsNarrowReference();
-    appendSafepointWithoutFrame();
-    Operation* read = out.opaque(out.zeroExtPtr(reference));
-    Block* returning = out.newBlock();
-    Block* calling = out.newBlock();
-    out.branch(out.testNonZero64(argument, 1), normalEdge(returning), normalEdge(calling));
-    out.appendTo(returning);
-    out.ret(read);
-    out.appendTo(calling);
-    appendFrameTestCall(test);
-    out.ret(out.add(read, 1));
-
-    compileOrFail(test);
-    const Allocation& allocation = proc.allocation();
-    AOT_FRAME_TEST_CHECK(test, allocation.onlyHeadOfFramedPart() == calling && allocation.needsFrameAheadOfFramedPart() && proc.frame().coverage() == FrameCoverage::WholeFunction);
-    SpillIndex pointer = findFrameTestPointerBeside(allocation, reference);
-    const BlockSteps& stepsOfDefinition = allocation.stepsOf(reference->owner());
-    unsigned numberOfStores = 0;
-    for (uint32_t index = stepsOfDefinition.begin; index < stepsOfDefinition.end; ++index)
-        numberOfStores += allocation.step(index).kind == StepKind::KeepPointer && allocation.step(index).destination == Location::spill(pointer);
-    AOT_FRAME_TEST_CHECK(test, pointer != noSpill && numberOfStores == 1);
-    AOT_FRAME_TEST_CHECK(test, test.call<uint64_t>(word + 1) == static_cast<uint32_t>(word + 1));
-    AOT_FRAME_TEST_CHECK(test, test.call<uint64_t>(word) == static_cast<uint32_t>(word) + uint64_t { 1 });
-}
-
-// Where bit 1 of the first argument is set, a rare block ahead of the guard calls and comes back.
-// Bit 2 of the first argument, where `hasRareRegion`: a rare block that calls and comes back. Bit 0: a part that calls and returns. Bit 1: another. Otherwise the second argument comes back at once.
-static void runFrameTestOfTwoPartsThatCall(bool hasRareRegion)
-{
-    TestProcedure test;
-    Output& out = test.out();
-    Procedure& proc = test.procedure();
-    FrameTestSetupsThatCount setups;
-    FrameTestMark markOfWayPastBoth;
-    proc.setStackCheckGenerator(noteAndCountFrameTestSetup, &setups);
-    Operation* a = test.argumentGPR(0);
-    Operation* b = test.argumentGPR(1);
-    Block* slow = hasRareRegion ? out.newBlock() : nullptr;
-    Block* firstTest = out.newBlock();
-    Block* first = out.newBlock();
-    Block* secondTest = out.newBlock();
-    Block* second = out.newBlock();
-    Block* returning = out.newBlock();
-
-    Operation* extra = out.int64Zero;
-    if (hasRareRegion) {
-        ValueFromBlock fromEntry = out.anchor(out.int64Zero);
-        out.branch(out.testNonZero64(a, 4), rareEdge(slow), normalEdge(firstTest));
-        out.appendTo(slow);
-        appendFrameTestCall(test);
-        ValueFromBlock fromRareBlock = out.anchor(out.add(appendFrameTestProbe(out), 1000));
-        out.jump(firstTest);
-        out.appendTo(firstTest);
-        extra = out.phi(Int64, fromEntry, fromRareBlock);
-    } else {
-        out.jump(firstTest);
-        out.appendTo(firstTest);
-    }
-    out.branch(out.testNonZero64(a, 1), normalEdge(first), normalEdge(secondTest));
-    out.appendTo(first);
-    appendFrameTestCall(test);
-    out.ret(out.add(out.add(a, b), out.add(extra, appendFrameTestProbe(out))));
-    out.appendTo(secondTest);
-    out.branch(out.testNonZero64(a, 2), normalEdge(second), normalEdge(returning));
-    out.appendTo(second);
-    appendFrameTestCall(test);
-    out.ret(out.add(out.add(out.add(a, b), 100), out.add(extra, appendFrameTestProbe(out))));
-    out.appendTo(returning);
-    appendFrameTestMark(out, markOfWayPastBoth, true);
-    out.ret(out.add(b, extra));
-
-    compileOrFail(test);
-    const Frame& frame = proc.frame();
-    const Allocation& allocation = proc.allocation();
-    AOT_FRAME_TEST_CHECK(test, frame.coverage() == FrameCoverage::FramedPart && !allocation.needsFrameAheadOfFramedPart());
-    AOT_FRAME_TEST_CHECK(test, allocation.headsOfFramedPart().size() == 2 && allocation.isHeadOfFramedPart(first) && allocation.isHeadOfFramedPart(second) && !allocation.onlyHeadOfFramedPart());
-    AOT_FRAME_TEST_CHECK(test, frame.isSetUpAtHeadOf(first) && frame.isSetUpAtHeadOf(second) && !frame.holdsStepsOf(firstTest) && !frame.holdsStepsOf(secondTest) && !frame.holdsStepsOf(returning));
-    AOT_FRAME_TEST_CHECK(test, setups.setups.labels.size() == 2u + hasRareRegion && setups.setups.sizesAgree && !markOfWayPastBoth.frameIsSetUp);
-    if (hasRareRegion)
-        AOT_FRAME_TEST_CHECK(test, proc.order().of(slow).isRare() && !allocation.isInFramedPart(slow) && frame.isSetUpAtHeadOf(slow) && frame.isTornDownAtEndOf(slow));
-    checkFrameTestRanges(test);
-    checkFrameTestLayout(test);
-    struct Case {
-        uint64_t a;
-        uint64_t expected;
-        uint64_t numberOfSetups;
-    };
-    for (Case testCase : { Case { 8, 10, 0 }, Case { 1, 11, 1 }, Case { 2, 112, 1 }, Case { 3, 13, 1 } }) {
-        setups.numberRun = 0;
-        AOT_FRAME_TEST_CHECK(test, test.call<uint64_t>(testCase.a, uint64_t { 10 }) == testCase.expected && setups.numberRun == testCase.numberOfSetups);
-    }
-    if (!hasRareRegion)
-        return;
-    for (Case testCase : { Case { 4, 1010, 1 }, Case { 5, 1015, 2 }, Case { 6, 1116, 2 } }) {
-        setups.numberRun = 0;
-        AOT_FRAME_TEST_CHECK(test, test.call<uint64_t>(testCase.a, uint64_t { 10 }) == testCase.expected && setups.numberRun == testCase.numberOfSetups);
-    }
 }
 
 // A value that the head of the framed part stores has lost its register ahead of a rare region. Each of two siblings in the region loads it, saves it around a call and reads it again:
@@ -2873,9 +2114,6 @@ static void testMachineFrameBlockOfRareRegionDoesNotReadWhatItsSiblingSaved()
     AOT_TEST_CHECK(valueCameInWithoutRegister);
 }
 
-static void testMachineFrameTwoPartsThatCallEachSetUpTheirFrame() { runFrameTestOfTwoPartsThatCall(false); }
-static void testMachineFrameRareRegionAheadOfTwoHeadsSavesWhatItNeeds() { runFrameTestOfTwoPartsThatCall(true); }
-
 // `if (a & 1) call(); if (a & 2) call(); [call();] return a + b`: a way leads from the first part that calls to the second. Where the way past both calls nothing, each part has its head.
 // Where every way calls in the end, one head stands above all of it, behind the guard.
 static void runFrameTestOfPartsThatLeadToOneAnother(bool everyWayCalls)
@@ -2932,7 +2170,6 @@ static void runFrameTestOfPartsThatLeadToOneAnother(bool everyWayCalls)
     AOT_FRAME_TEST_CHECK(test, test.call<uint64_t>(uint64_t { 8 }, uint64_t { 10 }) == 10 && !setups.numberRun);
 }
 
-static void testMachineFramePartsThatLeadToOneAnotherEachHaveTheirHead() { runFrameTestOfPartsThatLeadToOneAnother(false); }
 static void testMachineFrameHeadStandsWhereEveryWayOnCalls() { runFrameTestOfPartsThatLeadToOneAnother(true); }
 
 static void testMachineFrameOfRareRegionAheadOfFramedPartIsItsOwn()
@@ -3071,84 +2308,6 @@ static void testMachineFrameWayWithoutFrameReturnsInPlaceOfJump()
     AOT_FRAME_TEST_CHECK(test, test.call<uint64_t>(uint64_t { 4 }, uint64_t { 10 }) == 14);
 }
 
-// Leaves with zero where every callee-saved register holds what the record says it held at the entry. In the frame it first tears the frame down.
-static void appendFrameTestLeaveThatComparesCalleeSaves(Output& out, Operation* record, RegisterMask calleeSaved, bool runsWithoutFrame)
-{
-    PatchOperation* leave = out.patch(Void);
-    leave->append(record, ValueRep::reg(GPRInfo::argumentGPR1));
-    leave->effects.terminal = true;
-    leave->setRunsWithoutFrame(runsWithoutFrame);
-    leave->setGenerator([calleeSaved, runsWithoutFrame](CCallHelpers& jit, const PatchParameters& params) {
-        AllowMacroScratchRegisterUsage allowScratch(jit);
-        constexpr GPRReg expected = GPRInfo::argumentGPR0;
-        constexpr GPRReg record = GPRInfo::argumentGPR1;
-        constexpr GPRReg differences = GPRInfo::argumentGPR2;
-        constexpr GPRReg word = GPRInfo::argumentGPR3;
-        AOT_TEST_CHECK(params.frameIsSetUp() != runsWithoutFrame);
-        if (params.frameIsSetUp())
-            emitFrameTeardown(jit, params.frame());
-        jit.move(CCallHelpers::TrustedImm32(0), differences);
-        forEachRegister(calleeSaved, [&](Reg reg) {
-            if (reg.isGPR())
-                jit.move(reg.gpr(), word);
-            else
-                jit.moveDoubleTo64(reg.fpr(), word);
-            jit.load64(wordOfFrameTestRecord(record, reg.index()), expected);
-            jit.xor64(expected, word);
-            jit.or64(word, differences);
-        });
-        jit.move(differences, GPRInfo::returnValueGPR);
-        jit.ret();
-    });
-}
-
-static void testMachineFrameLeavesCalleeSavesToCallerOnBothWays()
-{
-    constexpr uint64_t a = 3000;
-    TestProcedure test;
-    Output& out = test.out();
-    Procedure& proc = test.procedure();
-    RegisterMask calleeSaved = registerFileOfFrameTest(test).calleeSaved;
-    unsigned count = numberOfCalleeSavedGPRsInFrameTests() + 1;
-    Operation* seed = test.argumentGPR(0);
-    Operation* argumentWithRecord = test.argumentGPR(1);
-    Block* returning = out.newBlock();
-    Block* calling = out.newBlock();
-
-    // It says nothing of the words that it writes: they are the test's own.
-    PatchOperation* atEntry = out.patch(Void);
-    atEntry->effects = Effects::none();
-    atEntry->effects.writesLocalState = true;
-    atEntry->setRunsWithoutFrame(true);
-    atEntry->appendSomeRegister(argumentWithRecord);
-    atEntry->setGenerator([calleeSaved](CCallHelpers& jit, const PatchParameters& params) {
-        AllowMacroScratchRegisterUsage allowScratch(jit);
-        GPRReg record = params[0].gpr();
-        AOT_TEST_CHECK(!params.frameIsSetUp() && !(maskOf(Reg(record)) & calleeSaved));
-        forEachRegister(calleeSaved, [&](Reg reg) {
-            if (reg.isGPR())
-                jit.store64(reg.gpr(), wordOfFrameTestRecord(record, reg.index()));
-            else
-                jit.storeDouble(reg.fpr(), wordOfFrameTestRecord(record, reg.index()));
-        });
-    });
-    Operation* record = out.opaque(argumentWithRecord);
-    Vector<Operation*> values = defineFrameTestValues(out, seed, count);
-    out.branch(out.testNonZero64(seed, 1), normalEdge(returning), normalEdge(calling));
-    out.appendTo(returning);
-    appendFrameTestLeaveThatComparesCalleeSaves(out, record, calleeSaved, true);
-    out.appendTo(calling);
-    appendFrameTestCall(test);
-    out.store64(addUpFrameTestValues(out, out.int64Zero, values.span()), out.address(test.heaps().argumentBuffer, record, sumInFrameTestRecord * sizeof(uint64_t)));
-    appendFrameTestLeaveThatComparesCalleeSaves(out, record, calleeSaved, false);
-
-    compileOrFail(test);
-    AOT_FRAME_TEST_CHECK(test, proc.frame().coverage() == FrameCoverage::FramedPart && proc.frame().calleeSavesMask());
-    FrameTestRecord words { };
-    AOT_FRAME_TEST_CHECK(test, !test.call<uint64_t>(a + 1, words.data()) && !words[sumInFrameTestRecord]);
-    AOT_FRAME_TEST_CHECK(test, !test.call<uint64_t>(a, words.data()) && words[sumInFrameTestRecord] == sumOfFrameTestValues(a, count));
-}
-
 #undef AOT_FRAME_TEST_CHECK
 
 } // namespace Machine
@@ -3159,64 +2318,39 @@ static constexpr ASCIILiteral argumentLiesInReturnRegister = isARM64() ? "machin
 std::span<const NativeTest> machineFrameTests()
 {
     static constexpr NativeTest tests[] = {
-        { "machine/frame/leaf-has-no-frame"_s, Machine::testMachineFrameOfLeafIsNone },
         { "machine/frame/rare-blocks-with-calls-have-frames-of-their-own"_s, Machine::testMachineFrameCoversRareBlocksAlone },
         { "machine/frame/small-rare-region-stands-among-the-other-code"_s, Machine::testMachineSmallRareRegionStandsAmongOtherCode },
         { "machine/frame/small-run-of-unlikely-blocks-stands-near-its-jump"_s, Machine::testMachineSmallRunOfUnlikelyBlocksStandsNearItsJump },
         { "machine/frame/handlers-rejection-and-suspension-set-it-up-at-entry"_s, Machine::testMachineFrameIsSetUpAtEntryWhereTraitsAskForIt },
-        { "machine/frame/every-entrypoint-sets-it-up"_s, Machine::testMachineFrameIsSetUpAtEveryEntrypoint },
         { "machine/frame/callee-saves-ascend-below-the-record-and-come-back"_s, Machine::testMachineFrameCalleeSavesAscendBelowRecord },
-        { "machine/frame/slots-are-shared-by-disjoint-ranges-alone"_s, Machine::testMachineFrameSharesSlotsOfDisjointRangesAlone },
-        { "machine/frame/half-word-places-pair"_s, Machine::testMachineFramePairsHalfWordPlaces },
         { "machine/frame/function-that-saves-its-frame"_s, Machine::testMachineFrameOfFunctionThatSavesItsFrame },
         { "machine/frame/words-stored-on-one-path-are-cleared-at-the-suspension"_s, Machine::testMachineFrameClearsWordsStoredOnOnePath },
         { "machine/frame/word-held-by-its-range-alone-keeps-no-leftover"_s, Machine::testMachineFrameKeepsNoLeftoverInWordHeldByRangeAlone },
         { "machine/frame/spill-that-no-path-reads-behind-a-suspension-is-not-kept"_s, Machine::testMachineFrameKeepsNoSpillThatNoPathReadsBehindSuspension },
         { "machine/frame/many-spills-that-live-through-the-block-of-a-suspension-are-kept"_s, Machine::testMachineFrameKeepsManySpillsThatLiveThroughBlockOfSuspension },
         { "machine/frame/many-spills-that-live-round-a-loop-with-a-suspension-are-kept"_s, Machine::testMachineFrameKeepsManySpillsThatLiveRoundLoopWithSuspension },
-        { "machine/frame/most-read-words-of-a-frame-that-is-saved-lie-near-its-ends"_s, Machine::testMachineFrameThatIsSavedHasItsMostReadWordsNearItsEnds },
         { "machine/frame/stack-slots-and-half-words-of-a-frame-that-is-saved-move-whole"_s, Machine::testMachineFrameThatIsSavedMovesStackSlotsAndHalfWordsWhole },
         { "machine/frame/word-that-a-suspension-names-by-its-number-comes-first"_s, Machine::testMachineFrameWordThatSuspensionNamesByNumberComesFirst },
         { "machine/frame/words-that-saves-write-are-cleared-at-setup"_s, Machine::testMachineFrameClearsAtSetupWordsThatSavesWrite },
-        { "machine/frame/saves-are-what-a-saved-frame-can-describe"_s, Machine::testMachineFrameSavesWhatSavedFrameCanDescribe },
-        { "machine/frame/narrow-reference-across-a-safepoint-gets-its-pointer"_s, Machine::testMachineFrameKeepsPointerBesideNarrowReference },
-        { "machine/frame/narrow-reference-across-a-rare-safepoint-gets-its-pointer"_s, Machine::testMachineFrameKeepsPointerBesideNarrowReferenceForRareSafepoint },
         { "machine/frame/pointer-is-kept-only-where-the-collector-needs-it"_s, Machine::testMachineFrameKeepsPointerOnlyWhereCollectorNeedsIt },
-        { "machine/frame/sum-of-a-narrow-reference-lives-across-a-safepoint"_s, Machine::testMachineFrameSumOfNarrowReferenceLivesAcrossSafepoint },
         { "machine/frame/sunk-sum-of-a-narrow-reference-lives-across-a-safepoint"_s, Machine::testMachineFrameSunkSumOfNarrowReferenceLivesAcrossSafepoint },
         { "machine/frame/owner-outlives-inner-pointer"_s, Machine::testMachineFrameOwnerOutlivesInnerPointer },
-        { "machine/frame/frame-address-is-made-again-behind-a-suspension"_s, Machine::testMachineFrameAddressIsMadeAgainBehindSuspension },
-        { "machine/frame/frame-address-across-a-suspension-is-refused"_s, Machine::testMachineFrameAddressAcrossSuspensionIsRefused },
         { "machine/frame/frame-address-carried-across-a-suspension-is-refused"_s, Machine::testMachineFrameAddressCarriedAcrossSuspensionIsRefused },
         { "machine/frame/narrow-reference-across-a-suspension-is-a-root"_s, Machine::testMachineFrameNarrowReferenceAcrossSuspensionIsRoot },
-        { "machine/frame/narrow-reference-compared-behind-a-suspension"_s, Machine::testMachineFrameNarrowReferenceComparedBehindSuspension },
         { "machine/frame/stack-pointer-stays-aligned"_s, Machine::testMachineFrameKeepsStackPointerAligned },
         { "machine/frame/frame-is-allocated-on-either-side-of-its-stack-check"_s, Machine::testMachineFrameIsAllocatedOnEitherSideOfStackCheck },
-        { "machine/frame/end-that-two-framed-parts-share-runs-in-the-frame"_s, Machine::testMachineFrameEndSharedByTwoFramedPartsRunsInFrame },
         { "machine/frame/rare-block-that-two-framed-parts-share-reads-what-lives-across-their-calls"_s, Machine::testMachineFrameRareBlockSharedByTwoFramedPartsReadsWhatLivesAcrossTheirCalls },
-        { "machine/frame/rare-block-that-two-framed-parts-share-goes-on-without-the-frame"_s, Machine::testMachineFrameRareBlockSharedByTwoFramedPartsGoesOnWithoutFrame },
-        { "machine/frame/way-that-returns-at-once-has-no-frame"_s, Machine::testMachineFrameIsSetUpBehindGuard },
-        { "machine/frame/two-ways-that-return-at-once-have-no-frame"_s, Machine::testMachineFrameIsSetUpBehindTwoGuards },
-        { "machine/frame/handlers-set-it-up-ahead-of-a-guard"_s, Machine::testMachineFrameOfFunctionWithHandlersIsSetUpAheadOfGuard },
         { "machine/frame/loop-that-needs-it-finds-it-set-up"_s, Machine::testMachineFrameIsSetUpAheadOfLoopThatNeedsIt },
-        { "machine/frame/no-turn-of-a-loop-sets-it-up"_s, Machine::testMachineFrameIsNotSetUpInLoop },
         { "machine/frame/whatever-writes-on-the-way-to-it-follows-the-setup"_s, Machine::testMachineFrameIsSetUpAheadOfWhateverWritesOnWayToIt },
         { "machine/frame/what-is-defined-ahead-of-it-is-stored-at-its-head"_s, Machine::testMachineFrameStoresAtHeadWhatIsDefinedAheadOfIt },
-        { "machine/frame/damaged-framed-part-is-refused"_s, Machine::testMachineFrameCheckersRefuseDamagedFramedPart },
         { "machine/frame/pointer-beside-a-reference-from-ahead-of-it-is-kept-at-its-head"_s, Machine::testMachineFrameKeepsPointerAtHeadOfFramedPart },
         { "machine/frame/safepoint-ahead-of-it-finds-the-pointer-kept"_s, Machine::testMachineFrameKeepsPointerAtDefinitionForSafepointAheadOfFramedPart },
-        { "machine/frame/reference-that-reaches-it-in-a-spill-gets-its-pointer"_s, Machine::testMachineFrameKeepsPointersOfReferencesThatLostTheirRegistersAheadOfFramedPart },
         { "machine/frame/arm-that-runs-out-of-registers-is-framed-by-itself"_s, Machine::testMachineFrameIsSetUpForArmThatRunsOutOfRegisters },
-        { "machine/frame/reference-made-between-two-safepoints-ahead-of-it-gets-its-pointer"_s, Machine::testMachineFrameKeepsPointerAtDefinitionBetweenSafepointsAheadOfFramedPart },
         { "machine/frame/rare-region-ahead-of-it-has-a-frame-of-its-own"_s, Machine::testMachineFrameOfRareRegionAheadOfFramedPartIsItsOwn },
-        { "machine/frame/two-parts-that-call-each-set-up-their-frame"_s, Machine::testMachineFrameTwoPartsThatCallEachSetUpTheirFrame },
-        { "machine/frame/rare-region-ahead-of-two-heads-saves-what-it-needs"_s, Machine::testMachineFrameRareRegionAheadOfTwoHeadsSavesWhatItNeeds },
         { "machine/frame/block-of-a-rare-region-does-not-read-what-its-sibling-saved"_s, Machine::testMachineFrameBlockOfRareRegionDoesNotReadWhatItsSiblingSaved },
-        { "machine/frame/parts-that-lead-to-one-another-each-have-their-head"_s, Machine::testMachineFramePartsThatLeadToOneAnotherEachHaveTheirHead },
         { "machine/frame/head-stands-where-every-way-on-calls"_s, Machine::testMachineFrameHeadStandsWhereEveryWayOnCalls },
         { "machine/frame/way-that-leaves-it-tears-it-down"_s, Machine::testMachineFrameIsTornDownWhereWayLeavesFramedPart },
         { "machine/frame/way-without-it-returns-in-place-of-a-jump"_s, Machine::testMachineFrameWayWithoutFrameReturnsInPlaceOfJump, argumentLiesInReturnRegister },
-        { "machine/frame/callee-saves-are-the-callers-on-both-ways"_s, Machine::testMachineFrameLeavesCalleeSavesToCallerOnBothWays },
     };
     return tests;
 }

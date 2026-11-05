@@ -148,12 +148,10 @@ std::optional<CodeUnit> parseCodeUnit(StringView text)
     if (parts.size() == 2)
         return CodeUnit(*function, *role);
 
-    std::optional<uint16_t> numberOfBoundArguments = numberInNameOfCodeUnit<uint16_t>(parts[2]);
-    if (*role == CodeRole::Serializer && numberOfBoundArguments)
-        return CodeUnit::serializer(*function, LayoutID(static_cast<uint32_t>(*numberOfBoundArguments)));
-    if (!isBoundRole(*role) || !numberOfBoundArguments)
+    std::optional<uint16_t> layout = numberInNameOfCodeUnit<uint16_t>(parts[2]);
+    if (*role != CodeRole::Serializer || !layout)
         return std::nullopt;
-    return CodeUnit(*function, *role, *numberOfBoundArguments);
+    return CodeUnit::serializer(*function, LayoutID(static_cast<uint32_t>(*layout)));
 }
 
 void printCodeUnit(PrintStream& out, CodeUnit unit)
@@ -161,8 +159,6 @@ void printCodeUnit(PrintStream& out, CodeUnit unit)
     out.print("f"_s, unit.function.index(), ":"_s, nameOf(unit.role));
     if (unit.role == CodeRole::Serializer)
         out.print(":"_s, unit.layoutOfSerializer().index());
-    if (isBoundRole(unit.role))
-        out.print(":"_s, unit.numberOfBoundArguments);
 }
 
 static String nameOfStagedUnit(CodeUnit unit)
@@ -360,7 +356,6 @@ void StagedBuild::State::reportFailureOf(const Machine::Procedure& procedure, co
 FactsRequest StagedBuild::State::requestForFacts() const
 {
     FactsRequest request;
-    request.tracesUnknownValues = AOT::hasFlag(build.options().reports, Wire::ReportSet::Flow);
     request.mechanisms = mechanisms;
     request.orderOfWorklist = orderOfWorklist;
     return request;

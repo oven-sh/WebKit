@@ -67,8 +67,9 @@ static void generateRequireObject(StraightEmitter& emitter, const BodyValue& val
     ValueID required = value.valueOperand();
     GPRReg boxed = StraightEmitter::temporary(1);
     emitter.load(required, boxed);
-    emitter.testType(boxed, TypeTable::object, StraightEmitter::resultGPR);
-    CCallHelpers::Jump isObject = jit.branchTest32(CCallHelpers::NonZero, StraightEmitter::resultGPR);
+    GPRReg result = emitter.takeResultRegister();
+    emitter.testType(boxed, TypeTable::object, result);
+    CCallHelpers::Jump isObject = jit.branchTest32(CCallHelpers::NonZero, result);
     emitter.callOperation(value, RuntimeOperation::ThrowRuntimeError, { StraightArgument::word(static_cast<uint32_t>(value.runtimeError())) });
     isObject.link(&jit);
     emitter.defineSameAs(value, required);
@@ -78,13 +79,13 @@ static void generateRequireObject(StraightEmitter& emitter, const BodyValue& val
 static void generateTypeTest(StraightEmitter& emitter, const BodyValue& value)
 {
     if (std::optional<StraightTest> test = StraightEmitter::testOfWordAlone(value.testedType()); test && emitter.isReadByBranchAlone(value)) {
-        emitter.load(value.valueOperand(), StraightEmitter::resultGPR);
+        emitter.loadIntoResultRegister(value.valueOperand());
         emitter.defineTest(value, *test);
         return;
     }
     GPRReg boxed = StraightEmitter::temporary(1);
     emitter.load(value.valueOperand(), boxed);
-    emitter.testType(boxed, value.testedType(), StraightEmitter::resultGPR);
+    emitter.testType(boxed, value.testedType(), emitter.takeResultRegister());
     emitter.defineBoolean(value);
 }
 

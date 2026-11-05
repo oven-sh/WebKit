@@ -40,7 +40,7 @@ static void generateIteratorResume(StraightEmitter& emitter, const BodyValue& va
         return;
     }
     emitter.callOperation(value, RuntimeOperation::StepIteration, { value.iteratorOperand() }, optionsOfIterationInStraightForm(value));
-    emitter.defineResult(value, static_cast<uint32_t>(IteratorResumeResult::Done), GPRInfo::returnValueGPR);
+    emitter.defineResult(value, static_cast<uint32_t>(IteratorResumeResult::Done), emitter.resultOfCall());
     emitter.defineResult(value, static_cast<uint32_t>(IteratorResumeResult::Value), GPRInfo::returnValueGPR2);
 }
 

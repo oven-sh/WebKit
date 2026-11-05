@@ -28,7 +28,6 @@
 #include "AOTWalkListReadsInLoops.h"
 #include "AOTWalkTextBuilders.h"
 #include "AOTWalkNumberForms.h"
-#include "AOTWalkNumberGuesses.h"
 #include "AOTTypeText.h"
 #include <algorithm>
 #include <array>
@@ -324,9 +323,6 @@ private:
     std::span<TypeID> typesOfParametersOf(BodyBlock block) { return m_stretch.typesOfValues.mutableSpan().subspan(block.firstParameter().index() - m_stretch.firstValue, block.numberOfParameters()); }
     TypeID typeOf(ValueID);
     ValueID valueBehindCasts(ValueID);
-    // Of a GetEnvironmentField of the outermost loop, in a look that counts on turns that begin again: what the one store of the turn in front of it has stored. Itself: there is no such store.
-    ValueID valueGivenByReadOfEnvironmentField(ValueID read);
-    bool readOfEnvironmentFieldGivesWhatTurnBeginsWith(const BodyValue& read);
     uint32_t& firstBoundOf(BlockID block) { return m_stretch.firstBoundOfBlocks[block.index() - m_stretch.firstBlock]; }
     BlockID headOfLoopInFrontOf(BlockID) const;
     TypeID joined(TypeID held, TypeID arriving);
@@ -393,9 +389,6 @@ private:
     bool m_countsOnListsTestedInFront { false };
     // Walker::looksCountOnTurnsThatBeginAgain() of the outermost loop.
     bool m_countsOnTurnsThatBeginAgain { false };
-    // valueGivenByReadOfEnvironmentField(), as answered so far: the read, and what stands for it.
-    Vector<std::pair<ValueID, ValueID>, 8> m_valuesGivenByReadsOfEnvironmentFields;
-    Vector<EnvironmentFieldTestedAtHeadOfTurn, 4> m_environmentFieldsTestedAtHead;
     // Of the look being made at the outermost loop, in the order of the stream: no operation so far does what may not be run again unseen. The walk does no more than the looks count on, and comes to an operation only past operations in front of it in the stream.
     bool m_nothingWasDoneInTurn { false };
     bool m_takesEffectsOfCopiesFromTheirOperations { false };
@@ -631,8 +624,6 @@ std::optional<LoopPreview> LooksAtLoops::preview(std::span<const TypeID> entryTy
         atHead[parameter] = typeThatEnters(parameter);
     m_countsOnTurnsThatBeginAgain = m_walker.looksCountOnTurnsThatBeginAgain(head.id());
     m_asksOnlyWhetherTurnsRunOtherCode = m_walker.looksAskOnlyWhetherTurnsRunOtherCode(head.id());
-    if (m_countsOnTurnsThatBeginAgain && &index() == &m_walker.currentBodyIndex())
-        m_environmentFieldsTestedAtHead = findEnvironmentFieldsTestedAtHeadsOfTurns(m_walker, head.id());
     if (m_countsOnTurnsThatBeginAgain)
         m_walker.setExpectationsRememberedForLook(&m_expectationsRemembered);
     settle(m_stretch.outermost);
@@ -1070,19 +1061,6 @@ void LooksAtLoops::lookAtOperationAsTyped(const BodyValue& operation)
         byRow = known;
     if (TypeID shown = countsOnGuesses ? typeShownOfEarlierReadInTurn(operation) : TypeID())
         byRow = shown;
-    // What the head of the turn has tested, what an earlier read was found to be, what was stored: the state answers the read with that.
-    if (operation.opcode() == Opcode::GetEnvironmentField && m_countsOnTurnsThatBeginAgain && !isLookingAtCopy()) {
-        ValueID given = valueGivenByReadOfEnvironmentField(operation.id());
-        if (given != operation.id())
-            byRow = typeOf(given);
-        else {
-            ValueID environment = index().valueBehindCasts(operation.operand(0));
-            for (const EnvironmentFieldTestedAtHeadOfTurn& field : m_environmentFieldsTestedAtHead) {
-                if (field.environment == environment && field.layout == operation.layout() && field.field == operation.field() && readOfEnvironmentFieldGivesWhatTurnBeginsWith(operation))
-                    byRow = field.tested;
-            }
-        }
-    }
     if (countsOnGuesses && operation.opcode() == Opcode::PropGet && !operation.isFreeName()) {
         if (TypeID function = typeThatLookAtCalledSlotWouldProve(m_walker, operation, operands[OperandIndex::PropGet::object]))
             byRow = function;
@@ -1599,181 +1577,6 @@ TypeID LooksAtLoops::typeOf(ValueID value)
 }
 
 // The casts that the walk binds to what it has built for their operands. For a claim it builds a test, and what passes has a record of its own.
-// ---- Fields of environments in the turns of a typed copy. In such a turn no other code runs, or there is no typed copy: so a field is written by what the turn itself shows alone: its PutEnvironmentField, and the callees that Link lists, by their effects.
-
-namespace {
-
-struct ReadOfEnvironmentFieldInTurn {
-    enum class Gives : uint8_t { Unknown, WhatTurnBeginsWith, WhatWasStored };
-    Gives gives { Gives::Unknown };
-    ValueID stored;
-    // Some store of the turn, into whatever, may come in front of it: where the walk comes to the read the turn may no longer begin again.
-    bool standsBehindSomeStore { false };
-};
-
-} // anonymous namespace
-
-// A way from the one block to the other that does not come through the head of the loop.
-static bool blockComesBehindInTurnInLoops(const BodyIndex& index, LoopID loop, BlockID from, BlockID to)
-{
-    BlockID head = index.loop(loop).head;
-    // Whatever comes to the head comes to the next turn.
-    if (to == head)
-        return false;
-    Vector<BlockID, 16> toVisit { from };
-    BitVector visited(index.numberOfBlocks());
-    while (!toVisit.isEmpty()) {
-        BlockID block = toVisit.takeLast();
-        for (BodyTarget target : index.terminator(block).targets()) {
-            BlockID next = target.block();
-            if (next == to)
-                return true;
-            if (next == head || !index.isInLoop(next, loop) || visited.set(next.index()))
-                continue;
-            toVisit.append(next);
-        }
-    }
-    return false;
-}
-
-// Of a callee that Link lists. Where Link knows all that it does, by that. Where it may run other code by Link's word, which speaks for every caller: either its copy in the turn runs none, and then it stores what its body shows, or there is no typed copy.
-static bool calleeMayStoreIntoEnvironmentFieldInLoops(Walker& walker, FunctionID callee, LayoutID layout, uint32_t field, unsigned depth)
-{
-    static constexpr AbstractHeapSet fields { AbstractHeap::EnvironmentFields };
-    const LinkTables& linked = walker.facts().linked();
-    if (callee.index() >= linked.functions.size())
-        return true;
-    Effects effects = linked.function(callee).effectsOnReturn;
-    effects.merge(linked.function(callee).effectsOnThrow);
-    if (!effects.mayRunOtherCode())
-        return effects.writes.containsAny(fields);
-    if (!depth)
-        return true;
-    const BodyIndex& body = walker.facts().bodies().at(callee);
-    for (uint32_t number = 0; number < body.numberOfBlocks(); ++number) {
-        for (BodyValue operation : body.block(BlockID(number)).values()) {
-            if (operation.opcode() == Opcode::PutEnvironmentField && operation.layout() == layout && operation.field() == field)
-                return true;
-            if (effectRuleOf(operation.opcode()) != EffectRule::Call)
-                continue;
-            if (FunctionID entered = linked.calleeAt(callee, operation.id()); entered && calleeMayStoreIntoEnvironmentFieldInLoops(walker, entered, layout, field, depth - 1))
-                return true;
-        }
-    }
-    return false;
-}
-
-static ReadOfEnvironmentFieldInTurn lookAtReadOfEnvironmentFieldInTurn(Walker& walker, FunctionID function, const BodyIndex& index, LoopID loop, const BodyValue& read)
-{
-    ReadOfEnvironmentFieldInTurn answer;
-    BlockID home = index.blockOf(read.id());
-    uint32_t firstValueOfLoop = index.block(index.loop(loop).head).firstParameter().index();
-    ValueID environment = index.valueBehindCasts(read.operand(0));
-    if (index.loopOf(home) != loop || index.block(home).hasHandler() || environment.index() >= firstValueOfLoop)
-        return answer;
-    const LinkTables& linked = walker.facts().linked();
-    unsigned numberOfWritersInFront = 0;
-    ValueID store;
-    for (BlockID member : index.membersOf(loop)) {
-        for (BodyValue operation : index.block(member).values()) {
-            static constexpr OpcodeSet storesAsWritten { Opcode::PutEnvironmentField, Opcode::PutModuleVariable, Opcode::PropSet, Opcode::ElemSet, Opcode::PrivateSet };
-            if (!answer.standsBehindSomeStore && storesAsWritten.contains(operation.opcode()))
-                answer.standsBehindSomeStore = member == home ? operation.id().index() < read.id().index() : blockComesBehindInTurnInLoops(index, loop, member, home);
-            bool isStore = operation.opcode() == Opcode::PutEnvironmentField && operation.layout() == read.layout() && operation.field() == read.field();
-            bool mayWrite = isStore;
-            if (!isStore && effectRuleOf(operation.opcode()) == EffectRule::Call) {
-                // Whoever else is entered is a built-in behind its row, or other code.
-                FunctionID callee = linked.calleeAt(function, operation.id());
-                mayWrite = callee && calleeMayStoreIntoEnvironmentFieldInLoops(walker, callee, read.layout(), read.field(), 2);
-            }
-            if (!mayWrite)
-                continue;
-            bool comesInFront = member == home ? operation.id().index() < read.id().index() : blockComesBehindInTurnInLoops(index, loop, member, home);
-            if (!comesInFront)
-                continue;
-            ++numberOfWritersInFront;
-            store = isStore ? operation.id() : ValueID();
-        }
-    }
-    if (!numberOfWritersInFront) {
-        answer.gives = ReadOfEnvironmentFieldInTurn::Gives::WhatTurnBeginsWith;
-        return answer;
-    }
-    if (numberOfWritersInFront != 1 || !store)
-        return answer;
-    BodyValue written = index.value(store);
-    if (index.valueBehindCasts(written.operand(0)) != environment || index.loopOf(index.blockOf(store)) != loop || !index.dominates(index.blockOf(store), home))
-        return answer;
-    answer.gives = ReadOfEnvironmentFieldInTurn::Gives::WhatWasStored;
-    answer.stored = written.valueOperand();
-    return answer;
-}
-
-Vector<EnvironmentFieldTestedAtHeadOfTurn, 4> findEnvironmentFieldsTestedAtHeadsOfTurns(Walker& walker, BlockID inputHead)
-{
-    static constexpr size_t mostFieldsTestedAtHead = 6;
-    Vector<EnvironmentFieldTestedAtHeadOfTurn, 4> found;
-    const BodyIndex& index = walker.currentBodyIndex();
-    LoopID loop = index.loopOf(inputHead);
-    if (!loop || !walker.has(Mechanism::Folding) || !walker.has(Mechanism::UnboxedNumbers))
-        return found;
-    for (BlockID member : index.membersOf(loop)) {
-        if (index.loopOf(member) != loop)
-            continue;
-        for (BodyValue operation : index.block(member).values()) {
-            if (operation.opcode() != Opcode::GetEnvironmentField || found.size() == mostFieldsTestedAtHead)
-                continue;
-            ValueID environment = index.valueBehindCasts(operation.operand(0));
-            bool isListed = found.containsIf([&](const EnvironmentFieldTestedAtHeadOfTurn& field) {
-                return field.environment == environment && field.layout == operation.layout() && field.field == operation.field();
-            });
-            if (isListed)
-                continue;
-            // A read that the walk comes to while nothing of the turn is done is tested where it stands: the-state-of-a-loop-may-lie-in-variables-1.
-            ReadOfEnvironmentFieldInTurn read = lookAtReadOfEnvironmentFieldInTurn(walker, walker.currentFunction(), index, loop, operation);
-            if (read.gives != ReadOfEnvironmentFieldInTurn::Gives::WhatTurnBeginsWith || !read.standsBehindSomeStore)
-                continue;
-            // What Link holds for numbers has its typed forms as it is.
-            Draft asWritten(Opcode::GetEnvironmentField);
-            asWritten.setLayout(operation.layout());
-            asWritten.setField(operation.field());
-            std::array<TypeID, 1> noOperand { TypeID() };
-            TypeID held = resultTypeOf(walker.typing(), asWritten, OperandTypes { std::span<const TypeID>(noOperand) });
-            if (held && (holdsOnlyPrimitives(held) || !walker.types().at(held).hasUnboundedUnknown()))
-                continue;
-            // `line += part` steps a text.
-            TypeID expected = findExpectation(walker, operation.id()).type;
-            TypeID written = expected ? walker.types().withoutPrimitives(walker.types().withoutNullish(expected), Primitive::Absent) : TypeID();
-            if (!written || isNeverType(written) || !walker.types().at(written).isNumber())
-                continue;
-            if (turnsTakeEnvironmentFieldForInt32(walker, loop, operation.layout(), operation.field()))
-                found.append(EnvironmentFieldTestedAtHeadOfTurn { environment, operation.layout(), operation.field(), TypeTable::int32 });
-        }
-    }
-    return found;
-}
-
-bool LooksAtLoops::readOfEnvironmentFieldGivesWhatTurnBeginsWith(const BodyValue& read)
-{
-    return lookAtReadOfEnvironmentFieldInTurn(m_walker, m_stretch.function, index(), m_stretch.outermost, read).gives == ReadOfEnvironmentFieldInTurn::Gives::WhatTurnBeginsWith;
-}
-
-ValueID LooksAtLoops::valueGivenByReadOfEnvironmentField(ValueID read)
-{
-    for (auto [asked, answer] : m_valuesGivenByReadsOfEnvironmentFields) {
-        if (asked == read)
-            return answer;
-    }
-    LoopID loop = m_stretch.outermost;
-    BodyValue asked = index().value(read);
-    ValueID answer = read;
-    ReadOfEnvironmentFieldInTurn found = loop && index().isInLoop(index().blockOf(read), loop) ? lookAtReadOfEnvironmentFieldInTurn(m_walker, m_stretch.function, index(), loop, asked) : ReadOfEnvironmentFieldInTurn();
-    if (found.gives == ReadOfEnvironmentFieldInTurn::Gives::WhatWasStored)
-        answer = found.stored;
-    m_valuesGivenByReadsOfEnvironmentFields.append({ read, answer });
-    return answer;
-}
-
 ValueID LooksAtLoops::valueBehindCasts(ValueID value)
 {
     while (!index().isParameter(value)) {
@@ -1940,7 +1743,7 @@ TypeID LooksAtLoops::withWhatCopyReturns(const BodyValue& call, OperandTypes ope
                 byRow = joined(byRow, resultTypeOf(m_typing, direct, OperandTypes { }));
                 if ((behind.enteredByValue && named != behind.enteredByValue) || m_calleesLookedAt.contains(named) || !mayCopyCallee(m_walker, m_draft, named, placeOfCopy))
                     continue;
-                if (behind.enteredByValue && (call.argumentsOperands().empty() || !mayBeLeafHandedToMethodOfLists(m_walker, typeOf(call.argumentsOperands()[0]))))
+                if (behind.enteredByValue && (isLookingAtCopy() || m_walker.depthOfCopies() || call.argumentsOperands().empty() || !mayBeLeafHandedToMethodOfLists(m_walker, typeOf(call.argumentsOperands()[0]))))
                     continue;
                 m_nothingWasDoneInTurn = false;
                 return m_anything;

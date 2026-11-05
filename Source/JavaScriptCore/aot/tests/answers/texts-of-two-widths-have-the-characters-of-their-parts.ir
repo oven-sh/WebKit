@@ -1,7 +1,7 @@
 # made of 842393fe81b62d4e
 # a narrow text joined with a wide one is made by the program, and its characters are known: its length, a comparison, its code units, a longer join with numbers and null, two halves of a pair that meet, the empty text, and the same in a loop
 # a text that both sides of a condition write alike is no constant to the front end and one to the walk. Each such text has a second reader: a join of texts that alone reads what the ways bring is walked once for each way
-# (known-state-and-effects-3b, findOperationsThatWaysDecide()), and behind the meeting the text is a parameter of a block, of which no characters are noted
+# (findOperationsThatWaysDecide()), and behind the meeting the text is a parameter of a block, of which no characters are noted
 # f1 = lengths, f2 = same, f3 = other, f4 = units, f5 = longer, f6 = halves, f7 = empty, f8 = turns, f9 = unknown, f10 = tell
 # RUN(FORM): walk f1 mechanisms=none+Folding+TypedOperations
 # FORM-LABEL: code f1:Body

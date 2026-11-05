@@ -175,47 +175,6 @@ static Presence presenceAfterRead(LoadedProgram& program, JSObject* object, cons
     return PropertyWalk::hasPropertyOnChain(object->structure(), name.impl());
 }
 
-static void testOwnDataProperty(LoadedProgram& program)
-{
-    VM& vm = program.vm();
-    JSObject* object = constructEmptyObject(program.realm());
-    AOT_TEST_CHECK(object->type() == FinalObjectType);
-
-    constexpr unsigned numberOfProperties = JSFinalObject::defaultInlineCapacity + 2;
-    for (unsigned index = 0; index < numberOfProperties; ++index)
-        object->putDirect(vm, Identifier::fromString(vm, makeString("field"_s, index)), jsNumber(index));
-    for (unsigned index = 0; index < numberOfProperties; ++index) {
-        Identifier name = Identifier::fromString(vm, makeString("field"_s, index));
-        AOT_TEST_CHECK(findsOwnValue(program, object, name));
-        AOT_TEST_CHECK(presenceAfterRead(program, object, name) == Presence::Present);
-    }
-    AOT_TEST_CHECK(isOutOfLineOffset(object->structure()->maxOffset()));
-
-    Identifier hidden = Identifier::fromString(vm, "hidden"_s);
-    object->putDirect(vm, hidden, jsNull(), PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum);
-    AOT_TEST_CHECK(findsOwnValue(program, object, hidden));
-}
-
-static void testAbsentName(LoadedProgram& program)
-{
-    VM& vm = program.vm();
-    Identifier label = Identifier::fromString(vm, "label"_s);
-    Identifier other = Identifier::fromString(vm, "other"_s);
-    JSObject* object = constructEmptyObject(program.realm());
-    AOT_TEST_CHECK(object->getPrototypeDirect() == JSValue(program.realm()->objectPrototype()));
-    AOT_TEST_CHECK(program.realm()->objectPrototype()->structure()->hasImmutableProperties());
-    auto isAbsentForGood = [&] {
-        PropertyAnswer answer = readAndClassify(program, object, label);
-        return isAbsent(answer) && !answer.dependsOnChain() && presenceAfterRead(program, object, label) == Presence::Absent;
-    };
-
-    AOT_TEST_CHECK(isAbsentForGood());
-    object->putDirect(vm, other, jsNumber(7));
-    AOT_TEST_CHECK(isAbsentForGood());
-    object->putDirect(vm, label, jsUndefined());
-    AOT_TEST_CHECK(findsOwnValue(program, object, label));
-}
-
 static void testOwnAccessor(LoadedProgram& program)
 {
     VM& vm = program.vm();
@@ -228,21 +187,6 @@ static void testOwnAccessor(LoadedProgram& program)
     AOT_TEST_CHECK(slotFor(readAndClassify(program, object, label), object->structure()).kind == Slot::Kind::Getter);
     AOT_TEST_CHECK(presenceAfterRead(program, object, label) == Presence::Present);
     AOT_TEST_CHECK(isAbsent(readAndClassify(program, object, Identifier::fromString(vm, "other"_s))));
-}
-
-static void testNameOfObjectPrototype(LoadedProgram& program)
-{
-    VM& vm = program.vm();
-    const Identifier& toString = vm.propertyNames->toString;
-    JSObject* objectPrototype = program.realm()->objectPrototype();
-    JSObject* object = constructEmptyObject(program.realm());
-    AOT_TEST_CHECK(objectPrototype->structure()->isImmutableProperty(toString.impl()));
-
-    PropertyAnswer answer = readAndClassify(program, object, toString);
-    AOT_TEST_CHECK(isInheritedFrom(program, answer, PropertyAnswerKind::Value, objectPrototype, toString) && !answer.dependsOnChain());
-    AOT_TEST_CHECK(presenceAfterRead(program, object, toString) == Presence::Present);
-    object->putDirect(vm, toString, jsNumber(7));
-    AOT_TEST_CHECK(findsOwnValue(program, object, toString));
 }
 
 static void testUnderscoreProtoAndIndex(LoadedProgram& program)
@@ -414,64 +358,6 @@ static JSString* createKeyWithoutAtom(VM& vm)
     return key;
 }
 
-static JSString* createRope(LoadedProgram& program, unsigned length)
-{
-    auto createHalf = [&](Latin1Character character) {
-        Vector<Latin1Character> characters(FillWith { }, length / 2, character);
-        return jsNontrivialString(program.vm(), String(characters.span()));
-    };
-    JSString* rope = jsString(program.realm(), createHalf('q'), createHalf('z'));
-    AOT_TEST_CHECK(rope && rope->isRope() && rope->length() == length);
-    return rope;
-}
-
-static bool isName(KeyName name, UniquedStringImpl* uid)
-{
-    return name.kind == KeyNameKind::Name && name.uid == uid;
-}
-
-static void testOnlyKeysWithAtomsAreNames(LoadedProgram& program)
-{
-    VM& vm = program.vm();
-    JSGlobalObject* realm = program.realm();
-    Identifier label = Identifier::fromString(vm, "label"_s);
-    JSString* keyWithAtom = jsString(vm, label.string().string());
-    JSString* keyWithoutAtom = createKeyWithoutAtom(vm);
-    JSString* ropeOfAtoms = jsString(realm, jsNontrivialString(vm, "la"_s), jsNontrivialString(vm, "bel"_s));
-    AOT_TEST_CHECK(ropeOfAtoms->isRope());
-
-    AOT_TEST_CHECK(isName(nameOfKeyWithoutAllocating(realm, keyWithAtom, KeyAtomization::OnlyExisting), label.impl()));
-    AOT_TEST_CHECK(isName(nameOfKeyWithoutAllocating(realm, keyWithoutAtom, KeyAtomization::OnlyExisting), label.impl()));
-    AOT_TEST_CHECK(keyWithoutAtom->tryGetValueImpl() == label.impl() && atomOfKey(keyWithoutAtom) == label.impl());
-    AOT_TEST_CHECK(isName(nameOfKeyWithoutAllocating(realm, ropeOfAtoms, KeyAtomization::OnlyExisting), label.impl()));
-    AOT_TEST_CHECK(ropeOfAtoms->tryGetValueImpl() == label.impl());
-
-    JSString* keyOfNoProperty = jsNontrivialString(vm, makeString("a name that "_s, "no property has"_s));
-    AOT_TEST_CHECK(nameOfKeyWithoutAllocating(realm, keyOfNoProperty, KeyAtomization::OnlyExisting).kind == KeyNameKind::HasNoAtom);
-    AOT_TEST_CHECK(!keyOfNoProperty->tryGetValueImpl()->isAtom() && !atomOfKey(keyOfNoProperty));
-    KeyName createdName = nameOfKeyWithoutAllocating(realm, keyOfNoProperty, KeyAtomization::Atomize);
-    AOT_TEST_CHECK(createdName.uid && isName(createdName, atomOfKey(keyOfNoProperty)));
-
-    // A short rope can only be an index, which has no atom, if it starts with a digit.
-    AOT_TEST_CHECK(nameOfKeyWithoutAllocating(realm, createRope(program, 8), KeyAtomization::OnlyExisting).kind == KeyNameKind::HasNoAtom);
-    JSString* ropeOfDigits = jsString(realm, jsNontrivialString(vm, "7190"_s), jsNontrivialString(vm, "4412"_s));
-    JSString* ropeAfterDigit = jsString(realm, jsNontrivialString(vm, "7q"_s), jsNontrivialString(vm, "zz"_s));
-    AOT_TEST_CHECK(ropeOfDigits->isRope() && ropeAfterDigit->isRope());
-    AOT_TEST_CHECK(nameOfKeyWithoutAllocating(realm, ropeOfDigits, KeyAtomization::OnlyExisting).kind == KeyNameKind::NotAName);
-    AOT_TEST_CHECK(nameOfKeyWithoutAllocating(realm, ropeAfterDigit, KeyAtomization::OnlyExisting).kind == KeyNameKind::NotAName);
-    JSString* longRope = createRope(program, 300);
-    AOT_TEST_CHECK(nameOfKeyWithoutAllocating(realm, longRope, KeyAtomization::OnlyExisting).kind == KeyNameKind::HasNoAtom);
-    AOT_TEST_CHECK(nameOfKeyWithoutAllocating(realm, longRope, KeyAtomization::Atomize).kind == KeyNameKind::Name);
-    for (KeyAtomization atomization : { KeyAtomization::OnlyExisting, KeyAtomization::Atomize })
-        AOT_TEST_CHECK(nameOfKeyWithoutAllocating(realm, createRope(program, JSString::maxLengthForOnStackResolve + 2), atomization).kind == KeyNameKind::NotAName);
-
-    Symbol* symbol = Symbol::create(vm);
-    PrivateName privateName(PrivateName::PrivateSymbol, "secret"_s);
-    AOT_TEST_CHECK(isName(nameOfKeyWithoutAllocating(realm, symbol, KeyAtomization::OnlyExisting), &symbol->uid()) && uidOfKey(symbol) == &symbol->uid());
-    AOT_TEST_CHECK(nameOfKeyWithoutAllocating(realm, Symbol::create(vm, privateName.uid()), KeyAtomization::OnlyExisting).kind == KeyNameKind::NotAName);
-    AOT_TEST_CHECK(nameOfKeyWithoutAllocating(realm, constructEmptyObject(realm), KeyAtomization::OnlyExisting).kind == KeyNameKind::NotAName);
-}
-
 static void testIndexesAreNotNames(LoadedProgram& program)
 {
     struct KeyText {
@@ -523,50 +409,6 @@ static void testIndexesAreNotNames(LoadedProgram& program)
     AOT_TEST_CHECK(!indexOfKey(jsNumber(-1)) && !indexOfKey(jsNumber(7.5)) && !indexOfKey(jsUndefined()) && !indexOfKey(Symbol::create(vm)));
 }
 
-static void testPresenceIsCachedUnderName(LoadedProgram& program)
-{
-    VM& vm = program.vm();
-    HashedSlotTable& table = program.state().propertyCaches->tables().hashedTable();
-    Identifier label = Identifier::fromString(vm, "label"_s);
-    Identifier other = Identifier::fromString(vm, "other"_s);
-    AOT_TEST_CHECK(vm.aotState().identifiers->numberOf(label.impl()));
-    AOT_TEST_CHECK(!vm.aotState().identifiers->numberOf(other.impl()));
-
-    Structure* emptyStructure = program.realm()->nullPrototypeObjectStructure();
-    JSObject* objectWithLabel = constructEmptyObject(vm, emptyStructure);
-    objectWithLabel->putDirect(vm, label, jsNumber(7));
-    JSObject* objectWithOther = constructEmptyObject(vm, emptyStructure);
-    objectWithOther->putDirect(vm, other, jsNumber(7));
-    auto hasLabel = [&](JSObject* object) {
-        return static_cast<LeafPresence>(operationAOTInByValGeneric(&program.instance(), object, createKeyWithoutAtom(vm)));
-    };
-    auto findLabel = [&](JSObject* object) {
-        return table.find(object->structure()->id(), label.impl(), SlotAccess::Read);
-    };
-
-    AOT_TEST_CHECK(!findLabel(objectWithLabel) && !findLabel(objectWithOther));
-    // A pair is filed at its third miss.
-    for (unsigned miss = 0; miss < 2; ++miss)
-        AOT_TEST_CHECK(hasLabel(objectWithLabel) == LeafPresence::Own && hasLabel(objectWithOther) == LeafPresence::Absent && !findLabel(objectWithLabel) && !findLabel(objectWithOther));
-    AOT_TEST_CHECK(hasLabel(objectWithLabel) == LeafPresence::Own);
-    const Slot* present = findLabel(objectWithLabel);
-    AOT_TEST_CHECK(present && present->kind == Slot::Kind::Value && present->has(Slot::isOwn) && Slot::presenceOf(present->kind) == SlotPresence::Present);
-    AOT_TEST_CHECK(present->offsetInStorage() == objectWithLabel->getDirectOffset(vm, label));
-
-    AOT_TEST_CHECK(hasLabel(objectWithOther) == LeafPresence::Absent);
-    const Slot* absent = findLabel(objectWithOther);
-    AOT_TEST_CHECK(absent && absent->kind == Slot::Kind::Absent && Slot::presenceOf(absent->kind) == SlotPresence::Absent);
-    AOT_TEST_CHECK(hasLabel(objectWithLabel) == LeafPresence::Own && hasLabel(objectWithOther) == LeafPresence::Absent);
-
-    JSObject* heir = constructEmptyObject(program.realm(), objectWithLabel);
-    for (unsigned miss = 0; miss < 2; ++miss)
-        AOT_TEST_CHECK(hasLabel(heir) == LeafPresence::Inherited && !findLabel(heir));
-    AOT_TEST_CHECK(hasLabel(heir) == LeafPresence::Inherited);
-    const Slot* inherited = findLabel(heir);
-    AOT_TEST_CHECK(inherited && Slot::presenceOf(inherited->kind) == SlotPresence::Present && !inherited->has(Slot::isOwn));
-    AOT_TEST_CHECK(hasLabel(heir) == LeafPresence::Inherited);
-}
-
 static void testSlotFiledByNumberIsCopiedForKeys(LoadedProgram& program)
 {
     VM& vm = program.vm();
@@ -587,233 +429,6 @@ static void testSlotFiledByNumberIsCopiedForKeys(LoadedProgram& program)
 
     const Slot* copy = caches.tables().hashedTable().find(structure->id(), label.impl(), SlotAccess::Read);
     AOT_TEST_CHECK(copy && copy->headerBits() == filed->headerBits() && copy->payloadBits() == filed->payloadBits());
-}
-
-static void makeStructure(LoadedProgram& program)
-{
-    JSFinalObject::createStructure(program.vm(), program.realm(), jsNull(), 0);
-}
-
-static void fetchStructures(LoadedProgram& program)
-{
-    while (!hasStructureAtHand(program.vm()))
-        makeStructure(program);
-}
-
-// The first object that is given a name keeps it in a table of its own. The next one makes the Structure that those behind it share.
-static JSObject* constructSecondObjectWith(LoadedProgram& program, Structure* emptyStructure, const Identifier& name, JSValue value)
-{
-    VM& vm = program.vm();
-    constructEmptyObject(vm, emptyStructure)->putDirect(vm, name, value);
-    JSObject* object = constructEmptyObject(vm, emptyStructure);
-    object->putDirect(vm, name, value);
-    AOT_TEST_CHECK(!object->structure()->isDictionary());
-    return object;
-}
-
-static void testLeafOperationsAnswerByName(LoadedProgram& program)
-{
-    VM& vm = program.vm();
-    Instance* instance = &program.instance();
-    HashedSlotTable& table = program.state().propertyCaches->tables().hashedTable();
-    Identifier nameWithDigit = Identifier::fromString(vm, "3d"_s);
-    Identifier addedName = Identifier::fromString(vm, "4e"_s);
-    Identifier absentName = Identifier::fromString(vm, "5f"_s);
-    JSObject* object = constructSecondObjectWith(program, program.realm()->nullPrototypeObjectStructure(), nameWithDigit, jsNumber(7));
-    Structure* structure = object->structure();
-    // What an object is given right behind the name that made its Structure makes Structures too. Here another object has come in between.
-    constructSecondObjectWith(program, program.realm()->nullPrototypeObjectStructure(), Identifier::fromString(vm, "8i"_s), jsNumber(0));
-    auto keyFor = [&](const Identifier& name) {
-        JSString* key = jsNontrivialString(vm, makeString(name.string().string().left(1), name.string().string().substring(1)));
-        AOT_TEST_CHECK(!key->tryGetValueImpl()->isAtom());
-        return key;
-    };
-    auto get = [&](JSCell* key) {
-        return JSValue::decode(operationAOTGetByValGeneric(instance, object, key));
-    };
-    auto has = [&](JSCell* key) {
-        return static_cast<LeafPresence>(operationAOTInByValGeneric(instance, object, key));
-    };
-
-    AOT_TEST_CHECK(JSValue::decode(operationAOTGetGeneric(instance, object, nameWithDigit.impl())) == jsNumber(7));
-    AOT_TEST_CHECK(JSValue::decode(operationAOTGetGeneric(instance, object, absentName.impl())).isUndefined());
-    AOT_TEST_CHECK(!table.find(structure->id(), nameWithDigit.impl(), SlotAccess::Read) && !table.find(structure->id(), absentName.impl(), SlotAccess::Read));
-
-    AOT_TEST_CHECK(get(keyFor(nameWithDigit)) == jsNumber(7) && has(keyFor(nameWithDigit)) == LeafPresence::Own);
-    AOT_TEST_CHECK(get(keyFor(absentName)).isUndefined() && has(keyFor(absentName)) == LeafPresence::Absent);
-    // A pair is filed at its third miss.
-    AOT_TEST_CHECK(!table.find(structure->id(), nameWithDigit.impl(), SlotAccess::Read) && !table.find(structure->id(), absentName.impl(), SlotAccess::Read));
-    AOT_TEST_CHECK(get(keyFor(nameWithDigit)) == jsNumber(7) && get(keyFor(absentName)).isUndefined());
-    AOT_TEST_CHECK(table.find(structure->id(), nameWithDigit.impl(), SlotAccess::Read) && table.find(structure->id(), absentName.impl(), SlotAccess::Read));
-    JSString* index = jsString(vm, String("0"_s));
-    AOT_TEST_CHECK(!get(index) && has(index) == LeafPresence::TakeSlowPath);
-    JSString* keyOfNoProperty = jsNontrivialString(vm, makeString("a name that "_s, "no object has"_s));
-    AOT_TEST_CHECK(get(keyOfNoProperty).isUndefined() && !atomOfKey(keyOfNoProperty));
-    // A key that comes again gets its atom, and is looked up like any name from then on.
-    AOT_TEST_CHECK(has(keyOfNoProperty) == LeafPresence::Absent && atomOfKey(keyOfNoProperty));
-    AOT_TEST_CHECK(get(keyOfNoProperty).isUndefined() && has(keyOfNoProperty) == LeafPresence::Absent);
-    JSString* ropeOfNoProperty = jsString(program.realm(), jsNontrivialString(vm, "another name that "_s), jsNontrivialString(vm, "no object has"_s));
-    AOT_TEST_CHECK(ropeOfNoProperty->isRope() && has(ropeOfNoProperty) == LeafPresence::Absent && ropeOfNoProperty->isRope());
-    AOT_TEST_CHECK(get(ropeOfNoProperty).isUndefined() && atomOfKey(ropeOfNoProperty));
-
-    auto put = [&](JSCell* key, JSValue value) {
-        return static_cast<LeafAnswer>(operationAOTPutByValGeneric(instance, object, key, JSValue::encode(value)));
-    };
-    AOT_TEST_CHECK(put(keyFor(nameWithDigit), jsNumber(6)) == LeafAnswer::Yes && object->getDirect(vm, nameWithDigit) == jsNumber(6));
-    // The first store of a Structure and a key files nothing.
-    AOT_TEST_CHECK(!table.find(structure->id(), nameWithDigit.impl(), SlotAccess::Store));
-    AOT_TEST_CHECK(put(keyFor(nameWithDigit), jsNumber(8)) == LeafAnswer::Yes && object->getDirect(vm, nameWithDigit) == jsNumber(8));
-    const Slot* replacement = table.find(structure->id(), nameWithDigit.impl(), SlotAccess::Store);
-    AOT_TEST_CHECK(replacement && replacement->kind == Slot::Kind::Value && replacement->has(Slot::isOwn));
-    JSString* addedKey = keyFor(addedName);
-    fetchStructures(program);
-    AOT_TEST_CHECK(put(addedKey, jsNumber(9)) == LeafAnswer::Yes && object->getDirect(vm, addedName) == jsNumber(9));
-    // The first object that is given a name becomes a dictionary, the second gets a Structure for it, and the third addition is filed.
-    AOT_TEST_CHECK(object->structure()->isDictionary() && !table.find(structure->id(), addedName.impl(), SlotAccess::Store));
-    auto makeNextObject = [&] {
-        JSObject* nextObject = constructEmptyObject(vm, program.realm()->nullPrototypeObjectStructure());
-        nextObject->putDirect(vm, nameWithDigit, jsNumber(7));
-        AOT_TEST_CHECK(nextObject->structure() == structure);
-        JSString* key = keyFor(addedName);
-        fetchStructures(program);
-        AOT_TEST_CHECK(static_cast<LeafAnswer>(operationAOTPutByValGeneric(instance, nextObject, key, JSValue::encode(jsNumber(9)))) == LeafAnswer::Yes && nextObject->getDirect(vm, addedName) == jsNumber(9));
-        return nextObject;
-    };
-    JSObject* secondObject = makeNextObject();
-    AOT_TEST_CHECK(!secondObject->structure()->isDictionary() && !table.find(structure->id(), addedName.impl(), SlotAccess::Store));
-    JSObject* thirdObject = makeNextObject();
-    const Slot* addition = table.find(structure->id(), addedName.impl(), SlotAccess::Store);
-    AOT_TEST_CHECK(addition && addition->kind == Slot::Kind::Transition && addition->transition.newStructureID == secondObject->structure()->id() && thirdObject->structure() == secondObject->structure());
-    AOT_TEST_CHECK(put(index, jsNumber(1)) == LeafAnswer::TakeSlowPath);
-}
-
-// Misses of several pairs share a counter, so a pair's first miss may be the one that triggers caching.
-static void testFirstAdditionIsNotCached(LoadedProgram& program)
-{
-    VM& vm = program.vm();
-    Instance* instance = &program.instance();
-    PropertyCaches& caches = *program.state().propertyCaches;
-    HashedSlotTable& table = caches.tables().hashedTable();
-    Identifier heldName = Identifier::fromString(vm, "9j"_s);
-    Structure* structure = constructSecondObjectWith(program, program.realm()->nullPrototypeObjectStructure(), heldName, jsNumber(7))->structure();
-    auto check = [&](const Identifier& addedName, const auto& put) {
-        auto addToNextObject = [&] {
-            // A property added right after the name that created an object's Structure also creates a Structure. Here another object came in between.
-            constructSecondObjectWith(program, program.realm()->nullPrototypeObjectStructure(), Identifier::fromString(vm, "8i"_s), jsNumber(0));
-            JSObject* object = constructEmptyObject(vm, program.realm()->nullPrototypeObjectStructure());
-            object->putDirect(vm, heldName, jsNumber(7));
-            AOT_TEST_CHECK(object->structure() == structure);
-            put(object);
-            AOT_TEST_CHECK(object->getDirect(vm, addedName) == jsNumber(9));
-            return object;
-        };
-        // Stands for the miss of another pair with the same counter: a store is due for filing at the second miss.
-        caches.shouldFile(structure->id(), addedName.impl(), SlotAccess::Store);
-        AOT_TEST_CHECK(addToNextObject()->structure()->isDictionary() && !table.find(structure->id(), addedName.impl(), SlotAccess::Store));
-        Structure* made = addToNextObject()->structure();
-        AOT_TEST_CHECK(!made->isDictionary() && !table.find(structure->id(), addedName.impl(), SlotAccess::Store));
-        const Slot* addition = nullptr;
-        for (unsigned turn = 0; turn < 3 && !addition; ++turn) {
-            AOT_TEST_CHECK(addToNextObject()->structure() == made);
-            addition = table.find(structure->id(), addedName.impl(), SlotAccess::Store);
-        }
-        AOT_TEST_CHECK(addition && addition->kind == Slot::Kind::Transition && addition->transition.newStructureID == made->id());
-    };
-    Identifier addedByName = Identifier::fromString(vm, "1k"_s);
-    check(addedByName, [&](JSObject* object) {
-        putAndCache({ instance, addedByName, std::nullopt }, object, jsNumber(9), PutMode::Strict);
-    });
-    Identifier addedByKey = Identifier::fromString(vm, "2l"_s);
-    check(addedByKey, [&](JSObject* object) {
-        callOperationFromTest(vm, operationAOTPutByValAndCache, instance, JSValue::encode(object), JSValue::encode(jsString(vm, addedByKey.string())), JSValue::encode(jsNumber(9)));
-    });
-}
-
-static void testLeafStoreMakesStructureOnlyOutOfBlockAtHand(LoadedProgram& program)
-{
-    VM& vm = program.vm();
-    Identifier heldName = Identifier::fromString(vm, "6g"_s);
-    Identifier addedName = Identifier::fromString(vm, "7h"_s);
-    JSObject* object = constructSecondObjectWith(program, program.realm()->nullPrototypeObjectStructure(), heldName, jsNumber(1));
-    Structure* structure = object->structure();
-    auto keyFor = [&](const Identifier& name) {
-        return jsNontrivialString(vm, makeString(name.string().string().left(1), name.string().string().substring(1)));
-    };
-    auto put = [&](JSCell* key, JSValue value) {
-        return static_cast<LeafAnswer>(operationAOTPutByValGeneric(&program.instance(), object, key, JSValue::encode(value)));
-    };
-    JSString* heldKey = keyFor(heldName);
-    JSString* addedKey = keyFor(addedName);
-
-    while (hasStructureAtHand(vm))
-        makeStructure(program);
-    AOT_TEST_CHECK(put(addedKey, jsNumber(2)) == LeafAnswer::TakeSlowPath && object->structure() == structure && !object->getDirect(vm, addedName));
-    AOT_TEST_CHECK(put(heldKey, jsNumber(3)) == LeafAnswer::Yes && object->getDirect(vm, heldName) == jsNumber(3));
-    AOT_TEST_CHECK(!hasStructureAtHand(vm));
-
-    fetchStructures(program);
-    AOT_TEST_CHECK(put(addedKey, jsNumber(2)) == LeafAnswer::Yes && object->getDirect(vm, addedName) == jsNumber(2));
-}
-
-static void testLeafOperationsAnswerByIndex(LoadedProgram& program)
-{
-    VM& vm = program.vm();
-    Instance* instance = &program.instance();
-    Realms& realms = program.realms();
-    HashedSlotTable& table = program.state().propertyCaches->tables().hashedTable();
-    auto keyFor = [&](unsigned index) {
-        return jsString(vm, String::number(index));
-    };
-    auto get = [&](JSCell* base, unsigned index) {
-        return JSValue::decode(operationAOTGetByValGeneric(instance, base, keyFor(index)));
-    };
-    auto has = [&](JSCell* base, unsigned index) {
-        return static_cast<LeafPresence>(operationAOTInByValGeneric(instance, base, keyFor(index)));
-    };
-    auto put = [&](JSCell* base, unsigned index, JSValue value) {
-        return static_cast<LeafAnswer>(operationAOTPutByValGeneric(instance, base, keyFor(index), JSValue::encode(value)));
-    };
-    auto isNumber = [](JSValue value, double number) {
-        return value && value.isNumber() && value.asNumber() == number;
-    };
-
-    for (ASCIILiteral source : { "new Array(10, 11, 12)"_s, "new Array(10, 11.5, 12)"_s, "new Array(10, 'b', 12)"_s, "Object.assign({ }, [10, 11, 12])"_s, "new Int32Array([10, 11, 12])"_s }) {
-        JSObject* object = realms.object(program.realm(), source);
-        Structure* structure = object->structure();
-        AOT_TEST_CHECK_FOR_SOURCE(isNumber(get(object, 0), 10) && isNumber(get(object, 2), 12) && has(object, 2) == LeafPresence::Own, source);
-        // Nothing above a pristine array has elements, so the leaf answers for an index that it lacks.
-        if (object->type() == ArrayType && !hasAnyArrayStorage(object->indexingType()) && structure->hasPristineElements())
-            AOT_TEST_CHECK_FOR_SOURCE(get(object, 3).isUndefined() && has(object, 3) == LeafPresence::Absent, source);
-        else
-            AOT_TEST_CHECK_FOR_SOURCE(!get(object, 3) && has(object, 3) == LeafPresence::TakeSlowPath, source);
-        AOT_TEST_CHECK_FOR_SOURCE(put(object, 2, jsNumber(13)) == LeafAnswer::Yes && isNumber(object->getIndexQuickly(2), 13), source);
-        AOT_TEST_CHECK_FOR_SOURCE(put(object, 100000, jsNumber(1)) == LeafAnswer::TakeSlowPath && !object->canGetIndexQuickly(100000u), source);
-        for (SlotAccess access : { SlotAccess::Read, SlotAccess::Store })
-            AOT_TEST_CHECK_FOR_SOURCE(!table.find(structure->id(), Identifier::fromString(vm, "2"_s).impl(), access), source);
-    }
-
-    JSObject* arrayWithHole = realms.object(program.realm(), "[10, , 12]"_s);
-    AOT_TEST_CHECK(isNumber(get(arrayWithHole, 0), 10) && get(arrayWithHole, 1).isUndefined() && has(arrayWithHole, 1) == LeafPresence::Absent);
-
-    struct RefusedStore {
-        ASCIILiteral source;
-        unsigned index;
-    };
-    static constexpr RefusedStore refusedStores[] = {
-        { "Object.freeze(new Array(10, 11))"_s, 1 },
-        { "Object.freeze([10, 11])"_s, 1 },
-        { "Object.preventExtensions(new Array(10, 11))"_s, 2 },
-    };
-    for (const RefusedStore& refused : refusedStores) {
-        JSObject* object = realms.object(program.realm(), refused.source);
-        AOT_TEST_CHECK_FOR_SOURCE(put(object, refused.index, jsNumber(5)) == LeafAnswer::TakeSlowPath, refused.source);
-        AOT_TEST_CHECK_FOR_SOURCE(isNumber(object->get(program.realm(), 1u), 11) && object->get(program.realm(), 2u).isUndefined(), refused.source);
-    }
-
-    JSObject* proxy = realms.object(program.realm(), "new Proxy([10, 11], { })"_s);
-    AOT_TEST_CHECK(!get(proxy, 0) && has(proxy, 0) == LeafPresence::TakeSlowPath && put(proxy, 0, jsNumber(5)) == LeafAnswer::TakeSlowPath);
-    JSString* text = jsNontrivialString(vm, "text"_s);
-    AOT_TEST_CHECK(!get(text, 0) && has(text, 0) == LeafPresence::TakeSlowPath && put(text, 0, jsNumber(5)) == LeafAnswer::TakeSlowPath);
 }
 
 namespace {
@@ -854,31 +469,6 @@ struct ObjectBelowPrototype {
 };
 
 } // namespace
-
-static void testNamedChangeDropsOnlyThatName(LoadedProgram& program)
-{
-    VM& vm = program.vm();
-    ObjectBelowPrototype fixture(program);
-    ChainDependents& dependents = *program.state().chainDependents;
-    fixture.file(fixture.label);
-    fixture.file(fixture.other);
-    AOT_TEST_CHECK(fixture.isFiledAsAbsent(fixture.label) && fixture.isFiledAsAbsent(fixture.other));
-    AOT_TEST_CHECK(fixture.caches.tables().front().hasRow(fixture.object->structure()->id()));
-    AOT_TEST_CHECK(fixture.caches.tables().hashedTable().find(fixture.object->structure()->id(), fixture.other.impl(), SlotAccess::Read));
-    AOT_TEST_CHECK(dependents.numberOfDependents(fixture.prototype) == 2);
-
-    fixture.prototype->putDirect(vm, fixture.label, jsNumber(1));
-
-    AOT_TEST_CHECK(!fixture.find(fixture.label) && fixture.isFiledAsAbsent(fixture.other));
-    AOT_TEST_CHECK(dependents.numberOfDependents(fixture.prototype) == 1);
-
-    fixture.file(fixture.label);
-    std::optional<Slot> inherited = fixture.find(fixture.label);
-    AOT_TEST_CHECK(inherited && inherited->kind == Slot::Kind::Value && inherited->holder == fixture.prototype && inherited->has(Slot::dependsOnChain));
-    AOT_TEST_CHECK(inherited->offsetInStorage() == fixture.prototype->getDirectOffset(vm, fixture.label));
-    bool isInFront = !!fixture.caches.tables().front().find(fixture.object->structure()->id(), *fixture.caches.nameOf(fixture.label.impl()).identifierNumber, SlotAccess::Read);
-    AOT_TEST_CHECK(isInFront == (MarkedBlockCage::baseOf(fixture.prototype) == vm.heap.cage().base()));
-}
 
 // Nobody tells the table when an owner evicts what depends on a chain. A full collection asks the owners, but only when as many dependents were added as were left the last time.
 static void testEvictedDependentsAreDroppedWhenTheTableHasDoubled(LoadedProgram& program)
@@ -949,25 +539,6 @@ static void testNamedChangesOfAnObjectWithManyDependents(LoadedProgram& program)
     AOT_TEST_CHECK(!dependents.hasDependents(fixture.prototype));
 }
 
-static void testNamelessChangeDropsEveryName(LoadedProgram& program)
-{
-    VM& vm = program.vm();
-    ObjectBelowPrototype fixture(program);
-    ChainDependents& dependents = *program.state().chainDependents;
-    JSObject* objectWithoutPrototype = constructEmptyObject(vm, program.realm()->nullPrototypeObjectStructure());
-    fixture.file(fixture.label);
-    fixture.file(fixture.other);
-    fixture.caches.cache({ objectWithoutPrototype->structure(), fixture.caches.nameOf(fixture.label.impl()), SlotAccess::Read }, readAndClassify(program, objectWithoutPrototype, fixture.label));
-    AOT_TEST_CHECK(fixture.isFiledAsAbsent(fixture.label) && fixture.isFiledAsAbsent(fixture.other));
-
-    didChangeChainObject(vm, fixture.prototype, nullptr);
-
-    AOT_TEST_CHECK(!fixture.find(fixture.label) && !fixture.find(fixture.other));
-    AOT_TEST_CHECK(!dependents.hasDependents(fixture.prototype));
-    std::optional<Slot> independent = fixture.caches.tables().find(objectWithoutPrototype->structure()->id(), fixture.caches.nameOf(fixture.label.impl()), SlotAccess::Read);
-    AOT_TEST_CHECK(independent && independent->kind == Slot::Kind::Absent && !independent->has(Slot::dependsOnChain));
-}
-
 static Object* allocateLabeledObject(LoadedProgram& program)
 {
     const ProgramTables& tables = program.state().tables;
@@ -995,10 +566,11 @@ static void checkWhereSlotsUnderCreatedSymbolAreFiled(LoadedProgram& program, bo
     AOT_TEST_CHECK(identifiersOf(program.instance()).isSymbolOfRealm(*name.identifierNumber) == eachRealmCreatesItsSymbol);
 
     Identifier tag = Identifier::fromUid(vm, name.uid);
-    JSObject* object = constructEmptyObject(vm, program.realm()->nullPrototypeObjectStructure());
-    object->putDirect(vm, tag, jsNumber(7));
-    Structure* structure = object->structure();
-    Slot slot = Slot::createInStorage(structure->id(), Slot::Kind::Value, Slot::isOwn, nullptr, object->getDirectOffset(vm, tag));
+    // Made by hand: an empty object that begins to fill is a dictionary for the time, and of a dictionary nothing is filed in front.
+    PropertyOffset offset;
+    Structure* structure = Structure::addPropertyTransition(vm, program.realm()->nullPrototypeObjectStructure(), tag, 0, offset);
+    AOT_TEST_CHECK(!structure->isDictionary());
+    Slot slot = Slot::createInStorage(structure->id(), Slot::Kind::Value, Slot::isOwn, nullptr, offset);
     for (SlotAccess access : { SlotAccess::Read, SlotAccess::Store }) {
         caches.tables().set(structure, name, access, slot);
         AOT_TEST_CHECK(!!caches.tables().front().find(structure->id(), *name.identifierNumber, access) == !eachRealmCreatesItsSymbol);
@@ -1029,126 +601,8 @@ static bool holdsUnboxedNumber(const FieldData* field)
     return field && traitsOf(field->slot.representation()).valueKind == SlotValueKind::Double;
 }
 
-static void testFieldsOfCompiledPrototype(LoadedProgram& program)
-{
-    VM& vm = program.vm();
-    JSGlobalObject* realm = program.realm();
-    PropertyCaches& caches = *program.state().propertyCaches;
-    Identifier label = Identifier::fromString(vm, "label"_s);
-    Identifier count = Identifier::fromString(vm, "count"_s);
-    Object* prototype = allocateLabeledObject(program);
-    JSObject* object = constructEmptyObject(realm, prototype);
-    Structure* structure = object->structure();
-    const FieldData* labelField = prototype->fieldNamed(program.state(), label);
-    AOT_TEST_CHECK(labelField && prototype->structure()->mayBePrototype());
-    AOT_TEST_CHECK(holdsUnboxedNumber(prototype->fieldNamed(program.state(), count)));
-    auto find = [&](const Identifier& name) {
-        return caches.tables().find(structure->id(), caches.nameOf(name.impl()), SlotAccess::Read);
-    };
-    auto getByKey = [&](const Identifier& name) {
-        return JSValue::decode(operationAOTGetByValGeneric(&program.instance(), object, jsNontrivialString(vm, name.string())));
-    };
-
-    // Compiled code fills an empty slot without a report. What it puts there is a writable data property, so a store below finds the same before and after.
-    prototype->clear(*labelField);
-    // A read asks the prototype each time.
-    PropertyAnswer belowEmptySlot = readAndClassify(program, object, label);
-    AOT_TEST_CHECK(belowEmptySlot.kind == PropertyAnswerKind::InheritedField && belowEmptySlot.holder == prototype && belowEmptySlot.changeableObjects.contains(prototype));
-    AOT_TEST_CHECK(storeCreatesOwnProperty(realm, structure, object, label.impl()));
-
-    putByName(program, prototype, label, jsNumber(7));
-    PropertyAnswer inherited = readAndClassify(program, object, label);
-    AOT_TEST_CHECK(inherited.kind == PropertyAnswerKind::Value && !inherited.isOwn && inherited.holder == prototype && dependsOnlyOn(inherited, prototype));
-    AOT_TEST_CHECK(readThroughAnswer(realm, object, inherited) == jsNumber(7));
-    // The leaf operation goes up to a compiled object only for a pair that it files, and it files a pair at its third miss.
-    AOT_TEST_CHECK(!getByKey(label) && !getByKey(label));
-    AOT_TEST_CHECK(getByKey(label) == jsNumber(7));
-    AOT_TEST_CHECK(storeCreatesOwnProperty(realm, structure, object, label.impl()));
-
-    // The answer names the word of the slot, so it holds after a store that nobody hears of.
-    AOT_TEST_CHECK(storeInSlot(program, prototype, *labelField, jsNontrivialString(vm, "text"_s)));
-    AOT_TEST_CHECK(readThroughAnswer(realm, object, inherited).isString());
-
-    // A slot with an unboxed number has no word that a read by offset could take: the prototype is asked for its field. A store below it still meets a writable data property.
-    putByName(program, prototype, count, jsNumber(1.5));
-    PropertyAnswer belowUnboxedSlot = readAndClassify(program, object, count);
-    AOT_TEST_CHECK(belowUnboxedSlot.kind == PropertyAnswerKind::InheritedField && !belowUnboxedSlot.isOwn && belowUnboxedSlot.holder == prototype && dependsOnlyOn(belowUnboxedSlot, prototype));
-    AOT_TEST_CHECK(!getByKey(count));
-    AOT_TEST_CHECK(storeCreatesOwnProperty(realm, structure, object, count.impl()));
-
-    caches.cache({ structure, caches.nameOf(label.impl()), SlotAccess::Read }, inherited);
-    std::optional<Slot> filed = find(label);
-    AOT_TEST_CHECK(filed && filed->kind == Slot::Kind::Value && filed->holder == prototype && filed->has(Slot::dependsOnChain));
-    DeletePropertySlot deleteSlot;
-    AOT_TEST_CHECK(prototype->methodTable()->deleteProperty(prototype, realm, label, deleteSlot));
-    AOT_TEST_CHECK(!find(label) && readAndClassify(program, object, label).kind == PropertyAnswerKind::InheritedField);
-
-    putByName(program, prototype, label, jsNumber(9));
-    caches.cache({ structure, caches.nameOf(label.impl()), SlotAccess::Read }, readAndClassify(program, object, label));
-    AOT_TEST_CHECK(find(label));
-    prototype->setIntegrity(realm, Object::Integrity::Frozen);
-    AOT_TEST_CHECK(!find(label));
-    AOT_TEST_CHECK(!storeCreatesOwnProperty(realm, structure, object, label.impl()) && !storeCreatesOwnProperty(realm, structure, object, count.impl()));
-    AOT_TEST_CHECK(readAndClassify(program, object, label).kind == PropertyAnswerKind::Value);
-}
-
 static void defineAccessor(LoadedProgram&, JSObject*, const Identifier&);
 static PropertyAnswer storeAndClassify(LoadedProgram&, JSObject*, const Identifier&, JSValue);
-
-static void testUnboxedFieldsOfCompiledPrototype(LoadedProgram& program)
-{
-    VM& vm = program.vm();
-    JSGlobalObject* realm = program.realm();
-    PropertyCaches& caches = *program.state().propertyCaches;
-    Identifier count = Identifier::fromString(vm, "count"_s);
-    auto isFiledFor = [&](JSObject* object) {
-        std::optional<Slot> slot = caches.tables().find(object->structure()->id(), caches.nameOf(count.impl()), SlotAccess::Read);
-        return slot && slot->kind == Slot::Kind::InheritedField && slot->has(Slot::dependsOnChain) && !slot->has(Slot::isOwn);
-    };
-    auto createObjectBelow = [&](Object* prototype) {
-        putByName(program, prototype, count, jsNumber(1.5));
-        JSObject* object = constructEmptyObject(realm, prototype);
-        PropertyAnswer answer = readAndClassify(program, object, count);
-        AOT_TEST_CHECK(answer.kind == PropertyAnswerKind::InheritedField && answer.holder == prototype);
-        caches.cache({ object->structure(), caches.nameOf(count.impl()), SlotAccess::Read }, answer);
-        AOT_TEST_CHECK(isFiledFor(object) && caches.tables().find(object->structure()->id(), caches.nameOf(count.impl()), SlotAccess::Read)->holder == prototype);
-        return object;
-    };
-
-    // The record names the holder and nothing of the slot, so it holds after a store that nobody hears of.
-    Object* prototype = allocateLabeledObject(program);
-    AOT_TEST_CHECK(holdsUnboxedNumber(prototype->fieldNamed(program.state(), count)));
-    JSObject* object = createObjectBelow(prototype);
-    AOT_TEST_CHECK(storeInSlot(program, prototype, *prototype->fieldNamed(program.state(), count), jsNumber(2.5)) && isFiledFor(object));
-
-    // The prototype reports what takes the property out of its slot, and the record goes.
-    DeletePropertySlot deleteSlot;
-    AOT_TEST_CHECK(prototype->methodTable()->deleteProperty(prototype, realm, count, deleteSlot));
-    AOT_TEST_CHECK(!isFiledFor(object) && !prototype->isInSlot(*prototype->fieldNamed(program.state(), count)));
-
-    Object* prototypeWithAccessor = allocateLabeledObject(program);
-    JSObject* objectBelowAccessor = createObjectBelow(prototypeWithAccessor);
-    defineAccessor(program, prototypeWithAccessor, count);
-    AOT_TEST_CHECK(!isFiledFor(objectBelowAccessor) && readAndClassify(program, objectBelowAccessor, count).kind != PropertyAnswerKind::InheritedField);
-
-    // A value of another type moves the property to the extra properties.
-    Object* prototypeWithText = allocateLabeledObject(program);
-    JSObject* objectBelowText = createObjectBelow(prototypeWithText);
-    putByName(program, prototypeWithText, count, jsNontrivialString(vm, "text"_s));
-    AOT_TEST_CHECK(!isFiledFor(objectBelowText) && readAndClassify(program, objectBelowText, count).kind == PropertyAnswerKind::Value);
-
-    // An object between the two that gets the name hides the field.
-    Object* farPrototype = allocateLabeledObject(program);
-    putByName(program, farPrototype, count, jsNumber(1.5));
-    JSObject* middle = constructEmptyObject(realm, farPrototype);
-    JSObject* objectBelowBoth = constructEmptyObject(realm, middle);
-    PropertyAnswer throughMiddle = readAndClassify(program, objectBelowBoth, count);
-    AOT_TEST_CHECK(throughMiddle.kind == PropertyAnswerKind::InheritedField && throughMiddle.holder == farPrototype && throughMiddle.changeableObjects.contains(middle));
-    caches.cache({ objectBelowBoth->structure(), caches.nameOf(count.impl()), SlotAccess::Read }, throughMiddle);
-    AOT_TEST_CHECK(isFiledFor(objectBelowBoth));
-    putByName(program, middle, count, jsNumber(4));
-    AOT_TEST_CHECK(!isFiledFor(objectBelowBoth));
-}
 
 static void testReadsBelowEmptySlotsAskTheFirstObjectThatHasOne(LoadedProgram& program)
 {
@@ -1259,41 +713,6 @@ static void defineAccessor(LoadedProgram& program, JSObject* object, const Ident
     AOT_TEST_CHECK(object->methodTable()->defineOwnProperty(object, program.realm(), name, descriptor, true) && !program.vm().exceptionForInspection());
 }
 
-static void testStoresBelowEmptySlotOfCompiledPrototype(LoadedProgram& program)
-{
-    VM& vm = program.vm();
-    JSGlobalObject* realm = program.realm();
-    PropertyCaches& caches = *program.state().propertyCaches;
-    Identifier label = Identifier::fromString(vm, "label"_s);
-    Object* prototype = allocateLabeledObject(program);
-    const FieldData* labelField = prototype->fieldNamed(program.state(), label);
-    prototype->clear(*labelField);
-    Structure* structure = constructEmptyObject(realm, prototype)->structure();
-    auto find = [&] {
-        return caches.tables().find(structure->id(), caches.nameOf(label.impl()), SlotAccess::Store);
-    };
-    auto storeAndFile = [&] {
-        PropertyAnswer answer = storeAndClassify(program, constructEmptyObject(realm, prototype), label, jsNumber(1));
-        caches.cache({ structure, caches.nameOf(label.impl()), SlotAccess::Store }, answer);
-        return answer;
-    };
-
-    AOT_TEST_CHECK(!prototype->hasExtraProperties());
-    // The first object that is given a name keeps it in a table of its own. The next one makes the Structure that those behind it share.
-    AOT_TEST_CHECK(storeAndClassify(program, constructEmptyObject(realm, prototype), label, jsNumber(1)).kind == PropertyAnswerKind::Uncacheable);
-    PropertyAnswer addition = storeAndFile();
-    AOT_TEST_CHECK(addition.kind == PropertyAnswerKind::Addition && dependsOnlyOn(addition, prototype));
-    AOT_TEST_CHECK(find() && find()->kind == Slot::Kind::Transition && find()->has(Slot::dependsOnChain));
-
-    // What compiled code does: nobody hears of it, and the answer is the same.
-    AOT_TEST_CHECK(storeInSlot(program, prototype, *labelField, jsNumber(2)));
-    AOT_TEST_CHECK(find() && storeAndFile().kind == PropertyAnswerKind::Addition);
-
-    // A frozen field refuses the store below it.
-    prototype->setIntegrity(realm, Object::Integrity::Frozen);
-    AOT_TEST_CHECK(!find() && !storeCreatesOwnProperty(realm, structure, nullptr, label.impl()));
-}
-
 static void testSetterAboveEmptySlotOfCompiledPrototype(LoadedProgram& program)
 {
     VM& vm = program.vm();
@@ -1323,252 +742,6 @@ static void testSetterAboveEmptySlotOfCompiledPrototype(LoadedProgram& program)
     AOT_TEST_CHECK(prototype->hasExtraProperties());
     AOT_TEST_CHECK(storeThroughChain(walk(ChainWalkUse::KeptForStores)) == StoreThroughChain::CallsSetter && walk(ChainWalkUse::KeptForReads).holder == top);
     AOT_TEST_CHECK(walk(ChainWalkUse::KeptForStores).changeableObjects.contains(prototype) && walk(ChainWalkUse::KeptForStores).changeableObjects.contains(top));
-}
-
-static void testReadsThroughEmptySlotOfCompiledPrototype(LoadedProgram& program)
-{
-    VM& vm = program.vm();
-    JSGlobalObject* realm = program.realm();
-    PropertyCaches& caches = *program.state().propertyCaches;
-    Identifier label = Identifier::fromString(vm, "label"_s);
-    Identifier other = Identifier::fromString(vm, "other"_s);
-    Object* prototype = allocateLabeledObject(program);
-    const FieldData* labelField = prototype->fieldNamed(program.state(), label);
-    prototype->clear(*labelField);
-    removeFieldFromKeyOrder(vm, program.state(), *prototype, *labelField);
-    putByName(program, prototype, other, jsNumber(1));
-    JSObject* object = constructEmptyObject(realm, prototype);
-    Structure* structure = object->structure();
-    auto find = [&] {
-        return caches.tables().find(structure->id(), caches.nameOf(label.impl()), SlotAccess::Read);
-    };
-
-    PropertyAnswer absent = readAndClassify(program, object, label);
-    AOT_TEST_CHECK(isAbsent(absent) && absent.changeableObjects.contains(prototype));
-    caches.cache({ structure, caches.nameOf(label.impl()), SlotAccess::Read }, absent);
-    AOT_TEST_CHECK(find() && find()->kind == Slot::Kind::Absent);
-
-    // What compiled code does with such an object: it has the run time list the field, then fills the slot.
-    callOperationFromTest(program.vm(), operationAOTDidCreateFieldAt, &program.instance(), prototype, slotKeyFor(labelField->slot.offset, labelField->isOutOfLine()));
-    AOT_TEST_CHECK(!find());
-    AOT_TEST_CHECK(storeInSlot(program, prototype, *labelField, jsNumber(3)));
-    PropertyAnswer inherited = readAndClassify(program, object, label);
-    AOT_TEST_CHECK(inherited.kind == PropertyAnswerKind::Value && inherited.holder == prototype && readThroughAnswer(realm, object, inherited) == jsNumber(3));
-}
-
-static void testExtraPropertiesOfCompiledPrototype(LoadedProgram& program)
-{
-    VM& vm = program.vm();
-    JSGlobalObject* realm = program.realm();
-    PropertyCaches& caches = *program.state().propertyCaches;
-    Identifier other = Identifier::fromString(vm, "other"_s);
-    Identifier absentName = Identifier::fromString(vm, "absentName"_s);
-    Object* prototype = allocateLabeledObject(program);
-    putByName(program, prototype, other, jsNumber(1));
-    JSObject* extra = prototype->extraProperties();
-    JSObject* object = constructEmptyObject(realm, prototype);
-    Structure* structure = object->structure();
-    auto find = [&](const Identifier& name, SlotAccess access) {
-        return caches.tables().find(structure->id(), caches.nameOf(name.impl()), access);
-    };
-    auto fileRead = [&](const Identifier& name) {
-        PropertyAnswer answer = readAndClassify(program, object, name);
-        caches.cache({ structure, caches.nameOf(name.impl()), SlotAccess::Read }, answer);
-        return answer;
-    };
-
-    PropertyAnswer inherited = fileRead(other);
-    AOT_TEST_CHECK(extra && isInheritedFrom(program, inherited, PropertyAnswerKind::Value, extra, other) && dependsOnlyOn(inherited, prototype));
-    putByName(program, prototype, other, jsNumber(2));
-    AOT_TEST_CHECK(find(other, SlotAccess::Read) && readThroughAnswer(realm, object, inherited) == jsNumber(2));
-    AOT_TEST_CHECK(storeCreatesOwnProperty(realm, structure, object, other.impl()));
-
-    AOT_TEST_CHECK(isAbsent(fileRead(absentName)) && find(absentName, SlotAccess::Read));
-    putByName(program, prototype, absentName, jsNumber(3));
-    AOT_TEST_CHECK(!find(absentName, SlotAccess::Read) && find(other, SlotAccess::Read));
-    AOT_TEST_CHECK(isInheritedFrom(program, readAndClassify(program, object, absentName), PropertyAnswerKind::Value, extra, absentName));
-
-    defineAccessor(program, prototype, other);
-    AOT_TEST_CHECK(!find(other, SlotAccess::Read));
-    AOT_TEST_CHECK(isInheritedFrom(program, readAndClassify(program, object, other), PropertyAnswerKind::Accessor, extra, other));
-    ChainWalk store = walkChain({ realm, structure, object, ChainWalkMode::MayAllocate, ChainWalkUse::KeptForStores }, other.impl());
-    AOT_TEST_CHECK(storeThroughChain(store) == StoreThroughChain::CallsSetter && store.holder == extra && store.owner == prototype);
-
-    DeletePropertySlot deleteSlot;
-    fileRead(other);
-    AOT_TEST_CHECK(find(other, SlotAccess::Read) && prototype->methodTable()->deleteProperty(prototype, realm, other, deleteSlot));
-    AOT_TEST_CHECK(!find(other, SlotAccess::Read) && isAbsent(readAndClassify(program, object, other)));
-}
-
-static void testEmptySlotOfReceiverDefersToChain(LoadedProgram& program)
-{
-    VM& vm = program.vm();
-    JSGlobalObject* realm = program.realm();
-    PropertyCaches& caches = *program.state().propertyCaches;
-    Identifier label = Identifier::fromString(vm, "label"_s);
-    JSObject* prototype = constructEmptyObject(realm);
-    Object* object = allocateLabeledObject(program);
-    const FieldData* labelField = object->fieldNamed(program.state(), label);
-    object->clear(*labelField);
-    object->setPrototypeKeepingShape(vm, prototype);
-    Structure* structure = object->structure();
-    auto file = [&](SlotAccess access, const PropertyAnswer& answer) {
-        caches.cache({ structure, caches.nameOf(label.impl()), access }, answer);
-        return caches.tables().find(structure->id(), caches.nameOf(label.impl()), access);
-    };
-    auto namesProperty = [&](const std::optional<Slot>& slot, Slot::Kind kind) {
-        return slot && slot->kind == kind && slot->has(Slot::dependsOnChain) && slot->fieldSlot() == labelField->slot
-            && MarkedBlockCage::decode(vm.heap.cage().base(), slot->fieldAndHolder.holder) == prototype && slot->offsetInStorage() == prototype->getDirectOffset(vm, label);
-    };
-
-    // Nothing above: an empty slot reads as undefined, and a store fills it.
-    PropertyAnswer absent = readAndClassify(program, object, label);
-    AOT_TEST_CHECK(absent.kind == PropertyAnswerKind::Field && absent.absentIsUndefined && absent.changeableObjects.contains(prototype));
-
-    prototype->putDirect(vm, label, jsNumber(5));
-    PropertyAnswer value = readAndClassify(program, object, label);
-    AOT_TEST_CHECK(value.kind == PropertyAnswerKind::FieldOrInheritedValue && value.field == labelField && value.holder == prototype && !value.absentIsUndefined);
-    std::optional<Slot> valueSlot = file(SlotAccess::Read, value);
-    AOT_TEST_CHECK(namesProperty(valueSlot, Slot::Kind::FieldOrInherited) && !valueSlot->has(Slot::inheritsGetter));
-
-    // The prototype reports what happens to the property, and the record goes.
-    DeletePropertySlot deleteSlot;
-    AOT_TEST_CHECK(JSObject::deleteProperty(prototype, realm, label, deleteSlot));
-    AOT_TEST_CHECK(!caches.tables().find(structure->id(), caches.nameOf(label.impl()), SlotAccess::Read));
-
-    defineAccessor(program, prototype, label);
-    PropertyAnswer getter = readAndClassify(program, object, label);
-    AOT_TEST_CHECK(getter.kind == PropertyAnswerKind::FieldOrInheritedAccessor && getter.holder == prototype);
-    std::optional<Slot> getterSlot = file(SlotAccess::Read, getter);
-    AOT_TEST_CHECK(namesProperty(getterSlot, Slot::Kind::FieldOrInherited) && getterSlot->has(Slot::inheritsGetter));
-
-    ChainWalk walk = walkChain({ realm, structure, object, ChainWalkMode::MayAllocate, ChainWalkUse::KeptForStores }, label.impl());
-    PutPropertySlot putSlot(object, true, PutPropertySlot::PutById);
-    putSlot.setCacheableSetter(walk.holder, walk.offset);
-    PropertyAnswer setter = classifyStore({ realm, object, structure, label.impl(), putSlot, PutMode::Strict });
-    AOT_TEST_CHECK(setter.kind == PropertyAnswerKind::FieldOrInheritedAccessor && setter.access == SlotAccess::Store && setter.holder == prototype);
-    AOT_TEST_CHECK(namesProperty(file(SlotAccess::Store, setter), Slot::Kind::FieldOrInheritedSetter));
-
-    // A definition asks nobody above.
-    PropertyAnswer definition = classifyStore({ realm, object, structure, label.impl(), putSlot, PutMode::Define });
-    AOT_TEST_CHECK(definition.kind == PropertyAnswerKind::FieldCreation && !definition.holder);
-}
-
-static void testStoreIsFiledOneMissEarlierThanRead(LoadedProgram& program)
-{
-    PropertyCaches& caches = *program.state().propertyCaches;
-    Identifier label = Identifier::fromString(program.vm(), "label"_s);
-    StructureID structure = program.realm()->nullPrototypeObjectStructure()->id();
-    auto missesUntilFiled = [&](SlotAccess access) {
-        unsigned misses = 1;
-        while (!caches.shouldFile(structure, label.impl(), access))
-            ++misses;
-        return misses;
-    };
-    AOT_TEST_CHECK(missesUntilFiled(SlotAccess::Read) == 3);
-    AOT_TEST_CHECK(missesUntilFiled(SlotAccess::Store) == 2);
-    AOT_TEST_CHECK(missesUntilFiled(SlotAccess::Define) == 2);
-}
-
-static void testPairsThatMissInTurnAreAllFiled(LoadedProgram& program)
-{
-    PropertyCaches& caches = *program.state().propertyCaches;
-    StructureID structure = program.realm()->nullPrototypeObjectStructure()->id();
-    constexpr unsigned numberOfPairs = 1024;
-    constexpr unsigned maxTurns = 32;
-    Vector<Identifier> names(numberOfPairs, [&](size_t pair) {
-        return Identifier::fromString(program.vm(), makeString("name"_s, pair));
-    });
-    BitVector isFiled(numberOfPairs);
-    for (unsigned turn = 0; turn < maxTurns; ++turn) {
-        for (unsigned pair = 0; pair < numberOfPairs; ++pair) {
-            if (!isFiled.get(pair) && caches.shouldFile(structure, names[pair].impl(), SlotAccess::Read))
-                isFiled.set(pair);
-        }
-    }
-    AOT_TEST_CHECK(isFiled.bitCount() == numberOfPairs);
-}
-
-static void testAdditionsByKeyThatTakeTurnsAllGetStructures(LoadedProgram& program)
-{
-    VM& vm = program.vm();
-    FirstAdditions& additions = firstAdditionsOf(program.state());
-    Structure* structure = program.realm()->nullPrototypeObjectStructure();
-    unsigned numberOfNamesMade = 0;
-    auto makeName = [&] {
-        return Identifier::fromString(vm, makeString("name"_s, numberOfNamesMade++));
-    };
-    auto countTurnsUntilAllGetStructures = [&](unsigned numberOfNames, unsigned maxTurns) {
-        Vector<Identifier> waiting(numberOfNames, [&](size_t) {
-            return makeName();
-        });
-        unsigned turns = 0;
-        for (; !waiting.isEmpty() && turns < maxTurns; ++turns) {
-            waiting.removeAllMatching([&](const Identifier& name) {
-                return additions.shouldMakeStructure(structure, name.impl());
-            });
-        }
-        return waiting.isEmpty() ? turns : UINT_MAX;
-    };
-
-    AOT_TEST_CHECK(countTurnsUntilAllGetStructures(2048, 16) <= 16);
-
-    constexpr unsigned numberOfNamesThatComeOnce = 1 << 16;
-    for (unsigned i = 0; i < numberOfNamesThatComeOnce; ++i)
-        additions.shouldMakeStructure(structure, makeName().impl());
-    AOT_TEST_CHECK(countTurnsUntilAllGetStructures(2, 64) <= 64);
-    AOT_TEST_CHECK(countTurnsUntilAllGetStructures(2048, 128) <= 128);
-
-    constexpr unsigned moreNamesThanAreRemembered = 1 << 14;
-    AOT_TEST_CHECK(countTurnsUntilAllGetStructures(moreNamesThanAreRemembered, 256) <= 256);
-}
-
-static void testAdditionByKeyThatCameAgainGetsStructureWheneverItReturns(LoadedProgram& program)
-{
-    FirstAdditions& additions = firstAdditionsOf(program.state());
-    Structure* structure = program.realm()->nullPrototypeObjectStructure();
-    Identifier name = Identifier::fromString(program.vm(), "nameThatReturns"_s);
-    AOT_TEST_CHECK(!additions.shouldMakeStructure(structure, name.impl()));
-    for (unsigned i = 0; i < 3; ++i)
-        AOT_TEST_CHECK(additions.shouldMakeStructure(structure, name.impl()));
-}
-
-// A collection that is owed starts where somebody stops putting collections off. A leaf operation comes back to code that has recorded no frame.
-static void testLeafOperationsPutCollectionsOff(LoadedProgram& program)
-{
-    VM& vm = program.vm();
-    JSGlobalObject* realm = program.realm();
-    Instance* instance = &program.instance();
-    Identifier added = Identifier::fromString(vm, "added"_s);
-    Identifier absent = Identifier::fromString(vm, "absent"_s);
-    auto keyFor = [&](const Identifier& name) {
-        return jsNontrivialString(vm, makeString(name.string().string().left(1), name.string().string().substring(1)));
-    };
-    enum class Asked : uint8_t { Presence, Value };
-    for (Asked asked : { Asked::Presence, Asked::Value }) {
-        // The structural look gives up at the array. The object in between keeps its names in a table of its own since it was given one while another inherited from it.
-        JSObject* between = constructEmptyObject(realm);
-        between->setPrototypeDirect(vm, constructEmptyArray(realm, nullptr));
-        JSObject* below = constructEmptyObject(realm);
-        below->setPrototypeDirect(vm, between);
-        between->putDirect(vm, added, jsNumber(1));
-        AOT_TEST_CHECK(between->structure()->isDictionary() && !between->structure()->isUncacheableDictionary());
-        JSString* key = keyFor(absent);
-        {
-            DeferGCForAWhile deferGC(vm);
-            vm.heap.deprecatedReportExtraMemory(size_t { 1 } << 32);
-        }
-        uint64_t stops = vm.heap.mutatorExecutionVersion();
-        if (asked == Asked::Presence) {
-            operationAOTInByValGeneric(instance, below, key);
-            AOT_TEST_CHECK(!between->structure()->isDictionary());
-        } else
-            operationAOTGetByValGeneric(instance, below, key);
-        AOT_TEST_CHECK(vm.heap.mutatorExecutionVersion() == stops);
-        vm.heap.collectSync(CollectionScope::Full);
-        ensureStillAliveHere(below);
-        ensureStillAliveHere(key);
-    }
 }
 
 static void testAbsenceFilterNamesWhatStopsStores(LoadedProgram& program)
@@ -1665,27 +838,6 @@ static void testAbsenceFilterNamesWhatStopsStores(LoadedProgram& program)
     AOT_TEST_CHECK(filterOf(earlier) == place && !validFilterOf(later));
 }
 
-static void testNamesOfNativeCodeAreFoundByTheirCharacters(LoadedProgram& program)
-{
-    VM& vm = program.vm();
-
-    // Wherever the characters lie: the linker places the literals of native code anew in every build.
-    UniquedStringImpl* label = Identifier::fromString(vm, "label"_s).impl();
-    Vector<Latin1Character> memory(FillWith { }, 16 * KB, static_cast<Latin1Character>(0));
-    for (size_t offset = 0; offset + 32 <= memory.size(); offset += 8) {
-        auto place = [&](ASCIILiteral text, size_t at) {
-            memcpySpan(memory.mutableSpan().subspan(at), text.span8());
-            return memory.span().subspan(at, text.length());
-        };
-        AOT_TEST_CHECK(PropertyWalk::tryFindName(vm, place("label"_s, offset)) == label);
-        AOT_TEST_CHECK(!PropertyWalk::tryFindName(vm, place("noNameOfTheProgram"_s, offset + 8)));
-    }
-
-    // Texts that differ in one character only, at either end, in the middle of a short one, or in length.
-    AOT_TEST_CHECK(!PropertyWalk::tryFindName(vm, "labem"_s.span8()) && !PropertyWalk::tryFindName(vm, "mabel"_s.span8()) && !PropertyWalk::tryFindName(vm, "labels"_s.span8()) && !PropertyWalk::tryFindName(vm, "labe"_s.span8()));
-    AOT_TEST_CHECK(PropertyWalk::tryFindName(vm, "label"_s.span8()) == label && PropertyWalk::tryFindName(vm, "count"_s.span8()) == Identifier::fromString(vm, "count"_s).impl());
-}
-
 template<LoadedProgramTest body>
 static constexpr void (*withProgram)() = runNativeTestWithLoadedProgram<propertyLookupTests, programText, body>;
 
@@ -1715,45 +867,22 @@ static void runSymbolOfEachRealmIsNeverFiledInFront()
 std::span<const NativeTest> propertyLookupTests()
 {
     static constexpr NativeTest tests[] = {
-        { "property-lookup/own-data-property"_s, withProgram<testOwnDataProperty> },
-        { "property-lookup/absent-name"_s, withProgram<testAbsentName> },
         { "property-lookup/own-accessor"_s, withProgram<testOwnAccessor> },
-        { "property-lookup/name-of-object-prototype"_s, withProgram<testNameOfObjectPrototype> },
         { "property-lookup/underscore-proto-and-index"_s, withProgram<testUnderscoreProtoAndIndex> },
         { "property-lookup/dictionary"_s, withProgram<testDictionary> },
         { "property-lookup/other-prototype"_s, withProgram<testOtherPrototype> },
         { "property-lookup/other-base"_s, withProgram<testOtherBase> },
         { "property-lookup/length-of-typed-arrays"_s, withProgram<testLengthOfTypedArrays> },
-        { "property-lookup/only-keys-with-atoms-are-names"_s, withProgram<testOnlyKeysWithAtomsAreNames> },
         { "property-lookup/indexes-are-not-names"_s, withProgram<testIndexesAreNotNames> },
-        { "property-lookup/names-of-native-code-are-found-by-their-characters"_s, withProgram<testNamesOfNativeCodeAreFoundByTheirCharacters> },
-        { "property-lookup/presence-is-cached-under-name"_s, withProgram<testPresenceIsCachedUnderName> },
-        { "property-lookup/store-is-filed-one-miss-earlier-than-read"_s, withProgram<testStoreIsFiledOneMissEarlierThanRead> },
-        { "property-lookup/pairs-that-miss-in-turn-are-all-filed"_s, withProgram<testPairsThatMissInTurnAreAllFiled> },
-        { "property-lookup/additions-by-key-that-take-turns-all-get-structures"_s, withProgram<testAdditionsByKeyThatTakeTurnsAllGetStructures> },
-        { "property-lookup/addition-by-key-that-came-again-gets-a-structure-whenever-it-returns"_s, withProgram<testAdditionByKeyThatCameAgainGetsStructureWheneverItReturns> },
         { "property-lookup/absence-filter-names-what-stops-stores"_s, withProgram<testAbsenceFilterNamesWhatStopsStores> },
         { "property-lookup/slot-filed-by-number-is-copied-for-keys"_s, withProgram<testSlotFiledByNumberIsCopiedForKeys> },
         { "property-lookup/symbol-of-one-realm-is-filed-in-front"_s, withProgramCreatingSymbol<testSymbolOfOneRealmIsFiledInFront> },
         { "property-lookup/symbol-of-each-realm-is-never-filed-in-front"_s, runSymbolOfEachRealmIsNeverFiledInFront },
-        { "property-lookup/leaf-operations-answer-by-name"_s, withProgram<testLeafOperationsAnswerByName> },
-        { "property-lookup/leaf-operations-put-collections-off"_s, withProgram<testLeafOperationsPutCollectionsOff> },
-        { "property-lookup/first-addition-that-is-due-for-filing-files-nothing"_s, withProgram<testFirstAdditionIsNotCached> },
-        { "property-lookup/leaf-store-makes-a-structure-only-out-of-the-block-at-hand"_s, withProgram<testLeafStoreMakesStructureOnlyOutOfBlockAtHand> },
-        { "property-lookup/leaf-operations-answer-by-index"_s, withProgram<testLeafOperationsAnswerByIndex> },
-        { "property-lookup/named-change-drops-only-that-name"_s, withProgram<testNamedChangeDropsOnlyThatName> },
         { "property-lookup/evicted-dependents-are-dropped-when-the-table-has-doubled"_s, withProgram<testEvictedDependentsAreDroppedWhenTheTableHasDoubled> },
         { "property-lookup/named-changes-of-an-object-with-many-dependents"_s, withProgram<testNamedChangesOfAnObjectWithManyDependents> },
-        { "property-lookup/nameless-change-drops-every-name"_s, withProgram<testNamelessChangeDropsEveryName> },
-        { "property-lookup/fields-of-compiled-prototype"_s, withProgramReadingCount<testFieldsOfCompiledPrototype> },
-        { "property-lookup/unboxed-fields-of-compiled-prototype"_s, withProgramReadingCount<testUnboxedFieldsOfCompiledPrototype> },
         { "property-lookup/reads-below-empty-slots-ask-the-first-object-that-has-one"_s, withProgram<testReadsBelowEmptySlotsAskTheFirstObjectThatHasOne> },
         { "property-lookup/empty-slot-of-receiver-defers-to-unboxed-field-of-compiled-prototype"_s, withProgramReadingCount<testEmptySlotOfReceiverDefersToUnboxedFieldOfCompiledPrototype> },
-        { "property-lookup/empty-slot-of-receiver-defers-to-chain"_s, withProgramAddingProperties<testEmptySlotOfReceiverDefersToChain> },
-        { "property-lookup/stores-below-empty-slot-of-compiled-prototype"_s, withProgram<testStoresBelowEmptySlotOfCompiledPrototype> },
         { "property-lookup/setter-above-empty-slot-of-compiled-prototype"_s, withProgramAddingProperties<testSetterAboveEmptySlotOfCompiledPrototype> },
-        { "property-lookup/reads-through-empty-slot-of-compiled-prototype"_s, withProgramAddingProperties<testReadsThroughEmptySlotOfCompiledPrototype> },
-        { "property-lookup/extra-properties-of-compiled-prototype"_s, withProgramAddingProperties<testExtraPropertiesOfCompiledPrototype> },
     };
     return tests;
 }

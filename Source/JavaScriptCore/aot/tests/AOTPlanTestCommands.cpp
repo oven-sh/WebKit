@@ -47,8 +47,6 @@ static ASCIILiteral nameInPlanText(VariableStorage storage)
     switch (storage) {
     case VariableStorage::Statics:
         return "Statics"_s;
-    case VariableStorage::None:
-        return "None"_s;
     case VariableStorage::ClosureTable:
         return "ClosureTable"_s;
     }
@@ -146,8 +144,6 @@ static void printPlannedLayouts(IRPrinter& printer, const Plan& plan)
             out.print(" shapes="_s, shapes.first, ".."_s, shapes.end() - 1);
         if (uint32_t numberOfOrders = plan.keyOrders().numberOfOrdersOf(id))
             out.print(" orders="_s, numberOfOrders);
-        if (layout.keysAreNeverEnumerated)
-            out.print(" unordered"_s);
         if (layout.granulesOfFirstExtension)
             out.print(" first-extension="_s, layout.granulesOfFirstExtension);
         out.println();
@@ -275,8 +271,6 @@ static std::optional<unsigned> numberOfParametersInPlanText(const CallingConvent
     case CodeRole::GenericCallEntry:
     case CodeRole::GenericConstructEntry:
     case CodeRole::AllocatingConstructEntry:
-    case CodeRole::BoundFunction:
-    case CodeRole::GenericEntryOfBoundFunction:
         return std::nullopt;
     case CodeRole::TableEntry:
     case CodeRole::TableLookup:

@@ -110,7 +110,7 @@ private:
 class CodeTypeVerifier {
     WTF_MAKE_NONCOPYABLE(CodeTypeVerifier);
 public:
-    CodeTypeVerifier(const TypingContext&, const CallingConventions&, const Facts&, const Arrivals&, const Code&);
+    CodeTypeVerifier(const TypingContext&, const CallingConventions&, const Arrivals&, const Code&);
 
     String run();
 
@@ -177,7 +177,6 @@ private:
     TypeArena& m_types;
     const Code& m_code;
     const CallingConventions& m_conventions;
-    const Facts& m_facts;
     const Arrivals& m_arrivals;
     PositionsOfTypeVerifier m_positions;
     TypingContext m_typing;
@@ -212,12 +211,11 @@ private:
     uint32_t m_numberOfSearchesForStores { 0 };
 };
 
-CodeTypeVerifier::CodeTypeVerifier(const TypingContext& context, const CallingConventions& conventions, const Facts& facts, const Arrivals& arrivals, const Code& code)
+CodeTypeVerifier::CodeTypeVerifier(const TypingContext& context, const CallingConventions& conventions, const Arrivals& arrivals, const Code& code)
     : m_program(context.program)
     , m_types(context.types)
     , m_code(code)
     , m_conventions(conventions)
-    , m_facts(facts)
     , m_arrivals(arrivals)
     , m_positions(context.positions)
     , m_typing { context.program, context.types, m_positions, TypeLevel::Proven }
@@ -505,7 +503,7 @@ TypeID CodeTypeVerifier::typeByResultRule(ValueID id, const Operation& operation
 // No operation of Code states a type. The rule of each of these reads one out of the payload, so what stands there is held against the thing that it speaks of.
 // Whoever adds one says in verifyTypeReadFromPayload() what its payload is held against.
 static constexpr OpcodeSet opcodesWhosePayloadIsHeldByTypeVerifier {
-    Opcode::Unspecified, Opcode::GetHeapFrameWord, Opcode::GetCachedValue, Opcode::GetStaticFieldOrAbsent, Opcode::GetAccessorOfMember, Opcode::GetBoundCapture, Opcode::EmptyArgumentList, Opcode::TypedArrayRange, Opcode::NewFormatterWithPattern
+    Opcode::Unspecified, Opcode::GetHeapFrameWord, Opcode::GetCachedValue, Opcode::GetStaticFieldOrAbsent, Opcode::GetAccessorOfMember, Opcode::EmptyArgumentList, Opcode::TypedArrayRange, Opcode::NewFormatterWithPattern
 };
 static_assert([]() consteval {
     for (Opcode opcode : allMembersOf<Opcode>) {
@@ -535,28 +533,6 @@ void CodeTypeVerifier::verifyTypeReadFromPayload(BlockID block, ValueID id, cons
         });
         if (!isFact)
             fail(block, id, "the payload names an accessor, and the record leans on no fact that names the same type"_s);
-        return;
-    }
-    // Plan laid the closure out. What it holds for an entry parameter of the target is what holds of every caller of the target: Facts is asked once more.
-    case Opcode::GetBoundCapture: {
-        const BoundFunctionPlan* bound = m_conventions.boundFunction(operation.function(), operation.numberOfBoundArguments());
-        if (!bound || operation.index() >= bound->captures.size())
-            return fail(block, id, "the plan of the bound function has no such capture"_s);
-        const Function& target = m_program.at(bound->target);
-        std::optional<unsigned> parameter = targetEntryParameterOf(target, bound->captures[operation.index()]);
-        TypeID held;
-        if (!parameter)
-            held = m_types.forFunction(bound->target);
-        else if (TypeID proven = m_facts.typeOfEntryParameter(bound->target, *parameter).proven)
-            held = proven;
-        else if (const DeclaredType* declared = target.declaredEntryParameter(*parameter))
-            held = m_program.provenTypeOf(*declared);
-        else if (m_types.isSubset(TypeTable::anything, stated))
-            return;
-        else
-            held = TypeTable::anything;
-        if (stated != held)
-            failWithTypes(block, id, "the closure holds"_s, held);
         return;
     }
     case Opcode::EmptyArgumentList:
@@ -626,8 +602,6 @@ bool CodeTypeVerifier::takesEntryParametersOfFunction() const
     case CodeRole::GenericCallEntry:
     case CodeRole::GenericConstructEntry:
     case CodeRole::AllocatingConstructEntry:
-    case CodeRole::BoundFunction:
-    case CodeRole::GenericEntryOfBoundFunction:
     case CodeRole::TableEntry:
     case CodeRole::TableLookup:
     case CodeRole::Serializer:
@@ -1092,9 +1066,9 @@ TypeID typeOfJoinParameter(TypeArena& types, std::span<const EdgeID> edgesThatRe
     return united;
 }
 
-String verifyTypesOfCode(const TypingContext& context, const CallingConventions& conventions, const Facts& facts, const Arrivals& arrivals, const Code& code)
+String verifyTypesOfCode(const TypingContext& context, const CallingConventions& conventions, const Arrivals& arrivals, const Code& code)
 {
-    return CodeTypeVerifier(context, conventions, facts, arrivals, code).run();
+    return CodeTypeVerifier(context, conventions, arrivals, code).run();
 }
 
 } } } // namespace JSC::AOT::Typed

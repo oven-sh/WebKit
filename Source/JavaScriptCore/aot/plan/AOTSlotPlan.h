@@ -102,8 +102,6 @@ struct PlannedLayout {
     // Milestone one: a layout of the last two kinds that declares a private name is a CompiledObject all the same. Its fields have a place in the record and no storage.
     bool isRecordAlone { false };
     // Milestone one: false.
-    bool keysAreNeverEnumerated { false };
-    // Milestone one: false.
     bool liesOnlyInFrames { false };
     // How many slots have indexInLayoutRecord.
     uint16_t numberOfRecordFields { 0 };
@@ -138,6 +136,8 @@ struct PlannedLayout {
     std::optional<FieldIndex> environmentOfDeferredClosures;
     // Milestone one: none.
     BitVector fieldsThatHoldRawValuesFromBirth;
+    // Some slot is isFilledAtBirth. An object of any other layout never bears the mark: Object::mayBearMark().
+    bool mayBearMark { false };
 };
 
 inline size_t PlannedLayout::findAppendedKey(PropertyKeyID key) const
@@ -207,7 +207,6 @@ enum class StoredFieldForm : uint8_t {
 
 enum class VariableStorage : uint8_t {
     Statics,
-    None,
     ClosureTable,
 };
 
@@ -217,20 +216,12 @@ enum class VariableEncoding : uint8_t {
     FunctionAsZero,
 };
 
-enum class StaticsRegion : uint8_t {
-    FilledAtInstanceCreation,
-    FilledAtProgramEntry,
-    FilledWithFile,
-};
-
 struct PlannedVariable {
     bool hasWordInStatics() const { return storage == VariableStorage::Statics; }
 
     VariableStorage storage { VariableStorage::Statics };
     VariableEncoding encoding { VariableEncoding::Plain };
     SlotRepresentation representation { SlotRepresentation::JSValue };
-    StaticsRegion region { StaticsRegion::FilledAtInstanceCreation };
-    bool isUsedBeforeProgramEntry { false };
     bool isDescribedToRunTime { false };
     // With FunctionAsZero: what the first read makes a closure of.
     FunctionID function;
@@ -353,11 +344,7 @@ public:
     // A store that finds the slot empty lists the key in the order word.
     bool storeMayListKey(const FieldAccess& access) const
     {
-        if (!canLeaveSlot(access.slot.representation))
-            return false;
-        return access.membersWithField.containsIf([&](LayoutID member) {
-            return !layout(member).keysAreNeverEnumerated;
-        });
+        return canLeaveSlot(access.slot.representation) && !access.membersWithField.isEmpty();
     }
     // How far behind the LayoutData of the receiver's layout the FieldData of the field lies. None: some layout has no plain field of the name with storage, or the places differ.
     JS_EXPORT_PRIVATE std::optional<uint32_t> recordOfStoredField(const Program&, PropertyKeyID, std::span<const LayoutID> receivers) const;

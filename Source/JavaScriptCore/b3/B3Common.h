@@ -29,10 +29,10 @@
 
 #if ENABLE(B3_JIT)
 
-#include <JavaScriptCore/CPU.h>
-#include <JavaScriptCore/GPRInfo.h>
-#include <JavaScriptCore/JSExportMacros.h>
-#include <JavaScriptCore/Options.h>
+#include "CPU.h"
+#include "GPRInfo.h"
+#include "JSExportMacros.h"
+#include "Options.h"
 #include <wtf/StdLibExtras.h>
 #include <wtf/text/ASCIILiteral.h>
 
@@ -49,8 +49,10 @@ enum B3CompilationMode {
 
 JS_EXPORT_PRIVATE bool LEGACY_NODELETE shouldDumpIR(Procedure&, B3CompilationMode);
 bool LEGACY_NODELETE shouldDumpIRAtEachPhase(B3CompilationMode);
-bool LEGACY_NODELETE shouldValidateIR();
-bool LEGACY_NODELETE shouldValidateIRAtEachPhase();
+JS_EXPORT_PRIVATE bool LEGACY_NODELETE shouldValidateIR();
+JS_EXPORT_PRIVATE bool LEGACY_NODELETE shouldValidateIRAtEachPhase();
+JS_EXPORT_PRIVATE bool shouldValidateIR(const Procedure&);
+JS_EXPORT_PRIVATE bool shouldValidateIRAtEachPhase(const Procedure&);
 bool LEGACY_NODELETE shouldSaveIRBeforePhase();
 
 template<typename IntType>

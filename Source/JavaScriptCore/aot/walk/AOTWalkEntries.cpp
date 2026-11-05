@@ -34,8 +34,6 @@ struct ValuesHandedOnByEntries {
     // Empty, like new.target: undefined.
     Reference thisValue;
     Reference newTarget;
-    // By capture of the function. One that is empty or missing is read out of `closure`.
-    Vector<Reference, 8> captures;
     Vector<Reference, 8> positionalArguments;
 };
 
@@ -49,8 +47,6 @@ public:
     bool buildParameterGuard();
     bool buildTableEntry();
     bool buildTableLookup();
-    bool buildBoundFunction();
-    bool buildGenericEntryOfBoundFunction();
 
 private:
     // The generic convention: the closure, `this`, and in registers the arguments behind them.
@@ -82,7 +78,7 @@ private:
     Reference captureAt(const ValuesHandedOnByEntries&, unsigned capture);
     TypeID typeAtEntryOfFunction(unsigned entryParameter);
     Reference proveOrTrap(Reference value, TypeID promised);
-    Reference inFormThatUnitTakes(Reference operand, CodeUnit target, unsigned parameterOfTarget, unsigned entryParameter);
+    Reference inFormThatUnitTakes(Reference operand, CodeUnit target, unsigned entryParameter);
     void layOutOperands(const ValuesHandedOnByEntries&, CodeUnit target, Vector<Reference, 16>& operands);
 
     Reference callUnit(CodeUnit target, std::span<const Reference> operands, bool isConstruction = false);
@@ -94,15 +90,11 @@ private:
     Reference allocateThis(std::span<const Reference> positionalArguments);
     void returnWhatWasConstructed(Reference returned, Reference object);
 
-    const BoundFunctionPlan* findPlanOfBoundFunction();
-    TypeID typeOfBoundCapture(const BoundCapture&);
-
     Walker& m_walker;
     const Program& m_program;
     const CallingConventions& m_conventions;
     TypeArena& m_types;
     const CodeUnit m_unit;
-    // Of a bound role: the target.
     const Function& m_function;
     const Origin m_origin;
     // Of the entry block, as CallingConventions::locationsOf() lists them.
@@ -290,8 +282,6 @@ Reference BuilderOfEntries::positionalArgument(uint32_t argumentIndex, const Dec
 
 Reference BuilderOfEntries::captureAt(const ValuesHandedOnByEntries& values, unsigned capture)
 {
-    if (capture < values.captures.size() && values.captures[capture])
-        return values.captures[capture];
     if (!values.closure) {
         fail("the function has captures, and the unit has neither them nor a function object"_s);
         return { };
@@ -303,7 +293,7 @@ Reference BuilderOfEntries::captureAt(const ValuesHandedOnByEntries& values, uns
     return build(WTF::move(read));
 }
 
-// What holds of every caller of the function, those that come through a unit of this file among them. The plan chose the forms of the parameters by it. verifyTypesOfCode() asks the same three of a GetBoundCapture.
+// What holds of every caller of the function, those that come through a unit of this file among them. The plan chose the forms of the parameters by it.
 TypeID BuilderOfEntries::typeAtEntryOfFunction(unsigned entryParameter)
 {
     if (TypeID proven = m_walker.facts().typeOfEntryParameter(m_unit.function, entryParameter).proven)
@@ -316,6 +306,8 @@ TypeID BuilderOfEntries::typeAtEntryOfFunction(unsigned entryParameter)
 // It is no guess and has no closed arm: only a fault of the compiler takes the failing side.
 Reference BuilderOfEntries::proveOrTrap(Reference value, TypeID promised)
 {
+    // Where proofs are checked the fault is named in front of the trap.
+    m_walker.checkProof(value, promised, m_walker.typeOf(value), ProofSource::EntryParameter, m_origin);
     Draft test = draft(Opcode::TypeTest);
     test.setValueOperand(value);
     test.setTestedType(m_types.testablePartOf(promised));
@@ -337,11 +329,11 @@ Reference BuilderOfEntries::proveOrTrap(Reference value, TypeID promised)
 }
 
 // What arrives by value is boxed and of no known type, and no operation of Code states one. Where the form needs a proof, a test gives it. Walker::build() of the call then finds the conversion.
-Reference BuilderOfEntries::inFormThatUnitTakes(Reference operand, CodeUnit target, unsigned parameterOfTarget, unsigned entryParameter)
+Reference BuilderOfEntries::inFormThatUnitTakes(Reference operand, CodeUnit target, unsigned entryParameter)
 {
     if (m_cannotGoOn)
         return { };
-    Representation wanted = m_conventions.parameterRepresentation(m_program, target, parameterOfTarget);
+    Representation wanted = m_conventions.parameterRepresentation(m_program, target, entryParameter);
     auto allowsWantedForm = [&] {
         return isLegalRepresentation(m_types.at(m_walker.typeOf(operand)), wanted);
     };
@@ -397,7 +389,7 @@ void BuilderOfEntries::layOutOperands(const ValuesHandedOnByEntries& values, Cod
             operand = listOfArgumentsBehindParameters();
             break;
         }
-        operands.append(inFormThatUnitTakes(operand, target, index, index));
+        operands.append(inFormThatUnitTakes(operand, target, index));
     }
 }
 
@@ -724,105 +716,6 @@ bool BuilderOfEntries::buildTableEntry()
     return !m_walker.hasFailed();
 }
 
-// ---- BoundFunction, GenericEntryOfBoundFunction
-
-const BoundFunctionPlan* BuilderOfEntries::findPlanOfBoundFunction()
-{
-    const BoundFunctionPlan* bound = m_conventions.boundFunction(m_unit.function, m_unit.numberOfBoundArguments);
-    if (!bound)
-        fail("the plan has no such bound function"_s);
-    else
-        RELEASE_ASSERT(bound->target == m_unit.function && bound->numberOfCapturedArguments <= m_function.numberOfPositionalParameters());
-    return bound;
-}
-
-// Whatever a bound function holds or is handed goes on to a position of the target.
-TypeID BuilderOfEntries::typeOfBoundCapture(const BoundCapture& capture)
-{
-    if (std::optional<unsigned> entryParameter = targetEntryParameterOf(m_function, capture))
-        return typeAtEntryOfFunction(*entryParameter);
-    return m_types.forFunction(m_unit.function);
-}
-
-bool BuilderOfEntries::buildBoundFunction()
-{
-    const BoundFunctionPlan* bound = findPlanOfBoundFunction();
-    if (!bound)
-        return false;
-
-    unsigned numberOfCaptures = static_cast<unsigned>(bound->captures.size());
-    unsigned firstUnboundParameter = m_function.firstParameterIndex() + bound->numberOfCapturedArguments;
-    takeParameters([&](unsigned index) {
-        return index < numberOfCaptures ? typeOfBoundCapture(bound->captures[index]) : typeAtEntryOfFunction(firstUnboundParameter + index - numberOfCaptures);
-    });
-    RELEASE_ASSERT(m_parameters.size() == numberOfCaptures + m_function.numberOfPositionalParameters() - bound->numberOfCapturedArguments);
-
-    // new.target stays undefined: the run time answers a construction through a bound function, and enters neither unit.
-    ValuesHandedOnByEntries values;
-    values.captures.fill(Reference(), m_function.captures.size());
-    for (unsigned index = 0; index < numberOfCaptures; ++index) {
-        const BoundCapture& capture = bound->captures[index];
-        Reference held = m_parameters[index];
-        switch (capture.kind) {
-        case BoundCaptureKind::TargetCapture:
-            values.captures[capture.index] = held;
-            break;
-        case BoundCaptureKind::BoundThis:
-            values.thisValue = held;
-            break;
-        case BoundCaptureKind::BoundArgument:
-            RELEASE_ASSERT(capture.index == values.positionalArguments.size());
-            values.positionalArguments.append(held);
-            break;
-        case BoundCaptureKind::TargetClosure:
-            values.closure = held;
-            break;
-        }
-    }
-    RELEASE_ASSERT(values.positionalArguments.size() == bound->numberOfCapturedArguments && !!values.closure == bound->capturesTargetClosure);
-    values.positionalArguments.append(m_parameters.span().subspan(numberOfCaptures));
-
-    CodeUnit target = m_conventions.directEntryOf(bound->target);
-    Vector<Reference, 16> operands;
-    layOutOperands(values, target, operands);
-    returnResultOf(callUnit(target, operands.span()));
-    return !m_walker.hasFailed();
-}
-
-// The caller's `this` is ignored. The unit is entered through the word of a closure that NewBoundClosure has made for the plan, so the captures lie where the plan says.
-bool BuilderOfEntries::buildGenericEntryOfBoundFunction()
-{
-    const BoundFunctionPlan* bound = findPlanOfBoundFunction();
-    if (!bound)
-        return false;
-    GenericEntryPlan entry = m_conventions.genericEntry(m_unit);
-    RELEASE_ASSERT(!entry.takesNewTarget && !entry.allocatesThis && entry.target == CodeUnit(bound->target, CodeRole::BoundFunction, bound->numberOfBoundArguments));
-
-    takeParametersOfGenericConvention(TypeTable::function);
-
-    Vector<Reference, 16> operands;
-    for (uint32_t index = 0; index < bound->captures.size(); ++index) {
-        const BoundCapture& capture = bound->captures[index];
-        Draft read = draft(Opcode::GetBoundCapture);
-        read.setFunction(bound->target);
-        read.setNumberOfBoundArguments(bound->numberOfBoundArguments);
-        read.setIndex(index);
-        read.setValueType(typeOfBoundCapture(capture));
-        read.setClosureOperand(closure());
-        read.representation = capture.representation;
-        operands.append(build(WTF::move(read)));
-    }
-    unsigned numberOfUnboundParameters = m_function.numberOfPositionalParameters() - bound->numberOfCapturedArguments;
-    unsigned firstUnboundParameter = m_function.firstParameterIndex() + bound->numberOfCapturedArguments;
-    for (unsigned index = 0; index < numberOfUnboundParameters; ++index) {
-        Reference argument = positionalArgument(index, m_function.parameters[bound->numberOfCapturedArguments + index]);
-        operands.append(inFormThatUnitTakes(argument, entry.target, static_cast<unsigned>(operands.size()), firstUnboundParameter + index));
-    }
-
-    returnResultOf(callUnit(entry.target, operands.span()));
-    return !m_walker.hasFailed();
-}
-
 } // anonymous namespace
 
 bool walkEntryUnit(Walker& walker, CodeUnit unit)
@@ -838,10 +731,6 @@ bool walkEntryUnit(Walker& walker, CodeUnit unit)
     case CodeRole::ModuleStart:
         walker.fail("the start of a module has no code: a call of it is a call of the stub StartModule"_s);
         return false;
-    case CodeRole::BoundFunction:
-        return builder.buildBoundFunction();
-    case CodeRole::GenericEntryOfBoundFunction:
-        return builder.buildGenericEntryOfBoundFunction();
     case CodeRole::Body:
     case CodeRole::SlowBody:
     case CodeRole::CoroutineBody:

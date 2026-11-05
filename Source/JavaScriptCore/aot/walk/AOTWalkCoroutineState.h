@@ -20,10 +20,8 @@ struct CoroutineStateOfUnit {
     // A suspension was built for the unit. It only ever turns true. Writer: noteSuspensionOfCoroutine().
     bool hasBuiltSuspension { false };
     // Each is made, cast and read by its package alone. Null: the package has kept nothing yet.
-    std::unique_ptr<KeptForUnitOfCoroutines> keptByPromises; // coroutines-2
-    std::unique_ptr<KeptForUnitOfCoroutines> keptByCalls; // coroutines-3
-    std::unique_ptr<KeptForUnitOfCoroutines> keptByGenerators; // coroutines-4
-    std::unique_ptr<KeptForUnitOfCoroutines> keptByFrames; // coroutines-5
+    std::unique_ptr<KeptForUnitOfCoroutines> keptByPromises;
+    std::unique_ptr<KeptForUnitOfCoroutines> keptByCalls;
 };
 
 } } } // namespace JSC::AOT::Typed

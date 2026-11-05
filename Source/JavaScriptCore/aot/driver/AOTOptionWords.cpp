@@ -143,6 +143,12 @@ static bool engineHonorsTestingSwitch(Wire::TestingSwitch testingSwitch)
     // The worklist of Link's flow in another order: scattered, and on lanes from the first tell, however small the program | oldest first. factsRequestForPreparedProgram().
     case Wire::TestingSwitch::DelayFlowRules:
     case Wire::TestingSwitch::DelayOtherFlowRules:
+    // --aot-harden=proof-checks. Mechanism::CellsInFrames is withheld: withoutMechanismsThatOptionsWithhold().
+    case Wire::TestingSwitch::KeepsCellsOutOfFrames:
+    // --aot-harden=ignore-told-ranges. WalkOptions::testsEveryPosition, ElementAccessEmitter::testsEveryPosition().
+    case Wire::TestingSwitch::TestsEveryPosition:
+    // A false bound on purpose, for the red control of that: isKnownToLieInsideList().
+    case Wire::TestingSwitch::PositionsAreTakenToLieInside:
         return true;
     case Wire::TestingSwitch::NobodyLooksAtNewInstances:
     case Wire::TestingSwitch::WalksNothingAtCalls:
@@ -357,6 +363,8 @@ ASCIILiteral nameOfMechanism(Typed::Mechanism mechanism)
         return "BuiltinCalls"_s;
     case Typed::Mechanism::ParameterGuards:
         return "ParameterGuards"_s;
+    case Typed::Mechanism::CellsInFrames:
+        return "CellsInFrames"_s;
     case Typed::Mechanism::Deferral:
         return "Deferral"_s;
     }

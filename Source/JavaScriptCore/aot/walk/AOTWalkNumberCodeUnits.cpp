@@ -18,26 +18,9 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-bool isPositionProvenInsideText(Walker&, Reference, Reference)
-{
-    return false;
-}
-
 Reference buildCharCode(Walker&, const CallByOneRow&)
 {
     return { };
-}
-
-Reference buildCharacterOfString(Walker&, ValueID, Reference, Reference, Origin)
-{
-    return { };
-}
-
-static ValueID recordBehindNamesInCodeUnits(const Code& code, ValueID record)
-{
-    while (opcodesThatGiveSameValue.contains(code.at(record).opcode))
-        record = code.at(record).operand(0);
-    return record;
 }
 
 Reference codeUnitBesideCharCode(Walker& walker, Reference number)
@@ -49,8 +32,6 @@ Reference codeUnitBesideCharCode(Walker& walker, Reference number)
     Type type = walker.types().at(id);
     if (!type.isNumberWithoutFraction() || type.isInteger())
         return { };
-    if (Reference noted = notesOfNumbers(walker).integerBeside(recordBehindNamesInCodeUnits(walker.code(), number.id())))
-        return noted;
     return codeUnitOfCharCodeInSight(walker, number);
 }
 
@@ -62,8 +43,6 @@ Reference codeUnitBesideCharacter(Walker& walker, Reference character)
     Type type = walker.types().at(id);
     if (type.isNever() || !type.hasOnlyPrimitives(Primitive::AnyString | Primitive::Undefined))
         return { };
-    if (Reference noted = notesOfNumbers(walker).integerBeside(recordBehindNamesInCodeUnits(walker.code(), character.id())))
-        return noted;
     return codeUnitOfCharacterInSight(walker, character);
 }
 

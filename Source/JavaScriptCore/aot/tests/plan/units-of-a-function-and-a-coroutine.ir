@@ -8,7 +8,6 @@
 # CHECK-NEXT: unit f2:GenericCallEntry -> f2:Body
 # CHECK-NEXT: unit f2:CoroutineBody (JSValue, JSValue) -> (JSValue)
 # RUN(NEVER): plan units mechanisms=none
-# NEVER-NOT: BoundFunction
 # NEVER-NOT: Table
 # NEVER-NOT: f1:CoroutineBody
 

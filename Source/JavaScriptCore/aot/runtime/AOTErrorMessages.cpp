@@ -410,8 +410,6 @@ static String refusalInTestRun(VM& vm, ASCIILiteral change, BuiltinID holder, Un
     bool isText = !key->isSymbol() && !parseIndex(*key);
     // A member that is constant unless written is locked only where the build has followed no write to it.
     bool canBeOpened = found ? table.canBeReplacedInTestRuns(found) || table.at(found).mutability == BuiltinMutability::ConstantUnlessWritten : isText && table.canTakeNameInTestRuns(holder, name);
-    // The language lets nobody replace `Bun`, so a build reads it without a lookup in a test run too.
-    canBeOpened &= !found || table.canonicalID(found) != Builtins::Bun;
     ASCIILiteral does = found ? "replace"_s : "add"_s;
     if (!canBeOpened)
         return refusalThatNoTestRunLifts(change, member, does);

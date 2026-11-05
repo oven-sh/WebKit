@@ -17,7 +17,6 @@
 #include "AOTIRProgram.h"
 #include "AOTPrimitiveEmitter.h"
 #include "AOTRepresentationRules.h"
-#include "AOTStaticsEmitter.h"
 #include "AOTStringEmitter.h"
 #include "AOTTypeIDs.h"
 #include <algorithm>
@@ -89,9 +88,6 @@ GenerationResult CodeGenerator::run()
         return GenerationResult::Failed;
 
     m_values = allocateZeroedSpan<LValue>(m_proc.arena(), code().numberOfValues());
-    bool runsBodyFromItsStart = code().role() == CodeRole::Body || code().role() == CodeRole::SlowBody;
-    if (runsBodyFromItsStart && plan().entersFile(unit().function))
-        m_blockEnteringFile = code().entries()[0].block;
     orderBlocks();
     createBlocks();
     followNumbersOutOfBytes();
@@ -707,10 +703,6 @@ void CodeGenerator::generateBlock(BlockID id)
         m_out.appendTo(blockFor(id));
     m_out.setOrigin(Machine::Origin());
     m_isAheadOfWhatMayThrow = true;
-
-    // Edges of the function itself may lead back here. The test answers the same each time it is made.
-    if (id == m_blockEnteringFile) [[unlikely]]
-        emitter<StaticsEmitter>().fillVariablesOfEnteredFile();
 
     if (ValueID owned = valueOwnedByTerminator(block.terminator)) {
         RELEASE_ASSERT(!values.empty() && values.back() == owned);

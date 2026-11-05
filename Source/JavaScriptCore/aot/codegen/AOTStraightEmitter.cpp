@@ -10,6 +10,7 @@
 
 #include "AOTBuildContext.h"
 #include "AOTBuiltinTableBindings.h"
+#include "AOTModuleEmitter.h"
 #include "AOTStubCatalog.h"
 #include "AOTStubsArithmetic.h"
 #include "AOTRepresentationRules.h"
@@ -70,7 +71,7 @@ bool StraightEmitter::covers(const CodeGenerationInputs& inputs, CodeUnit unit, 
         return false;
     if (conventions.isCoroutine(unit.function))
         return false;
-    if (inputs.plan.entersFile(unit.function) || inputs.plan.moduleEvaluation().moduleThatBeginsIn(unit.function))
+    if (inputs.plan.moduleEvaluation().moduleThatBeginsIn(unit.function))
         return false;
     if (!crossesEntryOfStraightUnit(conventions.resultRepresentation(unit)))
         return false;
@@ -86,6 +87,13 @@ bool StraightEmitter::covers(const CodeGenerationInputs& inputs, CodeUnit unit, 
     index.body().forEachBlock([&](BodyBlock block) {
         if (std::ranges::binary_search(blocksNeverEntered, block.id()))
             return;
+        // StraightEmitter::generateModule() asks the run time.
+        for (BodyValue value : block.values()) {
+            if (!opcodes.contains(Opcode::ModuleNamespace))
+                break;
+            if (value.opcode() == Opcode::ModuleNamespace && !value.ofModuleItself() && !value.asksAnew() && !ModuleEmitter::asksRunTimeForNamespaceAtEveryRead(inputs.program, inputs.plan, value.module(), value.phase()))
+                isCovered = false;
+        }
         TerminatorKind kind = block.terminator().kind();
         if (kind == TerminatorKind::ReturnCall && unit.role == CodeRole::Body && conventions.resultRepresentation(unit) != Representation::JSValue)
             isCovered = false;
@@ -180,11 +188,6 @@ void StraightEmitter::measureFrame()
         m_numberOfSlots = 0;
         m_wordsOfScratchArea = 0;
     }
-}
-
-bool StraightEmitter::isInLoop() const
-{
-    return !!m_index.loopOf(m_block.id());
 }
 
 void StraightEmitter::fail(Opcode opcode)
@@ -400,7 +403,7 @@ void StraightEmitter::load(ValueID value, GPRReg destination)
         m_sizeOfCodeAtCopy = m_jit->m_assembler.codeSize();
         return;
     }
-    if (destination == resultGPR)
+    if (isResultRegister(destination))
         storeWhatWaitsInRegister();
     if (std::optional<JSValue> constant = constantOf(value)) {
         m_jit->move(CCallHelpers::TrustedImm64(JSValue::encode(*constant)), destination);
@@ -454,6 +457,9 @@ void StraightEmitter::bringAll(std::span<const StraightArgument> arguments, NOES
             continue;
         const StraightArgument& argument = arguments[i];
         if (!goesIntoThunk(argument)) {
+            // A register that is handed on is read here: nothing that was brought ahead of it may lie there.
+            for (size_t earlier = 0; argument.kind == StraightArgument::Kind::Register && earlier < arguments.size(); ++earlier)
+                RELEASE_ASSERT(!(earlier == broughtFirst || (earlier < i && !goesIntoThunk(arguments[earlier]))) || registerOf(earlier) != static_cast<GPRReg>(argument.bits));
             bring(argument, registerOf(i));
             continue;
         }
@@ -464,6 +470,35 @@ void StraightEmitter::bringAll(std::span<const StraightArgument> arguments, NOES
         else
             appendArgumentMove(*leftToThunk, registerOf(i), ArgumentSource::Stack64, static_cast<uint64_t>(static_cast<int64_t>(addressOfSlot(argument.value).offset)));
     }
+
+    // Under Validate. Each value that was brought here is read again out of its word and held against its register. What was taken out of the result register has no word.
+    if (!m_build.options().recorded.validates) [[likely]]
+        return;
+    AllowMacroScratchRegisterUsage allowScratch(*m_jit);
+    GPRReg again = m_jit->scratchRegister();
+    for (size_t i = 0; i < arguments.size(); ++i) {
+        if (registerOf(i) == again)
+            return;
+    }
+    CCallHelpers::JumpList differs;
+    for (size_t i = 0; i < arguments.size(); ++i) {
+        const StraightArgument& argument = arguments[i];
+        if (argument.kind != StraightArgument::Kind::Value || (i != broughtFirst && goesIntoThunk(argument)))
+            continue;
+        if (m_valueTakenOutOfRegister && rootOf(argument.value) == m_valueTakenOutOfRegister)
+            continue;
+        if (std::optional<JSValue> constant = constantOf(argument.value))
+            m_jit->move(CCallHelpers::TrustedImm64(JSValue::encode(*constant)), again);
+        else
+            m_jit->load64(addressOfSlot(argument.value), again);
+        differs.append(m_jit->branch64(CCallHelpers::NotEqual, again, registerOf(i)));
+    }
+    if (differs.empty())
+        return;
+    CCallHelpers::Jump isRight = m_jit->jump();
+    differs.link(m_jit);
+    m_jit->breakpoint();
+    isRight.link(m_jit);
 }
 
 void StraightEmitter::bring(const StraightArgument& argument, GPRReg destination)
@@ -473,12 +508,12 @@ void StraightEmitter::bring(const StraightArgument& argument, GPRReg destination
         load(argument.value, destination);
         return;
     case StraightArgument::Kind::Word:
-        if (destination == resultGPR)
+        if (isResultRegister(destination))
             storeWhatWaitsInRegister();
         m_jit->move(CCallHelpers::TrustedImm64(static_cast<int64_t>(argument.bits)), destination);
         return;
     case StraightArgument::Kind::Number:
-        if (destination == resultGPR)
+        if (isResultRegister(destination))
             storeWhatWaitsInRegister();
         m_records.relocations.moveNumber({ SymbolSpace::Number, static_cast<uint32_t>(argument.bits) }, destination);
         return;
@@ -487,7 +522,7 @@ void StraightEmitter::bring(const StraightArgument& argument, GPRReg destination
         m_jit->move(static_cast<GPRReg>(argument.bits), destination);
         return;
     case StraightArgument::Kind::AddressInScratchArea:
-        if (destination == resultGPR)
+        if (isResultRegister(destination))
             storeWhatWaitsInRegister();
         m_jit->addPtr(CCallHelpers::TrustedImm32(static_cast<int32_t>(argument.bits * sizeof(EncodedJSValue))), CCallHelpers::stackPointerRegister, destination);
         return;
@@ -501,27 +536,26 @@ void StraightEmitter::storeInScratchArea(ValueID value, uint32_t word)
         m_jit->store64(CCallHelpers::TrustedImm64(JSValue::encode(*constant)), wordOfScratchArea(word));
         return;
     }
-    load(value, resultGPR);
-    m_jit->store64(resultGPR, wordOfScratchArea(word));
+    m_jit->store64(loadIntoResultRegister(value), wordOfScratchArea(word));
 }
 
 void StraightEmitter::define(const BodyValue& value, GPRReg boxed)
 {
     // Whoever writes the result register stores what waits there first. What still waits here has been written over, and to bring it into its boxed form would change the new value.
-    if (m_valueInRegister && boxed == resultGPR) {
+    if (m_valueInRegister && isResultRegister(boxed)) {
         fail(value);
         return;
     }
     storeWhatWaitsInRegister();
     if (m_index.isUnused(value.id()))
         return;
-    if (boxed == resultGPR && isReadByNextCodeAlone(value)) {
+    if (isResultRegister(boxed) && isReadByNextCodeAlone(value)) {
         m_valueInRegister = value.id();
         m_formInRegister = FormInRegister::Boxed;
         return;
     }
     m_jit->store64(boxed, addressOfSlot(value.id()));
-    if (boxed == resultGPR)
+    if (isResultRegister(boxed))
         noteCopyInRegister(value.id());
 }
 
@@ -554,14 +588,14 @@ void StraightEmitter::throwIfEmpty(const BodyValue& check, ValueID checked, cons
 
 void StraightEmitter::defineBoolean(const BodyValue& value, GPRReg zeroOrOne)
 {
-    if (m_valueInRegister && zeroOrOne == resultGPR) {
+    if (m_valueInRegister && isResultRegister(zeroOrOne)) {
         fail(value);
         return;
     }
     storeWhatWaitsInRegister();
     if (m_index.isUnused(value.id()))
         return;
-    if (zeroOrOne == resultGPR && isReadByNextCodeAlone(value)) {
+    if (isResultRegister(zeroOrOne) && isReadByNextCodeAlone(value)) {
         m_valueInRegister = value.id();
         m_formInRegister = FormInRegister::ZeroOrOne;
         return;
@@ -578,8 +612,9 @@ void StraightEmitter::defineInt32(const BodyValue& value, GPRReg word)
 
 void StraightEmitter::defineDouble(const BodyValue& value, FPRReg number)
 {
-    boxDouble(number, resultGPR);
-    define(value, resultGPR);
+    GPRReg result = takeResultRegister();
+    boxDouble(number, result);
+    define(value, result);
 }
 
 ValueID StraightEmitter::resultAt(const BodyValue& producer, uint32_t index) const
@@ -604,6 +639,9 @@ void StraightEmitter::boxDouble(FPRReg number, GPRReg boxed)
 {
     StubKey key = boxNumber(BoxedNumberForm::Double);
     const StubSignature& signature = m_inputs.stubCatalog.summaryOf(key).signature;
+    // On x86-64 the stub answers in the result register, whatever `boxed` is.
+    if (isResultRegister(signature.firstResult.gpr()))
+        takeResultRegister();
     m_jit->moveDouble(number, signature.operands[0].fpr());
     m_records.stubCalls.call(*m_jit, key, OptionalIndex { });
     m_jit->move(signature.firstResult.gpr(), boxed);
@@ -669,8 +707,8 @@ void StraightEmitter::unboxIntoForm(Representation representation, GPRReg word)
     case Representation::Int32: {
         // What is read out of a slot of doubles comes boxed as a double even where it is an int32. A call converts its integers behind its numbers, which lie in the argument FPRs by then: resultFPR is the first of them.
         CCallHelpers::Jump isInt32 = m_jit->branchIfInt32(word);
-        m_jit->unboxDoubleWithoutAssertions(word, word, CCallHelpers::fpTempRegister);
-        m_jit->truncateDoubleToInt32(CCallHelpers::fpTempRegister, word);
+        m_jit->unboxDoubleWithoutAssertions(word, word, conversionFPR);
+        m_jit->truncateDoubleToInt32(conversionFPR, word);
         isInt32.link(m_jit);
         m_jit->zeroExtend32ToWord(word, word);
         return;
@@ -732,7 +770,10 @@ void StraightEmitter::noteSiteMayThrow(uint32_t site)
 
 void StraightEmitter::generateLandingPads(unsigned bytesBelowFrameRecord)
 {
-    for (const LandingPad& pad : m_landingPads) {
+    // A call in a pad whose handler block has a handler of its own adds a pad to the list.
+    for (size_t index = 0; index < m_landingPads.size(); ++index) {
+        LandingPad pad = m_landingPads[index];
+        m_landingPadOfBlockPlusOne = 0;
         m_block = m_index.block(pad.from);
         BodyTarget handler = m_block.handler();
         *pad.label = m_jit->label();
@@ -983,16 +1024,19 @@ void StraightEmitter::takeParameters(const ArgumentLocations& locations)
                 RELEASE_ASSERT(location.representation == Representation::Double);
                 m_jit->storeDouble(location.reg.fpr(), addressOfSlot(parameter));
                 break;
-            case ArgumentLocation::Kind::Stack:
+            case ArgumentLocation::Kind::Stack: {
+                GPRReg result = takeResultRegister();
                 if (location.representation == Representation::Double) {
-                    m_jit->loadDouble(CCallHelpers::Address(GPRInfo::callFrameRegister, offsetOfStackWordFromFrame(location.stackIndex)), resultFPR);
-                    boxDouble(resultFPR, resultGPR);
+                    FPRReg number = takeResultFPR();
+                    m_jit->loadDouble(CCallHelpers::Address(GPRInfo::callFrameRegister, offsetOfStackWordFromFrame(location.stackIndex)), number);
+                    boxDouble(number, result);
                 } else {
-                    m_jit->load64(CCallHelpers::Address(GPRInfo::callFrameRegister, offsetOfStackWordFromFrame(location.stackIndex)), resultGPR);
-                    boxInForm(location.representation, resultGPR);
+                    m_jit->load64(CCallHelpers::Address(GPRInfo::callFrameRegister, offsetOfStackWordFromFrame(location.stackIndex)), result);
+                    boxInForm(location.representation, result);
                 }
-                m_jit->store64(resultGPR, addressOfSlot(parameter));
+                m_jit->store64(result, addressOfSlot(parameter));
                 break;
+            }
             }
         }
     }
@@ -1008,11 +1052,12 @@ void StraightEmitter::takeParameters(const ArgumentLocations& locations)
         const PlannedLayout& planned = m_inputs.plan.layout(declared.environment);
         if (!planned.isEscapedOffset || planned.liesOnlyInFrames)
             continue;
-        m_jit->load64(addressOfSlot(parameter), resultGPR);
+        GPRReg environment = takeResultRegister();
+        m_jit->load64(addressOfSlot(parameter), environment);
         CCallHelpers::Jump isNoCell;
         if (declared.primitives)
-            isNoCell = m_jit->branchIfNotCell(resultGPR);
-        m_jit->store8(CCallHelpers::TrustedImm32(1), CCallHelpers::Address(resultGPR, static_cast<int32_t>(*planned.isEscapedOffset)));
+            isNoCell = m_jit->branchIfNotCell(environment);
+        m_jit->store8(CCallHelpers::TrustedImm32(1), CCallHelpers::Address(environment, static_cast<int32_t>(*planned.isEscapedOffset)));
         if (isNoCell.isSet())
             isNoCell.link(m_jit);
     }
@@ -1020,9 +1065,11 @@ void StraightEmitter::takeParameters(const ArgumentLocations& locations)
         ValueID parameter = entry.parameter(index);
         if (locations.parameters[index].kind != ArgumentLocation::Kind::FPR || m_index.isUnused(parameter))
             continue;
-        m_jit->loadDouble(addressOfSlot(parameter), resultFPR);
-        boxDouble(resultFPR, resultGPR);
-        m_jit->store64(resultGPR, addressOfSlot(parameter));
+        GPRReg result = takeResultRegister();
+        FPRReg number = takeResultFPR();
+        m_jit->loadDouble(addressOfSlot(parameter), number);
+        boxDouble(number, result);
+        m_jit->store64(result, addressOfSlot(parameter));
     }
 }
 
@@ -1197,9 +1244,9 @@ bool StraightEmitter::leavesDefinitionToFirstRead(const BodyValue& value)
         return false;
     if (value.opcode() == Opcode::PutModuleVariable && deferred->isMarkedAtDeclaration) {
         JSValue mark = deferred->mark == Primitive::Undefined ? jsUndefined() : deferred->mark == Primitive::Null ? jsNull() : JSValue();
-        storeWhatWaitsInRegister();
-        m_jit->move(CCallHelpers::TrustedImm64(JSValue::encode(mark)), resultGPR);
-        storeVariable(deferred->variable, resultGPR);
+        GPRReg result = takeResultRegister();
+        m_jit->move(CCallHelpers::TrustedImm64(JSValue::encode(mark)), result);
+        storeVariable(deferred->variable, result);
     }
     return true;
 }
@@ -1376,25 +1423,27 @@ void StraightEmitter::tearDownFrame()
 void StraightEmitter::branchOnCondition(ValueID condition, bool jumpsIfTrue, BlockID target)
 {
     if (waitsInRegister(condition) && m_formInRegister == FormInRegister::Test) {
+        GPRReg word = registerOfWaitingValue(condition);
         m_valueTakenOutOfRegister = std::exchange(m_valueInRegister, { });
         if (m_testInRegister.mask)
-            m_jit->and64(CCallHelpers::TrustedImm32(m_testInRegister.mask), resultGPR);
-        m_jumps.append({ m_jit->branch64(jumpsIfTrue ? CCallHelpers::Equal : CCallHelpers::NotEqual, resultGPR, CCallHelpers::TrustedImm32(m_testInRegister.word)), target });
+            m_jit->and64(CCallHelpers::TrustedImm32(m_testInRegister.mask), word);
+        m_jumps.append({ m_jit->branch64(jumpsIfTrue ? CCallHelpers::Equal : CCallHelpers::NotEqual, word, CCallHelpers::TrustedImm32(m_testInRegister.word)), target });
         return;
     }
     if (waitsInRegister(condition) && m_formInRegister == FormInRegister::ZeroOrOne) {
+        GPRReg zeroOrOne = registerOfWaitingValue(condition);
         m_valueTakenOutOfRegister = std::exchange(m_valueInRegister, { });
-        m_jumps.append({ m_jit->branchTest32(jumpsIfTrue ? CCallHelpers::NonZero : CCallHelpers::Zero, resultGPR), target });
+        m_jumps.append({ m_jit->branchTest32(jumpsIfTrue ? CCallHelpers::NonZero : CCallHelpers::Zero, zeroOrOne), target });
         return;
     }
     if (!givesBoolean(condition)) {
         StraightArgument tested(condition);
         callStub(Origin { }, AOT::toBoolean(), { &tested, 1 }, { });
-        m_jumps.append({ m_jit->branchTest32(jumpsIfTrue ? CCallHelpers::NonZero : CCallHelpers::Zero, resultGPR), target });
+        m_jumps.append({ m_jit->branchTest32(jumpsIfTrue ? CCallHelpers::NonZero : CCallHelpers::Zero, resultOfCall()), target });
         return;
     }
-    load(condition, resultGPR);
-    m_jumps.append({ m_jit->branch32(jumpsIfTrue ? CCallHelpers::Equal : CCallHelpers::NotEqual, resultGPR, CCallHelpers::TrustedImm32(JSValue::ValueTrue)), target });
+    GPRReg boxed = loadIntoResultRegister(condition);
+    m_jumps.append({ m_jit->branch32(jumpsIfTrue ? CCallHelpers::Equal : CCallHelpers::NotEqual, boxed, CCallHelpers::TrustedImm32(JSValue::ValueTrue)), target });
 }
 
 bool StraightEmitter::givesBoolean(ValueID value) const
@@ -1409,9 +1458,9 @@ bool StraightEmitter::givesBoolean(ValueID value) const
 void StraightEmitter::generateReturn(const BodyTerminator& terminator)
 {
     if (ValueID value = terminator.valueOperand())
-        load(value, resultGPR);
+        loadIntoResultRegister(value);
     else
-        m_jit->move(CCallHelpers::TrustedImm64(JSValue::encode(jsUndefined())), resultGPR);
+        m_jit->move(CCallHelpers::TrustedImm64(JSValue::encode(jsUndefined())), takeResultRegister());
     returnToCaller();
 }
 
@@ -1471,13 +1520,12 @@ void StraightEmitter::generateTerminator(BodyBlock block, const BodyTerminator& 
             return;
         }
         CCallHelpers::Jump isFalse;
-        if (givesBoolean(condition)) {
-            load(condition, resultGPR);
-            isFalse = m_jit->branch32(CCallHelpers::NotEqual, resultGPR, CCallHelpers::TrustedImm32(JSValue::ValueTrue));
-        } else {
+        if (givesBoolean(condition))
+            isFalse = m_jit->branch32(CCallHelpers::NotEqual, loadIntoResultRegister(condition), CCallHelpers::TrustedImm32(JSValue::ValueTrue));
+        else {
             StraightArgument tested(condition);
             callStub(Origin { }, AOT::toBoolean(), { &tested, 1 }, { });
-            isFalse = m_jit->branchTest32(CCallHelpers::Zero, resultGPR);
+            isFalse = m_jit->branchTest32(CCallHelpers::Zero, resultOfCall());
         }
         passArguments(terminator, 0, taken);
         m_jumps.append({ m_jit->jump(), taken.block() });
@@ -1548,6 +1596,8 @@ void StraightEmitter::generateSwitch(BodyBlock block, const BodyTerminator& term
 
     GPRReg subject = temporary(0);
     load(terminator.subjectOperand(), subject);
+    // One arm writes it and on the other the operation leaves its answer there.
+    GPRReg integer = takeResultRegister();
     CCallHelpers::JumpList goesToOtherwise;
     CCallHelpers::Jump isInt32 = m_jit->branchIfInt32(subject);
     goesToOtherwise.append(m_jit->branchIfNotNumber(subject));
@@ -1555,7 +1605,7 @@ void StraightEmitter::generateSwitch(BodyBlock block, const BodyTerminator& term
     callOperation(terminator.origin(), RuntimeOperation::TryConvertToInteger, { &passed, 1 }, { });
     CCallHelpers::Jump isConverted = m_jit->jump();
     isInt32.link(m_jit);
-    m_jit->signExtend32ToPtr(subject, resultGPR);
+    m_jit->signExtend32ToPtr(subject, integer);
     isConverted.link(m_jit);
 
     for (uint32_t index = 0; index < numberOfCases; ++index) {
@@ -1568,10 +1618,10 @@ void StraightEmitter::generateSwitch(BodyBlock block, const BodyTerminator& term
         }
         if (edgeMovesNothing(terminator, index, targets[index])) {
             passArguments(terminator, index, targets[index]);
-            m_jumps.append({ m_jit->branch64(CCallHelpers::Equal, resultGPR, CCallHelpers::TrustedImm32(static_cast<int32_t>(caseValue))), targets[index].block() });
+            m_jumps.append({ m_jit->branch64(CCallHelpers::Equal, integer, CCallHelpers::TrustedImm32(static_cast<int32_t>(caseValue))), targets[index].block() });
             continue;
         }
-        CCallHelpers::Jump isOther = m_jit->branch64(CCallHelpers::NotEqual, resultGPR, CCallHelpers::TrustedImm32(static_cast<int32_t>(caseValue)));
+        CCallHelpers::Jump isOther = m_jit->branch64(CCallHelpers::NotEqual, integer, CCallHelpers::TrustedImm32(static_cast<int32_t>(caseValue)));
         passArguments(terminator, index, targets[index]);
         m_jumps.append({ m_jit->jump(), targets[index].block() });
         isOther.link(m_jit);

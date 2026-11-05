@@ -707,17 +707,6 @@ void KnownAnswers::holderHasLeft(Reference holder)
     }
 }
 
-void KnownAnswers::forEachNoteOf(Reference holder, NOESCAPE const ScopedLambda<void(const KnownAnswer&)>& functor) const
-{
-    if (!m_table || isEmpty())
-        return;
-    for (uint32_t place = m_table->newestOfHolder(holder); place; place = m_table->at(place - 1).olderOfHolder) {
-        const KnownAnswer& answer = m_table->at(place - 1);
-        if (answer.family == KnownAnswer::Family::Note && holds(place - 1))
-            functor(answer);
-    }
-}
-
 // ---- Keys. The first word says what kind of key it is, and which of the values behind it stand by their content.
 
 static constexpr uint32_t shiftOfFamilyInKeyOfKnownAnswer = 30;
@@ -796,8 +785,6 @@ static bool isOutcomeOfValueInKnownAnswers(KnownNote kind, Reference holder, Ref
 
 void noteKnown(Walker& walker, KnownNote kind, Reference subject, Reference other, uint32_t word, const LocationMasks& restsOn, uint64_t noted, bool endsAtSuspension)
 {
-    // No heap says that something may collect, so no note could end where a young cell grows old, and one that did would send every allocation through all that rests on a heap. The sweep finds the cell: Sweep::lookForBirthOfOwner().
-    RELEASE_ASSERT(kind != KnownNote::YoungCell);
     if (!walker.has(Mechanism::Folding))
         return;
     const Code& code = walker.code();
@@ -856,7 +843,7 @@ void endKnown(Walker& walker, KnownNote kind, Reference subject, Reference other
 // ---- K1: an equal operation is built once
 
 // THE MACHINE NUMBERS PURE MACHINE OPERATIONS IN ITS SCOPE (machine/AOTMachineNumbering.h). Numbered here is what it cannot find, or what the state needs under one name:
-// a test, whose outcome a branch may have decided . what may be an index or a length, under which the state knows an element or a relation . a form that calls a stub . a read of what is written once.
+// a test, whose outcome a branch may have decided . what may be an index or a length, under which the state knows an element or a relation . a form that calls a stub.
 static constexpr OpcodeSet testsNumberedInKnownAnswers = allEqualities | allRelations | OpcodeSet { Opcode::ToBoolean };
 static constexpr OpcodeSet valuesNumberedInKnownAnswers = allNumericOperators | OpcodeSet { Opcode::ToInt32, Opcode::ToUint32, Opcode::GetStringLength, Opcode::GetTypedArrayLength, Opcode::PrivateGet };
 // The first may fail or run code. It fills a cell of the instance, which every later one only reads.
@@ -992,12 +979,6 @@ Reference findEqualOperationBuiltOfItsOpcodes(Walker& walker, const Draft& draft
         std::optional<uint64_t> length = findKnown(walker, KnownNote::LengthOfList, draft.arrayOperand());
         return length ? unlessWiderThanDraftInKnownAnswers(walker, draft, Reference::fromBits(static_cast<uint32_t>(*length))) : Reference();
     }
-    if (opcode == Opcode::GetSlot) {
-        if (answers.isEmpty() || !slotKeepsValueOnceFilled(walker, draft))
-            return { };
-        std::optional<uint64_t> kept = findKnown(walker, KnownNote::ValueKeptByPlace, draft.objectOperand(), { }, draft.key().bits());
-        return kept ? unlessWiderThanDraftInKnownAnswers(walker, draft, Reference::fromBits(static_cast<uint32_t>(*kept))) : Reference();
-    }
     if (opcode == Opcode::GetStringLength) {
         if (Reference length = unlessWiderThanDraftInKnownAnswers(walker, draft, lengthOfKnownCharacters(walker, draft.stringOperand())))
             return length;
@@ -1032,11 +1013,6 @@ void noteOperationBuiltOfItsOpcodes(Walker& walker, const Draft& draft, const Ef
 
     if (opcode == Opcode::GetArrayLength) {
         noteKnown(walker, KnownNote::LengthOfList, draft.arrayOperand(), { }, 0, LocationMasks(AbstractHeapSet { AbstractHeap::ArrayStorage }), built.bits());
-        return;
-    }
-    if (opcode == Opcode::GetSlot) {
-        if (slotKeepsValueOnceFilled(walker, draft))
-            noteKnown(walker, KnownNote::ValueKeptByPlace, draft.objectOperand(), { }, draft.key().bits(), LocationMasks(), built.bits());
         return;
     }
     if (opcode == Opcode::Strcat || opcode == Opcode::Add)
@@ -1111,21 +1087,6 @@ std::optional<bool> outcomeKnownOf(Walker& walker, Reference condition)
     return std::nullopt;
 }
 
-// The branch may stand behind a write that the test stands in front of.
-static bool nothingIsWrittenBehindTestInKnownAnswers(const Code& code, BlockID block, ValueID test)
-{
-    if (code.blockOf(test) != block)
-        return false;
-    for (ValueID record = code.lastOperationOf(block); record && record != test; record = code.at(record).previous) {
-        EffectTraits traits = code.at(record).traits();
-        if (traits.mayWriteWhatIsSeen() || traits.mayRunOtherCode())
-            return false;
-    }
-    return true;
-}
-
-static constexpr OpcodeSet testsOfElementsInKnownAnswers { Opcode::HasArrayStorage, Opcode::IsPristine, Opcode::IsInsideView };
-
 // K3. In one spelling: `a > b` is `b < a`, for every number. What follows from a comparison that has failed is for whoever asks: NaN fails all four.
 static void noteRelationInKnownAnswers(Walker& walker, const Operation& comparison, bool isTrue)
 {
@@ -1166,8 +1127,6 @@ void noteWhatBranchDecidesOnEdge(Walker& walker, BlockID from, uint32_t targetIn
         }
         if (allRelations.contains(record.opcode))
             noteRelationInKnownAnswers(walker, record, isTrue);
-        else if (testsOfElementsInKnownAnswers.contains(record.opcode) && nothingIsWrittenBehindTestInKnownAnswers(code, from, condition.id()))
-            noteWhatTestOfElementsShows(walker, condition.id(), isTrue);
         return;
     }
 }

@@ -50,7 +50,7 @@ static constexpr bool hasFaultingLoopPolls = !!sizeOfLoopPoll;
 // "Is it a cell?" in front of a read of the word of its shape is left to the hardware. A boxed int32 or double is no address that the processor takes, and undefined, null, true, false and the empty value lie in the first page,
 // which is never mapped: the read faults, and the handler gives it zero, the word of a cell without a shape, which every test that holdsForAnyCell() refuses. A fault costs microseconds: only where no such value is expected.
 // Not on ARM64: the top byte of an address is ignored there, so a boxed double may name memory that is mapped.
-// NOWHERE, since 11-04: what is expected is what is written, and data breaks that: numbers out of JSON.parse where objects are written cost a fault a read, a hundred times and more what the test costs, as often as whoever sends them likes,
+// Nowhere: what is expected is what is written, and data breaks that: numbers out of JSON.parse where objects are written cost a fault a read, a hundred times and more what the test costs, as often as whoever sends them likes,
 // and nothing here learns: no code is patched, and whatever stood in front of the read to ask would be the test. The test is asked.
 #define AOT_READS_OFF_NO_CELL_FAULT 0
 static constexpr bool readsOffNoCellFault = !!AOT_READS_OFF_NO_CELL_FAULT;

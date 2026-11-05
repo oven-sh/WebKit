@@ -51,14 +51,6 @@ struct ExplainedCause {
     Wire::UnprovenCause cause { Wire::UnprovenCause::Unknown };
     Wire::IllTypedCause illTypedCause { Wire::IllTypedCause::None };
     Wire::Witness witness { Typed::noWitness };
-    uint32_t distance { 0 };
-    bool hasOtherRoots { false };
-    Wire::OtherOriginsRecord otherOrigins;
-};
-
-struct ExplainedAccess {
-    Wire::AccessRecord record;
-    Wire::OtherOriginsRecord otherOrigins;
 };
 
 struct ExplainedHeapCause {
@@ -560,23 +552,11 @@ static uint32_t countExplainedAllocations(std::span<const Typed::WalkNotes> unit
 static ExplainedCause explainCauseOfNote(const Typed::Program& program, const Typed::Facts& facts, const Typed::WalkNote& note)
 {
     ExplainedCause explained;
-    if (note.hasSubject && facts.tracesUnknownValues()) {
-        Typed::UnknownOrigin origin = facts.originOfUnknownAt(note.subject);
-        if (origin.cause != Wire::UnprovenCause::Unknown) {
-            explained.cause = origin.cause;
-            explained.witness = origin.witness;
-            explained.distance = origin.distance;
-            explained.hasOtherRoots = origin.hasOtherRoots;
-            explained.otherOrigins.locations = origin.otherOrigins;
-        }
-    }
-    if (explained.cause == Wire::UnprovenCause::Unknown) {
-        explained.cause = note.cause;
-        // No seed stands behind a mutation or an escape of a named object. Facts keeps the lowest place that does it.
-        if (std::optional<Typed::ObjectMutation> mutation = mutationForExplainedCause(explained.cause)) {
-            if (Typed::ObjectID object = objectNamedByExplainNote(program, note))
-                explained.witness = facts.witnessOf(object, *mutation);
-        }
+    explained.cause = note.cause;
+    // Facts keeps the lowest place that mutates a named object, or lets it escape.
+    if (std::optional<Typed::ObjectMutation> mutation = mutationForExplainedCause(explained.cause)) {
+        if (Typed::ObjectID object = objectNamedByExplainNote(program, note))
+            explained.witness = facts.witnessOf(object, *mutation);
     }
     explained.illTypedCause = note.illTypedCause != Wire::IllTypedCause::None ? note.illTypedCause : illTypedCauseForExplainedCause(explained.cause);
     if (Typed::hasFunction(explained.witness) && !hasModule(explained.witness.location))
@@ -610,13 +590,12 @@ static bool isExplainedOperator(Wire::AccessKind kind)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static ExplainedAccess makeExplainedAccess(const Typed::Program& program, const Typed::Facts& facts, std::span<const Typed::WalkNotes> units, std::span<const PlacedExplainNote> notesOfPlace, bool asksForCause)
+static Wire::AccessRecord makeExplainedAccess(const Typed::Program& program, const Typed::Facts& facts, std::span<const Typed::WalkNotes> units, std::span<const PlacedExplainNote> notesOfPlace, bool asksForCause)
 {
     const PlacedExplainNote& place = notesOfPlace.front();
     const Typed::WalkNote& worst = explainedWalkNote(units, place);
 
-    ExplainedAccess access;
-    Wire::AccessRecord& record = access.record;
+    Wire::AccessRecord record;
     record.location = place.location;
     record.kind = worst.access;
     record.level = levelOfExplainedOperation(worst.kind);
@@ -630,7 +609,7 @@ static ExplainedAccess makeExplainedAccess(const Typed::Program& program, const 
         record.loopDepth = std::max<uint32_t>(record.loopDepth, note.loopDepth);
     }
     if (!asksForCause || (record.level == Wire::KnowledgeLevel::Proven && record.cost == Wire::AccessCost::Free))
-        return access;
+        return record;
 
     ExplainedCause explained = explainCauseOfNote(program, facts, worst);
     // `x + 1` with `x: number | string` has no typed form though no `unknown` reaches it. Of an access, Unknown reads as a fault of the compiler.
@@ -642,17 +621,14 @@ static ExplainedAccess makeExplainedAccess(const Typed::Program& program, const 
     record.cause = explained.cause;
     record.illTypedCause = explained.illTypedCause;
     record.witness = explained.witness;
-    record.distance = explained.distance;
-    record.hasOtherRoots = explained.hasOtherRoots;
-    access.otherOrigins = explained.otherOrigins;
-    return access;
+    return record;
 }
 
-static Vector<ExplainedAccess> explainAccesses(const Typed::Program& program, const Typed::Facts& facts, std::span<const Typed::WalkNotes> units, bool asksForCauses, const ParallelLoops& loops)
+static Vector<Wire::AccessRecord> explainAccesses(const Typed::Program& program, const Typed::Facts& facts, std::span<const Typed::WalkNotes> units, bool asksForCauses, const ParallelLoops& loops)
 {
     Vector<PlacedExplainNote> notes = placeExplainNotes(program, facts, units, NotesToExplain::Operations, loops);
     Vector<uint32_t> firstNoteOfPlace = findExplainedPlaces(notes.span());
-    return collectInParallel<ExplainedAccess>(loops, static_cast<unsigned>(firstNoteOfPlace.size() - 1), [&](unsigned place, Vector<ExplainedAccess>& found) {
+    return collectInParallel<Wire::AccessRecord>(loops, static_cast<unsigned>(firstNoteOfPlace.size() - 1), [&](unsigned place, Vector<Wire::AccessRecord>& found) {
         found.append(makeExplainedAccess(program, facts, units, notes.span().subspan(firstNoteOfPlace[place], firstNoteOfPlace[place + 1] - firstNoteOfPlace[place]), asksForCauses));
     });
 }
@@ -714,21 +690,21 @@ static decltype(Wire::AccessCountRecord::accesses)* countersOfExplainedAccess(Wi
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static Vector<Wire::AccessCountRecord> countExplainedAccesses(const Typed::Program& program, std::span<const ExplainedAccess> accesses, std::span<const Wire::TypeTestRecord> typeTests)
+static Vector<Wire::AccessCountRecord> countExplainedAccesses(const Typed::Program& program, std::span<const Wire::AccessRecord> accesses, std::span<const Wire::TypeTestRecord> typeTests)
 {
     Vector<Wire::AccessCountRecord> counts(program.modules.size(), [](size_t module) {
         Wire::AccessCountRecord record;
         record.module = static_cast<uint32_t>(module);
         return record;
     });
-    for (const ExplainedAccess& access : accesses) {
-        Wire::AccessCountRecord& record = counts[access.record.location.module];
-        auto* countsByLevel = countersOfExplainedAccess(record, access.record.kind);
+    for (const Wire::AccessRecord& access : accesses) {
+        Wire::AccessCountRecord& record = counts[access.location.module];
+        auto* countsByLevel = countersOfExplainedAccess(record, access.kind);
         if (!countsByLevel)
             continue;
-        ++(*countsByLevel)[static_cast<size_t>(access.record.level)];
+        ++(*countsByLevel)[static_cast<size_t>(access.level)];
         if (countsByLevel == &record.accesses)
-            ++record.accessCosts[static_cast<size_t>(access.record.cost)];
+            ++record.accessCosts[static_cast<size_t>(access.cost)];
     }
     for (const Wire::TypeTestRecord& typeTest : typeTests)
         ++counts[typeTest.location.module].typeTests;
@@ -739,44 +715,6 @@ static Vector<Wire::AccessCountRecord> countExplainedAccesses(const Typed::Progr
         return record == empty;
     });
     return counts;
-}
-
-static std::array<uint32_t, 6> keyOfExplainedOrigins(const Wire::OtherOriginsRecord& origins)
-{
-    const auto& locations = origins.locations;
-    return { locations[0].module, locations[0].position, locations[1].module, locations[1].position, locations[2].module, locations[2].position };
-}
-
-static bool hasExplainedOrigin(const Wire::OtherOriginsRecord& origins)
-{
-    return std::ranges::any_of(origins.locations, [](Wire::SourceLocation location) {
-        return hasModule(location);
-    });
-}
-
-// The records ascend by content, so neither a thread nor the order of the accesses decides a number.
-static Vector<Wire::OtherOriginsRecord> shareExplainedOrigins(Vector<ExplainedAccess>& accesses, const ParallelLoops& loops)
-{
-    Vector<Wire::OtherOriginsRecord> shared;
-    for (const ExplainedAccess& access : accesses) {
-        if (hasExplainedOrigin(access.otherOrigins))
-            shared.append(access.otherOrigins);
-    }
-    sortAndRemoveDuplicates(loops, shared, [](const Wire::OtherOriginsRecord& a, const Wire::OtherOriginsRecord& b) {
-        return keyOfExplainedOrigins(a) < keyOfExplainedOrigins(b);
-    }, [](const Wire::OtherOriginsRecord& a, const Wire::OtherOriginsRecord& b) {
-        return a == b;
-    });
-
-    std::span<const Wire::OtherOriginsRecord> records = shared.span();
-    for (ExplainedAccess& access : accesses) {
-        if (!hasExplainedOrigin(access.otherOrigins))
-            continue;
-        auto found = std::ranges::lower_bound(records, keyOfExplainedOrigins(access.otherOrigins), { }, keyOfExplainedOrigins);
-        RELEASE_ASSERT(found != records.end() && *found == access.otherOrigins);
-        access.record.otherOrigins = static_cast<uint32_t>(found - records.begin()) + 1;
-    }
-    return shared;
 }
 
 static Vector<Wire::AllocationRemarkRecord> explainAllocations(const Typed::Program& program, const Typed::Facts& facts, std::span<const Typed::WalkNotes> units, const ParallelLoops& loops, CompileOutput& output)
@@ -861,7 +799,7 @@ void writeExplainSections(const Typed::Program& program, const Typed::Facts& fac
     NamesInExplainRecords names(program);
 
     if (explainsFlow || countsAccesses) {
-        Vector<ExplainedAccess> accesses = explainAccesses(program, facts, units, explainsFlow, loops);
+        Vector<Wire::AccessRecord> accesses = explainAccesses(program, facts, units, explainsFlow, loops);
         Vector<Wire::TypeTestRecord> typeTests = explainTypeTests(program, facts, units, explainsFlow, loops);
         if (countsAccesses) {
             Vector<Wire::AccessCountRecord> counts = countExplainedAccesses(program, accesses.span(), typeTests.span());
@@ -875,11 +813,7 @@ void writeExplainSections(const Typed::Program& program, const Typed::Facts& fac
             output.setRecords(Wire::ResultSection::AccessCounts, counts.span());
         }
         if (explainsFlow) {
-            output.setRecords(Wire::ResultSection::OtherOrigins, shareExplainedOrigins(accesses, loops).span());
-            Vector<Wire::AccessRecord> records(accesses.size(), [&](size_t index) {
-                return accesses[index].record;
-            });
-            for (const Wire::AccessRecord& record : records) {
+            for (const Wire::AccessRecord& record : accesses) {
                 names.addFunction(record.function);
                 names.addFunction(record.witness.function);
                 names.addLayout(record.layout);
@@ -889,7 +823,7 @@ void writeExplainSections(const Typed::Program& program, const Typed::Facts& fac
                 names.addFunction(record.witness.function);
                 names.addLayout(record.layout);
             }
-            output.setRecords(Wire::ResultSection::Accesses, records.span());
+            output.setRecords(Wire::ResultSection::Accesses, accesses.span());
             output.setRecords(Wire::ResultSection::TypeTests, typeTests.span());
         }
     }

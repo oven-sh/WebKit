@@ -11,7 +11,6 @@
 #include "WasmCallee.h"
 #include <array>
 #include <atomic>
-#include <optional>
 #include <span>
 #include <wtf/FixedVector.h>
 #include <wtf/TZoneMalloc.h>
@@ -40,11 +39,7 @@ public:
     static bool isModuleOfProgram(const ModuleInformation&);
     static std::span<const FunctionInImage> functionsOf(const ModuleInImage&, ImageCodeFlavor);
     JS_EXPORT_PRIVATE static ImageCodeFlavor flavorFor(const ModuleInformation&, MemoryMode);
-    static std::optional<InterpreterFallbackReason> fallbackReason(const ModuleInformation&);
     static RefPtr<CodeInImage> tryCreate(const ModuleInformation&, const IPIntCallees&, MemoryMode);
-
-    static void didFallBackToInterpreter(InterpreterFallbackReason);
-    JS_EXPORT_PRIVATE static unsigned interpreterFallbackCount(InterpreterFallbackReason);
 
     bool serves(const ModuleInformation& info, MemoryMode mode) const { return m_servesEveryFlavor || m_flavor == flavorFor(info, mode); }
     ~CodeInImage();
@@ -73,7 +68,6 @@ private:
     static const ModuleInImage* findRecord(const ModuleInformation&);
 
     static std::atomic<const PublishedImage*> s_lastPublished;
-    static std::array<std::atomic<unsigned>, numberOfInterpreterFallbackReasons> s_interpreterFallbackCounts;
 };
 
 } } // namespace JSC::Wasm

@@ -61,6 +61,7 @@ public:
     unsigned index(Node node) const { return node->index(); }
     Node node(unsigned index) const { return m_proc[index]; }
     unsigned numNodes() const { return m_proc.size(); }
+    bool hasCycle() const { return m_proc.hasCycle(); }
 
     PointerDump<BasicBlock> dump(Node node) const { return pointerDump(node); }
 

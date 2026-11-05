@@ -65,12 +65,12 @@ Value* InsertionSet::insertClone(size_t index, Value* value)
     return insertValue(index, m_procedure.clone(value));
 }
 
-void InsertionSet::execute(BasicBlock* block)
+void InsertionSet::executeInsertions(BasicBlock* block)
 {
     for (Insertion& insertion : m_insertions)
         insertion.element()->owner = block;
     bubbleSort(m_insertions.mutableSpan());
-    executeInsertions(block->m_values, m_insertions);
+    WTF::executeInsertions(block->m_values, m_insertions);
     m_bottomForType = TypeMap<Value*>();
 }
 

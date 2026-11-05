@@ -257,8 +257,6 @@ static std::optional<EvalBindingLocation> findLocationOfVariableInEvalBinding(co
             if (std::optional<FunctionID> entry = encoder.findEntrypoint(placed.function); entry && encoder.numbers.closureCellNumber(placed.function))
                 return EvalBindingLocation { .offset = entry->index(), .representation = SlotRepresentation::DeferredClosure };
             break;
-        case Typed::VariableStorage::None:
-            break;
         }
     }
     encoder.fail("a direct eval sees a variable that the run time cannot read where the image keeps it"_s, variable);

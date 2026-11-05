@@ -19,8 +19,6 @@ public:
     Condition isClosureOf(CellPointer, FunctionID, const Type& tested);
     // The operation IsClosureOf, in whichever form it is emitted. It refuses no closure of the function.
     void branchOnIsClosureOf(CellPointer, FunctionID, const Type& tested, BranchTargets);
-    // The word of the cell names the unit, which is the generic entry of a bound function.
-    void branchOnIsBoundClosureOf(CellPointer, CodeUnit genericEntry, BranchTargets);
     // Reads the closure number once, whatever the number of functions.
     Condition isClosureOfAny(CellPointer, std::span<const FunctionID>, const Type& tested);
     Condition hasFunctionCellType(CellPointer);
@@ -36,7 +34,6 @@ private:
     FunctionKindData closureKindOf(FunctionID) const;
     // Every slim closure is one of this instance, so the word of one that is as it was created names its function and no other cell has that word.
     bool closureWordNames(FunctionID) const;
-    bool closuresStayAsCreated(FunctionID) const;
     bool isDecidedByClosureWord(FunctionID, const Type& tested);
     Condition hasClosureWordThatDecides(CellPointer, FunctionID);
     void branchOnClosureTest(CellPointer, FunctionID, const Type& tested, BranchTargets);
@@ -54,7 +51,6 @@ private:
     Word32 numberOfChangedClosure(CellPointer);
     Word32 upperHalfOfWordAtSlimClosureWord(CellPointer);
     ptrdiff_t offsetOfClosureHeader(FunctionKindData) const;
-    Condition isTableCell(CellPointer, FunctionID);
     Word32 closureTableEntry(FunctionID);
     // NumberSpace::ClosureCell.
     TypedPointer closureCellOf(FunctionID);

@@ -423,10 +423,12 @@ static void rejectAsyncGeneratorStep(Instance& instance, const uint64_t* slotsOf
 {
     VM& vm = *instance.vm;
     JSGlobalObject* globalObject = instance.globalObject;
+    auto scope = DECLARE_THROW_SCOPE(vm);
     JSPromise* promise = endOfBodyAnswersOtherRequestsFirst(slotsOfStub, generator) ? tryPutPromiseInPlaceOfDriver(instance, slotsOfStub, generator) : nullptr;
     finishAsyncGeneratorBodyCall(globalObject, generator, JSValue(), error, &vm.syncResumeCallCache());
-    if (!promise)
+    if (scope.exception() || !promise)
         return;
+    scope.release();
     auto* driver = std::bit_cast<JSCell*>(slotsOfStub[driverSlotInStubFrame]);
     if (SavedFrame* saved = savedFrameIn(driver))
         resumeWhenSettled(globalObject, vm, promise, saved, InternalMicrotask::CompiledAsyncFunctionResume);

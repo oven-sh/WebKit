@@ -856,17 +856,6 @@ std::optional<PropertyKeyID> TypeTable::find(const PropertyKey& key) const
     return idAt<PropertyKeyID>(IDHome::Value, *position);
 }
 
-std::optional<TypeID> TypeTable::findTypeOfObject(ObjectID object) const
-{
-    // Records are hashed and compared by their parts alone, and these are the canonical parts that TypeArena::forObject() interns.
-    Type type;
-    type.objects = setOfOne<ObjectSetID>(object);
-    std::optional<uint32_t> position = m_types.find(hashOf(static_cast<const TypeParts&>(type)), type);
-    if (!position)
-        return std::nullopt;
-    return idAt<TypeID>(IDHome::Program, *position);
-}
-
 ProvenInEveryVersion TypeTable::provenTypeOf(const DeclaredType& declared) const
 {
     if (std::optional<ProvenInEveryVersion> established = declared.established())
@@ -893,15 +882,6 @@ void TypeTable::invalidateMemosAtRest()
         memos.types.clear();
         memos.unionsOfMany.clear();
     }
-}
-
-size_t TypeTable::sizeOfMemosAtRestInBytes() const
-{
-    size_t size = 0;
-    Locker locker { m_memosAtRestLock };
-    for (const MemosOfArena& memos : m_memosAtRest)
-        size += memos.types.sizeInBytes() + memos.layoutSets.sizeInBytes() + memos.objectSets.sizeInBytes() + memos.stringSets.sizeInBytes() + memos.keySets.sizeInBytes() + memos.unionsOfMany.sizeInBytes();
-    return size;
 }
 
 void TypeTable::freeze()
