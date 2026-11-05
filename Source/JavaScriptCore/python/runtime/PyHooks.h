@@ -126,6 +126,9 @@ JS_EXPORT_PRIVATE CallData callDataUnknownToJS(JSValue callee);
 // Null: there is no such function, and C++ makes the call.
 JS_EXPORT_PRIVATE JSFunction* beginCallWithSelf(JSGlobalObject*, JSValue callee);
 
+// The stack has no room for the frame of a call of Python code, which is about to be told so.
+void frameHasNoRoom(CallFrame*, CodeBlock*);
+
 // `class constructor extends superclass`, when the methods are in place and before anything sees the class. If the superclass is a
 // class of Python's, so is this: the class. Otherwise the constructor. See PyJSClass.h.
 JSC_DECLARE_HOST_FUNCTION(deriveClassFromJSFunction); // (constructor, prototype, superclass)

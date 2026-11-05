@@ -239,6 +239,16 @@ static ALWAYS_INLINE bool isGeneratorBody(CallFrame* callFrame)
     return callFrame->codeBlock()->unlinkedCodeBlock()->parseMode() == SourceParseMode::GeneratorBodyMode;
 }
 
+void frameHasNoRoom(CallFrame* callFrame, CodeBlock* codeBlock)
+{
+    // A generator that cannot be resumed is over, as in CPython. Whoever was to resume it may be the interpreter, which the exception passes by.
+    if (codeBlock->unlinkedCodeBlock()->parseMode() != SourceParseMode::GeneratorBodyMode)
+        return;
+    auto* generator = uncheckedDowncast<PyGenerator>(callFrame->uncheckedArgument(0).asCell());
+    if (!generator->isCompleted())
+        generator->complete();
+}
+
 void forEachVariableOfRunningGenerators(VM& vm, const ScopedLambda<void(PyGenerator*, JSValue)>& function)
 {
     auto walk = [&](CallFrame* callFrame, EntryFrame* entryFrame) {

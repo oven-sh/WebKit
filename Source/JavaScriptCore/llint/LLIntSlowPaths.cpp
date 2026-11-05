@@ -634,6 +634,8 @@ UGPRPair SYSV_ABI llint_check_stack_and_vm_traps(CallFrame* callFrame, const JSI
 
     // Hence, if we get here, then we know a stack overflow is imminent. So, just
     // throw the StackOverflowError unconditionally.
+    if (codeBlock->unlinkedCodeBlock()->isPython()) [[unlikely]]
+        Python::frameHasNoRoom(callFrame, codeBlock);
     callFrame->convertToZombieFrame(vm, codeBlock);
     ErrorHandlingScope errorScope(vm);
     throwStackOverflowError(globalObject, throwScope);
