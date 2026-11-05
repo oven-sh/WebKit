@@ -195,8 +195,9 @@ void Runtime::releaseTemporariesUsedAt(CallFrame* callFrame, unsigned offset, JS
         if (isOperand(temporary.object) && result != JSValue(temporary.object))
             objects[count++] = temporary.object;
     }
-    // As when the reference count falls to zero. There may be an exception pending, which stays.
-    for (unsigned i = 0; i < count; ++i) {
+    // As when the reference count falls to zero: CPython lets go of the operands of a call from the last to the first, and of the
+    // receiver after the arguments. There may be an exception pending, which stays.
+    for (unsigned i = count; i--;) {
         if (auto* view = PyMemoryView::tryFrom(objects[i])) {
             if (!view->exports)
                 view->release(m_globalObject);
