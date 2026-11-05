@@ -1042,7 +1042,9 @@ static JSValue setIsDisjoint(JSGlobalObject* globalObject, JSValue self, JSValue
     if (other == self)
         return jsBoolean(set->isEmpty());
     bool disjoint = true;
-    if (auto* otherSet = PySet::tryFrom(other)) {
+    // (An instance of a class derived from set or frozenset is gone through as any iterable is, and its elements are hashed again: so CPython.)
+    Runtime& rt = runtime(globalObject);
+    if (auto* otherSet = PySet::tryFrom(other); otherSet && (otherSet->type() == rt.setType() || otherSet->type() == rt.frozensetType())) {
         if (otherSet->size() > set->size())
             std::swap(set, otherSet);
         JSValue key;
