@@ -2027,7 +2027,7 @@ static JSValue codeGetCode(JSGlobalObject* globalObject, JSValue self)
     static constexpr uint8_t extendedArg = 67;
     static constexpr uint8_t jumpForward = 76, jumpBackward = 74, jumpBackwardNoInterrupt = 75, popJumpIfTrue = 102, popJumpIfFalse = 99, popJumpIfNone = 100, popJumpIfNotNone = 101, forIter = 68;
     static constexpr uint8_t returnValue = 33, yieldValue = 119, raiseVarargs = 103, reraise = 104;
-    static constexpr uint8_t loadAttr = 79, loadGlobal = 91, loadName = 92, storeAttr = 109, storeGlobal = 114, storeName = 115;
+    static constexpr uint8_t loadAttr = 79, loadGlobal = 91, loadName = 92, loadSuperAttr = 95, storeAttr = 109, storeGlobal = 114, storeName = 115;
     static constexpr uint8_t importFrom = 71, importName = 72, loadCommonConstant = 80, loadConst = 81, loadSmallInt = 93;
     static constexpr unsigned cachesOfLoadAttr = 9, cachesOfLoadGlobal = 4, cachesOfStoreAttr = 4;
     static constexpr unsigned commonConstantNone = 7;
@@ -2268,7 +2268,13 @@ static JSValue codeGetCode(JSGlobalObject* globalObject, JSValue self)
                 }
                 return { };
             };
-            if (static_cast<RuntimeFunction>(call.m_function) == RuntimeFunction::ImportFrom) {
+            auto function = static_cast<RuntimeFunction>(call.m_function);
+            bool isSuperMethod = function == RuntimeFunction::LoadSuperMethod || function == RuntimeFunction::LoadZeroSuperMethod;
+            bool isSuperWithArguments = function == RuntimeFunction::LoadSuperAttr || function == RuntimeFunction::LoadSuperMethod;
+            if (isSuperMethod || isSuperWithArguments || function == RuntimeFunction::LoadZeroSuperAttr) {
+                if (size_t index = indexOfName(operand(3)); index != notFound)
+                    appendUnit(loadSuperAttr, static_cast<unsigned>(index) << 2 | isSuperWithArguments << 1 | isSuperMethod, 1);
+            } else if (function == RuntimeFunction::ImportFrom) {
                 if (size_t index = indexOfName(operand(1)); index != notFound)
                     appendUnit(importFrom, index);
             } else if (static_cast<RuntimeFunction>(call.m_function) == RuntimeFunction::ImportName) {

@@ -636,9 +636,13 @@ RegisterID* Unit::attributeOfSuper(Attribute* node, RegisterID* dst, RegisterID*
     g.move(operands[3], usedName(mangle(node->attr)));
     loc(node->range);
     if (!self)
-        return callRuntime(dst, isWrittenWithoutArguments ? RuntimeFunction::LoadZeroSuperAttr : RuntimeFunction::LoadSuperAttr, operands);
-    callRuntime(dst, isWrittenWithoutArguments ? RuntimeFunction::LoadZeroSuperMethod : RuntimeFunction::LoadSuperMethod, operands);
-    g.move(self, operands[2]);
+        dst = callRuntime(dst, isWrittenWithoutArguments ? RuntimeFunction::LoadZeroSuperAttr : RuntimeFunction::LoadSuperAttr, operands);
+    else {
+        callRuntime(dst, isWrittenWithoutArguments ? RuntimeFunction::LoadZeroSuperMethod : RuntimeFunction::LoadSuperMethod, operands);
+        g.move(self, operands[2]);
+    }
+    // (CPython has an instruction that does nothing here, on the line of the name.)
+    line(rangeOfAttributeName(node));
     return dst;
 }
 
