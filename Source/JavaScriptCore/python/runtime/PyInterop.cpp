@@ -84,7 +84,7 @@ static Inquiry inquireOwnProperty(JSGlobalObject* globalObject, JSObject* object
         return Inquiry::NeedsCode;
     auto lookUp = object->methodTable()->getOwnPropertySlot;
     // A typed array has a way of its own for its elements alone.
-    if (isTypedArrayType(object->type()) && !name.isSymbol() && !isCanonicalNumericIndexString(name.uid()))
+    if (isTypedArrayType(object->type()) && (name.isSymbol() || !isCanonicalNumericIndexString(name.uid())))
         lookUp = JSObject::getOwnPropertySlot;
     bool isNamespace = lookUp == JSModuleNamespaceObject::getOwnPropertySlot;
     if (lookUp == JSFunction::info()->methodTable.getOwnPropertySlot) {
@@ -327,6 +327,8 @@ JSValue attributeOfObjectOfJS(JSGlobalObject* globalObject, JSObject* object, JS
     return attributeFromPropertyOfJS(globalObject, object, name);
 }
 
+static bool itemsAreProperties(JSGlobalObject*, JSObject*);
+
 // `isOfDerivedClass`: the __getattribute__ that a class of Python's inherits from the class of JS's it derives from.
 template<bool isOfDerivedClass>
 static JSValue jsObjectGetAttributeImpl(JSGlobalObject* globalObject, JSValue self, JSValue nameValue)
@@ -359,7 +361,7 @@ static JSValue jsObjectGetAttributeImpl(JSGlobalObject* globalObject, JSValue se
     if (object == globalObject->globalThis() && stringOf(name) == "null"_s)
         return jsNull();
     // keys(), get(), update() and the like are for an object that is a mapping, of its properties or by its methods. What else JS
-    // iterates over is not: dict(iterator) takes pairs from it.
+    // iterates over is not: dict(iterator) takes pairs from it. Nor is a WeakSet.
     if (isNameOfMappingMethod(rt, name)) {
         if (failed(scope, ensureMainThreadForJS(globalObject)))
             return { };
@@ -367,12 +369,18 @@ static JSValue jsObjectGetAttributeImpl(JSGlobalObject* globalObject, JSValue se
         RETURN_IF_EXCEPTION(scope, { });
         bool byMethods = isIterable && isMappingByMethods(globalObject, object);
         RETURN_IF_EXCEPTION(scope, { });
-        if (isIterable && !byMethods)
+        if (isIterable ? !byMethods : object->type() == JSWeakSetType)
             return raiseAttributeError(globalObject, scope, self, name, makeString('\'', typeName(globalObject, self), "' object has no attribute '"_s, stringOf(name), '\''));
     }
-    // vars(object), function.__dict__.update(): its attributes are its properties, and it is the mapping of those itself.
-    if (isDunderDict(rt, name))
-        return self;
+    // vars(object), function.__dict__.update(): its attributes are its properties, and it is the mapping of those itself, unless its
+    // items are something else.
+    if (isDunderDict(rt, name)) {
+        bool isMappingOfProperties = itemsAreProperties(globalObject, object);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (isMappingOfProperties)
+            return self;
+        RELEASE_AND_RETURN(scope, propertiesOfObjectOfJS(globalObject, object));
+    }
     // What every Python object has: __class__, __dir__, and so on.
     RELEASE_AND_RETURN(scope, genericGetAttrOfType(globalObject, self, name));
 }
@@ -549,6 +557,39 @@ static bool isMappingByMethods(JSGlobalObject* globalObject, JSObject* object)
     return true;
 }
 
+// What is in them is not their properties, and nobody can say what it is.
+static bool isWeakCollection(JSObject* object)
+{
+    return object->type() == JSWeakMapType || object->type() == JSWeakSetType;
+}
+
+static JSValue raiseNotIterable(JSGlobalObject* globalObject, ThrowScope& scope, JSValue object)
+{
+    return raiseTypeError(globalObject, scope, '\'', typeName(globalObject, object), "' object is not iterable"_s);
+}
+
+// Whether iterating over the object gives the names of its properties, and object[name] their values.
+static bool itemsAreProperties(JSGlobalObject* globalObject, JSObject* object)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (JSType type = object->type(); type == JSMapType || type == JSSetType || isWeakCollection(object) || isTypedArrayType(type))
+        return false;
+    if (runtime(globalObject).threads().isMainThread()) [[likely]]
+        RELEASE_AND_RETURN(scope, !hasIteratorMethod(globalObject, object));
+    JSValue method;
+    Inquiry result = inquireProperty(globalObject, object, vm.propertyNames->iteratorSymbol, method);
+    if (result == Inquiry::NeedsCode)
+        RELEASE_AND_RETURN(scope, ensureMainThreadForJS(globalObject));
+    return result == Inquiry::Absent || method.isUndefinedOrNull();
+}
+
+// Whether object[key] goes by its methods: a mapping by its methods, or a WeakMap, which is one that cannot be iterated over.
+static bool hasItemsByMethods(JSGlobalObject* globalObject, JSObject* object)
+{
+    return object->type() == JSWeakMapType || isMappingByMethods(globalObject, object);
+}
+
 // object.name(...arguments)
 static JSValue callMethodOfJS(JSGlobalObject* globalObject, JSObject* object, const Identifier& name, std::initializer_list<JSValue> arguments = { })
 {
@@ -624,7 +665,7 @@ static JSValue jsObjectGetItem(JSGlobalObject* globalObject, JSValue self, JSVal
             return raiseKeyError(globalObject, scope, key);
         RELEASE_AND_RETURN(scope, map->get(globalObject, valueForJS(key)));
     }
-    bool byMethods = isMappingByMethods(globalObject, asObject(self));
+    bool byMethods = hasItemsByMethods(globalObject, asObject(self));
     RETURN_IF_EXCEPTION(scope, { });
     if (byMethods) {
         if (failed(scope, hasKeyByMethod(globalObject, asObject(self), key)))
@@ -656,7 +697,7 @@ static JSValue jsObjectSetItem(JSGlobalObject* globalObject, JSValue self, JSVal
         RETURN_IF_EXCEPTION(scope, { });
         return jsUndefined();
     }
-    bool byMethods = isMappingByMethods(globalObject, asObject(self));
+    bool byMethods = hasItemsByMethods(globalObject, asObject(self));
     RETURN_IF_EXCEPTION(scope, { });
     if (byMethods) {
         callMethodOfJS(globalObject, asObject(self), vm.propertyNames->set, { key, value });
@@ -687,7 +728,7 @@ static JSValue jsObjectDelItem(JSGlobalObject* globalObject, JSValue self, JSVal
             return raiseKeyError(globalObject, scope, key);
         return jsUndefined();
     }
-    bool byMethods = isMappingByMethods(globalObject, asObject(self));
+    bool byMethods = hasItemsByMethods(globalObject, asObject(self));
     RETURN_IF_EXCEPTION(scope, { });
     if (byMethods) {
         if (failed(scope, hasKeyByMethod(globalObject, asObject(self), key)))
@@ -720,7 +761,7 @@ static JSValue jsObjectContains(JSGlobalObject* globalObject, JSValue self, JSVa
         RELEASE_AND_RETURN(scope, jsBoolean(map->has(globalObject, valueForJS(key))));
     if (auto* set = dynamicDowncast<JSSet>(self))
         RELEASE_AND_RETURN(scope, jsBoolean(set->has(globalObject, valueForJS(key))));
-    bool byMethods = isMappingByMethods(globalObject, asObject(self));
+    bool byMethods = asObject(self)->type() == JSWeakSetType || hasItemsByMethods(globalObject, asObject(self));
     RETURN_IF_EXCEPTION(scope, { });
     if (byMethods) {
         JSValue has = callMethodOfJS(globalObject, asObject(self), vm.propertyNames->has, { key });
@@ -878,6 +919,8 @@ static JSValue jsObjectIter(JSGlobalObject* globalObject, JSValue self)
     bool isIterable = hasIteratorMethod(globalObject, object);
     RETURN_IF_EXCEPTION(scope, { });
     if (!isIterable) {
+        if (isWeakCollection(object))
+            return raiseNotIterable(globalObject, scope, self);
         JSArray* names = ownPropertyNames(globalObject, object, DontEnumPropertiesMode::Exclude);
         RETURN_IF_EXCEPTION(scope, { });
         RELEASE_AND_RETURN(scope, getIter(globalObject, names));
@@ -948,6 +991,8 @@ static JSValue jsObjectParts(JSGlobalObject* globalObject, JSValue self, JSObjec
     auto scope = DECLARE_THROW_SCOPE(vm);
     bool byMethods = isMappingByMethods(globalObject, asObject(self));
     RETURN_IF_EXCEPTION(scope, { });
+    if (!byMethods && isWeakCollection(asObject(self)))
+        return raiseNotIterable(globalObject, scope, self);
     JSArray* names = byMethods ? keysByMethod(globalObject, asObject(self)) : ownPropertyNames(globalObject, asObject(self), DontEnumPropertiesMode::Exclude);
     RETURN_IF_EXCEPTION(scope, { });
     if (part == JSObjectPart::Keys)
@@ -992,7 +1037,7 @@ static JSValue jsObjectLen(JSGlobalObject* globalObject, JSValue self)
     RETURN_IF_EXCEPTION(scope, { });
     bool isIterable = hasIteratorMethod(globalObject, object);
     RETURN_IF_EXCEPTION(scope, { });
-    if (isIterable && !byMethods)
+    if (!byMethods && (isIterable || isWeakCollection(object)))
         return raiseTypeError(globalObject, scope, "object of type '"_s, typeName(globalObject, self), "' has no len()"_s);
     JSArray* names = byMethods ? keysByMethod(globalObject, object) : ownPropertyNames(globalObject, object, DontEnumPropertiesMode::Exclude);
     RETURN_IF_EXCEPTION(scope, { });
@@ -1069,7 +1114,7 @@ static JSValue jsObjectPop(JSGlobalObject* globalObject, JSValue self, JSValue k
     return jsObjectDelItem(globalObject, self, key) ? value : JSValue();
 }
 
-// ---- instance.__dict__, for an instance of a class of Python's that derives from one of JS's ----
+// ---- object.__dict__, for an instance of a class of Python's that derives from one of JS's, and for what has other items than its properties ----
 
 // The mapping of the object's own properties that have a str for a name: they are what another instance has in its __dict__. The object
 // itself will not do: object[key] finds what it inherits too, the attributes of its class among that (so functools.cached_property

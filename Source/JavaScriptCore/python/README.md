@@ -1568,7 +1568,8 @@ The collector is told the size of the side tables, which are several times the s
   like that of a plain object adds nothing to `JSObject` but what it says to others: it is registered as a `MutableMapping`, and a mapping pattern of `match` takes it. (`typeOf()`
   tells by the type of the cell. `class Cache(js.Map)` derives from it.) Where a method is `Map`'s own there is no need to call it (`mapWithItsOwnMethods` looks the
   method up and sees what function it is); a class derived from `Map` with a `get()` of its own is asked. `json.dumps()` does not take it: `dict(m)`.
-  A `Set` is as it was: iteration over its members, `in`, `len()`. A `WeakMap` and a `WeakSet` have their methods and no items. (A decision that can still be changed.)
+  A `Set` is as it was: iteration over its members, `in`, `len()`. A `WeakMap` is a mapping that cannot be iterated over: `w[o]`, `w[o] = v`, `del w[o]` and `o in w` go by
+  its `get()`, `set()`, `delete()` and `has()`, as those of a `Map`; there is no `len()`. `o in w` is `has(o)` for a `WeakSet`, which like a `Set` has none of the methods of a mapping. (A decision that can still be changed.)
 - **What can be disposed of is a context manager.** `with o:` is `using`: it gives `o`, and calls `o[Symbol.dispose]()` at the end. `async with o:` is
   `await using`: it awaits `o[Symbol.asyncDispose]()`, or calls `o[Symbol.dispose]()` if there is no such method. JS tells a disposable nothing of the
   exception that leaves the block, and whatever the method returns the exception goes on.
@@ -1576,7 +1577,8 @@ The collector is told the size of the side tables, which are several times the s
   object of JS cannot say whether the object can be disposed of, and what has an `__exit__` in its class is a context manager to all who ask
   (`ExitStack.push(f)` takes a function without one for a callback). So `hasattr(o, "__enter__")` is false, and `ExitStack.enter_context(o)`, which looks in
   the class, does not take it: `stack.callback(o[js.Symbol.dispose].bind(o))`. (A decision that can still be changed.)
-  `vars(object)` and `object.__dict__` are the object itself, so `functools.wraps(f)` takes a function of JS for the wrapper.
+  `vars(object)` and `object.__dict__` are the object itself, so `functools.wraps(f)` takes a function of JS for the wrapper. Where its items are not its
+  properties (what JS iterates over, a `WeakMap`, a `WeakSet`: `itemsAreProperties`) they are the mapping of its own properties, `_js.JSProperties`, see below.
 - A function that is read off an object is bound to it, so `f = o.method; f()` works as it does in Python. It is one bound function for
   each object and function, remembered weakly (`bindIfFunction`): `o.method is o.method`, and `emitter.off(name, o.method)` finds what
   `on()` was given. Not bound: classes, what a module exports (read off its namespace), and what is read off the `prototype` of a
