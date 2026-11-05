@@ -1088,6 +1088,10 @@ static bool appendField(JSGlobalObject* globalObject, const CodePoints& text, co
     auto view = result->view(globalObject);
     RETURN_IF_EXCEPTION(scope, false);
     builder.append(view.data);
+    if (builder.hasOverflowed()) [[unlikely]] {
+        raiseMemoryError(globalObject, scope, String());
+        return false;
+    }
     if (mayBeWhole && !formatted.isString() && result->length()) [[unlikely]]
         arguments.whole = formatted;
     return true;
@@ -1733,6 +1737,8 @@ JSValue strFormatPercent(JSGlobalObject* globalObject, JSString* formatString, J
                 auto view = converted->view(globalObject);
                 RETURN_IF_EXCEPTION(scope, { });
                 f.builder.append(view);
+                if (f.builder.hasOverflowed()) [[unlikely]]
+                    return raiseMemoryError(globalObject, scope, String());
                 continue;
             }
         }
@@ -1743,11 +1749,13 @@ JSValue strFormatPercent(JSGlobalObject* globalObject, JSString* formatString, J
             return { };
         // See FormatArguments::whole.
         if (argument.object && f.position >= end && f.builder.isEmpty() && !converted.isEmpty() && !(argument.flags & (AlwaysSign | BlankSign))) [[unlikely]] {
-            int64_t length = CodePoints(converted).length();
+            int64_t length = StrView(converted).length();
             if (argument.width <= length && (argument.precision < 0 || argument.precision >= length))
                 whole = argument.object;
         }
         appendPercentArgument(f, argument, converted);
+        if (f.builder.hasOverflowed()) [[unlikely]]
+            return raiseMemoryError(globalObject, scope, String());
     }
     if (f.argumentIndex < f.argumentCount && !f.mapping)
         return raiseTypeError(globalObject, scope, "not all arguments converted during string formatting (required "_s, f.argumentCount < 0 ? 0 : f.argumentIndex, ", got "_s, f.argumentCount < 0 ? 1 : f.argumentCount, ')');
