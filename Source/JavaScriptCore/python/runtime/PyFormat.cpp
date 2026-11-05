@@ -30,7 +30,7 @@ public:
         : m_string(string)
         , m_length(string.length())
     {
-        if (StrView(string).isSimple())
+        if (string.is8Bit() || StrView(string).isSimple())
             return;
         for (char32_t character : StringView(string).codePoints())
             m_points.append(character);
@@ -524,6 +524,10 @@ static JSString* formatFloatWithSpec(JSGlobalObject* globalObject, double value,
         type = 'g';
 
     String text = formatDouble(value, static_cast<char>(type), precision, flags);
+    if (!text) [[unlikely]] {
+        raiseMemoryError(globalObject, scope, String());
+        return nullptr;
+    }
     if (addPercent)
         text = makeString(text, '%');
     if (spec.sign != '+' && spec.sign != ' ' && spec.width == -1 && !spec.thousands && !spec.fractionThousands)
@@ -725,6 +729,10 @@ JSString* formatComplex(JSGlobalObject* globalObject, JSValue self, JSString* sp
 
     String realText = formatDouble(real, static_cast<char>(type), precision, flags);
     String imaginaryText = formatDouble(imaginary, static_cast<char>(type), precision, flags);
+    if (!realText || !imaginaryText) [[unlikely]] {
+        raiseMemoryError(globalObject, scope, String());
+        return nullptr;
+    }
     // The two numbers without padding, which goes around the whole.
     FormatSpec inner = spec;
     inner.align = '<';
@@ -1231,7 +1239,7 @@ struct PercentFormatter {
     int64_t argumentCount;
     int64_t argumentIndex;
     JSValue mapping;
-    StrBuilder builder;
+    ShortStrBuilder builder;
 
     bool atEnd() const { return position >= text.length(); }
 
@@ -1256,6 +1264,14 @@ struct PercentFormatter {
         VM& vm = getVM(globalObject);
         auto scope = DECLARE_THROW_SCOPE(vm);
         return raiseTypeError(globalObject, scope, "not enough arguments for format string (got "_s, argumentCount < 0 ? 1 : argumentCount, ')');
+    }
+
+    // What nextArgument(true) is going to return, where arguments are taken one after the other. Empty: it has something to say.
+    JSValue argumentToCome() const
+    {
+        if (argumentIndex >= argumentCount || argumentCount < -1)
+            return { };
+        return argumentCount >= 0 ? PyTuple::from(arguments)->at(static_cast<unsigned>(argumentIndex)) : arguments;
     }
 };
 
@@ -1515,6 +1531,10 @@ static bool convertPercentArgument(PercentFormatter& f, PercentArgument& argumen
         if (failed(scope, checkPrecision(globalObject, argument.precision)))
             return false;
         result = formatDouble(number, static_cast<char>(code), argument.precision < 0 ? 6 : argument.precision, argument.flags & Alternate ? FloatAlternate : 0);
+        if (!result) [[unlikely]] {
+            raiseMemoryError(globalObject, scope, String());
+            return false;
+        }
         argument.isNumber = true;
         return true;
     }
@@ -1568,14 +1588,19 @@ static bool convertPercentArgument(PercentFormatter& f, PercentArgument& argumen
 
 static void appendPercentArgument(PercentFormatter& f, PercentArgument& argument, const String& string)
 {
-    StringBuilder& builder = f.builder;
+    bool hasSignFlag = argument.flags & (AlwaysSign | BlankSign);
+    if (argument.width == -1 && (argument.precision == -1 || argument.isNumber) && !hasSignFlag) {
+        f.builder.append(StringView(string));
+        return;
+    }
     CodePoints text(string);
     int64_t length = text.length();
     char fill = argument.isNumber && (argument.flags & ZeroPad) ? '0' : ' ';
-    if ((argument.width == -1 || argument.width <= length) && (argument.precision == -1 || argument.precision >= length) && !(argument.flags & (AlwaysSign | BlankSign))) {
-        builder.append(string);
+    if ((argument.width == -1 || argument.width <= length) && (argument.precision == -1 || argument.precision >= length) && !hasSignFlag) {
+        f.builder.append(StringView(string));
         return;
     }
+    StringBuilder& builder = f.builder.builder();
     if ((argument.code == 's' || argument.code == 'r' || argument.code == 'a') && argument.precision >= 0 && length > argument.precision)
         length = argument.precision;
 
@@ -1647,9 +1672,14 @@ JSValue strFormatPercent(JSGlobalObject* globalObject, JSString* formatString, J
     while (f.position < end) {
         if (text[f.position] != '%') {
             unsigned start = f.position;
+            if (string.is8Bit()) {
+                f.position = std::min<size_t>(find(string.span8(), static_cast<Latin1Character>('%'), start), end);
+                f.builder.append(string.span8().subspan(start, f.position - start));
+                continue;
+            }
             while (f.position < end && text[f.position] != '%')
                 ++f.position;
-            text.appendTo(f.builder, start, f.position);
+            text.appendTo(f.builder.builder(), start, f.position);
             continue;
         }
         PercentArgument argument;
@@ -1661,6 +1691,31 @@ JSValue strFormatPercent(JSGlobalObject* globalObject, JSString* formatString, J
             ++f.position;
             f.builder.append('%');
             continue;
+        }
+        // What most are.
+        if (JSValue value = argument.code == 's' || argument.code == 'r' || argument.code == 'd' ? f.argumentToCome() : JSValue()) {
+            if (isSmallInt(value)) {
+                f.builder.append(smallIntValue(value));
+                ++f.argumentIndex;
+                ++f.position;
+                continue;
+            }
+            if (argument.code != 'd') {
+                JSValue object = argument.code == 'r' ? reprObject(globalObject, value) : value.isString() ? value : strObject(globalObject, value);
+                RETURN_IF_EXCEPTION(scope, { });
+                ++f.argumentIndex;
+                ++f.position;
+                JSString* converted = strValue(object);
+                // See FormatArguments::whole.
+                if (f.position == end && f.builder.isEmpty() && (object.isString() || converted->length())) {
+                    whole = object;
+                    continue;
+                }
+                auto view = converted->view(globalObject);
+                RETURN_IF_EXCEPTION(scope, { });
+                f.builder.append(view);
+                continue;
+            }
         }
         if (failed(scope, parsePercentArgument(f, argument)))
             return { };
@@ -1677,11 +1732,12 @@ JSValue strFormatPercent(JSGlobalObject* globalObject, JSString* formatString, J
     }
     if (f.argumentIndex < f.argumentCount && !f.mapping)
         return raiseTypeError(globalObject, scope, "not all arguments converted during string formatting (required "_s, f.argumentCount < 0 ? 0 : f.argumentIndex, ", got "_s, f.argumentCount < 0 ? 1 : f.argumentCount, ')');
-    if (f.builder.hasOverflowed())
-        return raiseMemoryError(globalObject, scope, String());
-    if (whole) [[unlikely]]
+    if (whole)
         return whole;
-    return makeStr(vm, f.builder.toString());
+    String result = f.builder.toStringOrNull();
+    if (!result) [[unlikely]]
+        return raiseMemoryError(globalObject, scope, String());
+    return makeStr(vm, WTF::move(result));
 }
 
 } // namespace Python

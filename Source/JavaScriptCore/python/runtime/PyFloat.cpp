@@ -308,7 +308,7 @@ String formatDouble(double value, char formatCode, int precision, unsigned flags
     }
 
     bool negative = std::signbit(value);
-    StrBuilder builder;
+    ShortStrBuilder builder;
     if (!std::isfinite(value)) {
         if (std::isnan(value))
             negative = false;
@@ -316,8 +316,8 @@ String formatDouble(double value, char formatCode, int precision, unsigned flags
             builder.append('-');
         else if (flags & FloatAlwaysSign)
             builder.append('+');
-        builder.append(std::isnan(value) ? (upperCase ? "NAN"_s : "nan"_s) : (upperCase ? "INF"_s : "inf"_s));
-        return builder.toString();
+        builder.append(StringView(std::isnan(value) ? (upperCase ? "NAN"_s : "nan"_s) : (upperCase ? "INF"_s : "inf"_s)));
+        return builder.toStringOrNull();
     }
 
     Digits result;
@@ -368,10 +368,10 @@ String formatDouble(double value, char formatCode, int precision, unsigned flags
     else if (flags & FloatAlwaysSign)
         builder.append('+');
     auto zeros = [&](int64_t count) {
-        appendRepeated(builder, '0', count);
+        builder.appendRepeated('0', count);
     };
     auto appendDigits = [&](int64_t from, int64_t to) {
-        builder.append(std::span<const char> { digits.span().data() + from, static_cast<size_t>(to - from) });
+        builder.append(byteCast<Latin1Character>(digits.span().subspan(from, to - from)));
     };
     if (point <= 0) {
         zeros(point - start);
@@ -391,17 +391,18 @@ String formatDouble(double value, char formatCode, int precision, unsigned flags
         zeros(end - point);
     } else
         zeros(end - digitCount);
-    if (!alternate && builder[builder.length() - 1] == '.')
-        builder.shrink(builder.length() - 1);
+    if (!alternate && builder.endsWith('.'))
+        builder.removeLast();
 
     if (useExponent) {
-        builder.append(upperCase ? 'E' : 'e', exponent < 0 ? '-' : '+');
+        builder.append(upperCase ? 'E' : 'e');
+        builder.append(exponent < 0 ? '-' : '+');
         int64_t magnitude = std::abs(exponent);
         if (magnitude < 10)
             builder.append('0');
         builder.append(magnitude);
     }
-    return builder.toString();
+    return builder.toStringOrNull();
 }
 
 String floatRepr(double value)

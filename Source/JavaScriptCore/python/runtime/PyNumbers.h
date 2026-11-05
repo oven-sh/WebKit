@@ -191,6 +191,7 @@ enum FloatFormatFlag : uint8_t {
     FloatAlternate = 1 << 2,
     FloatNoNegativeZero = 1 << 3,
 };
+// Null: with that precision it is too long for a str.
 String formatDouble(double, char formatCode, int precision, unsigned flags);
 // nullopt: not the text of a float. Leading and trailing whitespace and underscores are the caller's business.
 std::optional<double> parseDouble(std::span<const Latin1Character>);

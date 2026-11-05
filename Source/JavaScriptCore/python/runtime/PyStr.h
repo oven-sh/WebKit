@@ -160,6 +160,79 @@ JSValue strCompare(JSGlobalObject*, JSString*, JSString*, CompareOperator);
 void appendCodePoint(StringBuilder&, char32_t);
 // The count may be anything a program asked for.
 void appendRepeated(StringBuilder&, char32_t, int64_t count);
+
+// For text that is mostly short and Latin-1: it is put together on the stack and copied once, into a string of just its size. (A
+// StringBuilder allocates a buffer, and a second time when the text is taken out of it.) What does not fit goes on in a StrBuilder.
+class ShortStrBuilder {
+    WTF_FORBID_HEAP_ALLOCATION;
+public:
+    bool isEmpty() const { return m_isLong ? !m_builder.hasOverflowed() && m_builder.isEmpty() : !m_length; }
+
+    ALWAYS_INLINE void append(std::span<const Latin1Character> text)
+    {
+        if (m_isLong || text.size() > sizeof(m_short) - m_length) [[unlikely]]
+            return builder().append(text);
+        memcpySpan(std::span { m_short }.subspan(m_length), text);
+        m_length += text.size();
+    }
+    ALWAYS_INLINE void append(StringView text)
+    {
+        if (text.is8Bit()) [[likely]]
+            return append(text.span8());
+        builder().append(text);
+    }
+    void append(char character) { append(std::span { byteCast<Latin1Character>(&character), 1 }); }
+    void append(int64_t number)
+    {
+        std::array<Latin1Character, 20> digits;
+        unsigned length = lengthOfIntegerAsString(number);
+        writeIntegerToBuffer(number, std::span { digits }.first(length));
+        append(std::span<const Latin1Character> { digits }.first(length));
+    }
+
+    void appendRepeated(char character, int64_t count)
+    {
+        if (count <= 0)
+            return;
+        if (m_isLong || count > static_cast<int64_t>(sizeof(m_short) - m_length)) [[unlikely]]
+            return Python::appendRepeated(builder(), character, count);
+        memsetSpan(std::span { m_short }.subspan(m_length, count), static_cast<Latin1Character>(character));
+        m_length += count;
+    }
+    bool hasOverflowed() const { return m_isLong && m_builder.hasOverflowed(); }
+    bool endsWith(char character) const
+    {
+        if (!m_isLong)
+            return m_length && m_short[m_length - 1] == character;
+        return !m_builder.hasOverflowed() && !m_builder.isEmpty() && m_builder[m_builder.length() - 1] == character;
+    }
+    void removeLast()
+    {
+        if (!m_isLong)
+            --m_length;
+        else if (!m_builder.hasOverflowed())
+            m_builder.shrink(m_builder.length() - 1);
+    }
+
+    // For everything else there is to append.
+    StrBuilder& builder()
+    {
+        if (!m_isLong) {
+            m_isLong = true;
+            m_builder.append(std::span<const Latin1Character> { m_short }.first(m_length));
+        }
+        return m_builder;
+    }
+
+    // Null: it is too long.
+    String toStringOrNull() { return m_isLong ? m_builder.toStringOrNull() : String(std::span<const Latin1Character> { m_short }.first(m_length)); }
+
+private:
+    std::array<Latin1Character, 232> m_short;
+    unsigned m_length { 0 };
+    bool m_isLong { false };
+    StrBuilder m_builder;
+};
 String stringFromCodePoint(char32_t);
 
 // repr(str)

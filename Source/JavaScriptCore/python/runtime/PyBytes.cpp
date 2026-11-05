@@ -2591,7 +2591,10 @@ JSValue bytesFormatPercent(JSGlobalObject* globalObject, std::span<const uint8_t
             }
             if (precision > std::numeric_limits<int>::max() - 1024)
                 return raiseValueError(globalObject, scope, "precision too big"_s);
-            useString(formatDouble(number, static_cast<char>(code), precision < 0 ? 6 : precision, flags & BytesAlternate ? FloatAlternate : 0));
+            String text = formatDouble(number, static_cast<char>(code), precision < 0 ? 6 : precision, flags & BytesAlternate ? FloatAlternate : 0);
+            if (!text) [[unlikely]]
+                return raiseMemoryError(globalObject, scope, String());
+            useString(text);
             isNumber = true;
             break;
         }
