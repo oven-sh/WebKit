@@ -764,8 +764,14 @@ public:
         if (auto* dict = PyDict::tryFrom(object))
             RELEASE_AND_RETURN(scope, encodeDict(dict, dict, level));
         // The object of JSON is an object of JS.
-        if (typeOf(m_globalObject, object) == runtime(m_globalObject).jsPlainObjectType())
+        if (isMappingOfJSForJSON(m_globalObject, object))
             RELEASE_AND_RETURN(scope, encodeDict(object, nullptr, level));
+        JSObject* owner;
+        PyDict* properties = dictOfJSProperties(m_globalObject, object, owner);
+        RETURN_IF_EXCEPTION(scope, false);
+        // There is a new one whenever it is asked for, so it is marked by the object, but not as the object, which `default=vars` has marked.
+        if (properties)
+            RELEASE_AND_RETURN(scope, encodeDict(object, properties, level, m_markers ? PyTuple::create(m_globalObject, { identityOf(m_globalObject, owner) }) : nullptr));
 
         JSValue identity;
         if (failed(scope, enter(object, identity)))
@@ -797,12 +803,14 @@ private:
     }
 
     // Notes that the object is being written, which it must not be already.
+    // `identity`: what it is marked by, if that is not its own.
     bool enter(JSValue object, JSValue& identity)
     {
         if (!m_markers)
             return true;
         auto scope = DECLARE_THROW_SCOPE(m_vm);
-        identity = identityOf(m_globalObject, object);
+        if (!identity)
+            identity = identityOf(m_globalObject, object);
         bool isThere = m_markers->contains(m_globalObject, identity);
         RETURN_IF_EXCEPTION(scope, false);
         if (isThere) {
@@ -955,21 +963,20 @@ private:
         return true;
     }
 
-    // The mapping is the dict, or, without one, a plain object of JS.
-    bool encodeDict(JSValue mapping, PyDict* dict, unsigned level)
+    // The mapping is the dict or what the dict is a copy of, or, without one, a mapping of JS's.
+    bool encodeDict(JSValue mapping, PyDict* dict, unsigned level, JSValue identity = { })
     {
         Runtime& rt = runtime(m_globalObject);
         auto scope = DECLARE_THROW_SCOPE(m_vm);
         JSArray* items = nullptr;
         if (!dict) {
-            items = itemsOfObjectOfJS(m_globalObject, asObject(mapping));
+            items = itemsOfMappingOfJS(m_globalObject, asObject(mapping));
             RETURN_IF_EXCEPTION(scope, false);
         }
         if (dict ? dict->isEmpty() : !listLength(items)) {
             m_out.append("{}"_s);
             return true;
         }
-        JSValue identity;
         if (failed(scope, enter(mapping, identity)))
             return false;
         m_out.append('{');

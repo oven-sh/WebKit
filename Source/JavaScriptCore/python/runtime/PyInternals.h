@@ -631,8 +631,12 @@ ASCIILiteral nameOfErrno(int);
 JSValue attributeOfExceptionForJS(JSGlobalObject*, PyException*, JSString* name);
 // `with object:` is `using`. The method, bound to the object. Empty: it is no object of JS, or an exception: it cannot be disposed of.
 JSValue contextManagerMethodOfJS(JSGlobalObject*, JSValue object, SpecialMethodForWith);
-// [(name, value), ...] of its own enumerable properties. Null: an exception.
-JSArray* itemsOfObjectOfJS(JSGlobalObject*, JSObject*);
+// What json.dumps() writes as it writes a dict: a plain object, a Map.
+bool isMappingOfJSForJSON(JSGlobalObject*, JSValue);
+// [(key, value), ...] of one of those. Null: an exception.
+JSArray* itemsOfMappingOfJS(JSGlobalObject*, JSObject*);
+// And a _js.JSProperties, as the dict it is now, with the object whose properties they are. Null: it is none, or an exception.
+PyDict* dictOfJSProperties(JSGlobalObject*, JSValue, JSObject*&);
 // Once the import system works.
 void registerInteropTypes(JSGlobalObject*);
 // For the type that stands for a class of JS's among the bases: what the instances of the classes that derive from it do otherwise than

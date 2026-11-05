@@ -7,6 +7,7 @@
 
 #include "BigIntConstructor.h"
 #include "BooleanConstructor.h"
+#include "BuiltinNames.h"
 #include "FunctionPrototype.h"
 #include "IteratorOperations.h"
 #include "JSBoundFunction.h"
@@ -1048,10 +1049,54 @@ static JSValue jsObjectKeys(JSGlobalObject* globalObject, JSValue self) { return
 static JSValue jsObjectValues(JSGlobalObject* globalObject, JSValue self) { return jsObjectParts(globalObject, self, JSObjectPart::Values); }
 static JSValue jsObjectItems(JSGlobalObject* globalObject, JSValue self) { return jsObjectParts(globalObject, self, JSObjectPart::Items); }
 
-JSArray* itemsOfObjectOfJS(JSGlobalObject* globalObject, JSObject* object)
+static bool isJSProperties(JSGlobalObject*, JSValue);
+static JSObject* objectOfProperties(JSValue self);
+static JSValue jsPropertiesCopy(JSGlobalObject*, JSValue self);
+
+bool isMappingOfJSForJSON(JSGlobalObject* globalObject, JSValue value)
 {
-    JSValue items = jsObjectItems(globalObject, object);
-    return items ? asArray(items) : nullptr;
+    return value.isCell() && (value.asCell()->type() == JSMapType || typeOf(globalObject, value) == runtime(globalObject).jsPlainObjectType());
+}
+
+JSArray* itemsOfMappingOfJS(JSGlobalObject* globalObject, JSObject* mapping)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (mapping->type() != JSMapType) {
+        JSValue items = jsObjectItems(globalObject, mapping);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        return asArray(items);
+    }
+    if (failed(scope, ensureMainThreadForJS(globalObject)))
+        return nullptr;
+    // A class of Python's with an items() of its own says what the items are, as one derived from dict does.
+    if (PyType* type = typeByPrototype(mapping); type && lookupBeforeClassOfJS(type, runtime(globalObject).names.items())) {
+        JSValue view = callMethod(globalObject, mapping, runtime(globalObject).names.items());
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        RELEASE_AND_RETURN(scope, listFromIterable(globalObject, view));
+    }
+    // The entries as they are: a key need not be one that [] finds again (a float that JS was given in a list).
+    JSValue entries = callMethodOfJS(globalObject, mapping, vm.propertyNames->builtinNames().entriesPublicName());
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    JSArray* items = newList(globalObject);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    forEach(globalObject, entries, [&](JSValue entry) {
+        // What is no pair is for the caller to complain about.
+        JSArray* pair = tryAsList(entry);
+        listAppend(globalObject, items, pair && listLength(pair) == 2 ? JSValue(PyTuple::create(globalObject, { listGet(pair, 0), listGet(pair, 1) })) : entry);
+        return !scope.exception();
+    });
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    return items;
+}
+
+PyDict* dictOfJSProperties(JSGlobalObject* globalObject, JSValue value, JSObject*& object)
+{
+    if (!isJSProperties(globalObject, value))
+        return nullptr;
+    object = objectOfProperties(value);
+    JSValue dict = jsPropertiesCopy(globalObject, value);
+    return dict ? PyDict::from(dict) : nullptr;
 }
 
 static JSValue jsObjectLen(JSGlobalObject* globalObject, JSValue self)
@@ -1185,8 +1230,6 @@ static JSValue jsObjectPop(JSGlobalObject* globalObject, JSValue self, JSValue k
 enum JSPropertiesField : unsigned { JSPropertiesObject, JSPropertiesFieldCount };
 
 static JSObject* objectOfProperties(JSValue self) { return asObject(uncheckedDowncast<PyRecord>(self.asCell())->get(JSPropertiesObject)); }
-
-static bool isJSProperties(JSGlobalObject*, JSValue);
 
 // False: an exception, or, without one, the key is the name of no attribute.
 static bool nameOfAttributeFor(JSGlobalObject* globalObject, JSObject* object, JSValue key, Identifier& name)
