@@ -482,198 +482,310 @@ static NEVER_INLINE void raiseTooManyPositional(JSGlobalObject* globalObject, Py
     raiseTypeError(globalObject, scope, qualnameForMessage(globalObject, function), "() takes "_s, signature, " positional argument"_s, plural ? "s"_s : ""_s, " but "_s, given, keywordOnly, given == 1 && !keywordOnlyGiven ? " was"_s : " were"_s, " given"_s);
 }
 
-// `keywordValues`: the values that go with the names.
-static NEVER_INLINE bool bindArgumentsSlow(JSGlobalObject* globalObject, CallFrame* callFrame, PyFunction* function, unsigned positionalCount, PyTuple* keywordNames, const JSValue* keywordValues)
+// `keys`: see keywordKeys().
+static NEVER_INLINE void raiseUnexpectedKeyword(JSGlobalObject* globalObject, PyFunction* function, const CodeInfo& info, PyTuple* keywordNames, PyTuple* keys, unsigned k)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSString* keyword = asString(keywordNames->at(k));
+    unsigned keywordCount = keywordNames->length();
+    // It may be the name of a parameter that is positional-only.
+    if (info.posOnlyCount) {
+        StrBuilder names;
+        for (unsigned i = 0; i < info.posOnlyCount; ++i) {
+            for (unsigned j = 0; j < keywordCount; ++j) {
+                bool isEqual;
+                if (keys && !keys->at(j).isString()) [[unlikely]] {
+                    isEqual = richCompareBool(globalObject, internString(vm, info.parameterNames[i].string()), keys->at(j), CompareOperator::Eq);
+                    RETURN_IF_EXCEPTION(scope, void());
+                } else
+                    isEqual = WTF::equal(info.parameterNames[i].impl(), asString(keywordNames->at(j))->tryGetValueImpl());
+                if (isEqual) {
+                    if (!names.isEmpty())
+                        names.append(", "_s);
+                    names.append(stringOf(asString(keywordNames->at(j))));
+                }
+            }
+        }
+        if (!names.isEmpty()) {
+            raiseTypeError(globalObject, scope, qualnameForMessage(globalObject, function), "() got some positional-only arguments passed as keyword arguments: '"_s, names.toString(), '\'');
+            return;
+        }
+    }
+    Vector<String> candidates;
+    for (unsigned i = info.posOnlyCount; i < info.argCount + info.kwOnlyCount; ++i)
+        candidates.append(info.parameterNames[i].string());
+    String suggestion = calculateSuggestion(candidates, stringOf(keyword));
+    if (!suggestion.isNull())
+        raiseTypeError(globalObject, scope, qualnameForMessage(globalObject, function), "() got an unexpected keyword argument '"_s, stringOf(keyword), "'. Did you mean '"_s, suggestion, "'?"_s);
+    else
+        raiseTypeError(globalObject, scope, qualnameForMessage(globalObject, function), "() got an unexpected keyword argument '"_s, stringOf(keyword), '\'');
+}
+
+static NEVER_INLINE void raiseMultipleValues(JSGlobalObject* globalObject, PyFunction* function, JSString* keyword)
+{
+    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
+    raiseTypeError(globalObject, scope, qualnameForMessage(globalObject, function), "() got multiple values for argument '"_s, stringOf(keyword), '\'');
+}
+
+// The parameter that can be passed by this name, or the number of those that have names. `key`: an instance of a class derived from str,
+// which says itself what its instances are equal to.
+static NEVER_INLINE unsigned indexOfParameterEqualTo(JSGlobalObject* globalObject, const CodeInfo& info, JSValue key)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    unsigned namedCount = info.argCount + info.kwOnlyCount;
+    for (unsigned index = info.posOnlyCount; index < namedCount; ++index) {
+        bool isEqual = richCompareBool(globalObject, key, internString(vm, info.parameterNames[index].string()), CompareOperator::Eq);
+        RETURN_IF_EXCEPTION(scope, namedCount);
+        if (isEqual)
+            return index;
+    }
+    return namedCount;
+}
+
+static ALWAYS_INLINE unsigned indexOfParameterNamed(const CodeInfo& info, unsigned namedCount, const StringImpl* name)
+{
+    const Identifier* names = info.parameterNames.span().data();
+    for (unsigned index = info.posOnlyCount; index < namedCount; ++index) {
+        if (names[index].impl() == name)
+            return index;
+    }
+    if (!name->isAtom()) {
+        for (unsigned index = info.posOnlyCount; index < namedCount; ++index) {
+            if (WTF::equal(names[index].impl(), name))
+                return index;
+        }
+    }
+    return namedCount;
+}
+
+// The keyword-only parameters that have no value yet.
+static NEVER_INLINE bool bindKeywordOnlyDefaults(JSGlobalObject* globalObject, PyFunction* function, const CodeInfo& info, JSValue* slots)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    unsigned namedCount = info.argCount + info.kwOnlyCount;
+    bool isMissing = false;
+    for (unsigned i = info.argCount; i < namedCount; ++i) {
+        if (slots[i])
+            continue;
+        // (Each time: a key that is no str may have run code that gave the function another dict.)
+        if (PyDict* defaults = function->kwDefaults()) {
+            JSString* name = jsString(vm, info.parameterNames[i].string().string());
+            JSValue value = defaults->hasOnlyStringKeys() ? defaults->get(name) : defaults->get(globalObject, name);
+            RETURN_IF_EXCEPTION(scope, false);
+            if (value) {
+                slots[i] = value;
+                continue;
+            }
+        }
+        isMissing = true;
+    }
+    if (!isMissing)
+        return true;
+    scope.release();
+    raiseMissingArguments(globalObject, function, info, slots, info.argCount, namedCount, "keyword-only"_s);
+    return false;
+}
+
+static bool bindKeywords(JSGlobalObject*, CallFrame*, PyFunction*, unsigned positionalCount, PyTuple* keywordNames, const JSValue* keywordValues);
+
+static NEVER_INLINE bool bindManyKeywords(JSGlobalObject* globalObject, CallFrame* callFrame, PyFunction* function, unsigned positionalCount, PyTuple* keywordNames, const JSValue* keywordValues)
+{
+    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
+    MarkedArgumentBuffer values;
+    values.ensureCapacity(keywordNames->length());
+    if (values.hasOverflowed()) [[unlikely]] {
+        raiseWithArgs(globalObject, scope, runtime(globalObject).MemoryError(), { });
+        return false;
+    }
+    for (unsigned k = 0; k < keywordNames->length(); ++k)
+        values.append(keywordValues[k]);
+    RELEASE_AND_RETURN(scope, bindKeywords(globalObject, callFrame, function, positionalCount, keywordNames, valuesOf(values)));
+}
+
+// `keywordValues`: the values that go with the names. They follow the positional arguments in the frame, or are somewhere else.
+static NEVER_INLINE bool bindKeywords(JSGlobalObject* globalObject, CallFrame* callFrame, PyFunction* function, unsigned positionalCount, PyTuple* keywordNames, const JSValue* keywordValues)
 {
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     // (Not the function's: what has run since the call began may have given it other code.)
-    CodeInfo& info = codeInfoOf(callFrame);
-    unsigned argCount = info.argCount;
-    unsigned namedCount = argCount + info.kwOnlyCount;
-    bool hasVarArgs = info.flags.contains(CodeFlag::VarArgs);
-    const JSValue* args = reinterpret_cast<const JSValue*>(callFrame->addressOfArgumentsStart());
+    const CodeInfo& info = codeInfoOf(callFrame);
+    const unsigned argCount = info.argCount;
+    const unsigned namedCount = argCount + info.kwOnlyCount;
+    const bool hasVarArgs = info.flags.contains(CodeFlag::VarArgs);
+    const bool hasVarKeywords = info.flags.contains(CodeFlag::VarKeywords);
+    // The parameters are where the arguments are.
+    JSValue* slots = reinterpret_cast<JSValue*>(callFrame->addressOfArgumentsStart());
+    const bool keywordValuesAreInFrame = keywordValues == slots + positionalCount;
+    const bool keywordValuesFollowParameters = keywordValuesAreInFrame && positionalCount <= argCount;
 
     // A call in JS may pass any function more than it takes, and those who call callbacks do: array.map(f) is f(item, index, array).
     if (positionalCount > argCount && !hasVarArgs && !isCalledByPython(globalObject, callFrame))
         positionalCount = argCount;
 
-    // The parameters are worked out on the side: they go where the arguments are.
-    unsigned parameterCount = info.parameterCount();
-    MarkedArgumentBuffer buffer;
-    buffer.fill(vm, parameterCount, [](JSValue*) { });
-    JSValue* slots = valuesOf(buffer);
+    const unsigned keywordCount = keywordNames ? keywordNames->length() : 0;
+    PyTuple* keys = keywordCount ? keywordKeys(globalObject, keywordNames) : nullptr;
 
+    // So many parameters have their values where they are: what was passed by position, and then by name in the order of the parameters.
+    unsigned bound = std::min(positionalCount, argCount);
+    unsigned firstKeyword = 0;
+    if (keywordValuesFollowParameters && bound >= info.posOnlyCount && !keys) {
+        while (firstKeyword < keywordCount && bound < namedCount && info.parameterNames[bound].impl() == asString(keywordNames->at(firstKeyword))->tryGetValueImpl()) {
+            ++firstKeyword;
+            ++bound;
+        }
+    }
+    // The other values that were passed by name are in the way of the parameters.
+    constexpr unsigned fewKeywords = 8;
+    JSValue setAside[fewKeywords];
+    if (firstKeyword < keywordCount && keywordValuesAreInFrame) {
+        if (keywordCount > fewKeywords) [[unlikely]]
+            RELEASE_AND_RETURN(scope, bindManyKeywords(globalObject, callFrame, function, positionalCount, keywordNames, keywordValues));
+        for (unsigned k = firstKeyword; k < keywordCount; ++k)
+            setAside[k] = keywordValues[k];
+        keywordValues = setAside;
+    }
+    JSValue varArgs;
+    if (hasVarArgs)
+        varArgs = positionalCount > argCount ? PyTuple::create(globalObject, std::span<const JSValue> { slots + argCount, positionalCount - argCount }) : rt.emptyTuple();
+    for (unsigned i = bound; i < namedCount; ++i)
+        slots[i] = JSValue();
+    if (hasVarArgs)
+        slots[namedCount] = varArgs;
     PyDict* keywordDict = nullptr;
-    if (info.flags.contains(CodeFlag::VarKeywords)) {
+    if (hasVarKeywords) {
         keywordDict = PyDict::create(globalObject);
         slots[namedCount + hasVarArgs] = keywordDict;
     }
-    unsigned copied = std::min(positionalCount, argCount);
-    for (unsigned i = 0; i < copied; ++i)
-        slots[i] = args[i];
-    if (hasVarArgs)
-        slots[namedCount] = positionalCount > copied ? PyTuple::create(globalObject, std::span<const JSValue> { args + copied, positionalCount - copied }) : rt.emptyTuple();
 
-    unsigned keywordCount = keywordNames ? keywordNames->length() : 0;
-    // The keys of the dict that the names came from, if some of them are instances of classes derived from str.
-    PyTuple* keys = keywordCount ? keywordKeys(globalObject, keywordNames) : nullptr;
-    for (unsigned k = 0; k < keywordCount; ++k) {
+    for (unsigned k = firstKeyword; k < keywordCount; ++k) {
         JSString* keyword = asString(keywordNames->at(k));
-        JSValue value = keywordValues[k];
-        const StringImpl* impl = keyword->tryGetValueImpl();
-        unsigned index = info.posOnlyCount;
+        unsigned index;
         if (keys && !keys->at(k).isString()) [[unlikely]] {
-            // Such a class says itself what its instances are equal to.
-            for (; index < namedCount; ++index) {
-                bool isEqual = richCompareBool(globalObject, keys->at(k), internString(vm, info.parameterNames[index].string()), CompareOperator::Eq);
-                RETURN_IF_EXCEPTION(scope, false);
-                if (isEqual)
-                    break;
-            }
-        } else {
-            for (; index < namedCount; ++index) {
-                if (info.parameterNames[index].impl() == impl)
-                    break;
-            }
-            if (index == namedCount && !impl->isAtom()) {
-                for (index = info.posOnlyCount; index < namedCount; ++index) {
-                    if (WTF::equal(info.parameterNames[index].impl(), impl))
-                        break;
-                }
-            }
-        }
+            index = indexOfParameterEqualTo(globalObject, info, keys->at(k));
+            RETURN_IF_EXCEPTION(scope, false);
+        } else
+            index = indexOfParameterNamed(info, namedCount, keyword->tryGetValueImpl());
         if (index < namedCount) {
-            if (slots[index]) {
-                raiseTypeError(globalObject, scope, qualnameForMessage(globalObject, function), "() got multiple values for argument '"_s, stringOf(keyword), '\'');
+            if (slots[index]) [[unlikely]] {
+                scope.release();
+                raiseMultipleValues(globalObject, function, keyword);
                 return false;
             }
-            slots[index] = value;
+            slots[index] = keywordValues[k];
             continue;
         }
-        if (keywordDict) {
-            if (keys) [[unlikely]] {
-                keywordDict->set(globalObject, keys->at(k), value);
-                RETURN_IF_EXCEPTION(scope, false);
-            } else
-                keywordDict->set(vm, keyword, value);
-            continue;
+        if (!keywordDict) [[unlikely]] {
+            scope.release();
+            raiseUnexpectedKeyword(globalObject, function, info, keywordNames, keys, k);
+            return false;
         }
-
-        // Nothing takes it. It may be the name of a parameter that is positional-only.
-        if (info.posOnlyCount) {
-            StrBuilder names;
-            for (unsigned i = 0; i < info.posOnlyCount; ++i) {
-                for (unsigned j = 0; j < keywordCount; ++j) {
-                    bool isEqual;
-                    if (keys && !keys->at(j).isString()) [[unlikely]] {
-                        isEqual = richCompareBool(globalObject, internString(vm, info.parameterNames[i].string()), keys->at(j), CompareOperator::Eq);
-                        RETURN_IF_EXCEPTION(scope, false);
-                    } else
-                        isEqual = WTF::equal(info.parameterNames[i].impl(), asString(keywordNames->at(j))->tryGetValueImpl());
-                    if (isEqual) {
-                        if (!names.isEmpty())
-                            names.append(", "_s);
-                        names.append(stringOf(asString(keywordNames->at(j))));
-                    }
-                }
-            }
-            if (!names.isEmpty()) {
-                raiseTypeError(globalObject, scope, qualnameForMessage(globalObject, function), "() got some positional-only arguments passed as keyword arguments: '"_s, names.toString(), '\'');
-                return false;
-            }
-        }
-        Vector<String> candidates;
-        for (unsigned i = info.posOnlyCount; i < namedCount; ++i)
-            candidates.append(info.parameterNames[i].string());
-        String suggestion = calculateSuggestion(candidates, stringOf(keyword));
-        if (!suggestion.isNull())
-            raiseTypeError(globalObject, scope, qualnameForMessage(globalObject, function), "() got an unexpected keyword argument '"_s, stringOf(keyword), "'. Did you mean '"_s, suggestion, "'?"_s);
-        else
-            raiseTypeError(globalObject, scope, qualnameForMessage(globalObject, function), "() got an unexpected keyword argument '"_s, stringOf(keyword), '\'');
-        return false;
+        if (keys) [[unlikely]] {
+            keywordDict->set(globalObject, keys->at(k), keywordValues[k]);
+            RETURN_IF_EXCEPTION(scope, false);
+        } else
+            keywordDict->set(vm, keyword, keywordValues[k]);
     }
 
-    if (positionalCount > argCount && !hasVarArgs) {
+    if (positionalCount > argCount && !hasVarArgs) [[unlikely]] {
         scope.release();
         raiseTooManyPositional(globalObject, function, info, slots, positionalCount);
         return false;
     }
 
-    if (positionalCount < argCount) {
+    if (bound < argCount) {
         PyTuple* defaults = function->defaults();
         unsigned defaultCount = defaults ? defaults->length() : 0;
         unsigned required = argCount - std::min(defaultCount, argCount);
-        for (unsigned i = positionalCount; i < required; ++i) {
-            if (!slots[i]) {
+        for (unsigned i = bound; i < argCount; ++i) {
+            if (slots[i])
+                continue;
+            if (i < required) [[unlikely]] {
                 scope.release();
                 raiseMissingArguments(globalObject, function, info, slots, 0, required, "positional"_s);
                 return false;
             }
-        }
-        for (unsigned i = std::max(copied, required); i < argCount; ++i) {
-            if (!slots[i])
-                slots[i] = defaults->at(i + defaultCount - argCount); // The last default is that of the last parameter.
+            slots[i] = defaults->at(i + defaultCount - argCount); // The last default is that of the last parameter.
         }
     }
+    if (bound < namedCount && info.kwOnlyCount)
+        RELEASE_AND_RETURN(scope, bindKeywordOnlyDefaults(globalObject, function, info, slots));
+    return true;
+}
 
-    if (info.kwOnlyCount) {
-        PyDict* defaults = function->kwDefaults();
-        bool isMissing = false;
-        for (unsigned i = argCount; i < namedCount; ++i) {
-            if (slots[i])
-                continue;
-            if (defaults) {
-                JSValue value = defaults->get(globalObject, jsString(vm, info.parameterNames[i].string().string()));
-                RETURN_IF_EXCEPTION(scope, false);
-                if (value) {
-                    slots[i] = value;
-                    continue;
-                }
-            }
-            isMissing = true;
-        }
-        if (isMissing) {
+// Nothing was passed by name.
+static NEVER_INLINE bool bindPositional(JSGlobalObject* globalObject, CallFrame* callFrame, PyFunction* function, unsigned count)
+{
+    Runtime& rt = runtime(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(rt.vm());
+    const CodeInfo& info = function->codeInfo();
+    const unsigned argCount = info.argCount;
+    const unsigned namedCount = argCount + info.kwOnlyCount;
+    JSValue* slots = reinterpret_cast<JSValue*>(callFrame->addressOfArgumentsStart());
+
+    JSValue* next = slots + namedCount;
+    if (info.flags.contains(CodeFlag::VarArgs)) {
+        JSValue rest = count > argCount ? PyTuple::create(globalObject, std::span<const JSValue> { slots + argCount, count - argCount }) : rt.emptyTuple();
+        *next++ = rest;
+    } else if (count > argCount) [[unlikely]] {
+        if (isCalledByPython(globalObject, callFrame)) {
+            for (unsigned i = argCount; i < namedCount; ++i)
+                slots[i] = JSValue();
             scope.release();
-            raiseMissingArguments(globalObject, function, info, slots, argCount, namedCount, "keyword-only"_s);
+            raiseTooManyPositional(globalObject, function, info, slots, count);
             return false;
         }
+        // A call in JS may pass any function more than it takes, and those who call callbacks do: array.map(f) is f(item, index, array).
     }
+    if (info.flags.contains(CodeFlag::VarKeywords))
+        *next = PyDict::create(globalObject);
 
-    for (unsigned i = 0; i < parameterCount; ++i)
-        callFrame->setArgument(i, slots[i]);
-    return true;
+    if (count < argCount) {
+        PyTuple* defaults = function->defaults();
+        unsigned defaultCount = defaults ? defaults->length() : 0;
+        if (argCount - count > defaultCount) [[unlikely]] {
+            for (unsigned i = count; i < argCount - defaultCount; ++i)
+                slots[i] = JSValue();
+            scope.release();
+            raiseMissingArguments(globalObject, function, info, slots, 0, argCount - defaultCount, "positional"_s);
+            return false;
+        }
+        for (unsigned i = count; i < argCount; ++i)
+            slots[i] = defaults->at(i + defaultCount - argCount); // The last default is that of the last parameter.
+    }
+    if (argCount == namedCount)
+        return true;
+    for (unsigned i = argCount; i < namedCount; ++i)
+        slots[i] = JSValue();
+    RELEASE_AND_RETURN(scope, bindKeywordOnlyDefaults(globalObject, function, info, slots));
+}
+
+// From JS: f(1, kwargs({ a: 2 })).
+static NEVER_INLINE bool bindKeywordsOfMarker(JSGlobalObject* globalObject, CallFrame* callFrame, PyFunction* function, unsigned count)
+{
+    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
+    PyTuple* keywordNames = nullptr;
+    MarkedArgumentBuffer values;
+    if (failed(scope, keywordsOfMarker(globalObject, callFrame->uncheckedArgument(count - 1), keywordNames, values)))
+        return false;
+    RELEASE_AND_RETURN(scope, bindKeywords(globalObject, callFrame, function, count - 1, keywordNames, valuesOf(values)));
 }
 
 bool bindArguments(JSGlobalObject* globalObject, CallFrame* callFrame, PyFunction* function)
 {
-    CodeInfo& info = function->codeInfo();
     unsigned count = callFrame->argumentCount();
     JSValue thisValue = callFrame->thisValue();
-    PyTuple* keywordNames = nullptr;
-    if (thisValue.isCell() && thisValue.asCell()->type() == PyKwNamesType) [[unlikely]] {
-        keywordNames = uncheckedDowncast<PyTuple>(thisValue.asCell());
+    if (thisValue.isCell() && thisValue.asCell()->type() == PyKwNamesType) {
+        auto* keywordNames = uncheckedDowncast<PyTuple>(thisValue.asCell());
         count -= keywordNames->length();
-    } else if (hasKeywordMarker(globalObject, callFrame)) [[unlikely]] {
-        // From JS: f(1, kwargs({ a: 2 })).
-        MarkedArgumentBuffer values;
-        auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
-        if (failed(scope, keywordsOfMarker(globalObject, callFrame->uncheckedArgument(count - 1), keywordNames, values)))
-            return false;
-        RELEASE_AND_RETURN(scope, bindArgumentsSlow(globalObject, callFrame, function, count - 1, keywordNames, valuesOf(values)));
-    } else if (count == info.argCount && info.parameterCount() == count) [[likely]]
-        return true; // Every argument is where its parameter is.
-    else if (count < info.argCount && info.parameterCount() == info.argCount) {
-        // So it is, and what is left out has defaults. The last default is that of the last parameter.
-        PyTuple* defaults = function->defaults();
-        if (unsigned defaultCount = defaults ? defaults->length() : 0; info.argCount - count <= defaultCount) {
-            for (unsigned i = count; i < info.argCount; ++i)
-                callFrame->setArgument(i, defaults->at(i + defaultCount - info.argCount));
-            return true;
-        }
+        return bindKeywords(globalObject, callFrame, function, count, keywordNames, reinterpret_cast<const JSValue*>(callFrame->addressOfArgumentsStart()) + count);
     }
-    return bindArgumentsSlow(globalObject, callFrame, function, count, keywordNames, reinterpret_cast<const JSValue*>(callFrame->addressOfArgumentsStart()) + count);
+    if (hasKeywordMarker(globalObject, callFrame)) [[unlikely]]
+        return bindKeywordsOfMarker(globalObject, callFrame, function, count);
+    return bindPositional(globalObject, callFrame, function, count);
 }
 
 // ---- The type of functions ----
@@ -996,7 +1108,7 @@ JSC_DEFINE_HOST_FUNCTION(callPythonObject, (JSGlobalObject* globalObject, CallFr
         RETURN_IF_EXCEPTION(scope, { });
         RELEASE_AND_RETURN(scope, JSValue::encode(resultForCaller(globalObject, callFrame, result)));
     }
-    // As in bindArgumentsSlow(): what JS passes a bound method beyond what it takes is dropped.
+    // As in bindPositional(): what JS passes a bound method beyond what it takes is dropped.
     if (auto* method = dynamicDowncast<PyMethod>(callFrame->jsCallee()); method && !args.hasKeywords()) {
         if (auto* function = PyFunction::tryFrom(method->function())) {
             CodeInfo& info = function->codeInfo();
