@@ -1968,6 +1968,7 @@ static void typeSetAnnotations(JSGlobalObject* globalObject, JSValue self, JSVal
     }
     dict->remove(vm, rt.names.dAnnotateFunc());
     dict->remove(vm, rt.names.dAnnotate());
+    type->didChange(vm);
 }
 
 static JSValue typeGetTypeParams(JSGlobalObject* globalObject, JSValue self)
