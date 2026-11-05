@@ -150,6 +150,15 @@ if (USE_BUN_JSC_ADDITIONS)
     WEBKIT_EXECUTABLE_DECLARE(testaot)
 endif ()
 
+if (APPLE AND ENABLE_SANITIZERS)
+    # With the sanitizer's checks each of these has about 128 MB of code, which is as far as a branch reaches on arm64.
+    foreach (program jsc testFFI testaot)
+        if (TARGET ${program})
+            target_link_options(${program} PRIVATE "LINKER:-dead_strip")
+        endif ()
+    endforeach ()
+endif ()
+
 if (APPLE)
     WEBKIT_EXECUTABLE_DECLARE(mya)
 endif ()

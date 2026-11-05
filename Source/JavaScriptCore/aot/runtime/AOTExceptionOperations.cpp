@@ -18,6 +18,7 @@
 #include "AOTImage.h"
 #include "AOTInstance.h"
 #include "AOTMembersLeftOut.h"
+#include "AOTObject.h"
 #include "AOTOperationData.h"
 #include "AOTOperationScope.h"
 #include "AOTProgramStrings.h"

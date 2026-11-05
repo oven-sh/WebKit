@@ -18,6 +18,7 @@
 #include "AOTIRProgram.h"
 #include "AOTPrimitiveEmitter.h"
 #include "AOTRepresentationRules.h"
+#include "AOTRuntimeCallEmitter.h"
 #include "AOTStringEmitter.h"
 #include "AOTTypeIDs.h"
 #include <algorithm>
