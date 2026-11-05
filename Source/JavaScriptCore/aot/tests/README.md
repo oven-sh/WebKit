@@ -215,7 +215,7 @@ that hands a program to another command has a line `entry module=m0`. Without it
 Then the command runs on a new `BuildContext`, and what it printed is matched against the check lines with its prefix. There is one form of
 the IR: the wire IR, as a front end sends it. `OPTIONS`, `JSC-OPTIONS`, `TYPES`, `DIAGNOSTIC` and `STATISTIC` apply to every `RUN` in the file.
 
-**`LIBRARY`.** A front end always sends the library functions that the built-ins table names. So that a test need not, the Machine commands
+**`LIBRARY`.** A front end sends the library functions that the program can reach. So that a test need not, the Machine commands
 and the commands on whole builds get a stand-in library: one more module without a body (`flags=[IsLibrary]`) and in it one function,
 `role=Library`, that says that it was called (`printErr`) and returns `undefined`, registered for every runtime function that the text has no `runtimefunction` line for,
 but for the helpers of the compiler (the entries under `CompilerHelpers`: steps of an iteration, sorts, splits, spreads).
@@ -443,6 +443,7 @@ every unit that the build compiles: entries and units of the library too.
 - `test-run [oldest-first|scattered]` prints what the build knows of a test run (`facts/AOTTestRuns.h`; `# OPTIONS: admit=ReplacedBuiltins` makes one): `through-mock m1 "space"` for each export that may be a mock's
   (`mayComeThroughMock()`), by module and place, and behind them `any-other-name m1` where that holds of a name that the module lacks . `replaces MathImul` for each member that the table locks and the image opens because a write was followed to it . `adds FunctionPrototype "marked"` for each opened name, those
   of the wire in front of those that Link has found . `left-to-program <count>`: the members whose lock the table of the build leaves to the program, 0 in an executable.
+- `lacked` prints a line for each function of the library that the program reaches and does not hold, `lacked ArrayIteratorPrototypeNext`: `Facts::libraryFunctionsLacked()`, of which the front end makes a stop of the build.
 - `closure` prints nothing where Link's flow ends closed. Behind the flow it goes along every edge and tells every observer once more, as one that has never been told,
   in each of three orders of the worklist (`newest first`, as a build has it, `oldest first`, `scattered`). A node that climbs then, or a set that grows, was missed by an observer that
   decided on the state at the time of its telling, and is a line: `oldest first: f5.node2 climbs from f2 to lostFunctions | brought by subject of call 0 of f5, told at f5.node1`,
@@ -617,6 +618,10 @@ those words of operand 0 are others behind it. This is a bug in Bun.`
   (`addEffectsOfOperatorsLeftApart()`) and the walk (`effectsOfOperatorWithin()`) each have a rule for it over the same types, and the walk's is the wider: `undefined|string < "b"`. A hint (`family Hint`: `EndLifeOfCell`
   and `ReleaseHint`) overwrites a cell whose life the unit itself ends, which no caller sees. The lie: `RowSaysLess:Summary/f2/ObjectFields`:
   `answers/effects-by-link-that-say-less-than-the-body-stop-the-verifier.ir`.
+- **What Link's effects of a function lean on** (`CalleeSummarizerForLinkEffects::typeAt()`, `facts/AOTLinkEffects.cpp`): Link's type of a value in full only where the body itself makes the value. Of what comes
+  through a place of an enforced kind they lean on what its doors ask in every unit (`asDoorsAsk()`): the primitives and the layouts, never which function it is, nor where an object of a class of the engine was made.
+  Of what has no door (what a list holds, what was thrown) on nothing. A call of what a place holds, by value or under a name that finds a field, is any code:
+  `link/the-effects-of-a-function-go-by-what-its-body-makes-and-by-what-doors-ask.ir`, `answers/a-call-of-what-a-place-holds-is-any-code-to-the-effects-of-its-function.ir`.
 - `BUN_AOT_EFFECTS_NET_GOES_ON=1`: each false row is told once and the run goes on. With `aotCountsPath` the file lists `effects:<part>:<row>` for each part of a row that a
   call was held to, and `false-effects:` for each false one; `testaot list rows-of-effects` lists what there is to hold.
 
@@ -652,6 +657,9 @@ not of the type that the compiler has proven of it. It is: string. This is a bug
 - **WHAT A TEST HAS LET PASS** (`checkProofOfRecord()`): a `Narrowed` is a new proof about an old value, whoever has built it: the walk behind a test of the program, a guess behind its own test, a case of a switch,
   a field that tells its holders apart. That it stands on the edge on which its test says so is its builder's word: where the arms of a guess are swapped, a `Narrowed [isOnTakenEdge]` stands on the edge that is not
   taken, and no check at a source sees that. So behind each stands a `CheckProof` that takes the value for what it was in front of the test: `what a test has let pass ..`. Not where the value lies raw: a bound of an integer.
+- **WHAT THE STATE ANSWERS IN PLACE OF A READ** (`checkProofOfRecord()`): an `AssumeType` gives a value in hand the type that the read of a field of a scope would have had, by Link's word and no test. Behind each stands
+  the `CheckProof` that would have stood behind the read, under the source that the `AssumeType` names, and it takes the value for what it was without the proof. Of a raw number it asks the value that was assumed, as it is:
+  the type of the record itself would answer for the form.
 - **WHAT A READ HANDS OVER IS A VALUE OF THE LANGUAGE, WHATEVER IT CLAIMS, `anything` INCLUDED** (`checkThatReadGivesValue()`, `CastEmitter::generateCheckProof()`): not the empty word, unless the type says so, and no cell
   that is no object, text, symbol or big integer: the pair of an accessor, an environment, a structure, a table of the run time. Each passes every test of the tag bits, and `anything` asks no other. The emitter asks it of
   every value that a `CheckProof` is given, and a read of a slot, a field, an element or a variable that claims nothing else gets a check that asks nothing else: `.. It is: a cell that is no value of the language`.

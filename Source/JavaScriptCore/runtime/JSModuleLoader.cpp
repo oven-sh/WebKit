@@ -1113,7 +1113,12 @@ void JSModuleLoader::innerModuleLoading(JSGlobalObject* globalObject, ModuleGrap
         // (containsVisited first — it's the cheap pointer-hash check that fails
         //  fast for the common already-seen case before we pay for the dyncast.)
         if (!state->containsVisited(module)) {
-            if (auto* cyclic = dynamicDowncast<CyclicModuleRecord>(module); cyclic && cyclic->status() == CyclicModuleRecord::Status::New) {
+            auto* cyclic = dynamicDowncast<CyclicModuleRecord>(module);
+#if ENABLE(AOT)
+            if (state->isPartOfWholeLoad() && cyclic && cyclic->status() == CyclicModuleRecord::Status::New && !state->beginWalkForWholeLoad(vm, cyclic) && cyclic->inherits<AOT::ModuleRecord>())
+                cyclic = nullptr;
+#endif
+            if (cyclic && cyclic->status() == CyclicModuleRecord::Status::New) {
                 // 2.a. Append module to state.[[Visited]].
                 state->appendVisited(vm, cyclic);
 #if ENABLE(AOT)
@@ -1203,6 +1208,11 @@ void JSModuleLoader::innerModuleLoading(JSGlobalObject* globalObject, ModuleGrap
             // 5.a. Set state.[[IsLoading]] to false.
             state->setIsLoading(false);
             // 5.b. For each Cyclic Module Record loaded of state.[[Visited]], do
+#if ENABLE(AOT)
+            // What the states of one load walked stays New until the load has ended, and its first state holds all of it.
+            // Until then another load has to walk through it to find what is still on its way.
+            if (!state->isPartOfWholeLoad())
+#endif
             state->iterateVisited([](CyclicModuleRecord* loaded) {
                 // 5.b.i. If loaded.[[Status]] is NEW, set loaded.[[Status]] to UNLINKED.
                 if (loaded->status() == CyclicModuleRecord::Status::New)
@@ -1387,7 +1397,7 @@ void JSModuleLoader::continueDynamicImport(JSGlobalObject* globalObject, ModuleL
     scope.release();
 }
 
-JSPromise* JSModuleLoader::loadRequestedModules(JSGlobalObject* globalObject, AbstractModuleRecord* module, RefPtr<ScriptFetcher> scriptFetcher)
+JSPromise* JSModuleLoader::loadRequestedModules(JSGlobalObject* globalObject, AbstractModuleRecord* module, RefPtr<ScriptFetcher> scriptFetcher, ModuleGraphLoadingState* askedBy)
 {
     // LoadRequestedModules([hostDefined])
     // https://tc39.es/ecma262/#sec-LoadRequestedModules
@@ -1402,6 +1412,12 @@ JSPromise* JSModuleLoader::loadRequestedModules(JSGlobalObject* globalObject, Ab
     // 3. Let state be the GraphLoadingState Record { [[IsLoading]]: true, [[PendingModulesCount]]: 1, [[Visited]]: « », [[PromiseCapability]]: pc, [[HostDefined]]: hostDefined }.
     auto state = ModuleGraphLoadingState::create(vm, pc, WTF::move(scriptFetcher));
     RETURN_IF_EXCEPTION(scope, nullptr);
+#if ENABLE(AOT)
+    if (askedBy && module->inherits<AOT::ModuleRecord>())
+        state->setWholeLoad(vm, askedBy);
+#else
+    UNUSED_PARAM(askedBy);
+#endif
     // 4. Perform InnerModuleLoading(state, module).
     innerModuleLoading(globalObject, state, module);
 #if ENABLE(AOT)

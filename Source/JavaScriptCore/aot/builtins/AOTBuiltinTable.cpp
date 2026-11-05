@@ -639,6 +639,11 @@ std::span<const BuiltinHostObject> BuiltinTable::hostObjects() const
     return keptByThisReader(m_data.attachments.hostObjects, builtinTableHostObjects);
 }
 
+std::span<const BuiltinName> BuiltinTable::nativeCellsFilledByCalledFunctions() const
+{
+    return m_data.attachments.nativeCellsFilledByCalledFunctions;
+}
+
 const BuiltinUnseenCode* BuiltinTable::unseenCodeOf(BuiltinID id) const
 {
     return findRecord(m_data.attachments.unseenCode, &BuiltinUnseenCode::builtin, id);

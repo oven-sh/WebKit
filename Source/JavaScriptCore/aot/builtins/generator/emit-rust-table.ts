@@ -456,6 +456,64 @@ function emitEntriesLeadingToStartupLoads(model: TableModel): string {
   );
 }
 
+const actionsHandingOutWhatLiesUnderKey: readonly PropertyActionKind[] = [
+  "ReadsByKey",
+  "ReadsGetter",
+  "ReadsSetter",
+  "DescribesOwnProperties",
+];
+
+function emitEntriesReadingUnderKeysTheyAreHanded(model: TableModel): string {
+  const readsUnderSuchKey = ({ overloads }: ModelBuiltin): boolean =>
+    overloads.some(({ flow }) =>
+      flow.propertyActions.some(
+        ({ action, key }) => actionsHandingOutWhatLiesUnderKey.includes(action) && key.key !== "Names" && key.key !== "Indexes",
+      ),
+    );
+  const handsOutWhatLiesThere = ({ overloads }: ModelBuiltin): boolean =>
+    overloads.some(({ flow }) =>
+      flow.propertyActions.some(
+        ({ action, key, value }) =>
+          actionsHandingOutWhatLiesUnderKey.includes(action) &&
+          key.key !== "Names" &&
+          key.key !== "Indexes" &&
+          value.place !== "None" &&
+          value.place !== "NativeMemory",
+      ),
+    );
+  return [
+    emitSlice(
+      "pub static ENTRIES_READING_UNDER_KEYS_THEY_ARE_HANDED: &[BuiltinId]",
+      model.builtins.filter(readsUnderSuchKey).map(formatBuiltinId),
+    ),
+    emitSlice(
+      "pub static ENTRIES_HANDING_OUT_WHAT_LIES_UNDER_KEYS: &[BuiltinId]",
+      model.builtins.filter(handsOutWhatLiesThere).map(formatBuiltinId),
+    ),
+  ].join("");
+}
+
+function emitWhatAnyOperandIsAsked(model: TableModel): string {
+  const closure = new DependencyClosure(model);
+  const { calls, implementedBy } = closure.dependenciesOfAnyOperand();
+  return [
+    emitSlice(
+      "pub static ENTRIES_THAT_MAY_HAND_OUT_ANY_HOST_OBJECT: &[BuiltinId]",
+      model.builtins.filter(builtin => closure.dependenciesOf(builtin).mayHandOutAnyHostObject).map(formatBuiltinId),
+    ),
+    emitSlice(
+      "pub static FUNCTIONS_FOUND_ON_ANY_OPERAND: &[RuntimeFunction]",
+      formatFunctions(calls.union(implementedBy)),
+    ),
+    emitSlice(
+      "pub static PROTOTYPES_THAT_COME_WITH_FIRST_PROMISE: &[BuiltinId]",
+      closure.prototypesThatComeWithFirstPromise().map(formatBuiltinId),
+    ),
+    `pub const ANY_HOST_OBJECT_LEADS_TO_STARTUP_LOADS: bool = ${closure.dependenciesOfAnyHostObject().hasMethodCalledWithStartupLoads};
+`,
+  ].join("");
+}
+
 function emitFunctionsOfOpenRealm(model: TableModel): string {
   const { functionsOfLanguage, functionsOfHost } = openRealmOf(model);
   return emitSlice(
@@ -490,6 +548,8 @@ export function emitRustTable(model: TableModel): string {
     ),
     emitFunctionsForAnyHostObject(model),
     emitEntriesLeadingToStartupLoads(model),
+    emitEntriesReadingUnderKeysTheyAreHanded(model),
+    emitWhatAnyOperandIsAsked(model),
     emitFunctionsOfOpenRealm(model),
     emitSlice("static HOST_READS: &[HostRead]", model.hostReads.map(formatHostRead)),
   ].join("");

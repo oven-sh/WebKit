@@ -10,10 +10,68 @@
 
 #include "AOTIRProgram.h"
 #include <algorithm>
+#include <bit>
 #include <tuple>
+#include <utility>
 #include <wtf/BitVector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
+
+static uint64_t hashForDistinctEffects(const Effects& effects)
+{
+    uint64_t hash = EffectTraits(effects).bits() | static_cast<uint64_t>(effects.mayThrowOtherThanStackOverflow()) << EffectTraits::numberOfBits;
+    for (const LocationMasks* masks : { &effects.reads, &effects.writes }) {
+        hash = (std::rotr(hash, 32) ^ masks->heaps().toRaw()) * 0x9e3779b97f4a7c15ull;
+        for (AbstractHeap heap : indexedHeapsInOrder)
+            hash = (std::rotr(hash, 32) ^ masks->maskOf(heap)) * 0x9e3779b97f4a7c15ull;
+    }
+    return hash;
+}
+
+const Effects*& DistinctEffects::placeOf(const Effects& effects)
+{
+    size_t mask = m_places.size() - 1;
+    size_t place = (hashForDistinctEffects(effects) >> 32) & mask;
+    while (m_places[place] && *m_places[place] != effects)
+        place = (place + 1) & mask;
+    return m_places[place];
+}
+
+void DistinctEffects::makeRoomInPlaces()
+{
+    Vector<const Effects*> outgrown = std::exchange(m_places, { });
+    m_places.fill(nullptr, std::max(fewestPlaces, outgrown.size() * 2));
+    for (const Effects* kept : outgrown) {
+        if (kept)
+            placeOf(*kept) = kept;
+    }
+}
+
+const Effects* DistinctEffects::keep(const Effects& effects)
+{
+    if (effects == effectsOfUnknownCode)
+        return &effectsOfUnknownCode;
+    if ((m_numberKept + 1) * 2 > m_places.size())
+        makeRoomInPlaces();
+    const Effects*& place = placeOf(effects);
+    if (place)
+        return place;
+    if (m_blocks.isEmpty() || m_blocks.last().size() == effectsInBlock) {
+        m_blocks.append(Vector<Effects>());
+        m_blocks.last().reserveInitialCapacity(effectsInBlock);
+    }
+    m_blocks.last().append(effects);
+    place = &m_blocks.last().last();
+    ++m_numberKept;
+    return place;
+}
+
+Vector<Vector<Effects>> DistinctEffects::takeBlocks()
+{
+    m_places = { };
+    m_numberKept = 0;
+    return std::exchange(m_blocks, { });
+}
 
 uint64_t bitOfLayoutInKnownEffects(const Program& program, LayoutID layout)
 {

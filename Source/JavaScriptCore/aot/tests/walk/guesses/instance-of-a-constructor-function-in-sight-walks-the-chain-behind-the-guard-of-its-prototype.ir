@@ -1,0 +1,60 @@
+# `o instanceof V` in a loop, with V a function that is constructed and stays in sight: Link proves that V finds the ordinary Symbol.hasInstance. A miss walks the chain up to the prototype object that the table holds, which is V.prototype while the guard of that name holds
+# function V(x) { this.x = x; }  function countV(o, C, n) { let s = 0; for (let i = 0; i < n; i++) s += o instanceof C; return s; }
+# RUN: walk f3 mechanisms=none+TypedOperations+Guesses+DirectCalls+Arrivals
+# CHECK-LABEL: code f3:Body
+# CHECK: = AreMembersUnchanged conditions=[{layout=L0 side=Static key="prototype"}]
+# CHECK: = ShapeTest {{*}}layouts=[L0]
+# CHECK: = GetClassPrototype {{*}}layout=L0
+# CHECK: = HasInPrototypeChain
+# outside a loop nothing is asked of the function, and a miss is asked as written
+# RUN(ONCE): walk f2 mechanisms=none+TypedOperations+Guesses+DirectCalls+Arrivals
+# ONCE-LABEL: code f2:Body
+# ONCE-NOT: AreMembersUnchanged
+# ONCE: = ShapeTest {{*}}layouts=[L0]
+# ONCE: = InstanceOf
+
+layout L0 kind=Instance name="V" module=m0 constructor=f1 fields=[{key="x" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Integer integer=1
+    v2 = Construct v0, -, v1
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="input" [isFreeName]
+    v5 = NewClosure function=f2
+    v6 = Call v5, -, v4, v0 calleeName="isV"
+    v7 = Call v5, -, v2, v0 calleeName="isV"
+    v8 = NewClosure function=f3
+    v9 = Call v8, -, v4, v0, v4 calleeName="countV"
+    v10 = NewArray v6, v7, v9 contents=anything
+    Return v10
+}
+function f1 name="V" module=m0 flags=[HasThis, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] constructedClass=L0 {
+  b0(v0: anything, v1: anything):
+    PropSet v0, v1 key="x"
+    v3 = Undefined
+    Return v3
+}
+function f2 name="isV" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = InstanceOf v0, v1
+    Return v2
+}
+function f3 name="countV" module=m0 length=3 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = Integer
+    Jump -> next b1(v3, v3)
+  b1(v4, v5):
+    LoopHint
+    v7 = Less v5, v2
+    Branch v7 -> taken b2(), notTaken b3()
+  b2():
+    v8 = InstanceOf v0, v1
+    v9 = Add v4, v8
+    v10 = Increment v5
+    Jump -> next b1(v9, v10)
+  b3():
+    Return v4
+}

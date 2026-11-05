@@ -31,6 +31,7 @@ struct LinkedParameter {
     bool staysAsItsClassMakesIt { false };
     bool isOnlyCalled { false };
     bool isCapturedWhereOnlyCalled { false };
+    bool isOnlyLookedAt { false };
 };
 
 struct LinkedFunction {
@@ -47,14 +48,16 @@ struct LinkedFunction {
     bool closuresGetOnlyNamesThatAreListed { false };
     bool prototypePropertyStaysAsMade { false };
     uint32_t cycle { 0 };
-    uint32_t rank { 0 };
     TypeID result;
-    Effects effectsOnReturn;
-    Effects effectsOnThrow;
     uint32_t firstParameter { 0 };
     uint32_t numberOfParameters { 0 };
     static constexpr uint32_t notLeaf = UINT32_MAX;
     uint32_t weightAsLeaf { notLeaf };
+    const Effects* keptEffectsOnReturn { &effectsOfAnything };
+    const Effects* keptEffectsOnThrow { &effectsOfAnything };
+
+    const Effects& effectsOnReturn() const { return *keptEffectsOnReturn; }
+    const Effects& effectsOnThrow() const { return *keptEffectsOnThrow; }
 };
 
 struct LinkedCell {
@@ -155,7 +158,6 @@ struct LinkedGroup {
     Kind kind { Kind::Anybody };
     uint32_t subject { 0 };
     uint32_t cycle { 0 };
-    uint32_t rank { 0 };
 };
 
 struct LinkedCall {
@@ -315,7 +317,9 @@ private:
 };
 
 struct LinkTables {
+    std::unique_ptr<Families> familiesBehindFlow;
     BitVector exportsThatStayIn;
+    BitVector modulesWhoseValueStaysIn;
     LargeList<LinkedFunction> functions;
     LargeList<LinkedParameter> parameters;
     Vector<LinkedCall> calls;
@@ -389,6 +393,9 @@ struct LinkTables {
     LargeList<LinkedCell> captures;
     LargeList<LinkedLayout> layouts;
     Vector<LinkedMember> members;
+    Vector<LinkedMember> membersAboveCreatedLayouts;
+    Vector<std::pair<PropertyKeyID, FunctionID>> functionsAboveCreatedLayoutsUnderKeys;
+    BitVector keysOfFunctionsAboveCreatedLayouts;
     Vector<uint32_t> membersByKey;
     std::array<BitVector, 2> keysOfMembers;
     Vector<LinkedNameOnPrototype> namesOnPrototypes;
@@ -526,6 +533,13 @@ struct LinkTables {
         std::span<const LinkedParameter> arriving = parametersOf(function);
         return entryParameter < arriving.size() && arriving[entryParameter].isOnlyCalled;
     }
+    bool onlyLooksAtWhatArrivesAt(FunctionID function, unsigned entryParameter) const
+    {
+        if (function.index() >= functions.size())
+            return false;
+        std::span<const LinkedParameter> arriving = parametersOf(function);
+        return entryParameter < arriving.size() && arriving[entryParameter].isOnlyLookedAt;
+    }
     bool capturesWhatItOnlyCalls(FunctionID function) const
     {
         return function.index() < functions.size() && std::ranges::any_of(parametersOf(function), &LinkedParameter::isCapturedWhereOnlyCalled);
@@ -583,6 +597,7 @@ bool isSymbolOfLibrary(const Program&, PropertyKeyID);
 LinkTables conservativeLinkTables(const Program&);
 LinkTables conservativeLinkTables(const Program&, const ParallelLoops&);
 void findParametersThatAreOnlyCalled(const Program&, const BodyIndexTable&, const ThinSummaries&, const ParallelLoops&, Mechanisms, bool takesCalleesToKeepNothing, LinkTables&);
+void findParametersThatAreOnlyLookedAt(const Program&, const BodyIndexTable&, const ThinSummaries&, Mechanisms, bool takesCalleesToKeepNothing, LinkTables&);
 void carryExpectationOfThisIntoCaptures(const Program&, const BodyIndexTable&, const ThinSummaries&, LinkTables&);
 
 BitVector bodiesThatLoaderEntersAtMostOnce(const Program&);

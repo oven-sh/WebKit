@@ -10,6 +10,7 @@
 
 #include "AOTCallingConventions.h"
 #include "AOTEffectsDeclared.h"
+#include "AOTEffectsOfOperations.h"
 #include "AOTIRFunction.h"
 #include "AOTIRProgram.h"
 #include "AOTLinkTables.h"
@@ -25,7 +26,7 @@ static bool mayStandInFrontOfCallInAwaitedCalls(Opcode opcode)
     if (opcodesThatStateTypes.contains(opcode))
         return true;
     const Effects& bound = declaredBoundInTable(opcode);
-    return bound.isUnobservable() && bound.reads.containsOnly(bookkeepingHeaps);
+    return bound.isUnobservable() && bound.reads.containsOnly(bookkeepingHeaps) && !operandsMayRunCode(opcode);
 }
 
 std::optional<WaitOfCallInCoroutine> findWaitOfCallInCoroutine(Walker& walker, const BodyIndex& index, BodyBlock block, ValueID call)
@@ -108,7 +109,7 @@ static Reference buildAwaitCallInAwaitedCalls(Walker& walker, const BodyValue& c
 static bool bodyMayThrowInAwaitedCalls(const Walker& walker, FunctionID callee)
 {
     const LinkedFunction& linked = walker.facts().linked().function(callee);
-    return linked.effectsOnReturn.mayThrowOtherThanStackOverflow() || linked.effectsOnThrow.mayThrowOtherThanStackOverflow();
+    return linked.effectsOnReturn().mayThrowOtherThanStackOverflow() || linked.effectsOnThrow().mayThrowOtherThanStackOverflow();
 }
 
 static std::optional<bool> constantBooleanInAwaitedCalls(const Walker& walker, Reference reference)
@@ -273,7 +274,7 @@ bool buildAwaitedCall(Walker& walker, const BodyValue& call)
 {
     if (call.opcode() != Opcode::Call || !walker.has(Mechanism::DirectCalls))
         return false;
-    if (walker.depthOfCopies())
+    if (!walker.walksOwnBodyOfUnit())
         return buildCallOfCopyInAwaitedCalls(walker, call);
 
     std::optional<AwaitingBodyOfCoroutine> body = findAwaitingBodyOfCoroutine(walker);
@@ -317,7 +318,7 @@ bool buildAwaitedCall(Walker& walker, const BodyValue& call)
 bool takeWhatCallInCopyHasAwaited(Walker& walker, const BodyValue& await)
 {
     KeptByCallsOfCoroutines* kept = findKeptByCallsOfCoroutines(walker);
-    if (await.opcode() != Opcode::Await || walker.depthOfCopies() || !kept || !kept->awaitsTakenInCopies.removeFirst(await.id()))
+    if (await.opcode() != Opcode::Await || !walker.walksOwnBodyOfUnit() || !kept || !kept->awaitsTakenInCopies.removeFirst(await.id()))
         return false;
     Reference given = walker.referenceOf(await.valueOperand());
     if (!given) {
@@ -331,7 +332,7 @@ bool takeWhatCallInCopyHasAwaited(Walker& walker, const BodyValue& await)
 bool nameCastInFrontOfAwaitTakenInCopy(Walker& walker, const BodyValue& cast)
 {
     KeptByCallsOfCoroutines* kept = findKeptByCallsOfCoroutines(walker);
-    if (!kept || walker.depthOfCopies() || kept->awaitsTakenInCopies.isEmpty())
+    if (!kept || !walker.walksOwnBodyOfUnit() || kept->awaitsTakenInCopies.isEmpty())
         return false;
     if (!kept->awaitsTakenInCopies.contains(findOnlyTakerBehindCasts(walker.currentBodyIndex(), cast.id())))
         return false;

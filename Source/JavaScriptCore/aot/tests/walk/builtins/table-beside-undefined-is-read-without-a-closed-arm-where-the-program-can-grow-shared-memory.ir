@@ -1,7 +1,7 @@
 # function count(table: Map<number, number>) { return table.size; }   function size(view: Uint8Array) { return view.length; }
 # sink(count(new Map())); sink(size(new Uint8Array(4))); if (sink.never) { count(undefined); size(undefined); }   new SharedArrayBuffer(4).grow;
 # The program can grow shared memory, so nothing is said of views (view-is-asked-where-the-program-can-grow-shared-memory.ir). A table follows no memory, and it is a table that stays as made
-# whether or not undefined arrives beside it: `var table = new WeakMap()` is undefined until its line has run. So the table is read without a test, and the view behind one, with a closed arm.
+# whether or not undefined arrives beside it: `var table = new WeakMap()` is undefined until its line has run. So the table is read without a closed arm, behind the check that holds the word against it, and the view behind a test with a closed arm.
 # Beside undefined no class was once found, and nothing was said of the table either: x1.215 on one benchmark.
 # RUN: link functions mechanisms=all
 # CHECK: function f1
@@ -10,7 +10,8 @@
 # CHECK: parameter 0 {{*}}proven=undefined|Uint8Array{{*}} stays-as-made
 # RUN(WALK): walk f1 f2 mechanisms=all
 # WALK-LABEL: code f1:Body
-# WALK-NOT: IsPristine
+# WALK: = IsPristine {{*}}builtinClass=Map aspects=[Names, CellAlone]
+# WALK-NEXT: CheckProof {{*}}checkedType=true
 # WALK-NOT: PropGet
 # WALK: inlineBuiltin=MapSize
 # WALK-LABEL: code f2:Body

@@ -284,9 +284,14 @@ Condition TypeTestEmitter::isPristine(CellPointer cell, BuiltinClassID classID, 
     Condition isAsMade = isAsItsClassMadeIt(cell, classID, aspects);
     if (asksCellAlone || !m_program.admitsReplacedBuiltins || !aspects.containsAny({ PristineAspects::Names, PristineAspects::NamesKeptBelow }))
         return isAsMade;
+    return logicalAnd(isAsMade, nothingWasWrittenAbove(classID));
+}
+
+Condition TypeTestEmitter::nothingWasWrittenAbove(BuiltinClassID classID)
+{
     Pointer classesWrittenAbove = loadImmutablePointer(AOT_INSTANCE_OFFSET(builtins.classesWrittenAbove));
     Word32 wasWrittenAbove(m_out.load8ZeroExt32(m_out.address(m_heaps.entire(AbstractHeap::NamedProperties), classesWrittenAbove.value(), classID.index())));
-    return logicalAnd(isAsMade, isZero(wasWrittenAbove));
+    return isZero(wasWrittenAbove);
 }
 
 Condition TypeTestEmitter::isAsItsClassMadeIt(CellPointer cell, BuiltinClassID classID, OptionSet<PristineAspects> aspects)

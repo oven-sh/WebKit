@@ -1,10 +1,13 @@
-# without EscapeAnalysis nothing is noted of what was made here. Link has followed the list, which nobody but the loop gets hold of: it is not asked whether it is as made either
+# without EscapeAnalysis nothing is noted of what was made here. Link has followed the list, which nobody but the loop gets hold of: its word is held against the list in front of the loop, by a check that stops: there is no arm for a list that is not as made
 # PROGRAM-OF: loop-over-a-list-that-a-built-in-has-just-made-has-no-arm-of-the-protocol.ir
 # RUN: walk f1 mechanisms=all-EscapeAnalysis
 # CHECK-LABEL: code f1:Body
 # CHECK: = GetArrayLength
-# RUN(NEVER): walk f1 mechanisms=all-EscapeAnalysis
-# NEVER-NOT: IsPristine
+# RUN(HELD): walk f1 mechanisms=all-EscapeAnalysis
+# HELD: = IsPristine {{*}}builtinClass=Array
+# HELD-NEXT: CheckProof {{*}}checkedType=true
+# HELD: isLoopHead=true
+# HELD-NOT: IsPristine
 # code that nobody has seen has had the list in hand, so the list is asked
 # RUN(LOOKED): walk f2 mechanisms=all-EscapeAnalysis
 # LOOKED-LABEL: code f2:Body

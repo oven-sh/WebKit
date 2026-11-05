@@ -10,6 +10,7 @@
 
 #include "AOTAccessEmitter.h"
 #include "AOTCellFormat.h"
+#include "AOTClosuresLent.h"
 #include "AOTConstantEmitter.h"
 #include "AOTEnvironmentEmitter.h"
 #include "AOTIRProgram.h"
@@ -147,10 +148,29 @@ void AllocationEmitter::generateNewObject(const ValueContext& value)
         return;
     }
     CellPointer cell = allocateWithFields(value, allocation, value->fields(), value->valuesOperands(), value->storage());
+    if (ValueID call = callThatBorrowsObject(m_code, value.id()); call && !collectSlotsThatMayHoldCells(operationAt(value.id())).isEmpty())
+        generator().noteObjectWhoseLifeEndsBehind(value.id(), call);
     if (ValueID prototype = value->prototypeOperand())
         storePrototype(value, cell, prototype);
     else
         define(value, cell);
+}
+
+AllocationEmitter::EmptySlots AllocationEmitter::collectSlotsThatMayHoldCells(const Operation& made)
+{
+    EmptySlots slots;
+    for (const InitialField& field : collectInitialFields(made.layout(), made.fields(), made.valuesOperands())) {
+        if (traitsOf(field.slot->representation).holdsCell && typeOf(field.value).hasCells())
+            slots.append(field.field);
+    }
+    return slots;
+}
+
+void AllocationEmitter::clearCellsThatObjectLentHolds(ValueID object)
+{
+    const Operation& made = operationAt(object);
+    CodeGenerator::InitializationScope scope(generator());
+    storeEmptySlots(emitter<CellAllocationEmitter>().frameCellLent(object), made.layout(), collectSlotsThatMayHoldCells(made).span(), ZeroedBy::Nobody);
 }
 
 void AllocationEmitter::generateNewDictionary(const ValueContext& value)

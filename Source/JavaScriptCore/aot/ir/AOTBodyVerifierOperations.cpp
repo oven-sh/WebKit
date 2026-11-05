@@ -356,12 +356,8 @@ void BodyVerifier::verifyRuleOfOpcode(const BodyBlock& block, uint32_t indexInBl
     case Opcode::StringEqualsLiteral: case Opcode::ValueEqualsLiteral: case Opcode::StringStartsWithLiteral: case Opcode::StringEndsWithLiteral:
     case Opcode::StringIndexOfLiteral: case Opcode::StringIndexOfCharacter: case Opcode::StringLastIndexOfLiteral:
     case Opcode::StringRangeEqualsLiteral: case Opcode::StringRangeToNumber: case Opcode::StringRangeParseInt:
-    case Opcode::JSONHasStackSpace:
-    case Opcode::StringBuilderReserve: case Opcode::StringBuilderCommit: case Opcode::JSONEnterWatchedLevel: case Opcode::JSONAppendKey: case Opcode::JSONAppendToken: case Opcode::JSONAppendBoolean: case Opcode::JSONAppendInteger:
-    case Opcode::JSONAppendNumber: case Opcode::JSONAppendString: case Opcode::JSONAppendValue: case Opcode::JSONAppendObject:
     case Opcode::StringBuilderBegin: case Opcode::StringBuilderAppend: case Opcode::StringBuilderLength:
     case Opcode::StringBuilderToString: case Opcode::StringBuilderFinish: case Opcode::StringBuilderDiscard: case Opcode::StringBuilderCheckpoint: case Opcode::StringBuilderRollBack:
-    case Opcode::StringBuilderCheckLength:
     case Opcode::StackStringBuilderBegin: case Opcode::StackStringBuilderStart: case Opcode::StackStringBuilderCursor: case Opcode::StackStringBuilderLength:
     case Opcode::StackStringBuilderToString: case Opcode::StackStringBuilderFinish: case Opcode::StackStringBuilderDiscard:
     case Opcode::StringBuilderAppendConstant: case Opcode::StringBuilderAppendInteger: case Opcode::StringBuilderAppendNumber: case Opcode::StringBuilderAppendString:
@@ -370,7 +366,7 @@ void BodyVerifier::verifyRuleOfOpcode(const BodyBlock& block, uint32_t indexInBl
     case Opcode::StackStringBuilderAppendStringRange: case Opcode::StackStringBuilderAppendBoolean: case Opcode::StackStringBuilderAppendStringOrNullish: case Opcode::StackStringBuilderAppendValue:
     case Opcode::ResolveCallTarget: case Opcode::CallResolved: case Opcode::RegExpMatchLiteral: case Opcode::CallInline:
     case Opcode::Box: case Opcode::Unbox: case Opcode::IntegerToNumber: case Opcode::NumberToInteger: case Opcode::WidenInteger: case Opcode::NarrowInteger: case Opcode::Decode: case Opcode::Compress:
-    case Opcode::Narrowed: case Opcode::EndLifeOfCell: case Opcode::CheckProof:
+    case Opcode::Narrowed: case Opcode::EndLifeOfCell: case Opcode::CheckProof: case Opcode::AssumeType:
         RELEASE_ASSERT_NOT_REACHED();
     }
     RELEASE_ASSERT_NOT_REACHED();

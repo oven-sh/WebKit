@@ -70,6 +70,27 @@ static String joinsOfObjectsUnderLiveValuesForKnownJoinsTests(unsigned numberOfJ
     return text.toString();
 }
 
+static String joinsOfObjectsReadBehindAllOfThemForKnownJoinsTests(unsigned numberOfJoins)
+{
+    StringBuilder text;
+    text.append("layout L0 module=m0 fields=[{key=\"x\" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1\n"_s);
+    appendModuleForKnownJoinsTests(text);
+    text.append("function f1 name=\"run\" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {\n  b0(v0: anything):\n    v1 = Integer integer=1\n    v2 = Integer integer=2\n"_s);
+    unsigned value = 3;
+    unsigned block = 1;
+    for (unsigned join = 0; join < numberOfJoins; ++join, value += 5, block += 3) {
+        text.append("    Branch v0 -> taken b"_s, block, "(), notTaken b"_s, block + 1, "()\n"_s);
+        text.append("  b"_s, block, "():\n    v"_s, value, " = NewObject -, v1 layout=L0 fields=[0]\n    v"_s, value + 1, " = FinishObject v"_s, value, "\n    Jump -> next b"_s, block + 2, "(v"_s, value + 1, ")\n"_s);
+        text.append("  b"_s, block + 1, "():\n    v"_s, value + 2, " = NewObject -, v2 layout=L0 fields=[0]\n    v"_s, value + 3, " = FinishObject v"_s, value + 2, "\n    Jump -> next b"_s, block + 2, "(v"_s, value + 3, ")\n"_s);
+        text.append("  b"_s, block + 2, "(v"_s, value + 4, "):\n"_s);
+    }
+    text.append("    Jump -> next b"_s, block, "()\n  b"_s, block, "():\n"_s);
+    for (unsigned join = 0; join < numberOfJoins; ++join, value += 2)
+        text.append("    v"_s, value, " = PropGet v"_s, 7 + 5 * join, " key=\"x\"\n    v"_s, value + 1, " = Call v0, -, v"_s, value, '\n');
+    text.append("    Return v0\n}\n"_s);
+    return text.toString();
+}
+
 static std::optional<uint64_t> instructionsOfWalkForKnownJoinsTests(const String& text)
 {
     std::optional<uint64_t> instructions;
@@ -104,11 +125,21 @@ static void testWalkGrowsAsJoinsOfObjectsUnderLiveValuesDo()
     AOT_TEST_CHECK(growsAsSizeDoes(smaller, large));
 }
 
+static void testWalkGrowsAsJoinsOfObjectsReadBehindAllOfThemDo()
+{
+    constexpr unsigned numberOfJoins = 1500;
+    InstructionCounts::begin();
+    std::optional<uint64_t> smaller = instructionsOfWalkForKnownJoinsTests(joinsOfObjectsReadBehindAllOfThemForKnownJoinsTests(numberOfJoins));
+    std::optional<uint64_t> large = instructionsOfWalkForKnownJoinsTests(joinsOfObjectsReadBehindAllOfThemForKnownJoinsTests(4 * numberOfJoins));
+    AOT_TEST_CHECK(growsAsSizeDoes(smaller, large));
+}
+
 std::span<const NativeTest> knownJoinsTests()
 {
     static constexpr NativeTest tests[] {
         { "known-joins/the-walk-grows-as-the-joins-behind-known-variables-do"_s, testWalkGrowsAsJoinsBehindKnownVariablesDo },
         { "known-joins/the-walk-grows-as-the-joins-of-objects-under-live-values-do"_s, testWalkGrowsAsJoinsOfObjectsUnderLiveValuesDo },
+        { "known-joins/the-walk-grows-as-the-joins-of-objects-read-behind-all-of-them-do"_s, testWalkGrowsAsJoinsOfObjectsReadBehindAllOfThemDo },
     };
     return tests;
 }

@@ -50,47 +50,8 @@ NEVER_INLINE void StringBuilderStorage::throwOutOfMemory(JSGlobalObject* globalO
     throwOutOfMemoryError(globalObject, scope);
 }
 
-void StringBuilderStorage::setLevelLimit(void* limit)
-{
-    *std::bit_cast<void**>(std::bit_cast<uintptr_t>(&m_levelLimit) + StackManager::Mirror::offsetOfSoftStackLimit()) = limit;
-}
-
-void StringBuilderStorage::watchLevelsAfterGrowth(size_t numberOfCharacters)
-{
-    bool wasWatching = m_watchedLevels.isWatching();
-    if (!m_watchedLevels.isWatchingAfterGrowthTo(numberOfCharacters))
-        return;
-    if (!wasWatching)
-        m_lengthWhenWatchBegan = length();
-    setLevelLimit(std::bit_cast<void*>(std::numeric_limits<uintptr_t>::max()));
-}
-
-void StringBuilderStorage::stopWatchingLevels()
-{
-    m_watchedLevels.stop();
-    setLevelLimit(vm().softStackLimit());
-}
-
-bool StringBuilderStorage::enterWatchedLevel(EncodedJSValue holder, void* frame)
-{
-    if (std::bit_cast<uintptr_t>(frame) - stackReservedBelowJSONLevels < std::bit_cast<uintptr_t>(vm().softStackLimit()))
-        return false;
-    bool goesOn = true;
-    if (m_watchedLevels.isWatching()) {
-        if (length() < m_lengthWhenWatchBegan) {
-            m_watchedLevels.forgetLevels();
-            m_lengthWhenWatchBegan = 0;
-        }
-        goesOn = m_watchedLevels.enter(holder, frame);
-    }
-    if (!m_watchedLevels.isWatching())
-        stopWatchingLevels();
-    return goesOn;
-}
-
-StringBuilderStorage::StringBuilderStorage(VM& vm, Structure* structure, StackManager::Mirror& levelLimit, StringBuilderWords& words)
+StringBuilderStorage::StringBuilderStorage(VM& vm, Structure* structure, StringBuilderWords& words)
     : Base(vm, structure)
-    , m_levelLimit(levelLimit)
     , m_words(words)
 {
 }
@@ -98,7 +59,7 @@ StringBuilderStorage::StringBuilderStorage(VM& vm, Structure* structure, StackMa
 StringBuilderStorage* StringBuilderStorage::create(Instance& instance)
 {
     VM& vm = *instance.vm;
-    auto* storage = new (NotNull, allocateCell<StringBuilderStorage>(vm)) StringBuilderStorage(vm, vm.aotState().stringBuilderStorageStructure.get(), instance.jsonLevels.limit.get(), instance.stringBuilder);
+    auto* storage = new (NotNull, allocateCell<StringBuilderStorage>(vm)) StringBuilderStorage(vm, vm.aotState().stringBuilderStorageStructure.get(), instance.stringBuilder);
     storage->finishCreation(vm);
     storage->tryEnsureRoom(1);
     return storage;
@@ -181,7 +142,6 @@ void StringBuilderStorage::reset()
     m_lengthOutsideBuffer = 0;
     m_lengthOfLastString = 0;
     m_lastString.clear();
-    m_watchedLevels.stop();
     if (capacity() > maxRetainedCapacity) {
         dropLargeBuffer(longestTextInBuffer);
         return;
@@ -251,8 +211,6 @@ NEVER_INLINE bool StringBuilderStorage::tryReplaceBuffer(size_t newCapacity)
     m_characters = characters.data();
     m_sharedLength = 0;
     updateLimit();
-    if (length())
-        watchLevelsAfterGrowth(newCapacity);
     vm().heap.reportExtraMemoryAllocated(this, newCapacity);
     return true;
 }
@@ -442,16 +400,6 @@ void StringBuilderStorage::commit(const Latin1Character* cursor)
 {
     ASSERT(cursor >= m_characters && cursor <= m_characters + m_limit);
     m_position = static_cast<uint32_t>(cursor - m_characters);
-}
-
-bool StringBuilderStorage::checkLength(JSGlobalObject* globalObject)
-{
-    if (!canGrowBy(0)) {
-        throwOutOfMemory(globalObject);
-        return false;
-    }
-    updateLimit();
-    return true;
 }
 
 void StringBuilderStorage::rollBack(uint32_t length)
@@ -946,13 +894,6 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTStringBuilderRollBack, void, (Inst
     storage->rollBack(checkpoint);
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTStringBuilderCheckLength, void, (Instance* instance, JSCell* builder))
-{
-    AOT_OPERATION_BEGIN_WITHOUT_COLLECTION(instance, Entry::operationAOTStringBuilderCheckLength);
-    cellArgument<StringBuilderStorage>(builder, Entry::operationAOTStringBuilderCheckLength)->checkLength(globalObject);
-    OPERATION_RETURN(scope);
-}
-
 JSC_DEFINE_JIT_OPERATION(operationAOTStringBuilderToString, JSCell*, (Instance* instance, JSCell* builder, uint32_t isLikelyKey))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTStringBuilderToString);
@@ -1125,11 +1066,6 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTStackStringBuilderDiscard, void, (
     auto& stackBuilder = *reinterpret_cast<StackStringBuilder*>(builder);
     if (!stackBuilder.isOnStack() && !stackBuilder.holdsOneString())
         stackBuilder.storage->release(*instance);
-}
-
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTJSONEnterWatchedLevel, size_t, (Instance*, JSCell* builder, EncodedJSValue holder, void* frame))
-{
-    return cellArgument<StringBuilderStorage>(builder, Entry::operationAOTJSONEnterWatchedLevel)->enterWatchedLevel(holder, frame);
 }
 
 } } // namespace JSC::AOT

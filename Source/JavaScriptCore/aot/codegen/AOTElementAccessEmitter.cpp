@@ -505,7 +505,8 @@ const PlacedSlot* ElementAccessEmitter::extraPropertiesWordOfReadByPosition(cons
     if (!receiver.isObject() || !receiver.layouts || !receiver.hasOnlyLayouts() || !typeOf(read->propertyOperand()).hasOnlyPrimitives(Primitive::Number | Primitive::UndefinedOrNull))
         return nullptr;
     std::span<const LayoutID> layouts = membersOf(types(), receiver);
-    if (layouts.size() != 1 || m_program.at(layouts[0]).kind != LayoutKind::Container || !m_plan.slots().holdsCompiledObjects(layouts[0]))
+    LayoutKind kind = layouts.size() == 1 ? m_program.at(layouts[0]).kind : LayoutKind::Environment;
+    if ((kind != LayoutKind::Container && kind != LayoutKind::Record) || !m_plan.slots().holdsCompiledObjects(layouts[0]))
         return nullptr;
     const PlacedSlot& word = m_plan.slots().extraPropertiesWord(layouts[0]);
     return word.hasStorage() ? &word : nullptr;

@@ -3,21 +3,6 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-// The scope of a function that runs at most once is never made: its variables lie among the variables of the module, and a closure over it captures nothing.
-// Only what nobody could have let go lies there: numbers, booleans, undefined, null, and a closure that the program holds for good anyway.
-// A word of the instance lives as long as the program. An object, a list or a text that closures have captured dies with them, so it keeps its scope or its capture.
-// A closure holds its captures and whatever hangs on the function object: own properties, the prototype object, a parent. Link can list neither once a built-in is handed the function.
-// The one closure of a constructor function never dies in any build: the closure table takes it among its roots when its prototype property is made (ClassTable::didCreatePrototypePropertyOf()).
-// So a closure lies in a word where it is such a closure, or where such a closure captures it, by value or in its scope: what a closure that never dies has captured never dies.
-// The closure that captures it counts only where the function that fills the word makes it on every way from its entry to a return: that it is written does not say that it is made.
-// Its function holds no word itself once this plan is through. The forms stay: an object, a list or a text comes back by neither door.
-// Where something throws in front of the closure that never dies, or its prototype property is never made, the word holds what nothing else would have held.
-// A constructor function that loses its last capture is in the closure table from its making on, and not only from the first time its prototype property is asked for.
-// Suspension: a coroutine neither makes such a scope nor loses a capture. Throw: a store that was reached stays, as it would have stayed in the cell.
-// Enforced: the maker stops the program by name at its second entry (EnterBodyThatRunsOnce), is copied into no caller and is never written straight.
-// The body of a module has no such stop: that the loader enters it at most once rests on bodiesThatLoaderEntersAtMostOnce().
-// Effects: Link counts the words that such a function may fill among its writes (knownEffectsOfBody()), by what the function is and without this plan.
-// Withheld (Mechanism::PromotedEnvironments): the tables are empty, and every reader goes by the captures as they are written.
 
 #include "config.h"
 #include "AOTPromotedEnvironments.h"
@@ -36,6 +21,7 @@
 #include "AOTThinSummary.h"
 #include <optional>
 #include <type_traits>
+#include <wtf/HashMap.h>
 #include <wtf/ScopedLambda.h>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -48,11 +34,11 @@ struct FunctionsWhoseClosuresOperationMakes {
     {
         if constexpr (std::is_same_v<IDType, FunctionID>) {
             if (id && ((role == FunctionReferenceKind::Closure) || ...))
-                functions.set(id.index());
+                functions.append(id);
         }
     }
 
-    BitVector& functions;
+    Vector<FunctionID, 8>& functions;
 };
 
 class PlannerOfPromotedEnvironments {
@@ -63,6 +49,8 @@ public:
         , m_slots(slots)
         , m_isMade(program.layouts.size())
         , m_isRefused(program.layouts.size())
+        , m_isToBeGoneThrough(program.functions.size())
+        , m_isNamed(program.functions.size())
         , m_holdsWord(program.functions.size())
     {
     }
@@ -97,7 +85,6 @@ private:
         VariableID variable;
     };
 
-    // A value or a scope that may come to lie among the variables. The values come first, in the order of m_sources, then the scopes in the order of m_scopes.
     using Candidate = uint32_t;
     struct FunctionAndCandidate {
         uint32_t function;
@@ -118,15 +105,20 @@ private:
         return { m_program.provenTypeOf(m_program.at(function).captures[capture]), cell.everyWriterIsKnown ? cell.proven : TypeID() };
     }
 
-    void findScopesMadeOnce();
+    LayoutID scopeIn(TypeID type) const { return type && !holdsOnlyPrimitives(type) ? m_program.types.typeKeptAt(type).environment : LayoutID(); }
+
+    void goThrough(FunctionID);
+    void name(FunctionID);
+    void findScopesMadeOnce(FunctionID, const ThinSummary&, const BodyIndex&, bool serves);
     void refuseScopesThatPositionsHold();
 
-    uint32_t nodeOf(FunctionID function, uint32_t capture) const { return m_facts.linked().firstCaptureOfFunction[function.index()] + capture; }
+    uint32_t nodeOf(FunctionID function, uint32_t capture);
     uint32_t rootOf(uint32_t node);
     void unite(uint32_t, uint32_t);
     void addSource(uint32_t node, uint32_t source);
     bool mayLieInFrameOfCaller(FunctionID, const BodyIndex&, ValueID) const;
-    bool followCapturedValues();
+    void followCapturedValues(FunctionID, const ThinSummary&, const BodyIndex&, bool serves);
+    bool goThroughWhatStandsInFunctionsThatRunOnce();
 
     std::optional<Candidate> candidateOfCapture(FunctionID, uint32_t capture);
     FunctionID makerOf(Candidate candidate) const { return candidate < m_sources.size() ? m_sources[candidate].function : m_scopes[candidate - m_sources.size()].maker; }
@@ -146,8 +138,14 @@ private:
     const SlotPlanParts& m_slots;
     BitVector m_isMade;
     BitVector m_isRefused;
+    BitVector m_isToBeGoneThrough;
+    BitVector m_isNamed;
     BitVector m_functionsWhoseClosuresRunTimeMakes;
+    Vector<FunctionID> m_functionsToGoThrough;
+    Vector<uint32_t> m_functionsNamed;
+    Vector<LayoutID> m_scopesMade;
     Vector<ScopeMadeOnce> m_scopes;
+    UncheckedKeyHashMap<uint32_t, uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_nodesOfCaptures;
     Vector<uint32_t> m_parents;
     Vector<uint32_t> m_sourcesOfClasses;
     Vector<uint32_t> m_sourcesOfValues;
@@ -167,7 +165,6 @@ bool PlannerOfPromotedEnvironments::servesAsMaker(FunctionID id, const ThinSumma
     const Function& function = m_program.at(id);
     if (!m_facts.runsAtMostOnce(id) || function.isCoroutine() || summary.has(SummaryTrait::HasDirectEval) || index.hasIrreducibleFlow())
         return false;
-    // The run time puts the state of a module of the library back and runs its body again when the body has thrown.
     return m_program.at(function.module).kind != ModuleKind::RuntimeSource;
 }
 
@@ -201,7 +198,6 @@ bool PlannerOfPromotedEnvironments::capturesMayBeLeftOut(FunctionID id) const
     case FunctionKind::Getter:
     case FunctionKind::Setter:
         return true;
-    // The record of a class makes the closures of members over the word that the class object captures.
     case FunctionKind::BaseConstructor:
     case FunctionKind::DerivedConstructor:
     case FunctionKind::Initializer:
@@ -212,49 +208,46 @@ bool PlannerOfPromotedEnvironments::capturesMayBeLeftOut(FunctionID id) const
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-void PlannerOfPromotedEnvironments::findScopesMadeOnce()
+void PlannerOfPromotedEnvironments::goThrough(FunctionID id)
 {
-    const ThinSummaries& summaries = m_facts.summaries();
-    for (uint32_t number = 0; number < summaries.size(); ++number) {
-        FunctionID id(number);
-        const ThinSummary& summary = summaries.at(id);
-        const BodyIndex* index = summary.environmentsMade.isEmpty() ? nullptr : m_facts.bodies().find(id);
-        if (!index)
-            continue;
-        bool serves = servesAsMaker(id, summary, *index);
-        for (ValueID site : summary.environmentsMade) {
-            LayoutID layout = index->value(site).as<Opcode::NewObject>().layout();
-            if (m_isMade.quickSet(layout.index()) || !serves || index->loopOf(index->blockOf(site)) || !mayLieAmongVariables(layout))
-                m_isRefused.quickSet(layout.index());
-            else
-                m_scopes.append({ layout, id });
-        }
+    if (!m_isToBeGoneThrough.quickSet(id.index()))
+        m_functionsToGoThrough.append(id);
+}
+
+void PlannerOfPromotedEnvironments::name(FunctionID id)
+{
+    if (m_isNamed.quickSet(id.index()))
+        return;
+    m_functionsNamed.append(id.index());
+    goThrough(id);
+}
+
+void PlannerOfPromotedEnvironments::findScopesMadeOnce(FunctionID id, const ThinSummary& summary, const BodyIndex& index, bool serves)
+{
+    for (ValueID site : summary.environmentsMade) {
+        LayoutID layout = index.value(site).as<Opcode::NewObject>().layout();
+        m_scopesMade.append(layout);
+        if (m_isMade.quickSet(layout.index()) || !serves || index.loopOf(index.blockOf(site)) || !mayLieAmongVariables(layout))
+            m_isRefused.quickSet(layout.index());
+        else
+            m_scopes.append({ layout, id });
     }
 }
 
 void PlannerOfPromotedEnvironments::refuseScopesThatPositionsHold()
 {
-    auto scopeIn = [&](const DeclaredType& declared) -> std::pair<LayoutID, bool> {
-        TypeID written = declared.written();
-        if (!written || holdsOnlyPrimitives(written))
-            return { };
-        Type type = m_program.at(written);
-        return { type.environment, !!type.primitives };
-    };
     auto refuse = [&](const DeclaredType& declared) {
-        if (LayoutID scope = scopeIn(declared).first)
+        if (LayoutID scope = scopeIn(declared.written()))
             m_isRefused.quickSet(scope.index());
     };
 
-    for (const Layout& layout : m_program.layouts) {
-        if (!layout.isEnvironment())
-            continue;
-        for (const Field& field : layout.fields)
+    for (LayoutID made : m_scopesMade) {
+        for (const Field& field : m_program.at(made).fields)
             refuse(field.declared);
     }
     for (const Variable& variable : m_program.variables)
         refuse(variable.declared);
-    for (uint32_t number = 0; number < m_program.functions.size(); ++number) {
+    for (uint32_t number : m_functionsNamed) {
         const Function& function = m_program.functions[number];
         refuse(function.thisType);
         for (const DeclaredType& parameter : function.parameters)
@@ -263,8 +256,8 @@ void PlannerOfPromotedEnvironments::refuseScopesThatPositionsHold()
             refuse(result);
         bool keepsCaptures = !function.captures.isEmpty() && !capturesMayBeLeftOut(FunctionID(number));
         for (const DeclaredCapture& capture : function.captures) {
-            auto [scope, mayBeNoScope] = scopeIn(capture);
-            if (scope && (keepsCaptures || mayBeNoScope))
+            LayoutID scope = scopeIn(capture.written());
+            if (scope && (keepsCaptures || m_program.types.typeKeptAt(capture.written()).primitives))
                 m_isRefused.quickSet(scope.index());
         }
     }
@@ -274,6 +267,16 @@ void PlannerOfPromotedEnvironments::refuseScopesThatPositionsHold()
                 m_isRefused.quickSet(binding.layout.index());
         }
     }
+}
+
+uint32_t PlannerOfPromotedEnvironments::nodeOf(FunctionID function, uint32_t capture)
+{
+    auto added = m_nodesOfCaptures.add(m_facts.linked().firstCaptureOfFunction[function.index()] + capture, static_cast<uint32_t>(m_parents.size()));
+    if (added.isNewEntry) {
+        m_parents.append(added.iterator->value);
+        m_sourcesOfClasses.append(noSource);
+    }
+    return added.iterator->value;
 }
 
 uint32_t PlannerOfPromotedEnvironments::rootOf(uint32_t node)
@@ -304,7 +307,6 @@ void PlannerOfPromotedEnvironments::unite(uint32_t first, uint32_t second)
     addSource(first, m_sourcesOfClasses[second]);
 }
 
-// A caller makes the closure that it hands to a parameter that is only called in its own frame (findLoanOfClosure()). Link judges that on the body as written, where no store into a word stands.
 bool PlannerOfPromotedEnvironments::mayLieInFrameOfCaller(FunctionID id, const BodyIndex& index, ValueID value) const
 {
     while (!index.isParameter(value) && inputOperationsThatHandOn.contains(index.opcodeOf(value)) && index.value(value).operand(0))
@@ -315,7 +317,6 @@ bool PlannerOfPromotedEnvironments::mayLieInFrameOfCaller(FunctionID id, const B
     return !entryParameter || m_facts.linked().onlyCallsWhatArrivesAt(id, *entryParameter);
 }
 
-// Every way from the entry to a return goes through the blocks that stand in front of all the blocks that return.
 static BlockID lastBlockOnEveryWayToReturnForPromotedEnvironments(const BodyIndex& index)
 {
     BlockID last;
@@ -332,97 +333,106 @@ static BlockID lastBlockOnEveryWayToReturnForPromotedEnvironments(const BodyInde
     return last;
 }
 
-// Captures that are handed on from one function to the next hold one value. The classes are united in one go over the sites that the scan has listed.
-// The source of a class is the operand as it is written. A name behind a test or a check is another value than the one that was tested: it has a type of its own.
-bool PlannerOfPromotedEnvironments::followCapturedValues()
+void PlannerOfPromotedEnvironments::followCapturedValues(FunctionID id, const ThinSummary& summary, const BodyIndex& index, bool serves)
 {
     const LinkTables& linked = m_facts.linked();
-    if (linked.firstCaptureOfFunction.size() != m_program.functions.size() + 1)
-        return false;
-    uint32_t numberOfCaptures = linked.firstCaptureOfFunction.last();
-    m_parents = Vector<uint32_t>(numberOfCaptures, [](size_t node) {
-        return static_cast<uint32_t>(node);
-    });
-    m_sourcesOfClasses.fill(noSource, numberOfCaptures);
+    if (serves)
+        m_sourcesOfValues.fill(noSource, index.numberOfValues());
+    BodyBlock entry = index.block(entryBlock);
+    uint32_t numberOfOwnCaptures = static_cast<uint32_t>(m_program.at(id).captures.size());
+    std::optional<BlockID> lastBlockOnEveryWayToReturn;
+    for (ValueID site : summary.sitesThatHandOverCaptures) {
+        BodyValue value = index.value(site);
+        bool makesClosure = value.opcode() == Opcode::NewClosure;
+        if (!makesClosure && value.opcode() != Opcode::CallDirect) {
+            Vector<FunctionID, 8> functions;
+            FunctionsWhoseClosuresOperationMakes made { functions };
+            value.forEachReference(made);
+            for (FunctionID function : functions) {
+                m_functionsWhoseClosuresRunTimeMakes.set(function.index());
+                name(function);
+            }
+            continue;
+        }
+        FunctionID callee = makesClosure ? value.as<Opcode::NewClosure>().function() : value.as<Opcode::CallDirect>().function();
+        name(callee);
+        std::span<const ValueID> operands = makesClosure ? value.as<Opcode::NewClosure>().capturesOperands() : value.as<Opcode::CallDirect>().argumentsOperands();
+        uint32_t numberOfCapturesOfCallee = static_cast<uint32_t>(m_program.at(callee).captures.size());
+        if (makesClosure && serves && hasOneClosureThatNeverDies(callee)) {
+            if (!lastBlockOnEveryWayToReturn)
+                lastBlockOnEveryWayToReturn = lastBlockOnEveryWayToReturnForPromotedEnvironments(index);
+            if (*lastBlockOnEveryWayToReturn && index.dominates(index.blockOf(site), *lastBlockOnEveryWayToReturn) && !index.block(index.blockOf(site)).hasHandler())
+                m_holdersMadeOnEveryWay.append({ callee, id });
+        }
+        for (uint32_t capture = 0; capture < numberOfCapturesOfCallee; ++capture) {
+            if (scopeIn(m_program.provenTypeOf(m_program.at(callee).captures[capture])))
+                continue;
+            uint32_t node = nodeOf(callee, capture);
+            ValueID handed = capture < operands.size() ? operands[capture] : ValueID();
+            ValueID behindCasts = handed;
+            while (behindCasts && !index.isParameter(behindCasts) && castsThatClaimNothing.contains(index.opcodeOf(behindCasts)))
+                behindCasts = index.value(behindCasts).operand(0);
+            std::optional<uint32_t> entryParameterBehindCasts = behindCasts && index.isParameter(behindCasts) ? entry.indexOfParameter(behindCasts) : std::nullopt;
+            if (entryParameterBehindCasts && *entryParameterBehindCasts < numberOfOwnCaptures) {
+                unite(node, nodeOf(id, *entryParameterBehindCasts));
+                continue;
+            }
+            std::optional<uint32_t> entryParameter = handed && index.isParameter(handed) ? entry.indexOfParameter(handed) : std::nullopt;
+            bool isJoinOfValues = handed && index.isParameter(handed) && !entryParameter;
+            bool isLentByCaller = entryParameter && linked.onlyCallsWhatArrivesAt(id, *entryParameter);
+            if (!handed || !serves || isJoinOfValues || isLentByCaller || index.loopOf(index.blockOf(handed))) {
+                addSource(node, noSourceServes);
+                continue;
+            }
+            TypesOfCapture types = typesOfCapture(callee, capture);
+            uint32_t& source = m_sourcesOfValues[handed.index()];
+            if (source == noSource) {
+                m_sources.append(Source { id, handed, callee, capture, types, true, mayLieInFrameOfCaller(id, index, handed), { } });
+                source = firstSource + static_cast<uint32_t>(m_sources.size()) - 1;
+            } else
+                m_sources[source - firstSource].readersAgree &= m_sources[source - firstSource].types == types;
+            addSource(node, source);
+        }
+    }
+}
 
+bool PlannerOfPromotedEnvironments::goThroughWhatStandsInFunctionsThatRunOnce()
+{
+    if (m_facts.linked().firstCaptureOfFunction.size() != m_program.functions.size() + 1)
+        return false;
     const ThinSummaries& summaries = m_facts.summaries();
     for (uint32_t number = 0; number < summaries.size(); ++number) {
-        FunctionID id(number);
+        if (m_facts.runsAtMostOnce(FunctionID(number)))
+            goThrough(FunctionID(number));
+    }
+    while (!m_functionsToGoThrough.isEmpty()) {
+        FunctionID id = m_functionsToGoThrough.takeLast();
         const ThinSummary& summary = summaries.at(id);
-        if (summary.sitesThatHandOverCaptures.isEmpty())
+        if (summary.sitesThatHandOverCaptures.isEmpty() && summary.environmentsMade.isEmpty())
             continue;
         const BodyIndex* index = m_facts.bodies().find(id);
         if (!index)
             return false;
         bool serves = servesAsMaker(id, summary, *index);
-        if (serves)
-            m_sourcesOfValues.fill(noSource, index->numberOfValues());
-        BodyBlock entry = index->block(entryBlock);
-        uint32_t numberOfOwnCaptures = static_cast<uint32_t>(m_program.at(id).captures.size());
-        std::optional<BlockID> lastBlockOnEveryWayToReturn;
-        for (ValueID site : summary.sitesThatHandOverCaptures) {
-            BodyValue value = index->value(site);
-            bool makesClosure = value.opcode() == Opcode::NewClosure;
-            if (!makesClosure && value.opcode() != Opcode::CallDirect) {
-                FunctionsWhoseClosuresOperationMakes made { m_functionsWhoseClosuresRunTimeMakes };
-                value.forEachReference(made);
-                continue;
-            }
-            FunctionID callee = makesClosure ? value.as<Opcode::NewClosure>().function() : value.as<Opcode::CallDirect>().function();
-            std::span<const ValueID> operands = makesClosure ? value.as<Opcode::NewClosure>().capturesOperands() : value.as<Opcode::CallDirect>().argumentsOperands();
-            uint32_t numberOfCapturesOfCallee = static_cast<uint32_t>(m_program.at(callee).captures.size());
-            if (makesClosure && serves && hasOneClosureThatNeverDies(callee)) {
-                if (!lastBlockOnEveryWayToReturn)
-                    lastBlockOnEveryWayToReturn = lastBlockOnEveryWayToReturnForPromotedEnvironments(*index);
-                if (*lastBlockOnEveryWayToReturn && index->dominates(index->blockOf(site), *lastBlockOnEveryWayToReturn) && !index->block(index->blockOf(site)).hasHandler())
-                    m_holdersMadeOnEveryWay.append({ callee, id });
-            }
-            for (uint32_t capture = 0; capture < numberOfCapturesOfCallee; ++capture) {
-                TypesOfCapture types = typesOfCapture(callee, capture);
-                if (m_program.at(types.established).environment)
-                    continue;
-                uint32_t node = nodeOf(callee, capture);
-                ValueID handed = capture < operands.size() ? operands[capture] : ValueID();
-                ValueID behindCasts = handed;
-                while (behindCasts && !index->isParameter(behindCasts) && castsThatClaimNothing.contains(index->opcodeOf(behindCasts)))
-                    behindCasts = index->value(behindCasts).operand(0);
-                std::optional<uint32_t> entryParameterBehindCasts = behindCasts && index->isParameter(behindCasts) ? entry.indexOfParameter(behindCasts) : std::nullopt;
-                if (entryParameterBehindCasts && *entryParameterBehindCasts < numberOfOwnCaptures) {
-                    unite(node, nodeOf(id, *entryParameterBehindCasts));
-                    continue;
-                }
-                std::optional<uint32_t> entryParameter = handed && index->isParameter(handed) ? entry.indexOfParameter(handed) : std::nullopt;
-                bool isJoinOfValues = handed && index->isParameter(handed) && !entryParameter;
-                bool isLentByCaller = entryParameter && linked.onlyCallsWhatArrivesAt(id, *entryParameter);
-                if (!handed || !serves || isJoinOfValues || isLentByCaller || index->loopOf(index->blockOf(handed))) {
-                    addSource(node, noSourceServes);
-                    continue;
-                }
-                uint32_t& source = m_sourcesOfValues[handed.index()];
-                if (source == noSource) {
-                    m_sources.append(Source { id, handed, callee, capture, types, true, mayLieInFrameOfCaller(id, *index, handed), { } });
-                    source = firstSource + static_cast<uint32_t>(m_sources.size()) - 1;
-                } else
-                    m_sources[source - firstSource].readersAgree &= m_sources[source - firstSource].types == types;
-                addSource(node, source);
-            }
-        }
+        followCapturedValues(id, summary, *index, serves);
+        findScopesMadeOnce(id, summary, *index, serves);
     }
     AOT::sort(m_holdersMadeOnEveryWay, { }, &HolderMadeOnEveryWay::holder);
+    std::ranges::sort(m_functionsNamed);
     return true;
 }
 
 std::optional<PlannerOfPromotedEnvironments::Candidate> PlannerOfPromotedEnvironments::candidateOfCapture(FunctionID id, uint32_t capture)
 {
-    TypesOfCapture types = typesOfCapture(id, capture);
-    if (LayoutID scope = m_program.at(types.established).environment) {
+    if (LayoutID scope = scopeIn(m_program.provenTypeOf(m_program.at(id).captures[capture]))) {
         auto found = std::ranges::lower_bound(m_scopes, scope, { }, &ScopeMadeOnce::layout);
         if (found == m_scopes.end() || found->layout != scope)
             return std::nullopt;
         return static_cast<Candidate>(m_sources.size() + (found - m_scopes.begin()));
     }
-    uint32_t found = m_sourcesOfClasses[rootOf(nodeOf(id, capture))];
-    if (found < firstSource || m_sources[found - firstSource].types != types)
+    auto node = m_nodesOfCaptures.find(m_facts.linked().firstCaptureOfFunction[id.index()] + capture);
+    uint32_t found = node == m_nodesOfCaptures.end() ? noSource : m_sourcesOfClasses[rootOf(node->value)];
+    if (found < firstSource || m_sources[found - firstSource].types != typesOfCapture(id, capture))
         return std::nullopt;
     return found - firstSource;
 }
@@ -475,7 +485,6 @@ void PlannerOfPromotedEnvironments::strike(Candidate candidate)
         noteThatFunctionHoldsWord(capturing.function);
 }
 
-// The greatest set: everything is taken to lie among the variables, and what holds a closure that keeps a word is struck out, which leaves the functions over it with a word.
 void PlannerOfPromotedEnvironments::keepWhatCouldBeLetGo()
 {
     Candidate numberOfCandidates = static_cast<Candidate>(m_sources.size() + m_scopes.size());
@@ -484,7 +493,7 @@ void PlannerOfPromotedEnvironments::keepWhatCouldBeLetGo()
     if (!numberOfCandidates)
         return;
 
-    for (uint32_t number = 0; number < m_program.functions.size(); ++number) {
+    for (uint32_t number : m_functionsNamed) {
         FunctionID id(number);
         const Function& function = m_program.functions[number];
         if (function.captures.isEmpty())
@@ -528,6 +537,10 @@ void PlannerOfPromotedEnvironments::keepWhatCouldBeLetGo()
     }
     AOT::sort(m_candidatesByFunctionHeld, { }, &FunctionAndCandidate::function);
     AOT::sort(m_functionsByCandidateCaptured, { }, &FunctionAndCandidate::candidate);
+    for (const FunctionAndCandidate& held : m_candidatesByFunctionHeld) {
+        if (!m_isNamed.quickGet(held.function) && !m_program.functions[held.function].captures.isEmpty())
+            noteThatFunctionHoldsWord(held.function);
+    }
 
     for (Candidate candidate : struckFromStart)
         strike(candidate);
@@ -547,7 +560,7 @@ VariableID PlannerOfPromotedEnvironments::addVariable(PromotedVariable&& variabl
 
 void PlannerOfPromotedEnvironments::leaveOutCaptures()
 {
-    for (uint32_t number = 0; number < m_program.functions.size(); ++number) {
+    for (uint32_t number : m_functionsNamed) {
         FunctionID id(number);
         const Function& function = m_program.functions[number];
         if (function.captures.isEmpty() || !capturesMayBeLeftOut(id))
@@ -588,9 +601,8 @@ void PlannerOfPromotedEnvironments::listStores()
 
 PromotedEnvironments PlannerOfPromotedEnvironments::run()
 {
-    if (!followCapturedValues())
+    if (!goThroughWhatStandsInFunctionsThatRunOnce())
         return { };
-    findScopesMadeOnce();
     if (!m_scopes.isEmpty())
         refuseScopesThatPositionsHold();
     AOT::sort(m_scopes, { }, &ScopeMadeOnce::layout);

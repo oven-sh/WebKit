@@ -173,8 +173,8 @@ FunctionID findCoroutineCalledBy(Walker& walker, const BodyValue& call)
 static Effects effectsOfEnteringInCoroutineCalls(const Walker& walker, FunctionID callee)
 {
     const LinkedFunction& linked = walker.facts().linked().function(callee);
-    Effects effects = linked.effectsOnReturn;
-    effects.merge(linked.effectsOnThrow);
+    Effects effects = linked.effectsOnReturn();
+    effects.merge(linked.effectsOnThrow());
     effects.mayThrow |= ThrowEffect::onlyStackOverflow();
     return effects;
 }
@@ -245,7 +245,7 @@ bool buildRampAtCall(Walker& walker, const BodyValue& call)
         return false;
     const Function& function = walker.program().at(callee);
     bool neverSuspends = walker.plan().conventions().of(callee).coroutineNeverSuspends;
-    if (!walker.isInLoop() || walker.depthOfCopies())
+    if (!walker.isInLoop() || !walker.walksOwnBodyOfUnit())
         return false;
     if (function.has(FunctionFlags::IsGenerator))
         return false;
@@ -269,7 +269,7 @@ bool buildRampAtCall(Walker& walker, const BodyValue& call)
 
 void forgetAwaitOfCallThatMayBeCopied(Walker& walker)
 {
-    if (walker.depthOfCopies())
+    if (!walker.walksOwnBodyOfUnit())
         return;
     if (KeptByCallsOfCoroutines* kept = findKeptByCallsOfCoroutines(walker))
         kept->awaitOfCallThatMayBeCopied = std::nullopt;
@@ -287,12 +287,12 @@ bool buildCoroutineOperationOfItsOpcodes(Walker& walker, const BodyValue& value)
     auto written = value.as<Opcode::Call>();
     if (written.argumentsOperands().size() <= 1 && written.thisValueOperand() && buildPromiseOperation(walker, value))
         return true;
-    size_t depthOfCopies = walker.depthOfCopies();
+    bool walksOwnBody = walker.walksOwnBodyOfUnit();
     return (walker.currentBodyIndex().opcodes().contains(Opcode::NewArray) && buildPromiseAllOfElements(walker, value))
         || buildStepWrittenByHand(walker, value)
-        || (!depthOfCopies && walker.unit().role == CodeRole::CoroutineBody && buildAwaitedStepWrittenByHand(walker, value))
-        || ((depthOfCopies ? !!walker.coroutineState().keptByCalls : walker.unit().role == CodeRole::CoroutineBody) && buildAwaitedCall(walker, value))
-        || (!depthOfCopies && walker.isInLoop() && buildRampAtCall(walker, value));
+        || (walksOwnBody && walker.unit().role == CodeRole::CoroutineBody && buildAwaitedStepWrittenByHand(walker, value))
+        || ((walksOwnBody ? walker.unit().role == CodeRole::CoroutineBody : !!walker.coroutineState().keptByCalls) && buildAwaitedCall(walker, value))
+        || (walksOwnBody && walker.isInLoop() && buildRampAtCall(walker, value));
 }
 
 } } } // namespace JSC::AOT::Typed

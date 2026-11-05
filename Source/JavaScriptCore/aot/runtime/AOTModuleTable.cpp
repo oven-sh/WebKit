@@ -214,6 +214,13 @@ std::optional<ModuleID> ModuleTable::findRuntimeSource(uint32_t registryID) cons
     return ModuleID(found->module);
 }
 
+bool ModuleTable::valueOfRuntimeSourceStaysWithCompiledCode(uint32_t registryID) const
+{
+    std::span<const CompiledRuntimeModuleData> runtimeModules = m_tables->compiledRuntimeModules();
+    auto found = std::ranges::lower_bound(runtimeModules, registryID, { }, &CompiledRuntimeModuleData::registryID);
+    return found != runtimeModules.end() && found->registryID == registryID && found->valueStaysWithCompiledCode;
+}
+
 std::optional<unsigned> ModuleTable::findExport(ModuleID module, UniquedStringImpl* name) const
 {
     if (name->isSymbol())

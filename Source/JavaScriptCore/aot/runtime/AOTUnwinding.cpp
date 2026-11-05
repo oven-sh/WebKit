@@ -14,7 +14,8 @@
 #include "AOTImage.h"
 #include "AOTInstance.h"
 #include "AOTInstanceLayout.h"
-#include "AOTMembersLeftOut.h"
+#include "AOTPoisonedCell.h"
+#include "AOTRuntimeReporter.h"
 #include "AOTSavedFrame.h"
 #include "AOTStackTrace.h"
 #include "AOTState.h"
@@ -282,20 +283,30 @@ static ALWAYS_INLINE CompiledUnwindResult unwindFramesOfRun(VM& vm, const Return
     return result;
 }
 
+static NEVER_INLINE void endLivesOfCellsLentToCallsGivenUp(VM& vm, const CompiledUnwindResult& result)
+{
+    bool isCaught = result.status == CompiledUnwindStatus::FoundHandler;
+    countEvent(vm, RuntimeCounterID::CellsPoisoned, PoisonedCell::poisonCellsLentBelow(vm, isCaught ? result.handler.framePointer : result.exit.callFrame, isCaught));
+}
+
 CompiledUnwindResult unwindRun(VM& vm, const ReturnSiteInRun& start, EntryFrame* entryFrame, VMEntryRecord& record, bool isTermination, CallFrame* asyncGeneratorBodyFrameLeft)
 {
-    return unwindFramesOfRun(vm, start, entryFrame, record, isTermination, asyncGeneratorBodyFrameLeft, nullptr);
+    CompiledUnwindResult result = unwindFramesOfRun(vm, start, entryFrame, record, isTermination, asyncGeneratorBodyFrameLeft, nullptr);
+    if (PoisonedCell::someCellIsLent()) [[unlikely]]
+        endLivesOfCellsLentToCallsGivenUp(vm, result);
+    return result;
 }
 
 CompiledUnwindResult unwindRunOfThrow(VM& vm, Instance& instanceThatThrows, const ReturnSiteInRun& start, EntryFrame* entryFrame, VMEntryRecord& record)
 {
-    return unwindFramesOfRun(vm, start, entryFrame, record, false, nullptr, &instanceThatThrows);
+    CompiledUnwindResult result = unwindFramesOfRun(vm, start, entryFrame, record, false, nullptr, &instanceThatThrows);
+    if (PoisonedCell::someCellIsLent()) [[unlikely]]
+        endLivesOfCellsLentToCallsGivenUp(vm, result);
+    return result;
 }
 
 CompiledUnwindResult unwindCompiledFrames(VM& vm, const CompiledFrameIterator& frames, VMEntryRecord& record, bool isTermination)
 {
-    if (isTermination) [[unlikely]]
-        stopIfMissOfReachIsPending(vm);
     const int8_t* bufferSlots = bufferSlotsByRegisterIndex();
     if (CallFrame* stubFrame = frames.generatorStubFrameLeft())
         completeGeneratorLeftByThrow(stubFrame);

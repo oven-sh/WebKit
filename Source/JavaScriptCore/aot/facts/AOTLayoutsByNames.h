@@ -82,7 +82,7 @@ public:
         m_firstHolderOfName[0] = 0;
     }
 
-    LayoutID findOnlyLayoutWithAll(std::span<const PropertyKeyID> names) const
+    LayoutID findOnlyLayoutWithAll(std::span<const PropertyKeyID> names, bool recordsAnswer) const
     {
         if (names.empty() || m_firstHolderOfName.isEmpty())
             return { };
@@ -99,10 +99,18 @@ public:
                 return { };
             found = LayoutID(holder);
         }
-        return found && m_isInstance.get(found.index()) ? found : LayoutID();
+        return found && (recordsAnswer || m_isInstance.get(found.index())) ? found : LayoutID();
     }
 
     bool isNameOfSomeInstance(PropertyKeyID name) const { return m_isNameOfSomeInstance.get(name.index()); }
+    bool isNameOfSomeLayout(PropertyKeyID name) const { return !holdersOf(name).empty(); }
+
+    template<size_t inlineCapacity>
+    void appendHolders(PropertyKeyID name, Vector<LayoutID, inlineCapacity>& found) const
+    {
+        for (uint32_t holder : holdersOf(name))
+            found.append(LayoutID(holder));
+    }
 
     bool isInUse(LayoutID layout) const { return layout.index() + 1 < m_firstNameOfLayout.size() && m_firstNameOfLayout[layout.index()] < m_firstNameOfLayout[layout.index() + 1]; }
 

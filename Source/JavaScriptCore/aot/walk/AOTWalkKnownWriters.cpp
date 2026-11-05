@@ -416,10 +416,12 @@ static GuardsEndedInKnownWriters guardsEndedByInKnownWriters(const Walker& walke
         LayoutID classLayout = declaredLayoutOf(program, writer.layout());
         if (writer.prototypeOperand())
             return program.prototypeMaySelectOtherClass(writer.layout()) ? GuardsEndedInKnownWriters { } : GuardsEndedInKnownWriters { Which::OfClassesInRowOf, classLayout };
-        if (program.at(classLayout).has(LayoutFlags::IsConstructorFunction))
+        if (program.at(classLayout).has(LayoutFlags::IsConstructorFunction) && !walker.state().guardsHaveBegun(classLayout))
             return { Which::OfClassesInRowOf, classLayout };
         return { Which::None, { } };
     }
+    if (writer.opcode == Opcode::BeginMemberGuards && walker.state().guardsHaveBegun(declaredLayoutOf(program, writer.layout())))
+        return { Which::None, { } };
     if (writer.opcode == Opcode::NewClass || writer.opcode == Opcode::DefineMethod || writer.opcode == Opcode::BeginMemberGuards)
         return { Which::OfClassesInRowOf, declaredLayoutOf(program, writer.layout()) };
     return { };
@@ -540,6 +542,8 @@ static void endWhatOperationWritesOrRunsInKnownWriters(Walker& walker, const Dra
 void endWhatOperationWritesOrRuns(Walker& walker, const Draft& draft, const Effects& effects)
 {
     endWhatOperationWritesOrRunsInKnownWriters(walker, draft, effects);
+    if (draft.opcode == Opcode::BeginMemberGuards)
+        walker.state().noteThatGuardsHaveBegun(declaredLayoutOf(walker.program(), draft.layout()));
     static_assert(!declaredBoundOf(Opcode::PutSlot).writes.contains(AbstractHeap::NamedProperties) && !declaredBoundOf(Opcode::PutSlotOrAdd).writes.contains(AbstractHeap::NamedProperties));
     if ((draft.opcode != Opcode::PutSlot && draft.opcode != Opcode::PutSlotOrAdd) || testsItsOwnGuess(draft) || !effects.writes.contains(AbstractHeap::NamedProperties))
         return;

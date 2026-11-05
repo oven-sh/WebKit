@@ -588,6 +588,7 @@ export interface SlotSpec {
   holds?: TypeSpec;
   internalField?: number;
   holdsWhatStepsHandOut?: boolean;
+  holdsWhatIsThrown?: boolean;
 }
 
 export interface TypeNameSpec {

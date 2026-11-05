@@ -105,12 +105,11 @@ void Modules::putCallsThatWaitApartInLine()
     if (m_textsThatWait.isEmpty()) [[likely]]
         return;
     for (TextThatWaits& text : textsThatWait()) {
-        size_t index = m_textsOnTheirWay.size();
-        while (index && m_textsOnTheirWay[index - 1].place > text.place)
-            --index;
         if (!text.requestedRecord)
             m_modulesOfQueuedImports.set(text.module.index());
-        m_textsOnTheirWay.insert(index, TextOnItsWay { text.place, WTF::move(text.promise), text.module, WTF::move(text.requestedRecord), text.referrerAsyncOrder, std::nullopt });
+        m_textsOnTheirWay.appendAndBubble(TextOnItsWay { text.place, WTF::move(text.promise), text.module, WTF::move(text.requestedRecord), text.referrerAsyncOrder, std::nullopt }, [&](const TextOnItsWay& inLine) {
+            return inLine.place > text.place;
+        });
     }
     m_textsThatWait.clear();
     m_numberOfTextsThatHaveCome = 0;
@@ -150,7 +149,7 @@ bool Modules::deliverFirstTextThatWaits()
 bool Modules::deliverFirstTextInLine()
 {
     if (m_instance.globalObject->microtaskRunnability() == QueuedTaskResult::Discard) {
-        m_textsOnTheirWay.removeAt(0);
+        m_textsOnTheirWay.removeFirst();
         return false;
     }
     deliverFirstTextOnItsWay();

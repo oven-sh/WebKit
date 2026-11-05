@@ -205,7 +205,7 @@ public:
 
     void returnToCaller();
     void boxBooleanAtEveryReturn() { m_boxesBooleanAtEveryReturn = true; }
-    void goOnAtEveryReturnIn(StubKey stub) { m_stubBehindEveryReturn = stub; }
+    void goOnAtEveryReturnIn(std::optional<StubKey> stub) { m_stubBehindEveryReturn = stub; }
 #if CPU(X86_64)
     void emitFramelessCallerEpilogue();
 #else

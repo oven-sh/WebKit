@@ -9,6 +9,7 @@
 
 #include "AOTOperationEmitter.h"
 #include "AOTStubsArithmetic.h"
+#include "AOTStubsPropertyKeys.h"
 #include <optional>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -52,6 +53,7 @@ public:
     void generateToNumeric(const ValueContext&);
     void generateToNumber(const ValueContext&);
     void generateInstanceOf(const ValueContext&);
+    bool leaveConstructorToInstanceOf(const ValueContext& read, InstanceOfOperand, NumberedImmediate);
     void generateHasInPrototypeChain(const ValueContext&);
     void generateToBoolean(const ValueContext&);
     void generateLogicalNot(const ValueContext&);
@@ -106,6 +108,13 @@ private:
     bool generateRelationOfIntegerAndValue(const ValueContext&, Relation);
     bool generateRelationOfBoxedNumberAndValue(const ValueContext&, Relation);
     bool generateRelationOfValuesThatAreLikelyInt32s(const ValueContext&, Relation);
+
+    struct ConstructorLeftToInstanceOf {
+        ValueID read;
+        InstanceOfOperand operand;
+        NumberedImmediate number;
+    };
+    std::optional<ConstructorLeftToInstanceOf> m_constructorLeftToInstanceOf;
 };
 
 } } } // namespace JSC::AOT::Typed

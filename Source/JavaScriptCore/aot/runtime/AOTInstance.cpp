@@ -161,9 +161,11 @@ static void fillMethodTable(Instance& instance, const Image& image)
     std::span<uint32_t> methodTable = instance.methodTable();
     if (methodTable.empty())
         return;
+#if OS(DARWIN)
     std::span<const uint8_t> pagesOfImage { reinterpret_cast<const uint8_t*>(image.methodTable().data()), roundUpToMultipleOf(pageSize(), methodTable.size_bytes()) };
     if (mapPrivateCloneOfImagePages(image, pagesOfImage, methodTable.data()))
         return;
+#endif
     memcpySpan(methodTable, image.methodTable());
     OSAllocator::protect(methodTable.data(), InstanceLayout::bytesReservedForMethodTable(instance.tables().instanceSizes), true, false);
 }
@@ -342,7 +344,6 @@ static void registerStackMirror(Instance* instance, VM& vm)
 {
     vm.traps().registerMirror(instance->stackMirror.get());
     vm.traps().registerMirror(instance->callsByValue.limit.get());
-    vm.traps().registerMirror(instance->jsonLevels.limit.get());
     VMState::PolledInstances& polled = vm.aotState().polledInstances;
     decltype(polled.instances) instances;
     size_t numberOfInstances;
@@ -366,7 +367,6 @@ static void unregisterStackMirror(Instance* instance, VM& vm)
         Locker locker { polled.lock };
         polled.instances.removeFirst(instance);
     }
-    vm.traps().unregisterMirror(instance->jsonLevels.limit.get());
     vm.traps().unregisterMirror(instance->callsByValue.limit.get());
     vm.traps().unregisterMirror(instance->stackMirror.get());
 }
@@ -414,6 +414,7 @@ Instance* reserveInstance(JSGlobalObject* realm)
     fillImageWords(*instance, vm, image, *identifiers);
     fillMethodTable(*instance, image);
     instance->siteAnswers()[0] = SiteAnswers::forPlacesWithout();
+    instance->propertyCaches.firstWordOfWideAnswers = InstanceLayout::bytesReservedForSiteAnswers / sizeof(uint64_t);
     fillNumberWords(*instance);
     fillAllocationSpaces(*instance, vm);
     vmState.propertyCaches->publishWords(*instance);

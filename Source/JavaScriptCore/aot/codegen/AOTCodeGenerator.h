@@ -132,6 +132,7 @@ public:
         return slotOfScopeReadInPlaceOfClosureSlow(id, read);
     }
     void noteClosureWhoseLifeEndsBehind(ValueID closure, ValueID call) { m_closuresWhoseLivesEndBehindCalls.append({ closure, call }); }
+    void noteObjectWhoseLifeEndsBehind(ValueID object, ValueID call) { m_closuresWhoseLivesEndBehindCalls.append({ object, call }); }
     const PlacedSlot* slotOfScopeOfClosureWithoutValue(ValueID closure) const { return closure == m_closureReadForItsScope ? m_slotOfScopeOfClosureRead : nullptr; }
     const Effects& effectsOf(const OperationContext& context LIFETIME_BOUND) const
     {
@@ -264,6 +265,7 @@ private:
     void followNumbersOutOfBytes();
     bool letsAnyNaNInto(ValueID parameter);
     bool goesOnBehindJump(size_t positionInOrder) const;
+    bool leavesOutBlockThatNothingLeadsTo(BlockID);
     void generateBlock(BlockID id) { generateBlock(id, code().at(id)); }
     void generateBlock(BlockID, const Block&);
     ValueID testReadByBranchAlone(BlockID, const Terminator&) const;
@@ -390,6 +392,7 @@ private:
     Vector<Operand> m_results;
     std::span<LBasicBlock> m_blocks;
     bool m_nextBlockGoesOnHere { false };
+    Vector<LBasicBlock, 4> m_blocksLeftOut;
     BlockID m_headOfTurnsLaidOut;
     ValueID m_readLeftToBranch;
     Vector<Operand, 8> m_argumentsForNextTurn;

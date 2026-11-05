@@ -1,20 +1,29 @@
-# `o instanceof V` with V a function that is constructed: code may give V another `prototype` or a Symbol.hasInstance at any time, so the guards of the class are asked first, and the operator as written stands on their failing side
-# an object with the shape of V says itself whether it stands where it was made. Whatever has another shape is asked as written: V.prototype may stand above anything
-# function V(x) { this.x = x; }  function isV(o, C) { return o instanceof C; }  isV(input, V); isV(new V(1), V);
-# TODO: instanceof: no guard answers for Symbol.hasInstance on a function or a class object. findClassMember() knows texts alone and says nothing of a name that the static side lacks, so findsOrdinaryHasInstanceForInstanceOf() refuses every constructor function, and every class that Link has not proven to stay as written
-# RUN: walk f2 mechanisms=none+TypedOperations+Guesses+DirectCalls+Arrivals
-# CHECK-LABEL: code f2:Body
-# CHECK: = AreMembersUnchanged
+# `o instanceof V` in a loop, with V a function that is constructed and that code out of sight holds: it may give V another `prototype` or a Symbol.hasInstance at any time, so the guards of the class are asked first, and the operator as written stands on their failing side
+# an object with the shape of V says itself whether it stands where it was made; whatever has another shape walks its chain up to the prototype object of V
+# function V(x) { this.x = x; }  sink(V);  function isV(o, C) { return o instanceof C; }  function countV(o, C, n) { let s = 0; for (let i = 0; i < n; i++) s += o instanceof C; return s; }
+# RUN: walk f3 mechanisms=none+TypedOperations+Guesses+DirectCalls+Arrivals
+# CHECK-LABEL: code f3:Body
+# CHECK: = AreMembersUnchanged conditions=[{layout=L0 side=Static key=@@hasInstance}, {layout=L0 side=Static key="prototype"}]
 # CHECK: = ShapeTest {{*}}layouts=[L0]
+# CHECK: = InstanceOf
 # CHECK: = HasLayoutPrototype
-# RUN(WRITTEN): walk f2 mechanisms=none+TypedOperations+Guesses+DirectCalls+Arrivals
-# WRITTEN: = InstanceOf
-# no walk of the chain from the object that the function is read off: that read stops where `prototype` holds no object
-# RUN(NEVER): walk f2 mechanisms=none+TypedOperations+Guesses+DirectCalls+Arrivals
-# NEVER-NOT: GetClassPrototype
+# CHECK: = GetClassPrototype {{*}}layout=L0
+# CHECK: = HasInPrototypeChain
+# the guards of a function begin with its first object and a test begins none: begun ahead of `V.prototype = {..}` they would end for the run, and code cannot tell guards that have ended from guards that have not begun
+# RUN(BEGINS): walk f3 mechanisms=none+TypedOperations+Guesses+DirectCalls+Arrivals
+# BEGINS-NOT: BeginMemberGuards
+# one closed arm
+# RUN(ONE): walk f3 mechanisms=none+TypedOperations+Guesses+DirectCalls+Arrivals
+# ONE: = InstanceOf
+# ONE-NOT: = InstanceOf
+# outside a loop the bytes are not paid
+# RUN(ONCE): walk f2 mechanisms=none+TypedOperations+Guesses+DirectCalls+Arrivals
+# ONCE-LABEL: code f2:Body
+# ONCE-NOT: AreMembersUnchanged
+# ONCE: = InstanceOf
 # without arms nothing can be asked first
-# RUN(WITHHELD): walk f2 mechanisms=none+TypedOperations+DirectCalls+Arrivals
-# WITHHELD-LABEL: code f2:Body
+# RUN(WITHHELD): walk f3 mechanisms=none+TypedOperations+DirectCalls+Arrivals
+# WITHHELD-LABEL: code f3:Body
 # WITHHELD-NOT: ShapeTest
 # WITHHELD-NOT: AreMembersUnchanged
 # WITHHELD: = InstanceOf
@@ -32,8 +41,12 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v5 = NewClosure function=f2
     v6 = Call v5, -, v4, v0 calleeName="isV"
     v7 = Call v5, -, v2, v0 calleeName="isV"
-    v8 = NewArray v6, v7 contents=anything
-    Return v8
+    v8 = NewClosure function=f3
+    v9 = Call v8, -, v4, v0, v4 calleeName="countV"
+    v10 = PropGet v3 key="sink" [isFreeName]
+    v11 = Call v10, -, v0
+    v12 = NewArray v6, v7, v9 contents=anything
+    Return v12
 }
 function f1 name="V" module=m0 flags=[HasThis, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] constructedClass=L0 {
   b0(v0: anything, v1: anything):
@@ -45,4 +58,20 @@ function f2 name="isV" module=m0 length=2 thisType={type=anything} parameters=[{
   b0(v0: anything, v1: anything):
     v2 = InstanceOf v0, v1
     Return v2
+}
+function f3 name="countV" module=m0 length=3 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = Integer
+    Jump -> next b1(v3, v3)
+  b1(v4, v5):
+    LoopHint
+    v7 = Less v5, v2
+    Branch v7 -> taken b2(), notTaken b3()
+  b2():
+    v8 = InstanceOf v0, v1
+    v9 = Add v4, v8
+    v10 = Increment v5
+    Jump -> next b1(v9, v10)
+  b3():
+    Return v4
 }

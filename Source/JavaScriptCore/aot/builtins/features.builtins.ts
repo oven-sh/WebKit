@@ -61,7 +61,6 @@ export default b.declarations(
     "OperationsOfChecks",
     "OperationsOnProxies",
     "OperationsOfJSONParse",
-    "OperationsOfJSONStringify",
     "OperationsOnStringBuilders",
     "OperationsOnTypedArrays",
     "OperationsOnEncodedText",

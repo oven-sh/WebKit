@@ -97,7 +97,7 @@ export default b.declarations(
     jsType: "JSPromiseType",
     constructorCallee: "Function",
     constructorOnlyReadsPrototypeOfNewTarget: true,
-    slots: { value: b.contents("Value", promiseState), reason: b.internalField(1, promiseState) },
+    slots: { value: b.contents("Value", promiseState), reason: b.thrownValue(b.internalField(1, promiseState)) },
     lockedMembers: ["constructor", "prototype"],
     types: [b.viewType("Promise", "value"), b.viewType("PromiseLike", "value")],
     constructorTable: b.staticTable("runtime/JSPromiseConstructor.cpp", "promiseConstructorTable"),

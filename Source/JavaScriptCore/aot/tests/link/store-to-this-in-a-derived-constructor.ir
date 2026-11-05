@@ -9,7 +9,7 @@
 # KEPT-NOT: Parameter 2 -> Unknown
 # RUN(LINK): link functions fields layouts mechanisms=all
 # LINK: function f2 callers-known one-callee
-# LINK: function f3 callers-known one-callee {{*}}result=undefined|string
+# LINK: function f3 callers-known one-callee {{*}}result=string
 # LINK-NEXT: parameter 0 {{*}}proven=L
 # LINK: field L1.0 "b" proven=string writers-known written-at-construction-alone filled
 # LINK: layout L1 family=[[family]] changes=[]

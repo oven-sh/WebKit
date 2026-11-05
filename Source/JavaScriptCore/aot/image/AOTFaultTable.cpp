@@ -154,7 +154,7 @@ void writeFaultSites(std::span<CollectedSite> sites, const CompiledCode& code, u
         sites = sites.subspan(1);
     };
     std::span accesses = code.sites.faultingAccesses.span();
-    std::span polls = code.sites.pollSites.span();
+    std::span polls = code.sites.rareLists->pollSites.span();
     while (!accesses.empty() || !polls.empty()) {
         if (polls.empty() || (!accesses.empty() && accesses.front().codeOffset < polls.front().offset)) {
             const FaultingAccess& access = accesses.front();
@@ -401,7 +401,7 @@ Vector<uint8_t> encodeFaultSites(const LinkedFunctions& functions, std::span<con
     RELEASE_ASSERT(bodyStarts.size() == functions.size());
     const ParallelLoops& loops = context.parallelLoops();
     auto numberOfSitesOf = [](const CompiledCode& code) {
-        return code.sites.faultingAccesses.size() + code.sites.pollSites.size();
+        return code.sites.faultingAccesses.size() + code.sites.rareLists->pollSites.size();
     };
     size_t numberOfRanges = numberOfRangesOfIndices(functions.size());
     Vector<uint64_t> firstSiteOfRange(FillWith { }, numberOfRanges + 1, 0);

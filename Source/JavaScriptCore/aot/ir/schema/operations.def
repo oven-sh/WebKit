@@ -3,7 +3,7 @@ enum ClosureForm { | engine Full Slim Deferred Singleton }
 enum LoanOfClosure { | engine None ToFunctionEntered LeftToStubOfCall }
 enum ArrayLiteralStorage { | engine Fresh Profiled ProfiledForRoom }
 enum TailCallRequirement { | engine Required Allowed }
-enum CodeRole { | engine Body GenericCallEntry GenericConstructEntry AllocatingConstructEntry CoroutineBody ModuleStart SlowBody ParameterGuard TableEntry TableLookup Serializer }
+enum CodeRole { | engine Body GenericCallEntry GenericConstructEntry AllocatingConstructEntry CoroutineBody ModuleStart SlowBody ParameterGuard TableEntry TableLookup }
 enum DataEncoding { | engine Unselected ReadOnlyTree CopyOnWriteArray }
 enum ExpectedElements { | engine Anything Int32Array Uint8Array }
 enum OperatorForm (state: StateOfKnowledge) {
@@ -138,8 +138,8 @@ operation RequireObject (value: Any/returns, runtimeError: RuntimeErrorKind) -> 
 operation TypeTest (value: Any/inspects, testedType: Type) [| engine asksInFull] -> natural(boolean) ; none ; proves = TestedType ; branches = May ; interpreted = Test ; flow = Checks ; hasKnownValueRule = true ; hasOwnFoldingRule = true ; form = Open
 
 family Call AsRead..Placed
-operation Call (callee: Any/calls, thisValue?: Any/retains, arguments...: Any/retains, calleeKey?: PropertyKey, calleeName?: String, expectedResult?: ExpectedResult, calledBuiltin?: Builtin, callNumber?: UInt32, engine methodOfReceiverAsMade?: Builtin, with CallStamp) [isAnnotatedPure isNeverInlined isDoneInPlace | engine methodIsNamedByKeyAlone] -> unknown ; unknownCode by Call ; accessClass = IndirectCall ; flow = Copies ; runsBeforeCallee = true ; flowRule = Call ; entersByValue = Call ; form = Closed
-operation Construct (callee: Any/calls, newTarget?: Any/retains, arguments...: Any/retains, calleeName?: String, with CallStamp) [isAnnotatedPure] -> unknown ; unknownCode by Call ; accessClass = IndirectCall ; runtime = Construct ; flow = TableProves ; flowRule = Call ; entersByValue = Construction ; form = Closed
+operation Call (callee: Any/calls, thisValue?: Any/retains, arguments...: Any/retains, calleeKey?: PropertyKey, calleeName?: String, expectedResult?: ExpectedResult, calledBuiltin?: Builtin, callNumber?: UInt32, engine methodOfReceiverAsMade?: Builtin, with CallStamp) [isNeverInlined isDoneInPlace | engine methodIsNamedByKeyAlone] -> unknown ; unknownCode by Call ; accessClass = IndirectCall ; flow = Copies ; runsBeforeCallee = true ; flowRule = Call ; entersByValue = Call ; form = Closed
+operation Construct (callee: Any/calls, newTarget?: Any/retains, arguments...: Any/retains, calleeName?: String, with CallStamp) -> unknown ; unknownCode by Call ; accessClass = IndirectCall ; runtime = Construct ; flow = TableProves ; flowRule = Call ; entersByValue = Construction ; form = Closed
 operation CallList (callee: Any/calls, thisValue?: Any/retains, list: Array/Listed, calleeKey?: PropertyKey, calleeName?: String, expectedResult?: ExpectedResult, engine calledBuiltin?: Builtin, with CallStamp) -> unknown ; unknownCode by Call ; accessClass = IndirectCall ; interpreted = List ; runtime = Apply ; flow = Copies ; runsBeforeCallee = true ; flowRule = Call ; entersByValue = Call ; form = Closed
 operation ConstructList (callee: Any/calls, newTarget?: Any/retains, list: Array/Listed, calleeName?: String, with CallStamp) -> unknown ; unknownCode by Call ; accessClass = IndirectCall ; interpreted = List ; runtime = ConstructWithArray ; flow = TableProves ; flowRule = Call ; entersByValue = Construction ; form = Runtime
 operation CallDirect (function: Function(Call), arguments...: Declared/retains, engine calledBuiltin?: Builtin, engine role: CodeRole, engine numberOfBoundArguments: UInt32) [| engine isNeverInlined isConstruction] -> declared(function) ; unknownCode by Call ; accessClass = DirectCall ; flow = Copies ; runsBeforeCallee = true ; form = Open

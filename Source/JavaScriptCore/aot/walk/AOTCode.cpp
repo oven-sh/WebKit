@@ -27,10 +27,6 @@ static constexpr OpcodeSet opcodesThatTheWalkLowers {
 
 static constexpr OpcodeSet opcodesWithoutEmitterByList = opcodesThatStateTypes | opcodesThatTheWalkLowers | OpcodeSet {
     Opcode::StringBuilderAppend,
-    Opcode::StringBuilderCheckLength, Opcode::StringBuilderReserve, Opcode::StringBuilderCommit,
-    Opcode::JSONEnterWatchedLevel, Opcode::JSONAppendKey, Opcode::JSONAppendToken, Opcode::JSONAppendBoolean,
-    Opcode::JSONAppendInteger, Opcode::JSONAppendNumber, Opcode::JSONAppendString,
-    Opcode::JSONAppendValue, Opcode::JSONAppendObject, Opcode::JSONHasStackSpace,
 };
 
 static_assert([]() consteval {
@@ -415,6 +411,15 @@ void Code::layClosureInFrame(ValueID closure, LoanOfClosure loan)
     std::span<const uint32_t> payload = record.payload();
     const_cast<uint32_t&>(payload[*PayloadWord::storage(Opcode::NewClosure)]) = encodePayloadWord(AllocationStorage::Frame);
     const_cast<uint32_t&>(payload[*PayloadWord::loan(Opcode::NewClosure)]) = encodePayloadWord(loan);
+    m_holdsFrameCells = true;
+}
+
+void Code::layObjectInFrame(ValueID object)
+{
+    RELEASE_ASSERT(m_isSwept);
+    Operation& record = m_operations[checkedIndexInCode(object, m_operations.size())];
+    RELEASE_ASSERT(record.opcode == Opcode::NewObject && record.storage() == AllocationStorage::Heap);
+    const_cast<uint32_t&>(record.payload()[*PayloadWord::storage(Opcode::NewObject)]) = encodePayloadWord(AllocationStorage::Frame);
     m_holdsFrameCells = true;
 }
 

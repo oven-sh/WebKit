@@ -24,12 +24,6 @@ static_assert(std::is_trivially_default_constructible_v<StringBuilderWords>);
 
 inline constexpr uint32_t maxStringBuilderReservation = 4096;
 
-inline constexpr int64_t stackReservedBelowJSONLevels = 64 * 1024;
-
-inline constexpr uint32_t bitsOfJSONPosition = 2;
-constexpr uint32_t decodeJSONPosition(uint32_t encoded) { return encoded & ((1u << bitsOfJSONPosition) - 1); }
-constexpr uint32_t decodeJSONLevelsAround(uint32_t encoded) { return encoded >> bitsOfJSONPosition; }
-
 inline constexpr uint32_t jsonIntegerBytes = 24;
 inline constexpr uint32_t jsonNumberBytes = 40;
 

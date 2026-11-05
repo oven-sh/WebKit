@@ -204,21 +204,21 @@ function f4 name="ask" module=m1 position=490 role=Library flags=[HasExplicitNam
     v19 = Add v9, v18 @589
     Return v19 @589
 }
-function f5 name="get" module=m0 position=83 kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f5 name="get" module=m0 position=83 kind=Method role=Library flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0():
     Jump -> next b1() @83
   b1():
     v0 = Integer integer=7 @98
     Return v0 @98
 }
-function f6 name="get" module=m0 position=134 kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f6 name="get" module=m0 position=134 kind=Method role=Library flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0():
     Jump -> next b1() @134
   b1():
     v0 = Integer integer=8 @149
     Return v0 @149
 }
-function f7 name="set" module=m0 position=155 kind=Method flags=[HasThis, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f7 name="set" module=m0 position=155 kind=Method role=Library flags=[HasThis, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything, v1: anything):
     Jump -> next b1() @155
   b1():

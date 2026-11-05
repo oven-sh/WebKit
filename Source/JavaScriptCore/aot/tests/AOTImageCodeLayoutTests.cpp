@@ -138,11 +138,9 @@ static Vector<CompiledCode> bodiesWithMoves(unsigned count, std::span<const Argu
     result.reserveInitialCapacity(count);
     for (uint32_t function = 1; function <= count; ++function) {
         CodeSketch sketch = framedSketch(function);
-        for (unsigned call = 0; call < thunkCallsInBody; ++call) {
-            sketch.callThunk(lists[function % lists.size()]);
-            sketch.lastRelocation().symbol = 0;
-            sketch.code().body.argumentMoves.shrink(1);
-        }
+        sketch.callThunk(lists[function % lists.size()]);
+        for (unsigned call = 1; call < thunkCallsInBody; ++call)
+            sketch.callThunkAgain(0);
         sketch.end();
         result.append(sketch.take());
     }
@@ -258,8 +256,8 @@ static void checkMoveLists(const Steps& steps, std::span<const ArgumentMoves> li
     const SharedCode& sharedCode = steps.sharedCode;
     AOT_TEST_CHECK(sharedCode.argumentMoves.size() == lists.size());
     for (size_t index = 0; index < lists.size(); ++index) {
-        AOT_TEST_CHECK(*sharedCode.argumentMoves[index] == lists[index]);
-        AOT_TEST_CHECK(sharedCode.thunkOffset(lists[index]) == sharedCode.argumentThunks.offsets[index]);
+        AOT_TEST_CHECK(equalSpans(sharedCode.argumentMoves[index].span(), lists[index].span()));
+        AOT_TEST_CHECK(sharedCode.thunkOffset(lists[index].span()) == sharedCode.argumentThunks.offsets[index]);
     }
     AOT_TEST_CHECK(sharedCode.blob.offsetOf(writeBarrier()));
 }

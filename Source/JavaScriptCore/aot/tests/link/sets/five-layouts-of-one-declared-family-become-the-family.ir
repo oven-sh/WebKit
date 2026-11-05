@@ -1,5 +1,5 @@
-# If the fifth member lost a set whose members one declared family holds, a union of five records would be any object, as if nothing were declared. The set gives way to the nearest declared family that holds all five, and none of them is lost
-# interface Shape { }  type A, B, C, D, E, F: Shape  function area(s) { return 1; }  function same(s) { return s; }  area(a); area(b); area(c); area(d); area(same(e));
+# If the fifth member lost a set whose members one declared family holds, five classes below one class would be strangers to each other, as if nothing were declared. The set gives way to the nearest declared family that holds all five, and none of them is lost
+# abstract class Shape { }  class A, B, C, D, E, F extends Shape  function area(s) { return 1; }  function same(s) { return s; }  area(a); area(b); area(c); area(d); area(same(e));
 # The fifth has the longer way, so the four are a set when it comes. F never comes and is named all the same: the type is the family, not the five.
 # RUN: link families functions layouts mechanisms=all
 # CHECK: family [[shape]] [L1, L2, L3, L4, L5, L6]
@@ -11,7 +11,7 @@
 # CHECK: layout L4 family=[[shape]] changes=[] stays-with-compiled-code
 # CHECK: layout L5 family=[[shape]] changes=[] stays-with-compiled-code
 
-layout L0 name="Shape" module=m0 flags=[IsNeverAllocated]
+layout L0 kind=Instance name="Shape" module=m0 flags=[IsNeverAllocated]
 layout L1 name="A" module=m0 fields=[{key="a" declared={type=anything} flags=[IsRequired]}] supertypes=[L0]
 layout L2 name="B" module=m0 fields=[{key="b" declared={type=anything} flags=[IsRequired]}] supertypes=[L0]
 layout L3 name="C" module=m0 fields=[{key="c" declared={type=anything} flags=[IsRequired]}] supertypes=[L0]

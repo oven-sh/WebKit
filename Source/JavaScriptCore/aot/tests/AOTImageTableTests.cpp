@@ -99,7 +99,7 @@ static CompiledCode bodyWithConstantAndRegExp(uint32_t function, StringID patter
 {
     CodeSketch sketch = framedSketch(function);
     sketch.callStub(writeBarrier(), sketch.addSite());
-    sketch.code().body.constants.append(ConstantData { Vector<uint8_t>(FillWith { }, sizeOfConstant, byteOfConstant), sizeOfConstant });
+    sketch.code().body.rareLists.ensure().constants.append(ConstantData { Vector<uint8_t>(FillWith { }, sizeOfConstant, byteOfConstant), sizeOfConstant });
     sketch.end();
     CompiledCode code = sketch.take();
     MentionList mentions;
@@ -533,9 +533,10 @@ static CompiledCode bodyWithConstants(uint32_t function, Vector<ConstantData>&& 
 {
     CodeSketch sketch = framedSketch(function);
     uint32_t target = sketch.end();
-    sketch.code().body.constants = WTF::move(constants);
+    RareListsOfBody& rareLists = sketch.code().body.rareLists.ensure();
+    rareLists.constants = WTF::move(constants);
     for (unsigned table = 0; table < numberOfJumpTables; ++table)
-        sketch.code().body.jumpTables.append(JumpTable { { 0, target } });
+        rareLists.jumpTables.append(JumpTable { { 0, target } });
     return sketch.take();
 }
 

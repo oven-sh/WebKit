@@ -126,6 +126,8 @@ static bool hasMatchingHeapOptions(const ImageHeader& header)
         && header.heap.markedBlockCageShift == MarkedBlockCage::shift;
 }
 
+static_assert(offsetof(ProgramTables, instanceSizes) + offsetof(InstanceSizes, sizeOfMethodTable) == 24, "Bun's test/aot/cli/compiled-image.ts lists this member");
+
 static uint64_t endOfCodePart(uint32_t offset, uint32_t size)
 {
     return static_cast<uint64_t>(offset) + size;

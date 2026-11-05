@@ -120,7 +120,8 @@ void RegExpBuiltinEmitter::generateStringReplace(const InlineCall& call)
         finish(call, CellPointer(replaced), stringType);
         return;
     }
-    finish(call, callOperation<CellPointer>(call.context(), RuntimeOperation::StringReplaceRegExp, { string, regExpObject, boxedOperand(call.context(), replacement) }, { .calledBuiltin = functionOf(call.overload()) }), stringType);
+    LValue replaced = callStub(call.context(), stringReplaceRegExpMayNotMatch(ReplacementOfMatches::AnyValue), { string.value(), regExpObject.value(), boxedOperand(call.context(), replacement).value() }, { .calledBuiltin = functionOf(call.overload()) }).first;
+    finish(call, CellPointer(replaced), stringType);
 }
 
 void RegExpBuiltinEmitter::generateStringReplaceAll(const InlineCall& call)

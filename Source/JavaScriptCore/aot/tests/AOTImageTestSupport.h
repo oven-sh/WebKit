@@ -146,6 +146,7 @@ public:
     uint32_t callStub(StubKey, OptionalIndex site = { });
     uint32_t jumpToStub(StubKey);
     uint32_t callThunk(const ArgumentMoves&, OptionalIndex site = { });
+    uint32_t callThunkAgain(uint32_t index, OptionalIndex site = { });
     uint32_t callFunction(CodeUnit callee, OptionalIndex site = { }, uint16_t entry = primaryEntry);
     uint32_t callFunction(uint32_t callee, OptionalIndex site = { }, uint16_t entry = primaryEntry) { return callFunction(bodyUnitOf(callee), site, entry); }
     uint32_t jumpToFunction(CodeUnit callee, uint16_t entry = primaryEntry);
@@ -158,7 +159,7 @@ public:
     uint32_t stubKeyIndex(StubKey);
     OptionalIndex addSite(unsigned inlineFrame = 0, uint32_t line = 1, uint32_t column = 1);
 
-    Relocation& lastRelocation() { return m_code.body.relocations.last(); }
+
     CompiledCode& code() { return m_code; }
     uint32_t size() const { return static_cast<uint32_t>(m_code.body.bytes.size()); }
 
@@ -172,6 +173,7 @@ private:
     void finishFrame();
 
     CompiledCode m_code;
+    Vector<ArgumentMoves> m_argumentMoves;
     uint32_t m_sizeAfterLastEnd { 0 };
     bool m_hasFrame { false };
 };

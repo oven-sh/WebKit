@@ -147,16 +147,12 @@ constexpr ArgumentBufferAccess argumentBufferAccessOf(Entry entry)
     v(OperationsOnProxies, HasWithProxyTrap) \
     v(OperationsOnProxies, SetWithProxyTrap) \
     v(OperationsOnProxies, ValidateAnswerOfProxyTrap) \
-    v(OperationsOfJSONStringify, JSONAppendString) \
-    v(OperationsOfJSONStringify, JSONAppendValue) \
-    v(OperationsOfJSONStringify, JSONEnterWatchedLevel) \
     v(OperationsOnStringBuilders, Concatenate) \
     v(OperationsOnStringBuilders, ConcatenatePair) \
     v(OperationsOnStringBuilders, StringBuilderAppend) \
     v(OperationsOnStringBuilders, StringBuilderAppendString) \
     v(OperationsOnStringBuilders, StringBuilderAppendStringRange) \
     v(OperationsOnStringBuilders, StringBuilderBegin) \
-    v(OperationsOnStringBuilders, StringBuilderCheckLength) \
     v(OperationsOnStringBuilders, StringBuilderDiscard) \
     v(OperationsOnStringBuilders, StringBuilderFinish) \
     v(OperationsOnStringBuilders, StringBuilderReserve) \

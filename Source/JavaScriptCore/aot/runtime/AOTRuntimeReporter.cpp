@@ -171,6 +171,7 @@ static constexpr ASCIILiteral kindOf(RuntimeCounterID counter)
     case RuntimeCounterID::ModulesForRequireCache:
     case RuntimeCounterID::ModulesForWhatHasRun:
     case RuntimeCounterID::ModulesForCyclesThatWait:
+    case RuntimeCounterID::RecordsForStatesOfLoads:
     case RuntimeCounterID::LinksBelowRoots:
     case RuntimeCounterID::StacksOfThrows:
     case RuntimeCounterID::RunsBelowListedFrames:

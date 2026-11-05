@@ -32,7 +32,6 @@ struct PlaceOfAllocation {
     uint32_t position { 0 };
 };
 
-// No word of the cell says it: a visitor of the collector that still goes by the old Structure would take the numbers for what the slots held.
 struct PlacesOfPoisonedCells {
     Lock lock;
     UncheckedKeyHashMap<const JSCell*, PlaceOfAllocation> places WTF_GUARDED_BY_LOCK(lock);
@@ -48,6 +47,41 @@ static PlacesOfPoisonedCells& placesOfPoisonedCells()
         places.construct();
     });
     return places;
+}
+
+namespace {
+
+struct CellLent {
+    JSCell* cell;
+    const void* frame;
+    PlaceOfAllocation place;
+};
+
+} // anonymous namespace
+
+static Vector<CellLent>& cellsLentOnThisThread()
+{
+    static thread_local Vector<CellLent>* cells;
+    if (!cells)
+        cells = new Vector<CellLent>;
+    return *cells;
+}
+
+void PoisonedCell::noteThatCellIsLent(JSCell* cell, const void* frame, uint32_t function, uint32_t position)
+{
+    cellsLentOnThisThread().append({ cell, frame, { function, position } });
+    ++s_numberOfCellsLent;
+}
+
+uint32_t PoisonedCell::poisonCellsLentBelow(VM& vm, const void* frame, bool andByThatFrame)
+{
+    uint32_t numberPoisoned = 0;
+    Vector<CellLent>& lent = cellsLentOnThisThread();
+    while (!lent.isEmpty() && (lent.last().frame < frame || (andByThatFrame && lent.last().frame == frame))) {
+        CellLent last = lent.last();
+        numberPoisoned += tryPoison(vm, last.cell, last.place.function, last.place.position);
+    }
+    return numberPoisoned;
 }
 
 Structure* PoisonedCell::createStructure(VM& vm)
@@ -70,6 +104,11 @@ size_t PoisonedCell::estimatedSize(JSCell* cell, VM&)
 
 bool PoisonedCell::tryPoison(VM& vm, JSCell* cell, uint32_t function, uint32_t position)
 {
+    if (s_numberOfCellsLent) {
+        s_numberOfCellsLent -= cellsLentOnThisThread().removeLastMatching([&](const CellLent& lent) {
+            return lent.cell == cell;
+        });
+    }
     uint8_t* bytes = reinterpret_cast<uint8_t*>(cell);
     const ClassInfo* classInfo = cell->classInfo();
     if (classInfo == Object::info()) {

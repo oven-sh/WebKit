@@ -39,6 +39,51 @@ void Order::dropUpsilonsHandedTo(const Block* formerTarget, Block* from)
     from->m_upsilons.shrink(numberKept);
 }
 
+void Order::emptyBlock(Block* block)
+{
+    auto takeBackReadsOf = [](const Operation* reader) {
+        if (countsChildrenAtFirstUse(reader->opcode()))
+            return;
+        for (Operation* child : reader->children())
+            child->loseUse();
+    };
+    for (const Operation* upsilon : block->m_upsilons)
+        takeBackReadsOf(upsilon);
+    for (const Operation* operation : block->m_operations)
+        takeBackReadsOf(operation);
+    block->clearSuccessors();
+    block->m_operations.clear();
+    block->m_upsilons.clear();
+    block->m_phis.clear();
+}
+
+void Order::letGoOfBlockThatNothingLeadsTo(Block* first)
+{
+    while (first->m_successors.size() <= 1) {
+        ASSERT(!first->m_numberOfIncomingEdges && !first->m_isEntry);
+        Block* next = first->m_successors.isEmpty() ? nullptr : first->m_successors[0].block();
+        emptyBlock(first);
+        if (!next || next->m_numberOfIncomingEdges || next->m_isEntry || next->isEmpty())
+            return;
+        first = next;
+    }
+
+    Vector<Block*, 8> pending;
+    pending.append(first);
+    while (!pending.isEmpty()) {
+        Block* block = pending.takeLast();
+        ASSERT(!block->m_numberOfIncomingEdges && !block->m_isEntry);
+        Vector<Block*, 4> targets;
+        for (const Edge& edge : block->m_successors)
+            targets.append(edge.block());
+        emptyBlock(block);
+        for (Block* target : targets) {
+            if (!target->m_numberOfIncomingEdges && !target->m_isEntry && !target->isEmpty())
+                pending.append(target);
+        }
+    }
+}
+
 void Order::replaceJumpWithBranch(Block* from, const Operation* phi, bool isInverted)
 {
     Block* join = phi->owner();
@@ -59,7 +104,7 @@ void Order::replaceJumpWithBranch(Block* from, const Operation* phi, bool isInve
     retarget(from, 0, whenNotZero.block());
     from->m_successors[0].m_class = std::max(classOfJump, whenNotZero.edgeClass());
     from->m_successors.append(from->procedure().arena(), Edge(whenZero.block(), std::max(classOfJump, whenZero.edgeClass())));
-    whenZero.block()->didGainIncomingEdge();
+    whenZero.block()->didGainIncomingEdge(from);
 
     end->m_opcode = Branch;
     end->m_origin = join->last()->origin();
@@ -165,10 +210,9 @@ Block* Order::split(Block* from, unsigned successorIndex, EdgeClass classOfEdgeT
     };
 
     if (target->m_phis.isEmpty()) {
-        ASSERT(target->m_numberOfIncomingEdges);
-        --target->m_numberOfIncomingEdges;
+        target->didLoseIncomingEdge(from);
         from->m_successors[successorIndex].m_block = middle;
-        middle->didGainIncomingEdge();
+        middle->didGainIncomingEdge(from);
     } else {
         for (Operation* upsilon : from->upsilons()) {
             Operation* phi = upsilon->phi();
@@ -241,7 +285,7 @@ void Order::joinEdgesToOneBlock(Block* from)
 
     kept.m_class = std::min(kept.m_class, other.m_class);
     ASSERT(kept.m_block->m_numberOfIncomingEdges >= 2);
-    --kept.m_block->m_numberOfIncomingEdges;
+    kept.m_block->didLoseIncomingEdge(from);
     from->m_successors.shrink(1);
     branch->child(0)->loseUse();
 }

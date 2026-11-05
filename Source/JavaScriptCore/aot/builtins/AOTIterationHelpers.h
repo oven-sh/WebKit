@@ -16,6 +16,8 @@ enum class IterationHelper : uint8_t {
     OpenIterator,
     OpenWrappedIterator,
     StepIterator,
+    WayToStepIterator,
+    StepIteratorInWay,
     CloseIterator,
     CloseIteratorAfterThrow,
     AppendGenerator,
@@ -33,6 +35,10 @@ inline BuiltinID builtinOfIterationHelper(IterationHelper helper)
         return Builtins::CompilerHelpersOpenWrappedIterator;
     case IterationHelper::StepIterator:
         return Builtins::CompilerHelpersStepIterator;
+    case IterationHelper::WayToStepIterator:
+        return Builtins::CompilerHelpersWayToStepIterator;
+    case IterationHelper::StepIteratorInWay:
+        return Builtins::CompilerHelpersStepIteratorInWay;
     case IterationHelper::CloseIterator:
         return Builtins::CompilerHelpersCloseIterator;
     case IterationHelper::CloseIteratorAfterThrow:

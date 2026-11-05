@@ -5,19 +5,19 @@
 # Five meet in what each function gives, one more than a set takes, so they are lost: two families. The reader of the first five was given its node before the families met. It is tied to the node of the other five, so it finds what all ten hold. Nothing has escaped
 # RUN: link functions layouts mechanisms=all
 # CHECK: function f3 callers-known one-callee {{*}}result=undefined|null|true|i32|string
-# CHECK-NEXT: parameter 0 {{*}}proven=object
+# CHECK-NEXT: parameter 0 {{*}}proven=L0|L1|L2|L3|L4|L5|L6|L7|L8|L9
 # CHECK: function f4 callers-known one-callee {{*}}result=undefined|null|true|i32|string
-# CHECK-NEXT: parameter 0 {{*}}proven=object
-# CHECK: layout L0 changes=[]
-# CHECK: layout L1 changes=[]
-# CHECK: layout L2 changes=[]
-# CHECK: layout L3 changes=[]
-# CHECK: layout L4 changes=[]
-# CHECK: layout L5 changes=[]
-# CHECK: layout L6 changes=[]
-# CHECK: layout L7 changes=[]
-# CHECK: layout L8 changes=[]
-# CHECK: layout L9 changes=[]
+# CHECK-NEXT: parameter 0 {{*}}proven=L0|L1|L2|L3|L4|L5|L6|L7|L8|L9
+# CHECK: layout L0 {{*}}changes=[]
+# CHECK: layout L1 {{*}}changes=[]
+# CHECK: layout L2 {{*}}changes=[]
+# CHECK: layout L3 {{*}}changes=[]
+# CHECK: layout L4 {{*}}changes=[]
+# CHECK: layout L5 {{*}}changes=[]
+# CHECK: layout L6 {{*}}changes=[]
+# CHECK: layout L7 {{*}}changes=[]
+# CHECK: layout L8 {{*}}changes=[]
+# CHECK: layout L9 {{*}}changes=[]
 # RUN(ANSWER): run-in-shell globalThis.flag = false; globalThis.report = value => print(String(value));
 # ANSWER: true
 # ANSWER-NEXT: null

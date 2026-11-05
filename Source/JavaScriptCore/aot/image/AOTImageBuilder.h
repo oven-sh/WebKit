@@ -84,7 +84,7 @@ SideTables encodeSideTables(const LinkedFunctions&, std::span<const Vector<uint8
 struct CalledSharedCode {
     Vector<StubKey> stubKeys;
     Vector<StubKey> stubKeysOfArgumentMoves;
-    Vector<const ArgumentMoves*> argumentMoves;
+    Vector<KeptArgumentMoves> argumentMoves;
     Vector<uint32_t> firstArgumentMovesOfBody;
     Vector<uint32_t> thunksOfArgumentMoves;
 };

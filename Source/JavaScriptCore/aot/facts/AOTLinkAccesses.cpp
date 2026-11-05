@@ -199,6 +199,7 @@ private:
     FlowNodeID foundBesideFieldsOf(LayoutID id) { return m_flow.foundBesideFieldsOf(id); }
     FlowNodeID foundBesideFieldsUnderKey() { return m_flow.foundBesideFieldsUnder(m_access.key); }
     void storeBesideFieldsOf(LayoutID);
+    bool resolveOnWhatStandsAbove(FlowNodeID above, unsigned stepsLeft);
     bool mayStoreIntoPrototypeLink() const { return m_access.kind == Kind::Store && m_keyMayNamePrototypeLink; }
     bool namesOnlyElements() const { return !isNamed() && m_keyIsOnlyNumbers && indexesAreAbsentFrom(Builtins::ObjectPrototype); }
     bool namesNothingOnPlainClosures() const;
@@ -256,7 +257,7 @@ private:
     LinkType typeHeldAtLocation(BuiltinID member);
     LinkType typeHeldAtLocationThatRealmHas(BuiltinID member);
     LinkType typeAnsweredByReadsOf(BuiltinID member);
-    LinkType typeWrittenBy(BuiltinTypeID) const;
+    LinkType typeWrittenBy(BuiltinTypeID);
     LinkType typeWrittenOfLightForm(BuiltinTypeID, BuiltinID canonical) const;
 
     LinkFlow& m_flow;
@@ -276,6 +277,7 @@ private:
     bool m_keyIsWritten { true };
     void tellAgainOnceClimbs(FlowNodeID);
     bool m_keyIsOnlyNumbers { false };
+    bool m_keyIsSymbolAsFarAsIsSeen { false };
     bool m_keyMayNamePrototypeLink { false };
     bool m_hasThrown { false };
     bool m_wasAskedToThrow { false };
@@ -422,6 +424,47 @@ void AccessInLinkAccesses::storeBesideFieldsOf(LayoutID id)
     storeInto(m_flow.appendedField(id, m_access.key));
 }
 
+bool AccessInLinkAccesses::resolveOnWhatStandsAbove(FlowNodeID above, unsigned stepsLeft)
+{
+    tellAgainOnceClimbs(above);
+    const LinkType type = m_flow.typeAt(above);
+    bool setterTakesStore = false;
+    auto lookAt = [&](LayoutID holder) {
+        std::optional<FieldReference> field = findField(m_program, holder, m_access.key);
+        if (!field) {
+            if (stepsLeft && m_program.at(holder).has(LayoutFlags::IsOfCreatedObject))
+                setterTakesStore |= resolveOnWhatStandsAbove(m_flow.whatStandsAbove(holder), stepsLeft - 1);
+            return;
+        }
+        if (isRead())
+            giveWhatIsHeldAt(m_flow.field(*field));
+        else if (m_access.kind == Kind::Store && m_flow.hasSetterWritten(*field)) {
+            storeInto(m_flow.field(*field));
+            setterTakesStore = true;
+        }
+    };
+    switch (type.objects) {
+    case LinkType::Objects::Layout:
+        lookAt(type.layout);
+        break;
+    case LinkType::Objects::Set:
+        for (LayoutID member : m_flow.layoutsOfSet(type))
+            lookAt(member);
+        break;
+    case LinkType::Objects::Family:
+        m_program.at(m_flow.families.layoutsOf(type.family)).forEach(lookAt);
+        break;
+    case LinkType::Objects::None:
+    case LinkType::Objects::Prototype:
+    case LinkType::Objects::Prototypes:
+    case LinkType::Objects::Lost:
+        break;
+    }
+    if (type.classes == LinkType::Classes::Site && stepsLeft)
+        setterTakesStore |= resolveOnWhatStandsAbove(m_flow.whatStandsAbove(type.site), stepsLeft - 1);
+    return setterTakesStore;
+}
+
 bool AccessInLinkAccesses::readKey()
 {
     bool hasNode = m_access.keyNode != noSummaryNode;
@@ -445,6 +488,7 @@ bool AccessInLinkAccesses::readKey()
         mayThrow();
     }
     m_keyIsOnlyNumbers = !holdsObjects && !(key.primitives & ~LinkType::closed(Primitive::Number));
+    m_keyIsSymbolAsFarAsIsSeen = hasNode && LinkFlow::isSymbolAsFarAsIsSeen(key);
     m_keyMayNamePrototypeLink = (holdsObjects || key.primitives & Primitive::AnyString) && keyThatBeginsSoMayNamePrototypeLink(m_program, m_access);
     return true;
 }
@@ -604,7 +648,10 @@ void AccessInLinkAccesses::resolveOnLayout(LayoutID id, const LinkType& pooled)
         mayThrow();
         if (isRead())
             giveWhatIsHeldAt(m_flow.anyFieldReadThrough(pooled.objects, pooled.layout, pooled.family, namesOnlyElements()));
-        else
+        else if (m_keyIsSymbolAsFarAsIsSeen) {
+            m_flow.escape(id);
+            storeIntoUnseen();
+        } else
             storeInto(m_flow.anyFieldStoredThrough(pooled.objects, pooled.layout, pooled.family, m_keyIsOnlyNumbers));
         return;
     }
@@ -654,6 +701,8 @@ void AccessInLinkAccesses::resolveOnLayout(LayoutID id, const LinkType& pooled)
     }
 
     bool isPrivateName = m_program.at(m_access.key).kind == PropertyKeyKind::PrivateName;
+    if (!field && !isDefinition && !isPrivateName && layout.has(LayoutFlags::IsOfCreatedObject) && resolveOnWhatStandsAbove(m_flow.whatStandsAbove(id), LinkFlow::mostStepsAboveCreatedObject))
+        return;
     bool goesOnAboveClasses = members.lookupGoesOnAboveClasses() && !isPrivateName;
     FlowNodeID foundOnPrototypes;
     if (isRead() && !isPrivateName)
@@ -855,8 +904,12 @@ void AccessInLinkAccesses::resolveOnFamily(FamilyID family)
         giveWhatIsHeldAt(m_flow.anyFieldReadThrough(LinkType::Objects::Family, LayoutID(), family, namesOnlyElements()));
         return;
     }
-    if (mayStoreIntoPrototypeLink())
+    if (mayStoreIntoPrototypeLink() || m_keyIsSymbolAsFarAsIsSeen)
         m_flow.escapeAllOf(familyForLinkAccesses(family));
+    if (m_keyIsSymbolAsFarAsIsSeen) {
+        storeIntoUnseen();
+        return;
+    }
     storeInto(m_flow.anyFieldStoredThrough(LinkType::Objects::Family, LayoutID(), family, m_keyIsOnlyNumbers));
 }
 
@@ -872,6 +925,13 @@ void AccessInLinkAccesses::resolveOnLostObjects(LayoutID member)
             storeInto(m_flow.fieldStoredThroughLost(member, m_access.key));
     } else if (isRead())
         giveWhatIsHeldAt(m_flow.anyFieldReadThrough(LinkType::Objects::Lost, member, FamilyID(), namesOnlyElements()));
+    else if (m_keyIsSymbolAsFarAsIsSeen) {
+        LinkType lost;
+        lost.objects = LinkType::Objects::Lost;
+        lost.layout = member;
+        m_flow.escapeAllOf(lost);
+        storeIntoUnseen();
+    }
     else
         storeInto(m_flow.anyFieldStoredThrough(LinkType::Objects::Lost, member, FamilyID()));
 }
@@ -1512,6 +1572,8 @@ void AccessInLinkAccesses::resolveOnClasses(const LinkType& instances)
     bool mayBeElement = !isNamed() || mayBeElementKey(m_nameClass);
     bool isElement = isNamed() ? mayBeElement : m_keyIsOnlyNumbers;
     if (!mayBeElement) {
+        if (!isRead() && m_access.key == m_program.keyOf(BuiltinNames::length) && !m_access.storesSurelyIndex)
+            m_flow.arrive(m_flow.contentsOf(instances, SlotOfContents::noLongerAsMade()), m_flow.fromTypeID(TypeTable::undefined));
         resolveUnderNameOnClass(instances);
         return;
     }
@@ -2039,7 +2101,7 @@ LinkType AccessInLinkAccesses::typeWrittenOfLightForm(BuiltinTypeID id, BuiltinI
     return type;
 }
 
-LinkType AccessInLinkAccesses::typeWrittenBy(BuiltinTypeID id) const
+LinkType AccessInLinkAccesses::typeWrittenBy(BuiltinTypeID id)
 {
     if (!id)
         return LinkType::anything();
@@ -2051,6 +2113,10 @@ LinkType AccessInLinkAccesses::typeWrittenBy(BuiltinTypeID id) const
     if (!written.stringLiterals.empty())
         type.primitives |= Primitive::String;
     for (const BuiltinTypePart& part : written.parts) {
+        if (part.kind == BuiltinTypePartKind::Operand && part.operand->isReceiver() && isRead() && m_value) {
+            giveFrom(m_receiver);
+            continue;
+        }
         if (part.kind == BuiltinTypePartKind::Instance) {
             LinkType instances = LinkType::anything();
             instances.holdsLostBuiltins = m_flow.unseenObjectsBelow(m_flow.prototypeOfInstancesOf(part.builtinClass), m_function).holdsLostBuiltins;
@@ -2074,7 +2140,7 @@ PropertyKeyID LinkFlow::keyOf(FunctionID function, const SummaryAccess& access) 
     LinkType oneSymbol;
     oneSymbol.primitives = LinkType::oneSymbol;
     LinkType held = typeAt(node);
-    held.primitives &= LinkType::closed(Primitive::All);
+    held.primitives &= LinkType::closed(ViewAtWork::current() ? Primitive::All & ~Primitive::UndefinedOrNull : Primitive::All);
     if (held != oneSymbol)
         return { };
     PropertyKeyID symbol = symbolAt(node);
@@ -2096,11 +2162,7 @@ PropertyKeyID LinkFlow::keySeenOf(FunctionID function, const SummaryAccess& acce
         return { };
     FlowNodeID node = nodeOf(function, access.keyNode);
     const LinkType& held = typeAt(node);
-    if (!held.primitivesByEscapeAlone && !held.unseenIsByEscapeAlone)
-        return { };
-    if (held.objects != LinkType::Objects::None || held.functions != LinkType::Functions::None || held.classes != LinkType::Classes::None || held.builtin || held.holdsLostBuiltins || held.holdsUnseenInSight())
-        return { };
-    if ((held.primitivesSeen() & LinkType::closed(Primitive::All)) != LinkType::oneSymbol)
+    if (!isSymbolAsFarAsIsSeen(held) || !(held.primitivesSeen() & LinkType::oneSymbol) || !(held.primitives & LinkType::closed(Primitive::All) & ~LinkType::oneSymbol))
         return { };
     PropertyKeyID symbol = symbolNotedAt(node);
     if (!symbol || !isNameInTextOf(program, symbol, function))

@@ -56,8 +56,8 @@ bool unitDoesMoreThanBodyForKnownEffects(const Plan& plan, FunctionID function)
 static Effects effectsOfCallByValueOfFunctionForKnownEffects(const LinkTables& linked, FunctionID function)
 {
     const LinkedFunction& entered = linked.function(function);
-    Effects effects = entered.effectsOnReturn;
-    effects.merge(entered.effectsOnThrow);
+    Effects effects = entered.effectsOnReturn();
+    effects.merge(entered.effectsOnThrow());
     addEffectsOfEnteringByValue(effects);
     return effects;
 }
@@ -105,8 +105,8 @@ Effects effectsOfDirectCall(Walker& walker, FunctionID callee, std::span<const R
         return Effects::unknownCode();
     const LinkTables& linked = walker.facts().linked();
     const LinkedFunction& entered = linked.function(callee);
-    Effects onReturn = entered.effectsOnReturn;
-    Effects onThrow = entered.effectsOnThrow;
+    Effects onReturn = entered.effectsOnReturn();
+    Effects onThrow = entered.effectsOnThrow();
     if (walker.has(Mechanism::DirectCalls) && !linked.known.layoutsWrittenByFunction.isEmpty()) {
         if (std::optional<HalvesOfKnownEffects> given = findHalvesGivenArgumentsForKnownEffects(walker, callee, entryArguments)) {
             bool mayCollect = onReturn.mayCollect || onThrow.mayCollect;

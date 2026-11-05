@@ -1,7 +1,7 @@
 # function size(view: Uint8Array) { return view.length; }   function sizeOfMarked(view: Uint8Array) { return view.length; }
 # const plain = new Uint8Array(4), marked = new Uint8Array(4); marked.extra = 1; for (..) total += size(plain) + sizeOfMarked(marked);
 # Link knows every caller of both. All that arrives at `size` comes out of a site whose objects have not left the program and on which no reached code lays a name, defines anything by a descriptor or puts another object above:
-# each has the names that its class gives it and no other, for as long as it lives. So the read needs no test, and there is no closed arm behind it.
+# each has the names that its class gives it and no other, for as long as it lives. So there is no closed arm behind the read. The word is held against the view where it is taken: one bit of its cell, and a stop by name where the word is false.
 # A name is laid on what arrives at `sizeOfMarked`: nothing is said of it, and the view is asked when the code runs.
 # Both once asked.
 # RUN: link functions mechanisms=all
@@ -11,7 +11,8 @@
 # CHECK-NOT: stays-as-made
 # RUN(WALK): walk f1 f2 mechanisms=all
 # WALK-LABEL: code f1:Body
-# WALK-NOT: IsPristine
+# WALK: = IsPristine {{*}}aspects=[Names, CellAlone]
+# WALK-NEXT: CheckProof {{*}}checkedType=true
 # WALK-NOT: PropGet
 # WALK: = GetTypedArrayLength
 # WALK-LABEL: code f2:Body

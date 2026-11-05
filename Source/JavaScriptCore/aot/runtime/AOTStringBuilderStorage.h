@@ -9,9 +9,7 @@
 
 #include "AOTPropertyCachesStringKeys.h"
 #include "AOTStringBuilderWords.h"
-#include "AOTWatchedJSONLevels.h"
 #include "JSString.h"
-#include "StackManager.h"
 #include <array>
 #include <limits>
 #include <optional>
@@ -74,7 +72,6 @@ public:
     Latin1Character* reserve(JSGlobalObject*, const Reservation&);
     Latin1Character* tryReserve(const Reservation&);
     void commit(const Latin1Character* cursor);
-    bool checkLength(JSGlobalObject*);
     bool hasRoomAt(const Latin1Character* cursor, size_t size) const
     {
         ASSERT(m_characters <= cursor && cursor <= m_characters + m_limit);
@@ -84,7 +81,6 @@ public:
 
     uint32_t length() const { return m_position + m_lengthOutsideBuffer; }
     void rollBack(uint32_t length);
-    bool enterWatchedLevel(EncodedJSValue holder, void* frame);
 
     enum class StringUse : uint8_t {
         Unknown,
@@ -120,7 +116,7 @@ private:
         uint32_t length { 0 };
     };
 
-    StringBuilderStorage(VM&, Structure*, StackManager::Mirror& levelLimit, StringBuilderWords&);
+    StringBuilderStorage(VM&, Structure*, StringBuilderWords&);
     static StringBuilderStorage* create(Instance&);
     void reset();
     void returnToPool(Instance&);
@@ -142,9 +138,6 @@ private:
     void dropLargeBuffer(size_t longestTextInBuffer);
     bool ensureRoom(JSGlobalObject*, size_t size);
     void throwOutOfMemory(JSGlobalObject*);
-    void watchLevelsAfterGrowth(size_t numberOfCharacters);
-    void setLevelLimit(void*);
-    void stopWatchingLevels();
     bool canGrowBy(size_t added) const;
 
     AppendResult appendCharactersOf(JSGlobalObject*, JSString*);
@@ -168,9 +161,6 @@ private:
     uint32_t m_positionWhenSegmentsWereJoined { 0 };
     uint32_t m_positionJoinedIntoFirstSegment { 0 };
     uint32_t m_capacityOfNextBuffer { 0 };
-    uint32_t m_lengthWhenWatchBegan { 0 };
-    WatchedJSONLevels m_watchedLevels;
-    StackManager::Mirror& m_levelLimit;
     StringBuilderWords& m_words;
     WriteBarrier<StringBuilderStorage> m_nextFree;
     WriteBarrier<JSString> m_lastString;

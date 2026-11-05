@@ -1,11 +1,11 @@
 # If a set that meets a declared family stayed apart from it, a store through the parameter would miss the fields of the one or of the other. No declared family holds all, so the set is taken apart, and its members and the family are lost and united, as two strangers and a family were before there were sets
-# interface Shape { }  type A, B, C, D, E: Shape  function same(s) { return s; }  function put(o) { o.x = null; }  same(a); same(b); same(c); same(d);  put({ x: "s", p: "s" });  put({ x: "s", q: "s" });  put(same(e));
+# abstract class Shape { }  class A, B, C, D, E extends Shape  function same(s) { return s; }  function put(o) { o.x = null; }  same(a); same(b); same(c); same(d);  put({ x: "s", p: "s" });  put({ x: "s", q: "s" });  put(same(e));
 # Five members meet at `same`, so what it returns is typed as their family. That has the longer way to `put`, where the two strangers are a set by then.
 # RUN: link families functions fields mechanisms=all
 # CHECK: family F{{*}} [L3, L4, L5, L6, L7]
 # CHECK: function f1 callers-known one-callee {{*}}result=L3|L4|L5|L6|L7 returns=
 # CHECK: function f2 callers-known one-callee
-# CHECK-NEXT: parameter 0 {{*}}proven=object
+# CHECK-NEXT: parameter 0 {{*}}proven=L0|L1|L3|L4|L5|L6|L7
 # CHECK: field L0.0 "x" proven=null|string writers-known
 # CHECK: field L1.0 "x" proven=null|string writers-known
 # CHECK: field L3.0 "x" proven=null|string writers-known
@@ -16,7 +16,7 @@
 
 layout L0 module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="p" declared={type=anything} flags=[IsRequired]}]
 layout L1 module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="q" declared={type=anything} flags=[IsRequired]}]
-layout L2 name="Shape" module=m0 flags=[IsNeverAllocated]
+layout L2 kind=Instance name="Shape" module=m0 flags=[IsNeverAllocated]
 layout L3 name="A" module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="a" declared={type=anything} flags=[IsRequired]}] supertypes=[L2]
 layout L4 name="B" module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="b" declared={type=anything} flags=[IsRequired]}] supertypes=[L2]
 layout L5 name="C" module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="c" declared={type=anything} flags=[IsRequired]}] supertypes=[L2]

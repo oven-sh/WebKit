@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuiltinMembers.h"
 #include "AOTBuiltinPristine.h"
 #include "AOTCellFormat.h"
 #include "AOTClassGuards.h"
@@ -240,6 +241,10 @@ void GuardEmitter::generateIsPristine(const ValueContext& value)
 {
     ValueID subject = value->valueOperand();
     BuiltinClassID builtinClass = value->builtinClass();
+    if (m_program.admitsReplacedBuiltins && isClassOfPrimitives(builtinClass) && !typeOf(subject).hasObjects()) {
+        defineTest(value, emitter<TypeTestEmitter>().nothingWasWrittenAbove(builtinClass));
+        return;
+    }
     if (pristineTestOf(m_builtins, builtinClass) == PristineTest::ClosureAsCreated) {
         if (value->aspects().containsAny(aspectsWithoutTest)) {
             defineTest(value, boolean(false));

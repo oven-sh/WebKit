@@ -41,6 +41,32 @@ static TypeID typeOfReceiverBehindCheckInWalkTyped(Walker& walker, const BodyVal
     return walker.types().withoutNullish(typeOfReceiver);
 }
 
+static Reference splitNullishOffInFrontOfTypedCopyInWalkTyped(Walker& walker, const BodyValue& access, Reference receiver)
+{
+    if (!walker.standsInFrontOfTypedCopy(receiver))
+        return { };
+    Origin origin = walker.originOf(access);
+    origin.isTailCall = false;
+    Reference isNullish;
+    {
+        Walker::InFrontOfTypedCopy inFront(walker, true);
+        Draft test(Opcode::TypeTest, origin);
+        test.setValueOperand(receiver);
+        test.setTestedType(TypeArena::fromPrimitives(Primitive::Undefined | Primitive::Null));
+        isNullish = walker.build(WTF::move(test));
+    }
+    if (!walker.branchInFrontOfTypedCopy(isNullish, false))
+        return { };
+    walker.noteGuessOpened();
+    Walker::InFrontOfTypedCopy inFront(walker, true);
+    Draft rest(Opcode::Narrowed, origin);
+    rest.setValueOperand(receiver);
+    rest.setTestOperand(isNullish);
+    rest.setOperandIndex(OperandIndex::TypeTest::value);
+    rest.setIsOnTakenEdge(false);
+    return walker.build(WTF::move(rest));
+}
+
 static bool splitNullishOffReceiverInWalkTyped(Walker& walker, const BodyValue& access)
 {
     ValueID input = access.objectOperand();
@@ -66,6 +92,10 @@ static bool splitNullishOffReceiverInWalkTyped(Walker& walker, const BodyValue& 
         if (built && resultRuleOf(opcode) != ResultRule::None)
             walker.bind(access.id(), built);
         return true;
+    }
+    if (Reference checked = !isNeverType(rest) ? splitNullishOffInFrontOfTypedCopyInWalkTyped(walker, access, receiver) : Reference()) {
+        walker.state().noteCheckedName(receiver, checked);
+        return walker.isUnreachable();
     }
     Draft check(Opcode::RequireObjectCoercible, walker.originOf(access));
     check.setValueOperand(receiver);

@@ -65,6 +65,8 @@ struct ResultRules {
     template<typename Operation> TypeID declared(const Operation&, ModuleID);
     template<typename Operation> TypeID declared(const Operation& operation, TypeID type)
     {
+        if (opcodeOf(operation) == Opcode::AssumeType)
+            return operands[0] ? context.types.intersectionOf(operands[0], type) : type;
         return opcodeOf(operation) == Opcode::Unspecified ? context.types.withPrimitives(type, Primitive::Unspecified) : type;
     }
     template<typename Operation> TypeID declared(const Operation&, BuiltinOverloadID, uint32_t resultIndex);

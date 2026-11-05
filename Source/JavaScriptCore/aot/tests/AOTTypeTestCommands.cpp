@@ -1412,7 +1412,7 @@ static void runJoin(TestCommandContext& context)
         if (LayoutSetID set = type && !holdsOnlyPrimitives(type) ? program.at(type).unnamedLayouts : LayoutSetID(); set && !holdsOneMember(set))
             everySetOfWire.add(set.bits());
     }
-    Families families(program, everySetOfWire, context.build.parallelLoops());
+    Families families(program, everySetOfWire, { }, context.build.parallelLoops());
     TypeArena arena(program.types, ArenaKeeps::InProgram);
 
     unsigned numberThatHangOnOrder = 0;

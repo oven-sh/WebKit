@@ -97,6 +97,8 @@ public:
     Position endOfProcedure() const { return m_end; }
 
     static inline void retarget(Block* from, unsigned successorIndex, Block* newTarget);
+    static void emptyBlock(Block*);
+    static void letGoOfBlockThatNothingLeadsTo(Block*);
     static void replaceJumpWithBranch(Block* from, const Operation* phi, bool isInverted);
     static Block* split(Block* from, unsigned successorIndex, EdgeClass classOfEdgeToTarget);
     static Block* askBehind(Block* first, unsigned leavingSuccessorOfFirst, Block* second, unsigned leavingSuccessorOfSecond);
@@ -162,10 +164,9 @@ ALWAYS_INLINE void Order::retarget(Block* from, unsigned successorIndex, Block* 
             edge.m_class = std::max(edge.m_class, static_cast<EdgeClass>(classOfEdgePassedBy));
     }
 
-    ASSERT(oldTarget->m_numberOfIncomingEdges);
-    --oldTarget->m_numberOfIncomingEdges;
+    oldTarget->didLoseIncomingEdge(from);
     edge.m_block = newTarget;
-    newTarget->didGainIncomingEdge();
+    newTarget->didGainIncomingEdge(from);
 
     if (!oldTarget->m_phis.isEmpty() && !from->m_upsilons.isEmpty())
         dropUpsilonsHandedTo(oldTarget, from);

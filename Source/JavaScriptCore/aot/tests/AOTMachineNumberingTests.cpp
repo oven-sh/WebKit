@@ -645,10 +645,11 @@ static void testMachineNumberingBlockThatLostAnEdgeStartsEmpty()
         out.jump(next);
         AOT_TEST_CHECK(next->numberOfIncomingEdges() == 2 && !next->singlePredecessor());
         (firstEdgeIsTakenAway ? entry : other)->clearSuccessors();
-        AOT_TEST_CHECK(next->numberOfIncomingEdges() == 1 && !next->singlePredecessor());
+        AOT_TEST_CHECK(next->numberOfIncomingEdges() == 1 && next->singlePredecessor() == (firstEdgeIsTakenAway ? other : entry));
+        AOT_TEST_CHECK(next->classOfSingleIncomingEdge() == (firstEdgeIsTakenAway ? EdgeClass::Normal : EdgeClass::Unlikely));
 
         out.appendToSuccessor(next, atEnd);
-        AOT_TEST_CHECK(!next->hasOnlyOnePredecessor() && fixture.load(fixture.firstElement)->owner() == next);
+        AOT_TEST_CHECK(fixture.load(fixture.firstElement)->owner() == (firstEdgeIsTakenAway ? next : entry));
     }
 }
 

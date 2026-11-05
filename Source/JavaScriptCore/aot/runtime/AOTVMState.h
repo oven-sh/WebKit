@@ -139,7 +139,6 @@ public:
     UniqueArray<int> regExpMatchOutput;
     WriteBarrier<Structure> moduleRecordStructure;
     WriteBarrier<Structure> stringBuilderStorageStructure;
-    // Made by the first cell that is poisoned.
     WriteBarrier<Structure> poisonedCellStructure;
     Lock instancesLock;
     Vector<Instance*, 1> instances;

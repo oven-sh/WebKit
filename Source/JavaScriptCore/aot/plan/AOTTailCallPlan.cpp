@@ -202,7 +202,7 @@ bool FollowerOfTailCalls::followTailCall(FunctionBeingFollowed& caller, const Su
 void FollowerOfTailCalls::goOnWithLastFunction()
 {
     FunctionBeingFollowed& last = m_functionsBeingFollowed.last();
-    const Vector<SummaryCall>& calls = m_facts.summaries().at(last.function).calls;
+    std::span<const SummaryCall> calls = m_facts.summaries().at(last.function).calls.span();
     bool everyRowEnds = true;
     for (; everyRowEnds && last.nextCall < calls.size(); ++last.nextCall) {
         if (!calls[last.nextCall].isInTailPosition)

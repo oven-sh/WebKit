@@ -533,6 +533,7 @@ void Sweep::sweepBackward()
     m_looksForCoveredFences = beginLookingForCoveredFences();
     m_coverageIsOutOfDate = false;
     m_lendsClosures = beginLendingClosures();
+    m_lendsCells = beginLendingCells();
     beginFollowingLiveness();
 
     for (const EntryOfCode& entry : code.entries())
@@ -569,6 +570,8 @@ void Sweep::sweepBackward()
     countUsesAtEndsOfBlocks();
     if (m_lendsClosures)
         lendClosures();
+    if (m_lendsCells)
+        lendCells();
     if (m_coverageIsOutOfDate)
         lookForCoverageAgain();
     sortFactUses();
@@ -599,6 +602,8 @@ void Sweep::settleWhatIsNeeded()
         m_coverageIsOutOfDate = m_coverageIsOutOfDate || mayChangeWhatIsCovered(operation);
         if (m_lendsClosures && operation.opcode == Opcode::NewClosure)
             m_closuresThatMayBeLent.append(value);
+        if (m_lendsCells && operation.opcode == Opcode::NewObject)
+            m_cellsThatMayBeLent.append(value);
     }
 }
 

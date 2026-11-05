@@ -61,8 +61,9 @@ public:
         : m_firstReadSites(body.firstReadSites.mutableSpan())
         , m_returnSites(body.returnSites.mutableSpan())
         , m_faultingAccesses(sites.faultingAccesses.mutableSpan())
-        , m_pollSites(sites.pollSites.mutableSpan())
     {
+        if (RareListsOfSites* rareLists = sites.rareLists.ifExists())
+            m_pollSites = rareLists->pollSites.mutableSpan();
         findNextFirstReadSite();
         findNextReturnSite();
         findNextFaultingAccess();
@@ -447,14 +448,13 @@ static ShownFunctions findShownFunctions(const DescribedUnit& described)
     return shownFunctions;
 }
 
-static void describeConstructionStart(const Program& program, ShownFunction& shown, const RecordedSite& site, SitePosition& position)
+static void describeConstructionStart(const Program& program, ShownFunction& shown, const RecordedSite& site, uint32_t number, SitePosition& position, SiteDescription& sites)
 {
     if (!site.origin.isPartOfConstruction && !isConstructOf(site.kind))
         return;
     const Function& owner = *shown.owner;
     if (owner.kind == FunctionKind::DerivedConstructor && isDefaultConstructor(program, owner)) {
-        position.constructionStartLine = startOfSuperCallOfDefaultConstructor.line;
-        position.constructionStartColumn = startOfSuperCallOfDefaultConstructor.column;
+        sites.rareLists.ensure().constructionStarts.append(SiteConstructionStart { number, startOfSuperCallOfDefaultConstructor.line, startOfSuperCallOfDefaultConstructor.column });
         return;
     }
     if (shown.positionInBuiltin)
@@ -465,22 +465,20 @@ static void describeConstructionStart(const Program& program, ShownFunction& sho
         return;
     LineColumn lineColumn = lineColumnNear(program, module, construction->start, shown.lastPlace);
     if (construction->isShownAtStart) {
-        position.constructionStartLine = std::exchange(position.line, lineColumn.line);
-        position.constructionStartColumn = std::exchange(position.column, lineColumn.column);
+        uint32_t lineWhereWritten = std::exchange(position.line, lineColumn.line);
+        uint32_t columnWhereWritten = std::exchange(position.column, lineColumn.column);
         position.sourceOffset = construction->start;
-        position.startIsWhereWritten = true;
+        sites.rareLists.ensure().constructionStarts.append(SiteConstructionStart { number, lineWhereWritten, columnWhereWritten, false, true });
         return;
     }
-    position.constructionStartLine = lineColumn.line;
-    position.constructionStartColumn = lineColumn.column;
-    position.startIsForCallers = construction->isForCallers;
+    sites.rareLists.ensure().constructionStarts.append(SiteConstructionStart { number, lineColumn.line, lineColumn.column, construction->isForCallers });
 }
 
-static SitePosition describePosition(const Program& program, ShownFunctions& shownFunctions, const RecordedSite& site)
+static SitePosition describePosition(const Program& program, ShownFunctions& shownFunctions, const RecordedSite& site, uint32_t number, SiteDescription& sites)
 {
     ShownFunction& shown = shownFunctions[site.origin.inlineFrame];
     SitePosition position = positionIn(program, shown, site.origin.position, site.origin.inlineFrame);
-    describeConstructionStart(program, shown, site, position);
+    describeConstructionStart(program, shown, site, number, position, sites);
     return position;
 }
 
@@ -514,11 +512,11 @@ static void describeSitesInOrder(const DescribedUnit& described, const CodeRecor
     uint32_t numberOfSites = 0;
     auto addSite = [&](const RecordedSite& site) ALWAYS_INLINE_LAMBDA {
         uint32_t number = ++numberOfSites;
-        sites.positions.appendWithinCapacity(describePosition(program, shownFunctions, site));
+        sites.positions.appendWithinCapacity(describePosition(program, shownFunctions, site, number, sites));
         if (number > numberOfSitesWithoutCode && site.kind != CallSiteKind::Plain)
             sites.flaggedSites.append({ number, site.kind, site.calledBuiltin });
         if (site.constructedCallee)
-            sites.constructedCallees.append({ number, callees.indexOf(site.constructedCallee) });
+            sites.rareLists.ensure().constructedCallees.append({ number, callees.indexOf(site.constructedCallee) });
         return number;
     };
     for (const RecordedSite& site : recorded.span().first(numberOfSitesWithoutCode))
@@ -549,7 +547,7 @@ static void describeSitesInOrder(const DescribedUnit& described, const CodeRecor
         if (landingPad) {
             const MacroAssembler::Label* label = records.exceptions.landingPads[landingPad->landingPad];
             RELEASE_ASSERT(label && label->isSet());
-            sites.handlers.append({ number, linkBuffer.offsetOf(*label), landingPad->type });
+            sites.rareLists.ensure().handlers.append({ number, linkBuffer.offsetOf(*label), landingPad->type });
         }
         last = recordsOnlyPosition ? LastSite { &record, landingPad } : LastSite { };
     }
@@ -576,11 +574,12 @@ static void describeSites(const DescribedUnit& described, CodeRecords& records, 
     LinkBuffer& linkBuffer = emitted.buffer.linkBuffer();
     sites.numberOfSitesWithoutCode = records.sites.numberOfSitesWithoutCode;
     if (!records.frameMaps.words.isEmpty())
-        sites.frameMapWords = WTF::move(records.frameMaps.words);
+        sites.rareLists.ensure().frameMapWords = WTF::move(records.frameMaps.words);
     collectFaultingAccesses(described, records, emitted.procedure, linkBuffer, body, sites.faultingAccesses);
     if (!records.traps.pollSites.isEmpty()) {
-        sites.pollSites = WTF::move(records.traps.pollSites);
-        AOT::sortInLine(sites.pollSites, { }, &PollSite::offset);
+        ListOfUnit<PollSite>& pollSites = sites.rareLists.ensure().pollSites;
+        pollSites = WTF::move(records.traps.pollSites);
+        AOT::sortInLine(pollSites, { }, &PollSite::offset);
     }
 
     SiteReferencesInOrder references(body, sites);
@@ -592,6 +591,8 @@ static void describeSites(const DescribedUnit& described, CodeRecords& records, 
     if (hasOnlyInlineCallSites) {
         sites.numberOfSitesWithoutCode = 0;
         sites.positions.shrink(1);
+        if (RareListsOfSites* rareLists = sites.rareLists.ifExists())
+            rareLists->constructionStarts.clear();
         return;
     }
     describeInlineFrames(described.program, described.code, records.sites, callees, sites.inlineFrames);
@@ -627,9 +628,9 @@ static void describeBody(CodeRecords& records, EmittedCode& emitted, CodeBody& b
     body.bytes = emitted.buffer.takeBytes();
     body.entries = describeEntriesOfUnit(records, emitted.procedure, linkBuffer);
     if (!emitted.procedure.constantData().empty())
-        Machine::describeConstants(emitted.procedure, body.constants);
+        Machine::describeConstants(emitted.procedure, body.rareLists.ensure().constants);
     if (!emitted.procedure.jumpTables().empty())
-        Machine::describeJumpTables(emitted.procedure, linkBuffer, body.jumpTables);
+        Machine::describeJumpTables(emitted.procedure, linkBuffer, body.rareLists.ensure().jumpTables);
 }
 
 static void describeFrameOfUnit(const CodeRecords& records, EmittedCode& emitted, FrameDescription& frame)
@@ -665,7 +666,7 @@ static std::optional<StubKey> describedStubEnteredBy(const Relocation& relocatio
     case SymbolSpace::Stub:
         return body.stubKeys[relocation.symbol];
     case SymbolSpace::ArgumentThunk:
-        return StubKey::fromBits(body.argumentMoves[relocation.symbol][0]);
+        return calleeOfArgumentMoves(body.argumentMoves[relocation.symbol]);
     case SymbolSpace::Function:
     case SymbolSpace::Constant:
     case SymbolSpace::JumpTable:
@@ -766,7 +767,7 @@ private:
 
 } // anonymous namespace
 
-static Vector<BytesOfForm> describeBytesByForm(const Program& program, const Code& code, const FormsSaid& said, const CodeBody& body, EmittedCode& emitted, CompiledCode& result)
+static Vector<BytesOfForm> describeBytesByForm(const Program& program, const Code& code, const FormsSaid& said, const CodeBody& body, EmittedCode& emitted, MeasurementsOfCode& measurements)
 {
     static_assert(Form::Open < Form::Closed && Form::Closed < Form::Runtime);
     constexpr uint32_t noSite = FormsSaid::noSite;
@@ -848,12 +849,12 @@ static Vector<BytesOfForm> describeBytesByForm(const Program& program, const Cod
         uint32_t inlineFrame = code.at(site.value).inlineFrame;
         if (!inlineFrame)
             continue;
-        result.bytesInInlineFrames += operation.bytes;
+        measurements.bytesInInlineFrames += operation.bytes;
         const InlineFrame& frame = code.inlineFrames()[inlineFrame];
         if (frame.calledBuiltin)
-            result.bytesInFramesOfBuiltins += operation.bytes;
+            measurements.bytesInFramesOfBuiltins += operation.bytes;
         else if (isLibraryCode(program, program.at(frame.callee)))
-            result.bytesInInlineFramesOfLibrary += operation.bytes;
+            measurements.bytesInInlineFramesOfLibrary += operation.bytes;
     }
     auto keyOf = [](const BytesOfForm& entry) {
         return std::tuple { entry.opcode, entry.state, entry.place, entry.form, !entry.isNamed };
@@ -927,7 +928,8 @@ static Vector<RangeOfCode> describeRangesOfCode(const Code& code, const CodeBody
     auto add = [&](Machine::Origin origin, uint32_t begin, uint32_t end) {
         ValueID value = valueOfOrigin(origin);
         rareCode.forEachPieceOf(begin, end, [&](uint32_t beginOfPiece, uint32_t endOfPiece, bool isRare) {
-            ranges.append({ beginOfPiece, endOfPiece, value ? 0 : origin.bits(), value, value ? code.at(value).opcode : Opcode::Undefined, isRare });
+            BlockID block = value && !code.isConstant(value) ? code.blockOf(value) : BlockID();
+            ranges.append({ beginOfPiece, endOfPiece, value ? 0 : origin.bits(), value, value ? code.at(value).opcode : Opcode::Undefined, isRare, value ? static_cast<uint32_t>(code.at(value).inlineFrame) : 0u, block && code.at(block).frequency == BlockFrequency::Rare });
         });
     };
     uint32_t endOfPreviousRange = 0;
@@ -973,8 +975,8 @@ static std::optional<uint32_t> endOfLastReturnSiteOfDescribedUnit(const Compiled
     }
     if (!code.sites.faultingAccesses.isEmpty())
         add(code.sites.faultingAccesses.last().codeOffset + static_cast<uint32_t>(sizeOfNearCall));
-    if (!code.sites.pollSites.isEmpty())
-        add(code.sites.pollSites.last().returnOffset());
+    if (!code.sites.rareLists->pollSites.isEmpty())
+        add(code.sites.rareLists->pollSites.last().returnOffset());
     ASSERT(end == endOfLastReturnSite(code));
     return end;
 }
@@ -1008,17 +1010,18 @@ CompiledCode describeCode(BuildContext& build, const CodeGenerationInputs& input
     describeFrameOfUnit(records, emitted, result.frame);
     fitPaddingOfDescribedUnit(result);
     if (emitted.procedure.traits().notesRangesOfOrigins) {
-        result.bytesByForm = describeBytesByForm(inputs.program, code, records.formsSaid, result.body, emitted, result);
+        MeasurementsOfCode& measurements = result.measurements.ensure();
+        measurements.bytesByForm = describeBytesByForm(inputs.program, code, records.formsSaid, result.body, emitted, measurements);
         uint64_t formsThatDifferFromSchema = 0;
         uint64_t formsPickedByPlaceOtherThanLoop = 0;
-        for (const BytesOfForm& row : result.bytesByForm) {
+        for (const BytesOfForm& row : measurements.bytesByForm) {
             formsThatDifferFromSchema += row.countThatDiffersFromSchema;
             formsPickedByPlaceOtherThanLoop += row.isPickedByPlaceOtherThanLoop() ? row.count : 0;
         }
         build.statistics().count(StatisticID::FormsThatDifferFromSchema, formsThatDifferFromSchema);
         build.statistics().count(StatisticID::FormsPickedByPlaceOtherThanLoop, formsPickedByPlaceOtherThanLoop);
-        result.bytesOutsideOperations = describeBytesOutsideOperations(result.body, emitted);
-        result.ranges = describeRangesOfCode(code, result.body, emitted);
+        measurements.bytesOutsideOperations = describeBytesOutsideOperations(result.body, emitted);
+        measurements.ranges = describeRangesOfCode(code, result.body, emitted);
     }
     return result;
 }

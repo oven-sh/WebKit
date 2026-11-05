@@ -141,7 +141,6 @@ set(JavaScriptCore_AOT_EXPORTED_HEADERS
     aot/runtime/AOTStringBuilderWords.h
     aot/runtime/AOTTraceFrame.h
     aot/runtime/AOTVMState.h
-    aot/runtime/AOTWatchedJSONLevels.h
     aot/runtime/AOTWatchpoints.h
     aot/stubs/AOTConvention.h
     aot/stubs/AOTStubCoreFamilies.def
@@ -296,6 +295,7 @@ set(JavaScriptCore_AOT_TEST_SOURCES
     aot/tests/AOTMachineTestPatches.cpp
     aot/tests/AOTMachineTesting.cpp
     aot/tests/AOTMachineTestsOfPhisTests.cpp
+    aot/tests/AOTMembersLeftOutTests.cpp
     aot/tests/AOTMembersNamedLikeBuiltinsTests.cpp
     aot/tests/AOTModuleProgramTests.cpp
     aot/tests/AOTModuleRequestListTests.cpp

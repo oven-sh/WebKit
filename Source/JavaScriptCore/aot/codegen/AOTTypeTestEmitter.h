@@ -33,6 +33,7 @@ public:
     Condition isCallable(CellPointer);
     Condition inheritsClassInfo(CellPointer, BuiltinClassID);
     Condition isPristine(CellPointer, BuiltinClassID, OptionSet<PristineAspects>);
+    Condition nothingWasWrittenAbove(BuiltinClassID);
     Condition isAsItsClassMadeIt(CellPointer, BuiltinClassID, OptionSet<PristineAspects>);
     Condition hasSharingMode(CellPointer, ArrayBufferSharingMode);
     Condition isNamespaceOf(CellPointer, ModuleID);

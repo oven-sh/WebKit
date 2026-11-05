@@ -54,15 +54,33 @@ public:
             endRecord.firstRequiredName = Number24(endRecord.firstRequiredName + node.numberOfRequiredNames);
         }
         m_modules.append(endRecord);
-        computeModuleFlags(m_modules.mutableSpan(), m_requests.span());
+        Typed::StronglyConnectedComponents components = computeModuleFlags(m_modules.mutableSpan(), m_requests.span());
+        LinkRequestsOfModules linkRequests = contractLinkRequests(m_modules.mutableSpan(), m_requests.span(), components);
+        layLinkRequests(m_modules.mutableSpan(), linkRequests);
+        m_linkRequests = linkRequests.requests.map([](uint32_t module) { return static_cast<uint16_t>(module); });
     }
 
     Vector<LinkPlanStepData> planLink(unsigned entryPoint) { return planLinkOfEntryPoint(m_modules.mutableSpan(), m_requests.span(), ModuleID(entryPoint)); }
+    Vector<uint32_t> group(uint32_t endOfNumbers) { return groupModulesLoadedTogether(m_modules.mutableSpan(), m_requests.span(), findESModulesOfProgram(m_modules.span()), endOfNumbers); }
 
     unsigned size() const { return m_nodes.size(); }
     ModuleKind kindOf(unsigned module) const { return m_nodes[module].data.kind; }
     const ModuleData& data(unsigned module) const { return m_modules[module]; }
+    ModuleNumbers linkRequests() const { return { m_linkRequests.span(), m_modules.size() }; }
+    std::span<const ModuleRequestData> requestsOfAllModules() const { return m_requests.span(); }
     bool resolvesNames(unsigned module) const { return !!m_nodes[module].numberOfRequiredNames; }
+
+    std::span<const ModuleRequestData> requests(unsigned module) const { return m_nodes[module].requests.span(); }
+
+    Vector<uint32_t> imports(unsigned module) const
+    {
+        Vector<uint32_t> targets;
+        for (const ModuleRequestData& request : m_nodes[module].requests) {
+            if (!request.isRequire && !request.isHoisted)
+                targets.append(request.target());
+        }
+        return targets;
+    }
 
     Vector<uint32_t> allRequests(unsigned module) const
     {
@@ -86,7 +104,7 @@ private:
         data.exportRule = exportRule;
         data.flags = wireFlags.toRaw();
         data.body = optionalNumber24(body == Body::Present ? static_cast<uint32_t>(m_nodes.size()) : UINT32_MAX);
-        data.referrerOrRuntimeModule = optionalNumber24(UINT32_MAX);
+        data.referrerRuntimeModuleOrLoadGroup = optionalNumber24(UINT32_MAX);
         m_nodes.append(Node { data, { }, 0 });
         return m_nodes.size() - 1;
     }
@@ -94,6 +112,7 @@ private:
     Vector<Node> m_nodes;
     Vector<ModuleData> m_modules;
     Vector<ModuleRequestData> m_requests;
+    Vector<uint16_t> m_linkRequests;
 };
 
 class RandomNumbers {
@@ -208,9 +227,237 @@ static void testWalksOfRandomGraphsDoTheSameWork()
     }
 }
 
+namespace {
+
+struct LoadsOfGraph {
+    uint32_t moduleLoadedUnder(uint32_t target) const { return graph.data(target).isUncompiledCode() ? loadedInPlaceOfUncompiledCode : target; }
+    uint32_t headOf(uint32_t module) const { return graph.data(module).isHeadOfLoadGroup() ? module : graph.data(module).numberInLoadGroup(); }
+    bool isLoadedByGroups(uint32_t module) const { return (loadedGroups[headOf(module) / 64] >> (headOf(module) % 64) & 1) || loadedBesideGroups.get(module); }
+
+    void loadOneByOne(uint32_t root)
+    {
+        Vector<uint32_t> found;
+        if (!loadedOneByOne.set(root))
+            found.append(root);
+        while (!found.isEmpty()) {
+            for (uint32_t target : graph.imports(found.takeLast())) {
+                uint32_t imported = moduleLoadedUnder(target);
+                if (graph.data(imported).isESModuleOfProgram() && !loadedOneByOne.set(imported))
+                    found.append(imported);
+            }
+        }
+    }
+
+    const ModuleData& data(uint32_t module) const { return graph.data(module); }
+    std::span<const ModuleRequestData> requests(uint32_t module) const { return graph.requests(module); }
+    std::span<const uint32_t> groupsLoadedWith(uint32_t head) const
+    {
+        uint32_t first = graph.data(head).numberInLoadGroup();
+        return first ? lists.subspan(first, lists[first - 1]) : std::span<const uint32_t>();
+    }
+    uint32_t moduleLoadedBy(const ModuleRequestData& request) const { return moduleLoadedUnder(request.target()); }
+
+    const Graph& graph;
+    std::span<const uint32_t> lists;
+    uint32_t loadedInPlaceOfUncompiledCode;
+    BitVector loadedOneByOne { };
+    Vector<uint64_t> loadedGroups { };
+    BitVector loadedBesideGroups { };
+};
+
+} // anonymous namespace
+
+static void testGroupsOfRandomGraphsAreLoadedAsTheirModulesAre()
+{
+    RandomNumbers random(20261105);
+    unsigned numberBelowHeads = 0;
+    unsigned numberInCycles = 0;
+    unsigned numberThatRequestUncompiledCode = 0;
+    unsigned numberWithoutRoomForTheirLists = 0;
+    unsigned numberOfGraphsWithoutRoomForTheirModules = 0;
+    for (unsigned round = 0; round < 4000; ++round) {
+        Graph graph;
+        unsigned numberOfModules = 1 + random.below(24);
+        for (unsigned module = 0; module < numberOfModules; ++module)
+            addRandomModule(graph, random);
+        for (unsigned module = 0; module < numberOfModules; ++module) {
+            addRandomRequests(graph, random, module);
+            if (graph.kindOf(module) == ModuleKind::SourceText && !random.below(6))
+                graph.request(module, random.below(numberOfModules), Edge::Require);
+        }
+        graph.compute();
+        uint32_t endOfNumbers = ModuleData::endOfNumbersInLoadGroups;
+        if (uint32_t draw = random.below(4); draw < 2)
+            endOfNumbers = draw ? numberOfModules + random.below(6) : 1 + random.below(numberOfModules);
+        Vector<uint32_t> lists = graph.group(endOfNumbers);
+        numberOfGraphsWithoutRoomForTheirModules += numberOfModules > endOfNumbers;
+        LoadsOfGraph loads { graph, lists.span(), random.below(numberOfModules) };
+        loads.loadedGroups.fill(0, numberOfModules / 64 + 1);
+        for (unsigned load = 0; load < numberOfModules; ++load) {
+            uint32_t root = random.below(numberOfModules);
+            if (!graph.data(root).isESModuleOfProgram())
+                continue;
+            loads.loadOneByOne(root);
+            noteGroupsLoadedWith(loads, root, loads.loadedGroups, loads.loadedBesideGroups);
+            for (unsigned module = 0; module < numberOfModules; ++module)
+                AOT_TEST_CHECK(!graph.data(module).isESModuleOfProgram() || loads.loadedOneByOne.get(module) == loads.isLoadedByGroups(module));
+        }
+        for (unsigned module = 0; module < numberOfModules; ++module) {
+            if (!graph.data(module).isESModuleOfProgram())
+                continue;
+            numberBelowHeads += graph.data(module).placeInLoadGroup() == ModuleData::PlaceInLoadGroup::BelowHead;
+            numberWithoutRoomForTheirLists += numberOfModules <= endOfNumbers && graph.data(module).placeInLoadGroup() == ModuleData::PlaceInLoadGroup::BelowHead && graph.data(module).numberInLoadGroup() == module;
+            numberInCycles += graph.data(module).placeInLoadGroup() == ModuleData::PlaceInLoadGroup::InCycleWithHead;
+            numberThatRequestUncompiledCode += graph.data(module).placeInLoadGroup() == ModuleData::PlaceInLoadGroup::HeadThatRequestsUncompiledCode;
+        }
+    }
+    AOT_TEST_CHECK(numberBelowHeads > 1000 && numberInCycles > 1000 && numberThatRequestUncompiledCode > 100 && numberWithoutRoomForTheirLists > 100 && numberOfGraphsWithoutRoomForTheirModules > 100);
+}
+
+namespace {
+
+struct StepsOfTestWalk {
+    struct Step {
+        uint32_t module;
+        StepOfLinkWalk kind;
+        bool resolvesNames;
+        friend bool operator==(const Step&, const Step&) = default;
+    };
+
+    uint32_t size() const { return static_cast<uint32_t>(steps.size()); }
+    void append(uint32_t module, StepOfLinkWalk kind, bool resolvesNames) { steps.append(Step { module, kind, resolvesNames }); }
+    uint32_t moduleAt(uint32_t step) const { return steps[step].module; }
+    void leave(uint32_t enter, bool resolvesNames) { append(steps[enter].module, StepOfLinkWalk::Leave, resolvesNames); }
+    void onlyBecomesLinked(uint32_t enter)
+    {
+        modulesThatOnlyBecomeLinked.append(steps[enter].module);
+        steps.shrink(enter);
+    }
+
+    Vector<Step> steps;
+    Vector<uint32_t> modulesThatOnlyBecomeLinked;
+};
+
+struct LinksOfGraph {
+    LinksOfGraph(const Graph& graph, bool goesModuleByModule)
+        : graph(graph)
+        , goesOneByOne(goesModuleByModule)
+    {
+        settled.fill(0, graph.size() / 64 + 1);
+    }
+
+    const ModuleData& data(uint32_t module) const { return graph.data(module); }
+    uint32_t leaderOf(uint32_t module) const { return graph.linkRequests()[data(module).firstLinkRequest]; }
+    bool isUnlinked(uint32_t module) const
+    {
+        if (!data(module).needsLink() || hasStatusOfItsOwn.get(module))
+            return false;
+        return goesOneByOne || !data(module).onlyPassesLinkOn() || !hasStatusOfItsOwn.get(leaderOf(module));
+    }
+    bool isSettledForLinks(uint32_t module) const
+    {
+        bool isSettled = !data(module).needsLink() || (!data(module).capturesExports() && !data(module).isUncompiledCode() && !isUnlinked(module));
+        if (isSettled)
+            settled[module / 64] |= 1ull << (module % 64);
+        return isSettled;
+    }
+    std::span<const uint64_t> modulesSettledForLinks() const { return settled.span(); }
+    bool goesModuleByModule() const { return goesOneByOne; }
+    bool goesByAllRequests(uint32_t module) const { return goesOneByOne || leadersThatGoByAllRequests.get(module); }
+    void didGetStateOfItsOwn(uint32_t module) const
+    {
+        if (!goesOneByOne)
+            leadersThatGoByAllRequests.set(leaderOf(module));
+    }
+    ModuleNumbers linkRequests() const { return graph.linkRequests(); }
+    uint32_t endOfLinkRequests(uint32_t module) const { return data(module + 1).firstLinkRequest; }
+    std::span<const ModuleRequestData> requests() const { return graph.requestsOfAllModules(); }
+    uint32_t endOfRequests(uint32_t module) const { return data(module + 1).firstRequest; }
+    bool resolvesNames(uint32_t module) const { return !data(module).capturesExports() && graph.resolvesNames(module); }
+
+    StepsOfTestWalk walkFrom(uint32_t root) const
+    {
+        StepsOfTestWalk steps;
+        walkModulesToLink(*this, root, steps);
+        return steps;
+    }
+
+    void finish(const StepsOfTestWalk& walk)
+    {
+        if (walk.steps.isEmpty())
+            return;
+        for (const StepsOfTestWalk::Step& step : walk.steps) {
+            if (step.kind == StepOfLinkWalk::Leave)
+                hasStatusOfItsOwn.set(step.module);
+        }
+        for (uint32_t module : walk.modulesThatOnlyBecomeLinked)
+            hasStatusOfItsOwn.set(module);
+    }
+
+    const Graph& graph;
+    bool goesOneByOne;
+    BitVector hasStatusOfItsOwn { };
+    mutable Vector<uint64_t> settled { };
+    mutable BitVector leadersThatGoByAllRequests { };
+};
+
+} // anonymous namespace
+
+static void testLinksOfRandomGraphsGoTheSameWayThroughLeaders()
+{
+    RandomNumbers random(20261105);
+    unsigned modulesThatOnlyPassOn = 0;
+    unsigned stepsLeftOut = 0;
+    unsigned modulesWithNothingToDo = 0;
+    unsigned walksThatBeginBelowLeaders = 0;
+    unsigned leadersThatWentByAllRequests = 0;
+    for (unsigned round = 0; round < 4000; ++round) {
+        Graph graph;
+        unsigned numberOfModules = 1 + random.below(40);
+        for (unsigned module = 0; module < numberOfModules; ++module)
+            addRandomModule(graph, random);
+        for (unsigned module = 0; module < numberOfModules; ++module)
+            addRandomRequests(graph, random, module);
+        graph.compute();
+        for (unsigned module = 0; module < numberOfModules; ++module)
+            modulesThatOnlyPassOn += graph.data(module).onlyPassesLinkOn();
+
+        LinksOfGraph byModules(graph, true);
+        LinksOfGraph byLeaders(graph, false);
+        for (unsigned turn = 0; turn < 8; ++turn) {
+            uint32_t root = random.below(numberOfModules);
+            walksThatBeginBelowLeaders += graph.data(root).onlyPassesLinkOn() && byLeaders.isUnlinked(root);
+            StepsOfTestWalk walkByModules = byModules.walkFrom(root);
+            StepsOfTestWalk walkByLeaders = byLeaders.walkFrom(root);
+            AOT_TEST_CHECK(walkByModules.modulesThatOnlyBecomeLinked.isEmpty());
+            if (random.below(4)) {
+                byModules.finish(walkByModules);
+                byLeaders.finish(walkByLeaders);
+            }
+            AOT_TEST_CHECK(walkByLeaders.steps.size() <= walkByModules.steps.size());
+            stepsLeftOut += walkByModules.steps.size() - walkByLeaders.steps.size();
+            modulesWithNothingToDo += walkByLeaders.modulesThatOnlyBecomeLinked.size();
+            BitVector hasStepsByLeaders;
+            for (const StepsOfTestWalk::Step& step : walkByLeaders.steps)
+                hasStepsByLeaders.set(step.module);
+            auto isLeftOutByLeaders = [&](const StepsOfTestWalk::Step& step) { return !hasStepsByLeaders.get(step.module); };
+            for (const StepsOfTestWalk::Step& step : walkByModules.steps)
+                AOT_TEST_CHECK(!isLeftOutByLeaders(step) || step.kind == StepOfLinkWalk::Enter || (step.kind == StepOfLinkWalk::Leave && !step.resolvesNames));
+            walkByModules.steps.removeAllMatching(isLeftOutByLeaders);
+            AOT_TEST_CHECK(walkByModules.steps == walkByLeaders.steps);
+            for (unsigned module = 0; module < numberOfModules; ++module)
+                AOT_TEST_CHECK(byModules.isUnlinked(module) == byLeaders.isUnlinked(module));
+        }
+        leadersThatWentByAllRequests += byLeaders.leadersThatGoByAllRequests.bitCount();
+    }
+    AOT_TEST_CHECK(modulesThatOnlyPassOn > 4000 && stepsLeftOut > 4000 && modulesWithNothingToDo > 400 && walksThatBeginBelowLeaders > 400 && leadersThatWentByAllRequests > 400);
+}
+
 std::span<const NativeTest> moduleRequestListTests()
 {
     static constexpr NativeTest tests[] = {
+        { "module-request-lists/groups-of-random-graphs-are-loaded-as-their-modules-are"_s, testGroupsOfRandomGraphsAreLoadedAsTheirModulesAre },
+        { "module-request-lists/links-of-random-graphs-go-the-same-way-through-leaders"_s, testLinksOfRandomGraphsGoTheSameWayThroughLeaders },
         { "module-request-lists/walks-of-random-graphs-do-the-same-work"_s, testWalksOfRandomGraphsDoTheSameWork },
     };
     return tests;

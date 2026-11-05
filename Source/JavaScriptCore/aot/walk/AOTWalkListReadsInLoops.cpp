@@ -409,7 +409,7 @@ static bool surelyEndsWhatIsShownOfListsInListReadsInLoops(Walker& walker, const
         if (known && countsOnTurnsThatBeginAgain && lookReadsCopyOfCalleeInListReadsInLoops(walker, operation, known))
             return false;
         if (FunctionID callee = known)
-            return !leavesListsTestedInFrontOfLoopAsTheyAre(linked.function(callee).effectsOnReturn) || !leavesListsTestedInFrontOfLoopAsTheyAre(linked.function(callee).effectsOnThrow);
+            return !leavesListsTestedInFrontOfLoopAsTheyAre(linked.function(callee).effectsOnReturn()) || !leavesListsTestedInFrontOfLoopAsTheyAre(linked.function(callee).effectsOnThrow());
         TypeID callee = typeInLook(operation.as<Opcode::Call>().calleeOperand());
         return !callee || !singleBuiltinOf(types, types.at(callee));
     }

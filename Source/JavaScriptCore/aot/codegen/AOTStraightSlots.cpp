@@ -39,19 +39,47 @@ static constexpr bool markersInNumberSlotComeOut(SlotMarkers markers)
 
 static_assert(markersInNumberSlotComeOut(integerMarkers) && markersInNumberSlotComeOut(doubleMarkers));
 
-static void boxNumberOfSlotInStraightForm(StraightEmitter& emitter, BoxedNumberForm form, CCallHelpers::Address address, GPRReg boxedResult)
+static void boxNumberInStraightForm(StraightEmitter& emitter, BoxedNumberForm form, GPRReg boxedResult, NOESCAPE const Invocable<void(CCallHelpers&, Reg)> auto& bringNumberInto)
 {
     CCallHelpers& jit = emitter.jit();
     AllowMacroScratchRegisterUsage allowScratch(jit);
     StubKey key = AOT::boxNumber(form);
     const StubSignature& signature = emitter.catalog().summaryOf(key).signature;
-    Reg number = signature.operands[0];
-    if (number.isFPR())
-        jit.loadDouble(address, number.fpr());
-    else
-        jit.load64(address, number.gpr());
+    bringNumberInto(jit, signature.operands[0]);
     emitter.records().stubCalls.call(jit, key, { });
     jit.move(signature.firstResult.gpr(), boxedResult);
+}
+
+static void boxNumberOfSlotInStraightForm(StraightEmitter& emitter, BoxedNumberForm form, CCallHelpers::Address address, GPRReg boxedResult)
+{
+    boxNumberInStraightForm(emitter, form, boxedResult, [&](CCallHelpers& jit, Reg number) {
+        if (number.isFPR())
+            jit.loadDouble(address, number.fpr());
+        else
+            jit.load64(address, number.gpr());
+    });
+}
+
+static void boxNumberOfVariableInStraightForm(StraightEmitter& emitter, BoxedNumberForm form, VariableID variable, GPRReg boxedResult)
+{
+    boxNumberInStraightForm(emitter, form, boxedResult, [&](CCallHelpers& jit, Reg number) {
+        GPRReg word = number.isFPR() ? boxedResult : number.gpr();
+        emitter.relocations().loadInstanceWord({ SymbolSpace::InstanceWord, emitter.mentions().add(NumberSpace::Variable, variable) }, InstanceWordWidth::Word64, instanceGPR, word);
+        if (number.isFPR())
+            jit.move64ToDouble(word, number.fpr());
+    });
+}
+
+static std::optional<BoxedNumberForm> formOfRawNumbersInStraightForm(SlotRepresentation representation)
+{
+    switch (representation) {
+    case SlotRepresentation::OptionalInt64:
+        return BoxedNumberForm::OptionalInteger;
+    case SlotRepresentation::OptionalDouble:
+        return BoxedNumberForm::OptionalDouble;
+    default:
+        return std::nullopt;
+    }
 }
 
 static void convertToNumberOfSlotInStraightForm(CCallHelpers& jit, SlotRepresentation representation, GPRReg word, FPRReg number)
@@ -136,13 +164,18 @@ void StraightEmitter::loadVariable(VariableID variable, GPRReg boxedResult)
 {
     PlannedVariable planned = plan().variable(variable);
     bool isBornAsFunction = planned.storage == VariableStorage::ClosureTable || planned.encoding == VariableEncoding::FunctionAsZero;
-    if (planned.representation != SlotRepresentation::JSValue
+    std::optional<BoxedNumberForm> formOfNumbers = formOfRawNumbersInStraightForm(planned.representation);
+    if ((planned.representation != SlotRepresentation::JSValue && (!formOfNumbers || !planned.hasWordInStatics() || isBornAsFunction))
         || plan().deferredDefinitions().findDeferred(variable) || (isBornAsFunction && !closureTableHoldsClosureInStraightForm(*this, planned.function))) {
         fail(Opcode::GetModuleVariable);
         return;
     }
 
     storeWhatWaitsInRegister();
+    if (formOfNumbers) {
+        boxNumberOfVariableInStraightForm(*this, *formOfNumbers, variable, boxedResult);
+        return;
+    }
     CCallHelpers::Jump isStored;
     if (planned.hasWordInStatics()) {
         relocations().loadInstanceWord({ SymbolSpace::InstanceWord, mentions().add(NumberSpace::Variable, variable) }, InstanceWordWidth::Word64, instanceGPR, boxedResult);
@@ -160,12 +193,20 @@ void StraightEmitter::loadVariable(VariableID variable, GPRReg boxedResult)
 void StraightEmitter::storeVariable(VariableID variable, GPRReg boxed)
 {
     PlannedVariable planned = plan().variable(variable);
-    if (!planned.hasWordInStatics() || planned.representation != SlotRepresentation::JSValue) {
+    bool holdsNumbersRaw = !!formOfRawNumbersInStraightForm(planned.representation);
+    if (!planned.hasWordInStatics() || (planned.representation != SlotRepresentation::JSValue && !holdsNumbersRaw)) {
         fail(Opcode::PutModuleVariable);
         return;
     }
 
     AllowMacroScratchRegisterUsage allowScratch(*m_jit);
+    if (holdsNumbersRaw) {
+        GPRReg word = temporary(1);
+        m_jit->move(boxed, word);
+        convertToNumberOfSlotInStraightForm(*m_jit, planned.representation, word, takeResultFPR());
+        relocations().storeInstanceWord({ SymbolSpace::InstanceWord, mentions().add(NumberSpace::Variable, variable) }, InstanceWordWidth::Word64, word, instanceGPR);
+        return;
+    }
     relocations().storeInstanceWord({ SymbolSpace::InstanceWord, mentions().add(NumberSpace::Variable, variable) }, InstanceWordWidth::Word64, boxed, instanceGPR);
     GPRReg card = m_jit->scratchRegister();
     m_jit->move(CCallHelpers::TrustedImm32(RememberedSlotSet::writtenCard), card);

@@ -846,6 +846,22 @@ bool WalkState::Held::holderIsFresh(Reference object) const
     return record && record->isFresh;
 }
 
+Vector<WalkState::SlotOfObject, 8> WalkState::listSlotsOf(Reference object) const
+{
+    Vector<SlotOfObject, 8> slots;
+    if (!mayHoldPlaceOf(object))
+        return slots;
+    uint32_t holder = m_held->findHolder(object);
+    if (holder == none)
+        return slots;
+    for (uint32_t position = m_held->m_holders[holder].firstPlace; position != none; position = m_held->m_places[position].next) {
+        const Place& place = m_held->m_places[position];
+        if (place.value && place.kind == PlaceKind::Slot)
+            slots.append({ FieldReference { LayoutID(place.first), place.second }, place.value });
+    }
+    return slots;
+}
+
 Vector<Reference, 8> WalkState::listFreshObjects() const
 {
     Vector<Reference, 8> fresh;
@@ -930,6 +946,20 @@ void WalkState::Held::noteGuardOfReadsHolds(LayoutID classLayout, PropertyKeyID 
         return Place::entireHeap;
     });
     dropEndedRecordsIfMany();
+}
+
+bool WalkState::Held::someGuardHoldsOf(LayoutID classLayout) const
+{
+    uint32_t holder = findHolder(Reference());
+    constexpr uint16_t kindsOfGuards = 1 << static_cast<unsigned>(PlaceKind::GuardOfStores) | 1 << static_cast<unsigned>(PlaceKind::GuardOfReads);
+    if (holder == none || !(m_holders[holder].kindsOfPlaces & kindsOfGuards))
+        return false;
+    for (uint32_t position = m_holders[holder].firstPlace; position != none; position = m_places[position].next) {
+        const Place& place = m_places[position];
+        if (place.value && (place.kind == PlaceKind::GuardOfStores || place.kind == PlaceKind::GuardOfReads) && classOfGuardedSide(place.first) == classLayout)
+            return true;
+    }
+    return false;
 }
 
 void WalkState::Held::makeLists()

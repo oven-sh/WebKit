@@ -15,6 +15,15 @@ namespace JSC { namespace AOT { namespace Typed {
 
 void appendMembersAssignedByProgram(const Program& program, const LinkTables& tables, LayoutID layout, Vector<ClassMember>& members)
 {
+    for (const LinkedMember& above : std::ranges::equal_range(tables.membersAboveCreatedLayouts, layout, { }, &LinkedMember::classLayout)) {
+        ClassMember member;
+        member.key = above.key;
+        member.side = above.side;
+        member.kind = above.kind;
+        member.function = above.function;
+        member.isAssignedByProgram = true;
+        members.append(member);
+    }
     if (!program.at(layout).has(LayoutFlags::IsConstructorFunction))
         return;
     auto appendMethod = [&](ClassSide side, PropertyKeyID key, FunctionID function) {

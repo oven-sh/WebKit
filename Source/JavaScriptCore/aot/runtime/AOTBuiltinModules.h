@@ -46,6 +46,8 @@ private:
 
 JS_EXPORT_PRIVATE bool hasBuiltinModule(JSGlobalObject*, uint32_t registryID);
 JS_EXPORT_PRIVATE JSValue evaluateBuiltinModule(JSGlobalObject*, uint32_t registryID);
+JS_EXPORT_PRIVATE void willHandBuiltinModuleToNativeCode(JSGlobalObject*, uint32_t registryID);
+JS_EXPORT_PRIVATE void willHandExportOfBuiltinModuleToNativeCode(JSGlobalObject*, uint32_t registryID, ASCIILiteral exportName);
 JS_EXPORT_PRIVATE JSValue evaluateEveryBuiltinModuleForTesting(JSGlobalObject*);
 void fillWordsOfCompiledMethodsOfArray(Instance&);
 JS_EXPORT_PRIVATE bool hasBuiltinFunction(VM&, uint32_t id);

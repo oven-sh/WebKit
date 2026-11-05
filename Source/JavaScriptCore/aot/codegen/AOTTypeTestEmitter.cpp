@@ -106,6 +106,8 @@ void TypeTestEmitter::emitBranch(Operand operand, const TypeTestPlan& plan, Bran
         return;
     }
     test(operand, plan, targets.notTaken);
+    if (m_out.tryToLeadBranchPastEmptyBlock(targets.taken))
+        return;
     jump(targets.taken);
 }
 

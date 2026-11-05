@@ -108,8 +108,7 @@ inline void ScanOfBody::listBirths()
     }
     if (!m_summary.fieldsEmptyAtEndAlone.isEmpty())
         sortWithoutRepeatsInScan(m_summary.fieldsEmptyAtEndAlone);
-    if (!m_summary.keysFilledAtEnds.isEmpty())
-        m_summary.keysFilledAtEnds.shrinkToFit();
+
 }
 
 } } } // namespace JSC::AOT::Typed

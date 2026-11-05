@@ -81,7 +81,7 @@ void CastEmitter::generateCheckProof(const ValueContext& value)
     if (value->isLeftToTestBehind())
         return;
     Operand source = get(value->valueOperand());
-    if (numberRepresentations.contains(source.representation)) {
+    if (numberRepresentations.contains(source.representation) || optionalRepresentations.contains(source.representation)) {
         emitter<ThrowEmitter>().checkOrStopAtFalseProof(value, hasType(source, typeTestPlanFor(value->typeWithoutProof(), source.representation, value->checkedType())), value->source());
         return;
     }

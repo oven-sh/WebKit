@@ -28,7 +28,6 @@
 #include "JSCInlines.h"
 #include "LLIntData.h"
 #include "NativeExecutable.h"
-#include "StackVisitor.h"
 #include "TopExceptionScope.h"
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/MakeString.h>
@@ -66,6 +65,32 @@ JSValue evaluateBuiltinModule(JSGlobalObject* globalObject, uint32_t id)
     auto module = builtinModules.find(id);
     RELEASE_ASSERT(module);
     return builtinModules.evaluate(*module);
+}
+
+static bool buildKeptForCompiledCode(JSGlobalObject* globalObject, uint32_t id)
+{
+    Instance* instance = Instance::of(globalObject);
+    return instance && instance->state && instance->state->modules->table().valueOfRuntimeSourceStaysWithCompiledCode(id);
+}
+
+void willHandBuiltinModuleToNativeCode(JSGlobalObject* globalObject, uint32_t id)
+{
+    if (!buildKeptForCompiledCode(globalObject, id))
+        return;
+    dataLogLn("AOT: native code takes all that the library module ", BuiltinTable::singleton().tokenOf(RuntimeModuleID(id)), " gives, and the build has kept it for compiled code alone: what it has proven of it no longer holds.");
+    CRASH();
+}
+
+void willHandExportOfBuiltinModuleToNativeCode(JSGlobalObject* globalObject, uint32_t id, ASCIILiteral exportName)
+{
+    if (!buildKeptForCompiledCode(globalObject, id))
+        return;
+    const BuiltinTable& table = BuiltinTable::singleton();
+    BuiltinName name = table.nameOf(byteCast<uint8_t>(exportName.span()));
+    if (name && std::ranges::contains(table.at(RuntimeModuleID(id)).exportsReadByNativeCode, name))
+        return;
+    dataLogLn("AOT: native code reads the export ", exportName, " of the library module ", table.tokenOf(RuntimeModuleID(id)), ", and no row of the table of built-ins lists that read. The build has kept the module for compiled code alone: what it has proven of it no longer holds.");
+    CRASH();
 }
 
 JSValue evaluateEveryBuiltinModuleForTesting(JSGlobalObject* globalObject)
@@ -299,36 +324,22 @@ static Vector<String, 4> globalBuiltinsThatRun(RuntimeFunctionID function)
     return names;
 }
 
-static bool admitsTextOfRunTime(const Image& image)
+static bool lacksOnlyWhatReachMissed(const Image& image)
 {
-    return image.admitsUnknownJavaScript() || image.loadsCodeOutsideImage() || hasFlag(image.header().options.admitted(), AdmittedCode::Inspector);
+    return image.isBuiltWithLibrary() && !image.admitsUnknownJavaScript() && !image.loadsCodeOutsideImage() && !hasFlag(image.header().options.admitted(), AdmittedCode::Inspector);
 }
 
-enum class AskerForFunctionLeftOut : uint8_t { TextOfRunTime, CompiledCode, NativeCodeAlone };
-
-static AskerForFunctionLeftOut findAskerForFunctionLeftOut(VM& vm)
+[[noreturn]] static void stopAtMissOfReach(const String& leftOut)
 {
-    AskerForFunctionLeftOut asker = AskerForFunctionLeftOut::NativeCodeAlone;
-    if (!vm.topCallFrame)
-        return asker;
-    StackVisitor::visit(vm.topCallFrame, vm, [&](auto& visitor) {
-        if constexpr (std::remove_cvref_t<decltype(visitor)>::visitsCompiledFrames) {
-            if (visitor->isCompiledFrame()) {
-                asker = AskerForFunctionLeftOut::CompiledCode;
-                return IterationStatus::Continue;
-            }
-        }
-        if (!visitor->codeBlock())
-            return IterationStatus::Continue;
-        asker = AskerForFunctionLeftOut::TextOfRunTime;
-        return IterationStatus::Done;
-    });
-    return asker;
+    dataLogLn(leftOut, " was left out of the executable, because nothing seemed to use it. This is a bug in Bun.");
+    CRASH();
 }
 
 void throwBuiltinNotCompiled(JSGlobalObject* realm, const String& builtin)
 {
     auto scope = DECLARE_THROW_SCOPE(realm->vm());
+    if (lacksOnlyWhatReachMissed(*Image::current()) && !isMakingMemberForLookThatOnlyTests())
+        stopAtMissOfReach(builtin);
     JSObject* error = createBuiltinNotCompiledError(realm, builtin);
     noteErrorOfCodeLeftOut(realm, error);
     throwException(realm, scope, error);
@@ -343,26 +354,14 @@ void throwLibraryFunctionNotCompiled(JSGlobalObject* realm, ScriptExecutable& ex
     Vector<String, 4> names = id ? globalBuiltinsThatRun(RuntimeFunctionID(*id)) : Vector<String, 4>();
     if (id && std::ranges::contains(table.moduleLoaderFunctions(), RuntimeFunctionID(*id)))
         names = { "The module loader"_str };
+    if (lacksOnlyWhatReachMissed(*Image::current()) && !isMakingMemberForLookThatOnlyTests())
+        stopAtMissOfReach(names.isEmpty() ? makeString("The built-in function '"_s, function.name().string(), '\'') : makeStringByJoining(names.span(), " or "_s));
     JSObject* error = names.size() == 1 ? createBuiltinNotCompiledError(realm, names[0]) : names.isEmpty() ? createBuiltinFunctionNotCompiledError(realm, function.name().string()) : createBuiltinsNotCompiledError(realm, names.span());
     bool isGetterOfAccessor = id && table.contains(RuntimeFunctionID(*id)) && std::ranges::any_of(table.at(RuntimeFunctionID(*id)).implements, [&](BuiltinID builtin) {
         return table.at(builtin).kind == BuiltinKind::Accessor;
     });
     if (!isGetterOfAccessor)
         noteErrorOfCodeLeftOut(realm, error);
-    VM& vm = realm->vm();
-    if (AskerForFunctionLeftOut asker = findAskerForFunctionLeftOut(vm); asker != AskerForFunctionLeftOut::TextOfRunTime && !admitsTextOfRunTime(*Image::current())) {
-        String sentence = makeString(names.isEmpty() ? makeString("The built-in function '"_s, function.name().string(), '\'') : makeStringByJoining(names.span(), " or "_s), " was left out of the executable, because nothing seemed to use it. This is a bug in Bun."_s);
-        bool isFunctionOfBuiltin = id && (*id < numberOfBuiltinCodes || (table.contains(RuntimeFunctionID(*id)) && !table.at(RuntimeFunctionID(*id)).implements.empty()));
-        if (isFunctionOfBuiltin) {
-            dataLogLn(sentence);
-            CRASH();
-        }
-        if (asker == AskerForFunctionLeftOut::CompiledCode && !vm.traps().isDeferringTermination()) {
-            scope.release();
-            throwMissOfReach(realm, WTF::move(sentence), !isGetterOfAccessor);
-            return;
-        }
-    }
     throwException(realm, scope, error);
 }
 

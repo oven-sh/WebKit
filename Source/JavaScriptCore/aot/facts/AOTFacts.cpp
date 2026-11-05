@@ -24,6 +24,8 @@
 #include "AOTSort.h"
 #include "AOTThreads.h"
 #include <algorithm>
+#include <numeric>
+#include <tuple>
 #include <wtf/threads/BinarySemaphore.h>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -176,12 +178,6 @@ static void updateProgramBehindIndexesForFacts(Program& program, BodyIndexTable&
     noteSubclassesOfBuiltinClasses(program, classes.span());
 }
 
-static Effects effectsSeenByCallerForFacts(Effects effects)
-{
-    effects.maySuspend = false;
-    return effects;
-}
-
 static void fillFunctionTablesForFacts(const Program& program, const ThinSummaries& summaries, const LinkTables& linked, FactTables& tables)
 {
     size_t numberOfFunctions = program.functions.size();
@@ -196,7 +192,7 @@ static void fillFunctionTablesForFacts(const Program& program, const ThinSummari
     }
 
     tables.summaries.reserveInitialCapacity(numberOfFunctions);
-    tables.effects.reserveInitialCapacity(numberOfFunctions);
+
     tables.functionsNeverReached.ensureSize(numberOfFunctions);
     tables.entryParameters.firstRowOfOwner.reserveInitialCapacity(numberOfFunctions + 1);
 
@@ -207,7 +203,7 @@ static void fillFunctionTablesForFacts(const Program& program, const ThinSummari
         const ThinSummary& summary = summaries.at(id);
 
         tables.summaries.append(function.hasBody() ? Summary { summary.numberOfOperations, !summary.has(SummaryTrait::HasLoops) } : Summary { });
-        tables.effects.append(FunctionEffects { effectsSeenByCallerForFacts(link.effectsOnReturn), effectsSeenByCallerForFacts(link.effectsOnThrow) });
+
         if (!link.isReached)
             tables.functionsNeverReached.quickSet(index);
 
@@ -629,6 +625,28 @@ static void fillMembersOfClassesForFacts(const Program& program, const ThinSumma
         appendMembersAssignedByProgram(program, linked, LayoutID(static_cast<uint32_t>(layout)), rows.rows);
     }
     rows.firstRowOfOwner.append(static_cast<uint32_t>(rows.rows.size()));
+
+    tables.placesOfMembersOfClassByKey.resize(rows.rows.size());
+    for (uint32_t layout = 0; layout < numberOfLayouts; ++layout) {
+        std::span<const ClassMember> members = rows.of(layout);
+        std::span<uint32_t> places = tables.placesOfMembersOfClassByKey.mutableSpan().subspan(rows.firstRowOfOwner[layout], members.size());
+        std::iota(places.begin(), places.end(), 0);
+        std::ranges::sort(places, { }, [&](uint32_t place) {
+            return std::tuple { members[place].side, members[place].key, place };
+        });
+    }
+}
+
+std::span<const uint32_t> Facts::placesOfMembersUnder(LayoutID classLayout, ClassSide side, PropertyKeyID key) const
+{
+    std::span<const ClassMember> members = membersOf(classLayout);
+    if (members.empty())
+        return { };
+    std::span<const uint32_t> places = m_tables.placesOfMembersOfClassByKey.span().subspan(m_tables.membersOfClass.firstRowOfOwner[classLayout.index()], members.size());
+    auto found = std::ranges::equal_range(places, std::pair { side, key }, { }, [&](uint32_t place) {
+        return std::pair { members[place].side, members[place].key };
+    });
+    return { found.begin(), found.end() };
 }
 
 std::unique_ptr<Facts> computeFacts(Program& program, BuildContext& build, const FactsRequest& request)
@@ -648,8 +666,9 @@ void printBreachesOfClosureOfLink(PrintStream& out, Program& program, BuildConte
     ThinSummaries summaries = scanBodies(program, build.diagnostics(), loops, mechanisms);
     if (build.diagnostics().hasErrors())
         return;
-    Families families(program, summaries.setsOfLayoutsWrittenInBodies(), loops);
-    OwnedLooksAtBodies looks = lookAtBodies(program, *bodies, summaries, build);
+    Families families(program, Families::ClassHierarchiesAlone, loops);
+    OwnedLooksAtBodies looks = makeEmptyLooksAtBodies(*bodies);
+    lookAtBodies(*looks, program, summaries, build);
     printBreachesOfClosureOfLink(out, program, summaries, families, *looks, mechanisms, build);
 }
 
@@ -717,16 +736,19 @@ TypeID Facts::typeBelievedOfEntryParameter(TypeArena& types, FunctionID id, unsi
     if (isNeverType(both))
         return !declared || !declared->isEstablished() ? types.withSeeds(type, UnknownSeed::ParameterOfEscapedFunction) : type;
 
+    TypeID asked = both;
     TypeID testable = types.testablePartOf(both);
     if ((types.at(testable).anyObject && !types.at(both).anyObject) || (types.at(testable).anyFunction && !types.at(both).anyFunction))
-        both = testable;
+        asked = testable;
     CodeUnit entryByValue { id, CodeRole::GenericCallEntry };
-    bool entryMayNotAsk = testMentionsWhatIsOutOfReach(types, both, scopedLambda<bool(FunctionID)>([&](FunctionID named) {
+    bool entryMayNotAsk = testMentionsWhatIsOutOfReach(types, asked, scopedLambda<bool(FunctionID)>([&](FunctionID named) {
         return m_linked.mayBeMentionedBy(entryByValue, named);
     }));
-    if (!entryMayNotAsk)
-        return both;
-    return types.unionOf(types.withoutObjects(both), types.at(both).hasOnlyClosures() ? TypeTable::function : TypeTable::object);
+    if (entryMayNotAsk)
+        asked = types.unionOf(types.withoutObjects(asked), types.at(asked).hasOnlyClosures() ? TypeTable::function : TypeTable::object);
+    if (asked == both || !declared || !declared->isEstablished())
+        return asked;
+    return types.intersectionOf(type, asked);
 }
 
 static void orderFunctionsByReferrersForFacts([[maybe_unused]] Program& program, const ParallelLoops& loops, BuildContext& build, Facts::Parts& parts)
@@ -736,6 +758,7 @@ static void orderFunctionsByReferrersForFacts([[maybe_unused]] Program& program,
     steps.didFinish("lay referrers over"_s);
     rankReferrersFirst(parts.linked);
     findParametersThatAreOnlyCalled(program, *parts.bodies, *parts.summaries, loops, parts.mechanisms, AOT::hasFlag(build.options().testing, Wire::TestingSwitch::NoCalleeKeepsWhatItIsHanded), parts.linked);
+    findParametersThatAreOnlyLookedAt(program, *parts.bodies, *parts.summaries, parts.mechanisms, AOT::hasFlag(build.options().testing, Wire::TestingSwitch::NoCalleeKeepsWhatItIsHanded), parts.linked);
     carryExpectationOfThisIntoCaptures(program, *parts.bodies, *parts.summaries, parts.linked);
     steps.didFinish("rank referrers"_s);
 }
@@ -830,24 +853,28 @@ std::unique_ptr<Facts> computeFacts(Program& program, BuildContext& build, const
     if (hasFailed())
         return nullptr;
     steps.didFinish("scan"_s);
-    OwnedLooksAtBodies looks;
+    OwnedLooksAtBodies looks = makeEmptyLooksAtBodies(*parts.bodies);
+    std::unique_ptr<LinkFlow> flow;
     runLanes(loops, {
         [&] {
-            looks = lookAtBodies(program, *parts.bodies, *parts.summaries, build);
+            StepTimes stepsOfLane(build, "facts"_s);
+            parts.familiesOfFlow = makeUniqueWithoutFastMallocCheck<Families>(program, Families::ClassHierarchiesAlone, build.parallelLoops());
+            stepsOfLane.didFinish("families"_s);
+            flow = makeUniqueWithoutFastMallocCheck<LinkFlow>(program, *parts.summaries, *parts.familiesOfFlow, *looks, parts.mechanisms, build, request.orderOfWorklist);
+            stepsOfLane.didFinish("the flow is made"_s);
         },
         [&] {
             StepTimes stepsOfLane(build, "facts"_s);
-            parts.families = makeUniqueWithoutFastMallocCheck<Families>(program, parts.summaries->setsOfLayoutsWrittenInBodies(), build.parallelLoops());
-            stepsOfLane.didFinish("families"_s);
+            lookAtBodies(*looks, program, *parts.summaries, build);
+            stepsOfLane.didFinish("look at bodies"_s);
         },
     });
     times.didFinish("families"_s);
-    steps.didFinish("look at bodies beside families"_s);
+    steps.didFinish("families and the flow beside the look at bodies"_s);
     TurnsOfReadings turns;
     runLanes(loops, {
         [&] {
-            parts.linked = link(program, *parts.summaries, *parts.families, *looks, parts.mechanisms, build, request.orderOfWorklist, &turns);
-
+            parts.linked = link(WTF::move(flow), &turns);
         },
         [&] {
             if (parts.mechanisms.contains(Mechanism::BuiltinCalls))
@@ -874,6 +901,9 @@ std::unique_ptr<Facts> computeFacts(Program& program, BuildContext& build, const
     build.statistics().count(StatisticID::FactRuleCalls, sizeOfFlow.observersTold);
     build.statistics().count(StatisticID::FactRounds, sizeOfFlow.rounds);
     parts.held = WTF::move(turns.held);
+    parts.families = WTF::move(parts.linked.familiesBehindFlow);
+    if (!parts.families)
+        parts.families = makeUniqueWithoutFastMallocCheck<Families>(program, parts.summaries->setsOfLayoutsWrittenInBodies(), std::span<const LayoutSetID>(), build.parallelLoops());
     steps.didFinish("the two readings"_s);
     openNamesFoundByLink(program, build, parts.linked, parts.held);
     steps.didFinish("open names"_s);

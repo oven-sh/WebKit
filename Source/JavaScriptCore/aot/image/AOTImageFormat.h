@@ -162,6 +162,7 @@ static_assert(std::is_trivially_copyable_v<ImageHeader> && std::is_standard_layo
 static_assert(!(offsetof(ImageHeader, sections) % 4));
 static_assert(!offsetof(ImageHeader, magic) && offsetof(ImageHeader, stamp) == 8 && offsetof(ImageHeader, identity) == 16);
 static_assert(offsetof(ImageHeader, size) == 32 && offsetof(ImageHeader, codeOffset) == 40 && offsetof(ImageHeader, codeSize) == 48, "Bun's test/aot/cli/compiled-image.ts and src/standalone_graph/executable_file.rs read these members by offset");
+static_assert(static_cast<unsigned>(ImageSection::ProgramTables) == 22, "Bun's test/aot/cli/compiled-image.ts lists this section");
 static_assert(offsetof(ImageHeader, address) == 56, "Bun's writers of executables list this member for the loader");
 static_assert(offsetof(ImageHeader, executableSize) == 64, "Bun's writer of ELF executables reads this member by offset");
 static_assert(offsetof(ImageHeader, formatVersion) == 72 && offsetof(ImageHeader, options) == 80, "whoever reads an image without this header finds the members in front of `options` by offset: they stay where they are");

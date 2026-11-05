@@ -19,15 +19,15 @@
 # CHECK: field L5.0 "x" proven=null|string writers-known
 # CHECK-NOT: written-at-construction-alone
 # CHECK: field L5.1 "u" proven=string writers-known written-at-construction-alone
-# CHECK: layout L0 changes=[]
-# CHECK: layout L1 changes=[GainsProperty]
-# CHECK: layout L2 changes=[]
-# CHECK: layout L3 changes=[GainsProperty]
-# CHECK: layout L4 changes=[GainsProperty]
-# CHECK: layout L5 changes=[GainsProperty]
+# CHECK: layout L0 {{*}}changes=[]
+# CHECK: layout L1 {{*}}changes=[GainsProperty]
+# CHECK: layout L2 {{*}}changes=[]
+# CHECK: layout L3 {{*}}changes=[GainsProperty]
+# CHECK: layout L4 {{*}}changes=[GainsProperty]
+# CHECK: layout L5 {{*}}changes=[GainsProperty]
 # RUN(LOST): link functions mechanisms=all
 # LOST: function f1 callers-known one-callee
-# LOST-NEXT: parameter 0 {{*}}proven=undefined|object
+# LOST-NEXT: parameter 0 {{*}}proven=undefined|L0|L1|L3|L4|L5
 
 layout L0 module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="p" declared={type=anything} flags=[IsRequired]}]
 layout L1 module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="q" declared={type=anything} flags=[IsRequired]}]

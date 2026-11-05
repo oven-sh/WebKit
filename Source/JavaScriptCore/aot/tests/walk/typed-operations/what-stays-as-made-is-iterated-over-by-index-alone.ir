@@ -1,5 +1,5 @@
 # Link has followed all that arrives at the parameter: lists, or Sets, that nobody else gets hold of and that keep the names, the prototype and the storage of their making in every run.
-# So nothing is asked where the iteration opens, no step and no close has an arm of the protocol, the cleanup is gone, a pattern reads by index, and a spread copies the elements in one piece.
+# So where the iteration opens the word is held against the object, one bit of its cell and a stop by name, and nothing else is asked: no step and no close has an arm of the protocol, the cleanup is gone, a pattern reads by index, and a spread copies the elements in one piece.
 # function total(list) { let sum = 0; for (const item of list) sum = keep(item); return sum; }    function firstTwo(list) { const [a, b] = list; return a; }
 # function copy(list) { return [0, ...list]; }    function members(set) { for (const member of set) keep(member); }    function listed(set) { return [...set]; }
 # RUN: walk f1 f2 f3 f4 f5 mechanisms=all
@@ -18,12 +18,17 @@
 # CHECK-LABEL: code f5:Body
 # CHECK: = AppendMembers
 # RUN(NEVER): walk f1 f2 f3 f4 f5 mechanisms=all
-# NEVER-NOT: IsPristine
 # NEVER-NOT: @@iterator
 # NEVER-NOT: key="next"
 # NEVER-NOT: IterationCleanup
 # NEVER-NOT: DestructureIterable
 # NEVER-NOT: AppendIterable
+# RUN(HELD): walk f1 f2 f3 f4 f5 mechanisms=all
+# HELD-COUNT-3: = IsPristine {{*}}builtinClass=Array aspects=[Storage, Names, CellAlone]
+# HELD-COUNT-2: = IsPristine {{*}}builtinClass=Set aspects=[Names, CellAlone]
+# HELD-NOT: = IsPristine
+# RUN(STOPS): walk f1 f2 f3 f4 f5 mechanisms=all
+# STOPS-COUNT-5: CheckProof {{*}}checkedType=true
 # unseen code has had the list and the Set in hand: each is asked, and the protocol stands by
 # RUN(HANDED): walk f6 f7 mechanisms=all
 # HANDED-LABEL: code f6:Body

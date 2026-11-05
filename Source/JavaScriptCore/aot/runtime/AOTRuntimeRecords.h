@@ -669,10 +669,10 @@ struct alignas(16) SiteAnswers {
         ValueInStorageOfHolder,
         ValueInWordOfCage,
         OwnFieldInCell,
+        ExtraValueInCell,
         GetterInStorageOfHolder,
         OwnValueInCell,
         ExtraValueInStorage,
-        ExtraValueInCell,
         GetterInWordOfCage,
         OwnGetterInStorage,
         OwnGetterInCell,
@@ -770,7 +770,6 @@ struct alignas(16) SiteAnswers {
         return Answer { bits | bitsOf(use, form), operand };
     }
     static constexpr SiteAnswers forPlacesWithout() { return { { keyOfNoShape, 0 }, { 0, 0 } }; }
-    static constexpr uint32_t firstWordOfWideAnswers = 1u << 15;
     static constexpr Answer withoutKey(SiteUse use, bool isFirst, uint32_t operand = 0) { return { use == SiteUse::Read && isFirst ? keyOfNoShape : 0, operand }; }
     bool holdsShape() const { return first.isByShape() && first.key != keyOfNoShape; }
     bool isEmpty() const { return (!first.key || first.key == keyOfNoShape) && !second.key; }
@@ -784,16 +783,20 @@ struct alignas(16) SiteAnswers {
 static_assert(sizeof(SiteAnswers) == 16 && sizeof(SiteAnswers::Answer) == 8 && std::is_trivially_default_constructible_v<SiteAnswers>);
 
 struct alignas(16) WideSiteAnswers {
+    static constexpr unsigned numberOfFurtherAnswers = 2;
     static constexpr unsigned numberOfStructuresThatLackName = 4;
+    static constexpr std::array formsOfFurtherAnswers { SiteAnswers::Form::ExtraValueInCell, SiteAnswers::Form::OwnFieldInCell, SiteAnswers::Form::OwnValueInCell, SiteAnswers::Form::ExtraValueInStorage, SiteAnswers::Form::ValueInWordOfCage };
 
     bool namesNoStructure() const
     {
-        return !structureThatLeavesFieldOut && std::ranges::all_of(structuresThatLackName, [](uint32_t bits) {
+        auto isFree = [](uint32_t bits) {
             return !bits;
-        });
+        };
+        return !structureThatLeavesFieldOut && std::ranges::all_of(structuresThatLackName, isFree) && std::ranges::all_of(structuresOfFurtherAnswers, isFree);
     }
     void forgetStructures()
     {
+        structuresOfFurtherAnswers.fill(0);
         structuresThatLackName.fill(0);
         forgetWhatStandsAbove();
     }
@@ -805,13 +808,16 @@ struct alignas(16) WideSiteAnswers {
     }
 
     SiteAnswers answers;
+    std::array<uint32_t, numberOfFurtherAnswers> structuresOfFurtherAnswers;
+    std::array<uint32_t, numberOfFurtherAnswers> operandsOfFurtherAnswers;
     std::array<uint32_t, numberOfStructuresThatLackName> structuresThatLackName;
     uint32_t structureThatLeavesFieldOut;
     uint32_t holderOrWordAbove;
     int32_t indexInStorageOfHolderAbove;
-    uint32_t unused;
+    std::array<uint8_t, numberOfFurtherAnswers> bitsOfFormsOfFurtherAnswers;
+    uint16_t unused;
 };
-static_assert(sizeof(WideSiteAnswers) == 48 && !OBJECT_OFFSETOF(WideSiteAnswers, answers) && std::is_trivially_default_constructible_v<WideSiteAnswers>);
+static_assert(sizeof(WideSiteAnswers) == 64 && !OBJECT_OFFSETOF(WideSiteAnswers, answers) && std::is_trivially_default_constructible_v<WideSiteAnswers>);
 static_assert(SiteAnswers::keyOfNoShape == (compiledObjectShapeBit | SiteAnswers::bitsOf(SiteUse::Call, SiteAnswers::Form::Nothing)) && !SiteAnswers::looksLikeKeyByShape(SiteAnswers::keyOfNoShape));
 static_assert(SiteAnswers::looksLikeKeyByShape(shapeWordOf(1)) && SiteAnswers::looksLikeKeyByShape(shapeWordOf(Number24::max)) && SiteAnswers::looksLikeKeyByShape(shapeWordOf(1) ^ SiteAnswers::bitTurnedForFieldInExtension) && SiteAnswers::looksLikeKeyByShape(shapeWordOf(Number24::max) ^ SiteAnswers::bitTurnedForEncodedByteInCell));
 static_assert(!SiteAnswers::looksLikeKeyByShape(0x80000040u) && !SiteAnswers::looksLikeKeyByShape(0xc0000040u) && !SiteAnswers::looksLikeKeyByShape(0xf8000040u) && !SiteAnswers::looksLikeKeyByShape(0xfe000040u) && SiteAnswers::looksLikeKeyByShape(0xff000040u) && SiteAnswers::looksLikeKeyByShape(0xbf000040u));

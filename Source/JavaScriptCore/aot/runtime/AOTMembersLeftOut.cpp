@@ -15,9 +15,7 @@
 #include "FunctionPrototype.h"
 #include "InternalFunction.h"
 #include "JSCInlines.h"
-#include "JSNativeStdFunction.h"
 #include "ObjectConstructor.h"
-#include "TopExceptionScope.h"
 #include "WeakInlines.h"
 #include <wtf/HashMap.h>
 #include <wtf/Lock.h>
@@ -37,7 +35,6 @@ struct StandIn {
 };
 
 struct MembersLeftOut {
-    String sentenceOfMiss;
     Weak<JSObject> error;
     String message;
     Vector<StandIn> standIns;
@@ -66,13 +63,6 @@ public:
 #endif
 };
 
-JSC_DECLARE_HOST_FUNCTION(constructStandIn);
-
-JSC_DEFINE_HOST_FUNCTION(constructStandIn, (JSGlobalObject* realm, CallFrame* callFrame))
-{
-    return uncheckedDowncast<JSNativeStdFunction>(callFrame->jsCallee())->function()(realm, callFrame);
-}
-
 bool throwMessageOfStandIn(JSGlobalObject* realm, JSCell* standIn)
 {
     String message;
@@ -99,17 +89,33 @@ JSC_DEFINE_HOST_FUNCTION(useStandInForValue, (JSGlobalObject* realm, CallFrame* 
 class StandInForValue final : public InternalFunction {
 public:
     using Base = InternalFunction;
-    static constexpr unsigned StructureFlags = Base::StructureFlags | OverridesPut | ProhibitsPropertyCaching;
+    static constexpr unsigned StructureFlags = Base::StructureFlags | OverridesGetOwnPropertySlot | InterceptsGetOwnPropertySlotByIndexEvenWhenLengthIsNotZero | OverridesGetOwnPropertyNames | OverridesPut | ProhibitsPropertyCaching;
 
-    static StandInForValue* create(VM& vm, JSGlobalObject* realm, const String& name)
+    static StandInForValue* create(VM& vm, JSGlobalObject* realm, const String& name, unsigned length, bool canBeConstructed)
     {
         Structure* structure = Structure::create(vm, realm, realm->functionPrototype(), TypeInfo(InternalFunctionType, StructureFlags), info());
-        auto* standIn = new (NotNull, allocateCell<StandInForValue>(vm)) StandInForValue(vm, structure);
-        standIn->finishCreation(vm, 0, name);
+        auto* standIn = new (NotNull, allocateCell<StandInForValue>(vm)) StandInForValue(vm, structure, canBeConstructed);
+        standIn->finishCreation(vm, length, name);
         return standIn;
     }
 
     DECLARE_INFO;
+
+    static bool getOwnPropertySlot(JSObject* object, JSGlobalObject* realm, PropertyName name, PropertySlot& slot)
+    {
+        const CommonIdentifiers& names = *realm->vm().propertyNames;
+        bool isKnown = (name == names.name || name == names.length || name == names.prototype) && standsInForFunction(object);
+        if (isKnown || slot.internalMethodType() == PropertySlot::InternalMethodType::VMInquiry)
+            return Base::getOwnPropertySlot(object, realm, name, slot);
+        return throwMessageOfStandIn(realm, object);
+    }
+    static bool getOwnPropertySlotByIndex(JSObject* object, JSGlobalObject* realm, unsigned index, PropertySlot& slot)
+    {
+        if (slot.internalMethodType() == PropertySlot::InternalMethodType::VMInquiry)
+            return Base::getOwnPropertySlotByIndex(object, realm, index, slot);
+        return throwMessageOfStandIn(realm, object);
+    }
+    static void getOwnPropertyNames(JSObject* object, JSGlobalObject* realm, PropertyNameArrayBuilder&, DontEnumPropertiesMode) { throwMessageOfStandIn(realm, object); }
 
     static bool put(JSCell* cell, JSGlobalObject* realm, PropertyName name, JSValue value, PutPropertySlot& slot)
     {
@@ -125,8 +131,8 @@ public:
     static bool preventExtensions(JSObject* object, JSGlobalObject* realm) { return throwMessageOfStandIn(realm, object); }
 
 private:
-    StandInForValue(VM& vm, Structure* structure)
-        : Base(vm, structure, useStandInForValue, useStandInForValue)
+    StandInForValue(VM& vm, Structure* structure, bool canBeConstructed)
+        : Base(vm, structure, useStandInForValue, canBeConstructed ? NativeFunction(useStandInForValue) : NativeFunction(callHostFunctionAsConstructor))
     {
     }
 };
@@ -151,33 +157,6 @@ void noteErrorOfCodeLeftOut(JSGlobalObject* realm, JSObject* error)
     members.message = WTF::move(text);
 }
 
-void throwMissOfReach(JSGlobalObject* realm, String&& sentence, bool mayBeTakenForStandIn)
-{
-    VM& vm = realm->vm();
-    {
-        Locker locker { membersLock };
-        MembersLeftOut& members = membersByVM().ensure(&vm, [] {
-            return MembersLeftOut { };
-        }).iterator->value;
-        members.sentenceOfMiss = WTF::move(sentence);
-        if (!mayBeTakenForStandIn)
-            members.message = String();
-    }
-    vm.ensureTerminationException();
-    vm.setHasTerminationRequest();
-    vm.throwTerminationException();
-}
-
-void stopIfMissOfReachIsPending(VM& vm)
-{
-    Locker locker { membersLock };
-    auto found = membersByVM().find(&vm);
-    if (found == membersByVM().end() || found->value.sentenceOfMiss.isNull())
-        return;
-    dataLogLn(found->value.sentenceOfMiss);
-    CRASH();
-}
-
 static String takeMessageOfErrorOfCodeLeftOut(VM& vm)
 {
     Exception* exception = vm.exceptionForInspection();
@@ -185,24 +164,16 @@ static String takeMessageOfErrorOfCodeLeftOut(VM& vm)
         return { };
 
     String message;
-    bool isMissOfReach = vm.isTerminationException(exception);
     {
         Locker locker { membersLock };
         auto found = membersByVM().find(&vm);
         if (found == membersByVM().end())
             return { };
         MembersLeftOut& members = found->value;
-        if (isMissOfReach ? members.sentenceOfMiss.isNull() || members.message.isNull() : !members.error || exception->value() != JSValue(members.error.get()))
+        if (!members.error || exception->value() != JSValue(members.error.get()))
             return { };
         message = std::exchange(members.message, String());
         members.error.clear();
-        members.sentenceOfMiss = String();
-    }
-    if (isMissOfReach) {
-        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-        scope.clearException();
-        vm.clearHasTerminationRequest();
-        return message;
     }
     UnverifiedExceptionScope scope(vm);
     bool isCleared = scope.tryClearException();
@@ -220,15 +191,9 @@ static JSValue standInThatThrows(JSGlobalObject* realm, String&& message, const 
                 return known.function.get();
         }
     }
-    NativeStdFunction throwsWhenCalled = [message](JSGlobalObject* caller, CallFrame*) -> EncodedJSValue {
-        auto throwScope = DECLARE_THROW_SCOPE(caller->vm());
-        return throwVMError(caller, throwScope, createError(caller, message));
-    };
     bool canBeConstructed = function && function->canBeConstructed;
-    JSObject* standIn = function
-        ? static_cast<JSObject*>(JSNativeStdFunction::create(vm, realm, function->length, nameOfMember, WTF::move(throwsWhenCalled), NoIntrinsic, canBeConstructed ? NativeFunction(constructStandIn) : NativeFunction(callHostFunctionAsConstructor)))
-        : StandInForValue::create(vm, realm, nameOfMember);
-    if (canBeConstructed)
+    JSObject* standIn = StandInForValue::create(vm, realm, nameOfMember, function ? function->length : 0, !function || canBeConstructed);
+    if (canBeConstructed && function->hasPrototype)
         standIn->putDirect(vm, vm.propertyNames->prototype, constructEmptyObject(realm), PropertyAttribute::DontEnum | PropertyAttribute::DontDelete);
 
     Locker locker { membersLock };
@@ -256,9 +221,31 @@ JSValue takeStandInForFunctionLeftOut(JSGlobalObject* realm, const FunctionLeftO
     return standInThatThrows(realm, WTF::move(message), function.name, answeredBy, &function);
 }
 
+static thread_local bool makesMemberForLookThatOnlyTests;
+
+MakingOfMemberForLook::MakingOfMemberForLook(bool lookOnlyTests)
+    : m_previous(std::exchange(makesMemberForLookThatOnlyTests, lookOnlyTests))
+{
+}
+
+MakingOfMemberForLook::~MakingOfMemberForLook()
+{
+    makesMemberForLookThatOnlyTests = m_previous;
+}
+
+bool isMakingMemberForLookThatOnlyTests()
+{
+    return makesMemberForLookThatOnlyTests;
+}
+
+bool isPlaceholderForOmittedBuiltin(JSCell* cell)
+{
+    return cell->inherits<StandInForValue>();
+}
+
 bool standsInForFunction(JSCell* cell)
 {
-    if (!cell->inherits<JSNativeStdFunction>())
+    if (!cell->inherits<StandInForValue>())
         return false;
     Locker locker { membersLock };
     auto found = membersByVM().find(&cell->vm());

@@ -182,12 +182,13 @@ bool hostUsesPutValueInto(const BuiltinTable& builtins, const BuiltinHostUses& u
 static bool isFilledWithValueOfLibrary(const BuiltinTable& builtins, BuiltinID entry)
 {
     bool isExport = std::ranges::any_of(builtins.moduleLoadsOf(entry), [&](const BuiltinModuleLoad& load) {
-        return std::ranges::any_of(load.usesOfExports, [&](const BuiltinHostUses& uses) {
-            return hostUsesPutValueInto(builtins, uses, entry);
+        return load.readsEveryExport || std::ranges::any_of(load.usesOfExports, [&](const BuiltinHostUses& uses) {
+            return !uses.areListed || hostUsesPutValueInto(builtins, uses, entry);
         });
     });
+    bool isMadeByHost = builtins.at(entry).origin == BuiltinOrigin::Host;
     return isExport || std::ranges::any_of(builtins.calledFunctionsOf(entry), [&](const BuiltinCalledFunction& called) {
-        return hostUsesPutValueInto(builtins, called.uses, entry);
+        return (isMadeByHost && !called.uses.areListed) || hostUsesPutValueInto(builtins, called.uses, entry);
     });
 }
 

@@ -591,7 +591,7 @@ static bool codeBodiesHaveSameMentions(const CodeBody& a, const CodeBody& b)
 
 static bool codeBodiesHaveSameStubKeys(const CodeBody& a, const CodeBody& b)
 {
-    return a.stubKeys == b.stubKeys && std::ranges::equal(a.numberedStubKeys, b.numberedStubKeys, [](const NumberedStubKey& first, const NumberedStubKey& second) {
+    return a.stubKeys == b.stubKeys && std::ranges::equal(a.rareLists->numberedStubKeys, b.rareLists->numberedStubKeys, [](const NumberedStubKey& first, const NumberedStubKey& second) {
         return first.stubKey == second.stubKey && first.mention == second.mention;
     });
 }
@@ -619,8 +619,8 @@ static String firstDifferenceOfCodeBodies(const CodeBody& inside, const CodeBody
         { "callees"_s, inside.callees == alone.callees },
         { "stub keys"_s, codeBodiesHaveSameStubKeys(inside, alone) },
         { "argument moves"_s, inside.argumentMoves == alone.argumentMoves },
-        { "constants"_s, inside.constants == alone.constants },
-        { "jump tables"_s, inside.jumpTables == alone.jumpTables },
+        { "constants"_s, inside.rareLists->constants == alone.rareLists->constants },
+        { "jump tables"_s, inside.rareLists->jumpTables == alone.rareLists->jumpTables },
         { "mentions"_s, codeBodiesHaveSameMentions(inside, alone) },
     };
     for (auto [name, isSame] : lists) {

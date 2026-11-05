@@ -15,6 +15,7 @@ namespace JSC { namespace AOT { namespace Typed {
 
 class Plan;
 class Program;
+struct PlannedLayout;
 
 struct SweepInputs {
     const Program& program;
@@ -104,6 +105,9 @@ private:
     bool beginLendingClosures();
     bool noteIfClosureMayBeLent(ValueID);
     void lendClosures();
+    bool beginLendingCells();
+    bool noteIfCellMayBeLent(ValueID);
+    void lendCells();
 
     void beginFollowingLiveness();
     void noteNeededOperationForLiveness(ValueID, const Operation&);
@@ -167,6 +171,8 @@ private:
     bool m_coverageIsOutOfDate { false };
     bool m_lendsClosures { false };
     Vector<ValueID> m_closuresThatMayBeLent;
+    bool m_lendsCells { false };
+    Vector<ValueID> m_cellsThatMayBeLent;
     struct EnvironmentHandedBack {
         LayoutID layout;
         ValueID value;
@@ -214,6 +220,8 @@ private:
 
 bool staysInSweptCodeByItself(const Program&, const Operation&);
 
+bool objectOfLayoutMayLieInFrame(const PlannedLayout&);
+
 inline ValueID rootOfCellInSweptCode(const Code& code, ValueID cell)
 {
     for (;;) {
@@ -234,6 +242,9 @@ bool newObjectFencesBeforeHandingCellOn(const Program&, const Plan&, const Opera
 bool newArrayFencesBeforeHandingCellOn(const Operation& newArray);
 
 bool stubOfMethodEntersFunctionsThatOnlyCallFirstArgument(const Program&, const Facts&, BuiltinID method);
+bool unitMayLendWhatItMakes(const Program&, CodeUnit);
+bool closureHasCellThatMayBeLent(const Program&, ClosureForm, FunctionID);
+bool functionEnteredOnlyCallsWhatArrivesAt(const Facts&, CodeRole, uint32_t numberOfBoundArguments, FunctionID, uint32_t position);
 
 } } } // namespace JSC::AOT::Typed
 

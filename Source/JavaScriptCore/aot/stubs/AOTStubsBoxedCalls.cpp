@@ -1057,6 +1057,7 @@ void generateCallMethodThatMayBeUnread(StubAssembler& jit)
 }
 
 StubSignature signatureOfCallMethodOfBuiltinClassAtSite(StubKey key) { return signatureOf(callMethodAtSite(key.count())); }
+StubSignature signatureOfCallMethodOfOneBuiltinClassAtSite(StubKey key) { return signatureOf(callMethodAtSite(key.count())); }
 StubSignature signatureOfCallMethodOfProvenBuiltinClass(StubKey key) { return signatureOf(callMethodById(key.count())); }
 
 StubSignature signatureOfCallMethodOfBuiltinClassWithSharedPattern(StubKey key) { return signatureOf(callMethodById(key.count())); }
@@ -1104,6 +1105,10 @@ static void emitCallOfMethodOfBuiltinClass(StubAssembler& jit, bool patternIsSha
         goOnBy(byName);
         jit.bindEntry(entryAtSite);
         goOnBy(forOtherReceiversAtSite);
+        if (!patternIsShared) {
+            jit.bindEntry(callMethodOfOneBuiltinClassAtSite(handler.form, count));
+            jit.jumpToStub(callMethodAtSite(count));
+        }
         return;
     }
 
@@ -1121,14 +1126,24 @@ static void emitCallOfMethodOfBuiltinClass(StubAssembler& jit, bool patternIsSha
     goOnBy(byName);
 
     jit.bindEntry(entryAtSite);
+    if (!patternIsShared && !next)
+        jit.bindEntry(callMethodOfOneBuiltinClassAtSite(handler.form, count));
     JumpList isOtherReceiver;
     branchUnlessReceiverFindsBuiltin(jit, handler, isOtherReceiver);
     static_assert(sizeof(uint16_t) == InstanceLayout::sizeOfIndexOfSiteAnswers);
+    Label findsNameOfSite = jit.label();
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.namesOfSitesByDistance)), calleeGPR);
     jit.load16(BaseIndex(calleeGPR, name, CCallHelpers::TimesOne), name);
     jit.jump().linkTo(receiverFindsBuiltin, &jit);
     if (!patternIsShared) {
         jit.linkToStub(isOtherReceiver, forOtherReceiversAtSite);
+        if (next) {
+            jit.bindEntry(callMethodOfOneBuiltinClassAtSite(handler.form, count));
+            JumpList looksUpAtSite;
+            branchUnlessReceiverFindsBuiltin(jit, handler, looksUpAtSite);
+            jit.jump().linkTo(findsNameOfSite, &jit);
+            jit.linkToStub(looksUpAtSite, callMethodAtSite(count));
+        }
         return;
     }
     isOtherReceiver.link(&jit);

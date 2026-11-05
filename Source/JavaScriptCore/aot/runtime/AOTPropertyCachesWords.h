@@ -273,6 +273,7 @@ struct PropertyCacheWords {
     SiteCacheState* siteCacheStates;
     uint8_t missesOfEmptySites;
     uint8_t missesOfPlacesOfPairs;
+    uint32_t firstWordOfWideAnswers;
     const CustomAccessorRecord* customAccessors;
     uint32_t numberStructureID;
     uint32_t booleanStructureID;

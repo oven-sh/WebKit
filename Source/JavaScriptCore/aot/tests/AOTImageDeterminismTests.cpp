@@ -398,7 +398,7 @@ static Vector<CompiledCode> codeOfProgramWithTexts(const TestBuild& build, SizeO
         sketch.code().sites.positions.last().source = ModuleID(size.moduleOf(function));
         sketch.callStub(writeBarrier(), site);
         uint64_t constant = function % (size.numberOfFunctions() / timesEachConstantIsHeld);
-        sketch.code().body.constants.append(ConstantData { Vector<uint8_t>(asByteSpan(constant)), sizeof(constant) });
+        sketch.code().body.rareLists.ensure().constants.append(ConstantData { Vector<uint8_t>(asByteSpan(constant)), sizeof(constant) });
         sketch.end();
         CompiledCode code = sketch.take();
         mentions.add(NumberSpace::RegExpLiteralCell, std::span<const uint32_t>(keyInLongList(function)));

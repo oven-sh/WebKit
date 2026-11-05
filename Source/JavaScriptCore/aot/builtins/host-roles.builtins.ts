@@ -25,7 +25,9 @@ export default b.declarations(
     "%CompilerHelpers%.sortByDifference",
     "%CompilerHelpers%.sortByReversedDifference",
     "%CompilerHelpers%.stepIterator",
+    "%CompilerHelpers%.stepIteratorInWay",
     "%CompilerHelpers%.takeFromIterable",
+    "%CompilerHelpers%.wayToStepIterator",
   ),
   b.hostRoles(
     "%NativeFunctions%",

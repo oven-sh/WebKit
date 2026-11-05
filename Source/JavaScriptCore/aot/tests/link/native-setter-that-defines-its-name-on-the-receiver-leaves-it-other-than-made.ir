@@ -2,6 +2,7 @@
 # so the read behind the store is not listed, nor the call on the list that it walks. `url.hash = "x"`: the setter of URL.prototype.hash writes what the object holds and leaves its names: the read behind that store is listed.
 # const url = new URL("http://a/");  url.hash = "x";  url.hash;    const steps = [1.5].values();  steps.constructor = 1.5;  steps.constructor;
 # RUN: link accesses mechanisms=all
+# REQUIRES: entries-of-bun
 # CHECK: receiver-as-made f0 v7
 # CHECK-NOT: receiver-as-made
 

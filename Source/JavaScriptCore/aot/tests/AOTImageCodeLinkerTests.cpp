@@ -106,8 +106,9 @@ static CompiledCode bodyWithManySpaces(uint32_t function, uint32_t callee)
         recorder.moveInstanceAddress({ SymbolSpace::InstanceWord, linkedStringCellMention }, instanceGPR, GPRInfo::regT0);
     });
     uint32_t end = sketch.end();
-    sketch.code().body.constants = { constantOf(0x1122334455667788), constantOf(0x99aabbccddeeff00) };
-    sketch.code().body.jumpTables = { JumpTable { { functionCall, end } } };
+    RareListsOfBody& rareLists = sketch.code().body.rareLists.ensure();
+    rareLists.constants = { constantOf(0x1122334455667788), constantOf(0x99aabbccddeeff00) };
+    rareLists.jumpTables = { JumpTable { { functionCall, end } } };
     return sketch.take();
 }
 
@@ -256,16 +257,16 @@ static void checkLinkedBody(const Steps& steps, const ImageNumbers& numbers, uin
 
 static void checkLinkedData(const Steps& steps, uint32_t position, std::span<const uint8_t> code)
 {
-    const CodeBody& body = steps.functions[position].body;
+    const RareListsOfBody& rareLists = *steps.functions[position].body.rareLists;
     size_t constantsOffset = steps.layout.constantsOffset;
-    for (size_t index = 0; index < body.constants.size(); ++index) {
+    for (size_t index = 0; index < rareLists.constants.size(); ++index) {
         size_t offset = constantsOffset + steps.constants.constantOffsetsByBody[position][index];
-        AOT_TEST_CHECK(!(offset % body.constants[index].alignment));
-        AOT_TEST_CHECK(equalSpans(code.subspan(offset, body.constants[index].bytes.size()), body.constants[index].bytes.span()));
+        AOT_TEST_CHECK(!(offset % rareLists.constants[index].alignment));
+        AOT_TEST_CHECK(equalSpans(code.subspan(offset, rareLists.constants[index].bytes.size()), rareLists.constants[index].bytes.span()));
     }
-    for (size_t index = 0; index < body.jumpTables.size(); ++index) {
+    for (size_t index = 0; index < rareLists.jumpTables.size(); ++index) {
         size_t table = constantsOffset + steps.constants.jumpTableOffsetsByBody[position][index];
-        std::span<const uint32_t> targets = body.jumpTables[index].targets.span();
+        std::span<const uint32_t> targets = rareLists.jumpTables[index].targets.span();
         for (size_t word = 0; word < targets.size(); ++word) {
             int64_t distance = static_cast<int64_t>(steps.layout.bodyStarts[position]) + targets[word] - static_cast<int64_t>(table);
             AOT_TEST_CHECK(WTF::unalignedLoad<int32_t>(code.subspan(table + word * sizeof(int32_t)).data()) == distance);
@@ -493,7 +494,7 @@ static void testThrowWordsThatNameOneStringShareThunk()
     AOT_TEST_CHECK(expected && std::bit_cast<ThrowSiteWord>(*expected).narrowA() == numberOfName);
     for (uint32_t position = 0; position < steps.functions.size(); ++position) {
         const CompiledCode& code = steps.functions[position];
-        const ArgumentMoves& moves = code.body.argumentMoves[0];
+        std::span<const uint64_t> moves = code.body.argumentMoves[0];
         AOT_TEST_CHECK(sourceOfArgumentMove(moves, numberOfHeaderWords) == ArgumentSource::Constant && moves[numberOfHeaderWords + 1] == *expected);
         const FaultingAccess& access = code.sites.faultingAccesses[0];
         AOT_TEST_CHECK(!access.wordsThatAreMentions && access.throwSite.size() == 1 && access.throwSite[0] == *expected);
@@ -541,7 +542,7 @@ static void testReadsOfOneNameShareThunk()
 
     uint32_t numberOfName = valueOfLinkedMention(numbers, steps.functions[positionOfLinkedBody(steps, 2)].body, mentionInSecondBody, false);
     for (const CompiledCode& code : steps.functions) {
-        const ArgumentMoves& words = code.body.argumentMoves[0];
+        std::span<const uint64_t> words = code.body.argumentMoves[0];
         AOT_TEST_CHECK(words.size() == numberOfHeaderWords && words[1] == (hasImmediate | numberOfName));
     }
     steps.select();

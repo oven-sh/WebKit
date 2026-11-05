@@ -815,8 +815,15 @@ public:
     JS_EXPORT_PRIVATE void clearSuccessors();
 
     unsigned numberOfIncomingEdges() const { return m_numberOfIncomingEdges; }
-    Block* singlePredecessor() const { return m_numberOfIncomingEdges == 1 ? m_singlePredecessor : nullptr; }
-    EdgeClass classOfSingleIncomingEdge() const { return m_classOfSingleIncomingEdge; }
+    Block* singlePredecessor() const { return m_numberOfIncomingEdges == 1 ? std::bit_cast<Block*>(m_sourcesOfIncomingEdgesFolded) : nullptr; }
+    EdgeClass classOfSingleIncomingEdge() const
+    {
+        for (const Edge& edge : singlePredecessor()->successors()) {
+            if (edge.block() == this)
+                return edge.edgeClass();
+        }
+        RELEASE_ASSERT_NOT_REACHED();
+    }
     bool hasOnlyOnePredecessor() const { return m_hasOnlyOnePredecessor; }
     bool isLandingPad() const { return m_isLandingPad; }
     bool isEntry() const { return m_isEntry; }
@@ -847,20 +854,26 @@ private:
     inline void setSuccessorsInline(Edge taken, Edge notTaken);
     bool mayBeAppendedTo() const { return !m_lastOperationMayEndBlock || !isTerminated(); }
 
-    void didGainIncomingEdge()
+    void didGainIncomingEdge(const Block* from)
     {
         RELEASE_ASSERT(!m_isEntry);
         if (m_numberOfIncomingEdges)
             m_hasOnlyOnePredecessor = false;
-        m_singlePredecessor = nullptr;
+        m_sourcesOfIncomingEdgesFolded ^= std::bit_cast<uintptr_t>(from);
         ++m_numberOfIncomingEdges;
+    }
+
+    void didLoseIncomingEdge(const Block* from)
+    {
+        ASSERT(m_numberOfIncomingEdges);
+        m_sourcesOfIncomingEdgesFolded ^= std::bit_cast<uintptr_t>(from);
+        --m_numberOfIncomingEdges;
     }
 
     Procedure& m_procedure;
     uint32_t m_index;
     uint32_t m_numberOfIncomingEdges { 0 };
-    Block* m_singlePredecessor { nullptr };
-    EdgeClass m_classOfSingleIncomingEdge { EdgeClass::Normal };
+    uintptr_t m_sourcesOfIncomingEdgesFolded { 0 };
     bool m_hasOnlyOnePredecessor { false };
     bool m_isLandingPad { false };
     bool m_isEntry { false };
@@ -976,6 +989,7 @@ public:
     unsigned numberOfBlocks() const { return m_blocks.size(); }
     Block* blockAt(unsigned index) const { return m_blocks[index]; }
     std::span<Block* const> blocks() const { return m_blocks.span(); }
+    std::span<Block* const> blocksBegunBeforeAnythingLedToThem() const { return m_blocksBegunBeforeAnythingLedToThem.span(); }
 
     JS_EXPORT_PRIVATE Block* addEntrypoint(uint16_t id);
     std::span<const Entrypoint> entrypoints() const { return m_entrypoints.span(); }
@@ -1070,6 +1084,7 @@ private:
     MachineCoreListsOfHeapsKept* m_listsOfHeapsKept { nullptr };
     unsigned m_numberOfListsOfHeapsKept { 0 };
     ArenaVector<Block*> m_blocks;
+    ArenaVector<Block*> m_blocksBegunBeforeAnythingLedToThem;
     ArenaVector<Operation*> m_operations;
     ArenaVector<Entrypoint> m_entrypoints;
     ArenaVector<std::span<const Type>> m_tuples;
@@ -1165,12 +1180,7 @@ ALWAYS_INLINE void Block::appendSuccessorWhereRoomIsKnown(Edge edge)
     else
         m_successors.append(m_procedure.arena(), edge);
     target->m_numberOfIncomingEdges = numberOfIncomingEdges + 1;
-    if (numberOfIncomingEdges) {
-        target->m_singlePredecessor = nullptr;
-        return;
-    }
-    target->m_singlePredecessor = this;
-    target->m_classOfSingleIncomingEdge = edge.edgeClass();
+    target->m_sourcesOfIncomingEdgesFolded ^= std::bit_cast<uintptr_t>(this);
 }
 
 ALWAYS_INLINE void Block::appendSuccessorInline(Edge edge)

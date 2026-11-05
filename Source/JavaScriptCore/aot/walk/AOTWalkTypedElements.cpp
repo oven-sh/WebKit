@@ -573,8 +573,17 @@ static bool onlyUserTakesNumberInTypedElements(Walker& walker, const BodyValue& 
         return false;
     BodyValue operation = index.value(user);
     static constexpr OpcodeSet accessesByKey { Opcode::ElemGet, Opcode::ElemSet };
-    if (accessesByKey.contains(operation.opcode()))
-        return operation.propertyOperand() == name && operation.objectOperand() != name;
+    if (accessesByKey.contains(operation.opcode())) {
+        if (operation.objectOperand() == name)
+            return false;
+        if (operation.propertyOperand() == name)
+            return true;
+        Reference view = operation.opcode() == Opcode::ElemSet ? walker.referenceOf(operation.objectOperand()) : Reference();
+        if (!view || !view.isRecord())
+            return false;
+        BaseOfTypedElements base = classifyBaseOfTypedElements(walker, walker.typeOf(view));
+        return base.kind == KindOfBaseOfTypedElements::TypedArray && hasInlineElementAccess(base.typedArrayType) && !isBigInt(base.typedArrayType);
+    }
     return allBitwiseOperators.contains(operation.opcode());
 }
 
@@ -1001,6 +1010,18 @@ bool buildAccessByIndexOffExpectedViewOfItsOpcodes(Walker& walker, const BodyVal
         return false;
     AccessOfTypedElements access { walker, value, object, key, { }, walker.typeOf(object), walker.types().at(walker.typeOf(key)), { }, false };
     return buildAccessByIndexOfTypedElements(access, base.typedArrayType);
+}
+
+bool buildReadByIndexOffAnyBaseOfItsOpcodes(Walker& walker, const BodyValue& value)
+{
+    if (!walker.has(Mechanism::TypedOperations))
+        return false;
+    Reference object = walker.referenceOf(value.objectOperand());
+    Reference key = walker.referenceOf(value.propertyOperand());
+    if (!object || !key)
+        return false;
+    AccessOfTypedElements access { walker, value, object, key, { }, walker.typeOf(object), walker.types().at(walker.typeOf(key)), { }, false };
+    return buildAccessByIndexOfTypedElements(access, NotTypedArray);
 }
 
 } } } // namespace JSC::AOT::Typed

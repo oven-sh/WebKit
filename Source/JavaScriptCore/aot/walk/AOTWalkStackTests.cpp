@@ -46,21 +46,21 @@ void Walker::noteDirectCallForStackTests(const Draft& draft)
     CodeUnit entered = conventions.unitEnteredBy(draft);
     if (isBodyOfCoroutine(entered.role, program().at(entered.function).isCoroutine()) && unit() == CodeUnit(entered.function, CodeRole::Body))
         return;
-    if (entered == CodeUnit(unit().function, CodeRole::SlowBody) && unit().role == CodeRole::Body && draft.isTailCall && m_frames.size() == 1)
+    if (entered == CodeUnit(unit().function, CodeRole::SlowBody) && unit().role == CodeRole::Body && draft.isTailCall && walksOwnBodyOfUnit())
         return;
     CodeUnit unitThatSetsUpFrame = entered.role == CodeRole::ParameterGuard ? CodeUnit(entered.function, CodeRole::Body) : entered;
     if (conventions.stackCheckOf(unitThatSetsUpFrame) == StackCheck::Required)
         return;
 
     bool entersBodyOfFunction = returnsResultOfFunction(entered.role) || entered.role == CodeRole::CoroutineBody;
-    bool bodyBeingReadIsCounted = m_frames.size() == 1 || m_frames.last().callsAreCountedByPlan;
+    bool bodyBeingReadIsCounted = walksOwnBodyOfUnit() || m_frames.last().callsAreCountedByPlan;
     if (!entersBodyOfFunction || !bodyBeingReadIsCounted || !planHasCountedCallForStackTests(*this, currentFunction(), draft.inputValueGiven, entered.function))
         m_code.noteCallThatPlanHasNotCounted();
 }
 
 bool Walker::callsOfCopyAreCountedForStackTests(const BodyValue& call, FunctionID callee) const
 {
-    if (!unitCountsOnCallersForStackTests(*this) || (m_frames.size() > 1 && !m_frames.last().callsAreCountedByPlan))
+    if (!unitCountsOnCallersForStackTests(*this) || (!walksOwnBodyOfUnit() && !m_frames.last().callsAreCountedByPlan))
         return false;
     return plan().conventions().stackTests().countsCallsOfBodyBelowCallers(callee) && planHasCountedCallForStackTests(*this, currentFunction(), call.id(), callee);
 }

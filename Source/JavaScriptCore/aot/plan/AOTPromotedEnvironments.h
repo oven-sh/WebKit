@@ -21,7 +21,6 @@ class Facts;
 class Program;
 struct SlotPlanParts;
 
-// Either a field of a scope that is never made (layout, field), or a value that functions no longer capture: function and capture name the first of them, and every other one has its types.
 struct PromotedVariable {
     ModuleID module;
     StringID name;
@@ -44,7 +43,6 @@ struct RemovedCapture {
     VariableID variable;
 };
 
-// The value as written is stored once on each way: a parameter at the entry, anything else right behind the operation that makes it.
 struct StoreOfCapturedValue {
     FunctionID function;
     ValueID value;

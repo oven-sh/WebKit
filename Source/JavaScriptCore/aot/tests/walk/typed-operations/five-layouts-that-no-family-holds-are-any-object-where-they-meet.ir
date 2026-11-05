@@ -1,5 +1,6 @@
 # A set holds four layouts at the most: if the types of a walk held every set that its joins make, a place where the kinds of five hundred files meet would make a type for each of its subsets.
-# const o = which ? { a: 7, b: 7 } : which1 ? { b: 7, c: 7 } : which2 ? { c: 7, d: 7 } : which3 ? { b: 7, e: 7 } : { f: 7, g: 7 };  return o.b;
+# const o = which ? { a: 7, b: 7 } : which1 ? { b: 7, c: 7 } : which2 ? { c: 7, d: 7 } : which3 ? { b: 7, e: 7 } : { f: 7, g: 7 };  keep(o);  return o.b;
+# The five go to code that nobody sees, so what met has escaped as a whole: it is not named and is no family.
 # RUN: walk f0 mechanisms=all-EscapeAnalysis
 # CHECK: ([[met]]: object 
 # CHECK: = PropGet {{*}}key="b"
@@ -39,6 +40,8 @@ function f0 name="main" module=m0 kind=Module thisType={type=anything} results=[
   b4():
     Jump -> next b5(v12)
   b5(v16):
-    v17 = PropGet v16 key="b" @10
-    Return v17
+    v17 = PropGet v0 key="keep" [isFreeName]
+    v18 = Call v17, -, v16 calleeName="keep"
+    v19 = PropGet v16 key="b" @10
+    Return v19
 }

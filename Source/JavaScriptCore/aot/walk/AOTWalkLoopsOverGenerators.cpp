@@ -21,13 +21,7 @@ namespace JSC { namespace AOT { namespace Typed {
 
 static constexpr uint32_t closedOperationsOfProtocolForGenerators = 3;
 
-struct LoopOverIterator {
-    ValueID step;
-    BlockID blockOfStep;
-    bool stepStandsInHeadOfLoop { false };
-};
-
-static std::optional<LoopOverIterator> findLoopOverIterator(const BodyIndex& index, ValueID open)
+std::optional<LoopOverIterator> findLoopOverIterator(const BodyIndex& index, ValueID open)
 {
     LoopOverIterator loop;
     Vector<BlockID, 4> blocksOfCloses;
@@ -90,7 +84,7 @@ static bool isConstantLocationForGenerators(const Walker& walker, BuiltinID memb
     return walker.facts().builtinLocation(member) == BuiltinLocationState::Constant;
 }
 
-std::optional<BuiltinID> findMemberAboveForIteration(const Walker& walker, BuiltinID start, BuiltinName name)
+std::optional<BuiltinID> findMemberAboveForIteration(const Walker& walker, BuiltinID start, BuiltinName name, MembersBehindWatch watch)
 {
     const Program& program = walker.program();
     const BuiltinTable& table = program.builtins();
@@ -102,9 +96,11 @@ std::optional<BuiltinID> findMemberAboveForIteration(const Walker& walker, Built
     while (true) {
         if (BuiltinID member = members.findOwnMember(holder)) {
             bool liesOnHolder = !table.at(member).flags.contains(BuiltinFlag::IsOwnPropertyOfInstances);
-            return liesOnHolder && isConstantLocationForGenerators(walker, member) ? std::optional(member) : std::nullopt;
+            bool isBelieved = isConstantLocationForGenerators(walker, member) || (watch == MembersBehindWatch::AreAsBuilt && walker.facts().isBehindWatch(member));
+            return liesOnHolder && isBelieved ? std::optional(member) : std::nullopt;
         }
-        if (!listsEveryMemberUnder(program, holder, key) || !members.isClosedKey(holder) || !table.hasLockedPrototypeLink(holder))
+        auto opened = watch == MembersBehindWatch::AreAsBuilt ? MembersUnderKey::NamesOpenedForTestRun::AreAbsent : MembersUnderKey::NamesOpenedForTestRun::MayLieOnHolder;
+        if (!listsEveryMemberUnder(program, holder, key) || !members.isClosedKey(holder, opened) || !table.hasLockedPrototypeLink(holder))
             return std::nullopt;
         switch (table.at(holder).prototypeLink) {
         case BuiltinPrototypeLink::Unknown:
@@ -178,13 +174,13 @@ static void buildFirstReadForGenerators(Walker& walker, BuiltinName name, Origin
         walker.state().noteReadOfBuiltin(*location);
 }
 
-static void buildFirstReadsThatOpenLeavesOut(Walker& walker, Origin origin)
+void buildFirstReadsThatOpenOfGeneratorLeavesOut(Walker& walker, Origin origin)
 {
     buildFirstReadForGenerators(walker, walker.program().builtins().nameOf(WellKnownSymbol::Iterator), origin);
     buildFirstReadForGenerators(walker, BuiltinNames::next, origin);
 }
 
-static void buildFirstReadThatCloseLeavesOut(Walker& walker, Origin origin)
+void buildFirstReadThatCloseOfGeneratorLeavesOut(Walker& walker, Origin origin)
 {
     buildFirstReadForGenerators(walker, BuiltinNames::returnKeyword, origin);
 }
@@ -278,7 +274,7 @@ static bool openLoopOverGenerator(Walker& walker, const BodyValue& open)
     BlockID isAsMade = builder.addBlock();
     builder.branch(builder.build(WTF::move(test)), isAsMade, byProtocol);
     builder.continueIn(isAsMade);
-    buildFirstReadsThatOpenLeavesOut(walker, builder.origin());
+    buildFirstReadsThatOpenOfGeneratorLeavesOut(walker, builder.origin());
     builder.jumpTo(opened, { generator });
 
     builder.continueIn(byProtocol);
@@ -346,7 +342,7 @@ static void closeGenerator(Walker& walker, BuilderForGenerators& builder, Refere
     BlockID isClosed = builder.addBlock();
     builder.branch(builder.isInteger(status, static_cast<int64_t>(GeneratorStepStatus::NotStepped)), isNotStepped, isStepped);
     builder.continueIn(isStepped);
-    buildFirstReadThatCloseLeavesOut(walker, builder.origin());
+    buildFirstReadThatCloseOfGeneratorLeavesOut(walker, builder.origin());
     builder.jumpTo(isClosed);
     builder.continueIn(isNotStepped);
     builder.closeByProtocol(generator, IteratorCompletion::Normal);

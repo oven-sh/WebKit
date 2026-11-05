@@ -6,22 +6,22 @@
 # A read through the first five finds what those five hold under the name
 # RUN: link functions fields layouts mechanisms=all
 # CHECK: function f3 callers-known one-callee {{*}}result=undefined|true|string
-# CHECK-NEXT: parameter 0 {{*}}proven=object
+# CHECK-NEXT: parameter 0 {{*}}proven=L0|L1|L4|L5|L6
 # CHECK: field L0.0 "x" proven=string writers-known
 # CHECK: field L1.0 "x" proven=true writers-known
 # CHECK: field L4.0 "x" proven=string writers-known
 # CHECK: field L5.0 "x" proven=string writers-known
 # CHECK: field L6.0 "x" proven=string writers-known
-# CHECK: layout L0 changes=[]
-# CHECK: layout L1 changes=[]
-# CHECK: layout L2 changes=[IsFrozen, GainsProperty, LosesProperty, ChangesPrototype, GetsAccessor]
-# CHECK: layout L3 changes=[IsFrozen, GainsProperty, LosesProperty, ChangesPrototype, GetsAccessor]
-# CHECK: layout L4 changes=[]
-# CHECK: layout L5 changes=[]
-# CHECK: layout L6 changes=[]
-# CHECK: layout L7 changes=[IsFrozen, GainsProperty, LosesProperty, ChangesPrototype, GetsAccessor]
-# CHECK: layout L8 changes=[IsFrozen, GainsProperty, LosesProperty, ChangesPrototype, GetsAccessor]
-# CHECK: layout L9 changes=[IsFrozen, GainsProperty, LosesProperty, ChangesPrototype, GetsAccessor]
+# CHECK: layout L0 {{*}}changes=[]
+# CHECK: layout L1 {{*}}changes=[]
+# CHECK: layout L2 {{*}}changes=[IsFrozen, GainsProperty, LosesProperty, ChangesPrototype, GetsAccessor]
+# CHECK: layout L3 {{*}}changes=[IsFrozen, GainsProperty, LosesProperty, ChangesPrototype, GetsAccessor]
+# CHECK: layout L4 {{*}}changes=[]
+# CHECK: layout L5 {{*}}changes=[]
+# CHECK: layout L6 {{*}}changes=[]
+# CHECK: layout L7 {{*}}changes=[IsFrozen, GainsProperty, LosesProperty, ChangesPrototype, GetsAccessor]
+# CHECK: layout L8 {{*}}changes=[IsFrozen, GainsProperty, LosesProperty, ChangesPrototype, GetsAccessor]
+# CHECK: layout L9 {{*}}changes=[IsFrozen, GainsProperty, LosesProperty, ChangesPrototype, GetsAccessor]
 # RUN(ANSWER): run-in-shell globalThis.flag = false; globalThis.report = value => print(String(value)); globalThis.sink = o => { o.x = "changed"; o.more = 1; print(Object.keys(o).join()); };
 # ANSWER: boolean
 # ANSWER-NEXT: x,s,more

@@ -141,7 +141,7 @@ static void emitConstantsOfThunk(CCallHelpers& jit, std::span<const uint64_t> mo
     });
 }
 
-static std::expected<ArgumentThunks, LinkFailure> generateArgumentThunksOfChunk(BuildContext& context, const StubCatalog& catalog, std::span<const ArgumentMoves* const> lists, std::span<const uint32_t> stubKeyIndexes)
+static std::expected<ArgumentThunks, LinkFailure> generateArgumentThunksOfChunk(BuildContext& context, const StubCatalog& catalog, std::span<const KeptArgumentMoves> lists, std::span<const uint32_t> stubKeyIndexes)
 {
     ArgumentThunks result;
     CCallHelpers jit;
@@ -151,7 +151,7 @@ static std::expected<ArgumentThunks, LinkFailure> generateArgumentThunksOfChunk(
     Vector<CCallHelpers::Label> labels;
     labels.reserveInitialCapacity(lists.size());
     for (size_t index = 0; index < lists.size(); ++index) {
-        std::span<const uint64_t> words = lists[index]->span();
+        std::span<const uint64_t> words = lists[index].span();
         StubKey key = StubKey::fromBits(words[0]);
         RELEASE_ASSERT(exists(key));
         const StubSignature& signature = catalog.summaryOf(key).signature;
@@ -183,21 +183,20 @@ static std::expected<ArgumentThunks, LinkFailure> generateArgumentThunksOfChunk(
     return result;
 }
 
-std::expected<ArgumentThunks, LinkFailure> generateArgumentThunks(BuildContext& context, const StubCatalog& catalog, const Vector<const ArgumentMoves*>& all)
+std::expected<ArgumentThunks, LinkFailure> generateArgumentThunks(BuildContext& context, const StubCatalog& catalog, const Vector<KeptArgumentMoves>& all)
 {
     constexpr size_t listsInChunk = 1024;
     ArgumentThunks result;
     if (all.isEmpty())
         return result;
-    ASSERT(std::ranges::is_sorted(all, [](const ArgumentMoves* a, const ArgumentMoves* b) {
-        return std::ranges::lexicographical_compare(*a, *b);
+    ASSERT(std::ranges::is_sorted(all, [](KeptArgumentMoves a, KeptArgumentMoves b) {
+        return std::ranges::lexicographical_compare(a.span(), b.span());
     }));
 
     Vector<uint32_t> stubKeyIndexes;
     stubKeyIndexes.reserveInitialCapacity(all.size());
-    for (const ArgumentMoves* list : all) {
-        RELEASE_ASSERT(list->size() >= numberOfHeaderWords);
-        StubKey key = StubKey::fromBits((*list)[0]);
+    for (KeptArgumentMoves list : all) {
+        StubKey key = calleeOfArgumentMoves(list.span());
         if (result.stubKeys.isEmpty() || result.stubKeys.last() != key)
             result.stubKeys.append(key);
         stubKeyIndexes.append(safeCast<uint32_t>(result.stubKeys.size() - 1));

@@ -11,6 +11,7 @@
 #include "AOTConvention.h"
 #include "AOTInstance.h"
 #include "AOTStubsCalls.h"
+#include "AOTStubsGlobalBindings.h"
 #include "AOTStubsValues.h"
 #include "JSObject.h"
 #include "JSTypeInfo.h"
@@ -18,9 +19,51 @@
 
 namespace JSC { namespace AOT {
 
+static void readConstructorOffGlobalNameAndGoOn(StubAssembler& jit, GlobalBindingScope scope)
+{
+    const GPRReg value = jit.operand(0);
+    const GPRReg constructor = jit.clobberRegister(jit.immediate());
+    const GPRReg number = jit.allocateScratch(StubRegister::T11);
+    const GPRReg index = jit.allocateScratch(StubRegister::T12);
+    const GPRReg record = index;
+    const GPRReg global = jit.allocateScratch(StubRegister::T10);
+    JumpList asksStubOfBinding;
+
+    static_assert(sizeof(GlobalBinding) == 3 * sizeof(uint64_t) && !OBJECT_OFFSETOF(GlobalBinding, constant));
+    jit.zeroExtend32ToWord(jit.immediate(), number);
+    jit.getEffectiveAddress(BaseIndex(number, number, CCallHelpers::TimesTwo), index);
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(runtime.bindings.globalBindings)), constructor);
+    jit.load64(BaseIndex(constructor, index, CCallHelpers::TimesEight), constructor);
+    Jump hasNoConstant = jit.branchTest64(CCallHelpers::Zero, constructor);
+    jit.jumpToStub(instanceOf(InstanceOfOperand::Constructor));
+
+    hasNoConstant.link(&jit);
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(runtime.bindings.globalBindings)), constructor);
+    jit.getEffectiveAddress(BaseIndex(constructor, index, CCallHelpers::TimesEight), record);
+    loadValueAtLocationOfGlobalBinding(jit, scope == GlobalBindingScope::ScriptsAndGlobalObject, record, global, constructor, asksStubOfBinding);
+    jit.jumpToStub(instanceOf(InstanceOfOperand::Constructor));
+
+    const StubKey read = getGlobalBinding(scope);
+    const StubSignature signatureOfRead = signatureOf(read);
+    asksStubOfBinding.link(&jit);
+    jit.emitFunctionPrologue();
+    jit.preserving({ value }, [&] {
+        jit.move(number, *signatureOfRead.immediate);
+        jit.callStub(read);
+        jit.move(signatureOfRead.firstResult.gpr(), constructor);
+    });
+    jit.emitFunctionEpilogue();
+    jit.jumpToStub(instanceOf(InstanceOfOperand::Constructor));
+}
+
 void generateInstanceOf(StubAssembler& jit)
 {
-    const bool isGivenPrototype = static_cast<InstanceOfOperand>(jit.key().form()) == InstanceOfOperand::Prototype;
+    const auto operand = static_cast<InstanceOfOperand>(jit.key().form());
+    if (operand == InstanceOfOperand::NameSeenByScripts || operand == InstanceOfOperand::NameOfGlobalObject) {
+        readConstructorOffGlobalNameAndGoOn(jit, operand == InstanceOfOperand::NameSeenByScripts ? GlobalBindingScope::ScriptsAndGlobalObject : GlobalBindingScope::GlobalObject);
+        return;
+    }
+    const bool isGivenPrototype = operand == InstanceOfOperand::Prototype;
     const GPRReg prototype = isGivenPrototype ? jit.operand(1) : jit.clobberOperand(1);
     const GPRReg constructor = prototype;
     const GPRReg current = jit.allocateScratch(StubRegister::T11);
@@ -175,7 +218,14 @@ void generateInstanceOf(StubAssembler& jit)
     jit.exitOnMiss(Entry::operationAOTInstanceOfAndCache, { .secondArgumentIn = value, .thirdArgumentIn = constructor });
 }
 
-StubSignature signatureOfInstanceOf(StubKey) { return StubSignature::withGPRResult({ gprOf(StubRegister::R0), gprOf(StubRegister::A1) }); }
+StubSignature signatureOfInstanceOf(StubKey key)
+{
+    if (static_cast<InstanceOfOperand>(key.form()) <= InstanceOfOperand::Prototype)
+        return StubSignature::withGPRResult({ gprOf(StubRegister::R0), gprOf(StubRegister::A1) });
+    StubSignature signature = StubSignature::withGPRResult({ gprOf(StubRegister::R0) });
+    signature.immediate = gprOf(StubRegister::A1);
+    return signature;
+}
 
 } } // namespace JSC::AOT
 

@@ -492,6 +492,12 @@ void generateFinishRegExpExec(StubAssembler& jit)
     jit.callOperationAndReturn(Entry::operationAOTRegExpMatchLiteral, { });
 }
 
+static void checkOriginalRegExp(StubAssembler& jit, GPRReg regExpObject, GPRReg scratch, JumpList& slowCases)
+{
+    jit.load32(Address(regExpObject, JSCell::structureIDOffset()), scratch);
+    slowCases.append(jit.branch32(CCallHelpers::NotEqual, scratch, Address(instanceGPR, Instance::offsetOfReceiverStructureID(Receiver::RegExp))));
+}
+
 void generateRegExpMatch(StubAssembler& jit)
 {
     const auto form = static_cast<RegExpMatchResult>(jit.key().form());
@@ -504,6 +510,8 @@ void generateRegExpMatch(StubAssembler& jit)
     const GPRReg flags = length;
     JumpList slowCases;
 
+    if (stringIsInFront)
+        checkOriginalRegExp(jit, regExpObject, scratch, slowCases);
     Label begin = jit.label();
     Jump isRope = loadFlatSubject(jit, registers, string);
     Label hasCharacters = jit.label();
@@ -563,12 +571,6 @@ void generateRegExpMatch(StubAssembler& jit)
     jit.callOperationAndReturn(answers.generic, { });
 }
 
-static void checkOriginalRegExp(StubAssembler& jit, GPRReg regExpObject, GPRReg scratch, JumpList& slowCases)
-{
-    jit.load32(Address(regExpObject, JSCell::structureIDOffset()), scratch);
-    slowCases.append(jit.branch32(CCallHelpers::NotEqual, scratch, Address(instanceGPR, Instance::offsetOfReceiverStructureID(Receiver::RegExp))));
-}
-
 static void resetLastIndexIfGlobal(StubAssembler& jit, GPRReg flags, GPRReg regExpObject)
 {
     Jump isNotGlobal = jit.branchTest32(CCallHelpers::Zero, flags, TrustedImm32(globalFlag));
@@ -585,7 +587,18 @@ void generateStringReplaceRegExpMayNotMatch(StubAssembler& jit)
     const auto [scratch, impl, regExp, characters, subjectLength, length] = registers;
     const GPRReg flags = length;
     const std::array savedOperands { string, regExpObject, replacement };
+    const bool takesAnyValue = static_cast<ReplacementOfMatches>(jit.key().form()) == ReplacementOfMatches::AnyValue;
     JumpList slowCases;
+    JumpList isNeitherTextNorFunction;
+
+    if (takesAnyValue) {
+        isNeitherTextNorFunction.append(jit.branchIfNotCell(replacement));
+        Jump isText = jit.branchIfString(replacement);
+        Jump isFunction = jit.branchIfType(replacement, jsFunctionTypes);
+        isNeitherTextNorFunction.append(jit.branchIfNotType(replacement, slimClosureTypes));
+        isText.link(&jit);
+        isFunction.link(&jit);
+    }
 
     Label begin = jit.label();
     Jump isRope = loadFlatSubject(jit, registers, string);
@@ -640,7 +653,8 @@ void generateStringReplaceRegExpMayNotMatch(StubAssembler& jit)
     jit.callOperationAndReturn(Entry::operationAOTStringReplaceRegExpString, { });
 
     isNoText.link(&jit);
-    jit.callOperationAndReturn(Entry::operationAOTStringReplaceRegExpWithFunction, { });
+    isNeitherTextNorFunction.link(&jit);
+    jit.callOperationAndReturn(takesAnyValue ? Entry::operationAOTStringReplaceRegExp : Entry::operationAOTStringReplaceRegExpWithFunction, { });
 }
 
 void generateNewRegExpLiteral(StubAssembler& jit)

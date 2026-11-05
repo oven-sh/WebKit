@@ -19,7 +19,9 @@ namespace JSC { namespace AOT {
 
 bool Modules::isSomeLoadUnderWay() const
 {
-    if (m_instance.vm->synchronousModuleQueue() || m_rootWhoseFilesRun || m_rootWhoseFilesRanAhead || m_fileWhoseJobsWaitForLoader || !m_levelsOfLoads.isEmpty() || !m_textsOnTheirWay.isEmpty())
+    if (m_instance.vm->synchronousModuleQueue() || m_rootWhoseFilesRun || m_rootWhoseFilesRanAhead || m_fileWhoseJobsWaitForLoader || !m_textsOnTheirWay.isEmpty())
+        return true;
+    if (std::ranges::any_of(m_levelsOfLoads.values(), [&](auto& level) { return !hasGraphRun(*level); }))
         return true;
     if (!m_firstModuleRequestedByHost || status(*m_firstModuleRequestedByHost) < ModuleStatus::Evaluating)
         return true;

@@ -20,6 +20,7 @@
 #include <memory>
 #include <optional>
 #include <span>
+#include <wtf/StdLibExtras.h>
 
 namespace JSC { namespace AOT {
 
@@ -41,16 +42,95 @@ inline void appendArgumentMove(ArgumentMoves& moves, GPRReg destination, Argumen
     moves.append(payload);
 }
 
-inline ArgumentSource sourceOfArgumentMove(const ArgumentMoves& moves, size_t index)
+inline ArgumentSource sourceOfArgumentMove(std::span<const uint64_t> moves, size_t index)
 {
     return static_cast<ArgumentSource>(moves[index] & 0xff);
 }
 
-inline void setSourceOfArgumentMove(ArgumentMoves& moves, size_t index, ArgumentSource source, uint64_t payload)
+inline void setSourceOfArgumentMove(std::span<uint64_t> moves, size_t index, ArgumentSource source, uint64_t payload)
 {
     moves[index] = (moves[index] & ~static_cast<uint64_t>(0xff)) | static_cast<uint64_t>(source);
     moves[index + 1] = payload;
 }
+
+inline StubKey calleeOfArgumentMoves(std::span<const uint64_t> moves)
+{
+    RELEASE_ASSERT(moves.size() >= numberOfHeaderWords);
+    return StubKey::fromBits(moves[0]);
+}
+
+class ArgumentMovesOfUnit {
+public:
+    ArgumentMovesOfUnit() = default;
+    explicit ArgumentMovesOfUnit(std::span<const ArgumentMoves> lists)
+    {
+        if (lists.empty())
+            return;
+        size_t end = numberOfWordsInFrontOfLists(lists.size());
+        size_t numberOfWords = end;
+        for (const ArgumentMoves& list : lists)
+            numberOfWords += list.size();
+        m_words.reserveInitialCapacity(numberOfWords);
+        m_words.grow(numberOfWords);
+        std::span<uint64_t> words = m_words.mutableSpan();
+        zeroSpan(words.first(end));
+        auto setHalfWord = [&](size_t index, size_t value) {
+            words[index / 2] |= static_cast<uint64_t>(value) << (index % 2 * 32);
+        };
+        setHalfWord(0, lists.size());
+        for (size_t index = 0; index < lists.size(); ++index) {
+            for (uint64_t word : lists[index])
+                words[end++] = word;
+            setHalfWord(1 + index, end);
+        }
+    }
+
+    size_t size() const { return m_words.isEmpty() ? 0 : halfWord(0); }
+    bool isEmpty() const { return m_words.isEmpty(); }
+    std::span<const uint64_t> operator[](size_t index) const
+    {
+        size_t begin = beginOfList(index);
+        return m_words.span().subspan(begin, endOfList(index) - begin);
+    }
+    std::span<uint64_t> operator[](size_t index)
+    {
+        size_t begin = beginOfList(index);
+        return m_words.mutableSpan().subspan(begin, endOfList(index) - begin);
+    }
+    ListOfUnit<uint64_t>& list() { return m_words; }
+
+    friend bool operator==(const ArgumentMovesOfUnit&, const ArgumentMovesOfUnit&) = default;
+
+private:
+    static size_t numberOfWordsInFrontOfLists(size_t numberOfLists) { return (1 + numberOfLists + 1) / 2; }
+
+    uint32_t halfWord(size_t index) const { return static_cast<uint32_t>(m_words[index / 2] >> (index % 2 * 32)); }
+    size_t endOfList(size_t index) const { return halfWord(1 + index); }
+    size_t beginOfList(size_t index) const
+    {
+        size_t numberOfLists = size();
+        RELEASE_ASSERT(index < numberOfLists);
+        return index ? endOfList(index - 1) : numberOfWordsInFrontOfLists(numberOfLists);
+    }
+
+    ListOfUnit<uint64_t> m_words;
+};
+
+class KeptArgumentMoves {
+public:
+    KeptArgumentMoves() = default;
+    KeptArgumentMoves(std::span<const uint64_t> words)
+        : m_words(words.data())
+        , m_size(words.size())
+    {
+    }
+
+    std::span<const uint64_t> span() const { return unsafeMakeSpan(m_words, m_size); }
+
+private:
+    const uint64_t* m_words;
+    size_t m_size;
+};
 
 inline constexpr uint64_t maxConstantInArgumentThunk = 255;
 
@@ -60,7 +140,7 @@ struct ArgumentThunks {
     Vector<StubKey> stubKeys;
 };
 
-std::expected<ArgumentThunks, LinkFailure> generateArgumentThunks(BuildContext&, const StubCatalog&, const Vector<const ArgumentMoves*>&);
+std::expected<ArgumentThunks, LinkFailure> generateArgumentThunks(BuildContext&, const StubCatalog&, const Vector<KeptArgumentMoves>&);
 
 struct NumberedImmediate {
     uint32_t mention;
@@ -132,7 +212,7 @@ private:
     Vector<std::optional<uint32_t>, 16> m_mentionsOfImmediates;
     Vector<uint32_t> m_placesOfStubKeys;
     Vector<Typed::CodeUnit> m_callees;
-    ListOfUnit<ArgumentMoves> m_argumentMoves;
+    ListOfUnit<ArgumentMoves, 16> m_argumentMoves;
 };
 
 } } // namespace JSC::AOT

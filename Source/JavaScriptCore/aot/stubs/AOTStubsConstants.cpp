@@ -510,6 +510,24 @@ StubSignature signatureOfGetGlobalBinding(StubKey)
     return signatureOfConstant();
 }
 
+void loadValueAtLocationOfGlobalBinding(StubAssembler& jit, bool seesScriptBindings, GPRReg record, GPRReg global, GPRReg result, JumpList& cannot)
+{
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(globalObject)), global);
+    jit.load32(Address(global, JSCell::structureIDOffset()), result);
+    cannot.append(jit.branch32(CCallHelpers::NotEqual, result, Address(record, OBJECT_OFFSETOF(GlobalBinding, structureID))));
+    if (seesScriptBindings) {
+        jit.load32(Address(global, JSGlobalObject::globalLexicalBindingEpochOffset()), result);
+        cannot.append(jit.branch32(CCallHelpers::NotEqual, result, Address(record, OBJECT_OFFSETOF(GlobalBinding, lexicalBindingEpoch))));
+    }
+    jit.load64(Address(record, OBJECT_OFFSETOF(GlobalBinding, location)), record);
+    Jump isAddress = jit.branch64(CCallHelpers::GreaterThanOrEqual, record, TrustedImm32(0));
+    jit.loadPtr(Address(global, JSObject::butterflyOffset()), global);
+    jit.add64(global, record);
+    isAddress.link(&jit);
+    jit.load64(Address(record), result);
+    cannot.append(jit.branchTest64(CCallHelpers::Zero, result));
+}
+
 void generateGetGlobalBinding(StubAssembler& jit)
 {
     const auto scope = static_cast<GlobalBindingScope>(jit.key().form());
@@ -533,20 +551,7 @@ void generateGetGlobalBinding(StubAssembler& jit)
     jit.returnToCaller();
 
     isNoConstant.link(&jit);
-    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(globalObject)), global);
-    jit.load32(Address(global, JSCell::structureIDOffset()), result);
-    callsOperation.append(jit.branch32(CCallHelpers::NotEqual, result, Address(record, OBJECT_OFFSETOF(GlobalBinding, structureID))));
-    if (scope == GlobalBindingScope::ScriptsAndGlobalObject) {
-        jit.load32(Address(global, JSGlobalObject::globalLexicalBindingEpochOffset()), result);
-        callsOperation.append(jit.branch32(CCallHelpers::NotEqual, result, Address(record, OBJECT_OFFSETOF(GlobalBinding, lexicalBindingEpoch))));
-    }
-    jit.load64(Address(record, OBJECT_OFFSETOF(GlobalBinding, location)), record);
-    Jump isAddress = jit.branch64(CCallHelpers::GreaterThanOrEqual, record, TrustedImm32(0));
-    jit.loadPtr(Address(global, JSObject::butterflyOffset()), global);
-    jit.add64(global, record);
-    isAddress.link(&jit);
-    jit.load64(Address(record), result);
-    callsOperation.append(jit.branchTest64(CCallHelpers::Zero, result));
+    loadValueAtLocationOfGlobalBinding(jit, scope == GlobalBindingScope::ScriptsAndGlobalObject, record, global, result, callsOperation);
     jit.returnToCaller();
 
     callsOperation.link(&jit);

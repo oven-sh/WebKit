@@ -571,7 +571,6 @@ bool CodeTypeVerifier::takesEntryParametersOfFunction() const
     case CodeRole::AllocatingConstructEntry:
     case CodeRole::TableEntry:
     case CodeRole::TableLookup:
-    case CodeRole::Serializer:
         return false;
     }
     RELEASE_ASSERT_NOT_REACHED();

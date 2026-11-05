@@ -276,7 +276,7 @@ static void testMemoryConstantDataSaysWhatItIs()
     compileOrFail(test);
     AOT_TEST_CHECK(test.call<double>(2.5) == 2.5 + number);
 
-    decltype(CodeBody::constants) described;
+    decltype(RareListsOfBody::constants) described;
     describeConstants(test.procedure(), described);
     AOT_TEST_CHECK(described.size() == 2 && !constant);
     AOT_TEST_CHECK(described[0].kind == ConstantKind::ShapeSet);

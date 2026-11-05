@@ -366,7 +366,6 @@ static std::optional<SegmentOfExecutable> findSegmentOfExecutable(const uint8_t*
 #endif
 
 #if OS(LINUX) || OS(FREEBSD)
-// The number of a descriptor that is kept may come to name another file: a program may close every descriptor it finds. So none is kept: whoever maps out of the executable opens it, maps and closes it.
 static int openExecutable(const Invocable<bool(int)> auto& isWanted)
 {
     auto closeUnlessWanted = [&](int& descriptor) {
@@ -387,7 +386,6 @@ static int openExecutable(const Invocable<bool(int)> auto& isWanted)
     return descriptor;
 }
 
-// At the start, while the name is fresh. These bytes are the same in every program that one Bun builds.
 static int openExecutableAt(std::span<const uint8_t> bytes, int64_t offsetInFile)
 {
     return openExecutable([&](int descriptor) {
@@ -396,7 +394,6 @@ static int openExecutableAt(std::span<const uint8_t> bytes, int64_t offsetInFile
     });
 }
 
-// Behind the start a name may have gone to another build. The file that was loaded stays what it is while its mappings live.
 int openExecutableThatHolds(const Image& image)
 {
     const std::optional<Image::PlaceInExecutable>& place = image.placeInExecutable();
@@ -496,13 +493,13 @@ static const void* mapCodeOfImage(std::span<const uint8_t> bytes, std::optional<
 #endif
 }
 
+#if OS(DARWIN)
 bool mapPrivateCloneOfImagePages(const Image& image, std::span<const uint8_t> pages, void* target)
 {
     RELEASE_ASSERT(!(pages.size() % pageSize()) && !(reinterpret_cast<uintptr_t>(target) % pageSize()));
     RELEASE_ASSERT(pages.data() >= image.bytes().data() && pages.data() + pages.size() <= image.bytes().data() + image.bytes().size());
     if (reinterpret_cast<uintptr_t>(pages.data()) % pageSize())
         return false;
-#if OS(DARWIN)
     mach_vm_address_t address = reinterpret_cast<mach_vm_address_t>(target);
     vm_prot_t currentProtection;
     vm_prot_t maxProtection;
@@ -513,11 +510,8 @@ bool mapPrivateCloneOfImagePages(const Image& image, std::span<const uint8_t> pa
     RELEASE_ASSERT(mach_vm_protect(mach_task_self(), address, pages.size(), true, VM_PROT_READ | VM_PROT_WRITE | VM_PROT_COPY) == KERN_SUCCESS);
     RELEASE_ASSERT(mach_vm_protect(mach_task_self(), address, pages.size(), false, VM_PROT_READ) == KERN_SUCCESS);
     return true;
-#else
-    UNUSED_PARAM(target);
-    return false;
-#endif
 }
+#endif
 
 static void unblockAccessFaults()
 {

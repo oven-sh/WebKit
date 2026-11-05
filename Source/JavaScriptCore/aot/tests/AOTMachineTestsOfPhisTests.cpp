@@ -143,6 +143,47 @@ static void testValueOfTestWherePhiHolds()
     out.ret(wide);
 }
 
+static void testThirdArmPassesByJoinWhosePassingBlockHasBeenSkipped()
+{
+    constexpr int64_t upperHalf = int64_t { 0x5a5a } << 48;
+    TestOfPhiTest test;
+    Output& out = test.out;
+    LBasicBlock boxes = out.newBlock();
+    LBasicBlock doesNotBox = out.newBlock();
+    LBasicBlock join = out.newBlock();
+    LBasicBlock boxesNext = out.newBlock();
+    LBasicBlock brings = out.newBlock();
+    LBasicBlock passes = out.newBlock();
+    LBasicBlock fails = out.newBlock();
+    LBasicBlock behind = out.newBlock();
+    LValue held = out.phiIn(join, Int64);
+    LValue bound = out.constInt64(upperHalf);
+    auto box = [&](LValue word) {
+        return out.add(out.zeroExtPtr(word), bound);
+    };
+    out.branch(out.equal(test.first, out.constInt64(1)), normalEdge(boxes), normalEdge(doesNotBox));
+    out.appendTo(boxes);
+    out.upsilon(box(out.castToInt32(test.second)), held);
+    out.jump(join);
+    out.appendTo(doesNotBox);
+    out.branch(out.equal(test.first, out.constInt64(2)), normalEdge(boxesNext), normalEdge(brings));
+    out.appendTo(boxesNext);
+    out.upsilon(box(out.add(out.castToInt32(test.second), 1)), held);
+    out.jump(join);
+    out.appendTo(brings);
+    out.upsilon(test.third, held);
+    out.jump(join);
+    out.appendTo(join);
+    out.branch(out.aboveOrEqual(held, bound), normalEdge(passes), normalEdge(fails));
+    out.appendTo(passes);
+    out.jump(behind);
+    test.returnConstant(fails, 8);
+    test.returnConstant(behind, 9);
+    test.compile();
+
+    AOT_TEST_OF_PHI_CHECK(test, test.run(1, 5) == 9 && test.run(2, 5) == 9 && test.run(0, 0, 7) == 8);
+}
+
 enum class KindOfWordInBox : uint8_t {
     IsAskedWhetherAtLeast,
     IsAskedWhetherBelow,
@@ -312,6 +353,7 @@ std::span<const NativeTest> machineTestsOfPhisTests()
         { "machine-tests-of-phis/join-that-tests-bits-of-a-sum-of-its-phi-is-passed-by"_s, Machine::testJoinThatComparesItsPhiIsPassedBy<KindOfTestOfPhi::TestsBitsOfSum> },
         { "machine-tests-of-phis/value-of-a-test-where-the-phi-holds-a-constant"_s, Machine::testValueOfTestWherePhiHolds },
         { "machine-tests-of-phis/words-in-boxes-of-two-arms-pass-by-the-join"_s, Machine::testWordInBoxPassesByJoinThatAsksForBox<KindOfWordInBox::ComesByTwoArms> },
+        { "machine-tests-of-phis/a-third-arm-passes-by-a-join-whose-passing-block-has-been-skipped"_s, Machine::testThirdArmPassesByJoinWhosePassingBlockHasBeenSkipped },
         { "machine-tests-of-phis/word-in-a-box-that-is-an-index-where-it-passes-passes-by-the-join"_s, Machine::testWordInBoxPassesByJoinThatAsksForBox<KindOfWordInBox::IsIndexWhereItPasses> },
         { "machine-tests-of-phis/word-in-a-box-that-nothing-reads-where-it-passes-passes-by-the-join"_s, Machine::testWordInBoxPassesByJoinThatAsksForBox<KindOfWordInBox::IsNotReadWhereItPasses> },
         { "machine-tests-of-phis/box-that-is-read-whole-where-it-passes-goes-through-the-join"_s, Machine::testWordInBoxPassesByJoinThatAsksForBox<KindOfWordInBox::IsReadWholeWhereItPasses> },

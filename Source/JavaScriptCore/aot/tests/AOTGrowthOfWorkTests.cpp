@@ -112,6 +112,34 @@ static void testEachOfManyMembersIsFoundByItsKey()
     });
 }
 
+static void testEachOfManyEffectsIsKeptOnceAndStaysWhereItLies()
+{
+    constexpr uint32_t numberOfEffects = 100000;
+    auto effectsOf = [](uint32_t number) {
+        Effects effects = Effects::none();
+        effects.reads.add(AbstractHeap::ObjectFields, uint64_t { number } + 1);
+        effects.writes.add(AbstractHeap::ModuleVariables, uint64_t { number } * 7919 + 1);
+        effects.mayCollect = !!(number % 2);
+        return effects;
+    };
+    DistinctEffects distinct;
+    Vector<const Effects*> kept(numberOfEffects);
+    for (unsigned round = 0; round < 2; ++round) {
+        for (uint32_t number = 0; number < numberOfEffects; ++number)
+            kept[number] = distinct.keep(effectsOf(number));
+    }
+    AOT_TEST_CHECK(*distinct.keep(Effects::unknownCode()) == Effects::unknownCode());
+
+    Vector<Vector<Effects>> blocks;
+    blocks.appendVector(distinct.takeBlocks());
+    size_t numberInBlocks = 0;
+    for (const Vector<Effects>& block : blocks)
+        numberInBlocks += block.size();
+    AOT_TEST_CHECK(numberInBlocks == numberOfEffects);
+    for (uint32_t number = 0; number < numberOfEffects; ++number)
+        AOT_TEST_CHECK(*kept[number] == effectsOf(number));
+}
+
 static std::optional<uint64_t> instructionsOfPlanForGrowthTests(const String& text)
 {
     std::optional<uint64_t> instructions;
@@ -218,6 +246,40 @@ static void testFactsGrowAsClassesBelowOneClassDo()
     InstructionCounts::begin();
     std::optional<uint64_t> smaller = instructionsOfFactsForGrowthTests(classesBelowOneClassForGrowthTests(numberOfClasses));
     std::optional<uint64_t> large = instructionsOfFactsForGrowthTests(classesBelowOneClassForGrowthTests(4 * numberOfClasses));
+    AOT_TEST_CHECK(growsAsSizeDoes(smaller, large));
+}
+
+static String objectsCreatedBelowOneLiteralForGrowthTests(unsigned numberOfSites)
+{
+    StringBuilder text;
+    text.append("layout L0 module=m0 fields=[{key=\"code\" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1\n"_s);
+    for (unsigned site = 0; site < numberOfSites; ++site)
+        text.append("layout L"_s, site + 1, " kind=Instance module=m0 flags=[IsOfCreatedObject]\n"_s);
+    text.append("variable g0 name=\"above\" module=m0 declared={type=anything|absent} flags=[IsImmutable]\n"_s);
+    text.append("module m0 path=\"main.js\" displayPath=\"main.js\" body=f0\nentry module=m0\n"_s);
+    text.append("function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {\n  b0():\n    v0 = NewObject layout=L0\n    v1 = NewClosure function=f1\n    DefineGetter v0, v1 key=\"code\"\n"_s);
+    text.append("    v3 = NewClosure function=f2\n    DefineSetter v0, v3 key=\"code\"\n    v5 = FinishObject v0\n    PutModuleVariable v5 variable=g0\n    v7 = Integer integer=1\n"_s);
+    unsigned value = 8;
+    for (unsigned site = 0; site < numberOfSites; ++site, value += 2)
+        text.append("    v"_s, value, " = NewClosure function=f"_s, site + 3, "\n    v"_s, value + 1, " = Call v"_s, value, ", -, v7\n"_s);
+    text.append("    v"_s, value, " = Undefined\n    Return v"_s, value, "\n}\n"_s);
+    text.append("function f1 name=\"code\" module=m0 kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=anything}] {\n  b0(v0: anything):\n    v1 = PropGet v0 key=\"held\"\n    Return v1\n}\n"_s);
+    text.append("function f2 name=\"code\" module=m0 kind=Setter flags=[HasThis] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {\n  b0(v0: anything, v1: anything):\n"_s);
+    text.append("    PropSet v0, v1 key=\"held\"\n    v3 = Undefined\n    Return v3\n}\n"_s);
+    for (unsigned site = 0; site < numberOfSites; ++site) {
+        text.append("function f"_s, site + 3, " name=\"make\" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {\n  b0(v0: anything):\n"_s);
+        text.append("    v1 = GetModuleVariable variable=g0\n    v2 = CheckInitialized v1 name=\"above\"\n    v3 = NewObject layout=L"_s, site + 1, "\n    SetLiteralPrototype v3, v2 [refusesOtherValues]\n"_s);
+        text.append("    v5 = FinishObject v3\n    PropSet v5, v0 key=\"code\"\n    v7 = PropGet v5 key=\"code\"\n    Return v7\n}\n"_s);
+    }
+    return text.toString();
+}
+
+static void testFactsGrowAsObjectsCreatedBelowOneLiteralDo()
+{
+    constexpr unsigned numberOfSites = 1000;
+    InstructionCounts::begin();
+    std::optional<uint64_t> smaller = instructionsOfFactsForGrowthTests(objectsCreatedBelowOneLiteralForGrowthTests(numberOfSites));
+    std::optional<uint64_t> large = instructionsOfFactsForGrowthTests(objectsCreatedBelowOneLiteralForGrowthTests(4 * numberOfSites));
     AOT_TEST_CHECK(growsAsSizeDoes(smaller, large));
 }
 
@@ -328,6 +390,136 @@ static void testWalkGrowsAsIterationsInRowDo()
     InstructionCounts::begin();
     std::optional<uint64_t> smaller = instructionsOfWalkForGrowthTests(loopsInRowForGrowthTests(LoopInRowForGrowthTests::OverList, numberOfLoops), FunctionID(1u));
     std::optional<uint64_t> large = instructionsOfWalkForGrowthTests(loopsInRowForGrowthTests(LoopInRowForGrowthTests::OverList, 4 * numberOfLoops), FunctionID(1u));
+    AOT_TEST_CHECK(growsAsSizeDoes(smaller, large));
+}
+
+enum class LoopsOverGeneratorsForGrowthTests : uint8_t {
+    YieldsAndStatements,
+    InsideOneAnother,
+    GeneratorsOverOneAnother,
+};
+
+static void appendHeadOfGeneratorForGrowthTests(StringBuilder& text, unsigned function)
+{
+    text.append("function f"_s, function, " name=\"made"_s, function, "\" module=m0 flags=[IsGenerator, HasThis, TakesCallee, IsChecked] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {\n"_s);
+    text.append("  b0(v0: anything, v1: function, v2: anything):\n    InitialYield v2, v0\n"_s);
+}
+
+static void appendGeneratorOfYieldsInRowForGrowthTests(StringBuilder& text, unsigned function, unsigned numberOfYields)
+{
+    appendHeadOfGeneratorForGrowthTests(text, function);
+    unsigned value = 4;
+    unsigned block = 1;
+    for (unsigned yield = 0; yield < numberOfYields; ++yield) {
+        text.append("    v"_s, value, " = Yield v2, v2, v0\n    v"_s, value + 1, " = ResultAt v"_s, value, "\n    v"_s, value + 2, " = ResultAt v"_s, value, " index=1\n"_s);
+        text.append("    Switch v"_s, value + 2, " cases=[1, 2] -> case b"_s, block, "(), case b"_s, block + 1, "(), otherwise b"_s, block + 2, "()\n"_s);
+        text.append("  b"_s, block, "():\n    Throw v"_s, value + 1, "\n  b"_s, block + 1, "():\n    Return v"_s, value + 1, "\n  b"_s, block + 2, "():\n"_s);
+        value += 3;
+        block += 3;
+    }
+    text.append("    v"_s, value, " = Undefined\n    Return v"_s, value, "\n}\n"_s);
+}
+
+static void appendGeneratorOverGeneratorForGrowthTests(StringBuilder& text, unsigned function, unsigned variableOfInner, unsigned numberOfYields)
+{
+    appendHeadOfGeneratorForGrowthTests(text, function);
+    text.append("    v4 = GetModuleVariable variable=g"_s, variableOfInner, "\n    v5 = Call v4, -, v2\n    v6 = IteratorOpen v5\n    Jump -> next b1()\n"_s);
+    text.append("  b1():\n    LoopHint\n    v8 = IteratorResume v6\n    v9 = ResultAt v8\n    v10 = ResultAt v8 index=1\n    Branch v9 -> taken b2(), notTaken b3()\n"_s);
+    text.append("  b2():\n    v11 = Undefined\n    Return v11\n  b3():\n    Jump -> next b4()\n"_s);
+    unsigned close = 4 + 3 * numberOfYields;
+    unsigned back = close + 1;
+    unsigned cleanup = close + 2;
+    unsigned value = 12;
+    unsigned block = 4;
+    for (unsigned yield = 0; yield < numberOfYields; ++yield) {
+        text.append("  b"_s, block, "() handler=b"_s, cleanup, "():\n    v"_s, value, " = Yield v10, v2, v0\n    v"_s, value + 1, " = ResultAt v"_s, value, "\n    v"_s, value + 2, " = ResultAt v"_s, value, " index=1\n"_s);
+        text.append("    Switch v"_s, value + 2, " cases=[1, 2] -> case b"_s, block + 1, "(), case b"_s, block + 2, "(), otherwise b"_s, yield + 1 < numberOfYields ? block + 3 : back, "()\n"_s);
+        text.append("  b"_s, block + 1, "() handler=b"_s, cleanup, "():\n    Throw v"_s, value + 1, "\n  b"_s, block + 2, "() handler=b"_s, cleanup, "():\n    Jump -> next b"_s, close, "(v"_s, value + 1, ")\n"_s);
+        value += 3;
+        block += 3;
+    }
+    text.append("  b"_s, close, "(v"_s, value, "):\n    IteratorClose v6\n    Return v"_s, value, "\n  b"_s, back, "() handler=b"_s, cleanup, "():\n    Jump -> next b1()\n"_s);
+    text.append("  b"_s, cleanup, "() role=IterationCleanup subject=v6:\n    v"_s, value + 2, " = CatchException\n    IteratorClose v6 completion=Throw\n    Rethrow v"_s, value + 2, "\n}\n"_s);
+}
+
+static void appendLoopOverOneGeneratorForGrowthTests(StringBuilder& text, unsigned variable, unsigned numberOfStatements)
+{
+    text.append("    v1 = GetModuleVariable variable=g"_s, variable, "\n    v2 = Call v1, -, v0\n    v3 = IteratorOpen v2\n    Jump -> next b1(v0)\n"_s);
+    text.append("  b1(v4: number):\n    LoopHint\n    v6 = IteratorResume v3\n    v7 = ResultAt v6\n    v8 = ResultAt v6 index=1\n    Branch v7 -> taken b2(), notTaken b3()\n"_s);
+    text.append("  b2():\n    Return v4\n  b3():\n    Jump -> next b4()\n  b4() handler=b5():\n"_s);
+    unsigned value = 9;
+    for (unsigned statement = 0; statement < numberOfStatements; ++statement, ++value)
+        text.append("    v"_s, value, " = BitXor v"_s, statement ? value - 1 : 4, ", v0\n"_s);
+    text.append("    Jump -> next b1(v"_s, value - 1, ")\n  b5() role=IterationCleanup subject=v3:\n    v"_s, value, " = CatchException\n    IteratorClose v3 completion=Throw\n    Rethrow v"_s, value, "\n}\n"_s);
+}
+
+static String loopsOverGeneratorsForGrowthTests(LoopsOverGeneratorsForGrowthTests kind, unsigned size)
+{
+    StringBuilder text;
+    unsigned numberOfGenerators = kind == LoopsOverGeneratorsForGrowthTests::YieldsAndStatements ? 1 : size;
+    for (unsigned generator = 0; generator < numberOfGenerators; ++generator)
+        text.append("variable g"_s, generator, " name=\"made"_s, generator + 2, "\" module=m0 declared={type=f"_s, generator + 2, " flags=[IsFromCompiler]} initialization=Function function=f"_s, generator + 2, " flags=[IsImmutable]\n"_s);
+    text.append("module m0 path=\"main.js\" displayPath=\"main.js\" body=f0 namespaceLayout=L(m0)\nentry module=m0\n"_s);
+    text.append("function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] {\n  b0():\n    v0 = NewClosure function=f1\n    v1 = Integer integer=1\n    v2 = Call v0, -, v1\n    Return v2\n}\n"_s);
+    text.append("function f1 name=\"run\" module=m0 flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] {\n  b0(v0: number):\n"_s);
+
+    switch (kind) {
+    case LoopsOverGeneratorsForGrowthTests::YieldsAndStatements:
+        appendLoopOverOneGeneratorForGrowthTests(text, 0, size);
+        appendGeneratorOfYieldsInRowForGrowthTests(text, 2, size);
+        break;
+    case LoopsOverGeneratorsForGrowthTests::GeneratorsOverOneAnother:
+        appendLoopOverOneGeneratorForGrowthTests(text, size - 1, 1);
+        appendGeneratorOfYieldsInRowForGrowthTests(text, 2, 2);
+        for (unsigned generator = 1; generator < size; ++generator)
+            appendGeneratorOverGeneratorForGrowthTests(text, generator + 2, generator - 1, 2);
+        break;
+    case LoopsOverGeneratorsForGrowthTests::InsideOneAnother: {
+        auto cleanupOf = [&](unsigned level) {
+            return 3 * size + 1 + (size - 1 - level);
+        };
+        auto appendHandlerAround = [&](unsigned level) {
+            if (level)
+                text.append(" handler=b"_s, cleanupOf(level - 1), "()"_s);
+        };
+        unsigned value = 1;
+        for (unsigned level = 0; level < size; ++level, value += 8) {
+            text.append("    v"_s, value, " = GetModuleVariable variable=g"_s, level, "\n    v"_s, value + 1, " = Call v"_s, value, ", -, v0\n    v"_s, value + 2, " = IteratorOpen v"_s, value + 1, '\n');
+            text.append("    Jump -> next b"_s, 3 * level + 1, "(v"_s, level ? value - 5 : 0, ")\n  b"_s, 3 * level + 1, "(v"_s, value + 3, ": number)"_s);
+            appendHandlerAround(level);
+            text.append(":\n    LoopHint\n    v"_s, value + 5, " = IteratorResume v"_s, value + 2, "\n    v"_s, value + 6, " = ResultAt v"_s, value + 5, "\n    v"_s, value + 7, " = ResultAt v"_s, value + 5, " index=1\n"_s);
+            text.append("    Branch v"_s, value + 6, " -> taken b"_s, 3 * level + 2, "(), notTaken b"_s, 3 * level + 3, "()\n  b"_s, 3 * level + 2, "()"_s);
+            appendHandlerAround(level);
+            if (level)
+                text.append(":\n    Jump -> next b"_s, 3 * level - 2, "(v"_s, value + 3, ")\n"_s);
+            else
+                text.append(":\n    Return v"_s, value + 3, '\n');
+            text.append("  b"_s, 3 * level + 3, "()"_s);
+            appendHandlerAround(level + 1);
+            text.append(":\n"_s);
+        }
+        text.append("    v"_s, value, " = BitXor v"_s, value - 5, ", v0\n    Jump -> next b"_s, 3 * size - 2, "(v"_s, value, ")\n"_s);
+        ++value;
+        for (unsigned level = size; level--; value += 2) {
+            text.append("  b"_s, cleanupOf(level), "() role=IterationCleanup subject=v"_s, 8 * level + 3);
+            appendHandlerAround(level);
+            text.append(":\n    v"_s, value, " = CatchException\n    IteratorClose v"_s, 8 * level + 3, " completion=Throw\n    Rethrow v"_s, value, '\n');
+        }
+        text.append("}\n"_s);
+        for (unsigned generator = 0; generator < size; ++generator)
+            appendGeneratorOfYieldsInRowForGrowthTests(text, generator + 2, 3);
+        break;
+    }
+    }
+    return text.toString();
+}
+
+template<LoopsOverGeneratorsForGrowthTests kind, unsigned size>
+static void testWalkGrowsAsLoopsOverGeneratorsDo()
+{
+    InstructionCounts::begin();
+    std::optional<uint64_t> smaller = instructionsOfWalkForGrowthTests(loopsOverGeneratorsForGrowthTests(kind, size), FunctionID(1u));
+    std::optional<uint64_t> large = instructionsOfWalkForGrowthTests(loopsOverGeneratorsForGrowthTests(kind, 4 * size), FunctionID(1u));
     AOT_TEST_CHECK(growsAsSizeDoes(smaller, large));
 }
 
@@ -748,9 +940,11 @@ std::span<const NativeTest> growthOfWorkTests()
 {
     static constexpr NativeTest tests[] {
         { "growth-of-work/each-of-many-members-of-a-class-is-found-by-its-key"_s, testEachOfManyMembersIsFoundByItsKey },
+        { "growth-of-work/each-of-many-effects-is-kept-once-and-stays-where-it-lies"_s, testEachOfManyEffectsIsKeptOnceAndStaysWhereItLies },
         { "growth-of-work/the-plan-grows-as-the-members-of-a-class-do"_s, testPlanGrowsAsMembersOfClassDo },
         { "growth-of-work/a-function-with-more-parameters-than-a-convention-counts-is-refused"_s, testFunctionWithMoreParametersThanConventionCountsIsRefused },
         { "growth-of-work/the-facts-grow-as-the-classes-below-one-class-do"_s, testFactsGrowAsClassesBelowOneClassDo },
+        { "growth-of-work/the-facts-grow-as-the-objects-created-below-one-literal-do"_s, testFactsGrowAsObjectsCreatedBelowOneLiteralDo },
         { "growth-of-work/the-walk-grows-as-the-loops-in-a-row-do"_s, testWalkGrowsAsLoopsInRowDo },
         { "growth-of-work/the-walk-grows-as-the-loops-up-to-one-bound-do"_s, testWalkGrowsAsLoopsUpToOneBoundDo },
         { "growth-of-work/the-walk-grows-as-the-early-returns-that-each-leave-a-value-alive-do"_s, testWalkGrowsAsEarlyReturnsThatEachLeaveValueAliveDo<ReadInRowForGrowthTests::OfOneOfThreeElements, 1000> },
@@ -759,6 +953,9 @@ std::span<const NativeTest> growthOfWorkTests()
         { "growth-of-work/the-liveness-of-a-body-grows-as-the-loops-that-values-live-across-do"_s, testLivenessGrowsAsValuesReadAtEndDo<StatementInRowForGrowthTests::Loop> },
         { "growth-of-work/the-liveness-of-a-body-grows-as-the-blocks-under-one-handler-do"_s, testLivenessGrowsAsValuesReadAtEndDo<StatementInRowForGrowthTests::UnderOneHandler> },
         { "growth-of-work/the-walk-grows-as-the-iterations-in-a-row-do"_s, testWalkGrowsAsIterationsInRowDo },
+        { "growth-of-work/the-walk-grows-as-the-yields-and-the-statements-of-the-loop-that-takes-them-do"_s, testWalkGrowsAsLoopsOverGeneratorsDo<LoopsOverGeneratorsForGrowthTests::YieldsAndStatements, 100> },
+        { "growth-of-work/the-walk-grows-as-the-loops-over-generators-inside-one-another-do"_s, testWalkGrowsAsLoopsOverGeneratorsDo<LoopsOverGeneratorsForGrowthTests::InsideOneAnother, 3> },
+        { "growth-of-work/the-walk-grows-as-the-generators-that-loop-over-one-another-do"_s, testWalkGrowsAsLoopsOverGeneratorsDo<LoopsOverGeneratorsForGrowthTests::GeneratorsOverOneAnother, 4> },
         { "growth-of-work/a-chain-of-joined-texts-costs-what-its-last-text-holds"_s, testChainOfJoinedTextsCostsWhatItsLastTextHolds },
         { "growth-of-work/texts-that-add-to-one-another-and-are-each-read-cost-what-the-last-one-holds"_s, testTextsThatAddToOneAnotherAndAreEachReadCostWhatLastOneHolds },
         { "growth-of-work/the-walk-grows-as-the-terms-of-a-sum-of-texts-do"_s, testWalkGrowsAsTermsOfSumOfTextsDo },

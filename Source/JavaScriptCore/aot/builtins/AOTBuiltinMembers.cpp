@@ -84,6 +84,13 @@ BuiltinClassID primitiveClassOf(uint16_t primitives)
     return { };
 }
 
+bool isClassOfPrimitives(BuiltinClassID builtinClass)
+{
+    return std::ranges::any_of(builtinClassesOfPrimitives, [&](const BuiltinClassOfPrimitives& candidate) {
+        return candidate.builtinClass == builtinClass;
+    });
+}
+
 TypeID typeOfValuesThatLookUpAsInstancesOf(TypeArena& types, BuiltinClassID builtinClass)
 {
     static constexpr uint16_t primitivesWithClassOfTheirOwn[] { Primitive::String, Primitive::Symbol, Primitive::BigInt, Primitive::Number, Primitive::Boolean };

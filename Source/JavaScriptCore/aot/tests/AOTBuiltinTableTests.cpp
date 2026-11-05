@@ -570,6 +570,22 @@ static std::unique_ptr<Typed::Program> parseProgramForBuiltinTableTests(ASCIILit
     return program;
 }
 
+static void testModulesListWhatRowsSayNativeCodeReads()
+{
+    size_t namesInRows = 0;
+    auto checkRow = [&](const BuiltinModuleLoad& load) {
+        const RuntimeModuleData& module = table().at(load.module);
+        AOT_TEST_CHECK(!load.readsEveryExport || module.flags.contains(RuntimeModuleFlag::NativeCodeReadsEveryExport));
+        for (BuiltinName name : load.exports)
+            AOT_TEST_CHECK(std::ranges::contains(module.exportsReadByNativeCode, name));
+        namesInRows += load.exports.size();
+    };
+    for (uint32_t index = 0; index < table().builtinCount(); ++index)
+        std::ranges::for_each(table().moduleLoadsOf(BuiltinID(index)), checkRow);
+    std::ranges::for_each(table().startupLoads(), checkRow);
+    AOT_TEST_CHECK(namesInRows);
+}
+
 static void testNoObjectIsProvenToBePlainData()
 {
     using namespace Typed;
@@ -651,6 +667,7 @@ std::span<const NativeTest> builtinTableTests()
         { "builtin-table/string-constants-follow-the-target"_s, testStringConstantsFollowTheTarget },
         { "builtin-table/attachments-are-found-by-entry"_s, testAttachmentsAreFoundByEntry },
         { "builtin-table/host-uses-of-startup-loads"_s, testHostUsesOfStartupLoads },
+        { "builtin-table/modules-list-what-rows-say-native-code-reads"_s, testModulesListWhatRowsSayNativeCodeReads },
         { "builtin-table/no-object-is-proven-to-be-plain-data"_s, testNoObjectIsProvenToBePlainData },
         { "builtin-table/type-narrowed-to-class-written-below-parameter-lies-in-it"_s, testTypeNarrowedToClassWrittenBelowParameterLiesInIt },
     };

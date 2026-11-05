@@ -125,8 +125,4 @@ runtime StringSplitString : JSCell* (JSCell* string, JSCell* separator, uint32_t
 runtime StringSplitRegExp : JSCell* (JSCell* string, JSCell* regExp, uint32_t limit) ; unknownCode
 runtime StringMatchRegExp, StringSearchRegExp : EncodedJSValue (JSCell* string, JSCell* regExp) ; unknownCode
 
-runtime JSONAppendString : uint8_t* (JSCell* builder, uint8_t* cursor, JSCell* string) ; reads(all) writes(StringBuilderContents, StringStorage, AllocatorState, RuntimeState) throws collects
-runtime JSONAppendInteger : uint8_t* (uint8_t* cursor, int64_t integer) ; writes(StringBuilderContents) ; leaf
-runtime JSONAppendNumber : uint8_t* (uint8_t* cursor, double number) ; writes(StringBuilderContents) ; leaf
-runtime JSONAppendValue : UGPRPair (JSCell* builder, uint8_t* cursor, EncodedJSValue value, uint32_t positionAndLevels) ; reads(all) writes(StringBuilderContents, StringStorage, AllocatorState, RuntimeState) throws collects
 runtime JSONStringifyPrimitive : JSCell* (EncodedJSValue value) ; RuntimeCreatesString

@@ -16,6 +16,7 @@
 #include <type_traits>
 #include <utility>
 #include <wtf/MathExtras.h>
+#include <wtf/NeverDestroyed.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/StdLibExtras.h>
 
@@ -400,11 +401,89 @@ private:
 template<typename T, size_t inlineCapacity>
 inline constexpr bool holdsListsOfUnit<ListOfUnit<T, inlineCapacity>> = true;
 
-template<typename T, size_t inlineCapacity>
-void forEachListOfUnitIn(ListOfUnit<T, inlineCapacity>& list, auto& visit)
-{
-    visit(list);
-}
+template<typename Part>
+class RarePartOfUnit {
+public:
+    RarePartOfUnit() = default;
+    RarePartOfUnit(const RarePartOfUnit& other) { copyFrom(other); }
+    RarePartOfUnit(RarePartOfUnit&& other)
+        : m_bits(std::exchange(other.m_bits, 0))
+    {
+    }
+    ~RarePartOfUnit() { release(); }
+
+    RarePartOfUnit& operator=(const RarePartOfUnit& other)
+    {
+        if (this != &other) {
+            release();
+            copyFrom(other);
+        }
+        return *this;
+    }
+    RarePartOfUnit& operator=(RarePartOfUnit&& other)
+    {
+        if (this != &other) {
+            release();
+            m_bits = std::exchange(other.m_bits, 0);
+        }
+        return *this;
+    }
+
+    bool isEmpty() const { return !m_bits; }
+    bool liesOnHeap() const { return m_bits && !(m_bits & liesInBlockBit); }
+    bool liesInBlock() const { return m_bits & liesInBlockBit; }
+
+    const Part& operator*() const { return m_bits ? *part() : partOfUnitsWithoutOne(); }
+    const Part* operator->() const { return &**this; }
+    Part* ifExists() { return part(); }
+    Part& ensure()
+    {
+        if (!m_bits)
+            m_bits = reinterpret_cast<uintptr_t>(new (NotNull, WTF::VectorBufferMalloc::malloc(sizeof(Part))) Part);
+        return *part();
+    }
+
+private:
+    friend class BlocksOfUnits;
+
+    static_assert(holdsListsOfUnit<Part> && alignof(Part) > 1 && alignof(Part) <= alignof(uint64_t));
+
+    static constexpr uintptr_t liesInBlockBit = 1;
+
+    static const Part& partOfUnitsWithoutOne()
+    {
+        static NeverDestroyed<Part> emptyPart;
+        return emptyPart.get();
+    }
+
+    Part* part() const { return reinterpret_cast<Part*>(m_bits & ~liesInBlockBit); }
+
+    void copyFrom(const RarePartOfUnit& other)
+    {
+        if (other.m_bits)
+            m_bits = reinterpret_cast<uintptr_t>(new (NotNull, WTF::VectorBufferMalloc::malloc(sizeof(Part))) Part(*other.part()));
+    }
+
+    void release()
+    {
+        if (!m_bits)
+            return;
+        part()->~Part();
+        if (liesOnHeap())
+            WTF::VectorBufferMalloc::free(part());
+        m_bits = 0;
+    }
+
+    void moveToBlock(Part* room)
+    {
+        ASSERT(liesOnHeap());
+        memcpy(static_cast<void*>(room), part(), sizeof(Part));
+        WTF::VectorBufferMalloc::free(part());
+        m_bits = reinterpret_cast<uintptr_t>(room) | liesInBlockBit;
+    }
+
+    uintptr_t m_bits { 0 };
+};
 
 class BlocksOfUnits {
     WTF_MAKE_NONCOPYABLE(BlocksOfUnits);
@@ -466,6 +545,16 @@ private:
             }
         }
 
+        template<typename Part>
+        ALWAYS_INLINE void operator()(RarePartOfUnit<Part>& rarePart)
+        {
+            if (rarePart.isEmpty())
+                return;
+            if (rarePart.liesOnHeap())
+                m_offset = placeFor<Part>(m_offset) + sizeof(Part);
+            forEachListOfUnitIn(*rarePart.ifExists(), *this);
+        }
+
         size_t m_offset;
     };
 
@@ -479,6 +568,19 @@ private:
                 for (T& element : list)
                     forEachListOfUnitIn(element, *this);
             }
+        }
+
+        template<typename Part>
+        ALWAYS_INLINE void operator()(RarePartOfUnit<Part>& rarePart)
+        {
+            if (rarePart.isEmpty())
+                return;
+            if (rarePart.liesOnHeap()) {
+                m_offset = placeFor<Part>(m_offset);
+                rarePart.moveToBlock(reinterpret_cast<Part*>(m_room + m_offset));
+                m_offset += sizeof(Part);
+            }
+            forEachListOfUnitIn(*rarePart.ifExists(), *this);
         }
 
         template<typename T, size_t inlineCapacity>

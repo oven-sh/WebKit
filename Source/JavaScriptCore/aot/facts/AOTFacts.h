@@ -111,7 +111,7 @@ public:
 
     Vector<Summary> summaries;
     BitVector functionsNeverReached;
-    Vector<FunctionEffects> effects;
+
     FactRows<PositionFacts> entryParameters;
     uint32_t firstLayoutOfNamespace { 0 };
     uint32_t endOfLayoutsOfNamespaces { 0 };
@@ -124,6 +124,7 @@ public:
     Vector<ClassFacts> classes;
     BitVector functionsTakenToRunOnce;
     FactRows<ClassMember> membersOfClass;
+    Vector<uint32_t> placesOfMembersOfClassByKey;
     BitVector layoutsThatParsersMayMake;
 
     BitVector modulesWhosePathNoOperationReads;
@@ -158,6 +159,7 @@ public:
     struct Parts {
         std::unique_ptr<BodyIndexTable> bodies;
         std::unique_ptr<ThinSummaries> summaries;
+        std::unique_ptr<Families> familiesOfFlow;
         std::unique_ptr<Families> families;
         LinkTables linked;
         LinkTables held;
@@ -191,6 +193,7 @@ public:
         LayoutsByNames layoutsByNames;
     };
     WhatMiddleAloneReads takeWhatMiddleAloneReads() { return { WTF::move(m_bodies), WTF::move(m_summaries), WTF::move(m_families), std::exchange(m_held, { }), std::exchange(m_layoutsByNames, { }) }; }
+    void freeListsOfSummariesNotKeptForWalk(const ParallelLoops& loops) { m_summaries->freeListsNotKeptForWalk(loops); }
     const BodyIndexTable& bodies() const { return *m_bodies; }
     FunctionID functionThatCallEntersByBinding(const BodyIndex&, const BodyValue& call, ValueID* checkThatPasses = nullptr) const;
     bool testMentionsWhatIsOutOfReach(TypeReader, TypeID tested, NOESCAPE const ScopedLambda<bool(FunctionID)>& isInReach) const;
@@ -213,8 +216,8 @@ public:
     bool everyCallerIsKnown(FunctionID id) const { return id.index() < m_linked.functions.size() && m_linked.function(id).everyCallerIsKnown; }
     bool runsAtMostOnce(FunctionID id) const { return id.index() < m_linked.functions.size() && m_linked.function(id).runsAtMostOnce; }
     bool isTakenToRunOnce(FunctionID id) const { return m_tables.functionsTakenToRunOnce.get(id.index()); }
-    Effects effectsOnReturn(FunctionID id) const { return factRecordAt(m_tables.effects, id.index()).onReturn; }
-    Effects effectsOnThrow(FunctionID id) const { return factRecordAt(m_tables.effects, id.index()).onThrow; }
+    Effects effectsOnReturn(FunctionID id) const { return effectsSeenByCaller(id.index() < m_linked.functions.size() ? m_linked.function(id).effectsOnReturn() : effectsOfUnknownCode); }
+    Effects effectsOnThrow(FunctionID id) const { return effectsSeenByCaller(id.index() < m_linked.functions.size() ? m_linked.function(id).effectsOnThrow() : effectsOfUnknownCode); }
     PositionFacts typeOfEntryParameter(FunctionID id, uint32_t entryParameter) const
     {
         std::span<const PositionFacts> rows = m_tables.entryParameters.of(id);
@@ -241,6 +244,8 @@ public:
     ClassFacts classOf(LayoutID id) const { return factRecordAt(m_tables.classes, id.index()); }
     bool isEvaluatedAtMostOnce(LayoutID classLayout) const { return classOf(classLayout).evaluations == ExecutionCount::AtMostOnce; }
     std::span<const ClassMember> membersOf(LayoutID classLayout) const LIFETIME_BOUND { return m_tables.membersOfClass.of(classLayout); }
+    JS_EXPORT_PRIVATE std::span<const uint32_t> placesOfMembersUnder(LayoutID classLayout, ClassSide, PropertyKeyID) const LIFETIME_BOUND;
+    bool hasMemberUnder(LayoutID classLayout, ClassSide side, PropertyKeyID key) const { return !placesOfMembersUnder(classLayout, side, key).empty(); }
 
     BuiltinLocationState builtinLocation(BuiltinID member) const { return member && m_tables.constantBuiltinMembers.get(member.index()) ? BuiltinLocationState::Constant : BuiltinLocationState::Unknown; }
     const BitVector& builtinMembersLockedAtStartUp() const LIFETIME_BOUND { return m_tables.builtinMembersLockedAtStartUp; }
@@ -277,6 +282,12 @@ public:
     std::span<const RuntimeFunctionID> libraryFunctionsLacked() const LIFETIME_BOUND { return m_tables.program.libraryFunctionsLacked.span(); }
 
 private:
+    static Effects effectsSeenByCaller(Effects effects)
+    {
+        effects.maySuspend = false;
+        return effects;
+    }
+
     const Program& m_program;
     std::unique_ptr<BodyIndexTable> m_bodies;
     std::unique_ptr<ThinSummaries> m_summaries;

@@ -131,6 +131,7 @@ Reference valueOfStableBinding(Walker& walker, const BodyValue& read)
     if (!keepsNotesOfStableBindings(walker))
         return { };
     std::optional<uint64_t> noted;
+    bool readsScopeThatUnitMakes = false;
     if (read.opcode() == Opcode::GetModuleVariable) {
         if (variableStaysAsFilled(walker, read.variable()))
             noted = findKnown(walker, KnownNote::ValueKeptByPlace, { }, { }, read.variable().index());
@@ -138,12 +139,15 @@ Reference valueOfStableBinding(Walker& walker, const BodyValue& read)
         Reference environment = walker.referenceOf(read.environmentOperand());
         if (environment && scopeSlotStaysAsFilled(walker, { read.layout(), read.field() }))
             noted = findKnown(walker, KnownNote::ValueKeptByPlace, environment, { }, read.field());
+        readsScopeThatUnitMakes = walker.unitHasMadeScopes() && noted && environment.isValue() && walker.code().at(environment.id()).opcode == Opcode::NewObject;
     }
     if (!noted)
         return { };
     Reference kept = Reference::fromBits(static_cast<uint32_t>(*noted));
-    TypeID widest = widestTypeOfOperation(walker, read);
     TypeID type = walker.typeOf(kept);
+    if (type && readsScopeThatUnitMakes && !walker.isInLoop())
+        return kept;
+    TypeID widest = widestTypeOfOperation(walker, read);
     return widest && type && walker.types().isSubset(type, widest) ? kept : Reference();
 }
 

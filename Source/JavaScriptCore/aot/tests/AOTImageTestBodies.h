@@ -47,8 +47,9 @@ inline CompiledCode takeWithHandler(CodeSketch& sketch, std::initializer_list<ui
 {
     uint32_t site = sketch.code().sites.positions.size() - 1;
     uint32_t handler = sketch.end();
-    sketch.code().sites.handlers.append(SiteHandler { site, handler, HandlerType::Catch });
-    sketch.code().sites.frameMapWords = frameMapWords;
+    RareListsOfSites& rareLists = sketch.code().sites.rareLists.ensure();
+    rareLists.handlers.append(SiteHandler { site, handler, HandlerType::Catch });
+    rareLists.frameMapWords = frameMapWords;
     return sketch.take();
 }
 

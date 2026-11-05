@@ -2,33 +2,15 @@ flags FunctionCapabilities {
     | engine MayChangeSignature MayBeCloned MayBeInlined HasOrdinaryFrame IsNeverCalledByHost IsHiddenInStackTraces
     RecordsCallee
 }
-enum FunctionRole (hasSourceBody: Bool, canBeCalledByValue: Bool, hasStackArgumentArea: Bool, record: Name, capabilities: FunctionCapabilities
-    | engine isWrapperOrWorker: Bool, isEnteredOnlyByCalls: Bool, showsSourceText: Bool, hasClosureWord: Bool) {
-    Source(true, true, true, None, MayChangeSignature+MayBeCloned+MayBeInlined+HasOrdinaryFrame+IsNeverCalledByHost, false, true, true, false)
-    Library(true, true, true, None, MayChangeSignature+MayBeCloned+MayBeInlined+HasOrdinaryFrame, false, true, false, false)
-    Model(true, false, true, None, none, false, false, false, false)
-    Signature(false, false, false, None, none, false, true, false, false)
+enum FunctionRole (hasSourceBody: Bool, canBeCalledByValue: Bool, record: Name, capabilities: FunctionCapabilities | engine showsSourceText: Bool) {
+    Source(true, true, None, MayChangeSignature+MayBeCloned+MayBeInlined+HasOrdinaryFrame+IsNeverCalledByHost, true)
+    Library(true, true, None, MayChangeSignature+MayBeCloned+MayBeInlined+HasOrdinaryFrame, false)
+    Model(true, false, None, none, false)
+    Signature(false, false, None, none, false)
     | engine
-    GenericEntrypoint(false, false, false, Entrypoint, HasOrdinaryFrame+IsNeverCalledByHost+IsHiddenInStackTraces, false, false, false, true)
-    TableEntrypoint(false, false, false, Entrypoint, HasOrdinaryFrame+IsNeverCalledByHost+IsHiddenInStackTraces, false, false, false, false)
-    TableLookup(false, false, false, TableLookup, HasOrdinaryFrame+IsNeverCalledByHost+IsHiddenInStackTraces, false, false, false, false)
-    GenericVersion(true, false, true, Version, MayBeCloned+MayBeInlined+HasOrdinaryFrame+IsNeverCalledByHost, false, true, false, false)
-    AllocatedThisVersion(true, false, true, Version, MayBeInlined+HasOrdinaryFrame+IsNeverCalledByHost, false, true, false, false)
-    ConstructBody(true, false, true, Version, MayChangeSignature+MayBeInlined+HasOrdinaryFrame+IsNeverCalledByHost, false, true, false, false)
-    CallSiteVersion(true, false, true, Version, MayChangeSignature+MayBeCloned+MayBeInlined+HasOrdinaryFrame+IsNeverCalledByHost, false, true, false, false)
-    CoroutineRamp(false, true, true, Coroutine, MayChangeSignature+MayBeInlined+HasOrdinaryFrame+IsNeverCalledByHost+IsHiddenInStackTraces, false, true, true, false)
-    CoroutineBody(false, false, true, Coroutine, none, false, false, false, false)
-    AsyncWorker(false, false, true, Coroutine, MayChangeSignature+MayBeInlined+HasOrdinaryFrame+IsNeverCalledByHost, true, true, false, false)
-    ResultWrapper(false, true, true, ResultWrapper, MayBeInlined+HasOrdinaryFrame+IsNeverCalledByHost+IsHiddenInStackTraces, true, true, true, false)
-    ResultWorker(false, false, true, ResultWorker, MayChangeSignature+MayBeInlined+HasOrdinaryFrame+IsNeverCalledByHost, true, true, false, false)
-    ParameterWrapper(false, true, true, ParameterWrapper, MayBeInlined+HasOrdinaryFrame+IsNeverCalledByHost+IsHiddenInStackTraces, true, true, true, false)
-    EntryChecks(false, true, true, EntryChecks, MayBeInlined+HasOrdinaryFrame+IsNeverCalledByHost+IsHiddenInStackTraces, true, true, true, false)
-    ChecksThatGiveUp(false, true, true, Version, MayBeInlined+HasOrdinaryFrame+IsNeverCalledByHost, true, true, true, false)
-    OutlinedBody(false, false, true, None, HasOrdinaryFrame+IsNeverCalledByHost+IsHiddenInStackTraces, false, true, false, false)
-    Serializer(false, false, true, Serializer, MayBeInlined+HasOrdinaryFrame+IsNeverCalledByHost+IsHiddenInStackTraces, false, true, false, false)
-    Parser(false, false, true, Parser, MayBeInlined+HasOrdinaryFrame+IsNeverCalledByHost+IsHiddenInStackTraces, false, true, false, false)
-    ChainStep(false, false, true, ChainStep, MayBeInlined+HasOrdinaryFrame+IsNeverCalledByHost+IsHiddenInStackTraces, false, true, false, false)
-    StubBody(false, false, false, StubBody, none, false, false, false, false)
+    CoroutineBody(false, false, Coroutine, none, false)
+    OutlinedBody(false, false, None, HasOrdinaryFrame+IsNeverCalledByHost+IsHiddenInStackTraces, false)
+    StubBody(false, false, StubBody, none, false)
 }
 
 enum CoroutineKind { | engine Generator AsyncFunction AsyncGenerator }

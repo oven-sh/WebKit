@@ -693,19 +693,26 @@ JSValue RehearsalOfRegExpTexts::makeNumberThatNobodyKnows()
 void RehearsalOfRegExpTexts::layUnderNumberThatNobodyKnows(JSObject* object, JSValue number, JSValue laid)
 {
     VM& vm = *m_vm;
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     JSValue found = object->getDirect(vm, m_laidUnderNumbersThatNobodyKnows);
     JSMap* all = found ? uncheckedDowncast<JSMap>(found) : JSMap::create(vm, m_realm->mapStructure());
     if (!found)
         object->putDirect(vm, m_laidUnderNumbersThatNobodyKnows, all);
     all->set(m_realm.get(), number, laid);
+    hasThrown(scope);
 }
 
 JSValue RehearsalOfRegExpTexts::findUnderNumberThatNobodyKnows(JSObject* object, JSValue number)
 {
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(*m_vm);
     JSValue found = object->getDirect(*m_vm, m_laidUnderNumbersThatNobodyKnows);
-    if (!found || !uncheckedDowncast<JSMap>(found)->has(m_realm.get(), number))
+    if (!found)
         return unknown();
-    return uncheckedDowncast<JSMap>(found)->get(m_realm.get(), number);
+    bool isLaid = uncheckedDowncast<JSMap>(found)->has(m_realm.get(), number);
+    if (hasThrown(scope) || !isLaid)
+        return unknown();
+    JSValue laid = uncheckedDowncast<JSMap>(found)->get(m_realm.get(), number);
+    return hasThrown(scope) ? unknown() : laid;
 }
 
 void RehearsalOfRegExpTexts::noteHandedToCodeThatNobodyKnows(std::span<const JSValue> arguments)

@@ -102,6 +102,8 @@ GenerationResult CodeGenerator::run()
         if (m_hasFailed)
             return GenerationResult::Failed;
         BlockID id = m_order[position];
+        if (leavesOutBlockThatNothingLeadsTo(id))
+            continue;
         const Block& block = code().at(id);
         if (block.isLoopHead) {
             if (std::optional<CountedLoop> loop = findCountedLoopAt(position))
@@ -112,7 +114,22 @@ GenerationResult CodeGenerator::run()
         generateBlock(id, block);
         new (NotNull, &m_scopeAtEndOfBlock[id.index()]) ScopeFork(m_out.forkScope());
     }
+    for (LBasicBlock leftOut : m_blocksLeftOut)
+        RELEASE_ASSERT(m_hasFailed || !leftOut->numberOfIncomingEdges());
     return m_hasFailed ? GenerationResult::Failed : GenerationResult::Generated;
+}
+
+ALWAYS_INLINE bool CodeGenerator::leavesOutBlockThatNothingLeadsTo(BlockID id)
+{
+    if (m_nextBlockGoesOnHere)
+        return false;
+    LBasicBlock block = m_blocks[id.index()];
+    if (!block)
+        return true;
+    if (block->numberOfIncomingEdges() || block->isEntry()) [[likely]]
+        return false;
+    m_blocksLeftOut.append(block);
+    return true;
 }
 
 const Function& CodeGenerator::function() const
@@ -262,7 +279,7 @@ void CodeGenerator::orderBlocks()
     Machine::Arena& arena = m_proc.arena();
     uint32_t numberOfBlocks = code().numberOfBlocks();
     m_singlePredecessors = allocateSpanOfAllBitsSet<BlockID>(arena, numberOfBlocks);
-    m_scopeAtEndOfBlock = allocateSpan<ScopeFork>(arena, numberOfBlocks);
+    m_scopeAtEndOfBlock = allocateZeroedSpan<ScopeFork>(arena, numberOfBlocks);
     std::span<BlockID> order = allocateSpan<BlockID>(arena, numberOfBlocks);
     uint32_t numberOrdered = 0;
     Vector<Step, 64> steps;
@@ -599,23 +616,28 @@ bool CodeGenerator::isReadByBoxAlone(BlockID home, ValueID parameter, unsigned s
 
 bool CodeGenerator::isStoredIntoByName(ValueID made) const
 {
+    BlockID block = code().blockOf(made);
     for (unsigned stepsLeft = 8; stepsLeft--;) {
-        BlockID home = code().blockOf(made);
-        for (ValueID id : code().valuesOf(home)) {
+        ValueID boxed;
+        for (ValueID id : code().valuesOf(block)) {
             const Operation& operation = code().at(id);
-            if (operation.opcode == Opcode::PropSet && operation.objectOperand() == made)
+            if (operation.opcode == Opcode::Box && operation.operand(0) == made)
+                boxed = id;
+            if (operation.opcode == Opcode::PropSet && (operation.objectOperand() == made || (boxed && operation.objectOperand() == boxed)))
                 return true;
         }
-        const Terminator& terminator = code().at(home).terminator;
+        const Terminator& terminator = code().at(block).terminator;
         if (terminator.kind != TerminatorKind::Jump)
             return false;
         const Edge& edge = code().at(terminator.next());
         std::span<const ValueID> arguments = edge.arguments();
         std::span<const ValueID> parameters = code().at(edge.to).parameters();
-        size_t position = std::ranges::find(arguments, made) - arguments.begin();
-        if (position >= std::min(arguments.size(), parameters.size()))
-            return false;
-        made = parameters[position];
+        size_t position = std::ranges::find_if(arguments, [&](ValueID argument) {
+            return argument == made || (boxed && argument == boxed);
+        }) - arguments.begin();
+        if (position < std::min(arguments.size(), parameters.size()))
+            made = parameters[position];
+        block = edge.to;
     }
     return false;
 }
@@ -1004,8 +1026,7 @@ void CodeGenerator::generateBlock(BlockID id, const Block& block)
     };
     ValueID test = block.terminator.kind == TerminatorKind::Branch ? testReadByBranchAlone(id, block.terminator) : ValueID();
     bool testWaitsForBranch = false;
-    if (releases.empty())
-        m_readLeftToBranch = readLeftToBranchOnItsTruth(id, values, test);
+    m_readLeftToBranch = releases.empty() ? readLeftToBranchOnItsTruth(id, values, test) : ValueID();
     for (size_t index = 0; index < values.size(); ++index) {
         ValueID value = values[index];
         if (value == m_readLeftToBranch)
@@ -1051,7 +1072,7 @@ static constexpr unsigned placesLookedAtBehindHead = 8;
 static constexpr int64_t largestStepOfCounter = 16;
 static constexpr unsigned mostOperationsInTurnLaidOut = 16;
 static constexpr OpcodeSet operationsOfTurnsLaidOut {
-    Opcode::Narrowed, Opcode::Box, Opcode::Unbox, Opcode::IntegerToNumber, Opcode::NumberToInteger, Opcode::WidenInteger, Opcode::NarrowInteger, Opcode::ToInt32,
+    Opcode::Narrowed, Opcode::AssumeType, Opcode::Box, Opcode::Unbox, Opcode::IntegerToNumber, Opcode::NumberToInteger, Opcode::WidenInteger, Opcode::NarrowInteger, Opcode::ToInt32,
     Opcode::Add, Opcode::Sub, Opcode::Mul, Opcode::Div, Opcode::Mod, Opcode::Increment, Opcode::Decrement, Opcode::Negate,
     Opcode::BitAnd, Opcode::BitOr, Opcode::BitXor, Opcode::BitNot, Opcode::LShift, Opcode::RShift, Opcode::URShift,
     Opcode::Less, Opcode::LessEq, Opcode::Greater, Opcode::GreaterEq, Opcode::StrictEq, Opcode::Eq, Opcode::TypeTest,
@@ -1208,7 +1229,7 @@ std::optional<CodeGenerator::CountedLoop> CodeGenerator::findCountedLoopAt(size_
 
     const Edge& back = code().at(code().at(loop.turn.last()).terminator.next());
     auto integerHandedOnBy = [&](ValueID value) {
-        static constexpr OpcodeSet handingIntegerOn { Opcode::Narrowed, Opcode::WidenInteger, Opcode::NarrowInteger };
+        static constexpr OpcodeSet handingIntegerOn { Opcode::Narrowed, Opcode::AssumeType, Opcode::WidenInteger, Opcode::NarrowInteger };
         while (handingIntegerOn.contains(opcodeOf(value)))
             value = code().at(value).valueOperand();
         return value;

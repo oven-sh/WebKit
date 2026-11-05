@@ -15,6 +15,8 @@ void Walker::noteStateAtThrowForHandler(std::span<const Reference> thrown)
     if (handlerMadeOverCopiesIsInForce())
         return;
     size_t frameIndex = numberOfFramesUpToHandlerInForce();
+    if (m_numberOfFramesOverHandlersOfCode && handlerOfCodeInForce(frameIndex))
+        return;
     if (!frameIndex--)
         return;
 

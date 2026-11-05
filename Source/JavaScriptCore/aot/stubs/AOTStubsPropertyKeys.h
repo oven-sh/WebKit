@@ -18,7 +18,7 @@
 namespace JSC { namespace AOT {
 
 enum class PresenceQuestion : uint8_t { In, HasOwn };
-enum class InstanceOfOperand : uint8_t { Constructor, Prototype };
+enum class InstanceOfOperand : uint8_t { Constructor, Prototype, NameSeenByScripts, NameOfGlobalObject };
 enum class SlotExit : uint8_t { Miss, Uncached };
 enum class SlotFinisher : uint8_t { ReadField, CallGetter, StoreField, CreateField, CallSetterStrict, CallSetterSloppy, GrowStorage };
 enum class SlotInGranule : uint8_t { Word64, Word32At0, Word32At4, ByteAt0, ByteAt1, ByteAt2, ByteAt3, ByteAt4, ByteAt5, ByteAt6, ByteAt7 };
@@ -70,6 +70,8 @@ struct ReadBehindSiteForm {
 constexpr StubKey readAtSite(ReceiverAtSite receiver, NameAtSite name) { return StubKey(StubFamily::ReadAtSite).withForm(static_cast<uint8_t>(receiver) + 2 * static_cast<uint8_t>(name)); }
 constexpr ReadAtSiteForm readAtSiteFormOf(StubKey key) { return { static_cast<ReceiverAtSite>(key.form() % 2), static_cast<NameAtSite>(key.form() / 2) }; }
 constexpr StubKey readTruthAtSite(ReceiverAtSite receiver, NameAtSite name) { return readAtSite(receiver, name).withFamily(StubFamily::ReadTruthAtSite); }
+constexpr StubKey readTruthAtSiteOfNameWithoutField(ReceiverAtSite receiver, NameAtSite name) { return readAtSite(receiver, name).withFamily(StubFamily::ReadTruthAtSiteOfNameWithoutField); }
+constexpr StubKey readAtSiteOfNameWithoutField(ReceiverAtSite receiver, NameAtSite name) { return readAtSite(receiver, name).withFamily(StubFamily::ReadAtSiteOfNameWithoutField); }
 constexpr StubKey readAtSiteUnlessAsMade(NameAtSite name) { return readAtSite(ReceiverAtSite::IsCell, name).withFamily(StubFamily::ReadAtSiteUnlessAsMade); }
 inline constexpr std::array narrowFieldsAtSites { SlotRepresentation::OptionalCell32, SlotRepresentation::OptionalInt32, SlotRepresentation::OptionalDouble, SlotRepresentation::OptionalBoolean, SlotRepresentation::OptionalInt64 };
 constexpr std::optional<StubKey> tryReadAtSiteOfNarrowField(SlotRepresentation field, ReceiverAtSite receiver, NameAtSite name)
@@ -80,6 +82,7 @@ constexpr std::optional<StubKey> tryReadAtSiteOfNarrowField(SlotRepresentation f
     return readAtSite(receiver, name).withFamily(StubFamily::ReadAtSiteOfNarrowField).withCount(static_cast<unsigned>(place - narrowFieldsAtSites.begin()));
 }
 static_assert(narrowFieldsAtSites.size() == descriptorOf(StubFamily::ReadAtSiteOfNarrowField).maxCount + 1 && descriptorOf(StubFamily::ReadAtSiteOfNarrowField).numberOfForms == descriptorOf(StubFamily::ReadAtSite).numberOfForms);
+static_assert(descriptorOf(StubFamily::ReadAtSiteOfNameWithoutField).numberOfForms == descriptorOf(StubFamily::ReadAtSite).numberOfForms);
 constexpr uint8_t formOfReadBehindSiteOfFieldLeftOut = 4;
 constexpr StubKey readBehindSite(WayBehindSite way, NameAtSite name)
 {
@@ -290,7 +293,7 @@ static_assert([] {
         getById(), getByIdAfterFrontProbe(), getByIdHashed(), getByIdCheckingColumn(), getByIdOfSymbolOfRealm(), getByIdOfSilentSlot(), getByIdOfEmptySlot(), getByIdOfFieldLeftOut(), getByIdOfNarrowCellInExtension(), getLengthAtSite(), throughProxy(TrapOfProxy::Set), inById(PresenceQuestion::HasOwn),
         readFieldInExtension(0, SlotInGranule::ByteAt7),
         tryGetSuperById(), getSuperBaseOfClass(),
-        instanceOf(InstanceOfOperand::Prototype),
+        instanceOf(InstanceOfOperand::NameOfGlobalObject),
         callMethodById(0),
         readAtSite(ReceiverAtSite::IsCell, NameAtSite::HasColumn), readBehindSite(WayBehindSite::OfFieldLeftOut, NameAtSite::HasColumn), readLengthAtSite(NameAtSite::HasColumn), callMethodAtSite(0),
         getByIdOfCell(), getByIdAtSite(), getByIdOfObjectAtSite(), getByIdAtSiteHashed(), putByIdAtSite(PutMode::Sloppy, NameOfStoreAtSite::NamesField),

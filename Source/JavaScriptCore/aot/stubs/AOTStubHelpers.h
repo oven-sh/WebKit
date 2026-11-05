@@ -78,6 +78,7 @@ void toDouble(StubAssembler&, GPRReg boxedNumber, GPRReg scratch, FPRReg result)
 void branchIfNotExactInt32(StubAssembler&, FPRReg number, GPRReg integer, JumpList& isNotExact, FPRReg scratch);
 void boxExactInt32(StubAssembler&, GPRReg integer, GPRReg result);
 void decodeCell32(StubAssembler&, GPRReg word, GPRReg result);
+void loadValueAtLocationOfGlobalBinding(StubAssembler&, bool seesScriptBindings, GPRReg record, GPRReg global, GPRReg result, JumpList& cannot);
 void encodeCell32(StubAssembler&, GPRReg cell, GPRReg word);
 void encodeCellOfProgram(StubAssembler&, GPRReg cell, GPRReg word);
 void appendGranule(StubAssembler&, GPRReg extension, GPRReg granuleBits, GPRReg scratch, GPRReg secondScratch, JumpList& cannotAppend);

@@ -158,7 +158,6 @@ JSC_DEFINE_HOST_FUNCTION(generatorThrowOfEitherKind, (JSGlobalObject* globalObje
     return resumeGeneratorOfEitherKind<ResumeMode::Throw>(globalObject, callFrame);
 }
 
-// builtins/JSIteratorHelperPrototype.js, which reads the internal fields of the helper's generator: a compiled one has none.
 template<ResumeMode mode>
 static EncodedJSValue resumeIteratorHelperOfEitherKind(JSGlobalObject* globalObject, CallFrame* callFrame)
 {

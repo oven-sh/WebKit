@@ -525,7 +525,9 @@ static StepResult lookUpExtraPropertyOfCompiledObject(const ChainWalkStart& star
 
 static StepResult lookUpInCompiledObject(const ChainWalkStart& start, UniquedStringImpl* uid, Object& object, ChainWalk& walk)
 {
-    if (object.isInFrame() || (PropertyName(uid).isPrivateName() && !PropertyName(uid).passesThroughProxies()))
+    if (object.isInFrame())
+        return StepResult::Stop;
+    if (PropertyName(uid).isPrivateName() && !PropertyName(uid).passesThroughProxies())
         return stopAt(&object, walk);
     const FieldData* field = object.fieldNamed(object.state(), uid);
     if (field && field->isPrivate())

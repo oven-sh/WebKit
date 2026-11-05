@@ -561,9 +561,10 @@ static void testStubCallsWithNumbersInKeys()
         AOT_TEST_CHECK(assembled.bytesBefore(index).empty());
     }
     constexpr uint32_t expectedMentions[] = { firstMention, secondMention, firstMention };
-    AOT_TEST_CHECK(body.numberedStubKeys.size() == std::size(expectedMentions));
+    const auto& numberedStubKeys = body.rareLists->numberedStubKeys;
+    AOT_TEST_CHECK(numberedStubKeys.size() == std::size(expectedMentions));
     for (uint32_t index = 0; index < std::size(expectedMentions); ++index)
-        AOT_TEST_CHECK(body.numberedStubKeys[index].stubKey == index && body.numberedStubKeys[index].mention == expectedMentions[index]);
+        AOT_TEST_CHECK(numberedStubKeys[index].stubKey == index && numberedStubKeys[index].mention == expectedMentions[index]);
 }
 
 static void testStubCallsOfOneKey()
@@ -642,9 +643,38 @@ static void testStubCallsThroughArgumentThunks()
         checkRelocation(body.relocations[index], RelocationKind::Call, { SymbolSpace::ArgumentThunk, index });
         AOT_TEST_CHECK(assembled.bytesBefore(index).empty());
         checkReturnSite(assembled, index, index, OptionalIndex { index + 1 });
-        const ArgumentMoves& words = body.argumentMoves[index];
+        std::span<const uint64_t> words = body.argumentMoves[index];
         AOT_TEST_CHECK(words.size() == 2 + moves.size() && words[0] == expectedHeaders[index][0] && words[1] == expectedHeaders[index][1]);
-        AOT_TEST_CHECK(equalSpans(words.span().subspan(2), moves.span()));
+        AOT_TEST_CHECK(equalSpans(words.subspan(2), moves.span()));
+    }
+}
+
+static void testArgumentMovesOfUnitLieInOneList()
+{
+    constexpr size_t mostLists = 5;
+    Vector<ArgumentMoves> lists;
+    size_t numberOfWordsInLists = 0;
+    for (size_t numberOfLists = 0; numberOfLists <= mostLists; ++numberOfLists) {
+        ArgumentMovesOfUnit kept(lists.span());
+        AOT_TEST_CHECK(kept.size() == numberOfLists && kept.isEmpty() == !numberOfLists);
+        AOT_TEST_CHECK(kept.list().size() == (numberOfLists ? numberOfLists / 2 + 1 + numberOfWordsInLists : 0));
+        AOT_TEST_CHECK(kept.list().capacity() == kept.list().size());
+        for (size_t index = 0; index < numberOfLists; ++index)
+            AOT_TEST_CHECK(equalSpans(std::as_const(kept)[index], lists[index].span()));
+        AOT_TEST_CHECK(kept == ArgumentMovesOfUnit(lists.span()));
+
+        if (numberOfLists) {
+            ArgumentMovesOfUnit changed = kept;
+            changed[numberOfLists - 1][1] ^= 1;
+            AOT_TEST_CHECK(changed != kept && changed.size() == numberOfLists);
+            AOT_TEST_CHECK(changed[numberOfLists - 1][1] == (lists.last()[1] ^ 1) && changed[0][0] == lists[0][0]);
+        }
+
+        ArgumentMoves next;
+        for (size_t word = 0; word < numberOfHeaderWords + 4 * numberOfLists; ++word)
+            next.append((numberOfLists + 1) << 32 | word);
+        numberOfWordsInLists += next.size();
+        lists.append(WTF::move(next));
     }
 }
 
@@ -983,6 +1013,7 @@ std::span<const NativeTest> stubTests()
         { "stubs/calls-of-one-key"_s, testStubCallsOfOneKey },
         { "stubs/call-for-two-reads"_s, testStubCallForTwoReads },
         { "stubs/calls-through-argument-thunks"_s, testStubCallsThroughArgumentThunks },
+        { "stubs/argument-moves-of-a-unit-lie-in-one-list"_s, testArgumentMovesOfUnitLieInOneList },
         { "stubs/calls-of-functions"_s, testCallsOfFunctions },
 #if OS(UNIX)
         { "stubs/traps-end-listener-for-breakpoints"_s, testTrapsEndListenerForBreakpoints },

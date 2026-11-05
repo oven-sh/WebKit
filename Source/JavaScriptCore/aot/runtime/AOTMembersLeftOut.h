@@ -22,16 +22,25 @@ class VM;
 namespace AOT {
 
 void noteErrorOfCodeLeftOut(JSGlobalObject*, JSObject* error);
-void throwMissOfReach(JSGlobalObject*, String&& sentence, bool mayBeTakenForStandIn);
-void stopIfMissOfReachIsPending(VM&);
 JS_EXPORT_PRIVATE JSValue takeStandInForMemberLeftOut(JSGlobalObject*, const String& nameOfMember, JSObject* answeredBy = nullptr);
 struct FunctionLeftOut {
     ASCIILiteral name;
     unsigned length { 0 };
     bool canBeConstructed { false };
+    bool hasPrototype { true };
 };
 JS_EXPORT_PRIVATE JSValue takeStandInForFunctionLeftOut(JSGlobalObject*, const FunctionLeftOut&, JSObject* answeredBy);
 bool standsInForFunction(JSCell*);
+JS_EXPORT_PRIVATE bool isPlaceholderForOmittedBuiltin(JSCell*);
+class MakingOfMemberForLook {
+public:
+    explicit MakingOfMemberForLook(bool lookOnlyTests);
+    ~MakingOfMemberForLook();
+
+private:
+    bool m_previous;
+};
+bool isMakingMemberForLookThatOnlyTests();
 JSValue takeStandInForGetterLeftOut(JSGlobalObject*, JSObject* getter);
 void explainErrorBehindMemberLeftOut(JSGlobalObject*, JSObject* error, JSValue base);
 void forgetErrorOfCodeLeftOut(VM&);

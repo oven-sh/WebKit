@@ -248,6 +248,10 @@ static void forEachMemberOfSet(VM& vm, JSSet* set, NOESCAPE const Functor& funct
     JSCell* storage = set->storage();
     if (!storage)
         return;
+    if (JSSet::Helper::isCompact(*storage)) {
+        CompactTable::forEachInColumn(vm, storage, 0, true, functor);
+        return;
+    }
     for (auto next = JSSet::Helper::transitAndNext(vm, *storage, 0); next.storage; next = JSSet::Helper::transitAndNext(vm, *next.storage, next.entry + 1))
         functor(next.key);
 }

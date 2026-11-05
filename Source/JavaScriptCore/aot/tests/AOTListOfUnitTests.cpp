@@ -42,6 +42,36 @@ inline constexpr bool holdsListsOfUnit<ElementWithList> = true;
 
 namespace {
 
+struct RarePartOfRecord {
+    ListOfUnit<uint32_t> words;
+    ListOfUnit<ElementWithList> elements;
+    uint32_t number { 0 };
+};
+
+void forEachListOfUnitIn(RarePartOfRecord& part, auto& visit)
+{
+    visit(part.words);
+    visit(part.elements);
+}
+
+} // anonymous namespace
+
+template<>
+inline constexpr bool holdsListsOfUnit<RarePartOfRecord> = true;
+
+namespace {
+
+struct RecordWithRarePart {
+    ListOfUnit<uint8_t> bytes;
+    RarePartOfUnit<RarePartOfRecord> rarePart;
+};
+
+void forEachListOfUnitIn(RecordWithRarePart& record, auto& visit)
+{
+    visit(record.bytes);
+    visit(record.rarePart);
+}
+
 struct RecordWithLists {
     ListOfUnit<uint8_t> bytes;
     ListOfUnit<uint64_t, 1> few;
@@ -69,6 +99,15 @@ struct HeapFinder {
             for (T& element : list)
                 forEachListOfUnitIn(element, *this);
         }
+    }
+
+    template<typename Part>
+    void operator()(RarePartOfUnit<Part>& rarePart)
+    {
+        numberOnHeap += rarePart.liesOnHeap();
+        numberInBlocks += rarePart.liesInBlock();
+        if (Part* part = rarePart.ifExists())
+            forEachListOfUnitIn(*part, *this);
     }
 
     size_t numberOfLists { 0 };
@@ -173,6 +212,47 @@ static void testListInBlockIsWrittenInPlaceAndOutgrowsIt()
     kept->~RecordWithLists();
 }
 
+static void testRarePartIsAbsentUntilEnsuredAndMovesIntoBlock()
+{
+    RecordWithRarePart without;
+    without.bytes.append(1);
+    AOT_TEST_CHECK(without.rarePart.isEmpty() && !without.rarePart.ifExists() && !without.rarePart.liesOnHeap() && !without.rarePart.liesInBlock());
+    AOT_TEST_CHECK(without.rarePart->words.isEmpty() && without.rarePart->elements.isEmpty() && !without.rarePart->number && without.rarePart.isEmpty());
+
+    RecordWithRarePart with;
+    with.bytes.append(2);
+    RarePartOfRecord& part = with.rarePart.ensure();
+    part.number = 7;
+    for (uint32_t word = 0; word < 5; ++word)
+        part.words.append(word);
+    ElementWithList element;
+    for (uint32_t word = 0; word < 4; ++word)
+        element.words.append(10 + word);
+    part.elements.append(WTF::move(element));
+    AOT_TEST_CHECK(with.rarePart.liesOnHeap() && &with.rarePart.ensure() == &part && with.rarePart.ifExists() == &part && &*with.rarePart == &part);
+
+    RecordWithRarePart copy = with;
+    AOT_TEST_CHECK(copy.rarePart.liesOnHeap() && copy.rarePart.ifExists() != &part && copy.rarePart->number == 7 && copy.rarePart->words == part.words && copy.rarePart->words.begin() != part.words.begin());
+    copy = without;
+    AOT_TEST_CHECK(copy.rarePart.isEmpty());
+
+    BlocksOfUnits blocks;
+    RecordWithRarePart* keptWithout = blocks.keep(WTF::move(without));
+    RecordWithRarePart* kept = blocks.keep(WTF::move(with));
+    AOT_TEST_CHECK(keptWithout->rarePart.isEmpty() && with.rarePart.isEmpty());
+    AOT_TEST_CHECK(kept->rarePart.liesInBlock() && !kept->rarePart.liesOnHeap() && addressOf(kept->rarePart.ifExists()) > addressOf(kept) && addressOf(kept->rarePart.ifExists()) < addressOf(kept) + BlocksOfUnits::sizeOfBlock);
+    AOT_TEST_CHECK(kept->rarePart->number == 7 && kept->rarePart->words.liesInBlock() && kept->rarePart->words == ListOfUnit<uint32_t>({ 0, 1, 2, 3, 4 }));
+    AOT_TEST_CHECK(kept->rarePart->elements.liesInBlock() && kept->rarePart->elements[0].words.liesInBlock() && kept->rarePart->elements[0].words == ListOfTwo({ 10, 11, 12, 13 }));
+    HeapFinder finder;
+    forEachListOfUnitIn(*kept, finder);
+    AOT_TEST_CHECK(!finder.numberOnHeap && finder.numberInBlocks == 5);
+
+    RecordWithRarePart moved = WTF::move(*kept);
+    AOT_TEST_CHECK(kept->rarePart.isEmpty() && moved.rarePart.liesInBlock() && moved.rarePart->number == 7);
+    kept->~RecordWithRarePart();
+    keptWithout->~RecordWithRarePart();
+}
+
 static constexpr ASCIILiteral programWhoseUnitsLeaveLists = R"IR(layout L0 kind=Instance name="Box" module=m0 constructor=f1
 module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
 entry module=m0
@@ -249,6 +329,7 @@ std::span<const NativeTest> listOfUnitTests()
         { "list-of-unit/grows-in-itself-then-on-the-heap"_s, testListGrowsInItselfThenOnHeap },
         { "list-of-unit/large-list-that-fills-its-memory-stays-where-it-lies"_s, testLargeListThatFillsItsMemoryStaysWhereItLies },
         { "list-of-unit/list-in-a-block-is-written-in-place-and-outgrows-it"_s, testListInBlockIsWrittenInPlaceAndOutgrowsIt },
+        { "list-of-unit/rare-part-is-absent-until-ensured-and-moves-into-the-block"_s, testRarePartIsAbsentUntilEnsuredAndMovesIntoBlock },
         { "list-of-unit/no-record-of-the-stage-owns-memory"_s, testNoRecordOfStageOwnsMemory },
     };
     return tests;

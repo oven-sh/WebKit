@@ -54,6 +54,50 @@ void writeAccessorsExpectedInFields(const LinkFlow& flow, LinkTables& tables)
     }
 }
 
+LayoutID findHolderAboveCreatedLayout(const LinkFlow& flow, LayoutID created)
+{
+    FlowNodeID above = flow.findWhatStandsAbove(created);
+    for (unsigned stepsLeft = LinkFlow::mostStepsAboveCreatedObject; above && stepsLeft; --stepsLeft) {
+        const LinkType& type = flow.typeAt(above);
+        if (type.classes == LinkType::Classes::Site && type.objects == LinkType::Objects::None)
+            above = flow.findWhatStandsAbove(type.site);
+        else if (type.objects == LinkType::Objects::Layout && type.classes == LinkType::Classes::None) {
+            if (!flow.program.at(type.layout).has(LayoutFlags::IsOfCreatedObject))
+                return type.layout;
+            above = flow.findWhatStandsAbove(type.layout);
+        } else
+            return { };
+    }
+    return { };
+}
+
+void writeMembersAboveCreatedLayouts(const LinkFlow& flow, LinkTables& tables)
+{
+    const Program& program = flow.program;
+    for (uint32_t index = 0; index < program.layouts.size(); ++index) {
+        LayoutID holder = program.layouts[index].has(LayoutFlags::IsOfCreatedObject) ? findHolderAboveCreatedLayout(flow, LayoutID(index)) : LayoutID();
+        if (!holder)
+            continue;
+        uint32_t number = 0;
+        auto layoutOf = [](const LinkedAccessorsOfField& accessors) {
+            return accessors.field.layout;
+        };
+        for (const LinkedAccessorsOfField& accessors : std::ranges::equal_range(tables.accessorsExpectedInFields, holder, { }, layoutOf)) {
+            PropertyKeyID key = fieldAt(program, accessors.field).key;
+            for (auto [kind, function] : { std::pair { MethodKind::Getter, accessors.getter }, std::pair { MethodKind::Setter, accessors.setter } }) {
+                if (!key || !function)
+                    continue;
+                tables.membersAboveCreatedLayouts.append(LinkedMember { LayoutID(index), ClassSide::Prototype, kind, number++, key, function, false, { } });
+                tables.functionsAboveCreatedLayoutsUnderKeys.append({ key, function });
+                tables.keysOfFunctionsAboveCreatedLayouts.set(key.index());
+            }
+        }
+    }
+    std::ranges::sort(tables.functionsAboveCreatedLayoutsUnderKeys);
+    auto repeated = std::ranges::unique(tables.functionsAboveCreatedLayoutsUnderKeys);
+    tables.functionsAboveCreatedLayoutsUnderKeys.shrink(repeated.begin() - tables.functionsAboveCreatedLayoutsUnderKeys.begin());
+}
+
 const LinkedAccessorsOfField* LinkTables::findAccessorsExpectedIn(FieldReference field) const
 {
     auto found = std::ranges::lower_bound(accessorsExpectedInFields, field, { }, &LinkedAccessorsOfField::field);

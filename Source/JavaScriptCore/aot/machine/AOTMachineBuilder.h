@@ -41,6 +41,13 @@ public:
 
     Block* newBlock() { return m_proc.addBlock(); }
 
+    ALWAYS_INLINE void begin(Block* block)
+    {
+        if (!block->numberOfIncomingEdges()) [[unlikely]]
+            m_proc.m_blocksBegunBeforeAnythingLedToThem.append(m_proc.arena(), block);
+        m_block = block;
+    }
+
     NEVER_INLINE void appendTo(Block* block)
     {
         ASSERT(block);
@@ -49,7 +56,7 @@ public:
             return;
         if (m_block)
             m_numbering.switchBlocks(m_block, block);
-        m_block = block;
+        begin(block);
     }
     ALWAYS_INLINE void appendToContinuation(Block* block)
     {
@@ -61,7 +68,7 @@ public:
             block->m_hasOnlyOnePredecessor = true;
             m_numbering.continueIn(m_block, block);
         }
-        m_block = block;
+        begin(block);
     }
     ALWAYS_INLINE ScopeFork forkScope()
     {
@@ -77,13 +84,13 @@ public:
             block->m_hasOnlyOnePredecessor = true;
         }
         m_numbering.restore(fork.mark);
-        m_block = block;
+        begin(block);
     }
     NEVER_INLINE void appendToJoin(Block* block, const ScopeFork& fork)
     {
         sealPendingPatch();
         m_numbering.restore(fork.mark);
-        m_block = block;
+        begin(block);
     }
     ALWAYS_INLINE void appendToSuccessor(Block* block, const ScopeFork& fork)
     {
@@ -162,6 +169,7 @@ public:
     JS_EXPORT_PRIVATE void recordInPlaceOfPurePatch(const PureFunction&, Operation* phi);
 
     JS_EXPORT_PRIVATE void jump(Edge);
+    JS_EXPORT_PRIVATE bool tryToLeadBranchPastEmptyBlock(Edge);
     JS_EXPORT_PRIVATE void branch(Operation* predicate, Edge whenNotZero, Edge whenZero);
     JS_EXPORT_PRIVATE void switchOn(Operation*, std::span<const SwitchCase>, Edge otherwise);
     JS_EXPORT_PRIVATE void ret(Operation*);

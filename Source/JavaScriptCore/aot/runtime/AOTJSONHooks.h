@@ -18,11 +18,7 @@ class JSGlobalObject;
 
 namespace AOT {
 
-class StringBuilderStorage;
-
 JSValue tryParseJSON(JSGlobalObject*, StringView);
-
-Latin1Character* tryAppendJSONText(JSGlobalObject*, StringBuilderStorage&, Latin1Character* cursor, JSValue, unsigned levelsAround);
 
 } } // namespace JSC::AOT
 

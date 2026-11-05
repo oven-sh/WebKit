@@ -15,7 +15,10 @@
 #include "AOTIRProgram.h"
 #include "AOTLinkTables.h"
 #include "AOTOpcodeSets.h"
+#include "AOTPlan.h"
+#include "AOTSlotRepresentation.h"
 #include "AOTStubsCompiledMethods.h"
+#include "AOTWalk.h"
 #include <algorithm>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -37,15 +40,29 @@ bool stubOfMethodEntersFunctionsThatOnlyCallFirstArgument(const Program& program
     return namesFunction;
 }
 
+bool unitMayLendWhatItMakes(const Program& program, CodeUnit unit)
+{
+    bool isCoroutine = program.at(unit.function).isCoroutine();
+    return !isBodyOfCoroutine(unit.role, isCoroutine) && !(isCoroutine && walksInputBody(unit.role));
+}
+
+bool closureHasCellThatMayBeLent(const Program& program, ClosureForm form, FunctionID function)
+{
+    return (form == ClosureForm::Slim || form == ClosureForm::Full) && !program.at(function).calleeParameterIndex();
+}
+
+bool functionEnteredOnlyCallsWhatArrivesAt(const Facts& facts, CodeRole role, uint32_t numberOfBoundArguments, FunctionID function, uint32_t position)
+{
+    return returnsResultOfFunction(role) && !numberOfBoundArguments && facts.linked().onlyCallsWhatArrivesAt(function, position);
+}
+
 static LoanOfClosure findLoanOfSweptClosure(const SweepInputs& inputs, const Code& code, ValueID closure)
 {
     const Program& program = inputs.program;
     const LinkTables& linked = inputs.facts.linked();
     const Operation& made = code.at(closure);
     ClosureForm form = made.closureForm();
-    if (form != ClosureForm::Slim && form != ClosureForm::Full)
-        return LoanOfClosure::None;
-    if (program.at(made.function()).calleeParameterIndex())
+    if (!closureHasCellThatMayBeLent(program, form, made.function()))
         return LoanOfClosure::None;
 
     ValueID name = closure;
@@ -79,7 +96,7 @@ static LoanOfClosure findLoanOfSweptClosure(const SweepInputs& inputs, const Cod
 
     switch (call.opcode) {
     case Opcode::CallDirect:
-        if (returnsResultOfFunction(call.role()) && !call.numberOfBoundArguments() && linked.onlyCallsWhatArrivesAt(call.function(), position))
+        if (functionEnteredOnlyCallsWhatArrivesAt(inputs.facts, call.role(), call.numberOfBoundArguments(), call.function(), position))
             return LoanOfClosure::ToFunctionEntered;
         return LoanOfClosure::None;
     case Opcode::Call:
@@ -103,9 +120,7 @@ bool Sweep::beginLendingClosures()
     m_closuresThatMayBeLent.shrink(0);
     if (!code.opcodesOfValues().contains(Opcode::NewClosure) || !m_inputs->facts.mechanisms().contains(Mechanism::CellsInFrames))
         return false;
-    CodeUnit unit = code.unit();
-    bool isCoroutine = m_inputs->program.at(unit.function).isCoroutine();
-    return !isBodyOfCoroutine(unit.role, isCoroutine) && !(isCoroutine && walksInputBody(unit.role));
+    return unitMayLendWhatItMakes(m_inputs->program, code.unit());
 }
 
 bool Sweep::noteIfClosureMayBeLent(ValueID closure)
@@ -132,6 +147,88 @@ void Sweep::lendClosures()
         code.layClosureInFrame(closure, loan);
     }
     m_lendsClosures = false;
+}
+
+bool objectOfLayoutMayLieInFrame(const PlannedLayout& planned)
+{
+    if (!planned.holdsCompiledObjects() || planned.hasExtension())
+        return false;
+    for (unsigned field = 0; field < planned.numberOfFields(); ++field) {
+        const PlacedSlot& slot = planned.slots[field];
+        if (slot.hasStorage() && traitsOf(slot.representation).isNarrowReference)
+            return false;
+    }
+    return true;
+}
+
+static bool isLentToCalleeThatOnlyLooks(const SweepInputs& inputs, const Code& code, ValueID cell)
+{
+    const Operation& made = code.at(cell);
+
+    ValueID name = cell;
+    ValueID user = code.onlyUserOf(name);
+    while (user && opcodesThatGiveSameCell.contains(code.at(user).opcode)) {
+        name = user;
+        user = code.onlyUserOf(name);
+    }
+    if (!user)
+        return false;
+    const Operation& call = code.at(user);
+    if (call.opcode != Opcode::CallDirect || call.blockIndex != made.blockIndex || !returnsResultOfFunction(call.role()) || call.numberOfBoundArguments())
+        return false;
+    const Terminator& endOfCall = code.at(call.block()).terminator;
+    if (endOfCall.kind == TerminatorKind::ReturnCall && endOfCall.callOperand() == user)
+        return false;
+    std::span<const ValueID> arguments = call.argumentsOperands();
+    size_t position = std::ranges::find(arguments, name) - arguments.begin();
+    if (position == arguments.size() || !inputs.facts.linked().onlyLooksAtWhatArrivesAt(call.function(), static_cast<unsigned>(position)))
+        return false;
+    if (!nothingButOwnFieldsAnswersFor(inputs.program, made) || !objectOfLayoutMayLieInFrame(inputs.plan.layout(made.layout())))
+        return false;
+
+    bool throwsIntoThisFrame = !!code.at(call.block()).handler;
+    return std::ranges::none_of(made.valuesOperands(), [&](ValueID value) {
+        if (!value)
+            return false;
+        TypeID type = code.at(value).type;
+        return Operation::opcodesWithStorage.contains(code.at(rootOfCellInSweptCode(code, value)).opcode) || (throwsIntoThisFrame && (!type || inputs.types.at(type).hasCells()));
+    });
+}
+
+bool Sweep::beginLendingCells()
+{
+    const Code& code = *m_code;
+    m_cellsThatMayBeLent.shrink(0);
+    if (!code.opcodesOfValues().contains(Opcode::NewObject) || !code.opcodesOfValues().contains(Opcode::CallDirect) || !m_inputs->facts.mechanisms().contains(Mechanism::CellsInFrames))
+        return false;
+    CodeUnit unit = code.unit();
+    bool isCoroutine = m_inputs->program.at(unit.function).isCoroutine();
+    return !isBodyOfCoroutine(unit.role, isCoroutine) && !(isCoroutine && walksInputBody(unit.role));
+}
+
+bool Sweep::noteIfCellMayBeLent(ValueID cell)
+{
+    const Code& code = *m_code;
+    if (code.at(cell).storage() != AllocationStorage::Heap || !isLentToCalleeThatOnlyLooks(*m_inputs, code, cell))
+        return false;
+    m_cellsThatMayBeLent.append(cell);
+    return true;
+}
+
+void Sweep::lendCells()
+{
+    Code& code = *m_code;
+    for (ValueID cell : m_cellsThatMayBeLent) {
+        ++m_totals.operationsSwept;
+        if (code.at(cell).storage() != AllocationStorage::Heap)
+            continue;
+        if (!isLentToCalleeThatOnlyLooks(*m_inputs, code, cell)) {
+            m_coverageIsOutOfDate = true;
+            continue;
+        }
+        code.layObjectInFrame(cell);
+    }
+    m_lendsCells = false;
 }
 
 } } } // namespace JSC::AOT::Typed

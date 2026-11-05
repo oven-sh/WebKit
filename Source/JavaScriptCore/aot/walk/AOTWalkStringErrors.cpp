@@ -70,7 +70,7 @@ bool buildThrowOfNewError(Walker& walker, const CallByOneRow& call)
     BodyTerminator thrower = block.terminator();
     if (thrower.kind() != TerminatorKind::Throw || thrower.operand(0) != findErrorBehindItsCastsInStringErrors(index, block, made))
         return false;
-    if (block.hasHandler() || walker.depthOfCopies() || walker.code().at(walker.currentBlock()).handler)
+    if (block.hasHandler() || !walker.walksOwnBodyOfUnit() || walker.code().at(walker.currentBlock()).handler)
         return false;
     if (walker.program().at(walker.currentFunction()).isHiddenInStackTraces())
         return false;
@@ -83,6 +83,9 @@ bool buildThrowOfNewError(Walker& walker, const CallByOneRow& call)
     if (positionOfThrow != DraftWords::noPosition && positionOfThrow != call.origin.position)
         throwPosition = positionOfThrow;
 
+    walker.endLivesAtThrow({ });
+    if (walker.isUnreachable())
+        return true;
     Draft error(Opcode::ThrowNewError, call.origin);
     walker.chooseConservativeFields(error);
     error.setErrorKind(*errorKind);

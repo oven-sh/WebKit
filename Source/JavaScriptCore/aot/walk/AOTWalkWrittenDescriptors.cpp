@@ -333,7 +333,6 @@ bool buildDefinitionByWrittenDescriptorOfItsOpcodes(Walker& walker, const BodyVa
         return false;
     if (!typeOfObject.isJavaScriptValue() || !typeOfObject.hasObjects())
         return false;
-    // The built-in refuses what is no object before it asks an object for the key that it stands for.
     if (typeOfKey.hasObjects() && typeOfObject.primitives)
         return false;
     if (rootOfObjectInWrittenDescriptors(walker, operands->object) == rootOfObjectInWrittenDescriptors(walker, operands->descriptor))

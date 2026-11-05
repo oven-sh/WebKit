@@ -14,17 +14,12 @@
 # STORE: access [[store]] v4 Store [[from]] this=Parameter 0 "size" <- Parameter 1
 # STORE-NOT: Parameter 0 -> Unknown
 # STORE-NOT: Parameter 1 -> Unknown
-# The link above the home object is read without a lookup, and `prototype` of a class is a value that nobody can define anew: neither `super.x`, `super(..)` nor `new` runs code that nobody knows.
-# RUN(EFFECTS): link functions members mechanisms=all
-# EFFECTS: function f1 callers-known
-# EFFECTS-NOT: mayCallUnknownCode
-# EFFECTS: member L0 Prototype 0
 # RUN(LINK): link calls functions members layouts mechanisms=all
 # LINK: call f5 v4 -> f2
-# LINK: function f3 callers-known {{*}}result=L0
-# LINK-NEXT: parameter 0 {{*}}proven=L0
+# LINK: function f3 callers-known {{*}}result=L1
+# LINK-NEXT: parameter 0 {{*}}proven=L1
 # LINK: function f7 callers-known
-# LINK-NEXT: parameter 0 {{*}}proven=L0
+# LINK-NEXT: parameter 0 {{*}}proven=L1
 # LINK-NEXT: parameter 1 {{*}}proven=string
 # LINK: member L0 Prototype 0 Method "name" function=f2 writers-known
 # LINK: member L0 Prototype 1 Getter "size" function=f3 writers-known

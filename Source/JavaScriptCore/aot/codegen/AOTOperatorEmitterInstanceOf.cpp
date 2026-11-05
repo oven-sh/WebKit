@@ -12,9 +12,25 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
+bool OperatorEmitter::leaveConstructorToInstanceOf(const ValueContext& read, InstanceOfOperand operand, NumberedImmediate number)
+{
+    std::span<const ValueID> behind = read.operationsBehind();
+    while (!behind.empty() && operationAt(behind.front()).traits().isPure())
+        behind = behind.subspan(1);
+    if (behind.empty() || behind.front() != m_code.onlyUserOf(read.id()) || opcodeOf(behind.front()) != Opcode::InstanceOf || operationAt(behind.front()).constructorOperand() != read.id())
+        return false;
+    m_constructorLeftToInstanceOf = ConstructorLeftToInstanceOf { read.id(), operand, number };
+    return true;
+}
+
 void OperatorEmitter::generateInstanceOf(const ValueContext& value)
 {
     Boxed object = in<Boxed>(value->valueOperand());
+    if (std::optional left = std::exchange(m_constructorLeftToInstanceOf, std::nullopt)) {
+        RELEASE_ASSERT(left->read == value->constructorOperand());
+        defineTest(value, Condition(m_out.castToInt32(callStub(value, AOT::instanceOf(left->operand), { object.value() }, { .numberedImmediate = left->number }).first)));
+        return;
+    }
     Boxed constructor = in<Boxed>(value->constructorOperand());
     defineTest(value, Condition(m_out.castToInt32(callStub(value, AOT::instanceOf(InstanceOfOperand::Constructor), { object.value(), constructor.value() }).first)));
 }

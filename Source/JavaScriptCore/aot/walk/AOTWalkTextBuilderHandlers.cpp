@@ -386,7 +386,7 @@ std::optional<size_t> Walker::findTextHeldInFrame(size_t frameIndex, ValueID val
     return std::nullopt;
 }
 
-bool Walker::leadHandlerEdgeBehindStringsOfTexts(size_t frameIndex, BodyTarget target, Vector<Reference, 4>& arguments, Vector<TypeID, 4>& types)
+bool Walker::leadHandlerEdgeBehindStringsOfTexts(size_t frameIndex, BodyTarget target, Vector<Reference, 4>& arguments, Vector<TypeID, 4>& types, Vector<std::pair<ValueID, Reference>, 2>& names)
 {
     const BodyIndex& index = *m_frames[frameIndex].index;
     std::span<const ValueID> written = target.arguments();
@@ -450,6 +450,8 @@ bool Walker::leadHandlerEdgeBehindStringsOfTexts(size_t frameIndex, BodyTarget t
     open.arguments = WTF::move(arguments);
     open.types = WTF::move(types);
     takeNamesOntoEdge(open, frameIndex);
+    for (auto [value, name] : names)
+        m_frames[frameIndex].valuesBuiltTwice->nameOtherwiseOn(open.names, value, name);
     endWithRethrow(exception, origin);
     return goOnWhereBlockMayThrow();
 }

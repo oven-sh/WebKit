@@ -86,6 +86,7 @@ struct ModuleHost {
     bool (*loadsFileItself)(JSGlobalObject*, const String& path);
     bool (*hasPluginsThatAnswerForNames)(JSGlobalObject*);
     AnswerForName (*answersForName)(JSGlobalObject*, const String& name, const String& importer, String& foundWithoutPlugins);
+    String (*findsWithoutPlugins)(JSGlobalObject*, const String& name, const String& importer);
     void (*askingAboutNames)(JSGlobalObject*, const ScopedLambda<bool(const String& importer)>* leavesWhereAskingEnds);
     const MockOperations* (*mockOperations)();
     uint64_t (*stampOfFile)(std::span<const char> path);

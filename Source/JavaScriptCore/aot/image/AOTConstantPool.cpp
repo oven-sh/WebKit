@@ -75,7 +75,7 @@ ConstantPool buildConstantPool(const LinkedFunctions& functions, BuildContext& c
     auto bytesOfConstant = [&](const PooledConstant& constant) -> std::span<const uint8_t> {
         if (constant.isShared())
             return shared.bytes.subspan(shared.parts[constant.index].offset, shared.parts[constant.index].size);
-        return functions[constant.positionPlusOne - 1].body.constants[constant.index].bytes.span();
+        return functions[constant.positionPlusOne - 1].body.rareLists->constants[constant.index].bytes.span();
     };
     auto offsetOf = [&](const PooledConstant& constant) -> uint32_t& {
         return pool.constantOffsetsByBody[constant.positionPlusOne - 1][constant.index];
@@ -91,11 +91,11 @@ ConstantPool buildConstantPool(const LinkedFunctions& functions, BuildContext& c
     pool.constantOffsetsByBody.grow(functions.size());
     pool.jumpTableOffsetsByBody.grow(functions.size());
     Vector<PooledConstant> constants = collectInParallel<PooledConstant>(loops, functions.size(), [&](unsigned position, Vector<PooledConstant>& constantsOfChunk) {
-        const CodeBody& body = functions[position].body;
-        pool.constantOffsetsByBody[position].grow(body.constants.size());
-        pool.jumpTableOffsetsByBody[position].grow(body.jumpTables.size());
-        for (uint32_t index = 0; index < body.constants.size(); ++index)
-            constantsOfChunk.append(createPooledConstant(body.constants[index].bytes.span(), body.constants[index].alignment, position + 1, index));
+        const RareListsOfBody& lists = *functions[position].body.rareLists;
+        pool.constantOffsetsByBody[position].grow(lists.constants.size());
+        pool.jumpTableOffsetsByBody[position].grow(lists.jumpTables.size());
+        for (uint32_t index = 0; index < lists.constants.size(); ++index)
+            constantsOfChunk.append(createPooledConstant(lists.constants[index].bytes.span(), lists.constants[index].alignment, position + 1, index));
     });
     for (uint32_t index = 0; index < shared.parts.size(); ++index) {
         ConstantRange part = shared.parts[index];
@@ -144,7 +144,7 @@ ConstantPool buildConstantPool(const LinkedFunctions& functions, BuildContext& c
         Vector<uint32_t, 0>& offsets = pool.jumpTableOffsetsByBody[position];
         for (size_t index = 0; index < offsets.size(); ++index) {
             uint64_t start = roundUpToMultipleOf<sizeof(int32_t)>(size);
-            uint64_t sizeOfTable = sizeof(int32_t) * functions[position].body.jumpTables[index].targets.size();
+            uint64_t sizeOfTable = sizeof(int32_t) * functions[position].body.rareLists->jumpTables[index].targets.size();
             padding += start - size;
             offsets[index] = static_cast<uint32_t>(start);
             sizeOfJumpTables += sizeOfTable;
@@ -164,7 +164,7 @@ ConstantPool buildConstantPool(const LinkedFunctions& functions, BuildContext& c
             const PooledConstant& constant = constants[index];
             if (constant.isShared() || hasBytesOfConstantInFront[index])
                 continue;
-            const ConstantData& data = functions[constant.positionPlusOne - 1].body.constants[constant.index];
+            const ConstantData& data = functions[constant.positionPlusOne - 1].body.rareLists->constants[constant.index];
             memcpySpan(bytes.subspan(offsetsOfConstants[index]), data.bytes.span());
             bytesByKind[static_cast<unsigned>(data.kind)] += data.bytes.size();
         }

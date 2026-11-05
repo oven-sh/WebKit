@@ -194,9 +194,9 @@ static ASCIILiteral describeLinkFailureOfTestProcedure(LinkFailure failure)
 
 static Vector<uint8_t> layOutTestProcedure(const Procedure& procedure, ImageLinkBuffer& buffer, std::span<const Relocation> relocations)
 {
-    decltype(CodeBody::constants) constants;
+    decltype(RareListsOfBody::constants) constants;
     describeConstants(procedure, constants);
-    decltype(CodeBody::jumpTables) jumpTables;
+    decltype(RareListsOfBody::jumpTables) jumpTables;
     describeJumpTables(procedure, buffer.linkBuffer(), jumpTables);
 
     std::span<const uint8_t> code = buffer.bytes();

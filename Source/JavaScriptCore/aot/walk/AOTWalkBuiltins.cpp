@@ -112,16 +112,36 @@ static bool lookupFromClosuresGoesToFunctionPrototypeInWalkBuiltins(const Walker
 
 static constexpr AbstractHeapSet heapsUnderTestOfBeingAsMadeInWalkBuiltins { AbstractHeap::NamedProperties, AbstractHeap::PrototypeLinks };
 
+static BuiltinClassID classOfPrimitivesWatchedInWalkBuiltins(const Walker& walker, TypeID value)
+{
+    if (!walker.program().admitsReplacedBuiltins || !value)
+        return { };
+    Type type = walker.types().at(value);
+    return type.isJavaScriptValue() && !type.hasObjects() ? primitiveClassOf(type.primitives) : BuiltinClassID();
+}
+
 void noteObjectPassedTestOfBeingAsMade(Walker& walker, Reference object, Reference test, uint32_t numberOfValuesInFrontOfTest)
 {
-    if (!walker.program().admitsReplacedBuiltins || !test || !test.isValue() || test.id().index() < numberOfValuesInFrontOfTest)
+    if (!walker.program().admitsReplacedBuiltins || !test || !test.isValue())
+        return;
+    if (BuiltinClassID ofPrimitives = classOfPrimitivesWatchedInWalkBuiltins(walker, walker.typeOf(object))) {
+        noteKnown(walker, KnownNote::PassedTestOfBeingAsMade, { }, { }, ofPrimitives.index() + 1, LocationMasks(heapsUnderTestOfBeingAsMadeInWalkBuiltins), 1);
+        return;
+    }
+    if (test.id().index() < numberOfValuesInFrontOfTest)
         return;
     noteKnown(walker, KnownNote::PassedTestOfBeingAsMade, { }, object, 0, LocationMasks(heapsUnderTestOfBeingAsMadeInWalkBuiltins), 1);
 }
 
 static MembersBehindWatch membersBehindWatchAboveInWalkBuiltins(Walker& walker, Reference object)
 {
-    bool hasPassed = walker.program().admitsReplacedBuiltins && object && object.isValue() && findKnown(walker, KnownNote::PassedTestOfBeingAsMade, { }, object);
+    if (!walker.program().admitsReplacedBuiltins || !object)
+        return MembersBehindWatch::AreOpen;
+    bool hasPassed = false;
+    if (BuiltinClassID ofPrimitives = classOfPrimitivesWatchedInWalkBuiltins(walker, walker.typeOf(object)))
+        hasPassed = !!findKnown(walker, KnownNote::PassedTestOfBeingAsMade, { }, { }, ofPrimitives.index() + 1);
+    else
+        hasPassed = object.isValue() && findKnown(walker, KnownNote::PassedTestOfBeingAsMade, { }, object);
     return hasPassed ? MembersBehindWatch::AreAsBuilt : MembersBehindWatch::AreOpen;
 }
 
@@ -157,7 +177,7 @@ static BuiltinID findMemberReadOffInWalkBuiltins(const Walker& walker, TypeID ob
     for (BuiltinClassID current = builtinClass; current && !prototype; current = table.at(current).parent)
         prototype = table.at(current).prototype;
     BuiltinID member = prototype ? findConstantMemberOnceForBuild(walker, prototype, key) : BuiltinID();
-    if (!member && prototype && !isPrimitive && watch == MembersBehindWatch::AreAsBuilt)
+    if (!member && prototype && watch == MembersBehindWatch::AreAsBuilt)
         member = findConstantMemberFrom(program, walker.facts(), prototype, key, watch);
     if (!member || table.isRedefinedBelow(builtinClass, name))
         return { };
@@ -202,6 +222,14 @@ static Reference buildTestOfInstanceAsMadeInWalkBuiltins(Walker&, Reference obje
 
 Reference buildTestOfObjectAsMade(Walker& walker, Reference object, Origin origin)
 {
+    if (BuiltinClassID ofPrimitives = classOfPrimitivesWatchedInWalkBuiltins(walker, walker.typeOf(object))) {
+        Draft test(Opcode::IsPristine, origin);
+        walker.chooseConservativeFields(test);
+        test.setValueOperand(walker.constant(Draft(Opcode::Undefined, origin)));
+        test.setBuiltinClass(ofPrimitives);
+        test.setAspects({ PristineAspects::Names });
+        return walker.build(WTF::move(test));
+    }
     return buildTestOfInstanceAsMadeInWalkBuiltins(walker, object, classWhoseInstancesAreTestedInWalkBuiltins(walker, walker.typeOf(object)), origin);
 }
 
@@ -262,6 +290,13 @@ TypeID typeFoundOnObjectAsMade(Walker& walker, const BodyValue& read, TypeID typ
     BuiltinOperandTypes passed;
     passed.receiver = walker.types().withoutNullish(typeOfObject);
     return resultTypeOfReachableOverloads({ walker.program(), walker.types() }, table.canonicalID(member), BuiltinCallMode::Get, passed);
+}
+
+TypeID typeFoundAbovePrimitiveBehindWatch(Walker& walker, const BodyValue& read, TypeID typeOfPrimitive)
+{
+    if (!classOfPrimitivesWatchedInWalkBuiltins(walker, typeOfPrimitive) || findConstantMemberReadOff(std::as_const(walker), typeOfPrimitive, read.key()))
+        return { };
+    return typeFoundOnObjectAsMade(walker, read, typeOfPrimitive);
 }
 
 bool readOffObjectAsMadeCallsGetter(Walker& walker, const BodyValue& read, TypeID typeOfObject)
@@ -718,7 +753,7 @@ TypedForm buildReadOfBuiltinMember(Walker& walker, const BodyValue& read, TypeID
         if (location && object)
             holdLinksWordAgainstObjectAsMade(walker, object, walker.originOf(read), isSaidByBodyAlone);
     }
-    if (!location && !object && classWhoseInstancesAreTestedInWalkBuiltins(walker, typeOfObject)) {
+    if (!location && !object && (classWhoseInstancesAreTestedInWalkBuiltins(walker, typeOfObject) || classOfPrimitivesWatchedInWalkBuiltins(walker, typeOfObject))) {
         location = findMemberReadOffInWalkBuiltins(walker, typeOfObject, key, true, MembersBehindWatch::AreAsBuilt);
         formAskedAbout = TypedForm::BuiltOnObjectAsMade;
     }
@@ -870,7 +905,7 @@ public:
         , m_location(locationFoundByRead)
     {
         if (locationFoundByRead)
-            m_mode = BuiltinCallMode::Get;
+            m_mode = call.opcode() == Opcode::PropSet ? BuiltinCallMode::Set : BuiltinCallMode::Get;
     }
 
     CallInWalkBuiltins(Walker& walker, const BodyValue& call, const Draft& forwarded)
@@ -1013,7 +1048,7 @@ private:
 
 bool CallInWalkBuiltins::findCallee()
 {
-    if (m_mode == BuiltinCallMode::Get) {
+    if (m_mode == BuiltinCallMode::Get || m_mode == BuiltinCallMode::Set) {
         m_builtin = m_table.canonicalID(m_location);
         return true;
     }
@@ -1080,7 +1115,7 @@ bool CallInWalkBuiltins::constructorFindsItsAdderUnchanged() const
 
 bool CallInWalkBuiltins::mayBelieveRows() const
 {
-    if (m_mode == BuiltinCallMode::Get)
+    if (m_mode == BuiltinCallMode::Get || m_mode == BuiltinCallMode::Set)
         return m_table.dispatchOf(m_builtin, m_mode) && !mayBeTrimmed();
     if (!isCallableBuiltin(m_table, m_builtin) || isCallThatTheWalkMustLower(m_table, m_builtin))
         return false;
@@ -1102,6 +1137,11 @@ bool CallInWalkBuiltins::describeOperands()
     if (m_mode == BuiltinCallMode::Get) {
         m_thisValue = operandAsWritten(m_call.objectOperand());
         return m_thisValue->type && !isNeverType(m_thisValue->type);
+    }
+    if (m_mode == BuiltinCallMode::Set) {
+        m_thisValue = operandAsWritten(m_call.objectOperand());
+        m_passed.append(operandAsWritten(m_call.valueOperand()));
+        return holdsValue(*m_thisValue) && holdsValue(m_passed[0]);
     }
     if (m_forwarded) {
         Reference thisValue = m_forwarded->thisValueOperand();
@@ -1411,7 +1451,8 @@ bool CallInWalkBuiltins::hasNativeEntry() const
         return true;
     if (m_table.at(m_overload->builtin).flags.contains(BuiltinFlag::IsCompilerHelper))
         return !BuiltinBindings::hasHost() && m_overload->code.implementation.kind == BuiltinImplementationKind::HostCall;
-    if (!(m_mode == BuiltinCallMode::Get ? BuiltinCellKey::getter(m_overload->builtin) : BuiltinCellKey::object(m_overload->builtin)).hasCell(m_table))
+    BuiltinCellKey callee = m_mode == BuiltinCallMode::Get ? BuiltinCellKey::getter(m_overload->builtin) : m_mode == BuiltinCallMode::Set ? BuiltinCellKey::setter(m_overload->builtin) : BuiltinCellKey::object(m_overload->builtin);
+    if (!callee.hasCell(m_table))
         return false;
 
     const BuiltinImplementation& implementation = m_overload->code.implementation;
@@ -1865,7 +1906,7 @@ Vector<Reference, 4> CallInWalkBuiltins::freshOperandsThatStayHere() const
 {
     static constexpr OperandUses usesThatHandOperandToNobody {
         OperandUse::Inspects, OperandUse::ReadsContents, OperandUse::RetainsContents, OperandUse::WritesContents, OperandUse::MovesElements,
-        OperandUse::DefinesName, OperandUse::ChangesIntegrity, OperandUse::ChangesPrototype,
+        OperandUse::ChangesIntegrity,
     };
 
     Vector<Reference, 4> staying;
@@ -1926,7 +1967,7 @@ bool CallInWalkBuiltins::plan()
     if (!describeOperands())
         return false;
     if (!planOnPartsOfLiteral() && (!matchOverload() || !planOperands() || !chooseForm()))
-        return m_mode != BuiltinCallMode::Get && planOnAnyOperands();
+        return m_mode != BuiltinCallMode::Get && m_mode != BuiltinCallMode::Set && planOnAnyOperands();
     m_effects = m_rowStandsForSeveral ? Effects::unknownCode() : effectsOfRow(m_inlineForm == InlineForm::Whole ? m_inlineBuiltin : std::nullopt);
     if (m_inlineForm == InlineForm::TwoWay)
         m_effectsOfAttempt = effectsOfRow(m_inlineBuiltin);
@@ -2158,6 +2199,8 @@ void CallInWalkBuiltins::build()
         m_walker.state().noteFresh(object);
     for (Reference object : stayingAsMade)
         noteListAsMade(m_walker, object);
+    if (m_mode == BuiltinCallMode::Set)
+        return;
     m_walker.bind(m_call.id(), result);
     const ClassPart* classOfResult = m_mode == BuiltinCallMode::Call && result.isValue() && m_types.at(m_walker.typeOf(result)).isObject() ? singleBuiltinClassOf(m_types, m_types.at(m_walker.typeOf(result))) : nullptr;
     bool isListMadeByCall = classOfResult && classOfResult->builtinClass == BuiltinClasses::Array && m_walker.has(Mechanism::EscapeAnalysis) && !isDoneInPlace() && !mayRunCodeThatNoOperandNames()
@@ -2256,7 +2299,8 @@ Reference CallInWalkBuiltins::buildCall(std::span<const Reference> arguments)
     call.setIsDoneInPlace(isDoneInPlace());
     call.expected = m_expected;
     call.resultIsReturnedAtOnce = m_resultIsReturnedAtOnce;
-    call.inputValueGiven = m_call.id();
+    if (m_mode != BuiltinCallMode::Set)
+        call.inputValueGiven = m_call.id();
     const LinkedContentsAtOperation* contents = m_receiver && (m_builtin == m_table.canonicalID(Builtins::MapPrototypeGet) || m_builtin == m_table.canonicalID(Builtins::WeakMapPrototypeGet)) ? m_walker.facts().linked().contentsAtOperation(m_walker.currentFunction(), m_call.id()) : nullptr;
     TypeID before = m_walker.exchangeContentsBeingTyped(contents ? contents->value : TypeID());
     Reference built = m_walker.build(WTF::move(call), &m_effects);
@@ -2384,6 +2428,35 @@ static bool buildReadByRowOfMemberInWalkBuiltins(Walker& walker, const BodyValue
     return true;
 }
 
+TypedForm buildStoreThroughSetterOfBuiltin(Walker& walker, const BodyValue& store, TypeID typeOfObject, TypeID typeOfStored, Reference object)
+{
+    if (!walker.has(Mechanism::BuiltinCalls) || !typeOfObject || !typeOfStored || walker.types().at(typeOfObject).primitives & Primitive::UndefinedOrNull)
+        return TypedForm::None;
+    PropertyKeyID key = store.key();
+    BuiltinID location = object ? findConstantMemberReadOff(walker, object, key) : BuiltinID();
+    TypedForm formAskedAbout = TypedForm::Built;
+    if (!object && classWhoseInstancesAreTestedInWalkBuiltins(walker, typeOfObject)) {
+        location = findMemberReadOffInWalkBuiltins(walker, typeOfObject, key, true, MembersBehindWatch::AreAsBuilt);
+        formAskedAbout = TypedForm::BuiltOnObjectAsMade;
+    }
+    const BuiltinTable& table = walker.program().builtins();
+    if (!location || table.at(table.canonicalID(location)).kind != BuiltinKind::Accessor)
+        return TypedForm::None;
+
+    ValueID receiver = store.objectOperand();
+    ValueID stored = store.valueOperand();
+    auto typeOfInput = [&](ValueID input) {
+        return input == receiver ? typeOfObject : input == stored ? typeOfStored : TypeID();
+    };
+    TypesOfInputs typesAskedAbout(typeOfInput);
+    CallInWalkBuiltins call(walker, store, object ? nullptr : &typesAskedAbout, location);
+    if (!call.plan() || !call.goesByOneRow())
+        return TypedForm::None;
+    if (object)
+        call.build();
+    return formAskedAbout;
+}
+
 static BuiltinID findMethodThatSomeClassGivesUnderKey(Walker& walker, TypeID receiver, PropertyKeyID key, unsigned numberOfArguments)
 {
     const BuiltinTable& table = walker.program().builtins();
@@ -2485,7 +2558,8 @@ void nameMethodOfReceiverAsMade(Walker& walker, const BodyValue& call, Draft& dr
         return known.isObject() ? !!singleBuiltinClassOf(types, known) : known.isJavaScriptValue() && !known.isNever() && known.hasOnlyPrimitives(Primitive::AnyString);
     };
     TypeID known = types.withoutNullish(walker.typeOf(receiver));
-    if (!isOfOneClass(known)) {
+    const bool classIsOnlyExpected = !isOfOneClass(known);
+    if (classIsOnlyExpected) {
         TypeID expected = findExpectation(walker, operation.thisValueOperand()).type;
         known = expected ? types.withoutNullish(expected) : TypeID();
         if (!isOfOneClass(known) || !types.overlap(walker.typeOf(receiver), known)) {
@@ -2499,6 +2573,8 @@ void nameMethodOfReceiverAsMade(Walker& walker, const BodyValue& call, Draft& dr
     BuiltinID member = findMemberReadOffInWalkBuiltins(walker, known, index.value(read).key(), true);
     const BuiltinTable& table = walker.program().builtins();
     std::optional<BuiltinBoxedStub> boxedCall = member ? table.boxedCallStubOf(table.canonicalID(member)) : std::nullopt;
+    if (boxedCall && classIsOnlyExpected && formAskedBehind(*boxedCall) && findMethodThatSomeClassGivesUnderKey(walker, known, index.value(read).key(), static_cast<unsigned>(draft.argumentsOperands().size())) != table.canonicalID(member))
+        return;
     if (boxedCall && servesCallsByName(*boxedCall, static_cast<unsigned>(draft.argumentsOperands().size())))
         draft.setMethodOfReceiverAsMade(table.canonicalID(member));
     else if (member && stubEntersCompiledMethodInWalkBuiltins(walker, table.canonicalID(member), static_cast<unsigned>(draft.argumentsOperands().size())))

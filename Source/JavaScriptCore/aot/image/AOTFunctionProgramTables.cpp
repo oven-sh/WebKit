@@ -247,7 +247,6 @@ static CodeUnit closureEntryThatDescribes(const Typed::CallingConventions& conve
     case Typed::CodeRole::ParameterGuard:
     case Typed::CodeRole::TableEntry:
     case Typed::CodeRole::TableLookup:
-    case Typed::CodeRole::Serializer:
         return conventions.closureEntryOf(unit.function);
     }
     RELEASE_ASSERT_NOT_REACHED();

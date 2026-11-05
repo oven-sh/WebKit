@@ -261,7 +261,7 @@ void CalleeSummarizerForLinkEffects::takeKnownEffects(const Effects& all, const 
 void CalleeSummarizerForLinkEffects::takeKnownEffectsOfFunction(FunctionID callee, WayInKnownEffects way, EffectsOfComponentInKnownEffects& into) const
 {
     const LinkedFunction& linked = m_tables.function(callee);
-    takeKnownEffects(linked.effectsOnThrow, linked.effectsOnReturn.writes, m_layoutsWrittenByFunction[callee.index()], way, into);
+    takeKnownEffects(linked.effectsOnThrow(), linked.effectsOnReturn().writes, m_layoutsWrittenByFunction[callee.index()], way, into);
 }
 
 bool CalleeSummarizerForLinkEffects::mergeKnownEffectsOfCodeOutside(const CodeEntered& code, uint32_t component, WayInKnownEffects way, EffectsOfComponentInKnownEffects& effects) const
@@ -289,15 +289,15 @@ bool CalleeSummarizerForLinkEffects::mergeKnownEffectsOfCodeOutside(const CodeEn
 
 void CalleeSummarizerForLinkEffects::addEffectsOfOperatorsLeftApart(FunctionID id, const ThinSummary& summary, EffectsOfComponentInKnownEffects& effects) const
 {
-    const Effects* boundOfOperators = summary.knownEffectsApart.ownEffectsOfOperators();
+    std::optional<Effects> boundOfOperators = summary.ownEffectsOfOperators();
     if (!boundOfOperators)
         return;
     constexpr uint16_t whatBecomesNumber = LinkType::closed(Primitive::NumberLike);
     constexpr uint16_t plainPrimitives = LinkType::closed(Primitive::NumberLike | Primitive::AnyString);
     bool mayTakeStrings = false;
     bool mayTakeOtherValues = false;
-    for (uint32_t node : summary.knownEffectsApart.operandsOfOperatorsLeftApart()) {
-        LinkType type = typeAt(id, node);
+    for (uint32_t node : summary.operandsOfOperatorsLeftApart) {
+        LinkType type = typeAt(id, summary, node);
         mayTakeOtherValues |= type.isNothing() || mayBeObjectForLinkEffects(type) || (type.primitives & ~plainPrimitives);
         mayTakeStrings |= !!(type.primitives & ~whatBecomesNumber);
     }
@@ -406,12 +406,11 @@ void CalleeSummarizerForLinkEffects::addFunctionsCalledUnder(LayoutID layout, Pr
 {
     if (m_tables.layouts[layout.index()].possibleChanges.contains(LayoutChange::GainsProperty))
         found.mayBeUnseen = true;
-    if (std::optional<FieldReference> field = findField(m_program, layout, key)) {
-        if (!fieldAt(m_program, *field).form.contains(FieldForm::IsAccessor))
-            addFunctionsAt(m_flow.typeAt(m_flow.field(*field)), found);
-    }
-    if (FlowNodeID appended = m_flow.findAppendedField(layout, key))
-        addFunctionsAt(m_flow.typeAt(appended), found);
+    LinkType subject;
+    subject.objects = LinkType::Objects::Layout;
+    subject.layout = layout;
+    if (mayFindFunctionInFieldUnder(subject, key))
+        found.mayBeUnseen = true;
     for (const LinkFlow::FoundMember& member : m_flow.findMembers(layout, ClassSide::Prototype, key)) {
         if (member.kind == MethodKind::Method)
             addFunctionsAt(m_flow.typeAt(m_flow.member(member.classLayout, ClassSide::Prototype, member.index)), found);
@@ -430,7 +429,7 @@ bool CalleeSummarizerForLinkEffects::judgeAccessGivenArguments(FunctionID id, co
     if (!expected || access.receiver != noSummaryNode)
         return false;
     CodeFound found;
-    findCodeBehindLookup(*expected, key, access.kind, false, false, found);
+    findCodeBehindLookup(*expected, key, access.kind, false, found);
     if (!mergeKnownEffectsOfCodeFound(found, component, way, effects))
         return false;
     addEffectsOfAccessItself(id, summary, access, *expected, key, way, effects);
@@ -465,7 +464,7 @@ bool CalleeSummarizerForLinkEffects::judgeCallGivenArguments(FunctionID id, cons
         if (!expected || !call.key || findOwnMember(m_program, m_builtins.canonicalID(Builtins::ObjectPrototype), call.key))
             return false;
         CodeFound found;
-        findCodeBehindLookup(*expected, call.key, SummaryAccess::Kind::Read, false, true, found);
+        findCodeBehindLookup(*expected, call.key, SummaryAccess::Kind::Read, true, found);
         addFunctionsCalledUnder(expected->layout, call.key, found);
         if (!mergeKnownEffectsOfCodeFound(found, component, way, effects))
             return false;
@@ -493,16 +492,14 @@ auto CalleeSummarizerForLinkEffects::knownEffectsOfBody(uint32_t function) -> Ef
         return catchesWhatIsThrown ? WayInKnownEffects::ToReturnUnderHandler : WayInKnownEffects::ToReturn;
     };
 
-    bool isKnown = !keepsDefaults(id, summary, { SummaryTrait::Suspends, SummaryTrait::HasDirectEval }) && !summary.ownEffects.mayCallUnknownCode
+    bool isKnown = !keepsDefaults(id, summary, { SummaryTrait::Suspends, SummaryTrait::HasDirectEval }) && !summary.ownEffectsMayCallUnknownCode()
         && !handsObjectToCodeNobodyNames(id, summary) && !listingOfKeysMayRunCode(id, summary);
     EffectsOfComponentInKnownEffects effects;
     if (isKnown) {
-        effects.all = summary.ownEffects;
-        const LocationMasks* ownWritesOnWaysToReturn = summary.knownEffectsApart.ownWritesOnWaysToReturn();
-        effects.writesOnReturn = ownWritesOnWaysToReturn ? *ownWritesOnWaysToReturn : summary.ownEffects.writes;
-        effects.layoutsWritten = summary.layoutsOfOwnWrites;
-        // What a function that runs at most once hands to closures, and what it lays into a scope at its making, may be stored into words of the instance (plan/AOTPromotedEnvironments.cpp).
-        // The body as written holds no such store. It is counted here, for whoever reads these effects, and climbs to the callers like any other write.
+        Effects ownEffects = summary.ownEffects();
+        effects.all = ownEffects;
+        effects.writesOnReturn = summary.ownWritesOnWaysToReturn.isEmpty() ? ownEffects.writes : summary.ownWritesOnWaysToReturn[0];
+        effects.layoutsWritten = summary.layoutsOfOwnWrites();
         if (m_tables.function(id).runsAtMostOnce) {
             LocationMasks wordsInPlaceOfCells;
             if (!summary.sitesThatHandOverCaptures.isEmpty())
@@ -512,7 +509,7 @@ auto CalleeSummarizerForLinkEffects::knownEffectsOfBody(uint32_t function) -> Ef
             effects.all.writes.merge(wordsInPlaceOfCells);
             effects.writesOnReturn.merge(wordsInPlaceOfCells);
         }
-        if (summary.ownEffects.reads.contains(AbstractHeap::ModuleVariables)) {
+        if (ownEffects.reads.contains(AbstractHeap::ModuleVariables)) {
             for (const SummaryNode& node : summary.nodes) {
                 if (node.kind != SummaryNode::Kind::Variable || !m_variablesThatFirstReadMayFill.quickGet(node.first))
                     continue;
@@ -553,7 +550,7 @@ auto CalleeSummarizerForLinkEffects::knownEffectsOfBody(uint32_t function) -> Ef
 
     for (uint32_t index = 0; isKnown && index < summary.accesses.size(); ++index) {
         const SummaryAccess& access = summary.accesses[index];
-        LinkType subject = typeAt(id, access.subject);
+        LinkType subject = typeAt(id, summary, access.subject);
         if (access.isToContents()) {
             if (access.kind == SummaryAccess::Kind::Store || access.kind == SummaryAccess::Kind::Define)
                 effects.layoutsWritten |= bitsOfLayoutsAt(subject);
@@ -646,7 +643,7 @@ void CalleeSummarizerForLinkEffects::findComponentsThatExpectationsLeadTo()
             if (!expected)
                 continue;
             CodeFound code;
-            findCodeBehindLookup(*expected, call.key, SummaryAccess::Kind::Read, false, true, code);
+            findCodeBehindLookup(*expected, call.key, SummaryAccess::Kind::Read, true, code);
             addFunctionsCalledUnder(expected->layout, call.key, code);
             list(code);
         }
@@ -659,7 +656,7 @@ void CalleeSummarizerForLinkEffects::findComponentsThatExpectationsLeadTo()
             if (!expected)
                 continue;
             CodeFound code;
-            findCodeBehindLookup(*expected, m_flow.keyOf(id, access), access.kind, false, false, code);
+            findCodeBehindLookup(*expected, m_flow.keyOf(id, access), access.kind, false, code);
             list(code);
         }
     });
@@ -719,16 +716,22 @@ void CalleeSummarizerForLinkEffects::closeKnownEffectsOf(uint32_t component, std
 
     if (component == m_components.componentOfFunction[nodeOfLostFunctions()])
         m_knownEffectsOfLostFunctions = effects;
-    Effects onReturn = effects.all;
-    onReturn.writes = effects.writesOnReturn;
+    const Effects* onReturn = nullptr;
+    const Effects* onThrow = nullptr;
     for (uint32_t member : members) {
         if (isSharedCall(member))
             m_knownEffectsOfSharedCalls[member - nodeOfSharedCall(0)] = effects;
         if (!isFunction(member))
             continue;
+        if (!onThrow) {
+            Effects returned = effects.all;
+            returned.writes = effects.writesOnReturn;
+            onThrow = s_hand->effectsOfFunctions.keep(effects.all);
+            onReturn = returned == effects.all ? onThrow : s_hand->effectsOfFunctions.keep(returned);
+        }
         LinkedFunction& linked = m_tables.functions[member];
-        linked.effectsOnReturn = onReturn;
-        linked.effectsOnThrow = effects.all;
+        linked.keptEffectsOnReturn = onReturn;
+        linked.keptEffectsOnThrow = onThrow;
         m_layoutsWrittenByFunction[member] = effects.layoutsWritten;
     }
 }
@@ -832,6 +835,7 @@ void CalleeSummarizerForLinkEffects::summarizeKnownEffects()
             s_hand = nullptr;
         });
 
+        s_hand = &hands[0];
         for (uint32_t place : largeComponents) {
             uint32_t component = m_componentsInRanks[place];
             EffectsOfComponentInKnownEffects effects;
@@ -841,10 +845,13 @@ void CalleeSummarizerForLinkEffects::summarizeKnownEffects()
             }
             closeKnownEffectsOf(component, m_membersInRanks.span().subspan(m_firstMemberInRanks[place], m_firstMemberInRanks[place + 1] - m_firstMemberInRanks[place]), effects);
         }
+        s_hand = nullptr;
     }
 
-    for (HandOfSummarizer& hand : hands)
+    for (HandOfSummarizer& hand : hands) {
         m_effectsGivenArguments.appendVector(WTF::move(hand.effectsGivenArguments));
+        m_blocksOfDistinctEffects.appendVector(hand.effectsOfFunctions.takeBlocks());
+    }
 }
 
 void CalleeSummarizerForLinkEffects::writeKnownEffects()
@@ -852,6 +859,7 @@ void CalleeSummarizerForLinkEffects::writeKnownEffects()
     LinkKnownEffects& known = m_tables.known;
     known.layoutsWrittenByFunction = WTF::move(m_layoutsWrittenByFunction);
     known.givenArguments = WTF::move(m_effectsGivenArguments);
+    known.blocksOfDistinctEffects = WTF::move(m_blocksOfDistinctEffects);
     std::ranges::sort(known.givenArguments, { }, &LinkedEffectsGivenArguments::function);
 }
 

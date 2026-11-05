@@ -141,7 +141,7 @@ static void collectReturnSites(CallSiteScratch& scratch, const CompiledCode& cod
 {
     Vector<SiteWithCode, 32>& returnSites = scratch.returnSites;
     returnSites.shrink(0);
-    returnSites.reserveCapacity(code.body.returnSites.size() + code.body.firstReadSites.size() + code.sites.faultingAccesses.size() + code.sites.pollSites.size());
+    returnSites.reserveCapacity(code.body.returnSites.size() + code.body.firstReadSites.size() + code.sites.faultingAccesses.size() + code.sites.rareLists->pollSites.size());
     std::span<const FirstReadSite> firstReadSites = code.body.firstReadSites.span();
     forEachReturnAddress(code, [&](uint32_t returnOffset, OptionalIndex site) ALWAYS_INLINE_LAMBDA {
         bool hasFirstRead = !firstReadSites.empty() && firstReadSites.front().returnOffset == returnOffset;
@@ -648,39 +648,43 @@ static uint32_t sourceNumber(const SitePosition& position)
     return position.source ? position.source.index() + 1 : 0;
 }
 
-static void appendPosition(WriterOfReservedBytes& stream, PositionState& last, const SitePosition& position)
+static void appendConstructionStart(WriterOfReservedBytes& stream, const SitePosition& position, const SiteConstructionStart& constructionStart)
 {
-    uint32_t source = sourceNumber(position);
-    bool startsOnSameLine = position.constructionStartLine == position.line;
-    bool startsInFront = startsOnSameLine ? position.constructionStartColumn < position.column : position.constructionStartLine < position.line;
-    if (position.startIsWhereWritten) {
-        bool startsBehind = startsOnSameLine ? position.constructionStartColumn > position.column : position.constructionStartLine > position.line;
+    bool startsOnSameLine = constructionStart.line == position.line;
+    bool startsInFront = startsOnSameLine ? constructionStart.column < position.column : constructionStart.line < position.line;
+    if (constructionStart.isWhereWritten) {
+        bool startsBehind = startsOnSameLine ? constructionStart.column > position.column : constructionStart.line > position.line;
         if (startsBehind) {
             for (size_t zeros = 0; zeros < maxZerosInFrontOfStart; ++zeros)
                 stream.append(0);
             ConstructionStartRow start { .isOnSameLine = startsOnSameLine };
             if (startsOnSameLine)
-                start.columnsBack = position.constructionStartColumn - position.column;
+                start.columnsBack = constructionStart.column - position.column;
             else {
-                start.linesBack = position.constructionStartLine - position.line;
-                start.column = position.constructionStartColumn;
+                start.linesBack = constructionStart.line - position.line;
+                start.column = constructionStart.column;
             }
             start.append(stream);
         }
-    } else if (position.constructionStartLine && (startsInFront || position.startIsForCallers)) {
+    } else if (constructionStart.line && (startsInFront || constructionStart.isForCallers)) {
         stream.append(0);
-        if (position.startIsForCallers)
+        if (constructionStart.isForCallers)
             stream.append(0);
         startsOnSameLine |= !startsInFront;
         ConstructionStartRow start { .isOnSameLine = startsOnSameLine };
         if (startsOnSameLine)
-            start.columnsBack = startsInFront ? position.column - position.constructionStartColumn : 0;
+            start.columnsBack = startsInFront ? position.column - constructionStart.column : 0;
         else {
-            start.linesBack = position.line - position.constructionStartLine;
-            start.column = position.constructionStartColumn;
+            start.linesBack = position.line - constructionStart.line;
+            start.column = constructionStart.column;
         }
         start.append(stream);
     }
+}
+
+static void appendPosition(WriterOfReservedBytes& stream, PositionState& last, const SitePosition& position)
+{
+    uint32_t source = sourceNumber(position);
     PositionRow row { .isOnSameLine = position.line == last.line && source == last.source };
     if (row.isOnSameLine)
         row.columnChange = static_cast<int64_t>(position.column) - last.column;
@@ -717,6 +721,7 @@ void encodePositions(Vector<uint8_t>& stream, Vector<uint8_t>& roomForPositions,
     RELEASE_ASSERT(numberOfInlineFrames <= numberOfSitesWithoutCode && numberOfSitesWithoutCode < count);
     bool followsInlineFrames = sites.hasEncodedInlineFrames();
     const InlineFrame* inlineFrames = sites.inlineFrames.begin();
+    std::span<const SiteConstructionStart> constructionStarts = sites.rareLists->constructionStarts.span();
     size_t numberOfSuspensionSites = numberOfSitesWithoutCode - numberOfInlineFrames;
     auto frameOf = [&](size_t site) -> unsigned {
         if (!followsInlineFrames)
@@ -751,8 +756,13 @@ void encodePositions(Vector<uint8_t>& stream, Vector<uint8_t>& roomForPositions,
         unsigned frame = frameOf(site);
         if (std::exchange(checkpointsOfStates[frame], numberOfCheckpoints) != numberOfCheckpoints)
             states[frame] = start;
+        if (!constructionStarts.empty() && constructionStarts.front().site == site) {
+            appendConstructionStart(positions, positionsOfSites[site], constructionStarts.front());
+            constructionStarts = constructionStarts.subspan(1);
+        }
         appendPosition(positions, states[frame], positionsOfSites[site]);
     }
+    RELEASE_ASSERT(constructionStarts.empty());
 
     size_t sizeOfPositions = positions.end() - firstPositionByte;
     bool hasCheckpoints = !checkpoints.isEmpty();

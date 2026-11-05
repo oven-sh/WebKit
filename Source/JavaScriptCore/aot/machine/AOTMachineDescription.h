@@ -13,16 +13,16 @@
 
 namespace JSC { namespace AOT { namespace Machine {
 
-void describeListedConstants(const Procedure&, decltype(CodeBody::constants)&);
-inline void describeConstants(const Procedure& procedure, decltype(CodeBody::constants)& constants)
+void describeListedConstants(const Procedure&, decltype(RareListsOfBody::constants)&);
+inline void describeConstants(const Procedure& procedure, decltype(RareListsOfBody::constants)& constants)
 {
     RELEASE_ASSERT(constants.isEmpty());
     if (!procedure.constantData().empty())
         describeListedConstants(procedure, constants);
 }
 
-void describeListedJumpTables(const Procedure&, const LinkBuffer&, decltype(CodeBody::jumpTables)&);
-inline void describeJumpTables(const Procedure& procedure, const LinkBuffer& linkBuffer, decltype(CodeBody::jumpTables)& jumpTables)
+void describeListedJumpTables(const Procedure&, const LinkBuffer&, decltype(RareListsOfBody::jumpTables)&);
+inline void describeJumpTables(const Procedure& procedure, const LinkBuffer& linkBuffer, decltype(RareListsOfBody::jumpTables)& jumpTables)
 {
     RELEASE_ASSERT(jumpTables.isEmpty());
     if (!procedure.jumpTables().empty())

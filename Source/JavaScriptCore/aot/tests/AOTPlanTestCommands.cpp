@@ -252,7 +252,6 @@ static std::optional<unsigned> numberOfParametersInPlanText(const CallingConvent
         return conventions.of(unit.function).numberOfEntryParameters;
     case CodeRole::CoroutineBody:
         return conventions.of(unit.function).numberOfEntryParameters + 1;
-    case CodeRole::Serializer:
     case CodeRole::GenericCallEntry:
     case CodeRole::GenericConstructEntry:
     case CodeRole::AllocatingConstructEntry:

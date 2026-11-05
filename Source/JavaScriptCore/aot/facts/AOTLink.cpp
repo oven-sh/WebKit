@@ -350,7 +350,6 @@ class WriterOfLink {
 public:
     WriterOfLink(const LinkFlow&, LinkTables&);
 
-    // In this order. Only the second makes types, and the third and the fourth are for linked() alone. The effects of functions are summarized behind the third.
     void writeWhatMakesNoType();
     void writeWhatMakesTypes(TypeArena&);
     void findFunctionsThatRunAtMostOnce();
@@ -521,6 +520,7 @@ void WriterOfLink::writeProofsThatMakeNoType()
 
 void WriterOfLink::findExportsThatStayIn()
 {
+    m_tables.modulesWhoseValueStaysIn = m_flow.modulesWhoseValueStaysInSight;
     m_tables.exportsThatStayIn = BitVector(m_program.variables.size());
     for (const Module& module : m_program.modules) {
         if (module.kind == ModuleKind::CommonJs && module.exportsVariable && !m_flow.escapedVariables.get(module.exportsVariable.index()))
@@ -1081,14 +1081,17 @@ void WriterOfLink::writeContentsAtOperations()
     auto isMapOrWeakMap = [](const LinkType& receiver) {
         return receiver.builtinClass == BuiltinClasses::Map || receiver.builtinClass == BuiltinClasses::WeakMap;
     };
+    PropertyKeyID onlyNameAskedOfWhatIsExpected = writesWhatIsExpected() ? m_program.keyOf(BuiltinNames::get) : PropertyKeyID();
     Vector<Operation> found = collectInParallel<Operation>(loops(), m_numberOfFunctions, [&](unsigned index, Vector<Operation>& operationsOfChunk) {
         if (!m_flow.reached.get(index))
             return;
         FunctionID function(index);
         for (const SummaryCall& call : m_flow.summaries.at(function).calls) {
-            if (!call.site || call.receiver == noSummaryNode || !call.receiver)
+            if (!call.site || call.receiver == noSummaryNode || !call.receiver || (onlyNameAskedOfWhatIsExpected && call.key != onlyNameAskedOfWhatIsExpected))
                 continue;
             FlowNodeID node = m_flow.nodeOf(function, call.receiver);
+            if (!m_flow.holdsInstancesOfOneSiteAt(node))
+                continue;
             const LinkType& receiver = m_flow.typeAt(node);
             bool mayMakeIteratorOverList = receiver.builtinClass == BuiltinClasses::Array && !call.numberOfArguments;
             if (receiver.classes != LinkType::Classes::Site || receiver.objects != LinkType::Objects::None || receiver.functions != LinkType::Functions::None || (!isMapOrWeakMap(receiver) && !mayMakeIteratorOverList && receiver.builtinClass != BuiltinClasses::Set))
@@ -1140,7 +1143,7 @@ TypeID WriterOfLink::widened(TypeID type)
 {
     if (!type || isNeverType(type))
         return { };
-    return holdsOnlyPrimitives(type) ? type : widenedToFamily(typesAtHand(), m_flow.families, type, SetsThatNoFamilyHolds::BecomeAnyObject);
+    return holdsOnlyPrimitives(type) ? type : widenedToFamily(typesAtHand(), *m_flow.familiesBehindFlow, type, SetsThatNoFamilyHolds::BecomeAnyObject);
 }
 
 TypeID WriterOfLink::typeIDOf(const LinkType& type)
@@ -1172,7 +1175,7 @@ TypeID WriterOfLink::typeIDOfCapture(FunctionID id, uint32_t capture)
         return typeIDOf(captured);
     TypeID first = typeIDOf(passed);
     TypeID second = typeIDOf(captured);
-    return first && second ? unlessAnything(joinOf(typesAtHand(), m_flow.families, first, second)) : TypeID();
+    return first && second ? unlessAnything(joinOf(typesAtHand(), *m_flow.familiesBehindFlow, first, second)) : TypeID();
 }
 
 thread_local TypesOfThreadInLink WriterOfLink::s_typesOfThread;
@@ -1398,6 +1401,8 @@ void WriterOfLink::writeParameters(FunctionID id, const LinkedFunction& linked)
             LinkType seen = held;
             seen.holdsUnseen = false;
             seen.holdsLostBuiltins = false;
+            if (FlowNodeID heirs = function.entryParameterKind(index) == EntryParameter::This ? m_flow.findHeirsThatRun(id) : FlowNodeID(); heirs && !m_flow.typeAt(heirs).isNothing())
+                seen = m_flow.typeAt(heirs);
             TypeID seenToArrive = typeIDOf(seen);
             parameter.expected = written ? written : typesAtHand().saysNothing(seenToArrive) ? TypeID() : seenToArrive;
             parameter.expectedIsDeclared = !!written;
@@ -1514,7 +1519,7 @@ void WriterOfLink::indexFunctionsThatAreHeld()
 
 FunctionID WriterOfLink::addGroup(LinkedGroup::Kind kind, uint32_t subject)
 {
-    m_tables.groups.append(LinkedGroup { kind, subject, 0, 0 });
+    m_tables.groups.append(LinkedGroup { kind, subject, 0 });
     return FunctionID(m_tables.numberOfNodesOfReferrers() - 1);
 }
 
@@ -1693,6 +1698,14 @@ void WriterOfLink::forEachNodeNamedBy(FunctionID referrer, const Invocable<void(
                     name(laid->setter);
                 }
             });
+        }
+    }
+    if (!m_tables.functionsAboveCreatedLayoutsUnderKeys.isEmpty()) {
+        for (const SummaryAccess& access : summary.accesses) {
+            if (access.isToContents() || !access.key || liesInThread(access.key) || !m_tables.keysOfFunctionsAboveCreatedLayouts.get(access.key.index()))
+                continue;
+            for (auto [key, function] : std::ranges::equal_range(m_tables.functionsAboveCreatedLayoutsUnderKeys, access.key, { }, &std::pair<PropertyKeyID, FunctionID>::first))
+                name(function);
         }
     }
     for (uint32_t index = 1; index < summary.nodes.size(); ++index) {
@@ -1936,11 +1949,14 @@ void printBreachesOfClosureOfLink(PrintStream& out, Program& program, const Thin
 
 static LinkTables writeTablesOfProvingReading(Program&, Mechanisms, std::unique_ptr<LinkFlow>&, TurnsOfReadings*);
 
-LinkTables link(Program& program, const ThinSummaries& summaries, const Families& families, const LooksAtBodies& looks, Mechanisms mechanisms, BuildContext& build, OrderOfWorklist order, TurnsOfReadings* turns)
+LinkTables link(std::unique_ptr<LinkFlow>&& flowAtStart, TurnsOfReadings* turns)
 {
-    RELEASE_ASSERT(summaries.size() == program.functions.size());
-    std::unique_ptr<LinkFlow> ownedFlow = makeUniqueWithoutFastMallocCheck<LinkFlow>(program, summaries, families, looks, mechanisms, build, order);
+    std::unique_ptr<LinkFlow> ownedFlow = WTF::move(flowAtStart);
     LinkFlow& flow = *ownedFlow;
+    RELEASE_ASSERT(flow.loops.areThoseOfCurrentThread());
+    Program& program = flow.program;
+    Mechanisms mechanisms = flow.mechanisms;
+    BuildContext& build = flow.build;
     flow.reachEntries();
     seedCellsSharedWithUnseenCode(flow);
     flow.run();
@@ -2020,6 +2036,10 @@ static LinkTables writeTablesOfProvingReading(Program& program, Mechanisms mecha
     WriterOfLink writer(flow, tables);
     {
         TypeArena types(program.types, ArenaKeeps::InProgram);
+        flow.nameLayoutsThatMet(types);
+        tables.familiesBehindFlow = makeUniqueWithoutFastMallocCheck<Families>(program, flow.summaries.setsOfLayoutsWrittenInBodies(), flow.layoutsThatMet(), flow.loops);
+        flow.familiesBehindFlow = tables.familiesBehindFlow.get();
+        flow.forgetNamesThatAreNoFamilies(*tables.familiesBehindFlow);
         runLanes(flow.loops, {
             [&] {
                 writer.writeWhatMakesNoType();

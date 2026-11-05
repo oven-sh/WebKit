@@ -1,4 +1,4 @@
-enum StatisticStage { None Load Lower Link Read Scan Solve Passes Plan Compile Walk Emit Image Padding CountedByNothing }
+enum StatisticStage { None Load Lower Link Read Scan Solve Passes Plan Compile Walk Emit Image Padding }
 enum StatisticID (stage: StatisticStage) {
     [None]
     None
@@ -22,25 +22,22 @@ enum StatisticID (stage: StatisticStage) {
     [Passes]
     FieldsHeldToWhatIsSeen
     [Plan]
-    ModulesWithoutState RequireSitesBound RequiresRecorded AsyncWorkersMade FieldsOutOfLine NumbersOrUndefinedReturnedRaw
+    ModulesWithoutState RequireSitesBound RequiresRecorded AsyncWorkersMade FieldsOutOfLine NumbersOrUndefinedReturnedRaw EnvironmentsPromotedToVariables
     [Compile]
     UnitsCompiled UnitsWrittenStraight
-    FunctionsWithAllIndirectCallersListed GenericEntriesOpenedByIndirectCalls GenericEntriesOpenedBesideCompiledTarget ClosedGenericEntries
-    IndirectCallsThatMayEnterAnyClosure
     [Walk]
-    URLsLeftUnbuilt IteratorsSteppedWithoutCall SerializersCreated OwnKeyWalksExpanded
+    URLsLeftUnbuilt IteratorsSteppedWithoutCall IterationsOpenedByMethodsInSight OwnKeyWalksExpanded
     FieldsAskedWhereMakersEnd MakersWithoutFieldsHeldFilled ReadsOfOtherFilesVariablesHeld
     LibraryFunctionsEnteredBehindRows SortsThatCallNoComparator NewListsInPlaceOfSpecies
     AccessesProven AccessesGuarded AccessesUnknown ValuesInDouble
     LiteralArgumentsTakenApart
     ValuesWalked ValuesWalkedAndKept LoopsWalkedAgain CallsInlined OperationsBuilt OperationsSwept
     DirectCalls IndirectCalls TestsThatRejoin LoopsBuiltTwice TurnsThatBeginAgain EmptySlotsTakenAsCases
-    AssignmentsWrittenOutFieldByField JoinsWalkedOnceForEachWay
+    AssignmentsWrittenOutFieldByField JoinsWalkedOnceForEachWay ObjectsOfSeveralWaysMetAsOne
     ProofsCheckedOfEntryParameters ProofsCheckedOfResultsOfCalls ProofsCheckedOfFields ProofsCheckedOfVariables ProofsCheckedOfCaptures ProofsCheckedOfSlotsOfScopes ProofsCheckedOfContents ProofsCheckedOfCallees ProofsCheckedOfOtherOperations ProofsCheckedOfTests ProofsCheckedOfWhatIsRemembered ProofsCheckedOfLifetimes
     ProofsThatNoTestTells ProofsThatFormTells DoorsThatCanNeverPass
-    # What is fresh where a unit returns and gets no EndLifeOfCell: Walker::endLivesOfCellsThatHaveNotLeft().
     FreshCellsLeftAloneAtReturns
-    AllocateInFramesChanges ClosuresInFrames KnownInductionsUsed
+    AllocateInFramesChanges ClosuresInFrames KnownInductionsUsed NumbersBesideCountersAskedInFrontOfLoops
     SlicesMadeOfElementsInSight
     MethodCallsToldApartByShape
     MethodCallsThroughTable
@@ -68,15 +65,9 @@ enum StatisticID (stage: StatisticStage) {
     ConstantBytesOfSharedConstants ConstantBytesOfShapeSets ConstantBytesOfBitSetsOverKnownShapes ConstantBytesOfOffsetTables ConstantBytesOfCellTemplates ConstantBytesOfNumbers
     UnlabeledConstantBytes ConstantBytesOfJumpTables PaddingBytesBetweenConstants
     ParsersCreated
-    TypedResultsSelected
     [Padding]
     PaddingBytesBetweenFunctions
     PaddingBytesBetweenCodeParts
-    [CountedByNothing]
-    EnvironmentsPromotedToVariables UnreadVariableStoresRemoved GetsAnsweredByHas SlotStoreRunGroups KeyPartsLookupGroups
-    StoresLeftInLoopsForOthers ElementPresenceTestsPlaced ArrayChainsFused ArrayCapacitiesPlanned AllocationsSunk SwitchesTestedByWindow
-    InitializersDeferred ClosuresDeferredInVariables ClassesDeferredInVariables FlowListsNeverToldApart RestartsInGenericVersion
-    TagLookupsWithOtherKeys ObjectKeysSearchedInLine BirthsFinished
 }
 extend StatisticID with Stage suffix Nanoseconds as time
 
@@ -98,7 +89,7 @@ enum RuntimeCounterID {
     InterpretedGlobalCode InterpretedEvalCode InterpretedFunctionCode InterpretedModuleCode
     DirectEvalsParsed
     StackListingsAfterGivenUpCaptures
-    ModulesForRequireCache ModulesForWhatHasRun ModulesForCyclesThatWait LinksBelowRoots StacksOfThrows RunsBelowListedFrames
+    ModulesForRequireCache ModulesForWhatHasRun ModulesForCyclesThatWait RecordsForStatesOfLoads LinksBelowRoots StacksOfThrows RunsBelowListedFrames
     GraphsHeldBehindEarlierCalls GraphsLetGoBehindEarlierCalls
     CellsPoisoned CellsOfClassesThatAreNotPoisoned
 }

@@ -13,6 +13,7 @@ namespace JSC { namespace AOT {
 
 enum class RegExpMatchResult : uint8_t { Array, Boolean, BoxedBoolean, ArrayForStringMatch, IndexForStringSearch };
 enum class FinishRegExpExecForm : uint8_t { WithObject, WithoutObject };
+enum class ReplacementOfMatches : uint8_t { TextOrFunction, AnyValue };
 
 constexpr uint32_t noSharedRegExpOffset = UINT32_MAX;
 constexpr uint32_t noRegExpRecord = UINT32_MAX;
@@ -20,7 +21,7 @@ constexpr uint32_t noRegExpRecord = UINT32_MAX;
 constexpr StubKey regExpMatch(RegExpMatchResult result) { return StubKey(StubFamily::RegExpMatch).withForm(static_cast<uint8_t>(result)); }
 constexpr bool takesStringInFrontOfRegExp(RegExpMatchResult result) { return result == RegExpMatchResult::ArrayForStringMatch || result == RegExpMatchResult::IndexForStringSearch; }
 constexpr StubKey finishRegExpExec(FinishRegExpExecForm form) { return StubKey(StubFamily::FinishRegExpExec).withForm(static_cast<uint8_t>(form)); }
-constexpr StubKey stringReplaceRegExpMayNotMatch() { return StubKey(StubFamily::StringReplaceRegExpMayNotMatch); }
+constexpr StubKey stringReplaceRegExpMayNotMatch(ReplacementOfMatches replacement = ReplacementOfMatches::TextOrFunction) { return StubKey(StubFamily::StringReplaceRegExpMayNotMatch).withForm(static_cast<uint8_t>(replacement)); }
 constexpr StubKey newRegExpLiteral() { return StubKey(StubFamily::NewRegExpLiteral); }
 constexpr StubKey regExpMatchLiteralWithoutObject(Typed::RegExpMatchForm form) { return StubKey(StubFamily::RegExpMatchLiteral).withForm(static_cast<uint8_t>(form)); }
 constexpr StubKey regExpMatchLiteral(Typed::RegExpMatchForm form, bool isGlobal, bool recordsMatch)
@@ -35,7 +36,7 @@ constexpr bool recordsMatchOfLiteral(StubKey key) { return takesRegExpObject(key
 
 static_assert(exists(regExpMatch(RegExpMatchResult::Array)) && exists(regExpMatch(RegExpMatchResult::IndexForStringSearch)));
 static_assert(!exists(regExpMatch(RegExpMatchResult::IndexForStringSearch).withForm(static_cast<uint8_t>(RegExpMatchResult::IndexForStringSearch) + 1)));
-static_assert(exists(finishRegExpExec(FinishRegExpExecForm::WithObject)) && exists(finishRegExpExec(FinishRegExpExecForm::WithoutObject)) && exists(stringReplaceRegExpMayNotMatch()) && exists(newRegExpLiteral()));
+static_assert(exists(finishRegExpExec(FinishRegExpExecForm::WithObject)) && exists(finishRegExpExec(FinishRegExpExecForm::WithoutObject)) && exists(stringReplaceRegExpMayNotMatch()) && exists(stringReplaceRegExpMayNotMatch(ReplacementOfMatches::AnyValue)) && exists(newRegExpLiteral()));
 static_assert(descriptorOf(StubFamily::RegExpMatchLiteral).numberOfForms == 5 * numberOfEnumerators<Typed::RegExpMatchForm>);
 static_assert(exists(regExpMatchLiteralWithoutObject(Typed::RegExpMatchForm::Match)) && matchFormOf(regExpMatchLiteralWithoutObject(Typed::RegExpMatchForm::Search)) == Typed::RegExpMatchForm::Search);
 static_assert(!takesRegExpObject(regExpMatchLiteralWithoutObject(Typed::RegExpMatchForm::Match)) && !matchesGlobalLiteral(regExpMatchLiteralWithoutObject(Typed::RegExpMatchForm::Match)) && !recordsMatchOfLiteral(regExpMatchLiteralWithoutObject(Typed::RegExpMatchForm::Match)));

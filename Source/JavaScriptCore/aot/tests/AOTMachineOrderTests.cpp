@@ -738,7 +738,7 @@ static void testMachineThreadingKeepsClassOfOnlyReachedEdge()
 
     AOT_ORDER_TEST_CHECK(test, test.entry->successor(0) == normalEdge(slow) && order.rareRegions().empty() && !order.of(usual).isReached());
     for (const OrderTestBooleanJoin& blocks : joins)
-        AOT_ORDER_TEST_CHECK(test, !order.of(blocks.join).isReached() && blocks.taken->successor(0).block() == blocks.join);
+        AOT_ORDER_TEST_CHECK(test, !order.of(blocks.join).isReached() && blocks.taken->isEmpty() && !blocks.taken->numSuccessors());
     AOT_ORDER_TEST_CHECK(test, test.run(0) == 20);
 }
 
@@ -878,6 +878,8 @@ enum class OrderTestSecondTest : uint8_t {
     StandsBehindStore,
     IsReadAgain,
     IsComeToByThirdWay,
+    IsBehindWaysThatBlockWithoutWayInLeadsTo,
+    IsReadInBlockWithoutWayIn,
 };
 
 template<OrderTestSecondTest secondTest>
@@ -902,6 +904,10 @@ static void testMachineThreadingOfTestThatWayHasDecided()
     out.branch(out.equal(test.third, out.constInt64(1)), normalEdge(hit), normalEdge(again));
     out.appendTo(slow);
     out.branch(out.equal(test.third, out.constInt64(2)), normalEdge(hit), normalEdge(again));
+    if (secondTest == OrderTestSecondTest::IsBehindWaysThatBlockWithoutWayInLeadsTo) {
+        out.appendTo(out.newBlock());
+        out.branch(out.equal(test.third, out.constInt64(4)), normalEdge(usual), normalEdge(slow));
+    }
     out.appendTo(again);
     if (secondTest == OrderTestSecondTest::StandsBehindStore)
         out.store64(out.constInt64(5), out.address(test.testProcedure.heaps().argumentBuffer, test.third));
@@ -914,6 +920,10 @@ static void testMachineThreadingOfTestThatWayHasDecided()
     out.ret(secondTest == OrderTestSecondTest::IsReadAgain ? out.add(out.zeroExtPtr(asked), out.constInt64(9)) : out.constInt64(10));
     test.returnConstant(slowAgain, 20);
     test.returnConstant(hit, 30);
+    if (secondTest == OrderTestSecondTest::IsReadInBlockWithoutWayIn) {
+        out.appendTo(out.newBlock());
+        out.ret(out.zeroExtPtr(asked));
+    }
     const Order& order = test.compile();
 
     bool isPassedBy = secondTest != OrderTestSecondTest::StandsBehindStore && secondTest != OrderTestSecondTest::IsReadAgain;
@@ -931,6 +941,53 @@ static void testMachineThreadingOfTestThatWayHasDecided()
         AOT_ORDER_TEST_CHECK(test, test.run(2, 1, third) == (third == 1 ? 30 : 10));
         AOT_ORDER_TEST_CHECK(test, test.run(1, 2, third) == (third == 2 ? 30 : 20));
     }
+}
+
+static void testMachineThreadingCutsThroughLoopWhoseEntranceHasGone()
+{
+    OrderTest test;
+    Output& out = test.out;
+    LBasicBlock five = out.newBlock();
+    LBasicBlock seven = out.newBlock();
+    LBasicBlock asks = out.newBlock();
+    LBasicBlock into = out.newBlock();
+    LBasicBlock head = out.newBlock();
+    LBasicBlock fiveInTurn = out.newBlock();
+    LBasicBlock sevenInTurn = out.newBlock();
+    LBasicBlock asksInTurn = out.newBlock();
+    LBasicBlock round = out.newBlock();
+    LBasicBlock behind = out.newBlock();
+    LValue lane = out.phiIn(asks, Int64);
+    LValue gate = out.phiIn(asksInTurn, Int64);
+    auto arm = [&](LBasicBlock block, int64_t handed, LValue phi, LBasicBlock join) {
+        out.appendTo(block);
+        out.store64(out.constInt64(handed), out.address(test.testProcedure.heaps().argumentBuffer, test.third));
+        out.upsilon(out.constInt64(handed), phi);
+        out.jump(join);
+    };
+    out.branch(out.above(test.first, test.second), normalEdge(five), normalEdge(seven));
+    arm(five, 5, lane, asks);
+    arm(seven, 7, lane, asks);
+    out.appendTo(asks);
+    out.branch(out.equal(lane, out.constInt64(6)), normalEdge(into), normalEdge(behind));
+    out.appendTo(into);
+    out.jump(head);
+    out.appendTo(head);
+    out.branch(out.below(test.first, test.second), normalEdge(fiveInTurn), normalEdge(sevenInTurn));
+    arm(fiveInTurn, 5, gate, asksInTurn);
+    arm(sevenInTurn, 7, gate, asksInTurn);
+    out.appendTo(asksInTurn);
+    out.branch(out.equal(gate, out.constInt64(6)), normalEdge(round), normalEdge(behind));
+    out.appendTo(round);
+    out.jump(head);
+    test.returnConstant(behind, 9);
+    const Order& order = test.compile();
+
+    AOT_ORDER_TEST_CHECK(test, orderTestTargetOf(five, 0) == behind && orderTestTargetOf(seven, 0) == behind);
+    AOT_ORDER_TEST_CHECK(test, !order.of(asks).isReached() && !order.of(head).isReached() && !order.of(asksInTurn).isReached() && !order.of(round).isReached());
+    int64_t word = 0;
+    AOT_ORDER_TEST_CHECK(test, test.run(2, 1, reinterpret_cast<int64_t>(&word)) == 9 && word == 5);
+    AOT_ORDER_TEST_CHECK(test, test.run(1, 2, reinterpret_cast<int64_t>(&word)) == 9 && word == 7);
 }
 
 enum OrderTestWordOfObject : unsigned {
@@ -1482,6 +1539,9 @@ std::span<const NativeTest> machineOrderTests()
         { "machine-order/head-of-a-loop-is-not-threaded"_s, Machine::testMachineThreadingLeavesHeadOfLoop },
         { "machine-order/way-that-has-decided-a-test-passes-its-negation-by"_s, Machine::testMachineThreadingOfTestThatWayHasDecided<OrderTestSecondTest::IsAskedTheOtherWayRound> },
         { "machine-order/decided-test-behind-a-store-stays"_s, Machine::testMachineThreadingOfTestThatWayHasDecided<OrderTestSecondTest::StandsBehindStore> },
+        { "machine-order/a-block-that-nothing-leads-to-is-no-way-into-the-blocks-it-leads-to"_s, Machine::testMachineThreadingOfTestThatWayHasDecided<OrderTestSecondTest::IsBehindWaysThatBlockWithoutWayInLeadsTo> },
+        { "machine-order/what-a-block-that-nothing-leads-to-reads-is-not-read"_s, Machine::testMachineThreadingOfTestThatWayHasDecided<OrderTestSecondTest::IsReadInBlockWithoutWayIn> },
+        { "machine-order/a-loop-whose-entrance-goes-in-the-threader-is-cut-through"_s, Machine::testMachineThreadingCutsThroughLoopWhoseEntranceHasGone },
         { "machine-order/words-are-read-again-behind-a-decided-test-whose-arms-have-stored"_s, Machine::testMachineThreadingPastTestBehindArmsThatStore },
         { "machine-order/decided-test-at-the-head-of-a-loop-stays"_s, Machine::testMachineThreadingLeavesDecidedTestAtHeadOfLoop },
         { "machine-order/work-grows-as-the-decided-tests-in-a-row-do"_s, Machine::testMachineThreadingGrowsAsTestsInRowDo<true> },

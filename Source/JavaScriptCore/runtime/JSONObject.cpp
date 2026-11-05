@@ -58,7 +58,6 @@
 #include "AOTPropertyListCache.h"
 #include "AOTPropertyWalkInlines.h"
 #include "AOTRuntimeReporter.h"
-#include "AOTStringBuilderStorage.h"
 #include "AOTWatchedJSONLevels.h"
 #include "DateInstance.h"
 #include "DateTimeWriter.h"
@@ -755,8 +754,6 @@ bool Stringifier::Holder::appendNextProperty(Stringifier& stringifier, StringBui
 enum class BufferMode : uint8_t {
     StaticBuffer,
     DynamicBuffer,
-    // The buffer of a string builder of compiled code, behind the text that it holds.
-    BuilderBuffer,
 };
 
 enum class HasGap : bool { No, Yes };
@@ -786,10 +783,6 @@ class FastStringifier {
 public:
     // Returns null string if the fast case fails. `levelsAround`: the objects and lists that somebody else is writing around the value.
     static String stringify(JSGlobalObject&, JSValue, JSValue replacer, JSValue space, std::optional<FailureReason>&, unsigned levelsAround = 0);
-#if ENABLE(AOT)
-    // For BufferMode::BuilderBuffer. The end of the text, or null with the reason. What is written of a value that fails may be committed.
-    static Latin1Character* tryAppendAt(AOT::StringBuilderStorage&, Latin1Character* cursor, JSGlobalObject&, JSValue, std::optional<FailureReason>&, unsigned levelsAround);
-#endif
 
     static constexpr bool growsBuffer = bufferMode != BufferMode::StaticBuffer;
     static constexpr unsigned staticBufferSize = bufferMode == BufferMode::StaticBuffer ? 8192 : 8;
@@ -857,7 +850,6 @@ private:
     bool hasRemainingCapacitySlow(unsigned size);
 #if ENABLE(AOT)
     bool hasStackSpaceAtWatchedLevel(JSValue, void* stackPointer);
-    void takeBufferOfBuilder();
 #endif
     bool mayHaveToJSON(JSObject&) const;
 
@@ -892,13 +884,6 @@ private:
     uint32_t m_compiledStructureWithoutToJSON; // The bits of a StructureID. Written before m_hasCompiledStructureWithoutToJSON is set.
     // While it is watching, m_stackLimit is above every frame, so every append() takes the slow check.
     NO_UNIQUE_ADDRESS std::conditional_t<growsBuffer, WatchedJSONLevels, std::monostate> m_watchedLevels;
-    struct BufferOfBuilder {
-        AOT::StringBuilderStorage* builder { nullptr };
-        Latin1Character* characters { nullptr };
-    };
-    // An empty type of its own: it lies where m_watchedLevels lies, and the buffer stays where it is.
-    struct NoBuilder { };
-    NO_UNIQUE_ADDRESS std::conditional_t<bufferMode == BufferMode::BuilderBuffer, BufferOfBuilder, NoBuilder> m_bufferOfBuilder;
 #endif
 
     CharType m_buffer[staticBufferSize];
@@ -952,10 +937,6 @@ ALWAYS_INLINE CharType* FastStringifier<CharType, bufferMode>::buffer()
 {
     if constexpr (bufferMode == BufferMode::StaticBuffer)
         return m_buffer;
-#if ENABLE(AOT)
-    else if constexpr (bufferMode == BufferMode::BuilderBuffer)
-        return m_bufferOfBuilder.characters;
-#endif
     else
         return m_dynamicBuffer.mutableSpan().data();
 }
@@ -965,10 +946,6 @@ ALWAYS_INLINE const CharType* FastStringifier<CharType, bufferMode>::buffer() co
 {
     if constexpr (bufferMode == BufferMode::StaticBuffer)
         return m_buffer;
-#if ENABLE(AOT)
-    else if constexpr (bufferMode == BufferMode::BuilderBuffer)
-        return m_bufferOfBuilder.characters;
-#endif
     else
         return m_dynamicBuffer.span().data();
 }
@@ -978,10 +955,6 @@ ALWAYS_INLINE std::span<CharType> FastStringifier<CharType, bufferMode>::bufferS
 {
     if constexpr (bufferMode == BufferMode::StaticBuffer)
         return std::span<CharType> { m_buffer };
-#if ENABLE(AOT)
-    else if constexpr (bufferMode == BufferMode::BuilderBuffer)
-        return std::span<CharType> { m_bufferOfBuilder.characters, m_capacity };
-#endif
     else
         return m_dynamicBuffer.mutableSpan();
 }
@@ -1182,19 +1155,6 @@ bool FastStringifier<CharType, bufferMode>::hasRemainingCapacitySlow(unsigned si
         m_capacity = m_length + usableSize;
         ASSERT(m_capacity - m_length >= size);
         return true;
-#if ENABLE(AOT)
-    } else if constexpr (bufferMode == BufferMode::BuilderBuffer) {
-        // A new buffer gets what is committed, at the same positions.
-        AOT::StringBuilderStorage& builder = *m_bufferOfBuilder.builder;
-        builder.commit(buffer() + m_length);
-        if (!builder.tryReserve({ .length = 0, .maxLengthOfRest = size })) [[unlikely]]
-            return false;
-        takeBufferOfBuilder();
-        if (m_watchedLevels.isWatchingAfterGrowthTo(m_capacity))
-            m_stackLimit = std::bit_cast<uint8_t*>(std::numeric_limits<uintptr_t>::max());
-        ASSERT(m_capacity - m_length >= size);
-        return true;
-#endif
     } else {
         size_t newSize = std::max<size_t>(m_dynamicBuffer.size() * 2, m_dynamicBuffer.size() + size);
 #if ENABLE(AOT)
@@ -1767,9 +1727,6 @@ void FastStringifier<CharType, bufferMode>::append(JSValue value)
             return;
         }
 
-        // A builder that has made room keeps what lies in front of m_length alone.
-        if constexpr (bufferMode == BufferMode::BuilderBuffer)
-            buffer()[m_length] = '"';
         ASSERT(buffer()[m_length] == '"');
         auto output = bufferSpan().subspan(m_length + 1);
         if constexpr (std::same_as<CharType, char16_t>) {
@@ -3021,36 +2978,6 @@ inline String FastStringifier<CharType, bufferMode>::stringify(JSGlobalObject& g
     return stringifier.result();
 }
 
-#if ENABLE(AOT)
-template<typename CharType, BufferMode bufferMode>
-ALWAYS_INLINE void FastStringifier<CharType, bufferMode>::takeBufferOfBuilder()
-{
-    std::span<Latin1Character> characters = m_bufferOfBuilder.builder->charactersUpToLimit();
-    m_bufferOfBuilder.characters = characters.data();
-    m_capacity = static_cast<unsigned>(characters.size());
-}
-
-template<typename CharType, BufferMode bufferMode>
-inline Latin1Character* FastStringifier<CharType, bufferMode>::tryAppendAt(AOT::StringBuilderStorage& builder, Latin1Character* cursor, JSGlobalObject& globalObject, JSValue value, std::optional<FailureReason>& failureReason, unsigned levelsAround)
-{
-    static_assert(bufferMode == BufferMode::BuilderBuffer && std::same_as<CharType, Latin1Character>);
-    FastStringifier stringifier(globalObject);
-    stringifier.m_bufferOfBuilder.builder = &builder;
-    stringifier.takeBufferOfBuilder();
-    const unsigned start = static_cast<unsigned>(cursor - stringifier.buffer());
-    stringifier.m_length = start;
-    stringifier.startBelow(levelsAround);
-    stringifier.template append<HasGap::No>(value);
-    if (!stringifier.haveFailure()) [[likely]]
-        return stringifier.buffer() + stringifier.m_length;
-    failureReason = stringifier.m_failureReason;
-    // What has stayed short so far is likely to fit the static buffer of the next attempt.
-    if (failureReason == FailureReason::Found16BitLate && stringifier.m_length - start < FastStringifier<char16_t, BufferMode::StaticBuffer>::staticBufferSize / 2)
-        failureReason = FailureReason::Found16BitEarly;
-    return nullptr;
-}
-#endif
-
 // A fast case that fails has run no code, so the next one starts over. Null if all of them fail.
 static String stringifyAfterFirstFastCaseFailed(JSGlobalObject& globalObject, JSValue value, JSValue replacer, JSValue space, std::optional<FailureReason> failureReason, unsigned levelsAround = 0)
 {
@@ -3106,43 +3033,6 @@ static NEVER_INLINE String stringify(JSGlobalObject& globalObject, JSValue value
 #endif
     return result;
 }
-
-#if ENABLE(AOT)
-Latin1Character* AOT::tryAppendJSONText(JSGlobalObject* globalObject, StringBuilderStorage& builder, Latin1Character* cursor, JSValue value, unsigned levelsAround)
-{
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    if (std::bit_cast<uint8_t*>(currentStackPointer()) < std::bit_cast<uint8_t*>(vm.softStackLimit())) [[unlikely]]
-        return nullptr;
-
-    builder.commit(cursor);
-    const uint32_t lengthInFront = builder.length();
-    std::optional<FailureReason> failureReason;
-    if (stringifyHints.isWideInStaticBuffer) [[unlikely]]
-        failureReason = FailureReason::Found16BitEarly;
-    else if (Latin1Character* end = FastStringifier<Latin1Character, BufferMode::BuilderBuffer>::tryAppendAt(builder, cursor, *globalObject, value, failureReason, levelsAround)) [[likely]] {
-        if (builder.hasRoomAt(end, maxStringBuilderReservation)) [[likely]]
-            return end;
-        builder.commit(end);
-        return builder.tryReserve({ .length = 0, .maxLengthOfRest = maxStringBuilderReservation });
-    }
-    // The buffer of a builder holds 8-bit characters alone. A text with others is made apart and appended as one piece. No more room would help a builder that is full.
-    if (failureReason != FailureReason::Found16BitEarly && failureReason != FailureReason::Found16BitLate)
-        return nullptr;
-
-    builder.rollBack(lengthInFront);
-    String text = stringifyAfterFirstFastCaseFailed(*globalObject, value, jsUndefined(), jsUndefined(), failureReason, levelsAround);
-    if (text.isNull())
-        return nullptr;
-    if (text.is8Bit())
-        builder.append(globalObject, text.span8());
-    else
-        builder.append(globalObject, text.span16());
-    RETURN_IF_EXCEPTION(scope, nullptr);
-    RELEASE_AND_RETURN(scope, builder.reserve(globalObject, { .length = 0, .maxLengthOfRest = maxStringBuilderReservation }));
-}
-#endif
 
 // ------------------------------ JSONObject --------------------------------
 

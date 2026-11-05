@@ -29,7 +29,6 @@ namespace JSC { namespace AOT {
 
 namespace {
 
-enum class WalkOfModuleTables : uint8_t { Link, Evaluation };
 
 struct ModuleListedByPath {
     std::span<const uint8_t> path;
@@ -165,40 +164,21 @@ void nameWhatModuleTablesName(const TableInputs& inputs, const GatheredMentions&
         names.functionsWithClosureCell.set(inputs.program.runtimeFunctions[place].function.index());
 }
 
-static bool walkVisitsModule(WalkOfModuleTables walk, const ModuleData& module)
+static bool evaluationVisitsModule(const ModuleData& module)
 {
-    switch (walk) {
-    case WalkOfModuleTables::Link:
-        return module.needsLink();
-    case WalkOfModuleTables::Evaluation:
-        return module.needsEvaluation() && (module.hasExportTable() || module.kind == ModuleKind::CommonJs || module.isUncompiledCode());
-    }
-    RELEASE_ASSERT_NOT_REACHED();
+    return module.needsEvaluation() && (module.hasExportTable() || module.kind == ModuleKind::CommonJs || module.isUncompiledCode());
 }
 
-static bool walkFollowsRequestsOf(WalkOfModuleTables walk, const ModuleData& module)
+static void appendModulesThatEvaluationVisitsNext(const ModuleLists& lists, uint32_t module, BitVector& isListed, Vector<uint32_t>& targets)
 {
-    if (!walkVisitsModule(walk, module))
-        return false;
-    switch (walk) {
-    case WalkOfModuleTables::Link:
-        return module.capturesExportsBehindEvaluation() || (!module.capturesExports() && !module.isUncompiledCode());
-    case WalkOfModuleTables::Evaluation:
-        return module.hasExportTable() && !module.hasDeferredRequest();
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-static void appendModulesThatWalkVisitsNext(const ModuleLists& lists, WalkOfModuleTables walk, uint32_t module, BitVector& isListed, Vector<uint32_t>& targets)
-{
-    if (!walkFollowsRequestsOf(walk, lists.modules[module]))
+    if (!evaluationVisitsModule(lists.modules[module]) || !lists.modules[module].hasExportTable() || lists.modules[module].hasDeferredRequest())
         return;
     size_t first = targets.size();
     for (const ModuleRequestData& request : requestsInModuleTables(lists, module)) {
         uint32_t target = request.target();
-        if (target == module || (walk == WalkOfModuleTables::Evaluation && request.isRequire))
+        if (target == module || request.isRequire)
             continue;
-        if (!walkVisitsModule(walk, lists.modules[target]) || isListed.quickSet(target))
+        if (!evaluationVisitsModule(lists.modules[target]) || isListed.quickSet(target))
             continue;
         targets.append(target);
     }
@@ -222,38 +202,37 @@ static void appendImportsOfHeldFiles(const ModuleLists& lists, uint32_t importer
     }
 }
 
-static RequestsThatWalksFollow listRequestsThatWalksFollow(const ParallelLoops& loops, ModuleLists& lists)
+static RequestsThatWalksFollow listRequestsThatWalksFollow(const ParallelLoops& loops, ModuleLists& lists, const Typed::StronglyConnectedComponents& componentsOfRequests)
 {
     uint32_t numberOfModules = static_cast<uint32_t>(lists.modules.size() - 1);
     ChunksOfIndices chunks = divideIntoChunks(numberOfModules);
     Vector<RequestsThatWalksFollow> followedInChunks(chunks.size());
-    Vector<std::pair<uint32_t, uint32_t>> placesInChunks(numberOfModules);
-    forEachIndexInParallel(loops, chunks.size(), [&](unsigned chunk) {
-        RequestsThatWalksFollow& followed = followedInChunks[chunk];
-        BitVector isListed(numberOfModules);
-        for (uint32_t module = chunks.firstIndexOf[chunk]; module < chunks.firstIndexOf[chunk + 1]; ++module) {
-            placesInChunks[module] = { static_cast<uint32_t>(followed.linkRequests.size()), static_cast<uint32_t>(followed.evaluationRequests.size()) };
-            appendModulesThatWalkVisitsNext(lists, WalkOfModuleTables::Link, module, isListed, followed.linkRequests);
-            appendModulesThatWalkVisitsNext(lists, WalkOfModuleTables::Evaluation, module, isListed, followed.evaluationRequests);
-            appendImportsOfHeldFiles(lists, module, followed.importsOfHeldFiles);
-        }
+    Vector<uint32_t> placesInChunks(numberOfModules);
+    LinkRequestsOfModules linkRequests;
+    forEachIndexOfLoopsInParallel(loops, {
+        { 1, [&](unsigned) { linkRequests = contractLinkRequests(lists.modules.mutableSpan(), lists.requests.span(), componentsOfRequests); } },
+        { chunks.size(), [&](unsigned chunk) {
+            RequestsThatWalksFollow& followed = followedInChunks[chunk];
+            BitVector isListed(numberOfModules);
+            for (uint32_t module = chunks.firstIndexOf[chunk]; module < chunks.firstIndexOf[chunk + 1]; ++module) {
+                placesInChunks[module] = static_cast<uint32_t>(followed.evaluationRequests.size());
+                appendModulesThatEvaluationVisitsNext(lists, module, isListed, followed.evaluationRequests);
+                appendImportsOfHeldFiles(lists, module, followed.importsOfHeldFiles);
+            }
+        } },
     });
+    layLinkRequests(lists.modules.mutableSpan(), linkRequests);
 
-    uint32_t firstLinkRequest = 0;
     uint32_t firstEvaluationRequest = 0;
     for (unsigned chunk = 0; chunk < chunks.size(); ++chunk) {
-        for (uint32_t module = chunks.firstIndexOf[chunk]; module < chunks.firstIndexOf[chunk + 1]; ++module) {
-            lists.modules[module].firstLinkRequest = Number24(firstLinkRequest + placesInChunks[module].first);
-            lists.modules[module].firstEvaluationRequest = Number24(firstEvaluationRequest + placesInChunks[module].second);
-        }
-        firstLinkRequest += static_cast<uint32_t>(followedInChunks[chunk].linkRequests.size());
+        for (uint32_t module = chunks.firstIndexOf[chunk]; module < chunks.firstIndexOf[chunk + 1]; ++module)
+            lists.modules[module].firstEvaluationRequest = Number24(firstEvaluationRequest + placesInChunks[module]);
         firstEvaluationRequest += static_cast<uint32_t>(followedInChunks[chunk].evaluationRequests.size());
     }
-    lists.modules[numberOfModules].firstLinkRequest = Number24(firstLinkRequest);
     lists.modules[numberOfModules].firstEvaluationRequest = Number24(firstEvaluationRequest);
 
     RequestsThatWalksFollow result {
-        joinListsForModuleTables(followedInChunks, &RequestsThatWalksFollow::linkRequests),
+        WTF::move(linkRequests.requests),
         joinListsForModuleTables(followedInChunks, &RequestsThatWalksFollow::evaluationRequests),
         joinListsForModuleTables(followedInChunks, &RequestsThatWalksFollow::importsOfHeldFiles),
     };
@@ -308,7 +287,7 @@ static void listModulesOfChunkForModuleTables(const TableInputs& inputs, const A
         if (!Typed::answersToPath(program, module) || (isFoundOnlyWithCode && !answers.has(id, AnswerAboutModule::HasCompiledBody)))
             continue;
         if (module.kind == ModuleKind::RuntimeSource && module.runtimeModule)
-            listed.runtimeModules.append(CompiledRuntimeModuleData { module.runtimeModule.index(), index });
+            listed.runtimeModules.append(CompiledRuntimeModuleData { module.runtimeModule.index(), index, inputs.facts.linked().modulesWhoseValueStaysIn.get(index) });
         if (answers.has(id, AnswerAboutModule::IsNeverEvaluated))
             continue;
         if (Typed::isBundlerHelperModule(program, module) && !module.flags.contains(ModuleFlags::MayBeMocked) && !Typed::isBundlerHelperNamedByProgram(program, id))
@@ -549,8 +528,12 @@ void encodeModuleTables(TableEncoder& encoder)
     Vector<FunctionsListedInRange> functionsListed(numberOfRangesOfIndices(program.functions.size()));
     Vector<Vector<StateOfLibraryModuleData>> stateInClasses(numberOfRangesOfIndices(program.layouts.size()));
     StartsOfModules startsOfModules;
+    BitVector esModulesOfProgram = findESModulesOfProgram(lists.modules.span());
+    Vector<uint16_t> groupsLoadedWithGroups;
+    Typed::StronglyConnectedComponents componentsOfRequests;
     forEachIndexOfLoopsInParallel(loops, {
-        { 1, [&](unsigned) { computeModuleFlags(lists.modules.mutableSpan(), lists.requests.span()); } },
+        { 1, [&](unsigned) { componentsOfRequests = computeModuleFlags(lists.modules.mutableSpan(), lists.requests.span()); } },
+        { 1, [&](unsigned) { groupsLoadedWithGroups = encodeNumbersForModuleTables(program, groupModulesLoadedTogether(lists.modules.mutableSpan(), lists.requests.span(), esModulesOfProgram)); } },
         { 1, [&](unsigned) { startsOfModules = listStartsOfModules(encoder); } },
         { chunksOfModules.size(), [&](unsigned chunk) {
             listModulesOfChunkForModuleTables(encoder.inputs, answers, chunksOfModules.firstIndexOf[chunk], chunksOfModules.firstIndexOf[chunk + 1], modulesListed[chunk]);
@@ -570,7 +553,7 @@ void encodeModuleTables(TableEncoder& encoder)
     });
     times.didFinish("flags of the modules, beside what the tables list of modules, variables, functions and classes"_s);
 
-    RequestsThatWalksFollow followed = listRequestsThatWalksFollow(loops, lists);
+    RequestsThatWalksFollow followed = listRequestsThatWalksFollow(loops, lists, componentsOfRequests);
     Vector<LinkPlanStepData> entryPointLinkPlan;
     if (!program.entries.isEmpty())
         entryPointLinkPlan = planLinkOfEntryPoint(lists.modules.mutableSpan(), lists.requests.span(), program.entries.first().module);
@@ -602,7 +585,7 @@ void encodeModuleTables(TableEncoder& encoder)
     auto roomFor = [](const auto&... tables) {
         return (... + (tables.sizeInBytes() + sizeof(uint64_t)));
     };
-    part.reserveRoomFor(roomFor(lists.modules, lists.directories, lists.displayPaths, lists.requests, linkRequests, evaluationRequests, entryPointLinkPlan,
+    part.reserveRoomFor(roomFor(lists.modules, lists.directories, lists.displayPaths, lists.requests, linkRequests, evaluationRequests, groupsLoadedWithGroups, entryPointLinkPlan,
         lists.exports, lists.indirectExports, lists.syntheticExports, lists.requiredNames, lists.exportStatements, lists.ambiguousExports, lists.sourceStamps,
         moduleFailures, modulesOfUncompiledCode, modulesThatLoadCompiledFilesAlone, modulesThatFindBuiltinsReadOnly, modulesReachedUnderOtherNames, followed.importsOfHeldFiles, asyncFunctionsWithoutAwait,
         byPath.modulesByPath, byPath.modulesByHashOfPath, byPath.firstModulesByHashOfPath, byPath.directoriesOfModulesByPath, compiledRuntimeModules, compiledRuntimeFunctions, stateOfLibraryModules,
@@ -613,6 +596,7 @@ void encodeModuleTables(TableEncoder& encoder)
     part.setTable(ProgramTableIndex::moduleRequests, lists.requests);
     part.setTable(ProgramTableIndex::linkRequests, linkRequests);
     part.setTable(ProgramTableIndex::evaluationRequests, evaluationRequests);
+    part.setTable(ProgramTableIndex::groupsLoadedWithGroups, groupsLoadedWithGroups);
     part.setTable(ProgramTableIndex::entryPointLinkPlan, entryPointLinkPlan);
     part.setTable(ProgramTableIndex::moduleExports, lists.exports);
     part.setTable(ProgramTableIndex::indirectExports, lists.indirectExports);

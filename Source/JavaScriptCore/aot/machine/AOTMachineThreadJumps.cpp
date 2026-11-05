@@ -14,6 +14,7 @@
 #include <array>
 #include <bit>
 #include <cstring>
+#include <limits>
 #include <optional>
 #include <type_traits>
 #include <wtf/MathExtras.h>
@@ -114,7 +115,6 @@ private:
 
     bool has(const Block* block, uint8_t flags) const { return m_flags[block->index()] & flags; }
     void set(const Block* block, uint8_t flags) { m_flags[block->index()] |= flags; }
-    void clear(const Block* block, uint8_t flags) { m_flags[block->index()] &= static_cast<uint8_t>(~flags); }
 
     static constexpr bool isComparisonByNumber(Opcode opcode)
     {
@@ -142,7 +142,10 @@ private:
 
     void retarget(Block* from, unsigned successorIndex, Block* target);
     void setEdgeClass(Block* from, unsigned successorIndex, EdgeClass);
-    void markUnreached(Block*);
+    ALWAYS_INLINE bool isInHand(const Block*) const;
+    ALWAYS_INLINE void letGoUnlessSomethingLeadsTo(Block*);
+    NEVER_INLINE void letGoOfBlockThatNothingLeadsTo(Block*);
+    NEVER_INLINE void letGoOfBlocksThatWereInHand();
 
     void duplicateBranchIntoPredecessor(Block* from, Block* join, const ThreadableJoin&);
     void threadJumpsOfJoinsFrom(Block* join);
@@ -181,14 +184,16 @@ private:
     Procedure& m_proc;
     Arena& m_arena;
     ArenaVector<uint8_t> m_flags;
-    ArenaVector<uint32_t> m_reachedIncomingEdgeCounts;
     ArenaVector<MatchOfJoin> m_matchesOfJoins;
+    BitSpan m_joinsThatOneWayLedToAtFirst;
     ArenaVector<Block*> m_chain;
     ArenaVector<Block*> m_joinsThatJump;
-    ArenaVector<Block*> m_unreachedBlocks;
+    ArenaVector<Block*> m_blocksToLetGo;
+    ArenaVector<Block*> m_blocksInHandThatNothingLeadsTo;
+    bool m_isWalkingWays { false };
     ArenaVector<JoinPassedBy> m_joinsPassedBy;
     bool m_hasFoundLoopHeads { false };
-    uint32_t m_indexOfBlockInTurn { 0 };
+    uint32_t m_indexOfBlockInTurn { std::numeric_limits<uint32_t>::max() };
     ArenaVector<TestOfBranch> m_testsOfBranches;
     bool m_testsOfBranchesAreInOrder { true };
     ArenaVector<TestOfBlock> m_testsOfBlocks;
@@ -241,8 +246,6 @@ ALWAYS_INLINE SimplifiedPredicate JumpThreader::simplifyPredicateOfBranch(Operat
 void JumpThreader::findLoopHeads()
 {
     uint32_t numberOfBlocks = m_proc.numberOfBlocks();
-    m_reachedIncomingEdgeCounts.fill(m_arena, numberOfBlocks, 0);
-    uint32_t* counts = m_reachedIncomingEdgeCounts.begin();
     uint8_t* flags = m_flags.begin();
     Visit* const path = m_arena.allocateArray<Visit>(numberOfBlocks);
 
@@ -268,7 +271,6 @@ void JumpThreader::findLoopHeads()
             }
             const Block* successor = next++->block();
             uint32_t indexOfSuccessor = successor->index();
-            ++counts[indexOfSuccessor];
             uint8_t flagsOfSuccessor = flags[indexOfSuccessor];
             if (flagsOfSuccessor & IsVisited) {
                 if (flagsOfSuccessor & IsOnPath)
@@ -346,23 +348,79 @@ std::optional<JumpThreader::ThreadableJoin> JumpThreader::matchThreadableJoin(Bl
 {
     if (!hasFormOfThreadableJoin(join))
         return std::nullopt;
-    if (m_matchesOfJoins.isEmpty()) [[unlikely]]
+    if (m_matchesOfJoins.isEmpty()) [[unlikely]] {
         m_matchesOfJoins.fill(m_arena, m_proc.numberOfBlocks(), MatchOfJoin::IsNotLookedAt);
+        m_joinsThatOneWayLedToAtFirst = BitSpan::create(m_arena, m_proc.numberOfBlocks());
+    }
     MatchOfJoin match = m_matchesOfJoins[join->index()];
     if (match == MatchOfJoin::IsNotLookedAt) {
         match = lookAtJoin(join);
         m_matchesOfJoins[join->index()] = match;
+        if (join->numberOfIncomingEdges() == 1)
+            m_joinsThatOneWayLedToAtFirst.set(join->index());
     }
     if (match == MatchOfJoin::IsNotThreadable)
         return std::nullopt;
     return ThreadableJoin { join->phis().data()[0], match == MatchOfJoin::TestsInverseOfPhi, match == MatchOfJoin::ComparesPhi };
 }
 
+ALWAYS_INLINE void JumpThreader::letGoUnlessSomethingLeadsTo(Block* block)
+{
+    if (!block->numberOfIncomingEdges() && !block->isEntry()) [[unlikely]]
+        letGoOfBlockThatNothingLeadsTo(block);
+}
+
+ALWAYS_INLINE bool JumpThreader::isInHand(const Block* block) const
+{
+    uint8_t flags = m_flags[block->index()];
+    return m_isWalkingWays || block->index() == m_indexOfBlockInTurn || (flags & (IsBeingForwarded | IsForwarded)) == IsBeingForwarded || (flags & HasThreadedOwnJump);
+}
+
+void JumpThreader::letGoOfBlockThatNothingLeadsTo(Block* first)
+{
+    while (first->numSuccessors() <= 1 && !isInHand(first)) {
+        Block* next = first->numSuccessors() ? first->successor(0).block() : nullptr;
+        Order::emptyBlock(first);
+        if (!next || next->numberOfIncomingEdges() || next->isEntry() || next->isEmpty())
+            return;
+        first = next;
+    }
+
+    ASSERT(m_blocksToLetGo.isEmpty());
+    m_blocksToLetGo.append(m_arena, first);
+    while (!m_blocksToLetGo.isEmpty()) {
+        Block* block = m_blocksToLetGo.takeLast();
+        if (isInHand(block)) {
+            m_blocksInHandThatNothingLeadsTo.append(m_arena, block);
+            continue;
+        }
+        uint32_t numberKept = m_blocksToLetGo.size();
+        for (const Edge& edge : block->successors())
+            m_blocksToLetGo.append(m_arena, edge.block());
+        Order::emptyBlock(block);
+        for (uint32_t index = numberKept; index < m_blocksToLetGo.size(); ++index) {
+            Block* target = m_blocksToLetGo[index];
+            if (!target->numberOfIncomingEdges() && !target->isEntry() && !target->isEmpty())
+                m_blocksToLetGo[numberKept++] = target;
+        }
+        m_blocksToLetGo.shrink(numberKept);
+    }
+}
+
+void JumpThreader::letGoOfBlocksThatWereInHand()
+{
+    while (!m_blocksInHandThatNothingLeadsTo.isEmpty()) {
+        Block* block = m_blocksInHandThatNothingLeadsTo.takeLast();
+        if (!block->numberOfIncomingEdges() && !block->isEmpty())
+            Order::letGoOfBlockThatNothingLeadsTo(block);
+    }
+}
+
 void JumpThreader::retarget(Block* from, unsigned successorIndex, Block* target)
 {
+    Block* formerTarget = from->successor(successorIndex).block();
     Order::retarget(from, successorIndex, target);
-    if (has(from, IsVisited))
-        ++m_reachedIncomingEdgeCounts[target->index()];
+    letGoUnlessSomethingLeadsTo(formerTarget);
 }
 
 void JumpThreader::setEdgeClass(Block* from, unsigned successorIndex, EdgeClass edgeClass)
@@ -376,22 +434,6 @@ void JumpThreader::setEdgeClass(Block* from, unsigned successorIndex, EdgeClass 
         from->appendSuccessor(edge);
 }
 
-void JumpThreader::markUnreached(Block* block)
-{
-    ASSERT(has(block, IsVisited) && m_unreachedBlocks.isEmpty());
-    clear(block, IsVisited);
-    m_unreachedBlocks.append(m_arena, block);
-    while (!m_unreachedBlocks.isEmpty()) {
-        for (const Edge& edge : m_unreachedBlocks.takeLast()->successors()) {
-            Block* successor = edge.block();
-            if (!has(successor, IsVisited) || --m_reachedIncomingEdgeCounts[successor->index()])
-                continue;
-            clear(successor, IsVisited);
-            m_unreachedBlocks.append(m_arena, successor);
-        }
-    }
-}
-
 void JumpThreader::duplicateBranchIntoPredecessor(Block* from, Block* join, const ThreadableJoin& threadable)
 {
     if (from->last()->opcode() != Jump || join->last()->opcode() != Branch)
@@ -403,8 +445,7 @@ void JumpThreader::duplicateBranchIntoPredecessor(Block* from, Block* join, cons
     }
 
     Order::replaceJumpWithBranch(from, threadable.phi, threadable.isInverted);
-    for (const Edge& edge : from->successors())
-        ++m_reachedIncomingEdgeCounts[edge.block()->index()];
+    letGoUnlessSomethingLeadsTo(join);
     if (from->index() > m_indexOfBlockInTurn)
         return;
     if (!m_testsOfBranches.isEmpty() && m_testsOfBranches.last().block > from->index())
@@ -481,13 +522,11 @@ void JumpThreader::threadThroughJoin(Block* from, unsigned successorIndex)
     if (!canGainPredecessor(target))
         return;
 
-    bool isOnlyReachedEdge = m_reachedIncomingEdgeCounts[join->index()] == 1;
+    bool isOnlyEdge = m_joinsThatOneWayLedToAtFirst.get(join->index());
     EdgeClass edgeClass = from->successor(successorIndex).edgeClass();
     retarget(from, successorIndex, target);
-    if (!isOnlyReachedEdge)
-        return;
-    setEdgeClass(from, successorIndex, edgeClass);
-    markUnreached(join);
+    if (isOnlyEdge)
+        setEdgeClass(from, successorIndex, edgeClass);
 }
 
 Operation* JumpThreader::wordAddedTo(int64_t upperHalf, const Operation* sum)
@@ -528,10 +567,11 @@ void JumpThreader::passTestOfUpperHalfBy(Block* from)
         const JoinPassedBy& known = m_joinsPassedBy[index];
         if (known.join != join)
             continue;
-        if (!has(from, IsVisited))
+        Block* passing = join->successor(test->opcode() == AboveEqual ? 0 : 1).block();
+        if (!has(from, IsVisited) || (passing != known.passing && (known.lowerHalf || passing == join || !canGainPredecessor(passing))))
             return;
-        Order::passJoinBy(from, known.passing, known.lowerHalf, known.lowerHalf ? word : nullptr);
-        ++m_reachedIncomingEdgeCounts[known.passing->index()];
+        Order::passJoinBy(from, passing, known.lowerHalf, known.lowerHalf ? word : nullptr);
+        letGoUnlessSomethingLeadsTo(join);
         return;
     }
 
@@ -587,7 +627,7 @@ void JumpThreader::passTestOfUpperHalfBy(Block* from)
         Order::makePhiOfTruncationBehindJoin(join, truncation);
     m_joinsPassedBy.append(m_arena, JoinPassedBy { join, passing, truncation });
     Order::passJoinBy(from, passing, truncation, truncation ? word : nullptr);
-    ++m_reachedIncomingEdgeCounts[passing->index()];
+    letGoUnlessSomethingLeadsTo(join);
 }
 
 ALWAYS_INLINE void JumpThreader::skipEmptyJumpBlock(Block* from, unsigned successorIndex)
@@ -605,17 +645,7 @@ ALWAYS_INLINE void JumpThreader::skipForwardedBlock(Block* from, unsigned succes
         return;
     if (!skipped->upsilons().empty() || !canGainPredecessor(target))
         return;
-    Order::retarget(from, successorIndex, target);
-    if (!has(from, IsVisited))
-        return;
-    uint32_t* counts = m_reachedIncomingEdgeCounts.begin();
-    ++counts[target->index()];
-    if (--counts[skipped->index()])
-        return;
-    ASSERT(has(skipped, IsVisited));
-    clear(skipped, IsVisited);
-    if (has(target, IsVisited) && !--counts[target->index()])
-        markUnreached(target);
+    retarget(from, successorIndex, target);
 }
 
 ALWAYS_INLINE void JumpThreader::forwardEmptyJumpChain(Block* first)
@@ -714,6 +744,8 @@ bool JumpThreader::numberTestsAskedTwice()
     TestOfBlock* testsOfBlocks = nullptr;
     bool holdsSuchBlock = false;
     for (uint32_t branch = 0; branch < numberOfBranches; ++branch) {
+        if (blocks[tests[branch].block]->isEmpty())
+            continue;
         uint64_t operands = tests[branch].operands;
         uint32_t opcode = tests[branch].opcode;
         uint32_t place = static_cast<uint32_t>((operands ^ static_cast<uint64_t>(opcode) << 27) * 0x9e3779b97f4a7c15ull >> shift);
@@ -784,7 +816,7 @@ bool JumpThreader::holdsNothingButItsTest(const Block* block)
 
 void JumpThreader::passTestsThatWayHasDecided(Block* from)
 {
-    if (!canRetargetSuccessors(from))
+    if (!canRetargetSuccessors(from) || (!from->numberOfIncomingEdges() && !from->isEntry()))
         return;
     TestOfBlock own = m_testsOfBlocks[from->index()];
     for (unsigned index = 0; index < from->numSuccessors(); ++index) {
@@ -802,8 +834,6 @@ void JumpThreader::passTestsThatWayHasDecided(Block* from)
             if (target == passed || !canGainPredecessor(target))
                 break;
             retarget(from, index, target);
-            if (!--m_reachedIncomingEdgeCounts[passed->index()])
-                markUnreached(passed);
         }
     }
 }
@@ -1066,7 +1096,16 @@ void JumpThreader::run()
     m_flags.fill(m_arena, numberOfBlocks, 0);
     m_testsOfBranches.reserve(m_arena, numberOfBlocks);
     Block* const* blocks = m_proc.blocks().data();
+    for (Block* block : m_proc.blocksBegunBeforeAnythingLedToThem())
+        letGoUnlessSomethingLeadsTo(block);
+    if (m_proc.traits().checksAllocation) {
+        for (uint32_t indexOfBlock = 0; indexOfBlock < numberOfBlocks; ++indexOfBlock)
+            RELEASE_ASSERT(blocks[indexOfBlock]->isEmpty() || blocks[indexOfBlock]->numberOfIncomingEdges() || blocks[indexOfBlock]->isEntry());
+    }
     for (uint32_t indexOfBlock = 0; indexOfBlock < numberOfBlocks; ++indexOfBlock) {
+        if (!m_blocksInHandThatNothingLeadsTo.isEmpty()) [[unlikely]]
+            letGoOfBlocksThatWereInHand();
+        m_indexOfBlockInTurn = indexOfBlock;
         Block* block = blocks[indexOfBlock];
         ASSERT(block->index() == indexOfBlock);
         uint32_t size = block->size();
@@ -1079,7 +1118,6 @@ void JumpThreader::run()
                 if (m_flags[indexOfBlock] & (IsBeingForwarded | IsForwarded))
                     continue;
                 if (block->phis().empty() && !block->isLandingPad() && !block->isEntry()) {
-                    m_indexOfBlockInTurn = indexOfBlock;
                     forwardEmptyJumpChain(block);
                     continue;
                 }
@@ -1099,7 +1137,6 @@ void JumpThreader::run()
             Block* target = edge->block();
             if (mayThreadThrough(target)) [[unlikely]] {
                 unsigned index = static_cast<unsigned>(edge - successors);
-                m_indexOfBlockInTurn = indexOfBlock;
                 threadThroughJoin(block, index);
                 successors = block->successors().data();
                 end = successors + block->numSuccessors();
@@ -1113,7 +1150,6 @@ void JumpThreader::run()
             if (has(target, IsForwarded))
                 skipForwardedBlock(block, index, target);
             else if (isEmptyJumpBlock(target)) {
-                m_indexOfBlockInTurn = indexOfBlock;
                 forwardEmptyJumpChain(target);
                 skipEmptyJumpBlock(block, index);
             } else
@@ -1123,9 +1159,12 @@ void JumpThreader::run()
             edge = successors + index;
         }
     }
+    letGoOfBlocksThatWereInHand();
     if (m_testsOfBranches.size() < 2)
         return;
+    m_isWalkingWays = true;
     threadEdgesPastDecidedTests();
+    letGoOfBlocksThatWereInHand();
     askTestsBehindNextThatImplyThem();
 }
 

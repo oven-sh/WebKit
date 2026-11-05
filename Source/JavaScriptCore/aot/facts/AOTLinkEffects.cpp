@@ -207,6 +207,7 @@ private:
     };
 
     bool isSummarized(uint32_t function) const { return m_isSummarized.get(function); }
+    bool isAnyCodeByItsOwnText(FunctionID, const ThinSummary&) const;
     bool keepsDefaults(FunctionID, const ThinSummary&, OptionSet<SummaryTrait>) const;
     uint32_t nodeOfLostFunctions() const { return m_numberOfFunctions; }
     uint32_t nodeOfSharedCall(uint32_t shared) const { return m_numberOfFunctions + 1 + shared; }
@@ -214,7 +215,10 @@ private:
     bool isSharedCall(uint32_t node) const { return node > m_numberOfFunctions; }
     uint32_t numberOfNodesOfCallees() const { return m_numberOfFunctions + 1 + static_cast<uint32_t>(m_flow.calleesOfSharedCalls.size()); }
 
-    LinkType typeAt(FunctionID, uint32_t nodeInSummary) const;
+    LinkType typeAt(FunctionID function, uint32_t nodeInSummary) const { return typeAt(function, m_flow.summaries.at(function), nodeInSummary); }
+    LinkType typeAt(FunctionID, const ThinSummary&, uint32_t nodeInSummary) const;
+    bool mayHoldFunction(FlowNodeID field) const;
+    bool mayFindFunctionInFieldUnder(const LinkType& subject, PropertyKeyID) const;
     static std::span<const uint32_t> argumentsOf(const ThinSummary& summary, const SummaryCall& call) { return summary.arguments.span().subspan(call.firstArgument, call.numberOfArguments); }
     std::span<const FunctionID> functionsOf(const CodeEntered& code) const LIFETIME_BOUND { return m_functionsEntered.span().subspan(code.firstFunction, code.numberOfFunctions); }
     std::span<const FunctionID> calleesOf(uint32_t function) const LIFETIME_BOUND { return m_callees.span().subspan(m_firstCallee[function], m_firstCallee[function + 1] - m_firstCallee[function]); }
@@ -223,13 +227,16 @@ private:
     const CodeEntered& codeOfAccess(FunctionID function, uint32_t access) const LIFETIME_BOUND { return m_codeOfAccesses[m_firstAccessOfFunction[function.index()] + access]; }
 
     void indexHolders();
+    enum class Belief : uint8_t { Nothing, WhatDoorsAsk, Everything };
+    static Belief beliefInKindOfNode(SummaryNode::Kind);
+    static LinkType asDoorsAsk(LinkType);
+    void findBeliefInNodes();
     void findLayoutsThatMayFindAnything();
     bool mayFindAnything(const LinkType& subject) const;
-    bool readsFixedPartOfClass(const LinkType& subject, PropertyKeyID, bool hasOtherReceiver);
     bool objectPrototypeNeverAnswers(PropertyKeyID);
     void addFunctionsAt(const LinkType& held, CodeFound&) const;
     void lookInLayout(LayoutID, bool hasOwnFields, PropertyKeyID, MethodKind wanted, bool callsWhatIsFound, CodeFound&) const;
-    void findCodeBehindLookup(const LinkType& subject, PropertyKeyID, SummaryAccess::Kind, bool hasOtherReceiver, bool callsWhatIsFound, CodeFound&);
+    void findCodeBehindLookup(const LinkType& subject, PropertyKeyID, SummaryAccess::Kind, bool callsWhatIsFound, CodeFound&);
     Effects effectsOfLookupItself(SummaryAccess::Kind, PropertyKeyID) const;
 
     std::span<const BuiltinID> builtinsEnteredBy(FunctionID, const ThinSummary& summary LIFETIME_BOUND, uint32_t call) const LIFETIME_BOUND;
@@ -299,12 +306,17 @@ private:
     Vector<uint64_t> m_bitsOfLayouts;
     Vector<uint64_t> m_bitsOfFamilies;
     BitVector m_variablesThatFirstReadMayFill;
+    Vector<BitVector> m_nodesBelievedForLessThanEverything;
+    Vector<BitVector> m_nodesBelievedForNothing;
     BitVector m_keysOfFieldsThatHoldOneClosure;
+    BitVector m_keysOfFieldsThatMayHoldFunctions;
     BitVector m_layoutsOfPlainObjects;
     Vector<LinkedEffectsGivenArguments> m_effectsGivenArguments;
+    Vector<Vector<Effects>> m_blocksOfDistinctEffects;
 
     struct HandOfSummarizer {
         Vector<LinkedEffectsGivenArguments> effectsGivenArguments;
+        DistinctEffects effectsOfFunctions;
     };
     static thread_local HandOfSummarizer* s_hand;
     void prepareKnownEffects();
@@ -368,14 +380,26 @@ CalleeSummarizerForLinkEffects::CalleeSummarizerForLinkEffects(const LinkFlow& f
     RELEASE_ASSERT(m_numberOfFunctions == m_program.functions.size() && flow.summaries.size() == m_numberOfFunctions);
     RELEASE_ASSERT(flow.firstCallOfFunction.size() == m_numberOfFunctions + 1 && flow.calleesOfCalls.size() == flow.firstCallOfFunction.last());
     m_isSummarized.ensureSize(m_numberOfFunctions);
+    EffectsOfComponentInKnownEffects ofAnyCode = knownEffectsOfUnknownCode();
+    finishKnownEffectsOfCall(ofAnyCode, true);
+    DistinctEffects effectsOfAnyCode;
+    const Effects* keptEffectsOfAnyCode = effectsOfAnyCode.keep(ofAnyCode.all);
+    m_blocksOfDistinctEffects.appendVector(effectsOfAnyCode.takeBlocks());
     for (uint32_t index = 0; index < m_numberOfFunctions; ++index) {
         const Function& function = m_program.functions[index];
         if (!flow.reached.get(index) || !function.hasBody())
             continue;
-        RELEASE_ASSERT(flow.firstCallOfFunction[index + 1] - flow.firstCallOfFunction[index] == flow.summaries.at(FunctionID(index)).calls.size());
+        const ThinSummary& summary = flow.summaries.at(FunctionID(index));
+        RELEASE_ASSERT(flow.firstCallOfFunction[index + 1] - flow.firstCallOfFunction[index] == summary.calls.size());
+        if (isAnyCodeByItsOwnText(FunctionID(index), summary)) {
+            tables.functions[index].keptEffectsOnReturn = keptEffectsOfAnyCode;
+            tables.functions[index].keptEffectsOnThrow = keptEffectsOfAnyCode;
+            continue;
+        }
         m_isSummarized.quickSet(index);
     }
 
+    findBeliefInNodes();
     indexHolders();
     findLayoutsThatMayFindAnything();
     findCodeEntered();
@@ -386,10 +410,182 @@ bool CalleeSummarizerForLinkEffects::keepsDefaults(FunctionID id, const ThinSumm
     return m_program.at(id).isCoroutine() || summary.traits.containsAny(traits);
 }
 
-LinkType CalleeSummarizerForLinkEffects::typeAt(FunctionID function, uint32_t nodeInSummary) const
+bool CalleeSummarizerForLinkEffects::isAnyCodeByItsOwnText(FunctionID id, const ThinSummary& summary) const
 {
-    if (nodeInSummary != noSummaryNode)
-        return m_flow.typeAt(m_flow.nodeOf(function, nodeInSummary));
+    if (keepsDefaults(id, summary, { SummaryTrait::Suspends, SummaryTrait::HasDirectEval }) || summary.ownEffects().mayCallUnknownCode)
+        return true;
+    return std::ranges::any_of(summary.calls, [&](const SummaryCall& call) {
+        if (call.callee != SummaryCall::Callee::Value)
+            return false;
+        SummaryNode::Kind callee = summary.nodes[call.subject].kind;
+        return callee != SummaryNode::Kind::Closure && callee != SummaryNode::Kind::Parameter && !m_flow.typeAt(m_flow.nodeOf(id, call.subject)).isNothing();
+    });
+}
+
+auto CalleeSummarizerForLinkEffects::beliefInKindOfNode(SummaryNode::Kind kind) -> Belief
+{
+    switch (kind) {
+    case SummaryNode::Kind::Constant:
+    case SummaryNode::Kind::Allocation:
+    case SummaryNode::Kind::ClassInstance:
+    case SummaryNode::Kind::Closure:
+    case SummaryNode::Kind::Builtin:
+    case SummaryNode::Kind::Join:
+    case SummaryNode::Kind::ResultOfAccess:
+        return Belief::Everything;
+    case SummaryNode::Kind::Parameter:
+    case SummaryNode::Kind::Capture:
+    case SummaryNode::Kind::Variable:
+    case SummaryNode::Kind::Field:
+    case SummaryNode::Kind::ResultOfCall:
+    case SummaryNode::Kind::ResultOfOperator:
+    case SummaryNode::Kind::ResultOfConversion:
+        return Belief::WhatDoorsAsk;
+    case SummaryNode::Kind::Unknown:
+    case SummaryNode::Kind::Result:
+    case SummaryNode::Kind::Thrown:
+    case SummaryNode::Kind::Member:
+    case SummaryNode::Kind::Contents:
+        return Belief::Nothing;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+LinkType CalleeSummarizerForLinkEffects::asDoorsAsk(LinkType linked)
+{
+    if (linked.holdsUnseen || linked.holdsLostBuiltins || linked.builtin || linked.classes != LinkType::Classes::None)
+        return LinkType::anything();
+    if (linked.objects == LinkType::Objects::Prototype || linked.objects == LinkType::Objects::Prototypes || linked.objects == LinkType::Objects::Lost)
+        return LinkType::anything();
+    if (linked.functions == LinkType::Functions::None)
+        return linked;
+    if (linked.objects != LinkType::Objects::None)
+        return LinkType::anything();
+    linked.functions = LinkType::Functions::Lost;
+    return linked;
+}
+
+void CalleeSummarizerForLinkEffects::findBeliefInNodes()
+{
+    m_nodesBelievedForLessThanEverything.grow(m_numberOfFunctions);
+    m_nodesBelievedForNothing.grow(m_numberOfFunctions);
+    forEachRangeOfIndicesInParallel(m_flow.loops, m_numberOfFunctions, [&](size_t first, size_t end) {
+        Vector<uint32_t> endOfNodesLedToBy;
+        Vector<uint32_t> nodesLedTo;
+        Vector<uint32_t> toVisit;
+        for (size_t index = first; index < end; ++index) {
+            if (!isSummarized(index))
+                continue;
+            FunctionID id(static_cast<uint32_t>(index));
+            const ThinSummary& summary = m_flow.summaries.at(id);
+            uint32_t numberOfNodes = summary.nodes.size();
+            auto kindOf = [&](uint32_t node) { return summary.nodes[node].kind; };
+            auto forEachLink = [&](const auto& functor) {
+                for (const SummaryEdge& edge : summary.edges) {
+                    if (kindOf(edge.to) == SummaryNode::Kind::Join)
+                        functor(edge.from, edge.to);
+                }
+                for (uint32_t node = 0; node < numberOfNodes; ++node) {
+                    if (kindOf(node) == SummaryNode::Kind::ResultOfAccess && summary.accesses[summary.nodes[node].first].subject != noSummaryNode)
+                        functor(summary.accesses[summary.nodes[node].first].subject, node);
+                }
+            };
+            endOfNodesLedToBy.fill(0, numberOfNodes + 1);
+            uint32_t numberOfLinks = 0;
+            forEachLink([&](uint32_t from, uint32_t) {
+                ++endOfNodesLedToBy[from + 1];
+                ++numberOfLinks;
+            });
+            for (uint32_t node = 0; node < numberOfNodes; ++node)
+                endOfNodesLedToBy[node + 1] += endOfNodesLedToBy[node];
+            nodesLedTo.fill(0, numberOfLinks);
+            forEachLink([&](uint32_t from, uint32_t to) {
+                nodesLedTo[endOfNodesLedToBy[from]++] = to;
+            });
+
+            BitVector& less = m_nodesBelievedForLessThanEverything[index];
+            BitVector& nothing = m_nodesBelievedForNothing[index];
+            less.ensureSize(numberOfNodes);
+            nothing.ensureSize(numberOfNodes);
+            auto beliefIn = [&](uint32_t node) {
+                if (!less.quickGet(node))
+                    return beliefInKindOfNode(kindOf(node));
+                return nothing.quickGet(node) ? Belief::Nothing : Belief::WhatDoorsAsk;
+            };
+            auto lower = [&](uint32_t node, Belief belief) {
+                if (beliefIn(node) <= belief)
+                    return;
+                less.quickSet(node);
+                if (belief == Belief::Nothing)
+                    nothing.quickSet(node);
+                toVisit.append(node);
+            };
+            toVisit.shrink(0);
+            for (uint32_t node = 0; node < numberOfNodes; ++node) {
+                if (kindOf(node) == SummaryNode::Kind::ResultOfAccess) {
+                    const SummaryAccess& access = summary.accesses[summary.nodes[node].first];
+                    bool isReadByName = access.kind == SummaryAccess::Kind::Read && !access.isToContents() && access.receiver == noSummaryNode && access.subject != noSummaryNode;
+                    LinkType subject = isReadByName ? asDoorsAsk(m_flow.typeAt(m_flow.nodeOf(id, access.subject))) : LinkType::anything();
+                    lower(node, subject.holdsUnseen || subject.functions != LinkType::Functions::None ? Belief::Nothing : Belief::WhatDoorsAsk);
+                } else if (beliefInKindOfNode(kindOf(node)) != Belief::Everything)
+                    toVisit.append(node);
+            }
+            while (!toVisit.isEmpty()) {
+                uint32_t node = toVisit.takeLast();
+                Belief belief = beliefIn(node);
+                for (uint32_t place = node ? endOfNodesLedToBy[node - 1] : 0; place < endOfNodesLedToBy[node]; ++place) {
+                    uint32_t ledTo = nodesLedTo[place];
+                    if (kindOf(ledTo) == SummaryNode::Kind::Join || belief == Belief::Nothing)
+                        lower(ledTo, belief);
+                }
+            }
+        }
+    });
+}
+
+bool CalleeSummarizerForLinkEffects::mayHoldFunction(FlowNodeID field) const
+{
+    LinkType held = asDoorsAsk(m_flow.typeAt(field));
+    return held.holdsUnseen || held.functions != LinkType::Functions::None;
+}
+
+bool CalleeSummarizerForLinkEffects::mayFindFunctionInFieldUnder(const LinkType& subject, PropertyKeyID key) const
+{
+    if (!m_keysOfFieldsThatMayHoldFunctions.quickGet(key.index()))
+        return false;
+    auto mayFindItIn = [&](LayoutID layout) {
+        std::optional<FieldReference> field = findField(m_program, layout, key);
+        FlowNodeID appended = m_flow.findAppendedField(layout, key);
+        return (field && mayHoldFunction(m_flow.field(*field))) || (appended && mayHoldFunction(appended));
+    };
+    switch (subject.objects) {
+    case LinkType::Objects::None:
+    case LinkType::Objects::Prototype:
+        return false;
+    case LinkType::Objects::Layout:
+        return mayFindItIn(subject.layout);
+    case LinkType::Objects::Set:
+        return std::ranges::any_of(m_flow.layoutsOfSet(subject), mayFindItIn);
+    case LinkType::Objects::Prototypes:
+    case LinkType::Objects::Family:
+    case LinkType::Objects::Lost:
+        return true;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+LinkType CalleeSummarizerForLinkEffects::typeAt(FunctionID function, const ThinSummary& summary, uint32_t nodeInSummary) const
+{
+    ASSERT(isSummarized(function.index()));
+    if (nodeInSummary != noSummaryNode) {
+        Belief belief = beliefInKindOfNode(summary.nodes[nodeInSummary].kind);
+        if (m_nodesBelievedForLessThanEverything[function.index()].get(nodeInSummary))
+            belief = m_nodesBelievedForNothing[function.index()].get(nodeInSummary) ? Belief::Nothing : Belief::WhatDoorsAsk;
+        if (belief == Belief::Nothing)
+            return LinkType::anything();
+        LinkType linked = m_flow.typeAt(m_flow.nodeOf(function, nodeInSummary));
+        return belief == Belief::Everything ? linked : asDoorsAsk(linked);
+    }
     LinkType undefined;
     undefined.primitives = Primitive::Undefined;
     return undefined;
@@ -401,6 +597,7 @@ void CalleeSummarizerForLinkEffects::indexHolders()
     m_keysOfAccessorFields.ensureSize(numberOfKeys);
     m_keysOfOtherCallables.ensureSize(numberOfKeys);
     m_keysOfFieldsThatHoldOneClosure.ensureSize(numberOfKeys);
+    m_keysOfFieldsThatMayHoldFunctions.ensureSize(numberOfKeys);
     m_keysThatObjectPrototypeNeverAnswers.fill(Answer::NotAsked, numberOfKeys);
 
     auto note = [&](PropertyKeyID key, FlowNodeID holder, bool runsAtReads, bool runsAtStores) {
@@ -430,8 +627,14 @@ void CalleeSummarizerForLinkEffects::indexHolders()
                 note(key, m_flow.field({ LayoutID(index), field }), false, false);
             if (key && m_flow.typeAt(m_flow.field({ LayoutID(index), field })).functions == LinkType::Functions::Closure)
                 m_keysOfFieldsThatHoldOneClosure.quickSet(key.index());
+            if (key && mayHoldFunction(m_flow.field({ LayoutID(index), field })))
+                m_keysOfFieldsThatMayHoldFunctions.quickSet(key.index());
         }
     }
+    m_flow.forEachAppendedField([&](PropertyKeyID key, FlowNodeID field) {
+        if (key && mayHoldFunction(field))
+            m_keysOfFieldsThatMayHoldFunctions.quickSet(key.index());
+    });
     std::ranges::stable_sort(m_accessors, { }, &AccessorUnderKey::key);
 
     forEachRangeOfIndicesInParallel(m_flow.loops, numberOfKeys, [&](size_t first, size_t end) {
@@ -551,34 +754,9 @@ void CalleeSummarizerForLinkEffects::lookInLayout(LayoutID layout, bool hasOwnFi
     }
 }
 
-bool CalleeSummarizerForLinkEffects::readsFixedPartOfClass(const LinkType& subject, PropertyKeyID key, bool hasOtherReceiver)
-{
-    constexpr uint16_t primitivesWithoutMembers = Primitive::UndefinedOrNull | Primitive::Absent;
-    if (mayBeOtherCallableForLinkEffects(subject) || (subject.primitives & ~primitivesWithoutMembers))
-        return false;
-    bool holdsNoObject = subject.objects == LinkType::Objects::None;
-    bool holdsNoFunction = subject.functions == LinkType::Functions::None;
-    LayoutID classOfOnlyClassObject = subject.functions == LinkType::Functions::Closure && isClassConstructorOf(m_program.at(subject.function).kind) ? m_program.at(subject.function).constructedClass : LayoutID();
-    auto staysAsWrittenWithoutTheName = [&](LayoutID classLayout, ClassSide side) {
-        return !m_layoutsThatMayFindAnything.get(classLayout.index()) && !m_flow.namesMayBeIncomplete(classLayout, side) && m_flow.findsPrototypeLinkOfSubject(classLayout, side, key, hasOtherReceiver);
-    };
-    switch (m_program.nameClassOf(key)) {
-    case NameClass::Prototype:
-        return holdsNoObject && (classOfOnlyClassObject || subject.functions == LinkType::Functions::Constructors);
-    case NameClass::Proto:
-        if (holdsNoObject)
-            return classOfOnlyClassObject && staysAsWrittenWithoutTheName(classOfOnlyClassObject, ClassSide::Static);
-        return holdsNoFunction && subject.objects == LinkType::Objects::Prototype && staysAsWrittenWithoutTheName(subject.layout, ClassSide::Prototype);
-    default:
-        return false;
-    }
-}
-
-void CalleeSummarizerForLinkEffects::findCodeBehindLookup(const LinkType& subject, PropertyKeyID key, SummaryAccess::Kind kind, bool hasOtherReceiver, bool callsWhatIsFound, CodeFound& found)
+void CalleeSummarizerForLinkEffects::findCodeBehindLookup(const LinkType& subject, PropertyKeyID key, SummaryAccess::Kind kind, bool callsWhatIsFound, CodeFound& found)
 {
     if (subject.isNothing())
-        return;
-    if (kind == SummaryAccess::Kind::Read && key && !callsWhatIsFound && readsFixedPartOfClass(subject, key, hasOtherReceiver))
         return;
     constexpr uint16_t primitivesWithoutMembers = Primitive::UndefinedOrNull | Primitive::Absent;
     bool isOfProgram = !mayBeOtherCallableForLinkEffects(subject) && subject.functions == LinkType::Functions::None && !(subject.primitives & ~primitivesWithoutMembers);
@@ -845,23 +1023,24 @@ void CalleeSummarizerForLinkEffects::findCodeEnteredByCall(FunctionID id, const 
             found.mayBeUnseen = true;
         break;
     case SummaryCall::Callee::Name: {
-        LinkType receiver = typeAt(id, call.receiver);
+        LinkType receiver = typeAt(id, summary, call.receiver);
+        if (receiver.holdsUnseen || (call.key && mayFindFunctionInFieldUnder(receiver, call.key)))
+            found.mayBeUnseen = true;
         receiver.primitives = 0;
         receiver.builtin = { };
         if (membersOfInstancesAreAsTableLists(receiver, call.key))
             break;
-        findCodeBehindLookup(receiver, call.key, SummaryAccess::Kind::Read, false, true, found);
+        findCodeBehindLookup(receiver, call.key, SummaryAccess::Kind::Read, true, found);
         break;
     }
     case SummaryCall::Callee::Value: {
-        LinkType subject = typeAt(id, call.subject);
+        if (summary.nodes[call.subject].kind != SummaryNode::Kind::Closure) {
+            found.mayBeUnseen = true;
+            break;
+        }
+        LinkType subject = typeAt(id, summary, call.subject);
         subject.builtin = { };
         addFunctionsAt(subject, found);
-        const SummaryNode& callee = summary.nodes[call.subject];
-        bool isReadThroughSuper = callee.kind == SummaryNode::Kind::ResultOfAccess && summary.accesses[callee.first].receiver != noSummaryNode;
-        bool isSuperCall = call.isConstruction && call.newTarget != noSummaryNode;
-        if (callee.kind != SummaryNode::Kind::Closure && !isReadThroughSuper && !isSuperCall)
-            found.mayBeUnseen = true;
         break;
     }
     case SummaryCall::Callee::Builtin:
@@ -906,7 +1085,7 @@ void CalleeSummarizerForLinkEffects::findCodeEntered()
             for (uint32_t access = 0; access < summary.accesses.size(); ++access) {
                 CodeFound found;
                 if (!summary.accesses[access].isToContents())
-                    findCodeBehindLookup(typeAt(id, summary.accesses[access].subject), m_flow.keyOf(id, summary.accesses[access]), summary.accesses[access].kind, summary.accesses[access].receiver != noSummaryNode, false, found);
+                    findCodeBehindLookup(typeAt(id, summary, summary.accesses[access].subject), m_flow.keyOf(id, summary.accesses[access]), summary.accesses[access].kind, false, found);
                 m_codeOfAccesses[m_firstAccessOfFunction[index] + access] = keep(found, functionsEntered);
             }
         }
@@ -1139,12 +1318,10 @@ void rankReferrersFirst(LinkTables& tables)
             if (member >= numberOfFunctions) {
                 LinkedGroup& group = tables.groups[member - numberOfFunctions];
                 group.cycle = cycle;
-                group.rank = rank;
                 continue;
             }
             LinkedFunction& function = tables.functions[member];
             function.cycle = cycle;
-            function.rank = rank;
             function.isNamedInItsCycle = namesItself;
         }
     }

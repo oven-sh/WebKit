@@ -19,11 +19,11 @@
 namespace JSC { namespace AOT {
 
 struct SharedCode {
-    uint32_t thunkOffset(const ArgumentMoves&) const;
+    uint32_t thunkOffset(std::span<const uint64_t> moves) const;
     uint32_t thunkOffset(uint32_t positionOfBody, uint32_t indexInBody) const { return argumentThunks.offsets[thunksOfArgumentMoves[firstArgumentMovesOfBody[positionOfBody] + indexInBody]]; }
 
     StubBlob blob;
-    Vector<const ArgumentMoves*> argumentMoves;
+    Vector<KeptArgumentMoves> argumentMoves;
     Vector<uint32_t> firstArgumentMovesOfBody;
     Vector<uint32_t> thunksOfArgumentMoves;
     ArgumentThunks argumentThunks;

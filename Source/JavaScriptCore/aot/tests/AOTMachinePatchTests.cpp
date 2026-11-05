@@ -8,7 +8,11 @@
 #if ENABLE(AOT)
 
 #include "AOTMachineTestSupport.h"
+#include "AOTCellFormat.h"
+#include "AOTConvention.h"
+#include "AOTEntryEmitter.h"
 #include "AllowMacroScratchRegisterUsage.h"
+#include "JSCJSValueInlines.h"
 #include <array>
 #include <bit>
 
@@ -805,6 +809,37 @@ static void testMachinePatchReleasesRegisterOfAnotherName()
     AOT_TEST_CHECK(!test.call<int64_t>(int64_t { 37 }));
 }
 
+static void testMachinePatchReleasesRegisterThatNativeCalleesAloneKeep()
+{
+    TestProcedure test;
+    Output& out = test.out();
+    RegisterFile file = registerFileOfPatchTest(test);
+    RegisterMask keptByNativeCalleesAlone = maskOf(RegisterSet::calleeSaveRegisters()) & ~file.calleeSaved & file.allocatableIn(Bank::GP);
+    if (!keptByNativeCalleesAlone)
+        return;
+    Reg waitedIn = Reg::fromIndex(static_cast<unsigned>(std::countr_zero(keptByNativeCalleesAlone)));
+
+    Operation* cell = out.opaque(out.add(test.argumentGPR(0), 5));
+    PatchOperation* callThatWritesNoRegister = out.patch(Void);
+    callThatWritesNoRegister->append(cell, ValueRep::reg(waitedIn));
+    callThatWritesNoRegister->clobberLate(callerSavedRegistersOfPatchTest(test));
+    callThatWritesNoRegister->setGenerator([](CCallHelpers&, const PatchParameters&) { });
+    PatchTestObservation seen;
+    RegisterMask cleared = 0;
+    appendPatchTestReleaseHint(out, cell, seen, cleared);
+    PatchOperation* reader = out.patch(Int64);
+    reader->effects = Effects::none();
+    reader->setGenerator([waitedIn](CCallHelpers& jit, const PatchParameters& params) {
+        jit.move(waitedIn.gpr(), params[0].gpr());
+    });
+    out.ret(reader);
+
+    compileOrFail(test);
+    AOT_TEST_CHECK(callerSavedRegistersOfPatchTest(test) & maskOf(waitedIn));
+    AOT_TEST_CHECK(seen.runs == 1 && (cleared & maskOf(waitedIn)));
+    AOT_TEST_CHECK(!test.call<int64_t>(int64_t { 37 }));
+}
+
 static void testMachinePatchClearsSpillThatAnotherArmReads()
 {
     for (bool isReadBehindArms : { false, true }) {
@@ -971,6 +1006,83 @@ static void testMachinePatchThatWantsTooManyRegisters()
     AOT_TEST_CHECK(test.procedure().failure() && test.procedure().failure()->kind == FailureKind::OutOfRegisters);
 }
 
+static bool fitsQuestionOfEntryInPatchTest(const Typed::QuestionOfEntry& question, uint64_t value)
+{
+    TestProcedure test;
+    Output& out = test.out();
+    Operation* asked = test.argumentGPR(0);
+    PatchOperation* patch = out.patch(Int64);
+    patch->append(asked, ValueRep::reg(question.value));
+    RegisterSet clobbered = RegisterSet::macroClobberedGPRs();
+    clobbered.add(valueEntryGPR, IgnoreVectors);
+    patch->clobber(clobbered);
+    patch->setGenerator([&question](CCallHelpers& jit, const PatchParameters& params) {
+        CCallHelpers::JumpList misfits = Typed::emitQuestionOfEntryWrittenByHand(jit, question);
+        jit.move(CCallHelpers::TrustedImm32(1), params[0].gpr());
+        CCallHelpers::Jump done = jit.jump();
+        misfits.link(&jit);
+        jit.move(CCallHelpers::TrustedImm32(0), params[0].gpr());
+        done.link(&jit);
+    });
+    out.ret(patch);
+    compileOrFail(test);
+    return test.call<int64_t>(value);
+}
+
+struct alignas(16) CellOfPatchTest {
+    std::array<uint32_t, 4> words { };
+
+    explicit CellOfPatchTest(uint32_t shapeWord)
+    {
+        static_assert(offsetOfShapeWord == 3 * sizeof(uint32_t));
+        words[3] = shapeWord;
+    }
+    uint64_t bits() const { return reinterpret_cast<uintptr_t>(this); }
+};
+
+static void testMachinePatchQuestionOfEntryAsksForOneShape()
+{
+    for (uint32_t shape : { 1u, 4095u, 4096u, 4097u, 70001u, maxNumberOfShapes - 2 }) {
+        for (bool mayBearMark : { false, true }) {
+            Typed::QuestionOfEntry question { .value = thisGPR, .passingPrimitives = Typed::Primitive::Undefined, .shapeMayBearMark = mayBearMark, .shapeWord = shapeWordOf(shape) };
+            AOT_TEST_CHECK(fitsQuestionOfEntryInPatchTest(question, CellOfPatchTest(shapeWordOf(shape)).bits()));
+            AOT_TEST_CHECK(fitsQuestionOfEntryInPatchTest(question, CellOfPatchTest(shapeWordOf(shape) & ~shapeWordIsUnmarked).bits()) == mayBearMark);
+            AOT_TEST_CHECK(!fitsQuestionOfEntryInPatchTest(question, CellOfPatchTest(shapeWordOf(shape + 1)).bits()));
+            AOT_TEST_CHECK(!fitsQuestionOfEntryInPatchTest(question, CellOfPatchTest(shapeWordOf(shape + 1) & ~shapeWordIsUnmarked).bits()));
+            AOT_TEST_CHECK(!fitsQuestionOfEntryInPatchTest(question, CellOfPatchTest(0).bits()));
+            AOT_TEST_CHECK(fitsQuestionOfEntryInPatchTest(question, JSValue::encode(jsUndefined())));
+            AOT_TEST_CHECK(!fitsQuestionOfEntryInPatchTest(question, JSValue::encode(jsNull())));
+            AOT_TEST_CHECK(!fitsQuestionOfEntryInPatchTest(question, JSValue::encode(jsNumber(7))));
+        }
+    }
+}
+
+static void testMachinePatchQuestionOfEntryAsksForWords()
+{
+    using namespace Typed;
+    struct Word {
+        uint16_t primitive;
+        JSValue value;
+    };
+    const Word words[] = {
+        { Primitive::Undefined, jsUndefined() }, { Primitive::Null, jsNull() }, { Primitive::False, jsBoolean(false) }, { Primitive::True, jsBoolean(true) },
+        { Primitive::Number, jsNumber(0) }, { Primitive::Number, jsNumber(-1) }, { Primitive::Number, jsNumber(2147483647) }, { Primitive::Number, jsNumber(2147483648.0) },
+        { Primitive::Number, jsNumber(-0.0) }, { Primitive::Number, jsNumber(0.5) }, { Primitive::Number, jsNumber(9007199254740992.0) }, { Primitive::Number, jsNaN() },
+    };
+    for (uint16_t passing : { uint16_t { 0 }, Primitive::Undefined, Primitive::Null, Primitive::UndefinedOrNull, Primitive::False, Primitive::True, Primitive::Boolean, Primitive::Number,
+        static_cast<uint16_t>(Primitive::Number | Primitive::Undefined), static_cast<uint16_t>(Primitive::Boolean | Primitive::UndefinedOrNull), static_cast<uint16_t>(Primitive::Number | Primitive::Boolean | Primitive::Null) }) {
+        for (bool asksForShapeToo : { false, true }) {
+            QuestionOfEntry question { .value = argumentGPR(1), .passingPrimitives = passing };
+            if (asksForShapeToo)
+                question.shapeWord = shapeWordOf(4097);
+            for (const Word& word : words)
+                AOT_TEST_CHECK(fitsQuestionOfEntryInPatchTest(question, JSValue::encode(word.value)) == !!(passing & word.primitive));
+            AOT_TEST_CHECK(fitsQuestionOfEntryInPatchTest(question, CellOfPatchTest(shapeWordOf(4097)).bits()) == asksForShapeToo);
+            AOT_TEST_CHECK(!fitsQuestionOfEntryInPatchTest(question, CellOfPatchTest(shapeWordOf(4098)).bits()));
+        }
+    }
+}
+
 static std::span<const NativeTest> listOfMachinePatchTests()
 {
     static constexpr NativeTest tests[] = {
@@ -988,9 +1100,12 @@ static std::span<const NativeTest> listOfMachinePatchTests()
         { "machine/patch/releases-value-in-frame"_s, testMachinePatchReleasesValueInFrame },
         { "machine/patch/releases-nothing-that-is-read-again"_s, testMachinePatchReleasesNothingThatIsReadAgain },
         { "machine/patch/releases-register-of-another-name"_s, testMachinePatchReleasesRegisterOfAnotherName },
+        { "machine/patch/releases-register-that-native-callees-alone-keep"_s, testMachinePatchReleasesRegisterThatNativeCalleesAloneKeep },
         { "machine/patch/clears-spill-that-another-arm-reads"_s, testMachinePatchClearsSpillThatAnotherArmReads },
         { "machine/patch/searches-for-ways-through-block-split-late"_s, testMachinePatchSearchesForWaysThroughBlockSplitLate },
         { "machine/patch/wants-too-many-registers"_s, testMachinePatchThatWantsTooManyRegisters },
+        { "machine/patch/question-of-an-entry-written-by-hand-asks-for-one-shape"_s, testMachinePatchQuestionOfEntryAsksForOneShape },
+        { "machine/patch/question-of-an-entry-written-by-hand-asks-for-words"_s, testMachinePatchQuestionOfEntryAsksForWords },
     };
     return tests;
 }

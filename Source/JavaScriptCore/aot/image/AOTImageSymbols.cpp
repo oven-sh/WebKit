@@ -249,12 +249,12 @@ static void addSymbolsOfSharedCode(ImageSymbolTable& table, const BuiltImage& bu
 
     const ArgumentThunks& thunks = sharedCode.argumentThunks;
     RELEASE_ASSERT(thunks.offsets.size() == sharedCode.argumentMoves.size());
-    uint64_t calleeOfName = 0;
+    StubKey calleeOfName;
     uint32_t name = 0;
     for (size_t index = 0; index < thunks.offsets.size(); ++index) {
-        uint64_t callee = sharedCode.argumentMoves[index]->at(0);
+        StubKey callee = calleeOfArgumentMoves(sharedCode.argumentMoves[index].span());
         if (!index || callee != calleeOfName) {
-            appendStubToSymbolName(table, StubKey::fromBits(callee));
+            appendStubToSymbolName(table, callee);
             table.append(" with arguments"_s);
             name = table.endName();
             calleeOfName = callee;
@@ -379,7 +379,7 @@ static void appendUnitsToMap(ImageSymbolTable& table, const Typed::Program& prog
         table.append("\n"_s);
 
         table.append("FO"_s);
-        for (const BytesOfForm& entry : code.bytesByForm) {
+        for (const BytesOfForm& entry : code.measurements->bytesByForm) {
             table.append("\t"_s);
             table.append(nameOf(entry.opcode));
             table.append("\t"_s);
@@ -409,7 +409,7 @@ static void appendSharedCodeToMap(ImageSymbolTable& table, const BuiltImage& bui
     RELEASE_ASSERT(thunks.offsets.size() == sharedCode.argumentMoves.size());
     for (size_t index = 0; index < thunks.offsets.size(); ++index) {
         beginRow(sharedCode.argumentThunksOffset + thunks.offsets[index]);
-        appendStubToSymbolName(table, StubKey::fromBits(sharedCode.argumentMoves[index]->at(0)));
+        appendStubToSymbolName(table, calleeOfArgumentMoves(sharedCode.argumentMoves[index].span()));
         table.append(" with arguments\n"_s);
     }
 

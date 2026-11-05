@@ -162,6 +162,25 @@ public:
             places.append({ kind, base, first, second, value });
     }
 
+    void noteThatGuardsHaveBegun(uint32_t classLayout)
+    {
+        if (!begun.contains(classLayout))
+            begun.append(classLayout);
+    }
+
+    void noteGuard(Kind kind, uint32_t classLayout, uint32_t key, Reference test)
+    {
+        note(kind, Reference(), classLayout, key, test);
+        noteThatGuardsHaveBegun(classLayout);
+    }
+
+    bool someGuardHoldsOf(uint32_t classLayout) const
+    {
+        return places.containsIf([&](const Place& place) {
+            return (place.kind == Kind::GuardOfStores || place.kind == Kind::GuardOfReads) && place.first == classLayout;
+        });
+    }
+
     void invalidateAliasedSlots(Reference object, FieldReference field, NOESCAPE const Invocable<bool(Reference)> auto& mayBeSameObject)
     {
         uint32_t layout = field.layout.index();
@@ -250,12 +269,16 @@ public:
         fresh.removeAllMatching([&](Reference object) {
             return !other.isFresh(object);
         });
+        begun.removeAllMatching([&](uint32_t classLayout) {
+            return !other.begun.contains(classLayout);
+        });
     }
 
     Vector<Shape> shapes;
     Vector<Cell> cells;
     Vector<Place> places;
     Vector<Reference> fresh;
+    Vector<uint32_t> begun;
 };
 
 struct PairOfWalkStateTests {
@@ -283,7 +306,6 @@ static Effects effectsThatWriteInWalkStateTests(AbstractHeapSet written)
 }
 
 static constexpr uint32_t layoutsOfWalkStateTests[] { 0, 1, 64, 65, 63, UINT32_MAX };
-// The place of a guard numbers the side of the class beside its layout.
 static constexpr uint32_t classesOfWalkStateTests[] { 0, 1, 64, 65, 63, UINT32_MAX >> 1 };
 
 static void checkSameAnswersInWalkStateTests(const PairOfWalkStateTests& pair, uint32_t numberOfObjects, uint32_t numberOfFields)
@@ -291,8 +313,10 @@ static void checkSameAnswersInWalkStateTests(const PairOfWalkStateTests& pair, u
     using Kind = PlainListsOfWalkStateTests::Kind;
     const WalkState& state = pair.state;
     const PlainListsOfWalkStateTests& lists = pair.lists;
-    AOT_TEST_CHECK(state.isEmpty() == (lists.shapes.isEmpty() && lists.cells.isEmpty() && lists.places.isEmpty() && lists.fresh.isEmpty()));
+    AOT_TEST_CHECK(state.isEmpty() == (lists.shapes.isEmpty() && lists.cells.isEmpty() && lists.places.isEmpty() && lists.fresh.isEmpty() && lists.begun.isEmpty()));
     for (uint32_t layout : classesOfWalkStateTests) {
+        AOT_TEST_CHECK(state.guardsHaveBegun(LayoutID(layout)) == lists.begun.contains(layout));
+        AOT_TEST_CHECK(state.someGuardHoldsOf(LayoutID(layout)) == lists.someGuardHoldsOf(layout));
         for (uint32_t key = 0; key < numberOfFields; ++key) {
             AOT_TEST_CHECK(state.storesPassAbove(LayoutID(layout), PropertyKeyID(key)) == !!lists.valueOf(Kind::GuardOfStores, Reference(), layout, key));
             AOT_TEST_CHECK(state.guardOfReadsHolds(LayoutID(layout), PropertyKeyID(key)) == !!lists.valueOf(Kind::GuardOfReads, Reference(), layout, key));
@@ -333,7 +357,10 @@ static void runRandomStepsInWalkStateTests(unsigned seed, uint32_t numberOfObjec
     };
 
     WeakRandom random(seed);
+    NumbersOfWalkStates numbers;
     Vector<PairOfWalkStateTests> pairs(numberOfStates);
+    for (PairOfWalkStateTests& pair : pairs)
+        pair.state.setNumbers(numbers);
     auto object = [&] {
         return valueOfWalkStateTests(random.getUint32(numberOfObjects));
     };
@@ -492,12 +519,19 @@ static void runRandomStepsInWalkStateTests(unsigned seed, uint32_t numberOfObjec
             uint32_t classLayout = classesOfWalkStateTests[random.getUint32(std::size(classesOfWalkStateTests))];
             uint32_t key = random.getUint32(numberOfFields);
             Reference test = valueOfWalkStateTests(random.getUint32(3));
-            if (random.getUint32(2)) {
+            switch (random.getUint32(3)) {
+            case 0:
                 pair.state.noteStoresPassAbove(LayoutID(classLayout), PropertyKeyID(key), test);
-                pair.lists.note(Kind::GuardOfStores, Reference(), classLayout, key, test);
-            } else {
+                pair.lists.noteGuard(Kind::GuardOfStores, classLayout, key, test);
+                break;
+            case 1:
                 pair.state.noteGuardOfReadsHolds(LayoutID(classLayout), PropertyKeyID(key), test);
-                pair.lists.note(Kind::GuardOfReads, Reference(), classLayout, key, test);
+                pair.lists.noteGuard(Kind::GuardOfReads, classLayout, key, test);
+                break;
+            case 2:
+                pair.state.noteThatGuardsHaveBegun(LayoutID(classLayout));
+                pair.lists.noteThatGuardsHaveBegun(classLayout);
+                break;
             }
             break;
         }

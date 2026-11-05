@@ -1,14 +1,14 @@
 # If a set grew with every stranger that comes, types would grow with the program and Link would no longer be linear. The fifth finds no declared family that holds all five, so the set is taken apart and all five are lost, as any two strangers were before there were sets
 # function take(o) { return o.x; }  function same(o) { return o; }  take({ x: 1, p: 1 });  take({ x: "a", q: 1 });  take({ x: true, r: 1 });  take({ x: null, s: 1 });  take(same({ x: "a", t: 1 }));
-# The fifth has the longer way, so the four are a set when it comes. A read through what is lost gives undefined too. None has escaped.
+# The fifth has the longer way, so the four are a set when it comes. A read through what is lost gives undefined too. None has escaped, so the type names the five that met.
 # RUN: link functions layouts mechanisms=all
 # CHECK: function f1 callers-known one-callee {{*}}result=undefined|null|true|i32|string returns=
-# CHECK-NEXT: parameter 0 {{*}}proven=object
-# CHECK: layout L0 changes=[] stays-with-compiled-code
-# CHECK: layout L1 changes=[] stays-with-compiled-code
-# CHECK: layout L2 changes=[] stays-with-compiled-code
-# CHECK: layout L3 changes=[] stays-with-compiled-code
-# CHECK: layout L4 changes=[] stays-with-compiled-code
+# CHECK-NEXT: parameter 0 {{*}}proven=L0|L1|L2|L3|L4
+# CHECK: layout L0 {{*}}changes=[] stays-with-compiled-code
+# CHECK: layout L1 {{*}}changes=[] stays-with-compiled-code
+# CHECK: layout L2 {{*}}changes=[] stays-with-compiled-code
+# CHECK: layout L3 {{*}}changes=[] stays-with-compiled-code
+# CHECK: layout L4 {{*}}changes=[] stays-with-compiled-code
 
 layout L0 module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="p" declared={type=anything} flags=[IsRequired]}]
 layout L1 module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="q" declared={type=anything} flags=[IsRequired]}]

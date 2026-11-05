@@ -7,8 +7,7 @@ import type { EmitContext, OutputFile } from "./outputs.ts";
 const entriesWithoutEmitter: ReadonlySet<string> = new Set(
   `Convert Check Expect Upcast NarrowByField NarrowByTest
    AppendSpread IteratorOpen IteratorResume IteratorClose StepArrayIterator StepMapIterator StepSetIterator
-   CreateIteratorResult Await Yield InitialYield ReadScope EvaluateModule StringBuilderAppend
-   StringBuilderCheckLength StringBuilderReserve StringBuilderCommit JSONEnterWatchedLevel JSONAppendKey JSONAppendToken JSONAppendBoolean JSONAppendInteger JSONAppendNumber JSONAppendString JSONAppendValue JSONAppendObject JSONHasStackSpace`.split(/\s+/),
+   CreateIteratorResult Await Yield InitialYield ReadScope EvaluateModule StringBuilderAppend`.split(/\s+/),
 );
 
 function requireNamesInSchema(

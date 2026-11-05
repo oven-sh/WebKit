@@ -1,4 +1,5 @@
 import { GeneratorError, Problems } from "./declarations.ts";
+import { cellsFilledByCalledFunctionsAlone } from "./check-host-uses.ts";
 import {
   classTokensArray,
   classTokensType,
@@ -207,6 +208,7 @@ export function collectArrayDeclarations(model: TableModel): ArrayDeclaration[] 
     ["BuiltinCalledFunction", "builtinTableCalledFunctions", countAttached(attachments => attachments.calledFunctions)],
     ["BuiltinCalledFunction", "builtinTableStartupCalledFunctions", startup.functionsCalledWithLoads.length],
     ["BuiltinHostObject", "builtinTableHostObjects", model.hostObjects.length],
+    ["BuiltinName", "builtinTableNativeCellsFilledByCalledFunctions", cellsFilledByCalledFunctionsAlone(model).length],
     ["BuiltinForms", "builtinTableForms", countBuiltins(hasForms)],
     ["BuiltinBoxedCall", "builtinTableBoxedCalls", countBuiltins(hasBoxedCallStub)],
     ["BuiltinNumberConstant", "builtinTableNumberConstants", countBuiltins(isNumberConstant)],

@@ -290,6 +290,14 @@ export default b.declarations(
       },
       implementation: b.compiled("ArrayConstructor", "from"),
     },
+    {
+      args: { items: b.any, mapper: b.any, thisArg: b.any.optional },
+      returns: b.never,
+      capability: "heap",
+      throws: true,
+      uses: { this: b.inspected, items: b.inspected, mapper: b.inspected, thisArg: b.inspected },
+      implementation: b.compiled("ArrayConstructor", "from"),
+    },
     b.otherwiseBy(b.compiled("ArrayConstructor", "from")),
   ]),
 

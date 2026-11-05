@@ -498,10 +498,11 @@ struct CodeLinker {
         const CompiledCode& function = inputs.functions[position];
         const CodeBody& body = function.body;
         const Vector<uint32_t, 0>& tableOffsets = constants.jumpTableOffsetsByBody[position];
-        RELEASE_ASSERT(tableOffsets.size() == body.jumpTables.size());
+        const auto& jumpTables = body.rareLists->jumpTables;
+        RELEASE_ASSERT(tableOffsets.size() == jumpTables.size());
         int64_t bodyStart = layout.bodyStarts[position];
         for (size_t index = 0; index < tableOffsets.size(); ++index) {
-            std::span<const uint32_t> targets = body.jumpTables[index].targets.span();
+            std::span<const uint32_t> targets = jumpTables[index].targets.span();
             size_t table = static_cast<size_t>(layout.constantsOffset) + tableOffsets[index];
             RELEASE_ASSERT(isSumSmallerThanOrEqual(table, targets.size_bytes(), code.size()));
             std::span<uint8_t> words = code.subspan(table, targets.size_bytes());

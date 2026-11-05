@@ -1,7 +1,7 @@
 # Layout, set, declared family, lost: not every order climbs that alike. Five members meet at a parameter, which climbs to their family, and a stranger comes later: the whole family is lost, and every member that
 # may be known by it joins. The stranger in the same step: each was lost by itself, nobody told the family, and the sixth member kept its proof. Which of the two a large program got hung on the clock.
 # The nearest declared family of two layouts that stand in one lost family is lost, so both programs below end alike, in every order of the worklist.
-#   interface Shape { }  Circle, Square, Triangle, Oval, Kite, Star: Shape  Point     interface Tool { }  Hammer, Saw, Drill, File, Plane, Chisel: Tool  Nail
+#   abstract class Shape { }  Circle, Square, Triangle, Oval, Kite, Star extend Shape  Point     abstract class Tool { }  Hammer, Saw, Drill, File, Plane, Chisel extend Tool  Nail
 #   function area(o) { return 1 }  function put(e) { e.x = null }  function same(v) { return v }  function use(o) { return 1 }  function lay(e) { e.x = null }
 #   area(circle); area(triangle); area(oval); area(kite); area(star);  put(circle); put(square); put(oval); put(kite); put(star); put(same(same(point)));       the stranger has the longer way
 #   use(hammer); use(drill); use(file); use(plane); use(chisel);  lay(hammer); lay(saw); lay(file); lay(plane); lay(chisel); lay(nail);                         the stranger comes with the five
@@ -20,18 +20,18 @@
 # LOST: function f1 callers-known one-callee
 # LOST-NEXT: parameter 0 {{*}}proven=L1|L2|L3|L10|L11|L12
 # LOST: function f2 callers-known one-callee
-# LOST-NEXT: parameter 0 {{*}}proven=object
+# LOST-NEXT: parameter 0 {{*}}proven=L1|L2|L3|L4|L10|L11|L12
 # LOST: function f4 callers-known one-callee
 # LOST-NEXT: parameter 0 {{*}}proven=L6|L7|L8|L13|L14|L15
 # LOST: function f5 callers-known one-callee
-# LOST-NEXT: parameter 0 {{*}}proven=object
+# LOST-NEXT: parameter 0 {{*}}proven=L6|L7|L8|L9|L13|L14|L15
 
-layout L0 name="Shape" module=m0 flags=[IsNeverAllocated]
+layout L0 kind=Instance name="Shape" module=m0 flags=[IsNeverAllocated]
 layout L1 name="Circle" module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="r" declared={type=anything} flags=[IsRequired]}] supertypes=[L0]
 layout L2 name="Square" module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="s" declared={type=anything} flags=[IsRequired]}] supertypes=[L0]
 layout L3 name="Triangle" module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="t" declared={type=anything} flags=[IsRequired]}] supertypes=[L0]
 layout L4 name="Point" module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="p" declared={type=anything} flags=[IsRequired]}]
-layout L5 name="Tool" module=m0 flags=[IsNeverAllocated]
+layout L5 kind=Instance name="Tool" module=m0 flags=[IsNeverAllocated]
 layout L6 name="Hammer" module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="h" declared={type=anything} flags=[IsRequired]}] supertypes=[L5]
 layout L7 name="Saw" module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="w" declared={type=anything} flags=[IsRequired]}] supertypes=[L5]
 layout L8 name="Drill" module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="d" declared={type=anything} flags=[IsRequired]}] supertypes=[L5]

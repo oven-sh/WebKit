@@ -191,11 +191,6 @@ bool Modules::isNativeModule(ModuleID module) const
     return !BuiltinTable::singleton().at(RuntimeModuleID(*moduleData.registryID())).flags.contains(RuntimeModuleFlag::HasSource);
 }
 
-static bool linkFollowsRequestsOf(const ModuleData& data)
-{
-    return data.capturesExportsBehindEvaluation() || (!data.capturesExports() && !data.isUncompiledCode());
-}
-
 static SyntheticExportRule captureRuleOf(const ModuleData& data)
 {
     if (data.exportRule == SyntheticExportRule::None && data.kind == ModuleKind::CommonJs)
@@ -226,10 +221,37 @@ ModuleLinkWalk::ModuleLinkWalk(const Modules& modules, ModuleID root)
     : m_root(root)
     , m_linkEpoch(modules.linkEpoch())
 {
-    struct Frame {
-        uint32_t enter;
-        uint32_t nextRequest;
-        uint32_t endOfRequests;
+    struct World {
+        const ModuleData& data(uint32_t module) const { return table.data(ModuleID(module)); }
+        bool isUnlinked(uint32_t module) const { return modules.status(ModuleID(module)) == ModuleStatus::Unlinked; }
+        bool isSettledForLinks(uint32_t module) const { return modules.isSettledForLinks(ModuleID(module)); }
+        std::span<const uint64_t> modulesSettledForLinks() const { return modules.modulesSettledForLinks(); }
+        bool goesModuleByModule() const { return modules.goesModuleByModule(); }
+        bool goesByAllRequests(uint32_t module) const { return modules.linkGoesByAllRequestsOf(ModuleID(module)); }
+        void didGetStateOfItsOwn(uint32_t module) const { modules.didGetStateOfItsOwn(ModuleID(module)); }
+        ModuleNumbers linkRequests() const { return table.allLinkRequests(); }
+        uint32_t endOfLinkRequests(uint32_t module) const { return table.endOfLinkRequests(ModuleID(module)); }
+        std::span<const ModuleRequestData> requests() const { return table.allRequests(); }
+        uint32_t endOfRequests(uint32_t module) const { return table.endOfRequests(ModuleID(module)); }
+        bool resolvesNames(uint32_t module) const { return !table.data(ModuleID(module)).capturesExports() && (!table.requiredNames(ModuleID(module)).empty() || !table.syntheticExports(ModuleID(module)).empty()); }
+        const Modules& modules;
+        const ModuleTable& table;
+    };
+    struct Steps {
+        uint32_t size() const { return static_cast<uint32_t>(walk.m_steps.size()); }
+        ALWAYS_INLINE void append(uint32_t module, StepKind kind, bool resolvesNames) { walk.append(ModuleID(module), kind, resolvesNames); }
+        uint32_t moduleAt(uint32_t step) const { return walk.m_steps[step].module; }
+        ALWAYS_INLINE void leave(uint32_t enter, bool resolvesNames)
+        {
+            walk.m_steps[enter].leave = size();
+            append(moduleAt(enter), StepKind::Leave, resolvesNames);
+        }
+        ALWAYS_INLINE void onlyBecomesLinked(uint32_t enter)
+        {
+            walk.m_modulesThatOnlyBecomeLinked.append(moduleAt(enter));
+            walk.m_steps.shrink(enter);
+        }
+        ModuleLinkWalk& walk;
     };
 
     const ModuleTable& table = modules.table();
@@ -238,66 +260,9 @@ ModuleLinkWalk::ModuleLinkWalk(const Modules& modules, ModuleID root)
             m_plan = table.entryPointLinkPlan();
         return;
     }
-
-    Vector<Frame, 64> path;
-    auto record = [&](ModuleID module) ALWAYS_INLINE_LAMBDA {
-        const ModuleData& moduleData = table.data(module);
-        if (linkFollowsRequestsOf(moduleData) && modules.status(module) == ModuleStatus::Unlinked) {
-            path.append(Frame { static_cast<uint32_t>(m_steps.size()), moduleData.firstLinkRequest, table.endOfLinkRequests(module) });
-            append(module, StepKind::Enter);
-        }
-        if (moduleData.capturesExports())
-            append(module, StepKind::CapturesExports);
-        else if (moduleData.isUncompiledCode())
-            append(module, StepKind::IsUncompiled);
-    };
-
-    if (modules.isSettledForLinks(root))
-        return;
-    record(root);
-    if (path.isEmpty())
-        return;
-
-    ModuleNumbers requests = table.allLinkRequests();
-    Vector<uint64_t> passedOver;
-    std::span<const uint64_t> modulesPassedOver = modules.modulesSettledForLinks();
-    auto passOverFromNowOn = [&](ModuleID module) ALWAYS_INLINE_LAMBDA {
-        passedOver[module.index() / 64] |= 1ull << (module.index() % 64);
-    };
-    while (!path.isEmpty()) {
-        Frame& frame = path.last();
-        uint32_t next = frame.nextRequest;
-        uint32_t end = frame.endOfRequests;
-        size_t depth = path.size();
-        while (true) {
-            next = static_cast<uint32_t>(requests.findFirstOutside(modulesPassedOver, next, end));
-            if (next == end)
-                break;
-            ModuleID target(requests[next++]);
-            if (passedOver.isEmpty()) {
-                passedOver = modulesPassedOver;
-                modulesPassedOver = passedOver.span();
-                passOverFromNowOn(root);
-                if (target == root)
-                    continue;
-            }
-            passOverFromNowOn(target);
-            if (modules.isSettledForLinks(target))
-                continue;
-            path[depth - 1].nextRequest = next;
-            record(target);
-            if (path.size() != depth)
-                break;
-        }
-        if (path.size() != depth)
-            continue;
-
-        Step& enter = m_steps[path.last().enter];
-        ModuleID module(enter.module);
-        enter.leave = static_cast<uint32_t>(m_steps.size());
-        append(module, StepKind::Leave, !table.data(module).capturesExports() && (!table.requiredNames(module).empty() || !table.syntheticExports(module).empty()));
-        path.removeLast();
-    }
+    Steps steps { *this };
+    walkModulesToLink(World { modules, table }, root.index(), steps);
+    m_linkEpoch = modules.linkEpoch();
 }
 
 bool ModuleLinkWalk::bringUpToDate(const Modules& modules)
@@ -325,6 +290,20 @@ bool ModuleLinkWalk::bringUpToDate(const Modules& modules)
         index = leave;
     }
     return true;
+}
+
+bool Modules::isLinkedWithLeader(ModuleID module) const
+{
+    if (m_goesModuleByModule)
+        return false;
+    ModuleStatus statusOfLeader = status(m_table.leaderInLink(module));
+    return statusOfLeader != ModuleStatus::Unlinked && statusOfLeader != ModuleStatus::Linking;
+}
+
+void Modules::didGetStateOfItsOwn(ModuleID module) const
+{
+    if (!m_goesModuleByModule && !m_leadersWhoseLinkGoesByAllRequests.set(m_table.leaderInLink(module).index()))
+        ++m_linkEpoch;
 }
 
 bool Modules::checkIsSettledForLinks(ModuleID module) const
@@ -393,6 +372,7 @@ void Modules::willMock(ModuleID mocked)
 {
     if (isMocked(mocked))
         return;
+    goModuleByModuleFromNowOn();
     m_importersAskedAboutOriginal.clear();
     m_modulesThatHadRunWhenMocked.set(mocked.index(), status(mocked) == ModuleStatus::Evaluated);
     momentOfFirstMockInTestFile(mocked);
@@ -474,7 +454,7 @@ bool Modules::loadRuntimeModules(const ModuleLinkWalk& walk, NativeModuleLoading
 
 void Modules::link(ModuleID root)
 {
-    if (!data(root).needsLink() || (linkFollowsRequestsOf(data(root)) && status(root) != ModuleStatus::Unlinked))
+    if (!data(root).needsLink() || (data(root).linkFollowsRequests() && status(root) != ModuleStatus::Unlinked))
         return;
     if (std::unique_ptr<ModuleLinkWalk> kept = takeKeptLinkWalk(root)) {
         link(*kept);
@@ -636,6 +616,10 @@ void Modules::finishLink(const ModuleLinkWalk& walk, LinkContext& context)
         if (!mocks.hides(module))
             setStatus(module, ModuleStatus::Linked);
     });
+    for (uint32_t module : walk.modulesThatOnlyBecomeLinked()) {
+        if (isUnlinked(ModuleID(module)) && !mocks.hides(ModuleID(module)))
+            setStatus(ModuleID(module), ModuleStatus::Linked);
+    }
 }
 
 bool Modules::didCaptureExports(ModuleID module) const

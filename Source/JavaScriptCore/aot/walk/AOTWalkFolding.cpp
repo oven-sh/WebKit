@@ -823,8 +823,9 @@ static Reference answerOfReadInFolding(Walker& walker, const BodyValue& value)
     case Opcode::GetEnvironmentField: {
         auto read = value.as<Opcode::GetEnvironmentField>();
         FieldReference field { read.layout(), read.field() };
-        if (Reference held = walker.state().environmentField(walker.referenceOf(read.environmentOperand()), field))
-            return held;
+        Reference environment = walker.referenceOf(read.environmentOperand());
+        if (Reference held = walker.state().environmentField(environment, field))
+            return walker.typeAnswerOfStateAsRead(value, environment, field, held);
         return valueOfStableBinding(walker, value);
     }
     case Opcode::PropGet:

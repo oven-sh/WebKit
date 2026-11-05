@@ -14,7 +14,7 @@
 # CHECK-NOT: read f0 v18
 # CHECK: read f0 v23 proven=undefined|string|Array
 # CHECK-NEXT: read f0 v28 proven=undefined|L2
-# CHECK-NEXT: read f0 v33 proven=undefined|object?ContentsOfEscapedObject
+# CHECK-NEXT: read f0 v33 proven=undefined|L0|L1|L3|L4|L5
 
 module m0 path="flat.js" displayPath="flat.js" body=f0
 entry module=m0

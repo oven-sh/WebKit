@@ -6,10 +6,12 @@
 # CHECK: section RegExps 0
 # RUN(UNITS): units-with-code f1:Body mechanisms=all
 # UNITS: unit f1:Body has no code
-# With Folding withheld both sides of the branch are built, and what they name is there. `asks` runs twice: a text of code that runs at most once has no constant.
+# With Folding withheld Link reaches `dead`, whose own unit names the text. `asks` runs twice: a text of code that runs at most once has no constant.
+# The arm in `asks` is walked with `dead` in line, and the branch on the constant is folded where the machine code is built: nothing leads to the arm's block, it is not generated,
+# and the pattern, which the copy in line alone would name, is not there. If the block were generated all the same, the section would hold it.
 # RUN(BOTH): image mechanisms=-Folding
 # BOTH-NOT: section StringConstants 0
-# BOTH-NOT: section RegExps 0
+# BOTH: section RegExps 0
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0

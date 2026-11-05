@@ -76,10 +76,6 @@ struct CallByValueWords {
     ZeroedStorage<StackManager::Mirror> limit;
 };
 
-struct JSONLevelWords {
-    ZeroedStorage<StackManager::Mirror> limit;
-};
-
 struct ClosureTableWords {
     uint8_t* cards;
 };
@@ -292,7 +288,6 @@ struct NumberWords {
     v(constructWords, ConstructWordCache) \
     v(lazyStrings, LazyStringWords) \
     v(callsByValue, CallByValueWords) \
-    v(jsonLevels, JSONLevelWords) \
     v(closureTable, ClosureTableWords) \
     v(shortArrays, ShortArrayWords) \
     writtenOnce(emptyTable, EmptyTableWords) \

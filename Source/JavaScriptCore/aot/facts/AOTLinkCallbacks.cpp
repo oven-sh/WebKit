@@ -162,6 +162,7 @@ static bool isOnlyCalledInLinkCallbacks(const BodyReadInLinkCallbacks& body, Val
 
     Vector<NameInLinkCallbacks, maxNamesInLinkCallbacks> names;
     names.append({ parameter });
+    uint32_t mentionsNotSeen = index.useCount(parameter);
     auto find = [&](ValueID value) -> NameInLinkCallbacks* {
         for (NameInLinkCallbacks& name : names) {
             if (name.value == value)
@@ -171,13 +172,16 @@ static bool isOnlyCalledInLinkCallbacks(const BodyReadInLinkCallbacks& body, Val
     };
     bool doesMore = false;
     auto addName = [&](ValueID value) {
+        mentionsNotSeen += index.useCount(value);
         if (names.size() == maxNamesInLinkCallbacks)
             doesMore = true;
         else
             names.append({ value });
     };
 
-    for (uint32_t blockIndex = 0; blockIndex < index.numberOfBlocks() && !doesMore; ++blockIndex) {
+    std::optional<BodyUser> firstUser = index.firstUser(parameter);
+    BlockID blockOfFirstUser = firstUser->kind == BodyUseKind::Operand ? index.blockOf(firstUser->value) : firstUser->block;
+    for (uint32_t blockIndex = blockOfFirstUser.index(); blockIndex < index.numberOfBlocks() && mentionsNotSeen && !doesMore; ++blockIndex) {
         BodyBlock block = index.block(BlockID(blockIndex));
         for (BodyValue value : block.values()) {
             Opcode opcode = value.opcode();
@@ -187,6 +191,7 @@ static bool isOnlyCalledInLinkCallbacks(const BodyReadInLinkCallbacks& body, Val
                 if (!name)
                     return;
                 ++name->mentionsUnderstood;
+                --mentionsNotSeen;
                 if (opcode == Opcode::Call && operandIndex == OperandIndex::Call::callee)
                     return;
                 if (opcode == Opcode::NarrowByTest && operandIndex)
@@ -221,6 +226,7 @@ static bool isOnlyCalledInLinkCallbacks(const BodyReadInLinkCallbacks& body, Val
                 if (!name)
                     continue;
                 ++name->mentionsUnderstood;
+                --mentionsNotSeen;
                 if (!index.isUnused(joined) && !find(joined))
                     addName(joined);
             }
@@ -233,6 +239,7 @@ static bool isOnlyCalledInLinkCallbacks(const BodyReadInLinkCallbacks& body, Val
                 if (!subject)
                     continue;
                 ++subject->mentionsUnderstood;
+                --mentionsNotSeen;
                 if (!index.isUnused(result->parameter))
                     addName(result->parameter);
             }
@@ -394,6 +401,203 @@ void carryExpectationOfThisIntoCaptures(const Program& program, const BodyIndexT
             }
         }
     }
+}
+
+static constexpr OpcodeSet looksInLinkLooks { Opcode::TypeTest, Opcode::ToBoolean, Opcode::TypeOf, Opcode::StrictEq };
+static constexpr OpcodeSet makersOfObjectsInLinkLooks { Opcode::NewObject, Opcode::Data };
+static_assert(!OperandIndex::PropGet::object);
+
+namespace {
+
+struct HandingOnInLinkLooks {
+    uint32_t to { 0 };
+    uint32_t from { 0 };
+    friend constexpr auto operator<=>(const HandingOnInLinkLooks&, const HandingOnInLinkLooks&) = default;
+};
+
+} // anonymous namespace
+
+static bool isNameThatOnlyFieldsAnswerInLinkLooks(const Program& program, PropertyKeyID key)
+{
+    return program.at(key).kind == PropertyKeyKind::Text && !isOnObjectPrototype(program.nameClassOf(key));
+}
+
+static ValueID valueBehindWhatHandsOnInLinkLooks(const BodyIndex& index, ValueID id)
+{
+    while (!index.isParameter(id)) {
+        BodyValue definition = index.value(id);
+        if (!inputOperationsThatHandOn.contains(definition.opcode()) || !definition.operand(0))
+            break;
+        id = definition.operand(0);
+    }
+    return id;
+}
+
+static bool isOnlyLookedAtInLinkLooks(const Program& program, const LinkTables& tables, const BodyIndex& index, ValueID parameter, Vector<uint32_t, 4>& placesHandedTo)
+{
+    BitVector names(index.numberOfValues());
+    uint32_t mentionsNotSeen = 0;
+    bool doesMore = false;
+    auto addName = [&](ValueID value) {
+        uint32_t mentions = index.useCount(value);
+        if (mentions == BodyIndex::maxCountedUses) {
+            doesMore = true;
+            return;
+        }
+        names.quickSet(value.index());
+        mentionsNotSeen += mentions;
+    };
+    auto isName = [&](ValueID value) {
+        return value && names.quickGet(value.index());
+    };
+
+    addName(parameter);
+    std::optional<BodyUser> firstUser = index.firstUser(parameter);
+    BlockID blockOfFirstUser = !firstUser ? entryBlock : firstUser->kind == BodyUseKind::Operand ? index.blockOf(firstUser->value) : firstUser->block;
+    for (uint32_t blockIndex = blockOfFirstUser.index(); blockIndex < index.numberOfBlocks() && mentionsNotSeen && !doesMore; ++blockIndex) {
+        BodyBlock block = index.block(BlockID(blockIndex));
+        for (BodyValue value : block.values()) {
+            Opcode opcode = value.opcode();
+            bool handsOn = false;
+            value.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
+                if (!isName(operand))
+                    return;
+                --mentionsNotSeen;
+                if (looksInLinkLooks.contains(opcode) || (opcode == Opcode::PropGet && !operandIndex && isNameThatOnlyFieldsAnswerInLinkLooks(program, value.key())) || (opcode == Opcode::NarrowByTest && operandIndex))
+                    return;
+                if (opcode == Opcode::Call || opcode == Opcode::CallDirect) {
+                    if (std::optional<uint32_t> place = placeThatTakesOperandInLinkCallbacks({ program, tables, index }, value, operandIndex))
+                        placesHandedTo.append(*place);
+                    else
+                        doesMore = true;
+                } else if (!operandIndex && inputOperationsThatHandOn.contains(opcode))
+                    handsOn = true;
+                else
+                    doesMore = true;
+            });
+            if (handsOn)
+                addName(value.id());
+        }
+
+        BodyTerminator terminator = block.terminator();
+        terminator.forEachOperand([&](ValueID operand, uint32_t) {
+            doesMore |= isName(operand);
+        });
+        block.forEachOutgoingEdge([&](BodyTarget target, bool) {
+            uint32_t position = 0;
+            for (ValueID argument : target.arguments()) {
+                ValueID joined = index.block(target.block()).parameter(position++);
+                if (!isName(argument))
+                    continue;
+                --mentionsNotSeen;
+                if (!index.isUnused(joined) && !isName(joined))
+                    addName(joined);
+            }
+        });
+        uint32_t targetIndex = 0;
+        for (BodyTarget target : terminator.targets()) {
+            for (uint32_t proofIndex = 0; proofIndex < target.proofs().size(); ++proofIndex) {
+                std::optional<BodyEdgeResult> result = index.edgeResult(terminator, targetIndex, target, proofIndex);
+                if (!result || !isName(result->subject))
+                    continue;
+                --mentionsNotSeen;
+                if (!index.isUnused(result->parameter) && !isName(result->parameter))
+                    addName(result->parameter);
+            }
+            ++targetIndex;
+        }
+    }
+    return !doesMore && !mentionsNotSeen;
+}
+
+void findParametersThatAreOnlyLookedAt(const Program& program, const BodyIndexTable& bodies, const ThinSummaries& summaries, Mechanisms mechanisms, bool takesCalleesToKeepNothing, LinkTables& tables)
+{
+    if (!mechanisms.contains(Mechanism::CellsInFrames))
+        return;
+
+    BitVector asked(tables.parameters.size());
+    Vector<uint32_t> placesAsked;
+    auto ask = [&](uint32_t place) {
+        if (!asked.quickSet(place))
+            placesAsked.append(place);
+    };
+
+    size_t numberOfFunctions = std::min<size_t>(program.functions.size(), tables.functions.size());
+    for (size_t number = 0; number < numberOfFunctions; ++number) {
+        FunctionID id(static_cast<uint32_t>(number));
+        if (!tables.function(id).isReached || !program.at(id).hasBody() || program.at(id).isCoroutine())
+            continue;
+        const ThinSummary& summary = summaries.at(id);
+        const BodyIndex* index = nullptr;
+        for (const SummaryCall& call : summary.calls) {
+            if (!call.numberOfArguments || (call.callee != SummaryCall::Callee::Value && call.callee != SummaryCall::Callee::Binding) || !call.site || call.isConstruction || call.passesList || call.isMadeByProtocol)
+                continue;
+            bool takesCellMadeHere = std::ranges::any_of(summary.arguments.span().subspan(call.firstArgument, call.numberOfArguments), [&](uint32_t node) {
+                return node != noSummaryNode && summary.nodes[node].kind == SummaryNode::Kind::Allocation;
+            });
+            if (!takesCellMadeHere)
+                continue;
+            if (!index)
+                index = bodies.find(id);
+            if (!index)
+                break;
+            BodyValue taker = index->value(call.site);
+            if (taker.opcode() != Opcode::Call && taker.opcode() != Opcode::CallDirect)
+                continue;
+            taker.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
+                if (!operand)
+                    return;
+                ValueID made = valueBehindWhatHandsOnInLinkLooks(*index, operand);
+                if (index->isParameter(made) || !makersOfObjectsInLinkLooks.contains(index->opcodeOf(made)))
+                    return;
+                if (std::optional<uint32_t> place = placeThatTakesOperandInLinkCallbacks({ program, tables, *index }, taker, operandIndex))
+                    ask(*place);
+            });
+        }
+    }
+
+    Vector<HandingOnInLinkLooks> handings;
+    for (size_t next = 0; next < placesAsked.size(); ++next) {
+        uint32_t place = placesAsked[next];
+        FunctionID taker = functionThatTakesAtInLinkCallbacks(tables, place);
+        const Function& function = program.at(taker);
+        if (!function.hasBody() || function.isCoroutine() || function.isModuleBody())
+            continue;
+        const ThinSummary& summary = summaries.at(taker);
+        if (summary.has(SummaryTrait::UsesArguments) || summary.has(SummaryTrait::HasDirectEval))
+            continue;
+        const BodyIndex* index = bodies.find(taker);
+        uint32_t entryParameter = place - tables.function(taker).firstParameter;
+        if (!index || !index->numberOfBlocks() || entryParameter >= index->block(entryBlock).numberOfParameters())
+            continue;
+
+        Vector<uint32_t, 4> placesHandedTo;
+        if (!takesCalleesToKeepNothing && !isOnlyLookedAtInLinkLooks(program, tables, *index, index->block(entryBlock).parameter(entryParameter), placesHandedTo))
+            continue;
+        tables.parameters[place].isOnlyLookedAt = true;
+        for (uint32_t to : placesHandedTo) {
+            if (to == place)
+                continue;
+            handings.append({ to, place });
+            ask(to);
+        }
+    }
+
+    std::ranges::sort(handings);
+    Vector<uint32_t> takenBack;
+    auto takeBackFromAllThatHandTo = [&](uint32_t place) {
+        for (auto giver = std::ranges::lower_bound(handings, HandingOnInLinkLooks { place, 0 }); giver != handings.end() && giver->to == place; ++giver) {
+            if (std::exchange(tables.parameters[giver->from].isOnlyLookedAt, false))
+                takenBack.append(giver->from);
+        }
+    };
+    for (size_t index = 0; index < handings.size(); ++index) {
+        uint32_t place = handings[index].to;
+        if ((!index || place != handings[index - 1].to) && !tables.parameters[place].isOnlyLookedAt)
+            takeBackFromAllThatHandTo(place);
+    }
+    while (!takenBack.isEmpty())
+        takeBackFromAllThatHandTo(takenBack.takeLast());
 }
 
 } } } // namespace JSC::AOT::Typed

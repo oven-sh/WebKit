@@ -1229,6 +1229,7 @@ function buildSlots(context: SlotContext, builtinClass: MutableClass, descendant
       holds: null,
       internalField: spec.internalField ?? null,
       holdsWhatStepsHandOut: spec.holdsWhatStepsHandOut ?? false,
+      holdsWhatIsThrown: spec.holdsWhatIsThrown ?? false,
     };
     slots.push(slot);
     if (spec.holds !== undefined) slotTypes.push({ slot, spec: spec.holds, source });

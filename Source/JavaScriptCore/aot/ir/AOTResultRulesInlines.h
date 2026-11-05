@@ -198,7 +198,6 @@ inline bool unitHandsBackResultsInResultRules(const Function& callee, CodeRole e
     case CodeRole::CoroutineBody:
     case CodeRole::ModuleStart:
     case CodeRole::TableLookup:
-    case CodeRole::Serializer:
         return false;
     }
     RELEASE_ASSERT_NOT_REACHED();

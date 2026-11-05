@@ -22,6 +22,7 @@
 #include "AOTRepresentationRules.h"
 #include "AOTSweep.h"
 #include "AOTTypeArena.h"
+#include "AOTWalk.h"
 #include <algorithm>
 #include <utility>
 #include <wtf/BitVector.h>
@@ -175,6 +176,8 @@ private:
     bool handsBackPointerIntoFrame(const Operation&) const;
     bool isClosureOfFrame(ValueID name) const;
     bool onlyCallsWhatArrivesAt(FunctionID function, uint32_t entryParameter) const { return m_facts && m_facts->linked().onlyCallsWhatArrivesAt(function, entryParameter); }
+    bool loanCoversOperandOfCall(const Operation& call, uint32_t operandIndex, ValueID operand) const;
+    bool isCallOfTailCall(BlockID block, ValueID call) const { return m_code.at(block).terminator.kind == TerminatorKind::ReturnCall && m_code.at(block).terminator.callOperand() == call; }
     LayoutID layoutOfEnvironment(ValueID) const;
 
     const Program& m_program;
@@ -1198,6 +1201,21 @@ bool CodeVerifier::handsBackPointerIntoFrame(const Operation& operation) const
     return false;
 }
 
+bool CodeVerifier::loanCoversOperandOfCall(const Operation& call, uint32_t operandIndex, ValueID operand) const
+{
+    const Operation& made = m_code.at(cellBeforeForwarding(operand));
+    if (made.opcode == Opcode::NewClosure)
+        return made.loan() != LoanOfClosure::None;
+    uint32_t numberOfNamedOperands = call.numberOfNamedOperands();
+    if (!nothingButOwnFieldsAnswersFor(m_program, made) || call.opcode != Opcode::CallDirect || operandIndex < numberOfNamedOperands || !returnsResultOfFunction(call.role()) || call.numberOfBoundArguments())
+        return false;
+    if (std::ranges::any_of(made.valuesOperands(), [&](ValueID value) { return value && mayPointIntoFrame(value); }))
+        return false;
+    if (m_plan && !objectOfLayoutMayLieInFrame(m_plan->layout(made.layout())))
+        return false;
+    return m_facts && m_facts->linked().onlyLooksAtWhatArrivesAt(call.function(), operandIndex - numberOfNamedOperands);
+}
+
 void CodeVerifier::verifyFramePointersTakenBy(BlockID block, ValueID id, const Operation& operation)
 {
     if (handsOperandsToCallee(operation.opcode)) {
@@ -1205,6 +1223,8 @@ void CodeVerifier::verifyFramePointersTakenBy(BlockID block, ValueID id, const O
             ValueID operand = operation.operand(operandIndex);
             if (operand && mayPointIntoFrame(operand) && isHeldOperand(operation, operandIndex))
                 return fail(block, id, "a cell of the frame is held across a suspension"_s, operand, InternalErrorKind::InvalidSuspension);
+            if (operand && mayPointIntoFrame(operand) && !isCallOfTailCall(block, id) && !loanCoversOperandOfCall(operation, operandIndex, operand))
+                return fail(block, id, "a cell of the frame is an operand of a call that no loan covers"_s, operand);
         }
         return;
     }
@@ -1553,12 +1573,6 @@ void CodeVerifier::verifyFrameCells()
     }
 }
 
-// No operand leads from the store of a word in the place of captures to its readers, so no other rule holds them behind it.
-// This rule checks what makes a reader reachable, in the body of the function that fills the word: a closure made there, or a call written there that hands the value over.
-// It does not check a reader, or what a copy of a reader makes. Those may stand behind a test of the closure (`if (read !== null) read()`), which goes with the way that stored, and the code does not say so.
-// A scope that lists values where it is made is checked at its closures, by its first word. Calls are not: the word in the place of the scope is the same whether the call is written or made from a call of a closure.
-// It goes by ways, not by one store in front of everything: ways that were walked apart each store for themselves and may meet again.
-// The compile unit verifies its code in front of the sweep alone, so nothing checks that the sweep and what follows it leave the stores where they stand.
 void CodeVerifier::verifyWordsInPlaceOfCaptures()
 {
     if (!m_plan || !m_plan->promotedEnvironments().isMaker(m_code.function()))

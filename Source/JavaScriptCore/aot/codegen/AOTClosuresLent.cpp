@@ -29,12 +29,35 @@ ValueID callThatBorrowsClosure(const Code& code, ValueID closure)
     return user;
 }
 
-bool isLentToFunctionsEnteredAlone(const Code& code, ValueID closure)
+ValueID callThatBorrowsObject(const Code& code, ValueID object)
+{
+    const Operation& made = code.at(object);
+    if (made.opcode != Opcode::NewObject || made.storage() != AllocationStorage::Frame)
+        return { };
+    ValueID user = code.onlyUserOf(object);
+    while (user && opcodesThatGiveSameCell.contains(code.at(user).opcode))
+        user = code.onlyUserOf(user);
+    return user && code.at(user).opcode == Opcode::CallDirect && code.at(user).blockIndex == made.blockIndex ? user : ValueID();
+}
+
+static bool holdsLentClosure(const Code& code, const Operation& holder)
+{
+    return std::ranges::any_of(holder.capturesOperands(), [&](ValueID capture) {
+        if (!capture || code.isConstant(capture))
+            return false;
+        const Operation& held = code.at(rootOfCellInSweptCode(code, capture));
+        return held.opcode == Opcode::NewClosure && held.loan() != LoanOfClosure::None;
+    });
+}
+
+bool lentClosureMayStandInHeap(const Code& code, ValueID closure)
 {
     while (true) {
         const Operation& made = code.at(closure);
         if (made.opcode != Opcode::NewClosure)
             return true;
+        if (made.loan() == LoanOfClosure::LeftToStubOfCall)
+            return !holdsLentClosure(code, made);
         if (made.loan() != LoanOfClosure::ToFunctionEntered)
             return false;
         closure = code.onlyUserOf(closure);

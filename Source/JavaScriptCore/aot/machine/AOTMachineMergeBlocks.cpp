@@ -57,7 +57,6 @@ private:
     static bool areEqualButForOrigin(const Operation*, const Operation*);
     static ALWAYS_INLINE bool mayBeIdentical(const Block*, const Block*);
     static bool areIdentical(const Block*, const Block*);
-    static void takeBackReadsOf(const Block*);
     NEVER_INLINE void moveEdgesToBlocksThatStay(Block* from, const uint32_t* replacements);
     NEVER_INLINE void findBlocksEnteredFromRareBlocks();
     bool isEnteredFromRareBlock(uint32_t block)
@@ -440,24 +439,12 @@ bool MachineBlockMerger::areIdentical(const Block* a, const Block* b)
     return !originsMatter || !originsDiffer;
 }
 
-void MachineBlockMerger::takeBackReadsOf(const Block* block)
-{
-    auto takeBack = [](const Operation* reader) {
-        if (countsChildrenAtFirstUse(reader->opcode()))
-            return;
-        for (Operation* child : reader->children())
-            child->loseUse();
-    };
-    for (const Operation* upsilon : block->upsilons())
-        takeBack(upsilon);
-    for (const Operation* operation : block->operations())
-        takeBack(operation);
-}
-
 void MachineBlockMerger::moveEdgesToBlocksThatStay(Block* from, const uint32_t* replacements)
 {
-    if (replacements[from->index()] != none)
-        takeBackReadsOf(from);
+    if (replacements[from->index()] != none) {
+        Order::emptyBlock(from);
+        return;
+    }
     for (unsigned successorIndex = 0; successorIndex < from->numSuccessors(); ++successorIndex) {
         uint32_t replacement = replacements[from->successor(successorIndex).block()->index()];
         if (replacement != none)

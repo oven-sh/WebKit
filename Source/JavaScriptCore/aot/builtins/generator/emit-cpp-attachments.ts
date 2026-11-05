@@ -1,4 +1,5 @@
 import { GeneratorError } from "./declarations.ts";
+import { cellsFilledByCalledFunctionsAlone } from "./check-host-uses.ts";
 import {
   emitArray,
   formatAggregate,
@@ -403,6 +404,11 @@ export function emitCppAttachments(model: TableModel, features: readonly TableFe
       "BuiltinHostObject",
       "HostObjects",
       model.hostObjects.map(object => formatHostObject(context, object)),
+    ),
+    emitTableArray(
+      "BuiltinName",
+      "NativeCellsFilledByCalledFunctions",
+      cellsFilledByCalledFunctionsAlone(model).map(cell => formatName(cell)),
     ),
     emitTableArray("BuiltinForms", "Forms", builtins.flatMap(formatForms)),
     emitTableArray("BuiltinBoxedCall", "BoxedCalls", builtins.flatMap(formatBoxedCall)),

@@ -285,22 +285,36 @@ CellPointer CellAllocationEmitter::allocateObjectCopy(const OperationContext& co
 LValue CellAllocationEmitter::slotOfFrameCell(const OperationContext& context, size_t size)
 {
     const Operation& made = operationAt(context.valueID());
-    if (ValueID call = callThatBorrowsClosure(m_code, context.valueID())) {
+    ValueID call = callThatBorrowsClosure(m_code, context.valueID());
+    if (!call)
+        call = callThatBorrowsObject(m_code, context.valueID());
+    if (call) {
         for (SlotOfClosuresLent& shared : m_slotsOfClosuresLent) {
-            if (shared.size != size || (shared.blockIndex == made.blockIndex && shared.call.index() > context.valueID().index()))
+            if (shared.blockIndex == made.blockIndex && shared.call.index() > context.valueID().index())
                 continue;
+            shared.slot->ensureSize(size);
             shared.blockIndex = made.blockIndex;
             shared.call = call;
+            shared.cell = context.valueID();
             return m_out.slotBase(shared.slot);
         }
         Machine::StackSlot* slot = m_proc.addStackSlot(size);
         slot->setIsDeadAtSuspensions(true);
-        m_slotsOfClosuresLent.append(SlotOfClosuresLent { size, slot, made.blockIndex, call });
+        m_slotsOfClosuresLent.append(SlotOfClosuresLent { slot, made.blockIndex, call, context.valueID() });
         return m_out.slotBase(slot);
     }
     LValue slot = m_out.lockedStackSlot(size);
     slot->slot()->setIsDeadAtSuspensions(true);
     return slot;
+}
+
+CellPointer CellAllocationEmitter::frameCellLent(ValueID cell)
+{
+    for (const SlotOfClosuresLent& shared : m_slotsOfClosuresLent) {
+        if (shared.cell == cell)
+            return CellPointer(m_out.slotBase(shared.slot));
+    }
+    RELEASE_ASSERT_NOT_REACHED();
 }
 
 CellPointer CellAllocationEmitter::allocateInFrame(const OperationContext& context, size_t size)

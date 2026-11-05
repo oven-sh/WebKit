@@ -49,7 +49,7 @@ FieldAccess OperationEmitter::fieldAccessFor(PropertyKeyID key, LayoutSetID rece
 
 ValueID OperationEmitter::definitionOf(ValueID id) const
 {
-    while (id && opcodeOf(id) == Opcode::Narrowed)
+    while (id && (opcodeOf(id) == Opcode::Narrowed || opcodeOf(id) == Opcode::AssumeType))
         id = operationAt(id).valueOperand();
     return id;
 }

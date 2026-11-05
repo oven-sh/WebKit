@@ -5,6 +5,7 @@
     "builtin-table/locked-members"_s,
     "builtin-table/locked-objects"_s,
     "builtin-table/member-missing-on-target-is-not-found"_s,
+    "builtin-table/modules-list-what-rows-say-native-code-reads"_s,
     "builtin-table/string-constants-follow-the-target"_s,
     "builtin-table/tokens-round-trip"_s,
     "closed-world/flags/call-that-starts-unseen-code-admits-what-a-text-may-load"_s,

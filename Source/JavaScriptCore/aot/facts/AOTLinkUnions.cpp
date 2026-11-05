@@ -22,14 +22,18 @@ void comeAliveForUnions(LinkFlow& flow, FunctionID id)
 
 void notePrototypesLaidAboveOtherObjects(LinkFlow& flow, const LinkType& above)
 {
+    auto noteLaidAbove = [&](LayoutID layout) {
+        if (!flow.prototypesLaidAboveOtherObjects.quickGet(layout.index()))
+            flow.note(LinkFlow::Note::PrototypeLaidAboveOtherObjects, layout.index());
+    };
     if (above.objects == LinkType::Objects::Prototype) {
-        flow.prototypesLaidAboveOtherObjects.quickSet(above.layout.index());
+        noteLaidAbove(above.layout);
         return;
     }
     if (above.objects != LinkType::Objects::Prototypes)
         return;
     for (LayoutID member : flow.program.types.listOf(flow.families.layoutsOf(above.family)))
-        flow.prototypesLaidAboveOtherObjects.quickSet(member.index());
+        noteLaidAbove(member);
 }
 
 static bool onlyOwnObjectsStandBelowPrototypeOf(const LinkFlow& flow, const LinkTables& tables, LayoutID id)

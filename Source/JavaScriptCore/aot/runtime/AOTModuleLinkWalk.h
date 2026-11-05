@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTModuleGraph.h"
 #include "AOTModules.h"
 #include "AOTVector.h"
 #include "ThrowScope.h"
@@ -28,12 +29,13 @@ public:
     ModuleID root() const { return m_root; }
     bool bringUpToDate(const Modules&);
     bool hasPlan() const { return !m_plan.empty(); }
+    std::span<const uint32_t> modulesThatOnlyBecomeLinked() const LIFETIME_BOUND { return m_modulesThatOnlyBecomeLinked.span(); }
 
     template<typename ShouldEnterFunctor, typename VisitLeafFunctor, typename DidLeaveFunctor>
     bool replay(ThrowScope&, const ShouldEnterFunctor&, const VisitLeafFunctor&, const DidLeaveFunctor&) const;
 
 private:
-    enum class StepKind : uint8_t { CapturesExports, IsUncompiled, Enter, Leave };
+    using StepKind = StepOfLinkWalk;
 
     struct Step {
         uint32_t module;
@@ -48,8 +50,8 @@ private:
     ModuleID m_root;
     unsigned m_linkEpoch;
     std::span<const LinkPlanStepData> m_plan;
-    std::optional<ModuleID> m_memberOfCycle;
     Vector<Step, 64> m_steps;
+    Vector<uint32_t, 64> m_modulesThatOnlyBecomeLinked;
 };
 
 template<typename ShouldEnterFunctor, typename VisitLeafFunctor, typename DidLeaveFunctor>

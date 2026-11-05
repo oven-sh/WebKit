@@ -8,12 +8,14 @@
 
 #if ENABLE(AOT)
 
+#include "AOTAllocationEmitter.h"
 #include "AOTCodeRecords.h"
 #include "AOTCodeSites.h"
 #include "AOTCompileUnit.h"
 #include "AOTConvention.h"
 #include "AOTExceptionEmitter.h"
 #include "AOTInstance.h"
+#include "AOTPoisonedCell.h"
 #include "AOTRuntimeCallEmitter.h"
 #include "AOTStubCatalog.h"
 #include "AOTStubRegisters.h"
@@ -135,9 +137,19 @@ bool HintEmitter::endsLivesAtRunTime()
 void HintEmitter::endLifeOf(const OperationContext& context, ValueID cell)
 {
     const Operation& made = operationAt(definitionOf(cell));
+    if (made.opcode == Opcode::NewObject && made.storage() == AllocationStorage::Frame)
+        return emitter<AllocationEmitter>().clearCellsThatObjectLentHolds(definitionOf(cell));
     FunctionID madeIn = generator().code().inlineFrames()[made.inlineFrame].callee;
     m_out.suspendDeclaredAccesses();
     callVoidOperation(context, RuntimeOperation::PoisonCell, { in<CellPointer>(cell), word32(static_cast<int32_t>(madeIn.index())), word32(static_cast<int32_t>(made.position)) });
+    m_out.resumeDeclaredAccesses();
+}
+
+void HintEmitter::noteThatCellIsLent(const ValueContext& made, CellPointer cell)
+{
+    FunctionID madeIn = generator().code().inlineFrames()[made->inlineFrame].callee;
+    m_out.suspendDeclaredAccesses();
+    callVoidOperation(made, RuntimeOperation::PoisonCell, { cell, word32(static_cast<int32_t>(madeIn.index() | PoisonedCell::isLentForCallAhead)), word32(static_cast<int32_t>(made->position)) });
     m_out.resumeDeclaredAccesses();
 }
 

@@ -189,7 +189,7 @@ static ALWAYS_INLINE std::optional<uint32_t> numberToPutInPlaceOfMention(const C
     return number;
 }
 
-static void putNumberInThrowWordOfThunk(const CompiledCode& code, ArgumentMoves& moves, size_t index, const ImageNumbers& numbers, BuildContext& context)
+static void putNumberInThrowWordOfThunk(const CompiledCode& code, std::span<uint64_t> moves, size_t index, const ImageNumbers& numbers, BuildContext& context)
 {
     uint32_t firstWord = static_cast<uint32_t>(moves[index + 1]);
     uint32_t mention = static_cast<uint32_t>(moves[index + 1] >> 32);
@@ -234,14 +234,17 @@ void applyNumbersToFunctions(LinkedFunctions& functions, const ImageNumbers& num
                 continue;
             }
 
-            for (const NumberedStubKey& numbered : code.body.numberedStubKeys) {
+            for (const NumberedStubKey& numbered : code.body.rareLists->numberedStubKeys) {
                 StubKey& key = code.body.stubKeys[numbered.stubKey];
                 ASSERT(key.immediate() == std::optional<uint32_t>(0));
                 if (std::optional<uint32_t> immediate = numberToPutInPlaceOfMention(code, numbered.mention, "the key of a stub"_s, numbers, context))
                     key = key.withImmediate(*immediate);
             }
 
-            for (ArgumentMoves& moves : code.body.argumentMoves) {
+            size_t numberOfLists = code.body.argumentMoves.size();
+            for (size_t list = 0; list < numberOfLists; ++list) {
+                std::span<uint64_t> moves = code.body.argumentMoves[list];
+                RELEASE_ASSERT(moves.size() >= numberOfHeaderWords && !((moves.size() - numberOfHeaderWords) % 2));
                 if (moves[1] & immediateIsMention) {
                     if (std::optional<uint32_t> immediate = numberToPutInPlaceOfMention(code, static_cast<uint32_t>(moves[1]), "the immediate that an argument thunk moves"_s, numbers, context))
                         moves[1] = hasImmediate | *immediate;

@@ -355,15 +355,16 @@ void copyMadeTextsMentionedBy(CodeBody& body, const Typed::TypeArena& types)
         size_t& mostBytes = textsAtAddresses.add(bytes.data(), TextsAtAddress { }).iterator->value.mostBytes;
         mostBytes = std::max(mostBytes, bytes.size());
     }
+    RareListsOfBody& lists = body.rareLists.ensure();
     for (StringID text : texts) {
         std::span<const uint8_t> bytes = types.bytesOf(text);
         TextsAtAddress& atAddress = textsAtAddresses.find(bytes.data())->value;
         if (!atAddress.firstInBody) {
-            atAddress.firstInBody = static_cast<uint32_t>(body.bytesOfMadeTexts.size());
-            body.bytesOfMadeTexts.append(std::span<const uint8_t>(bytes.data(), atAddress.mostBytes));
+            atAddress.firstInBody = static_cast<uint32_t>(lists.bytesOfMadeTexts.size());
+            lists.bytesOfMadeTexts.append(std::span<const uint8_t>(bytes.data(), atAddress.mostBytes));
         }
-        body.firstsOfMadeTexts.append(*atAddress.firstInBody);
-        body.endsOfMadeTexts.append(*atAddress.firstInBody + static_cast<uint32_t>(bytes.size()));
+        lists.firstsOfMadeTexts.append(*atAddress.firstInBody);
+        lists.endsOfMadeTexts.append(*atAddress.firstInBody + static_cast<uint32_t>(bytes.size()));
     }
 }
 
@@ -376,13 +377,13 @@ void internTextsMadeByFunctions(Typed::Program& program, LinkedFunctions& functi
     Vector<MadeText> texts;
     Vector<uint32_t> numbersOfFirstTexts(functions.size());
     for (size_t index = 0; index < functions.size(); ++index) {
-        const CodeBody& body = functions[index].body;
+        const RareListsOfBody& lists = *functions[index].body.rareLists;
         numbersOfFirstTexts[index] = static_cast<uint32_t>(texts.size());
-        if (body.endsOfMadeTexts.isEmpty())
+        if (lists.endsOfMadeTexts.isEmpty())
             continue;
-        std::span<const uint8_t> kept = program.strings.keep(body.bytesOfMadeTexts.span());
-        for (uint32_t place = 0; place < body.endsOfMadeTexts.size(); ++place)
-            texts.append({ kept.subspan(body.firstsOfMadeTexts[place], body.endsOfMadeTexts[place] - body.firstsOfMadeTexts[place]), static_cast<uint32_t>(texts.size()) });
+        std::span<const uint8_t> kept = program.strings.keep(lists.bytesOfMadeTexts.span());
+        for (uint32_t place = 0; place < lists.endsOfMadeTexts.size(); ++place)
+            texts.append({ kept.subspan(lists.firstsOfMadeTexts[place], lists.endsOfMadeTexts[place] - lists.firstsOfMadeTexts[place]), static_cast<uint32_t>(texts.size()) });
     }
     if (texts.isEmpty())
         return;
@@ -405,14 +406,15 @@ void internTextsMadeByFunctions(Typed::Program& program, LinkedFunctions& functi
     forEachRangeOfIndicesInParallel(loops, functions.size(), [&](size_t first, size_t end) {
         for (size_t index = first; index < end; ++index) {
             CodeBody& body = functions[index].body;
-            if (body.endsOfMadeTexts.isEmpty())
+            RareListsOfBody* lists = body.rareLists.ifExists();
+            if (!lists || lists->endsOfMadeTexts.isEmpty())
                 continue;
             forEachMadeTextAmongMentions(body, [&](uint32_t& word) {
                 word = strings[numbersOfFirstTexts[index] + Typed::positionOf(StringID::fromBits(word))].bits();
             });
-            body.bytesOfMadeTexts = { };
-            body.firstsOfMadeTexts = { };
-            body.endsOfMadeTexts = { };
+            lists->bytesOfMadeTexts = { };
+            lists->firstsOfMadeTexts = { };
+            lists->endsOfMadeTexts = { };
         }
     });
 }

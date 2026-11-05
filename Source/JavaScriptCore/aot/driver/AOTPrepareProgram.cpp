@@ -22,6 +22,8 @@
 #include "AOTProgramVerifier.h"
 #include "AOTStackTestPlan.h"
 #include "AOTStubCatalog.h"
+#include "AOTTailCallPlan.h"
+#include "AOTThreads.h"
 #include "AOTTypeRelations.h"
 #include <wtf/BitVector.h>
 #include <wtf/StdLibExtras.h>
@@ -98,15 +100,22 @@ static bool planPreparedProgram(PreparedProgram& prepared, BuildContext& build)
         RELEASE_ASSERT(prepared.plan->layout(layout).storage != Typed::LayoutStorage::OrdinaryObject || Typed::builtinClassWrittenAbove(program, layout));
     }
 
+    if (build.validates()) {
+        Typed::checkFormsRoundRingsOfTailCalls(program, facts, *prepared.plan, build);
+        times.didFinish("check the rings of tail calls"_s);
+    }
     if (prepared.checkOfPlan == CheckOfPlan::InFrontOfCompile) {
         Typed::checkPlan(program, facts, *prepared.plan, build);
         Typed::checkStackTests(program, facts, *prepared.plan, build);
         times.didFinish("check the plan"_s);
-        if (build.diagnostics().hasErrors())
-            return false;
     }
+    if (build.diagnostics().hasErrors())
+        return false;
 
-    prepared.stubCatalog = makeUniqueWithoutFastMallocCheck<const StubCatalog>(StubOptions::from(build.recordedOptions(), program, facts.hasOneInstance(), facts.matchesRegExps(), facts.mayReadLegacyRegExpStatics(), AOT::hasFlag(build.options().testing, Wire::TestingSwitch::CheckProofsAtRunTime)));
+    runLanes(build.parallelLoops(), {
+        [&] { prepared.stubCatalog = makeUniqueWithoutFastMallocCheck<const StubCatalog>(StubOptions::from(build.recordedOptions(), program, facts.hasOneInstance(), facts.matchesRegExps(), facts.mayReadLegacyRegExpStatics(), AOT::hasFlag(build.options().testing, Wire::TestingSwitch::CheckProofsAtRunTime))); },
+        [&] { prepared.facts->freeListsOfSummariesNotKeptForWalk(build.parallelLoops()); },
+    });
     times.didFinish("make the stub catalog"_s);
     return true;
 }

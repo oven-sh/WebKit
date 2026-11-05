@@ -216,8 +216,6 @@ static unsigned numberOfParametersInConventionOf(const CallingConventions& conve
     case CodeRole::TableEntry:
     case CodeRole::TableLookup:
         return 1 + conventions.methodSelector(unit.placeOfSelector()).numberOfArguments;
-    case CodeRole::Serializer:
-        break;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -242,8 +240,6 @@ CallingConventions::CallingConventions(CallingConventionParts&& parts)
 bool CallingConventions::existsBehindUnitsOfFunctions(CodeUnit unit) const
 {
     switch (unit.role) {
-    case CodeRole::Serializer:
-        return false;
     case CodeRole::TableEntry:
     case CodeRole::TableLookup: {
         if (unit.placeOfSelector() >= methodSelectors().size())
@@ -296,7 +292,6 @@ uint32_t CallingConventions::indexBehindUnitsOfFunctions(CodeUnit unit) const
         RELEASE_ASSERT(found != methods.end() && *found == unit.function);
         return lookup + 1 + static_cast<uint32_t>(found - methods.begin());
     }
-    case CodeRole::Serializer:
     case CodeRole::Body:
     case CodeRole::GenericCallEntry:
     case CodeRole::GenericConstructEntry:
@@ -360,8 +355,6 @@ Representation CallingConventions::parameterRepresentationByRole(const Program& 
     case CodeRole::AllocatingConstructEntry:
         RELEASE_ASSERT(parameterIndex < numberOfParametersInConventionOf(*this, program, unit));
         return parameterIndex ? Representation::JSValue : Representation::Cell;
-    case CodeRole::Serializer:
-        break;
     case CodeRole::TableEntry:
     case CodeRole::TableLookup:
         RELEASE_ASSERT(parameterIndex < numberOfParametersInConventionOf(*this, program, unit));
@@ -462,7 +455,6 @@ GenericEntryPlan CallingConventions::genericEntry(CodeUnit unit) const
     case CodeRole::ParameterGuard:
     case CodeRole::TableEntry:
     case CodeRole::TableLookup:
-    case CodeRole::Serializer:
         break;
     }
     RELEASE_ASSERT_NOT_REACHED();

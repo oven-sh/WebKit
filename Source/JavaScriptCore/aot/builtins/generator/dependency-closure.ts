@@ -17,7 +17,7 @@ import type {
   TableModel,
 } from "./model.ts";
 import { arrayClassName, functionClassName, objectClassName } from "./build-types.ts";
-import { operandUses, type ClassName, type FeatureName } from "./vocabulary.ts";
+import { namesProbedOnIterators, operandUses, type ClassName, type FeatureName } from "./vocabulary.ts";
 
 export interface LoadedModule {
   isConditional: boolean;
@@ -38,6 +38,7 @@ export interface RuntimeDependencies {
   certain: Set<ModelFunction>;
   namedBy: Map<ModelModule | ModelFunction, ModelBuiltin>;
   hasMethodCalledWithStartupLoads: boolean;
+  mayHandOutAnyHostObject: boolean;
 }
 
 export interface UndescribedResult {
@@ -65,6 +66,7 @@ function createDependencies(): RuntimeDependencies {
     certain: new Set(),
     namedBy: new Map(),
     hasMethodCalledWithStartupLoads: false,
+    mayHandOutAnyHostObject: false,
   };
 }
 
@@ -113,6 +115,7 @@ function mergeDependencies(into: RuntimeDependencies, from: RuntimeDependencies)
   for (const implementation of from.implementedBy) into.implementedBy.add(implementation);
   for (const needed of from.certain) into.certain.add(needed);
   into.hasMethodCalledWithStartupLoads ||= from.hasMethodCalledWithStartupLoads;
+  into.mayHandOutAnyHostObject ||= from.mayHandOutAnyHostObject;
   for (const [dependency, builtin] of from.namedBy) {
     if (!into.namedBy.has(dependency)) into.namedBy.set(dependency, builtin);
   }
@@ -353,6 +356,7 @@ export class DependencyClosure {
   readonly #functionsLayingSuchMethods: ReadonlySet<ModelFunction>;
   readonly #promiseClass: ModelClass | null;
   readonly #enginePrototypes: readonly ModelBuiltin[];
+  readonly #askedOfAnyOperand: readonly NamesAskedOfOperands[];
   readonly #foundOnInstances = new Map<string, RuntimeDependencies>();
   readonly #handedOut = new Map<ModelBuiltin, HandedOutValues>();
   readonly #reachable = new Map<string, RuntimeDependencies>();
@@ -392,6 +396,19 @@ export class DependencyClosure {
     this.#functionsLayingSuchMethods = new Set(model.startup.functionsLayingSuchMethods);
     this.#promiseClass = model.classes.find(({ token }) => token === promiseClassName) ?? null;
     this.#enginePrototypes = classesOf("Engine").flatMap(({ prototype }) => prototype ?? []);
+    const symbols = model.names.filter(({ kind }) => kind !== "Text");
+    const probed = model.names.filter(({ kind, text }) => kind === "Text" && namesProbedOnIterators.includes(text));
+    this.#askedOfAnyOperand = [
+      {
+        called: new Set([
+          ...symbols,
+          ...probed,
+          ...model.protocolKeys.flatMap(({ keys }) => keys),
+          ...this.#namesAskedOfOperands.flatMap(({ called }) => [...called]),
+        ]),
+        read: new Set([...symbols, ...this.#namesAskedOfOperands.flatMap(({ read }) => [...read])]),
+      },
+    ];
   }
 
   dependenciesOf(builtin: ModelBuiltin): RuntimeDependencies {
@@ -408,6 +425,7 @@ export class DependencyClosure {
       const { calledFunctions } = builtin.attachments;
       const calledOnCondition = new Set(calledFunctions.flatMap(called => (called.condition === null ? [] : [called.function])));
       dependencies.certain = dependencies.calls.union(dependencies.implementedBy).difference(calledOnCondition);
+      dependencies.mayHandOutAnyHostObject = false;
     }
     for (const [key, listed] of dependencies.callsForTexts) {
       listed.calls = listed.calls.difference(dependencies.calls);
@@ -422,6 +440,23 @@ export class DependencyClosure {
       if (DependencyClosure.isInEveryProgram(builtin)) mergeDependencies(dependencies, this.dependenciesOf(builtin));
     }
     return dependencies;
+  }
+
+  prototypesThatComeWithFirstPromise(): ModelBuiltin[] {
+    const promise = this.#promiseClass?.constructor ?? null;
+    if (promise === null) return [];
+    const { calls: calledForPromise } = this.dependenciesOf(promise);
+    const makesPromise = (member: ModelBuiltin): boolean => {
+      const { calls, implementedBy } = this.dependenciesOf(member.sameObjectAs ?? member);
+      return !calls.union(implementedBy).isDisjointFrom(calledForPromise);
+    };
+    return this.#enginePrototypes.filter(prototype => prototype.members.some(makesPromise));
+  }
+
+  dependenciesOfAnyOperand(): RuntimeDependencies {
+    const leftOut = new Set(this.prototypesThatComeWithFirstPromise());
+    const prototypes = this.#enginePrototypes.filter(prototype => !leftOut.has(prototype));
+    return this.#foundOn(prototypes, this.#askedOfAnyOperand, "of any operand");
   }
 
   dependenciesOfAnyHostObject(): RuntimeDependencies {
@@ -518,12 +553,21 @@ export class DependencyClosure {
     const roots = makesOnlyWhatItSays ? handedOut.objects : this.#enginePrototypes;
     const prototypes = [builtin, ...roots].filter(isPrototypeOfLanguage);
     const key = prototypes.map(prototype => prototype.id).join(",");
+    return this.#foundOn(prototypes, this.#namesAskedOfOperands, key);
+  }
+
+  #foundOn(
+    prototypes: readonly ModelBuiltin[],
+    asked: readonly NamesAskedOfOperands[],
+    key: string,
+  ): RuntimeDependencies {
+    const isPrototypeOfLanguage = ({ kind, origin }: ModelBuiltin): boolean => kind === "Prototype" && origin === "Engine";
     let dependencies = this.#foundOnInstances.get(key);
     if (dependencies !== undefined) return dependencies;
     dependencies = createDependencies();
     this.#foundOnInstances.set(key, dependencies);
     const found = new Set<ModelBuiltin>();
-    for (const { called, read } of this.#namesAskedOfOperands) {
+    for (const { called, read } of asked) {
       const visited = new Set<ModelBuiltin>();
       const workList = [...prototypes];
       for (let next = workList.pop(); next !== undefined; next = workList.pop()) {
@@ -626,6 +670,7 @@ export class DependencyClosure {
     const addHandedOut = ({ objects, undescribedValue, features }: HandedOutValues): void => {
       workList.push(...objects);
       if (undescribedValue === null) return;
+      dependencies.mayHandOutAnyHostObject = true;
       for (const feature of features) {
         if (featuresAdded.has(feature)) continue;
         featuresAdded.add(feature);

@@ -37,8 +37,8 @@ MentionedKeys findMentionedKeys(const Program& program, const Facts& facts, cons
             if (!link.function(id).isReached)
                 continue;
             const ThinSummary& summary = facts.summaries().at(id);
-            for (const Vector<PropertyKeyID>* names : { &summary.namesRead, &summary.namesCalled, &summary.namesStored }) {
-                for (PropertyKeyID key : *names) {
+            for (std::span<const PropertyKeyID> names : { summary.namesRead.span(), summary.namesCalled.span(), summary.namesStored.span() }) {
+                for (PropertyKeyID key : names) {
                     if (key.index() < numberOfKeys)
                         AtomicRef(mentioned.isMentioned[key.index()]).store(1, std::memory_order_relaxed);
                 }

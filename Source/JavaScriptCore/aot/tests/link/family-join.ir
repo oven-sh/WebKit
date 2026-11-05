@@ -1,19 +1,17 @@
 # A set holds layouts that stand in no declared family, or layouts that one declared family holds all. A layout of a family beside a stranger, and layouts of different families, are lost as before: else every place where hundreds of kinds meet would climb through three sets on its way there and tell its observers each time. If the join dropped one of the two, a read through the parameter would be compiled for the wrong shape
-# interface Shape { }  type Circle, Square: Shape  type Point
-# A circle and a square arrive at `area`: the set of the two, which one declared family holds. A circle and a point arrive at `any`: the circle stands in a family that does not hold the point: both are lost and the type is any object. Neither has escaped.
+# abstract class Shape { }  class Circle, Square extends Shape  type Point
+# A circle and a square arrive at `area`: the set of the two, which one declared family holds. A circle and a point arrive at `any`: the circle stands in a family that does not hold the point: both are lost, and the type names the two that met and no other member of the family. Neither has escaped.
 # RUN: link families functions layouts mechanisms=all
 # CHECK: family [[shape]] [{{*}}L1, L2]
 # CHECK: function f1 callers-known one-callee
 # CHECK-NEXT: parameter 0 {{*}}proven=L1|L2
 # CHECK: function f2 callers-known one-callee
-# CHECK-NEXT: parameter 0 {{*}}proven=object
+# CHECK-NEXT: parameter 0 {{*}}proven=L1|L3
 # CHECK: layout L1 family=[[shape]] changes=[]
 # CHECK: layout L2 family=[[shape]] changes=[]
 # CHECK: layout L3 changes=[]
-# RUN(NOSET): link functions mechanisms=all
-# NOSET-NOT: L3
 
-layout L0 name="Shape" module=m0 flags=[IsNeverAllocated]
+layout L0 kind=Instance name="Shape" module=m0 flags=[IsNeverAllocated]
 layout L1 name="Circle" module=m0 fields=[{key="r" declared={type=anything} flags=[IsRequired]}] supertypes=[L0]
 layout L2 name="Square" module=m0 fields=[{key="s" declared={type=anything} flags=[IsRequired]}] supertypes=[L0]
 layout L3 name="Point" module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}]

@@ -585,8 +585,8 @@ void NamesInBytesText::printSymbol(const CodeBody& body, const Relocation& reloc
     case SymbolSpace::Stub: {
         if (index >= body.stubKeys.size())
             break;
-        auto numbered = std::ranges::find(body.numberedStubKeys, index, &NumberedStubKey::stubKey);
-        if (numbered == body.numberedStubKeys.end()) {
+        auto numbered = std::ranges::find(body.rareLists->numberedStubKeys, index, &NumberedStubKey::stubKey);
+        if (numbered == body.rareLists->numberedStubKeys.end()) {
             printStubInBytesText(m_out, body.stubKeys[index]);
             return;
         }
@@ -666,9 +666,9 @@ static void printSummaryInBytesText(PrintStream& out, const CompiledCode& code)
         }
     } else
         out.print("none"_s);
-    out.print(" entries="_s, body.entries.size(), " sites="_s, sites.positions.isEmpty() ? 0 : sites.positions.size() - 1, " handlers="_s, sites.handlers.size());
-    out.print(" faults="_s, sites.faultingAccesses.size(), " polls="_s, sites.pollSites.size());
-    out.print(" constants="_s, body.constants.size(), " jumpTables="_s, body.jumpTables.size(), " prologueChecks="_s, frame.prologueChecks.size());
+    out.print(" entries="_s, body.entries.size(), " sites="_s, sites.positions.isEmpty() ? 0 : sites.positions.size() - 1, " handlers="_s, sites.rareLists->handlers.size());
+    out.print(" faults="_s, sites.faultingAccesses.size(), " polls="_s, sites.rareLists->pollSites.size());
+    out.print(" constants="_s, body.rareLists->constants.size(), " jumpTables="_s, body.rareLists->jumpTables.size(), " prologueChecks="_s, frame.prologueChecks.size());
     out.print(" relocations="_s, body.relocations.size(), " returns="_s, body.returnSites.size(), " thunks="_s, body.argumentMoves.size(), " inlineFrames="_s, sites.inlineFrames.size());
     out.print(" stackUsedAtCalls="_s, frame.stackUsedAtCalls, " aboveFrameRecord="_s, frame.bytesAboveFrameRecord, " deadAtSuspensions="_s, frame.bytesDeadAtSuspensions);
     if (frame.isEnteredWithoutStackCheck)
@@ -689,7 +689,7 @@ static void printSummaryInBytesText(PrintStream& out, const CompiledCode& code)
     out.println();
 }
 
-static void printArgumentThunkInBytesText(PrintStream& out, const ArgumentMoves& words)
+static void printArgumentThunkInBytesText(PrintStream& out, std::span<const uint64_t> words)
 {
     if (words.size() < numberOfHeaderWords) {
         out.print("?"_s);
@@ -732,14 +732,15 @@ static void printListsOfBodyInBytesText(NamesInBytesText& names, const CodeBody&
         printArgumentThunkInBytesText(out, body.argumentMoves[index]);
         out.println();
     }
-    for (size_t index = 0; index < body.constants.size(); ++index) {
-        out.print("  constant "_s, index, " align "_s, body.constants[index].alignment, " "_s, WTF::enumName(body.constants[index].kind), " "_s);
-        printHexInBytesText(out, body.constants[index].bytes.span());
+    const RareListsOfBody& rareLists = *body.rareLists;
+    for (size_t index = 0; index < rareLists.constants.size(); ++index) {
+        out.print("  constant "_s, index, " align "_s, rareLists.constants[index].alignment, " "_s, WTF::enumName(rareLists.constants[index].kind), " "_s);
+        printHexInBytesText(out, rareLists.constants[index].bytes.span());
         out.println();
     }
-    for (size_t index = 0; index < body.jumpTables.size(); ++index) {
+    for (size_t index = 0; index < rareLists.jumpTables.size(); ++index) {
         out.print("  jump table "_s, index);
-        for (uint32_t target : body.jumpTables[index].targets)
+        for (uint32_t target : rareLists.jumpTables[index].targets)
             out.print(" "_s, target);
         out.println();
     }
@@ -763,7 +764,7 @@ static void printSitesInBytesText(NamesInBytesText& names, const CodeBody& body,
         names.printSite(sites, OptionalIndex { flagged.site });
         out.println(" is "_s, WTF::enumName(flagged.kind));
     }
-    for (const ConstructedCallee& constructed : sites.constructedCallees) {
+    for (const ConstructedCallee& constructed : sites.rareLists->constructedCallees) {
         out.print("  constructs "_s);
         if (constructed.callee < body.callees.size())
             names.printUnitName(body.callees[constructed.callee]);
@@ -773,7 +774,7 @@ static void printSitesInBytesText(NamesInBytesText& names, const CodeBody& body,
         names.printSite(sites, OptionalIndex { constructed.site });
         out.println();
     }
-    for (const SiteHandler& handler : sites.handlers) {
+    for (const SiteHandler& handler : sites.rareLists->handlers) {
         out.print("  handler "_s, WTF::enumName(handler.type), " at "_s, handler.codeOffset, " for"_s);
         names.printSite(sites, OptionalIndex { handler.site });
         out.println();
@@ -793,16 +794,16 @@ static void printSitesInBytesText(NamesInBytesText& names, const CodeBody& body,
         }
         out.println();
     }
-    for (const PollSite& poll : sites.pollSites) {
+    for (const PollSite& poll : sites.rareLists->pollSites) {
         out.print("  poll "_s, poll.offset);
         if (poll.callerIsFrameless)
             out.print(" frameless"_s);
         names.printSite(sites, poll.callSite);
         out.println();
     }
-    if (!sites.frameMapWords.isEmpty()) {
+    if (!sites.rareLists->frameMapWords.isEmpty()) {
         out.print("  frame map"_s);
-        for (uint32_t word : sites.frameMapWords)
+        for (uint32_t word : sites.rareLists->frameMapWords)
             out.printf(" %08x", word);
         out.println();
     }
@@ -956,10 +957,10 @@ static void runMachineBytesByFormCommand(TestCommandContext& context)
         ++numberOfUnits;
         numberOfInlineFrames += code->sites.inlineFrames.size();
         bytesOfCode += code->body.bytes.size();
-        bytesInInlineFrames += code->bytesInInlineFrames;
-        bytesInInlineFramesOfLibrary += code->bytesInInlineFramesOfLibrary;
-        bytesInFramesOfBuiltins += code->bytesInFramesOfBuiltins;
-        for (const BytesOfForm& row : code->bytesByForm) {
+        bytesInInlineFrames += code->measurements->bytesInInlineFrames;
+        bytesInInlineFramesOfLibrary += code->measurements->bytesInInlineFramesOfLibrary;
+        bytesInFramesOfBuiltins += code->measurements->bytesInFramesOfBuiltins;
+        for (const BytesOfForm& row : code->measurements->bytesByForm) {
             TotalOfRow& total = totals.add(keyOfRowInBytesByFormText(row), TotalOfRow { }).iterator->value;
             total.all.count += row.count;
             total.all.bytes += row.bytes;
@@ -1080,7 +1081,7 @@ static void runMachineBytesOutsideOperationsCommand(TestCommandContext& context)
         if (!code)
             break;
         bytesOfCode += code->body.bytes.size();
-        for (const BytesOutsideOperations& row : code->bytesOutsideOperations) {
+        for (const BytesOutsideOperations& row : code->measurements->bytesOutsideOperations) {
             TotalOfCodeForm& total = totals.add(static_cast<uint64_t>(row.origin) << 1 | row.isRare, TotalOfCodeForm { }).iterator->value;
             total.count += row.count;
             total.bytes += row.bytes;
@@ -1124,10 +1125,10 @@ static void runMachineRangesCommand(TestCommandContext& context)
             context.out.println(lineOfFailedMachineCommand);
             return;
         }
-        for (const RangeOfCode& range : code->ranges) {
+        for (const RangeOfCode& range : code->measurements->ranges) {
             context.out.print(range.begin, " "_s, range.end, range.isRare ? " rare "_s : " main "_s);
             if (range.value)
-                context.out.print(nameOf(range.opcode), " v"_s, range.value.index());
+                context.out.print(nameOf(range.opcode), " v"_s, range.value.index(), " frame "_s, range.inlineFrame, range.standsInRareBlock ? " rareBlock"_s : " plainBlock"_s);
             else
                 printOriginOutsideOperations(context.out, range.origin);
             context.out.println();

@@ -1,4 +1,4 @@
-# only a block of f4 that no run comes to makes a closure of f1 and the scope that f1 reads. Five members of a declared family meet, one more than a set takes, so the value is known by the family, and a stranger joins it: the family is lost. L0 is its first, so it stands for the family, and f1 is reached
+# only a block of f4 that no run comes to makes a closure of f1 and the scope that f1 reads. Five classes below one class meet, one more than a set takes, so the value is known by the family, and a stranger joins it: the family is lost. L0 is its first, so it stands for the family, and f1 is reached
 # RUN: emit f1:Body mechanisms=all
 # CHECK-LABEL: unit f1:Body
 # CHECK: Oops
@@ -6,14 +6,15 @@
 # RUN(LINK): link functions layouts mechanisms=all
 # LINK: layout L3 never-allocated
 
-layout L0 kind=Instance name="Unmade" module=m0 constructor=f1 fields=[{key="label" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=1
-layout L1 kind=Instance name="First" module=m0 constructor=f2 fields=[{key="label" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=1
-layout L2 kind=Instance name="Second" module=m0 constructor=f3 fields=[{key="label" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=1
+layout L0 kind=Instance name="Unmade" module=m0 constructor=f1 fields=[{key="label" declared={type=anything} flags=[IsRequired]}] supertypes=[L8] flags=[IsConstructorFunction] ownFieldCount=1
+layout L1 kind=Instance name="First" module=m0 constructor=f2 fields=[{key="label" declared={type=anything} flags=[IsRequired]}] supertypes=[L8] flags=[IsConstructorFunction] ownFieldCount=1
+layout L2 kind=Instance name="Second" module=m0 constructor=f3 fields=[{key="label" declared={type=anything} flags=[IsRequired]}] supertypes=[L8] flags=[IsConstructorFunction] ownFieldCount=1
 layout L3 kind=Environment module=m0 fields=[{key=@"0" declared={type=f5 flags=[IsFromCompiler]} flags=[IsImmutable] variableName="fallback"}, {key=@"1" declared={type=anything} variableName="held"}] ownFieldCount=2
 layout L4 module=m0 fields=[{key="other" declared={type=anything} flags=[IsRequired]}, {key="kind" declared={type=undefined|L0|L1|L2|L5|L6|L7}}] ownFieldCount=2
-layout L5 kind=Instance name="Third" module=m0 constructor=f6 fields=[{key="label" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=1
-layout L6 kind=Instance name="Fourth" module=m0 constructor=f7 fields=[{key="label" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=1
-layout L7 kind=Instance name="Fifth" module=m0 constructor=f8 fields=[{key="label" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=1
+layout L5 kind=Instance name="Third" module=m0 constructor=f6 fields=[{key="label" declared={type=anything} flags=[IsRequired]}] supertypes=[L8] flags=[IsConstructorFunction] ownFieldCount=1
+layout L6 kind=Instance name="Fourth" module=m0 constructor=f7 fields=[{key="label" declared={type=anything} flags=[IsRequired]}] supertypes=[L8] flags=[IsConstructorFunction] ownFieldCount=1
+layout L7 kind=Instance name="Fifth" module=m0 constructor=f8 fields=[{key="label" declared={type=anything} flags=[IsRequired]}] supertypes=[L8] flags=[IsConstructorFunction] ownFieldCount=1
+layout L8 kind=Instance name="Kind" module=m0 flags=[IsNeverAllocated]
 module m0 path="/main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 module=m0 kind=Module results=[{type=anything}] {

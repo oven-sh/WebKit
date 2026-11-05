@@ -311,7 +311,7 @@ static bool onlyUserTakesBoxInNumberPaths(Walker& walker, const BodyValue& writt
             break;
         }
         case BodyUseKind::TerminatorOperand: {
-            if (user->block != blockOfSum || index.terminator(blockOfSum).kind() != TerminatorKind::Return || walker.depthOfCopies())
+            if (user->block != blockOfSum || index.terminator(blockOfSum).kind() != TerminatorKind::Return || !walker.walksOwnBodyOfUnit())
                 return false;
             const CallingConventions& conventions = walker.plan().conventions();
             return conventions.numberOfResults(walker.unit()) == 1 && conventions.resultRepresentation(walker.unit()) == Representation::JSValue;

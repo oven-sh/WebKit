@@ -116,8 +116,8 @@ public:
     StableArray() = default;
     ~StableArray()
     {
-        for (T* segment : m_segments)
-            fastFree(segment);
+        for (uint32_t index = 0; index < m_capacity; index += segmentSize)
+            fastFree(recordAt(index));
     }
 
     uint32_t size() const { return m_size; }
@@ -126,16 +126,12 @@ public:
     ALWAYS_INLINE T& operator[](uint32_t index) LIFETIME_BOUND
     {
         ASSERT(index < m_size);
-        if (index < segmentSize) [[likely]]
-            return m_firstSegment[index];
-        return m_segments[index >> logOfSegmentSize][index & (segmentSize - 1)];
+        return *recordAt(index);
     }
     ALWAYS_INLINE const T& operator[](uint32_t index) const LIFETIME_BOUND
     {
         ASSERT(index < m_size);
-        if (index < segmentSize) [[likely]]
-            return m_firstSegment[index];
-        return m_segments[index >> logOfSegmentSize][index & (segmentSize - 1)];
+        return *recordAt(index);
     }
     T& last() LIFETIME_BOUND { return (*this)[m_size - 1]; }
     const T& last() const LIFETIME_BOUND { return (*this)[m_size - 1]; }
@@ -170,15 +166,20 @@ public:
     void clear() { m_size = 0; }
 
 private:
-    NEVER_INLINE void addSegment()
+    ALWAYS_INLINE T* recordAt(uint32_t index) const
     {
-        m_segments.append(static_cast<T*>(fastMalloc(sizeof(T) * segmentSize)));
-        m_firstSegment = m_segments[0];
+        RELEASE_ASSERT(index < m_capacity);
+        return reinterpret_cast<T*>(m_addressOfIndexZeroBySegment[index >> logOfSegmentSize] + static_cast<uintptr_t>(index) * sizeof(T));
+    }
+    COLD NEVER_INLINE void addSegment()
+    {
+        m_addressesOfIndexZero.append(reinterpret_cast<uintptr_t>(fastMalloc(sizeof(T) * segmentSize)) - static_cast<uintptr_t>(m_capacity) * sizeof(T));
+        m_addressOfIndexZeroBySegment = m_addressesOfIndexZero.span().data();
         m_capacity += segmentSize;
     }
 
-    Vector<T*, 4> m_segments;
-    T* m_firstSegment { nullptr };
+    Vector<uintptr_t, 4> m_addressesOfIndexZero;
+    const uintptr_t* m_addressOfIndexZeroBySegment { nullptr };
     uint32_t m_size { 0 };
     uint32_t m_capacity { 0 };
 };
@@ -934,6 +935,7 @@ private:
     void fill(Instruction&, const DraftWords&);
     void appendEdgeInto(BlockID from, BlockID to, std::span<const ValueID> arguments);
     void layClosureInFrame(ValueID, LoanOfClosure);
+    void layObjectInFrame(ValueID);
 
     CodeUnit m_unit;
     StableArray<Operation, 10> m_operations;
@@ -990,7 +992,7 @@ inline ValueID valueThatTestSpeaksOf(const Code& code, ValueID test, uint32_t op
         return test;
     return operandIndex < operation.numberOfOperands() ? operation.operand(operandIndex) : ValueID();
 }
-inline constexpr OpcodeSet operationsThatStandAmongNarrowedValues = conversionsOfForm | OpcodeSet { Opcode::CheckProof };
+inline constexpr OpcodeSet operationsThatStandAmongNarrowedValues = conversionsOfForm | OpcodeSet { Opcode::CheckProof, Opcode::AssumeType };
 inline constexpr OpcodeSet readsThatNarrowTheirHolders { Opcode::GetSlot, Opcode::GetSlotOrUndefined };
 inline bool hasTestedForHole(const Operation& read)
 {

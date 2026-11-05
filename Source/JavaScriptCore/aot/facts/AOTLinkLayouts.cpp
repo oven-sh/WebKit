@@ -174,6 +174,9 @@ struct ObservedChangeInLinkLayouts {
     bool descriptorIsInSight { false };
     bool laysValueInSight { false };
     FlowNodeID valueInSight;
+    FlowNodeID valueLaidThroughConstant;
+    bool heirIsMadeByCall { false };
+    FlowNodeID laidAboveByConstructor;
     FlowNodeID getterInSight;
     FlowNodeID setterInSight;
     bool definesWhatItCopies { false };
@@ -324,7 +327,8 @@ static NodesStoredInLinkLayouts nodesStoredUnderInLinkLayouts(LinkFlow& flow, co
 
 static void addChangesInLinkLayouts(LinkFlow& flow, LayoutID layout, OptionSet<LayoutChange> changes)
 {
-    flow.possibleChanges[layout.index()].add(changes);
+    if (!flow.possibleChanges[layout.index()].containsAll(changes))
+        flow.note(LinkFlow::Note::ChangeOfLayout, layout.index(), changes.toRaw());
 }
 
 static void addChangesToLayoutsNamedInLinkLayouts(LinkFlow& flow, const LinkType& type, OptionSet<LayoutChange> changes)
@@ -434,9 +438,7 @@ static bool layKnownAccessorInLinkLayouts(LinkFlow& flow, const ObservedChangeIn
     if (function.kind != (isGetter ? FunctionKind::Getter : FunctionKind::Setter) || !function.hasBody() || function.isCoroutine() || function.results.size() != 1 || flow.summaries.at(id).has(SummaryTrait::UsesArguments))
         return false;
 
-    flow.layoutsWithKnownAccessors.set(layout.index());
-    flow.fieldsWithKnownAccessors.append(*field);
-    flow.accessorsLaidInFields.append({ *field, id, isGetter });
+    flow.noteAccessorLaid(layout, { *field, id, isGetter });
     flow.reach(id);
     flow.addEdge(flow.thrown(id), flow.unseen());
     FlowNodeID held = flow.field(*field);
@@ -450,6 +452,8 @@ static bool layKnownAccessorInLinkLayouts(LinkFlow& flow, const ObservedChangeIn
             break;
         case EntryParameter::This:
             flow.addEdge(change.subjectNode, node);
+            flow.addEdge(flow.whatStandsBelow(layout), node);
+            flow.addEdge(flow.whatStandsBelow(layout), flow.heirsThatRun(id));
             break;
         case EntryParameter::Callee:
             flow.arrive(node, typeOfClosuresInLinkLayouts(id));
@@ -511,6 +515,33 @@ static bool definitionInSightIsStoreInLinkLayouts(const LinkFlow& flow, const Li
     return subject.functions == LinkType::Functions::Closure && subject == typeOfClosuresInLinkLayouts(subject.function) && flow.followsNamesOnClosuresOf(subject.function, key);
 }
 
+static void expectValueOfDescriptorUnderNameInLinkLayouts(LinkFlow& flow, const ObservedChangeInLinkLayouts& change)
+{
+    if (!change.key || change.lays != SummaryChange::Lays::WhatDescriptorSays)
+        return;
+    PropertyKeyID value = flow.program.keyOf(BuiltinNames::value);
+    NodesStoredInLinkLayouts held;
+    if (change.valueLaidThroughConstant)
+        held.append(change.valueLaidThroughConstant);
+    else if (change.other.objects == LinkType::Objects::Family)
+        held.append(flow.fieldReadThrough(change.other.family, value));
+    else if (change.other.objects == LinkType::Objects::Lost)
+        held.append(flow.fieldReadThroughLost(change.other.layout, value));
+    else {
+        forEachLayoutNamedInLinkLayouts(flow, change.other, [&](LayoutID descriptor) {
+            if (std::optional<FieldReference> field = findField(flow.program, descriptor, value))
+                held.append(flow.field(*field));
+        });
+    }
+    if (held.isEmpty() || (change.subject.objects != LinkType::Objects::Layout && change.subject.objects != LinkType::Objects::Set))
+        return;
+    forEachLayoutNamedInLinkLayouts(flow, change.subject, [&](LayoutID layout) {
+        FlowNodeID laid = flow.laidByDescriptorsOn(layout, change.key);
+        for (FlowNodeID from : held)
+            flow.addEdge(from, laid);
+    });
+}
+
 static void observeDefinitionInLinkLayouts(LinkFlow& flow, const ObservedChangeInLinkLayouts& change)
 {
     bool isStore = change.laysValueInSight && change.key && definitionInSightIsStoreInLinkLayouts(flow, change.subject, change.key);
@@ -521,7 +552,8 @@ static void observeDefinitionInLinkLayouts(LinkFlow& flow, const ObservedChangeI
     bool namesObjectsOfLayoutsAlone = (change.subject.objects == LinkType::Objects::Layout || change.subject.objects == LinkType::Objects::Set || change.subject.objects == LinkType::Objects::Family) && change.subject.functions == LinkType::Functions::None && change.subject.classes == LinkType::Classes::None && !change.subject.builtin;
     if (change.descriptorIsInSight && namesObjectsOfLayoutsAlone && handObjectToHalvesInSightInLinkLayouts(flow, change)) {
         forEachLayoutNamedInLinkLayouts(flow, change.subject, [&](LayoutID layout) {
-            flow.layoutsDefinedOnUnderWrittenKeys.set(layout.index());
+            if (!flow.layoutsDefinedOnUnderWrittenKeys.get(layout.index()))
+                flow.note(LinkFlow::Note::LayoutDefinedOnUnderWrittenKeys, layout.index());
             if (!change.key) {
                 flow.addEdge(flow.unseen(), flow.storedBesideFieldsOf(layout));
                 return;
@@ -537,6 +569,7 @@ static void observeDefinitionInLinkLayouts(LinkFlow& flow, const ObservedChangeI
         return;
     if (change.otherNode)
         handToUnseenCodeInLinkLayouts(flow, change.otherNode, change.other);
+    expectValueOfDescriptorUnderNameInLinkLayouts(flow, change);
     if (LayoutID function = onlyPrototypeOfConstructorFunctionInLinkLayouts(flow, change.subject)) {
         flow.defineOnPrototypeOf(function, change.key);
         return;
@@ -620,9 +653,90 @@ static bool agreesWithLayoutsInLinkLayouts(const LinkFlow& flow, const LinkType&
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+static LinkType objectsAmongInLinkLayouts(const LinkType& type)
+{
+    LinkType objects;
+    objects.objects = type.objects;
+    objects.layout = type.layout;
+    objects.family = type.family;
+    objects.classes = type.classes;
+    objects.builtinClass = type.builtinClass;
+    objects.site = type.site;
+    return objects;
+}
+
+FlowNodeID LinkFlow::findWhatConstructorLaysAbove(FunctionID function, const SummaryChange& change) const
+{
+    if (change.kind != SummaryChange::Kind::BecomesPrototype || change.heirIsMadeByCall || change.other == noSummaryNode)
+        return { };
+    const ThinSummary& summary = summaries.at(function);
+    const SummaryNode& heir = summary.nodes[change.other];
+    const SummaryNode& parent = summary.nodes[change.subject];
+    if (heir.kind != SummaryNode::Kind::Allocation || !program.at(LayoutID(heir.first)).has(LayoutFlags::IsOfCreatedObject) || parent.kind != SummaryNode::Kind::ResultOfAccess)
+        return { };
+    const SummaryAccess& read = summary.accesses[parent.first];
+    const SummaryNode& holder = summary.nodes[read.subject];
+    const Function& reader = program.at(function);
+    if (read.kind != SummaryAccess::Kind::Read || !read.key || read.isToContents() || holder.kind != SummaryNode::Kind::Parameter || holder.first != reader.thisParameterIndex())
+        return { };
+    TypeReader types(program);
+    TypeID written = reader.thisType.written();
+    LayoutID classLayout = written ? singleLayoutOf(types, types.at(written)) : LayoutID();
+    FunctionID constructor = classLayout ? program.at(classLayout).constructor : FunctionID();
+    if (!constructor)
+        return { };
+    const ThinSummary& ofConstructor = summaries.at(constructor);
+    uint32_t stored = noSummaryNode;
+    for (const SummaryAccess& access : ofConstructor.accesses) {
+        if (access.key != read.key || access.isToContents() || (access.kind != SummaryAccess::Kind::Store && access.kind != SummaryAccess::Kind::Define))
+            continue;
+        if (stored != noSummaryNode)
+            return { };
+        stored = access.value;
+    }
+    if (stored == noSummaryNode)
+        return { };
+    for (const SummaryChange& made : ofConstructor.changes) {
+        if (made.kind == SummaryChange::Kind::BecomesPrototype && made.heirIsMadeByCall && made.other == stored)
+            return nodeOf(constructor, made.subject);
+    }
+    return { };
+}
+
+static void tieHeirToWhatStandsAboveInLinkLayouts(LinkFlow& flow, const ObservedChangeInLinkLayouts& change)
+{
+    const LinkType whatStandsAbove = change.laidAboveByConstructor ? flow.typeAt(change.laidAboveByConstructor) : change.subject;
+    Vector<FlowNodeID, 4> heirsOfWhatStandsAbove;
+    forEachLayoutNamedInLinkLayouts(flow, whatStandsAbove, [&](LayoutID above) {
+        heirsOfWhatStandsAbove.append(flow.whatStandsBelow(above));
+    });
+    if (whatStandsAbove.classes == LinkType::Classes::Site)
+        heirsOfWhatStandsAbove.append(flow.whatStandsBelow(whatStandsAbove.site));
+    auto tie = [&](FlowNodeID aboveHeir, FlowNodeID belowHeir) {
+        flow.arrive(aboveHeir, objectsAmongInLinkLayouts(whatStandsAbove));
+        for (FlowNodeID heirs : heirsOfWhatStandsAbove)
+            flow.addEdge(belowHeir, heirs);
+    };
+    forEachLayoutNamedInLinkLayouts(flow, change.other, [&](LayoutID heir) {
+        if (flow.program.at(heir).has(LayoutFlags::IsOfCreatedObject))
+            tie(flow.whatStandsAbove(heir), flow.whatStandsBelow(heir));
+    });
+    if (change.other.classes == LinkType::Classes::Site)
+        tie(flow.whatStandsAbove(change.other.site), flow.whatStandsBelow(change.other.site));
+    if (change.heirIsMadeByCall)
+        return;
+    for (FlowNodeID heirs : heirsOfWhatStandsAbove)
+        flow.addEdge(change.otherNode, heirs);
+}
+
 static void observeNewHeirInLinkLayouts(LinkFlow& flow, const ObservedChangeInLinkLayouts& change)
 {
     if (!change.otherNode) {
+        handToUnseenCodeInLinkLayouts(flow, change.subjectNode, change.subject);
+        return;
+    }
+    if (change.heirIsMadeByCall) {
+        tieHeirToWhatStandsAboveInLinkLayouts(flow, change);
         handToUnseenCodeInLinkLayouts(flow, change.subjectNode, change.subject);
         return;
     }
@@ -632,6 +746,7 @@ static void observeNewHeirInLinkLayouts(LinkFlow& flow, const ObservedChangeInLi
     if (agreesWithLayoutsInLinkLayouts(flow, change.subject, change.other))
         return;
 
+    tieHeirToWhatStandsAboveInLinkLayouts(flow, change);
     handToUnseenCodeInLinkLayouts(flow, change.subjectNode, change.subject);
     handToUnseenCodeInLinkLayouts(flow, change.otherNode, change.other);
     flow.arrive(change.otherNode, typeOfUnseenObjectsInLinkLayouts());
@@ -812,7 +927,8 @@ static CopyWaitsForInLinkLayouts observeCopyInLinkLayouts(LinkFlow& flow, const 
         addChangesToLayoutsNamedInLinkLayouts(flow, subject, { LayoutChange::GainsProperty });
     else if (gainsAtAll) {
         forEachLayoutNamedInLinkLayouts(flow, subject, [&](LayoutID layout) {
-            flow.layoutsThatGainWhatUnseenCodeGaveSources.set(layout.index());
+            if (!flow.layoutsThatGainWhatUnseenCodeGaveSources.get(layout.index()))
+                flow.note(LinkFlow::Note::LayoutGainsWhatUnseenCodeGaveSources, layout.index());
         });
     }
     forEachLayoutNamedInLinkLayouts(flow, subject, [&](LayoutID layout) {
@@ -884,7 +1000,11 @@ void LinkFlow::changeObserved(const FlowObserver& observer, const LinkType& now)
     change.laysValueInSight = record.laysValueInSight;
     if (record.valueInSight != noSummaryNode)
         change.valueInSight = nodeOf(observer.function, record.valueInSight);
+    if (record.valueLaidThroughConstant != noSummaryNode)
+        change.valueLaidThroughConstant = nodeOf(observer.function, record.valueLaidThroughConstant);
     change.definesWhatItCopies = record.definesWhatItCopies;
+    change.heirIsMadeByCall = record.heirIsMadeByCall;
+    change.laidAboveByConstructor = findWhatConstructorLaysAbove(observer.function, record);
     if (record.getterInSight != noSummaryNode)
         change.getterInSight = nodeOf(observer.function, record.getterInSight);
     if (record.setterInSight != noSummaryNode)
@@ -896,10 +1016,11 @@ void LinkFlow::changeObserved(const FlowObserver& observer, const LinkType& now)
     if (change.subject.isNothing())
         return;
 
+    CopiesObserved& copies = copiesObservedIn(observer.function);
     uint64_t placeOfCopy = static_cast<uint64_t>(observer.function.index()) << 32 | observer.record;
     if (record.kind == SummaryChange::Kind::CopiesInto) {
-        auto lookedAt = copiesLookedAt.find(placeOfCopy);
-        if (lookedAt != copiesLookedAt.end() && lookedAt->value.subject == change.subject && lookedAt->value.other == change.other
+        auto lookedAt = copies.lookedAt.find(placeOfCopy);
+        if (lookedAt != copies.lookedAt.end() && lookedAt->value.subject == change.subject && lookedAt->value.other == change.other
             && (lookedAt->value.waitsForNothingBesideFields || (lookedAt->value.waitsForWhatIsSeenAlone && now.asSeen().isNothing())))
             return;
     }
@@ -915,7 +1036,7 @@ void LinkFlow::changeObserved(const FlowObserver& observer, const LinkType& now)
     if (record.kind == SummaryChange::Kind::CopiesInto) {
         forEachLayoutNamedInLinkLayouts(*this, change.other, [&](LayoutID layout) {
             for (const OwnValue& value : ownValuesOf(layout)) {
-                if (!value.key && copiesToldOfWhatLiesBesideFields.add(std::pair { static_cast<uint64_t>(value.node.index()) << 32 | observer.function.index(), observer.record }).isNewEntry)
+                if (!value.key && copies.toldOfWhatLiesBesideFields.add(std::pair { static_cast<uint64_t>(value.node.index()) << 32 | observer.function.index(), observer.record }).isNewEntry)
                     observe(value.node, FlowObserver { FlowObserver::Kind::OtherOfChange, observer.function, observer.record });
             }
         });
@@ -943,7 +1064,7 @@ void LinkFlow::changeObserved(const FlowObserver& observer, const LinkType& now)
     case SummaryChange::Kind::CopiesInto:
     {
         CopyWaitsForInLinkLayouts waitsFor = observeCopyInLinkLayouts(*this, change);
-        copiesLookedAt.set(placeOfCopy, CopyLookedAt { change.subject, change.other, waitsFor == CopyWaitsForInLinkLayouts::Nothing, waitsFor == CopyWaitsForInLinkLayouts::WhatIsSeenAlone });
+        copies.lookedAt.set(placeOfCopy, CopyLookedAt { change.subject, change.other, waitsFor == CopyWaitsForInLinkLayouts::Nothing, waitsFor == CopyWaitsForInLinkLayouts::WhatIsSeenAlone });
         return;
     }
     }
@@ -1430,6 +1551,7 @@ private:
         bool isWrittenAgain { false };
     };
     HashMap<uint64_t, NameWrittenOnPrototype, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_namesWrittenOnPrototypes;
+    HashSet<uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_keysWrittenOnPrototypes;
     HashMap<uint64_t, NameWrittenOnPrototype, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_accessorsWrittenInMaps;
     Vector<std::pair<uint64_t, uint64_t>> m_namesLaidOutOfMaps;
 
@@ -1617,7 +1739,7 @@ TypeID WriterOfLinkLayouts::claimedTypeAtEither(FlowNodeID first, FlowNodeID sec
         return claimedTypeAt(second);
     TypeID atFirst = claimedTypeAt(first);
     TypeID atSecond = claimedTypeAt(second);
-    return atFirst && atSecond ? unlessAnything(joinOf(types(), m_flow.families, atFirst, atSecond)) : TypeID();
+    return atFirst && atSecond ? unlessAnything(joinOf(types(), *m_flow.familiesBehindFlow, atFirst, atSecond)) : TypeID();
 }
 
 TypeID WriterOfLinkLayouts::typeEstablishedOf(const DeclaredType& declared) const
@@ -1707,6 +1829,7 @@ void WriterOfLinkLayouts::lookAtAccesses(FunctionID id, const ThinSummary& summa
 {
     m_thisOfObjectBeingMade = UINT32_MAX;
     bool constructs = m_program.at(id).constructedClass && m_program.at(id).takesThisFromConstruction();
+    FlowNodeID heirsThatRun = m_flow.findHeirsThatRun(id);
     if (const Function& function = m_program.at(id); m_asksWhatMakersGive && (function.kind == FunctionKind::Initializer || function.takesThisFromConstruction()))
         m_thisOfObjectBeingMade = function.thisParameterIndex().value_or(UINT32_MAX);
     for (const SummaryAccess& access : summary.accesses) {
@@ -1736,6 +1859,8 @@ void WriterOfLinkLayouts::lookAtAccesses(FunctionID id, const ThinSummary& summa
         if (access.key && access.key.index() < m_placesOfFirstStoresOfKeys.size() && m_placesOfFirstStoresOfKeys[access.key.index()] == UINT32_MAX)
             m_placesOfFirstStoresOfKeys[access.key.index()] = m_numberOfKeysStored++;
         PropertyKeyID key = m_flow.keyOf(id, access);
+        if (!key && access.keyNode != noSummaryNode && m_flow.reading() != WhatUnseenCodeDoes::Anything && LinkFlow::isSymbolAsFarAsIsSeen(typeAt(id, access.keyNode)))
+            continue;
         noteStoreOfMaker(summary, access, key);
         traits.add(traitsOfStoreOfMaker(id, summary, access));
         if (LayoutID constructed = traits.containsAny({ Trait::GivesUndefinedToObjectBeingMade, Trait::FillsObjectBeingConstructed }) ? m_program.at(id).constructedClass : LayoutID(); constructed && summary.nodes[access.subject].kind == SummaryNode::Kind::Parameter && typeAt(id, access.subject).objects == LinkType::Objects::Lost) {
@@ -1760,6 +1885,17 @@ void WriterOfLinkLayouts::lookAtAccesses(FunctionID id, const ThinSummary& summa
         }
         if (const SummaryNode& made = summary.nodes[access.subject]; key && made.kind == SummaryNode::Kind::Allocation && !access.isToContents() && m_program.at(LayoutID(made.first)).has(LayoutFlags::IsOfCreatedObject))
             m_namesThatConstructorsStore.add(static_cast<uint64_t>(made.first) << 32 | key.bits());
+        if (const SummaryNode& stored = summary.nodes[access.subject]; heirsThatRun && key && access.kind == SummaryAccess::Kind::Store && !access.isToContents() && stored.kind == SummaryNode::Kind::Parameter && stored.first == m_program.at(id).thisParameterIndex()) {
+            m_flow.forEachLayoutOf(m_flow.typeAt(heirsThatRun), [&](LayoutID heir) {
+                if (!m_program.at(heir).has(LayoutFlags::IsOfCreatedObject) || findField(m_program, heir, key))
+                    return;
+                LayoutID holder = findHolderAboveCreatedLayout(m_flow, heir);
+                if (!holder || findField(m_program, holder, key))
+                    return;
+                m_namesThatConstructorsStore.add(static_cast<uint64_t>(heir.index()) << 32 | key.bits());
+                noteWriteInto(heir, key, traits);
+            });
+        }
         m_definitionAtHand = access.kind == SummaryAccess::Kind::Define ? &access : nullptr;
         noteWrite(subject, key, traits);
         if (m_flow.mayStoreIntoOlderObjectThatSuperCallAnswered(id, access))
@@ -2131,6 +2267,7 @@ void WriterOfLinkLayouts::noteHalfOfAccessorLaidOnPrototype(FunctionID id, const
         layout = onlyPrototypeOfConstructorFunctionInLinkLayouts(m_flow, typeAt(id, change.subject));
     if (!layout)
         return;
+    m_keysWrittenOnPrototypes.add(change.key.bits());
     NameWrittenOnPrototype& written = m_namesWrittenOnPrototypes.add(static_cast<uint64_t>(layout.index()) << 32 | change.key.bits(), NameWrittenOnPrototype { { }, { }, { }, true }).iterator->value;
     FunctionID& half = change.lays == SummaryChange::Lays::Getter ? written.getter : written.setter;
     bool laysClosure = change.other != noSummaryNode && summary.nodes[change.other].kind == SummaryNode::Kind::Closure;
@@ -2157,6 +2294,7 @@ void WriterOfLinkLayouts::noteNameWrittenOnPrototype(FunctionID id, const ThinSu
         written = { access.writtenGetter, access.writtenSetter, { }, true };
     else if (!access.isByDescriptor && access.value != noSummaryNode && summary.nodes[access.value].kind == SummaryNode::Kind::Closure)
         written = { { }, { }, FunctionID(summary.nodes[access.value].first), true };
+    m_keysWrittenOnPrototypes.add(access.key.bits());
     auto added = m_namesWrittenOnPrototypes.add(static_cast<uint64_t>(layout.index()) << 32 | access.key.bits(), written);
     if (!added.isNewEntry) {
         added.iterator->value.isWrittenOnce = false;
@@ -2173,6 +2311,8 @@ void WriterOfLinkLayouts::noteNameWrittenOnPrototype(FunctionID id, const ThinSu
 
 bool WriterOfLinkLayouts::isWrittenOnPrototypeAbove(LayoutID layout, PropertyKeyID key) const
 {
+    if (!m_keysWrittenOnPrototypes.contains(key.bits()))
+        return false;
     size_t stepsLeft = m_program.layouts.size();
     for (LayoutID current = layout; current && stepsLeft; --stepsLeft) {
         if (m_namesWrittenOnPrototypes.contains(static_cast<uint64_t>(current.index()) << 32 | key.bits()))
@@ -2862,7 +3002,8 @@ void WriterOfLinkLayouts::writeAppendedFields()
 {
     for (uint32_t index = 0; index < m_tables.layouts.size(); ++index) {
         LayoutID id(index);
-        if (hasEscaped(index) || m_tables.layouts[index].possibleChanges.contains(LayoutChange::GainsProperty))
+        bool isExpectedOfCreatedObjects = m_flow.reading() != WhatUnseenCodeDoes::Anything && m_program.layouts[index].has(LayoutFlags::IsOfCreatedObject);
+        if (!isExpectedOfCreatedObjects && (hasEscaped(index) || m_tables.layouts[index].possibleChanges.contains(LayoutChange::GainsProperty)))
             continue;
         std::span<const PropertyKeyID> keys = m_tables.appendedKeysOf(id);
         for (uint32_t place = 0; place < keys.size(); ++place) {
@@ -2972,7 +3113,7 @@ void WriterOfLinkLayouts::writeLayouts()
         LayoutID id(index);
         LinkedLayout& linked = m_tables.layouts[index];
         linked.hasConstructorFunctionInRow = haveConstructorFunctionInRow.quickGet(index);
-        linked.family = m_flow.families.nearestCommonFamily(id, id);
+        linked.family = m_flow.familiesBehindFlow->nearestCommonFamily(id, id);
         linked.isAllocated = mayBeAllocated(id);
         linked.possibleChanges = LinkedLayout { }.possibleChanges;
         linked.listsEveryMemberAbove = !m_flow.namesMayBeIncomplete(id, ClassSide::Prototype);
@@ -3026,7 +3167,7 @@ void LinkFlow::forEachNodeAnsweredBesideObjectOfConstruction(FunctionID construc
                     functor(edge.from);
                 break;
             case SummaryNode::Kind::Allocation:
-                if (function.kind != FunctionKind::BaseConstructor)
+                if (function.kind != FunctionKind::BaseConstructor || !function.constructedClass || !standsAtOrBelow(LayoutID(from.first), function.constructedClass))
                     functor(edge.from);
                 break;
             case SummaryNode::Kind::Parameter:
@@ -3058,15 +3199,11 @@ bool LinkFlow::answersOnlyWithObjectOfItsConstruction(FunctionID constructor) co
 
 void LinkFlow::findSuperCallsThatMayAnswerWithOlderObject()
 {
+    numberTreeOfBases();
     size_t numberOfLayouts = program.layouts.size();
-    BitVector standAboveSomeClass(numberOfLayouts);
-    for (const Layout& layout : program.layouts) {
-        if (layout.base)
-            standAboveSomeClass.quickSet(layout.base.index());
-    }
-    BitVector rowsThatMayAnswerWithOlderObject = answerAlongRows(numberOfLayouts, true, [&](LayoutID above) -> StepAlongRow {
+    m_layoutsWhoseConstructionMayAnswerWithOlderObject = answerAlongRows(numberOfLayouts, true, [&](LayoutID above) -> StepAlongRow {
         const Layout& record = program.at(above);
-        if (!standAboveSomeClass.quickGet(above.index()) || !record.constructor || !answersOnlyWithObjectOfItsConstruction(record.constructor))
+        if (record.kind != LayoutKind::Instance || !record.constructor || !answersOnlyWithObjectOfItsConstruction(record.constructor))
             return { true, { } };
         if (!record.base)
             return { record.has(LayoutFlags::HasHeritage), { } };
@@ -3077,10 +3214,9 @@ void LinkFlow::findSuperCallsThatMayAnswerWithOlderObject()
         const Layout& layout = program.layouts[index];
         if (layout.kind != LayoutKind::Instance || (!layout.base && !layout.has(LayoutFlags::HasHeritage)))
             continue;
-        if (!layout.base || rowsThatMayAnswerWithOlderObject.quickGet(layout.base.index()))
+        if (!layout.base || m_layoutsWhoseConstructionMayAnswerWithOlderObject.quickGet(layout.base.index()))
             m_layoutsWhoseSuperCallMayAnswerWithOlderObject.quickSet(index);
     }
-    numberTreeOfBases();
 }
 
 void LinkFlow::numberTreeOfBases()
@@ -3149,8 +3285,7 @@ bool LinkFlow::isPartOfConstructionOf(LayoutID layout, FunctionID writer, const 
 {
     if (!mayStoreIntoOlderObjectThatSuperCallAnswered(writer, access))
         return access.isPartOfConstruction;
-    uint32_t place = m_stretchesAtAndBelowLayouts[layout.index()].first;
-    return m_stretchesAtAndBelowLayouts[program.at(writer).constructedClass.index()].holds({ place, place + 1 });
+    return standsAtOrBelow(layout, program.at(writer).constructedClass);
 }
 
 bool LinkFlow::isPartOfConstructionOfAllOf(FamilyID family, FunctionID writer, const SummaryAccess& access) const
@@ -3221,6 +3356,12 @@ void WriterOfLinkLayouts::writeFields()
                 continue;
             uint32_t cell = cellOf(reference);
             TypeID arrived = claimedTypeAt(node);
+            if (PropertyKeyID key = fieldAt(m_program, reference).key; key && arrived && m_flow.reading() == WhatUnseenCodeDoes::OnlyReadsAndCalls) {
+                if (FlowNodeID laid = m_flow.findLaidByDescriptorsOn(LayoutID(index), key); laid && !m_flow.typeAt(laid).isNothing()) {
+                    TypeID byDescriptors = claimedTypeAt(laid);
+                    arrived = byDescriptors ? types().unionOf(arrived, byDescriptors) : TypeID();
+                }
+            }
             if (m_program.layouts[index].isEnvironment())
                 arrived = namingSymbolAt(node, arrived);
             provenAtDeclaration[cell] = arrived;
@@ -3467,6 +3608,7 @@ void WriterOfLinkLayouts::write(TypeArena& types)
     writeFields();
     writeAppendedFields();
     writeAccessorsExpectedInFields(m_flow, m_tables);
+    writeMembersAboveCreatedLayouts(m_flow, m_tables);
     writeVariables();
     if (m_flow.reading() == WhatUnseenCodeDoes::Anything)
         writeCaptures();

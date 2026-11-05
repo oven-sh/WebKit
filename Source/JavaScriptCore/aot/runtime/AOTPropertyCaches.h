@@ -150,8 +150,12 @@ private:
 
     const void* keyOfState(uint32_t place) const { return &m_indices[place]; }
     SiteAnswers* ensureAnswersOf(uint32_t place, SiteUse);
-    WideSiteAnswers* wideAnswersOf(uint32_t place) const { return m_indices[place] >= SiteAnswers::firstWordOfWideAnswers ? &m_wideAnswers[(m_indices[place] - SiteAnswers::firstWordOfWideAnswers) / wordsInWideAnswers] : nullptr; }
+    WideSiteAnswers& wideAnswersAt(uint32_t number) const { return m_endOfWideAnswers[-1 - static_cast<ptrdiff_t>(number)]; }
+    uint32_t numberOf(const WideSiteAnswers& wide) const { return static_cast<uint32_t>(m_endOfWideAnswers - 1 - &wide); }
+    uint32_t firstWordOfWideAnswersAt(uint32_t number) const { return static_cast<uint32_t>(m_answers.size() * wordsInAnswers - (number + 1) * wordsInWideAnswers); }
+    WideSiteAnswers* wideAnswersOf(uint32_t place) const;
     WideSiteAnswers* ensureWideAnswersOf(uint32_t place);
+    void addFurtherAnswer(uint32_t place, SiteAnswers::Answer, UniquedStringImpl*, std::span<JSObject* const> changeableObjects);
     void giveBackIfEmpty(uint32_t numberOfAnswers);
     void giveBackWideAnswersIfEmpty(uint32_t numberOfWideAnswers);
 
@@ -159,7 +163,7 @@ private:
     SiteCaches& m_states;
     std::span<uint16_t> m_indices;
     std::span<SiteAnswers> m_answers;
-    std::span<WideSiteAnswers> m_wideAnswers;
+    WideSiteAnswers* m_endOfWideAnswers;
     Vector<uint32_t> m_places;
     Vector<uint16_t> m_numbersGivenBack;
     Vector<uint32_t> m_placesOfWideAnswers;

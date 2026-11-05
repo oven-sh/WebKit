@@ -558,6 +558,7 @@ static void printChangeOfSummary(IRPrinter& printer, const ThinSummary& summary,
         out.print(" descriptor-in-sight"_s);
     printNamedNodeOfSummary(printer, summary, "getter-in-sight="_s, change.getterInSight);
     printNamedNodeOfSummary(printer, summary, "setter-in-sight="_s, change.setterInSight);
+    printNamedNodeOfSummary(printer, summary, "laid-through-constant="_s, change.valueLaidThroughConstant);
     if (change.lays != SummaryChange::Lays::WhatDescriptorSays)
         out.print(change.lays == SummaryChange::Lays::Getter ? " getter"_s : " setter"_s);
     if (change.liesOnNoWayToReturn)
@@ -578,10 +579,10 @@ static void printSummaryInFactsText(IRPrinter& printer, FunctionID function, con
         printFlagsInFactsText(out, summary.traits);
     }
     out.print(" effects="_s);
-    printEffectsInFactsText(out, summary.ownEffects);
-    if (summary.knownEffectsApart.ownWritesOnWaysToReturn())
+    printEffectsInFactsText(out, summary.ownEffects());
+    if (!summary.ownWritesOnWaysToReturn.isEmpty())
         out.print(" writes-less-on-return"_s);
-    if (const Effects* ofOperators = summary.knownEffectsApart.ownEffectsOfOperators()) {
+    if (std::optional<Effects> ofOperators = summary.ownEffectsOfOperators()) {
         out.print(" operators="_s);
         printEffectsInFactsText(out, *ofOperators);
     }
@@ -589,8 +590,8 @@ static void printSummaryInFactsText(IRPrinter& printer, FunctionID function, con
         out.print(" may-join-texts"_s);
     if (summary.someBlockHasHandler)
         out.print(" has-handler"_s);
-    if (summary.layoutsOfOwnWrites)
-        printLayoutsWrittenInFactsText(out, "own-writes-in"_s, summary.layoutsOfOwnWrites);
+    if (summary.layoutsOfOwnWrites())
+        printLayoutsWrittenInFactsText(out, "own-writes-in"_s, summary.layoutsOfOwnWrites());
     out.println();
 
     for (uint32_t index = 0; index < summary.nodes.size(); ++index) {
@@ -602,7 +603,7 @@ static void printSummaryInFactsText(IRPrinter& printer, FunctionID function, con
         printCallOfSummary(printer, summary, index);
     for (uint32_t index = 0; index < summary.accesses.size(); ++index)
         printAccessOfSummary(printer, summary, index);
-    if (std::span<const uint32_t> operands = summary.knownEffectsApart.operandsOfOperatorsLeftApart(); !operands.empty()) {
+    if (std::span<const uint32_t> operands = summary.operandsOfOperatorsLeftApart.span(); !operands.empty()) {
         out.print("  operands-of-operators"_s);
         CommaPrinter comma(", "_s, " "_s);
         for (uint32_t node : operands) {
@@ -960,15 +961,15 @@ static void printLinkedFunctions(IRPrinter& printer, const LinkTables& tables)
             out.print(" one-callee"_s);
         if (function.closuresAreChanged)
             out.print(" closures-changed"_s);
-        out.print(" cycle="_s, function.cycle, " rank="_s, function.rank);
+        out.print(" cycle="_s, function.cycle, " rank="_s, tables.rankOfCycle[function.cycle]);
         printTypeFieldInFactsText(printer, "result"_s, function.result);
         out.print(" returns="_s);
-        printEffectsInFactsText(out, function.effectsOnReturn);
+        printEffectsInFactsText(out, function.effectsOnReturn());
         out.print(" throws="_s);
-        printEffectsInFactsText(out, function.effectsOnThrow);
-        printFieldsWrittenInFactsText(out, "fields-written-on-return"_s, function.effectsOnReturn);
-        printFieldsWrittenInFactsText(out, "fields-written"_s, function.effectsOnThrow);
-        if (!tables.known.layoutsWrittenByFunction.isEmpty() && !function.effectsOnThrow.mayCallUnknownCode)
+        printEffectsInFactsText(out, function.effectsOnThrow());
+        printFieldsWrittenInFactsText(out, "fields-written-on-return"_s, function.effectsOnReturn());
+        printFieldsWrittenInFactsText(out, "fields-written"_s, function.effectsOnThrow());
+        if (!tables.known.layoutsWrittenByFunction.isEmpty() && !function.effectsOnThrow().mayCallUnknownCode)
             printLayoutsWrittenInFactsText(out, "layouts-written"_s, tables.known.layoutsWrittenBy(id));
         if (function.runsAtMostOnce)
             out.print(" runs-once"_s);
@@ -996,6 +997,8 @@ static void printLinkedFunctions(IRPrinter& printer, const LinkTables& tables)
                 out.print(" only-called"_s);
             if (linked.isCapturedWhereOnlyCalled)
                 out.print(" captured"_s);
+            if (linked.isOnlyLookedAt)
+                out.print(" only-looked-at"_s);
             out.println();
         }
 
@@ -1026,7 +1029,7 @@ static void printLinkedFunctions(IRPrinter& printer, const LinkTables& tables)
         FunctionID node(static_cast<uint32_t>(tables.functions.size()) + index);
         out.print("group "_s);
         printNodeOfReferrersInFactsText(printer, tables, node);
-        out.println(" cycle="_s, tables.groups[index].cycle, " rank="_s, tables.groups[index].rank);
+        out.println(" cycle="_s, tables.groups[index].cycle, " rank="_s, tables.rankOfCycle[tables.groups[index].cycle]);
         printReferrersInFactsText(printer, tables, node);
     }
 }
@@ -1190,6 +1193,14 @@ static void printLinkedMembers(IRPrinter& printer, const LinkTables& tables)
         }
         if (member.everyWriterIsKnown)
             out.print(" writers-known"_s);
+        out.println();
+    }
+    for (const LinkedMember& member : tables.membersAboveCreatedLayouts) {
+        out.print("above-created "_s);
+        printer.print(member.classLayout);
+        printKindAndKeyOfMemberInFactsText(printer, member.kind, member.key);
+        out.print(" function="_s);
+        printer.print(member.function);
         out.println();
     }
     for (const LinkedNameOnFunction& name : tables.namesOnFunctions) {
@@ -1405,10 +1416,10 @@ static void printLinkCounts(PrintStream& out, const Program& program, const Fact
         oneCallee += linked.everyCallHasOneCallee;
         callersKnownAndOneCallee += linked.everyCallerIsKnown && linked.everyCallHasOneCallee;
         coroutines += function.isCoroutine();
-        returnsAnything += linked.effectsOnReturn == Effects { };
-        returnsNothing += linked.effectsOnReturn.isPure();
+        returnsAnything += linked.effectsOnReturn() == Effects { };
+        returnsNothing += linked.effectsOnReturn().isPure();
         ++sizesOfCycles.add(linked.cycle, 0).iterator->value;
-        highestRank = std::max(highestRank, linked.rank);
+        highestRank = std::max(highestRank, tables.rankOfCycle[linked.cycle]);
         takesArrivals += linked.everyCallerIsKnown && linked.everyCallHasOneCallee && !linked.isNamedInItsCycle;
 
         results.add(types, linked.result);
@@ -1885,6 +1896,16 @@ static void runCausesCommand(TestCommandContext& context)
     context.out.println("unseen-scripts "_s, facts->unseenScriptsCanRun() ? "can-run"_s : "cannot-run"_s);
 }
 
+static void runLackedCommand(TestCommandContext& context)
+{
+    StagedBuild stage = context.stage();
+    const Facts* facts = stage.facts();
+    if (!facts)
+        return;
+    for (RuntimeFunctionID function : facts->libraryFunctionsLacked())
+        context.out.println("lacked "_s, tokenOf(stage.program().builtins(), function));
+}
+
 static void runFeaturesCommand(TestCommandContext& context)
 {
     StagedBuild stage = context.stage();
@@ -1917,6 +1938,7 @@ std::span<const TestCommand> factsTestCommands()
         { "locales"_s, runLocalesCommand, ProgramOfCommand::AsWritten, ""_s },
         { "causes"_s, runCausesCommand, ProgramOfCommand::AsWritten, ""_s },
         { "features"_s, runFeaturesCommand, ProgramOfCommand::AsWritten, ""_s },
+        { "lacked"_s, runLackedCommand, ProgramOfCommand::AsWritten, ""_s },
         { "closure"_s, runClosureCommand, ProgramOfCommand::AsWritten, ""_s },
         { "facts"_s, runFactsCommand, ProgramOfCommand::AsWritten, "enforced [counts]"_s },
         { "regexp-texts"_s, runRegExpTextsCommand, ProgramOfCommand::AsWritten, "[hashes] [realms]"_s },

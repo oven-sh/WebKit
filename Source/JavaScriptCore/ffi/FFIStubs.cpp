@@ -115,18 +115,32 @@ std::optional<Stubs::BlockOfCallbackEntries> Stubs::tryMapCallbackEntries() cons
         if (m_callbackEntries.imageInExecutable && descriptor >= 0)
             close(descriptor);
     });
+    auto mapRegion = [&](int protection, int flags, int file, off_t offset) {
+        void* region = mmap(nullptr, regionSize, protection, MAP_PRIVATE | flags, file, offset);
+        return region == MAP_FAILED ? nullptr : static_cast<uint8_t*>(region);
+    };
     struct stat status;
-    if (descriptor < 0 || fstat(descriptor, &status) || !S_ISREG(status.st_mode) || status.st_size < m_callbackEntries.offsetInFile + static_cast<int64_t>(codeSize))
-        return std::nullopt;
-    void* region = mmap(nullptr, regionSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
-    if (region == MAP_FAILED)
-        return std::nullopt;
-    // It may still be another file of that length.
-    if (mmap(region, codeSize, PROT_READ | PROT_EXEC, MAP_PRIVATE | MAP_FIXED, descriptor, m_callbackEntries.offsetInFile) == MAP_FAILED || memcmp(region, pages, codeSize)) {
-        munmap(region, regionSize);
-        return std::nullopt;
+    bool fileHoldsPages = descriptor >= 0 && !fstat(descriptor, &status) && S_ISREG(status.st_mode) && status.st_size >= m_callbackEntries.offsetInFile + static_cast<int64_t>(codeSize);
+    uint8_t* code = fileHoldsPages ? mapRegion(PROT_READ | PROT_EXEC, 0, descriptor, m_callbackEntries.offsetInFile) : nullptr;
+    if (code && mmap(code + codeSize, m_callbackEntries.contextSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON | MAP_FIXED, -1, 0) == MAP_FAILED) {
+        munmap(code, codeSize);
+        code = nullptr;
     }
-    auto* code = static_cast<uint8_t*>(region);
+    if (code && memcmp(code, pages, codeSize)) {
+        munmap(code, regionSize);
+        code = nullptr;
+    }
+    if (!code) {
+        code = mapRegion(PROT_READ | PROT_WRITE, MAP_ANON, -1, 0);
+        if (!code)
+            return std::nullopt;
+        memcpy(code, pages, codeSize);
+        if (mprotect(code, codeSize, PROT_READ | PROT_EXEC)) {
+            munmap(code, regionSize);
+            return std::nullopt;
+        }
+        __builtin___clear_cache(reinterpret_cast<char*>(code), reinterpret_cast<char*>(code + codeSize));
+    }
 #endif
     return BlockOfCallbackEntries { code, { code + codeSize, m_callbackEntries.contextSize } };
 #else

@@ -1015,6 +1015,7 @@ export const internalField = (index: number, heap: Heap, holds?: TableType): Slo
   internalField: index,
 });
 export const handedOutBySteps = (heap: Heap): SlotSpec => ({ ...state(heap), holdsWhatStepsHandOut: true });
+export const thrownValue = (slot: SlotSpec): SlotSpec => ({ ...slot, holdsWhatIsThrown: true });
 export const exactType = (path: string, ...typeArguments: readonly SlotName[]): TypeNameSpec => ({
   path: path.split("."),
   isView: false,

@@ -48,7 +48,7 @@ static void appendFault(CodeSketch& sketch, Vector<ExpectedFault>& faults, uint3
     SiteDescription& sites = sketch.code().sites;
     if (words.isEmpty()) {
         uint32_t offset = sketch.pinned(word, wordsInLoopPoll);
-        sites.pollSites.append(PollSite { offset, !hasFrame });
+        sites.rareLists.ensure().pollSites.append(PollSite { offset, !hasFrame });
         faults.append(ExpectedFault { offset, FaultSiteKind::LoopPoll, hasFrame, { } });
         return;
     }
@@ -378,7 +378,7 @@ static void testHandlersThroughImage()
     for (unsigned i = 0; i < 3; ++i)
         appendCall(sketch, sites, i);
     uint32_t landingPad = sketch.end();
-    sketch.code().sites.handlers.append(SiteHandler { 2, landingPad, HandlerType::Catch });
+    sketch.code().sites.rareLists.ensure().handlers.append(SiteHandler { 2, landingPad, HandlerType::Catch });
 
     BodiesImage built(3, bodies(sketch.take(), bodyWithCalls(2, 3).code));
     const Image& table = built.table();

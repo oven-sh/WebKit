@@ -113,7 +113,6 @@ operation StringBuilderFinish (builder: StringBuilder/inspects) [isLikelyKey] ->
 operation StringBuilderDiscard (builder: StringBuilder/inspects) -> none ; reads(StringBuilderContents, RuntimeState) writes(StringBuilderContents, RuntimeState) ; runtime = StringBuilderDiscard ; form = Closed
 operation StringBuilderCheckpoint (builder: StringBuilder/inspects) -> natural(int32) ; reads(StringBuilderContents) ; form = Open
 operation StringBuilderRollBack (builder: StringBuilder/inspects, checkpoint: Integer/inspects) -> none ; writes(StringBuilderContents) ; runtime = StringBuilderRollBack ; form = Runtime
-operation StringBuilderCheckLength (builder: StringBuilder/inspects) -> none ; reads(StringBuilderContents) writes(StringBuilderContents) throws ; runtime = StringBuilderCheckLength ; form = Open
 engine operation StackStringBuilderBegin () -> natural(StringBuilder) ; writes(StringBuilderContents) ; form = Open
 engine operation StackStringBuilderStart (builder: StringBuilder/inspects) -> natural(BuilderCursor) ; none ; base = builder ; form = Open
 engine operation StackStringBuilderCursor (builder: StringBuilder/inspects) -> natural(BuilderCursor) ; reads(StringBuilderContents) ; base = builder ; form = Open

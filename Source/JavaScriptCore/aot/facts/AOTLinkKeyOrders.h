@@ -22,6 +22,8 @@ struct AccessorLaidInField {
 };
 
 void writeAccessorsExpectedInFields(const LinkFlow&, LinkTables&);
+void writeMembersAboveCreatedLayouts(const LinkFlow&, LinkTables&);
+LayoutID findHolderAboveCreatedLayout(const LinkFlow&, LayoutID created);
 
 } } } // namespace JSC::AOT::Typed
 

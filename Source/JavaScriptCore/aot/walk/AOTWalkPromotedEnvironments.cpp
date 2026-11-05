@@ -3,10 +3,6 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-// What the plan has promoted (AOTPromotedEnvironments.cpp) is decided there alone, so every unit of a function goes by it, the slow body too.
-// A field of such a scope stays a GetEnvironmentField | PutEnvironmentField: Link's effects, the looks at loops and the state go on speaking of fields, and the emitter finds the word among the variables.
-// In the place of the scope, and of a capture that is left out of a call, stands a word that says nothing. Whoever inspects it stops the build (UnspecifiedValueInspected).
-// A reader of such a word takes no operand, so nothing but its place holds it behind the store: it leaves no loop (findLoopToBuildInFrontOf()).
 
 #include "config.h"
 #include "AOTWalk.h"
@@ -117,8 +113,6 @@ bool leaveEnvironmentAmongVariables(Walker& walker, const BodyValue& value)
     return true;
 }
 
-// That a way has stored is a fact of the way. The state holds it as it holds the end of a dead zone: no effect ends it, and a join keeps it only where every way brings it.
-// Where the state has let it go the value is stored once more, which changes nothing.
 void Walker::storeValueNoLongerCaptured(const StoreOfCapturedValue& store)
 {
     Reference stored = referenceBoundTo(store.value);
@@ -149,9 +143,6 @@ void Walker::storeParametersNoLongerCaptured()
     }
 }
 
-// The store belongs to the definition, which every way to a reader goes through: whatever passes by a closure that nobody asks for (a throw that nobody reads) passes by no store.
-// Whoever binds an operation by hand and walks what stands behind it before walkStretch() comes back to the operation calls this behind the binding, once for each way.
-// The verifier holds the outcome against the code (verifyWordsInPlaceOfCaptures()).
 void Walker::storeValueBehindItsDefinitionInMaker(ValueID definition)
 {
     auto found = std::ranges::lower_bound(m_storesOfCapturedValues, definition, { }, &StoreOfCapturedValue::value);

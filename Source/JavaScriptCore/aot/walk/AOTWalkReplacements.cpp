@@ -573,11 +573,9 @@ PropertyKeyID keyOfSymbolMadeOnce(Walker& walker, const BodyValue& value)
     BuiltinID called = walker.program().builtins().canonicalID(body.value(callee).as<Opcode::Builtin>().builtin());
     if (called != Builtins::Symbol && called != Builtins::SymbolFor)
         return { };
-    const Vector<SummaryCall>& calls = walker.facts().summaries().at(walker.currentFunction()).calls;
-    auto record = std::ranges::find_if(calls, [&](const SummaryCall& call) {
-        return call.site == value.id() && call.callee == SummaryCall::Callee::Builtin;
-    });
-    return record != calls.end() ? keyOfSymbolMadeOnceBy(walker.program(), *record) : PropertyKeyID();
+    std::span<const SummaryKeyAtSite> symbols = walker.facts().summaries().at(walker.currentFunction()).symbolsMadeOnce.span();
+    auto made = std::ranges::find(symbols, value.id(), &SummaryKeyAtSite::site);
+    return made != symbols.end() ? made->key : PropertyKeyID();
 }
 
 static bool replaceCallThatMakesSymbolOnce(Walker& walker, const BodyValue& call)

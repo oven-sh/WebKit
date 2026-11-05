@@ -18,7 +18,7 @@
 # RANGES-NOT: the build failed
 # RANGES: unit f1:CoroutineBody
 # RANGES: 0 {{*}} main {{*}}
-# RANGES: {{*}} main AwaitBySavingFrame v{{*}}
+# RANGES: {{*}} main AwaitBySavingFrame v{{*}} frame 0 plainBlock
 # RANGES: {{*}} main End Return
 # RUN(ALONE): same-bytes-alone
 # ALONE-NOT: differs

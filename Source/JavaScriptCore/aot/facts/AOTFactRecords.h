@@ -10,7 +10,7 @@
 #include "AOTBodyIndex.h"
 #include "AOTBuiltinIDTypes.h"
 #include "AOTDiagnostics.h"
-#include "AOTEffects.h"
+
 #include "AOTID.h"
 #include "AOTLayout.h"
 #include "AOTObjects.h"
@@ -81,11 +81,6 @@ struct Summary {
 
 struct PositionFacts {
     TypeID proven;
-};
-
-struct FunctionEffects {
-    Effects onReturn { Effects::unknownCode() };
-    Effects onThrow { Effects::unknownCode() };
 };
 
 struct LocationFacts {

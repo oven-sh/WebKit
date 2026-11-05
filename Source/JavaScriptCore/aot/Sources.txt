@@ -514,6 +514,7 @@ aot/walk/AOTWalkFolding.cpp
 aot/walk/AOTWalkForIn.cpp
 aot/walk/AOTWalkForInKeys.cpp
 aot/walk/AOTWalkGeneratorStepsByHand.cpp
+aot/walk/AOTWalkGeneratorsInLoops.cpp
 aot/walk/AOTWalkGuesses.cpp
 aot/walk/AOTWalkHandlers.cpp
 aot/walk/AOTWalkInlining.cpp

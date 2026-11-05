@@ -1,0 +1,52 @@
+# What is held of the fields of a record that a copy lands on is what the fields of the source hold: a copy takes own properties, so it brings neither undefined nor null from above them, whether or not the program also reads the source under a key that nobody knows
+# function fill(t, s) { Object.assign(t, s); }  function pick(r, k) { return r[k]; }  function widthOf(t) { return t.width; }  const options = { width: 1, title: "x" };  const target = { width: 2, title: "y" };  sink(target);  fill(target, options);  pick(options, "width");  pick(options, "title");  widthOf(target);
+# Unseen code has the target, so the copy no longer goes field by field alone: it reads its source under every key and stores under every key. The read of pick() has asked for all fields of the source rounds before. If the copy were handed the node that was tied for the read, undefined and null would be held of target.width, and with them that the program itself brings something unknown
+# RUN: link held functions mechanisms=all
+# CHECK: function f2 {{*}}result=undefined|null|i32|string returns
+# CHECK: function f3 {{*}}result=i32|string returns
+
+layout L0 module=m0 fields=[{key="width" declared={type=anything} flags=[IsRequired]}, {key="title" declared={type=anything} flags=[IsRequired]}]
+layout L1 module=m0 fields=[{key="width" declared={type=anything} flags=[IsRequired]}, {key="title" declared={type=anything} flags=[IsRequired]}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = Integer integer=1
+    v3 = String string="x"
+    v4 = NewObject -, v2, v3 layout=L0 fields=[0, 1]
+    v5 = FinishObject v4
+    v6 = Integer integer=2
+    v7 = String string="y"
+    v8 = NewObject -, v6, v7 layout=L1 fields=[0, 1]
+    v9 = FinishObject v8
+    v10 = Call v1, -, v9 calleeName="sink"
+    v11 = NewClosure function=f1
+    v12 = NewClosure function=f2
+    v13 = NewClosure function=f3
+    v14 = Call v11, -, v9, v5 calleeName="fill"
+    v15 = String string="width"
+    v16 = String string="title"
+    v17 = Call v12, -, v5, v15 calleeName="pick"
+    v18 = Call v12, -, v5, v16 calleeName="pick"
+    v19 = Call v13, -, v9 calleeName="widthOf"
+    Return v19
+}
+function f1 name="fill" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Builtin builtin=ObjectAssign [isNotReadFromHolder]
+    v3 = Call v2, -, v0, v1
+    v4 = Undefined
+    Return v4
+}
+function f2 name="pick" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = ElemGet v0, v1
+    Return v2
+}
+function f3 name="widthOf" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="width"
+    Return v1
+}

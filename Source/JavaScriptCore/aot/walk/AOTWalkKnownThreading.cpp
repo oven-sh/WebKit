@@ -173,6 +173,8 @@ void KnownThreading::forgetValuesThatNobodyReadsAnyMore()
     uint32_t here = m_block.firstParameter().index();
     Walker::Frame::ValuesBuiltTwice& listed = *frame().valuesBuiltTwice;
     for (uint32_t slot : listed.slotsListedAnew) {
+        if (listed.slots[slot].value.index() >= frame().index->numberOfValues())
+            continue;
         listed.slotsByLastUse.append({ m_walker.m_liveness.lastUse(listed.slots[slot].value).index(), slot });
         std::ranges::push_heap(listed.slotsByLastUse, std::ranges::greater());
     }
@@ -231,20 +233,18 @@ bool KnownThreading::letTerminatorBeWalkedForEachWay(ValueID firstBuiltOnEachWay
         if (!m_index.isParameter(value) && mustBeNamedByDefinitionInKnownThreading(m_index, value))
             return false;
     }
-    if (!readBehind.isEmpty()) {
-        std::optional<Vector<BlockID, 4>>& handlerBlocks = frame().handlerBlocks;
-        if (!handlerBlocks) {
-            handlerBlocks.emplace();
-            for (uint32_t number = 0; number < m_index.numberOfBlocks(); ++number) {
-                if (m_index.block(BlockID(number)).isHandlerBlock())
-                    handlerBlocks->append(BlockID(number));
-            }
-        }
-        uint32_t lastUse = 0;
-        for (ValueID value : readBehind)
-            lastUse = std::max(lastUse, liveness.lastUse(value).index());
-        for (auto handlerBlock = std::ranges::upper_bound(*handlerBlocks, m_block.id()); handlerBlock != handlerBlocks->end() && m_index.block(*handlerBlock).firstParameter().index() <= lastUse; ++handlerBlock) {
-            for (ValueID value : readBehind) {
+    Vector<ValueID, 8> readByHandlers;
+    uint32_t lastUse = 0;
+    for (ValueID value : readBehind) {
+        if (!m_walker.numberOfHandlersThatRead(frame(), value))
+            continue;
+        readByHandlers.append(value);
+        lastUse = std::max(lastUse, liveness.lastUse(value).index());
+    }
+    if (!readByHandlers.isEmpty()) {
+        std::span<const BlockID> handlerBlocks = m_walker.handlerBlocksOf(frame());
+        for (auto handlerBlock = std::ranges::upper_bound(handlerBlocks, m_block.id()); handlerBlock != handlerBlocks.end() && m_index.block(*handlerBlock).firstParameter().index() <= lastUse; ++handlerBlock) {
+            for (ValueID value : readByHandlers) {
                 if (liveness.isLiveAtHead(value, *handlerBlock))
                     return false;
             }
@@ -752,7 +752,7 @@ bool Walker::armsTakeBranchForProofOf(BlockID inputBlock, uint32_t begin, uint32
     const Frame& frame = m_frames.last();
     BodyBlock block = frame.index->block(inputBlock);
     TerminatorKind kind = block.terminator().kind();
-    bool returnsFromCopy = (kind == TerminatorKind::Return || kind == TerminatorKind::ReturnCall) && m_frames.size() > 1 && !frame.returnsInPlaceOfUnit;
+    bool returnsFromCopy = (kind == TerminatorKind::Return || kind == TerminatorKind::ReturnCall) && !walksOwnBodyOfUnit() && !frame.returnsInPlaceOfUnit;
     bool mayBeTaken = goesByOneOperand(kind) || kind == TerminatorKind::Jump || returnsFromCopy;
     if ((value && !value.isValue()) || !mayBeTaken || frame.endOfStretch != block.numberOfValues() || block.numberOfValues() - end > mostOperationsOfJoinWalkedForEachWay)
         return false;

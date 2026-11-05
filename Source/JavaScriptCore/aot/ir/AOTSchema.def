@@ -116,7 +116,6 @@ effects AppendsToBuilder = reads(StringBuilderContents, StringStorage, Allocator
 effects ResolvesRopes = reads(StringStorage) writes(StringStorage, RuntimeState) throws collects
 effects CreatesString = reads(StringStorage, AllocatorState) writes(StringStorage, AllocatorState, RuntimeState) throws collects
 effects GrowsArray = reads(ArrayStorage, Elements[Array], AllocatorState) writes(ArrayStorage, Elements[Array], AllocatorState, RuntimeState) throws collects
-effects ReadsObjectGraph = reads(ObjectFields, ShapeWords, OrderWords, NamedProperties, Elements, ArrayStorage, StringStorage)
 
 opaque IteratorState Enumerator Exception ClassToken
 opaque Cursor KeyOrder engine directCallsOnly

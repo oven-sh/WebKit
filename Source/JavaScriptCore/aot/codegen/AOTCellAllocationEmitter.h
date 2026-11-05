@@ -43,6 +43,7 @@ public:
     CellPointer allocateObjectCopy(const OperationContext&, const MentionedAllocation&, CellPointer source, unsigned fieldBytes);
     void copyFieldWords(CellPointer source, CellPointer cell, unsigned fieldBytes);
     CellPointer allocateInFrame(const OperationContext&, size_t size);
+    CellPointer frameCellLent(ValueID cell);
 
     std::pair<CellPointer, Pointer> allocateArray(const OperationContext&, Word32 length, Word32 vectorLength, IndexingType, LBasicBlock slowPath);
     CellPointer allocateArrayOfLength(const OperationContext&, IndexingType, unsigned length);
@@ -57,10 +58,10 @@ private:
     LValue slotOfFrameCell(const OperationContext&, size_t size);
 
     struct SlotOfClosuresLent {
-        size_t size { 0 };
         Machine::StackSlot* slot { nullptr };
         uint32_t blockIndex { 0 };
         ValueID call;
+        ValueID cell;
     };
     Vector<SlotOfClosuresLent, 4> m_slotsOfClosuresLent;
 };

@@ -21,6 +21,7 @@ public:
     void generateEndLifeOfCell(const ValueContext&);
     bool endsLivesAtRunTime();
     void endLifeOf(const OperationContext&, ValueID cell);
+    void noteThatCellIsLent(const ValueContext& made, CellPointer);
     void stopWhereLifeHasEnded(const OperationContext&, CellPointer);
     void pollWhereNoFrameIsSetUp(const OperationContext&);
 

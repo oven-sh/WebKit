@@ -10,8 +10,9 @@
 # The store goes to globalThis, so unseen code may put anything into its Map: nothing is proven of what `get` gives. WHAT IS EXPECTED is the union of what the sites in sight put in: the reading of Link in which unseen code only reads and calls lists it at the Map's operations, and the guess at what `get` gave goes by it: the reads of `weight` and `bias` test for the literal's layout themselves and no longer go by name.
 # RUN(FORM): walk f1 mechanisms=all
 # FORM: [[given]]: {{*}} = CallInline {{*}} inlineBuiltin=MapGet
-# FORM: GetSlot {{*}} key="weight" receivers=[L1] level=Expected
-# FORM: GetSlot {{*}} key="bias" receivers=[L1] level=Expected
+# FORM: = ShapeTest {{*}}layouts=[L1]
+# FORM: GetSlot {{*}} key="weight" receivers=[L1] level=Proven
+# FORM: GetSlot {{*}} key="bias" receivers=[L1] level=Proven
 # RUN(ALL): run-in-shell mechanisms=all
 # ALL: 32
 # RUN(CALLS): run-in-shell mechanisms=-Inlining

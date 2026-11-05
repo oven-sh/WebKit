@@ -620,7 +620,6 @@ static bool standsBelowFunctionsNamedByClassRecords(VM& vm, State& state, const 
         if (stateOfClassHolder(vm, state, *current, ClassSide::Static, parent, namesOfFunctionsAbove) != StateOfClassHolder::AsDeclared)
             return false;
     }
-    // The row of records goes on where the functions are not linked: what it declares further up is not found from here.
     while ((current = classes.assumedBaseOf(*current))) {
         for (const MethodData& method : methodsInClassRecord(*current, ClassSide::Static))
             namesOfFunctionsAbove.add(method.flags & methodHasComputedName ? std::nullopt : std::optional<uint32_t>(static_cast<uint32_t>(method.name)));
@@ -1118,6 +1117,43 @@ bool ClassTable::takesObjectsLaidBelowPrototype(VM& vm, const LayoutData& instan
     return true;
 }
 
+bool ClassTable::accessorAboveCreatedObjectsIsWhatRecordNames(VM& vm, const LayoutData& classLayout, Structure* structure, uint32_t name)
+{
+    const MethodData* getter = nullptr;
+    const MethodData* setter = nullptr;
+    for (const MethodData& method : methodsInClassRecord(classLayout, ClassSide::Prototype)) {
+        if (!isNamedInClassRecord(method, name))
+            continue;
+        if (method.kind() == MethodKind::Method)
+            return false;
+        (method.kind() == MethodKind::Getter ? getter : setter) = &method;
+    }
+    JSGlobalObject* realm = m_state.instance.globalObject;
+    const Identifier& identifier = identifiersOf(m_state.instance).identifier(name);
+    ChainWalk walk = walkChain({ realm, structure, nullptr, ChainWalkMode::MayAllocate, ChainWalkUse::KeptForReads }, identifier.impl());
+    if (!walk.dependsOnChain())
+        return false;
+    if (!getter && !setter) {
+        if (walk.result != ChainWalkResult::Absent)
+            return false;
+        m_state.chainDependents->add(walk.changeableObjects.span(), ChainDependent { identifier.impl(), classLayout.index, ownerOfGuardsThatHangOnChains() });
+        return true;
+    }
+    if (walk.result != ChainWalkResult::Found || !walk.holder)
+        return false;
+    PropertySlot slot(walk.holder, PropertySlot::InternalMethodType::VMInquiry, &vm);
+    if (!walk.holder->methodTable()->getOwnPropertySlot(walk.holder, realm, identifier, slot) || !slot.isAccessor())
+        return false;
+    GetterSetter* held = slot.getterSetter();
+    auto isHalfOfRecord = [&](bool isNull, JSObject* half, const MethodData* row) {
+        return row ? !isNull && functionOf(half) == FunctionID(row->function) : isNull;
+    };
+    if (!isHalfOfRecord(held->isGetterNull(), held->getter(), getter) || !isHalfOfRecord(held->isSetterNull(), held->setter(), setter))
+        return false;
+    m_state.chainDependents->add(walk.changeableObjects.span(), ChainDependent { identifier.impl(), classLayout.index, ownerOfGuardsThatHangOnChains() });
+    return true;
+}
+
 void ClassTable::defineClassOfCreatedObjects(VM& vm, const LayoutData& classLayout, JSObject* parent)
 {
     ASSERT(isClassOfCreatedObjects(classLayout) && !classPrototypeIfExists(classLayout));
@@ -1136,7 +1172,8 @@ void ClassTable::defineClassOfCreatedObjects(VM& vm, const LayoutData& classLayo
     for (size_t index = 0; index < guards.size(); ++index) {
         const NamedClassGuardData& guard = guards[index];
         if (!guard.answersStoresAlone()) {
-            bitsThatDoNotBegin.add(guard.numberOfBit());
+            if (!accessorAboveCreatedObjectsIsWhatRecordNames(vm, classLayout, structure, guard.name))
+                bitsThatDoNotBegin.add(guard.numberOfBit());
             continue;
         }
         if (!index || guard.name != nameAsked || !guards[index - 1].answersStoresAlone()) {

@@ -72,7 +72,10 @@ static bool closureHoldsWordForListedCapture(const Program& program, const Calli
 
 void ConstantEmitter::generateNewClosure(const ValueContext& value)
 {
-    defineCell(value, closureCreatedBy(value));
+    CellPointer closure = closureCreatedBy(value);
+    if (!generator().hasFailed() && emitter<HintEmitter>().endsLivesAtRunTime() && lentClosureMayStandInHeap(m_code, value.valueID()) && value->loan() != LoanOfClosure::None)
+        emitter<HintEmitter>().noteThatCellIsLent(value, closure);
+    defineCell(value, closure);
 }
 
 CellPointer ConstantEmitter::closureCreatedBy(const ValueContext& value)
@@ -85,7 +88,7 @@ CellPointer ConstantEmitter::closureCreatedBy(const ValueContext& value)
     if (!conventions().exists(entry))
         return failWithoutCell(value, InternalErrorKind::OpcodeWithoutCode);
 
-    bool lifeIsEndedBehindCall = emitter<HintEmitter>().endsLivesAtRunTime() && isLentToFunctionsEnteredAlone(m_code, value.valueID());
+    bool lifeIsEndedBehindCall = emitter<HintEmitter>().endsLivesAtRunTime() && lentClosureMayStandInHeap(m_code, value.valueID());
     if (lifeIsEndedBehindCall)
         generator().noteClosureWhoseLifeEndsBehind(value.valueID(), callThatBorrowsClosure(m_code, value.valueID()));
     NewClosureRequest request { function, m_plan.functionKind(m_program, entry), { }, lifeIsEndedBehindCall ? AllocationStorage::Heap : value->storage(), value->closureForm(), captures };

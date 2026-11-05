@@ -27,6 +27,7 @@ import {
   type ModelLayout,
   type ModelLayoutField,
   type ModelModule,
+  type ModelName,
   type ModelNamesReadByNativeCode,
   type ModelRealmStructure,
   type ModelSlot,
@@ -82,6 +83,7 @@ const attachmentSpans: readonly SpanMember[] = [
   ["calledFunctions", "builtinTableCalledFunctions"],
   ["startupCalledFunctions", "builtinTableStartupCalledFunctions"],
   ["hostObjects", "builtinTableHostObjects"],
+  ["nativeCellsFilledByCalledFunctions", "builtinTableNativeCellsFilledByCalledFunctions"],
   ["forms", "builtinTableForms"],
   ["boxedCalls", "builtinTableBoxedCalls"],
   ["numberConstants", "builtinTableNumberConstants"],
@@ -247,6 +249,7 @@ function formatSlot(slot: ModelSlot): string {
     ["holds", formatId("BuiltinTypeID", slot.holds)],
     ["internalField", slot.internalField === null ? null : String(slot.internalField)],
     ["holdsWhatStepsHandOut", formatUnlessFalse(slot.holdsWhatStepsHandOut)],
+    ["holdsWhatIsThrown", formatUnlessFalse(slot.holdsWhatIsThrown)],
   ]);
 }
 
@@ -273,7 +276,29 @@ function formatRealmStructure({ getter, names }: ModelRealmStructure, realmStruc
   ]);
 }
 
-function formatModule(module: ModelModule, exportsHeldByNamespaces: Pool): string {
+interface NativeReads {
+  readsEveryExport: boolean;
+  names: Map<number, ModelName>;
+}
+
+function collectNativeReads(model: TableModel): Map<ModelModule, NativeReads> {
+  const reads = new Map<ModelModule, NativeReads>();
+  const loads = [...model.builtins.flatMap(builtin => builtin.attachments.moduleLoads), ...model.startup.loads];
+  for (const { module, exports } of loads) {
+    let read = reads.get(module);
+    if (read === undefined) reads.set(module, (read = { readsEveryExport: false, names: new Map() }));
+    if (exports === null) read.readsEveryExport = true;
+    else for (const { name } of exports) read.names.set(name.number, name);
+  }
+  return reads;
+}
+
+function formatModule(
+  module: ModelModule,
+  exportsHeldByNamespaces: Pool,
+  nativeReads: NativeReads | undefined,
+  exportsReadByNativeCode: Pool,
+): string {
   return formatAggregate([
     ["id", formatId("RuntimeModuleID", module)],
     ["namespaceObject", formatId("BuiltinID", module.namespace)],
@@ -284,9 +309,18 @@ function formatModule(module: ModelModule, exportsHeldByNamespaces: Pool): strin
         ["HasOpenNamespace", module.hasOpenNamespace],
         ["ListsAllExports", module.listsAllExports],
         ["IsPublic", module.isPublic],
+        ["NativeCodeReadsEveryExport", nativeReads?.readsEveryExport ?? false],
       ]),
     ],
     ["exportsHeldByNamespace", exportsHeldByNamespaces.add(module.exportsHeldByNamespace.map(name => formatName(name)))],
+    [
+      "exportsReadByNativeCode",
+      exportsReadByNativeCode.add(
+        [...(nativeReads?.names.values() ?? [])]
+          .sort((left, right) => left.number - right.number)
+          .map(name => formatName(name)),
+      ),
+    ],
   ]);
 }
 
@@ -403,6 +437,8 @@ export function emitCppBuiltins(model: TableModel): string {
   const layoutFields = new Pool("BuiltinLayoutField", "layoutFields");
   const implementedBuiltins = new Pool("BuiltinID", "implementedBuiltins");
   const exportsHeldByNamespaces = new Pool("BuiltinName", "exportsHeldByNamespaces");
+  const exportsReadByNativeCode = new Pool("BuiltinName", "exportsReadByNativeCode");
+  const nativeReads = collectNativeReads(model);
   const lockedMembers = new Pool("BuiltinID", "lockedMembers");
   const lockedMemberSpan = lockedMembers.add(formatBuiltinIds(model.membersLockedByName));
   const closedKeyNames = new Pool("BuiltinName", "closedKeyNames");
@@ -429,7 +465,9 @@ export function emitCppBuiltins(model: TableModel): string {
     emitTableArray(
       arrays,
       "builtinTableRuntimeModules",
-      model.modules.map(module => formatModule(module, exportsHeldByNamespaces)),
+      model.modules.map(module =>
+        formatModule(module, exportsHeldByNamespaces, nativeReads.get(module), exportsReadByNativeCode),
+      ),
     ),
     emitTableArray(
       arrays,
@@ -502,6 +540,7 @@ export function emitCppBuiltins(model: TableModel): string {
     layoutFields.emit(),
     implementedBuiltins.emit(),
     exportsHeldByNamespaces.emit(),
+    exportsReadByNativeCode.emit(),
     lockedMembers.emit(),
     closedKeyNames.emit(),
     namesReadByNativeCode.emit(),

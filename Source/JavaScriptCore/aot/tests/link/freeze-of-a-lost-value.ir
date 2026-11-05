@@ -9,18 +9,18 @@
 # CHECK: field L4.0 "e" proven=string writers-known
 # CHECK: field L5.0 "f" proven=string writers-known
 # CHECK: field L6.0 "g" proven=string writers-known
-# CHECK: layout L0 changes=[IsFrozen]
-# CHECK: layout L1 changes=[IsFrozen]
-# CHECK: layout L2 changes=[IsFrozen]
-# CHECK: layout L3 changes=[]
-# CHECK: layout L4 changes=[IsFrozen]
-# CHECK: layout L5 changes=[IsFrozen]
-# CHECK: layout L6 changes=[IsFrozen]
+# CHECK: layout L0 {{*}}changes=[IsFrozen]
+# CHECK: layout L1 {{*}}changes=[IsFrozen]
+# CHECK: layout L2 {{*}}changes=[IsFrozen]
+# CHECK: layout L3 {{*}}changes=[]
+# CHECK: layout L4 {{*}}changes=[IsFrozen]
+# CHECK: layout L5 {{*}}changes=[IsFrozen]
+# CHECK: layout L6 {{*}}changes=[IsFrozen]
 # RUN(LOST): link functions mechanisms=all
 # LOST: function f1 callers-known one-callee
-# LOST-NEXT: parameter 0 {{*}}proven=object
+# LOST-NEXT: parameter 0 {{*}}proven=L0|L1|L2|L4|L5|L6
 # LOST: function f2 callers-known one-callee
-# LOST-NEXT: parameter 0 {{*}}proven=object
+# LOST-NEXT: parameter 0 {{*}}proven=L0|L1|L2|L4|L5|L6
 # LOST: function f3 callers-known one-callee
 # LOST-NEXT: parameter 0 {{*}}proven=L3
 

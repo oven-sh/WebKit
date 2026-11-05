@@ -21,7 +21,9 @@
 # RUN(WITHHELD): walk f1 mechanisms=none+TypedOperations
 # WITHHELD-NOT: IsPristine
 # RUN(STILL): walk f1 mechanisms=none+TypedOperations
-# STILL: = NewHeapWords
+# STILL: key="next"
+# RUN(NOCELL): walk f1 mechanisms=none+TypedOperations
+# NOCELL-NOT: NewHeapWords
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0

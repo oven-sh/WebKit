@@ -84,6 +84,28 @@ struct NumberedStubKey {
     uint32_t mention;
 };
 
+struct RareListsOfBody {
+    ListOfUnit<NumberedStubKey> numberedStubKeys;
+    ListOfUnit<ConstantData> constants;
+    ListOfUnit<JumpTable> jumpTables;
+    ListOfUnit<uint8_t> bytesOfMadeTexts;
+    ListOfUnit<uint32_t> firstsOfMadeTexts;
+    ListOfUnit<uint32_t> endsOfMadeTexts;
+};
+
+template<>
+inline constexpr bool holdsListsOfUnit<RareListsOfBody> = true;
+
+void forEachListOfUnitIn(RareListsOfBody& lists, auto& visit)
+{
+    visit(lists.numberedStubKeys);
+    visit(lists.constants);
+    visit(lists.jumpTables);
+    visit(lists.bytesOfMadeTexts);
+    visit(lists.firstsOfMadeTexts);
+    visit(lists.endsOfMadeTexts);
+}
+
 struct CodeBody {
     uint32_t primaryEntryOffset() const { return entries[0].offset; }
     std::optional<uint32_t> offsetOfEntry(uint16_t id) const;
@@ -95,15 +117,10 @@ struct CodeBody {
     ListOfUnit<FirstReadSite> firstReadSites;
     ListOfUnit<Typed::CodeUnit> callees;
     ListOfUnit<StubKey> stubKeys;
-    ListOfUnit<NumberedStubKey> numberedStubKeys;
-    ListOfUnit<ArgumentMoves> argumentMoves;
-    ListOfUnit<ConstantData> constants;
-    ListOfUnit<JumpTable> jumpTables;
+    ArgumentMovesOfUnit argumentMoves;
     ListOfUnit<Mention> mentions;
     ListOfUnit<uint32_t> mentionWords;
-    ListOfUnit<uint8_t> bytesOfMadeTexts;
-    ListOfUnit<uint32_t> firstsOfMadeTexts;
-    ListOfUnit<uint32_t> endsOfMadeTexts;
+    RarePartOfUnit<RareListsOfBody> rareLists;
 };
 
 inline std::optional<uint32_t> CodeBody::offsetOfEntry(uint16_t id) const
@@ -175,10 +192,15 @@ struct SitePosition {
     ModuleID source;
     uint32_t sourceOffset;
     uint32_t inlineFrame;
-    uint32_t constructionStartLine { 0 };
-    uint32_t constructionStartColumn { 0 };
-    bool startIsForCallers { false };
-    bool startIsWhereWritten { false };
+};
+static_assert(sizeof(SitePosition) == 20);
+
+struct SiteConstructionStart {
+    uint32_t site;
+    uint32_t line;
+    uint32_t column;
+    bool isForCallers { false };
+    bool isWhereWritten { false };
 };
 
 struct InlineFrame {
@@ -222,6 +244,26 @@ void forEachListOfUnitIn(FaultingAccess& access, auto& visit)
     visit(access.throwSite);
 }
 
+struct RareListsOfSites {
+    ListOfUnit<SiteConstructionStart> constructionStarts;
+    ListOfUnit<ConstructedCallee> constructedCallees;
+    ListOfUnit<SiteHandler> handlers;
+    ListOfUnit<PollSite> pollSites;
+    ListOfUnit<uint32_t> frameMapWords;
+};
+
+template<>
+inline constexpr bool holdsListsOfUnit<RareListsOfSites> = true;
+
+void forEachListOfUnitIn(RareListsOfSites& lists, auto& visit)
+{
+    visit(lists.constructionStarts);
+    visit(lists.constructedCallees);
+    visit(lists.handlers);
+    visit(lists.pollSites);
+    visit(lists.frameMapWords);
+}
+
 struct SiteDescription {
     bool hasEncodedInlineFrames() const { return inlineFrames.size() > 1 && positions.size() > 1 + numberOfSitesWithoutCode; }
 
@@ -229,11 +271,8 @@ struct SiteDescription {
     ListOfUnit<SitePosition> positions;
     ListOfUnit<InlineFrame> inlineFrames;
     ListOfUnit<FlaggedSite> flaggedSites;
-    ListOfUnit<ConstructedCallee> constructedCallees;
-    ListOfUnit<SiteHandler> handlers;
     ListOfUnit<FaultingAccess> faultingAccesses;
-    ListOfUnit<PollSite> pollSites;
-    ListOfUnit<uint32_t> frameMapWords;
+    RarePartOfUnit<RareListsOfSites> rareLists;
 };
 
 struct BytesOfForm {
@@ -268,7 +307,28 @@ struct RangeOfCode {
     Typed::ValueID value;
     Typed::Opcode opcode;
     bool isRare;
+    uint32_t inlineFrame { 0 };
+    bool standsInRareBlock { false };
 };
+
+struct MeasurementsOfCode {
+    ListOfUnit<BytesOfForm> bytesByForm;
+    ListOfUnit<BytesOutsideOperations> bytesOutsideOperations;
+    ListOfUnit<RangeOfCode> ranges;
+    uint32_t bytesInInlineFrames { 0 };
+    uint32_t bytesInInlineFramesOfLibrary { 0 };
+    uint32_t bytesInFramesOfBuiltins { 0 };
+};
+
+template<>
+inline constexpr bool holdsListsOfUnit<MeasurementsOfCode> = true;
+
+void forEachListOfUnitIn(MeasurementsOfCode& measurements, auto& visit)
+{
+    visit(measurements.bytesByForm);
+    visit(measurements.bytesOutsideOperations);
+    visit(measurements.ranges);
+}
 
 constexpr unsigned rankInCodeOf(Typed::CodeRole role)
 {
@@ -291,7 +351,6 @@ constexpr unsigned rankInCodeOf(Typed::CodeRole role)
         return 7;
     case Typed::CodeRole::TableEntry:
     case Typed::CodeRole::TableLookup:
-    case Typed::CodeRole::Serializer:
         return 0;
     }
     RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
@@ -315,16 +374,11 @@ struct CompiledCode {
     uint32_t unitIndex { UINT32_MAX };
     uint32_t placeInCode { UINT32_MAX };
     FunctionID function;
+    EntryDescription entry;
     CodeBody body;
     FrameDescription frame;
-    EntryDescription entry;
     SiteDescription sites;
-    ListOfUnit<BytesOfForm> bytesByForm;
-    uint32_t bytesInInlineFrames { 0 };
-    uint32_t bytesInInlineFramesOfLibrary { 0 };
-    uint32_t bytesInFramesOfBuiltins { 0 };
-    ListOfUnit<BytesOutsideOperations> bytesOutsideOperations;
-    ListOfUnit<RangeOfCode> ranges;
+    RarePartOfUnit<MeasurementsOfCode> measurements;
 };
 
 void forEachListOfUnitWhateverItHoldsIn(CompiledCode& code, auto& visit)
@@ -334,10 +388,10 @@ void forEachListOfUnitWhateverItHoldsIn(CompiledCode& code, auto& visit)
     };
     CodeBody& body = code.body;
     SiteDescription& sites = code.sites;
-    visitEach(body.bytes, body.entries, body.relocations, body.returnSites, body.firstReadSites, body.callees, body.stubKeys, body.numberedStubKeys, body.argumentMoves, body.constants, body.jumpTables, body.mentions, body.mentionWords, body.bytesOfMadeTexts, body.firstsOfMadeTexts, body.endsOfMadeTexts);
+    visitEach(body.bytes, body.entries, body.relocations, body.returnSites, body.firstReadSites, body.callees, body.stubKeys, body.argumentMoves.list(), body.mentions, body.mentionWords, body.rareLists);
     visitEach(code.frame.calleeSaveRegisters.list(), code.frame.frameRanges, code.frame.prologueChecks);
-    visitEach(sites.positions, sites.inlineFrames, sites.flaggedSites, sites.constructedCallees, sites.handlers, sites.faultingAccesses, sites.pollSites, sites.frameMapWords);
-    visitEach(code.bytesByForm, code.bytesOutsideOperations, code.ranges);
+    visitEach(sites.positions, sites.inlineFrames, sites.flaggedSites, sites.faultingAccesses, sites.rareLists);
+    visitEach(code.measurements);
 }
 
 void forEachListOfUnitIn(CompiledCode& code, auto& visit)
@@ -384,7 +438,7 @@ void forEachReturnAddress(const CompiledCode& code, const Functor& functor)
         functor(site.offset, site.site);
     for (const FaultingAccess& access : code.sites.faultingAccesses)
         functor(access.codeOffset + static_cast<uint32_t>(sizeOfNearCall), access.callSite);
-    for (const PollSite& poll : code.sites.pollSites)
+    for (const PollSite& poll : code.sites.rareLists->pollSites)
         functor(poll.returnOffset(), poll.callSite);
 }
 

@@ -19,6 +19,7 @@
 #include "AOTFieldTable.h"
 #include "AOTIRProgram.h"
 #include "AOTNameClass.h"
+#include "AOTOperatorEmitter.h"
 #include "AOTPropertyCachesFront.h"
 #include "AOTResultRules.h"
 #include "AOTRuntimeCallEmitter.h"
@@ -102,7 +103,7 @@ Boxed AccessEmitter::getById(const OperationContext& context, Boxed receiver, Pr
         NameAtSite name = hasColumn ? NameAtSite::HasColumn : NameAtSite::IsAnyName;
         ReceiverAtSite receiverIs = receiverID && typeOf(receiverID).isObject() ? ReceiverAtSite::IsCell : ReceiverAtSite::IsAnyValue;
         const bool namesLength = hasColumn ? isLength : m_program.nameClassOf(key) == NameClass::Length;
-        StubKey stub = namesLength ? readLengthAtSite(name) : tryReadAtSiteOfNarrowField(m_plan.slots().narrowFormOf(key), receiverIs, name).value_or(readAtSite(receiverIs, name));
+        StubKey stub = namesLength ? readLengthAtSite(name) : !m_plan.slots().namesField(key) ? readAtSiteOfNameWithoutField(receiverIs, name) : tryReadAtSiteOfNarrowField(m_plan.slots().narrowFormOf(key), receiverIs, name).value_or(readAtSite(receiverIs, name));
         return Boxed(callStub(context, stub, { receiver.value() }, { .numberedImmediate = *answers }).first);
     }
     if (isLength)
@@ -317,8 +318,13 @@ void AccessEmitter::generateGetGlobalBinding(const ValueContext& value)
         flags.add(GlobalBindingFlags::IsForTypeOf);
 
     if (!m_generator.takesOpenForm(value)) {
+        NumberedImmediate binding { m_mentions.globalBinding(key, flags) };
+        if (emitter<OperatorEmitter>().leaveConstructorToInstanceOf(value, seesScriptBindings ? InstanceOfOperand::NameSeenByScripts : InstanceOfOperand::NameOfGlobalObject, binding)) {
+            define(value, undefined());
+            return;
+        }
         GlobalBindingScope scope = seesScriptBindings ? GlobalBindingScope::ScriptsAndGlobalObject : GlobalBindingScope::GlobalObject;
-        define(value, Boxed(callStub(value, AOT::getGlobalBinding(scope), { }, { .numberedImmediate = NumberedImmediate { m_mentions.globalBinding(key, flags) } }).first));
+        define(value, Boxed(callStub(value, AOT::getGlobalBinding(scope), { }, { .numberedImmediate = binding }).first));
         return;
     }
 
@@ -535,10 +541,12 @@ bool AccessEmitter::tryCallMethodByName(const ValueContext& call)
     std::optional<CompiledMethodOfArray> compiledMethod = !goesByClass && call->methodOfReceiverAsMade() && count <= maxArgumentCountOfCompiledMethodOfArray ? compiledMethodOfArray(call->methodOfReceiverAsMade()) : std::nullopt;
     std::optional<NumberedImmediate> answers = (!goesByClass || call->methodIsNamedByKeyAlone()) && !compiledMethod && m_plan.slots().hasColumn(read.key) ? answersOf(call, read.key, SiteUse::Call) : std::nullopt;
     bool standsBehindFailedLookInLoop = goesByClass && m_code.at(call.block()).frequency == BlockFrequency::Rare && m_generator.paysForCodeInLine(call.block());
-    if (!answers && standsBehindFailedLookInLoop && !read.pattern && m_plan.slots().hasColumn(read.key) && !isSymbolOfRealm(read.key) && comesAgain(call))
+    bool asksOneClassAtSite = !answers && standsBehindFailedLookInLoop && !read.pattern && m_plan.slots().hasColumn(read.key) && !isSymbolOfRealm(read.key);
+    if (asksOneClassAtSite)
         answers = answersAtSite(call, read.key, SiteUse::Call);
     RELEASE_ASSERT((!read.pattern || goesByClass) && (!lentArguments || !goesByClass));
     StubKey byClass = !goesByClass ? StubKey() : read.pattern ? (answers ? callMethodOfBuiltinClassAtSiteWithSharedPattern(*boxedCall, count) : callMethodOfBuiltinClassWithSharedPattern(*boxedCall, count))
+        : answers && asksOneClassAtSite ? callMethodOfOneBuiltinClassAtSite(*boxedCall, count)
         : answers ? callMethodOfBuiltinClassAtSite(*boxedCall, count)
         : calls.isProvenReceiverOf(*boxedCall, typeOf(call->thisValueOperand())) ? callMethodOfProvenBuiltinClass(*boxedCall, count) : callMethodOfBuiltinClass(*boxedCall, count);
     ConventionCall conventionCall {
@@ -595,7 +603,8 @@ void AccessEmitter::branchOnTruthAtSite(const ValueContext& read)
     NameAtSite name = m_plan.slots().hasColumn(key) ? NameAtSite::HasColumn : NameAtSite::IsAnyName;
     ReceiverAtSite receiverIs = typeOf(receiverID).isObject() ? ReceiverAtSite::IsCell : ReceiverAtSite::IsAnyValue;
     LValue operands[] = { receiver.value() };
-    emitter<RuntimeCallEmitter>().callStubAndBranch(read, readTruthAtSite(receiverIs, name), operands, { .numberedImmediate = *answers }, read.branchTargets());
+    StubKey stub = m_plan.slots().namesField(key) ? readTruthAtSite(receiverIs, name) : readTruthAtSiteOfNameWithoutField(receiverIs, name);
+    emitter<RuntimeCallEmitter>().callStubAndBranch(read, stub, operands, { .numberedImmediate = *answers }, read.branchTargets());
 }
 
 void AccessEmitter::generatePropGet(const ValueContext& value)

@@ -155,6 +155,17 @@ function collectWrittenCells(model: CheckedModel, written: readonly DescribedUse
   return cells;
 }
 
+export function cellsFilledByCalledFunctionsAlone(model: CheckedModel): ModelName[] {
+  const filledOtherwise = new Set([...cellsWrittenByOverloads(model.overloads), ...model.hostObjects.map(({ cell }) => cell)]);
+  const cells = new Set<ModelName>();
+  for (const { uses } of collectWrittenUses(model)) {
+    forEachUse(uses, use => {
+      if (use.read === "Kept" && !filledOtherwise.has(use.cell)) cells.add(use.cell);
+    });
+  }
+  return [...cells].sort((left, right) => left.number - right.number);
+}
+
 function collectReadValues(model: CheckedModel, written: readonly DescribedUses[]): DescribedValue[] {
   const values: DescribedValue[] = [];
   for (const { row, uses } of written) {

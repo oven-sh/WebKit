@@ -84,7 +84,7 @@ LValue ArrayIntrinsicEmitter::elementFoundByTestInFront(const ValueContext& read
     if (!generator().testThatFoundElement)
         return nullptr;
     auto behindNames = [&](ValueID id) {
-        while (operationAt(id).opcode == Opcode::Narrowed)
+        while (operationAt(id).opcode == Opcode::Narrowed || operationAt(id).opcode == Opcode::AssumeType)
             id = operationAt(id).valueOperand();
         return id;
     };
@@ -97,7 +97,7 @@ LValue ArrayIntrinsicEmitter::elementFoundByTestInFront(const ValueContext& read
         for (ValueID id : m_code.valuesOf(block)) {
             if (id == read.id())
                 break;
-            if (operationAt(id).opcode != Opcode::Narrowed)
+            if (operationAt(id).opcode != Opcode::Narrowed && operationAt(id).opcode != Opcode::AssumeType)
                 return nullptr;
         }
         BlockID above = generator().singlePredecessorOf(block);

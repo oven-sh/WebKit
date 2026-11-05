@@ -14,7 +14,8 @@ namespace JSC { namespace AOT { namespace Typed {
 class Facts;
 
 ValueID callThatBorrowsClosure(const Code&, ValueID closure);
-bool isLentToFunctionsEnteredAlone(const Code&, ValueID closure);
+ValueID callThatBorrowsObject(const Code&, ValueID object);
+bool lentClosureMayStandInHeap(const Code&, ValueID closure);
 uint8_t argumentsLentBy(const Code&, const Operation& call);
 bool mayCaptureClosuresOfFrames(const Facts&, const Code&);
 

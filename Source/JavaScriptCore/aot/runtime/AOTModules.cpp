@@ -135,6 +135,8 @@ Modules::Modules(State& state)
     m_instance.modules.evaluatingMark = static_cast<uint32_t>(StoredModuleStatus::Evaluating);
     m_instance.modules.runsImportedFilesAlone = 0;
     m_modulesSettledForLinks.fill(0, m_table.size() / 64 + 1);
+    m_loadedGroups.fill(0, m_table.size() / 64 + 1);
+    m_goesModuleByModule = isTestRun();
     state.caches->add(CacheKind::StrongRoots, "modules"_s, *this, RootVolatility::GreyedByExecution);
 }
 
@@ -451,25 +453,40 @@ bool Modules::writesNameThatHostMayAnswerFor(ModuleID file, WalkForEvictedFiles&
     return *walk.pluginsAnswerForNames;
 }
 
-AnswerForName Modules::askHostAboutNamesWrittenBy(ModuleID file, Vector<uint32_t, 4>& filesThatAnswersLeadAwayFrom)
+Modules::AnswersForNamesOfFile Modules::askHostAboutNamesWrittenBy(ModuleID file)
 {
+    AnswersForNamesOfFile answers;
     String importer = m_table.pathText(file);
-    AnswerForName answer = AnswerForName::Declined;
-    for (const NameOfStatementData& written : m_table.namesOfStatements(file)) {
+    std::span<const NameOfStatementData> names = m_table.namesOfStatements(file);
+    auto textOf = [&](const NameOfStatementData& written) {
+        return ProgramStrings::text(m_table.programTables(), written.nameString());
+    };
+    auto fileAt = [&](const String& path) -> std::optional<uint32_t> {
+        std::optional<ModuleID> linked = path.isNull() ? std::nullopt : m_table.findByPath(path);
+        return linked ? std::optional(fileOf(*linked).index()) : std::nullopt;
+    };
+    Vector<uint32_t, 16> namesDeclined;
+    for (uint32_t index = 0; index < names.size(); ++index) {
         String foundWithoutPlugins;
-        switch (host().answersForName(m_instance.globalObject, ProgramStrings::text(m_table.programTables(), written.nameString()), importer, foundWithoutPlugins)) {
-        case AnswerForName::Declined:
+        AnswerForName answer = host().answersForName(m_instance.globalObject, textOf(names[index]), importer, foundWithoutPlugins);
+        if (answer == AnswerForName::Answered) {
+            answers.answer = answer;
+            if (std::optional<uint32_t> linked = fileAt(foundWithoutPlugins))
+                answers.filesThatAnswersLeadAwayFrom.append(*linked);
             continue;
-        case AnswerForName::Thrown:
-            return AnswerForName::Thrown;
-        case AnswerForName::Answered:
-            break;
         }
-        answer = AnswerForName::Answered;
-        if (std::optional<ModuleID> linked = foundWithoutPlugins.isNull() ? std::nullopt : m_table.findByPath(foundWithoutPlugins))
-            filesThatAnswersLeadAwayFrom.append(fileOf(*linked).index());
+        if (answer == AnswerForName::Declined) {
+            namesDeclined.append(index);
+            continue;
+        }
+        answers.answer = answer;
+        for (uint32_t inFront : namesDeclined) {
+            if (std::optional<uint32_t> linked = fileAt(host().findsWithoutPlugins(m_instance.globalObject, textOf(names[inFront]), importer)))
+                answers.filesInFrontOfThrow.append(*linked);
+        }
+        break;
     }
-    return answer;
+    return answers;
 }
 
 bool Modules::isChangedOutOfSightOfBuild(StringView path) const
@@ -493,6 +510,12 @@ bool Modules::walkForEvictedFiles(ModuleID module, WalkForEvictedFiles& walk)
 
 bool Modules::askHostLevelByLevel(ModuleID root, WalkForEvictedFiles& walk, BitVector& filesAsked)
 {
+    if (!m_table.listsNamesOfStatements() || !host().hasPluginsThatAnswerForNames)
+        return false;
+    if (!walk.pluginsAnswerForNames)
+        walk.pluginsAnswerForNames = host().hasPluginsThatAnswerForNames(m_instance.globalObject);
+    if (!*walk.pluginsAnswerForNames)
+        return false;
     bool didAsk = false;
     BitVector isReached;
     Deque<ModuleID, 32> toFollow;
@@ -500,30 +523,35 @@ bool Modules::askHostLevelByLevel(ModuleID root, WalkForEvictedFiles& walk, BitV
     toFollow.append(fileOf(root));
     while (!toFollow.isEmpty()) {
         ModuleID file = toFollow.takeFirst();
-        if (isEvicted(file) || m_filesWhoseGraphHasBegun.get(file.index()) || status(file) >= ModuleStatus::Evaluating || hasRun(file))
+        if (isEvicted(file) || m_filesWhoseNamesNobodyAnswersFor.get(file.index()) || m_filesWhoseGraphHasBegun.get(file.index()) || status(file) >= ModuleStatus::Evaluating || hasRun(file, walk.importsAreFollowed))
             continue;
         if (isMocked(file) || mockInPlace(file) || m_modulesWithMockToRun.get(file.index()))
             continue;
-        Vector<uint32_t, 4> filesThatAnswersLeadAwayFrom;
+        AnswersForNamesOfFile answers;
         if (!filesAsked.get(file.index()) && mayBeAskedAbout(file) && writesNameThatHostMayAnswerFor(file, walk)) {
             if (filesAsked.isEmpty())
                 host().askingAboutNames(m_instance.globalObject, nullptr);
             filesAsked.set(file.index());
             didAsk = true;
-            AnswerForName answer = askHostAboutNamesWrittenBy(file, filesThatAnswersLeadAwayFrom);
-            if (answer == AnswerForName::Declined)
+            uint64_t numberOfGraphsBegun = m_numberOfGraphsBegun;
+            answers = askHostAboutNamesWrittenBy(file);
+            if (m_numberOfGraphsBegun != numberOfGraphsBegun)
+                walk.importsAreFollowed = false;
+            if (answers.answer == AnswerForName::Declined)
                 m_filesWhoseNamesNobodyAnswersFor.set(file.index());
             else
                 leaveToHostUnlessItHasRun(file);
-            if (answer == AnswerForName::Thrown)
-                continue;
         }
-        if (!isLoadedWithRequests(file) || (walk.pluginsAnswerForNames && !*walk.pluginsAnswerForNames))
+        auto takeUp = [&](ModuleID target) {
+            if (!m_filesAboveNoEvictedFile.get(target.index()) && !answers.filesThatAnswersLeadAwayFrom.contains(target.index()) && !isReached.set(target.index()))
+                toFollow.append(target);
+        };
+        if (!isLoadedWithRequests(file))
             continue;
         for (const ModuleRequestData& request : m_table.imports(file)) {
             ModuleID target = fileOf(request.targetModule());
-            if (!m_filesAboveNoEvictedFile.get(target.index()) && !filesThatAnswersLeadAwayFrom.contains(target.index()) && !isReached.set(target.index()))
-                toFollow.append(target);
+            if (answers.answer != AnswerForName::Thrown || answers.filesInFrontOfThrow.contains(target.index()))
+                takeUp(target);
         }
     }
     return didAsk;
@@ -681,6 +709,8 @@ ModuleRecord* Modules::ensureRecord(ModuleID module)
         return record;
     }
     record->setHoldsStatus();
+    if (data(module).onlyPassesLinkOn())
+        didGetStateOfItsOwn(module);
     record->setStatus((moduleStatus == ModuleStatus::Unlinked && data(module).reachesUncompiledCode()) || isNotLoaded(module) ? CyclicModuleRecord::Status::New : recordStatusFor(moduleStatus));
     if (moduleStatus == ModuleStatus::Evaluated)
         record->setCycleRoot(*m_instance.vm, record);
@@ -738,6 +768,9 @@ bool Modules::isEvaluatingAsynchronouslyWithItsCycle(const ModuleRecord& record)
 
 void Modules::retireRecordsOfSettledLoads()
 {
+    m_levelsOfLoads.removeIf([&](auto& entry) {
+        return hasGraphRun(*entry.value);
+    });
     if (m_instance.vm->synchronousModuleQueue() || m_innermostEvaluation || m_rootWhoseFilesRun || m_rootWhoseFilesRanAhead || m_fileWhoseJobsWaitForLoader || !m_levelsOfLoads.isEmpty() || !m_textsOnTheirWay.isEmpty())
         return;
     if (!m_firstModuleRequestedByHost || status(*m_firstModuleRequestedByHost) < ModuleStatus::Evaluating)
@@ -1677,6 +1710,7 @@ bool Modules::setMockInPlace(ModuleID fileOrModule, JSObject* mock, JSValue what
     bool ranBesideMock = m_modulesThatRanBesideMock.get(module.index());
     m_modulesThatRanBesideMock.clear(module.index());
     m_modulesOwedBesideMock.clear(module.index());
+    goModuleByModuleFromNowOn();
     for (ModuleID each : { fileOrModule, module }) {
         if (ranBesideMock) [[unlikely]] {
             if (status(each) < ModuleStatus::Evaluating)
@@ -3095,10 +3129,9 @@ void Modules::holdText(JSPromise* promise, ModuleID module, ModuleRecord* reques
     VM& vm = *m_instance.vm;
     putCallsThatWaitApartInLine();
     uint64_t place = static_cast<uint64_t>(turnOfRequest) << 32 | m_numberOfTextsAskedFor++;
-    size_t index = m_textsOnTheirWay.size();
-    while (index && m_textsOnTheirWay[index - 1].place > place)
-        --index;
-    m_textsOnTheirWay.insert(index, TextOnItsWay { place, Strong<JSPromise>(vm, promise), module, Strong<JSCell>(vm, requested), referrerAsyncOrder, m_stepsOfLoader });
+    m_textsOnTheirWay.appendAndBubble(TextOnItsWay { place, Strong<JSPromise>(vm, promise), module, Strong<JSCell>(vm, requested), referrerAsyncOrder, m_stepsOfLoader }, [&](const TextOnItsWay& inLine) {
+        return inLine.place > place;
+    });
     if (host().callInLaterTurn && isTestRun()) {
         host().callInLaterTurn(m_instance.globalObject);
         return;
@@ -3114,21 +3147,15 @@ void Modules::deliverFirstTextOnItsWay()
 {
     if (m_textsOnTheirWay.isEmpty())
         return;
-    TextOnItsWay text = WTF::move(m_textsOnTheirWay.first());
-    m_textsOnTheirWay.removeAt(0);
+    TextOnItsWay text = m_textsOnTheirWay.takeFirst();
     noteThatTextHasCome(text.module);
     if (text.requested) {
         text.promise->fulfill(*m_instance.vm, text.requested.get());
         return;
     }
-    size_t numberOfSuchCalls = 0;
-    while (numberOfSuchCalls < m_textsOnTheirWay.size() && !m_textsOnTheirWay[numberOfSuchCalls].requested && m_textsOnTheirWay[numberOfSuchCalls].stepsOfLoaderAtCall == text.stepsOfLoaderAtCall)
-        ++numberOfSuchCalls;
-    Vector<TextOnItsWay, 2> callsMadeWhileLoaderTookNoStep(numberOfSuchCalls, [&](size_t index) {
-        return WTF::move(m_textsOnTheirWay[index]);
-    });
-    if (numberOfSuchCalls)
-        m_textsOnTheirWay.removeAt(0, numberOfSuchCalls);
+    Vector<TextOnItsWay, 2> callsMadeWhileLoaderTookNoStep;
+    while (!m_textsOnTheirWay.isEmpty() && !m_textsOnTheirWay.first().requested && m_textsOnTheirWay.first().stepsOfLoaderAtCall == text.stepsOfLoaderAtCall)
+        callsMadeWhileLoaderTookNoStep.append(m_textsOnTheirWay.takeFirst());
     SetForScope stepsOfLoaderAtCall(m_stepsOfLoaderAtCallWhoseTextHasCome, text.stepsOfLoaderAtCall);
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
     startImportWhoseTextHasCome(text.promise.get(), text.module, text.referrerAsyncOrder);
@@ -5747,6 +5774,7 @@ std::optional<ModuleID> formThatMockFinds(JSGlobalObject* realm, StringView path
     Modules* modules = modulesOf(realm);
     if (!modules)
         return file;
+    modules->goModuleByModuleFromNowOn();
     return modules->formThatMockFinds(path, file);
 }
 
@@ -5993,6 +6021,7 @@ unsigned ModuleRecord::innerModuleEvaluation(JSGlobalObject* globalObject, Modul
 
 void ModuleRecord::willLoadRequests(ModuleGraphLoadingState& load)
 {
+    countEvent(vm(), RuntimeCounterID::RecordsForStatesOfLoads);
     modules().appendRequestsForLoader(m_module, this, load);
 }
 

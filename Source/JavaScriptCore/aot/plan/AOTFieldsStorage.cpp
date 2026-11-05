@@ -715,7 +715,25 @@ void ChooserOfFieldsStorage::fillRoomLeftInCell(LayoutID id, PlannedLayout& plan
         return;
     bool hasRoomForReferences = true;
     uint64_t endOfCell = m_cellSizes.cellSizeFor(m_cell.end());
-    for (FieldIndex field = static_cast<uint32_t>(m_program.at(id).fields.size()); field < planned.numberOfFields(); ++field) {
+    const Layout& layout = m_program.at(id);
+    uint32_t numberListed = static_cast<uint32_t>(layout.fields.size());
+    auto placeInWrittenTypes = [&](FieldIndex field) {
+        uint32_t numberDeclaredInFront = 0;
+        for (LayoutID written : layout.supertypes) {
+            const Layout& type = m_program.at(written);
+            if (std::optional<uint32_t> listed = type.findField(planned.appendedKeys[field - numberListed])) {
+                auto place = std::ranges::find(type.declaredOrder, *listed);
+                return numberDeclaredInFront + static_cast<uint32_t>(place - type.declaredOrder.begin());
+            }
+            numberDeclaredInFront += static_cast<uint32_t>(type.fields.size());
+        }
+        return UINT32_MAX;
+    };
+    Vector<std::pair<uint32_t, FieldIndex>, 32> lateNames;
+    for (FieldIndex field = numberListed; field < planned.numberOfFields(); ++field)
+        lateNames.append({ placeInWrittenTypes(field), field });
+    std::ranges::sort(lateNames);
+    for (auto [place, field] : lateNames) {
         PlacedSlot& slot = planned.slots[field];
         if (slot.liesInCellOnTrial()) {
             if (std::optional<uint64_t> offset = m_cell.tryTakeBelow(slot.width(), endOfCell))

@@ -291,13 +291,17 @@ static bool markQuotedTextsThatCodeReports(const TableEncoder& encoder, PlacesOf
             }
         };
         bool hasPlace = false;
-        for (const SitePosition& site : functions[position].sites.positions) {
+        const SiteDescription& sites = functions[position].sites;
+        for (const SitePosition& site : sites.positions) {
             if (!site.source)
                 continue;
             hasPlace = true;
             report(site.source.index(), PlacesOfQuotedTexts::placeOf(site.line, site.column));
-            if (site.constructionStartLine)
-                report(site.source.index(), PlacesOfQuotedTexts::placeOf(site.constructionStartLine, site.constructionStartColumn));
+        }
+        for (const SiteConstructionStart& start : sites.rareLists->constructionStarts) {
+            ModuleID source = sites.positions[start.site].source;
+            if (source && start.line)
+                report(source.index(), PlacesOfQuotedTexts::placeOf(start.line, start.column));
         }
         if (hasPlace && !reportsPlace.load(std::memory_order_relaxed))
             reportsPlace.store(true, std::memory_order_relaxed);

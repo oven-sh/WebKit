@@ -8,7 +8,7 @@
 # Nobody outside the class body can name `#x`: whoever gets hold of the object can neither read nor store it. So the field keeps its proof and its writers where the layout escapes, and the field beside it loses both.
 # RUN: link fields layouts mechanisms=all
 # CHECK: field L0.0 #"#"@L0 proven=classtoken writers-known
-# CHECK-NEXT: field L0.1 #"#x"@L0 proven=int|whole writers-known
+# CHECK-NEXT: field L0.1 #"#x"@L0 proven=number writers-known
 # CHECK-NEXT: field L0.2 "open"
 # CHECK-NOT: "open" {{*}}writers-known
 # CHECK: layout L0 changes=[IsFrozen, GainsProperty, LosesProperty, ChangesPrototype, GetsAccessor]

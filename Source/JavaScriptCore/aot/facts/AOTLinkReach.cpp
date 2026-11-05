@@ -200,6 +200,8 @@ private:
     void enterLibraryFunction(RuntimeFunctionID);
     void letGoWhatHostHandsOver(const BuiltinHostUses&);
     void loadLibraryModule(RuntimeModuleID);
+    void letGoWhatNativeCodeReadsOffModules();
+    Vector<ModuleID> m_modulesThatNativeCodeReadsNamesOff;
     bool m_hasEnteredLoaderFunctionsForTestRun { false };
     bool m_hasEnteredLoaderFunctionsForValueOfHost { false };
     void enterWhatUndeclaredNativeCodeCalls();
@@ -952,16 +954,9 @@ void StateOfLinkReach::findModulesWhoseValueStaysInSight()
     bool libraryRunsCompiledAlone = refusedCodeOf(m_program).codeOutsideImage && std::ranges::none_of(m_program.modules, [](const Module& module) {
         return module.kind == ModuleKind::External && module.externalKind == ExternalKind::UncompiledCode;
     });
+    m_flow.modulesWhoseValueStaysInSight = m_modulesWhoseValueStaysInSight;
     if (!libraryRunsCompiledAlone)
         return;
-
-    BitVector isLoadedByNativeCode;
-    for (uint32_t index = 0; index < builtins.builtinCount(); ++index) {
-        for (const BuiltinModuleLoad& load : builtins.moduleLoadsOf(BuiltinID(index))) {
-            if (load.module)
-                isLoadedByNativeCode.set(load.module.index());
-        }
-    }
 
     static constexpr OptionSet<ModuleFlags> flagsOfModulesHandedOut {
         ModuleFlags::IsFoundByName, ModuleFlags::MayBeMocked, ModuleFlags::MayBeEvicted, ModuleFlags::RunsAgain, ModuleFlags::IsImportedAsNamespace, ModuleFlags::AnswersLoaderWithNamespace,
@@ -985,9 +980,12 @@ void StateOfLinkReach::findModulesWhoseValueStaysInSight()
         }
         if (module.kind != ModuleKind::RuntimeSource || !module.runtimeModule || module.flags.containsAny(flagsOfModulesHandedOut) || isAskedFor.get(index))
             continue;
-        if (builtins.at(module.runtimeModule).flags.contains(RuntimeModuleFlag::IsPublic) || isLoadedByNativeCode.get(module.runtimeModule.index()))
+        const RuntimeModuleData& row = builtins.at(module.runtimeModule);
+        if (row.flags.containsAny({ RuntimeModuleFlag::IsPublic, RuntimeModuleFlag::NativeCodeReadsEveryExport }))
             continue;
         m_modulesWhoseValueStaysInSight.quickSet(index);
+        if (module.body && !row.exportsReadByNativeCode.empty())
+            m_modulesThatNativeCodeReadsNamesOff.append(ModuleID(index));
     }
     for (const Module& module : m_program.modules) {
         for (const ModuleRequest& request : module.requests) {
@@ -1014,6 +1012,7 @@ void StateOfLinkReach::findModulesWhoseValueStaysInSight()
         } else if (captured)
             m_facesThatWereFollowedAtFirst.append(ModuleID(index));
     }
+    m_flow.modulesWhoseValueStaysInSight = m_modulesWhoseValueStaysInSight;
 }
 
 void StateOfLinkReach::escapeExportsWhoseGettersFacesRun()
@@ -1057,6 +1056,7 @@ void StateOfLinkReach::escapeValueOf(ModuleID id)
 {
     if (!m_modulesWhoseValueStaysInSight.quickClear(id.index()))
         return;
+    m_flow.modulesWhoseValueStaysInSight.quickClear(id.index());
     if (VariableID exportsVariable = m_program.at(id).exportsVariable)
         escapeVariable(exportsVariable);
     if (ModuleID captured = commonJsModuleCapturedBy(m_program, m_program.at(id))) {
@@ -1193,6 +1193,30 @@ void StateOfLinkReach::enterLibraryBehind(BuiltinID canonical)
     }
 }
 
+void StateOfLinkReach::letGoWhatNativeCodeReadsOffModules()
+{
+    for (ModuleID id : m_modulesThatNativeCodeReadsNamesOff) {
+        if (!m_modulesWhoseValueStaysInSight.quickGet(id.index()))
+            continue;
+        const Module& module = m_program.at(id);
+        LinkType value = m_flow.typeAt(m_flow.result(module.body, 0));
+        bool everyNameIsField = value.functions == LinkType::Functions::None && value.classes == LinkType::Classes::None && !value.builtin
+            && value.objects != LinkType::Objects::Prototype && value.objects != LinkType::Objects::Prototypes;
+        m_flow.forEachLayoutOf(value, [&](LayoutID holder) {
+            for (BuiltinName name : m_program.builtins().at(module.runtimeModule).exportsReadByNativeCode) {
+                PropertyKeyID key = m_program.keyOf(name);
+                std::optional<FieldReference> field = key ? findField(m_program, holder, key) : std::nullopt;
+                if (field)
+                    escapeField(*field);
+                else
+                    everyNameIsField = false;
+            }
+        });
+        if (!everyNameIsField)
+            escapeValueOf(id);
+    }
+}
+
 void StateOfLinkReach::enterWhatUndeclaredNativeCodeCalls()
 {
     if (std::exchange(m_hasEnteredWhatUndeclaredNativeCodeCalls, true))
@@ -1313,6 +1337,7 @@ bool StateOfLinkReach::enterLibraryInReach()
         enterLoaderOfHost();
     if (m_builtinsInReach.unseenCodeCanRun())
         enterWhatUnseenCodeFinds();
+    letGoWhatNativeCodeReadsOffModules();
     bool somebodyCanBeHandedSomething = m_nativeCodeMayHoldObjects || m_flow.rowPassesWhatNobodyFollows() || m_builtinsInReach.unseenCodeCanRun();
     bool promisesHaveChanged = somebodyCanBeHandedSomething && m_flow.letPromisesBeHandedOut();
     bool hasEntered = !m_steps.isEmpty() || !m_functionsToBringAlive.isEmpty() || !m_membersWrittenAfterAll.isEmpty() || promisesHaveChanged || entriesHaveComeToBeAskedForMore;
@@ -1371,7 +1396,7 @@ void StateOfLinkReach::bringAlive(FunctionID id)
     }
     if (m_functionsCalledByHost.get(id.index()) && !m_isCodeBehindBuiltin.get(id.index()))
         m_flow.escape(id);
-    if (function.constructedClass && function.kind != FunctionKind::DerivedConstructor)
+    if (function.constructedClass && function.kind != FunctionKind::DerivedConstructor && (function.kind != FunctionKind::BaseConstructor || m_flow.constructionMayAnswerWithOlderObject(function.constructedClass)))
         m_flow.noteAllocated(function.constructedClass);
     m_flow.noteConstructionsOf(id);
     comeAliveForUnions(m_flow, id);
@@ -1420,7 +1445,7 @@ void StateOfLinkReach::bringAlive(FunctionID id)
                 m_flow.takeAsContents(siteAt(id, classInstances.span(), node.first), SlotOfContents::fromNumber(node.second), nodeAt(index));
             break;
         case SummaryNode::Kind::Constant:
-            m_flow.arriveFromSource(nodeAt(index), m_flow.fromTypeID(TypeID::fromBits(node.first)));
+            m_flow.arriveFromSource(nodeAt(index), TypeID::fromBits(node.first));
             break;
         case SummaryNode::Kind::Allocation: {
             LayoutID layout(node.first);
@@ -1501,6 +1526,8 @@ void StateOfLinkReach::bringAlive(FunctionID id)
         const SummaryChange& change = summary.changes[index];
         watch(change.subject, FlowObserver::Kind::SubjectOfChange, index);
         watch(change.other, FlowObserver::Kind::OtherOfChange, index);
+        if (FlowNodeID laid = m_flow.findWhatConstructorLaysAbove(id, change))
+            m_flow.observe(laid, FlowObserver { FlowObserver::Kind::SubjectOfChange, id, index });
         watch(change.getterInSight, FlowObserver::Kind::OtherOfChange, index);
         watch(change.setterInSight, FlowObserver::Kind::OtherOfChange, index);
     }
@@ -1586,7 +1613,7 @@ void StateOfLinkReach::arriveWhatIsEstablished(FlowNodeID node, const DeclaredTy
     if (!declared)
         return;
     if (std::optional<ProvenInEveryVersion> established = declared->established())
-        m_flow.arriveFromSource(node, m_flow.fromTypeID(*established));
+        m_flow.arriveFromSource(node, *established);
 }
 
 void StateOfLinkReach::arriveWhatNoNodeBrings(FlowNodeID node, const DeclaredType& declared)
@@ -1728,7 +1755,7 @@ void StateOfLinkReach::openClassObject(LayoutID classLayout)
 {
     if (m_openClassObjects.set(classLayout.index()))
         return;
-    m_flow.noteAllocated(classLayout);
+    m_flow.noteAllocatedWithRowAbove(classLayout);
     escapePrototype(classLayout);
     shareMembers(classLayout, ClassSide::Static);
     for (const StaticField& field : m_program.at(classLayout).staticFields)
@@ -1890,6 +1917,27 @@ void LinkFlow::arriveFromSource(FlowNodeID node, const LinkType& type)
     if (arriving.objects == LinkType::Objects::Family)
         arriveFromSource(node, arriving.family);
     stateOfLinkReach().arriveFromSource(node, arriving);
+}
+
+void LinkFlow::arriveFromSource(FlowNodeID node, TypeID id)
+{
+    LinkType type = fromTypeID(id);
+    if (type.objects != LinkType::Objects::Lost || !type.layout) {
+        arriveFromSource(node, type);
+        return;
+    }
+    type.objects = LinkType::Objects::None;
+    type.layout = { };
+    arrive(node, type);
+    for (LayoutID member : program.types.listOf(program.types.at(id).layouts))
+        stateOfLinkReach().arriveFromSource(node, typeOfObjectsForLinkReach(member));
+}
+
+void LinkFlow::noteAllocatedWithRowAbove(LayoutID id)
+{
+    size_t stepsLeft = program.layouts.size();
+    for (LayoutID current = id; current && stepsLeft; current = program.at(current).base, --stepsLeft)
+        noteAllocated(current);
 }
 
 void LinkFlow::noteAllocated(LayoutID id)

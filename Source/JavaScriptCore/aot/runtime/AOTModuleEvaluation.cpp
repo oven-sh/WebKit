@@ -4,6 +4,7 @@
  */
 
 #include "config.h"
+#include "AOTModuleGraph.h"
 #include "AOTModules.h"
 
 #if ENABLE(AOT)
@@ -233,6 +234,7 @@ void Modules::innerModuleEvaluation(ModuleID root, EvaluationContext& context)
         record->setStatus(CyclicModuleRecord::Status::Evaluating);
         record->setDFSAncestorIndex(frame.dfsIndex);
         record->setPendingAsyncDependencies(0);
+        record->setAsyncEvaluationOrder({ });
         record->setEvaluationStack(&context.stack);
         context.stack.insert(frame.stackPosition, static_cast<AbstractModuleRecord*>(record));
     };
@@ -1675,12 +1677,51 @@ bool Modules::isNotLoaded(ModuleID module)
 
 void Modules::noteModulesLoadedWith(ModuleID root)
 {
-    if (!data(root).isESModuleOfProgram() || data(root).isFaceOfFile() || m_modulesLoadedBesideGroups.get(root.index()))
+    if (!data(root).isESModuleOfProgram() || data(root).isFaceOfFile() || wasLoadedWithGraph(root))
         return;
-    bool notesMoment = !!m_mockOperations;
-    uint32_t moment = notesMoment ? ++m_instance.vm->aotState().momentOfLoads : 0;
+    if (m_goesModuleByModule) {
+        noteLoadOfEachModuleWith(root);
+        return;
+    }
+    struct Graph {
+        const ModuleData& data(uint32_t module) const { return modules.data(ModuleID(module)); }
+        std::span<const ModuleRequestData> requests(uint32_t module) const { return modules.m_table.requests(ModuleID(module)); }
+        ModuleNumbers groupsLoadedWith(uint32_t head) const { return modules.m_table.groupsLoadedWith(ModuleID(head)); }
+        uint32_t moduleLoadedBy(const ModuleRequestData& request) const { return modules.moduleLoadedBy(request).index(); }
+        const Modules& modules;
+    };
+    noteGroupsLoadedWith(Graph { *this }, root.index(), m_loadedGroups, m_modulesLoadedBesideGroups);
+}
+
+void Modules::goModuleByModuleFromNowOn()
+{
+    if (m_goesModuleByModule)
+        return;
+    uint32_t moment = ++m_instance.vm->aotState().momentOfLoads;
+    m_momentsOfLoads.fill(0, m_table.size());
+    m_loadedInPreload.ensureSize(m_table.size());
+    m_modulesLoadedBesideGroups.ensureSize(m_table.size());
+    for (uint32_t module = 0; module < m_table.size(); ++module) {
+        if (!wasLoadedWithGraph(ModuleID(module)))
+            continue;
+        m_modulesLoadedBesideGroups.quickSet(module);
+        m_momentsOfLoads[module] = moment;
+        m_loadedInPreload.quickSet(module, !m_hasBegunTestFile);
+    }
+    m_loadedGroups.fill(0);
+    for (uint32_t module = 0; module < m_table.size(); ++module) {
+        if (!m_storedStatuses[module] && storedStatus(ModuleID(module)) == StoredModuleStatus::Linked)
+            setStoredStatus(ModuleID(module), StoredModuleStatus::Linked);
+    }
+    ++m_linkEpoch;
+    m_goesModuleByModule = true;
+}
+
+void Modules::noteLoadOfEachModuleWith(ModuleID root)
+{
+    uint32_t moment = ++m_instance.vm->aotState().momentOfLoads;
     bool isAheadOfTestFiles = !m_hasBegunTestFile;
-    if (notesMoment && m_momentsOfLoads.isEmpty()) {
+    if (m_momentsOfLoads.isEmpty()) {
         m_momentsOfLoads.fill(0, m_table.size());
         m_loadedInPreload.ensureSize(m_table.size());
     }
@@ -1689,10 +1730,8 @@ void Modules::noteModulesLoadedWith(ModuleID root)
     Vector<uint32_t, 32> found { root.index() };
     while (!found.isEmpty()) {
         uint32_t module = found.takeLast();
-        if (notesMoment) {
-            m_momentsOfLoads[module] = moment;
-            m_loadedInPreload.quickSet(module, isAheadOfTestFiles);
-        }
+        m_momentsOfLoads[module] = moment;
+        m_loadedInPreload.quickSet(module, isAheadOfTestFiles);
         if (standsForWholeModule(ModuleID(module)))
             continue;
         for (const ModuleRequestData& request : m_table.requests(ModuleID(module))) {
@@ -2552,6 +2591,7 @@ bool Modules::isLeftToStartsOfImporters(ModuleID module) const
 
 void Modules::noteThatGraphBegins(ModuleID root)
 {
+    ++m_numberOfGraphsBegun;
     if (!m_table.listsNamesOfStatements())
         return;
     Vector<ModuleID, 32> toFollow;

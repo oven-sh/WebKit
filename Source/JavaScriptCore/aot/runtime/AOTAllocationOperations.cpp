@@ -117,7 +117,7 @@ namespace {
 struct ClosureInFrame {
     static_assert(SlimClosure::offsetOfCaptures() == SlimClosure::offsetOfWord() + static_cast<ptrdiff_t>(sizeof(uint64_t)) && Closure::offsetOfCaptures() == Closure::offsetOfEntry() + static_cast<ptrdiff_t>(sizeof(uint64_t)));
 
-    explicit ClosureInFrame(JSCell* closure)
+    explicit ClosureInFrame(JSCell* closure, bool standsInHeap = false)
         : cell(closure)
         , words(reinterpret_cast<const uint64_t*>(closure))
         , isFull(closure->type() == CompiledClosureType)
@@ -125,7 +125,7 @@ struct ClosureInFrame {
         , closureNumber(ClosureWord::closureNumberOf(words[placeOfClosureWord]))
         , counts(captureCountsOfClosureNumber(closureNumber))
     {
-        RELEASE_ASSERT(static_cast<uint8_t>(closure->cellState()) == frameCellState);
+        RELEASE_ASSERT(standsInHeap || static_cast<uint8_t>(closure->cellState()) == frameCellState);
         RELEASE_ASSERT(isFull || closure->type() == SlimClosureType);
         RELEASE_ASSERT(counts.references <= counts.captures && counts.captures <= (isFull ? Closure::maxNumberOfCaptures : ClosureRequest::maxSlimClosureCaptures));
     }
@@ -177,6 +177,8 @@ static JSCell* copyToHeap(VM& vm, Instance* instance, const ClosureInFrame& clos
 
 static JSCell* moveToHeap(VM& vm, Instance* instance, JSCell* closureInFrame)
 {
+    if (!liesInFrame(closureInFrame))
+        return copyToHeap(vm, instance, ClosureInFrame(closureInFrame, true));
     Vector<JSCell*, 8> waiting;
     waiting.append(closureInFrame);
     while (true) {

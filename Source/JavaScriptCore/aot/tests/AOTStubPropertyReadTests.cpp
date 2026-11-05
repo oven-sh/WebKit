@@ -18,6 +18,7 @@
 #include "AOTSlotAccess.h"
 #include "AOTSlotRepresentation.h"
 #include "AOTRuntimeTable.h"
+#include "AOTRuntimeWords.h"
 #include "AOTStubRunner.h"
 #include "AOTStubsCalls.h"
 #include "AOTStubsPropertyKeys.h"
@@ -1952,17 +1953,51 @@ static void testInstanceOfRemembersOrdinaryConstructors()
     reads.clear();
     AOT_TEST_CHECK(ask(value.address()).calledOperation);
 
-#if AOT_STUB_RUNNER_COUNTS_INSTRUCTIONS
     forgetPlaces();
     reads.clear();
     fileMethodIn(functionPrototype);
     reads.fileBesideOthers(Slot::createInStorage(id, Slot::Kind::Value, Slot::isOwn, nullptr, FakeHolder::outOfLineOffset), words.prototypeUID);
     constructor.property(FakeHolder::outOfLineOffset) = prototypeObject.address();
     ask(value.address());
+
+    constexpr uint32_t numberOfBinding = 2;
+    std::array<GlobalBinding, numberOfBinding + 1> bindings { };
+    instance.runtime.bindings.globalBindings = bindings.data();
+    constexpr uint32_t epochOfGlobalObject = 7;
+    FakeObject<sizeof(JSGlobalObject)> globalObject;
+    globalObject.setHeader(structureIDOfValues, GlobalObjectType);
+    globalObject.at<uint32_t>(JSGlobalObject::globalLexicalBindingEpochOffset()) = epochOfGlobalObject;
+    instance.globalObject = std::bit_cast<JSGlobalObject*>(globalObject.address());
+    uint64_t wordOfName = constructor.address();
+    for (InstanceOfOperand name : { InstanceOfOperand::NameSeenByScripts, InstanceOfOperand::NameOfGlobalObject }) {
+        bindings[numberOfBinding].constant = static_cast<EncodedJSValue>(constructor.address());
+        StubRun byName = runner.run(instanceOf(name), { value.address() }, numberOfBinding);
+        AOT_TEST_CHECK(!byName.calledOperation && byName.result == 1);
+        StubRun ofPrimitive = runner.run(instanceOf(name), { bitsOf(jsNumber(7)) }, numberOfBinding);
+        AOT_TEST_CHECK(!ofPrimitive.calledOperation && !ofPrimitive.result);
+
+        bindings[numberOfBinding] = { 0, structureIDOfValues, epochOfGlobalObject, static_cast<int64_t>(std::bit_cast<uintptr_t>(&wordOfName)) };
+        StubRun atLocation = runner.run(instanceOf(name), { value.address() }, numberOfBinding);
+        AOT_TEST_CHECK(!atLocation.calledOperation && atLocation.result == 1);
+
+        bindings[numberOfBinding] = { };
+        Entry readOfBinding = name == InstanceOfOperand::NameSeenByScripts ? Entry::operationAOTGetGlobalBinding : Entry::operationAOTGetGlobalObjectBinding;
+        runner.recordCallsOf(readOfBinding);
+        runner.setResultOfRecordedOperation(constructor.address());
+        StubRun withoutConstant = runner.run(instanceOf(name), { value.address() }, numberOfBinding);
+        runner.countCallsOf(readOfBinding);
+        AOT_TEST_CHECK(withoutConstant.numberOfRecordedCalls == 1 && withoutConstant.recordedArguments[0] == numberOfBinding && withoutConstant.result == 1);
+    }
+
+#if AOT_STUB_RUNNER_COUNTS_INSTRUCTIONS
     runner.setCountsInstructions(true);
     AOT_TEST_CHECK(isWithinBudgetOfRead(ask(value.address()), 32, "instanceof of a remembered constructor, found at the first link"_s));
     structureOfValues.at<uint64_t>(Structure::prototypeOffset()) = objectPrototype.address();
     AOT_TEST_CHECK(isWithinBudgetOfRead(ask(value.address()), 34, "instanceof of a remembered constructor, not found below Object.prototype"_s));
+    bindings[numberOfBinding].constant = static_cast<EncodedJSValue>(constructor.address());
+    AOT_TEST_CHECK(isWithinBudgetOfRead(runner.run(instanceOf(InstanceOfOperand::NameSeenByScripts), { value.address() }, numberOfBinding), 41, "instanceof of a remembered constructor that a global name holds"_s));
+    bindings[numberOfBinding] = { 0, structureIDOfValues, epochOfGlobalObject, static_cast<int64_t>(std::bit_cast<uintptr_t>(&wordOfName)) };
+    AOT_TEST_CHECK(isWithinBudgetOfRead(runner.run(instanceOf(InstanceOfOperand::NameSeenByScripts), { value.address() }, numberOfBinding), 56, "instanceof of a remembered constructor at the location of a global name"_s));
 #endif
 }
 

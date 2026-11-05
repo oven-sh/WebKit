@@ -10,6 +10,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTCallPlan.h"
 #include "AOTCallingConventions.h"
 #include "AOTEffectsDeclared.h"
 #include "AOTFamilies.h"
@@ -317,6 +318,29 @@ static bool looksBehindAllocationPayInBirths(const Walker& walker)
     return !walker.program().at(function).isModuleBody();
 }
 
+std::optional<GuardOfPrototypeAtConstruction> findGuardOfPrototypeAtConstruction(Walker& walker, FunctionID constructor, bool newCellIsLookedAt, bool guardsAreAskedAtBirth, Origin origin)
+{
+    const Program& program = walker.program();
+    LayoutID classLayout = declaredLayoutOf(program, program.at(constructor).constructedClass);
+    AccessContext context { program, WalkFacts(walker.facts()), walker.plan(), walker.types(), walker.currentFunction() };
+    if (!walker.has(Mechanism::Guesses) || !walker.opensGuesses() || !walker.isInLoop() || program.at(classLayout).constructor != constructor || !prototypeOfConstructorFunctionIsLeftToGuards(context, classLayout))
+        return std::nullopt;
+
+    GuardOfPrototypeAtConstruction guard { { MemberConditionKind::MemberUnchanged, classLayout, ClassSide::Static, program.keyOf(BuiltinNames::prototype) } };
+    guard.isKnownToHold = walker.state().someGuardHoldsOf(classLayout);
+    if (!guard.isKnownToHold && !newCellIsLookedAt && !(guardsAreAskedAtBirth && walker.state().guardsHaveBegun(classLayout)))
+        return std::nullopt;
+    if (walker.state().guardOfReadsHolds(classLayout, guard.condition.key, ClassSide::Static) && walker.checksProofs() && !walker.isUnreachable()) {
+        origin.isTailCall = false;
+        Draft test(Opcode::AreMembersUnchanged, origin);
+        test.setConditions(singleElementSpan(guard.condition));
+        Reference holds = walker.build(WTF::move(test));
+        if (holds && holds.isValue() && !walker.isUnreachable())
+            walker.checkProof(holds, TypeArena::fromPrimitives(Primitive::True), TypeTable::boolean, ProofSource::WhatIsRemembered, origin);
+    }
+    return guard;
+}
+
 static Reference buildWhatConstructionGivesInBirths(Walker& walker, FunctionID callee, Reference returned, Reference object, Origin origin)
 {
     TypeArena& types = walker.types();
@@ -400,6 +424,13 @@ bool listStoresOfCopiedConstructorOfItsOpcodes(Walker& walker, const BodyValue& 
         return false;
     if ((listed.asksForLayoutPrototype || !listed.conditions.isEmpty()) && !looksBehindAllocationPayInBirths(walker))
         return false;
+    std::optional<GuardOfPrototypeAtConstruction> guardOfPrototype = findGuardOfPrototypeAtConstruction(walker, callee, listed.asksForLayoutPrototype, !listed.conditions.isEmpty(), origin);
+    bool someGuardOfClassIsAsked = guardOfPrototype && listed.conditions.containsIf([&](const MemberConditionRecord& condition) {
+        return condition.layout == guardOfPrototype->condition.layout;
+    });
+    if (guardOfPrototype && !guardOfPrototype->isKnownToHold && !someGuardOfClassIsAsked)
+        listed.conditions.append(guardOfPrototype->condition);
+    bool beginsGuards = guardOfPrototype && !walker.state().guardsHaveBegun(guardOfPrototype->condition.layout);
 
     const BodyIndex& index = walker.currentBodyIndex();
     BodyBlock block = index.block(index.blockOf(call.id()));
@@ -415,27 +446,36 @@ bool listStoresOfCopiedConstructorOfItsOpcodes(Walker& walker, const BodyValue& 
     };
     Reference guardsHold;
     if (!listed.conditions.isEmpty()) {
+        if (beginsGuards) {
+            Draft begin(Opcode::BeginMemberGuards, origin);
+            begin.setLayout(guardOfPrototype->condition.layout);
+            walker.build(WTF::move(begin));
+        }
         Draft look(Opcode::AreMembersUnchanged, origin);
         look.setConditions(listed.conditions.span());
-        guardsHold = walker.build(WTF::move(look));
+        guardsHold = walker.isUnreachable() ? Reference() : walker.build(WTF::move(look));
         if (!guardsHold)
             return true;
         goOnWhereLookPasses(guardsHold);
     }
 
-    Draft read(Opcode::GetConstructPrototype, origin);
-    read.setNewTargetOperand(closure);
-    read.setLayout(declaredLayoutOf(program, constructed));
-    walker.chooseConservativeFields(read);
-    Effects ofRead = declaredBoundOf(Opcode::NewObject);
-    ofRead.reads.add(AbstractHeap::NamedProperties);
-    Reference prototype = walker.build(WTF::move(read), &ofRead);
-    if (!prototype)
-        return true;
+    Reference prototype;
+    if (!guardOfPrototype) {
+        Draft read(Opcode::GetConstructPrototype, origin);
+        read.setNewTargetOperand(closure);
+        read.setLayout(declaredLayoutOf(program, constructed));
+        walker.chooseConservativeFields(read);
+        Effects ofRead = declaredBoundOf(Opcode::NewObject);
+        ofRead.reads.add(AbstractHeap::NamedProperties);
+        prototype = walker.build(WTF::move(read), &ofRead);
+        if (!prototype)
+            return true;
+    }
     Draft allocation(Opcode::NewObject, origin);
     allocation.standsForNoValueOfInput = true;
     allocation.setLayout(constructed);
-    allocation.setPrototypeOperand(prototype);
+    if (prototype)
+        allocation.setPrototypeOperand(prototype);
     allocation.setFields(listed.fields.span());
     allocation.setValuesOperands(stores.values.span().first(listed.fields.size()));
     walker.chooseConservativeFields(allocation);
@@ -444,18 +484,23 @@ bool listStoresOfCopiedConstructorOfItsOpcodes(Walker& walker, const BodyValue& 
         return true;
     noteFreshObject(walker, object, listed.fields.size());
 
-    if (listed.asksForLayoutPrototype) {
+    if (listed.asksForLayoutPrototype && !guardOfPrototype) {
         Draft look(Opcode::HasLayoutPrototype, origin);
         look.setObjectOperand(object);
         Reference passes = walker.build(WTF::move(look));
         if (!passes)
             return true;
         goOnWhereLookPasses(passes);
-        walker.state().noteFactsOfCell(object, FactOfCell::HasLayoutPrototype);
     }
+    if (listed.asksForLayoutPrototype || guardOfPrototype)
+        walker.state().noteFactsOfCell(object, FactOfCell::HasLayoutPrototype);
     if (guardsHold) {
-        for (const MemberConditionRecord& condition : listed.conditions)
-            walker.state().noteStoresPassAbove(condition.layout, condition.key, guardsHold);
+        for (const MemberConditionRecord& condition : listed.conditions) {
+            if (condition.kind == MemberConditionKind::MemberUnchanged)
+                walker.state().noteGuardOfReadsHolds(condition.layout, condition.key, guardsHold, condition.side);
+            else
+                walker.state().noteStoresPassAbove(condition.layout, condition.key, guardsHold);
+        }
     }
 
     Vector<Walker::ArmThatMeets, 2> arms;
@@ -470,7 +515,9 @@ bool listStoresOfCopiedConstructorOfItsOpcodes(Walker& walker, const BodyValue& 
     };
 
     auto constructAsWritten = [&] {
-        Walker::ClosedArm closedArm(walker);
+        Walker::ClosedArm closedArm(walker, !!guardOfPrototype);
+        if (walker.isUnreachable())
+            return;
         walker.arrivals().leaveAnything(callee);
         Draft asWritten = walker.draftOf(call);
         walker.chooseConservativeFields(asWritten);

@@ -58,6 +58,8 @@ inline constexpr OpcodeSet opcodesThatBuildInstanceOfBuiltinTakes { Opcode::Inst
 AOT_LINK_OF_WALK_WITH_INPUTS(buildInstanceOfBuiltin, opcodesThatBuildInstanceOfBuiltinTakes)
 inline constexpr OpcodeSet opcodesThatBuildAccessByIndexOffExpectedViewTakes { Opcode::ElemGet, Opcode::ElemSet };
 AOT_LINK_OF_WALK(buildAccessByIndexOffExpectedView, opcodesThatBuildAccessByIndexOffExpectedViewTakes)
+inline constexpr OpcodeSet opcodesThatBuildReadByIndexOffAnyBaseTakes { Opcode::ElemGet };
+AOT_LINK_OF_WALK(buildReadByIndexOffAnyBase, opcodesThatBuildReadByIndexOffAnyBaseTakes)
 inline constexpr OpcodeSet opcodesThatAskPlainVectorBehindRowTakes { Opcode::HasContiguousIndex, Opcode::GetOwnContiguousIndex };
 AOT_LINK_OF_WALK(askPlainVectorBehindRow, opcodesThatAskPlainVectorBehindRowTakes)
 extern const OpcodeSet opcodesThatOpenGuessAtTakes;

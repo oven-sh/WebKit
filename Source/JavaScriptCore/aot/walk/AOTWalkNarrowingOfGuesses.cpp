@@ -56,7 +56,7 @@ static void meetWithWhatWasSeenToArriveInNarrowingOfGuesses(Walker& walker, uint
 
 static void meetWithWhatUnitExpectsOfItsOwnParameterInNarrowingOfGuesses(Walker& walker, ValueID input, TypeID& found)
 {
-    if (!walker.depthOfCopies())
+    if (walker.walksOwnBodyOfUnit())
         return;
     std::optional<uint32_t> ofUnit = walker.entryParameterOfUnitBoundTo(walker.referenceOf(input));
     if (!ofUnit)
@@ -132,7 +132,7 @@ static bool restsOnNamesThatBuiltinsAnswerInNarrowingOfGuesses(Walker& walker, V
     if (definition.isParameter() && walker.currentBodyIndex().blockOf(input) == entryBlock && !saysNothingInNarrowingOfGuesses(types, typeSeenToArriveInNarrowingOfGuesses(walker, input.index())))
         return false;
     std::span<const PropertyKeyID> names = walker.namesUsedOff(input);
-    if (names.empty() || walker.facts().layoutsByNames().findOnlyLayoutWithAll(names) != expected)
+    if (names.empty() || walker.facts().layoutsByNames().findOnlyLayoutWithAll(names, walker.isInLoop() && names.size() > 1) != expected)
         return false;
     if (someCastStatesLayoutInNarrowingOfGuesses(walker, input, expected))
         return false;
@@ -279,7 +279,7 @@ void refineExpectationOfValue(Walker& walker, ValueID input, TypeID& found, bool
 
     if (types.at(found).hasOnlyPrimitives(Primitive::UndefinedOrNull))
         return;
-    if (walker.depthOfCopies()) {
+    if (!walker.walksOwnBodyOfUnit()) {
         bool statesType = !definition.isParameter() && opcodesThatStateTypes.contains(definition.opcode());
         if (ValueID behindCasts = statesType ? index.valueBehindCasts(input) : input; index.isParameter(behindCasts) && index.blockOf(behindCasts) == entryBlock)
             meetWithWhatUnitExpectsOfItsOwnParameterInNarrowingOfGuesses(walker, behindCasts, found);

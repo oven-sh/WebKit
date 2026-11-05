@@ -362,6 +362,7 @@ Reference BuilderOfEntries::callUnit(CodeUnit target, std::span<const Reference>
     if (m_cannotGoOn)
         return { };
 
+    RELEASE_ASSERT(!isTableRole(target.role));
     Draft call = draft(Opcode::CallDirect);
     call.setFunction(target.function);
     call.setArgumentsOperands(operands);
@@ -674,7 +675,6 @@ bool walkEntryUnit(Walker& walker, CodeUnit unit)
     case CodeRole::Body:
     case CodeRole::SlowBody:
     case CodeRole::CoroutineBody:
-    case CodeRole::Serializer:
         walker.fail("a unit that a body stands behind is walked as one that has none"_s);
         return false;
     case CodeRole::TableEntry:

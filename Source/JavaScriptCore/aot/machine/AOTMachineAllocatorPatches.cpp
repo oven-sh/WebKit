@@ -1909,9 +1909,10 @@ void Allocator::releaseChildrenLetGoByCallee(PatchOperation* patch, std::span<co
 
 RegisterMask Allocator::registersWhereReleasedValueMayHaveWaited() const
 {
+    RegisterMask keptByNativeCalleesAlone = maskOf(RegisterSet::calleeSaveRegisters()) & ~m_file.calleeSaved;
     if (m_isAheadOfFramedPart)
-        return 0;
-    return m_allocation.usedCalleeSaves() & m_file.allocatableIn(Bank::GP);
+        return keptByNativeCalleesAlone & m_file.allocatableIn(Bank::GP);
+    return (m_allocation.usedCalleeSaves() | keptByNativeCalleesAlone) & m_file.allocatableIn(Bank::GP);
 }
 
 } } } // namespace JSC::AOT::Machine

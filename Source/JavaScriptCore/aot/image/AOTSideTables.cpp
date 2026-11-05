@@ -63,7 +63,7 @@ static void collectOffsetsAskedForFrame(Vector<uint32_t, 32>& offsets, const Com
         addReturnOffset(site.offset);
     for (const FaultingAccess& access : code.sites.faultingAccesses)
         offsets.append(access.codeOffset);
-    for (const PollSite& poll : code.sites.pollSites)
+    for (const PollSite& poll : code.sites.rareLists->pollSites)
         addReturnOffset(poll.returnOffset());
     if (!std::ranges::is_sorted(offsets))
         std::ranges::sort(offsets);
@@ -73,7 +73,7 @@ static bool eachListOfOffsetsAskedForFrameIsInOrder(const CompiledCode& code)
 {
     return std::ranges::is_sorted(code.body.returnSites, { }, &ReturnSite::offset)
         && std::ranges::is_sorted(code.sites.faultingAccesses, { }, &FaultingAccess::codeOffset)
-        && std::ranges::is_sorted(code.sites.pollSites, { }, &PollSite::returnOffset);
+        && std::ranges::is_sorted(code.sites.rareLists->pollSites, { }, &PollSite::returnOffset);
 }
 
 static void forEachOffsetAskedForFrameInOrder(Vector<uint32_t, 32>& offsets, const CompiledCode& code, const Invocable<void(uint32_t)> auto& functor)
@@ -93,8 +93,8 @@ static void forEachOffsetAskedForFrameInOrder(Vector<uint32_t, 32>& offsets, con
     const ReturnSite* endOfSites = code.body.returnSites.end();
     const FaultingAccess* access = code.sites.faultingAccesses.begin();
     const FaultingAccess* endOfAccesses = code.sites.faultingAccesses.end();
-    const PollSite* poll = code.sites.pollSites.begin();
-    const PollSite* endOfPolls = code.sites.pollSites.end();
+    const PollSite* poll = code.sites.rareLists->pollSites.begin();
+    const PollSite* endOfPolls = code.sites.rareLists->pollSites.end();
     uint64_t offsetOfSite = site != endOfSites ? offsetInFrontOf(site->offset) : none;
     uint64_t offsetOfAccess = access != endOfAccesses ? access->codeOffset : none;
     uint64_t offsetOfPoll = poll != endOfPolls ? offsetInFrontOf(poll->returnOffset()) : none;
@@ -154,7 +154,7 @@ static uint64_t hashFrameMapWords(std::span<const uint32_t> words)
 static FrameMapPlaces findPlacesOfFrameMaps(const LinkedFunctions& functions, const ParallelLoops& loops)
 {
     Vector<HashedFrameMaps> hashed = collectInParallel<HashedFrameMaps>(loops, static_cast<unsigned>(functions.size()), [&](unsigned position, Vector<HashedFrameMaps>& found) {
-        std::span<const uint32_t> words = functions[position].sites.frameMapWords.span();
+        std::span<const uint32_t> words = functions[position].sites.rareLists->frameMapWords.span();
         if (!words.empty())
             found.append({ hashFrameMapWords(words), position });
     });
@@ -164,9 +164,9 @@ static FrameMapPlaces findPlacesOfFrameMaps(const LinkedFunctions& functions, co
     places.storesOwnWords.ensureSize(functions.size());
     UncheckedKeyHashMap<uint64_t, uint32_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> firstWithHash;
     for (auto [hash, position] : hashed) {
-        std::span<const uint32_t> words = functions[position].sites.frameMapWords.span();
+        std::span<const uint32_t> words = functions[position].sites.rareLists->frameMapWords.span();
         uint32_t first = firstWithHash.add(hash, position).iterator->value;
-        if (first != position && equalSpans(functions[first].sites.frameMapWords.span(), words)) {
+        if (first != position && equalSpans(functions[first].sites.rareLists->frameMapWords.span(), words)) {
             places.firstWordOf[position] = places.firstWordOf[first];
             continue;
         }
@@ -240,17 +240,18 @@ SideTables encodeSideTables(const LinkedFunctions& functions, std::span<const Ve
         for (unsigned position = chunks.firstIndexOf[chunk]; position < chunks.firstIndexOf[chunk + 1]; ++position) {
             const CompiledCode& code = functions[position];
             const SiteDescription& sites = code.sites;
+            const RareListsOfSites& rareLists = *sites.rareLists;
             encodeFrameRanges(scratch, code);
             std::optional<std::pair<uint32_t, uint32_t>> frameMapRange;
-            if (!sites.frameMapWords.isEmpty()) {
-                frameMapRange.emplace(frameMaps.firstWordOf[position], static_cast<uint32_t>(sites.frameMapWords.size()));
+            if (!rareLists.frameMapWords.isEmpty()) {
+                frameMapRange.emplace(frameMaps.firstWordOf[position], static_cast<uint32_t>(rareLists.frameMapWords.size()));
                 if (frameMaps.storesOwnWords.quickGet(position))
-                    memcpySpan(frameMapWords.subspan(frameMapRange->first), sites.frameMapWords.span());
+                    memcpySpan(frameMapWords.subspan(frameMapRange->first), rareLists.frameMapWords.span());
             }
             scratch.handlers.shrink(0);
-            encodeHandlers(scratch.handlers, sites.handlers.span());
+            encodeHandlers(scratch.handlers, rareLists.handlers.span());
             scratch.constructedCallees.shrink(0);
-            for (const ConstructedCallee& row : sites.constructedCallees) {
+            for (const ConstructedCallee& row : rareLists.constructedCallees) {
                 CodeUnit callee = code.body.callees[row.callee];
                 RELEASE_ASSERT(callee);
                 scratch.constructedCallees.append({ row.site, callee.function.index() });

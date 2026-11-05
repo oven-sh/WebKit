@@ -382,8 +382,10 @@ static void testSuspensions()
 static void testWriterEndsWhatItMayWrite()
 {
     AnswersOfWalk table;
+    NumbersOfWalkStates numbers;
     WalkState state;
     state.setAnswers(table);
+    state.setNumbers(numbers);
     Reference written = valueOfKnownAnswersTests(1);
     Reference other = valueOfKnownAnswersTests(2);
     Reference held = valueOfKnownAnswersTests(3);
@@ -416,6 +418,7 @@ static void testWriterEndsWhatItMayWrite()
     AOT_TEST_CHECK(state.shapeOf(other) && state.slot(other, field) == held && state.element(other, held) == held && state.factsOfCell(other).contains(FactOfCell::NotFrozen));
     AOT_TEST_CHECK(state.variable(VariableID(0u)) == held);
     AOT_TEST_CHECK(!state.guardOfReadsHolds(LayoutID(1u), key) && state.guardOfReadsHolds(LayoutID(2u), key));
+    AOT_TEST_CHECK(!state.someGuardHoldsOf(LayoutID(1u)) && state.someGuardHoldsOf(LayoutID(2u)));
     AOT_TEST_CHECK(!findInKnownAnswersTests(state, 1) && findInKnownAnswersTests(state, 2) && findInKnownAnswersTests(state, 3));
     AOT_TEST_CHECK(!findInKnownAnswersTests(state, 4));
     AOT_TEST_CHECK(numberOfQuestionsAboutOther == 2);
@@ -428,6 +431,7 @@ static void testWriterEndsWhatItMayWrite()
 
     state.invalidate(Effects::unknownCode(), mayBeWritten, mayEndGuard);
     AOT_TEST_CHECK(!state.slot(other, field) && !state.guardOfReadsHolds(LayoutID(2u), key) && !findInKnownAnswersTests(state, 2));
+    AOT_TEST_CHECK(state.guardsHaveBegun(LayoutID(1u)) && state.guardsHaveBegun(LayoutID(2u)) && !state.guardsHaveBegun(LayoutID(3u)));
 }
 
 static void testNumberFarAboveOldOneCostsNoMore()

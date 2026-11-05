@@ -62,6 +62,7 @@ struct ModuleData {
         IsLibraryCodeWithFilePath = 1 << 13,
         IsOfLibrary = 1 << 14,
         CapturesOnDemand = 1 << 15,
+        OnlyPassesLinkOn = 1 << 15,
     };
 
     static constexpr uint8_t hasNoDisplayPath = UINT8_MAX - 1;
@@ -77,7 +78,7 @@ struct ModuleData {
     SyntheticExportRule exportRule : 2;
     RequireResult requireResult : 2;
     Number24 body;
-    Number24 referrerOrRuntimeModule;
+    Number24 referrerRuntimeModuleOrLoadGroup;
     Number24 firstRequest;
     Number24 firstExport;
     Number24 firstSyntheticExport;
@@ -100,6 +101,7 @@ struct ModuleData {
     bool isSynchronous() const { return has(Flag::IsSynchronous); }
     bool isSimple() const { return has(Flag::IsSimple); }
     bool needsLink() const { return has(Flag::NeedsLink); }
+    bool onlyPassesLinkOn() const { return has(Flag::OnlyPassesLinkOn) && kind != ModuleKind::CommonJs; }
     bool reachesUncompiledCode() const { return has(Flag::ReachesUncompiledCode); }
     bool hasDynamicStarExport() const { return kind != ModuleKind::CommonJs && has(Flag::HasDynamicStarExport); }
     bool exportsStayInCompiledCode() const { return kind == ModuleKind::CommonJs && has(Flag::ExportsStayInCompiledCode); }
@@ -135,12 +137,25 @@ struct ModuleData {
     bool mayBeMocked() const { return kind != ModuleKind::External && externalKind == mayBeMockedBit; }
     bool capturesExports() const;
     bool capturesExportsBehindEvaluation() const { return capturesExports() && (kind == ModuleKind::SourceText || kind == ModuleKind::CommonJs); }
+    bool linkFollowsRequests() const { return capturesExportsBehindEvaluation() || (!capturesExports() && !isUncompiledCode()); }
     bool holdsNamespaceInValue() const { return hasValue() && (hasExportTable() || isUncompiledCode()); }
 
     std::optional<FunctionID> bodyFunction() const { return optionalIDInImage<FunctionID>(body); }
-    std::optional<ModuleID> referrerModule() const { return kind == ModuleKind::External ? optionalIDInImage<ModuleID>(referrerOrRuntimeModule) : std::nullopt; }
-    std::optional<ModuleID> evaluatorModule() const { return kind == ModuleKind::CommonJs ? optionalIDInImage<ModuleID>(referrerOrRuntimeModule) : std::nullopt; }
-    std::optional<uint32_t> registryID() const { return kind == ModuleKind::RuntimeSource || kind == ModuleKind::Runtime ? optionalIDInImage<uint32_t>(referrerOrRuntimeModule) : std::nullopt; }
+    std::optional<ModuleID> referrerModule() const { return kind == ModuleKind::External ? optionalIDInImage<ModuleID>(referrerRuntimeModuleOrLoadGroup) : std::nullopt; }
+    std::optional<ModuleID> evaluatorModule() const { return kind == ModuleKind::CommonJs ? optionalIDInImage<ModuleID>(referrerRuntimeModuleOrLoadGroup) : std::nullopt; }
+    std::optional<uint32_t> registryID() const { return kind == ModuleKind::RuntimeSource || kind == ModuleKind::Runtime ? optionalIDInImage<uint32_t>(referrerRuntimeModuleOrLoadGroup) : std::nullopt; }
+
+    enum class PlaceInLoadGroup : uint8_t { BelowHead, InCycleWithHead, Head, HeadThatRequestsUncompiledCode };
+    static constexpr unsigned bitsOfNumberInLoadGroup = 22;
+    static constexpr uint32_t endOfNumbersInLoadGroups = 1u << bitsOfNumberInLoadGroup;
+    static Number24 encodeLoadGroup(PlaceInLoadGroup place, uint32_t number)
+    {
+        RELEASE_ASSERT(number < endOfNumbersInLoadGroups);
+        return Number24(static_cast<uint32_t>(place) << bitsOfNumberInLoadGroup | number);
+    }
+    PlaceInLoadGroup placeInLoadGroup() const { return static_cast<PlaceInLoadGroup>(static_cast<uint32_t>(referrerRuntimeModuleOrLoadGroup) >> bitsOfNumberInLoadGroup); }
+    uint32_t numberInLoadGroup() const { return static_cast<uint32_t>(referrerRuntimeModuleOrLoadGroup) & ((1u << bitsOfNumberInLoadGroup) - 1); }
+    bool isHeadOfLoadGroup() const { return placeInLoadGroup() >= PlaceInLoadGroup::Head; }
 };
 
 inline bool ModuleData::hasExportTable() const
@@ -160,7 +175,7 @@ inline bool ModuleData::hasExportTable() const
 
 inline bool ModuleData::capturesExports() const
 {
-    if (has(Flag::CapturesOnDemand))
+    if (kind == ModuleKind::CommonJs && has(Flag::CapturesOnDemand))
         return false;
     switch (exportRule) {
     case SyntheticExportRule::CommonJs:
@@ -412,7 +427,8 @@ struct ImportOfHeldFileData {
 
 struct CompiledRuntimeModuleData {
     uint32_t registryID;
-    uint32_t module;
+    uint32_t module : 31;
+    uint32_t valueStaysWithCompiledCode : 1;
 };
 
 struct StateOfLibraryModuleData {
@@ -530,6 +546,7 @@ private:
     v(moduleRequests, ModuleRequestData) \
     v(linkRequests, uint16_t) \
     v(evaluationRequests, uint16_t) \
+    v(groupsLoadedWithGroups, uint16_t) \
     v(entryPointLinkPlan, LinkPlanStepData) \
     v(moduleExports, ModuleExportData) \
     v(indirectExports, IndirectExportData) \

@@ -41,8 +41,8 @@ Effects effectsOfLibraryFunctionBehindRow(const Walker& walker, const BuiltinOve
     if (!entered.isReached || entered.everyCallerIsKnown)
         return Effects::unknownCode();
 
-    Effects effects = entered.effectsOnReturn;
-    effects.merge(entered.effectsOnThrow);
+    Effects effects = entered.effectsOnReturn();
+    effects.merge(entered.effectsOnThrow());
     effects.mayThrow |= ThrowEffect::onlyStackOverflow();
     if (program.builtins().has(BuiltinMark::MayTerminateProcess, row.builtin))
         effects.mayBeTerminated = true;
@@ -242,7 +242,7 @@ bool callLibraryFunctionBehindRows(Walker& walker, const BodyValue& call)
             Reference handedOver = call.argumentsOperands().empty() ? Reference() : walker.referenceOf(call.argumentsOperands()[0]);
             Reference receiver = call.thisValueOperand() ? walker.referenceOf(call.thisValueOperand()) : Reference();
             bool isListAsItWasMade = receiver && (isListAsMade(walker, receiver) || receiverStaysAsMadeByLink(walker, call));
-            mayCopy = walker.isInLoop() && (isListAsItWasMade || !walker.depthOfCopies()) && handedOver && isLeafHandedToMethodOfLists(walker, walker.typeOf(handedOver)) ? MayCopyFunctionCalledDirectly::Yes : MayCopyFunctionCalledDirectly::No;
+            mayCopy = walker.isInLoop() && (isListAsItWasMade || walker.walksOwnBodyOfUnit()) && handedOver && isLeafHandedToMethodOfLists(walker, walker.typeOf(handedOver)) ? MayCopyFunctionCalledDirectly::Yes : MayCopyFunctionCalledDirectly::No;
         } else if (!behind.named.isEmpty())
             function = findLibraryFunctionOfRowsReachedBy(walker, call);
         isFoundByRowsReached = function && !behind.enteredByValue;

@@ -169,7 +169,7 @@ static BodyTestWords writeBodyOfEveryShape(const BodyTestUnit& unit)
     words.value(Opcode::Double, none).addPair(bodyTestNaNBits);
     words.value(Opcode::String, 105).add(id(1));
     words.value(Opcode::String, 106).add(id(bodyTestUnnamedOrdinal));
-    words.value(Opcode::Call, 107, declaredPosition(FlagMask::isAnnotatedPure(Opcode::Call))).add(v0, none).addList({ v2, v3 }).add(id(2), none, id(3), none, 9);
+    words.value(Opcode::Call, 107, declaredPosition(FlagMask::isNeverInlined(Opcode::Call))).add(v0, none).addList({ v2, v3 }).add(id(2), none, id(3), none, 9);
     words.value(Opcode::NewObject, 108).add(id(1)).addList({ 0, 2 }).add(none).addList({ v2, v3 });
     words.value(Opcode::NewArray, 109).add(id(2)).addList({ 1 }).addList({ v2, v3, v4 });
     words.value(Opcode::AppendElement, 110).add(v9, v2);

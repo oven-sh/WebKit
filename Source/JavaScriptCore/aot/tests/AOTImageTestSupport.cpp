@@ -347,8 +347,14 @@ uint32_t CodeSketch::jumpToStub(StubKey key)
 
 uint32_t CodeSketch::callThunk(const ArgumentMoves& moves, OptionalIndex site)
 {
-    uint32_t index = static_cast<uint32_t>(m_code.body.argumentMoves.size());
-    m_code.body.argumentMoves.append(moves);
+    uint32_t index = static_cast<uint32_t>(m_argumentMoves.size());
+    m_argumentMoves.append(moves);
+    return appendCall({ SymbolSpace::ArgumentThunk, index }, site);
+}
+
+uint32_t CodeSketch::callThunkAgain(uint32_t index, OptionalIndex site)
+{
+    AOT_TEST_CHECK(index < m_argumentMoves.size());
     return appendCall({ SymbolSpace::ArgumentThunk, index }, site);
 }
 
@@ -431,13 +437,13 @@ CompiledCode CodeSketch::take()
 {
     AOT_TEST_CHECK(!m_code.body.bytes.isEmpty());
     AOT_TEST_CHECK(m_sizeAfterLastEnd == size() || endsWithoutReturning(m_code));
-    finishFrame();
-    return WTF::move(m_code);
+    return takeUnchecked();
 }
 
 CompiledCode CodeSketch::takeUnchecked()
 {
     finishFrame();
+    m_code.body.argumentMoves = ArgumentMovesOfUnit(m_argumentMoves.span());
     return WTF::move(m_code);
 }
 

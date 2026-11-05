@@ -417,7 +417,11 @@ bool Walker::writeOutTurnsOfLoop(BlockID inputHead, std::span<const Reference> e
 
 std::span<const BlockID> Walker::handlerBlocksOfFrameOnTop()
 {
-    Frame& frame = m_frames.last();
+    return handlerBlocksOf(m_frames.last());
+}
+
+std::span<const BlockID> Walker::handlerBlocksOf(Frame& frame)
+{
     if (!frame.handlerBlocks) {
         frame.handlerBlocks.emplace();
         for (uint32_t number = 0; number < frame.index->numberOfBlocks(); ++number) {

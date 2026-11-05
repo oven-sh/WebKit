@@ -71,7 +71,6 @@ struct WalkOptions {
     uint16_t sourcesOfProofsChecked { 0 };
     bool testsEveryPosition { false };
     bool takesPositionsToLieInside { false };
-    // TestingSwitch::NoCalleeKeepsWhatItIsHanded. No option of a build.
     bool takesCalleesToKeepNothing { false };
     bool holdsObjectsToStayingAsMade { false };
     bool writesBodiesStraight { false };

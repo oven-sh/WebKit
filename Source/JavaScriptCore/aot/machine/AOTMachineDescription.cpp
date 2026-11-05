@@ -33,7 +33,7 @@ static void describeFrameRanges(const Procedure& procedure, const LinkBuffer& li
     }
 }
 
-void describeListedConstants(const Procedure& procedure, decltype(CodeBody::constants)& constants)
+void describeListedConstants(const Procedure& procedure, decltype(RareListsOfBody::constants)& constants)
 {
     std::span<const ConstantDataRecord> records = procedure.constantData();
     constants.reserveCapacity(records.size());
@@ -44,7 +44,7 @@ void describeListedConstants(const Procedure& procedure, decltype(CodeBody::cons
     }
 }
 
-void describeListedJumpTables(const Procedure& procedure, const LinkBuffer& linkBuffer, decltype(CodeBody::jumpTables)& jumpTables)
+void describeListedJumpTables(const Procedure& procedure, const LinkBuffer& linkBuffer, decltype(RareListsOfBody::jumpTables)& jumpTables)
 {
     std::span<const JumpTableRecord> records = procedure.jumpTables();
     jumpTables.reserveCapacity(records.size());

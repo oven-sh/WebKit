@@ -302,6 +302,33 @@ static Vector<SitePosition> randomPositions(uint32_t count)
     return positions;
 }
 
+static void testPositionsWithConstructionStarts()
+{
+    BodiesImage any(2, bodies(bodyWithCalls(1, 1).code));
+    SiteDescription sites;
+    sites.positions = { positionAt(1, 1), positionAt(10, 20), positionAt(10, 30), positionAt(12, 5), positionAt(12, 9), positionAt(13, 2), positionAt(13, 8) };
+    sites.rareLists.ensure().constructionStarts = {
+        SiteConstructionStart { 1, 10, 4 },
+        SiteConstructionStart { 3, 11, 7 },
+        SiteConstructionStart { 4, 12, 9, true },
+        SiteConstructionStart { 5, 14, 3, false, true },
+    };
+    Vector<uint8_t> stream;
+    encodePositions(stream, sites, nullptr, OwnPosition { });
+    auto decoded = [&](uint32_t site) {
+        return decodePosition(any.table(), 0, stream.span().data(), OwnPosition { }, CallSiteIndex(site));
+    };
+    ModuleID module(0u);
+    AOT_TEST_CHECK(decoded(0) == SourcePosition({ { 1, 1 }, module }));
+    AOT_TEST_CHECK(decoded(1) == SourcePosition({ { 10, 20 }, module, { 10, 4 } }));
+    AOT_TEST_CHECK(decoded(2) == SourcePosition({ { 10, 30 }, module }));
+    AOT_TEST_CHECK(decoded(3) == SourcePosition({ { 12, 5 }, module, { 11, 7 } }));
+    AOT_TEST_CHECK(decoded(4) == SourcePosition({ { 12, 9 }, module, { 12, 9 }, true }));
+    AOT_TEST_CHECK(decoded(5) == SourcePosition({ { 13, 2 }, module, { 14, 3 }, false, true }));
+    AOT_TEST_CHECK(decoded(6) == SourcePosition({ { 13, 8 }, module }));
+    AOT_TEST_CHECK(!decoded(7));
+}
+
 static void testPositionsObfuscated()
 {
     SiteBody body = bodyWithInlineFrames(1, 1, chainedFrames, chainedFramesByCall);
@@ -328,6 +355,7 @@ std::span<const NativeTest> siteTableTests()
         { "image/call-sites/two-prologue-checks"_s, testCallSitesTwoPrologueChecks },
         { "image/call-sites/prologue-check-elsewhere"_s, testCallSitesPrologueCheckElsewhere },
         { "image/positions/random"_s, [] { checkEncodedPositions({ randomPositions(2000) }); } },
+        { "image/positions/construction-starts"_s, testPositionsWithConstructionStarts },
         { "image/positions/obfuscated"_s, testPositionsObfuscated },
     };
     return tests;

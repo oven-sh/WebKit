@@ -2034,13 +2034,14 @@ size_t SiteCaches::removeDeadEntries(VM& vm, CollectionScope scope)
 }
 
 static_assert(sizeof(SiteAnswers) == InstanceLayout::sizeOfSiteAnswers && sizeof(uint16_t) == InstanceLayout::sizeOfIndexOfSiteAnswers);
+static_assert(!(InstanceLayout::bytesReservedForSiteAnswers % sizeof(WideSiteAnswers)));
 
 AnswersAtSites::AnswersAtSites(State& state, SiteCaches& states)
     : m_state(state)
     , m_states(states)
     , m_indices(state.instance.indicesOfSiteAnswers())
-    , m_answers(state.instance.siteAnswers().first(SiteAnswers::firstWordOfWideAnswers / wordsInAnswers))
-    , m_wideAnswers(reinterpret_cast<WideSiteAnswers*>(state.instance.siteAnswers().data() + SiteAnswers::firstWordOfWideAnswers / wordsInAnswers), (state.instance.siteAnswers().size_bytes() - SiteAnswers::firstWordOfWideAnswers * sizeof(uint64_t)) / sizeof(WideSiteAnswers))
+    , m_answers(state.instance.siteAnswers())
+    , m_endOfWideAnswers(reinterpret_cast<WideSiteAnswers*>(state.instance.siteAnswers().data() + state.instance.siteAnswers().size()))
     , m_placesThatMissed(state.tableArena.allocate<uint64_t>((std::min<size_t>(m_indices.size(), numberOfMissBits) + 63) / 64))
     , m_placesThatFailed(state.tableArena.allocate<uint64_t>((std::min<size_t>(m_indices.size(), numberOfMissBits) + 63) / 64))
     , m_placesInPageShift(WTF::fastLog2(static_cast<unsigned>(pageSize() / sizeof(uint16_t))))
@@ -2084,7 +2085,7 @@ SiteAnswers* AnswersAtSites::ensureAnswersOf(uint32_t place, SiteUse use)
     uint32_t number;
     if (!m_numbersGivenBack.isEmpty())
         number = m_numbersGivenBack.takeLast();
-    else if (m_places.size() < m_answers.size()) {
+    else if ((m_places.size() + 1) * wordsInAnswers <= m_state.instance.propertyCaches.firstWordOfWideAnswers) {
         number = m_places.size();
         m_places.append(UINT32_MAX);
     } else
@@ -2107,6 +2108,14 @@ void AnswersAtSites::giveBackIfEmpty(uint32_t number)
     m_numbersGivenBack.append(static_cast<uint16_t>(number));
 }
 
+WideSiteAnswers* AnswersAtSites::wideAnswersOf(uint32_t place) const
+{
+    uint32_t word = m_indices[place];
+    if (word < m_state.instance.propertyCaches.firstWordOfWideAnswers)
+        return nullptr;
+    return &wideAnswersAt(static_cast<uint32_t>((m_answers.size() * wordsInAnswers - word) / wordsInWideAnswers - 1));
+}
+
 WideSiteAnswers* AnswersAtSites::ensureWideAnswersOf(uint32_t place)
 {
     if (WideSiteAnswers* wide = wideAnswersOf(place))
@@ -2114,12 +2123,13 @@ WideSiteAnswers* AnswersAtSites::ensureWideAnswersOf(uint32_t place)
     uint32_t number;
     if (!m_numbersOfWideAnswersGivenBack.isEmpty())
         number = m_numbersOfWideAnswersGivenBack.takeLast();
-    else if (m_placesOfWideAnswers.size() < m_wideAnswers.size()) {
+    else if (m_places.size() * wordsInAnswers + (m_placesOfWideAnswers.size() + 1) * wordsInWideAnswers <= m_answers.size() * wordsInAnswers) {
         number = m_placesOfWideAnswers.size();
         m_placesOfWideAnswers.append(UINT32_MAX);
+        m_state.instance.propertyCaches.firstWordOfWideAnswers = firstWordOfWideAnswersAt(number);
     } else
         return nullptr;
-    WideSiteAnswers& wide = m_wideAnswers[number];
+    WideSiteAnswers& wide = wideAnswersAt(number);
     ASSERT(wide.namesNoStructure() && !wide.answers.first.key && !wide.answers.second.key);
     if (SiteAnswers* narrow = answersOf(place)) {
         uint32_t numberOfNarrow = static_cast<uint32_t>(narrow - m_answers.data());
@@ -2129,13 +2139,13 @@ WideSiteAnswers* AnswersAtSites::ensureWideAnswersOf(uint32_t place)
     } else
         wide.answers.first = SiteAnswers::withoutKey(SiteUse::Read, true);
     m_placesOfWideAnswers[number] = place;
-    m_indices[place] = static_cast<uint16_t>(SiteAnswers::firstWordOfWideAnswers + number * wordsInWideAnswers);
+    m_indices[place] = static_cast<uint16_t>(firstWordOfWideAnswersAt(number));
     return &wide;
 }
 
 void AnswersAtSites::giveBackWideAnswersIfEmpty(uint32_t number)
 {
-    WideSiteAnswers& wide = m_wideAnswers[number];
+    WideSiteAnswers& wide = wideAnswersAt(number);
     if (!wide.answers.isEmpty() || !wide.namesNoStructure() || m_placesOfWideAnswers[number] == UINT32_MAX)
         return;
     wide = { };
@@ -2162,10 +2172,16 @@ static bool borrowsOperandOfOtherAnswer(SiteUse use, SiteAnswers::Answer answer)
 void AnswersAtSites::fill(uint32_t place, SiteUse use, const AnswerByStructure& filled, UniquedStringImpl* uid, std::span<JSObject* const> changeableObjects)
 {
     RELEASE_ASSERT(filled.answer.isByStructure());
-    m_states.waitLongerForNextFill(keyOfState(place));
-    SiteAnswers* answers = ensureAnswersOf(place, use);
-    if (!answers)
+    if (use == SiteUse::Read && holdsAnotherStructure(place, filled.answer.structureID()) && std::ranges::contains(WideSiteAnswers::formsOfFurtherAnswers, SiteAnswers::formOf(use, filled.answer.key))) {
+        addFurtherAnswer(place, filled.answer, uid, changeableObjects);
         return;
+    }
+    SiteAnswers* answers = ensureAnswersOf(place, use);
+    if (!answers) {
+        didFailToFill(place);
+        return;
+    }
+    m_states.waitLongerForNextFill(keyOfState(place));
     SiteAnswers::Answer& newest = answers->newestByStructure(use);
     SiteAnswers::Answer& other = answers->besideNewestByStructure(use);
     const bool otherIsFirst = &other == &answers->first;
@@ -2187,10 +2203,12 @@ void AnswersAtSites::fill(uint32_t place, SiteUse use, const AnswerByStructure& 
 void AnswersAtSites::fillByShape(uint32_t place, SiteAnswers::Answer answer)
 {
     RELEASE_ASSERT(answer.isByShape());
-    m_states.waitLongerForNextFill(keyOfState(place));
     SiteAnswers* answers = ensureAnswersOf(place, SiteUse::Read);
-    if (!answers)
+    if (!answers) {
+        didFailToFill(place);
         return;
+    }
+    m_states.waitLongerForNextFill(keyOfState(place));
     if (borrowsOperandOfOtherAnswer(SiteUse::Read, answers->second))
         answers->second = { };
     answers->first = answer;
@@ -2202,6 +2220,32 @@ bool AnswersAtSites::holdsAnotherStructure(uint32_t place, StructureID id) const
     return answers && answers->second.isByStructure() && answers->second.structureID() != id;
 }
 
+void AnswersAtSites::addFurtherAnswer(uint32_t place, SiteAnswers::Answer answer, UniquedStringImpl* uid, std::span<JSObject* const> changeableObjects)
+{
+    WideSiteAnswers* wide = ensureWideAnswersOf(place);
+    if (!wide) {
+        m_states.waitLongerForNextFill(keyOfState(place));
+        return;
+    }
+    auto& structures = wide->structuresOfFurtherAnswers;
+    if (std::ranges::contains(structures, answer.structureID().bits())) {
+        m_states.waitLongerForNextFill(keyOfState(place));
+        return;
+    }
+    auto room = std::ranges::find(structures, 0u);
+    if (room == structures.end()) {
+        room = structures.begin() + m_nextStructureToForget++ % structures.size();
+        m_states.waitLongerForNextFill(keyOfState(place));
+    }
+    size_t index = room - structures.begin();
+    *room = answer.structureID().bits();
+    wide->operandsOfFurtherAnswers[index] = answer.operand;
+    wide->bitsOfFormsOfFurtherAnswers[index] = static_cast<uint8_t>(answer.key & SiteAnswers::formMask);
+    m_wasWrittenSinceLastSweep = true;
+    if (!changeableObjects.empty())
+        m_state.chainDependents->add(changeableObjects, { uid, place, m_ownerID });
+}
+
 void AnswersAtSites::addStructureThatLacksName(uint32_t place, StructureID id, UniquedStringImpl* uid, std::span<JSObject* const> changeableObjects)
 {
     WideSiteAnswers* wide = ensureWideAnswersOf(place);
@@ -2210,6 +2254,10 @@ void AnswersAtSites::addStructureThatLacksName(uint32_t place, StructureID id, U
         return;
     }
     auto& structures = wide->structuresThatLackName;
+    if (std::ranges::contains(structures, id.bits())) {
+        m_states.waitLongerForNextFill(keyOfState(place));
+        return;
+    }
     auto room = std::ranges::find(structures, 0u);
     if (room == structures.end()) {
         room = structures.begin() + m_nextStructureToForget++ % structures.size();
@@ -2259,7 +2307,7 @@ void AnswersAtSites::dropChainDependent(VM&, uint32_t place, UniquedStringImpl*)
     }
     if (WideSiteAnswers* wide = wideAnswersOf(place)) {
         wide->forgetStructures();
-        giveBackWideAnswersIfEmpty(static_cast<uint32_t>(wide - m_wideAnswers.data()));
+        giveBackWideAnswersIfEmpty(numberOf(*wide));
     } else
         giveBackIfEmpty(static_cast<uint32_t>(answers - m_answers.data()));
     m_states.forgetHowOftenItWasFilled(keyOfState(place));
@@ -2298,7 +2346,7 @@ size_t AnswersAtSites::removeDeadEntries(VM& vm, CollectionScope scope)
         return bits && !vm.heap.isMarked(std::bit_cast<StructureID>(bits).decode());
     };
     for (uint32_t number = 0; number < m_placesOfWideAnswers.size(); ++number) {
-        WideSiteAnswers& wide = m_wideAnswers[number];
+        WideSiteAnswers& wide = wideAnswersAt(number);
         size_t numberBefore = numberOfClearedAnswers;
         for (SiteAnswers::Answer* answer : { &wide.answers.first, &wide.answers.second }) {
             if (!answer->isByStructure() || vm.heap.isMarked(answer->structureID().decode()))
@@ -2306,11 +2354,13 @@ size_t AnswersAtSites::removeDeadEntries(VM& vm, CollectionScope scope)
             *answer = { };
             ++numberOfClearedAnswers;
         }
-        for (uint32_t& bits : wide.structuresThatLackName) {
-            if (!isDead(bits))
-                continue;
-            bits = 0;
-            ++numberOfClearedAnswers;
+        for (std::span<uint32_t> structures : { std::span<uint32_t>(wide.structuresOfFurtherAnswers), std::span<uint32_t>(wide.structuresThatLackName) }) {
+            for (uint32_t& bits : structures) {
+                if (!isDead(bits))
+                    continue;
+                bits = 0;
+                ++numberOfClearedAnswers;
+            }
         }
         if (isDead(wide.structureThatLeavesFieldOut)) {
             wide.forgetWhatStandsAbove();
@@ -2513,7 +2563,7 @@ void PropertyCaches::fillSiteAnswers(uint32_t place, JSCell* base, uint32_t iden
         return;
     }
     ChainWalk walk = walkChain({ globalObject, structure, base->isObject() ? asObject(base) : nullptr, ChainWalkMode::AllocatesNothing, ChainWalkUse::KeptForReadsThatAskObjects }, name.uid);
-    if (walk.result == ChainWalkResult::Unknown) {
+    if (walk.result == ChainWalkResult::Unknown || (slot->kind == Slot::Kind::Absent && (walk.result != ChainWalkResult::Absent || walk.firstObjectWithEmptySlot))) {
         m_answersAtSites.didFailToFill(place);
         return;
     }

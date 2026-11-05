@@ -206,10 +206,8 @@ void Block::setSuccessors(Edge taken, Edge notTaken)
 
 void Block::clearSuccessors()
 {
-    for (const Edge& edge : m_successors) {
-        ASSERT(edge.block()->m_numberOfIncomingEdges);
-        --edge.block()->m_numberOfIncomingEdges;
-    }
+    for (const Edge& edge : m_successors)
+        edge.block()->didLoseIncomingEdge(this);
     m_successors.clear();
 }
 

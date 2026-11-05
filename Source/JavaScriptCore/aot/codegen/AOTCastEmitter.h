@@ -19,6 +19,7 @@ public:
     }
 
     void generateNarrowed(const ValueContext& value) { defineNarrowed(value, get(value->valueOperand())); }
+    void generateAssumeType(const ValueContext& value) { defineNarrowed(value, get(value->valueOperand())); }
     void generateCheckInitialized(const ValueContext&);
     void generateRequireObjectCoercible(const ValueContext&);
     void requireObjectCoercible(const ValueContext&);

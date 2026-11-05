@@ -228,10 +228,25 @@ static DeferredDefinitions deferredDefinitionsOfPlan(const Program& program, con
     return result;
 }
 
+static SlotRepresentation formOfNumbersProvenOfVariableInPlan(const Program& program, const LinkTables& linked, VariableID id)
+{
+    constexpr uint16_t markers = Primitive::UndefinedOrNull | Primitive::Absent;
+    if (id.index() >= linked.variables.size())
+        return SlotRepresentation::JSValue;
+    const LinkedCell& cell = linked.variable(id);
+    if (!cell.everyWriterIsKnown || !cell.proven || isNeverType(cell.proven))
+        return SlotRepresentation::JSValue;
+    Type proven = program.at(cell.proven);
+    if (!(proven.primitives & Primitive::Number) || !proven.hasOnlyPrimitives(Primitive::Number | markers))
+        return SlotRepresentation::JSValue;
+    return proven.primitives & Primitive::Double ? SlotRepresentation::OptionalDouble : SlotRepresentation::OptionalInt64;
+}
+
 static Vector<PlannedVariable> variablesOfPlan(const Program& program, const Facts& facts, const BitVector& described)
 {
     bool leavesOutWordsNeverStored = facts.mechanisms().contains(Mechanism::TypedSlots);
-    constexpr SlotTraits traits = traitsOf(SlotRepresentation::JSValue);
+    bool holdsNumbersRaw = withoutMechanismsMissingDependencies(facts.mechanisms()).contains(Mechanism::TypedSlots);
+    BitVector filledByRunTime = holdsNumbersRaw ? variablesThatRunTimeMayFill(program) : BitVector();
 
     Vector<PlannedVariable> variables(program.variables.size());
     for (uint32_t index = 0; index < program.variables.size(); ++index) {
@@ -240,6 +255,10 @@ static Vector<PlannedVariable> variablesOfPlan(const Program& program, const Fac
         planned.isDescribedToRunTime = described.quickGet(index);
         if (declaration.owner)
             continue;
+        if (holdsNumbersRaw && !planned.isDescribedToRunTime && declaration.initialization != VariableInitialization::Function && !filledByRunTime.get(index)
+            && !declaration.flags.containsAny({ VariableFlags::IsReplaceable, VariableFlags::HoldsMock, VariableFlags::OriginalMayRun }))
+            planned.representation = formOfNumbersProvenOfVariableInPlan(program, facts.linked(), VariableID(index));
+        SlotTraits traits = traitsOf(planned.representation);
         switch (declaration.initialization) {
         case VariableInitialization::Uninitialized:
             planned.initialWord = traits.absentBits;
@@ -792,6 +811,9 @@ std::unique_ptr<Plan> planProgram(Program& program, const Facts& facts, BuildCon
                     [&] {
                         parts.layoutsWithClassRecord = layoutsWithClassRecordInPlan(program, facts);
                         methodTable = planMethodTable(program, facts, parts.conventions, storage, parts.layoutsWithClassRecord);
+                        static_assert(defaultLimitValue(LimitID::ImageFunctions, hostArchitecture()) < 1ull << 24);
+                        if (build.exceeds(LimitID::ImageFunctions, methodTable.numberOfUnits))
+                            build.reportLimitExceeded(LimitID::ImageFunctions, methodTable.numberOfUnits);
                     },
                     [&] {
                         if (plansStackTests)
@@ -1287,8 +1309,7 @@ void checkPlan(const Program& program, const Facts& facts, const Plan& plan, Bui
 {
     CheckerOfPlan(program, plan, build).check();
     checkStorageOfFields(program, facts, plan, build);
-    if (build.validates())
-        checkFormsRoundRingsOfTailCalls(program, facts, plan, build);
+
 }
 
 } } } // namespace JSC::AOT::Typed

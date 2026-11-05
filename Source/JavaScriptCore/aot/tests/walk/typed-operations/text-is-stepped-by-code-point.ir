@@ -10,8 +10,13 @@
 # RUN(UNITS): walk f1 mechanisms=none+TypedOperations+UnboxedNumbers
 # UNITS-COUNT-2: = GetStringCodeUnit
 # UNITS-NOT: = GetStringCodeUnit
+# one code unit is handed out by the table of texts of one character, in line, off the unit that the step has read; a piece is cut for a pair of surrogates alone.
+# RUN(SINGLE): walk f1 mechanisms=none+TypedOperations+UnboxedNumbers
+# SINGLE: [[unit]]: {{*}} = GetStringCodeUnit
+# SINGLE: = CallInline -, [[unit]] inlineBuiltin=StringFromCharCode {{*}}traits=[mayThrow, mayCollect, mayTouchMemory]
 # RUN(PIECE): walk f1 mechanisms=none+TypedOperations+UnboxedNumbers
-# PIECE: = Substring
+# PIECE-COUNT-1: = Substring
+# PIECE-NOT: = Substring
 # RUN(NEVER): walk f1 mechanisms=none+TypedOperations+UnboxedNumbers
 # NEVER-NOT: @@iterator
 # NEVER-NOT: NewHeapWords

@@ -53,6 +53,8 @@ bool Walker::handlerInForceIgnoresWhatIsThrown() const
         return false;
 
     size_t frameIndex = numberOfFramesUpToHandlerInForce();
+    if (m_numberOfFramesOverHandlersOfCode && handlerOfCodeInForce(frameIndex))
+        return false;
     if (!frameIndex--)
         return false;
 
@@ -71,6 +73,8 @@ bool Walker::jumpToHandlerInPlaceOfThrow(const BodyTerminator&)
     if (!handlerInForceIgnoresWhatIsThrown())
         return false;
     size_t frameIndex = numberOfFramesUpToHandlerInForce() - 1;
+    if (!m_generatorsWalkedInConsumers.isEmpty())
+        bindParametersOfHeadForHandlerOfStep(frameIndex);
 
     noteStateAtThrowForHandler();
 
@@ -98,6 +102,8 @@ bool Walker::jumpToHandlerInPlaceOfThrow(const BodyTerminator&)
     open.arguments = WTF::move(arguments);
     open.types = WTF::move(types);
     takeNamesOntoEdge(open, frameIndex);
+    if (m_frames[frameIndex].references.size() > m_frames[frameIndex].index->numberOfValues())
+        nameCarriedValuesOnEdge(open, frameIndex);
     m_block = { };
     m_state.clear();
     return true;

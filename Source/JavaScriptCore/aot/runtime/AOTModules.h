@@ -22,6 +22,7 @@
 #include <array>
 #include <wtf/BitVector.h>
 #include <wtf/Box.h>
+#include <wtf/Deque.h>
 #include <wtf/HashMap.h>
 #include <wtf/RefCounted.h>
 #include <wtf/RefPtr.h>
@@ -138,6 +139,9 @@ public:
     const ModuleTable& table() const { return m_table; }
     const Instance& instance() const { return m_instance; }
     unsigned linkEpoch() const { return m_linkEpoch; }
+    bool goesModuleByModule() const { return m_goesModuleByModule; }
+    bool linkGoesByAllRequestsOf(ModuleID module) const { return m_goesModuleByModule || m_leadersWhoseLinkGoesByAllRequests.get(module.index()); }
+    void didGetStateOfItsOwn(ModuleID) const;
     bool isSettledForLinks(ModuleID module) const { return (m_modulesSettledForLinks[module.index() / 64] >> (module.index() % 64) & 1) || checkIsSettledForLinks(module); }
     std::span<const uint64_t> modulesSettledForLinks() const { return m_modulesSettledForLinks.span(); }
     const ModuleData& data(ModuleID module) const { return m_table.data(module); }
@@ -169,6 +173,7 @@ public:
     ModuleID moduleLoadedBy(const ModuleRequestData&) const;
     ModuleID moduleLoadedUnder(ModuleID named) const;
     void willMock(ModuleID);
+    void goModuleByModuleFromNowOn();
     void didEndMock(ModuleID);
     void didBeginTestFile()
     {
@@ -796,6 +801,7 @@ private:
     };
 
     StoredModuleStatus storedStatus(ModuleID) const;
+    bool isLinkedWithLeader(ModuleID) const;
     void setStoredStatus(ModuleID, StoredModuleStatus);
     ModuleStatus statusInRecord(ModuleID) const;
     void setStatus(ModuleID, ModuleStatus);
@@ -945,7 +951,8 @@ private:
     void keepLinkWalk(std::unique_ptr<ModuleLinkWalk>&&);
     Vector<std::unique_ptr<ModuleLinkWalk>, 2> m_linkWalksOfLoads;
     bool checkIsSettledForLinks(ModuleID) const;
-    unsigned m_linkEpoch { 0 };
+    mutable unsigned m_linkEpoch { 0 };
+    mutable BitVector m_leadersWhoseLinkGoesByAllRequests;
     unsigned m_numberOfMocksInPlace { 0 };
     BitVector m_modulesWithMockInPlace;
     mutable Vector<uint64_t> m_modulesSettledForLinks;
@@ -1017,6 +1024,7 @@ private:
     BitVector m_filesAboveEvictedFile;
     BitVector m_filesWhoseNamesNobodyAnswersFor;
     BitVector m_filesWhoseGraphHasBegun;
+    uint64_t m_numberOfGraphsBegun { 0 };
     bool m_listsWithoutAsking { false };
     BitVector m_keptFiles;
     BitVector m_modulesThatRanBeforeCodeThatKeepsFiles;
@@ -1342,6 +1350,7 @@ private:
         bool isAskedFor { false };
     };
     UncheckedKeyHashMap<ModuleID, std::unique_ptr<LevelOfLoad>> m_levelsOfLoads;
+    bool hasGraphRun(const LevelOfLoad& level) const { return status(level.plan->found[0].module) >= ModuleStatus::EvaluatingAsync; }
     Vector<uint32_t> m_placesSeenByPlans;
     uint32_t m_firstPlaceOfNextPlan { 1 };
     Vector<ModuleID, 4> m_rootsLoadedWithoutLoader;
@@ -1352,6 +1361,8 @@ private:
     BitVector m_filesWhoseNextLoadIsFirst;
     BitVector m_filesWhoseTextHostDropped;
     void noteModulesLoadedWith(ModuleID root);
+    void noteLoadOfEachModuleWith(ModuleID root);
+    bool m_goesModuleByModule { false };
     const MockOperations* m_mockOperations;
     mutable UncheckedKeyHashMap<uint64_t, bool, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_importersAskedAboutOriginal;
     mutable UncheckedKeyHashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_importersThatGotOriginal;
@@ -1360,6 +1371,7 @@ private:
     BitVector m_modulesThatOwnFactoryMayLoad;
     BitVector m_filesWhoseOriginalRuns;
     bool m_makesNamespaceOfModuleItself { false };
+    Vector<uint64_t> m_loadedGroups;
     BitVector m_modulesLoadedBesideGroups;
     Vector<uint32_t> m_momentsOfLoads;
     BitVector m_loadedInPreload;
@@ -1485,7 +1497,7 @@ private:
         std::optional<int64_t> referrerAsyncOrder;
         std::optional<uint32_t> stepsOfLoaderAtCall;
     };
-    Vector<TextOnItsWay, 2> m_textsOnTheirWay;
+    Deque<TextOnItsWay, 2> m_textsOnTheirWay;
     bool m_canJobsOfFileTellWhenTextsCome { false };
     std::optional<uint32_t> m_stepsOfLoaderAtCallWhoseTextHasCome;
     uint32_t m_turnOfTexts { 0 };
@@ -1548,7 +1560,12 @@ private:
     void leaveToHost(ModuleID file);
     bool isChangedOnDisk(ModuleID file);
     bool writesNameThatHostMayAnswerFor(ModuleID file, WalkForEvictedFiles&);
-    AnswerForName askHostAboutNamesWrittenBy(ModuleID file, Vector<uint32_t, 4>& filesThatAnswersLeadAwayFrom);
+    struct AnswersForNamesOfFile {
+        AnswerForName answer { AnswerForName::Declined };
+        Vector<uint32_t, 4> filesThatAnswersLeadAwayFrom;
+        Vector<uint32_t, 4> filesInFrontOfThrow;
+    };
+    AnswersForNamesOfFile askHostAboutNamesWrittenBy(ModuleID file);
     bool mayBeAskedAbout(ModuleID file) const { return !m_filesWhoseNamesNobodyAnswersFor.get(file.index()) && !m_filesWhoseGraphHasBegun.get(file.index()); }
     void forEachFileEvaluatedByLoader(const Invocable<void(ModuleID)> auto&) const;
     void forEachFileOrFaceEvaluatedByLoader(const Invocable<void(ModuleID)> auto&) const;
@@ -1598,7 +1615,10 @@ private:
 ALWAYS_INLINE StoredModuleStatus Modules::storedStatus(ModuleID module) const
 {
     RELEASE_ASSERT(module.index() < m_storedStatuses.size());
-    return static_cast<StoredModuleStatus>(std::min(m_storedStatuses[module.index()], static_cast<uint8_t>(StoredModuleStatus::Evaluating)));
+    uint8_t stored = m_storedStatuses[module.index()];
+    if (!stored && data(module).onlyPassesLinkOn() && isLinkedWithLeader(module))
+        return StoredModuleStatus::Linked;
+    return static_cast<StoredModuleStatus>(std::min(stored, static_cast<uint8_t>(StoredModuleStatus::Evaluating)));
 }
 
 ALWAYS_INLINE void Modules::setStoredStatus(ModuleID module, StoredModuleStatus status)
@@ -1613,9 +1633,14 @@ ALWAYS_INLINE void Modules::setStoredStatus(ModuleID module, StoredModuleStatus 
 
 ALWAYS_INLINE ModuleStatus Modules::status(ModuleID module) const
 {
-    switch (storedStatus(module)) {
-    case StoredModuleStatus::Unlinked:
-        return !data(module).needsLink() || (m_entryPointIsLinked && data(module).isLinkedWithEntryPoint()) ? ModuleStatus::Linked : ModuleStatus::Unlinked;
+    RELEASE_ASSERT(module.index() < m_storedStatuses.size());
+    switch (static_cast<StoredModuleStatus>(std::min(m_storedStatuses[module.index()], static_cast<uint8_t>(StoredModuleStatus::Evaluating)))) {
+    case StoredModuleStatus::Unlinked: {
+        const ModuleData& moduleData = data(module);
+        if (!moduleData.needsLink() || (m_entryPointIsLinked && moduleData.isLinkedWithEntryPoint()))
+            return ModuleStatus::Linked;
+        return moduleData.onlyPassesLinkOn() && isLinkedWithLeader(module) ? ModuleStatus::Linked : ModuleStatus::Unlinked;
+    }
     case StoredModuleStatus::Linked:
         return ModuleStatus::Linked;
     case StoredModuleStatus::Evaluating:
@@ -1674,7 +1699,10 @@ ALWAYS_INLINE bool Modules::isNotLoadedWithoutStatus(ModuleID module, const Modu
 
 ALWAYS_INLINE bool Modules::wasLoadedWithGraph(ModuleID module) const
 {
-    return m_modulesLoadedBesideGroups.get(module.index());
+    if (!data(module).isESModuleOfProgram())
+        return false;
+    uint32_t head = m_table.headOfLoadGroup(module).index();
+    return (m_loadedGroups[head / 64] >> (head % 64) & 1) || m_modulesLoadedBesideGroups.get(module.index());
 }
 
 ALWAYS_INLINE uint8_t Modules::markOfEvaluationThatBegan(ModuleID module) const

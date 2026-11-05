@@ -51,6 +51,7 @@ constexpr unsigned maxGroupsInTests = 3;
 constexpr size_t sizeOfRope = 4 * sizeof(uint64_t);
 constexpr size_t wordsInFrontOfElements = initialOutOfLineCapacity + 1;
 constexpr uint32_t tooManyGroups = MarkedSpace::largeCutoff / sizeof(EncodedJSValue);
+constexpr uint32_t structureOfRegExpObjects = 0x40;
 
 uint64_t bitsOfValue(JSValue value) { return static_cast<uint64_t>(JSValue::encode(value)); }
 
@@ -116,6 +117,8 @@ public:
         instance.prefix().newArrayWithContiguousHeader = anyArrayHeader;
         instance.allocation.auxiliarySpace = m_auxiliarySpace.bytes.data();
         instance.allocation.inlineAllocations[kindOfMatchArray] = { &arrayAllocator, matchArrayHeader };
+        instance.receiverStructureID(Receiver::RegExp) = structureOfRegExpObjects;
+        regExpObject.at<uint32_t>(JSCell::structureIDOffset()) = structureOfRegExpObjects;
 
         m_codeBlock.at<void*>(Yarr::YarrCodeBlock::offsetOf8BitCode()) = tagCFunctionPtr<void*, Yarr8BitPtrTag>(runMatchingCodeScript);
         regExp.at<void*>(RegExp::offsetOfRegExpJITCode()) = m_codeBlock.bytes.data();
@@ -444,6 +447,10 @@ static void testStringMatchAndSearch()
     AOT_TEST_CHECK(isLeftToOperation(RegExpMatchResult::IndexForStringSearch, Entry::operationAOTStringSearchRegExp, { Yarr::Flags::Global }, jsNumber(0)));
     AOT_TEST_CHECK(isLeftToOperation(RegExpMatchResult::IndexForStringSearch, Entry::operationAOTStringSearchRegExp, { Yarr::Flags::Sticky }, jsNumber(0)));
     AOT_TEST_CHECK(isLeftToOperation(RegExpMatchResult::IndexForStringSearch, Entry::operationAOTStringSearchRegExp, { }, jsNumber(3)));
+
+    matches.regExpObject.at<uint32_t>(JSCell::structureIDOffset()) = structureOfRegExpObjects + 1;
+    AOT_TEST_CHECK(isLeftToOperation(RegExpMatchResult::ArrayForStringMatch, Entry::operationAOTStringMatchRegExp, { }, jsNumber(0)));
+    AOT_TEST_CHECK(isLeftToOperation(RegExpMatchResult::IndexForStringSearch, Entry::operationAOTStringSearchRegExp, { }, jsNumber(0)));
 }
 
 static void testNoRecordWhereNobodyReadsIt()
@@ -592,11 +599,8 @@ static void testSubjectsWithoutCodeAreLeftToOperation()
         AOT_TEST_CHECK(run.calledOperation && !matches.script.numberOfCalls && matches.hasRecordedNothing() && matches.lastIndex() == bitsOfValue(jsNumber(1)));
     }
 
-    constexpr uint32_t structureOfRegExpObjects = 0x40;
     Ref<StringImpl> narrowText = StringImpl::create("abcd"_span);
     FakeSubject narrowSubject(narrowText.get());
-    matches.runner.instance().receiverStructureID(Receiver::RegExp) = structureOfRegExpObjects;
-    matches.regExpObject.at<uint32_t>(JSCell::structureIDOffset()) = structureOfRegExpObjects;
     matches.runner.recordCallsOf(Entry::operationAOTStringReplaceRegExpString);
     matches.runner.setResultOfRecordedOperation(0x1234);
 
@@ -615,13 +619,10 @@ static void testSubjectsWithoutCodeAreLeftToOperation()
 static void testReplacementByFunctionLooksFirst()
 {
     Matches matches;
-    constexpr uint32_t structureOfRegExpObjects = 0x40;
     Ref<StringImpl> text = StringImpl::create("abcd"_span);
     FakeSubject subject(text.get());
     FakeSubject function(text.get());
     function.type = JSFunctionType;
-    matches.runner.instance().receiverStructureID(Receiver::RegExp) = structureOfRegExpObjects;
-    matches.regExpObject.at<uint32_t>(JSCell::structureIDOffset()) = structureOfRegExpObjects;
     matches.runner.recordCallsOf(Entry::operationAOTStringReplaceRegExpWithFunction);
     matches.runner.setResultOfRecordedOperation(0x1234);
 
@@ -639,6 +640,45 @@ static void testReplacementByFunctionLooksFirst()
         AOT_TEST_CHECK(run.recordedArguments[0] == subject.address() && run.recordedArguments[1] == matches.regExpObject.address() && run.recordedArguments[2] == function.address());
     }
     matches.runner.countCallsOf(Entry::operationAOTStringReplaceRegExpWithFunction);
+}
+
+static void testReplacementOfAnyKindIsLookedAtFirst()
+{
+    constexpr StubKey stub = stringReplaceRegExpMayNotMatch(ReplacementOfMatches::AnyValue);
+    Matches matches;
+    Ref<StringImpl> text = StringImpl::create("abcd"_span);
+    FakeSubject subject(text.get());
+    FakeSubject cell(text.get());
+
+    for (JSType type : { StringType, JSFunctionType, slimClosureTypes.first }) {
+        cell.type = type;
+        matches.reset({ Yarr::Flags::Global }, jsNumber(1));
+        matches.script.answer = -1;
+        StubRun run = matches.runner.run(stub, { subject.address(), matches.regExpObject.address(), cell.address() });
+        AOT_TEST_CHECK(!run.calledOperation && run.result == subject.address() && matches.script.numberOfCalls == 1 && matches.lastIndex() == bitsOfValue(jsNumber(0)));
+    }
+
+    matches.runner.recordCallsOf(Entry::operationAOTStringReplaceRegExp);
+    matches.runner.setResultOfRecordedOperation(0x1234);
+    auto isLeftToOperation = [&](uint64_t replacement) {
+        matches.reset({ Yarr::Flags::Global }, jsNumber(1));
+        StubRun run = matches.runner.run(stub, { subject.address(), matches.regExpObject.address(), replacement });
+        return run.numberOfRecordedCalls == 1 && run.result == 0x1234 && !matches.script.numberOfCalls && matches.lastIndex() == bitsOfValue(jsNumber(1))
+            && run.recordedArguments[0] == subject.address() && run.recordedArguments[1] == matches.regExpObject.address() && run.recordedArguments[2] == replacement;
+    };
+    AOT_TEST_CHECK(isLeftToOperation(bitsOfValue(jsUndefined())) && isLeftToOperation(bitsOfValue(jsNumber(7))) && isLeftToOperation(bitsOfValue(jsNumber(0.5))));
+    for (JSType type : { SymbolType, HeapBigIntType, ObjectType, InternalFunctionType, ProxyObjectType }) {
+        cell.type = type;
+        AOT_TEST_CHECK(isLeftToOperation(cell.address()));
+    }
+
+    cell.type = JSFunctionType;
+    matches.reset({ }, jsNumber(1));
+    matches.script.answer = 2;
+    StubRun found = matches.runner.run(stub, { subject.address(), matches.regExpObject.address(), cell.address() });
+    AOT_TEST_CHECK(found.numberOfRecordedCalls == 1 && found.result == 0x1234 && matches.script.numberOfCalls == 1);
+    AOT_TEST_CHECK(found.recordedArguments[0] == subject.address() && found.recordedArguments[1] == matches.regExpObject.address() && found.recordedArguments[2] == cell.address());
+    matches.runner.countCallsOf(Entry::operationAOTStringReplaceRegExp);
 }
 
 static void testWideSubjectsOfLiterals()
@@ -720,6 +760,7 @@ std::span<const NativeTest> stubRegExpTests()
         { "stubs/regexp-match/arrays-without-object"_s, ImageTests::whenExecutable<testMatchArraysWithoutObject> },
         { "stubs/regexp-match/subjects-without-code-are-left-to-operation"_s, ImageTests::whenExecutable<testSubjectsWithoutCodeAreLeftToOperation> },
         { "stubs/regexp-match/replacement-by-function-looks-first"_s, ImageTests::whenExecutable<testReplacementByFunctionLooksFirst> },
+        { "stubs/regexp-match/replacement-of-any-kind-is-looked-at-first"_s, ImageTests::whenExecutable<testReplacementOfAnyKindIsLookedAtFirst> },
         { "stubs/regexp-match/wide-subjects-of-literals"_s, ImageTests::whenExecutable<testWideSubjectsOfLiterals> },
     };
     return tests;

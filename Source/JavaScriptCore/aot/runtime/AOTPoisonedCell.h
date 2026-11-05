@@ -11,8 +11,6 @@
 
 namespace JSC { namespace AOT {
 
-// TestingSwitch::CheckProofsAtRunTime alone makes one: Opcode::EndLifeOfCell. The compiler took a cell for dead where the function that made it returned.
-// The cell becomes one of these where it lies. The collector passes it by, and whoever else looks into it stops the process and says where the cell was made.
 class PoisonedCell final : public JSObject {
 public:
     using Base = JSObject;
@@ -29,6 +27,10 @@ public:
     static Structure* createStructure(VM&);
 
     static bool tryPoison(VM&, JSCell*, uint32_t function, uint32_t position);
+    static constexpr uint32_t isLentForCallAhead = 1u << 31;
+    static void noteThatCellIsLent(JSCell*, const void* frame, uint32_t function, uint32_t position);
+    static bool someCellIsLent() { return s_numberOfCellsLent; }
+    static uint32_t poisonCellsLentBelow(VM&, const void* frame, bool andByThatFrame);
     [[noreturn]] static void stop(const JSCell*);
 
     static bool getOwnPropertySlot(JSObject*, JSGlobalObject*, PropertyName, PropertySlot&);
@@ -45,6 +47,9 @@ public:
     static JSValue getPrototype(JSObject*, JSGlobalObject*);
     static CallData getCallData(JSCell*);
     static CallData getConstructData(JSCell*);
+
+private:
+    static inline thread_local uint32_t s_numberOfCellsLent { 0 };
 };
 
 } } // namespace JSC::AOT

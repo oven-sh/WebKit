@@ -338,7 +338,6 @@ private:
         return fitsWithin(m_limit);
     }
 
-    // The word of an ES module or of a file of data holds its namespace object for the code that asks for it. Where no code names the word the run time keeps the object itself: Modules::setNamespace().
     bool placeModuleValues()
     {
         const BitVector& isNamedByCode = m_mentions.byID(NumberSpace::ModuleValue).isMentioned;
@@ -346,7 +345,6 @@ private:
             ModuleID module(index);
             if (!m_plan.hasModuleValue(module))
                 continue;
-            // When a CommonJS file loads again, the word of its face goes on holding the object that the modules which have run were linked with: Modules::captureExportsAgain().
             const Typed::Module& record = m_program.modules[index];
             if ((record.kind == ModuleKind::SourceText || record.kind == ModuleKind::Data) && !isNamedByCode.get(index) && !m_plan.hasRequireCacheValue(module) && !Typed::isFaceOfCommonJSFile(m_program, record))
                 continue;

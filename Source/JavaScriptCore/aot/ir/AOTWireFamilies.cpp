@@ -207,6 +207,7 @@ struct LayoutConversion {
 };
 
 struct LayoutsThatMeetTypesByNames {
+    static constexpr size_t mostThatMeetTypeKnownByNamesAlone = 4;
     static constexpr uint32_t noGroup = UINT32_MAX;
 
     bool meetNone(uint32_t type) const { return heldAgainstType[type].isEmpty() && (groupOfType[type] == noGroup || withoutTellingFields[groupOfType[type]].isEmpty()); }
@@ -310,6 +311,13 @@ static bool isWireFieldNamedByProgram(const Wire::Field& field)
 static bool isRequiredWireField(const Wire::Field& field)
 {
     return isWireFieldNamedByProgram(field) && has(field, FieldFlags::IsRequired) && !has(field, FieldFlags::IsMethod) && !has(field, FieldFlags::IsNeverWritten);
+}
+
+static bool holdsEveryValue(const Wire::Sections& sections, uint32_t type)
+{
+    constexpr uint32_t everyPrimitive = static_cast<uint32_t>(Wire::Primitives::Undefined) | static_cast<uint32_t>(Wire::Primitives::Null) | static_cast<uint32_t>(Wire::Primitives::False) | static_cast<uint32_t>(Wire::Primitives::True)
+        | static_cast<uint32_t>(Wire::Primitives::Number) | static_cast<uint32_t>(Wire::Primitives::String) | static_cast<uint32_t>(Wire::Primitives::Symbol) | static_cast<uint32_t>(Wire::Primitives::BigInt);
+    return type < sections.types.size() && (sections.types[type].primitives & everyPrimitive) == everyPrimitive && (sections.types[type].flags & static_cast<uint32_t>(TypeFlags::AnyObject));
 }
 
 static bool isStructuralWireType(const Wire::Layout& layout)
@@ -462,9 +470,19 @@ static LayoutsThatMeetTypesByNames findLayoutsThatMeetWireTypesByNames(const Bui
     uint32_t numberOfLayouts = static_cast<uint32_t>(layouts.size());
     size_t numberOfKeys = checkedSections.propertyKeys.size();
 
+    auto isAsked = [&](const Wire::Field& field) {
+        return isWireFieldNamedByProgram(field) && !has(field, FieldFlags::IsNeverWritten) && field.key < numberOfKeys;
+    };
+    auto isKnownByNamesAlone = [&](uint32_t type) {
+        return std::ranges::all_of(wireFieldsOf(checkedSections, layouts[type]), [&](const Wire::Field& field) {
+            bool nothingIsBelievedOfIt = holdsEveryValue(checkedSections, field.declared.type) || (field.declared.flags & static_cast<uint32_t>(PositionFlags::IsExpected));
+            return !isAsked(field) || (!has(field, FieldFlags::IsRequired) && nothingIsBelievedOfIt);
+        });
+    };
     auto forEachRequiredMember = [&](uint32_t type, NOESCAPE const Invocable<void(const Wire::Field&)> auto& functor) {
+        bool asksForEveryName = isKnownByNamesAlone(type);
         for (const Wire::Field& field : wireFieldsOf(checkedSections, layouts[type])) {
-            if (isWireFieldNamedByProgram(field) && has(field, FieldFlags::IsRequired) && !has(field, FieldFlags::IsNeverWritten) && field.key < numberOfKeys)
+            if (isAsked(field) && (has(field, FieldFlags::IsRequired) || asksForEveryName))
                 functor(field);
         }
     };
@@ -584,6 +602,10 @@ static LayoutsThatMeetTypesByNames findLayoutsThatMeetWireTypesByNames(const Bui
         uint32_t group = result.groupOfType[type];
         const Vector<uint32_t>& withTellingFields = withTellingFieldsOfGroup[group];
         Vector<LayoutID>& found = result.heldAgainstType[type];
+        if (isKnownByNamesAlone(type) && result.withoutTellingFields[group].size() + withTellingFields.size() > LayoutsThatMeetTypesByNames::mostThatMeetTypeKnownByNamesAlone) {
+            result.groupOfType[type] = LayoutsThatMeetTypesByNames::noGroup;
+            return;
+        }
         auto holdAgainstType = [&](uint32_t layout) {
             if (layout != type && !tellingFields.tellApart(layout, type) && !isToldByNameThatTypeLacks(layout, type))
                 found.append(LayoutID(layout));

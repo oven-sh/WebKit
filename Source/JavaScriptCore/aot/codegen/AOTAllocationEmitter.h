@@ -39,6 +39,7 @@ public:
     void generateSetMappedArgument(const ValueContext&);
 
     CellPointer allocateWithFields(const ValueContext&, const MentionedAllocation&, std::span<const uint32_t> fields, std::span<const ValueID> values, AllocationStorage);
+    void clearCellsThatObjectLentHolds(ValueID object);
 
 private:
     struct InitialField {
@@ -61,6 +62,7 @@ private:
     CellPointer allocateFrameCell(const ValueContext&, const MentionedAllocation&, const PlannedLayout&);
     using EmptySlots = Vector<FieldIndex, 8>;
     EmptySlots collectEmptySlots(LayoutID, const BitVector& isInitialField);
+    EmptySlots collectSlotsThatMayHoldCells(const Operation& made);
     ZeroedBy whoZeroesBodyOfFreshCell(const ValueContext&, const MentionedAllocation&, std::span<const FieldIndex> emptySlots, AllocationStorage);
     template<typename Visitor> void forEachEmptySlot(LayoutID, const BitVector& isInitialField, const Visitor&);
     void initializeHiddenFields(CellPointer, LayoutID, AllocationStorage, ZeroedBy, bool hasStateOfFrameCell);

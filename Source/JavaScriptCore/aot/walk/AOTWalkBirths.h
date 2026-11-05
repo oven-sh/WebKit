@@ -29,6 +29,13 @@ struct StoresListedAtBirth {
     bool isBornUnfinished { false };
 };
 StoresListedAtBirth findStoresThatAllocationMayList(Walker&, LayoutID, std::span<const PropertyKeyID> keys, std::span<const TypeID> stored, std::span<const PropertyKeyID> keysStoredFurtherOn);
+bool looksAtCellsAskForLayoutPrototype(Walker&, LayoutID);
+
+struct GuardOfPrototypeAtConstruction {
+    MemberConditionRecord condition;
+    bool isKnownToHold { false };
+};
+std::optional<GuardOfPrototypeAtConstruction> findGuardOfPrototypeAtConstruction(Walker&, FunctionID constructor, bool newCellIsLookedAt, bool guardsAreAskedAtBirth, Origin);
 
 } } } // namespace JSC::AOT::Typed
 

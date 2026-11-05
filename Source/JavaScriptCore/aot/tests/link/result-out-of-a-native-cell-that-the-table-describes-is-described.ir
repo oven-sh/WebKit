@@ -4,7 +4,8 @@
 # The control: result-out-of-a-native-cell-that-nothing-describes-lets-any-class-exist.ir.
 # LIBRARY: own
 # RUN: link functions mechanisms=all
-# REQUIRES: entries-of-bun
+# On Windows what lies in that cell is a proxy that a function of the library makes: it is not the object that the table describes.
+# REQUIRES: entries-of-bun not-windows
 # CHECK: function f2 unreached
 
 module m0 path="main.js" displayPath="main.js" body=f0

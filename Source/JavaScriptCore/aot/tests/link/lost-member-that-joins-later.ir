@@ -3,21 +3,21 @@
 # Five layouts meet at each of the two places, one more than a set takes, so they are lost. The third layout is lost at `look`, not at `put`. A lost value is an object of some member, so the store at `put` reaches it too, in whichever order the worklist comes to the two places.
 # RUN: link functions fields layouts mechanisms=all
 # CHECK: function f1 callers-known one-callee
-# CHECK-NEXT: parameter 0 {{*}}proven=object
+# CHECK-NEXT: parameter 0 {{*}}proven=L0|L1|L2|L3|L4|L5
 # CHECK: function f2 callers-known one-callee {{*}}result=undefined|null|string
-# CHECK-NEXT: parameter 0 {{*}}proven=object
+# CHECK-NEXT: parameter 0 {{*}}proven=L0|L1|L2|L3|L4|L5
 # CHECK: field L0.0 "x" proven=null|string writers-known
 # CHECK: field L1.0 "x" proven=null|string writers-known
 # CHECK: field L2.0 "x" proven=null|string writers-known
 # CHECK: field L3.0 "x" proven=null|string writers-known
 # CHECK: field L4.0 "x" proven=null|string writers-known
 # CHECK: field L5.0 "x" proven=null|string writers-known
-# CHECK: layout L0 changes=[]
-# CHECK: layout L1 changes=[]
-# CHECK: layout L2 changes=[]
-# CHECK: layout L3 changes=[]
-# CHECK: layout L4 changes=[]
-# CHECK: layout L5 changes=[]
+# CHECK: layout L0 {{*}}changes=[]
+# CHECK: layout L1 {{*}}changes=[]
+# CHECK: layout L2 {{*}}changes=[]
+# CHECK: layout L3 {{*}}changes=[]
+# CHECK: layout L4 {{*}}changes=[]
+# CHECK: layout L5 {{*}}changes=[]
 
 layout L0 module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="a" declared={type=anything} flags=[IsRequired]}]
 layout L1 module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="b" declared={type=anything} flags=[IsRequired]}]

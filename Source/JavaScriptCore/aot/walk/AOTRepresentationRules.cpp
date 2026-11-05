@@ -75,7 +75,7 @@ static constexpr RepresentationRule representationRuleOf(Opcode opcode)
     case Opcode::Parameter:
     case Opcode::Box: case Opcode::Unbox: case Opcode::IntegerToNumber: case Opcode::NumberToInteger: case Opcode::WidenInteger: case Opcode::NarrowInteger: case Opcode::Decode: case Opcode::Compress:
         return RepresentationRule::OwnForm;
-    case Opcode::Narrowed:
+    case Opcode::Narrowed: case Opcode::AssumeType:
         return RepresentationRule::Narrowed;
     case Opcode::CheckInitialized: case Opcode::RequireObjectCoercible: case Opcode::RequireObject: case Opcode::FinishObject: case Opcode::FinishClass:
     case Opcode::Convert: case Opcode::Check: case Opcode::Expect: case Opcode::Upcast: case Opcode::NarrowByField: case Opcode::NarrowByTest:
@@ -161,11 +161,8 @@ static constexpr RepresentationRule representationRuleOf(Opcode opcode)
     case Opcode::GetTypedArrayLength: case Opcode::GetTypedArrayVector: case Opcode::RequireAttachedTypedArray: case Opcode::RequireLengthFitsList: case Opcode::GetStringLength: case Opcode::GetStringCodeUnit: case Opcode::Substring: case Opcode::FlattenString: case Opcode::StringStartsWithLiteral: case Opcode::StringEndsWithLiteral:
     case Opcode::StringIndexOfLiteral: case Opcode::StringIndexOfCharacter: case Opcode::StringLastIndexOfLiteral:
     case Opcode::StringRangeEqualsLiteral: case Opcode::StringRangeToNumber: case Opcode::StringRangeParseInt:
-    case Opcode::JSONHasStackSpace:
-    case Opcode::StringBuilderReserve: case Opcode::StringBuilderCommit: case Opcode::JSONEnterWatchedLevel: case Opcode::JSONAppendKey: case Opcode::JSONAppendToken: case Opcode::JSONAppendBoolean: case Opcode::JSONAppendInteger:
-    case Opcode::JSONAppendNumber: case Opcode::JSONAppendString: case Opcode::JSONAppendValue: case Opcode::JSONAppendObject:
     case Opcode::StringBuilderBegin: case Opcode::StringBuilderAppend: case Opcode::StringBuilderLength: case Opcode::StringBuilderToString: case Opcode::StringBuilderFinish:
-    case Opcode::StringBuilderDiscard: case Opcode::StringBuilderCheckpoint: case Opcode::StringBuilderRollBack: case Opcode::StringBuilderCheckLength:
+    case Opcode::StringBuilderDiscard: case Opcode::StringBuilderCheckpoint: case Opcode::StringBuilderRollBack:
     case Opcode::StringBuilderAppendConstant: case Opcode::StringBuilderAppendInteger: case Opcode::StringBuilderAppendString: case Opcode::StringBuilderAppendStringRange:
     case Opcode::StringBuilderAppendBoolean: case Opcode::StringBuilderAppendStringOrNullish: case Opcode::StringBuilderAppendValue:
     case Opcode::StackStringBuilderBegin: case Opcode::StackStringBuilderStart: case Opcode::StackStringBuilderCursor: case Opcode::StackStringBuilderLength: case Opcode::StackStringBuilderToString: case Opcode::StackStringBuilderFinish: case Opcode::StackStringBuilderDiscard:
@@ -392,7 +389,7 @@ private:
     static_assert(opcodesThatMayHaveSeveralResults.contains(Opcode::CallDirect));
 
     static constexpr uint32_t forwardedOperand = 0;
-    static_assert(OperandIndex::Narrowed::value == forwardedOperand && OperandIndex::CheckInitialized::value == forwardedOperand && OperandIndex::RequireObjectCoercible::value == forwardedOperand);
+    static_assert(OperandIndex::Narrowed::value == forwardedOperand && OperandIndex::AssumeType::value == forwardedOperand && OperandIndex::CheckInitialized::value == forwardedOperand && OperandIndex::RequireObjectCoercible::value == forwardedOperand);
     static_assert(OperandIndex::RequireObject::value == forwardedOperand && OperandIndex::FinishObject::object == forwardedOperand && OperandIndex::FinishClass::classObject == forwardedOperand);
 
     static constexpr uint32_t receiverOfBuiltinCall = 0;

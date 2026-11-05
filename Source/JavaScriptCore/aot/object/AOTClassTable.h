@@ -122,6 +122,7 @@ public:
             defineClassOfCreatedObjects(vm, instanceLayout, parent);
     }
     void defineClassOfCreatedObjects(VM&, const LayoutData&, JSObject* parent);
+    bool accessorAboveCreatedObjectsIsWhatRecordNames(VM&, const LayoutData&, Structure*, uint32_t name);
     bool takesObjectsLaidBelowPrototype(VM&, const LayoutData& instanceLayout, JSObject* firstAbove);
     Structure* lazyClassObjectStructureInheritingFrom(VM&, JSObject* parent);
     Structure* classObjectStructureInheritingFrom(VM&, JSObject* parent);

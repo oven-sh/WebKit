@@ -29,6 +29,7 @@ BuiltinID findOwnMember(const Program&, BuiltinID holder, PropertyKeyID);
 bool listsEveryMemberUnder(const Program&, BuiltinID holder, PropertyKeyID);
 
 BuiltinClassID primitiveClassOf(uint16_t primitives);
+bool isClassOfPrimitives(BuiltinClassID);
 TypeID typeOfValuesThatLookUpAsInstancesOf(TypeArena&, BuiltinClassID);
 
 bool isClosedKey(const Program&, BuiltinID holder, PropertyKeyID);

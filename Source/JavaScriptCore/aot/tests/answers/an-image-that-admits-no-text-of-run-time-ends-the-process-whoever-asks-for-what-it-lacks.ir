@@ -1,12 +1,16 @@
-# The green control of text-of-an-engine-built-in-that-the-image-lacks-is-refused-where-the-build-held-the-library.ir. The compiler cannot know what text of run time will call, so that text gets an error which says what to do, and it can catch it: nothing ends
+# What decides how a refusal ends is the image, not who stands on the stack. This image admits no text of run time, so nobody can ask for what it lacks unless the compiler has made a mistake: the process ends at the throw, by name.
+# The function of the shell that asks here would have caught an error; who asks was looked for on the stack once, and a tail call or a value handed on fooled the look.
+# The control: a-built-in-that-evaluated-text-hands-on-is-refused-by-an-error-that-can-be-caught.ir: an image that admits such text.
 # globalThis.attempt = () => { try { return [1].map(count => count).join(); } catch (error) { return error.message; } };   in the shell
 # print(attempt());
 # LIBRARY: own
 # OPTIONS: exclude=LibraryText
 # RUN: run-in-shell globalThis.attempt = () => { try { return [1].map(count => count).join(); } catch (error) { return error.message; } };
-# CHECK: Array.prototype.map was not compiled into this executable
-# CHECK-NEXT: went on
-# CHECK-NEXT: exited with 0
+# CHECK: Array.prototype.map was left out of the executable, because nothing seemed to use it. This is a bug in Bun.
+# CHECK-NOT: went on
+# CHECK: crashed with
+# RUN(IMAGE): image
+# IMAGE-NOT: AdmitsUnknownJavaScript
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0

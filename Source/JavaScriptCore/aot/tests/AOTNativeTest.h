@@ -127,6 +127,7 @@ inline constexpr bool framesAreThoseOfAddressSanitizer = ASAN_ENABLED;
     v(interpreterSiteCacheTests) \
     v(locationsReadAtRunTimeTests) \
     v(lockedRealmMemberTests) \
+    v(membersLeftOutTests) \
     v(lookupBehindTablesProgramTests) \
     v(membersNamedLikeBuiltinsTests) \
     v(moduleProgramTests) \

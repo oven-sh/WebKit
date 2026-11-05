@@ -37,6 +37,7 @@
 #include <utility>
 #include <wtf/HashMap.h>
 #include <wtf/HashSet.h>
+#include <wtf/MathExtras.h>
 #include <wtf/Noncopyable.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -105,6 +106,7 @@ struct StoreInScan {
     uint32_t block { 0 };
     bool storesObjectMadeForIt { false };
     bool isIntoObjectKnownByRead { false };
+    bool storesSurelyIndex { false };
 };
 
 struct AccessorLaidInScan {
@@ -838,37 +840,10 @@ static NEVER_INLINE void sortSeveralWithoutRepeatsInScan(Vector<T>& list)
 }
 
 template<typename T>
-static ALWAYS_INLINE void sortWithoutRepeatsAndKeepRoomInScan(Vector<T>& list)
+static ALWAYS_INLINE void sortWithoutRepeatsInScan(Vector<T>& list)
 {
     if (list.size() > 1)
         sortSeveralWithoutRepeatsInScan(list);
-}
-
-template<typename T>
-static ALWAYS_INLINE void sortWithoutRepeatsInScan(Vector<T>& list)
-{
-    if (!list.capacity())
-        return;
-    sortWithoutRepeatsAndKeepRoomInScan(list);
-    list.shrinkToFit();
-}
-
-template<typename T>
-static ALWAYS_INLINE void shrinkToFitInScan(Vector<T>& list)
-{
-    if (list.capacity() > list.size())
-        list.shrinkToFit();
-}
-
-template<typename T>
-static ALWAYS_INLINE void keepRoomOfListInScan(Vector<T>& filled, Vector<T>& next)
-{
-    if (filled.capacity() == filled.size())
-        return;
-    Vector<T> exact(filled.span());
-    filled.shrink(0);
-    next.swap(filled);
-    filled.swap(exact);
 }
 
 static BitVector namesUnderWhichEventsHangInScan(const BuiltinTable& builtins)
@@ -1070,6 +1045,8 @@ private:
     bool someResultIsReadOutOf(const BodyValue&, uint32_t operandIndex) const;
     void addChange(SummaryChange::Kind, ValueID site, ListInScan subject, PropertyKeyID, std::optional<ListInScan> other);
     void defineByDescriptor(ValueID site, ListInScan subject, PropertyKeyID, std::optional<ListInScan> other, bool isUnderNameThatNobodyElseNames = false);
+    VariableID constantReadAs(ValueID) const;
+    uint32_t valuesLaidIntoDescriptorHeldBy(VariableID);
     struct KeyWrittenInScan {
         bool isWritten { false };
         PropertyKeyID key;
@@ -1250,6 +1227,8 @@ private:
     void settleWhereRecordsThrow();
     void removeRepeatedEdges();
     void listNamesSpelled();
+    void listWhatWalkAsksOfNodesAndCalls();
+    void listStoresOnResult();
 
     void noteWritesIn(uint32_t block, const LocationMasks&);
     void noteObjectsWrittenBy(const BodyValue&, const Effects&);
@@ -1273,7 +1252,7 @@ private:
     const bool m_walkFollowsTests;
     FunctionID m_id;
     const Function* m_function { nullptr };
-    ThinSummary m_summary;
+    SummaryBeingMade m_summary;
     bool m_summaryHoldsNothing { true };
     std::array<const Effects*, numberOfEnumerators<Opcode>> m_declaredEffectsOfEveryValue { };
     std::array<TypeID, numberOfEnumerators<Opcode>> m_widestPrimitiveResults { };
@@ -1343,6 +1322,7 @@ private:
         ValueID value;
     };
     Vector<ValueOfVariableInScan> m_valuesOfImmutableVariables;
+    Vector<std::pair<VariableID, uint32_t>, 2> m_valuesLaidIntoDescriptors;
     Vector<KeyOfVariableInScan> m_keysOfVariables;
     Vector<MemberUnderVariableInScan> m_membersUnderVariables;
     HashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_placesOfAccessorsLaid;
@@ -1574,20 +1554,266 @@ void ScanOfBody::noteSetOfLayoutsWritten(TypeID type)
         m_setsOfLayoutsWritten.add(set.bits());
 }
 
+enum class FlagOfEffectsInScan : unsigned {
+    FirstMaskRead,
+    FirstMaskWritten = FirstMaskRead + numberOfIndexedHeaps,
+    MayThrow = FirstMaskWritten + numberOfIndexedHeaps,
+    MayThrowOtherThanStackOverflow,
+    MayThrowByRule,
+    MayCollect,
+    MayCallUnknownCode,
+    MaySuspend,
+    MayBeTerminated,
+};
+
+static_assert(numberOfHeaps <= 32 && std::to_underlying(FlagOfEffectsInScan::MayBeTerminated) < 64);
+
+static constexpr size_t numberOfWordsInFrontOfEffectsInScan = 1;
+static constexpr size_t numberOfWordsInFrontOfMasksInScan = 2;
+static constexpr size_t mostWordsOfEffectsInScan = numberOfWordsInFrontOfMasksInScan + 2 * numberOfIndexedHeaps;
+using WordsOfEffectsInScan = Vector<uint64_t, numberOfWordsInFrontOfEffectsInScan + 2 * mostWordsOfEffectsInScan>;
+
+static void appendMasksInScan(const LocationMasks& masks, FlagOfEffectsInScan firstFlag, uint64_t& flags, WordsOfEffectsInScan& words)
+{
+    for (AbstractHeap heap : masks.heaps() & indexedHeaps) {
+        uint64_t mask = masks.maskOf(heap);
+        if (mask == LocationMasks::entireHeap)
+            continue;
+        flags |= uint64_t { 1 } << (std::to_underlying(firstFlag) + maskIndexOf(heap));
+        words.append(mask);
+    }
+}
+
+static void appendEffectsInScan(const Effects& effects, WordsOfEffectsInScan& words)
+{
+    uint64_t flags = 0;
+    auto note = [&](FlagOfEffectsInScan flag, bool holds) {
+        flags |= static_cast<uint64_t>(holds) << std::to_underlying(flag);
+    };
+    note(FlagOfEffectsInScan::MayThrow, effects.mayThrow);
+    note(FlagOfEffectsInScan::MayThrowOtherThanStackOverflow, effects.mayThrowOtherThanStackOverflow());
+    note(FlagOfEffectsInScan::MayThrowByRule, effects.mayThrowByRule());
+    note(FlagOfEffectsInScan::MayCollect, effects.mayCollect);
+    note(FlagOfEffectsInScan::MayCallUnknownCode, effects.mayCallUnknownCode);
+    note(FlagOfEffectsInScan::MaySuspend, effects.maySuspend);
+    note(FlagOfEffectsInScan::MayBeTerminated, effects.mayBeTerminated);
+
+    size_t placeOfFlags = words.size() + 1;
+    words.append(static_cast<uint64_t>(effects.reads.heaps().toRaw()) | static_cast<uint64_t>(effects.writes.heaps().toRaw()) << 32);
+    words.append(0);
+    appendMasksInScan(effects.reads, FlagOfEffectsInScan::FirstMaskRead, flags, words);
+    appendMasksInScan(effects.writes, FlagOfEffectsInScan::FirstMaskWritten, flags, words);
+    words[placeOfFlags] = flags;
+}
+
+static LocationMasks takeMasksInScan(uint32_t heaps, FlagOfEffectsInScan firstFlag, uint64_t flags, std::span<const uint64_t>& words)
+{
+    uint64_t heapsWithMask = flags >> std::to_underlying(firstFlag);
+    AbstractHeapSet all = AbstractHeapSet::fromRaw(heaps);
+    LocationMasks masks(all - indexedHeaps);
+    for (AbstractHeap heap : all & indexedHeaps) {
+        if (!(heapsWithMask >> maskIndexOf(heap) & 1)) {
+            masks.add(heap, LocationMasks::entireHeap);
+            continue;
+        }
+        masks.add(heap, words[0]);
+        words = words.subspan(1);
+    }
+    return masks;
+}
+
+static Effects takeEffectsInScan(std::span<const uint64_t>& words)
+{
+    uint64_t heaps = words[0];
+    uint64_t flags = words[1];
+    words = words.subspan(numberOfWordsInFrontOfMasksInScan);
+    auto holds = [&](FlagOfEffectsInScan flag) {
+        return !!(flags >> std::to_underlying(flag) & 1);
+    };
+    Effects effects = Effects::none();
+    effects.reads = takeMasksInScan(static_cast<uint32_t>(heaps), FlagOfEffectsInScan::FirstMaskRead, flags, words);
+    effects.writes = takeMasksInScan(static_cast<uint32_t>(heaps >> 32), FlagOfEffectsInScan::FirstMaskWritten, flags, words);
+    if (holds(FlagOfEffectsInScan::MayThrowByRule))
+        effects.mayThrow = ThrowEffect(true);
+    else if (holds(FlagOfEffectsInScan::MayThrowOtherThanStackOverflow))
+        effects.mayThrow = ThrowEffect::onlyForLackOfMemory();
+    else if (holds(FlagOfEffectsInScan::MayThrow))
+        effects.mayThrow = ThrowEffect::onlyStackOverflow();
+    effects.mayCollect = holds(FlagOfEffectsInScan::MayCollect);
+    effects.mayCallUnknownCode = holds(FlagOfEffectsInScan::MayCallUnknownCode);
+    effects.maySuspend = holds(FlagOfEffectsInScan::MaySuspend);
+    effects.mayBeTerminated = holds(FlagOfEffectsInScan::MayBeTerminated);
+    return effects;
+}
+
+bool ThinSummary::ownEffectsMayCallUnknownCode() const
+{
+    std::span<const uint64_t> words = wordsOfEffects.span();
+    return words.empty() || (words[numberOfWordsInFrontOfEffectsInScan + 1] >> std::to_underlying(FlagOfEffectsInScan::MayCallUnknownCode) & 1);
+}
+
+Effects ThinSummary::ownEffects() const
+{
+    std::span<const uint64_t> words = wordsOfEffects.span();
+    if (words.empty())
+        return { };
+    words = words.subspan(numberOfWordsInFrontOfEffectsInScan);
+    return takeEffectsInScan(words);
+}
+
+std::optional<Effects> ThinSummary::ownEffectsOfOperators() const
+{
+    std::span<const uint64_t> words = wordsOfEffects.span();
+    if (words.empty())
+        return std::nullopt;
+    words = words.subspan(numberOfWordsInFrontOfEffectsInScan);
+    constexpr uint64_t flagsOfMasks = (uint64_t { 1 } << std::to_underlying(FlagOfEffectsInScan::MayThrow)) - 1;
+    words = words.subspan(numberOfWordsInFrontOfMasksInScan + std::popcount(words[1] & flagsOfMasks));
+    if (words.empty())
+        return std::nullopt;
+    return takeEffectsInScan(words);
+}
+
+ThinSummary::ThinSummary(SummaryBeingMade& made)
+    : SummaryWithoutLists(made)
+{
+    using Entry = SummaryStorage::Entry;
+
+    WordsOfEffectsInScan effects;
+    effects.append(made.layoutsOfOwnWrites);
+    appendEffectsInScan(made.ownEffects, effects);
+    if (made.ownEffectsOfOperators)
+        appendEffectsInScan(*made.ownEffectsOfOperators, effects);
+
+    auto forEachList = [&](const auto& visit) {
+        visit(nodes, made.nodes);
+        visit(edges, made.edges);
+        visit(calls, made.calls);
+        visit(arguments, made.arguments);
+        visit(accesses, made.accesses);
+        visit(blocksNeverEntered, made.blocksNeverEntered);
+        visit(scopesStoredFirst, made.scopesStoredFirst);
+        visit(makersThatEndWhereTheyLeave, made.makersThatEndWhereTheyLeave);
+        visit(allocationsOfMakersThatEndWhereTheyLeave, made.allocationsOfMakersThatEndWhereTheyLeave);
+        visit(constructions, made.constructions);
+        visit(keysOfConstructions, made.keysOfConstructions);
+        visit(keysFilledAtEnds, made.keysFilledAtEnds);
+        visit(otherNamesOfObjectsBeingMade, made.otherNamesOfObjectsBeingMade);
+        visit(tailCallThatIsOnlyCall, made.tailCallThatIsOnlyCall);
+        visit(symbolsMadeOnce, made.symbolsMadeOnce);
+        visit(callThatGivesResult, made.callThatGivesResult);
+        visit(storesOnResult, made.storesOnResult);
+        visit(keysOfTestedFields, made.keysOfTestedFields);
+        visit(operators, made.operators);
+        visit(changes, made.changes);
+        visit(members, made.members);
+        visit(functionVariablesStoredInto, made.functionVariablesStoredInto);
+        visit(partsOfConstructions, made.partsOfConstructions);
+        visit(fieldsLeftEmpty, made.fieldsLeftEmpty);
+        visit(fieldsFilledAtEndAlone, made.fieldsFilledAtEndAlone);
+        visit(fieldsEmptyAtEndAlone, made.fieldsEmptyAtEndAlone);
+        visit(halvesOfAccessorsNotLaid, made.halvesOfAccessorsNotLaid);
+        visit(fieldsListedByAllocations, made.fieldsListedByAllocations);
+        visit(classesEvaluated, made.classesEvaluated);
+        visit(environmentsMade, made.environmentsMade);
+        visit(sitesThatHandOverCaptures, made.sitesThatHandOverCaptures);
+        visit(definitions, made.definitions);
+        visit(functionsNamed, made.functionsNamed);
+        visit(handlers, made.handlers);
+        visit(modulesNamedInBlocksNeverEntered, made.modulesNamedInBlocksNeverEntered);
+        visit(modulesHandedOut, made.modulesHandedOut);
+        visit(firstStoresOfBody, made.firstStoresOfBody);
+        visit(firstUsesOfFunctions, made.firstUsesOfFunctions);
+        visit(otherModulesNamed, made.otherModulesNamed);
+        visit(answersOfRequire, made.answersOfRequire);
+        visit(objectsOfCompiledModules, made.objectsOfCompiledModules);
+        visit(namesThatLoaderTakes, made.namesThatLoaderTakes);
+        visit(inspections, made.inspections);
+        visit(namesRead, made.namesRead);
+        visit(namesCalled, made.namesCalled);
+        visit(namesStored, made.namesStored);
+        visit(textsThatNameEvents, made.textsThatNameEvents);
+        visit(accessesUnderConstantKeys, made.accessesUnderConstantKeys);
+        visit(modulesWhosePathIsRead, made.modulesWhosePathIsRead);
+        visit(ownWritesOnWaysToReturn, made.ownWritesOnWaysToReturn);
+        visit(operandsOfOperatorsLeftApart, made.operandsOfOperatorsLeftApart);
+        visit(wordsOfEffects, effects);
+    };
+
+    SummaryStorage& storage = nodes.m_storage;
+    std::array<size_t, SummaryStorage::numberOfListsInRecord> offsetsOfListsInRecord;
+    std::array<Entry, 64> entries;
+    size_t size = 0;
+    size_t sizeKeptForWalk = 0;
+    forEachList([&]<typename T, unsigned number>(const SummaryList<T, number>&, const auto& list) {
+        static_assert(alignof(T) <= alignof(uint64_t));
+        if constexpr (number < SummaryStorage::numberOfListsInRecord) {
+            static_assert(std::is_trivially_destructible_v<T>);
+            size = WTF::roundUpToMultipleOf<alignof(T)>(size);
+            offsetsOfListsInRecord[number] = size;
+            storage.sizesOfListsInRecord[number] = static_cast<uint32_t>(list.size());
+            size += list.size() * sizeof(T);
+        } else if (!list.isEmpty()) {
+            constexpr uint64_t bit = SummaryStorage::bitOf<number>();
+            constexpr bool isKeptForWalk = !!(bit & SummaryStorage::listsKeptForWalk);
+            static_assert(std::is_trivially_destructible_v<T> || (isKeptForWalk && std::is_same_v<T, SummaryScopeStoredFirst>));
+            size_t& end = isKeptForWalk ? sizeKeptForWalk : size;
+            size_t offset = WTF::roundUpToMultipleOf<alignof(T)>(end);
+            end = offset + list.size() * sizeof(T);
+            ASSERT(!(storage.listsInDirectories & bit));
+            storage.listsInDirectories |= bit;
+            entries[number - SummaryStorage::numberOfListsInRecord] = { static_cast<uint32_t>(offset), static_cast<uint32_t>(list.size()) };
+        }
+    });
+
+    uint64_t keptForWalk = storage.listsInDirectories & SummaryStorage::listsKeptForWalk;
+    uint64_t notKeptForWalk = storage.listsInDirectories & ~SummaryStorage::listsKeptForWalk;
+    size_t sizeOfDirectoryKeptForWalk = std::popcount(keptForWalk) * sizeof(Entry);
+    size_t offsetOfDirectory = WTF::roundUpToMultipleOf<alignof(Entry)>(size);
+    size = offsetOfDirectory + std::popcount(notKeptForWalk) * sizeof(Entry);
+    RELEASE_ASSERT(size <= UINT32_MAX && sizeOfDirectoryKeptForWalk + sizeKeptForWalk <= UINT32_MAX);
+
+    std::byte* block = static_cast<std::byte*>(fastMalloc(size));
+    ASSERT(!offsetsOfListsInRecord[0]);
+    for (unsigned number = 0; number < SummaryStorage::numberOfListsInRecord; ++number)
+        storage.listsInRecord[number] = block + offsetsOfListsInRecord[number];
+    storage.offsetOfDirectory = static_cast<uint32_t>(offsetOfDirectory);
+    Entry* entry = SummaryStorage::pointerInto<Entry>(block, offsetOfDirectory);
+    for (uint64_t rest = notKeptForWalk; rest; rest &= rest - 1)
+        *entry++ = entries[std::countr_zero(rest)];
+
+    if (keptForWalk) {
+        storage.blockKeptForWalk = fastMalloc(sizeOfDirectoryKeptForWalk + sizeKeptForWalk);
+        entry = static_cast<Entry*>(storage.blockKeptForWalk);
+        for (uint64_t rest = keptForWalk; rest; rest &= rest - 1) {
+            Entry behindDirectory = entries[std::countr_zero(rest)];
+            *entry++ = { static_cast<uint32_t>(sizeOfDirectoryKeptForWalk + behindDirectory.offset), behindDirectory.size };
+        }
+    }
+
+    forEachList([&]<typename T, unsigned number>(const SummaryList<T, number>&, auto& list) {
+        if (list.isEmpty())
+            return;
+        std::span<T> room = storage.list<T, number>();
+        if constexpr (std::is_trivially_copyable_v<T>)
+            memcpySpan(room, list.span());
+        else
+            std::ranges::uninitialized_move(list.mutableSpan(), room);
+        list.shrink(0);
+    });
+    ASSERT(layoutsOfOwnWrites() == made.layoutsOfOwnWrites && ownEffects() == made.ownEffects && ownEffectsOfOperators() == made.ownEffectsOfOperators);
+
+    static_cast<SummaryWithoutLists&>(made) = { };
+    made.layoutsOfOwnWrites = 0;
+    made.ownEffects = { };
+    made.ownEffectsOfOperators = std::nullopt;
+}
+
 void ScanOfBody::run(FunctionID id, ThinSummary& result)
 {
     summarize(id);
-    memcpySpan(asMutableByteSpan(result), asByteSpan(m_summary));
-    std::construct_at(&m_summary);
+    result = ThinSummary(m_summary);
     m_summaryHoldsNothing = true;
-    keepRoomOfListInScan(result.nodes, m_summary.nodes);
-    keepRoomOfListInScan(result.edges, m_summary.edges);
-    keepRoomOfListInScan(result.calls, m_summary.calls);
-    keepRoomOfListInScan(result.arguments, m_summary.arguments);
-    keepRoomOfListInScan(result.accesses, m_summary.accesses);
-    keepRoomOfListInScan(result.functionsNamed, m_summary.functionsNamed);
-    keepRoomOfListInScan(result.namesRead, m_summary.namesRead);
-    keepRoomOfListInScan(result.namesCalled, m_summary.namesCalled);
 }
 
 void ScanOfBody::summarize(FunctionID id)
@@ -1651,6 +1877,7 @@ void ScanOfBody::reset()
     m_stores.shrink(0);
     m_keysWrittenForMembers.shrink(0);
     m_valuesOfImmutableVariables.shrink(0);
+    m_valuesLaidIntoDescriptors.shrink(0);
     if (!m_accessorsLaid.isEmpty()) {
         m_accessorsLaid.shrink(0);
         m_placesOfAccessorsLaid.clear();
@@ -2287,7 +2514,7 @@ uint32_t ScanOfBody::addAccessUnder(SummaryAccess::Kind kind, ValueID site, List
 
 bool ScanOfBody::isSurelyIndex(ValueID value) const
 {
-    constexpr int64_t numberOfIndexes = UINT32_MAX;
+    constexpr int64_t numberOfIndexes = 1ll << 31;
     auto integerWrittenAt = [&](ValueID operand) -> std::optional<int64_t> {
         BodyValue written = operand ? definitionBehindCasts(operand) : BodyValue();
         return written && written.opcode() == Opcode::Integer ? std::optional(written.as<Opcode::Integer>().integer()) : std::nullopt;
@@ -2414,6 +2641,25 @@ void ScanOfBody::addChange(SummaryChange::Kind kind, ValueID site, ListInScan su
     addSink(SinkKindInScan::SubjectOfChange, subject, index);
     if (other)
         addSink(SinkKindInScan::OtherOfChange, *other, index);
+}
+
+VariableID ScanOfBody::constantReadAs(ValueID value) const
+{
+    BodyValue definition = definitionBehindCasts(value);
+    if (!definition || definition.opcode() != Opcode::GetModuleVariable)
+        return { };
+    VariableID variable = definition.as<Opcode::GetModuleVariable>().variable();
+    return variable && m_program.at(variable).flags.contains(VariableFlags::IsImmutable) ? variable : VariableID();
+}
+
+uint32_t ScanOfBody::valuesLaidIntoDescriptorHeldBy(VariableID constant)
+{
+    for (auto [variable, node] : m_valuesLaidIntoDescriptors) {
+        if (variable == constant)
+            return node;
+    }
+    m_valuesLaidIntoDescriptors.append({ constant, newJoin() });
+    return m_valuesLaidIntoDescriptors.last().second;
 }
 
 void ScanOfBody::defineByDescriptor(ValueID site, ListInScan subject, PropertyKeyID key, std::optional<ListInScan> other, bool isUnderNameThatNobodyElseNames)
@@ -3010,7 +3256,10 @@ void ScanOfBody::readAccess(const BodyValue& value, SummaryAccess::Kind kind, ui
         if (key && object) {
             if (stored && kind == SummaryAccess::Kind::Store && m_program.nameClassOf(key) == NameClass::Prototype)
                 m_storesOfPrototypes.append(StoreOfPrototypeInScan { static_cast<uint32_t>(m_stores.size()), m_roots[stored.index()] });
+            if (VariableID constant = stored && key == m_program.keyOf(BuiltinNames::value) ? constantReadAs(object) : VariableID())
+                flowInto(held, valuesLaidIntoDescriptorHeldBy(constant));
             m_stores.append(StoreInScan { value.id(), kind == SummaryAccess::Kind::Define, subject, held, key, m_roots[object.index()], block });
+            m_stores.last().storesSurelyIndex = stored && key == m_program.keyOf(BuiltinNames::length) && isSurelyIndex(stored);
             noteStoreIntoObject(m_roots[object.index()], key, kind);
             return;
         }
@@ -3361,8 +3610,10 @@ void ScanOfBody::readIteration(const BodyValue& value, const OperandInfo& info, 
     ValueID site = value.id();
     if (opcode == Opcode::IteratorOpen) {
         if (value.as<Opcode::IteratorOpen>().iteratorKind() == IteratorKind::Sync) {
-            for (IterationHelper helper : { IterationHelper::OpenIterator, IterationHelper::StepIterator, IterationHelper::CloseIterator, IterationHelper::CloseIteratorAfterThrow, IterationHelper::NextOfStepsOverText }) {
+            for (IterationHelper helper : { IterationHelper::OpenIterator, IterationHelper::StepIterator, IterationHelper::WayToStepIterator, IterationHelper::StepIteratorInWay, IterationHelper::CloseIterator, IterationHelper::CloseIteratorAfterThrow, IterationHelper::NextOfStepsOverText }) {
                 if (!functionOfIterationHelper(m_program, helper))
+                    continue;
+                if ((helper == IterationHelper::WayToStepIterator || helper == IterationHelper::StepIteratorInWay) && value.as<Opcode::IteratorOpen>().isDestructuring())
                     continue;
                 SummaryCall call;
                 call.site = site;
@@ -4138,8 +4389,7 @@ void ScanOfBody::readDirectCall(const BodyValue& value, SummaryCall& call)
                 object.parts.append(call.function);
             noteFill(root, true, call.function.index());
         }
-        if (index < numberOfCaptures && m_summary.environmentsMade.contains(arguments[index]))
-            m_summary.environmentsHandedToFunctionsEntered.appendIfNotContains(arguments[index]);
+
         if (index < numberOfCaptures && arguments[index])
             flowInto(listOf(arguments[index]), captureNode(call.function, index));
     }
@@ -4361,6 +4611,8 @@ void ScanOfBody::readChangesMadeByBuiltin(const BodyValue& value, const SummaryC
                 if (hasNotLeft)
                     m_definitionsByDescriptors.append(DefinitionByDescriptorInScan { static_cast<uint32_t>(m_summary.changes.size()), m_roots[written.index()], site.index(), waitsForItsJudgment, *descriptor });
                 defineByDescriptor(site, subject, keyWritten.key, descriptor, keyWritten.isWritten && !keyWritten.key);
+                if (VariableID constant = written && keyWritten.key ? constantReadAs(written) : VariableID())
+                    m_summary.changes.last().valueLaidThroughConstant = valuesLaidIntoDescriptorHeldBy(constant);
                 if (hasNotLeft && keyWritten.key)
                     m_definitionsByDescriptors.last().access = static_cast<uint32_t>(m_summary.accesses.size()) - 1;
                 if (descriptor && !waitsForItsJudgment)
@@ -4610,16 +4862,24 @@ const uint32_t* ScanOfBody::readTerminator(const BodyTerminator& terminator, uin
 {
     TerminatorKind kind = terminator.kind();
     if (terminatorKindsThatNameRecordsInScan.contains(kind)) {
-        ReferencesOfScan references { *this, ValueID(), block, false, false, false };
+        ReferencesOfScan references { *this, ValueID(), block, false, false, kind == TerminatorKind::ReturnCall };
         terminator.forEachReference(references);
+        if (kind == TerminatorKind::ReturnCall) {
+            for (TailCast cast : terminator.as<TerminatorKind::ReturnCall>().casts()) {
+                if (cast.declared.written() && !cast.declared.isExpected())
+                    noteSetOfLayoutsWritten(cast.declared.written());
+            }
+        }
         if (references.namesUndefinedRecord) {
             stopAtUndefinedRecord(block, ValueID(), m_function->locationOf(terminator), nameOf(kind));
             return terminator.end();
         }
     }
 
-    if (kind == TerminatorKind::Switch || kind == TerminatorKind::SwitchString)
-        m_summary.weightOfOperations += terminator.numberOfTargets() / 4;
+    if (kind == TerminatorKind::SwitchString)
+        m_summary.weightOfOperations += terminator.numberOfTargets() * 2;
+    else if (kind == TerminatorKind::Switch)
+        m_summary.weightOfOperations += terminator.numberOfTargets() / 2;
     bool mayThrow = false;
     if (terminatorKindsWithoutEffectsInScan.contains(kind))
         noteEndOfBlock(terminator, block, noEffectsInScan);
@@ -5244,7 +5504,6 @@ void ScanOfBody::followObjectsMadeToBePrototypes()
                 continue;
         }
 
-        // An accessor runs code at lookups that no flow need see: the names of such an object are followed, and the function and its layout go as at any other store.
         m_stores[candidate.store].storesObjectMadeForIt = !(m_uses[root] & isLaidAccessorsUnderNames);
         uint32_t standsForObject = addAccessUnder(SummaryAccess::Kind::Read, ValueID(root), m_stores[candidate.store].base, m_stores[candidate.store].key, ValueID());
         m_summary.accesses[standsForObject].standsForObjectMadeAtSite = true;
@@ -5267,8 +5526,11 @@ void ScanOfBody::followObjectsMadeToBePrototypes()
         }
     }
     for (const HeirMadeByBuiltinInScan& heir : m_heirsMadeByBuiltins) {
-        if (!heir.isFollowed)
-            escape(heir.above);
+        if (heir.isFollowed)
+            continue;
+        escape(heir.above);
+        m_summary.changes[heir.change].heirIsMadeByCall = true;
+        addSink(SinkKindInScan::OtherOfChange, listOf(ValueID(heir.call)), heir.change);
     }
 }
 
@@ -5658,6 +5920,7 @@ void ScanOfBody::applyStore(const StoreInScan& store)
     access.kind = store.isDefinition ? SummaryAccess::Kind::Define : SummaryAccess::Kind::Store;
     access.isPartOfConstruction = isAlone;
     access.storesObjectMadeForIt = store.storesObjectMadeForIt;
+    access.storesSurelyIndex = store.storesSurelyIndex;
     access.subject = oneNodeFor(store.base);
     access.key = store.key;
     access.value = oneNodeFor(store.value);
@@ -5682,7 +5945,7 @@ void ScanOfBody::finish()
 
     removeRepeatedEdges();
     listNamesSpelled();
-    if (m_summary.modulesWhosePathIsRead.capacity())
+    if (!m_summary.modulesWhosePathIsRead.isEmpty())
         finishListsOfStringsInScan(m_summary);
     listConstructions();
     sortWithoutRepeatsInScan(m_summary.classesEvaluated);
@@ -5693,13 +5956,63 @@ void ScanOfBody::finish()
     if (m_listsDefinitions)
         listDefinitions();
     sortWithoutRepeatsInScan(m_summary.modulesNamedInBlocksNeverEntered);
-    sortWithoutRepeatsAndKeepRoomInScan(m_summary.functionsNamed);
-    shrinkToFitInScan(m_summary.operators);
-    shrinkToFitInScan(m_summary.changes);
-    shrinkToFitInScan(m_summary.members);
-    shrinkToFitInScan(m_summary.constructions);
-    shrinkToFitInScan(m_summary.keysOfConstructions);
-    shrinkToFitInScan(m_summary.partsOfConstructions);
+    sortWithoutRepeatsInScan(m_summary.functionsNamed);
+    listWhatWalkAsksOfNodesAndCalls();
+    listStoresOnResult();
+}
+
+void ScanOfBody::listWhatWalkAsksOfNodesAndCalls()
+{
+    m_summary.makesObjects = std::ranges::any_of(m_summary.nodes, [](const SummaryNode& node) {
+        return node.kind == SummaryNode::Kind::Allocation || node.kind == SummaryNode::Kind::ClassInstance || node.kind == SummaryNode::Kind::Closure;
+    });
+
+    std::span<const SummaryCall> calls = m_summary.calls.span();
+    for (size_t index = 0; index < calls.size(); ++index) {
+        const SummaryCall& call = calls[index];
+        if (call.callee != SummaryCall::Callee::Builtin) {
+            if (!call.isMadeByProtocol) {
+                ++m_summary.numberOfOwnCalls;
+                m_summary.numberOfArgumentsOfOwnCalls += call.numberOfArguments;
+            }
+            continue;
+        }
+        PropertyKeyID key = keyOfSymbolMadeOnceBy(m_program, call);
+        if (!key)
+            continue;
+        bool isFirstRecordOfSite = std::ranges::none_of(calls.first(index), [&](const SummaryCall& earlier) {
+            return earlier.site == call.site && earlier.callee == SummaryCall::Callee::Builtin;
+        });
+        if (isFirstRecordOfSite)
+            m_summary.symbolsMadeOnce.append({ call.site, key });
+    }
+    if (calls.size() == 1 && calls[0].isInTailPosition && !calls[0].isConstruction && !calls[0].passesList && !calls[0].isMadeByProtocol)
+        m_summary.tailCallThatIsOnlyCall.append({ calls[0].site, calls[0].numberOfArguments });
+}
+
+void ScanOfBody::listStoresOnResult()
+{
+    if (m_summary.calls.isEmpty() && m_summary.accesses.isEmpty())
+        return;
+    uint32_t returned = noSummaryNode;
+    for (const SummaryEdge& edge : m_summary.edges) {
+        if (m_summary.nodes[edge.to].kind != SummaryNode::Kind::Result)
+            continue;
+        if (returned != noSummaryNode && returned != edge.from)
+            return;
+        returned = edge.from;
+    }
+    if (returned == noSummaryNode)
+        return;
+    const SummaryNode& node = m_summary.nodes[returned];
+    if (node.kind != SummaryNode::Kind::ResultOfCall && node.kind != SummaryNode::Kind::Allocation)
+        return;
+    if (node.kind == SummaryNode::Kind::ResultOfCall && !m_summary.calls[node.first].isConstruction)
+        m_summary.callThatGivesResult.append(m_summary.calls[node.first].site);
+    for (const SummaryAccess& access : m_summary.accesses) {
+        if ((access.kind == SummaryAccess::Kind::Store || access.kind == SummaryAccess::Kind::Define) && !access.isToContents() && access.subject == returned)
+            m_summary.storesOnResult.append({ access.site, access.key });
+    }
 }
 
 void ScanOfBody::listNamesSpelled()
@@ -5741,8 +6054,8 @@ void ScanOfBody::listNamesSpelled()
         if (change.kind == SummaryChange::Kind::Deletes)
             note(change.site, change.key, m_summary.namesStored, SummaryTrait::StoresUnderComputedKey);
     }
-    sortWithoutRepeatsAndKeepRoomInScan(m_summary.namesRead);
-    sortWithoutRepeatsAndKeepRoomInScan(m_summary.namesCalled);
+    sortWithoutRepeatsInScan(m_summary.namesRead);
+    sortWithoutRepeatsInScan(m_summary.namesCalled);
     sortWithoutRepeatsInScan(m_summary.namesStored);
     sortWithoutRepeatsInScan(m_summary.textsThatNameEvents);
 }

@@ -410,6 +410,8 @@ std::optional<Vector<QuestionOfEntry, 4>> findQuestionsOfEntryWrittenByHand(cons
     return questions;
 }
 
+static constexpr GPRReg scratchOfEntryWrittenByHand = valueEntryGPR;
+
 enum class CaseOfQuestionOfEntry : uint8_t { Number, Text, Symbol, BigInteger, Object, CellType, Shape, Boolean, False, True, Undefined, Null };
 
 struct CaseInQuestionOfEntry {
@@ -520,10 +522,27 @@ static void emitQuestionOfEntry(CCallHelpers& jit, const QuestionOfEntry& questi
     ways.behind = jit.label();
 }
 
+CCallHelpers::JumpList emitQuestionOfEntryWrittenByHand(CCallHelpers& jit, const QuestionOfEntry& question)
+{
+    AllowMacroScratchRegisterUsage allowScratch(jit);
+    WaysOutOfQuestionOfEntry ways;
+    emitQuestionOfEntry(jit, question, scratchOfEntryWrittenByHand, ways);
+    if (ways.isNoCell.empty())
+        return ways.misfits;
+
+    CCallHelpers::Jump fits = jit.jump();
+    ways.isNoCell.link(&jit);
+    for (CaseInQuestionOfEntry word : wordsThatFitQuestionOfEntry(question))
+        branchOnCaseOfQuestionOfEntry(jit, question, scratchOfEntryWrittenByHand, word, true).linkTo(ways.behind, &jit);
+    ways.misfits.append(jit.jump());
+    fits.link(&jit);
+    return ways.misfits;
+}
+
 void emitEntryWrittenByHand(CCallHelpers& jit, const CodeGenerationInputs& inputs, CodeRecords& records, CodeUnit unit, std::span<const QuestionOfEntry> questions, bool frameIsSetUp)
 {
     AllowMacroScratchRegisterUsage allowScratch(jit);
-    GPRReg scratch = valueEntryGPR;
+    constexpr GPRReg scratch = scratchOfEntryWrittenByHand;
     Vector<WaysOutOfQuestionOfEntry, 4> ways(questions.size());
     for (size_t index = 0; index < questions.size(); ++index)
         emitQuestionOfEntry(jit, questions[index], scratch, ways[index]);

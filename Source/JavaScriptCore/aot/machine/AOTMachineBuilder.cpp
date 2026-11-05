@@ -1297,6 +1297,30 @@ void Builder::jump(Edge target)
     block->appendSuccessorWhereRoomIsKnown<true>(target);
 }
 
+bool Builder::tryToLeadBranchPastEmptyBlock(Edge target)
+{
+    Block* block = m_block;
+    if (m_pendingPatch || !block || m_proc.m_blocks.last() != block)
+        return false;
+    if (!block->isEmpty() || !block->m_phis.isEmpty() || !block->m_upsilons.isEmpty() || !block->m_successors.isEmpty() || block->m_isLandingPad || block->m_isEntry)
+        return false;
+    Block* from = block->singlePredecessor();
+    if (!from || from->numSuccessors() != 2 || from->last()->opcode() != Branch)
+        return false;
+    unsigned index = from->successor(0).block() == block ? 0 : 1;
+    Block* newTarget = target.block();
+    if (from->successor(index).edgeClass() != EdgeClass::Normal || newTarget == block || from->successor(1 - index).block() == newTarget || from->successor(1 - index).block() == block)
+        return false;
+
+    uint32_t numberOfIncomingEdges = newTarget->m_numberOfIncomingEdges;
+    RELEASE_ASSERT(!newTarget->m_isEntry && (!newTarget->m_hasOnlyOnePredecessor || !numberOfIncomingEdges));
+    from->m_successors[index] = target;
+    newTarget->didGainIncomingEdge(from);
+    m_proc.m_blocks.takeLast();
+    m_block = from;
+    return true;
+}
+
 void Builder::branch(Operation* predicate, Edge whenNotZero, Edge whenZero)
 {
     ASSERT(predicate->type().isInt());

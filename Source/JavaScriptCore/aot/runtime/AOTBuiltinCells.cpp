@@ -558,8 +558,11 @@ void BuiltinCells::noteWriteAboveInstances(BuiltinID holder)
             const Builtin& object = table.at(table.canonicalID(above));
             above = object.prototypeLink == BuiltinPrototypeLink::Builtin ? object.inheritsFrom : BuiltinID();
         }
-        if (above)
-            m_classesWrittenAbove[index] = 1;
+        if (!above)
+            continue;
+        m_classesWrittenAbove[index] = 1;
+        if (isTypedView(table.typedArrayTypeOf(BuiltinClassID(index))))
+            m_instance.builtins.someClassOfViewsWasWrittenAbove = 1;
     }
 }
 

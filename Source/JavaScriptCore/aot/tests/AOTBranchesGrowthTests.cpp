@@ -10,6 +10,7 @@
 #include "AOTGrowthOfWork.h"
 #include "AOTIRParser.h"
 #include "AOTNativeTest.h"
+#include "AOTOptionWords.h"
 #include "AOTProgramFile.h"
 #include "AOTTestHarness.h"
 #include <wtf/text/StringBuilder.h>
@@ -95,11 +96,35 @@ static String wordsHandedOnRoundLoopWithTwoWaysRoundForBranchesGrowthTests(unsig
     return text.toString();
 }
 
-static std::optional<uint64_t> instructionsOfWalkForBranchesGrowthTests(const String& text, FunctionID function)
+static String freshCellsThatLiveOverJoinsForBranchesGrowthTests(unsigned numberOfCells)
+{
+    StringBuilder text;
+    text.append("layout L0 module=m0 fields=[{key=\"lid\" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1\n"_s);
+    text.append("module m0 path=\"main.js\" displayPath=\"main.js\" body=f0\nentry module=m0\n"_s);
+    text.append("function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {\n  b0():\n    v0 = Builtin builtin=GlobalThis\n    v1 = PropGet v0 key=\"sink\" [isFreeName]\n"_s);
+    text.append("    v2 = NewClosure function=f1\n    v3 = Call v1, -, v2\n    Return v3\n}\n"_s);
+    text.append("function f1 name=\"big\" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {\n  b0(v0: anything):\n"_s);
+    for (unsigned cell = 0; cell < numberOfCells; ++cell) {
+        unsigned value = 1 + 3 * cell;
+        unsigned block = 3 * cell;
+        if (cell)
+            text.append("  b"_s, block, "():\n"_s);
+        text.append("    v"_s, value, " = NewObject -, v0 layout=L0 fields=[0]\n    v"_s, value + 1, " = FinishObject v"_s, value, "\n    v"_s, value + 2, " = ToBoolean v0\n"_s);
+        text.append("    Branch v"_s, value + 2, " -> taken b"_s, block + 1, "(), notTaken b"_s, block + 2, "()\n"_s);
+        text.append("  b"_s, block + 1, "():\n    Jump -> next b"_s, block + 3, "()\n  b"_s, block + 2, "():\n    Jump -> next b"_s, block + 3, "()\n"_s);
+    }
+    text.append("  b"_s, 3 * numberOfCells, "():\n"_s);
+    for (unsigned cell = 0; cell < numberOfCells; ++cell)
+        text.append("    v"_s, 1 + 3 * numberOfCells + cell, " = PropGet v"_s, 2 + 3 * cell, " key=\"lid\"\n"_s);
+    text.append("    Return v0\n}\n"_s);
+    return text.toString();
+}
+
+static std::optional<uint64_t> instructionsOfWalkForBranchesGrowthTests(const String& text, FunctionID function, Wire::CompileOptions options = makeOptionsOfTestedProgram())
 {
     std::optional<uint64_t> instructions;
     runOnBuildThread([&] {
-        BuildContext build(makeOptionsOfTestedProgram());
+        BuildContext build(options);
         std::unique_ptr<Program> parsed = parseProgram(withStandInLibrary(text), build);
         AOT_TEST_CHECK(parsed);
         StagedBuild stages(WTF::move(parsed), build);
@@ -129,11 +154,23 @@ static void testWalkGrowsAsWordsHandedOnRoundLoopWithTwoWaysRoundDo()
     AOT_TEST_CHECK(growsAsSizeDoes(smaller, large));
 }
 
+static void testWalkThatEndsLivesGrowsAsFreshCellsThatLiveOverJoinsDo()
+{
+    constexpr unsigned numberOfCells = 100;
+    Wire::CompileOptions options = makeOptionsOfTestedProgram();
+    AOT_TEST_CHECK(!applyOptionWord(options, "testing=CheckProofsAtRunTime"_s));
+    InstructionCounts::begin();
+    std::optional<uint64_t> smaller = instructionsOfWalkForBranchesGrowthTests(freshCellsThatLiveOverJoinsForBranchesGrowthTests(numberOfCells), FunctionID(1u), options);
+    std::optional<uint64_t> large = instructionsOfWalkForBranchesGrowthTests(freshCellsThatLiveOverJoinsForBranchesGrowthTests(4 * numberOfCells), FunctionID(1u), options);
+    AOT_TEST_CHECK(growsAsSizeDoes(smaller, large));
+}
+
 std::span<const NativeTest> branchesGrowthTests()
 {
     static constexpr NativeTest tests[] {
         { "branches-growth/the-walk-grows-as-the-cases-of-a-switch-do"_s, testWalkGrowsAsCasesOfSwitchDo },
         { "branches-growth/the-walk-grows-as-the-words-handed-on-round-a-loop-with-two-ways-round-do"_s, testWalkGrowsAsWordsHandedOnRoundLoopWithTwoWaysRoundDo },
+        { "branches-growth/the-walk-that-ends-lives-grows-as-the-fresh-cells-that-live-over-joins-do"_s, testWalkThatEndsLivesGrowsAsFreshCellsThatLiveOverJoinsDo },
     };
     return tests;
 }

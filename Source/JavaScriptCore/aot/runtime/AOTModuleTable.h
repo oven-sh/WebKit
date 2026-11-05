@@ -41,9 +41,12 @@ public:
     ModuleNumbers linkRequests(ModuleID module) const { return listOf(allLinkRequests(), module, &ModuleData::firstLinkRequest); }
     ModuleNumbers allLinkRequests() const { return { m_tables->linkRequests(), m_modules.size() }; }
     uint32_t endOfLinkRequests(ModuleID module) const { return m_modules[checkedIndex(module) + 1].firstLinkRequest; }
+    ModuleID leaderInLink(ModuleID module) const { return ModuleID(allLinkRequests()[data(module).firstLinkRequest]); }
     ModuleNumbers evaluationRequests(ModuleID module) const { return listOf(allEvaluationRequests(), module, &ModuleData::firstEvaluationRequest); }
     ModuleNumbers allEvaluationRequests() const { return { m_tables->evaluationRequests(), m_modules.size() }; }
     uint32_t endOfEvaluationRequests(ModuleID module) const { return m_modules[checkedIndex(module) + 1].firstEvaluationRequest; }
+    ModuleID headOfLoadGroup(ModuleID) const;
+    ModuleNumbers groupsLoadedWith(ModuleID head) const;
     std::span<const LinkPlanStepData> entryPointLinkPlan() const { return m_tables->entryPointLinkPlan(); }
     std::span<const ImportOfHeldFileData> importsOfHeldFile(ModuleID) const;
     std::span<const ModuleExportData> exports(ModuleID module) const
@@ -85,6 +88,7 @@ public:
     std::span<const UncompiledModuleData> modulesOfUncompiledCode() const { return m_tables->modulesOfUncompiledCode(); }
     String typeAttribute(ModuleID) const;
     std::optional<ModuleID> findRuntimeSource(uint32_t registryID) const;
+    bool valueOfRuntimeSourceStaysWithCompiledCode(uint32_t registryID) const;
     std::optional<unsigned> findExport(ModuleID, UniquedStringImpl* name) const;
     std::optional<ModuleID> fileBehindFace(ModuleID module) const { return data(module).isFaceOfFile() ? std::optional(requests(module).front().targetModule()) : std::nullopt; }
     std::optional<ModuleID> faceOfFile(ModuleID) const;
@@ -142,6 +146,23 @@ inline List ModuleTable::listOf(List list, ModuleID module, Number24 ModuleData:
     size_t index = checkedIndex(module);
     uint32_t start = m_modules[index].*first;
     return list.subspan(start, m_modules[index + 1].*first - start);
+}
+
+inline ModuleID ModuleTable::headOfLoadGroup(ModuleID module) const
+{
+    const ModuleData& moduleData = data(module);
+    ASSERT(moduleData.isESModuleOfProgram());
+    return moduleData.isHeadOfLoadGroup() ? module : ModuleID(moduleData.numberInLoadGroup());
+}
+
+inline ModuleNumbers ModuleTable::groupsLoadedWith(ModuleID head) const
+{
+    ASSERT(data(head).isHeadOfLoadGroup());
+    uint32_t first = data(head).numberInLoadGroup();
+    if (!first)
+        return { };
+    ModuleNumbers lists(m_tables->groupsLoadedWithGroups(), m_modules.size());
+    return lists.subspan(first, lists[first - 1]);
 }
 
 inline const IndirectExportData& ModuleTable::indirectExport(const ModuleExportData& moduleExport) const

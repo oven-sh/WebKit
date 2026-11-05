@@ -199,7 +199,6 @@ static CodeUnit entryNamedByClosureWordsFor(CodeUnit unit)
     case CodeRole::ParameterGuard:
     case CodeRole::TableEntry:
     case CodeRole::TableLookup:
-    case CodeRole::Serializer:
         return { unit.function, CodeRole::GenericCallEntry };
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -249,8 +248,6 @@ static TraceVisibility traceVisibilityOfUnit(const Function& function, CodeRole 
     case CodeRole::ParameterGuard:
     case CodeRole::TableEntry:
         return TraceVisibility::VisibleOnlyOnTop;
-    case CodeRole::Serializer:
-        return TraceVisibility::Hidden;
     case CodeRole::TableLookup:
         return TraceVisibility::Hidden;
     }
@@ -266,7 +263,6 @@ static bool unitRejectsOnThrow(const Function& function, CodeRole role, bool bod
         return true;
     case CodeRole::CoroutineBody:
         return !bodyNeverSuspends;
-    case CodeRole::Serializer:
     case CodeRole::GenericCallEntry:
     case CodeRole::GenericConstructEntry:
     case CodeRole::AllocatingConstructEntry:

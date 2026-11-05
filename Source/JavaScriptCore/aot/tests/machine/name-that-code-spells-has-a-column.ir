@@ -4,7 +4,7 @@
 # CHECK-LABEL: unit f0:Body
 # CHECK-NOT: CheckingColumn
 # CHECK-LABEL: unit f1:Body
-# CHECK: Call Stub ReadAtSite.OfAnyValueUnderNameWithColumn
+# CHECK: Call Stub ReadAtSiteOfNameWithoutField.OfAnyValueUnderNameWithColumn
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0

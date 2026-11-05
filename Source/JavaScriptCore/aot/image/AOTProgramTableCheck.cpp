@@ -309,10 +309,38 @@ static void checkModuleTables(const JoinedTables& check)
     auto checkRequestLists = [&](std::span<const uint16_t> words, Number24 ModuleData::* first, ASCIILiteral table) {
         ModuleNumbers lists(words, modules.size());
         bool hasValidStarts = std::ranges::is_sorted(modules, { }, [&](const ModuleData& module) { return static_cast<uint32_t>(module.*first); }) && modules.back().*first == lists.size();
-        check.expect(hasValidStarts && everyModuleExists(lists), "TableOutOfBounds"_s, { }, table);
+        return check.expect(hasValidStarts && everyModuleExists(lists), "TableOutOfBounds"_s, { }, table);
     };
-    checkRequestLists(tables.linkRequests(), &ModuleData::firstLinkRequest, "linkRequests"_s);
+    bool canReadLinkRequests = checkRequestLists(tables.linkRequests(), &ModuleData::firstLinkRequest, "linkRequests"_s);
+    ModuleNumbers linkRequests(tables.linkRequests(), modules.size());
+    for (size_t index = 0; canReadLinkRequests && index < numberOfModules; ++index) {
+        ModuleNumbers list = linkRequests.subspan(modules[index].firstLinkRequest, modules[index + 1].firstLinkRequest - modules[index].firstLinkRequest);
+        bool namesNoModuleThatOnlyPassesOn = std::ranges::none_of(list, [&](uint32_t module) { return modules[module].onlyPassesLinkOn(); });
+        bool namesItsLeader = list.size() == 1 && modules[list[0]].needsLink() && modules[list[0]].linkFollowsRequests();
+        check.expect(namesNoModuleThatOnlyPassesOn && (!modules[index].onlyPassesLinkOn() || namesItsLeader), "LinkRequestNamesModuleThatOnlyPassesOn"_s, { }, "linkRequests"_s);
+    }
     checkRequestLists(tables.evaluationRequests(), &ModuleData::firstEvaluationRequest, "evaluationRequests"_s);
+    ModuleNumbers groupsLoadedWithGroups(tables.groupsLoadedWithGroups(), modules.size());
+    auto isHeadOfLoadGroup = [&](uint32_t module) {
+        return module < numberOfModules && modules[module].isESModuleOfProgram() && modules[module].isHeadOfLoadGroup();
+    };
+    for (size_t index = 0; index < numberOfModules; ++index) {
+        if (!modules[index].isESModuleOfProgram())
+            continue;
+        uint32_t number = modules[index].numberInLoadGroup();
+        if (!modules[index].isHeadOfLoadGroup()) {
+            bool goesByRequests = modules[index].placeInLoadGroup() == ModuleData::PlaceInLoadGroup::BelowHead && number < numberOfModules && (!modules[number].isESModuleOfProgram() || modules[number].placeInLoadGroup() == ModuleData::PlaceInLoadGroup::BelowHead);
+            check.expect(isHeadOfLoadGroup(number) || goesByRequests, "TableOutOfBounds"_s, { }, "groupsLoadedWithGroups"_s);
+            continue;
+        }
+        bool hasList = number && number <= groupsLoadedWithGroups.size() && groupsLoadedWithGroups[number - 1] <= groupsLoadedWithGroups.size() - number;
+        if (!check.expect(!number || hasList, "TableOutOfBounds"_s, { }, "groupsLoadedWithGroups"_s) || !number)
+            continue;
+        ModuleNumbers list = groupsLoadedWithGroups.subspan(number, groupsLoadedWithGroups[number - 1]);
+        check.expect(std::ranges::all_of(list, [&](uint32_t listed) {
+            return isHeadOfLoadGroup(listed) || (listed < numberOfModules && modules[listed].isESModuleOfProgram() && modules[listed].numberInLoadGroup() == listed);
+        }), "TableOutOfBounds"_s, { }, "groupsLoadedWithGroups"_s);
+    }
     check.expect(std::ranges::all_of(tables.entryPointLinkPlan(), [&](const LinkPlanStepData& step) {
         return step.module < numberOfModules;
     }), "TableOutOfBounds"_s, { }, "entryPointLinkPlan"_s);

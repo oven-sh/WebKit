@@ -1,5 +1,5 @@
-# const a = { part: 1.5, whole: 7, first: 7 }, b = { whole: "w", part: 2.5, second: 2.5 }, c = { part: "p", whole: "x", more: 1 };   const o = never ? one of three other literals : which ? a : b;   show(o.part, o.whole);
-# The two reads run once, so they have no place. Three layouts have both names, and none is written as a kind of another; five layouts meet in `o`, more than a set holds, so it is any object. Two of them hold `part` as a raw number: the read under it calls the stub that asks the table of fields first.
+# const a = { part: 1.5, whole: 7, first: 7 }, b = { whole: "w", part: 2.5, second: 2.5 }, c = { part: "p", whole: "x", more: 1 };   const o = never ? one of two other literals or a text : which ? a : b;   show(o.part, o.whole);
+# The two reads run once, so they have no place. Three layouts have both names, and none is written as a kind of another; four layouts and a text meet in `o`, and a text has no slots, so the reads look the names up. Two of them hold `part` as a raw number: the read under it calls the stub that asks the table of fields first.
 # Two hold `whole` as any value: the read under it asks as every read by name does.
 # RUN(PLAN): plan layouts mechanisms=none+TypedOperations+UnboxedNumbers+TypedSlots
 # PLAN: layout L0 CompiledObject
@@ -78,7 +78,7 @@ function f0 name="main" module=m0 kind=Module thisType={type=anything} results=[
   b4():
     Jump -> next b9(v29, v23)
   b5():
-    Jump -> next b9(v32, v23)
+    Jump -> next b9(v16, v23)
   b6():
     Branch v33 -> taken b7(), notTaken b8()
   b7():

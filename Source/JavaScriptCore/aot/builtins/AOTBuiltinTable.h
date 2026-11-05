@@ -156,6 +156,7 @@ enum class RuntimeModuleFlag : uint8_t {
     HasOpenNamespace = 1 << 1,
     ListsAllExports = 1 << 2,
     IsPublic = 1 << 3,
+    NativeCodeReadsEveryExport = 1 << 4,
 };
 
 struct BuiltinIntegerRange {
@@ -522,6 +523,7 @@ struct BuiltinSlot {
     BuiltinTypeID holds { };
     std::optional<uint8_t> internalField { };
     bool holdsWhatStepsHandOut { false };
+    bool holdsWhatIsThrown { false };
 };
 
 struct BuiltinClass {
@@ -769,6 +771,7 @@ struct RuntimeModuleData {
     BuiltinID namespaceObject { };
     OptionSet<RuntimeModuleFlag> flags { };
     std::span<const BuiltinName> exportsHeldByNamespace { };
+    std::span<const BuiltinName> exportsReadByNativeCode { };
 };
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -836,6 +839,7 @@ struct BuiltinTableAttachments {
     std::span<const BuiltinCalledFunction> calledFunctions { };
     std::span<const BuiltinCalledFunction> startupCalledFunctions { };
     std::span<const BuiltinHostObject> hostObjects { };
+    std::span<const BuiltinName> nativeCellsFilledByCalledFunctions { };
     std::span<const BuiltinForms> forms { };
     std::span<const BuiltinBoxedCall> boxedCalls { };
     std::span<const BuiltinNumberConstant> numberConstants { };
@@ -1023,6 +1027,7 @@ public:
     std::span<const RuntimeFunctionID> functionsCalledWithStartupLoads() const { return m_data.runtime.functionsCalledWithStartupLoads; }
     std::span<const BuiltinCalledFunction> startupCalledFunctions() const;
     std::span<const BuiltinHostObject> hostObjects() const;
+    std::span<const BuiltinName> nativeCellsFilledByCalledFunctions() const;
     std::span<const BuiltinName> namesOfHostMethodsCallingStartupLoads() const { return m_data.runtime.namesOfHostMethodsCallingStartupLoads; }
     std::span<const RuntimeFunctionID> moduleLoaderFunctions() const { return m_data.runtime.moduleLoaderFunctions; }
     std::span<const BuiltinName> keysReadBy(Protocol) const;

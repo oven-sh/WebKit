@@ -228,8 +228,8 @@ static String findOperationThatLinkHasNotCounted(const WalkInputs& inputs, TypeA
         return { };
     const LinkTables& tables = inputs.facts.linked();
     const LinkedFunction& linked = tables.function(unit.function);
-    Effects counted = linked.effectsOnReturn;
-    counted.merge(linked.effectsOnThrow);
+    Effects counted = linked.effectsOnReturn();
+    counted.merge(linked.effectsOnThrow());
     const LinkedEffectsGivenArguments* given = tables.known.findEffectsGivenArguments(unit.function);
     Effects countedGivenArguments = given ? given->onReturn : Effects::none();
     if (given)
@@ -258,11 +258,12 @@ static String findOperationThatLinkHasNotCounted(const WalkInputs& inputs, TypeA
     return { };
 }
 
-// A caller may make what it hands to such a parameter in its own frame. Link has judged that on the body as written: no store that the walk adds may keep it.
 static String findStoreOfWhatCallerMayLend(const WalkInputs& inputs, const Code& code)
 {
     CodeUnit unit = code.unit();
     if (!walksInputBody(unit.role) || !(code.opcodesOfValues().contains(Opcode::PutModuleVariable) || code.opcodesOfValues().contains(Opcode::PutEnvironmentField)))
+        return { };
+    if (inputs.options.takesCalleesToKeepNothing)
         return { };
     const LinkTables& tables = inputs.facts.linked();
     for (uint32_t index = 0; index < code.numberOfValues(); ++index) {
@@ -327,7 +328,6 @@ static bool notesAreTakenOfCompileUnit(CodeRole role)
     case CodeRole::ModuleStart:
     case CodeRole::TableEntry:
     case CodeRole::TableLookup:
-    case CodeRole::Serializer:
         return false;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -362,7 +362,7 @@ bool CompileWorker::walkAndSweep(CodeUnit unit)
     Code& code = m_walker->code();
     if (!m_walker->walk(unit)) {
         m_build.diagnostics().append(m_walker->takeReports());
-        reportFailureOfCompileUnit(m_build, unit, InternalErrorKind::Unknown, m_walker->failure());
+        reportFailureOfCompileUnit(m_build, unit, m_walker->kindOfFailure(), m_walker->failure());
         return false;
     } else if (uint32_t guesses = m_walker->numberOfGuessesOpened()) {
         m_build.statistics().count(StatisticID::TestsThatRejoin, guesses);
@@ -374,6 +374,8 @@ bool CompileWorker::walkAndSweep(CodeUnit unit)
         m_build.statistics().count(StatisticID::AssignmentsWrittenOutFieldByField, assignments);
     if (uint32_t joins = m_walker->numberOfJoinsWalkedForEachWay())
         m_build.statistics().count(StatisticID::JoinsWalkedOnceForEachWay, joins);
+    if (uint32_t objects = m_walker->numberOfObjectsMetAsOne())
+        m_build.statistics().count(StatisticID::ObjectsOfSeveralWaysMetAsOne, objects);
     static_assert(static_cast<unsigned>(StatisticID::ProofsThatNoTestTells) - static_cast<unsigned>(StatisticID::ProofsCheckedOfEntryParameters) == numberOfEnumerators<ProofSource>);
     for (unsigned source = 0; source < numberOfEnumerators<ProofSource>; ++source) {
         if (uint32_t checked = m_walker->numberOfProofsChecked(static_cast<ProofSource>(source)))
@@ -570,6 +572,12 @@ static bool readsVariableOfAnotherFileStoredFirst(const WalkInputs& inputs, Code
     return reads;
 }
 
+static bool readsScopesWhoseLivesMayHaveEnded(const WalkInputs& inputs, const BodyIndex& index)
+{
+    static constexpr OpcodeSet accessesToScopes { Opcode::GetEnvironmentField, Opcode::PutEnvironmentField };
+    return (inputs.options.sourcesOfProofsChecked & bitOfSourceOfProofs(ProofSource::Lifetime)) && index.opcodes().intersects(accessesToScopes);
+}
+
 static bool isWrittenStraight(const WalkInputs& inputs, CodeUnit unit, const BodyIndex& index)
 {
     static constexpr OpcodeSet operationsThatTypesMakeNoCheaper = inputOperationsThatHandOn | OpcodeSet {
@@ -580,6 +588,8 @@ static bool isWrittenStraight(const WalkInputs& inputs, CodeUnit unit, const Bod
     if ((unit.role != CodeRole::SlowBody && unit.role != CodeRole::Body) || inputs.facts.isTakenToRunOnce(unit.function))
         return false;
     if (inputs.plan.promotedEnvironments().isMaker(unit.function) || inputs.plan.promotedEnvironments().numberOfRemovedCapturesOf(unit.function))
+        return false;
+    if (readsScopesWhoseLivesMayHaveEnded(inputs, index))
         return false;
     if (inputs.options.writesBodiesStraight)
         return true;

@@ -29,7 +29,9 @@ using SetsOfLayoutsWritten = UncheckedKeyHashSet<uint32_t, IntHash<uint32_t>, WT
 class Families {
     WTF_MAKE_NONCOPYABLE(Families);
 public:
-    Families(Program&, const SetsOfLayoutsWritten& writtenInBodies, const ParallelLoops&);
+    enum ClassHierarchiesAloneTag { ClassHierarchiesAlone };
+    Families(Program&, ClassHierarchiesAloneTag, const ParallelLoops&);
+    Families(Program&, const SetsOfLayoutsWritten& writtenInBodies, std::span<const LayoutSetID> layoutsThatMet, const ParallelLoops&);
 
     uint32_t size() const { return m_layouts.size(); }
     LayoutSetID layoutsOf(FamilyID id) const { return m_layouts[id.index()]; }
@@ -61,6 +63,8 @@ public:
 
 private:
     friend TypeID widenedToFamily(TypeArena&, const Families&, TypeID, SetsThatNoFamilyHolds);
+
+    Families(Program&, const SetsOfLayoutsWritten* writtenInBodies, std::span<const LayoutSetID> layoutsThatMet, const ParallelLoops&);
 
     FamilyID smallestFamilyHolding(const TypeArena&, LayoutSetID) const;
 

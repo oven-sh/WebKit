@@ -2,20 +2,20 @@
 # Five strangers meet at one parameter, one more than a set takes, so they are lost, and through the parameter a property is deleted. Which of them loses it nobody knows, so a PROOF charges all five.
 # What is held is what is expected of an object of the layout: on a large program strangers meet until most layouts are one family, in which everything is done to somebody. It charges none of them, and the look at the object sees the rest
 # RUN: link layouts mechanisms=all
-# CHECK: layout L0 changes=[{{*}}LosesProperty
-# CHECK: layout L1 changes=[{{*}}LosesProperty
-# CHECK: layout L2 changes=[{{*}}LosesProperty
-# CHECK: layout L3 changes=[{{*}}LosesProperty
-# CHECK: layout L4 changes=[{{*}}LosesProperty
+# CHECK: layout L0 {{*}}changes=[{{*}}LosesProperty
+# CHECK: layout L1 {{*}}changes=[{{*}}LosesProperty
+# CHECK: layout L2 {{*}}changes=[{{*}}LosesProperty
+# CHECK: layout L3 {{*}}changes=[{{*}}LosesProperty
+# CHECK: layout L4 {{*}}changes=[{{*}}LosesProperty
 # RUN(HELD): link held layouts mechanisms=all
-# HELD: layout L0 changes=[]
-# HELD: layout L1 changes=[]
-# HELD: layout L2 changes=[]
-# HELD: layout L3 changes=[]
-# HELD: layout L4 changes=[]
+# HELD: layout L0 {{*}}changes=[]
+# HELD: layout L1 {{*}}changes=[]
+# HELD: layout L2 {{*}}changes=[]
+# HELD: layout L3 {{*}}changes=[]
+# HELD: layout L4 {{*}}changes=[]
 # RUN(LOST): link functions mechanisms=all
 # LOST: function f1 callers-known one-callee
-# LOST-NEXT: parameter 0 {{*}}proven=object
+# LOST-NEXT: parameter 0 {{*}}proven=L0|L1|L2|L3|L4
 # RUN(ANSWER): run-in-shell globalThis.report = value => print(String(value));
 # ANSWER: undefined
 # ANSWER-NEXT: 2

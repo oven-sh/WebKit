@@ -179,6 +179,27 @@ static bool hasOneClassObjectForInstanceOf(const Walker& walker, LayoutID classL
     return layout.constructor && walker.program().at(layout.constructor).captures.size() == walker.plan().promotedEnvironments().numberOfRemovedCapturesOf(layout.constructor);
 }
 
+static bool recordsExpectNothingUnderNameOnStaticSidesForInstanceOf(const Walker& walker, LayoutID tested, PropertyKeyID key)
+{
+    const Program& program = walker.program();
+    const LinkTables& held = walker.facts().held();
+    size_t numberOfClassesLeft = program.layouts.size();
+    for (LayoutID current = tested; current;) {
+        const Layout& layout = program.at(current);
+        if (!numberOfClassesLeft-- || !layout.constructor || !walker.plan().hasClassRecord(current) || layout.mayHaveStaticField(key) || held.findNameOnFunction(layout.constructor, key))
+            return false;
+        for (const ClassMember& declared : walker.facts().membersOf(current)) {
+            if (declared.side == ClassSide::Static && (!declared.key || declared.key == key))
+                return false;
+        }
+        LayoutID parent;
+        if (!findParentNamedByClassRecordForTypedAccess(walker, current, parent))
+            return false;
+        current = parent;
+    }
+    return true;
+}
+
 static bool findsOrdinaryHasInstanceForInstanceOf(const Walker& walker, const ClassTestedByInstanceOf& tested, ConditionsOfInstanceOf& conditions)
 {
     const Program& program = walker.program();
@@ -201,8 +222,15 @@ static bool findsOrdinaryHasInstanceForInstanceOf(const Walker& walker, const Cl
     if (FunctionID constructor = program.at(tested.layout).constructor; tested.isConstructorFunction && constructor && link.closuresLackName(constructor, key))
         return true;
 
-    UNUSED_PARAM(conditions);
-    return false;
+    if (!recordsExpectNothingUnderNameOnStaticSidesForInstanceOf(walker, tested.layout, key))
+        return false;
+    addConditionOfInstanceOf(conditions, { MemberConditionKind::MemberUnchanged, tested.layout, ClassSide::Static, key });
+    return true;
+}
+
+static MemberConditionRecord conditionOnPrototypePropertyForInstanceOf(const Program& program, LayoutID constructorFunction)
+{
+    return { MemberConditionKind::MemberUnchanged, constructorFunction, ClassSide::Static, program.keyOf(BuiltinNames::prototype) };
 }
 
 static std::optional<ClassTestedByInstanceOf> describeClassTestedByInstanceOf(const Walker& walker, TypeID typeOfConstructor)
@@ -229,13 +257,8 @@ static std::optional<ClassTestedByInstanceOf> describeClassTestedByInstanceOf(co
     if (!findsOrdinaryHasInstanceForInstanceOf(walker, tested, tested.conditions))
         return std::nullopt;
 
-    if (tested.isConstructorFunction) {
-        tested.conditions.removeAllMatching([&](const MemberConditionRecord& condition) {
-            return condition.kind == MemberConditionKind::PrototypeLinkUnchanged && condition.layout == tested.layout && condition.side == ClassSide::Static;
-        });
-        if (!walker.facts().linked().layouts[tested.layout.index()].prototypeObjectIsSettledAheadOfEveryObject)
-            addConditionOfInstanceOf(tested.conditions, { MemberConditionKind::MemberUnchanged, tested.layout, ClassSide::Static, program.keyOf(BuiltinNames::prototype) });
-    }
+    if (tested.isConstructorFunction && !walker.facts().linked().layouts[tested.layout.index()].prototypeObjectIsSettledAheadOfEveryObject)
+        addConditionOfInstanceOf(tested.conditions, conditionOnPrototypePropertyForInstanceOf(program, tested.layout));
     if (!walker.facts().isEvaluatedAtMostOnce(tested.layout))
         addConditionOfInstanceOf(tested.conditions, { MemberConditionKind::ClassEvaluatedOnce, tested.layout, ClassSide::Prototype, { } });
     if (!tested.conditions.isEmpty() && (!walker.plan().hasClassRecord(tested.layout) || (tested.isConstructorFunction && !isEvaluatedOnce)))
@@ -371,14 +394,16 @@ static std::optional<FormOfInstanceOf> planFormOfInstanceOf(const Walker& walker
     form.missMeansFalse = !chains.hasUndecidedLayouts && (areAllConsidered || onlyInstancesStandBelow);
     form.areAllInstances = areAllConsidered && form.missMeansFalse && !chains.decided.isEmpty() && chains.instances.size() == chains.decided.size();
 
-    if (chains.instances.isEmpty())
-        return form;
-    if (isTestableByShapeForInstanceOf(walker, chains.instances.span()))
-        form.instances = types.layoutSets().ofSorted(chains.instances.span());
-    else {
-        form.missMeansFalse = false;
-        form.areAllInstances = false;
+    if (!chains.instances.isEmpty()) {
+        if (isTestableByShapeForInstanceOf(walker, chains.instances.span()))
+            form.instances = types.layoutSets().ofSorted(chains.instances.span());
+        else {
+            form.missMeansFalse = false;
+            form.areAllInstances = false;
+        }
     }
+    if (walker.isInLoop() && form.testedIsConstructorFunction && !form.missMeansFalse && walker.plan().hasClassRecord(form.tested) && hasOneClassObjectForInstanceOf(walker, form.tested))
+        addConditionOfInstanceOf(form.conditions, conditionOnPrototypePropertyForInstanceOf(program, form.tested));
     return form;
 }
 
@@ -389,7 +414,7 @@ static bool buildInstanceOfClassOfProgram(Walker& walker, const BodyValue& test,
     if (!typeOfValue || !typeOfConstructor)
         return false;
     std::optional<FormOfInstanceOf> form = planFormOfInstanceOf(walker, typeOfValue, typeOfConstructor);
-    if (!form || !form->conditions.isEmpty())
+    if (!form)
         return false;
 
     bool isConstant = !form->instances ? form->missMeansFalse : form->areAllInstances && form->valueIsSurelyObject && !form->testsPrototypeOfInstance;
@@ -406,7 +431,10 @@ static bool buildInstanceOfClassOfProgram(Walker& walker, const BodyValue& test,
         form->missMeansFalse = false;
         form->areAllInstances = false;
     }
-    if (form->testedIsConstructorFunction && !form->instances && !form->missMeansFalse)
+    bool prototypeObjectIsInTable = !form->testedIsConstructorFunction || form->conditions.contains(conditionOnPrototypePropertyForInstanceOf(walker.program(), form->tested));
+    if (!prototypeObjectIsInTable && !form->instances && !form->missMeansFalse)
+        return false;
+    if (!form->conditions.isEmpty() && !walker.isInLoop())
         return false;
     if (inputs.areOnlyTypes())
         return true;
@@ -426,11 +454,25 @@ static bool buildInstanceOfClassOfProgram(Walker& walker, const BodyValue& test,
     Origin origin = walker.originOf(test);
     AnswersOfInstanceOf answers(walker);
     bool hasArms = false;
+    BlockID asWritten;
+    if (!form->conditions.isEmpty()) {
+        Draft guards(Opcode::AreMembersUnchanged, origin);
+        guards.setConditions(form->conditions.span());
+        Reference areUnchanged = walker.isUnreachable() ? Reference() : walker.build(WTF::move(guards));
+        if (!areUnchanged)
+            return true;
+        BlockID unchanged = walker.addBlock();
+        asWritten = walker.addBlock(BlockFrequency::Rare);
+        walker.branch(areUnchanged, unchanged, asWritten);
+        walker.noteGuessOpened();
+        hasArms = true;
+        walker.continueIn(unchanged);
+    }
 
     auto buildAnswerOfMiss = [&]() -> Reference {
         if (form->missMeansFalse)
             return booleanAnswerOfInstanceOf(walker, false);
-        if (form->testedIsConstructorFunction)
+        if (!prototypeObjectIsInTable)
             return buildInstanceOfAsWritten(walker, test);
         Draft read(Opcode::GetClassPrototype, origin);
         walker.chooseConservativeFields(read);
@@ -440,12 +482,11 @@ static bool buildInstanceOfClassOfProgram(Walker& walker, const BodyValue& test,
     };
 
     bool testsPrototype = form->testsPrototypeOfInstance && !walker.state().factsOfCell(value).contains(FactOfCell::HasLayoutPrototype);
-    Reference answer;
-    if (!form->instances)
-        answer = buildAnswerOfMiss();
-    else if (form->areAllInstances && form->valueIsSurelyObject && !testsPrototype && walker.has(Mechanism::Folding))
-        answer = booleanAnswerOfInstanceOf(walker, true);
-    else {
+    auto buildAnswerWhereClassIsUnchanged = [&]() -> Reference {
+        if (!form->instances)
+            return buildAnswerOfMiss();
+        if (form->areAllInstances && form->valueIsSurelyObject && !testsPrototype && walker.has(Mechanism::Folding))
+            return booleanAnswerOfInstanceOf(walker, true);
         Draft shapeTest(Opcode::ShapeTest, origin);
         walker.chooseConservativeFields(shapeTest);
         shapeTest.setObjectOperand(value);
@@ -453,51 +494,56 @@ static bool buildInstanceOfClassOfProgram(Walker& walker, const BodyValue& test,
         if (!hasArms && form->missMeansFalse && !testsPrototype)
             shapeTest.inputValueGiven = test.id();
         Reference isInstance = walker.build(WTF::move(shapeTest));
-        if (!isInstance)
-            return true;
-        if (form->missMeansFalse && !testsPrototype)
-            answer = isInstance;
-        else {
-            BlockID hasShape = walker.addBlock();
-            BlockID walksChain = walker.addBlock(BlockFrequency::Rare);
-            BlockID hasOtherShape = form->missMeansFalse ? walker.addBlock() : walksChain;
-            walker.branch(isInstance, hasShape, hasOtherShape);
-            if (!hasArms)
-                walker.noteGuessOpened();
-            hasArms = true;
+        if (!isInstance || (form->missMeansFalse && !testsPrototype))
+            return isInstance;
 
-            walker.continueIn(hasShape);
-            if (testsPrototype) {
-                Reference instance = buildProofOfInstanceOf(walker, value, isInstance, OperandIndex::ShapeTest::object, origin);
-                if (!instance)
-                    return true;
+        BlockID hasShape = walker.addBlock();
+        bool missIsAskedAsWritten = asWritten && !prototypeObjectIsInTable;
+        BlockID walksChain = missIsAskedAsWritten ? asWritten : walker.addBlock(BlockFrequency::Rare);
+        BlockID hasOtherShape = form->missMeansFalse ? walker.addBlock() : walksChain;
+        walker.branch(isInstance, hasShape, hasOtherShape);
+        if (!hasArms)
+            walker.noteGuessOpened();
+        hasArms = true;
+
+        walker.continueIn(hasShape);
+        if (testsPrototype) {
+            Reference instance = buildProofOfInstanceOf(walker, value, isInstance, OperandIndex::ShapeTest::object, origin);
+            Reference standsWhereMade;
+            if (instance) {
                 Draft linkTest(Opcode::HasLayoutPrototype, origin);
                 walker.chooseConservativeFields(linkTest);
                 linkTest.setObjectOperand(instance);
-                Reference standsWhereMade = walker.build(WTF::move(linkTest));
-                if (!standsWhereMade)
-                    return true;
+                standsWhereMade = walker.build(WTF::move(linkTest));
+            }
+            if (standsWhereMade) {
                 BlockID isBelowClass = walker.addBlock();
                 walker.branch(standsWhereMade, isBelowClass, walksChain);
                 walker.continueIn(isBelowClass);
             }
-            answers.arrive(booleanAnswerOfInstanceOf(walker, true));
-
-            if (form->missMeansFalse) {
-                walker.continueIn(hasOtherShape);
-                answers.arrive(booleanAnswerOfInstanceOf(walker, false));
-            }
-            if (!form->missMeansFalse || testsPrototype) {
-                walker.continueIn(walksChain);
-                bool missMeansFalse = std::exchange(form->missMeansFalse, false);
-                answers.arrive(buildAnswerOfMiss());
-                form->missMeansFalse = missMeansFalse;
-            }
         }
-    }
+        answers.arrive(booleanAnswerOfInstanceOf(walker, true));
 
+        if (form->missMeansFalse) {
+            walker.continueIn(hasOtherShape);
+            answers.arrive(booleanAnswerOfInstanceOf(walker, false));
+        }
+        if (!missIsAskedAsWritten && (!form->missMeansFalse || testsPrototype)) {
+            walker.continueIn(walksChain);
+            bool missMeansFalse = std::exchange(form->missMeansFalse, false);
+            answers.arrive(buildAnswerOfMiss());
+            form->missMeansFalse = missMeansFalse;
+        }
+        return { };
+    };
+
+    Reference answer = buildAnswerWhereClassIsUnchanged();
     if (hasArms) {
         answers.arrive(answer);
+        if (asWritten) {
+            walker.continueIn(asWritten);
+            answers.arrive(buildInstanceOfAsWritten(walker, test));
+        }
         answer = answers.meet();
     }
     if (answer)

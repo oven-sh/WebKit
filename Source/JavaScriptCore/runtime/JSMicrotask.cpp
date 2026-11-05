@@ -1205,7 +1205,7 @@ static void moduleLoadStep(JSGlobalObject* globalObject, VM& vm, ThrowScope& sco
             if (auto* compiled = context->payload()->inherits<ModuleGraphLoadingState>() ? nullptr : dynamicDowncast<AOT::ModuleRecord>(module))
                 compiled->willBeLoadedByImport();
 #endif
-            JSPromise* requestedPromise = context->loader()->loadRequestedModules(globalObject, module, context->scriptFetcher());
+            JSPromise* requestedPromise = context->loader()->loadRequestedModules(globalObject, module, context->scriptFetcher(), context->referrer().getModule() ? dynamicDowncast<ModuleGraphLoadingState>(context->payload()) : nullptr);
             if (scope.exception()) {
                 loadPromise->rejectWithCaughtException(vm, scope);
                 return;
@@ -1257,7 +1257,7 @@ static void moduleLoadStep(JSGlobalObject* globalObject, VM& vm, ThrowScope& sco
 
             // setEntryRecord logic
             auto* entry = context->entry();
-            if (auto* cyclic = dynamicDowncast<CyclicModuleRecord>(module); cyclic && cyclic->status() != CyclicModuleRecord::Status::Unlinked) {
+            if (auto* cyclic = dynamicDowncast<CyclicModuleRecord>(module); cyclic && cyclic->status() != CyclicModuleRecord::Status::Unlinked && cyclic->status() != CyclicModuleRecord::Status::New) {
                 ASSERT(cyclic->status() != CyclicModuleRecord::Status::Linking);
                 loadPromise->fulfill(vm, entry->record());
             } else {

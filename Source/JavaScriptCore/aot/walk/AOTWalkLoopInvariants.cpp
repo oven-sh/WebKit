@@ -86,7 +86,8 @@ std::optional<Effects> effectsOfTypedFormAhead(Walker& walker, const BodyValue& 
     walker.takeFormAskedAhead();
     TypedForm typedForm = typedFormOf(walker, operation, types);
     bool isBuiltBehindLooks = !isByKey && walker.looksTakeFormsBehindLooksAsBuilt() && typedForm != TypedForm::None && typedForm != TypedForm::BuiltAsCall && typedForm != TypedForm::BuiltOnObjectAsMade;
-    if (typedForm != TypedForm::Built && !isBuiltBehindLooks && !(typedForm == TypedForm::BuiltOnObjectAsMade && readsLengthOfViewTestedInFrontOfLoop(walker, operation)))
+    bool isFoundAbovePrimitive = typedForm == TypedForm::BuiltOnObjectAsMade && walker.looksTakeFormsBehindLooksAsBuilt() && !walker.types().at(types(operation.objectOperand())).hasObjects();
+    if (typedForm != TypedForm::Built && !isBuiltBehindLooks && !isFoundAbovePrimitive && !(typedForm == TypedForm::BuiltOnObjectAsMade && readsLengthOfViewTestedInFrontOfLoop(walker, operation)))
         return std::nullopt;
     Walker::FormAskedAhead form = walker.takeFormAskedAhead();
     if (form.opcode == Opcode::CallDirect) {
@@ -99,6 +100,8 @@ std::optional<Effects> effectsOfTypedFormAhead(Walker& walker, const BodyValue& 
         return form.level == KnowledgeLevel::Proven ? std::optional<Effects>(declaredBoundOf(form.opcode)) : std::nullopt;
     if (readsByNameForLoopInvariants.contains(opcode)) {
         Effects effects = effectsOfTypedReadByNameForLoopInvariants();
+        if (TypeID object = types(operation.objectOperand()); object && walker.types().at(walker.types().withoutNullish(object)).hasOnlyLayouts())
+            effects.writes.remove(AbstractHeapSet { AbstractHeap::MemberGuards });
         if (form.opcode == Opcode::GetDeferredClosureSlotOrUndefined) {
             for (Opcode read : { Opcode::GetDeferredClosureSlot, Opcode::GetDeferredClosureSlotOrUndefined }) {
                 Draft built(read);
@@ -270,7 +273,7 @@ static bool mayLeaveSomeLoopForLoopInvariants(const TypeArena& types, const Draf
         return false;
     if (opcode == Opcode::IsElementPresent)
         return false;
-    if (opcode == Opcode::Narrowed || opcode == Opcode::ResultAt || boundToOf(opcode) != BoundTo::Nothing)
+    if (opcode == Opcode::Narrowed || opcode == Opcode::AssumeType || opcode == Opcode::ResultAt || boundToOf(opcode) != BoundTo::Nothing)
         return false;
     if (!effects.writes.isEmpty() || effects.mayThrow || !effects.alwaysCompletes() || effects.reads.containsAny(bookkeepingHeaps))
         return false;
@@ -358,7 +361,6 @@ std::optional<uint32_t> Walker::findLoopToBuildInFrontOf(const Draft& draft, con
         return std::nullopt;
     if (draft.opcode == Opcode::GetModuleVariable && (isVariableFilledAtFirstRead(plan(), draft.variable()) || plan().promotedEnvironments().find(draft.variable())))
         return std::nullopt;
-    // The read took the scope out of the closure that was called, so it stood behind whatever had shown that the closure is there. It takes no operand any more, and a loop of no turn may stand in front of the maker.
     if (draft.opcode == Opcode::GetEnvironmentField && plan().promotedEnvironments().isPromoted(draft.layout()))
         return std::nullopt;
     for (Reference operand : draft.operands()) {
@@ -489,8 +491,8 @@ bool Walker::looksAtLoopsAroundHaveSeen(const Effects& effects) const
             const LinkTables& linked = facts().linked();
             if (loop.frame + 1 < m_frames.size() && m_frames[loop.frame + 1].function.index() < linked.functions.size()) {
                 const LinkedFunction& copied = linked.function(m_frames[loop.frame + 1].function);
-                Effects ofCopied = copied.effectsOnReturn;
-                ofCopied.merge(copied.effectsOnThrow);
+                Effects ofCopied = copied.effectsOnReturn();
+                ofCopied.merge(copied.effectsOnThrow());
                 if (!ofCopied.mayRunOtherCode() && ofCopied.writes.without(heapsWhoseWritesNobodySees).isSubsetOf(loop.effects.writes))
                     return IterationStatus::Continue;
             }

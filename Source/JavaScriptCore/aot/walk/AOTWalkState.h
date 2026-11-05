@@ -108,6 +108,8 @@ public:
     std::optional<uint32_t> findNumberOf(FunctionID functionWhoseClaimsAreAnswered) const { return findNumberOfBinding(keyOf(functionWhoseClaimsAreAnswered)); }
     uint32_t numberOf(Reference environment, FieldReference field) { return numberOfBinding(keyOf(environment, field)); }
     std::optional<uint32_t> findNumberOf(Reference environment, FieldReference field) const { return findNumberOfBinding(keyOf(environment, field)); }
+    uint32_t numberOf(LayoutID classWhoseGuardsHaveBegun) { return numberOfBinding(keyOf(classWhoseGuardsHaveBegun)); }
+    std::optional<uint32_t> findNumberOf(LayoutID classWhoseGuardsHaveBegun) const { return findNumberOfBinding(keyOf(classWhoseGuardsHaveBegun)); }
 
     uint32_t numberOf(BuiltinID builtin) { return m_numbersOfBuiltins.add(builtin.index() + 1, m_numbersOfBuiltins.size()).iterator->value; }
     std::optional<uint32_t> findNumberOf(BuiltinID builtin) const
@@ -120,6 +122,7 @@ private:
     static uint64_t keyOf(VariableID variable) { return static_cast<uint64_t>(variable.index()) + 1; }
     static uint64_t keyOf(FunctionID function) { return 1ULL << 63 | function.index(); }
     static uint64_t keyOf(Reference environment, FieldReference field) { return (static_cast<uint64_t>(environment.id().index()) + 1) << 32 | field.field; }
+    static uint64_t keyOf(LayoutID classLayout) { return 3ULL << 62 | classLayout.index(); }
     uint32_t numberOfBinding(uint64_t key) { return m_numbersOfBindings.add(key, m_numbersOfBindings.size()).iterator->value; }
     std::optional<uint32_t> findNumberOfBinding(uint64_t key) const
     {
@@ -255,6 +258,45 @@ public:
                 functor(m_held->m_holders[holder].object);
         }
     }
+    void forEachEnvironmentFieldNotSharedWithAll(std::span<const WalkState* const> ways, NOESCAPE const Invocable<void(Reference environment, FieldReference, Reference value)> auto& functor) const
+    {
+        if (!mayHold(Kinds::places) || !m_held->m_numberOfPlaces)
+            return;
+        Vector<uint32_t, 16> positions;
+        for (const WalkState* way : ways) {
+            if (way->m_held == m_held)
+                continue;
+            if (!way->m_held)
+                return;
+            m_held->m_places.forEachStretchNotSharedWith(way->m_held->m_places, [&](uint32_t begin, uint32_t end) {
+                for (uint32_t position = begin; position < end; ++position) {
+                    const Place& place = m_held->m_places[position];
+                    if (place.value && place.kind == PlaceKind::EnvironmentField)
+                        positions.append(position);
+                }
+            });
+        }
+        if (ways.size() > 2) {
+            std::ranges::sort(positions);
+            positions.shrink(std::ranges::unique(positions).begin() - positions.begin());
+        }
+        for (uint32_t position : positions) {
+            const Place& place = m_held->m_places[position];
+            const Holder& holder = m_held->m_holders[place.holder];
+            if (!holder.hasEnded && holder.object)
+                functor(holder.object, FieldReference { LayoutID(place.first), place.second }, place.value);
+        }
+    }
+    void forEachValueHeldByAnother(NOESCAPE const Invocable<void(Reference)> auto& functor) const
+    {
+        if (!m_held)
+            return;
+        for (uint32_t position = 0; position < m_held->m_places.size(); ++position) {
+            const Place& place = m_held->m_places[position];
+            if (place.value && place.value != m_held->m_holders[place.holder].object)
+                functor(place.value);
+        }
+    }
     void markEscaped(Reference object)
     {
         if (mayHold(Kinds::freshObjects) && m_held->mayHaveRecordOf(object) && (writesInPlace() || m_held->holderIsFresh(object)) && heldToWrite().letLeaveIfFresh(object)) {
@@ -364,6 +406,7 @@ public:
             heldToWrite().noteStoresPassAbove(classLayout, key, test);
             m_marks.kinds |= Kinds::places;
         }
+        noteThatGuardsHaveBegun(classLayout);
     }
     bool storesPassAbove(LayoutID classLayout, PropertyKeyID key) const { return !!valueOfPlace(PlaceKind::GuardOfStores, Reference(), numberOfGuardedSide(classLayout, ClassSide::Prototype), key.bits()); }
     void noteGuardOfReadsHolds(LayoutID classLayout, PropertyKeyID key, Reference test, ClassSide side = ClassSide::Prototype)
@@ -372,8 +415,22 @@ public:
             heldToWrite().noteGuardOfReadsHolds(classLayout, key, test, side);
             m_marks.kinds |= Kinds::places;
         }
+        noteThatGuardsHaveBegun(classLayout);
     }
     bool guardOfReadsHolds(LayoutID classLayout, PropertyKeyID key, ClassSide side = ClassSide::Prototype) const { return !!valueOfPlace(PlaceKind::GuardOfReads, Reference(), numberOfGuardedSide(classLayout, side), key.bits()); }
+    bool someGuardHoldsOf(LayoutID classLayout) const { return mayHoldPlaceOf(Reference()) && m_held->someGuardHoldsOf(classLayout); }
+    void noteThatGuardsHaveBegun(LayoutID classLayout)
+    {
+        RELEASE_ASSERT(m_program.numbers);
+        noteBindingPastDeadZone(m_program.numbers->numberOf(classLayout));
+    }
+    bool guardsHaveBegun(LayoutID classLayout) const
+    {
+        if (!m_held || m_held->m_bindingsPastDeadZone.isEmpty())
+            return false;
+        std::optional<uint32_t> number = m_program.numbers->findNumberOf(classLayout);
+        return number && m_held->m_bindingsPastDeadZone.contains(*number);
+    }
 
     void noteSlot(Reference object, FieldReference field, Reference value)
     {
@@ -407,6 +464,11 @@ public:
     Reference variable(VariableID variable) const { return valueOfPlace(PlaceKind::Variable, Reference(), variable.index(), 0); }
     Reference environmentField(Reference environment, FieldReference field) const { return valueOfPlace(PlaceKind::EnvironmentField, environment, field.layout.index(), field.field); }
     Reference element(Reference object, Reference index) const { return valueOfPlace(PlaceKind::Element, object, index.bits(), 0); }
+    struct SlotOfObject {
+        FieldReference field;
+        Reference value;
+    };
+    Vector<SlotOfObject, 8> listSlotsOf(Reference object) const;
     bool mayHoldPlaceOf(Reference base) const { return mayHold(Kinds::places) && m_held->m_numberOfPlaces && m_held->mayHaveRecordOf(base); }
 
     void invalidateAliasedSlots(Reference object, FieldReference field, NOESCAPE const ScopedLambda<bool(Reference other)>& mayBeSameObject)
@@ -418,6 +480,12 @@ public:
     bool nothingWasDoneInTurn(uint32_t numberOfTurn) const { return numberOfTurn && m_marks.turnInWhichNothingWasDone == numberOfTurn; }
     void noteHeadOfTurn(uint32_t numberOfTurn) { m_marks.turnInWhichNothingWasDone = numberOfTurn; }
     void noteSomethingWasDoneInTurn() { m_marks.turnInWhichNothingWasDone = 0; }
+    bool nothingWasDoneSinceCopyBegan(uint32_t numberOfCopy) const { return m_marks.turnInWhichNothingWasDone && m_marks.turnInWhichNothingWasDone <= numberOfCopy; }
+    void noteCopyBegins(uint32_t numberOfCopy)
+    {
+        if (!m_marks.turnInWhichNothingWasDone)
+            m_marks.turnInWhichNothingWasDone = numberOfCopy;
+    }
     void noteWhatOperationDoes(const Effects& effects)
     {
         if (m_marks.turnInWhichNothingWasDone && !effects.mayBeRunAgainUnseen())
@@ -446,6 +514,20 @@ public:
         m_marks = { 0, m_marks.kinds & programIsWhole };
         if (m_held)
             dropWhatIsHeld();
+        m_answers.clear();
+    }
+    void forgetAllButFreshObjects()
+    {
+        if (!holdsFreshObjects()) {
+            clear();
+            return;
+        }
+        m_marks.turnInWhichNothingWasDone = 0;
+        endWhatIsNotFresh();
+        Held& held = heldToWrite();
+        held.m_checkedNames.clear();
+        held.m_builtinsRead.clear();
+        m_marks.kinds &= ~Kinds::checkedNames;
         m_answers.clear();
     }
 
@@ -568,6 +650,7 @@ private:
         std::optional<uint32_t> orderWordOf(Reference object) const;
         void noteStoresPassAbove(LayoutID classLayout, PropertyKeyID, Reference test);
         void noteGuardOfReadsHolds(LayoutID classLayout, PropertyKeyID, Reference test, ClassSide);
+        bool someGuardHoldsOf(LayoutID classLayout) const;
         void noteSlot(const ProgramOfState&, Reference object, FieldReference, Reference value);
         void noteVariable(const ProgramOfState&, VariableID, Reference value);
         void noteEnvironmentField(const ProgramOfState&, Reference environment, FieldReference, Reference value);

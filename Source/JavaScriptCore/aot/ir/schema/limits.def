@@ -55,7 +55,6 @@ enum LimitID (stage: Stage, protects: Protects, degradesTo: DegradesTo, valueOnA
     InlineFramesPerFunction(BuildImage, BitWidth, NotOptimized, 16777215, 16777215, 16777215, "inlined calls per function")
     TableBytes(BuildImage, BitWidth, BuildError, 4294967296, 4294967296, 0, "data table size")
     VectorBytes(Any, BitWidth, BuildError, 2147483647, 2147483647, 0, "the size of a compiler table")
-    RegExpPatternLengthWithCode(BuildImage, CodeSize, Interpreter, 1048576, 1048576, 0, "the length of a compiled regular expression")
     RegExpSectionSize(BuildImage, BitWidth, Interpreter, 4294967295, 4294967295, 4294967295, "total compiled regular expression size")
     RegExpClassTableClusterSize(BuildImage, BitWidth, NotOptimized, 98304, 98304, 0, "distance from regular expression code to its character class tables")
     WasmImageCodeSize(BuildImage, BitWidth, Interpreter, 2147483647, 2147483647, 0, "compiled code per WebAssembly module")

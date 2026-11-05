@@ -159,7 +159,6 @@ public:
     uint32_t numberInTextOf(LayoutID) const;
     LayoutID layoutNumberedInText(uint32_t) const;
 
-    // The variables behind the program's own are words that the plan lays in place of cells. One bit speaks for all of them, so that a store into one is no store into every variable.
     static constexpr uint8_t locationBitOfVariablesThatPlanAdds = 0;
     std::optional<uint8_t> locationBitOf(VariableID id) const { return id && id.index() >= variables.size() ? std::optional(locationBitOfVariablesThatPlanAdds) : locationBitAt(m_derivedTables.locationBitsOfVariables, id.index()); }
     std::optional<uint8_t> locationBitOf(LayoutID id) const { return locationBitAt(m_derivedTables.locationBitsOfLayouts, id.index()); }

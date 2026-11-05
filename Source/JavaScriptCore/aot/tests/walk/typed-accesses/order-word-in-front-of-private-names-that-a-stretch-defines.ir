@@ -1,9 +1,9 @@
 # class Point { #x = 1; #y = 2; z = 3; w = 4; }
-# The definitions of the private names stand in the stretch, in front of the first store that looks at the cell. The test of the order word stands in front of the stretch, where the cell has just been made and lists nothing.
-# If it asked for the word in front of `z`, which lists the brand, #x and #y, it would fail in every construction, and all five fields would be added by a stub.
+# The definitions of the private names stand in the stretch, in front of the first store that looks at the cell. The order word counts from the front of the stretch, where the cell has just been made and lists nothing: that is known without a test.
+# If it counted from the word in front of `z`, which lists the brand, #x and #y, all five fields would be added by a stub.
 # RUN: walk f1 mechanisms=all
 # CHECK-LABEL: code f1:
-# CHECK: HasKeyOrder {{*}} layout=L0 [hasNoFlags] traits
+# CHECK-NOT: HasKeyOrder
 # CHECK: PutSlotOrAdd {{*}} key=#"#"@L0 {{*}} orderWordAfter=
 # CHECK: PutSlotOrAdd {{*}} key=#"#x"@L0 {{*}} orderWordAfter=
 # CHECK: PutSlotOrAdd {{*}} key=#"#y"@L0 {{*}} orderWordAfter=

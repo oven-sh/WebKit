@@ -47,6 +47,7 @@ struct QuestionOfEntry {
 };
 std::optional<Vector<QuestionOfEntry, 4>> findQuestionsOfEntryWrittenByHand(const CodeGenerationInputs&, TypeArena&, CodeUnit, NOESCAPE const ScopedLambda<TypeID(unsigned)>& typeAskedOfEntryParameter);
 void emitEntryWrittenByHand(CCallHelpers&, const CodeGenerationInputs&, CodeRecords&, CodeUnit, std::span<const QuestionOfEntry>, bool frameIsSetUp);
+CCallHelpers::JumpList emitQuestionOfEntryWrittenByHand(CCallHelpers&, const QuestionOfEntry&);
 EntryDescription describeEntry(const CodeGenerationInputs&, CodeUnit);
 bool readsCallerFrame(const CodeGenerationInputs&, const Code&);
 

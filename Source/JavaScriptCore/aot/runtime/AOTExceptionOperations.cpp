@@ -382,6 +382,10 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTStopAtNativeResult, void, (Instanc
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTPoisonCell, void, (Instance* instance, JSCell* cell, uint32_t function, uint32_t position))
 {
     AOT_OPERATION_BEGIN_WITHOUT_COLLECTION(instance, Entry::operationAOTPoisonCell);
+    if (function & PoisonedCell::isLentForCallAhead) {
+        PoisonedCell::noteThatCellIsLent(cell, AOT_FRAME_RECORD_OF_THIS_FUNCTION()->callerFrame, function & ~PoisonedCell::isLentForCallAhead, position);
+        return;
+    }
     countEvent(vm, PoisonedCell::tryPoison(vm, cell, function, position) ? RuntimeCounterID::CellsPoisoned : RuntimeCounterID::CellsOfClassesThatAreNotPoisoned);
 }
 
@@ -390,7 +394,6 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTPoisonCell, void, (Instance* insta
     static constexpr std::array<ASCIILiteral, 11> names {
         "an entry parameter"_s, "the result of a call"_s, "what a field holds"_s, "what a variable holds"_s, "what was captured"_s, "what a slot of a scope holds"_s, "what a container holds"_s, "what a built-in or a call by value gives"_s, "what an operation gives"_s, "what a test has let pass"_s, "what memory holds where the compiler remembers another value"_s,
     };
-    // The check has met a cell whose life was ended: where that cell was made says more than where it was met.
     if (JSValue value = JSValue::decode(encodedFound); value && value.isCell() && value.asCell()->classInfo() == PoisonedCell::info())
         PoisonedCell::stop(value.asCell());
     StringPrintStream found;

@@ -38,7 +38,7 @@ struct ModulesNamedInScanStrings {
 
 } // anonymous namespace
 
-void notePathsOfModulesReadInScan(const BodyValue& value, ThinSummary& summary)
+void notePathsOfModulesReadInScan(const BodyValue& value, SummaryBeingMade& summary)
 {
     Opcode opcode = value.opcode();
     if (!opcodesThatNameModulesInScanStrings.contains(opcode) || opcodesThatGoByNumbersOfModulesInScanStrings.contains(opcode))
@@ -124,10 +124,9 @@ static void sortWithoutRepeatsInScanStrings(Vector<IDType>& list)
 {
     std::ranges::sort(list);
     list.shrink(std::ranges::unique(list).begin() - list.begin());
-    list.shrinkToFit();
 }
 
-void finishListsOfStringsInScan(ThinSummary& summary)
+void finishListsOfStringsInScan(SummaryBeingMade& summary)
 {
     sortWithoutRepeatsInScanStrings(summary.modulesWhosePathIsRead);
 }

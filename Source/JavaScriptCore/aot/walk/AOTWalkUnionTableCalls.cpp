@@ -10,6 +10,7 @@
 
 #include "AOTCallingConventions.h"
 #include "AOTEffectsDeclared.h"
+#include "AOTEffectsOfOperations.h"
 #include "AOTIRProgram.h"
 #include "AOTLayout.h"
 #include "AOTOpcodeSets.h"
@@ -51,7 +52,7 @@ static bool readMayMoveDownToCallInUnionTableCalls(const BodyIndex& index, Value
     for (uint32_t between = read.index() + 1; between < call.index(); ++between) {
         Opcode opcode = index.opcodeOf(ValueID(between));
         const Effects& bound = declaredBoundInTable(opcode);
-        if (!opcodesThatStateTypes.contains(opcode) && !(bound.isUnobservable() && bound.reads.containsOnly(bookkeepingHeaps)))
+        if (!opcodesThatStateTypes.contains(opcode) && !(bound.isUnobservable() && bound.reads.containsOnly(bookkeepingHeaps) && !operandsMayRunCode(opcode)))
             return false;
     }
     return true;

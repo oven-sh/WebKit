@@ -197,11 +197,8 @@ void ScanOfBody::listOperandsOfOperatorsLeftApart()
     }
     std::sort(sources.begin(), sources.end());
     sources.shrink(std::unique(sources.begin(), sources.end()) - sources.begin());
-    ThinSummary::KnownEffectsApart::Lists& lists = m_summary.knownEffectsApart.ensureLists();
-    lists.operandsOfOperatorsLeftApart.reserveInitialCapacity(sources.size());
-    lists.operandsOfOperatorsLeftApart.appendVector(sources);
-    lists.ownEffectsOfOperators.reserveInitialCapacity(1);
-    lists.ownEffectsOfOperators.append(known.ofOperators);
+    m_summary.operandsOfOperatorsLeftApart.appendVector(sources);
+    m_summary.ownEffectsOfOperators = known.ofOperators;
 }
 
 void ScanOfBody::tellWaysToReturnApart()
@@ -238,9 +235,7 @@ void ScanOfBody::tellWaysToReturnApart()
     }
     if (writes == m_summary.ownEffects.writes)
         return;
-    Vector<LocationMasks>& onWaysToReturn = m_summary.knownEffectsApart.ensureLists().ownWritesOnWaysToReturn;
-    onWaysToReturn.reserveInitialCapacity(1);
-    onWaysToReturn.append(writes);
+    m_summary.ownWritesOnWaysToReturn.append(writes);
 }
 
 void ScanOfBody::finishKnownEffects()

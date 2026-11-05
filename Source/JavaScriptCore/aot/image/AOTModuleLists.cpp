@@ -574,7 +574,7 @@ static ModuleData createRecordForModuleLists(const TableInputs& inputs, const An
     entry.body = optionalNumber24(isEntered ? numbers.entryOfBody(module.body, id) : UINT32_MAX);
     RELEASE_ASSERT(!module.referrer || !module.runtimeModule);
     uint32_t referrerOrRuntimeModule = module.referrer ? module.referrer.index() : module.runtimeModule ? module.runtimeModule.index() : UINT32_MAX;
-    entry.referrerOrRuntimeModule = optionalNumber24(referrerOrRuntimeModule);
+    entry.referrerRuntimeModuleOrLoadGroup = optionalNumber24(referrerOrRuntimeModule);
     if (module.exportsVariable)
         entry.value = numbers.slotOfVariable(module.exportsVariable);
     else if (hasValue)

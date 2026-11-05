@@ -13,6 +13,7 @@
 #include "AOTBuiltinTable.h"
 #include "AOTIRProgram.h"
 #include "AOTNameClass.h"
+#include "AOTPhaseTimes.h"
 #include "AOTRowsOfLayouts.h"
 #include "AOTThreads.h"
 #include "AOTTypeRelations.h"
@@ -197,7 +198,7 @@ static void arriveWhatIsEstablishedInLinkFlow(LinkFlow& flow, FlowNodeID node, c
     if (!established)
         return;
     if (TypeID type = *established)
-        flow.arriveFromSource(node, flow.fromTypeID(type));
+        flow.arriveFromSource(node, type);
 }
 
 static void sortNumbersInLinkFlow(Vector<uint64_t>& numbers, Vector<uint64_t>& room, size_t numberOfNodes)
@@ -296,6 +297,10 @@ struct alignas(128) LinkFlow::Lane {
     };
     Vector<Vector<Tell>> tells;
     Vector<Tell> tellsForOneThread;
+
+    CopiesObserved copiesObserved;
+    BitVector layoutsWhoseOwnValuesAreSeen;
+    Vector<std::pair<LayoutID, AccessorLaidInField>> accessorsLaid;
     Vector<std::pair<FlowObserver, FlowNodeID>> newObservers;
     Vector<FunctionID> functionsToReach;
     Vector<FunctionID> functionsToBringAlive;
@@ -348,7 +353,7 @@ LinkFlow::LinkFlow(Program& program, const ThinSummaries& summaries, const Famil
     , m_order(order)
 {
     RELEASE_ASSERT(summaries.size() == program.functions.size());
-    m_testRuns = makeUnique<TestRunsInLink>(*this);
+
     unsigned numberOfLanes = loops.width() > 1 ? 32 : 1;
     if (order == OrderOfWorklist::Scattered) {
         numberOfLanes = 4;
@@ -368,18 +373,89 @@ LinkFlow::LinkFlow(Program& program, const ThinSummaries& summaries, const Famil
         m_contentsOfSites.append(makeUnique<PartOfContentsOfSites>());
     }
     m_firstLane = m_lanes[0].get();
-    indexMembersOfClasses();
-    numberNodes();
-    indexConstructorFunctions();
-    findSidesBelowIncompleteNames();
 
-    m_nameClassesOfKeys.grow(program.types.numberOfPropertyKeys());
-    forEachRangeOfIndicesInParallel(loops, m_nameClassesOfKeys.size(), [&](size_t first, size_t end) {
-        for (size_t key = first; key < end; ++key)
-            m_nameClassesOfKeys[key] = program.nameClassOf(PropertyKeyID(key));
+    Vector<uint32_t> layoutsThatListComputedKeys;
+    BinarySemaphore membersOfClassesAreIndexed;
+    runLanes(loops, {
+        [&] {
+            StepTimes stepsOfLane(build, "facts"_s);
+            indexMembersOfClasses();
+            membersOfClassesAreIndexed.signal();
+            stepsOfLane.didFinish("the flow: members of classes"_s);
+            numberNodes();
+            stepsOfLane.didFinish("the flow: nodes"_s);
+        },
+        [&] {
+            StepTimes stepsOfLane(build, "facts"_s);
+            indexConstructorFunctions();
+            m_nameClassesOfKeys.grow(program.types.numberOfPropertyKeys());
+            forEachRangeOfIndicesInParallel(build.parallelLoops(), m_nameClassesOfKeys.size(), [&](size_t first, size_t end) {
+                for (size_t key = first; key < end; ++key)
+                    m_nameClassesOfKeys[key] = program.nameClassOf(PropertyKeyID(key));
+            });
+            size_t numberOfLayouts = program.layouts.size();
+            m_layoutsWithFieldsUnderComputedKeys.ensureSize(numberOfLayouts);
+            layoutsThatListComputedKeys = findIndicesInParallel(build.parallelLoops(), static_cast<unsigned>(numberOfLayouts), [&](unsigned index) {
+                bool listsComputedKey = false;
+                forEachFieldListedInLinkFlow(program, LayoutID(index), [&](FieldReference reference) {
+                    listsComputedKey |= !!fieldAt(program, reference).computedKey;
+                });
+                return listsComputedKey;
+            });
+            for (uint32_t index : layoutsThatListComputedKeys)
+                m_layoutsWithFieldsUnderComputedKeys.quickSet(index);
+            stepsOfLane.didFinish("the flow: constructor functions, name classes, computed keys"_s);
+            membersOfClassesAreIndexed.wait();
+            findSidesBelowIncompleteNames();
+            stepsOfLane.didFinish("the flow: sides below incomplete names"_s);
+            findWhatRowsOfConstructorsFill();
+            stepsOfLane.didFinish("the flow: rows of constructors"_s);
+            findLayoutsBelowMembersUnderNumbers();
+            stepsOfLane.didFinish("the flow: layouts below members under numbers"_s);
+        },
+        [&] {
+            StepTimes stepsOfLane(build, "facts"_s);
+            findSuperCallsThatMayAnswerWithOlderObject();
+            stepsOfLane.didFinish("the flow: super calls, tree of bases"_s);
+        },
+        [&] {
+            StepTimes stepsOfLane(build, "facts"_s);
+            makeTablesThatNeedNoNodes();
+            stepsOfLane.didFinish("the flow: tables that need no nodes"_s);
+        },
     });
-    findLayoutsBelowMembersUnderNumbers();
 
+    fieldsWrittenAfterConstruction.ensureSize(m_firstFieldOfLayout.last());
+    fieldsThatMayBeEmpty.ensureSize(m_firstFieldOfLayout.last());
+    fieldsNotOfBirth.ensureSize(m_firstFieldOfLayout.last());
+    gettersThatMayBeAbsent.ensureSize(m_firstFieldOfLayout.last());
+    settersThatMayBeAbsent.ensureSize(m_firstFieldOfLayout.last());
+    m_fieldsWithSettersWritten.ensureSize(m_firstFieldOfLayout.last());
+    for (uint32_t cell : collectInParallel<uint32_t>(loops, static_cast<unsigned>(summaries.size()), [&](unsigned index, Vector<uint32_t>& found) {
+        const ThinSummary& summary = summaries.at(FunctionID(index));
+        for (const SummaryChange& change : summary.changes) {
+            if (change.kind != SummaryChange::Kind::DefinesByDescriptor || change.lays != SummaryChange::Lays::Setter || !change.key || summary.nodes[change.subject].kind != SummaryNode::Kind::Allocation)
+                continue;
+            if (std::optional<FieldReference> field = findField(program, LayoutID(summary.nodes[change.subject].first), change.key))
+                found.append(m_firstFieldOfLayout[field->layout.index()] + field->field);
+        }
+    }))
+        m_fieldsWithSettersWritten.quickSet(cell);
+    for (uint32_t index : layoutsThatListComputedKeys) {
+        forEachFieldListedInLinkFlow(program, LayoutID(index), [&](FieldReference reference) {
+            if (!fieldAt(program, reference).computedKey)
+                return;
+            fieldsWrittenAfterConstruction.quickSet(m_firstFieldOfLayout[reference.layout.index()] + reference.field);
+            addEdge(field(reference), unseen());
+            addEdge(unseen(), field(reference));
+        });
+    }
+    RELEASE_ASSERT(!m_stateOfLinkReach);
+}
+
+void LinkFlow::makeTablesThatNeedNoNodes()
+{
+    m_testRuns = makeUnique<TestRunsInLink>(*this);
     size_t numberOfFunctions = program.functions.size();
     size_t numberOfLayouts = program.layouts.size();
     reached.ensureSize(numberOfFunctions);
@@ -401,11 +477,7 @@ LinkFlow::LinkFlow(Program& program, const ThinSummaries& summaries, const Famil
     prototypesLaidAboveOtherObjects.ensureSize(program.layouts.size());
     taggedMakers = findTaggedMakers(program, summaries, mechanisms);
     possibleChanges.fill(OptionSet<LayoutChange> { }, numberOfLayouts);
-    fieldsWrittenAfterConstruction.ensureSize(m_firstFieldOfLayout.last());
-    fieldsThatMayBeEmpty.ensureSize(m_firstFieldOfLayout.last());
-    fieldsNotOfBirth.ensureSize(m_firstFieldOfLayout.last());
-    gettersThatMayBeAbsent.ensureSize(m_firstFieldOfLayout.last());
-    settersThatMayBeAbsent.ensureSize(m_firstFieldOfLayout.last());
+
     m_nodesBesideFields.fill(noNodeInLinkFlow, 2 * numberOfLayouts);
     m_newestAppendedFieldOfLayout.fill(UINT32_MAX, numberOfLayouts);
 
@@ -421,37 +493,8 @@ LinkFlow::LinkFlow(Program& program, const ThinSummaries& summaries, const Famil
         FamilyID above = families.nearestFamilyAbove(FamilyID(family));
         m_outermostFamilies[family] = above ? m_outermostFamilies[above.index()] : FamilyID(family);
     }
-
-    firstCallOfFunction.reserveInitialCapacity(numberOfFunctions + 1);
-    uint64_t numberOfCalls = 0;
-    for (size_t index = 0; index < numberOfFunctions; ++index) {
-        firstCallOfFunction.append(static_cast<uint32_t>(numberOfCalls));
-        numberOfCalls += summaries.at(FunctionID(index)).calls.size();
-    }
-    RELEASE_ASSERT(numberOfCalls < UINT32_MAX);
-    firstCallOfFunction.append(static_cast<uint32_t>(numberOfCalls));
-    calleesOfCalls.grow(loops, numberOfCalls);
-
-    m_layoutsWithFieldsUnderComputedKeys.ensureSize(numberOfLayouts);
-    Vector<uint32_t> layoutsThatListComputedKeys = findIndicesInParallel(loops, static_cast<unsigned>(numberOfLayouts), [&](unsigned index) {
-        bool listsComputedKey = false;
-        forEachFieldListedInLinkFlow(program, LayoutID(index), [&](FieldReference reference) {
-            listsComputedKey |= !!fieldAt(program, reference).computedKey;
-        });
-        return listsComputedKey;
-    });
-    for (uint32_t index : layoutsThatListComputedKeys) {
-        forEachFieldListedInLinkFlow(program, LayoutID(index), [&](FieldReference reference) {
-            if (!fieldAt(program, reference).computedKey)
-                return;
-            m_layoutsWithFieldsUnderComputedKeys.quickSet(index);
-            fieldsWrittenAfterConstruction.quickSet(m_firstFieldOfLayout[reference.layout.index()] + reference.field);
-            addEdge(field(reference), unseen());
-            addEdge(unseen(), field(reference));
-        });
-    }
-    findWhatRowsOfConstructorsFill();
-    findSuperCallsThatMayAnswerWithOlderObject();
+    unitedLayouts.growTo(static_cast<uint32_t>(numberOfLayouts));
+    m_lostFamilies.grow(numberOfLayouts);
 }
 
 void LinkFlow::indexMembersOfClasses()
@@ -504,6 +547,7 @@ void LinkFlow::indexMembersOfClasses()
 
 void LinkFlow::numberNodes()
 {
+    const ParallelLoops& loopsOfLane = build.parallelLoops();
     size_t numberOfFunctions = program.functions.size();
     size_t numberOfLayouts = program.layouts.size();
 
@@ -516,14 +560,16 @@ void LinkFlow::numberNodes()
 
     m_firstVariable = take(program.variables.size());
 
-    m_firstFieldOfLayout.reserveInitialCapacity(numberOfLayouts + 1);
+    m_firstFieldOfLayout.grow(numberOfLayouts + 1);
+    forEachRangeOfIndicesInParallel(loopsOfLane, numberOfLayouts, [&](size_t first, size_t end) {
+        for (size_t index = first; index < end; ++index)
+            m_firstFieldOfLayout[index] = program.layouts[index].fields.size();
+    });
     uint64_t numberOfFields = 0;
-    for (const Layout& layout : program.layouts) {
-        m_firstFieldOfLayout.append(static_cast<uint32_t>(numberOfFields));
-        numberOfFields += layout.fields.size();
-    }
+    for (size_t index = 0; index < numberOfLayouts; ++index)
+        numberOfFields += std::exchange(m_firstFieldOfLayout[index], static_cast<uint32_t>(numberOfFields));
     RELEASE_ASSERT(numberOfFields < UINT32_MAX);
-    m_firstFieldOfLayout.append(static_cast<uint32_t>(numberOfFields));
+    m_firstFieldOfLayout[numberOfLayouts] = static_cast<uint32_t>(numberOfFields);
     uint32_t firstField = take(numberOfFields);
 
     size_t numberOfSides = 2 * numberOfLayouts;
@@ -534,15 +580,18 @@ void LinkFlow::numberNodes()
     static constexpr uint8_t isOfLibrary = 1;
     static constexpr uint8_t rowsSpeakForIt = 2;
     Vector<uint8_t> whoseFunctionsAre;
-    whoseFunctionsAre.fill(0, numberOfFunctions);
-    m_nodesOfFunctions.reserveInitialCapacity(numberOfFunctions + 1);
-    m_nodesOfFunctions.fill(NodesOfFunction { }, numberOfFunctions);
-    forEachRangeOfIndicesInParallel(loops, numberOfFunctions, [&](size_t first, size_t end) {
+    whoseFunctionsAre.grow(numberOfFunctions);
+    m_nodesOfFunctions.grow(numberOfFunctions + 1);
+    firstCallOfFunction.grow(numberOfFunctions + 1);
+    forEachRangeOfIndicesInParallel(loopsOfLane, numberOfFunctions, [&](size_t first, size_t end) {
         for (size_t index = first; index < end; ++index) {
             const Function& function = program.functions[index];
+            const ThinSummary& summary = summaries.at(FunctionID(index));
             m_nodesOfFunctions[index].firstParameter = function.numberOfEntryParameters();
             m_nodesOfFunctions[index].firstResult = function.results.size();
-            m_nodesOfFunctions[index].base = summaries.at(FunctionID(index)).nodes.size();
+            m_nodesOfFunctions[index].base = summary.nodes.size();
+            firstCallOfFunction[index] = summary.calls.size();
+            whoseFunctionsAre[index] = 0;
             if (!isLibraryCode(program, function))
                 continue;
             whoseFunctionsAre[index] = isOfLibrary;
@@ -550,44 +599,33 @@ void LinkFlow::numberNodes()
                 whoseFunctionsAre[index] |= rowsSpeakForIt;
         }
     });
+    uint64_t numberOfCalls = 0;
     for (size_t index = 0; index < numberOfFunctions; ++index) {
         NodesOfFunction& nodes = m_nodesOfFunctions[index];
         nodes.firstParameter = take(nodes.firstParameter);
         nodes.firstResult = take(nodes.firstResult);
         nodes.thrown = take(1);
         nodes.base = take(nodes.base);
+        numberOfCalls += std::exchange(firstCallOfFunction[index], static_cast<uint32_t>(numberOfCalls));
     }
-    uint32_t endOfFunctions = static_cast<uint32_t>(next);
-    m_isNodeOfLibrary.ensureSize(endOfFunctions);
-    m_isFunctionOfLibrary.ensureSize(numberOfFunctions);
-    m_isFunctionThatRowsSpeakFor.ensureSize(numberOfFunctions);
-    Vector<uint32_t> contentsInLibrary = collectInParallel<uint32_t>(loops, static_cast<unsigned>(numberOfFunctions), [&](unsigned index, Vector<uint32_t>& found) {
-        if (!whoseFunctionsAre[index])
-            return;
-        const ThinSummary& summary = summaries.at(FunctionID(index));
-        for (uint32_t inSummary = 0; inSummary < summary.nodes.size(); ++inSummary) {
-            if (summary.nodes[inSummary].kind == SummaryNode::Kind::Contents)
-                found.append(m_nodesOfFunctions[index].base + inSummary);
-        }
-    });
-    for (size_t index = 0; index < numberOfFunctions; ++index) {
-        if (!whoseFunctionsAre[index])
-            continue;
-        m_isFunctionOfLibrary.quickSet(index);
-        if (whoseFunctionsAre[index] & rowsSpeakForIt)
-            m_isFunctionThatRowsSpeakFor.quickSet(index);
-        uint32_t end = index + 1 < numberOfFunctions ? m_nodesOfFunctions[index + 1].firstParameter : endOfFunctions;
-        for (uint32_t node = m_nodesOfFunctions[index].firstParameter; node < end; ++node)
-            m_isNodeOfLibrary.quickSet(node);
-    }
-    for (uint32_t node : contentsInLibrary)
-        m_isNodeOfLibrary.quickClear(node);
-    m_nodesOfFunctions.append(NodesOfFunction { endOfFunctions, endOfFunctions, endOfFunctions, endOfFunctions });
-    m_firstNodeOfFunctions = m_nodesOfFunctions[0].firstParameter;
     RELEASE_ASSERT(next <= FlowNodeID::largestIndex);
+    RELEASE_ASSERT(numberOfCalls < UINT32_MAX);
+    uint32_t endOfFunctions = static_cast<uint32_t>(next);
+    m_nodesOfFunctions[numberOfFunctions] = NodesOfFunction { endOfFunctions, endOfFunctions, endOfFunctions, endOfFunctions };
+    m_firstNodeOfFunctions = m_nodesOfFunctions[0].firstParameter;
+    firstCallOfFunction[numberOfFunctions] = static_cast<uint32_t>(numberOfCalls);
 
     m_nodeOfField.grow(numberOfFields);
-    forEachRangeOfIndicesInParallel(loops, numberOfLayouts, [&](size_t first, size_t end) {
+    m_firstNodeOfFields = firstField;
+    m_fieldsWhoseSlotsHaveDoors.ensureSize(numberOfFields);
+    for (size_t index = 0; index < numberOfLayouts; ++index) {
+        LayoutKind kind = program.layouts[index].kind;
+        if (kind != LayoutKind::Record && kind != LayoutKind::Instance && kind != LayoutKind::Container)
+            continue;
+        for (uint32_t field = m_firstFieldOfLayout[index]; field < m_firstFieldOfLayout[index + 1]; ++field)
+            m_fieldsWhoseSlotsHaveDoors.quickSet(field);
+    }
+    forEachRangeOfIndicesInParallel(loopsOfLane, numberOfLayouts, [&](size_t first, size_t end) {
         for (size_t index = first; index < end; ++index) {
             uint32_t numberOfFieldsOfLayout = m_firstFieldOfLayout[index + 1] - m_firstFieldOfLayout[index];
             for (uint32_t position = 0; position < numberOfFieldsOfLayout; ++position) {
@@ -598,72 +636,105 @@ void LinkFlow::numberNodes()
     });
 
     size_t roomForNodes = next + next / 4 + 64;
-    m_nodes.reserve(roomForNodes);
-    m_nodes.grow(loops, next);
-    m_listsOfNodes.reserve(roomForNodes);
-    m_listsOfNodes.grow(loops, next);
-    m_isOnWorklist.ensureSize(roomForNodes);
-    m_isToBeTold.ensureSize(roomForNodes);
-    m_flowsIntoUnseen.ensureSize(roomForNodes);
-    m_hasEdgesInSet.ensureSize(roomForNodes);
-    unitedLayouts.growTo(static_cast<uint32_t>(numberOfLayouts));
-    m_lostFamilies.grow(numberOfLayouts);
-    m_nodes[unseen().index()].type = LinkType::anything();
-    for (uint32_t node = m_firstMemberNodeOfSide[0]; node < m_nodesOfFunctions[0].firstParameter; ++node)
-        m_nodes[node].typeOfPosition = TypeTable::anything;
-    auto bind = [&](FlowNodeID node, const DeclaredType& declared) {
-        TypeID held = declared.written() ? TypeID(program.provenTypeOf(declared)) : TypeID(TypeTable::anything);
-        m_nodes[node.index()].typeOfPosition = held == TypeTable::anythingOrAbsent ? TypeID() : held;
-    };
-    forEachRangeOfIndicesInParallel(loops, numberOfFunctions, [&](size_t first, size_t end) {
-        for (size_t index = first; index < end; ++index) {
-            for (uint32_t node = m_nodesOfFunctions[index].firstParameter; node <= m_nodesOfFunctions[index].thrown; ++node)
+    runLanes(loopsOfLane, {
+        [&] {
+            m_nodes.reserve(roomForNodes);
+            m_nodes.grow(build.parallelLoops(), next);
+            m_listsOfNodes.reserve(roomForNodes);
+            m_listsOfNodes.grow(build.parallelLoops(), next);
+            m_nodes[unseen().index()].type = LinkType::anything();
+            for (uint32_t node = m_firstMemberNodeOfSide[0]; node < m_nodesOfFunctions[0].firstParameter; ++node)
                 m_nodes[node].typeOfPosition = TypeTable::anything;
-            FunctionID id(index);
-            const Function& function = program.functions[index];
-            uint32_t numberOfParameters = function.numberOfEntryParameters();
-            for (uint32_t position = 0; position < numberOfParameters; ++position) {
-                if (const DeclaredType* declared = function.declaredEntryParameter(position))
-                    bind(parameter(id, position), *declared);
+            auto bind = [&](FlowNodeID node, const DeclaredType& declared) {
+                TypeID held = declared.written() ? TypeID(program.provenTypeOf(declared)) : TypeID(TypeTable::anything);
+                m_nodes[node.index()].typeOfPosition = held == TypeTable::anythingOrAbsent ? TypeID() : held;
+            };
+            forEachRangeOfIndicesInParallel(build.parallelLoops(), numberOfFunctions, [&](size_t first, size_t end) {
+                for (size_t index = first; index < end; ++index) {
+                    for (uint32_t node = m_nodesOfFunctions[index].firstParameter; node <= m_nodesOfFunctions[index].thrown; ++node)
+                        m_nodes[node].typeOfPosition = TypeTable::anything;
+                    FunctionID id(index);
+                    const Function& function = program.functions[index];
+                    uint32_t numberOfParameters = function.numberOfEntryParameters();
+                    for (uint32_t position = 0; position < numberOfParameters; ++position) {
+                        if (const DeclaredType* declared = function.declaredEntryParameter(position))
+                            bind(parameter(id, position), *declared);
+                    }
+                    for (uint32_t position = 0; position < function.results.size(); ++position)
+                        bind(result(id, position), function.results[position]);
+                }
+            });
+            forEachRangeOfIndicesInParallel(build.parallelLoops(), program.variables.size(), [&](size_t first, size_t end) {
+                for (size_t index = first; index < end; ++index)
+                    bind(variable(VariableID(index)), program.variables[index].declared);
+            });
+            forEachRangeOfIndicesInParallel(build.parallelLoops(), numberOfLayouts, [&](size_t first, size_t end) {
+                for (size_t index = first; index < end; ++index) {
+                    const Layout& layout = program.layouts[index];
+                    for (uint32_t position = 0; position < layout.fields.size(); ++position) {
+                        FieldReference reference { LayoutID(index), position };
+                        if (declarationOf(program, reference) == reference)
+                            bind(field(reference), layout.fields[position].declared);
+                    }
+                }
+            });
+        },
+        [&] {
+            m_nodesOfSummaries.grow(next - m_nodesOfFunctions[0].firstParameter);
+            m_firstSiteOfFunction.grow(numberOfFunctions + 1);
+            m_firstSiteOfFunction[0] = 0;
+            forEachRangeOfIndicesInParallel(build.parallelLoops(), numberOfFunctions, [&](size_t first, size_t end) {
+                for (size_t index = first; index < end; ++index) {
+                    uint32_t numberOfNodes = m_nodesOfFunctions[index + 1].firstParameter - m_nodesOfFunctions[index].base;
+                    std::span<uint32_t> nodes = m_nodesOfSummaries.mutableSpan().subspan(m_nodesOfFunctions[index].base - m_nodesOfFunctions[0].firstParameter, numberOfNodes);
+                    const ThinSummary& summary = summaries.at(FunctionID(index));
+                    uint32_t numberOfSites = 0;
+                    for (uint32_t node = 0; node < numberOfNodes; ++node) {
+                        nodes[node] = findNodeOf(FunctionID(index), node).index();
+                        numberOfSites += summary.nodes[node].kind == SummaryNode::Kind::ClassInstance;
+                    }
+                    m_firstSiteOfFunction[index + 1] = numberOfSites;
+                }
+            });
+            for (size_t index = 0; index < numberOfFunctions; ++index)
+                m_firstSiteOfFunction[index + 1] += m_firstSiteOfFunction[index];
+            m_sites.growTo(m_firstSiteOfFunction.last());
+            m_familiesOfSites.growTo(m_firstSiteOfFunction.last());
+        },
+        [&] {
+            m_isNodeOfLibrary.ensureSize(endOfFunctions);
+            m_isFunctionOfLibrary.ensureSize(numberOfFunctions);
+            m_isFunctionThatRowsSpeakFor.ensureSize(numberOfFunctions);
+            Vector<uint32_t> contentsInLibrary = collectInParallel<uint32_t>(build.parallelLoops(), static_cast<unsigned>(numberOfFunctions), [&](unsigned index, Vector<uint32_t>& found) {
+                if (!whoseFunctionsAre[index])
+                    return;
+                const ThinSummary& summary = summaries.at(FunctionID(index));
+                for (uint32_t inSummary = 0; inSummary < summary.nodes.size(); ++inSummary) {
+                    if (summary.nodes[inSummary].kind == SummaryNode::Kind::Contents)
+                        found.append(m_nodesOfFunctions[index].base + inSummary);
+                }
+            });
+            for (size_t index = 0; index < numberOfFunctions; ++index) {
+                if (!whoseFunctionsAre[index])
+                    continue;
+                m_isFunctionOfLibrary.quickSet(index);
+                if (whoseFunctionsAre[index] & rowsSpeakForIt)
+                    m_isFunctionThatRowsSpeakFor.quickSet(index);
+                uint32_t end = m_nodesOfFunctions[index + 1].firstParameter;
+                for (uint32_t node = m_nodesOfFunctions[index].firstParameter; node < end; ++node)
+                    m_isNodeOfLibrary.quickSet(node);
             }
-            for (uint32_t position = 0; position < function.results.size(); ++position)
-                bind(result(id, position), function.results[position]);
-        }
+            for (uint32_t node : contentsInLibrary)
+                m_isNodeOfLibrary.quickClear(node);
+            m_isOnWorklist.ensureSize(roomForNodes);
+            m_isToBeTold.ensureSize(roomForNodes);
+            m_flowsIntoUnseen.ensureSize(roomForNodes);
+            m_hasEdgesInSet.ensureSize(roomForNodes);
+        },
+        [&] {
+            calleesOfCalls.grow(build.parallelLoops(), numberOfCalls);
+        },
     });
-    forEachRangeOfIndicesInParallel(loops, program.variables.size(), [&](size_t first, size_t end) {
-        for (size_t index = first; index < end; ++index)
-            bind(variable(VariableID(index)), program.variables[index].declared);
-    });
-    forEachRangeOfIndicesInParallel(loops, numberOfLayouts, [&](size_t first, size_t end) {
-        for (size_t index = first; index < end; ++index) {
-            const Layout& layout = program.layouts[index];
-            for (uint32_t position = 0; position < layout.fields.size(); ++position) {
-                FieldReference reference { LayoutID(index), position };
-                if (declarationOf(program, reference) == reference)
-                    bind(field(reference), layout.fields[position].declared);
-            }
-        }
-    });
-
-    m_nodesOfSummaries.grow(next - m_nodesOfFunctions[0].firstParameter);
-    m_firstSiteOfFunction.fill(0, numberOfFunctions + 1);
-    forEachRangeOfIndicesInParallel(loops, numberOfFunctions, [&](size_t first, size_t end) {
-        for (size_t index = first; index < end; ++index) {
-            uint32_t numberOfNodes = m_nodesOfFunctions[index + 1].firstParameter - m_nodesOfFunctions[index].base;
-            std::span<uint32_t> nodes = m_nodesOfSummaries.mutableSpan().subspan(m_nodesOfFunctions[index].base - m_nodesOfFunctions[0].firstParameter, numberOfNodes);
-            const ThinSummary& summary = summaries.at(FunctionID(index));
-            uint32_t numberOfSites = 0;
-            for (uint32_t node = 0; node < numberOfNodes; ++node) {
-                nodes[node] = findNodeOf(FunctionID(index), node).index();
-                numberOfSites += summary.nodes[node].kind == SummaryNode::Kind::ClassInstance;
-            }
-            m_firstSiteOfFunction[index + 1] = numberOfSites;
-        }
-    });
-    for (size_t index = 0; index < numberOfFunctions; ++index)
-        m_firstSiteOfFunction[index + 1] += m_firstSiteOfFunction[index];
-    m_sites.growTo(m_firstSiteOfFunction.last());
-    m_familiesOfSites.growTo(m_firstSiteOfFunction.last());
 }
 
 FlowNodeID LinkFlow::makeNode()
@@ -1725,6 +1796,11 @@ ALWAYS_INLINE void LinkFlow::receive(FlowNodeID node, const LinkType& type, Prop
         arriving.primitives &= LinkType::closed(Primitive::All);
     else if (bound)
         arriving = passedBy(type, bound);
+    if ((arriving.primitives & Primitive::Double) && index - m_firstNodeOfFields < m_fieldsWhoseSlotsHaveDoors.size() && m_fieldsWhoseSlotsHaveDoors.quickGet(index - m_firstNodeOfFields)) {
+        uint16_t added = LinkType::closed(Primitive::Number) & ~arriving.primitives;
+        arriving.primitives |= added;
+        arriving.primitivesByEscapeAlone |= added;
+    }
     LinkType before = m_nodes[index].type;
     bool heldNothing = !before.primitives && before.objects == LinkType::Objects::None && before.functions == LinkType::Functions::None && before.classes == LinkType::Classes::None && !before.holdsUnseen && !before.holdsLostBuiltins && !before.builtin;
     if (heldNothing && !(arriving.holdsUnseen && arriving.builtin) && !(arriving.primitives & LinkType::oneSymbol)) {
@@ -1956,6 +2032,24 @@ unsigned LinkFlow::indexOfLaneAtWork() const
     return s_laneAtWork ? s_laneAtWork->index : 0;
 }
 
+LinkFlow::CopiesObserved& LinkFlow::copiesObservedIn(FunctionID function)
+{
+    Lane& lane = *m_lanes[laneOfObserversOf(function)];
+    RELEASE_ASSERT(!s_laneAtWork || s_laneAtWork == &lane);
+    return lane.copiesObserved;
+}
+
+void LinkFlow::noteAccessorLaid(LayoutID layout, const AccessorLaidInField& laid)
+{
+    if (m_severalThreadsTell) {
+        s_laneAtWork->accessorsLaid.append({ layout, laid });
+        return;
+    }
+    layoutsWithKnownAccessors.set(layout.index());
+    fieldsWithKnownAccessors.append(laid.field);
+    accessorsLaidInFields.append(laid);
+}
+
 std::optional<uint32_t> LinkFlow::findWhatLaneWasGiven(MadeOnDemand kind, uint64_t words) const
 {
     auto& given = s_laneAtWork->given[static_cast<size_t>(kind)];
@@ -2077,7 +2171,16 @@ void LinkFlow::takeNote(Note note, uint32_t number, uint32_t more)
         exportsShown.set(number);
         return;
     case Note::ChangeOfLayout:
-        possibleChanges[number].add(static_cast<LayoutChange>(more));
+        possibleChanges[number].add(OptionSet<LayoutChange>::fromRaw(static_cast<uint8_t>(more)));
+        return;
+    case Note::LayoutGainsWhatUnseenCodeGaveSources:
+        layoutsThatGainWhatUnseenCodeGaveSources.set(number);
+        return;
+    case Note::LayoutDefinedOnUnderWrittenKeys:
+        layoutsDefinedOnUnderWrittenKeys.set(number);
+        return;
+    case Note::PrototypeLaidAboveOtherObjects:
+        prototypesLaidAboveOtherObjects.quickSet(number);
         return;
     case Note::WriteOnBuiltin:
         builtinsInReach().noteWrite(BuiltinID(more), PropertyKeyID::fromBits(number));
@@ -2130,12 +2233,12 @@ bool LinkFlow::isToldByOneThread(FlowObserver::Kind kind)
     case FlowObserver::Kind::SubjectOfAccess:
     case FlowObserver::Kind::KeyOfAccess:
     case FlowObserver::Kind::MemberOfAccess:
+    case FlowObserver::Kind::SubjectOfChange:
+    case FlowObserver::Kind::OtherOfChange:
     case FlowObserver::Kind::OperandOfOperator:
         return false;
     case FlowObserver::Kind::MemberOfSharedCall:
     case FlowObserver::Kind::MemberOfSharedAccess:
-    case FlowObserver::Kind::SubjectOfChange:
-    case FlowObserver::Kind::OtherOfChange:
     case FlowObserver::Kind::SymbolOfPreparation:
     case FlowObserver::Kind::Inspected:
         return true;
@@ -2201,6 +2304,7 @@ void LinkFlow::run()
     while (fillParametersThatUnseenCodeAlonePasses())
         flow();
     noteLostLayoutsGainingProperties();
+    countAllocatedMembersOfFamilies();
 }
 
 LinkType LinkFlow::withoutObjectsThatHaveEscaped(LinkType type) const
@@ -2992,6 +3096,9 @@ void LinkFlow::takeOverWhatLanesDidWhileTelling()
         for (const Lane::NoteTaken& taken : lane->notes)
             takeNote(taken.note, taken.number, taken.more);
         lane->notes.shrink(0);
+        for (const auto& [layout, laid] : lane->accessorsLaid)
+            noteAccessorLaid(layout, laid);
+        lane->accessorsLaid.shrink(0);
     }
     for (auto& lane : m_lanes) {
         m_numberOfObserversTold += std::exchange(lane->numberOfObserversTold, 0);
@@ -3052,6 +3159,7 @@ void LinkFlow::tellOnLanes()
     stateOfLinkCalls();
     prepareAccessesForSeveralThreads();
     prepareOperatorsForSeveralThreads();
+
     m_lanes[0]->newObservers.appendVector(m_newObservers);
     m_newObservers.shrink(0);
     m_firstOfNewObservers = 0;
@@ -3079,6 +3187,7 @@ void LinkFlow::tellOnLanes()
     takeOverWhatLanesDidWhileTelling();
     for (unsigned lane = 0; lane < m_lanes.size(); ++lane) {
         for (const Lane::Tell& told : tellsForOneThread[lane]) {
+
             LinkType now = typeAt(told.node);
             tell(told.observer, now, told.placeOfTypeBefore == UINT32_MAX ? s_nothing : nodesTold[lane][told.placeOfTypeBefore].second);
         }
@@ -3450,9 +3559,11 @@ LinkType LinkFlow::fromTypeID(TypeID id) const
 
     TypeReader reader(program);
     if (type.layouts) {
-        if (FamilyID family = holdsOneMember(type.layouts) ? FamilyID() : families.familyOf(type.layouts))
+        if (FamilyID family = holdsOneMember(type.layouts) ? FamilyID() : families.familyOf(type.layouts)) {
             result = joined(result, typeOfFamilyInLinkFlow(family));
-        else {
+            for (LayoutID member : layoutsOfFamily(family))
+                noteMetInFamily(member);
+        } else {
             reader.at(type.layouts).forEach([&](LayoutID layout) {
                 result = joined(result, typeOfLayoutInLinkFlow(layout));
             });
@@ -3505,6 +3616,53 @@ LinkType LinkFlow::fromTypeID(TypeID id) const
     return result;
 }
 
+void LinkFlow::countAllocatedMembersOfFamilies()
+{
+    m_numbersOfAllocatedMembersOfFamilies.fill(0, families.size());
+    for (size_t layout : allocatedLayouts) {
+        if (FamilyID nearest = families.nearestFamilyOf(LayoutID(layout)))
+            ++m_numbersOfAllocatedMembersOfFamilies[nearest.index()];
+    }
+    for (uint32_t family = 0; family < families.size(); ++family) {
+        if (FamilyID above = families.nearestFamilyAbove(FamilyID(family)))
+            m_numbersOfAllocatedMembersOfFamilies[above.index()] += m_numbersOfAllocatedMembersOfFamilies[family];
+    }
+}
+
+FamilyID LinkFlow::familyWhoseAllocatedMembersAre(std::span<const LayoutID> members) const
+{
+    if (m_numbersOfAllocatedMembersOfFamilies.isEmpty())
+        return { };
+    FamilyID common = families.nearestCommonFamily(members[0], members[1]);
+    for (size_t index = 2; index < members.size() && common; ++index)
+        common = families.nearestCommonFamily(common, members[index]);
+    if (!common || m_numbersOfAllocatedMembersOfFamilies[common.index()] != members.size())
+        return { };
+    return std::ranges::all_of(members, [&](LayoutID member) { return allocatedLayouts.get(member.index()); }) ? common : FamilyID();
+}
+
+void LinkFlow::nameLayoutsThatMet(TypeArena& types)
+{
+    RELEASE_ASSERT(m_typesAreSettled && m_layoutsThatMet.isEmpty());
+    for (size_t layout : lostLayouts) {
+        uint32_t smallestMember = static_cast<uint32_t>(layout);
+        if (unitedLayouts.isAlone(smallestMember) || m_lostFamiliesThatHaveEscaped.quickGet(smallestMember))
+            continue;
+        auto named = m_layoutsThatMetByRepresentative.add(unitedLayouts.representativeWithoutShortening(smallestMember), LayoutSetID());
+        if (!named.isNewEntry)
+            continue;
+        named.iterator->value = types.layoutSets().ofUnsorted(membersOfLostFamily(smallestMember).span());
+        m_layoutsThatMet.append(named.iterator->value);
+    }
+}
+
+void LinkFlow::forgetNamesThatAreNoFamilies(const Families& behindFlow)
+{
+    m_layoutsThatMetByRepresentative.removeIf([&](auto& named) {
+        return program.at(named.value).size() > SetsOfLayoutsInLinkFlow::mostMembers && !behindFlow.familyOf(named.value);
+    });
+}
+
 TypeID LinkFlow::toTypeID(TypeArena& types, const LinkType& type) const
 {
     if (type.isNothing())
@@ -3540,14 +3698,24 @@ TypeID LinkFlow::toTypeID(TypeArena& types, const LinkType& type) const
             parts.environment = type.layout;
         break;
     case LinkType::Objects::Set:
-        parts.unnamedLayouts = types.layoutSets().ofSorted(layoutsOfSet(type));
+        if (FamilyID family = familyWhoseAllocatedMembersAre(layoutsOfSet(type)))
+            parts.unnamedLayouts = families.layoutsOf(family);
+        else
+            parts.unnamedLayouts = types.layoutSets().ofSorted(layoutsOfSet(type));
         break;
     case LinkType::Objects::Family:
         parts.unnamedLayouts = families.layoutsOf(type.family);
         break;
+    case LinkType::Objects::Lost:
+        if (type.layout) {
+            if (auto named = m_layoutsThatMetByRepresentative.find(unitedLayouts.representativeWithoutShortening(type.layout.index())); named != m_layoutsThatMetByRepresentative.end()) {
+                parts.unnamedLayouts = named->value;
+                break;
+            }
+        }
+        [[fallthrough]];
     case LinkType::Objects::Prototype:
     case LinkType::Objects::Prototypes:
-    case LinkType::Objects::Lost:
         holdAnyObject(UnknownSeed::ContentsOfEscapedObject);
         break;
     }
@@ -3789,7 +3957,7 @@ LinkType LinkFlow::passedBy(const LinkType& type, TypeID test) const
 
 uint64_t LinkFlow::wordOfNodeOnDemand(NodeOnDemand kind, uint32_t number, PropertyKeyID key)
 {
-    static_assert(static_cast<uint64_t>(NodeOnDemand::AnyFieldDefinedOnLayout) < 1u << 4);
+    static_assert(static_cast<uint64_t>(NodeOnDemand::WhatStandsBelow) < 1u << 4);
     RELEASE_ASSERT(number < 1u << 28);
     return static_cast<uint64_t>(kind) << 60 | static_cast<uint64_t>(number) << 32 | key.bits();
 }
@@ -4012,6 +4180,9 @@ std::pair<FlowNodeID, bool> LinkFlow::aggregateOfReadsUnderNumbers(Vector<uint32
 
 std::span<const LinkFlow::OwnValue> LinkFlow::ownValuesOf(LayoutID layout)
 {
+    Lane* lane = m_severalThreadsTell ? s_laneAtWork : nullptr;
+    if (lane && lane->layoutsWhoseOwnValuesAreSeen.get(layout.index()))
+        return m_ownValuesOfLayouts[layout.index()].span();
     LockerOfWhatIsShared lockerOfWhatIsShared(*this);
     if (m_ownValuesOfLayouts.isEmpty()) {
         m_ownValuesOfLayouts.grow(program.layouts.size());
@@ -4022,6 +4193,8 @@ std::span<const LinkFlow::OwnValue> LinkFlow::ownValuesOf(LayoutID layout)
         if (!m_layoutsWhoseOwnValuesAreListed.quickSet(layout.index()))
             m_ownValuesOfLayouts[layout.index()].appendVector(values);
     }
+    if (lane)
+        lane->layoutsWhoseOwnValuesAreSeen.ensureSizeAndSet(layout.index(), program.layouts.size());
     return m_ownValuesOfLayouts[layout.index()].span();
 }
 
@@ -4533,6 +4706,7 @@ FlowNodeID LinkFlow::fieldReadThrough(FamilyID family, PropertyKeyID key)
         if (!isNew)
             return aggregate;
 
+        UnknownByEscapeAlone ofEscapeAlone(UnknownByEscapeAlone::marksAtWork() == UnknownByEscapeAlone::Marks::OfEscape);
         if (isAbsentAboveClasses(key)) {
             tieReadThroughSortedMembers(aggregate, family, key);
             return aggregate;
@@ -4554,6 +4728,7 @@ FlowNodeID LinkFlow::fieldStoredThrough(FamilyID family, PropertyKeyID key, bool
         if (!isNew)
             return aggregate;
 
+        UnknownByEscapeAlone ofEscapeAlone(UnknownByEscapeAlone::marksAtWork() == UnknownByEscapeAlone::Marks::OfEscape);
         TiesToLay ties { TiesToLay::Members::DeclaredFamily, isPartOfConstruction ? TiesToLay::Access::StoreInConstruction : TiesToLay::Access::Store, aggregate, family.index(), key };
         if (leavesTiesToLanes(ties))
             return aggregate;
@@ -4605,6 +4780,7 @@ FlowNodeID LinkFlow::fieldThroughLost(LayoutID member, PropertyKeyID key, Aggreg
     if (existing != noNodeInLinkFlow)
         return FlowNodeID(existing);
 
+    UnknownByEscapeAlone ofEscapeAlone(UnknownByEscapeAlone::marksAtWork() == UnknownByEscapeAlone::Marks::OfEscape);
     FlowNodeID aggregate = makeNode();
     m_keysLookedUpThroughLost.add(key.index());
     bool tiesEveryMember = m_lostKeys[record].tiesEveryMember;
@@ -4816,15 +4992,34 @@ FlowNodeID LinkFlow::fieldStoredThroughLost(LayoutID member, PropertyKeyID key)
     });
 }
 
+uint64_t LinkFlow::wordOfAnyFieldThrough(LinkType::Objects objects, LayoutID layout, FamilyID family, bool keyIsNumber) const
+{
+    uint32_t number = objects == LinkType::Objects::Family || objects == LinkType::Objects::Prototypes ? family.index() : layout.index();
+    if (objects == LinkType::Objects::Lost && layout)
+        number = unitedLayouts.representativeOf(layout.index());
+    bool isUnderMarksOfRule = UnknownByEscapeAlone::marksAtWork() == UnknownByEscapeAlone::Marks::OfRule;
+    return static_cast<uint64_t>(objects) << 34 | static_cast<uint64_t>(isUnderMarksOfRule) << 33 | static_cast<uint64_t>(keyIsNumber) << 32 | number;
+}
+
 FlowNodeID LinkFlow::anyFieldReadThrough(LinkType::Objects objects, LayoutID layout, FamilyID family, bool keyIsNumber)
 {
+    return nodeAskedOnceByLane(MadeOnDemand::AnyFieldReadThrough, wordOfAnyFieldThrough(objects, layout, family, keyIsNumber), [&] {
+        return findOrMakeAnyFieldReadThrough(objects, layout, family, keyIsNumber);
+    });
+}
+
+FlowNodeID LinkFlow::findOrMakeAnyFieldReadThrough(LinkType::Objects objects, LayoutID layout, FamilyID family, bool keyIsNumber)
+{
     LockerOfWhatIsShared lockerOfWhatIsShared(*this);
+    bool isUnderMarksOfRule = UnknownByEscapeAlone::marksAtWork() == UnknownByEscapeAlone::Marks::OfRule;
+    RELEASE_ASSERT(!keyIsNumber || !isUnderMarksOfRule);
+    uint32_t underMarksOfRule = isUnderMarksOfRule ? underMarksOfRuleAmongNodesOnDemand : 0;
     FlowNodeID underAnyKey = keyIsNumber ? foundBesideFieldsUnderAnyNumber() : fixedNodeInLinkFlow(FixedNodeOfLinkFlow::FoundBesideFieldsUnderAnyKey);
     switch (objects) {
     case LinkType::Objects::None:
         return unseen();
     case LinkType::Objects::Layout: {
-        auto [aggregate, isNew] = keyIsNumber ? aggregateOfReadsUnderNumbers(m_elementsReadThroughLayouts, program.layouts.size(), layout.index()) : nodeOnDemand(NodeOnDemand::AnyFieldReadOfLayout, layout.index(), { });
+        auto [aggregate, isNew] = keyIsNumber ? aggregateOfReadsUnderNumbers(m_elementsReadThroughLayouts, program.layouts.size(), layout.index()) : nodeOnDemand(NodeOnDemand::AnyFieldReadOfLayout, layout.index() | underMarksOfRule, { });
         if (isNew) {
             addEdge(underAnyKey, aggregate);
             addEdge(foundBesideFieldsOf(layout), aggregate);
@@ -4833,7 +5028,7 @@ FlowNodeID LinkFlow::anyFieldReadThrough(LinkType::Objects objects, LayoutID lay
         return aggregate;
     }
     case LinkType::Objects::Set: {
-        auto [aggregate, isNew] = nodeOnDemand(keyIsNumber ? NodeOnDemand::ElementReadOfSet : NodeOnDemand::AnyFieldReadOfSet, layout.index(), { });
+        auto [aggregate, isNew] = nodeOnDemand(keyIsNumber ? NodeOnDemand::ElementReadOfSet : NodeOnDemand::AnyFieldReadOfSet, layout.index() | underMarksOfRule, { });
         if (isNew) {
             for (LayoutID member : m_setsOfLayouts.membersOf(layout.index()))
                 addEdge(anyFieldReadThrough(LinkType::Objects::Layout, member, { }, keyIsNumber), aggregate);
@@ -4850,7 +5045,7 @@ FlowNodeID LinkFlow::anyFieldReadThrough(LinkType::Objects objects, LayoutID lay
         settle();
         return unseen();
     case LinkType::Objects::Family: {
-        auto [aggregate, isNew] = keyIsNumber ? aggregateOfReadsUnderNumbers(m_elementsReadThroughFamilies, families.size(), family.index()) : nodeOnDemand(NodeOnDemand::AnyFieldReadOfFamily, family.index(), { });
+        auto [aggregate, isNew] = keyIsNumber ? aggregateOfReadsUnderNumbers(m_elementsReadThroughFamilies, families.size(), family.index()) : nodeOnDemand(NodeOnDemand::AnyFieldReadOfFamily, family.index() | underMarksOfRule, { });
         if (isNew) {
             addEdge(underAnyKey, aggregate);
             for (LayoutID member : program.types.listOf(families.layoutsOf(family))) {
@@ -4875,10 +5070,11 @@ FlowNodeID LinkFlow::anyFieldReadThrough(LinkType::Objects objects, LayoutID lay
             }
             return aggregate;
         }
-        if (m_lostFamilies[representative].anyFieldRead != noNodeInLinkFlow)
-            return FlowNodeID(m_lostFamilies[representative].anyFieldRead);
+        uint32_t& read = isUnderMarksOfRule ? m_lostFamilies[representative].anyFieldReadUnderMarksOfRule : m_lostFamilies[representative].anyFieldRead;
+        if (read != noNodeInLinkFlow)
+            return FlowNodeID(read);
         FlowNodeID aggregate = makeNode();
-        m_lostFamilies[representative].anyFieldRead = aggregate.index();
+        read = aggregate.index();
         m_anyFieldIsReadThroughLost = true;
         addEdge(underAnyKey, aggregate);
         addEdge(FlowNodeID(m_lostFamilies[representative].foundBesideFields), aggregate);
@@ -4892,24 +5088,33 @@ FlowNodeID LinkFlow::anyFieldReadThrough(LinkType::Objects objects, LayoutID lay
 
 FlowNodeID LinkFlow::anyFieldDefinedOn(LayoutID layout)
 {
-    LockerOfWhatIsShared lockerOfWhatIsShared(*this);
-    auto [aggregate, isNew] = nodeOnDemand(NodeOnDemand::AnyFieldDefinedOnLayout, layout.index(), { });
-    if (!isNew)
+    return nodeAskedOnceByLane(MadeOnDemand::AnyFieldDefinedOn, layout.index(), [&]() -> FlowNodeID {
+        auto [aggregate, isNew] = nodeOnDemand(NodeOnDemand::AnyFieldDefinedOnLayout, layout.index(), { });
+        if (!isNew)
+            return aggregate;
+        addEdge(aggregate, unseen());
+        forEachFieldListedInLinkFlow(program, layout, [&](FieldReference reference) {
+            if (isPrivateNameInLink(program, fieldAt(program, reference).key))
+                return;
+            RELEASE_ASSERT(!fieldAt(program, reference).form.contains(FieldForm::IsAccessor));
+            fieldsWrittenAfterConstruction.set(m_firstFieldOfLayout[reference.layout.index()] + reference.field);
+            addEdge(aggregate, field(reference));
+        });
         return aggregate;
-    addEdge(aggregate, unseen());
-    forEachFieldListedInLinkFlow(program, layout, [&](FieldReference reference) {
-        if (isPrivateNameInLink(program, fieldAt(program, reference).key))
-            return;
-        RELEASE_ASSERT(!fieldAt(program, reference).form.contains(FieldForm::IsAccessor));
-        fieldsWrittenAfterConstruction.set(m_firstFieldOfLayout[reference.layout.index()] + reference.field);
-        addEdge(aggregate, field(reference));
     });
-    return aggregate;
 }
 
 FlowNodeID LinkFlow::anyFieldStoredThrough(LinkType::Objects objects, LayoutID layout, FamilyID family, bool keyIsNumber)
 {
+    return nodeAskedOnceByLane(MadeOnDemand::AnyFieldStoredThrough, wordOfAnyFieldThrough(objects, layout, family, keyIsNumber), [&] {
+        return findOrMakeAnyFieldStoredThrough(objects, layout, family, keyIsNumber);
+    });
+}
+
+FlowNodeID LinkFlow::findOrMakeAnyFieldStoredThrough(LinkType::Objects objects, LayoutID layout, FamilyID family, bool keyIsNumber)
+{
     LockerOfWhatIsShared lockerOfWhatIsShared(*this);
+    UnknownByEscapeAlone ofEscapeAlone(UnknownByEscapeAlone::marksAtWork() == UnknownByEscapeAlone::Marks::OfEscape);
     switch (objects) {
     case LinkType::Objects::None:
         return unseen();
@@ -5155,12 +5360,14 @@ void LinkFlow::mergeLostFamilies(uint32_t kept, uint32_t absorbed)
     tieToEachOther(m_lostFamilies[kept].foundBesideFields, m_lostFamilies[absorbed].foundBesideFields);
     tieToEachOther(m_lostFamilies[kept].storedBesideFields, m_lostFamilies[absorbed].storedBesideFields);
 
-    uint32_t anyFieldRead = merge(m_lostFamilies[kept].anyFieldRead, m_lostFamilies[absorbed].anyFieldRead, [&](FlowNodeID aggregate) {
-        tieMembers(true, TiesToLay::Access::ReadOfAnyField, aggregate, { });
-    }, [&](FlowNodeID aggregate) {
-        tieMembers(false, TiesToLay::Access::ReadOfAnyField, aggregate, { });
-    });
-    m_lostFamilies[kept].anyFieldRead = anyFieldRead;
+    for (auto read : { &LostFamily::anyFieldRead, &LostFamily::anyFieldReadUnderMarksOfRule }) {
+        uint32_t anyFieldRead = merge(m_lostFamilies[kept].*read, m_lostFamilies[absorbed].*read, [&](FlowNodeID aggregate) {
+            tieMembers(true, TiesToLay::Access::ReadOfAnyField, aggregate, { });
+        }, [&](FlowNodeID aggregate) {
+            tieMembers(false, TiesToLay::Access::ReadOfAnyField, aggregate, { });
+        });
+        m_lostFamilies[kept].*read = anyFieldRead;
+    }
 
     if (!m_elementsReadThroughLostFamilies.isEmpty()) {
         m_elementsReadThroughLostFamilies[kept] = merge(m_elementsReadThroughLostFamilies[kept], m_elementsReadThroughLostFamilies[absorbed], [&](FlowNodeID aggregate) {
@@ -5608,6 +5815,15 @@ void LinkFlow::unite(SiteID one, SiteID other)
         }
         addEdge(held.node, ofKept);
         addEdge(ofKept, held.node);
+    }
+
+    for (NodeOnDemand kind : { NodeOnDemand::WhatStandsAbove, NodeOnDemand::WhatStandsBelow }) {
+        FlowNodeID ofAbsorbed = findNodeOnDemand(kind, united.absorbed | siteAmongNodesOnDemand, { });
+        if (!ofAbsorbed)
+            continue;
+        FlowNodeID ofKept = nodeOnDemand(kind, united.kept | siteAmongNodesOnDemand, { }).first;
+        addEdge(ofAbsorbed, ofKept);
+        addEdge(ofKept, ofAbsorbed);
     }
 
     siteKept.isClimbedFrom |= absorbed.isClimbedFrom;

@@ -290,6 +290,17 @@ private:
     TypeID joined(TypeID held, TypeID arriving);
     OperandTypes collectOperandTypesOfOperation(const BodyValue&);
     bool collectOperandTypesOfRead(const BodyValue&);
+    void lookAtOperationThatMayNameScopes(const BodyValue&);
+    ValueID operandOfWhichOperationOnlyBorrowsScopes(const BodyValue&);
+    bool noteScopesNamedBy(ValueID mentioned, Reference, bool areOnlyBorrowed);
+    struct CallThatTakesMention {
+        ValueID call;
+        std::optional<uint32_t> argument;
+    };
+    CallThatTakesMention callThatTakesWhatIsMentioned(ValueID mentioned);
+    bool callMayBeCopied(const BodyValue& call, std::optional<uint32_t> argumentThatCalleeMustOnlyCall);
+    bool addFieldsStoredThroughWhatIsMentioned(ValueID mentioned, Reference, Vector<FieldReference, 4>&);
+    void noteFieldStoredInTurns(const BodyValue& store);
     TypeID typeByRow(const BodyValue&, OperandTypes);
     TypeID typeOfResultAt(const BodyValue&);
     bool iteratesOverListOfCall(const BodyValue&);
@@ -333,10 +344,24 @@ private:
     Vector<bool, 8> m_isLostOutermost;
     Vector<bool, 8> m_isSteppedOnDoublesOutermost;
     bool m_mentionsLetLeave { true };
-    Vector<Reference, 4> m_objectsLeftAsTheyAre;
+    ValueID m_operandOfWhichScopesAreOnlyBorrowed;
+    const BodyValue* m_operationLookedAt { nullptr };
+    using SetOfRecords = HashSet<uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>;
+    SetOfRecords m_scopesNamedInTurns;
+    SetOfRecords m_scopesLentOrLeftInTurns;
+    Vector<FieldReference, 4> m_fieldsOfScopesStoredInTurns;
+    Vector<FieldReference, 4> m_fieldsOfScopesStoredByCallsInTurns;
+    struct ReadOutOfFreshObject {
+        Reference object;
+        ValueID read;
+        uint32_t operandIndex;
+        TypeID typeOfKey;
+    };
+    Vector<ReadOutOfFreshObject, 4> m_readsOutOfFreshObjects;
     bool m_hasLostTypes { false };
     bool m_countsOnListsTestedInFront { false };
     bool m_countsOnViewsTestedInFront { false };
+    bool m_countsOnMembersAbovePrimitives { false };
     bool m_countsOnTurnsThatBeginAgain { false };
     bool m_nothingWasDoneInTurn { false };
     bool m_takesEffectsOfCopiesFromTheirOperations { false };
@@ -344,6 +369,7 @@ private:
     bool m_hasFoundOtherCode { false };
     ValueID m_firstOperationThatRunsOtherCode;
     bool m_otherCodeRunsInLoopInside { false };
+    bool m_calleeIsKnownByTypeAlone { false };
     Vector<GuessCountedOnByLooks, 4> m_guessesCountedOn;
     bool m_lastOperationMayRunOtherCode { false };
     bool m_hasLookedAtCopy { false };
@@ -576,8 +602,18 @@ std::optional<LoopPreview> LooksAtLoops::preview(std::span<const TypeID> entryTy
         return std::nullopt;
     bool turnsEndElementsOfFreshObjects = !m_effects.mayRunOtherCode() && m_effects.writes.containsAny(AbstractHeapSet { AbstractHeap::TypedArrayElements, AbstractHeap::TypedArrayStorage });
     if (m_hasLostTypes || turnsEndElementsOfFreshObjects) {
-        for (Reference object : m_objectsLeftAsTheyAre)
-            m_walker.letLeave(object);
+        for (const ReadOutOfFreshObject& noted : m_readsOutOfFreshObjects)
+            m_walker.letLeaveInFrontOfLoopLookedAt(noted.object);
+    }
+    for (const ReadOutOfFreshObject& noted : m_readsOutOfFreshObjects) {
+        if (!noted.typeOfKey || readLeavesFreshObjectAsItIs(m_walker, index().value(noted.read), noted.operandIndex, noted.object, noted.typeOfKey))
+            continue;
+        if (m_countsOnTurnsThatBeginAgain)
+            return std::nullopt;
+        if (!m_firstOperationThatRunsOtherCode && !m_effects.mayRunOtherCode())
+            m_firstOperationThatRunsOtherCode = noted.read;
+        m_effects.merge(Effects::unknownCode());
+        break;
     }
 
     LoopPreview result;
@@ -585,7 +621,19 @@ std::optional<LoopPreview> LooksAtLoops::preview(std::span<const TypeID> entryTy
     result.guessesCountedOn = WTF::move(m_guessesCountedOn);
     result.firstOperationThatRunsOtherCode = m_firstOperationThatRunsOtherCode;
     result.otherCodeRunsInLoopInside = m_otherCodeRunsInLoopInside;
+    result.countsOnMembersAbovePrimitives = m_countsOnMembersAbovePrimitives;
     result.hasLetMentionsLeave = true;
+    if (!m_scopesNamedInTurns.isEmpty()) {
+        result.fieldsOfScopesThatTurnsStore = WTF::move(m_fieldsOfScopesStoredInTurns);
+        result.fieldsOfScopesThatCallsInTurnsStore = WTF::move(m_fieldsOfScopesStoredByCallsInTurns);
+        for (uint32_t scope : m_scopesNamedInTurns) {
+            if (!m_scopesLentOrLeftInTurns.contains(scope))
+                result.scopesThatTurnsOnlyBorrow.append(Reference::value(ValueID(scope)));
+        }
+        std::ranges::sort(result.scopesThatTurnsOnlyBorrow, { }, [](Reference scope) {
+            return scope.id().index();
+        });
+    }
     keepIntegersThatTurnsTakeAsIntegers();
     result.parametersSteppedOnDoubles = WTF::move(m_isSteppedOnDoublesOutermost);
     for (uint32_t parameter = 0; parameter < head.numberOfParameters(); ++parameter) {
@@ -622,6 +670,13 @@ void LooksAtLoops::settle(LoopID loop)
     uint32_t numberOfParameters = head.numberOfParameters();
 
     size_t depth = m_stretch.openLoops.size();
+    Vector<TypeID, 8> heldWhereTheyComeRound;
+    for (uint32_t parameter = 0; parameter < numberOfParameters && !depth && !isLookingAtCopy(); ++parameter) {
+        if (TypeID held = m_walker.typeThatCounterIsHeldTo(head.id(), parameter)) {
+            heldWhereTheyComeRound.grow(numberOfParameters);
+            heldWhereTheyComeRound[parameter] = held;
+        }
+    }
     KeptOfLoop* kept = m_kept ? &keptOf(loop) : nullptr;
     Vector<TypeID, 8> assumed = m_stretch.settledParametersOfLoops.take(loop.index());
     if (kept && assumed.isEmpty() && depth && m_stretch.openLoops[depth - 1].loopsInsideCountAsSettled && kept->isKept)
@@ -637,7 +692,7 @@ void LooksAtLoops::settle(LoopID loop)
             assumed[parameter] = joined(assumed[parameter], least);
     }
 
-    if (kept && takeWhatIsKeptOf(loop, *kept, head, assumed.span()))
+    if (kept && heldWhereTheyComeRound.isEmpty() && takeWhatIsKeptOf(loop, *kept, head, assumed.span()))
         return;
 
     m_hasMadeLooks = true;
@@ -669,6 +724,13 @@ void LooksAtLoops::settle(LoopID loop)
         m_nothingWasDoneInTurn = false;
         if (m_hasFoundOtherCode)
             break;
+        for (uint32_t parameter = 0; parameter < heldWhereTheyComeRound.size(); ++parameter) {
+            TypeID& cameRound = m_stretch.openLoops[depth].typesThatCameRound[parameter];
+            if (!cameRound || !heldWhereTheyComeRound[parameter])
+                continue;
+            TypeID left = m_arena.intersectionOf(cameRound, heldWhereTheyComeRound[parameter]);
+            cameRound = isNeverType(left) ? TypeID() : left;
+        }
 
         bool holds = true;
         for (uint32_t parameter = 0; parameter < numberOfParameters; ++parameter) {
@@ -719,6 +781,7 @@ void LooksAtLoops::settle(LoopID loop)
         Effects effects = std::exchange(m_effects, effectsAround);
         m_effects.merge(effects);
         keep(loop, *kept, head, WTF::move(closed), WTF::move(start), effects, isLost.contains(true), lastLookAssumedWhatIsSettled);
+        kept->isKept &= heldWhereTheyComeRound.isEmpty();
     }
     if (!depth)
         m_isLostOutermost = WTF::move(isLost);
@@ -903,7 +966,10 @@ void LooksAtLoops::lookAtBlock(BodyBlock block)
     m_firstBound = first;
 
     for (BodyValue operation : block.values()) {
-        lookAtOperation(operation);
+        if (m_walker.unitHasMadeScopes())
+            lookAtOperationThatMayNameScopes(operation);
+        else
+            lookAtOperation(operation);
         if (m_asksOnlyWhetherTurnsRunOtherCode && (!isLookingAtCopy() || m_takesEffectsOfCopiesFromTheirOperations) && m_effects.mayRunOtherCode()) {
             m_hasFoundOtherCode = true;
             return;
@@ -969,6 +1035,10 @@ void LooksAtLoops::lookAtOperationAsTyped(const BodyValue& operation)
     if (countsOnGuesses && operation.opcode() == Opcode::PropGet && !operation.isFreeName()) {
         if (TypeID function = typeThatLookAtCalledSlotWouldProve(m_walker, operation, operands[OperandIndex::PropGet::object]))
             byRow = function;
+        else if (TypeID member = typeFoundAbovePrimitiveBehindWatch(m_walker, operation, operands[OperandIndex::PropGet::object])) {
+            m_countsOnMembersAbovePrimitives = true;
+            byRow = member;
+        }
     }
     noteStepMadeOnDoubles(operation, operands, byRow);
     if (leavesFreshObjectAsItIs)
@@ -976,8 +1046,9 @@ void LooksAtLoops::lookAtOperationAsTyped(const BodyValue& operation)
     else if (!m_countsOnTurnsThatBeginAgain) {
         if (!isLookingAtCopy()) {
             bool ranOtherCode = m_firstOperationThatRunsOtherCode || m_effects.mayRunOtherCode();
+            m_calleeIsKnownByTypeAlone = false;
             addEffectsOf(operation, operands, byRow);
-            if (!ranOtherCode && m_effects.mayRunOtherCode()) {
+            if (!ranOtherCode && (m_effects.mayRunOtherCode() || m_calleeIsKnownByTypeAlone)) {
                 m_firstOperationThatRunsOtherCode = operation.id();
                 m_otherCodeRunsInLoopInside = m_stretch.openLoops.size() > 1;
             }
@@ -1241,11 +1312,13 @@ void LooksAtLoops::addEffectsOf(const BodyValue& operation, OperandTypes operand
     if (effectRuleOf(opcode) == EffectRule::Call) {
         const LinkTables& linked = m_walker.facts().linked();
         FunctionID callee = linked.calleeAt(m_stretch.function, operation.id());
-        if (!callee && m_nothingWasDoneInTurn && (opcode == Opcode::Call || opcode == Opcode::Construct) && operands[OperandIndex::Call::callee] && m_arena.at(operands[OperandIndex::Call::callee]).isObject())
+        if (!callee && (m_nothingWasDoneInTurn || !m_countsOnTurnsThatBeginAgain) && (opcode == Opcode::Call || opcode == Opcode::Construct) && operands[OperandIndex::Call::callee] && m_arena.at(operands[OperandIndex::Call::callee]).isObject()) {
             callee = singleFunctionOf(m_arena, m_arena.at(operands[OperandIndex::Call::callee]));
+            m_calleeIsKnownByTypeAlone = !!callee;
+        }
         if (callee && callee.index() < linked.functions.size()) {
-            effectsOfCallee = linked.function(callee).effectsOnReturn;
-            effectsOfCallee.merge(linked.function(callee).effectsOnThrow);
+            effectsOfCallee = linked.function(callee).effectsOnReturn();
+            effectsOfCallee.merge(linked.function(callee).effectsOnThrow());
             foundByLink = &effectsOfCallee;
         }
     }
@@ -1436,8 +1509,12 @@ TypeID LooksAtLoops::typeOf(ValueID value)
     TypeID type;
     if (value.index() < m_stretch.firstValue) {
         if (Reference reference = m_walker.referenceOf(value); reference && reference.isRecord()) {
-            if (m_stretch.outermost && m_mentionsLetLeave)
-                m_walker.letLeave(reference);
+            if (m_stretch.outermost && m_mentionsLetLeave) {
+                if (m_walker.unitHasMadeScopes() && noteScopesNamedBy(value, reference, value == m_operandOfWhichScopesAreOnlyBorrowed))
+                    m_walker.letLeaveAtMentionThatOnlyBorrowsScopes(reference);
+                else
+                    m_walker.letLeaveInFrontOfLoopLookedAt(reference);
+            }
             type = m_walker.code().at(reference.id()).type;
             if (TypeID seenByLooks = typeOfRecordForLooks(m_walker, type); seenByLooks != type) {
                 doNotKeep();
@@ -1498,11 +1575,139 @@ bool LooksAtLoops::collectOperandTypesOfRead(const BodyValue& read)
             return;
         if (readLeavesFreshObjectAsItIs(m_walker, read, operandIndex, reference, typeOfKey)) {
             leavesFreshObjectAsItIs = true;
-            m_objectsLeftAsTheyAre.append(reference);
-        } else
-            m_walker.letLeave(reference);
+            m_readsOutOfFreshObjects.append({ reference, read.id(), operandIndex, typeOfKey });
+        } else {
+            if (m_walker.unitHasMadeScopes())
+                noteScopesNamedBy(operand, reference, false);
+            m_walker.letLeaveInFrontOfLoopLookedAt(reference);
+        }
     });
     return leavesFreshObjectAsItIs;
+}
+
+void LooksAtLoops::lookAtOperationThatMayNameScopes(const BodyValue& operation)
+{
+    SetForScope onlyBorrowed(m_operandOfWhichScopesAreOnlyBorrowed, operandOfWhichOperationOnlyBorrowsScopes(operation));
+    SetForScope lookedAt(m_operationLookedAt, &operation);
+    if (operation.opcode() == Opcode::PutEnvironmentField)
+        noteFieldStoredInTurns(operation);
+    lookAtOperation(operation);
+}
+
+bool LooksAtLoops::noteScopesNamedBy(ValueID mentioned, Reference reference, bool areOnlyBorrowed)
+{
+    Vector<Reference, 2> named;
+    m_walker.listScopesThatValueNames(reference, named);
+    if (named.isEmpty())
+        return areOnlyBorrowed;
+    CallThatTakesMention taker = callThatTakesWhatIsMentioned(mentioned);
+    bool isCalled = taker.call && !taker.argument;
+    bool isCopied = taker.call && callMayBeCopied(index().value(taker.call), taker.argument);
+    bool stayInSight = !m_walker.loopsLetScopesLeave() && (areOnlyBorrowed || isCopied || isCalled) && addFieldsStoredThroughWhatIsMentioned(mentioned, reference, m_fieldsOfScopesStoredInTurns);
+    for (Reference scope : named) {
+        m_scopesNamedInTurns.add(scope.id().index());
+        if (!stayInSight)
+            m_scopesLentOrLeftInTurns.add(scope.id().index());
+    }
+    if (!stayInSight)
+        return false;
+    doNotKeep();
+    if (isCalled && !isCopied)
+        addFieldsStoredThroughWhatIsMentioned(mentioned, reference, m_fieldsOfScopesStoredByCallsInTurns);
+    return areOnlyBorrowed;
+}
+
+auto LooksAtLoops::callThatTakesWhatIsMentioned(ValueID mentioned) -> CallThatTakesMention
+{
+    if (!m_operationLookedAt || isLookingAtCopy())
+        return { };
+    ValueID handed = mentioned;
+    ValueID taker = m_operationLookedAt->id();
+    if (m_operationLookedAt->opcode() == Opcode::NewClosure || inputOperationsThatOnlyHandOn.contains(m_operationLookedAt->opcode())) {
+        do {
+            handed = taker;
+            taker = index().onlyUsingValue(handed);
+        } while (taker && inputOperationsThatOnlyHandOn.contains(index().opcodeOf(taker)));
+    }
+    if (!taker || index().opcodeOf(taker) != Opcode::Call)
+        return { };
+    auto call = index().value(taker).as<Opcode::Call>();
+    uint32_t mentions = 0;
+    index().value(taker).forEachOperand([&](ValueID operand, uint32_t) {
+        mentions += operand == handed;
+    });
+    if (mentions != 1)
+        return { };
+    if (call.calleeOperand() == handed)
+        return { taker, std::nullopt };
+    std::span<const ValueID> arguments = call.argumentsOperands();
+    size_t position = std::ranges::find(arguments, handed) - arguments.begin();
+    if (position == arguments.size())
+        return { };
+    return { taker, static_cast<uint32_t>(position) };
+}
+
+bool LooksAtLoops::callMayBeCopied(const BodyValue& call, std::optional<uint32_t> argumentThatCalleeMustOnlyCall)
+{
+    SetForScope withoutLeaving(m_mentionsLetLeave, false);
+    TypeID typeOfCallee = typeOf(call.calleeOperand());
+    Draft site(Opcode::Call);
+    site.flags = static_cast<uint8_t>(call.flags());
+    copyFields(call, site, [](ValueID operand) {
+        return Reference::value(operand);
+    });
+    PlaceOfCall place { m_stretch.function, true, &index(), call.id() };
+    const LinkTables& linked = m_walker.facts().linked();
+    auto onlyCallsArgument = [&](FunctionID callee) {
+        if (!argumentThatCalleeMustOnlyCall)
+            return true;
+        unsigned entryParameter = m_typing.program.at(callee).firstParameterIndex() + *argumentThatCalleeMustOnlyCall;
+        return linked.onlyCallsWhatArrivesAt(callee, entryParameter) && !linked.parametersOf(callee)[entryParameter].isCapturedWhereOnlyCalled;
+    };
+    auto mayBeCopied = [&](FunctionID callee) {
+        return callee && !m_calleesLookedAt.contains(callee) && onlyCallsArgument(callee) && mayCopyCallee(m_walker, site, callee, place);
+    };
+    if (mayBeCopied(onlyCalleeOf(m_typing, typeOfCallee)) || mayBeCopied(findLibraryFunctionBehindBuiltin(m_walker, typeOfCallee)))
+        return true;
+    return std::ranges::any_of(findLibraryFunctionsBehindBuiltin(m_walker, typeOfCallee).named, mayBeCopied);
+}
+
+bool LooksAtLoops::addFieldsStoredThroughWhatIsMentioned(ValueID mentioned, Reference reference, Vector<FieldReference, 4>& stored)
+{
+    if (!m_operationLookedAt || m_operationLookedAt->opcode() != Opcode::NewClosure)
+        return m_walker.addFieldsThatClosureStores(reference, stored);
+    auto made = m_operationLookedAt->as<Opcode::NewClosure>();
+    bool hasFoundEveryStore = true;
+    uint32_t position = 0;
+    for (ValueID capture : made.capturesOperands()) {
+        if (capture == mentioned)
+            hasFoundEveryStore &= m_walker.addFieldsThatFunctionStoresIntoCapture(made.function(), position, stored);
+        ++position;
+    }
+    return hasFoundEveryStore;
+}
+
+ValueID LooksAtLoops::operandOfWhichOperationOnlyBorrowsScopes(const BodyValue& operation)
+{
+    Opcode opcode = operation.opcode();
+    bool isAccess = opcode == Opcode::GetEnvironmentField || opcode == Opcode::PutEnvironmentField;
+    if ((!isAccess && opcode != Opcode::Call) || isLookingAtCopy() || m_walker.loopsLetScopesLeave())
+        return { };
+    ValueID borrowed = isAccess ? operation.environmentOperand() : operation.calleeOperand();
+    uint32_t mentions = 0;
+    operation.forEachOperand([&](ValueID operand, uint32_t) {
+        mentions += operand == borrowed;
+    });
+    return mentions == 1 ? borrowed : ValueID();
+}
+
+void LooksAtLoops::noteFieldStoredInTurns(const BodyValue& store)
+{
+    auto written = store.as<Opcode::PutEnvironmentField>();
+    if (!m_walker.unitHasMadeScopeOf(written.layout()))
+        return;
+    doNotKeep();
+    m_fieldsOfScopesStoredInTurns.appendIfNotContains(FieldReference { written.layout(), written.field() });
 }
 
 TypeID LooksAtLoops::typeByRow(const BodyValue& operation, OperandTypes operands)
@@ -1625,7 +1830,7 @@ TypeID LooksAtLoops::withWhatCopyReturns(const BodyValue& call, OperandTypes ope
                 byRow = joined(byRow, resultTypeOf(m_typing, direct, OperandTypes { }));
                 if ((behind.enteredByValue && named != behind.enteredByValue) || m_calleesLookedAt.contains(named) || !mayCopyCallee(m_walker, m_draft, named, placeOfCopy))
                     continue;
-                if (behind.enteredByValue && (isLookingAtCopy() || m_walker.depthOfCopies() || call.argumentsOperands().empty() || !mayBeLeafHandedToMethodOfLists(m_walker, typeOf(call.argumentsOperands()[0]))))
+                if (behind.enteredByValue && (isLookingAtCopy() || !m_walker.walksOwnBodyOfUnit() || call.argumentsOperands().empty() || !mayBeLeafHandedToMethodOfLists(m_walker, typeOf(call.argumentsOperands()[0]))))
                     continue;
                 m_nothingWasDoneInTurn = false;
                 return m_anything;
@@ -1994,8 +2199,8 @@ bool Walker::looksAtLoopsAroundHaveCounted(const Draft& draft, const Effects& ef
     FunctionID callee = linked.calleeAt(currentFunction(), draft.inputValueGiven);
     if (!callee)
         return false;
-    Effects ofCallee = linked.function(callee).effectsOnReturn;
-    ofCallee.merge(linked.function(callee).effectsOnThrow);
+    Effects ofCallee = linked.function(callee).effectsOnReturn();
+    ofCallee.merge(linked.function(callee).effectsOnThrow());
     return looksAtLoopsAroundHaveSeen(effectsOf(typing(), draft, typesOfOperands(draft), { }, &ofCallee));
 }
 

@@ -106,7 +106,7 @@ static Vector<CompiledCode> recordBodies()
 {
     CodeSketch withHandler = sketchWithSite(3, 48);
     uint32_t handlerOffset = withHandler.plain(0x2000);
-    withHandler.code().sites.handlers.append(SiteHandler { 1, handlerOffset, HandlerType::Catch });
+    withHandler.code().sites.rareLists.ensure().handlers.append(SiteHandler { 1, handlerOffset, HandlerType::Catch });
     withHandler.end();
     return bodies(plainBody(1, 32), plainBody(2, 48), withHandler.take(), jumpToStubBody(4));
 }
@@ -229,7 +229,7 @@ static SUPPRESS_ASAN void testSampleInNativeCode()
 static CompiledCode bodyWithFrameMap(uint32_t function, const Vector<uint32_t>& frameMapWords)
 {
     CodeSketch sketch = sketchWithSite(function, 16);
-    sketch.code().sites.frameMapWords = frameMapWords;
+    sketch.code().sites.rareLists.ensure().frameMapWords = frameMapWords;
     sketch.end();
     return sketch.take();
 }

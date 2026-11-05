@@ -32,7 +32,8 @@ struct DeleterOfLooksAtBodies {
     void operator()(LooksAtBodies*) const;
 };
 using OwnedLooksAtBodies = std::unique_ptr<LooksAtBodies, DeleterOfLooksAtBodies>;
-OwnedLooksAtBodies lookAtBodies(const Program&, const BodyIndexTable&, const ThinSummaries&, BuildContext&);
+OwnedLooksAtBodies makeEmptyLooksAtBodies(const BodyIndexTable&);
+void lookAtBodies(LooksAtBodies&, const Program&, const ThinSummaries&, BuildContext&);
 const BodyIndexTable& bodiesLookedAt(const LooksAtBodies&);
 class FieldsOfNumbers;
 struct LinkTables;

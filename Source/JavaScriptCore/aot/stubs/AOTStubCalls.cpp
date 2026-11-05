@@ -310,13 +310,14 @@ void StubCalls::describeCalls(std::span<const Relocation> relocations, CodeBody&
 {
     for (size_t index = 0; index < m_stubKeys.size(); ++index) {
         if (std::optional<uint32_t> mention = m_mentionsOfImmediates[index])
-            body.numberedStubKeys.append({ safeCast<uint32_t>(index), *mention });
+            body.rareLists.ensure().numberedStubKeys.append({ safeCast<uint32_t>(index), *mention });
     }
     m_mentionsOfImmediates.clear();
     m_placesOfStubKeys.clear();
     body.stubKeys = WTF::move(m_stubKeys);
     body.callees = WTF::move(m_callees);
-    body.argumentMoves = WTF::move(m_argumentMoves);
+    body.argumentMoves = ArgumentMovesOfUnit(m_argumentMoves.span());
+    m_argumentMoves.clear();
     size_t numberOfReturnSites = body.returnSites.size();
     body.returnSites.reserveCapacity(numberOfReturnSites + m_calls.size());
     body.returnSites.grow(numberOfReturnSites + m_calls.size());

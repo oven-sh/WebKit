@@ -109,7 +109,7 @@ static CodeReportFormTotals sumCodeReportBytesByForm(const LinkedFunctions& unit
     forEachIndexInParallel(loops, chunks.size(), [&](unsigned chunk, unsigned worker) {
         CodeReportFormTotals& totals = totalsOfThreads[worker];
         for (unsigned position = chunks.firstIndexOf[chunk]; position < chunks.firstIndexOf[chunk + 1]; ++position) {
-            for (const BytesOfForm& entry : units[position].bytesByForm) {
+            for (const BytesOfForm& entry : units[position].measurements->bytesByForm) {
                 CodeReportFormTotal& total = totals.add(keyOfCodeReportForm(entry), CodeReportFormTotal { }).iterator->value;
                 total.count += entry.count;
                 total.bytes += entry.bytes;

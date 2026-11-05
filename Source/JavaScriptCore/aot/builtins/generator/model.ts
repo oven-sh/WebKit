@@ -549,6 +549,7 @@ export interface ModelSlot {
   holds: ModelType | null;
   internalField: number | null;
   holdsWhatStepsHandOut: boolean;
+  holdsWhatIsThrown: boolean;
 }
 
 export interface ModelTypeName {

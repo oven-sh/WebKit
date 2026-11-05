@@ -48,9 +48,7 @@ static constexpr OperandUses usesThatKeepFreshObjectHere {
     OperandUse::StoresByKey,
     OperandUse::DeletesByKey,
     OperandUse::AssignsFrom,
-    OperandUse::DefinesName,
     OperandUse::ChangesIntegrity,
-    OperandUse::ChangesPrototype,
 };
 
 namespace {
@@ -58,6 +56,7 @@ namespace {
 struct FreshOperandOfEscapeAnalysis {
     Reference object;
     uint32_t operandIndex { 0 };
+    bool isHeldByClosure { false };
 };
 
 } // anonymous namespace
@@ -149,16 +148,23 @@ static void noteWhatNewObjectFillsIn(Walker& walker, Reference object, const Ope
 {
     const Program& program = walker.program();
     LayoutID layout = made.layout();
-    if (made.prototypeOperand() && program.prototypeMaySelectOtherClass(layout))
-        return;
     if (!walker.plan().layout(layout).hasSlots())
         return;
 
     WalkState& state = walker.state();
-    bool isEnvironment = program.at(layout).isEnvironment();
-    state.noteShape(object, isEnvironment ? walker.types().forEnvironment(layout) : walker.types().forLayout(layout));
     std::span<const FieldIndex> fillers = walker.fillersOfAllocation(object);
     bool isAsAllocated = fillers.empty() && (numberOfFieldsWritten == SIZE_MAX || made.fields().size() == numberOfFieldsWritten);
+    if (made.prototypeOperand() && program.prototypeMaySelectOtherClass(layout)) {
+        std::optional<PlacedAllocation> placed = isAsAllocated ? walker.plan().allocation(program, layout, made.fields()) : std::nullopt;
+        if (placed && placed->orderWord == unorderedOrderWord)
+            state.noteOrderWord(object, unorderedOrderWord);
+        return;
+    }
+
+    bool isEnvironment = program.at(layout).isEnvironment();
+    if (isEnvironment)
+        walker.noteScopeThatUnitMakes(layout);
+    state.noteShape(object, isEnvironment ? walker.types().forEnvironment(layout) : walker.types().forLayout(layout));
     if (!isEnvironment) {
         OptionSet<FactOfCell> facts { FactOfCell::NotFrozen };
         if (!made.prototypeOperand())
@@ -361,6 +367,72 @@ std::optional<Vector<PropertyOfFreshObject, 8>> propertiesOfFreshObject(Walker& 
         properties.append({ field, value });
     }
     return properties;
+}
+
+static constexpr OpcodeSet readsThatProveNoSlotFilledInEscapeAnalysis { Opcode::GetSlotOrUndefined, Opcode::GetDeferredClosureSlotOrUndefined };
+
+std::optional<ObjectsThatMeet> findObjectsThatMeetAsOne(Walker& walker, std::span<const WalkState* const> ways, std::span<const Reference> arguments, uint32_t firstRecordBehindParting)
+{
+    const Code& code = walker.code();
+    ObjectsThatMeet met;
+    LayoutID layout;
+    Vector<Reference, 4> cells;
+    for (size_t way = 0; way < ways.size(); ++way) {
+        if (!arguments[way] || !arguments[way].isValue())
+            return std::nullopt;
+        ValueID cell = rootOfCellInSweptCode(code, arguments[way].id());
+        if (code.isConstant(cell) || cell.index() < firstRecordBehindParting)
+            return std::nullopt;
+        const Operation& made = code.at(cell);
+        Reference object = Reference::value(cell);
+        const WalkState& state = *ways[way];
+        if (made.opcode != Opcode::NewObject || made.prototypeOperand() || !state.isFresh(object))
+            return std::nullopt;
+        TypeID shape = state.shapeOf(object);
+        std::optional<uint32_t> orderWord = state.orderWordOf(object);
+        if (!shape || !orderWord || walker.program().at(made.layout()).isEnvironment())
+            return std::nullopt;
+        if (!way) {
+            layout = made.layout();
+            met.shape = shape;
+            met.orderWord = *orderWord;
+            met.facts = state.factsOfCell(object);
+        } else if (made.layout() != layout || shape != met.shape || *orderWord != met.orderWord)
+            return std::nullopt;
+        else
+            met.facts = met.facts & state.factsOfCell(object);
+        cells.append(object);
+    }
+
+    for (const WalkState::SlotOfObject& first : ways[0]->listSlotsOf(cells[0])) {
+        ObjectsThatMeet::Slot slot { first.field, first.value, { } };
+        bool everyWayKnowsIt = true;
+        for (size_t way = 0; way < ways.size() && everyWayKnowsIt; ++way) {
+            Reference value = ways[way]->slot(cells[way], first.field);
+            TypeID type = value && value.isRecord() && !isClosureLeftUnmade(walker, value) ? walker.typeOf(value) : TypeID();
+            everyWayKnowsIt = type && !(walker.types().at(type).primitives & Primitive::Absent)
+                && !(value.isValue() && (readsThatProveNoSlotFilledInEscapeAnalysis.contains(code.at(value.id()).opcode) || rootOfCellInSweptCode(code, value.id()) == cells[way].id()));
+            if (value != first.value)
+                slot.valueOnEveryWay = { };
+            slot.valuesOfWays.append(value);
+        }
+        if (everyWayKnowsIt)
+            met.slots.append(WTF::move(slot));
+    }
+    return met;
+}
+
+void noteObjectsThatHaveMetAsOne(Walker& walker, Reference parameter, const ObjectsThatMeet& met, std::span<const Reference> parametersOfSlots)
+{
+    WalkState& state = walker.state();
+    state.noteShape(parameter, met.shape);
+    state.noteFactsOfCell(parameter, met.facts);
+    state.noteOrderWord(parameter, met.orderWord);
+    size_t numberOfParametersTaken = 0;
+    for (const ObjectsThatMeet::Slot& slot : met.slots)
+        state.noteSlot(parameter, slot.field, slot.valueOnEveryWay ? slot.valueOnEveryWay : parametersOfSlots[numberOfParametersTaken++]);
+    state.noteFresh(parameter);
+    walker.countObjectsMetAsOne(parameter.id());
 }
 
 void noteListMadeByCaller(Walker& walker, Reference list)
@@ -642,6 +714,7 @@ static bool useLetsFreshObjectLeave(const OperandInfo& info, bool runsOtherCode)
     return runsOtherCode && !info.uses.contains(OperandUse::ReadsContents);
 }
 
+static constexpr OpcodeSet opcodesThatMayBorrowScopesInEscapeAnalysis { Opcode::NewClosure, Opcode::Call, Opcode::CallResolved, Opcode::CallDirect };
 static constexpr OpcodeSet appendsFollowedByEscapeAnalysis { Opcode::AppendElement, Opcode::AppendHole };
 static_assert(!OperandIndex::AppendElement::array && !OperandIndex::AppendHole::array);
 
@@ -715,16 +788,43 @@ static bool followStoreIntoFreshObject(Walker& walker, const Draft& store, const
     return true;
 }
 
+bool nothingButOwnFieldsAnswersFor(const Program& program, const Operation& made)
+{
+    if (made.opcode != Opcode::NewObject || made.prototypeOperand())
+        return false;
+    const Layout& layout = program.at(made.layout());
+    return layout.kind == LayoutKind::Record && !layout.constructor && !layout.has(LayoutFlags::IsConstructorFunction) && !layout.has(LayoutFlags::IsOfCreatedObject) && !objectPrototypeMayGainName(program);
+}
+
+static bool calleeOnlyLooksAtFreshCell(Walker& walker, const Draft& call, const FreshOperandOfEscapeAnalysis& operand)
+{
+    uint32_t numberOfNamedOperands = call.numberOfNamedOperands();
+    if (call.opcode != Opcode::CallDirect || operand.isHeldByClosure || operand.operandIndex < numberOfNamedOperands || !returnsResultOfFunction(call.role()) || call.numberOfBoundArguments())
+        return false;
+    return linkTablesForEscapeAnalysis(walker).onlyLooksAtWhatArrivesAt(call.function(), operand.operandIndex - numberOfNamedOperands) && nothingButOwnFieldsAnswersFor(walker.program(), walker.code().at(operand.object.id()));
+}
+
 void markEscapingOperands(Walker& walker, const Draft& draft, const Effects* foundByCaller)
 {
     Opcode opcode = draft.opcode;
     if (!walker.state().holdsFreshObjects() || !draft.numberOfOperands() || opcodesThatGiveSameCell.contains(opcode))
         return;
 
+    bool closuresHoldScopes = walker.closuresHoldScopes();
     Vector<FreshOperandOfEscapeAnalysis, 4> freshOperands;
     draft.forEachOperand([&](Reference operand, uint32_t operandIndex) {
         if (Reference object = freshObjectNamedBy(walker, operand))
             freshOperands.append({ object, operandIndex });
+        if (!closuresHoldScopes || !operand || !operand.isValue())
+            return;
+        const Code& code = walker.code();
+        const Operation& named = code.at(rootOfCellInSweptCode(code, operand.id()));
+        if (named.opcode != Opcode::NewClosure)
+            return;
+        for (ValueID capture : named.capturesOperands()) {
+            if (Reference scope = capture && !code.isConstant(capture) ? freshObjectNamedBy(walker, Reference::value(capture)) : Reference())
+                freshOperands.append({ scope, operandIndex, true });
+        }
     });
     if (freshOperands.isEmpty())
         return;
@@ -738,18 +838,24 @@ void markEscapingOperands(Walker& walker, const Draft& draft, const Effects* fou
 
     if (opcode == Opcode::CallDirect && returnsResultOfFunction(draft.role()) && !draft.numberOfBoundArguments()) {
         const LinkedFunction& callee = linkTablesForEscapeAnalysis(walker).function(draft.function());
-        effects = callee.effectsOnReturn;
-        effects.merge(callee.effectsOnThrow);
+        effects = callee.effectsOnReturn();
+        effects.merge(callee.effectsOnThrow());
     }
 
     uint32_t numberOfNamedOperands = draft.numberOfNamedOperands();
     bool someObjectHasLeft = false;
     for (const FreshOperandOfEscapeAnalysis& operand : freshOperands) {
-        // Wrong on purpose. No value shows it: Walker::endLivesOfCellsThatHaveNotLeft().
         if (opcode == Opcode::CallDirect && operand.operandIndex >= numberOfNamedOperands && walker.takesCalleesToKeepNothing())
             continue;
-        if (!doesGenericOperation && !useLetsFreshObjectLeave(operandInfoOf(opcode, std::min(operand.operandIndex, numberOfNamedOperands)), runsOtherCode))
+        if (calleeOnlyLooksAtFreshCell(walker, draft, operand))
             continue;
+        if (walker.unitHasMadeScopes() && opcodesThatMayBorrowScopesInEscapeAnalysis.contains(opcode) && walker.operationOnlyBorrowsScope(draft, operand.object, operand.operandIndex, operand.isHeldByClosure))
+            continue;
+        bool handsOutWhatClosureHolds = operand.isHeldByClosure && opcode == Opcode::GetCapture;
+        if (!doesGenericOperation && !handsOutWhatClosureHolds && !useLetsFreshObjectLeave(operandInfoOf(opcode, std::min(operand.operandIndex, numberOfNamedOperands)), runsOtherCode))
+            continue;
+        if (closuresHoldScopes)
+            walker.noteThatWalkLetsScopeLeave(operand.object);
         state.markEscaped(operand.object);
         someObjectHasLeft = true;
     }
@@ -758,7 +864,7 @@ void markEscapingOperands(Walker& walker, const Draft& draft, const Effects* fou
 
     Vector<Reference, 4> lent;
     for (const FreshOperandOfEscapeAnalysis& operand : freshOperands) {
-        if (!state.isFresh(operand.object) || followStoreIntoFreshObject(walker, draft, operand))
+        if (!state.isFresh(operand.object) || (!operand.isHeldByClosure && followStoreIntoFreshObject(walker, draft, operand)))
             continue;
         state.markEscaped(operand.object);
         lent.append(operand.object);
