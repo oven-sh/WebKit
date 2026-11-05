@@ -1900,7 +1900,7 @@ static JSValue strMakeTrans(JSGlobalObject* globalObject, JSValue x, JSValue y, 
         return result;
     }
     PyDict* mapping = PyDict::tryFrom(x);
-    if (!mapping)
+    if (!mapping || !isExactDict(runtime(globalObject), mapping))
         return raiseTypeError(globalObject, scope, "if you give only one argument to maketrans it must be a dict"_s);
     JSValue key, value;
     for (unsigned position = 0; mapping->next(position, key, value);) {

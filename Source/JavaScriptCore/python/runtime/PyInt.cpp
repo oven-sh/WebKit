@@ -1132,7 +1132,9 @@ static JSValue intNew(JSGlobalObject* globalObject, JSValue cls, const CallArgs&
             return raiseTypeError(globalObject, scope, "int() missing string argument"_s);
         result = jsNumber(0);
     } else if (!baseValue) {
-        if (isStr(source) || isBytesLike(source))
+        // What a class derived from str or bytes says of itself comes before the text.
+        PyType* sourceType = rt.typeOf(source);
+        if ((isStr(source) || isBytesLike(source)) && !sourceType->lookup(Special::Int) && !sourceType->lookup(Special::Index))
             result = intFromTextObject(globalObject, source, 10);
         else if (isFloat(source) && !rt.typeOf(source)->isHeapType())
             result = intFromDouble(globalObject, floatValue(source));

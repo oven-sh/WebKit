@@ -702,7 +702,8 @@ static bool convertOperand(JSGlobalObject* globalObject, JSValue value, double& 
     if (isInt(value)) {
         VM& vm = getVM(globalObject);
         auto scope = DECLARE_THROW_SCOPE(vm);
-        number = toDouble(globalObject, value);
+        // The number it is, whatever the __float__ of its class says.
+        number = toDouble(globalObject, intValue(value));
         if (scope.exception()) {
             result = JSValue();
             return false;

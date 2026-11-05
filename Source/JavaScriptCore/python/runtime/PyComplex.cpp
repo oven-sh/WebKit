@@ -238,7 +238,8 @@ static bool realOperand(JSGlobalObject* globalObject, JSValue value, double& num
     }
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    number = toDouble(globalObject, value);
+    // The number it is, whatever the __float__ of its class says. (toDouble() does not ask that of a float.)
+    number = toDouble(globalObject, isInt(value) ? intValue(value) : value);
     if (scope.exception()) {
         result = JSValue();
         return false;
