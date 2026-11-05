@@ -176,6 +176,9 @@ void Runtime::initializeStructures()
     FOR_EACH_PY_CELL_CLASS(PY_CREATE_STRUCTURE)
 #undef PY_CREATE_STRUCTURE
     iteratorStructureID = structure<PyIterator>()->id();
+    RELEASE_ASSERT(structure<PyIterator>()->typeInfoBlob() == PyIterator::typeInfoBlob());
+    if (!Options::forceGCSlowPaths())
+        iteratorAllocator = subspaceFor<PyIterator>(vm)->allocatorForNonInline(sizeof(PyIterator), AllocatorForMode::EnsureAllocator);
     m_keywordNamesStructure.set(vm, globalObject, PyTuple::createKeywordNamesStructure(vm, globalObject));
     m_structures[static_cast<unsigned>(CellClass::PyException)].set(vm, globalObject, Structure::create(vm, globalObject, jsViewObject(JSViewObject::ExceptionPrototype), TypeInfo(PyExceptionType, PyException::StructureFlags), PyException::info()));
     JSObject* functionPrototype = jsViewObject(JSViewObject::FunctionPrototype);

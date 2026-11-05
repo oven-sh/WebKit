@@ -4303,7 +4303,11 @@ llintOpWithReturn(op_py_get_iter, OpPyGetIter, macro (size, get, dispatch, retur
     get(m_iterable, t1)
     loadConstantOrVariable(size, t1, t0)
     btqnz t0, notCellMask, .slow
-    bbneq JSCell::m_type[t0], PyGeneratorType, .slow
+    loadb JSCell::m_type[t0], t2
+    bbeq t2, ArrayType, .list
+    bbeq t2, PyTupleType, .tuple
+    bbeq t2, PyObjectType, .object
+    bbneq t2, PyGeneratorType, .slow
     bbneq (constexpr (Python::PyGenerator::offsetOfKind()))[t0], constexpr Python::PyGenerator::Kind::Generator, .slow
     loadPythonRuntime(t1)
     bpneq t0, (constexpr (Python::Runtime::offsetOfNewGenerator()))[t1], .done
@@ -4315,6 +4319,45 @@ llintOpWithReturn(op_py_get_iter, OpPyGetIter, macro (size, get, dispatch, retur
     storei t2, (constexpr (Python::PyGenerator::offsetOfLoopOwnership()))[t0]
 .done:
     return(t0)
+
+.object:
+    loadPythonRuntime(t1)
+    loadi Python::Runtime::iteratorStructureID[t1], t1
+    bineq t1, JSCell::m_structureID[t0], .slow
+    return(t0)
+
+.list:
+    loadPythonRuntime(t1)
+    loadp (constexpr (Python::Runtime::offsetOfType(Python::TypeID::listIteratorType)))[t1], t2
+    move constexpr Python::PyIterator::Kind::List, t3
+    jmp .create
+
+.tuple:
+    # A class derived from tuple may have an __iter__ of its own.
+    loadPythonRuntime(t1)
+    loadp (constexpr (Python::Runtime::offsetOfType(Python::TypeID::tupleType)))[t1], t2
+    bpneq t2, (constexpr (Python::PyObject::offsetOfType()))[t0], .slow
+    loadp (constexpr (Python::Runtime::offsetOfType(Python::TypeID::tupleIteratorType)))[t1], t2
+    move constexpr Python::PyIterator::Kind::Tuple, t3
+
+.create:
+    # PyIterator::create()
+    loadi Python::Runtime::iteratorStructureID[t1], t5
+    loadp Python::Runtime::iteratorAllocator[t1], t1
+    btpz t1, .slow
+    allocateCell(t1, t6, t7, .slow)
+    storei t5, JSCell::m_structureID[t6]
+    storei (constexpr (Python::PyIterator::typeInfoBlob())), JSCell::m_indexingTypeAndMisc[t6]
+    storep 0, JSObjectWithButterfly::m_butterfly[t6]
+    storep t2, (constexpr (Python::PyObject::offsetOfType()))[t6]
+    storeq 0, (constexpr (Python::PyIterator::offsetOfPosition()))[t6]
+    storeq 0, (constexpr (Python::PyIterator::offsetOfStep()))[t6]
+    storeq 0, (constexpr (Python::PyIterator::offsetOfRemaining()))[t6]
+    storeq t0, (constexpr (Python::PyIterator::offsetOfTarget()))[t6]
+    storeq ValueEmpty, (constexpr (Python::PyIterator::offsetOfExtra()))[t6]
+    storeq t3, (constexpr (Python::PyIterator::offsetOfKind()))[t6] # With what is behind it in the word.
+    fenceAfterAllocation(t1)
+    return(t6)
 
 .slow:
     callSlowPath(_slow_path_py_get_iter)

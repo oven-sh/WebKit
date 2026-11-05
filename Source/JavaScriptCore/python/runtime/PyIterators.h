@@ -66,7 +66,10 @@ public:
     static constexpr ptrdiff_t offsetOfStep() { return OBJECT_OFFSETOF(PyIterator, step); }
     static constexpr ptrdiff_t offsetOfRemaining() { return OBJECT_OFFSETOF(PyIterator, remaining); }
     static constexpr ptrdiff_t offsetOfTarget() { return OBJECT_OFFSETOF(PyIterator, m_target); }
+    static constexpr ptrdiff_t offsetOfExtra() { return OBJECT_OFFSETOF(PyIterator, m_extra); }
     static constexpr ptrdiff_t offsetOfKind() { return OBJECT_OFFSETOF(PyIterator, m_kind); }
+    // For op_py_get_iter, which makes the iterators of lists and tuples itself: whoever adds a field adds it there. See the assertions below.
+    static constexpr uint32_t typeInfoBlob() { return TypeInfoBlob::typeInfoBlob(NonArray, cellType, TypeInfo(cellType, StructureFlags).inlineTypeFlags()); }
 
 private:
     PyIterator(VM&, Structure*, PyType*, Kind);
@@ -75,6 +78,10 @@ private:
     WriteBarrier<Unknown> m_extra;
     Kind m_kind;
 };
+
+static_assert(PyObject::offsetOfType() == sizeof(JSObjectWithButterfly) && PyIterator::offsetOfPosition() == PyObject::offsetOfType() + 8 && PyIterator::offsetOfStep() == PyIterator::offsetOfPosition() + 8
+    && PyIterator::offsetOfRemaining() == PyIterator::offsetOfStep() + 8 && PyIterator::offsetOfTarget() == PyIterator::offsetOfRemaining() + 8 && PyIterator::offsetOfExtra() == PyIterator::offsetOfTarget() + 8
+    && PyIterator::offsetOfKind() == PyIterator::offsetOfExtra() + 8 && sizeof(PyIterator) == PyIterator::offsetOfKind() + 8, "op_py_get_iter writes every field");
 
 // dict.keys(), dict.values(), dict.items()
 class PyDictView final : public PyObject {

@@ -271,7 +271,8 @@ page 2 for a test of the mechanism.
 
 **Fast paths.** Each `op_py_*` instruction has a slow path in C++ that does all of it (`runtime/PySlowPaths.cpp`), and most have the
 common cases in assembly (`llint/LowLevelInterpreter64.asm`, "Python"): arithmetic and comparisons of numbers, comparisons fused
-with the jump that follows, truth of the usual values, items of lists, tuples and strs, iteration over ranges, lists and tuples,
+with the jump that follows, truth of the usual values, items of lists, tuples and strs, iteration over ranges, lists and tuples
+from the making of the iterator to the end of the loop (the cell is allocated as the AOT interpreter allocates: `allocateCell`),
 unpacking, cells, the binding of arguments when they are simply the parameters, appending to the list of a comprehension.
 
 **Inline caches**, in the metadata of the instruction, as for JS:

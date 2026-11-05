@@ -902,6 +902,7 @@ public:
     // ---- For the interpreter (LowLevelInterpreter64.asm) ----
 
     StructureID iteratorStructureID; // Of PyIterator.
+    Allocator iteratorAllocator; // Of its cells, as ObjectAllocationProfile has one for generated code. None: Options::forceGCSlowPaths.
     StructureID functionStructureID; // Of PyFunction.
     // What beginBinaryOperation() and its like leave to their caller, which reads it at once. `progress`: with IsReflected.
     struct {
