@@ -453,8 +453,8 @@ static JSValue localNew(JSGlobalObject* globalObject, JSValue cls, const CallArg
     setHiddenField(globalObject, self, LocalArguments, PyTuple::create(globalObject, args.positional()));
     if (args.keywordCount()) {
         PyDict* keywords = PyDict::create(globalObject);
-        for (unsigned i = 0; i < args.keywordCount(); ++i)
-            keywords->set(vm, args.keywordName(i), args.keywordValue(i));
+        mergeKeywordsInto(globalObject, keywords, args);
+        RETURN_IF_EXCEPTION(scope, { });
         setHiddenField(globalObject, self, LocalKeywords, keywords);
     }
     localMakeDict(globalObject, self);
@@ -1037,8 +1037,8 @@ static JSValue atexitRegister(JSGlobalObject* globalObject, const CallArgs& args
     if (!isCallable(globalObject, args[0]))
         return raiseTypeError(globalObject, scope, "the first argument must be callable"_s);
     PyDict* keywords = PyDict::create(globalObject);
-    for (unsigned i = 0; i < args.keywordCount(); ++i)
-        keywords->set(vm, args.keywordName(i), args.keywordValue(i));
+    mergeKeywordsInto(globalObject, keywords, args);
+    RETURN_IF_EXCEPTION(scope, { });
     JSValue entry = PyTuple::create(globalObject, { args[0], PyTuple::create(globalObject, args.positional().subspan(1)), keywords });
     listInsert(globalObject, atexitCallbacks(globalObject), 0, entry);
     RETURN_IF_EXCEPTION(scope, { });

@@ -207,8 +207,8 @@ static JSValue namespaceInit(JSGlobalObject* globalObject, JSValue self, const C
         dictUpdate(globalObject, dict, source);
         RETURN_IF_EXCEPTION(scope, { });
     }
-    if (failed(scope, namespaceAddKeywords(globalObject, dict, args)))
-        return { };
+    mergeKeywordsInto(globalObject, dict, args);
+    RETURN_IF_EXCEPTION(scope, { });
     return jsUndefined();
 }
 

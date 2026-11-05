@@ -12,6 +12,7 @@
 #include "PyList.h"
 #include "PyModule.h"
 #include "PyNumbers.h"
+#include "PySet.h"
 #include "PyStr.h"
 
 namespace JSC {
@@ -232,9 +233,20 @@ static JSValue astInit(JSGlobalObject* globalObject, JSValue self, const CallArg
         isGiven[i] = true;
     }
 
+    // A name that is an instance of a class derived from str is asked what CPython asks it, which has the fields that are still to come in a set.
+    PyTuple* keys = args.keywordCount() ? keywordKeys(globalObject, args.keywordNames()) : nullptr;
+    PySet* remaining = nullptr;
+    if (keys) [[unlikely]] {
+        remaining = PySet::create(globalObject);
+        for (unsigned j = args.size(); j < fieldCount; ++j) {
+            remaining->add(globalObject, fields->at(j));
+            RETURN_IF_EXCEPTION(scope, { });
+        }
+    }
+
     JSValue attributes;
     for (unsigned i = 0; i < args.keywordCount(); ++i) {
-        JSString* key = args.keywordName(i);
+        JSValue key = keys ? keys->at(i) : JSValue(args.keywordName(i));
         bool isField = false;
         for (unsigned j = 0; j < fieldCount; ++j) {
             bool same = isEqual(globalObject, fields->at(j), key);
@@ -242,7 +254,9 @@ static JSValue astInit(JSGlobalObject* globalObject, JSValue self, const CallArg
             if (!same)
                 continue;
             isField = true;
-            if (isGiven[j]) {
+            bool isGivenTwice = remaining ? !remaining->remove(globalObject, key) : isGiven[j];
+            RETURN_IF_EXCEPTION(scope, { });
+            if (isGivenTwice) {
                 String keyText = reprForMessage(globalObject, key);
                 return raiseTypeError(globalObject, scope, typeNameForMessage(globalObject, type), " got multiple values for argument "_s, keyText);
             }
@@ -261,7 +275,10 @@ static JSValue astInit(JSGlobalObject* globalObject, JSValue self, const CallArg
                 return raiseTypeError(globalObject, scope, typeNameForMessage(globalObject, type), ".__init__ got an unexpected keyword argument "_s, keyText);
             }
         }
-        setAttr(globalObject, self, key, args.keywordValue(i));
+        if (key.isString()) [[likely]]
+            setAttr(globalObject, self, asString(key), args.keywordValue(i));
+        else
+            setAttrByKey(globalObject, self, key, args.keywordValue(i));
         RETURN_IF_EXCEPTION(scope, { });
     }
 
@@ -402,10 +419,8 @@ static JSValue astReplace(JSGlobalObject* globalObject, JSValue self, const Call
         if (failed(scope, astCopyPresent(globalObject, payload, attributes, PyDict::from(dict))))
             return { };
     }
-    for (unsigned i = 0; i < args.keywordCount(); ++i) {
-        payload->set(globalObject, args.keywordName(i), args.keywordValue(i));
-        RETURN_IF_EXCEPTION(scope, { });
-    }
+    mergeKeywordsInto(globalObject, payload, args);
+    RETURN_IF_EXCEPTION(scope, { });
     RELEASE_AND_RETURN(scope, callWithTupleAndDict(globalObject, type, rt.emptyTuple(), payload));
 }
 

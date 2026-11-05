@@ -148,10 +148,14 @@ inline void setHiddenField(JSGlobalObject* globalObject, JSValue object, unsigne
     asObject(object)->putDirect(getVM(globalObject), runtime(globalObject).hiddenKey(index), value, PropertyAttribute::DontEnum | 0);
 }
 
-// The hidden field of a tuple of keyword names that has the keys of the dict they came from, if some are not plain strs.
+// The hidden fields of a tuple of keyword names that came from a dict some of whose keys are not plain strs: a tuple of the keys, and a tuple of their hashes as that dict remembers
+// them (ints; for a key that is exactly a str, whose hash no dict looks at, 0).
 static constexpr unsigned keywordKeysField = 0;
+static constexpr unsigned keywordHashesField = 1;
 // What a call passes as `this`, from the keys of a dict that is not empty. Null: with an exception.
 PyTuple* keywordNamesOf(JSGlobalObject*, PyDict*);
+// The same from the keys of a dict, which may be empty, and then those of the keywords of a call whose indices are given.
+PyTuple* keywordNamesOf(JSGlobalObject*, PyDict*, const CallArgs&, std::span<const unsigned> indices);
 // Those keys. Null: the names are the keys. (A field is a property, so a tuple that has one no longer has the Structure it was made with.)
 inline PyTuple* keywordKeys(JSGlobalObject* globalObject, PyTuple* names)
 {
@@ -160,8 +164,10 @@ inline PyTuple* keywordKeys(JSGlobalObject* globalObject, PyTuple* names)
     JSValue keys = hiddenField(globalObject, names, keywordKeysField);
     return keys ? PyTuple::from(keys) : nullptr;
 }
-// dict[key] = value for each keyword argument.
-void addKeywordsTo(JSGlobalObject*, PyDict*, const CallArgs&);
+// dict[key] = value for each keyword argument, as where CPython's callee is given names and values: a key that is no plain str is asked for its hash.
+void addKeywordsTo(JSGlobalObject*, PyDict*, const CallArgs&, bool withRememberedHashes = false);
+// The same where CPython's callee is given the dict of the keywords and copies or merges it: with the hashes that that dict remembers.
+inline void mergeKeywordsInto(JSGlobalObject* globalObject, PyDict* dict, const CallArgs& args) { addKeywordsTo(globalObject, dict, args, true); }
 
 // The members of int | str. Null: the value is not a union.
 PyTuple* unionArguments(JSGlobalObject*, JSValue);

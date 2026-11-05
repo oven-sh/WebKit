@@ -254,6 +254,11 @@ static bool updateFromArguments(JSGlobalObject* globalObject, PyDict* dict, cons
             dict->clear(vm);
         dict->reserve(vm, args.keywordCount(), !keys);
     }
+    if (mergesKeywords && keys) [[unlikely]] {
+        mergeKeywordsInto(globalObject, dict, args);
+        RETURN_IF_EXCEPTION(scope, false);
+        return true;
+    }
     for (unsigned i = 0; i < args.keywordCount(); ++i) {
         // (A key of another kind that is there may say that it is equal to the name.)
         dict->set(globalObject, keys ? keys->at(i) : JSValue(args.keywordName(i)), args.keywordValue(i));

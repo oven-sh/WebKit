@@ -246,6 +246,17 @@ and 978, `super().x` 776 and 780: it looks at one byte more in each class it com
 dicts of classes, which may say that they are equal to the name.) What is left is in DEFERRED.md, "Names that are instances of classes
 derived from str".
 
+As the name of a keyword. A call hands over the names of its keywords as a tuple of strs. Where they are the keys of a dict (`f(**m)`) and
+some are not plain strs, the tuple has two hidden fields: the keys, and the hashes that the dict remembers for them (`keywordNamesOf()`,
+`keywordKeys()`). A function written in Python asks such a key whether it equals each parameter, and its `**kwargs` gets the key. For what
+is written in C++ it depends on what CPython hands its counterpart. One that gets names and values stores them one by one, and the key is
+asked for its hash again: `addKeywordsTo()`, for `dict()`, the class statement (which takes `metaclass` out of that dict), a call of `type`
+itself. One that gets the dict of the keywords copies or merges it with the hashes it has: `mergeKeywordsInto()`, for `d.update()`, the
+classes derived from dict, `SimpleNamespace`, `functools.partial`, `threading.local`, `atexit.register`; `str.format()` looks its fields up
+in that dict. The key of `lru_cache` has the keys. A node of `ast` asks the key what CPython's asks (is it among the fields; out of the set
+of those still to come; `setattr()`). A call of a `partial` with keywords of its own looks each of the caller's up among them, stores it in
+a copy if it is there, which looks again, and lets it follow as it is if not. None of this is on the way of a call whose names are plain.
+
 **Built-in types.** A `TypeDef` in the source file of a type says what is particular to it. What follows from how CPython makes the
 type is added by `PyType::initializeBuiltin` and `addMethods`, so that `vars(T)`, `help(T)` and what goes by them
 (`functools.total_ordering`, `functools.wraps`, `copyreg`) see what they see there. A type with a method for one rich comparison has

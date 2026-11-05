@@ -1341,12 +1341,48 @@ static ALWAYS_INLINE JSValue callSpecialIfThere(JSGlobalObject* globalObject, Py
     return callSpecialIfThere(globalObject, method, self, arguments...);
 }
 
-PyTuple* keywordNamesOf(JSGlobalObject* globalObject, PyDict* keywords)
+static int64_t keywordHash(JSGlobalObject* globalObject, PyTuple* names, unsigned index)
+{
+    return toInt64(globalObject, PyTuple::from(hiddenField(globalObject, names, keywordHashesField))->at(index));
+}
+
+// The hidden fields of the names: see keywordKeysField.
+static NEVER_INLINE void noteKeywordKeys(JSGlobalObject* globalObject, PyTuple* names, PyDict* keywords, const CallArgs& args, std::span<const unsigned> indices)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    PyTuple* keysOfCall = indices.empty() ? nullptr : keywordKeys(globalObject, args.keywordNames());
+    PyTuple* keys = PyTuple::create(globalObject, names->length());
+    PyTuple* hashes = PyTuple::create(globalObject, names->length());
+    unsigned index = 0;
+    auto append = [&](JSValue key, int64_t hash) {
+        keys->initializeAt(vm, index, key);
+        hashes->initializeAt(vm, index++, makeInt(globalObject, key.isString() ? 0 : hash));
+    };
+    JSValue key;
+    JSValue value;
+    int64_t hash;
+    for (unsigned position = 0; keywords->next(position, key, value, hash);) {
+        append(key, hash);
+        RETURN_IF_EXCEPTION(scope, void());
+    }
+    for (unsigned i : indices) {
+        hash = keysOfCall ? keywordHash(globalObject, args.keywordNames(), i) : 0;
+        RETURN_IF_EXCEPTION(scope, void());
+        append(keysOfCall ? keysOfCall->at(i) : JSValue(args.keywordName(i)), hash);
+        RETURN_IF_EXCEPTION(scope, void());
+    }
+    setHiddenField(globalObject, names, keywordKeysField, keys);
+    setHiddenField(globalObject, names, keywordHashesField, hashes);
+}
+
+template<bool hasMore>
+static ALWAYS_INLINE PyTuple* keywordNamesImpl(JSGlobalObject* globalObject, PyDict* keywords, const CallArgs& args, std::span<const unsigned> indices)
 {
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    PyTuple* names = PyTuple::createUninitialized(vm, rt.keywordNamesStructure(), rt.tupleType(), keywords->size());
+    PyTuple* names = PyTuple::createUninitialized(vm, rt.keywordNamesStructure(), rt.tupleType(), keywords->size() + (hasMore ? indices.size() : 0));
     bool namesAreKeys = true;
     unsigned index = 0;
     JSValue key;
@@ -1363,18 +1399,30 @@ PyTuple* keywordNamesOf(JSGlobalObject* globalObject, PyDict* keywords)
         RETURN_IF_EXCEPTION(scope, nullptr);
         names->initializeAt(vm, index++, name);
     }
+    if constexpr (hasMore) {
+        for (unsigned i : indices)
+            names->initializeAt(vm, index++, args.keywordName(i));
+        namesAreKeys &= indices.empty() || !keywordKeys(globalObject, args.keywordNames());
+    }
     // A key that is an instance of a class derived from str is what a **kwargs gets.
     if (!namesAreKeys) [[unlikely]] {
-        PyTuple* keys = PyTuple::create(globalObject, keywords->size());
-        index = 0;
-        for (unsigned position = 0; keywords->next(position, key, value);)
-            keys->initializeAt(vm, index++, key);
-        setHiddenField(globalObject, names, keywordKeysField, keys);
+        noteKeywordKeys(globalObject, names, keywords, args, indices);
+        RETURN_IF_EXCEPTION(scope, nullptr);
     }
     return names;
 }
 
-void addKeywordsTo(JSGlobalObject* globalObject, PyDict* dict, const CallArgs& args)
+PyTuple* keywordNamesOf(JSGlobalObject* globalObject, PyDict* keywords)
+{
+    return keywordNamesImpl<false>(globalObject, keywords, CallArgs(), { });
+}
+
+PyTuple* keywordNamesOf(JSGlobalObject* globalObject, PyDict* keywords, const CallArgs& args, std::span<const unsigned> indices)
+{
+    return keywordNamesImpl<true>(globalObject, keywords, args, indices);
+}
+
+void addKeywordsTo(JSGlobalObject* globalObject, PyDict* dict, const CallArgs& args, bool withRememberedHashes)
 {
     if (!args.keywordCount())
         return;
@@ -1388,7 +1436,12 @@ void addKeywordsTo(JSGlobalObject* globalObject, PyDict* dict, const CallArgs& a
             dict->set(vm, args.keywordName(i), args.keywordValue(i));
             continue;
         }
-        dict->set(globalObject, keys ? keys->at(i) : JSValue(args.keywordName(i)), args.keywordValue(i));
+        if (keys && withRememberedHashes) {
+            int64_t hash = keywordHash(globalObject, args.keywordNames(), i);
+            RETURN_IF_EXCEPTION(scope, void());
+            dict->set(globalObject, keys->at(i), hash, args.keywordValue(i));
+        } else
+            dict->set(globalObject, keys ? keys->at(i) : JSValue(args.keywordName(i)), args.keywordValue(i));
         RETURN_IF_EXCEPTION(scope, void());
     }
 }

@@ -808,8 +808,9 @@ static JSValue structInit(JSGlobalObject* globalObject, JSValue self, const Call
         if (count < static_cast<int64_t>(args.size()))
             return raiseTypeError(globalObject, scope, "too many initializers"_s);
     }
+    PyTuple* keys = args.keywordCount() ? keywordKeys(globalObject, args.keywordNames()) : nullptr;
     for (unsigned i = 0; i < args.keywordCount(); ++i) {
-        setAttr(globalObject, self, args.keywordName(i), args.keywordValue(i));
+        setAttrAsGiven(globalObject, self, args.keywordName(i), keys ? keys->at(i) : JSValue(args.keywordName(i)), args.keywordValue(i));
         RETURN_IF_EXCEPTION(scope, { });
     }
     return none();

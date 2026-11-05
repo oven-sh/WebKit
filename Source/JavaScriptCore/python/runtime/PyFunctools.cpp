@@ -151,7 +151,7 @@ static JSValue functoolsPartialNew(JSGlobalObject* globalObject, JSValue cls, co
     }
 
     PyDict* keywords = innerKeywords ? innerKeywords->copy(globalObject) : PyDict::create(globalObject);
-    addKeywordsTo(globalObject, keywords, args);
+    mergeKeywordsInto(globalObject, keywords, args);
     RETURN_IF_EXCEPTION(scope, { });
 
     PyRecord* record = PyRecord::create(globalObject, PyType::from(cls), FunctoolsPartial::FieldCount);
@@ -161,6 +161,39 @@ static JSValue functoolsPartialNew(JSGlobalObject* globalObject, JSValue cls, co
     record->set(vm, FunctoolsPartial::Placeholder, placeholder);
     record->number = placeholderCount;
     return record;
+}
+
+// Both have keywords, and not all of them are plain strs, so that they can tell what they are asked. As measured on CPython: each of the caller's is looked for among the partial's; if
+// it is there, it is stored in a copy of them, which looks for it again; if not, it follows them as it is, and no dict hears of it.
+static NEVER_INLINE JSValue functoolsPartialCallWithKeys(JSGlobalObject* globalObject, JSValue function, MarkedArgumentBuffer& values, PyDict* keywords, const CallArgs& args)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    unsigned positionalCount = values.size();
+    PyTuple* keys = keywordKeys(globalObject, args.keywordNames());
+    PyDict* merged = keywords;
+    Vector<unsigned, 8> added;
+    for (unsigned i = 0; i < args.keywordCount(); ++i) {
+        JSValue key = keys ? keys->at(i) : JSValue(args.keywordName(i));
+        bool isThere = keywords->contains(globalObject, key);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (!isThere) {
+            added.append(i);
+            continue;
+        }
+        if (merged == keywords)
+            merged = keywords->copy(globalObject);
+        merged->set(globalObject, key, args.keywordValue(i));
+        RETURN_IF_EXCEPTION(scope, { });
+    }
+    PyTuple* names = keywordNamesOf(globalObject, merged, args, added.span());
+    RETURN_IF_EXCEPTION(scope, { });
+    JSValue key, value;
+    for (unsigned position = 0; merged->next(position, key, value);)
+        values.append(value);
+    for (unsigned i : added)
+        values.append(args.keywordValue(i));
+    RELEASE_AND_RETURN(scope, call(globalObject, function, CallArgs(valuesOf(values), positionalCount, names)));
 }
 
 static JSValue functoolsPartialCall(JSGlobalObject* globalObject, JSValue self, const CallArgs& args)
@@ -198,6 +231,8 @@ static JSValue functoolsPartialCall(JSGlobalObject* globalObject, JSValue self, 
     }
     // The caller's keywords win, where the partial has them.
     if (args.hasKeywords()) {
+        if (!keywords->hasOnlyStringKeys() || keywordKeys(globalObject, args.keywordNames())) [[unlikely]]
+            RELEASE_AND_RETURN(scope, functoolsPartialCallWithKeys(globalObject, function, values, keywords, args));
         keywords = keywords->copy(globalObject);
         addKeywordsTo(globalObject, keywords, args);
         RETURN_IF_EXCEPTION(scope, { });
@@ -516,8 +551,9 @@ static JSValue functoolsMakeCacheKey(JSGlobalObject* globalObject, PyRecord* cac
         key->initializeAt(vm, position++, args[i]);
     if (keywordCount) {
         key->initializeAt(vm, position++, cache->get(FunctoolsCache::KeywordMark));
+        PyTuple* keys = keywordKeys(globalObject, args.keywordNames());
         for (unsigned i = 0; i < keywordCount; ++i) {
-            key->initializeAt(vm, position++, args.keywordName(i));
+            key->initializeAt(vm, position++, keys ? keys->at(i) : JSValue(args.keywordName(i)));
             key->initializeAt(vm, position++, args.keywordValue(i));
         }
     }

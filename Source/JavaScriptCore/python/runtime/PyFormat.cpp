@@ -789,6 +789,7 @@ enum class AutoNumbering : uint8_t { Undecided, Automatic, Manual };
 
 struct FormatArguments {
     const CallArgs* args { nullptr }; // Null for format_map().
+    PyDict* keywords { nullptr }; // Of those, if some of the names are not plain strs: CPython looks a field up in the dict of the keywords, so they are asked.
     JSValue mapping; // For format_map().
     AutoNumbering numbering { AutoNumbering::Undecided };
     int64_t nextIndex { 0 };
@@ -1009,7 +1010,11 @@ static JSValue fieldObject(JSGlobalObject* globalObject, const CodePoints& text,
     if (index == -1) {
         JSString* key = makeStr(vm, text.substring(start, firstEnd));
         if (arguments.args) {
-            object = arguments.args->keyword(key);
+            if (arguments.keywords) [[unlikely]] {
+                object = arguments.keywords->get(globalObject, key);
+                RETURN_IF_EXCEPTION(scope, { });
+            } else
+                object = arguments.args->keyword(key);
             if (!object)
                 return raiseKeyError(globalObject, scope, key);
         } else {
@@ -1148,6 +1153,13 @@ JSValue strFormatMethod(JSGlobalObject* globalObject, JSValue self, const CallAr
 {
     FormatArguments arguments;
     arguments.args = &args;
+    if (args.keywordCount() && keywordKeys(globalObject, args.keywordNames())) [[unlikely]] {
+        auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
+        arguments.keywords = PyDict::create(globalObject);
+        mergeKeywordsInto(globalObject, arguments.keywords, args);
+        RETURN_IF_EXCEPTION(scope, { });
+        RELEASE_AND_RETURN(scope, formatWith(globalObject, self, arguments));
+    }
     return formatWith(globalObject, self, arguments);
 }
 

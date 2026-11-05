@@ -1173,7 +1173,31 @@ static bool checkEncodable(JSGlobalObject* globalObject, JSString* string)
     RELEASE_AND_RETURN(scope, !!codecEncodeUTF8(globalObject, string, "strict"_s));
 }
 
+static JSValue typeNewWithKeywordsAsGiven(JSGlobalObject*, JSValue cls, const CallArgs&);
+
 static JSValue typeNew(JSGlobalObject* globalObject, JSValue cls, const CallArgs& args)
+{
+    Runtime& rt = runtime(globalObject);
+    if (!args.hasKeywords() || cls != JSValue(rt.typeType()) || !keywordKeys(globalObject, args.keywordNames())) [[likely]]
+        return typeNewWithKeywordsAsGiven(globalObject, cls, args);
+    // type(name, bases, dict, **m), or a class statement that comes to that. In CPython a call of type itself puts the keywords into a dict on the way here, so names that are no plain
+    // strs are asked for their hashes once more.
+    auto scope = DECLARE_THROW_SCOPE(rt.vm());
+    PyDict* keywords = PyDict::create(globalObject);
+    addKeywordsTo(globalObject, keywords, args);
+    RETURN_IF_EXCEPTION(scope, { });
+    PyTuple* names = keywordNamesOf(globalObject, keywords);
+    RETURN_IF_EXCEPTION(scope, { });
+    MarkedArgumentBuffer values;
+    for (JSValue value : args.positional())
+        values.append(value);
+    JSValue key, value;
+    for (unsigned position = 0; keywords->next(position, key, value);)
+        values.append(value);
+    RELEASE_AND_RETURN(scope, typeNewWithKeywordsAsGiven(globalObject, cls, CallArgs(valuesOf(values), args.size(), names)));
+}
+
+static JSValue typeNewWithKeywordsAsGiven(JSGlobalObject* globalObject, JSValue cls, const CallArgs& args)
 {
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
@@ -2288,15 +2312,31 @@ JSValue buildClass(JSGlobalObject* globalObject, JSValue name, PyTuple* original
     JSValue meta;
     Vector<JSValue, 8> callValues { name, bases, JSValue() };
     Vector<JSValue, 4> keywordNames;
-    for (unsigned i = 0; i < args.keywordCount(); ++i) {
-        if (WTF::equal(args.keywordName(i)->tryGetValueImpl(), rt.names.metaclass()->tryGetValueImpl())) {
-            meta = args.keywordValue(i);
-            continue;
-        }
-        keywordNames.append(args.keywordName(i));
-        callValues.append(args.keywordValue(i));
-    }
     PyTuple* names = nullptr;
+    if (args.keywordCount() && keywordKeys(globalObject, args.keywordNames())) [[unlikely]] {
+        // Some are not plain strs. CPython puts the keywords into a dict and takes 'metaclass' out of that.
+        PyDict* keywords = PyDict::create(globalObject);
+        addKeywordsTo(globalObject, keywords, args);
+        RETURN_IF_EXCEPTION(scope, { });
+        meta = keywords->take(globalObject, rt.names.metaclass());
+        RETURN_IF_EXCEPTION(scope, { });
+        if (!keywords->isEmpty()) {
+            names = keywordNamesOf(globalObject, keywords);
+            RETURN_IF_EXCEPTION(scope, { });
+            JSValue key, value;
+            for (unsigned position = 0; keywords->next(position, key, value);)
+                callValues.append(value);
+        }
+    } else {
+        for (unsigned i = 0; i < args.keywordCount(); ++i) {
+            if (WTF::equal(args.keywordName(i)->tryGetValueImpl(), rt.names.metaclass()->tryGetValueImpl())) {
+                meta = args.keywordValue(i);
+                continue;
+            }
+            keywordNames.append(args.keywordName(i));
+            callValues.append(args.keywordValue(i));
+        }
+    }
     if (!keywordNames.isEmpty()) {
         names = PyTuple::createUninitialized(vm, rt.keywordNamesStructure(), rt.tupleType(), keywordNames.size());
         for (unsigned i = 0; i < keywordNames.size(); ++i)
