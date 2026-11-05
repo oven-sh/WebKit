@@ -1682,6 +1682,11 @@ static JSValue richCompareOrNotImplemented(JSGlobalObject* globalObject, JSValue
     RELEASE_AND_RETURN(scope, askComparisonMethods(globalObject, a, b, op, ComparisonProgress::Nothing, MethodsWrittenInPython::AreCalled));
 }
 
+bool haveSameText(JSGlobalObject* globalObject, JSString* a, JSString* b)
+{
+    return a->equal(globalObject, b);
+}
+
 bool richCompareBool(JSGlobalObject* globalObject, JSValue a, JSValue b, CompareOperator op)
 {
     if (isIdentical(a, b)) {
@@ -2032,6 +2037,30 @@ JSValue getIter(JSGlobalObject* globalObject, JSValue value)
         RELEASE_AND_RETURN(scope, PyIterator::create(globalObject, PyIterator::Kind::Sequence, value));
     }
     return raiseTypeError(globalObject, scope, '\'', type->nameInMessages(), "' object is not iterable"_s);
+}
+
+void Items::initializeWithStr(JSString* string)
+{
+    // (Out of memory.)
+    if (string->value(m_globalObject)->isNull())
+        return;
+    if (!string->is8Bit())
+        return initializeWithIterator(string);
+    m_cell = string;
+    m_kind = Kind::Latin1Str;
+}
+
+void Items::initializeWithIterator(JSValue iterable)
+{
+    JSValue iterator = getIter(m_globalObject, iterable);
+    if (!iterator)
+        return;
+    // An iterator is an object.
+    m_cell = iterator.asCell();
+    if (m_cell->type() != PyObjectType || m_cell->classInfo() != PyIterator::info())
+        m_kind = Kind::Iterator;
+    else
+        m_kind = uncheckedDowncast<PyIterator>(m_cell)->kind() == PyIterator::Kind::Range ? Kind::Range : Kind::BuiltinIterator;
 }
 
 bool isIterator(JSGlobalObject* globalObject, JSValue value)

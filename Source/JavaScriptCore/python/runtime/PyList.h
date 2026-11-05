@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include "ArgList.h"
 #include "JSArray.h"
 #include "PyObject.h"
 
@@ -87,6 +88,28 @@ PyTuple* tupleFromIterable(JSGlobalObject*, JSValue iterable);
 PyTuple* tupleFromList(JSGlobalObject*, JSArray*);
 // list.sort(key=key, reverse=reverse). An empty key is none.
 void listSort(JSGlobalObject*, JSArray*, JSValue key, bool reverse);
+
+// All the items of an iterable, for what takes them before it does anything with them. A list or a tuple itself is not asked for an
+// iterator, and its items stay where they are. Anything else is gone through as list(iter(iterable)) goes through it.
+class AllItems {
+    WTF_MAKE_NONCOPYABLE(AllItems);
+    WTF_FORBID_HEAP_ALLOCATION;
+public:
+    // If code may run while the span is in use, it may change the list: then the items of a list are copied as well.
+    enum class WhileInUse : bool { NothingRuns, CodeMayRun };
+    // May throw. Whatever TypeError asking for the iterator ends in becomes one with this message.
+    AllItems(JSGlobalObject* globalObject, JSValue iterable, ASCIILiteral messageIfNotIterable, WhileInUse whileInUse = WhileInUse::NothingRuns) { take(globalObject, iterable, messageIfNotIterable, whileInUse); }
+    ~AllItems() { ensureStillAliveHere(m_owner); }
+    // An empty value is None: a hole in a list.
+    std::span<const JSValue> span() const { return m_span; }
+
+private:
+    void take(JSGlobalObject*, JSValue iterable, ASCIILiteral messageIfNotIterable, WhileInUse);
+
+    std::span<const JSValue> m_span;
+    JSValue m_owner; // The list or tuple that the span lies in.
+    MarkedArgumentBuffer m_kept; // Or it lies here.
+};
 
 } // namespace Python
 } // namespace JSC

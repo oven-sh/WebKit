@@ -427,8 +427,13 @@ static JSValue minOrMax(JSGlobalObject* globalObject, const CallArgs& args)
             bestKey = itemKey;
             return true;
         }
-        bool isBetter = richCompareBool(globalObject, itemKey, bestKey, op);
-        RETURN_IF_EXCEPTION(scope, false);
+        bool isBetter;
+        if (itemKey.isInt32() && bestKey.isInt32()) [[likely]]
+            isBetter = op == CompareOperator::Lt ? itemKey.asInt32() < bestKey.asInt32() : itemKey.asInt32() > bestKey.asInt32();
+        else {
+            isBetter = richCompareBool(globalObject, itemKey, bestKey, op);
+            RETURN_IF_EXCEPTION(scope, false);
+        }
         if (isBetter) {
             bestItem = item;
             bestKey = itemKey;
@@ -500,7 +505,7 @@ static JSValue builtinSum(JSGlobalObject* globalObject, JSValue iterable, JSValu
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     GeneratorArgumentScope argument(globalObject, iterable);
-    JSValue iterator = getIter(globalObject, iterable);
+    Items items(globalObject, iterable);
     RETURN_IF_EXCEPTION(scope, { });
     JSValue result = start ? start : jsNumber(0);
     if (isStr(result))
@@ -511,8 +516,8 @@ static JSValue builtinSum(JSGlobalObject* globalObject, JSValue iterable, JSValu
         return raiseTypeError(globalObject, scope, "sum() can't sum bytearray [use b''.join(seq) instead]"_s);
 
     JSValue item;
-    auto next = [&] {
-        item = iterNext(globalObject, iterator);
+    auto next = [&] ALWAYS_INLINE_LAMBDA {
+        item = items.next();
         return !!item;
     };
 
@@ -539,6 +544,10 @@ static JSValue builtinSum(JSGlobalObject* globalObject, JSValue iterable, JSValu
         RETURN_IF_EXCEPTION(scope, { });
         if (!hasItem)
             return result;
+        if (int32_t total; result.isInt32() && item.isInt32() && !__builtin_add_overflow(result.asInt32(), item.asInt32(), &total)) [[likely]] {
+            result = jsNumber(total);
+            continue;
+        }
         if (isSmallInt(result) && isSmallInt(item)) [[likely]] {
             if (int64_t total = smallIntValue(result) + smallIntValue(item); fitsSmallInt(total)) [[likely]] {
                 result = smallInt(total);

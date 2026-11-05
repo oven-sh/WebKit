@@ -1390,36 +1390,9 @@ JSString* strJoin(JSGlobalObject* globalObject, JSString* separatorString, JSVal
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    if (auto* tuple = PyTuple::tryFrom(iterable); tuple && tuple->type() == runtime(globalObject).tupleType())
-        RELEASE_AND_RETURN(scope, joinItems(globalObject, separatorString, tuple->span()));
-
-    MarkedArgumentBuffer items;
-    if (isExactList(iterable)) {
-        JSArray* list = asList(iterable);
-        // Any other storage holds no str.
-        if (hasContiguous(list->indexingType())) [[likely]]
-            RELEASE_AND_RETURN(scope, joinItems(globalObject, separatorString, { reinterpret_cast<const JSValue*>(list->butterfly()->contiguous().data()), listLength(list) }));
-        for (unsigned i = 0; i < listLength(list); ++i)
-            items.append(listGet(list, i));
-    } else {
-        // Whatever TypeError asking for the iterator ends in.
-        JSValue iterator = getIter(globalObject, iterable);
-        if (failed(scope, iterator)) {
-            if (clearPendingExceptionIfMatches(globalObject, runtime(globalObject).TypeError()))
-                raiseTypeError(globalObject, scope, "can only join an iterable"_s);
-            return nullptr;
-        }
-        forEach(globalObject, iterator, [&](JSValue item) {
-            items.append(item);
-            return true;
-        });
-        RETURN_IF_EXCEPTION(scope, nullptr);
-    }
-    if (items.hasOverflowed()) [[unlikely]] {
-        raiseMemoryError(globalObject, scope, String());
-        return nullptr;
-    }
-    RELEASE_AND_RETURN(scope, joinItems(globalObject, separatorString, spanOf(items)));
+    AllItems items(globalObject, iterable, "can only join an iterable"_s);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    RELEASE_AND_RETURN(scope, joinItems(globalObject, separatorString, items.span()));
 }
 
 static JSValue strJoinMethod(JSGlobalObject* globalObject, JSValue self, JSValue iterable)

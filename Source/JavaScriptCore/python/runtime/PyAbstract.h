@@ -6,8 +6,11 @@
 #pragma once
 
 #include "PyBytecode.h"
+#include "PyIterators.h"
+#include "PyList.h"
 #include "PyNative.h"
 #include "PyRuntime.h"
+#include "PyTuple.h"
 #include "PyType.h"
 
 namespace JSC {
@@ -226,7 +229,17 @@ JSValue beginComparison(JSGlobalObject*, JSValue, JSValue, CompareOperator);
 JSValue continueComparison(JSGlobalObject*, JSValue, JSValue, CompareOperator, unsigned progress, MethodsWrittenInPython);
 // The same as a bool; an object is taken to equal itself.
 bool richCompareBool(JSGlobalObject*, JSValue, JSValue, CompareOperator);
-inline bool isEqual(JSGlobalObject* globalObject, JSValue a, JSValue b) { return richCompareBool(globalObject, a, b, CompareOperator::Eq); }
+bool haveSameText(JSGlobalObject*, JSString*, JSString*);
+ALWAYS_INLINE bool isEqual(JSGlobalObject* globalObject, JSValue a, JSValue b)
+{
+    if (a == b)
+        return true;
+    if (a.isInt32() && b.isInt32())
+        return false;
+    if (a.isString() && b.isString())
+        return asString(a)->length() == asString(b)->length() && haveSameText(globalObject, asString(a), asString(b));
+    return richCompareBool(globalObject, a, b, CompareOperator::Eq);
+}
 // Any of the operators.
 JSValue compare(JSGlobalObject*, JSValue, JSValue, CompareOperator);
 
@@ -247,6 +260,70 @@ JSValue getIter(JSGlobalObject*, JSValue);
 // Empty, with no exception, when there are no more.
 JSValue iterNext(JSGlobalObject*, JSValue iterator);
 bool isIterator(JSGlobalObject*, JSValue);
+
+// For C++ that goes through an iterable: iter() and next(). A list, a tuple or a str itself is gone through as its iterator goes through
+// it, by index, the length of the list being read each time, but without the iterator, which nobody would get to see.
+class Items {
+    WTF_MAKE_NONCOPYABLE(Items);
+    WTF_FORBID_HEAP_ALLOCATION;
+public:
+    // May throw: what is not iterable.
+    ALWAYS_INLINE Items(JSGlobalObject* globalObject, JSValue iterable)
+        : m_globalObject(globalObject)
+    {
+        if (isExactList(iterable)) {
+            m_kind = Kind::List;
+            m_cell = iterable.asCell();
+        } else if (auto* tuple = PyTuple::tryFrom(iterable); tuple && tuple->type() == runtime(globalObject).tupleType()) {
+            m_kind = Kind::Tuple;
+            m_cell = tuple;
+        } else if (iterable.isString())
+            initializeWithStr(asString(iterable));
+        else
+            initializeWithIterator(iterable);
+    }
+
+    // Empty: there are no more, or an exception.
+    ALWAYS_INLINE JSValue next()
+    {
+        switch (m_kind) {
+        case Kind::List:
+            if (auto* list = uncheckedDowncast<JSArray>(m_cell); m_index < list->length()) [[likely]]
+                return listGet(list, m_index++);
+            m_kind = Kind::Exhausted;
+            return { };
+        case Kind::Tuple:
+            if (auto* tuple = uncheckedDowncast<PyTuple>(m_cell); m_index < tuple->length()) [[likely]]
+                return tuple->at(m_index++);
+            m_kind = Kind::Exhausted;
+            return { };
+        case Kind::Latin1Str:
+            if (auto characters = uncheckedDowncast<JSString>(m_cell)->tryGetValueImpl()->span8(); m_index < characters.size()) [[likely]]
+                return getVM(m_globalObject).smallStrings.singleCharacterString(characters[m_index++]);
+            m_kind = Kind::Exhausted;
+            return { };
+        case Kind::Range:
+            return uncheckedDowncast<PyIterator>(m_cell)->nextOfRange(m_globalObject);
+        case Kind::BuiltinIterator:
+            return uncheckedDowncast<PyIterator>(m_cell)->next(m_globalObject);
+        case Kind::Iterator:
+            return iterNext(m_globalObject, m_cell);
+        case Kind::Exhausted:
+            break;
+        }
+        return { };
+    }
+
+private:
+    enum class Kind : uint8_t { List, Tuple, Latin1Str, Range, BuiltinIterator, Iterator, Exhausted };
+    void initializeWithStr(JSString*);
+    void initializeWithIterator(JSValue iterable);
+
+    JSGlobalObject* m_globalObject;
+    JSCell* m_cell { nullptr };
+    unsigned m_index { 0 };
+    Kind m_kind { Kind::Exhausted };
+};
 
 // Calls the function with each item until it returns false. False: it did, or an exception.
 template<typename Function>
@@ -304,10 +381,10 @@ bool forEach(JSGlobalObject* globalObject, JSValue iterable, const Function& fun
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue iterator = getIter(globalObject, iterable);
+    Items items(globalObject, iterable);
     RETURN_IF_EXCEPTION(scope, false);
     while (true) {
-        JSValue item = iterNext(globalObject, iterator);
+        JSValue item = items.next();
         RETURN_IF_EXCEPTION(scope, false);
         if (!item)
             return true;

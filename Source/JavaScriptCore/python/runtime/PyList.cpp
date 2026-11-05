@@ -168,11 +168,59 @@ public:
 
     void set(unsigned index, JSValue value) { items()[index].set(m_vm, m_list, value); }
 
+    // The values are not in this list. An empty one is a hole of the list they are in, which reads as None.
+    void set(unsigned index, std::span<const JSValue> values)
+    {
+        WriteBarrier<Unknown>* data = items() + index;
+        for (JSValue value : values)
+            (data++)->setWithoutWriteBarrier(value ? value : jsUndefined());
+        m_vm.writeBarrier(m_list);
+    }
+
+    // Room for so many items, which does not change the length. It is no error if there is none.
+    void reserve(uint64_t capacity)
+    {
+        unsigned length = this->length();
+        if (capacity > length && grow(capacity))
+            m_list->butterfly()->setPublicLength(length);
+    }
+
 private:
     VM& m_vm;
     JSArray* m_list;
     bool m_isContiguous { false };
 };
+
+// The items of a list where they lie, if they lie there as values, for as long as nothing changes the list. An empty one is a hole.
+// No data: they lie there in another way.
+static ALWAYS_INLINE std::span<const JSValue> listValues(JSArray* list)
+{
+    IndexingType indexingType = list->indexingType();
+    if (!hasContiguous(indexingType) && !hasInt32(indexingType))
+        return { };
+    Butterfly* butterfly = list->butterfly();
+    return { std::bit_cast<const JSValue*>(butterfly->contiguous().data()), butterfly->publicLength() };
+}
+
+// As values or as doubles.
+static ALWAYS_INLINE bool hasItemsInARow(JSArray* list)
+{
+    IndexingType indexingType = list->indexingType();
+    return hasContiguous(indexingType) || hasInt32(indexingType) || hasDouble(indexingType);
+}
+
+// So many items of such a list, as values, to where they are not. A hole stays one. The caller sees to the barrier.
+static ALWAYS_INLINE void copyItems(WriteBarrier<Unknown>* to, JSArray* list, unsigned start, unsigned count)
+{
+    ASSERT(hasItemsInARow(list) && start + count <= list->butterfly()->publicLength());
+    if (hasDouble(list->indexingType())) {
+        const double* from = list->butterfly()->contiguousDouble().data() + start;
+        for (unsigned i = 0; i < count; ++i)
+            to[i].setWithoutWriteBarrier(from[i] == from[i] ? JSValue(JSValue::EncodeAsDouble, from[i]) : JSValue());
+        return;
+    }
+    gcSafeMemcpy(to, list->butterfly()->contiguous().data() + start, count * sizeof(JSValue));
+}
 
 static NEVER_INLINE void raiseListTooLong(JSGlobalObject* globalObject)
 {
@@ -220,6 +268,40 @@ JSArray* newList(JSGlobalObject* globalObject, std::span<const JSValue> items)
 {
     const JSValue* item = items.data();
     return newListOf(globalObject, items.size(), [&] ALWAYS_INLINE_LAMBDA { return *item++; });
+}
+
+// A new list of so many items, which fill() writes all at once, allocating nothing. Null, with nothing raised: it cannot be made so.
+template<typename Functor>
+static ALWAYS_INLINE JSArray* tryNewListFilledBy(JSGlobalObject* globalObject, uint64_t length, const Functor& fill)
+{
+    if (length > MAX_STORAGE_VECTOR_LENGTH) [[unlikely]]
+        return nullptr;
+    Structure* structure = globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous);
+    if (!hasContiguous(structure->indexingType())) [[unlikely]]
+        return nullptr;
+    ObjectInitializationScope initialization(getVM(globalObject));
+    JSArray* list = JSArray::tryCreateUninitializedRestricted(initialization, structure, static_cast<unsigned>(length));
+    if (list) [[likely]]
+        fill(list->butterfly()->contiguous().data());
+    return list;
+}
+
+// The first so many items are there. They are written again behind themselves until they are there `count` times.
+static void repeatItems(WriteBarrier<Unknown>* items, unsigned length, uint64_t count)
+{
+    if (length == 1) {
+        JSValue item = items[0].get();
+        for (uint64_t i = 1; i < count; ++i)
+            items[i].setWithoutWriteBarrier(item);
+        return;
+    }
+    // Twice as many each time.
+    uint64_t total = length * count;
+    for (uint64_t done = length; done < total;) {
+        uint64_t more = std::min(done, total - done);
+        gcSafeMemcpy(items + done, items, more * sizeof(JSValue));
+        done += more;
+    }
 }
 
 JSValue listGetSlow(JSArray* list, unsigned index)
@@ -356,6 +438,22 @@ static void listAppendSpan(JSGlobalObject* globalObject, JSArray* list, std::spa
     }
 }
 
+// What list.extend() asks of an iterable once it has the iterator: how many items there may be. -1: an exception.
+static int64_t lengthHintForList(JSGlobalObject* globalObject, JSValue iterable, int64_t length)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    int64_t hint = lengthHint(globalObject, iterable, 0);
+    RETURN_IF_EXCEPTION(scope, -1);
+    // CPython makes room for so many, unless the sum overflows: then it takes the hint for a lie.
+    constexpr int64_t maxSsize = std::numeric_limits<int64_t>::max();
+    if (hint <= maxSsize - length && hint + length > maxSsize / static_cast<int64_t>(sizeof(void*))) [[unlikely]] {
+        raiseMemoryError(globalObject, scope, String());
+        return -1;
+    }
+    return hint;
+}
+
 void listExtend(JSGlobalObject* globalObject, JSArray* list, JSValue iterable)
 {
     VM& vm = getVM(globalObject);
@@ -366,16 +464,12 @@ void listExtend(JSGlobalObject* globalObject, JSArray* list, JSValue iterable)
     if (isExactList(iterable) || (iterable.isCell() && iterable.asCell() == list)) {
         JSArray* other = asList(iterable);
         unsigned count = other->length();
-        if (ListStorage storage { vm, list }; storage && hasContiguous(other->indexingType())) [[likely]] {
+        if (ListStorage storage { vm, list }; storage && hasItemsInARow(other)) [[likely]] {
             unsigned length = storage.length();
             if (count > MAX_STORAGE_VECTOR_LENGTH - length || !storage.grow(length + count))
                 RELEASE_AND_RETURN(scope, raiseListTooLong(globalObject));
-            const WriteBarrier<Unknown>* from = other->butterfly()->contiguous().data();
-            WriteBarrier<Unknown>* to = storage.items() + length;
-            for (unsigned i = 0; i < count; ++i) {
-                JSValue item = from[i].get();
-                to[i].setWithoutWriteBarrier(item ? item : jsUndefined());
-            }
+            // (It may be the other one: its items are looked for now that it has grown.)
+            copyItems(storage.items() + length, other, 0, count);
             vm.writeBarrier(list);
             return;
         }
@@ -385,23 +479,21 @@ void listExtend(JSGlobalObject* globalObject, JSArray* list, JSValue iterable)
         }
         return;
     }
-    JSValue iterator = getIter(globalObject, iterable);
+    Items items(globalObject, iterable);
     RETURN_IF_EXCEPTION(scope, void());
-    // Only asked so that what is wrong with the answer is reported: the array grows as it needs to.
-    int64_t hint = lengthHint(globalObject, iterable, 8);
+    int64_t hint = lengthHintForList(globalObject, iterable, list->length());
     RETURN_IF_EXCEPTION(scope, void());
-    // CPython makes room for so many, unless the sum overflows: then it takes the hint for a lie.
-    constexpr int64_t maxSsize = std::numeric_limits<int64_t>::max();
-    if (int64_t length = list->length(); hint <= maxSsize - length && hint + length > maxSsize / static_cast<int64_t>(sizeof(void*))) [[unlikely]] {
-        raiseMemoryError(globalObject, scope, String());
-        return;
+    // We make room if it is one of our own types that says how many there are. What a class of the program's says is a guess.
+    if (hint && !typeOf(globalObject, iterable)->isHeapType()) {
+        if (ListStorage storage { vm, list })
+            storage.reserve(storage.length() + static_cast<uint64_t>(hint));
     }
     while (true) {
-        JSValue item = iterNext(globalObject, iterator);
+        JSValue item = items.next();
         RETURN_IF_EXCEPTION(scope, void());
         if (!item)
             return;
-        list->push(globalObject, item);
+        list->pushInline(globalObject, item);
         RETURN_IF_EXCEPTION(scope, void());
     }
 }
@@ -422,6 +514,55 @@ JSArray* listFromIterable(JSGlobalObject* globalObject, JSValue iterable)
     return list;
 }
 
+void AllItems::take(JSGlobalObject* globalObject, JSValue iterable, ASCIILiteral messageIfNotIterable, WhileInUse whileInUse)
+{
+    Runtime& rt = runtime(globalObject);
+    VM& vm = rt.vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (auto* tuple = PyTuple::tryFrom(iterable); tuple && tuple->type() == rt.tupleType()) {
+        m_owner = tuple;
+        m_span = tuple->span();
+        return;
+    }
+    if (isExactList(iterable)) {
+        JSArray* list = asList(iterable);
+        if (auto values = listValues(list); values.data() && whileInUse == WhileInUse::NothingRuns) [[likely]] {
+            m_owner = list;
+            m_span = values;
+            return;
+        }
+        unsigned length = list->length();
+        if (length > MAX_STORAGE_VECTOR_LENGTH) [[unlikely]]
+            RELEASE_AND_RETURN(scope, raiseListTooLong(globalObject));
+        for (unsigned i = 0; i < length; ++i)
+            m_kept.append(listGet(list, i));
+    } else {
+        JSValue iterator = getIter(globalObject, iterable);
+        if (failed(scope, iterator)) {
+            if (clearPendingExceptionIfMatches(globalObject, rt.TypeError()))
+                raiseTypeError(globalObject, scope, messageIfNotIterable);
+            return;
+        }
+        Items items(globalObject, iterator);
+        RETURN_IF_EXCEPTION(scope, void());
+        lengthHintForList(globalObject, iterator, 0);
+        RETURN_IF_EXCEPTION(scope, void());
+        while (true) {
+            JSValue item = items.next();
+            RETURN_IF_EXCEPTION(scope, void());
+            if (!item)
+                break;
+            m_kept.append(item);
+            // (There may be no end to them.)
+            if (m_kept.hasOverflowed() || m_kept.size() > MAX_STORAGE_VECTOR_LENGTH) [[unlikely]]
+                RELEASE_AND_RETURN(scope, raiseListTooLong(globalObject));
+        }
+    }
+    if (m_kept.hasOverflowed()) [[unlikely]]
+        RELEASE_AND_RETURN(scope, raiseListTooLong(globalObject));
+    m_span = spanOf(m_kept);
+}
+
 PyTuple* tupleFromList(JSGlobalObject* globalObject, JSArray* list)
 {
     VM& vm = getVM(globalObject);
@@ -429,6 +570,11 @@ PyTuple* tupleFromList(JSGlobalObject* globalObject, JSArray* list)
     if (length > MAX_STORAGE_VECTOR_LENGTH) [[unlikely]] {
         raiseListTooLong(globalObject);
         return nullptr;
+    }
+    if (auto values = listValues(list); values.data() && std::ranges::find(values, JSValue()) == values.end()) [[likely]] {
+        PyTuple* tuple = PyTuple::create(globalObject, values);
+        ensureStillAliveHere(list);
+        return tuple;
     }
     PyTuple* tuple = PyTuple::create(globalObject, length);
     for (unsigned i = 0; i < length; ++i)
@@ -445,19 +591,23 @@ PyTuple* tupleFromIterable(JSGlobalObject* globalObject, JSValue iterable)
     if (isExactList(iterable))
         RELEASE_AND_RETURN(scope, tupleFromList(globalObject, asList(iterable)));
     // Unlike a list, a tuple does not ask how many there will be.
-    JSValue iterator = getIter(globalObject, iterable);
+    Items items(globalObject, iterable);
     RETURN_IF_EXCEPTION(scope, nullptr);
-    JSArray* list = newList(globalObject);
-    RETURN_IF_EXCEPTION(scope, nullptr);
+    MarkedArgumentBuffer taken;
     while (true) {
-        JSValue item = iterNext(globalObject, iterator);
+        JSValue item = items.next();
         RETURN_IF_EXCEPTION(scope, nullptr);
         if (!item)
             break;
-        list->push(globalObject, item);
-        RETURN_IF_EXCEPTION(scope, nullptr);
+        taken.append(item);
+        // (There may be no end to them.)
+        if (taken.hasOverflowed() || taken.size() > MAX_STORAGE_VECTOR_LENGTH) [[unlikely]] {
+            scope.release();
+            raiseListTooLong(globalObject);
+            return nullptr;
+        }
     }
-    RELEASE_AND_RETURN(scope, tupleFromList(globalObject, list));
+    return PyTuple::create(globalObject, spanOf(taken));
 }
 
 // ---- Sorting ----
@@ -1282,15 +1432,29 @@ void listSort(JSGlobalObject* globalObject, JSArray* list, JSValue key, bool rev
 namespace {
 
 struct ListItems {
+    static constexpr bool lengthsAreComparedFirst = true;
     JSArray* list;
-    unsigned length() const { return list->length(); }
-    JSValue at(unsigned index) const { return listGet(list, index); }
+    ALWAYS_INLINE unsigned length() const { return list->length(); }
+    ALWAYS_INLINE JSValue at(unsigned index) const { return listGet(list, index); }
+    ALWAYS_INLINE std::span<const JSValue> values() const { return listValues(list); }
+    // The items as they lie in memory, if those that are the same there are the same items. Until something changes the list.
+    ALWAYS_INLINE std::span<const uint64_t> words(bool& areDoubles) const
+    {
+        if (!hasItemsInARow(list))
+            return { };
+        areDoubles = hasDouble(list->indexingType());
+        Butterfly* butterfly = list->butterfly();
+        return { std::bit_cast<const uint64_t*>(butterfly->contiguous().data()), butterfly->publicLength() };
+    }
 };
 
 struct TupleItems {
+    static constexpr bool lengthsAreComparedFirst = false;
     PyTuple* tuple;
-    unsigned length() const { return tuple->length(); }
-    JSValue at(unsigned index) const { return tuple->at(index); }
+    ALWAYS_INLINE unsigned length() const { return tuple->length(); }
+    ALWAYS_INLINE JSValue at(unsigned index) const { return tuple->at(index); }
+    ALWAYS_INLINE std::span<const JSValue> values() const { return tuple->span(); }
+    ALWAYS_INLINE std::span<const uint64_t> words(bool&) const { return { std::bit_cast<const uint64_t*>(tuple->span().data()), tuple->length() }; }
 };
 
 }
@@ -1300,12 +1464,23 @@ static JSValue compareSequences(JSGlobalObject* globalObject, CompareOperator op
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (first.length() != second.length() && (op == CompareOperator::Eq || op == CompareOperator::NotEq))
+    // (Two tuples are not asked for their lengths first.)
+    if (Items::lengthsAreComparedFirst && first.length() != second.length() && (op == CompareOperator::Eq || op == CompareOperator::NotEq))
         return jsBoolean(op == CompareOperator::NotEq);
 
     // The first pair of items that differ decides. The lengths may change as the items are compared.
     unsigned i = 0;
-    for (; i < first.length() && i < second.length(); ++i) {
+    for (;; ++i) {
+        // Nothing is asked about a pair of items that are one and the same, so nothing changes while those are passed over.
+        bool firstAreDoubles = false;
+        bool secondAreDoubles = false;
+        auto firstWords = first.words(firstAreDoubles);
+        auto secondWords = second.words(secondAreDoubles);
+        size_t common = firstAreDoubles == secondAreDoubles ? std::min(firstWords.size(), secondWords.size()) : 0;
+        while (i < common && firstWords[i] == secondWords[i])
+            ++i;
+        if (i >= first.length() || i >= second.length())
+            break;
         JSValue a = first.at(i);
         JSValue b = second.at(i);
         bool equal = isEqual(globalObject, a, b);
@@ -1337,6 +1512,44 @@ static JSValue compareSequences(JSGlobalObject* globalObject, CompareOperator op
         return jsBoolean(a > b);
     default:
         return jsBoolean(a >= b);
+    }
+}
+
+// The index of the first item from `from` on and before `to` that equals the value. -1: there is none, or an exception.
+template<typename Items>
+static int64_t findEqual(JSGlobalObject* globalObject, Items items, JSValue value, int64_t from = 0, int64_t to = std::numeric_limits<int64_t>::max())
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    // The length is looked at each time: a list may grow or shrink as it is searched.
+    for (int64_t i = from;; ++i) {
+        if (value.isInt32()) {
+            // Nothing is asked about two ints, so nothing changes while the other ints are passed over.
+            auto values = items.values();
+            int64_t end = std::min<int64_t>(values.size(), to);
+            while (i < end && values[i].isInt32() && values[i] != value)
+                ++i;
+        }
+        if (i >= to || i >= items.length())
+            return -1;
+        bool equal = isEqual(globalObject, items.at(i), value);
+        RETURN_IF_EXCEPTION(scope, -1);
+        if (equal)
+            return i;
+    }
+}
+
+template<typename Items>
+static JSValue countEqual(JSGlobalObject* globalObject, Items items, JSValue value)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    unsigned count = 0;
+    for (int64_t i = 0;; ++i, ++count) {
+        i = findEqual(globalObject, items, value, i);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (i < 0)
+            return jsNumber(count);
     }
 }
 
@@ -1425,8 +1638,22 @@ static JSArray* listSlice(JSGlobalObject* globalObject, JSArray* list, const PyS
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
+    if (indices.step == 1 && indices.length > 0 && hasItemsInARow(list)) [[likely]] {
+        JSArray* result = tryNewListFilledBy(globalObject, indices.length, [&](WriteBarrier<Unknown>* items) ALWAYS_INLINE_LAMBDA {
+            copyItems(items, list, indices.start, indices.length);
+        });
+        if (result) [[likely]]
+            return result;
+    }
     // Unsigned: one step beyond the last item may be beyond what an int64_t holds.
     uint64_t position = indices.start;
+    if (auto values = listValues(list); values.data()) {
+        RELEASE_AND_RETURN(scope, newListOf(globalObject, indices.length, [&] ALWAYS_INLINE_LAMBDA {
+            JSValue item = values[position];
+            position += static_cast<uint64_t>(indices.step);
+            return item ? item : jsUndefined();
+        }));
+    }
     RELEASE_AND_RETURN(scope, newListOf(globalObject, indices.length, [&] ALWAYS_INLINE_LAMBDA {
         JSValue item = listGet(list, static_cast<unsigned>(position));
         position += static_cast<uint64_t>(indices.step);
@@ -1481,7 +1708,7 @@ JSValue listGetItem(JSGlobalObject* globalObject, JSValue self, JSValue key)
     RELEASE_AND_RETURN(scope, listSlice(globalObject, list, indices));
 }
 
-// list[start:stop] = items
+// list[start:stop] = items, which are not in the list. An empty one is None.
 static void listReplaceRange(JSGlobalObject* globalObject, JSArray* list, unsigned start, unsigned stop, std::span<const JSValue> items)
 {
     VM& vm = getVM(globalObject);
@@ -1492,8 +1719,10 @@ static void listReplaceRange(JSGlobalObject* globalObject, JSArray* list, unsign
     else
         listRemove(globalObject, list, start + items.size(), removed - items.size());
     RETURN_IF_EXCEPTION(scope, void());
+    if (ListStorage storage { vm, list }) [[likely]]
+        return storage.set(start, items);
     for (size_t i = 0; i < items.size(); ++i) {
-        listSet(globalObject, list, start + i, items[i]);
+        listSetSlow(globalObject, list, start + i, items[i] ? items[i] : jsUndefined());
         RETURN_IF_EXCEPTION(scope, void());
     }
 }
@@ -1525,26 +1754,16 @@ static void listAssignSubscript(JSGlobalObject* globalObject, JSArray* list, JSV
         return;
 
     // The items are collected before the length of the list is looked at: working them out may change the list, and they may be the list.
-    MarkedArgumentBuffer items;
-    if (value && value.isCell() && value.asCell() == list) {
+    JSValue source = value ? value : JSValue(runtime(globalObject).emptyTuple());
+    if (source.isCell() && source.asCell() == list) {
         // Whatever its class.
-        for (unsigned i = 0; i < list->length(); ++i)
-            items.append(listGet(list, i));
-    } else if (value) {
-        // Whatever TypeError asking for the iterator ends in. (A list or a tuple is not asked.)
-        JSValue iterator = isExactList(value) || typeOf(globalObject, value) == runtime(globalObject).tupleType() ? value : getIter(globalObject, value);
-        if (failed(scope, iterator)) {
-            if (clearPendingExceptionIfMatches(globalObject, runtime(globalObject).TypeError()))
-                raiseTypeError(globalObject, scope, "must assign iterable to extended slice"_s);
-            return;
-        }
-        forEach(globalObject, iterator, [&](JSValue item) {
-            items.append(item);
-            return true;
-        });
+        source = listSlice(globalObject, list, { 0, list->length(), 1, list->length() });
         RETURN_IF_EXCEPTION(scope, void());
     }
-    std::span<const JSValue> itemSpan { reinterpret_cast<const JSValue*>(ArgList(items).data()), items.size() };
+    // To store into a list whose items are not in a row may run code of JS.
+    AllItems items(globalObject, source, "must assign iterable to extended slice"_s, ListStorage { vm, list } ? AllItems::WhileInUse::NothingRuns : AllItems::WhileInUse::CodeMayRun);
+    RETURN_IF_EXCEPTION(scope, void());
+    std::span<const JSValue> itemSpan = items.span();
 
     PySlice::adjust(list->length(), indices);
     if (indices.step == 1) {
@@ -1565,25 +1784,48 @@ static void listAssignSubscript(JSGlobalObject* globalObject, JSArray* list, JSV
         int64_t left = indices.length;
         unsigned length = list->length();
         unsigned kept = next;
+        if (ListStorage storage { vm, list }) [[likely]] {
+            WriteBarrier<Unknown>* data = storage.items();
+            for (unsigned i = next; i < length; ++i) {
+                if (left && i == next) {
+                    next += step;
+                    --left;
+                    continue;
+                }
+                data[kept++].setWithoutWriteBarrier(data[i].get());
+            }
+            // What has moved may have passed the collector by.
+            vm.writeBarrier(list);
+            return storage.shrink(kept);
+        }
         for (unsigned i = next; i < length; ++i) {
             if (left && i == next) {
                 next += step;
                 --left;
                 continue;
             }
-            listSet(globalObject, list, kept++, listGet(list, i));
+            listSetSlow(globalObject, list, kept++, listGet(list, i));
             RETURN_IF_EXCEPTION(scope, void());
         }
         RELEASE_AND_RETURN(scope, listTruncate(globalObject, list, kept));
     }
-    if (static_cast<int64_t>(items.size()) != indices.length) {
-        raiseValueError(globalObject, scope, "attempt to assign sequence of size "_s, items.size(), " to extended slice of size "_s, indices.length);
+    if (static_cast<int64_t>(itemSpan.size()) != indices.length) {
+        raiseValueError(globalObject, scope, "attempt to assign sequence of size "_s, itemSpan.size(), " to extended slice of size "_s, indices.length);
         return;
     }
     int64_t position = indices.start;
-    for (int64_t i = 0; i < indices.length; ++i, position += indices.step) {
-        listSet(globalObject, list, position, itemSpan[i]);
+    if (ListStorage storage { vm, list }) [[likely]] {
+        for (JSValue item : itemSpan) {
+            storage.items()[position].setWithoutWriteBarrier(item ? item : jsUndefined());
+            position += indices.step;
+        }
+        vm.writeBarrier(list);
+        return;
+    }
+    for (JSValue item : itemSpan) {
+        listSetSlow(globalObject, list, position, item ? item : jsUndefined());
         RETURN_IF_EXCEPTION(scope, void());
+        position += indices.step;
     }
 }
 
@@ -1616,15 +1858,7 @@ static JSValue listReversed(JSGlobalObject* globalObject, JSValue self)
 
 bool listContains(JSGlobalObject* globalObject, JSArray* list, JSValue item)
 {
-    VM& vm = getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    for (unsigned i = 0; i < list->length(); ++i) {
-        bool equal = isEqual(globalObject, listGet(list, i), item);
-        RETURN_IF_EXCEPTION(scope, false);
-        if (equal)
-            return true;
-    }
-    return false;
+    return findEqual(globalObject, ListItems { list }, item) >= 0;
 }
 
 static JSValue listContainsMethod(JSGlobalObject* globalObject, JSValue self, JSValue item)
@@ -1645,6 +1879,14 @@ static JSValue listAdd(JSGlobalObject* globalObject, JSValue self, JSValue other
     JSArray* a = asList(self);
     JSArray* b = asList(other);
     unsigned lengthA = a->length();
+    if (hasItemsInARow(a) && hasItemsInARow(b)) [[likely]] {
+        JSArray* result = tryNewListFilledBy(globalObject, static_cast<uint64_t>(lengthA) + b->length(), [&](WriteBarrier<Unknown>* items) ALWAYS_INLINE_LAMBDA {
+            copyItems(items, a, 0, lengthA);
+            copyItems(items + lengthA, b, 0, b->length());
+        });
+        if (result) [[likely]]
+            return result;
+    }
     unsigned i = 0;
     RELEASE_AND_RETURN(scope, newListOf(globalObject, static_cast<uint64_t>(lengthA) + b->length(), [&] ALWAYS_INLINE_LAMBDA {
         JSValue item = i < lengthA ? listGet(a, i) : listGet(b, i - lengthA);
@@ -1671,6 +1913,14 @@ static JSValue listMul(JSGlobalObject* globalObject, JSValue self, JSValue count
     uint64_t count;
     if (failed(scope, repeatCount(globalObject, countValue, [&] { return list->length(); }, length, count)))
         return { };
+    if (length && count && hasItemsInARow(list)) [[likely]] {
+        JSArray* result = tryNewListFilledBy(globalObject, length * count, [&](WriteBarrier<Unknown>* items) ALWAYS_INLINE_LAMBDA {
+            copyItems(items, list, 0, length);
+            repeatItems(items, length, count);
+        });
+        if (result) [[likely]]
+            return result;
+    }
     unsigned i = 0;
     RELEASE_AND_RETURN(scope, newListOf(globalObject, length * count, [&] ALWAYS_INLINE_LAMBDA {
         JSValue item = listGet(list, i);
@@ -1692,6 +1942,18 @@ static JSValue listIMul(JSGlobalObject* globalObject, JSValue self, JSValue coun
     if (!count) {
         listTruncate(globalObject, list, 0);
         RETURN_IF_EXCEPTION(scope, { });
+        return self;
+    }
+    if (!length)
+        return self;
+    if (ListStorage storage { vm, list }) [[likely]] {
+        if (!storage.grow(length * count)) {
+            scope.release();
+            raiseListTooLong(globalObject);
+            return { };
+        }
+        repeatItems(storage.items(), length, count);
+        vm.writeBarrier(list);
         return self;
     }
     for (uint64_t i = 1; i < count; ++i) {
@@ -1764,18 +2026,16 @@ static JSValue listRemoveMethod(JSGlobalObject* globalObject, JSValue self, JSVa
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSArray* list = asList(self);
-    for (unsigned i = 0; i < list->length(); ++i) {
-        bool equal = isEqual(globalObject, listGet(list, i), item);
+    int64_t index = findEqual(globalObject, ListItems { list }, item);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (index < 0)
+        return raiseValueError(globalObject, scope, "list.remove(x): x not in list"_s);
+    // (The comparison may have taken it away.)
+    if (index < list->length()) {
+        listRemove(globalObject, list, index);
         RETURN_IF_EXCEPTION(scope, { });
-        if (!equal)
-            continue;
-        if (i < list->length()) {
-            listRemove(globalObject, list, i);
-            RETURN_IF_EXCEPTION(scope, { });
-        }
-        return jsUndefined();
     }
-    return raiseValueError(globalObject, scope, "list.remove(x): x not in list"_s);
+    return jsUndefined();
 }
 
 static JSValue listClear(JSGlobalObject* globalObject, JSValue self)
@@ -1795,16 +2055,7 @@ static JSValue listCopy(JSGlobalObject* globalObject, JSValue self)
 
 static JSValue listCount(JSGlobalObject* globalObject, JSValue self, JSValue item)
 {
-    VM& vm = getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    JSArray* list = asList(self);
-    unsigned count = 0;
-    for (unsigned i = 0; i < list->length(); ++i) {
-        bool equal = isEqual(globalObject, listGet(list, i), item);
-        RETURN_IF_EXCEPTION(scope, { });
-        count += equal;
-    }
-    return jsNumber(count);
+    return countEqual(globalObject, ListItems { asList(self) }, item);
 }
 
 static JSValue listIndex(JSGlobalObject* globalObject, JSValue self, JSValue item, JSValue start, JSValue stop)
@@ -1821,12 +2072,10 @@ static JSValue listIndex(JSGlobalObject* globalObject, JSValue self, JSValue ite
         from = std::max<int64_t>(from + list->length(), 0);
     if (to < 0)
         to = std::max<int64_t>(to + list->length(), 0);
-    for (int64_t i = from; i < to && i < list->length(); ++i) {
-        bool equal = isEqual(globalObject, listGet(list, i), item);
-        RETURN_IF_EXCEPTION(scope, { });
-        if (equal)
-            return jsNumber(static_cast<double>(i));
-    }
+    int64_t index = findEqual(globalObject, ListItems { list }, item, from, to);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (index >= 0)
+        return jsNumber(static_cast<double>(index));
     return raiseValueError(globalObject, scope, "list.index(x): x not in list"_s);
 }
 
@@ -1835,12 +2084,23 @@ static JSValue listReverse(JSGlobalObject* globalObject, JSValue self)
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSArray* list = asList(self);
+    if (ListStorage storage { vm, list }) [[likely]] {
+        WriteBarrier<Unknown>* items = storage.items();
+        for (unsigned i = 0, j = storage.length(); i + 1 < j; ++i) {
+            JSValue item = items[i].get();
+            items[i].setWithoutWriteBarrier(items[--j].get());
+            items[j].setWithoutWriteBarrier(item);
+        }
+        // What has moved may have passed the collector by.
+        vm.writeBarrier(list);
+        return jsUndefined();
+    }
     unsigned length = list->length();
     for (unsigned i = 0; i < length / 2; ++i) {
         JSValue first = listGet(list, i);
-        listSet(globalObject, list, i, listGet(list, length - 1 - i));
+        listSetSlow(globalObject, list, i, listGet(list, length - 1 - i));
         RETURN_IF_EXCEPTION(scope, { });
-        listSet(globalObject, list, length - 1 - i, first);
+        listSetSlow(globalObject, list, length - 1 - i, first);
         RETURN_IF_EXCEPTION(scope, { });
     }
     return jsUndefined();
@@ -2037,6 +2297,11 @@ JSValue tupleGetItem(JSGlobalObject* globalObject, JSValue self, JSValue key)
         return rt.emptyTuple();
     if (!indices.start && indices.step == 1 && indices.length == tuple->length() && tuple->type() == rt.tupleType())
         return tuple;
+    if (indices.step == 1) {
+        PyTuple* result = PyTuple::create(globalObject, tuple->span().subspan(indices.start, indices.length));
+        ensureStillAliveHere(tuple);
+        return result;
+    }
     PyTuple* result = PyTuple::create(globalObject, indices.length);
     int64_t position = indices.start;
     for (int64_t i = 0; i < indices.length; ++i, position += indices.step)
@@ -2048,15 +2313,7 @@ static JSValue tupleIter(JSGlobalObject* globalObject, JSValue self) { return Py
 
 bool tupleContains(JSGlobalObject* globalObject, PyTuple* tuple, JSValue item)
 {
-    VM& vm = getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    for (unsigned i = 0; i < tuple->length(); ++i) {
-        bool equal = isEqual(globalObject, tuple->at(i), item);
-        RETURN_IF_EXCEPTION(scope, false);
-        if (equal)
-            return true;
-    }
-    return false;
+    return findEqual(globalObject, TupleItems { tuple }, item) >= 0;
 }
 
 static JSValue tupleContainsMethod(JSGlobalObject* globalObject, JSValue self, JSValue item)
@@ -2116,16 +2373,7 @@ static JSValue tupleMul(JSGlobalObject* globalObject, JSValue self, JSValue coun
 
 static JSValue tupleCount(JSGlobalObject* globalObject, JSValue self, JSValue item)
 {
-    VM& vm = getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    PyTuple* tuple = PyTuple::from(self);
-    unsigned count = 0;
-    for (unsigned i = 0; i < tuple->length(); ++i) {
-        bool equal = isEqual(globalObject, tuple->at(i), item);
-        RETURN_IF_EXCEPTION(scope, { });
-        count += equal;
-    }
-    return jsNumber(count);
+    return countEqual(globalObject, TupleItems { PyTuple::from(self) }, item);
 }
 
 static JSValue tupleIndex(JSGlobalObject* globalObject, JSValue self, JSValue item, JSValue start, JSValue stop)
@@ -2138,12 +2386,10 @@ static JSValue tupleIndex(JSGlobalObject* globalObject, JSValue self, JSValue it
     if ((start && failed(scope, sliceIndexArgument(globalObject, start, from))) || (stop && failed(scope, sliceIndexArgument(globalObject, stop, to))))
         return { };
     adjustSliceBounds(tuple->length(), from, to);
-    for (int64_t i = from; i < to; ++i) {
-        bool equal = isEqual(globalObject, tuple->at(i), item);
-        RETURN_IF_EXCEPTION(scope, { });
-        if (equal)
-            return jsNumber(static_cast<double>(i));
-    }
+    int64_t index = findEqual(globalObject, TupleItems { tuple }, item, from, to);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (index >= 0)
+        return jsNumber(static_cast<double>(index));
     return raiseValueError(globalObject, scope, "tuple.index(x): x not in tuple"_s);
 }
 

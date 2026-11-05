@@ -62,11 +62,17 @@ count of a `StringImpl` is atomic, and two such operations cost more than most m
 than 48 units) remembers the number of pairs and the offset of every 64th code point, so that `s[i]` in a loop does not scan from
 the start each time.
 
-**list.** Any `JSArray` is a list, so a list is not always values in a row. JS makes arrays of int32s or doubles only, copy-on-write
-ones, ones with holes, sparse, frozen, with accessors for indices, with any length below 2^32; and once `Array.prototype` has an accessor
+**list.** Any `JSArray` is a list, so a list is not always values in a row. An array that has held nothing but int32s, or nothing but
+numbers, is stored as int32s or as doubles: what `[]`, `[1, 2]` and a comprehension make begins so, as in JS, and `JSArray::push`,
+`op_py_list_append` and `op_py_set_item` keep it so. (In an array of doubles a whole number is an int. A float that is whole is a cell, and
+makes it an array of values.) JS also makes copy-on-write
+arrays, ones with holes, sparse, frozen, with accessors for indices, with any length below 2^32; and once `Array.prototype` has an accessor
 for an index, *every* array of the realm, also the next one that Python makes, has `ArrayStorage`. So nothing outside `PyList.cpp`
-touches a butterfly. There, `ListStorage` says whether the items are in a row; if not, each item goes through what works for any array.
-A new list is made by `newListOf`, with what `constructArray` uses. (`PyListObject::create` lays out an empty butterfly, and `listSort`
+touches a butterfly. There, what changes a list asks `ListStorage` whether the items are values in a row, which makes them so if they are
+numbers in a row. What only reads asks `listValues()`, or `hasItemsInARow()` and then `copyItems()`. If they are not, each item goes
+through what works for any array. What is done to a whole list asks once, works on the row and has one barrier. C++ elsewhere
+gets the items one after the other from `Items` (`PyAbstract.h`: any iterable) or all at once from `AllItems` (`PyList.h`).
+A new list is made by `newListOf` or `tryNewListFilledBy`, with what `constructArray` uses, and is an array of values. (`PyListObject::create` lays out an empty butterfly, and `listSort`
 leaves a mark in one after looking at its shape.) The limit on the length of items in a row is `ListStorage::grow`'s; any other array
 may be as long as 32 bits allow, so whatever takes room for each item looks at the length first. The fast paths of the
 interpreter look at the indexing type first. `differential/crashers/evil_js_arrays.py` does everything to all of them.

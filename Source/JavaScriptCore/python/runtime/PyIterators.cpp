@@ -167,14 +167,8 @@ JSValue PyIterator::next(JSGlobalObject* globalObject)
             return jsNumber(bytes->span()[position++]);
         return exhaust();
     }
-    case Kind::Range: {
-        if (remaining <= 0)
-            return { };
-        int64_t value = position;
-        position += step;
-        --remaining;
-        RELEASE_AND_RETURN(scope, makeInt(globalObject, value));
-    }
+    case Kind::Range:
+        RELEASE_AND_RETURN(scope, nextOfRange(globalObject));
     case Kind::LongRange: {
         auto* state = PyTuple::from(m_extra.get());
         JSValue stride = state->at(0);

@@ -6,6 +6,7 @@
 #pragma once
 
 #include "PyDict.h"
+#include "PyNumbers.h"
 
 namespace JSC {
 namespace Python {
@@ -46,6 +47,16 @@ public:
 
     // Empty, with no exception: exhausted.
     JSValue next(JSGlobalObject*);
+    // The same, for who knows that it is a Kind::Range.
+    ALWAYS_INLINE JSValue nextOfRange(JSGlobalObject* globalObject)
+    {
+        if (remaining <= 0)
+            return { };
+        int64_t value = position;
+        position += step;
+        --remaining;
+        return makeInt(globalObject, value);
+    }
 
     int64_t position { 0 };
     int64_t step { 0 }; // For a dict: how many items are still to come.
