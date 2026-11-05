@@ -174,6 +174,9 @@ static JSValue localeSetlocale(JSGlobalObject* globalObject, JSValue categoryVal
     LocaleText locale;
     if (failed(scope, posixToInt(globalObject, categoryValue, category)) || failed(scope, localeToText(globalObject, localeValue, "setlocale"_s, 2, true, locale)))
         return { };
+    // "": as the environment has it.
+    if (!locale.isNull && !*locale.characters())
+        posixGiveProcessVariablesOfHost(globalObject, { "LC_ALL"_s, "LC_COLLATE"_s, "LC_CTYPE"_s, "LC_MESSAGES"_s, "LC_MONETARY"_s, "LC_NUMERIC"_s, "LC_TIME"_s, "LANG"_s });
     const char* result = setlocale(category, locale.characters());
     if (!result)
         RELEASE_AND_RETURN(scope, localeRaiseError(globalObject, locale.isNull ? "locale query failed"_s : "unsupported locale setting"_s));

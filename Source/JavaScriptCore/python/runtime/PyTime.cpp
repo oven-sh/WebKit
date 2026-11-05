@@ -14,6 +14,7 @@
 #include "PyModuleHelpers.h"
 #include "PyNamespace.h"
 #include "PyNumbers.h"
+#include "PyPosix.h"
 #include "PyStr.h"
 #include "PyStructSeq.h"
 #include "PyThreads.h"
@@ -795,6 +796,7 @@ static JSValue timeTzSet(JSGlobalObject* globalObject)
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue module = importModule(globalObject, "time"_s);
     RETURN_IF_EXCEPTION(scope, { });
+    posixGiveProcessVariablesOfHost(globalObject, { "TZ"_s });
     tzset();
     if (auto* timeModule = PyModule::tryFrom(module)) {
         timeInitializeZones(globalObject, timeModule);

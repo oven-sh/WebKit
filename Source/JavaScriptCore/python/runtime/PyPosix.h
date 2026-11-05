@@ -58,6 +58,9 @@ private:
     Vector<char> m_characters;
     Vector<char*> m_pointers;
 };
+// The C library reads the environment of the process. Before it is told to read these variables again, the process is given what the
+// host has for them, as if Python had written that. With the GIL.
+void posixGiveProcessVariablesOfHost(JSGlobalObject*, std::initializer_list<ASCIILiteral> names);
 JSValue posixError(JSGlobalObject*, int errorNumber);
 
 // ---- Results ----

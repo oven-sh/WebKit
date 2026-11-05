@@ -1465,8 +1465,9 @@ The collector is told the size of the side tables, which are several times the s
   Python writes that variable, or the host what the process has). A program that Python starts or gives way to without being told its environment inherits that
   of the process in CPython. Here it is given that with the differences applied (`PosixChildEnvironment`), on whatever thread, without asking the host:
   `subprocess`, `os.system()`, `os.popen()`, `os.spawnv()` and its kin, `os.posix_spawn(..., None)`, `os.execv()` and its kin, `multiprocessing`. While there is
-  no difference nothing is built, and `os.system()` is `system(3)`. `os.reload_environ()` gives the same. What is left: the C library, and whatever else calls
-  `getenv()`, does not see what JS wrote, as in Bun without Python: after `process.env.TZ = ...`, `time.tzset()` changes nothing.
+  no difference nothing is built, and `os.system()` is `system(3)`. `os.reload_environ()` gives the same. `time.tzset()` and `locale.setlocale(category, "")` tell
+  the C library to read variables again: the process is first given what the host has for just those (`TZ`; `LC_ALL`, the six `LC_*` of POSIX, `LANG`), as if Python had
+  written it (`posixGiveProcessVariablesOfHost`). What is left: whatever else calls `getenv()` does not see what JS wrote, as in Bun without Python.
   To JS names and values are text, with U+FFFD for what is not UTF-8. Such bytes stay what they are in
   `os.environb` until JS writes another text. A name that no environment can hold (`A=B`) stays in `process.env` alone.
   In a worker `process.env` is a copy, or what `new Worker(file, { env })` gave it, and `os.environ` is the same as that, and so is what the programs get that Python

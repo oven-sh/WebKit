@@ -763,6 +763,22 @@ PosixChildEnvironment::PosixChildEnvironment(JSGlobalObject* globalObject)
     m_pointers.append(nullptr);
 }
 
+void posixGiveProcessVariablesOfHost(JSGlobalObject* globalObject, std::initializer_list<ASCIILiteral> names)
+{
+    auto& variablesOfHost = runtime(globalObject).threads().variablesOfHost();
+    if (variablesOfHost.isEmpty())
+        return;
+    for (ASCIILiteral name : names) {
+        auto variable = variablesOfHost.find(posixVariable(name.span()));
+        if (variable == variablesOfHost.end())
+            continue;
+        int status = variable->value.isNull() ? unsetenv(name.characters()) : setenv(name.characters(), byteCast<char>(variable->value.spanIncludingNullTerminator().data()), 1);
+        // The two are the same again.
+        if (!status)
+            variablesOfHost.remove(variable);
+    }
+}
+
 char* const* PosixChildEnvironment::pointers()
 {
     return m_pointers.isEmpty() ? posixEnvironmentOfProcess() : m_pointers.span().data();
