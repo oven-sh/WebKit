@@ -560,6 +560,13 @@ static ALWAYS_INLINE unsigned indexOfParameterNamed(const CodeInfo& info, unsign
     return namedCount;
 }
 
+// What was passed beyond the parameters has gone to the tuple or the dict, or is about to. The frame is not to keep it alive when they no longer do.
+static ALWAYS_INLINE void forgetArgumentsFrom(JSValue* slot, JSValue* end)
+{
+    for (; slot < end; ++slot)
+        *slot = jsUndefined();
+}
+
 // The keyword-only parameters that have no value yet.
 static NEVER_INLINE bool bindKeywordOnlyDefaults(JSGlobalObject* globalObject, PyFunction* function, const CodeInfo& info, JSValue* slots)
 {
@@ -660,6 +667,8 @@ static NEVER_INLINE bool bindKeywords(JSGlobalObject* globalObject, CallFrame* c
         keywordDict = PyDict::create(globalObject);
         slots[namedCount + hasVarArgs] = keywordDict;
     }
+    if (hasVarArgs || hasVarKeywords)
+        forgetArgumentsFrom(slots + namedCount + hasVarArgs + hasVarKeywords, slots + callFrame->argumentCount());
 
     for (unsigned k = firstKeyword; k < keywordCount; ++k) {
         JSString* keyword = asString(keywordNames->at(k));
@@ -741,7 +750,9 @@ static NEVER_INLINE bool bindPositional(JSGlobalObject* globalObject, CallFrame*
         // A call in JS may pass any function more than it takes, and those who call callbacks do: array.map(f) is f(item, index, array).
     }
     if (info.flags.contains(CodeFlag::VarKeywords))
-        *next = PyDict::create(globalObject);
+        *next++ = PyDict::create(globalObject);
+    if (next != slots + namedCount)
+        forgetArgumentsFrom(next, slots + count);
 
     if (count < argCount) {
         PyTuple* defaults = function->defaults();
