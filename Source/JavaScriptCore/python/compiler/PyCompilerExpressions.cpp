@@ -916,13 +916,7 @@ void Unit::jumpIf(Expr* node, Label& target, bool condition)
         g.emitLabel(goesOn.get());
         line(branchTarget.placeOfJumpThere);
     } else if (branchTarget.returns) {
-        int lineno = node->range.lineno;
-        size_t index = branchTarget.returns->findIf([&](auto& entry) { return entry.first == lineno; });
-        if (index == notFound) {
-            index = branchTarget.returns->size();
-            branchTarget.returns->append({ lineno, g.newLabel() });
-        }
-        jumpIfTo(node, branchTarget.returns->at(index).second.get(), condition);
+        jumpIfTo(node, labelForLine(*branchTarget.returns, node->range.lineno), condition);
     } else {
         jumpIfTo(node, target, condition);
         line(branchTarget.placeOfJumpThere);

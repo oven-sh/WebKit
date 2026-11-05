@@ -535,12 +535,7 @@ void Unit::emitImplicitReturn(Last isLast, const Range& range)
 // that the body is left on, behind the body.
 Label& Unit::endOfClassBodyForLine(int lineno)
 {
-    for (auto& [line, label] : *m_endsOfClassBody) {
-        if (line == lineno)
-            return label.get();
-    }
-    m_endsOfClassBody->append({ lineno, g.newLabel() });
-    return m_endsOfClassBody->last().second.get();
+    return labelForLine(*m_endsOfClassBody, lineno);
 }
 
 void Unit::emitImplicitContinue(unsigned loop, const Range& range)
@@ -617,6 +612,16 @@ void Unit::jumpIfOrLeave(Expr* test, Label& target, Last isLast, ReturnsByLine& 
         return jumpIf(test, target, false);
     SetForScope branchTarget(m_branchTarget, BranchTarget { &target, { }, &returns, { }, nullptr });
     jumpIf(test, target, false);
+}
+
+Label& Unit::labelForLine(ReturnsByLine& labels, int lineno)
+{
+    size_t index = labels.findIf([&](auto& entry) { return entry.first == lineno; });
+    if (index == notFound) {
+        index = labels.size();
+        labels.append({ lineno, g.newLabel() });
+    }
+    return labels[index].second.get();
 }
 
 void Unit::emitReturnsByLine(ReturnsByLine& returns, Last isLast)

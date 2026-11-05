@@ -165,6 +165,12 @@ private:
         };
         Vector<Capture, 4> captures;
         Label* fail { nullptr };
+        // For a pattern written over several lines. CPython's code has on its stack what is still to be looked at and what has been
+        // captured; where a pattern fails with something there, that is dropped first, which is of the line the pattern begins on.
+        Label* failOnFirstLine { nullptr };
+        unsigned stillToLookAt { 0 };
+        // If the statement is the last of something: what comes then is of the line that the pattern failed on.
+        Vector<std::pair<int, Ref<Label>>, 4>* failsByLine { nullptr };
         bool allowIrrefutable { false };
     };
 
@@ -222,6 +228,7 @@ private:
     using ReturnsByLine = Vector<std::pair<int, Ref<Label>>, 4>;
     void jumpIfOrLeave(Expr* test, Label& target, Last, ReturnsByLine&);
     void emitReturnsByLine(ReturnsByLine&, Last);
+    Label& labelForLine(ReturnsByLine&, int lineno);
     ReturnsByLine* m_endsOfClassBody { nullptr };
     Label& endOfClassBodyForLine(int lineno);
     // What jumpIf() does about the branches that go to the label.
@@ -504,6 +511,8 @@ private:
     void pattern(AST::Pattern*, RegisterID* subject, PatternContext&);
     void subpattern(AST::Pattern*, RegisterID* subject, PatternContext&);
     void capture(Name, RegisterID* value, const Range&, PatternContext&);
+    Label& whereToFail(PatternContext&);
+    void emitFailLabels(const Range&, PatternContext&);
     void patternValue(AST::MatchValue*, RegisterID* subject, PatternContext&);
     void patternSingleton(AST::MatchSingleton*, RegisterID* subject, PatternContext&);
     void patternSequence(AST::MatchSequence*, RegisterID* subject, PatternContext&);

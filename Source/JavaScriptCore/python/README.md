@@ -1146,7 +1146,7 @@ whatever comes next, which costs nothing; only where that can be reached from el
 `f_lineno`, tracebacks, `co_lines()` and `LINE` events all go by the marks.
 A function or a module that falls off its end returns on the line of whatever ran last. CPython gets there by copying the implicit `return` for each block that leads to it; here a compound statement
 that is the last of the function is told so (`Last`), bodies and handlers of `try` statements included, and each of its ways out returns for itself (`Unit::leaveStatement()`) or marks the line it
-leaves on (`Unit::lineOfImplicitReturn()`). A test written over several lines returns from the line it fails on. A `return` that runs a `finally` clause returns on the line of the clause that ran last.
+leaves on (`Unit::lineOfImplicitReturn()`). A test written over several lines returns from the line it fails on, and so does a pattern of the last `case`. A `return` that runs a `finally` clause returns on the line of the clause that ran last.
 The body of a class ends in more than a `return` (`__static_attributes__`, `__classcell__`), which cannot be compiled before all of the body has been: there is one copy of that behind the body for each line the body is left on (`Unit::endOfClassBodyForLine()`).
 So does the end of a `finally` clause that an exception led to: each way to it raises the exception again for itself (`Last::exception`), and that is the line the frame is left on.
 The same goes for the jump at the end of the body of a loop, which CPython's compiler has every jump to it replaced by: the last statement of the body is told so, and each of its ways out jumps back for itself, on its own line.
@@ -1161,6 +1161,12 @@ Code written on the line of its `def`, `lambda` or `class` is on that line from 
 Where the frame may come from the same line or from another, the jumps and branches that lead there say which: those from other lines tell of the line
 (the head of a `for` loop), or those from the same line say that it is not news (`return (a and` over `b)`). In what is left, one code object in 200 of the
 standard library, the frame object remembers the line it was last on, and all places where lines begin stay changed while a tool wants any of them.
+
+**Patterns.** A pattern may be written over several lines. CPython's code keeps what is still to be looked at, and what has been captured, on its stack, and whatever puts a value there or takes it
+off is of the line its pattern begins on: so the line of `case {` comes again after the last of the values, that of `(` after the alternatives, that of a name where it is put underneath
+what is there already, and the first line of the pattern where it fails with something on the stack. Here nothing is on a stack, so the compiler counts what would be
+(`PatternContext::stillToLookAt`, the captures) and marks the lines where CPython has such an instruction; a pattern on several lines has a second place to fail (`failOnFirstLine`). A pattern on
+one line is compiled as if none of this were there. The keys of a mapping pattern, if they are constants, are one constant tuple, on the first line.
 
 **Jumps and branches.** The layout is not CPython's, so some of the jumps here are none there, and are not told of (`Unit::hiddenJump()`): over
 an exception handler, which CPython moves out of the way; between the two ways a method call is compiled. A jump to a jump is told of as one, and a branch to a jump that has no line of its own
