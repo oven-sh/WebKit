@@ -278,6 +278,7 @@ private:
     JSValue valueCPythonsCompilerWorksOut(Expr*);
     JSValue valueCPythonsCompilerWorksOut(AST::Operator, JSValue left, JSValue right);
     PyTuple* tupleOfConstants(Seq<Expr*>);
+    PySet* frozensetOf(PyTuple*);
     bool areConstants(Seq<Expr*>);
     RegisterID* exprToIterateOverOrSearch(Expr*, RegisterID* dst = nullptr);
     bool isAttributeOfSuper(AST::Attribute*);

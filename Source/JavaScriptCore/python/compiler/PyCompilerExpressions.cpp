@@ -204,6 +204,20 @@ PyTuple* Unit::tupleOfConstants(Seq<Expr*> nodes)
     return result;
 }
 
+// Null: it cannot be made. Making the set fails again when the code is run.
+PySet* Unit::frozensetOf(PyTuple* tuple)
+{
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm());
+    PySet* set = PySet::createFrozen(globalObject());
+    for (unsigned i = 0; !scope.exception() && i < tuple->length(); ++i)
+        set->add(globalObject(), tuple->at(i));
+    if (scope.exception()) {
+        scope.clearException();
+        return nullptr;
+    }
+    return set;
+}
+
 // A list or a set that is only iterated over or searched. As CPython's compiler does, this makes one constant of constants, a tuple or a
 // frozenset, however few, and a tuple of anything else that would be a list.
 RegisterID* Unit::exprToIterateOverOrSearch(Expr* node, RegisterID* dst)
@@ -216,15 +230,11 @@ RegisterID* Unit::exprToIterateOverOrSearch(Expr* node, RegisterID* dst)
     if (items.isEmpty())
         return expr(node, dst);
     if (PyTuple* tuple = tupleOfConstants(items)) {
-        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm());
         JSValue value = tuple;
         if (node->is<Set>()) {
-            PySet* set = PySet::createFrozen(globalObject());
-            for (unsigned i = 0; set && !scope.exception() && i < tuple->length(); ++i)
-                set->add(globalObject(), tuple->at(i));
-            if (scope.exception())
-                return expr(node, dst); // It fails again when the code is run.
-            value = set;
+            value = frozensetOf(tuple);
+            if (!value)
+                return expr(node, dst);
         }
         line(node->range);
         noteFoldedConstant(node, value);
@@ -1261,13 +1271,25 @@ RegisterID* Unit::sequence(SequenceKind kind, Seq<Expr*> items, RegisterID* dst,
     // It makes constants of more tuples than tryConstantValue() does.
     std::optional<SameLine> sameLine;
     if ((kind == SequenceKind::Tuple || count >= 3) && count <= maxItemsCPythonHasOnItsStack && total == count) {
-        PyTuple* tuple = kind == SequenceKind::Tuple || (range.lineno != range.endLineno && !m_sameLineDepth) ? tupleOfConstants(items) : nullptr;
-        if (tuple && kind == SequenceKind::Tuple) {
+        PyTuple* tuple = kind != SequenceKind::List || (range.lineno != range.endLineno && !m_sameLineDepth) ? tupleOfConstants(items) : nullptr;
+        // The order of a set shows how it was filled: all at once from a frozenset, not item by item.
+        JSValue constantToUse;
+        if (tuple && kind == SequenceKind::Tuple)
+            constantToUse = tuple;
+        else if (PySet* set = tuple && kind == SequenceKind::Set ? frozensetOf(tuple) : nullptr)
+            constantToUse = set;
+        if (constantToUse) {
             line(range);
             for (Expr* item : items)
                 noteWhatConstantIsMadeOf(item);
-            noteConstantMade(tuple);
-            return load(dst, tuple);
+            noteConstantMade(constantToUse);
+            if (kind == SequenceKind::Tuple)
+                return load(dst, constantToUse);
+            Reg result = g.finalDestination(dst);
+            loc(range);
+            callRuntime(result.get(), RuntimeFunction::BuildSet);
+            callRuntimeForEffect(RuntimeFunction::SetUpdate, { result.get(), constant(constantToUse) });
+            return result.get();
         }
         if (tuple) {
             line(range);
