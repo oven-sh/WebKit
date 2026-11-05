@@ -738,6 +738,10 @@ bool Threads::collectWhileIdle(JSGlobalObject* globalObject, IdleLook look)
         SetForScope collector(m_threadThatCollectsWhileIdle, &thread);
         collectAndFinalize(globalObject, nullptr, CollectionScope::Full, leavesCyclicGarbageForLater, calls);
     }
+    // A call of the program's wanted an answer, as gc.collect() does. That is not time that threads with nothing to do have taken: they
+    // look when they would have. (Else what the program drops right after lies there for fifty times as long as this has taken.)
+    if (look == IdleLook::WhateverTheShare)
+        return m_nextIdleCollectionMayFindMore;
     m_bytesAllocatedAtIdleCollection = m_vm.heap.totalBytesAllocated();
     int64_t end = monotonicNanoseconds();
     m_durationOfLastIdleCollection = end - start;

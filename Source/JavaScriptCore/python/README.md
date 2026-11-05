@@ -871,16 +871,17 @@ so the aim is that everything Python *guarantees* holds, and that what it merely
       either: a store at every entry is a store that JS would pay for. A test that asks whether something has been collected asks it of several objects, and not of all of them, or
       asks when the entry is over and something else has been on that part of the stack.
   - *`flock` cannot be made piece by piece.* `flock(open(p, "w"), LOCK_EX)`, the file dropped, and the same again: with reference counts the
-    first file is closed by then. Here it would hold its lock while the second call waits for it, for ever if there is no other
-    thread; and with `LOCK_NB` ("is another instance running?") the second call would be told that somebody has the lock. So every call
-    that asks for a lock asks without waiting first, and if the lock is taken and this very process has one on the same file (by
-    `fstat` of the descriptors it has locked), it collects and asks again. Whatever the share of the time that such collections
-    have, if one of those locks has not been through such a collection yet, and it finalizes what reference counts would have freed
-    whichever thread made it, since the answer is wanted now. If all of them were in use the last time, this may be a program
-    that polls, or whose threads contend for the lock: then within the share; if that is refused, a call that waits blocks, and a
-    thread that waits looks within the 5 s, and one that does not wait is refused though the file may have been dropped since. A call
-    that would wait in the only thread there is collects in any case. A lock that another process holds costs one or two more
-    system calls. A copy of the descriptor (`dup`, a child) keeps the lock as it does in CPython.
+    first file is closed by then. Here it would hold its lock while the second call waits for it, for ever if there is no other thread; and with
+    `LOCK_NB` ("is another instance running?") the second call would be told that somebody has the lock. So every call that asks for a lock asks
+    without waiting first, and if the lock is taken and this very process has one on the same file (by `fstat` of the descriptors it has
+    locked), it collects and asks again. Whatever the share of the time that such collections have, if one of those locks has not been through
+    such a collection yet, and it finalizes what reference counts would have freed whichever thread made it, since the answer is wanted now; nor
+    does it count against that share. If all of them were in use the last time, this may be a program that polls, or whose threads contend for
+    the lock: then within the share; if that is refused, a call that waits blocks, and a thread that waits looks within the 5 s, and one that
+    does not wait is refused though the file may have been dropped since. A call that would wait in the only thread there is collects in any
+    case. A lock that another process holds costs one or two more system calls. A copy of the descriptor (`dup`, a child) keeps the lock as it
+    does in CPython. A file that hangs below a cycle of objects without finalizers (`l = [f]; l.append(l)`) looks like plain garbage to such a
+    collection, and gives back a lock that it keeps in CPython.
   - Not covered: `recv` and the like on a blocking socket in a thread other than the main one, writes, `connect`,
     `wait()` for any child, `sigwait`, `sigtimedwait`.
 - **What only a temporary holds is finalized at once**, where that can be known without the collector (`PyTemporaries.cpp`, which has the
