@@ -621,7 +621,7 @@ public:
     // The same for a generator, of which there are many, when it is made.
     ALWAYS_INLINE void registerNewGenerator(JSCell* generator)
     {
-        m_youngFinalizable.append({ generator, m_currentThread });
+        m_youngFinalizable.append(Finalizable::of(generator, m_currentThread));
         if (allocationTracebackLimit) [[unlikely]]
             didRegisterWhileTracingAllocations(generator);
     }
@@ -1012,8 +1012,17 @@ private:
     // visited: a collection takes out what it finds dead. What it has seen and left in is old, so a collection of the young
     // only looks at the others. The thread that runs Python code uses these, and the collector while that thread is stopped, which
     // may be several times in one collection: see keepUnreachableObjectsToFinalize().
+    //
+    // The addresses are kept complemented. A list is copied as it grows and shrinks, in vector registers, which keep what they held until
+    // the thread's next large copy; whenever a collection suspends the thread, the kernel saves them on its stack, and other frames
+    // come to lie there. What the collector reads there is then no address: a thread that looked and went on waiting would
+    // otherwise keep alive what the next to look is meant to find.
     struct Finalizable {
-        JSCell* cell;
+        static Finalizable of(JSCell* cell, uint32_t thread) { return { ~std::bit_cast<uintptr_t>(cell), thread }; }
+        JSCell* cell() const { return std::bit_cast<JSCell*>(~complement); }
+        void clear() { complement = ~static_cast<uintptr_t>(0); }
+
+        uintptr_t complement;
         uint32_t thread; // That registered it.
     };
     Vector<Finalizable> m_oldFinalizable;

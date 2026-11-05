@@ -67,7 +67,7 @@ void Runtime::registerFinalizable(JSCell* cell)
             return;
         cell->setPerCellBit(true);
     }
-    m_youngFinalizable.append({ cell, m_currentThread });
+    m_youngFinalizable.append(Finalizable::of(cell, m_currentThread));
     if (allocationTracebackLimit) [[unlikely]]
         didRegisterWhileTracingAllocations(cell);
 }
@@ -128,9 +128,9 @@ void Runtime::forEachFinalizable(const ScopedLambda<void(JSCell*)>& function)
 {
     for (auto* list : { &m_oldFinalizable, &m_youngFinalizable }) {
         for (auto& entry : *list) {
-            ASSERT(entry.cell);
-            if (!isNoLongerWanted(entry.cell))
-                function(entry.cell);
+            ASSERT(entry.cell());
+            if (!isNoLongerWanted(entry.cell()))
+                function(entry.cell());
         }
     }
 }
@@ -236,7 +236,7 @@ bool Runtime::keepUnreachableObjectsToFinalize(SlotVisitor& visitor)
     auto look = [&](Vector<Finalizable>& list) {
         size_t kept = 0;
         for (auto entry : list) {
-            JSCell* cell = entry.cell;
+            JSCell* cell = entry.cell();
             if (isNoLongerWanted(cell)) {
                 didTakeOffList(cell);
                 continue;
@@ -270,9 +270,9 @@ bool Runtime::keepUnreachableObjectsToFinalize(SlotVisitor& visitor)
         });
         for (Finalizable* place : callbacksOfForeignCode) {
             if (finalizersAreLeft)
-                visitor.appendUnbarriered(place->cell);
+                visitor.appendUnbarriered(place->cell());
             else {
-                candidates.append(place->cell);
+                candidates.append(place->cell());
                 places.append(place);
             }
         }
@@ -345,7 +345,7 @@ bool Runtime::keepUnreachableObjectsToFinalize(SlotVisitor& visitor)
     for (unsigned n = 0; n < order.now.size(); ++n) {
         unsigned candidate = order.now[n];
         Finalizable& entry = *places[candidate];
-        JSCell* cell = entry.cell;
+        JSCell* cell = entry.cell();
         visitor.appendUnbarriered(cell);
         bool isCyclicGarbage = n >= order.freedByReferenceCounts;
         if (m_leavesCyclicGarbageForLater && isCyclicGarbage)
@@ -356,7 +356,7 @@ bool Runtime::keepUnreachableObjectsToFinalize(SlotVisitor& visitor)
         if (!owed || owed->thread != taker)
             owed = &callsOwedBy(taker);
         owed->finalizers.append(cell);
-        entry.cell = nullptr;
+        entry.clear();
         didTakeOffList(cell, true);
     }
     // The others are kept alive by those. They come up again, in this order, in the collection that finds those gone: they go to the
@@ -371,11 +371,11 @@ bool Runtime::keepUnreachableObjectsToFinalize(SlotVisitor& visitor)
         if (takers[first] != noThread)
             entry.thread = takers[first];
         toComeLast.append(entry);
-        places[candidate]->cell = nullptr;
+        places[candidate]->clear();
     }
     if (!candidates.isEmpty()) {
         auto isHole = [](auto& entry) {
-            return !entry.cell;
+            return !entry.cell();
         };
         if (isFull)
             m_oldFinalizable.removeAllMatching(isHole);
@@ -435,11 +435,11 @@ void Runtime::didMarkAll(SlotVisitor& visitor)
     };
     if (isFull) {
         m_oldFinalizable.removeAllMatching([&](auto& entry) {
-            return !stays(entry.cell);
+            return !stays(entry.cell());
         });
     }
     for (auto& entry : m_youngFinalizable) {
-        if (stays(entry.cell))
+        if (stays(entry.cell()))
             m_oldFinalizable.append(entry);
     }
     m_youngFinalizable.shrink(0);
@@ -449,7 +449,8 @@ void Runtime::didMarkAll(SlotVisitor& visitor)
 #if ASSERT_ENABLED
     if (isFull) {
         UncheckedKeyHashSet<JSCell*> seen;
-        for (auto [cell, thread] : m_oldFinalizable) {
+        for (auto& entry : m_oldFinalizable) {
+            JSCell* cell = entry.cell();
             if (!visitor.isMarked(cell) || !seen.add(cell).isNewEntry) [[unlikely]] {
                 dataLogLn("A registered object of type ", typeOf(cell)->nameInMessages(), visitor.isMarked(cell) ? " is in the list twice" : " is about to be freed");
                 RELEASE_ASSERT_NOT_REACHED();
@@ -1055,7 +1056,7 @@ void Runtime::finalizeAllAtExit()
         rest.appendVector(callbacksOfForeignCode);
         for (auto* list : { &m_oldFinalizable, &m_youngFinalizable }) {
             for (auto& entry : *list)
-                didTakeOffList(entry.cell);
+                didTakeOffList(entry.cell());
             list->clear();
         }
         Locker locker { m_finalizationLock };

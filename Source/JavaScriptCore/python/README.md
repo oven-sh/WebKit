@@ -698,11 +698,18 @@ so the aim is that everything Python *guarantees* holds, and that what it merely
     such a pair, trees across threads, allocation between naps): at most 4.4 s with 2,000,000 objects alive, 0.3 s with 1,000; twenty
     times what the last collection cost. Before, a collection that was refused was left out, and the next came four times
     as late: 4.3 s and 17 s.
-  - *Not cured.* Three threads that each wait for the finalizers of trees three levels deep, beside those 2,000,000 objects, are done after 0.6 to
-    1.5 s (before: 0.5 to 0.7 s), but in one run of fifty after 6 s. In the collections that find nothing there, the objects
-    are marked: the stack of another thread that waits has their addresses, in the frames of its wait (seen: the main thread in `join()`,
-    16 bytes apart, each with the number of a thread beside it, as in the list of objects with finalizers). They go when that thread
-    collects. What writes them there, on a stack that was wiped when the wait began, is not known yet.
+  - *The list of objects with finalizers holds complemented addresses.* Three threads that each wait for the finalizers of trees three levels
+    deep, beside those 2,000,000 objects, were done after 1.1 s, but in 14 runs of 320 after 6, 11 or 17 s: collections found nothing,
+    because the objects were marked. The stack of another thread that waited had their addresses, 16 bytes apart, each with the
+    number of a thread beside it: a piece of the list. `memmove` copies with vector registers (on that machine `zmm16` to `zmm23`), which
+    nothing else uses: a thread that has collected, and so copied the list, goes on waiting with up to 512 bytes of it in them (seen in
+    a debugger). A collection suspends every thread with a signal, and the kernel saves all registers on the thread's stack, below what is
+    in use, those registers on top. When the thread wakes while another collects, it waits for the GIL, which takes more frames than it had:
+    they come to lie on what the kernel wrote, and what they leave unwritten, and the 128 bytes below the stack pointer, which the
+    collector reads too, is still the list. (The addresses agree to the byte.) Threads that wait wake together since a
+    collection that is refused is put off to the moment the share allows. Now what lies there is no address: 1 run of 320, and
+    0.8 s. (In such a run the registers held addresses 8 bytes apart: some other list that a collection copies. Nothing is done
+    about those.)
   - *A piece that ends is not a signal.* A signal that comes between two pieces interrupts neither, so signals are looked at
     after every piece (`IdleWait::didWait`); one that comes between that look and the system call waits for the end of the
     piece, where in CPython it waits for the end of the whole call.
