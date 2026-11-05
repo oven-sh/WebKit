@@ -52,13 +52,28 @@ DEFINE_VISIT_CHILDREN(PyInt);
 
 // ---- Representation ----
 
-// Of a digit or two. Like any small cell, it is there or the process is out of memory.
+// JSBigInt::createFrom() asks whether an exception is pending. That question is also where a termination that has been asked for is thrown,
+// and then it returns nothing. Who wants an int gets one all the same, and comes upon the termination in time.
+static NEVER_INLINE JSBigInt* makeBigIntWhileTerminating(VM& vm, uint64_t magnitude, bool isNegative)
+{
+    RELEASE_ASSERT(vm.hasPendingTerminationException());
+    JSBigInt* result = JSBigInt::tryCreateWithLength(vm, 1);
+    RELEASE_ASSERT(result);
+    result->setDigit(0, magnitude);
+    result->setSign(isNegative);
+    return result;
+}
+
+// Of one digit. Like any small cell, it is there or the process is out of memory.
 template<typename Integer>
 static ALWAYS_INLINE JSValue makeBigIntFrom(JSGlobalObject* globalObject, Integer value)
 {
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(getVM(globalObject));
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     JSBigInt* result = JSBigInt::createFrom(globalObject, value);
-    RELEASE_ASSERT(!scope.exception());
+    EXCEPTION_ASSERT_UNUSED(scope, !scope.exception() || vm.hasPendingTerminationException());
+    if (!result) [[unlikely]]
+        return makeBigIntWhileTerminating(vm, value < 0 ? -static_cast<uint64_t>(value) : static_cast<uint64_t>(value), value < 0);
     return result;
 }
 

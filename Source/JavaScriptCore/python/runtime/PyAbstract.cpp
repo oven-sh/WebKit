@@ -1485,8 +1485,9 @@ int64_t hashForContainer(JSGlobalObject* globalObject, JSValue value, ASCIILiter
     int64_t result = hash(globalObject, value);
     if (!scope.exception()) [[likely]]
         return result;
+    // (Nothing to look at: a termination.)
     JSValue exception = pendingException(globalObject);
-    if (rt.typeOf(exception) != rt.TypeError())
+    if (!exception || rt.typeOf(exception) != rt.TypeError())
         return -1;
     takePendingException(globalObject);
     JSString* message = str(globalObject, exception);

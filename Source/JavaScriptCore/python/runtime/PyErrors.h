@@ -98,13 +98,13 @@ void unwrapPendingException(JSGlobalObject*);
 
 // ---- The pending exception ----
 
-// The exception that is propagating, as a Python exception: for what JS threw, its JSError. Empty: none.
+// The exception that is propagating, as a Python exception: for what JS threw, its JSError. Empty: none, or a termination.
 JSValue pendingException(JSGlobalObject*);
 // Whether one is propagating that `except type:` would catch.
 bool pendingExceptionMatches(JSGlobalObject*, PyType*);
 // If so, it no longer propagates.
 bool clearPendingExceptionIfMatches(JSGlobalObject*, PyType*);
-// It no longer propagates. Empty: there was none.
+// It no longer propagates. Empty: there was none, or it is a termination, which goes on.
 JSValue takePendingException(JSGlobalObject*);
 // Whether `except typeOrTuple:` catches the exception. May throw.
 bool exceptionMatches(JSGlobalObject*, JSValue exception, JSValue typeOrTuple);

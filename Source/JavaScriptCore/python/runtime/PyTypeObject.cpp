@@ -1440,6 +1440,8 @@ static JSValue typeNew(JSGlobalObject* globalObject, JSValue cls, const CallArgs
             if (scope.exception()) [[unlikely]] {
                 // Nothing else can run while it propagates.
                 JSValue exception = takePendingException(globalObject);
+                if (!exception) // A termination.
+                    return { };
                 scope.release();
                 raiseWithNote(globalObject, exception, makeString("Error calling __set_name__ on '"_s, valueType->name(), "' instance "_s, reprForMessage(globalObject, key), " in '"_s, nameText, '\''));
                 return { };
