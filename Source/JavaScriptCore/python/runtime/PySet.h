@@ -64,7 +64,8 @@ public:
 
     // These may run __hash__ and __eq__, and so throw.
     bool contains(JSGlobalObject*, JSValue key);
-    bool contains(JSGlobalObject*, JSValue key, int64_t hash);
+    enum class SearchFor : uint8_t { In, AnythingElse };
+    bool contains(JSGlobalObject*, JSValue key, int64_t hash, SearchFor = SearchFor::AnythingElse);
     bool add(JSGlobalObject*, JSValue key); // False: it was there, or an exception.
     bool add(JSGlobalObject*, JSValue key, int64_t hash);
     bool remove(JSGlobalObject*, JSValue key); // False: it was not there, or an exception.
@@ -103,7 +104,8 @@ private:
 
     PySet(VM&, Structure*, PyType*);
 
-    Entry* find(JSGlobalObject*, JSValue key, int64_t hash);
+    Entry* find(JSGlobalObject*, JSValue key, int64_t hash, SearchFor = SearchFor::AnythingElse);
+    bool findsUnderAnotherHash(JSGlobalObject*, SearchFor) const;
     void resize(VM&, size_t minimumUsed);
     static void insertClean(VM&, PySetStorage*, JSValue key, int64_t hash);
 

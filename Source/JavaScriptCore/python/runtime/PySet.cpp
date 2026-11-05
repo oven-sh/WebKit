@@ -159,7 +159,16 @@ static ALWAYS_INLINE bool areSameString(JSValue a, JSValue b)
     return x && y && WTF::equal(x, y);
 }
 
-PySet::Entry* PySet::find(JSGlobalObject* globalObject, JSValue key, int64_t hash)
+// The hash of an object may have changed since it was stored. What a search does when it comes by the very object it looks for, under another hash
+// than it goes by: in a set it goes on; in a frozenset it has found it; in an instance of a class derived from frozenset it has found it if it
+// is the search of `in`. (So CPython 3.15, measured. add() goes on in all of them.)
+bool PySet::findsUnderAnotherHash(JSGlobalObject* globalObject, SearchFor searchFor) const
+{
+    Runtime& rt = runtime(globalObject);
+    return type() == rt.frozensetType() || (searchFor == SearchFor::In && !type()->isSubtypeOf(rt.setType()));
+}
+
+PySet::Entry* PySet::find(JSGlobalObject* globalObject, JSValue key, int64_t hash, SearchFor searchFor)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -188,7 +197,8 @@ restart:
                     goto restart;
                 if (equal)
                     return entry;
-            }
+            } else if (entry->key.get() == key && findsUnderAnotherHash(globalObject, searchFor)) [[unlikely]]
+                return entry;
             ++entry;
         } while (probes--);
         perturb >>= setPerturbShift;
@@ -196,9 +206,9 @@ restart:
     }
 }
 
-bool PySet::contains(JSGlobalObject* globalObject, JSValue key, int64_t hash)
+bool PySet::contains(JSGlobalObject* globalObject, JSValue key, int64_t hash, SearchFor searchFor)
 {
-    return !!find(globalObject, key, hash);
+    return !!find(globalObject, key, hash, searchFor);
 }
 
 bool PySet::add(JSGlobalObject* globalObject, JSValue key, int64_t hash)
@@ -803,7 +813,7 @@ bool setContains(JSGlobalObject* globalObject, PySet* set, JSValue key)
         hash = hashOfString(asString(key)->tryGetValueImpl());
     else if (failed(scope, hashForLookup(globalObject, key, hash)))
         return false;
-    RELEASE_AND_RETURN(scope, set->contains(globalObject, key, hash));
+    RELEASE_AND_RETURN(scope, set->contains(globalObject, key, hash, PySet::SearchFor::In));
 }
 
 static JSValue setContainsMethod(JSGlobalObject* globalObject, JSValue self, JSValue key)
