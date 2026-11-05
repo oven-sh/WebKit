@@ -2262,8 +2262,13 @@ JSValue exceptionIsRaised(JSGlobalObject* globalObject, JSValue exception, CallF
     bool isAwake = monitor && monitor->isAwake();
     CodeBlock* codeBlock = callFrame->codeBlock();
     // What raises it again on behalf of the program, from no line, does so as if from here: see PyFrame::findPlace().
-    if (PyFrame* frame = isWanted ? PyFrame::of(globalObject, callFrame) : frameObjectIfAny(callFrame)) {
-        if (!isRaisedAgain || lineOfMarks(codeBlock->unlinkedCodeBlock()->pythonMarks(), index.offset()) >= 0)
+    PyFrame* frame = isWanted ? PyFrame::of(globalObject, callFrame) : frameObjectIfAny(callFrame);
+    // That of a generator may be from before it was last resumed.
+    if (!frame && codeBlock->unlinkedCodeBlock()->parseMode() == SourceParseMode::GeneratorBodyMode)
+        frame = generatorOf(callFrame)->frameObject();
+    if (frame) {
+        // (What is left over of an `except*` is raised from no line, and that is where it comes from.)
+        if (!isRaisedAgain || lineOfMarks(codeBlock->unlinkedCodeBlock()->pythonMarks(), index.offset()) >= 0 || !raisesAgainAsIfFromWhereItWasRaised(codeBlock, index))
             frame->raisedAt = index.offset();
     }
     // Only whoever is told of lines asks for the line.
