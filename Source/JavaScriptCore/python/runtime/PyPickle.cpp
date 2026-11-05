@@ -2744,11 +2744,13 @@ private:
         auto scope = DECLARE_THROW_SCOPE(m_vm);
         if (size_t end = WTF::find(text, static_cast<uint8_t>(0)); end != notFound)
             text = text.first(end);
-        StringView view(byteCast<Latin1Character>(text));
-        JSValue value = intFromText(m_globalObject, view, 10, NumberTextOf::Bytes);
+        JSValue value = intFromText(m_globalObject, StringView(byteCast<Latin1Character>(text)), 10, NumberTextOf::Bytes);
         RETURN_IF_EXCEPTION(scope, { });
-        if (!value)
-            RELEASE_AND_RETURN(scope, raiseValueError(m_globalObject, scope, "invalid literal for int() with base 10: "_s, strRepr(view)));
+        if (!value) {
+            JSValue shown = decodeUTF8(text.first(std::min<size_t>(text.size(), 200)), "strict"_s);
+            RETURN_IF_EXCEPTION(scope, { });
+            RELEASE_AND_RETURN(scope, raiseInvalidIntLiteral(m_globalObject, shown, 10));
+        }
         return value;
     }
 
@@ -2761,8 +2763,14 @@ private:
             RELEASE_AND_RETURN(scope, truncated());
         if (m_line.size() == 3 && m_line[0] == '0' && (m_line[1] == '0' || m_line[1] == '1'))
             return push(jsBoolean(m_line[1] == '1'));
-        JSValue value = intFromText(m_globalObject, StringView(byteCast<Latin1Character>(m_line.span())), 10, NumberTextOf::Bytes);
-        if (scope.exception() || !value) {
+        // What strtol() makes of it, if that is a long and all of the line. (A NUL follows the line.)
+        errno = 0;
+        char* end;
+        long number = strtol(byteCast<char>(m_line.span()).data(), &end, 10);
+        if (!errno && (*end == '\n' || !*end))
+            RELEASE_AND_RETURN(scope, push(makeInt(m_globalObject, static_cast<int64_t>(number))));
+        JSValue value = intFromLine(m_line.span());
+        if (failed(scope, value)) {
             takePendingException(m_globalObject);
             raiseValueError(m_globalObject, scope, "could not convert string to int"_s);
             return false;
