@@ -1372,10 +1372,17 @@ void Unit::unwindBlock(const Block& block, Vector<TryContext>& suspended)
     case BlockKind::InlinedComprehension:
     case BlockKind::MatchSubject:
         return;
-    case BlockKind::FinallyTry:
-        // A `return` that runs the clause returns on the line that ran last, like a function that comes to its end.
-        statements(block.finalBody, 0, m_leavingAs);
+    case BlockKind::FinallyTry: {
+        // A `return` that runs the clause returns on the line that ran last, like a function that comes to its end: each way out of
+        // the clause gets a copy of what is left to do. Not if that has lines of its own, another clause or the end of a `with`: then
+        // the ways meet, as in CPython, or clauses in clauses would be copied once for each way through all of them.
+        unsigned stays = m_leavingAs.kind == Last::OfLoopBody ? m_leavingAs.loop + 1 : m_leavingAs.blockCount;
+        bool restHasLines = m_leavingAs && std::ranges::any_of(m_blocks.subspan(std::min<size_t>(stays, m_blocks.size())), [](const Block& other) {
+            return other.kind == BlockKind::FinallyTry || other.kind == BlockKind::With || other.kind == BlockKind::AsyncWith;
+        });
+        statements(block.finalBody, 0, m_leavingAs.onlyIf(!restHasLines));
         return;
+    }
     case BlockKind::FinallyEnd:
         restoreHandledException(block.saved);
         return;
