@@ -37,8 +37,13 @@ static constexpr ResumeMode throwThrough = ResumeMode::ReturnMode;
 PY_DEFINE_CELL(PyGenerator);
 PY_DEFINE_CELL(PyAsyncGenAwaitable);
 
-PyGenerator::PyGenerator(VM& vm, Structure* structure, PyType* type, Kind kind, unsigned slotCount)
+PyGenerator::PyGenerator(VM& vm, Structure* structure, PyType* type, Kind kind, unsigned slotCount, PyFunction* function, PyFunction* body)
     : Base(vm, structure, type)
+    , m_state(jsNumber(NotStarted), WriteBarrierEarlyInit)
+    , m_body(body, WriteBarrierEarlyInit)
+    , m_function(function, WriteBarrierEarlyInit)
+    , m_name(function->nameIfMade(), WriteBarrierEarlyInit)
+    , m_qualname(function->qualnameIfMade(), WriteBarrierEarlyInit)
     , m_slotCount(slotCount)
     , m_kind(kind)
 {
@@ -53,15 +58,8 @@ PyGenerator* PyGenerator::create(JSGlobalObject* globalObject, PyFunction* funct
     auto flags = body->codeInfo().flags;
     Kind kind = flags.contains(CodeFlag::AsyncGenerator) ? Kind::AsyncGenerator : flags.contains(CodeFlag::Coroutine) ? Kind::Coroutine : Kind::Generator;
     PyType* type = kind == Kind::AsyncGenerator ? rt.asyncGeneratorType() : kind == Kind::Coroutine ? rt.coroutineType() : rt.generatorType();
-    auto* generator = new (NotNull, allocateCell<PyGenerator>(vm, allocationSize(slotCount))) PyGenerator(vm, rt.structure<PyGenerator>(), type, kind, slotCount);
+    auto* generator = new (NotNull, allocateCell<PyGenerator>(vm, allocationSize(slotCount))) PyGenerator(vm, rt.structure<PyGenerator>(), type, kind, slotCount, function, body);
     generator->finishCreation(vm);
-    generator->m_state.setWithoutWriteBarrier(jsNumber(NotStarted));
-    generator->m_body.set(vm, generator, body);
-    generator->m_function.set(vm, generator, function);
-    if (JSValue name = function->nameIfMade())
-        generator->m_name.set(vm, generator, name);
-    if (JSValue qualname = function->qualnameIfMade())
-        generator->m_qualname.set(vm, generator, qualname);
     generator->isIterableCoroutine = function->isIterableCoroutine();
     if (kind == Kind::Coroutine && rt.coroutineOriginTrackingDepth > 0) [[unlikely]]
         generator->m_origin.set(vm, generator, coroutineOrigin(globalObject, rt.coroutineOriginTrackingDepth));

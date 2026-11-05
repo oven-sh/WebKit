@@ -133,7 +133,7 @@ public:
     void setFinalization(Finalization finalization) { m_finalization = finalization; }
 
 private:
-    PyGenerator(VM&, Structure*, PyType*, Kind, unsigned slotCount);
+    PyGenerator(VM&, Structure*, PyType*, Kind, unsigned slotCount, PyFunction*, PyFunction* body);
     void leaveBody(Runtime&);
     void takeNamesFromCode();
     WriteBarrier<Unknown>* slots() const { return storageBehind<WriteBarrier<Unknown>>(const_cast<PyGenerator*>(this)); }
