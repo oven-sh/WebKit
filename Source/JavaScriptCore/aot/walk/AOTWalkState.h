@@ -152,9 +152,6 @@ enum class FactOfCell : uint8_t {
     IsLikelyAsConstructed = 1 << 5,
     // It has no property of its own but under the names that its layout has fields for, and no element: orderWordHasExtraProperties is clear. Whatever lays one there is declared as a write of NamedProperties.
     NoExtraProperties = 1 << 6,
-    // shapeWordIsUnmarked is set: its birth is over, and every field of the birth lies filled in its slot. More than NoFieldOutsideSlot, which holds of a new object from its allocation on.
-    // Whatever takes a field out of its slot or empties one is declared as a write of NamedProperties or of ShapeWords.
-    BearsNoMark = 1 << 7,
 };
 
 // What holds at the present point of the walk beyond the proven type of each value, which Code has.

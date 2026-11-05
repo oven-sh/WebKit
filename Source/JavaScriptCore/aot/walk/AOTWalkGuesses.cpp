@@ -1635,15 +1635,13 @@ static TypeID partThatHasNameAskedForGuesses(Walker& walker, TypeID expected, Pr
     return part ? part : expected;
 }
 
-// refusesMarkedObjects: for whoever gives way where the test fails and concludes nothing from that.
-static Reference buildTestOfGuess(Walker& walker, Reference value, const TestOfGuess& chosen, Origin origin, bool refusesMarkedObjects = false)
+static Reference buildTestOfGuess(Walker& walker, Reference value, const TestOfGuess& chosen, Origin origin)
 {
     if (chosen.layouts) {
         Draft test(Opcode::ShapeTest, origin);
         test.setObjectOperand(value);
         test.setLayouts(chosen.layouts);
         test.setExpectsCell(chosen.expectsCell);
-        test.setRefusesMarkedObjects(refusesMarkedObjects);
         return walker.build(WTF::move(test));
     }
     Draft test(Opcode::TypeTest, origin);
@@ -2445,9 +2443,9 @@ static void openGuessWithTest(Walker& walker, Reference value, const TestOfGuess
     };
 
     // A test of a type or of a shape looks at the value and at words that are written once.
-    auto buildTestWhereItMayStand = [&](Reference tested, const TestOfGuess& asked, bool refusesMarkedObjects = false) {
+    auto buildTestWhereItMayStand = [&](Reference tested, const TestOfGuess& asked) {
         Walker::InFrontOfTypedCopy inFront(walker, failingWayBeginsTurnAgain && walker.standsInFrontOfTypedCopy(tested));
-        return buildTestOfGuess(walker, tested, asked, origin, refusesMarkedObjects);
+        return buildTestOfGuess(walker, tested, asked, origin);
     };
     auto buildProofWhereTestWasAsked = [&](Reference tested, Reference test, const TestOfGuess& asked) {
         Walker::InFrontOfTypedCopy inFront(walker, lastTestIsAskedInFront);
@@ -2458,24 +2456,11 @@ static void openGuessWithTest(Walker& walker, Reference value, const TestOfGuess
     // No proof and no failure: nothing is left of the value behind the test, and the block behind it has ended as one that is never reached.
     Reference proven = value;
     if (!chosen.isPassedAlready) {
-        // Within shapes that are known the test tells one from the other, and its refusal says which is left: it goes by the number.
-        Type known = walker.types().at(walker.typeOf(value));
-        // An object that the body being read makes is in its birth.
-        bool isBeingMade = std::ranges::any_of(names, [&](ValueID name) {
-            return isBeingMadeByBodyBeingRead(walker, name);
-        });
-        bool refusesMarkedObjects = chosen.layouts && !isBeingMade && (!known.hasOnlyLayouts() || known.traitsOfNamed.contains(ObjectTrait::MayHaveLayoutBelow));
-        uint32_t firstNewValue = walker.code().numberOfValues();
-        BlockID blockOfTest = walker.currentBlock();
-        Reference test = buildTestWhereItMayStand(value, chosen, refusesMarkedObjects);
+        Reference test = buildTestWhereItMayStand(value, chosen);
         if (!test)
             return;
-        // In a loop the test of a value from in front of it stands in front of the loop, where it says nothing of the mark of now.
-        bool isAskedHere = test.isValue() && test.id().index() >= firstNewValue && walker.code().blockOf(test.id()) == blockOfTest;
         goOnWhereTestPasses(test);
         proven = buildProofWhereTestWasAsked(value, test, chosen);
-        if (refusesMarkedObjects && isAskedHere && proven && !walker.isUnreachable())
-            walker.state().noteFactsOfCell(proven, FactOfCell::BearsNoMark);
         // Where the arms part for good the proof goes on with the passing way, as a checked name in its state. It is not noted for every guess: where the arms meet, the meet drops it.
         if ((takesInBranch || failingWayBeginsTurnAgain) && proven && proven.isValue() && value.isValue() && !walker.isUnreachable()) {
             Reference last = value;
@@ -2553,15 +2538,12 @@ static void openGuessWithTest(Walker& walker, Reference value, const TestOfGuess
                 break;
             holder = *rested;
         }
+        Reference test = holder ? buildTestOfSlot(walker, walker.asWalked(index.value(look.access)), holder) : Reference();
+        if (!test)
+            break;
         // Only a definition under a private name asks for an empty slot.
         bool asksForFilledSlot = index.opcodeOf(look.access) != Opcode::PrivateDefine;
-        bool markAnswers = numberOfTests && holder && walker.state().factsOfCell(holder).contains(FactOfCell::BearsNoMark) && markOfCellAnswersForRead(walker, walker.asWalked(index.value(look.access)), walker.typeOf(holder));
-        if (!markAnswers) {
-            Reference test = holder ? buildTestOfSlot(walker, walker.asWalked(index.value(look.access)), holder) : Reference();
-            if (!test)
-                break;
-            goOnWhereTestPasses(test, asksForFilledSlot);
-        }
+        goOnWhereTestPasses(test, asksForFilledSlot);
         if (asksForFilledSlot) {
             // The look has found the slot filled in front of the loop, and no turn writes what the look has read.
             Reference loaded;

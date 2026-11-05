@@ -340,7 +340,7 @@ JSObject* ObjectBuilder::finish()
     std::span<const uint8_t> body = cellBytes().subspan(sizeof(JSCell), m_plan.m_initialBody.size());
     Object* object = Object::create(m_vm, structure, layout, layout.size, unorderedOrderWord);
     memcpySpan(std::span { &object->at<uint8_t>(sizeof(JSCell)), body.size() }, body);
-    object->setBearsMark(object->orderWord() & orderWordHasFieldOutsideSlot || !object->hasEveryFieldOfBirth());
+    object->setPerCellBit(object->orderWord() & orderWordHasFieldOutsideSlot || !object->hasEveryFieldOfBirth());
     if (m_granuleBits) {
         object->ensureExtensionGranules(m_vm, m_granuleBits);
         // The first Extension of an object holds what every maker fills besides: a granule has its place by the bits of the Extension, not by those that were stored.

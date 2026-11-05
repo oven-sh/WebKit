@@ -3,9 +3,9 @@
 # A fault costs microseconds. So only in front of an access through the value, which throws off undefined and null, and only where no number and no boolean is expected of it: `expectsCell`.
 # f1 = oneField, f2 = twoFields, f3 = nothingOrMoney, f4 = numberOrMoney, f5 = booleanOrMoney, f6 = numberIsToldApart, f7 = truthOf
 # RUN(WRITTEN): walk f1 mechanisms=all
-# WRITTEN: = GetSlot {{*}}level=Expected [{{*}}expectsCell
+# WRITTEN: = GetSlot {{*}}level=Expected [{{*}}expectsCell]
 # RUN(NULLISH): walk f3 mechanisms=all
-# NULLISH: = GetSlot {{*}}level=Expected [{{*}}expectsCell
+# NULLISH: = GetSlot {{*}}level=Expected [{{*}}expectsCell]
 # RUN(NUMBER): walk f4 mechanisms=all
 # NUMBER: = GetSlot {{*}}level=Expected
 # NUMBER-NOT: expectsCell

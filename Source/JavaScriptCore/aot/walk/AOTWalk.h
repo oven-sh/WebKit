@@ -2083,8 +2083,6 @@ Reference buildReadThatTestsShapeAndSlot(Walker&, const BodyValue& read, Referen
 // The same of a PropGet for which typedFormOf() answers BuiltBehindLookAtCell: a property that objects leave out. A filled slot is right whatever has become of the object, so the operation asks the cell and the guards of
 // its classes only where it finds the slot empty: behind them that is undefined. Null, and nothing is built: a method above, a raw number, a look that reads do not make.
 Reference buildReadThatTestsShapeAndCell(Walker&, const BodyValue& read, Reference object, TypeID guessed, bool expectsCell);
-// Of a PropGet off an object of that type: while the object bears no mark (FactOfCell::BearsNoMark), the read is a load.
-bool markOfCellAnswersForRead(Walker&, const BodyValue& read, TypeID typeOfObject);
 bool buildStoreThatTestsForItself(Walker&, const BodyValue& store, Reference object, TypeID guessed, bool expectsCell);
 // It answers with what it has read.
 Reference readSlotFoundFilled(Walker&, const BodyValue& access, Reference object);
@@ -2105,8 +2103,6 @@ std::optional<uint32_t> findLikelyOrderWordInFrontOfStores(Walker&, ValueID firs
 void testOrderWordInFrontOfStores(Walker&, ValueID firstStore, Reference object, uint32_t orderWord, NOESCAPE const ScopedLambda<void(Reference test)>& goOnWhereTestPasses);
 // For Guesses, of an access for which typedFormOf() asks for a filled slot: the body that is being read is making the object, so a look at the slot fails unless something in front has filled it.
 bool looksAtSlotOfObjectBeingMade(const Walker&, const BodyValue& access);
-// Of a value of the body: `this` of an initializer of fields and of a function that `new` hands the object, what `super()` answers, what the body allocates.
-bool isBeingMadeByBodyBeingRead(const Walker&, ValueID object);
 // Walker::takeEntryParameters(), of `this` of a Body.
 void noteThisAtEntry(Walker&, Reference thisValue);
 

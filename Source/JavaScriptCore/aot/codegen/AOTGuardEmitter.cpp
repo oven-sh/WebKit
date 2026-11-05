@@ -114,7 +114,6 @@ void GuardEmitter::generateShapeTest(const ValueContext& value)
     bool asksForInstance = !hasOneInstance() && !holdsOnlyCompiledObjects(types(), m_plan, typeOf(object));
     bool mayBeNoCell = representationOf(object) == Representation::JSValue && (typeOf(object).primitives & ~cellPrimitives);
     bool leavesCellTestToRead = mayBeNoCell && value->expectsCell() && failingSideBeginsWithAccessThrough(value, object);
-    MarkedObjects marked = value->refusesMarkedObjects() ? MarkedObjects::AreRefused : MarkedObjects::Pass;
     defineTestByBranching(value, [&](BranchTargets targets) {
         BranchTargets targetsOfShape = targets;
         LBasicBlock hasShape = nullptr;
@@ -124,12 +123,12 @@ void GuardEmitter::generateShapeTest(const ValueContext& value)
         }
         std::optional<Condition> hasShapeThoughNoCell;
         if (leavesCellTestToRead)
-            hasShapeThoughNoCell = emitter<ShapeTestEmitter>().hasShapeInThoughNoCell(in<Boxed>(object), value->layouts(), typeOf(object), marked);
+            hasShapeThoughNoCell = emitter<ShapeTestEmitter>().hasShapeInThoughNoCell(in<Boxed>(object), value->layouts(), typeOf(object));
         CellPointer cell = hasShapeThoughNoCell ? untestedCell(value, object) : cellOrElse(value, object, targets.notTaken);
         if (hasShapeThoughNoCell)
             branch(*hasShapeThoughNoCell, targetsOfShape);
         else
-            emitter<ShapeTestEmitter>().branchOnShapeIn(cell, value->layouts(), typeOf(object), targetsOfShape, marked);
+            emitter<ShapeTestEmitter>().branchOnShapeIn(cell, value->layouts(), typeOf(object), targetsOfShape);
         if (!asksForInstance)
             return;
         m_out.appendTo(hasShape);
@@ -234,6 +233,8 @@ Condition GuardEmitter::orderWordHasNoBits(const ValueContext& value, uint32_t b
 void GuardEmitter::generateHasNoFieldOutsideSlot(const ValueContext& value)
 {
     defineTestOfCompiledObject(value, [&] {
+        if (value->mayMeetUnfinishedObject())
+            return orderWordHasNoBits(value, orderWordHasFieldOutsideSlot);
         Word32 flags = loadByte(in<CellPointer>(value->objectOperand()), m_heaps.JSCell_typeInfoFlags);
         return hasNoBits(flags, TypeInfoPerCellBit);
     });
@@ -242,9 +243,8 @@ void GuardEmitter::generateHasNoFieldOutsideSlot(const ValueContext& value)
 void GuardEmitter::generateHasBirthFieldsFilled(const ValueContext& value)
 {
     defineTestOfCompiledObject(value, [&] {
-        CellPointer cell = in<CellPointer>(value->objectOperand());
-        Condition bearsNoMark = emitter<ShapeTestEmitter>().bearsNoMark(cell);
-        return value->hasLayoutPrototype() ? logicalAnd(bearsNoMark, hasNoBits(loadByte(cell, m_heaps.JSCell_typeInfoFlags), JSC::IsPristine)) : bearsNoMark;
+        Word32 flags = loadByte(in<CellPointer>(value->objectOperand()), m_heaps.JSCell_typeInfoFlags);
+        return hasNoBits(flags, value->hasLayoutPrototype() ? TypeInfoPerCellBit | JSC::IsPristine : TypeInfoPerCellBit);
     });
 }
 

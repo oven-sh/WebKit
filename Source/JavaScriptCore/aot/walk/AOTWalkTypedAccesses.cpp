@@ -86,10 +86,6 @@ struct FieldOfTypedAccess {
     bool isAppendedByConstructors { true };
     // LinkedCell::isOfBirth in every receiver. False: `const node = createBaseNode(kind); node.name = name;`: the type says that the property is there, and a store by name outside of the maker puts it there.
     bool isOfBirth { true };
-    // PlacedSlot::isFilledAtBirth in every receiver: while an object bears no mark, the slot is filled.
-    bool markAnswersForSlot { true };
-    // PlannedLayout::holdsRawValueFromBirth() in every receiver: while an object bears no mark, the slot holds neither undefined nor null.
-    bool markAnswersForValue { true };
     // In every receiver the slot has a form with marks for absent, undefined and null. JSValue has none: there a look for "filled" and a load are all that there is.
     bool liesInFormWithMarks { true };
     // In every receiver that form holds numbers or booleans.
@@ -535,8 +531,6 @@ static FieldOfTypedAccess describeFieldAnewForTypedAccess(Walker& walker, const 
         staysInSlot &= takesEveryValue || everyStoreFits;
         field.isFilledByEveryConstruction &= cell.isFilled;
         field.isFilledAtEveryRead &= cell.isFilledAtEveryRead;
-        field.markAnswersForSlot &= slot.isFilledAtBirth;
-        field.markAnswersForValue &= walker.plan().layout(member).holdsRawValueFromBirth(*index);
         // Link follows the constructions of the layout that has the constructor. What a layout below has from it is created by the same constructor.
         field.isOfBirth &= cell.isOfBirth || (recordOrNull && recordOrNull->flags.contains(FieldFlags::IsInherited) && cellOfFieldForTypedAccess(link, declarationOf(program, reference)).isOfBirth);
         if (stored)
@@ -949,23 +943,6 @@ static TypedForm buildReadThatFindsNothingBehindLooksForTypedAccess(Walker&, con
 static TypedForm buildAccessToAccessorBehindLooksForTypedAccess(Walker&, const BodyValue&, const OperandsOfTypedAccess&, const ReceiversOfTypedAccess&, PropertyKeyID);
 static bool orderWordShowsThatCellLacksFieldForTypedAccess(Walker&, Reference object, const ReceiversOfTypedAccess&, PropertyKeyID);
 
-// NO MARK, SO THE SLOT IS FILLED: every maker in sight has filled the field when it is through with the object, an object that is not through bears the mark, and whatever empties the slot later sets it.
-static bool markOfCellAnswersForFieldInTypedAccess(const Walker& walker, const ReceiversOfTypedAccess& receivers, const FieldOfTypedAccess& field, PropertyKeyID key, ValueID object)
-{
-    // lookAsksForValueOfWrittenType(): such a look asks that the slot holds neither undefined nor null.
-    bool lookAsksForValue = field.isRequired && field.liesInFormWithMarks && (field.liesInFormOfNumbersOrBooleans || field.isWrittenWithoutUndefinedAndNull) && !field.markAnswersForValue;
-    return field.liesInOneSlot && field.coverage == CoverageOfTypedAccess::EveryReceiver && field.markAnswersForSlot && !lookAsksForValue && !field.isAppended && paysToLookAtSlotForTypedAccess(walker, field, key)
-        && !possibleChangesForbid(receivers.possibleChanges, TypedAccess::ReadsFilledSlot) && !isBeingMadeByBodyBeingReadInTypedAccess(walker, object);
-}
-
-bool markOfCellAnswersForRead(Walker& walker, const BodyValue& read, TypeID typeOfObject)
-{
-    if (read.opcode() != Opcode::PropGet)
-        return false;
-    std::optional<ReceiversOfTypedAccess> receivers = findReceiversOfTypedAccess(walker, typeOfObject);
-    return receivers && markOfCellAnswersForFieldInTypedAccess(walker, *receivers, describeFieldOfTypedAccess(walker, *receivers, read.key(), { }, true), read.key(), read.objectOperand());
-}
-
 static TypedForm buildReadForTypedAccess(Walker& walker, const BodyValue& value, const OperandsOfTypedAccess& operands, PropertyKeyID key)
 {
     std::optional<ReceiversOfTypedAccess> receivers = findReceiversOfTypedAccess(walker, operands.typeOfObject);
@@ -1018,8 +995,6 @@ static TypedForm buildReadForTypedAccess(Walker& walker, const BodyValue& value,
     Reference object = operands.object;
     Reference held = valueInSlotForTypedAccess(walker, object, field);
     bool isFilled = isFilledByConstructions || (provesSlotFilledForTypedAccess(walker, held, key) && !possibleChangesForbid(receivers->possibleChanges, TypedAccess::ReadsFilledSlot));
-    bool markAnswers = walker.state().factsOfCell(object).contains(FactOfCell::BearsNoMark) && markOfCellAnswersForFieldInTypedAccess(walker, *receivers, field, key, value.objectOperand());
-    isFilled |= markAnswers;
     if (!isFilled && !mayFindSlotEmpty)
         mayFindSlotEmpty = mayFindSlotEmptyBehindLooksInTypedRead(walker, *receivers, field, key, walker.state().factsOfCell(object), &walker.state());
     if (!isFilled && !mayFindSlotEmpty)
@@ -1041,11 +1016,7 @@ static TypedForm buildReadForTypedAccess(Walker& walker, const BodyValue& value,
         filledWhereverObjectIs.emplace(walker);
     bool holdsMark = slotHoldsMarkForTypedAccess(walker, *receivers, key);
     Opcode opcodeOfRead = isFilled ? (holdsMark ? Opcode::GetDeferredClosureSlot : Opcode::GetSlot) : (holdsMark ? Opcode::GetDeferredClosureSlotOrUndefined : Opcode::GetSlotOrUndefined);
-    Draft draft = draftOfSlotOperationForTypedAccess(walker, value, opcodeOfRead, object, *receivers, key);
-    // No mark: neither undefined nor null lies there.
-    if (markAnswers && field.markAnswersForValue && opcodeOfRead == Opcode::GetSlot)
-        draft.setHoldsDeclaredType(true);
-    Reference read = walker.build(WTF::move(draft));
+    Reference read = walker.build(draftOfSlotOperationForTypedAccess(walker, value, opcodeOfRead, object, *receivers, key));
     readScopeBesideSlotForTypedAccess(walker, walker.originOf(value), read);
     walker.bind(value.id(), read);
     if (read)
@@ -2062,51 +2033,6 @@ static bool orderWordShowsThatCellLacksFieldForTypedAccess(Walker& walker, Refer
     return inKnownOrder && !inKnownOrder->isListed;
 }
 
-// `function Node(kind, pos, end) { this.pos = pos; this.end = end; this.kind = kind; .. }`: the store has filled the last field of the birth of an object that the body being read makes.
-// The state holds a value for each of them, and no field lies outside its slot: what the state holds is so at this point of the walk whoever else has the object. The birth is over, and no look at the slots is paid for it.
-static void finishBirthBehindStoreForTypedAccess(Walker& walker, const BodyValue& store, Reference object, const ReceiversOfTypedAccess& receivers, const FieldOfTypedAccess& stored)
-{
-    if (!stored.markAnswersForSlot || walker.isUnreachable() || !isBeingMadeByBodyBeingReadInTypedAccess(walker, store.objectOperand()))
-        return;
-    OptionSet<FactOfCell> known = walker.state().factsOfCell(object);
-    if (known.contains(FactOfCell::BearsNoMark) || !known.contains(FactOfCell::NoFieldOutsideSlot))
-        return;
-    const Plan& plan = walker.plan();
-    auto numberOfFieldsOfBirth = [&](LayoutID layout) {
-        const PlannedLayout& planned = plan.layout(layout);
-        return std::ranges::count_if(planned.slots.span().first(planned.numberOfFields()), &PlacedSlot::isFilledAtBirth);
-    };
-    // A constructor stores its fields as the layout lists them, so the last one is what is missing until the set is whole.
-    LayoutID first = receivers.members[0];
-    for (uint32_t index = plan.layout(first).numberOfFields(); index--;) {
-        if (!plan.slot(first, index).isFilledAtBirth)
-            continue;
-        PropertyKeyID key = plan.slots().keyOf(walker.program(), { first, index });
-        if (!key)
-            return;
-        FieldOfTypedAccess field = describeFieldOfTypedAccess(walker, receivers, key, { }, true);
-        Reference inSlot = valueInSlotForTypedAccess(walker, object, field);
-        if (field.coverage != CoverageOfTypedAccess::EveryReceiver || !field.markAnswersForSlot || !field.liesInOneSlot || !provesSlotFilledForTypedAccess(walker, inSlot, key))
-            return;
-        if (plan.layout(first).holdsRawValueFromBirth(index) && (!field.markAnswersForValue || !walker.typeOf(inSlot) || walker.types().at(walker.typeOf(inSlot)).mayBeUndefinedOrNull()))
-            return;
-    }
-    // No receiver waits for a field that the first does not have.
-    auto numberInFirst = numberOfFieldsOfBirth(first);
-    for (LayoutID member : receivers.members) {
-        if (numberOfFieldsOfBirth(member) != numberInFirst)
-            return;
-    }
-    Origin origin = walker.originOf(store);
-    origin.isTailCall = false;
-    Draft finish(Opcode::FinishBirth, origin);
-    finish.setObjectOperand(object);
-    walker.chooseConservativeFields(finish);
-    walker.build(WTF::move(finish));
-    if (!walker.isUnreachable())
-        walker.state().noteFactsOfCell(object, FactOfCell::BearsNoMark);
-}
-
 static TypedForm buildStoreForTypedAccess(Walker& walker, const BodyValue& value, const OperandsOfTypedAccess& operands, PropertyKeyID key, ECMAMode mode, bool isDefinition)
 {
     TypeID typeOfStored = operands.typeOfStored;
@@ -2167,7 +2093,6 @@ static TypedForm buildStoreForTypedAccess(Walker& walker, const BodyValue& value
     walker.state().noteSlot(object, field.place, stored);
     if (opcode == Opcode::PutSlotOrAdd)
         walker.state().noteOrderWord(object, orderWordAfter);
-    finishBirthBehindStoreForTypedAccess(walker, value, object, *receivers, field);
     return TypedForm::Built;
 }
 
@@ -2393,8 +2318,7 @@ TypeID typeTakenBySlotOfStore(Walker& walker, const BodyValue& store, TypeID typ
     TypeID taken;
     for (LayoutID member : receivers->members) {
         std::optional<FieldIndex> field = slots.findField(walker.program(), member, store.key());
-        // Of a field for whose value the mark answers a value is asked for: whoever brings undefined or null stores by name, and the run time sets the mark.
-        TypeID type = field && slots.slot(member, *field).type ? slots.slot(member, *field).typeInLayoutRecord() : TypeID();
+        TypeID type = field ? slots.slot(member, *field).type : TypeID();
         if (type)
             taken = taken ? walker.types().intersectionOf(taken, type) : type;
     }
@@ -2411,10 +2335,6 @@ Reference buildReadThatTestsShapeAndSlot(Walker& walker, const BodyValue& read, 
     Draft draft = draftOfSlotOperationForTypedAccess(walker, read, Opcode::GetSlot, object, *receivers, read.key());
     draft.setHoldsDeclaredType(lookAsksForValueOfWrittenType(walker, *receivers, read.key()));
     draft.setLevel(KnowledgeLevel::Expected);
-    // Where the read tests the shape for itself. Of a receiver that was proven earlier somebody may have taken a field out since. A look that asks for a value of the written type asks more than the mark answers.
-    if (!walker.types().isSubset(walker.typeOf(object), guessed) && markOfCellAnswersForFieldInTypedAccess(walker, *receivers, describeFieldOfTypedAccess(walker, *receivers, read.key(), { }, true), read.key(), read.objectOperand()))
-        draft.setIsFilledWhereShapeFits(true);
-    draft.setReceiverMayBeInBirth(isBeingMadeByBodyBeingReadInTypedAccess(walker, read.objectOperand()));
     if (resultRepresentationOf(walker, draft) != Representation::JSValue)
         return { };
     draft.setExpectsCell(expectsCell);
@@ -2452,7 +2372,6 @@ Reference buildReadThatTestsShapeAndCell(Walker& walker, const BodyValue& read, 
     if (resultRepresentationOf(walker, draft) != Representation::JSValue)
         return { };
     draft.setExpectsCell(expectsCell);
-    draft.setReceiverMayBeInBirth(isBeingMadeByBodyBeingReadInTypedAccess(walker, read.objectOperand()));
     draft.setConditions(conditions.span());
     // The closed read may hand the object to a getter.
     walker.letLeave(object);
@@ -2536,11 +2455,6 @@ void noteSlotFoundEmpty(Walker& walker, const BodyValue& access, Reference objec
 {
     if (std::optional<ReceiversOfTypedAccess> receivers = findReceiversOfTypedAccess(walker, walker.typeOf(object)))
         walker.state().noteSlot(object, describeFieldOfTypedAccess(walker, *receivers, keyOfAccessToSlot(walker.program(), access), { }).place, walker.constant(Draft(Opcode::Absent)));
-}
-
-bool isBeingMadeByBodyBeingRead(const Walker& walker, ValueID object)
-{
-    return isBeingMadeByBodyBeingReadInTypedAccess(walker, object);
 }
 
 bool looksAtSlotOfObjectBeingMade(const Walker& walker, const BodyValue& access)

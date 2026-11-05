@@ -27,7 +27,6 @@
 #include "AOTUnionPlan.h"
 #include "AOTThinSummary.h"
 #include "AOTThreads.h"
-#include "AOTTypeArena.h"
 #include <algorithm>
 #include <array>
 #include <limits>
@@ -744,97 +743,6 @@ static void planConventions(const Program& program, const Facts& facts, BuildCon
     }
 }
 
-// ---- The fields of the birth
-
-static bool makesObjectsWithBirthsInPlan(const Program& program, const SlotPlanParts& slots, uint32_t layout)
-{
-    LayoutKind kind = program.layouts[layout].kind;
-    // A literal is filled where it is allocated, or by stores that nothing marks the end of: `const o = { }; o.a = a;`.
-    return kind == LayoutKind::Instance && slots.layouts[layout].holdsCompiledObjects() && !slots.layoutsNeverAllocated.get(layout);
-}
-
-// The code that looks at the fields of a birth looks into the cell, and the run time tells a field that is there from one that is not by the slot alone.
-static bool slotMayBeOfBirthInPlan(const PlannedLayout& planned, FieldIndex field)
-{
-    const PlacedSlot& slot = planned.slots[field];
-    return slot.storage == SlotStorage::Inline && slot.indexInLayoutRecord && canLeaveSlot(slot.representation) && !slot.holdsAccessor && !slot.mayExistWithoutStorage
-        && slot.representation != SlotRepresentation::DeferredClosure && !slot.deferredFunction && planned.environmentOfDeferredClosures != field;
-}
-
-// `class Vec { x; y; z }   v.x * v.x + v.y * v.y + v.z * v.z`: a slot is of the birth where every construction in sight fills the field. The mark of the cell then answers for all of them: it is clear while each is filled.
-// AN EXPECTATION, so any choice is safe: the run time sets the mark wherever an object is made without such a field or loses one, and code asks for the mark.
-// Not where Link has proven the field filled in objects that reach no unseen code: a read of that asks nothing.
-// One answer for a row of classes: a field that a class below has from the class above lies in one slot, and an access by the family goes by what holds of every member.
-// A debugger stands in any scope at any operation: where one is admitted no more is said than is proven.
-static void markSlotsFilledAtBirthInPlan(Program& program, const Facts& facts, SlotPlanParts& slots)
-{
-    if (!withoutMechanismsMissingDependencies(facts.mechanisms()).contains(Mechanism::TypedSlots) || program.admitsInspector)
-        return;
-    const LinkTables& linked = facts.linked();
-    const LinkTables& held = facts.held();
-    uint32_t numberOfLayouts = static_cast<uint32_t>(program.layouts.size());
-    RELEASE_ASSERT(held.firstFieldOfLayout.size() == numberOfLayouts + 1 && linked.firstFieldOfLayout.size() == numberOfLayouts + 1 && slots.layouts.size() == numberOfLayouts);
-
-    auto declarationOfField = [&](FieldReference reference) {
-        FieldReference declaration = declarationOf(program, reference);
-        return held.firstFieldOfLayout[declaration.layout.index()] + declaration.field;
-    };
-    // Both by the cell of the declaration in LinkTables::fields.
-    BitVector isLeftOutBySomeLayout(held.fields.size());
-    BitVector isLookedAtInSomeLayout(held.fields.size());
-    // `flags: SymbolFlags`: the slot has marks for undefined and null, its type takes neither, and nothing in sight brings one. Whoever lays a mark there all the same sets the mark of the cell.
-    BitVector mayHoldMarkInSomeLayout(held.fields.size());
-    // `class B extends A`: the constructor of A allocates, that of B stores behind it, and each of them asks anew what `super()` has handed it: the object is tested in its birth over and over.
-    BitVector standsInRowOfClasses(numberOfLayouts);
-    for (uint32_t index = 0; index < numberOfLayouts; ++index) {
-        const Layout& layout = program.layouts[index];
-        if (!layout.base || layout.isDerived())
-            continue;
-        standsInRowOfClasses.quickSet(index);
-        standsInRowOfClasses.quickSet(declaredLayoutOf(program, layout.base).index());
-    }
-    for (uint32_t index = 0; index < numberOfLayouts; ++index) {
-        if (!makesObjectsWithBirthsInPlan(program, slots, index))
-            continue;
-        LayoutID id(index);
-        bool isReadWithoutLook = !linked.layout(id).reachesUnseenCode;
-        for (FieldIndex field = 0; field < program.layouts[index].fields.size(); ++field) {
-            uint32_t declaration = declarationOfField({ id, field });
-            // Link follows the constructions of the layout that has the constructor. What a layout below has from it is created by the same constructor.
-            bool isOfBirth = held.field({ id, field }).isOfBirth || (program.layouts[index].fields[field].flags.contains(FieldFlags::IsInherited) && held.fields[declaration].isOfBirth);
-            if (!isOfBirth || !slotMayBeOfBirthInPlan(slots.layouts[index], field) || standsInRowOfClasses.quickGet(declaredLayoutOf(program, id).index()))
-                isLeftOutBySomeLayout.quickSet(declaration);
-            else if (!isReadWithoutLook || !linked.field({ id, field }).isFilled)
-                isLookedAtInSomeLayout.quickSet(declaration);
-            // AN EXPECTATION TOO: what is written admits neither, and no maker in sight gives the field the constant undefined: `this.parent = undefined` would keep every such object in its birth for life.
-            const PlacedSlot& slot = slots.layouts[index].slots[field];
-            const Field& record = program.layouts[index].fields[field];
-            const Field& origin = record.originLayout && record.originField ? fieldAt(program, { record.originLayout, *record.originField }) : record;
-            TypeID written = origin.declared.written();
-            LinkedCell cell = held.field({ id, field });
-            if (!traitsOf(slot.representation).hasUndefined || !slot.type || !written || program.types.at(written).isAnything() || program.types.at(written).mayBeUndefinedOrNull()
-                || cell.isOnlyGivenUndefinedByMakers || cell.isLeftUndefinedByMakers || cell.isGivenByNoMaker || cell.isGivenUndefinedOrNullInSight)
-                mayHoldMarkInSomeLayout.quickSet(declaration);
-        }
-    }
-
-    TypeArena types(program.types, ArenaKeeps::InProgram);
-    for (uint32_t index = 0; index < numberOfLayouts; ++index) {
-        if (!makesObjectsWithBirthsInPlan(program, slots, index))
-            continue;
-        for (FieldIndex field = 0; field < program.layouts[index].fields.size(); ++field) {
-            uint32_t declaration = declarationOfField({ LayoutID(index), field });
-            slots.layouts[index].slots[field].isFilledAtBirth = isLookedAtInSomeLayout.quickGet(declaration) && !isLeftOutBySomeLayout.quickGet(declaration);
-            slots.layouts[index].mayBearMark |= slots.layouts[index].slots[field].isFilledAtBirth;
-            if (slots.layouts[index].slots[field].isFilledAtBirth && !mayHoldMarkInSomeLayout.quickGet(declaration)) {
-                slots.layouts[index].fieldsThatHoldRawValuesFromBirth.set(field);
-                // What every door of the run time holds a store to: whoever brings undefined or null is led to Object::willStoreMarker().
-                slots.layouts[index].slots[field].typeOfRawValue = types.withoutNullish(slots.layouts[index].slots[field].type);
-            }
-        }
-    }
-}
-
 std::unique_ptr<Plan> planProgram(Program& program, const Facts& facts, BuildContext& build)
 {
     StepTimes times(build, nameOf(Stage::PlanSlots));
@@ -873,7 +781,6 @@ std::unique_ptr<Plan> planProgram(Program& program, const Facts& facts, BuildCon
     parts.deferredDefinitions = deferredDefinitionsOfPlan(program, facts, variablesDescribedToRunTime, AOT::hasFlag(build.options().testing, Wire::TestingSwitch::CheckProofsAtRunTime));
     slots.variables = variablesOfPlan(program, facts, variablesDescribedToRunTime);
     slots.classCreation = classCreationOfPlan(program, facts);
-    markSlotsFilledAtBirthInPlan(program, facts, slots);
     parts.slots = SlotPlan(WTF::move(slots));
     if (!finish("plan: closure forms, variables, class creation"_s))
         return nullptr;

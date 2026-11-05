@@ -320,7 +320,7 @@ static FieldsOfLayoutRecord collectFieldsOfLayoutRecord(const TableEncoder& enco
         FieldData data { };
         data.name = name;
         data.isFilledAtBirth = slot.isFilledAtBirth;
-        data.holdsRawValueFromBirth = planned.holdsRawValueFromBirth(index);
+        data.holdsRawValueFromBirth = facts.facts.contains(Typed::FieldFact::HoldsRawValueFromBirth);
         data.keepsStateOfBirth = fieldOfLayoutRecordKeepsStateOfBirth(program, field, facts, slot);
         data.slotHoldsUndefinedAndNull = facts.facts.contains(Typed::FieldFact::SlotHoldsUndefinedAndNull);
         data.flags = flagsOfFieldInLayoutRecord(field, facts, slot, slotOfLayoutRecordTakesWhatIsProven(encoder, reference, slot));

@@ -115,8 +115,6 @@ struct alignas(64) FieldExit {
     uint16_t offsetOfExtraPropertiesWord;
     bool wasInSlot;
     // Four or eight for a slot in the cell. Zero for any other and for a definition, which the stubs leave to the run time.
-    // Beside the width.
-    static constexpr uint8_t objectMayBearMark = 1;
     uint8_t widthOfSlot;
     bool isDefinition;
     // Bits of PropertyAttribute that the property has outside the slot.

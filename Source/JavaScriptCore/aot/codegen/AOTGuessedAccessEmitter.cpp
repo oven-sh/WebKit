@@ -108,12 +108,8 @@ CellPointer GuessedAccessEmitter::receiverOrElse(const ValueContext& value, Boxe
     std::optional<Condition> hasShapeThoughNoCell;
     static constexpr OpcodeSet accessesThatSayWhetherCellIsExpected { Opcode::GetSlot, Opcode::GetSlotOrUndefined, Opcode::PutSlot, Opcode::PutSlotOrAdd };
     bool expectsCell = accessesThatSayWhetherCellIsExpected.contains(value.opcode()) && value->expectsCell();
-    // The failing side is the access by name, which concludes nothing.
-    MarkedObjects marked = value.opcode() == Opcode::GetSlot && value->isFilledWhereShapeFits() ? MarkedObjects::AreRefused : MarkedObjects::MayBeRefused;
-    if ((value.opcode() == Opcode::GetSlot || value.opcode() == Opcode::GetSlotOrUndefined) && value->receiverMayBeInBirth())
-        marked = MarkedObjects::Pass;
     if (expectsCell && (known.primitives & ~cellPrimitives))
-        hasShapeThoughNoCell = emitter<ShapeTestEmitter>().hasShapeInThoughNoCell(object, receivers, known, marked);
+        hasShapeThoughNoCell = emitter<ShapeTestEmitter>().hasShapeInThoughNoCell(object, receivers, known);
     if (hasShapeThoughNoCell)
         branchUnless(*hasShapeThoughNoCell, failure);
     else {
@@ -124,7 +120,7 @@ CellPointer GuessedAccessEmitter::receiverOrElse(const ValueContext& value, Boxe
                 isPresentCell = logicalAnd(isPresentCell, isNotEmpty(object));
             branchUnless(isPresentCell, failure);
         }
-        branchUnless(emitter<ShapeTestEmitter>().hasShapeIn(cell, receivers, known, marked), failure);
+        branchUnless(emitter<ShapeTestEmitter>().hasShapeIn(cell, receivers, known), failure);
     }
     // As GuardEmitter::generateShapeTest(). What a store has tested fits the slots of the instance that runs, and what a read finds counts as that instance's: the stubs leave a holder of another instance to the run time too.
     if (!hasOneInstance() && !holdsOnlyCompiledObjects(types(), m_plan, known))
@@ -197,7 +193,6 @@ void GuessedAccessEmitter::generateSlotRead(const ValueContext& value)
 
     // A receiver without the field has no slot to look into.
     CellPointer cell = receiverOrElse(value, object, types().layoutSets().ofSorted(access.membersWithField.span()), failure);
-    bool receiverBearsNoMark = emitter<ShapeTestEmitter>().lastTestRefusesMarkedObjects();
     CellPointer base = emitter<SlotAccessEmitter>().baseOfSlot(cell, access);
     if (slot.representation == SlotRepresentation::DeferredClosure) {
         // The generic read creates a closure that has not been created yet.
@@ -206,23 +201,20 @@ void GuessedAccessEmitter::generateSlotRead(const ValueContext& value)
         join.add(conversions.decode(word, types().at(TypeTable::cellOrMarker), Representation::JSValue).as<Boxed>());
     } else if (value.opcode() == Opcode::GetSlot && value->holdsDeclaredType()) {
         // One compare tells a value from absent, undefined and null, and what is loaded behind it is boxed without a look at it. Whoever finds a mark reads by name.
-        if (!value->isFilledWhereShapeFits() || !receiverBearsNoMark)
-            continueGuessedAccessIf(m_out, slots.holdsDeclaredType(base, slot, location, extensionWord), rareEdge(failure));
+        continueGuessedAccessIf(m_out, slots.holdsDeclaredType(base, slot, location, extensionWord), rareEdge(failure));
         Type loaded = types().at(slot.type);
         loaded.primitives &= ~(Primitive::UndefinedOrNull | Primitive::Absent);
         join.add(conversions.box(value, slots.loadSlot(base, slot, location, extensionWord, loaded), loaded));
     } else {
         LBasicBlock slotIsEmpty = readsEmptySlotAsUndefined ? newBlock() : nullptr;
-        // A field of the birth lies filled in its slot while the object bears no mark.
-        if (value.opcode() != Opcode::GetSlot || !value->isFilledWhereShapeFits() || !receiverBearsNoMark)
-            continueGuessedAccessIf(m_out, slots.holdsValue(base, slot, location, extensionWord), slotIsEmpty ? unlikelyEdge(slotIsEmpty) : rareEdge(failure));
+        continueGuessedAccessIf(m_out, slots.holdsValue(base, slot, location, extensionWord), slotIsEmpty ? unlikelyEdge(slotIsEmpty) : rareEdge(failure));
         Operand held = slots.loadSlotThatHoldsValue(base, slot, location, extensionWord);
         // The receivers' slots share a representation, not a type.
         join.add(conversions.box(value, held, types().at(widestTypeOf(held.representation))));
 
         if (slotIsEmpty) {
             m_out.appendTo(slotIsEmpty);
-            // A field that leaves its slot sets the flag of the cell, and an object that is laid below another prototype says so beside it: one byte. What has become of the objects above it the guards of its classes say.
+            // A field that leaves its slot sets the mark of the cell, and an object that is laid below another prototype says so beside it: one byte. What has become of the objects above it the guards of its classes say.
             branchUnless(hasNoBits(loadByte(cell, m_heaps.JSCell_typeInfoFlags), TypeInfoPerCellBit | JSC::IsPristine), failure);
             if (!value->conditions().isEmpty())
                 branchUnless(emitter<GuardEmitter>().areMembersUnchanged(value->conditions()), failure);

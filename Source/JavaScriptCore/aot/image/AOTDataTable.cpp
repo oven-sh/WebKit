@@ -639,7 +639,7 @@ private:
                 continue;
             const Typed::DataNode& value = object.members[index].value;
             // Object::willStoreMarker() marks the cell, which a copy of words does not.
-            bool setsMarkOfCell = (value.is<Typed::DataNode::Undefined>() || value.is<Typed::DataNode::Null>()) && layout.holdsRawValueFromBirth(field);
+            bool setsMarkOfCell = (value.is<Typed::DataNode::Undefined>() || value.is<Typed::DataNode::Null>()) && m_encoder.facts.field({ object.layout, field }).facts.contains(Typed::FieldFact::HoldsRawValueFromBirth);
             if (slot.isOutOfLine() || setsMarkOfCell || !tryWriteDataInSlot(slot, bytesOf(slot), value, contents[nextWord++]))
                 return std::nullopt;
         }

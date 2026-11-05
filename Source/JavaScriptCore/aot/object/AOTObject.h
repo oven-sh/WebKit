@@ -137,21 +137,9 @@ public:
 
     template<typename T> T& at(uint32_t offset) const { return *reinterpret_cast<T*>(reinterpret_cast<uint8_t*>(const_cast<Object*>(this)) + offset); }
     uint32_t orderWord() const { return at<uint32_t>(offsetOfOrderWord); }
-    // For comparisons with the word of another object, or with one that was read so, alone.
-    uint32_t shapeWordWithMark() const { return at<uint32_t>(offsetOfShapeWord); }
-    uint64_t orderAndShapeWordsWithMark() const { return static_cast<uint64_t>(shapeWordWithMark()) << 32 | orderWord(); }
-    uint32_t shapeWord() const { return shapeWordWithoutMark(shapeWordWithMark()); }
+    uint32_t shapeWord() const { return at<uint32_t>(offsetOfShapeWord); }
     uint32_t shape() const { return shapeOf(shapeWord()); }
     uint64_t orderAndShapeWords() const { return static_cast<uint64_t>(shapeWord()) << 32 | orderWord(); }
-    // TWO SEATS. The bit of the cell's flags: a field has left its slot, or undefined | null lies where a raw value is due. It lies beside the other flags of the cell, and whoever reads a slot that may be empty asks them in one byte.
-    // The bit in the word of the shape says that too, and that the birth is not over, of an object whose layout has a field that the mark answers for.
-    bool bearsMark() const { return perCellBit() || !(shapeWordWithMark() & shapeWordIsUnmarked); }
-    void setIsInBirth(bool isInBirth) { at<uint32_t>(offsetOfShapeWord) = isInBirth && mayBearMark() ? shapeWordWithMark() & ~shapeWordIsUnmarked : shapeWord(); }
-    void setBearsMark(bool bearsMark)
-    {
-        setPerCellBit(bearsMark);
-        setIsInBirth(bearsMark);
-    }
     bool hasFlagsInOrderWord() const { return orderWord() & ~orderAndCountMask; }
     bool isFrozen() const { return orderWord() & orderWordIsFrozen; }
     bool isSealed() const { return orderWord() & orderWordIsSealed; }
@@ -213,8 +201,6 @@ public:
     bool tryMoveFieldBackToSlot(VM&, const FieldData&);
     void deleteField(VM&, const FieldData&);
     bool hasEveryFieldOfBirth() const;
-    // The layout has a field that the mark answers for. An object of any other layout never bears the mark, so whoever asks about such layouts alone takes the word as it lies.
-    bool mayBearMark() const;
     JS_EXPORT_PRIVATE void tryFinishBirth();
 
     enum class Integrity : uint8_t { NotExtensible, Sealed, Frozen };

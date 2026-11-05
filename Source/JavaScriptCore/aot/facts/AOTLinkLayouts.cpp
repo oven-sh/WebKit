@@ -1382,11 +1382,6 @@ static bool isConstantUndefinedInLinkLayouts(const SummaryNode& node)
     return node.kind == SummaryNode::Kind::Constant && TypeID::fromBits(node.first) == TypeID(TypeTable::undefined);
 }
 
-static bool isConstantUndefinedOrNullInLinkLayouts(const SummaryNode& node)
-{
-    return node.kind == SummaryNode::Kind::Constant && (TypeID::fromBits(node.first) == TypeID(TypeTable::undefined) || TypeID::fromBits(node.first) == TypeID(TypeTable::null));
-}
-
 enum class TraitOfWriteInLinkLayouts : uint8_t {
     ComesAfterConstruction = 1 << 0,
     AddsWhatIsNotListed = 1 << 1,
@@ -1397,8 +1392,6 @@ enum class TraitOfWriteInLinkLayouts : uint8_t {
     GivesUndefinedToObjectBeingMade = 1 << 4,
     // `this.flags = flags`: the construction itself, or the body that constructs, stores anything else.
     FillsObjectBeingConstructed = 1 << 5,
-    // `this.socket = null`.
-    BringsUndefinedOrNull = 1 << 6,
 };
 
 } // anonymous namespace
@@ -1568,10 +1561,6 @@ private:
     // LinkedCell::isLeftUndefinedByMakers is the first without the second.
     BitVector m_fieldsGivenUndefinedByMakers;
     BitVector m_fieldsFilledByConstructors;
-    // The constant undefined or null: by a store behind the construction, by a maker. And what a maker gives that is neither.
-    BitVector m_fieldsGivenUndefinedOrNullLate;
-    BitVector m_fieldsGivenUndefinedOrNullByMakers;
-    BitVector m_fieldsGivenValuesByMakers;
     // By layout: some cell of it is in the first.
     BitVector m_layoutsGivenUndefinedByMakers;
     // SlotPlan reads the answer off Facts::held() alone.
@@ -1718,9 +1707,6 @@ WriterOfLinkLayouts::WriterOfLinkLayouts(const LinkFlow& flow, LinkTables& table
     m_keysOfTestedFields.ensureSize(m_program.types.numberOfPropertyKeys());
     m_fieldsGivenUndefinedByMakers.ensureSize(tables.fields.size());
     m_fieldsFilledByConstructors.ensureSize(tables.fields.size());
-    m_fieldsGivenUndefinedOrNullLate.ensureSize(tables.fields.size());
-    m_fieldsGivenUndefinedOrNullByMakers.ensureSize(tables.fields.size());
-    m_fieldsGivenValuesByMakers.ensureSize(tables.fields.size());
     m_layoutsGivenUndefinedByMakers.ensureSize(numberOfLayouts);
     m_asksWhatMakersGive = flow.reading() == WhatUnseenCodeDoes::OnlyReadsAndCalls;
     m_onlyFunctionsThatMakeObjects.fill(FunctionID(), m_asksWhatMakersGive ? numberOfLayouts : 0);
@@ -1879,8 +1865,6 @@ void WriterOfLinkLayouts::lookAtAccesses(FunctionID id, const ThinSummary& summa
         }
         if (!access.isPartOfConstruction)
             traits.add(Trait::ComesAfterConstruction);
-        if (access.value != noSummaryNode && isConstantUndefinedOrNullInLinkLayouts(summary.nodes[access.value]))
-            traits.add(Trait::BringsUndefinedOrNull);
         // `meter.value = 1` on an object that somebody has made: where an accessor lies under the name the store runs it, and where nothing lies there the object was made without the field.
         if (!access.isPartOfConstruction && access.kind == SummaryAccess::Kind::Store)
             traits.remove(Trait::MayGiveValue);
@@ -2395,10 +2379,6 @@ void WriterOfLinkLayouts::noteWriteInto(LayoutID layout, PropertyKeyID key, Trai
     }
     if (traits.contains(Trait::FillsObjectBeingConstructed))
         m_fieldsFilledByConstructors.quickSet(cellOf(*found));
-    if (traits.contains(Trait::BringsUndefinedOrNull))
-        (traits.contains(Trait::ComesAfterConstruction) ? m_fieldsGivenUndefinedOrNullLate : m_fieldsGivenUndefinedOrNullByMakers).quickSet(cellOf(*found));
-    else if (traits.contains(Trait::FillsObjectBeingConstructed))
-        m_fieldsGivenValuesByMakers.quickSet(cellOf(*found));
 }
 
 // ---- The fields that are appended. A list claims nothing, so whom it names decides only how fast a name is found and how large the tables are.
@@ -3288,8 +3268,6 @@ void WriterOfLinkLayouts::writeFields()
             cell.isFilledAtEveryRead = cell.isFilled && !m_fieldsReadInFrontOfDefinition.quickGet(cellOf(reference))
                 && !(m_flow.lostLayouts.get(index) && m_keysReadInFrontOfDefinitionThroughLost.contains(record.key.bits()));
             cell.isLeftUndefinedByMakers = m_layoutsGivenUndefinedByMakers.quickGet(index) && m_fieldsGivenUndefinedByMakers.quickGet(declaration) && !m_fieldsFilledByConstructors.quickGet(declaration);
-            // `flags: Flags;` in a class defines undefined, and the constructor stores the value behind it.
-            cell.isGivenUndefinedOrNullInSight = m_fieldsGivenUndefinedOrNullLate.quickGet(declaration) || (m_fieldsGivenUndefinedOrNullByMakers.quickGet(declaration) && !m_fieldsGivenValuesByMakers.quickGet(declaration));
             // `{ id, get extra() { .. } }`: the literal gives the field, as a pair of functions.
             cell.isGivenByNoMaker = isRecordThatIsMade && !m_fieldsGivenUndefinedByMakers.quickGet(declaration) && !m_fieldsFilledByConstructors.quickGet(declaration)
                 && !hasKnownAccessor.quickGet(cellOf(reference)) && !hasKnownAccessor.quickGet(declaration);

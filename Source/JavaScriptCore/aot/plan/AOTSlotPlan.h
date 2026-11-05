@@ -136,8 +136,6 @@ struct PlannedLayout {
     std::optional<FieldIndex> environmentOfDeferredClosures;
     // Milestone one: none.
     BitVector fieldsThatHoldRawValuesFromBirth;
-    // Some slot is isFilledAtBirth. An object of any other layout never bears the mark: Object::mayBearMark().
-    bool mayBearMark { false };
 };
 
 inline size_t PlannedLayout::findAppendedKey(PropertyKeyID key) const

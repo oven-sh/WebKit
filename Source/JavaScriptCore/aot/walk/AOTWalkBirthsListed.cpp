@@ -87,10 +87,8 @@ static bool markAnswersForSomeFieldInBirths(const Plan& plan, LayoutID layout)
     return false;
 }
 
-bool lookMayFinishBirthOf(Walker& walker, Reference object)
+bool lookMayFinishBirthOf(const Walker& walker, Reference object)
 {
-    if (object && walker.state().factsOfCell(object).contains(FactOfCell::BearsNoMark))
-        return false;
     TypeID proven = object ? walker.typeOf(object) : TypeID();
     if (!proven)
         return true;
@@ -100,55 +98,6 @@ bool lookMayFinishBirthOf(Walker& walker, Reference object)
     return std::ranges::any_of(membersOf(walker.types(), type.layouts), [&](LayoutID member) {
         return markAnswersForSomeFieldInBirths(walker.plan(), member);
     });
-}
-
-void finishBirthAtReturnOfClassConstructor(Walker& walker, Reference returned, Origin origin)
-{
-    if (!returned || !returned.isValue() || walker.isUnreachable() || !walker.has(Mechanism::TypedOperations))
-        return;
-    const Plan& plan = walker.plan();
-    TypeArena& types = walker.types();
-    const Function& function = walker.program().at(walker.currentFunction());
-    LayoutID own = function.constructedClass;
-    if (!isClassConstructorOf(function.kind) || !own || !plan.isInUse(own) || !plan.layout(own).holdsCompiledObjects() || !markAnswersForSomeFieldInBirths(plan, own))
-        return;
-    if (walker.state().factsOfCell(returned).contains(FactOfCell::BearsNoMark))
-        return;
-    origin.isTailCall = false;
-    auto tryFinish = [&](Reference object) {
-        Draft finish(Opcode::TryFinishBirth, origin);
-        finish.setObjectOperand(object);
-        walker.chooseConservativeFields(finish);
-        walker.build(WTF::move(finish));
-    };
-    TypeID proven = walker.typeOf(returned);
-    if (!proven)
-        return;
-    Type type = types.at(proven);
-    if (!type.primitives && type.hasOnlyLayouts() && !type.traitsOfNamed.contains(ObjectTrait::MayHaveLayoutBelow)) {
-        tryFinish(returned);
-        return;
-    }
-
-    // new.target may have selected a class below, whose own constructor ends the birth. On a type that does not close its layouts the look at the slots is a call of the run time, so the shape is asked first.
-    TypeID tested = types.forLayout(own);
-    if (plan.shapes().shapesOf(own).isEmpty() || !types.overlap(proven, tested))
-        return;
-    GuessInFrontOfLoop isOfOwnClass { returned, tested, types.at(tested).layouts, { } };
-    Reference test = buildTestInFrontOfLoop(walker, isOfOwnClass, origin);
-    if (!test)
-        return;
-    BlockID finishes = walker.addBlock();
-    BlockID leavesToClassBelow = walker.addBlock();
-    BlockID behind = walker.addBlock();
-    walker.branch(test, finishes, leavesToClassBelow);
-    walker.continueIn(finishes);
-    if (Reference narrowed = buildProofInFrontOfLoop(walker, isOfOwnClass, test, origin))
-        tryFinish(narrowed);
-    walker.jumpTo(behind);
-    walker.continueIn(leavesToClassBelow);
-    walker.jumpTo(behind);
-    walker.continueIn(behind);
 }
 
 // ---- The stores behind an allocation, as the body has them
@@ -456,7 +405,7 @@ bool listStoresOfCopiedConstructorOfItsOpcodes(Walker& walker, const BodyValue& 
     handedOver[*thisParameter] = object;
     if (walker.walkInline(call, callee, handedOver.span())) {
         Reference returned = walker.isUnreachable() ? Reference() : walker.referenceBoundTo(call.id());
-        if (returned && listed.isBornUnfinished && lookMayFinishBirthOf(walker, object)) {
+        if (returned && listed.isBornUnfinished) {
             Draft finish(Opcode::TryFinishBirth, origin);
             finish.setObjectOperand(object);
             walker.chooseConservativeFields(finish);

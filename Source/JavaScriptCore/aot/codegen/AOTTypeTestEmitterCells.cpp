@@ -50,13 +50,6 @@ void TypeTestEmitter::forEachCellCase(CellPointer cell, const TypeTestPlan& plan
 
     const Type from = types().at(plan.from);
     auto visitCellTest = [&](const CellTest& test) {
-        // An object without the mark pays nothing for the mark: one case asks the word as it lies, the next lets marked objects pass.
-        if (test.kind == CellTestKind::ShapeIn && m_casesAreBranchedOn && emitter<ShapeTestEmitter>().paysForMark(test.layouts, from)) {
-            visit([&] {
-                m_nextCaseIsUnlikely = true;
-                return passesCellTest(cell, test, from, MarkedObjects::AreAskedAgain);
-            });
-        }
         visit([&] {
             return passesCellTest(cell, test, from);
         });
@@ -149,7 +142,6 @@ void TypeTestEmitter::testCell(CellPointer cell, const TypeTestPlan& plan, Block
 
 Condition TypeTestEmitter::cellPasses(CellPointer cell, const TypeTestPlan& plan)
 {
-    SetForScope casesAreBranchedOn(m_casesAreBranchedOn, false);
     Condition result;
     forEachCellCase(cell, plan, [&](const auto& emitTest) {
         result = logicalOr(result, emitTest());
@@ -171,7 +163,7 @@ Condition TypeTestEmitter::stringPasses(CellPointer cell, const TypeTestPlan& pl
     });
 }
 
-Condition TypeTestEmitter::passesCellTest(CellPointer cell, const CellTest& test, const Type& from, MarkedObjects marked)
+Condition TypeTestEmitter::passesCellTest(CellPointer cell, const CellTest& test, const Type& from)
 {
     // What a cell is never changes, so a type test declares no read. The words that say what it is do change.
     Machine::DeclaredAccessesSuspension suspension(m_out);
@@ -183,7 +175,7 @@ Condition TypeTestEmitter::passesCellTest(CellPointer cell, const CellTest& test
     case CellTestKind::CellTypeIs:
         return hasCellTypeIn(cell, test.cellTypes);
     case CellTestKind::ShapeIn: {
-        Condition hasShape = emitter<ShapeTestEmitter>().hasShapeIn(cell, test.layouts, from, marked);
+        Condition hasShape = emitter<ShapeTestEmitter>().hasShapeIn(cell, test.layouts, from);
         if (!test.asksForInstance)
             return hasShape;
         return logicalAnd(hasShape, emitter<GuardEmitter>().belongsToInstance(cell));

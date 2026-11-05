@@ -108,8 +108,7 @@ CellPointer AllocationEmitter::allocateFrameCell(const ValueContext& value, cons
     CodeGenerator::InitializationScope scope(generator());
     cellAllocation.storeHeader(cell, header);
     storeField(cell, m_heaps.AOTObject_orderWord, word32(static_cast<int32_t>(allocation.placed.orderWord)));
-    uint32_t shapeWord = shapeWordOf(allocation.placed.shape);
-    m_out.store32(m_out.constInt32(static_cast<int32_t>(allocation.placed.isBornUnfinished ? shapeWord & ~shapeWordIsUnmarked : shapeWord)), m_out.address(m_heaps.entire(AbstractHeap::ShapeWords), cell.value(), offsetOfShapeWord));
+    m_out.store32(m_out.constInt32(static_cast<int32_t>(shapeWordOf(allocation.placed.shape))), m_out.address(m_heaps.entire(AbstractHeap::ShapeWords), cell.value(), offsetOfShapeWord));
     return cell;
 }
 
@@ -170,24 +169,16 @@ void AllocationEmitter::generateFinishObject(const ValueContext& value)
     define(value, get(value->objectOperand()));
 }
 
-void AllocationEmitter::clearBirthMark(CellPointer cell, const Type& type)
+void AllocationEmitter::clearBirthMark(CellPointer cell)
 {
-    // Of one shape the word is known whole.
-    if (type.hasOnlyLayouts() && !type.primitives && !type.traitsOfNamed.contains(ObjectTrait::MayHaveLayoutBelow)) {
-        std::span<const LayoutID> members = membersOf(types(), type.layouts);
-        ShapeRange shapes = members.size() == 1 ? m_plan.shapes().shapesOf(members[0]) : ShapeRange { };
-        if (shapes.count == 1) {
-            CodeGenerator::InitializationScope scope(generator());
-            storeField(cell, m_heaps.AOTObject_shapeWord, word32(static_cast<int32_t>(shapeWordOf(shapes.first))));
-            return;
-        }
-    }
-    emitter<ShapeTestEmitter>().clearMark(cell);
+    CodeGenerator::InitializationScope scope(generator());
+    Word32 flags = loadByte(cell, m_heaps.JSCell_typeInfoFlags);
+    m_out.store32As8(bitAnd(flags, word32(static_cast<uint8_t>(~TypeInfoPerCellBit))).value(), cell.value(), m_heaps.JSCell_typeInfoFlags);
 }
 
 void AllocationEmitter::generateFinishBirth(const ValueContext& value)
 {
-    clearBirthMark(in<CellPointer>(value->objectOperand()), typeOf(value->objectOperand()));
+    clearBirthMark(in<CellPointer>(value->objectOperand()));
 }
 
 namespace {
@@ -268,7 +259,7 @@ void AllocationEmitter::generateTryFinishBirth(const ValueContext& value)
     CellPointer cell = in<CellPointer>(value->objectOperand());
     LBasicBlock isUnfinished = newBlock();
     LBasicBlock done = newBlock();
-    Condition bearsMark = emitter<ShapeTestEmitter>().bearsMark(cell);
+    Condition bearsMark = hasBits(loadByte(cell, m_heaps.JSCell_typeInfoFlags), TypeInfoPerCellBit);
 
     Type type = typeOf(value->objectOperand());
     bool typeClosesLayouts = type.hasOnlyLayouts() && !type.traitsOfNamed.contains(ObjectTrait::MayHaveLayoutBelow);
@@ -297,36 +288,17 @@ void AllocationEmitter::generateTryFinishBirth(const ValueContext& value)
         branch(holds, { normalEdge(next), normalEdge(done) });
         m_out.appendToContinuation(next);
     };
+    continueIf(hasNoBits(emitter<ShapeTestEmitter>().orderWordOf(cell), orderWordHasFieldOutsideSlot));
     SlotEmitter& slots = emitter<SlotEmitter>();
-    auto finishBehindLooks = [&](bool everyFieldIsListed) {
-        for (const BirthFieldToCheck& checked : fields | std::views::reverse) {
-            const PlacedSlot& slot = m_plan.slot(layout, checked.field);
-            if (!traitsOf(slot.representation).hasAbsent || (everyFieldIsListed && !checked.holdsRawValue))
-                continue;
-            MemoryLocation location = locationOfField(m_program, m_plan.slots(), layout, checked.field);
-            continueIf(checked.holdsRawValue ? slots.holdsDeclaredType(cell, slot, location) : slots.holdsValue(cell, slot, location));
-        }
-        clearBirthMark(cell, type);
-        m_out.jump(done);
-    };
-    // An object whose order word is that of the shortest beginning of an order that has all of them, with no bit beside it, lists each of them and has none outside its slot: one compare in the place of a look at each.
-    // Whether a number or a boolean is there and no mark the slot alone says. What lists more, or otherwise, is looked at slot by slot.
-    Vector<FieldIndex, 16> fieldsOfBirth;
-    for (const BirthFieldToCheck& checked : fields)
-        fieldsOfBirth.append(checked.field);
-    std::optional<uint32_t> orderWordOfFinishedObject = membersOf(types(), provenLayouts).size() == 1 && fieldsOfBirth.size() > 1 ? m_plan.keyOrders().findOrderWordOfShortestBeginningThatLists(layout, fieldsOfBirth.span()) : std::nullopt;
-    Word32 orderWord = emitter<ShapeTestEmitter>().orderWordOf(cell);
-    if (orderWordOfFinishedObject) {
-        LBasicBlock listsThemAll = newBlock();
-        LBasicBlock listsOtherwise = newBlock();
-        ScopeFork byOrderWord = m_out.forkScope();
-        branch(equal(orderWord, static_cast<int32_t>(*orderWordOfFinishedObject)), { normalEdge(listsThemAll), unlikelyEdge(listsOtherwise) });
-        m_out.appendToArm(listsThemAll, byOrderWord);
-        finishBehindLooks(true);
-        m_out.appendToArm(listsOtherwise, byOrderWord);
+    for (const BirthFieldToCheck& checked : fields | std::views::reverse) {
+        const PlacedSlot& slot = m_plan.slot(layout, checked.field);
+        if (!traitsOf(slot.representation).hasAbsent)
+            continue;
+        MemoryLocation location = locationOfField(m_program, m_plan.slots(), layout, checked.field);
+        continueIf(checked.holdsRawValue ? slots.holdsDeclaredType(cell, slot, location) : slots.holdsValue(cell, slot, location));
     }
-    continueIf(hasNoBits(orderWord, orderWordHasFieldOutsideSlot));
-    finishBehindLooks(false);
+    clearBirthMark(cell);
+    m_out.jump(done);
     m_out.appendToJoin(done, fork);
 }
 

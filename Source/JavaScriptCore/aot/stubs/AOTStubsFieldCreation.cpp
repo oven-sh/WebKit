@@ -133,8 +133,6 @@ void appendFieldToKeyOrder(StubAssembler& jit, const KeyOrderRegisters& r, JumpL
     jit.or32(r.scratch, r.slotKey);
     hasNoExtraProperties.link(&jit);
     jit.and64(TrustedImm64(static_cast<int64_t>(orderCountAndShapeMask)), r.words);
-    // The run time files a transition under the word of the layout, and who creates fields is mostly an object that is being born.
-    jit.or64(TrustedImm64(static_cast<int64_t>(orderAndShapeWordsAreUnmarked)), r.words);
     computeTransitionHash(jit, r);
 
     Label probe = jit.label();

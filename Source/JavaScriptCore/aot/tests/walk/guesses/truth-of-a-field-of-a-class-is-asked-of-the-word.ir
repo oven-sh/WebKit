@@ -1,4 +1,4 @@
-# as the front end writes `if (item.next)`: the test of the shape as it lies answers for the slots of the birth, the slot is held to what is written of the field, and the truth of what it holds is whether the word is a cell
+# as the front end writes `if (item.next)`: the guard at the entry proves the parameter, the slot is held to what is written of the field, and the truth of what it holds is whether the word is a cell. Each arm of the look at the slot ends with the Branch
 # f1 = weigh, f2 = Item
 # -- source: truth-of-a-field-of-a-class-is-asked-of-the-word.ts
 # declare function sink(...values: unknown[]): void;
@@ -10,8 +10,7 @@
 # records of f65cda13c68a3427
 # RUN: walk f1 mechanisms=all-Inlining
 # CHECK-LABEL: code f1:Body
-# CHECK: = ShapeTest {{*}}[{{*}}refusesMarkedObjects]
-# CHECK-NOT: IsSlotFilled {{*}}key="next"
+# CHECK: = IsSlotFilled {{*}}key="next"
 # CHECK: = GetSlot {{*}}key="next"
 # CHECK: = ToBoolean {{*}}form=Bits
 # CHECK: Branch

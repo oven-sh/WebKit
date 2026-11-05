@@ -548,7 +548,7 @@ static bool tryBindFieldsThatTargetLacks(VM& vm, Object& target, Star star)
         return true;
     star.setFieldsOfTarget(vm, bound.span());
     target.at<uint32_t>(offsetOfOrderWord) |= orderWordHasFieldOutsideSlot;
-    target.setBearsMark(true);
+    target.setPerCellBit(true);
     return true;
 }
 

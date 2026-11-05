@@ -575,9 +575,8 @@ void SlotAccessEmitter::markCellIfMarkerReplacesRawValue(CellPointer cell, const
     if (!typeOf(stored).mayBeUndefinedOrNull())
         return;
     SlotEmitter& slots = emitter<SlotEmitter>();
-    LayoutSetID members = setOfMembersWithField(access);
-    if (slots.holdsRawValueFromBirthInSomeMember(members, access.key))
-        slots.markCellIfMarkerIsStored(cell, stored, members);
+    if (slots.holdsRawValueFromBirthInSomeMember(setOfMembersWithField(access), access.key))
+        slots.markCellIfMarkerIsStored(cell, stored);
 }
 
 void SlotAccessEmitter::generatePutSlot(const ValueContext& value)
@@ -903,9 +902,6 @@ std::optional<KeyOrderStep> SlotAccessEmitter::testLikeliestKeyOrderStep(CellPoi
             continue;
         uint64_t wordsBefore = static_cast<uint64_t>(AOT::shapeWordOf(shapes.generalShapeOf(member))) << 32 | continuation->orderWordBefore;
         Integer words(m_out.load64(m_out.address(m_heaps.AOTObject_orderWord, cell.value(), offsetOfOrderWord)));
-        // Who creates fields is mostly an object that is being born. The load goes by the heap of the order word: the number never changes, and the mark is taken out.
-        if (m_plan.layout(member).mayBearMark)
-            words = bitOr(words, integer(static_cast<int64_t>(orderAndShapeWordsAreUnmarked)));
         return KeyOrderStep { equal(words, integer(static_cast<int64_t>(wordsBefore))), word32(static_cast<int32_t>(continuation->orderWordAfter)) };
     }
     return std::nullopt;

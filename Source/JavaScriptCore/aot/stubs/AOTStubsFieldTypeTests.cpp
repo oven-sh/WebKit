@@ -140,8 +140,6 @@ void branchUnlessTypeAccepts(StubAssembler& jit, const TypeTestRegisters& r, Jum
             loadShapeTest(shapeTest);
             jit.load32(Address(shapeTest, ShapeTestData::offsetOfLast()), shapeTest);
             jit.add32(Address(r.value, offsetOfShapeWord), shapeTest);
-            // The index is below the count, so the bits below the mark are all of it, with the mark or without.
-            jit.and32(TrustedImm32(shapeWordIsUnmarked - 1), shapeTest);
             isAccepted.append(jit.branch32(CCallHelpers::Equal, shapeTest, held));
             testFailed.append(jit.jump());
             isNotHashed.link(&jit);

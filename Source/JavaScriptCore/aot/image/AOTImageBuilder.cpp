@@ -910,7 +910,6 @@ BuiltImage buildImage(ImageInputs&& inputs, BuildContext& context)
             StubOptions stubOptions = inputs.stubCatalog.options();
             stubOptions.maxNameInFieldTable = numbers.identifiers().countWithFieldTableColumn() - 1;
             StubPolicy stubPolicy = stubPolicyOf(inputs.plan.slots());
-            stubPolicy.shapesFitHalfword = inputs.plan.shapes().numberOfShapes() <= 1u << 16;
             const StubCatalog stubCatalogOfImage(stubOptions, WTF::move(stubPolicy));
             steps.didFinish("create stub catalog"_s);
             std::optional<CalledSharedCode> calledSharedCode = collectCalledSharedCode(functions, context);

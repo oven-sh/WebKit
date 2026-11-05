@@ -1281,7 +1281,8 @@ static void testUndefinedAndNullInFieldsOfOtherTypes()
                         ExpectedStore expected = expectedStoreOf(representation, value, number.word, cageBase);
                         AOT_TEST_CHECK(expected.isWritten == traitsOf(representation).hasUndefined);
                         FakeTypedObject object(number.word);
-                        object.at<uint8_t>(offsetOfByteWithMark) = cellHasMark ? 0 : byteWithMarkIsUnmarked;
+                        if (cellHasMark)
+                            object.at<uint8_t>(JSCell::typeInfoFlagsOffset()) |= TypeInfoPerCellBit;
                         stores.runner.recordCallsOf(operationThatFinishes);
                         StubRun run = stores.store(storeCase, object.address(), bitsOf(value));
                         stores.runner.countCallsOf(operationThatFinishes);
@@ -1301,7 +1302,7 @@ static void testUndefinedAndNullInFieldsOfOtherTypes()
         stores.file(storeCase, createFieldSlot(Slot::Kind::FieldCreation, SlotRepresentation::JSValue, PropertyStores::typeOfNumbers));
         for (JSValue value : { jsUndefined(), jsNull() }) {
             FakeObjectWithOrder object(JSValue::ValueEmpty);
-            object.at<uint8_t>(offsetOfByteWithMark) &= static_cast<uint8_t>(~byteWithMarkIsUnmarked);
+            object.at<uint8_t>(JSCell::typeInfoFlagsOffset()) |= TypeInfoPerCellBit;
             AOT_TEST_CHECK(!stores.store(storeCase, object.address(), bitsOf(value)).calledOperation);
             AOT_TEST_CHECK(object.field() == bitsOf(value) && object.orderWord() == CreatedFieldOrders::orderAfter && object.wordAfterFieldIsUntouched());
         }

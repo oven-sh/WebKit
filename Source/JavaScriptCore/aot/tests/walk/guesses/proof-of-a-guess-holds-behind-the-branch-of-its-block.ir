@@ -11,10 +11,10 @@
 # CHECK-LABEL: code f1:Body
 # CHECK: [[test]]: boolean @Boolean = ShapeTest [[type]] layouts=[L0]
 # CHECK: [[proven]]: {{*}} = Narrowed [[type]], [[test]]
-# CHECK: = GetSlot {{*}}key="flags" {{*}}level=Proven
-# CHECK: Branch
 # CHECK: frequency=Rare
 # CHECK: = PropGet [[type]] key="flags"
+# CHECK: Branch
+# CHECK: = GetSlot {{*}}key="flags" {{*}}level=Proven
 # CHECK: Branch
 # CHECK: frequency=Rare
 # CHECK: = PropGet [[type]] key="flags"

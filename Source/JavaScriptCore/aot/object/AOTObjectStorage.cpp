@@ -50,9 +50,9 @@ Object* Object::create(VM& vm, Structure* structure, const LayoutData& layout, s
             object->clear(field);
         isBornUnfinished |= field.isFilledAtBirth;
     }
+    object->setPerCellBit(isBornUnfinished);
     object->at<uint32_t>(offsetOfOrderWord) = orderWord;
     object->at<uint32_t>(offsetOfShapeWord) = shapeWordOf(layout.shape);
-    object->setIsInBirth(isBornUnfinished);
     object->JSCell::finishCreation(vm);
     return object;
 }
@@ -126,7 +126,7 @@ ALWAYS_INLINE void Object::willStoreMarker(VM& vm, const FieldData& field, JSVal
     if (field.keepsStateOfBirth && !state().objects->layouts.fieldAccepts(field, marker)) [[unlikely]]
         crashOnLostStateOfBirth(vm, *this, field, nameOf(ObjectMutation::StoreOfOtherType));
     if (field.holdsRawValueFromBirth)
-        setBearsMark(true);
+        setPerCellBit(true);
 }
 
 bool Object::store(VM& vm, const FieldData& field, JSValue value)

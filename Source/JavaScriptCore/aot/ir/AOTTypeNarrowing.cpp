@@ -600,11 +600,6 @@ TypeID typeOfEdgeResult(const TypingContext& context, const Test& test, OperandT
     case Proof::TestedType:
     case Proof::Shape:
     case Proof::ExactFunction:
-        // An object of a tested layout that bears the mark is refused too.
-        if constexpr (!isCursorOverInput<Test>) {
-            if (opcode == Opcode::ShapeTest && side == EdgeSide::NotTaken && test.refusesMarkedObjects())
-                return source;
-        }
         return narrowByTest(context, source, typeThatTestAsksFor(context.types, test), side);
     case Proof::Truthiness:
         return narrowByTruthiness(context, source, side);

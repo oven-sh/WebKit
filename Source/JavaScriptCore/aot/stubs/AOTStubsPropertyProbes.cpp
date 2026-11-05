@@ -169,16 +169,10 @@ static void locateFieldTableEntry(StubAssembler& jit, const FieldTableProbe& pro
         isNotCompiledObject.append(jit.branch32(CCallHelpers::Above, probe.name, TrustedImm32(jit.options().maxNameInFieldTable)));
     if (!probe.receiverIsCell)
         isNotCompiledObject.append(jit.branchIfNotCell(probe.receiver));
-    if (loadsShapeAsHalfword(jit)) {
-        isNotCompiledObject.append(jit.branchTest8(CCallHelpers::Zero, Address(probe.receiver, offsetOfShapeWord + 3), TrustedImm32(compiledObjectShapeBit >> 24)));
-        loadShapeWordAsIndex(jit, probe.receiver, probe.index);
-    } else {
-        jit.load32SignedExtendTo64(Address(probe.receiver, offsetOfShapeWord), probe.index);
-        isNotCompiledObject.append(jit.branchTest32(CCallHelpers::PositiveOrZero, probe.index));
-        jit.or64(TrustedImm32(shapeWordIsUnmarked), probe.index);
-    }
+    jit.load32SignedExtendTo64(Address(probe.receiver, offsetOfShapeWord), probe.index);
+    isNotCompiledObject.append(jit.branchTest32(CCallHelpers::PositiveOrZero, probe.index));
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.fieldTableEntries)), probe.table);
-    jit.load32(BaseIndex(probe.table, probe.index, CCallHelpers::TimesFour, offsetOfRowsByShapeIndex(jit)), probe.index);
+    jit.load32(BaseIndex(probe.table, probe.index, CCallHelpers::TimesFour), probe.index);
     jit.add32(probe.name, probe.index);
 }
 
@@ -1267,10 +1261,14 @@ void generatePutValueThatSlotRefuses(StubAssembler& jit)
     }
     jit.load32(memberOfExit(OBJECT_OFFSETOF(FieldExit, orderWordAfter)), scratch);
     jit.store32(scratch, orderWord);
-    setFlagThatFieldHasLeft(jit, object, scratch);
-    Jump neverBearsMark = jit.branchTest8(CCallHelpers::Zero, memberOfExit(OBJECT_OFFSETOF(FieldExit, widthOfSlot)), TrustedImm32(FieldExit::objectMayBearMark));
-    setMarkOfCell(jit, object, scratch);
-    neverBearsMark.link(&jit);
+    const Address flagsOfCell(object, JSCell::typeInfoFlagsOffset());
+#if CPU(X86_64)
+    jit.or8(TrustedImm32(TypeInfoPerCellBit), flagsOfCell);
+#else
+    jit.load8(flagsOfCell, scratch);
+    jit.or32(TrustedImm32(TypeInfoPerCellBit), scratch);
+    jit.store8(scratch, flagsOfCell);
+#endif
     jit.load64(memberOfExit(OBJECT_OFFSETOF(FieldExit, absentBits)), scratch);
     Jump isWide = branchIfSlotIsWide();
     jit.store32(scratch, slot);

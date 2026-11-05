@@ -353,7 +353,7 @@ void storeField(StubAssembler& jit, const FieldStoreRegisters& r, FieldStoreEnd 
     auto jumpIfSlotHoldsValueAsMarker = [&](Label isAdmitted) {
         Jump isNeitherUndefinedNorNull = jit.branchIfNotOther(value, r.scratch);
         // The mark of the cell may answer for the raw value of the field, and Object::store() knows for which fields it does. A cell that has the mark, as every object has until its constructor is through, takes the marker here.
-        Jump cellHasNoMark = branchUnlessCellBearsMark(jit, r.field.object);
+        Jump cellHasNoMark = jit.branchTest8(CCallHelpers::Zero, CCallHelpers::Address(r.field.object, JSCell::typeInfoFlagsOffset()), TrustedImm32(TypeInfoPerCellBit));
         LayoutData layoutWithSuchField { };
         layoutWithSuchField.hasSlotWithUnusedMarkers = 1;
         static_assert(sizeof(LayoutData) % sizeof(uint32_t) == 0);

@@ -4299,8 +4299,6 @@ void Walker::walkReturn(const BodyTerminator& terminator)
         }
     }
 
-    if (terminator.kind() == TerminatorKind::Return)
-        finishBirthAtReturnOfClassConstructor(*this, returned, m_origin);
     if (terminator.kind() == TerminatorKind::ReturnCall)
         returnAtOnce(returned);
     else
@@ -4322,8 +4320,6 @@ void Walker::noteReturnOfCopy(const BodyTerminator& terminator)
         fail("a return of a callee is walked where nobody goes on behind the call"_s);
         return;
     }
-    if (terminator.kind() == TerminatorKind::Return)
-        finishBirthAtReturnOfClassConstructor(*this, value, m_origin);
     frame.returnsOfCopy->append(Frame::ReturnOfCopy { m_block, value, WTF::move(m_state), frame.index->block(terminator.block()).hasHandler(), !m_opensGuesses });
     m_block = { };
     m_state.clear();

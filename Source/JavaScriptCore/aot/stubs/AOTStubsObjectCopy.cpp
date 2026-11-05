@@ -187,8 +187,6 @@ static void generateFrontEndOfObjectCopy(StubAssembler& jit, ObjectIsCopiedBy co
     jit.move(count, word);
     callsOperation.append(jit.branchOr32(CCallHelpers::NonZero, excludedRun, word));
     JumpList isNotCompiledObject = branchIfNotCompiledObjectOfThisImage(jit, source);
-    // A record gets the word of its layout, which says that no field is missing.
-    callsOperation.append(branchIfCellBearsMark(jit, source));
 
     // The copy has the Structure of the source, and with it a key order that the Structure holds.
     static_assert(CompiledStructure::offsetOfHeldKeyOrder() == CompiledStructure::offsetOfFlags() + 1);
@@ -699,8 +697,7 @@ static void copyByChunks(StubAssembler& jit, const ChunkCopy& copy, JumpList& ca
     callsOperation.append(branchIfNotCompiledObjectOfThisImage(jit, target));
     jit.move(count, word);
     callsOperation.append(jit.branchOr32(CCallHelpers::NonZero, excludedRun, word));
-    // The target may be in its birth. A source that bears the mark is left to the run time.
-    loadShapeWord(jit, target, word);
+    jit.load32(Address(target, offsetOfShapeWord), word);
     callsOperation.append(jit.branch32(CCallHelpers::NotEqual, word, Address(source, offsetOfShapeWord)));
     callsOperation.append(jit.branch32(CCallHelpers::NotEqual, Address(target, offsetOfOrderWord), TrustedImm32(unorderedOrderWord)));
     jit.load32(Address(source, offsetOfOrderWord), orderWord);
@@ -721,7 +718,7 @@ static void copyByChunks(StubAssembler& jit, const ChunkCopy& copy, JumpList& ca
 // The key order of the source has no number: it lies in the Structure of the source. The operation that makes such a copy sees to it that the place of the copy is not empty.
 static void branchUnlessSourceOfSameLayoutHasUnnumberedKeyOrder(StubAssembler& jit, GPRReg target, GPRReg source, GPRReg scratch, JumpList& otherwise)
 {
-    loadShapeWord(jit, target, scratch);
+    jit.load32(Address(target, offsetOfShapeWord), scratch);
     otherwise.append(jit.branch32(CCallHelpers::NotEqual, scratch, Address(source, offsetOfShapeWord)));
     jit.load32(Address(source, offsetOfOrderWord), scratch);
     jit.and32(TrustedImm32(~(orderWordIntegrityBits | orderWordCountBits)), scratch);

@@ -134,9 +134,6 @@ struct LinkedCell {
     // Of a field that the layout lists: `this.exports = undefined` in the constructor. Some maker gives it the constant undefined, the construction itself gives it nothing else, and no second constructor (WriterOfLinkLayouts::appendFields()) does.
     // A GUESS at which objects come to hold anything there, which decides where the slot lies and nothing else: SlotPlan lays it out of line where the written type lets the field be left out.
     bool isLeftUndefinedByMakers { false };
-    // Of a field that the layout lists: `this.socket = null`. A store in sight behind the construction brings the constant undefined or null, or the makers bring that and nothing else.
-    // A GUESS at what the objects hold, which decides whether the mark of the cell answers for the value of the field: PlannedLayout::holdsRawValueFromBirth().
-    bool isGivenUndefinedOrNullInSight { false };
     // Of a field of a record of which objects are made: `interface Message { text: string; isMeta?: boolean; .. }   { text }`. No literal in sight lists it and no maker goes on to store it: it comes by a later store, by a copy,
     // out of a text that the run time parses, or never. A GUESS of the same kind, with the same use.
     bool isGivenByNoMaker { false };
@@ -156,8 +153,7 @@ enum class LayoutChange : uint8_t {
     GetsAccessor = 1 << 4,
 };
 
-// LinkTables::appendedKeys, but for those that the plan lays in the cell: appendedFieldsThatTypeOfThisRequires. A slot of the widest form takes a granule of the Extension, so the plan has room for all of them
-// where no listed field has left the cell. Those come first: placeAppendedFieldsForSlotPlan().
+// LinkTables::appendedKeys, but for those that the plan lays in the cell: appendedFieldsThatTypeOfThisRequires. A slot of the widest form takes a granule of the Extension, so the plan has room for all of them.
 inline constexpr uint32_t maxAppendedFieldsOutOfLine = maxExtensionGranules;
 
 struct LinkedLayout {

@@ -54,7 +54,7 @@ private:
         SlotRepresentation representation { SlotRepresentation::JSValue };
     };
 
-    void clearBirthMark(CellPointer, const Type&);
+    void clearBirthMark(CellPointer);
     InitialFields collectInitialFields(LayoutID, std::span<const uint32_t> fields, std::span<const ValueID> values);
     CellPointer allocateCell(const ValueContext&, const MentionedAllocation&, const PlannedLayout&, AllocationStorage, ZeroedBy);
     // Of a layout with PlannedLayout::isEscapedOffset.

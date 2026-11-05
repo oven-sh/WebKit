@@ -25,9 +25,7 @@ AOT_LINK_OF_WALK(listStoresBehindLiteral, opcodesThatListStoresBehindLiteralTake
 bool storeLaysWhatSlotOfFreshObjectHolds(Walker&, Reference object, Reference held, Reference stored);
 
 // For whoever has made an object and has run its constructor. False: the mark answers for no field of any layout that the object may have. It is then set only where a field has left its slot for good, and no look clears it.
-bool lookMayFinishBirthOf(Walker&, Reference object);
-// A birth ends at each Return of the constructor of a class, in the unit of the constructor and where its body is copied. Nothing where the walk has seen the birth end.
-void finishBirthAtReturnOfClassConstructor(Walker&, Reference returned, Origin);
+bool lookMayFinishBirthOf(const Walker&, Reference object);
 
 // ---- AOTWalkTypedAccesses.cpp, which has the questions that a store by name asks.
 struct StoresListedAtBirth {

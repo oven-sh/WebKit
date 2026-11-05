@@ -60,18 +60,6 @@ static constexpr uint8_t frameCellState = UINT8_MAX;
 static constexpr uint32_t shapeWordOf(uint32_t shape) { return 0 - shape; }
 static constexpr uint32_t shapeOf(uint32_t shapeWord) { return 0 - shapeWord; }
 
-// THE MARK OF A COMPILED OBJECT. The bit is set while every field of the birth lies filled in its slot and no field lies outside its slot. It is clear in an object that is born unfinished, until its birth ends, and for good once a field has left.
-// The word of a shape has the bit, so a marked object passes no comparison with such a word: whoever compares the word as it lies has asked for the mark too. Whoever numbers, indexes or hashes by the word takes it without the mark.
-static constexpr uint32_t shapeWordIsUnmarked = 1u << 23;
-static constexpr uint64_t orderAndShapeWordsAreUnmarked = static_cast<uint64_t>(shapeWordIsUnmarked) << 32;
-static constexpr ptrdiff_t offsetOfByteWithMark = offsetOfShapeWord + 2;
-static constexpr uint8_t byteWithMarkIsUnmarked = 1u << 7;
-static constexpr uint32_t maxNumberOfShapes = shapeWordIsUnmarked;
-static constexpr uint32_t shapeWordWithoutMark(uint32_t shapeWordWithMark) { return shapeWordWithMark | shapeWordIsUnmarked; }
-static_assert(shapeWordWithoutMark(shapeWordOf(1)) == shapeWordOf(1) && shapeWordWithoutMark(shapeWordOf(maxNumberOfShapes)) == shapeWordOf(maxNumberOfShapes) && shapeWordWithoutMark(shapeWordOf(maxNumberOfShapes + 1)) != shapeWordOf(maxNumberOfShapes + 1));
-static_assert(shapeWordWithoutMark(shapeBlockMarker) == shapeBlockMarker && shapeWordIsUnmarked == static_cast<uint32_t>(byteWithMarkIsUnmarked) << 8 * (offsetOfByteWithMark - offsetOfShapeWord));
-static_assert(shapeBlockMarkerBesideMark == (shapeBlockMarker & ~shapeWordIsUnmarked));
-
 enum class KeyListKind : uint8_t { Strings, StringsAndSymbols, Symbols };
 // The lists with symbols lie in the table of key lists under the words of shapes that a program with fewer shapes than the step does not have.
 static constexpr uint32_t keyListWordStep = (1u << 29) + 341;

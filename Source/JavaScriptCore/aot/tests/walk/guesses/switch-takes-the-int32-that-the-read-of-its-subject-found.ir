@@ -44,9 +44,9 @@
 # RUN: walk f1 mechanisms=all
 # REQUIRES: entries-of-bun
 # CHECK-LABEL: code f1:Body
-# CHECK: @Int32 = GetSlot {{*}}key="tag"
 # CHECK: = PropGet {{*}}key="tag"
 # CHECK: = TypeTest {{*}}testedType=i32
+# CHECK: @Int32 = GetSlot {{*}}key="tag"
 # CHECK: ([[subject]]: i32 @Int32
 # CHECK-NEXT: Switch [[subject]] cases=[0, 1, 2, 3, 7, -1]
 # CHECK: = StrictEq {{*}}form=Int32AndValue

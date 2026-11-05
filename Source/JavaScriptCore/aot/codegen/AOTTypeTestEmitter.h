@@ -8,7 +8,6 @@
 #if ENABLE(AOT)
 
 #include "AOTOperationEmitter.h"
-#include "AOTShapeTestEmitter.h"
 #include "AOTTypeTestPlan.h"
 #include <array>
 #include <memory>
@@ -32,7 +31,7 @@ public:
     void emitBranch(Operand, const TypeTestPlan&, BranchTargets);
     Condition emitBoolean(Operand, const TypeTestPlan&);
 
-    Condition passesCellTest(CellPointer, const CellTest&, const Type& from, MarkedObjects = MarkedObjects::Pass);
+    Condition passesCellTest(CellPointer, const CellTest&, const Type& from);
     Condition isCallable(CellPointer);
     Condition inheritsClassInfo(CellPointer, BuiltinClassID);
     Condition isPristine(CellPointer, BuiltinClassID, OptionSet<PristineAspects>);
@@ -83,10 +82,6 @@ private:
     Condition isInLiteralStringWindows(LValue word, std::span<const LiteralStringWindow> ascendingWindows);
 
     std::array<PlanMap, numberOfEnumerators<Representation>> m_plans;
-    // Each case ends in a branch of its own. Otherwise the cases are joined into one condition.
-    bool m_casesAreBranchedOn { true };
-    // Said by a case while it is emitted.
-    bool m_nextCaseIsUnlikely { false };
 };
 
 void TypeTestEmitter::testCases(BlockEdge failure, const auto& forEachCase)
@@ -107,8 +102,7 @@ void TypeTestEmitter::testCases(BlockEdge failure, const auto& forEachCase)
             return;
         }
         LBasicBlock nextCase = newBlock();
-        Condition passes = emitTest();
-        m_out.branch(passes.value(), normalEdge(continuation), std::exchange(m_nextCaseIsUnlikely, false) ? unlikelyEdge(nextCase) : normalEdge(nextCase));
+        m_out.branch(emitTest().value(), normalEdge(continuation), normalEdge(nextCase));
         m_out.appendTo(nextCase);
     });
     if (continuation) {

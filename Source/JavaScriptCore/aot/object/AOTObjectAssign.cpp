@@ -52,8 +52,6 @@ void Object::copyFieldsOfSameLayout(VM& vm, const Object& source)
     ASSERT(&layout == &source.layout() && !source.hasKeyOrderOfItsOwn());
     Extension* extension = createCopyOf(vm, source.extension());
     gcSafeMemcpy(&at<uint64_t>(offsetOfFirstField), &source.at<uint64_t>(offsetOfFirstField), sizeOfFieldWords(layout));
-    if (source.bearsMark())
-        setBearsMark(true);
     if (layout.hasExtension())
         setExtension(vm, extension);
     setOrderAndCount(source.orderWord() & orderAndCountMask);
@@ -79,16 +77,18 @@ ALWAYS_INLINE Object* Object::createCopyOfWords(VM& vm, const Object& source, St
     Object* copy = new (NotNull, allocateCell<Object>(vm, layout.size)) Object(vm, structure);
     if (!layout.hasExtension()) {
         // Nothing is allocated before the last word is written, so nobody visits the cell while it holds what the cell before it held.
+        copy->setPerCellBit(source.perCellBit());
         copy->at<uint32_t>(offsetOfOrderWord) = source.orderWord() & orderAndCountMask;
-        copy->at<uint32_t>(offsetOfShapeWord) = source.shapeWordWithMark();
+        copy->at<uint32_t>(offsetOfShapeWord) = shapeWordOf(layout.shape);
         gcSafeMemcpy(&copy->at<uint64_t>(offsetOfFirstField), &source.at<uint64_t>(offsetOfFirstField), sizeOfFieldWords(layout));
         copy->JSCell::finishCreation(vm);
         vm.writeBarrier(copy);
         return copy;
     }
     zeroSpan(std::span { reinterpret_cast<uint8_t*>(copy) + sizeof(JSCell), layout.size - sizeof(JSCell) });
+    copy->setPerCellBit(source.perCellBit());
     copy->at<uint32_t>(offsetOfOrderWord) = unorderedOrderWord;
-    copy->at<uint32_t>(offsetOfShapeWord) = source.shapeWordWithMark();
+    copy->at<uint32_t>(offsetOfShapeWord) = shapeWordOf(layout.shape);
     copy->JSCell::finishCreation(vm);
     copy->copyFieldsOfSameLayout(vm, source);
     return copy;
@@ -300,8 +300,6 @@ ALWAYS_INLINE bool Object::tryCopyWordsOfSameLayout(VM& vm, const Object& source
     std::optional<SlotData> extensionSlot = structure.extensionSlot();
     Extension* extension = extensionSlot ? createCopyOf(vm, reinterpret_cast<Extension*>(const_cast<uint8_t*>(extensionStorageOrNull(&source, *extensionSlot)))) : nullptr;
     gcSafeMemcpy(&at<uint64_t>(offsetOfFirstField), &source.at<uint64_t>(offsetOfFirstField), sizeOfFieldWords(layout));
-    if (source.bearsMark())
-        setBearsMark(true);
     if (extension) {
         if (extensionSlot->representation() == SlotRepresentation::Cell)
             at<Extension*>(extensionSlot->offset) = extension;
@@ -314,7 +312,7 @@ ALWAYS_INLINE bool Object::tryCopyWordsOfSameLayout(VM& vm, const Object& source
         setStructureIDDirectly(source.structureID());
         // The stub in front makes the next copy of this kind.
         State& state = this->state();
-        if (const MappedCopy*& place = state.instance.copiesWithoutFrame()[AllocationWords::placeOfCopyWithoutFrame(orderAndShapeWordsWithMark(), source.orderAndShapeWordsWithMark(), 0)]; !place)
+        if (const MappedCopy*& place = state.instance.copiesWithoutFrame()[AllocationWords::placeOfCopyWithoutFrame(orderAndShapeWords(), source.orderAndShapeWords(), 0)]; !place)
             place = &state.objects->caches->assignmentPlans.copyOfNoSource();
     }
     at<uint32_t>(offsetOfOrderWord) = orderWordOfSource & orderAndCountMask;
@@ -1116,8 +1114,8 @@ static NEVER_INLINE bool tryDescribeMappedCopy(VM& vm, State& state, MappedCopy&
     if (const MappedCopy*& place = placeOfCopyWithoutFrame(state, copy); place == &copy)
         place = nullptr;
     copy = { };
-    copy.targetWords = target.orderAndShapeWordsWithMark();
-    copy.sourceWords = source.orderAndShapeWordsWithMark();
+    copy.targetWords = target.orderAndShapeWords();
+    copy.sourceWords = source.orderAndShapeWords();
     copy.excludedRunNumberPlusOne = excludedRunNumberPlusOne;
     copy.state = MappedCopy::State::IsNotServed;
     uint32_t orderWordOfSource = source.orderWord();
@@ -1202,8 +1200,8 @@ static ALWAYS_INLINE RepeatedCopy tryCopyByFieldMap(VM& vm, State& state, Object
     JSGlobalObject* realm = state.instance.globalObject;
     if (target.structure()->realm() != realm || source.structure()->realm() != realm)
         return RepeatedCopy::IsNotDone;
-    uint64_t targetWords = target.orderAndShapeWordsWithMark();
-    uint64_t sourceWords = source.orderAndShapeWordsWithMark();
+    uint64_t targetWords = target.orderAndShapeWords();
+    uint64_t sourceWords = source.orderAndShapeWords();
     MappedCopy& copy = state.objects->caches->assignmentPlans.mappedCopyAt(targetWords, sourceWords, excludedRunNumberPlusOne);
     bool isFirstCopy = !copy.isFor(targetWords, sourceWords, excludedRunNumberPlusOne);
     if (isFirstCopy && !tryDescribeMappedCopy(vm, state, copy, target, source, excludedRunNumberPlusOne))
@@ -1357,7 +1355,7 @@ static bool tryDescribeCopyOutOfOrdinaryObject(VM& vm, State& state, const Assig
     copy.granuleBitsFilled = plan.granuleBitsFilled;
     if (copy.granuleBitsFilled && !tryDescribeNewExtension(vm, copy, target))
         return false;
-    copy.targetWords = static_cast<uint64_t>(target.shapeWordWithMark()) << 32 | unorderedOrderWord;
+    copy.targetWords = static_cast<uint64_t>(target.shapeWord()) << 32 | unorderedOrderWord;
     copy.sourceWords = 0;
     copy.readsOrdinaryObject = true;
     copy.granuleBitsOfSource = UINT64_MAX;
@@ -1458,10 +1456,10 @@ static bool tryDescribeCopyFollowingPlan(VM& vm, State& state, const AssignmentP
     copy.orderWordAfter = plan.orderWordAfterRun;
     copy.structureOfTarget = plan.target;
     copy.structureOfSource = plan.source;
-    followed.targetWords = static_cast<uint64_t>(target.shapeWordWithMark()) << 32 | unorderedOrderWord;
+    followed.targetWords = static_cast<uint64_t>(target.shapeWord()) << 32 | unorderedOrderWord;
     // The butterfly of an ordinary object lies where a record has these words, so such a copy has no place and always comes with a frame.
     if (source.compiledObject) {
-        copy.sourceWords = source.compiledObject->orderAndShapeWordsWithMark();
+        copy.sourceWords = source.compiledObject->orderAndShapeWords();
         copy.targetWords = followed.targetWords;
         copy.placeOfOwnedCopy = &placeOfCopyWithoutFrame(state, copy);
         copy.takesNoFrame = true;
@@ -1639,7 +1637,7 @@ static NEVER_INLINE RepeatedCopy runPlanAsBeforeAndOfferCopy(VM& vm, State& stat
     // A copy without a place is made here each time, and so is one whose caller is no compiled code. Any other has lost its place, to a collection or to another copy.
     // The plan may since have run on a target that lists other fields: the copy is for the target that it was written down for.
     auto isForTarget = [&](const MappedCopy& copy) {
-        return (copy.followedPlan ? copy.followedPlan->targetWords : copy.targetWords) == to.orderAndShapeWordsWithMark();
+        return (copy.followedPlan ? copy.followedPlan->targetWords : copy.targetWords) == to.orderAndShapeWords();
     };
     if (const MappedCopy* copy = plan.copyWithoutFrame.get(); copy && !copy->granuleBitsFilled && isForTarget(*copy) && plan.runsAsBeforeOn(to, source, excludedRunNumberPlusOne) && tryCopyFollowingPlan(state.instance, *copy, &to, source.object)) {
         if (copy->placeOfOwnedCopy && *copy->placeOfOwnedCopy != copy) [[unlikely]]
