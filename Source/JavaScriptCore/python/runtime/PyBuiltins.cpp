@@ -336,6 +336,16 @@ static JSValue builtinIter(JSGlobalObject* globalObject, const CallArgs& args)
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (failed(scope, rejectKeywords(globalObject, "iter"_s, args)) || failed(scope, checkPositional(globalObject, "iter"_s, args, 1, 2)))
         return { };
+    Runtime& rt = runtime(globalObject);
+    if (rt.hasNewGenerator()) [[unlikely]] {
+        // for x in iter(g())
+        Runtime::CallOfInstruction call = rt.callInProgress();
+        JSValue iterator = args.size() == 1 ? getIter(globalObject, args[0]) : JSValue();
+        RETURN_IF_EXCEPTION(scope, { });
+        rt.iteratorWasMade(call, iterator == args[0] ? iterator.asCell() : nullptr);
+        if (iterator)
+            return iterator;
+    }
     if (args.size() == 1)
         RELEASE_AND_RETURN(scope, getIter(globalObject, args[0]));
     if (!isCallable(globalObject, args[0]))
@@ -472,6 +482,7 @@ static JSValue builtinSorted(JSGlobalObject* globalObject, const CallArgs& args)
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (failed(scope, checkPositional(globalObject, "sorted"_s, args, 1, 1)))
         return { };
+    GeneratorArgumentScope argument(globalObject, args[0]);
     JSArray* list = listFromIterable(globalObject, args[0]);
     RETURN_IF_EXCEPTION(scope, { });
     static constexpr ASCIILiteral keywords[] = { "key"_s, "reverse"_s };
@@ -1135,7 +1146,7 @@ static constexpr NativeDef builtinFunctions[] = {
     PY_FUNCTION("input", builtinInput, "(prompt='', /)"),
     PY_FUNCTION("isinstance", builtinIsInstance, "(obj, class_or_tuple, /)"),
     PY_FUNCTION("issubclass", builtinIsSubclass, "(cls, class_or_tuple, /)"),
-    PY_FUNCTION("iter", builtinIter, "(*args)"),
+    PY_FUNCTION_WITH_FLAGS("iter", builtinIter, "(*args)", ClosesGeneratorArgument),
     PY_FUNCTION("len", builtinLen, "(obj, /)"),
     PY_FUNCTION("locals", builtinLocals, "()"),
     PY_FUNCTION_WITH_FLAGS("max", minOrMax<CompareOperator::Gt>, "(*args, **kwargs)", ClosesGeneratorArgument),
@@ -1148,7 +1159,7 @@ static constexpr NativeDef builtinFunctions[] = {
     PY_FUNCTION("repr", builtinRepr, "(obj, /)"),
     PY_FUNCTION("round", builtinRound, "(number, ndigits=None)"),
     PY_FUNCTION("setattr", builtinSetAttr, "(obj, name, value, /)"),
-    PY_FUNCTION("sorted", builtinSorted, "!(iterable, /, *, key=None, reverse=False)"),
+    PY_FUNCTION_WITH_FLAGS("sorted", builtinSorted, "!(iterable, /, *, key=None, reverse=False)", ClosesGeneratorArgument),
     PY_FUNCTION_WITH_FLAGS("sum", builtinSum, "(iterable, /, start=0)", ClosesGeneratorArgument),
     PY_FUNCTION("vars", builtinVars, "(*args)"),
 };

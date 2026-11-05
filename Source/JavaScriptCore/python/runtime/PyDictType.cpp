@@ -1068,7 +1068,7 @@ void initializeDictTypes(JSGlobalObject* globalObject)
 {
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
-    rt.dictType()->initializeBuiltin(globalObject, { "dict"_s, { TypeFlag::Base, TypeFlag::DictSubclass, TypeFlag::Mapping, TypeFlag::MatchSelf, TypeFlag::OwnLayout }, dictMethods, { }, "dict() -> new empty dictionary\ndict(mapping) -> new dictionary initialized from a mapping object's\n    (key, value) pairs\ndict(iterable) -> new dictionary initialized as if via:\n    d = {}\n    for k, v in iterable:\n        d[k] = v\ndict(**kwargs) -> new dictionary initialized with the name=value pairs\n    in the keyword argument list.  For example:  dict(one=1, two=2)"_s }, rt.typeType(), rt.objectType());
+    rt.dictType()->initializeBuiltin(globalObject, { "dict"_s, { TypeFlag::Base, TypeFlag::DictSubclass, TypeFlag::Mapping, TypeFlag::MatchSelf, TypeFlag::OwnLayout, TypeFlag::GoesThroughArgument }, dictMethods, { }, "dict() -> new empty dictionary\ndict(mapping) -> new dictionary initialized from a mapping object's\n    (key, value) pairs\ndict(iterable) -> new dictionary initialized as if via:\n    d = {}\n    for k, v in iterable:\n        d[k] = v\ndict(**kwargs) -> new dictionary initialized with the name=value pairs\n    in the keyword argument list.  For example:  dict(one=1, two=2)"_s }, rt.typeType(), rt.objectType());
     rt.dictType()->dict()->set(vm, rt.name(Special::Hash), jsUndefined());
     rt.dictType()->didChange(vm);
     rt.frozendictType()->initializeBuiltin(globalObject, { "frozendict"_s, { TypeFlag::Base, TypeFlag::Mapping, TypeFlag::MatchSelf, TypeFlag::OwnLayout }, frozendictMethods, { }, { } }, rt.typeType(), rt.objectType());

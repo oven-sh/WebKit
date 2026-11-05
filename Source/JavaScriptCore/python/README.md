@@ -856,8 +856,13 @@ so the aim is that everything Python *guarantees* holds, and that what it merely
       (`copyCalleeSavesToEntryFrameCalleeSavesBuffer`). Until then it holds what earlier calls have left there, for as long as the entry
       lasts. Seen in a debugger: the scope of a function of JS that had returned, with no edge to it and no root in five heap
       snapshots, and its address in `calleeSaveRegistersBuffer[0]` of the entry that ran the test; in 4 runs of 450 it kept a generator of
-      Python alive that the test had dropped. Nothing is done about it: a store at every entry is a store that JS would pay for. A test
-      that asks whether something has been collected asks it of several objects, and not of all of them.
+      Python alive that the test had dropped. On x86-64 there is one more such word: `vmEntryToJavaScriptWith1Arguments`, `With3` and `With5`, the last of which resumes a
+      generator for whatever is written in C++ (`next`, `list`, `send`, `a, = g()`, `in`), make room for a slot behind the arguments that keeps the stack aligned, and do not write
+      it. (On AArch64 it gets the last argument once more, by a store of a pair; the general entry fills it with `undefined`.) Seen in `a, = g(A(), A())`, where the generator lets
+      go of its arguments and collects: the second `A` was alive, a cell with no edge to it and no root in the heap snapshot, its address in that slot, 88 bytes below the frame pointer
+      of the entry, last written by the prologue of a function that ran while the `A` was made (a watchpoint says so). When the statement is over it is gone. Nothing is done about
+      either: a store at every entry is a store that JS would pay for. A test that asks whether something has been collected asks it of several objects, and not of all of them, or
+      asks when the entry is over and something else has been on that part of the stack.
   - *`flock` cannot be made piece by piece.* `flock(open(p, "w"), LOCK_EX)`, the file dropped, and the same again: with reference counts the
     first file is closed by then. Here it would hold its lock while the second call waits for it, for ever if there is no other
     thread; and with `LOCK_NB` ("is another instance running?") the second call would be told that somebody has the lock. So every call
@@ -886,16 +891,28 @@ so the aim is that everything Python *guarantees* holds, and that what it merely
     finalized as the collector would do it, `ResourceWarning` included, on the line where CPython gives it. Of several in one call
     (`open(w, "w").writelines(open(p))`) the last made goes first, as CPython lets go of them. Not `json.load(open(p))` or
     `for line in open(p)`: what a function written in Python does with its argument is not known when the file is opened.
-  - A generator function looks at the marks too, and so does what makes the generator of a generator expression. It notes the last generator made if its use is
-    the head of a `for` loop or of a loop of a comprehension, to be searched by `in` or `not in`, or to be
-    passed to a built-in function that is already waiting in a register and says that it goes through such an argument and keeps
-    nothing of it (`NativeFlag::ClosesGeneratorArgument`: `next`, `any`, `all`, `sum`, `min`, `max`, `functools.reduce`). The use takes the note up:
-    `op_py_get_iter` or `op_py_compare`, the next instruction to run there, or the function when it begins (`GeneratorArgumentScope`). There is one note, so of two
-    generators in one call the first waits for the collector.
+  - A generator function looks at the marks too, and so does what makes the generator of a generator expression. It makes a note of the generator if its use is
+    the head of a `for` loop or of a loop of a comprehension, to be searched by `in` or `not in`, to be taken apart (`a, b = g()`), or to be
+    passed by position to a built-in function or type that is already waiting in a register and says that it goes through such an argument and keeps
+    nothing of it (`NativeFlag::ClosesGeneratorArgument`: `next`, `any`, `all`, `sum`, `min`, `max`, `sorted`, `functools.reduce`, `str.join`, `bytes.join`, the `extend` of `list`,
+    `bytearray` and `deque`; `TypeFlag::GoesThroughArgument`: `list`, `tuple`, `set`, `frozenset`, `dict`, `bytes`, `bytearray`, `deque`). The use takes the note up:
+    `op_py_get_iter`, `op_py_compare` or `op_py_unpack`, the next instruction to run there, or the function when it begins (`GeneratorArgumentScope`), which forgets the
+    notes that were made for its call and are of something else (`next(it, g())` may return the generator). There is room for four notes; a fifth pushes out the oldest, whose
+    generator waits for the collector.
+  - `for i, x in enumerate(g())`, `any(map(f, g()))`, `list(islice(g(), 3))`, `for a, b in zip(g(), h())`: the generator is in an iterator that lets nobody have what it was made
+    from, and the iterator is where the generator is above. Such a type says so (`TypeFlag::HasIteratorsToItself`: `enumerate`, `zip`, `map`, `filter` and, in `itertools`, `accumulate`, `batched`, `chain`,
+    `compress`, `cycle`, `dropwhile`, `filterfalse`, `islice`, `pairwise`, `starmap`, `takewhile`, `zip_longest`; not what derives from them). To be passed to it is a use that notes are made for, and
+    when the iterator is made, the notes that were made for the call are about the iterator and its use from then on (`Runtime::iteratorWasMade()`), if that is such a use again. `iter()` passes its argument
+    on in the same way. So it goes on for as many levels as are written. The iterator remembers that there may be something in it (`hasGeneratorsToItself`), and whoever closes what it owns looks for
+    the generators in such iterators only (`forEachGeneratorBehind()`), in the order in which CPython lets go of them: the last item of a tuple first. An argument that is passed by keyword is not
+    noted: `accumulate(x, initial=g())` and `zip_longest(x, y, fillvalue=g())` hand it out. What others pay: one test for "is there a note" where a type is called, and a look at the type and at that
+    mark where a loop over such an iterator ends.
   - The loop closes a generator it owns on every way out but the end: an instruction on the way of `break`, `return` and the `continue`
     of an outer loop; for an exception the unwinder does it, from the marks that tracing has for loops, before anybody is
     told that the exception is caught or leaves the frame, as CPython pops the stack of a frame first. The function closes it when it
-    returns or raises; if a profiler is waiting to hear of that, after it has. `in` closes it when it has found the item, or `==` has raised. A generator that the
+    returns or raises; if a profiler is waiting to hear of that, after it has. `in` closes it when it has found the item, or `==` has raised; the assignment, when there were too many
+    items. A loop that ends closes what it owns too, for `zip(g(), h())` ends with the first that does. An iterator that lets go of what it went through before it goes itself, as in
+    CPython (`islice` when it has given what was asked for; `batched`, `cycle`, `pairwise`, `zip_longest` and `chain` at an end), closes what was owned with it then. A generator that the
     collector would leave alone (no handler in it, nothing in its frame to close) is left alone here too, unless a tool listens to
     its code, which is then told of the `GeneratorExit`, as in CPython.
   - `(x for x in g())`: what a generator expression goes through is not in a temporary but in a variable of its frame, `.0`, and goes when the frame goes. The use of `g()` is

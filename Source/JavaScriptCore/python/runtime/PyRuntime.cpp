@@ -781,6 +781,11 @@ void Runtime::takeThreadLocalState(ThreadLocalState& state)
     state.isRunningPendingCalls = std::exchange(m_isRunningPendingCalls, false);
     state.stackWhereUnaskedCallsBegan = std::exchange(m_stackWhereUnaskedCallsBegan, nullptr);
     state.thread = std::exchange(m_currentThread, noThread);
+    if (hasNewGenerator()) [[unlikely]] {
+        state.newGenerators = std::exchange(m_newGenerators, { });
+        state.ownershipEpoch = m_ownershipEpoch;
+    } else
+        state.newGenerators[0].generator = nullptr;
     m_hasPendingCalls = false;
 }
 
@@ -823,6 +828,10 @@ void Runtime::putThreadLocalState(ThreadLocalState& state)
     m_isRunningPendingCalls = state.isRunningPendingCalls;
     m_stackWhereUnaskedCallsBegan = state.stackWhereUnaskedCallsBegan;
     m_currentThread = state.thread;
+    // Another thread may have been handed the generators meanwhile: temporariesMayHaveEscaped().
+    ASSERT(!hasNewGenerator());
+    if (state.newGenerators[0].generator && state.ownershipEpoch == m_ownershipEpoch) [[unlikely]]
+        m_newGenerators = state.newGenerators;
     m_hasPendingCalls = owesCalls(CallsOf::ThisThread);
 }
 

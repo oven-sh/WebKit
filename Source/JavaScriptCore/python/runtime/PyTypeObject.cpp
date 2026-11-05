@@ -857,7 +857,35 @@ static NEVER_INLINE PyType::Construction findConstruction(Runtime& rt, PyType* t
     return construction;
 }
 
-JSValue typeCall(JSGlobalObject* globalObject, PyType* type, const CallArgs& allArgs, PyType* derived, bool afterType)
+static JSValue typeCallWithoutNotes(JSGlobalObject*, PyType*, const CallArgs&, PyType* derived, bool afterType);
+
+// list(islice(g(), 3)), enumerate(g()): see "Generators" in PyTemporaries.cpp.
+static NEVER_INLINE JSValue typeCallWithNewGenerator(JSGlobalObject* globalObject, PyType* type, const CallArgs& args, PyType* derived, bool afterType)
+{
+    Runtime& rt = runtime(globalObject);
+    VM& vm = rt.vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (!derived && type->has(TypeFlag::GoesThroughArgument)) {
+        GeneratorArgumentScope argument(globalObject, args.size() ? args[0] : JSValue());
+        RELEASE_AND_RETURN(scope, typeCallWithoutNotes(globalObject, type, args, derived, afterType));
+    }
+    if (derived || !type->has(TypeFlag::HasIteratorsToItself))
+        RELEASE_AND_RETURN(scope, typeCallWithoutNotes(globalObject, type, args, derived, afterType));
+    Runtime::CallOfInstruction call = rt.callInProgress();
+    JSValue iterator = typeCallWithoutNotes(globalObject, type, args, derived, afterType);
+    RETURN_IF_EXCEPTION(scope, { });
+    rt.iteratorWasMade(call, rt.typeOf(iterator) == type ? iterator.asCell() : nullptr);
+    return iterator;
+}
+
+JSValue typeCall(JSGlobalObject* globalObject, PyType* type, const CallArgs& args, PyType* derived, bool afterType)
+{
+    if (runtime(globalObject).hasNewGenerator()) [[unlikely]]
+        return typeCallWithNewGenerator(globalObject, type, args, derived, afterType);
+    return typeCallWithoutNotes(globalObject, type, args, derived, afterType);
+}
+
+static JSValue typeCallWithoutNotes(JSGlobalObject* globalObject, PyType* type, const CallArgs& allArgs, PyType* derived, bool afterType)
 {
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();

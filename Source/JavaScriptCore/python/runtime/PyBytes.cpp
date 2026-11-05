@@ -1691,6 +1691,7 @@ static JSValue bytesJoin(JSGlobalObject* globalObject, JSValue self, JSValue ite
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+    GeneratorArgumentScope argument(globalObject, iterable);
     bool isArray = bytesIsArray(self);
 
     // The code of an iterator cannot resize the separator.
@@ -3002,6 +3003,7 @@ static JSValue byteArrayExtend(JSGlobalObject* globalObject, JSValue self, JSVal
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+    GeneratorArgumentScope argument(globalObject, iterable);
     auto* array = PyByteArray::from(self);
     if (isBytesLike(iterable)) {
         // array[end:end] = iterable, where the end is what it is now: a __buffer__() may resize the array.
@@ -3230,7 +3232,7 @@ static JSValue byteArrayReduceEx(JSGlobalObject* globalObject, JSValue self, JSV
     PY_METHOD("isspace", bytesAll<bytesSpacePredicate>, "($self, /)"), \
     PY_METHOD("istitle", bytesIsTitle, "($self, /)"), \
     PY_METHOD("isupper", bytesIsOfCase<true>, "($self, /)"), \
-    PY_METHOD("join", bytesJoin, "($self, iterable_of_bytes, /)"), \
+    PY_METHOD_WITH_FLAGS("join", bytesJoin, "($self, iterable_of_bytes, /)", ClosesGeneratorArgument), \
     PY_METHOD("ljust", bytesJustifyMethod<BytesJustify::Left>, "($self, width, fillchar=b' ', /)"), \
     PY_METHOD("lower", bytesLower, "($self, /)"), \
     PY_METHOD("lstrip", bytesStrip<BytesStripSide::Left>, "($self, bytes=None, /)"), \
@@ -3278,7 +3280,7 @@ static constexpr NativeDef byteArrayMethods[] = {
     PY_METHOD("append", byteArrayAppend, "($self, item, /)"),
     PY_METHOD("clear", byteArrayClear, "($self, /)"),
     PY_METHOD("copy", byteArrayCopy, "($self, /)"),
-    PY_METHOD("extend", byteArrayExtend, "($self, iterable_of_ints, /)"),
+    PY_METHOD_WITH_FLAGS("extend", byteArrayExtend, "($self, iterable_of_ints, /)", ClosesGeneratorArgument),
     PY_METHOD("insert", byteArrayInsert, "($self, index, item, /)"),
     PY_METHOD("pop", byteArrayPop, "($self, index=-1, /)"),
     PY_METHOD("remove", byteArrayRemove, "($self, value, /)"),
@@ -3294,8 +3296,8 @@ void initializeBytesTypes(JSGlobalObject* globalObject)
 {
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
-    rt.bytesType()->initializeBuiltin(globalObject, { "bytes"_s, { TypeFlag::Base, TypeFlag::OwnLayout, TypeFlag::BytesSubclass, TypeFlag::MatchSelf }, bytesMethods, { }, "bytes(iterable_of_ints) -> bytes\nbytes(string, encoding[, errors]) -> bytes\nbytes(bytes_or_buffer) -> immutable copy of bytes_or_buffer\nbytes(int) -> bytes object of size given by the parameter initialized with null bytes\nbytes() -> empty bytes object\n\nConstruct an immutable array of bytes from:\n  - an iterable yielding integers in range(256)\n  - a text string encoded using the specified encoding\n  - any object implementing the buffer API.\n  - an integer"_s }, rt.typeType(), rt.objectType());
-    rt.bytearrayType()->initializeBuiltin(globalObject, { "bytearray"_s, { TypeFlag::Base, TypeFlag::OwnLayout, TypeFlag::MatchSelf }, byteArrayMethods, { }, "bytearray(iterable_of_ints) -> bytearray\nbytearray(string, encoding[, errors]) -> bytearray\nbytearray(bytes_or_buffer) -> mutable copy of bytes_or_buffer\nbytearray(int) -> bytes array of size given by the parameter initialized with null bytes\nbytearray() -> empty bytes array\n\nConstruct a mutable bytearray object from:\n  - an iterable yielding integers in range(256)\n  - a text string encoded using the specified encoding\n  - a bytes or a buffer object\n  - any object implementing the buffer API.\n  - an integer"_s }, rt.typeType(), rt.objectType());
+    rt.bytesType()->initializeBuiltin(globalObject, { "bytes"_s, { TypeFlag::Base, TypeFlag::OwnLayout, TypeFlag::BytesSubclass, TypeFlag::MatchSelf, TypeFlag::GoesThroughArgument }, bytesMethods, { }, "bytes(iterable_of_ints) -> bytes\nbytes(string, encoding[, errors]) -> bytes\nbytes(bytes_or_buffer) -> immutable copy of bytes_or_buffer\nbytes(int) -> bytes object of size given by the parameter initialized with null bytes\nbytes() -> empty bytes object\n\nConstruct an immutable array of bytes from:\n  - an iterable yielding integers in range(256)\n  - a text string encoded using the specified encoding\n  - any object implementing the buffer API.\n  - an integer"_s }, rt.typeType(), rt.objectType());
+    rt.bytearrayType()->initializeBuiltin(globalObject, { "bytearray"_s, { TypeFlag::Base, TypeFlag::OwnLayout, TypeFlag::MatchSelf, TypeFlag::GoesThroughArgument }, byteArrayMethods, { }, "bytearray(iterable_of_ints) -> bytearray\nbytearray(string, encoding[, errors]) -> bytearray\nbytearray(bytes_or_buffer) -> mutable copy of bytes_or_buffer\nbytearray(int) -> bytes array of size given by the parameter initialized with null bytes\nbytearray() -> empty bytes array\n\nConstruct a mutable bytearray object from:\n  - an iterable yielding integers in range(256)\n  - a text string encoded using the specified encoding\n  - a bytes or a buffer object\n  - any object implementing the buffer API.\n  - an integer"_s }, rt.typeType(), rt.objectType());
     // With -b a dict of strs is to ask them about a key that is bytes, for the sake of the warning: see PyDict::searchAmongStringsFor().
     if (configuration().bytesWarning) [[unlikely]]
         rt.bytesType()->add(TypeFlag::AnswersForAnother);

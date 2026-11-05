@@ -16,6 +16,7 @@
 #include "PyFunction.h"
 #include "PyGenerator.h"
 #include "PyIO.h"
+#include "PyIterators.h"
 #include "PyMonitoring.h"
 #include "PyNative.h"
 #include "PreciseJumpTargetsInlines.h"
@@ -64,8 +65,12 @@ void Runtime::forgetDeadTemporaries(SlotVisitor& visitor)
             m_ownedTemporaries[kept++] = m_ownedTemporaries[i];
     }
     m_ownedTemporaryCount = kept;
-    if (m_newGenerator && !visitor.isMarked(m_newGenerator))
-        m_newGenerator = nullptr;
+    for (unsigned i = 0; i < m_newGenerators.size() && m_newGenerators[i].generator;) {
+        if (NewGenerator& note = m_newGenerators[i]; visitor.isMarked(note.generator) && (!note.iterator || visitor.isMarked(note.iterator)))
+            ++i;
+        else
+            forget(m_newGenerators[i]);
+    }
     m_usesOfCalls.fill({ });
 }
 
@@ -139,6 +144,7 @@ void Runtime::ownTemporary(CallFrame* callFrame, unsigned offset, JSCell* object
     case TemporaryUse::SubscriptBase:
         break;
     case TemporaryUse::Argument:
+    case TemporaryUse::KeywordArgument:
         if (!keepsNoArguments(*this, callFrame->r(reg).jsValue()))
             return;
         break;
@@ -301,35 +307,51 @@ void Runtime::didStoreInItem(JSValue value)
 // ---- Generators ----
 //
 // for x in g(): the generator is in the register where the loop keeps its iterator, and nowhere else. next(g()): it is in the register
-// of the argument. A generator function notes the last generator made, if it was made for such a use: at the head of a `for`
-// loop, as what `in` searches, or as an argument of a built-in function that is already waiting in its register and says that it
-// closes such an argument (NativeFlag::ClosesGeneratorArgument).
-// The use takes the note up: op_py_get_iter or op_py_compare, which is the very next instruction to run in the caller (for a generator
-// expression, the call that makes it, with what it goes through for its argument), or the function, which does so
-// whether or not the generator is the argument that it goes through (next(it, g()) may return it). So no note outlives the use. One that
-// the use never came for, because another argument raised, is of a generator that can never turn up again. Other arguments are
-// evaluated between the making and the use; they cannot get at the generator, and if they make another for such a use,
-// the note is of that one and this one is left to the collector.
-// A loop that is left before its end closes the generator it owns: ReleaseIterator on the way of `break`, `return` and a `continue`
-// of an outer loop; for an exception, the unwinder asks releaseIteratorsOfLoopsLeft(). A function does when it is done
-// (GeneratorArgumentScope), and so does `in`.
+// of the argument. A generator function makes a note of the generator it has made, if it was made for a use that goes through it and keeps nothing: at the head of a `for`
+// loop, as what `in` searches or an assignment takes apart, or as a positional argument of a built-in function or type that is already waiting in its register and says that it
+// closes such an argument (NativeFlag::ClosesGeneratorArgument, TypeFlag::GoesThroughArgument).
+// The use takes the note up, and owns the generator from then on: op_py_get_iter, op_py_compare or op_py_unpack, which is the very next instruction to run in the caller (for a generator
+// expression, the call that makes it, with what it goes through for its argument), or the function.
+//
+// for i, x in enumerate(g()): the generator is in the iterator, and nowhere else, and the iterator is where the generator is above. A type whose instances let nobody have what they were
+// made from says so (TypeFlag::HasIteratorsToItself). To be passed to it is a use that notes are made for as well, and when the iterator is made, the notes that were made for
+// the call go on to be about the iterator and its use, if that is such a use again; if not, that is the end of them. The iterator remembers that there may be something in it
+// (hasGeneratorsToItself): whoever closes what it owns looks for the generators there (forEachGeneratorBehind()), and in no other iterator.
+//
+// No note outlives the use. What is called at the use forgets those that were made for the call and are not of what it goes through: next(it, g()) may return the generator.
+// That it is called, and nothing else, was settled when the note was made. One that the use never came for, because another argument raised, is of a
+// generator that can never turn up again: the unwinder forgets the notes of each frame it comes through. Other arguments are evaluated between the making and the use, and they cannot get at the generator. They may make notes of their
+// own: there is room for a few, and the oldest goes first.
+// A frame that is suspended between the making and the use, zip(g(), (yield)), goes on elsewhere on the stack and would not know its note: the compiler marks no use then, and no note is made.
+// A thread that gives way in between takes its notes along (ThreadLocalState), so that no other thread finds notes to look through; it gets them back unless the program has been
+// handed objects it had no reference to meanwhile.
+//
+// A loop that is left before its end closes the generators it owns: ReleaseIterator on the way of `break`, `return` and a `continue`
+// of an outer loop; for an exception, the unwinder asks releaseIteratorsOfLoopsLeft(). So does a loop that ends, for zip(g(), h()) ends with the first that does.
+// A function does when it is done (GeneratorArgumentScope), and so do `in` and the assignment. An iterator that lets go of what it went through before it goes itself, as islice() does,
+// closes what was owned with it then.
 
-void Runtime::findUseOfCall(UseOfCall& found, CallFrame* callFrame)
+void Runtime::findUseOfCall(UseOfCall& found, CodeBlock* codeBlock, unsigned call)
 {
-    found = { callFrame->codeBlock(), callFrame->callSiteIndex().bits() };
-    if (!isFrameOfPythonCode(callFrame))
-        return;
-    auto marks = found.codeBlock->unlinkedCodeBlock()->pythonMarks();
-    const PythonMark* made = markAt(marks, found.call, PythonMark::TemporaryMade);
+    found = { codeBlock, call };
+    auto marks = codeBlock->unlinkedCodeBlock()->pythonMarks();
+    const PythonMark* made = markAt(marks, call, PythonMark::TemporaryMade);
     if (!made)
         return;
-    const PythonMark* use = made + 1;
     const PythonMark* end = marks.data() + marks.size();
-    while (use != end && (use->kind() != PythonMark::TemporaryUsed || use->value() != made->value()))
-        ++use;
+    auto nextUse = [&](const PythonMark* mark) {
+        while (mark != end && (mark->kind() != PythonMark::TemporaryUsed || mark->value() != made->value()))
+            ++mark;
+        return mark;
+    };
+    const PythonMark* use = nextUse(made + 1);
     if (use == end)
         return;
-    found.use = use->offset;
+    found.use = found.otherUse = use->offset;
+    if (!TemporaryUse::isLast(use->bits)) {
+        if (const PythonMark* other = nextUse(use + 1); other != end)
+            found.otherUse = other->offset;
+    }
     switch (TemporaryUse::kindOf(use->bits)) {
     case TemporaryUse::ForHeader:
         found.kind = UseOfCall::ForHeader;
@@ -343,49 +365,253 @@ void Runtime::findUseOfCall(UseOfCall& found, CallFrame* callFrame)
     }
 }
 
+ALWAYS_INLINE const Runtime::UseOfCall* Runtime::owningUseOfCall(CallFrame* callFrame, unsigned call)
+{
+    CodeBlock* codeBlock = callFrame->codeBlock();
+    UseOfCall& use = m_usesOfCalls[(call ^ std::bit_cast<uintptr_t>(codeBlock) >> 5) % m_usesOfCalls.size()];
+    if (use.codeBlock != codeBlock || use.call != call) [[unlikely]] {
+        if (!isFrameOfPythonCode(callFrame))
+            return nullptr;
+        findUseOfCall(use, codeBlock, call);
+    }
+    if (use.kind == UseOfCall::Other)
+        return nullptr;
+    if (use.kind == UseOfCall::Argument) {
+        JSValue callee = callFrame->r(VirtualRegister(use.callee)).jsValue();
+        if (auto* native = PyNativeFunction::tryFrom(callee)) {
+            if (!(native->def().flags & ClosesGeneratorArgument))
+                return nullptr;
+        } else if (auto* type = PyType::tryFrom(callee); !type || !(type->has(TypeFlag::HasIteratorsToItself) || type->has(TypeFlag::GoesThroughArgument)))
+            return nullptr;
+    }
+    return &use;
+}
+
+void Runtime::forget(NewGenerator& note)
+{
+    if (&note + 1 == m_newGenerators.end() || !(&note + 1)->generator) [[likely]] {
+        note.generator = nullptr;
+        return;
+    }
+    std::move(&note + 1, m_newGenerators.end(), &note);
+    m_newGenerators.back() = { };
+}
+
+// The functor is given the generators first.
+template<typename Functor>
+void Runtime::forgetNewGeneratorsFor(const CallOfInstruction& call, const Functor& functor)
+{
+    for (unsigned i = 0; i < m_newGenerators.size() && m_newGenerators[i].generator;) {
+        NewGenerator& note = m_newGenerators[i];
+        if (note.caller != call.frame || (note.use != call.offset && note.otherUse != call.offset)) {
+            ++i;
+            continue;
+        }
+        functor(note.generator);
+        forget(note);
+    }
+}
+
 void Runtime::didMakeGenerator(PyGenerator* generator, CallFrame* frameOfFunction)
 {
-    PyGenerator* previous = std::exchange(m_newGenerator, nullptr);
     void* caller = frameOfFunction->callerFrameOrEntryFrame();
     if (caller == m_vm.topEntryFrame) [[unlikely]]
         return;
     auto* callFrame = static_cast<CallFrame*>(caller);
-    CodeBlock* codeBlock = callFrame->codeBlock();
     unsigned call = callFrame->callSiteIndex().bits();
-    // (x for x in g()): this call is the use. See GeneratorsOwnedByFrame.
-    if (previous && m_callerOfNewGenerator == callFrame && m_useOfNewGenerator == call) [[unlikely]]
-        previous->loopOwnership = m_ownershipEpoch;
-    UseOfCall& use = m_usesOfCalls[(call ^ std::bit_cast<uintptr_t>(codeBlock) >> 5) % m_usesOfCalls.size()];
-    if (use.codeBlock != codeBlock || use.call != call) [[unlikely]]
-        findUseOfCall(use, callFrame);
-    if (use.kind == UseOfCall::Other)
-        return;
-    if (use.kind == UseOfCall::Argument) {
-        auto* native = PyNativeFunction::tryFrom(callFrame->r(VirtualRegister(use.callee)).jsValue());
-        if (!native || !(native->def().flags & ClosesGeneratorArgument))
-            return;
+    bool hasNotes = hasNewGenerator();
+    if (hasNotes) [[unlikely]] {
+        // (x for x in g()): this call is the use. See GeneratorsOwnedByFrame.
+        forgetNewGeneratorsFor({ callFrame, call }, [&](PyGenerator* passed) {
+            passed->loopOwnership = m_ownershipEpoch;
+        });
     }
-    m_newGenerator = generator;
-    m_callerOfNewGenerator = callFrame;
-    m_useOfNewGenerator = use.use;
+    const UseOfCall* use = owningUseOfCall(callFrame, call);
+    if (!use)
+        return;
+    if (hasNotes) [[unlikely]]
+        std::move_backward(m_newGenerators.begin(), m_newGenerators.end() - 1, m_newGenerators.end());
+    m_newGenerators[0] = { generator, nullptr, callFrame, use->use, use->otherUse };
 }
 
-void Runtime::claimIteratorOfLoop(unsigned offset)
+// What an iterator goes through, if it lets nobody else have it. From the last: that is the order in which CPython lets go of the items of a tuple, and the fields of the
+// records are in the order that makes it right for them.
+template<typename Functor> static void forEachGeneratorIn(JSValue held, const Functor&, unsigned depth);
+
+template<typename Functor>
+static ALWAYS_INLINE void forEachGeneratorBehind(JSValue iterator, const Functor& functor, unsigned depth = 0)
 {
-    PyGenerator* generator = std::exchange(m_newGenerator, nullptr);
-    if (m_useOfNewGenerator == offset)
-        generator->loopOwnership = m_ownershipEpoch;
+    if (!iterator || !iterator.isCell())
+        return;
+    JSCell* cell = iterator.asCell();
+    if (cell->type() == PyGeneratorType)
+        return functor(uncheckedDowncast<PyGenerator>(cell));
+    if (cell->type() != PyObjectType || !uncheckedDowncast<PyObject>(cell)->type()->has(TypeFlag::HasIteratorsToItself))
+        return;
+    if (cell->classInfo() == PyMultiIterator::info()) {
+        if (auto* multi = uncheckedDowncast<PyMultiIterator>(cell); multi->hasGeneratorsToItself) [[unlikely]]
+            forEachGeneratorIn(multi->first.get(), functor, depth + 1);
+        return;
+    }
+    auto* record = uncheckedDowncast<PyRecord>(cell);
+    if (!record->hasGeneratorsToItself) [[likely]]
+        return;
+    for (unsigned i = record->fieldCount(); i--;)
+        forEachGeneratorIn(record->get(i), functor, depth + 1);
 }
 
-// Nothing but the call that the note is about can have passed the generator on.
-PyGenerator* Runtime::claimGeneratorArgument(JSValue argument, PyGenerator**& whereToLeaveIt)
+// `held`: what such an iterator has.
+template<typename Functor>
+static void forEachGeneratorIn(JSValue held, const Functor& functor, unsigned depth)
 {
-    PyGenerator* generator = std::exchange(m_newGenerator, nullptr);
-    whereToLeaveIt = std::exchange(m_whereToLeaveGeneratorArgument, nullptr);
-    if (argument != JSValue(generator))
-        return nullptr;
-    generator->loopOwnership = m_ownershipEpoch;
-    return generator;
+    static constexpr unsigned maxDepth = 8;
+    if (!held || !held.isCell() || depth > maxDepth)
+        return;
+    JSCell* cell = held.asCell();
+    // The iterators of a zip, the arguments of a chain.
+    if (cell->type() == PyObjectType && cell->classInfo() == PyIterator::info()) {
+        auto* plain = uncheckedDowncast<PyIterator>(cell);
+        if (plain->kind() != PyIterator::Kind::Tuple || !plain->target())
+            return;
+        cell = plain->target().asCell();
+    }
+    if (cell->type() == PyTupleType) {
+        auto* tuple = uncheckedDowncast<PyTuple>(cell);
+        for (unsigned i = tuple->length(); i--;)
+            forEachGeneratorBehind(tuple->at(i), functor, depth);
+        return;
+    }
+    forEachGeneratorBehind(cell, functor, depth);
+}
+
+static NEVER_INLINE bool hasOwnedGenerator(JSCell* iterator)
+{
+    bool result = false;
+    forEachGeneratorBehind(iterator, [&](PyGenerator* generator) {
+        result |= generator->loopOwnership && !generator->isCompleted();
+    });
+    return result;
+}
+
+// It is an owned generator, or has one to itself.
+static ALWAYS_INLINE bool ownsGenerator(JSValue iterator)
+{
+    if (!iterator || !iterator.isCell())
+        return false;
+    JSCell* cell = iterator.asCell();
+    if (cell->type() == PyGeneratorType)
+        return uncheckedDowncast<PyGenerator>(cell)->loopOwnership && !uncheckedDowncast<PyGenerator>(cell)->isCompleted();
+    return hasGeneratorsToItself(cell) && hasOwnedGenerator(cell);
+}
+
+void disownGenerators(JSValue iterator)
+{
+    forEachGeneratorBehind(iterator, [&](PyGenerator* generator) {
+        generator->loopOwnership = 0;
+    });
+}
+
+bool Runtime::claimNewGenerators(JSValue iterable, CallFrame* callFrame, unsigned offset)
+{
+    bool result = false;
+    for (unsigned i = 0; i < m_newGenerators.size() && m_newGenerators[i].generator;) {
+        NewGenerator& note = m_newGenerators[i];
+        // (The code of a generator expression asks for the iterator of its argument before the generator is made, which is the use.)
+        if (iterable != JSValue(note.iterator ? note.iterator : note.generator) || note.caller != callFrame) {
+            ++i;
+            continue;
+        }
+        if (note.use == offset) {
+            note.generator->loopOwnership = m_ownershipEpoch;
+            result = true;
+        }
+        forget(note);
+    }
+    return result;
+}
+
+Runtime::CallOfInstruction Runtime::callInProgress()
+{
+    if (m_callOnBehalf.frame) [[unlikely]]
+        return std::exchange(m_callOnBehalf, { });
+    CallFrame* callFrame = m_vm.topCallFrame ? pythonCallerOf(m_vm, m_vm.topCallFrame) : nullptr;
+    if (!callFrame)
+        return { };
+    return { callFrame, callFrame->callSiteIndex().bits() };
+}
+
+void Runtime::leaveGeneratorArgumentIn(JSCell*& slot, CallFrame* callFrame, unsigned offset)
+{
+    // With a note, what is called is something that asks callInProgress() first of all.
+    for (NewGenerator& note : m_newGenerators) {
+        if (note.generator && note.caller == callFrame && (note.use == offset || note.otherUse == offset)) {
+            m_callOnBehalf = { callFrame, offset, &slot };
+            return;
+        }
+    }
+}
+
+// Nothing but the call that a note is about can have passed the generator on.
+JSCell* Runtime::claimGeneratorArgument(JSValue argument, JSCell**& whereToLeaveIt)
+{
+    // next(g())
+    if (NewGenerator& last = m_newGenerators[0]; argument == JSValue(last.generator) && !last.iterator && !m_newGenerators[1].generator) [[likely]] {
+        whereToLeaveIt = m_callOnBehalf.whereToLeaveArgument;
+        if (whereToLeaveIt) [[unlikely]]
+            m_callOnBehalf = { };
+        last.generator->loopOwnership = m_ownershipEpoch;
+        last.generator = nullptr;
+        return argument.asCell();
+    }
+    return claimGeneratorArgumentAmongNotes(argument, whereToLeaveIt);
+}
+
+NEVER_INLINE JSCell* Runtime::claimGeneratorArgumentAmongNotes(JSValue argument, JSCell**& whereToLeaveIt)
+{
+    CallOfInstruction call = callInProgress();
+    whereToLeaveIt = call.whereToLeaveArgument;
+    bool isOwned = false;
+    for (unsigned i = 0; i < m_newGenerators.size() && m_newGenerators[i].generator;) {
+        NewGenerator& note = m_newGenerators[i];
+        if (argument != JSValue(note.iterator ? note.iterator : note.generator)) {
+            ++i;
+            continue;
+        }
+        note.generator->loopOwnership = m_ownershipEpoch;
+        isOwned = true;
+        forget(note);
+    }
+    forgetNewGeneratorsFor(call, [](PyGenerator*) { });
+    return isOwned ? argument.asCell() : nullptr;
+}
+
+void Runtime::iteratorWasMade(const CallOfInstruction& call, JSCell* iterator)
+{
+    // (Making it may have run code of the program, the __iter__ of another argument, but the frame is at the call for as long as that lasts.)
+    const UseOfCall* use = call.frame && iterator ? owningUseOfCall(call.frame, call.offset) : nullptr;
+    bool* mark = nullptr;
+    if (use && iterator->type() == PyObjectType && uncheckedDowncast<PyObject>(iterator)->type()->has(TypeFlag::HasIteratorsToItself))
+        mark = iterator->classInfo() == PyMultiIterator::info() ? &uncheckedDowncast<PyMultiIterator>(iterator)->hasGeneratorsToItself : &uncheckedDowncast<PyRecord>(iterator)->hasGeneratorsToItself;
+    for (unsigned i = 0; i < m_newGenerators.size() && m_newGenerators[i].generator;) {
+        NewGenerator& note = m_newGenerators[i];
+        if (note.caller != call.frame || (note.use != call.offset && note.otherUse != call.offset)) {
+            ++i;
+            continue;
+        }
+        // iter(g()) is g().
+        bool isItself = iterator == note.generator;
+        if (!use || (!isItself && !mark)) {
+            forget(note);
+            continue;
+        }
+        if (!isItself) {
+            note.iterator = iterator;
+            *mark = true;
+        }
+        note.use = use->use;
+        note.otherUse = use->otherUse;
+        ++i;
+    }
 }
 
 void GeneratorArgumentScope::release()
@@ -395,18 +621,6 @@ void GeneratorArgumentScope::release()
         return;
     }
     m_runtime.releaseGeneratorGoneThrough(m_generator);
-}
-
-void Runtime::releaseGeneratorGoneThrough(PyGenerator* generator)
-{
-    // Most have been gone through to their end.
-    if (generator->isCompleted()) [[likely]] {
-        generator->loopOwnership = 0;
-        return;
-    }
-    // An exception that was raised on the way waits.
-    SuspendExceptionScope suspended(m_vm);
-    releaseIteratorOfLoop(generator);
 }
 
 static std::span<const BlockPiece> blockPiecesOf(CodeBlock* codeBlock, CodeInfo& info)
@@ -440,20 +654,63 @@ static bool hasNothingToClose(PyGenerator* generator)
     // A tool is told of the GeneratorExit all the same.
     if (CodeMonitor* monitor = generator->body()->codeInfo().monitor.get(); monitor && monitor->isAwake())
         return false;
+    if (!generator->body()->codeInfo().hasLoopThatOwnsItsIterator) [[likely]]
+        return true;
     for (unsigned i = 0; i < generator->slotCount(); ++i) {
-        if (auto* held = PyGenerator::tryFrom(generator->slot(i)); held && held->loopOwnership)
+        if (ownsGenerator(generator->slot(i)))
             return false;
     }
     return true;
 }
 
+// It is owned no longer. Whether there is something to do about that.
+ALWAYS_INLINE bool Runtime::isToBeClosed(PyGenerator* generator)
+{
+    return generator->loopOwnership && std::exchange(generator->loopOwnership, 0) == m_ownershipEpoch && !generator->isCompleted() && !hasNothingToClose(generator);
+}
+
 void Runtime::releaseIteratorOfLoop(JSValue iterator)
 {
-    auto* generator = PyGenerator::tryFrom(iterator);
-    if (!generator || !generator->loopOwnership)
+    // for i, x in enumerate(g()): nothing that runs meanwhile can get at what has them.
+    forEachGeneratorBehind(iterator, [&](PyGenerator* generator) ALWAYS_INLINE_LAMBDA {
+        if (isToBeClosed(generator))
+            finalizeGeneratorNow(m_globalObject, generator);
+    });
+}
+
+void Runtime::releaseGeneratorGoneThrough(JSValue iterator)
+{
+    // Most have been gone through to their end, and most of the others have no clean-up to do: next(g()).
+    if (auto* generator = PyGenerator::tryFrom(iterator); generator && (generator->isCompleted() || hasNothingToClose(generator))) [[likely]] {
+        generator->loopOwnership = 0;
         return;
-    if (std::exchange(generator->loopOwnership, 0) == m_ownershipEpoch && !hasNothingToClose(generator))
+    }
+    releaseGeneratorLeftHalfWay(iterator);
+}
+
+NEVER_INLINE void Runtime::releaseGeneratorLeftHalfWay(JSValue iterator)
+{
+    // An exception that was raised on the way waits.
+    std::optional<SuspendExceptionScope> suspended;
+    forEachGeneratorBehind(iterator, [&](PyGenerator* generator) ALWAYS_INLINE_LAMBDA {
+        if (!isToBeClosed(generator)) [[likely]]
+            return;
+        if (!suspended)
+            suspended.emplace(m_vm);
         finalizeGeneratorNow(m_globalObject, generator);
+    });
+}
+
+void Runtime::releaseWhatIteratorHad(JSValue held)
+{
+    std::optional<SuspendExceptionScope> suspended;
+    forEachGeneratorIn(held, [&](PyGenerator* generator) {
+        if (!isToBeClosed(generator)) [[likely]]
+            return;
+        if (!suspended)
+            suspended.emplace(m_vm);
+        finalizeGeneratorNow(m_globalObject, generator);
+    }, 1);
 }
 
 GeneratorsOwnedByFrame::GeneratorsOwnedByFrame(Runtime& runtime, PyGenerator* generator)
@@ -464,17 +721,20 @@ GeneratorsOwnedByFrame::GeneratorsOwnedByFrame(Runtime& runtime, PyGenerator* ge
     // Whoever has the frame object has the variables for as long as he keeps it.
     if (PyFrame* frame = generator->frameObject(); frame && frame->wasAskedFor())
         return;
-    for (unsigned i = 0; i < generator->slotCount() && m_count < m_generators.size(); ++i) {
-        if (auto* held = PyGenerator::tryFrom(generator->slot(i)); held && held->loopOwnership == runtime.ownershipEpoch())
-            m_generators[m_count++] = held;
+    // That of the innermost loop first, as when they are taken off the stack of the frame.
+    for (unsigned i = generator->slotCount(); i--;) {
+        forEachGeneratorBehind(generator->slot(i), [&](PyGenerator* held) {
+            if (held->loopOwnership == runtime.ownershipEpoch() && m_count < m_generators.size())
+                m_generators[m_count++] = held;
+        });
     }
 }
 
 void GeneratorsOwnedByFrame::frameIsGone()
 {
-    // That of the innermost loop first, as when they are taken off the stack of the frame.
-    while (m_count)
-        m_runtime.releaseIteratorOfLoop(m_generators[--m_count]);
+    for (unsigned i = 0; i < m_count; ++i)
+        m_runtime.releaseIteratorOfLoop(m_generators[i]);
+    m_count = 0;
 }
 
 unsigned whereHandlerBegins(CodeBlock* codeBlock, unsigned offsetOfCatch)
@@ -487,6 +747,15 @@ unsigned whereHandlerBegins(CodeBlock* codeBlock, unsigned offsetOfCatch)
 
 void Runtime::releaseIteratorsOfLoopsLeft(CallFrame* callFrame, unsigned offset, bool isCaught)
 {
+    // zip(g(), h()), and h() has raised: the use will not come.
+    if (hasNewGenerator()) [[unlikely]] {
+        for (unsigned i = 0; i < m_newGenerators.size() && m_newGenerators[i].generator;) {
+            if (m_newGenerators[i].caller == callFrame)
+                forget(m_newGenerators[i]);
+            else
+                ++i;
+        }
+    }
     if (callFrame->isZombieFrame()) [[unlikely]]
         return;
     CodeInfo& info = codeInfoOf(callFrame);
@@ -494,13 +763,14 @@ void Runtime::releaseIteratorsOfLoopsLeft(CallFrame* callFrame, unsigned offset,
         return;
     CodeBlock* codeBlock = callFrame->codeBlock();
     auto loops = blockPiecesOf(codeBlock, info);
-    auto generatorOf = [&](const BlockPiece& loop) -> PyGenerator* {
+    // Empty: the loop has nothing to close.
+    auto iteratorOf = [&](const BlockPiece& loop) -> JSValue {
         if (!loop.ownsIterator || !loop.contains(offset))
-            return nullptr;
-        auto* generator = PyGenerator::tryFrom(callFrame->r(VirtualRegister(loop.held)).jsValue());
-        return generator && generator->loopOwnership ? generator : nullptr;
+            return { };
+        JSValue iterator = callFrame->r(VirtualRegister(loop.held)).jsValue();
+        return ownsGenerator(iterator) ? iterator : JSValue();
     };
-    if (std::ranges::none_of(loops, generatorOf))
+    if (std::ranges::none_of(loops, [&](const BlockPiece& loop) { return !!iteratorOf(loop); }))
         return;
     std::optional<unsigned> landing;
     if (isCaught) {
@@ -512,8 +782,8 @@ void Runtime::releaseIteratorsOfLoopsLeft(CallFrame* callFrame, unsigned offset,
 
     for (size_t i = loops.size(); i--;) {
         auto& loop = loops[i];
-        PyGenerator* generator = generatorOf(loop);
-        if (!generator)
+        JSValue iterator = iteratorOf(loop);
+        if (!iterator)
             continue;
         bool goesOn = landing && std::ranges::any_of(loops, [&](const BlockPiece& piece) {
             return piece.number == loop.number && piece.contains(*landing);
@@ -526,7 +796,7 @@ void Runtime::releaseIteratorsOfLoopsLeft(CallFrame* callFrame, unsigned offset,
         JSC::Exception* pending = scope.exception();
         scope.clearException();
         // Code of the program may run, which can ask for all the objects there are.
-        if (pending && !generator->isCompleted())
+        if (auto* generator = PyGenerator::tryFrom(iterator); pending && !(generator && generator->isCompleted()))
             exceptionWillBeSeen(pending->value());
         {
             SetForScope topCallFrame(m_vm.topCallFrame, callFrame);
@@ -534,7 +804,7 @@ void Runtime::releaseIteratorsOfLoopsLeft(CallFrame* callFrame, unsigned offset,
             auto isDone = makeScopeExit([&] {
                 framesToldOfException.removeLast(callFrame);
             });
-            releaseIteratorOfLoop(generator);
+            releaseIteratorOfLoop(iterator);
         }
         if (pending && !scope.exception()) {
             {

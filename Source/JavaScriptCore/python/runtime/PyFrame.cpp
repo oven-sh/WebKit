@@ -532,8 +532,7 @@ public:
         // The cells of a generator are made when it starts.
         if (!held || at(index).kind == CodeInfo::VariableKind::Local || m_holdsArguments) {
             // `.0`, what a generator expression goes through. The frame had the only reference: see GeneratorsOwnedByFrame.
-            if (auto* generator = held ? PyGenerator::tryFrom(held) : nullptr) [[unlikely]]
-                generator->loopOwnership = 0;
+            disownGenerators(held);
             return held;
         }
         // So are those of a function, and something may look at the frame before that.

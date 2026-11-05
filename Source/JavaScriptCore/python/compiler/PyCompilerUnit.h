@@ -489,7 +489,9 @@ private:
     void markTemporaryUsed(unsigned number, TemporaryUse::Kind, RegisterID*, bool isLast);
     Expr* m_temporaryNode { nullptr };
     unsigned m_temporaryNumber { 0 };
+    unsigned m_unpackedTemporary { 0 }; // From assign() to unpack().
     unsigned m_temporaryCount { 0 };
+    Vector<unsigned> m_yieldPointsWhenTemporaryWasMade; // By number.
     unsigned m_storedTemporary { 0 }; // For store(): the number of the value, if it is to mark the store as its use.
     RegisterID* emitSimpleCall(RegisterID* dst, RegisterID* callee, std::initializer_list<RegisterID*> args, const Range&, unsigned temporary = 0, unsigned temporaryToGoThrough = 0);
     // What op_py_get_method gave is called: with `self` before the arguments, unless it is the empty value.

@@ -82,8 +82,8 @@ public:
     bool hooksInitialized { false };
     bool isClosed { false };
     bool isRunningAsync { false };
-    // Not 0: nothing refers to it but the register in which a `for` loop keeps its iterator, if nothing has escaped since: see
-    // Runtime::claimIteratorOfLoop().
+    // Not 0: nothing refers to it but the register in which a `for` loop keeps its iterator, or an iterator that is there and has it to itself, if nothing has
+    // escaped since: see Runtime::claimNewGenerators().
     unsigned loopOwnership { 0 };
     JSValue finalizer() const { return m_finalizer.get(); }
     void setFinalizer(VM& vm, JSValue value) { m_finalizer.set(vm, this, value); }

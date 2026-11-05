@@ -223,7 +223,7 @@ enum NativeFlag : uint8_t {
     // it has shown them to no code of the program: as far as they are of the built-in types that PyTemporaries.cpp is about.
     // It calls Runtime::didCallMethod() when it is done.
     KeepsNothing = 1 << 4,
-    // See GeneratorArgumentScope.
+    // See GeneratorArgumentScope. (iter(g()) passes it on: Runtime::iteratorWasMade().)
     ClosesGeneratorArgument = 1 << 5,
     // A __getitem__ that takes indices, among other things: the type has no __iter__ and is iterated over by index.
     ItemOfSequence = 1 << 6,

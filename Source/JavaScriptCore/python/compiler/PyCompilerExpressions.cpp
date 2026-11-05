@@ -1393,6 +1393,7 @@ void Unit::unpack(Seq<Expr*> targets, RegisterID* value, const Range& range)
     Arguments items(*this, firstVariable ? 0 : count);
     RegisterID* first = firstVariable ? firstVariable : items.first();
     loc(range);
+    markTemporaryUsed(std::exchange(m_unpackedTemporary, 0), TemporaryUse::ForHeader, nullptr, true);
     if (star < 0)
         g.emitPyUnpack(first ? first : value, value, count, -1);
     else
@@ -1909,14 +1910,24 @@ unsigned Unit::takeTemporary(Expr* node)
 
 void Unit::markTemporaryMade(unsigned number)
 {
-    if (number)
-        g.addPythonMark(PythonMark::TemporaryMade, number);
+    if (!number)
+        return;
+    g.addPythonMark(PythonMark::TemporaryMade, number);
+    if (isGeneratorLike()) {
+        while (m_yieldPointsWhenTemporaryWasMade.size() <= number)
+            m_yieldPointsWhenTemporaryWasMade.append(0);
+        m_yieldPointsWhenTemporaryWasMade[number] = g.yieldPoints();
+    }
 }
 
 void Unit::markTemporaryUsed(unsigned number, TemporaryUse::Kind kind, RegisterID* reg, bool isLast)
 {
-    if (number)
-        g.addPythonMark(PythonMark::TemporaryUsed, number, TemporaryUse::encode(kind, (reg ? reg->virtualRegister() : VirtualRegister()).offset(), isLast));
+    if (!number)
+        return;
+    // zip(g(), (yield)): a frame that is suspended goes on elsewhere on the stack, so it would not know the note for its own, and until then the note would be in everybody's way.
+    if (number < m_yieldPointsWhenTemporaryWasMade.size() && m_yieldPointsWhenTemporaryWasMade[number] != g.yieldPoints())
+        return;
+    g.addPythonMark(PythonMark::TemporaryUsed, number, TemporaryUse::encode(kind, (reg ? reg->virtualRegister() : VirtualRegister()).offset(), isLast));
 }
 
 RegisterID* Unit::emitSimpleCall(RegisterID* dst, RegisterID* callee, std::initializer_list<RegisterID*> args, const Range& range, unsigned temporary, unsigned temporaryToGoThrough)
@@ -2000,14 +2011,15 @@ RegisterID* Unit::emitCall(RegisterID* dst, RegisterID* callee, std::span<Regist
         }
         if (injected)
             loadName(injected, arguments.argumentRegister(next++), range);
+        unsigned positionalCount = temporaries.size();
         for (Keyword* keyword : keywords) {
             temporaries.append(beginTemporary(keyword->value));
             expr(keyword->value, arguments.argumentRegister(next++));
         }
         load(arguments.thisRegister(), keywordNames(keywords));
         loc(range);
-        for (unsigned number : temporaries)
-            markTemporaryUsed(number, TemporaryUse::Argument, callee, true);
+        for (unsigned i = 0; i < temporaries.size(); ++i)
+            markTemporaryUsed(temporaries[i], i < positionalCount ? TemporaryUse::Argument : TemporaryUse::KeywordArgument, callee, true);
         markTemporaryMade(temporary);
         return g.emitPyCall(result.get(), callee, arguments, count);
     }
@@ -2124,6 +2136,7 @@ RegisterID* Unit::call(Call* node, RegisterID* dst, RegisterID* calleeRegister)
             temporaries.append(beginTemporary(argument));
             expr(argument, arguments.argumentRegister(next++));
         }
+        unsigned positionalCount = temporaries.size();
         for (Keyword* keyword : node->keywords) {
             temporaries.append(beginTemporary(keyword->value));
             expr(keyword->value, arguments.argumentRegister(next++));
@@ -2131,8 +2144,8 @@ RegisterID* Unit::call(Call* node, RegisterID* dst, RegisterID* calleeRegister)
         load(arguments.thisRegister(), keywordNames(node->keywords));
         auto markCall = [&](bool isLast) {
             markTemporaryUsed(receiver, TemporaryUse::Receiver, name, isLast);
-            for (unsigned number : temporaries)
-                markTemporaryUsed(number, TemporaryUse::Argument, callee.get(), isLast);
+            for (unsigned i = 0; i < temporaries.size(); ++i)
+                markTemporaryUsed(temporaries[i], i < positionalCount ? TemporaryUse::Argument : TemporaryUse::KeywordArgument, callee.get(), isLast);
             markTemporaryMade(temporary);
         };
 

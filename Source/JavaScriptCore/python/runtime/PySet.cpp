@@ -1227,10 +1227,10 @@ void initializeSetTypes(JSGlobalObject* globalObject)
 {
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
-    rt.setType()->initializeBuiltin(globalObject, { "set"_s, { TypeFlag::Base, TypeFlag::MatchSelf, TypeFlag::OwnLayout, TypeFlag::HasWeakref }, setMethods, { }, "Build an unordered collection of unique elements."_s }, rt.typeType(), rt.objectType());
+    rt.setType()->initializeBuiltin(globalObject, { "set"_s, { TypeFlag::Base, TypeFlag::MatchSelf, TypeFlag::OwnLayout, TypeFlag::HasWeakref, TypeFlag::GoesThroughArgument }, setMethods, { }, "Build an unordered collection of unique elements."_s }, rt.typeType(), rt.objectType());
     rt.setType()->dict()->set(vm, rt.name(Special::Hash), jsUndefined());
     rt.setType()->didChange(vm);
-    rt.frozensetType()->initializeBuiltin(globalObject, { "frozenset"_s, { TypeFlag::Base, TypeFlag::MatchSelf, TypeFlag::OwnLayout, TypeFlag::HasWeakref }, frozensetMethods, { }, "Build an immutable unordered collection of unique elements."_s }, rt.typeType(), rt.objectType());
+    rt.frozensetType()->initializeBuiltin(globalObject, { "frozenset"_s, { TypeFlag::Base, TypeFlag::MatchSelf, TypeFlag::OwnLayout, TypeFlag::HasWeakref, TypeFlag::GoesThroughArgument }, frozensetMethods, { }, "Build an immutable unordered collection of unique elements."_s }, rt.typeType(), rt.objectType());
 }
 
 } // namespace Python

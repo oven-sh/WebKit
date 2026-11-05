@@ -9,6 +9,7 @@
 #include "PyAbstract.h"
 #include "PyErrors.h"
 #include "PyInternals.h"
+#include "PyIterators.h"
 #include "PyList.h"
 #include "PyModule.h"
 #include "PyNumbers.h"
@@ -40,6 +41,14 @@ static NEVER_INLINE JSValue itertoolsStop(JSGlobalObject* globalObject)
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     return raiseStopIteration(globalObject, scope);
+}
+
+// The iterator is done with what it went through, perhaps by an exception. If nothing else had that, it is closed now, as in CPython: see "Generators" in PyTemporaries.cpp.
+static void itertoolsLetGo(JSGlobalObject* globalObject, PyRecord* record, unsigned field)
+{
+    JSValue iterator = record->get(field);
+    record->set(getVM(globalObject), field, { });
+    runtime(globalObject).releaseWhatIteratorHad(iterator);
 }
 
 // An integer that may not fit a number takes two fields.
@@ -158,7 +167,7 @@ static JSValue itertoolsBatchedNext(JSGlobalObject* globalObject, JSValue self)
     JSValue iterator = record->get(ItertoolsBatched::Iterator);
     auto finish = [&] {
         record->number = -1;
-        record->set(vm, ItertoolsBatched::Iterator, { });
+        itertoolsLetGo(globalObject, record, ItertoolsBatched::Iterator);
     };
 
     MarkedArgumentBuffer batch;
@@ -190,7 +199,7 @@ static constexpr NativeDef itertoolsBatchedMethods[] = {
     PY_SLOT("__iter__", itertoolsSelf, "($self, /)"),
     PY_SLOT("__next__", itertoolsBatchedNext, "($self, /)"),
 };
-ITERTOOLS_DEFINE_TYPE(Batched, "batched", TypeFlag::Base, TypeFlag::OwnLayout)
+ITERTOOLS_DEFINE_TYPE(Batched, "batched", TypeFlag::Base, TypeFlag::OwnLayout, TypeFlag::HasIteratorsToItself)
 
 // ---- pairwise ----
 
@@ -227,7 +236,7 @@ static JSValue itertoolsPairwiseNext(JSGlobalObject* globalObject, JSValue self)
         EXCEPTION_ASSERT(!scope.exception() || !old);
         record->set(vm, ItertoolsPairwise::Old, old);
         if (!old) {
-            record->set(vm, ItertoolsPairwise::Iterator, { });
+            itertoolsLetGo(globalObject, record, ItertoolsPairwise::Iterator);
             RETURN_IF_EXCEPTION(scope, { });
             RELEASE_AND_RETURN(scope, itertoolsStop(globalObject));
         }
@@ -241,7 +250,7 @@ static JSValue itertoolsPairwiseNext(JSGlobalObject* globalObject, JSValue self)
     JSValue next = iterNext(globalObject, iterator);
     EXCEPTION_ASSERT(!scope.exception() || !next);
     if (!next) {
-        record->set(vm, ItertoolsPairwise::Iterator, { });
+        itertoolsLetGo(globalObject, record, ItertoolsPairwise::Iterator);
         record->set(vm, ItertoolsPairwise::Old, { });
         RETURN_IF_EXCEPTION(scope, { });
         RELEASE_AND_RETURN(scope, itertoolsStop(globalObject));
@@ -255,7 +264,7 @@ static constexpr NativeDef itertoolsPairwiseMethods[] = {
     PY_SLOT("__iter__", itertoolsSelf, "($self, /)"),
     PY_SLOT("__next__", itertoolsPairwiseNext, "($self, /)"),
 };
-ITERTOOLS_DEFINE_TYPE(Pairwise, "pairwise", TypeFlag::Base, TypeFlag::OwnLayout)
+ITERTOOLS_DEFINE_TYPE(Pairwise, "pairwise", TypeFlag::Base, TypeFlag::OwnLayout, TypeFlag::HasIteratorsToItself)
 
 // ---- groupby ----
 
@@ -599,7 +608,7 @@ static JSValue itertoolsCycleNext(JSGlobalObject* globalObject, JSValue self)
             return item;
         }
         record->number = 0;
-        record->set(vm, ItertoolsCycle::Iterator, { });
+        itertoolsLetGo(globalObject, record, ItertoolsCycle::Iterator);
     }
     unsigned length = listLength(saved);
     if (!length)
@@ -615,7 +624,7 @@ static constexpr NativeDef itertoolsCycleMethods[] = {
     PY_SLOT("__iter__", itertoolsSelf, "($self, /)"),
     PY_SLOT("__next__", itertoolsCycleNext, "($self, /)"),
 };
-ITERTOOLS_DEFINE_TYPE(Cycle, "cycle", TypeFlag::Base, TypeFlag::OwnLayout)
+ITERTOOLS_DEFINE_TYPE(Cycle, "cycle", TypeFlag::Base, TypeFlag::OwnLayout, TypeFlag::HasIteratorsToItself)
 
 // ---- What is made from a function and an iterable: dropwhile, takewhile, starmap, filterfalse ----
 
@@ -744,28 +753,28 @@ static constexpr NativeDef itertoolsDropWhileMethods[] = {
     PY_SLOT("__iter__", itertoolsSelf, "($self, /)"),
     PY_SLOT("__next__", itertoolsDropWhileNext, "($self, /)"),
 };
-ITERTOOLS_DEFINE_TYPE(DropWhile, "dropwhile", TypeFlag::Base, TypeFlag::OwnLayout)
+ITERTOOLS_DEFINE_TYPE(DropWhile, "dropwhile", TypeFlag::Base, TypeFlag::OwnLayout, TypeFlag::HasIteratorsToItself)
 
 static constexpr NativeDef itertoolsTakeWhileMethods[] = {
     PY_NEW(itertoolsTakeWhileNew, "($type, *args, **kwargs)"),
     PY_SLOT("__iter__", itertoolsSelf, "($self, /)"),
     PY_SLOT("__next__", itertoolsTakeWhileNext, "($self, /)"),
 };
-ITERTOOLS_DEFINE_TYPE(TakeWhile, "takewhile", TypeFlag::Base, TypeFlag::OwnLayout)
+ITERTOOLS_DEFINE_TYPE(TakeWhile, "takewhile", TypeFlag::Base, TypeFlag::OwnLayout, TypeFlag::HasIteratorsToItself)
 
 static constexpr NativeDef itertoolsStarMapMethods[] = {
     PY_NEW(itertoolsStarMapNew, "($type, *args, **kwargs)"),
     PY_SLOT("__iter__", itertoolsSelf, "($self, /)"),
     PY_SLOT("__next__", itertoolsStarMapNext, "($self, /)"),
 };
-ITERTOOLS_DEFINE_TYPE(StarMap, "starmap", TypeFlag::Base, TypeFlag::OwnLayout)
+ITERTOOLS_DEFINE_TYPE(StarMap, "starmap", TypeFlag::Base, TypeFlag::OwnLayout, TypeFlag::HasIteratorsToItself)
 
 static constexpr NativeDef itertoolsFilterFalseMethods[] = {
     PY_NEW(itertoolsFilterFalseNew, "($type, *args, **kwargs)"),
     PY_SLOT("__iter__", itertoolsSelf, "($self, /)"),
     PY_SLOT("__next__", itertoolsFilterFalseNext, "($self, /)"),
 };
-ITERTOOLS_DEFINE_TYPE(FilterFalse, "filterfalse", TypeFlag::Base, TypeFlag::OwnLayout)
+ITERTOOLS_DEFINE_TYPE(FilterFalse, "filterfalse", TypeFlag::Base, TypeFlag::OwnLayout, TypeFlag::HasIteratorsToItself)
 
 // ---- islice ----
 
@@ -830,7 +839,7 @@ static JSValue itertoolsISliceNext(JSGlobalObject* globalObject, JSValue self)
     if (!iterator)
         RELEASE_AND_RETURN(scope, itertoolsStop(globalObject));
     auto finish = [&]() -> JSValue {
-        record->set(vm, ItertoolsISlice::Iterator, { });
+        itertoolsLetGo(globalObject, record, ItertoolsISlice::Iterator);
         RETURN_IF_EXCEPTION(scope, { });
         RELEASE_AND_RETURN(scope, itertoolsStop(globalObject));
     };
@@ -862,12 +871,12 @@ static constexpr NativeDef itertoolsISliceMethods[] = {
     PY_SLOT("__iter__", itertoolsSelf, "($self, /)"),
     PY_SLOT("__next__", itertoolsISliceNext, "($self, /)"),
 };
-ITERTOOLS_DEFINE_TYPE(ISlice, "islice", TypeFlag::Base, TypeFlag::OwnLayout)
+ITERTOOLS_DEFINE_TYPE(ISlice, "islice", TypeFlag::Base, TypeFlag::OwnLayout, TypeFlag::HasIteratorsToItself)
 
 // ---- chain ----
 
 namespace ItertoolsChain {
-enum : unsigned { Source, Active, FieldCount };
+enum : unsigned { Active, Source, FieldCount }; // What is active is in the source as well, if that is a tuple.
 }
 
 ITERTOOLS_DECLARE_TYPE(Chain);
@@ -902,16 +911,20 @@ static JSValue itertoolsChainNext(JSGlobalObject* globalObject, JSValue self)
     while (JSValue source = record->get(ItertoolsChain::Source)) {
         JSValue active = record->get(ItertoolsChain::Active);
         if (!active) {
+            // The iterator of a tuple lets go of the tuple when it finds the end.
+            auto* plain = PyIterator::tryFrom(source);
+            JSValue arguments = plain ? plain->target() : JSValue();
             JSValue iterable = iterNext(globalObject, source);
             EXCEPTION_ASSERT(!scope.exception() || !iterable);
             if (!iterable) {
                 record->set(vm, ItertoolsChain::Source, { });
+                runtime(globalObject).releaseWhatIteratorHad(arguments);
                 RETURN_IF_EXCEPTION(scope, { });
                 break;
             }
             active = getIter(globalObject, iterable);
             if (failed(scope, active)) {
-                record->set(vm, ItertoolsChain::Source, { });
+                itertoolsLetGo(globalObject, record, ItertoolsChain::Source);
                 return { };
             }
             record->set(vm, ItertoolsChain::Active, active);
@@ -920,6 +933,7 @@ static JSValue itertoolsChainNext(JSGlobalObject* globalObject, JSValue self)
         RETURN_IF_EXCEPTION(scope, { });
         if (item)
             return item;
+        // (What gave it has it still: the tuple of the arguments.)
         record->set(vm, ItertoolsChain::Active, { });
     }
     RELEASE_AND_RETURN(scope, itertoolsStop(globalObject));
@@ -932,7 +946,7 @@ static constexpr NativeDef itertoolsChainMethods[] = {
     PY_CLASSMETHOD("from_iterable", itertoolsChainFromIterable, "($type, iterable, /)"),
     PY_CLASSMETHOD("__class_getitem__", classGetItem, "($type, object, /)"),
 };
-ITERTOOLS_DEFINE_TYPE(Chain, "chain", TypeFlag::Base, TypeFlag::OwnLayout)
+ITERTOOLS_DEFINE_TYPE(Chain, "chain", TypeFlag::Base, TypeFlag::OwnLayout, TypeFlag::HasIteratorsToItself)
 
 // ---- product ----
 
@@ -1306,12 +1320,12 @@ static constexpr NativeDef itertoolsAccumulateMethods[] = {
     PY_SLOT("__iter__", itertoolsSelf, "($self, /)"),
     PY_SLOT("__next__", itertoolsAccumulateNext, "($self, /)"),
 };
-ITERTOOLS_DEFINE_TYPE(Accumulate, "accumulate", TypeFlag::Base, TypeFlag::OwnLayout)
+ITERTOOLS_DEFINE_TYPE(Accumulate, "accumulate", TypeFlag::Base, TypeFlag::OwnLayout, TypeFlag::HasIteratorsToItself)
 
 // ---- compress ----
 
 namespace ItertoolsCompress {
-enum : unsigned { Data, Selectors, FieldCount };
+enum : unsigned { Selectors, Data, FieldCount };
 }
 
 static JSValue itertoolsCompressNew(JSGlobalObject* globalObject, JSValue cls, const CallArgs& args)
@@ -1360,7 +1374,7 @@ static constexpr NativeDef itertoolsCompressMethods[] = {
     PY_SLOT("__iter__", itertoolsSelf, "($self, /)"),
     PY_SLOT("__next__", itertoolsCompressNext, "($self, /)"),
 };
-ITERTOOLS_DEFINE_TYPE(Compress, "compress", TypeFlag::Base, TypeFlag::OwnLayout)
+ITERTOOLS_DEFINE_TYPE(Compress, "compress", TypeFlag::Base, TypeFlag::OwnLayout, TypeFlag::HasIteratorsToItself)
 
 // ---- count ----
 //
@@ -1576,7 +1590,7 @@ static JSValue itertoolsZipLongestNext(JSGlobalObject* globalObject, JSValue sel
                     RETURN_IF_EXCEPTION(scope, { });
                     RELEASE_AND_RETURN(scope, itertoolsStop(globalObject));
                 }
-                record->set(vm, ItertoolsZipLongest::FirstIterator + i, { });
+                itertoolsLetGo(globalObject, record, ItertoolsZipLongest::FirstIterator + i);
             }
         }
         result->initializeAt(vm, i, item ? item : record->get(ItertoolsZipLongest::FillValue));
@@ -1589,7 +1603,7 @@ static constexpr NativeDef itertoolsZipLongestMethods[] = {
     PY_SLOT("__iter__", itertoolsSelf, "($self, /)"),
     PY_SLOT("__next__", itertoolsZipLongestNext, "($self, /)"),
 };
-ITERTOOLS_DEFINE_TYPE(ZipLongest, "zip_longest", TypeFlag::Base, TypeFlag::OwnLayout)
+ITERTOOLS_DEFINE_TYPE(ZipLongest, "zip_longest", TypeFlag::Base, TypeFlag::OwnLayout, TypeFlag::HasIteratorsToItself)
 
 // ---- The module ----
 

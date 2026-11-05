@@ -206,6 +206,8 @@ public:
 
     // For what is not a value.
     int64_t number { 0 };
+    // TypeFlag::HasIteratorsToItself: there may be generators in there that are owned with it. See "Generators" in PyTemporaries.cpp.
+    bool hasGeneratorsToItself { false };
 
     FinalizerState& finalizerState() { return m_finalizerState; }
 

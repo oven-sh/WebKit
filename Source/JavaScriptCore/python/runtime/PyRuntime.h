@@ -541,6 +541,16 @@ public:
     };
     RuntimeCall* runtimeCall { nullptr };
 
+    // See "Generators" in PyTemporaries.cpp.
+    struct NewGenerator {
+        PyGenerator* generator { nullptr };
+        JSCell* iterator { nullptr }; // What has taken it since: enumerate(g()). It is that which the use will be given.
+        CallFrame* caller { nullptr }; // Only compared with: the frame may be gone.
+        unsigned use { 0 }; // The offset of the instruction.
+        unsigned otherUse { 0 }; // m.f(g()) is compiled twice, for an f that is a method and one that is not.
+    };
+    using NewGenerators = std::array<NewGenerator, 4>;
+
     // What of all this belongs to the thread that is running. It goes with the thread when another takes its place. It refers
     // to cells, and is visited by nobody: it must be on the stack of the thread.
     struct ThreadLocalState {
@@ -571,6 +581,8 @@ public:
         bool isRunningPendingCalls { false };
         void* stackWhereUnaskedCallsBegan { nullptr };
         uint32_t thread { 0 };
+        NewGenerators newGenerators;
+        unsigned ownershipEpoch { 0 }; // When they were put here.
     };
     // Leaves the runtime as a thread that has just started finds it.
     void takeThreadLocalState(ThreadLocalState&);
@@ -799,33 +811,45 @@ public:
         ++m_ownershipEpoch;
         makeNotedEntries();
     }
+    // ---- See "Generators" in PyTemporaries.cpp ----
     // A generator function is about to return the generator to whoever called it.
     void didMakeGenerator(PyGenerator*, CallFrame* frameOfFunction);
-    // For op_py_get_iter, which the frame is at: the generator is its own iterator.
-    ALWAYS_INLINE bool isNewGenerator(JSValue value, CallFrame* callFrame) const { return value.isCell() && value.asCell() == std::bit_cast<JSCell*>(m_newGenerator) && m_callerOfNewGenerator == callFrame; }
-    void claimIteratorOfLoop(unsigned offsetOfGetIter);
-    // (The interpreter does both by itself.)
-    static constexpr ptrdiff_t offsetOfNewGenerator() { return OBJECT_OFFSETOF(Runtime, m_newGenerator); }
-    static constexpr ptrdiff_t offsetOfCallerOfNewGenerator() { return OBJECT_OFFSETOF(Runtime, m_callerOfNewGenerator); }
-    static constexpr ptrdiff_t offsetOfUseOfNewGenerator() { return OBJECT_OFFSETOF(Runtime, m_useOfNewGenerator); }
+    // There are notes of generators whose use has not come.
+    ALWAYS_INLINE bool hasNewGenerator() const { return m_newGenerators[0].generator; }
+    // If so. The instruction that the frame is at goes through the value and keeps nothing of it: op_py_get_iter, `in`, a, b = g(). Whether it owns something now.
+    bool claimNewGenerators(JSValue, CallFrame*, unsigned offset);
+    // (The interpreter does that by itself for a generator, if there is no other note.)
+    static constexpr ptrdiff_t offsetOfNewGenerator() { return OBJECT_OFFSETOF(Runtime, m_newGenerators) + OBJECT_OFFSETOF(NewGenerator, generator); }
+    static constexpr ptrdiff_t offsetOfCallerOfNewGenerator() { return OBJECT_OFFSETOF(Runtime, m_newGenerators) + OBJECT_OFFSETOF(NewGenerator, caller); }
+    static constexpr ptrdiff_t offsetOfUseOfNewGenerator() { return OBJECT_OFFSETOF(Runtime, m_newGenerators) + OBJECT_OFFSETOF(NewGenerator, use); }
+    static constexpr ptrdiff_t offsetOfNewGeneratorBefore() { return offsetOfNewGenerator() + sizeof(NewGenerator); }
     static constexpr ptrdiff_t offsetOfOwnershipEpoch() { return OBJECT_OFFSETOF(Runtime, m_ownershipEpoch); }
-    // See GeneratorArgumentScope. Null: it is not known to be out of the program's reach.
-    ALWAYS_INLINE bool hasNewGenerator() const { return m_newGenerator; }
-    PyGenerator* claimGeneratorArgument(JSValue argument, PyGenerator**& whereToLeaveIt);
+    // If there are notes. For a built-in function or type that takes them up, when it has just been called and has run nothing: the instruction that called it. Without
+    // a frame: none did.
+    struct CallOfInstruction {
+        CallFrame* frame { nullptr };
+        unsigned offset { 0 };
+        JSCell** whereToLeaveArgument { nullptr }; // See leaveGeneratorArgumentIn().
+    };
+    CallOfInstruction callInProgress();
+    // See GeneratorArgumentScope. Null: there is nothing in it that is known to be out of the program's reach.
+    JSCell* claimGeneratorArgument(JSValue argument, JSCell**& whereToLeaveIt);
+    // enumerate(g()), zip(g(), h()), iter(g()): the call has made an iterator that has its arguments to itself (TypeFlag::HasIteratorsToItself), or has returned its
+    // argument. The notes that were made for the call are about the use of the iterator from now on, which is the value of a call too. Null: the call
+    // has done something else.
+    void iteratorWasMade(const CallOfInstruction&, JSCell* iterator);
     // A tool is about to be shown the arguments of a call.
-    void forgetNewGenerator() { m_newGenerator = nullptr; }
+    void forgetNewGenerators() { m_newGenerators.fill({ }); }
     // For what makes the call at the offset on behalf of the frame, and has something to do between the return of the function and the
     // closing of the generator: the function leaves it there. When the call is over, whether the function got that far or not: didCallWithGeneratorArgument().
-    void leaveGeneratorArgumentIn(PyGenerator*& slot, CallFrame* callFrame, unsigned offset)
-    {
-        if (m_newGenerator && m_callerOfNewGenerator == callFrame && m_useOfNewGenerator == offset)
-            m_whereToLeaveGeneratorArgument = &slot;
-    }
-    void didCallWithGeneratorArgument() { m_whereToLeaveGeneratorArgument = nullptr; }
+    void leaveGeneratorArgumentIn(JSCell*& slot, CallFrame*, unsigned offset);
+    void didCallWithGeneratorArgument() { m_callOnBehalf = { }; }
     // The loop is left before the iterator is exhausted.
     void releaseIteratorOfLoop(JSValue iterator);
     // A built-in function or `in` is done with it, perhaps by an exception.
-    void releaseGeneratorGoneThrough(PyGenerator*);
+    void releaseGeneratorGoneThrough(JSValue);
+    // An iterator (TypeFlag::HasIteratorsToItself) lets go of it, perhaps because of an exception.
+    void releaseWhatIteratorHad(JSValue);
     // An exception is caught in the frame, or leaves it.
     void releaseIteratorsOfLoopsLeft(CallFrame*, unsigned offset, bool isCaught);
     unsigned ownershipEpoch() const { return m_ownershipEpoch; }
@@ -1062,7 +1086,7 @@ private:
     void forgetTemporaries()
     {
         m_ownedTemporaryCount = 0;
-        m_newGenerator = nullptr;
+        forgetNewGenerators();
     }
     void forgetDeadTemporaries(SlotVisitor&);
     void ownTemporary(CallFrame*, unsigned offset, JSCell*);
@@ -1071,10 +1095,14 @@ private:
     std::array<OwnedTemporary, maxOwnedTemporaries> m_ownedTemporaries;
     unsigned m_ownedTemporaryCount { 0 };
     unsigned m_ownershipEpoch { 1 };
-    PyGenerator* m_newGenerator { nullptr };
-    CallFrame* m_callerOfNewGenerator { nullptr };
-    unsigned m_useOfNewGenerator { 0 }; // The offset of the instruction.
-    PyGenerator** m_whereToLeaveGeneratorArgument { nullptr };
+    // The last made first, and none behind an empty one.
+    NewGenerators m_newGenerators;
+    void forget(NewGenerator&);
+    JSCell* claimGeneratorArgumentAmongNotes(JSValue argument, JSCell**& whereToLeaveIt);
+    bool isToBeClosed(PyGenerator*);
+    void releaseGeneratorLeftHalfWay(JSValue);
+    template<typename Functor> void forgetNewGeneratorsFor(const CallOfInstruction&, const Functor&);
+    CallOfInstruction m_callOnBehalf;
     // What the marks say of the value of a call, for didMakeGenerator(), which asks about the same few calls over and over. A code
     // block is only compared with, and a collection forgets them all: until then there is no other at its address.
     // The question cannot wait for the use. In `f(g())` the generator is only out of the program's reach if f is known to keep nothing when
@@ -1085,11 +1113,14 @@ private:
         CodeBlock* codeBlock { nullptr };
         unsigned call { 0 }; // Offsets of instructions.
         unsigned use { 0 };
+        unsigned otherUse { 0 };
         int callee { 0 }; // Argument: the register.
         Kind kind { Other };
     };
     std::array<UseOfCall, 16> m_usesOfCalls;
-    void findUseOfCall(UseOfCall&, CallFrame*);
+    void findUseOfCall(UseOfCall&, CodeBlock*, unsigned call);
+    // Of the value of the call at the offset, which the frame is at. Null: it is no use that owns what it is given.
+    const UseOfCall* owningUseOfCall(CallFrame*, unsigned call);
     struct CollectionNotice {
         int generation;
         double duration;

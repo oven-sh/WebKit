@@ -1573,6 +1573,7 @@ JSString* strJoin(JSGlobalObject* globalObject, JSString* separatorString, JSVal
 
 static JSValue strJoinMethod(JSGlobalObject* globalObject, JSValue self, JSValue iterable)
 {
+    GeneratorArgumentScope argument(globalObject, iterable);
     return strJoin(globalObject, strValue(self), iterable);
 }
 
@@ -2220,7 +2221,7 @@ static constexpr NativeDef strMethods[] = {
     PY_METHOD("replace", strReplace, "($self, old, new, /, count=-1)"),
     PY_METHOD("split", strSplit, "($self, /, sep=None, maxsplit=-1)"),
     PY_METHOD("rsplit", strRSplit, "($self, /, sep=None, maxsplit=-1)"),
-    PY_METHOD("join", strJoinMethod, "($self, iterable, /)"),
+    PY_METHOD_WITH_FLAGS("join", strJoinMethod, "($self, iterable, /)", ClosesGeneratorArgument),
     PY_METHOD("capitalize", strCapitalize, "($self, /)"),
     PY_METHOD("casefold", strCaseFold, "($self, /)"),
     PY_METHOD("title", strTitle, "($self, /)"),

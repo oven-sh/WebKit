@@ -2022,6 +2022,7 @@ static JSValue listExtendMethod(JSGlobalObject* globalObject, JSValue self, JSVa
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
+    GeneratorArgumentScope argument(globalObject, iterable);
     listExtend(globalObject, asList(self), iterable);
     RETURN_IF_EXCEPTION(scope, { });
     return jsUndefined();
@@ -2201,7 +2202,7 @@ static constexpr NativeDef listMethods[] = {
     PY_METHOD("copy", listCopy, "($self, /)"),
     PY_METHOD("append", listAppendMethod, "($self, object, /)"),
     PY_METHOD("insert", listInsertMethod, "($self, index, object, /)"),
-    PY_METHOD("extend", listExtendMethod, "($self, iterable, /)"),
+    PY_METHOD_WITH_FLAGS("extend", listExtendMethod, "($self, iterable, /)", ClosesGeneratorArgument),
     PY_METHOD("pop", listPop, "($self, index=-1, /)"),
     PY_METHOD("remove", listRemoveMethod, "($self, value, /)"),
     PY_METHOD("index", listIndex, "($self, value, start=0, stop=sys.maxsize, /)"),
@@ -2215,7 +2216,7 @@ void initializeListTypes(JSGlobalObject* globalObject)
 {
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
-    rt.listType()->initializeBuiltin(globalObject, { "list"_s, { TypeFlag::Base, TypeFlag::ListSubclass, TypeFlag::Sequence, TypeFlag::MatchSelf, TypeFlag::OwnLayout }, listMethods, { }, "Built-in mutable sequence.\n\nIf no argument is given, the constructor creates a new empty list.\nThe argument must be an iterable if specified."_s }, rt.typeType(), rt.objectType());
+    rt.listType()->initializeBuiltin(globalObject, { "list"_s, { TypeFlag::Base, TypeFlag::ListSubclass, TypeFlag::Sequence, TypeFlag::MatchSelf, TypeFlag::OwnLayout, TypeFlag::GoesThroughArgument }, listMethods, { }, "Built-in mutable sequence.\n\nIf no argument is given, the constructor creates a new empty list.\nThe argument must be an iterable if specified."_s }, rt.typeType(), rt.objectType());
     rt.listType()->dict()->set(vm, rt.name(Special::Hash), jsUndefined());
     rt.listType()->didChange(vm);
 }
@@ -2454,7 +2455,7 @@ static constexpr NativeDef tupleMethods[] = {
 void initializeTupleTypes(JSGlobalObject* globalObject)
 {
     Runtime& rt = runtime(globalObject);
-    rt.tupleType()->initializeBuiltin(globalObject, { "tuple"_s, { TypeFlag::Base, TypeFlag::TupleSubclass, TypeFlag::Sequence, TypeFlag::MatchSelf, TypeFlag::OwnLayout }, tupleMethods, { }, "Built-in immutable sequence.\n\nIf no argument is given, the constructor returns an empty tuple.\nIf iterable is specified the tuple is initialized from iterable's items.\n\nIf the argument is a tuple, the return value is the same object."_s }, rt.typeType(), rt.objectType());
+    rt.tupleType()->initializeBuiltin(globalObject, { "tuple"_s, { TypeFlag::Base, TypeFlag::TupleSubclass, TypeFlag::Sequence, TypeFlag::MatchSelf, TypeFlag::OwnLayout, TypeFlag::GoesThroughArgument }, tupleMethods, { }, "Built-in immutable sequence.\n\nIf no argument is given, the constructor returns an empty tuple.\nIf iterable is specified the tuple is initialized from iterable's items.\n\nIf the argument is a tuple, the return value is the same object."_s }, rt.typeType(), rt.objectType());
 }
 
 } // namespace Python

@@ -57,6 +57,12 @@ enum class TypeFlag : uint32_t {
     DictSubclass = 1 << 22,
     TypeSubclass = 1 << 23,
     ExceptionSubclass = 1 << 24, // BaseException
+
+    // For generators that only a temporary register refers to: see "Generators" in PyTemporaries.cpp. Of the type itself, not of what derives from it.
+    // The instances are iterators over what the type is called with, which they let nobody else have: enumerate, zip, map, most of itertools. They are PyMultiIterators or records.
+    HasIteratorsToItself = 1 << 26,
+    // To call the type is to go through the first argument, of which nothing is kept: list, tuple, set, dict.
+    GoesThroughArgument = 1 << 27,
 };
 
 static constexpr OptionSet<TypeFlag> inheritedTypeFlags {

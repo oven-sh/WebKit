@@ -22,6 +22,7 @@
 #include "PyGenerator.h"
 #include "PyHooks.h"
 #include "PyInternals.h"
+#include "PyIterators.h"
 #include "PyList.h"
 #include "PyModule.h"
 #include "PyNumbers.h"
@@ -765,12 +766,10 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_compare)
     if (operation == CompareOperator::In || operation == CompareOperator::NotIn) {
         // x in g(): nothing but the search has the generator.
         Runtime& rt = runtime(globalObject);
-        bool isNew = rt.isNewGenerator(rhs, callFrame);
-        if (isNew) [[unlikely]]
-            rt.claimIteratorOfLoop(codeBlock->bytecodeOffset(pc));
+        bool isOwned = rt.hasNewGenerator() && rt.claimNewGenerators(rhs, callFrame, callFrame->callSiteIndex().bits());
         bool found = containsInline(globalObject, rhs, lhs);
-        if (isNew) [[unlikely]]
-            rt.releaseGeneratorGoneThrough(uncheckedDowncast<PyGenerator>(rhs.asCell()));
+        if (isOwned) [[unlikely]]
+            rt.releaseGeneratorGoneThrough(rhs);
         CHECK_EXCEPTION();
         RETURN(jsBoolean(found == (operation == CompareOperator::In)));
     }
@@ -862,8 +861,8 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_get_iter)
     BEGIN();
     auto bytecode = pc->as<OpPyGetIter>();
     JSValue iterable = GET_C(bytecode.m_iterable).jsValue();
-    if (Runtime& rt = runtime(globalObject); rt.isNewGenerator(iterable, callFrame))
-        rt.claimIteratorOfLoop(codeBlock->bytecodeOffset(pc));
+    if (Runtime& rt = runtime(globalObject); rt.hasNewGenerator()) [[unlikely]]
+        rt.claimNewGenerators(iterable, callFrame, callFrame->callSiteIndex().bits());
     RETURN(getIter(globalObject, iterable));
 }
 
@@ -903,14 +902,25 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_assert_frame_may_end)
     return encodeResult(pc, callFrame);
 }
 
+// for a, b in zip(g(), range(3)): the loop is over, and g() is not.
+static NEVER_INLINE void loopHasEnded(CallFrame* callFrame, const JSInstruction* pc)
+{
+    JSValue iterator = GET(pc->as<OpPyForIter>().m_iterator).jsValue();
+    ASSERT(iterator.isCell()); // op_py_get_iter takes nothing without a __next__, and no int, float, bool or None has one.
+    if (hasGeneratorsToItself(iterator.asCell())) [[unlikely]]
+        runtime(callFrame->codeBlock()->globalObject()).releaseGeneratorGoneThrough(iterator);
+}
+
 JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_for_iter)
 {
     BEGIN();
     auto bytecode = pc->as<OpPyForIter>();
     JSValue item = iterNext(globalObject, GET(bytecode.m_iterator).jsValue());
     CHECK_EXCEPTION();
-    if (item)
+    if (item) [[likely]]
         GET(bytecode.m_dst) = item;
+    else
+        loopHasEnded(callFrame, pc);
     JUMP_IF(!item);
 }
 
@@ -1090,7 +1100,13 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_unpack)
 {
     BEGIN();
     auto bytecode = pc->as<OpPyUnpack>();
-    unpackIterable(globalObject, callFrame, GET_C(bytecode.m_iterable).jsValue(), bytecode.m_argv, bytecode.m_before, static_cast<int>(bytecode.m_afterPlusOne) - 1);
+    JSValue iterable = GET_C(bytecode.m_iterable).jsValue();
+    // a, b = g(): nothing else has the generator, and it may have more to give than is wanted.
+    Runtime& rt = runtime(globalObject);
+    bool isOwned = rt.hasNewGenerator() && rt.claimNewGenerators(iterable, callFrame, callFrame->callSiteIndex().bits());
+    unpackIterable(globalObject, callFrame, iterable, bytecode.m_argv, bytecode.m_before, static_cast<int>(bytecode.m_afterPlusOne) - 1);
+    if (isOwned) [[unlikely]]
+        rt.releaseGeneratorGoneThrough(iterable);
     END();
 }
 

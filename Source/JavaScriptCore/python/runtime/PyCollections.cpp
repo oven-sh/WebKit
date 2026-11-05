@@ -326,6 +326,7 @@ static JSValue dequeAppendLeft(JSGlobalObject* globalObject, JSValue self, JSVal
 
 static JSValue dequeExtend(JSGlobalObject* globalObject, JSValue self, JSValue iterable)
 {
+    GeneratorArgumentScope argument(globalObject, iterable);
     if (!dequeExtendWith<false>(globalObject, dequeOf(self), iterable))
         return { };
     return jsUndefined();
@@ -333,6 +334,7 @@ static JSValue dequeExtend(JSGlobalObject* globalObject, JSValue self, JSValue i
 
 static JSValue dequeExtendLeft(JSGlobalObject* globalObject, JSValue self, JSValue iterable)
 {
+    GeneratorArgumentScope argument(globalObject, iterable);
     if (!dequeExtendWith<true>(globalObject, dequeOf(self), iterable))
         return { };
     return jsUndefined();
@@ -870,8 +872,8 @@ static constexpr NativeDef dequeMethods[] = {
     PY_METHOD("__copy__", dequeCopy, "($self, /)"),
     PY_METHOD("copy", dequeCopy, "($self, /)"),
     PY_METHOD("count", dequeCount, "($self, value, /)"),
-    PY_METHOD("extend", dequeExtend, "($self, iterable, /)"),
-    PY_METHOD("extendleft", dequeExtendLeft, "($self, iterable, /)"),
+    PY_METHOD_WITH_FLAGS("extend", dequeExtend, "($self, iterable, /)", ClosesGeneratorArgument),
+    PY_METHOD_WITH_FLAGS("extendleft", dequeExtendLeft, "($self, iterable, /)", ClosesGeneratorArgument),
     PY_METHOD("index", dequeIndex, "!($self, value, [start, [stop]])"),
     PY_METHOD("insert", dequeInsert, "($self, index, value, /)"),
     PY_METHOD("pop", dequePop, "($self, /)"),
@@ -889,7 +891,7 @@ static constexpr NativeGetSet dequeGetSets[] = {
     { "maxlen"_s, dequeGetMaxLen },
 };
 
-constexpr TypeDef dequeTypeDef { "collections.deque"_s, { TypeFlag::Base, TypeFlag::OwnLayout, TypeFlag::Sequence, TypeFlag::HasWeakref, TypeFlag::OwnsContainers }, dequeMethods, dequeGetSets, "A list-like sequence optimized for data accesses near its endpoints."_s };
+constexpr TypeDef dequeTypeDef { "collections.deque"_s, { TypeFlag::Base, TypeFlag::OwnLayout, TypeFlag::Sequence, TypeFlag::HasWeakref, TypeFlag::OwnsContainers, TypeFlag::GoesThroughArgument }, dequeMethods, dequeGetSets, "A list-like sequence optimized for data accesses near its endpoints."_s };
 
 static constexpr NativeDef dequeIteratorMethods[] = {
     PY_NEW(dequeIteratorNew<false>, "($type, *args, **kwargs)"),

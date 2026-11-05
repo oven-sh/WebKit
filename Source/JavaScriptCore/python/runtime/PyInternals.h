@@ -700,6 +700,8 @@ std::span<const BlockPiece> blockPiecesOf(CodeBlock*);
 // The op_py_catch of a handler is at the end of the code, out of the way, and jumps to where the compiler began the handler: that is
 // the place which is in a loop or in a `try`, or not.
 unsigned whereHandlerBegins(CodeBlock*, unsigned offsetOfCatch);
+// The program is about to get hold of the iterator.
+void disownGenerators(JSValue iterator);
 // For a built-in function that goes through what it is given, may stop before the end, and keeps nothing: any(g()), next(g()). If the
 // generator was made for this call and only the temporary register refers to it, it is closed when the function is done or
 // has raised, as when its reference count falls to zero. The function is NativeFlag::ClosesGeneratorArgument, and has one of these
@@ -723,8 +725,8 @@ private:
     void release();
 
     Runtime& m_runtime;
-    PyGenerator* m_generator { nullptr };
-    PyGenerator** m_whereToLeaveIt { nullptr };
+    JSCell* m_generator { nullptr }; // Or what has it to itself: any(map(f, g())).
+    JSCell** m_whereToLeaveIt { nullptr };
 };
 
 // A function of the host's event loop module (setEventLoopModule). Empty without an exception: the host has none.

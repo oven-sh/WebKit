@@ -7,6 +7,7 @@
 
 #include "PyDict.h"
 #include "PyNumbers.h"
+#include "PyType.h"
 
 namespace JSC {
 namespace Python {
@@ -126,12 +127,21 @@ public:
     WriteBarrier<Unknown> second;
     int64_t position { 0 };
     bool flag { false };
+    bool hasGeneratorsToItself { false }; // As in PyRecord.
 
 private:
     PyMultiIterator(VM&, Structure*, PyType*, Kind);
 
     Kind m_kind;
 };
+
+// It is an iterator that lets nobody have what it goes through (TypeFlag::HasIteratorsToItself), and there may be generators in there that are owned with it.
+ALWAYS_INLINE bool hasGeneratorsToItself(JSCell* cell)
+{
+    if (cell->type() != PyObjectType || !uncheckedDowncast<PyObject>(cell)->type()->has(TypeFlag::HasIteratorsToItself))
+        return false;
+    return cell->classInfo() == PyMultiIterator::info() ? uncheckedDowncast<PyMultiIterator>(cell)->hasGeneratorsToItself : uncheckedDowncast<PyRecord>(cell)->hasGeneratorsToItself;
+}
 
 } // namespace Python
 } // namespace JSC

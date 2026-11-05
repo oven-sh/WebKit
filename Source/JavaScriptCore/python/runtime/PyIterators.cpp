@@ -1024,10 +1024,10 @@ void initializeIteratorTypes(JSGlobalObject* globalObject)
     define(rt.sequenceIteratorType(), "iterator"_s, iteratorMethods);
     define(rt.callableIteratorType(), "callable_iterator"_s, callableIteratorMethods);
 
-    define(rt.enumerateType(), "enumerate"_s, enumerateMethods, { TypeFlag::Base, TypeFlag::OwnLayout });
-    define(rt.zipType(), "zip"_s, zipMethods, { TypeFlag::Base, TypeFlag::OwnLayout });
-    define(rt.mapType(), "map"_s, mapMethods, { TypeFlag::Base, TypeFlag::OwnLayout });
-    define(rt.filterType(), "filter"_s, filterMethods, { TypeFlag::Base, TypeFlag::OwnLayout });
+    define(rt.enumerateType(), "enumerate"_s, enumerateMethods, { TypeFlag::Base, TypeFlag::OwnLayout, TypeFlag::HasIteratorsToItself });
+    define(rt.zipType(), "zip"_s, zipMethods, { TypeFlag::Base, TypeFlag::OwnLayout, TypeFlag::HasIteratorsToItself });
+    define(rt.mapType(), "map"_s, mapMethods, { TypeFlag::Base, TypeFlag::OwnLayout, TypeFlag::HasIteratorsToItself });
+    define(rt.filterType(), "filter"_s, filterMethods, { TypeFlag::Base, TypeFlag::OwnLayout, TypeFlag::HasIteratorsToItself });
     define(rt.reversedType(), "reversed"_s, reversedMethods, { TypeFlag::Base, TypeFlag::OwnLayout });
 }
 

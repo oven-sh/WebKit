@@ -1953,7 +1953,7 @@ NEVER_INLINE Monitoring::Outcome Monitoring::handle(JSGlobalObject* globalObject
         }
         // It may keep what it is shown. (A profile function is only shown the function.)
         if (tools & ~(1 << profileTool))
-            m_runtime.forgetNewGenerator();
+            m_runtime.forgetNewGenerators();
         if (failed(scope, fire(globalObject, callFrame, monitor, offset, Event::Call, tools, callable, first)))
             return threw;
         // What is not a function written in Python is also told of when it is over. So it is called from here.
@@ -1968,7 +1968,7 @@ NEVER_INLINE Monitoring::Outcome Monitoring::handle(JSGlobalObject* globalObject
         if (!listening)
             return runIt;
         // next(g()): the arguments are dropped, and the generator is closed, after the tools have been told that the function is done.
-        PyGenerator* generatorArgument = nullptr;
+        JSCell* generatorArgument = nullptr;
         m_runtime.leaveGeneratorArgumentIn(generatorArgument, callFrame, offset);
         auto dropArguments = makeScopeExit([&] {
             if (!generatorArgument)

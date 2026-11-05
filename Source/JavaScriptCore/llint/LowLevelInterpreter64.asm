@@ -4298,7 +4298,7 @@ macro pyResumeGenerator(size, opcodeStruct, loadValueAndMode, slow)
     loadPC()
 end
 
-# A generator is its own iterator. One that comes straight from the call belongs to the loop: Runtime::claimIteratorOfLoop().
+# A generator is its own iterator. One that comes straight from the call belongs to the loop: Runtime::claimNewGenerators().
 llintOpWithReturn(op_py_get_iter, OpPyGetIter, macro (size, get, dispatch, return)
     get(m_iterable, t1)
     loadConstantOrVariable(size, t1, t0)
@@ -4312,6 +4312,7 @@ llintOpWithReturn(op_py_get_iter, OpPyGetIter, macro (size, get, dispatch, retur
     loadPythonRuntime(t1)
     bpneq t0, (constexpr (Python::Runtime::offsetOfNewGenerator()))[t1], .done
     bpneq cfr, (constexpr (Python::Runtime::offsetOfCallerOfNewGenerator()))[t1], .done
+    btpnz (constexpr (Python::Runtime::offsetOfNewGeneratorBefore()))[t1], .slow
     storep 0, (constexpr (Python::Runtime::offsetOfNewGenerator()))[t1]
     loadi (constexpr (Python::Runtime::offsetOfUseOfNewGenerator()))[t1], t2
     bineq t2, PC, .done

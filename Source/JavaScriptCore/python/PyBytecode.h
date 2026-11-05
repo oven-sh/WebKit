@@ -237,7 +237,8 @@ struct TemporaryUse {
         SubscriptBase, // It is subscripted.
         Argument, // It is passed to what is in the register, which was there before the value was made.
         StoredValue, // It is stored in an item of what is in the register, a variable. No code runs between making it and that.
-        ForHeader, // A `for` loop goes through it, or `in` searches it.
+        ForHeader, // A `for` loop goes through it, `in` searches it, or it is taken apart (a, b = g()).
+        KeywordArgument, // As Argument.
     };
     // `isLast`: no other mark for this value follows.
     static constexpr uint64_t encode(Kind kind, int registerOffset, bool isLast) { return kind | isLast << 7 | static_cast<uint64_t>(static_cast<uint32_t>(registerOffset)) << 8; }

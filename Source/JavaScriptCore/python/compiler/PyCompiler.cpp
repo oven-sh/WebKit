@@ -1729,6 +1729,9 @@ void Unit::assign(Assign* node)
         if (target->value->is<NameExpr>() && isAtHand(target->value) && (slice ? isAtHand(slice->lower) && isAtHand(slice->upper) && isAtHand(slice->step) : isAtHand(target->slice)))
             m_storedTemporary = beginTemporary(node->value);
     }
+    // a, b = g(): to be taken apart is the one use of the value.
+    if (node->targets.size() == 1 && (node->targets[0]->is<Tuple>() || node->targets[0]->is<List>()))
+        m_unpackedTemporary = beginTemporaryOfLoop(node->value);
     Reg value = expr(node->value);
     for (Expr* target : node->targets)
         store(target, value.get());
