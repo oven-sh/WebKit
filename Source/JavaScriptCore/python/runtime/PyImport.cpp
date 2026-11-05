@@ -754,9 +754,30 @@ JSValue importFrom(JSGlobalObject* globalObject, JSValue module, JSString* name)
     if (value)
         return value;
 
-    // In a circular import the submodule may be in sys.modules and not yet an attribute of the package.
     JSValue moduleName = getAttrIfPresent(globalObject, module, rt.names.dName());
     RETURN_IF_EXCEPTION(scope, { });
+    // What the host has put in sys.modules need not be a module, and its __name__, if it has one, not that of a module (a function
+    // of JS has one). The host knows what it was imported as.
+    JSValue spec;
+    bool isModule = PyModule::is(module);
+    if (!isModule) {
+        spec = getAttrIfPresent(globalObject, module, rt.names.dSpec());
+        RETURN_IF_EXCEPTION(scope, { });
+        JSValue specOf = spec ? JSValue() : importSystemFunction(globalObject, "spec_of"_s);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (specOf) {
+            spec = call(globalObject, specOf, module);
+            RETURN_IF_EXCEPTION(scope, { });
+            if (isNone(spec))
+                spec = { };
+            else {
+                moduleName = getAttrIfPresent(globalObject, spec, rt.names.name());
+                RETURN_IF_EXCEPTION(scope, { });
+            }
+        }
+    }
+
+    // In a circular import the submodule may be in sys.modules and not yet an attribute of the package.
     String moduleText;
     if (moduleName && isStr(moduleName)) {
         moduleText = strValue(moduleName)->value(globalObject);
@@ -767,10 +788,12 @@ JSValue importFrom(JSGlobalObject* globalObject, JSValue module, JSString* name)
 
     if (moduleText.isNull())
         moduleName = { };
+    if (isModule) {
+        spec = getAttrIfPresent(globalObject, module, rt.names.dSpec());
+        RETURN_IF_EXCEPTION(scope, { });
+    }
     String shownName = strRepr(moduleText.isNull() ? "<unknown module name>"_str : moduleText);
     String start = makeString("cannot import name "_s, strRepr(stringOf(name)), " from "_s);
-    JSValue spec = getAttrIfPresent(globalObject, module, rt.names.dSpec());
-    RETURN_IF_EXCEPTION(scope, { });
     ModuleDiagnosis diagnosis;
     String message;
     if (!spec)

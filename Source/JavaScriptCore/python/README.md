@@ -915,7 +915,10 @@ that belongs to the interpreter (the codec registry, the warning filters) is not
 A host adds what it can import through a module of its own (`setImportSystemModule`), which also decides what module a file is that JS imports by path (one file, one module; the name Python would import it by, if there is one). Bun's (`src/python/_bun_import.py`) makes
 JavaScript and TypeScript files importable wherever Python files are, packages in `node_modules`, and `node.*` and `bun.*`. What
 is imported is what `require()` returns, a JS object like any other. A name that Python code tries to import is only ever looked
-up on disk.
+up on disk. Such an object is no module to Python: it has no `__name__`, `__file__` or `__spec__`, and `importlib.reload()` refuses it. What it was imported as the
+host remembers (`spec_of()` in that module), and `from helper import nothing` asks, to name the module and its file in the `ImportError`.
+Only files of program text are found by `import`. What else Bun can load (JSON, TOML, YAML, text) is not: such files lie about in directories that are
+on `sys.path`, and a `requests.json` is not to hide `requests`. `bun.require("./data.json")` loads them.
 
 **Compiled code is kept in `.pyc` files**, and it is importlib that keeps it there, as in CPython: `__pycache__/os.bun-315.pyc` beside
 the source, checked against the time and size of the source (or its hash), `-B`, `PYTHONPYCACHEPREFIX`, `py_compile`, modules
