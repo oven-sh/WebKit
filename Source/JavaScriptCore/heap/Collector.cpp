@@ -576,6 +576,9 @@ bool Collector::startsHelpersLazily()
 
 void Collector::startHelpers()
 {
+    // A concurrent collection that is under way when the count goes up, and has not started its helpers yet, is refused too. If its
+    // conductor has just given away all its work to wait for them (SlotVisitor::drainInParallelPassively()), nobody marks until that
+    // slice is over. Only that one: the mutator that raised the count waits for the collection, and then the conductor marks itself.
     if (m_collectionsWithoutHelpers.load(std::memory_order_relaxed))
         return;
     if (m_hasStartedHelpers.exchange(true))
