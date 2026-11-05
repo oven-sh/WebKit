@@ -564,9 +564,8 @@ void JSView::getOwnPropertyNames(JSObject* object, PropertyNameArrayBuilder& bui
 
 // `this`. What JS has put around an object of Python's (a Proxy) or made of one (Object.create()) inherits these functions too, and they
 // are about that object then: to Python the thing around it is an object of JS, whose str() is its toString().
-static JSValue jsViewThis(CallFrame* callFrame)
+JSValue objectOfPythonWithin(JSValue self)
 {
-    JSValue self = callFrame->thisValue();
     for (JSValue value = self; value.isObject();) {
         JSObject* object = asObject(value);
         if (isPyObject(object) || PyType::is(object) || PyFunction::is(object) || PyNativeFunction::is(object) || PyListObject::is(object))
@@ -577,6 +576,11 @@ static JSValue jsViewThis(CallFrame* callFrame)
             value = object->getPrototypeDirect();
     }
     return self;
+}
+
+static JSValue jsViewThis(CallFrame* callFrame)
+{
+    return objectOfPythonWithin(callFrame->thisValue());
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsViewToString, (JSGlobalObject* globalObject, CallFrame* callFrame))

@@ -1760,6 +1760,11 @@ static void typeSetBases(JSGlobalObject* globalObject, JSValue self, JSValue val
     PyType* type = PyType::from(self);
     if (failed(scope, checkMutable(globalObject, type, value, "__bases__"_s)))
         return;
+    // Its prototype, which inherits from that of the class of JS's and says what its instances are, is made once: see PyPrototypeView.
+    if (type->has(TypeFlag::AttributesAreProperties)) {
+        raiseTypeError(globalObject, scope, "__bases__ assignment: the bases of '"_s, type->nameInMessages(), "', a class of objects of JavaScript, cannot be changed"_s);
+        return;
+    }
     PyTuple* bases = PyTuple::tryFrom(value);
     if (!bases) {
         raiseTypeError(globalObject, scope, "can only assign tuple to "_s, type->name(), ".__bases__, not "_s, typeName(globalObject, value));

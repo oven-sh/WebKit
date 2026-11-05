@@ -121,6 +121,10 @@ void getOwnPropertyNamesOfListSubclass(JSObject*, PropertyNameArrayBuilder&);
 // the structures need the prototypes.
 void initializeJSView(JSGlobalObject*);
 
+// What toString() and the like, which all objects of Python's inherit, are about: `self`, or the object of Python's that it is a Proxy of or
+// inherits from. `self` itself, if there is none.
+JSValue objectOfPythonWithin(JSValue self);
+
 // ---- Calls from JS ----
 
 // Keyword arguments are an object to JS. f(1, a=2) in Python calls a function of JS with (1, { a: 2 }), and f(1, kwargs({ a: 2 })) in JS

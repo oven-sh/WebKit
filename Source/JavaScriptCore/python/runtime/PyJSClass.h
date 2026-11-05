@@ -64,6 +64,8 @@ public:
 
     PyType* type() const { return m_type.get(); }
     bool isSuper() const { return m_isSuper; }
+    // Whether an object of JS's that has this for its prototype is an instance of the type.
+    bool makesInstanceOf(JSObject*);
 
     static bool getOwnPropertySlot(JSObject*, JSGlobalObject*, PropertyName, PropertySlot&);
     static bool getOwnPropertySlotByIndex(JSObject*, JSGlobalObject*, unsigned, PropertySlot&);
@@ -75,8 +77,13 @@ public:
 private:
     PyPrototypeView(VM&, Structure*);
 
+    // What the instances of the type are, if it derives from a class of JS's: by which of JSMap, JSPromise and JSTypedArray it derives from, whose
+    // methods count on it. It is found out when it is first asked for and the type has its MRO, and stays: typeSetBases() leaves such types alone.
+    enum class Instances : uint8_t { Unknown, NotOfJS, Objects, Maps, Promises, TypedArrays };
+
     WriteBarrier<PyType> m_type;
     bool m_isSuper { false };
+    Instances m_instances { Instances::Unknown };
 };
 
 // What `super` is in the constructor and in the static methods of a type that is written in JS: the prototype of the constructor.

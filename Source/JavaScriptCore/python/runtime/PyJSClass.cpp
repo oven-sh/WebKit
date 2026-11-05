@@ -184,6 +184,9 @@ static constexpr TypeDef jsStaticAccessorTypeDef { "_js.JSStaticAccessor"_s, { T
 
 // ---- Type.prototype ----
 
+PyType* jsTypedArrayType(Runtime&); // PyJSBuffers.cpp
+PyType* jsMapType(Runtime&); // PyInterop.cpp
+
 const ClassInfo PyPrototypeView::s_info = { "PyPrototypeView"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(PyPrototypeView) };
 
 PyPrototypeView::PyPrototypeView(VM& vm, Structure* structure)
@@ -214,13 +217,65 @@ JSObject* prototypeForJS(JSGlobalObject* globalObject, PyType* type)
     return PyPrototypeView::of(globalObject, type);
 }
 
+// The first in the MRO. Null: the type derives from none, or has no MRO yet.
+static PyType* firstClassOfJS(PyType* type)
+{
+    PyTuple* mro = type->mro();
+    for (unsigned i = 0; mro && i < mro->length(); ++i) {
+        if (PyType* next = PyType::from(mro->at(i)); prototypeOfClassOfJS(next))
+            return next;
+    }
+    return nullptr;
+}
+
+bool PyPrototypeView::makesInstanceOf(JSObject* object)
+{
+    if (m_instances == Instances::Unknown) [[unlikely]] {
+        PyType* type = m_type.get();
+        if (!type->mro())
+            return false;
+        Runtime& rt = runtime(realm());
+        if (!firstClassOfJS(type))
+            m_instances = Instances::NotOfJS;
+        else if (type->isSubtypeOf(jsMapType(rt)))
+            m_instances = Instances::Maps;
+        else if (type->isSubtypeOf(rt.jsPromiseType()))
+            m_instances = Instances::Promises;
+        else
+            m_instances = type->isSubtypeOf(jsTypedArrayType(rt)) ? Instances::TypedArrays : Instances::Objects;
+    }
+    // As in Runtime::typeOfSlow(): what the object is without a class of Python's.
+    switch (object->type()) {
+    case JSMapType:
+        return m_instances == Instances::Maps || m_instances == Instances::Objects;
+    case JSPromiseType:
+        return m_instances == Instances::Promises || m_instances == Instances::Objects;
+    case ArrayType:
+    case DerivedArrayType:
+    case JSFunctionType:
+    case InternalFunctionType:
+    case JSGeneratorType:
+    case JSArrayIteratorType:
+    case JSMapIteratorType:
+    case JSSetIteratorType:
+    case JSStringIteratorType:
+    case JSRegExpStringIteratorType:
+    case JSIteratorHelperType:
+    case JSWrapForValidIteratorType:
+        return false;
+    default:
+        return m_instances == Instances::Objects || (m_instances == Instances::TypedArrays && isTypedArrayType(object->type()));
+    }
+}
+
 PyType* typeByPrototype(JSObject* object)
 {
     JSValue prototype = object->getPrototypeDirect();
     if (!prototype.isCell())
         return nullptr;
     auto* view = dynamicDowncast<PyPrototypeView>(prototype.asCell());
-    return view && !view->isSuper() ? view->type() : nullptr;
+    // (Object.create(list.prototype) is no list, and Object.create(Derived.prototype) no Uint8Array.)
+    return view && view->makesInstanceOf(object) ? view->type() : nullptr;
 }
 
 PyPrototypeView* PyPrototypeView::of(JSGlobalObject* globalObject, PyType* type)
@@ -256,6 +311,7 @@ PyPrototypeView* PyPrototypeView::createSuper(JSGlobalObject* globalObject, PyTy
     view->finishCreation(vm);
     view->m_type.set(vm, view, type);
     view->m_isSuper = true;
+    view->m_instances = Instances::NotOfJS;
     view->didBecomePrototype(vm);
     return view;
 }
@@ -772,6 +828,15 @@ static JSValue classOfJSNew(JSGlobalObject* globalObject, JSValue constructor, c
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
+    if (PyType* cls = args.isEmpty() ? nullptr : PyType::tryFrom(args[0])) {
+        PyType* type = typeForClassOfJS(globalObject, asObject(constructor));
+        RETURN_IF_EXCEPTION(scope, { });
+        if (!cls->isSubtypeOf(type))
+            return raiseTypeError(globalObject, scope, type->name(), ".__new__("_s, cls->name(), "): "_s, cls->name(), " is not a subtype of "_s, type->name());
+        // The constructor of the class of JS's that comes first calls the others.
+        if (PyType* first = firstClassOfJS(cls); first != type)
+            return raiseTypeError(globalObject, scope, type->name(), ".__new__("_s, cls->name(), ") is not safe"_s, first ? ", use "_s : ""_s, first ? first->name() : String(), first ? ".__new__()"_s : ""_s);
+    }
     JSValue object = jsClassNew(globalObject, constructor, args);
     RETURN_IF_EXCEPTION(scope, { });
     if (object.isObject() && !isInitOfClassOfJS(PyType::from(args[0])->lookup(Special::Init)))
@@ -803,26 +868,25 @@ static JSValue classOfJSInit(JSGlobalObject* globalObject, JSValue self, const C
 static constexpr NativeDef classOfJSNewDef = PY_FUNCTION("__new__", classOfJSNew, "($self, *args, **kwargs)");
 static constexpr NativeDef classOfJSInitDef = PY_METHOD("__init__", classOfJSInit, "($self, *args, **kwargs)");
 
+// A hidden field of the type that stands for the class. (Its __new__ knows the constructor too, but can be deleted.)
+static constexpr unsigned constructorField = 0;
+
 static JSObject* constructorOfClassOfJS(PyType* type)
 {
     ASSERT(prototypeOfClassOfJS(type));
-    return asObject(PyNativeFunction::tryFrom(type->dict()->get(runtime(type->realm()).name(Special::New)))->self());
+    return asObject(hiddenField(type->realm(), type, constructorField));
 }
 
 JSValue staticMemberOfClassOfJS(JSGlobalObject* globalObject, PyType* type, JSString* name)
 {
-    PyTuple* mro = type->mro();
-    for (unsigned i = 0; mro && i < mro->length(); ++i) {
-        PyType* next = PyType::from(mro->at(i));
-        if (!prototypeOfClassOfJS(next))
-            continue;
-        // Every function has these, and the class has its own.
-        String text = stringOf(name);
-        if (text == "name"_s || text == "length"_s || text == "prototype"_s)
-            return { };
-        return attributeFromPrototypeOfJS(globalObject, constructorOfClassOfJS(next), type, name);
-    }
-    return { };
+    PyType* first = firstClassOfJS(type);
+    if (!first)
+        return { };
+    // Every function has these, and the class has its own.
+    String text = stringOf(name);
+    if (text == "name"_s || text == "length"_s || text == "prototype"_s)
+        return { };
+    return attributeFromPrototypeOfJS(globalObject, constructorOfClassOfJS(first), type, name);
 }
 
 // To JS a class inherits from the class it extends: that is where it finds Symbol.species, which has no name in Python.
@@ -852,9 +916,6 @@ static JSValue jsClassInitSubclass(JSGlobalObject* globalObject, JSValue self, c
     return jsUndefined();
 }
 static constexpr NativeDef jsClassInitSubclassDef = PY_FUNCTION("__init_subclass__", jsClassInitSubclass, "($self, *args, **kwargs)");
-
-PyType* jsTypedArrayType(Runtime&); // PyJSBuffers.cpp
-PyType* jsMapType(Runtime&); // PyInterop.cpp
 
 PyType* typeForClassOfJS(JSGlobalObject* globalObject, JSObject* constructor)
 {
@@ -934,6 +995,7 @@ PyType* typeForClassOfJS(JSGlobalObject* globalObject, JSObject* constructor)
     // An instance is made by one class of JS.
     type->setSolidBase(vm, type);
     type->setJSPrototype(vm, asObject(prototype));
+    setHiddenField(globalObject, type, constructorField, constructor);
     types->set(vm, constructor, type);
     return type;
 }

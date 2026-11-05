@@ -1526,16 +1526,20 @@ static JSValue jsObjectStr(JSGlobalObject* globalObject, JSValue self)
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (failed(scope, ensureMainThreadForJS(globalObject)))
         return { };
-    // An object without a prototype, or the namespace of a module, has nothing by which JS could make a string of it.
+    // An object without a prototype, or the namespace of a module, has nothing by which JS could make a string of it. Nor has one that inherits
+    // it from where the objects of Python's do, with nothing of Python's in it (Object.create(Class.prototype)): that is str(this).
     bool canConvert = false;
     for (auto& key : { vm.propertyNames->toPrimitiveSymbol, vm.propertyNames->toString, vm.propertyNames->valueOf }) {
-        canConvert = asObject(self)->hasProperty(globalObject, key);
+        PropertySlot slot(self, PropertySlot::InternalMethodType::HasProperty);
+        bool found = asObject(self)->getPropertySlot(globalObject, key, slot);
         RETURN_IF_EXCEPTION(scope, { });
-        if (canConvert)
-            break;
+        if (!found)
+            continue;
+        canConvert = slot.slotBase() != runtime(globalObject).jsViewObject(JSViewObject::ObjectPrototype) || objectOfPythonWithin(self) != self;
+        break;
     }
     if (!canConvert)
-        RELEASE_AND_RETURN(scope, jsObjectRepr(globalObject, self));
+        RELEASE_AND_RETURN(scope, repr(globalObject, self));
     RELEASE_AND_RETURN(scope, self.toString(globalObject));
 }
 
