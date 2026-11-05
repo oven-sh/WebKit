@@ -646,7 +646,7 @@ static JSValue moduleDlsym(JSGlobalObject* globalObject, JSValue handleValue, JS
         return { };
     if (!isStr(nameValue))
         return raiseTypeError(globalObject, scope, "dlsym() argument 2 must be str, not "_s, typeNameOfArgument(globalObject, nameValue));
-    if (hasEmbeddedNull(globalObject, strValue(nameValue)))
+    if (cannotBeCString(globalObject, strValue(nameValue)))
         return { };
     RETURN_IF_EXCEPTION(scope, { });
     audit(globalObject, "ctypes.dlsym/handle"_s, PyTuple::create(globalObject, { handleValue, nameValue }));

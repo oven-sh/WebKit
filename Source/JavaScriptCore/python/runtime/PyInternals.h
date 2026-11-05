@@ -255,8 +255,9 @@ JSString* formatInt(JSGlobalObject*, JSValue self, JSString* spec);
 JSString* formatFloat(JSGlobalObject*, JSValue self, JSString* spec);
 JSString* formatComplex(JSGlobalObject*, JSValue self, JSString* spec);
 JSString* formatStr(JSGlobalObject*, JSValue self, JSString* spec);
-// For an argument that CPython takes as a C string. True: there is a null character in it, and a ValueError has been raised.
-bool hasEmbeddedNull(JSGlobalObject*, JSString*);
+// For an argument that CPython takes as a C string, in UTF-8. True: there is a lone surrogate in it (UnicodeEncodeError) or a null
+// character (ValueError), and that has been raised.
+bool cannotBeCString(JSGlobalObject*, JSString*);
 // The module _string.
 JSValue formatterParser(JSGlobalObject*, JSValue formatString);
 JSValue formatterFieldNameSplit(JSGlobalObject*, JSValue fieldName);
@@ -302,6 +303,7 @@ JSValue strFormatMap(JSGlobalObject*, JSValue self, JSValue mapping);
 JSString* strJoin(JSGlobalObject*, JSString* separator, JSValue iterable);
 // str.encode, bytes.decode. A null encoding or handler is the default.
 JSValue strEncode(JSGlobalObject*, JSString*, JSString* encoding, JSString* errors);
+// Whatever keeps the bytes from being had is a TypeError.
 JSValue bytesDecode(JSGlobalObject*, JSValue bytesLike, JSString* encoding, JSString* errors);
 
 // bytes(object), for anything but a str or an int.

@@ -217,7 +217,7 @@ static JSValue typeInDll(JSGlobalObject* globalObject, JSValue self, JSValue dll
     if (!isStr(nameValue))
         return raiseTypeError(globalObject, scope, "in_dll() argument 2 must be str, not "_s, typeNameOfArgument(globalObject, nameValue));
     JSString* name = strValue(nameValue);
-    if (hasEmbeddedNull(globalObject, name))
+    if (cannotBeCString(globalObject, name))
         return { };
     RETURN_IF_EXCEPTION(scope, { });
     audit(globalObject, "ctypes.dlsym"_s, dll, name);

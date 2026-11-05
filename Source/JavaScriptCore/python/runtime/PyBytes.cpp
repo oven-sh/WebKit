@@ -541,7 +541,7 @@ static bool bytesOptionalStr(JSGlobalObject* globalObject, JSValue value, ASCIIL
         return false;
     }
     result = strValue(value);
-    return !hasEmbeddedNull(globalObject, result);
+    return !cannotBeCString(globalObject, result);
 }
 
 // As PyNumber_Check().

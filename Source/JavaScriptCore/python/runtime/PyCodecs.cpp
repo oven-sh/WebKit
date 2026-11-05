@@ -2640,10 +2640,20 @@ JSValue bytesDecode(JSGlobalObject* globalObject, JSValue bytesLike, JSString* e
     String errors;
     if (failed(scope, codecNameText(globalObject, encodingName, encoding)) || failed(scope, codecNameText(globalObject, errorsName, errors)))
         return { };
+    // A bytes object, of whatever class, is not asked for its buffer.
+    EnsureStillAliveScope keepsBytes(bytesLike);
     CodecBuffer buffer;
-    if (failed(scope, buffer.initialize(globalObject, bytesLike, false)))
-        return { };
-    auto bytes = buffer.span();
+    std::span<const uint8_t> bytes;
+    if (PyBytes* object = PyBytes::tryFrom(bytesLike))
+        bytes = object->span();
+    else {
+        if (failed(scope, buffer.initialize(globalObject, bytesLike, false))) {
+            if (takePendingException(globalObject))
+                raiseTypeError(globalObject, scope, "decoding to str: need a bytes-like object, "_s, typeName(globalObject, bytesLike), " found"_s);
+            return { };
+        }
+        bytes = buffer.span();
+    }
     if (failed(scope, codecCheckNamesInDevelopmentMode(globalObject, encoding, errors)))
         return { };
     // Whatever the encoding, even one there is no codec for.
@@ -2678,7 +2688,7 @@ JSValue bytesDecode(JSGlobalObject* globalObject, JSValue bytesLike, JSString* e
     JSValue codec = codecLookupTextEncoding(globalObject, encoding, "codecs.decode()"_s);
     RETURN_IF_EXCEPTION(scope, { });
     // FIXME: CPython passes a memoryview of the bytes.
-    JSValue object = PyBytes::is(bytesLike) ? bytesLike : JSValue(PyBytes::create(globalObject, bytes));
+    JSValue object = typeOf(globalObject, bytesLike) == runtime(globalObject).bytesType() ? bytesLike : JSValue(PyBytes::create(globalObject, bytes));
     JSValue result = codecCallCodec(globalObject, PyTuple::from(codec)->at(1), object, encoding, errors, false);
     RETURN_IF_EXCEPTION(scope, { });
     if (!isStr(result))

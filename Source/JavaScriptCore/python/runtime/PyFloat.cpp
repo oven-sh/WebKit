@@ -1149,7 +1149,7 @@ static JSValue floatGetFormat(JSGlobalObject* globalObject, JSValue, JSValue kin
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (!isStr(kind))
         return raiseTypeError(globalObject, scope, "__getformat__() argument must be str, not "_s, typeNameOfArgument(globalObject, kind));
-    if (failed(scope, !hasEmbeddedNull(globalObject, strValue(kind))))
+    if (failed(scope, !cannotBeCString(globalObject, strValue(kind))))
         return { };
     String text = strValue(kind)->value(globalObject);
     RETURN_IF_EXCEPTION(scope, { });

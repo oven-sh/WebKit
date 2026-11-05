@@ -2061,10 +2061,14 @@ static JSValue strMakeTrans(JSGlobalObject* globalObject, JSValue x, JSValue y, 
 // ---- encode, str() ----
 
 // False: a TypeError, "f() argument 'name' must be str, not int". Absent: null.
-bool hasEmbeddedNull(JSGlobalObject* globalObject, JSString* string)
+bool cannotBeCString(JSGlobalObject* globalObject, JSString* string)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
+    if (!string->is8Bit()) [[unlikely]] {
+        strEncode(globalObject, string, nullptr, nullptr);
+        RETURN_IF_EXCEPTION(scope, true);
+    }
     auto view = string->view(globalObject);
     RETURN_IF_EXCEPTION(scope, true);
     if (view->find(static_cast<char16_t>(0)) == notFound)
@@ -2078,14 +2082,14 @@ static bool optionalStr(JSGlobalObject* globalObject, JSValue value, ASCIILitera
     result = nullptr;
     if (!value)
         return true;
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     if (!isStr(value)) {
-        VM& vm = getVM(globalObject);
-        auto scope = DECLARE_THROW_SCOPE(vm);
         raiseTypeError(globalObject, scope, function, "() argument '"_s, name, "' must be str, not "_s, isNone(value) ? "None"_str : typeName(globalObject, value));
         return false;
     }
     result = strValue(value);
-    return !hasEmbeddedNull(globalObject, result);
+    RELEASE_AND_RETURN(scope, !cannotBeCString(globalObject, result));
 }
 
 static JSValue strEncodeMethod(JSGlobalObject* globalObject, JSValue self, JSValue encodingValue, JSValue errorsValue)
@@ -2147,10 +2151,11 @@ static JSValue strNew(JSGlobalObject* globalObject, JSValue cls, const CallArgs&
     } else {
         if (isStr(values[0]))
             return raiseTypeError(globalObject, scope, "decoding str is not supported"_s);
-        if (!isBytesLike(values[0]))
-            return raiseTypeError(globalObject, scope, "decoding to str: need a bytes-like object, "_s, typeName(globalObject, values[0]), " found"_s);
         JSValue decoded = bytesDecode(globalObject, values[0], encoding, errors);
         RETURN_IF_EXCEPTION(scope, { });
+        // A codec may return an instance of a class derived from str.
+        if (type == rt.strType())
+            return decoded;
         result = strValue(decoded);
     }
     if (type == rt.strType())
