@@ -394,14 +394,15 @@ void Threads::sendInterrupt(ThreadState& thread)
 
 void Threads::interruptAgainAfter(Seconds pause, ThreadState& thread)
 {
-    // Twice as long each time. A thread that has the signal blocked, or whose system calls begin again by themselves
-    // (signal.siginterrupt()), is soon left alone, and one that was kept from its system call for long is reached all the same.
+    // Twice as long each time, up to a second. A thread that has the signal blocked, or whose system calls begin again by themselves
+    // (signal.siginterrupt()), gets one a second, which costs nothing to speak of, and one that was kept from its system call for
+    // long is reached within a second of getting there, not after as long again.
     VMTraps::queue().dispatchAfter(pause, [protectedThis = Ref { *this }, thread = Ref { thread }, pause, time = thread.timesInterrupted] {
         Locker locker { protectedThis->m_interruptLock };
         if (!thread->isBeingInterrupted.load() || thread->timesInterrupted != time)
             return;
         protectedThis->sendInterrupt(thread.get());
-        protectedThis->interruptAgainAfter(2 * pause, thread.get());
+        protectedThis->interruptAgainAfter(std::min(2 * pause, 1_s), thread.get());
     });
 }
 
