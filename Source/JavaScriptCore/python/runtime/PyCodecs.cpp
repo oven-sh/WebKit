@@ -21,6 +21,7 @@
 #include "PyUnicode.h"
 #include <bit>
 #include <unicode/uchar.h>
+#include <wtf/SIMDUTF.h>
 #include <wtf/text/ASCIIFastPath.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -1337,6 +1338,36 @@ static CodecUTF8Status codecScanUTF8(std::span<const uint8_t> s, char32_t& chara
     return CodecUTF8Status::InvalidStart;
 }
 
+// Null: the bytes are not well-formed UTF-8, or there is no room for the text. (String(std::span<const char8_t>) is for text that is
+// not long: it ends the process where there is no room, and from 2**30 bytes on wherever not all of them are ASCII.)
+static String textOfWellFormedUTF8(std::span<const uint8_t> input, bool& hasRoom)
+{
+    if (input.size() <= 1024)
+        return String { byteCast<char8_t>(input) };
+    if (charactersAreAllASCII(input)) {
+        std::span<Latin1Character> characters;
+        RefPtr text = StringImpl::tryCreateUninitialized(input.size(), characters);
+        if (text) [[likely]]
+            memcpySpan(characters, input);
+        hasRoom = text;
+        return text;
+    }
+    // No text has more units than bytes. To count them first would be to count on it that nobody writes to the bytes meanwhile.
+    std::span<char16_t> units;
+    RefPtr text = StringImpl::tryCreateUninitialized(input.size(), units);
+    if (!text) [[unlikely]] {
+        hasRoom = false;
+        return { };
+    }
+    size_t length = simdutf::convert_utf8_to_utf16(byteCast<char>(input.data()), input.size(), units.data());
+    if (!length)
+        return { };
+    char16_t* moved;
+    auto shortened = StringImpl::tryReallocate(text.releaseNonNull(), length, moved);
+    hasRoom = shortened.has_value();
+    return hasRoom ? String { WTF::move(*shortened) } : String { };
+}
+
 JSValue codecDecodeUTF8(JSGlobalObject* globalObject, std::span<const uint8_t> input, const String& errors, size_t* consumed)
 {
     VM& vm = getVM(globalObject);
@@ -1349,11 +1380,14 @@ JSValue codecDecodeUTF8(JSGlobalObject* globalObject, std::span<const uint8_t> i
     if (input.size() > String::MaxLength)
         RELEASE_AND_RETURN(scope, codecRaiseMemoryError(globalObject));
     // Most text is well formed.
-    if (String text { byteCast<char8_t>(input) }; !text.isNull()) {
+    bool hasRoom = true;
+    if (String text = textOfWellFormedUTF8(input, hasRoom); !text.isNull()) {
         if (consumed)
             *consumed = input.size();
         return makeStr(vm, text);
     }
+    if (!hasRoom) [[unlikely]]
+        RELEASE_AND_RETURN(scope, codecRaiseMemoryError(globalObject));
 
     CodecDecoder decoder(globalObject, input, errors);
     StringBuilder& out = decoder.out;
