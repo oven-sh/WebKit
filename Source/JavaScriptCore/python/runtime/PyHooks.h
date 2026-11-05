@@ -35,8 +35,8 @@ void throwUnboundLocal(JSGlobalObject*, CodeBlock*, VirtualRegister);
 // is being thrown now. `frameBefore`: the frame with a code block that the exception left last, or the one it was thrown in.
 JSValue addTracebackEntry(JSGlobalObject*, JSValue exception, CallFrame*, BytecodeIndex, CallFrame* frameBefore);
 JSValue exceptionStaysOrLeaves(JSGlobalObject*, JSValue exception, CallFrame*, BytecodeIndex, bool isCaught);
-// The same for a call of a function of JS, where there is a Python to tell. (The frame may be that of a caller which the call has
-// been made part of.) `throwsAgain`: what catches it there is no `catch` of the program's. It runs no code.
+// The same for a call of a function of JS, where there is a Python to tell. (The frame is only compared: of a call that has been made
+// part of its caller, it is where the frame would be.) `throwsAgain`: what catches it there is no `catch` of the program's. It runs no code.
 // `hasNoTraceback` belongs to one unwind, which begins with false: this sets it when it finds a value that is none of Python's and has not
 // been through code of Python's. Nothing is noted about where such a value goes, and only a frame of Python's changes what it is.
 void addTracebackEntryForJS(JSGlobalObject*, JSValue thrown, CallFrame*, CodeBlock*, BytecodeIndex, bool throwsAgain, bool& hasNoTraceback);

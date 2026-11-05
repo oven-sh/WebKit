@@ -1381,7 +1381,9 @@ public:
         for (InlineCallFrame* inlineCallFrame = visitor->inlineCallFrame(); inlineCallFrame;) {
             CodeBlock* codeBlock = inlineCallFrame->baselineCodeBlock.get();
             HandlerInfo* handler = codeBlock->handlerForBytecodeIndex(index);
-            Python::addTracebackEntryForJS(globalObject, m_thrownValue, visitor->callFrame(), codeBlock, index, throwsAgain(handler), m_thrownValueHasNoTraceback);
+            // Where the call has its frame once the optimized code has been left, as it is when something is caught here.
+            auto* frameOfCall = reinterpret_cast<CallFrame*>(visitor->callFrame()->registers() + inlineCallFrame->stackOffset);
+            Python::addTracebackEntryForJS(globalObject, m_thrownValue, frameOfCall, codeBlock, index, throwsAgain(handler), m_thrownValueHasNoTraceback);
             if (handler)
                 return false;
             CodeOrigin* caller = inlineCallFrame->getCallerSkippingTailCalls();

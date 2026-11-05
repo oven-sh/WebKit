@@ -1696,6 +1696,8 @@ void addTracebackEntryForJS(JSGlobalObject* globalObject, JSValue thrown, CallFr
     }
     if (!isShownCodeOfJS(codeBlock))
         return;
+    // Optimized code that catches goes on as baseline code, so what throws again there is another code block of the same function.
+    codeBlock = codeBlock->baselineAlternative();
     bool isThrownAgain = caught.callFrame == callFrame && caught.codeBlock == codeBlock && caught.thrown == JSValue::encode(thrown);
     caught = { };
     if (isThrownAgain) {
