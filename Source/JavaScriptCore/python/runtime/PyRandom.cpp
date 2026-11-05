@@ -233,7 +233,8 @@ static bool randomSeedWith(JSGlobalObject* globalObject, PyRecord* generator, JS
         key.append(static_cast<uint32_t>(word >> 32));
     };
     if (isInt(seed)) {
-        JSValue value = intValue(seed);
+        // A BigInt of JS's may be small, and 0n has no digits.
+        JSValue value = normalizeInt(intValue(seed));
         if (isSmallInt(value)) {
             int64_t number = smallIntValue(value);
             appendWord(number < 0 ? -number : number);
