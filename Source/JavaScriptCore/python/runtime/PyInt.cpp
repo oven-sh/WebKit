@@ -729,7 +729,7 @@ static JSValue intAbsMethod(JSGlobalObject* globalObject, JSValue self) { return
 static JSValue intInvertMethod(JSGlobalObject* globalObject, JSValue self) { return intInvert(globalObject, intValue(self)); }
 static JSValue intIdentity(JSGlobalObject*, JSValue self) { return sameInt(intValue(self)); }
 static JSValue intBoolMethod(JSGlobalObject*, JSValue self) { return jsBoolean(!!intSign(intValue(self))); }
-static JSValue intHashMethod(JSGlobalObject* globalObject, JSValue self) { return makeInt(globalObject, hashOfInt(intValue(self))); }
+static int64_t intHashMethod(JSGlobalObject*, JSValue self) { return hashOfInt(intValue(self)); }
 
 static JSValue intFloatMethod(JSGlobalObject* globalObject, JSValue self)
 {
@@ -1160,7 +1160,7 @@ static JSValue intNew(JSGlobalObject* globalObject, JSValue cls, const CallArgs&
 static constexpr NativeDef intMethods[] = {
     PY_NEW(intNew, "($type, *args, **kwargs)"),
     PY_SLOT("__repr__", intReprMethod, "($self, /)"),
-    PY_SLOT("__hash__", intHashMethod, "($self, /)"),
+    PY_HASH(intHashMethod),
     PY_SLOT("__bool__", intBoolMethod, "($self, /)"),
     PY_SLOT("__eq__", intCompareMethod<CompareOperator::Eq>, "($self, value, /)"),
     PY_SLOT("__ne__", intCompareMethod<CompareOperator::NotEq>, "($self, value, /)"),

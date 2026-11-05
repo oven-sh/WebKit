@@ -39,6 +39,7 @@ JSValue objectInit(JSGlobalObject*, JSValue self, const CallArgs&);
 JSValue objectRepr(JSGlobalObject*, JSValue self);
 JSValue objectStr(JSGlobalObject*, JSValue self);
 JSValue objectHash(JSGlobalObject*, JSValue self);
+int64_t identityHash(JSGlobalObject*, JSValue self); // The same, not yet an int.
 JSValue objectEq(JSGlobalObject*, JSValue self, JSValue other);
 JSValue typeGetAttribute(JSGlobalObject*, JSValue self, JSValue name);
 // For pickle and copy (PyReduce.cpp).
@@ -304,6 +305,7 @@ void dictMergeForCall(JSGlobalObject*, PyDict*, JSValue mapping, JSValue functio
 JSValue dictSubscript(JSGlobalObject*, PyDict*, JSValue key);
 JSValue makeMappingProxy(JSGlobalObject*, JSValue mapping);
 void setUpdate(JSGlobalObject*, JSValue set, JSValue iterable);
+bool setContains(JSGlobalObject*, PySet*, JSValue key); // key in set. (False if it has thrown.)
 // The __getitem__ of these types. That of bytes is bytearray's too.
 JSValue listGetItem(JSGlobalObject*, JSValue self, JSValue key);
 JSValue tupleGetItem(JSGlobalObject*, JSValue self, JSValue key);

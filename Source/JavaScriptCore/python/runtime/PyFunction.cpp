@@ -1056,16 +1056,15 @@ static JSValue methodEquality(JSGlobalObject* globalObject, JSValue self, JSValu
     return jsBoolean(equal == wantEqual);
 }
 
-static JSValue methodHash(JSGlobalObject* globalObject, JSValue self)
+static int64_t methodHash(JSGlobalObject* globalObject, JSValue self)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* method = PyMethod::from(self);
-    JSValue selfHash = objectHash(globalObject, method->self());
     int64_t functionHash = hash(globalObject, method->function());
-    RETURN_IF_EXCEPTION(scope, { });
-    int64_t result = tryInt64(selfHash).value_or(0) ^ functionHash;
-    RELEASE_AND_RETURN(scope, makeInt(globalObject, result == -1 ? static_cast<int64_t>(-2) : result));
+    RETURN_IF_EXCEPTION(scope, -1);
+    int64_t result = identityHash(globalObject, method->self()) ^ functionHash;
+    return result == -1 ? -2 : result;
 }
 
 // What the method itself does not have is looked for on the function.
@@ -1119,7 +1118,7 @@ static constexpr NativeDef methodMethods[] = {
     PY_SLOT("__repr__", methodRepr, "($self, /)"),
     PY_SLOT("__eq__", methodEquality<true>, "($self, value, /)"),
     PY_SLOT("__ne__", methodEquality<false>, "($self, value, /)"),
-    PY_SLOT("__hash__", methodHash, "($self, /)"),
+    PY_HASH(methodHash),
     PY_SLOT("__getattribute__", methodGetAttribute, "($self, name, /)"),
     PY_METHOD("__reduce__", methodReduce, "($self, /)"),
 };

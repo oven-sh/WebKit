@@ -6,6 +6,7 @@
 #pragma once
 
 #include "PyAbstract.h"
+#include "PyHash.h"
 #include "PyInternals.h"
 #include "PyNumbers.h"
 #include "PyObject.h"
@@ -513,22 +514,35 @@ JSValue raiseInvalidIsoFormat(JSGlobalObject*, JSValue string);
 
 // ---- Hashes ----
 //
-// They fit a small int, so that __hash__ allocates nothing.
+// CPython's: a timedelta is hashed as the tuple of its fields; a date, a time or a datetime that is naive as the bytes that a pickle
+// has for it, without the fold; one that is aware as the timedelta from a fixed moment to it in UTC.
 
-ALWAYS_INLINE int64_t mixHash(uint64_t value)
-{
-    value ^= value >> 33;
-    value *= 0xff51afd7ed558ccdull;
-    value ^= value >> 33;
-    value *= 0xc4ceb9fe1a85ec53ull;
-    value ^= value >> 33;
-    return static_cast<int64_t>(value >> 12);
-}
 ALWAYS_INLINE int64_t hashOfDelta(int64_t days, int seconds, int microseconds)
 {
-    return mixHash(static_cast<uint64_t>(days) * 0x9e3779b97f4a7c15ull + ((static_cast<uint64_t>(seconds) << 20) | static_cast<uint64_t>(microseconds)));
+    TupleHasher hasher;
+    hasher.add(days == -1 ? -2 : days);
+    hasher.add(seconds);
+    hasher.add(microseconds);
+    return hasher.finish();
 }
 ALWAYS_INLINE int64_t hashOfDelta(const PyTimeDelta* delta) { return hashOfDelta(delta->days(), delta->seconds(), delta->microseconds()); }
+// The bytes of a pickle, without the fold.
+ALWAYS_INLINE void writeDateBytes(uint64_t packed, uint8_t* bytes)
+{
+    bytes[0] = static_cast<uint8_t>(Packed::year(packed) >> 8);
+    bytes[1] = static_cast<uint8_t>(Packed::year(packed));
+    bytes[2] = static_cast<uint8_t>(Packed::month(packed));
+    bytes[3] = static_cast<uint8_t>(Packed::day(packed));
+}
+ALWAYS_INLINE void writeTimeBytes(uint64_t packed, uint8_t* bytes)
+{
+    bytes[0] = static_cast<uint8_t>(Packed::hour(packed));
+    bytes[1] = static_cast<uint8_t>(Packed::minute(packed));
+    bytes[2] = static_cast<uint8_t>(Packed::second(packed));
+    bytes[3] = static_cast<uint8_t>(Packed::microsecond(packed) >> 16);
+    bytes[4] = static_cast<uint8_t>(Packed::microsecond(packed) >> 8);
+    bytes[5] = static_cast<uint8_t>(Packed::microsecond(packed));
+}
 
 // ---- Comparisons ----
 

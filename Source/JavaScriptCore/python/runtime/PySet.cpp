@@ -275,8 +275,10 @@ bool PySet::remove(JSGlobalObject* globalObject, JSValue key, int64_t hash)
     return true;
 }
 
-static int64_t hashElement(JSGlobalObject* globalObject, JSValue key)
+static ALWAYS_INLINE int64_t hashElement(JSGlobalObject* globalObject, JSValue key)
 {
+    if (key.isString() && !asString(key)->isRope()) [[likely]]
+        return hashOfString(asString(key)->tryGetValueImpl());
     return hashForContainer(globalObject, key, "a set element"_s);
 }
 
@@ -471,6 +473,9 @@ static void updateSet(JSGlobalObject* globalObject, PySet* set, JSValue other)
         JSValue key, value;
         int64_t hash;
         for (unsigned position = 0; dict->next(position, key, value, hash);) {
+            // (The dict does not keep that of a str.)
+            if (key.isString())
+                hash = hashOfString(asString(key)->tryGetValueImpl());
             set->add(globalObject, key, hash);
             RETURN_IF_EXCEPTION(scope, void());
         }
@@ -628,6 +633,9 @@ static void symmetricDifferenceUpdate(JSGlobalObject* globalObject, PySet* set, 
         JSValue key, value;
         int64_t hash;
         for (unsigned position = 0; dict->next(position, key, value, hash);) {
+            // (The dict does not keep that of a str.)
+            if (key.isString())
+                hash = hashOfString(asString(key)->tryGetValueImpl());
             bool removed = set->remove(globalObject, key, hash);
             RETURN_IF_EXCEPTION(scope, void());
             if (!removed) {
@@ -786,23 +794,32 @@ static JSValue setIter(JSGlobalObject* globalObject, JSValue self)
     return iterator;
 }
 
-static JSValue setContains(JSGlobalObject* globalObject, JSValue self, JSValue key)
+bool setContains(JSGlobalObject* globalObject, PySet* set, JSValue key)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    int64_t hash;
+    if (key.isString() && !asString(key)->isRope()) [[likely]]
+        hash = hashOfString(asString(key)->tryGetValueImpl());
+    else if (failed(scope, hashForLookup(globalObject, key, hash)))
+        return false;
+    RELEASE_AND_RETURN(scope, set->contains(globalObject, key, hash));
+}
+
+static JSValue setContainsMethod(JSGlobalObject* globalObject, JSValue self, JSValue key)
 {
     PY_SET_PROLOGUE();
-    int64_t hash;
-    if (failed(scope, hashForLookup(globalObject, key, hash)))
-        return { };
-    bool found = set->contains(globalObject, key, hash);
+    bool found = setContains(globalObject, set, key);
     RETURN_IF_EXCEPTION(scope, { });
     return jsBoolean(found);
 }
 
-static JSValue frozensetHash(JSGlobalObject* globalObject, JSValue self)
+static int64_t frozensetHash(JSGlobalObject*, JSValue self)
 {
     PySet* set = PySet::from(self);
     if (!set->hasCachedHash())
         set->setCachedHash(hashOfSet(set));
-    return makeInt(globalObject, set->cachedHash());
+    return set->cachedHash();
 }
 
 template<CompareOperator op>
@@ -1133,7 +1150,7 @@ static JSValue setSizeOf(JSGlobalObject* globalObject, JSValue self)
     PY_SLOT("__repr__", setRepr, "($self, /)"), \
     PY_SLOT("__len__", setLen, "($self, /)"), \
     PY_SLOT("__iter__", setIter, "($self, /)"), \
-    PY_METHOD("__contains__", setContains, "($self, object, /)"), \
+    PY_METHOD("__contains__", setContainsMethod, "($self, object, /)"), \
     PY_SLOT("__eq__", setCompare<CompareOperator::Eq>, "($self, value, /)"), \
     PY_SLOT("__ne__", setCompare<CompareOperator::NotEq>, "($self, value, /)"), \
     PY_SLOT("__lt__", setCompare<CompareOperator::Lt>, "($self, value, /)"), \
@@ -1182,7 +1199,7 @@ static constexpr NativeDef setMethods[] = {
 static constexpr NativeDef frozensetMethods[] = {
     PY_NEW(frozensetNew, "($type, *args, **kwargs)"),
     PY_SET_SHARED_METHODS,
-    PY_SLOT("__hash__", frozensetHash, "($self, /)"),
+    PY_HASH(frozensetHash),
     PY_METHOD("copy", frozensetCopy, "($self, /)"),
 };
 

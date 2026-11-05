@@ -347,7 +347,7 @@ static JSValue odictSetItem(JSGlobalObject* globalObject, JSValue self, JSValue 
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    int64_t keyHash = hash(globalObject, key);
+    int64_t keyHash = PyDict::hashIfNeeded(globalObject, key);
     RETURN_IF_EXCEPTION(scope, { });
     PyDict::from(self)->set(globalObject, key, keyHash, value);
     RETURN_IF_EXCEPTION(scope, { });
@@ -358,7 +358,7 @@ static JSValue odictDelItem(JSGlobalObject* globalObject, JSValue self, JSValue 
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    int64_t keyHash = hash(globalObject, key);
+    int64_t keyHash = PyDict::hashIfNeeded(globalObject, key);
     RETURN_IF_EXCEPTION(scope, { });
     bool removed = !!PyDict::from(self)->take(globalObject, key, keyHash);
     RETURN_IF_EXCEPTION(scope, { });
@@ -405,7 +405,7 @@ static JSValue odictPop(JSGlobalObject* globalObject, JSValue self, JSValue key,
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    int64_t keyHash = hash(globalObject, key);
+    int64_t keyHash = PyDict::hashIfNeeded(globalObject, key);
     RETURN_IF_EXCEPTION(scope, { });
     JSValue value = PyDict::from(self)->take(globalObject, key, keyHash);
     RETURN_IF_EXCEPTION(scope, { });
@@ -444,7 +444,7 @@ static JSValue odictMoveToEnd(JSGlobalObject* globalObject, JSValue self, JSValu
     bool found = false;
     // Nothing is looked for in an empty one, so the key need not even be hashable.
     if (PyDict::from(self)->size()) {
-        int64_t keyHash = hash(globalObject, key);
+        int64_t keyHash = PyDict::hashIfNeeded(globalObject, key);
         RETURN_IF_EXCEPTION(scope, { });
         found = PyDict::from(self)->moveToEnd(globalObject, key, keyHash, last);
         RETURN_IF_EXCEPTION(scope, { });

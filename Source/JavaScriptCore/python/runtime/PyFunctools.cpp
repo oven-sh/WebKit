@@ -569,7 +569,7 @@ static JSValue functoolsCacheCall(JSGlobalObject* globalObject, JSValue self, co
 
     PyDict* cache = PyDict::from(record->get(FunctoolsCache::Cache));
     JSValue key = functoolsMakeCacheKey(globalObject, record, args);
-    int64_t keyHash = hash(globalObject, key);
+    int64_t keyHash = PyDict::hashIfNeeded(globalObject, key);
     RETURN_IF_EXCEPTION(scope, { });
     JSValue found = cache->get(globalObject, key, keyHash);
     RETURN_IF_EXCEPTION(scope, { });

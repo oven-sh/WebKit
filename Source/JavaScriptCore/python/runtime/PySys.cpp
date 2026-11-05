@@ -791,7 +791,7 @@ void updateSysFlags(JSGlobalObject* globalObject)
     rt.sysDict()->set(vm, name, makeStructSeq(globalObject, type, {
         jsNumber(!!configuration.parserDebug), jsNumber(!!configuration.inspect), jsNumber(!!configuration.interactive), jsNumber(configuration.optimizationLevel),
         jsNumber(!configuration.writeBytecode), jsNumber(!configuration.userSiteDirectory), jsNumber(!configuration.siteImport), jsNumber(!configuration.useEnvironment),
-        jsNumber(configuration.verbose), jsNumber(configuration.bytesWarning), jsNumber(!!configuration.quiet), jsNumber(configuration.hashRandomization),
+        jsNumber(configuration.verbose), jsNumber(configuration.bytesWarning), jsNumber(!!configuration.quiet), jsNumber(!configuration.hashSeed || *configuration.hashSeed),
         jsNumber(configuration.isolated), jsBoolean(configuration.devMode), jsNumber(configuration.utf8Mode), jsNumber(configuration.warnDefaultEncoding),
         jsBoolean(configuration.safePath), jsNumber(configuration.intMaxStrDigits),
         jsNumber(1), jsNumber(configuration.threadInheritContext), jsNumber(configuration.contextAwareWarnings), jsNumber(configuration.lazyImports) }));
@@ -951,7 +951,7 @@ void initializeSysModule(JSGlobalObject* globalObject, PyModule* module)
         jsNumber(15), jsNumber(53), makeFloat(globalObject, std::numeric_limits<double>::epsilon()), jsNumber(2), jsNumber(1) }));
     module->add(globalObject, "int_info"_s, makeStructSeq(globalObject, makeStructSeqType(globalObject, intInfoDef), { jsNumber(30), jsNumber(4), jsNumber(4300), jsNumber(640) }));
     module->add(globalObject, "hash_info"_s, makeStructSeq(globalObject, makeStructSeqType(globalObject, hashInfoDef), {
-        jsNumber(64), makeInt(globalObject, static_cast<int64_t>(2305843009213693951)), jsNumber(314159), jsNumber(0), jsNumber(1000003), text("wtf"_s), jsNumber(64), jsNumber(0), jsNumber(0) }));
+        jsNumber(64), makeInt(globalObject, static_cast<int64_t>(2305843009213693951)), jsNumber(314159), jsNumber(0), jsNumber(1000003), text("siphash13"_s), jsNumber(64), jsNumber(128), jsNumber(0) }));
     {
         JSValue version = jsUndefined();
 #if defined(_CS_GNU_LIBPTHREAD_VERSION)
@@ -1053,7 +1053,7 @@ void initializeSysconfigDataModule(JSGlobalObject* globalObject, PyModule* modul
     set("Py_DEBUG"_s, jsNumber(0));
     set("Py_GIL_DISABLED"_s, jsNumber(0));
     set("Py_ENABLE_SHARED"_s, jsNumber(0));
-    set("Py_HASH_ALGORITHM"_s, jsNumber(0)); // None of CPython's: see sys.hash_info.algorithm.
+    set("Py_HASH_ALGORITHM"_s, jsNumber(0));
     set("WITH_DOC_STRINGS"_s, jsNumber(1));
     // os.urandom() needs no file descriptor.
     set("HAVE_GETENTROPY"_s, jsNumber(1));

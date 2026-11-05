@@ -232,6 +232,17 @@ enum NativeFlag : uint8_t {
     ParsedByName = 1 << 7,
 };
 
+JSValue makeInt(JSGlobalObject*, int64_t); // PyNumbers.h
+
+template<int64_t (*function)(JSGlobalObject*, JSValue)>
+JSValue hashAsInt(JSGlobalObject* globalObject, JSValue self)
+{
+    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
+    int64_t result = function(globalObject, self);
+    RETURN_IF_EXCEPTION(scope, { });
+    RELEASE_AND_RETURN(scope, makeInt(globalObject, result));
+}
+
 class NativeDef {
 public:
     static constexpr unsigned maxArity = 8;
@@ -247,6 +258,8 @@ public:
     using F8 = JSValue (*)(JSGlobalObject*, JSValue, JSValue, JSValue, JSValue, JSValue, JSValue, JSValue, JSValue);
     using Variadic = JSValue (*)(JSGlobalObject*, const CallArgs&);
     using VariadicWithSelf = JSValue (*)(JSGlobalObject*, JSValue, const CallArgs&);
+    // -1: an exception.
+    using RawHash = int64_t (*)(JSGlobalObject*, JSValue self);
 
     union Pointer {
         F0 f0;
@@ -305,10 +318,11 @@ public:
     static constexpr int arityOf(VariadicWithSelf) { return -2; }
 
     template<typename Function>
-    consteval NativeDef(NativeKind kind, ASCIILiteral name, Function function, ASCIILiteral signature, uint8_t flags = 0)
+    consteval NativeDef(NativeKind kind, ASCIILiteral name, Function function, ASCIILiteral signature, uint8_t flags = 0, RawHash rawHash = nullptr)
         : name(name)
         , signatureText(signature)
         , pointer(function)
+        , rawHash(rawHash)
         , knownOfName(name)
         , signature(parseNativeSignature(signature.characters(), signature.length()))
         , kind(kind)
@@ -324,6 +338,8 @@ public:
     ASCIILiteral name;
     ASCIILiteral signatureText;
     Pointer pointer;
+    // For a __hash__ (PY_HASH): what `pointer` does, without making an int of the result, which takes an allocation for most hashes.
+    RawHash rawHash;
     KnownOfName knownOfName;
     NativeSignature signature;
     NativeKind kind;
@@ -345,6 +361,8 @@ private:
 #define PY_CLASSMETHOD_WITH_FLAGS(name, function, signature, flags) NativeDef(NativeKind::ClassMethod, name ""_s, function, signature ""_s, flags)
 #define PY_STATICMETHOD(name, function, signature) NativeDef(NativeKind::StaticMethod, name ""_s, function, signature ""_s)
 #define PY_NEW(function, signature) NativeDef(NativeKind::New, "__new__"_s, function, signature ""_s)
+// __hash__, given an int64_t function(JSGlobalObject*, JSValue self) that returns -1 if, and only if, it has raised an exception.
+#define PY_HASH(function) NativeDef(NativeKind::SlotWrapper, "__hash__"_s, hashAsInt<function>, "($self, /)"_s, 0, function)
 
 // An attribute computed in C++: getset_descriptor.
 struct NativeGetSet {

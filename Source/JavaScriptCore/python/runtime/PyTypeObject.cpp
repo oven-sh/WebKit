@@ -248,12 +248,14 @@ JSValue objectStr(JSGlobalObject* globalObject, JSValue self)
     return callSpecial(globalObject, typeOf(globalObject, self)->lookup(Special::Repr), self);
 }
 
-JSValue objectHash(JSGlobalObject* globalObject, JSValue self)
+int64_t identityHash(JSGlobalObject*, JSValue self)
 {
     uint64_t bits = self.isCell() ? std::bit_cast<uintptr_t>(self.asCell()) : static_cast<uint64_t>(JSValue::encode(self));
     int64_t hash = static_cast<int64_t>((bits >> 4) | (bits << 60));
-    return makeInt(globalObject, hash == -1 ? static_cast<int64_t>(-2) : hash);
+    return hash == -1 ? -2 : hash;
 }
+
+JSValue objectHash(JSGlobalObject* globalObject, JSValue self) { return makeInt(globalObject, identityHash(globalObject, self)); }
 
 JSValue objectEq(JSGlobalObject* globalObject, JSValue self, JSValue other)
 {
@@ -587,7 +589,7 @@ static constexpr NativeDef repeatableObjectMethods[] = {
     PY_SLOT("__getattribute__", objectGetAttribute, "($self, name, /)"),
     PY_SLOT("__setattr__", objectSetAttr, "($self, name, value, /)"),
     PY_SLOT("__delattr__", objectDelAttr, "($self, name, /)"),
-    PY_SLOT("__hash__", objectHash, "($self, /)"),
+    PY_HASH(identityHash),
     PY_SLOT("__eq__", objectEq, "($self, value, /)"),
 };
 
@@ -598,7 +600,7 @@ static constexpr NativeDef objectMethods[] = {
     PY_SLOT("__init__", objectInit, "($self, *args, **kwargs)"),
     PY_SLOT("__repr__", objectRepr, "($self, /)"),
     PY_SLOT("__str__", objectStr, "($self, /)"),
-    PY_SLOT("__hash__", objectHash, "($self, /)"),
+    PY_HASH(identityHash),
     PY_SLOT("__eq__", objectEq, "($self, value, /)"),
     PY_SLOT("__ne__", objectNe, "($self, value, /)"),
     PY_SLOT("__lt__", objectNotComparable, "($self, value, /)"),
@@ -2330,13 +2332,13 @@ static JSValue noneNew(JSGlobalObject* globalObject, JSValue, const CallArgs& ar
 
 static JSValue noneRepr(JSGlobalObject* globalObject, JSValue) { return makeStr(getVM(globalObject), "None"_s); }
 static JSValue noneBool(JSGlobalObject*, JSValue) { return jsBoolean(false); }
-static JSValue noneHash(JSGlobalObject*, JSValue) { return jsNumber(static_cast<double>(0xFCA86420)); }
+static int64_t noneHash(JSGlobalObject*, JSValue) { return 0xFCA86420; }
 
 static constexpr NativeDef noneMethods[] = {
     PY_NEW(noneNew, "($type, *args, **kwargs)"),
     PY_SLOT("__repr__", noneRepr, "($self, /)"),
     PY_SLOT("__bool__", noneBool, "($self, /)"),
-    PY_SLOT("__hash__", noneHash, "($self, /)"),
+    PY_HASH(noneHash),
 };
 
 static JSValue notImplementedNew(JSGlobalObject* globalObject, JSValue, const CallArgs& args)

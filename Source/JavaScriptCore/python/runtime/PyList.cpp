@@ -2188,24 +2188,16 @@ int64_t hashOfTuple(JSGlobalObject* globalObject, PyTuple* tuple)
         raiseRecursionError(globalObject, scope, "maximum recursion depth exceeded while hashing a tuple"_s);
         return -1;
     }
-    // xxHash, simplified.
-    static constexpr uint64_t prime1 = 11400714785074694791ULL;
-    static constexpr uint64_t prime2 = 14029467366897019727ULL;
-    static constexpr uint64_t prime5 = 2870177450012600261ULL;
-    uint64_t accumulator = prime5;
+    TupleHasher hasher;
     unsigned length = tuple->length();
     for (unsigned i = 0; i < length; ++i) {
-        int64_t lane = hash(globalObject, tuple->at(i));
+        int64_t itemHash = hash(globalObject, tuple->at(i));
         RETURN_IF_EXCEPTION(scope, -1);
-        accumulator += static_cast<uint64_t>(lane) * prime2;
-        accumulator = (accumulator << 31) | (accumulator >> 33);
-        accumulator *= prime1;
+        hasher.add(itemHash);
     }
-    accumulator += length ^ (prime5 ^ 3527539UL);
-    if (accumulator == static_cast<uint64_t>(-1))
-        accumulator = 1546275796;
-    tuple->setCachedHash(static_cast<int64_t>(accumulator));
-    return static_cast<int64_t>(accumulator);
+    int64_t result = hasher.finish();
+    tuple->setCachedHash(result);
+    return result;
 }
 
 static JSValue tupleNew(JSGlobalObject* globalObject, JSValue cls, const CallArgs& args)
@@ -2256,14 +2248,7 @@ static JSValue tupleRepr(JSGlobalObject* globalObject, JSValue self)
     RELEASE_AND_RETURN(scope, makeStr(globalObject, builder));
 }
 
-static JSValue tupleHash(JSGlobalObject* globalObject, JSValue self)
-{
-    VM& vm = getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    int64_t result = hashOfTuple(globalObject, PyTuple::from(self));
-    RETURN_IF_EXCEPTION(scope, { });
-    RELEASE_AND_RETURN(scope, makeInt(globalObject, result));
-}
+static int64_t tupleHash(JSGlobalObject* globalObject, JSValue self) { return hashOfTuple(globalObject, PyTuple::from(self)); }
 
 template<CompareOperator op>
 static JSValue tupleCompare(JSGlobalObject* globalObject, JSValue self, JSValue other)
@@ -2402,7 +2387,7 @@ static JSValue tupleGetNewArgs(JSGlobalObject* globalObject, JSValue self)
 static constexpr NativeDef tupleMethods[] = {
     PY_NEW(tupleNew, "($type, *args, **kwargs)"),
     PY_SLOT("__repr__", tupleRepr, "($self, /)"),
-    PY_SLOT("__hash__", tupleHash, "($self, /)"),
+    PY_HASH(tupleHash),
     PY_SLOT("__eq__", tupleCompare<CompareOperator::Eq>, "($self, value, /)"),
     PY_SLOT("__ne__", tupleCompare<CompareOperator::NotEq>, "($self, value, /)"),
     PY_SLOT("__lt__", tupleCompare<CompareOperator::Lt>, "($self, value, /)"),

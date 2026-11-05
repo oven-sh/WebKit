@@ -882,6 +882,7 @@ python/runtime/PyFunctools.cpp
 python/runtime/PyGC.cpp
 python/runtime/PyGenerator.cpp
 python/runtime/PyGenericAlias.cpp
+python/runtime/PyHash.cpp
 python/runtime/PyHeapq.cpp
 python/runtime/PyIOBase.cpp
 python/runtime/PyImp.cpp

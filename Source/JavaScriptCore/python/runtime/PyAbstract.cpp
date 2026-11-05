@@ -1384,7 +1384,7 @@ int64_t hash(JSGlobalObject* globalObject, JSValue value)
             string->value(globalObject);
             RETURN_IF_EXCEPTION(scope, -1);
         }
-        return hashOfString(string);
+        return hashOfString(string->tryGetValueImpl());
     }
     if (value.isInt32())
         return value.asInt32() == -1 ? -2 : value.asInt32();
@@ -1393,6 +1393,10 @@ int64_t hash(JSGlobalObject* globalObject, JSValue value)
 
     PyType* type = rt.typeOf(value);
     JSValue method = type->lookup(Special::Hash);
+    if (canCallNativeSpecial<>(globalObject, type, Special::Hash, method)) [[likely]] {
+        if (auto rawHash = uncheckedDowncast<PyNativeFunction>(method.asCell())->def().rawHash) [[likely]]
+            RELEASE_AND_RETURN(scope, rawHash(globalObject, value));
+    }
     JSValue result;
     if (method && !isNone(method)) {
         result = callSpecialIfThere(globalObject, type, Special::Hash, method, value);

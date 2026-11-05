@@ -330,15 +330,6 @@ String bytesRepr(std::span<const uint8_t> bytes)
     return builder.toString();
 }
 
-// That of the str with these code points, as in CPython, where both are the hash of the same bytes in memory.
-// FIXME: Not keyed, so a program can be fed keys that all collide; and not remembered, so it is computed at every lookup.
-int64_t hashOfBytes(std::span<const uint8_t> bytes)
-{
-    if (bytes.empty())
-        return 0;
-    return StringHasher::computeHashAndMaskTop8Bits(byteCast<Latin1Character>(bytes));
-}
-
 // ---- Helpers ----
 
 static ALWAYS_INLINE bool bytesIsSpace(uint8_t byte) { return byte == ' ' || (byte >= '\t' && byte <= '\r'); }
@@ -1006,9 +997,15 @@ static JSValue bytesReprMethod(JSGlobalObject* globalObject, JSValue self)
     RELEASE_AND_RETURN(scope, makeStr(vm, makeString(typeName(globalObject, self), '(', text, ')')));
 }
 
-static JSValue bytesHashMethod(JSGlobalObject* globalObject, JSValue self)
+static int64_t bytesHashMethod(JSGlobalObject*, JSValue self)
 {
-    return makeInt(globalObject, hashOfBytes(bytesSpanOf(self)));
+    auto* bytes = PyBytes::from(self);
+    int64_t hash = bytes->cachedHash();
+    if (hash == -1) {
+        hash = hashOfBytes(bytes->span());
+        bytes->setCachedHash(hash);
+    }
+    return hash;
 }
 
 template<CompareOperator op>
@@ -3144,7 +3141,7 @@ static JSValue byteArrayReduceEx(JSGlobalObject* globalObject, JSValue self, JSV
 
 static constexpr NativeDef bytesMethods[] = {
     PY_NEW(bytesNew, "($type, *args, **kwargs)"),
-    PY_SLOT("__hash__", bytesHashMethod, "($self, /)"),
+    PY_HASH(bytesHashMethod),
     PY_METHOD("__bytes__", bytesBytesMethod, "($self, /)"),
     PY_METHOD("__getnewargs__", bytesGetNewArgs, "($self, /)"),
     PY_BYTES_COMMON_METHODS,

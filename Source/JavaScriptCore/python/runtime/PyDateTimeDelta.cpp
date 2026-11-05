@@ -385,7 +385,7 @@ static JSValue deltaCompare(JSGlobalObject* globalObject, JSValue self, JSValue 
     return compareResult(PyTimeDelta::from(self)->compare(second), op);
 }
 
-static JSValue deltaHash(JSGlobalObject*, JSValue self) { return smallInt(hashOfDelta(PyTimeDelta::from(self))); }
+static int64_t deltaHash(JSGlobalObject*, JSValue self) { return hashOfDelta(PyTimeDelta::from(self)); }
 
 // ---- Text ----
 
@@ -452,7 +452,7 @@ static constexpr NativeDef deltaMethods[] = {
     PY_NEW(deltaNew, "($type, /, days=0, seconds=0, microseconds=0, milliseconds=0, minutes=0, hours=0, weeks=0)"),
     PY_SLOT("__repr__", deltaRepr, "($self, /)"),
     PY_SLOT("__str__", deltaStr, "($self, /)"),
-    PY_SLOT("__hash__", deltaHash, "($self, /)"),
+    PY_HASH(deltaHash),
     PY_SLOT("__bool__", deltaBool, "($self, /)"),
     PY_DATETIME_COMPARISONS(deltaCompare),
     PY_SLOT("__add__", deltaAdd, "($self, value, /)"),

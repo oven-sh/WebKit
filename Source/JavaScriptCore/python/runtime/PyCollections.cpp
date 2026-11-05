@@ -1187,7 +1187,7 @@ static JSValue collectionsCountElements(JSGlobalObject* globalObject, JSValue ma
             RETURN_IF_EXCEPTION(scope, { });
             if (!key)
                 return jsUndefined();
-            int64_t keyHash = hash(globalObject, key);
+            int64_t keyHash = PyDict::hashIfNeeded(globalObject, key);
             RETURN_IF_EXCEPTION(scope, { });
             JSValue count = dict->get(globalObject, key, keyHash);
             RETURN_IF_EXCEPTION(scope, { });

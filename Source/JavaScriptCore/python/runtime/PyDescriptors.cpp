@@ -521,14 +521,7 @@ static JSValue mappingProxyCompare(JSGlobalObject* globalObject, JSValue self, J
     return richCompare(globalObject, mapping, other, op);
 }
 
-static JSValue mappingProxyHash(JSGlobalObject* globalObject, JSValue self)
-{
-    VM& vm = getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    int64_t result = hash(globalObject, proxied(self));
-    RETURN_IF_EXCEPTION(scope, { });
-    RELEASE_AND_RETURN(scope, makeInt(globalObject, result));
-}
+static int64_t mappingProxyHash(JSGlobalObject* globalObject, JSValue self) { return hash(globalObject, proxied(self)); }
 
 static JSValue unwrapProxy(JSGlobalObject* globalObject, JSValue value)
 {
@@ -565,7 +558,7 @@ static constexpr NativeDef mappingProxyMethods[] = {
     PY_SLOT("__iter__", mappingProxyIter, "($self, /)"),
     PY_SLOT("__repr__", mappingProxyRepr, "($self, /)"),
     PY_SLOT("__str__", mappingProxyStr, "($self, /)"),
-    PY_SLOT("__hash__", mappingProxyHash, "($self, /)"),
+    PY_HASH(mappingProxyHash),
     PY_SLOT("__eq__", mappingProxyCompare<CompareOperator::Eq>, "($self, value, /)"),
     PY_SLOT("__ne__", mappingProxyCompare<CompareOperator::NotEq>, "($self, value, /)"),
     PY_SLOT("__lt__", mappingProxyCompare<CompareOperator::Lt>, "($self, value, /)"),
@@ -1054,7 +1047,7 @@ void initializeDescriptorTypes(JSGlobalObject* globalObject)
     rt.classmethodType()->addGetSets(globalObject, dictGetSet());
     define(rt.staticmethodType(), "staticmethod"_s, { TypeFlag::Base, TypeFlag::OwnLayout, TypeFlag::HasDict }, staticmethodMethods, wrapperGetSets);
     rt.staticmethodType()->addGetSets(globalObject, dictGetSet());
-    define(rt.mappingProxyType(), "mappingproxy"_s, { TypeFlag::Mapping }, mappingProxyMethods, { });
+    define(rt.mappingProxyType(), "mappingproxy"_s, { TypeFlag::Mapping, TypeFlag::AnswersForAnother }, mappingProxyMethods, { });
     define(rt.superType(), "super"_s, { TypeFlag::Base, TypeFlag::OwnLayout }, superMethods, superGetSets);
     define(rt.getSetDescriptorType(), "getset_descriptor"_s, { }, getSetMethods, getSetGetSets);
     define(rt.memberDescriptorType(), "member_descriptor"_s, { }, memberMethods, memberGetSets);

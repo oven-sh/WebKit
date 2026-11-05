@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include "PyHash.h"
 #include "PyObject.h"
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -34,10 +35,15 @@ public:
     const uint8_t* data() const { return storageBehind<const uint8_t>(this); }
     uint8_t* mutableData() { return storageBehind<uint8_t>(this); }
 
+    // hash(bytes), once it has been worked out; -1 until then.
+    int64_t cachedHash() const { return m_hash; }
+    void setCachedHash(int64_t hash) { m_hash = hash; }
+
 private:
     PyBytes(VM&, Structure*, PyType*, size_t length);
 
     size_t m_length;
+    int64_t m_hash { -1 };
 };
 
 // The bytes of a bytearray.
@@ -160,7 +166,6 @@ private:
 PyBytes* makeBytes(JSGlobalObject*, const ByteBuilder&);
 
 String bytesRepr(std::span<const uint8_t>);
-int64_t hashOfBytes(std::span<const uint8_t>);
 
 } // namespace Python
 } // namespace JSC

@@ -77,11 +77,136 @@ leaves a mark in one after looking at its shape.) The limit on the length of ite
 may be as long as 32 bits allow, so whatever takes room for each item looks at the length first. The fast paths of the
 interpreter look at the indexing type first. `differential/crashers/evil_js_arrays.py` does everything to all of them.
 
-**tuple, dict.** A tuple remembers its hash once it has been asked for. A dict keeps its entries in an array in insertion order, with
-an index beside it; it knows where its first entry is, and can leave room before it, so that taking and adding entries is as cheap at
-the front as at the back. `collections.OrderedDict` (`PyOrderedDict.cpp`) is that and nothing more. Each entry keeps the hash of its
-key, whole, so that `set(d)`, `dict.fromkeys(s)`, `s - d` and the like never ask a key for its hash again. The hash of a str fits 32
-bits, so a dict with none but str keys keeps 32 bits for each; the first key of another kind widens them to 64.
+**tuple, dict.** A tuple remembers its hash once it has been asked for. A dict keeps its entries in an array in insertion order, with an
+index beside it; it knows where its first entry is, and can leave room before it, so that taking and adding entries is as cheap at the front
+as at the back. `collections.OrderedDict` (`PyOrderedDict.cpp`) is that and nothing more. Each entry keeps the hash of its key, whole, so
+that `set(d)`, `dict.fromkeys(s)`, `s - d` and the like never ask a key for its hash again, and so that no key is asked whether it equals
+another unless all 64 bits agree, which `__eq__` can tell. A dict with none but str keys keeps 32 bits for each, of another hash (below).
+
+**Hashes.** `hash()` of a str, of bytes, and of what is hashed as its bytes (a `memoryview`, a `date`, a `time`, a naive `datetime`, the
+code of a compiled pattern) is CPython's (`PyHash.cpp`): SipHash-1-3 over the bytes that CPython has in memory, which for a str is one, two
+or four for each code point, however the text is kept here. The key, 128 bits, is drawn when Python first starts in the process, or made
+from `PYTHONHASHSEED` as CPython makes it; all threads and VMs of the process have the one. So whoever chooses the keys of a dict, as the
+sender of a request does, cannot choose keys that collide. And with one seed a str has the same hash here and there, and a set, whose table
+is sized and probed as CPython's is, the same order (but for some displays of constants: DEFERRED.md). `-R`, `sys.flags.hash_randomization`
+and `sys.hash_info` say what they say there. A `__hash__` written in C++ returns an `int64_t` (`PY_HASH`). The built-in `hash()` makes an
+int of it and nobody else does: few hashes fit a number, and a `JSBigInt` is an allocation.
+
+JS pays nothing for this: not a line of WTF or of JSC outside `python/` has to do with it. A `StringImpl` remembers a hash of its own, 24
+bits, without a key, the same in every process. Neither it nor a `JSString` has room for 64 bits more, and none was made: 8 bytes in every
+`StringImpl` are 10 to 13 % of a heap of short strings. So the hash of a str is worked out every time it is asked for: some 90 instructions
+for up to seven characters, 19 more for every eight, 0.7 cycles a byte for a long text. (bytes, tuples, frozensets and datetimes remember
+theirs in the object, as CPython's do.) No table on the side remembers it either. One was tried: 1,024 entries by the address of the cell,
+emptied at each collection. It makes `k in s` with the same strs over and over cost what it cost when the hash was the `StringImpl`'s, and a
+str that is not in it 25 instructions more. Whole programs (the test suites of pygments, jinja2 and networkx, `python -m rich`, 60 imports)
+gained 0.04 to 0.3 %, for in them all the hashing of strs there is comes to 0.15 to 0.5 % of the instructions. What is felt without it is a
+long str that is hashed again and again other than as the key of a dict of strs: 1,000 characters take 0.18 µs each time, 100,000 take 17.5.
+Thirteen whole programs were counted (below). In twelve of them all the hashing of strs comes to 0.1 to 0.8 % of the instructions, a sixth
+of that at most for strs of 64 characters and more. The thirteenth is the test suite of pyparsing, whose cache of results has the whole
+input in each key: 1.4 million hashes of strs of 64 to 999 characters and 195,000 of longer ones, by these costs 4 % of its instructions.
+
+**By what a dict places a str.** Most programs hash few strs because dicts do without. A dict that holds nothing but strs (exactly strs:
+what CPython has a kind of table of its own for) places them by the hash that the `StringImpl` remembers, which costs a load, and keeps 32
+bits with each entry. Four things make it go by `hash()`, for good (only `clear()` makes a dict what it was at first):
+
+- It is given a key that is not exactly a str. Such a key is placed by `hash()`, and may be equal to a str. The table is made anew, as
+  CPython's is at that moment.
+- It is asked for a key that might say it is equal to a str and hash like it: an object whose `__eq__` or `__hash__` is not written in C++,
+  or a `mappingproxy`, which passes both questions on (`TypeFlag::AnswersForAnother`). (Any other key cannot be in a dict of strs and is not
+  looked for. An instance of a class derived from str that has str's `__eq__` and `__hash__` is looked for as the str it holds, if the hash
+  that comes with it is that of the str: a set may have kept another from before the class was changed.)
+- A search gets too long: more than 64 slots, where a slot with another str that has the same 24 bits counts for 17. Chance does that to one
+  search in 10^11. Keys that were chosen to collide, which is easy with a hash that is the same everywhere (one core finds such a key every
+  70 ms), do it with the fifth. The search for a free slot counts as well, when a key is added and when the table is made anew, larger or
+  smaller: nothing that a dict does with keys placed by that hash goes on for longer.
+- Its table gets 2^21 slots, which is at 699,051 entries: 24 bits then tell too few keys apart. Up to there going by `hash()` gains nothing;
+  a dict of 1.4 million strs is made in 72 % of the time, read in 78 %, asked for what it has not in 56 %.
+
+After the first two the table has room for 64 bits with each entry and keeps the hash of every key whole, strs included
+(`keepsWholeHashes()`). After the last two it is still a table of strs, and keeps the 32 bits that `hash()` folds to, until one of the first
+two comes.
+
+In the last three cases the entries stay at their places, no key is compared or asked for its hash, and no code of the program runs. So they
+can come in the middle of a lookup, of an iteration, of an `__eq__` that looks into the same dict, and what goes by the place of an entry
+(iterators, the caches of globals and of attributes of modules, in the interpreter too) is not disturbed. A copy is what its original is.
+With 8,000 keys that collide, making a dict took 220 ms and takes 0.7 (ordinary keys: 0.6), looking them all up 187 and 0.5, `json.loads`
+447 and 2.1, `Counter` 469 and 1.0, `urllib.parse.parse_qs` 410 and 6.9, `pickle.loads` 233 and 1.3, a set 482 and 0.8; 130 dicts of 60 such
+keys each, 4.5 and 1.0.
+
+What it costs: instructions for one operation with the loop around it, before and now. In a dict of strs `d[k]` is shorter than it was, 446
+and 377 (24.1 ns and 20.4), `d[k] = v` 412 and 343, because a str no longer goes the way of all keys. In a dict that keeps whole hashes a
+str is hashed each time it is looked for: `d[k]` 422 and 518, `d[k] = v` 394 and 505; with strs of 64 characters 416 and 690, of 1,000
+characters 412 and 3,273. Other keys gain: `d[i]` 455 and 432, `d[obj]` 533 and 428, `d[(1, 2)]` 990 and 839. Dicts that hold strs and other
+keys are rare. Counted in the test suites of attrs, jinja2, pygments, networkx (four directories), sympy (core), pyparsing, more_itertools
+and toolz, in black formatting three packages, a small django program (a model, queries, forms, templates), pyflakes, pycodestyle and isort
+over jinja2, `python -m rich` and 60 imports: 13.7 million dicts got a table, 2.07 million of them for keys of any kind, and 18,543 came to
+hold both (15,030 of these in django, which never looked for a str in them); 24 were asked for a key of the program's while they held strs
+only. Of 612 million searches for a str 174,335 went to such dicts, 0.03 %; most in networkx, 0.3 % of its searches, by the costs above 0.02
+% of its instructions. The programs as wholes: 0.5 to 1.5 % fewer instructions in seven of them, 0.4 to 1.7 % more in more_itertools,
+networkx and sympy (two runs of the last two differ by as much, and sets in another order take other ways through a program), 0.6 % more in
+pyparsing, whose dicts gain what its long strs cost (above); `python -m rich` and toolz are too short to tell.
+
+**Where a dict has its keys.** A program can tell which of its `__eq__` and `__hash__` a dict calls, in what order and how often; with keys
+whose hashes have the same low bits that depends on where each key lies in the index, and so on everything that has happened to the dict. So
+a table with whole hashes is CPython's in all that shows (measured on 3.15.2, by `sys.getsizeof` and by logs of the calls; none of it is in
+the language reference):
+
+- The slots a search goes through: `SlotSequence`, the same for all tables here.
+- The very object is found where the search comes by it, whatever hash was kept for it; any other key is asked only if all 64 bits agree,
+  stored key on the left. After an `__eq__` the search starts again if the table, the key of the entry or the slot is another.
+- The size: 8 slots at first; a table takes two thirds of its slots in insertions, whatever has become of the entries (one into a slot that
+  a deletion left counts too; `popitem()` gives back the entry, not the insertion), and is then made anew for three times the keys it has,
+  which may be smaller. A new key goes into the first slot on its way that is empty or was left by a deletion.
+- A key is looked for first. Only if it is then added, and is the first that is not a str, is the table made anew for that.
+- `copy()` takes the table as it is, with what deletions have left in it, if at least two thirds of its entries are in use; otherwise the
+  keys are put in one by one, and compared. `update()`, `|=`, `dict(d)` and `{**d}` take the table into an empty dict if it has no deleted
+  entry and half its size would not do. Otherwise they make room once, for the keys of both, if a table of this size could not hold those of
+  the other. Keywords are merged as a dict of them would be, but by `dict()` itself, which stores them one by one. `dict.fromkeys()` makes
+  room for all the keys of a dict or a set, and for a set a table for keys of any kind. (So `d.copy()`, `dict(d)` and `{**d}` of 20 keys
+  take 970 to 1,170 instructions, where they took 3,400 to 3,700.)
+
+Random programs of 15 to 300 operations on dicts whose keys log these calls: 66,000 on one dict, of which 48,873 logged other calls than
+under CPython before and none does now; 23,000 on two dicts, with everything that takes the keys of one into the other or into a set, 13,382
+before and 4 now.
+
+A dict that never held or was asked for anything but strs is not where CPython has it, and nothing can tell: no code of the program runs in
+its searches, and its order is that of insertion. What is left is in DEFERRED.md, "Which keys a dict or a set asks".
+
+**What a fast path through a dict may assume.** (For whoever writes one, in the interpreter or in a compiler.)
+
+- *The table.* `PyDict::m_storage` is null as long as no room has been made, and after `clear()`. (That there is a table does not say that
+  there has been an entry: a display and `dict.fromkeys()` make room first.) A `PyDictStorage` never changes its size or its width. In it
+  lie, one behind the other: `entries()`, key and value, `capacity()` of them (two thirds of the slots), in the order of insertion,
+  `entryCount()` in use, a deleted one with an empty key; the kept hashes, one for each entry (`hashAt(index)`), `uint32_t` if
+  `!hasWideHashes()` and `int64_t` otherwise; the index, one number for each of the `1 << log2Size()` slots (`indexAt(slot)`), of 1, 2 or 4
+  bytes by `indexWidth(log2Size())`: the index of an entry, `emptyIndex`, where a search ends, or `deletedIndex`, where it goes on.
+- *What is kept*, by the three flags of the dict. `!m_isKeyed`: every key is exactly a str and no rope, the table is narrow, kept is
+  `StringImpl::hash()`. `m_isKeyed && !keepsWholeHashes()`: the same, kept is `foldHash(hash(key))`. `keepsWholeHashes()`: the table is wide
+  and kept is `hash(key)` for every key. Of these only `m_hasOnlyStringKeys` says something about the keys: a wide table may hold nothing
+  but strs.
+- *The way.* `SlotSequence(kept, mask)`: the first slot is `kept & mask`; then `perturb >>= 5; slot = (slot * 5 + perturb + 1) & mask`,
+  where `perturb` starts as all 64 bits of kept, unsigned.
+- *What needs no code of the program:* a search for a str that is no rope in a dict with `hasOnlyStringKeys()`: texts are compared. A search
+  for an int32 or a double in a wide table, as long as each entry it comes by has another kept hash, is the same value bit for bit, or is a
+  number too. In all other cases a key with the same kept hash has to be asked (`richCompareBool(stored, key)`): leave that to `find()`.
+- *What has to be counted:* the steps of a search while `!m_isKeyed`, as `findString()` does. That count is all that stands between chosen
+  keys and a search through thousands of slots. A path that gives up after a few slots and calls `find()` need not count.
+- *After code of the program may have run* (an `__eq__`, a `__hash__`): read again `m_storage`, the flags, the key of the entry and
+  `indexAt(slot)`; if any is another, start again. `find()` itself may replace the table without running any code (the second case above) or
+  rebuild the index (the third), so nothing read before a call of it holds after.
+- *Adding* goes through `insertNew(vm, key, kept, value)`, with kept for the state the dict is in at that call.
+- *Where the 64 bits of a str come from in a wide table:* they are worked out at each `d[k]`, `k in d`, `d[k] = v`: some 90 instructions for
+  up to seven characters and 19 more for every eight, so `d[k]` with the loop around it takes 518 instructions where a dict of strs takes
+  377, 690 with keys of 64 characters, 3,273 with 1,000. Neither the `JSString` nor the `StringImpl` has room for them (above).
+
+A set has no two ways. It goes by `hash()` from the start, because its order can be seen: whoever sets `PYTHONHASHSEED` to have runs repeat
+gets the order that CPython gives. The price is the hashing: `k in s` 447 instructions with the loop, now 487 (25.3 ns, now 28.2), `set()`
+of 20 strs 6,956, now 7,720. And a dict of strs has no hashes to hand on: `set(d)` with 20 keys 3,929, now 6,397, `d.keys() | e.keys()`
+10,114, now 13,540. That is also what two ways for sets would save, in whole programs less than the 0.1 to 0.8 % above. `dict.fromkeys(s)`
+makes a table for keys of any kind, as CPython does, whatever is in the set (10,117, now 13,906, and a str is hashed whenever it is looked
+for there).
+
+What is not covered are names: see DEFERRED.md, "Names chosen to collide".
 
 **Built-in types.** A `TypeDef` in the source file of a type says what is particular to it. What follows from how CPython makes the
 type is added by `PyType::initializeBuiltin` and `addMethods`, so that `vars(T)`, `help(T)` and what goes by them
@@ -1417,6 +1542,14 @@ Everything is tested through Bun, against CPython 3.15 as the oracle. The tests 
   `tools/grid_compare.py` and `tools/grid_classes.py` make all the calls under both interpreters, in half a minute with a release build, and show
   what differs, call by call or put in classes; `tools/grid_scripts.py` writes the samples again after a change to the grid.
 - **Bun's own tests**: `*.test.ts` (`cli.test.ts` is the command line).
+- **Dicts that become keyed early.** In a build with assertions `-X dict_keyed_after_steps=N` and `-X dict_keyed_from_log2_size=N` lower the
+  two limits for all dicts of the process, those of the interpreter included (0 and 3: nearly every dict is keyed at once). Any test can be
+  run that way; other builds, and CPython, take no notice of the options. `differential/mod_hash/dict_modes_early.py` does it to the scripts
+  on dicts there.
+- **Which keys a dict asks.** `differential/mod_hash/dict_calls_of_keys.py` runs random programs on dicts whose keys log every call of their
+  `__eq__` and `__hash__`, and prints digests of the logs. Whoever touches a search of `PyDict` or `PySet`, how a table grows or what is
+  copied, a fast path in the interpreter included, runs it with larger numbers against CPython (its header says how): `one 0 20000 40` and
+  `two 0 10000 60` take a minute.
 - **CPython's test suite** (`Lib/test`, which is not in the executable: point `BUN_PYTHON_STDLIB` at a checkout's `Lib`).
   `python3 -m test test_x` is regrtest unchanged, `-j N` with worker processes included. Tests that need `_testcapi`,
   `_testinternalcapi` and other extension modules skip themselves.

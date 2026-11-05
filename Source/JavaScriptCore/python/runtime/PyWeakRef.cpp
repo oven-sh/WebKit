@@ -185,20 +185,22 @@ static JSValue weakRefRepr(JSGlobalObject* globalObject, JSValue self)
     return makeStr(vm, makeString(prefix, '>'));
 }
 
-static JSValue weakRefHash(JSGlobalObject* globalObject, JSValue self)
+static int64_t weakRefHash(JSGlobalObject* globalObject, JSValue self)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* weakRef = PyWeakRef::from(self);
     if (!weakRef->hasHash()) {
         JSCell* referent = weakRef->referent();
-        if (!referent)
-            return raiseTypeError(globalObject, scope, "weak object has gone away"_s);
+        if (!referent) {
+            raiseTypeError(globalObject, scope, "weak object has gone away"_s);
+            return -1;
+        }
         int64_t result = hash(globalObject, referent);
-        RETURN_IF_EXCEPTION(scope, { });
+        RETURN_IF_EXCEPTION(scope, -1);
         weakRef->setHash(result);
     }
-    RELEASE_AND_RETURN(scope, makeInt(globalObject, weakRef->hash()));
+    return weakRef->hash();
 }
 
 // While both referents are alive they are what is compared; otherwise the references themselves.
@@ -228,7 +230,7 @@ static constexpr NativeDef weakRefMethods[] = {
     PY_SLOT("__init__", weakRefInit, "($self, *args, **kwargs)"),
     PY_SLOT("__call__", weakRefCall, "($self, *args, **kwargs)"),
     PY_SLOT("__repr__", weakRefRepr, "($self, /)"),
-    PY_SLOT("__hash__", weakRefHash, "($self, /)"),
+    PY_HASH(weakRefHash),
     PY_SLOT("__eq__", weakRefEquality<CompareOperator::Eq>, "($self, value, /)"),
     PY_SLOT("__ne__", weakRefEquality<CompareOperator::NotEq>, "($self, value, /)"),
     PY_CLASSMETHOD("__class_getitem__", classGetItem, "($type, object, /)"),

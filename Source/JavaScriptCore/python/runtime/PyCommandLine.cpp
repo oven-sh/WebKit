@@ -198,14 +198,24 @@ static std::optional<int> readEnvironmentAndXOptions(Configuration& configuratio
     if (const char* value = environmentVariable(configuration, "PYTHONPLATLIBDIR"))
         configuration.platlibdir = textFromSystem(value);
 
-    if (const char* seed = environmentVariable(configuration, "PYTHONHASHSEED"); seed && strcmp(seed, "random")) {
+    if (const char* seed = environmentVariable(configuration, "PYTHONHASHSEED"); seed && strcmp(seed, "random") && !configuration.ignoresHashSeedOfEnvironment) {
         char* end = nullptr;
         errno = 0;
         unsigned long value = strtoul(seed, &end, 10);
         if (*end || value > 4294967295UL || (errno == ERANGE && value == ULONG_MAX))
             return fatalConfigurationError("config_init_hash_seed"_s, "PYTHONHASHSEED must be \"random\" or an integer in range [0; 4294967295]"_s);
-        configuration.hashRandomization = !!value;
+        configuration.hashSeed = static_cast<uint32_t>(value);
     }
+
+#if ASSERT_ENABLED
+    // For tests: every dict of the process becomes keyed early, or at once.
+    auto limitOfDicts = [&](ASCIILiteral name) -> std::optional<unsigned> {
+        String text = xOption(configuration, name);
+        auto value = text.isNull() ? std::nullopt : parseInt(text);
+        return value && *value >= 0 ? std::optional<unsigned>(*value) : std::nullopt;
+    };
+    PyDict::setLimitsForTesting(limitOfDicts("dict_keyed_after_steps"_s), limitOfDicts("dict_keyed_from_log2_size"_s));
+#endif
 
     auto readGIL = [&](StringView value) -> std::optional<int> {
         if (value == "0"_s)
@@ -763,7 +773,7 @@ std::optional<int> readCommandLine(Configuration& configuration, std::span<const
             ++configuration.quiet;
             break;
         case 'R':
-            configuration.hashRandomization = true;
+            configuration.ignoresHashSeedOfEnvironment = true;
             break;
         default:
             return usageMistake(program);

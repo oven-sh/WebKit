@@ -511,7 +511,7 @@ static JSValue dateTimeCompare(JSGlobalObject* globalObject, JSValue self, JSVal
     return compareResult(difference, op);
 }
 
-static JSValue dateTimeHash(JSGlobalObject* globalObject, JSValue self)
+static int64_t dateTimeHash(JSGlobalObject* globalObject, JSValue self)
 {
     auto* dateTime = PyDateTime::from(self);
     if (dateTime->cachedHash == -1) {
@@ -523,11 +523,14 @@ static JSValue dateTimeHash(JSGlobalObject* globalObject, JSValue self)
             // The fold does not count, so neither does what the offset would be with it.
             PyDateTime* unfolded = dateTime->fold() ? PyDateTime::create(vm, state.dateTimeStructure.get(), dateTime->type(), dateTime->packed() & ~1ull, dateTime->tzinfo()) : dateTime;
             offset = callUtcOffset(globalObject, state, dateTime->tzinfo(), unfolded);
-            RETURN_IF_EXCEPTION(scope, { });
+            RETURN_IF_EXCEPTION(scope, -1);
         }
-        if (isNone(offset))
-            dateTime->cachedHash = mixHash(dateTime->packed() >> 1);
-        else {
+        if (isNone(offset)) {
+            uint8_t bytes[10];
+            writeDateBytes(dateTime->packed(), bytes);
+            writeTimeBytes(dateTime->packed(), bytes + 4);
+            dateTime->cachedHash = hashOfBytes(bytes);
+        } else {
             auto* delta = PyTimeDelta::from(offset);
             int64_t microseconds = dateTime->microsecond() - delta->microseconds();
             int64_t seconds = dateTime->hour() * 3600 + dateTime->minute() * 60 + dateTime->second() - delta->seconds();
@@ -537,7 +540,7 @@ static JSValue dateTimeHash(JSGlobalObject* globalObject, JSValue self)
             dateTime->cachedHash = hashOfDelta(days, static_cast<int>(seconds), static_cast<int>(microseconds));
         }
     }
-    return smallInt(dateTime->cachedHash);
+    return dateTime->cachedHash;
 }
 
 // ---- Text ----
@@ -820,7 +823,7 @@ static constexpr NativeDef dateTimeMethods[] = {
     PY_NEW(dateTimeNew, "($type, *args, **kwargs)"),
     PY_SLOT("__repr__", dateTimeRepr, "($self, /)"),
     PY_SLOT("__str__", dateTimeStr, "($self, /)"),
-    PY_SLOT("__hash__", dateTimeHash, "($self, /)"),
+    PY_HASH(dateTimeHash),
     PY_DATETIME_COMPARISONS(dateTimeCompare),
     PY_SLOT("__add__", dateTimeAdd, "($self, value, /)"),
     PY_SLOT("__radd__", dateTimeReflected<dateTimeAdd>, "($self, value, /)"),

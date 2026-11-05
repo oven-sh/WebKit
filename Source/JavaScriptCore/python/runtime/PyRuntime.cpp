@@ -51,6 +51,7 @@ Runtime& Runtime::ensure(JSGlobalObject* globalObject)
 {
     if (auto* existing = globalObject->pythonRuntime())
         return *existing;
+    initializeHashSecret();
     auto created = makeUnique<Runtime>(globalObject);
     Runtime& runtime = *created;
     globalObject->setPythonRuntime(WTF::move(created));

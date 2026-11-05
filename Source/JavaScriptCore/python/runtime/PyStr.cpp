@@ -613,14 +613,7 @@ static JSValue strReprMethod(JSGlobalObject* globalObject, JSValue self)
 
 static JSValue strStrMethod(JSGlobalObject*, JSValue self) { return strValue(self); }
 
-static JSValue strHashMethod(JSGlobalObject* globalObject, JSValue self)
-{
-    VM& vm = getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    int64_t result = hash(globalObject, strValue(self));
-    RETURN_IF_EXCEPTION(scope, { });
-    RELEASE_AND_RETURN(scope, makeInt(globalObject, result));
-}
+static int64_t strHashMethod(JSGlobalObject* globalObject, JSValue self) { return hash(globalObject, strValue(self)); }
 
 static JSValue strLenMethod(JSGlobalObject* globalObject, JSValue self) { return jsNumber(strLength(globalObject, strValue(self))); }
 
@@ -2006,7 +1999,7 @@ static constexpr NativeDef strMethods[] = {
     PY_NEW(strNew, "($type, *args, **kwargs)"),
     PY_SLOT("__repr__", strReprMethod, "($self, /)"),
     PY_SLOT("__str__", strStrMethod, "($self, /)"),
-    PY_SLOT("__hash__", strHashMethod, "($self, /)"),
+    PY_HASH(strHashMethod),
     PY_SLOT("__eq__", strCompareMethod<CompareOperator::Eq>, "($self, value, /)"),
     PY_SLOT("__ne__", strCompareMethod<CompareOperator::NotEq>, "($self, value, /)"),
     PY_SLOT("__lt__", strCompareMethod<CompareOperator::Lt>, "($self, value, /)"),

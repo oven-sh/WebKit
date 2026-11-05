@@ -416,12 +416,12 @@ static JSValue complexEquality(JSGlobalObject* globalObject, JSValue self, JSVal
     return jsBoolean(equal == wantEqual);
 }
 
-static JSValue complexHash(JSGlobalObject* globalObject, JSValue self)
+static int64_t complexHash(JSGlobalObject*, JSValue self)
 {
     Complex value = valueOf(self);
     uint64_t combined = static_cast<uint64_t>(hashOfDouble(value.real)) + 1000003 * static_cast<uint64_t>(hashOfDouble(value.imaginary));
     int64_t hash = static_cast<int64_t>(combined);
-    return makeInt(globalObject, hash == -1 ? static_cast<int64_t>(-2) : hash);
+    return hash == -1 ? -2 : hash;
 }
 
 static JSValue complexRepr(JSGlobalObject* globalObject, JSValue self)
@@ -699,7 +699,7 @@ static JSValue complexFromNumber(JSGlobalObject* globalObject, JSValue cls, JSVa
 static constexpr NativeDef complexMethods[] = {
     PY_NEW(complexNew, "($type, *args, **kwargs)"),
     PY_SLOT("__repr__", complexRepr, "($self, /)"),
-    PY_SLOT("__hash__", complexHash, "($self, /)"),
+    PY_HASH(complexHash),
     PY_SLOT("__bool__", complexBool, "($self, /)"),
     PY_SLOT("__eq__", complexEquality<true>, "($self, value, /)"),
     PY_SLOT("__ne__", complexEquality<false>, "($self, value, /)"),

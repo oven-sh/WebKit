@@ -842,13 +842,13 @@ static JSValue floatCompareMethod(JSGlobalObject* globalObject, JSValue self, JS
 }
 
 static JSValue floatReprMethod(JSGlobalObject* globalObject, JSValue self) { return makeStr(globalObject, floatRepr(floatValue(self))); }
-static JSValue floatHashMethod(JSGlobalObject* globalObject, JSValue self)
+static int64_t floatHashMethod(JSGlobalObject* globalObject, JSValue self)
 {
     double value = floatValue(self);
     // Two of them are never equal, so they had better not collide.
     if (std::isnan(value) && self.isCell())
-        return objectHash(globalObject, self);
-    return makeInt(globalObject, hashOfDouble(value));
+        return identityHash(globalObject, self);
+    return hashOfDouble(value);
 }
 static JSValue floatBoolMethod(JSGlobalObject*, JSValue self) { return jsBoolean(!!floatValue(self)); }
 static JSValue floatNegMethod(JSGlobalObject* globalObject, JSValue self) { return makeFloat(globalObject, -floatValue(self)); }
@@ -1195,7 +1195,7 @@ static JSValue floatFromNumberMethod(JSGlobalObject* globalObject, JSValue cls, 
 static constexpr NativeDef floatMethods[] = {
     PY_NEW(floatNew, "($type, *args, **kwargs)"),
     PY_SLOT("__repr__", floatReprMethod, "($self, /)"),
-    PY_SLOT("__hash__", floatHashMethod, "($self, /)"),
+    PY_HASH(floatHashMethod),
     PY_SLOT("__bool__", floatBoolMethod, "($self, /)"),
     PY_SLOT("__eq__", floatCompareMethod<CompareOperator::Eq>, "($self, value, /)"),
     PY_SLOT("__ne__", floatCompareMethod<CompareOperator::NotEq>, "($self, value, /)"),

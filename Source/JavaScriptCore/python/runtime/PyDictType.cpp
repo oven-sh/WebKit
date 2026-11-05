@@ -60,8 +60,13 @@ static void mergeMapping(JSGlobalObject* globalObject, PyDict* dict, JSValue oth
     if (auto* otherDict = PyDict::tryFrom(other); otherDict && iteratesAsDict(globalObject, otherDict)) {
         if (otherDict == dict || otherDict->isEmpty())
             return;
-        if (dict->isEmpty())
-            return dict->takeItemsOf(vm, otherDict);
+        if (dict->isEmpty()) {
+            if (otherDict->hasTableThatFits())
+                return dict->takeTableOf(vm, otherDict);
+            // Otherwise the keys go in one by one, each compared with those of the same hash that are in already. Among strs nobody can tell.
+            if (otherDict->hasOnlyStringKeys())
+                return dict->takeItemsOf(vm, otherDict);
+        }
         dict->reserve(vm, otherDict->size(), otherDict->hasOnlyStringKeys());
         unsigned size = otherDict->size();
         JSValue key, value;
@@ -413,10 +418,10 @@ static PyDict* copyAsBaseType(JSGlobalObject* globalObject, PyDict* dict)
 {
     Runtime& rt = runtime(globalObject);
     PyDict* result;
-    if (iteratesAsDict(globalObject, dict))
+    if (iteratesAsDict(globalObject, dict) && (dict->hasFewDeletedEntries() || dict->hasOnlyStringKeys()))
         result = dict->copy(globalObject);
     else {
-        // A class with an __iter__ of its own is asked for its keys and items.
+        // A class with an __iter__ of its own is asked for its keys and items. (And the keys of a dict that has lost many go in one by one.)
         auto scope = DECLARE_THROW_SCOPE(rt.vm());
         result = PyDict::create(globalObject);
         mergeMapping(globalObject, result, dict);

@@ -292,7 +292,12 @@ static JSValue dateCompare(JSGlobalObject* globalObject, JSValue self, JSValue o
     return compareResult(Packed::compare(PyDate::from(self)->packed() & ~Packed::timeMask, second->packed()), op);
 }
 
-static JSValue dateHash(JSGlobalObject*, JSValue self) { return smallInt(mixHash(PyDate::from(self)->packed() & ~Packed::timeMask)); }
+static int64_t dateHash(JSGlobalObject*, JSValue self)
+{
+    uint8_t bytes[4];
+    writeDateBytes(PyDate::from(self)->packed(), bytes);
+    return hashOfBytes(bytes);
+}
 
 // ---- Text ----
 
@@ -407,7 +412,7 @@ static constexpr NativeDef dateMethods[] = {
     PY_NEW(dateNew, "($type, *args, **kwargs)"),
     PY_SLOT("__repr__", dateRepr, "($self, /)"),
     PY_SLOT("__str__", dateStr, "($self, /)"),
-    PY_SLOT("__hash__", dateHash, "($self, /)"),
+    PY_HASH(dateHash),
     PY_DATETIME_COMPARISONS(dateCompare),
     PY_SLOT("__add__", dateAdd, "($self, value, /)"),
     PY_SLOT("__radd__", dateReflected<dateAdd>, "($self, value, /)"),

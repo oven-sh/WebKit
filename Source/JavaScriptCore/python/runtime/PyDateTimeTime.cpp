@@ -142,7 +142,7 @@ static JSValue zoneCompare(JSGlobalObject* globalObject, JSValue self, JSValue o
     return compareResult(PyTimeZone::from(self)->offset()->compare(second->offset()), op);
 }
 
-static JSValue zoneHash(JSGlobalObject*, JSValue self) { return smallInt(hashOfDelta(PyTimeZone::from(self)->offset())); }
+static int64_t zoneHash(JSGlobalObject*, JSValue self) { return hashOfDelta(PyTimeZone::from(self)->offset()); }
 
 static JSValue zoneRepr(JSGlobalObject* globalObject, JSValue self)
 {
@@ -233,7 +233,7 @@ static constexpr NativeDef zoneMethods[] = {
     PY_NEW(zoneNew, "($type, /, offset, name=<unrepresentable>)"),
     PY_SLOT("__repr__", zoneRepr, "($self, /)"),
     PY_SLOT("__str__", zoneStr, "($self, /)"),
-    PY_SLOT("__hash__", zoneHash, "($self, /)"),
+    PY_HASH(zoneHash),
     PY_DATETIME_COMPARISONS(zoneCompare),
     PY_METHOD("tzname", zoneTzName, "($self, object, /)"),
     PY_METHOD("utcoffset", zoneUtcOffset, "($self, object, /)"),
@@ -433,17 +433,19 @@ static JSValue timeOfDayCompare(JSGlobalObject* globalObject, JSValue self, JSVa
     return raiseTypeError(globalObject, scope, "can't compare offset-naive and offset-aware times"_s);
 }
 
-static JSValue timeOfDayHash(JSGlobalObject* globalObject, JSValue self)
+static int64_t timeOfDayHash(JSGlobalObject* globalObject, JSValue self)
 {
     auto* time = PyTimeOfDay::from(self);
     if (time->cachedHash == -1) {
         VM& vm = getVM(globalObject);
         auto scope = DECLARE_THROW_SCOPE(vm);
         JSValue offset = callUtcOffset(globalObject, stateOf(globalObject, time), time->tzinfo(), none());
-        RETURN_IF_EXCEPTION(scope, { });
-        if (isNone(offset))
-            time->cachedHash = mixHash(time->packed() >> 1);
-        else {
+        RETURN_IF_EXCEPTION(scope, -1);
+        if (isNone(offset)) {
+            uint8_t bytes[6];
+            writeTimeBytes(time->packed(), bytes);
+            time->cachedHash = hashOfBytes(bytes);
+        } else {
             int64_t total = static_cast<int64_t>(timeOfDaySeconds(time)) * microsecondsPerSecond + time->microsecond() - static_cast<int64_t>(PyTimeDelta::from(offset)->total());
             int64_t microseconds;
             int64_t seconds;
@@ -451,7 +453,7 @@ static JSValue timeOfDayHash(JSGlobalObject* globalObject, JSValue self)
             time->cachedHash = hashOfDelta(days, static_cast<int>(seconds), static_cast<int>(microseconds));
         }
     }
-    return smallInt(time->cachedHash);
+    return time->cachedHash;
 }
 
 static constexpr Parameters timeReplaceParameters { "replace"_s, timeParameterNames, 0, 5 };
@@ -510,7 +512,7 @@ static constexpr NativeDef timeOfDayMethods[] = {
     PY_NEW(timeOfDayNew, "($type, *args, **kwargs)"),
     PY_SLOT("__repr__", timeOfDayRepr, "($self, /)"),
     PY_SLOT("__str__", timeOfDayStr, "($self, /)"),
-    PY_SLOT("__hash__", timeOfDayHash, "($self, /)"),
+    PY_HASH(timeOfDayHash),
     PY_DATETIME_COMPARISONS(timeOfDayCompare),
     PY_CLASSMETHOD("fromisoformat", timeOfDayFromIsoFormat, "($type, string, /)"),
     PY_CLASSMETHOD("strptime", timeOfDayStrptime, "($type, string, format, /)"),

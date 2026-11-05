@@ -40,7 +40,9 @@ struct Configuration {
     bool warnDefaultEncoding { false }; // -X warn_default_encoding
     bool safePath { false }; // -P
     int intMaxStrDigits { 4300 }; // -X int_max_str_digits
-    bool hashRandomization { true }; // PYTHONHASHSEED. Hashes do not depend on it.
+    // PYTHONHASHSEED. None: the key that the hashes of str and bytes depend on is made up when the process starts (PyHash.h).
+    std::optional<uint32_t> hashSeed;
+    bool ignoresHashSeedOfEnvironment { false }; // -R
     int threadInheritContext { 0 };
     int contextAwareWarnings { 0 };
     int lazyImports { -1 }; // -X lazy_imports: 1 is "all".

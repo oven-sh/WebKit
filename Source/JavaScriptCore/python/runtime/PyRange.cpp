@@ -434,10 +434,9 @@ static JSValue rangeEquality(JSGlobalObject* globalObject, JSValue self, JSValue
     return jsBoolean(rangesAreEqual(PyRange::from(self), PyRange::from(other)) == wantEqual);
 }
 
-static JSValue rangeHash(JSGlobalObject* globalObject, JSValue self)
+static int64_t rangeHash(JSGlobalObject* globalObject, JSValue self)
 {
-    VM& vm = getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
     auto* range = PyRange::from(self);
     // Of what decides equality.
     JSValue start = jsUndefined();
@@ -447,9 +446,14 @@ static JSValue rangeHash(JSGlobalObject* globalObject, JSValue self)
         if (compareInts(range->length(), jsNumber(1)))
             step = range->step();
     }
-    int64_t result = hashOfTuple(globalObject, PyTuple::create(globalObject, { range->length(), start, step }));
-    RETURN_IF_EXCEPTION(scope, { });
-    RELEASE_AND_RETURN(scope, makeInt(globalObject, result));
+    // As the tuple of them.
+    TupleHasher hasher;
+    for (JSValue part : { range->length(), start, step }) {
+        int64_t partHash = hash(globalObject, part);
+        RETURN_IF_EXCEPTION(scope, -1);
+        hasher.add(partHash);
+    }
+    return hasher.finish();
 }
 
 static JSValue rangeReduce(JSGlobalObject* globalObject, JSValue self)
@@ -465,7 +469,7 @@ static JSValue rangeGetStep(JSGlobalObject*, JSValue self) { return PyRange::fro
 static constexpr NativeDef rangeMethods[] = {
     PY_NEW(rangeNew, "($type, *args, **kwargs)"),
     PY_SLOT("__repr__", rangeRepr, "($self, /)"),
-    PY_SLOT("__hash__", rangeHash, "($self, /)"),
+    PY_HASH(rangeHash),
     PY_SLOT("__bool__", rangeBool, "($self, /)"),
     PY_SLOT("__eq__", rangeEquality<true>, "($self, value, /)"),
     PY_SLOT("__ne__", rangeEquality<false>, "($self, value, /)"),
@@ -597,23 +601,18 @@ static JSValue sliceCompare(JSGlobalObject* globalObject, JSValue self, JSValue 
     return richCompare(globalObject, sliceAsTuple(globalObject, self), sliceAsTuple(globalObject, other), op);
 }
 
-static JSValue sliceHash(JSGlobalObject* globalObject, JSValue self)
+static int64_t sliceHash(JSGlobalObject* globalObject, JSValue self)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    // As hashOfTuple(), but that the length is not mixed in at the end.
     auto* slice = PySlice::from(self);
-    uint64_t accumulator = 2870177450012600261ULL;
+    TupleHasher hasher;
     for (JSValue part : { slice->start(), slice->stop(), slice->step() }) {
-        int64_t lane = hash(globalObject, part);
-        RETURN_IF_EXCEPTION(scope, { });
-        accumulator += static_cast<uint64_t>(lane) * 14029467366897019727ULL;
-        accumulator = (accumulator << 31) | (accumulator >> 33);
-        accumulator *= 11400714785074694791ULL;
+        int64_t partHash = hash(globalObject, part);
+        RETURN_IF_EXCEPTION(scope, -1);
+        hasher.add(partHash);
     }
-    if (accumulator == static_cast<uint64_t>(-1))
-        accumulator = 1546275796;
-    RELEASE_AND_RETURN(scope, makeInt(globalObject, static_cast<int64_t>(accumulator)));
+    return hasher.finishWithoutLength();
 }
 
 static JSValue sliceIndices(JSGlobalObject* globalObject, JSValue self, JSValue lengthValue)
@@ -642,7 +641,7 @@ static JSValue sliceGetStep(JSGlobalObject*, JSValue self) { return PySlice::fro
 static constexpr NativeDef sliceMethods[] = {
     PY_NEW(sliceNew, "($type, *args, **kwargs)"),
     PY_SLOT("__repr__", sliceRepr, "($self, /)"),
-    PY_SLOT("__hash__", sliceHash, "($self, /)"),
+    PY_HASH(sliceHash),
     PY_SLOT("__eq__", sliceCompare<CompareOperator::Eq>, "($self, value, /)"),
     PY_SLOT("__ne__", sliceCompare<CompareOperator::NotEq>, "($self, value, /)"),
     PY_SLOT("__lt__", sliceCompare<CompareOperator::Lt>, "($self, value, /)"),
