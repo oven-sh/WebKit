@@ -740,7 +740,8 @@ so the aim is that everything Python *guarantees* holds, and that what it merely
     collector reads too, is still the list. (The addresses agree to the byte.) Threads that wait wake together since a
     collection that is refused is put off to the moment the share allows. Now what lies there is no address: 1 run of 320, and
     0.8 s. (In such a run the registers held addresses 8 bytes apart: some other list that a collection copies. Nothing is done
-    about those.)
+    about those.) The rule: a table that refers weakly to cells and is copied in bulk holds complements. That what it holds is no
+    reference is what such a table means, and nothing is wiped for it.
   - *A piece that ends is not a signal.* A signal that comes between two pieces interrupts neither, so signals are looked at
     after every piece (`IdleWait::didWait`); one that comes between that look and the system call waits for the end of the
     piece, where in CPython it waits for the end of the whole call.

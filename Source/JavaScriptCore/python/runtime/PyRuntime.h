@@ -1018,7 +1018,8 @@ private:
     // The addresses are kept complemented. A list is copied as it grows and shrinks, in vector registers, which keep what they held until
     // the thread's next large copy; whenever a collection suspends the thread, the kernel saves them on its stack, and other frames
     // come to lie there. What the collector reads there is then no address: a thread that looked and went on waiting would
-    // otherwise keep alive what the next to look is meant to find.
+    // otherwise keep alive what the next to look is meant to find. (Other conservative collectors do the same with their weak tables:
+    // GC_HIDE_POINTER in Boehm's, for finalization and disappearing links, HIDE_POINTER in Mono's, for weak links.)
     struct Finalizable {
         static Finalizable of(JSCell* cell, uint32_t thread) { return { ~std::bit_cast<uintptr_t>(cell), thread }; }
         JSCell* cell() const { return std::bit_cast<JSCell*>(~complement); }
