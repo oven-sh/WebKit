@@ -2700,9 +2700,10 @@ void Unit::compileModule(Mod* module)
 void Unit::compileFunctionBody(Seq<Stmt*> body)
 {
     unsigned first = m_scope->hasDocstring ? 1 : 0;
+    size_t start = g.instructions().size();
     statements(body, first, { Last::OfFunction });
-    // A function with nothing in it returns on the line it begins on.
-    if (first == body.size())
+    // A function with nothing in it, or only what no code comes of (`a: int`, `global b`), returns on the line it begins on.
+    if (g.instructions().size() == start && m_markedLine == -1)
         line(m_info.firstLineNumber);
     emitReturnNone();
 }
