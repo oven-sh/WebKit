@@ -392,6 +392,8 @@ void JSLock::park(ParkedThread& parked)
     RELEASE_ASSERT(currentThreadIsHoldingLock());
     VM& vm = *m_vm;
     RELEASE_ASSERT(!vm.isCollectorBusyOnCurrentThread());
+    // This takes references from where the collector finds them to where it finds them. It must not be looking meanwhile.
+    RELEASE_ASSERT(vm.heap.hasAccess());
     ASSERT(!vm.hasCheckpointOSRSideState());
 
     parked.m_thread = &Thread::currentSingleton();
@@ -427,7 +429,7 @@ void JSLock::park(ParkedThread& parked)
     }
 
     // Whoever comes next acquires access to the heap for itself; and if nobody comes, the collector need not wait for anybody.
-    m_shouldReleaseHeapAccess = vm.heap.hasAccess();
+    m_shouldReleaseHeapAccess = true;
     m_isParking = true;
     unlock(m_lockCount);
 }

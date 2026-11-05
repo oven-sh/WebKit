@@ -183,7 +183,7 @@ public:
         bool m_needExceptionCheck { false };
     };
 
-    // The current thread holds the lock, and the collector is not at work on it.
+    // The current thread holds the lock and has access to the heap, and the collector is not at work on it.
     JS_EXPORT_PRIVATE void park(ParkedThread&);
     JS_EXPORT_PRIVATE void unpark(ParkedThread&);
     bool hasParkedThreads() const { return m_parkedThreadCount.load(std::memory_order_relaxed); }

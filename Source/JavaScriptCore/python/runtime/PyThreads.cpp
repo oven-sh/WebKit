@@ -278,6 +278,11 @@ void Threads::dropGIL(ThreadState&, bool isYielding)
 void Threads::release(ThreadState& thread, JSLock::ParkedThread& parked, SavedStates& saved)
 {
     ASSERT(&thread == t_currentThread);
+    // The host gives up access to the heap before it waits for events if a collection is under way, which then does not wait for this
+    // thread. What follows takes references from where the collector finds them to where it finds them, so it must not be looking
+    // meanwhile. JSLock::park() gives access up again.
+    if (!m_vm.heap.hasAccess()) [[unlikely]]
+        m_vm.heap.acquireAccess();
     auto& runtimes = m_vm.heap.pythonRuntimes();
     RELEASE_ASSERT(runtimes.size() <= SavedStates::capacity);
     for (unsigned i = 0; i < runtimes.size(); ++i) {

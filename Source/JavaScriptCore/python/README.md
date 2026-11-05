@@ -763,6 +763,8 @@ A Python thread is a thread of the system, and one of them at a time runs in the
 lock (`runtime/PyThreads.h`). To hold it is to hold the VM's `JSLock`, with what the VM and the runtime know about the running code
 (top frame, entry frame, exception state, stack limits) being that thread's: a thread that gives up the lock takes that with it
 (`JSLock::park`) and puts it back when it has the lock again. The collector scans the stacks of all of them.
+To let other threads run moves references from where the collector finds them to where it finds them, so it takes access to the heap. Bun gives that
+up before it waits for events while a collection that it has asked for is under way; `Threads::release()` takes it back for as long as it needs it.
 
 - The lock changes hands where a thread is about to wait or to make a long system call (`AllowThreads`: sleep, locks, `join`, queues, `select`
   and its kin, sockets, files, `waitpid`), and where another thread has waited for longer than `sys.getswitchinterval()`: that
