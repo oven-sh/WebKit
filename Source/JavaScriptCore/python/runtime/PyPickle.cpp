@@ -435,10 +435,13 @@ public:
         return true;
     }
 
+    // Nothing, with a MemoryError: there was no room for them.
     JSValue takeBytes()
     {
+        auto scope = DECLARE_THROW_SCOPE(m_vm);
         commitFrame();
-        JSValue result = PyBytes::create(m_globalObject, m_out.span());
+        JSValue result = makeBytes(m_globalObject, m_out);
+        RETURN_IF_EXCEPTION(scope, { });
         m_out.shrink(0);
         m_frameStart = notFound;
         return result;
@@ -448,6 +451,7 @@ public:
     {
         auto scope = DECLARE_THROW_SCOPE(m_vm);
         JSValue output = takeBytes();
+        RETURN_IF_EXCEPTION(scope, false);
         call(m_globalObject, m_write, output);
         return !scope.exception();
     }
@@ -459,7 +463,7 @@ private:
     {
         if (m_framing && m_frameStart == notFound) [[unlikely]] {
             m_frameStart = m_out.size();
-            m_out.grow(m_out.size() + pickleFrameHeaderSize);
+            m_out.appendUninitialized(pickleFrameHeaderSize);
         }
     }
 
@@ -499,7 +503,7 @@ private:
 
     void commitFrame()
     {
-        if (!m_framing || m_frameStart == notFound)
+        if (!m_framing || m_frameStart == notFound || m_out.hasOverflowed())
             return;
         size_t frameLength = m_out.size() - m_frameStart - pickleFrameHeaderSize;
         uint8_t* header = m_out.mutableSpan().data() + m_frameStart;
@@ -519,6 +523,8 @@ private:
     {
         if (!m_framing || m_frameStart == notFound || m_out.size() - m_frameStart - pickleFrameHeaderSize < pickleFrameSizeTarget) [[likely]]
             return true;
+        if (m_out.hasOverflowed()) [[unlikely]]
+            return flushToFile();
         commitFrame();
         return !m_write || flushToFile();
     }
@@ -776,18 +782,20 @@ private:
 
     bool saveBytes(JSValue object)
     {
+        auto scope = DECLARE_THROW_SCOPE(m_vm);
         auto* bytes = PyBytes::from(object);
         if (m_proto >= 3)
-            return saveBytesData(object, bytes->span());
+            RELEASE_AND_RETURN(scope, saveBytesData(object, bytes->span()));
         // There is no opcode. What this does instead makes a str in Python 2, which is what its bytes are.
         PyTuple* reduced;
         if (!bytes->length())
             reduced = PyTuple::create(m_globalObject, { m_rt.bytesType(), PyTuple::create(m_globalObject, { }) });
         else {
-            JSValue text = makeStr(m_vm, String(byteCast<Latin1Character>(bytes->span())));
+            JSValue text = codecDecodeLatin1(m_globalObject, bytes->span());
+            RETURN_IF_EXCEPTION(scope, false);
             reduced = PyTuple::create(m_globalObject, { m_state->get(PickleStateCodecsEncode), PyTuple::create(m_globalObject, { text, internString(m_vm, "latin1"_s) }) });
         }
-        return saveReduce(reduced, object);
+        RELEASE_AND_RETURN(scope, saveReduce(reduced, object));
     }
 
     bool saveByteArrayData(JSValue object, std::span<const uint8_t> data)
@@ -886,12 +894,16 @@ private:
         }
 
         std::span<const uint8_t> data;
-        std::optional<Vector<uint8_t>> encoded;
+        ByteBuilder encoded;
         if (text.is8Bit() && text.containsOnlyASCII())
             data = byteCast<uint8_t>(text.span8());
         else {
-            encoded = tryEncodeUTF8(text, true);
-            data = encoded->span();
+            appendUTF8(encoded, text, true);
+            if (encoded.hasOverflowed()) [[unlikely]] {
+                raiseMemoryError(m_globalObject, scope, String());
+                return false;
+            }
+            data = encoded.span();
         }
         uint8_t header[9];
         size_t headerSize;
@@ -1850,7 +1862,7 @@ private:
     JSValue m_reducerOverride;
     PyDict* m_fastMemo { nullptr };
     int m_fastNesting { 0 };
-    Vector<uint8_t, 256> m_out;
+    ByteBuilderWithRoom<256> m_out;
     size_t m_frameStart { notFound };
 };
 
@@ -2468,16 +2480,21 @@ private:
             return -1;
         if (static_cast<int64_t>(first.size()) < size)
             RELEASE_AND_RETURN(scope, setFileInput(data));
-        Vector<uint8_t> all;
+        ByteBuilder all;
         all.append(first.first(size));
         while (size < count) {
-            int64_t previous = size;
-            size += std::min(size, count - size);
-            all.grow(size);
-            if (failed(scope, readIntoFromFile(all.mutableSpan().data() + previous, size - previous)))
+            int64_t more = std::min(size, count - size);
+            size += more;
+            auto room = all.appendUninitialized(more);
+            if (!room.data())
+                break;
+            if (failed(scope, readIntoFromFile(room.data(), more)))
                 return -1;
         }
-        RELEASE_AND_RETURN(scope, setFileInput(PyBytes::create(m_globalObject, all.span())));
+        PyBytes* bytes = makeBytes(m_globalObject, all);
+        if (failed(scope, bytes))
+            return -1;
+        RELEASE_AND_RETURN(scope, setFileInput(bytes));
     }
 
     // The next `count` bytes, which stay put until the next read. Null: an exception.
@@ -2559,9 +2576,14 @@ private:
     {
         auto scope = DECLARE_THROW_SCOPE(m_vm);
         auto keep = [&](const uint8_t* start, int64_t length) {
-            m_line.shrink(0);
+            m_line.clear();
+            m_line.reserveInitialCapacity(length + 1);
             m_line.append(std::span { start, static_cast<size_t>(length) });
             m_line.append(0);
+            if (m_line.hasOverflowed()) [[unlikely]] {
+                raiseMemoryError(m_globalObject, scope, String());
+                return false;
+            }
             m_line.shrink(length);
             return true;
         };
@@ -2589,6 +2611,19 @@ private:
             RELEASE_AND_RETURN(scope, truncated());
         m_next = found;
         return keep(m_input, found);
+    }
+
+    // A line that is to be a number, which is looked at as a text is.
+    bool readLineOfText()
+    {
+        auto scope = DECLARE_THROW_SCOPE(m_vm);
+        if (failed(scope, readLine()))
+            return false;
+        if (m_line.size() > String::MaxLength) [[unlikely]] {
+            raiseMemoryError(m_globalObject, scope, String());
+            return false;
+        }
+        return true;
     }
 
     // ---- The stack ----
@@ -2720,7 +2755,7 @@ private:
     bool loadInt()
     {
         auto scope = DECLARE_THROW_SCOPE(m_vm);
-        if (failed(scope, readLine()))
+        if (failed(scope, readLineOfText()))
             return false;
         if (m_line.size() < 2)
             RELEASE_AND_RETURN(scope, truncated());
@@ -2738,7 +2773,7 @@ private:
     bool loadLong()
     {
         auto scope = DECLARE_THROW_SCOPE(m_vm);
-        if (failed(scope, readLine()))
+        if (failed(scope, readLineOfText()))
             return false;
         if (m_line.size() < 2)
             RELEASE_AND_RETURN(scope, truncated());
@@ -2771,7 +2806,7 @@ private:
     bool loadFloat()
     {
         auto scope = DECLARE_THROW_SCOPE(m_vm);
-        if (failed(scope, readLine()))
+        if (failed(scope, readLineOfText()))
             return false;
         if (m_line.size() < 2)
             RELEASE_AND_RETURN(scope, truncated());
@@ -2869,12 +2904,16 @@ private:
             return push(result);
         }
         // As much at a time as there has been so far: what the pickle says the size is need not be true.
-        Vector<uint8_t> data;
+        ByteBuilder data;
         int64_t current = std::min(size, pickleMinReadBufferSize);
         int64_t previous = 0;
         while (true) {
-            data.grow(current);
-            if (failed(scope, readInto(data.mutableSpan().data() + previous, current - previous)))
+            auto room = data.appendUninitialized(current - previous);
+            if (!room.data()) {
+                raiseMemoryError(m_globalObject, scope, String());
+                return false;
+            }
+            if (failed(scope, readInto(room.data(), current - previous)))
                 return false;
             if (current >= size)
                 break;
@@ -2928,7 +2967,7 @@ private:
 
     JSValue decodeUTF8(std::span<const uint8_t> bytes, ASCIILiteral errors)
     {
-        if (charactersAreAllASCII(bytes))
+        if (charactersAreAllASCII(bytes) && bytes.size() <= String::MaxLength)
             return bytes.empty() ? JSValue(m_rt.names.empty()) : JSValue(makeStr(m_vm, String(byteCast<Latin1Character>(bytes))));
         return codecDecodeUTF8(m_globalObject, bytes, errors);
     }
@@ -3225,7 +3264,7 @@ private:
     bool loadGet()
     {
         auto scope = DECLARE_THROW_SCOPE(m_vm);
-        if (failed(scope, readLine()))
+        if (failed(scope, readLineOfText()))
             return false;
         if (m_line.size() < 2)
             RELEASE_AND_RETURN(scope, truncated());
@@ -3280,7 +3319,7 @@ private:
     bool loadPut()
     {
         auto scope = DECLARE_THROW_SCOPE(m_vm);
-        if (failed(scope, readLine()))
+        if (failed(scope, readLineOfText()))
             return false;
         if (m_line.size() < 2)
             RELEASE_AND_RETURN(scope, truncated());
@@ -3701,7 +3740,7 @@ private:
     int64_t m_inputLength { 0 }; // No further than the end of the frame, while there is one.
     int64_t m_frameEnd { -1 };
     int64_t m_savedInputLength { 0 };
-    Vector<uint8_t, 64> m_line;
+    ByteBuilderWithRoom<64> m_line;
 
     MarkedArgumentBuffer m_stack;
     Vector<size_t, 16> m_marks;
@@ -4054,7 +4093,7 @@ static JSValue pickleDumps(JSGlobalObject* globalObject, JSValue object, JSValue
     PicklerRun run(globalObject, pickler);
     run.dump(object);
     RETURN_IF_EXCEPTION(scope, { });
-    return run.takeBytes();
+    RELEASE_AND_RETURN(scope, run.takeBytes());
 }
 
 static JSValue pickleLoad(JSGlobalObject* globalObject, JSValue file, JSValue fixImportsValue, JSValue encoding, JSValue errors, JSValue buffers)
