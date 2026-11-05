@@ -764,6 +764,7 @@ bool Walker::walkYieldOfGeneratorInConsumer(const BodyValue& yield)
     forgetRegionOfIteration(frameOfTurn, m_generatorsWalkedInConsumers[place]);
 
     size_t numberOfLoopsAround = m_openLoops.size();
+    m_generatorsWalkedInConsumers[place].numberOfLoopsAroundTurn = static_cast<uint32_t>(numberOfLoopsAround);
     walkHeadOfLoopBehindStep(inputHead, step, carried.span(), false, yielded);
     for (size_t number = 0; number < m_generatorsWalkedInConsumers[place].region.size() && !m_hasFailed; ++number) {
         BlockID member = m_generatorsWalkedInConsumers[place].region[number];

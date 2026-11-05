@@ -35,6 +35,7 @@ struct GeneratorWalkedInConsumer {
     uint32_t frameOfConsumer { 0 };
     uint32_t frameOfGenerator { 0 };
     uint32_t frameOfTurn { UINT32_MAX };
+    uint32_t numberOfLoopsAroundTurn { 0 };
     BlockID inputHead;
     ValueID step;
     Reference state;

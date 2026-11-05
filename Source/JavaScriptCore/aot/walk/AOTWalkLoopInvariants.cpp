@@ -244,7 +244,12 @@ void Walker::leaveBlockOpenInFrontOfLoop(BlockID inputHead, BlockID head, std::s
 
 void Walker::endBlocksInFrontOfLoops(size_t frameIndex, BlockID next)
 {
-    while (!m_openLoops.isEmpty()) {
+    size_t numberOfLoopsAroundTurn = 0;
+    for (const GeneratorWalkedInConsumer& walked : m_generatorsWalkedInConsumers) {
+        if (walked.frameOfTurn == frameIndex)
+            numberOfLoopsAroundTurn = std::max<size_t>(numberOfLoopsAroundTurn, walked.numberOfLoopsAroundTurn);
+    }
+    while (m_openLoops.size() > numberOfLoopsAroundTurn) {
         const OpenLoop& loop = m_openLoops.last();
         if (loop.frame < frameIndex)
             return;
