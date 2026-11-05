@@ -438,6 +438,9 @@ void Unit::noLine()
 
 void Unit::jump(Label& target)
 {
+    // (`break` through a `finally` clause that returns. A jump would make it look as if the end of the loop could be reached.)
+    if (cannotGetHere())
+        return;
     if (m_place.lineno > 0 && m_place.lineno == m_markedLine)
         place(m_place);
     g.emitJump(target);
@@ -1419,7 +1422,9 @@ void Unit::unwindBlocks(const Range& range, size_t count, Vector<TryContext>& su
     // What the block runs on the way out is outside the block.
     markBlock(top, false);
     m_blocks.removeLast();
-    unwindBlock(top, suspended);
+    // Behind a `finally` clause that never comes to its end, all there is to do is to look at what else is in the way.
+    if (!cannotGetHere())
+        unwindBlock(top, suspended);
     unwindBlocks(range, count, suspended);
     markBlock(top, true);
     m_blocks.append(top);
