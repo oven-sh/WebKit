@@ -75,7 +75,9 @@ struct TypeDef {
 // all Structures (HasOwnPropertyCache, MegamorphicCache). A type has a key that no other type has or has had, and takes a new one whenever
 // it changes, or one of its bases: what was found before that is never found again.
 // The table keeps nothing alive but the text of the names, each until its place is taken. After each collection it forgets the values
-// that are gone: the dict of a class can be written to behind the back of the class (gc.get_referents(C.__dict__)).
+// that are gone: the dict of a class can be written to behind the back of the class (gc.get_referents(C.__dict__)). An Eden collection
+// frees nothing that has survived a collection, so after one only what has been written since the last is looked at, as in
+// Heap::reconcileWeakGCHashTables().
 class TypeLookupCache {
     WTF_MAKE_NONCOPYABLE(TypeLookupCache);
     WTF_MAKE_TZONE_ALLOCATED(TypeLookupCache);
@@ -94,10 +96,22 @@ public:
         uintptr_t bits = reinterpret_cast<uintptr_t>(impl);
         return m_entries[((bits >> 4) ^ (bits >> 9) ^ (key >> 32)) % size];
     }
+    ALWAYS_INLINE void remember(uint64_t key, StringImpl* impl, JSValue value)
+    {
+        Entry& entry = entryFor(key, impl);
+        entry.key = key;
+        entry.impl = impl;
+        entry.value = value;
+        if (value && value.isCell())
+            m_written |= 1ull << (static_cast<size_t>(&entry - m_entries.data()) / entriesPerBit);
+    }
     void removeUnmarked(Heap&);
 
 private:
+    static constexpr unsigned entriesPerBit = size / 64;
+
     std::array<Entry, size> m_entries;
+    uint64_t m_written { 0 }; // A bit for each run of entries: one of them was given a cell since the last collection.
 };
 
 class PyType final : public InternalFunction {

@@ -263,11 +263,15 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(TypeLookupCache);
 
 void TypeLookupCache::removeUnmarked(Heap& heap)
 {
+    uint64_t runs = heap.collectionScope() == CollectionScope::Eden ? m_written : ~0ull;
+    m_written = 0;
     // (The text is let go of when the entry is taken for another name: not here, which may be the collector's thread.)
-    for (Entry& entry : m_entries) {
-        if (entry.value && entry.value.isCell() && !heap.isMarked(entry.value.asCell())) {
-            entry.key = 0;
-            entry.value = JSValue();
+    for (; runs; runs &= runs - 1) {
+        for (Entry& entry : std::span { m_entries }.subspan(WTF::ctz(runs) * entriesPerBit, entriesPerBit)) {
+            if (entry.value && entry.value.isCell() && !heap.isMarked(entry.value.asCell())) {
+                entry.key = 0;
+                entry.value = JSValue();
+            }
         }
     }
 }
@@ -328,10 +332,7 @@ JSValue PyType::lookupSlow(JSString* name)
     StringImpl* impl = name->tryGetValueImpl();
     if (impl->length() > 100) [[unlikely]]
         return value;
-    TypeLookupCache::Entry& entry = m_lookupCache->entryFor(key, impl);
-    entry.key = key;
-    entry.impl = impl;
-    entry.value = value;
+    m_lookupCache->remember(key, impl, value);
     return value;
 }
 
