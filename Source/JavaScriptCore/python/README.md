@@ -58,9 +58,11 @@ interpreter stores a result that is whole, so none can make a `-0.0` that is a n
 
 **str.** A `JSString`, so UTF-16 where it is not Latin-1, while Python counts code points. A text without surrogate pairs is indexed
 directly. C++ borrows the text of a str while it works on it (`StrView`, `JSString::view()`) instead of retaining it: the reference
-count of a `StringImpl` is atomic, and two such operations cost more than most methods of str. For one with pairs, `StrIndexCache` (16 entries for each runtime, emptied after each collection, nothing for texts shorter
-than 48 units) remembers the number of pairs and the offset of every 64th code point, so that `s[i]` in a loop does not scan from
-the start each time.
+count of a `StringImpl` is atomic, and two such operations cost more than most methods of str. Whether there are pairs is seen by
+looking for a unit that is a second half, eight at a time. `StrIndexCache` (16 entries for each runtime, each holding its
+`StringImpl`, all emptied after each collection, nothing for texts shorter than 48 units) remembers the answer, and for a text with
+pairs their number and the offset of every 64th code point, so that `s[i]` in a loop does not go through the text each time. (A
+`StringImpl` has no bit left to remember it in.)
 
 **list.** Any `JSArray` is a list, so a list is not always values in a row. An array that has held nothing but int32s, or nothing but
 numbers, is stored as int32s or as doubles: what `[]`, `[1, 2]` and a comprehension make begins so, as in JS, and `JSArray::push`,

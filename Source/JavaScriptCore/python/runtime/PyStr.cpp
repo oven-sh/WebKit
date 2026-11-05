@@ -185,6 +185,20 @@ String stringFromCodePoint(char32_t character)
 
 // ---- StrView ----
 
+// Whether any unit is the second half of a pair: in most text none is.
+static bool hasSecondHalves(std::span<const char16_t> units)
+{
+    auto mask = SIMD::splat<uint16_t>(0xfc00);
+    auto secondHalf = SIMD::splat<uint16_t>(0xdc00);
+    auto vectorMatch = [&](auto value) ALWAYS_INLINE_LAMBDA {
+        return SIMD::findFirstNonZeroIndex(SIMD::equal(SIMD::bitAnd(value, mask), secondHalf));
+    };
+    auto scalarMatch = [&](char16_t unit) ALWAYS_INLINE_LAMBDA {
+        return U16_IS_TRAIL(unit);
+    };
+    return SIMD::find(units, vectorMatch, scalarMatch) != std::to_address(units.end());
+}
+
 static unsigned countSurrogatePairs(std::span<const char16_t> units)
 {
     unsigned pairs = 0;
@@ -203,7 +217,7 @@ static constexpr unsigned shortestStrRemembered = 48;
 void StrView::lookThrough()
 {
     auto units = string().span16();
-    unsigned pairs = countSurrogatePairs(units);
+    unsigned pairs = hasSecondHalves(units) ? countSurrogatePairs(units) : 0;
     m_length = units.size() - pairs;
     m_isSimple = !pairs;
     if (!pairs || units.size() < shortestStrRemembered)
@@ -263,7 +277,7 @@ void StrView::lookThroughOrRecall(JSGlobalObject* globalObject)
         cache.heapVersion = version;
     }
     StringImpl* impl = m_text.data;
-    auto& entry = cache.entries[(std::bit_cast<uintptr_t>(impl) >> 5) % StrIndexCache::size];
+    auto& entry = cache.entries[PtrHash<StringImpl*>::hash(impl) % StrIndexCache::size];
     if (entry.impl == impl) [[likely]] {
         m_length = entry.length;
         m_isSimple = m_length == impl->length();
