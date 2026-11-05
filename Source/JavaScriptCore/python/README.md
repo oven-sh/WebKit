@@ -573,7 +573,8 @@ so the aim is that everything Python *guarantees* holds, and that what it merely
     look at is the running thread's. In foreign code: when it comes back. A signal that comes just before the system call does nothing, so it
     is sent again, after 1 ms, 2 ms, 4 ms and so on, until the thread is back (`Threads::interrupt`, on the queue from which `VMTraps`
     sends its signals again and again). Once it is back none is sent, and none is on its way. The main thread gets a signal that is
-    nobody else's (`wakeMainThreadFromSystemCall()`), the others `SIGURG`.
+    nobody else's (`wakeMainThreadFromSystemCall()`), the others `SIGURG`. A collection tells a thread once, however much it leaves for it: to
+    tell is a system call. (Once for each callback of a weak reference, 200,000 of them took 145 ms, 100 ms of that in the kernel; now 42 ms.)
   - **The signal is sent only where it loses nothing** (`AllowThreads::LosesNothing`, which the call site says): a call that transfers nothing
     before it returns and is made again when it was interrupted: `read`, `readv`, `recv` and its kin, `accept`, `poll`/`select`/`epoll`, the
     `wait` family, `flock`, `lockf`, `open` (of a FIFO), a semaphore, a sleep. CPython sends a thread no signal at all, and one that comes in the
@@ -591,6 +592,11 @@ so the aim is that everything Python *guarantees* holds, and that what it merely
   collections find and order what only the modules held. What is then still held (by JS, by a frame on the stack) is finalized in
   the order it was made. A program that leaves nothing to finalize exits without a collection; a generator that has not begun is
   nothing to finalize.
+  - What it costs, measured: black formatting its own 24 sources in one process (7 s, 330 MB) makes one full collection at exit, 99.9 ms of
+    marking and 13.2 ms of sweeping; from its last line to the end of the process 112 to 142 ms, against 28 to 31 ms with `os._exit()`.
+    It is made for one object: the tokenizer's generator for the last file, dropped while suspended inside `try` / `except`. To
+    close it evaluates the `except` clauses, as CPython does when it is dropped. Whether one old object is dead takes a full marking:
+    a collection of the young does not find it (and takes 18 to 27 ms), and to leave out the sweep would save 0.2 % of the run.
 - **What a daemon thread still holds at exit is never finalized**, as in CPython, where the frames of a thread that never runs again
   never let go: its variables and temporaries, the arguments of the built-in functions it is in, and by way of its functions their
   globals, with all that those lead to (`whatOtherThreadsHold`). A file among that is not closed, and what was written to it and

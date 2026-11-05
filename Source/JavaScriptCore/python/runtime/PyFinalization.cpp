@@ -526,6 +526,12 @@ void Runtime::WeakCellTable::removeUnmarked(JSC::Heap& heap)
 void Runtime::reconcileWeakReferencesAtGCEnd()
 {
     scheduledTasks.removeUnmarked(m_vm.heap);
+    // Each thread is told once of all that queueWeakRefCallback() has left for it: to tell may be a system call.
+    Locker locker { m_finalizationLock };
+    for (auto& owed : m_callsOwed) {
+        if (!owed->weakRefCallbacks.isEmpty())
+            didQueueCallsFor(owed->thread);
+    }
 }
 
 bool Runtime::hasBeenFinalized(JSCell* cell)
@@ -540,7 +546,6 @@ void Runtime::queueWeakRefCallback(PyWeakRef* weakRef)
     CallsOwed& owed = callsOwedBy(m_scopeAskedFor && m_askerMakesAllCalls ? m_currentThread : threadToMakeCallsOf(weakRef->thread()));
     owed.weakRefCallbacks.append(weakRef);
     owed.weakRefCallbacksAreInOrder = false;
-    didQueueCallsFor(owed.thread);
 }
 
 template<typename Visitor>
