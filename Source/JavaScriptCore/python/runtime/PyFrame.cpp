@@ -946,8 +946,10 @@ void PyFrame::callIsEnding(JSGlobalObject* globalObject, CallFrame* callFrame, b
         m_generator.clear();
     else if (callerIsFoundLater)
         m_lacksBack = true;
-    else if (CallFrame* caller = pythonCallerOfFrameThatEnds(vm, callFrame))
-        m_back.set(vm, this, of(globalObject, caller));
+    else if (CallFrame* caller = pythonCallerOfFrameThatEnds(vm, callFrame)) {
+        // Whoever has asked for this one can get at that one from now on. (If it was only made for a tool, f_back asks.)
+        m_back.set(vm, this, m_wasAskedFor ? of(globalObject, caller) : ofForTracing(globalObject, caller));
+    }
     m_callFrame = nullptr;
 }
 
