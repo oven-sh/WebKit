@@ -111,7 +111,7 @@ public:
     void suspendBody(JSGlobalObject*, unsigned resumeOffset);
     void returnFromBody(JSGlobalObject*);
     // An exception is about to leave the frame of the body. It may be replaced by another.
-    void bodyIsUnwinding(JSGlobalObject*, bool isTermination);
+    void bodyIsUnwinding(JSGlobalObject*, CallFrame*, bool isTermination);
 
     static constexpr ptrdiff_t offsetOfState() { return OBJECT_OFFSETOF(PyGenerator, m_state); }
     static constexpr ptrdiff_t offsetOfBody() { return OBJECT_OFFSETOF(PyGenerator, m_body); }

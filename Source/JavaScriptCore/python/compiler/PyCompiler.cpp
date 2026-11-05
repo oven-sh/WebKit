@@ -1048,6 +1048,15 @@ void Unit::emitPrologue()
         }
     }
 
+    if (m_part == Part::GeneratorBody) {
+        // throw() into one that has not started: it starts, and this is as far as it gets. BytecodeGeneratorification puts the switch of
+        // the generator in the place of the jump, so that one which is started in the usual way runs nothing for this.
+        Ref<Label> start = g.newLabel();
+        g.emitPyJumpIfFalse(g.generatorResumeModeRegister(), start.get());
+        callRuntimeForEffect(RuntimeFunction::ThrowIntoGenerator, { g.generatorValueRegister() });
+        g.emitLabel(start.get());
+    }
+
     g.addPythonMark(PythonMark::Start, 0);
     m_markedLine = -1;
     m_start = g.instructions().size();

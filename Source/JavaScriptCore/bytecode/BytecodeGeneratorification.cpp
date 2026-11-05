@@ -93,6 +93,13 @@ public:
                 break;
             }
 
+            case op_py_jfalse: {
+                // The first is at the end of what sets up the frame: see Python::Unit::emitPrologue().
+                if (!m_pythonStartPoint)
+                    m_pythonStartPoint = instruction.offset();
+                break;
+            }
+
             case op_py_generator_registers: {
                 // The one that is there already takes the values of the parameters from the first slots.
                 auto bytecode = instruction->as<OpPyGeneratorRegisters>();
@@ -198,6 +205,7 @@ private:
     BytecodeGenerator& m_bytecodeGenerator;
     VirtualRegister m_firstPythonParameter;
     unsigned m_pythonParameterCount { 0 };
+    std::optional<JSInstructionStream::Offset> m_pythonStartPoint;
     JSInstructionStream::Offset m_enterPoint;
     std::optional<GeneratorFrameData> m_generatorFrameData;
     UnlinkedCodeBlockGenerator* m_codeBlock;
@@ -358,18 +366,34 @@ void BytecodeGeneratorification::run()
         jumpTable.m_min = 0;
         jumpTable.m_branchOffsets = FixedVector<int32_t>(m_yields.size() + 1);
         std::ranges::fill(jumpTable.m_branchOffsets, 0);
-        jumpTable.add(0, nextToEnterPoint.offset());
+        // In Python the frame is set up first. Only a generator that starts gets as far as the switch, for op_py_generator_enter goes
+        // straight to where one is resumed. What comes next is for throw(), which passes a state that there is not.
+        JSInstructionStream::Offset start = nextToEnterPoint.offset();
+        JSInstructionStream::Offset other = start;
+        if (isPython) {
+            auto startPoint = m_instructions.at(*m_pythonStartPoint);
+            extractStoredJumpTargetsForInstruction(m_codeBlock, startPoint, [&](int32_t relative) {
+                start = startPoint.offset() + relative;
+            });
+            other = startPoint.next().offset();
+        }
+        jumpTable.add(0, start);
         // A yield the bytecode optimizer removed as unreachable can never be resumed at; give its state the default
         // target so the table has no holes (a 0 entry would be rebased into a jump to op_enter).
         for (unsigned i = 0; i < m_yields.size(); ++i)
-            jumpTable.add(i + 1, m_yields[i].found ? m_yields[i].point : nextToEnterPoint.offset());
-        jumpTable.m_defaultOffset = nextToEnterPoint.offset();
+            jumpTable.add(i + 1, m_yields[i].found ? m_yields[i].point : other);
+        jumpTable.m_defaultOffset = other;
 
-        rewriter.insertFragmentBefore(nextToEnterPoint, [&] (BytecodeRewriter::Fragment& fragment) {
-            if (isPython)
-                fragment.appendInstruction<OpPyGeneratorEnter>();
+        auto emitSwitch = [&] (BytecodeRewriter::Fragment& fragment) {
             fragment.appendInstruction<OpSwitchImm>(switchTableIndex, state);
-        });
+        };
+        if (isPython) {
+            rewriter.insertFragmentBefore(nextToEnterPoint, [&] (BytecodeRewriter::Fragment& fragment) {
+                fragment.appendInstruction<OpPyGeneratorEnter>();
+            });
+            rewriter.replaceBytecodeWithFragment(m_instructions.at(*m_pythonStartPoint), emitSwitch);
+        } else
+            rewriter.insertFragmentBefore(nextToEnterPoint, emitSwitch);
     }
 
     // Before what follows: where one of these is right before a yield, it has to come before the registers are saved.

@@ -602,7 +602,8 @@ void CodeMonitor::findPointsWithoutTellingTheCollector(bool everyInstruction)
             if (it == indexOfOffset.end())
                 return;
             if (isResumption) {
-                if (items[it->value].offset > start)
+                // (Before the start: where throw() has one begin that has not started.)
+                if (items[it->value].offset != start)
                     items[it->value].isResumedAt = true;
                 return;
             }
@@ -709,7 +710,7 @@ void CodeMonitor::findPointsWithoutTellingTheCollector(bool everyInstruction)
             startOfStatement = item.offset;
             lineOfStatement = item.exitLine;
         }
-        if (item.offset < start || !isReachable.get(&item - items.begin()))
+        if ((item.offset < start && !isBeingResumed) || !isReachable.get(&item - items.begin()))
             continue;
 
         Point point;
@@ -718,7 +719,7 @@ void CodeMonitor::findPointsWithoutTellingTheCollector(bool everyInstruction)
         point.next = item.offset + instructions.at(item.offset)->size();
         if (item.offset == start)
             point.kinds |= bit(Event::PyStart);
-        if (everyInstruction && !item.isHiddenJump)
+        if (everyInstruction && !item.isHiddenJump && item.offset >= start)
             point.kinds |= bit(Event::Instruction);
 
         // The registers are put back first.
@@ -2287,7 +2288,7 @@ JSValue exceptionIsRaised(JSGlobalObject* globalObject, JSValue exception, CallF
     }
     auto marks = codeBlock->unlinkedCodeBlock()->pythonMarks();
     // What throw() raises comes from outside: a handler on the line of the `yield` is told of as a line that begins.
-    bool isThrownIn = instruction->opcodeID() == op_py_runtime && static_cast<RuntimeFunction>(instruction->as<OpPyRuntime>().m_function) == RuntimeFunction::ThrowIntoGenerator;
+    bool isThrownIn = throwsIntoGenerator(codeBlock, index);
     int line = isThrownIn ? -1 : lineOfMarks(marks, index.offset());
     // As above: in `with a, b, c():` the handler of `a` is on the line that the exception comes from, though it comes by way of the handler of `b`.
     if (!isRaisedAgain || line >= 0 || !monitoring.isRaisedIn(callFrame))
@@ -2325,7 +2326,7 @@ JSValue exceptionStaysOrLeaves(JSGlobalObject* globalObject, JSValue exception, 
         }
     }
     // In CPython all of a generator is in a handler, which makes a RuntimeError of a StopIteration and raises anything else again.
-    if (!isCaught && codeInfoOf(callFrame).isGeneratorLike()) {
+    if (!isCaught && codeInfoOf(callFrame).isGeneratorLike() && isPastStart(codeBlock->unlinkedCodeBlock()->pythonMarks(), index.offset())) {
         exception = tellOfException(globalObject, exception, callFrame, offset, Event::ExceptionHandled);
         exception = tellOfException(globalObject, exception, callFrame, offset, Event::Reraise);
     }

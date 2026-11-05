@@ -127,7 +127,7 @@ static ASCIILiteral describe(PyGenerator::Kind kind)
 }
 
 // A StopIteration that leaves the body would pass for the end of the generator.
-static void replaceStopIteration(JSGlobalObject* globalObject, PyGenerator::Kind kind)
+static void replaceStopIteration(JSGlobalObject* globalObject, CallFrame* callFrame, PyGenerator::Kind kind)
 {
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
@@ -138,6 +138,9 @@ static void replaceStopIteration(JSGlobalObject* globalObject, PyGenerator::Kind
     else if (kind == PyGenerator::Kind::AsyncGenerator && pendingExceptionMatches(globalObject, rt.StopAsyncIteration()))
         what = "StopAsyncIteration"_s;
     else
+        return;
+    // What throw() has raised in one that had not started is let out as it is.
+    if (!isPastStart(callFrame->codeBlock()->unlinkedCodeBlock()->pythonMarks(), callFrame->bytecodeIndex().offset()))
         return;
     JSValue original = takePendingException(globalObject);
     PyException* error = newException(globalObject, rt.RuntimeError(), makeString(describe(kind), " raised "_s, what));
@@ -188,7 +191,7 @@ void PyGenerator::returnFromBody(JSGlobalObject* globalObject)
     complete();
 }
 
-void PyGenerator::bodyIsUnwinding(JSGlobalObject* globalObject, bool isTermination)
+void PyGenerator::bodyIsUnwinding(JSGlobalObject* globalObject, CallFrame* callFrame, bool isTermination)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
@@ -202,7 +205,7 @@ void PyGenerator::bodyIsUnwinding(JSGlobalObject* globalObject, bool isTerminati
     if (isTermination)
         return;
     if (!body()->codeInfo().isLambda)
-        replaceStopIteration(globalObject, m_kind);
+        replaceStopIteration(globalObject, callFrame, m_kind);
     EXCEPTION_ASSERT(scope.exception());
     unwrapPendingException(globalObject);
     EXCEPTION_ASSERT_UNUSED(scope, scope.exception());
@@ -210,7 +213,7 @@ void PyGenerator::bodyIsUnwinding(JSGlobalObject* globalObject, bool isTerminati
 
 void generatorBodyIsUnwinding(JSGlobalObject* globalObject, CallFrame* callFrame, bool isTermination)
 {
-    uncheckedDowncast<PyGenerator>(callFrame->uncheckedArgument(0).asCell())->bodyIsUnwinding(globalObject, isTermination);
+    uncheckedDowncast<PyGenerator>(callFrame->uncheckedArgument(0).asCell())->bodyIsUnwinding(globalObject, callFrame, isTermination);
 }
 
 PyGenerator::Outcome PyGenerator::resume(JSGlobalObject* globalObject, JSValue value, ResumeMode mode, JSValue& result)
@@ -218,10 +221,11 @@ PyGenerator::Outcome PyGenerator::resume(JSGlobalObject* globalObject, JSValue v
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     ASSERT(state() >= 0);
-    ASSERT(state() || mode == ResumeMode::NormalMode);
 
     throwIsWithDelegate = mode != ResumeMode::NormalMode && m_delegate;
-    JSValue arguments[] = { this, m_state.get(), value, jsNumber(static_cast<int32_t>(mode)), jsUndefined() };
+    // One that has not started goes by this when its frame is set up: see Unit::emitPrologue().
+    JSValue whereToStart = isStarted() || mode == ResumeMode::NormalMode ? m_state.get() : jsNumber(-1);
+    JSValue arguments[] = { this, whereToStart, value, jsNumber(static_cast<int32_t>(mode)), jsUndefined() };
     JSValue returned = callBodyOfGenerator(globalObject, body(), arguments);
     if (scope.exception()) [[unlikely]] {
         // It did not get as far as the body: there was no room on the stack for its frame.
@@ -281,14 +285,6 @@ static JSValue generatorThrowWithMode(JSGlobalObject* globalObject, PyGenerator*
         if (generator->kind() == PyGenerator::Kind::Coroutine)
             return raiseRuntimeError(globalObject, scope, "cannot reuse already awaited coroutine"_s);
         // As it is: see raiseExceptionThrownIntoGenerator().
-        throwPythonException(globalObject, scope, exception);
-        return { };
-    }
-    if (!generator->isStarted()) {
-        // There is nothing in it that could catch the exception, which passes through it all the same.
-        if (auto* thrown = PyException::tryFrom(exception))
-            thrown->setTraceback(vm, PyTraceback::create(globalObject, thrown->traceback(), PyFrame::of(globalObject, generator), generator->body()->codeInfo().firstLineNumber, 0));
-        generator->complete();
         throwPythonException(globalObject, scope, exception);
         return { };
     }

@@ -322,6 +322,8 @@ int lineNumberForBytecodeIndex(CodeBlock*, BytecodeIndex);
 // The instruction is on no line and raises an exception again on behalf of the program, as if from where the program raised it. (In CPython
 // RERAISE puts f_lasti back.)
 bool raisesAgainAsIfFromWhereItWasRaised(CodeBlock*, BytecodeIndex);
+// It is where throw() raises what it was given.
+bool throwsIntoGenerator(CodeBlock*, BytecodeIndex);
 
 // Prints the exception and its traceback on sys.stderr, as the interpreter does for one nothing caught: nothing if that is None.
 // As in CPython it is Lib/traceback.py that does it, which underlines what raised, colours what goes to a terminal and has hints

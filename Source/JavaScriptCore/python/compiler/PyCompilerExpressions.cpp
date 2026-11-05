@@ -2731,7 +2731,8 @@ RegisterID* Unit::comprehension(Expr* node, ComprehensionKind kind, Seq<Comprehe
     loc(range);
     emitMakeFunction(function.get(), executable, scope, { });
     unsigned temporaryOfIterable = ownsFirstIterator ? beginTemporaryOfLoop(outermost->iter) : 0;
-    Reg iterable = outermost->isAsync ? expr(outermost->iter) : exprToIterateOverOrSearch(outermost->iter);
+    // A generator expression is passed what was written, and asks for the iterator itself: gi_frame.f_locals['.0'] is a list.
+    Reg iterable = outermost->isAsync || isGenerator ? expr(outermost->iter) : exprToIterateOverOrSearch(outermost->iter);
     emitSimpleCall(result.get(), function.get(), { iterable.get() }, range, temporary, temporaryOfIterable);
     if (scope->isCoroutine && !isGenerator)
         emitAwait(result.get(), result.get(), 0);

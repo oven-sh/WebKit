@@ -464,6 +464,11 @@ function is called in this way once it has been called in the ordinary way, whic
 - So anybody can resume one: `PyGenerator::resume()` in C++, and two instructions, which make the frame and call the body without
   leaving the interpreter: `op_py_for_iter`, and `op_py_send`, which is a step of `yield from` or `await`. Both enter at
   `llint_python_generator_resume`: the prologue, `op_enter` and `op_py_generator_enter` in one.
+- _`throw()` into one that has not started_ starts it: its frame is set up, and there the exception is raised, on the line of the `def`
+  and outside of all that the program wrote, so that a `StopIteration` stays one. Tools are told (`PY_THROW`, `RAISE`, `PY_UNWIND`), the
+  traceback has the frame, and the frame has the arguments. A generator of JS begins with a test of the resume mode. Here one that is
+  started in the usual way runs nothing for it: the switch that the generatorification pass adds, which only a generator that starts
+  gets to, comes after what sets up the frame; state 0 goes on with the program's code, and `throw()` passes a state that there is not.
 - _The registers_ that are live across a yield, and all the variables (`gi_frame.f_locals` shows them), are kept in slots at the
   end of the generator object, which is as large as its code needs. Runs of registers are saved and restored by one instruction
   (`op_py_generator_registers`; the last run is saved by the suspend itself). Until it starts the first slots hold the arguments.

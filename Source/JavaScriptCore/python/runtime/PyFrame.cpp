@@ -882,6 +882,12 @@ unsigned PyFrame::bytecodeOffset()
     return m_bytecodeOffset;
 }
 
+bool throwsIntoGenerator(CodeBlock* codeBlock, BytecodeIndex index)
+{
+    auto instruction = codeBlock->instructionAt(index);
+    return instruction->opcodeID() == op_py_runtime && static_cast<RuntimeFunction>(instruction->as<OpPyRuntime>().m_function) == RuntimeFunction::ThrowIntoGenerator;
+}
+
 bool raisesAgainAsIfFromWhereItWasRaised(CodeBlock* codeBlock, BytecodeIndex index)
 {
     auto instruction = codeBlock->instructionAt(index);
@@ -1969,9 +1975,9 @@ JSValue addTracebackEntry(JSGlobalObject* globalObject, JSValue exceptionValue, 
     // An exception raised again where it was caught has been through this frame already.
     bool isRaisedAgain = std::exchange(rt.reraisingFrame, nullptr) == callFrame;
     // A call whose arguments do not fit never began. Nor did that of a generator expression whose first iterable is none: it is the
-    // code around it that asks for the iterator, as far as a program can tell.
+    // code around it that asks for the iterator, as far as a program can tell. A generator that throw() has started did begin.
     CodeBlock* codeBlock = callFrame->codeBlock();
-    if (!isPastStart(codeBlock->unlinkedCodeBlock()->pythonMarks(), index.offset())) {
+    if (!isPastStart(codeBlock->unlinkedCodeBlock()->pythonMarks(), index.offset()) && !throwsIntoGenerator(codeBlock, index)) {
         // (It is the caller of whatever it called all the same.)
         if (auto* exception = PyException::tryFrom(exceptionValue); exception && frameLeftLastLacksCaller(exception->tracebackSoFar())) [[unlikely]]
             callerOfFrameLeftLastIs(vm, exception->tracebackSoFar(), PyFrame::of(globalObject, callFrame));

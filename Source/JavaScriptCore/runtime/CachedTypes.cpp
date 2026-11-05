@@ -5575,7 +5575,8 @@ protected:
     // 19: Python::CodeInfo::isLambda.
     // 20: op_py_catch (opcode numbering).
     // 21: op_py_catch has a mode; Python::RuntimeFunction::Raise takes what was called, LeaveHandler (numbering of the functions).
-    static constexpr uint32_t cachedTypesFormatRevision = 21;
+    // 22: the switch of a generator of Python comes after what sets up the frame, and has a way for throw() into one that has not started.
+    static constexpr uint32_t cachedTypesFormatRevision = 22;
     static uint32_t currentCacheVersion() { return computeJSCBytecodeCacheVersion() ^ (cachedTypesFormatRevision * 0x9E3779B9u); }
 
     GenericCacheEntry(Encoder& encoder, CachedCodeBlockTag tag)
