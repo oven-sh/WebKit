@@ -1078,7 +1078,10 @@ up before it waits for events while a collection that it has asked for is under 
   which it wakes to finalize what it has found, came later and had it for a moment in between. Nobody else is kept waiting: whoever finds the lock
   free takes it. One turn is all that is promised: it may be short, and the thread that handed over, awake by then, may well be next.
   `Bun.serve` beside threads that collect and threads that compute answers a quarter to a half more requests for it, and those threads get
-  done what they did. Why is not understood.
+  done what they did. Why is not understood. The price: with many threads that compute, a thread that has handed over waits a little longer
+  before it asks again (beside eight others 1.3 -> 1.5 ms on average, the longest 7 -> 34 ms). The lock is not idle for longer, and the main
+  thread is as fast as before. The manager tests of `multiprocessing`, a process each, 32 at a time on 28 CPUs, took 0.6 % less time with it
+  (+- 1.1, 17 pairs of runs) when measured on one machine and 2 % more (two pairs of runs) on another. Neither has been explained.
 - Until a program starts its first thread none of this happens, and while there is no other thread blocking calls keep the lock.
 - **JavaScript stays on the main thread.** Only that thread turns the host's event loop; using a JS object or function from another thread
   raises `RuntimeError`. While the event loop idles, the lock is free.
