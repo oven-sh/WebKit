@@ -2126,9 +2126,10 @@ namespace {
 
 class ExceptionPrinter {
 public:
-    explicit ExceptionPrinter(JSGlobalObject* globalObject)
+    ExceptionPrinter(JSGlobalObject* globalObject, bool givesHints)
         : m_globalObject(globalObject)
         , m_vm(getVM(globalObject))
+        , m_givesHints(givesHints)
     {
     }
 
@@ -2410,7 +2411,7 @@ private:
             message = textOf(value);
         if (message.isNull())
             message = "<exception str() failed>"_s;
-        else if (!isSyntaxError)
+        else if (!isSyntaxError && m_givesHints)
             addHint(exception, message);
         if (!message.isEmpty())
             m_out.append(": "_s, message);
@@ -2497,10 +2498,10 @@ private:
         return PyTraceback::from(traceback)->frame();
     }
 
-    JSValue selfIn(PyFrame* frame)
+    JSValue selfIn(JSValue locals)
     {
-        auto* locals = PyDict::tryFrom(frameLocals(m_globalObject, frame));
-        return locals ? locals->get(internString(m_vm, "self"_s)) : JSValue();
+        auto* dict = PyDict::tryFrom(locals);
+        return dict ? dict->get(internString(m_vm, "self"_s)) : JSValue();
     }
 
     // object.outer.name, if there is an `outer` for which that exists. No descriptor is run to find out.
@@ -2691,7 +2692,9 @@ private:
             if (hideUnderscored) {
                 // A method may well mean a private attribute of its own object.
                 if (PyFrame* frame = innermostFrame(exception)) {
-                    if (JSValue self = selfIn(frame); self && isIdentical(self, object))
+                    JSValue locals = frameLocals(m_globalObject, frame);
+                    RETURN_IF_EXCEPTION(scope, { });
+                    if (JSValue self = selfIn(locals); self && isIdentical(self, object))
                         hideUnderscored = false;
                 }
             }
@@ -2720,12 +2723,14 @@ private:
             String suggestion;
             if (PyFrame* frame = innermostFrame(exception)) {
                 Vector<String> names;
-                appendNames(names, frameLocals(m_globalObject, frame));
+                JSValue locals = frameLocals(m_globalObject, frame);
+                RETURN_IF_EXCEPTION(scope, { });
+                appendNames(names, locals);
                 appendNames(names, frame->function()->globals());
                 appendNames(names, frame->function()->builtins());
                 // In a method, it may be an attribute of the instance.
                 bool isAttributeOfSelf = false;
-                if (JSValue self = selfIn(frame)) {
+                if (JSValue self = selfIn(locals)) {
                     isAttributeOfSelf = hasAttr(m_globalObject, self, wrongName);
                     if (scope.exception()) {
                         takePendingException(m_globalObject);
@@ -2749,6 +2754,7 @@ private:
 
     JSGlobalObject* m_globalObject;
     VM& m_vm;
+    bool m_givesHints;
     StrBuilder m_result;
     StrBuilder m_out; // What has not been indented yet.
     Vector<JSCell*, 8> m_seen;
@@ -2761,7 +2767,13 @@ private:
 
 String formatException(JSGlobalObject* globalObject, JSValue exception)
 {
-    return ExceptionPrinter(globalObject).print(exception);
+    return ExceptionPrinter(globalObject, true).print(exception);
+}
+
+// What CPython has in C for when there is no traceback.py gives no hints.
+static String formatExceptionInPlaceOfTracebackModule(JSGlobalObject* globalObject, JSValue exception)
+{
+    return ExceptionPrinter(globalObject, false).print(exception);
 }
 
 // traceback._print_exception_bltin(exception[, file]). False: there is no such thing, or it failed. Nothing is left pending.
@@ -2795,7 +2807,7 @@ void printException(JSGlobalObject* globalObject, JSValue exception, JSValue fil
     if (printWithTracebackModule(globalObject, exception, tracebackModuleIsToldTheFile ? file : JSValue()) || vm.hasPendingTerminationException())
         return;
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    writeToFile(globalObject, file, makeStr(globalObject, formatException(globalObject, exception)));
+    writeToFile(globalObject, file, makeStr(globalObject, formatExceptionInPlaceOfTracebackModule(globalObject, exception)));
     if (!scope.exception())
         callMethod(globalObject, file, runtime(globalObject).names.flush());
     if (scope.exception() && !vm.hasPendingTerminationException())
@@ -2808,7 +2820,7 @@ void printException(JSGlobalObject* globalObject, JSValue exception)
     JSValue file = rt.sysDict()->get(rt.names.stderr_());
     // There is none before the interpreter has started, and what goes wrong until then has to be said all the same.
     if (!file)
-        return writeToStderr(globalObject, formatException(globalObject, exception));
+        return writeToStderr(globalObject, formatExceptionInPlaceOfTracebackModule(globalObject, exception));
     if (!isNone(file))
         printException(globalObject, exception, file, false);
 }
