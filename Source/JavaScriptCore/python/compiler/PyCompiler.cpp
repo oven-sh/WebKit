@@ -1982,8 +1982,12 @@ void Unit::breakOrContinue(Stmt* node, bool isBreak)
         return;
     }
     // (A jump would make it look as if the end of the loop could be reached.)
-    if (m_cannotBeReached)
+    if (m_cannotBeReached) {
+        // What is in the way is looked at all the same.
+        if (std::ranges::any_of(m_blocks.subspan(loop + 1), [](const Block& block) { return block.kind == BlockKind::ExceptionGroupHandler; }))
+            fail(node->range, "'break', 'continue' and 'return' cannot appear in an except* block"_s);
         return;
+    }
     if (!isBreak)
         return emitImplicitContinue(loop, node->range);
     // To leave a loop that is the last statement of the function is to return, and so on. A `return` in the loop that has got as far as a
