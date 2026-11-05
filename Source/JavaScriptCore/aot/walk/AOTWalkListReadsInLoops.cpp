@@ -505,7 +505,8 @@ ListsReadInLoop findListsReadInLoop(Walker& walker, BlockID inputHead, const Loo
                     proven = types.intersectionOf(proven, guess.tested);
             }
             if (readsLength) {
-                if (classOfViewInListReadsInLoops(walker, proven) && !isFreshInListReadsInLoops(walker, name) && !isListAsMade(walker, name) && !findNoteInListReadsInLoops(walker, name))
+                bool staysAsMadeByLink = readsOffEntryParameterThatStaysAsMade(walker, operation) || receiverStaysAsMadeByLink(walker, operation);
+                if (!staysAsMadeByLink && classOfViewInListReadsInLoops(walker, proven) && !isFreshInListReadsInLoops(walker, name) && !isListAsMade(walker, name) && !findNoteInListReadsInLoops(walker, name))
                     found.lists.append(ListTestedInFrontOfLoop { name, ArrayStorage::Other, false });
                 continue;
             }

@@ -181,16 +181,20 @@ static Vector<uint32_t, 2> countsAtWhichMakersStopInCopiesOwnKeys(const Walker& 
     uint32_t whole = static_cast<uint32_t>(order.size());
     if (!walker.isInLoop()) {
         const PlannedLayout& planned = walker.plan().layout(layout);
-        uint32_t numberOfFieldsWithStorage = 0;
+        uint32_t numberOfFieldsThatMakersCreate = 0;
         bool everyFieldIsRequired = true;
+        uint32_t numberOfDeclaredFields = static_cast<uint32_t>(walker.program().at(layout).fields.size());
         for (FieldIndex field = 0; field < planned.numberOfFields(); ++field) {
             if (!planned.slots[field].hasStorage())
                 continue;
-            ++numberOfFieldsWithStorage;
-            everyFieldIsRequired &= isRequiredInCopiesOwnKeys(walker, layout, field);
+            bool isRequired = isRequiredInCopiesOwnKeys(walker, layout, field);
+            if (!isRequired && field >= numberOfDeclaredFields)
+                continue;
+            ++numberOfFieldsThatMakersCreate;
+            everyFieldIsRequired &= isRequired;
         }
-        if (everyFieldIsRequired && whole == numberOfFieldsWithStorage)
-            counts.append(whole);
+        if (everyFieldIsRequired && behindLastRequiredField == numberOfFieldsThatMakersCreate)
+            counts.append(behindLastRequiredField);
         return counts;
     }
     counts.append(whole);

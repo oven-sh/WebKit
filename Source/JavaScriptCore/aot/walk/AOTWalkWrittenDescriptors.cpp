@@ -26,8 +26,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-static constexpr unsigned numberOfArgumentsOfDescriptorCall = 3;
-
 namespace {
 
 enum class MemberOfDescriptor : uint8_t { Enumerable, Configurable, Value, Writable, Get, Set };
@@ -181,17 +179,29 @@ static std::optional<Vector<PropertyOfFreshObject, 8>> propertiesDefinedBehindAl
     return properties;
 }
 
+std::optional<Vector<PropertyOfFreshObject, 8>> propertiesOfLiteralWrittenForCall(Walker& walker, const BodyValue& call, ValueID written, Reference literal)
+{
+    std::optional<Vector<PropertyOfFreshObject, 8>> properties = propertiesOfFreshObject(walker, literal);
+    if (!properties)
+        properties = propertiesDefinedBehindAllocationInWrittenDescriptors(walker, call, written, literal);
+    if (!properties)
+        return std::nullopt;
+    if (!(walker.state().factsOfCell(literal) | walker.state().factsOfCell(rootOfObjectInWrittenDescriptors(walker, literal))).contains(FactOfCell::HasLayoutPrototype))
+        return std::nullopt;
+    return properties;
+}
+
+bool literalsFindNothingUnder(const Program& program, PropertyKeyID name)
+{
+    return name && !isOnObjectPrototype(program.nameClassOf(name)) && isClosedKey(program, program.builtins().canonicalID(Builtins::ObjectPrototype), name);
+}
+
 static std::optional<PartsOfWrittenDescriptor> readDescriptorWrittenOut(Walker& walker, const BodyValue& call, ValueID written, Reference descriptor)
 {
     using Flag = PropertyDescriptorFlags;
     const Program& program = walker.program();
-    std::optional<Vector<PropertyOfFreshObject, 8>> properties = propertiesOfFreshObject(walker, descriptor);
+    std::optional<Vector<PropertyOfFreshObject, 8>> properties = propertiesOfLiteralWrittenForCall(walker, call, written, descriptor);
     if (!properties)
-        properties = propertiesDefinedBehindAllocationInWrittenDescriptors(walker, call, written, descriptor);
-    if (!properties)
-        return std::nullopt;
-
-    if (!(walker.state().factsOfCell(descriptor) | walker.state().factsOfCell(rootOfObjectInWrittenDescriptors(walker, descriptor))).contains(FactOfCell::HasLayoutPrototype))
         return std::nullopt;
 
     PartsOfWrittenDescriptor read;
@@ -247,10 +257,8 @@ static std::optional<PartsOfWrittenDescriptor> readDescriptorWrittenOut(Walker& 
     if (read.flags.containsAny({ Flag::HasGet, Flag::HasSet }) && read.flags.containsAny({ Flag::HasValue, Flag::HasWritable }))
         return std::nullopt;
 
-    BuiltinID objectPrototype = program.builtins().canonicalID(Builtins::ObjectPrototype);
     for (unsigned index = 0; index < numberOfMembersOfDescriptor; ++index) {
-        PropertyKeyID name = keyOfMemberOfDescriptor(program, static_cast<MemberOfDescriptor>(index));
-        if (!isOwnMember[index] && (!name || isOnObjectPrototype(program.nameClassOf(name)) || !isClosedKey(program, objectPrototype, name)))
+        if (!isOwnMember[index] && !literalsFindNothingUnder(program, keyOfMemberOfDescriptor(program, static_cast<MemberOfDescriptor>(index))))
             return std::nullopt;
     }
     return read;
@@ -321,9 +329,12 @@ bool buildDefinitionByWrittenDescriptorOfItsOpcodes(Walker& walker, const BodyVa
         return false;
     Type typeOfKey = walker.types().at(provenOfKey);
     Type typeOfObject = walker.types().at(provenOfObject);
-    if (!typeOfKey.isJavaScriptValue() || typeOfKey.hasObjects() || typeOfKey.isNever() || (typeOfKey.primitives & (Primitive::Absent | Primitive::Unspecified)))
+    if (!typeOfKey.isJavaScriptValue() || typeOfKey.isNever() || (typeOfKey.primitives & (Primitive::Absent | Primitive::Unspecified)))
         return false;
     if (!typeOfObject.isJavaScriptValue() || !typeOfObject.hasObjects())
+        return false;
+    // The built-in refuses what is no object before it asks an object for the key that it stands for.
+    if (typeOfKey.hasObjects() && typeOfObject.primitives)
         return false;
     if (rootOfObjectInWrittenDescriptors(walker, operands->object) == rootOfObjectInWrittenDescriptors(walker, operands->descriptor))
         return false;

@@ -45,7 +45,7 @@ static std::optional<WaitOfCallInCoroutine> findWaitOfCallInCoroutine(Walker& wa
     if (!taker || index.opcodeOf(taker) != Opcode::Await || !block.holds(taker))
         return std::nullopt;
     BodyValue await = index.value(taker);
-    if (await.valueOperand() != name || await.takesExtraTurn())
+    if (await.valueOperand() != name)
         return std::nullopt;
     wait.await = taker;
     wait.endOfWait = taker.index() - firstValue;
@@ -130,7 +130,7 @@ static Reference buildAwaitOfNewPromiseInAwaitedCalls(Walker& walker, Opcode set
     Reference promise = buildNewPromiseOfCoroutineCalls(walker, origin);
     if (!promise || !buildSettlementOfCoroutineCalls(walker, settlement, promise, value, origin))
         return { };
-    return buildAwaitBySavingFrame(walker, promise, held, false, origin);
+    return buildAwaitBySavingFrame(walker, promise, held, origin);
 }
 
 static Reference buildAwaitOfPlainBodyInAwaitedCalls(Walker& walker, const BodyValue& call, FunctionID callee, std::span<const Reference> operands, std::span<const Reference> held, Origin originOfAwait)
@@ -163,7 +163,7 @@ static Reference buildAwaitOfPlainBodyInAwaitedCalls(Walker& walker, const BodyV
     if (!hasNoThen)
         return { };
     if (std::optional<bool> decided = constantBooleanInAwaitedCalls(walker, hasNoThen))
-        return *decided ? buildAwaitBySavingFrame(walker, returned, held, false, originOfAwait) : buildAwaitOfNewPromiseInAwaitedCalls(walker, Opcode::ResolvePromise, returned, held, originOfAwait);
+        return *decided ? buildAwaitBySavingFrame(walker, returned, held, originOfAwait) : buildAwaitOfNewPromiseInAwaitedCalls(walker, Opcode::ResolvePromise, returned, held, originOfAwait);
 
     BlockID awaitsValue = walker.addBlock();
     BlockID awaitsPromise = walker.addBlock(BlockFrequency::Unlikely);
@@ -173,7 +173,7 @@ static Reference buildAwaitOfPlainBodyInAwaitedCalls(Walker& walker, const BodyV
     walker.branch(hasNoThen, awaitsValue, awaitsPromise);
 
     walker.continueIn(awaitsValue);
-    if (Reference given = buildAwaitBySavingFrame(walker, returned, held, false, originOfAwait)) {
+    if (Reference given = buildAwaitBySavingFrame(walker, returned, held, originOfAwait)) {
         walker.jumpTo(meeting, singleElementSpan(given));
         someWayArrives = true;
     }

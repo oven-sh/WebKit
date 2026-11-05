@@ -174,7 +174,7 @@ void WalkState::Held::endWhatIsWritten(const Effects& effects, NOESCAPE const Sc
                 else if (place.kind == PlaceKind::EnvironmentField)
                     ends = (environmentFieldsWritten & place.mask()) && isWritten();
                 else if (place.kind == PlaceKind::GuardOfStores || place.kind == PlaceKind::GuardOfReads)
-                    ends = (guardsWritten & place.mask()) && mayEndGuard(LayoutID(place.first));
+                    ends = (guardsWritten & place.mask()) && mayEndGuard(classOfGuardedSide(place.first));
                 else if (!(bitOfKind(place.kind) & kindsThatRestOnWhatIsKnown))
                     ends = writesIntoObjects && isWritten();
                 if (ends)

@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTBuiltinIDs.h"
+#include "AOTCellFormat.h"
 #include "AOTEffectsOfOperations.h"
 #include "AOTIRProgram.h"
 #include "AOTLinkTables.h"
@@ -159,12 +160,13 @@ static void noteWhatNewObjectFillsIn(Walker& walker, Reference object, const Ope
     std::span<const FieldIndex> fillers = walker.fillersOfAllocation(object);
     bool isAsAllocated = fillers.empty() && (numberOfFieldsWritten == SIZE_MAX || made.fields().size() == numberOfFieldsWritten);
     if (!isEnvironment) {
-        state.noteFactsOfCell(object, FactOfCell::NotFrozen);
+        OptionSet<FactOfCell> facts { FactOfCell::NotFrozen };
         if (!made.prototypeOperand())
-            state.noteFactsOfCell(object, FactOfCell::HasLayoutPrototype);
-        std::optional<PlacedAllocation> placed = isAsAllocated ? walker.plan().allocation(program, layout, made.fields()) : std::nullopt;
+            facts.add(FactOfCell::HasLayoutPrototype);
         if (isAsAllocated)
-            state.noteFactsOfCell(object, FactOfCell::NoFieldOutsideSlot);
+            facts.add(FactOfCell::NoFieldOutsideSlot);
+        state.noteFactsOfCell(object, facts);
+        std::optional<PlacedAllocation> placed = isAsAllocated ? walker.plan().allocation(program, layout, made.fields()) : std::nullopt;
         if (placed)
             state.noteOrderWord(object, placed->orderWord);
     }
@@ -313,6 +315,19 @@ void noteFreshObject(Walker& walker, Reference name, size_t numberOfFieldsWritte
     walker.state().noteFresh(Reference::value(cell));
 }
 
+static std::optional<std::span<const FieldIndex>> fieldsListedByOrderWordInEscapeAnalysis(const Walker& walker, LayoutID layout, uint32_t orderWord)
+{
+    const KeyOrders& orders = walker.plan().keyOrders();
+    uint32_t count = countOf(orderWord);
+    if (orderWord & ~orderAndCountMask || isOrderStoredOutOfLine(orderWord) || !orderWordTellsOwnKeysOf(walker, layout))
+        return std::nullopt;
+    if (!count)
+        return std::span<const FieldIndex>();
+    if (orderOf(orderWord) >= orders.numberOfOrdersOf(layout) || count > orders.order(layout, orderOf(orderWord)).size())
+        return std::nullopt;
+    return orders.order(layout, orderOf(orderWord)).first(count);
+}
+
 std::optional<Vector<PropertyOfFreshObject, 8>> propertiesOfFreshObject(Walker& walker, Reference name)
 {
     Reference object = freshObjectNamedBy(walker, name);
@@ -325,11 +340,19 @@ std::optional<Vector<PropertyOfFreshObject, 8>> propertiesOfFreshObject(Walker& 
     if (made.opcode != Opcode::NewObject || program.at(layout).kind != LayoutKind::Record || !walker.plan().slots().layout(layout).appendedKeys.isEmpty())
         return std::nullopt;
     std::optional<PlacedAllocation> placed = walker.plan().allocation(program, layout, made.fields());
-    if (!placed || state.orderWordOf(object) != std::optional<uint32_t>(placed->orderWord))
+    std::optional<uint32_t> orderWord = state.orderWordOf(object);
+    if (!placed || !orderWord)
         return std::nullopt;
+    std::span<const FieldIndex> created = made.fields();
+    if (*orderWord != placed->orderWord) {
+        std::optional<std::span<const FieldIndex>> createdSince = fieldsListedByOrderWordInEscapeAnalysis(walker, layout, *orderWord);
+        if (!createdSince || !std::ranges::all_of(created, [&](FieldIndex listed) { return std::ranges::contains(*createdSince, listed); }))
+            return std::nullopt;
+        created = *createdSince;
+    }
 
     Vector<PropertyOfFreshObject, 8> properties;
-    for (FieldIndex listed : made.fields()) {
+    for (FieldIndex listed : created) {
         FieldReference field { layout, listed };
         Reference value = state.slot(object, field);
         TypeID type = value && !isClosureLeftUnmade(walker, value) ? walker.typeOf(value) : TypeID();
@@ -593,11 +616,11 @@ bool buildFreshObjectOfItsOpcodes(Walker& walker, const BodyValue& value)
         return false;
 
     if (opcode == Opcode::StrictEq)
-        return foldIdentityOfFreshObject(walker, value);
+        return walker.state().holdsFreshObjects() && foldIdentityOfFreshObject(walker, value);
     if (opcode == Opcode::GetMappedArgument)
         return answerMappedArgumentFromState(walker, value);
     if (namesOfOperandInEscapeAnalysis.contains(opcode))
-        return bindNameToFreshObjectItself(walker, value);
+        return walker.state().holdsFreshObjects() && bindNameToFreshObjectItself(walker, value);
     return buildAllocationOfFreshObject(walker, value);
 }
 

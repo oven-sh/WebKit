@@ -123,13 +123,15 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTSetConstructPrototype, JSCell*, (I
 {
     constexpr Entry entry = Entry::operationAOTSetConstructPrototype;
     AOT_OPERATION_BEGIN(instance, entry);
-    DeferGC deferGC(vm);
+    if (vm.traps().needsOutOfMemoryError()) [[unlikely]]
+        vm.heap.cage().tryTakeBackOutOfMemoryError(vm);
     ObjectModel& objects = *instance->state->objects;
     Object* allocated = object ? cellArgument<Object>(object, entry) : uncheckedDowncast<Object>(objects.structures.allocate(vm, allocation));
     JSObject* result = objects.classes.instanceWithPrototype(vm, allocated, cellArgument<JSObject>(prototype, entry), !!holdsNoField);
     if (result == allocated)
         objects.structures.predictStructure(vm, allocation, uncheckedDowncast<CompiledStructure>(result->structure()));
-    OPERATION_RETURN(scope, result);
+    vm.writeBarrier(result);
+    OPERATION_RETURN(scope, newCellForCompiledCode(vm, result));
 }
 
 static NEVER_INLINE OperationReturnType<JSCell*> JIT_OPERATION_ATTRIBUTES createThisSlow(Instance*, JSCell* constructor, JSCell* newTarget);

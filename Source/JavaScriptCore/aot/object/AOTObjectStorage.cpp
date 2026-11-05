@@ -115,10 +115,8 @@ bool Object::store(VM& vm, const FieldData& field, AcceptedValue accepted)
     return store(vm, field, accepted.value());
 }
 
-ALWAYS_INLINE void Object::willStoreMarker(VM& vm, const FieldData& field, JSValue marker)
+ALWAYS_INLINE void Object::willStoreMarker(const FieldData& field)
 {
-    if (field.keepsStateOfBirth && !state().objects->layouts.fieldAccepts(field, marker)) [[unlikely]]
-        crashOnLostStateOfBirth(vm, *this, field, nameOf(ObjectMutation::StoreOfOtherType));
     if (field.holdsRawValueFromBirth)
         setBearsMark(true);
 }
@@ -126,7 +124,7 @@ ALWAYS_INLINE void Object::willStoreMarker(VM& vm, const FieldData& field, JSVal
 bool Object::store(VM& vm, const FieldData& field, JSValue value)
 {
     if (value.isUndefined() && field.flags & fieldMayExistWithoutStorage && !slotOf(field)) {
-        willStoreMarker(vm, field, value);
+        willStoreMarker(field);
         return true;
     }
     ensureStorageFor(vm, field);
@@ -137,7 +135,7 @@ bool Object::store(VM& vm, const FieldData& field, JSValue value)
     if (!tryWriteSlot(instance(), representation, slot, value))
         return false;
     if (value.isUndefinedOrNull())
-        willStoreMarker(vm, field, value);
+        willStoreMarker(field);
     if (traitsOf(representation).holdsCell)
         vm.writeBarrier(this, value);
     return true;
@@ -304,12 +302,6 @@ void crashOnImpossibleMutation(VM&, const Object& object, PropertyName, ObjectMu
 void crashOnImpossibleMutation(VM&, const Object& object, const FieldData& field, ObjectMutation mutation)
 {
     crashOnFalseProof(object, mutation, &field);
-}
-
-void crashOnLostStateOfBirth(VM&, const Object& object, const FieldData& field, ASCIILiteral event)
-{
-    dataLogLn("AOT: ", event, " of an object of layout L", object.layout().index, ", field ", object.indexOf(field), ": the compiler has proven that the field stays as it was born, and compiled code reads it without a look. This is a bug in Bun.");
-    CRASH_WITH_INFO(std::bit_cast<uintptr_t>(&object));
 }
 
 UniquedStringImpl* propertyNameOf(VM& vm, const Object& object, const FieldData& field)

@@ -658,6 +658,10 @@ export const whenCallRunsOtherCode: ConditionSpec = { callRunsOtherCode: true };
 export const whenObjectNobodyKnowsIsWritten: ConditionSpec = { objectNobodyKnowsIsWritten: true };
 export const whenTestsReplaceBuiltins: ConditionSpec = { testsReplaceBuiltins: true };
 export const whenProgramStores = (member: BuiltinPath): ConditionSpec => ({ programStores: member });
+export const whenAskedForOtherNames = (
+  object: BuiltinPath,
+  served: { values: readonly string[]; methods: readonly string[] },
+): ConditionSpec => ({ isAskedForOtherNames: object, valuesServed: served.values, methodsServed: served.methods });
 
 export type TypeByPlatform = Readonly<Record<TargetPlatform, TableType>>;
 
@@ -721,7 +725,8 @@ export class ConstantField {
   }
 }
 
-export interface PropertyOptions extends EntryColumns, Pick<GetterField, "setter" | "call" | "uses"> {
+export interface PropertyOptions
+  extends EntryColumns, Pick<GetterField, "setter" | "call" | "uses" | "resultIsDeclaredOnly"> {
   createdOnFirstRead?: Pick<SignatureOptions, "capability" | "throws" | "uses" | "reads">;
 }
 
@@ -800,7 +805,6 @@ const entryColumnKeys = [
   "loadsMachineCodeAs",
   "loads",
   "callsFunctions",
-  "appendForm",
   "literalPartsForm",
   "boxedCallStub",
   "platforms",

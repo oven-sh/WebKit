@@ -283,6 +283,8 @@ static Effects effectsThatWriteInWalkStateTests(AbstractHeapSet written)
 }
 
 static constexpr uint32_t layoutsOfWalkStateTests[] { 0, 1, 64, 65, 63, UINT32_MAX };
+// The place of a guard numbers the side of the class beside its layout.
+static constexpr uint32_t classesOfWalkStateTests[] { 0, 1, 64, 65, 63, UINT32_MAX >> 1 };
 
 static void checkSameAnswersInWalkStateTests(const PairOfWalkStateTests& pair, uint32_t numberOfObjects, uint32_t numberOfFields)
 {
@@ -290,7 +292,7 @@ static void checkSameAnswersInWalkStateTests(const PairOfWalkStateTests& pair, u
     const WalkState& state = pair.state;
     const PlainListsOfWalkStateTests& lists = pair.lists;
     AOT_TEST_CHECK(state.isEmpty() == (lists.shapes.isEmpty() && lists.cells.isEmpty() && lists.places.isEmpty() && lists.fresh.isEmpty()));
-    for (uint32_t layout : layoutsOfWalkStateTests) {
+    for (uint32_t layout : classesOfWalkStateTests) {
         for (uint32_t key = 0; key < numberOfFields; ++key) {
             AOT_TEST_CHECK(state.storesPassAbove(LayoutID(layout), PropertyKeyID(key)) == !!lists.valueOf(Kind::GuardOfStores, Reference(), layout, key));
             AOT_TEST_CHECK(state.guardOfReadsHolds(LayoutID(layout), PropertyKeyID(key)) == !!lists.valueOf(Kind::GuardOfReads, Reference(), layout, key));
@@ -487,7 +489,7 @@ static void runRandomStepsInWalkStateTests(unsigned seed, uint32_t numberOfObjec
             break;
         }
         case 27: {
-            uint32_t classLayout = layout();
+            uint32_t classLayout = classesOfWalkStateTests[random.getUint32(std::size(classesOfWalkStateTests))];
             uint32_t key = random.getUint32(numberOfFields);
             Reference test = valueOfWalkStateTests(random.getUint32(3));
             if (random.getUint32(2)) {

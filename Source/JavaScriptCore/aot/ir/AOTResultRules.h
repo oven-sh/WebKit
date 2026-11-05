@@ -65,11 +65,12 @@ struct TypingContext {
     TypeArena& types;
     const PositionTypes& positions;
     TypeLevel level { TypeLevel::Proven };
+    bool believesWhatFrontEndHasEstablished { true };
 
     ALWAYS_INLINE Type at(TypeID id) const { return types.at(id); }
     ALWAYS_INLINE TypeID typeIDOf(const DeclaredType& declared) const { return level == TypeLevel::Expected ? declared.expected().predicted() : typeIDOfSlowCase(declared); }
     TypeID typeIDOfSlowCase(const DeclaredType&) const;
-    TypingContext atLevel(TypeLevel newLevel) const { return { program, types, positions, newLevel }; }
+    TypingContext atLevel(TypeLevel newLevel) const { return { program, types, positions, newLevel, believesWhatFrontEndHasEstablished }; }
     TypingContext expecting() const { return atLevel(TypeLevel::Expected); }
 };
 

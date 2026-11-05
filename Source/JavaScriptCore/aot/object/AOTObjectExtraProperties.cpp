@@ -529,7 +529,7 @@ static bool tryBindFieldsThatTargetLacks(VM& vm, Object& target, Star star)
         uint16_t index = layout.indexOf(field);
         if (starThatBindsFieldOfTarget(star.previous(), index) || !starBindsName(vm, state, star, layouts.nameOf(vm, field)))
             continue;
-        if (!field.canLeaveSlot() || field.keepsStateOfBirth)
+        if (!field.canLeaveSlot())
             return false;
         bound.append(index);
     }

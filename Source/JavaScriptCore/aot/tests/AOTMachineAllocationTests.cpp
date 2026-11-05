@@ -669,6 +669,80 @@ static void allocatorLeavesPhiWhereCallInItsBlockTakesIt()
     AOT_ALLOCATION_TEST_CHECK(test, test.call<uint64_t>(uint64_t { 41 }) == 42 && noted == 41);
 }
 
+static void allocatorGivesArgumentThatLivesAcrossCallItsHomeWhereItIsDefined()
+{
+    TestProcedure test;
+    Output& out = test.out();
+    RegisterFile file = registerFileFor(test.procedure().traits());
+    LValue tested = test.argumentGPR(0);
+    LValue kept = test.argumentGPR(1);
+    LValue buffer = test.argumentGPR(2);
+    LBasicBlock slow = out.newBlock();
+    LBasicBlock behind = out.newBlock();
+    out.branch(out.testNonZero64(tested, 1), rareEdge(slow), normalEdge(behind));
+
+    out.appendTo(slow);
+    allocationTestAppendCall(test, nullptr);
+    out.jump(normalEdge(behind));
+
+    out.appendTo(behind);
+    PatchOperation* call = allocationTestAppendCall(test, nullptr);
+    out.store64(kept, allocationTestWordAt(test, buffer, 0));
+    out.store64(kept, allocationTestWordAt(test, buffer, 1));
+    out.ret(out.add(kept, 1));
+    compileOrFail(test);
+
+    AllocationTestText text(test);
+    const Order& order = test.procedure().order();
+    const Liveness& liveness = test.procedure().liveness();
+    const Allocation& allocation = test.procedure().allocation();
+    AOT_ALLOCATION_TEST_CHECK(test, order.of(slow).isRare() && !allocation.hasFramedPart());
+    for (LValue value : { kept, buffer }) {
+        AOT_ALLOCATION_TEST_CHECK(test, value->opcode() == ArgumentReg && liveness.of(value).has(ValueFlag::LivesAcrossCall) && liveness.of(value).lastUse > order.earlyPositionOf(call));
+        AOT_ALLOCATION_TEST_CHECK(test, allocation.registerAtDefinitionOf(value) && (maskOf(allocation.registerAtDefinitionOf(value)) & file.calleeSaved));
+        AOT_ALLOCATION_TEST_CHECK(test, !allocation.isSpilled(value) && !text.count("move"_s, value) && !text.count("save"_s, value) && !text.count("reload"_s, value));
+    }
+    AOT_ALLOCATION_TEST_CHECK(test, allocation.registerAtDefinitionOf(tested) == Reg(GPRInfo::argumentGPR0));
+
+    for (uint64_t first : { 0u, 1u }) {
+        std::array<uint64_t, 64> words = allocationTestWords<uint64_t>();
+        std::array<uint64_t, 64> expected = words;
+        expected[0] = 41;
+        expected[1] = 41;
+        AOT_ALLOCATION_TEST_CHECK(test, test.call<uint64_t>(first, uint64_t { 41 }, words.data()) == 42);
+        AOT_ALLOCATION_TEST_CHECK(test, words == expected);
+    }
+}
+
+static void allocatorLeavesArgumentWhereCallInItsBlockTakesIt()
+{
+    uint64_t noted = 0;
+    TestProcedure test;
+    Output& out = test.out();
+    RegisterFile file = registerFileFor(test.procedure().traits());
+    LValue argument = test.argumentGPR(0);
+    PatchOperation* call = out.patch(Void);
+    call->append(argument, ValueRep::reg(GPRInfo::argumentGPR0));
+    call->clobberLate((file.allocatableIn(Bank::GP) | file.allocatableIn(Bank::FP)) & ~file.calleeSaved);
+    call->setGenerator([place = &noted](CCallHelpers& jit, const PatchParameters& params) {
+        AllowMacroScratchRegisterUsage allowScratch(jit);
+        AOT_TEST_CHECK(params.size() == 1 && params[0] == ValueRep::reg(GPRInfo::argumentGPR0));
+        GPRReg address = jit.scratchRegister();
+        jit.move(CCallHelpers::TrustedImm64(std::bit_cast<int64_t>(place)), address);
+        jit.store64(GPRInfo::argumentGPR0, CCallHelpers::Address(address));
+        jit.move(CCallHelpers::TrustedImm64(-1), GPRInfo::argumentGPR0);
+    });
+    out.ret(out.add(argument, out.constInt64(1)));
+    compileOrFail(test);
+
+    AllocationTestText text(test);
+    const Allocation& allocation = test.procedure().allocation();
+    AOT_ALLOCATION_TEST_CHECK(test, argument->opcode() == ArgumentReg && test.procedure().liveness().of(argument).has(ValueFlag::LivesAcrossCall));
+    AOT_ALLOCATION_TEST_CHECK(test, allocation.registerAtDefinitionOf(argument) == Reg(GPRInfo::argumentGPR0) && text.count("move"_s, argument) == 1);
+    AOT_ALLOCATION_TEST_CHECK(test, !allocation.isSpilled(argument) && allocationTestCountOf(allocation.usedCalleeSaves()) == 1);
+    AOT_ALLOCATION_TEST_CHECK(test, test.call<uint64_t>(uint64_t { 41 }) == 42 && noted == 41);
+}
+
 template<typename Word, bool isUnderPressure>
 static void allocatorDecidesByPressureWhatKeepsItsRegisterThroughLoop()
 {
@@ -817,9 +891,9 @@ static void allocatorSpillsNothingAheadOfJoinThatRareBlockLeadsBackTo()
     AOT_ALLOCATION_TEST_CHECK(test, order.of(join).isLoopHead && order.of(slow).isRare() && order.headOf(join) < order.headOf(slow) && order.headOf(slow) < order.headOf(behind));
     for (LValue value : { kept, buffer }) {
         AOT_ALLOCATION_TEST_CHECK(test, liveness.of(value).has(ValueFlag::LivesAcrossCall) && liveness.of(value).lastUse > order.earlyPositionOf(call));
-        AOT_ALLOCATION_TEST_CHECK(test, allocation.registerAtDefinitionOf(value) && !(maskOf(allocation.registerAtDefinitionOf(value)) & file.calleeSaved));
+        AOT_ALLOCATION_TEST_CHECK(test, allocation.registerAtDefinitionOf(value) && (maskOf(allocation.registerAtDefinitionOf(value)) & file.calleeSaved));
         AOT_ALLOCATION_TEST_CHECK(test, !allocation.isSpilled(value) && allocationTestRegisterAtHead(test, join, value) == allocation.registerAtDefinitionOf(value));
-        AOT_ALLOCATION_TEST_CHECK(test, text.count("move"_s, value) == 1 && !text.count("save"_s, value) && !text.count("reload"_s, value));
+        AOT_ALLOCATION_TEST_CHECK(test, !text.count("move"_s, value) && !text.count("save"_s, value) && !text.count("reload"_s, value));
     }
 
     for (uint64_t first : { 0u, 1u, 2u, 7u }) {
@@ -1087,6 +1161,72 @@ static void allocatorLaysPhiOfJoinInWordOfPhiThatIsHandedToIt()
             }
             AOT_ALLOCATION_TEST_CHECK(test, counted[index] == expected);
         }
+    }
+}
+
+template<bool isReadBehindJoin>
+static void allocatorLaysPhiOfJoinInWordOfValueThatIsHandedToIt()
+{
+    constexpr unsigned numberOfWords = 24;
+    TestProcedure test;
+    Output& out = test.out();
+    LValue changes = test.argumentGPR(0);
+    LValue buffer = test.argumentGPR(1);
+    LBasicBlock changed = out.newBlock();
+    LBasicBlock unchanged = out.newBlock();
+    LBasicBlock join = out.newBlock();
+    Vector<LValue> read = allocationTestLoadWords(test, buffer, 0, numberOfWords, Int64);
+    Vector<LValue> joined;
+    for (unsigned index = 0; index < numberOfWords; ++index)
+        joined.append(out.phiIn(join, Int64));
+    allocationTestAppendCall(test, nullptr);
+    out.branch(changes, normalEdge(changed), normalEdge(unchanged));
+
+    out.appendTo(changed);
+    for (unsigned index = 0; index < numberOfWords; ++index)
+        out.upsilon(out.constInt64(index + 1), joined[index]);
+    out.jump(normalEdge(join));
+
+    out.appendTo(unchanged);
+    for (unsigned index = 0; index < numberOfWords; ++index)
+        out.upsilon(read[index], joined[index]);
+    out.jump(normalEdge(join));
+
+    out.appendTo(join);
+    allocationTestAppendCall(test, nullptr);
+    for (unsigned index = 0; index < numberOfWords; ++index)
+        out.store64(isReadBehindJoin ? out.add(joined[index], read[index]) : joined[index], allocationTestWordAt(test, buffer, index));
+    out.ret(changes);
+    compileOrFail(test);
+
+    const Allocation& allocation = test.procedure().allocation();
+    unsigned numberThatShare = 0;
+    Vector<SpillIndex> spillsThatAreShared;
+    for (unsigned index = 0; index < numberOfWords; ++index) {
+        AOT_ALLOCATION_TEST_CHECK(test, read[index]->opcode() == Load);
+        if (!allocation.isSpilled(read[index]) || allocation.spillOf(read[index]) != allocation.spillOf(joined[index]))
+            continue;
+        ++numberThatShare;
+        spillsThatAreShared.append(allocation.spillOf(joined[index]));
+        const SpillFacts& word = allocation.spills()[spillsThatAreShared.last()];
+        AOT_ALLOCATION_TEST_CHECK(test, word.isSharedByPhis && word.value == read[index]);
+        AOT_ALLOCATION_TEST_CHECK(test, allocation.isStoredBehindDefinition(read[index]) && !allocation.isWrittenByEdges(read[index]));
+        AOT_ALLOCATION_TEST_CHECK(test, allocation.isWrittenByEdges(joined[index]) && !allocation.isStoredBehindDefinition(joined[index]));
+    }
+    AOT_ALLOCATION_TEST_CHECK(test, isReadBehindJoin ? !numberThatShare : numberThatShare >= numberOfWords / 2);
+    const BlockSteps& steps = allocation.stepsOf(unchanged);
+    for (uint32_t index = steps.beginOfEdgeMoves; index < steps.endOfEdgeMoves; ++index) {
+        Location destination = allocation.step(index).destination;
+        AOT_ALLOCATION_TEST_CHECK(test, !destination.isSpill() || !spillsThatAreShared.contains(destination.spillIndex()));
+    }
+
+    for (uint64_t isChanged : { 0u, 1u }) {
+        std::array<uint64_t, numberOfWords> words;
+        for (unsigned index = 0; index < numberOfWords; ++index)
+            words[index] = 100 + index;
+        AOT_ALLOCATION_TEST_CHECK(test, test.call<uint64_t>(isChanged, words.data()) == isChanged);
+        for (unsigned index = 0; index < numberOfWords; ++index)
+            AOT_ALLOCATION_TEST_CHECK(test, words[index] == (isChanged ? index + 1 : 100 + index) + (isReadBehindJoin ? 100 + index : 0));
     }
 }
 
@@ -2703,9 +2843,13 @@ std::span<const NativeTest> machineAllocationTests()
         { "machine-allocation/sum-comes-round-in-its-register-past-a-join-that-a-rare-block-leads-back-to"_s, Machine::allocatorBringsSumRoundInItsRegisterPastJoinThatRareBlockLeadsBackTo },
         { "machine-allocation/value-for-a-phi-is-made-in-the-register-of-the-phi"_s, Machine::allocatorDefinesValueInRegisterOfPhiWhoseHeadIsFixed },
         { "machine-allocation/a-phi-stays-where-the-call-in-its-block-takes-it"_s, Machine::allocatorLeavesPhiWhereCallInItsBlockTakesIt },
+        { "machine-allocation/an-argument-that-lives-across-a-call-takes-its-home-where-it-is-defined"_s, Machine::allocatorGivesArgumentThatLivesAcrossCallItsHomeWhereItIsDefined },
+        { "machine-allocation/an-argument-stays-where-the-call-in-its-block-takes-it"_s, Machine::allocatorLeavesArgumentWhereCallInItsBlockTakesIt },
         { "machine-allocation/count-that-one-arm-adds-to-comes-round-in-its-register"_s, Machine::allocatorBringsCountThatOneArmAddsToRoundInItsRegister },
         { "machine-allocation/phi-of-a-join-lies-in-the-word-of-the-phi-that-is-handed-to-it"_s, Machine::allocatorLaysPhiOfJoinInWordOfPhiThatIsHandedToIt<false> },
         { "machine-allocation/phi-of-a-join-has-a-word-of-its-own-where-what-is-handed-to-it-lives-on"_s, Machine::allocatorLaysPhiOfJoinInWordOfPhiThatIsHandedToIt<true> },
+        { "machine-allocation/phi-of-a-join-lies-in-the-word-of-the-value-that-is-handed-to-it"_s, Machine::allocatorLaysPhiOfJoinInWordOfValueThatIsHandedToIt<false> },
+        { "machine-allocation/phi-of-a-join-has-a-word-of-its-own-where-the-value-that-is-handed-to-it-lives-on"_s, Machine::allocatorLaysPhiOfJoinInWordOfValueThatIsHandedToIt<true> },
         { "machine-allocation/phis-that-lie-in-memory-rotate"_s, Machine::allocatorRotatesPhisThatLieInMemory },
         { "machine-allocation/what-only-lives-through-a-loop-gives-way-for-the-registers-its-patches-leave-alone"_s, Machine::allocatorGivesRegistersThatPatchesLeaveAloneToWhatLoopUses },
         { "machine-allocation/nothing-is-loaded-at-a-join-for-a-rare-arm"_s, Machine::allocatorLoadsNothingAtJoinForRareArm },

@@ -27,6 +27,8 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
+OperatorForm formAllowedForTypedOperator(Walker&, const Draft&);
+
 static_assert(!static_cast<uint32_t>(StepArrayIteratorResult::Done) && static_cast<uint32_t>(StepArrayIteratorResult::Value) == 1);
 static_assert(static_cast<uint32_t>(SetNextResult::HasEntry) == static_cast<uint32_t>(MapNextResult::HasEntry) && static_cast<uint32_t>(SetNextResult::Entry) == static_cast<uint32_t>(MapNextResult::Entry) && static_cast<uint32_t>(SetNextResult::Element) == static_cast<uint32_t>(MapNextResult::Key));
 static_assert(static_cast<uint32_t>(JSMapIterator::Field::Entry) == static_cast<uint32_t>(JSSetIterator::Field::Entry) && static_cast<uint32_t>(JSMapIterator::Field::IteratedObject) == static_cast<uint32_t>(JSSetIterator::Field::IteratedObject) && static_cast<uint32_t>(JSMapIterator::Field::Kind) == static_cast<uint32_t>(JSSetIterator::Field::Kind));
@@ -82,10 +84,14 @@ public:
 
     Reference applyOperator(Opcode opcode, Reference left, Reference right)
     {
+        if (m_hasStopped)
+            return { };
         Draft operation = draft(opcode);
+        m_walker.chooseConservativeFields(operation);
         operation.setLeftOperand(left);
         operation.setRightOperand(right);
-        return build(WTF::move(operation));
+        operation.setForm(formAllowedForTypedOperator(m_walker, operation));
+        return buildAsItStands(WTF::move(operation));
     }
 
     Reference resultAt(Reference results, uint32_t index)
@@ -257,14 +263,17 @@ static TypeID typeClaimedByConvertForReplacement(Walker& walker, const DeclaredT
 static void bindOperandInPlaceOfCastForReplacement(Walker& walker, const BodyValue& cast)
 {
     Reference operand = walker.referenceOf(cast.operand(cast.opcode() == Opcode::NarrowByTest ? OperandIndex::NarrowByTest::left : 0));
-    if (cast.opcode() == Opcode::Convert)
-        checkInt32Promise(walker, cast.as<Opcode::Convert>().declared(), cast.operand(0), walker.originOf(cast));
-    if (cast.opcode() == Opcode::Convert && !walker.currentBodyIndex().isUnused(cast.id())) {
-        if (TypeID claimed = typeClaimedByConvertForReplacement(walker, cast.as<Opcode::Convert>().declared())) {
-            BuilderOfReplacements builder(walker, cast);
-            operand = builder.proveOrTrap(operand, claimed);
-            if (builder.hasStopped())
-                return;
+    if (cast.opcode() == Opcode::Convert) {
+        const DeclaredType declared = cast.as<Opcode::Convert>().declared();
+        if (declared.has(PositionFlags::IsInt32Promise))
+            checkInt32Promise(walker, declared, cast.operand(0), walker.originOf(cast));
+        if (declared.has(PositionFlags::IsClaim) && !walker.currentBodyIndex().isUnused(cast.id())) {
+            if (TypeID claimed = typeClaimedByConvertForReplacement(walker, declared)) {
+                BuilderOfReplacements builder(walker, cast);
+                operand = builder.proveOrTrap(operand, claimed);
+                if (builder.hasStopped())
+                    return;
+            }
         }
     }
     walker.bind(cast.id(), operand);
@@ -556,10 +565,13 @@ PropertyKeyID keyOfSymbolMadeOnce(Walker& walker, const BodyValue& value)
     if (value.opcode() != Opcode::Call)
         return { };
     const BodyIndex& body = walker.currentBodyIndex();
-    PropertyKeyID key = keyOfSymbolThatCallMakes(walker.program(), walker.currentFunction(), value, scopedLambda<BodyValue(ValueID)>([&](ValueID id) {
-        return body.value(id);
-    }));
-    if (!key)
+    ValueID callee = value.calleeOperand();
+    while (callee && !body.isParameter(callee) && opcodesThatStateTypes.contains(body.opcodeOf(callee)))
+        callee = body.value(callee).operand(0);
+    if (!callee || body.isParameter(callee) || body.opcodeOf(callee) != Opcode::Builtin)
+        return { };
+    BuiltinID called = walker.program().builtins().canonicalID(body.value(callee).as<Opcode::Builtin>().builtin());
+    if (called != Builtins::Symbol && called != Builtins::SymbolFor)
         return { };
     const Vector<SummaryCall>& calls = walker.facts().summaries().at(walker.currentFunction()).calls;
     auto record = std::ranges::find_if(calls, [&](const SummaryCall& call) {
@@ -863,19 +875,21 @@ static bool mayHaveGlobalBindingForReplacement(const Program& program, const Bod
 
 static bool replaceAccessToGlobalName(Walker& walker, const BodyValue& access)
 {
-    const Program& program = walker.program();
-    PropertyKeyID key = access.key();
     Reference object = walker.referenceOf(access.objectOperand());
     TypeID typeOfObject = object ? walker.typeOf(object) : TypeID();
-    if (!typeOfObject)
+    if (!typeOfObject || holdsOnlyPrimitives(typeOfObject))
         return false;
-    Type type = walker.types().at(typeOfObject);
+    const Type& type = walker.types().recordOf(typeOfObject);
     BuiltinID named = type.isObject() ? singleBuiltinOf(walker.types(), type) : BuiltinID();
-    if (!named || program.builtins().canonicalID(named) != program.builtins().canonicalID(Builtins::GlobalThis))
+    if (!named)
+        return false;
+    const Program& program = walker.program();
+    if (program.builtins().canonicalID(named) != program.builtins().canonicalID(Builtins::GlobalThis))
         return false;
     if (!mayHaveGlobalBindingForReplacement(program, access))
         return false;
 
+    PropertyKeyID key = access.key();
     Draft written = walker.draftOf(access);
     if (access.opcode() == Opcode::PropGet) {
         Draft read(Opcode::GetGlobalBinding, written.origin());
@@ -961,12 +975,12 @@ static bool replaceSpeciesOfListByNewList(Walker& walker, const BodyValue& creat
 }
 
 constinit const OpcodeSet opcodesThatReplaceOperationTakes = opcodesOfAllReplacements;
+static_assert(opcodesThatReplaceOperationTakesInChains == opcodesOfAllReplacements);
 
 bool replaceOperationOfItsOpcodes(Walker& walker, const BodyValue& value)
 {
     Opcode opcode = value.opcode();
-    if (!opcodesOfAllReplacements.contains(opcode))
-        return false;
+    ASSERT(opcodesOfAllReplacements.contains(opcode));
     if (opcode == Opcode::PropGet || opcode == Opcode::PropSet)
         return replaceAccessToGlobalName(walker, value);
     if (opcode == Opcode::HasJSType)

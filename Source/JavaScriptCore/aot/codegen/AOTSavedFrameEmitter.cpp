@@ -176,15 +176,11 @@ void SavedFrameEmitter::generateAwaitBySavingFrame(const ValueContext& value)
     ValueID driver = value->promiseOperand();
     switch (kindOfFunction()) {
     case CoroutineKind::AsyncFunction: {
-        AwaitedOperand form = value->takesExtraTurn() ? AwaitedOperand::ValueAfterTurn : m_plan.moduleEvaluation().isBodyResumedByJobOfLoader(function()) ? AwaitedOperand::ValueInModuleBody : AwaitedOperand::Value;
-        define(value, Boxed(suspend(value, awaitBySavingFrame(form), { in<Boxed>(awaited).value() }, driver, value->takesExtraTurn() ? RunsCodeOfAwaited::InFrameOfFunction : RunsCodeOfAwaited::BehindFunction).first));
+        AwaitedOperand form = m_plan.moduleEvaluation().isBodyResumedByJobOfLoader(function()) ? AwaitedOperand::ValueInModuleBody : AwaitedOperand::Value;
+        define(value, Boxed(suspend(value, awaitBySavingFrame(form), { in<Boxed>(awaited).value() }, driver, RunsCodeOfAwaited::BehindFunction).first));
         return;
     }
     case CoroutineKind::AsyncGenerator:
-        if (value->takesExtraTurn()) {
-            fail(value, InternalErrorKind::OpcodeWithoutCode);
-            return;
-        }
         define(value, Boxed(suspend(value, AOT::suspendGenerator(GeneratorSuspension::AsyncAwait), { cellOrZero(driver), in<Boxed>(awaited).value() }, driver).first));
         return;
     case CoroutineKind::Generator:

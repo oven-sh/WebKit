@@ -2,10 +2,11 @@
 # function halves(view: Int32Array, n: unknown) { let total = 0; for (let at = 0; at < n; at += 2.5) total = (total + view[at]) | 0; return total; }
 # Nothing is known of the bound, so nothing cuts the counter, and a step of five leaves the integers that a double holds exactly. A sum of numbers without a fraction has none: that is the rung of the head below every number.
 # A position without a fraction is truncated and compared with the length, with no test whether it is an integer. The head once held every number: 5 instructions more a read.
+# Where the bound is asked for an int32 in front of the loop, the copy of the loop behind the failing test is the one of which nothing is known: the lines hold of whichever copy has that head.
 # RUN: walk f1 f2 mechanisms=all
 # CHECK-LABEL: code f1:Body
-# CHECK: , [[at]]: int|whole @Double) isInLoop=true isLoopHead=true
-# CHECK: = GetTypedArrayElement {{*}}, [[at]], {{*}}[keyIsIntegral]
+# CHECK: , [[at]]: int|whole @Double) {{*}}isLoopHead=true
+# CHECK: = GetTypedArrayElement {{*}}, [[at]]{{*}}[keyIsIntegral]
 # CHECK: = GetTypedArrayElement {{*}}[keyIsIntegral]
 # CHECK-LABEL: code f2:Body
 # CHECK: : number @Double) isInLoop=true isLoopHead=true
@@ -14,9 +15,11 @@
 # REQUIRES(EMIT): x86_64
 # EMIT-LABEL: unit f1:Body
 # EMIT: Int64 @[[truncated]] = Patch({{*}}TruncatesDoubleToInt64
-# EMIT-NEXT: = Below(@[[truncated]],
+# EMIT-NOT: = IToD(@[[truncated]]
+# EMIT: = Below(@[[truncated]],
 # EMIT: Int64 @[[beside]] = Add(@[[truncated]],
-# EMIT-NEXT: = Below(@[[beside]],
+# EMIT-NOT: = IToD(@[[beside]]
+# EMIT: = Below(@[[beside]],
 # RUN(SHELL): run-in-shell globalThis.bound = () => 12; globalThis.sink = (whole, halves) => { print(String(whole) + " " + String(halves)); };
 # SHELL: 0 0
 # SHELL: exited with 0

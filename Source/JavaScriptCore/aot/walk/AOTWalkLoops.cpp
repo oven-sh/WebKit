@@ -1649,9 +1649,37 @@ TypeID LooksAtLoops::withWhatCopyReturns(const BodyValue& call, OperandTypes ope
     Vector<Reference, 8> handedOver = operandsHandedToCopy(m_draft, function);
     if (handedOver.size() != function.numberOfEntryParameters())
         return byRow;
+    ValueID writtenCallee = opcode == Opcode::Call ? valueBehindCasts(call.as<Opcode::Call>().calleeOperand()) : ValueID();
+    Reference closure = writtenCallee && !isLookingAtCopy() && writtenCallee.index() < m_stretch.firstValue ? m_walker.referenceOf(writtenCallee) : Reference();
+    auto typeOfCapture = [&](uint32_t capture) -> TypeID {
+        if (!writtenCallee || m_walker.plan().promotedEnvironments().isRemoved(callee, capture))
+            return { };
+        if (closure && closure.isValue()) {
+            const Operation& creation = m_walker.code().at(closure.id());
+            if (creation.opcode == Opcode::NewClosure && creation.function() == callee && creation.numberOfVariadicOperands() == function.captures.size()) {
+                ValueID captured = creation.variadicOperands()[capture];
+                return m_walker.typeOf(m_walker.code().isConstant(captured) ? Reference::constant(captured) : Reference::value(captured));
+            }
+        }
+        if (Reference atHand = closure ? findCaptureAtHand(m_walker, callee, capture, closure) : Reference())
+            return m_walker.typeOf(atHand);
+        Draft read(Opcode::GetCapture);
+        m_walker.chooseConservativeFields(read);
+        read.setFunction(callee);
+        read.setIndex(capture);
+        TypeID typeOfClosure = operands[OperandIndex::Call::callee];
+        return resultTypeOf(m_typing, read, OperandTypes { std::span<const TypeID>(&typeOfClosure, 1) });
+    };
     Vector<TypeID, 8> typesOfEntryParameters;
-    for (unsigned entryParameter = 0; entryParameter < handedOver.size(); ++entryParameter)
-        typesOfEntryParameters.append(handedOver[entryParameter] ? typeOf(handedOver[entryParameter].id()) : typeLaidDownAtEntryOf(callee, entryParameter));
+    uint32_t numberOfCapturesPassed = 0;
+    for (unsigned entryParameter = 0; entryParameter < handedOver.size(); ++entryParameter) {
+        TypeID captured = function.entryParameterKind(entryParameter) == EntryParameter::Capture && !handedOver[entryParameter] ? typeOfCapture(numberOfCapturesPassed) : TypeID();
+        numberOfCapturesPassed += function.entryParameterKind(entryParameter) == EntryParameter::Capture;
+        if (captured)
+            typesOfEntryParameters.append(captured);
+        else
+            typesOfEntryParameters.append(handedOver[entryParameter] ? typeOf(handedOver[entryParameter].id()) : typeLaidDownAtEntryOf(callee, entryParameter));
+    }
 
     if (turns) {
         ListOfCallLookedAt list;

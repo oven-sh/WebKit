@@ -648,8 +648,8 @@ static ALWAYS_INLINE Effects declaredEffectsBuiltInPlace(const Program& program,
 {
     if (effectsOfEveryOperation.opcodes.contains(opcode)) {
         Effects effects = effectsOfEveryOperationWith(opcode);
-        if (opcode == Opcode::IsNotFrozen && !operation.hasNoExtraProperties() && !operation.hasNoFieldOutsideSlot())
-            effects.reads.remove(heapsThatOnlyFlagsOfIsNotFrozenRead);
+        if (lookAtCellHasNoFlagThatReads(opcode, operation))
+            effects.reads.remove(heapsThatOnlyFlagsOfLooksAtCellRead);
         return effects;
     }
     Effects effects = Effects::none();

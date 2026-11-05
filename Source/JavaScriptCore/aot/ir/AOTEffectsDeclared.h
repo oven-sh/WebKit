@@ -78,16 +78,24 @@ extern const OpcodeSet opcodesWithExactBoundsInTable;
 ALWAYS_INLINE const Effects& declaredBoundInTable(Opcode opcode) { return declaredBoundsInRows[rowsOfDeclaredBoundsByOpcode[static_cast<unsigned>(opcode)]]; }
 ALWAYS_INLINE const Effects* findDeclaredEffectsOfEveryValue(Opcode opcode) { return opcodesWithExactBoundsInTable.contains(opcode) ? &declaredBoundInTable(opcode) : nullptr; }
 
-inline constexpr AbstractHeapSet heapsThatOnlyFlagsOfIsNotFrozenRead { AbstractHeap::NamedProperties };
+inline constexpr AbstractHeapSet heapsThatOnlyFlagsOfLooksAtCellRead { AbstractHeap::NamedProperties };
+
+template<typename Operation>
+ALWAYS_INLINE bool lookAtCellHasNoFlagThatReads(Opcode opcode, const Operation& operation)
+{
+    if (opcode == Opcode::IsNotFrozen)
+        return !operation.hasNoExtraProperties() && !operation.hasNoFieldOutsideSlot();
+    return opcode == Opcode::HasLayoutPrototype && !operation.hasNoFieldOutsideSlot();
+}
 
 template<typename Operation>
 Effects declaredEffectsOfOperation(const Program& program, Opcode opcode, const Operation& operation)
 {
     if (const Effects* effects = findDeclaredEffectsOfEveryValue(opcode)) {
-        if (opcode != Opcode::IsNotFrozen || operation.hasNoExtraProperties() || operation.hasNoFieldOutsideSlot())
+        if (!lookAtCellHasNoFlagThatReads(opcode, operation))
             return *effects;
         Effects withoutFlags = *effects;
-        withoutFlags.reads.remove(heapsThatOnlyFlagsOfIsNotFrozenRead);
+        withoutFlags.reads.remove(heapsThatOnlyFlagsOfLooksAtCellRead);
         return withoutFlags;
     }
     Effects effects = Effects::none();
@@ -102,10 +110,10 @@ template<typename Operation>
 const Effects& declaredEffectsOfOperation(const Program& program, Opcode opcode, const Operation& operation, Effects& storage)
 {
     if (const Effects* effects = findDeclaredEffectsOfEveryValue(opcode)) {
-        if (opcode != Opcode::IsNotFrozen || operation.hasNoExtraProperties() || operation.hasNoFieldOutsideSlot())
+        if (!lookAtCellHasNoFlagThatReads(opcode, operation))
             return *effects;
         storage = *effects;
-        storage.reads.remove(heapsThatOnlyFlagsOfIsNotFrozenRead);
+        storage.reads.remove(heapsThatOnlyFlagsOfLooksAtCellRead);
         return storage;
     }
     storage = Effects::none();

@@ -500,37 +500,41 @@ static uint64_t countThingsNumbered(const ImageNumbers& numbers)
     return count;
 }
 
-void numberWhatStaticsWaitFor(const NumberingInputs& inputs, GatheredMentions& mentions, const NamesOfTables& tables, ImageNumbers& numbers, BuildContext& context, NOESCAPE const ScopedLambda<void()>& laneBesideNumbering)
+static void runStepsOfNumbering(ImageNumbersBuilder& builder, ASCIILiteral name, std::initializer_list<void (ImageNumbersBuilder::*)()> steps)
 {
-    StepTimes times(context, "image: number"_s);
-    ImageNumbersBuilder builder { inputs, mentions, tables, numbers, context };
-    auto run = [&](void (ImageNumbersBuilder::*step)()) {
-        if (context.diagnostics().hasErrors())
-            return;
+    StepTimes times(builder.context, "image: number"_s);
+    for (void (ImageNumbersBuilder::*step)() : steps) {
+        if (builder.context.diagnostics().hasErrors())
+            continue;
         CurrentWorkScope currentWork("image"_s);
         (builder.*step)();
-    };
+    }
+    times.didFinish(name);
+}
 
-    run(&ImageNumbersBuilder::collectRegExpRequests);
-    times.didFinish("collect the requests for regular expressions"_s);
-    auto runLane = [&](ASCIILiteral name, std::initializer_list<void (ImageNumbersBuilder::*)()> steps) {
-        StepTimes timesOfLane(context, "image: number"_s);
-        for (void (ImageNumbersBuilder::*step)() : steps)
-            run(step);
-        timesOfLane.didFinish(name);
-    };
+void collectRequestsForRegExps(const NumberingInputs& inputs, GatheredMentions& mentions, const NamesOfTables& tables, ImageNumbers& numbers, BuildContext& context)
+{
+    ImageNumbersBuilder builder { inputs, mentions, tables, numbers, context };
+    runStepsOfNumbering(builder, "collect the requests for regular expressions"_s, { &ImageNumbersBuilder::collectRegExpRequests });
+}
+
+void numberAllButIdentifiersAndStrings(const NumberingInputs& inputs, GatheredMentions& mentions, const NamesOfTables& tables, ImageNumbers& numbers, BuildContext& context)
+{
+    ImageNumbersBuilder builder { inputs, mentions, tables, numbers, context };
     runLanes(context.parallelLoops(), {
-        [&] { runLane("number identifiers and strings"_s, { &ImageNumbersBuilder::numberIdentifiersAndStrings }); },
-        [&] { runLane("number rows"_s, { &ImageNumbersBuilder::numberRows }); },
-        [&] { runLane("number types"_s, { &ImageNumbersBuilder::numberTypes }); },
-        [&] { runLane("number functions, closure cells, class ranks"_s, { &ImageNumbersBuilder::numberFunctions, &ImageNumbersBuilder::numberClosureCellsAndClassRanks }); },
-        [&] { runLane("number constants"_s, { &ImageNumbersBuilder::numberConstants }); },
-        [&] {
-            if (!context.diagnostics().hasErrors())
-                laneBesideNumbering();
-        },
+        [&] { runStepsOfNumbering(builder, "collect names and strings with text"_s, { &ImageNumbersBuilder::collectNamesAndStringsWithText }); },
+        [&] { runStepsOfNumbering(builder, "number rows"_s, { &ImageNumbersBuilder::numberRows }); },
+        [&] { runStepsOfNumbering(builder, "number sites"_s, { &ImageNumbersBuilder::numberSites }); },
+        [&] { runStepsOfNumbering(builder, "number types"_s, { &ImageNumbersBuilder::numberTypes }); },
+        [&] { runStepsOfNumbering(builder, "number functions, closure cells, class ranks"_s, { &ImageNumbersBuilder::numberFunctions, &ImageNumbersBuilder::numberClosureCellsAndClassRanks }); },
+        [&] { runStepsOfNumbering(builder, "number constants"_s, { &ImageNumbersBuilder::numberConstants }); },
     });
-    times.didFinish("number what the statics wait for"_s);
+}
+
+void numberIdentifiersAndStrings(const NumberingInputs& inputs, GatheredMentions& mentions, const NamesOfTables& tables, ImageNumbers& numbers, BuildContext& context)
+{
+    ImageNumbersBuilder builder { inputs, mentions, tables, numbers, context };
+    runStepsOfNumbering(builder, "number identifiers and strings"_s, { &ImageNumbersBuilder::numberIdentifiersAndStrings });
 }
 
 void layOutStaticsOfMentions(const NumberingInputs& inputs, GatheredMentions& mentions, const NamesOfTables& tables, ImageNumbers& numbers, BuildContext& context)
@@ -564,7 +568,9 @@ void layOutStaticsOfMentions(const NumberingInputs& inputs, GatheredMentions& me
 
 void numberMentions(const NumberingInputs& inputs, GatheredMentions& mentions, const NamesOfTables& tables, ImageNumbers& numbers, BuildContext& context)
 {
-    numberWhatStaticsWaitFor(inputs, mentions, tables, numbers, context);
+    collectRequestsForRegExps(inputs, mentions, tables, numbers, context);
+    numberAllButIdentifiersAndStrings(inputs, mentions, tables, numbers, context);
+    numberIdentifiersAndStrings(inputs, mentions, tables, numbers, context);
     layOutStaticsOfMentions(inputs, mentions, tables, numbers, context);
 }
 

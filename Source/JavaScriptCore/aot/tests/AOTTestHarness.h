@@ -127,6 +127,7 @@ struct TestCommandContext {
     std::optional<FunctionID> functionOfTypesLine { };
     StringView programText { };
     Mechanisms mechanisms { mechanismsOfProcess() };
+    Vector<String> notesForFailure { };
 
     const TestSection* findSection(ASCIILiteral name) const
     {

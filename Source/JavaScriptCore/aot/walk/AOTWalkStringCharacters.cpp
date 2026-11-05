@@ -215,19 +215,9 @@ void BuilderOfCharacterRead::meetAndBind(const std::array<Reference, 2>& inside)
         return;
     }
 
-    const Code& code = m_walker.code();
-    BlockID meeting = m_walker.addBlock();
+    std::array<Walker::ArmThatMeets, 2> arms { { { lastInside, { inside[0], inside[1] } }, { m_outside, { outside[0], outside[1] } } } };
     std::array<Reference, 2> met;
-    for (size_t place = 0; place < count; ++place) {
-        TypeID type = joinOf(m_walker.types(), m_walker.facts().families(), code.at(inside[place].id()).type, code.at(outside[place].id()).type);
-        Representation forms[] { m_walker.representationOf(inside[place]), m_walker.representationOf(outside[place]) };
-        met[place] = m_walker.addParameter(meeting, type, m_walker.formOfParameter(type, forms));
-    }
-    m_walker.jumpTo(meeting, std::span<const Reference>(inside).first(count));
-    m_walker.continueIn(m_outside);
-    m_walker.jumpTo(meeting, std::span<const Reference>(outside).first(count));
-    m_walker.continueIn(meeting);
-    if (!m_walker.isUnreachable() && !m_walker.hasFailed())
+    if (m_walker.letArmsMeet(arms, m_walker.addBlock(), std::span<Reference>(met).first(count)))
         bindAndNote(met[0], met[1]);
 }
 

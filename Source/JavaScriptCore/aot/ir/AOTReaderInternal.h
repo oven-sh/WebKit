@@ -32,7 +32,7 @@ public:
 
     void setExternalFunctionBodies(const ExternalFunctionBodies* bodies) { m_externalBodies = bodies; }
     void setSchemaHashCheck(SchemaHashCheck check) { m_schemaHashCheck = check; }
-    // In this order, one after another, each with loops of its own: header; strings; property keys; replaceable built-ins; WireTypeReader's makeObjects, computeFamilies, readTypes;
+
     bool run();
     bool tablesHaveRoomFor(const Wire::Sections&);
 
@@ -42,14 +42,13 @@ public:
 
 private:
     bool readHeader();
-    void readReplaceableBuiltins();
     void readStrings();
     void readPropertyKeys();
     NumbersOfProgramRecords numbersOfRecords() const;
     void forEachListReadIntoTableOfItsName(const Wire::Sections&, const auto& functor);
+    void makeRoomForTables();
     void readProgramLists();
     void readLayouts();
-    void finishProgram();
     void setConstructedClasses();
     void setParameterSiteFunctions();
     bool report(const InternalError&);
@@ -60,6 +59,8 @@ private:
     template<typename WireRecord, typename Record, size_t inlineCapacity>
     void readList(std::span<const WireRecord>, Vector<Record, inlineCapacity>&);
     static void readInChunks(const ParallelLoops&, size_t recordCount, size_t recordsPerChunk, NOESCAPE const Invocable<void(uint32_t)> auto& readRecord);
+    template<typename Record, size_t inlineCapacity>
+    static void makeRoomFor(const ParallelLoops&, Vector<Record, inlineCapacity>&, size_t capacity);
     template<typename Record, size_t inlineCapacity>
     static void growFromEmpty(const ParallelLoops&, Vector<Record, inlineCapacity>&, size_t size);
 
@@ -121,14 +122,13 @@ void Reader::readInChunks(const ParallelLoops& loops, size_t recordCount, size_t
 }
 
 template<typename Record, size_t inlineCapacity>
-void Reader::growFromEmpty(const ParallelLoops& loops, Vector<Record, inlineCapacity>& records, size_t size)
+void Reader::makeRoomFor(const ParallelLoops& loops, Vector<Record, inlineCapacity>& records, size_t capacity)
 {
     constexpr size_t bytesPerTask = 256 * KB;
     RELEASE_ASSERT(records.isEmpty());
-    if (records.capacity() < size)
-        records.reserveInitialCapacity(size);
+    records.reserveInitialCapacity(capacity);
 #if !ASAN_ENABLED
-    std::span<uint8_t> bytes = unsafeMakeSpan(reinterpret_cast<uint8_t*>(records.mutableSpan().data()), size * sizeof(Record));
+    std::span<uint8_t> bytes = unsafeMakeSpan(reinterpret_cast<uint8_t*>(records.mutableSpan().data()), records.capacity() * sizeof(Record));
     forEachIndexInParallel(loops, static_cast<unsigned>((bytes.size() + bytesPerTask - 1) / bytesPerTask), [&](unsigned task) {
         zeroSpan(bytes.subspan(task * bytesPerTask, std::min(bytesPerTask, bytes.size() - task * bytesPerTask)));
     });
@@ -136,6 +136,14 @@ void Reader::growFromEmpty(const ParallelLoops& loops, Vector<Record, inlineCapa
     UNUSED_PARAM(loops);
     UNUSED_VARIABLE(bytesPerTask);
 #endif
+}
+
+template<typename Record, size_t inlineCapacity>
+void Reader::growFromEmpty(const ParallelLoops& loops, Vector<Record, inlineCapacity>& records, size_t size)
+{
+    RELEASE_ASSERT(records.isEmpty());
+    if (records.capacity() < size)
+        makeRoomFor(loops, records, size);
     records.grow(size);
 }
 

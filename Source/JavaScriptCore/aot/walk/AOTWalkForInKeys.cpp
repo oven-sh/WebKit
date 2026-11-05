@@ -139,19 +139,9 @@ bool useKeyOfForInBehindTestOfItsOpcodes(Walker& walker, const BodyValue& operat
     walker.branch(isCurrent, current, asWritten);
     walker.noteGuessOpened();
 
-    Vector<Walker::ArmThatMeets, 2> arms;
-    auto endArm = [&] {
-        if (walker.isUnreachable() || walker.hasFailed())
-            return;
-        arms.append(Walker::ArmThatMeets { walker.currentBlock(), { walker.referenceOf(operation.id()) } });
-    };
-
-    walker.continueIn(asWritten);
-    {
-        Walker::ClosedArm closedArm(walker);
-        walker.walkStretch(block.id(), place, place + 1);
-        endArm();
-    }
+    Walker::StretchInArms stretch = walker.stretchInArms(block.id(), place, place + 1);
+    Walker::ArmsThatMeet arms;
+    walker.walkClosedArm(asWritten, stretch, arms);
     if (walker.hasFailed())
         return true;
 
@@ -175,14 +165,10 @@ bool useKeyOfForInBehindTestOfItsOpcodes(Walker& walker, const BodyValue& operat
     }
     if (answer) {
         walker.bind(operation.id(), answer);
-        endArm();
+        walker.listArm(stretch, arms);
     }
-    if (walker.hasFailed())
-        return true;
-
-    Reference met;
-    if (walker.letArmsMeet(arms.span(), meeting, singleElementSpan(met)))
-        walker.bind(operation.id(), met);
+    if (!walker.hasFailed())
+        walker.letArmsMeet(stretch, arms, meeting);
     return true;
 }
 

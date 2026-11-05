@@ -1740,11 +1740,11 @@ static bool edgesMayWritePhisWithRegistersAtHead(const Allocator& allocator, con
     });
 }
 
-static bool phiMayShareSpill(const Allocator& allocator, const Operation* phi)
+static bool valueMayShareSpill(const Allocator& allocator, const Operation* value)
 {
-    const ValueFacts& facts = allocator.m_valueFacts[phi->index()];
-    return phi->opcode() == Phi && !phi->isNarrowReference() && !phi->has(OperationFlag::IsInnerPointer) && !facts.has(ValueFlag::LivesIntoLandingPad)
-        && !facts.has(ValueFlag::LivesAcrossSuspension) && !facts.has(ValueFlag::IsKeptForCollector);
+    const ValueFacts& facts = allocator.m_valueFacts[value->index()];
+    return !value->isNarrowReference() && !value->has(OperationFlag::IsInnerPointer) && !value->endsBlock() && value->opcode() != Extract && !facts.has(ValueFlag::IsSunk)
+        && !facts.has(ValueFlag::LivesIntoLandingPad) && !facts.has(ValueFlag::LivesAcrossSuspension) && !facts.has(ValueFlag::IsKeptForCollector);
 }
 
 Allocator::PhisInSpill& Allocator::phisInSpill(SpillIndex spill)
@@ -2091,7 +2091,7 @@ void Allocator::fixHeadOf(Block* targetOfEdge, Block* blockOfEdge, const BlockPl
                         isKnownWhetherEdgesMayWritePhis = true;
                         edgesMayWritePhis = edgesMayWritePhisWithRegistersAtHead(*this, target, place);
                     }
-                    if (edgesMayWritePhis && phiMayShareSpill(*this, phi) && !m_allocation.isSpilled(phi)) {
+                    if (edgesMayWritePhis && valueMayShareSpill(*this, phi) && !m_allocation.isSpilled(phi)) {
                         if (!spillsHandedToPhis) {
                             spillsHandedToPhis = m_arena.allocateArray<SpillsHandedToPhi>(numberOfPhis);
                             std::fill_n(spillsHandedToPhis, numberOfPhis, SpillsHandedToPhi { });
@@ -2099,16 +2099,23 @@ void Allocator::fixHeadOf(Block* targetOfEdge, Block* blockOfEdge, const BlockPl
                                 for (const Operation* upsilon : predecessor->upsilons()) {
                                     const Operation* taker = upsilon->phi();
                                     const Operation* handedOn = upsilon->valueHandedOn();
-                                    if (!taker || taker->owner() != target || handedOn == taker || !m_allocation.isSpilled(handedOn) || handedOn->type() != taker->type() || !phiMayShareSpill(*this, handedOn) || m_order.of(handedOn->owner()).isRare())
+                                    if (!taker || taker->owner() != target || handedOn == taker || !m_allocation.isSpilled(handedOn) || handedOn->type() != taker->type() || !valueMayShareSpill(*this, handedOn) || m_order.of(handedOn->owner()).isRare())
                                         continue;
                                     SpillIndex candidate = m_allocation.spillOf(handedOn);
                                     const SpillFacts& factsOfCandidate = factsOfSpills[candidate];
-                                    if (factsOfCandidate.isSaveInRareRegion || factsOfCandidate.isPointerBesideNarrowReference || factsOfCandidate.value->opcode() != Phi)
+                                    if (factsOfCandidate.isSaveInRareRegion || factsOfCandidate.isPointerBesideNarrowReference)
                                         continue;
                                     SpillsHandedToPhi& known = spillsHandedToPhis[taker->indexInBlock()];
+                                    if (known.first == candidate || known.second == candidate)
+                                        continue;
+                                    auto isWordOfPhi = [&](SpillIndex spill) {
+                                        return factsOfSpills[spill].value->opcode() == Phi;
+                                    };
                                     if (known.first == noSpill)
                                         known.first = candidate;
-                                    else if (known.first != candidate && known.second == noSpill)
+                                    else if (isWordOfPhi(candidate) && !isWordOfPhi(known.first))
+                                        known.second = std::exchange(known.first, candidate);
+                                    else if (known.second == noSpill || (isWordOfPhi(candidate) && !isWordOfPhi(known.second)))
                                         known.second = candidate;
                                 }
                             }
@@ -2126,7 +2133,7 @@ void Allocator::fixHeadOf(Block* targetOfEdge, Block* blockOfEdge, const BlockPl
                             }
                             phisInCandidate.shrink(static_cast<uint32_t>(endOfPhisNotYetDead - phisInCandidate.begin()));
                             bool liesApart = std::ranges::none_of(phisInCandidate, [&](const Operation* other) {
-                                return other->owner() == target || (isLiveAtHeadBeingFixed<kind>(*this, head, other) && isReadOnSomeWayFromHeadOf(other, target));
+                                return other->owner() == target || (isLiveAtHeadBeingFixed<kind>(*this, head, other) && (other->opcode() != Phi || isReadOnSomeWayFromHeadOf(other, target)));
                             });
                             if (liesApart) {
                                 shared = candidate;

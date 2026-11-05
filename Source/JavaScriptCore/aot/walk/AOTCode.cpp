@@ -26,7 +26,6 @@ static constexpr OpcodeSet opcodesThatTheWalkLowers {
 };
 
 static constexpr OpcodeSet opcodesWithoutEmitterByList = opcodesThatStateTypes | opcodesThatTheWalkLowers | OpcodeSet {
-    Opcode::ValueLooselyEqualsLiteral,
     Opcode::StringBuilderAppend,
 };
 

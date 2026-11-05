@@ -108,6 +108,27 @@ private:
     TypeArena& m_types;
 };
 
+class PositionsKnowingWhatFunctionsHandBackInWalk final : public PositionTypes {
+    WTF_MAKE_NONCOPYABLE(PositionsKnowingWhatFunctionsHandBackInWalk);
+public:
+    explicit PositionsKnowingWhatFunctionsHandBackInWalk(const PositionTypes& positionsOfBuild)
+        : m_positionsOfBuild(positionsOfBuild)
+    {
+    }
+
+    TypeID variable(TypeLevel, VariableID) const final { return { }; }
+    TypeID environmentField(TypeLevel, LayoutID, uint32_t) const final { return { }; }
+    TypeID slot(TypeLevel, LayoutID, uint32_t) const final { return { }; }
+    TypeID property(TypeLevel, ObjectID, PropertyKeyID) const final { return { }; }
+    TypeID contents(TypeLevel, ObjectID, ContentsSlot) const final { return { }; }
+    TypeID result(TypeLevel level, FunctionID function, uint32_t resultIndex) const final { return m_positionsOfBuild.result(level, function, resultIndex); }
+    TypeID entryParameter(TypeLevel, FunctionID, uint32_t) const final { return { }; }
+    TypeID resultOfCallBeingTyped(TypeLevel, uint32_t) const final { return { }; }
+
+private:
+    const PositionTypes& m_positionsOfBuild;
+};
+
 class PositionsOfWalk final : public PositionTypes {
     WTF_MAKE_NONCOPYABLE(PositionsOfWalk);
 public:
@@ -133,6 +154,8 @@ public:
     {
         if (const PromotedVariable* promoted = m_plan.promotedEnvironments().find(variable))
             return typeOfPromotedVariable(level, *promoted);
+        if (!m_believesTables && variable.index() < m_program.variables.size() && m_program.at(variable).declared.isEstablished())
+            return { };
         bool isFilledByCompiledCodeAlone = !m_plan.runTimeMayFill(variable);
         TypeID proven = variable.index() < m_linked.variables.size() && isFilledByCompiledCodeAlone ? filledByCompiledCode(level, &m_linked.variables[variable.index()]) : TypeID();
         if (proven && !m_believesTables) {
@@ -145,6 +168,8 @@ public:
 
     TypeID environmentField(TypeLevel level, LayoutID layout, uint32_t field) const final
     {
+        if (const Vector<Field>& fields = m_program.at(layout).fields; !m_believesTables && field < fields.size() && fields[field].declared.isEstablished())
+            return { };
         TypeID proven = filledByCompiledCode(level, cellAt(m_linked.firstFieldOfLayout, m_linked.fields, layout.index(), field));
         return proven && !m_believesTables ? m_types.withPrimitives(proven, Primitive::Absent) : proven;
     }
@@ -245,10 +270,15 @@ public:
     TypeID entryParameter(TypeLevel level, FunctionID function, uint32_t entryParameter) const final { return level == TypeLevel::Proven ? m_plan.conventions().typeBehindGuard(function, entryParameter) : TypeID(); }
     bool entryParameterIsLeftOutOfCalls(FunctionID function, uint32_t entryParameter) const final { return m_plan.promotedEnvironments().isRemoved(function, entryParameter); }
     TypeID resultOfSelector(TypeLevel, uint32_t selector) const final { return m_plan.conventions().methodSelector(selector).typeOfResult; }
-    TypeID capture(TypeLevel level, FunctionID function, uint32_t capture) const final { return filledByCompiledCode(level, cellAt(m_linked.firstCaptureOfFunction, m_linked.captures, function.index(), capture)); }
-    TypeID resultOfCallBeingTyped(TypeLevel level, uint32_t resultIndex) const final { return m_resultOfCallBeingTyped && level == TypeLevel::Proven && !resultIndex ? *m_resultOfCallBeingTyped : TypeID(); }
-    TypeID resultOfReadBeingTyped(TypeLevel level) const final { return m_resultOfReadBeingTyped && level == TypeLevel::Proven ? *m_resultOfReadBeingTyped : TypeID(); }
-    TypeID contentsBeingTyped(TypeLevel level) const final { return m_contentsBeingTyped && level == TypeLevel::Proven ? *m_contentsBeingTyped : TypeID(); }
+    TypeID capture(TypeLevel level, FunctionID function, uint32_t capture) const final
+    {
+        if (const auto& captures = m_program.at(function).captures; !m_believesTables && capture < captures.size() && captures[capture].isEstablished())
+            return { };
+        return filledByCompiledCode(level, cellAt(m_linked.firstCaptureOfFunction, m_linked.captures, function.index(), capture));
+    }
+    TypeID resultOfCallBeingTyped(TypeLevel level, uint32_t resultIndex) const final { return m_resultOfCallBeingTyped && level == TypeLevel::Proven && !resultIndex ? asFarAsDoorTellsClasses(*m_resultOfCallBeingTyped) : TypeID(); }
+    TypeID resultOfReadBeingTyped(TypeLevel level) const final { return m_resultOfReadBeingTyped && level == TypeLevel::Proven ? asFarAsDoorTellsClasses(*m_resultOfReadBeingTyped) : TypeID(); }
+    TypeID contentsBeingTyped(TypeLevel level) const final { return m_contentsBeingTyped && level == TypeLevel::Proven ? asFarAsDoorTellsClasses(*m_contentsBeingTyped) : TypeID(); }
 
 private:
     TypeID typeOfPromotedVariable(TypeLevel level, const PromotedVariable& promoted) const
@@ -284,9 +314,19 @@ private:
         return m_believesTables ? filledByCompiledCode(level, cell) : TypeID();
     }
 
+    TypeID asFarAsDoorTellsClasses(TypeID proven) const
+    {
+        if (!proven || holdsOnlyPrimitives(proven) || !m_types.at(proven).isJavaScriptValue())
+            return proven;
+        TypeID testable = m_types.testablePartOf(proven);
+        Type asked = m_types.at(testable);
+        Type named = m_types.at(proven);
+        return (asked.anyObject && !named.anyObject) || (asked.anyFunction && !named.anyFunction) ? testable : proven;
+    }
+
     TypeID filledByCompiledCode(TypeLevel level, const LinkedCell* cell) const
     {
-        return m_readsTables && level == TypeLevel::Proven && cell && cell->everyWriterIsKnown ? cell->proven : TypeID();
+        return m_readsTables && level == TypeLevel::Proven && cell && cell->everyWriterIsKnown ? asFarAsDoorTellsClasses(cell->proven) : TypeID();
     }
 
     const Program& m_program;
@@ -486,6 +526,7 @@ Walker::Walker(const WalkInputs& inputs, TypeArena& types, Arrivals& arrivals)
     , m_positionsOfSlowBody(makeUniqueWithoutFastMallocCheck<PositionsOfWalk>(inputs.program, inputs.facts, inputs.facts.linked(), inputs.plan, types, false))
     , m_positions(m_positionsOfBuild.get())
     , m_positionsKnowingNothing(makeUniqueWithoutFastMallocCheck<PositionsKnowingNothingInWalk>(types))
+    , m_positionsKnowingWhatFunctionsHandBack(makeUniqueWithoutFastMallocCheck<PositionsKnowingWhatFunctionsHandBackInWalk>(*m_positionsOfBuild))
     , m_heldPositions(makeUniqueWithoutFastMallocCheck<PositionsOfWalk>(inputs.program, inputs.facts, inputs.facts.held(), inputs.plan, types, m_mechanismsOfBuild.contains(Mechanism::TypedOperations)))
     , m_explainsClosedAccessesTo(inputs.options.explainsClosedAccessesTo)
 {
@@ -535,8 +576,10 @@ void Walker::beginUnit(CodeUnit unit)
     m_numberOfGuessesOpened = 0;
     m_numberOfLoopsBuiltTwice = 0;
     m_numberOfAssignmentsWrittenOut = 0;
+    m_keysStoredInFrontOfLastRow = { };
     m_numberOfJoinsWalkedForEachWay = 0;
     m_numberOfTurnsThatBeginAgain = 0;
+    m_numberOfEmptySlotsTakenAsCases = 0;
     m_fillersOfAllocations.clear();
     m_numberOfSlicesMadeOfElementsInSight = 0;
     m_countsOfUnit.shrink(0);
@@ -796,7 +839,7 @@ bool Walker::makeTestOnTheWayAskInFull(Reference value, TypeID taken)
             continue;
         const Operation& test = m_code.at(testID);
         TypeID passing = test.opcode == Opcode::TypeTest ? test.testedType() : test.opcode == Opcode::ShapeTest ? m_types.forLayoutSet(test.layouts()) : TypeID();
-        if (!passing || !m_types.isSubset(passing, taken))
+        if (!passing || !m_types.isSubset(passing, taken) || m_types.testablePartOf(passing) != passing)
             continue;
         Representation form = m_code.at(test.operand(0)).representation;
         if (form != Representation::JSValue && form != Representation::Cell)
@@ -868,6 +911,24 @@ void Walker::holdStoredValuesToSlots(const Draft& draft)
         if (!isShown(value, noCell))
             buildCheckOfProof(value, noCell, m_types.withPrimitives(TypeTable::anything, Primitive::Absent), ProofSource::Field, origin);
     };
+    auto holdRawWordToPartOfItsKind = [&](Reference value, TypeID taken) {
+        if (!value || !value.isValue() || !taken || isUnreachable())
+            return;
+        Representation form = representationOf(value);
+        if (form != Representation::Int32 && form != Representation::Boolean)
+            return;
+        TypeID claimed = typeAsBuilt(value);
+        if (!claimed || isNeverType(claimed) || m_types.isSubset(widestTypeOf(form), taken))
+            return;
+        TypeID both = m_types.isSubset(claimed, taken) ? claimed : m_types.intersectionOf(claimed, taken);
+        if (isNeverType(both) || isShown(value, both))
+            return;
+        Origin origin = draft.origin();
+        origin.isTailCall = false;
+        Reference boxed = convert(value, Representation::JSValue, origin);
+        if (boxed && boxed.isValue() && !isUnreachable())
+            buildCheckOfProof(boxed, both, TypeTable::anything, ProofSource::Field, origin);
+    };
     if (draft.opcode == Opcode::DefineOwnProperty) {
         if (!isBoxedOrCell(draft.valueOperand()))
             return;
@@ -882,6 +943,8 @@ void Walker::holdStoredValuesToSlots(const Draft& draft)
     if (draft.opcode != Opcode::NewObject) {
         if (isBoxedOrCell(draft.valueOperand()))
             holdToSlotOfObjectThatMayBeOld(draft.valueOperand(), typeThatStoreTakesOnWordOfWalk(draft));
+        else
+            holdRawWordToPartOfItsKind(draft.valueOperand(), typeThatStoreTakesOnWordOfWalk(draft));
         return;
     }
     if (program().at(draft.layout()).kind == LayoutKind::Environment)
@@ -890,6 +953,8 @@ void Walker::holdStoredValuesToSlots(const Draft& draft)
     for (uint32_t index = 0; index < std::min(draft.fields().size(), values.size()); ++index) {
         if (isBoxedOrCell(values[index]))
             checkThatSlotTakes(values[index], plan().slot(draft.layout(), draft.fields()[index]).typeThatStoresAreHeldTo(), draft.origin());
+        else
+            holdRawWordToPartOfItsKind(values[index], plan().slot(draft.layout(), draft.fields()[index]).typeThatStoresAreHeldTo());
     }
 }
 
@@ -916,7 +981,11 @@ void Walker::holdVariableOfAnotherFileStoredFirst(VariableID variable)
 void Walker::holdVariablesStoredFirstWhereFunctionsAreUsed(std::span<const LinkedVariableStoredFirst> claims, std::span<const FunctionID> used, VariableID storedByOperation)
 {
     for (FunctionID function : used) {
+        if (m_state.claimsAreAnswered(function))
+            continue;
+        bool everyClaimIsAnswered = true;
         for (const LinkedVariableStoredFirst& claim : std::ranges::equal_range(claims, function, { }, &LinkedVariableStoredFirst::functionWhoseUseCounts)) {
+            everyClaimIsAnswered &= claim.variable != storedByOperation;
             if (claim.variable == storedByOperation || isUnreachable() || m_state.isPastDeadZone(claim.variable) || plan().deferredDefinitions().findDeferred(claim.variable))
                 continue;
             TypeID held = m_positionsOfBuild->variable(TypeLevel::Proven, claim.variable);
@@ -931,6 +1000,8 @@ void Walker::holdVariablesStoredFirstWhereFunctionsAreUsed(std::span<const Linke
             buildCheckOfProof(found, held, m_types.withPrimitives(TypeTable::anything, Primitive::Absent), ProofSource::Variable, m_origin, true);
             m_state.noteEndOfDeadZone(claim.variable);
         }
+        if (everyClaimIsAnswered && !isUnreachable())
+            m_state.noteThatClaimsAreAnswered(function);
     }
 }
 
@@ -1161,7 +1232,7 @@ void Walker::checkProofsOfWhatIsStoredBy(const Draft& draft)
     }
 }
 
-static constexpr OpcodeSet storesIntoPlacesInWalk { Opcode::PutModuleVariable, Opcode::PutEnvironmentField, Opcode::NewObject, Opcode::NewClosure };
+static constexpr OpcodeSet storesIntoPlacesInWalk { Opcode::PutModuleVariable, Opcode::PutEnvironmentField, Opcode::NewObject, Opcode::NewClosure, Opcode::TryReExportFields };
 
 void Walker::holdStoredValuesToPlaces(const Draft& draft)
 {
@@ -1172,6 +1243,10 @@ void Walker::holdStoredValuesToPlaces(const Draft& draft)
     }
     if (draft.opcode == Opcode::PutEnvironmentField) {
         holdToTypeOfPlace(draft.valueOperand(), m_positionsOfBuild->environmentField(TypeLevel::Proven, draft.layout(), draft.field()), ProofSource::SlotOfScope, origin);
+        return;
+    }
+    if (draft.opcode == Opcode::TryReExportFields) {
+        holdToTypeOfPlace(draft.sourceOperand(), m_positionsOfBuild->capture(TypeLevel::Proven, draft.function(), draft.keyIsFirstCapture() ? 1 : 0), ProofSource::Capture, origin);
         return;
     }
     if (draft.opcode == Opcode::NewClosure) {
@@ -1200,11 +1275,10 @@ void Walker::holdToTypeOfPlace(Reference value, TypeID held, ProofSource source,
         return;
     if (value.isConstant() && (m_types.at(claimed).primitives & Primitive::Absent))
         return;
-    held = m_types.withPrimitives(held, Primitive::Absent);
     origin.isTailCall = false;
     Representation form = representationOf(value);
     bool hasBox = !value.isConstant() && (form == Representation::JSValue || form == Representation::Cell || form == Representation::Cell32);
-    if (hasBox && (isShown(value, held) || makeTestOnTheWayAskInFull(value, held)))
+    if (hasBox && !checksProofsOf(source) && (isShown(value, held) || makeTestOnTheWayAskInFull(value, held)))
         return;
     buildCheckOfProof(value, held, m_types.withPrimitives(TypeTable::anything, Primitive::Absent), source, origin, true);
 }
@@ -1267,6 +1341,8 @@ void Walker::checkProofsOfWhatComesThroughFusedEntry()
     BodyBlock entry = m_frames[0].index->block(entryBlock);
     for (unsigned index = 0; index < entry.numberOfParameters() && !isUnreachable(); ++index) {
         TypeID withoutProof = typeArrivingAtEntryParameter(index, false);
+        if (const DeclaredType* declared = program().at(id).declaredEntryParameter(index); declared && declared->isEstablished() && m_types.at(withoutProof).isJavaScriptValue())
+            withoutProof = m_types.at(withoutProof).primitives & Primitive::Absent ? TypeTable::anythingOrAbsent : TypeTable::anything;
         if (TypeID tested = unit().role == CodeRole::Body ? plan().conventions().typeBehindGuard(id, index) : TypeID()) {
             TypeID passed = m_types.intersectionOf(withoutProof, tested);
             withoutProof = isNeverType(passed) ? tested : passed;
@@ -1304,7 +1380,7 @@ void Walker::holdOperandsToWhatCalleeBelieves(const Draft& call)
         TypeID shown = form == Representation::Void ? typeOf(operand) : typeShown(operand);
         if (!m_types.at(held).isJavaScriptValue() || m_types.isSubset(shown, held))
             continue;
-        if (form != Representation::JSValue && form != Representation::Cell && form != Representation::Cell32)
+        if (form != Representation::JSValue && form != Representation::Cell && form != Representation::Cell32 && !numberRepresentations.contains(form))
             operand = convert(operand, Representation::JSValue, call.origin());
         if (operand && !isUnreachable())
             buildCheckOfProof(operand, held, shown, ProofSource::EntryParameter, call.origin(), true);
@@ -1365,6 +1441,38 @@ static constexpr OpcodeSet readsThatHandOverWhatLies {
     Opcode::GetCapture, Opcode::GetGlobalBinding, Opcode::GetArrayElement, Opcode::GetContiguousIndex, Opcode::GetOwnContiguousIndex,
 };
 
+static constexpr OpcodeSet callsByValueInWalk = opcodesWhere([](Opcode opcode) {
+    return accessClassOf(opcode) == AccessClass::IndirectCall && resultRuleOf(opcode) == ResultRule::Unknown;
+});
+
+TypeID Walker::typeThatCallByValueIsShownToGive(const auto& call, std::span<const TypeID> shownOfOperands)
+{
+    TypeID given = Typed::resultTypeOf(TypingContext { program(), m_types, *m_positionsKnowingWhatFunctionsHandBack, TypeLevel::Proven }, call, OperandTypes { shownOfOperands });
+    if (!given)
+        return TypeTable::anything;
+    TypeID callee = shownOfOperands[OperandIndex::Call::callee];
+    bool entersBuiltin = callee && !holdsOnlyPrimitives(callee) && m_types.at(callee).isObject() && singleBuiltinOf(m_types, m_types.at(callee));
+    return entersBuiltin ? m_types.wholeKindsAndBuiltinClassesOf(given) : given;
+}
+
+void Walker::askWhatCallByValueGives(ValueID call, const Draft& draft, TypeID proven)
+{
+    if (m_types.saysNothing(proven) || unitReturnsAtOnce(draft))
+        return;
+    Vector<TypeID, 8> shownOfOperands;
+    for (Reference operand : draft.operands())
+        shownOfOperands.append(operand && operand.isRecord() ? typeShown(operand) : TypeID());
+    TypeID shown = typeThatCallByValueIsShownToGive(draft, shownOfOperands.span());
+    if (m_types.isSubset(shown, proven))
+        return;
+    if (!isNeverType(proven)) {
+        buildCheckOfProof(Reference::value(call), proven, shown, ProofSource::ResultOfOtherCall, draft.origin(), true);
+        return;
+    }
+    if (Reference callee = draft.operands()[OperandIndex::Call::callee]; callee && callee.isValue())
+        buildCheckOfProof(callee, TypeTable::never, TypeTable::anything, ProofSource::ResultOfOtherCall, draft.origin());
+}
+
 void Walker::checkProofOfRecord(ValueID record, const Draft& draft, TypeID proven)
 {
     if (draft.opcode == Opcode::Narrowed) {
@@ -1396,7 +1504,7 @@ void Walker::checkProofOfRecord(ValueID record, const Draft& draft, TypeID prove
             if (type && m_types.at(type).isJavaScriptValue())
                 type = m_types.testablePartOf(type);
         }
-        if (TypeID given = Typed::resultTypeOf(TypingContext { program(), m_types, *m_positionsWithoutProofs, TypeLevel::Proven }, draft, OperandTypes { m_operandTypes.span() }))
+        if (TypeID given = Typed::resultTypeOf(TypingContext { program(), m_types, *m_positionsWithoutProofs, TypeLevel::Proven, false }, draft, OperandTypes { m_operandTypes.span() }))
             withoutProof = given;
     }
     if (draft.opcode == Opcode::GetModuleVariable || draft.opcode == Opcode::GetEnvironmentField || draft.opcode == Opcode::GetCapture)
@@ -1416,15 +1524,28 @@ static bool codeGoesByTypesOfOperandsInWalk(const Operation& record)
     return familyOf(record.opcode) == OperationFamily::Operator && !(PayloadWord::form(record.opcode) && record.form() == OperatorForm::Generic);
 }
 
-bool Walker::entryParameterIsShown(const Block& entry, ValueID parameter) const
+bool Walker::entryParameterIsCapture(const Block& entry, ValueID parameter) const
 {
-    if (!isEnforced(ProofSource::EntryParameter))
+    if (namesOnlyUnitsOfItsFunction(unit().role))
         return false;
-    if (isEnforced(ProofSource::Capture) || namesOnlyUnitsOfItsFunction(unit().role))
-        return true;
     const Function& function = program().at(unit().function);
     size_t index = std::ranges::find(entry.parameters(), parameter) - entry.parameters().begin();
-    return index >= function.numberOfEntryParameters() || function.entryParameterKind(static_cast<unsigned>(index)) != EntryParameter::Capture;
+    return index < function.numberOfEntryParameters() && function.entryParameterKind(static_cast<unsigned>(index)) == EntryParameter::Capture;
+}
+
+bool Walker::entryParameterIsShown(const Block& entry, ValueID parameter) const
+{
+    return isEnforced(entryParameterIsCapture(entry, parameter) ? ProofSource::Capture : ProofSource::EntryParameter);
+}
+
+static TypeID typeOfFunctionThatVariableIsBornWith(const Program& program, const Plan& plan, VariableID id)
+{
+    const Variable& variable = program.at(id);
+    if (variable.initialization != VariableInitialization::Function || variable.owner || !variable.flags.contains(VariableFlags::IsImmutable) || !variable.declared.isEstablished())
+        return { };
+    if (variable.flags.containsAny({ VariableFlags::IsReplaceable, VariableFlags::HoldsMock, VariableFlags::OriginalMayRun }) || plan.runTimeMayFill(id))
+        return { };
+    return variable.declared.written();
 }
 
 TypeID Walker::typeShownAtOnce(ValueID id) const
@@ -1443,8 +1564,10 @@ TypeID Walker::typeShownAtOnce(ValueID id) const
         return TypeTable::boolean;
     if (record.opcode == Opcode::Parameter) {
         const Block& block = m_code.at(record.block());
+        if (block.isEntry && !numberRepresentations.contains(record.representation) && entryParameterIsCapture(block, id) && entryParameterIsShown(block, id))
+            return { };
         if (block.isEntry)
-            return entryParameterIsShown(block, id) ? record.type : numberRepresentations.contains(record.representation) ? widestTypeOf(record.representation) : TypeID(TypeTable::anything);
+            return entryParameterIsShown(block, id) && !entryParameterIsCapture(block, id) ? record.type : numberRepresentations.contains(record.representation) ? widestTypeOf(record.representation) : TypeID(TypeTable::anything);
         return block.isHandlerBlock() || (block.isLoopHead && !m_headsOfClosedLoops.contains(record.block().index())) ? TypeID(TypeTable::anything) : TypeID();
     }
     if (record.opcode == Opcode::Narrowed)
@@ -1467,11 +1590,15 @@ TypeID Walker::typeShownAtOnce(ValueID id) const
         Type written = m_types.at(record.type);
         return written.isJavaScriptValue() && !(written.primitives & (Primitive::Absent | Primitive::Unspecified)) ? m_types.wholeKindsAndBuiltinClassesOf(record.type) : TypeID(TypeTable::anything);
     }
+    if (record.opcode == Opcode::GetModuleVariable) {
+        if (TypeID born = typeOfFunctionThatVariableIsBornWith(program(), plan(), record.variable()))
+            return born;
+    }
     ProofSource source = sourceOfProofInWalk(record.opcode);
-    if (isEnforced(source) && (source == ProofSource::SlotOfScope || (record.opcode == Opcode::GetSlot && record.level() == KnowledgeLevel::Proven)))
+    if (isEnforced(source) && (source == ProofSource::SlotOfScope || source == ProofSource::Capture || source == ProofSource::Variable || callsByValueInWalk.contains(record.opcode) || (record.opcode == Opcode::GetSlot && record.level() == KnowledgeLevel::Proven)))
         return { };
     if (record.opcode == Opcode::ResultAt || (source != ProofSource::OtherOperation && !recordsTypedByWhatIsProvenOfContents.contains(record.opcode)))
-        return isEnforced(source) && source != ProofSource::Field ? record.type : TypeID(TypeTable::anything);
+        return isEnforced(source) && source != ProofSource::Field && source != ProofSource::ResultOfOtherCall ? record.type : TypeID(TypeTable::anything);
     TypeID widest = widestPrimitiveResultOf(record.opcode);
     return widest == record.type && !codeGoesByTypesOfOperandsInWalk(record) ? widest : TypeID();
 }
@@ -1512,6 +1639,8 @@ TypeID Walker::computeTypeShown(ValueID id)
         TypeID atOnce = typeShownAtOnce(value);
         return atOnce ? atOnce : m_typesShown.get(value.index());
     };
+    if (record.opcode == Opcode::Parameter && m_code.at(record.block()).isEntry)
+        return typeThatUnitMayTestFor(m_types.testablePartOf(record.type), true, true);
     if (record.opcode == Opcode::Parameter) {
         const Block& block = m_code.at(record.block());
         size_t index = std::ranges::find(block.parameters(), id) - block.parameters().begin();
@@ -1529,7 +1658,7 @@ TypeID Walker::computeTypeShown(ValueID id)
     }
     TypingContext believingNothing { program(), m_types, *m_positionsKnowingNothing, TypeLevel::Proven };
     Vector<TypeID, 8> operands;
-    if (record.opcode == Opcode::GetEnvironmentField)
+    if (record.opcode == Opcode::GetEnvironmentField || record.opcode == Opcode::GetCapture || record.opcode == Opcode::GetModuleVariable)
         return typeThatUnitMayTestFor(m_types.testablePartOf(record.type), true, true);
     if (record.opcode == Opcode::GetSlot) {
         ValueID object = record.objectOperand();
@@ -1537,6 +1666,11 @@ TypeID Walker::computeTypeShown(ValueID id)
         if (!held)
             return TypeTable::anything;
         return m_types.withPrimitives(held, Primitive::Absent);
+    }
+    if (callsByValueInWalk.contains(record.opcode)) {
+        for (ValueID operand : record.operands())
+            operands.append(operand ? shown(operand) : TypeID());
+        return typeThatCallByValueIsShownToGive(record, operands.span());
     }
     if (record.opcode != Opcode::Narrowed && resultRuleOf(record.opcode) != ResultRule::Cast) {
         bool codeGoesByTypesOfOperands = codeGoesByTypesOfOperandsInWalk(record);
@@ -1664,6 +1798,15 @@ void Walker::checkProofOfCopy(Reference value, TypeID proven, ProofSource source
     checkProof(value, proven, own, source, origin);
 }
 
+TypeID Walker::asFarAsUnitMayAsk(TypeID claimed)
+{
+    if (!claimed || holdsOnlyPrimitives(claimed) || !m_types.at(claimed).isJavaScriptValue())
+        return claimed;
+    TypeID testable = m_types.testablePartOf(claimed);
+    TypeID asked = typeThatUnitMayTestFor(testable);
+    return asked == testable ? claimed : asked;
+}
+
 TypeID Walker::typeThatUnitMayTestFor(TypeID tested, bool mayBringClasses, bool asOfUnitWithoutReach)
 {
     bool mentionsWhatIsOutOfReach = facts().testMentionsWhatIsOutOfReach(m_types, tested, scopedLambda<bool(FunctionID)>([&](FunctionID function) {
@@ -1709,7 +1852,7 @@ Reference Walker::proveOrTrap(Reference value, TypeID tested, ProofSource source
 void Walker::checkProof(Reference value, TypeID proven, TypeID withoutProof, ProofSource source, Origin origin)
 {
     if (checksProofsOf(source))
-        buildCheckOfProof(value, proven, withoutProof, source, origin);
+        buildCheckOfProof(value, proven, withoutProof, source, origin, true);
 }
 
 std::optional<Origin> Walker::leaveCheckOfWhatContainerHasJustGivenToTestBehind(Reference given)
@@ -1785,7 +1928,7 @@ bool Walker::splitNullishOffWhatContainerHasJustGiven(Reference given, TypeID re
     branch(passes, isOfRest, isOther);
 
     continueIn(isOther);
-    buildCheckOfProof(given, nullish, TypeTable::anything, ProofSource::Contents, *originOfCheck);
+    buildCheckOfProof(given, nullish, TypeTable::anything, ProofSource::Contents, *originOfCheck, true);
     if (!isUnreachable())
         build(WTF::move(throwsOffNullish));
     if (!isUnreachable())
@@ -1855,7 +1998,7 @@ bool Walker::letTestInFrontOfBranchAskWhatContainerHasJustGiven(const BodyValue&
         bind(input, given);
     };
     continueIn(other);
-    buildCheckOfProof(given, asksForFailingSide ? passing : failing, TypeTable::anything, ProofSource::Contents, *originOfCheck);
+    buildCheckOfProof(given, asksForFailingSide ? passing : failing, TypeTable::anything, ProofSource::Contents, *originOfCheck, true);
     endArm(false);
     continueIn(asked);
     endArm(true);
@@ -1894,6 +2037,7 @@ void Walker::buildCheckOfProof(Reference value, TypeID proven, TypeID withoutPro
     Representation form = representationOf(value);
     bool isAnswerOfTest = form == Representation::Boolean && !value.isConstant() && withoutProof == TypeID(TypeTable::boolean);
     bool hasBox = !value.isConstant() && (form == Representation::JSValue || form == Representation::Cell || form == Representation::Cell32);
+    bool isAskedInRawForm = false;
     if (!isAnswerOfTest && !hasBox) {
         TypeID said = typeThatFormSays(value);
         if (!said) {
@@ -1901,14 +2045,22 @@ void Walker::buildCheckOfProof(Reference value, TypeID proven, TypeID withoutPro
             return;
         }
         bool isRawNumber = !value.isConstant() && (m_types.at(said).primitives & Primitive::Number);
-        if (m_types.isSubset(said, proven) || (isRawNumber && (m_types.at(proven).primitives & Primitive::Number))) {
+        bool mayBeNumberThatIsProven = isRawNumber && (m_types.at(proven).primitives & Primitive::Number);
+        if (m_types.isSubset(said, proven) || (mayBeNumberThatIsProven && source != ProofSource::EntryParameter)) {
             ++m_numberOfProofsThatFormTells;
             return;
         }
-        if (!isNeverType(proven) && isNeverType(m_types.intersectionOf(said, proven)))
+        isAskedInRawForm = mayBeNumberThatIsProven && numberRepresentations.contains(form);
+        if (!isNeverType(proven) && isNeverType(m_types.intersectionOf(said, proven))) {
             ++m_numberOfDoorsThatCanNeverPass;
+            if (m_inputs.options.verifiesCode) {
+                dataLogLn("AOT: f", currentFunction().index(), " at ", origin.position, ": a door of kind ", static_cast<unsigned>(source), " can never pass: what comes is ", TypeInText { m_types, said }, ", and what is proven is ", TypeInText { m_types, proven });
+                fail("a door can never pass: what the form of a value says is disjoint from what is proven of where it goes"_s);
+                return;
+            }
+        }
     }
-    if (!isAnswerOfTest && form != Representation::JSValue && form != Representation::Cell) {
+    if (!isAnswerOfTest && !isAskedInRawForm && form != Representation::JSValue && form != Representation::Cell) {
         value = convert(value, Representation::JSValue, origin);
         if (!value || !value.isRecord() || isUnreachable())
             return;
@@ -1922,7 +2074,7 @@ void Walker::buildCheckOfProof(Reference value, TypeID proven, TypeID withoutPro
     Draft check(Opcode::CheckProof, origin);
     check.setValueOperand(value);
     check.setCheckedType(checked);
-    check.setTypeWithoutProof(value.isValue() && hasTestedForHole(m_code.at(value.id())) ? withoutProof : m_types.withPrimitives(withoutProof, Primitive::Absent));
+    check.setTypeWithoutProof(isAskedInRawForm || (value.isValue() && hasTestedForHole(m_code.at(value.id()))) ? withoutProof : m_types.withPrimitives(withoutProof, Primitive::Absent));
     check.setSource(source);
     build(WTF::move(check));
     ++m_numbersOfProofsChecked[static_cast<unsigned>(source)];
@@ -2802,7 +2954,7 @@ std::array<uint32_t, numberOfOpcodes> Walker::findStepsOfBuildByOpcode()
         add(Step::takesCellsAsTheyAre, way == OperandsAreTaken::ByKindOrAsCell);
         add(Step::resultHasFormOfItsType, opcodesWhoseResultsHaveFormsOfTheirTypes.contains(opcode));
         add(Step::notesOperationBuilt, opcodesThatNoteOperationBuiltTakes.contains(opcode));
-        add(Step::isTypedByWhatIsProven, readsTypedByWhatIsProvenOfInput.contains(opcode) || recordsTypedByWhatIsProvenOfContents.contains(opcode));
+        add(Step::isTypedByWhatIsProven, readsTypedByWhatIsProvenOfInput.contains(opcode) || recordsTypedByWhatIsProvenOfContents.contains(opcode) || callsByValueInWalk.contains(opcode));
         add(Step::isCallForStackTests, opcode == Opcode::CallDirect || opcode == Opcode::AwaitCallBySavingFrame || opcode == Opcode::Construct);
         add(Step::isToldToPolls, opcodesThatPollsAreToldOfInWalk.contains(opcode));
         add(Step::isLookedAtByCopy, opcode == Opcode::Call || opcode == Opcode::StrictEq || opcode == Opcode::Builtin);
@@ -3046,9 +3198,9 @@ Reference Walker::build(Draft&& draft, const Effects* foundByCaller)
         noteOperationBuiltOfItsOpcodes(*this, draft, effects, Reference::value(id));
     if (steps & Step::isTypedByWhatIsProven) {
         if (m_resultOfReadBeingTyped && readsTypedByWhatIsProvenOfInput.contains(draft.opcode) && m_positions == m_positionsOfBuild.get())
-            m_code.addFactUse(FactUse { .record = id, .kind = FactKind::ProvenContents, .subjectKind = FactSubject::Kind::Operation, .type = m_resultOfReadBeingTyped });
+            m_code.addFactUse(FactUse { .record = id, .kind = FactKind::ProvenContents, .subjectKind = FactSubject::Kind::Operation, .type = m_positions->resultOfReadBeingTyped(TypeLevel::Proven) });
         if (m_contentsBeingTyped && recordsTypedByWhatIsProvenOfContents.contains(draft.opcode) && m_positions == m_positionsOfBuild.get())
-            m_code.addFactUse(FactUse { .record = id, .kind = FactKind::ProvenContents, .subjectKind = FactSubject::Kind::Operation, .type = m_contentsBeingTyped });
+            m_code.addFactUse(FactUse { .record = id, .kind = FactKind::ProvenContents, .subjectKind = FactSubject::Kind::Operation, .type = m_positions->contentsBeingTyped(TypeLevel::Proven) });
     }
     if (standsInFrontOfLoop)
         noteBuiltInFrontOfLoop(m_numberOfLoopsThatMayBeLeft, id);
@@ -3059,7 +3211,9 @@ Reference Walker::build(Draft&& draft, const Effects* foundByCaller)
         checkProofOfRecord(id, draft, proven);
     else if ((steps & Step::isTypedByWhatIsProven) && holdsValue && proven && m_positions == m_positionsOfBuild.get()
         && ((m_resultOfReadBeingTyped && readsTypedByWhatIsProvenOfInput.contains(draft.opcode)) || (m_contentsBeingTyped && recordsTypedByWhatIsProvenOfContents.contains(draft.opcode))))
-        buildCheckOfProof(Reference::value(id), proven, TypeTable::anything, ProofSource::Contents, draft.origin());
+        buildCheckOfProof(Reference::value(id), proven, TypeTable::anything, ProofSource::Contents, draft.origin(), true);
+    else if ((steps & Step::isTypedByWhatIsProven) && proven && (holdsValue || isNeverType(proven)) && callsByValueInWalk.contains(draft.opcode))
+        askWhatCallByValueGives(id, draft, proven);
 
     if (!hasNoEffects && ((steps & Step::isToldToPolls) || (effects.mayCollect && has(Mechanism::Handlers) && !m_openLoops.isEmpty())))
         noteRecordBuiltForPolls(id, draft, effects);
@@ -3603,6 +3757,72 @@ bool Walker::letArmsMeet(std::span<const ArmThatMeets> arms, BlockID meeting, st
     }
     continueIn(meeting);
     return !isUnreachable();
+}
+
+Walker::StretchInArms Walker::stretchInArms(BlockID inputBlock, uint32_t begin, uint32_t end, bool armsMayEndWithReturn) const
+{
+    const BodyIndex& index = currentBodyIndex();
+    uint32_t first = index.block(inputBlock).firstValue().index() + begin;
+    uint32_t size = end - begin;
+    StretchInArms stretch { inputBlock, begin, end, false, { } };
+
+    Vector<uint32_t, 32> mentions;
+    mentions.fill(0, size);
+    for (uint32_t place = 1; place < size; ++place) {
+        index.value(ValueID(first + place)).forEachOperand([&](ValueID operand, uint32_t) {
+            if (operand && operand.index() >= first)
+                ++mentions[operand.index() - first];
+        });
+    }
+    for (uint32_t place = 0; place < size; ++place) {
+        uint32_t uses = index.useCount(ValueID(first + place));
+        if (uses == BodyIndex::maxCountedUses || uses > mentions[place])
+            stretch.mentionedBehind.append(ValueID(first + place));
+    }
+    if (armsMayEndWithReturn) {
+        BodyTerminator terminator = index.terminator(inputBlock);
+        stretch.isReturnedAtOnce = terminator.kind() == TerminatorKind::ReturnCall && terminator.operand(0) == ValueID(first + size - 1);
+    }
+    return stretch;
+}
+
+void Walker::listArm(const StretchInArms& stretch, ArmsThatMeet& arms)
+{
+    if (stretch.isReturnedAtOnce && !isUnreachable())
+        endArmWithReturnOf(stretch.inputBlock);
+    if (isUnreachable() || hasFailed())
+        return;
+    ArmThatMeets arm { m_block, { } };
+    for (ValueID mentioned : stretch.mentionedBehind) {
+        Reference built = referenceOf(mentioned);
+        if (!built || !built.isRecord())
+            return fail("an arm has no value for what is read behind it"_s);
+        arm.values.append(built);
+    }
+    arms.append(WTF::move(arm));
+}
+
+void Walker::walkClosedArm(BlockID closed, const StretchInArms& stretch, ArmsThatMeet& arms)
+{
+    continueIn(closed);
+    ClosedArm closedArm(*this);
+    walkStretch(stretch.inputBlock, stretch.begin, stretch.end);
+    listArm(stretch, arms);
+}
+
+bool Walker::letArmsMeet(const StretchInArms& stretch, const ArmsThatMeet& arms, BlockID meeting)
+{
+    uint32_t firstOfBlock = currentBodyIndex().block(stretch.inputBlock).firstValue().index();
+    for (uint32_t place = stretch.begin; place < stretch.end; ++place) {
+        if (arms.isEmpty() || !stretch.mentionedBehind.contains(ValueID(firstOfBlock + place)))
+            bind(ValueID(firstOfBlock + place), Reference());
+    }
+    Vector<Reference, 8> met(stretch.mentionedBehind.size());
+    if (!letArmsMeet(arms.span(), meeting, met.mutableSpan()))
+        return false;
+    for (size_t position = 0; position < met.size(); ++position)
+        bind(stretch.mentionedBehind[position], met[position]);
+    return true;
 }
 
 ALWAYS_INLINE uint32_t Walker::addOpenEdge(InputBlock& target)
@@ -4957,6 +5177,16 @@ bool Walker::endArmWithReturnOf(BlockID inputBlock)
     return true;
 }
 
+template<Opcode known> static ALWAYS_INLINE bool isReadThatOnlyCallUsesInChain(const Walker& walker, const BodyValueOf<known>& value)
+{
+    if constexpr (opcodesThatOpenLoopOverIteratorThatEngineMakesTakes.contains(known)) {
+        const BodyIndex& index = walker.currentBodyIndex();
+        ValueID user = index.onlyUsingValue(value.id());
+        return user && index.opcodeOf(user) == Opcode::Call;
+    } else
+        return false;
+}
+
 template<Opcode known> bool Walker::walkThroughChainOf(const BodyValue& walked)
 {
     BodyValueOf<known> value(walked);
@@ -4986,8 +5216,8 @@ template<Opcode known> bool Walker::walkThroughChainOf(const BodyValue& walked)
         || (has(Mechanism::BuiltinCalls) && buildDefinitionByWrittenDescriptor(*this, value))
         || (has(Mechanism::EscapeAnalysis) && m_opensGuesses && listStoresOfCopiedConstructor(*this, value))
         || buildCoroutineOperation(*this, value)
-        || (has(Mechanism::Guesses) && m_opensGuesses && has(Mechanism::TypedOperations) && openLoopOverIteratorThatEngineMakes(*this, value))
-        || (has(Mechanism::Guesses) && m_opensGuesses && has(Mechanism::TypedOperations) && openTestOfListAtReadOfMethod(*this, value))
+        || (opcodesThatOpenLoopOverIteratorThatEngineMakesTakes.contains(known) && has(Mechanism::Guesses) && m_opensGuesses && has(Mechanism::TypedOperations) && currentBodyIndex().opcodes().contains(Opcode::IteratorOpen) && isReadThatOnlyCallUsesInChain(*this, value) && openLoopOverIteratorThatEngineMakes(*this, value))
+        || (opcodesThatOpenLoopOverIteratorThatEngineMakesTakes.contains(known) && has(Mechanism::Guesses) && m_opensGuesses && has(Mechanism::TypedOperations) && isInLoop() && isReadThatOnlyCallUsesInChain(*this, value) && openTestOfListAtReadOfMethod(*this, value))
         || (has(Mechanism::EscapeAnalysis) && buildFreshObject(*this, value))
         || (has(Mechanism::Guesses) && m_opensGuesses && buildArmsInFrontOfTypedForms(*this, value))
         || (has(Mechanism::Guesses) && m_opensGuesses && openGuessAtElementOfNumbers(*this, value))
@@ -4995,7 +5225,7 @@ template<Opcode known> bool Walker::walkThroughChainOf(const BodyValue& walked)
         || buildCopyOrKeyOrderForm(*this, value)
         || buildCopyWithWhatFollows(*this, value)
         || (has(Mechanism::BuiltinCalls) && callBuiltin(*this, value))
-        || (has(Mechanism::Inlining) && inlineCalleeAsLinkOfChain(value))
+        || (opcodesThatInlineCalleeTakes.contains(known) && has(Mechanism::Inlining) && inlineCalleeAsLinkOfChainOfItsOpcodes(value))
         || (has(Mechanism::DirectCalls) && callDirectly(*this, value))
         || (has(Mechanism::DirectCalls) && callProvenAccessor(*this, value))
         || (has(Mechanism::Folding) && unit().role == CodeRole::SlowBody && program().admitsReplacedBuiltins && buildBuiltinThatExecutableNames(*this, value))
@@ -5027,6 +5257,11 @@ bool Walker::walkThroughChain(const BodyValue& written)
     static constexpr auto chains = []<size_t... opcodes>(std::index_sequence<opcodes...>) {
         return std::array<Chain, sizeof...(opcodes)> { &Walker::walkThroughChainOf<static_cast<Opcode>(opcodes)>... };
     }(std::make_index_sequence<numberOfEnumerators<Opcode>>());
+    if (!accessesUnderComputedKeys.contains(written.opcode())) [[likely]] {
+        if (!m_waysIntoClosedCopies.isEmpty())
+            proveWhatLooksCountOnAt(written);
+        return (this->*chains[static_cast<size_t>(written.opcode())])(written);
+    }
     BodyValue value = written;
     if (accessesUnderComputedKeys.contains(written.opcode())) {
         PropertyKeyID chosen;
@@ -5151,7 +5386,8 @@ void Walker::walkOperation(const BodyValue& value)
         if (isUnreachable())
             return;
     }
-    if (const Vector<SummaryMakerThatEndsWhereItLeaves>& makers = facts().summaries().at(function).makersThatEndWhereTheyLeave; !makers.isEmpty()) {
+    const ThinSummary& summary = facts().summaries().at(function);
+    if (const Vector<SummaryMakerThatEndsWhereItLeaves>& makers = summary.makersThatEndWhereTheyLeave; !makers.isEmpty()) {
         showThatMakersThatLeaveAtHoldWhatIsHeldFilled(makers, value.id().index(), false);
         if (isUnreachable())
             return;
@@ -5160,7 +5396,7 @@ void Walker::walkOperation(const BodyValue& value)
         copy(value);
         return;
     }
-    if (const Vector<SummaryScopeStoredFirst>& scopes = facts().summaries().at(function).scopesStoredFirst; !scopes.isEmpty()) {
+    if (const Vector<SummaryScopeStoredFirst>& scopes = summary.scopesStoredFirst; !scopes.isEmpty()) {
         holdSlotsOfScopesThatLeaveAt(scopes, value.id().index(), false);
         if (isUnreachable())
             return;
@@ -5178,7 +5414,7 @@ void Walker::walkOperation(const BodyValue& value)
             return;
     }
     SetForScope isWalkingAccess(m_isWalkingAccess, effectRuleOf(value.opcode()) == EffectRule::Access);
-    SetForScope resultOfRead(m_resultOfReadBeingTyped, value.opcode() == Opcode::ElemGet ? facts().linked().resultOfReadByKey(function, value.id()) : TypeID());
+    SetForScope resultOfRead(m_resultOfReadBeingTyped, value.opcode() == Opcode::ElemGet ? asFarAsUnitMayAsk(facts().linked().resultOfReadByKey(function, value.id())) : TypeID());
 
     std::optional<StringsInPlaceOfTextsInBuilders> strings;
     if (hasTextsInStringBuilders()) {

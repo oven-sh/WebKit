@@ -67,6 +67,26 @@ static constexpr ASCIILiteral fileThatDiesUnderTodo =
     "# RUN: crash without-memory-at-no-work\n"_s;
 static constexpr ASCIILiteral fileWithoutMemory = "# RUN: crash without-memory\n"_s;
 static constexpr ASCIILiteral fileWithoutMemoryAtNoWork = "# RUN: crash without-memory-at-no-work\n"_s;
+static constexpr ASCIILiteral fileThatAsksShellToCrash =
+    "# RUN: run-in-shell --useDollarVM=1 $vm.crash();\n"
+    "# CHECK: crashed with\n"
+    "module m0 path=\"main.js\" displayPath=\"main.js\" body=f0 namespaceLayout=L(m0)\n"
+    "entry module=m0\n"
+    "function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {\n"
+    "  b0():\n"
+    "    Return\n"
+    "}\n"_s;
+static constexpr ASCIILiteral fileWhoseShellAlsoCrashesUnasked =
+    "# RUN(ASKED): run-in-shell --useDollarVM=1 $vm.crash();\n"
+    "# ASKED: crashed with\n"
+    "# RUN(UNASKED): run-in-shell --useDollarVM=1 $vm.crash();\n"
+    "# UNASKED: exited with 0\n"
+    "module m0 path=\"main.js\" displayPath=\"main.js\" body=f0 namespaceLayout=L(m0)\n"
+    "entry module=m0\n"
+    "function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {\n"
+    "  b0():\n"
+    "    Return\n"
+    "}\n"_s;
 
 static ChildProcessLauncher createLauncher(Vector<String>&& sharedArguments = { })
 {
@@ -145,6 +165,26 @@ static void testTodoOfFileStandsForNoDeath()
     AOT_TEST_CHECK(out.toString().contains(makeString("FAIL "_s, dying.path(), ":1: crashed with "_s)));
 }
 
+static void testCrashThatRunAsksForIsNotNamed()
+{
+    TemporaryFile asking(".ir"_s, byteCast<uint8_t>(fileThatAsksShellToCrash.span8()));
+    TemporaryFile passing(".ir"_s, byteCast<uint8_t>(passingFile.span8()));
+    ChildProcessResult result = runWith(createLauncher(), { String(runSubcommandName), asking.path(), passing.path() });
+    AOT_TEST_CHECK(result.exitedWith(0) && result.output.contains("2 passed, 0 failed, 0 todo\n"_s));
+    AOT_TEST_CHECK(!result.output.contains("crashed"_s) && !result.output.contains("SIG"_s));
+}
+
+static void testCrashThatNoRunAsksForSaysHowShellWasStarted()
+{
+    TemporaryFile file(".ir"_s, byteCast<uint8_t>(fileWhoseShellAlsoCrashesUnasked.span8()));
+    ChildProcessResult result = runWith(createLauncher(), { String(runSubcommandName), file.path() });
+    AOT_TEST_CHECK(result.exitedWith(1));
+    AOT_TEST_CHECK(!result.output.contains(makeString("FAIL "_s, file.path(), ":1: "_s)));
+    AOT_TEST_CHECK(result.output.contains(makeString("FAIL "_s, file.path(), ":3: run-in-shell: the shell crashed with "_s)));
+    AOT_TEST_CHECK(result.output.contains(makeString(" (started as: "_s, shellPath(), " --aotImagePath="_s)));
+    AOT_TEST_CHECK(result.output.contains(makeString("FAIL "_s, file.path(), ":4: run-in-shell: "_s)));
+}
+
 static constexpr ASCIILiteral fileLeftPrefix = "leaves "_s;
 
 static void testCrashesOnRequest()
@@ -205,6 +245,8 @@ std::span<const NativeTest> childProcessTests()
         { "runner/file-whose-process-ends-early"_s, testFileWhoseProcessEndsEarlyIsNamed },
         { "runner/todo-of-a-file-stands-for-no-death"_s, testTodoOfFileStandsForNoDeath },
         { "runner/todo-of-a-native-test-stands-for-no-death"_s, testTodoOfNativeTestStandsForNoDeath },
+        { "runner/crash-that-a-run-asks-for-is-not-named"_s, testCrashThatRunAsksForIsNotNamed },
+        { "runner/crash-that-no-run-asks-for-says-how-the-shell-was-started"_s, testCrashThatNoRunAsksForSaysHowShellWasStarted },
         { "crash-on-request/first"_s, testCrashesOnRequest },
         { "crash-on-request/fails-a-check"_s, testFailsCheckOnRequest },
     };

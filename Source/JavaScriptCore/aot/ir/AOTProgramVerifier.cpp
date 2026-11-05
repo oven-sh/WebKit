@@ -746,12 +746,12 @@ void ProgramVerifier::verifyTypes()
 
 void ProgramVerifier::verifyPropertyKeys()
 {
-    unsigned numberOfPropertyKeys = m_program.types.numberOfPropertyKeys();
-    for (unsigned index = 0; index < numberOfPropertyKeys; ++index) {
+    Vector<uint32_t> invalidKeys = findIndicesInParallel(m_build.parallelLoops(), m_program.types.numberOfPropertyKeys(), [&](unsigned index) {
         const PropertyKey& key = m_program.at(PropertyKeyID(index));
-        if (!isValidPropertyKey(key) || (key.kind == PropertyKeyKind::PrivateName && m_program.at(key.owner).isEnvironment()))
-            fail({ .kind = InternalErrorKind::InvalidPropertyKey, .count = index });
-    }
+        return !isValidPropertyKey(key) || (key.kind == PropertyKeyKind::PrivateName && m_program.at(key.owner).isEnvironment());
+    });
+    for (uint32_t index : invalidKeys)
+        fail({ .kind = InternalErrorKind::InvalidPropertyKey, .count = index });
 }
 
 void ProgramVerifier::verifyDeclaredPositions()

@@ -96,6 +96,7 @@ struct QuestionsInLinkCalls {
     bool convertToPrimitive { false };
     bool onlyBoxedPrimitivesAreConverted { false };
     bool callMembers { false };
+    bool iterate { false };
     bool membersOfTableAnswerNothing { false };
 
     bool isEmpty() const { return keys.isEmpty() && keysAnsweredByProgramAlone.isEmpty() && !readEverything && !readOwnValues && !describeObjects && !convertToPrimitive && !callMembers; }
@@ -708,8 +709,10 @@ private:
     void applyHandlerCall(RowCall&, const BuiltinHandlerCall&);
     void applyAction(RowCall&, const BuiltinPropertyAction&);
     std::optional<PropertyKeyID> keyWrittenAs(const RowCall&, BuiltinOperand) const;
-    void tellWhatIsFoundUnder(PropertyKeyID, const Values& objects);
+    void tellWhatIsFoundUnder(PropertyKeyID, const Values& objects, bool readsThroughPrototypes);
     void tellWhatReadFinds(const RowCall&, const BuiltinPropertyAction&);
+    void tellWhatIterationCallsAbove(BuiltinClassID, bool followsWhatIsMade);
+    void tellWhatIterationCalls(const LinkType& iterable);
     void addResult(RowCall&);
 
     Values valuesAt(const RowCall&, BuiltinOperand);
@@ -1333,7 +1336,12 @@ void CallInLinkCalls::callName()
         if (uint16_t present = receiver.primitives & group)
             callMemberOfTable(findOnInstancesOf(primitiveClassOf(LinkType::inNamesOfPrimitive(present))), valuesOf(primitivesForLinkCalls(present)), WhenAbsent::CallThrows);
     }
-    if (receiver.builtin && !isSettledButForOwnCallees())
+    const BuiltinCondition* light = receiver.builtin ? m_flow.lightFormOf(receiver.builtin) : nullptr;
+    if (light && std::ranges::contains(light->methodsServed, m_program.builtinNameOf(m_call.key))) {
+        Passed passed = passedByCall();
+        passed.receiver = std::nullopt;
+        give(passToUnseen(passed));
+    } else if (receiver.builtin && !isSettledButForOwnCallees())
         callMemberOfTable(findAbove(receiver.builtin), valuesOf(builtinForLinkCalls(receiver.builtin)), WhenAbsent::MayHaveBeenAdded);
     if (receiver.holdsUnseen)
         callUnseen(howUnknownIs(receiver));
@@ -2207,8 +2215,11 @@ ValuesInLinkCalls CallInLinkCalls::callBuiltin(BuiltinID builtin, const Passed& 
         Fit fit = fitOf(call, row);
         if (!fit.mayBeInside || fit.mayBeOutside)
             describeWhatRowRefuses(call, row);
-        if (!fit.mayBeInside)
+        if (!fit.mayBeInside) {
+            call.row = &row;
+            enterCodeBehindRow(call);
             continue;
+        }
         if (rowSaysTooLittleForLinkCalls(row))
             return callOutOfSight(call);
         call.row = &row;
@@ -2837,9 +2848,14 @@ std::optional<PropertyKeyID> CallInLinkCalls::keyWrittenAs(const RowCall& call, 
     return m_program.types.find(PropertyKey { .kind = PropertyKeyKind::Text, .text = text }).value_or(PropertyKeyID());
 }
 
-void CallInLinkCalls::tellWhatIsFoundUnder(PropertyKeyID key, const Values& objects)
+void CallInLinkCalls::tellWhatIsFoundUnder(PropertyKeyID key, const Values& objects, bool readsThroughPrototypes)
 {
     forEachType(objects, [&](const LinkType& type, const Source*) {
+        if (!readsThroughPrototypes) {
+            if (type.holdsUnseen || type.holdsLostBuiltins)
+                m_flow.note(LinkFlow::Note::NameRead, key.bits(), !m_flow.codeAtWorkIsOfLibrary());
+            return;
+        }
         LinkType others = type;
         others.primitives = 0;
         if (type.classes == LinkType::Classes::Site) {
@@ -2859,20 +2875,25 @@ void CallInLinkCalls::tellWhatIsFoundUnder(PropertyKeyID key, const Values& obje
 void CallInLinkCalls::tellWhatReadFinds(const RowCall& call, const BuiltinPropertyAction& action)
 {
     const BuiltinParameter* read = m_builtins.parameterFor(*call.row, action.object);
-    if (read && !read->protocols.contains(Protocol::PrototypeChain))
-        return;
+    bool readsThroughPrototypes = !read || read->protocols.contains(Protocol::PrototypeChain);
     Values objects = valuesAt(call, action.object);
+    bool findsSomething = readsThroughPrototypes;
+    forEachType(objects, [&](const LinkType& type, const Source*) {
+        findsSomething |= type.holdsUnseen || type.holdsLostBuiltins;
+    });
+    if (!findsSomething)
+        return;
     switch (action.key.kind) {
     case BuiltinKeyKind::Indexes:
         return;
     case BuiltinKeyKind::Names:
         for (BuiltinName name : action.key.names)
-            tellWhatIsFoundUnder(m_program.keyOf(name), objects);
+            tellWhatIsFoundUnder(m_program.keyOf(name), objects, readsThroughPrototypes);
         return;
     case BuiltinKeyKind::Operand: {
         if (std::optional<PropertyKeyID> written = keyWrittenAs(call, *action.key.operand)) {
             if (*written)
-                tellWhatIsFoundUnder(*written, objects);
+                tellWhatIsFoundUnder(*written, objects, readsThroughPrototypes);
             return;
         }
         bool isOnlyNumbers = true;
@@ -2889,6 +2910,32 @@ void CallInLinkCalls::tellWhatReadFinds(const RowCall& call, const BuiltinProper
         break;
     }
     m_flow.note(LinkFlow::Note::ReadUnderKeyNobodyKnows, 0);
+}
+
+void CallInLinkCalls::tellWhatIterationCallsAbove(BuiltinClassID builtinClass, bool followsWhatIsMade)
+{
+    for (BuiltinName name : m_builtins.keysReadBy(Protocol::Iterate)) {
+        MemberOfTable found = findOnInstancesOf(builtinClass, m_program.keyOf(name));
+        if (found.outcome != Lookup::Found)
+            continue;
+        m_flow.note(LinkFlow::Note::BuiltinCalledOutOfSight, found.member.index());
+        if (!followsWhatIsMade)
+            continue;
+        for (const BuiltinOverload& row : m_builtins.overloadsOf(found.member)) {
+            if (!row.result.type)
+                continue;
+            for (const BuiltinTypePart& part : m_builtins.at(row.result.type).parts) {
+                if (part.builtinClass)
+                    tellWhatIterationCallsAbove(part.builtinClass, false);
+            }
+        }
+    }
+}
+
+void CallInLinkCalls::tellWhatIterationCalls(const LinkType& iterable)
+{
+    if (iterable.classes == LinkType::Classes::Site)
+        tellWhatIterationCallsAbove(iterable.builtinClass, true);
 }
 
 void CallInLinkCalls::addResult(RowCall& call)
@@ -2914,7 +2961,7 @@ void CallInLinkCalls::addResult(RowCall& call)
     if (mayBeMadeOverBuffer) {
         forEachSiteOfResult(call, [&](SiteID made, const BuiltinTypePart&) {
             if (m_builtins.typedArrayTypeOf(m_flow.classOf(made)) != NotTypedArray)
-                m_flow.arrive(m_flow.contents(made, SlotOfContents::underUnknownNames()), m_flow.fromTypeID(TypeTable::undefined));
+                m_flow.arrive(m_flow.contents(made, SlotOfContents::noLongerAsMade()), m_flow.fromTypeID(TypeTable::undefined));
         });
     }
 
@@ -3652,8 +3699,10 @@ QuestionsInLinkCalls CallInLinkCalls::questionsOf(const BuiltinParameter& parame
         case Protocol::HasInstance:
             addKeys(questions, m_builtins.keysReadBy(protocol));
             break;
-        case Protocol::Thenable:
         case Protocol::Iterate:
+            questions.iterate = true;
+            [[fallthrough]];
+        case Protocol::Thenable:
             addKeysAnsweredByProgramAlone(questions, m_builtins.keysReadBy(protocol));
             break;
         case Protocol::Named:
@@ -3779,6 +3828,8 @@ bool CallInLinkCalls::ask(const Values& subjects, const Questions& questions)
             someMayAnswer = true;
             return;
         }
+        if (questions.iterate)
+            tellWhatIterationCalls(type);
         if (questions.convertToPrimitive && !questions.onlyBoxedPrimitivesAreConverted && type.classes == LinkType::Classes::Site) {
             Questions ofContents;
             addConversion(ofContents);
@@ -3845,6 +3896,9 @@ void CallInLinkCalls::takeStepOfInspection(uint32_t step, const LinkType& now)
 
 void CallInLinkCalls::inspectType(const LinkType& type, uint32_t inspection)
 {
+    if (m_state.inspections[inspection].questions.iterate)
+        tellWhatIterationCalls(type);
+
     auto inspectObjectsOf = [&](LayoutID layout) {
         LinkType objects = objectsForLinkCalls(layout);
         if (!askInspected(SubjectOfInspection::Layout, layout.index(), objects, inspection))

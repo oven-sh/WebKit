@@ -1,5 +1,5 @@
 # `i < n`: beside a number the relation asks a value of which nothing is known in line, and converts what is no number, which may run code: then the look at the loop counts on any code.
-# The written type of the bound is tested in front of the loop. Behind the test the least integer that the counter cannot pass is taken once, in front of the loop, and the relation compares two integers
+# The bound is written as a number, and in front of the loop, which is built twice, it is asked for an int32. Behind the test it is taken out of its box once, in front of the head, the counter is an int32 too, and the relation compares two integers
 # function count(n: number) { let s = 0; for (let i = 0; i < n; i++) s = (s + i) | 0; return s; }
 # (globalThis as any).kept = count;
 # console.log(count(5));
@@ -7,11 +7,11 @@
 # RUN: walk f1 mechanisms=all-ParameterGuards
 # REQUIRES: entries-of-bun
 # CHECK-LABEL: code f1:Body
-# CHECK: [[test]]: boolean @Boolean = TypeTest {{*}}testedType=number
+# CHECK: [[test]]: boolean @Boolean = TypeTest {{*}}testedType=i32
 # CHECK-NEXT: Branch [[test]] ->
 # CHECK: frequency=Rare isLoopHead=true
 # CHECK: = Less {{*}}form=NumberAndValue
-# CHECK: [[bound]]: int @Int64 = IntegerBound {{*}}comparison=Less
+# CHECK: [[bound]]: i32 @Int32 = Unbox
 # CHECK: isInLoop=true isLoopHead=true
 # CHECK: = Less {{*}}, [[bound]] form=Integers
 

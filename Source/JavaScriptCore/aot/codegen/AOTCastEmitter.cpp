@@ -81,9 +81,23 @@ void CastEmitter::generateCheckProof(const ValueContext& value)
     if (value->isLeftToTestBehind())
         return;
     Operand source = get(value->valueOperand());
+    if (numberRepresentations.contains(source.representation)) {
+        emitter<ThrowEmitter>().checkOrStopAtFalseProof(value, hasType(source, typeTestPlanFor(value->typeWithoutProof(), source.representation, value->checkedType())), value->source());
+        return;
+    }
     bool isAnswerOfTest = source.representation == Representation::Boolean;
     Boxed found(isAnswerOfTest ? m_out.constInt64(JSValue::encode(JSValue())) : source.value);
     bool asksForType = value->checkedType() != value->typeWithoutProof();
+    if (!isAnswerOfTest && asksForType && !sourcesOfProofsCheckedUnder(build().options().testing)) {
+        LBasicBlock stops = newBlock();
+        LBasicBlock continuation = newBlock();
+        ScopeFork fork = m_out.forkScope();
+        branchOnType(found, typeTestPlanFor(value->typeWithoutProof(), Representation::JSValue, value->checkedType()), { normalEdge(continuation), rareEdge(stops) });
+        m_out.appendToJoin(stops, fork);
+        emitter<ThrowEmitter>().stopAtFalseProof(value, found, value->source());
+        m_out.appendToJoin(continuation, fork);
+        return;
+    }
     Condition holds = isAnswerOfTest ? Condition(source.value) : asksForType ? hasType(found, typeTestPlanFor(value->typeWithoutProof(), Representation::JSValue, value->checkedType())) : boolean(true);
     if (!isAnswerOfTest && sourcesOfProofsCheckedUnder(build().options().testing)) {
         holds = logicalAnd(holds, either<Condition>(logicalOr(logicalNot(isCell(found)), isEmpty(found)), [&] {

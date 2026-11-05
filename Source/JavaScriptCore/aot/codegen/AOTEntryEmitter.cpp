@@ -92,10 +92,19 @@ void EntryEmitter::generateEntry(uint16_t entry, const ArgumentLocations& locati
                 passed[index] = read(location, locations.convention);
         }
     }
-    for (size_t index = 0; index < parameters.size(); ++index)
-        generator().defineParameter(parameters[index], passed[index]);
+    const bool goesOnHere = generator().goesOnInBlockOfEntry(block);
+    for (size_t index = 0; index < parameters.size(); ++index) {
+        if (goesOnHere)
+            generator().defineParameterAsPassed(parameters[index], passed[index]);
+        else
+            generator().defineParameter(parameters[index], passed[index]);
+    }
     if (AOT::hasFlag(build().options().testing, Wire::TestingSwitch::CheckEffectsAtRunTime)) [[unlikely]]
         countEntryIntoCode(m_out.patchpoint(Machine::Void));
+    if (goesOnHere) {
+        generator().goOnInBlockOfEntry(block);
+        return;
+    }
     m_out.jump(generator().blockFor(block));
 }
 

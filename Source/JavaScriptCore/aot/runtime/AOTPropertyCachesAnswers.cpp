@@ -699,9 +699,9 @@ static std::optional<PropertyAnswer> classifyReplacement(const StoreQuery& query
     Structure* structure = query.structureBefore;
     if (!slot.isCacheablePut() || slot.type() != PutPropertySlot::ExistingProperty || slot.base() != query.base || query.base->structure() != structure)
         return std::nullopt;
-    if (structure->mayBePrototype())
-        return std::nullopt;
     bool isDefinition = query.mode == PutMode::Define;
+    if (structure->mayBePrototype() && (isDefinition || !isCompiledClosure(query.base) || !uncheckedDowncast<Closure>(query.base)->holdsStaticFieldUnder(query.uid)))
+        return std::nullopt;
     if ((!isDefinition && isHostObjectOverridingPut(structure)) || structure->isImmutableProperty(query.uid))
         return std::nullopt;
     VM& vm = query.globalObject->vm();

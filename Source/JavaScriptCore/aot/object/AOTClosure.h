@@ -67,6 +67,7 @@ public:
     bool hasOrdinaryDefineOwnProperty(VM&, PropertyName) const;
     static bool isNameThatBuiltinFunctionsRefuse(VM&, UniquedStringImpl*);
     bool refusesOwnProperty(VM&, PropertyName) const;
+    bool holdsStaticFieldUnder(UniquedStringImpl*) const;
     bool isBuiltinFunction() const;
     void ensureClassObject(VM&);
     void initializeClassObject(VM&, JSObject* parent, JSObject* prototype);

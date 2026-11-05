@@ -143,6 +143,7 @@ WireTypeReader::WireTypeReader(Program& program, const Wire::Sections& checkedSe
     , m_sections(checkedSections)
     , m_build(build)
     , m_externalBodies(externalBodies)
+    , m_numberOfDerivedLayouts(program.builtins().layoutCount())
 {
 }
 
@@ -291,23 +292,72 @@ void WireTypeReader::readTypes()
         first = end;
     }
 
-    TypeArena& arenaOfCaller = arenas.of(0);
-    for (uint32_t index = 0; index < numberOfTypes; ++index) {
-        std::span<const uint32_t> namedLayouts = wordsListedByWireType(m_sections, m_sections.types[index].layouts);
-        if (!readsAsAnything(namedLayouts) || std::ranges::any_of(namedLayouts, [&](uint32_t layout) { return m_typeParametersWithoutFamily.get(layout); }))
-            continue;
-        TypeParts parts = readPartsWithoutClasses(arenaOfCaller, index, ViewsWithoutLayouts::AreLeftOut);
+    findTypesExpectedBesideViews(arenas, types);
+    m_program.types.setTypesOfWireIndexes(WTF::move(types));
+}
+
+void WireTypeReader::findTypesExpectedBesideViews(ArenasOfWorkers& arenas, const Vector<TypeID>& typesOfWireIndexes)
+{
+    struct PartsBesideViews {
+        uint32_t index;
+        bool unitesContentsOfClasses;
+        TypeParts parts;
+    };
+    auto partsBesideViewsOf = [&](uint32_t index, TypeArena& arena) -> std::optional<TypeParts> {
+        TypeParts parts = readPartsWithoutClasses(arena, index, ViewsWithoutLayouts::AreLeftOut);
         if (!parts.anyObject)
-            parts.unnamedClasses = readClassPartsOfWireType(arenaOfCaller, m_sections, index, types);
+            parts.unnamedClasses = readClassPartsOfWireType(arena, m_sections, index, typesOfWireIndexes);
         bool namesSomethingElse = (parts.primitives & ~(Primitive::UndefinedOrNull | Primitive::Absent)) || parts.stringLiterals || parts.objects || parts.unnamedLayouts || parts.unnamedClasses || parts.anyFunction;
         if (!namesSomethingElse || parts.anyObject)
+            return std::nullopt;
+        return parts;
+    };
+
+    const ParallelLoops& loops = m_build.parallelLoops();
+    uint32_t numberOfTypes = static_cast<uint32_t>(m_sections.types.size());
+    ChunksOfIndices division = divideIntoChunks(numberOfTypes);
+    Vector<Vector<PartsBesideViews>> foundInChunks(division.size());
+    forEachIndexInParallel(loops, division.size(), [&](unsigned chunk, unsigned worker) {
+        for (uint32_t index = division.firstIndexOf[chunk]; index < division.firstIndexOf[chunk + 1]; ++index) {
+            std::span<const uint32_t> namedLayouts = wordsListedByWireType(m_sections, m_sections.types[index].layouts);
+            if (!readsAsAnything(namedLayouts) || std::ranges::any_of(namedLayouts, [&](uint32_t layout) { return m_typeParametersWithoutFamily.get(layout); }))
+                continue;
+            if (endOfTypesNamedByWireType(m_sections, index) == wireTypeUnitesContentsOfClasses)
+                foundInChunks[chunk].append({ index, true, { } });
+            else if (std::optional<TypeParts> parts = partsBesideViewsOf(index, arenas.of(worker)))
+                foundInChunks[chunk].append({ index, false, *parts });
+        }
+    });
+
+    Vector<PartsBesideViews> found;
+    for (Vector<PartsBesideViews>& foundInChunk : foundInChunks)
+        found.appendVector(WTF::move(foundInChunk));
+
+    Vector<TypeID> expected(found.size());
+    for (size_t first = 0; first < found.size();) {
+        if (found[first].unitesContentsOfClasses) {
+            TypeArena& arena = arenas.of(0);
+            if (std::optional<TypeParts> parts = partsBesideViewsOf(found[first].index, arena))
+                expected[first] = arena.intern(*parts);
+            ++first;
+            continue;
+        }
+        size_t end = first + 1;
+        while (end < found.size() && !found[end].unitesContentsOfClasses)
+            ++end;
+        arenas.internInOrder(expected.mutableSpan().subspan(first, end - first), [&](uint32_t offset, TypeArena&) {
+            return found[first + offset].parts;
+        });
+        first = end;
+    }
+
+    for (size_t place = 0; place < found.size(); ++place) {
+        if (!expected[place])
             continue;
         if (m_typesExpectedBesideViews.isEmpty())
             m_typesExpectedBesideViews.fill(TypeID(), numberOfTypes);
-        m_typesExpectedBesideViews[index] = arenaOfCaller.intern(parts);
+        m_typesExpectedBesideViews[found[place].index] = expected[place];
     }
-
-    m_program.types.setTypesOfWireIndexes(WTF::move(types));
 }
 
 void WireTypeReader::finishLayouts()
@@ -353,11 +403,10 @@ void WireTypeReader::finishLayouts()
     steps.didFinish("inherited fields"_s);
 }
 
-static BitVector modulesNamedByModuleBuiltins(const Program& program, const ParallelLoops& loops)
+static BitVector modulesNamedByModuleBuiltins(const Program& program, uint32_t numberOfModules, const ParallelLoops& loops)
 {
     constexpr uint32_t functionsPerTask = 64;
     uint32_t numberOfFunctions = static_cast<uint32_t>(program.functions.size());
-    uint32_t numberOfModules = static_cast<uint32_t>(program.modules.size());
     auto isNamed = std::make_unique<std::atomic<bool>[]>(numberOfModules);
     forEachIndexInParallel(loops, (numberOfFunctions + functionsPerTask - 1) / functionsPerTask, [&](unsigned task) {
         uint32_t end = std::min(numberOfFunctions, (task + 1) * functionsPerTask);
@@ -382,13 +431,15 @@ static BitVector modulesNamedByModuleBuiltins(const Program& program, const Para
     return modules;
 }
 
+void WireTypeReader::findModulesNamedByBodies()
+{
+    m_modulesNamedByBodies = modulesNamedByModuleBuiltins(m_program, static_cast<uint32_t>(m_sections.modules.size()), m_build.parallelLoops());
+}
+
 void WireTypeReader::finishObjects()
 {
     StepTimes steps(m_build, "ReadAndVerify: finish objects"_s);
-    m_program.types.reserveMembersOfLayoutSets(static_cast<uint32_t>(m_program.layouts.size()));
-    BitVector modulesNamed = modulesNamedByModuleBuiltins(m_program, m_build.parallelLoops());
-    steps.didFinish("modules that bodies name"_s);
-    m_program.types.objects().addObjectsOfProgram(m_program, modulesNamed, m_build.parallelLoops());
+    m_program.types.objects().addObjectsOfProgram(m_program, m_modulesNamedByBodies, m_build.parallelLoops());
     steps.didFinish("objects of the program"_s);
     expectFieldsFilledWithOtherData(m_program, m_build);
     steps.didFinish("fields filled with other data"_s);

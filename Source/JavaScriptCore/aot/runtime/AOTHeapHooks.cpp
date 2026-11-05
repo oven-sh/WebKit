@@ -290,17 +290,23 @@ void ImmortalCells::add(JSCell* cell)
 {
     ASSERT(cell);
     Locker locker { m_state.caches->lock() };
-    m_cells.append(cell);
+    if (!m_last || m_last->size == Segment::capacity) {
+        Segment* segment = static_cast<Segment*>(m_state.instance.vm->aotState().pages->allocate(sizeof(Segment)));
+        segment->next = nullptr;
+        segment->size = 0;
+        (m_last ? m_last->next : m_first) = segment;
+        m_last = segment;
+    }
+    m_last->cells[m_last->size++] = cell;
 }
 
 template<typename Functor>
-ALWAYS_INLINE void ImmortalCells::forEachSegment(size_t firstIndex, const Functor& functor)
+ALWAYS_INLINE void ImmortalCells::forEachSegment(Segment* first, size_t firstInSegment, const Functor& functor)
 {
-    size_t size = m_cells.size();
-    for (size_t begin = firstIndex; begin < size;) {
-        size_t end = std::min(begin - begin % cellsPerSegment + cellsPerSegment, size);
-        functor(unsafeMakeSpan(&m_cells[begin], end - begin));
-        begin = end;
+    for (Segment* segment = first; segment; segment = segment->next) {
+        if (segment->size > firstInSegment)
+            functor(unsafeMakeSpan(segment->cells, segment->size).subspan(firstInSegment));
+        firstInSegment = 0;
     }
 }
 
@@ -315,26 +321,30 @@ static void visitDeferredSegment(SlotVisitor& visitor, void* segment, size_t beg
 template<typename Visitor>
 void ImmortalCells::visitRoots(Visitor& visitor)
 {
-    size_t first = 0;
+    Segment* first = m_first;
+    size_t firstInSegment = 0;
     if constexpr (std::is_same_v<Visitor, SlotVisitor>) {
         JSC::Heap& heap = m_state.instance.vm->heap;
         HeapVersion version = heap.objectSpace().newlyAllocatedVersion();
         bool isFirstVisitInCollection = version != m_lastVisitVersion;
         m_lastVisitVersion = version;
         bool visitsEveryCell = isFirstVisitInCollection && heap.collectionScope() != CollectionScope::Eden;
-        if (!visitsEveryCell)
-            first = m_numberOfCellsVisited;
-        m_numberOfCellsVisited = m_cells.size();
+        if (!visitsEveryCell && m_lastVisited) {
+            first = m_lastVisited;
+            firstInSegment = m_numberVisitedInLastVisited;
+        }
+        m_lastVisited = m_last;
+        m_numberVisitedInLastVisited = m_last ? m_last->size : 0;
 
         if (visitsEveryCell && visitor.defersRootRegions()) {
-            forEachSegment(0, [&](std::span<JSCell*> cells) {
+            forEachSegment(m_first, 0, [&](std::span<JSCell*> cells) {
                 visitor.deferRootRegion({ visitDeferredSegment, cells.data(), 0, cells.size() });
             });
             return;
         }
     }
     appendRoots(visitor, [&](auto& appender) ALWAYS_INLINE_LAMBDA {
-        forEachSegment(first, [&](std::span<JSCell*> cells) ALWAYS_INLINE_LAMBDA {
+        forEachSegment(first, firstInSegment, [&](std::span<JSCell*> cells) ALWAYS_INLINE_LAMBDA {
             for (JSCell* cell : cells)
                 appender.appendUnbarriered(cell);
         });
@@ -348,6 +358,16 @@ ImmortalCells::ImmortalCells(State& state)
     : m_state(state)
 {
     state.caches->add(CacheKind::StrongRoots, "immortal cells"_s, *this, RootVolatility::GreyedByExecution);
+}
+
+ImmortalCells::~ImmortalCells()
+{
+    PagesOfVM& pages = *m_state.instance.vm->aotState().pages;
+    for (Segment* segment = m_first; segment;) {
+        Segment* next = segment->next;
+        pages.release(segment, sizeof(Segment));
+        segment = next;
+    }
 }
 
 } } // namespace JSC::AOT

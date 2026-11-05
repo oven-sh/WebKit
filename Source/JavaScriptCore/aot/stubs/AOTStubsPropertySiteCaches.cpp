@@ -311,7 +311,7 @@ void generateGetByIdAtSite(StubAssembler& jit)
     returnFieldByTable(jit, { registers.receiver, registers.identifierNumber, jit.allocateScratch(StubRegister::T14), registers.header, nameHasColumn, true }, isNotInFieldTable);
     isNotInFieldTable.link(&jit);
     countMissOfEmptySite(jit, registers.site, registers.scratch, isDue);
-    jit.jumpToStub(nameHasColumn ? getByIdBehindFieldTable() : tables);
+    jit.jumpToStub(nameHasColumn ? getByIdOfCell() : tables);
 
     isDue.link(&jit);
     refillSiteCache(jit, registers.receiver, registers.identifierNumber, registers.site, SlotAccess::Read);
@@ -941,7 +941,7 @@ void generateReadBehindSite(StubAssembler& jit)
     const GPRReg name = jit.allocateScratch(StubRegister::T13);
     checkStubOperands(getByIdCheckingColumn(), { receiver });
     checkStubOperands(getById(), { receiver });
-    checkStubOperands(getByIdBehindFieldTable(), { receiver });
+    checkStubOperands(getByIdOfCell(), { receiver });
     checkStubOperands(getByIdOfFieldLeftOut(), { receiver });
     if (form.way == WayBehindSite::AfterMiss)
         countMissAtSite(jit, receiver, distance, name, scratch, SiteUse::Read, form.name);
@@ -949,7 +949,7 @@ void generateReadBehindSite(StubAssembler& jit)
     if (!nameHasColumn(form.name))
         jit.jumpToStub(getByIdCheckingColumn());
     else
-        jit.jumpToStub(form.way == WayBehindSite::AfterMiss ? getByIdBehindFieldTable() : form.way == WayBehindSite::OfFieldLeftOut ? getByIdOfFieldLeftOut() : getById());
+        jit.jumpToStub(form.way == WayBehindSite::AfterMiss ? getByIdOfCell() : form.way == WayBehindSite::OfFieldLeftOut ? getByIdOfFieldLeftOut() : getById());
 }
 
 void generateReadLengthAtSite(StubAssembler& jit)

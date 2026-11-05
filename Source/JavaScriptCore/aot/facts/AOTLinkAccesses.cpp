@@ -249,6 +249,7 @@ private:
     LookupInLinkAccesses lookUpFrom(BuiltinID start, BuiltinID& member) const;
     LookupInLinkAccesses lookUpInTableFrom(BuiltinID start, BuiltinID& member) const;
     bool giveWhatIsFoundFrom(BuiltinID start);
+    bool giveWhatLightFormServes(BuiltinID);
     bool mayRunCodeFoundFrom(BuiltinID start);
     bool nativeSetterFoundFromKeepsReceiver(BuiltinID start);
     bool holdsWhatTableLists(BuiltinID member);
@@ -256,6 +257,7 @@ private:
     LinkType typeHeldAtLocationThatRealmHas(BuiltinID member);
     LinkType typeAnsweredByReadsOf(BuiltinID member);
     LinkType typeWrittenBy(BuiltinTypeID) const;
+    LinkType typeWrittenOfLightForm(BuiltinTypeID, BuiltinID canonical) const;
 
     LinkFlow& m_flow;
     const PrivatePartsInLinkAccesses& m_parts;
@@ -458,7 +460,7 @@ void AccessInLinkAccesses::resolve()
     }
     if (isPrivateNameInLink(m_program, m_access.key)) {
         if (!isRead() && m_access.kind != Kind::Has && subject.classes != LinkType::Classes::None)
-            m_flow.arrive(m_flow.contentsOf(subject, SlotOfContents::underUnknownNames()), m_flow.fromTypeID(TypeTable::undefined));
+            m_flow.arrive(m_flow.contentsOf(subject, SlotOfContents::noLongerAsMade()), m_flow.fromTypeID(TypeTable::undefined));
         resolveUnderPrivateName();
         return;
     }
@@ -845,15 +847,8 @@ void AccessInLinkAccesses::resolveOnFamily(FamilyID family)
         }
         if (isRead())
             giveWhatIsHeldAt(m_flow.fieldReadThrough(family, m_access.key));
-        else {
-            bool isPartOfConstruction = m_access.isPartOfConstruction;
-            if (isPartOfConstruction && m_flow.storesIntoWhatSuperCallAnswers(m_function)) {
-                m_program.at(m_flow.families.layoutsOf(family)).forEach([&](LayoutID member) {
-                    isPartOfConstruction &= m_flow.isPartOfConstructionOf(member, m_function, m_access);
-                });
-            }
-            storeInto(m_flow.fieldStoredThrough(family, m_access.key, isPartOfConstruction));
-        }
+        else
+            storeInto(m_flow.fieldStoredThrough(family, m_access.key, m_flow.isPartOfConstructionOfAllOf(family, m_function, m_access)));
         return;
     }
     if (isRead()) {
@@ -1540,8 +1535,8 @@ void AccessInLinkAccesses::resolveOnClasses(const LinkType& instances)
         giveWhatIsHeldAt(elements);
         storeInto(elements);
     });
-    if (!isRead() && !isNamed())
-        storeInto(m_flow.contentsOf(instances, SlotOfContents::underUnknownNames()));
+    if (!isRead() && (isNamed() ? m_nameClass != NameClass::Index : !m_access.keyIsSurelyIndex))
+        m_flow.arrive(m_flow.contentsOf(instances, SlotOfContents::noLongerAsMade()), m_flow.fromTypeID(TypeTable::undefined));
     BuiltinID prototype = isOneClass && isElement && hasElements ? prototypeOfInstancesOf(builtinClass) : BuiltinID();
     if (prototype && indexesAreAbsentFrom(prototype))
         givePrimitives(Primitive::Undefined);
@@ -1772,12 +1767,24 @@ void AccessInLinkAccesses::resolveContentsOfInstances(const LinkType& instances)
 void AccessInLinkAccesses::resolveOnBuiltin(BuiltinID builtin)
 {
     if (isRead() && isNamed()) {
-        giveWhatIsFoundFrom(builtin);
+        if (!giveWhatLightFormServes(builtin))
+            giveWhatIsFoundFrom(builtin);
         return;
     }
     if (isRead())
         m_flow.noteLossOf(builtin);
     cannotTell();
+}
+
+bool AccessInLinkAccesses::giveWhatLightFormServes(BuiltinID builtin)
+{
+    const BuiltinCondition* light = m_flow.lightFormOf(builtin);
+    BuiltinName name = light ? m_program.builtinNameOf(m_access.key) : BuiltinName();
+    if (!name || (!std::ranges::contains(light->valuesServed, name) && !std::ranges::contains(light->methodsServed, name)))
+        return false;
+    mayThrow();
+    giveAnything();
+    return true;
 }
 
 BuiltinID AccessInLinkAccesses::prototypeOfInstancesOf(BuiltinClassID builtinClass) const
@@ -1987,6 +1994,12 @@ LinkType AccessInLinkAccesses::typeHeldAtLocationThatRealmHas(BuiltinID member)
 
 LinkType AccessInLinkAccesses::typeAnsweredByReadsOf(BuiltinID member)
 {
+    BuiltinID canonical = m_table.canonicalID(member);
+    bool standsForLightForm = m_flow.lightFormOf(canonical);
+    if (standsForLightForm) {
+        tellAgainOnceClimbs(m_flow.writtenAtMember(canonical));
+        standsForLightForm = !m_flow.isAskedForOtherNames(canonical);
+    }
     LinkType answered;
     bool hasRow = false;
     for (const BuiltinOverload& overload : m_table.overloadsOf(member)) {
@@ -1996,10 +2009,22 @@ LinkType AccessInLinkAccesses::typeAnsweredByReadsOf(BuiltinID member)
             mayThrow();
         if (overload.isUndeclared() || overload.resultIsDeclaredOnly())
             return LinkType::anything();
-        answered = m_flow.joinOf(answered, typeWrittenBy(overload.result.type));
+        answered = m_flow.joinOf(answered, standsForLightForm ? typeWrittenOfLightForm(overload.result.type, canonical) : typeWrittenBy(overload.result.type));
         hasRow = true;
     }
     return hasRow ? answered : LinkType::anything();
+}
+
+LinkType AccessInLinkAccesses::typeWrittenOfLightForm(BuiltinTypeID id, BuiltinID canonical) const
+{
+    if (!id || m_table.at(id).isAnything())
+        return LinkType::anything();
+    const BuiltinType& written = m_table.at(id);
+    LinkType type = primitivesForLinkAccesses(LinkType::primitivesOf(primitivesOfBuiltinType(written), integerRangeWrittenBy(written)));
+    if (!written.stringLiterals.empty())
+        type.primitives |= Primitive::String;
+    type.builtin = canonical;
+    return type;
 }
 
 LinkType AccessInLinkAccesses::typeWrittenBy(BuiltinTypeID id) const

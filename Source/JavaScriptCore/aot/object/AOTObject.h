@@ -331,7 +331,7 @@ private:
     }
 
     bool store(VM&, const FieldData&, JSValue);
-    void willStoreMarker(VM&, const FieldData&, JSValue marker);
+    void willStoreMarker(const FieldData&);
     void copyFieldsOfSameLayout(VM&, const Object& source);
     bool tryCopyWordsOfSameLayout(VM&, const Object& source);
     static Object* createCopyOfWords(VM&, const Object& source, Structure*);

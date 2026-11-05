@@ -29,7 +29,7 @@ namespace JSC { namespace AOT { namespace Typed {
 bool walkRampOfCoroutine(Walker&);
 Reference addDriverParameterOfCoroutine(Walker&, BlockID entry);
 Reference convertReturnedValueOfCoroutine(Walker&, Reference returned, Origin);
-Reference buildAwaitBySavingFrame(Walker&, Reference awaited, std::span<const Reference> held, bool takesExtraTurn, Origin);
+Reference buildAwaitBySavingFrame(Walker&, Reference awaited, std::span<const Reference> held, Origin);
 bool canWaitForStepOfAsyncGenerator(Walker&);
 Reference buildStepOfAsyncGenerator(Walker&, Reference generator, Reference sent, std::span<const Reference> held, Origin);
 bool engineAnswersAboveGenerators(const Walker&);
@@ -122,7 +122,7 @@ Reference buildSuspensionInCoroutine(Walker& walker, Draft&& suspension)
     return buildSuspensionOfCoroutine(walker, WTF::move(suspension));
 }
 
-Reference buildAwaitBySavingFrame(Walker& walker, Reference awaited, std::span<const Reference> held, bool takesExtraTurn, Origin origin)
+Reference buildAwaitBySavingFrame(Walker& walker, Reference awaited, std::span<const Reference> held, Origin origin)
 {
     std::optional<SuspendingBodyOfCoroutine> body = findSuspendingBodyOfCoroutine(walker);
     if (!body || body->kind == CoroutineKind::Generator) {
@@ -130,19 +130,13 @@ Reference buildAwaitBySavingFrame(Walker& walker, Reference awaited, std::span<c
         return { };
     }
 
-    if (takesExtraTurn && body->kind == CoroutineKind::AsyncGenerator) {
-        walker.fail("no job that resumes an async generator takes an extra turn"_s);
-        return { };
-    }
-
-    if (Reference given = buildAwaitOfWhatHasNoThen(walker, awaited, held, takesExtraTurn, origin))
+    if (Reference given = buildAwaitOfWhatHasNoThen(walker, awaited, held, origin))
         return given;
 
     Draft await = draftForCoroutine(walker, Opcode::AwaitBySavingFrame, origin);
     await.setAwaitedOperand(awaited);
     await.setPromiseOperand(body->driver);
     await.setHeldOperands(held);
-    await.setTakesExtraTurn(takesExtraTurn);
     return buildSuspensionOfCoroutine(walker, WTF::move(await));
 }
 
@@ -358,9 +352,6 @@ static bool isCastBetweenAwaitAndYieldOfCoroutine(BodyValue operation)
 
 static ValueID findYieldThatAloneTakesAwaitOfCoroutine(const BodyIndex& index, BodyBlock block, ValueID await)
 {
-    if (index.value(await).as<Opcode::Await>().takesExtraTurn())
-        return { };
-
     ValueID value = await;
     for (uint32_t next = await.index() + 1; next < block.endOfValues().index(); ++next) {
         ValueID user(next);
@@ -434,7 +425,7 @@ bool replaceCoroutineOperation(Walker& walker, const BodyValue& value)
             walker.bind(value.id(), written.valueOperand());
             return true;
         }
-        built = buildAwaitBySavingFrame(walker, written.valueOperand(), written.heldOperands(), written.takesExtraTurn(), written.origin());
+        built = buildAwaitBySavingFrame(walker, written.valueOperand(), written.heldOperands(), written.origin());
     } else if (std::optional<SuspendingBodyOfCoroutine> body = findYieldingBodyOfCoroutine(walker)) {
         ValueID await = runTimeAwaitsWhatCoroutineYields(walker) ? findAwaitThatYieldAloneTakesOfCoroutine(index, block, value.id()) : ValueID();
         if (await && walker.referenceOf(await) == walker.referenceOf(index.value(await).as<Opcode::Await>().valueOperand()))

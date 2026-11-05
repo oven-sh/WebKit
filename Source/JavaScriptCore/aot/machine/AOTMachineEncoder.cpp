@@ -509,6 +509,11 @@ void Encoder::placeColdCodeNearItsJumps()
     m_beginOfRareCodeAsWritten = order.beginOfRareCode();
     const uint32_t numberOfBlocksAsWritten = m_blocksAsWritten.size();
     RELEASE_ASSERT(numberOfBlocksAsWritten && numberOfBlocksAsWritten == m_numberOfBlocksWithCode);
+}
+
+NEVER_INLINE void Encoder::findIndexesAsWritten() const
+{
+    const uint32_t numberOfBlocksAsWritten = m_blocksAsWritten.size();
     m_indexAsWritten = m_arena.createSpan<uint32_t>(m_proc.numberOfBlocks());
     const Block* first = m_blocksAsWritten[0];
     for (uint32_t index = 1; index < numberOfBlocksAsWritten; ++index) {
@@ -575,6 +580,8 @@ bool Encoder::fallsThroughToSlowCase(const Block* from, const Block* target) con
         return false;
     target = blockEnteredThrough(target);
     if (!m_blocksAsWritten.isEmpty()) {
+        if (m_indexAsWritten.empty())
+            findIndexesAsWritten();
         if (m_indexAsWritten[target->index()] != m_indexAsWritten[from->index()] + 1)
             return false;
     } else if (m_order.of(target).layoutIndex != m_nextLayoutIndexWithCode[m_order.of(from).layoutIndex + 1])
@@ -589,7 +596,7 @@ ALWAYS_INLINE void Encoder::encodeBlockUnder(Block* block)
     ASSERT(place.isReached());
     ASSERT(hasCode(block));
     MacroAssembler::Label& label = m_labels[block->index()];
-    ASSERT(!label.isSet());
+    RELEASE_ASSERT(!label.isSet());
 
     m_block = block;
     label = m_jit.label();

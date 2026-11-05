@@ -636,7 +636,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTResolvePromiseOrReturnResult, EncodedJSValu
     OPERATION_RETURN(scope, JSValue::encode(created));
 }
 
-enum class AwaitedKind : uint8_t { Value, ValueAfterTurn, ValueInModuleBody, ResultOfCall };
+enum class AwaitedKind : uint8_t { Value, ValueInModuleBody, ResultOfCall };
 
 static constexpr InternalMicrotask resumingTaskOf(AwaitedKind kind)
 {
@@ -644,8 +644,6 @@ static constexpr InternalMicrotask resumingTaskOf(AwaitedKind kind)
     case AwaitedKind::Value:
     case AwaitedKind::ResultOfCall:
         return InternalMicrotask::CompiledAsyncFunctionResume;
-    case AwaitedKind::ValueAfterTurn:
-        return InternalMicrotask::CompiledAsyncFunctionResumeAfterTurn;
     case AwaitedKind::ValueInModuleBody:
         return InternalMicrotask::CompiledModuleBodyResume;
     }
@@ -681,7 +679,6 @@ static ALWAYS_INLINE JSCell* suspendUntilSettled(Instance* instance, VM& vm, Thr
     }
 
 AOT_DEFINE_AWAIT_OPERATIONS(operationAOTSaveFrameAndAwait, operationAOTAwaitWithSavedFrame, AwaitedKind::Value)
-AOT_DEFINE_AWAIT_OPERATIONS(operationAOTSaveFrameAndAwaitAfterTurn, operationAOTAwaitWithSavedFrameAfterTurn, AwaitedKind::ValueAfterTurn)
 AOT_DEFINE_AWAIT_OPERATIONS(operationAOTSaveFrameAndAwaitInModuleBody, operationAOTAwaitWithSavedFrameInModuleBody, AwaitedKind::ValueInModuleBody)
 AOT_DEFINE_AWAIT_OPERATIONS(operationAOTSaveFrameAndAwaitCall, operationAOTAwaitCallWithSavedFrame, AwaitedKind::ResultOfCall)
 #undef AOT_DEFINE_AWAIT_OPERATIONS

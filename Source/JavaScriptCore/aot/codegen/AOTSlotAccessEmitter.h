@@ -38,6 +38,7 @@ public:
     void generatePutSlotOrAdd(const ValueContext&);
 
     CellPointer baseOfSlot(CellPointer, const FieldAccess&);
+    CellPointer baseOfSlot(CellPointer, const FieldAccess&, LayoutSetID receivers);
 
     struct CreationByDefinition {
         bool isEmitted { false };
@@ -85,7 +86,8 @@ private:
     Operand resultBehindTestThatNeverPasses(const ValueContext&);
     Operand failRead(const ValueContext&, InternalErrorKind);
 
-    Word32 distanceBehindLowestOffset(CellPointer, const FieldAccess&);
+    Word32 distanceBehindLowestOffset(CellPointer cell, const FieldAccess& access) { return distanceBehindLowestOffset(cell, access, setOfMembersWithField(access)); }
+    Word32 distanceBehindLowestOffset(CellPointer, const FieldAccess&, LayoutSetID setOfMembers);
 
     struct OffsetsByShape {
         DistancesByShape distances;

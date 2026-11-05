@@ -619,6 +619,7 @@ void Modules::setStatus(ModuleID module, ModuleStatus status)
 {
     if (ModuleRecord* record = recordIfExists(module)) {
         record->setStatus(recordStatusFor(status));
+        didChangeStatusInRecord(module);
         if (status == ModuleStatus::Evaluated && !record->cycleRoot())
             record->setCycleRoot(*m_instance.vm, record);
         return;
@@ -652,6 +653,7 @@ ModuleRecord* Modules::ensureRecordWithoutStatus(ModuleID module)
     Locker locker { m_state.caches->lock() };
     m_records.add(module, record);
     m_storedReferences.recordAll();
+    didChangeStatusInRecord(module);
     return record;
 }
 
@@ -1953,6 +1955,7 @@ void Modules::endMockOverModuleThatHasRun(ModuleID module)
             m_records.add(each, record);
             m_storedReferences.recordAll();
         }
+        didChangeStatusInRecord(each);
         if (record->holdsStatus())
             setStoredStatus(each, StoredModuleStatus::InRecord);
     };
@@ -3110,7 +3113,7 @@ void Modules::deliverFirstTextOnItsWay()
 bool Modules::holdTextOfRequest(JSPromise* fetched, ModuleRecord* requested, ModuleID requester)
 {
     ModuleID file = fileOf(requested->module());
-    if (m_textsOnTheirWay.isEmpty() || !isFileOfProgram(file) || m_instance.vm->synchronousModuleQueue() || isFetchedInsideCall(file)) {
+    if ((m_textsOnTheirWay.isEmpty() && !m_canJobsOfFileTellWhenTextsCome) || !isFileOfProgram(file) || m_instance.vm->synchronousModuleQueue() || isFetchedInsideCall(file)) {
         noteThatTextHasCome(file);
         return false;
     }
@@ -4911,9 +4914,20 @@ void Modules::followImportsOfModulesThatHaveRun()
     }
     for (size_t index : waited)
         lookAt(ModuleID(index));
-    numberLookedAt += m_records.size();
+    constexpr auto inRecord = static_cast<uint8_t>(StoredModuleStatus::InRecord);
+    Vector<size_t, 64> settled;
+    for (size_t index : m_recordsNotSeenToHaveRun) {
+        ++numberLookedAt;
+        lookAt(ModuleID(index));
+        if (now[index] != inRecord || m_modulesSeenToHaveRun.quickGet(index) || !m_records.contains(ModuleID(index)))
+            settled.append(index);
+    }
+    for (size_t index : settled)
+        m_recordsNotSeenToHaveRun.clear(index);
+#if ASSERT_ENABLED
     for (ModuleID module : m_records.keys())
-        lookAt(module);
+        ASSERT(now[module.index()] != inRecord || m_modulesSeenToHaveRun.quickGet(module.index()) == (statusInRecord(module) == ModuleStatus::Evaluated));
+#endif
     if (!numberLookedAt)
         return;
 
@@ -4948,6 +4962,8 @@ void Modules::followImportsAnewAtNextQuestion()
     m_modulesThatWaitedWhenImportsWereFollowed = { };
     m_modulesThatRanWithImporters.clearAll();
     m_modulesSeenToHaveRun.clearAll();
+    for (ModuleID module : m_records.keys())
+        didChangeStatusInRecord(module);
 }
 
 bool Modules::isListedBeforeItHasRun(ModuleID module)
@@ -5938,8 +5954,10 @@ unsigned ModuleRecord::innerModuleEvaluation(JSGlobalObject* globalObject, Modul
     Exception* exception = scope.exception();
     if (!exception) [[likely]]
         return context.index;
-    if (globalObject->vm().isTerminationException(exception) && status() == Status::Evaluated && !evaluationError())
+    if (globalObject->vm().isTerminationException(exception) && status() == Status::Evaluated && !evaluationError()) {
         setEvaluationError(globalObject->vm(), exception->value());
+        modules().didChangeStatusInRecord(m_module);
+    }
     return invalidIndex;
 }
 

@@ -165,15 +165,8 @@ bool callAccessorInSlot(Walker& walker, const BodyValue& access)
     BlockID meeting = walker.addBlock();
     walker.noteGuessOpened();
 
-    struct Arm {
-        BlockID last;
-        Reference value;
-    };
-    Vector<Arm, 3> arms;
-    auto endArm = [&](Reference value) {
-        if (!walker.isUnreachable() && !walker.hasFailed())
-            arms.append(Arm { walker.currentBlock(), value });
-    };
+    Walker::StretchInArms stretch = walker.stretchInArms(block.id(), place, place + 1);
+    Walker::ArmsThatMeet arms;
     auto goOnWhereTestPasses = [&](Reference test, BlockID whereTestFails) {
         if (!test)
             return false;
@@ -198,7 +191,10 @@ bool callAccessorInSlot(Walker& walker, const BodyValue& access)
         call.setThisValueOperand(object);
         if (isStore)
             call.setArgumentsOperands(singleElementSpan(stored));
-        endArm(walker.build(WTF::move(call)));
+        Reference called = walker.build(WTF::move(call));
+        if (!isStore)
+            walker.bind(access.id(), called);
+        walker.listArm(stretch, arms);
     };
 
     bool goesOn = true;
@@ -214,7 +210,7 @@ bool callAccessorInSlot(Walker& walker, const BodyValue& access)
             if (goesOn && provenHalf)
                 checkProvenHalfInKeyOrdersAccessors(walker, access, object, *field);
             if (goesOn && provenHalf && callAccessor(walker, access, provenHalf, object, stored)) {
-                endArm(isStore || walker.isUnreachable() ? Reference() : walker.referenceOf(access.id()));
+                walker.listArm(stretch, arms);
                 goesOn = false;
             }
         }
@@ -241,7 +237,7 @@ bool callAccessorInSlot(Walker& walker, const BodyValue& access)
 
     if (half && provenHalf) {
         if (callAccessor(walker, access, provenHalf, object, stored, half))
-            endArm(isStore || walker.isUnreachable() ? Reference() : walker.referenceOf(access.id()));
+            walker.listArm(stretch, arms);
         else
             callByValue(half);
         if (walker.hasFailed())
@@ -262,7 +258,7 @@ bool callAccessorInSlot(Walker& walker, const BodyValue& access)
         if (isExpected) {
             Reference closure = goOnWhereTestPasses(isExpected, otherFunction) ? buildProof(half, isExpected, OperandIndex::TypeTest::value) : Reference();
             if (closure && callAccessor(walker, access, expected, object, stored, closure))
-                endArm(isStore || walker.isUnreachable() ? Reference() : walker.referenceOf(access.id()));
+                walker.listArm(stretch, arms);
             else if (closure)
                 callByValue(closure);
             if (walker.hasFailed())
@@ -275,43 +271,9 @@ bool callAccessorInSlot(Walker& walker, const BodyValue& access)
             return true;
     }
 
-    walker.continueIn(asWritten);
-    if (!walker.isUnreachable()) {
-        Walker::ClosedArm closedArm(walker);
-        walker.walkStretch(block.id(), place, place + 1);
-        endArm(isStore || walker.isUnreachable() ? Reference() : walker.referenceOf(access.id()));
-    }
-    if (walker.hasFailed())
-        return true;
-
-    Reference met;
-    bool everyArmGivesValue = !isStore && std::ranges::all_of(arms, [](const Arm& arm) {
-        return !!arm.value;
-    });
-    if (everyArmGivesValue && arms.size() > 1) {
-        const Code& code = walker.code();
-        TypeID type = code.at(arms[0].value.id()).type;
-        Vector<Representation, 3> forms;
-        for (const Arm& arm : arms) {
-            type = joinOf(types, walker.facts().families(), type, code.at(arm.value.id()).type);
-            forms.append(walker.representationOf(arm.value));
-        }
-        met = walker.addParameter(meeting, type, walker.formOfParameter(type, forms.span()));
-    }
-    for (const Arm& arm : arms) {
-        walker.continueIn(arm.last);
-        if (met)
-            walker.jumpTo(meeting, singleElementSpan(arm.value));
-        else
-            walker.jumpTo(meeting);
-        if (walker.hasFailed())
-            return true;
-    }
-    walker.continueIn(meeting);
-    if (met)
-        walker.bind(access.id(), met);
-    else if (everyArmGivesValue && arms.size() == 1)
-        walker.bind(access.id(), arms[0].value);
+    walker.walkClosedArm(asWritten, stretch, arms);
+    if (!walker.hasFailed())
+        walker.letArmsMeet(stretch, arms, meeting);
     return true;
 }
 
@@ -386,15 +348,8 @@ bool accessStaticFieldInVariable(Walker& walker, const BodyValue& access)
     walker.noteGuessOpened();
     walker.branch(isAbsent, asWritten, liesInVariable);
 
-    struct Arm {
-        BlockID last;
-        Reference value;
-    };
-    Vector<Arm, 2> arms;
-    auto endArm = [&](Reference value) {
-        if (!walker.isUnreachable() && !walker.hasFailed())
-            arms.append(Arm { walker.currentBlock(), value });
-    };
+    Walker::StretchInArms stretch = walker.stretchInArms(block.id(), place, place + 1);
+    Walker::ArmsThatMeet arms;
 
     walker.continueIn(liesInVariable);
     if (!walker.isUnreachable()) {
@@ -404,56 +359,22 @@ bool accessStaticFieldInVariable(Walker& walker, const BodyValue& access)
             store.setClassObjectOperand(object);
             store.setValueOperand(stored);
             walker.build(WTF::move(store));
-            endArm({ });
         } else {
             Draft proof(Opcode::Narrowed, origin);
             proof.setValueOperand(held);
             proof.setTestOperand(isAbsent);
             proof.setOperandIndex(OperandIndex::TypeTest::value);
             proof.setIsOnTakenEdge(false);
-            endArm(walker.build(WTF::move(proof)));
+            walker.bind(access.id(), walker.build(WTF::move(proof)));
         }
+        walker.listArm(stretch, arms);
     }
     if (walker.hasFailed())
         return true;
 
-    walker.continueIn(asWritten);
-    if (!walker.isUnreachable()) {
-        Walker::ClosedArm closedArm(walker);
-        walker.walkStretch(block.id(), place, place + 1);
-        endArm(isStore || walker.isUnreachable() ? Reference() : walker.referenceOf(access.id()));
-    }
-    if (walker.hasFailed())
-        return true;
-
-    Reference met;
-    bool everyArmGivesValue = !isStore && std::ranges::all_of(arms, [](const Arm& arm) {
-        return !!arm.value;
-    });
-    if (everyArmGivesValue && arms.size() > 1) {
-        const Code& code = walker.code();
-        TypeID type = code.at(arms[0].value.id()).type;
-        Vector<Representation, 2> forms;
-        for (const Arm& arm : arms) {
-            type = joinOf(types, walker.facts().families(), type, code.at(arm.value.id()).type);
-            forms.append(walker.representationOf(arm.value));
-        }
-        met = walker.addParameter(meeting, type, walker.formOfParameter(type, forms.span()));
-    }
-    for (const Arm& arm : arms) {
-        walker.continueIn(arm.last);
-        if (met)
-            walker.jumpTo(meeting, singleElementSpan(arm.value));
-        else
-            walker.jumpTo(meeting);
-        if (walker.hasFailed())
-            return true;
-    }
-    walker.continueIn(meeting);
-    if (met)
-        walker.bind(access.id(), met);
-    else if (everyArmGivesValue && arms.size() == 1)
-        walker.bind(access.id(), arms[0].value);
+    walker.walkClosedArm(asWritten, stretch, arms);
+    if (!walker.hasFailed())
+        walker.letArmsMeet(stretch, arms, meeting);
     return true;
 }
 

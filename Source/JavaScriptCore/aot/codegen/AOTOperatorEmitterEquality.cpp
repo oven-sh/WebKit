@@ -570,6 +570,13 @@ static ValueID writtenTextComparedWithValue(const Code& code, const Operation& e
     return { };
 }
 
+static_assert(static_cast<uint64_t>(-JSValue::DoubleEncodeOffset) >> 52 == 0xfff && static_cast<uint64_t>(-JSValue::DoubleEncodeOffset) << 12);
+
+void OperatorEmitter::generateNumberOrNaN(const ValueContext& value)
+{
+    define(value, numberToDouble(in<Boxed>(value->valueOperand())));
+}
+
 void OperatorEmitter::generateEquality(const ValueContext& value, bool isStrict)
 {
     EqualityEmitter equality(generator());

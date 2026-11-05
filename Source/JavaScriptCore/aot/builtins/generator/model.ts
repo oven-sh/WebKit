@@ -403,6 +403,9 @@ export interface ModelCondition {
   objectNobodyKnowsIsWritten: boolean;
   testsReplaceBuiltins: boolean;
   programStores: ModelBuiltin | null;
+  isAskedForOtherNames: ModelBuiltin | null;
+  valuesServed: readonly ModelName[];
+  methodsServed: readonly ModelName[];
 }
 
 export interface ModelFeatureUse {
@@ -485,7 +488,6 @@ export interface ModelAttachments {
   unseenCodeCondition: ModelCondition | null;
   moduleLoads: readonly ModelModuleLoad[];
   calledFunctions: readonly ModelCalledFunction[];
-  appendForm: InlineBuiltinName | null;
   literalPartsForm: { argument: ModelOperand; names: readonly ModelName[]; builtin: ModelBuiltin } | null;
   boxedCallStub: BoxedStubName | null;
   nativeFunction: ModelNativeFunction | null;

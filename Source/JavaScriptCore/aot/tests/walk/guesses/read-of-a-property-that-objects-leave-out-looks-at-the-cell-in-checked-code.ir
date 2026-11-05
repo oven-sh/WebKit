@@ -4,13 +4,12 @@
 # RUN: walk f1 mechanisms=none+TypedOperations+Guesses
 # CHECK-LABEL: code f1:Body
 # CHECK: = ShapeTest {{*}}layouts=[L0]
-# CHECK: = HasNoFieldOutsideSlot
-# CHECK: = HasLayoutPrototype
+# CHECK: = HasLayoutPrototype {{*}}hasNoFieldOutsideSlot
 # CHECK: = GetSlotOrUndefined {{*}}key="x"
 # CHECK: = GetSlotOrUndefined {{*}}key="y"
 # RUN(ONCE): walk f1 mechanisms=none+TypedOperations+Guesses
-# ONCE-COUNT-1: = HasNoFieldOutsideSlot
-# ONCE-NOT: = HasNoFieldOutsideSlot
+# ONCE-COUNT-1: = HasLayoutPrototype
+# ONCE-NOT: = HasLayoutPrototype
 # A look at the slot of such a property would fail as often as not
 # RUN(SLOTS): walk f1 mechanisms=none+TypedOperations+Guesses
 # SLOTS-NOT: IsSlotFilled

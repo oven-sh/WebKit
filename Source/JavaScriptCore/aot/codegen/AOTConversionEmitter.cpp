@@ -546,7 +546,7 @@ static void answerOperandsFirst(LValue number, UncheckedKeyHashMap<LValue, Answe
 
 static bool isNumberReadFromStorage(LValue number)
 {
-    return number->type() == Machine::Double && (number->opcode() == Machine::Load || number->opcode() == Machine::Phi);
+    return number->type() == Machine::Double && (number->opcode() == Machine::Load || number->opcode() == Machine::Phi || number->opcode() == Machine::ArgumentReg);
 }
 
 ValueID ConversionEmitter::parameterOfLoopHeadFedBy(ValueID start)

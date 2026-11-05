@@ -1242,9 +1242,13 @@ void BackwardScan::findBlocksThatRareBlocksBranchOff()
     origins.fill(m_proc.arena(), m_order.mostBlocks(), nullptr);
     const BlockPlace* places = m_order.places();
     const Block** originOfBlock = origins.begin();
-    for (const Block* block : m_order.blocksInOrder()) {
+    std::span<Block* const> layout = m_order.blocksInLayout();
+    size_t numberOfRareBlocks = layout.size() - m_order.numberOfBlocksOutsideRareRegions();
+    std::span<Block* const> rareBlocksInOrder = m_proc.traits().fallsIntoWhatLiesBehind ? layout.first(numberOfRareBlocks) : layout.last(numberOfRareBlocks);
+    for (const Block* block : rareBlocksInOrder) {
         const BlockPlace& place = places[block->index()];
-        if (!place.isRare() || block->isLandingPad() || place.predecessors.size() != 1)
+        ASSERT(place.isRare());
+        if (block->isLandingPad() || place.predecessors.size() != 1)
             continue;
         const Block* predecessor = place.predecessors.front();
         const BlockPlace& placeOfPredecessor = places[predecessor->index()];

@@ -157,7 +157,7 @@ function hasUnseenCodeCondition({ attachments }: ModelBuiltin): boolean {
 }
 
 function hasForms({ attachments }: ModelBuiltin): boolean {
-  return attachments.appendForm !== null || attachments.literalPartsForm !== null;
+  return attachments.literalPartsForm !== null;
 }
 
 function hasBoxedCallStub({ attachments }: ModelBuiltin): boolean {

@@ -143,7 +143,7 @@ void GuardEmitter::generateIsSlotFilled(const ValueContext& value)
     auto isFilled = [&] {
         SlotEmitter& slots = emitter<SlotEmitter>();
         MemoryLocation location = MemoryLocation::objectField(value->key());
-        CellPointer base = emitter<SlotAccessEmitter>().baseOfSlot(object, access);
+        CellPointer base = emitter<SlotAccessEmitter>().baseOfSlot(object, access, value->receivers());
         if (value->holdsDeclaredType())
             return slots.holdsDeclaredType(base, access.slot, location, &access.extensionWord);
         return slots.isFilled(base, access.slot, location, &access.extensionWord);
@@ -232,7 +232,7 @@ void GuardEmitter::generateHasLayoutPrototype(const ValueContext& value)
 {
     defineTestOfCompiledObject(value, [&] {
         Word32 flags = loadByte(in<CellPointer>(value->objectOperand()), m_heaps.JSCell_typeInfoFlags);
-        return hasNoBits(flags, JSC::IsPristine);
+        return hasNoBits(flags, value->hasNoFieldOutsideSlot() ? JSC::IsPristine | TypeInfoPerCellBit : JSC::IsPristine);
     });
 }
 

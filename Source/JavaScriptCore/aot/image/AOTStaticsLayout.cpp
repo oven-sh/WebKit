@@ -554,16 +554,8 @@ private:
 
 } // anonymous namespace
 
-void ImageNumbersBuilder::layOutStatics()
+void ImageNumbersBuilder::numberSites()
 {
-    StaticsLayoutBuilder builder(inputs, mentions, tables, context);
-    bool fits = builder.run();
-    numbers.m_statics = builder.takeStatics();
-    numbers.m_originsOfMethodSelectors = builder.takeOriginsOfMethodSelectors();
-    numbers.m_regExpLiteralCells = mentions.takeKeys(NumberSpace::RegExpLiteralCell);
-    numbers.m_templateObjectCells = mentions.takeKeys(NumberSpace::TemplateObjectCell);
-    numbers.m_arrayProfiles = mentions.takeKeys(NumberSpace::ArrayProfile);
-    numbers.m_classGuards = mentions.takeKeys(NumberSpace::ClassGuard);
     numbers.m_siteCaches = mentions.takeKeys(NumberSpace::SiteCache);
     const NumberedKeys& sites = numbers.m_siteCaches;
     numbers.m_numbersOfSites.resize(sites.size() + 1);
@@ -574,6 +566,19 @@ void ImageNumbersBuilder::layOutStatics()
         numberOfNumbersOfSites += ImageNumbers::isPlaceWithSiteAnswers(key) && !inputs.plan.slots().hasColumn(ImageNumbers::nameOfSite(key)) ? 2 : 1;
     }
     numbers.m_numbersOfSites[sites.size()] = static_cast<uint32_t>(std::min<uint64_t>(numberOfNumbersOfSites, UINT32_MAX));
+}
+
+void ImageNumbersBuilder::layOutStatics()
+{
+    StaticsLayoutBuilder builder(inputs, mentions, tables, context);
+    bool fits = builder.run();
+    numbers.m_statics = builder.takeStatics();
+    numbers.m_originsOfMethodSelectors = builder.takeOriginsOfMethodSelectors();
+    numbers.m_regExpLiteralCells = mentions.takeKeys(NumberSpace::RegExpLiteralCell);
+    numbers.m_templateObjectCells = mentions.takeKeys(NumberSpace::TemplateObjectCell);
+    numbers.m_arrayProfiles = mentions.takeKeys(NumberSpace::ArrayProfile);
+    numbers.m_classGuards = mentions.takeKeys(NumberSpace::ClassGuard);
+
     if (!fits)
         return;
 

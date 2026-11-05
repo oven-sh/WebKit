@@ -16,7 +16,7 @@ import type {
   ModelTypePart,
   TableModel,
 } from "./model.ts";
-import { arrayClassName, objectClassName } from "./build-types.ts";
+import { arrayClassName, functionClassName, objectClassName } from "./build-types.ts";
 import { operandUses, type ClassName, type FeatureName } from "./vocabulary.ts";
 
 export interface LoadedModule {
@@ -100,7 +100,8 @@ function textsDecidingCall(condition: ModelCondition): Pick<CallsForTexts, "argu
     condition.callRunsOtherCode ||
     condition.objectNobodyKnowsIsWritten ||
     condition.testsReplaceBuiltins ||
-    condition.programStores !== null;
+    condition.programStores !== null ||
+    condition.isAskedForOtherNames !== null;
   if (operand === null || operand.operand !== "Argument" || isOneOf.length === 0 || asksMore) return null;
   return { argument: operand.index, texts: isOneOf };
 }
@@ -404,7 +405,9 @@ export class DependencyClosure {
       mergeDependencies(dependencies, this.#reachableFrom({ ...nothingHandedOut, objects: [builtin] }));
     }
     if (DependencyClosure.isInEveryProgram(builtin)) {
-      dependencies.certain = dependencies.calls.union(dependencies.implementedBy);
+      const { calledFunctions } = builtin.attachments;
+      const calledOnCondition = new Set(calledFunctions.flatMap(called => (called.condition === null ? [] : [called.function])));
+      dependencies.certain = dependencies.calls.union(dependencies.implementedBy).difference(calledOnCondition);
     }
     for (const [key, listed] of dependencies.callsForTexts) {
       listed.calls = listed.calls.difference(dependencies.calls);
@@ -510,7 +513,9 @@ export class DependencyClosure {
   #foundOnInstancesFrom(builtin: ModelBuiltin): RuntimeDependencies {
     const isPrototypeOfLanguage = ({ kind, origin }: ModelBuiltin): boolean => kind === "Prototype" && origin === "Engine";
     const handedOut = this.#instancesHandedOutBy(builtin);
-    const roots = handedOut.undescribedValue === null ? handedOut.objects : this.#enginePrototypes;
+    const makesOnlyWhatItSays =
+      handedOut.undescribedValue === null || DependencyClosure.isInEveryProgram(builtin) || builtin.kind === "DataProperty";
+    const roots = makesOnlyWhatItSays ? handedOut.objects : this.#enginePrototypes;
     const prototypes = [builtin, ...roots].filter(isPrototypeOfLanguage);
     const key = prototypes.map(prototype => prototype.id).join(",");
     let dependencies = this.#foundOnInstances.get(key);
@@ -553,7 +558,8 @@ export class DependencyClosure {
       for (const place of places) if (place.place === "NewValue") types.add(place.type);
       const runsOtherCode = effects.capability === "js" && !flags.includes("RunsOnlyOperandCode");
       const returnsAnything = result.type.isAnything || result.type.hasAnyObject;
-      if (builtin.origin === "Host" && runsOtherCode && returnsAnything && this.#promiseClass !== null) {
+      const isNative = !DependencyClosure.isInEveryProgram(builtin);
+      if (isNative && runsOtherCode && returnsAnything && this.#promiseClass !== null) {
         classes.add(this.#promiseClass);
       }
     }
@@ -566,6 +572,7 @@ export class DependencyClosure {
     }
     const holders = new Set<ModelBuiltin>();
     for (const handedOut of classes) {
+      if (handedOut.token === functionClassName && DependencyClosure.isInEveryProgram(builtin)) continue;
       for (const holder of objectsOfClass(handedOut)) holders.add(holder.sameObjectAs ?? holder);
       if (handedOut.parent !== null) classes.add(handedOut.parent);
     }

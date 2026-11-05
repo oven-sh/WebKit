@@ -1,0 +1,152 @@
+# function run(step, count) { let total = 0; for (let i = 0; i < count; i++) total += step(i); return total; }  function up(n) { let t = 0; for (let k = 0; k < n; k++) t = ((t + k) * k + k) * k ..; return t; }  function down(n) { .. t -= k .. }  sink(run(up, 10), run(down, 10));
+# A build of the loop for each closure pays by what the copy of the closure's body in the loop spares. A callee that is not copied in, here because it has a loop of its own, would be called directly in the place of by value, and the whole loop would stand in the code once more for each:
+# one unit of the TypeScript compiler grew from 4,869 to 25,210 bytes that way and ran no faster. So nothing is told apart in front of this loop.
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = CallResolved
+# RUN(NEVER): walk f1 mechanisms=all
+# NEVER-NOT: testedType=f2
+# NEVER-NOT: testedType=f3
+
+module m0 path="no-loop-is-built-for-a-closure-whose-copy-in-the-loop-does-not-pay.ts" displayPath="no-loop-is-built-for-a-closure-whose-copy-in-the-loop-does-not-pay.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f2 @0
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} @0
+    v4 = NewClosure function=f3 @0
+    v5 = Convert v4 declared={type=f3 flags=[IsFromCompiler]} @0
+    v6 = Builtin builtin=GlobalThis @276
+    v7 = PropGet v6 key="sink" [isFreeName] @276
+    v8 = Integer integer=10 @289
+    v9 = Call v1, -, v3, v8 calleeName="run" @281
+    v10 = Integer integer=10 @305
+    v11 = Call v1, -, v5, v10 calleeName="run" @294
+    v12 = Call v7, -, v9, v11 calleeName="sink" @276
+    v13 = Undefined @276
+    Return v13 @276
+}
+function f1 name="run" module=m0 position=51 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|function flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|function, v1: number):
+    v2 = Integer @122
+    v3 = Convert v2 declared={type=number} @122
+    v4 = Integer @138
+    v5 = Convert v4 declared={type=number} @138
+    Jump -> next b1(v3, v5) @134
+  b1(v6: number, v7: number):
+    LoopHint @134
+    v9 = Less v7, v1 @145
+    Branch v9 -> taken b2(), notTaken b3() @145
+  b2():
+    v10 = Call v0, -, v7 calleeName="step" @166
+    v11 = Add v6, v10 @166
+    v12 = Convert v11 declared={type=number} @157
+    v13 = Increment v7 @152
+    v14 = Convert v13 declared={type=number} @152
+    Jump -> next b1(v12, v14) @152
+  b3():
+    Return v6 @182
+}
+function f2 name="up" module=m0 position=191 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    v1 = Integer @200
+    v2 = Convert v1 declared={type=number} @200
+    v3 = Integer @201
+    v4 = Convert v3 declared={type=number} @201
+    Jump -> next b1(v2, v4) @202
+  b1(v5: number, v6: number):
+    LoopHint @202
+    v8 = Less v6, v0 @203
+    Branch v8 -> taken b2(), notTaken b3() @203
+  b2():
+    v9 = Add v5, v6 @204
+    v10 = Add v9, v6 @204
+    v11 = Mul v10, v6 @204
+    v12 = Add v11, v6 @204
+    v13 = Mul v12, v6 @204
+    v14 = Add v13, v6 @204
+    v15 = Mul v14, v6 @204
+    v16 = Add v15, v6 @204
+    v17 = Mul v16, v6 @204
+    v18 = Add v17, v6 @204
+    v19 = Mul v18, v6 @204
+    v20 = Add v19, v6 @204
+    v21 = Mul v20, v6 @204
+    v22 = Add v21, v6 @204
+    v23 = Mul v22, v6 @204
+    v24 = Add v23, v6 @204
+    v25 = Mul v24, v6 @204
+    v26 = Add v25, v6 @204
+    v27 = Mul v26, v6 @204
+    v28 = Add v27, v6 @204
+    v29 = Mul v28, v6 @204
+    v30 = Add v29, v6 @204
+    v31 = Mul v30, v6 @204
+    v32 = Add v31, v6 @204
+    v33 = Mul v32, v6 @204
+    v34 = Add v33, v6 @204
+    v35 = Mul v34, v6 @204
+    v36 = Add v35, v6 @204
+    v37 = Mul v36, v6 @204
+    v38 = Add v37, v6 @204
+    v39 = Mul v38, v6 @204
+    v40 = Convert v39 declared={type=number} @204
+    v41 = Increment v6 @205
+    v42 = Convert v41 declared={type=number} @205
+    Jump -> next b1(v40, v42) @205
+  b3():
+    Return v5 @206
+}
+function f3 name="twice" module=m0 position=232 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    v1 = Integer @200
+    v2 = Convert v1 declared={type=number} @200
+    v3 = Integer @201
+    v4 = Convert v3 declared={type=number} @201
+    Jump -> next b1(v2, v4) @202
+  b1(v5: number, v6: number):
+    LoopHint @202
+    v8 = Less v6, v0 @203
+    Branch v8 -> taken b2(), notTaken b3() @203
+  b2():
+    v9 = Sub v5, v6 @204
+    v10 = Sub v9, v6 @204
+    v11 = Mul v10, v6 @204
+    v12 = Sub v11, v6 @204
+    v13 = Mul v12, v6 @204
+    v14 = Sub v13, v6 @204
+    v15 = Mul v14, v6 @204
+    v16 = Sub v15, v6 @204
+    v17 = Mul v16, v6 @204
+    v18 = Sub v17, v6 @204
+    v19 = Mul v18, v6 @204
+    v20 = Sub v19, v6 @204
+    v21 = Mul v20, v6 @204
+    v22 = Sub v21, v6 @204
+    v23 = Mul v22, v6 @204
+    v24 = Sub v23, v6 @204
+    v25 = Mul v24, v6 @204
+    v26 = Sub v25, v6 @204
+    v27 = Mul v26, v6 @204
+    v28 = Sub v27, v6 @204
+    v29 = Mul v28, v6 @204
+    v30 = Sub v29, v6 @204
+    v31 = Mul v30, v6 @204
+    v32 = Sub v31, v6 @204
+    v33 = Mul v32, v6 @204
+    v34 = Sub v33, v6 @204
+    v35 = Mul v34, v6 @204
+    v36 = Sub v35, v6 @204
+    v37 = Mul v36, v6 @204
+    v38 = Sub v37, v6 @204
+    v39 = Mul v38, v6 @204
+    v40 = Convert v39 declared={type=number} @204
+    v41 = Increment v6 @205
+    v42 = Convert v41 declared={type=number} @205
+    Jump -> next b1(v40, v42) @205
+  b3():
+    Return v5 @206
+}
+function f4 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]

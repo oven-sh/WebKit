@@ -4,10 +4,11 @@ flags PropertyDescriptorFlags { | engine HasValue HasWritable IsWritable HasEnum
 
 family ObjectCreation Selected..Placed
 operation DefineOwnProperty (object: Any/inspects+returns+definesName+runs(OwnKeys), computedKey: PropertyKey/inspects, value?: Any/retains(object), getter?: Any/retains(object), setter?: Any/retains(object), descriptorFlags: PropertyDescriptorFlags, orderWordAfter?: OrderWord) -> natural(same(object)) ; DefinesProperty UsesRuntime ResolvesRopes reads(Elements, ArrayStorage) writes(MemberGuards, Elements, ArrayStorage) ; replaces = CallBuiltin, NewObject, SetLiteralPrototype ; runtime = DefineOwnProperty ; form = Runtime
-operation DefineAccessors (object: Object/inspects+definesName, keys: List<PropertyKey>, getterMask: UInt32, enumerableMask: UInt32, functions...: Callable/retains(object)) -> none ; DefinesProperty ; replaces = DefineGetter, DefineSetter ; runtime = DefineAccessors ; form = Runtime
+operation DefineAccessors (object: Object/inspects+definesName, keys: List<PropertyKey>, getterMask: UInt32, enumerableMask: UInt32, functions...: Callable/retains(object)) -> none ; DefinesProperty writes(ArrayStorage, Elements) ; replaces = DefineGetter, DefineSetter ; runtime = DefineAccessors ; form = Runtime
 
 family Operator Selected..Placed
 operation IntegerBound (number: Number/inspects, comparison: Opcode) [numberIsOnLeft] -> natural(integer) ; none ; form = Open
+operation NumberOrNaN (value: Any/inspects) -> natural(number) ; none ; form = Open
 
 family PromiseIntrinsic Selected..Placed
 operation FulfillFreshPromise (promise: Object/inspects+writesContents, value: Any/retains(promise)) -> none ; writes(PromiseState) ; relies = NotThenable ; replaces = ReturnAsyncResult, ResolvePromise ; runsOwnerBarrier = true ; remembersOwner = true ; form = Open
@@ -20,7 +21,6 @@ operation StringOrder (left: String/inspects, right: String/inspects) -> natural
 operation StringOrderToCharacter (string: String/inspects, codeUnit: UInt32) -> natural(int[-1, 1]) ; ResolvesRopes ; replaces = Less, LessEq, Greater, GreaterEq ; form = Open
 operation StringEqualsLiteral (string: String/inspects, length?: Integer/inspects, flat?: String/inspects, literal: String) -> natural(boolean) ; reads(StringStorage) ; proves = Equality ; branches = May ; replaces = StrictEq, Eq ; runtime = StringEqualsLiteral ; formDependsOnLoop = true ; openUnder = EmptyLiteral, LengthOfSubject, FlatSubject ; closedUnder = Always, LiteralComparedByStub ; openIn = Loop
 operation ValueEqualsLiteral (value: Any/inspects, length?: Integer/inspects, literal: String) -> natural(boolean) ; reads(StringStorage) ; proves = Equality ; branches = May ; replaces = StrictEq ; runtime = StringEqualsLiteral ; formDependsOnLoop = true ; openUnder = EmptyLiteral, LengthOfSubject ; closedUnder = Always, LiteralComparedByStub ; openIn = Loop
-operation ValueLooselyEqualsLiteral (value: Any/Converted, literal: String) -> natural(boolean) ; ResolvesRopes by Operator ; branches = May ; replaces = Eq ; runtime = CompareEqToString ; form = Runtime
 operation StringStartsWithLiteral (string: String/inspects, literal: String) -> natural(boolean) ; ResolvesRopes ; branches = May ; replaces = CallBuiltin ; form = Open
 operation StringEndsWithLiteral (string: String/inspects, literal: String) -> natural(boolean) ; ResolvesRopes ; branches = May ; replaces = CallBuiltin ; form = Open
 operation StringIndexOfLiteral (string: String/inspects, position: Integer/inspects, literal: String) -> natural(int[-1, 2147483647]) ; ResolvesRopes ; replaces = CallBuiltin ; runtime = StringIndexOfLiteral ; form = Runtime

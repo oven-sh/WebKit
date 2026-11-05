@@ -918,15 +918,15 @@ void WalkState::Held::noteElement(Reference object, Reference index, Reference v
 
 void WalkState::Held::noteStoresPassAbove(LayoutID classLayout, PropertyKeyID key, Reference test)
 {
-    notePlace(PlaceKind::GuardOfStores, Reference(), classLayout.index(), key.bits(), test, [] {
+    notePlace(PlaceKind::GuardOfStores, Reference(), numberOfGuardedSide(classLayout, ClassSide::Prototype), key.bits(), test, [] {
         return Place::entireHeap;
     });
     dropEndedRecordsIfMany();
 }
 
-void WalkState::Held::noteGuardOfReadsHolds(LayoutID classLayout, PropertyKeyID key, Reference test)
+void WalkState::Held::noteGuardOfReadsHolds(LayoutID classLayout, PropertyKeyID key, Reference test, ClassSide side)
 {
-    notePlace(PlaceKind::GuardOfReads, Reference(), classLayout.index(), key.bits(), test, [] {
+    notePlace(PlaceKind::GuardOfReads, Reference(), numberOfGuardedSide(classLayout, side), key.bits(), test, [] {
         return Place::entireHeap;
     });
     dropEndedRecordsIfMany();
@@ -1069,7 +1069,7 @@ void WalkState::Held::endByLists(const WhatEnds& ends)
             const Place& place = m_places[position];
             if (!place.value)
                 return false;
-            if (!(ends.guards & place.mask()) || (ends.mayEndGuard && !(*ends.mayEndGuard)(LayoutID(place.first))))
+            if (!(ends.guards & place.mask()) || (ends.mayEndGuard && !(*ends.mayEndGuard)(classOfGuardedSide(place.first))))
                 return true;
             uint32_t holder = place.holder;
             endPlace(position);

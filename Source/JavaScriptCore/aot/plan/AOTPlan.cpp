@@ -14,7 +14,6 @@
 #include "AOTCellFormat.h"
 #include "AOTClosure.h"
 #include "AOTFieldsStorage.h"
-#include "AOTClosuresOfLiterals.h"
 #include "AOTIRProgram.h"
 #include "AOTMechanisms.h"
 #include "AOTNameClass.h"
@@ -46,7 +45,6 @@ static_assert(AOT::Closure::maxNumberOfCaptures % 2);
 static_assert(unorderedOrderWord == orderWordOf(0, 0));
 static_assert(representsAbsentAsZero(SlotRepresentation::JSValue) && traitsOf(SlotRepresentation::JSValue).undefinedBits);
 
-Vector<ClosureForm> chooseClosureForms(const Program&, const LinkTables&);
 StorageOfLayouts chooseStorageOfLayouts(const Program&, const LinkTables&, const ParallelLoops&);
 SlotPlanParts computeSlotPlanParts(Program&, const Facts&, BuildContext&, const StorageOfLayouts&, KeyOrders&, PromotedEnvironments&);
 void holdDoorsToProofsInSlotPlan(Program&, const Facts&, const ParallelLoops&, SlotPlanParts&);
@@ -411,7 +409,7 @@ static BitVector functionsWhoseResultsPassNoReturnInPlan(const Program& program,
         TypeID held = linked.function(function).result;
         if (!held)
             continue;
-        bool passesNoReturn = facts.testMentionsWhatIsOutOfReach(types, held, scopedLambda<bool(FunctionID)>([&](FunctionID named) {
+        bool passesNoReturn = testTellsNoClassOfObjectsIn(types, types.at(held)) || facts.testMentionsWhatIsOutOfReach(types, held, scopedLambda<bool(FunctionID)>([&](FunctionID named) {
             return linked.leadsTo(CodeUnit { function, CodeRole::Body }, named);
         }));
         const BodyIndex* index = facts.bodies().find(function);
@@ -759,13 +757,11 @@ std::unique_ptr<Plan> planProgram(Program& program, const Facts& facts, BuildCon
     StackTestPlan stackTests;
     auto planSlotsAndKeyOrders = [&] {
         SlotPlanParts slots;
-        Vector<ClosureForm> closureForms;
         Vector<PlannedVariable> variables;
         Vector<ClassCreationPlan> classCreation;
         runLanes(build.parallelLoops(), {
             [&] { runLane("plan: lane of slots"_s, [&] { slots = computeSlotPlanParts(program, facts, build, storage, parts.keyOrders, parts.promotedEnvironments); }); },
-            [&] { runLane("plan: lane of closure forms, variables, class creation"_s, [&] {
-                closureForms = chooseClosureForms(program, facts.linked());
+            [&] { runLane("plan: lane of variables, class creation"_s, [&] {
                 const BitVector variablesDescribedToRunTime = variablesDescribedToRunTimeByPlan(program);
                 parts.deferredDefinitions = deferredDefinitionsOfPlan(program, facts, variablesDescribedToRunTime, AOT::hasFlag(build.options().testing, Wire::TestingSwitch::CheckProofsAtRunTime));
                 variables = variablesOfPlan(program, facts, variablesDescribedToRunTime);
@@ -774,11 +770,9 @@ std::unique_ptr<Plan> planProgram(Program& program, const Facts& facts, BuildCon
         });
         if (hasFailed())
             return;
-        slots.closureForms = WTF::move(closureForms);
         slots.variables = WTF::move(variables);
         slots.classCreation = WTF::move(classCreation);
         build.statistics().count(StatisticID::EnvironmentsPromotedToVariables, parts.promotedEnvironments.layouts.size());
-        leaveClosuresOfLiteralsUnmade(program, facts, parts.promotedEnvironments, build.recordedOptions().useWideReferences(), slots);
         holdDoorsToProofsInSlotPlan(program, facts, build.parallelLoops(), slots);
         appendPromotedVariables(parts.promotedEnvironments, slots);
         markSlotsFilledAtBirthInPlan(program, facts, slots);

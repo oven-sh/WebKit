@@ -1,17 +1,16 @@
 enum KnowledgeLevel { Unknown Expected Proven }
 enum AccessCost { ByName TestsReceiver TestsSlot Free }
 enum AccessKind { Unknown Read Store Define Has Delete Call Construct Truthiness Equality Arithmetic Comparison Conversion TypeOf InstanceOf Iteration Spread }
-enum UnprovenCauseFamily { UnprovenType UnknownCode Mutation }
+enum UnprovenCauseFamily { UnprovenType UnknownCode }
 enum UnprovenCause (family: UnprovenCauseFamily) {
     Unknown(UnprovenType) ResultDisabled(UnprovenType) UnknownObject(UnknownCode) NonLayoutObject(UnprovenType) BuiltinBase(UnprovenType)
     UnknownBase(UnknownCode) ClassEvaluatedAgain(UnknownCode) ReachesNativeCode(UnknownCode) ReachesUnknownJavaScript(UnknownCode) UnknownWriter(UnknownCode) UnknownCallee(UnknownCode)
-    UnprovenContents(UnprovenType) FieldDeleted(Mutation) UnknownKeyDelete(Mutation) PropertyRedefined(Mutation) PropertyAdded(Mutation) UnknownKeyStore(Mutation)
-    StoreOfOtherType(Mutation) IntegrityChanged(Mutation) PrototypeChanged(Mutation) OwnPropertyHidesMember(Mutation) OtherNewTarget(Mutation)
+    UnprovenContents(UnprovenType)
+    OtherNewTarget(UnknownCode)
     UndescribedNativeResult(UnknownCode) UnseenCode(UnknownCode) UncheckedConversionOfUntracked(UnprovenType) DataFromOutside(UnknownCode) ThrownByRunTime(UnknownCode)
     ParameterOfEscapedFunction(UnknownCode) ContentsOfEscapedObject(UnknownCode) ResultOfUnknownCallee(UnknownCode) ObjectWithoutLayout(UnprovenType)
     Untracked(UnprovenType) LayoutOutsideFamily(UnprovenType)
 }
-enum CheckCause { Unknown UnknownObject UnknownCallee UnprovenContents MayFail LimitReached ResultDisabled AddedByPass }
 enum UnseenCodeCause { Unknown EvaluatesText ImportsUncompiledModule LoadsModuleByName RunsUnseenCode OptionAdmitsCode FlowResultDisabled RunsMachineCode LoadsCodeByName }
 flags BuiltinUse { Tested Read Called Constructed Written Escaped StoredByName }
 enum FeatureUseKind { Named Unnamed }
@@ -37,10 +36,9 @@ enum AllocationKind {
     Other Object Array Closure Environment Arguments Rest IteratorResult Generator Promise BoundFunction StringRange Collection
 }
 enum ResultSection {
-    Image Text UserDiagnostics InternalErrors EntryModuleIds UnseenCode BuiltinsUsed FeaturesUsed LocalesUsed WorkerEntries Accesses AccessCounts TypeTests RemainingChecks
-    Declines AllocationRemarks Losses Functions OperationCounts PassTimes Statistics LimitValues Symbols ObfuscatedSites
-    ArrivalSites ArrivalSiteLayouts ArrivalLayouts ArrivalLayoutFields
-    LibraryFunctionsLacked ExportsThatSpiesReplace WorkerStartsWithoutName BuiltinsThatTestsReplace NamesThatTestsAdd
+    Image Text UserDiagnostics InternalErrors EntryModuleIds UnseenCode BuiltinsUsed FeaturesUsed LocalesUsed WorkerEntries Accesses AccessCounts TypeTests
+    AllocationRemarks Statistics Symbols ObfuscatedSites
+    LibraryFunctionsLacked WorkerStartsWithoutName
     BytesByForm BytesByModule
     FunctionNames LayoutNames
     URLsThatStartWorkers
@@ -92,17 +90,17 @@ enum Architecture { ARM64 X86_64 }
 enum ReferenceWidth { Wide Narrow }
 enum ImageForm { Absolute PositionIndependent }
 flags CheckSet { VerifyEachPass Validate ValidateBackEnd ValidateReferences VerifyEachStage ValidateReferenceGuards FlowFixpoint UsedValuesAreListed ClaimsToBackEnd MovedLoads DecidedComparisons SpillSlots AllocatedRegisters ClaimsOfFlow KeepGoing }
-flags ReportSet { Flow Declines Symbols Allocations Functions Arrivals AccessCounts Statistics Uses }
-flags TestingSwitch { IgnoreBranchHints ForceGCSlowPaths MayEncounterMasqueradesAsUndefined DropGuard IgnoreExpectedTypes DropReferenceGuards ProveEverything NoCallConvertsCells NoLayoutIsMadeSeldom DelayFlowRules DelayOtherFlowRules FoldLoadsPastCollections OverwriteDeadValuesAtCollections ShuffleExpectedTypes NobodyLooksAtNewInstances NativeCodeAnswersNullish WalksNothingAtCalls CheckProofsAtRunTime UnseenCodeAnswersUndefined WritesBodiesStraight CheckProofsAtEntries CheckProofsAtEntriesAndFields KeepsCellsOutOfFrames TestsEveryPosition PositionsAreTakenToLieInside CheckEffectsAtRunTime RowSaysLess NoCalleeKeepsWhatItIsHanded }
+flags ReportSet { Flow Symbols Allocations AccessCounts Uses }
+flags TestingSwitch { IgnoreBranchHints MayEncounterMasqueradesAsUndefined DropGuard IgnoreExpectedTypes DropReferenceGuards ProveEverything NoCallConvertsCells NoLayoutIsMadeSeldom DelayFlowRules DelayOtherFlowRules FoldLoadsPastCollections OverwriteDeadValuesAtCollections ShuffleExpectedTypes NobodyLooksAtNewInstances NativeCodeAnswersNullish WalksNothingAtCalls CheckProofsAtRunTime UnseenCodeAnswersUndefined WritesBodiesStraight CheckProofsAtEntries CheckProofsAtEntriesAndFields KeepsCellsOutOfFrames TestsEveryPosition PositionsAreTakenToLieInside CheckEffectsAtRunTime RowSaysLess NoCalleeKeepsWhatItIsHanded HoldsObjectsToStayingAsMade }
 flags AdmittedCode { Inspector ReplacedBuiltins }
 flags ExcludedCode { EvaluatedText FunctionSource CodeOutsideImage HostEvaluatedText ForeignCalls ForeignCallsOfUnseenCode LibraryText FilesOfImageForCodeOutside }
 flags OutputOptions { Obfuscate SharesRealms RunsInSeveralRealms RunsInPlaceOfFiles }
 record ImagesBelowWords abi { address: UInt64 size: UInt64 }
 record TargetOptions abi { features: UInt64 featuresKeptOnlyWhenNamed: UInt64[8] imagesBelow: ImagesBelowWords architecture: Architecture referenceWidth: ReferenceWidth imageForm: ImageForm reserved: UInt32 }
 record CompileOptions abi {
-    target: TargetOptions loweredLimitValue: UInt64 sizeClassProgression: Double removedFeatures: UInt64[8] executableIdentity: UInt8[16] size: UInt32
+    target: TargetOptions sizeClassProgression: Double removedFeatures: UInt64[8] executableIdentity: UInt8[16] size: UInt32
     action: CompileAction checks: CheckSet reports: ReportSet testing: TestingSwitch 
-    loweredLimit: LimitID threadCount: UInt32 layoutSeed: UInt32 admittedCode: AdmittedCode output: OutputOptions
+    threadCount: UInt32 admittedCode: AdmittedCode output: OutputOptions
     excludedCode: ExcludedCode rowThatSaysLess: UInt32
 }
 

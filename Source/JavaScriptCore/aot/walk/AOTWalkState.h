@@ -104,6 +104,8 @@ public:
 
     uint32_t numberOf(VariableID variable) { return numberOfBinding(keyOf(variable)); }
     std::optional<uint32_t> findNumberOf(VariableID variable) const { return findNumberOfBinding(keyOf(variable)); }
+    uint32_t numberOf(FunctionID functionWhoseClaimsAreAnswered) { return numberOfBinding(keyOf(functionWhoseClaimsAreAnswered)); }
+    std::optional<uint32_t> findNumberOf(FunctionID functionWhoseClaimsAreAnswered) const { return findNumberOfBinding(keyOf(functionWhoseClaimsAreAnswered)); }
     uint32_t numberOf(Reference environment, FieldReference field) { return numberOfBinding(keyOf(environment, field)); }
     std::optional<uint32_t> findNumberOf(Reference environment, FieldReference field) const { return findNumberOfBinding(keyOf(environment, field)); }
 
@@ -116,6 +118,7 @@ public:
 
 private:
     static uint64_t keyOf(VariableID variable) { return static_cast<uint64_t>(variable.index()) + 1; }
+    static uint64_t keyOf(FunctionID function) { return 1ULL << 63 | function.index(); }
     static uint64_t keyOf(Reference environment, FieldReference field) { return (static_cast<uint64_t>(environment.id().index()) + 1) << 32 | field.field; }
     uint32_t numberOfBinding(uint64_t key) { return m_numbersOfBindings.add(key, m_numbersOfBindings.size()).iterator->value; }
     std::optional<uint32_t> findNumberOfBinding(uint64_t key) const
@@ -289,6 +292,18 @@ public:
         std::optional<uint32_t> number = m_program.numbers->findNumberOf(variable);
         return number && m_held->m_bindingsPastDeadZone.contains(*number);
     }
+    void noteThatClaimsAreAnswered(FunctionID function)
+    {
+        RELEASE_ASSERT(m_program.numbers);
+        noteBindingPastDeadZone(m_program.numbers->numberOf(function));
+    }
+    bool claimsAreAnswered(FunctionID function) const
+    {
+        if (!m_held || m_held->m_bindingsPastDeadZone.isEmpty())
+            return false;
+        std::optional<uint32_t> number = m_program.numbers->findNumberOf(function);
+        return number && m_held->m_bindingsPastDeadZone.contains(*number);
+    }
     void noteEndOfDeadZone(Reference environment, FieldReference field)
     {
         RELEASE_ASSERT(m_program.numbers);
@@ -341,22 +356,24 @@ public:
     }
     std::optional<uint32_t> orderWordOf(Reference object) const { return mayHold(Kinds::factsOfCells) && m_held->mayHaveRecordOf(object) ? m_held->orderWordOf(object) : std::nullopt; }
 
+    static uint32_t numberOfGuardedSide(LayoutID classLayout, ClassSide side) { return classLayout.index() << 1 | static_cast<uint32_t>(side); }
+    static LayoutID classOfGuardedSide(uint32_t number) { return LayoutID(number >> 1); }
     void noteStoresPassAbove(LayoutID classLayout, PropertyKeyID key, Reference test)
     {
-        if (writesInPlace() || !noteChangesNothing(valueOfPlace(PlaceKind::GuardOfStores, Reference(), classLayout.index(), key.bits()), test)) {
+        if (writesInPlace() || !noteChangesNothing(valueOfPlace(PlaceKind::GuardOfStores, Reference(), numberOfGuardedSide(classLayout, ClassSide::Prototype), key.bits()), test)) {
             heldToWrite().noteStoresPassAbove(classLayout, key, test);
             m_marks.kinds |= Kinds::places;
         }
     }
-    bool storesPassAbove(LayoutID classLayout, PropertyKeyID key) const { return !!valueOfPlace(PlaceKind::GuardOfStores, Reference(), classLayout.index(), key.bits()); }
-    void noteGuardOfReadsHolds(LayoutID classLayout, PropertyKeyID key, Reference test)
+    bool storesPassAbove(LayoutID classLayout, PropertyKeyID key) const { return !!valueOfPlace(PlaceKind::GuardOfStores, Reference(), numberOfGuardedSide(classLayout, ClassSide::Prototype), key.bits()); }
+    void noteGuardOfReadsHolds(LayoutID classLayout, PropertyKeyID key, Reference test, ClassSide side = ClassSide::Prototype)
     {
-        if (writesInPlace() || !noteChangesNothing(valueOfPlace(PlaceKind::GuardOfReads, Reference(), classLayout.index(), key.bits()), test)) {
-            heldToWrite().noteGuardOfReadsHolds(classLayout, key, test);
+        if (writesInPlace() || !noteChangesNothing(valueOfPlace(PlaceKind::GuardOfReads, Reference(), numberOfGuardedSide(classLayout, side), key.bits()), test)) {
+            heldToWrite().noteGuardOfReadsHolds(classLayout, key, test, side);
             m_marks.kinds |= Kinds::places;
         }
     }
-    bool guardOfReadsHolds(LayoutID classLayout, PropertyKeyID key) const { return !!valueOfPlace(PlaceKind::GuardOfReads, Reference(), classLayout.index(), key.bits()); }
+    bool guardOfReadsHolds(LayoutID classLayout, PropertyKeyID key, ClassSide side = ClassSide::Prototype) const { return !!valueOfPlace(PlaceKind::GuardOfReads, Reference(), numberOfGuardedSide(classLayout, side), key.bits()); }
 
     void noteSlot(Reference object, FieldReference field, Reference value)
     {
@@ -390,6 +407,7 @@ public:
     Reference variable(VariableID variable) const { return valueOfPlace(PlaceKind::Variable, Reference(), variable.index(), 0); }
     Reference environmentField(Reference environment, FieldReference field) const { return valueOfPlace(PlaceKind::EnvironmentField, environment, field.layout.index(), field.field); }
     Reference element(Reference object, Reference index) const { return valueOfPlace(PlaceKind::Element, object, index.bits(), 0); }
+    bool mayHoldPlaceOf(Reference base) const { return mayHold(Kinds::places) && m_held->m_numberOfPlaces && m_held->mayHaveRecordOf(base); }
 
     void invalidateAliasedSlots(Reference object, FieldReference field, NOESCAPE const ScopedLambda<bool(Reference other)>& mayBeSameObject)
     {
@@ -549,7 +567,7 @@ private:
         void noteOrderWord(Reference object, std::optional<uint32_t>);
         std::optional<uint32_t> orderWordOf(Reference object) const;
         void noteStoresPassAbove(LayoutID classLayout, PropertyKeyID, Reference test);
-        void noteGuardOfReadsHolds(LayoutID classLayout, PropertyKeyID, Reference test);
+        void noteGuardOfReadsHolds(LayoutID classLayout, PropertyKeyID, Reference test, ClassSide);
         void noteSlot(const ProgramOfState&, Reference object, FieldReference, Reference value);
         void noteVariable(const ProgramOfState&, VariableID, Reference value);
         void noteEnvironmentField(const ProgramOfState&, Reference environment, FieldReference, Reference value);

@@ -2258,15 +2258,6 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
         scope.release();
         LEAVE_FOR_COMPILED_JOB(AOT::runAsyncFunctionResumeJob(globalObject, vm, task, payload, argument0, argument1, argument2, argument3, microtaskCallCache));
     }
-
-    case InternalMicrotask::CompiledAsyncFunctionResumeAfterTurn: {
-#if USE(BUN_JSC_ADDITIONS)
-        globalObject->queueMicrotask(vm, InternalMicrotask::CompiledAsyncFunctionResume, payload, argument0, argument1, argument2, argument3);
-#else
-        globalObject->queueMicrotask(vm, InternalMicrotask::CompiledAsyncFunctionResume, payload, argument0, argument1, argument2);
-#endif
-        return;
-    }
 #endif
 
     case InternalMicrotask::AsyncFromSyncIteratorContinue:

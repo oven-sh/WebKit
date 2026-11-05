@@ -105,7 +105,6 @@ enum class FieldFact : uint8_t {
 
 struct FieldFacts {
     LocationFacts location;
-    Occupancy occupancy { Occupancy::Unknown };
     OptionSet<FieldStability> stability;
     OptionSet<FieldForm> formOfValue;
     OptionSet<FieldFact> facts;

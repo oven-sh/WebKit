@@ -255,7 +255,7 @@ void ThrowEmitter::requireOrThrow(const OperationContext& context, Condition mus
     }
     operand = withoutUndefinedConstant(operand);
     bool operandNeedsConversion = operand && !canBeNamedByThrowWordsOf(operand->representation);
-    if (operandNeedsConversion || ExceptionEmitter::unwindsWithinFunction(context)) {
+    if (operandNeedsConversion || (!site.sourceOfFalseProof && ExceptionEmitter::unwindsWithinFunction(context))) {
         LBasicBlock fails = newBlock();
         LBasicBlock continuation = newBlock();
         ScopeFork fork = m_out.forkScope();
@@ -296,27 +296,44 @@ void ThrowEmitter::throwError(const OperationContext& context, ErrorKind kind, S
     throwAt(context, throwSiteWithName(m_mentions, ThrowKind::ErrorWithMessage, message), std::nullopt, NewError { kind, throwPosition });
 }
 
-void ThrowEmitter::requireOrStopAtFalseProof(const OperationContext& context, Condition holds, std::optional<Boxed> found, ProofSource source)
+static ThrowSite siteOfFalseProof(ProofSource source)
 {
     static_assert(numberOfEnumerators<ProofSource> <= ThrowSiteWord::maxNarrowA);
-    Origin origin = context.origin();
+    return { .kind = ThrowKind::ErrorWithMessage, .a = ThrowSiteWord::none, .b = std::nullopt, .sourceOfFalseProof = source };
+}
+
+void ThrowEmitter::requireOrStopAtFalseProof(const OperationContext& context, Condition holds, std::optional<Boxed> found, ProofSource source)
+{
     LBasicBlock stops = newBlock();
     LBasicBlock continuation = newBlock();
     ScopeFork fork = m_out.forkScope();
     m_out.branch(holds.value(), normalEdge(continuation), rareEdge(stops));
     m_out.appendToArm(stops, fork);
+    stopAtFalseProof(context, found, source);
+    m_out.appendToArm(continuation, fork);
+}
+
+void ThrowEmitter::checkOrStopAtFalseProof(const OperationContext& context, Condition holds, ProofSource source)
+{
+    if (generator().isInitializingCell())
+        requireOrStopAtFalseProof(context, holds, std::nullopt, source);
+    else
+        requireOrThrow(context, holds, siteOfFalseProof(source), std::nullopt);
+}
+
+void ThrowEmitter::stopAtFalseProof(const OperationContext& context, std::optional<Boxed> found, ProofSource source)
+{
     if (!generator().isInitializingCell()) {
-        throwAt(context, { .kind = ThrowKind::ErrorWithMessage, .a = ThrowSiteWord::none, .b = std::nullopt, .sourceOfFalseProof = source }, found ? std::optional<Operand>(*found) : std::nullopt);
+        throwAt(context, siteOfFalseProof(source), found ? std::optional<Operand>(*found) : std::nullopt);
         m_out.unreachable();
-        m_out.appendToArm(continuation, fork);
         return;
     }
+    Origin origin = context.origin();
     FunctionID writtenIn = generator().code().inlineFrames()[origin.inlineFrame].callee;
     m_out.suspendDeclaredAccesses();
     callVoidOperation(context, RuntimeOperation::StopAtFalseProof, { found ? *found : Boxed(m_out.constInt64(JSValue::encode(JSValue()))), word32(static_cast<int32_t>(writtenIn.index())), word32(static_cast<int32_t>(origin.position)), word32(static_cast<int32_t>(source)) });
     m_out.resumeDeclaredAccesses();
     m_out.unreachable();
-    m_out.appendToArm(continuation, fork);
 }
 
 void ThrowEmitter::requireNotNullish(const OperationContext& context, Operand operand, const Type& type, NullishAccess access, StringID name)

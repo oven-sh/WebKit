@@ -46,7 +46,7 @@ type CallRelativeSpec = SpecOf<
   | "Prototype"
 >;
 
-const functionClassName: ClassName = "Function";
+export const functionClassName: ClassName = "Function";
 export const arrayClassName: ClassName = "Array";
 export const objectClassName: ClassName = "Object";
 

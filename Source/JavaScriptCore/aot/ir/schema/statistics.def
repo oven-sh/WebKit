@@ -1,55 +1,81 @@
-enum StatisticID {
+enum StatisticStage { None Load Lower Link Read Scan Solve Passes Plan Compile Walk Emit Image Padding CountedByNothing }
+enum StatisticID (stage: StatisticStage) {
+    [None]
     None
+    [Load]
     SourceFilesChecked SourceFilesInferred SourceFilesTypesOnly SourceFilesData SourceFilesRuntime SourceFilesDemoted SourceBytes SourceLines
     SourceBytesOfPackages SourceLinesOfPackages SourceBytesOfDeclarations SourceLinesOfDeclarations SourceBytesOfBun SourceLinesOfBun
-    FunctionsLowered ValuesLowered ProgramBytes
+    [Lower]
+    FunctionsLowered ValuesLowered
     KnownHelperFunctions KnownHelperCalls
+    [Link]
+    ProgramBytes
     ModulesWithNames ModulesWithValue Faces
-    FlowAppendedFields FieldsHeldToWhatIsSeen
+    [Read]
+    TypesInterned
+    FunctionsRead ValuesRead
+    [Scan]
+    ValuesScanned
+    [Solve]
+    FlowAppendedFields
+    FactNodes FactEdges FactsCarriedOverEdges FactRounds FactRuleCalls
+    [Passes]
+    FieldsHeldToWhatIsSeen
+    [Plan]
     ModulesWithoutState RequireSitesBound RequiresRecorded AsyncWorkersMade FieldsOutOfLine NumbersOrUndefinedReturnedRaw
+    [Compile]
+    UnitsCompiled UnitsWrittenStraight
+    FunctionsWithAllIndirectCallersListed GenericEntriesOpenedByIndirectCalls GenericEntriesOpenedBesideCompiledTarget ClosedGenericEntries
+    IndirectCallsThatMayEnterAnyClosure
+    [Walk]
     URLsLeftUnbuilt IteratorsSteppedWithoutCall SerializersCreated OwnKeyWalksExpanded
     FieldsAskedWhereMakersEnd MakersWithoutFieldsHeldFilled ReadsOfOtherFilesVariablesHeld
     LibraryFunctionsEnteredBehindRows SortsThatCallNoComparator NewListsInPlaceOfSpecies
     AccessesProven AccessesGuarded AccessesUnknown ValuesInDouble
-    NativeFunctionsCalledDirectly NativeFunctionTestsEmitted ExactIntegersBehindNumbers StepsThatKnowTheDeletedPrefix LoopsRotated
-    InnerPointersAcrossSafepoints NullChecksFoldedIntoAccesses
-    InlineFramesEmitted FrameMapBytesEmitted RegExpCandidatesCompiled
-    EnvironmentsPromotedToVariables UnreadVariableStoresRemoved LiteralArgumentsTakenApart GetsAnsweredByHas SlotStoreRunGroups KeyPartsLookupGroups
-    StoresLeftInLoopsForOthers ElementPresenceTestsPlaced ArrayChainsFused ArrayCapacitiesPlanned AllocationsSunk SwitchesTestedByWindow
-    InitializersDeferred ClosuresDeferredInVariables ClassesDeferredInVariables FlowListsNeverToldApart RestartsInGenericVersion
-    TagLookupsWithOtherKeys ObjectKeysSearchedInLine BirthsFinished
-    TypesInterned
-    FunctionsRead ValuesRead
-    ValuesScanned FactNodes FactEdges FactsCarriedOverEdges FactRounds FactRuleCalls
-    UnitsCompiled UnitsWrittenStraight ValuesWalked ValuesWalkedAndKept LoopsWalkedAgain CallsInlined OperationsBuilt OperationsSwept OperationsEmitted
-    MachineOperationsAppended MachineOperationsScanned MachineOperationsAllocated MachineOperationsEncoded ValuesSpilled
-    FormsThatDifferFromSchema FormsPickedByPlaceOtherThanLoop
-    DirectCalls IndirectCalls TestsThatRejoin LoopsBuiltTwice TurnsThatBeginAgain
+    LiteralArgumentsTakenApart
+    ValuesWalked ValuesWalkedAndKept LoopsWalkedAgain CallsInlined OperationsBuilt OperationsSwept
+    DirectCalls IndirectCalls TestsThatRejoin LoopsBuiltTwice TurnsThatBeginAgain EmptySlotsTakenAsCases
     AssignmentsWrittenOutFieldByField JoinsWalkedOnceForEachWay
     ProofsCheckedOfEntryParameters ProofsCheckedOfResultsOfCalls ProofsCheckedOfFields ProofsCheckedOfVariables ProofsCheckedOfCaptures ProofsCheckedOfSlotsOfScopes ProofsCheckedOfContents ProofsCheckedOfCallees ProofsCheckedOfOtherOperations ProofsCheckedOfTests ProofsCheckedOfWhatIsRemembered ProofsCheckedOfLifetimes
     ProofsThatNoTestTells ProofsThatFormTells DoorsThatCanNeverPass
     # What is fresh where a unit returns and gets no EndLifeOfCell: Walker::endLivesOfCellsThatHaveNotLeft().
     FreshCellsLeftAloneAtReturns
+    AllocateInFramesChanges ClosuresInFrames KnownInductionsUsed
+    SlicesMadeOfElementsInSight
+    MethodCallsToldApartByShape
+    [Emit]
+    NativeFunctionsCalledDirectly NativeFunctionTestsEmitted ExactIntegersBehindNumbers StepsThatKnowTheDeletedPrefix LoopsRotated
+    InnerPointersAcrossSafepoints NullChecksFoldedIntoAccesses
+    OperationsEmitted
+    MachineOperationsAppended MachineOperationsScanned MachineOperationsAllocated MachineOperationsEncoded ValuesSpilled
+    FormsThatDifferFromSchema FormsPickedByPlaceOtherThanLoop
     CallsHeldToRunNoOtherCode CallsHeldToThrowNothing CallsHeldNotToCollect OperandsHashedRoundCalls
-    FunctionsWithAllIndirectCallersListed GenericEntriesOpenedByIndirectCalls GenericEntriesOpenedBesideCompiledTarget ClosedGenericEntries
-    IndirectCallsThatMayEnterAnyClosure
     OffsetsFoundByComparisons OffsetsFoundInFlatTables OffsetsFoundInHashedTables OffsetsFoundInPagedTables BytesOfFlatOffsetTables BytesOfHashedOffsetTables BytesOfPagedOffsetTables
+    RangeChecksRemoved
+    VectorsOfViewsRead
+    AccessesInsideViews
+    [Image]
+    InlineFramesEmitted FrameMapBytesEmitted RegExpCandidatesCompiled
     ThingsMentioned ThingsNumbered IdentifiersNumbered StringConstantsNumbered NamesWithoutColumn MethodTableSelectors MethodTableBytes
     ClassGuardCounts GuardsOfClassGuardCounts
     ImageFunctionsEmitted CodeBytesEmitted StubBytes ConstantBytesEmitted TableBytesEmitted TextBytesEmitted Veneers StubCopiesEmitted
     RegExpsCompiled RegExpsInterpreted
     WasmFunctionsCompiled WasmFunctionsWithTwoCopies WasmCodeBytesEmitted WasmCodeBytesOfSecondCopies
-    FunctionBytesEmitted FarInstanceWordBytesEmitted VeneerBytesEmitted SharedCodeBytesEmitted ArgumentThunkBytes PaddingBytesBetweenFunctions
+    FunctionBytesEmitted FarInstanceWordBytesEmitted VeneerBytesEmitted SharedCodeBytesEmitted ArgumentThunkBytes
     FinalJumpBytesRemoved
-    FFICodeBytesEmitted FFIDirectoryBytesEmitted RegExpCodeBytesEmitted RegExp16BitCodeBytes RegExpTableBytesEmitted PaddingBytesBetweenCodeParts
+    FFICodeBytesEmitted FFIDirectoryBytesEmitted RegExpCodeBytesEmitted RegExp16BitCodeBytes RegExpTableBytesEmitted
     ConstantBytesOfSharedConstants ConstantBytesOfShapeSets ConstantBytesOfBitSetsOverKnownShapes ConstantBytesOfOffsetTables ConstantBytesOfCellTemplates ConstantBytesOfNumbers
     UnlabeledConstantBytes ConstantBytesOfJumpTables PaddingBytesBetweenConstants
     ParsersCreated
-    AllocateInFramesChanges ClosuresInFrames RangeChecksRemoved KnownInductionsUsed
     TypedResultsSelected
-    SlicesMadeOfElementsInSight
-    VectorsOfViewsRead
-    AccessesInsideViews
+    [Padding]
+    PaddingBytesBetweenFunctions
+    PaddingBytesBetweenCodeParts
+    [CountedByNothing]
+    EnvironmentsPromotedToVariables UnreadVariableStoresRemoved GetsAnsweredByHas SlotStoreRunGroups KeyPartsLookupGroups
+    StoresLeftInLoopsForOthers ElementPresenceTestsPlaced ArrayChainsFused ArrayCapacitiesPlanned AllocationsSunk SwitchesTestedByWindow
+    InitializersDeferred ClosuresDeferredInVariables ClassesDeferredInVariables FlowListsNeverToldApart RestartsInGenericVersion
+    TagLookupsWithOtherKeys ObjectKeysSearchedInLine BirthsFinished
 }
 extend StatisticID with Stage suffix Nanoseconds as time
 

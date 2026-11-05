@@ -227,7 +227,8 @@ public:
         Members members { };
         std::ranges::copy(sortedMembers, members.begin());
         std::pair<uint64_t, uint64_t> words { static_cast<uint64_t>(members[0].bits()) << 32 | members[1].bits(), static_cast<uint64_t>(members[2].bits()) << 32 | members[3].bits() };
-        while (m_isLocked.load(std::memory_order_relaxed) || m_isLocked.exchange(true, std::memory_order_acquire)) { }
+        while (m_isLocked.load(std::memory_order_relaxed) || m_isLocked.exchange(true, std::memory_order_acquire))
+            simde_mm_pause();
         uint32_t next = m_size.load(std::memory_order_relaxed);
         auto added = m_numbers.add(words, next);
         if (added.isNewEntry) {
@@ -626,6 +627,8 @@ public:
     bool enterLibraryInReach();
     BuiltinsInReach& builtinsInReach();
     bool takeForConstant(BuiltinID member);
+    const BuiltinCondition* lightFormOf(BuiltinID canonical) const;
+    bool isAskedForOtherNames(BuiltinID canonical) const;
     bool isWorthFollowingToWrites(BuiltinID canonical) const;
 
     void assertHasWhatIsSharedToItself() const { RELEASE_ASSERT((!m_severalThreadsTell && !s_laneAtWork) || s_depthOfLockOfWhatIsShared); }
@@ -885,8 +888,11 @@ public:
     void noteConstructionsOf(FunctionID);
     FlowNodeID foundWhereFieldIsEmpty(FieldReference);
     bool mayReadInFrontOfDefinition(FunctionID reader, const SummaryAccess&, LayoutID) const;
-    bool storesIntoWhatSuperCallAnswers(FunctionID) const;
+    bool superCallMayAnswerWithOlderObject(LayoutID id) const { return m_layoutsWhoseSuperCallMayAnswerWithOlderObject.get(id.index()); }
+    bool mayStoreIntoOlderObjectThatSuperCallAnswered(FunctionID writer, const SummaryAccess&) const;
+    void forEachNodeAnsweredBesideObjectOfConstruction(FunctionID constructor, NOESCAPE const ScopedLambda<void(uint32_t nodeInSummary)>&) const;
     bool isPartOfConstructionOf(LayoutID, FunctionID writer, const SummaryAccess&) const;
+    bool isPartOfConstructionOfAllOf(FamilyID, FunctionID writer, const SummaryAccess&) const;
 
 private:
     struct Edge {
@@ -1282,6 +1288,17 @@ private:
     Vector<KeysThatRowOfConstructorsFills> m_keysThatRowsOfConstructorsFill;
     Vector<Vector<PropertyKeyID>> m_listsOfKeysThatRowsOfConstructorsFill;
     void findWhatRowsOfConstructorsFill();
+    void findSuperCallsThatMayAnswerWithOlderObject();
+    bool answersOnlyWithObjectOfItsConstruction(FunctionID constructor) const;
+    void numberTreeOfBases();
+    struct StretchInTreeOfBases {
+        bool holds(const StretchInTreeOfBases& other) const { return first <= other.first && other.end <= end; }
+        uint32_t first { UINT32_MAX };
+        uint32_t end { 0 };
+    };
+    BitVector m_layoutsWhoseSuperCallMayAnswerWithOlderObject;
+    Vector<StretchInTreeOfBases> m_stretchesAtAndBelowLayouts;
+    Vector<StretchInTreeOfBases> m_stretchesOfFamilies;
 
     mutable BitVector m_layoutsToldLost;
     mutable BitVector m_familiesToldLost;

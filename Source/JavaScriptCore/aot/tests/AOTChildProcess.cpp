@@ -551,6 +551,13 @@ void installTrapReporter()
 
 String ChildProcessResult::description() const
 {
+    if (!hasCrashedOrHung())
+        return descriptionOfOutcome();
+    return makeString(descriptionOfOutcome(), " (started as: "_s, commandLine, ')');
+}
+
+String ChildProcessResult::descriptionOfOutcome() const
+{
     switch (outcome) {
     case ChildProcessOutcome::Exited:
         return makeString("exited with "_s, code);
@@ -582,12 +589,10 @@ ChildProcessResult ChildProcessLauncher::run(std::span<const String> arguments) 
     for (const String& argument : m_sharedArguments)
         commandLine.append(argument);
     ChildProcessResult result = runProcess(commandLine);
-    if (result.outcome == ChildProcessOutcome::Crashed || result.outcome == ChildProcessOutcome::Hung) {
-        dataLog("The process that ", result.description(), " was started as:");
-        for (StringView word : commandLine)
-            dataLog(" ", word);
-        dataLogLn();
-    }
+    StringBuilder words;
+    for (StringView word : commandLine)
+        words.append(words.isEmpty() ? ""_s : " "_s, word);
+    result.commandLine = words.toString();
     if (printsLineAfterEachChildProcess)
         dataLogLn(lineAfterChildProcess);
     return result;

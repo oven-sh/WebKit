@@ -418,8 +418,10 @@ private:
             return false;
         if (m_flow.hasEscaped(type.site))
             return false;
-        FlowNodeID underUnknownNames = m_flow.findContentsOf(type, SlotOfContents::underUnknownNames());
-        return !underUnknownNames || (underUnknownNames != m_flow.unseen() && m_flow.typeAt(underUnknownNames).isNothing());
+        return std::ranges::all_of(std::array { SlotOfContents::underUnknownNames(), SlotOfContents::noLongerAsMade() }, [&](SlotOfContents slot) {
+            FlowNodeID held = m_flow.findContentsOf(type, slot);
+            return !held || (held != m_flow.unseen() && m_flow.typeAt(held).isNothing());
+        });
     }
     TypeID typeIDOf(const LinkType&);
     TypeID typeIDOfCapture(FunctionID, uint32_t capture);
@@ -1156,7 +1158,7 @@ TypeID WriterOfLink::typeIDOf(const LinkType& type)
     seen.holdsUnseen = false;
     seen.holdsLostBuiltins = false;
     seen.builtin = { };
-    if (seen.functions != LinkType::Functions::None && seen.functions != LinkType::Functions::Closure) {
+    if (seen.functions != LinkType::Functions::None && seen.functions != LinkType::Functions::Closure && seen.functions != LinkType::Functions::Set) {
         seen.functions = LinkType::Functions::Lost;
         seen.function = { };
     }
@@ -1465,6 +1467,8 @@ void WriterOfLink::indexFunctionsThatAreHeld()
         for (FunctionID laid : { name.function, name.expected, name.expectedGetter, name.expectedSetter })
             holders.note(name.key, name.layout, laid);
     }
+    for (const LinkedNameOnFunction& name : m_tables.namesOnFunctions)
+        holders.note(name.key, classOfConstructorFunction(m_program, name.holder), name.expected);
     forEachIndexOnAllThreads(m_program.layouts.size(), [&](uint32_t index, Holders& holders) {
         const Layout& layout = m_program.layouts[index];
         for (uint32_t field = 0; field < layout.fields.size(); ++field) {

@@ -50,7 +50,6 @@ const objectColumns = [
   "runsUnseenCode",
   "loads",
   "callsFunctions",
-  "appendForm",
   "literalPartsForm",
   "boxedCallStub",
 ] as const satisfies readonly (keyof EntryColumns)[];
@@ -181,6 +180,9 @@ export const conditionOnNoOperand: ModelCondition = {
   objectNobodyKnowsIsWritten: false,
   testsReplaceBuiltins: false,
   programStores: null,
+  isAskedForOtherNames: null,
+  valuesServed: [],
+  methodsServed: [],
 };
 
 function resolveConditionOnOverload(
@@ -214,7 +216,7 @@ export function resolveCondition(
     );
     return null;
   }
-  if ("testsReplaceBuiltins" in condition || "programStores" in condition) {
+  if ("testsReplaceBuiltins" in condition || "programStores" in condition || "isAskedForOtherNames" in condition) {
     builder.problems.add(
       source,
       `${builtin.text}: only loads and callsFunctions can depend on what the program replaces`,
@@ -249,6 +251,16 @@ function resolveDependencyCondition(
   if ("programStores" in condition) {
     const programStores = resolveObject(builder, condition.programStores, source);
     return programStores === null ? null : { ...conditionOnNoOperand, programStores };
+  }
+  if ("isAskedForOtherNames" in condition) {
+    const isAskedForOtherNames = resolveObject(builder, condition.isAskedForOtherNames, source);
+    if (isAskedForOtherNames === null) return null;
+    return {
+      ...conditionOnNoOperand,
+      isAskedForOtherNames,
+      valuesServed: internTexts(builder, condition.valuesServed),
+      methodsServed: internTexts(builder, condition.methodsServed),
+    };
   }
   return resolveCondition(builder, builtin, condition, source);
 }
@@ -617,6 +629,9 @@ const describeCondition = ({
   calledOn,
   hasProperty,
   programStores,
+  isAskedForOtherNames,
+  valuesServed,
+  methodsServed,
   ...flags
 }: ModelCondition): string =>
   JSON.stringify([
@@ -626,6 +641,9 @@ const describeCondition = ({
     calledOn === null ? null : calledOn.token,
     hasProperty === null ? null : [hasProperty.kind, hasProperty.text],
     programStores === null ? null : programStores.token,
+    isAskedForOtherNames === null ? null : isAskedForOtherNames.token,
+    valuesServed.map(name => name.text),
+    methodsServed.map(name => name.text),
     flags,
   ]);
 
@@ -752,7 +770,6 @@ function findNativeFunction(
 function buildEntryAttachments(context: AttachmentContext, builtin: ModelBuiltin): ModelAttachments {
   const { builder } = context;
   const nativeSymbols = writtenColumn(builder, builtin, "nativeSymbols").flatMap(({ value }) => value);
-  const [appendForm] = writtenColumn(builder, builtin, "appendForm");
   const [boxedCallStub] = writtenColumn(builder, builtin, "boxedCallStub");
   const [creationSymbol] = writtenColumn(builder, builtin, "creationSymbol");
   const [linkTimeConstant] = writtenColumn(builder, builtin, "linkTimeConstant");
@@ -761,7 +778,6 @@ function buildEntryAttachments(context: AttachmentContext, builtin: ModelBuiltin
     unseenCodeCondition: null,
     moduleLoads: buildModuleLoads(context, builtin),
     calledFunctions: buildCalledFunctions(context, builtin),
-    appendForm: appendForm?.value ?? null,
     literalPartsForm: buildLiteralPartsForm(context, builtin),
     boxedCallStub: boxedCallStub?.value ?? null,
     nativeFunction: findNativeFunction(builder, builtin, nativeSymbols),

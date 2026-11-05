@@ -10,6 +10,7 @@
 #include "AOTOperationEmitter.h"
 #include "AOTPagedBitSet.h"
 #include "AOTShapeTest.h"
+#include <array>
 #include <optional>
 #include <span>
 #include <wtf/HashMap.h>
@@ -23,6 +24,17 @@ enum class MarkedObjects : uint8_t {
     MayBeRefused,
     AreRefused,
     AreAskedAgain,
+};
+
+struct ShapeTestsKeptAcrossUnits {
+    static constexpr unsigned numberOfBits = 10;
+    struct Entry {
+        uint64_t testedAndKnown { UINT64_MAX };
+        ShapeTest test;
+    };
+
+    const ShapeTable* table { nullptr };
+    std::array<Entry, 1 << numberOfBits> entries;
 };
 
 class ShapeTestEmitter final : public OperationEmitter {
@@ -72,15 +84,19 @@ private:
         uint64_t headOfHashedSet;
     };
     BitSetConstant bitSetConstant(LayoutSetID tested);
+    ShapeTestsKeptAcrossUnits::Entry& entryKeptAcrossUnits(uint64_t testedAndKnown);
 
     LayoutSetID m_setWhoseShapesAreKept;
     bool m_keptSetHoldsCompiledObjectsAlone { true };
+    bool m_shapesOfKeptSetAreListed { false };
     bool m_lastTestRefusesMarkedObjects { false };
     bool m_wordIsAskedForMark { true };
     UncheckedKeyHashMap<LayoutSetID, bool> m_setsThatMayBearMark;
     ShapeTable::ShapeList m_shapesKept;
     UncheckedKeyHashMap<LayoutSetID, BitSetConstant> m_bitSetConstants;
     UncheckedKeyHashMap<uint64_t, uint32_t, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_bitSetsThatHoldEveryKnownShape;
+    UncheckedKeyHashMap<uint64_t, ShapeTest, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_testsAmongKnownShapes;
+    ShapeTestsKeptAcrossUnits* m_testsKeptAcrossUnits { nullptr };
     mutable LayoutSetID m_setTestedLast;
     mutable ShapeTest m_testOfSetTestedLast;
 };

@@ -180,14 +180,14 @@ private:
     Operation* findNumberedLoad(const NumberingKey&, uint32_t hash);
     Operation* noteIfInherited(const Numbering::Found&);
     void noteInheritedFind(const Operation*);
-    Operation* duplicateIfFusable(Operation* operand)
+    ALWAYS_INLINE Operation* duplicateIfFusable(Operation* operand)
     {
         if (!wasFoundInInheritedScope(operand)) [[likely]]
             return operand;
         return duplicateInheritedFindIfFusable(operand);
     }
     Operation* duplicateInheritedFindIfFusable(Operation*);
-    bool wasFoundInInheritedScope(const Operation* operation) const
+    ALWAYS_INLINE bool wasFoundInInheritedScope(const Operation* operation) const
     {
         if (!m_hasInheritedFindsInEpoch) [[likely]]
             return false;
@@ -244,7 +244,11 @@ private:
     }
     void checkDeclaredAccess(const AbstractHeap&, bool isStore);
 
+    static constexpr uint32_t numberOfSmallConstantsKept = 16;
+
     Numbering m_numbering;
+    std::array<Operation*, numberOfSmallConstantsKept> m_smallConstants32 { };
+    std::array<Operation*, numberOfSmallConstantsKept> m_smallConstants64 { };
     ArenaVector<uint32_t> m_epochOfLastInheritedFind;
     uint32_t m_scopeEpoch { 0 };
     bool m_hasInheritedFindsInEpoch { false };

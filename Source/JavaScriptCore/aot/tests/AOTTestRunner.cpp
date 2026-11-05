@@ -174,7 +174,7 @@ struct WordsOfRun {
     Mechanisms mechanisms;
 };
 
-static String runCommand(const TestCommand& command, const TestFile& file, const WordsOfRun& words, BuildContext& build, const Wire::CompileOptions& options)
+static String runCommand(const TestCommand& command, const TestFile& file, const WordsOfRun& words, BuildContext& build, const Wire::CompileOptions& options, Vector<String>* notesForFailure = nullptr)
 {
     String programText = programTextFor(command, file);
     std::unique_ptr<Program> program;
@@ -196,6 +196,8 @@ static String runCommand(const TestCommand& command, const TestFile& file, const
     context.mechanisms = words.mechanisms;
     command.run(context);
     build.diagnostics().finish(context.program.get());
+    if (notesForFailure)
+        *notesForFailure = WTF::move(context.notesForFailure);
     return out.toStringWithLatin1Fallback();
 }
 
@@ -234,7 +236,8 @@ static bool runOneDirective(const TestFile& file, const RunDirective& run, const
 
     runOnBuildThread([&] {
         BuildContext build(options);
-        String output = runCommand(*command, file, words, build, options);
+        Vector<String> notesForFailure;
+        String output = runCommand(*command, file, words, build, options, &notesForFailure);
         if (variant.onlyDiagnostic) {
             reportDiagnostic(*variant.onlyDiagnostic, run, build.diagnostics(), failures);
             if (outputs)
@@ -242,10 +245,15 @@ static bool runOneDirective(const TestFile& file, const RunDirective& run, const
             return;
         }
 
+        size_t numberOfEarlierFailures = failures.size();
         compareDiagnostics(file, run, build.diagnostics(), failures);
         compareStatistics(file, run, build.statistics(), failures);
         if (std::optional<CheckFailure> failure = matchCheckLines(file.checkLinesFor(run.prefix), output))
             appendFailure(failures, run, failure->line, failure->message);
+        if (failures.size() > numberOfEarlierFailures) {
+            for (const String& note : notesForFailure)
+                appendFailure(failures, run, run.line, note);
+        }
         if (outputs)
             outputs->append(RunOutput { run.line, WTF::move(output) });
     });
@@ -516,6 +524,8 @@ static constexpr unsigned filesPerChildProcess = 16;
 
 static BatchResult runFilesInChildProcesses(const ChildProcessLauncher& launcher, std::span<const String> paths, const TestRunRequest& request)
 {
+    BatchResult batch;
+    StringBuilder report;
     if (paths.size() > 1) {
         ChildProcessResult result = launcher.run(childArguments(paths, request).span());
         if (result.exitedWith(exitCodeForSuccess) || result.exitedWith(exitCodeForFailure)) {
@@ -525,10 +535,10 @@ static BatchResult runFilesInChildProcesses(const ChildProcessLauncher& launcher
             if (summary && summary->passed + summary->failed + summary->todo == paths.size())
                 return { *summary, output.left(summaryStart).toString() };
         }
+        if (result.hasCrashedOrHung())
+            report.append("The process of "_s, paths.size(), " files "_s, result.description(), '\n');
     }
 
-    BatchResult batch;
-    StringBuilder report;
     for (const String& path : paths) {
         FileResult result = runOneFileInChildProcess(launcher, path, request);
         count(batch.summary, result.outcome);

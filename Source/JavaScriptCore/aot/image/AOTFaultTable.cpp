@@ -133,10 +133,11 @@ struct CollectedSite {
     bool isFrameless;
     bool isLoopPoll;
     uint8_t numberOfWords;
+    uint8_t unused;
     std::array<uint32_t, FaultSite::maxThrowSiteWords> words;
 };
 
-void addFaultSites(Vector<CollectedSite>& sites, const CompiledCode& code, uint32_t bodyStart)
+void writeFaultSites(std::span<CollectedSite> sites, const CompiledCode& code, uint32_t bodyStart)
 {
     RELEASE_ASSERT(code.frame.hasFrame() || !code.frame.calleeSaveRegisters.registerCount());
     std::span frameRanges = code.frame.frameRanges.span();
@@ -148,8 +149,9 @@ void addFaultSites(Vector<CollectedSite>& sites, const CompiledCode& code, uint3
     auto add = [&](uint32_t offsetInBody, bool isFrameless, bool isLoopPoll, std::span<const uint32_t> words) {
         uint64_t offset = static_cast<uint64_t>(bodyStart) + offsetInBody;
         RELEASE_ASSERT(offset <= std::numeric_limits<uint32_t>::max() && words.size() <= FaultSite::maxThrowSiteWords);
-        sites.append(CollectedSite { static_cast<uint32_t>(offset), isFrameless, isLoopPoll, static_cast<uint8_t>(words.size()), { } });
-        std::ranges::copy(words, sites.last().words.begin());
+        sites.front() = CollectedSite { static_cast<uint32_t>(offset), isFrameless, isLoopPoll, static_cast<uint8_t>(words.size()), 0, { } };
+        std::ranges::copy(words, sites.front().words.begin());
+        sites = sites.subspan(1);
     };
     std::span accesses = code.sites.faultingAccesses.span();
     std::span polls = code.sites.pollSites.span();
@@ -166,11 +168,12 @@ void addFaultSites(Vector<CollectedSite>& sites, const CompiledCode& code, uint3
         add(poll.offset, poll.callerIsFrameless, true, { });
         polls = polls.subspan(1);
     }
+    RELEASE_ASSERT(sites.empty());
 }
 
-uint32_t findMostFrequentWord(Vector<uint32_t>&& words)
+uint32_t findMostFrequentWord(const ParallelLoops& loops, Vector<uint32_t>&& words)
 {
-    radixSortKeepingEqualKeysInOrder<32>(words, [](uint32_t word) {
+    sortByWordOnPoolKeepingEqualElementsInOrder(loops, words.mutableSpan(), [](uint32_t word) {
         return word;
     });
     uint32_t mostFrequentWord = 0;
@@ -243,7 +246,7 @@ Vector<uint8_t> encodeFaultTable(std::span<const CollectedSite> sites, const Par
             ++nullCheck;
         }
     });
-    radixSortKeepingEqualKeysInOrder<32>(firstWordsWithNullChecks, [](uint64_t wordWithNullCheck) {
+    sortByWordOnPoolKeepingEqualElementsInOrder(loops, firstWordsWithNullChecks.mutableSpan(), [](uint64_t wordWithNullCheck) {
         return wordWithNullCheck >> 32;
     });
     Vector<uint32_t> firstWords;
@@ -258,7 +261,7 @@ Vector<uint8_t> encodeFaultTable(std::span<const CollectedSite> sites, const Par
             firstWords[i] = firstWords[i + 1];
     }
     removeRepeatedElements(firstWords);
-    uint32_t defaultSecondWord = findMostFrequentWord(collectInParallel<uint32_t>(loops, sites.size(), [&](unsigned site, Vector<uint32_t>& words) {
+    uint32_t defaultSecondWord = findMostFrequentWord(loops, collectInParallel<uint32_t>(loops, sites.size(), [&](unsigned site, Vector<uint32_t>& words) {
         if (sites[site].numberOfWords > 1)
             words.append(sites[site].words[1]);
     }));
@@ -298,8 +301,12 @@ Vector<uint8_t> encodeFaultTable(std::span<const CollectedSite> sites, const Par
     };
     FaultTableLayout layout(header);
 
-    Vector<uint8_t> bytes(FillWith { }, layout.sizeWithSteps(sizeOfSteps), 0);
+    Vector<uint8_t> bytes;
+    bytes.grow(layout.sizeWithSteps(sizeOfSteps));
     std::span<uint8_t> section = bytes.mutableSpan();
+    forEachRangeOfIndicesInParallel(loops, section.size(), [&](size_t first, size_t end) {
+        zeroSpan(section.subspan(first, end - first));
+    });
     memcpySpan(section, asByteSpan(header));
     memcpySpan(section.subspan(sizeof(FaultTableHeader)), asBytes(checkpoints.span()));
     memcpySpan(section.subspan(layout.firstWordsOffset), asBytes(firstWords.span()));
@@ -392,13 +399,30 @@ struct FaultTableView {
 Vector<uint8_t> encodeFaultSites(const LinkedFunctions& functions, std::span<const uint32_t> bodyStarts, BuildContext& context)
 {
     RELEASE_ASSERT(bodyStarts.size() == functions.size());
+    const ParallelLoops& loops = context.parallelLoops();
+    auto numberOfSitesOf = [](const CompiledCode& code) {
+        return code.sites.faultingAccesses.size() + code.sites.pollSites.size();
+    };
+    size_t numberOfRanges = numberOfRangesOfIndices(functions.size());
+    Vector<uint64_t> firstSiteOfRange(FillWith { }, numberOfRanges + 1, 0);
+    Vector<uint64_t> numberOfNullChecksInRange(FillWith { }, numberOfRanges, 0);
+    forEachRangeOfIndicesInParallel(loops, functions.size(), [&](size_t first, size_t end) {
+        uint64_t numberOfSitesInRange = 0;
+        uint64_t numberOfNullChecks = 0;
+        for (size_t position = first; position < end; ++position) {
+            numberOfSitesInRange += numberOfSitesOf(functions[position]);
+            numberOfNullChecks += functions[position].sites.faultingAccesses.size();
+        }
+        size_t range = first / indicesInRangeOfLoop;
+        firstSiteOfRange[range + 1] = numberOfSitesInRange;
+        numberOfNullChecksInRange[range] = numberOfNullChecks;
+    });
     uint64_t numberOfNullChecks = 0;
-    uint64_t numberOfLoopPolls = 0;
-    for (const CompiledCode& code : functions) {
-        numberOfNullChecks += code.sites.faultingAccesses.size();
-        numberOfLoopPolls += code.sites.pollSites.size();
+    for (size_t range = 0; range < numberOfRanges; ++range) {
+        firstSiteOfRange[range + 1] += firstSiteOfRange[range];
+        numberOfNullChecks += numberOfNullChecksInRange[range];
     }
-    uint64_t numberOfSites = numberOfNullChecks + numberOfLoopPolls;
+    uint64_t numberOfSites = firstSiteOfRange.last();
     if (!numberOfSites)
         return { };
 
@@ -406,9 +430,15 @@ Vector<uint8_t> encodeFaultSites(const LinkedFunctions& functions, std::span<con
     if (!checkSectionSize(std::max<uint64_t>(maxSectionSize, numberOfSites * sizeof(CollectedSite)), context))
         return { };
 
-    const ParallelLoops& loops = context.parallelLoops();
-    Vector<CollectedSite> sites = collectInParallel<CollectedSite>(loops, functions.size(), [&](unsigned position, Vector<CollectedSite>& collected) {
-        addFaultSites(collected, functions[position], bodyStarts[position]);
+    Vector<CollectedSite> sites;
+    sites.grow(numberOfSites);
+    forEachRangeOfIndicesInParallel(loops, functions.size(), [&](size_t first, size_t end) {
+        size_t firstSite = firstSiteOfRange[first / indicesInRangeOfLoop];
+        for (size_t position = first; position < end; ++position) {
+            size_t numberOfSitesOfBody = numberOfSitesOf(functions[position]);
+            writeFaultSites(sites.mutableSpan().subspan(firstSite, numberOfSitesOfBody), functions[position], bodyStarts[position]);
+            firstSite += numberOfSitesOfBody;
+        }
     });
     return encodeFaultTable(sites.span(), loops);
 }

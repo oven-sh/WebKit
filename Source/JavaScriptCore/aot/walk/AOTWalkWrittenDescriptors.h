@@ -12,7 +12,13 @@
 namespace JSC { namespace AOT { namespace Typed {
 
 inline constexpr OpcodeSet opcodesThatBuildDefinitionByWrittenDescriptorTakes { Opcode::Call };
-AOT_LINK_OF_WALK(buildDefinitionByWrittenDescriptor, opcodesThatBuildDefinitionByWrittenDescriptorTakes)
+inline constexpr unsigned numberOfArgumentsOfDescriptorCall = 3;
+bool buildDefinitionByWrittenDescriptorOfItsOpcodes(Walker&, const BodyValue&);
+ALWAYS_INLINE bool buildDefinitionByWrittenDescriptor(Walker& walker, const BodyValue& value) { return value.opcode() == Opcode::Call && value.as<Opcode::Call>().argumentsOperands().size() == numberOfArgumentsOfDescriptorCall && buildDefinitionByWrittenDescriptorOfItsOpcodes(walker, value); }
+template<Opcode known> ALWAYS_INLINE bool buildDefinitionByWrittenDescriptor(Walker& walker, const BodyValueOf<known>& value) { return known == Opcode::Call && value.template as<Opcode::Call>().argumentsOperands().size() == numberOfArgumentsOfDescriptorCall && buildDefinitionByWrittenDescriptorOfItsOpcodes(walker, value); }
+
+std::optional<Vector<PropertyOfFreshObject, 8>> propertiesOfLiteralWrittenForCall(Walker&, const BodyValue& call, ValueID written, Reference literal);
+bool literalsFindNothingUnder(const Program&, PropertyKeyID);
 
 } } } // namespace JSC::AOT::Typed
 

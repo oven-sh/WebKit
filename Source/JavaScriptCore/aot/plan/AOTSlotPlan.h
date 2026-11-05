@@ -68,6 +68,7 @@ struct PlacedSlot {
     bool hasStorage() const { return storage != SlotStorage::None; }
     bool isOutOfLine() const { return storage == SlotStorage::OutOfLine; }
     bool needsExtension() const { return isOutOfLine(); }
+    bool liesInCellOnTrial() const { return storage == SlotStorage::Inline && mayTakeWordLeftInCell; }
     uint32_t width() const { return widthOf(representation); }
     uint32_t end() const { return offset + width(); }
     SlotData data() const { return SlotData::create(offset, representation); }
@@ -84,6 +85,7 @@ struct PlacedSlot {
     bool everyStoreFits { false };
     bool deferredClosureCapturesObject { false };
     bool deferredClosureCapturesEnvironment { false };
+    bool mayTakeWordLeftInCell { false };
     uint32_t offset { 0 };
     std::optional<uint16_t> indexInLayoutRecord;
     FunctionID deferredFunction;

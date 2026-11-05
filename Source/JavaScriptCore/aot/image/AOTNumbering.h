@@ -41,6 +41,7 @@ class LinkedFunctions;
 class RegExpRequests;
 class StringConstantNumbering;
 struct CodeBody;
+struct NamesAndStringsToNumber;
 
 namespace Typed {
 class Facts;
@@ -427,6 +428,8 @@ public:
     InstanceSizes instanceSizes() const { return m_instanceSizes; }
 
     const BitVector& namedStrings() const { return m_namedStrings; }
+    const BitVector& textsOfNames() const { return m_textsOfNames; }
+    const BitVector& otherStringsWithText() const { return m_otherStringsWithText; }
     std::span<const StringID> stringsInOrderOfText() const { return m_stringsInOrderOfText.span(); }
     const BitVector& stringsOnlyShown() const { return m_stringsOnlyShown; }
     const BitVector& atomsOfStrings() const { return m_atomsOfStrings; }
@@ -489,9 +492,12 @@ private:
     std::unique_ptr<IdentifierNumbering> m_identifiers;
     std::unique_ptr<StringConstantNumbering> m_stringConstants;
     std::unique_ptr<RegExpRequests> m_regExpRequests;
+    std::unique_ptr<NamesAndStringsToNumber> m_namesAndStringsToNumber;
     PlacedStatics m_statics;
     InstanceSizes m_instanceSizes { };
     BitVector m_namedStrings;
+    BitVector m_textsOfNames;
+    BitVector m_otherStringsWithText;
     Vector<StringID> m_stringsInOrderOfText;
     BitVector m_stringsOnlyShown;
     BitVector m_atomsOfStrings;
@@ -645,53 +651,21 @@ struct ImageNumbersBuilder {
 
     void numberFunctions();
     void numberClosureCellsAndClassRanks();
+    void collectNamesAndStringsWithText();
     void numberIdentifiersAndStrings();
     void numberConstants();
     void numberRows();
+    void numberSites();
     void numberTypes();
     void collectRegExpRequests();
     void layOutStatics();
 };
 
-void numberWhatStaticsWaitFor(const NumberingInputs&, GatheredMentions&, const NamesOfTables&, ImageNumbers&, BuildContext&, NOESCAPE const ScopedLambda<void()>& laneBesideNumbering = scopedLambda<void()>([] { }));
+void collectRequestsForRegExps(const NumberingInputs&, GatheredMentions&, const NamesOfTables&, ImageNumbers&, BuildContext&);
+void numberAllButIdentifiersAndStrings(const NumberingInputs&, GatheredMentions&, const NamesOfTables&, ImageNumbers&, BuildContext&);
+void numberIdentifiersAndStrings(const NumberingInputs&, GatheredMentions&, const NamesOfTables&, ImageNumbers&, BuildContext&);
 void layOutStaticsOfMentions(const NumberingInputs&, GatheredMentions&, const NamesOfTables&, ImageNumbers&, BuildContext&);
 void numberMentions(const NumberingInputs&, GatheredMentions&, const NamesOfTables&, ImageNumbers&, BuildContext&);
-
-template<typename T>
-void sortByWordKeepingEqualElementsInOrder(std::span<T> list, const Invocable<uint64_t(const T&)> auto& wordOf)
-{
-    constexpr size_t fewestSortedByBytes = 256;
-    constexpr size_t numberOfBytes = sizeof(uint64_t);
-    if (list.size() < fewestSortedByBytes) {
-        AOT::stableSortInLine(list, { }, wordOf);
-        return;
-    }
-
-    std::array<std::array<uint32_t, 256>, numberOfBytes> places { };
-    for (const T& element : list) {
-        uint64_t word = wordOf(element);
-        for (size_t byte = 0; byte < numberOfBytes; ++byte)
-            ++places[byte][static_cast<uint8_t>(word >> (8 * byte))];
-    }
-
-    Vector<T> scratch;
-    scratch.grow(list.size());
-    std::span<T> from = list;
-    std::span<T> to = scratch.mutableSpan();
-    for (size_t byte = 0; byte < numberOfBytes; ++byte) {
-        std::array<uint32_t, 256>& placesOfByte = places[byte];
-        if (placesOfByte[static_cast<uint8_t>(wordOf(from[0]) >> (8 * byte))] == list.size())
-            continue;
-        uint32_t next = 0;
-        for (uint32_t& place : placesOfByte)
-            next += std::exchange(place, next);
-        for (const T& element : from)
-            to[placesOfByte[static_cast<uint8_t>(wordOf(element) >> (8 * byte))]++] = element;
-        std::swap(from, to);
-    }
-    if (from.data() != list.data())
-        std::ranges::copy(from, list.begin());
-}
 
 } } // namespace JSC::AOT
 

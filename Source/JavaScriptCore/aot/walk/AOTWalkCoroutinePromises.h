@@ -19,7 +19,7 @@ Reference buildTestForNoThen(Walker&, Reference value, Origin);
 
 void noteSuspensionOfCoroutine(Walker&, Draft& suspension);
 bool replaceSuspensionOfCoroutine(Walker&, const BodyValue&);
-Reference buildAwaitOfWhatHasNoThen(Walker&, Reference awaited, std::span<const Reference> held, bool takesExtraTurn, Origin);
+Reference buildAwaitOfWhatHasNoThen(Walker&, Reference awaited, std::span<const Reference> held, Origin);
 void resolvePromiseThatNothingHasTaken(Walker&, Reference promise, Reference value, bool mayTest, Origin);
 bool buildPromiseOperation(Walker&, const BodyValue&);
 Reference valueOfPromiseFulfilledHere(Walker&, Reference promise);

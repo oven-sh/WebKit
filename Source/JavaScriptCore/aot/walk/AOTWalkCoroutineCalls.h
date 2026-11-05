@@ -11,7 +11,8 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-extern const OpcodeSet opcodesThatBuildCoroutineOperationTakes;
+inline constexpr OpcodeSet opcodesThatAskWhatCallsOfCoroutinesKeep = opcodesThatStateTypes | OpcodeSet { Opcode::Await };
+inline constexpr OpcodeSet opcodesThatBuildCoroutineOperationTakes = opcodesThatAskWhatCallsOfCoroutinesKeep | OpcodeSet { Opcode::Call, Opcode::CreatePromise, Opcode::ResolvePromise, Opcode::HasJSType, Opcode::ReadsIteratorOfListUnseen };
 bool buildCoroutineOperationOfItsOpcodes(Walker&, const BodyValue&);
 void forgetAwaitOfCallThatMayBeCopied(Walker&);
 ALWAYS_INLINE bool buildCoroutineOperation(Walker& walker, const BodyValue& value)
@@ -19,6 +20,13 @@ ALWAYS_INLINE bool buildCoroutineOperation(Walker& walker, const BodyValue& valu
     if (walker.coroutineState().keptByCalls) [[unlikely]]
         forgetAwaitOfCallThatMayBeCopied(walker);
     return opcodesThatBuildCoroutineOperationTakes.contains(value.opcode()) && buildCoroutineOperationOfItsOpcodes(walker, value);
+}
+template<Opcode known> ALWAYS_INLINE bool buildCoroutineOperation(Walker& walker, const BodyValueOf<known>& value)
+{
+    bool callsKeepSomething = !!walker.coroutineState().keptByCalls;
+    if (callsKeepSomething) [[unlikely]]
+        forgetAwaitOfCallThatMayBeCopied(walker);
+    return opcodesThatBuildCoroutineOperationTakes.contains(known) && (callsKeepSomething || !opcodesThatAskWhatCallsOfCoroutinesKeep.contains(known)) && buildCoroutineOperationOfItsOpcodes(walker, value);
 }
 
 AOT_LINK_OF_WALK(answerFromStepWrittenByHand, opcodesThatAnswerFromStepWrittenByHandTakes)

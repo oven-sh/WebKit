@@ -56,7 +56,6 @@ void Object::moveFieldToExtraProperties(VM& vm, const FieldData& field, LeavingP
         if (exit && exit->isDefinition && exit->attributes == leaving.attributes && tryRepeat(vm, *exit, leaving.valueOrAccessor))
             return;
     }
-    willLeaveStateOfBirth(vm, *this, field, mutationOf(reason));
     validateMutation(vm, *this, field, mutationOf(reason));
     RELEASE_ASSERT(field.canLeaveSlot());
     UniquedStringImpl* name = propertyNameOf(vm, *this, field);
@@ -112,7 +111,6 @@ bool Object::tryRepeat(VM& vm, const FieldExit& exit, JSValue value)
     JSObject* extra = extraPropertiesIfMade(*this);
     if (exit.extraPropertiesBefore ? !extra || extra->structureID() != exit.extraPropertiesBefore : hasExtraProperties())
         return false;
-    willLeaveStateOfBirth(vm, *this, field, mutationOf(reason));
     validateMutation(vm, *this, field, mutationOf(reason));
     // A collection forgets the exit, and then these pointers alone keep the Structures alive.
     auto* structureAfter = WTF::opaque(uncheckedDowncast<CompiledStructure>(exit.structureAfter.decode()));
@@ -190,7 +188,6 @@ void Object::tryFinishBirth()
 
 void Object::deleteField(VM& vm, const FieldData& field)
 {
-    willLeaveStateOfBirth(vm, *this, field, ObjectMutation::DeleteField);
     validateMutation(vm, *this, field, ObjectMutation::DeleteField);
     RELEASE_ASSERT(field.canLeaveSlot());
     UniquedStringImpl* name = propertyNameOf(vm, *this, field);

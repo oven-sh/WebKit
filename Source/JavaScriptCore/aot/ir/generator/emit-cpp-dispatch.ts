@@ -5,8 +5,7 @@ import { cppEmitterClassName, cppGenerateFunctionName } from "./names.ts";
 import type { EmitContext, OutputFile } from "./outputs.ts";
 
 const entriesWithoutEmitter: ReadonlySet<string> = new Set(
-  `ValueLooselyEqualsLiteral
-   Convert Check Expect Upcast NarrowByField NarrowByTest
+  `Convert Check Expect Upcast NarrowByField NarrowByTest
    AppendSpread IteratorOpen IteratorResume IteratorClose StepArrayIterator StepMapIterator StepSetIterator
    CreateIteratorResult Await Yield InitialYield ReadScope EvaluateModule StringBuilderAppend`.split(/\s+/),
 );

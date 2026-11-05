@@ -531,6 +531,7 @@ public:
         BitVector modules;
     };
     bool waitsForItsCycle(ModuleID, ModulesThatWaitForCycles&) const;
+    void didChangeStatusInRecord(ModuleID module) { m_recordsNotSeenToHaveRun.set(module.index()); }
     void lookAtCycleOf(ModuleID, ModulesThatWaitForCycles&) const;
     const CyclesOfImports& cyclesOfImports() const;
     JSValue callBodyOfModuleEnteredByLoader(ModuleID module) { return callBodyUnderOwnMark(module, false); }
@@ -1028,6 +1029,7 @@ private:
     BitVector m_uncompiledNamespacesNotShownYet;
     BitVector m_modulesThatRanWithImporters;
     BitVector m_modulesSeenToHaveRun;
+    BitVector m_recordsNotSeenToHaveRun;
     Vector<uint8_t> m_statusesWhenImportsWereFollowed;
     ModulesThatWaitForCycles m_modulesThatWaitedWhenImportsWereFollowed;
     BitVector m_modulesOfQueuedImports;
@@ -1039,6 +1041,7 @@ private:
     mutable BitVector m_libraryModulesKeptInRequireCache;
     BitVector m_libraryModulesWithMock;
     BitVector m_libraryModulesThatMockReplaces;
+    UncheckedKeyHashMap<ModuleID, uint32_t> m_momentsMocksInPlaceOfLibraryModulesEnded;
     BitVector m_libraryModulesLeftByThrow;
     std::optional<ModuleID> m_firstModuleRequestedByHost;
     BitVector m_dataFilesImportedByUncompiledCode;
@@ -1481,6 +1484,7 @@ private:
         std::optional<uint32_t> stepsOfLoaderAtCall;
     };
     Vector<TextOnItsWay, 2> m_textsOnTheirWay;
+    bool m_canJobsOfFileTellWhenTextsCome { false };
     std::optional<uint32_t> m_stepsOfLoaderAtCallWhoseTextHasCome;
     uint32_t m_turnOfTexts { 0 };
     uint32_t m_numberOfTextsAskedFor { 0 };
@@ -1601,6 +1605,8 @@ ALWAYS_INLINE void Modules::setStoredStatus(ModuleID module, StoredModuleStatus 
     if (status == StoredModuleStatus::Evaluated && m_filesToLoadAgain.get(module.index())) [[unlikely]]
         return;
     m_storedStatuses[module.index()] = static_cast<uint8_t>(status);
+    if (status == StoredModuleStatus::InRecord)
+        didChangeStatusInRecord(module);
 }
 
 ALWAYS_INLINE ModuleStatus Modules::status(ModuleID module) const

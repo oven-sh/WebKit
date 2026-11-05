@@ -11,8 +11,8 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-bool buildCallOfBuiltinForTexts(Walker&, const BodyValue& call);
-bool joinOfWhatIsInSight(Walker&, const BodyValue& call);
+bool buildCallOfBuiltinForTexts(Walker&, const BodyValue& call, BuiltinID called);
+bool joinOfWhatIsInSight(Walker&, const BodyValue& call, BuiltinID called);
 
 bool holdsPartsTakenOutOfTexts(const Walker&, const BodyValue& join, std::span<const Reference> parts);
 inline constexpr OpcodeSet opcodesThatGuessThatOperandBesideStringHasTextTakes { Opcode::Add };

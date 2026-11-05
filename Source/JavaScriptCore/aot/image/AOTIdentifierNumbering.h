@@ -7,14 +7,33 @@
 
 #if ENABLE(AOT)
 
+#include "AOTNumbering.h"
 #include "AOTRecordTypes.h"
 #include "AOTStringUses.h"
+#include <wtf/BitVector.h>
 
 namespace JSC { namespace AOT {
 
 struct NumberedIdentifier {
     PropertyKeyID key;
     StringID text;
+};
+
+struct NameCandidate {
+    NumberedIdentifier identifier;
+    bool hasPromisedColumn { false };
+    bool isEngineSymbol { false };
+    bool isOnlyCompared { false };
+    uint32_t numberOfFunctions { 0 };
+    FunctionByModule firstFunction;
+
+    bool isLookedUpByCode() const { return !isOnlyCompared && (numberOfFunctions || firstFunction.function); }
+};
+
+struct NamesAndStringsToNumber {
+    Vector<NameCandidate> names;
+    BitVector numberedConstants;
+    Vector<FunctionByModule> firstFunctionsNamingTexts;
 };
 
 constexpr bool isKindOfEngineSymbol(PropertyKeyKind kind)

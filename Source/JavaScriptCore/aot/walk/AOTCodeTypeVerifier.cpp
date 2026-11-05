@@ -10,6 +10,7 @@
 
 #include "AOTArrivals.h"
 #include "AOTCallingConventions.h"
+#include "AOTFacts.h"
 #include "AOTIRProgram.h"
 #include "AOTRepresentation.h"
 #include "AOTSchemaOperandPositions.h"
@@ -594,13 +595,15 @@ TypeID CodeTypeVerifier::typeLaidDownAtEntry(unsigned entryParameterIndex) const
 
 TypeID CodeTypeVerifier::entryParameterTypeFromArrivals(unsigned entryParameterIndex) const
 {
-    TypeID laidDown = typeLaidDownAtEntry(entryParameterIndex);
-    if (!laidDown)
-        laidDown = TypeTable::anything;
-    TypeID known = m_arrivals.provenAt(m_types, m_code.function(), entryParameterIndex);
-    if (!m_types.at(laidDown).isJavaScriptValue())
+    FunctionID function = m_code.function();
+    TypeID believed = m_arrivals.facts().typeBelievedOfEntryParameter(m_types, function, entryParameterIndex, m_arrivals.provenAt(m_types, function, entryParameterIndex));
+    if (!m_types.at(believed).isJavaScriptValue())
         return { };
-    return known ? m_types.intersectionOf(laidDown, known) : laidDown;
+    if (TypeID tested = m_code.role() == CodeRole::Body ? m_conventions.typeBehindGuard(function, entryParameterIndex) : TypeID()) {
+        TypeID passed = m_types.intersectionOf(believed, tested);
+        believed = isNeverType(passed) ? tested : passed;
+    }
+    return believed;
 }
 
 void CodeTypeVerifier::verifyEntryParameters(BlockID id, const Block& block)

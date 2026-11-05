@@ -87,11 +87,13 @@ namespace {
 struct ArgumentMovesWithFirstWords {
     std::array<uint64_t, 4> firstWords;
     uint32_t list;
+    uint32_t unused;
 };
+static_assert(!VectorTraits<ArgumentMovesWithFirstWords>::needsInitialization, "the loops that fill a list of them are the first to touch its memory");
 
 } // anonymous namespace
 
-static Vector<const ArgumentMoves*> sortArgumentMovesByWords(const ParallelLoops& loops, const Vector<HashedArgumentMoves>& lists, const Vector<uint32_t>& kept, Vector<uint32_t>& placeOfKept)
+static Vector<const ArgumentMoves*> sortArgumentMovesByWords(const ParallelLoops& loops, const Vector<HashedArgumentMoves>& lists, const Vector<uint32_t>& kept, Vector<uint32_t>& placeOfKept, Vector<StubKey>& stubKeys)
 {
     Vector<ArgumentMovesWithFirstWords> withFirstWords;
     withFirstWords.grow(kept.size());
@@ -100,6 +102,7 @@ static Vector<const ArgumentMoves*> sortArgumentMovesByWords(const ParallelLoops
             std::span<const uint64_t> words = lists[kept[index]].moves->span();
             ArgumentMovesWithFirstWords& entry = withFirstWords[index];
             entry.list = kept[index];
+            entry.unused = 0;
             for (size_t word = 0; word < entry.firstWords.size(); ++word)
                 entry.firstWords[word] = word < words.size() ? words[word] : 0;
         }
@@ -113,13 +116,20 @@ static Vector<const ArgumentMoves*> sortArgumentMovesByWords(const ParallelLoops
     });
 
     Vector<const ArgumentMoves*> sorted;
-    sorted.reserveInitialCapacity(withFirstWords.size());
+    sorted.grow(withFirstWords.size());
     placeOfKept.grow(lists.size());
+    forEachRangeOfIndicesInParallel(loops, withFirstWords.size(), [&](size_t first, size_t end) {
+        for (size_t place = first; place < end; ++place) {
+            const ArgumentMovesWithFirstWords& entry = withFirstWords[place];
+            sorted[place] = lists[entry.list].moves;
+            placeOfKept[entry.list] = static_cast<uint32_t>(place);
+            RELEASE_ASSERT(!place || entry.firstWords != withFirstWords[place - 1].firstWords || !areSameArgumentMoves(lists[withFirstWords[place - 1].list].moves, sorted[place]));
+        }
+    });
     for (const ArgumentMovesWithFirstWords& entry : withFirstWords) {
-        const ArgumentMoves* moves = lists[entry.list].moves;
-        if (sorted.isEmpty() || !areSameArgumentMoves(sorted.last(), moves))
-            sorted.append(moves);
-        placeOfKept[entry.list] = static_cast<uint32_t>(sorted.size() - 1);
+        StubKey key = StubKey::fromBits(entry.firstWords[0]);
+        if (stubKeys.isEmpty() || stubKeys.last() != key)
+            stubKeys.append(key);
     }
     return sorted;
 }
@@ -250,11 +260,16 @@ std::optional<CalledSharedCode> collectCalledSharedCode(const LinkedFunctions& f
     Vector<Vector<HashedArgumentMoves>> argumentMovesOfChunks(numberOfChunks);
     CalledSharedCode called;
     called.firstArgumentMovesOfBody.grow(functions.size() + 1);
-    uint64_t numberOfLists = 0;
-    for (size_t position = 0; position < functions.size(); ++position) {
-        called.firstArgumentMovesOfBody[position] = static_cast<uint32_t>(numberOfLists);
-        numberOfLists += functions[position].body.argumentMoves.size();
-    }
+    Vector<uint64_t> firstListOfChunk(FillWith { }, numberOfChunks + 1, 0);
+    forEachRangeOfIndicesInParallel(loops, functions.size(), [&](size_t first, size_t end) {
+        uint64_t numberOfListsInChunk = 0;
+        for (size_t position = first; position < end; ++position)
+            numberOfListsInChunk += functions[position].body.argumentMoves.size();
+        firstListOfChunk[first / indicesInRangeOfLoop + 1] = numberOfListsInChunk;
+    });
+    for (size_t chunk = 0; chunk < numberOfChunks; ++chunk)
+        firstListOfChunk[chunk + 1] += firstListOfChunk[chunk];
+    uint64_t numberOfLists = firstListOfChunk.last();
     called.firstArgumentMovesOfBody[functions.size()] = safeCast<uint32_t>(numberOfLists);
     called.thunksOfArgumentMoves.grow(numberOfLists);
     std::span<const uint32_t> firstListOfBody = called.firstArgumentMovesOfBody.span();
@@ -262,8 +277,11 @@ std::optional<CalledSharedCode> collectCalledSharedCode(const LinkedFunctions& f
     std::atomic<bool> everyStubExists { true };
     forEachRangeOfIndicesInParallel(loops, functions.size(), [&](size_t first, size_t end) {
         SharedCodeCalledByChunk calledByChunk;
+        auto firstList = static_cast<uint32_t>(firstListOfChunk[first / indicesInRangeOfLoop]);
         for (size_t position = first; position < end; ++position) {
-            std::span<uint32_t> placesOfArgumentMoves = thunksOfLists.subspan(firstListOfBody[position], firstListOfBody[position + 1] - firstListOfBody[position]);
+            called.firstArgumentMovesOfBody[position] = firstList;
+            std::span<uint32_t> placesOfArgumentMoves = thunksOfLists.subspan(firstList, functions[position].body.argumentMoves.size());
+            firstList += static_cast<uint32_t>(placesOfArgumentMoves.size());
             if (!addSharedCodeCalledBy(functions[position], calledByChunk, placesOfArgumentMoves, context))
                 everyStubExists.store(false, std::memory_order_relaxed);
         }
@@ -280,14 +298,19 @@ std::optional<CalledSharedCode> collectCalledSharedCode(const LinkedFunctions& f
         firstListKeptByChunk[chunk] = static_cast<uint32_t>(numberOfListsKeptByChunks);
         numberOfListsKeptByChunks += argumentMovesOfChunks[chunk].size();
     }
-    Vector<HashedArgumentMoves> hashedMoves = joinChunks<HashedArgumentMoves>(loops, WTF::move(argumentMovesOfChunks));
+    Vector<HashedArgumentMoves> hashedMoves;
+    hashedMoves.grow(numberOfListsKeptByChunks);
+    forEachIndexInParallel(loops, static_cast<unsigned>(numberOfChunks), [&](unsigned chunk) {
+        std::ranges::copy(argumentMovesOfChunks[chunk], hashedMoves.mutableSpan().subspan(firstListKeptByChunk[chunk]).begin());
+        argumentMovesOfChunks[chunk] = { };
+    });
     Vector<uint32_t> listKeptFor;
     Vector<uint32_t> kept = removeDuplicateArgumentMoves(loops, hashedMoves, listKeptFor);
     times.didFinish("remove duplicate argument moves"_s);
 
     called.stubKeys = joinChunks<StubKey>(loops, WTF::move(stubKeysOfChunks));
     Vector<uint32_t> placeOfKept;
-    called.argumentMoves = sortArgumentMovesByWords(loops, hashedMoves, kept, placeOfKept);
+    called.argumentMoves = sortArgumentMovesByWords(loops, hashedMoves, kept, placeOfKept, called.stubKeysOfArgumentMoves);
     forEachRangeOfIndicesInParallel(loops, functions.size(), [&](size_t first, size_t end) {
         uint32_t firstListKept = firstListKeptByChunk[first / indicesInRangeOfLoop];
         for (uint32_t& thunk : thunksOfLists.subspan(firstListOfBody[first], firstListOfBody[end] - firstListOfBody[first]))
@@ -348,27 +371,37 @@ SharedCode generateSharedCode(CalledSharedCode&& called, const StubCatalog& cata
     result.argumentMoves = WTF::move(called.argumentMoves);
     result.firstArgumentMovesOfBody = WTF::move(called.firstArgumentMovesOfBody);
     result.thunksOfArgumentMoves = WTF::move(called.thunksOfArgumentMoves);
-    std::expected<ArgumentThunks, LinkFailure> argumentThunks = generateArgumentThunks(context, catalog, result.argumentMoves);
-    times.didFinish("generate argument thunks"_s);
-    if (!argumentThunks) {
-        reportLinkFailure(argumentThunks.error(), { }, context);
-        return { };
-    }
-    result.argumentThunks = WTF::move(*argumentThunks);
-    RELEASE_ASSERT(result.argumentThunks.offsets.size() == result.argumentMoves.size());
 
     DistinctStubKeys distinctKeys;
     for (StubKey key : called.stubKeys)
         distinctKeys.add(key);
-    for (StubKey key : result.argumentThunks.stubKeys)
+    for (StubKey key : called.stubKeysOfArgumentMoves)
         distinctKeys.add(key);
     Vector<StubKey> calledKeys = distinctKeys.take();
     sortAndRemoveDuplicates(context.parallelLoops(), calledKeys);
     if (checksSharedCodeWhileBuilding())
         checkStubSummariesMatchCompile(catalog, calledKeys.span());
 
-    std::expected<StubBlob, LinkFailure> blob = buildStubBlob(context, catalog, calledKeys.span(), entriesUsedByFunctions);
-    times.didFinish("generate stubs"_s);
+    std::expected<ArgumentThunks, LinkFailure> argumentThunks;
+    std::expected<StubBlob, LinkFailure> blob;
+    runLanes(context.parallelLoops(), {
+        [&] {
+            argumentThunks = generateArgumentThunks(context, catalog, result.argumentMoves);
+            times.didFinish("generate argument thunks"_s);
+        },
+        [&] {
+            StepTimes timesOfLane(context, "image: shared code"_s);
+            blob = buildStubBlob(context, catalog, calledKeys.span(), entriesUsedByFunctions);
+            timesOfLane.didFinish("generate stubs"_s);
+        },
+    });
+    if (!argumentThunks) {
+        reportLinkFailure(argumentThunks.error(), { }, context);
+        return { };
+    }
+    result.argumentThunks = WTF::move(*argumentThunks);
+    RELEASE_ASSERT(result.argumentThunks.offsets.size() == result.argumentMoves.size());
+    RELEASE_ASSERT(result.argumentThunks.stubKeys == called.stubKeysOfArgumentMoves);
     if (!blob) {
         reportLinkFailure(blob.error(), { }, context);
         return { };

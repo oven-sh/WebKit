@@ -13,10 +13,19 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-void appendMembersAssignedToPrototype(const Program& program, const LinkTables& tables, LayoutID layout, Vector<ClassMember>& members)
+void appendMembersAssignedByProgram(const Program& program, const LinkTables& tables, LayoutID layout, Vector<ClassMember>& members)
 {
     if (!program.at(layout).has(LayoutFlags::IsConstructorFunction))
         return;
+    auto appendMethod = [&](ClassSide side, PropertyKeyID key, FunctionID function) {
+        ClassMember member;
+        member.key = key;
+        member.side = side;
+        member.kind = MethodKind::Method;
+        member.function = function;
+        member.isAssignedByProgram = true;
+        members.append(member);
+    };
     for (const LinkedNameOnPrototype& name : std::ranges::equal_range(tables.namesOnPrototypes, layout, { }, &LinkedNameOnPrototype::layout)) {
         if (!name.key)
             continue;
@@ -31,15 +40,14 @@ void appendMembersAssignedToPrototype(const Program& program, const LinkTables& 
             half.isAssignedByProgram = true;
             members.append(half);
         }
-        if (!name.expected)
-            continue;
-        ClassMember member;
-        member.key = name.key;
-        member.side = ClassSide::Prototype;
-        member.kind = MethodKind::Method;
-        member.function = name.expected;
-        member.isAssignedByProgram = true;
-        members.append(member);
+        if (name.expected)
+            appendMethod(ClassSide::Prototype, name.key, name.expected);
+    }
+    if (classOfConstructorFunction(program, program.at(layout).constructor) != layout)
+        return;
+    for (const LinkedNameOnFunction& name : std::ranges::equal_range(tables.namesOnFunctions, program.at(layout).constructor, { }, &LinkedNameOnFunction::holder)) {
+        if (name.expected)
+            appendMethod(ClassSide::Static, name.key, name.expected);
     }
 }
 

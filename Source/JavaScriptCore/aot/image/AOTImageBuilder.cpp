@@ -35,8 +35,11 @@
 #include <limits>
 #include <optional>
 #include <type_traits>
+#include <wtf/Atomics.h>
 #include <wtf/CheckedArithmetic.h>
 #include <wtf/MathExtras.h>
+#include <wtf/Noncopyable.h>
+#include <wtf/ParkingLot.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/text/MakeString.h>
 
@@ -275,6 +278,7 @@ struct StringHeaderNumbers {
     Vector<uint32_t> listedWordIndexes;
     uint32_t count { 0 };
     uint32_t numberOfListedWords { 0 };
+    uint64_t largestNumberNeeded { 0 };
 };
 
 struct ImageWriterInputs {
@@ -283,11 +287,41 @@ struct ImageWriterInputs {
     const Typed::Plan& plan;
     const CodeLinkerInputs& linker;
     const ImageSections& sections;
+    const StringHeaderNumbers& stringHeaders;
     const WebAssemblyImageInputs& webAssembly;
     const FFIStubs& ffiStubs;
     const WTF::BitSet<numberOfEntries>& entriesUsed;
     ImageCounts counts;
     std::span<const StubReturnSite> stubReturnSites;
+};
+
+class AnswerAwaitedByLane {
+    WTF_MAKE_NONCOPYABLE(AnswerAwaitedByLane);
+public:
+    AnswerAwaitedByLane() = default;
+
+    void give(bool answer)
+    {
+        m_state.store(answer ? isYes : isNo);
+        ParkingLot::unparkAll(&m_state);
+    }
+
+    bool wait()
+    {
+        for (;;) {
+            uint32_t state = m_state.load();
+            if (state != isNotGiven)
+                return state == isYes;
+            ParkingLot::compareAndPark(&m_state, isNotGiven);
+        }
+    }
+
+private:
+    static constexpr uint32_t isNotGiven = 0;
+    static constexpr uint32_t isYes = 1;
+    static constexpr uint32_t isNo = 2;
+
+    Atomic<uint32_t> m_state { isNotGiven };
 };
 
 } // anonymous namespace
@@ -331,6 +365,15 @@ static ShapeSetsOfTables takeShapeSets(Vector<uint8_t>& programTables)
     range = { 0, 0 };
     programTables.shrink(offset);
     return sets;
+}
+
+static size_t countFunctionsWithCode(const Typed::Program& program, const LinkedFunctions& functions)
+{
+    BitVector hasCode(program.functions.size());
+    size_t count = 0;
+    for (const CompiledCode& code : functions)
+        count += hasCode.add(code.unit.function.index());
+    return count;
 }
 
 static size_t countFunctionsInImage(const Typed::Program& program, const LinkedFunctions& functions)
@@ -389,7 +432,16 @@ static Vector<uint32_t> listStringsInOrderOfText(size_t numberOfStrings, std::sp
     return order;
 }
 
-static std::optional<StringHeaderNumbers> numberStringHeaders(const TextRecords& text, std::span<const StringID> stringsInOrderOfText, ImageForm form, BuildContext& context)
+static TextRecords textRecordsIn(const Vector<uint8_t>& strings, const Vector<uint8_t>& longStrings, const Vector<uint8_t>& identifiers)
+{
+    return {
+        spanReinterpretCast<const ImageString>(strings.span()),
+        spanReinterpretCast<const ImageLongString>(longStrings.span()),
+        spanReinterpretCast<const ImageIdentifier>(identifiers.span()),
+    };
+}
+
+static StringHeaderNumbers numberStringHeaders(const TextRecords& text, std::span<const StringID> stringsInOrderOfText, ImageForm form)
 {
     StringHeaderNumbers numbers;
     numbers.form = form;
@@ -414,14 +466,19 @@ static std::optional<StringHeaderNumbers> numberStringHeaders(const TextRecords&
         numbers.byString[index] = static_cast<uint32_t>(numberOfListedWords);
         numberOfListedWords += ImageListedString::numberOfWords(string.range(text.longStrings)) + string.hasListedHash();
     }
-    static_assert(defaultLimitValue(LimitID::MaxListedStrings, hostArchitecture()) == ImageString::hashMask + 1);
-    if (std::max(count, numberOfListedWords) > ImageString::hashMask + 1) {
-        context.reportLimitExceeded(LimitID::MaxListedStrings, std::max(count, numberOfListedWords));
-        return std::nullopt;
-    }
     numbers.count = static_cast<uint32_t>(count);
     numbers.numberOfListedWords = static_cast<uint32_t>(numberOfListedWords);
+    numbers.largestNumberNeeded = std::max(count, numberOfListedWords);
     return numbers;
+}
+
+[[nodiscard]] static bool checkStringHeaderNumbers(const StringHeaderNumbers& numbers, BuildContext& context)
+{
+    static_assert(defaultLimitValue(LimitID::MaxListedStrings, hostArchitecture()) == ImageString::hashMask + 1);
+    if (numbers.largestNumberNeeded <= ImageString::hashMask + 1)
+        return true;
+    context.reportLimitExceeded(LimitID::MaxListedStrings, numbers.largestNumberNeeded);
+    return false;
 }
 
 static std::optional<ImageExtent> computeImageExtent(const ImageSections& sections, const StringHeaderNumbers& stringHeaders, uint64_t codeSize, BuildContext& context)
@@ -662,27 +719,23 @@ static Vector<uint8_t> writeImage(const ImageWriterInputs& parts, PhaseTimes& ti
 {
     const CodeLayout& layout = parts.linker.layout;
     const ImageSections& sections = parts.sections;
-    TextRecords text {
-        spanReinterpretCast<const ImageString>(sections[ImageSection::Strings].span()),
-        spanReinterpretCast<const ImageLongString>(sections[ImageSection::LongStrings].span()),
-        spanReinterpretCast<const ImageIdentifier>(sections[ImageSection::Identifiers].span()),
-    };
-    std::optional<StringHeaderNumbers> stringHeaders = numberStringHeaders(text, parts.linker.numbers.stringsInOrderOfText(), context.recordedOptions().form(), context);
-    if (!stringHeaders)
+    TextRecords text = textRecordsIn(sections[ImageSection::Strings], sections[ImageSection::LongStrings], sections[ImageSection::Identifiers]);
+    const StringHeaderNumbers& stringHeaders = parts.stringHeaders;
+    if (!checkStringHeaderNumbers(stringHeaders, context))
         return { };
-    std::optional<ImageExtent> extent = computeImageExtent(sections, *stringHeaders, layout.codeSize, context);
+    std::optional<ImageExtent> extent = computeImageExtent(sections, stringHeaders, layout.codeSize, context);
     if (!extent)
         return { };
 
     const ParallelLoops& loops = context.parallelLoops();
     Vector<uint8_t> image = allocateImage(*extent, layout.executableSize, parts.linker.layoutInputs.templates, loops);
-    writeHeader(*reinterpret_cast<ImageHeader*>(image.mutableSpan().data()), parts, *extent, *stringHeaders, static_cast<uint32_t>(text.identifiers.size()), context);
+    writeHeader(*reinterpret_cast<ImageHeader*>(image.mutableSpan().data()), parts, *extent, stringHeaders, static_cast<uint32_t>(text.identifiers.size()), context);
     times.didFinish("allocate image, write header"_s);
 
     copySections(image.mutableSpan(), parts, *extent, loops);
     times.didFinish("copy sections"_s);
 
-    writeStrings(image.mutableSpan(), text, *stringHeaders, *extent, loops);
+    writeStrings(image.mutableSpan(), text, stringHeaders, *extent, loops);
     writeWordsOfStringConstants(image.mutableSpan(), *extent);
     writeRangeOfShapeSets(image.mutableSpan(), parts.linker, *extent);
     times.didFinish("write strings"_s);
@@ -720,6 +773,7 @@ BuiltImage buildImage(ImageInputs&& inputs, BuildContext& context)
     ImageNumbers& numbers = *result.numbers;
 
     ResolvedCallees callees;
+    size_t numberOfFunctionsInImage = 0;
     runLanes(context.parallelLoops(), {
         [&] {
             StepTimes steps(context, nameOfLaneSteps);
@@ -734,6 +788,8 @@ BuiltImage buildImage(ImageInputs&& inputs, BuildContext& context)
             StepTimes steps(context, nameOfLaneSteps);
             callees = resolveCallees(functions, inputs.plan, context);
             steps.didFinish("resolve callees"_s);
+            numberOfFunctionsInImage = countFunctionsInImage(program, functions);
+            steps.didFinish("count functions"_s);
         },
     });
     times.didFinish("lanes in front of the mentions"_s);
@@ -752,10 +808,11 @@ BuiltImage buildImage(ImageInputs&& inputs, BuildContext& context)
     RegExpSection regExpSection;
     RegExpSections regExps;
     EncodedText text;
+    StringHeaderNumbers stringHeaders;
+    Vector<uint8_t> namesOfSites;
     Vector<Vector<uint8_t>> callSites;
     SideTables sideTables;
     const bool hasPositions = !context.options().obfuscates();
-    const size_t numberOfFunctionsInImage = countFunctionsInImage(program, functions);
 
     auto compileRegExpsOfImage = [&] {
         StepTimes steps(context, nameOfLaneSteps);
@@ -787,8 +844,10 @@ BuiltImage buildImage(ImageInputs&& inputs, BuildContext& context)
             if (diagnostics.hasErrors())
                 return;
 
-            numberWhatStaticsWaitFor(numberingInputs, *mentions, *namesOfTables, numbers, context, scopedLambda<void()>(compileRegExpsOfImage));
-            times.didFinish("number"_s);
+            collectRequestsForRegExps(numberingInputs, *mentions, *namesOfTables, numbers, context);
+            times.didFinish("collect the requests for regular expressions"_s);
+            numberAllButIdentifiersAndStrings(numberingInputs, *mentions, *namesOfTables, numbers, context);
+            times.didFinish("number all but identifiers and strings"_s);
         },
         [&] {
             StepTimes steps(context, nameOfLaneSteps);
@@ -829,6 +888,8 @@ BuiltImage buildImage(ImageInputs&& inputs, BuildContext& context)
             steps.didFinish("compile WebAssembly modules"_s);
             farInstanceWords = findFarInstanceWords(functions, numbers, context);
             steps.didFinish("find far words of the instance"_s);
+            namesOfSites = encodeNamesOfSites(numbers);
+            steps.didFinish("encode names of sites"_s);
             if (checksImageWhileBuilding(context)) {
                 checkUncheckedStackUsage(functions, callees, context);
                 steps.didFinish("check unchecked stack usage"_s);
@@ -865,8 +926,15 @@ BuiltImage buildImage(ImageInputs&& inputs, BuildContext& context)
         },
     });
     };
+    AnswerAwaitedByLane stringsAreNumbered;
     runLanes(context.parallelLoops(), {
         [&] {
+            numberIdentifiersAndStrings(numberingInputs, *mentions, *namesOfTables, numbers, context);
+            times.didFinish("number identifiers and strings"_s);
+            bool isNumbered = !diagnostics.hasErrors();
+            stringsAreNumbered.give(isNumbered);
+            if (!isNumbered)
+                return;
             layOutStaticsOfMentions(numberingInputs, *mentions, *namesOfTables, numbers, context);
             mentions.reset();
             namesOfTables.reset();
@@ -881,10 +949,20 @@ BuiltImage buildImage(ImageInputs&& inputs, BuildContext& context)
         },
         [&] {
             StepTimes steps(context, nameOfLaneSteps);
-            text = encodeText({ .program = program, .numbers = numbers }, context);
+            text = encodeText({ .program = program, .numbers = numbers }, context, scopedLambda<bool()>([&] {
+                return stringsAreNumbered.wait();
+            }));
             steps.didFinish("encode text"_s);
+            if (diagnostics.hasErrors())
+                return;
+            stringHeaders = numberStringHeaders(textRecordsIn(text.strings, text.longStrings, text.identifiers), numbers.stringsInOrderOfText(), context.recordedOptions().form());
+            steps.didFinish("number string headers"_s);
         },
-        [&] { layOutAndDescribeRegExps(); },
+        [&] {
+            compileRegExpsOfImage();
+            if (!diagnostics.hasErrors())
+                layOutAndDescribeRegExps();
+        },
     });
     times.didFinish("lanes in front of the layout of code"_s);
     if (diagnostics.hasErrors())
@@ -970,7 +1048,7 @@ BuiltImage buildImage(ImageInputs&& inputs, BuildContext& context)
     sections[ImageSection::Text] = WTF::move(text.text);
     sections[ImageSection::Identifiers] = WTF::move(text.identifiers);
     sections[ImageSection::StringConstants] = WTF::move(text.stringConstants);
-    sections[ImageSection::NamesOfSites] = encodeNamesOfSites(numbers);
+    sections[ImageSection::NamesOfSites] = WTF::move(namesOfSites);
     sections[ImageSection::RegExps] = WTF::move(regExps.records);
     sections[ImageSection::RegExpHashes] = WTF::move(regExps.hashes);
     sections[ImageSection::RegExpDetails] = WTF::move(regExps.details);
@@ -996,6 +1074,7 @@ BuiltImage buildImage(ImageInputs&& inputs, BuildContext& context)
         .plan = inputs.plan,
         .linker = linker,
         .sections = sections,
+        .stringHeaders = stringHeaders,
         .webAssembly = webAssembly,
         .ffiStubs = ffiStubs,
         .entriesUsed = result.entriesUsed,
@@ -1005,7 +1084,7 @@ BuiltImage buildImage(ImageInputs&& inputs, BuildContext& context)
     if (diagnostics.hasErrors())
         result.image.clear();
     else
-        context.statistics().count(StatisticID::ImageFunctionsEmitted, functions.size());
+        context.statistics().count(StatisticID::ImageFunctionsEmitted, countFunctionsWithCode(program, functions));
     logSizesOfImageForTestRunReport(result.image.span(), result.bytesOfTableParts, context);
     times.didFinish("check image"_s);
 

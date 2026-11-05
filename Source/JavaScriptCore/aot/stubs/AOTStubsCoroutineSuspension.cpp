@@ -528,7 +528,6 @@ StubSignature signatureOfAwaitBySavingFrame(StubKey key)
 {
     switch (static_cast<AwaitedOperand>(key.form())) {
     case AwaitedOperand::Value:
-    case AwaitedOperand::ValueAfterTurn:
     case AwaitedOperand::ValueInModuleBody:
         return StubSignature::withGPRResult({ gprOf(StubRegister::A1), gprOf(StubRegister::T9) });
     case AwaitedOperand::ResultOfCallWithoutPromise:
@@ -551,8 +550,6 @@ static AwaitOperations operationsOf(AwaitedOperand form)
         return { Entry::operationAOTSaveFrameAndAwait, Entry::operationAOTAwaitWithSavedFrame };
     case AwaitedOperand::ResultOfCallWithoutPromise:
         return { Entry::operationAOTSaveFrameAndAwaitCall, Entry::operationAOTAwaitCallWithSavedFrame };
-    case AwaitedOperand::ValueAfterTurn:
-        return { Entry::operationAOTSaveFrameAndAwaitAfterTurn, Entry::operationAOTAwaitWithSavedFrameAfterTurn };
     case AwaitedOperand::ValueInModuleBody:
         return { Entry::operationAOTSaveFrameAndAwaitInModuleBody, Entry::operationAOTAwaitWithSavedFrameInModuleBody };
     }
@@ -571,7 +568,7 @@ void generateAwaitBySavingFrame(StubAssembler& jit)
 {
     const auto form = static_cast<AwaitedOperand>(jit.key().form());
     const bool awaitsCallWithoutPromise = form == AwaitedOperand::ResultOfCallWithoutPromise;
-    const bool queuesJobInOperation = form == AwaitedOperand::ValueAfterTurn || form == AwaitedOperand::ValueInModuleBody;
+    const bool queuesJobInOperation = form == AwaitedOperand::ValueInModuleBody;
     const AwaitOperations operations = operationsOf(form);
     const GPRReg result = jit.result();
     const GPRReg awaited = awaitsCallWithoutPromise ? jit.allocateScratch(StubRegister::A1) : jit.operand(0);
@@ -598,11 +595,6 @@ void generateAwaitBySavingFrame(StubAssembler& jit)
         break;
     case AwaitedOperand::ResultOfCallWithoutPromise:
         emitLoadSettledValue(jit, registers, result, isOtherObject, mustSuspend);
-        jit.returnToCaller();
-        break;
-    case AwaitedOperand::ValueAfterTurn:
-        emitBranchIfMayBeThenable(jit, awaited, word, other, mustSuspend);
-        jit.move(awaited, result);
         jit.returnToCaller();
         break;
     case AwaitedOperand::ValueInModuleBody:

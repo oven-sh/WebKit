@@ -570,6 +570,9 @@ struct BuiltinCondition {
     bool objectNobodyKnowsIsWritten { false };
     bool testsReplaceBuiltins { false };
     BuiltinID programStores { };
+    BuiltinID isAskedForOtherNames { };
+    std::span<const BuiltinName> valuesServed { };
+    std::span<const BuiltinName> methodsServed { };
 
     BuiltinName firstText() const { return !isOneOf.empty() ? isOneOf.front() : !startsWith.empty() ? startsWith.front() : BuiltinName(); }
     bool isAboutWhatProgramReplaces() const { return testsReplaceBuiltins || programStores; }
@@ -656,7 +659,6 @@ inline constexpr size_t maxLiteralPartNames = 4;
 
 struct BuiltinForms {
     BuiltinID builtin { };
-    std::optional<InlineBuiltin> appendForm { };
     BuiltinID literalPartsForm { };
     std::optional<BuiltinOperand> literalPartsArgument { };
     std::array<BuiltinName, maxLiteralPartNames> literalPartNames { };
@@ -1000,6 +1002,7 @@ public:
     std::span<const BuiltinFeatureUse> featureUsesOf(BuiltinID) const;
     std::span<const BuiltinModuleLoad> moduleLoadsOf(BuiltinID) const;
     std::span<const BuiltinCalledFunction> calledFunctionsOf(BuiltinID) const;
+    Vector<const BuiltinCondition*, 8> conditionsOnLightForms() const;
     const BuiltinUnseenCode* unseenCodeOf(BuiltinID) const;
     bool letsInUnseenCode(BuiltinID) const;
     bool letsInUnseenCodeWhenCalled(BuiltinID) const;

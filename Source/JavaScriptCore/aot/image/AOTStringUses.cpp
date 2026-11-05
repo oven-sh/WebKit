@@ -17,6 +17,7 @@
 #include "AOTPlan.h"
 #include "AOTPropertyCachesFront.h"
 #include "AOTRegExpRequests.h"
+#include "AOTSectionWriter.h"
 #include "AOTSort.h"
 #include "AOTThreads.h"
 #include "AOTVector.h"
@@ -36,17 +37,6 @@ static_assert(RowDisplacementTable::maxColumn <= FieldTableEntry::maxName);
 static_assert(StringID(0u) < StringID(), "a symbol without a description sorts last");
 
 namespace {
-
-struct NameCandidate {
-    NumberedIdentifier identifier;
-    bool hasPromisedColumn { false };
-    bool isEngineSymbol { false };
-    bool isOnlyCompared { false };
-    uint32_t numberOfFunctions { 0 };
-    FunctionByModule firstFunction;
-
-    bool isLookedUpByCode() const { return !isOnlyCompared && (numberOfFunctions || firstFunction.function); }
-};
 
 struct StringByFirstFunction {
     static StringByFirstFunction create(const FunctionByModule& firstFunction, StringID string)
@@ -146,7 +136,7 @@ static bool isNameKeyOrderedBefore(const Typed::Program& program, PropertyKeyID 
 
 static void sortNamesByWordAndThen(const ParallelLoops& loops, std::span<NameCandidate> names, const Invocable<uint64_t(const NameCandidate&)> auto& wordOf, const Invocable<bool(const NameCandidate&, const NameCandidate&)> auto& comesFirstAmongNamesWithOneWord)
 {
-    sortByWordKeepingEqualElementsInOrder(names, wordOf);
+    sortByWordOnPoolKeepingEqualElementsInOrder(loops, names, wordOf);
     for (size_t first = 0, end = 0; first < names.size(); first = end) {
         uint64_t word = wordOf(names[first]);
         for (end = first + 1; end < names.size() && wordOf(names[end]) == word; ++end) { }
@@ -264,29 +254,32 @@ static Vector<FunctionByModule> findFirstFunctionsNamingTexts(const Typed::Progr
     return firstFunctions;
 }
 
-static Vector<StringID> sortStringsByFirstFunction(const BitVector& strings, const Invocable<FunctionByModule(size_t)> auto& firstFunctionOf)
+static void sortStringsWithFirstFunctions(const ParallelLoops& loops, std::span<StringByFirstFunction> strings)
+{
+    sortByWordOnPoolKeepingEqualElementsInOrder(loops, strings, [](const StringByFirstFunction& entry) {
+        return entry.functionAndString >> 32;
+    });
+    sortByWordOnPoolKeepingEqualElementsInOrder(loops, strings, [](const StringByFirstFunction& entry) {
+        return entry.moduleAndPosition;
+    });
+}
+
+static Vector<StringID> sortStringsByFirstFunction(const ParallelLoops& loops, const BitVector& strings, const Invocable<FunctionByModule(size_t)> auto& firstFunctionOf)
 {
     Vector<StringByFirstFunction> inOrder;
     inOrder.reserveInitialCapacity(strings.bitCount());
     for (size_t string : strings)
         inOrder.append(StringByFirstFunction::create(firstFunctionOf(string), StringID(string)));
-    sortByWordKeepingEqualElementsInOrder(inOrder.mutableSpan(), [](const StringByFirstFunction& entry) {
-        return entry.functionAndString >> 32;
-    });
-    sortByWordKeepingEqualElementsInOrder(inOrder.mutableSpan(), [](const StringByFirstFunction& entry) {
-        return entry.moduleAndPosition;
-    });
+    sortStringsWithFirstFunctions(loops, inOrder.mutableSpan());
     return inOrder.map([](const StringByFirstFunction& entry) {
         return entry.string();
     });
 }
 
-void ImageNumbersBuilder::numberIdentifiersAndStrings()
+void ImageNumbersBuilder::collectNamesAndStringsWithText()
 {
     const Typed::Program& program = inputs.program;
-    const ParallelLoops& loops = context.parallelLoops();
     const BitVector& keysWithColumn = inputs.plan.slots().keysWithColumn();
-    const size_t numberOfStrings = program.strings.size();
 
     if (size_t numberOfPromises = keysWithColumn.bitCount(); numberOfPromises > RowDisplacementTable::maxColumn) {
         context.diagnostics().add(InternalError {
@@ -296,78 +289,111 @@ void ImageNumbersBuilder::numberIdentifiersAndStrings()
         });
     }
 
-    Vector<NameCandidate> names = collectNumberedNames(program, mentions, tables, keysWithColumn);
-    sortByUse(program, loops, names.mutableSpan());
-    auto numberOfNamesLookedUp = static_cast<uint64_t>(std::ranges::count_if(names, [](const NameCandidate& name) {
-        return !name.isOnlyCompared;
-    }));
-    auto columnCount = static_cast<uint32_t>(std::min<uint64_t>(numberOfNamesLookedUp, RowDisplacementTable::maxColumn));
-    groupColumnsByFirstFunction(names.mutableSpan().first(columnCount));
-    sortNamesWithoutColumn(program, loops, names.mutableSpan().subspan(columnCount));
+    auto toNumber = makeUniqueWithoutFastMallocCheck<NamesAndStringsToNumber>();
+    toNumber->names = collectNumberedNames(program, mentions, tables, keysWithColumn);
+    std::span<const NameCandidate> names = toNumber->names.span();
+    RELEASE_ASSERT(numbers.m_regExpRequests);
+    runLanes(context.parallelLoops(), {
+        [&] {
+            BitVector textsWhoseCellsHoldAtoms = collectTextsWhoseCellsHoldAtoms(program, mentions, tables);
+            BitVector stringsReadThroughHeaders = collectStringsReadThroughHeaders(inputs, mentions, textsWhoseCellsHoldAtoms, *numbers.m_regExpRequests, names);
+            const BitVector& stringsShownByCode = mentions.byID(NumberSpace::ShownString).isMentioned;
+            numbers.m_stringsOnlyShown = tables.strings;
+            numbers.m_stringsOnlyShown.merge(stringsShownByCode);
+            numbers.m_stringsOnlyShown.exclude(tables.stringsWithOtherUsesThanShowing);
+            numbers.m_stringsOnlyShown.exclude(stringsReadThroughHeaders);
+            numbers.m_namedStrings = WTF::move(stringsReadThroughHeaders);
+            numbers.m_namedStrings.merge(tables.strings);
+            numbers.m_namedStrings.merge(stringsShownByCode);
+
+            toNumber->numberedConstants = collectNumberedStringConstants(program, mentions, tables);
+            numbers.m_atomsOfStrings = collectAtomsOfStrings(program, textsWhoseCellsHoldAtoms, *numbers.m_regExpRequests);
+            numbers.m_otherStringsWithText = numbers.m_namedStrings;
+            numbers.m_otherStringsWithText.merge(toNumber->numberedConstants);
+            numbers.m_otherStringsWithText.quickSet(program.strings.emptyString().index());
+
+            numbers.m_textsOfNames = BitVector(program.strings.size());
+            for (const NameCandidate& name : names) {
+                if (name.identifier.text)
+                    numbers.m_textsOfNames.quickSet(name.identifier.text.index());
+            }
+            numbers.m_otherStringsWithText.exclude(numbers.m_textsOfNames);
+        },
+        [&] {
+            toNumber->firstFunctionsNamingTexts = findFirstFunctionsNamingTexts(program, mentions, names);
+        },
+    });
+    numbers.m_namesAndStringsToNumber = WTF::move(toNumber);
+}
+
+void ImageNumbersBuilder::numberIdentifiersAndStrings()
+{
+    const Typed::Program& program = inputs.program;
+    const size_t numberOfStrings = program.strings.size();
+
+    if (!numbers.m_namesAndStringsToNumber)
+        collectNamesAndStringsWithText();
+    std::unique_ptr<NamesAndStringsToNumber> toNumber = std::exchange(numbers.m_namesAndStringsToNumber, nullptr);
+    Vector<NameCandidate>& names = toNumber->names;
+    auto firstFunctionNamingText = [&](size_t string) {
+        return toNumber->firstFunctionsNamingTexts[string];
+    };
 
     IdentifierNumbering identifiers;
-    identifiers.m_numbersByKey.fill(0, program.types.numberOfPropertyKeys());
-    identifiers.m_numbersByText.fill(0, numberOfStrings);
-    identifiers.m_identifiers.grow(names.size() + 1);
-    for (uint32_t index = 0; index < names.size(); ++index) {
-        const NumberedIdentifier& identifier = names[index].identifier;
-        uint32_t number = RowDisplacementTable::numberForRank(index + 1, columnCount);
-        identifiers.m_identifiers[number] = identifier;
-        if (identifier.key)
-            identifiers.m_numbersByKey[identifier.key.index()] = number;
-        if (isFoundByText(program, identifier))
-            identifiers.m_numbersByText[identifier.text.index()] = number;
-    }
-    identifiers.m_countWithLookupTableColumn = columnCount + 1;
-    auto mentionedWithoutColumn = static_cast<uint64_t>(std::ranges::count_if(names.span().subspan(columnCount), &NameCandidate::isLookedUpByCode));
-    uint64_t numbersProbedWithoutAsking = std::min<uint64_t>(names.size(), RowDisplacementTable::maxColumn);
-    identifiers.m_countWithFieldTableColumn = static_cast<uint32_t>(std::min<uint64_t>(std::max<uint64_t>(columnCount + mentionedWithoutColumn, numbersProbedWithoutAsking), FieldTableEntry::maxName) + 1);
+    uint64_t mentionedWithoutColumn = 0;
+    Vector<StringID> otherStrings;
+    StringConstantNumbering constants;
+    runLanes(context.parallelLoops(), {
+        [&] {
+            sortByUse(program, context.parallelLoops(), names.mutableSpan());
+            auto numberOfNamesLookedUp = static_cast<uint64_t>(std::ranges::count_if(names, [](const NameCandidate& name) {
+                return !name.isOnlyCompared;
+            }));
+            auto columnCount = static_cast<uint32_t>(std::min<uint64_t>(numberOfNamesLookedUp, RowDisplacementTable::maxColumn));
+            runLanes(context.parallelLoops(), {
+                [&] { groupColumnsByFirstFunction(names.mutableSpan().first(columnCount)); },
+                [&] { sortNamesWithoutColumn(program, context.parallelLoops(), names.mutableSpan().subspan(columnCount)); },
+            });
 
-    if (context.exceeds(LimitID::MaxIdentifiers, identifiers.count()))
-        context.diagnostics().add(UserDiagnostic { .kind = UserDiagnosticKind::TooManyIdentifiers, .limit = LimitID::MaxIdentifiers, .count = identifiers.count() });
+            identifiers.m_numbersByKey.fill(0, program.types.numberOfPropertyKeys());
+            identifiers.m_numbersByText.fill(0, numberOfStrings);
+            identifiers.m_identifiers.grow(names.size() + 1);
+            for (uint32_t index = 0; index < names.size(); ++index) {
+                const NumberedIdentifier& identifier = names[index].identifier;
+                uint32_t number = RowDisplacementTable::numberForRank(index + 1, columnCount);
+                identifiers.m_identifiers[number] = identifier;
+                if (identifier.key)
+                    identifiers.m_numbersByKey[identifier.key.index()] = number;
+                if (isFoundByText(program, identifier))
+                    identifiers.m_numbersByText[identifier.text.index()] = number;
+            }
+            identifiers.m_countWithLookupTableColumn = columnCount + 1;
+            mentionedWithoutColumn = static_cast<uint64_t>(std::ranges::count_if(names.span().subspan(columnCount), &NameCandidate::isLookedUpByCode));
+            uint64_t numbersProbedWithoutAsking = std::min<uint64_t>(names.size(), RowDisplacementTable::maxColumn);
+            identifiers.m_countWithFieldTableColumn = static_cast<uint32_t>(std::min<uint64_t>(std::max<uint64_t>(columnCount + mentionedWithoutColumn, numbersProbedWithoutAsking), FieldTableEntry::maxName) + 1);
 
-    RELEASE_ASSERT(numbers.m_regExpRequests);
-    BitVector textsWhoseCellsHoldAtoms = collectTextsWhoseCellsHoldAtoms(program, mentions, tables);
-    BitVector stringsReadThroughHeaders = collectStringsReadThroughHeaders(inputs, mentions, textsWhoseCellsHoldAtoms, *numbers.m_regExpRequests, names.span());
-    const BitVector& stringsShownByCode = mentions.byID(NumberSpace::ShownString).isMentioned;
-    numbers.m_stringsOnlyShown = tables.strings;
-    numbers.m_stringsOnlyShown.merge(stringsShownByCode);
-    numbers.m_stringsOnlyShown.exclude(tables.stringsWithOtherUsesThanShowing);
-    numbers.m_stringsOnlyShown.exclude(stringsReadThroughHeaders);
-    numbers.m_namedStrings = WTF::move(stringsReadThroughHeaders);
-    numbers.m_namedStrings.merge(tables.strings);
-    numbers.m_namedStrings.merge(stringsShownByCode);
-
-    BitVector numberedConstants = collectNumberedStringConstants(program, mentions, tables);
-    numbers.m_atomsOfStrings = collectAtomsOfStrings(program, textsWhoseCellsHoldAtoms, *numbers.m_regExpRequests);
-    BitVector stringsWithText = numbers.m_namedStrings;
-    stringsWithText.merge(numberedConstants);
-    stringsWithText.quickSet(program.strings.emptyString().index());
-
-    BitVector textsOfNames(numberOfStrings);
-    for (const NameCandidate& name : names) {
-        if (name.identifier.text)
-            textsOfNames.quickSet(name.identifier.text.index());
-    }
-    stringsWithText.exclude(textsOfNames);
-    Vector<FunctionByModule> firstFunctionsNamingTexts = findFirstFunctionsNamingTexts(program, mentions, names.span());
-    auto firstFunctionNamingText = [&](size_t string) {
-        return firstFunctionsNamingTexts[string];
-    };
-    numbers.m_stringsInOrderOfText = sortStringsByFirstFunction(textsOfNames, firstFunctionNamingText);
-    Vector<StringID> otherStrings = sortStringsByFirstFunction(stringsWithText, firstFunctionNamingText);
-    std::ranges::stable_partition(otherStrings, [&](StringID string) {
-        return program.strings[string].size() <= ImageString::lengthMask;
+            if (context.exceeds(LimitID::MaxIdentifiers, identifiers.count()))
+                context.diagnostics().add(UserDiagnostic { .kind = UserDiagnosticKind::TooManyIdentifiers, .limit = LimitID::MaxIdentifiers, .count = identifiers.count() });
+        },
+        [&] {
+            numbers.m_stringsInOrderOfText = sortStringsByFirstFunction(context.parallelLoops(), numbers.m_textsOfNames, firstFunctionNamingText);
+        },
+        [&] {
+            otherStrings = sortStringsByFirstFunction(context.parallelLoops(), numbers.m_otherStringsWithText, firstFunctionNamingText);
+            std::ranges::stable_partition(otherStrings, [&](StringID string) {
+                return program.strings[string].size() <= ImageString::lengthMask;
+            });
+        },
+        [&] {
+            constants.m_strings = sortStringsByFirstFunction(context.parallelLoops(), toNumber->numberedConstants, [&](size_t string) {
+                return mentions.firstFunctionMentioning(NumberSpace::StringCell, static_cast<uint32_t>(string));
+            });
+            constants.m_numbersPlusOne.fill(0, numberOfStrings);
+            for (uint32_t number = 0; number < constants.count(); ++number)
+                constants.m_numbersPlusOne[constants.m_strings[number].index()] = number + 1;
+        },
     });
     numbers.m_stringsInOrderOfText.appendVector(otherStrings);
-
-    StringConstantNumbering constants;
-    constants.m_strings = sortStringsByFirstFunction(numberedConstants, [&](size_t string) {
-        return mentions.firstFunctionMentioning(NumberSpace::StringCell, static_cast<uint32_t>(string));
-    });
-    constants.m_numbersPlusOne.fill(0, numberOfStrings);
-    for (uint32_t number = 0; number < constants.count(); ++number)
-        constants.m_numbersPlusOne[constants.m_strings[number].index()] = number + 1;
 
     context.statistics().count(StatisticID::IdentifiersNumbered, names.size());
     context.statistics().count(StatisticID::NamesWithoutColumn, mentionedWithoutColumn);
@@ -375,6 +401,7 @@ void ImageNumbersBuilder::numberIdentifiersAndStrings()
 
     numbers.m_identifiers = makeUniqueWithoutFastMallocCheck<IdentifierNumbering>(WTF::move(identifiers));
     numbers.m_stringConstants = makeUniqueWithoutFastMallocCheck<StringConstantNumbering>(WTF::move(constants));
+    destroyInBackground(context.backgroundJobs(), WTF::move(toNumber));
 }
 
 } } // namespace JSC::AOT

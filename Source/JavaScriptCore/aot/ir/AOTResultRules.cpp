@@ -44,8 +44,12 @@ const PositionTypes& PositionTypes::knowingNothing()
 TypeID TypingContext::typeIDOfSlowCase(const DeclaredType& declared) const
 {
     switch (level) {
-    case TypeLevel::Proven:
-        return program.provenTypeOf(declared);
+    case TypeLevel::Proven: {
+        TypeID proven = program.provenTypeOf(declared);
+        if (believesWhatFrontEndHasEstablished || !declared.isEstablished() || !at(proven).isJavaScriptValue())
+            return proven;
+        return at(proven).primitives & Primitive::Absent ? TypeTable::anythingOrAbsent : TypeTable::anything;
+    }
     case TypeLevel::Expected:
         return declared.expected().predicted();
     }

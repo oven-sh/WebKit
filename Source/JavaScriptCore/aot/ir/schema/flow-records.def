@@ -1,5 +1,4 @@
 enum InitializationState { | engine Unknown StoredBeforeEveryRead }
-enum Occupancy { | engine Unknown FilledAtBirth FilledWithValueAtBirth AlwaysFilled }
 enum ExecutionCount { | engine Unknown AtMostOnce }
 enum BaseState { | engine Unknown None Layout BuiltinClass }
 enum BuiltinLocationState { | engine Unknown Constant }

@@ -287,23 +287,9 @@ bool guessThatOperandBesideStringHasTextOfItsOpcodes(Walker& walker, const BodyV
     walker.branch(hasText, joins, converts);
     walker.noteGuessOpened();
 
-    struct Arm {
-        BlockID last;
-        Reference text;
-    };
-    Vector<Arm, 2> arms;
-    auto endArm = [&] {
-        if (walker.isUnreachable() || walker.hasFailed())
-            return;
-        arms.append(Arm { walker.currentBlock(), walker.referenceOf(last) });
-    };
-
-    walker.continueIn(converts);
-    {
-        Walker::ClosedArm closedArm(walker);
-        walker.walkStretch(block.id(), begin, end);
-        endArm();
-    }
+    Walker::StretchInArms stretch = walker.stretchInArms(block.id(), begin, end);
+    Walker::ArmsThatMeet arms;
+    walker.walkClosedArm(converts, stretch, arms);
     if (walker.hasFailed())
         return true;
 
@@ -324,34 +310,12 @@ bool guessThatOperandBesideStringHasTextOfItsOpcodes(Walker& walker, const BodyV
             walker.bind(sum.id(), part);
         else
             walker.walkStretch(block.id(), begin, end);
-        endArm();
+        walker.listArm(stretch, arms);
         for (size_t place = 0; place < names.size(); ++place)
             walker.bind(names[place], boundBefore[place]);
     }
-    if (walker.hasFailed())
-        return true;
-
-    Reference met;
-    if (arms.size() == 2 && arms[0].text && arms[1].text && arms[0].text != arms[1].text) {
-        const Code& code = walker.code();
-        TypeID type = joinOf(types, walker.facts().families(), code.at(arms[0].text.id()).type, code.at(arms[1].text.id()).type);
-        Representation forms[] { walker.representationOf(arms[0].text), walker.representationOf(arms[1].text) };
-        met = walker.addParameter(meeting, type, walker.formOfParameter(type, forms));
-    }
-    for (const Arm& arm : arms) {
-        walker.continueIn(arm.last);
-        if (met)
-            walker.jumpTo(meeting, singleElementSpan(arm.text));
-        else
-            walker.jumpTo(meeting);
-        if (walker.hasFailed())
-            return true;
-    }
-    walker.continueIn(meeting);
-    if (met)
-        walker.bind(last, met);
-    else if (!arms.isEmpty() && arms[0].text)
-        walker.bind(last, arms[0].text);
+    if (!walker.hasFailed())
+        walker.letArmsMeet(stretch, arms, meeting);
     return true;
 }
 
@@ -478,15 +442,15 @@ static bool takePartsOfConcatInTextBuilderRows(Walker& walker, const BodyValue& 
     return true;
 }
 
-bool joinOfWhatIsInSight(Walker& walker, const BodyValue& call)
+bool joinOfWhatIsInSight(Walker& walker, const BodyValue& call, BuiltinID called)
 {
     if (call.opcode() != Opcode::Call || !walker.has(Mechanism::TypedOperations) || walker.isUnreachable())
         return false;
-    BuiltinID builtin = findBuiltinCalledInTextBuilderRows(walker, call);
+    const BuiltinTable& table = walker.program().builtins();
+    BuiltinID builtin = called ? table.canonicalID(called) : findBuiltinCalledInTextBuilderRows(walker, call);
     if (!builtin)
         return false;
 
-    const BuiltinTable& table = walker.program().builtins();
     PartsInTextBuilderRows parts;
     bool isJoin = false;
     if (builtin == table.canonicalID(Builtins::ArrayPrototypeJoin))
@@ -495,8 +459,13 @@ bool joinOfWhatIsInSight(Walker& walker, const BodyValue& call)
         isJoin = takePartsOfRawTemplateInTextBuilderRows(walker, call, parts);
     else if (builtin == table.canonicalID(Builtins::StringPrototypeConcat))
         isJoin = takePartsOfConcatInTextBuilderRows(walker, call, parts);
-    if (!isJoin || std::ranges::all_of(parts, [](Reference part) { return part.isConstant(); }))
+    bool isWrittenWhole = std::ranges::all_of(parts, [](Reference part) { return part.isConstant(); });
+    if (!isJoin || (isWrittenWhole && builtin != table.canonicalID(Builtins::StringRaw)))
         return false;
+    if (parts.isEmpty()) {
+        walker.bind(call.id(), writtenTextInTextBuilderRows(walker, walker.program().strings.emptyString()));
+        return true;
+    }
 
     Origin origin = walker.originOf(call);
     origin.isTailCall = false;
@@ -517,13 +486,13 @@ bool joinOfWhatIsInSight(Walker& walker, const BodyValue& call)
     return true;
 }
 
-bool buildCallOfBuiltinForTexts(Walker& walker, const BodyValue& call)
+bool buildCallOfBuiltinForTexts(Walker& walker, const BodyValue& call, BuiltinID called)
 {
     if (writeJSONTextOfCall(walker, call)) {
         walker.count(StatisticID::OwnKeyWalksExpanded);
         return true;
     }
-    return joinOfWhatIsInSight(walker, call);
+    return joinOfWhatIsInSight(walker, call, called);
 }
 
 } } } // namespace JSC::AOT::Typed

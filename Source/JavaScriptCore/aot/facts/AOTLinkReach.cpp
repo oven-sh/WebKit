@@ -1103,7 +1103,8 @@ bool StateOfLinkReach::mayHold(const BuiltinCondition* condition, BuiltinID cano
         return false;
     bool waitsForWrite = condition->objectNobodyKnowsIsWritten && !m_builtinsInReach.mayBeHandedWhatIsNoTextNumberOrBoolean(canonical);
     bool waitsForCall = condition->callRunsOtherCode && !m_builtinsInReach.hasCallThatMayRunCode(canonical);
-    if (waitsForWrite || waitsForCall) {
+    bool waitsToBeAskedForMore = condition->isAskedForOtherNames && !m_builtinsInReach.isAskedForOtherNames(m_program.builtins().canonicalID(condition->isAskedForOtherNames));
+    if (waitsForWrite || waitsForCall || waitsToBeAskedForMore) {
         waitOnConditionsOf(canonical);
         return false;
     }
@@ -1278,6 +1279,15 @@ bool StateOfLinkReach::enterLibraryInReach()
     }
     for (BuiltinID waiting : std::exchange(m_builtinsWaitingOnConditions, { }))
         enterLibraryBehind(waiting);
+    bool entriesHaveComeToBeAskedForMore = false;
+    for (const BuiltinCondition* condition : m_program.builtins().conditionsOnLightForms()) {
+        BuiltinID entry = m_program.builtins().canonicalID(condition->isAskedForOtherNames);
+        FlowNodeID observed = m_flow.findWrittenAtMember(entry);
+        if (!observed || !m_flow.typeAt(observed).isNothing() || !m_builtinsInReach.isAskedForOtherNames(entry))
+            continue;
+        m_flow.arrive(observed, LinkType::anything());
+        entriesHaveComeToBeAskedForMore = true;
+    }
     for (BuiltinID builtin : m_builtinsThatCameIntoReach)
         enterLibraryBehind(builtin);
     for (BuiltinID builtin : m_builtinsThatCameOutOfSight) {
@@ -1301,7 +1311,7 @@ bool StateOfLinkReach::enterLibraryInReach()
         enterWhatUnseenCodeFinds();
     bool somebodyCanBeHandedSomething = m_nativeCodeMayHoldObjects || m_flow.rowPassesWhatNobodyFollows() || m_builtinsInReach.unseenCodeCanRun();
     bool promisesHaveChanged = somebodyCanBeHandedSomething && m_flow.letPromisesBeHandedOut();
-    bool hasEntered = !m_steps.isEmpty() || !m_functionsToBringAlive.isEmpty() || !m_membersWrittenAfterAll.isEmpty() || promisesHaveChanged;
+    bool hasEntered = !m_steps.isEmpty() || !m_functionsToBringAlive.isEmpty() || !m_membersWrittenAfterAll.isEmpty() || promisesHaveChanged || entriesHaveComeToBeAskedForMore;
     finish();
     return hasEntered;
 }
@@ -1894,6 +1904,16 @@ bool LinkFlow::takeForConstant(BuiltinID member)
     return askedOnceByLane(MadeOnDemand::TakenForConstant, member.index(), [&]() -> uint32_t {
         return builtinsInReach().takeForConstant(member);
     });
+}
+
+const BuiltinCondition* LinkFlow::lightFormOf(BuiltinID canonical) const
+{
+    return m_stateOfLinkReach->builtinsInReach().lightFormOf(canonical);
+}
+
+bool LinkFlow::isAskedForOtherNames(BuiltinID canonical) const
+{
+    return m_stateOfLinkReach->builtinsInReach().isAskedForOtherNames(canonical);
 }
 
 BuiltinsInReach& LinkFlow::builtinsInReach()

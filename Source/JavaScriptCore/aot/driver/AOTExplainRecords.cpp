@@ -158,6 +158,7 @@ static Wire::IllTypedCause illTypedCauseForExplainedCause(Wire::UnprovenCause ca
     case Wire::UnprovenCause::Unknown:
     case Wire::UnprovenCause::ResultDisabled:
     case Wire::UnprovenCause::Untracked:
+    case Wire::UnprovenCause::ClassEvaluatedAgain:
         return Wire::IllTypedCause::None;
     case Wire::UnprovenCause::UnknownObject:
     case Wire::UnprovenCause::UncheckedConversionOfUntracked:
@@ -174,9 +175,6 @@ static Wire::IllTypedCause illTypedCauseForExplainedCause(Wire::UnprovenCause ca
     case Wire::UnprovenCause::BuiltinBase:
     case Wire::UnprovenCause::UnknownBase:
         return Wire::IllTypedCause::MemberWithoutSlot;
-    case Wire::UnprovenCause::ClassEvaluatedAgain:
-    case Wire::UnprovenCause::OwnPropertyHidesMember:
-        return Wire::IllTypedCause::LookupMayChange;
     case Wire::UnprovenCause::ReachesNativeCode:
         return Wire::IllTypedCause::NativeWritesOperand;
     case Wire::UnprovenCause::ReachesUnknownJavaScript:
@@ -191,17 +189,6 @@ static Wire::IllTypedCause illTypedCauseForExplainedCause(Wire::UnprovenCause ca
         return Wire::IllTypedCause::UnprovenCallee;
     case Wire::UnprovenCause::UnprovenContents:
         return Wire::IllTypedCause::ContainerWriterUnseen;
-    case Wire::UnprovenCause::FieldDeleted:
-    case Wire::UnprovenCause::UnknownKeyDelete:
-    case Wire::UnprovenCause::PropertyRedefined:
-    case Wire::UnprovenCause::PropertyAdded:
-    case Wire::UnprovenCause::IntegrityChanged:
-    case Wire::UnprovenCause::PrototypeChanged:
-        return Wire::IllTypedCause::StateChanged;
-    case Wire::UnprovenCause::UnknownKeyStore:
-        return Wire::IllTypedCause::ComputedKeyStore;
-    case Wire::UnprovenCause::StoreOfOtherType:
-        return Wire::IllTypedCause::StoreOutsideFieldType;
     case Wire::UnprovenCause::OtherNewTarget:
         return Wire::IllTypedCause::OtherThis;
     }

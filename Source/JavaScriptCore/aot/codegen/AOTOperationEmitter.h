@@ -81,6 +81,12 @@ protected:
     const Function& function() const { return m_generator.function(); }
     const CallingConventions& conventions() const { return m_plan.conventions(); }
     FieldAccess fieldAccessFor(PropertyKeyID, LayoutSetID receivers, bool isStore) const;
+    LayoutSetID membersWithFieldAmong(const FieldAccess& access, LayoutSetID receivers)
+    {
+        if (types().layoutSets().sizeOf(receivers) == access.membersWithField.size())
+            return receivers;
+        return types().layoutSets().ofSorted(access.membersWithField.span());
+    }
     ValueID definitionOf(ValueID) const;
     bool functionSuspends() const { return m_generator.suspends(); }
     bool functionHasHandlers() const { return m_generator.hasHandlers(); }

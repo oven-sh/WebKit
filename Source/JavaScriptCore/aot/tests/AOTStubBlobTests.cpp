@@ -489,7 +489,6 @@ static void checkCoroutineSummaries(const StubCatalog& catalog)
 {
     checkAwaitSummary(catalog, awaitBySavingFrame(), A1);
     checkAwaitSummary(catalog, awaitCallBySavingFrame(), R0);
-    checkAwaitSummary(catalog, awaitBySavingFrame(AwaitedOperand::ValueAfterTurn), A1);
     AOT_TEST_CHECK(mayThrowAndCollect(catalog, returnAsyncResult()));
 
     Typed::Effects effectsOfPromiseCreation = catalog.effectsOf(newPromise());
@@ -637,7 +636,6 @@ static void checkCoroutineOperations(const StubCatalog& catalog)
         operationsCalled.merge(operationsCalledBy(catalog, key));
     AOT_TEST_CHECK(operationsCalled == entrySetOf({ Entry::operationAOTNewPromise, Entry::operationAOTSaveFrameAndAwait, Entry::operationAOTSaveFrameAndAwaitCall, Entry::operationAOTAwaitWithSavedFrame, Entry::operationAOTAwaitCallWithSavedFrame, Entry::operationAOTResolvePromiseOrReturnResult }));
 
-    AOT_TEST_CHECK(operationsCalledBy(catalog, awaitBySavingFrame(AwaitedOperand::ValueAfterTurn)) == entrySetOf({ Entry::operationAOTSaveFrameAndAwaitAfterTurn, Entry::operationAOTAwaitWithSavedFrameAfterTurn }));
     AOT_TEST_CHECK(operationsCalledBy(catalog, awaitBySavingFrame(AwaitedOperand::ValueInModuleBody)) == entrySetOf({ Entry::operationAOTSaveFrameAndAwaitInModuleBody, Entry::operationAOTAwaitWithSavedFrameInModuleBody }));
     for (StepConsumer consumer : stepConsumers)
         AOT_TEST_CHECK(operationsCalledBy(catalog, stepAsyncGenerator(consumer)).isEmpty());

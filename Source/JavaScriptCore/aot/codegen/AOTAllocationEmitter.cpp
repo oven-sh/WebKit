@@ -263,12 +263,8 @@ void AllocationEmitter::generateTryFinishBirth(const ValueContext& value)
     bool typeClosesLayouts = type.hasOnlyLayouts() && !type.traitsOfNamed.contains(ObjectTrait::MayHaveLayoutBelow);
     LayoutSetID provenLayouts = typeClosesLayouts ? type.layouts : layoutsListedByPassedShapeTest(generator().code(), value->objectOperand());
     BirthFieldsToCheck fields;
-    LayoutID layout;
-    BlockFrequency frequency = generator().code().at(value.block()).frequency;
-    Place placeThatRulesOutLookInLine = frequency == BlockFrequency::Rare ? Place::RareBlock : frequency == BlockFrequency::Unlikely ? Place::UnlikelyBlock : Place::Anywhere;
-    if (placeThatRulesOutLookInLine == Place::Anywhere)
-        layout = layoutForInlineBirthCheck(types(), m_program, m_plan, provenLayouts, fields);
-    m_out.noteForm(layout ? Form::Open : Form::Runtime, layout ? StateOfKnowledge::BirthFieldsInCell : StateOfKnowledge::Always, placeThatRulesOutLookInLine);
+    LayoutID layout = layoutForInlineBirthCheck(types(), m_program, m_plan, provenLayouts, fields);
+    m_out.noteForm(layout ? Form::Open : Form::Runtime, layout ? StateOfKnowledge::BirthFieldsInCell : StateOfKnowledge::Always);
     if (!layout) {
         branch(bearsMark, { normalEdge(isUnfinished), normalEdge(done) });
         m_out.appendTo(isUnfinished);

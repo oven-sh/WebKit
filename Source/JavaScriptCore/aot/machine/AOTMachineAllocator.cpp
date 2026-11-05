@@ -666,6 +666,7 @@ NEVER_INLINE void Allocator::allocateArgumentRegister(Operation* operation)
             m_allocation.m_registerAtDefinition[operation->index()] = reg;
             location = Location::reg(reg);
         } else {
+            const bool mayLieInCalleeSave = facts.has(ValueFlag::LivesAcrossCall) && !(registersWhereCallInBlockTakesWhatLiesThere(m_block) & maskOf(reg));
             unbindAll(operation, state);
             if (asksForNoMoreThanItsRegister) {
                 ASSERT(registerFileIsConsistent());
@@ -675,7 +676,7 @@ NEVER_INLINE void Allocator::allocateArgumentRegister(Operation* operation)
                     bind(reg, operation);
                 location = Location::reg(reg);
             } else
-                location = defineResult(operation, maskOf(reg), 0, reg);
+                location = defineResult(operation, maskOf(reg) | (mayLieInCalleeSave ? m_file.calleeSaved : 0), 0, reg);
         }
     } else
         location = defineResult(operation, m_file.allocatableIn(bankOf(reg)), registersReservedAtAllocatedOperation(*this), Reg());

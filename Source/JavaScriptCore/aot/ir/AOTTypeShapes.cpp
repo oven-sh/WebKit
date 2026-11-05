@@ -220,6 +220,32 @@ static TypeParts describeObjectsByShape(TypeArena& arena, const Type& type, Shap
     return parts;
 }
 
+bool testTellsNoClassOfObjectsIn(TypeReader reader, const Type& type)
+{
+    if (!type.hasObjects() || type.anyObject)
+        return false;
+    const BuiltinTable& builtins = reader.builtins();
+    ShapesOfDescribedObjects shapes;
+    shapes.anyFunction = type.anyFunction;
+    if (type.unnamedClasses)
+        shapes.classes.append(reader.at(type.unnamedClasses));
+    if (type.objects) {
+        reader.at(type.objects).forEach([&](ObjectID object) {
+            const ObjectRecord& record = reader.at(object);
+            if (!keepsNameInShapeDescription(builtins, record, ShapeDescription::OfTest))
+                addObjectToDescribedShapes(reader, shapes, record);
+        });
+    }
+    if (type.unnamedLayouts) {
+        reader.at(type.unnamedLayouts).forEach([&](LayoutID layout) {
+            if (builtinClassWrittenAbove(reader, layout))
+                addLayoutToDescribedShapes(reader, shapes, layout);
+        });
+    }
+    widenClassesWithoutInstanceTestInDescribedShapes(builtins, shapes);
+    return shapes.anyObject || (shapes.anyFunction && !type.anyFunction);
+}
+
 static bool holdsNothingToDescribeByShape(const Type& type, ShapeDescription description)
 {
     return !type.objects && !type.unnamedLayouts && (description == ShapeDescription::OfExpectation || !type.unnamedClasses);

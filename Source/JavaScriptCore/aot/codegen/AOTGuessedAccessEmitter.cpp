@@ -213,9 +213,10 @@ void GuessedAccessEmitter::generateSlotRead(const ValueContext& value)
     if (!ways)
         join.emplace(m_out);
 
-    CellPointer cell = receiverOrElse(value, object, types().layoutSets().ofSorted(access.membersWithField.span()), failure);
+    LayoutSetID holders = membersWithFieldAmong(access, value->receivers());
+    CellPointer cell = receiverOrElse(value, object, holders, failure);
     bool receiverBearsNoMark = emitter<ShapeTestEmitter>().lastTestRefusesMarkedObjects();
-    CellPointer base = emitter<SlotAccessEmitter>().baseOfSlot(cell, access);
+    CellPointer base = emitter<SlotAccessEmitter>().baseOfSlot(cell, access, holders);
     if (slot.representation == SlotRepresentation::DeferredClosure) {
         NarrowReference word(m_out.load32(slots.addressOf(base, slot, location, extensionWord)));
         branchUnless(above(word, NarrowReference(m_out.constInt32(absentDeferredClosure))), failure);
@@ -287,7 +288,7 @@ void GuessedAccessEmitter::generateSlotStore(const ValueContext& value)
     TypeID tested;
     bool mayPass = guessedAccessFindsSlot(access);
     if (mayPass) {
-        holders = types().layoutSets().ofSorted(access.membersWithField.span());
+        holders = membersWithFieldAmong(access, value->receivers());
         AccessContext context { m_program, WalkFacts(m_facts), m_plan, types(), m_id };
         if (!storedValueFits(context, storedTypeID, holders, key)) {
             tested = testableStoredTypeOf(context, storedTypeID, storedTypeOf(context, holders, key));
@@ -318,7 +319,7 @@ void GuessedAccessEmitter::generateSlotStore(const ValueContext& value)
         if (!value->conditions().isEmpty())
             branchUnless(emitter<GuardEmitter>().areMembersUnchanged(value->conditions()), failure);
     } else
-        continueGuessedAccessIf(m_out, slots.holdsValue(slotAccesses.baseOfSlot(cell, access), slot, location, extensionWord), rareEdge(failure));
+        continueGuessedAccessIf(m_out, slots.holdsValue(slotAccesses.baseOfSlot(cell, access, holders), slot, location, extensionWord), rareEdge(failure));
     if (tested) {
         LBasicBlock fits = newBlock();
         branchOnType(held.as<Boxed>(), typeTestPlanFor(TypeTable::anythingOrAbsent, Representation::JSValue, tested), { normalEdge(fits), rareEdge(failure) });
@@ -359,7 +360,7 @@ void GuessedAccessEmitter::generateSlotStore(const ValueContext& value)
         auto listFieldIfMissing = [&] {
             LBasicBlock creates = newBlock();
             LBasicBlock isListed = newBlock();
-            CellPointer base = slotAccesses.baseOfSlot(cell, access);
+            CellPointer base = slotAccesses.baseOfSlot(cell, access, holders);
             Condition isMissing = needsStorage
                 ? slots.holdsAbsent(slots.addressOf(base, slot, location, extensionWord), slot.representation)
                 : logicalNot(slots.holdsValue(base, slot, location, extensionWord));
@@ -373,7 +374,7 @@ void GuessedAccessEmitter::generateSlotStore(const ValueContext& value)
         slotAccesses.listCreatedFields(cell, holders, singleElementSpan(key), value->isExpectedToCreate(), listFieldIfMissing);
     }
 
-    CellPointer base = slotAccesses.baseOfSlot(cell, access);
+    CellPointer base = slotAccesses.baseOfSlot(cell, access, holders);
     if (!needsStorage)
         slots.storeIfExtensionHolds(base, slot, location, inFormOfSlot, access.extensionWord);
     else {

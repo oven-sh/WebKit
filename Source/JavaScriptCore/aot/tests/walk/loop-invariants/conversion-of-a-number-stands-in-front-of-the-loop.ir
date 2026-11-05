@@ -1,4 +1,4 @@
-# no turn changes the factor or the bound. The tests of their written types stand in a row in front of the loop, which is built twice, and in the copy behind the test the number is taken out of its box once, in front of the head
+# no turn changes the factor or the bound. The bound is asked for an int32 and the factor for its written type, in a row in front of the loop, which is built twice, and in the copy behind the test the number is taken out of its box once, in front of the head
 # function scaled(k: number, n: number) { let s = 0.5; for (let i = 0; i < n; i++) s = s * k + i; return s; }
 # (globalThis as any).kept = scaled;
 # console.log(scaled(1.5, 5));
@@ -6,7 +6,7 @@
 # RUN: walk f1 mechanisms=all-ParameterGuards
 # REQUIRES: entries-of-bun
 # CHECK-LABEL: code f1:Body
-# CHECK: = TypeTest {{*}}testedType=number
+# CHECK: = TypeTest {{*}}testedType=i32
 # CHECK: [[test]]: boolean @Boolean = TypeTest {{*}}testedType=number
 # CHECK-NEXT: Branch [[test]] ->
 # CHECK: [[proven]]: number @JSValue = Narrowed {{*}}, [[test]]

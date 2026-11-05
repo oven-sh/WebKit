@@ -64,14 +64,6 @@ ALWAYS_INLINE void validateMutation(VM& vm, const Object& object, const FieldDat
         crashOnImpossibleMutation(vm, object, field, mutation);
 }
 
-[[noreturn]] void crashOnLostStateOfBirth(VM&, const Object&, const FieldData&, ASCIILiteral event);
-
-ALWAYS_INLINE void willLeaveStateOfBirth(VM& vm, const Object& object, const FieldData& field, ObjectMutation mutation)
-{
-    if (field.keepsStateOfBirth) [[unlikely]]
-        crashOnLostStateOfBirth(vm, object, field, nameOf(mutation));
-}
-
 struct FieldProperty {
     explicit operator bool() const { return !!valueOrAccessor; }
 

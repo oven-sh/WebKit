@@ -1057,6 +1057,7 @@ private:
     uint32_t callMember(ValueID site, ListInScan receiver, BuiltinName, std::initializer_list<ListInScan> arguments, uint32_t block);
     uint32_t addAccess(SummaryAccess::Kind, ValueID site, ListInScan subject, PropertyKeyID);
     uint32_t addAccessUnder(SummaryAccess::Kind, ValueID site, ListInScan subject, PropertyKeyID, ValueID computedKey);
+    bool isSurelyIndex(ValueID) const;
     uint32_t resultOfRead(uint32_t access);
     uint32_t addRead(ValueID site, ListInScan subject, PropertyKeyID);
     uint32_t readContents(ValueID site, ListInScan holder, SlotOfContents);
@@ -2257,9 +2258,48 @@ uint32_t ScanOfBody::addAccessUnder(SummaryAccess::Kind kind, ValueID site, List
     if (key)
         return access;
     m_summary.accesses[access].keyNode = 0;
-    if (computedKey)
+    if (computedKey) {
+        m_summary.accesses[access].keyIsSurelyIndex = isSurelyIndex(computedKey);
         addSink(SinkKindInScan::KeyOfAccess, listOf(computedKey), access);
+    }
     return access;
+}
+
+bool ScanOfBody::isSurelyIndex(ValueID value) const
+{
+    constexpr int64_t numberOfIndexes = UINT32_MAX;
+    auto integerWrittenAt = [&](ValueID operand) -> std::optional<int64_t> {
+        BodyValue written = operand ? definitionBehindCasts(operand) : BodyValue();
+        return written && written.opcode() == Opcode::Integer ? std::optional(written.as<Opcode::Integer>().integer()) : std::nullopt;
+    };
+    while (value) {
+        BodyValue definition = definitionBehindCasts(value);
+        if (!definition)
+            return false;
+        switch (definition.opcode()) {
+        case Opcode::Integer:
+            return definition.as<Opcode::Integer>().integer() >= 0 && definition.as<Opcode::Integer>().integer() < numberOfIndexes;
+        case Opcode::BitAnd:
+            return std::ranges::any_of(std::array { definition.operand(0), definition.operand(1) }, [&](ValueID operand) {
+                std::optional<int64_t> mask = integerWrittenAt(operand);
+                return mask && *mask >= 0 && *mask <= INT32_MAX;
+            });
+        case Opcode::URShift: {
+            std::optional<int64_t> distance = integerWrittenAt(definition.operand(1));
+            return distance && (*distance & 31);
+        }
+        case Opcode::Mod: {
+            std::optional<int64_t> divisor = integerWrittenAt(definition.operand(1));
+            if (!divisor || *divisor <= 0 || *divisor > numberOfIndexes)
+                return false;
+            value = definition.operand(0);
+            continue;
+        }
+        default:
+            return false;
+        }
+    }
+    return false;
 }
 
 uint32_t ScanOfBody::resultOfRead(uint32_t access)
@@ -2784,8 +2824,11 @@ void ScanOfBody::readOperation(const BodyValue& value, uint32_t block)
             uint32_t unscopables = addRead(value.id(), listOf(scope), m_program.keyOf(m_program.builtins().nameOf(WellKnownSymbol::Unscopables)));
             addRead(value.id(), listOfNode(unscopables), value.key());
         }
-        if (opcode == Opcode::NewTemplateObject)
-            addEdge(constant(typeOfElementsOfTemplateObject(value)), contentsNode(classInstanceMadeBy(value, whatIsMadeBy(value).builtinClass), ContentsSlot::Element));
+        if (opcode == Opcode::NewTemplateObject) {
+            uint32_t made = classInstanceMadeBy(value, whatIsMadeBy(value).builtinClass);
+            addEdge(constant(typeOfElementsOfTemplateObject(value)), contentsNode(made, ContentsSlot::Element));
+            addEdge(constant(TypeTable::undefined), contentsNode(made, SlotOfContents::noLongerAsMade()));
+        }
     }
     if (mayCallUnknownCode && whatIsMadeBy(value).builtinClass)
         m_resultLeaves = true;

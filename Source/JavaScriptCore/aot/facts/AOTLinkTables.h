@@ -126,10 +126,11 @@ struct LinkedNameOnPrototype {
 struct LinkedNameOnFunction {
     FunctionID holder;
     PropertyKeyID key;
+    FunctionID expected;
 };
 
 struct LinkTables;
-void appendMembersAssignedToPrototype(const Program&, const LinkTables&, LayoutID, Vector<ClassMember>&);
+void appendMembersAssignedByProgram(const Program&, const LinkTables&, LayoutID, Vector<ClassMember>&);
 
 struct MemberFound {
     enum class Kind : uint8_t {

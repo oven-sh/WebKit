@@ -13,7 +13,7 @@ operation IsSlotFilled (object: Object/inspects, with SlotStamp) [holdsDeclaredT
 operation HasNoExtraProperties (object: Object/inspects) [| engine hasNoFieldOutsideSlot] -> natural(boolean) ; reads(NamedProperties) ; proves = NoExtraProperties ; relies = Shape ; form = Open
 operation HasNoFieldOutsideSlot (object: Object/inspects) [mayMeetUnfinishedObject] -> natural(boolean) ; reads(NamedProperties) ; proves = NoFieldOutsideSlot ; relies = Shape ; form = Open
 operation IsNotFrozen (object: Object/inspects) [| engine hasNoExtraProperties hasNoFieldOutsideSlot] -> natural(boolean) ; reads(ShapeWords, OrderWords, NamedProperties) ; proves = NotFrozen ; relies = Shape ; form = Open
-operation HasLayoutPrototype (object: Object/inspects) -> natural(boolean) ; reads(PrototypeLinks) ; proves = PrototypeLinkUnchanged ; relies = Shape ; form = Open
+operation HasLayoutPrototype (object: Object/inspects) [| engine hasNoFieldOutsideSlot] -> natural(boolean) ; reads(PrototypeLinks, NamedProperties) ; proves = PrototypeLinkUnchanged ; relies = Shape ; form = Open
 operation IsPristine (value: Any/inspects, builtinClass: BuiltinClass, aspects: PristineAspects) -> natural(boolean) ; reads(NamedProperties, PrototypeLinks) ; hasKnownValueRule = true ; proves = Pristine ; replaces = IsPristineArray, CallBuiltin ; form = Open
 operation HasArrayStorage (array: Array/inspects, arrayStorage: ArrayStorage) [isWritable | engine admitsInt32Storage] -> natural(boolean) ; reads(ArrayStorage) ; proves = ArrayStorage ; form = Open
 operation IsElementPresent (array: Array/inspects, position: Number/inspects, storage?: ArrayStoragePointer/inspects, length...: Integer/inspects, arrayStorage: ArrayStorage) [keyIsIntegral | engine admitsInt32Storage isInBounds] -> natural(boolean) ; reads(ArrayStorage, Elements[Array]) ; proves = InBounds ; relies = ArrayStorage ; form = Open
@@ -37,7 +37,7 @@ operation PutSlotOrAdd (object: Object/inspects, value: Declared/retains(object)
 
 family Allocation Prepared..Placed
 operation FinishBirth (object: Object/inspects) -> none ; reads(ObjectFields) writes(RuntimeState) ; form = Open
-operation TryFinishBirth (object: Object/inspects) -> none ; reads(ObjectFields, OrderWords) writes(RuntimeState) ; runtime = TryFinishBirth ; runtimeUnder = Always ; openUnder = BirthFieldsInCell ; runtimeIn = UnlikelyBlock, RareBlock
+operation TryFinishBirth (object: Object/inspects) -> none ; reads(ObjectFields, OrderWords) writes(RuntimeState) ; runtime = TryFinishBirth ; runtimeUnder = Always ; openUnder = BirthFieldsInCell
 
 family OwnAccess Prepared..Placed
 operation PropHasOwn (object: Any/inspects+runs(OwnKeys), key: PropertyKey, calledBuiltin?: Builtin, with AccessStamp) -> natural(boolean) ; Allocates UsesRuntime reads(ObjectFields, NamedProperties, Elements, ArrayStorage, ShapeWords, OrderWords) throws by Access ; access = Has ; receiver = object ; interpreted = Test ; accessClass = ByName ; branches = May ; replaces = CallBuiltin ; runtime = HasOwnByIdAndCache ; form = Closed
@@ -128,7 +128,7 @@ operation NewAsyncGenerator (function: Function(Dispatch), callee: Callable/insp
 operation TakeGeneratorPrototype (generator: Object/inspects+changesPrototype, callee: Callable/inspects) -> none ; Allocates reads(NamedProperties, PrototypeLinks, ShapeWords) writes(PrototypeLinks, ShapeWords, RuntimeState) ; runtime = TakeGeneratorPrototype ; flow = Copies ; form = Runtime
 operation StepAsyncGenerator (generator: Object/inspects+calls, value: Any/retains, driver: Any/inspects, held...: Convertible/retains, calledBuiltin?: Builtin) -> results(StepGeneratorResult: unknown, natural(AsyncGeneratorStepStatus)) ; unknownCode suspends ; runtime = AsyncIteratorStep ; boundTo = Frame ; form = Closed
 operation AwaitMayContinue () -> natural(boolean) ; reads(RuntimeState, PromiseState) ; boundTo = Frame ; branches = May ; replaces = AwaitBySavingFrame ; form = Open
-operation AwaitBySavingFrame (awaited: Any/retains+runs(Thenable), promise: Any/inspects, held...: Convertible/retains) [takesExtraTurn] -> unknown => declared(awaited) ; unknownCode suspends ; runtime = SaveFrameAndAwait ; boundTo = Frame ; replaces = Await ; form = Closed
+operation AwaitBySavingFrame (awaited: Any/retains+runs(Thenable), promise: Any/inspects, held...: Convertible/retains) -> unknown => declared(awaited) ; unknownCode suspends ; runtime = SaveFrameAndAwait ; boundTo = Frame ; replaces = Await ; form = Closed
 operation AwaitCallBySavingFrame (function: Function(Call), promise: Any/inspects, numberOfHeld?: UInt32, arguments...: Declared/retains, role: CodeRole, numberOfBoundArguments: UInt32) -> unknown ; unknownCode suspends by Call ; accessClass = DirectCall ; runtime = SaveFrameAndAwaitCall ; boundTo = Frame ; replaces = AwaitBySavingFrame, CallDirect ; runsBeforeCallee = true ; form = Closed
 operation YieldBySavingFrame (generator: Object/inspects, value: Any/retains, held...: Convertible/retains) -> results(YieldResult: unknown, natural(ResumeMode)) ; unknownCode suspends ; runtime = SaveFrameAndYield ; boundTo = Frame ; replaces = Yield, InitialYield ; form = Closed
 operation GetHeapFrameWord (frame: Any/inspects, index: UInt32, valueType: Type) -> declared(valueType) ; reads(InternalFields) ; form = Open

@@ -38,11 +38,11 @@ constexpr bool isEnforced(ProofSource source)
     case ProofSource::EntryParameter:
     case ProofSource::Field:
     case ProofSource::SlotOfScope:
-        return true;
     case ProofSource::Variable:
     case ProofSource::Capture:
-    case ProofSource::Contents:
     case ProofSource::ResultOfOtherCall:
+        return true;
+    case ProofSource::Contents:
     case ProofSource::OtherOperation:
     case ProofSource::Test:
     case ProofSource::WhatIsRemembered:
@@ -73,6 +73,7 @@ struct WalkOptions {
     bool takesPositionsToLieInside { false };
     // TestingSwitch::NoCalleeKeepsWhatItIsHanded. No option of a build.
     bool takesCalleesToKeepNothing { false };
+    bool holdsObjectsToStayingAsMade { false };
     bool writesBodiesStraight { false };
     bool checksEffects { false };
     uint32_t rowThatSaysLess { 0 };

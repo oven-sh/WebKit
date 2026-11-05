@@ -206,6 +206,16 @@ static bool buildEqualityAsTypedOperator(Walker& walker, const BodyValue& value,
         draft.setLeftOperand(left);
         draft.setRightOperand(right);
     }
+    if (opcode == Opcode::StrictEq && form == OperatorForm::NumberAndValue && narrowed && !*narrowed && walker.has(Mechanism::UnboxedNumbers)) {
+        Draft readAsNumber(Opcode::NumberOrNaN, draft.origin());
+        readAsNumber.setValueOperand(leftType.isNumber() ? draft.rightOperand() : draft.leftOperand());
+        Reference number = walker.build(WTF::move(readAsNumber));
+        if (leftType.isNumber())
+            draft.setRightOperand(number);
+        else
+            draft.setLeftOperand(number);
+        form = OperatorForm::Numbers;
+    }
     return buildInFormOfTypedOperator(walker, WTF::move(draft), form, value.id());
 }
 

@@ -183,12 +183,23 @@ static constexpr std::array<MachineBuilderRulesOfOpcode, sizeOfTableByOpcode> ma
     return rules;
 }();
 
+static ALWAYS_INLINE bool machineBuilderSumWithConstantStaysAsItIs(const Operation* left, const Operation* right)
+{
+    if (!right->hasInt() || !right->asInt())
+        return false;
+    Opcode opcode = left->opcode();
+    return opcode != Const32 && opcode != Const64 && opcode != Add && opcode != Neg;
+}
+
 static ALWAYS_INLINE Operation* machineBuilderFold(Builder& builder, Opcode opcode, Type type, Operation* left, Operation* rightOrNull)
 {
     switch (machineBuilderRulesOfOpcodes[opcode].foldFamily) {
     case MachineBuilderFoldFamily::Arithmetic:
-        if (type.isInt())
+        if (type.isInt()) {
+            if (opcode == Add && machineBuilderSumWithConstantStaysAsItIs(left, rightOrNull))
+                return nullptr;
             return foldIntegerArithmetic(builder, opcode, type, left, rightOrNull, false);
+        }
         return foldFloatingPoint(builder, opcode, type, left, rightOrNull);
     case MachineBuilderFoldFamily::IntegerArithmetic:
         return foldIntegerArithmetic(builder, opcode, type, left, rightOrNull, false);
@@ -582,12 +593,24 @@ Operation* Builder::duplicateInheritedFindIfFusable(Operation* operand)
 
 Operation* Builder::const32(int32_t value)
 {
-    return createWithoutPosition(Const32, Int32, static_cast<uint64_t>(static_cast<int64_t>(value)));
+    Operation** kept = static_cast<uint32_t>(value) < numberOfSmallConstantsKept ? &m_smallConstants32[static_cast<uint32_t>(value)] : nullptr;
+    if (kept && *kept)
+        return *kept;
+    Operation* result = createWithoutPosition(Const32, Int32, static_cast<uint64_t>(static_cast<int64_t>(value)));
+    if (kept)
+        *kept = result;
+    return result;
 }
 
 Operation* Builder::const64(int64_t value)
 {
-    return createWithoutPosition(Const64, Int64, static_cast<uint64_t>(value));
+    Operation** kept = static_cast<uint64_t>(value) < numberOfSmallConstantsKept ? &m_smallConstants64[static_cast<uint64_t>(value)] : nullptr;
+    if (kept && *kept)
+        return *kept;
+    Operation* result = createWithoutPosition(Const64, Int64, static_cast<uint64_t>(value));
+    if (kept)
+        *kept = result;
+    return result;
 }
 
 Operation* Builder::constFloat(float value)

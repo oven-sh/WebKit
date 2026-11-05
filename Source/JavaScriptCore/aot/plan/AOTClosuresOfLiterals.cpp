@@ -110,7 +110,6 @@ void leaveClosuresOfLiteralsUnmade(const Program& program, const Facts& facts, c
             continue;
 
         LayoutID scopeOfLayout;
-        std::optional<FieldIndex> first;
         for (FieldIndex field = 0; field < layout.fields.size(); ++field) {
             FieldReference reference { id, field };
             PlacedSlot& slot = planned.slots[field];
@@ -126,22 +125,18 @@ void leaveClosuresOfLiteralsUnmade(const Program& program, const Facts& facts, c
                 break;
 
             scopeOfLayout = scope;
-            if (!first)
-                first = field;
             slot.representation = SlotRepresentation::DeferredClosure;
             slot.deferredFunction = function;
             slot.deferredClosureCapturesEnvironment = true;
             slot.type = linked.findCellOfField(reference)->proven;
             slots.keysOfSlotsThatHoldMarks.set(layout.fields[field].key.index());
         }
-        if (!first)
+        if (!scopeOfLayout)
             continue;
 
-        static_assert(widthOf(SlotRepresentation::DeferredClosure) + widthOf(SlotRepresentation::Cell32) <= sizeof(uint64_t));
         PlacedSlot scope;
         scope.representation = SlotRepresentation::Cell32;
         scope.storage = SlotStorage::Inline;
-        scope.offset = planned.slots[*first].offset + widthOf(SlotRepresentation::DeferredClosure);
         scope.indexInLayoutRecord = planned.numberOfRecordFields++;
         FieldIndex fieldOfScope = planned.numberOfFields();
         planned.slots.insert(fieldOfScope, scope);

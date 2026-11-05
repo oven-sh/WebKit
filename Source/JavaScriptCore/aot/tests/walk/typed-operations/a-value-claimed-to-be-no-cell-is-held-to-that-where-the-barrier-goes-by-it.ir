@@ -11,11 +11,12 @@
 # print(typeof bags[0]!.any + typeof bags[1]!.any);
 # print("went on");
 # A VALUE CLAIMED TO BE NO CELL IS HELD TO THAT WHERE THE BARRIER GOES BY IT. The slot `any` is held to nothing, so the floor asked nothing; and the emitter leaves the write barrier out where the stored value is claimed to hold no
-# cell. What a module's variable holds is claimed, not shown. A cell behind a false claim would lie in an old object unseen by the collector. The value is asked what the emitter goes by and no more: that it is no cell.
+# cell. What a module's variable holds IS SHOWN since the kind Variable is on, so nothing is asked here any more. A cell behind a false claim would lie in an old object unseen by the collector. The value is asked what the emitter goes by and no more: that it is no cell.
 # RUN(PUT): walk f2 mechanisms=all-Inlining
 # PUT-LABEL: code f2:Body
 # PUT: = GetModuleVariable
-# PUT: CheckProof [[value]] checkedType=undefined|null|boolean|number typeWithoutProof=absent|anything source=Field
+# PUT: [[value]]: {{*}} = CheckInitialized
+# PUT-NOT: CheckProof
 # PUT: PutSlot {{*}}, [[value]] key="any" receivers=[L0] level=Proven
 # RUN(NUMBER): run-in-shell mechanisms=-Inlining globalThis.which = 2; globalThis.id = (value) => value;
 # NUMBER: numbernumber

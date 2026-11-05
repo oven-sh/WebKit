@@ -112,35 +112,41 @@ static bool mayHoldInt32BesideOthersInCountersOfLoops(const Walker& walker, Refe
     return type.isJavaScriptValue() && type.primitives & Primitive::Integer && !type.isNumber();
 }
 
-static bool comesRoundAsInt32InCountersOfLoops(Walker& walker, const BodyIndex& index, BlockID inputHead, const LoopPreview& preview, uint32_t position, Vector<uint32_t, 8>& positionsOnTheWay)
+enum class WhatComesRoundInCountersOfLoops : uint8_t { NotAsked, IsBeingAsked, Int32, Other };
+
+static bool comesRoundAsInt32InCountersOfLoops(Walker& walker, const BodyIndex& index, BlockID inputHead, const LoopPreview& preview, uint32_t position, Vector<WhatComesRoundInCountersOfLoops, 8>& answers)
 {
-    if (positionsOnTheWay.contains(position))
-        return false;
-    positionsOnTheWay.append(position);
+    if (answers[position] != WhatComesRoundInCountersOfLoops::NotAsked)
+        return answers[position] == WhatComesRoundInCountersOfLoops::Int32;
+    answers[position] = WhatComesRoundInCountersOfLoops::IsBeingAsked;
     TypeArena& types = walker.types();
     LoopID loop = index.loopOf(inputHead);
     uint32_t firstParameter = index.block(inputHead).firstParameter().index();
-    bool comesRound = false;
-    for (const BodyIncomingEdge& edge : walker.incomingEdgesOf(index, inputHead)) {
-        if (!index.isInLoop(edge.from, loop))
-            continue;
-        std::span<const ValueID> arguments = edge.target.arguments();
-        ValueID brought = position < arguments.size() ? index.valueBehindCasts(arguments[position]) : ValueID();
-        if (!brought)
-            return false;
-        if (index.isParameter(brought) && index.blockOf(brought) == inputHead) {
-            if (!comesRoundAsInt32InCountersOfLoops(walker, index, inputHead, preview, brought.index() - firstParameter, positionsOnTheWay))
+    auto everyWayRoundBringsInt32 = [&] {
+        bool comesRound = false;
+        for (const BodyIncomingEdge& edge : walker.incomingEdgesOf(index, inputHead)) {
+            if (!index.isInLoop(edge.from, loop))
+                continue;
+            std::span<const ValueID> arguments = edge.target.arguments();
+            ValueID brought = position < arguments.size() ? index.valueBehindCasts(arguments[position]) : ValueID();
+            if (!brought)
                 return false;
-        } else {
-            size_t place = brought.index() - preview.firstValue;
-            TypeID found = brought.index() >= preview.firstValue && place < preview.typesOfValues.size() ? preview.typesOfValues[place] : TypeID();
-            TypeID number = found ? types.withoutPrimitives(found, Primitive::BigInt) : TypeID();
-            if (!number || isNeverType(number) || !types.at(number).isInt32())
-                return false;
+            if (index.isParameter(brought) && index.blockOf(brought) == inputHead) {
+                if (!comesRoundAsInt32InCountersOfLoops(walker, index, inputHead, preview, brought.index() - firstParameter, answers))
+                    return false;
+            } else {
+                size_t place = brought.index() - preview.firstValue;
+                TypeID found = brought.index() >= preview.firstValue && place < preview.typesOfValues.size() ? preview.typesOfValues[place] : TypeID();
+                TypeID number = found ? types.withoutPrimitives(found, Primitive::BigInt) : TypeID();
+                if (!number || isNeverType(number) || !types.at(number).isInt32())
+                    return false;
+            }
+            comesRound = true;
         }
-        comesRound = true;
-    }
-    positionsOnTheWay.removeLast();
+        return comesRound;
+    };
+    bool comesRound = everyWayRoundBringsInt32();
+    answers[position] = comesRound ? WhatComesRoundInCountersOfLoops::Int32 : WhatComesRoundInCountersOfLoops::Other;
     return comesRound;
 }
 
@@ -214,6 +220,8 @@ Vector<CounterTestedInFrontOfLoop, 2> findCountersTestedInFrontOfLoop(Walker& wa
     if (!holdsOperatorsOnBits && !index.holdsAnyOf(stepsByOneOfCountersOfLoops | stepsByNumberOfCountersOfLoops))
         return counters;
     uint32_t numberOfParameters = index.block(inputHead).numberOfParameters();
+    Vector<WhatComesRoundInCountersOfLoops, 8> whatComesRound;
+    whatComesRound.fill(WhatComesRoundInCountersOfLoops::NotAsked, numberOfParameters);
     for (uint32_t position = 0; position < numberOfParameters && position < entering.size(); ++position) {
         Reference enters = entering[position];
         if (enters && walker.types().at(walker.typeOf(enters)).isInt32() && !guesses.isEmpty()) {
@@ -229,8 +237,7 @@ Vector<CounterTestedInFrontOfLoop, 2> findCountersTestedInFrontOfLoop(Walker& wa
         });
         if (isTestedAlready)
             continue;
-        Vector<uint32_t, 8> positionsOnTheWay;
-        if (holdsOperatorsOnBits && comesRoundAsInt32InCountersOfLoops(walker, index, inputHead, preview, position, positionsOnTheWay)) {
+        if (holdsOperatorsOnBits && comesRoundAsInt32InCountersOfLoops(walker, index, inputHead, preview, position, whatComesRound)) {
             counters.append({ position, TypeTable::int32 });
             continue;
         }

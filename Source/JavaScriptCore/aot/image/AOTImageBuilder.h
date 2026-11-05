@@ -83,6 +83,7 @@ ResolvedCallees resolveCallees(const LinkedFunctions&, const Typed::Plan&, Build
 SideTables encodeSideTables(const LinkedFunctions&, std::span<const Vector<uint8_t>> callSites, BuildContext&);
 struct CalledSharedCode {
     Vector<StubKey> stubKeys;
+    Vector<StubKey> stubKeysOfArgumentMoves;
     Vector<const ArgumentMoves*> argumentMoves;
     Vector<uint32_t> firstArgumentMovesOfBody;
     Vector<uint32_t> thunksOfArgumentMoves;

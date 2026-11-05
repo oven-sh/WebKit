@@ -199,6 +199,7 @@ public:
         return m_blockIsLeftInFrame == frameAtBlock(entered).isEnteredInFrame();
     }
     bool fallsThroughToSlowCase(const Block* from, const Block* target) const;
+    void findIndexesAsWritten() const;
 
     template<FrameCoverage> void encodeBlocksUnder();
     template<FrameCoverage> ALWAYS_INLINE void encodeBlockUnder(Block*);
@@ -251,6 +252,10 @@ public:
         const MacroAssembler::Label* label = labelOf(target);
         if (label->isSet()) {
             jump.linkTo(*label, &m_jit);
+            return;
+        }
+        if (m_pendingJumps.size() < m_pendingJumps.capacity()) [[likely]] {
+            m_pendingJumps.appendWithinCapacity(PendingJump { jump, label });
             return;
         }
         m_pendingJumps.append(m_arena, PendingJump { jump, label });
@@ -439,7 +444,7 @@ public:
     ArenaVector<SharedLatePath> m_sharedLatePaths;
     std::span<uint32_t> m_sharedLatePathSlots;
     ArenaVector<Block*> m_blocksAsWritten;
-    UncheckedSpan<uint32_t> m_indexAsWritten;
+    mutable UncheckedSpan<uint32_t> m_indexAsWritten;
     uint32_t m_beginOfRareCodeAsWritten { 0 };
     bool m_isAmongOtherCode { false };
     Block* m_block { nullptr };
@@ -622,7 +627,9 @@ ALWAYS_INLINE void Encoder::fillParameters(PatchParameters& parameters, const St
     RELEASE_ASSERT(locations.size() == numberOfResults + numberOfOperands);
 
     if (size_t numberOfReps = locations.size()) {
-        ValueRep* reps = static_cast<ValueRep*>(m_arena.allocate(numberOfReps * sizeof(ValueRep), alignof(ValueRep)));
+        static_assert(alignof(ValueRep) <= Arena::alignmentOfCursor);
+        const size_t bytesOfReps = numberOfReps * sizeof(ValueRep);
+        ValueRep* reps = static_cast<ValueRep*>(m_arena.hasRoomFor(bytesOfReps) ? m_arena.allocateWhereThereIsRoom(bytesOfReps) : m_arena.allocate(bytesOfReps, alignof(ValueRep)));
         const Location* location = locations.data();
         ValueRep* rep = reps;
         static constexpr ValueRep someRegister { ValueRep::SomeRegister };
@@ -652,18 +659,22 @@ ALWAYS_INLINE void Encoder::fillParameters(PatchParameters& parameters, const St
 
     std::span<GPRReg> gpScratch(parameters.m_gpScratch);
     unsigned numberOfGPScratch = 0;
-    forEachRegister(assignment.gpScratch, [&](Reg reg) {
-        RELEASE_ASSERT(numberOfGPScratch < gpScratch.size());
-        gpScratch[numberOfGPScratch++] = reg.gpr();
-    });
+    if (assignment.gpScratch) [[unlikely]] {
+        forEachRegister(assignment.gpScratch, [&](Reg reg) {
+            RELEASE_ASSERT(numberOfGPScratch < gpScratch.size());
+            gpScratch[numberOfGPScratch++] = reg.gpr();
+        });
+    }
     RELEASE_ASSERT(numberOfGPScratch == patch->numGPScratchRegisters);
 
     std::span<FPRReg> fpScratch(parameters.m_fpScratch);
     unsigned numberOfFPScratch = 0;
-    forEachRegister(assignment.fpScratch, [&](Reg reg) {
-        RELEASE_ASSERT(numberOfFPScratch < fpScratch.size());
-        fpScratch[numberOfFPScratch++] = reg.fpr();
-    });
+    if (assignment.fpScratch) [[unlikely]] {
+        forEachRegister(assignment.fpScratch, [&](Reg reg) {
+            RELEASE_ASSERT(numberOfFPScratch < fpScratch.size());
+            fpScratch[numberOfFPScratch++] = reg.fpr();
+        });
+    }
     RELEASE_ASSERT(numberOfFPScratch == patch->numFPScratchRegisters);
 
     parameters.m_usedRegisters = assignment.usedRegisters;

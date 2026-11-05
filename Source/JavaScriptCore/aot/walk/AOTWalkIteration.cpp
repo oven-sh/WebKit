@@ -31,7 +31,7 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-Reference buildAwaitBySavingFrame(Walker&, Reference awaited, std::span<const Reference> held, bool takesExtraTurn, Origin);
+Reference buildAwaitBySavingFrame(Walker&, Reference awaited, std::span<const Reference> held, Origin);
 bool canWaitForStepOfAsyncGenerator(Walker&);
 bool canCallCompilerHelper(Walker&, FunctionID helper);
 Reference callCompilerHelper(Walker&, FunctionID helper, std::span<const Reference> arguments, Origin);
@@ -831,6 +831,37 @@ public:
         return iteration;
     }
 
+    Walker::IterationByIndex takeStepsThroughTableAtOpen(Reference iterable, uint32_t numberOfSteps, const ClassSteppedUnseen& stepped)
+    {
+        BlockID outOfLine = addBlock(BlockFrequency::Unlikely);
+        Walker::IterationByIndex inLine;
+        inLine.list = goOnWhereInstanceIsAsMade(iterable, stepped, outOfLine);
+        inLine.builtinClass = stepped.builtinClass;
+        inLine.contents = stepped.contents;
+        inLine.kind = stepped.kind;
+        inLine.position = integer(0);
+        inLine.table = tableOf(inLine.list);
+        Vector<Reference, 4> taken;
+        for (uint32_t step = 0; step < numberOfSteps; ++step) {
+            Draft read = draft(Opcode::ResultAt);
+            read.setResultsOperand(resumeByIndex(inLine, std::nullopt));
+            read.setIndex(static_cast<uint32_t>(IteratorResumeResult::Value));
+            taken.append(build(WTF::move(read)));
+        }
+
+        Walker::IterationByIndex iteration;
+        iteration.isTakenAtOpen = true;
+        BlockID after = addBlock();
+        for (uint32_t step = 0; step < numberOfSteps; ++step)
+            iteration.takenAtOpen.append(m_walker.addParameter(after, { }, Representation::JSValue));
+        jumpTo(after, taken.span());
+        continueIn(outOfLine);
+        taken.shrink(0);
+        takeStepsOutOfLine(iterable, numberOfSteps, taken);
+        jumpTo(after, taken.span());
+        return iteration;
+    }
+
     TypeID typeHandedOutInTurnAhead(const Walker::IterationByIndex& iteration, TypeID provenByLink, bool& countsOnRowInFront)
     {
         static_assert(!OperandIndex::GetArrayElement::array && OperandIndex::GetArrayElement::position == 1);
@@ -1338,7 +1369,7 @@ private:
         }
         if (m_walker.isUnreachable())
             return { };
-        return buildAwaitBySavingFrame(m_walker, value, m_held, false, m_origin);
+        return buildAwaitBySavingFrame(m_walker, value, m_held, m_origin);
     }
 
     BlockID addBlock(BlockFrequency frequency = BlockFrequency::Normal)
@@ -2466,13 +2497,22 @@ static bool openTypedIteration(Walker& walker, const BodyValue& open)
         }
     }
     std::optional<ClassSteppedUnseen> proven = iterable ? findClassSteppedUnseen(walker, walker.typeOf(iterable)) : std::nullopt;
-    bool isAsMadeForGood = proven && proven->contents != ContentsStepped::Text && linksWordCanBeHeldAgainst(walker, iterable) && classOfIterableThatStaysAsMadeByLink(walker, open, iterated) == proven->builtinClass;
+    bool isAsMadeForGood = proven && proven->contents != ContentsStepped::Text && linksWordIsTakenOf(walker, iterable) && classOfIterableThatStaysAsMadeByLink(walker, open, iterated) == proven->builtinClass;
     bool isSurelyAsMade = proven && (proven->contents == ContentsStepped::Text || isAsMadeForGood || (proven->contents == ContentsStepped::List && isListAsMade(walker, iterable)));
     if (iterable && !isSurelyAsMade && stepsOfPatternStandInRow(index, open)) {
-        Walker::IterationByIndex iteration = builder.takeStepsAtOpen(iterable, *open.as<Opcode::IteratorOpen>().elementCount());
-        if (!walker.isUnreachable())
-            walker.bind(open.id(), walker.addIterationByIndex(WTF::move(iteration)));
-        return true;
+        uint32_t numberOfSteps = *open.as<Opcode::IteratorOpen>().elementCount();
+        bool standsInLoop = iterable.isValue() && walker.isInLoop();
+        std::optional<ClassSteppedUnseen> table = standsInLoop ? findClassToTestFor(walker, iterated, iterable, true) : std::nullopt;
+        if (table && table->contents != ContentsStepped::Map && table->contents != ContentsStepped::Set)
+            table = std::nullopt;
+        if (table || !standsInLoop || walker.types().overlap(walker.typeOf(iterable), walker.types().builtinClass(BuiltinClasses::Array))) {
+            Walker::IterationByIndex iteration = table ? builder.takeStepsThroughTableAtOpen(iterable, numberOfSteps, *table) : builder.takeStepsAtOpen(iterable, numberOfSteps);
+            if (table)
+                walker.noteGuessOpened();
+            if (!walker.isUnreachable())
+                walker.bind(open.id(), walker.addIterationByIndex(WTF::move(iteration)));
+            return true;
+        }
     }
 
     WayOfIteration way = findWayOfIteration(index, open.id());
@@ -2599,7 +2639,7 @@ static bool appendSpreadOfList(Walker& walker, const BodyValue& spread)
             return true;
         }
     }
-    BuiltinClassID classAsMadeForGood = linksWordCanBeHeldAgainst(walker, iterable) ? classOfIterableThatStaysAsMadeByLink(walker, spread, spread.as<Opcode::AppendSpread>().iterableOperand()) : BuiltinClassID();
+    BuiltinClassID classAsMadeForGood = linksWordIsTakenOf(walker, iterable) ? classOfIterableThatStaysAsMadeByLink(walker, spread, spread.as<Opcode::AppendSpread>().iterableOperand()) : BuiltinClassID();
     bool isListAsMadeForGood = classAsMadeForGood == BuiltinClasses::Array && indexesAreAbsentAboveLists(walker);
     bool isSurelyAsMade = isProvenListInIteration(walker, iterable) && (isListAsMadeForGood || isListAsMade(walker, iterable));
     std::optional<ClassSteppedUnseen> tested = !array || isSurelyAsMade ? std::nullopt : findClassToTestFor(walker, spread.as<Opcode::AppendSpread>().iterableOperand(), iterable);
@@ -2751,6 +2791,7 @@ std::optional<Effects> effectsOfStepOverListAhead(Walker& walker, const BodyInde
 }
 
 constinit const OpcodeSet opcodesThatBuildTypedIterationTakes = opcodesOfTypedIteration;
+static_assert(opcodesThatBuildTypedIterationTakesInChains == opcodesOfTypedIteration);
 
 bool buildTypedIterationOfItsOpcodes(Walker& walker, const BodyValue& value)
 {

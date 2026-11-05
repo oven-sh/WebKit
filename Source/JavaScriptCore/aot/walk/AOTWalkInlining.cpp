@@ -288,8 +288,8 @@ static bool mayBeWalkedAtInlining(const Walker& walker, FunctionID callee)
         return false;
 
     bool returns = false;
-    for (uint32_t block = 0; block < body->numberOfBlocks() && !returns; ++block)
-        returns = body->isReachable(BlockID(block)) && endsInReturnAtInlining(body->terminator(BlockID(block)));
+    for (uint32_t block = body->numberOfBlocks(); block && !returns; --block)
+        returns = body->isReachable(BlockID(block - 1)) && endsInReturnAtInlining(body->terminator(BlockID(block - 1)));
     const LinkTables& link = walker.facts().linked();
     return returns && (link.function(callee).namesOnlyWhatEveryFunctionLeadsTo || link.leadsTo(walker.unit(), callee));
 }
@@ -574,7 +574,7 @@ static bool callAdmitsCopyAtInlining(const Walker& walker, const Draft& site, Fu
             || copyPaysForClosureHandedOverAtInlining(walker, callee, place, inSight ? &inSight->handedOver : nullptr)
             || copyPaysForClosureThatCalleeOnlyCallsAtInlining(walker, callee, place, inSight ? &inSight->handedOver : nullptr)
             || ((!inSight || inSight->callsParameterOfCopy) && copyOfClosureHandedOverPaysAtInlining(walker, callee, place))
-            || ((!inSight || !walker.hasTextsInStringBuilders()) && place.caller == walker.unit().function && (place.isInLoop || !stepsForOfAtInlining(walker, callee)) && turnsOfCopyWrittenOutAt(walker, site, callee, place));
+            || ((!inSight || !walker.hasTextsInStringBuilders()) && place.caller == walker.unit().function && walker.facts().summaries().at(callee).has(SummaryTrait::HasLoops) && (place.isInLoop || !stepsForOfAtInlining(walker, callee)) && turnsOfCopyWrittenOutAt(walker, site, callee, place));
     };
     if (copyFillsObjectMadeForItAtInlining(walker, site, callee, place))
         return true;
@@ -592,6 +592,13 @@ static bool callAdmitsCopyAtInlining(const Walker& walker, const Draft& site, Fu
 bool mayCopyCallee(const Walker& walker, const Draft& site, FunctionID callee, const PlaceOfCall& place)
 {
     return walker.has(Mechanism::Inlining) && opcodesOfInlining.contains(site.opcode) && callAdmitsCopyAtInlining(walker, site, callee, place, nullptr)
+        && !walker.isBeingWalked(callee) && mayBeWalkedAtInlining(walker, callee);
+}
+
+bool copyOfCalleeCalledInLoopPays(const Walker& walker, FunctionID callee, size_t numberOfArguments)
+{
+    PlaceOfCall place { walker.currentFunction(), true };
+    return callee && walker.has(Mechanism::Inlining) && isEnteredAtInlining(walker.program().at(callee), false) && copyPaysAtInlining(walker, callee, numberOfArguments, place, nullptr)
         && !walker.isBeingWalked(callee) && mayBeWalkedAtInlining(walker, callee);
 }
 
@@ -771,6 +778,14 @@ static bool copyHeadThatReturnsAtOnceAtInlining(Walker& walker, const BodyValue&
     return true;
 }
 
+static bool copyLearnsOfThisAtInlining(Walker& walker, const BodyValue& call, FunctionID callee)
+{
+    ValueID written = call.as<Opcode::Call>().thisValueOperand();
+    TypeID handed = written ? walker.typeOf(walker.referenceOf(written)) : TypeID();
+    TypeID own = walker.program().at(callee).thisType.written();
+    return !handed || !own || !walker.types().isSubset(walker.types().withoutNullish(own), handed);
+}
+
 bool inlineCalleeOfItsOpcodes(Walker& walker, const BodyValue& call)
 {
     if (callsOfListsAtInlining.contains(call.opcode()))
@@ -788,12 +803,14 @@ bool inlineCalleeOfItsOpcodes(Walker& walker, const BodyValue& call)
     if (!callee)
         return false;
 
+    if (call.opcode() == Opcode::Call && walker.standsAtFrameOfRowOfShapeTests() && !copyLearnsOfThisAtInlining(walker, call, callee))
+        return false;
     Draft site = walker.draftOf(call);
     const BodyIndex& index = walker.currentBodyIndex();
     Vector<Reference, 8> handedOver = operandsHandedToCopy(site, walker.program().at(callee));
     bool callsParameterOfCopy = call.opcode() == Opcode::Call && walker.depthOfCopies() && index.block(entryBlock).indexOfParameter(index.valueBehindCasts(call.as<Opcode::Call>().calleeOperand()));
     OperandsInSightAtInlining inSight { handedOver.span(), callsParameterOfCopy, calleeStandsBehindBuiltin };
-    if (callAdmitsCopyAtInlining(walker, site, callee, { walker.currentFunction(), walker.isInLoop(), &index, call.id() }, &inSight) && walker.walkInline(call, callee, handedOver.span()))
+    if (callAdmitsCopyAtInlining(walker, site, callee, { walker.currentFunction(), walker.isInLoop(), &index, call.id() }, &inSight) && walker.walkInline(call, callee, handedOver.span(), &site))
         return true;
     return !calleeStandsBehindBuiltin && !walker.hasFailed() && copyHeadThatReturnsAtOnceAtInlining(walker, call, site, callee, handedOver.span());
 }
@@ -847,9 +864,12 @@ bool Walker::walkInline(const BodyValue& call, FunctionID callee, std::span<cons
     if (!m_opensGuesses || isBeingWalked(callee))
         return false;
 
-    Draft site = writtenOut ? *writtenOut : draftOf(call);
+    std::optional<Draft> drafted;
+    if (!writtenOut)
+        drafted.emplace(draftOf(call));
+    const Draft& site = writtenOut ? *writtenOut : *drafted;
     Vector<Reference, 2> heldByCallAlone = collectWhatCopyAloneHolds(*this, call);
-    Vector<ClosureMadeForCallAtInlining, 2> closuresMadeForCall = collectClosuresMadeForCallAtInlining(*this, call);
+    Vector<ClosureMadeForCallAtInlining, 2> closuresMadeForCall;
     const Function& function = program().at(callee);
     bool isConstruction = constructionsOfInlining.contains(site.opcode);
     CallOfInlining written;
@@ -873,7 +893,7 @@ bool Walker::walkInline(const BodyValue& call, FunctionID callee, std::span<cons
     if (isUnreachable())
         return true;
 
-    Vector<Reference, 8> argumentsAsTheyCame(entryArguments);
+    Vector<Reference, 8> argumentsAsTheyCame;
     BlockID whereGuardFails;
     const CallingConventions& conventions = plan().conventions();
     for (uint32_t index = 0; index < entryArguments.size() && !isUnreachable(); ++index) {
@@ -890,6 +910,8 @@ bool Walker::walkInline(const BodyValue& call, FunctionID callee, std::span<cons
         if (!whereGuardFails) {
             whereGuardFails = addBlock(BlockFrequency::Rare);
             noteGuessOpened();
+            argumentsAsTheyCame = entryArguments;
+            closuresMadeForCall = collectClosuresMadeForCallAtInlining(*this, call);
         }
         branch(passes, whereTestPasses, whereGuardFails);
         continueIn(whereTestPasses);
@@ -945,24 +967,12 @@ bool Walker::walkInline(const BodyValue& call, FunctionID callee, std::span<cons
     const BodyIndex& body = facts().bodies().at(callee);
     const BodyIndex& bodyOfCaller = currentBodyIndex();
 
-    Frame frame;
-    frame.function = callee;
-    frame.body = &body.body();
-    frame.index = &body;
-    if (function.isModuleBody())
-        frame.variablesStoredFirst = facts().linked().variablesStoredFirstIn(callee);
-    frame.references.fill(Reference(), body.numberOfValues());
-    frame.loopDepthAtCall = m_frames.last().loopDepthAtCall + bodyOfCaller.loopDepthOf(bodyOfCaller.blockOf(call.id()));
-    frame.returnsInPlaceOfUnit = returnsInPlaceOfUnit;
-    frame.callsAreCountedByPlan = callsOfCopyAreCountedForStackTests(call, callee);
-    if (ExpectationOfValue ofAnswer = expectationOfAnswerOfCallBeingCopied(*this, call); ofAnswer.type) {
-        frame.typeExpectedOfAnswer = ofAnswer.type;
-        frame.answerIsDeclared = ofAnswer.isDeclared;
-    }
-    frame.callCopied = call.id();
-    frame.numberOfValuesBuiltBefore = m_code.numberOfValues();
-    frame.isCopiedByLinkOfChain = isCopiedByLinkOfChain(call);
-    frame.inlineFrame = m_code.addInlineFrame({
+    uint32_t loopDepthAtCall = m_frames.last().loopDepthAtCall + bodyOfCaller.loopDepthOf(bodyOfCaller.blockOf(call.id()));
+    bool callsAreCountedByPlan = callsOfCopyAreCountedForStackTests(call, callee);
+    ExpectationOfValue ofAnswer = expectationOfAnswerOfCallBeingCopied(*this, call);
+    uint32_t numberOfValuesBuiltBefore = m_code.numberOfValues();
+    bool copyIsMadeByLinkOfChain = isCopiedByLinkOfChain(call);
+    uint32_t inlineFrame = m_code.addInlineFrame({
         .callee = callee,
         .callPosition = site.position,
         .parent = m_frames.last().inlineFrame,
@@ -972,7 +982,25 @@ bool Walker::walkInline(const BodyValue& call, FunctionID callee, std::span<cons
         .module = function.module,
         .calledBuiltin = !isConstruction && function.isHiddenInStackTraces() ? site.calledBuiltin() : BuiltinID(),
     });
-    m_frames.append(WTF::move(frame));
+
+    Frame& frame = m_frames.appendNew();
+    frame.function = callee;
+    frame.body = &body.body();
+    frame.index = &body;
+    if (function.isModuleBody())
+        frame.variablesStoredFirst = facts().linked().variablesStoredFirstIn(callee);
+    frame.references.fill(Reference(), body.numberOfValues());
+    frame.loopDepthAtCall = loopDepthAtCall;
+    frame.returnsInPlaceOfUnit = returnsInPlaceOfUnit;
+    frame.callsAreCountedByPlan = callsAreCountedByPlan;
+    if (ofAnswer.type) {
+        frame.typeExpectedOfAnswer = ofAnswer.type;
+        frame.answerIsDeclared = ofAnswer.isDeclared;
+    }
+    frame.callCopied = call.id();
+    frame.numberOfValuesBuiltBefore = numberOfValuesBuiltBefore;
+    frame.isCopiedByLinkOfChain = copyIsMadeByLinkOfChain;
+    frame.inlineFrame = inlineFrame;
 
     using ReturnOfCopy = Frame::ReturnOfCopy;
     Vector<ReturnOfCopy, 2> returns;

@@ -84,51 +84,6 @@ function f3 name="makeBag" results=[{type=anything}] {
 }
 )IR"_s;
 
-static constexpr ASCIILiteral programWithoutMutationsText = R"IR(layout L0 name="Extensible" fields=[{key="a" declared={type=number} flags=[IsRequired]}, {key="b" declared={type=string} flags=[IsRequired]}, {key="c" declared={type=anything} flags=[IsRequired]}, {key="d" declared={type=boolean} flags=[IsRequired]}]
-layout L1 name="Closed" fields=[{key="a" declared={type=number} flags=[IsRequired]}, {key="b" declared={type=string} flags=[IsRequired]}]
-variable g0 name="closed" module=m0 declared={type=anything} initialization=Undefined
-variable g1 name="extensible" module=m0 declared={type=anything} initialization=Undefined
-module m0 path="/main.js" displayPath="main.js" body=f0
-entry module=m0
-function f0 name="main" kind=Module results=[{type=anything}] {
-    v0 = Builtin builtin=GlobalThis
-    v1 = PropGet v0 key="publish" [isFreeName]
-    v2 = NewClosure function=f1
-    v3 = NewClosure function=f2
-    v4 = Call v1, -, v2, v3
-    Return
-}
-function f1 name="useExtensible" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-    v2 = Double number=1.5
-    v3 = String string="text"
-    v4 = Boolean boolean=true
-    v5 = NewObject -, v2, v3, v0, v4 layout=L0 fields=[0, 1, 2, 3]
-    v6 = FinishObject v5
-    v7 = GetModuleVariable variable=g1
-    PutModuleVariable v6 variable=g1
-    v9 = Integer integer=0
-    ElemSet v7, v9, v1
-    v11 = PropGet v7 key="a"
-    v12 = PropGet v7 key="b"
-    v13 = PropGet v7 key="c"
-    v14 = PropGet v7 key="d"
-    v15 = NewArray v11, v12, v13, v14 contents=anything holes=[]
-    Return v15
-}
-function f2 name="useClosed" results=[{type=anything}] {
-    v0 = Double number=1.5
-    v1 = String string="text"
-    v2 = NewObject -, v0, v1 layout=L1 fields=[0, 1]
-    v3 = FinishObject v2
-    v4 = GetModuleVariable variable=g0
-    PutModuleVariable v3 variable=g0
-    v6 = PropGet v4 key="a"
-    v7 = PropGet v4 key="b"
-    v8 = NewArray v6, v7 contents=anything holes=[]
-    Return v8
-}
-)IR"_s;
-
 namespace {
 
 enum class Event : uint8_t { Delete, Redefinition, StoreOfOtherType };
@@ -333,7 +288,7 @@ static unsigned checkEventOnEachField(LoadedProgram& program, ASCIILiteral layou
     unsigned numberOfFieldsThatLeft = 0;
     const LayoutData& layout = layoutNamed(program, layoutName);
     for (const FieldData& field : declaredFieldsOf(program, layout)) {
-        if (!field.canLeaveSlot() || field.keepsStateOfBirth)
+        if (!field.canLeaveSlot())
             continue;
         if (event == Event::StoreOfOtherType && !valueOfOtherTypeFor(program, field))
             continue;
@@ -367,31 +322,6 @@ static void checkFieldsWithAbsentBitsWithoutExtraPropertiesWord(LoadedProgram& p
     AOT_TEST_CHECK(checkEventOnEachField(program, "Deletable"_s, Event::Delete) == 2);
     AOT_TEST_CHECK(checkEventOnEachField(program, "Deletable"_s, Event::Redefinition) == 2);
     AOT_TEST_CHECK(checkEventOnEachField(program, "Deletable"_s, Event::StoreOfOtherType) == 2);
-}
-
-static bool everyFieldKeepsStateOfBirth(LoadedProgram& program, const LayoutData& layout)
-{
-    return std::ranges::all_of(declaredFieldsOf(program, layout), [](const FieldData& field) {
-        return field.keepsStateOfBirth;
-    });
-}
-
-static void checkFieldsWithoutAbsentBitsWithExtraPropertiesWord(LoadedProgram& program)
-{
-    const LayoutData& layout = layoutNamed(program, "Extensible"_s);
-    AOT_TEST_CHECK(layout.extraPropertiesSlot() && std::ranges::count_if(declaredFieldsOf(program, layout), &FieldData::canLeaveSlot) == 2);
-    AOT_TEST_CHECK(everyFieldKeepsStateOfBirth(program, layout));
-    for (Event event : { Event::Delete, Event::Redefinition, Event::StoreOfOtherType })
-        AOT_TEST_CHECK(!checkEventOnEachField(program, "Extensible"_s, event));
-}
-
-static void checkFieldsWithoutAbsentBitsWithoutExtraPropertiesWord(LoadedProgram& program)
-{
-    const LayoutData& layout = layoutNamed(program, "Closed"_s);
-    AOT_TEST_CHECK(!layout.extraPropertiesSlot() && !layout.fields()[0].canLeaveSlot() && layout.fields()[1].canLeaveSlot());
-    AOT_TEST_CHECK(everyFieldKeepsStateOfBirth(program, layout));
-    for (Event event : { Event::Delete, Event::Redefinition, Event::StoreOfOtherType })
-        AOT_TEST_CHECK(!checkEventOnEachField(program, "Closed"_s, event));
 }
 
 static void checkStoreThatFitsMovesFieldBack(LoadedProgram& program)
@@ -750,18 +680,11 @@ static void changeObjectsUnseen(LoadedProgram& program)
 template<LoadedProgramTest body>
 static constexpr void (*withMutations)() = runNativeTestWithLoadedProgram<objectSlotExitTests, mutatingProgramText, changeObjectsUnseen<body>>;
 
-template<LoadedProgramTest body>
-static constexpr void (*withoutMutations)() = runNativeTestWithLoadedProgram<objectSlotExitTests, programWithoutMutationsText, body>;
-
-static constexpr ASCIILiteral noSlotsWithoutAbsentState = "plan/AOTSlotPlan.cpp: slots without an absent state, and fields that keep the state of their birth: every slot is a JSValue, an OptionalInt64 or an OptionalDouble, which a field can leave"_s;
-
 std::span<const NativeTest> objectSlotExitTests()
 {
     static constexpr NativeTest tests[] = {
         { "slot-exit/absent-bits-and-extra-properties-word"_s, withMutations<checkFieldsWithAbsentBitsAndExtraPropertiesWord> },
         { "slot-exit/absent-bits-without-extra-properties-word"_s, withMutations<checkFieldsWithAbsentBitsWithoutExtraPropertiesWord> },
-        { "slot-exit/no-absent-bits-with-extra-properties-word"_s, withoutMutations<checkFieldsWithoutAbsentBitsWithExtraPropertiesWord>, noSlotsWithoutAbsentState },
-        { "slot-exit/no-absent-bits-and-no-extra-properties-word"_s, withoutMutations<checkFieldsWithoutAbsentBitsWithoutExtraPropertiesWord>, noSlotsWithoutAbsentState },
         { "slot-exit/fitting-store-moves-field-back"_s, withMutations<checkStoreThatFitsMovesFieldBack> },
         { "slot-exit/read-of-getter-in-place-of-field-is-cached"_s, withMutations<checkReadOfGetterInPlaceOfFieldIsCached> },
         { "slot-exit/name-of-no-field"_s, withMutations<checkNameThatIsNoField> },

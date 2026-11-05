@@ -399,7 +399,7 @@ static void checkCopiesOfEveryShape(const Body& body)
     AOT_TEST_CHECK(bodyTestRangeEquals(newObject.list(PayloadWord::fields(Opcode::NewObject)), { 0u, 2u }));
 
     BodyTestHolder newArray = copyIntoBodyTestHolder(values[v9], Opcode::NewArray);
-    AOT_TEST_CHECK(bodyTestValuesEqual(newArray.operands.span(), { none, v2 + shift, v3 + shift, v4 + shift }) && newArray.word(PayloadWord::contents(Opcode::NewArray)) == bodyTestID<TypeID>(2).bits());
+    AOT_TEST_CHECK(bodyTestValuesEqual(newArray.operands.span(), { v2 + shift, v3 + shift, v4 + shift }) && newArray.word(PayloadWord::contents(Opcode::NewArray)) == bodyTestID<TypeID>(2).bits());
     AOT_TEST_CHECK(bodyTestRangeEquals(newArray.list(PayloadWord::holes(Opcode::NewArray)), { 1u }));
 
     BodyTestHolder templateObject = copyIntoBodyTestHolder(values[v11], Opcode::NewTemplateObject);

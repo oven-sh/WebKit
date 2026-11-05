@@ -5,8 +5,9 @@
 # what was found at the read is what is called.
 # RUN: bytes f1:Body mechanisms=all
 # CHECK-LABEL: unit f1:Body
-# CHECK: Stub ReadAtSiteUnlessAsMade.OfCell
-# CHECK: Stub CallMethodThatMayBeUnread.MapSet count 2
+# CHECK: ReadAtSiteUnlessAsMade.OfCell
+# RUN(CALLED): bytes f1:Body mechanisms=all
+# CALLED: Stub CallMethodThatMayBeUnread.MapSet count 2
 # RUN(WITHHELD): bytes f1:Body mechanisms=all-BuiltinCalls
 # WITHHELD-NOT: Unread
 # WITHHELD-NOT: UnlessAsMade

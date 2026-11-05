@@ -26,6 +26,7 @@ public:
     TypeID provenAt(FunctionID, uint32_t entryParameter) const;
     TypeID provenAt(TypeArena&, FunctionID, uint32_t entryParameter) const;
     bool takesWhatWasLeft(FunctionID) const;
+    const Facts& facts() const { return m_facts; }
 
 private:
     const Program& m_program;

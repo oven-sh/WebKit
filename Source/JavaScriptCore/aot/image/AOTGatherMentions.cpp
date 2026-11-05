@@ -397,17 +397,13 @@ static NumberedKeys mergeGatheredKeys(NumberSpace space, std::span<const Gathere
             rest = rest.subspan(1 + sizeOfKey);
         }
     });
-    sortByWordKeepingEqualElementsInOrder(keys.mutableSpan(), [](const GatheredKey& key) {
+    auto firstWordsOf = [](const GatheredKey& key) {
         return key.firstWords;
+    };
+    sortByWordOnPoolKeepingEqualElementsInOrder(loops, keys.mutableSpan(), firstWordsOf);
+    sortRunsOfEqualWordsOnPool(loops, keys.mutableSpan(), firstWordsOf, [](const GatheredKey& a, const GatheredKey& b) {
+        return std::ranges::lexicographical_compare(a.words(), b.words());
     });
-    for (size_t first = 0, end = 0; first < numberOfKeys; first = end) {
-        for (end = first + 1; end < numberOfKeys && keys[end].firstWords == keys[first].firstWords; ++end) { }
-        if (end - first == 1)
-            continue;
-        parallelSort(loops, keys.mutableSpan().subspan(first, end - first), [](const GatheredKey& a, const GatheredKey& b) {
-            return std::ranges::lexicographical_compare(a.words(), b.words());
-        });
-    }
 
     auto forEachDistinctKeyInRange = [&](size_t first, size_t end, const auto& functor) {
         for (size_t index = first; index < end; ++index) {
@@ -501,11 +497,11 @@ GatheredMentions gatherMentions(const NumberingInputs& inputs, BuildContext& con
     runLanes(loops, {
         [&] {
             StepTimes timesOfLane(context, "image: gather mentions"_s);
-            for (unsigned index = 0; index < numberOfNumberSpaces; ++index) {
+            runLanes(context.parallelLoops(), numberOfNumberSpaces, [&](unsigned index, const ParallelLoops&) {
                 auto space = static_cast<NumberSpace>(index);
                 if (!hasOneIDAsKey(space))
                     gathered.keySpaces[index] = mergeGatheredKeys(space, chunks.span(), context);
-            }
+            });
             timesOfLane.didFinish("merge keys"_s);
         },
         [&] {

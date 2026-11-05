@@ -13,6 +13,7 @@
 namespace JSC { namespace AOT { namespace Typed {
 
 Effects effectsOfDirectCall(Walker&, FunctionID callee, std::span<const Reference> entryArguments);
+bool unitDoesMoreThanBodyForKnownEffects(const Plan&, FunctionID);
 uint64_t layoutsWrittenBy(Walker&, const Draft&);
 uint64_t bitsOfLayoutsOf(Walker&, TypeID);
 

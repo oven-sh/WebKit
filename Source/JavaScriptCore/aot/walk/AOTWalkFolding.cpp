@@ -51,6 +51,8 @@ static PrimitiveKnownToFolding onlyValueOfTypeInFolding(const TypeArena& types, 
 {
     if (!id)
         return { };
+    if (holdsOnlyPrimitives(id) ? !std::has_single_bit(primitivesInID(id)) || (isIntegerType(id) && !integersInID(id).isSingleValue()) : types.recordOf(id).hasObjects())
+        return { };
     Type type = types.at(id);
     if (!type.isJavaScriptValue() || type.hasObjects())
         return { };
@@ -506,12 +508,12 @@ static TypingContext typingForFolding(Walker& walker)
     return { walker.program(), walker.types(), PositionTypes::knowingNothing() };
 }
 
-static TypeID typeToJudgeByInFolding(Walker& walker, Reference reference)
+static ALWAYS_INLINE TypeID typeToJudgeByInFolding(Walker& walker, Reference reference)
 {
     if (!reference)
         return { };
     TypeID type = walker.typeOf(reference);
-    if (!type || isNeverType(type) || walker.types().at(type).mayBeUnspecified())
+    if (!type || isNeverType(type) || ((holdsOnlyPrimitives(type) ? primitivesInID(type) : walker.types().recordOf(type).primitives) & Primitive::Unspecified))
         return { };
     return type;
 }
@@ -524,6 +526,89 @@ static bool areOneClassObjectInFolding(Walker& walker, TypeID left, TypeID right
     FunctionID constructor = type.isObject() && type.isJavaScriptValue() ? singleFunctionOf(walker.types(), type) : FunctionID();
     LayoutID classLayout = constructor ? classOfClassObject(walker.program(), constructor) : LayoutID();
     return classLayout && walker.facts().isEvaluatedAtMostOnce(classLayout);
+}
+
+struct PartsJudgedInFolding {
+    uint16_t primitives;
+    bool hasObjects;
+    bool isJavaScriptValue;
+    Range integers;
+};
+
+static ALWAYS_INLINE PartsJudgedInFolding partsJudgedInFolding(const TypeArena& types, TypeID id)
+{
+    if (holdsOnlyPrimitives(id))
+        return { primitivesInID(id), false, true, integersInID(id) };
+    const Type& record = types.recordOf(id);
+    return { record.primitives, record.hasObjects(), record.isJavaScriptValue(), record.integers };
+}
+
+static bool surelyOverlapInFolding(const PartsJudgedInFolding& a, const PartsJudgedInFolding& b)
+{
+    constexpr uint16_t primitivesKeptWhereBothHoldThem = Primitive::UndefinedOrNull | Primitive::Boolean | Primitive::WholeNumber | Primitive::BigInt | Primitive::Absent | Primitive::String | Primitive::Symbol;
+    uint16_t shared = a.primitives & b.primitives;
+    return (shared & primitivesKeptWhereBothHoldThem) || ((shared & Primitive::Integer) && !a.integers.intersectWith(b.integers).isEmpty());
+}
+
+static bool surelyLeavesSomethingInFolding(const PartsJudgedInFolding& value, const PartsJudgedInFolding& removed)
+{
+    if (value.hasObjects && !removed.hasObjects)
+        return true;
+    return (value.primitives & ~removed.primitives & ~primitivesWithLists) || ((value.primitives & Primitive::Integer) && !value.integers.isSubsetOf(removed.integers));
+}
+
+static bool isSurelySeveralValuesInFolding(const PartsJudgedInFolding& type)
+{
+    constexpr uint16_t primitivesThatMayBeOneValue = Primitive::UndefinedOrNull | Primitive::Boolean | Primitive::Absent | Primitive::Integer | primitivesWithLists;
+    if (type.hasObjects)
+        return type.primitives;
+    if (!std::has_single_bit(type.primitives) || !(type.primitives & primitivesThatMayBeOneValue))
+        return true;
+    return type.primitives == Primitive::Integer && !type.integers.isSingleValue();
+}
+
+static_assert(provesOf(Opcode::ToBoolean) == Proof::Truthiness && provesOf(Opcode::TypeTest) == Proof::TestedType && provesOf(Opcode::StrictEq) == Proof::Equality);
+static_assert(provesOf(Opcode::Less) == Proof::IntegerBound && provesOf(Opcode::LessEq) == Proof::IntegerBound && provesOf(Opcode::Greater) == Proof::IntegerBound && provesOf(Opcode::GreaterEq) == Proof::IntegerBound);
+
+static bool neitherSideOfTestIsRuledOutInFolding(const TypeArena& types, const BodyValue& test, std::span<const TypeID> typesOfOperands)
+{
+    if (typesOfOperands.empty())
+        return false;
+    PartsJudgedInFolding first = partsJudgedInFolding(types, typesOfOperands[0]);
+    if (!first.isJavaScriptValue)
+        return false;
+    Opcode opcode = test.opcode();
+    if (opcode == Opcode::ToBoolean) {
+        constexpr uint16_t primitivesThatMayAllBeFalsy = Primitive::UndefinedOrNull | Primitive::False | Primitive::Integer | Primitive::LiteralString;
+        constexpr uint16_t primitivesThatMayAllBeTruthy = Primitive::True | Primitive::FractionalNumber | Primitive::AnySymbol | Primitive::Integer | Primitive::LiteralString;
+        return (first.hasObjects || (first.primitives & ~primitivesThatMayAllBeFalsy)) && (first.primitives & ~primitivesThatMayAllBeTruthy);
+    }
+    if (opcode == Opcode::TypeTest) {
+        TypeID tested = test.testedType();
+        if (!tested || !holdsOnlyPrimitives(tested))
+            return false;
+        PartsJudgedInFolding asked = partsJudgedInFolding(types, tested);
+        return surelyOverlapInFolding(first, asked) && surelyLeavesSomethingInFolding(first, asked);
+    }
+    if (typesOfOperands.size() != 2)
+        return false;
+    PartsJudgedInFolding second = partsJudgedInFolding(types, typesOfOperands[1]);
+    if (!second.isJavaScriptValue)
+        return false;
+    if (opcode == Opcode::StrictEq) {
+        return surelyOverlapInFolding(first, second)
+            && (isSurelySeveralValuesInFolding(second) || surelyLeavesSomethingInFolding(first, second))
+            && (isSurelySeveralValuesInFolding(first) || surelyLeavesSomethingInFolding(second, first));
+    }
+    if (opcode != Opcode::Less && opcode != Opcode::LessEq && opcode != Opcode::Greater && opcode != Opcode::GreaterEq)
+        return false;
+    auto mayBeInteger = [](const PartsJudgedInFolding& type) {
+        return !type.hasObjects && (type.primitives & ~Primitive::Undefined) == Primitive::Integer;
+    };
+    auto mayLieWithinBounds = [](const PartsJudgedInFolding& type) {
+        return !type.hasObjects && !(type.primitives & ~(Primitive::Undefined | Primitive::Integer | Primitive::FractionalNumber));
+    };
+    return !(mayBeInteger(first) && mayLieWithinBounds(second)) && !(mayBeInteger(second) && mayLieWithinBounds(first));
 }
 
 static std::optional<bool> answerThatTypesDecideInFolding(Walker& walker, const BodyValue& test)
@@ -548,6 +633,9 @@ static std::optional<bool> answerThatTypesDecideInFolding(Walker& walker, const 
     if (test.opcode() == Opcode::StrictEq && areOneClassObjectInFolding(walker, typesOfOperands[0], typesOfOperands[1]))
         return true;
 
+    if (neitherSideOfTestIsRuledOutInFolding(types, test, std::span<const TypeID>(typesOfOperands.data(), numberOfOperands)))
+        return std::nullopt;
+
     TypingContext context = typingForFolding(walker);
     OperandTypes operands { std::span<const TypeID>(typesOfOperands.data(), numberOfOperands) };
     for (uint32_t operandIndex = 0; operandIndex < numberOfOperands; ++operandIndex) {
@@ -562,17 +650,19 @@ static std::optional<bool> answerThatTypesDecideInFolding(Walker& walker, const 
 static Reference operandOfCheckThatPassesInFolding(Walker& walker, const BodyValue& check)
 {
     static_assert(!OperandIndex::CheckInitialized::value && !OperandIndex::RequireObjectCoercible::value && !OperandIndex::RequireObject::value);
+    static_assert(checksThatHandOnOrThrow == OpcodeSet { Opcode::CheckInitialized, Opcode::RequireObjectCoercible, Opcode::RequireObject });
+    static_assert(!genericOperationOf(Opcode::CheckInitialized) && !genericOperationOf(Opcode::RequireObjectCoercible) && !genericOperationOf(Opcode::RequireObject));
     Reference checked = walker.referenceOf(check.operand(0));
     TypeID type = typeToJudgeByInFolding(walker, checked);
     if (!type)
         return { };
-    Draft draft(check.opcode());
-    draft.setOperand(0, checked);
-    TypeID passing = resultTypeOf(typingForFolding(walker), draft, OperandTypes { std::span<const TypeID>(&type, 1) });
+    TypeArena& types = walker.types();
+    Opcode opcode = check.opcode();
+    TypeID passing = opcode == Opcode::CheckInitialized ? types.withoutPrimitives(type, Primitive::Absent) : opcode == Opcode::RequireObjectCoercible ? types.withoutNullish(type) : types.withOnlyObjects(type);
     return passing == type ? checked : Reference();
 }
 
-static uint16_t primitivesThatConversionHandsOnInFolding(Opcode conversion)
+static constexpr uint16_t primitivesThatConversionHandsOnInFolding(Opcode conversion)
 {
     switch (conversion) {
     case Opcode::ToBoolean:
@@ -589,6 +679,10 @@ static uint16_t primitivesThatConversionHandsOnInFolding(Opcode conversion)
         return 0;
     }
 }
+
+static constexpr OpcodeSet conversionsThatMayHandOnInFolding = opcodesWhere([](Opcode opcode) {
+    return primitivesThatConversionHandsOnInFolding(opcode) || conversionsToObjectsInFolding.contains(opcode) || opcode == Opcode::ToLength;
+});
 
 static Reference operandThatConversionHandsOnInFolding(Walker& walker, const BodyValue& conversion)
 {
@@ -679,6 +773,8 @@ static Reference answerOfNamedReadInFolding(Walker& walker, const BodyOperation<
     if (read.isFreeName())
         return { };
     Reference object = walker.referenceOf(read.objectOperand());
+    if (!walker.state().mayHoldPlaceOf(object))
+        return { };
     TypeID type = typeToJudgeByInFolding(walker, object);
     if (!type)
         return { };
@@ -732,7 +828,7 @@ static Reference answerOfReadInFolding(Walker& walker, const BodyValue& value)
         return valueOfStableBinding(walker, value);
     }
     case Opcode::PropGet:
-        if (Reference earlier = walker.tagReadInFrontOfTest(value))
+        if (Reference earlier = walker.currentBodyIndex().opcodes().contains(Opcode::NarrowByField) ? walker.tagReadInFrontOfTest(value) : Reference())
             return earlier;
         return answerOfNamedReadInFolding(walker, value.as<Opcode::PropGet>());
     case Opcode::ElemGet:
@@ -842,16 +938,16 @@ static Reference answerKnownToFolding(Walker& walker, const BodyValue& value)
     }
     if (Reference answer = opcode == Opcode::StrictEq && !walker.isAskedByBranchOfItsBlock(value) ? walker.buildTestOfTagAsTestOfShape(value) : Reference())
         return answer;
-    return operandThatConversionHandsOnInFolding(walker, value);
+    return conversionsThatMayHandOnInFolding.contains(opcode) ? operandThatConversionHandsOnInFolding(walker, value) : Reference();
 }
 
 constinit const OpcodeSet opcodesThatFoldOperationTakes = opcodesOfFolding;
+static_assert(opcodesThatFoldOperationTakesInChains == opcodesOfFolding);
 
 bool foldOperationOfItsOpcodes(Walker& walker, const BodyValue& value)
 {
     Opcode opcode = value.opcode();
-    if (!opcodesOfFolding.contains(opcode))
-        return false;
+    ASSERT(opcodesOfFolding.contains(opcode));
     if (Reference answer = storesThatStateFollowsForFolding.contains(opcode) ? Reference() : answerKnownToFolding(walker, value)) {
         walker.bind(value.id(), answer);
         return true;

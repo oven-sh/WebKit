@@ -1,5 +1,5 @@
 # `o.limit` with limit?: an empty slot reads as undefined only while the property lies nowhere else in the object and nothing above the object answers.
-# Of an object that is out of sight the object itself says both: one bit of its order word and one bit of its cell, asked once for however many reads. A frozen object is read like any other.
+# Of an object that is out of sight the object itself says both: two bits of one byte of its cell, asked by one look, once for however many reads. A frozen object is read like any other.
 # The looks cost what a closed read costs, so they are asked for where the reads come again: in a loop
 # function both(o: Options, n) { let x; while (n()) x = [o.limit, o.label]; return x; }
 # RUN: walk f1 mechanisms=none+TypedOperations+Guesses
@@ -7,18 +7,16 @@
 # CHECK: isLoopHead=true
 # CHECK: = ShapeTest {{*}}layouts=[L0]
 # CHECK-NEXT: Branch {{*}}notTaken [[closed]]()
-# CHECK: = HasNoFieldOutsideSlot
+# CHECK: = HasLayoutPrototype {{*}}hasNoFieldOutsideSlot
 # CHECK-NEXT: Branch {{*}}notTaken [[closed]]()
 # CHECK: [[closed]]() frequency=Rare isInLoop=true:
 # CHECK-NEXT: = PropGet {{*}}key="limit"
 # CHECK-NEXT: = PropGet {{*}}key="label"
-# CHECK: = HasLayoutPrototype
-# CHECK-NEXT: Branch {{*}}notTaken [[closed]]()
 # CHECK: = GetSlotOrUndefined {{*}}key="limit"
 # CHECK: = GetSlotOrUndefined {{*}}key="label"
 # RUN(ONCE): walk f1 mechanisms=none+TypedOperations+Guesses
-# ONCE-COUNT-1: = HasNoFieldOutsideSlot
-# ONCE-NOT: = HasNoFieldOutsideSlot
+# ONCE-COUNT-1: = HasLayoutPrototype
+# ONCE-NOT: = HasLayoutPrototype
 # RUN(FROZEN): walk f1 mechanisms=none+TypedOperations+Guesses
 # FROZEN-NOT: IsNotFrozen
 # A look at the slot of such a property would fail as often as not

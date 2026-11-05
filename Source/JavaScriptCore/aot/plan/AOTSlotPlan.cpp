@@ -10,6 +10,7 @@
 
 #include "AOTBuildContext.h"
 #include "AOTCellFormat.h"
+#include "AOTClosuresOfLiterals.h"
 #include "AOTEnvironmentsHandedBack.h"
 #include "AOTEnforcedFields.h"
 #include "AOTFacts.h"
@@ -441,6 +442,11 @@ static bool needsHiddenWordInSlotPlan(const Program& program, const LinkTables& 
         return true;
     if (id.index() >= link.layouts.size() || link.layout(id).possibleChanges.containsAny(changesThatMakeExtraProperties) || layoutsWithSlotsThatStoresMayEmpty.get(id.index()))
         return true;
+    uint32_t numberDeclared = static_cast<uint32_t>(program.at(id).fields.size());
+    for (uint32_t field = 0; field < numberDeclared; ++field) {
+        if (!fieldAt(program, declarationOf(program, { id, field })).form.isEmpty())
+            return true;
+    }
     return link.numberOfAppendedKeysOfPlan(id);
 }
 
@@ -861,7 +867,10 @@ static void placeFieldsForSlotPlan(const Program& program, const LinkTables& lin
                 }
             }
         }
-        placeFieldsOfUnions(program, link, *families, layoutsBelowTheirBases, RowsOfSlotPlan { result.firstRowOfLayout.span(), result.offsets.mutableSpan(), result.places.mutableSpan(), result.ends.mutableSpan(), result.layoutsWithHiddenWords, widthsInCell.span() }, hasCells, addPlace);
+        Vector<uint8_t> offsetsOfFirstSlots(numberOfLayouts, [&](size_t index) {
+            return static_cast<uint8_t>(result.offsetOfFirstSlotOf(LayoutID(index)));
+        });
+        placeFieldsOfUnions(program, link, *families, layoutsBelowTheirBases, RowsOfSlotPlan { result.firstRowOfLayout.span(), result.offsets.mutableSpan(), result.places.mutableSpan(), result.ends.mutableSpan(), offsetsOfFirstSlots.span(), widthsInCell.span() }, hasCells, addPlace);
     }
 
     BitVector isPlaced(numberOfLayouts);
@@ -1177,6 +1186,15 @@ static void giveSlotFormOfPlaceInSlotPlan(PlacedSlot& slot, FormOfPlaceInSlotPla
     }
 }
 
+void layAppendedFieldInCellForFields(const Program& program, const Facts& facts, FieldReference reference, uint32_t offset, PlacedSlot& slot)
+{
+    slot.storage = SlotStorage::Inline;
+    slot.offset = offset;
+    slot.mayExistWithoutStorage = false;
+    if (hasTypedSlotsInSlotPlan(facts))
+        giveSlotFormOfPlaceInSlotPlan(slot, formProvenOfFieldForSlotPlan(program, facts, facts.linked(), reference), slot.type);
+}
+
 static PlannedLayout planLayoutForSlotPlan(const Program& program, const Facts& facts, const MentionedKeys& mentioned, const PlacesOfFieldsInSlotPlan& places, StorageOfLayoutInSlotPlan storage, LayoutID id, BuildContext& build)
 {
     const Layout& layout = program.at(id);
@@ -1230,8 +1248,7 @@ static PlannedLayout planLayoutForSlotPlan(const Program& program, const Facts& 
     uint64_t endOfSlotsInCell = end;
     for (FieldIndex field = numberOfDeclaredFields; field < numberOfFields; ++field)
         endOfSlotsInCell += places.granulesOfAppendedFields[id.index()][field - numberOfDeclaredFields] == PlacesOfFieldsInSlotPlan::inCell ? bytesPerSlotInSlotPlan : 0;
-    bool hasWordLeftOver = isCompiledObject && storage.hasCells() && !build.recordedOptions().useWideReferences()
-        && WTF::roundUpToMultipleOf<MarkedSpace::sizeStep>(endOfSlotsInCell) - endOfSlotsInCell >= bytesPerSlotInSlotPlan;
+    bool hasWordLeftOver = WTF::roundUpToMultipleOf<MarkedSpace::sizeStep>(endOfSlotsInCell) - endOfSlotsInCell >= bytesPerSlotInSlotPlan;
     for (FieldIndex field = numberOfDeclaredFields; field < numberOfFields; ++field) {
         PlacedSlot& slot = planned.slots[field];
         uint8_t granule = places.granulesOfAppendedFields[id.index()][field - numberOfDeclaredFields];
@@ -1239,22 +1256,20 @@ static PlannedLayout planLayoutForSlotPlan(const Program& program, const Facts& 
             continue;
         slot.indexInLayoutRecord = planned.numberOfRecordFields++;
         slot.holdsAccessor = facts.field({ id, field }).facts.contains(FieldFact::IsAccessor);
-        if (hasWordLeftOver && facts.linked().takesWordLeftInCell({ id, field }) && !places.appendedFieldsThatShareGranule[id.index()].get(field - numberOfDeclaredFields))
+        slot.type = hasTypedSlots ? places.typesHeldOfAppendedFields[id.index()][field - numberOfDeclaredFields] : TypeID();
+        bool isFirstLateName = !build.recordedOptions().useWideReferences() && facts.linked().takesWordLeftInCell({ id, field }) && !places.appendedFieldsThatShareGranule[id.index()].get(field - numberOfDeclaredFields);
+        if (hasWordLeftOver && isFirstLateName)
             granule = PlacesOfFieldsInSlotPlan::inCell;
-        TypeID held = hasTypedSlots ? places.typesHeldOfAppendedFields[id.index()][field - numberOfDeclaredFields] : TypeID();
         if (granule == PlacesOfFieldsInSlotPlan::inCell) {
-            slot.storage = SlotStorage::Inline;
-            slot.offset = static_cast<uint32_t>(end);
+            layAppendedFieldInCellForFields(program, facts, { id, field }, static_cast<uint32_t>(end), slot);
             end += bytesPerSlotInSlotPlan;
-            if (hasTypedSlots)
-                giveSlotFormOfPlaceInSlotPlan(slot, formProvenOfFieldForSlotPlan(program, facts, facts.linked(), { id, field }), held);
             continue;
         }
         RELEASE_ASSERT(granule < maxExtensionGranules);
         slot.storage = SlotStorage::OutOfLine;
         slot.offset = offsetOfFirstExtensionSlot + granule * extensionGranuleSize;
-        slot.type = held;
         slot.mayExistWithoutStorage = !facts.linked().isAppendedFieldRequiredBySomeWrittenType({ id, field }) && facts.field({ id, field }).formOfValue.isEmpty();
+        slot.mayTakeWordLeftInCell = isFirstLateName;
         endOfExtension = std::max(endOfExtension, slot.end());
     }
     if (!storage.hasCells())
@@ -1293,6 +1308,7 @@ static PlannedLayout planLayoutForSlotPlan(const Program& program, const Facts& 
 
 MentionedKeys findMentionedKeys(const Program&, const Facts&, const ParallelLoops&);
 void planNames(const Program&, const MentionedKeys&, BuildContext&, SlotPlanParts&);
+Vector<ClosureForm> chooseClosureForms(const Program&, const LinkTables&);
 
 KeyOrders computeKeyOrders(const Program&, const LinkTables&, const ThinSummaries&, const BodyIndexTable&, Mechanisms, std::span<const PlannedLayout>, BuildContext&);
 
@@ -1424,16 +1440,21 @@ SlotPlanParts computeSlotPlanParts(Program& program, const Facts& facts, BuildCo
             });
         },
         [&] {
-            if (!hasTypedSlots)
-                return;
             groupsForFields = groupLayoutsForFields(program, facts.families());
             unitsOfFields = collectUnitsOfFields(program, facts.linked(), storageOfLayouts, groupsForFields);
         },
         [&] { environmentsHandedBack = findEnvironmentsHandedBack(program, facts, build); },
+        [&] { parts.closureForms = chooseClosureForms(program, facts.linked()); },
     });
     if (build.diagnostics().hasErrors())
         return parts;
 
+    {
+        StepTimes times(build, nameOf(Stage::PlanSlots));
+        promotedEnvironments = planPromotedEnvironments(program, facts, parts);
+        leaveClosuresOfLiteralsUnmade(program, facts, promotedEnvironments, build.recordedOptions().useWideReferences(), parts);
+        times.didFinish("plan: promoted environments, closures of literals"_s);
+    }
     runLanes(build.parallelLoops(), {
         [&] {
             StepTimes times(build, nameOf(Stage::PlanSlots));
@@ -1447,11 +1468,6 @@ SlotPlanParts computeSlotPlanParts(Program& program, const Facts& facts, BuildCo
             StepTimes times(build, nameOf(Stage::PlanSlots));
             keyOrders = computeKeyOrders(program, facts.linked(), facts.summaries(), facts.bodies(), facts.mechanisms(), parts.layouts.span(), build);
             times.didFinish("plan: lane of key orders"_s);
-        },
-        [&] {
-            StepTimes times(build, nameOf(Stage::PlanSlots));
-            promotedEnvironments = planPromotedEnvironments(program, facts, parts);
-            times.didFinish("plan: lane of promoted environments"_s);
         },
     });
     return parts;

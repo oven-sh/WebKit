@@ -45,10 +45,15 @@ Numbering::Numbering(Procedure& procedure)
     : m_arena(procedure.arena())
     , m_heapTree(procedure.heapTree())
     , m_savesFrameOnSuspend(procedure.traits().savesFrameOnSuspend)
-    , m_timesOfWrites(procedure.arena().createSpan<TimesOfWrites>(procedure.heapTree().size()))
 {
     machineNumberingMakeFirstBuckets(m_arena, m_log, m_buckets);
     machineNumberingMakeFirstBuckets(m_arena, m_withoutPosition, m_bucketsWithoutPosition);
+}
+
+void Numbering::makeTimesOfWrites()
+{
+    m_timesOfWrites = m_arena.createSpan<TimesOfWrites>(m_heapTree.size());
+    m_timesOfWrites[rootHeapIndex].toHeap = m_timeOfLastWriteToAllHeaps;
 }
 
 void Numbering::growBucketsWithoutPosition()
@@ -124,6 +129,8 @@ void Numbering::didWriteListedHeaps(std::span<const HeapIndex> list)
     m_lastListWritten = list;
 
     uint32_t time = timeOfNewWrite();
+    if (m_timesOfWrites.empty()) [[unlikely]]
+        makeTimesOfWrites();
     TimesOfWrites* const times = m_timesOfWrites.data();
     const size_t numberOfHeaps = m_timesOfWrites.size();
     const HeapIndex* const parents = m_heapTree.parents().data();

@@ -1236,25 +1236,23 @@ bool Modules::evaluateImportedCommonJSFiles(ModuleID root, JobsOfImportedFiles j
         }
         if (mocks.hides(imported)) [[unlikely]]
             continue;
-        if (mockInPlace(imported) && hasImporterBelowThatGetsOriginal(root, imported)) [[unlikely]] {
-            runFileBesideMock(fileOf(imported));
-            RETURN_IF_EXCEPTION(scope, didRunFile);
-            didRunFile = true;
-            continue;
-        }
+        bool isOwedBesideMock = mockInPlace(imported) && hasImporterBelowThatGetsOriginal(root, imported);
         ModuleStatus statusAtStart = status(imported);
-        if (statusAtStart != ModuleStatus::Unlinked && statusAtStart != ModuleStatus::Linked && statusAtStart != ModuleStatus::Failed)
+        if (!isOwedBesideMock && statusAtStart != ModuleStatus::Unlinked && statusAtStart != ModuleStatus::Linked && statusAtStart != ModuleStatus::Failed)
             continue;
         didRunFile |= statusAtStart != ModuleStatus::Failed;
         size_t numberOfJobs = numberOfJobsThatWouldWait(jobs);
         bool hadQueuedTicks = hasQueuedTicks();
         filesBeingRun.fileOrFace = imported;
         filesBeingRun.numberOfJobsInFrontOfFile = numberOfJobs;
-        if (storedStatus(imported) < StoredModuleStatus::InRecord && data(imported).evaluatesItself())
-            evaluateByCallingBody(imported);
-        else
-            evaluateModuleInRecord(imported);
-        if (!scope.exception() && mockInPlace(imported) && hasImporterBelowThatGetsOriginal(root, imported)) [[unlikely]] {
+        if (!isOwedBesideMock) [[likely]] {
+            if (storedStatus(imported) < StoredModuleStatus::InRecord && data(imported).evaluatesItself())
+                evaluateByCallingBody(imported);
+            else
+                evaluateModuleInRecord(imported);
+            isOwedBesideMock = !scope.exception() && mockInPlace(imported) && hasImporterBelowThatGetsOriginal(root, imported);
+        }
+        if (isOwedBesideMock) [[unlikely]] {
             runFileBesideMock(fileOf(imported));
             RETURN_IF_EXCEPTION(scope, didRunFile);
         }
@@ -1370,6 +1368,7 @@ void Modules::handGraphToLoader(FilesBeingRun& files, std::optional<ModuleID> fi
     MicrotaskQueue& queue = vm.defaultMicrotaskQueue();
     Ref<MicrotaskQueue> jobsOfFile = MicrotaskQueue::create(vm);
     queue.moveTasksBehind(files.numberOfJobsInFrontOfFile, jobsOfFile.get());
+    m_canJobsOfFileTellWhenTextsCome |= !jobsOfFile->isEmpty() && isTestRun();
     m_rootWhoseFilesRanAhead = files.root;
     files.fileHandedToLoader = running;
     {
@@ -1549,7 +1548,9 @@ unsigned Modules::numberOfGraphsBeingLoaded()
         return true;
     });
     bool hostLoadsGraph = m_rootWhoseFilesRanAhead && !m_loadsInFlight.hasRoot(*m_rootWhoseFilesRanAhead);
-    return hostLoadsGraph + m_loadsInFlight.numberBeingLoaded();
+    unsigned number = hostLoadsGraph + m_loadsInFlight.numberBeingLoaded();
+    m_canJobsOfFileTellWhenTextsCome &= !!number;
+    return number;
 }
 
 bool Modules::comesToLoadInFlight(ModuleID required)
@@ -2935,8 +2936,9 @@ bool Modules::isHeldForImport(ModuleID target) const
         return true;
     if (m_dataFilesImportedByUncompiledCode.get(target.index()))
         return true;
+    uint32_t momentMockInItsPlaceEnded = m_momentsMocksInPlaceOfLibraryModulesEnded.get(target);
     return std::ranges::any_of(m_table.importsOfHeldFile(target), [&](const ImportOfHeldFileData& import) {
-        return wasImporterLoaded(ModuleID(import.importer));
+        return wasImporterLoaded(ModuleID(import.importer)) && momentLinked(ModuleID(import.importer)) >= momentMockInItsPlaceEnded;
     });
 }
 

@@ -9,13 +9,13 @@
 # print(read(make()));
 # print("went on");
 # THE FLOOR STANDS IN FRONT OF A DEFINITION WRITTEN IN LINE. Where the type as built of the value of Object.defineProperty() fits the slot, the emitter writes it straight into the slot (SlotAccessEmitter::tryCreateFieldByDefinition()).
-# What a variable of the module holds is claimed and not shown (the kind Variable is off), so the floor asks in front of the definition, as in front of PutSlot, PutSlotOrAdd and NewObject. The test beside this one
+# What a variable of the module holds IS SHOWN since the kind Variable is on (every store into it is held to its type), so the floor asks nothing in front of the definition. The test beside this one
 # (a-definition-written-in-line-is-a-typed-store.ir) has an entry parameter for its value, which shows its type: nothing is asked there.
 # RUN(DEFINED): walk f2 mechanisms=all-Inlining
 # DEFINED-LABEL: code f2:Body
 # DEFINED: = GetModuleVariable
 # DEFINED: [[value]]: undefined|string @JSValue = CheckInitialized
-# DEFINED: CheckProof [[value]] checkedType=undefined|string typeWithoutProof=absent|anything source=Field
+# DEFINED-NOT: CheckProof
 # DEFINED: = DefineOwnProperty {{*}}, {{*}}, [[value]] descriptorFlags=
 # RUN(TEXT): run-in-shell mechanisms=-Inlining globalThis.which = 1;
 # TEXT: string

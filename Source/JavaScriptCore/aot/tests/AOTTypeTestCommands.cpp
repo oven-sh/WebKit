@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTFamilies.h"
 #include "AOTIRProgram.h"
 #include "AOTLayout.h"
 #include "AOTRepresentation.h"
@@ -1400,12 +1401,80 @@ static void runMemosAtRest(TestCommandContext& context)
         context.out.println("t"_s, i, " is tested "_s, after[i].first == before[i].first ? "as before"_s : "otherwise"_s, " and described "_s, after[i].second == before[i].second ? "as before"_s : "otherwise"_s);
 }
 
+static void runJoin(TestCommandContext& context)
+{
+    auto types = typesOfTypeTest(context);
+    if (!types)
+        return;
+    Program& program = *context.program;
+    Families families(program, context.build.parallelLoops());
+    TypeArena arena(program.types, ArenaKeeps::InProgram);
+
+    unsigned numberThatHangOnOrder = 0;
+    auto joinedInOrder = [&](std::span<const unsigned> order, bool inPairs) {
+        if (inPairs)
+            return joinOf(arena, families, joinOf(arena, families, types->at(order[0]), types->at(order[1])), joinOf(arena, families, types->at(order[2]), types->at(order[3])));
+        TypeID joined = types->at(order[0]);
+        for (unsigned place : order.subspan(1))
+            joined = joinOf(arena, families, joined, types->at(place));
+        return joined;
+    };
+    auto forEachOrder = [&](std::span<const unsigned> chosen, const auto& functor) {
+        Vector<unsigned, 4> order(chosen);
+        do {
+            functor(order.span(), false);
+            if (order.size() == 4)
+                functor(order.span(), true);
+        } while (std::ranges::next_permutation(order).found);
+    };
+    auto printOrder = [&](std::span<const unsigned> order, bool inPairs) {
+        for (size_t place = 0; place < order.size(); ++place)
+            context.out.print(place ? (inPairs && place == 2 ? " | "_s : " "_s) : ""_s, "t"_s, order[place]);
+    };
+    auto judge = [&](std::span<const unsigned> chosen) {
+        TypeID first = joinedInOrder(chosen, false);
+        bool hangsOnOrder = false;
+        forEachOrder(chosen, [&](std::span<const unsigned> order, bool inPairs) {
+            hangsOnOrder |= joinedInOrder(order, inPairs) != first;
+        });
+        if (!hangsOnOrder) {
+            printOrder(chosen, false);
+            context.out.println(" = "_s, TypeInText { arena, first });
+            return;
+        }
+        ++numberThatHangOnOrder;
+        forEachOrder(chosen, [&](std::span<const unsigned> order, bool inPairs) {
+            context.out.print("HANGS ON THE ORDER: "_s);
+            printOrder(order, inPairs);
+            context.out.println(" = "_s, TypeInText { arena, joinedInOrder(order, inPairs) });
+        });
+    };
+    Vector<unsigned, 4> chosen;
+    auto choose = [&](auto& self, unsigned from) -> void {
+        if (chosen.size() >= 2)
+            judge(chosen.span());
+        if (chosen.size() == 4)
+            return;
+        for (unsigned next = from; next < types->size(); ++next) {
+            chosen.append(next);
+            self(self, next + 1);
+            chosen.removeLast();
+        }
+    };
+    choose(choose, 0);
+    if (numberThatHangOnOrder)
+        context.out.println(numberThatHangOnOrder, " joins hang on the order"_s);
+    else
+        context.out.println("every order ends alike"_s);
+}
+
 std::span<const TestCommand> typeTestCommands()
 {
     static constexpr TestCommand commands[] = {
         { "subset"_s, runSubset, ProgramOfCommand::AsWritten, ""_s },
         { "union"_s, runUnion, ProgramOfCommand::AsWritten, ""_s },
         { "intersect"_s, runIntersect, ProgramOfCommand::AsWritten, ""_s },
+        { "join"_s, runJoin, ProgramOfCommand::AsWritten, ""_s },
         { "cast"_s, runCast, ProgramOfCommand::AsWritten, ""_s },
         { "canonical"_s, runCanonical, ProgramOfCommand::AsWritten, ""_s },
         { "rep"_s, runRepresentation, ProgramOfCommand::AsWritten, ""_s },

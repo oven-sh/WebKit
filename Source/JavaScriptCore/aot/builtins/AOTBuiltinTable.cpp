@@ -614,6 +614,21 @@ std::span<const BuiltinCalledFunction> BuiltinTable::calledFunctionsOf(BuiltinID
     return calledFunctionsByBuiltin.find(keptByThisReader(m_data.attachments.calledFunctions, builtinTableCalledFunctions), m_data.builtins.size(), id);
 }
 
+Vector<const BuiltinCondition*, 8> BuiltinTable::conditionsOnLightForms() const
+{
+    Vector<const BuiltinCondition*, 8> found;
+    for (const BuiltinCalledFunction& called : keptByThisReader(m_data.attachments.calledFunctions, builtinTableCalledFunctions)) {
+        if (!called.condition || !called.condition->isAskedForOtherNames)
+            continue;
+        bool isKnown = std::ranges::any_of(found, [&](const BuiltinCondition* known) {
+            return known->isAskedForOtherNames == called.condition->isAskedForOtherNames;
+        });
+        if (!isKnown)
+            found.append(called.condition);
+    }
+    return found;
+}
+
 std::span<const BuiltinCalledFunction> BuiltinTable::startupCalledFunctions() const
 {
     return keptByThisReader(m_data.attachments.startupCalledFunctions, builtinTableStartupCalledFunctions);

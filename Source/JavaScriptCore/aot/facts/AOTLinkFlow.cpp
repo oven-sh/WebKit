@@ -350,7 +350,7 @@ LinkFlow::LinkFlow(Program& program, const ThinSummaries& summaries, const Famil
 {
     RELEASE_ASSERT(summaries.size() == program.functions.size());
     m_testRuns = makeUnique<TestRunsInLink>(*this);
-    unsigned numberOfLanes = std::min(16u, std::bit_floor(std::max(1u, loops.width())));
+    unsigned numberOfLanes = loops.width() > 1 ? 32 : 1;
     if (order == OrderOfWorklist::Scattered) {
         numberOfLanes = 4;
         m_log2OfNodesInBlock = 6;
@@ -452,6 +452,7 @@ LinkFlow::LinkFlow(Program& program, const ThinSummaries& summaries, const Famil
         });
     }
     findWhatRowsOfConstructorsFill();
+    findSuperCallsThatMayAnswerWithOlderObject();
 }
 
 void LinkFlow::indexMembersOfClasses()
@@ -2566,7 +2567,11 @@ void LinkFlow::foldFunctions(LinkType& into, std::span<const LinkType> met) cons
         members.shrink(members.size() - std::ranges::unique(members).size());
         if (into.functions == Functions::Set && members.size() == functionsOfSet(into).size())
             return;
-        if (members.size() <= 1) {
+        if (members.size() <= SetsOfFunctionsInLinkFlow::mostMembers) {
+            if (members.size() > 1) {
+                for (FunctionID member : members)
+                    deferLoss(member);
+            }
             LinkType named = typeOfFunctions(members.span());
             into.functions = named.functions;
             into.function = named.function;
@@ -2675,12 +2680,22 @@ void LinkFlow::receiveInLane(unsigned index)
         FlowNodeID node = lane.meetings[first].first;
         objects.shrink(0);
         functions.shrink(0);
+        unsigned numberOfSetsOfLayouts = 0;
         for (end = first; end < lane.meetings.size() && lane.meetings[end].first == node; ++end) {
             const LinkType& met = lane.meetings[end].second;
             if (met.objects != LinkType::Objects::None)
                 objects.append(met);
             if (met.functions != LinkType::Functions::None)
                 functions.append(met);
+            numberOfSetsOfLayouts += met.objects == LinkType::Objects::Set;
+        }
+        if (numberOfSetsOfLayouts > 1) {
+            auto firstSet = std::ranges::find_if(objects, [](const LinkType& met) {
+                return met.objects == LinkType::Objects::Set;
+            });
+            std::ranges::sort(firstSet, firstSet + numberOfSetsOfLayouts, [&](const LinkType& one, const LinkType& other) {
+                return std::ranges::lexicographical_compare(layoutsOfSet(one), layoutsOfSet(other));
+            });
         }
         LinkType before = m_nodes[node.index()].type;
         LinkType after = before;
@@ -3481,6 +3496,8 @@ TypeID LinkFlow::toTypeID(TypeArena& types, const LinkType& type) const
 {
     if (type.isNothing())
         return { };
+    if (type.builtin && lightFormOf(type.builtin))
+        return toTypeID(types, LinkType::anything());
 
     uint16_t primitives = withoutLiteralsInLinkFlow(type.primitives);
     TypeParts parts;
@@ -3533,6 +3550,11 @@ TypeID LinkFlow::toTypeID(TypeArena& types, const LinkType& type) const
         parts.objects = types.objectSets().with(parts.objects, types.objects().closureOf(type.function));
         break;
     case LinkType::Functions::Set:
+        if (reading() == WhatUnseenCodeDoes::Anything) {
+            parts.anyFunction = true;
+            parts.seeds.add(UnknownSeed::ContentsOfEscapedObject);
+            break;
+        }
         for (FunctionID member : functionsOfSet(type)) {
             if (!tablesMayName(member))
                 parts.anyFunction = true;
@@ -4119,7 +4141,7 @@ bool LinkFlow::openLayoutsThatChanged()
         LayoutID layout = m_layoutsWithNodesBesideFields[position];
         if (m_openLayouts.get(layout.index()))
             continue;
-        if (!escapedLayouts.get(layout.index()) && !layoutsThatGainWhatUnseenCodeGaveSources.get(layout.index()) && !possibleChanges[layout.index()].containsAny({ LayoutChange::GainsProperty, LayoutChange::LosesProperty, LayoutChange::ChangesPrototype, LayoutChange::GetsAccessor }))
+        if (!escapedLayouts.get(layout.index()) && !layoutsThatGainWhatUnseenCodeGaveSources.get(layout.index()) && !possibleChanges[layout.index()].containsAny({ LayoutChange::GainsProperty, LayoutChange::ChangesPrototype, LayoutChange::GetsAccessor }))
             continue;
         open(layout);
         hasOpened = true;

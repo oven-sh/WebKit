@@ -607,6 +607,7 @@ aot/walk/AOTWalkTypedElements.cpp
 aot/walk/AOTWalkTypedOperators.cpp
 aot/walk/AOTWalkTypedTexts.cpp
 aot/walk/AOTWalkUnionInstanceOf.cpp
+aot/walk/AOTWalkUnionMethodCalls.cpp
 aot/walk/AOTWalkUnionSlots.cpp
 aot/walk/AOTWalkUnionSwitches.cpp
 aot/walk/AOTWalkUnionTaggedMakers.cpp

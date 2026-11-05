@@ -48,6 +48,7 @@ public:
     void generateEq(const ValueContext& value) { generateEquality(value, false); }
     void generateStrictEq(const ValueContext& value) { generateEquality(value, true); }
     void generateIntegerBound(const ValueContext&);
+    void generateNumberOrNaN(const ValueContext&);
     void generateToNumeric(const ValueContext&);
     void generateToNumber(const ValueContext&);
     void generateInstanceOf(const ValueContext&);

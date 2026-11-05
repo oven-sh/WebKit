@@ -276,6 +276,7 @@ void CodeGenerator::orderBlocks()
         RELEASE_ASSERT(id);
         BlockID& predecessor = m_singlePredecessors[id.index()];
         if (predecessor) {
+            m_firstBlockHasOtherWaysIn |= id == m_onlyEntryBlock;
             if (predecessor != enteredOtherwise)
                 m_waysIntoJoins.append({ id, predecessor });
             m_waysIntoJoins.append({ id, step.from });
@@ -396,90 +397,98 @@ void CodeGenerator::findDominators()
             firstWaysIn[target] = index;
         }
     }
-    constexpr int64_t stepsOfShortClimbsForEachPlace = 4;
-    int64_t stepsLeftForShortClimbs = stepsOfShortClimbsForEachPlace * numberOfPlaces;
-    std::span<uint32_t> depths;
-    std::span<uint32_t> leaps;
-    uint32_t numberOfPlacesHung = 1;
-    uint32_t numberOfPlacesWithDominatorOfRound = 1;
-    bool dominatorHasMovedBehindRound = false;
-    auto lastOnEveryWayToBoth = [&](uint32_t found, uint32_t other) {
-        if (stepsLeftForShortClimbs >= 0 || dominatorHasMovedBehindRound) [[likely]] {
+    auto goThroughPlaces = [&]<bool climbsMayBeLong>() {
+        constexpr int64_t stepsOfShortClimbsForEachPlace = 4;
+        [[maybe_unused]] int64_t stepsLeftForShortClimbs = stepsOfShortClimbsForEachPlace * numberOfPlaces;
+        [[maybe_unused]] std::span<uint32_t> depths;
+        [[maybe_unused]] std::span<uint32_t> leaps;
+        [[maybe_unused]] uint32_t numberOfPlacesHung = 1;
+        [[maybe_unused]] uint32_t numberOfPlacesWithDominatorOfRound = 1;
+        [[maybe_unused]] bool dominatorHasMovedBehindRound = false;
+        auto lastOnEveryWayToBoth = [&](uint32_t found, uint32_t other) {
+            if (!climbsMayBeLong || stepsLeftForShortClimbs >= 0 || dominatorHasMovedBehindRound) [[likely]] {
+                while (found != other) {
+                    if (found > other)
+                        found = m_dominatorsByPlace[found];
+                    else
+                        other = m_dominatorsByPlace[other];
+                    if constexpr (climbsMayBeLong)
+                        --stepsLeftForShortClimbs;
+                }
+                return found;
+            }
+            if (leaps.empty()) {
+                depths = allocateSpan<uint32_t>(arena, numberOfPlaces);
+                leaps = allocateSpan<uint32_t>(arena, numberOfPlaces);
+                depths[root] = 0;
+                leaps[root] = root;
+            }
+            for (; numberOfPlacesHung < numberOfPlacesWithDominatorOfRound; ++numberOfPlacesHung) {
+                uint32_t above = m_dominatorsByPlace[numberOfPlacesHung];
+                uint32_t leap = leaps[above];
+                depths[numberOfPlacesHung] = depths[above] + 1;
+                leaps[numberOfPlacesHung] = depths[above] - depths[leap] == depths[leap] - depths[leaps[leap]] ? leaps[leap] : above;
+            }
+            if (depths[found] < depths[other])
+                std::swap(found, other);
+            uint32_t depth = depths[other];
+            while (depths[found] > depth)
+                found = depths[leaps[found]] >= depth ? leaps[found] : m_dominatorsByPlace[found];
             while (found != other) {
-                if (found > other)
-                    found = m_dominatorsByPlace[found];
-                else
-                    other = m_dominatorsByPlace[other];
-                --stepsLeftForShortClimbs;
+                bool leapsDiffer = leaps[found] != leaps[other];
+                found = leapsDiffer ? leaps[found] : m_dominatorsByPlace[found];
+                other = leapsDiffer ? leaps[other] : m_dominatorsByPlace[other];
             }
             return found;
-        }
-        if (leaps.empty()) {
-            depths = allocateSpan<uint32_t>(arena, numberOfPlaces);
-            leaps = allocateSpan<uint32_t>(arena, numberOfPlaces);
-            depths[root] = 0;
-            leaps[root] = root;
-        }
-        for (; numberOfPlacesHung < numberOfPlacesWithDominatorOfRound; ++numberOfPlacesHung) {
-            uint32_t above = m_dominatorsByPlace[numberOfPlacesHung];
-            uint32_t leap = leaps[above];
-            depths[numberOfPlacesHung] = depths[above] + 1;
-            leaps[numberOfPlacesHung] = depths[above] - depths[leap] == depths[leap] - depths[leaps[leap]] ? leaps[leap] : above;
-        }
-        if (depths[found] < depths[other])
-            std::swap(found, other);
-        uint32_t depth = depths[other];
-        while (depths[found] > depth)
-            found = depths[leaps[found]] >= depth ? leaps[found] : m_dominatorsByPlace[found];
-        while (found != other) {
-            bool leapsDiffer = leaps[found] != leaps[other];
-            found = leapsDiffer ? leaps[found] : m_dominatorsByPlace[found];
-            other = leapsDiffer ? leaps[other] : m_dominatorsByPlace[other];
-        }
-        return found;
-    };
-    auto takeWaysInto = [&](uint32_t target, bool thatComeRound) {
-        uint32_t known = m_dominatorsByPlace[target];
-        if (known == root)
-            return false;
-        uint32_t found = unknown;
-        for (uint32_t index = firstWaysIn[target]; index != noWay; index = nextWaysIn[index]) {
-            uint32_t source = m_places[m_waysIntoJoins[index].from.index()];
-            if ((source >= target) != thatComeRound) {
-                if (thatComeRound)
-                    break;
-                continue;
+        };
+        auto takeWaysInto = [&](uint32_t target, bool thatComeRound) {
+            uint32_t known = m_dominatorsByPlace[target];
+            if (known == root)
+                return false;
+            uint32_t found = unknown;
+            for (uint32_t index = firstWaysIn[target]; index != noWay; index = nextWaysIn[index]) {
+                uint32_t source = m_places[m_waysIntoJoins[index].from.index()];
+                if ((source >= target) != thatComeRound) {
+                    if (thatComeRound)
+                        break;
+                    continue;
+                }
+                found = found == unknown ? source : lastOnEveryWayToBoth(found, source);
             }
-            found = found == unknown ? source : lastOnEveryWayToBoth(found, source);
-        }
-        if (found == unknown)
-            return false;
-        if (known != unknown)
-            found = lastOnEveryWayToBoth(found, known);
-        m_dominatorsByPlace[target] = found;
-        return found != known;
-    };
+            if (found == unknown)
+                return false;
+            if (known != unknown)
+                found = lastOnEveryWayToBoth(found, known);
+            m_dominatorsByPlace[target] = found;
+            return found != known;
+        };
 
-    for (bool changed = true; changed;) {
-        changed = false;
-        numberOfPlacesHung = 1;
-        dominatorHasMovedBehindRound = false;
-        for (uint32_t place = 1; place < numberOfPlaces; ++place) {
-            if (BlockID predecessor = m_singlePredecessors[m_order[place - 1].index()])
-                m_dominatorsByPlace[place] = m_places[predecessor.index()];
-            else {
-                numberOfPlacesWithDominatorOfRound = place;
-                takeWaysInto(place, false);
+        for (bool changed = true; changed;) {
+            changed = false;
+            numberOfPlacesHung = 1;
+            dominatorHasMovedBehindRound = false;
+            for (uint32_t place = 1; place < numberOfPlaces; ++place) {
+                if (BlockID predecessor = m_singlePredecessors[m_order[place - 1].index()])
+                    m_dominatorsByPlace[place] = m_places[predecessor.index()];
+                else {
+                    numberOfPlacesWithDominatorOfRound = place;
+                    takeWaysInto(place, false);
+                }
+            }
+            numberOfPlacesWithDominatorOfRound = numberOfPlaces;
+            for (uint32_t target : targetsOfWaysThatComeRound) {
+                if (takeWaysInto(target, true)) {
+                    changed = true;
+                    dominatorHasMovedBehindRound = true;
+                }
             }
         }
-        numberOfPlacesWithDominatorOfRound = numberOfPlaces;
-        for (uint32_t target : targetsOfWaysThatComeRound) {
-            if (takeWaysInto(target, true)) {
-                changed = true;
-                dominatorHasMovedBehindRound = true;
-            }
-        }
-    }
+    };
+    constexpr uint32_t mostPlacesOfBodyWithoutLongClimbs = 512;
+    if (numberOfPlaces > mostPlacesOfBodyWithoutLongClimbs)
+        goThroughPlaces.template operator()<true>();
+    else
+        goThroughPlaces.template operator()<false>();
 }
 
 void CodeGenerator::numberDominatorTree()
@@ -554,7 +563,7 @@ void CodeGenerator::createBlocks()
 {
     m_blocks = allocateZeroedSpan<LBasicBlock>(m_proc.arena(), code().numberOfBlocks());
     for (size_t position = 0; position < m_order.size(); ++position) {
-        if (!goesOnBehindJump(position))
+        if (!goesOnBehindJump(position) && !goesOnInBlockOfEntry(m_order[position]))
             m_blocks[m_order[position].index()] = m_out.newBlock();
     }
 }
@@ -614,6 +623,8 @@ void CodeGenerator::createPhis()
 {
     constexpr unsigned mostBlocksThatHandParameterOn = 4;
     for (BlockID block : m_order) {
+        if (goesOnInBlockOfEntry(block))
+            continue;
         for (ValueID parameter : code().at(block).parameters()) {
             Representation representation = representationOf(parameter);
             RELEASE_ASSERT(representation != Representation::Unchosen);
@@ -1858,6 +1869,27 @@ void CodeGenerator::defineParameter(ValueID parameter, Operand operand)
     RELEASE_ASSERT(opcodeOf(parameter) == Opcode::Parameter);
     if (m_values[parameter.index()])
         passArgument(parameter, operand);
+}
+
+void CodeGenerator::defineParameterAsPassed(ValueID parameter, Operand passed)
+{
+    RELEASE_ASSERT(opcodeOf(parameter) == Opcode::Parameter);
+    Representation representation = representationOf(parameter);
+    RELEASE_ASSERT(representation != Representation::Unchosen);
+    if (!code().isNeeded(parameter) || !hasRegister(representation))
+        return;
+    if (!isSameWord(passed.representation, representation)) [[unlikely]] {
+        failToPassArgument(parameter, passed.representation, representation);
+        return;
+    }
+    defineValue(parameter, representation, Operand(representation, passed.value));
+}
+
+void CodeGenerator::goOnInBlockOfEntry(BlockID block)
+{
+    RELEASE_ASSERT(goesOnInBlockOfEntry(block) && !m_blocks[block.index()] && currentBlockIsOpen());
+    m_blocks[block.index()] = m_out.m_block;
+    m_nextBlockGoesOnHere = true;
 }
 
 Subject CodeGenerator::subjectOf(const OperationContext& context) const

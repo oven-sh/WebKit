@@ -5,7 +5,8 @@
 # REQUIRES: entries-of-bun
 # CHECK-LABEL: code f1:Body
 # CHECK: = Builtin builtin=ProcessNextTick
-# CHECK: InitializeBuiltin builtin=ProcessNextTick
+# CHECK: GetWatchedBuiltinValue {{*}}builtin=ProcessNextTick
+# CHECK-NOT: InitializeBuiltin
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0

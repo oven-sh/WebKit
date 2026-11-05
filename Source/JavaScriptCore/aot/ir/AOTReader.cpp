@@ -44,27 +44,53 @@ bool Reader::run()
     if (!readHeader())
         return false;
     steps.didFinish("header and bytes"_s);
+
+    m_types.emplace(m_program, m_sections, m_build, m_externalBodies);
+    readList(m_sections.replaceableBuiltins, m_program.replaceableBuiltins);
+    readList(m_sections.openedNames, m_program.openedNames);
+    bool unlockingReadsStrings = !m_program.openedNames.isEmpty();
+    if (!unlockingReadsStrings)
+        m_program.unlockReplaceableBuiltins();
+    auto makeObjectsAndFamiliesOfFunctions = [&] {
+        StepTimes stepsOfLane(m_build, stepsOfReadSideBySide);
+        m_types->makeObjects();
+        stepsOfLane.didFinish("objects of functions"_s);
+        m_types->computeFunctionFamilies();
+        stepsOfLane.didFinish("families of functions"_s);
+    };
+    bool hasDeclaredMembers = false;
     runLanes(loops, {
+        [&] {
+            StepTimes stepsOfLane(m_build, stepsOfReadSideBySide);
+            hasDeclaredMembers = m_types->computeDeclaredMembers();
+            stepsOfLane.didFinish("families of layouts"_s);
+        },
         [&] {
             StepTimes stepsOfLane(m_build, stepsOfReadSideBySide);
             readStrings();
             stepsOfLane.didFinish("strings"_s);
+            if (!unlockingReadsStrings)
+                return;
+            m_program.unlockReplaceableBuiltins();
+            makeObjectsAndFamiliesOfFunctions();
+        },
+        [&] {
+            if (!unlockingReadsStrings)
+                makeObjectsAndFamiliesOfFunctions();
         },
         [&] {
             StepTimes stepsOfLane(m_build, stepsOfReadSideBySide);
             readPropertyKeys();
             stepsOfLane.didFinish("property keys"_s);
+            makeRoomForTables();
+            stepsOfLane.didFinish("room for the tables"_s);
         },
     });
-    readReplaceableBuiltins();
-    steps.didFinish("strings beside property keys"_s);
-
-    m_types.emplace(m_program, m_sections, m_build, m_externalBodies);
-    if (!m_types->makeObjectsAndComputeFamilies())
+    if (!hasDeclaredMembers || !m_types->reportErrorInFunctionFamilies())
         return false;
     if (!checkListSize(m_sections.layouts.size() + m_types->numberOfDerivedLayouts(), sizeof(Layout), m_build))
         return false;
-    steps.didFinish("families of layouts beside objects and families of functions"_s);
+    steps.didFinish("families of layouts beside strings, objects, families of functions and property keys"_s);
     m_types->readTypes();
     steps.didFinish("types"_s);
     m_program.unitsOfBodies.initialize(m_externalBodies, m_program.types.typesOfWireIndexes(), numbersOfRecords(), loops);
@@ -84,13 +110,36 @@ bool Reader::run()
             StepTimes stepsOfLane(m_build, stepsOfReadSideBySide);
             readFunctions();
             stepsOfLane.didFinish("functions"_s);
+            m_types->findModulesNamedByBodies();
+            stepsOfLane.didFinish("modules that bodies name"_s);
         },
     });
     steps.didFinish("lists and layouts beside functions"_s);
-    m_types->finishObjects();
-    steps.didFinish("finish objects"_s);
-    finishProgram();
-    steps.didFinish("finish the program"_s);
+
+    m_program.types.reserveMembersOfLayoutSets(static_cast<uint32_t>(m_program.layouts.size()));
+    runLanes(loops, {
+        [&] {
+            StepTimes stepsOfLane(m_build, stepsOfReadSideBySide);
+            m_types->finishObjects();
+            setConstructedClasses();
+            stepsOfLane.didFinish("finish objects"_s);
+        },
+        [&] {
+            StepTimes stepsOfLane(m_build, stepsOfReadSideBySide);
+            m_program.indexViews(m_build.parallelLoops());
+            stepsOfLane.didFinish("index of views"_s);
+            setParameterSiteFunctions();
+            stepsOfLane.didFinish("functions of parameter sites"_s);
+        },
+        [&] {
+            StepTimes stepsOfLane(m_build, stepsOfReadSideBySide);
+            m_program.indexClasses();
+            stepsOfLane.didFinish("index of classes"_s);
+            m_program.indexNames(m_build.parallelLoops());
+            stepsOfLane.didFinish("index of names"_s);
+        },
+    });
+    steps.didFinish("finish objects beside the indexes"_s);
     return true;
 }
 
@@ -133,14 +182,6 @@ bool Reader::readHeader()
     if (!m_program.ownsBuffer())
         m_sections.bytes = m_program.copyBorrowedBytes(m_sections.bytes, m_build.parallelLoops());
     return true;
-}
-
-// Unlocking rewrites the table of built-ins, so it must happen before anything asks the table about a lock and while no other thread reads the table.
-void Reader::readReplaceableBuiltins()
-{
-    readList(m_sections.replaceableBuiltins, m_program.replaceableBuiltins);
-    readList(m_sections.openedNames, m_program.openedNames);
-    m_program.unlockReplaceableBuiltins();
 }
 
 void Reader::readStrings()
@@ -209,6 +250,16 @@ void Reader::forEachListReadIntoTableOfItsName(const Wire::Sections& sections, c
     functor(sections.webAssemblyModules, m_program.webAssemblyModules);
 }
 
+void Reader::makeRoomForTables()
+{
+    const ParallelLoops& loops = m_build.parallelLoops();
+    makeRoomFor(loops, m_program.functions, m_sections.functions.size());
+    makeRoomFor(loops, m_program.typeSites, m_sections.typeSites.size());
+    forEachListReadIntoTableOfItsName(m_sections, [&](auto records, auto& table) {
+        makeRoomFor(loops, table, records.size());
+    });
+}
+
 void Reader::readProgramLists()
 {
     forEachListReadIntoTableOfItsName(m_sections, [&](auto records, auto& table) {
@@ -235,7 +286,7 @@ void Reader::readLayouts()
     constexpr size_t layoutsPerChunk = 64;
     const ParallelLoops& loops = m_build.parallelLoops();
     auto records = m_sections.layouts;
-    m_program.layouts.reserveInitialCapacity(records.size() + m_types->numberOfDerivedLayouts());
+    makeRoomFor(loops, m_program.layouts, records.size() + m_types->numberOfDerivedLayouts());
     growFromEmpty(loops, m_program.layouts, records.size());
     readInChunks(loops, records.size(), layoutsPerChunk, [&](uint32_t index) {
         RecordChecker checker(*this);
@@ -249,21 +300,6 @@ void Reader::readLayouts()
                 declared.expect(ExpectedType(expected));
         }
     });
-}
-
-void Reader::finishProgram()
-{
-    StepTimes steps(m_build, "ReadAndVerify: finish the program"_s);
-    setConstructedClasses();
-    steps.didFinish("constructed classes"_s);
-    m_program.indexClasses();
-    steps.didFinish("index of classes"_s);
-    m_program.indexNames(m_build.parallelLoops());
-    steps.didFinish("index of names"_s);
-    m_program.indexViews(m_build.parallelLoops());
-    steps.didFinish("index of views"_s);
-    setParameterSiteFunctions();
-    steps.didFinish("functions of parameter sites"_s);
 }
 
 void Reader::setConstructedClasses()

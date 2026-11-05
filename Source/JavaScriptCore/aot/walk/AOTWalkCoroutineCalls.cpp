@@ -20,8 +20,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-static constexpr OpcodeSet opcodesOfCoroutineCalls = opcodesThatStateTypes | OpcodeSet { Opcode::Call, Opcode::Await, Opcode::CreatePromise, Opcode::ResolvePromise, Opcode::HasJSType, Opcode::ReadsIteratorOfListUnseen };
-
 KeptByCallsOfCoroutines* findKeptByCallsOfCoroutines(Walker& walker)
 {
     return static_cast<KeptByCallsOfCoroutines*>(walker.coroutineState().keptByCalls.get());
@@ -269,9 +267,6 @@ bool buildRampAtCall(Walker& walker, const BodyValue& call)
     return true;
 }
 
-extern const OpcodeSet opcodesThatBuildCoroutineOperationTakes;
-constinit const OpcodeSet opcodesThatBuildCoroutineOperationTakes = opcodesOfCoroutineCalls;
-
 void forgetAwaitOfCallThatMayBeCopied(Walker& walker)
 {
     if (walker.depthOfCopies())
@@ -287,14 +282,16 @@ bool buildCoroutineOperationOfItsOpcodes(Walker& walker, const BodyValue& value)
         return nameCastInFrontOfAwaitTakenInCopy(walker, value);
     if (opcode == Opcode::Await)
         return takeWhatCallInCopyHasAwaited(walker, value);
-    if (buildPromiseOperation(walker, value))
-        return true;
     if (opcode != Opcode::Call)
-        return false;
-    return buildPromiseAllOfElements(walker, value)
+        return buildPromiseOperation(walker, value);
+    auto written = value.as<Opcode::Call>();
+    if (written.argumentsOperands().size() <= 1 && written.thisValueOperand() && buildPromiseOperation(walker, value))
+        return true;
+    size_t depthOfCopies = walker.depthOfCopies();
+    return (walker.currentBodyIndex().opcodes().contains(Opcode::NewArray) && buildPromiseAllOfElements(walker, value))
         || buildStepWrittenByHand(walker, value)
-        || buildAwaitedCall(walker, value)
-        || buildRampAtCall(walker, value);
+        || ((depthOfCopies ? !!walker.coroutineState().keptByCalls : walker.unit().role == CodeRole::CoroutineBody) && buildAwaitedCall(walker, value))
+        || (!depthOfCopies && walker.isInLoop() && buildRampAtCall(walker, value));
 }
 
 } } } // namespace JSC::AOT::Typed

@@ -125,6 +125,8 @@ public:
         if (m_numberOfEntriesThatWritesEnd == m_numberOfEntriesEndedByWriteToAllHeaps)
             return;
         uint32_t time = timeOfNewWrite();
+        if (m_timesOfWrites.empty()) [[unlikely]]
+            makeTimesOfWrites();
         m_timesOfWrites[heap].toHeap = time;
         while (heap != rootHeapIndex) {
             heap = m_heapTree.parentOf(heap);
@@ -136,7 +138,10 @@ public:
         if (m_numberOfEntriesThatWritesEnd == m_numberOfEntriesEndedByWriteToAllHeaps)
             return;
         if (heaps.isTop()) {
-            m_timesOfWrites[rootHeapIndex].toHeap = timeOfNewWrite();
+            uint32_t time = timeOfNewWrite();
+            m_timeOfLastWriteToAllHeaps = time;
+            if (!m_timesOfWrites.empty())
+                m_timesOfWrites[rootHeapIndex].toHeap = time;
             m_numberOfEntriesEndedByWriteToAllHeaps = m_numberOfEntriesThatWritesEnd;
             return;
         }
@@ -302,6 +307,8 @@ private:
     }
     uint32_t timeOfLastWriteTo(HeapIndex heap) const
     {
+        if (m_timesOfWrites.empty())
+            return m_timeOfLastWriteToAllHeaps;
         uint32_t time = std::max(m_timesOfWrites[heap].toHeap, m_timesOfWrites[heap].belowHeap);
         while (heap != rootHeapIndex) {
             heap = m_heapTree.parentOf(heap);
@@ -310,6 +317,7 @@ private:
         return time;
     }
     bool patchWasEndedByWrite(const Entry&) const;
+    JS_EXPORT_PRIVATE void makeTimesOfWrites();
     JS_EXPORT_PRIVATE void didWriteListedHeaps(std::span<const HeapIndex>);
     JS_EXPORT_PRIVATE void growBuckets();
     void growBucketsWithoutPosition();
@@ -326,6 +334,7 @@ private:
     uint32_t m_clock { 1 };
     uint32_t m_timeOfLastSuspension { 0 };
     uint32_t m_timeOfLastWrite { 0 };
+    uint32_t m_timeOfLastWriteToAllHeaps { 0 };
     uint32_t m_numberOfEntriesThatWritesEnd { 0 };
     uint32_t m_numberOfEntriesEndedByWriteToAllHeaps { 0 };
     uint32_t m_numberOfEntriesEndedByLastListWritten { 0 };

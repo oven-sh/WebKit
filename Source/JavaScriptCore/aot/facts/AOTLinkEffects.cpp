@@ -848,6 +848,11 @@ void CalleeSummarizerForLinkEffects::findCodeEnteredByCall(FunctionID id, const 
         LinkType subject = typeAt(id, call.subject);
         subject.builtin = { };
         addFunctionsAt(subject, found);
+        const SummaryNode& callee = summary.nodes[call.subject];
+        bool isReadThroughSuper = callee.kind == SummaryNode::Kind::ResultOfAccess && summary.accesses[callee.first].receiver != noSummaryNode;
+        bool isSuperCall = call.isConstruction && call.newTarget != noSummaryNode;
+        if (callee.kind != SummaryNode::Kind::Closure && !isReadThroughSuper && !isSuperCall)
+            found.mayBeUnseen = true;
         break;
     }
     case SummaryCall::Callee::Builtin:

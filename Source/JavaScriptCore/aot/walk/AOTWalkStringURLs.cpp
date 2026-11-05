@@ -697,29 +697,18 @@ static bool buildURLThatIsNeverMade(Walker& walker, const CallByOneRow& call, Re
     url.inlineFrame = walker.originOfOperation().inlineFrame;
     url.made = made;
     url.typeOfObject = typeOfObject;
-    url.object = nothing;
-    url.text = string;
-    url.scan = scan;
+    Vector<Walker::ArmThatMeets, 2> arms;
     if (endOfWritten) {
-        const Code& code = walker.code();
         Reference noText = constantForStrings(walker, PrimitiveKnownToFolding::text(walker.program().strings.emptyString()));
-        Reference notPlain = integerForStrings(walker, PlainURL::notPlain);
-        auto meet = [&](Reference onPlainWay, Reference onWayAsWritten) {
-            TypeID type = joinOf(walker.types(), walker.facts().families(), code.at(onPlainWay.id()).type, code.at(onWayAsWritten.id()).type);
-            Representation forms[] { walker.representationOf(onPlainWay), walker.representationOf(onWayAsWritten) };
-            return walker.addParameter(meeting, type, walker.formOfParameter(type, forms));
-        };
-        url.object = meet(nothing, object);
-        url.text = meet(string, noText);
-        url.scan = meet(scan, notPlain);
-        walker.jumpTo(meeting, std::array { object, noText, notPlain });
-        walker.continueIn(plain);
-        walker.jumpTo(meeting, std::array { nothing, string, scan });
-    } else {
-        walker.continueIn(plain);
-        walker.jumpTo(meeting);
+        arms.append(Walker::ArmThatMeets { endOfWritten, { object, noText, integerForStrings(walker, PlainURL::notPlain) } });
     }
-    walker.continueIn(meeting);
+    arms.append(Walker::ArmThatMeets { plain, { nothing, string, scan } });
+    std::array<Reference, 3> met;
+    if (!walker.letArmsMeet(arms.span(), meeting, met))
+        return true;
+    url.object = met[0];
+    url.text = met[1];
+    url.scan = met[2];
     walker.bind(made, url.object);
 
     Vector<URLThatIsNeverMade, 1>& urls = notesOfStrings(walker).urlsThatAreNeverMade;

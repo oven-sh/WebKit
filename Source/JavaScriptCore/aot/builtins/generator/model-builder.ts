@@ -142,7 +142,6 @@ function createAttachments(): ModelAttachments {
     unseenCodeCondition: null,
     moduleLoads: [],
     calledFunctions: [],
-    appendForm: null,
     literalPartsForm: null,
     boxedCallStub: null,
     nativeFunction: null,

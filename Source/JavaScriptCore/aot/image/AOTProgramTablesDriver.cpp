@@ -148,31 +148,35 @@ Vector<uint8_t> encodeProgramTables(const TableInputs& inputs, ImageNumbers& num
 
     runLanes(build.parallelLoops(), {
         [&] {
-            runLanes(build.parallelLoops(), {
-                [&] { encode(TablePartID::Types, [&](TableEncoder& encoder) { encodeTypeTables(encoder, firstParts); }); },
-                [&] { encode(TablePartID::Data, [&](TableEncoder& encoder) { encodeDataTable(encoder, firstParts); }); },
-            });
-            times.didFinish("encode types and data"_s);
+            encode(TablePartID::Types, [&](TableEncoder& encoder) { encodeTypeTables(encoder, firstParts); });
+            times.didFinish("encode types"_s);
             if (diagnostics.hasErrors())
                 return;
             if (firstParts.typeOffsets.size() != numbers.typesNeededAtRunTime().size()) {
                 encoders[static_cast<unsigned>(TablePartID::Types)].fail("TypeOffsetsDoNotMatchTypesNeededAtRunTime"_s);
                 return;
             }
-            firstParts.fieldsOfLayoutRecords = collectFieldsOfLayoutRecords(encoders[static_cast<unsigned>(TablePartID::Layouts)]);
-            times.didFinish("collect the fields of layout records"_s);
-            if (diagnostics.hasErrors())
-                return;
-
             runLanes(build.parallelLoops(), {
-                [&] { encode(TablePartID::Layouts, encodeLayoutTables); },
-                [&] { encode(TablePartID::Functions, encodeFunctionProgramTables); },
-                [&] { encode(TablePartID::FieldTable, encodeFieldTable); },
-                [&] { encode(TablePartID::Modules, encodeModuleTables); },
-                [&] { encode(TablePartID::Constants, encodeConstantTables); },
-                [&] { encode(TablePartID::Statics, [](TableEncoder& encoder) { encodeStaticsTables(encoder); encodeMethodTableDependents(encoder); }); },
-                [&] { encode(TablePartID::Requests, encodeRequestTables); },
-                [&] { encode(TablePartID::ShapeSets, encodeShapeSetBits); },
+                [&] {
+                    firstParts.fieldsOfLayoutRecords = collectFieldsOfLayoutRecords(encoders[static_cast<unsigned>(TablePartID::Layouts)]);
+                    times.didFinish("collect the fields of layout records"_s);
+                    if (diagnostics.hasErrors())
+                        return;
+                    runLanes(build.parallelLoops(), {
+                        [&] { encode(TablePartID::Layouts, encodeLayoutTables); },
+                        [&] { encode(TablePartID::Functions, encodeFunctionProgramTables); },
+                        [&] { encode(TablePartID::FieldTable, encodeFieldTable); },
+                        [&] { encode(TablePartID::Modules, encodeModuleTables); },
+                        [&] { encode(TablePartID::Constants, encodeConstantTables); },
+                        [&] { encode(TablePartID::Statics, [](TableEncoder& encoder) { encodeStaticsTables(encoder); encodeMethodTableDependents(encoder); }); },
+                        [&] { encode(TablePartID::ShapeSets, encodeShapeSetBits); },
+                    });
+                },
+                [&] {
+                    encode(TablePartID::Data, [&](TableEncoder& encoder) { encodeDataTable(encoder, firstParts); });
+                    if (!diagnostics.hasErrors())
+                        encode(TablePartID::Requests, encodeRequestTables);
+                },
             });
             times.didFinish("encode the other groups"_s);
         },

@@ -13,7 +13,7 @@ v(GetByIdOfSilentSlot, InternalEntry, (), CallerFrameAxis | StubFrameAxis, 0, 0,
 v(GetByIdOfEmptySlot, InternalEntry, (), CallerFrameAxis | StubFrameAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, GetById)
 v(GetByIdOfFieldLeftOut, InternalEntry, (), CallerFrameAxis | StubFrameAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, GetById)
 v(GetByIdOfNarrowCellInExtension, InternalEntry, (), CallerFrameAxis | StubFrameAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, GetById)
-v(GetByIdBehindFieldTable, InternalEntry, (), CallerFrameAxis | StubFrameAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, GetById)
+v(GetByIdOfCell, InternalEntry, (), CallerFrameAxis | StubFrameAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, GetById)
 v(InById, CalledByCode, (In, HasOwn), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, InById)
 v(ReadFieldInExtension, CalledByCode, (Word64, Word32At0, Word32At4, ByteAt0, ByteAt1, ByteAt2, ByteAt3, ByteAt4, ByteAt5, ByteAt6, ByteAt7), FormAxis | CountAxis | OperandRegisterAxis, 0, 63, AllISAs, NoISA, AlternateReceivers, Never, Leaf, ClobbersOnlyScratch, reads(ObjectFields), ReadFieldInExtension)
 

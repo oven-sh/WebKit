@@ -435,7 +435,7 @@ bool ObjectLiteralPlans::storesValuesUnchanged(const ObjectBuilderPlan& builder)
     RuntimeLayoutTable& layouts = builder.m_state.objects->layouts;
     bool slotsHoldEveryValue = std::ranges::all_of(builder.m_fields, [&](const ObjectBuilderPlan::PlannedField& planned) {
         const FieldData& field = *planned.field;
-        return field.slot.representation() == SlotRepresentation::JSValue && !field.holdsRawValueFromBirth && !field.keepsStateOfBirth && typeAcceptsEveryValue(layouts.typeOf(field));
+        return field.slot.representation() == SlotRepresentation::JSValue && !field.holdsRawValueFromBirth && typeAcceptsEveryValue(layouts.typeOf(field));
     });
     bool otherWordsAreZero = std::ranges::all_of(builder.m_initialWords, [](const ObjectBuilderPlan::InitialWord& initial) {
         return initial.offset == offsetOfOrderWord || !initial.word;

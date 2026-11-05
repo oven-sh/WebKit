@@ -21,7 +21,7 @@ struct RowsOfSlotPlan {
     std::span<uint64_t> offsets;
     std::span<uint32_t> places;
     std::span<uint64_t> ends;
-    const BitVector& layoutsWithHiddenWords;
+    std::span<const uint8_t> offsetsOfFirstSlots;
     std::span<const uint8_t> widths { };
 };
 struct LayoutsBelowTheirBases {

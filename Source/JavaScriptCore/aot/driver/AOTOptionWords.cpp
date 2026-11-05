@@ -144,13 +144,13 @@ static bool engineHonorsTestingSwitch(Wire::TestingSwitch testingSwitch)
     // A false bound on purpose, for the red control of that: isKnownToLieInsideList().
     case Wire::TestingSwitch::PositionsAreTakenToLieInside:
     case Wire::TestingSwitch::NoCalleeKeepsWhatItIsHanded:
+    case Wire::TestingSwitch::HoldsObjectsToStayingAsMade:
     case Wire::TestingSwitch::CheckEffectsAtRunTime:
     case Wire::TestingSwitch::RowSaysLess:
         return true;
     case Wire::TestingSwitch::NobodyLooksAtNewInstances:
     case Wire::TestingSwitch::WalksNothingAtCalls:
     case Wire::TestingSwitch::IgnoreBranchHints:
-    case Wire::TestingSwitch::ForceGCSlowPaths:
     case Wire::TestingSwitch::MayEncounterMasqueradesAsUndefined:
     case Wire::TestingSwitch::DropGuard:
     case Wire::TestingSwitch::IgnoreExpectedTypes:

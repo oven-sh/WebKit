@@ -55,7 +55,7 @@ const disposeMethodLookup = (name: string, uses: readonly b.UseSpec[]) =>
     throws: true,
     runsOnlyOperandCode: true,
     runsUnseenCode: false,
-    uses: { value: uses },
+    uses: { value: [...uses, b.runs("PrototypeChain")] },
     implementation: b.compiled("DisposableStackPrototype", name),
   }) satisfies b.FunctionField;
 

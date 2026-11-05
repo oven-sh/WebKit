@@ -16,7 +16,7 @@
 namespace JSC { namespace AOT {
 
 enum class PromiseHandler : uint8_t { OnFulfilled, OnRejected };
-enum class AwaitedOperand : uint8_t { Value, ResultOfCallWithoutPromise, ValueAfterTurn, ValueInModuleBody };
+enum class AwaitedOperand : uint8_t { Value, ResultOfCallWithoutPromise, ValueInModuleBody };
 enum class GeneratorSuspension : uint8_t { Yield, AsyncAwait, AsyncYield, AsyncYieldAfterAwait };
 enum class StepConsumer : uint8_t { AsyncFunction, AsyncGenerator };
 enum class NewGeneratorKind : uint8_t { Sync, Async };
@@ -46,7 +46,7 @@ static_assert(numberOfEnumerators<GeneratorStepCheck> == descriptorOf(StubFamily
 static_assert(!static_cast<unsigned>(GeneratorStepCheck::IsUnmodifiedGenerator) && static_cast<unsigned>(GeneratorStepCheck::IsGenerator) == 1 && static_cast<unsigned>(GeneratorStepCheck::IsUnmodified) == 2 && static_cast<unsigned>(GeneratorStepCheck::None) == 3);
 static_assert(static_cast<unsigned>(StepConsumer::AsyncGenerator) + 1 == descriptorOf(StubFamily::StepAsyncGenerator).numberOfForms);
 static_assert(exists(newPromise()) && exists(returnAsyncResult()) && exists(awaitCallBySavingFrame()) && exists(suspendGenerator(GeneratorSuspension::AsyncYieldAfterAwait)));
-static_assert(exists(awaitBySavingFrame(AwaitedOperand::ValueAfterTurn)) && exists(awaitBySavingFrame(AwaitedOperand::ValueInModuleBody)));
+static_assert(exists(awaitBySavingFrame(AwaitedOperand::ValueInModuleBody)));
 static_assert(exists(stepGenerator(GeneratorStepCheck::None)) && exists(enterSavedFrame()) && exists(restoreSavedFrameToStack()) && exists(enterGeneratorFrame()));
 static_assert(exists(stepAsyncGenerator(StepConsumer::AsyncFunction)) && exists(stepAsyncGenerator(StepConsumer::AsyncGenerator)) && exists(runAsyncGeneratorStep()) && exists(stepAsyncIteratorInEngine()));
 static_assert(bodyOf(stepAsyncIteratorInEngine()) == runAsyncGeneratorStep());

@@ -649,11 +649,11 @@ void Program::appendNamespaceLayouts(const ParallelLoops& loops)
             continue;
         RELEASE_ASSERT(!module.namespaceLayout);
         module.namespaceLayout = LayoutID(layouts.size());
-        Layout layout;
+        layouts.constructAndAppend();
+        Layout& layout = layouts.last();
         layout.kind = LayoutKind::ModuleNamespace;
         layout.module = ModuleID(index);
         layout.namespaceOf = ModuleID(index);
-        layouts.append(WTF::move(layout));
     }
 
     Vector<uint32_t> holders;

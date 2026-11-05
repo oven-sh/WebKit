@@ -12,6 +12,7 @@
 #include "AOTDiagnostics.h"
 #include "AOTEffectsDeclared.h"
 #include "AOTEffectsNet.h"
+#include "AOTWalkKnown.h"
 #include "AOTMachineArena.h"
 #include "AOTNumbering.h"
 #include "AOTPhaseTimes.h"
@@ -51,6 +52,7 @@ WalkOptions walkOptionsOf(const BuildContext& build)
         .testsEveryPosition = AOT::hasFlag(options.testing, Wire::TestingSwitch::TestsEveryPosition),
         .takesPositionsToLieInside = AOT::hasFlag(options.testing, Wire::TestingSwitch::PositionsAreTakenToLieInside),
         .takesCalleesToKeepNothing = AOT::hasFlag(options.testing, Wire::TestingSwitch::NoCalleeKeepsWhatItIsHanded),
+        .holdsObjectsToStayingAsMade = AOT::hasFlag(options.testing, Wire::TestingSwitch::HoldsObjectsToStayingAsMade),
         .writesBodiesStraight = AOT::hasFlag(options.testing, Wire::TestingSwitch::WritesBodiesStraight),
         .checksEffects = AOT::hasFlag(options.testing, Wire::TestingSwitch::CheckEffectsAtRunTime),
         .rowThatSaysLess = options.rowThatSaysLess,
@@ -177,10 +179,46 @@ static String findPartThatLinkHasNotCounted(const Code& code, const Operation& o
     return { };
 }
 
-static String findOperationThatLinkHasNotCounted(const WalkInputs& inputs, const Code& code)
+static BitVector findFramesOfClosuresThatCalledParametersHold(const WalkInputs& inputs, TypeArena& types, const Code& code, uint32_t parametersCalled)
+{
+    Vector<FunctionID, 4> held;
+    auto note = [&](TypeID type) {
+        if (FunctionID function = type ? singleFunctionOf(types, types.at(type)) : FunctionID())
+            held.append(function);
+    };
+    std::span<const LinkedParameter> parameters = inputs.facts.linked().parametersOf(code.unit().function);
+    for (uint32_t parameter = 0; parameter < parameters.size() && parameter < 32; ++parameter) {
+        if (parametersCalled >> parameter & 1)
+            note(parameters[parameter].proven);
+    }
+    auto isCalledParameter = [&](ValueID value) {
+        const Operation& operation = code.at(value);
+        if (operation.opcode != Opcode::Parameter || !operation.block() || !code.at(operation.block()).isEntry)
+            return false;
+        size_t place = std::ranges::find(code.at(operation.block()).parameters(), value) - code.at(operation.block()).parameters().begin();
+        return place < 32 && (parametersCalled >> place & 1);
+    };
+    for (uint32_t index = 0; index < code.numberOfValues(); ++index) {
+        const Operation& operation = code.at(ValueID(index));
+        if (isCalledParameter(ValueID(index)))
+            note(operation.type);
+        else if (operation.opcode == Opcode::TypeTest && operation.block() && isCalledParameter(rootOfCellInSweptCode(code, operation.operand(0))))
+            note(operation.testedType());
+    }
+
+    BitVector frames;
+    std::span<const InlineFrame> copied = code.inlineFrames();
+    for (uint32_t frame = 1; frame < copied.size(); ++frame) {
+        if ((!copied[frame].parent && held.contains(copied[frame].callee)) || frames.get(copied[frame].parent))
+            frames.set(frame);
+    }
+    return frames;
+}
+
+static String findOperationThatLinkHasNotCounted(const WalkInputs& inputs, TypeArena& types, const Code& code)
 {
     CodeUnit unit = code.unit();
-    if (unit.role != CodeRole::Body || inputs.plan.moduleEvaluation().moduleThatBeginsIn(unit.function))
+    if (unit.role != CodeRole::Body || unitDoesMoreThanBodyForKnownEffects(inputs.plan, unit.function))
         return { };
     const LinkTables& tables = inputs.facts.linked();
     const LinkedFunction& linked = tables.function(unit.function);
@@ -192,16 +230,16 @@ static String findOperationThatLinkHasNotCounted(const WalkInputs& inputs, const
         countedGivenArguments.merge(given->onThrow);
     if (inputs.options.rowThatSaysLess) [[unlikely]] {
         RowThatSaysLess row = RowThatSaysLess::decode(inputs.options.rowThatSaysLess);
-        row.cut(KindOfEffectsRow::Summary, unit.function.index(), counted);
-        row.cut(KindOfEffectsRow::Summary, unit.function.index(), countedGivenArguments);
+        row.cut(KindOfEffectsRow::Summary, unit.function.index(), given ? countedGivenArguments : counted);
     }
+    BitVector framesLeftToCaller = given && given->parametersCalled ? findFramesOfClosuresThatCalledParametersHold(inputs, types, code, given->parametersCalled) : BitVector();
     for (uint32_t index = 0; index < code.numberOfValues(); ++index) {
         const Operation& operation = code.at(ValueID(index));
         if (!operation.block() || operation.traits().mayCallUnknownCode())
             continue;
         String part = findPartThatLinkHasNotCounted(code, operation, counted);
         ASCIILiteral summary = "Link's effects of the function"_s;
-        if (part.isNull() && given && code.at(operation.block()).frequency == BlockFrequency::Normal) {
+        if (part.isNull() && given && code.at(operation.block()).frequency == BlockFrequency::Normal && !framesLeftToCaller.get(operation.origin().inlineFrame)) {
             part = findPartThatLinkHasNotCounted(code, operation, countedGivenArguments);
             summary = "Link's effects of the function given its arguments"_s;
         }
@@ -222,7 +260,7 @@ static bool verifyCodeOfCompileUnit(const WalkInputs& inputs, BuildContext& buil
     }
     if (brokenRule.isNull()) {
         kindOfBrokenRule = InternalErrorKind::EffectsNotCounted;
-        brokenRule = findOperationThatLinkHasNotCounted(inputs, code);
+        brokenRule = findOperationThatLinkHasNotCounted(inputs, types, code);
     }
     if (brokenRule.isNull())
         return true;
@@ -295,15 +333,18 @@ bool CompileWorker::walkAndSweep(CodeUnit unit)
         m_build.statistics().count(StatisticID::TestsThatRejoin, guesses);
         m_build.statistics().count(StatisticID::LoopsBuiltTwice, m_walker->numberOfLoopsBuiltTwice());
         m_build.statistics().count(StatisticID::TurnsThatBeginAgain, m_walker->numberOfTurnsThatBeginAgain());
+        m_build.statistics().count(StatisticID::EmptySlotsTakenAsCases, m_walker->numberOfEmptySlotsTakenAsCases());
     }
     if (uint32_t assignments = m_walker->numberOfAssignmentsWrittenOut())
         m_build.statistics().count(StatisticID::AssignmentsWrittenOutFieldByField, assignments);
     if (uint32_t joins = m_walker->numberOfJoinsWalkedForEachWay())
         m_build.statistics().count(StatisticID::JoinsWalkedOnceForEachWay, joins);
+    static_assert(static_cast<unsigned>(StatisticID::ProofsThatNoTestTells) - static_cast<unsigned>(StatisticID::ProofsCheckedOfEntryParameters) == numberOfEnumerators<ProofSource>);
+    for (unsigned source = 0; source < numberOfEnumerators<ProofSource>; ++source) {
+        if (uint32_t checked = m_walker->numberOfProofsChecked(static_cast<ProofSource>(source)))
+            m_build.statistics().count(static_cast<StatisticID>(static_cast<unsigned>(StatisticID::ProofsCheckedOfEntryParameters) + source), checked);
+    }
     if (inputs.options.checksProofs) {
-        static_assert(static_cast<unsigned>(StatisticID::ProofsThatNoTestTells) - static_cast<unsigned>(StatisticID::ProofsCheckedOfEntryParameters) == numberOfEnumerators<ProofSource>);
-        for (unsigned source = 0; source < numberOfEnumerators<ProofSource>; ++source)
-            m_build.statistics().count(static_cast<StatisticID>(static_cast<unsigned>(StatisticID::ProofsCheckedOfEntryParameters) + source), m_walker->numberOfProofsChecked(static_cast<ProofSource>(source)));
         m_build.statistics().count(StatisticID::ProofsThatNoTestTells, m_walker->numberOfProofsThatNoTestTells());
         m_build.statistics().count(StatisticID::FreshCellsLeftAloneAtReturns, m_walker->numberOfFreshCellsLeftAloneAtReturns());
     }
@@ -344,7 +385,7 @@ bool CompileWorker::walkAndSweep(CodeUnit unit)
 
 static bool storesOnlyWhatFitsByItsMaking(const WalkInputs& inputs, TypeArena& types, const BodyIndex& index)
 {
-    static constexpr OpcodeSet operationsThatStoreIntoPlaces { Opcode::PutModuleVariable, Opcode::PutEnvironmentField, Opcode::NewObject, Opcode::NewClosure };
+    static constexpr OpcodeSet operationsThatStoreIntoPlaces { Opcode::PutModuleVariable, Opcode::PutEnvironmentField, Opcode::NewObject, Opcode::NewClosure, Opcode::TryReExportFields };
     if (!index.opcodes().intersects(operationsThatStoreIntoPlaces))
         return true;
     const LinkTables& linked = inputs.facts.linked();
@@ -404,6 +445,14 @@ static bool storesOnlyWhatFitsByItsMaking(const WalkInputs& inputs, TypeArena& t
                 allFit = fits(value.valueOperand(), heldIn(value.layout(), value.field()));
                 continue;
             }
+            if (value.opcode() == Opcode::TryReExportFields) {
+                auto reExport = value.as<Opcode::TryReExportFields>();
+                uint32_t place = reExport.keyIsFirstCapture() ? 1 : 0;
+                bool isTyped = reExport.function().index() + 1 < linked.firstCaptureOfFunction.size() && place < linked.firstCaptureOfFunction[reExport.function().index() + 1] - linked.firstCaptureOfFunction[reExport.function().index()];
+                if (isTyped && linked.capture(reExport.function(), place).everyWriterIsKnown)
+                    allFit = fits(reExport.sourceOperand(), linked.capture(reExport.function(), place).proven);
+                continue;
+            }
             if (value.opcode() == Opcode::NewClosure) {
                 FunctionID function = value.as<Opcode::NewClosure>().function();
                 uint32_t numberTyped = function.index() + 1 < linked.firstCaptureOfFunction.size() ? linked.firstCaptureOfFunction[function.index() + 1] - linked.firstCaptureOfFunction[function.index()] : 0;
@@ -440,10 +489,18 @@ static bool entryBlockStoresVariablesInFrontOfTheirFirstReaders(const WalkInputs
     Vector<FunctionID, 4> used;
     bool isShown = true;
     bool isEntryBlock = true;
+    UncheckedKeyHashSet<uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> functionsFoundShown;
     auto look = [&](VariableID storedByOperation) {
         for (FunctionID function : used) {
-            for (const LinkedVariableStoredFirst& claim : std::ranges::equal_range(claims, function, { }, &LinkedVariableStoredFirst::functionWhoseUseCounts))
+            if (!isShown || functionsFoundShown.contains(function.index()))
+                continue;
+            bool isPassedBy = false;
+            for (const LinkedVariableStoredFirst& claim : std::ranges::equal_range(claims, function, { }, &LinkedVariableStoredFirst::functionWhoseUseCounts)) {
+                isPassedBy |= claim.variable == storedByOperation;
                 isShown &= claim.variable == storedByOperation || stored.contains(claim.variable.index()) || inputs.plan.deferredDefinitions().findDeferred(claim.variable);
+            }
+            if (isShown && !isPassedBy)
+                functionsFoundShown.add(function.index());
         }
     };
     index.body().forEachBlock([&](BodyBlock block) {

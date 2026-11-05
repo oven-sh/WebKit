@@ -109,6 +109,10 @@ std::optional<KeyOrderContinuation> KeyOrders::continuationCreatingBehindFewestK
         return std::nullopt;
     std::span<const uint32_t> firstFieldOfOrder = m_parts.firstFieldOfOrder.span().subspan(m_parts.firstOrderOfLayout[layout.index()], numberOfOrders + 1);
     std::span<const FieldIndex> fields = m_parts.fields.span();
+    BitVector isInFront;
+    size_t numberOfFieldsInFront = 0;
+    for (FieldIndex field : fieldsInFront)
+        numberOfFieldsInFront += !isInFront.set(field);
     constexpr size_t noPlace = std::numeric_limits<size_t>::max();
     size_t fewest = noPlace;
     uint32_t best = 0;
@@ -118,7 +122,7 @@ std::optional<KeyOrderContinuation> KeyOrders::continuationCreatingBehindFewestK
         if (!place || *place < fieldsInFront.size())
             continue;
         std::span<const FieldIndex> beginning = listed.first(*place);
-        if (!std::ranges::all_of(fieldsInFront, [&](FieldIndex field) { return std::ranges::find(beginning, field) != beginning.end(); }))
+        if (numberOfFieldsInFront && static_cast<size_t>(std::ranges::count_if(beginning, [&](FieldIndex field) { return isInFront.get(field); })) != numberOfFieldsInFront)
             continue;
         fewest = *place;
         best = number;

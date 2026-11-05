@@ -339,17 +339,33 @@ static void fillLayoutTablesForFacts(const Program& program, const LinkTables& l
         }
     }
     const TypeTable& types = program.types;
+    Vector<uint64_t> layoutsNamedByTypes;
+    layoutsNamedByTypes.fill(0, (numberOfLayouts + 63) / 64);
+    BitVector typesLookedAt(types.numberOfTypes());
+    HashSet<uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> setsLookedAt;
     for (TypeID type : types.typesOfWireIndexes()) {
-        if (!type || holdsOnlyPrimitives(type))
+        if (!type || holdsOnlyPrimitives(type) || typesLookedAt.quickSet(TypeTable::positionInProgramOf(type)))
             continue;
-        types.at(types.at(type).unnamedLayouts).forEach([&](LayoutID layout) {
-            holdsDictionaries.quickClear(layout.index());
+        LayoutSetID named = types.typeKeptAt(type).unnamedLayouts;
+        if (!named)
+            continue;
+        if (holdsOneMember(named)) {
+            layoutsNamedByTypes[positionOf(named) / 64] |= 1ull << (positionOf(named) % 64);
+            continue;
+        }
+        if (!setsLookedAt.add(named.bits()).isNewEntry)
+            continue;
+        types.at(named).untyped().anyWordOf([&](uint32_t word, uint64_t members) {
+            layoutsNamedByTypes[word] |= members;
+            return false;
         });
     }
 
     tables.layouts.fill(LayoutFacts { }, numberOfLayouts);
-    for (size_t index : holdsDictionaries)
-        tables.layouts[index].facts.add(LayoutFact::ObjectsAreDictionaries);
+    for (size_t index : holdsDictionaries) {
+        if (!(layoutsNamedByTypes[index / 64] >> (index % 64) & 1))
+            tables.layouts[index].facts.add(LayoutFact::ObjectsAreDictionaries);
+    }
 }
 
 static void fillVariableTablesForFacts(const LinkTables& linked, FactTables& tables)
@@ -610,7 +626,7 @@ static void fillMembersOfClassesForFacts(const Program& program, const ThinSumma
                 listed.function = { };
             }
         }
-        appendMembersAssignedToPrototype(program, linked, LayoutID(static_cast<uint32_t>(layout)), rows.rows);
+        appendMembersAssignedByProgram(program, linked, LayoutID(static_cast<uint32_t>(layout)), rows.rows);
     }
     rows.firstRowOfOwner.append(static_cast<uint32_t>(rows.rows.size()));
 }
@@ -701,6 +717,9 @@ TypeID Facts::typeBelievedOfEntryParameter(TypeArena& types, FunctionID id, unsi
     if (isNeverType(both))
         return !declared || !declared->isEstablished() ? types.withSeeds(type, UnknownSeed::ParameterOfEscapedFunction) : type;
 
+    TypeID testable = types.testablePartOf(both);
+    if ((types.at(testable).anyObject && !types.at(both).anyObject) || (types.at(testable).anyFunction && !types.at(both).anyFunction))
+        both = testable;
     CodeUnit entryByValue { id, CodeRole::GenericCallEntry };
     bool entryMayNotAsk = testMentionsWhatIsOutOfReach(types, both, scopedLambda<bool(FunctionID)>([&](FunctionID named) {
         return m_linked.mayBeMentionedBy(entryByValue, named);
@@ -728,13 +747,25 @@ static void fillTablesOfFunctionsForFacts(const Program& program, const FactsReq
     steps.didFinish("tables of functions"_s);
 }
 
-static void fillTablesOfFieldsLayoutsAndClassesForFacts(const Program& program, BuildContext& build, Facts::Parts& parts)
+static void fillTablesOfFieldsForFacts(Program& program, const OwnedLooksAtBodies& looks, BuildContext& build, Facts::Parts& parts)
 {
     StepTimes steps(build, "facts"_s);
     if (parts.mechanisms.contains(Mechanism::Guesses))
         layKeysThatHeldAloneAppendsOver(parts.linked, parts.held, program.layouts.size());
     build.statistics().count(StatisticID::FlowAppendedFields, parts.linked.appendedKeys.size() + parts.linked.keysAppendedByHeldAlone.size());
     fillFieldTablesForFacts(program, parts.linked, parts.mechanisms, parts.tables);
+    parts.linked.fieldsReadAsIntegers = fieldsReadAsIntegersIn(*looks);
+    parts.linked.fieldsReadForArithmetic = fieldsReadForArithmeticIn(*looks);
+    parts.linked.fieldsStoredWhatIsNoInt32 = fieldsStoredWhatIsNoInt32In(*looks);
+    parts.linked.fieldsStoredCounts = fieldsStoredCountsIn(*looks, program, parts.linked);
+    parts.linked.keysStoredWhatIsNoInt32 = keysStoredWhatIsNoInt32In(*looks);
+    build.statistics().count(StatisticID::FieldsHeldToWhatIsSeen, fillEnforcedFieldsForFacts(program, parts.linked, parts.held, *parts.families, parts.mechanisms, parts.tables));
+    steps.didFinish("tables of fields"_s);
+}
+
+static void fillTablesOfLayoutsAndClassesForFacts(const Program& program, BuildContext& build, Facts::Parts& parts)
+{
+    StepTimes steps(build, "facts"_s);
     fillLayoutTablesForFacts(program, parts.linked, parts.held, parts.tables);
     fillTablesOfStringsForFacts(program, *parts.summaries, parts.linked, parts.held, parts.tables);
     fillVariableTablesForFacts(parts.linked, parts.tables);
@@ -743,7 +774,15 @@ static void fillTablesOfFieldsLayoutsAndClassesForFacts(const Program& program, 
     if (parts.mechanisms.contains(Mechanism::TypedOperations))
         fillClassTablesForFacts(program, *parts.bodies, *parts.summaries, parts.linked, parts.held, parts.tables);
     fillMembersOfClassesForFacts(program, *parts.summaries, parts.held, parts.tables);
-    steps.didFinish("tables of fields, layouts, strings, variables, classes"_s);
+    steps.didFinish("tables of layouts, strings, variables, classes"_s);
+}
+
+static void indexLayoutsByNamesForFacts(const Program& program, BuildContext& build, Facts::Parts& parts)
+{
+    StepTimes steps(build, "facts"_s);
+    if (parts.mechanisms.contains(Mechanism::Guesses))
+        parts.layoutsByNames = LayoutsByNames(program, parts.linked);
+    steps.didFinish("layouts by names"_s);
 }
 
 static void fillTablesOfProgramForFacts(const Program& program, const OwnedLooksAtBodies& looks, BuildContext& build, Facts::Parts& parts)
@@ -763,34 +802,51 @@ std::unique_ptr<Facts> computeFacts(Program& program, BuildContext& build, const
     };
 
     StepTimes steps(build, "facts"_s);
-    endStableNumbersOfKeysForFacts(program, loops);
-    steps.didFinish("keys of texts"_s);
-
     Facts::Parts parts;
     parts.mechanisms = withoutMechanismsMissingDependencies(request.mechanisms);
-    parts.tables.mocks = findMocksOfProgram(program);
-    parts.bodies = indexBodiesForFacts(program, loops, WTF::move(indexesOfVerifier));
+    runLanes(loops, {
+        [&] {
+            StepTimes stepsOfLane(build, "facts"_s);
+            endStableNumbersOfKeysForFacts(program, build.parallelLoops());
+            stepsOfLane.didFinish("keys of texts"_s);
+        },
+        [&] {
+            StepTimes stepsOfLane(build, "facts"_s);
+            parts.tables.mocks = findMocksOfProgram(program);
+            parts.bodies = indexBodiesForFacts(program, build.parallelLoops(), WTF::move(indexesOfVerifier));
+            if (hasFailed())
+                return;
+            updateProgramBehindIndexesForFacts(program, *parts.bodies, build.parallelLoops());
+            stepsOfLane.didFinish("mocks, indexes of bodies"_s);
+        },
+    });
+    steps.didFinish("keys of texts beside mocks and indexes of bodies"_s);
     if (hasFailed())
         return nullptr;
-    updateProgramBehindIndexesForFacts(program, *parts.bodies, loops);
-    steps.didFinish("mocks, indexes of bodies"_s);
 
     PhaseTimes times(build, "scan and Link"_s);
-    parts.summaries = makeUniqueWithoutFastMallocCheck<ThinSummaries>(scanBodies(program, build.diagnostics(), loops, parts.mechanisms));
+    runLanes(loops, {
+        [&] {
+            parts.summaries = makeUniqueWithoutFastMallocCheck<ThinSummaries>(scanBodies(program, build.diagnostics(), build.parallelLoops(), parts.mechanisms));
+        },
+        [&] {
+            StepTimes stepsOfLane(build, "facts"_s);
+            parts.families = makeUniqueWithoutFastMallocCheck<Families>(program, build.parallelLoops());
+            stepsOfLane.didFinish("families"_s);
+        },
+    });
     times.didFinish("scan"_s);
     if (hasFailed())
         return nullptr;
-    parts.families = makeUniqueWithoutFastMallocCheck<Families>(program, loops);
     times.didFinish("families"_s);
-    steps.didFinish("scan, families"_s);
+    steps.didFinish("scan beside families"_s);
     OwnedLooksAtBodies looks = lookAtBodies(program, *parts.bodies, *parts.summaries, build);
     steps.didFinish("look at bodies"_s);
     TurnsOfReadings turns;
     runLanes(loops, {
         [&] {
             parts.linked = link(program, *parts.summaries, *parts.families, *looks, parts.mechanisms, build, request.orderOfWorklist, &turns);
-            if (parts.mechanisms.contains(Mechanism::Guesses))
-                parts.layoutsByNames = LayoutsByNames(program, parts.linked);
+
         },
         [&] {
             if (parts.mechanisms.contains(Mechanism::BuiltinCalls))
@@ -817,10 +873,6 @@ std::unique_ptr<Facts> computeFacts(Program& program, BuildContext& build, const
     build.statistics().count(StatisticID::FactRuleCalls, sizeOfFlow.observersTold);
     build.statistics().count(StatisticID::FactRounds, sizeOfFlow.rounds);
     parts.held = WTF::move(turns.held);
-    finishReadingsOfLink(program, parts.mechanisms, turns, parts.linked, parts.held);
-    build.backgroundJobs().add([](const ParallelLoops&) {
-        WTF::releaseFastMallocFreeMemory();
-    });
     steps.didFinish("the two readings"_s);
     openNamesFoundByLink(program, build, parts.linked, parts.held);
     steps.didFinish("open names"_s);
@@ -829,21 +881,26 @@ std::unique_ptr<Facts> computeFacts(Program& program, BuildContext& build, const
         return nullptr;
 
     runLanes(loops, {
-        [&] { orderFunctionsByReferrersForFacts(program, build.parallelLoops(), build, parts); },
-        [&] { fillTablesOfFieldsLayoutsAndClassesForFacts(program, build, parts); },
+        [&] {
+            StepTimes stepsOfLane(build, "facts"_s);
+            finishReadingsOfLink(program, parts.mechanisms, turns, parts.linked, parts.held);
+            build.backgroundJobs().add([](const ParallelLoops&) {
+                WTF::releaseFastMallocFreeMemory();
+            });
+            stepsOfLane.didFinish("finish the readings"_s);
+            fillTablesOfFieldsForFacts(program, looks, build, parts);
+        },
         [&] { fillTablesOfProgramForFacts(program, looks, build, parts); },
+        [&] { orderFunctionsByReferrersForFacts(program, build.parallelLoops(), build, parts); },
+        [&] { fillTablesOfLayoutsAndClassesForFacts(program, build, parts); },
+        [&] { indexLayoutsByNamesForFacts(program, build, parts); },
         [&] { fillTablesOfFunctionsForFacts(program, request, build, parts); },
     });
     for (size_t layout = 0; layout < parts.linked.layouts.size() && layout < parts.tables.classes.size(); ++layout) {
         if (parts.tables.classes[layout].evaluations != ExecutionCount::AtMostOnce)
             parts.linked.layouts[layout].prototypeObjectIsSettledAheadOfEveryObject = false;
     }
-    parts.linked.fieldsReadAsIntegers = fieldsReadAsIntegersIn(*looks);
-    parts.linked.fieldsReadForArithmetic = fieldsReadForArithmeticIn(*looks);
-    parts.linked.fieldsStoredWhatIsNoInt32 = fieldsStoredWhatIsNoInt32In(*looks);
-    parts.linked.fieldsStoredCounts = fieldsStoredCountsIn(*looks, program, parts.linked);
-    parts.linked.keysStoredWhatIsNoInt32 = keysStoredWhatIsNoInt32In(*looks);
-    build.statistics().count(StatisticID::FieldsHeldToWhatIsSeen, fillEnforcedFieldsForFacts(program, parts.linked, parts.held, *parts.families, parts.mechanisms, parts.tables));
+
     steps.didFinish("referrers beside tables"_s);
     times.didFinish("referrers, tables"_s);
     if (hasFailed())

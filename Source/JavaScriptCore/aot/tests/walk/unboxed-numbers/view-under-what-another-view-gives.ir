@@ -2,7 +2,7 @@
 # function pick(words: Int32Array, at: number) { return words[TABLE[at]]; }
 # function sum(words: Int32Array, turns: number) { let total = 0; for (let at = 0; at < turns; at++) total = (total + (words[TABLE[at]] >>> 1)) | 0; return total; }
 # What a view gives is a number, or undefined behind its end, and under undefined a read goes by the name "undefined". The number is asked for, the read under it is typed, and a Rare block does the read as written.
-# In the typed copy of a loop nothing of the turn has been done where the test fails: the turn begins again in the other copy, so no closed read stands in the typed one and what the read gives is an element.
+# In the typed copy of a loop nothing of the turn has been done where a test fails: the turn begins again in the other copy. So each position is held below the length of its view in front of the read, no closed read stands in the typed copy, and what a read gives is an i32 and nothing else.
 # Once a guess asked for the int32, its closed arm came back, the element was boxed for the meeting and asked for its tag behind it: 18 instructions a turn of two such reads.
 # RUN: walk f1 f2 mechanisms=all
 # CHECK-LABEL: code f1:Body
@@ -12,13 +12,12 @@
 # CHECK: = ElemGet
 # CHECK: : undefined|i32 {{*}} = GetTypedArrayElement
 # CHECK-LABEL: code f2:Body
-# CHECK: isInLoop=true isLoopHead=true
+# CHECK: [[positionInTurn]]: i32 @Int32 = GetTypedArrayElement {{*}}isInsideView
 # CHECK-NOT: = ElemGet
-# CHECK: [[positionInTurn]]: undefined|i32 {{*}} = GetTypedArrayElement
-# CHECK: = TypeTest [[positionInTurn]] testedType=i32
-# CHECK-NOT: = ElemGet
-# CHECK: [[element]]: undefined|i32 {{*}} = GetTypedArrayElement
-# CHECK: = URShift [[element]], {{*}} form=Numbers
+# CHECK-NOT: = TypeTest
+# CHECK: [[held]]: i32 @Int32 = Narrowed [[positionInTurn]]
+# CHECK: [[element]]: i32 @Int32 = GetTypedArrayElement {{*}}, [[held]], {{*}}isInsideView
+# CHECK: = URShift [[element]], {{*}} form=Integers
 # RUN(SHELL): run-in-shell globalThis.sink = (picked, sum) => { print(String(picked) + " " + String(sum)); };
 # SHELL: undefined 0
 # SHELL: exited with 0

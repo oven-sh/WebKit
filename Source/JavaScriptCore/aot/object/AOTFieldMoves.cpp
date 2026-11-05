@@ -121,7 +121,7 @@ static bool typeAlwaysFits(const RuntimeLayoutTable& layouts, const FieldData& f
 
 SlotFit fitOf(const RuntimeLayoutTable& layouts, const FieldData& from, const FieldData& to)
 {
-    if ((to.keepsStateOfBirth && !from.keepsStateOfBirth) || !typeAlwaysFits(layouts, from, to))
+    if (!typeAlwaysFits(layouts, from, to))
         return SlotFit::IsTested;
     if (from.slotHoldsUndefinedAndNull && !(layouts.slotAdmits(to, jsUndefined()) && layouts.slotAdmits(to, jsNull())))
         return SlotFit::UnlessUndefinedOrNull;

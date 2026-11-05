@@ -470,12 +470,15 @@ void MachineBlockMerger::findBlocksEnteredFromRareBlocks()
     const uint32_t numberOfBlocks = m_proc.numberOfBlocks();
     Block* const* blocks = m_proc.blocks().data();
     bool* isReached = m_arena.allocateArray<bool>(numberOfBlocks);
+    std::fill_n(isReached, numberOfBlocks, false);
     uint32_t* reached = m_arena.allocateArray<uint32_t>(numberOfBlocks);
     uint32_t numberReached = 0;
-    for (uint32_t index = 0; index < numberOfBlocks; ++index) {
-        isReached[index] = blocks[index]->isEntry();
+    for (const Entrypoint& entrypoint : m_proc.entrypoints()) {
+        uint32_t index = entrypoint.block->index();
         if (isReached[index])
-            reached[numberReached++] = index;
+            continue;
+        isReached[index] = true;
+        reached[numberReached++] = index;
     }
     for (uint32_t next = 0; next < numberReached; ++next) {
         for (const Edge& edge : blocks[reached[next]]->successors()) {
@@ -509,8 +512,11 @@ void MachineBlockMerger::run()
         return;
     const uint32_t* previousInPlace = byPlace.previousInPlace;
     const bool* isSuccessorOfPatch = m_isSuccessorOfPatch;
-    auto mayMerge = [&](uint32_t index) ALWAYS_INLINE_LAMBDA {
-        return blocks[index]->isLandingPad() || (!isSuccessorOfPatch[index] && (blocks[index]->numSuccessors() || !isEnteredFromRareBlock(index)));
+    auto mayMergeUnlessRareBlockEnters = [&](uint32_t index) ALWAYS_INLINE_LAMBDA {
+        return blocks[index]->isLandingPad() || !isSuccessorOfPatch[index];
+    };
+    auto staysApartForRareBlockThatEnters = [&](uint32_t index) ALWAYS_INLINE_LAMBDA {
+        return !blocks[index]->isLandingPad() && !blocks[index]->numSuccessors() && isEnteredFromRareBlock(index);
     };
 
     uint64_t* candidates = byPlace.storage;
@@ -530,7 +536,7 @@ void MachineBlockMerger::run()
         uint32_t firstTwo[2];
         uint32_t numberThatMayMerge = 0;
         for (uint32_t member = last; member; member = previousInPlace[member - 1]) {
-            if (!mayMerge(member - 1))
+            if (!mayMergeUnlessRareBlockEnters(member - 1))
                 continue;
             if (numberThatMayMerge < 2)
                 firstTwo[numberThatMayMerge] = member - 1;
@@ -542,14 +548,14 @@ void MachineBlockMerger::run()
         if (numberThatMayMerge == 2) {
             const Block* kept = blocks[firstTwo[1]];
             const Block* other = blocks[firstTwo[0]];
-            if (mayBeIdentical(kept, other) && areIdentical(kept, other) && isMergeable(kept) && isMergeable(other))
+            if (mayBeIdentical(kept, other) && areIdentical(kept, other) && !staysApartForRareBlockThatEnters(firstTwo[1]) && !staysApartForRareBlockThatEnters(firstTwo[0]) && isMergeable(kept) && isMergeable(other))
                 replace(firstTwo[0], firstTwo[1]);
             continue;
         }
 
         for (uint32_t member = last; member; member = previousInPlace[member - 1]) {
             uint32_t index = member - 1;
-            if (!mayMerge(index))
+            if (!mayMergeUnlessRareBlockEnters(index))
                 continue;
             if (std::optional<uint32_t> hash = hashOfContentIfMergeable(blocks[index], hashesOfGenerators[index]))
                 candidates[numberOfCandidates++] = static_cast<uint64_t>(*hash) << 32 | index;
@@ -565,11 +571,15 @@ void MachineBlockMerger::run()
             uint32_t kept = static_cast<uint32_t>(candidates[first]);
             if (hasReplacements && replacements[kept] != none)
                 continue;
+            if (staysApartForRareBlockThatEnters(kept))
+                continue;
             for (uint32_t next = first + 1; next < numberOfCandidates && candidates[next] >> 32 == hash; ++next) {
                 uint32_t other = static_cast<uint32_t>(candidates[next]);
                 if (hasReplacements && replacements[other] != none)
                     continue;
                 if (hashesOfGenerators[kept] != hashesOfGenerators[other] || !areIdentical(blocks[kept], blocks[other]))
+                    continue;
+                if (staysApartForRareBlockThatEnters(other))
                     continue;
                 replace(other, kept);
             }

@@ -1071,26 +1071,6 @@ function checkImplementations(model: TableModel, schema: Schema, problems: Probl
   }
 }
 
-function checkAppendForm(
-  builtin: ModelBuiltin,
-  calls: readonly ModelOverload[],
-  schema: Schema,
-  problems: Problems,
-): void {
-  const { appendForm } = builtin.attachments;
-  if (appendForm === null) return;
-  const declared = schema.inlineBuiltins.get(appendForm);
-  if (declared === undefined) problems.add(null, `${builtin.text}: ${describeMissingInlineBuiltin(appendForm)}`);
-  for (const overload of calls) {
-    if (!admits(overload.result.type, "String")) {
-      report(problems, overload, `${appendForm} appends the result, which is never a string`);
-    }
-    if (declared?.hasOptionalSlowPath === false && !hasSlowPath(overload.code.implementation)) {
-      report(problems, overload, describeMissingSlowPath(appendForm));
-    }
-  }
-}
-
 function checkLiteralPartsForm(builtin: ModelBuiltin, problems: Problems): void {
   const { literalPartsForm } = builtin.attachments;
   if (literalPartsForm === null) return;
@@ -1108,12 +1088,8 @@ function checkLiteralPartsForm(builtin: ModelBuiltin, problems: Problems): void 
   }
 }
 
-function checkForms(model: TableModel, schema: Schema, problems: Problems): void {
-  for (const builtin of model.builtins) {
-    const calls = builtin.overloads.filter(({ mode, flags }) => mode === "Call" && !flags.includes("IsUndeclared"));
-    checkAppendForm(builtin, calls, schema, problems);
-    checkLiteralPartsForm(builtin, problems);
-  }
+function checkForms(model: TableModel, problems: Problems): void {
+  for (const builtin of model.builtins) checkLiteralPartsForm(builtin, problems);
 }
 
 const mayBeObject = (type: ModelType): boolean =>
@@ -1499,7 +1475,7 @@ export function checkModel(model: TableModel, schema: Schema, problems: Problems
   checkTypedResults(model, problems);
   checkImplementations(model, schema, problems);
   checkDirectEntries(model, problems);
-  checkForms(model, schema, problems);
+  checkForms(model, problems);
   checkConditions(model, problems);
   checkDeterministic(model, problems);
   checkPropagatedErrors(model, problems);

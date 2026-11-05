@@ -610,6 +610,30 @@ static bool storesPropertyOfClosureBelowClosure(VM& vm, Closure& closure, Proper
     return storeThroughChain(walkChain({ structure->realm(), structure, &closure, ChainWalkMode::MayAllocate, ChainWalkUse::UsedAtOnce }, name.uid())) == StoreThroughChain::CreatesOwnProperty;
 }
 
+bool Closure::holdsStaticFieldUnder(UniquedStringImpl* uid) const
+{
+    const LayoutData* classLayout = classData();
+    if (!classLayout)
+        return false;
+    const ClassTable& classes = state().objects->classes;
+    return classes.staticField(*classLayout, uid) && !classes.hasStaticMethodNamed(*classLayout, uid);
+}
+
+static bool tryReplaceStaticFieldOfClassObject(VM& vm, Closure& closure, PropertyName name, JSValue value, PutPropertySlot& slot)
+{
+    Structure* structure = closure.structure();
+    if (structure->isDictionary() || !closure.holdsStaticFieldUnder(name.uid()))
+        return false;
+    unsigned attributes = 0;
+    PropertyOffset offset = structure->get(vm, name, attributes);
+    if (!isValidOffset(offset) || (attributes & PropertyAttribute::ReadOnlyOrAccessorOrCustomAccessorOrValue))
+        return false;
+    structure->didReplaceProperty(offset);
+    closure.putDirectOffset(vm, offset, value);
+    slot.setExistingProperty(&closure, offset);
+    return true;
+}
+
 bool Closure::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName name, JSValue value, PutPropertySlot& slot)
 {
     VM& vm = globalObject->vm();
@@ -624,6 +648,8 @@ bool Closure::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName name,
     const LayoutData* classLayout = closure->classData();
     bool isStoreToClassObject = classLayout && slot.thisValue() == JSValue(closure);
     if (isStoreToClassObject && StaticFields::tryStore(*closure, name.uid(), value))
+        return true;
+    if (isStoreToClassObject && tryReplaceStaticFieldOfClassObject(vm, *closure, name, value, slot))
         return true;
     closure->ensureClassObject(vm);
     if (name == vm.propertyNames->prototype)

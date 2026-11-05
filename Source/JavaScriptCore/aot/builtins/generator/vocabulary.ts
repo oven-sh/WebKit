@@ -433,7 +433,8 @@ export type ConditionSpec =
   | { callRunsOtherCode: true }
   | { objectNobodyKnowsIsWritten: true }
   | { testsReplaceBuiltins: true }
-  | { programStores: BuiltinPath };
+  | { programStores: BuiltinPath }
+  | { isAskedForOtherNames: BuiltinPath; valuesServed: readonly string[]; methodsServed: readonly string[] };
 
 export type FeatureUseSpec = FeatureName | { feature: FeatureName; when: ConditionSpec };
 
@@ -575,7 +576,6 @@ export interface EntryColumns {
   loadsMachineCodeAs?: BuiltinPath;
   loads?: readonly ModuleLoadSpec[];
   callsFunctions?: readonly CalledFunctionSpec[];
-  appendForm?: InlineBuiltinName;
   literalPartsForm?: { argument: number; names: readonly string[]; path: BuiltinPath };
   boxedCallStub?: BoxedStubName;
   platforms?: readonly TargetPlatform[];

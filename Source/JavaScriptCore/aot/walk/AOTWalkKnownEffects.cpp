@@ -35,9 +35,9 @@ struct HalvesOfKnownEffects {
 
 } // anonymous namespace
 
-static TypeID ownTypeForKnownEffects(const Walker& walker, Reference reference)
+static TypeID ownTypeForKnownEffects(Walker& walker, Reference reference)
 {
-    return reference && reference.isRecord() ? walker.code().at(reference.id()).type : TypeID();
+    return reference && reference.isRecord() ? walker.typeShown(reference) : TypeID();
 }
 
 void addEffectsOfEnteringByValue(Effects& effects)
@@ -48,7 +48,7 @@ void addEffectsOfEnteringByValue(Effects& effects)
     effects.mayCollect = true;
 }
 
-static bool unitDoesMoreThanBodyForKnownEffects(const Plan& plan, FunctionID function)
+bool unitDoesMoreThanBodyForKnownEffects(const Plan& plan, FunctionID function)
 {
     return !!plan.moduleEvaluation().moduleThatBeginsIn(function) || plan.promotedEnvironments().leadsToMaker(function);
 }
@@ -62,7 +62,7 @@ static Effects effectsOfCallByValueOfFunctionForKnownEffects(const LinkTables& l
     return effects;
 }
 
-static std::optional<HalvesOfKnownEffects> findHalvesGivenArgumentsForKnownEffects(const Walker& walker, FunctionID callee, std::span<const Reference> entryArguments)
+static std::optional<HalvesOfKnownEffects> findHalvesGivenArgumentsForKnownEffects(Walker& walker, FunctionID callee, std::span<const Reference> entryArguments)
 {
     const LinkTables& linked = walker.facts().linked();
     const LinkedEffectsGivenArguments* given = linked.known.findEffectsGivenArguments(callee);

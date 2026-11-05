@@ -46,6 +46,24 @@ struct LayoutRecordParts {
     uint32_t shapeThatParsersMake { 0 };
 };
 
+struct IDsNamedByLayoutRecords {
+    void set(size_t id) { ids.append(static_cast<uint32_t>(id)); }
+
+    Vector<uint32_t> ids;
+};
+
+struct NamesOfLayoutRecords {
+    IDsNamedByLayoutRecords keys;
+    IDsNamedByLayoutRecords strings;
+    IDsNamedByLayoutRecords functionsWithClosureCell;
+    Vector<TypeID> types;
+};
+
+struct AllocationRows {
+    Vector<AllocationData> allocations;
+    Vector<ConstructedAllocationData> constructedAllocations;
+};
+
 } // anonymous namespace
 
 static constexpr bool isPrivateNameKindForLayoutRecord(PropertyKeyKind kind)
@@ -134,13 +152,13 @@ static void forEachDescribedVariableOfEnvironment(const TableInputs& inputs, Lay
     }
 }
 
-static void nameStringShownByLayoutTables(const TableInputs& inputs, StringID name, NamesOfTables& names)
+static void nameStringShownByLayoutTables(const TableInputs& inputs, StringID name, NamesOfLayoutRecords& names)
 {
     StringID shown = name && !inputs.options.obfuscates() ? name : inputs.program.strings.emptyString();
     names.strings.set(shown.index());
 }
 
-static void nameWhatObjectLayoutRecordNames(const TableInputs& inputs, LayoutID id, NamesOfTables& names)
+static void nameWhatObjectLayoutRecordNames(const TableInputs& inputs, LayoutID id, NamesOfLayoutRecords& names)
 {
     const Typed::Layout& layout = inputs.program.at(id);
     const Typed::PlannedLayout& planned = inputs.plan.layout(id);
@@ -172,7 +190,7 @@ static void nameWhatObjectLayoutRecordNames(const TableInputs& inputs, LayoutID 
     nameClosureCell(layout.constructor);
 }
 
-static void nameWhatEnvironmentRecordNames(const TableInputs& inputs, LayoutID id, NamesOfTables& names)
+static void nameWhatEnvironmentRecordNames(const TableInputs& inputs, LayoutID id, NamesOfLayoutRecords& names)
 {
     forEachDescribedVariableOfEnvironment(inputs, id, inputs.options.obfuscates(), [&](const Typed::PlacedSlot&, StringID shownName) {
         if (shownName)
@@ -183,13 +201,32 @@ static void nameWhatEnvironmentRecordNames(const TableInputs& inputs, LayoutID i
 
 void nameWhatLayoutTablesName(const TableInputs& inputs, const GatheredMentions&, NamesOfTables& names)
 {
+    RELEASE_ASSERT(inputs.build);
     uint32_t firstEnvironmentShape = inputs.plan.shapes().firstEnvironmentShape();
+    Vector<std::pair<LayoutID, uint32_t>> records;
     forEachLayoutRecord(inputs, [&](LayoutID id, uint32_t shape) {
-        if (!shape || shape < firstEnvironmentShape)
-            nameWhatObjectLayoutRecordNames(inputs, id, names);
-        else
-            nameWhatEnvironmentRecordNames(inputs, id, names);
+        records.append({ id, shape });
     });
+    ChunksOfIndices division = divideIntoChunks(static_cast<unsigned>(records.size()));
+    Vector<NamesOfLayoutRecords> namesOfChunks(division.size());
+    forEachIndexInParallel(inputs.build->parallelLoops(), division.size(), [&](unsigned chunk) {
+        for (unsigned index = division.firstIndexOf[chunk]; index < division.firstIndexOf[chunk + 1]; ++index) {
+            auto [id, shape] = records[index];
+            if (!shape || shape < firstEnvironmentShape)
+                nameWhatObjectLayoutRecordNames(inputs, id, namesOfChunks[chunk]);
+            else
+                nameWhatEnvironmentRecordNames(inputs, id, namesOfChunks[chunk]);
+        }
+    });
+    for (const NamesOfLayoutRecords& namesOfChunk : namesOfChunks) {
+        for (uint32_t key : namesOfChunk.keys.ids)
+            names.keys.set(key);
+        for (uint32_t string : namesOfChunk.strings.ids)
+            names.strings.set(string);
+        for (uint32_t function : namesOfChunk.functionsWithClosureCell.ids)
+            names.functionsWithClosureCell.set(function);
+        names.types.appendVector(namesOfChunk.types);
+    }
 }
 
 static uint32_t appendOffsetsInLayoutTables(TablePart& part, std::span<const uint32_t> words, size_t numberOfWordsInFrontOfOffsets = 0)
@@ -197,20 +234,6 @@ static uint32_t appendOffsetsInLayoutTables(TablePart& part, std::span<const uin
     uint32_t place = part.appendUnshared(asBytes(words), alignof(uint32_t));
     part.linkWords(place + static_cast<uint32_t>(numberOfWordsInFrontOfOffsets * sizeof(uint32_t)), words.size() - numberOfWordsInFrontOfOffsets);
     return place;
-}
-
-static bool slotOfLayoutRecordTakesEveryValue(const Typed::Program& program, const FieldOfLayoutRecord& field, const Typed::FieldFacts& facts, const Typed::PlacedSlot& slot)
-{
-    if (field.form.contains(Typed::FieldForm::IsAccessor) || (facts.facts.contains(Typed::FieldFact::IsEnforced) && slot.type))
-        return false;
-    return slot.representation == SlotRepresentation::JSValue && program.at(typeRecordedForSlot(slot)).isAnything();
-}
-
-static bool fieldOfLayoutRecordKeepsStateOfBirth(const Typed::Program& program, const FieldOfLayoutRecord& field, const Typed::FieldFacts& facts, const Typed::PlacedSlot& slot)
-{
-    if (facts.occupancy == Typed::Occupancy::Unknown || !facts.stability.containsAll({ Typed::FieldStability::IsNeverDeleted, Typed::FieldStability::IsNeverRedefined }))
-        return false;
-    return slot.everyStoreFits || slotOfLayoutRecordTakesEveryValue(program, field, facts, slot);
 }
 
 static uint16_t flagsOfFieldInLayoutRecord(const FieldOfLayoutRecord& field, const Typed::FieldFacts& facts, const Typed::PlacedSlot& slot)
@@ -285,7 +308,6 @@ static FieldsOfLayoutRecord collectFieldsOfLayoutRecord(const TableEncoder& enco
         data.name = name;
         data.isFilledAtBirth = slot.isFilledAtBirth;
         data.holdsRawValueFromBirth = planned.holdsRawValueFromBirth(index);
-        data.keepsStateOfBirth = fieldOfLayoutRecordKeepsStateOfBirth(program, field, facts, slot);
         data.slotHoldsUndefinedAndNull = facts.facts.contains(Typed::FieldFact::SlotHoldsUndefinedAndNull) && !slot.provenType;
         data.flags = flagsOfFieldInLayoutRecord(field, facts, slot);
         data.slot = slot.data();
@@ -299,7 +321,7 @@ static FieldsOfLayoutRecord collectFieldsOfLayoutRecord(const TableEncoder& enco
             data.setterIsProven = laid->setterIsProven;
         }
         uint16_t openToUnseenCode = fieldIsNeverDeleted | fieldIsNeverRedefined | (data.flags & fieldIsPrivate ? 0 : fieldIsNeverStoredWithOtherType);
-        if (reachesUnseenCode && (data.flags & openToUnseenCode || data.keepsStateOfBirth || (slot.hasStorage() && !data.canLeaveSlot())))
+        if (reachesUnseenCode && (data.flags & openToUnseenCode || (slot.hasStorage() && !data.canLeaveSlot())))
             encoder.fail("RecordRulesOutWhatUnseenCodeMayDo"_s, id);
         if (slot.representation == SlotRepresentation::DeferredClosure) {
             data.operandIndex = static_cast<uint16_t>(operands.size());
@@ -678,6 +700,18 @@ static void encodeLayoutRecords(TableEncoder& encoder, std::span<const LayoutRec
     const Typed::ShapeTable& shapes = encoder.plan.shapes();
     Vector<uint32_t> layouts(FillWith { }, shapes.numberOfShapes() + 1, 0);
     Vector<uint32_t> classes(FillWith { }, program.layouts.size(), 0);
+    uint64_t mostBytesOfTables = layouts.sizeInBytes() + 2 * classes.sizeInBytes() + program.layouts.size() * sizeof(ConstructorData);
+    mostBytesOfTables += static_cast<uint64_t>(encoder.numbers.allocations().size()) * (sizeof(AllocationData) + sizeof(ConstructedAllocationData));
+    for (size_t index = 0; index < records.size(); ++index) {
+        if (records[index].shapeThatParsersMake)
+            mostBytesOfTables += encoder.firstParts->fieldsOfLayoutRecords[index].fields.size() * sizeof(ParsedRecordFieldData);
+    }
+    forEachLayoutRecord(encoder.inputs, [&](LayoutID id, uint32_t) {
+        const LayoutRecordParts& parts = records[id.index()];
+        constexpr uint64_t mostPaddingOfRecord = 4 * alignof(uint64_t);
+        mostBytesOfTables += parts.record.size() + parts.keyOrders.sizeInBytes() + parts.numberOfKeyOrders * (sizeof(uint32_t) + alignof(uint64_t)) + parts.references.sizeInBytes() + mostPaddingOfRecord;
+    });
+    encoder.part.reserveRoomFor(mostBytesOfTables);
     forEachLayoutRecord(encoder.inputs, [&](LayoutID id, uint32_t shape) {
         const LayoutRecordParts& parts = records[id.index()];
         if (!shape)
@@ -737,11 +771,12 @@ static bool allocationRowLeavesFieldOfBirthEmpty(const TableEncoder& encoder, co
     return false;
 }
 
-static void encodeAllocationRows(TableEncoder& encoder)
+static AllocationRows collectAllocationRows(const TableEncoder& encoder)
 {
     const NumberedKeys& keys = encoder.numbers.allocations();
-    Vector<AllocationData> allocations;
-    Vector<ConstructedAllocationData> constructedAllocations;
+    AllocationRows rows;
+    Vector<AllocationData>& allocations = rows.allocations;
+    Vector<ConstructedAllocationData>& constructedAllocations = rows.constructedAllocations;
     allocations.reserveInitialCapacity(keys.size());
     BitVector isInitialField;
     for (uint32_t row = 0; row < keys.size(); ++row) {
@@ -761,18 +796,10 @@ static void encodeAllocationRows(TableEncoder& encoder)
             constructedAllocations.append({ Number24(row), Number24(constructor) });
         allocations.append(AllocationData::create(allocation.shape, allocation.orderWord, allocation.size, allocation.isBornUnfinished || leavesFieldEmpty, isConstructed));
     }
-    encoder.part.setTable(ProgramTableIndex::allocations, allocations);
-    encoder.part.setTable(ProgramTableIndex::constructedAllocations, constructedAllocations);
+    return rows;
 }
 
-template<typename T>
-static void setSortedLayoutTable(TableEncoder& encoder, ProgramTableIndex index, Vector<T>& items, auto... order)
-{
-    AOT::sortInLine(items, order...);
-    encoder.part.setTable(index, items);
-}
-
-static void encodeParsedRecordFields(TableEncoder& encoder, std::span<const LayoutRecordParts> records)
+static Vector<ParsedRecordFieldData> collectParsedRecordFields(const TableEncoder& encoder, std::span<const LayoutRecordParts> records)
 {
     Vector<uint64_t> keys;
     for (size_t index = 0; index < records.size(); ++index) {
@@ -785,13 +812,12 @@ static void encodeParsedRecordFields(TableEncoder& encoder, std::span<const Layo
     radixSortKeepingEqualKeysInOrder<48>(keys, [](uint64_t key) {
         return key;
     });
-    Vector<ParsedRecordFieldData> rows(keys.size(), [&](size_t index) {
+    return Vector<ParsedRecordFieldData>(keys.size(), [&](size_t index) {
         return ParsedRecordFieldData { Number24(static_cast<uint32_t>(keys[index] >> 24)), Number24(static_cast<uint32_t>(keys[index]) & Number24::max) };
     });
-    encoder.part.setTable(ProgramTableIndex::parsedRecordFields, rows);
 }
 
-static void encodeConstructorsOfLayouts(TableEncoder& encoder)
+static Vector<ConstructorData> collectConstructorsOfLayouts(const TableEncoder& encoder)
 {
     Vector<ConstructorData> constructors;
     for (size_t index = 0; index < encoder.program.layouts.size(); ++index) {
@@ -802,31 +828,47 @@ static void encodeConstructorsOfLayouts(TableEncoder& encoder)
         if (std::optional<FunctionID> entrypoint = encoder.findEntrypoint(constructor))
             constructors.append({ entrypoint->index(), static_cast<uint32_t>(index) });
     }
-    setSortedLayoutTable(encoder, ProgramTableIndex::constructors, constructors, [](const ConstructorData& a, const ConstructorData& b) {
+    AOT::sortInLine(constructors, [](const ConstructorData& a, const ConstructorData& b) {
         return std::tie(a.function, a.layoutIndex) < std::tie(b.function, b.layoutIndex);
     });
+    return constructors;
 }
 
 void encodeLayoutTables(TableEncoder& encoder)
 {
-    StepTimes times(encoder.build, "image: layout tables"_s);
+    static constexpr ASCIILiteral nameOfSteps = "image: layout tables"_s;
+    StepTimes times(encoder.build, nameOfSteps);
     Vector<LayoutRecordParts> records = collectLayoutRecordParts(encoder);
     times.didFinish("parts of records"_s);
     if (encoder.build.diagnostics().hasErrors())
         return;
-    encodeLayoutRecords(encoder, records.span());
-    times.didFinish("records"_s);
-    encodeParsedRecordFields(encoder, records.span());
-    times.didFinish("fields of parsed records"_s);
-    forEachRangeOfIndicesInParallel(encoder.build.parallelLoops(), records.size(), [&](size_t first, size_t end) {
-        for (LayoutRecordParts& parts : records.mutableSpan().subspan(first, end - first))
-            parts = { };
+    Vector<ParsedRecordFieldData> parsedRecordFields;
+    AllocationRows allocationRows;
+    Vector<ConstructorData> constructors;
+    runLanes(encoder.build.parallelLoops(), {
+        [&] {
+            encodeLayoutRecords(encoder, records.span());
+            times.didFinish("records"_s);
+        },
+        [&] {
+            StepTimes timesOfLane(encoder.build, nameOfSteps);
+            parsedRecordFields = collectParsedRecordFields(encoder, records.span());
+            timesOfLane.didFinish("fields of parsed records"_s);
+        },
+        [&] {
+            StepTimes timesOfLane(encoder.build, nameOfSteps);
+            allocationRows = collectAllocationRows(encoder);
+            timesOfLane.didFinish("allocation rows"_s);
+            constructors = collectConstructorsOfLayouts(encoder);
+            timesOfLane.didFinish("constructors"_s);
+        },
     });
-    times.didFinish("free the parts of records"_s);
-    encodeAllocationRows(encoder);
-    times.didFinish("allocation rows"_s);
-    encodeConstructorsOfLayouts(encoder);
-    times.didFinish("constructors"_s);
+    destroyInBackground(encoder.build.backgroundJobs(), WTF::move(records));
+    encoder.part.setTable(ProgramTableIndex::parsedRecordFields, parsedRecordFields);
+    encoder.part.setTable(ProgramTableIndex::allocations, allocationRows.allocations);
+    encoder.part.setTable(ProgramTableIndex::constructedAllocations, allocationRows.constructedAllocations);
+    encoder.part.setTable(ProgramTableIndex::constructors, constructors);
+    times.didFinish("append the tables behind the records"_s);
 }
 
 } } // namespace JSC::AOT

@@ -19,15 +19,6 @@ namespace JSC { namespace AOT { namespace Typed {
 
 static constexpr PristineAspectSet aspectsThatLookAtCellProvesForStringOperands { PristineAspects::Storage, PristineAspects::Names, PristineAspects::NamesKeptBelow, PristineAspects::Prototype };
 
-namespace {
-
-struct ArmOfCallOnOperandAsMade {
-    BlockID last;
-    Reference result;
-};
-
-} // anonymous namespace
-
 bool goesByOneRowOnOperandAsMade(Walker& walker, const BodyValue& call, BuiltinID builtin, Reference value, TypeID behindTest)
 {
     TypeArena& types = walker.types();
@@ -157,7 +148,7 @@ void openGuessAtOperandTakenAsMade(Walker& walker, const BodyValue& call, Refere
     BlockID meetingBlock = walker.addBlock();
     walker.noteGuessOpened();
 
-    Vector<ArmOfCallOnOperandAsMade, 2> arms;
+    Vector<Walker::ArmThatMeets, 2> arms;
     auto walkCallToEndOfArm = [&] {
         walker.walkStretch(inputBlock, firstPlace.value_or(place), place + 1);
         if (isReturnedAtOnce)
@@ -167,7 +158,7 @@ void openGuessAtOperandTakenAsMade(Walker& walker, const BodyValue& call, Refere
         Reference result = isReadBehind ? walker.referenceOf(call.id()) : Reference();
         if (isReadBehind && (!result || !result.isRecord()))
             return walker.fail("an arm of a guess at an operand has no value for what is read behind it"_s);
-        arms.append({ walker.currentBlock(), result });
+        arms.append(Walker::ArmThatMeets { walker.currentBlock(), { result } });
     };
 
     walker.continueIn(closedBlock);
@@ -192,30 +183,9 @@ void openGuessAtOperandTakenAsMade(Walker& walker, const BodyValue& call, Refere
     if (walker.hasFailed())
         return;
 
-    bool meetsInParameter = false;
-    if (isReadBehind && !arms.isEmpty()) {
-        Reference one = arms.first().result;
-        Reference other = arms.last().result;
-        Reference met = one;
-        if (one != other) {
-            const Code& code = walker.code();
-            TypeID type = joinOf(walker.types(), walker.facts().families(), code.at(one.id()).type, code.at(other.id()).type);
-            Representation forms[] { walker.representationOf(one), walker.representationOf(other) };
-            met = walker.addParameter(meetingBlock, type, walker.formOfParameter(type, forms));
-            meetsInParameter = true;
-        }
+    Reference met;
+    if (walker.letArmsMeet(arms.span(), meetingBlock, singleElementSpan(met).first(isReadBehind)) && isReadBehind)
         walker.bind(call.id(), met);
-    }
-    for (const ArmOfCallOnOperandAsMade& arm : arms) {
-        walker.continueIn(arm.last);
-        if (meetsInParameter)
-            walker.jumpTo(meetingBlock, singleElementSpan(arm.result));
-        else
-            walker.jumpTo(meetingBlock);
-        if (walker.hasFailed())
-            return;
-    }
-    walker.continueIn(meetingBlock);
 }
 
 } } } // namespace JSC::AOT::Typed

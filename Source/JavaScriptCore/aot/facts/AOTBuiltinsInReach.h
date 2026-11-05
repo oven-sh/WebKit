@@ -15,6 +15,7 @@
 namespace JSC { namespace AOT {
 
 class BuildContext;
+struct BuiltinCondition;
 
 namespace Typed {
 
@@ -74,6 +75,8 @@ public:
     bool hasCallThatMayRunCode(BuiltinID canonical) const;
     bool mayRun(BuiltinID canonical) const;
     bool mayRunOrHasObjects(BuiltinID canonical) const;
+    bool isAskedForOtherNames(BuiltinID canonical) const;
+    const BuiltinCondition* lightFormOf(BuiltinID canonical) const;
     bool loaderOfHostMayRun() const;
     bool hostIsAskedForValueOfModule() const;
     bool unseenCodeCanRun() const;

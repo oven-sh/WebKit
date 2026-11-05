@@ -140,6 +140,7 @@ bool takeObjectOfDeferredVariable(Walker& walker, VariableID variable, Reference
 }
 
 constinit const OpcodeSet opcodesThatBuildDeferredDefinitionTakes = opcodesOfDeferredDefinitions;
+static_assert(opcodesThatBuildDeferredDefinitionTakesInChains == opcodesOfDeferredDefinitions);
 
 bool buildDeferredDefinitionOfItsOpcodes(Walker& walker, const BodyValue& value)
 {
@@ -154,6 +155,9 @@ bool buildDeferredDefinitionOfItsOpcodes(Walker& walker, const BodyValue& value)
         buildReadOfDeferredVariable(walker, value, *deferred);
         return true;
     }
+
+    if (!walker.plan().deferredDefinitions().bodiesThatDefine.get(walker.currentFunction().index()))
+        return false;
 
     if (opcode == Opcode::PutModuleVariable) {
         const DeferredVariable* deferred = variableThatValueIsMadeFor(walker, value.valueOperand());

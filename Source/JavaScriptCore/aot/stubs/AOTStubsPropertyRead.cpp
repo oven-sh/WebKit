@@ -56,7 +56,7 @@ StubSignature signatureOfGetByIdOfSilentSlot(StubKey) { return signatureReturnin
 StubSignature signatureOfGetByIdOfNarrowCellInExtension(StubKey) { return signatureReturningValue({ firstStubOperandRegister }); }
 StubSignature signatureOfGetByIdOfEmptySlot(StubKey) { return signatureReturningValue({ firstStubOperandRegister }); }
 StubSignature signatureOfGetByIdOfFieldLeftOut(StubKey) { return signatureReturningValue({ firstStubOperandRegister }); }
-StubSignature signatureOfGetByIdBehindFieldTable(StubKey) { return signatureReturningValue({ firstStubOperandRegister }); }
+StubSignature signatureOfGetByIdOfCell(StubKey) { return signatureReturningValue({ firstStubOperandRegister }); }
 StubSignature signatureOfInById(StubKey) { return signatureReturningValue({ firstStubOperandRegister }); }
 
 static void subtractWordAt(StubAssembler& jit, Address address, GPRReg value, GPRReg scratch)
@@ -1076,7 +1076,7 @@ void generateGetById(StubAssembler& jit)
         JumpList isAnsweredByFieldTable;
         JumpList isNotInFieldTable;
         JumpList isNotCompiledObject;
-        jit.bindEntry(getByIdBehindFieldTable().withCallerFrame(callerFrame));
+        jit.bindEntry(getByIdOfCell().withCallerFrame(callerFrame));
         returnValueByAccessTable(jit, { { R0, name, T11, T12 }, T14, T10 }, isNotInAccessTable, isAnsweredByFieldTable);
         isNotInAccessTable.link(&jit);
         FieldTableProbe probe { R0, name, T14, cell, true, true, false, callerFrame };

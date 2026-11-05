@@ -227,10 +227,8 @@ constexpr ArgumentBufferAccess argumentBufferAccessOf(Entry entry)
     v(OperationsOnGenerators, TakeGeneratorPrototype) \
     v(OperationsOfAwait, AwaitCallWithSavedFrame) \
     v(OperationsOfAwait, AwaitWithSavedFrame) \
-    v(OperationsOfAwait, AwaitWithSavedFrameAfterTurn) \
     v(OperationsOfAwait, NewHeapFrame) \
     v(OperationsOfAwait, SaveFrameAndAwait) \
-    v(OperationsOfAwait, SaveFrameAndAwaitAfterTurn) \
     v(OperationsOfAwait, SaveFrameAndAwaitCall) \
     v(OperationsOnPromises, CreatePromise) \
     v(OperationsOnPromises, NewPromise) \
@@ -320,7 +318,6 @@ constexpr ArgumentBufferAccess argumentBufferAccessOf(Entry entry)
     v(OperationsThatSearchStrings, StringReverseFindLiteral8) \
     v(OperationsThatMakeStrings, CharToString) \
     v(OperationsThatMakeStrings, CodeURIOfAnyValue) \
-    v(OperationsThatMakeStrings, CompareEqToString) \
     v(OperationsThatMakeStrings, Concat) \
     v(OperationsThatMakeStrings, ConcatThree) \
     v(OperationsThatMakeStrings, DoubleToString) \

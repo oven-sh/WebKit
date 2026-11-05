@@ -141,6 +141,27 @@ static_assert([] {
     return hasFoldTrait(Sub, FoldTrait::BoundsIntegerRange) && hasFoldTrait(Const64, FoldTrait::BoundsIntegerRange) && hasFoldTrait(SExt32, FoldTrait::BoundsIntegerRange) && hasFoldTrait(ZExt32, FoldTrait::BoundsIntegerRange);
 }());
 
+static_assert(hasFoldTrait(Const32, FoldTrait::BoundsIntegerRange));
+
+ALWAYS_INLINE bool comparisonFoldNeitherSideIsBounded(const Operation* left, const Operation* right)
+{
+    return left != right && !hasFoldTrait(left->opcode(), FoldTrait::BoundsIntegerRange) && !hasFoldTrait(right->opcode(), FoldTrait::BoundsIntegerRange);
+}
+
+ALWAYS_INLINE bool comparisonFoldTestsBitsOfUnboundedValue(Opcode opcode, const Operation* left, const Operation* right)
+{
+    if ((opcode != Equal && opcode != NotEqual) || left->opcode() != BitAnd || !right->hasInt())
+        return false;
+    const Operation* mask = left->child(1);
+    if (!mask->hasInt() || hasFoldTrait(left->child(0)->opcode(), FoldTrait::BoundsIntegerRange))
+        return false;
+    int64_t bits = mask->asInt();
+    if (bits < 0)
+        return true;
+    int64_t constant = right->asInt();
+    return bits > 1 && constant >= 0 && constant <= bits;
+}
+
 ALWAYS_INLINE Operation* foldComparison(Builder& builder, Opcode opcode, Operation* left, Operation* right)
 {
     ASSERT(isComparison(opcode));
@@ -159,6 +180,8 @@ ALWAYS_INLINE Operation* foldComparison(Builder& builder, Opcode opcode, Operati
             return nullptr;
         return foldMachineOrderWithZeroOrOne(builder, opcode, left, right->isInt(0), right->isInt(1));
     }
+    if (comparisonFoldTestsBitsOfUnboundedValue(opcode, left, right) || comparisonFoldNeitherSideIsBounded(left, right))
+        return nullptr;
     return foldMachineComparisonOfBoundedIntegers(builder, opcode, left, right);
 }
 

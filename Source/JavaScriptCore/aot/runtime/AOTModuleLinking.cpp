@@ -33,6 +33,7 @@
 #include "TopExceptionScope.h"
 #include <algorithm>
 #include <wtf/BitVector.h>
+#include <wtf/Scope.h>
 #include <wtf/text/StringView.h>
 
 namespace JSC { namespace AOT {
@@ -826,7 +827,13 @@ void Modules::endMockOfLibraryModule(ModuleID module)
     if (!m_libraryModulesWithMock.get(module.index()))
         return;
     m_libraryModulesWithMock.clear(module.index());
-    m_libraryModulesThatMockReplaces.clear(module.index());
+    bool stoodInPlaceOfModule = m_libraryModulesThatMockReplaces.clear(module.index());
+    if (stoodInPlaceOfModule)
+        m_momentsMocksInPlaceOfLibraryModulesEnded.set(module, ++m_instance.vm->aotState().momentOfLoads);
+    auto letGoOfNamespace = makeScopeExit([&] {
+        if (stoodInPlaceOfModule)
+            letGoOfNamespaceMadeUnderMock(module);
+    });
     LoadedModule* found = loadedIfExists(module);
     if (!found)
         return;

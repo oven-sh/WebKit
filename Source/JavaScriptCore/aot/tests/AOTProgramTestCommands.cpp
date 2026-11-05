@@ -160,12 +160,14 @@ static ChildProcessResult startProgramInShell(const WordsOfShellRun& run, Vector
     return result;
 }
 
-static void printOutputOfShell(PrintStream& out, const ChildProcessResult& result)
+static void printOutputOfShell(TestCommandContext& context, const ChildProcessResult& result)
 {
-    out.print(result.output);
+    context.out.print(result.output);
     if (!result.output.isEmpty() && !result.output.endsWith('\n'))
-        out.println();
-    out.println(result.description());
+        context.out.println();
+    context.out.println(result.descriptionOfOutcome());
+    if (result.hasCrashedOrHung())
+        context.notesForFailure.append(makeString("the shell "_s, result.description()));
 }
 
 static Vector<SourceFileOfTestProgram> findSourcesOfTestProgram(StringView programText)
@@ -235,7 +237,7 @@ static void runInShellCommand(TestCommandContext& context)
     WordsOfShellRun run = splitWordsOfShellRun(context.arguments);
     TemporaryFile image(".image"_s, output->section(Wire::ResultSection::Image));
     ChildProcessResult compiled = startProgramInShell(run, { makeString("--aotImagePath="_s, image.path()) }, makeString("runCompiledEntryPoint("_s, entryModuleIDs[0], ')'));
-    printOutputOfShell(context.out, compiled);
+    printOutputOfShell(context, compiled);
     if (compiled.output.contains(lineOfCalledStandIn))
         failRunOfProgramCommand(context.build, "the program or the statements of the shell called a built-in written in JavaScript that the text brings no runtimefunction line for, and got undefined: the text brings the line, or `# LIBRARY: own`"_s);
     if (compiled.outcome == ChildProcessOutcome::Crashed && !hasOwnLibraryLine(context.programText))
@@ -249,12 +251,12 @@ static void runInShellCommand(TestCommandContext& context)
         return;
     }
     ChildProcessResult plain = startSourceInShell(run, sources[0]);
-    if (plain.output == compiled.output && plain.description() == compiled.description()) {
+    if (plain.output == compiled.output && plain.descriptionOfOutcome() == compiled.descriptionOfOutcome()) {
         context.out.println("the source prints the same");
         return;
     }
     context.out.println("the source prints:");
-    printOutputOfShell(context.out, plain);
+    printOutputOfShell(context, plain);
     failRunOfProgramCommand(context.build, "the compiled program and its source, run by the shell itself, do not print the same"_s);
 }
 

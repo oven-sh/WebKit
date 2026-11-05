@@ -172,6 +172,9 @@ public:
     void defineResults(const ValueContext&, std::span<const Operand>);
     Operand resultAt(ValueID producer, uint32_t index) const;
     void defineParameter(ValueID parameter, Operand);
+    bool goesOnInBlockOfEntry(BlockID id) const { return id == m_onlyEntryBlock && !m_firstBlockHasOtherWaysIn; }
+    void defineParameterAsPassed(ValueID parameter, Operand);
+    void goOnInBlockOfEntry(BlockID);
 
     LBasicBlock blockFor(BlockID) const;
     BlockEdge edgeTo(const TerminatorContext&, uint32_t targetIndex, std::span<const Operand> declaredResults = { });
@@ -395,6 +398,7 @@ private:
     std::span<BlockID> m_singlePredecessors;
     std::span<ScopeFork> m_scopeAtEndOfBlock;
     BlockID m_onlyEntryBlock;
+    bool m_firstBlockHasOtherWaysIn { false };
     Vector<WayIntoBlock, 16> m_waysIntoJoins;
     std::span<uint32_t> m_places;
     std::span<uint32_t> m_dominatorsByPlace;

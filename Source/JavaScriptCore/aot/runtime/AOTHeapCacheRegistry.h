@@ -105,18 +105,29 @@ class ImmortalCells {
     WTF_MAKE_TZONE_ALLOCATED(ImmortalCells);
 public:
     explicit ImmortalCells(State&);
+    ~ImmortalCells();
 
     void add(JSCell*);
     template<typename Visitor> void visitRoots(Visitor&);
 
 private:
-    static constexpr size_t cellsPerSegment = 512;
+    static constexpr size_t bytesPerSegment = 4096;
+    struct Segment {
+        static constexpr size_t capacity = (bytesPerSegment - sizeof(Segment*) - sizeof(size_t)) / sizeof(JSCell*);
 
-    template<typename Functor> void forEachSegment(size_t firstIndex, const Functor&);
+        Segment* next;
+        size_t size;
+        JSCell* cells[capacity];
+    };
+    static_assert(sizeof(Segment) == bytesPerSegment);
+
+    template<typename Functor> void forEachSegment(Segment* first, size_t firstInSegment, const Functor&);
 
     State& m_state;
-    SegmentedVector<JSCell*, cellsPerSegment> m_cells;
-    size_t m_numberOfCellsVisited { 0 };
+    Segment* m_first { nullptr };
+    Segment* m_last { nullptr };
+    Segment* m_lastVisited { nullptr };
+    size_t m_numberVisitedInLastVisited { 0 };
     HeapVersion m_lastVisitVersion { 0 };
 };
 

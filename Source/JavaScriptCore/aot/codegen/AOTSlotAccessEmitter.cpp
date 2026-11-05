@@ -204,15 +204,15 @@ SlotAccessEmitter::~SlotAccessEmitter()
     }
 }
 
-Word32 SlotAccessEmitter::distanceBehindLowestOffset(CellPointer cell, const FieldAccess& access)
+Word32 SlotAccessEmitter::distanceBehindLowestOffset(CellPointer cell, const FieldAccess& access, LayoutSetID setOfMembers)
 {
-    LayoutSetID setOfMembers = setOfMembersWithField(access);
     uint64_t keyAndMembers = static_cast<uint64_t>(access.key.bits()) << 32 | setOfMembers.bits();
     auto found = m_offsetsByShapeOfKeyAndMembers.find(keyAndMembers);
     size_t known = found == m_offsetsByShapeOfKeyAndMembers.end() ? notFound : found->value;
     if (known == notFound) {
         const ShapeTable& shapes = m_plan.shapes();
         Vector<DistanceOfShapes, 8> members;
+        members.reserveInitialCapacity(access.membersWithField.size());
         for (LayoutID layout : access.membersWithField) {
             ShapeRange range = shapes.shapesOf(layout);
             if (range.isEmpty())
@@ -246,6 +246,13 @@ CellPointer SlotAccessEmitter::baseOfSlot(CellPointer cell, const FieldAccess& a
     if (!access.findsOffsetByShape)
         return cell;
     return CellPointer(m_out.add(cell.value(), zeroExtended(distanceBehindLowestOffset(cell, access)).value()));
+}
+
+CellPointer SlotAccessEmitter::baseOfSlot(CellPointer cell, const FieldAccess& access, LayoutSetID receivers)
+{
+    if (!access.findsOffsetByShape)
+        return cell;
+    return CellPointer(m_out.add(cell.value(), zeroExtended(distanceBehindLowestOffset(cell, access, membersWithFieldAmong(access, receivers))).value()));
 }
 
 Operand SlotAccessEmitter::loadSlot(CellPointer cell, const FieldAccess& access)
@@ -336,7 +343,7 @@ Operand SlotAccessEmitter::readSlot(const ValueContext& value, CellPointer cell,
         }
         return inResultRepresentation(value, loadFilledSlot(value, baseOfSlot(cell, access), access));
     case FieldAccess::Coverage::EveryMember:
-        return mayBeAbsent ? load() : inResultRepresentation(value, loadFilledSlot(value, baseOfSlot(cell, access), access));
+        return mayBeAbsent ? load() : inResultRepresentation(value, loadFilledSlot(value, baseOfSlot(cell, access, value->receivers()), access));
     }
     RELEASE_ASSERT_NOT_REACHED();
 }

@@ -342,7 +342,11 @@ public:
     }
     bool isInt64(int64_t value) const { return hasInt64() && asInt64() == value; }
     bool hasInt() const { return hasInt32() || hasInt64(); }
-    int64_t asInt() const { return hasInt32() ? asInt32() : asInt64(); }
+    int64_t asInt() const
+    {
+        ASSERT(hasInt() && (!hasInt32() || m_payload.bits == asInt32()));
+        return m_payload.bits;
+    }
     bool isInt(int64_t value) const { return hasInt() && asInt() == value; }
     bool hasDouble() const { return m_opcode == ConstDouble; }
     double asDouble() const

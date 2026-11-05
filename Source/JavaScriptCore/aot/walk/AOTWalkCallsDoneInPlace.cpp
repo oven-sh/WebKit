@@ -124,6 +124,8 @@ static std::optional<RowOfForwardedCall> findRowOfCallOfBuiltin(Walker& walker, 
         if (table.at(overload).mode == BuiltinCallMode::Call)
             rows.append(overload);
     }
+    if (std::ranges::none_of(rows, [&](BuiltinOverloadID row) { return !!findCallbackOfForwardedCall(table.at(row)); }))
+        return std::nullopt;
     if (rows.size() > 1) {
         auto typeOfOperand = [&](ValueID operand) {
             Reference built = walker.referenceOf(operand);

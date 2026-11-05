@@ -759,11 +759,7 @@ bool writeJSONTextOfCall(Walker& walker, const BodyValue& call)
     Origin origin = written.origin();
     origin.isTailCall = false;
 
-    struct Arm {
-        BlockID last;
-        Reference value;
-    };
-    Vector<Arm, 2> arms;
+    Vector<Walker::ArmThatMeets, 2> arms;
 
     walker.noteGuessOpened();
     JSONTextWriter writer(walker, origin);
@@ -777,7 +773,7 @@ bool writeJSONTextOfCall(Walker& walker, const BodyValue& call)
         finish.expected = written.expected;
         finish.inputValueGiven = call.id();
         if (Reference text = walker.build(WTF::move(finish)))
-            arms.append(Arm { walker.currentBlock(), text });
+            arms.append(Walker::ArmThatMeets { walker.currentBlock(), { text } });
     }
     if (walker.hasFailed())
         return true;
@@ -786,33 +782,20 @@ bool writeJSONTextOfCall(Walker& walker, const BodyValue& call)
         Walker::ClosedArm closedArm(walker);
         walker.walkStretch(block.id(), place, place + 1);
         if (!walker.isUnreachable() && !walker.hasFailed())
-            arms.append(Arm { walker.currentBlock(), walker.referenceOf(call.id()) });
+            arms.append(Walker::ArmThatMeets { walker.currentBlock(), { walker.referenceOf(call.id()) } });
     }
     if (walker.hasFailed() || arms.isEmpty())
         return true;
 
-    if (arms.size() == 1 || !arms[0].value || !arms[1].value) {
+    if (arms.size() == 1) {
         walker.continueIn(arms[0].last);
-        walker.bind(call.id(), arms[0].value);
-        if (arms.size() == 1)
-            return true;
-        walker.fail("the call of JSON.stringify as written gives nothing"_s);
+        walker.bind(call.id(), arms[0].values[0]);
         return true;
     }
 
-    const Code& code = walker.code();
-    TypeID type = joinOf(walker.types(), walker.facts().families(), code.at(arms[0].value.id()).type, code.at(arms[1].value.id()).type);
-    Representation forms[] { walker.representationOf(arms[0].value), walker.representationOf(arms[1].value) };
-    BlockID meeting = walker.addBlock();
-    Reference met = walker.addParameter(meeting, type, walker.formOfParameter(type, forms));
-    for (const Arm& arm : arms) {
-        walker.continueIn(arm.last);
-        walker.jumpTo(meeting, singleElementSpan(arm.value));
-        if (walker.hasFailed())
-            return true;
-    }
-    walker.continueIn(meeting);
-    walker.bind(call.id(), met);
+    Reference met;
+    if (walker.letArmsMeet(arms.span(), walker.addBlock(), singleElementSpan(met)))
+        walker.bind(call.id(), met);
     return true;
 }
 

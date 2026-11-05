@@ -270,10 +270,19 @@ StackSlot* Procedure::addStackSlot(unsigned byteSize)
 
 static uint32_t machineCoreHashOfConstantData(std::span<const uint8_t> bytes, uint32_t alignment)
 {
-    uint32_t hash = 2166136261u ^ alignment;
-    for (uint8_t byte : bytes)
-        hash = (hash ^ byte) * 16777619u;
-    return hash;
+    uint64_t hash = 2166136261u ^ alignment;
+    WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+    const uint8_t* cursor = bytes.data();
+    size_t bytesLeft = bytes.size();
+    for (; bytesLeft >= sizeof(uint64_t); bytesLeft -= sizeof(uint64_t), cursor += sizeof(uint64_t)) {
+        uint64_t word;
+        std::memcpy(&word, cursor, sizeof(uint64_t));
+        hash = (std::rotr(hash, 32) ^ word) * 0x9E3779B97F4A7C15ull;
+    }
+    for (; bytesLeft; --bytesLeft, ++cursor)
+        hash = (hash ^ *cursor) * 16777619u;
+    WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
+    return static_cast<uint32_t>(hash >> 32) ^ static_cast<uint32_t>(hash);
 }
 
 // The encoder calls this wherever it materializes a double, so the cost of a call must not grow with the number of constants.

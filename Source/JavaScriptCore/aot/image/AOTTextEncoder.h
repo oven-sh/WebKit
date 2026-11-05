@@ -27,7 +27,7 @@ struct EncodedText {
     Vector<uint8_t> stringConstants;
 };
 
-EncodedText encodeText(const TextInputs&, BuildContext&);
+EncodedText encodeText(const TextInputs&, BuildContext&, NOESCAPE const ScopedLambda<bool()>& waitForNumbersOfStrings = scopedLambda<bool()>([] { return true; }));
 
 struct DecodedString {
     bool is16Bit() const { return !units16.isEmpty(); }

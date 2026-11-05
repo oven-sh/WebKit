@@ -63,8 +63,8 @@ public:
         m_end = firstByte;
         m_unplaced = unplaced;
         m_occupied.fill(0, limit / 64 + 1);
-        for (uint32_t offset = 0; offset < firstByte; offset += widestSlotInUnionSlots)
-            m_occupied[offset / 64] |= maskOf(offset, widestSlotInUnionSlots);
+        RELEASE_ASSERT(firstByte < 64);
+        m_occupied[0] = (1ull << firstByte) - 1;
         for (uint32_t offset = limit; offset < m_occupied.size() * 64; offset += widestSlotInUnionSlots)
             m_occupied[offset / 64] |= maskOf(offset, widestSlotInUnionSlots);
         for (unsigned logSize = 0; logSize < numberOfWidthsInUnionSlots; ++logSize)
@@ -198,7 +198,7 @@ public:
         , m_isTouched(m_numberOfLayouts)
         , m_allAboveIsPlaced(m_numberOfLayouts)
     {
-        RELEASE_ASSERT(rows.firstRowOfLayout.size() == m_numberOfLayouts + 1 && rows.ends.size() == m_numberOfLayouts && m_depths.size() == m_numberOfLayouts);
+        RELEASE_ASSERT(rows.firstRowOfLayout.size() == m_numberOfLayouts + 1 && rows.ends.size() == m_numberOfLayouts && rows.offsetsOfFirstSlots.size() == m_numberOfLayouts && m_depths.size() == m_numberOfLayouts);
         RELEASE_ASSERT(rows.offsets.size() == rows.firstRowOfLayout.back() && rows.places.size() == rows.offsets.size() && (rows.widths.empty() || rows.widths.size() == rows.offsets.size()));
     }
 
@@ -255,7 +255,7 @@ private:
     bool isTouchable(LayoutID id) const { return m_depths[id.index()] != none; }
     std::span<const uint32_t> rowsOf(UnitIndex unit) const LIFETIME_BOUND { return m_rowsOfUnits.span().subspan(m_units[unit].firstRow, m_units[unit].numberOfRows); }
     std::span<const UnitIndex> unitsOf(const Group& group) const LIFETIME_BOUND { return m_unitsOfGroups.span().subspan(group.firstUnit, group.numberOfUnits); }
-    uint32_t offsetOfFirstSlotOf(LayoutID id) const { return offsetOfFirstField + (m_rows.layoutsWithHiddenWords.get(id.index()) ? widestSlotInUnionSlots : 0); }
+    uint32_t offsetOfFirstSlotOf(LayoutID id) const { return m_rows.offsetsOfFirstSlots[id.index()]; }
 
     bool standsByItself(LayoutID id) const
     {

@@ -23,6 +23,7 @@ class Program;
 struct LayoutsBelowTheirBases;
 
 SlotRepresentation narrowFormOfSlotHeldToTypeForFields(const Program&, TypeID held, bool usesWideReferences);
+void layAppendedFieldInCellForFields(const Program&, const Facts&, FieldReference, uint32_t offset, PlacedSlot&);
 void checkStorageOfFields(const Program&, const Facts&, const Plan&, BuildContext&);
 
 bool hasTypedSlotsForFields(const Facts&);
@@ -60,7 +61,7 @@ struct UnitsOfFields {
     Vector<uint32_t> firstRowOfLayout;
     Vector<uint32_t> unitOfRow;
 };
-void chooseFormsOfSlots(Program&, const Facts&, BuildContext&, SlotPlanParts&, const GroupsOfLayoutsForFields&, const UnitsOfFields&, BitVector& layoutsWithSlotsOfOtherWidths);
+void chooseFormsOfSlots(Program&, const Facts&, BuildContext&, SlotPlanParts&, const GroupsOfLayoutsForFields&, const UnitsOfFields&, std::span<const uint8_t> offsetsOfFirstSlots, const BitVector& layoutsThatLateNamesMayMoveInto, BitVector& layoutsWithSlotsOfOtherWidths);
 UnitsOfFields collectUnitsOfFields(const Program&, const LinkTables&, const StorageOfLayouts&, const GroupsOfLayoutsForFields&);
 void chooseStorageOfFields(Program&, const Facts&, BuildContext&, SlotPlanParts&, const LayoutsBelowTheirBases&, GroupsOfLayoutsForFields&&, UnitsOfFields&&);
 

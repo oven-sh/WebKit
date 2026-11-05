@@ -26,6 +26,7 @@ bool holdsOnlyCallables(const BuiltinTable&, BuiltinClassID);
 bool isCallableBuiltin(const BuiltinTable&, BuiltinID);
 bool isTestableBuiltin(const BuiltinTable&, BuiltinID);
 bool hasInstanceTest(const BuiltinTable&, BuiltinClassID);
+bool testTellsNoClassOfObjectsIn(TypeReader, const Type&);
 
 std::optional<uint8_t> positionInTypeOf(const BuiltinTable&, BuiltinClassID, ContentsSlot);
 ContentsSlot defaultContentsSlotOf(const BuiltinTable&, BuiltinClassID);

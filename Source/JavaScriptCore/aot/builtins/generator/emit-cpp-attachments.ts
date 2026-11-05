@@ -95,6 +95,9 @@ function formatCondition(context: AttachmentContext, condition: ModelCondition |
       ["objectNobodyKnowsIsWritten", condition.objectNobodyKnowsIsWritten ? "true" : null],
       ["testsReplaceBuiltins", condition.testsReplaceBuiltins ? "true" : null],
       ["programStores", formatId("BuiltinID", condition.programStores)],
+      ["isAskedForOtherNames", formatId("BuiltinID", condition.isAskedForOtherNames)],
+      ["valuesServed", formatNames(context, condition.valuesServed)],
+      ["methodsServed", formatNames(context, condition.methodsServed)],
     ]),
   );
 }
@@ -253,18 +256,14 @@ function formatHostObject(context: AttachmentContext, object: ModelHostObject): 
 }
 
 function formatForms(builtin: ModelBuiltin): string[] {
-  const { appendForm, literalPartsForm } = builtin.attachments;
-  if (appendForm === null && literalPartsForm === null) return [];
+  const { literalPartsForm } = builtin.attachments;
+  if (literalPartsForm === null) return [];
   return [
     formatAggregate([
       ["builtin", formatId("BuiltinID", builtin)],
-      ["appendForm", appendForm === null ? null : formatEnumerator("InlineBuiltin", appendForm)],
-      ["literalPartsForm", formatId("BuiltinID", literalPartsForm === null ? null : literalPartsForm.builtin)],
-      ["literalPartsArgument", formatOperand(literalPartsForm === null ? null : literalPartsForm.argument)],
-      [
-        "literalPartNames",
-        literalPartsForm === null ? null : `{ ${literalPartsForm.names.map(name => formatName(name)).join(", ")} }`,
-      ],
+      ["literalPartsForm", formatId("BuiltinID", literalPartsForm.builtin)],
+      ["literalPartsArgument", formatOperand(literalPartsForm.argument)],
+      ["literalPartNames", `{ ${literalPartsForm.names.map(name => formatName(name)).join(", ")} }`],
     ]),
   ];
 }

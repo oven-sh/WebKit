@@ -235,6 +235,8 @@ static int runCommandOnProgramFile(const TestCommand& command, ProgramFile&& fil
     context.mechanisms = inputs.mechanisms;
     command.run(context);
     out.flush();
+    for (const String& note : context.notesForFailure)
+        errors.println(note);
 
     build.diagnostics().finish(context.program.get());
     printDiagnostics(build.diagnostics(), errors);

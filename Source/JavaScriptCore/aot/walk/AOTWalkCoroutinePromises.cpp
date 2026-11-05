@@ -230,9 +230,9 @@ static bool findsConstructorOfPromisesInCoroutinePromises(Walker& walker, Refere
     return found && table.canonicalID(found) == table.canonicalID(table.at(BuiltinClasses::Promise).constructor);
 }
 
-static Reference valueAwaitedInPlaceOfPromiseInCoroutinePromises(Walker& walker, Reference promise, bool takesExtraTurn)
+static Reference valueAwaitedInPlaceOfPromiseInCoroutinePromises(Walker& walker, Reference promise)
 {
-    if (takesExtraTurn || !walker.has(Mechanism::EscapeAnalysis))
+    if (!walker.has(Mechanism::EscapeAnalysis))
         return { };
     Reference value = valueOfPromiseFulfilledHere(walker, promise);
     if (!value || !isListAsMade(walker, promise) || !findsConstructorOfPromisesInCoroutinePromises(walker, promise))
@@ -240,7 +240,7 @@ static Reference valueAwaitedInPlaceOfPromiseInCoroutinePromises(Walker& walker,
     return value;
 }
 
-Reference buildAwaitOfWhatHasNoThen(Walker& walker, Reference awaited, std::span<const Reference> held, bool takesExtraTurn, Origin origin)
+Reference buildAwaitOfWhatHasNoThen(Walker& walker, Reference awaited, std::span<const Reference> held, Origin origin)
 {
     if (!walker.has(Mechanism::TypedOperations))
         return { };
@@ -250,7 +250,7 @@ Reference buildAwaitOfWhatHasNoThen(Walker& walker, Reference awaited, std::span
         return { };
 
     const Function& function = walker.program().at(walker.unit().function);
-    if (Reference fulfilledWith = function.isModuleBody() ? Reference() : valueAwaitedInPlaceOfPromiseInCoroutinePromises(walker, awaited, takesExtraTurn))
+    if (Reference fulfilledWith = function.isModuleBody() ? Reference() : valueAwaitedInPlaceOfPromiseInCoroutinePromises(walker, awaited))
         awaited = fulfilledWith;
     if (!isProvenToHaveNoThen(walker, awaited))
         return { };
@@ -259,9 +259,8 @@ Reference buildAwaitOfWhatHasNoThen(Walker& walker, Reference awaited, std::span
     await.setAwaitedOperand(awaited);
     await.setPromiseOperand(driver);
     await.setHeldOperands(held);
-    await.setTakesExtraTurn(takesExtraTurn);
 
-    bool asksWhetherFrameMayGoOn = *kind == CoroutineKind::AsyncFunction && !takesExtraTurn && walker.isInLoop() && walker.has(Mechanism::Guesses) && walker.opensGuesses()
+    bool asksWhetherFrameMayGoOn = *kind == CoroutineKind::AsyncFunction && walker.isInLoop() && walker.has(Mechanism::Guesses) && walker.opensGuesses()
         && !walker.plan().moduleEvaluation().isBodyResumedByJobOfLoader(function);
     if (!asksWhetherFrameMayGoOn)
         return buildSuspensionInCoroutine(walker, WTF::move(await)) ? awaited : Reference();

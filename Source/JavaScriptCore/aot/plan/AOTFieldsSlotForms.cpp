@@ -23,7 +23,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-static constexpr uint32_t bytesPerSlotInSlotForms = widthOf(SlotRepresentation::JSValue);
 static constexpr TypeID typeOfIntegerSlotInSlotForms = typeOfPrimitives(Primitive::Integer | Primitive::UndefinedOrNull);
 static constexpr TypeID typeOfNumberSlotInSlotForms = typeOfPrimitives(Primitive::Number | Primitive::UndefinedOrNull);
 static constexpr Range integersOfNarrowSlotInSlotForms { minInlineInt32, INT32_MAX };
@@ -198,7 +197,7 @@ static void forEachFewLayoutsWithoutFamilyForSlotForms(const Program& program, c
     }
 }
 
-void chooseFormsOfSlots(Program& program, const Facts& facts, BuildContext& build, SlotPlanParts& parts, const GroupsOfLayoutsForFields& groups, const UnitsOfFields& units, BitVector& layoutsWithSlotsOfOtherWidths)
+void chooseFormsOfSlots(Program& program, const Facts& facts, BuildContext& build, SlotPlanParts& parts, const GroupsOfLayoutsForFields& groups, const UnitsOfFields& units, std::span<const uint8_t> offsetsOfFirstSlots, const BitVector& layoutsThatLateNamesMayMoveInto, BitVector& layoutsWithSlotsOfOtherWidths)
 {
     static_assert(!(indicesInRangeOfLoop % 64));
     if (!hasTypedSlotsForFields(facts))
@@ -259,35 +258,32 @@ void chooseFormsOfSlots(Program& program, const Facts& facts, BuildContext& buil
         return;
 
     CellSizesForFields sizes(build);
-    BitVector layoutsWithSmallerCells(numberOfLayouts);
+    BitVector layoutsThatGainFromNarrowForms = layoutsThatLateNamesMayMoveInto;
     forEachRangeOfIndicesInParallel(build.parallelLoops(), numberOfLayouts, [&](size_t firstLayout, size_t endOfLayouts) {
         for (size_t index = firstLayout; index < endOfLayouts; ++index) {
             LayoutID id(static_cast<uint32_t>(index));
             if (groups.groupOf[index] == GroupsOfLayoutsForFields::noGroup || !hasCellsForFields(parts, id))
                 continue;
             const PlannedLayout& planned = parts.layouts[index];
-            uint64_t bytesAsFound = 0;
-            uint64_t bytesAtNarrowest = 0;
-            bool hasHiddenWords = planned.hasExtraPropertiesWord();
+            uint64_t endAsFound = offsetsOfFirstSlots[index];
+            uint64_t endAtNarrowest = offsetsOfFirstSlots[index];
             for (FieldIndex field = 0; field < planned.numberOfFields(); ++field) {
                 const PlacedSlot& slot = planned.slots[field];
-                hasHiddenWords |= slot.isOutOfLine();
-                if (slot.storage != SlotStorage::Inline)
+                if (slot.storage != SlotStorage::Inline || slot.liesInCellOnTrial())
                     continue;
-                uint32_t unit = units.unitOfRow[units.rowOf({ id, field })];
+                uint32_t unit = planned.environmentOfDeferredClosures == field ? UnitsOfFields::noUnit : units.unitOfRow[units.rowOf({ id, field })];
                 bool mayChange = unit != UnitsOfFields::noUnit && unitsWhoseFormMayChange.quickGet(unit);
-                bytesAsFound += slot.width();
-                bytesAtNarrowest += mayChange ? widthOf(representationOfContentsForSlotForms(contentsOfUnits[unit], true, usesWideReferences, unitsWithSlotHeldToType.quickGet(unit), false)) : slot.width();
+                endAsFound += slot.width();
+                endAtNarrowest += mayChange ? widthOf(representationOfContentsForSlotForms(contentsOfUnits[unit], true, usesWideReferences, unitsWithSlotHeldToType.quickGet(unit), false)) : slot.width();
             }
-            uint64_t offsetOfFirstSlot = offsetOfFirstField + (hasHiddenWords ? bytesPerSlotInSlotForms : 0);
-            if (sizes.cellSizeFor(offsetOfFirstSlot + WTF::roundUpToMultipleOf<bytesPerSlotInSlotForms>(bytesAtNarrowest)) < sizes.cellSizeFor(offsetOfFirstSlot + WTF::roundUpToMultipleOf<bytesPerSlotInSlotForms>(bytesAsFound)))
-                layoutsWithSmallerCells.quickSet(index);
+            if (sizes.cellSizeFor(endAtNarrowest) < sizes.cellSizeFor(endAsFound))
+                layoutsThatGainFromNarrowForms.quickSet(index);
         }
     });
 
     auto isNarrowByItself = [&](size_t unit) {
         return std::ranges::any_of(units.rowsOf(units.units[unit]), [&](FieldReference row) {
-            return layoutsWithSmallerCells.quickGet(row.layout.index());
+            return layoutsThatGainFromNarrowForms.quickGet(row.layout.index());
         });
     };
     auto formOf = [&](size_t unit, bool mayBeNarrow) {
@@ -401,7 +397,7 @@ void chooseFormsOfSlots(Program& program, const Facts& facts, BuildContext& buil
             PlacedSlot& slot = parts.layouts[row.layout.index()].slots[row.field];
             if (!holdsReferences || slot.representation != SlotRepresentation::JSValue || !slot.type)
                 slot.type = type;
-            if (slot.storage == SlotStorage::Inline && slot.width() != widthOf(representation))
+            if (slot.storage == SlotStorage::Inline && !slot.liesInCellOnTrial() && slot.width() != widthOf(representation))
                 layoutsWithSlotsOfOtherWidths.quickSet(row.layout.index());
             slot.representation = representation;
         }

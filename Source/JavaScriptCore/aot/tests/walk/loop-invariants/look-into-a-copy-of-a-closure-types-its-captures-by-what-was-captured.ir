@@ -1,0 +1,98 @@
+# interface Row { tag: Named | "a" | "b" | "c"; id: number }
+# function count(list, predicate) { let n = 0; for (const item of list) n += +!!predicate(item); return n; }
+# function tell(rows: Row[]) { const of = (kind: "a" | "b" | "c") => count(rows, ({ tag }) => tag === kind); return of("a") + of("b"); }
+# `count` and its predicate are copied in line. The closure is made in front of the loop and what it captures is in sight: a text. The walk binds the capture to that text, so the comparison has a form
+# of its own and no guess is opened at it. The look into the copy used to type the capture by its declaration alone: anything: there the comparison had no form, a guess at each side was counted on,
+# an object on the left and a text on the right, and an object is no text: `false`, so `n` stayed 0 in the look and int[0, 1] came round in the walk: the unit was walked again, and the verifier stopped the build.
+# f2 = tell
+# OPTIONS: check=Validate
+# RUN: walk f2 mechanisms=all
+# CHECK-LABEL: code f2:Body
+# CHECK: isInLoop=true isLoopHead=true
+# CHECK: boolean @Boolean = StrictEq {{*}}form=StringAndValue
+# CHECK: int[0, 1] @{{*}} = ToNumber
+
+layout L0 module=m0 fields=[{key="id" declared={type=number} flags=[IsRequired]}, {key="tag" declared={type=undefined|null|"a"|"b"|"c"|L1 flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsRequired]}] declaredOrder=[1, 0] ownFieldCount=2
+layout L1 module=m0 fields=[{key="name" declared={type=undefined|null|string flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsRequired]}] ownFieldCount=1
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="count" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+data d0 root=Array{contents=undefined|null|L0 elements=[Object{layout=L0 members=[{key="tag" value=Object{layout=L1 members=[{key="name" value=String{value="m"}}]}}, {key="id" value=Number{value=1}}]}]} module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f2
+    v1 = Convert v0 declared={type=f2 flags=[IsFromCompiler]}
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="give" [isFreeName]
+    v4 = Call v3, -
+    v5 = Call v1, -, v4 calleeName="tell"
+    v6 = PropGet v2 key="sink" [isFreeName]
+    v7 = Call v6, -, v5
+    v8 = Data data=d0
+    v9 = Call v1, -, v8 calleeName="tell"
+    v10 = Call v6, -, v9
+    v11 = Undefined
+    Return v11
+}
+function f1 name="count" module=m0 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Array flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|function flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] {
+  b0(v0: undefined|null|Array, v1: undefined|null|function):
+    v2 = Integer
+    v3 = Convert v2 declared={type=number}
+    v4 = IteratorOpen v0
+    Jump -> next b1(v3)
+  b1(v5: number):
+    LoopHint
+    v7 = IteratorResume v4
+    v8 = ResultAt v7
+    v9 = ResultAt v7 index=1
+    Branch v8 -> taken b2(), notTaken b3()
+  b2():
+    v10 = Convert v5 declared={type=number}
+    Return v10
+  b3():
+    Jump -> next b4()
+  b4() handler=b5():
+    v11 = Call v1, -, v9 calleeName="predicate"
+    v12 = ToBoolean v11
+    v13 = LogicalNot v12
+    v14 = ToBoolean v13
+    v15 = LogicalNot v14
+    v16 = ToNumber v15
+    v17 = Add v5, v16
+    v18 = Convert v17 declared={type=number}
+    Jump -> next b1(v18)
+  b5() role=IterationCleanup subject=v4:
+    v19 = CatchException
+    IteratorClose v4 completion=Throw
+    Rethrow v19
+}
+function f2 name="tell" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|L0> flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
+  b0(v0: undefined|null|Array<undefined|null|L0>):
+    v1 = String string="a"
+    v2 = Convert v1 declared={type=undefined|null|"a"|"b"|"c" flags=[OmitsNull, OmitsUndefined]}
+    v3 = CallDirect v0, v2 function=f3
+    v4 = String string="b"
+    v5 = Convert v4 declared={type=undefined|null|"a"|"b"|"c" flags=[OmitsNull, OmitsUndefined]}
+    v6 = CallDirect v0, v5 function=f3
+    v7 = Add v3, v6
+    Return v7
+}
+function f3 name="of" module=m0 kind=Arrow flags=[IsChecked] length=1 captures=[{type=undefined|null|Array<undefined|null|L0> flags=[OmitsNull, OmitsUndefined] variableName="rows"}] thisType={type=anything} parameters=[{type=undefined|null|"a"|"b"|"c" flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
+  b0(v0: undefined|null|Array<undefined|null|L0>, v1: undefined|null|"a"|"b"|"c"):
+    v2 = GetModuleVariable variable=g0
+    v3 = NewClosure v1 function=f4
+    v4 = Call v2, -, v0, v3 calleeName="count"
+    ReturnCall v4
+}
+function f4 module=m0 kind=Arrow flags=[IsChecked] length=1 captures=[{type=undefined|null|"a"|"b"|"c" flags=[OmitsNull, OmitsUndefined] variableName="kind"}] thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
+  b0(v0: undefined|null|"a"|"b"|"c", v1: undefined|null|L0):
+    v2 = TypeTest v1 testedType=undefined|null
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v3):
+    v4 = NewRuntimeError runtimeError=NotDestructurable name="tag"
+    Throw v4
+  b2(v5):
+    v6 = PropGet v5 key="tag"
+    v7 = StrictEq v6, v0
+    Return v7
+}

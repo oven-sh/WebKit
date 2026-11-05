@@ -32,18 +32,20 @@ public:
     WireTypeReader(Program&, const Wire::Sections& checkedSections, BuildContext&, const ExternalFunctionBodies* = nullptr);
     ~WireTypeReader();
 
-    bool makeObjectsAndComputeFamilies();
+    bool computeDeclaredMembers();
+    void makeObjects();
+    void computeFunctionFamilies();
+    bool reportErrorInFunctionFamilies();
     uint32_t numberOfDerivedLayouts() const { return m_numberOfDerivedLayouts; }
     void readTypes();
     TypeID typeExpectedBesideViews(uint32_t wireIndex) const { return wireIndex < m_typesExpectedBesideViews.size() ? m_typesExpectedBesideViews[wireIndex] : TypeID(); }
     void finishLayouts();
+    void findModulesNamedByBodies();
     void finishObjects();
 
 private:
-    void makeObjects();
-    bool computeDeclaredMembers();
     void planTaggedLayouts(ArenasOfWorkers&, Vector<LayoutSetID>& members, const class TellingFields&);
-    void computeFunctionFamilies();
+    void findTypesExpectedBesideViews(ArenasOfWorkers&, const Vector<TypeID>& typesOfWireIndexes);
     enum class ViewsWithoutLayouts : bool { ReadAsAnything, AreLeftOut };
     TypeParts readPartsWithoutClasses(TypeArena&, uint32_t index, ViewsWithoutLayouts = ViewsWithoutLayouts::ReadAsAnything) const;
     bool readsAsAnything(std::span<const uint32_t> namedLayouts) const;
@@ -59,6 +61,7 @@ private:
     Vector<TypeID> m_typesExpectedBesideViews;
     Vector<ObjectSetID> m_functionFamilies;
     std::optional<InternalError> m_errorInFunctionFamilies;
+    BitVector m_modulesNamedByBodies;
 };
 
 } } } // namespace JSC::AOT::Typed

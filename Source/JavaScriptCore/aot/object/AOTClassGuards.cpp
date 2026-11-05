@@ -589,7 +589,6 @@ static bool isClassOfLibrary(const LayoutData& classLayout)
 static bool standsBelowFunctionsNamedByClassRecords(VM& vm, State& state, const LayoutData& classLayout, JSObject* function, NamesThatDifferOnClassHolders& namesOfFunctionsAbove)
 {
     ClassTable& classes = state.objects->classes;
-    const ProgramIdentifiers& identifiers = identifiersOf(state.instance);
     JSObject* functionPrototype = state.instance.globalObject->functionPrototype();
     const LayoutData* current = &classLayout;
     for (JSObject* parent = function->getPrototypeDirect().getObject(); parent != functionPrototype; parent = parent->getPrototypeDirect().getObject()) {
@@ -599,11 +598,13 @@ static bool standsBelowFunctionsNamedByClassRecords(VM& vm, State& state, const 
         ClassSide sideOfParent;
         if (classes.classHeldBy(parent, sideOfParent) != current || sideOfParent != ClassSide::Static)
             return false;
-        parent->structure()->forEachProperty(vm, [&](const PropertyTableEntry& entry) {
-            if (!isImplicitMemberOfClassHolder(vm, ClassSide::Static, entry.key()))
-                namesOfFunctionsAbove.add(identifiers.numberOf(entry.key()));
-            return true;
-        });
+        if (stateOfClassHolder(vm, state, *current, ClassSide::Static, parent, namesOfFunctionsAbove) != StateOfClassHolder::AsDeclared)
+            return false;
+    }
+    // The row of records goes on where the functions are not linked: what it declares further up is not found from here.
+    while ((current = classes.assumedBaseOf(*current))) {
+        for (const MethodData& method : methodsInClassRecord(*current, ClassSide::Static))
+            namesOfFunctionsAbove.add(method.flags & methodHasComputedName ? std::nullopt : std::optional<uint32_t>(static_cast<uint32_t>(method.name)));
     }
     return true;
 }

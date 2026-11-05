@@ -100,8 +100,13 @@ compared, and a file that expects the diagnostic itself is left out. Together th
 
 A test that crashes fails alone, because tests run in child processes. `run` starts one child for 16 files. If that child crashes or
 hangs, each of its files runs again in a process of its own. `native` starts one child for all its tests, and after a crash another
-one for the tests that are left. The failure is `FAIL <file>:1: crashed with <signal>` or `FAIL <name>: crashed with <signal>`, below
-the last lines the child printed. A child that prints nothing for 100 seconds (300 with ASan or assertions) is killed, and its test fails.
+one for the tests that are left. The failure is `FAIL <file>:1: crashed with <signal> (started as: <command line>)` or
+`FAIL <name>: crashed with <signal> (started as: <command line>)`, below the last lines the child printed. A child that prints nothing for
+100 seconds (300 with ASan or assertions) is killed, and its test fails.
+
+Only a failure names a process that crashed or hung. A `RUN` whose check lines ask for `crashed with` and find it prints nothing. Where a
+`run-in-shell` fails and its shell crashed or hung, one more `FAIL` line, at the line of the `RUN`, says how the shell was started. On the
+command line, where no check line says what was asked for, `run-in-shell` says it on stderr.
 
 Under a debugger, run the test in `testaot` itself: `run` with a single file starts no child, and neither does `--single-process`.
 `--after=<name>` runs only the native tests listed after that one. `--part=<i>/<n>` runs every n-th native test, from the i-th on.
@@ -603,7 +608,9 @@ those words of operand 0 are others behind it. This is a bug in Bun.`
   `answers/false-rows-of-effects-are-stopped-by-name.ir`.
 - **Its twin at build time**, in every build that verifies (`findOperationThatLinkHasNotCounted()`, `walk/AOTCompileUnit.cpp`): an operation of a `Body` whose own row is exact, that is one which calls
   no unknown code, and which writes an observable heap, throws by rule or collects, in a function of which Link's effects say that it does not, stops the verifier: `f2 v12 (PutSlot) writes ObjectFields,
-  and Link's effects of the function say that it does not`. In every block against the effects of the function, in blocks that are not rare also against its effects given the arguments. What fills an
+  and Link's effects of the function say that it does not`. In every block against the effects of the function, in blocks that are not rare also against its effects given the arguments (but the text of a closure
+  that a called parameter holds, where the walk has copied it in, and what is copied below it: the caller adds the effects of the closure that it hands over). Only functions whose callers take Link's effects are judged: of the others
+  `effectsOfDirectCall()` says any code (`unitDoesMoreThanBodyForKnownEffects()`). What fills an
   allocation of the unit is no write, as for Link. A closed operation's row is an upper bound and judges nothing: that is the net's. Nor is what an operator may throw judged: Link
   (`addEffectsOfOperatorsLeftApart()`) and the walk (`effectsOfOperatorWithin()`) each have a rule for it over the same types, and the walk's is the wider: `undefined|string < "b"`. A hint (`family Hint`: `EndLifeOfCell`
   and `ReleaseHint`) overwrites a cell whose life the unit itself ends, which no caller sees. The lie: `RowSaysLess:Summary/f2/ObjectFields`:

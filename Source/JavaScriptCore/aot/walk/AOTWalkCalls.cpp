@@ -79,12 +79,13 @@ FunctionID findOnlyCallee(Walker& walker, const BodyValue& call, TypeID proven)
     Type type = types.at(proven);
     if (!type.isObject() || !type.isJavaScriptValue())
         return { };
+    FunctionID only = singleFunctionOf(types, type);
+    if (!only)
+        return { };
     const LinkTables& link = walker.facts().linked();
-    FunctionID listed = link.calleeAt(walker.currentFunction(), call.id());
-    if (FunctionID only = singleFunctionOf(types, type))
-        return only == listed || link.mayBeMentionedBy(walker.unit(), only) ? only : FunctionID();
-
-    return { };
+    if (link.function(only).isInQueueFromStart)
+        return only;
+    return only == link.calleeAt(walker.currentFunction(), call.id()) || link.mayBeMentionedBy(walker.unit(), only) ? only : FunctionID();
 }
 
 static bool bodyRunsWhenCalledInWalkCalls(FunctionKind kind)
@@ -1120,6 +1121,7 @@ static bool walkDirectCallOfInputInWalkCalls(Walker& walker, const BodyValue& ca
 static constexpr OpcodeSet opcodesOfConstructionInWalkCalls { Opcode::GetConstructPrototype, Opcode::NewObject };
 
 constinit const OpcodeSet opcodesThatBuildTypedConstructionTakes = opcodesOfConstructionInWalkCalls;
+static_assert(opcodesThatBuildTypedConstructionTakesInChains == opcodesOfConstructionInWalkCalls);
 
 bool buildTypedConstructionOfItsOpcodes(Walker& walker, const BodyValue& value)
 {
@@ -1322,19 +1324,9 @@ bool callGetterExpectedAtRead(Walker& walker, const BodyValue& read)
     walker.branch(isGetter, calls, reads);
     walker.noteGuessOpened();
 
-    Vector<Walker::ArmThatMeets, 2> arms;
-    auto endArm = [&] {
-        if (walker.isUnreachable() || walker.hasFailed())
-            return;
-        arms.append(Walker::ArmThatMeets { walker.currentBlock(), { walker.referenceOf(read.id()) } });
-    };
-
-    walker.continueIn(reads);
-    {
-        Walker::ClosedArm closedArm(walker);
-        walker.walkStretch(block.id(), place, place + 1);
-        endArm();
-    }
+    Walker::StretchInArms stretch = walker.stretchInArms(block.id(), place, place + 1);
+    Walker::ArmsThatMeet arms;
+    walker.walkClosedArm(reads, stretch, arms);
     if (walker.hasFailed())
         return true;
 
@@ -1346,18 +1338,12 @@ bool callGetterExpectedAtRead(Walker& walker, const BodyValue& read)
     proof.setOperandIndex(OperandIndex::TypeTest::value);
     proof.setIsOnTakenEdge(true);
     Reference closure = walker.build(WTF::move(proof));
-    if (closure && !callAccessor(walker, read, getter, object, { }, closure)) {
-        Walker::ClosedArm closedArm(walker);
-        walker.walkStretch(block.id(), place, place + 1);
-        endArm();
-    } else
-        endArm();
-    if (walker.hasFailed())
-        return true;
-
-    Reference met;
-    if (walker.letArmsMeet(arms.span(), meeting, singleElementSpan(met)))
-        walker.bind(read.id(), met);
+    if (closure && !callAccessor(walker, read, getter, object, { }, closure))
+        walker.walkClosedArm(walker.currentBlock(), stretch, arms);
+    else
+        walker.listArm(stretch, arms);
+    if (!walker.hasFailed())
+        walker.letArmsMeet(stretch, arms, meeting);
     return true;
 }
 

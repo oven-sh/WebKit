@@ -50,7 +50,7 @@ constexpr StubKey getByIdOfSilentSlot() { return StubKey(StubFamily::GetByIdOfSi
 constexpr StubKey getByIdOfNarrowCellInExtension() { return StubKey(StubFamily::GetByIdOfNarrowCellInExtension); }
 constexpr StubKey getByIdOfEmptySlot() { return StubKey(StubFamily::GetByIdOfEmptySlot); }
 constexpr StubKey getByIdOfFieldLeftOut() { return StubKey(StubFamily::GetByIdOfFieldLeftOut); }
-constexpr StubKey getByIdBehindFieldTable() { return StubKey(StubFamily::GetByIdBehindFieldTable); }
+constexpr StubKey getByIdOfCell() { return StubKey(StubFamily::GetByIdOfCell); }
 constexpr StubKey callMethodById(unsigned count, unsigned lentArguments = 0) { return lentArguments ? StubKey(StubFamily::CallMethodByIdLending).withCount(count).withForm(static_cast<uint8_t>(lentArguments - 1)) : StubKey(StubFamily::CallMethodById).withCount(count); }
 constexpr StubKey getByIdAtSite() { return StubKey(StubFamily::GetByIdAtSite); }
 constexpr StubKey getByIdOfObjectAtSite() { return StubKey(StubFamily::GetByIdOfObjectAtSite); }
@@ -292,7 +292,7 @@ static_assert([] {
         instanceOf(InstanceOfOperand::Prototype),
         callMethodById(0),
         readAtSite(ReceiverAtSite::IsCell, NameAtSite::HasColumn), readBehindSite(WayBehindSite::OfFieldLeftOut, NameAtSite::HasColumn), readLengthAtSite(NameAtSite::HasColumn), callMethodAtSite(0),
-        getByIdBehindFieldTable(), getByIdAtSite(), getByIdOfObjectAtSite(), getByIdAtSiteHashed(), putByIdAtSite(PutMode::Sloppy, NameOfStoreAtSite::NamesField),
+        getByIdOfCell(), getByIdAtSite(), getByIdOfObjectAtSite(), getByIdAtSiteHashed(), putByIdAtSite(PutMode::Sloppy, NameOfStoreAtSite::NamesField),
         putById(PutMode::Define), putByIdAfterFrontProbe(PutMode::Define), putByIdHashed(PutMode::Define), putByIdOfSymbolOfRealm(PutMode::Define), putByIdBehindFieldTable(PutMode::Define), putKnownField(PutMode::Define), putByIdOnce(PutMode::Define), createKnownField(PutMode::Define), putBooleanOrDoubleField(PutMode::Define), putValueThatSlotRefuses(PutMode::Define),
         didCreateField(), didCreateFieldOfSlot(), putSlotOrAdd(PlaceOfCreatedSlot::OutOfLine, SlotRepresentation::JSValue), putSlotOrAddAtKeyInRegister(SlotRepresentation::JSValue),
         getByValCached(), getByValCachedCells(), getByValCachedAtPlace(), getByValCachedBehindPlaces(),

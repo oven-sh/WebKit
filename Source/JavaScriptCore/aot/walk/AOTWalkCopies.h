@@ -14,12 +14,33 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
+bool foldComparisonOfValueWithItself(Walker&, const BodyValue& comparison);
+bool assignSourcesFieldByField(Walker&, const BodyValue& call);
 inline constexpr OpcodeSet opcodesThatBuildCopyOrKeyOrderFormTakes { Opcode::StrictEq, Opcode::CopyObject, Opcode::Call };
-AOT_LINK_OF_WALK(buildCopyOrKeyOrderForm, opcodesThatBuildCopyOrKeyOrderFormTakes)
+bool buildCopyOrKeyOrderFormOfItsOpcodes(Walker&, const BodyValue&);
+ALWAYS_INLINE bool buildCopyOrKeyOrderForm(Walker& walker, const BodyValue& value) { return opcodesThatBuildCopyOrKeyOrderFormTakes.contains(value.opcode()) && buildCopyOrKeyOrderFormOfItsOpcodes(walker, value); }
+template<Opcode known> ALWAYS_INLINE bool buildCopyOrKeyOrderForm(Walker& walker, const BodyValueOf<known>& value)
+{
+    if constexpr (known == Opcode::StrictEq)
+        return foldComparisonOfValueWithItself(walker, value);
+    else if constexpr (known == Opcode::Call)
+        return value.template as<Opcode::Call>().argumentsOperands().size() >= 2 && assignSourcesFieldByField(walker, value);
+    else
+        return opcodesThatBuildCopyOrKeyOrderFormTakes.contains(known) && buildCopyOrKeyOrderFormOfItsOpcodes(walker, value);
+}
 inline constexpr OpcodeSet opcodesThatOpenGuessOfKeyOrdersTakes { Opcode::PropGet, Opcode::PropSet };
 AOT_LINK_OF_WALK(openGuessOfKeyOrders, opcodesThatOpenGuessOfKeyOrdersTakes)
 inline constexpr OpcodeSet opcodesThatCallProvenAccessorTakes { Opcode::PropGet, Opcode::PropSet };
-AOT_LINK_OF_WALK(callProvenAccessor, opcodesThatCallProvenAccessorTakes)
+bool callProvenAccessorOfItsOpcodes(Walker&, const BodyValue&);
+ALWAYS_INLINE bool callProvenAccessor(Walker& walker, const BodyValue& value) { return opcodesThatCallProvenAccessorTakes.contains(value.opcode()) && callProvenAccessorOfItsOpcodes(walker, value); }
+template<Opcode known> ALWAYS_INLINE bool callProvenAccessor(Walker& walker, const BodyValueOf<known>& value)
+{
+    if constexpr (opcodesThatCallProvenAccessorTakes.contains(known)) {
+        PropertyKeyID key = value.template as<known>().key();
+        return key && !liesInThread(key) && walker.facts().linked().keysOfAccessorsExpectedInFields.get(key.index()) && callProvenAccessorOfItsOpcodes(walker, value);
+    } else
+        return false;
+}
 
 struct OwnKeyOrder {
     LayoutID layout;
@@ -47,10 +68,8 @@ bool goOnWhereObjectHasOwnKeys(Walker&, Reference& object, const OwnKeyOrder&, b
 Reference valueOfOwnKey(Walker&, Reference object, LayoutID, FieldIndex, Origin);
 bool orderWordTellsOwnKeysOf(const Walker&, LayoutID);
 
-bool foldComparisonOfValueWithItself(Walker&, const BodyValue& comparison);
 bool callAccessorInSlot(Walker&, const BodyValue& access);
 bool accessStaticFieldInVariable(Walker&, const BodyValue& access);
-bool assignSourcesFieldByField(Walker&, const BodyValue& call);
 bool buildCopyThatMakesObject(Walker&, const BodyValue& copy);
 inline constexpr OpcodeSet opcodesThatBuildCopyWithWhatFollowsTakes { Opcode::CopyObject };
 AOT_LINK_OF_WALK(buildCopyWithWhatFollows, opcodesThatBuildCopyWithWhatFollowsTakes)

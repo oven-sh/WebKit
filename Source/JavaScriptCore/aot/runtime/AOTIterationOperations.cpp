@@ -84,23 +84,48 @@ EnumeratedKey findEnumeratedKey(JSGlobalObject* globalObject, JSPropertyNameEnum
     return { key, mode == JSPropertyNameEnumerator::IndexedMode ? index : indexedLength + index };
 }
 
-static bool isReadByIndexUnseen(JSValue iterable)
+static bool isIteratedAsListsAre(JSArray* list)
+{
+    if (list->isIteratorProtocolFastAndNonObservable())
+        return true;
+    JSGlobalObject* realm = list->realm();
+    VM& vm = realm->vm();
+    if (!realm->isArrayPrototypeIteratorProtocolFastAndNonObservable() || list->structure()->mayInterceptIndexedAccesses() || list->getDirectOffset(vm, vm.propertyNames->iteratorSymbol) != invalidOffset)
+        return false;
+    for (JSValue above = list->getPrototypeDirect(); above != JSValue(realm->arrayPrototype());) {
+        JSObject* object = above.getObject();
+        if (!object || (object->type() != ObjectType && object->type() != FinalObjectType) || object->structure()->typeInfo().overridesGetPrototype())
+            return false;
+        PropertySlot slot(object, PropertySlot::InternalMethodType::VMInquiry, &vm);
+        if (object->methodTable()->getOwnPropertySlot(object, realm, vm.propertyNames->iteratorSymbol, slot))
+            return false;
+        above = object->getPrototypeDirect();
+    }
+    return true;
+}
+
+static bool isReadByIndexWhereNoHoleIsMet(JSValue iterable)
 {
     JSArray* list = iterable.isCell() ? dynamicDowncast<JSArray>(iterable.asCell()) : nullptr;
-    if (!list || !list->isIteratorProtocolFastAndNonObservable())
+    if (!list || !isIteratedAsListsAre(list))
         return false;
     switch (list->indexingType() & IndexingShapeMask) {
     case UndecidedShape:
     case Int32Shape:
     case DoubleShape:
     case ContiguousShape:
-        return !list->structure()->holesMustForwardToPrototype(list);
+        return true;
     default:
         return false;
     }
 }
 
 namespace {
+
+bool isReadByIndexUnseen(JSValue iterable)
+{
+    return isReadByIndexWhereNoHoleIsMet(iterable) && !asArray(iterable)->structure()->holesMustForwardToPrototype(asArray(iterable));
+}
 
 enum class WordingOfIteration : uint8_t { Pattern, Spread };
 
@@ -140,7 +165,7 @@ bool IterationInRunTime::tryOpenUnseen(JSValue iterable)
     JSCell* cell = iterable.asCell();
     switch (cell->type()) {
     case ArrayType:
-        if (!uncheckedDowncast<JSArray>(cell)->isIteratorProtocolFastAndNonObservable())
+        if (!isIteratedAsListsAre(uncheckedDowncast<JSArray>(cell)))
             return false;
         m_iterator = JSArrayIterator::create(m_vm, m_globalObject->arrayIteratorStructure(), uncheckedDowncast<JSArray>(cell), IterationKind::Values);
         m_stepper = Stepper::ArrayIterator;
@@ -322,13 +347,20 @@ static void destructureIterable(Instance& instance, JSGlobalObject* globalObject
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (isReadByIndexUnseen(iterable)) {
+    if (isReadByIndexWhereNoHoleIsMet(iterable)) {
         JSArray* list = asArray(iterable);
-        for (size_t index = 0; index < elements.size(); ++index) {
+        size_t length = std::min<size_t>(list->length(), elements.size());
+        size_t index = 0;
+        for (; index < length; ++index) {
             JSValue element = list->tryGetIndexQuickly(static_cast<unsigned>(index));
+            if (!element && list->structure()->holesMustForwardToPrototype(list))
+                break;
             elements[index] = JSValue::encode(element ? element : jsUndefined());
         }
-        return;
+        if (index == length) {
+            std::ranges::fill(elements.subspan(length), JSValue::encode(jsUndefined()));
+            return;
+        }
     }
     for (EncodedJSValue& element : elements)
         element = JSValue::encode(jsUndefined());

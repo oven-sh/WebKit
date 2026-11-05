@@ -43,6 +43,7 @@ public:
     static constexpr SlotOfContents underUnknownNames() { return behindEnumerators(UnderUnknownNames); }
     static constexpr SlotOfContents underAnyName() { return behindEnumerators(UnderAnyName); }
     static constexpr SlotOfContents returnedAlone() { return behindEnumerators(ReturnedAlone); }
+    static constexpr SlotOfContents noLongerAsMade() { return behindEnumerators(NoLongerAsMade); }
     static constexpr SlotOfContents internalField(uint32_t index) { return fromNumber(firstInternalField + index); }
     static constexpr SlotOfContents stateOf(BuiltinSlotID slot) { return fromNumber(firstStateSlot + slot.index()); }
     static constexpr SlotOfContents under(PropertyKeyID key) { return fromNumber(nameBit | key.index()); }
@@ -64,7 +65,7 @@ public:
 
 private:
     // The slots that no enumerator of ContentsSlot names are numbered behind the enumerators, in this order. Whoever adds one adds it here, so the count below knows of it.
-    enum SlotBehindEnumerators : uint32_t { UnderUnknownNames, UnderAnyName, ReturnedAlone, numberOfSlotsBehindEnumerators };
+    enum SlotBehindEnumerators : uint32_t { UnderUnknownNames, UnderAnyName, ReturnedAlone, NoLongerAsMade, numberOfSlotsBehindEnumerators };
     static constexpr SlotOfContents behindEnumerators(SlotBehindEnumerators slot) { return fromNumber(numberOfEnumerators<ContentsSlot> + slot); }
     static constexpr uint32_t firstInternalField = 16;
     static_assert(numberOfEnumerators<ContentsSlot> + numberOfSlotsBehindEnumerators <= firstInternalField);
@@ -197,6 +198,7 @@ struct SummaryAccess {
     uint32_t receiver { noSummaryNode };
     PropertyKeyID key;
     uint32_t keyNode { noSummaryNode };
+    bool keyIsSurelyIndex { false };
     StringID beginningOfKey;
     uint32_t value { noSummaryNode };
     SlotOfContents slot;

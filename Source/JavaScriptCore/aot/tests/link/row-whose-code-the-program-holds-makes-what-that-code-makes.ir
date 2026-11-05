@@ -1,20 +1,21 @@
-# process.nextTick(() => {}); require("node:path").sep, and the function of the library that makes the queue of ticks lets $makeErrorWithCode go
-# Two rows answer the same type of the table, `any`. A read of an export of a module that is compiled with the program makes nothing; the last row of $makeErrorWithCode is a row of native code that says nothing of what it hands out,
-# so objects of any class may exist. The read stands in the program and is told first; the function of the library is entered a round later. If a type that has been looked at once were never looked at again, the row that makes nothing
-# would hide what the other says: whether Bun.Glob is found on the prototype object of its class would hang on which other built-ins the program uses.
-# The control: row-of-the-host-that-answers-anything-lets-objects-of-any-class-exist.ir is this program without the read.
+# process.nextTick(() => {}); Buffer.prototype.toJSON.call("ab").scan()
+# Buffer.prototype.toJSON is written in JavaScript, and the table says of its result that it is an object and nothing more. Where the program holds that code Link sees what it makes: the row makes nothing of the host.
+# If it counted as a row of the host that says nothing of what it hands out, objects of any class might exist: the call would find `scan` on the prototype object of the class of Bun.Glob,
+# and the function of the library behind it would be in the program.
+# The control: row-whose-code-the-program-does-not-hold-lets-any-class-exist.ir.
 # LIBRARY: own
 # RUN: link functions mechanisms=all
 # REQUIRES: entries-of-bun
-# CHECK-NOT: function f2 unreached
-# CHECK-NOT: function f3 unreached
+# CHECK: function f2 unreached
+# CHECK-NOT: function f4 unreached
 
 module m0 path="main.js" displayPath="main.js" body=f0
 module m1 path="/$bun/js/builtins/ProcessObjectInternals.ts" displayPath="/$bun/js/builtins/ProcessObjectInternals.ts" flags=[IsLibrary]
 module m2 path="/$bun/js/builtins/Glob.ts" displayPath="/$bun/js/builtins/Glob.ts" flags=[IsLibrary]
-module m3 path="node:path" displayPath="node:path" kind=RuntimeSource exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodePath body=f4
+module m3 path="/$bun/js/builtins/JSBufferPrototype.ts" displayPath="/$bun/js/builtins/JSBufferPrototype.ts" flags=[IsLibrary]
 entry module=m0
 runtimefunction id=GlobScan function=f2
+runtimefunction id=JSBufferPrototypeToJSON function=f4
 runtimefunction id=ProcessObjectInternalsInitializeNextTickQueue function=f3
 function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
   b0():
@@ -23,10 +24,12 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v2 = Convert v1 declared={type=builtin(ProcessNextTick) flags=[IsExpected]}
     v3 = NewClosure function=f1
     v4 = Call v2, v0, v3 calleeKey="nextTick" calleeName="process.nextTick"
-    v5 = RequireModule module=m3 referrer=m0 specifier="node:path"
-    v6 = Builtin builtin=NodePath
-    v7 = PropGet v6 key="sep"
-    Return v7
+    v5 = Builtin builtin=BufferPrototypeToJSON
+    v6 = String string="ab"
+    v7 = Call v5, v6
+    v8 = PropGet v7 key="scan"
+    v9 = Call v8, v7 calleeKey="scan"
+    Return v9
 }
 function f1 module=m0 kind=Arrow thisType={type=anything} results=[{type=anything}] {
   b0():
@@ -39,12 +42,10 @@ function f2 name="scan" module=m2 kind=Method role=Library flags=[HasExplicitNam
 }
 function f3 name="initializeNextTickQueue" module=m1 kind=Method role=Library flags=[HasExplicitName] length=3 enclosingRuntimeFunction=ProcessObjectInternalsInitializeNextTickQueue thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything, v2: anything):
-    v3 = Builtin builtin=PrivateGlobalsMakeErrorWithCode
-    v4 = Call v0, -, v3
-    Return v4
+    Return v0
 }
-function f4 module=m3 kind=Module role=Library thisType={type=anything} results=[{type=anything}] {
+function f4 name="toJSON" module=m3 kind=Method role=Library flags=[HasExplicitName] enclosingRuntimeFunction=JSBufferPrototypeToJSON thisType={type=anything} results=[{type=anything}] {
   b0():
-    v0 = String string="/"
+    v0 = Undefined
     Return v0
 }
