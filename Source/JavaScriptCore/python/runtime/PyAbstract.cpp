@@ -1943,7 +1943,7 @@ static bool isGivenByClassOfProgram(Runtime& rt, PyType* type, Special special)
 
 bool hasTableOfSequenceMethods(PyType* type)
 {
-    return type->isHeapType() || type->lookup(Special::Len) || type->lookup(Special::GetItem) || type->lookup(Special::Contains);
+    return type->isHeapType() || isMadeAtRunTimeInCPython(type) || type->lookup(Special::Len) || type->lookup(Special::Contains);
 }
 
 void setItem(JSGlobalObject* globalObject, JSValue object, JSValue key, JSValue value)

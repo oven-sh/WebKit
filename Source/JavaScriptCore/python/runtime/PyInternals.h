@@ -288,8 +288,11 @@ JSValue bytesFromObject(JSGlobalObject*, JSValue);
 // The index for a sequence of that length, from an index that may be negative. False: an IndexError with the message.
 bool normalizeIndex(JSGlobalObject*, JSValue index, int64_t length, ASCIILiteral message, int64_t& result);
 // Whether the type has a table of the methods of sequences in CPython (tp_as_sequence), be it an empty one, on which some messages and
-// the order of some checks depend: every class written in Python has, and every built-in type that has a length, items or `in`.
+// the order of some checks depend: every class written in Python has, every built-in type that CPython makes at run time, and of the
+// others those that have a length or `in`. (list[int] and int | str have items as a mapping has.)
 bool hasTableOfSequenceMethods(PyType*);
+// A built-in type that is not laid down in CPython's program but made when its module is: see PyType::initializeBuiltin().
+bool isMadeAtRunTimeInCPython(PyType*);
 // As the start and end arguments of str.find() and list.index(): None or absent is the default, and what is out of range is clipped.
 bool sliceBounds(JSGlobalObject*, JSValue start, JSValue end, int64_t length, int64_t& from, int64_t& to);
 // The same in two steps, for a sequence that can change: the first may call __index__ methods, the second is for the length after that.

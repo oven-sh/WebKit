@@ -1181,7 +1181,7 @@ static JSValue typeNew(JSGlobalObject* globalObject, JSValue cls, const CallArgs
     if (!isStr(args[0]))
         return raiseTypeError(globalObject, scope, "type.__new__() argument 1 must be str, not "_s, typeNameOfArgument(globalObject, args[0]));
     if (!PyTuple::is(args[1]))
-        return raiseTypeError(globalObject, scope, "type.__new__() argument 2 must be tuple, not "_s, typeName(globalObject, args[1]));
+        return raiseTypeError(globalObject, scope, "type.__new__() argument 2 must be tuple, not "_s, typeNameOfArgument(globalObject, args[1]));
     if (!PyDict::is(args[2]))
         return raiseTypeError(globalObject, scope, "type.__new__() argument 3 must be dict or frozendict, not "_s, typeName(globalObject, args[2]));
     JSString* name = internString(globalObject, strValue(args[0]));
@@ -2075,6 +2075,14 @@ static JSValue typeGetTextSignature(JSGlobalObject* globalObject, JSValue self)
     return makeStr(rt.vm(), text.substring(name.length(), end + 1 - name.length()).toString());
 }
 
+bool isMadeAtRunTimeInCPython(PyType* type)
+{
+    if (type->isHeapType())
+        return false;
+    JSValue module = type->dict()->get(Runtime::from(type->realm()).names.dModule());
+    return module && module.isString();
+}
+
 // In the numbering of CPython, which programs test bits of.
 static JSValue typeGetFlags(JSGlobalObject* globalObject, JSValue self)
 {
@@ -2093,8 +2101,7 @@ static JSValue typeGetFlags(JSGlobalObject* globalObject, JSValue self)
     if (!type->isHeapType()) {
         if (!type->has(TypeFlag::Mutable))
             flags |= 1 << 8; // Immutable.
-        // Made at run time in CPython: see PyType::initializeBuiltin().
-        if (JSValue module = type->dict()->get(runtime(globalObject).names.dModule()); module && module.isString())
+        if (isMadeAtRunTimeInCPython(type))
             flags |= 1 << 9;
     }
     // Its instances may refer to other objects. (They are all the collector's here.)

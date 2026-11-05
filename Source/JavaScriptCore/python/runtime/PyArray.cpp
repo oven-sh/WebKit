@@ -788,7 +788,8 @@ static JSValue arrayConstruct(JSGlobalObject* globalObject, PyType* type, JSValu
             memcpy(arrayData(array), arrayData(initialArray), length * arrayItemSize(array));
     } else if (initial)
         arrayStoreStr(array, 0, initialStr);
-    if (iterator && failed(scope, arrayExtendFromIterator(globalObject, array, iterator)))
+    // As extend() of the iterator, which asks that for an iterator in its turn.
+    if (iterator && failed(scope, arrayExtendWith(globalObject, array, iterator)))
         return { };
     return array;
 }
