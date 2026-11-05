@@ -81,6 +81,7 @@ Runtime::Runtime(JSGlobalObject* globalObject)
     if (m_threads->isEnabled())
         m_currentThread = m_threads->current().number();
     m_monitoring = makeUnique<Monitoring>(*this);
+    m_typeLookupCache = makeUnique<TypeLookupCache>();
     m_vm.heap.addPythonRuntime(this);
 }
 

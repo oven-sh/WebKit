@@ -26,6 +26,7 @@ namespace Python {
 // every frame of JS has. Until then it holds undefined, which is what op_enter leaves there. op_py_ret looks at it.
 VirtualRegister frameObjectRegister();
 class Monitoring;
+class TypeLookupCache;
 JSString* internString(VM&, ASCIILiteral, unsigned hash);
 
 // The classes of cells whose Structure takes nothing but the global object to make.
@@ -586,6 +587,7 @@ public:
     // ---- sys.monitoring, sys.settrace(), sys.setprofile(): see PyMonitoring.h ----
 
     Monitoring& monitoring() { return *m_monitoring; }
+    TypeLookupCache& typeLookupCache() { return *m_typeLookupCache; }
     // Not 0: a tool, a trace function or a profile function is running. What it does is told to nobody.
     int tracingDepth { 0 };
     // What it is being told of (Event), and where that happens. -1: nothing.
@@ -1012,6 +1014,7 @@ private:
     std::array<PrivateName, numberOfHiddenKeys> m_hiddenKeys;
     std::array<PrivateName, 3> m_instanceKeys;
     std::unique_ptr<Monitoring> m_monitoring;
+    std::unique_ptr<TypeLookupCache> m_typeLookupCache;
 
     Lock m_finalizationLock;
     // The objects that are registered, in the order in which they were: first those that a collection has seen, then the others. Not

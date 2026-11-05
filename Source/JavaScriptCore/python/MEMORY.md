@@ -40,7 +40,7 @@ has been freed and not yet given back.
 | bound method | 60 | 48 | 64 |
 | bound method of a built-in | 126 | 112 | 80 |
 | code object, small function, defined and called | 5116 | 2247 | 895 |
-| class, 5 methods | 4154 | 3923 | 3285 |
+| class, 5 methods | 4160 | 3209 | 3285 |
 | exception, raised and caught | 857 | 704 | 693 |
 | generator, suspended | 176 | 160 | 224 |
 | generator expression, not started | 786 | 756 | 405 |
@@ -98,8 +98,8 @@ The pytest run took 1,161 to 1,198 MB before the changes below (60 MB of that we
 live. It keeps the same objects as CPython now. What is left of the difference: the collector's policy (309 MB of blocks for 163 MB of
 cells), what `gc.collect()` itself needs while it runs (75 to 82 MB here; pytest calls it at the end), and the floor.
 
-After an import it is code that takes the room. `import sympy` leaves 27 MB of cells (strs 4.9, `PyFunction` 4.2, dict storage 3.6, `PyType` 3.1,
-`FunctionExecutable` 2.5, `UnlinkedFunctionCodeBlock` 1.9, `UnlinkedFunctionExecutable` 1.9) in 48 MB of blocks, some 16 MB from malloc (strs 5, `CodeInfo` 6, code blocks 5), and
+After an import it is code that takes the room. `import sympy` leaves 26 MB of cells (strs 4.9, `PyFunction` 4.2, dict storage 3.6, `FunctionExecutable` 2.5,
+`PyType` 2.2, `UnlinkedFunctionCodeBlock` 1.9, `UnlinkedFunctionExecutable` 1.9) in 48 MB of blocks, some 16 MB from malloc (strs 5, `CodeInfo` 6, code blocks 5), and
 **46 MB of copies of `.pyc` files**: a function is decoded when it is first called, so what marshal was given is kept as long as any function of
 the module has not been called. CPython's `.pyc` files for the same modules are 17 MB, and it keeps none of them.
 
@@ -133,6 +133,9 @@ has been left alone. `BUN_JSC_forceRAMSize=1073741824` makes a process behave as
   cell in it: a quarter of the heap, on top of the heap, while it ran. The table now has an entry for each cell of the block, not
   for each 16 bytes. With a million objects alive and a hundred thousand dead the call needs nothing to speak of, not 55 MB. Where most of the
   heap is dead it still needs 64 bytes for each dead cell, much of it in the old buffers of vectors that grew.
+- **What was looked up in a class** was remembered in 16 places in each `PyType`, 544 bytes of 1,776. It is one table of 96 KB for the runtime now
+  (`TypeLookupCache`, from malloc, so each Worker has one), which is less from 181 types on; an empty program has 316. It keeps the text
+  of up to 4,096 names of up to 100 characters, and nothing else. An empty program takes 15 page faults fewer than before.
 
 ## Tried and put aside: mapping the `.pyc` files
 

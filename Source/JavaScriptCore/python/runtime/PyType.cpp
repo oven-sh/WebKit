@@ -21,6 +21,7 @@
 #include "PyStr.h"
 #include "PyWeakRef.h"
 #include <wtf/SetForScope.h>
+#include <wtf/TZoneMallocInlines.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -74,6 +75,8 @@ PyType* PyType::createBare(VM& vm, Structure* structure)
     auto* type = new (NotNull, allocateCell<PyType>(vm)) PyType(vm, structure);
     type->finishCreation(vm);
     type->m_originalName.set(vm, type, jsEmptyString(vm));
+    type->m_lookupCache = &Runtime::from(structure->globalObject()).typeLookupCache();
+    type->takeNewLookupKey();
     return type;
 }
 
@@ -96,10 +99,6 @@ void PyType::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_instanceStructure);
     visitor.append(thisObject->m_jsPrototype);
     visitor.appendValues(thisObject->m_specials.data(), numberOfSpecials);
-    for (auto& entry : thisObject->m_lookupCache) {
-        visitor.append(entry.name);
-        visitor.append(entry.value);
-    }
 }
 
 DEFINE_VISIT_CHILDREN(PyType);
@@ -260,13 +259,33 @@ bool PyType::isSubtypeOf(const PyType* other) const
 
 std::atomic<uint64_t> PyType::s_timesLookupRanCode;
 
+WTF_MAKE_TZONE_ALLOCATED_IMPL(TypeLookupCache);
+
+void TypeLookupCache::removeUnmarked(Heap& heap)
+{
+    // (The text is let go of when the entry is taken for another name: not here, which may be the collector's thread.)
+    for (Entry& entry : m_entries) {
+        if (entry.value && entry.value.isCell() && !heap.isMarked(entry.value.asCell())) {
+            entry.key = 0;
+            entry.value = JSValue();
+        }
+    }
+}
+
+void PyType::takeNewLookupKey()
+{
+    // Times an odd number they are as many as before, and none is 0; and the upper half is spread out, for TypeLookupCache::entryFor().
+    static std::atomic<uint64_t> lastKey;
+    m_lookupKey = (lastKey.fetch_add(1, std::memory_order_relaxed) + 1) * 0x9E3779B97F4A7C15ull;
+}
+
 JSValue PyType::lookupSlow(JSString* name)
 {
     PyTuple* mro = m_mro.get();
     if (!mro)
         return { };
     VM& vm = this->vm();
-    uint32_t numberOfChanges = m_numberOfChanges;
+    uint64_t key = m_lookupKey;
     JSValue value;
     for (unsigned i = 0; !value && i < mro->length(); ++i) {
         PyDict* dict = uncheckedDowncast<PyType>(mro->at(i).asCell())->dict();
@@ -303,13 +322,16 @@ JSValue PyType::lookupSlow(JSString* name)
             return { };
     }
     // And it may have changed the type, or its bases.
-    if (m_numberOfChanges != numberOfChanges) [[unlikely]]
+    if (m_lookupKey != key) [[unlikely]]
         return value;
+    // The table keeps the text. (The limit is CPython's.)
     StringImpl* impl = name->tryGetValueImpl();
-    LookupCacheEntry& entry = lookupCacheEntry(impl);
+    if (impl->length() > 100) [[unlikely]]
+        return value;
+    TypeLookupCache::Entry& entry = m_lookupCache->entryFor(key, impl);
+    entry.key = key;
     entry.impl = impl;
-    entry.name.set(vm, this, name);
-    entry.value.set(vm, this, value);
+    entry.value = value;
     return value;
 }
 
@@ -346,7 +368,7 @@ JSValue PyType::lookupSpecialSlow(Special special)
         else {
             // What that has not remembered is not remembered here either.
             StringImpl* impl = name->tryGetValueImpl();
-            if (LookupCacheEntry& entry = lookupCacheEntry(impl); entry.impl != impl || entry.value.get() != value) [[unlikely]]
+            if (TypeLookupCache::Entry& entry = m_lookupCache->entryFor(m_lookupKey, impl); entry.key != m_lookupKey || entry.impl != impl || entry.value != value) [[unlikely]]
                 return value;
         }
     }
@@ -454,7 +476,7 @@ void PyType::didChange(VM& vm, Change change)
         return;
     SetForScope isBeingTold(m_isBeingToldOfChange, true);
     m_version = 0;
-    ++m_numberOfChanges;
+    takeNewLookupKey();
     m_construction = Construction::Unknown;
     if (change == Change::HowAttributesAreRead)
         m_hasGivenUpGetAttr = false;
@@ -462,11 +484,6 @@ void PyType::didChange(VM& vm, Change change)
     m_specialStates.fill(SpecialState::Unknown);
     for (auto& special : m_specials)
         special.clear();
-    for (auto& entry : m_lookupCache) {
-        entry.impl = nullptr;
-        entry.name.clear();
-        entry.value.clear();
-    }
     JSValue subclasses = m_subclasses.get();
     if (!subclasses)
         return;

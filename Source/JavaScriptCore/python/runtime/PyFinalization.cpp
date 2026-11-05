@@ -527,6 +527,7 @@ void Runtime::WeakCellTable::removeUnmarked(JSC::Heap& heap)
 void Runtime::reconcileWeakReferencesAtGCEnd()
 {
     scheduledTasks.removeUnmarked(m_vm.heap);
+    m_typeLookupCache->removeUnmarked(m_vm.heap);
     // Each thread is told once of all that queueWeakRefCallback() has left for it: to tell may be a system call.
     Locker locker { m_finalizationLock };
     for (auto& owed : m_callsOwed) {

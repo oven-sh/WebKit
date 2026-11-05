@@ -338,6 +338,16 @@ unpacking, cells, the binding of arguments when they are simply the parameters, 
   about a class that keeps changing (`C.count += 1`) nothing is remembered after that.
 - _Calls_ are JSC's.
 
+**What a class has under a name** (`PyType::lookup()`: the first class of the MRO that has it) is asked by every slow path above, and by all of the runtime. What was
+found last is in one table of 4096 entries for all the types of a runtime (`TypeLookupCache`), names that no class has included, as in CPython. The VM has the like for Structures
+(`HasOwnPropertyCache`, `MegamorphicCache`). An entry belongs to a key and a name. A type's key is a number that no type has had before, and it takes a new one whenever it changes,
+or one of its bases does, so nothing has to be looked for in the table then. The table keeps no value alive: after each collection it forgets those that are gone
+(`Runtime::reconcileWeakReferencesAtGCEnd()`), which only happens to a class whose dict was written to behind its back (`gc.get_referents(C.__dict__)`; CPython crashes). It
+does keep the text of a name, until another takes the place: so none of more than 100 characters, as in CPython. All 96 KB of it are gone through at the end of each
+collection (15 to 20 µs). More pairs of a class and a name than there are places push each other out, where the 16 places that each type had before grew with the number of
+classes: `getattr()` on 300 to 3,000 classes in turn, with 12 names each, takes a fifth to a quarter longer than it did; on 100 classes, or with 40 names each, a tenth to
+a quarter less. Programs have more than 16 names for a class: six that were measured take up to 4 % less time.
+
 `object.name(...)` makes no bound method: `op_py_get_method` gives the function and the object, which is passed as the first argument.
 `with` finds `__enter__` and `__exit__` with the same instruction (a number stands for the name: they are looked for in the class alone).
 Whether there is an object to pass is one `op_jeq_ptr` against the empty value.

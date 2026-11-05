@@ -10,6 +10,7 @@
 #include "PyNames.h"
 #include "PyNative.h"
 #include "PyTuple.h"
+#include <wtf/TZoneMalloc.h>
 
 namespace JSC {
 namespace Python {
@@ -68,6 +69,35 @@ struct TypeDef {
     std::span<const NativeDef> methods;
     std::span<const NativeGetSet> getsets;
     ASCIILiteral doc;
+};
+
+// What PyType::lookup() found last: one table for all the types of a runtime, as CPython has one for all its types, and as the VM has one for
+// all Structures (HasOwnPropertyCache, MegamorphicCache). A type has a key that no other type has or has had, and takes a new one whenever
+// it changes, or one of its bases: what was found before that is never found again.
+// The table keeps nothing alive but the text of the names, each until its place is taken. After each collection it forgets the values
+// that are gone: the dict of a class can be written to behind the back of the class (gc.get_referents(C.__dict__)).
+class TypeLookupCache {
+    WTF_MAKE_NONCOPYABLE(TypeLookupCache);
+    WTF_MAKE_TZONE_ALLOCATED(TypeLookupCache);
+public:
+    TypeLookupCache() = default;
+
+    struct Entry {
+        uint64_t key { 0 };
+        RefPtr<StringImpl> impl;
+        JSValue value; // Empty: no class of the MRO has the name.
+    };
+    static constexpr unsigned size = 4096;
+
+    ALWAYS_INLINE Entry& entryFor(uint64_t key, StringImpl* impl)
+    {
+        uintptr_t bits = reinterpret_cast<uintptr_t>(impl);
+        return m_entries[((bits >> 4) ^ (bits >> 9) ^ (key >> 32)) % size];
+    }
+    void removeUnmarked(Heap&);
+
+private:
+    std::array<Entry, size> m_entries;
 };
 
 class PyType final : public InternalFunction {
@@ -146,9 +176,9 @@ public:
     ALWAYS_INLINE JSValue lookup(JSString* name)
     {
         StringImpl* impl = name->tryGetValueImpl();
-        LookupCacheEntry& entry = lookupCacheEntry(impl);
-        if (entry.impl == impl) [[likely]]
-            return entry.value.get();
+        TypeLookupCache::Entry& entry = m_lookupCache->entryFor(m_lookupKey, impl);
+        if (entry.key == m_lookupKey && entry.impl == impl) [[likely]]
+            return entry.value;
         return lookupSlow(name);
     }
     // The same for a name that is an instance of a class derived from str: getattr(o, name). It is looked for as a dict looks for any
@@ -241,18 +271,7 @@ public:
 private:
     PyType(VM&, Structure*);
 
-    // What lookup() found last, for some names.
-    struct LookupCacheEntry {
-        StringImpl* impl { nullptr };
-        WriteBarrier<JSString> name; // Keeps impl alive.
-        WriteBarrier<Unknown> value;
-    };
-    static constexpr unsigned lookupCacheSize = 16;
-    LookupCacheEntry& lookupCacheEntry(StringImpl* impl)
-    {
-        uintptr_t bits = reinterpret_cast<uintptr_t>(impl);
-        return m_lookupCache[((bits >> 4) ^ (bits >> 9)) % lookupCacheSize];
-    }
+    void takeNewLookupKey();
 
     JSValue lookupSlow(JSString* name);
     static std::atomic<uint64_t> s_timesLookupRanCode;
@@ -273,9 +292,12 @@ private:
     WriteBarrier<Unknown> m_subclasses; // A list, or empty: of built-in types, of weak references to classes, and of tuples of one such for dependents.
     WriteBarrier<Structure> m_instanceStructure;
     WriteBarrier<JSObject> m_jsPrototype;
+    TypeLookupCache* m_lookupCache { nullptr }; // The runtime's.
+    // Another after every change, like the version. But that is of 32 bits, for the instructions that remember it, so there are not enough for
+    // every change of every type. Of these there are.
+    uint64_t m_lookupKey { 0 };
     OptionSet<TypeFlag> m_flags;
     uint32_t m_version { 0 };
-    uint32_t m_numberOfChanges { 0 };
     uint16_t m_versionsLeft { 1000 };
     bool m_isBeingToldOfChange { false };
     bool m_hasInstancesAmongAttributes { false };
@@ -288,7 +310,6 @@ private:
     static_assert(static_cast<uint8_t>(SpecialState::Known) == specialIsOfNoParticularKind && static_cast<uint8_t>(SpecialState::Function) == specialIsFunction);
     std::array<SpecialState, numberOfSpecials> m_specialStates { };
     std::array<WriteBarrier<Unknown>, numberOfSpecials> m_specials;
-    std::array<LookupCacheEntry, lookupCacheSize> m_lookupCache;
 };
 
 // A PyDict is a dict or a frozendict, or an instance of a class derived from either.
