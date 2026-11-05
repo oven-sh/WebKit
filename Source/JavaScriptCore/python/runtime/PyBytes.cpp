@@ -1686,6 +1686,32 @@ static JSValue bytesJoinHoldingBuffers(JSGlobalObject* globalObject, JSValue sel
     return result;
 }
 
+// The items, of which there is one at least, are bytes, or with `hasArrays` bytes and bytearrays. (Not inline: the loops have the registers to themselves.)
+template<bool hasArrays>
+static NEVER_INLINE void bytesJoinInto(std::span<uint8_t> buffer, std::span<const JSValue> items, std::span<const uint8_t> separator)
+{
+    auto append = [&](std::span<const uint8_t> bytes) ALWAYS_INLINE_LAMBDA {
+        WTF::copyElements(buffer, bytes);
+        skip(buffer, bytes.size());
+    };
+    auto bytesOf = [](JSValue item) ALWAYS_INLINE_LAMBDA -> std::span<const uint8_t> {
+        JSCell* cell = item.asCell();
+        if (hasArrays && cell->type() != PyBytesType)
+            return uncheckedDowncast<PyByteArray>(cell)->span();
+        return uncheckedDowncast<PyBytes>(cell)->span();
+    };
+    append(bytesOf(items.front()));
+    if (separator.empty()) {
+        for (JSValue item : items.subspan(1))
+            append(bytesOf(item));
+        return;
+    }
+    for (JSValue item : items.subspan(1)) {
+        append(separator);
+        append(bytesOf(item));
+    }
+}
+
 static JSValue bytesJoin(JSGlobalObject* globalObject, JSValue self, JSValue iterable)
 {
     Runtime& rt = runtime(globalObject);
@@ -1722,48 +1748,41 @@ static JSValue bytesJoin(JSGlobalObject* globalObject, JSValue self, JSValue ite
         takePendingException(globalObject);
         return raiseTypeError(globalObject, scope, "sequence item "_s, index, ": expected a bytes-like object, "_s, typeName(globalObject, item), " found"_s);
     };
-    // Mostly the items are bytes, all of them, and lie one behind the other.
-    auto asExactBytes = [&](JSValue item) ALWAYS_INLINE_LAMBDA -> PyBytes* {
-        if (!item || !item.isCell() || item.asCell()->type() != PyBytesType)
-            return nullptr;
-        auto* bytes = uncheckedDowncast<PyBytes>(item.asCell());
-        return bytes->type() == rt.bytesType() ? bytes : nullptr;
-    };
+    // Mostly the items are bytes or bytearrays, all of them, and lie one behind the other.
     std::span<const JSValue> items = tuple ? tuple->span() : listValues(list);
+    PyType* bytesType = rt.bytesType();
     uint64_t lengthOfBytes = 0;
     size_t numberOfBytes = 0;
+    bool hasArrays = false;
     for (; numberOfBytes < items.size(); ++numberOfBytes) {
-        auto* bytes = asExactBytes(items[numberOfBytes]);
-        if (!bytes)
+        JSValue item = items[numberOfBytes];
+        if (!item || !item.isCell())
             break;
-        lengthOfBytes += bytes->length();
+        JSCell* cell = item.asCell();
+        if (cell->type() == PyBytesType && uncheckedDowncast<PyBytes>(cell)->type() == bytesType) [[likely]] {
+            lengthOfBytes += uncheckedDowncast<PyBytes>(cell)->length();
+            continue;
+        }
+        if (cell->type() != PyByteArrayType || uncheckedDowncast<PyByteArray>(cell)->type() != rt.bytearrayType())
+            break;
+        lengthOfBytes += uncheckedDowncast<PyByteArray>(cell)->length();
+        hasArrays = true;
     }
     if (numberOfBytes == count && count > 1) {
         auto separator = bytesSpanOf(self);
         lengthOfBytes += static_cast<uint64_t>(separator.size()) * (count - 1);
         if (lengthOfBytes > static_cast<uint64_t>(bytesMaxSsize))
             return raiseOverflowError(globalObject, scope, "join() result is too long"_s);
-        // (To allocate runs no code, so the items stay where they are.)
+        // (To allocate runs no code, so the items stay where and what they are.)
         JSValue result;
         uint8_t* data;
         if (failed(scope, bytesAllocate(globalObject, isArray, lengthOfBytes, result, data)))
             return { };
         std::span<uint8_t> buffer { data, static_cast<size_t>(lengthOfBytes) };
-        auto append = [&](std::span<const uint8_t> bytes) ALWAYS_INLINE_LAMBDA {
-            WTF::copyElements(buffer, bytes);
-            skip(buffer, bytes.size());
-        };
-        auto bytesAt = [&](size_t index) ALWAYS_INLINE_LAMBDA { return uncheckedDowncast<PyBytes>(items[index].asCell())->span(); };
-        append(bytesAt(0));
-        if (separator.empty()) {
-            for (size_t i = 1; i < count; ++i)
-                append(bytesAt(i));
-        } else {
-            for (size_t i = 1; i < count; ++i) {
-                append(separator);
-                append(bytesAt(i));
-            }
-        }
+        if (!hasArrays) [[likely]]
+            bytesJoinInto<false>(buffer, items, separator);
+        else
+            bytesJoinInto<true>(buffer, items, separator);
         ensureStillAliveHere(tuple);
         ensureStillAliveHere(list);
         return result;
