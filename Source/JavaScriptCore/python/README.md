@@ -935,6 +935,15 @@ among files or packages and never installed. `module.isBuiltin("python:x")` says
 A file is Python if its name ends in `.py` or the import says so: `import rules from "./rules.txt" with { type: "python" }`. Python's own import would not look at such a file, so it is a
 module under a name of its own (`rules_<hash of the path>`), one module however often it is imported.
 
+A `.py` file that JS imports is the module that Python's own `import` of it gives (Bun: `import_file` in `src/python/_bun_import.py`): `a/mod.py`
+is `mod`, and a file in a package (a directory with `__init__.py`) is `package.mod`. For that its directory, or the one the outermost package
+lies in, is appended to `sys.path`: at the end, where it hides nothing, and there it stays. So files that JS imports from several
+directories share one `sys.path` and one `sys.modules`, as all of a Python program does, and names go by Python's rule: `import helper` in
+`b/mod.py` finds `a/helper.py` if both directories have one and JS imported something from `a/` first. A relative import, in a package,
+says which one is meant. Two files that JS itself imports are two modules though they have one name: if the name means something else to Python
+already (`a/mod.py` came first, the standard library has a `mod`), the file is a module under a name of its own, as above. Not so a file in
+a package: of two packages with one name Python knows only the first, and to import `b/package/mod.py` after `a/package/mod.py` is an `ImportError`.
+
 ## Codecs
 
 What CPython has in C is in C++ here: UTF-8, 16, 32 and 7, ASCII, Latin-1, the escapes, charmap, the registry and the error handlers
