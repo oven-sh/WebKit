@@ -265,6 +265,12 @@ void TypeLookupCache::removeUnmarked(Heap& heap)
 {
     uint64_t runs = heap.collectionScope() == CollectionScope::Eden ? m_written : ~0ull;
     m_written = 0;
+#if ASSERT_ENABLED
+    for (unsigned i = 0; i < size; ++i) {
+        if (!(runs >> (i / entriesPerBit) & 1))
+            ASSERT(!m_entries[i].value || !m_entries[i].value.isCell() || heap.isMarked(m_entries[i].value.asCell()));
+    }
+#endif
     // (The text is let go of when the entry is taken for another name: not here, which may be the collector's thread.)
     for (; runs; runs &= runs - 1) {
         for (Entry& entry : std::span { m_entries }.subspan(WTF::ctz(runs) * entriesPerBit, entriesPerBit)) {

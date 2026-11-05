@@ -109,6 +109,7 @@ public:
 
 private:
     static constexpr unsigned entriesPerBit = size / 64;
+    static_assert(size && !(size % 64));
 
     std::array<Entry, size> m_entries;
     uint64_t m_written { 0 }; // A bit for each run of entries: one of them was given a cell since the last collection.
