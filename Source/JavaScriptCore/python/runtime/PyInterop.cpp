@@ -166,8 +166,18 @@ static bool propertyKeyForAttribute(JSGlobalObject* globalObject, JSObject* obje
 static bool isPrototypeOfConstructor(JSGlobalObject* globalObject, JSObject* object)
 {
     VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue constructor = object->getDirect(vm, vm.propertyNames->constructor);
-    if (!constructor || !constructor.isObject())
+    if (!constructor) [[likely]]
+        return false;
+    // In many classes of the host it is a getter written in C++ (Headers.prototype).
+    if (constructor.isCell() && constructor.asCell()->type() == CustomGetterSetterType) [[unlikely]] {
+        if (failed(scope, ensureMainThreadForJS(globalObject)))
+            return false;
+        constructor = object->get(globalObject, vm.propertyNames->constructor);
+        RETURN_IF_EXCEPTION(scope, false);
+    }
+    if (!constructor.isObject())
         return false;
     return asObject(constructor)->getDirect(vm, vm.propertyNames->prototype) == JSValue(object);
 }
@@ -180,6 +190,7 @@ static JSValue bindIfFunction(JSGlobalObject* globalObject, JSObject* object, JS
 {
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
     if (!value.isObject() || isPyObject(value) || PyFunction::is(value) || PyType::is(value) || PyNativeFunction::is(value))
         return value;
     JSObject* function = asObject(value);
@@ -189,7 +200,11 @@ static JSValue bindIfFunction(JSGlobalObject* globalObject, JSObject* object, JS
     if (auto* jsFunction = dynamicDowncast<JSFunction>(function); jsFunction && !jsFunction->isHostFunction() && isClassWrittenInJS(jsFunction))
         return value;
     // Nor is what a module exports a method of its namespace.
-    if (function->inherits<InternalFunction>() || object->type() == ModuleNamespaceObjectType || isPrototypeOfConstructor(globalObject, object))
+    if (function->inherits<InternalFunction>() || object->type() == ModuleNamespaceObjectType)
+        return value;
+    bool isPrototype = isPrototypeOfConstructor(globalObject, object);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (isPrototype)
         return value;
     // object -> function -> bound function, all of it weak: a bound function lasts as long as both.
     auto mapIn = [&](JSValue found, auto&& remember) {
