@@ -911,6 +911,8 @@ public:
     StructureID iteratorStructureID; // Of PyIterator.
     Allocator iteratorAllocator; // Of its cells, as ObjectAllocationProfile has one for generated code. None: Options::forceGCSlowPaths.
     StructureID functionStructureID; // Of PyFunction.
+    TaggedNativeFunction hostFunctionOfNativeFunctions; // What PyNativeFunction::is() goes by,
+    TaggedNativeFunction hostFunctionOfTypes; // and PyType::is().
     // What beginBinaryOperation() and its like leave to their caller, which reads it at once. `progress`: with IsReflected.
     struct {
         PyFunction* function { nullptr };

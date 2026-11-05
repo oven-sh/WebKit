@@ -391,6 +391,10 @@ in Python, the instance is made and `__init__` called without leaving the interp
 Python function, and Python a JS function, with the engine's own call sequence and inline caches.
 When Python calls what is not Python, the frame is adapted on the way (`prepareForeignCall`, from `linkFor`): keyword arguments
 become a trailing object, whole floats become numbers.
+A call site is linked to the function that its second call calls. One that is then given something else goes virtual, as in JS, but with a trampoline
+of its own (`llint_python_virtual_call_trampoline`), since the VM's would enter a function of JS with the frame as it is. It keeps nothing about the
+callees: functions that one `def` or `lambda` makes over and over are all alike to it. It enters functions written in Python (those that have the
+Structure they were made with), and functions and types written in C++, and leaves everything else to the slow path.
 `f(*a, **k)` is `op_call_varargs` with an array that `callArguments()` makes, in CPython's order: `k` is read, then `a` is gone through.
 The names that come out of `k` are its keys as they are, not atoms: a program can make any number of them, and an atom is looked
 up in a table that all strs of the process share. So whoever takes keywords compares texts where the pointers differ.
@@ -726,6 +730,13 @@ so the aim is that everything Python *guarantees* holds, and that what it merely
   collection that is to find things dead: before every round of `gc.collect()`, for the last round has gone through the very
   objects that this one is to find gone, at exit (`finalizeInterpreter`, `finalizeAllAtExit`), and before finalizers and handlers
   of signals are called at a safe point (`makeCallsOwed`), whose frames of C++ stay while those run.
+  Nothing is wiped before an ordinary call of a function written in C++. If that calls back into Python code (`max(l, key=f)`, a class
+  with an `__init__`) and a collection is made there, its frames may lie over what an earlier call left, and an object that was dropped
+  just before may still be seen. The slow path of a call clears 256 bytes below the frame (`linkFor` in `LowLevelInterpreter.asm`). The first
+  two calls of a site come by it, and every call of what C++ has to call; a site that is linked, or has gone virtual, does not. A
+  program that has `x` in 60 variables of a recursion, drops it, and asks in `f([1], key=check)` whether it is gone hears yes 0 to 2 times
+  out of 18, for `max`, `min`, `sorted` and classes with `__init__` or `__new__`, whether the site has had one callee or several. (While a
+  site with several callees took the slow path each time, it was 1, 18, 6, 0 and 18 for these; with one callee, as now.)
 - **`gc.collect(0)` and `gc.collect(1)`** are collections of the young generation: of what has been allocated since the last
   collection, whoever made that. There are two generations here, and a program passes 0 or 1 to be quick. What is found
   dead is finalized, weak references to it are cleared and it is counted, as above; what has come through a collection is

@@ -231,9 +231,8 @@ ALWAYS_INLINE void* linkFor(VM& vm, JSCell* owner, CallFrame* calleeFrame, CallL
             }
             case CallLinkInfo::Mode::Monomorphic:
             case CallLinkInfo::Mode::Polymorphic: {
-                if (isCalledByPython)
-                    break; // See below.
-                if (kind == CodeSpecializationKind::CodeForCall) {
+                // (See below.)
+                if (kind == CodeSpecializationKind::CodeForCall && !isCalledByPython) {
                     linkPolymorphicCall(vm, owner, calleeFrame, *callLinkInfo, CallVariant(internalFunction));
                     break;
                 }
@@ -296,11 +295,9 @@ ALWAYS_INLINE void* linkFor(VM& vm, JSCell* owner, CallFrame* calleeFrame, CallL
     }
     case CallLinkInfo::Mode::Monomorphic:
     case CallLinkInfo::Mode::Polymorphic: {
-        // A call site that has gone virtual enters whatever function it is given without coming here, foreign ones too.
-        // FIXME: So call sites in Python code that see a second callee come here for it each time.
-        if (isCalledByPython)
-            break;
-        if (kind == CodeSpecializationKind::CodeForCall) {
+        // A call site of Python code goes virtual at once. Its trampoline enters nothing foreign without coming to virtualForWithFunction()
+        // (llint_python_virtual_call_trampoline), which a stub for some callees and the VM's thunk for virtual calls would.
+        if (kind == CodeSpecializationKind::CodeForCall && !isCalledByPython) {
             linkPolymorphicCall(vm, owner, calleeFrame, *callLinkInfo, CallVariant(callee));
             break;
         }

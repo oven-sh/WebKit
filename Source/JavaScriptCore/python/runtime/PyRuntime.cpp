@@ -187,6 +187,8 @@ void Runtime::initializeStructures()
     m_nativeFunctionStructure.set(vm, globalObject, PyNativeFunction::createStructure(vm, globalObject, functionPrototype));
     m_functionStructure.set(vm, globalObject, PyFunction::createStructure(vm, globalObject, functionPrototype));
     functionStructureID = m_functionStructure->id();
+    hostFunctionOfNativeFunctions = TaggedNativeFunction(callNativeFunction);
+    hostFunctionOfTypes = TaggedNativeFunction(callType);
     m_listSubclassStructure.set(vm, globalObject, PyListObject::createStructure(vm, globalObject, globalObject->arrayPrototype()));
     m_weakRefStructure.set(vm, globalObject, PyWeakRef::createStructure(vm, globalObject));
 }

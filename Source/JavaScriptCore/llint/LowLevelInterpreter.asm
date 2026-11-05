@@ -2909,6 +2909,37 @@ end)
 
 # t0 is callee
 # t2 is CallLinkInfo*
+# For the call sites of Python code. What is not Python's is left to the slow path, which adapts the frame: Python::prepareForeignCall().
+op(llint_python_virtual_call_trampoline, macro ()
+    btqnz t0, NotCellMask, .slowCase
+    loadp CodeBlock[cfr], t5
+    loadp CodeBlock::m_globalObject[t5], t5
+    loadp JSGlobalObject::m_pythonRuntime[t5], t5
+    loadi JSCell::m_structureID[t0], t4
+    bineq t4, Python::Runtime::functionStructureID[t5], .notFunction
+    loadp JSFunction::m_executableOrRareData[t0], t5
+    btpz t5, (constexpr JSFunction::rareDataTag), .isExecutable
+    loadp (FunctionRareData::m_executable - (constexpr JSFunction::rareDataTag))[t5], t5
+.isExecutable:
+    loadp ExecutableBase::m_jitCodeForCallWithArityCheck[t5], t4
+    btpz t4, .slowCase
+    move t4, t1
+    loadp FunctionExecutable::m_codeBlockForCall[t5], t5
+    storep t5, CodeBlock - PrologueStackPointerDelta[sp]
+    jmp t1, JSEntryPtrTag
+.notFunction:
+    bbneq JSCell::m_type[t0], InternalFunctionType, .slowCase
+    loadp InternalFunction::m_functionForCall[t0], t4
+    bpeq t4, Python::Runtime::hostFunctionOfNativeFunctions[t5], .isPythons
+    bpneq t4, Python::Runtime::hostFunctionOfTypes[t5], .slowCase
+.isPythons:
+    jmp _llint_internal_function_call_trampoline
+.slowCase:
+    linkFor(_llint_virtual_call)
+end)
+
+# t0 is callee
+# t2 is CallLinkInfo*
 op(llint_polymorphic_normal_call_trampoline, macro ()
     loadp CallLinkInfo::m_stub[t2], t5
     addp (constexpr (PolymorphicCallStubRoutine::offsetOfTrailingData())), t5

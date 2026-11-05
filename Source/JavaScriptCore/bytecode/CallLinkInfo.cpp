@@ -36,6 +36,7 @@
 #include "JITThunks.h"
 #include "JSCellInlines.h"
 #include "JSWebAssemblyModule.h"
+#include "LLIntData.h"
 #include "LLIntEntrypoint.h"
 #include "LinkBuffer.h"
 #include "Opcode.h"
@@ -254,7 +255,7 @@ void DataOnlyCallLinkInfo::initialize(VM& vm, CodeBlock* owner, CallType callTyp
     m_mode = static_cast<unsigned>(Mode::Init);
     // Code compiled ahead of time has call sites without a CodeBlock.
     m_isInPythonCode = owner && owner->unlinkedCodeBlock()->isPython();
-    if (!Options::useLLIntICs() && !m_isInPythonCode) [[unlikely]]
+    if (!Options::useLLIntICs()) [[unlikely]]
         setVirtualCall(vm);
 }
 
@@ -365,7 +366,7 @@ void CallLinkInfo::reset(VM&)
 
 void CallLinkInfo::revertCall(VM& vm)
 {
-    if (!Options::useLLIntICs() && type() == CallLinkInfo::Type::DataOnly && !m_isInPythonCode) [[unlikely]]
+    if (!Options::useLLIntICs() && type() == CallLinkInfo::Type::DataOnly) [[unlikely]]
         setVirtualCall(vm);
     else
         reset(vm);
@@ -378,7 +379,10 @@ void CallLinkInfo::setVirtualCall(VM& vm)
     m_callee.clear();
     *std::bit_cast<uintptr_t*>(m_callee.slot()) = polymorphicCalleeMask;
     m_codeBlock = nullptr; // PolymorphicCallStubRoutine will set CodeBlock inside it.
-    m_monomorphicCallDestination = vm.getCTIVirtualCall(callMode()).code().template retagged<JSEntryPtrTag>();
+    if (m_isInPythonCode)
+        m_monomorphicCallDestination = LLInt::getCodePtr<JSEntryPtrTag>(llint_python_virtual_call_trampoline);
+    else
+        m_monomorphicCallDestination = vm.getCTIVirtualCall(callMode()).code().template retagged<JSEntryPtrTag>();
 
     setClearedByVirtual();
     m_mode = static_cast<unsigned>(Mode::Virtual);
