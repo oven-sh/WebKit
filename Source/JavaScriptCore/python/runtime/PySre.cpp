@@ -310,8 +310,10 @@ static bool sreGetText(JSGlobalObject* globalObject, JSValue value, SreText& tex
 }
 
 // subject[start:end], where `wide` is the UTF-32 of the subject if positions are not those of its UTF-16.
-static JSValue sreSliceOfStr(VM& vm, JSString* subject, const String& string, PyByteStorage* wide, ptrdiff_t start, ptrdiff_t end)
+// Nothing, with a MemoryError: there is no room for it.
+static JSValue sreSliceOfStr(JSGlobalObject* globalObject, JSString* subject, const String& string, PyByteStorage* wide, ptrdiff_t start, ptrdiff_t end)
 {
+    VM& vm = getVM(globalObject);
     if (start >= end)
         return jsEmptyString(vm);
     if (!wide) {
@@ -323,9 +325,9 @@ static JSValue sreSliceOfStr(VM& vm, JSString* subject, const String& string, Py
     StrBuilder builder;
     for (ptrdiff_t i = start; i < end; ++i)
         appendCodePoint(builder, characters[i]);
-    if (builder.length() == string.length())
+    if (!builder.hasOverflowed() && builder.length() == string.length())
         return subject;
-    return makeStr(vm, builder.toString());
+    return makeStr(globalObject, builder);
 }
 
 static JSValue sreSliceOfText(JSGlobalObject* globalObject, const SreText& text, JSValue object, ptrdiff_t start, ptrdiff_t end)
@@ -335,7 +337,7 @@ static JSValue sreSliceOfText(JSGlobalObject* globalObject, const SreText& text,
             return object;
         return PyBytes::create(globalObject, std::span { static_cast<const uint8_t*>(text.characters) + start, static_cast<size_t>(end - start) });
     }
-    return sreSliceOfStr(getVM(globalObject), strValue(object), text.string, text.wide, start, std::min(end, text.length));
+    return sreSliceOfStr(globalObject, strValue(object), text.string, text.wide, start, std::min(end, text.length));
 }
 
 // All that a match or a series of matches over one subject needs. It must be on the stack: that is how the collector finds
@@ -504,7 +506,7 @@ static JSValue sreGroupByIndex(JSGlobalObject* globalObject, PyRecord* match, pt
         String text = subject->value(globalObject);
         RETURN_IF_EXCEPTION(scope, { });
         JSValue wide = match->get(SreMatch::Wide);
-        return sreSliceOfStr(vm, subject, text, wide ? uncheckedDowncast<PyByteStorage>(wide.asCell()) : nullptr, start, end);
+        RELEASE_AND_RETURN(scope, sreSliceOfStr(globalObject, subject, text, wide ? uncheckedDowncast<PyByteStorage>(wide.asCell()) : nullptr, start, end));
     }
 
     // A bytearray may have shrunk since.
@@ -948,7 +950,9 @@ static JSValue srePatternSplit(JSGlobalObject* globalObject, JSValue thisValue, 
         if (!status)
             break;
 
-        listAppend(globalObject, list, run.slice(globalObject, last, run.startIndex()));
+        JSValue before = run.slice(globalObject, last, run.startIndex());
+        RETURN_IF_EXCEPTION(scope, { });
+        listAppend(globalObject, list, before);
         RETURN_IF_EXCEPTION(scope, { });
         for (ptrdiff_t group = 1; group <= groups; ++group) {
             JSValue part = sreGroupOfRun(globalObject, run, group, false);
@@ -960,7 +964,9 @@ static JSValue srePatternSplit(JSGlobalObject* globalObject, JSValue thisValue, 
         sreMoveOn(run);
         last = run.startIndex();
     }
-    listAppend(globalObject, list, run.slice(globalObject, last, run.endpos));
+    JSValue rest = run.slice(globalObject, last, run.endpos);
+    RETURN_IF_EXCEPTION(scope, { });
+    listAppend(globalObject, list, rest);
     RETURN_IF_EXCEPTION(scope, { });
     ensureStillAliveHere(pattern);
     return list;
@@ -1023,7 +1029,9 @@ static JSValue sreSubstitute(JSGlobalObject* globalObject, JSValue thisValue, JS
 
         ptrdiff_t matchStart = run.startIndex();
         if (copied < matchStart) {
-            listAppend(globalObject, list, run.slice(globalObject, copied, matchStart));
+            JSValue before = run.slice(globalObject, copied, matchStart);
+            RETURN_IF_EXCEPTION(scope, { });
+            listAppend(globalObject, list, before);
             RETURN_IF_EXCEPTION(scope, { });
         }
 
@@ -1046,7 +1054,9 @@ static JSValue sreSubstitute(JSGlobalObject* globalObject, JSValue thisValue, JS
         sreMoveOn(run);
     }
     if (copied < run.endpos) {
-        listAppend(globalObject, list, run.slice(globalObject, copied, run.endpos));
+        JSValue rest = run.slice(globalObject, copied, run.endpos);
+        RETURN_IF_EXCEPTION(scope, { });
+        listAppend(globalObject, list, rest);
         RETURN_IF_EXCEPTION(scope, { });
     }
     ensureStillAliveHere(pattern);
