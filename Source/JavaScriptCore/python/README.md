@@ -206,11 +206,12 @@ its searches, and its order is that of insertion. What is left is in DEFERRED.md
   377, 690 with keys of 64 characters, 3,273 with 1,000. Neither the `JSString` nor the `StringImpl` has room for them (above).
 
 A set has no two ways. It goes by `hash()` from the start, because its order can be seen: whoever sets `PYTHONHASHSEED` to have runs repeat
-gets the order that CPython gives. The price is the hashing: `k in s` 447 instructions with the loop, now 487 (25.3 ns, now 28.2), `set()`
-of 20 strs 6,956, now 7,720. And a dict of strs has no hashes to hand on: `set(d)` with 20 keys 3,929, now 6,397, `d.keys() | e.keys()`
-10,114, now 13,540. That is also what two ways for sets would save, in whole programs less than the 0.1 to 0.8 % above. `dict.fromkeys(s)`
-makes a table for keys of any kind, as CPython does, whatever is in the set (10,117, now 13,906, and a str is hashed whenever it is looked
-for there).
+gets the order that CPython gives. The price is the hashing: `k in s` 447 instructions with the loop, then 487 (25.3 ns, 28.2), `set()` of
+20 strs 6,956, now 7,720. (`k in s` is 399 since `in` asks a set or a frozenset itself, in `containsInline()`, without the lookup and the
+call of `__contains__`. Of 62 million `in` and `not in` in the thirteen programs above 32 % were asked of dicts and 31 % of sets.) And a
+dict of strs has no hashes to hand on: `set(d)` with 20 keys 3,929, now 6,397, `d.keys() | e.keys()` 10,114, now 13,540. That is also what
+two ways for sets would save, in whole programs less than the 0.1 to 0.8 % above. `dict.fromkeys(s)` makes a table for keys of any kind, as
+CPython does, whatever is in the set (10,117, now 13,906, and a str is hashed whenever it is looked for there).
 
 The tables of `pyexpat` that a document fills (entities, element types, prefixes, the attributes of an element) are WTF's, which left to
 themselves go by the `StringImpl`'s hash; they are given `KeyedStringHash`. (CPython salts expat's tables from the same key.) 6,728

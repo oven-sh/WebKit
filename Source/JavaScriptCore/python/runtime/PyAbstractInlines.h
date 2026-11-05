@@ -11,6 +11,7 @@
 #include "PyErrors.h"
 #include "PyInternals.h"
 #include "PyList.h"
+#include "PySet.h"
 #include "PyTuple.h"
 
 namespace JSC {
@@ -146,6 +147,10 @@ ALWAYS_INLINE bool containsInline(JSGlobalObject* globalObject, JSValue containe
         case PyDictType:
             if (auto* dict = uncheckedDowncast<PyDict>(cell); dict->type() == rt.dictType())
                 RELEASE_AND_RETURN(scope, dict->contains(globalObject, item));
+            break;
+        case PySetType:
+            if (auto* set = uncheckedDowncast<PySet>(cell); set->type() == rt.setType() || set->type() == rt.frozensetType())
+                RELEASE_AND_RETURN(scope, setContains(globalObject, set, item));
             break;
         case ArrayType:
             RELEASE_AND_RETURN(scope, listContains(globalObject, uncheckedDowncast<JSArray>(cell), item));
