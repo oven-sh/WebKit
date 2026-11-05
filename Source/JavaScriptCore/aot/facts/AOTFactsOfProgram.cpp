@@ -2051,7 +2051,7 @@ public:
     bool hasNoFindingsIn(FunctionID id) const { return m_inputs.looks.of(id).empty(); }
     bool knowsWhatBodyMakes(FunctionID) const;
     WritesOnBuiltinsInProgramFacts& writes() LIFETIME_BOUND { return m_writes; }
-    void noteEvaluated(ModuleID id) { evaluate(id, noWitness); }
+    void noteEvaluated(ModuleID);
     void setNativeCodeMayHoldObjects(bool mayHold) { m_nativeCodeMayHoldObjects = mayHold; }
     void take(const LookupsPastProgramObjects&);
     void noteNameRead(PropertyKeyID key) { m_namesRead.set(key.index()); }
@@ -2101,6 +2101,7 @@ private:
     bool mayExport(const Module&, StringID name) const;
     void useBuiltinsThatHostHandsExportsTo();
     void followModules();
+    void followRequestsOfEvaluatedModules();
     void evaluate(ModuleID, const Witness&);
 
     void letGo(BuiltinID canonical, const Witness&);
@@ -2641,6 +2642,13 @@ void BuilderOfProgramFacts::followModules()
             evaluate(ModuleID(index), noWitness);
     }
 
+    followRequestsOfEvaluatedModules();
+    AOT::sort(m_program.libraryModulesLacked);
+}
+
+// The importer is the witness: an object that a file of the program lets go hands out the events below it. The flow and the last run both come by it here, so neither takes for closed what the other opens.
+void BuilderOfProgramFacts::followRequestsOfEvaluatedModules()
+{
     while (!m_modulesToFollow.isEmpty()) {
         ModuleID id = m_modulesToFollow.takeLast();
         const Module& module = m_source.at(id);
@@ -2650,7 +2658,12 @@ void BuilderOfProgramFacts::followModules()
         for (const ModuleRequest& request : module.requests)
             evaluate(request.target, witness);
     }
-    AOT::sort(m_program.libraryModulesLacked);
+}
+
+void BuilderOfProgramFacts::noteEvaluated(ModuleID id)
+{
+    evaluate(id, noWitness);
+    followRequestsOfEvaluatedModules();
 }
 
 // ---- What is let go, and what values that nobody knows find
