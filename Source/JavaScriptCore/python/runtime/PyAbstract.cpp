@@ -213,6 +213,46 @@ static NEVER_INLINE JSValue raiseDescriptorDoesNotApply(JSGlobalObject* globalOb
     return raiseTypeError(globalObject, scope, "descriptor '"_s, name, "' for '"_s, owner->nameInMessages(), "' objects doesn't apply to a '"_s, typeName(globalObject, object), "' object"_s);
 }
 
+// descriptor.__get__(object, type). What the class of the descriptor has under that name is called as it is, with the descriptor in
+// front. It is not bound first, as the other special methods are: a staticmethod gets three arguments, a classmethod is not callable.
+// For a function that comes to the same, also for one of JS, which has the descriptor as `this`.
+static JSValue callGet(JSGlobalObject* globalObject, JSValue getter, JSValue descriptor, JSValue object, PyType* type)
+{
+    if (!object)
+        object = jsUndefined();
+    if (isMethodDescriptor(getter) || (getter.isCell() && getter.asCell()->type() == JSFunctionType)) [[likely]]
+        return callSpecial(globalObject, getter, descriptor, object, type);
+    Runtime& rt = runtime(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(rt.vm());
+    if (failed(scope, rt.tryEnterFrame())) [[unlikely]]
+        return { };
+    JSValue result = call(globalObject, getter, descriptor, object, type);
+    rt.leaveFrame();
+    scope.release();
+    return result;
+}
+
+// The class of what was found in a class, if that class may make a descriptor of it. Null: it is a function, which bindDescriptor()
+// knows about, or a value of a type that has no such methods.
+static ALWAYS_INLINE PyType* typeOfPossibleDescriptor(Runtime& rt, JSValue descriptor)
+{
+    if (!descriptor.isCell())
+        return nullptr;
+    JSCell* cell = descriptor.asCell();
+    switch (cell->type()) {
+    case JSFunctionType:
+    case StringType:
+    case HeapBigIntType:
+    case ArrayType:
+        return nullptr;
+    case InternalFunctionType:
+        // A class is an instance of its metaclass.
+        return PyType::is(cell) ? uncheckedDowncast<PyType>(cell)->type() : nullptr;
+    default:
+        return rt.typeOf(descriptor);
+    }
+}
+
 JSValue bindDescriptor(JSGlobalObject* globalObject, JSValue descriptor, JSValue object, PyType* type)
 {
     if (!descriptor.isCell())
@@ -244,25 +284,19 @@ JSValue bindDescriptor(JSGlobalObject* globalObject, JSValue descriptor, JSValue
                 return descriptor;
             }
         }
-        return descriptor;
-    case StringType:
-    case HeapBigIntType:
-    case ArrayType:
-    case PyTupleType:
-    case PyDictType:
-        return descriptor;
+        break;
     default:
         break;
     }
-    JSValue getter = rt.typeOf(descriptor)->lookup(Special::Get);
+    PyType* descriptorType = typeOfPossibleDescriptor(rt, descriptor);
+    JSValue getter = descriptorType ? descriptorType->lookup(Special::Get) : JSValue();
     if (!getter)
         return descriptor;
-    // After A.__get__ = A(), to call that it has to be bound, by calling it.
     if (!rt.vm().isSafeToRecurseSoft()) [[unlikely]] {
         auto scope = DECLARE_THROW_SCOPE(rt.vm());
         return raiseRecursionError(globalObject, scope, "maximum recursion depth exceeded"_s);
     }
-    return callSpecial(globalObject, getter, descriptor, object ? object : jsUndefined(), type);
+    return callGet(globalObject, getter, descriptor, object, type);
 }
 
 // ---- Attributes ----
@@ -283,7 +317,7 @@ JSValue genericGetAttr(JSGlobalObject* globalObject, JSValue object, JSString* n
     if (descriptor) {
         if (isMethodDescriptor(descriptor))
             bindsDirectly = true;
-        else if (descriptor.isCell() && isPyObject(descriptor.asCell())) {
+        else if (PyType* descriptorType = typeOfPossibleDescriptor(rt, descriptor)) {
             JSCell* cell = descriptor.asCell();
             // The data descriptors written in C++.
             if (cell->type() == PyObjectType) {
@@ -306,10 +340,9 @@ JSValue genericGetAttr(JSGlobalObject* globalObject, JSValue object, JSString* n
                         RELEASE_AND_RETURN(scope, call(globalObject, function, object));
                 }
             }
-            PyType* descriptorType = uncheckedDowncast<PyObject>(cell)->type();
             getter = descriptorType->lookup(Special::Get);
             if (getter && (descriptorType->lookup(Special::Set) || descriptorType->lookup(Special::Delete)))
-                RELEASE_AND_RETURN(scope, callSpecial(globalObject, getter, descriptor, object, type));
+                RELEASE_AND_RETURN(scope, callGet(globalObject, getter, descriptor, object, type));
         } else if (descriptor.isCell() && (descriptor.asCell()->type() == InternalFunctionType || descriptor.asCell()->type() == JSFunctionType))
             bindsDirectly = true; // A class method, a function of JS, or nothing to bind.
     }
@@ -331,7 +364,7 @@ JSValue genericGetAttr(JSGlobalObject* globalObject, JSValue object, JSString* n
     if (bindsDirectly)
         RELEASE_AND_RETURN(scope, bindDescriptor(globalObject, descriptor, object, type));
     if (getter)
-        RELEASE_AND_RETURN(scope, callSpecial(globalObject, getter, descriptor, object, type));
+        RELEASE_AND_RETURN(scope, callGet(globalObject, getter, descriptor, object, type));
     if (descriptor)
         return descriptor;
     if (suppress)
@@ -346,7 +379,7 @@ void genericSetAttr(JSGlobalObject* globalObject, JSValue object, JSString* name
     auto scope = DECLARE_THROW_SCOPE(vm);
     PyType* type = rt.typeOf(object);
     JSValue descriptor = type->lookup(name);
-    if (descriptor && descriptor.isCell() && isPyObject(descriptor.asCell())) {
+    if (PyType* descriptorType = descriptor ? typeOfPossibleDescriptor(rt, descriptor) : nullptr) {
         JSCell* cell = descriptor.asCell();
         if (cell->type() == PyObjectType) {
             const ClassInfo* info = cell->classInfo();
@@ -384,7 +417,6 @@ void genericSetAttr(JSGlobalObject* globalObject, JSValue object, JSString* name
                 }
             }
         }
-        PyType* descriptorType = uncheckedDowncast<PyObject>(cell)->type();
         JSValue setter = descriptorType->lookup(Special::Set);
         JSValue deleter = descriptorType->lookup(Special::Delete);
         if (setter || deleter) {
@@ -614,12 +646,10 @@ static UniquedStringImpl* propertyKeyOfAttribute(JSString* name)
     return parseIndex(*key) ? nullptr : key;
 }
 
-static bool isDataDescriptor(JSValue descriptor)
+static bool isDataDescriptor(Runtime& rt, JSValue descriptor)
 {
-    if (!descriptor || !descriptor.isCell() || !isPyObject(descriptor.asCell()))
-        return false;
-    PyType* type = uncheckedDowncast<PyObject>(descriptor.asCell())->type();
-    return type->lookup(Special::Set) || type->lookup(Special::Delete);
+    PyType* type = descriptor ? typeOfPossibleDescriptor(rt, descriptor) : nullptr;
+    return type && (type->lookup(Special::Set) || type->lookup(Special::Delete));
 }
 
 // What was found in `type` stays there while that has its version. But what it does as a descriptor is up to its own class, which
@@ -737,7 +767,7 @@ static AttributeDescription describeAttributeOfObject(JSGlobalObject* globalObje
     // refuse that, and goes by another name once it is bound.
     if (forCall && hasHook && PyNativeFunction::is(descriptor))
         return None;
-    bool isData = isDataDescriptor(descriptor);
+    bool isData = isDataDescriptor(rt, descriptor);
     // The Structure is looked at when the lookups are over. Code that one of them ran may have given the object another, and a
     // collection may have freed this one.
     if (PyType::timesLookupRanCode() != timesLookupRanCode) [[unlikely]]
@@ -901,7 +931,7 @@ bool describeSetAttribute(JSGlobalObject* globalObject, JSValue object, JSString
     if (mayBecomeAnotherKindOfDescriptor(rt, descriptor, type))
         return false;
     bool isSlot = descriptor && descriptor.isCell() && descriptor.asCell()->type() == PyObjectType && descriptor.asCell()->classInfo() == PyMemberDescriptor::info();
-    if (!isSlot && isDataDescriptor(descriptor))
+    if (!isSlot && isDataDescriptor(rt, descriptor))
         return false;
     // As in describeAttributeOfObject(): the Structure is looked at when the lookups are over.
     if (PyType::timesLookupRanCode() != timesLookupRanCode) [[unlikely]]
