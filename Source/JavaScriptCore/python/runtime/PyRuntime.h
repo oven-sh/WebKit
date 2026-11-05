@@ -821,6 +821,8 @@ public:
     void didCallWithGeneratorArgument() { m_whereToLeaveGeneratorArgument = nullptr; }
     // The loop is left before the iterator is exhausted.
     void releaseIteratorOfLoop(JSValue iterator);
+    // A built-in function or `in` is done with it, perhaps by an exception.
+    void releaseGeneratorGoneThrough(PyGenerator*);
     // An exception is caught in the frame, or leaves it.
     void releaseIteratorsOfLoopsLeft(CallFrame*, unsigned offset, bool isCaught);
     unsigned ownershipEpoch() const { return m_ownershipEpoch; }

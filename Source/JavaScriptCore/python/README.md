@@ -809,15 +809,15 @@ so the aim is that everything Python *guarantees* holds, and that what it merely
     (`open(w, "w").writelines(open(p))`) the last made goes first, as CPython lets go of them. Not `json.load(open(p))` or
     `for line in open(p)`: what a function written in Python does with its argument is not known when the file is opened.
   - A generator function looks at the marks too, and so does what makes the generator of a generator expression. It notes the last generator made if its use is
-    the head of a `for` loop or of a loop of a comprehension, or to be
+    the head of a `for` loop or of a loop of a comprehension, to be searched by `in` or `not in`, or to be
     passed to a built-in function that is already waiting in a register and says that it goes through such an argument and keeps
-    nothing of it (`NativeFlag::ClosesGeneratorArgument`: `next`, `any`, `all`, `sum`, `min`, `max`). The use takes the note up:
-    `op_py_get_iter`, the next instruction to run there, or the function when it begins (`GeneratorArgumentScope`). There is one note, so of two
+    nothing of it (`NativeFlag::ClosesGeneratorArgument`: `next`, `any`, `all`, `sum`, `min`, `max`, `functools.reduce`). The use takes the note up:
+    `op_py_get_iter` or `op_py_compare`, the next instruction to run there, or the function when it begins (`GeneratorArgumentScope`). There is one note, so of two
     generators in one call the first waits for the collector.
   - The loop closes a generator it owns on every way out but the end: an instruction on the way of `break`, `return` and the `continue`
     of an outer loop; for an exception the unwinder does it, from the marks that tracing has for loops, before anybody is
     told that the exception is caught or leaves the frame, as CPython pops the stack of a frame first. The function closes it when it
-    returns or raises; if a profiler is waiting to hear of that, after it has. A generator that the
+    returns or raises; if a profiler is waiting to hear of that, after it has. `in` closes it when it has found the item, or `==` has raised. A generator that the
     collector would leave alone (no handler in it, nothing in its frame to close) is left alone here too, unless a tool listens to
     its code, which is then told of the `GeneratorExit`, as in CPython.
   - `(x for x in g())`: what a generator expression goes through is not in a temporary but in a variable of its frame, `.0`, and goes when the frame goes. The use of `g()` is

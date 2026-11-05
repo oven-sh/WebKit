@@ -405,6 +405,7 @@ static JSValue functoolsReduce(JSGlobalObject* globalObject, JSValue function, J
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+    GeneratorArgumentScope argument(globalObject, iterable);
     JSValue iterator = getIter(globalObject, iterable);
     if (failed(scope, iterator)) {
         if (clearPendingExceptionIfMatches(globalObject, rt.TypeError()))
@@ -680,7 +681,7 @@ static PyType* functoolsCacheType(JSGlobalObject* globalObject) { return runtime
 // ---- The module ----
 
 static constexpr NativeDef functoolsFunctions[] = {
-    PY_FUNCTION("reduce", functoolsReduce, "(function, iterable, /, initial=functools._initial_missing)"),
+    PY_FUNCTION_WITH_FLAGS("reduce", functoolsReduce, "(function, iterable, /, initial=functools._initial_missing)", ClosesGeneratorArgument),
     PY_FUNCTION("cmp_to_key", functoolsCmpToKey, "(mycmp)"),
 };
 

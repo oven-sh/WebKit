@@ -913,10 +913,12 @@ RegisterID* Unit::compare(Compare* node, RegisterID* dst)
     Reg left = expr(node->left);
     if (!last) {
         bool searches = node->ops[0] == AST::CompareKind::In || node->ops[0] == AST::CompareKind::NotIn;
+        unsigned temporary = searches ? beginTemporaryOfLoop(node->comparators[0]) : 0;
         Reg right = isNoneLiteral(node->comparators[0]) ? Reg(constant(jsUndefined())) : Reg(searches ? exprToIterateOverOrSearch(node->comparators[0]) : expr(node->comparators[0]));
         if (isNoneLiteral(node->comparators[0]))
             line(node->comparators[0]->range);
         loc(node->range);
+        markTemporaryUsed(temporary, TemporaryUse::ForHeader, nullptr, true);
         return emitCompare(g.finalDestination(dst, left.get()), left.get(), right.get(), node->ops[0], node->comparators[0]);
     }
 
@@ -926,8 +928,10 @@ RegisterID* Unit::compare(Compare* node, RegisterID* dst)
     for (unsigned i = 0; i <= last; ++i) {
         // (What is compared with the next is not only searched.)
         bool searches = i == last && (node->ops[i] == AST::CompareKind::In || node->ops[i] == AST::CompareKind::NotIn);
+        unsigned temporary = searches ? beginTemporaryOfLoop(node->comparators[i]) : 0;
         Reg right = searches ? exprToIterateOverOrSearch(node->comparators[i]) : expr(node->comparators[i]);
         loc(node->range);
+        markTemporaryUsed(temporary, TemporaryUse::ForHeader, nullptr, true);
         emitCompare(result.get(), left.get(), right.get(), node->ops[i], node->comparators[i]);
         if (i < last)
             g.emitPyJumpIfFalse(result.get(), end.get());
@@ -1070,8 +1074,10 @@ void Unit::jumpIfTo(Expr* node, Label& target, bool condition)
                 continue;
             }
             bool searches = isLast && (op == AST::CompareKind::In || op == AST::CompareKind::NotIn);
+            unsigned temporary = searches ? beginTemporaryOfLoop(rightExpr) : 0;
             Reg right = searches ? exprToIterateOverOrSearch(rightExpr) : expr(rightExpr);
             loc(compare->range);
+            markTemporaryUsed(temporary, TemporaryUse::ForHeader, nullptr, true);
             if (yieldsBoolean(op)) {
                 g.emitPyCompare(result.get(), left.get(), right.get(), static_cast<Python::CompareOperator>(op));
                 if (jumpOn)

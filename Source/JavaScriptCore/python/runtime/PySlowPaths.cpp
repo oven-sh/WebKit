@@ -748,7 +748,14 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_compare)
     JSValue rhs = GET_C(bytecode.m_rhs).jsValue();
     auto operation = static_cast<CompareOperator>(bytecode.m_operation);
     if (operation == CompareOperator::In || operation == CompareOperator::NotIn) {
+        // x in g(): nothing but the search has the generator.
+        Runtime& rt = runtime(globalObject);
+        bool isNew = rt.isNewGenerator(rhs, callFrame);
+        if (isNew) [[unlikely]]
+            rt.claimIteratorOfLoop(codeBlock->bytecodeOffset(pc));
         bool found = containsInline(globalObject, rhs, lhs);
+        if (isNew) [[unlikely]]
+            rt.releaseGeneratorGoneThrough(uncheckedDowncast<PyGenerator>(rhs.asCell()));
         CHECK_EXCEPTION();
         RETURN(jsBoolean(found == (operation == CompareOperator::In)));
     }

@@ -467,7 +467,7 @@ private:
     // For what is about to compile `node` as an operand of its own: the number of the value, which it passes to markTemporaryUsed()
     // right before each instruction that may turn out to be the use. 0: the node is not of that kind.
     unsigned beginTemporary(Expr* node);
-    // For a loop that is about to compile what it goes through. Nothing but a call or a generator expression: in `for x in (g := f()):` there
+    // For a loop that is about to compile what it goes through, and for `in`, what it searches. Nothing but a call or a generator expression: in `for x in (g := f()):` there
     // is a variable as well.
     static bool mayMakeGenerator(Expr* node) { return node->is<AST::Call>() || node->is<AST::GeneratorExp>(); }
     unsigned beginTemporaryOfLoop(Expr* node) { return mayMakeGenerator(node) ? beginTemporary(node) : 0; }

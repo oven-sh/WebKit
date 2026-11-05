@@ -302,16 +302,17 @@ void Runtime::didStoreInItem(JSValue value)
 //
 // for x in g(): the generator is in the register where the loop keeps its iterator, and nowhere else. next(g()): it is in the register
 // of the argument. A generator function notes the last generator made, if it was made for such a use: at the head of a `for`
-// loop, or as an argument of a built-in function that is already waiting in its register and says that it closes such an
-// argument (NativeFlag::ClosesGeneratorArgument).
-// The use takes the note up: op_py_get_iter, which is the very next instruction to run in the caller (for a generator expression, the call
-// that makes it, with what it goes through for its argument), or the function, which does so
+// loop, as what `in` searches, or as an argument of a built-in function that is already waiting in its register and says that it
+// closes such an argument (NativeFlag::ClosesGeneratorArgument).
+// The use takes the note up: op_py_get_iter or op_py_compare, which is the very next instruction to run in the caller (for a generator
+// expression, the call that makes it, with what it goes through for its argument), or the function, which does so
 // whether or not the generator is the argument that it goes through (next(it, g()) may return it). So no note outlives the use. One that
 // the use never came for, because another argument raised, is of a generator that can never turn up again. Other arguments are
 // evaluated between the making and the use; they cannot get at the generator, and if they make another for such a use,
 // the note is of that one and this one is left to the collector.
 // A loop that is left before its end closes the generator it owns: ReleaseIterator on the way of `break`, `return` and a `continue`
-// of an outer loop; for an exception, the unwinder asks releaseIteratorsOfLoopsLeft(). A function does when it is done: GeneratorArgumentScope.
+// of an outer loop; for an exception, the unwinder asks releaseIteratorsOfLoopsLeft(). A function does when it is done
+// (GeneratorArgumentScope), and so does `in`.
 
 void Runtime::findUseOfCall(UseOfCall& found, CallFrame* callFrame)
 {
@@ -393,14 +394,19 @@ void GeneratorArgumentScope::release()
         *m_whereToLeaveIt = m_generator;
         return;
     }
+    m_runtime.releaseGeneratorGoneThrough(m_generator);
+}
+
+void Runtime::releaseGeneratorGoneThrough(PyGenerator* generator)
+{
     // Most have been gone through to their end.
-    if (m_generator->isCompleted()) [[likely]] {
-        m_generator->loopOwnership = 0;
+    if (generator->isCompleted()) [[likely]] {
+        generator->loopOwnership = 0;
         return;
     }
-    // An exception that the function has raised waits.
-    SuspendExceptionScope suspended(m_runtime.vm());
-    m_runtime.releaseIteratorOfLoop(m_generator);
+    // An exception that was raised on the way waits.
+    SuspendExceptionScope suspended(m_vm);
+    releaseIteratorOfLoop(generator);
 }
 
 static std::span<const BlockPiece> blockPiecesOf(CodeBlock* codeBlock, CodeInfo& info)
