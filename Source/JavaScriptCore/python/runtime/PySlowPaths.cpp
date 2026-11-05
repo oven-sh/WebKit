@@ -341,8 +341,8 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_load_name)
     JSString* name = asString(GET_C(bytecode.m_name).jsValue());
     JSValue locals = GET(bytecode.m_locals).jsValue();
     PyFunction* function = calleeOf(callFrame);
-    // In the body of a module the locals are the globals, which are asked once.
-    if (locals == JSValue(function->globals()) && !function->hasUnusualNamespaces())
+    // In the body of a module the locals are the globals, which are asked once. (Twice, as locals and as globals, if a key could tell.)
+    if (locals == JSValue(function->globals()) && !function->hasUnusualNamespaces() && function->globals()->hasOnlyStringKeys())
         RETURN(loadGlobal(globalObject, function, name, GlobalLookup::Name));
     JSValue value = getOptionalItem(globalObject, locals, name);
     CHECK_EXCEPTION();
