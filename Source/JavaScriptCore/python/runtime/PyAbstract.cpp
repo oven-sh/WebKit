@@ -1603,10 +1603,11 @@ JSValue formatObject(JSGlobalObject* globalObject, JSValue value, JSString* spec
         if (isExactInt(value))
             RELEASE_AND_RETURN(scope, str(globalObject, value));
     }
-    JSValue method = rt.typeOf(value)->lookup(Special::Format);
+    PyType* type = rt.typeOf(value);
+    JSValue method = type->lookup(Special::Format);
     if (!method) [[unlikely]]
-        return raiseTypeError(globalObject, scope, "Type "_s, rt.typeOf(value)->nameInMessages(), " doesn't define __format__"_s);
-    JSValue result = callSpecial(globalObject, method, value, spec ? spec : rt.names.empty());
+        return raiseTypeError(globalObject, scope, "Type "_s, type->nameInMessages(), " doesn't define __format__"_s);
+    JSValue result = callSpecial(globalObject, type, Special::Format, method, value, JSValue(spec ? spec : rt.names.empty()));
     RETURN_IF_EXCEPTION(scope, { });
     if (!isStr(result))
         return raiseTypeError(globalObject, scope, typeNameForMessage(globalObject, rt.typeOf(value)), ".__format__() must return a str, not "_s, typeNameForMessage(globalObject, rt.typeOf(result)));
@@ -2097,7 +2098,7 @@ int64_t lengthHint(JSGlobalObject* globalObject, JSValue value, int64_t defaultV
     JSValue method = type->lookup(Special::LengthHint);
     if (!method)
         return defaultValue;
-    JSValue result = callSpecial(globalObject, method, value);
+    JSValue result = callSpecial(globalObject, type, Special::LengthHint, method, value);
     if (failed(scope, result)) {
         if (clearPendingExceptionIfMatches(globalObject, rt.TypeError()))
             return defaultValue;
@@ -2564,7 +2565,7 @@ bool isInstance(JSGlobalObject* globalObject, JSValue object, JSValue cls)
     if (PyTuple* members = unionArguments(globalObject, cls))
         RELEASE_AND_RETURN(scope, isInstance(globalObject, object, members));
     if (JSValue method = classType->lookup(Special::InstanceCheck)) {
-        JSValue result = callSpecial(globalObject, method, cls, object);
+        JSValue result = callSpecial(globalObject, classType, Special::InstanceCheck, method, cls, object);
         RETURN_IF_EXCEPTION(scope, false);
         RELEASE_AND_RETURN(scope, isTrue(globalObject, result));
     }
@@ -2599,7 +2600,7 @@ bool isSubclass(JSGlobalObject* globalObject, JSValue derived, JSValue cls)
     if (PyTuple* members = unionArguments(globalObject, cls))
         RELEASE_AND_RETURN(scope, isSubclass(globalObject, derived, members));
     if (JSValue method = classType->lookup(Special::SubclassCheck)) {
-        JSValue result = callSpecial(globalObject, method, cls, derived);
+        JSValue result = callSpecial(globalObject, classType, Special::SubclassCheck, method, cls, derived);
         RETURN_IF_EXCEPTION(scope, false);
         RELEASE_AND_RETURN(scope, isTrue(globalObject, result));
     }

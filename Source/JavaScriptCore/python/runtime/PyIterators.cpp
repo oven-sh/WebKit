@@ -890,7 +890,7 @@ static JSValue reversedNew(JSGlobalObject* globalObject, JSValue cls, const Call
     if (method) {
         if (isNone(method))
             return notReversible();
-        RELEASE_AND_RETURN(scope, callSpecial(globalObject, method, sequence));
+        RELEASE_AND_RETURN(scope, callSpecial(globalObject, type, Special::Reversed, method, sequence));
     }
     if (!type->lookup(Special::GetItem) || type->has(TypeFlag::DictSubclass))
         return notReversible();

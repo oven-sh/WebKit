@@ -369,7 +369,7 @@ static JSValue builtinNext(JSGlobalObject* globalObject, const CallArgs& args)
     if (!method || isNone(method))
         return raiseTypeError(globalObject, scope, '\'', type->name(), "' object is not an iterator"_s);
     // Through the method, and not iterNext(): a StopIteration keeps its value.
-    JSValue item = callSpecial(globalObject, method, iterator);
+    JSValue item = callSpecial(globalObject, type, Special::Next, method, iterator);
     EXCEPTION_ASSERT(!!scope.exception() == !item);
     if (item || args.size() == 1)
         return item;

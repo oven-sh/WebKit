@@ -491,7 +491,7 @@ JSValue unaryOperation(JSGlobalObject* globalObject, UnaryOperator op, JSValue o
     JSValue function = type->lookup(method);
     if (!function)
         return raiseTypeError(globalObject, scope, "bad operand type for unary "_s, symbol, ": '"_s, type->nameInMessages(), '\'');
-    RELEASE_AND_RETURN(scope, callSpecial(globalObject, function, operand));
+    RELEASE_AND_RETURN(scope, callSpecial(globalObject, type, method, function, operand));
 }
 
 JSValue absolute(JSGlobalObject* globalObject, JSValue operand)
@@ -502,7 +502,7 @@ JSValue absolute(JSGlobalObject* globalObject, JSValue operand)
     JSValue function = type->lookup(Special::Abs);
     if (!function)
         return raiseTypeError(globalObject, scope, "bad operand type for abs(): '"_s, type->nameInMessages(), '\'');
-    RELEASE_AND_RETURN(scope, callSpecial(globalObject, function, operand));
+    RELEASE_AND_RETURN(scope, callSpecial(globalObject, type, Special::Abs, function, operand));
 }
 
 // ---- Conversions ----
@@ -529,7 +529,7 @@ JSValue toIndex(JSGlobalObject* globalObject, JSValue value)
     JSValue method = type->lookup(Special::Index);
     if (!method)
         return raiseTypeError(globalObject, scope, '\'', type->nameInMessages(), "' object cannot be interpreted as an integer"_s);
-    JSValue result = callSpecial(globalObject, method, value);
+    JSValue result = callSpecial(globalObject, type, Special::Index, method, value);
     RETURN_IF_EXCEPTION(scope, { });
     if (!isInt(result))
         return raiseTypeError(globalObject, scope, typeNameForMessage(globalObject, type), ".__index__() must return an int, not "_s, typeNameForMessage(globalObject, typeOf(globalObject, result)));
@@ -618,7 +618,7 @@ double toDoubleAsFloatDoes(JSGlobalObject* globalObject, JSValue value)
 
     PyType* type = typeOf(globalObject, value);
     if (JSValue method = type->lookup(Special::Float)) {
-        JSValue result = callSpecial(globalObject, method, value);
+        JSValue result = callSpecial(globalObject, type, Special::Float, method, value);
         RETURN_IF_EXCEPTION(scope, -1);
         PyType* resultType = typeOf(globalObject, result);
         if (!isFloat(result)) {
@@ -648,7 +648,7 @@ JSValue toInt(JSGlobalObject* globalObject, JSValue value)
     auto scope = DECLARE_THROW_SCOPE(vm);
     PyType* type = typeOf(globalObject, value);
     if (JSValue method = type->lookup(Special::Int)) {
-        JSValue result = callSpecial(globalObject, method, value);
+        JSValue result = callSpecial(globalObject, type, Special::Int, method, value);
         RETURN_IF_EXCEPTION(scope, { });
         if (!isInt(result))
             return raiseTypeError(globalObject, scope, typeNameForMessage(globalObject, type), ".__int__() must return an int, not "_s, typeNameForMessage(globalObject, typeOf(globalObject, result)));
