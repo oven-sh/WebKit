@@ -5914,11 +5914,12 @@ UnlinkedFunctionExecutable* decodeBuiltinFunction(VM& vm, Ref<CachedBytecode> ca
     return executable;
 }
 
-UnlinkedFunctionExecutable* decodePythonCode(JSGlobalObject* globalObject, Ref<ThreadSafeRefCountedFixedVector<uint8_t>>&& payload, SourceCode& parentSource)
+UnlinkedFunctionExecutable* decodePythonCode(JSGlobalObject* globalObject, Ref<ThreadSafeRefCountedFixedVector<uint8_t>>&& owner, std::span<uint8_t> payload, SourceCode& parentSource)
 {
     VM& vm = globalObject->vm();
-    RELEASE_ASSERT(!(std::bit_cast<uintptr_t>(payload->span().data()) % encoderMaxAlignment));
-    Ref cachedBytecode = CachedBytecode::create(payload->span(), [payload = payload.copyRef()](const void*) { }, { });
+    RELEASE_ASSERT(!(std::bit_cast<uintptr_t>(payload.data()) % encoderMaxAlignment));
+    ASSERT(payload.data() >= owner->span().data() && payload.data() + payload.size() <= owner->span().data() + owner->size());
+    Ref cachedBytecode = CachedBytecode::create(payload, [owner = owner.copyRef()](const void*) { }, { });
     auto* entry = cacheEntryOf<PythonCodeCacheEntry>(cachedBytecode.get());
     if (!entry)
         return nullptr;
@@ -5926,7 +5927,7 @@ UnlinkedFunctionExecutable* decodePythonCode(JSGlobalObject* globalObject, Ref<T
     if (!entry->isValid(decoder.get()))
         return nullptr;
     DeferGC deferGC(vm);
-    Ref provider = entry->provider(decoder.get(), WTF::move(payload));
+    Ref provider = entry->provider(decoder.get(), WTF::move(owner));
     decoder->setPythonContext(globalObject, provider.copyRef());
     unsigned length = provider->source().length();
     if (entry->parentStartOffset() > length)

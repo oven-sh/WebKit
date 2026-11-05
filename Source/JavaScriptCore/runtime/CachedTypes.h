@@ -469,8 +469,9 @@ JS_EXPORT_PRIVATE UnlinkedFunctionExecutable* decodeBuiltinFunction(VM&, Ref<Cac
 // from. The SourceCode is the executable's own. Null: it cannot be encoded.
 RefPtr<CachedBytecode> encodePythonCode(VM&, UnlinkedFunctionExecutable*, const SourceCode&);
 // What to link() the executable with is returned too. The code in it is decoded when it is first run. Null: the payload was not
-// made by this build of JSC, or is cut short. One that has been tampered with is not found out.
-UnlinkedFunctionExecutable* decodePythonCode(JSGlobalObject*, Ref<ThreadSafeRefCountedFixedVector<uint8_t>>&& payload, SourceCode& parentSource);
+// made by this build of JSC, or is cut short. One that has been tampered with is not found out. The payload is in `owner`, all
+// of it or a part (a file has something before it), and is read where it is for as long as any of the code is there.
+UnlinkedFunctionExecutable* decodePythonCode(JSGlobalObject*, Ref<ThreadSafeRefCountedFixedVector<uint8_t>>&& owner, std::span<uint8_t> payload, SourceCode& parentSource);
 
 template<typename UnlinkedCodeBlockType>
 UnlinkedCodeBlockType* decodeCodeBlock(VM& vm, const SourceCodeKey& key, Ref<CachedBytecode> cachedBytecode, Decoder::RecoverableCode recoverableCode = Decoder::RecoverableCode::Yes)

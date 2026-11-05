@@ -318,7 +318,8 @@ PyCode* readMarshalledCode(JSGlobalObject* globalObject, const MarshalledCodeHea
     // The records are read where they are, for as long as any of the code is there, and are aligned.
     Ref payload = ThreadSafeRefCountedFixedVector<uint8_t>::create(bytes.begin(), bytes.end());
     SourceCode parentSource;
-    UnlinkedFunctionExecutable* unlinked = decodePythonCode(globalObject, WTF::move(payload), parentSource);
+    auto all = payload->span();
+    UnlinkedFunctionExecutable* unlinked = decodePythonCode(globalObject, WTF::move(payload), all, parentSource);
     if (!unlinked)
         return nullptr;
     CodeInfo* info = unlinked->pythonCodeInfo();
