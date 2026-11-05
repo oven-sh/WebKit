@@ -8,6 +8,7 @@
 
 #include "JSCInlines.h"
 #include "MarkedSpaceInlines.h"
+#include "PreventCollectionScope.h"
 #include "PyAbstract.h"
 #include "PyBuffer.h"
 #include "PyCtypes.h"
@@ -1168,15 +1169,21 @@ void collectAndFinalize(JSGlobalObject* globalObject, Runtime::MarkingObserver* 
     // An object with a finalizer takes two rounds: one finds it, the next frees it, which may clear weak references in turn
     // and finds what only it referred to. The limit is for finalizers that make new garbage with finalizers for ever.
     for (unsigned round = 0; round < 64; ++round) {
-        wipeStackBelow(globalObject);
-        if (observer) {
-            observer->willCollect();
-            rt.setMarkingObserver(observer);
-        }
-        rt.collectAsAskedFor(collectionScope, leavesCyclicGarbageForLater, callsOf);
-        if (observer) {
-            rt.setMarkingObserver(nullptr);
-            observer->didCollect();
+        {
+            // What an observer listens to is the collection asked for here, from beginning to end. Not one that was under way, or had been asked for: this one would follow, and
+            // free what the observer has been told of and has noted by its address. Nor does another come before the observer has heard that it is over.
+            std::optional<PreventCollectionScope> preventCollection;
+            if (observer) {
+                preventCollection.emplace(vm.heap);
+                observer->willCollect();
+                rt.setMarkingObserver(observer);
+            }
+            wipeStackBelow(globalObject);
+            rt.collectAsAskedFor(collectionScope, leavesCyclicGarbageForLater, callsOf);
+            if (observer) {
+                rt.setMarkingObserver(nullptr);
+                observer->didCollect();
+            }
         }
         if (!rt.owesCalls(callsOf))
             break;

@@ -773,6 +773,10 @@ so the aim is that everything Python *guarantees* holds, and that what it merely
   call in a program also finds the cycles that have piled up since it started, which CPython's own collections would have taken.
   It goes on for another round only if finalizers or callbacks of weak references were owed (`hasPendingFinalizers`), not for
   whatever else is in the queue: a collection that `gc.callbacks` is to be told of is in it too.
+  The collection that is looked at is the one asked for, from beginning to end (`PreventCollectionScope` in `collectAndFinalize`, as for `get_referrers()` and for buffers): what was under
+  way or had been asked for is finished first, and no other begins until what was found has been put where the collector sees it. What looks on (`Census`) notes cells by their addresses
+  and has them marked for one collection. A full collection of the engine's own that was under way when `gc.collect()` was called used to be taken for the one asked for; that one followed, freed
+  the cells, and with `DEBUG_SAVEALL` their addresses went to `gc.garbage`.
 - **What the module `gc` hands out** (`get_objects`, `get_referrers`, `get_referents`, `garbage`) is decided in one place, at the top
   of `PyGC.cpp`: a cell is given to the program if it is an object of Python of this realm, of a kind that programs see, whole (no
   tuple that is still being filled), and not a part of something else (the table of a dict, the namespace of a class, the values
