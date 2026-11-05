@@ -839,6 +839,13 @@ void Heap::didMarkAllThatIsReachable()
         m_sizeMarkedWhenAllThatIsReachableWas = m_bytesMarkedThisCycle.load(std::memory_order_relaxed) + m_extraMemorySize;
 }
 
+void Heap::didKeepWhatWaitsForFinalizersIndefinitely()
+{
+    ASSERT(m_sizeMarkedWhenAllThatIsReachableWas);
+    if (!m_sizeMarkedWhenWhatWaitsIndefinitelyWas)
+        m_sizeMarkedWhenWhatWaitsIndefinitelyWas = m_bytesMarkedThisCycle.load(std::memory_order_relaxed) + m_extraMemorySize;
+}
+
 bool Heap::keepUnreachablePythonObjectsToFinalize(SlotVisitor& visitor)
 {
     SetRootMarkReasonScope rootScope(visitor, RootMarkReason::KeptForFinalizers);
@@ -1022,7 +1029,10 @@ void Heap::endMarking()
     ASSERT(m_objectSpace.isMarking());
 
     size_t bytesMarked = m_bytesMarkedThisCycle.exchange(0, std::memory_order_relaxed);
-    m_sizeKeptForFinalizers = bytesMarked + m_extraMemorySize - *std::exchange(m_sizeMarkedWhenAllThatIsReachableWas, std::nullopt);
+    size_t sizeMarked = bytesMarked + m_extraMemorySize;
+    size_t reachableSizeMarked = *std::exchange(m_sizeMarkedWhenAllThatIsReachableWas, std::nullopt);
+    m_sizeKeptForFinalizers = sizeMarked - reachableSizeMarked;
+    m_sizeWaitingForFinalizersIndefinitely = std::exchange(m_sizeMarkedWhenWhatWaitsIndefinitelyWas, std::nullopt).value_or(reachableSizeMarked) - reachableSizeMarked;
     updateOldGenerationCellBytes(bytesMarked);
 
     m_objectSpace.endMarking();
@@ -2646,9 +2656,23 @@ void Heap::updateAllocationLimits()
         // objects with finalizers would have a heap that grows by a constant factor with each collection.
         size_t lastMaxHeapSize = m_maxHeapSize;
         size_t limit = memoryLimitForGrowth();
-        size_t reachableSize = currentHeapSize - std::min(m_sizeKeptForFinalizers, currentHeapSize);
-        m_maxEdenSize = std::max(minHeapSize(m_heapType, limit), proportionalHeapSize(reachableSize, limit)) - reachableSize;
+        size_t sizeKept = std::min(m_sizeKeptForFinalizers, currentHeapSize);
+        size_t reachableSize = currentHeapSize - sizeKept;
+        auto maxEdenSizeFor = [&](size_t heapSize) {
+            return std::max(minHeapSize(m_heapType, limit), proportionalHeapSize(heapSize, limit)) - heapSize;
+        };
+        m_maxEdenSize = maxEdenSizeFor(reachableSize);
         m_maxHeapSize = currentHeapSize + m_maxEdenSize;
+        // With cycles that are short for the size of the heap, the young generation's share of it (below) is small from the start, and
+        // every other collection is a full one. That is as it should be where finalizers are called soon: what has been kept is freed
+        // by a full collection and by nothing else. What waits indefinitely a full collection can only mark again. So there, and only
+        // there, that counts as if it were alive, until its turn comes.
+        m_maxEdenSizeWithheld = 0;
+        if (size_t sizeWaiting = std::min(m_sizeWaitingForFinalizersIndefinitely, sizeKept)) {
+            size_t maxEdenSizeWithThat = maxEdenSizeFor(reachableSize + sizeWaiting);
+            if (maxEdenSizeWithThat > m_maxEdenSize)
+                m_maxEdenSizeWithheld = maxEdenSizeWithThat - m_maxEdenSize;
+        }
         if (m_isInOpportunisticTask && !isCritical) {
             // After an Opportunistic Full GC, we allow eden to occupy all the space we recovered.
             // In this case, m_maxHeapSize may be larger than currentHeapSize + m_maxEdenSize.
@@ -2670,7 +2694,7 @@ void Heap::updateAllocationLimits()
         dataLogLnIf(verbose, "Eden: remainingHeapSize = ", remainingHeapSize);
         m_sizeAfterLastEdenCollect = currentHeapSize;
         dataLogLnIf(verbose, "Eden: sizeAfterLastEdenCollect = ", currentHeapSize);
-        double edenToOldGenerationRatio = (double)remainingHeapSize / (double)m_maxHeapSize;
+        double edenToOldGenerationRatio = (double)(remainingHeapSize + m_maxEdenSizeWithheld) / (double)(m_maxHeapSize + m_maxEdenSizeWithheld);
         if (edenToOldGenerationRatio < Options::minEdenToOldGenerationRatio())
             m_shouldDoFullCollection = true;
         m_maxHeapSize = std::max(m_maxHeapSize, currentHeapSize + m_maxEdenSize);

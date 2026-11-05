@@ -379,6 +379,12 @@ public:
     void addPythonRuntime(Python::Runtime* runtime) { m_pythonRuntimes.append(runtime); }
     void removePythonRuntime(Python::Runtime* runtime) { m_pythonRuntimes.removeFirst(runtime); }
     const Vector<Python::Runtime*, 1>& pythonRuntimes() const { return m_pythonRuntimes; }
+    // For whoever keeps unreachable objects for their finalizers. See updateAllocationLimits().
+    // In a collection, once marking has converged: of what earlier collections kept, that of which nobody knows when its turn comes is marked, with all it
+    // refers to. What is kept from here on will be finalized soon.
+    void didKeepWhatWaitsForFinalizersIndefinitely();
+    // In the mutator: its turn has come.
+    void didBeginToFinalizeWhatWaitedIndefinitely() { m_maxEdenSizeWithheld = 0; }
 
     static inline size_t cellSize(const void*);
 
@@ -995,10 +1001,15 @@ private:
     // Bytes the visitors have marked this cycle, gathered for the End step.
     Atomic<size_t> m_bytesMarkedThisCycle { 0 };
     // What a collection marks after it has marked all that is reachable is garbage that is kept, with all it refers to, until its
-    // finalizers have been called. The first: m_bytesMarkedThisCycle + m_extraMemorySize when marking first converged in the collection
-    // that is under way. The second: the part of m_sizeAfterLastCollect that the last collection kept. See updateAllocationLimits().
+    // finalizers have been called: first what waits indefinitely, then the rest. The first two: m_bytesMarkedThisCycle +
+    // m_extraMemorySize in the collection that is under way, when marking first converged, and when what waits indefinitely had been
+    // marked as well. The next two: the part of m_sizeAfterLastCollect that the last collection kept, and the part of that which
+    // waits indefinitely. The last: by how much m_maxEdenSize would be larger if the latter counted. See updateAllocationLimits().
     std::optional<size_t> m_sizeMarkedWhenAllThatIsReachableWas;
+    std::optional<size_t> m_sizeMarkedWhenWhatWaitsIndefinitelyWas;
     size_t m_sizeKeptForFinalizers { 0 };
+    size_t m_sizeWaitingForFinalizersIndefinitely { 0 };
+    size_t m_maxEdenSizeWithheld { 0 };
 
     double m_incrementBalance { 0 };
     

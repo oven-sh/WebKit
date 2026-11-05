@@ -1133,6 +1133,8 @@ private:
         Deque<JSCell*> finalizers;
         Deque<PyWeakRef*> weakRefCallbacks;
         bool weakRefCallbacksAreInOrder { true };
+        // A full collection has found some of these, and none has been taken since: the thread is in foreign code, or does not get its turn.
+        bool hasStoodSinceFullCollection { false };
         // gc.callbacks have been told the start of it, by this thread. They hear of the end when it has made its calls.
         std::optional<CollectionNotice> collectionBeingToldOf;
         bool hasFinalizers() const { return !finalizers.isEmpty() || !weakRefCallbacks.isEmpty(); }
@@ -1140,6 +1142,7 @@ private:
     // The first is the main thread's. A thread has one from the first time it owes something, or looks, until it ends.
     Vector<std::unique_ptr<CallsOwed>, 1> m_callsOwed WTF_GUARDED_BY_LOCK(m_finalizationLock);
     CallsOwed& callsOwedBy(uint32_t thread) WTF_REQUIRES_LOCK(m_finalizationLock);
+    void didTakeFrom(CallsOwed&) WTF_REQUIRES_LOCK(m_finalizationLock);
     // The thread if it can still make calls, else the main one.
     uint32_t threadToMakeCallsOf(uint32_t thread);
     uint32_t m_currentThread { 0 };

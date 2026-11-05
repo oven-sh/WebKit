@@ -153,6 +153,12 @@ Runtime::CallsOwed& Runtime::callsOwedBy(uint32_t thread)
     return *m_callsOwed.last();
 }
 
+void Runtime::didTakeFrom(CallsOwed& owed)
+{
+    if (std::exchange(owed.hasStoodSinceFullCollection, false))
+        m_vm.heap.didBeginToFinalizeWhatWaitedIndefinitely();
+}
+
 // With the GIL, or for the collector while whoever holds it is stopped.
 uint32_t Runtime::threadToMakeCallsOf(uint32_t thread)
 {
@@ -178,6 +184,7 @@ void Runtime::threadDidEnd(uint32_t thread)
     m_callsOwed.removeAt(index);
     CallsOwed& heir = callsOwedBy(0);
     bool leavesSomething = owed->hasFinalizers() || owed->collectionBeingToldOf;
+    didTakeFrom(*owed);
     while (!owed->finalizers.isEmpty())
         heir.finalizers.append(owed->finalizers.takeFirst());
     while (!owed->weakRefCallbacks.isEmpty()) {
@@ -221,14 +228,21 @@ bool Runtime::keepUnreachableObjectsToFinalize(SlotVisitor& visitor)
             visitor.appendUnbarriered(cell);
             keptSomething = true;
         };
-        for (auto& owed : m_callsOwed) {
-            for (JSCell* cell : owed->finalizers)
-                keep(cell);
-            for (PyWeakRef* weakRef : owed->weakRefCallbacks)
-                keep(weakRef);
+        // First the queues that stand still: the heap wants to know how much that is.
+        for (bool standsStill : { true, false }) {
+            for (auto& owed : m_callsOwed) {
+                if (owed->hasStoodSinceFullCollection != standsStill)
+                    continue;
+                for (JSCell* cell : owed->finalizers)
+                    keep(cell);
+                for (PyWeakRef* weakRef : owed->weakRefCallbacks)
+                    keep(weakRef);
+            }
+            if (keptSomething)
+                return true;
+            if (standsStill)
+                m_vm.heap.didKeepWhatWaitsForFinalizersIndefinitely();
         }
-        if (keptSomething)
-            return true;
     }
     // All of them are found before any is marked.
     Vector<JSCell*> candidates;
@@ -427,6 +441,10 @@ Vector<PyWeakRef*> Runtime::weakRefsWithCallbacksToUnmarkedObjects(SlotVisitor& 
 void Runtime::didMarkAll(SlotVisitor& visitor)
 {
     bool isFull = m_vm.heap.collectionScope() == CollectionScope::Full;
+    if (isFull) {
+        for (auto& owed : m_callsOwed)
+            owed->hasStoodSinceFullCollection = owed->hasFinalizers();
+    }
     auto stays = [&](JSCell* cell) {
         if (visitor.isMarked(cell))
             return true;
@@ -924,8 +942,10 @@ void Runtime::runPendingCalls(bool mayPutOff, CallsOf callsOf)
                         owed->weakRefCallbacks.append(each);
                 }
                 weakRef = owed->weakRefCallbacks.takeFirst();
+                didTakeFrom(*owed);
             } else if (!owed->finalizers.isEmpty()) {
                 object = owed->finalizers.takeFirst();
+                didTakeFrom(*owed);
                 m_justFinalized.append(object);
             } else if (collection)
                 collectionIsOver = true;
@@ -1162,6 +1182,7 @@ void Runtime::finalizeWhatReferenceCountsWouldHaveFreed()
         for (auto& other : m_callsOwed) {
             if (other.get() == &own)
                 continue;
+            didTakeFrom(*other);
             while (!other->finalizers.isEmpty())
                 finalizers.append(other->finalizers.takeFirst());
             while (!other->weakRefCallbacks.isEmpty()) {

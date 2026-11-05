@@ -665,9 +665,15 @@ so the aim is that everything Python *guarantees* holds, and that what it merely
     collection is a full one, because only that frees it: 6 ms for a program that has imported nothing, against 0.5 ms. The loop above is none the slower for it; objects of
     1 KB take 15 to 26 % more processor time, suspended generators 4 to 6 %, and 200,000 files that are dropped open, whose buffers of 128 KB count as allocated, 37 us each where it
     was 21 (the heap then took itself to be 5 GB large, and there were 23 collections, not 918).
-  - *A queue that stands still* while others allocate (its thread is in foreign code, or in a system call that is not to be interrupted) is marked again by every full collection,
-    and if it is more than some three times the reachable heap every other collection is one. With 229 MB queued for a thread that sat in `read()` by way of ctypes, another
-    thread's 8 million small objects took 9 to 10 s, not 1.5. It ends when the thread is back.
+  - *A queue that stands still* while others allocate (its thread is in foreign code, or in a system call that is not to be interrupted) is another matter. After a collection of the
+    young generation the heap asks for a full one if the room that is left is less than a third of the heap, and with cycles that are short for a heap full of what is kept that is so every time. Where
+    finalizers are called soon it is as it should be: only a full collection frees what was kept. But a queue that is not served it can only mark again. So the queues from which nothing has been
+    taken since a full collection found calls in them (`hasStoodSinceFullCollection`) are kept first, the heap notes how much that was (`Heap::didKeepWhatWaitsForFinalizersIndefinitely`), and in that
+    one question it counts as if it were alive: the room that the heap would have granted for it is added on both sides. The cycles stay as short as they are: a queue whose thread has merely not
+    had its turn between two full collections looks the same, and if that lengthened the cycles the heap would be back where it was. It ends with the first call that is taken from such a queue.
+    With 229 MB queued for a thread that sat in `read()` by way of ctypes, the main thread's 8 million small objects took 3.3 to 3.8 s, with 6 full collections and 100 to 120 of the young generation;
+    9 to 10 s without this (48 and 47); 1.5 s while the queue counted as alive in every respect, with 880 MB resident, not 415. (What is left is the walk through the three million entries, in every
+    collection.) Queues that are being served are not touched by it: the same collections, time and memory in all the programs above.
 - **An object registers when it is made**, if its class has a `__del__` then. A class that gets one later, by assignment to the
   attribute or to `__bases__`, has the heap searched for its instances (`registerInstancesForFinalization`), once; an object
   that is given such a class by assignment to `__class__` registers then.
@@ -1783,7 +1789,7 @@ What every program pays, with the sizes of a release build for x86-64:
 
 | Where | What |
 | --- | --- |
-| `VM` (one) | 96 bytes of 111,008: 80 in `Heap` (the list of runtimes, two more owners of finalizers, a subspace pointer, what a collection marked once all that is reachable was marked), 8 in `VMTraps`, 8 of padding |
+| `VM` (one) | 128 bytes of 111,040: 112 in `Heap` (the list of runtimes, two more owners of finalizers, a subspace pointer, what a collection marked once all that is reachable was marked and how much of that waits indefinitely), 8 in `VMTraps`, 8 of padding |
 | `JSLock` (one per VM) | 72 bytes: the list of parked threads |
 | `JSGlobalObject` | 8 bytes: the pointer to the runtime |
 | `UnlinkedCodeBlock::RareData`, `UnlinkedFunctionExecutable::RareData` | 8 bytes each, where there is rare data; `FunctionExecutable::RareData` 16. `CodeBlock`, `UnlinkedCodeBlock`, `UnlinkedFunctionExecutable`, `CallLinkInfo`, `Structure`, `JSString`, `JSArray`, `JSFunction`: nothing |
