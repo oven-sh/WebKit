@@ -510,13 +510,28 @@ bool encodeUTF8(JSGlobalObject* globalObject, JSString* string, Vector<uint8_t>&
         strEncode(globalObject, string, nullptr, nullptr);
         return false;
     }
-    // With room for a NUL, or whatever little is appended to it: a Vector grows by half.
+    // With room for a NUL. (Whatever else is appended makes the Vector grow by half.)
     result.shrink(0);
-    if (*length > String::MaxLength / 2 || !result.tryGrow(*length)) [[unlikely]] {
+    if (*length > String::MaxLength / 2 || !result.tryReserveCapacity(*length + 1)) [[unlikely]] {
         raiseMemoryError(globalObject, scope, String());
         return false;
     }
+    result.grow(*length);
     writeUTF8(text, result.mutableSpan());
+    return true;
+}
+
+bool encodeCString(JSGlobalObject* globalObject, JSString* string, Vector<uint8_t>& result)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (failed(scope, encodeUTF8(globalObject, string, result)))
+        return false;
+    if (result.contains(0)) {
+        raiseValueError(globalObject, scope, "embedded null character"_s);
+        return false;
+    }
+    result.append(0);
     return true;
 }
 

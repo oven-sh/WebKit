@@ -217,9 +217,9 @@ static JSValue typeInDll(JSGlobalObject* globalObject, JSValue self, JSValue dll
     if (!isStr(nameValue))
         return raiseTypeError(globalObject, scope, "in_dll() argument 2 must be str, not "_s, typeNameOfArgument(globalObject, nameValue));
     JSString* name = strValue(nameValue);
-    if (cannotBeCString(globalObject, name))
+    Vector<uint8_t> utf8;
+    if (failed(scope, encodeCString(globalObject, name, utf8)))
         return { };
-    RETURN_IF_EXCEPTION(scope, { });
     audit(globalObject, "ctypes.dlsym"_s, dll, name);
     RETURN_IF_EXCEPTION(scope, { });
     JSValue handleValue = getAttr(globalObject, dll, state.handleName.get());
@@ -232,13 +232,12 @@ static JSValue typeInDll(JSGlobalObject* globalObject, JSValue self, JSValue dll
         takePendingException(globalObject);
         return raiseValueError(globalObject, scope, "could not convert the _handle attribute to a pointer"_s);
     }
-    auto utf8 = stringOf(name).utf8();
 #if OS(WINDOWS)
     UNUSED_VARIABLE(handle);
     void* address = nullptr;
 #else
     dlerror();
-    void* address = dlsym(std::bit_cast<void*>(handle), byteCast<char>(utf8.data()));
+    void* address = dlsym(std::bit_cast<void*>(handle), byteCast<char>(utf8.span()).data());
     if (!address) {
         if (const char* message = dlerror())
             return raiseValueError(globalObject, scope, decodeFilesystem(byteCast<uint8_t>(unsafeSpan(message))));

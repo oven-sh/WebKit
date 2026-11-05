@@ -646,14 +646,13 @@ static JSValue moduleDlsym(JSGlobalObject* globalObject, JSValue handleValue, JS
         return { };
     if (!isStr(nameValue))
         return raiseTypeError(globalObject, scope, "dlsym() argument 2 must be str, not "_s, typeNameOfArgument(globalObject, nameValue));
-    if (cannotBeCString(globalObject, strValue(nameValue)))
+    Vector<uint8_t> name;
+    if (failed(scope, encodeCString(globalObject, strValue(nameValue), name)))
         return { };
+    audit(globalObject, "ctypes.dlsym/handle"_s, handleValue, nameValue);
     RETURN_IF_EXCEPTION(scope, { });
-    audit(globalObject, "ctypes.dlsym/handle"_s, PyTuple::create(globalObject, { handleValue, nameValue }));
-    RETURN_IF_EXCEPTION(scope, { });
-    auto name = stringOf(strValue(nameValue)).utf8();
     dlerror();
-    if (void* address = dlsym(handle, byteCast<char>(name.data())))
+    if (void* address = dlsym(handle, byteCast<char>(name.span()).data()))
         return intFromPointer(globalObject, address);
     if (const char* message = dlerror())
         return raise(globalObject, scope, runtime(globalObject).OSError(), decodeFilesystem(byteCast<uint8_t>(unsafeSpan(message))));

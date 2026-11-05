@@ -778,17 +778,17 @@ static JSValue functionFromLibrary(JSGlobalObject* globalObject, PyType* type, c
         return raiseTypeError(globalObject, scope, "illegal func_spec argument"_s);
     JSValue nameValue = spec->at(0);
     JSValue library = spec->at(1);
-    Vector<char, 64> name;
+    Vector<uint8_t> name;
     if (auto* bytes = PyBytes::tryFrom(nameValue))
-        name.append(byteCast<char>(bytes->span()));
+        name.append(bytes->span());
     else if (isStr(nameValue)) {
-        StrView view(globalObject, strValue(nameValue));
-        RETURN_IF_EXCEPTION(scope, { });
-        name.append(byteCast<char>(view.string().utf8().span()));
+        if (failed(scope, encodeUTF8(globalObject, strValue(nameValue), name)))
+            return { };
     } else
         return raiseTypeError(globalObject, scope, "function name must be string, bytes object or integer"_s);
-    String nameText = decodeUTF8Lenient(byteCast<uint8_t>(name.span()));
-    name.append('\0');
+    // It is a C string from here on: what follows a NUL is not looked for, so not reported either.
+    name.append(0);
+    String nameText = decodeUTF8Lenient(name.span().first(name.find(0)));
     audit(globalObject, "ctypes.dlsym"_s, library, makeStr(globalObject, nameText));
     RETURN_IF_EXCEPTION(scope, { });
     JSValue handleValue = getAttr(globalObject, library, state.handleName.get());
@@ -807,7 +807,7 @@ static JSValue functionFromLibrary(JSGlobalObject* globalObject, PyType* type, c
     void* address = nullptr;
 #else
     dlerror();
-    void* address = dlsym(std::bit_cast<void*>(handle), name.span().data());
+    void* address = dlsym(std::bit_cast<void*>(handle), byteCast<char>(name.span()).data());
     if (!address) {
         if (const char* message = dlerror())
             return raise(globalObject, scope, attributeError, decodeFilesystem(byteCast<uint8_t>(unsafeSpan(message))));

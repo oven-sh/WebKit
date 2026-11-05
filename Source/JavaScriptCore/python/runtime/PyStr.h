@@ -267,6 +267,8 @@ String asciiEscape(StringView);
 std::optional<Vector<uint8_t>> tryEncodeUTF8(StringView, bool allowSurrogates = false);
 // False: an exception, that of str.encode() for a lone surrogate, or a MemoryError for more than 2**30 bytes.
 bool encodeUTF8(JSGlobalObject*, JSString*, Vector<uint8_t>& result);
+// The same with a NUL behind it. False also for a NUL in the text: ValueError, "embedded null character".
+bool encodeCString(JSGlobalObject*, JSString*, Vector<uint8_t>& result);
 // How many bytes the text takes (nothing: it has halves of surrogate pairs on their own, which have no UTF-8), and the bytes, into room
 // of just that size.
 std::optional<size_t> lengthInUTF8(StringView);
