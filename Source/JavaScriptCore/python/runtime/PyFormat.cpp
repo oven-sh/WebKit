@@ -7,6 +7,7 @@
 #include "PyInternals.h"
 
 #include "JSCInlines.h"
+#include "PyBytes.h"
 #include "PyErrors.h"
 #include "PyList.h"
 #include "PyNumbers.h"
@@ -32,17 +33,28 @@ public:
     {
         if (string.is8Bit())
             return;
-        auto result = m_points.set(string.span16());
+        auto result = m_owned.set(string.span16());
         if (result == WideText::Result::NoPairs)
             return;
         m_hasRoom = result == WideText::Result::Done;
+        m_points = m_owned.span();
         m_length = m_points.size();
+    }
+
+    // Of a text that has been looked at before: what points() was then, which somebody has kept.
+    CodePoints(const String& string, std::span<const char32_t> points)
+        : m_string(string)
+        , m_points(points)
+        , m_length(points.empty() ? string.length() : points.size())
+    {
     }
 
     // If not, it is empty.
     bool hasRoom() const { return m_hasRoom; }
     unsigned length() const { return m_length; }
     char32_t operator[](unsigned index) const { return m_points.size() ? m_points[index] : m_string[index]; }
+    // Empty: every unit of the string is a character.
+    std::span<const char32_t> points() const LIFETIME_BOUND { return m_points; }
 
     void appendTo(StringBuilder& builder, unsigned start, unsigned end) const
     {
@@ -65,7 +77,8 @@ public:
 
 private:
     String m_string;
-    WideText m_points;
+    WideText m_owned;
+    std::span<const char32_t> m_points;
     unsigned m_length;
     bool m_hasRoom { true };
 };
@@ -1170,7 +1183,110 @@ JSValue strFormatMap(JSGlobalObject* globalObject, JSValue self, JSValue mapping
     return formatWith(globalObject, self, arguments);
 }
 
-// _string.formatter_parser(): (literal, field_name, format_spec, conversion) for each stretch.
+// ---- _string ----
+
+// The two iterators read the text as they go: what is wrong with it is said when they get there. PyRecord::number is how far they are.
+enum FormatIteratorField : unsigned {
+    FormatIteratorText,
+    FormatIteratorPoints, // A PyByteStorage with CodePoints::points(), or None if that is empty.
+    FormatIteratorFieldCount,
+};
+
+extern const TypeDef formatterIteratorTypeDef;
+extern const TypeDef fieldNameIteratorTypeDef;
+
+static JSValue makeFormatIterator(JSGlobalObject* globalObject, const TypeDef& type, JSString* string, const CodePoints& text, unsigned position)
+{
+    Runtime& rt = runtime(globalObject);
+    VM& vm = rt.vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue points = jsUndefined();
+    if (auto bytes = asByteSpan(text.points()); !bytes.empty()) {
+        PyByteStorage* storage = PyByteStorage::tryCreate(vm, rt.structure<PyByteStorage>(), bytes.size());
+        if (!storage) [[unlikely]]
+            return raiseMemoryError(globalObject, scope, String());
+        memcpySpan(std::span { storage->data(), bytes.size() }, bytes);
+        points = storage;
+    }
+    PyRecord* iterator = PyRecord::create(globalObject, rt.typeFor(type), FormatIteratorFieldCount);
+    iterator->set(vm, FormatIteratorText, string);
+    iterator->set(vm, FormatIteratorPoints, points);
+    iterator->number = position;
+    return iterator;
+}
+
+static std::span<const char32_t> pointsOfFormatIterator(PyRecord* iterator)
+{
+    JSValue points = iterator->get(FormatIteratorPoints);
+    if (isNone(points))
+        return { };
+    auto* storage = uncheckedDowncast<PyByteStorage>(points.asCell());
+    return spanReinterpretCast<const char32_t>(std::span<const uint8_t> { storage->data(), storage->capacity() });
+}
+
+static JSValue formatIteratorSelf(JSGlobalObject*, JSValue self) { return self; }
+
+// (literal, field_name, format_spec, conversion) for each stretch.
+static JSValue formatterIteratorNext(JSGlobalObject* globalObject, JSValue self)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    PyRecord* iterator = PyRecord::from(self);
+    String string = asString(iterator->get(FormatIteratorText))->value(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    CodePoints text(string, pointsOfFormatIterator(iterator));
+    unsigned position = iterator->number;
+    Markup markup;
+    int status = nextMarkup(globalObject, text, position, text.length(), markup);
+    EXCEPTION_ASSERT(!!scope.exception() == !status);
+    iterator->number = position;
+    if (!status)
+        return { };
+    if (status == 1)
+        return raiseStopIteration(globalObject, scope);
+    JSValue literal = makeStr(vm, text.substring(markup.literalStart, markup.literalEnd));
+    JSValue name = markup.hasField ? JSValue(makeStr(vm, text.substring(markup.nameStart, markup.nameEnd))) : jsUndefined();
+    JSValue spec = markup.hasField ? JSValue(makeStr(vm, markup.hasSpec ? text.substring(markup.specStart, markup.specEnd) : String())) : jsUndefined();
+    JSValue conversion = markup.conversion ? JSValue(makeStr(vm, stringFromCodePoint(markup.conversion))) : jsUndefined();
+    return PyTuple::create(globalObject, { literal, name, spec, conversion });
+}
+
+// (is_attribute, key) for each ".name" and "[key]".
+static JSValue fieldNameIteratorNext(JSGlobalObject* globalObject, JSValue self)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    PyRecord* iterator = PyRecord::from(self);
+    String string = asString(iterator->get(FormatIteratorText))->value(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    CodePoints text(string, pointsOfFormatIterator(iterator));
+    unsigned position = iterator->number;
+    FieldNamePart part;
+    int status = nextFieldNamePart(globalObject, text, position, text.length(), part);
+    EXCEPTION_ASSERT(!!scope.exception() == !status);
+    iterator->number = position;
+    if (!status)
+        return { };
+    if (status == 1)
+        return raiseStopIteration(globalObject, scope);
+    JSValue key = part.index == -1 ? JSValue(makeStr(vm, text.substring(part.start, part.end))) : makeInt(globalObject, part.index);
+    return PyTuple::create(globalObject, { jsBoolean(part.isAttribute), key });
+}
+
+static constexpr NativeDef formatterIteratorMethods[] = {
+    PY_SLOT("__iter__", formatIteratorSelf, "($self, /)"),
+    PY_SLOT("__next__", formatterIteratorNext, "($self, /)"),
+};
+
+static constexpr NativeDef fieldNameIteratorMethods[] = {
+    PY_SLOT("__iter__", formatIteratorSelf, "($self, /)"),
+    PY_SLOT("__next__", fieldNameIteratorNext, "($self, /)"),
+};
+
+constexpr TypeDef formatterIteratorTypeDef { "formatteriterator"_s, { TypeFlag::Immutable }, formatterIteratorMethods, { }, { } };
+constexpr TypeDef fieldNameIteratorTypeDef { "fieldnameiterator"_s, { TypeFlag::Immutable }, fieldNameIteratorMethods, { }, { } };
+
+// _string.formatter_parser()
 JSValue formatterParser(JSGlobalObject* globalObject, JSValue formatString)
 {
     VM& vm = getVM(globalObject);
@@ -1182,25 +1298,10 @@ JSValue formatterParser(JSGlobalObject* globalObject, JSValue formatString)
     CodePoints text(string);
     if (!text.hasRoom()) [[unlikely]]
         return raiseMemoryError(globalObject, scope, String());
-    JSArray* result = newList(globalObject);
-    unsigned position = 0;
-    Markup markup;
-    int status;
-    while ((status = nextMarkup(globalObject, text, position, text.length(), markup)) == 2) {
-        JSValue literal = makeStr(vm, text.substring(markup.literalStart, markup.literalEnd));
-        JSValue name = markup.hasField ? JSValue(makeStr(vm, text.substring(markup.nameStart, markup.nameEnd))) : jsUndefined();
-        JSValue spec = markup.hasField ? JSValue(makeStr(vm, markup.hasSpec ? text.substring(markup.specStart, markup.specEnd) : String())) : jsUndefined();
-        JSValue conversion = markup.conversion ? JSValue(makeStr(vm, stringFromCodePoint(markup.conversion))) : jsUndefined();
-        listAppend(globalObject, result, PyTuple::create(globalObject, { literal, name, spec, conversion }));
-        RETURN_IF_EXCEPTION(scope, { });
-    }
-    EXCEPTION_ASSERT(!!scope.exception() == !status);
-    if (!status)
-        return { };
-    RELEASE_AND_RETURN(scope, getIter(globalObject, result));
+    RELEASE_AND_RETURN(scope, makeFormatIterator(globalObject, formatterIteratorTypeDef, strValue(formatString), text, 0));
 }
 
-// _string.formatter_field_name_split(): (first, iterator of (is_attribute, key)).
+// _string.formatter_field_name_split(): (first, the iterator over the rest).
 JSValue formatterFieldNameSplit(JSGlobalObject* globalObject, JSValue fieldName)
 {
     VM& vm = getVM(globalObject);
@@ -1217,25 +1318,13 @@ JSValue formatterFieldNameSplit(JSGlobalObject* globalObject, JSValue fieldName)
     while (firstEnd < end && text[firstEnd] != '[' && text[firstEnd] != '.')
         ++firstEnd;
     int64_t index = parseIndex(globalObject, text, 0, firstEnd);
+    EXCEPTION_ASSERT(!!scope.exception() == (index == -2));
     if (index == -2)
         return { };
     JSValue first = index == -1 ? JSValue(makeStr(vm, text.substring(0, firstEnd))) : makeInt(globalObject, index);
-
-    JSArray* rest = newList(globalObject);
-    unsigned position = firstEnd;
-    FieldNamePart part;
-    int status;
-    while ((status = nextFieldNamePart(globalObject, text, position, end, part)) == 2) {
-        JSValue key = part.index == -1 ? JSValue(makeStr(vm, text.substring(part.start, part.end))) : makeInt(globalObject, part.index);
-        listAppend(globalObject, rest, PyTuple::create(globalObject, { jsBoolean(part.isAttribute), key }));
-        RETURN_IF_EXCEPTION(scope, { });
-    }
-    EXCEPTION_ASSERT(!!scope.exception() == !status);
-    if (!status)
-        return { };
-    JSValue iterator = getIter(globalObject, rest);
+    JSValue rest = makeFormatIterator(globalObject, fieldNameIteratorTypeDef, strValue(fieldName), text, firstEnd);
     RETURN_IF_EXCEPTION(scope, { });
-    RELEASE_AND_RETURN(scope, PyTuple::create(globalObject, { first, iterator }));
+    return PyTuple::create(globalObject, { first, rest });
 }
 
 // ---- format % arguments ----

@@ -164,6 +164,7 @@ public:
     Result set(std::span<const char16_t>);
     size_t size() const { return m_characters.size(); }
     ALWAYS_INLINE char32_t operator[](size_t index) const { return m_characters[index]; }
+    std::span<const char32_t> span() const LIFETIME_BOUND { return m_characters; }
 
 private:
     MallocSpan<char32_t> m_memory; // Room for as many characters as there are units.
