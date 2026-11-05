@@ -456,6 +456,8 @@ namespace JSC {
         // Where a range of the code begins or ends. Nothing jumps there.
         Ref<Label> newEmittedPythonRangeLabel();
         OpcodeID opcodeOfLastInstruction() { return m_writer.position() ? m_lastInstruction->opcodeID() : op_nop; }
+        // The compiler has found an error and given up. What there is has jumps that lead nowhere, and is not for anything to look at.
+        void abandonPythonCode() { m_pythonCodeIsAbandoned = true; }
 
         VM& vm() const { return m_vm; }
         ParserArena& parserArena() const LIFETIME_BOUND { return m_scopeNode->parserArena(); }
@@ -1597,6 +1599,7 @@ namespace JSC {
         size_t m_pythonLineMarkPosition { std::numeric_limits<size_t>::max() };
         unsigned m_pythonLineMarkCount { 0 }; // How many lines are marked there.
         unsigned m_positionOfLastPythonLabel { 0 };
+        bool m_pythonCodeIsAbandoned { false };
         UncheckedKeyHashMap<Label*, uint64_t> m_pythonVariablesBoundAtLabels; // For the labels still to be emitted.
         SegmentedVector<UsingScope, 8> m_usingScopeStack;
         unsigned m_yieldPoints { 0 };

@@ -307,6 +307,9 @@ ParserError BytecodeGenerator::generate(unsigned& size)
         emitUnreachable();
     }
 
+    if (m_pythonCodeIsAbandoned) [[unlikely]]
+        return ParserError(ParserError::SyntaxError);
+
     for (auto& handler : m_exceptionHandlersToEmit) {
         Ref<Label> realCatchTarget = newLabel();
         TryData* tryData = handler.tryData;

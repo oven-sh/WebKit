@@ -230,7 +230,11 @@ UnlinkedFunctionExecutable* Compiler::generate(const SourceCode& parentSource, c
     ExecutableInfo executableInfo(false, PrivateBrandRequirement::None, false, ConstructorKind::None, JSParserScriptMode::Classic, SuperBinding::NotNeeded, parseMode, DerivedContextType::None, NeedsClassFieldInitializer::No, false, false, EvalContextType::None);
     auto* codeBlock = UnlinkedFunctionCodeBlock::create(m_vm, FunctionCode, executableInfo, { });
     ParserArena arena;
-    PythonCodeNode node(arena, source, parameterCount, isGeneratorBody, WTF::move(emitter));
+    PythonCodeNode node(arena, source, parameterCount, isGeneratorBody, [&](BytecodeGenerator& generator) {
+        emitter(generator);
+        if (failed())
+            generator.abandonPythonCode();
+    });
     ParserError error = BytecodeGenerator::generatePython(m_vm, &node, codeBlock);
     if (generatorSlotCount)
         *generatorSlotCount = node.generatorSlotCount();
