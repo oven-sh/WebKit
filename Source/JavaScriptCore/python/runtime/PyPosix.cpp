@@ -376,20 +376,40 @@ bool posixToDirFd(JSGlobalObject* globalObject, JSValue value, int& result)
     return posixToPathDescriptor(globalObject, value, result);
 }
 
+bool PosixBytes::assign(JSGlobalObject* globalObject, JSString* string)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    String text = string->value(globalObject);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (tryAssign(text)) [[likely]]
+        return true;
+    if (hasOverflowed()) {
+        raiseMemoryError(globalObject, scope, String());
+        return false;
+    }
+    // Which raises.
+    scope.release();
+    strEncode(globalObject, string, nullptr, nullptr);
+    return false;
+}
+
 bool posixEncodeStr(JSGlobalObject* globalObject, JSString* string, PosixBytes& result)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     String text = string->value(globalObject);
     RETURN_IF_EXCEPTION(scope, false);
-    if (auto encoded = tryEncodeUTF8(text))
-        result.assign(byteCast<char>(encoded->span()));
-    else {
-        // There are lone surrogates: those that stand for a byte become it, any other is an error.
-        JSValue bytes = strEncode(globalObject, string, makeStr(vm, "utf-8"_s), makeStr(vm, "surrogateescape"_s));
-        RETURN_IF_EXCEPTION(scope, false);
-        result.assign(byteCast<char>(PyBytes::from(bytes)->span()));
+    if (result.tryAssign(text)) [[likely]]
+        return true;
+    if (result.hasOverflowed()) {
+        raiseMemoryError(globalObject, scope, String());
+        return false;
     }
+    // There are lone surrogates: those that stand for a byte become it, any other is an error.
+    JSValue bytes = strEncode(globalObject, string, makeStr(vm, "utf-8"_s), makeStr(vm, "surrogateescape"_s));
+    RETURN_IF_EXCEPTION(scope, false);
+    result.assign(byteCast<char>(PyBytes::from(bytes)->span()));
     return true;
 }
 
@@ -824,8 +844,14 @@ void posixDidChangeEnvironment(JSGlobalObject* globalObject, std::span<const Vec
     }
 }
 
+// What the host can be told of: WTF decodes UTF-8 through a Vector of 16-bit units.
+static constexpr size_t posixMaxLengthInEnvironment = (1u << 30) - 1;
+
 static void posixDidChangeVariable(JSGlobalObject* globalObject, const PosixBytes& name)
 {
+    // There was no such variable.
+    if (name.length() > posixMaxLengthInEnvironment) [[unlikely]]
+        return;
     // The two are the same again.
     runtime(globalObject).threads().variablesOfHost().remove(posixVariable(name.span()));
     Vector<char> copy { std::span { name.characters(), name.length() + 1 } };
@@ -927,6 +953,10 @@ static JSValue posixPutenv(JSGlobalObject* globalObject, JSValue nameValue, JSVa
         return { };
     if (name.contains('='))
         return raiseValueError(globalObject, scope, "illegal environment variable name"_s);
+    if (std::max(name.length(), value.length()) > posixMaxLengthInEnvironment) [[unlikely]] {
+        errno = ENOMEM;
+        RELEASE_AND_RETURN(scope, posixError(globalObject));
+    }
     if (setenv(name.characters(), value.characters(), 1))
         RELEASE_AND_RETURN(scope, posixError(globalObject));
     posixDidChangeVariable(globalObject, name);

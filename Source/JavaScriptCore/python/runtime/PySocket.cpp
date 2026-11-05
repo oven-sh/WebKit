@@ -175,22 +175,6 @@ static bool socketToUnsigned(JSGlobalObject* globalObject, JSValue value, ASCIIL
     return true;
 }
 
-static bool socketEncodeUTF8(JSGlobalObject* globalObject, JSString* string, PosixBytes& result)
-{
-    VM& vm = getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    String text = string->value(globalObject);
-    RETURN_IF_EXCEPTION(scope, false);
-    if (auto encoded = tryEncodeUTF8(text)) {
-        result.assign(byteCast<char>(encoded->span()));
-        return true;
-    }
-    // Which raises.
-    scope.release();
-    strEncode(globalObject, string, makeStr(vm, "utf-8"_s), makeStr(vm, "strict"_s));
-    return false;
-}
-
 // The format "s". `position` 0: it is the only argument.
 static bool socketToCString(JSGlobalObject* globalObject, JSValue value, ASCIILiteral function, unsigned position, PosixBytes& result)
 {
@@ -203,7 +187,7 @@ static bool socketToCString(JSGlobalObject* globalObject, JSValue value, ASCIILi
             raiseTypeError(globalObject, scope, function, "() argument must be str, not "_s, posixTypeNameOfArgument(globalObject, value));
         return false;
     }
-    if (failed(scope, socketEncodeUTF8(globalObject, strValue(value), result)))
+    if (failed(scope, result.assign(globalObject, strValue(value))))
         return false;
     if (result.contains('\0')) {
         raiseValueError(globalObject, scope, "embedded null character"_s);
@@ -2244,10 +2228,10 @@ static JSValue socketGetAddrInfo(JSGlobalObject* globalObject, JSValue hostValue
         RETURN_IF_EXCEPTION(scope, { });
         JSString* text = str(globalObject, index);
         RETURN_IF_EXCEPTION(scope, { });
-        if (failed(scope, socketEncodeUTF8(globalObject, text, port)))
+        if (failed(scope, port.assign(globalObject, text)))
             return { };
     } else if (isStr(portValue)) {
-        if (failed(scope, socketEncodeUTF8(globalObject, strValue(portValue), port)))
+        if (failed(scope, port.assign(globalObject, strValue(portValue))))
             return { };
     } else if (auto* bytes = PyBytes::tryFrom(portValue))
         port.assign(byteCast<char>(bytes->span()));

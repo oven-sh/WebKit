@@ -861,47 +861,9 @@ static JSValue posixRegisterAtFork(JSGlobalObject* globalObject, JSValue before,
 
 // ---- Running a program ----
 
-// The strings of argv or of the environment, as the system wants them.
-class PosixStringArray {
-public:
-    void append(const PosixBytes& string)
-    {
-        m_offsets.append(m_characters.size());
-        m_characters.append(string.span());
-        m_characters.append('\0');
-    }
-
-    void appendPair(const PosixBytes& key, const PosixBytes& value)
-    {
-        m_offsets.append(m_characters.size());
-        m_characters.append(key.span());
-        m_characters.append('=');
-        m_characters.append(value.span());
-        m_characters.append('\0');
-    }
-
-    size_t size() const { return m_offsets.size(); }
-    const char* at(size_t index) const { return m_characters.span().data() + m_offsets[index]; }
-
-    // Good until something more is appended.
-    char** pointers()
-    {
-        m_pointers.shrink(0);
-        for (size_t offset : m_offsets)
-            m_pointers.append(m_characters.mutableSpan().data() + offset);
-        m_pointers.append(nullptr);
-        return m_pointers.mutableSpan().data();
-    }
-
-private:
-    Vector<char, 512> m_characters;
-    Vector<size_t, 32> m_offsets;
-    Vector<char*, 32> m_pointers;
-};
-
 static bool posixIsListOrTuple(JSValue value) { return isList(value) || PyTuple::is(value); }
 
-static bool posixParseArguments(JSGlobalObject* globalObject, JSValue argv, int64_t count, PosixStringArray& result)
+static bool posixParseArguments(JSGlobalObject* globalObject, JSValue argv, int64_t count, PosixStrings& result)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -911,12 +873,16 @@ static bool posixParseArguments(JSGlobalObject* globalObject, JSValue argv, int6
         RETURN_IF_EXCEPTION(scope, false);
         if (failed(scope, posixToFSBytes(globalObject, item, string)))
             return false;
-        result.append(string);
+        result.append(string.span());
+    }
+    if (result.hasOverflowed()) [[unlikely]] {
+        raiseMemoryError(globalObject, scope, String());
+        return false;
     }
     return true;
 }
 
-static bool posixParseEnvironment(JSGlobalObject* globalObject, JSValue env, PosixStringArray& result)
+static bool posixParseEnvironment(JSGlobalObject* globalObject, JSValue env, PosixStrings& result)
 {
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
@@ -945,7 +911,11 @@ static bool posixParseEnvironment(JSGlobalObject* globalObject, JSValue env, Pos
             raiseValueError(globalObject, scope, "illegal environment variable name"_s);
             return false;
         }
-        result.appendPair(key, value);
+        result.appendPair(key.span(), value.span());
+    }
+    if (result.hasOverflowed()) [[unlikely]] {
+        raiseMemoryError(globalObject, scope, String());
+        return false;
     }
     return true;
 }
@@ -969,7 +939,7 @@ static JSValue posixExecv(JSGlobalObject* globalObject, JSValue pathValue, JSVal
     RETURN_IF_EXCEPTION(scope, { });
     if (count < 1)
         return raiseValueError(globalObject, scope, "execv() arg 2 must not be empty"_s);
-    PosixStringArray arguments;
+    PosixStrings arguments;
     if (failed(scope, posixParseArguments(globalObject, argv, count, arguments)))
         return { };
     if (!arguments.at(0)[0])
@@ -1002,12 +972,12 @@ static JSValue posixExecve(JSGlobalObject* globalObject, JSValue pathValue, JSVa
         return raiseValueError(globalObject, scope, "execve: argv must not be empty"_s);
     if (!posixIsMapping(globalObject, env))
         return raiseTypeError(globalObject, scope, "execve: environment must be a mapping object"_s);
-    PosixStringArray arguments;
+    PosixStrings arguments;
     if (failed(scope, posixParseArguments(globalObject, argv, count, arguments)))
         return { };
     if (!arguments.at(0)[0])
         return raiseValueError(globalObject, scope, "execve: argv first element cannot be empty"_s);
-    PosixStringArray environment;
+    PosixStrings environment;
     if (failed(scope, posixParseEnvironment(globalObject, env, environment)))
         return { };
     if (failed(scope, audit(globalObject, "os.exec"_s, path.object(), argv, env)))
@@ -1276,12 +1246,12 @@ static JSValue posixSpawnNamed(JSGlobalObject* globalObject, ASCIILiteral functi
         return raiseTypeError(globalObject, scope, function, ": environment must be a mapping object or None"_s);
     if (scheduler && !isNone(scheduler) && !PyTuple::is(scheduler))
         return raiseTypeError(globalObject, scope, function, ": scheduler must be a tuple or None"_s);
-    PosixStringArray arguments;
+    PosixStrings arguments;
     if (failed(scope, posixParseArguments(globalObject, argv, count, arguments)))
         return { };
     if (!arguments.at(0)[0])
         return raiseValueError(globalObject, scope, function, ": argv first element cannot be empty"_s);
-    PosixStringArray environment;
+    PosixStrings environment;
     PosixChildEnvironment sharedEnvironment(globalObject);
     char* const* environmentPointers;
     if (isNone(env))
@@ -1339,8 +1309,8 @@ static JSValue posixSpawnFamily(JSGlobalObject* globalObject, JSValue modeValue,
         return { };
     // What exec() would not take is found out by the child of os.py, which then exits like one that found no program.
     PosixBytes program;
-    PosixStringArray arguments;
-    PosixStringArray environment;
+    PosixStrings arguments;
+    PosixStrings environment;
     bool canRun = !failed(scope, posixToFSBytes(globalObject, file, program)) && !failed(scope, posixParseArguments(globalObject, argv, count, arguments))
         && (!env || (posixIsMapping(globalObject, env) && !failed(scope, posixParseEnvironment(globalObject, env, environment))));
     if (!canRun)
@@ -1349,10 +1319,10 @@ static JSValue posixSpawnFamily(JSGlobalObject* globalObject, JSValue modeValue,
     PosixChildEnvironment sharedEnvironment(globalObject);
 
     // As os._execvpe() looks for it.
-    PosixStringArray executables;
+    PosixStrings executables;
     if (!canRun) {
     } else if (!searchPath || program.contains('/'))
-        executables.append(program);
+        executables.append(program.span());
     else {
         const char* path = nullptr;
         if (!env)
@@ -1365,25 +1335,19 @@ static JSValue posixSpawnFamily(JSGlobalObject* globalObject, JSValue modeValue,
         }
         if (!path)
             path = "/bin:/usr/bin";
-        PosixBytes candidate;
-        Vector<char, 256> joined;
         for (const char* start = path;;) {
             const char* end = start;
             while (*end && *end != ':')
                 ++end;
-            joined.shrink(0);
-            joined.append(std::span { start, static_cast<size_t>(end - start) });
-            if (end != start && end[-1] != '/')
-                joined.append('/');
-            joined.append(program.span());
-            candidate.assign(joined.span());
-            executables.append(candidate);
+            executables.appendPath(std::span { start, static_cast<size_t>(end - start) }, program.span());
             if (!*end)
                 break;
             start = end + 1;
         }
     }
 
+    if (executables.hasOverflowed()) [[unlikely]]
+        return raiseMemoryError(globalObject, scope, String());
     pid_t pid = posixSpawnChild(executables.pointers(), arguments.pointers(), env ? environment.pointers() : sharedEnvironment.pointersOrNull());
     if (pid == -1)
         RELEASE_AND_RETURN(scope, posixError(globalObject));

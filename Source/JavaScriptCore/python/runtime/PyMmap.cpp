@@ -952,16 +952,8 @@ static bool shmToName(JSGlobalObject* globalObject, JSValue value, ASCIILiteral 
         raiseTypeError(globalObject, scope, function, position ? "() argument 1 must be str, not "_s : "() argument must be str, not "_s, posixTypeNameOfArgument(globalObject, value));
         return false;
     }
-    String text = strValue(value)->value(globalObject);
-    RETURN_IF_EXCEPTION(scope, false);
-    auto encoded = tryEncodeUTF8(text);
-    if (!encoded) {
-        // Which raises.
-        scope.release();
-        strEncode(globalObject, strValue(value), makeStr(vm, "utf-8"_s), makeStr(vm, "strict"_s));
+    if (failed(scope, name.assign(globalObject, strValue(value))))
         return false;
-    }
-    name.assign(byteCast<char>(encoded->span()));
     if (name.contains('\0')) {
         raiseValueError(globalObject, scope, "embedded null character"_s);
         return false;

@@ -1430,14 +1430,16 @@ static JSValue posixScandir(JSGlobalObject* globalObject, JSValue pathValue)
     int dirFd = path.isFd() ? path.fd() : AT_FDCWD;
 
     // The directory, up to where the name of an entry goes.
-    Vector<char, 256> joined;
+    ByteBuilderWithRoom<256> joined;
     if (!path.isFd()) {
         if (path.narrow())
-            joined.append(path.span());
+            joined.append(byteCast<uint8_t>(path.span()));
         else
             joined.append('.');
-        if (!joined.isEmpty() && joined.last() != '/')
+        if (joined.size() && joined[joined.size() - 1] != '/')
             joined.append('/');
+        if (joined.hasOverflowed()) [[unlikely]]
+            return raiseMemoryError(globalObject, scope, String());
     }
     size_t prefixLength = joined.size();
 
@@ -1450,8 +1452,12 @@ static JSValue posixScandir(JSGlobalObject* globalObject, JSValue pathValue)
             entry->set(vm, PosixDirEntryPath, nameObject);
         else {
             joined.shrink(prefixLength);
-            joined.append(name);
-            JSValue fullName = posixFileName(globalObject, joined.span(), asBytes);
+            joined.append(byteCast<uint8_t>(name));
+            if (joined.hasOverflowed()) [[unlikely]] {
+                raiseMemoryError(globalObject, scope, String());
+                return false;
+            }
+            JSValue fullName = posixFileName(globalObject, byteCast<char>(joined.span()), asBytes);
             RETURN_IF_EXCEPTION(scope, false);
             entry->set(vm, PosixDirEntryPath, fullName);
         }

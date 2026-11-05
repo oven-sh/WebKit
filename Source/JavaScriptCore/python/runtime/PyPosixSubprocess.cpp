@@ -382,33 +382,8 @@ static pid_t subprocessStart(SubprocessRequest& request)
     return pid;
 }
 
-// The strings of an argv or the like, and the array of pointers to them that ends with a null.
-class SubprocessStrings {
-public:
-    void append(std::span<const uint8_t> bytes)
-    {
-        m_offsets.append(m_characters.size());
-        m_characters.append(byteCast<char>(bytes));
-        m_characters.append('\0');
-    }
-
-    char* const* finish()
-    {
-        m_pointers.shrink(0);
-        for (size_t offset : m_offsets)
-            m_pointers.append(m_characters.mutableSpan().data() + offset);
-        m_pointers.append(nullptr);
-        return m_pointers.span().data();
-    }
-
-private:
-    Vector<char, 512> m_characters;
-    Vector<size_t, 16> m_offsets;
-    Vector<char*, 16> m_pointers;
-};
-
 // A sequence of bytes objects.
-static bool subprocessGatherBytes(JSGlobalObject* globalObject, JSValue sequence, SubprocessStrings& result)
+static bool subprocessGatherBytes(JSGlobalObject* globalObject, JSValue sequence, PosixStrings& result)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -426,7 +401,11 @@ static bool subprocessGatherBytes(JSGlobalObject* globalObject, JSValue sequence
             raiseValueError(globalObject, scope, "embedded null byte"_s);
             return false;
         }
-        result.append(bytes->span());
+        result.append(byteCast<char>(bytes->span()));
+    }
+    if (result.hasOverflowed()) [[unlikely]] {
+        raiseMemoryError(globalObject, scope, String());
+        return false;
     }
     return true;
 }
@@ -504,13 +483,13 @@ static JSValue subprocessForkExec(JSGlobalObject* globalObject, const CallArgs& 
     request.descriptorsToKeep = descriptorsToKeep.span().data();
     request.descriptorsToKeepCount = descriptorsToKeep.size();
 
-    SubprocessStrings executables;
-    SubprocessStrings arguments;
-    SubprocessStrings environment;
+    PosixStrings executables;
+    PosixStrings arguments;
+    PosixStrings environment;
     PosixBytes directory;
     if (failed(scope, subprocessGatherBytes(globalObject, args[ArgumentExecutableList], executables)))
         return { };
-    request.executables = executables.finish();
+    request.executables = executables.pointers();
     if (!isNone(args[ArgumentArgs])) {
         JSValue sequence = args[ArgumentArgs];
         JSArray* list = tryAsList(sequence);
@@ -531,15 +510,17 @@ static JSValue subprocessForkExec(JSGlobalObject* globalObject, const CallArgs& 
             PosixBytes argument;
             if (failed(scope, posixToFSBytes(globalObject, list ? listGet(list, i) : tuple->at(i), argument)))
                 return { };
-            arguments.append(byteCast<uint8_t>(argument.span()));
+            arguments.append(argument.span());
         }
-        request.arguments = arguments.finish();
+        if (arguments.hasOverflowed()) [[unlikely]]
+            return raiseMemoryError(globalObject, scope, String());
+        request.arguments = arguments.pointers();
     }
     PosixChildEnvironment sharedEnvironment(globalObject);
     if (!isNone(args[ArgumentEnv])) {
         if (failed(scope, subprocessGatherBytes(globalObject, args[ArgumentEnv], environment)))
             return { };
-        request.environment = environment.finish();
+        request.environment = environment.pointers();
     } else
         request.environment = sharedEnvironment.pointersOrNull();
     if (!isNone(args[ArgumentCwd])) {

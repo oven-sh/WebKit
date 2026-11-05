@@ -59,7 +59,8 @@ bool toVirtualPath(std::span<const char> path, VirtualPath& fromRoot)
     if (!s_virtualFileSystem || path.empty() || path[0] != '/')
         return false;
     auto root = s_virtualFileSystem->root.span();
-    if (path.size() < root.size() || !WTF::contains(path, s_virtualMarker))
+    // A path of 4096 bytes or more is left to the system, which says of any such that the name is too long.
+    if (path.size() < root.size() || path.size() >= 4096 || !WTF::contains(path, s_virtualMarker))
         return false;
 
     Vector<char, 256> normalized;

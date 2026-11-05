@@ -140,23 +140,93 @@ inline bool posixToBool(JSGlobalObject* globalObject, JSValue value, bool defaul
 
 // os.fspath(): a str or bytes. Empty: an exception.
 JSValue posixFSPath(JSGlobalObject*, JSValue);
-// Bytes to hand to the system as a C string: there is a NUL after them.
+// Bytes to hand to the system as a C string: there is a NUL after them. However many there are: it is for the system to say that a name
+// is too long.
 class PosixBytes {
 public:
     void assign(std::span<const char> bytes)
     {
-        m_buffer.shrink(0);
-        m_buffer.append(bytes);
+        m_buffer.clear();
+        m_buffer.reserveInitialCapacity(bytes.size() + 1);
+        m_buffer.append(byteCast<uint8_t>(bytes));
         m_buffer.append('\0');
+        RELEASE_ASSERT(!m_buffer.hasOverflowed());
     }
-    const char* characters() const { return m_buffer.span().data(); }
-    size_t length() const { return m_buffer.isEmpty() ? 0 : m_buffer.size() - 1; }
-    std::span<const char> span() const { return m_buffer.span().first(length()); }
+    // The UTF-8 of a str. False: an exception, that of str.encode() for a lone surrogate or a MemoryError.
+    bool assign(JSGlobalObject*, JSString*);
+    // The same. False: there is a lone surrogate in it, or (hasOverflowed()) no room.
+    bool tryAssign(StringView text)
+    {
+        m_buffer.clear();
+        auto length = lengthInUTF8(text);
+        if (!length)
+            return false;
+        auto room = m_buffer.appendUninitialized(*length + 1);
+        if (!room.data())
+            return false;
+        writeUTF8(text, room.first(*length));
+        room[*length] = 0;
+        return true;
+    }
+    bool hasOverflowed() const { return m_buffer.hasOverflowed(); }
+    const char* characters() const { return byteCast<char>(m_buffer.span().data()); }
+    size_t length() const { return m_buffer.size() ? m_buffer.size() - 1 : 0; }
+    std::span<const char> span() const { return byteCast<char>(m_buffer.span().first(length())); }
     bool contains(char byte) const { return !!memchr(m_buffer.span().data(), byte, length()); }
 
 private:
-    Vector<char, 128> m_buffer;
+    ByteBuilderWithRoom<128> m_buffer;
 };
+// Strings as the system wants them: argv, the environment. If there is no room for them all, no more are taken, and nothing but
+// hasOverflowed() is to be asked.
+class PosixStrings {
+public:
+    void append(std::span<const char> string)
+    {
+        begin();
+        m_characters.append(byteCast<uint8_t>(string));
+        m_characters.append('\0');
+    }
+    void appendPair(std::span<const char> key, std::span<const char> value)
+    {
+        begin();
+        m_characters.append(byteCast<uint8_t>(key));
+        m_characters.append('=');
+        m_characters.append(byteCast<uint8_t>(value));
+        m_characters.append('\0');
+    }
+    void appendPath(std::span<const char> directory, std::span<const char> name)
+    {
+        begin();
+        m_characters.append(byteCast<uint8_t>(directory));
+        if (!directory.empty() && directory.back() != '/')
+            m_characters.append('/');
+        m_characters.append(byteCast<uint8_t>(name));
+        m_characters.append('\0');
+    }
+
+    bool hasOverflowed() const { return m_hasOverflowed || m_characters.hasOverflowed(); }
+    size_t size() const { return m_offsets.size(); }
+    const char* at(size_t index) const { return byteCast<char>(m_characters.span().data()) + m_offsets[index]; }
+
+    // With a null pointer after them. Good until something more is appended.
+    char** pointers()
+    {
+        for (size_t i = 0; i < m_offsets.size(); ++i)
+            m_pointers[i] = byteCast<char>(m_characters.mutableSpan().data()) + m_offsets[i];
+        m_pointers[m_offsets.size()] = nullptr;
+        return m_pointers.mutableSpan().data();
+    }
+
+private:
+    void begin() { m_hasOverflowed |= m_hasOverflowed || !m_offsets.tryAppend(m_characters.size()) || !m_pointers.tryAppend(nullptr); }
+
+    ByteBuilderWithRoom<512> m_characters;
+    Vector<size_t, 32> m_offsets;
+    Vector<char*, 33> m_pointers { nullptr }; // One more than there are strings.
+    bool m_hasOverflowed { false };
+};
+
 // os.fsencode(), without a NUL in it. (PyUnicode_FSConverter)
 bool posixToFSBytes(JSGlobalObject*, JSValue, PosixBytes&);
 // The same for a str alone, which the caller has checked.

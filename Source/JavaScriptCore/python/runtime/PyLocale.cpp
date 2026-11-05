@@ -134,12 +134,10 @@ public:
         const char* current = setlocale(LC_CTYPE, nullptr);
         if (!current)
             return;
-        PosixBytes saved;
-        saved.assign({ current, strlen(current) });
+        m_saved.assign({ current, strlen(current) });
         const char* other = setlocale(category, nullptr);
-        if (!other || !strcmp(other, saved.characters()))
+        if (!other || !strcmp(other, m_saved.characters()))
             return;
-        m_saved = WTF::move(saved);
         m_isSwitched = true;
         setlocale(LC_CTYPE, other);
     }

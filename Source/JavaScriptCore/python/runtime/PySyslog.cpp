@@ -28,23 +28,6 @@ static PosixBytes& syslogIdent()
     return ident;
 }
 
-static bool syslogToUTF8(JSGlobalObject* globalObject, JSString* string, PosixBytes& result)
-{
-    VM& vm = getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    String text = string->value(globalObject);
-    RETURN_IF_EXCEPTION(scope, false);
-    auto encoded = tryEncodeUTF8(text);
-    if (!encoded) {
-        // Which raises.
-        scope.release();
-        strEncode(globalObject, string, makeStr(vm, "utf-8"_s), makeStr(vm, "strict"_s));
-        return false;
-    }
-    result.assign(byteCast<char>(encoded->span()));
-    return true;
-}
-
 // The name of the script: what follows the last slash of sys.argv[0].
 static JSString* syslogDefaultIdent(JSGlobalObject* globalObject)
 {
@@ -70,7 +53,7 @@ static bool syslogOpen(JSGlobalObject* globalObject, JSString* ident, int64_t op
     if (failed(scope, audit(globalObject, "syslog.openlog"_s, ident, posixMakeInt(globalObject, options), posixMakeInt(globalObject, facility))))
         return false;
     PosixBytes encoded;
-    if (ident && failed(scope, syslogToUTF8(globalObject, ident, encoded)))
+    if (ident && failed(scope, encoded.assign(globalObject, ident)))
         return false;
     Locker locker { s_syslogLock };
     // Closed first, so that nothing uses the previous name while it is overwritten.
@@ -122,7 +105,7 @@ static JSValue syslogSyslog(JSGlobalObject* globalObject, const CallArgs& args)
     if (!isStr(messageValue))
         return raiseTypeError(globalObject, scope, "syslog() argument "_s, args.size(), " must be str, not "_s, posixTypeNameOfArgument(globalObject, messageValue));
     PosixBytes message;
-    if (failed(scope, syslogToUTF8(globalObject, strValue(messageValue), message)))
+    if (failed(scope, message.assign(globalObject, strValue(messageValue))))
         return { };
     if (message.contains('\0'))
         return raiseValueError(globalObject, scope, "embedded null character"_s);
