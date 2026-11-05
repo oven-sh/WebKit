@@ -455,6 +455,8 @@ being handled and keeps what that was before, in one call of C++, and profiles n
 An exception that goes on past a `finally`, a `with` or `except` clauses that do not match is thrown twice on the way: into the handler, and out of it by one instruction that also puts back
 what was being handled before (`RuntimeFunction::ReraiseOutOfHandler`). It stands outside the range of the handler's own clean-up, which is there for what the clauses themselves raise.
 CPython raises it inside that range, catches it, and raises it a third time: tools are told of those two steps all the same (`Monitoring::exceptionLeavesHandler()`).
+What is left: a frame that an exception leaves costs 1,700 instructions, 1,235 in CPython. Of the 465 between them, more than all is JSC's own unwinder, which JS pays for as well: 218 to copy the callee saves to the
+entry frame's buffer for each frame, 267 in `StackVisitor`, `UnwindFunctor` and `CallFrame::bytecodeIndex()`. If exceptions that cross many frames turn out to matter, that is where to look, for both languages.
 
 **Printing them.** As in CPython, `sys.excepthook`, `sys.unraisablehook` and `threading.excepthook` have `Lib/traceback.py` do it
 (`traceback._print_exception_bltin`, called by `printException` in `PyFrame.cpp`): carets, suggestions, colours, groups and notes are its

@@ -22,8 +22,9 @@ using namespace AST;
 
 RegisterID* Unit::emitMakeFunction(RegisterID* dst, UnlinkedFunctionExecutable* executable, Scope* scope, const FunctionParts& parts)
 {
-    CompiledCode& code = m_compiledCode.find(scope)->value;
-    ASSERT(code.executable == executable);
+    auto it = m_compiledCode.find(scope);
+    RELEASE_ASSERT(it != m_compiledCode.end() && it->value.executable == executable);
+    CompiledCode& code = it->value;
     if (!code.index) {
         code.index = g.addPythonFunction(executable);
         code.constant = m_info.constants.size();
