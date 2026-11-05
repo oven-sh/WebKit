@@ -300,7 +300,6 @@ PyType* jsSymbolType(Runtime&);
 PyType* jsIteratorObjectType(Runtime&);
 PyType* jsTypedArrayType(Runtime&);
 PyType* jsGeneratorType(Runtime&);
-PyType* jsMapType(Runtime&);
 
 PyType* Runtime::typeOfSlow(JSValue value) const
 {
@@ -343,7 +342,7 @@ PyType* Runtime::typeOfSlow(JSValue value) const
         case JSMapType:
             if (PyType* derived = typeByPrototype(asObject(cell))) [[unlikely]]
                 return derived;
-            return jsMapType(const_cast<Runtime&>(*this));
+            return jsMapType();
         case SymbolType:
             return jsSymbolType(const_cast<Runtime&>(*this));
         case JSGeneratorType:

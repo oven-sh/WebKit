@@ -2351,10 +2351,6 @@ static constexpr NativeDef jsModuleFunctions[] = {
 
 PyType* jsTypedArrayType(Runtime&); // PyJSBuffers.cpp
 
-// A Map has a type of its own, as a plain object has, which adds nothing to JSObject but what it says to others: that it is a mapping.
-static constexpr TypeDef jsMapTypeDef { "_js.JSMap"_s, { TypeFlag::DisallowInstantiation, TypeFlag::HasWeakref, TypeFlag::Base, TypeFlag::OwnLayout, TypeFlag::Mapping }, { }, { }, { } };
-PyType* jsMapType(Runtime& rt) { return rt.typeFor(jsMapTypeDef, rt.jsObjectType()); }
-
 // `import js` gives the global object of JS, whose properties are its attributes. The import system writes what it knows of a
 // module into the module (__spec__, __loader__), and hands out what is in sys.modules once the module has run. So there is a module for
 // it to write into, which puts the global object in its own place. Not before a program asks for it: a program that has nothing to do
@@ -2384,7 +2380,7 @@ void initializeJSModule(JSGlobalObject* globalObject, PyModule* module)
     module->add(globalObject, "JSIterator"_s, jsIteratorObjectType(rt));
     module->add(globalObject, "JSGenerator"_s, jsGeneratorType(rt));
     module->add(globalObject, "JSTypedArray"_s, jsTypedArrayType(rt));
-    module->add(globalObject, "JSMap"_s, jsMapType(rt));
+    module->add(globalObject, "JSMap"_s, rt.jsMapType());
     module->add(globalObject, "JSProperties"_s, propertiesType);
     module->add(globalObject, "JSMethod"_s, jsMethodType(rt));
     module->addFunctions(globalObject, jsModuleFunctions);
@@ -2395,7 +2391,7 @@ void initializeJSModule(JSGlobalObject* globalObject, PyModule* module)
 void registerInteropTypes(JSGlobalObject* globalObject)
 {
     Runtime& rt = runtime(globalObject);
-    registerAsMutableMapping(globalObject, { rt.jsPlainObjectType(), jsMapType(rt) });
+    registerAsMutableMapping(globalObject, { rt.jsPlainObjectType(), rt.jsMapType() });
 }
 
 void initializeInteropTypes(JSGlobalObject* globalObject)
@@ -2405,6 +2401,8 @@ void initializeInteropTypes(JSGlobalObject* globalObject)
     rt.jsPlainObjectType()->initializeBuiltin(globalObject, { "JSPlainObject"_s, { TypeFlag::DisallowInstantiation, TypeFlag::HasWeakref, TypeFlag::Mapping }, { }, { }, { } }, rt.typeType(), rt.jsObjectType());
     rt.jsFunctionType()->initializeBuiltin(globalObject, { "JSFunction"_s, { TypeFlag::DisallowInstantiation, TypeFlag::HasWeakref }, jsFunctionMethods, jsFunctionGetSets, { } }, rt.typeType(), rt.jsObjectType());
     rt.jsPromiseType()->initializeBuiltin(globalObject, { "JSPromise"_s, { TypeFlag::DisallowInstantiation, TypeFlag::HasWeakref, TypeFlag::Base, TypeFlag::OwnLayout }, jsPromiseMethods, { }, { } }, rt.typeType(), rt.jsObjectType());
+    // A Map has a type of its own, as a plain object has, which adds nothing to JSObject but what it says to others: that it is a mapping.
+    rt.jsMapType()->initializeBuiltin(globalObject, { "_js.JSMap"_s, { TypeFlag::DisallowInstantiation, TypeFlag::HasWeakref, TypeFlag::Base, TypeFlag::OwnLayout, TypeFlag::Mapping }, { }, { }, { } }, rt.typeType(), rt.jsObjectType());
 }
 
 } // namespace Python

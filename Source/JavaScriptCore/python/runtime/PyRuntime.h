@@ -168,7 +168,8 @@ JSString* internString(VM&, ASCIILiteral, unsigned hash);
     v(jsObject) \
     v(jsPlainObject) \
     v(jsFunction) \
-    v(jsPromise)
+    v(jsPromise) \
+    v(jsMap)
 
 // name, base
 #define FOR_EACH_PY_EXCEPTION(v) \

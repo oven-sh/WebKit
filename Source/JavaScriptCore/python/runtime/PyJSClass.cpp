@@ -185,7 +185,6 @@ static constexpr TypeDef jsStaticAccessorTypeDef { "_js.JSStaticAccessor"_s, { T
 // ---- Type.prototype ----
 
 PyType* jsTypedArrayType(Runtime&); // PyJSBuffers.cpp
-PyType* jsMapType(Runtime&); // PyInterop.cpp
 
 const ClassInfo PyPrototypeView::s_info = { "PyPrototypeView"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(PyPrototypeView) };
 
@@ -237,7 +236,7 @@ bool PyPrototypeView::makesInstanceOf(JSObject* object)
         Runtime& rt = runtime(realm());
         if (!firstClassOfJS(type))
             m_instances = Instances::NotOfJS;
-        else if (type->isSubtypeOf(jsMapType(rt)))
+        else if (type->isSubtypeOf(rt.jsMapType()))
             m_instances = Instances::Maps;
         else if (type->isSubtypeOf(rt.jsPromiseType()))
             m_instances = Instances::Promises;
@@ -971,7 +970,7 @@ PyType* typeForClassOfJS(JSGlobalObject* globalObject, JSObject* constructor)
     } else if (constructor == realm->promiseConstructor())
         base = rt.jsPromiseType();
     else if (prototype == JSValue(realm->mapPrototype()))
-        base = jsMapType(rt);
+        base = rt.jsMapType();
     else
         base = constructor->inherits<JSTypedArrayViewConstructor>() ? jsTypedArrayType(rt) : rt.jsObjectType();
 
