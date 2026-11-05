@@ -671,10 +671,18 @@ so the aim is that everything Python *guarantees* holds, and that what it merely
   long ago. What is in a cycle or hangs off one is kept for a collection that the program asks for or brings about by allocating:
   CPython's collector does not run in a thread that waits either, and such a thread may hold the very lock that a finalizer
   wants (`with lock: time.sleep(1)`). Only the one that would otherwise wait for ever finalizes everything. Such a collection stops every thread, and any number of threads may be idle beside one that works: all of
-  them together spend at most a twentieth of the time on it, a fiftieth if nothing seems to have been allocated since the last
-  one (to drop something takes no allocation). While such collections find something to finalize, whose thread finalizes it and so
+  them together spend at most a twentieth of the time on it, a fiftieth if nothing has been allocated since the last one, as far as can
+  be told, and no object with a finalizer has been made (to drop something takes no allocation). The time of all processors
+  counts: the collector marks on several, and a process that only waits is to use next to none. But they are never blind for longer
+  than 5 s, unless that came to more than a tenth of the time. A collection that is due when the share is used up is put off until
+  there is some again, not left out. And one thread collects at a time: finalizers run in the middle of it, and other threads
+  meanwhile. While such collections find something to finalize, whose thread finalizes it and so
   uncovers more, the threads that wait look again after 50 ms and may spend half the time, but only if that thread waits too: one
-  that works leaves something to finalize all the time, and has to stop for every collection. (Without that condition two idle threads
+  that works leaves something to finalize all the time, and has to stop for every collection. Not for what the collecting thread itself
+  has finalized: it goes on until it finds no more of its own. And eight times at most, and then not again until two collections in a
+  row have found nothing. For a thread that polls and drops something each time round (a response, a generator with a `finally`)
+  also leaves something to finalize every time, which no finalizer has uncovered.
+  (Without the condition that the thread waits too, two idle threads
   of a process pool that nobody had shut down made the tests of black take 39 % more instructions and 97 s instead of 65. A thread counts
   as waiting by what it is in, an `IdleWait` or a system call that loses nothing when it is interrupted, not by whether it holds the
   GIL: a thread that hashes 32 MB at a time does not, and beside two idle threads it saw 63 full collections in 3 s and took 32 %
@@ -683,6 +691,18 @@ so the aim is that everything Python *guarantees* holds, and that what it merely
   (`Threads::waitUntil`) and for waiting for the kernel, which is done piece by piece (`IdleWait`): `time.sleep`, everything in
   `select` and every socket call that goes through `waitForEvents` (with a timeout, or on the main thread of a host with an event
   loop), `os.read` and `FileIO` (so `input()` too), `os.waitpid` for one process on Linux.
+  - *What that comes to, measured.* With 2,000,000 objects alive, a loop that drops one object with a `__del__` and sleeps for 1 ms used 91 % of a
+    processor (266 full collections in 30 s, half as many rounds); now 6.5 %, 14 collections, 97 % of the rounds. Naps of 0.1 s: 65 % and now
+    5.0 %. With 1,000 objects alive: 18.7 % and now 6.3 %. Two threads, one of which drops what the other makes: 93 % and now 9.9 %.
+    How long an object waits for its finalizer when it is dropped while every thread waits, whatever went before (a poller,
+    such a pair, trees across threads, allocation between naps): at most 4.4 s with 2,000,000 objects alive, 0.3 s with 1,000; twenty
+    times what the last collection cost. Before, a collection that was refused was left out, and the next came four times
+    as late: 4.3 s and 17 s.
+  - *Not cured.* Three threads that each wait for the finalizers of trees three levels deep, beside those 2,000,000 objects, are done after 0.6 to
+    1.5 s (before: 0.5 to 0.7 s), but in one run of fifty after 6 s. In the collections that find nothing there, the objects
+    are marked: the stack of another thread that waits has their addresses, in the frames of its wait (seen: the main thread in `join()`,
+    16 bytes apart, each with the number of a thread beside it, as in the list of objects with finalizers). They go when that thread
+    collects. What writes them there, on a stack that was wiped when the wait began, is not known yet.
   - *A piece that ends is not a signal.* A signal that comes between two pieces interrupts neither, so signals are looked at
     after every piece (`IdleWait::didWait`); one that comes between that look and the system call waits for the end of the
     piece, where in CPython it waits for the end of the whole call.

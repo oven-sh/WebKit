@@ -283,6 +283,7 @@ private:
 
     void release(ThreadState&, JSLock::ParkedThread&, SavedStates&);
     void acquire(ThreadState&, JSLock::ParkedThread&, SavedStates&);
+    int64_t timeOfNextIdleCollection(JSGlobalObject*);
     bool shouldCollectWhileIdle(JSGlobalObject*, bool isLastResort);
     // True: a thread that waits has something to finalize. Then the next may find what only that referred to, and comes soon.
     bool collectWhileIdle(JSGlobalObject*, bool isLastResort);
@@ -301,8 +302,13 @@ private:
     Vector<Ref<ThreadState>> m_threads;
     UncheckedKeyHashMap<const void*, Deque<ThreadState*>> m_waiters;
     uint64_t m_bytesAllocatedAtIdleCollection { 0 };
-    int64_t m_timeForIdleCollectionWithoutCause { 0 };
+    int64_t m_endOfLastIdleCollection { 0 };
     int64_t m_durationOfLastIdleCollection { 0 };
+    int64_t m_costOfLastIdleCollection { 0 };
+    static constexpr unsigned mostEarlyIdleCollections = 8;
+    unsigned m_earlyIdleCollectionsLeft { mostEarlyIdleCollections };
+    bool m_lastIdleCollectionFoundSomething { false };
+    ThreadState* m_threadThatCollectsWhileIdle { nullptr };
     bool m_nextIdleCollectionMayFindMore { false };
     bool m_threadThatWaitsOwesCalls { false };
     bool m_didTellMainThreadOfFinalizers { false };

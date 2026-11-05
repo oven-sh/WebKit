@@ -634,6 +634,8 @@ public:
     bool keepUnreachableObjectsToFinalize(SlotVisitor&);
     // For a weak reference whose referent has just died.
     void queueWeakRefCallback(PyWeakRef*);
+    // Since the last collection, of whatever kind. With the GIL.
+    bool hasRegisteredFinalizableSinceCollection() const { return !m_youngFinalizable.isEmpty(); }
 
     // This thread owes calls.
     ALWAYS_INLINE bool hasPendingCalls() const { return m_hasPendingCalls; }
