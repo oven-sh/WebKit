@@ -128,10 +128,16 @@ inline void* handleHostCall(VM& vm, JSCell* owner, CallFrame* calleeFrame, JSVal
 
     calleeFrame->setCodeBlock(nullptr);
 
+    // What Python calls need not be a cell, and the unwinder asks the callee of every frame what it is.
+    auto leaveWithoutCallee = [&]() -> void* {
+        calleeFrame->setCallee(callLinkInfo->globalObjectForSlowPath(owner)->zombieFrameCallee());
+        return nullptr;
+    };
+
     // A method, an object with a __call__: the function behind it is entered like any other, not from C++.
     if (callLinkInfo->isInPythonCode()) {
         JSFunction* function = Python::beginCallWithSelf(callLinkInfo->globalObjectForSlowPath(owner), callee);
-        RETURN_IF_EXCEPTION(scope, nullptr);
+        RETURN_IF_EXCEPTION(scope, leaveWithoutCallee());
         if (function) {
             DeferTraps deferTraps(vm); // We can't jettison if we're going to call this CodeBlock.
             auto* executable = uncheckedDowncast<FunctionExecutable>(function->executable());
@@ -152,7 +158,7 @@ inline void* handleHostCall(VM& vm, JSCell* owner, CallFrame* calleeFrame, JSVal
         ASSERT(callData.type != CallData::Type::JS);
         if (callData.type == CallData::Type::None && callLinkInfo->isInPythonCode()) [[unlikely]] {
             callData = Python::callDataUnknownToJS(callee);
-            RETURN_IF_EXCEPTION(scope, nullptr);
+            RETURN_IF_EXCEPTION(scope, leaveWithoutCallee());
         }
 
         if (callData.type == CallData::Type::Native) {
