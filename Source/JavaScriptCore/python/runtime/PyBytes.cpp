@@ -2392,7 +2392,7 @@ JSValue bytesFormatPercent(JSGlobalObject* globalObject, std::span<const uint8_t
     if (auto* tuple = PyTuple::tryFrom(arguments)) {
         f.argumentCount = tuple->length();
         f.argumentIndex = 0;
-    } else if (!PyBytes::is(arguments) && !PyByteArray::is(arguments) && !isStr(arguments) && rt.typeOf(arguments)->lookup(Special::GetItem))
+    } else if (!PyBytes::is(arguments) && !PyByteArray::is(arguments) && !isStr(arguments) && isSubscriptedByKeys(globalObject, arguments))
         mapping = arguments;
 
     size_t end = format.size();

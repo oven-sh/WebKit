@@ -973,7 +973,7 @@ static JSValue evaluate(JSGlobalObject* globalObject, bool isEval, JSValue sourc
         closure = JSValue();
 
     // Anything that can be subscripted, a list too.
-    auto isMapping = [&](JSValue value) { return !!rt.typeOf(value)->lookup(Special::GetItem); };
+    auto isMapping = [&](JSValue value) { return isSubscriptedByKeys(globalObject, value); };
     if (isEval) {
         if (locals && !isMapping(locals))
             return raiseTypeError(globalObject, scope, "locals must be a mapping"_s);

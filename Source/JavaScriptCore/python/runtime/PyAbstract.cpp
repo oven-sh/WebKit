@@ -2163,6 +2163,12 @@ static bool isIterableThroughGetItem(Runtime& rt, PyType* type)
     return isGivenByClassOfProgram(rt, type, Special::GetItem);
 }
 
+bool isSubscriptedByKeys(JSGlobalObject* globalObject, JSValue value)
+{
+    JSValue method = typeOf(globalObject, value)->lookup(Special::GetItem);
+    return method && !takesIndexOnly(method);
+}
+
 bool contains(JSGlobalObject* globalObject, JSValue container, JSValue item)
 {
     return containsInline(globalObject, container, item);

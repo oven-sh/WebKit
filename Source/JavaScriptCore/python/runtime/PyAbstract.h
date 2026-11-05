@@ -302,6 +302,8 @@ JSValue getItem(JSGlobalObject*, JSValue object, JSValue key);
 void setItem(JSGlobalObject*, JSValue object, JSValue key, JSValue value);
 void delItem(JSGlobalObject*, JSValue object, JSValue key);
 bool contains(JSGlobalObject*, JSValue container, JSValue item);
+// As PyMapping_Check(): it has a __getitem__ that takes keys. A list has; that of a deque takes indices and nothing else.
+bool isSubscriptedByKeys(JSGlobalObject*, JSValue);
 // What these do with an object that they have no case for (PyAbstractInlines.h).
 JSValue getItemByMethod(JSGlobalObject*, JSValue object, JSValue key);
 void setItemByMethod(JSGlobalObject*, JSValue object, JSValue key, JSValue value);

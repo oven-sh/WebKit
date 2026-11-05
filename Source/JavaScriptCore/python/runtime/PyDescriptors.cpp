@@ -467,7 +467,7 @@ static JSValue mappingProxyNew(JSGlobalObject* globalObject, JSValue, JSValue ma
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!typeOf(globalObject, mapping)->lookup(Special::GetItem) || isList(mapping) || PyTuple::is(mapping))
+    if (!isSubscriptedByKeys(globalObject, mapping) || isList(mapping) || PyTuple::is(mapping))
         return raiseTypeError(globalObject, scope, "mappingproxy() argument must be a mapping, not "_s, typeName(globalObject, mapping));
     RELEASE_AND_RETURN(scope, makeMappingProxy(globalObject, mapping));
 }

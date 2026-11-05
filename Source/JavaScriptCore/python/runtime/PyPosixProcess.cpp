@@ -952,7 +952,7 @@ static bool posixParseEnvironment(JSGlobalObject* globalObject, JSValue env, Pos
 
 static bool posixIsMapping(JSGlobalObject* globalObject, JSValue value)
 {
-    return !!typeOf(globalObject, value)->lookup(Special::GetItem);
+    return isSubscriptedByKeys(globalObject, value);
 }
 
 static JSValue posixExecv(JSGlobalObject* globalObject, JSValue pathValue, JSValue argv)

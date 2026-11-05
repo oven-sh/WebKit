@@ -1687,7 +1687,7 @@ JSValue strFormatPercent(JSGlobalObject* globalObject, JSString* formatString, J
     if (auto* tuple = PyTuple::tryFrom(arguments)) {
         f.argumentCount = tuple->length();
         f.argumentIndex = 0;
-    } else if (!isStr(arguments) && typeOf(globalObject, arguments)->lookup(Special::GetItem))
+    } else if (!isStr(arguments) && isSubscriptedByKeys(globalObject, arguments))
         f.mapping = arguments;
 
     unsigned end = text.length();

@@ -1199,7 +1199,7 @@ static JSValue typeNew(JSGlobalObject* globalObject, JSValue cls, const CallArgs
     if (!PyTuple::is(args[1]))
         return raiseTypeError(globalObject, scope, "type.__new__() argument 2 must be tuple, not "_s, typeNameOfArgument(globalObject, args[1]));
     if (!PyDict::is(args[2]))
-        return raiseTypeError(globalObject, scope, "type.__new__() argument 3 must be dict or frozendict, not "_s, typeName(globalObject, args[2]));
+        return raiseTypeError(globalObject, scope, "type.__new__() argument 3 must be dict or frozendict, not "_s, typeNameForMessage(globalObject, typeOf(globalObject, args[2])));
     JSString* name = internString(globalObject, strValue(args[0]));
     RETURN_IF_EXCEPTION(scope, { });
     PyTuple* bases = PyTuple::from(args[1]);
@@ -1416,6 +1416,17 @@ static JSValue typeNew(JSGlobalObject* globalObject, JSValue cls, const CallArgs
 
     resolveMRO(globalObject, type);
     RETURN_IF_EXCEPTION(scope, { });
+
+    // Nor can what has inherited no way to hash: the mro() of a metaclass has left out object, and every class that has object in its own.
+    if (PyTuple* mro = type->mro(); (!mro->length() || mro->at(mro->length() - 1) != JSValue(rt.objectType())) && !type->lookup(Special::Hash) && !dict->get(rt.name(Special::Hash))) [[unlikely]] {
+        bool inherits = false;
+        for (unsigned i = 1; i < mro->length() && !inherits; ++i)
+            inherits = !!PyType::from(mro->at(i))->lookup(Special::Hash);
+        if (!inherits) {
+            dict->set(vm, rt.name(Special::Hash), jsUndefined());
+            type->didChange(vm);
+        }
+    }
 
     // A sequence or a mapping is so for `match` whichever base says it.
     if (!type->has(TypeFlag::Sequence) && !type->has(TypeFlag::Mapping)) {
@@ -2325,7 +2336,7 @@ JSValue buildClass(JSGlobalObject* globalObject, JSValue name, PyTuple* original
         prepareValues.append(callValues.subspan(3));
         ns = call(globalObject, prepare, CallArgs(prepareValues.span().data(), 2, names));
         RETURN_IF_EXCEPTION(scope, { });
-        if (!PyDict::is(ns) && !rt.typeOf(ns)->lookup(Special::GetItem))
+        if (!PyDict::is(ns) && !isSubscriptedByKeys(globalObject, ns))
             return raiseTypeError(globalObject, scope, isClass ? PyType::from(meta)->name() : "<metaclass>"_str, ".__prepare__() must return a mapping, not "_s, typeName(globalObject, ns));
     }
 

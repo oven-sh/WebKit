@@ -780,9 +780,14 @@ static JSValue setRepr(JSGlobalObject* globalObject, JSValue self)
     if (!isPlainSet)
         builder.append(name, '(');
     builder.append('{');
-    // What the reprs of the elements do must not upset the walk.
-    JSArray* elements = listFromIterable(globalObject, self);
+    // What the reprs of the elements do must not upset the walk. (What is in the set, not what the __iter__ of a derived class gives.)
+    JSArray* elements = newList(globalObject, set->size());
     RETURN_IF_EXCEPTION(scope, { });
+    JSValue element;
+    for (size_t position = 0; set->next(position, element);) {
+        listAppend(globalObject, elements, element);
+        RETURN_IF_EXCEPTION(scope, { });
+    }
     for (unsigned i = 0; i < listLength(elements); ++i) {
         if (i)
             builder.append(", "_s);
