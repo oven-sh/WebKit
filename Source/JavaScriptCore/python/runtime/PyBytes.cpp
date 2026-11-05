@@ -1355,19 +1355,29 @@ static JSValue bytesStartsOrEndsWith(JSGlobalObject* globalObject, JSValue self,
     BytesExportScope exportScope(self);
     adjustSliceBounds(bytesSpanOf(self).size(), from, to);
     std::span<const uint8_t> affix;
+    // Bytes, of whatever class, are read where they are: a __buffer__() of the class is not asked.
+    auto getAffix = [&](JSValue value) {
+        auto* bytes = PyBytes::tryFrom(value);
+        if (!bytes)
+            return getBytesLike(globalObject, value, affix);
+        affix = bytes->span();
+        return true;
+    };
     if (auto* tuple = PyTuple::tryFrom(affixValue)) {
         for (unsigned i = 0; i < tuple->length(); ++i) {
-            if (failed(scope, getBytesLike(globalObject, tuple->at(i), affix)))
+            if (failed(scope, getAffix(tuple->at(i))))
                 return { };
             if (bytesTailMatches<atEnd>(bytesSpanOf(self), affix, from, to))
                 return jsBoolean(true);
         }
         return jsBoolean(false);
     }
-    if (!isBytesLike(affixValue))
+    if (!isBytesLike(affixValue) || failed(scope, getAffix(affixValue))) {
+        // Whatever TypeError its __buffer__() raised.
+        if (scope.exception() && !clearPendingExceptionIfMatches(globalObject, runtime(globalObject).TypeError()))
+            return { };
         return raiseTypeError(globalObject, scope, atEnd ? "endswith"_s : "startswith"_s, " first arg must be bytes or a tuple of bytes, not "_s, typeName(globalObject, affixValue));
-    if (failed(scope, getBytesLike(globalObject, affixValue, affix)))
-        return { };
+    }
     return jsBoolean(bytesTailMatches<atEnd>(bytesSpanOf(self), affix, from, to));
 }
 
