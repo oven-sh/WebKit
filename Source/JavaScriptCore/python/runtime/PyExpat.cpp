@@ -211,9 +211,9 @@ class ExpatDTD : public RefCounted<ExpatDTD> {
 public:
     static Ref<ExpatDTD> create() { return adoptRef(*new ExpatDTD); }
 
-    HashMap<String, std::unique_ptr<ExpatEntity>> generalEntities;
-    HashMap<String, std::unique_ptr<ExpatEntity>> parameterEntities;
-    HashMap<String, ExpatElementType> elementTypes;
+    HashMap<String, std::unique_ptr<ExpatEntity>, KeyedStringHash> generalEntities;
+    HashMap<String, std::unique_ptr<ExpatEntity>, KeyedStringHash> parameterEntities;
+    HashMap<String, ExpatElementType, KeyedStringHash> elementTypes;
     bool keepProcessing { true }; // False once something that could not be read may have declared anything.
     bool hasParamEntityRefs { false };
     bool isStandalone { false };
@@ -2589,7 +2589,7 @@ private:
             return true;
         };
 
-        HashSet<String> seen;
+        HashSet<String, KeyedStringHash> seen;
         for (auto& rawAttribute : raw) {
             String name = stringOfText(t, rawAttribute.nameStart, rawAttribute.nameEnd);
             if (!seen.add(name).isNewEntry) {
@@ -2634,7 +2634,7 @@ private:
         if (!m_hasNamespaces)
             return ExpatErrorNone;
 
-        HashSet<String> expanded;
+        HashSet<String, KeyedStringHash> expanded;
         for (auto& attribute : attributes) {
             if (!attribute.hasPrefix)
                 continue;
@@ -4427,7 +4427,7 @@ private:
     int64_t m_characterBufferUsed { 0 };
 
     Vector<Tag> m_tags;
-    HashMap<String, Vector<String>> m_bindings; // For each prefix, the namespaces it has been bound to, the innermost last.
+    HashMap<String, Vector<String>, KeyedStringHash> m_bindings; // For each prefix, the namespaces it has been bound to, the innermost last.
     unsigned m_openInternalEntities { 0 };
     Vector<String> m_openedByContext;
 

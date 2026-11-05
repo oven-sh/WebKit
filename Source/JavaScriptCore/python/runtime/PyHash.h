@@ -31,6 +31,15 @@ int64_t hashOfString(StringImpl*);
 // What a dict makes of a hash.
 ALWAYS_INLINE uint32_t foldHash(int64_t hash) { return static_cast<uint32_t>(hash) ^ static_cast<uint32_t>(static_cast<uint64_t>(hash) >> 32); }
 
+// For a HashMap or HashSet whose keys are texts that somebody outside may have chosen, as the names in a document are. Left to itself
+// such a table goes by the hash that a StringImpl remembers, which has no key.
+struct KeyedStringHash {
+    static unsigned hash(const String& key) { return foldHash(hashOfString(key.impl())); }
+    static bool equal(const String& a, const String& b) { return a == b; }
+    static constexpr bool safeToCompareToEmptyOrDeleted = false;
+    static constexpr bool hasHashInValue = false;
+};
+
 // ---- hash() of a tuple, given those of its items ----
 
 class TupleHasher {

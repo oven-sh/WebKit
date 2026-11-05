@@ -206,6 +206,10 @@ of 20 strs 6,956, now 7,720. And a dict of strs has no hashes to hand on: `set(d
 makes a table for keys of any kind, as CPython does, whatever is in the set (10,117, now 13,906, and a str is hashed whenever it is looked
 for there).
 
+The tables of `pyexpat` that a document fills (entities, element types, prefixes, the attributes of an element) are WTF's, which left to
+themselves go by the `StringImpl`'s hash; they are given `KeyedStringHash`. (CPython salts expat's tables from the same key.) 6,728
+attributes with names that collide took 412 ms and take 3.8.
+
 What is not covered are names: see DEFERRED.md, "Names chosen to collide".
 
 **Built-in types.** A `TypeDef` in the source file of a type says what is particular to it. What follows from how CPython makes the
