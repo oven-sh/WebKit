@@ -2010,29 +2010,35 @@ NEVER_INLINE Monitoring::Outcome Monitoring::handle(JSGlobalObject* globalObject
 
     case op_jmp:
     case op_py_jmp_back: {
-        // A jump to a jump is told of as one jump: CPython's compiler makes the first go where the second goes.
+        // A jump to a jump is told of as one jump: CPython's compiler makes the first go where the second goes. It is of the line of the
+        // second: if a line begins there, that comes first.
         auto jumpAt = [&](unsigned where) {
             auto* other = monitor.pointAt(where);
             return other && isJump(static_cast<OpcodeID>(other->opcode)) && other->kinds & bit(Event::Jump) ? other : nullptr;
         };
+        auto tellsItself = [](const CodeMonitor::Point& jump) { return jump.lineStartCount && jump.isPatched; };
         bool isToldOfAlready = m_jumpGoesOn.callFrame == callFrame && m_jumpGoesOn.offset == offset;
         m_jumpGoesOn = { };
         if (uint8_t tools = !isToldOfAlready && kinds & bit(Event::Jump) ? wanted(Event::Jump) : 0) {
             unsigned last = target;
-            for (unsigned count = 0; count < 8; ++count) {
+            bool isToldOfLater = false;
+            for (unsigned count = 0; count < 8 && !isToldOfLater; ++count) {
                 auto* other = jumpAt(last);
                 if (!other)
                     break;
+                isToldOfLater = tellsItself(*other);
                 last = other->target;
             }
-            if (failed(scope, fire(globalObject, callFrame, monitor, offset, Event::Jump, tools, jsNumber(shownOffset(last)))))
-                return threw;
-            if (jumped(elsewhere))
-                return elsewhere;
+            if (!isToldOfLater) {
+                if (failed(scope, fire(globalObject, callFrame, monitor, offset, Event::Jump, tools, jsNumber(shownOffset(last)))))
+                    return threw;
+                if (jumped(elsewhere))
+                    return elsewhere;
+            }
         }
         if (!tellOfLineAt(target, elsewhere))
             return elsewhere;
-        if (auto* other = jumpAt(target); other && other->isPatched)
+        if (auto* other = jumpAt(target); other && other->isPatched && !tellsItself(*other))
             m_jumpGoesOn = { callFrame, target };
         return runIt;
     }

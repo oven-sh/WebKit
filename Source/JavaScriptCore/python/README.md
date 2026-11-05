@@ -1176,7 +1176,7 @@ what is there already, and the first line of the pattern where it fails with som
 one line is compiled as if none of this were there. The keys of a mapping pattern, if they are constants, are one constant tuple, on the first line.
 
 **Jumps and branches.** The layout is not CPython's, so some of the jumps here are none there, and are not told of (`Unit::hiddenJump()`): over
-an exception handler, which CPython moves out of the way; between the two ways a method call is compiled. A jump to a jump is told of as one, and a branch to a jump that has no line of its own
+an exception handler, which CPython moves out of the way; between the two ways a method call is compiled. A jump to a jump is told of as one, where the second is if a line begins there (the line comes first), and a branch to a jump that has no line of its own
 is said to go where the jump goes, in events and in `co_branches()`. A `for` loop that goes on, and an
 `except E:` that matches, go on "in their own last byte", which is of their line, where CPython has an instruction to store the item or drop the exception.
 Every test of the program's is a branch of Python's (`op_py_jtrue` and the like), also where the value is known to be a bool (`x in y`, patterns). `x is None` is JS's `op_jundefined_or_null`, which counts as one of them.
