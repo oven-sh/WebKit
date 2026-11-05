@@ -506,7 +506,13 @@ static JSValue getAttrImpl(JSGlobalObject* globalObject, JSValue object, JSStrin
         result = typeGetAttr(globalObject, PyType::from(object), name, suppress || fallback);
     else if (isNative(getAttribute, moduleGetAttribute) && PyModule::is(object))
         result = moduleGetAttr(globalObject, PyModule::from(object), name, suppress || fallback);
-    else
+    else if (!getAttribute) [[unlikely]] {
+        // `object` is not in the MRO. If there is a __getattr__, it comes after the usual search, as ever. Else nothing is found.
+        if (fallback)
+            result = genericGetAttr(globalObject, object, name, true);
+        else if (!suppress)
+            return raiseNoAttribute(globalObject, scope, object, name);
+    } else
         result = callSpecial(globalObject, getAttribute, object, name);
     EXCEPTION_ASSERT(!scope.exception() || !result);
     if (result) [[likely]]
@@ -542,12 +548,28 @@ bool hasAttr(JSGlobalObject* globalObject, JSValue object, JSString* name)
     return !!getAttrImpl(globalObject, object, name, true);
 }
 
+// The class has no __setattr__, or no __delattr__: `object` is not in its MRO.
+NEVER_INLINE void raiseCannotSetAttr(JSGlobalObject* globalObject, JSValue object, JSValue name, bool isDeletion)
+{
+    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
+    PyType* type = typeOf(globalObject, object);
+    // The two are one to CPython: a class that has either is asked, and then lacks the other.
+    if (type->lookup(isDeletion ? Special::SetAttr : Special::DelAttr)) {
+        raise(globalObject, scope, runtime(globalObject).AttributeError(), isDeletion ? "__delattr__"_s : "__setattr__"_s);
+        return;
+    }
+    bool canBeRead = type->lookup(Special::GetAttribute) || type->lookup(Special::GetAttr);
+    raiseTypeError(globalObject, scope, '\'', type->nameInMessages(), canBeRead ? "' object has only read-only attributes ("_s : "' object has no attributes ("_s, isDeletion ? "del ."_s : "assign to ."_s, stringOf(strValue(name)), ')');
+}
+
 void setAttr(JSGlobalObject* globalObject, JSValue object, JSString* name, JSValue value)
 {
     ASSERT(value);
     JSValue method = typeOf(globalObject, object)->lookup(Special::SetAttr);
     if (isNative(method, objectSetAttr)) [[likely]]
         return genericSetAttr(globalObject, object, name, value);
+    if (!method) [[unlikely]]
+        return raiseCannotSetAttr(globalObject, object, name, false);
     callSpecial(globalObject, method, object, name, value);
 }
 
@@ -556,6 +578,8 @@ void delAttr(JSGlobalObject* globalObject, JSValue object, JSString* name)
     JSValue method = typeOf(globalObject, object)->lookup(Special::DelAttr);
     if (isNative(method, objectDelAttr)) [[likely]]
         return genericSetAttr(globalObject, object, name, { });
+    if (!method) [[unlikely]]
+        return raiseCannotSetAttr(globalObject, object, name, true);
     callSpecial(globalObject, method, object, name);
 }
 
@@ -1089,8 +1113,8 @@ JSValue call(JSGlobalObject* globalObject, JSValue callable, const CallArgs& arg
 
 JSValue callSpecial(JSGlobalObject* globalObject, JSValue method, JSValue self, const CallArgs& args)
 {
-    // Whoever takes a method of `object` for granted (__getattribute__, __repr__) finds none in a class whose metaclass has given it an MRO
-    // without `object`.
+    // Whoever takes a method of `object` for granted finds none in a class whose metaclass has given it an MRO without `object`. What
+    // CPython has an answer of its own for looks before it calls (getAttrImpl(), setAttr(), reprObject(), ...): this is for the rest.
     if (!method) [[unlikely]] {
         auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
         return raiseTypeError(globalObject, scope, "type '"_s, typeName(globalObject, self), "' has no such method: 'object' is not in its MRO"_s);
@@ -1232,6 +1256,9 @@ JSValue reprObject(JSGlobalObject* globalObject, JSValue value)
         return raiseRecursionError(globalObject, scope, "maximum recursion depth exceeded while getting the repr of an object"_s);
     PyType* type = typeOf(globalObject, value);
     JSValue method = type->lookup(Special::Repr);
+    // `object` is not in the MRO.
+    if (!method) [[unlikely]]
+        RELEASE_AND_RETURN(scope, makeStr(globalObject, makeString('<', type->nameInMessages(), " object at "_s, addressForRepr(globalObject, value), '>')));
     JSValue result = callSpecial(globalObject, type, Special::Repr, method, value);
     RETURN_IF_EXCEPTION(scope, { });
     RELEASE_AND_RETURN(scope, checkString(globalObject, value, result, "__repr__"_s));
@@ -1253,6 +1280,8 @@ JSValue strObject(JSGlobalObject* globalObject, JSValue value)
         return raiseRecursionError(globalObject, scope, "maximum recursion depth exceeded while getting the str of an object"_s);
     PyType* type = typeOf(globalObject, value);
     JSValue method = type->lookup(Special::Str);
+    if (!method) [[unlikely]]
+        RELEASE_AND_RETURN(scope, reprObject(globalObject, value));
     JSValue result = callSpecial(globalObject, type, Special::Str, method, value);
     RETURN_IF_EXCEPTION(scope, { });
     RELEASE_AND_RETURN(scope, checkString(globalObject, value, result, "__str__"_s));
@@ -1312,6 +1341,8 @@ JSValue formatObject(JSGlobalObject* globalObject, JSValue value, JSString* spec
             RELEASE_AND_RETURN(scope, str(globalObject, value));
     }
     JSValue method = rt.typeOf(value)->lookup(Special::Format);
+    if (!method) [[unlikely]]
+        return raiseTypeError(globalObject, scope, "Type "_s, rt.typeOf(value)->nameInMessages(), " doesn't define __format__"_s);
     JSValue result = callSpecial(globalObject, method, value, spec ? spec : rt.names.empty());
     RETURN_IF_EXCEPTION(scope, { });
     if (!isStr(result))

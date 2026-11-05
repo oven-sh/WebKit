@@ -30,6 +30,8 @@ void completeAttributeError(JSGlobalObject*, JSValue thrown, JSValue object, JSS
 JSValue getAttrIfPresent(JSGlobalObject*, JSValue object, JSString* name);
 void setAttr(JSGlobalObject*, JSValue object, JSString* name, JSValue value);
 void delAttr(JSGlobalObject*, JSValue object, JSString* name);
+// What these raise for an instance of a class that has no __setattr__, or no __delattr__. The name is a str or of a class derived from it.
+void raiseCannotSetAttr(JSGlobalObject*, JSValue object, JSValue name, bool isDeletion);
 bool hasAttr(JSGlobalObject*, JSValue object, JSString* name);
 
 // object.__getattribute__, object.__setattr__ (an empty value deletes).

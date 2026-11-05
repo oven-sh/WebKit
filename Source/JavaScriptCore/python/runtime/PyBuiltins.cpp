@@ -168,8 +168,10 @@ static JSValue builtinSetAttr(JSGlobalObject* globalObject, JSValue object, JSVa
     RETURN_IF_EXCEPTION(scope, { });
     if (nameValue.isString()) [[likely]]
         setAttr(globalObject, object, name, value);
-    else // __setattr__ gets the instance of a class derived from str that this was given.
-        callSpecial(globalObject, typeOf(globalObject, object)->lookup(Special::SetAttr), object, nameValue, value);
+    else if (JSValue method = typeOf(globalObject, object)->lookup(Special::SetAttr)) // __setattr__ gets the instance of a class derived from str that this was given.
+        callSpecial(globalObject, method, object, nameValue, value);
+    else
+        raiseCannotSetAttr(globalObject, object, nameValue, false);
     RETURN_IF_EXCEPTION(scope, { });
     return jsUndefined();
 }
