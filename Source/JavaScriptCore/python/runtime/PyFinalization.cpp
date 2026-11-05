@@ -67,7 +67,7 @@ void Runtime::registerFinalizable(JSCell* cell)
             return;
         cell->setPerCellBit(true);
     }
-    m_youngFinalizable.append(Finalizable::of(cell, m_currentThread));
+    m_youngFinalizable.append(Finalizable::of(cell, m_currentThread, m_era));
     if (allocationTracebackLimit) [[unlikely]]
         didRegisterWhileTracingAllocations(cell);
 }
@@ -319,7 +319,7 @@ bool Runtime::keepUnreachableObjectsToFinalize(SlotVisitor& visitor)
     auto freedByReferenceCounts = order.now.span().first(order.freedByReferenceCounts);
     auto cyclicGarbage = order.now.span().subspan(order.freedByReferenceCounts);
     auto makerOf = [&](unsigned candidate) {
-        return askerMakesAllCalls ? m_currentThread : threadToMakeCallsOf(places[candidate]->thread);
+        return askerMakesAllCalls ? m_currentThread : threadToFinalize(*places[candidate]);
     };
     auto takerOfPieceWithOldest = [&](unsigned oldest) {
         return makerOf(oldest < candidates.size() ? oldest : cyclicGarbage.empty() ? 0 : cyclicGarbage[0]);
@@ -545,7 +545,8 @@ bool Runtime::hasBeenFinalized(JSCell* cell)
 void Runtime::queueWeakRefCallback(PyWeakRef* weakRef)
 {
     Locker locker { m_finalizationLock };
-    CallsOwed& owed = callsOwedBy(m_scopeAskedFor && m_askerMakesAllCalls ? m_currentThread : threadToMakeCallsOf(weakRef->thread()));
+    bool isOfEarlierEra = m_threadThatPaysForEarlierEras != noThread && weakRef->serial() < m_firstWeakRefOfEra;
+    CallsOwed& owed = callsOwedBy(m_scopeAskedFor && m_askerMakesAllCalls ? m_currentThread : isOfEarlierEra ? m_threadThatPaysForEarlierEras : threadToMakeCallsOf(weakRef->thread()));
     owed.weakRefCallbacks.append(weakRef);
     owed.weakRefCallbacksAreInOrder = false;
 }
@@ -1118,19 +1119,41 @@ void Runtime::collectAsAskedFor(CollectionScope collectionScope, bool leavesCycl
 
 void Runtime::finalizeWhatReferenceCountsWouldHaveFreed()
 {
+    // See m_era.
+    ++m_era;
+    SetForScope threadThatPays(m_threadThatPaysForEarlierEras, m_currentThread);
+    m_firstWeakRefOfEra = nextWeakRefSerial();
+    {
+        // What the others owe by now comes first: it was found earlier.
+        Locker locker { m_finalizationLock };
+        CallsOwed& own = callsOwedBy(m_currentThread);
+        Deque<JSCell*> finalizers;
+        for (auto& other : m_callsOwed) {
+            if (other.get() == &own)
+                continue;
+            while (!other->finalizers.isEmpty())
+                finalizers.append(other->finalizers.takeFirst());
+            while (!other->weakRefCallbacks.isEmpty()) {
+                own.weakRefCallbacks.append(other->weakRefCallbacks.takeFirst());
+                own.weakRefCallbacksAreInOrder = false;
+            }
+        }
+        while (!finalizers.isEmpty())
+            own.finalizers.prepend(finalizers.takeLast());
+    }
     for (unsigned round = 0; round < 64; ++round) {
-        bool hasSomethingToDo = hasPendingFinalizers();
+        bool hasSomethingToDo = hasPendingFinalizers(CallsOf::ThisThread);
         forEachFinalizable([&](JSCell* cell) {
             hasSomethingToDo |= hasFinalizerOfProgram(*this, cell) && !hasNothingToFinalize(cell);
         });
         if (!hasSomethingToDo)
             return;
         wipeStackBelow(m_globalObject);
-        collectAsAskedFor(CollectionScope::Full, true);
-        if (!owesCalls(CallsOf::AllThreads))
+        collectAsAskedFor(CollectionScope::Full, true, CallsOf::ThisThread);
+        if (!owesCalls(CallsOf::ThisThread))
             return;
-        bool mayFindMore = hasPendingFinalizers();
-        runPendingCalls(false, CallsOf::AllThreads);
+        bool mayFindMore = hasPendingFinalizers(CallsOf::ThisThread);
+        runPendingCalls(false, CallsOf::ThisThread);
         if (!mayFindMore || m_vm.hasPendingTerminationException())
             return;
     }

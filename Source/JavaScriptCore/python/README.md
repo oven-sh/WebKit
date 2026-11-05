@@ -691,6 +691,13 @@ so the aim is that everything Python *guarantees* holds, and that what it merely
   collections find and order what only the modules held. What is then still held (by JS, by a frame on the stack) is finalized in
   the order it was made. A program that leaves nothing to finalize exits without a collection; a generator that has not begun is
   nothing to finalize.
+  - Daemon threads are still running during the first of these steps, and in CPython they finalize what they drop themselves. So the step begins
+    an era (`Runtime::m_era`, which each object with a finalizer is registered with; weak references have serial numbers): the main thread
+    takes over what the others owe by then, and while the step lasts every collection, its own or the engine's, gives it what is of an
+    earlier era and is found dead, whoever made it; what a thread has made since is its maker's, as at any other time. It ends when the main
+    thread owes nothing after a collection. (It used to pay until no thread owed anything, and each of its collections took all garbage upon
+    it: beside two daemons that keep making objects with a `__del__` the process ended after 1 to 60 s or not at all, with millions of
+    finalizers called by the main thread; now in half a second, most of it for what the daemons had left when they were stopped.)
   - What it costs, measured: black formatting its own 24 sources in one process (7 s, 330 MB) makes one full collection at exit, 99.9 ms of
     marking and 13.2 ms of sweeping; from its last line to the end of the process 112 to 142 ms, against 28 to 31 ms with `os._exit()`.
     It is made for one object: the tokenizer's generator for the last file, dropped while suspended inside `try` / `except`. To

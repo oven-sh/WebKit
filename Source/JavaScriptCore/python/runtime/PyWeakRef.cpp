@@ -30,7 +30,7 @@ PY_DEFINE_CELL(PyWeakRef);
 // weak reference to the other.
 static constexpr unsigned sharedWeakRefsField = Runtime::numberOfHiddenKeys - 1;
 
-static uint64_t nextWeakRefSerial()
+uint64_t nextWeakRefSerial()
 {
     static std::atomic<uint64_t> last;
     return ++last;

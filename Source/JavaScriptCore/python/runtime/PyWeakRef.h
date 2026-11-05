@@ -10,6 +10,9 @@
 namespace JSC {
 namespace Python {
 
+// What PyWeakRef::serial() of the next weak reference to be made would have been: those made later have higher ones.
+uint64_t nextWeakRefSerial();
+
 // weakref.ref, weakref.proxy: a pointer the collector does not follow.
 //
 // At the end of a collection every weak reference that survived it is asked to look at its referent (as JSWeakObjectRef is):

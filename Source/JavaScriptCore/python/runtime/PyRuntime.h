@@ -624,7 +624,7 @@ public:
     // The same for a generator, of which there are many, when it is made.
     ALWAYS_INLINE void registerNewGenerator(JSCell* generator)
     {
-        m_youngFinalizable.append(Finalizable::of(generator, m_currentThread));
+        m_youngFinalizable.append(Finalizable::of(generator, m_currentThread, m_era));
         if (allocationTracebackLimit) [[unlikely]]
             didRegisterWhileTracingAllocations(generator);
     }
@@ -1028,13 +1028,21 @@ private:
     // otherwise keep alive what the next to look is meant to find. (Other conservative collectors do the same with their weak tables:
     // GC_HIDE_POINTER in Boehm's, for finalization and disappearing links, HIDE_POINTER in Mono's, for weak links.)
     struct Finalizable {
-        static Finalizable of(JSCell* cell, uint32_t thread) { return { ~std::bit_cast<uintptr_t>(cell), thread }; }
+        static Finalizable of(JSCell* cell, uint32_t thread, uint32_t era) { return { ~std::bit_cast<uintptr_t>(cell), thread, era }; }
         JSCell* cell() const { return std::bit_cast<JSCell*>(~complement); }
         void clear() { complement = ~static_cast<uintptr_t>(0); }
 
         uintptr_t complement;
         uint32_t thread; // That registered it.
+        uint32_t era; // When: see m_era.
     };
+    // The main thread, as it ends, finalizes what has been dropped by then, whoever made it, and what comes of that, while daemon threads go on running. What they make from then on
+    // is theirs to finalize, as at any other time, or a program whose daemons keep making garbage would not exit. So that step begins an era: what is older and is found dead, by
+    // whichever collection, is for the thread that pays.
+    uint32_t m_era { 0 };
+    uint32_t m_threadThatPaysForEarlierEras { noThread };
+    uint64_t m_firstWeakRefOfEra { 0 };
+    uint32_t threadToFinalize(const Finalizable& entry) { return m_threadThatPaysForEarlierEras != noThread && entry.era < m_era ? m_threadThatPaysForEarlierEras : threadToMakeCallsOf(entry.thread); }
     Vector<Finalizable> m_oldFinalizable;
     Vector<Finalizable> m_youngFinalizable;
     void forEachFinalizable(const ScopedLambda<void(JSCell*)>&);
