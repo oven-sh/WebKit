@@ -94,12 +94,12 @@ public:
     }
 
     // False: an exception.
-    bool write(JSValue value)
+    bool write(JSValue value, bool isInSet = false)
     {
         VM& vm = m_runtime.vm();
         auto scope = DECLARE_THROW_SCOPE(vm);
         if (m_version >= 3)
-            count(value);
+            count(value, isInSet);
         if (m_error == Error::None)
             writeObject(value);
         switch (m_error) {
@@ -152,7 +152,8 @@ public:
         for (unsigned i = 0; i < items.size(); ++i) {
             MarshalWriter writer(m_globalObject, m_version, m_allowCode);
             writer.m_depth = m_depth;
-            if (failed(scope, writer.write(items.at(i)))) {
+            // (Numbered here too, as in CPython, which holds a reference of its own to the item meanwhile.)
+            if (failed(scope, writer.write(items.at(i), true))) {
                 m_error = Error::Unmarshallable;
                 return false;
             }

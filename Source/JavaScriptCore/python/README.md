@@ -340,7 +340,8 @@ interpreter looks it up whenever it jumps (a call and a hash table: some 70 inst
 constants (`60 * 60 * x`); tuples of constants; a list or a set of constants that is only searched or iterated over is a constant tuple or frozenset, and a list of anything else that is only
 searched or iterated over is built as a tuple (`Unit::exprToIterateOverOrSearch()`). `co_consts` shows what CPython's shows, except that a list display of three constants or more, which
 CPython makes from one constant, is made from its items here. A set display of three constants or more is an empty set updated with a frozenset, as in CPython: the order of a set shows
-how it was filled. What is written once may be compiled several times (a `finally` clause, for each way into it); a function, class or
+how it was filled. In a `.pyc` file and in the cache a frozenset has its items in the order of what marshal writes for each on its own, which does not go by hashes: the same source gives the same file in every process. It is
+CPython's order as far as the items are written alike (there, whether an item is marked as one to refer back to goes by its reference count). What is written once may be compiled several times (a `finally` clause, for each way into it); a function, class or
 generator expression in there is compiled once (`Unit::m_compiledCode`) and is one constant, as in CPython, where the copies are equal.
 
 `Name(...)`, where the name looks like that of a class, is compiled so that, if it is a class with `object.__new__` and an `__init__`
