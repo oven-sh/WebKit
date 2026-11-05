@@ -622,8 +622,13 @@ void finalizeSignals(JSGlobalObject* globalObject)
     cancelTracebackDumpRequests();
     signalRestoreActions();
     JSArray* handlers = signalHandlers(globalObject);
-    for (int number = 1; number < signalLimit; ++number)
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(getVM(globalObject));
+    for (int number = 1; number < signalLimit; ++number) {
         listSet(globalObject, handlers, number, jsUndefined());
+        // Code of JS may have seen to it that a store into any array calls a function of its own. What that throws is nobody's.
+        if (!scope.clearExceptionExceptTermination()) [[unlikely]]
+            return;
+    }
 }
 
 void detachSignals(Runtime& rt)

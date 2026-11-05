@@ -62,7 +62,9 @@ static bool heapqSiftDown(JSGlobalObject* globalObject, JSArray* heap, unsigned 
             break;
         JSValue parent = listGet(heap, parentPosition);
         listSet(globalObject, heap, parentPosition, listGet(heap, position));
+        RETURN_IF_EXCEPTION(scope, false);
         listSet(globalObject, heap, position, parent);
+        RETURN_IF_EXCEPTION(scope, false);
         position = parentPosition;
     }
     return true;
@@ -91,7 +93,9 @@ static bool heapqSiftUp(JSGlobalObject* globalObject, JSArray* heap, unsigned po
         }
         JSValue item = listGet(heap, position);
         listSet(globalObject, heap, position, listGet(heap, child));
+        RETURN_IF_EXCEPTION(scope, false);
         listSet(globalObject, heap, child, item);
+        RETURN_IF_EXCEPTION(scope, false);
         position = child;
     }
     RELEASE_AND_RETURN(scope, heapqSiftDown<isMax>(globalObject, heap, start, position));
@@ -149,6 +153,7 @@ static JSValue heapqPop(JSGlobalObject* globalObject, JSValue heapValue)
         return last;
     JSValue top = listGet(heap, 0);
     listSet(globalObject, heap, 0, last);
+    RETURN_IF_EXCEPTION(scope, { });
     if (failed(scope, heapqSiftUp<isMax>(globalObject, heap, 0)))
         return { };
     return top;
@@ -170,6 +175,7 @@ static JSValue heapqReplace(JSGlobalObject* globalObject, JSValue heapValue, JSV
     }
     JSValue top = listGet(heap, 0);
     listSet(globalObject, heap, 0, item);
+    RETURN_IF_EXCEPTION(scope, { });
     if (failed(scope, heapqSiftUp<isMax>(globalObject, heap, 0)))
         return { };
     return top;
@@ -197,6 +203,7 @@ static JSValue heapqPushPop(JSGlobalObject* globalObject, JSValue heapValue, JSV
     }
     JSValue top = listGet(heap, 0);
     listSet(globalObject, heap, 0, item);
+    RETURN_IF_EXCEPTION(scope, { });
     if (failed(scope, heapqSiftUp<isMax>(globalObject, heap, 0)))
         return { };
     return top;
