@@ -242,19 +242,13 @@ private:
     UnlinkedCodeBlockGenerator* m_codeBlock;
     JSInstructionStreamWriter& m_writer;
     Vector<Insertion, 8> m_insertions;
+    Vector<int, 9> m_differences; // By how much the insertions in front of each one move the code, and all of them. Filled by execute().
 };
 
 template<typename Iterator>
 inline int BytecodeRewriter::calculateDifference(Iterator begin, Iterator end)
 {
-    int result = 0;
-    for (; begin != end; ++begin) {
-        if (begin->type == Insertion::Type::Remove)
-            result -= begin->length();
-        else
-            result += begin->length();
-    }
-    return result;
+    return m_differences[end - m_insertions.begin()] - m_differences[begin - m_insertions.begin()];
 }
 
 template<typename Func>

@@ -37,20 +37,30 @@ namespace JSC {
 
 void BytecodeRewriter::applyModification()
 {
-    for (size_t insertionIndex = m_insertions.size(); insertionIndex--;) {
+    // One pass, whatever the number of insertions. At one offset, what is inserted comes in the order of the insertions, in front of the original bytecode.
+    auto original = m_writer.m_instructions.span();
+    JSInstructionStreamWriter::InstructionBuffer result;
+    result.reserveInitialCapacity(original.size() + m_differences.last());
+    size_t copiedSoFar = 0;
+    for (size_t insertionIndex = 0; insertionIndex < m_insertions.size(); ++insertionIndex) {
         Insertion& insertion = m_insertions[insertionIndex];
+        size_t offset = insertion.index.bytecodeOffset;
+        ASSERT(copiedSoFar <= offset);
+        result.append(original.subspan(copiedSoFar, offset - copiedSoFar));
+        copiedSoFar = offset;
         if (insertion.type == Insertion::Type::Remove)
-            m_writer.m_instructions.removeAt(insertion.index.bytecodeOffset, insertion.length());
+            copiedSoFar += insertion.length();
         else {
-            if (insertion.includeBranch == IncludeBranch::Yes) {
-                int finalOffset = insertion.index.bytecodeOffset + calculateDifference(m_insertions.begin(), m_insertions.begin() + insertionIndex);
-                adjustJumpTargetsInFragment(finalOffset, insertion);
-            }
-            m_writer.m_instructions.insertVector(insertion.index.bytecodeOffset, insertion.instructions.m_instructions);
+            if (insertion.includeBranch == IncludeBranch::Yes)
+                adjustJumpTargetsInFragment(offset + m_differences[insertionIndex], insertion);
+            result.appendVector(insertion.instructions.m_instructions);
         }
     }
+    result.append(original.subspan(copiedSoFar));
+    m_writer.m_instructions = WTF::move(result);
     m_writer.didMutateBuffer();
     m_insertions.clear();
+    m_differences.clear();
 }
 
 void BytecodeRewriter::execute()
@@ -58,6 +68,17 @@ void BytecodeRewriter::execute()
     WTF::bubbleSort(m_insertions.mutableSpan(), [] (const Insertion& lhs, const Insertion& rhs) {
         return lhs.index < rhs.index;
     });
+
+    int difference = 0;
+    m_differences.reserveInitialCapacity(m_insertions.size() + 1);
+    for (auto& insertion : m_insertions) {
+        m_differences.append(difference);
+        if (insertion.type == Insertion::Type::Remove)
+            difference -= insertion.length();
+        else
+            difference += insertion.length();
+    }
+    m_differences.append(difference);
 
     m_codeBlock->applyModification(*this);
 }
