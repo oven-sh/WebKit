@@ -4344,7 +4344,7 @@ llintOpWithJump(op_py_for_iter, OpPyForIter, macro (size, get, jump, dispatch)
     bbeq t3, constexpr Python::PyIterator::Kind::List, .list
     bbneq t3, constexpr Python::PyIterator::Kind::Tuple, .slow
     loadi (constexpr (Python::PyTuple::offsetOfLength()))[t1], t3
-    bqaeq t2, t3, .slow
+    bqaeq t2, t3, .ends
     loadq (constexpr (Python::PyTuple::offsetOfItems()))[t1, t2, 8], t3
     addq 1, t2
     storeq t2, (constexpr (Python::PyIterator::offsetOfPosition()))[t0]
@@ -4353,9 +4353,9 @@ llintOpWithJump(op_py_for_iter, OpPyForIter, macro (size, get, jump, dispatch)
 .list:
     loadb JSCell::m_indexingTypeAndMisc[t1], t5
     loadp JSObjectWithButterfly::m_butterfly[t1], t1
-    btpz t1, .slow
+    btpz t1, .ends
     loadi -sizeof IndexingHeader + IndexingHeader::u.lengths.publicLength[t1], t3
-    bqaeq t2, t3, .slow
+    bqaeq t2, t3, .ends
     loadListItem(t5, t1, t2, t3, .slow)
     addq 1, t2
     storeq t2, (constexpr (Python::PyIterator::offsetOfPosition()))[t0]
@@ -4386,6 +4386,9 @@ llintOpWithJump(op_py_for_iter, OpPyForIter, macro (size, get, jump, dispatch)
     loadq [cfr, t1, 8], t1
     bieq (constexpr (Python::PyGenerator::offsetOfState()))[t1], constexpr Python::PyGenerator::Completed, .exhausted
     storeItem(r0)
+
+.ends:
+    storeq ValueEmpty, (constexpr (Python::PyIterator::offsetOfTarget()))[t0]
 
 .exhausted:
     jump(m_targetLabel)
