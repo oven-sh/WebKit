@@ -1136,9 +1136,23 @@ bool isForeignCallee(JSValue callee)
         return !PyFunction::is(callee);
     case InternalFunctionType:
         return !PyType::is(callee) && !PyNativeFunction::is(callee);
+    case DerivedArrayType:
+        return !PyListObject::is(callee.asCell());
     default:
         return !isPyObjectType(callee.asCell()->type());
     }
+}
+
+CallData callDataUnknownToJS(JSValue callee)
+{
+    CallData callData;
+    if (callee.isCell() && PyListObject::is(callee.asCell()) && uncheckedDowncast<PyListObject>(callee.asCell())->type()->lookup(Special::Call)) {
+        callData.type = CallData::Type::Native;
+        callData.native.function = callPythonObject;
+        callData.native.isBoundFunction = false;
+        callData.native.isWasm = false;
+    }
+    return callData;
 }
 
 // f(1, a=2, b=3) is f(1, { a: 2, b: 3 }): that is how functions take named arguments in JS.

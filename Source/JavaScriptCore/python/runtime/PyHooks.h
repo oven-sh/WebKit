@@ -6,6 +6,7 @@
 #pragma once
 
 #include "BytecodeIndex.h"
+#include "CallData.h"
 #include "JSCJSValue.h"
 #include "VirtualRegister.h"
 #include <optional>
@@ -116,6 +117,9 @@ JS_EXPORT_PRIVATE std::optional<bool> equalForJS(JSGlobalObject*, JSValue left, 
 // True: the callee is a class, and the call is `new callee(...)`.
 JS_EXPORT_PRIVATE bool isForeignCallee(JSValue callee);
 JS_EXPORT_PRIVATE bool prepareForeignCall(JSGlobalObject*, CallFrame* calleeFrame);
+// Python code is calling what JS says cannot be called. An instance of a class derived from list is an array to JS, whatever methods the
+// class has: to be a function as well would make it one for typeof, JSON.stringify() and console.log().
+JS_EXPORT_PRIVATE CallData callDataUnknownToJS(JSValue callee);
 
 // `class constructor extends superclass`, when the methods are in place and before anything sees the class. If the superclass is a
 // class of Python's, so is this: the class. Otherwise the constructor. See PyJSClass.h.

@@ -169,6 +169,7 @@ public:
 
     // See LazyCallLinkInfo. Nothing may ever change such a CallLinkInfo.
     bool isSharedByUnlinkedCallSites() const { return m_isSharedByUnlinkedCallSites; }
+    bool isInPythonCode() const { return m_isInPythonCode; }
 
     void clearSeen()
     {

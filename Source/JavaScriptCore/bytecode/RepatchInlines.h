@@ -130,6 +130,8 @@ inline void* handleHostCall(VM& vm, JSCell* owner, CallFrame* calleeFrame, JSVal
     if (callLinkInfo->specializationKind() == CodeSpecializationKind::CodeForCall) {
         auto callData = JSC::getCallDataInline(callee);
         ASSERT(callData.type != CallData::Type::JS);
+        if (callData.type == CallData::Type::None && callLinkInfo->isInPythonCode()) [[unlikely]]
+            callData = Python::callDataUnknownToJS(callee);
 
         if (callData.type == CallData::Type::Native) {
             NativeCallFrameTracer tracer(vm, calleeFrame);
