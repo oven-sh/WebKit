@@ -489,8 +489,9 @@ static NEVER_INLINE bool bindArgumentsSlow(JSGlobalObject* globalObject, CallFra
         positionalCount = argCount;
 
     // The parameters are worked out on the side: they go where the arguments are.
+    unsigned parameterCount = info.parameterCount();
     MarkedArgumentBuffer buffer;
-    buffer.fill(vm, info.parameterCount(), [](JSValue*) { });
+    buffer.fill(vm, parameterCount, [](JSValue*) { });
     JSValue* slots = valuesOf(buffer);
 
     PyDict* keywordDict = nullptr;
@@ -629,7 +630,7 @@ static NEVER_INLINE bool bindArgumentsSlow(JSGlobalObject* globalObject, CallFra
         }
     }
 
-    for (unsigned i = 0; i < info.parameterCount(); ++i)
+    for (unsigned i = 0; i < parameterCount; ++i)
         callFrame->setArgument(i, slots[i]);
     return true;
 }

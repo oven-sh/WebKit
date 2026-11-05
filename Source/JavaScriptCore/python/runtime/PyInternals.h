@@ -152,9 +152,11 @@ inline void setHiddenField(JSGlobalObject* globalObject, JSValue object, unsigne
 static constexpr unsigned keywordKeysField = 0;
 // What a call passes as `this`, from the keys of a dict that is not empty. Null: with an exception.
 PyTuple* keywordNamesOf(JSGlobalObject*, PyDict*);
-// Those keys. Null: the names are the keys.
+// Those keys. Null: the names are the keys. (A field is a property, so a tuple that has one no longer has the Structure it was made with.)
 inline PyTuple* keywordKeys(JSGlobalObject* globalObject, PyTuple* names)
 {
+    if (names->structure() == runtime(globalObject).keywordNamesStructure()) [[likely]]
+        return nullptr;
     JSValue keys = hiddenField(globalObject, names, keywordKeysField);
     return keys ? PyTuple::from(keys) : nullptr;
 }
