@@ -228,7 +228,7 @@ static std::optional<FoundFrozenModule> findFrozenModule(JSValue name)
         }
         return found;
     }
-    if (auto* fileSystem = virtualFileSystem(); fileSystem && !fileSystem->hostLibrary.isNull() && !text.contains('.') && !text.contains('/')) {
+    if (auto* fileSystem = virtualFileSystem(); fileSystem && !fileSystem->hostLibrary.isNull() && !isTooLongForAPath(text.length()) && !text.contains('.') && !text.contains('/')) {
         String file = makeString(fileSystem->hostLibrary, '/', text, ".py"_s);
         if (kindOfFile(file) == VirtualFileKind::File)
             return FoundFrozenModule { file, makeString("<frozen "_s, text, '>'), { }, { }, false };

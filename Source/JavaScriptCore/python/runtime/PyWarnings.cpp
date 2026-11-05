@@ -455,7 +455,7 @@ static bool warningsIsInternalFile(const String& filename)
         return true;
     constexpr auto prefix = "<frozen "_s;
     auto* fileSystem = virtualFileSystem();
-    if (!fileSystem || fileSystem->hostLibrary.isNull() || !filename.startsWith(prefix) || !filename.endsWith('>'))
+    if (!fileSystem || fileSystem->hostLibrary.isNull() || isTooLongForAPath(filename.length()) || !filename.startsWith(prefix) || !filename.endsWith('>'))
         return false;
     return kindOfFile(makeString(fileSystem->hostLibrary, '/', StringView(filename).substring(prefix.length(), filename.length() - prefix.length() - 1), ".py"_s)) == VirtualFileKind::File;
 }

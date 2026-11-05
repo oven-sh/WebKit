@@ -262,6 +262,8 @@ static JSValue findAndLoadOnPath(JSGlobalObject* globalObject, JSString* name, c
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
+    if (isTooLongForAPath(tail.length()))
+        return { };
     JSArray* directories = listFromIterable(globalObject, searchPath);
     RETURN_IF_EXCEPTION(scope, { });
     String namespaceDirectory;

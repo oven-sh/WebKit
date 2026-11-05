@@ -72,6 +72,9 @@ bool makeParentDirectories(std::span<const char> path);
 
 // ---- For what reads files without going through posix, the host too ----
 
+// Whether a text of so many units is too long to be a path: the three below say ENAMETOOLONG without a look at it. (Gigabytes of text, as the name
+// of a module can be, have no room in a Vector, and joined to something else none in a String.)
+bool isTooLongForAPath(unsigned length);
 // Follows symbolic links.
 JS_EXPORT_PRIVATE VirtualFileKind kindOfFile(const String& path);
 // Nothing: errno says why.

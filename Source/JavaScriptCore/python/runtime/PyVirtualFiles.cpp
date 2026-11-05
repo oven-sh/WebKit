@@ -54,13 +54,15 @@ const VirtualFileSystem* virtualFileSystem()
     return s_virtualFileSystem;
 }
 
+static constexpr unsigned maxLengthOfVirtualPath = 4095;
+
 bool toVirtualPath(std::span<const char> path, VirtualPath& fromRoot)
 {
     if (!s_virtualFileSystem || path.empty() || path[0] != '/')
         return false;
     auto root = s_virtualFileSystem->root.span();
-    // A path of 4096 bytes or more is left to the system, which says of any such that the name is too long.
-    if (path.size() < root.size() || path.size() >= 4096 || !WTF::contains(path, s_virtualMarker))
+    // A longer path is left to the system, which says of any such that the name is too long.
+    if (path.size() < root.size() || path.size() > maxLengthOfVirtualPath || !WTF::contains(path, s_virtualMarker))
         return false;
 
     Vector<char, 256> normalized;
@@ -190,8 +192,24 @@ bool isVirtualPath(std::span<const char> path)
     return toVirtualPath(path, fromRoot);
 }
 
+// The system refuses a path of so many bytes, as toVirtualPath() does, and each unit of the text takes a byte at least.
+bool isTooLongForAPath(unsigned length)
+{
+#if OS(WINDOWS)
+    constexpr unsigned limit = 32768;
+#else
+    constexpr unsigned limit = std::max<unsigned>(PATH_MAX, maxLengthOfVirtualPath + 1);
+#endif
+    if (length < limit)
+        return false;
+    errno = ENAMETOOLONG;
+    return true;
+}
+
 VirtualFileKind kindOfFile(const String& path)
 {
+    if (isTooLongForAPath(path.length())) [[unlikely]]
+        return VirtualFileKind::None;
     auto bytes = encodeFilesystem(path);
     if (s_virtualFileSystem) {
         VirtualPath fromRoot;
@@ -217,6 +235,8 @@ VirtualFileKind kindOfFile(const String& path)
 
 std::optional<Vector<uint8_t>> readFile(const String& path)
 {
+    if (isTooLongForAPath(path.length())) [[unlikely]]
+        return std::nullopt;
     auto bytes = encodeFilesystem(path);
     if (s_virtualFileSystem) {
         VirtualPath fromRoot;
@@ -285,6 +305,8 @@ RefPtr<ThreadSafeRefCountedFixedVector<uint8_t>> readFileToKeep(const String& pa
         zeroSpan(contents->span().first(padding));
         return contents;
     };
+    if (isTooLongForAPath(path.length())) [[unlikely]]
+        return nullptr;
 #if !OS(WINDOWS)
     auto bytes = encodeFilesystem(path);
     Vector<char, 256> realPath;
