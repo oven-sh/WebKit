@@ -61,6 +61,8 @@ static void mergeMapping(JSGlobalObject* globalObject, PyDict* dict, JSValue oth
         if (otherDict == dict || otherDict->isEmpty())
             return;
         if (dict->isEmpty()) {
+            // Nothing can be there twice, so nothing is looked for before it is stored: the keys that a search comes by can tell.
+            duplicate = nullptr;
             if (otherDict->hasTableThatFits())
                 return dict->takeTableOf(vm, otherDict);
             // Otherwise the keys go in one by one, each compared with those of the same hash that are in already. Among strs nobody can tell. (Into
