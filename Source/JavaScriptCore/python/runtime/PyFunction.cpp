@@ -402,16 +402,27 @@ String calculateSuggestion(const Vector<String>& candidates, const String& name)
         return result;
     };
 
-    CString nameUTF8 = name.utf8();
+    // The distance is at least what the lengths differ by, so a name so much longer than all the candidates is close to none. It may
+    // be too long for its UTF-8 to be had. (A unit is one to three bytes.)
+    size_t longest = 0;
+    for (auto& candidate : candidates)
+        longest = std::max<size_t>(longest, candidate.length());
+    if (5 * static_cast<size_t>(name.length()) > 7 * 3 * longest + 3)
+        return { };
+    auto nameUTF8 = name.tryGetUTF8();
+    if (!nameUTF8) [[unlikely]]
+        return { };
     size_t bestDistance = std::numeric_limits<size_t>::max();
     String best;
     for (auto& candidate : candidates) {
         if (candidate == name)
             continue;
-        CString candidateUTF8 = candidate.utf8();
-        size_t maxDistance = (nameUTF8.length() + candidateUTF8.length() + 3) * moveCost / 6;
+        auto candidateUTF8 = candidate.tryGetUTF8();
+        if (!candidateUTF8) [[unlikely]]
+            continue;
+        size_t maxDistance = (nameUTF8->length() + candidateUTF8->length() + 3) * moveCost / 6;
         maxDistance = std::min(maxDistance, bestDistance - 1);
-        size_t distance = distanceBetween(byteCast<char>(nameUTF8.span()), byteCast<char>(candidateUTF8.span()), maxDistance);
+        size_t distance = distanceBetween(byteCast<char>(nameUTF8->span()), byteCast<char>(candidateUTF8->span()), maxDistance);
         if (distance > maxDistance)
             continue;
         if (best.isNull() || distance < bestDistance) {
