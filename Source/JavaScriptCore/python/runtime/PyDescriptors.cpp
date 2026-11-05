@@ -662,8 +662,10 @@ static JSValue superInit(JSGlobalObject* globalObject, JSValue self, const CallA
 }
 
 // What the classes that follow `thisClass` in the MRO of `startType` have by the name, bound to the instance. Empty, and no exception:
-// nothing. `self`: as for getMethod().
-static JSValue superLookup(JSGlobalObject* globalObject, PyType* thisClass, JSValue instance, PyType* startType, JSString* name, JSValue* self)
+// nothing. `self`: as for getMethod(). `nameIsKey`: as for genericGetAttr(). Here each class is asked with a hash of its own, and what the
+// name raises comes out, as in CPython.
+template<bool nameIsKey>
+static ALWAYS_INLINE JSValue superLookupImpl(JSGlobalObject* globalObject, PyType* thisClass, JSValue instance, PyType* startType, JSString* name, JSValue key, JSValue* self)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -685,7 +687,14 @@ static JSValue superLookup(JSGlobalObject* globalObject, PyType* thisClass, JSVa
             if (inherited)
                 return inherited;
         }
-        JSValue found = next->dict()->get(name);
+        JSValue found;
+        if (PyDict* dict = next->dict(); !nameIsKey && dict->hasOnlyStringKeys()) [[likely]]
+            found = dict->get(name);
+        else {
+            // (A key that is no str may say that it is equal to the name.)
+            found = dict->get(globalObject, nameIsKey ? key : JSValue(name));
+            RETURN_IF_EXCEPTION(scope, { });
+        }
         if (!found)
             continue;
         if (self && !isOfClass && isCalledWithInstanceFirst(found)) {
@@ -695,6 +704,16 @@ static JSValue superLookup(JSGlobalObject* globalObject, PyType* thisClass, JSVa
         RELEASE_AND_RETURN(scope, bindDescriptor(globalObject, found, isOfClass ? JSValue() : instance, startType));
     }
     return { };
+}
+
+static JSValue superLookup(JSGlobalObject* globalObject, PyType* thisClass, JSValue instance, PyType* startType, JSString* name, JSValue* self)
+{
+    return superLookupImpl<false>(globalObject, thisClass, instance, startType, name, { }, self);
+}
+
+static NEVER_INLINE JSValue superLookupByKey(JSGlobalObject* globalObject, PyType* thisClass, JSValue instance, PyType* startType, JSString* name, JSValue key)
+{
+    return superLookupImpl<true>(globalObject, thisClass, instance, startType, name, key, nullptr);
 }
 
 static JSValue superGetAttribute(JSGlobalObject* globalObject, JSValue self, JSValue nameValue)
@@ -708,12 +727,13 @@ static JSValue superGetAttribute(JSGlobalObject* globalObject, JSValue self, JSV
     PyType* startType = object->objectType.get();
     // super().__class__ is super itself.
     if (startType && !WTF::equal(name->tryGetValueImpl(), rt.names.dClass()->tryGetValueImpl())) {
-        JSValue found = superLookup(globalObject, object->thisClass.get(), object->object.get(), startType, name, nullptr);
+        JSValue found = nameValue.isString() ? superLookup(globalObject, object->thisClass.get(), object->object.get(), startType, name, nullptr)
+            : superLookupByKey(globalObject, object->thisClass.get(), object->object.get(), startType, name, nameValue);
         RETURN_IF_EXCEPTION(scope, { });
         if (found)
             return found;
     }
-    RELEASE_AND_RETURN(scope, genericGetAttr(globalObject, self, name));
+    RELEASE_AND_RETURN(scope, genericGetAttrAsGiven(globalObject, self, name, nameValue));
 }
 
 JSValue loadSuperAttribute(JSGlobalObject* globalObject, JSValue super, JSValue type, JSValue object, JSString* name, bool isWrittenWithoutArguments, JSValue* self)

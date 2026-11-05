@@ -298,7 +298,9 @@ static JSValue raiseModuleHasNoAttribute(JSGlobalObject* globalObject, PyModule*
     return raise(globalObject, scope, rt.AttributeError(), plain);
 }
 
-JSValue moduleGetAttr(JSGlobalObject* globalObject, PyModule* module, JSString* name, bool suppress)
+// `nameIsKey`: as for genericGetAttr().
+template<bool nameIsKey>
+static ALWAYS_INLINE JSValue moduleGetAttrImpl(JSGlobalObject* globalObject, PyModule* module, JSString* name, JSValue key, bool suppress)
 {
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
@@ -307,13 +309,13 @@ JSValue moduleGetAttr(JSGlobalObject* globalObject, PyModule* module, JSString* 
     // Nearly always the name is in the dict, and nothing on the type comes before that but a data descriptor.
     PyDict* dict = module->dict();
     JSValue value;
-    if (module->type() == rt.moduleType()) [[likely]] {
+    if (!nameIsKey && module->type() == rt.moduleType() && dict->hasOnlyStringKeys()) [[likely]] {
         value = dict->get(name);
         if (value && rt.moduleType()->lookup(name)) [[unlikely]]
             value = { };
     }
     if (!value) {
-        value = genericGetAttr(globalObject, module, name, true);
+        value = nameIsKey ? genericGetAttrByKey(globalObject, module, name, key, true) : genericGetAttr(globalObject, module, name, true);
         RETURN_IF_EXCEPTION(scope, { });
     }
     if (!value) {
@@ -349,7 +351,7 @@ JSValue moduleGetAttr(JSGlobalObject* globalObject, PyModule* module, JSString* 
         }
     }
     if (getter) {
-        JSValue result = call(globalObject, getter, name);
+        JSValue result = call(globalObject, getter, nameIsKey ? key : JSValue(name));
         EXCEPTION_ASSERT(!!scope.exception() == !result);
         if (!result && suppress)
             clearPendingExceptionIfMatches(globalObject, rt.AttributeError());
@@ -360,12 +362,19 @@ JSValue moduleGetAttr(JSGlobalObject* globalObject, PyModule* module, JSString* 
     RELEASE_AND_RETURN(scope, raiseModuleHasNoAttribute(globalObject, module, name));
 }
 
+JSValue moduleGetAttr(JSGlobalObject* globalObject, PyModule* module, JSString* name, bool suppress)
+{
+    return moduleGetAttrImpl<false>(globalObject, module, name, { }, suppress);
+}
+
 JSValue moduleGetAttribute(JSGlobalObject* globalObject, JSValue self, JSValue nameValue)
 {
+    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
     JSString* name = attributeName(globalObject, nameValue);
-    if (!name)
-        return { };
-    return moduleGetAttr(globalObject, PyModule::from(self), name, false);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (!nameValue.isString()) [[unlikely]]
+        RELEASE_AND_RETURN(scope, moduleGetAttrImpl<true>(globalObject, PyModule::from(self), name, nameValue, false));
+    RELEASE_AND_RETURN(scope, moduleGetAttr(globalObject, PyModule::from(self), name, false));
 }
 
 static JSValue moduleDir(JSGlobalObject* globalObject, JSValue self)

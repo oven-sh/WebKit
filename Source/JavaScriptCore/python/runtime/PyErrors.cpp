@@ -144,7 +144,7 @@ JSValue raiseKeyError(JSGlobalObject* globalObject, ThrowScope& scope, JSValue k
     return raiseWithArgs(globalObject, scope, runtime(globalObject).KeyError(), { key });
 }
 
-JSValue raiseAttributeError(JSGlobalObject* globalObject, ThrowScope& scope, JSValue object, JSString* name, const String& message)
+JSValue raiseAttributeError(JSGlobalObject* globalObject, ThrowScope& scope, JSValue object, JSValue name, const String& message)
 {
     VM& vm = getVM(globalObject);
     PyException* exception = newException(globalObject, runtime(globalObject).AttributeError(), message);

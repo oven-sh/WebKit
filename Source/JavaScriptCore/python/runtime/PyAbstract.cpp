@@ -112,6 +112,17 @@ JSValue instanceAttribute(JSGlobalObject* globalObject, JSValue object, JSString
     return dict->get(name);
 }
 
+// For a name that is an instance of a class derived from str.
+static JSValue instanceAttributeByKey(JSGlobalObject* globalObject, JSValue object, JSValue key)
+{
+    if (PyDict* dict = instanceDict(globalObject, object, false))
+        return dict->get(globalObject, key);
+    // An instance without attributes has no dict here. CPython's has, and a dict asks a key for its hash before anything else.
+    if (auto* instance = PyInstance::tryFrom(object); instance && instance->type()->has(TypeFlag::HasDict))
+        hashForContainer(globalObject, key, "a dict key"_s);
+    return { };
+}
+
 bool setInstanceDict(JSGlobalObject* globalObject, JSValue object, PyDict* dict)
 {
     if (!object.isCell())
@@ -301,17 +312,23 @@ JSValue bindDescriptor(JSGlobalObject* globalObject, JSValue descriptor, JSValue
 
 // ---- Attributes ----
 
-static NEVER_INLINE JSValue raiseNoAttribute(JSGlobalObject* globalObject, ThrowScope& scope, JSValue object, JSString* name)
+static NEVER_INLINE JSValue raiseNoAttribute(JSGlobalObject* globalObject, ThrowScope& scope, JSValue object, JSString* name, JSValue key = { })
 {
-    return raiseAttributeError(globalObject, scope, object, name, makeString('\'', typeName(globalObject, object), "' object has no attribute '"_s, stringOf(name), '\''));
+    return raiseAttributeError(globalObject, scope, object, key ? key : JSValue(name), makeString('\'', typeName(globalObject, object), "' object has no attribute '"_s, stringOf(name), '\''));
 }
 
-JSValue genericGetAttr(JSGlobalObject* globalObject, JSValue object, JSString* name, bool suppress)
+// `nameIsKey`, here and below: getattr() and its kin were given an instance of a class derived from str, `key`, whose text is `name`.
+// CPython has names as the keys of dicts, so such a name is looked up as a dict looks up any key: its __hash__ and its __eq__ say what
+// it finds.
+template<bool nameIsKey>
+static ALWAYS_INLINE JSValue genericGetAttrImpl(JSGlobalObject* globalObject, JSValue object, JSString* name, JSValue key, bool suppress)
 {
     Runtime& rt = runtime(globalObject);
     auto scope = DECLARE_THROW_SCOPE(rt.vm());
     PyType* type = rt.typeOf(object);
-    JSValue descriptor = type->lookup(name);
+    JSValue descriptor = nameIsKey ? type->lookupKey(globalObject, key) : type->lookup(name);
+    if constexpr (nameIsKey)
+        RETURN_IF_EXCEPTION(scope, { });
     JSValue getter;
     bool bindsDirectly = false;
     if (descriptor) {
@@ -347,7 +364,7 @@ JSValue genericGetAttr(JSGlobalObject* globalObject, JSValue object, JSString* n
             bindsDirectly = true; // A class method, a function of JS, or nothing to bind.
     }
 
-    JSValue value = instanceAttribute(globalObject, object, name);
+    JSValue value = nameIsKey ? instanceAttributeByKey(globalObject, object, key) : instanceAttribute(globalObject, object, name);
     EXCEPTION_ASSERT(!scope.exception() || !value);
     if (value)
         return value;
@@ -355,7 +372,7 @@ JSValue genericGetAttr(JSGlobalObject* globalObject, JSValue object, JSString* n
     // object.__getattribute__(cls, name): a class is an instance of its metaclass, and its dict the dict of that instance. So what
     // the class itself defines is found, as it is there.
     if (PyType* itself = PyType::tryFrom(object); itself && itself->isHeapType()) [[unlikely]] {
-        value = itself->dict()->get(globalObject, name);
+        value = itself->dict()->get(globalObject, nameIsKey ? key : JSValue(name));
         RETURN_IF_EXCEPTION(scope, { });
         if (value)
             return value;
@@ -369,16 +386,29 @@ JSValue genericGetAttr(JSGlobalObject* globalObject, JSValue object, JSString* n
         return descriptor;
     if (suppress)
         return { };
-    return raiseNoAttribute(globalObject, scope, object, name);
+    return raiseNoAttribute(globalObject, scope, object, name, key);
 }
 
-void genericSetAttr(JSGlobalObject* globalObject, JSValue object, JSString* name, JSValue value, JSValue key)
+JSValue genericGetAttr(JSGlobalObject* globalObject, JSValue object, JSString* name, bool suppress)
+{
+    return genericGetAttrImpl<false>(globalObject, object, name, { }, suppress);
+}
+
+NEVER_INLINE JSValue genericGetAttrByKey(JSGlobalObject* globalObject, JSValue object, JSString* name, JSValue key, bool suppress)
+{
+    return genericGetAttrImpl<true>(globalObject, object, name, key, suppress);
+}
+
+template<bool nameIsKey>
+static ALWAYS_INLINE void genericSetAttrImpl(JSGlobalObject* globalObject, JSValue object, JSString* name, JSValue key, JSValue value)
 {
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     PyType* type = rt.typeOf(object);
-    JSValue descriptor = type->lookup(name);
+    JSValue descriptor = nameIsKey ? type->lookupKey(globalObject, key) : type->lookup(name);
+    if constexpr (nameIsKey)
+        RETURN_IF_EXCEPTION(scope, void());
     if (PyType* descriptorType = descriptor ? typeOfPossibleDescriptor(rt, descriptor) : nullptr) {
         JSCell* cell = descriptor.asCell();
         if (cell->type() == PyObjectType) {
@@ -439,7 +469,7 @@ void genericSetAttr(JSGlobalObject* globalObject, JSValue object, JSString* name
         }
     }
 
-    if (auto* instance = PyInstance::tryFrom(object); instance && !key && instance->type()->has(TypeFlag::HasDict) && (!instance->dict() || instance->dict()->hasOnlyStringKeys())) [[likely]] {
+    if (auto* instance = PyInstance::tryFrom(object); !nameIsKey && instance && instance->type()->has(TypeFlag::HasDict) && (!instance->dict() || instance->dict()->hasOnlyStringKeys())) [[likely]] {
         if (value)
             RELEASE_AND_RETURN(scope, instance->setAttribute(globalObject, name, value));
         bool deleted = instance->deleteAttribute(globalObject, name);
@@ -457,30 +487,40 @@ void genericSetAttr(JSGlobalObject* globalObject, JSValue object, JSString* name
         else {
             // The hint is for classes that leave setting attributes to object.
             bool isGeneric = isNative(type->lookup(Special::SetAttr), objectSetAttr);
-            raiseAttributeError(globalObject, scope, object, name, makeString('\'', type->nameInMessages(), "' object has no attribute '"_s, text, '\'', isGeneric ? " and no __dict__ for setting new attributes"_s : ""_s));
+            raiseAttributeError(globalObject, scope, object, nameIsKey ? key : JSValue(name), makeString('\'', type->nameInMessages(), "' object has no attribute '"_s, text, '\'', isGeneric ? " and no __dict__ for setting new attributes"_s : ""_s));
         }
         return;
     }
     if (value) {
-        if (key || !dict->hasOnlyStringKeys()) [[unlikely]]
-            RELEASE_AND_RETURN(scope, dict->set(globalObject, key ? key : JSValue(name), value));
+        if (nameIsKey || !dict->hasOnlyStringKeys()) [[unlikely]]
+            RELEASE_AND_RETURN(scope, dict->set(globalObject, nameIsKey ? key : JSValue(name), value));
         dict->set(vm, name, value);
         return;
     }
     bool removed;
-    if (dict->hasOnlyStringKeys()) [[likely]]
+    if (!nameIsKey && dict->hasOnlyStringKeys()) [[likely]]
         removed = dict->remove(vm, name);
     else {
-        removed = dict->remove(globalObject, name);
+        removed = dict->remove(globalObject, nameIsKey ? key : JSValue(name));
         RETURN_IF_EXCEPTION(scope, void());
     }
     if (!removed)
-        raiseNoAttribute(globalObject, scope, object, name);
+        raiseNoAttribute(globalObject, scope, object, name, key);
+}
+
+void genericSetAttr(JSGlobalObject* globalObject, JSValue object, JSString* name, JSValue value)
+{
+    genericSetAttrImpl<false>(globalObject, object, name, { }, value);
+}
+
+NEVER_INLINE void genericSetAttrByKey(JSGlobalObject* globalObject, JSValue object, JSString* name, JSValue key, JSValue value)
+{
+    genericSetAttrImpl<true>(globalObject, object, name, key, value);
 }
 
 // An AttributeError that comes out of the lookup of an attribute without saying which (`raise AttributeError` in a __getattr__ or
 // a property) is told, as in CPython: what may have been meant instead is worked out from that.
-void completeAttributeError(JSGlobalObject* globalObject, JSValue thrown, JSValue object, JSString* name)
+void completeAttributeError(JSGlobalObject* globalObject, JSValue thrown, JSValue object, JSValue name)
 {
     Runtime& rt = runtime(globalObject);
     PyException* exception = exceptionOfThrownValueIfKnown(globalObject, thrown);
@@ -492,13 +532,13 @@ void completeAttributeError(JSGlobalObject* globalObject, JSValue thrown, JSValu
     exception->setField(rt.vm(), ExceptionField::attributeErrorObj, object);
 }
 
-static NEVER_INLINE void completeAttributeError(JSGlobalObject* globalObject, JSValue object, JSString* name)
+static NEVER_INLINE void completeAttributeError(JSGlobalObject* globalObject, JSValue object, JSValue name)
 {
     if (Exception* thrown = getVM(globalObject).exceptionForInspection())
         completeAttributeError(globalObject, thrown->value(), object, name);
 }
 
-static JSValue callGetAttrHook(JSGlobalObject* globalObject, JSValue hook, JSValue object, JSString* name, bool suppress)
+static JSValue callGetAttrHook(JSGlobalObject* globalObject, JSValue hook, JSValue object, JSValue name, bool suppress)
 {
     auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
     JSValue result = callSpecial(globalObject, hook, object, name);
@@ -615,6 +655,44 @@ void delAttr(JSGlobalObject* globalObject, JSValue object, JSString* name)
     callSpecial(globalObject, method, object, name);
 }
 
+// getattr(object, key), hasattr(object, key). __getattribute__ and __getattr__ get the key itself.
+NEVER_INLINE JSValue getAttrByKey(JSGlobalObject* globalObject, JSValue object, JSValue key, bool suppress)
+{
+    Runtime& rt = runtime(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(rt.vm());
+    PyType* type = rt.typeOf(object);
+    JSValue getAttribute = type->lookup(Special::GetAttribute);
+    JSValue fallback = type->lookup(Special::GetAttr);
+    JSValue result;
+    if (getAttribute) [[likely]]
+        result = callSpecial(globalObject, getAttribute, object, key);
+    else if (fallback) // As in getAttrImpl().
+        result = genericGetAttrByKey(globalObject, object, strValue(key), key, false);
+    else
+        result = raiseNoAttribute(globalObject, scope, object, strValue(key), key);
+    EXCEPTION_ASSERT(!!scope.exception() == !result);
+    if (result) [[likely]]
+        return result;
+    if (!suppress && !fallback) {
+        completeAttributeError(globalObject, object, key);
+        return { };
+    }
+    if (!clearPendingExceptionIfMatches(globalObject, rt.AttributeError()) || !fallback)
+        return { };
+    RELEASE_AND_RETURN(scope, callGetAttrHook(globalObject, fallback, object, key, suppress));
+}
+
+NEVER_INLINE void setAttrByKey(JSGlobalObject* globalObject, JSValue object, JSValue key, JSValue value)
+{
+    JSValue method = typeOf(globalObject, object)->lookup(value ? Special::SetAttr : Special::DelAttr);
+    if (!method) [[unlikely]]
+        return raiseCannotSetAttr(globalObject, object, key, !value);
+    if (value)
+        callSpecial(globalObject, method, object, key, value);
+    else
+        callSpecial(globalObject, method, object, key);
+}
+
 JSValue getMethod(JSGlobalObject* globalObject, JSValue object, JSString* name, JSValue& self)
 {
     Runtime& rt = runtime(globalObject);
@@ -727,7 +805,7 @@ static AttributeDescription describeAttributeOfObject(JSGlobalObject* globalObje
     // As in moduleGetAttr().
     if (jsType == PyModuleType) {
         auto* module = uncheckedDowncast<PyModule>(cell);
-        if (module->type() != rt.moduleType() || rt.moduleType()->lookup(name))
+        if (module->type() != rt.moduleType() || rt.moduleType()->lookup(name) || !module->dict()->hasOnlyStringKeys())
             return None;
         StringImpl* impl = name->tryGetValueImpl();
         if (impl == rt.names.dSpec()->tryGetValueImpl() || impl == rt.names.dLoader()->tryGetValueImpl())

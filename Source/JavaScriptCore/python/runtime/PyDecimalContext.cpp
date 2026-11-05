@@ -523,7 +523,7 @@ static JSValue contextGetAttribute(JSGlobalObject* globalObject, JSValue self, J
         auto* context = PyDecimalContext::from(self);
         return kind == SignalDictOfTraps ? context->traps.get() : context->flags.get();
     }
-    RELEASE_AND_RETURN(scope, genericGetAttr(globalObject, self, string));
+    RELEASE_AND_RETURN(scope, genericGetAttrAsGiven(globalObject, self, string, name));
 }
 
 static JSValue contextSetAttr(JSGlobalObject* globalObject, JSValue self, JSValue name, JSValue value)
@@ -538,7 +538,7 @@ static JSValue contextSetAttr(JSGlobalObject* globalObject, JSValue self, JSValu
             return { };
         return jsUndefined();
     }
-    genericSetAttr(globalObject, self, string, value, name.isString() ? JSValue() : name);
+    genericSetAttrAsGiven(globalObject, self, string, name, value);
     RETURN_IF_EXCEPTION(scope, { });
     return jsUndefined();
 }

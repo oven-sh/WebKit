@@ -31,7 +31,7 @@ namespace Python {
 
 // ---- Helpers ----
 
-JSString* attributeName(JSGlobalObject* globalObject, JSValue name)
+JSString* attributeNameSlow(JSGlobalObject* globalObject, JSValue name)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -291,7 +291,7 @@ JSValue objectGetAttribute(JSGlobalObject* globalObject, JSValue self, JSValue n
     RETURN_IF_EXCEPTION(scope, { });
     if (!string)
         return { };
-    RELEASE_AND_RETURN(scope, genericGetAttr(globalObject, self, string));
+    RELEASE_AND_RETURN(scope, genericGetAttrAsGiven(globalObject, self, string, name));
 }
 
 // object.__setattr__(int, ...) would get around what type.__setattr__ forbids: a method written in C++ is not for the instances
@@ -326,7 +326,7 @@ JSValue objectSetAttr(JSGlobalObject* globalObject, JSValue self, JSValue name, 
         return { };
     JSString* string = attributeName(globalObject, name);
     RETURN_IF_EXCEPTION(scope, { });
-    genericSetAttr(globalObject, self, string, value, name.isString() ? JSValue() : name);
+    genericSetAttrAsGiven(globalObject, self, string, name, value);
     RETURN_IF_EXCEPTION(scope, { });
     return jsUndefined();
 }
@@ -339,7 +339,7 @@ JSValue objectDelAttr(JSGlobalObject* globalObject, JSValue self, JSValue name)
         return { };
     JSString* string = attributeName(globalObject, name);
     RETURN_IF_EXCEPTION(scope, { });
-    genericSetAttr(globalObject, self, string, { });
+    genericSetAttrAsGiven(globalObject, self, string, name, { });
     RETURN_IF_EXCEPTION(scope, { });
     return jsUndefined();
 }
@@ -722,14 +722,18 @@ std::span<const NativeGetSet> weakrefGetSet() { return instanceWeakrefGetSet; }
 
 // ---- type: attributes ----
 
-JSValue typeGetAttr(JSGlobalObject* globalObject, PyType* type, JSString* name, bool suppress)
+// `nameIsKey`: as for genericGetAttr().
+template<bool nameIsKey>
+static ALWAYS_INLINE JSValue typeGetAttrImpl(JSGlobalObject* globalObject, PyType* type, JSString* name, JSValue key, bool suppress)
 {
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     PyType* metatype = type->type();
-    JSValue metaAttribute = metatype->lookup(name);
+    JSValue metaAttribute = nameIsKey ? metatype->lookupKey(globalObject, key) : metatype->lookup(name);
+    if constexpr (nameIsKey)
+        RETURN_IF_EXCEPTION(scope, { });
     JSValue metaGetter;
     if (metaAttribute) {
         PyType* attributeType = rt.typeOf(metaAttribute);
@@ -737,7 +741,10 @@ JSValue typeGetAttr(JSGlobalObject* globalObject, PyType* type, JSString* name, 
         if (metaGetter && (attributeType->lookup(Special::Set) || attributeType->lookup(Special::Delete)))
             RELEASE_AND_RETURN(scope, bindDescriptor(globalObject, metaAttribute, type, metatype));
     }
-    if (JSValue attribute = type->lookup(name))
+    JSValue attribute = nameIsKey ? type->lookupKey(globalObject, key) : type->lookup(name);
+    if constexpr (nameIsKey)
+        RETURN_IF_EXCEPTION(scope, { });
+    if (attribute)
         RELEASE_AND_RETURN(scope, bindDescriptor(globalObject, attribute, { }, type));
     if (metaGetter)
         RELEASE_AND_RETURN(scope, bindDescriptor(globalObject, metaAttribute, type, metatype));
@@ -755,6 +762,11 @@ JSValue typeGetAttr(JSGlobalObject* globalObject, PyType* type, JSString* name, 
     return raise(globalObject, scope, rt.AttributeError(), makeString("type object '"_s, type->nameInMessages(), "' has no attribute '"_s, stringOf(name), '\''));
 }
 
+JSValue typeGetAttr(JSGlobalObject* globalObject, PyType* type, JSString* name, bool suppress)
+{
+    return typeGetAttrImpl<false>(globalObject, type, name, { }, suppress);
+}
+
 JSValue typeGetAttribute(JSGlobalObject* globalObject, JSValue self, JSValue name)
 {
     VM& vm = getVM(globalObject);
@@ -763,6 +775,8 @@ JSValue typeGetAttribute(JSGlobalObject* globalObject, JSValue self, JSValue nam
     RETURN_IF_EXCEPTION(scope, { });
     if (!string)
         return { };
+    if (!name.isString()) [[unlikely]]
+        RELEASE_AND_RETURN(scope, typeGetAttrImpl<true>(globalObject, PyType::from(self), string, name, false));
     RELEASE_AND_RETURN(scope, typeGetAttr(globalObject, PyType::from(self), string));
 }
 

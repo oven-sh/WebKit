@@ -1075,9 +1075,16 @@ static JSValue methodGetAttribute(JSGlobalObject* globalObject, JSValue self, JS
     JSString* name = attributeName(globalObject, nameValue);
     RETURN_IF_EXCEPTION(scope, { });
     auto* method = PyMethod::from(self);
-    if (JSValue descriptor = method->type()->lookup(name))
+    JSValue descriptor;
+    if (nameValue.isString()) [[likely]]
+        descriptor = method->type()->lookup(name);
+    else {
+        descriptor = method->type()->lookupKey(globalObject, nameValue);
+        RETURN_IF_EXCEPTION(scope, { });
+    }
+    if (descriptor)
         RELEASE_AND_RETURN(scope, bindDescriptor(globalObject, descriptor, self, method->type()));
-    RELEASE_AND_RETURN(scope, getAttr(globalObject, method->function(), name));
+    RELEASE_AND_RETURN(scope, getAttrAsGiven(globalObject, method->function(), name, nameValue));
 }
 
 static JSValue methodReduce(JSGlobalObject* globalObject, JSValue self)

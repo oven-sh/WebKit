@@ -142,6 +142,12 @@ static JSValue builtinGetAttr(JSGlobalObject* globalObject, const CallArgs& args
         return { };
     JSString* name = attributeName(globalObject, args[1]);
     RETURN_IF_EXCEPTION(scope, { });
+    if (!args[1].isString()) [[unlikely]] {
+        // An instance of a class derived from str.
+        JSValue value = getAttrByKey(globalObject, args[0], args[1], args.size() == 3);
+        RETURN_IF_EXCEPTION(scope, { });
+        return value ? value : args[2];
+    }
     if (args.size() == 2)
         RELEASE_AND_RETURN(scope, getAttr(globalObject, args[0], name));
     JSValue value = getAttrIfPresent(globalObject, args[0], name);
@@ -155,7 +161,11 @@ static JSValue builtinHasAttr(JSGlobalObject* globalObject, JSValue object, JSVa
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSString* name = attributeName(globalObject, nameValue);
     RETURN_IF_EXCEPTION(scope, { });
-    bool result = hasAttr(globalObject, object, name);
+    bool result;
+    if (nameValue.isString()) [[likely]]
+        result = hasAttr(globalObject, object, name);
+    else
+        result = !!getAttrByKey(globalObject, object, nameValue, true);
     RETURN_IF_EXCEPTION(scope, { });
     return jsBoolean(result);
 }
@@ -166,12 +176,7 @@ static JSValue builtinSetAttr(JSGlobalObject* globalObject, JSValue object, JSVa
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSString* name = attributeName(globalObject, nameValue);
     RETURN_IF_EXCEPTION(scope, { });
-    if (nameValue.isString()) [[likely]]
-        setAttr(globalObject, object, name, value);
-    else if (JSValue method = typeOf(globalObject, object)->lookup(Special::SetAttr)) // __setattr__ gets the instance of a class derived from str that this was given.
-        callSpecial(globalObject, method, object, nameValue, value);
-    else
-        raiseCannotSetAttr(globalObject, object, nameValue, false);
+    setAttrAsGiven(globalObject, object, name, nameValue, value);
     RETURN_IF_EXCEPTION(scope, { });
     return jsUndefined();
 }
@@ -182,7 +187,7 @@ static JSValue builtinDelAttr(JSGlobalObject* globalObject, JSValue object, JSVa
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSString* name = attributeName(globalObject, nameValue);
     RETURN_IF_EXCEPTION(scope, { });
-    delAttr(globalObject, object, name);
+    delAttrAsGiven(globalObject, object, name, nameValue);
     RETURN_IF_EXCEPTION(scope, { });
     return jsUndefined();
 }

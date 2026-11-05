@@ -469,7 +469,7 @@ static JSValue localGetAttribute(JSGlobalObject* globalObject, JSValue self, JSV
     RETURN_IF_EXCEPTION(scope, { });
     if (failed(scope, localSwitchToCurrentThread(globalObject, self)))
         return { };
-    RELEASE_AND_RETURN(scope, genericGetAttr(globalObject, self, string));
+    RELEASE_AND_RETURN(scope, genericGetAttrAsGiven(globalObject, self, string, name));
 }
 
 // An empty value deletes.
@@ -486,7 +486,7 @@ static JSValue localSetAttr(JSGlobalObject* globalObject, JSValue self, JSValue 
         return raise(globalObject, scope, rt.AttributeError(), makeString('\'', rt.typeOf(self)->nameInMessages(), "' object attribute '__dict__' is read-only"_s));
     if (failed(scope, localSwitchToCurrentThread(globalObject, self)))
         return { };
-    genericSetAttr(globalObject, self, string, value, !value || name.isString() ? JSValue() : name);
+    genericSetAttrAsGiven(globalObject, self, string, name, value);
     RETURN_IF_EXCEPTION(scope, { });
     return jsUndefined();
 }

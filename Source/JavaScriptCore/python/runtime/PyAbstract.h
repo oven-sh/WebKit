@@ -25,7 +25,7 @@ inline PyType* typeOf(JSGlobalObject* globalObject, JSValue value) { return runt
 
 JSValue getAttr(JSGlobalObject*, JSValue object, JSString* name);
 // What getAttr() does for an AttributeError that comes out of the lookup without saying which attribute it was.
-void completeAttributeError(JSGlobalObject*, JSValue thrown, JSValue object, JSString* name);
+void completeAttributeError(JSGlobalObject*, JSValue thrown, JSValue object, JSValue name);
 // Empty, with no exception, if there is no such attribute.
 JSValue getAttrIfPresent(JSGlobalObject*, JSValue object, JSString* name);
 void setAttr(JSGlobalObject*, JSValue object, JSString* name, JSValue value);
@@ -37,8 +37,46 @@ bool hasAttr(JSGlobalObject*, JSValue object, JSString* name);
 // object.__getattribute__, object.__setattr__ (an empty value deletes).
 // With `suppress`, a missing attribute is an empty value and no exception.
 JSValue genericGetAttr(JSGlobalObject*, JSValue object, JSString* name, bool suppress = false);
-// `key`: what goes in the __dict__, if that is not the name: an instance of a class derived from str.
-void genericSetAttr(JSGlobalObject*, JSValue object, JSString* name, JSValue value, JSValue key = { });
+// For a name that is an instance of a class derived from str, `key`, whose text is `name`: looked up as a dict looks up any key.
+JSValue genericGetAttrByKey(JSGlobalObject*, JSValue object, JSString* name, JSValue key, bool suppress = false);
+void genericSetAttrByKey(JSGlobalObject*, JSValue object, JSString* name, JSValue key, JSValue value); // No value: delete.
+JSValue getAttrByKey(JSGlobalObject*, JSValue object, JSValue key, bool suppress); // getattr(object, key)
+void genericSetAttr(JSGlobalObject*, JSValue object, JSString* name, JSValue value);
+// For a __getattribute__, __setattr__ or __delattr__ written in C++: `given` is the name as it got it, `name` the text of that
+// (attributeName()).
+inline JSValue genericGetAttrAsGiven(JSGlobalObject* globalObject, JSValue object, JSString* name, JSValue given)
+{
+    if (given.isString()) [[likely]]
+        return genericGetAttr(globalObject, object, name);
+    return genericGetAttrByKey(globalObject, object, name, given);
+}
+inline void genericSetAttrAsGiven(JSGlobalObject* globalObject, JSValue object, JSString* name, JSValue given, JSValue value)
+{
+    if (given.isString()) [[likely]]
+        return genericSetAttr(globalObject, object, name, value);
+    genericSetAttrByKey(globalObject, object, name, given, value);
+}
+// And for one that passes the question on to another object: getattr(object, given), setattr(object, given, value),
+// delattr(object, given).
+void setAttrByKey(JSGlobalObject*, JSValue object, JSValue key, JSValue value); // No value: delete.
+inline JSValue getAttrAsGiven(JSGlobalObject* globalObject, JSValue object, JSString* name, JSValue given)
+{
+    if (given.isString()) [[likely]]
+        return getAttr(globalObject, object, name);
+    return getAttrByKey(globalObject, object, given, false);
+}
+inline void setAttrAsGiven(JSGlobalObject* globalObject, JSValue object, JSString* name, JSValue given, JSValue value)
+{
+    if (given.isString()) [[likely]]
+        return setAttr(globalObject, object, name, value);
+    setAttrByKey(globalObject, object, given, value);
+}
+inline void delAttrAsGiven(JSGlobalObject* globalObject, JSValue object, JSString* name, JSValue given)
+{
+    if (given.isString()) [[likely]]
+        return delAttr(globalObject, object, name);
+    setAttrByKey(globalObject, object, given, { });
+}
 
 // For object.name(...): the function and, in `self`, what to pass it first; or the attribute, and an empty `self`.
 JSValue getMethod(JSGlobalObject*, JSValue object, JSString* name, JSValue& self);

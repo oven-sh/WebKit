@@ -219,6 +219,26 @@ attributes with names that collide took 412 ms and take 3.8.
 
 What is not covered are names: see DEFERRED.md, "Names chosen to collide".
 
+**Names that are not exactly strs.** The name of an attribute is a `JSString`, and whatever looks an attribute up takes one: the
+instructions and their caches, `getAttr()`, `PyType::lookup()`. In CPython a name is a key of dicts, and `getattr()`, `hasattr()`,
+`setattr()`, `delattr()` and the methods behind them may be given an instance of a class derived from str, whose `__hash__` and `__eq__`
+then say what it finds. So whoever is given a name as a value asks whether it is exactly a str (`attributeName()` for the text, then
+`isString()`), and if not goes another way: `getAttrByKey()`, `setAttrByKey()`, `genericGetAttrByKey()`, `genericSetAttrByKey()`,
+`PyType::lookupKey()`. (A `__getattribute__` or `__setattr__` written in C++ calls `genericGetAttrAsGiven()` or `genericSetAttrAsGiven()`;
+one that passes the question on to another object, `getAttrAsGiven()` and its kin.) They are the functions for plain names compiled a second
+time (`nameIsKey`), so the plain case runs the code it ran. As measured on 3.15.2: the classes are searched with one hash for all of them,
+and what the name raises there is lost; the dict of the object is searched with another, and what is raised there comes out; an instance
+that has its attributes as properties is given its dict first; `__getattribute__`, `__getattr__`, `__setattr__`, `__delattr__` and the
+`__getattr__` of a module get the name itself; it is what `setattr()` stores, and what an `AttributeError` has as its `name`.
+`type.__setattr__` and `type.__delattr__` take the text. `super()` asks each class with a hash of its own, and what is raised comes out. And
+a dict that has got such a key is no dict of strs any more, so a plain name is then looked for in it as any key is, in a module too. The
+plain case pays a test of the tag of the value, and gets more back, because `attributeName()` now has its common case inline: instructions
+with the loop around them, `getattr(o, 'x')` 696 and 683, `hasattr(o, 'x')` 596 and 580, `setattr(o, 'x', v)` 689 and 655,
+`object.__getattribute__(o, 'x')` 539 and 523; `o.x`, `o.x = v`, `C.x`, `module.x`, `o.m()`: the same to the instruction. (`super().m()` 976
+and 978, `super().x` 776 and 780: it looks at one byte more in each class it comes by, because it passed over keys that are no strs in the
+dicts of classes, which may say that they are equal to the name.) What is left is in DEFERRED.md, "Names that are instances of classes
+derived from str".
+
 **Built-in types.** A `TypeDef` in the source file of a type says what is particular to it. What follows from how CPython makes the
 type is added by `PyType::initializeBuiltin` and `addMethods`, so that `vars(T)`, `help(T)` and what goes by them
 (`functools.total_ordering`, `functools.wraps`, `copyreg`) see what they see there. A type with a method for one rich comparison has

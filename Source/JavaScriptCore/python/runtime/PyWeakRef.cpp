@@ -473,7 +473,7 @@ static JSValue proxyGetAttribute(JSGlobalObject* globalObject, JSValue self, JSV
     if (!name)
         return { };
     UNWRAP_IN_SCOPE(self);
-    RELEASE_AND_RETURN(scope, getAttr(globalObject, self, name));
+    RELEASE_AND_RETURN(scope, getAttrAsGiven(globalObject, self, name, nameValue));
 }
 
 static JSValue proxySetAttr(JSGlobalObject* globalObject, JSValue self, JSValue nameValue, JSValue value)
@@ -483,7 +483,7 @@ static JSValue proxySetAttr(JSGlobalObject* globalObject, JSValue self, JSValue 
     JSString* name = attributeName(globalObject, nameValue);
     RETURN_IF_EXCEPTION(scope, { });
     UNWRAP_IN_SCOPE(self);
-    setAttr(globalObject, self, name, value);
+    setAttrAsGiven(globalObject, self, name, nameValue, value);
     RETURN_IF_EXCEPTION(scope, { });
     return jsUndefined();
 }
@@ -495,7 +495,7 @@ static JSValue proxyDelAttr(JSGlobalObject* globalObject, JSValue self, JSValue 
     JSString* name = attributeName(globalObject, nameValue);
     RETURN_IF_EXCEPTION(scope, { });
     UNWRAP_IN_SCOPE(self);
-    delAttr(globalObject, self, name);
+    delAttrAsGiven(globalObject, self, name, nameValue);
     RETURN_IF_EXCEPTION(scope, { });
     return jsUndefined();
 }

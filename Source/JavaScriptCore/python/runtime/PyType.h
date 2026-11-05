@@ -150,6 +150,10 @@ public:
             return entry.value.get();
         return lookupSlow(name);
     }
+    // The same for a name that is an instance of a class derived from str: getattr(o, name). It is looked for as a dict looks for any
+    // key, with one hash for all the classes. What its __hash__ or its __eq__ raises is lost, as in CPython: the name is then in no
+    // class. All but the end of the program: after an empty answer a termination may be pending, and no code must be run then.
+    JSValue lookupKey(JSGlobalObject*, JSValue name);
     // lookup() runs code of the program in one case: a key that is no str, in the dict of a class, is asked whether it equals the name.
     // Whoever looks things up, in whatever classes, and then counts on it that nothing has changed meanwhile sees by this number
     // whether that has happened, here or in another thread.

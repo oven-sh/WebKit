@@ -197,8 +197,14 @@ ALWAYS_INLINE JSValue withFirstArgument(JSValue first, const CallArgs& args, con
     return function(CallArgs(buffer, args.size() + 1, args.keywordNames()));
 }
 
-// The name as a str that is not a rope and is the one of its kind. Null: a TypeError, "attribute name must be string, not 'x'".
-JSString* attributeName(JSGlobalObject*, JSValue);
+// The name as a str that is not a rope. Null: a TypeError, "attribute name must be string, not 'x'".
+JSString* attributeNameSlow(JSGlobalObject*, JSValue);
+ALWAYS_INLINE JSString* attributeName(JSGlobalObject* globalObject, JSValue name)
+{
+    if (name.isString() && !asString(name)->isRope()) [[likely]]
+        return asString(name);
+    return attributeNameSlow(globalObject, name);
+}
 // False: a TypeError, "f() takes no keyword arguments".
 // As VM::isSafeToRecurseSoft(), that much earlier: for a function that recurses by way of others that make the check themselves,
 // and that has something more precise to say than they have.

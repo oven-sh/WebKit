@@ -67,7 +67,7 @@ PY_DECLARE_RAISE(MemoryError)
 
 JSValue raiseKeyError(JSGlobalObject*, ThrowScope&, JSValue key);
 // With the name and obj attributes that suggestions are made from.
-JSValue raiseAttributeError(JSGlobalObject*, ThrowScope&, JSValue object, JSString* name, const String& message);
+JSValue raiseAttributeError(JSGlobalObject*, ThrowScope&, JSValue object, JSValue name, const String& message);
 // How an iterator ends. With a value that is not None: how a generator or a coroutine returns it, which is the next one.
 JSValue raiseStopIteration(JSGlobalObject*, ThrowScope&, JSValue value = { });
 // StopIteration(value), None or not. As in CPython (_PyGen_SetStopIterationValue()) it does not remember what is being handled: it is a

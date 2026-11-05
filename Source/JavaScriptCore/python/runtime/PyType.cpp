@@ -313,6 +313,26 @@ JSValue PyType::lookupSlow(JSString* name)
     return value;
 }
 
+JSValue PyType::lookupKey(JSGlobalObject* globalObject, JSValue name)
+{
+    PyTuple* mro = m_mro.get();
+    VM& vm = this->vm();
+    if (!mro || vm.hasPendingTerminationException()) [[unlikely]]
+        return { };
+    s_timesLookupRanCode.fetch_add(1, std::memory_order_relaxed);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    int64_t hash = Python::hash(globalObject, name);
+    JSValue value;
+    for (unsigned i = 0; !value && !scope.exception() && i < mro->length(); ++i)
+        value = uncheckedDowncast<PyType>(mro->at(i).asCell())->dict()->get(globalObject, name, hash);
+    if (Exception* exception = scope.exception()) [[unlikely]] {
+        if (!vm.isTerminationException(exception))
+            takePendingException(globalObject);
+        return { };
+    }
+    return value;
+}
+
 JSValue PyType::lookupSpecialSlow(Special special)
 {
     Runtime& rt = Runtime::from(realm());
