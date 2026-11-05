@@ -212,7 +212,7 @@ public:
 
 private:
     Runtime& m_runtime;
-    std::array<PyGenerator*, 4> m_generators;
+    std::array<PyGenerator*, 4> m_generators { };
     unsigned m_count { 0 };
 };
 // Nothing refers to it any more, and the code that held it knows: what CPython does at that moment. Does not throw.
