@@ -130,8 +130,12 @@ static JSValue getOptionalItem(JSGlobalObject* globalObject, JSValue mapping, JS
 {
     Runtime& rt = runtime(globalObject);
     auto scope = DECLARE_THROW_SCOPE(rt.vm());
-    if (auto* dict = PyDict::tryFrom(mapping); dict && isExactDict(rt, dict)) [[likely]]
-        return dict->get(name);
+    if (auto* dict = PyDict::tryFrom(mapping); dict && isExactDict(rt, dict)) [[likely]] {
+        if (dict->hasOnlyStringKeys()) [[likely]]
+            return dict->get(name);
+        // A key that is no str may say that it is equal to the name.
+        RELEASE_AND_RETURN(scope, dict->get(globalObject, JSValue(name)));
+    }
     JSValue value = getItem(globalObject, mapping, name);
     if (failed(scope, value))
         clearPendingExceptionIfMatches(globalObject, rt.KeyError());
@@ -149,10 +153,7 @@ static NEVER_INLINE JSValue loadGlobalFromMappings(JSGlobalObject* globalObject,
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    // In a dict, a key that is no str may say that it is equal to the name.
     auto find = [&](JSValue mapping) {
-        if (auto* dict = PyDict::tryFrom(mapping); dict && isExactDict(runtime(globalObject), dict))
-            return dict->get(globalObject, JSValue(name));
         return getOptionalItem(globalObject, mapping, name);
     };
     JSValue names = function->globals();
@@ -172,14 +173,14 @@ static NEVER_INLINE JSValue loadGlobalFromMappings(JSGlobalObject* globalObject,
 
 static ALWAYS_INLINE JSValue loadGlobal(JSGlobalObject* globalObject, PyFunction* function, JSString* name, GlobalLookup lookup = GlobalLookup::Global)
 {
-    if (function->hasUnusualNamespaces()) [[unlikely]]
+    // (In a dict with keys that are no strs, one of them may say that it is equal to the name.)
+    if (function->hasUnusualNamespaces() || !function->globals()->hasOnlyStringKeys() || !function->builtins()->hasOnlyStringKeys()) [[unlikely]]
         return loadGlobalFromMappings(globalObject, function, name, lookup);
     PyDict* names = function->globals();
     JSValue value = names->get(name);
     if (!value) {
         names = function->builtins();
         value = names->get(name);
-        // There may be a key that is no str and says that it is equal to the name.
         if (!value) [[unlikely]]
             return loadGlobalFromMappings(globalObject, function, name, lookup);
     }
@@ -288,7 +289,7 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_load_global)
     auto bytecode = pc->as<OpPyLoadGlobal>();
     PyFunction* function = calleeOf(callFrame);
     JSString* name = asString(GET_C(bytecode.m_name).jsValue());
-    if (function->hasUnusualNamespaces()) [[unlikely]]
+    if (function->hasUnusualNamespaces() || !function->globals()->hasOnlyStringKeys() || !function->builtins()->hasOnlyStringKeys()) [[unlikely]]
         RETURN(loadGlobal(globalObject, function, name));
 
     // Where the name is now is where the interpreter looks next time, while the dicts have the versions they have now.
@@ -320,6 +321,11 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_store_global)
     if (isFrozenDict(globals)) [[unlikely]] {
         raiseTypeError(globalObject, throwScope, "'frozendict' object does not support item assignment"_s);
         CHECK_EXCEPTION();
+    }
+    if (!globals->hasOnlyStringKeys()) [[unlikely]] {
+        // A key that is no str may say that it is equal to the name: the value is then stored with that.
+        globals->set(globalObject, name, GET_C(bytecode.m_value).jsValue());
+        END();
     }
     globals->set(vm, name, GET_C(bytecode.m_value).jsValue());
     auto& metadata = bytecode.metadata(codeBlock);
@@ -354,7 +360,7 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_store_name)
     JSValue locals = GET(bytecode.m_locals).jsValue();
     JSString* name = asString(GET_C(bytecode.m_name).jsValue());
     JSValue value = GET_C(bytecode.m_value).jsValue();
-    if (auto* dict = PyDict::tryFrom(locals); dict && dict->type() == runtime(globalObject).dictType()) [[likely]] {
+    if (auto* dict = PyDict::tryFrom(locals); dict && dict->type() == runtime(globalObject).dictType() && dict->hasOnlyStringKeys()) [[likely]] {
         dict->set(vm, name, value);
         END_IMPL();
     }
@@ -1481,7 +1487,7 @@ static JSValue runRuntimeFunction(JSGlobalObject* globalObject, CallFrame* callF
     // ---- Names ----
     case RuntimeFunction::DeleteName: {
         JSString* name = asString(args[1]);
-        if (auto* dict = PyDict::tryFrom(args[0]); dict && dict->type() == rt.dictType()) {
+        if (auto* dict = PyDict::tryFrom(args[0]); dict && dict->type() == rt.dictType() && dict->hasOnlyStringKeys()) {
             if (!dict->remove(vm, name))
                 RELEASE_AND_RETURN(scope, raiseNameNotDefined(globalObject, name));
             return jsUndefined();
@@ -1491,12 +1497,15 @@ static JSValue runRuntimeFunction(JSGlobalObject* globalObject, CallFrame* callF
             RELEASE_AND_RETURN(scope, raiseNameNotDefined(globalObject, name));
         return jsUndefined();
     }
-    case RuntimeFunction::DeleteGlobal:
+    case RuntimeFunction::DeleteGlobal: {
         if (isFrozenDict(calleeOf(callFrame)->globals())) [[unlikely]]
             return raiseTypeError(globalObject, scope, "'frozendict' object does not support item deletion"_s);
-        if (!calleeOf(callFrame)->globals()->remove(vm, asString(args[0])))
+        bool removed = calleeOf(callFrame)->globals()->remove(globalObject, args[0]);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (!removed)
             RELEASE_AND_RETURN(scope, raiseNameNotDefined(globalObject, asString(args[0])));
         return jsUndefined();
+    }
     case RuntimeFunction::DeleteCell: {
         auto* cell = PyCell::from(args[0]);
         if (!cell->value())

@@ -787,11 +787,17 @@ static void typeSetAttrImpl(JSGlobalObject* globalObject, PyType* type, JSString
     name = internString(globalObject, name);
     RETURN_IF_EXCEPTION(scope, void());
     bool getsFinalizer = value && isIdentical(name, rt.name(Special::Del)) && !type->lookup(Special::Del);
-    if (value)
-        type->dict()->set(vm, name, value);
-    else if (!type->dict()->remove(vm, name)) {
-        raiseAttributeError(globalObject, scope, type, name, makeString("type object '"_s, type->nameInMessages(), "' has no attribute '"_s, stringOf(name), '\''));
-        return;
+    // (As any key is stored and removed: type("X", (), { key: 1 }) may have a key that says it is equal to the name, and that is where a lookup finds it.)
+    if (value) {
+        type->dict()->set(globalObject, name, value);
+        RETURN_IF_EXCEPTION(scope, void());
+    } else {
+        bool removed = type->dict()->remove(globalObject, name);
+        RETURN_IF_EXCEPTION(scope, void());
+        if (!removed) {
+            raiseAttributeError(globalObject, scope, type, name, makeString("type object '"_s, type->nameInMessages(), "' has no attribute '"_s, stringOf(name), '\''));
+            return;
+        }
     }
     type->didChange(vm);
     if (getsFinalizer) [[unlikely]]
