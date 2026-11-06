@@ -110,6 +110,8 @@ public:
     }
 
     bool currentThreadIsHoldingLock() { return m_hasOwnerThread.load(std::memory_order_acquire) && m_ownerThread.get() == &Thread::currentSingleton(); }
+    // The same question, for whoever has its Thread at hand: to look that up is most of what it costs where that takes a call (pthread_getspecific()).
+    bool isHeldBy(const Thread& thread) const { return m_hasOwnerThread.load(std::memory_order_acquire) && m_ownerThread.get() == &thread; }
 
     // For code that knows it runs on the thread that holds the lock (it is in the middle of running JS) and wants that
     // thread without looking it up.
