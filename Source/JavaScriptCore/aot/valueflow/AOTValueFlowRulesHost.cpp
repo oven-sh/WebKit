@@ -1557,7 +1557,9 @@ void runUnseenCode(const ValueFlowStatement&, ValueFlowRuleContext& context)
         handLoadableModulesToText(context, filesOfProgramAreLoadedByName || context.refusedCode().hostRunsFilesOutsideImage);
 
     for (uint32_t index = 0; index < builtins.builtinCount(); ++index) {
-        if (builtins.at(BuiltinID(index)).flags.contains(BuiltinFlag::EvaluatesText))
+        // Unseen code can name the language's evaluators. Private host entry points still need a reachable caller.
+        const Builtin& entry = builtins.at(BuiltinID(index));
+        if (entry.origin == BuiltinOrigin::Engine && entry.flags.contains(BuiltinFlag::EvaluatesText))
             context.use(BuiltinID(index), { BuiltinUse::Escaped, BuiltinUse::Called });
     }
     letHostChooseOperands(context);
