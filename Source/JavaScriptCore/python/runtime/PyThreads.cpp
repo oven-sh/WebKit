@@ -616,6 +616,8 @@ void Threads::runThread(ThreadState& thread, Function<void()>&& body)
             }
         }
         scope.assertNoException();
+        importLock.holderEnds(*this, thread);
+        warningsLock.holderEnds(*this, thread);
         for (Runtime* runtime : m_vm.heap.pythonRuntimes()) {
             Runtime::ThreadLocalState state;
             runtime->takeThreadLocalState(state);
@@ -1139,6 +1141,15 @@ void ThreadLock::release(JSGlobalObject* globalObject)
         return;
     m_owner = 0;
     runtime(globalObject).threads().wakeOne(this);
+}
+
+void ThreadLock::holderEnds(Threads& threads, const ThreadState& thread)
+{
+    if (!m_count || m_owner != thread.serial)
+        return;
+    m_count = 0;
+    m_owner = 0;
+    threads.wakeOne(this);
 }
 
 bool ensureMainThreadForJS(JSGlobalObject* globalObject)

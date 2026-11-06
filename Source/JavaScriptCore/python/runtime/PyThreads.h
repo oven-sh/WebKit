@@ -124,6 +124,8 @@ struct SavedStates {
 };
 PY_END_WITHOUT_PADDING
 
+class Threads;
+
 // A lock among the threads of Python for the use of the runtime, held across points where the GIL may change hands. The thread
 // that holds it may take it again. It must stay where it is in memory. All of this is for whoever holds the GIL.
 class ThreadLock {
@@ -136,6 +138,8 @@ public:
     // Waits for as long as it takes. False: an exception, which the handler of a signal raised, or because nobody can release it.
     bool acquire(JSGlobalObject*);
     void release(JSGlobalObject*);
+    // The thread ends. If it holds the lock, nobody else could let go of it.
+    void holderEnds(Threads&, const ThreadState&);
 
 private:
     uint64_t m_owner { 0 }; // ThreadState::serial
