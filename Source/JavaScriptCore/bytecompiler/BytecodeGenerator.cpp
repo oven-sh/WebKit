@@ -1176,7 +1176,6 @@ void BytecodeGenerator::addPythonMark(PythonMark::Kind kind, unsigned value, uin
     m_pythonLineMarkCount += beginsLine;
 }
 
-// For instructions that have been emitted already. False: something has been marked since.
 bool BytecodeGenerator::addPythonLineMarkAt(size_t position, unsigned value)
 {
     ASSERT(position < m_writer.position());

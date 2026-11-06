@@ -451,8 +451,9 @@ namespace JSC {
         // A line that has been marked and that no instruction has followed is given one that does nothing. Until then, the mark is
         // on whatever comes next, which is as good, unless that can be reached from elsewhere. emitLabel() sees to this
         // for a label that has been jumped to; it is for the compiler to do before a label that will be.
-        bool addPythonLineMarkAt(size_t position, unsigned value);
         void settlePythonLineMark();
+        // For instructions that have been emitted already. False: something has been marked since.
+        bool addPythonLineMarkAt(size_t position, unsigned value);
         void emitPyAsyncForMark(unsigned mark);
         // Where the last label is that something jumps to, or may.
         // Of those that something may jump to.

@@ -1506,7 +1506,8 @@ between the two ways a method call is compiled, in place of a copy, or where CPy
 is said to go where the jump goes, in events and in `co_branches()`. A `for` loop that goes on, and an
 `except E:` that matches, go on "in their own last byte", which is of their line, where CPython has an instruction to store the item or drop the exception.
 Every test of the program's is a branch of Python's (`op_py_jtrue` and the like), also where the value is known to be a bool (`x in y`, patterns). `x is None` is JS's `op_jundefined_or_null`, which counts as one of them.
-The other branches of JS are those the compiler adds for itself, and so is one of these if it is marked (`hiddenJumpMark`). An `async for` loop has no instruction that branches: two `op_nop`, marked, stand for the two ways. Code that cannot be reached has no branches.
+The other branches of JS are those the compiler adds for itself, and so is one of these if it is marked (`hiddenJumpMark`). An `async for` loop has no instruction that branches: two `op_nop`, marked, stand for the two ways. Code that cannot be reached has no branches, nor have its handlers, which the compiler marks (`deadHandlerMark`): what a handler covers does not tell, for an empty range is in no table.
+CPython's compiler has a branch to a jump go where the jump goes if the jump is of the kind that ends a `case` or the body of a loop, and not if it is of the kind that goes over an `else` or over handlers, whatever that one comes to lead to (`Last::firstJumpIs`, `Unit::canBranchTo()`).
 
 **Generator expressions.** `all()`, `any()`, `tuple()`, `list()` and `set()` of a generator expression are compiled as in CPython: if the name is bound to the builtin, the code goes through the generator itself
 (`Unit::callOnGeneratorExpression()`). No call is told of, the loop is, and `all()` and `any()` close the generator they leave early, there and then.

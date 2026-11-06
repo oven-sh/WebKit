@@ -73,6 +73,7 @@ struct Last {
         return result;
     }
 };
+inline constexpr Last notLast { };
 
 // The compilation of one code object.
 //
@@ -116,7 +117,7 @@ public:
     void compileModule(AST::Mod*);
     void compileFunctionBody(Seq<Stmt*>);
     void compileClassBody(AST::ClassDef*, int firstLineNumber);
-    void statements(Seq<Stmt*>, unsigned first = 0, const Last& = { });
+    void statements(Seq<Stmt*>, unsigned first = 0, const Last& = notLast);
     void statement(Stmt*, const Last&);
 
     // ---- Expressions ----
@@ -293,7 +294,7 @@ private:
         return m_whereBranchOfConstantLeads == position || (m_targetOfJumpOfConstant && !m_targetOfJumpOfConstant->isForward() && m_targetOfJumpOfConstant->location() == position);
     }
     void leaveStatement(Label& end, const Last&, JumpIs);
-    void endOfStatement(Label& end, const Last& = { }, int lineOfBranch = 0);
+    void endOfStatement(Label& end, const Last& = notLast, int lineOfBranch = 0);
     bool cannotGetHere();
     void emitImplicitReturn(const Last&, const Range& = { });
     void emitImplicitContinue(unsigned loop, const Range& = { });

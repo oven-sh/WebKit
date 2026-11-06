@@ -1814,7 +1814,6 @@ void Unit::statements(Seq<Stmt*> body, unsigned first, const Last& isLast)
         enclosing = enclosing->enclosing;
     StatementsAfter after { body, first, isLast, static_cast<unsigned>(m_blocks.size()), enclosing, endWhereStatementEnds };
     SetForScope statementsAfter(m_statementsAfter, &after);
-    const Last notLast;
     for (unsigned i = first; i < body.size() && !c.failed(); ++i) {
         // After a `return`, say, or at the very beginning: what `if a and 0:` is in front of.
         if (!m_sameLineDepth && cannotGetHere())
@@ -2453,7 +2452,6 @@ void Unit::tryFinally(AST::Try* node, const Last& isLast)
 
     Try body = beginTry();
     // What comes after the statements is the clause.
-    const Last notLast;
     StatementsAfter clause { node->finalbody, 0, notLast, static_cast<unsigned>(m_blocks.size()), m_statementsAfter, false, 1 };
     pushBlock({ .kind = BlockKind::FinallyTry, .tryDepth = body.depthBefore, .finalBody = node->finalbody, .range = node->range });
     {
@@ -2462,9 +2460,9 @@ void Unit::tryFinally(AST::Try* node, const Last& isLast)
         if (node->handlers.isEmpty())
             statements(node->body);
         else if (node->isStar())
-            tryStarExcept(node, { });
+            tryStarExcept(node, notLast);
         else
-            tryExcept(node, { });
+            tryExcept(node, notLast);
     }
     endOfProtectedStatements();
     popBlock();
@@ -2500,19 +2498,23 @@ void Unit::tryExcept(AST::Try* node, const Last& isLast)
     Ref<Label> end = g.newLabel();
 
     // What comes next is a jump over the handlers. CPython's compiler puts the handlers behind everything else, so there it is a jump to what follows, and is dropped.
-    Last isLastOfBody = lastBeforeJump(end.get(), isLast, JumpIs::ToldOfForwards, node->orelse.isEmpty() ? 2 : 1);
-    Last isLastOfHandler = lastBeforeJump(end.get(), isLast, JumpIs::ToldOfForwards, 3);
-    Last isLastOfHandlerWithName = lastBeforeJump(end.get(), isLast, JumpIs::ToldOfForwards, 7);
+    // So it is behind each handler, where the jump comes with more.
+    Last isLastOfPart = lastBeforeJump(end.get(), isLast, JumpIs::ToldOfForwards, node->orelse.isEmpty() ? 2 : 1);
+    auto isLastOfHandler = [&](unsigned instructions) -> const Last& {
+        if (isLastOfPart.jumpsBefore <= Last::maxJumps)
+            isLastOfPart.instructionsOfJumps[isLastOfPart.jumpsBefore - 1] = instructions;
+        return isLastOfPart;
+    };
     Try body = beginTry();
     pushBlock({ .kind = BlockKind::TryExcept, .tryDepth = body.depthBefore, .range = node->range });
-    statements(node->body, 0, isLastOfBody.onlyIf(node->orelse.isEmpty()));
+    statements(node->body, 0, node->orelse.isEmpty() ? isLastOfPart : notLast);
     endOfProtectedStatements(node->orelse.isEmpty() ? JumpsHere::AreTakenIn : JumpsHere::Count, end.ptr());
     popBlock();
     endTry(body);
     if (cannotGetHere())
         deadStatements(node->orelse);
     else
-        statements(node->orelse, 0, isLastOfBody);
+        statements(node->orelse, 0, isLastOfPart);
     leaveStatement(end.get(), isLast, JumpIs::ToldOfForwards);
 
     Reg previous;
@@ -2554,7 +2556,7 @@ void Unit::tryExcept(AST::Try* node, const Last& isLast)
             g.addPythonMark(PythonMark::BlockEnd, matching, bitsOfMatching);
             Try nameCleanup = beginTry();
             pushBlock({ .kind = BlockKind::HandlerCleanup, .tryDepth = cleanup.depthBefore, .saved = previous.get(), .name = handler->name, .range = handler->range, .isMarked = false });
-            statements(handler->body, 0, isLastOfHandlerWithName);
+            statements(handler->body, 0, isLastOfHandler(7));
             popBlock();
             endTry(nameCleanup);
             outsideTry(cleanup.depthBefore, [&] {
@@ -2578,7 +2580,7 @@ void Unit::tryExcept(AST::Try* node, const Last& isLast)
         } else {
             g.addPythonMark(PythonMark::BlockEnd, matching, bitsOfMatching);
             pushBlock({ .kind = BlockKind::HandlerCleanup, .tryDepth = cleanup.depthBefore, .saved = previous.get(), .range = handler->range, .isMarked = false });
-            statements(handler->body, 0, isLastOfHandler);
+            statements(handler->body, 0, isLastOfHandler(3));
             popBlock();
             outsideTry(cleanup.depthBefore, [&] {
                 if (cannotGetHere())
@@ -2755,7 +2757,7 @@ void Unit::withStatement(With* node, unsigned index, const Last& isLast)
     if (index + 1 == node->items.size())
         statements(node->body);
     else if (!c.failed())
-        withStatement(node, index + 1, { });
+        withStatement(node, index + 1, notLast);
     endOfProtectedStatements();
     popBlock();
     endTry(body);
