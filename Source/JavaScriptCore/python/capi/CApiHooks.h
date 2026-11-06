@@ -61,6 +61,8 @@ ALWAYS_INLINE bool isSetUpFor(const Runtime& runtime) { return s_runtimeItIsSetU
 // Around code of C's that an interpreter runs on this thread: a foreign call; dlopen() and dlclose(), for what a library does as it is loaded and as it goes (a constructor or a
 // destructor, those of a static variable in C++). Whoever calls the API meanwhile calls it for that interpreter, until code of Python's that C calls back does the same again.
 // (C that JS runs, by bun:ffi or N-API, runs for nobody in particular: it is served if its thread holds the GIL of the interpreter that has the API.)
+// IT IS ABOUT C, AND ONLY C IS ASKED. What the runtime does for itself, the functions below, does not depend on it: code of the interpreter that is served may run deep inside C that
+// another one runs (that C calls back, the callback calls JS, JS calls Python of the first), and its calls come with references and exceptions like any.
 class CRunsFor {
     WTF_MAKE_NONCOPYABLE(CRunsFor);
     WTF_FORBID_HEAP_ALLOCATION;
@@ -77,7 +79,7 @@ private:
 // From identityBits() back: this interpreter's object, if the bits are the address of one of the symbols that stand for objects. Empty: they are not.
 JSValue objectOfSymbol(JSGlobalObject*, uint64_t bits);
 
-// ---- For the interpreter that the API has been set up for ----
+// ---- For the interpreter that the API has been set up for (isSetUpFor()) ----
 
 // For the collector, with the world stopped, when marking is over and nothing has been freed yet.
 void didFinishMarking(JSC::Heap&);
@@ -90,10 +92,11 @@ bool throwWhatCRaisedBesideResult(JSGlobalObject*, const String& who);
 // Nobody will look: the call ends otherwise.
 void forgetWhatCRaised();
 
-// C has handed over a reference with a result: these are the bits of the PyObject*.
-void takeOverReference(uint64_t bits);
-// And the other way round.
+// C is handed a reference: these are the bits of the PyObject*.
 void giveReference(uint64_t bits);
+// And the other way round: code has handed over a reference with its result. This one is for any interpreter: the code may be that of a callback of the interpreter that the API is set up
+// for, which somebody else has called by its address.
+void takeOverReference(uint64_t bits);
 
 #else // !PYTHON_HAS_CAPI
 

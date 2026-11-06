@@ -76,7 +76,7 @@ PY_CAPI Handle PyTuple_GetItem(Handle object, ssize_t index)
 PY_CAPI int PyTuple_SetItem(Handle object, ssize_t index, Handle item)
 {
     CAPI_NOISY(-1);
-    TakenOver takenOver(item);
+    TakenOver takenOver(*current, item);
     PyTuple* tuple = PyTuple::tryFrom(toJS(object));
     bool isBeingFilled = tuple && tuple->isMadeByC() && current->counts.get(tuple) + tuple->holdersThatCKnowsOf() <= 1;
     if (isBeingFilled && static_cast<size_t>(index) < tuple->length()) [[likely]] {
@@ -143,7 +143,7 @@ PY_CAPI Handle PyList_GetItem(Handle object, ssize_t index)
 PY_CAPI int PyList_SetItem(Handle object, ssize_t index, Handle item)
 {
     CAPI_NOISY(-1);
-    TakenOver takenOver(item);
+    TakenOver takenOver(*current, item);
     CAPI_ENTER_AFTER_ALL(-1);
     JSArray* list = tryAsList(toJS(object));
     if (!list) {

@@ -1487,6 +1487,9 @@ a foreign call, `dlopen()` and `dlclose()`): that is the thread's, and the inner
 told apart at every level. It costs who is let in nothing: while a thread runs C for an interpreter that the API is not for, it does not have its `Thread` at hand, so the
 question above fails and the long way finds out why. C that JS runs (`bun:ffi`, N-API) runs for nobody in particular: on a thread that holds the GIL of the interpreter that has the
 API it is served, from whichever realm it was called, unless that is inside C which runs for another.
+The question is for C, and only C is asked. What the runtime does for itself (it throws what C raised, gives up the reference that came with a result, hands C one with the result of a callback;
+`_ctypes.Py_INCREF()`) goes by whose call it is: code of the interpreter that is served may run deep inside C that another one runs, and its calls come with references and exceptions like any. A
+function that has asked does not ask again for the references that it takes and gives (`retain()` and `release()` with `current`).
 
 **Quiet and noisy.** Every function that C calls says in its first line whether it can run code of the program or put a reference where the program finds
 it (`CAPI_ENTER()`, `CAPI_NOISY()`) or not (`CAPI_QUIET()`); all three ask who calls, once, and have the answer at hand (`current`). `CAPI_QUIET_AND_ASKS_NOBODY()` is for the quiet ones that have nothing to ask for.

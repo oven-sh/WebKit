@@ -352,17 +352,16 @@ Handle& errorIndicator()
     return t_errorIndicator;
 }
 
-void setErrorIndicator(Handle exception)
+void setErrorIndicator(Interpreter& current, Handle exception)
 {
-    if (Handle previous = std::exchange(t_errorIndicator, exception))
-        release(previous);
+    release(current, std::exchange(t_errorIndicator, exception));
 }
 
 void Entry::moveExceptionToIndicator()
 {
     // Empty: it is a termination, and goes on.
     if (JSValue exception = takePendingException(globalObject))
-        setErrorIndicator(CApi::newReference(exception));
+        setErrorIndicator(m_interpreter, CApi::newReference(m_interpreter, exception));
 }
 
 void Entry::raise(PyType* type, const String& message)
@@ -401,7 +400,7 @@ bool throwWhatCRaised(JSGlobalObject* globalObject)
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     throwPythonException(globalObject, scope, toThrow(exception));
-    release(exception);
+    release(interpreter(), exception);
     return false;
 }
 
@@ -413,7 +412,7 @@ bool throwWhatCRaisedBesideResult(JSGlobalObject* globalObject, const String& wh
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue cause = toThrow(exception);
-    release(exception);
+    release(interpreter(), exception);
     raiseSystemError(globalObject, scope, who, " returned a result with an exception set"_s);
     if (auto* error = PyException::tryFrom(pendingException(globalObject))) {
         error->setCause(vm, cause);
@@ -425,22 +424,31 @@ bool throwWhatCRaisedBesideResult(JSGlobalObject* globalObject, const String& wh
 
 void forgetWhatCRaised()
 {
-    setErrorIndicator(nullptr);
-}
-
-void takeOverReference(uint64_t bits)
-{
-    Handle handle = std::bit_cast<Handle>(static_cast<uintptr_t>(bits));
-    // Where the call has ended otherwise than with a result, nobody has looked at the bits. What is in the table is a cell, and lives.
-    if (JSCell* cell = countedCell(handle); cell && interpreter().counts.get(cell))
-        didGetHolder(cell, Holder::Program);
-    release(handle);
+    setErrorIndicator(interpreter(), nullptr);
 }
 
 void giveReference(uint64_t bits)
 {
-    if (bits)
-        retain(std::bit_cast<Handle>(static_cast<uintptr_t>(bits)));
+    retain(interpreter(), std::bit_cast<Handle>(static_cast<uintptr_t>(bits)));
+}
+
+// The caller may be an interpreter of another VM. That one has not got the GIL, and the table is not its to change.
+void takeOverReference(uint64_t bits)
+{
+    Handle handle = std::bit_cast<Handle>(static_cast<uintptr_t>(bits));
+    JSCell* cell = countedCell(handle);
+    if (!cell)
+        return;
+    Interpreter* current = s_interpreter.load(std::memory_order_relaxed);
+    if (!current || !current->lock->currentThreadIsHoldingLock()) [[unlikely]] {
+        refuseToChangeCount(true);
+        return;
+    }
+    // Where the call has ended otherwise than with a result, nobody has looked at the bits. What is in the table is a cell, and lives.
+    if (current->counts.get(cell)) [[likely]] {
+        didGetHolder(cell, Holder::Program);
+        release(*current, handle);
+    }
 }
 
 // ---- The symbols, for every interpreter ----

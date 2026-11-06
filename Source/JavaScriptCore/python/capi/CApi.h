@@ -129,7 +129,7 @@ struct Interpreter {
 // orders the two loads on every processor that JSC runs on).
 extern std::atomic<Interpreter*> s_interpreter;
 
-// For who has asked interpreterToEnter(), or is the collector of the interpreter's VM.
+// For the runtime of the interpreter that the API is set up for (isSetUpFor()), with the GIL, and for the collector of its VM. Whom C calls has `current`.
 ALWAYS_INLINE Interpreter& interpreter()
 {
     Interpreter* current = s_interpreter.load(std::memory_order_relaxed);
@@ -187,6 +187,21 @@ void refuseToChangeCount(bool isToFall);
 // s_interpreter, until a reference that was to be taken has been refused.
 extern std::atomic<Interpreter*> s_interpreterWhoseCountsFall;
 
+// THE QUESTION IS FOR C. Who has asked and been let in does not ask again, and the runtime does not ask at all where it keeps the books of a call that it has made itself (the hooks of
+// ctypes in CApiHooks.h): for whom C runs further out on the stack has nothing to do with whose reference the result of this call came with.
+ALWAYS_INLINE void retain(Interpreter& current, Handle handle)
+{
+    if (JSCell* cell = countedCell(handle))
+        current.counts.add(cell);
+}
+
+ALWAYS_INLINE void release(Interpreter& current, Handle handle)
+{
+    if (JSCell* cell = countedCell(handle); cell && s_interpreterWhoseCountsFall.load(std::memory_order_relaxed)) [[likely]]
+        current.counts.remove(cell);
+}
+
+// Py_INCREF(), Py_DECREF().
 ALWAYS_INLINE void retain(Handle handle)
 {
     JSCell* cell = countedCell(handle);
@@ -226,26 +241,23 @@ class TakenOver {
     WTF_MAKE_NONCOPYABLE(TakenOver);
     WTF_FORBID_HEAP_ALLOCATION;
 public:
-    explicit TakenOver(Handle handle)
-        : m_handle(handle)
+    TakenOver(Interpreter& current, Handle handle)
+        : m_interpreter(current)
+        , m_handle(handle)
     {
     }
-    ~TakenOver()
-    {
-        if (m_handle)
-            release(m_handle);
-    }
+    ~TakenOver() { release(m_interpreter, m_handle); }
 
 private:
+    Interpreter& m_interpreter;
     Handle m_handle;
 };
 
 // A reference that C will own. The empty value gives NULL.
-ALWAYS_INLINE Handle newReference(JSValue value)
+ALWAYS_INLINE Handle newReference(Interpreter& current, JSValue value)
 {
     Handle handle = toC(value);
-    if (handle)
-        retain(handle);
+    retain(current, handle);
     return handle;
 }
 
@@ -261,7 +273,7 @@ ALWAYS_INLINE Handle newReference(JSValue value)
 // release(), which looks at its bits and at s_interpreterWhoseCountsFall, which is null. The API never comes back, so no later interpreter can take the pointer for one of its own.
 Handle& errorIndicator();
 // Takes over the reference. NULL: none is set any more.
-void setErrorIndicator(Handle);
+void setErrorIndicator(Interpreter&, Handle);
 
 // ---- A function that C calls ----
 //
@@ -290,12 +302,12 @@ public:
         : globalObject(current.globalObject)
         , vm(current.vm)
         , scope(WTF::move(scope))
-        , m_runtime(current.runtime)
+        , m_interpreter(current)
     {
         ASSERT(vm.currentThreadIsHoldingAPILock());
     }
 
-    Runtime& runtime() const { return m_runtime; }
+    Runtime& runtime() const { return m_interpreter.runtime; }
 
     // Whether the runtime has raised. Then the exception is in the indicator, and the function returns what says so.
     ALWAYS_INLINE bool failed()
@@ -312,7 +324,7 @@ public:
         if (failed()) [[unlikely]]
             return nullptr;
         ASSERT(value);
-        return CApi::newReference(value);
+        return CApi::newReference(m_interpreter, value);
     }
     // 0, or -1 if the runtime has raised.
     ALWAYS_INLINE int status() { return failed() ? -1 : 0; }
@@ -329,7 +341,7 @@ public:
 private:
     void moveExceptionToIndicator();
 
-    Runtime& m_runtime;
+    Interpreter& m_interpreter;
 };
 
 #define CAPI_QUIET_AND_ASKS_NOBODY() do { } while (false)

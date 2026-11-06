@@ -48,7 +48,7 @@ PY_CAPI Handle PyErr_Occurred()
 PY_CAPI void PyErr_Clear()
 {
     CAPI_QUIET();
-    setErrorIndicator(nullptr);
+    setErrorIndicator(*current, nullptr);
 }
 
 PY_CAPI Handle PyErr_GetRaisedException()
@@ -61,7 +61,7 @@ PY_CAPI Handle PyErr_GetRaisedException()
 PY_CAPI void PyErr_SetRaisedException(Handle exception)
 {
     CAPI_QUIET();
-    setErrorIndicator(exception);
+    setErrorIndicator(*current, exception);
 }
 
 // raise type(*arguments), where the arguments are what `value` is taken for: nothing if there is none or it is None, its items if it is a tuple,
