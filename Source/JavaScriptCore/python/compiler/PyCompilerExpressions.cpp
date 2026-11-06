@@ -2317,7 +2317,7 @@ RegisterID* Unit::emitSimpleCall(RegisterID* dst, RegisterID* callee, std::initi
     return g.emitPyCall(dst, callee, arguments, args.size());
 }
 
-RegisterID* Unit::emitMethodCall(RegisterID* dst, RegisterID* callee, RegisterID* self, std::initializer_list<RegisterID*> args, const Range& range)
+RegisterID* Unit::emitMethodCall(RegisterID* dst, RegisterID* callee, RegisterID* self, std::initializer_list<RegisterID*> args, const Range& range, unsigned markOfCall)
 {
     Reg heldCallee = callee;
     Reg heldSelf = self;
@@ -2336,12 +2336,16 @@ RegisterID* Unit::emitMethodCall(RegisterID* dst, RegisterID* callee, RegisterID
     Ref<Label> done = g.newLabel();
     g.emitPyJumpIfEmpty(self, notMethod.get());
     loc(range);
+    if (markOfCall)
+        g.addPythonMark(PythonMark::NoLine, markOfCall);
     g.emitPyCall(dst, callee, arguments, count + 1);
     hiddenJump(done.get());
     g.emitLabel(notMethod.get());
     for (unsigned i = 0; i < count; ++i)
         g.move(arguments.argumentRegister(i), arguments.argumentRegister(i + 1));
     loc(range);
+    if (markOfCall)
+        g.addPythonMark(PythonMark::NoLine, markOfCall);
     g.emitPyCall(dst, callee, arguments, count);
     g.emitLabel(done.get());
     return dst;

@@ -624,7 +624,7 @@ private:
     unsigned m_storedTemporary { 0 }; // For store(): the number of the value, if it is to mark the store as its use.
     RegisterID* emitSimpleCall(RegisterID* dst, RegisterID* callee, std::initializer_list<RegisterID*> args, const Range&, unsigned temporary = 0, unsigned temporaryToGoThrough = 0);
     // What op_py_get_method gave is called: with `self` before the arguments, unless it is the empty value.
-    RegisterID* emitMethodCall(RegisterID* dst, RegisterID* callee, RegisterID* self, std::initializer_list<RegisterID*> args, const Range&);
+    RegisterID* emitMethodCall(RegisterID* dst, RegisterID* callee, RegisterID* self, std::initializer_list<RegisterID*> args, const Range&, unsigned markOfCall = 0);
     void validateKeywords(Seq<AST::Keyword*>);
     JSValue keywordNames(Seq<AST::Keyword*>);
     void checkCaller(Expr*);

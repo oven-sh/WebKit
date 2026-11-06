@@ -456,11 +456,9 @@ static NEVER_INLINE bool checkSignalsAfterCall(JSGlobalObject* globalObject, Cal
         auto* callFrame = static_cast<CallFrame*>(caller);
         CodeBlock* codeBlock = callFrame->isNativeCalleeFrame() || callFrame->isZombieFrame() ? nullptr : callFrame->codeBlock();
         if (codeBlock && codeBlock->unlinkedCodeBlock()->isPython()) {
-            unsigned call = callFrame->bytecodeIndex().offset();
-            unsigned next = call + codeBlock->instructions().at(call)->size();
-            auto marks = std::ranges::equal_range(codeBlock->unlinkedCodeBlock()->pythonMarks(), next, { }, &PythonMark::offset);
+            auto marks = std::ranges::equal_range(codeBlock->unlinkedCodeBlock()->pythonMarks(), callFrame->bytecodeIndex().offset(), { }, &PythonMark::offset);
             bool entersWith = std::ranges::any_of(marks, [](const PythonMark& mark) {
-                return mark.kind() == PythonMark::BlockBegin && TracedBlock::kindOf(mark.bits) == TracedBlock::With;
+                return mark.kind() == PythonMark::NoLine && mark.value() == callOfEnterMark;
             });
             if (entersWith)
                 return true;

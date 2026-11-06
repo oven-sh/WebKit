@@ -518,7 +518,7 @@ void CodeMonitor::findPointsWithoutTellingTheCollector(bool everyInstruction)
                         item.comesAfterNoLine = true;
                     else if (mark.value() == deadHandlerMark)
                         item.isDeadHandler = true;
-                    else if (mark.value() != handlerOfLineMark)
+                    else if (mark.value() == asyncForGoesOnMark || mark.value() == asyncForEndsMark)
                         item.asyncForMark = mark.value();
                     continue;
                 }
