@@ -549,6 +549,19 @@ bool Threads::throwIfStoppingSlow()
     return true;
 }
 
+bool Threads::throwIfHostEndsWhatRuns()
+{
+    constexpr auto endingTraps = VMTraps::NeedTermination | VMTraps::NeedWatchdogCheck;
+    if (!m_vm.traps().needHandling(endingTraps) || !m_vm.entryScope || !isMainThread()) [[likely]]
+        return false;
+    // Nothing would come of it, and it is not cheap.
+    if (m_vm.traps().isDeferringTermination() && !m_vm.traps().needHandling(VMTraps::NeedWatchdogCheck))
+        return false;
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(m_vm);
+    m_vm.traps().handleTraps(endingTraps);
+    return !!scope.exception();
+}
+
 void stopThreads(VM& vm)
 {
     if (!vm.heap.pythonRuntimes().isEmpty())
@@ -1057,19 +1070,8 @@ bool Threads::waitUntil(JSGlobalObject* globalObject, const void* address, int64
                 m_waiters.remove(it);
         }
 
-        if (thread.isMain) {
-            if (m_vm.heap.hasPostponedEmbedderFinalizers()) [[unlikely]]
-                m_vm.heap.runPostponedEmbedderFinalizers();
-            // The host wants whatever runs here ended. Nothing else looks while this waits.
-            constexpr auto endingTraps = VMTraps::NeedTermination | VMTraps::NeedWatchdogCheck;
-            if (vm.traps().needHandling(endingTraps) && vm.entryScope) [[unlikely]] {
-                vm.traps().handleTraps(endingTraps);
-                if (scope.exception()) {
-                    wakeOne(address);
-                    return false;
-                }
-            }
-        }
+        if (thread.isMain && m_vm.heap.hasPostponedEmbedderFinalizers()) [[unlikely]]
+            m_vm.heap.runPostponedEmbedderFinalizers();
         bool canGoOn = idle.checkSignals();
         EXCEPTION_ASSERT(!scope.exception() == canGoOn);
         if (!canGoOn) {

@@ -202,6 +202,9 @@ public:
     void stopAll();
     // For a thread that holds the GIL, where it may throw. True: it is to end, and that has been thrown.
     ALWAYS_INLINE bool throwIfStopping() { return m_isStopping.load(std::memory_order_relaxed) && throwIfStoppingSlow(); }
+    // The same for the main thread: the host wants what runs here ended (worker.terminate(), a time limit). Code finds that out at its safe
+    // points. A thread that waits, or has been got out of a system call and is about to make it again, comes to none: it asks here.
+    bool throwIfHostEndsWhatRuns();
 
     // ---- Waiting for other threads ----
 

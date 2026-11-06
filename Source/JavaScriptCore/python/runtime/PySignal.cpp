@@ -372,9 +372,9 @@ static NEVER_INLINE bool signalRunHandlers(JSGlobalObject* globalObject)
 
 bool checkSignals(JSGlobalObject* globalObject)
 {
-    // What interrupted the thread may have been the end of the VM.
+    // What interrupted the thread may have been the end of the VM, or of what runs in it.
     Runtime& rt = runtime(globalObject);
-    if (rt.threads().throwIfStopping()) [[unlikely]]
+    if (rt.threads().throwIfStopping() || rt.threads().throwIfHostEndsWhatRuns()) [[unlikely]]
         return false;
     // Or that it owes calls: see Threads::wakeToMakeCalls(). (In CPython this is a place where the collector runs.)
     if (rt.hasPendingCalls() && !rt.isRunningPendingCalls()) [[unlikely]] {
@@ -1326,7 +1326,7 @@ void initializeSignalModule(JSGlobalObject* globalObject, PyModule* module)
 #else // OS(WINDOWS)
 
 // FIXME: Signals on Windows.
-bool checkSignals(JSGlobalObject*) { return true; }
+bool checkSignals(JSGlobalObject* globalObject) { return !runtime(globalObject).threads().throwIfHostEndsWhatRuns(); }
 bool checkOnlySignals(JSGlobalObject*) { return true; }
 bool signalMayEndWait(JSGlobalObject*) { return false; }
 bool simulateSignal(JSGlobalObject*, int number) { return number >= 1 && number < 23; }
