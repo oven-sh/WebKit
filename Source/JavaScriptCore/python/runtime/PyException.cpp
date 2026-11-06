@@ -6,6 +6,7 @@
 #include "config.h"
 #include "PyException.h"
 
+#include "DeferTermination.h"
 #include "ErrorInstance.h"
 #include "JSBoundFunction.h"
 #include "JSCInlines.h"
@@ -223,13 +224,22 @@ JSValue exceptionFromThrownValue(JSGlobalObject* globalObject, JSValue thrown)
     else if (error && error->isOutOfMemoryError())
         exception = newException(globalObject, rt.MemoryError(), std::span<const JSValue> { });
     else {
-        exception = thrown.isObject() ? osErrorFromThrownValue(globalObject, asObject(thrown)) : nullptr;
-        if (!exception) {
-            String message = thrown.toWTFString(globalObject);
+        String message;
+        {
+            // Its properties and its toString() are code of the program, which the unwinder may have come to: a generator asks what is leaving it.
+            TerminationNotDeferred canBeEnded(globalObject);
+            exception = thrown.isObject() ? osErrorFromThrownValue(globalObject, asObject(thrown)) : nullptr;
+            if (!exception && !scope.exception())
+                message = thrown.toWTFString(globalObject);
             if (scope.exception()) {
                 dropPendingException(globalObject, scope);
+                exception = nullptr;
                 message = "<exception>"_s;
             }
+        }
+        if (!exception) {
+            // A termination that was dropped has been asked for again. It is not this that it is to end: whoever wants to know what was thrown is told.
+            DeferTerminationForAWhile deferred(vm);
             exception = newException(globalObject, thrown.isObject() && isTypeErrorOfJS(asObject(thrown)) ? jsTypeErrorType(globalObject) : rt.JSError(), message);
         }
         if (!failed(scope, exception))
