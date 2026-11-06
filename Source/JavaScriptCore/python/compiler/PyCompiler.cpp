@@ -2421,8 +2421,15 @@ void Unit::returnStatement(Return* node)
     // As in CPython: what leaves a `with` is of the line of the `with`, and nothing comes before it, unless the value begins on another line than the `return`.
     auto* innermost = innermostBlock(m_blocks.size());
     bool leavesWithFirst = innermost && (innermost->kind == BlockKind::With || innermost->kind == BlockKind::AsyncWith);
-    if (!leavesWithFirst || !node->value || node->value->range.lineno != node->range.lineno)
+    if (!leavesWithFirst || !node->value || node->value->range.lineno != node->range.lineno) {
+        // A frame that is told of the line once more has the value: it can be sent to where one waits, and back (`frame.f_lineno = n`).
+        bool valueWaits = value->isTemporary() && m_markedLine != node->range.lineno;
+        if (valueWaits)
+            pushBlock({ .kind = BlockKind::ValueToReturn, .tryDepth = g.tryDepth(), .saved = value.get(), .isOnlyHere = true });
         line(node->range);
+        if (valueWaits)
+            popBlock();
+    }
 
     SetForScope leavingAs(m_leavingAs, Last { Last::OfFunction });
     SetForScope valueToReturn(m_valueToReturn, value.get());

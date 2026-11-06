@@ -2786,6 +2786,7 @@ void Monitoring::jump(JSGlobalObject* globalObject, PyFrame* frame, int requeste
     unsigned lastOffset = std::numeric_limits<unsigned>::max();
     Vector<Target, 2> targets;
     bool isInExpression = false;
+    bool valueIsAllThereIs = false; // The line of a `return` that is told of when the value has been computed.
     for (auto& mark : marks) {
         if (!from && mark.offset > offset)
             from = open;
@@ -2798,7 +2799,8 @@ void Monitoring::jump(JSGlobalObject* globalObject, PyFrame* frame, int requeste
             break;
         case PythonMark::BlockBegin:
             open.append({ mark.value(), TracedBlock::kindOf(mark.bits), VirtualRegister(TracedBlock::registerOffsetOf(mark.bits)) });
-            break;
+            valueIsAllThereIs = open.last().kind == TracedBlock::Value;
+            continue;
         case PythonMark::BlockEnd:
             open.removeLast();
             break;
@@ -2808,7 +2810,7 @@ void Monitoring::jump(JSGlobalObject* globalObject, PyFrame* frame, int requeste
             ++linesAtOffset;
             if (lineOfMarkValue(mark.value()) != line)
                 break;
-            if (isStatementStart(mark.value()))
+            if (isStatementStart(mark.value()) || valueIsAllThereIs)
                 targets.append({ mark.offset, mark.offset + linesAtOffset - 1, open });
             else
                 isInExpression = true;
@@ -2816,6 +2818,7 @@ void Monitoring::jump(JSGlobalObject* globalObject, PyFrame* frame, int requeste
         default:
             break;
         }
+        valueIsAllThereIs = false;
     }
     if (!from)
         from = open;
