@@ -925,7 +925,7 @@ static void testStartUpCreatesNoClass(LoadedProgram& program)
     AOT_TEST_CHECK(!realm->dateStructureConcurrently() && !realm->weakMapStructureConcurrently() && !realm->weakSetStructureConcurrently());
     AOT_TEST_CHECK(!realm->arrayBufferStructureConcurrently(ArrayBufferSharingMode::Default));
     // Where the option is on, as in Bun and here, JSGlobalObject::init() puts SharedArrayBuffer on the global object of every realm.
-    AOT_TEST_CHECK(!!realm->arrayBufferStructureConcurrently(ArrayBufferSharingMode::Shared) == Options::useSharedArrayBuffer());
+    AOT_TEST_CHECK(!!realm->arrayBufferStructureConcurrently(ArrayBufferSharingMode::Shared) == Options::alwaysUseSharedArrayBuffer());
     AOT_TEST_CHECK(!realm->typedArrayStructureConcurrently(TypeUint8, false) && !realm->typedArrayStructureConcurrently(TypeFloat64, false) && !realm->typedArrayStructureConcurrently(TypeDataView, false));
     AOT_TEST_CHECK(!findExistingObject(realm, Identifier::fromString(program.realms().vm(), "Math"_s).impl()));
 }

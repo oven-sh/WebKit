@@ -227,6 +227,7 @@ Not upstream's: a sync neither brings nor changes them. Most are named `stress/b
 |---|---|
 | `stress/bun-async-context-propagation.js` | the embedder's async-context slot is captured when a job is scheduled and current while it runs |
 | `stress/bun-aot-builtins-table.js` | the ahead-of-time compiler's table of built-ins (`Source/JavaScriptCore/aot/builtins/*.builtins.ts`) agrees with the engine. **After a sync that removes, renames, moves or reimplements a built-in that the table knows this fails, and each line it prints names the entry to fix.** |
+| `stress/bun-use-shared-array-buffer-option-alias.js` | the option name `useSharedArrayBuffer`, which upstream renamed to `alwaysUseSharedArrayBuffer` (325936@main), still sets that option: `--useSharedArrayBuffer=0` takes the global `SharedArrayBuffer` away, as `BUN_JSC_useSharedArrayBuffer=0` does in Bun (`FOR_EACH_JSC_ALIASED_OPTION` in `runtime/OptionsList.h`) |
 | `stress/sort-scratch-double-pivot.js` | double arithmetic in the comparator of an inlined sort stores no double into an Int32 array |
 | `stress/array-sort-inline-int32-double-comparator.js` | an earlier, smaller test for the sort fix |
 | `stress/bun-definition-of-a-value-reaches-the-setter-of-a-custom-value.js` | a definition that gives a value and changes no attribute, and every store through a proxy that ends in one, calls the setter of a custom value with the holder and in the holder's realm, and leaves the property a custom value; a definition that changes an attribute, an accessor definition and `delete` replace it (A11) |

@@ -827,6 +827,8 @@ enum OptionEquivalence {
     v(maximumFTLCandidateInstructionCount, maximumFTLCandidateBytecodeCost, SameOption) \
     v(maximumInliningCallerSize, maximumInliningCallerBytecodeCost, SameOption) \
     v(validateBCE, validateBoundsCheckElimination, SameOption) \
+    /* Bun: the name that alwaysUseSharedArrayBuffer had until 325936@main. BUN_JSC_useSharedArrayBuffer=0 still takes the global away. */ \
+    v(useSharedArrayBuffer, alwaysUseSharedArrayBuffer, SameOption) \
 
 
 enum ExperimentalOptionFlags {

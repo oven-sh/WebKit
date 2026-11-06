@@ -83,7 +83,7 @@ export default b.declarations(
     },
   ]),
 
-  // JSGlobalObject::init() asks an option before it puts each of these on the global object: useExplicitResourceManagement, useSharedArrayBuffer, useTemporal, useWasm.
+  // JSGlobalObject::init() asks an option before it puts each of these on the global object: useExplicitResourceManagement, alwaysUseSharedArrayBuffer, useTemporal, useWasm.
   [
     "AsyncDisposableStack",
     "DisposableStack",

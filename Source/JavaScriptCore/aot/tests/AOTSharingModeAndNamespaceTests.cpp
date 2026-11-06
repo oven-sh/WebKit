@@ -466,7 +466,7 @@ static String runInShell(std::initializer_list<ASCIILiteral> optionWords)
 
     TemporaryFile image(".image"_s, output->image.span());
     Vector<String> arguments {
-        String("--useSharedArrayBuffer=1"_s),
+        String("--alwaysUseSharedArrayBuffer=1"_s),
         makeString("--aotImagePath="_s, image.path()),
         String("-e"_s),
         makeString(scriptStart, "runCompiledEntryPoint("_s, output->entryModuleIDs[0], ").then(() => {"_s, statements, "}).catch(error => print(\"the script threw \" + error));"_s),
