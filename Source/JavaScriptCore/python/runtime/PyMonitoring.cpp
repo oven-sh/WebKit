@@ -1816,14 +1816,14 @@ bool Monitoring::fireLine(JSGlobalObject* globalObject, CallFrame* callFrame, Co
     if (point.firstLineFollowsCatch && m_raisedIn == callFrame && lineItIsRaisedOn(callFrame->codeBlock(), m_raisedAt) == monitor.m_lineStarts[first].line)
         comesFromSameLine = true;
     PyFrame* frame = monitor.m_needsLastLine || monitor.tools(Event::Line) >> traceTool ? frameObjectOf(globalObject, callFrame) : frameObjectIfThereIsOne(callFrame);
-    // It got here because a trace function said so.
+    // It got here because a trace function said so, which knows of that line. Those behind it begin as ever.
+    unsigned told = 0;
     if (frame && frame->jumpedTo) {
         if (*std::exchange(frame->jumpedTo, std::nullopt) == offset) {
-            frame->lastLine = monitor.m_lineStarts[first + count - 1].line;
-            return true;
+            while (told < count && monitor.m_lineStarts[first + told++].line != frame->lastLine) { }
         }
     }
-    for (unsigned i = 0; i < count; ++i) {
+    for (unsigned i = told; i < count; ++i) {
         int line = monitor.m_lineStarts[first + i].line;
         bool isNews = i || (!comesFromSameLine && (!firstLineIsInDoubt || line != frame->lastLine));
         if (frame)
