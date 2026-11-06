@@ -2988,8 +2988,11 @@ void Unit::withStatement(With* node, unsigned index, const Last& isLast)
     value = nullptr;
     if (index + 1 == node->items.size())
         statements(node->body);
-    else if (!c.failed())
+    else if (!c.failed()) {
+        // What comes after the next item is the call of this one's `__exit__`, not what comes after the statement.
+        SetForScope statementsAfter(m_statementsAfter, nullptr);
         withStatement(node, index + 1, notLast);
+    }
     endOfProtectedStatements();
     popBlock();
     endTry(body);
