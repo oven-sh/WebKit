@@ -90,8 +90,9 @@ struct SignalState {
     std::atomic<bool> warnsOnFullBuffer { true };
     // The errno of a write to the wakeup descriptor that failed, until it has been reported.
     std::atomic<int> wakeupError { 0 };
-    // Of the thread that handles signals. Null: there is none (yet, or any more).
+    // Of the thread that handles signals. Null: there is none (yet, or since its runtime has gone).
     std::atomic<VM*> vm { nullptr };
+    // The first to ask on the main thread of the process while there is none. Null once it has gone: the next runtime may come to lie at its address.
     Runtime* runtime { nullptr };
     pthread_t thread { };
     // installSignalHandlers()
@@ -272,10 +273,12 @@ static bool signalRemove(sigset_t& set, std::initializer_list<int> numbers)
 static JSArray* signalHandlers(JSGlobalObject* globalObject)
 {
     Runtime& rt = runtime(globalObject);
-    if (JSValue list = rt.slot(Runtime::Slot::SignalHandlers))
+    // A runtime that has had a list without the signals has not been able to change it.
+    bool takesSignals = !s_signalState.runtime && signalIsOnMainThreadOfProcess();
+    if (JSValue list = rt.slot(Runtime::Slot::SignalHandlers); list && !takesSignals)
         return asList(list);
 
-    if (!s_signalState.runtime && signalIsOnMainThreadOfProcess()) {
+    if (takesSignals) {
         s_signalState.runtime = &rt;
         s_signalState.thread = pthread_self();
         s_signalState.vm.store(&rt.vm());
@@ -644,10 +647,16 @@ void finalizeSignals(JSGlobalObject* globalObject)
 void detachSignals(Runtime& rt)
 {
     cancelTracebackDumpRequests(rt);
-    if (s_signalState.runtime != &rt || !s_signalState.vm.load())
+    if (s_signalState.runtime != &rt)
         return;
     signalRestoreActions();
     s_signalState.vm.store(nullptr);
+    // What has arrived for it is nobody's.
+    for (auto& isTripped : s_signalState.tripped)
+        isTripped.store(false);
+    s_signalState.isTripped.store(false);
+    s_signalState.wakeupError.store(0);
+    s_signalState.runtime = nullptr;
 }
 
 // ---- The module ----
