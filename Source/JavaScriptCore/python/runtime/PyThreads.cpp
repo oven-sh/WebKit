@@ -688,7 +688,10 @@ void Threads::runThread(ThreadState& thread, Function<void()>&& body)
         scope.assertNoException();
         importLock.holderEnds(*this, thread);
         warningsLock.holderEnds(*this, thread);
-        for (Runtime* runtime : m_vm.heap.pythonRuntimes()) {
+        // (A copy: to tell the monitoring may make a frame object, and a collection takes a runtime whose global object it finds dead out of the list.)
+        for (Runtime* runtime : Vector<Runtime*, 1>(m_vm.heap.pythonRuntimes())) {
+            if (!m_vm.heap.pythonRuntimes().contains(runtime))
+                continue;
             Runtime::ThreadLocalState state;
             runtime->takeThreadLocalState(state);
             if (state.traceFunction || state.profileFunction)
