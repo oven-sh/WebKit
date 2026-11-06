@@ -806,11 +806,14 @@ profiler/ProfilerProfiledBytecodes.cpp
 profiler/ProfilerTZoneImpls.cpp
 
 python/capi/CApiErrors.cpp
+python/capi/CApiInstance.cpp
 python/capi/CApiInterpreter.cpp
+python/capi/CApiLife.cpp
 python/capi/CApiNumbers.cpp
 python/capi/CApiObject.cpp
 python/capi/CApiReferences.cpp
 python/capi/CApiSequences.cpp
+python/capi/CApiType.cpp
 python/compiler/PyCompiler.cpp
 python/compiler/PyCompilerDefinitions.cpp
 python/compiler/PyCompilerExpressions.cpp

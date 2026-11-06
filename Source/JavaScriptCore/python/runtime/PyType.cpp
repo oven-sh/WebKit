@@ -99,6 +99,7 @@ void PyType::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_instanceStructure);
     visitor.append(thisObject->m_jsPrototype);
     visitor.append(thisObject->m_maker);
+    visitor.append(thisObject->m_extension);
     visitor.appendValues(thisObject->m_specials.data(), numberOfSpecials);
 }
 
@@ -111,7 +112,7 @@ String PyType::name() const
 
 String PyType::nameInMessages() const
 {
-    if (isHeapType() || !m_module)
+    if (!m_module)
         return name();
     String module = stringOf(m_module.get());
     if (module == "builtins"_s)
@@ -544,6 +545,7 @@ Structure* createStructureOfInstances(VM&, JSGlobalObject*, Runtime&, unsigned i
 
 Structure* PyType::createInstanceStructure(VM& vm)
 {
+    ASSERT(!has(TypeFlag::InstancesHaveDataOfC));
     JSGlobalObject* globalObject = realm();
     // What __slots__ names has its place in the object. Storage on the side costs an allocation, and an assignment that the
     // interpreter cannot do by itself, for every instance.

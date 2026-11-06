@@ -22,9 +22,11 @@
 namespace JSC {
 
 class Heap;
+class VM;
 
 namespace Python {
 
+class PyType;
 class Runtime;
 
 namespace CApi {
@@ -41,6 +43,9 @@ namespace CApi {
 
 // Sets it up. False, with an ImportError: the API is not for this interpreter.
 bool ensure(JSGlobalObject*);
+
+// identityBits(), for an instance of a type of an extension (TypeFlag::InstancesHaveDataOfC). Declared in PyType.h as well, which others than the engine include.
+uint64_t bitsOfInstance(JSCell*);
 
 #if PYTHON_HAS_CAPI
 
@@ -84,6 +89,21 @@ JSValue objectOfSymbol(JSGlobalObject*, uint64_t bits);
 // For the collector, with the world stopped, when marking is over and nothing has been freed yet.
 void didFinishMarking(JSC::Heap&);
 
+// ---- Instances of the types of extensions (TypeFlag::InstancesHaveDataOfC) ----
+
+// Empty, with an exception: there is no room.
+JSValue allocateInstance(JSGlobalObject*, PyType*);
+// Whether an instance of one type can become an instance of the other. One of them at least has the flag.
+bool instancesAreAlike(PyType*, PyType*);
+
+// The object whose PyObject* is the address of this cell, if the cell is not an object itself. Empty: it is nothing of the kind. With the GIL.
+JSValue objectOfBody(Runtime&, JSCell*);
+
+// __class__ has been assigned to.
+void didChangeClass(JSCell*, PyType* oldType, PyType* newType);
+
+// ---- ctypes ----
+
 // After code of C's has run with the GIL.
 // What it raised, if it did, is thrown. False: it is.
 bool throwWhatCRaised(JSGlobalObject*);
@@ -115,6 +135,10 @@ public:
 };
 inline JSValue objectOfSymbol(JSGlobalObject*, uint64_t) { return { }; }
 inline void didFinishMarking(JSC::Heap&) { }
+inline JSValue allocateInstance(JSGlobalObject*, PyType*) { return { }; }
+inline bool instancesAreAlike(PyType*, PyType*) { return false; }
+inline JSValue objectOfBody(Runtime&, JSCell*) { return { }; }
+inline void didChangeClass(JSCell*, PyType*, PyType*) { }
 inline bool throwWhatCRaised(JSGlobalObject*) { return true; }
 inline bool throwWhatCRaisedBesideResult(JSGlobalObject*, const String&) { return true; }
 inline void forgetWhatCRaised() { }

@@ -1590,12 +1590,14 @@ a finalizer left to run, and comes up again in the next collection.
 `capi/` is CPython's C API for extension modules, in the one form in which C sees the layout of no object: **abi3t** (PEP 803). `PyObject`,
 `PyVarObject`, `PyTypeObject` and `PyModuleDef` are incomplete types there, `Py_INCREF`, `Py_TYPE` and `Py_SIZE` are calls, and what C knows of an object is its
 address. Nothing in `capi/` is CPython's text: what a function does is taken from the documentation, the list of the stable ABI, and from running CPython. The
-functions are exported from the executable. (So far there is what it takes to hold objects, and no way to load a module: a library loaded with `ctypes.PyDLL` can call it.)
+functions are exported from the executable. (So far there is what it takes to hold objects and to make types whose instances hold them, and no way to load a module: a
+library loaded with `ctypes.PyDLL` can call it.)
 
 **A `PyObject*` is the 64 bits of the `JSValue`**, and NULL the empty value (`toJS()`, `toC()` in `capi/CApi.h`). The address of a cell stands for the cell. None, the
 bools, and the ints and floats that are no cells are addresses at which there is no memory, and C cannot tell. So `==` in C is `is`, nothing is allocated or looked
 up for a value to cross, and a reference that is borrowed from a container is the value that the container holds, good for as long as it holds it: CPython's rule.
-Three kinds of value are spelled otherwise for C than in the heap, where one object has several spellings or C's was fixed beforehand:
+Four kinds of value are spelled otherwise for C than in the heap, where one object has several spellings or C's was fixed beforehand:
+- An instance of the type of an extension is two cells, and C has the address of the one that Python and JS never see: below.
 - A built-in type that C names by a symbol (`&PyLong_Type`; `PyExc_ValueError`, which is a variable) has an address that was fixed when the executable was linked. These symbols lie in one
   section. A pointer that comes in is tested for that range, and the symbol holds the cell; a type that goes out is asked for its symbol (`PyType::symbolForC()`).
 - An int that is no cell may be tagged as an int32 or as a double, as the arithmetic left it (`(2**40 + 5) - 2**40`). It goes out in the one way in which `jsNumber()` tags it.
@@ -1606,8 +1608,8 @@ made of it, as in CPython (`id()` turned right by four bits); the eight bytes of
 asks for no interpreter: a type has been told its symbol when its interpreter made it (`CApi::didMakeTypes()`), in every interpreter, and a symbol says which it is (`StaticObject::number`), so
 the way back (`objectOfSymbol()`) gives each interpreter its own type. So the `id()` of `int` is `&PyLong_Type`, as it is in CPython, in every interpreter, from the start; and to write a type
 into memory takes no API. No cell can have such an `id()`: the section is part of the executable. (An `id()` is unique within an interpreter: the `int` of another realm of the VM is another
-cell with the same `id()`. A `ShadowRealm` lets no object through, so no program there has both.) What it costs: for a cell, one comparison of its `JSType`, which sends
-everything but types away.
+cell with the same `id()`. A `ShadowRealm` lets no object through, so no program there has both.) What it costs: for a cell, a look at its `JSType`: what may be a type is asked
+for its symbol, and a plain object of Python's has its type asked whether its instances have data of C's.
 
 **`PyExc_ValueError` never changes.** A library may read it as it is loaded, whoever loads it and whenever (JS by `bun:ffi` before there is any Python, a Worker before main has a use
 for the API), and a constructor runs once in a process. So the variable is a constant that the linker fills: the address of a symbol like those of the types, which has no name of its own. What
@@ -1677,19 +1679,36 @@ keeps at hand, with a reference, from its first call to its end. What the questi
 and it holds a reference to the lock. `Py_None` and the other constants that are no cells, `Py_Is*()` and `Py_IsInitialized()` ask nothing and look at nothing that could go away:
 the symbols of None and the bools say what they stand for from the time the executable is loaded. `Py_IsInitialized()` says whether the interpreter that the API serves is there.
 
-The lock is the VM's, and a VM may have several interpreters, on one thread: each realm (`ShadowRealm`) that imports Python has its own. So **whoever runs C says for whom** (`CRunsFor`, around
-a foreign call, `dlopen()` and `dlclose()`): that is the thread's, and the innermost counts, so C that one interpreter calls, that calls back, and so gets to C that the other calls, is
-told apart at every level. It costs who is let in nothing: while a thread runs C for an interpreter that the API is not for, it does not have its `Thread` at hand, so the
-question above fails and the long way finds out why. C that JS runs (`bun:ffi`, N-API) runs for nobody in particular: on a thread that holds the GIL of the interpreter that has the
-API it is served, from whichever realm it was called, unless that is inside C which runs for another.
-The question is for C, and only C is asked. What the runtime does for itself (it throws what C raised, gives up the reference that came with a result, hands C one with the result of a callback;
-`_ctypes.Py_INCREF()`) goes by whose call it is: code of the interpreter that is served may run deep inside C that another one runs, and its calls come with references and exceptions like any. A
-function that has asked does not ask again for the references that it takes and gives (`retain()` and `release()` with `current`).
-
 **Quiet and noisy.** Every function that C calls says in its first line whether it can run code of the program or put a reference where the program finds
 it (`CAPI_ENTER()`, `CAPI_NOISY()`) or not (`CAPI_QUIET()`); all three ask who calls, once, and have the answer at hand (`current`). `CAPI_QUIET_AND_ASKS_NOBODY()` is for the quiet ones that have nothing to ask for.
 `tools/check_capi.py` looks for the first lines, and that a function which asks nobody does not name the interpreter. A function is noisy unless it is known to be quiet. Nothing
 counts the noisy calls yet: that is for the order in which instances of extension types are destroyed.
+
+**A type that an extension makes** (`PyType_FromSpec()` and its kin, `capi/CApiType.cpp`) is made by the runtime's own `type.__new__`, which knows the rules for bases, the MRO
+and layouts, except that nobody is told of it (`__init_subclass__`, `__set_name__`), as in CPython. Who makes its instances is what it has taken from its base, like any class ("Who makes an
+instance", above): `object.__new__`, as long as there is no slot for another; how they are laid out is for the type to say (`allocateInstance()`). A metaclass that `type.__new__` does not make the instances of is refused
+(CPython: "Metaclasses with custom tp_new are not supported"). What the extension said besides is kept in a cell that the type refers to
+(`MadeByExtension`). In abi3t C does not know how large an object is, so a type says how much it *adds* to its base (a negative `basicsize`) and asks where its part is
+(`PyObject_GetTypeData()`).
+
+**An instance** of such a type, or of a class that derives from one (`TypeFlag::InstancesHaveDataOfC`), **is two cells** (`capi/CApiInstance.h`).
+
+- **The face** is what Python and JS see and hold: the type, the `__dict__` and `__slots__` of classes that derive from the type, what weak references refer to, what `is` compares. It is
+  an object like any other, and lives and dies by the collector's rules like any other.
+- **The body** is what C sees: 32 bytes of head, then the data, in the cell's own memory, 16-byte aligned and zero at first. Cells do not move. Its address is the `PyObject*` for the whole
+  life of the instance, `tp_dealloc` included, and the instance's `id()`. **No code of Python's or JS's is ever given a body**: `toJS()` gives the face, and is the only way from a
+  handle to a value; `toC()` of a face gives the body. (A body is told by one byte: it is of `CellType`, which no object of Python's is.)
+- The face refers to the body, and **the body to the face**: an instance that only C holds, or that another instance holds in its data, keeps its attributes, its identity and its
+  weak references. So the two are one strongly connected piece, and are found dead together.
+
+Why two: `tp_dealloc` is the end of what C keeps, and nobody may have the object then, or get it later. But whether somebody can still get at a cell that is *kept alive for a call to
+come* is more than anybody can tell. JSC and Bun hold addresses in many ways without marking them (`JSC::Weak` with its owners, `WeakRef`, tables that are gone through when a
+collection ends, the frames of an `Error`, bare pointers in native code that go by the mark), and to all of them a cell that is marked is alive. A list of those ways would be out of date
+with the next commit. A face is not kept: when it has died each of them has been told, as of any cell that dies. What is kept for `tp_dealloc` is the body, of which none of them has
+ever heard. (It is how WebKit keeps a native object with a lifetime of its own behind a wrapper that is collected.)
+
+The collector does not look into the data: C stores there without telling anybody, and only C knows what is a reference. But a reference that lies there is one
+that C owns, so it is in the table. For an instance the key is the body.
 
 **`ctypes`.** A `py_object` is a `PyObject*`: the same bits. A function of a `PyDLL` is called with the GIL; what C raised is thrown when it returns, whatever it returned (also for a
 function of a `CDLL` that got in because no other thread wanted the GIL: CPython crashes there). What a library raised as it was loaded, or as it went, is the cause of a `SystemError` from

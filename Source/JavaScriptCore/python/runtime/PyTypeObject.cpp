@@ -7,6 +7,7 @@
 #include "PyInternals.h"
 #include "PyJSClass.h"
 
+#include "CApiHooks.h"
 #include "HeapIterationScope.h"
 #include "JSCInlines.h"
 #include "MarkedSpaceInlines.h"
@@ -159,6 +160,8 @@ JSValue allocateInstance(JSGlobalObject* globalObject, PyType* type, PyType* lay
     if (type == rt.objectType())
         return PyObject::create(vm, rt.structure<PyObject>(), type);
     ASSERT_UNUSED(layout, type->layoutBase() == (layout ? layout : rt.objectType()));
+    if (type->has(TypeFlag::InstancesHaveDataOfC)) [[unlikely]]
+        return CApi::allocateInstance(globalObject, type);
     return PyInstance::create(vm, type);
 }
 
@@ -509,6 +512,8 @@ static bool layoutsAreCompatible(PyType* oldType, PyType* newType, PyType* deriv
         if (derived ? newType->has(flag) && !derived->has(flag) : oldType->has(flag) != newType->has(flag))
             return false;
     }
+    if ((oldType->has(TypeFlag::InstancesHaveDataOfC) || newType->has(TypeFlag::InstancesHaveDataOfC)) && !CApi::instancesAreAlike(oldType, newType))
+        return false;
     // The classes that last added something to the layout: the same one, or two that added the same to the same base.
     PyType* a = oldType->solidBase();
     PyType* b = newType->solidBase();
@@ -534,7 +539,7 @@ static void objectSetClass(JSGlobalObject* globalObject, JSValue self, JSValue v
     PyType* oldType = rt.typeOf(self);
     bool areModules = oldType->isSubtypeOf(rt.moduleType()) && newType->isSubtypeOf(rt.moduleType());
     // (What an object of JS's is an instance of, its prototype says.)
-    if (!areModules && (!oldType->isHeapType() || !newType->isHeapType() || oldType->has(TypeFlag::AttributesAreProperties))) {
+    if (!areModules && (!oldType->isHeapType() || !newType->isHeapType() || oldType->has(TypeFlag::Immutable) || newType->has(TypeFlag::Immutable) || oldType->has(TypeFlag::AttributesAreProperties))) {
         raiseTypeError(globalObject, scope, "__class__ assignment only supported for mutable types or ModuleType subclasses"_s);
         return;
     }
@@ -546,6 +551,8 @@ static void objectSetClass(JSGlobalObject* globalObject, JSValue self, JSValue v
     JSCell* cell = self.asCell();
     if (isPyObject(cell)) {
         uncheckedDowncast<PyObject>(cell)->setType(vm, newType);
+        if (newType->has(TypeFlag::InstancesHaveDataOfC)) [[unlikely]]
+            CApi::didChangeClass(cell, oldType, newType);
         // What was remembered about the attributes of a module goes by its dict alone: see describeAttribute().
         if (auto* module = PyModule::tryFrom(self))
             module->dict()->renewWatchedVersion();
@@ -1084,6 +1091,9 @@ JSValue prepareConstruct(JSGlobalObject* globalObject, JSValue callee, JSValue& 
     if (!PyFunction::is(init) || !type->isMadeBy(objectNew) || !isNativeNew(type->type()->lookup(Special::Call), typeCallMethod))
         return { };
     self = allocateInstance(globalObject, type);
+    // There was no memory for what C keeps in it.
+    if (!self) [[unlikely]]
+        return { };
     didMakeObject(globalObject, type, self);
     return init;
 }
@@ -1266,7 +1276,7 @@ static bool checkEncodable(JSGlobalObject* globalObject, JSString* string)
     RELEASE_AND_RETURN(scope, !!codecEncodeUTF8(globalObject, string, "strict"_s));
 }
 
-static JSValue typeNewWithKeywordsAsGiven(JSGlobalObject*, JSValue cls, const CallArgs&);
+static JSValue typeNewWithKeywordsAsGiven(JSGlobalObject*, JSValue cls, const CallArgs&, bool tellsOthers = true);
 
 static JSValue typeNew(JSGlobalObject* globalObject, JSValue cls, const CallArgs& args)
 {
@@ -1290,7 +1300,13 @@ static JSValue typeNew(JSGlobalObject* globalObject, JSValue cls, const CallArgs
     RELEASE_AND_RETURN(scope, typeNewWithKeywordsAsGiven(globalObject, cls, CallArgs(valuesOf(values), args.size(), names)));
 }
 
-static JSValue typeNewWithKeywordsAsGiven(JSGlobalObject* globalObject, JSValue cls, const CallArgs& args)
+JSValue makeTypeForExtension(JSGlobalObject* globalObject, PyType* metatype, JSValue name, JSValue bases, JSValue namespaceOfClass)
+{
+    JSValue arguments[] = { name, bases, namespaceOfClass };
+    return typeNewWithKeywordsAsGiven(globalObject, metatype, CallArgs(arguments, 3), false);
+}
+
+static JSValue typeNewWithKeywordsAsGiven(JSGlobalObject* globalObject, JSValue cls, const CallArgs& args, bool tellsOthers)
 {
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
@@ -1331,6 +1347,9 @@ static JSValue typeNewWithKeywordsAsGiven(JSGlobalObject* globalObject, JSValue 
         }
         PyType* winner = calculateMetaclass(globalObject, metatype, bases);
         RETURN_IF_EXCEPTION(scope, { });
+        // An extension describes the type, and no code of the program has a say in how it is made.
+        if (!tellsOthers && !winner->isMadeBy(typeNew))
+            return raiseTypeError(globalObject, scope, "Metaclasses with custom tp_new are not supported."_s);
         if (winner != metatype) {
             if (!winner->isMadeBy(typeNew))
                 RELEASE_AND_RETURN(scope, makeInstanceOf(globalObject, winner, args));
@@ -1553,6 +1572,9 @@ static JSValue typeNewWithKeywordsAsGiven(JSGlobalObject* globalObject, JSValue 
     }
 
     // ---- __set_name__, __init_subclass__ ----
+
+    if (!tellsOthers)
+        return type;
 
     {
         PyDict* snapshot = dict->copy(globalObject);

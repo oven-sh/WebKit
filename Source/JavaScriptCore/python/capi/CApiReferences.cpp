@@ -76,20 +76,20 @@ PY_CAPI ssize_t Py_REFCNT(Handle object)
 PY_CAPI Handle Py_TYPE(Handle object)
 {
     CAPI_QUIET(nullptr);
-    return toC(current->runtime.typeOf(toJS(object)));
+    return toC(typeOf(object));
 }
 
 PY_CAPI int Py_IS_TYPE(Handle object, Handle type)
 {
     CAPI_QUIET(0);
-    return JSValue(current->runtime.typeOf(toJS(object))) == toJS(type);
+    return JSValue(typeOf(object)) == toLookAt(type);
 }
 
 // One object may be spelled in two ways for C too: None and the bools are, by their symbols, which say what they stand for at all times, and as toC() spells them. (A type is only ever
 // spelled by its symbol, a number in one way, and what the symbols of Ellipsis and NotImplemented stand for is there while the API is.)
 static ALWAYS_INLINE JSValue plain(Handle handle)
 {
-    JSValue value = toJS(handle);
+    JSValue value = toLookAt(handle);
     return value.isNull() ? jsUndefined() : value;
 }
 

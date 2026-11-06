@@ -6,7 +6,9 @@
 #include "config.h"
 #include "CApi.h"
 
+#include "CApiInstance.h"
 #include "CApiSymbols.h"
+#include "CApiType.h"
 #include "JSCInlines.h"
 #include "PyException.h"
 #include "SimpleMarkingConstraint.h"
@@ -94,6 +96,27 @@ static void forEachSymbol(const Function& function)
 
 WTF_MAKE_STRUCT_TZONE_ALLOCATED_IMPL(Interpreter);
 
+const ClassInfo State::s_info = { "PyCApiState"_s, nullptr, nullptr, nullptr, CREATE_METHOD_TABLE(State) };
+
+State* State::create(VM& vm, Structure* structure)
+{
+    auto* state = new (NotNull, allocateCell<State>(vm)) State(vm, structure);
+    state->finishCreation(vm);
+    return state;
+}
+
+template<typename Visitor>
+void State::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+{
+    auto* thisObject = uncheckedDowncast<State>(cell);
+    Base::visitChildren(thisObject, visitor);
+    visitor.append(thisObject->madeByExtensionStructure);
+    visitor.append(thisObject->faceStructure);
+    visitor.append(thisObject->bodyStructure);
+}
+
+DEFINE_VISIT_CHILDREN(State);
+
 // ---- The one interpreter ----
 
 std::atomic<Interpreter*> s_interpreter;
@@ -163,7 +186,12 @@ bool tryEnsure(JSGlobalObject* globalObject)
     FOR_EACH_CAPI_FILE(KEEP_FILE)
 #undef KEEP_FILE
 
-    auto* interpreter = new Interpreter(globalObject);
+    State* state = State::create(vm, State::createStructure(vm, globalObject));
+    runtime(globalObject).setSlot(Runtime::Slot::CApi, state);
+    state->madeByExtensionStructure.set(vm, state, MadeByExtension::createStructure(vm, globalObject));
+    state->faceStructure.set(vm, state, Face::createStructure(vm, globalObject));
+    state->bodyStructure.set(vm, state, Body::createStructure(vm, globalObject));
+    auto* interpreter = new Interpreter(globalObject, state);
     setSymbols(interpreter->runtime);
     // In this order: a reference can be refused, which clears the first, once the second is there.
     s_interpreterThatLetsGo.store(interpreter, std::memory_order_release);
@@ -472,6 +500,14 @@ void takeOverReference(uint64_t bits, bool programGetsObject)
 
 // ---- The symbols, for every interpreter ----
 
+// identityBits(), for the face of an instance. Whoever asks has it in hand. With the GIL.
+uint64_t bitsOfInstance(JSCell* cell)
+{
+    return std::bit_cast<uintptr_t>(uncheckedDowncast<Face>(cell)->body());
+}
+
+// ---- The symbols, for every interpreter ----
+
 JSValue objectOfSymbol(JSGlobalObject* globalObject, uint64_t bits)
 {
     Handle handle = std::bit_cast<Handle>(static_cast<uintptr_t>(bits));
@@ -513,6 +549,11 @@ bool ensure(JSGlobalObject* globalObject)
     auto scope = DECLARE_THROW_SCOPE(vm);
     raiseImportError(globalObject, scope, "the C API is not there on this system"_s);
     return false;
+}
+
+uint64_t bitsOfInstance(JSCell*)
+{
+    RELEASE_ASSERT_NOT_REACHED();
 }
 
 } // namespace CApi

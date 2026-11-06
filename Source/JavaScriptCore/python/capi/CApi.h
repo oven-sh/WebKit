@@ -7,6 +7,7 @@
 
 #include "CApiCounts.h"
 #include "CApiHooks.h"
+#include "CApiInstance.h"
 #include "PyErrors.h"
 #include "PyTuple.h"
 #include "PyType.h"
@@ -29,7 +30,8 @@ namespace CApi {
 // Two objects are the same if the pointers are equal, a container's own array of values is an array of PyObject*, and nothing
 // is allocated for a value to cross.
 //
-// Three kinds of value are spelled otherwise for C than in the heap (identityBits() in ../runtime/PyType.h, which id() goes by too):
+// Four kinds of value are spelled otherwise for C than in the heap (identityBits() in ../runtime/PyType.h, which id() goes by too):
+//  - An instance of the type of an extension. It is two cells, and C has the address of the one that Python and JS never see: CApiInstance.h.
 //  - A built-in type that C names by a symbol (&PyLong_Type), or by a variable that is as good as one (PyExc_ValueError, which a library may read as it is loaded, before
 //    there is an interpreter, and keep). The address is fixed when bun is linked, and the cell is made when the program runs. All these symbols lie in one section
 //    (StaticObject). What comes in is tested for that range; a type that goes out is asked for its symbol (PyType::symbolForC()). The program sees the same number: it is the
@@ -77,10 +79,23 @@ ALWAYS_INLINE JSValue toJS(Handle handle)
 {
     if (isStatic(handle)) [[unlikely]]
         return JSValue::decode(std::bit_cast<StaticObject*>(handle)->value);
+    uintptr_t bits = bitsOf(handle);
+    if (bits && !(bits & JSValue::NotCellMask)) {
+        if (Body* body = Body::tryFromCellOfHandle(std::bit_cast<JSCell*>(handle))) [[unlikely]]
+            return faceOf(body);
+    }
+    return JSValue::decode(static_cast<EncodedJSValue>(bits));
+}
+
+// For who only asks what it is. A body stays a body. NOT TO BE STORED OR PASSED ON.
+ALWAYS_INLINE JSValue toLookAt(Handle handle)
+{
+    if (isStatic(handle)) [[unlikely]]
+        return JSValue::decode(std::bit_cast<StaticObject*>(handle)->value);
     return JSValue::decode(static_cast<EncodedJSValue>(bitsOf(handle)));
 }
 
-// The cell whose references are counted. Null: the object is not a cell, or one that the runtime keeps alive anyway.
+// The cell whose references are counted: of an instance, the body. Null: the object is not a cell, or one that the runtime keeps alive anyway.
 ALWAYS_INLINE JSCell* countedCell(Handle handle)
 {
     if ((bitsOf(handle) & JSValue::NotCellMask) || isStatic(handle))
@@ -90,17 +105,57 @@ ALWAYS_INLINE JSCell* countedCell(Handle handle)
 
 ALWAYS_INLINE Handle toC(JSValue value) { return std::bit_cast<Handle>(static_cast<uintptr_t>(identityBits(value))); }
 
+ALWAYS_INLINE Handle toC(Body* body) { return std::bit_cast<Handle>(body); }
+
+// Null: it is no instance of the type of an extension.
+ALWAYS_INLINE Body* bodyOrNull(Handle handle)
+{
+    JSCell* cell = countedCell(handle);
+    return cell ? Body::tryFromCellOfHandle(cell) : nullptr;
+}
+
 // ---- The one interpreter ----
 //
 // Whose the API is, and when it is set up: see CApiHooks.h.
 
+// What has to be a cell: the runtime refers to it (Runtime::Slot::CApi).
+class State final : public JSCell {
+public:
+    using Base = JSCell;
+    static constexpr unsigned StructureFlags = Base::StructureFlags;
+    static constexpr DestructionMode needsDestruction = DoesNotNeedDestruction;
+
+    template<typename CellType, SubspaceAccess>
+    static CompleteSubspace* subspaceFor(VM& vm) { return &vm.cellSpace(); }
+
+    DECLARE_INFO;
+    DECLARE_VISIT_CHILDREN;
+
+    static Structure* createStructure(VM& vm, JSGlobalObject* globalObject)
+    {
+        return Structure::create(vm, globalObject, jsNull(), TypeInfo(CellType, StructureFlags), info());
+    }
+    static State* create(VM&, Structure*);
+
+    WriteBarrier<Structure> madeByExtensionStructure;
+    WriteBarrier<Structure> faceStructure;
+    WriteBarrier<Structure> bodyStructure;
+
+private:
+    State(VM& vm, Structure* structure)
+        : Base(vm, structure)
+    {
+    }
+};
+
 struct Interpreter {
     WTF_MAKE_STRUCT_TZONE_ALLOCATED(Interpreter);
 
-    Interpreter(JSGlobalObject* globalObject)
+    Interpreter(JSGlobalObject* globalObject, State* state)
         : globalObject(globalObject)
         , vm(getVM(globalObject))
         , runtime(Python::runtime(globalObject))
+        , state(state)
         , lock(vm.apiLock())
         , keyOfReferenceToThread(makeKeyOfReferenceToThread())
     {
@@ -111,6 +166,7 @@ struct Interpreter {
     JSGlobalObject* const globalObject;
     VM& vm;
     Runtime& runtime;
+    State* const state;
     const Ref<JSLock> lock;
     // See t_thisThread.
     const pthread_key_t keyOfReferenceToThread;
@@ -139,6 +195,13 @@ ALWAYS_INLINE Interpreter& interpreter()
     Interpreter* current = s_interpreter.load(std::memory_order_relaxed);
     ASSERT(current);
     return *current;
+}
+
+ALWAYS_INLINE PyType* typeOf(Handle object)
+{
+    if (Body* body = bodyOrNull(object)) [[unlikely]]
+        return body->type();
+    return interpreter().runtime.typeOf(toLookAt(object));
 }
 
 // ---- Who may come in ----
@@ -377,10 +440,12 @@ private:
 // CAPI_FILE(Name) in it, and ensure() refers to them all.
 #define FOR_EACH_CAPI_FILE(v) \
     v(Errors) \
+    v(Life) \
     v(Numbers) \
     v(Object) \
     v(References) \
-    v(Sequences)
+    v(Sequences) \
+    v(Type)
 
 #define CAPI_FILE(name) \
     void keep##name() { }

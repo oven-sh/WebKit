@@ -66,11 +66,13 @@ enum class TypeFlag : uint32_t {
     HasIteratorsToItself = 1 << 26,
     // To call the type is to go through the first argument, of which nothing is kept: list, tuple, set, dict.
     GoesThroughArgument = 1 << 27,
+    // An extension has made the type, or one that it derives from: an instance is a CApi::Face, with a CApi::Body. See ../capi/CApiInstance.h.
+    InstancesHaveDataOfC = 1 << 28,
 };
 
 static constexpr OptionSet<TypeFlag> inheritedTypeFlags {
     TypeFlag::HasDict, TypeFlag::HasWeakref, TypeFlag::Sequence, TypeFlag::Mapping, TypeFlag::MatchSelf, TypeFlag::OwnsContainers,
-    TypeFlag::AttributesAreProperties,
+    TypeFlag::AttributesAreProperties, TypeFlag::InstancesHaveDataOfC,
     TypeFlag::IntSubclass, TypeFlag::FloatSubclass, TypeFlag::StrSubclass, TypeFlag::BytesSubclass, TypeFlag::ListSubclass,
     TypeFlag::TupleSubclass, TypeFlag::DictSubclass, TypeFlag::TypeSubclass, TypeFlag::ExceptionSubclass
 };
@@ -175,12 +177,15 @@ public:
         m_originalName.set(vm, this, name); // What JSC calls it: InternalFunction::name().
     }
     String name() const; // __name__
-    // How messages name the type (tp_name in CPython): a built-in type outside builtins goes with its module, "collections.deque".
+    // How messages name the type (tp_name in CPython): a built-in type outside builtins goes with its module, "collections.deque", and so
+    // does a type that an extension has made.
     String nameInMessages() const;
     JSString* qualname() const { return m_qualname ? m_qualname.get() : m_name.get(); } // __qualname__
     void setQualname(VM& vm, JSString* qualname) { m_qualname.set(vm, this, qualname); }
     // For a built-in type: __module__. (That of a class is in its dict.)
     JSString* builtinModule() const { return m_module.get(); }
+    // For a type that an extension has made: the module in messages.
+    void setModuleInMessages(VM& vm, JSString* module) { m_module.set(vm, this, module); }
     // The names in __slots__ that this type itself adds to its instances, mangled and sorted. Null: none.
     PyTuple* slots() const { return m_slots.get(); }
     void setSlots(VM& vm, PyTuple* slots) { m_slots.setMayBeNull(vm, this, slots); }
@@ -320,6 +325,9 @@ public:
     // Type.prototype in JS: see PyJSClass.h. Null: nobody has asked for it.
     JSObject* jsPrototype() const { return m_jsPrototype.get(); }
     void setJSPrototype(VM& vm, JSObject* prototype) { m_jsPrototype.set(vm, this, prototype); }
+    // What the C API knows about a type that an extension has made: a CApi::MadeByExtension (../capi/CApiType.h). Null: none has.
+    JSCell* extension() const { return m_extension.get(); }
+    void setExtension(VM& vm, JSCell* extension) { m_extension.set(vm, this, extension); }
     // Where the type is for C, if C names it by a symbol of the executable (&PyLong_Type, PyExc_ValueError: ../capi/CApi.h). That is its id() then, in every interpreter. Null: it is where the cell is.
     const void* symbolForC() const { return m_symbolForC; }
     void setSymbolForC(const void* symbol) { m_symbolForC = symbol; }
@@ -374,6 +382,7 @@ private:
     WriteBarrier<Structure> m_instanceStructure;
     WriteBarrier<JSObject> m_jsPrototype;
     WriteBarrier<PyNativeFunction> m_maker;
+    WriteBarrier<JSCell> m_extension;
     const void* m_symbolForC { nullptr };
     TypeLookupCache* m_lookupCache { nullptr }; // The runtime's.
     // Another after every change, like the version. But that is of 32 bits, for the instructions that remember it, so there are not enough for
@@ -398,15 +407,26 @@ private:
     std::array<WriteBarrier<Unknown>, numberOfSpecials> m_specials;
 };
 
+namespace CApi {
+uint64_t bitsOfInstance(JSCell*); // See ../capi/CApiHooks.h.
+}
+
 // The 64 bits that say which object it is: what id() returns and the default hash() goes by, for every object but a str, and what C has for a PyObject* (../capi/CApi.h). For all but strs,
 // `a is b` if the bits are equal. They are those of the value, but:
 //  - the same number may be tagged in two ways, and None is two values;
-//  - a built-in type that C names by a symbol is where the symbol is, as in CPython.
+//  - a built-in type that C names by a symbol is where the symbol is, as in CPython;
+//  - an instance of the type of an extension is where C sees it (../capi/CApiInstance.h). Whoever asks for that has the object in hand, and has the GIL.
 ALWAYS_INLINE uint64_t identityBits(JSValue value)
 {
     EncodedJSValue bits = JSValue::encode(value);
     if (!(bits & JSValue::NotCellMask)) {
-        if (bits && value.asCell()->type() == InternalFunctionType) [[unlikely]] {
+        if (!bits) [[unlikely]]
+            return 0;
+        JSType type = value.asCell()->type();
+        if (type == PyObjectType) {
+            if (uncheckedDowncast<PyObject>(value.asCell())->type()->has(TypeFlag::InstancesHaveDataOfC)) [[unlikely]]
+                return CApi::bitsOfInstance(value.asCell());
+        } else if (type == InternalFunctionType) [[unlikely]] {
             if (PyType* type = PyType::tryFrom(value.asCell())) {
                 if (const void* symbol = type->symbolForC())
                     return std::bit_cast<uintptr_t>(symbol);

@@ -204,6 +204,7 @@ JSValue objectFromBits(JSGlobalObject* globalObject, uint64_t bits, JSValue hint
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue value = JSValue::decode(static_cast<EncodedJSValue>(bits));
     bool isValid;
+    JSCell* cellOfAnotherKind = nullptr;
     if (!value)
         isValid = false;
     else if (!value.isCell())
@@ -225,7 +226,14 @@ JSValue objectFromBits(JSGlobalObject* globalObject, uint64_t bits, JSValue hint
                 isValid = !type->has(TypeFlag::Internal);
             else
                 isValid = cell->isString() || cell->isHeapBigInt() || cell->isObject();
+            if (!isValid)
+                cellOfAnotherKind = cell;
         }
+    }
+    // The address of an instance of the type of an extension is not that of the object.
+    if (cellOfAnotherKind) {
+        value = CApi::objectOfBody(runtime(globalObject), cellOfAnotherKind);
+        isValid = !!value;
     }
     if (!isValid)
         return raiseValueError(globalObject, scope, "the memory does not hold a reference to an object"_s);
