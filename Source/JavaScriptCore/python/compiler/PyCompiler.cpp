@@ -2492,18 +2492,18 @@ void Unit::raiseStatement(Raise* node)
     auto* made = node->exc && !node->cause ? node->exc->tryAs<Call>() : nullptr;
     if (made)
         call(made, arguments[0], arguments[2]);
-    else {
-        if (node->exc)
-            expr(node->exc, arguments[0]);
-        else
-            g.move(arguments[0], emptyValue());
-        g.move(arguments[2], emptyValue());
-    }
+    else if (node->exc)
+        expr(node->exc, arguments[0]);
     if (node->cause)
         expr(node->cause, arguments[1]);
-    else
-        g.move(arguments[1], emptyValue());
+    // (First: a jump may lead here, and where a jump leads a line begins.)
     loc(node->range);
+    if (!node->exc)
+        g.move(arguments[0], emptyValue());
+    if (!node->cause)
+        g.move(arguments[1], emptyValue());
+    if (!made)
+        g.move(arguments[2], emptyValue());
     callRuntime(arguments[0], RuntimeFunction::Raise, arguments);
 }
 
