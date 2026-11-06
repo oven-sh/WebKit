@@ -679,22 +679,26 @@ static JSValue gcGetObjects(JSGlobalObject* globalObject, JSValue generation)
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (failed(scope, audit(globalObject, "gc.get_objects"_s, generation && !isNone(generation) ? generation : jsNumber(-1))))
-        return { };
+    // The argument is converted first, and the hooks are shown the number, as in CPython.
+    int64_t number = -1;
     if (generation && !isNone(generation)) {
         if (!hasIndex(globalObject, generation))
             return raiseTypeError(globalObject, scope, "argument should be integer or None, not '"_s, typeName(globalObject, generation), '\'');
-        int number = toCInt(globalObject, generation);
+        number = toSsize(globalObject, generation, rt.OverflowError());
         RETURN_IF_EXCEPTION(scope, { });
-        if (number < -1)
-            return raiseValueError(globalObject, scope, "generation parameter cannot be negative"_s);
-        if (number > 2)
-            return raiseValueError(globalObject, scope, "generation parameter must be less than the number of available generations ("_s, 3, ')');
-        // There are no such generations here. Everything is as old as can be.
-        if (number >= 0 && number < 2)
-            RELEASE_AND_RETURN(scope, newList(globalObject));
     }
-    // Behind all that may run code of the program, in this thread or, if that lets go of the GIL, in another: the hooks, __index__().
+    JSValue shown = makeInt(globalObject, number);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (failed(scope, audit(globalObject, "gc.get_objects"_s, shown)))
+        return { };
+    if (number > 2)
+        return raiseValueError(globalObject, scope, "generation parameter must be less than the number of available generations ("_s, 3, ')');
+    if (number < -1)
+        return raiseValueError(globalObject, scope, "generation parameter cannot be negative"_s);
+    // There are no such generations here. Everything is as old as can be.
+    if (number >= 0 && number < 2)
+        RELEASE_AND_RETURN(scope, newList(globalObject));
+    // Behind all that may run code of the program, in this thread or, if that lets go of the GIL, in another: __index__(), the hooks.
     rt.temporariesMayHaveEscaped();
     collectBeforeLookingAtHeap(rt);
     MarkedArgumentBuffer objects;
