@@ -1457,8 +1457,15 @@ and it holds a reference to the lock. `Py_None` and the other constants that are
 it (`CAPI_ENTER()`, `CAPI_NOISY()`) or not (`CAPI_QUIET()`); `tools/check_capi.py` looks. A function is noisy unless it is known to be quiet. Nothing counts the noisy
 calls yet: that is for the order in which instances of extension types are destroyed.
 
-**`ctypes`.** A `py_object` is a `PyObject*`: the same bits. A function of a `PyDLL` is called with the GIL; what it raised is thrown when it returns, whatever it returned; a
-`py_object` that it returns comes with a reference, which is given up once the object is in hand.
+**`ctypes`.** A `py_object` is a `PyObject*`: the same bits. A function of a `PyDLL` is called with the GIL; what it raised is thrown when it returns, whatever it returned. Code that
+returns a `py_object` returns a reference with it: a function of C's does, and the reference is given up once the object is in hand; a callback does, and C owns what it gets (a
+prototype over a Python callable that is called from Python does both). `ctypes`' own functions (`string_at()`, `cast()`) are no code in that sense: nothing is counted. `_ctypes.Py_INCREF()` and
+`Py_DECREF()` count in the same table. In an interpreter that the API is not for, C can own nothing: `Py_INCREF()` keeps a table of its own, and what a callback returns lives while the
+program holds it.
+
+**`PyTuple_SetItem()`** writes only into a tuple that C is filling. CPython asks for a reference count of 1, which here nobody knows; what is known is asked: `PyTuple_New()` has made
+the tuple (a flag in it), and C owns exactly one reference to it. Into any other it is a `SystemError`, as there. What passes here and not there is a tuple that C has shown to somebody
+who kept it. The hash that the tuple has kept is forgotten (CPython 3.15 goes on answering with it).
 
 ## decimal
 

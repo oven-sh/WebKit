@@ -531,7 +531,7 @@ int& privateErrno();
 bool holdObject(JSGlobalObject*, JSValue);
 
 // A value that is stored as a PyObject*. 0 is NULL.
-uint64_t bitsOfObject(JSValue);
+uint64_t bitsOfObject(JSGlobalObject*, JSValue);
 // Empty: a ValueError, the bits are not those of a value of this heap. To find that out takes a while. It is not needed if they
 // are those of `hint`, which is known to be alive: as a rule, what the instance keeps alive for this very reference.
 JSValue objectFromBits(JSGlobalObject*, uint64_t, JSValue hint = { });
@@ -551,6 +551,8 @@ bool callForeignFunction(JSGlobalObject*, void* function, std::span<const Foreig
 // Sets `code` to a function of C that calls runCallback() with the thunk. False: an exception.
 bool allocateCallbackCode(JSGlobalObject*, PyCThunk*);
 void releaseCallbackCode(PyCThunk*);
+// Whether the address is one that allocateCallbackCode() gives out.
+bool isCallbackCode(void*);
 // With the GIL. `arguments[i]` is where argument i is; the result, if any, is stored where `result` says. It raises nothing.
 void runCallback(PyCThunk*, void** arguments, void* result);
 

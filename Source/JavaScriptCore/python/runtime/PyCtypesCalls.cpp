@@ -332,7 +332,7 @@ static bool convertArgument(JSGlobalObject* globalObject, JSValue object, unsign
         if (argument->tag == 'O') {
             JSValue object = argument->object.get();
             auto* holder = PyCData::tryFrom(object);
-            result.object = holder && bitsOfObject(object) != result.as<uint64_t>() ? keptFor(globalObject, holder, 0) : object;
+            result.object = holder && bitsOfObject(globalObject, object) != result.as<uint64_t>() ? keptFor(globalObject, holder, 0) : object;
         }
         if (result.kind == ForeignKind::Aggregate) {
             result.aggregate = infoOfInstance(globalObject, argument->keep.get());
@@ -384,7 +384,9 @@ static bool convertArgument(JSGlobalObject* globalObject, JSValue object, unsign
 
 // ---- Results ----
 
-static JSValue makeResult(JSGlobalObject* globalObject, JSValue resultType, const uint8_t* memory, JSValue checker, JSValue hint)
+enum class ResultIs : bool { OfThisFile, OfCode };
+
+static JSValue makeResult(JSGlobalObject* globalObject, JSValue resultType, const uint8_t* memory, JSValue checker, JSValue hint, ResultIs resultIs)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -400,8 +402,8 @@ static JSValue makeResult(JSGlobalObject* globalObject, JSValue resultType, cons
     JSValue result;
     if (info->accessor && isSimpleInstanceType(*info->state.get(), PyType::from(resultType))) {
         result = load(globalObject, info->accessor, memory, info->size, { }, hint);
-        // A function that returns an object returns a reference with it.
-        if (info->accessor.code == Code::Object && result && CApi::belongsTo(runtime(globalObject))) {
+        // Code that returns an object returns a reference with it: C's does, and so does a callback (runCallback()).
+        if (info->accessor.code == Code::Object && result && resultIs == ResultIs::OfCode && CApi::belongsTo(runtime(globalObject))) {
             uint64_t bits;
             memcpy(&bits, memory, sizeof(bits));
             CApi::takeOverReference(bits);
@@ -415,6 +417,11 @@ static JSValue makeResult(JSGlobalObject* globalObject, JSValue resultType, cons
 }
 
 // ---- The call ----
+
+static bool isOwnFunction(uintptr_t address)
+{
+    return address == addressOfMemmove() || address == addressOfMemset() || address == addressOfCast() || address == addressOfMemoryViewAt() || address == addressOfStringAt() || address == addressOfWStringAt();
+}
 
 // Runs one of the functions above. False: the address is not one of theirs. Otherwise the result is in `memory`, unless
 // there is an exception.
@@ -482,7 +489,7 @@ static bool callOwnFunction(JSGlobalObject* globalObject, uintptr_t address, std
         result = castTo(globalObject, pointer(0), source, type);
     }
     RETURN_IF_EXCEPTION(scope, true);
-    uint64_t bits = bitsOfObject(result);
+    uint64_t bits = bitsOfObject(globalObject, result);
     memcpy(memory, &bits, sizeof(bits));
     return true;
 }
@@ -495,6 +502,12 @@ JSValue callFunction(JSGlobalObject* globalObject, void* function, PyTuple* argu
 
     audit(globalObject, "ctypes.call_function"_s, intFromPointer(globalObject, function), arguments);
     RETURN_IF_EXCEPTION(scope, { });
+    // A function of a PyDLL may call the C API, if it is C's: the prototypes of ctypes' own functions, and of callbacks, have the flag too. Before
+    // the arguments are converted, which are spelled for C.
+    if ((flags & FunctionPythonAPI) && !CApi::belongsTo(runtime(globalObject)) && !isOwnFunction(std::bit_cast<uintptr_t>(function)) && !isCallbackCode(function)) {
+        if (failed(scope, CApi::ensure(globalObject)))
+            return { };
+    }
     unsigned count = arguments->length();
     if (count > 1024)
         return raise(globalObject, scope, state.argumentError.get(), makeString("too many arguments ("_s, count, "), maximum is 1024"_s));
@@ -560,16 +573,13 @@ JSValue callFunction(JSGlobalObject* globalObject, void* function, PyTuple* argu
             return raiseValueError(globalObject, scope, "NULL pointer access"_s);
         // With more arguments than argtypes, the rest are those of a variadic function.
         unsigned fixedCount = converterCount && count > converterCount ? converterCount : count;
-        // A function of a PyDLL may call the C API.
-        if ((flags & FunctionPythonAPI) && failed(scope, CApi::ensure(globalObject)))
-            return { };
         bool ok = callForeignFunction(globalObject, function, values.span(), fixedCount, result, flags);
         RETURN_IF_EXCEPTION(scope, { });
         ASSERT_UNUSED(ok, ok);
-        if ((flags & FunctionPythonAPI) && failed(scope, CApi::throwWhatCRaised(globalObject)))
+        if ((flags & FunctionPythonAPI) && CApi::belongsTo(runtime(globalObject)) && failed(scope, CApi::throwWhatCRaised(globalObject)))
             return { };
     }
-    RELEASE_AND_RETURN(scope, makeResult(globalObject, resultType, resultMemory, checker, ownResult));
+    RELEASE_AND_RETURN(scope, makeResult(globalObject, resultType, resultMemory, checker, ownResult, isOwn ? ResultIs::OfThisFile : ResultIs::OfCode));
 }
 
 // ---- Callbacks ----
@@ -678,6 +688,11 @@ void runCallback(PyCThunk* thunk, void** arguments, void* resultMemory)
         return;
     }
     store(static_cast<uint8_t*>(resultMemory), info->accessor, packed, info->size);
+    if (info->accessor.code == Code::Object && CApi::belongsTo(runtime(globalObject))) {
+        uint64_t bits;
+        memcpy(&bits, resultMemory, sizeof(bits));
+        CApi::giveReference(bits);
+    }
     // C now has a pointer into it, for nobody knows how long: it is never let go. That is what CPython does, and warns of.
     if (info->accessor.code != Code::Object && !isNone(packed.keep)) {
         holdObject(globalObject, packed.keep);

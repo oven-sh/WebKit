@@ -194,16 +194,14 @@ JSValue capsuleForMemory(JSGlobalObject* globalObject, PyByteStorage* storage)
 
 // ---- Objects ----
 
-uint64_t bitsOfObject(JSValue value)
+uint64_t bitsOfObject(JSGlobalObject* globalObject, JSValue value)
 {
-    if (CApi::s_interpreter.load(std::memory_order_relaxed)) [[unlikely]]
-        return CApi::bitsForC(value);
-    return static_cast<uint64_t>(JSValue::encode(value));
+    return CApi::bitsForC(globalObject, value);
 }
 
 JSValue objectFromBits(JSGlobalObject* globalObject, uint64_t bits, JSValue hint)
 {
-    if (hint && bitsOfObject(hint) == bits) [[likely]]
+    if (hint && bitsOfObject(globalObject, hint) == bits) [[likely]]
         return hint;
     if (CApi::belongsTo(runtime(globalObject))) {
         if (JSValue object = CApi::objectOfSymbol(bits))
@@ -413,7 +411,7 @@ bool pack(JSGlobalObject* globalObject, Accessor accessor, JSValue value, int64_
         packAs(result, static_cast<uintptr_t>(lowBitsOfInt(intValue(value))));
         return true;
     case Code::Object:
-        packAs(result, bitsOfObject(value));
+        packAs(result, bitsOfObject(globalObject, value));
         result.keep = value;
         return true;
     case Code::CharArray: {

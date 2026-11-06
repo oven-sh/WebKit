@@ -776,6 +776,11 @@ bool allocateCallbackCode(JSGlobalObject* globalObject, PyCThunk* thunk)
     return false;
 }
 
+bool isCallbackCode(void* function)
+{
+    return std::ranges::find(integerEntries, function) != integerEntries.end() || std::ranges::find(floatEntries, function) != floatEntries.end();
+}
+
 void releaseCallbackCode(PyCThunk* thunk)
 {
     if (thunk->slot < 0)
@@ -799,6 +804,11 @@ bool callForeignFunction(JSGlobalObject* globalObject, void*, std::span<const Fo
 bool allocateCallbackCode(JSGlobalObject* globalObject, PyCThunk*)
 {
     return raiseUnsupported(globalObject, "callbacks are"_s);
+}
+
+bool isCallbackCode(void*)
+{
+    return false;
 }
 
 void releaseCallbackCode(PyCThunk*)

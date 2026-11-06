@@ -6,6 +6,7 @@
 #include "config.h"
 #include "PyCtypes.h"
 
+#include "CApiHooks.h"
 #include "JSCInlines.h"
 #include "PyList.h"
 #include "PyModule.h"
@@ -527,7 +528,7 @@ bool holdObject(JSGlobalObject* globalObject, JSValue object)
     if (!object.isCell())
         return true;
     PyDict* held = stateOf(globalObject).heldObjects.get();
-    JSValue key = makeInt(globalObject, bitsOfObject(object));
+    JSValue key = makeInt(globalObject, static_cast<uint64_t>(JSValue::encode(object)));
     JSValue entry = held->get(globalObject, key);
     RETURN_IF_EXCEPTION(scope, false);
     int64_t count = entry ? smallIntValue(PyTuple::from(entry)->at(1)) : 0;
@@ -535,8 +536,13 @@ bool holdObject(JSGlobalObject* globalObject, JSValue object)
     return !scope.exception();
 }
 
+// These are references as C owns them, and are counted with those: what is taken here may be given back by C. Only an interpreter that the C API is not for keeps count here.
 static JSValue moduleIncRef(JSGlobalObject* globalObject, JSValue, JSValue object)
 {
+    if (CApi::tryEnsure(globalObject)) {
+        CApi::giveReference(bitsOfObject(globalObject, object));
+        return object;
+    }
     return holdObject(globalObject, object) ? object : JSValue();
 }
 
@@ -546,8 +552,12 @@ static JSValue moduleDecRef(JSGlobalObject* globalObject, JSValue, JSValue objec
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (!object.isCell())
         return object;
+    if (CApi::tryEnsure(globalObject)) {
+        CApi::takeOverReference(bitsOfObject(globalObject, object));
+        return object;
+    }
     PyDict* held = stateOf(globalObject).heldObjects.get();
-    JSValue key = makeInt(globalObject, bitsOfObject(object));
+    JSValue key = makeInt(globalObject, static_cast<uint64_t>(JSValue::encode(object)));
     JSValue entry = held->get(globalObject, key);
     RETURN_IF_EXCEPTION(scope, { });
     if (!entry)
@@ -619,7 +629,11 @@ static JSValue moduleDlopen(JSGlobalObject* globalObject, JSValue name, JSValue 
         return { };
     audit(globalObject, "ctypes.dlopen"_s, name);
     RETURN_IF_EXCEPTION(scope, { });
-    void* handle = dlopen(isNone(name) ? nullptr : path.characters(), mode);
+    void* handle;
+    {
+        CApi::LibraryBeingLoaded loading(globalObject);
+        handle = dlopen(isNone(name) ? nullptr : path.characters(), mode);
+    }
     if (!handle)
         RELEASE_AND_RETURN(scope, raiseLoaderError(globalObject, "dlopen() error"_s));
     return intFromPointer(globalObject, handle);

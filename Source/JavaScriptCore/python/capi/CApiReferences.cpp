@@ -176,7 +176,10 @@ PY_CAPI Handle Py_GetConstant(unsigned id)
 PY_CAPI int Py_IsInitialized()
 {
     CAPI_QUIET();
-    return !!s_interpreter.load(std::memory_order_relaxed);
+    // Any thread may ask, with the GIL or without.
+    if (s_interpreter.load(std::memory_order_relaxed))
+        return true;
+    return mayEnter();
 }
 
 } // namespace CApi

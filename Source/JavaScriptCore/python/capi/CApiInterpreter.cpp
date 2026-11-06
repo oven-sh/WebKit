@@ -116,16 +116,23 @@ FOR_EACH_CAPI_FILE(DECLARE_FILE)
 
 bool ensure(JSGlobalObject* globalObject)
 {
-    if (belongsTo(runtime(globalObject))) [[likely]]
+    if (tryEnsure(globalObject)) [[likely]]
         return true;
-
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (s_isTaken.exchange(true)) {
-        raiseImportError(globalObject, scope, "the C API serves one interpreter of a process, and it is not this one"_s);
-        return false;
-    }
+    raiseImportError(globalObject, scope, "the C API serves one interpreter of a process, and it is not this one"_s);
+    return false;
+}
 
+bool tryEnsure(JSGlobalObject* globalObject)
+{
+    if (belongsTo(runtime(globalObject))) [[likely]]
+        return true;
+    if (s_isTaken.exchange(true))
+        return false;
+
+    VM& vm = getVM(globalObject);
+    ASSERT(vm.currentThreadIsHoldingAPILock());
 #define KEEP_FILE(name) keep##name();
     FOR_EACH_CAPI_FILE(KEEP_FILE)
 #undef KEEP_FILE
@@ -229,14 +236,31 @@ bool hasGILSlow(Interpreter& current)
     return current.lock->isHeldBy(*t_thisThread);
 }
 
-void refuseToEnter(Interpreter* current)
+static constinit thread_local JSGlobalObject* t_loadsLibraryFor = nullptr;
+
+LibraryBeingLoaded::LibraryBeingLoaded(JSGlobalObject* globalObject)
+    : m_previous(std::exchange(t_loadsLibraryFor, globalObject))
 {
-    // What a library does as it is loaded, or as the process goes, is nobody's mistake.
-    if (!current)
-        return;
+}
+
+LibraryBeingLoaded::~LibraryBeingLoaded()
+{
+    t_loadsLibraryFor = m_previous;
+}
+
+bool mayEnterSlow(Interpreter* current)
+{
+    if (!current) {
+        // The thread is in dlopen(), which it has called with the GIL.
+        if (t_loadsLibraryFor)
+            return tryEnsure(t_loadsLibraryFor);
+        // What a library does as the process goes is nobody's mistake.
+        return false;
+    }
     static std::atomic<bool> hasTold;
     if (!hasTold.exchange(true))
         fputs("Python: a function of the C API was called by a thread that does not hold the GIL; it fails\n", stderr);
+    return false;
 }
 
 std::atomic<Interpreter*> s_interpreterWhoseCountsFall;
@@ -314,9 +338,28 @@ void takeOverReference(uint64_t bits)
         release(std::bit_cast<Handle>(static_cast<uintptr_t>(bits)));
 }
 
-uint64_t bitsForC(JSValue value)
+void giveReference(uint64_t bits)
 {
-    return bitsOf(toC(value));
+    if (bits)
+        retain(std::bit_cast<Handle>(static_cast<uintptr_t>(bits)));
+}
+
+static bool hasSymbol(Runtime& rt, PyType* type)
+{
+#define IS_STATIC_TYPE(symbol, id) || type == rt.id##Type()
+    return false FOR_EACH_CAPI_STATIC_TYPE(IS_STATIC_TYPE);
+#undef IS_STATIC_TYPE
+}
+
+uint64_t bitsForC(JSGlobalObject* globalObject, JSValue value)
+{
+    Runtime& rt = runtime(globalObject);
+    if (belongsTo(rt)) [[unlikely]]
+        return bitsOf(toC(value));
+    // What is written now may be read by C when there is an API, and C compares with the address of the symbol.
+    if (PyType* type = PyType::tryFrom(value); type && hasSymbol(rt, type) && tryEnsure(globalObject)) [[unlikely]]
+        return bitsOf(toC(value));
+    return static_cast<uint64_t>(JSValue::encode(value));
 }
 
 JSValue objectOfSymbol(uint64_t bits)

@@ -191,6 +191,9 @@ struct Interpreter {
     // Nobody sets the first yet, and nobody reads the second: they are for the order in which instances of extension types are destroyed.
 };
 
+// Null until a program needs the API, and again when its interpreter has ended. Any thread may read it, at any time: see Interpreter::lock.
+extern std::atomic<Interpreter*> s_interpreter;
+
 // For who has asked mayEnter(), or is the collector of the interpreter's VM.
 ALWAYS_INLINE Interpreter& interpreter()
 {
@@ -219,14 +222,14 @@ ALWAYS_INLINE bool hasGIL(Interpreter* current)
 // EVERY FUNCTION THAT LOOKS AT AN OBJECT, AT THE TABLE OF COUNTS OR AT THE INTERPRETER ASKS THIS FIRST. A thread without the GIL would read what another thread is changing, and when
 // the interpreter has ended, or before there is one, there is nothing to look at. In CPython all of that is undefined. Here the function fails: it returns what it returns
 // when it fails, and sets no exception. A thread without the GIL is told of, once, on stderr.
-void refuseToEnter(Interpreter*);
+// (A library that calls as it is being loaded is let in: see LibraryBeingLoaded.)
+bool mayEnterSlow(Interpreter*);
 ALWAYS_INLINE bool mayEnter()
 {
     Interpreter* current = s_interpreter.load(std::memory_order_relaxed);
     if (hasGIL(current)) [[likely]]
         return true;
-    refuseToEnter(current);
-    return false;
+    return mayEnterSlow(current);
 }
 
 // ---- References ----
