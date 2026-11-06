@@ -157,7 +157,6 @@ static Handle constantThatIsACell(unsigned id)
     default:
         break;
     }
-    current->noteNoisyCall();
     CAPI_ENTER_AFTER_ALL(nullptr);
     entry.raiseBadInternalCall();
     return nullptr;

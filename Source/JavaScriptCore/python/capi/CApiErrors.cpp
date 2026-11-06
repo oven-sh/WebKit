@@ -57,10 +57,10 @@ PY_CAPI Handle PyErr_GetRaisedException()
     return std::exchange(errorIndicator(), nullptr);
 }
 
-// Steals the reference.
+// Takes over the reference, also from a caller who is refused: then release() says what becomes of it.
 PY_CAPI void PyErr_SetRaisedException(Handle exception)
 {
-    CAPI_QUIET();
+    CAPI_QUIET(release(exception));
     setErrorIndicator(*current, exception);
 }
 

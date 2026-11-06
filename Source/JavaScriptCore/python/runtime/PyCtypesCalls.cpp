@@ -332,7 +332,7 @@ static bool convertArgument(JSGlobalObject* globalObject, JSValue object, unsign
         if (argument->tag == 'O') {
             JSValue object = argument->object.get();
             auto* holder = PyCData::tryFrom(object);
-            result.object = holder && bitsOfObject(globalObject, object) != result.as<uint64_t>() ? keptFor(globalObject, holder, 0) : object;
+            result.object = holder && identityBits(object) != result.as<uint64_t>() ? keptFor(globalObject, holder, 0) : object;
         }
         if (result.kind == ForeignKind::Aggregate) {
             result.aggregate = infoOfInstance(globalObject, argument->keep.get());
@@ -489,7 +489,7 @@ static void callOwnFunction(JSGlobalObject* globalObject, uintptr_t address, std
         result = castTo(globalObject, pointer(0), source, type);
     }
     RETURN_IF_EXCEPTION(scope, void());
-    uint64_t bits = bitsOfObject(globalObject, result);
+    uint64_t bits = identityBits(result);
     memcpy(memory, &bits, sizeof(bits));
 }
 

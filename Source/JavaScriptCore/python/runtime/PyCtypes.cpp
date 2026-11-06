@@ -542,7 +542,7 @@ static JSValue moduleIncRef(JSGlobalObject* globalObject, JSValue, JSValue objec
     if (!object.isCell())
         return object;
     if (CApi::tryEnsure(globalObject)) {
-        CApi::giveReference(bitsOfObject(globalObject, object));
+        CApi::giveReference(identityBits(object));
         return object;
     }
     return holdObject(globalObject, object) ? object : JSValue();
@@ -556,7 +556,7 @@ static JSValue moduleDecRef(JSGlobalObject* globalObject, JSValue, JSValue objec
         return object;
     if (Runtime& rt = runtime(globalObject); CApi::isFor(rt)) {
         if (CApi::isSetUpFor(rt))
-            CApi::takeOverReference(bitsOfObject(globalObject, object));
+            CApi::takeOverReference(identityBits(object));
         return object;
     }
     PyDict* held = stateOf(globalObject).heldObjects.get();

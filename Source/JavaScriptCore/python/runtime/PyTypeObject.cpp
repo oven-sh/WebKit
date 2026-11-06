@@ -246,7 +246,7 @@ JSValue objectStr(JSGlobalObject* globalObject, JSValue self)
 
 int64_t identityHash(JSGlobalObject*, JSValue self)
 {
-    // It goes by id(), as in CPython.
+    // It goes by what id() goes by, as in CPython. (But for a str, which has a hash of its own: this is asked for one that is the self of a bound method.)
     uint64_t bits = identityBits(self);
     int64_t hash = static_cast<int64_t>((bits >> 4) | (bits << 60));
     return hash == -1 ? -2 : hash;

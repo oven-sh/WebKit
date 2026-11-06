@@ -295,7 +295,7 @@ void setErrorIndicator(Interpreter&, Handle);
 //    CAPI_QUIET_AND_ASKS_NOBODY(), for those of them that look at nothing but the bits of their arguments and what is the thread's own: any thread may call them, at any time.
 //    (retain() and release() ask for themselves.)
 //  - CAPI_ENTER(failure), or CAPI_NOISY(failure) where there is nothing to enter the runtime for: all others. They are counted, as they begin, while a finalizer
-//    of C's is being served. (CAPI_ENTER_AFTER_ALL(failure): further down in a function that began with CAPI_NOISY(), on the way that does enter the runtime.)
+//    of C's is being served. (CAPI_ENTER_AFTER_ALL(failure): further down in a function that has asked, on the way that does enter the runtime. Whoever enters is counted: Entry does it.)
 // What is done with the count: see "The C API" in ../README.md. A function is noisy unless it is known to be quiet; to take a quiet one for
 // noisy costs time, the other way round is an error. ../tools/check_capi.py looks for the first lines, and that what asks nobody does not name the interpreter.
 class Entry {
@@ -309,6 +309,7 @@ public:
         , m_interpreter(current)
     {
         ASSERT(vm.currentThreadIsHoldingAPILock());
+        current.noteNoisyCall();
     }
 
     Runtime& runtime() const { return m_interpreter.runtime; }
@@ -362,7 +363,7 @@ private:
     if (entry.scope.exception()) [[unlikely]] \
         return failure
 #define CAPI_ENTER(failure) \
-    CAPI_NOISY(failure); \
+    CAPI_QUIET(failure); \
     CAPI_ENTER_AFTER_ALL(failure)
 
 // ---- The files of this directory ----

@@ -68,7 +68,7 @@
     v(_PyWeakref_ProxyType, weakProxy) \
     v(_PyWeakref_RefType, weakRef)
 
-// v(name): the variable PyExc_##name holds Runtime::name().
+// v(name): the variable PyExc_##name holds the address of a symbol that stands for Runtime::name().
 #define FOR_EACH_CAPI_EXCEPTION(v) \
     v(ArithmeticError) \
     v(AssertionError) \

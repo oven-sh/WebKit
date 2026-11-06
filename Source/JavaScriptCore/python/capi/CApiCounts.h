@@ -20,9 +20,10 @@ namespace CApi {
 // WHEN A COLLECTION HAS MARKED ALL IT WILL, EVERY KEY OF THE TABLE IS MARKED (markWhatCHolds(), asserted in didFinishMarking()). So no
 // key is the address of a cell that has been freed, whatever an extension does or fails to do.
 //
-// The program changes the table with the GIL (retain() and release() refuse a thread without it). The collector reads it with the world stopped, and
-// at no other time. The thread that runs the program is never stopped from outside: it stops where it allocates in the heap or gives up its access to
-// it, and no function here does either. So the collector never sees the table in the middle of a change, and there is no lock.
+// The program changes the table with the GIL (retain() and release() refuse a thread without it). The collector reads it with the world stopped, and at
+// no other time; so it empties it, if it is the collector that ends the interpreter (runtimeIsEnding()). The thread that runs the program is never
+// stopped from outside: it stops where it allocates in the heap or gives up its access to it, and no function here does either. So the collector never
+// sees the table in the middle of a change, and there is no lock.
 class CountTable {
     WTF_MAKE_NONCOPYABLE(CountTable);
 public:

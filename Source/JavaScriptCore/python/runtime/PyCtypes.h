@@ -531,8 +531,7 @@ int& privateErrno();
 // Keeps the object alive until it has been let go as many times: Py_INCREF() and Py_DECREF(). False: an exception.
 bool holdObject(JSGlobalObject*, JSValue);
 
-// A value that is stored as a PyObject*. 0 is NULL.
-uint64_t bitsOfObject(JSGlobalObject*, JSValue);
+// A value is stored as a PyObject* by its identityBits(). 0 is NULL. And back:
 // Empty: a ValueError, the bits are not those of a value of this heap. To find that out takes a while. It is not needed if they
 // are those of `hint`, which is known to be alive: as a rule, what the instance keeps alive for this very reference.
 JSValue objectFromBits(JSGlobalObject*, uint64_t, JSValue hint = { });

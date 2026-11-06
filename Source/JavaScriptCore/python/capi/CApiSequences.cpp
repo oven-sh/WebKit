@@ -72,10 +72,10 @@ PY_CAPI Handle PyTuple_GetItem(Handle object, ssize_t index)
 // asked: that PyTuple_New() has made the tuple, so what the program has made (a constant of its code) is as it was made; and that there is no more than one reference among those that
 // are known of: C's own, and those that C has handed on or seen taken (didGetHolder()). So it may be C's, or that of a container into which C has put the tuple, to fill it by the pointer
 // that it still has ("put it in, then fill it": from then on one Py_DECREF of the container frees all). Once the program has been handed the tuple, that is the end of it.
-// Takes over the reference to the item.
+// Takes over the reference to the item, whatever comes of the call.
 PY_CAPI int PyTuple_SetItem(Handle object, ssize_t index, Handle item)
 {
-    CAPI_NOISY(-1);
+    CAPI_NOISY((release(item), -1));
     TakenOver takenOver(*current, item);
     PyTuple* tuple = PyTuple::tryFrom(toJS(object));
     bool isBeingFilled = tuple && tuple->isMadeByC() && current->counts.get(tuple) + tuple->holdersThatCKnowsOf() <= 1;
@@ -139,10 +139,10 @@ PY_CAPI Handle PyList_GetItem(Handle object, ssize_t index)
     return nullptr;
 }
 
-// Takes over the reference to the item.
+// Takes over the reference to the item, whatever comes of the call.
 PY_CAPI int PyList_SetItem(Handle object, ssize_t index, Handle item)
 {
-    CAPI_NOISY(-1);
+    CAPI_NOISY((release(item), -1));
     TakenOver takenOver(*current, item);
     CAPI_ENTER_AFTER_ALL(-1);
     JSArray* list = tryAsList(toJS(object));

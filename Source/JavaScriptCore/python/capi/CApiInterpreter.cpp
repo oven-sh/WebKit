@@ -8,7 +8,6 @@
 
 #include "CApiSymbols.h"
 #include "JSCInlines.h"
-#include "PyCtypes.h"
 #include "PyException.h"
 #include "SimpleMarkingConstraint.h"
 #include "SlotVisitorInlines.h"

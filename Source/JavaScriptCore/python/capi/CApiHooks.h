@@ -29,12 +29,12 @@ class Runtime;
 
 namespace CApi {
 
-// WHOSE THE API IS. The functions that C calls are not told for which interpreter, and a variable such as PyExc_ValueError holds one object. So the API serves one interpreter of
+// WHOSE THE API IS. The functions that C calls are not told for which interpreter, and a symbol such as PyLong_Type stands for one object. So the API serves one interpreter of
 // the process: THE FIRST THAT THERE IS, from its beginning to its end, and nobody after that: what was loaded has pointers into its heap. Nothing that a program does
 // changes whose it is.
 //
 // WHEN IT IS SET UP. When that interpreter first has a use for it:
-//  - before it loads a library: what a library does as it is loaded may read those variables, and may call;
+//  - before it loads a library: what a library does as it is loaded may call;
 //  - before code of C's is called that may call it (a function of a PyDLL);
 //  - when C is handed a reference.
 // With the GIL.
@@ -48,7 +48,7 @@ bool ensure(JSGlobalObject*);
 bool tryEnsure(JSGlobalObject*);
 
 void runtimeIsBeginning(Runtime&);
-// Its built-in types are there, bare: those that C names by symbols are told so.
+// Its built-in types are there: those that C names by symbols are told so.
 void didMakeTypes(Runtime&);
 // By its thread, or by the collector with the world stopped. More than once does no harm.
 void runtimeIsEnding(Runtime&);

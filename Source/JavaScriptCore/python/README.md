@@ -1414,12 +1414,14 @@ Three kinds of value are spelled otherwise for C than in the heap, where one obj
 made of it, as in CPython (`id()` turned right by four bits); the eight bytes of a `py_object` are it. (Only the `id()` of a str goes by something else, its characters: two cells with the same ones are one str to `is`. C has the cell.) It needs no API and
 asks for no interpreter: a type has been told its symbol when its interpreter made it (`CApi::didMakeTypes()`), in every interpreter, and a symbol says which it is (`StaticObject::number`), so
 the way back (`objectOfSymbol()`) gives each interpreter its own type. So the `id()` of `int` is `&PyLong_Type`, as it is in CPython, in every interpreter, from the start; and to write a type
-into memory takes no API. No cell can have such an `id()`: the section is part of the executable. What it costs: for a cell, one comparison of its `JSType`, which sends
+into memory takes no API. No cell can have such an `id()`: the section is part of the executable. (An `id()` is unique within an interpreter: the `int` of another realm of the VM is another
+cell with the same `id()`. A `ShadowRealm` lets no object through, so no program there has both.) What it costs: for a cell, one comparison of its `JSType`, which sends
 everything but types away.
 
 **`PyExc_ValueError` never changes.** A library may read it as it is loaded, whoever loads it and whenever (JS by `bun:ffi` before there is any Python, a Worker before main has a use
 for the API), and a constructor runs once in a process. So the variable is a constant that the linker fills: the address of a symbol like those of the types, which has no name of its own. What
 stands behind a symbol is there while the API is set up. Before and after, the symbol holds nothing, and nobody gets as far as looking: every function that would refuses the caller first.
+That goes for what such a constructor *calls*: it runs once, so what it was refused (an object that it meant to make and keep) it never gets.
 
 So a value that is its own 64 bits is one object however often it is made, where CPython makes a new object each time. `PyLong_FromLong(x) == PyLong_FromLong(x)` holds for every
 int that is no cell (below 2**53 in size; CPython: from -5 to 256), and `PyFloat_FromDouble(x) == PyFloat_FromDouble(x)` for every float that is no cell (1.5, 1e308; a float with a
@@ -1468,8 +1470,8 @@ nothing refers any more that is in the collection that finds the global object d
 meanwhile. Nobody is in the middle of a call then (a function that has entered has the global object on its stack), and while C owns an object the realm does not die (the object holds it by
 its Structure). What C may still own are cells of no realm, a str or a large int, and what a thread's indicator still points to: nothing follows those pointers any more, for every function refuses.
 
-It is **set up** when that interpreter first has a use for it (`ensure()`, `tryEnsure()`): before it loads a library with `dlopen()`, because what a library does as it is loaded may read
-`PyExc_ValueError` without a call, and may call; before a function of C's in a `PyDLL` is called (after its arguments have been converted: a call that fails before it gets to C fails as
+It is **set up** when that interpreter first has a use for it (`ensure()`, `tryEnsure()`): before it loads a library with `dlopen()`, because what a library does as it is loaded may
+call; before a function of C's in a `PyDLL` is called (after its arguments have been converted: a call that fails before it gets to C fails as
 it does anywhere; not for the prototypes that `ctypes` makes of its own functions or of a Python callable, which have the same flag); and when C is handed a reference. `import ctypes`
 has a `dlopen()` in it.
 
