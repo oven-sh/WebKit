@@ -49,7 +49,7 @@ PY_CAPI ssize_t PyTuple_Size(Handle object)
     CAPI_NOISY(-1);
     if (PyTuple* tuple = PyTuple::tryFrom(toJS(object))) [[likely]]
         return tuple->length();
-    CAPI_ENTER(-1);
+    CAPI_ENTER_AFTER_ALL(-1);
     entry.raiseBadInternalCall();
     return -1;
 }
@@ -60,7 +60,7 @@ PY_CAPI Handle PyTuple_GetItem(Handle object, ssize_t index)
     PyTuple* tuple = PyTuple::tryFrom(toJS(object));
     if (tuple && static_cast<size_t>(index) < tuple->length()) [[likely]]
         return toC(tuple->at(static_cast<unsigned>(index)));
-    CAPI_ENTER(nullptr);
+    CAPI_ENTER_AFTER_ALL(nullptr);
     if (!tuple)
         entry.raiseBadInternalCall();
     else
@@ -78,12 +78,12 @@ PY_CAPI int PyTuple_SetItem(Handle object, ssize_t index, Handle item)
     PyTuple* tuple = PyTuple::tryFrom(toJS(object));
     bool isBeingFilled = tuple && tuple->isFilledByC() && interpreter().counts.get(tuple) == 1;
     if (isBeingFilled && static_cast<size_t>(index) < tuple->length()) [[likely]] {
-        tuple->initializeAt(interpreter().vm, static_cast<unsigned>(index), item ? toJS(item) : jsUndefined());
+        tuple->initializeAt(current->vm, static_cast<unsigned>(index), item ? toJS(item) : jsUndefined());
         // Somebody may have asked before it was full.
         tuple->setCachedHash(-1);
         return 0;
     }
-    CAPI_ENTER(-1);
+    CAPI_ENTER_AFTER_ALL(-1);
     if (!isBeingFilled)
         entry.raiseBadInternalCall();
     else
@@ -117,7 +117,7 @@ PY_CAPI ssize_t PyList_Size(Handle object)
     CAPI_NOISY(-1);
     if (JSArray* list = tryAsList(toJS(object))) [[likely]]
         return listLength(list);
-    CAPI_ENTER(-1);
+    CAPI_ENTER_AFTER_ALL(-1);
     entry.raiseBadInternalCall();
     return -1;
 }
@@ -128,7 +128,7 @@ PY_CAPI Handle PyList_GetItem(Handle object, ssize_t index)
     JSArray* list = tryAsList(toJS(object));
     if (list && static_cast<size_t>(index) < listLength(list)) [[likely]]
         return toC(listGet(list, static_cast<unsigned>(index)));
-    CAPI_ENTER(nullptr);
+    CAPI_ENTER_AFTER_ALL(nullptr);
     if (!list)
         entry.raiseBadInternalCall();
     else
@@ -141,7 +141,7 @@ PY_CAPI int PyList_SetItem(Handle object, ssize_t index, Handle item)
 {
     CAPI_NOISY(-1);
     TakenOver takenOver(item);
-    CAPI_ENTER(-1);
+    CAPI_ENTER_AFTER_ALL(-1);
     JSArray* list = tryAsList(toJS(object));
     if (!list) {
         entry.raiseBadInternalCall();

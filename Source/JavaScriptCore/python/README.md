@@ -1475,7 +1475,7 @@ and it holds a reference to the lock. `Py_None` and the other constants that are
 the symbols of None and the bools say what they stand for from the time the executable is loaded. `Py_IsInitialized()` says whether the interpreter that the API serves is there.
 
 **Quiet and noisy.** Every function that C calls says in its first line whether it can run code of the program or put a reference where the program finds
-it (`CAPI_ENTER()`, `CAPI_NOISY()`) or not (`CAPI_QUIET()`); all three ask who calls. `CAPI_QUIET_AND_ASKS_NOBODY()` is for the quiet ones that have nothing to ask for.
+it (`CAPI_ENTER()`, `CAPI_NOISY()`) or not (`CAPI_QUIET()`); all three ask who calls, once, and have the answer at hand (`current`). `CAPI_QUIET_AND_ASKS_NOBODY()` is for the quiet ones that have nothing to ask for.
 `tools/check_capi.py` looks for the first lines, and that a function which asks nobody does not name the interpreter. A function is noisy unless it is known to be quiet. Nothing
 counts the noisy calls yet: that is for the order in which instances of extension types are destroyed.
 

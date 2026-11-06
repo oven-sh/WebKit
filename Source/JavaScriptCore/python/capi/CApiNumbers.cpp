@@ -25,7 +25,7 @@ PY_CAPI Handle PyLong_FromLong(long value)
     CAPI_NOISY(nullptr);
     if (fitsSmallInt(static_cast<int64_t>(value))) [[likely]]
         return toC(smallInt(static_cast<int64_t>(value)));
-    CAPI_ENTER(nullptr);
+    CAPI_ENTER_AFTER_ALL(nullptr);
     return entry.newReference(makeBigInt(entry.globalObject, static_cast<int64_t>(value)));
 }
 
@@ -36,7 +36,7 @@ PY_CAPI long PyLong_AsLong(Handle object)
     JSValue value = toJS(object);
     if (value.isInt32()) [[likely]]
         return value.asInt32();
-    CAPI_ENTER(-1);
+    CAPI_ENTER_AFTER_ALL(-1);
     if (!value) {
         entry.raiseBadInternalCall();
         return -1;
@@ -59,7 +59,7 @@ PY_CAPI double PyFloat_AsDouble(Handle object)
     JSValue value = toJS(object);
     if (value && isFloat(value)) [[likely]]
         return floatValue(value);
-    CAPI_ENTER(-1.0);
+    CAPI_ENTER_AFTER_ALL(-1.0);
     if (!value) {
         entry.raise(entry.runtime().TypeError(), "bad argument type for built-in operation"_s);
         return -1.0;

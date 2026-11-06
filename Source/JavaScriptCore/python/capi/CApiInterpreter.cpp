@@ -289,18 +289,17 @@ static void tellOnce(std::atomic<bool>& hasTold, const char* what)
         fputs(what, stderr);
 }
 
-bool mayEnterSlow(Interpreter* current)
+void didRefuseToEnter(Interpreter* current)
 {
     // What a library does when the interpreter has ended, as the process goes, is nobody's mistake. Nor is it one to ask before there is anything to ask about.
     if (!current)
-        return false;
+        return;
     static std::atomic<bool> hasToldOfOther;
     static std::atomic<bool> hasTold;
     if (runsCForAnotherInterpreter(*current))
         tellOnce(hasToldOfOther, "Python: a function of the C API was called for an interpreter that the C API does not serve (it serves the first of the process); it fails, and nothing changes for the interpreter that it serves\n");
     else
         tellOnce(hasTold, "Python: a function of the C API was called by a thread that does not hold the GIL; it fails\n");
-    return false;
 }
 
 std::atomic<Interpreter*> s_interpreterWhoseCountsFall;

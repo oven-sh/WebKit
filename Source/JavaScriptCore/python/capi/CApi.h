@@ -128,7 +128,7 @@ struct Interpreter {
 // orders the two loads on every processor that JSC runs on).
 extern std::atomic<Interpreter*> s_interpreter;
 
-// For who has asked mayEnter(), or is the collector of the interpreter's VM.
+// For who has asked interpreterToEnter(), or is the collector of the interpreter's VM.
 ALWAYS_INLINE Interpreter& interpreter()
 {
     Interpreter* current = s_interpreter.load(std::memory_order_relaxed);
@@ -156,13 +156,15 @@ ALWAYS_INLINE bool hasGIL(Interpreter* current)
 // EVERY FUNCTION THAT LOOKS AT AN OBJECT, AT THE TABLE OF COUNTS OR AT THE INTERPRETER ASKS THIS FIRST. A thread without the GIL would read what another thread is changing, and when
 // the interpreter has ended, or before there is one, there is nothing to look at. In CPython all of that is undefined. Here the function fails: it returns what it returns
 // when it fails, and sets no exception. A thread without the GIL is told of, once, on stderr, and so is one that runs C for an interpreter that the API is not for.
-bool mayEnterSlow(Interpreter*);
-ALWAYS_INLINE bool mayEnter()
+// Null: the caller is refused.
+void didRefuseToEnter(Interpreter*);
+ALWAYS_INLINE Interpreter* interpreterToEnter()
 {
     Interpreter* current = s_interpreter.load(std::memory_order_relaxed);
     if (hasGIL(current)) [[likely]]
-        return true;
-    return mayEnterSlow(current);
+        return current;
+    didRefuseToEnter(current);
+    return nullptr;
 }
 
 // ---- References ----
@@ -252,7 +254,7 @@ void setErrorIndicator(Handle);
 //         return entry.newReference(reprObject(entry.globalObject, toJS(object)));
 //     }
 //
-// The argument is what the function returns when it fails. The thread has the GIL: the API demands it, and these ask (mayEnter()).
+// The argument is what the function returns when it fails. The thread has the GIL: the API demands it, and these ask (interpreterToEnter()). What they are told is `current`.
 //
 // Every function that C calls says in its first line which of two kinds it is:
 //  - CAPI_QUIET(failure): it can neither run code of the program nor put a reference where the program finds it. There are few of these, and they are what
@@ -260,23 +262,23 @@ void setErrorIndicator(Handle);
 //    CAPI_QUIET_AND_ASKS_NOBODY(), for those of them that look at nothing but the bits of their arguments and what is the thread's own: any thread may call them, at any time.
 //    (retain() and release() ask for themselves.)
 //  - CAPI_ENTER(failure), or CAPI_NOISY(failure) where there is nothing to enter the runtime for: all others. They are counted, as they begin, while a finalizer
-//    of C's is being served.
+//    of C's is being served. (CAPI_ENTER_AFTER_ALL(failure): further down in a function that began with CAPI_NOISY(), on the way that does enter the runtime.)
 // What is done with the count: see "The C API" in ../README.md. A function is noisy unless it is known to be quiet; to take a quiet one for
 // noisy costs time, the other way round is an error. ../tools/check_capi.py looks for the first lines, and that what asks nobody does not name the interpreter.
 class Entry {
     WTF_MAKE_NONCOPYABLE(Entry);
     WTF_FORBID_HEAP_ALLOCATION;
 public:
-    explicit Entry(TopExceptionScope&& scope)
-        : globalObject(interpreter().globalObject)
-        , vm(interpreter().vm)
+    Entry(Interpreter& current, TopExceptionScope&& scope)
+        : globalObject(current.globalObject)
+        , vm(current.vm)
         , scope(WTF::move(scope))
+        , m_runtime(current.runtime)
     {
         ASSERT(vm.currentThreadIsHoldingAPILock());
-        interpreter().noteNoisyCall();
     }
 
-    Runtime& runtime() const { return interpreter().runtime; }
+    Runtime& runtime() const { return m_runtime; }
 
     // Whether the runtime has raised. Then the exception is in the indicator, and the function returns what says so.
     ALWAYS_INLINE bool failed()
@@ -309,23 +311,26 @@ public:
 
 private:
     void moveExceptionToIndicator();
+
+    Runtime& m_runtime;
 };
 
 #define CAPI_QUIET_AND_ASKS_NOBODY() do { } while (false)
 #define CAPI_QUIET(failure) \
-    if (!JSC::Python::CApi::mayEnter()) [[unlikely]] \
+    [[maybe_unused]] JSC::Python::CApi::Interpreter* const current = JSC::Python::CApi::interpreterToEnter(); \
+    if (!current) [[unlikely]] \
         return failure
 #define CAPI_NOISY(failure) \
-    if (!JSC::Python::CApi::mayEnter()) [[unlikely]] \
-        return failure; \
-    JSC::Python::CApi::interpreter().noteNoisyCall()
+    CAPI_QUIET(failure); \
+    current->noteNoisyCall()
 // Nothing but a termination can be pending here.
-#define CAPI_ENTER(failure) \
-    if (!JSC::Python::CApi::mayEnter()) [[unlikely]] \
-        return failure; \
-    JSC::Python::CApi::Entry entry(DECLARE_TOP_EXCEPTION_SCOPE(JSC::Python::CApi::interpreter().vm)); \
+#define CAPI_ENTER_AFTER_ALL(failure) \
+    JSC::Python::CApi::Entry entry(*current, DECLARE_TOP_EXCEPTION_SCOPE(current->vm)); \
     if (entry.scope.exception()) [[unlikely]] \
         return failure
+#define CAPI_ENTER(failure) \
+    CAPI_NOISY(failure); \
+    CAPI_ENTER_AFTER_ALL(failure)
 
 // ---- The files of this directory ----
 //

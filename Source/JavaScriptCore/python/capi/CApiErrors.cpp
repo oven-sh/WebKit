@@ -40,7 +40,7 @@ PY_CAPI Handle PyErr_Occurred()
     Handle exception = errorIndicator();
     if (!exception) [[likely]]
         return nullptr;
-    return toC(interpreter().runtime.typeOf(toJS(exception)));
+    return toC(current->runtime.typeOf(toJS(exception)));
 }
 
 PY_CAPI void PyErr_Clear()
@@ -64,12 +64,9 @@ PY_CAPI void PyErr_SetRaisedException(Handle exception)
 
 // raise type(*arguments), where the arguments are what `value` is taken for: nothing if there is none or it is None, its items if it is a tuple,
 // else itself. An instance of the type is raised as it is.
-PY_CAPI void PyErr_SetObject(Handle typeHandle, Handle valueHandle)
+static void setObject(Entry& entry, JSValue type, JSValue value)
 {
-    CAPI_ENTER();
     Runtime& rt = entry.runtime();
-    JSValue type = toJS(typeHandle);
-    JSValue value = toJS(valueHandle);
     if (!isExceptionClass(rt, type)) {
         String shown = reprForMessage(entry.globalObject, type);
         if (entry.failed())
@@ -100,25 +97,25 @@ PY_CAPI void PyErr_SetObject(Handle typeHandle, Handle valueHandle)
     entry.failed();
 }
 
+PY_CAPI void PyErr_SetObject(Handle type, Handle value)
+{
+    CAPI_ENTER();
+    setObject(entry, toJS(type), toJS(value));
+}
+
 PY_CAPI void PyErr_SetNone(Handle type)
 {
-    CAPI_NOISY();
-    PyErr_SetObject(type, nullptr);
+    CAPI_ENTER();
+    setObject(entry, toJS(type), { });
 }
 
 // The message is UTF-8. If it is not, that is the error.
 PY_CAPI void PyErr_SetString(Handle type, const char* message)
 {
-    CAPI_NOISY();
-    Handle value;
-    {
-        CAPI_ENTER();
-        value = entry.newReference(codecDecodeUTF8(entry.globalObject, byteCast<uint8_t>(unsafeSpan(message)), "strict"_s));
-        if (!value)
-            return;
-    }
-    PyErr_SetObject(type, value);
-    release(value);
+    CAPI_ENTER();
+    JSValue value = codecDecodeUTF8(entry.globalObject, byteCast<uint8_t>(unsafeSpan(message)), "strict"_s);
+    if (!entry.failed())
+        setObject(entry, toJS(type), value);
 }
 
 // Whether `except expected:` would catch `given`, which is an exception or a class. It raises nothing: what is no class matches itself.
@@ -141,15 +138,14 @@ static bool matches(Runtime& rt, JSValue given, JSValue expected)
 PY_CAPI int PyErr_GivenExceptionMatches(Handle given, Handle expected)
 {
     CAPI_NOISY(0);
-    if (!given || !expected)
-        return 0;
-    return matches(interpreter().runtime, toJS(given), toJS(expected));
+    return given && expected && matches(current->runtime, toJS(given), toJS(expected));
 }
 
 PY_CAPI int PyErr_ExceptionMatches(Handle expected)
 {
     CAPI_NOISY(0);
-    return PyErr_GivenExceptionMatches(errorIndicator(), expected);
+    Handle given = errorIndicator();
+    return given && expected && matches(current->runtime, toJS(given), toJS(expected));
 }
 
 } // namespace CApi

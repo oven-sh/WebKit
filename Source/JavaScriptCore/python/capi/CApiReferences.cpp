@@ -69,20 +69,20 @@ PY_CAPI ssize_t Py_REFCNT(Handle object)
 {
     CAPI_QUIET(countOfWhatLivesForEver);
     if (JSCell* cell = countedCell(object))
-        return static_cast<ssize_t>(interpreter().counts.get(cell)) + 2;
+        return static_cast<ssize_t>(current->counts.get(cell)) + 2;
     return countOfWhatLivesForEver;
 }
 
 PY_CAPI Handle Py_TYPE(Handle object)
 {
     CAPI_QUIET(nullptr);
-    return toC(interpreter().runtime.typeOf(toJS(object)));
+    return toC(current->runtime.typeOf(toJS(object)));
 }
 
 PY_CAPI int Py_IS_TYPE(Handle object, Handle type)
 {
     CAPI_QUIET(0);
-    return JSValue(interpreter().runtime.typeOf(toJS(object))) == toJS(type);
+    return JSValue(current->runtime.typeOf(toJS(object))) == toJS(type);
 }
 
 // One object may be spelled in two ways for C too: None and the bools are, by their symbols, which say what they stand for at all times, and as toC() spells them. (A type is only ever
@@ -143,22 +143,22 @@ static JSValue constantThatIsNoCell(unsigned id)
 static Handle constantThatIsACell(unsigned id)
 {
     CAPI_QUIET(nullptr);
-    Interpreter& current = interpreter();
     switch (id) {
     case 3:
-        return toC(current.runtime.ellipsis());
+        return toC(current->runtime.ellipsis());
     case 4:
-        return toC(current.runtime.notImplemented());
+        return toC(current->runtime.notImplemented());
     case 7:
-        return toC(jsEmptyString(current.vm));
+        return toC(jsEmptyString(current->vm));
     case 8:
-        return toC(current.runtime.emptyBytes());
+        return toC(current->runtime.emptyBytes());
     case 9:
-        return toC(current.runtime.emptyTuple());
+        return toC(current->runtime.emptyTuple());
     default:
         break;
     }
-    CAPI_ENTER(nullptr);
+    current->noteNoisyCall();
+    CAPI_ENTER_AFTER_ALL(nullptr);
     entry.raiseBadInternalCall();
     return nullptr;
 }
