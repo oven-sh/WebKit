@@ -140,12 +140,8 @@ void Threads::forgetRuntimesThatHaveGone()
     m_lastIdleCollectionFoundSomething = false;
     m_nextIdleCollectionMayFindMore = false;
     m_threadThatWaitsOwesCalls = false;
-    for (auto& thread : m_threads) {
+    for (auto& thread : m_threads)
         thread->waits = { };
-        // _imp.acquire_lock() without its release_lock().
-        importLock.holderEnds(*this, thread.get());
-        warningsLock.holderEnds(*this, thread.get());
-    }
 }
 
 Threads::Threads(VM& vm)
@@ -686,12 +682,12 @@ void Threads::runThread(ThreadState& thread, Function<void()>&& body)
             }
         }
         scope.assertNoException();
-        importLock.holderEnds(*this, thread);
-        warningsLock.holderEnds(*this, thread);
         // (A copy: to tell the monitoring may make a frame object, and a collection takes a runtime whose global object it finds dead out of the list.)
         for (Runtime* runtime : Vector<Runtime*, 1>(m_vm.heap.pythonRuntimes())) {
             if (!m_vm.heap.pythonRuntimes().contains(runtime))
                 continue;
+            runtime->importLock.holderEnds(*this, thread);
+            runtime->warningsLock.holderEnds(*this, thread);
             Runtime::ThreadLocalState state;
             runtime->takeThreadLocalState(state);
             if (state.traceFunction || state.profileFunction)

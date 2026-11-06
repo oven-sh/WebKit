@@ -254,6 +254,7 @@ class PyNativeFunction;
 class PyType;
 class PyWeakRef;
 class Threads;
+class ThreadState;
 struct StrIndexCache;
 struct StructSeqDef;
 struct TypeDef;
@@ -296,6 +297,26 @@ enum class JSViewObject : uint8_t {
     AsyncEnd,
     Identity,
     Count,
+};
+
+// A lock among the threads of Python for the use of the runtime, held across points where the GIL may change hands. The thread
+// that holds it may take it again. It must stay where it is in memory. All of this is for whoever holds the GIL.
+class ThreadLock {
+    WTF_MAKE_NONCOPYABLE(ThreadLock);
+public:
+    ThreadLock() = default;
+
+    bool isHeld() const { return m_count; }
+    bool isHeldByThisThread(JSGlobalObject*) const;
+    // Waits for as long as it takes. False: an exception, which the handler of a signal raised, or because nobody can release it.
+    bool acquire(JSGlobalObject*);
+    void release(JSGlobalObject*);
+    // The thread ends. If it holds the lock, nobody else could let go of it.
+    void holderEnds(Threads&, const ThreadState&);
+
+private:
+    uint64_t m_owner { 0 }; // ThreadState::serial
+    unsigned m_count { 0 };
 };
 
 // All that Python needs of a global object besides what programs make. It belongs to the global object, which visits it.
@@ -624,6 +645,9 @@ public:
     // A JSWeakMap: for each _thread._local object this thread has used, the dict that holds the thread's attributes of it.
     JSValue threadLocals() const { return m_threadLocals.get(); }
     void setThreadLocals(JSValue value) { set(m_threadLocals, value); }
+    // Each interpreter has its own, as in CPython. The program can take them and not give them back: they go with the runtime.
+    ThreadLock importLock; // _imp.acquire_lock()
+    ThreadLock warningsLock; // _warnings._acquire_lock()
 
     // ---- sys.monitoring, sys.settrace(), sys.setprofile(): see PyMonitoring.h ----
 

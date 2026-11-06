@@ -107,13 +107,13 @@ class WarningsLocker {
 public:
     explicit WarningsLocker(JSGlobalObject* globalObject)
         : m_globalObject(globalObject)
-        , m_isHeld(runtime(globalObject).threads().warningsLock.acquire(globalObject))
+        , m_isHeld(runtime(globalObject).warningsLock.acquire(globalObject))
     {
     }
     ~WarningsLocker()
     {
         if (m_isHeld)
-            runtime(m_globalObject).threads().warningsLock.release(m_globalObject);
+            runtime(m_globalObject).warningsLock.release(m_globalObject);
     }
     // False: an exception.
     explicit operator bool() const { return m_isHeld; }
@@ -679,7 +679,7 @@ static JSValue warningsFiltersMutated(JSGlobalObject* globalObject)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!runtime(globalObject).threads().warningsLock.isHeld())
+    if (!runtime(globalObject).warningsLock.isHeld())
         return raiseRuntimeError(globalObject, scope, "warnings lock is not held"_s);
     JSArray* state = warningsState(globalObject);
     listSet(globalObject, state, WarningsFiltersVersion, jsNumber(listGet(state, WarningsFiltersVersion).asNumber() + 1));
@@ -688,7 +688,7 @@ static JSValue warningsFiltersMutated(JSGlobalObject* globalObject)
 
 static JSValue warningsAcquireLock(JSGlobalObject* globalObject)
 {
-    if (!runtime(globalObject).threads().warningsLock.acquire(globalObject))
+    if (!runtime(globalObject).warningsLock.acquire(globalObject))
         return { };
     return jsUndefined();
 }
@@ -697,7 +697,7 @@ static JSValue warningsReleaseLock(JSGlobalObject* globalObject)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    ThreadLock& lock = runtime(globalObject).threads().warningsLock;
+    ThreadLock& lock = runtime(globalObject).warningsLock;
     if (!lock.isHeldByThisThread(globalObject))
         return raiseRuntimeError(globalObject, scope, "cannot release un-acquired lock"_s);
     lock.release(globalObject);

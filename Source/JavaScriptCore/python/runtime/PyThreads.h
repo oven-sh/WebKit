@@ -124,28 +124,6 @@ struct SavedStates {
 };
 PY_END_WITHOUT_PADDING
 
-class Threads;
-
-// A lock among the threads of Python for the use of the runtime, held across points where the GIL may change hands. The thread
-// that holds it may take it again. It must stay where it is in memory. All of this is for whoever holds the GIL.
-class ThreadLock {
-    WTF_MAKE_NONCOPYABLE(ThreadLock);
-public:
-    ThreadLock() = default;
-
-    bool isHeld() const { return m_count; }
-    bool isHeldByThisThread(JSGlobalObject*) const;
-    // Waits for as long as it takes. False: an exception, which the handler of a signal raised, or because nobody can release it.
-    bool acquire(JSGlobalObject*);
-    void release(JSGlobalObject*);
-    // The thread ends. If it holds the lock, nobody else could let go of it.
-    void holderEnds(Threads&, const ThreadState&);
-
-private:
-    uint64_t m_owner { 0 }; // ThreadState::serial
-    unsigned m_count { 0 };
-};
-
 class Threads final : public ThreadSafeRefCounted<Threads> {
 public:
     // That of the VM: the runtimes of a VM share it, those that come when the others have gone too. The heap holds it.
@@ -244,10 +222,6 @@ public:
     // The thread of that number, which may be the one that runs, owes finalizers or callbacks of weak references. Under the same
     // conditions. See collectWhileIdle().
     void didQueueCallsThatMayUncoverMore(uint32_t number);
-
-    // _imp.acquire_lock()
-    ThreadLock importLock;
-    ThreadLock warningsLock; // _warnings._acquire_lock()
 
     // ---- The other threads, for whoever holds the GIL ----
 

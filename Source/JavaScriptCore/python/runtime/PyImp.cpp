@@ -19,7 +19,6 @@
 #include "PyModule.h"
 #include "PyNumbers.h"
 #include "PyStr.h"
-#include "PyThreads.h"
 #include "PyTuple.h"
 #include "PyVirtualFiles.h"
 
@@ -103,18 +102,18 @@ static JSValue impExecBuiltin(JSGlobalObject* globalObject, JSValue value)
     return jsNumber(0);
 }
 
-static JSValue impLockHeld(JSGlobalObject* globalObject) { return jsBoolean(runtime(globalObject).threads().importLock.isHeld()); }
+static JSValue impLockHeld(JSGlobalObject* globalObject) { return jsBoolean(runtime(globalObject).importLock.isHeld()); }
 
 static JSValue impAcquireLock(JSGlobalObject* globalObject)
 {
-    if (!runtime(globalObject).threads().importLock.acquire(globalObject))
+    if (!runtime(globalObject).importLock.acquire(globalObject))
         return { };
     return jsUndefined();
 }
 
 static JSValue impReleaseLock(JSGlobalObject* globalObject)
 {
-    auto& lock = runtime(globalObject).threads().importLock;
+    auto& lock = runtime(globalObject).importLock;
     if (!lock.isHeldByThisThread(globalObject)) {
         auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
         return raiseRuntimeError(globalObject, scope, "not holding the import lock"_s);
