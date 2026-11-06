@@ -751,6 +751,8 @@ public:
     class MarkingObserver {
     public:
         virtual ~MarkingObserver() = default;
+        // With the world stopped, when all that is reachable is marked, and nothing has been kept for the sake of a finalizer yet. Once in a collection.
+        virtual void didMarkAllThatIsReachable(SlotVisitor&) { }
         // With the world stopped, when a collection has marked all that it will: no runtime of the heap has anything left to keep.
         // True: it has marked something itself, so there is more to mark. It is told again when that is done.
         virtual bool didFinishMarking(SlotVisitor&) { return false; }
@@ -763,6 +765,12 @@ public:
         virtual void didCollect() { }
     };
     void setMarkingObserver(MarkingObserver* observer) { m_markingObserver = observer; }
+    // For the heap.
+    void didMarkAllThatIsReachable(SlotVisitor& visitor)
+    {
+        if (m_markingObserver) [[unlikely]]
+            m_markingObserver->didMarkAllThatIsReachable(visitor);
+    }
     // A collection for which the program waits. It takes the time to look at all that has died: see PyFinalizationOrder.cpp.
     // `leavesCyclicGarbageForLater`: only what reference counts would have freed is finalized. What has a finalizer and is in a
     // cycle, or hangs off one, is kept, and comes up again in the next collection.
@@ -789,8 +797,9 @@ public:
     void finalizeWhatReferenceCountsWouldHaveFreed();
     // Its finalizer has been called, and yet it is still there.
     bool hasBeenFinalized(JSCell*);
-    // Those that a collection has found dead and whose finalizer has not been called yet.
-    void forEachObjectToBeFinalized(const ScopedLambda<void(JSCell*)>&);
+    // For MarkingObserver::didMarkAllThatIsReachable(): function(cell, isInQueue) for the objects that an earlier collection has found dead and whose finalizer has not been called yet, and for
+    // those that this collection is about to find dead.
+    void forEachUnmarkedObjectWithFinalizer(SlotVisitor&, const ScopedLambda<void(JSCell*, bool)>&);
 
     // ---- Cells that can be found again and are not kept alive by that ----
 

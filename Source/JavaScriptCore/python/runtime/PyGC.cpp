@@ -130,22 +130,73 @@ static void forEachPartInFields(JSCell* cell, const Function& function)
     }
 }
 
+// What reference counts would have freed, and a collection has kept all the same: an object that waits for its finalizer, and what only such an object leads to. In CPython it is gone. A list
+// that such an object holds leads straight to the next one in the queue, which would be finalized in the hands of whoever got the list.
+// What is in a cycle, or hangs off one, is not among it, wherever it hangs: CPython has that until its collector comes.
+// It listens to one collection, and asks when all that is reachable is marked and nothing has been kept yet: then whatever waits, since whichever collection and in whichever runtime of the heap, is
+// dead like all that it leads to. What of that is marked in the end has been kept, by whatever way: a finalizer, the code of a callback of ctypes, a WeakMap of JS whose key has been kept.
+// (It goes by what the finalizers are expected to do: an object that its finalizer is going to bring back is passed over, with all below it, until the finalizer has been called.)
+class WhatIsGoneInCPython final : public Runtime::MarkingObserver {
+public:
+    explicit WhatIsGoneInCPython(VM& vm)
+        : m_vm(vm)
+    {
+    }
+
+    bool contains(JSCell* cell) const { return m_kept.contains(cell); }
+
+    void didMarkAllThatIsReachable(SlotVisitor& visitor) final
+    {
+        // (If too much has died to look at all of it, it looks at what these lead to.)
+        Vector<JSCell*> withFinalizers;
+        Vector<JSCell*> notInQueues;
+        for (Runtime* runtime : m_vm.heap.pythonRuntimes()) {
+            runtime->forEachUnmarkedObjectWithFinalizer(visitor, [&](JSCell* cell, bool isInQueue) {
+                (isInQueue ? withFinalizers : notInQueues).append(cell);
+            });
+        }
+        FinalizationQuestions questions;
+        questions.looksAtAllThatDied = true;
+        questions.wantsAllThatReferenceCountsWouldFree = true;
+        questions.candidatesInQueues = withFinalizers.size();
+        withFinalizers.appendVector(notInQueues);
+        if (!withFinalizers.isEmpty())
+            m_freed = finalizationOrder(m_vm.heap, visitor, withFinalizers.span(), questions).allFreedByReferenceCounts;
+    }
+
+    bool didFinishMarking(SlotVisitor& visitor) final
+    {
+        m_kept.clear();
+        for (JSCell* cell : m_freed) {
+            if (visitor.isMarked(cell))
+                m_kept.add(cell);
+        }
+        return false;
+    }
+
+    // The rest of them are about to be swept.
+    void didCollect() final { m_freed.clear(); }
+
+private:
+    VM& m_vm;
+    Vector<JSCell*> m_freed;
+    UncheckedKeyHashSet<JSCell*> m_kept;
+};
+
 // The heap as it is now: which cells are objects, and which are parts of what. No cell may be allocated while there is one.
 class HeapView {
     WTF_MAKE_NONCOPYABLE(HeapView);
 public:
-    explicit HeapView(JSGlobalObject* globalObject)
+    HeapView(JSGlobalObject* globalObject, const WhatIsGoneInCPython& gone)
         : m_globalObject(globalObject)
         , m_runtime(runtime(globalObject))
+        , m_gone(gone)
     {
         VM& vm = m_runtime.vm();
         for (unsigned i = 0; i < static_cast<unsigned>(Runtime::Slot::Count); ++i) {
             if (!isSlotOfPublicObject(static_cast<Runtime::Slot>(i)))
                 addPart(m_runtime.slot(static_cast<Runtime::Slot>(i)), nullptr, true);
         }
-        m_runtime.forEachObjectToBeFinalized([&](JSCell* cell) {
-            m_toBeFinalized.add(cell);
-        });
         bool hasWhatIsOutOfReach = false;
         HeapIterationScope iterationScope(vm.heap);
         vm.heap.objectSpace().forEachLiveCell(iterationScope, [&](HeapCell* heapCell, HeapCell::Kind kind) {
@@ -172,8 +223,7 @@ public:
     // All the objects of Python there are, parts included.
     const Vector<JSCell*>& objects() const { return m_objects; }
 
-    // What a collection has found dead is only there until its finalizer has been called, which is going to happen in whoever's hands it is.
-    bool mayBeGiven(JSCell* cell) const { return !m_owners.contains(cell) && !m_toBeFinalized.contains(cell) && !m_outOfReach.contains(cell) && isObjectOfPython(cell, m_globalObject) && isWhole(cell); }
+    bool mayBeGiven(JSCell* cell) const { return !m_owners.contains(cell) && !m_gone.contains(cell) && !m_outOfReach.contains(cell) && isObjectOfPython(cell, m_globalObject) && isWhole(cell); }
 
     // The cell, or what it is a part of. Null: nothing that may be given.
     JSCell* objectOf(JSCell* cell) const
@@ -321,7 +371,7 @@ private:
     Runtime& m_runtime;
     Vector<JSCell*> m_objects;
     UncheckedKeyHashMap<JSCell*, JSCell*> m_owners;
-    UncheckedKeyHashSet<JSCell*> m_toBeFinalized;
+    const WhatIsGoneInCPython& m_gone;
     UncheckedKeyHashSet<JSCell*> m_outOfReach;
     UncheckedKeyHashMap<Structure*, HiddenOffsets> m_hiddenOffsets;
 };
@@ -671,12 +721,23 @@ static JSValue gcGetStats(JSGlobalObject* globalObject)
 // ---- Looking at the heap ----
 
 // What is dead but has not been swept yet must not come back. What reference counts would have freed is gone in CPython: its finalizers are owed from here on, each by the thread
-// that made the object, and it is not given (HeapView::mayBeGiven()). What is in a cycle, or hangs off one, is still there in CPython until a collection comes: what of that has a
+// that made the object, and it is not given (WhatIsGoneInCPython). What is in a cycle, or hangs off one, is still there in CPython until a collection comes: what of that has a
 // finalizer is left as it is, and is given alive. Nothing is called here.
-static void collectBeforeLookingAtHeap(Runtime& rt)
+static void collectBeforeLookingAtHeap(Runtime& rt, WhatIsGoneInCPython& gone, HeapAnalyzer* analyzer = nullptr)
 {
+    VM& vm = rt.vm();
     SetForScope collectsForItself(rt.gc.collectsForItself, true);
+    // What they listen to is the collection asked for here, from beginning to end. The one that is finished first is waited for all the same: see collectAndFinalize().
+    Runtime::WaitForCollection wait(rt, true, Runtime::CallsOf::ThisThread);
+    PreventCollectionScope preventCollection(vm.heap);
+    if (analyzer)
+        vm.heapProfiler()->setActiveHeapAnalyzer(analyzer);
+    rt.setMarkingObserver(&gone);
     rt.collectAsAskedFor(CollectionScope::Full, true, Runtime::CallsOf::ThisThread);
+    rt.setMarkingObserver(nullptr);
+    gone.didCollect();
+    if (analyzer)
+        vm.heapProfiler()->setActiveHeapAnalyzer(nullptr);
 }
 
 // What can refer to other objects, as in CPython: not numbers, not strs.
@@ -706,10 +767,11 @@ static JSValue gcGetObjects(JSGlobalObject* globalObject, JSValue generation)
         RELEASE_AND_RETURN(scope, newList(globalObject));
     // Behind all that may run code of the program, in this thread or, if that lets go of the GIL, in another: __index__(), the hooks.
     rt.temporariesMayHaveEscaped();
-    collectBeforeLookingAtHeap(rt);
+    WhatIsGoneInCPython gone(vm);
+    collectBeforeLookingAtHeap(rt, gone);
     MarkedArgumentBuffer objects;
     {
-        HeapView view(globalObject);
+        HeapView view(globalObject, gone);
         for (JSCell* cell : view.objects()) {
             if (view.mayBeGiven(cell) && isTracked(rt, cell)) {
                 assertIsComplete(cell);
@@ -732,18 +794,10 @@ public:
         }
     }
 
-    void listen(Runtime& rt)
+    void listen(Runtime& rt, WhatIsGoneInCPython& gone)
     {
-        if (m_objects.isEmpty())
-            return;
-        VM& vm = rt.vm();
-        HeapProfiler& profiler = vm.ensureHeapProfiler();
-        if (profiler.activeHeapAnalyzer())
-            return;
-        PreventCollectionScope preventCollectionScope(vm.heap);
-        profiler.setActiveHeapAnalyzer(this);
-        collectBeforeLookingAtHeap(rt);
-        profiler.setActiveHeapAnalyzer(nullptr);
+        if (!m_objects.isEmpty() && !rt.vm().ensureHeapProfiler().activeHeapAnalyzer())
+            collectBeforeLookingAtHeap(rt, gone, this);
     }
 
     const Vector<JSCell*>& found() const { return m_found; }
@@ -781,10 +835,11 @@ static JSValue gcGetReferrers(JSGlobalObject* globalObject, const CallArgs& args
     MarkedArgumentBuffer result;
     {
         ReferrerListener listener(args.positional());
-        listener.listen(runtime(globalObject));
+        WhatIsGoneInCPython gone(vm);
+        listener.listen(runtime(globalObject), gone);
         UncheckedKeyHashSet<JSCell*> seen;
         if (!listener.found().isEmpty()) {
-            HeapView view(globalObject);
+            HeapView view(globalObject, gone);
             if (forHooks)
                 seen.add(forHooks);
             for (JSCell* cell : listener.found()) {

@@ -649,7 +649,7 @@ NEVER_INLINE bool Collector::runFixpointPhase(GCConductor conn)
                 });
             bool keptSomething = false;
             forEachHeap([&](Heap& heap) {
-                heap.didMarkAllThatIsReachable();
+                heap.didMarkAllThatIsReachable(visitor);
                 keptSomething |= heap.keepUnreachablePythonObjectsToFinalize(visitor);
             });
             if (!keptSomething) {

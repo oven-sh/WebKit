@@ -539,6 +539,21 @@ FinalizationOrder DeadGraph::order()
     }
     static_assert(none == FinalizationOrder::none);
     result.letGoBy = Vector<unsigned>(letGoBy.span().first(m_candidateCount));
+    if (m_questions.wantsAllThatReferenceCountsWouldFree) {
+        Vector<unsigned> worklist;
+        for (unsigned i = 0; i < m_questions.candidatesInQueues; ++i) {
+            if (!(m_flags[i] & Released)) {
+                m_flags[i] |= Released;
+                worklist.append(i);
+            }
+        }
+        flagAllReachedFrom(WTF::move(worklist), Released);
+        for (unsigned node = 0; node < count; ++node) {
+            if (m_flags[node] & Released)
+                result.allFreedByReferenceCounts.append(m_cells[node]);
+        }
+        return result;
+    }
 
     // What another candidate reaches waits: it is kept alive by that one now, and comes up again in the collection that finds
     // that one gone, unless its finalizer found it a home. That takes a collection per level. A structure that is deeper than a
@@ -680,7 +695,7 @@ JSCell* wholeThatPartRefersTo(JSCell* cell)
 
 FinalizationOrder finalizationOrder(JSC::Heap& heap, SlotVisitor& marker, std::span<JSCell* const> candidates, const FinalizationQuestions& questions)
 {
-    if (candidates.size() < 2 && !questions.wantsGarbage && !questions.wantsToKnowWhatReferenceCountsWouldFree && questions.askedAbout.empty()) {
+    if (candidates.size() < 2 && !questions.wantsGarbage && !questions.wantsToKnowWhatReferenceCountsWouldFree && !questions.wantsAllThatReferenceCountsWouldFree && questions.askedAbout.empty()) {
         FinalizationOrder result;
         if (!candidates.empty())
             result.now.append(0);

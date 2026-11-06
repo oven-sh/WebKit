@@ -716,6 +716,9 @@ struct FinalizationQuestions {
     bool wantsGarbage { false };
     bool wantsToKnowWhatReferenceCountsWouldFree { false };
     bool wantsPieces { false }; // See oldestOfPiece.
+    // Nothing but allFreedByReferenceCounts is wanted. So many of the first candidates are in a queue: an earlier collection has found them dead.
+    bool wantsAllThatReferenceCountsWouldFree { false };
+    unsigned candidatesInQueues { 0 };
 };
 struct FinalizationOrder {
     // Which of the candidates to finalize now, and which when those are gone. Each in the order in which to take them.
@@ -725,6 +728,9 @@ struct FinalizationOrder {
     unsigned freedByReferenceCounts { 0 };
     // Among those are objects together with what they alone refer to.
     bool takesAllLevels { false };
+    // If asked for: every cell that was looked at and that reference counts would have freed, if no finalizer found its object a new home. And all that a candidate leads to that is in a queue
+    // and is not among that: it was found in a cycle, or hanging off one, and CPython's collector has freed all that it found with it.
+    Vector<JSCell*> allFreedByReferenceCounts;
     static constexpr unsigned none = std::numeric_limits<unsigned>::max();
     // For each candidate: the candidate whose going would free it, by reference counts. None: nothing dead holds it, or a cycle does.
     Vector<unsigned> letGoBy;

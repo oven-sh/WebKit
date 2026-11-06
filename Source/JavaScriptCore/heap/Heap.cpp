@@ -833,11 +833,14 @@ void Heap::reconcileWeakReferencesAtGCEnd()
         clientData->reconcileWeakReferencesAtGCEnd(vm(), collectionScope);
 }
 
-void Heap::didMarkAllThatIsReachable()
+void Heap::didMarkAllThatIsReachable(SlotVisitor& visitor)
 {
     // Marking converges once more each time something has been kept.
-    if (!m_sizeMarkedWhenAllThatIsReachableWas)
-        m_sizeMarkedWhenAllThatIsReachableWas = m_bytesMarkedThisCycle.load(std::memory_order_relaxed) + m_extraMemorySize;
+    if (m_sizeMarkedWhenAllThatIsReachableWas)
+        return;
+    m_sizeMarkedWhenAllThatIsReachableWas = m_bytesMarkedThisCycle.load(std::memory_order_relaxed) + m_extraMemorySize;
+    for (auto* runtime : m_pythonRuntimes)
+        runtime->didMarkAllThatIsReachable(visitor);
 }
 
 void Heap::didKeepWhatWaitsForFinalizersIndefinitely()

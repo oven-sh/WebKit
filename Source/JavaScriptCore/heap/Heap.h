@@ -897,7 +897,7 @@ private:
     void reconcileWeakReferencesAtGCEnd();
 
     // Once marking has converged, with the counts of all visitors flushed: all that is reachable is marked.
-    void didMarkAllThatIsReachable();
+    void didMarkAllThatIsReachable(SlotVisitor&);
     // After that. True: more was marked, and marking goes on until it converges again.
     bool keepUnreachablePythonObjectsToFinalize(SlotVisitor&);
     // In the course of that: of what earlier collections kept, that of which nobody knows when its turn comes is marked, with all it refers to. What is kept from

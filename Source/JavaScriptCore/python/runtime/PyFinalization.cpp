@@ -575,12 +575,20 @@ bool Runtime::hasBeenFinalized(JSCell* cell)
     return m_finalized.contains(cell) || m_justFinalized.contains(cell);
 }
 
-void Runtime::forEachObjectToBeFinalized(const ScopedLambda<void(JSCell*)>& function)
+void Runtime::forEachUnmarkedObjectWithFinalizer(SlotVisitor& visitor, const ScopedLambda<void(JSCell*, bool)>& function)
 {
     Locker locker { m_finalizationLock };
     for (auto& owed : m_callsOwed) {
-        for (JSCell* cell : owed->finalizers)
-            function(cell);
+        for (JSCell* cell : owed->finalizers) {
+            if (!visitor.isMarked(cell))
+                function(cell, true);
+        }
+    }
+    for (auto* list : { &m_oldFinalizable, &m_youngFinalizable }) {
+        for (auto& entry : *list) {
+            if (JSCell* cell = entry.cell(); cell && !visitor.isMarked(cell))
+                function(cell, false);
+        }
     }
 }
 

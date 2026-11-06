@@ -891,7 +891,11 @@ so the aim is that everything Python *guarantees* holds, and that what it merely
   that any thread is handling made fit to be seen (`temporariesMayHaveEscaped`; `get_objects(0)` and `get_objects(1)` give nothing and look at nothing), and that behind their audit hooks: a hook that lets go of the GIL lets the other threads raise new ones.
   `get_objects()` and `get_referrers()` begin with a collection (`collectBeforeLookingAtHeap`), so that what is dead and has not been swept does not come back. It calls nothing. What reference counts would
   have freed is gone in CPython: its finalizer is owed from then on, by the thread that made it, and until that has been called it is not given, nor does it count as a referrer. (It used to be given, and was
-  then finalized in the hands of whoever had got it: a generator taken out of `get_objects()` while suspended was closed a moment later.) What is in a cycle, or hangs off one, is still there in CPython until a
+  then finalized in the hands of whoever had got it: a generator taken out of `get_objects()` while suspended was closed a moment later.) Nor is what only such an object leads to, which is kept with it:
+  of a chain of six objects with a `__del__`, each of which holds the next in a list, the five lists were given, whose items were then finalized in the program's hands. So that collection is listened
+  to (`WhatIsGoneInCPython`): when all that is reachable is marked and nothing has been kept yet, whatever waits for a finalizer, since whichever collection and in whichever runtime of the heap, is dead
+  like all that it leads to, and the dead cells are let go of as reference counts would (`PyFinalizationOrder.cpp`). What of that is marked in the end has been kept, by whatever way, and is passed over. It costs
+  nothing if nothing waits. What is in a cycle, or hangs off one, is still there in CPython until a
   collection comes: what of that has a finalizer is left as it is (`leavesCyclicGarbageForLater`) and is given alive, and being held it is no garbage any more.
 - **The engine collects when it sees fit.** `gc.disable()`, `set_threshold()` and `freeze()` do not change that: the collector is the
   only thing that frees memory. A collection of the engine's own is told to `gc.callbacks` and counted in `get_stats()` at the next
