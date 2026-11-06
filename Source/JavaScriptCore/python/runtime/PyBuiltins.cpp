@@ -18,6 +18,7 @@
 #include "PyModule.h"
 #include "PyNumbers.h"
 #include "PyStr.h"
+#include "PyThreads.h"
 
 namespace JSC {
 namespace Python {
@@ -712,11 +713,13 @@ static JSValue builtinPrint(JSGlobalObject* globalObject, const CallArgs& args)
     return jsUndefined();
 }
 
-JSValue readLineWithEditor(JSGlobalObject* globalObject, JSString* prompt)
+// `hasEditor`: there is one, whether or not it has read the line. What is in sys.modules under the name may be anything.
+static JSValue readLineWithEditor(JSGlobalObject* globalObject, JSString* prompt, bool& hasEditor)
 {
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+    hasEditor = false;
     JSValue module = rt.modules()->get(internString(vm, "readline"_s));
     if (!module)
         return { };
@@ -724,6 +727,7 @@ JSValue readLineWithEditor(JSGlobalObject* globalObject, JSString* prompt)
     RETURN_IF_EXCEPTION(scope, { });
     if (!function)
         return { };
+    hasEditor = true;
     JSValue line = call(globalObject, function, prompt);
     if (scope.exception()) {
         // Ctrl-C, Ctrl-D: it happened in input(), as far as the program is concerned.
@@ -736,6 +740,12 @@ JSValue readLineWithEditor(JSGlobalObject* globalObject, JSString* prompt)
     if (!isStr(line))
         return raiseTypeError(globalObject, scope, "readline._read_line() returned non-string"_s);
     return line;
+}
+
+JSValue readLineWithEditor(JSGlobalObject* globalObject, JSString* prompt)
+{
+    bool hasEditor;
+    return readLineWithEditor(globalObject, prompt, hasEditor);
 }
 
 // file.fileno() == descriptor, and that is a terminal.
@@ -860,7 +870,8 @@ static JSValue builtinInput(JSGlobalObject* globalObject, JSValue prompt)
             if (memchr(encoded->data(), 0, encoded->length()))
                 return raiseValueError(globalObject, scope, "input: prompt string cannot contain null characters"_s);
         }
-        JSValue line = readLineWithEditor(globalObject, text);
+        bool hasEditor;
+        JSValue line = readLineWithEditor(globalObject, text, hasEditor);
         RETURN_IF_EXCEPTION(scope, { });
         if (line) {
             if (failed(scope, audit(globalObject, "builtins.input/result"_s, line)))
@@ -868,7 +879,6 @@ static JSValue builtinInput(JSGlobalObject* globalObject, JSValue prompt)
             return line;
         }
         // An editor that has declined (it is not the main thread that asks) would have written to the standard output, as GNU's does.
-        bool hasEditor = !!rt.modules()->get(internString(vm, "readline"_s));
         if (encoded && failed(scope, writePromptToTerminal(globalObject, hasEditor ? STDOUT_FILENO : STDERR_FILENO, encoded)))
             return { };
     } else {
