@@ -365,11 +365,6 @@ static PyType* exceptionClassForPrototypeOfJS(JSGlobalObject* globalObject, JSOb
         lackedMeans = true;
         return otherwise == IfClassCannotBeMade::Raise ? nullptr : nearest;
     };
-    if (prototype == typeErrorPrototypeOfJS(globalObject)) {
-        PyType* type = jsTypeErrorType(globalObject, otherwise);
-        lackedMeans |= !type || type == rt.JSError();
-        return type;
-    }
     JSWeakMap* classes = weakMapInSlot(globalObject, Runtime::Slot::ExceptionClassesOfJSPrototypes);
     if (JSValue known = classes->get(prototype); known.isCell()) [[likely]]
         return PyType::from(known);
@@ -381,14 +376,16 @@ static PyType* exceptionClassForPrototypeOfJS(JSGlobalObject* globalObject, JSOb
     MarkedArgumentBuffer withoutClass;
     PyType* type = rt.JSError();
     for (JSObject* object = prototype; object != globalObject->errorPrototype();) {
+        if (JSValue known = classes->get(object); known.isCell()) {
+            type = PyType::from(known);
+            break;
+        }
+        // (_js.JSTypeError is there for who has caught none.)
         if (object == typeErrorPrototypeOfJS(globalObject)) {
             type = jsTypeErrorType(globalObject, otherwise);
             if (!type || type == rt.JSError())
                 return forLackOfMeans(type);
-            break;
-        }
-        if (JSValue known = classes->get(object); known.isCell()) {
-            type = PyType::from(known);
+            classes->set(vm, object, type);
             break;
         }
         withoutClass.append(object);
@@ -563,8 +560,13 @@ static PyType* exceptionClassNamedEverywhere(JSGlobalObject* globalObject, const
         return rt.JSError();
     if (rest == "ThrownValue"_s)
         return jsThrownValueType(globalObject, otherwise);
-    PyType* base = PyType::tryFrom(rt.builtins()->get(internString(rt.vm(), rest)));
-    if (base && !base->isHeapType() && (base == rt.TypeError() || base->isSubtypeOf(rt.OSError())))
+    PyType* base = nullptr;
+#define PY_FIND_EXCEPTION(id, unused) \
+    if (rest == #id ""_s) \
+        base = rt.id();
+    FOR_EACH_PY_EXCEPTION(PY_FIND_EXCEPTION)
+#undef PY_FIND_EXCEPTION
+    if (base && (base == rt.TypeError() || base->isSubtypeOf(rt.OSError())))
         return jsErrorTypeFor(globalObject, base, otherwise);
     for (unsigned i = 0; i < NumberOfErrorType; ++i) {
         if (rest == errorTypeName(static_cast<ErrorType>(i)))
@@ -2019,15 +2021,11 @@ JSValue attributeOfExceptionForJS(JSGlobalObject* globalObject, PyException* exc
 static JSValue reduceAsNextClassDoes(JSGlobalObject* globalObject, JSValue object)
 {
     Runtime& rt = runtime(globalObject);
-    PyTuple* mro = self(object)->type()->mro();
-    JSValue method;
-    bool isAfter = false;
-    for (unsigned i = 0; i < mro->length() && !method; ++i) {
-        if (isAfter)
-            method = PyType::from(mro->at(i))->dict()->get(rt.names.dReduce());
-        isAfter |= mro->at(i) == JSValue(rt.JSError());
-    }
-    return method ? callSpecial(globalObject, method, object) : baseExceptionReduce(globalObject, object);
+    VM& vm = rt.vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue method = loadSuperAttribute(globalObject, rt.superType(), rt.JSError(), object, rt.names.dReduce(), false, nullptr);
+    RETURN_IF_EXCEPTION(scope, { });
+    RELEASE_AND_RETURN(scope, call(globalObject, method));
 }
 
 // That, but for the class: see classToPickleAs().
