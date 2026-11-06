@@ -353,11 +353,14 @@ void refuseToChangeCount(bool isToFall)
 // Not the way of a thread that has the GIL while all is well. `thatLetsGo`: what the caller has read. If there is one, it has found that the thread has not got the GIL.
 void releaseSlow(JSCell* cell, Interpreter* thatLetsGo)
 {
-    Interpreter* current = thatLetsGo ? nullptr : s_interpreter.load(std::memory_order_relaxed);
-    if (hasGIL(current))
-        releaseCell(*current, cell, false);
-    else
-        refuseToChangeCount(true);
+    if (!thatLetsGo) {
+        Interpreter* current = s_interpreter.load(std::memory_order_relaxed);
+        if (hasGIL(current)) {
+            releaseCell(*current, cell, false);
+            return;
+        }
+    }
+    refuseToChangeCount(true);
 }
 
 // ---- The error indicator ----
