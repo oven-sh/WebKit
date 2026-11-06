@@ -2672,10 +2672,10 @@ void Unit::tryStarExcept(AST::Try* node, const Last& isLast)
         } else
             g.move(match.get(), rest.get());
 
-        if (handler->name)
-            storeName(handler->name, match.get(), handler->range);
         // The part that matched is what sys.exception() shows in the clause, and, as in CPython, from then on: where the next clause says what it catches.
         callRuntimeForEffect(RuntimeFunction::SetHandledException, { match.get() });
+        if (handler->name)
+            storeName(handler->name, match.get(), handler->range);
         match = nullptr;
 
         Try clause = beginTry();
