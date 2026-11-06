@@ -8,7 +8,6 @@ runs it for each source of ../../Sources.txt instead, with -fsyntax-only and the
 fails. A quarter of a minute on 16 cores."""
 import concurrent.futures, json, os, re, shlex, subprocess, sys
 
-here = os.path.dirname(os.path.abspath(__file__))
 entry = next(entry for entry in json.load(open(sys.argv[1])) if re.search(r"UnifiedSource-python-\d+\.cpp$", entry["file"]))
 arguments = entry.get("arguments") or shlex.split(entry["command"])
 output = arguments.index("-o")
