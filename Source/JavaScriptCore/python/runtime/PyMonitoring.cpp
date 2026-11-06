@@ -2865,6 +2865,30 @@ void Monitoring::jump(JSGlobalObject* globalObject, PyFrame* frame, int requeste
         return;
     }
 
+    // What is read where the frame goes on must be in use where it is, or a collection may have emptied the register; and whether one has come must not tell. What a block holds
+    // is in use no longer at the very end of the block, nor is the subject of a `match` behind the last pattern that looks at it.
+    CodeBlock* codeBlock = callFrame->codeBlock();
+    FastBitVector inUse = liveLocalsBefore(codeBlock, offset);
+    FastBitVector needed = liveLocalsBefore(codeBlock, best->offset);
+    bool hasAll = true;
+    for (unsigned i = 0; i < best->blocks.size(); ++i) {
+        VirtualRegister target = best->blocks[i].reg;
+        if (!target.isValid() || !needed[target.toLocal()])
+            continue;
+        VirtualRegister reg = from->at(i).reg;
+        hasAll &= reg.isValid() && inUse[reg.toLocal()];
+        needed[target.toLocal()] = false;
+        if (best->blocks[i].kind == TracedBlock::With)
+            needed[target.toLocal() + 1] = false;
+    }
+    // So for whatever else is no variable: what `except*` keeps.
+    for (unsigned local = codeBlock->numVars(); local < codeBlock->numCalleeLocals(); ++local)
+        hasAll &= !needed[local] || inUse[local];
+    if (!hasAll) {
+        raiseValueError(globalObject, scope, "incompatible stacks"_s);
+        return;
+    }
+
     // The code there may take it that a variable has a value which has none.
     unsigned unbound = 0;
     for (auto& variable : info.variables)

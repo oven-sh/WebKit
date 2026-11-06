@@ -190,7 +190,7 @@ struct TracedBlock {
         ExceptionHandler, // the exception that was being handled before the one that is now.
         ExceptionHandlerWithMore, // The same, and there is more in other registers: `except*`, `finally` on the way of an exception.
         Value, // A value that is read behind the block.
-        Other,
+        Other, // If there is a register, the code of the block reads it, and it is in use no longer than that: there is no BlockPiece.
     };
     // `ownsIterator`: see BlockPiece.
     static constexpr uint64_t encode(Kind kind, int registerOffset, bool ownsIterator) { return kind | ownsIterator << 7 | static_cast<uint64_t>(static_cast<uint32_t>(registerOffset)) << 8; }
@@ -227,7 +227,7 @@ Vector<BlockPiece, 4> blockPiecesIn(const Marks& marks)
     using Mark = std::remove_cvref_t<decltype(marks[0])>;
     Vector<BlockPiece, 4> pieces;
     for (auto& mark : marks) {
-        if ((mark.kind() != Mark::BlockBegin && mark.kind() != Mark::BlockEnd) || !VirtualRegister(TracedBlock::registerOffsetOf(mark.bits)).isValid())
+        if ((mark.kind() != Mark::BlockBegin && mark.kind() != Mark::BlockEnd) || !VirtualRegister(TracedBlock::registerOffsetOf(mark.bits)).isValid() || TracedBlock::kindOf(mark.bits) == TracedBlock::Other)
             continue;
         if (mark.kind() == Mark::BlockBegin) {
             pieces.append({ mark.offset, std::numeric_limits<unsigned>::max(), mark.value(), TracedBlock::registerOffsetOf(mark.bits), TracedBlock::kindOf(mark.bits) == TracedBlock::With, TracedBlock::ownsIterator(mark.bits) });

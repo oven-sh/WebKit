@@ -507,7 +507,7 @@ void Unit::matchStatement(Match* node, const Last& isLast)
         context.functionEndsWhereItFails = isLastCase && isLast.kind == Last::OfFunction;
         // A case that always matches must be guarded, or the last.
         context.allowIrrefutable = matchCase->guard || i == count - 1;
-        pushBlock({ .kind = BlockKind::MatchSubject, .tryDepth = g.tryDepth(), .isOnlyHere = true });
+        pushBlock({ .kind = BlockKind::MatchSubject, .tryDepth = g.tryDepth(), .saved = isWildcard(matchCase->pattern) ? nullptr : subject.get(), .isOnlyHere = true });
         m_statementStart = g.instructions().size();
         line(matchCase->pattern->range);
         {
