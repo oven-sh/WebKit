@@ -141,6 +141,9 @@ public:
             if (!isSlotOfPublicObject(static_cast<Runtime::Slot>(i)))
                 addPart(m_runtime.slot(static_cast<Runtime::Slot>(i)), nullptr, true);
         }
+        m_runtime.forEachObjectToBeFinalized([&](JSCell* cell) {
+            m_toBeFinalized.add(cell);
+        });
         HeapIterationScope iterationScope(vm.heap);
         vm.heap.objectSpace().forEachLiveCell(iterationScope, [&](HeapCell* heapCell, HeapCell::Kind kind) {
             if (!isJSCellKind(kind))
@@ -161,7 +164,8 @@ public:
     // All the objects of Python there are, parts included.
     const Vector<JSCell*>& objects() const { return m_objects; }
 
-    bool mayBeGiven(JSCell* cell) const { return !m_owners.contains(cell) && isObjectOfPython(cell, m_globalObject) && isWhole(cell); }
+    // What a collection has found dead is only there until its finalizer has been called, which is going to happen in whoever's hands it is.
+    bool mayBeGiven(JSCell* cell) const { return !m_owners.contains(cell) && !m_toBeFinalized.contains(cell) && isObjectOfPython(cell, m_globalObject) && isWhole(cell); }
 
     // The cell, or what it is a part of. Null: nothing that may be given.
     JSCell* objectOf(JSCell* cell) const
@@ -225,6 +229,7 @@ private:
     Runtime& m_runtime;
     Vector<JSCell*> m_objects;
     UncheckedKeyHashMap<JSCell*, JSCell*> m_owners;
+    UncheckedKeyHashSet<JSCell*> m_toBeFinalized;
     UncheckedKeyHashMap<Structure*, HiddenOffsets> m_hiddenOffsets;
 };
 
@@ -558,6 +563,15 @@ static JSValue gcGetStats(JSGlobalObject* globalObject)
 
 // ---- Looking at the heap ----
 
+// What is dead but has not been swept yet must not come back. What reference counts would have freed is gone in CPython: its finalizers are owed from here on, each by the thread
+// that made the object, and it is not given (HeapView::mayBeGiven()). What is in a cycle, or hangs off one, is still there in CPython until a collection comes: what of that has a
+// finalizer is left as it is, and is given alive. Nothing is called here.
+static void collectBeforeLookingAtHeap(Runtime& rt)
+{
+    SetForScope collectsForItself(rt.gc.collectsForItself, true);
+    rt.collectAsAskedFor(CollectionScope::Full, true, Runtime::CallsOf::ThisThread);
+}
+
 // What can refer to other objects, as in CPython: not numbers, not strs.
 static JSValue gcGetObjects(JSGlobalObject* globalObject, JSValue generation)
 {
@@ -580,12 +594,7 @@ static JSValue gcGetObjects(JSGlobalObject* globalObject, JSValue generation)
         if (number >= 0 && number < 2)
             RELEASE_AND_RETURN(scope, newList(globalObject));
     }
-    // What is dead but has not been swept yet must not come back.
-    vm.clearLastException();
-    {
-        SetForScope collectsForItself(rt.gc.collectsForItself, true);
-        vm.heap.collectNow(Synchronousness::Sync, CollectionScope::Full);
-    }
+    collectBeforeLookingAtHeap(rt);
     MarkedArgumentBuffer objects;
     {
         HeapView view(globalObject);
@@ -611,16 +620,17 @@ public:
         }
     }
 
-    void listen(VM& vm)
+    void listen(Runtime& rt)
     {
         if (m_objects.isEmpty())
             return;
+        VM& vm = rt.vm();
         HeapProfiler& profiler = vm.ensureHeapProfiler();
         if (profiler.activeHeapAnalyzer())
             return;
         PreventCollectionScope preventCollectionScope(vm.heap);
         profiler.setActiveHeapAnalyzer(this);
-        vm.heap.collectNow(Synchronousness::Sync, CollectionScope::Full);
+        collectBeforeLookingAtHeap(rt);
         profiler.setActiveHeapAnalyzer(nullptr);
     }
 
@@ -658,12 +668,8 @@ static JSValue gcGetReferrers(JSGlobalObject* globalObject, const CallArgs& args
         return { };
     MarkedArgumentBuffer result;
     {
-        vm.clearLastException();
         ReferrerListener listener(args.positional());
-        {
-            SetForScope collectsForItself(runtime(globalObject).gc.collectsForItself, true);
-            listener.listen(vm);
-        }
+        listener.listen(runtime(globalObject));
         UncheckedKeyHashSet<JSCell*> seen;
         if (!listener.found().isEmpty()) {
             HeapView view(globalObject);

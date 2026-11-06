@@ -567,6 +567,15 @@ bool Runtime::hasBeenFinalized(JSCell* cell)
     return m_finalized.contains(cell) || m_justFinalized.contains(cell);
 }
 
+void Runtime::forEachObjectToBeFinalized(const ScopedLambda<void(JSCell*)>& function)
+{
+    Locker locker { m_finalizationLock };
+    for (auto& owed : m_callsOwed) {
+        for (JSCell* cell : owed->finalizers)
+            function(cell);
+    }
+}
+
 void Runtime::queueWeakRefCallback(PyWeakRef* weakRef)
 {
     Locker locker { m_finalizationLock };

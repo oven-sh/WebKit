@@ -814,7 +814,8 @@ so the aim is that everything Python *guarantees* holds, and that what it merely
   It goes on for another round only if finalizers or callbacks of weak references were owed (`hasPendingFinalizers`), not for
   whatever else is in the queue: a collection that `gc.callbacks` is to be told of is in it too.
   The collection that is looked at is the one asked for, from beginning to end (`PreventCollectionScope` in `collectAndFinalize`, as for `get_referrers()` and for buffers): what was under
-  way or had been asked for is finished first, and no other begins until what was found has been put where the collector sees it. What looks on (`Census`) notes cells by their addresses
+  way or had been asked for is finished first, and no other begins until what was found has been put where the collector sees it. What that earlier one frees is neither counted nor saved, whichever
+  generation is asked for (ten young cycles, a collection that has been asked for and is not waited for, `gc.collect(0)`: 0). What looks on (`Census`) notes cells by their addresses
   and has them marked for one collection. A full collection of the engine's own that was under way when `gc.collect()` was called used to be taken for the one asked for; that one followed, freed
   the cells, and with `DEBUG_SAVEALL` their addresses went to `gc.garbage`.
 - **What the module `gc` hands out** (`get_objects`, `get_referrers`, `get_referents`, `garbage`) is decided in one place, at the top
@@ -824,6 +825,10 @@ so the aim is that everything Python *guarantees* holds, and that what it merely
   of the runtime). A reference held by a part counts as held by its owner. A generator or coroutine that is running refers to its
   variables, as in CPython, though they are in a frame on the stack meanwhile (`forEachVariableOfRunningGenerators`); the variables
   of a function that is running belong to nobody, as in CPython.
+  `get_objects()` and `get_referrers()` begin with a collection (`collectBeforeLookingAtHeap`), so that what is dead and has not been swept does not come back. It calls nothing. What reference counts would
+  have freed is gone in CPython: its finalizer is owed from then on, by the thread that made it, and until that has been called it is not given, nor does it count as a referrer. (It used to be given, and was
+  then finalized in the hands of whoever had got it: a generator taken out of `get_objects()` while suspended was closed a moment later.) What is in a cycle, or hangs off one, is still there in CPython until a
+  collection comes: what of that has a finalizer is left as it is (`leavesCyclicGarbageForLater`) and is given alive, and being held it is no garbage any more.
 - **The engine collects when it sees fit.** `gc.disable()`, `set_threshold()` and `freeze()` do not change that: the collector is the
   only thing that frees memory. A collection of the engine's own is told to `gc.callbacks` and counted in `get_stats()` at the next
   safe point: "start", then what it found (callbacks of weak references, finalizers), then "stop"; a collection of the young

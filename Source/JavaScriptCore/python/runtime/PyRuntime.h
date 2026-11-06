@@ -716,6 +716,8 @@ public:
     void finalizeWhatReferenceCountsWouldHaveFreed();
     // Its finalizer has been called, and yet it is still there.
     bool hasBeenFinalized(JSCell*);
+    // Those that a collection has found dead and whose finalizer has not been called yet.
+    void forEachObjectToBeFinalized(const ScopedLambda<void(JSCell*)>&);
 
     // ---- Cells that can be found again and are not kept alive by that ----
 
