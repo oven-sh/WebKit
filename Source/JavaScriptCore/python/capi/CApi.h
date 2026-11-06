@@ -57,9 +57,13 @@ extern "C" StaticObject pyStaticObjectsBegin __asm("__start_py_statics");
 extern "C" StaticObject pyStaticObjectsEnd __asm("__stop_py_statics");
 #endif
 
+// The section is gone through as an array (forEachSymbol()), so nothing lies between one symbol and the next. AddressSanitizer would put a red zone behind each: on Mach-O it does so in a
+// section with a name of its own too (not on ELF).
+#define PY_CAPI_IN_STATIC_SECTION used, section(PY_CAPI_STATIC_SECTION), no_sanitize("address")
+
 // What C links with. `used`: nothing in bun refers to most of it. (The names are C's whatever namespace the definitions are in.)
 #define PY_CAPI extern "C" __attribute__((visibility("default"), used))
-#define PY_CAPI_STATIC_OBJECT(name, value, number) extern "C" { __attribute__((visibility("default"), used, section(PY_CAPI_STATIC_SECTION))) constinit JSC::Python::CApi::StaticObject name { value, number }; }
+#define PY_CAPI_STATIC_OBJECT(name, value, number) extern "C" { __attribute__((visibility("default"), PY_CAPI_IN_STATIC_SECTION)) constinit JSC::Python::CApi::StaticObject name { value, number }; }
 
 ALWAYS_INLINE uintptr_t bitsOf(Handle handle) { return std::bit_cast<uintptr_t>(handle); }
 

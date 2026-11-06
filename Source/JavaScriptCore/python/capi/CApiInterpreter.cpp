@@ -36,6 +36,7 @@ enum SymbolNumber : uint64_t {
     NumberOfTrue,
     NumberOfEllipsis,
     NumberOfNotImplemented,
+    numberOfSymbols
 };
 
 #define DEFINE_STATIC_TYPE(symbol, id) PY_CAPI_STATIC_OBJECT(symbol, 0, NumberOf##symbol)
@@ -53,7 +54,7 @@ PY_CAPI_STATIC_OBJECT(_Py_NotImplementedStruct, 0, NumberOfNotImplemented)
 // it holds is good from before main() to the end of the process, and is never written: the address of a symbol like the others, which nobody names.
 #define DEFINE_EXCEPTION(name) \
     extern "C" { \
-    __attribute__((visibility("hidden"), used, section(PY_CAPI_STATIC_SECTION))) constinit StaticObject pyExceptionSymbol##name { 0, NumberOf##name }; \
+    __attribute__((visibility("hidden"), PY_CAPI_IN_STATIC_SECTION)) constinit StaticObject pyExceptionSymbol##name { 0, NumberOf##name }; \
     extern __attribute__((visibility("default"))) StaticObject* const PyExc_##name; \
     __attribute__((used)) constinit StaticObject* const PyExc_##name = &pyExceptionSymbol##name; \
     }
@@ -87,6 +88,7 @@ static PyType* typeWithSymbol(Runtime& rt, uint64_t number)
 template<typename Function>
 static void forEachSymbol(const Function& function)
 {
+    RELEASE_ASSERT(&pyStaticObjectsEnd - &pyStaticObjectsBegin == numberOfSymbols);
     for (StaticObject* symbol = &pyStaticObjectsBegin; symbol != &pyStaticObjectsEnd; ++symbol)
         function(*symbol);
 }
