@@ -889,7 +889,7 @@ static BitVector namesUnderWhichTextIsEvaluatedInScan(const BuiltinTable& builti
     BitVector names;
     for (uint32_t index = 0; index < builtins.builtinCount(); ++index) {
         const Builtin& entry = builtins.at(BuiltinID(index));
-        if (entry.holder && entry.name && builtins.at(builtins.canonicalID(BuiltinID(index))).flags.contains(BuiltinFlag::EvaluatesText))
+        if (entry.holder && entry.name && builtins.at(builtins.canonicalID(BuiltinID(index))).flags.contains(BuiltinFlag::EvaluatesText) && !builtins.at(entry.holder).flags.contains(BuiltinFlag::IsGlobalObject))
             names.set(entry.name.index());
     }
     return names;
