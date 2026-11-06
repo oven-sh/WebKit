@@ -12,6 +12,8 @@
 #include "SlotVisitorInlines.h"
 #include <wtf/TZoneMallocInlines.h>
 
+#if PYTHON_HAS_CAPI
+
 namespace JSC {
 namespace Python {
 namespace CApi {
@@ -371,3 +373,23 @@ JSValue objectOfSymbol(uint64_t bits)
 } // namespace CApi
 } // namespace Python
 } // namespace JSC
+
+#else // !PYTHON_HAS_CAPI
+
+namespace JSC {
+namespace Python {
+namespace CApi {
+
+bool ensure(JSGlobalObject* globalObject)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    raiseImportError(globalObject, scope, "the C API is not there on this system"_s);
+    return false;
+}
+
+} // namespace CApi
+} // namespace Python
+} // namespace JSC
+
+#endif // PYTHON_HAS_CAPI

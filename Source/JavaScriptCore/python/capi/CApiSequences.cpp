@@ -10,6 +10,8 @@
 #include "PyList.h"
 #include "PyTuple.h"
 
+#if PYTHON_HAS_CAPI
+
 // PyTuple_*, PyList_*
 //
 // An item that C is lent is the value that the container holds: it is good for as long as the container holds it, which is CPython's rule.
@@ -168,3 +170,5 @@ PY_CAPI int PyList_Append(Handle object, Handle item)
 } // namespace CApi
 } // namespace Python
 } // namespace JSC
+
+#endif // PYTHON_HAS_CAPI

@@ -10,6 +10,8 @@
 #include "PyAbstract.h"
 #include "PyNumbers.h"
 
+#if PYTHON_HAS_CAPI
+
 // PyLong_*, PyFloat_*
 
 namespace JSC {
@@ -69,3 +71,5 @@ PY_CAPI double PyFloat_AsDouble(Handle object)
 } // namespace CApi
 } // namespace Python
 } // namespace JSC
+
+#endif // PYTHON_HAS_CAPI

@@ -10,6 +10,8 @@
 #include "PyBytes.h"
 #include "PyTuple.h"
 
+#if PYTHON_HAS_CAPI
+
 // References, identity, the type of an object, the constants. None of these runs code of the program or raises but where it says so.
 
 namespace JSC {
@@ -185,3 +187,5 @@ PY_CAPI int Py_IsInitialized()
 } // namespace CApi
 } // namespace Python
 } // namespace JSC
+
+#endif // PYTHON_HAS_CAPI

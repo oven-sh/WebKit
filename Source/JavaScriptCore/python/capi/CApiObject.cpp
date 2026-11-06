@@ -11,6 +11,8 @@
 #include "PyCodecs.h"
 #include "PyStr.h"
 
+#if PYTHON_HAS_CAPI
+
 // PyObject_*, PyUnicode_*
 
 namespace JSC {
@@ -37,3 +39,5 @@ PY_CAPI Handle PyUnicode_FromString(const char* text)
 } // namespace CApi
 } // namespace Python
 } // namespace JSC
+
+#endif // PYTHON_HAS_CAPI

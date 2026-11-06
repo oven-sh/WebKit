@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""check_sources_alone.py COMPILE_COMMANDS.JSON: every source of python/ compiles by itself.
+"""check_sources_alone.py COMPILE_COMMANDS.JSON [OPTION...]: every source of python/ compiles by itself.
 
 The sources are compiled in bundles (unified sources), and all of python/ is one sequence of bundles, in the order of the directories' names: a source compiles with whatever
 those before it in its bundle have included, and one source more anywhere moves all the later ones to other places. So a source that does not name what it uses
 compiles until somebody adds a file. This takes the command for one of the bundles from the compile_commands.json of a build that has run (of Bun, or CMake's) and
-runs it for each source of ../../Sources.txt instead, with -fsyntax-only. Prints what fails. A quarter of a minute on 16 cores."""
+runs it for each source of ../../Sources.txt instead, with -fsyntax-only and the options given (-DPYTHON_HAS_CAPI=0: what a system without the C API compiles). Prints what
+fails. A quarter of a minute on 16 cores."""
 import concurrent.futures, json, os, re, shlex, subprocess, sys
 
 here = os.path.dirname(os.path.abspath(__file__))
@@ -18,7 +19,7 @@ sources = [line.split("@")[0].strip() for line in open(f"{root}/Sources.txt") if
 
 
 def check(source):
-    result = subprocess.run([*arguments, "-fsyntax-only", f"{root}/{source}"], cwd=entry["directory"], capture_output=True, text=True)
+    result = subprocess.run([*arguments, *sys.argv[2:], "-fsyntax-only", f"{root}/{source}"], cwd=entry["directory"], capture_output=True, text=True)
     return source, result.returncode, result.stderr
 
 

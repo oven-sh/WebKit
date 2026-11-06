@@ -9,6 +9,16 @@
 
 // What the runtime calls of the C API (CApi.h).
 
+// Not on Windows: the symbols that stand for objects are found by the section they lie in, for which every linker has its own way, and nothing there has been compiled, let alone run.
+// Without it no interpreter ever has the API, and what needs it fails as it does in an interpreter that the API is not for.
+#if !defined(PYTHON_HAS_CAPI)
+#if OS(WINDOWS)
+#define PYTHON_HAS_CAPI 0
+#else
+#define PYTHON_HAS_CAPI 1
+#endif
+#endif
+
 namespace JSC {
 
 class Heap;
@@ -27,6 +37,9 @@ namespace CApi {
 
 // False, with an ImportError: the API is another interpreter's.
 bool ensure(JSGlobalObject*);
+
+#if PYTHON_HAS_CAPI
+
 // False, and nothing is raised: for what can do without.
 bool tryEnsure(JSGlobalObject*);
 // Around dlopen(). What a library does as it is loaded (a constructor, the initializer of a static variable in C++) may call the API, on this thread.
@@ -60,6 +73,25 @@ void takeOverReference(uint64_t bits);
 void giveReference(uint64_t bits);
 // The object, if the bits are the address of one of the symbols that stand for objects (&PyLong_Type). Empty: they are not.
 JSValue objectOfSymbol(uint64_t bits);
+
+#else // !PYTHON_HAS_CAPI
+
+inline bool tryEnsure(JSGlobalObject*) { return false; }
+class LibraryBeingLoaded {
+public:
+    explicit LibraryBeingLoaded(JSGlobalObject*) { }
+    ~LibraryBeingLoaded() { }
+};
+inline bool belongsTo(const Runtime&) { return false; }
+inline void runtimeIsEnding(Runtime&) { }
+inline uint64_t bitsForC(JSGlobalObject*, JSValue value) { return static_cast<uint64_t>(JSValue::encode(value)); }
+inline void didFinishMarking(JSC::Heap&) { }
+inline bool throwWhatCRaised(JSGlobalObject*) { return true; }
+inline void takeOverReference(uint64_t) { }
+inline void giveReference(uint64_t) { }
+inline JSValue objectOfSymbol(uint64_t) { return { }; }
+
+#endif // PYTHON_HAS_CAPI
 
 } // namespace CApi
 } // namespace Python

@@ -9,6 +9,9 @@
 #include "CApiHooks.h"
 #include "PyErrors.h"
 #include "PyType.h"
+
+#if PYTHON_HAS_CAPI
+
 #include <pthread.h>
 
 // CPython's C API, for extension modules built for abi3t (PEP 803): the ABI in which C sees the layout of no object. See "The C API"
@@ -186,9 +189,9 @@ struct Interpreter {
         if (finalizersOfCBeingServed) [[unlikely]]
             ++noise;
     }
+    // Nobody sets the first yet, and nobody reads the second: they are for the order in which instances of extension types are destroyed.
     unsigned finalizersOfCBeingServed { 0 };
     uint32_t noise { 0 };
-    // Nobody sets the first yet, and nobody reads the second: they are for the order in which instances of extension types are destroyed.
 };
 
 // Null until a program needs the API, and again when its interpreter has ended. Any thread may read it, at any time: see Interpreter::lock.
@@ -403,3 +406,5 @@ private:
 } // namespace CApi
 } // namespace Python
 } // namespace JSC
+
+#endif // PYTHON_HAS_CAPI

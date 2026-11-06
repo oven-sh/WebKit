@@ -12,6 +12,8 @@
 #include "PyException.h"
 #include "PyTuple.h"
 
+#if PYTHON_HAS_CAPI
+
 // PyErr_*: the error indicator, as C sees it.
 
 namespace JSC {
@@ -153,3 +155,5 @@ PY_CAPI int PyErr_ExceptionMatches(Handle expected)
 } // namespace CApi
 } // namespace Python
 } // namespace JSC
+
+#endif // PYTHON_HAS_CAPI
