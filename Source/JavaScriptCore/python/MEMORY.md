@@ -109,11 +109,11 @@ objects dropped and collected leave 372 MB anonymous, and 36 MB half a second an
 ## The collector's policy
 
 The engine collects when the heap has grown by a factor since the last full collection. On a machine with 16 GB or more the factor is
-about 4 for a small heap and falls towards 1 as the heap nears the size of the memory (`Heap::updateAllocationLimits`, `proportionalHeapSize`; the memory is what
+about 3 for a small heap (Bun sets `heapGrowthMaxIncrease` to 2: twice as much may be allocated as was marked; JSC's own default is 3, a factor of 4) and falls towards 1 as the heap nears the size of the memory (`Heap::updateAllocationLimits`, `proportionalHeapSize`; the memory is what
 the container allows, if there is one). So a program with 160 MB of live data may hold 300 to 600 MB. That buys speed. With the
 factor at 2 (`BUN_JSC_heapGrowthMaxIncrease=1`; measured before the changes below) the pytest run peaked at 846 MB, not at 911 to 1,197, in the same wall time and 2%
 more CPU time, and none of the Python benchmarks lost time, but a program in JS that churns objects took 1.5 times as long. It is the engine's policy for JS and Python alike and
-has been left alone. `BUN_JSC_forceRAMSize=1073741824` makes a process behave as on a machine with 1 GB.
+has been left alone, but for one thing: the size that counts is that of what is reachable, not of what a collection has kept for finalizers (README, "What waits for a finalizer does not make the heap grow"). In a program without such objects nothing has changed. `BUN_JSC_forceRAMSize=1073741824` makes a process behave as on a machine with 1 GB.
 
 ## What has been done
 
@@ -153,7 +153,7 @@ working whatever becomes of the file.
 
 ## What is left, largest first
 
-1. **The collector's policy** (above): the largest part of the difference in every program with much data. Not Python's to change.
+1. **The collector's policy** (above): the largest part of the difference in every program with much data. Not Python's to change, beyond what is said there.
 2. **The copies of `.pyc` files**: 46 MB after `import sympy`, 2.7 times the size of CPython's files. Two things make them smaller without any risk.
    - **The text** of the module is 27% of a file (13.6 of 49.9 MB for sympy) and the last thing in it (`PythonCodeCacheEntry::encode`), so the copy can stop
      short of it. It has few readers. `codeStartColumn()` and `codePositions()` (`PyFunction.cpp`) look for the starts of lines, which the payload has (`lineStartsForBytecode()`), and
