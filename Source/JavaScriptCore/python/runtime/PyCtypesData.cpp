@@ -174,7 +174,7 @@ static bool findProvenance(JSGlobalObject* globalObject, JSValue kept, const uin
             auto scope = DECLARE_TOP_EXCEPTION_SCOPE(getVM(globalObject));
             begin = view->data(globalObject);
             if (scope.exception()) {
-                scope.clearException();
+                dropPendingException(globalObject, scope);
                 return false;
             }
             size = static_cast<size_t>(view->length);

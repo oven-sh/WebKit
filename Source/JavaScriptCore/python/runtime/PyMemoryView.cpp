@@ -8,7 +8,6 @@
 
 #include "BytecodeLivenessAnalysisInlines.h"
 #include "CodeBlock.h"
-#include "FrameTracers.h"
 #include "HeapAnalyzer.h"
 #include "HeapProfiler.h"
 #include "HeapUtil.h"
@@ -306,7 +305,7 @@ static void bufferWrapperRelease(JSGlobalObject* globalObject, JSValue object)
     bool isOwnMemory = view->managedBuffer()->object() == exporter;
     if (!isOwnMemory) {
         if (JSValue method = bufferPythonReleaseMethod(exporter)) {
-            SuspendExceptionScope suspended(vm);
+            ExceptionSetAside suspended(globalObject);
             bufferCallPythonRelease(globalObject, exporter, method, view);
         }
     }
@@ -335,7 +334,7 @@ void releaseBuffer(JSGlobalObject* globalObject, Buffer& buffer)
     if (JSValue method = bufferPythonReleaseMethod(object)) {
         // It is lent a view of the memory, which is taken back as soon as it returns.
         VM& vm = getVM(globalObject);
-        SuspendExceptionScope suspended(vm);
+        ExceptionSetAside suspended(globalObject);
         auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
         Buffer copy = buffer;
         copy.release = nullptr;
@@ -1232,7 +1231,7 @@ static JSValue memoryViewTakingOver(JSGlobalObject* globalObject, Buffer& buffer
     PyManagedBuffer* managedBuffer = PyManagedBuffer::create(globalObject, buffer);
     PyMemoryView* view = memoryViewFromBuffer(globalObject, managedBuffer, buffer);
     if (failed(scope, view)) {
-        SuspendExceptionScope suspended(vm);
+        ExceptionSetAside suspended(globalObject);
         managedBuffer->release(globalObject);
         return { };
     }
@@ -1276,7 +1275,7 @@ JSValue memoryForHost(JSGlobalObject* globalObject, JSValue object)
     RETURN_IF_EXCEPTION(scope, { });
     PyMemoryView* view = PyMemoryView::from(made);
     auto fail = [&] {
-        SuspendExceptionScope suspended(vm);
+        ExceptionSetAside suspended(globalObject);
         view->release(globalObject);
         return JSValue();
     };
@@ -2063,7 +2062,7 @@ static JSValue memoryViewSubscript(JSGlobalObject* globalObject, JSValue self, J
         PyMemoryView* result = memoryViewCopy(globalObject, view);
         PySlice::Indices indices;
         if (failed(scope, slice->indices(globalObject, result->shape()[0], indices))) {
-            SuspendExceptionScope suspended(vm);
+            ExceptionSetAside suspended(globalObject);
             result->release(globalObject);
             return { };
         }

@@ -685,6 +685,15 @@ static void finalizeGenerator(JSGlobalObject* globalObject, PyGenerator* generat
 
 void finalizeGeneratorNow(JSGlobalObject* globalObject, PyGenerator* generator)
 {
+    // Not while the host is ending what runs here: `finally` is code of the program. It is left to the collector, which does not know
+    // of one that has no handler of its own but something to close all the same: whom it delegates to, the generator of a loop.
+    if (getVM(globalObject).hasPendingTermination()) [[unlikely]] {
+        if (generator->finalization() == PyGenerator::Finalization::None) {
+            generator->setFinalization(PyGenerator::Finalization::Registered);
+            runtime(globalObject).registerFinalizable(generator);
+        }
+        return;
+    }
     // Once. If it does not let itself be closed, the collector is not to try again.
     generator->setFinalization(PyGenerator::Finalization::None);
     finalizeGenerator(globalObject, generator);

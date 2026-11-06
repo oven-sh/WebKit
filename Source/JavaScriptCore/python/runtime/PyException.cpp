@@ -227,7 +227,7 @@ JSValue exceptionFromThrownValue(JSGlobalObject* globalObject, JSValue thrown)
         if (!exception) {
             String message = thrown.toWTFString(globalObject);
             if (scope.exception()) {
-                scope.clearException();
+                dropPendingException(globalObject, scope);
                 message = "<exception>"_s;
             }
             exception = newException(globalObject, thrown.isObject() && isTypeErrorOfJS(asObject(thrown)) ? jsTypeErrorType(globalObject) : rt.JSError(), message);

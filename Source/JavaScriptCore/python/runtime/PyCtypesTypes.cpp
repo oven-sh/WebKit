@@ -6,7 +6,6 @@
 #include "config.h"
 #include "PyCtypes.h"
 
-#include "FrameTracers.h"
 #include "JSCInlines.h"
 #include "PyList.h"
 #include "PyWeakRef.h"
@@ -160,7 +159,7 @@ static JSValue typeFromBuffer(JSGlobalObject* globalObject, JSValue self, JSValu
     RETURN_IF_EXCEPTION(scope, { });
     auto* view = PyMemoryView::from(viewValue);
     auto fail = [&](JSValue) -> JSValue {
-        SuspendExceptionScope suspended(vm);
+        ExceptionSetAside suspended(globalObject);
         view->release(globalObject);
         return { };
     };

@@ -2149,7 +2149,7 @@ private:
         if (!scope.exception())
             result = string->value(m_globalObject);
         if (scope.exception()) {
-            scope.clearException();
+            dropPendingException(m_globalObject, scope);
             return { };
         }
         return result.isNull() ? emptyString() : result;
@@ -2508,6 +2508,7 @@ private:
     String nestedAttribute(JSValue object, JSString* name, const Vector<String>& names)
     {
         Runtime& rt = runtime(m_globalObject);
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(m_vm);
         unsigned checked = 0;
         for (auto& outer : names) {
             if (outer.startsWith('_'))
@@ -2519,7 +2520,7 @@ private:
                 continue;
             JSValue value = getAttrIfPresent(m_globalObject, object, outerName);
             if (!value) {
-                takePendingException(m_globalObject);
+                dropPendingException(m_globalObject, scope);
                 continue;
             }
             bool found = instanceAttribute(m_globalObject, value, name) || rt.typeOf(value)->lookup(name) || (PyType::is(value) && PyType::from(value)->lookup(name));
@@ -2618,7 +2619,7 @@ private:
                 directory = "."_s;
             JSValue listing = callMethod(m_globalObject, posix, internString(m_vm, "listdir"_s), makeStr(m_vm, directory));
             if (scope.exception()) {
-                takePendingException(m_globalObject);
+                dropPendingException(m_globalObject, scope);
                 continue;
             }
             Vector<String> files;
@@ -2644,7 +2645,7 @@ private:
         String replacement;
         String hint = computeHint(exception, replacement);
         if (scope.exception()) {
-            scope.clearException();
+            dropPendingException(m_globalObject, scope);
             return;
         }
         if (!replacement.isNull())
@@ -2733,7 +2734,7 @@ private:
                 if (JSValue self = selfIn(locals)) {
                     isAttributeOfSelf = hasAttr(m_globalObject, self, wrongName);
                     if (scope.exception()) {
-                        takePendingException(m_globalObject);
+                        dropPendingException(m_globalObject, scope);
                         isAttributeOfSelf = false;
                     }
                 }

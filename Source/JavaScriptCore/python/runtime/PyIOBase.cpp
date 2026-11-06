@@ -171,7 +171,7 @@ void ioWarnUnclosed(JSGlobalObject* globalObject, JSValue self, JSValue source)
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
     // An exception that is propagating is set aside.
-    SuspendExceptionScope suspended(vm);
+    ExceptionSetAside suspended(globalObject);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     JSString* text = repr(globalObject, source);
     if (!scope.exception()) {
@@ -654,7 +654,7 @@ void ioNotePendingOutput(JSGlobalObject* globalObject, PyRecord* stream)
     }
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(getVM(globalObject));
     listAppend(globalObject, ioStreamsWithPendingOutput(globalObject), stream);
-    scope.clearException();
+    dropPendingException(globalObject, scope);
     runtime(globalObject).setMayHavePendingOutput(true);
 }
 
@@ -707,7 +707,7 @@ static bool ioSaysItIsClosed(JSGlobalObject* globalObject, JSValue stream, bool 
     if (closed && !scope.exception())
         result = isTrue(globalObject, closed);
     if (scope.exception()) {
-        scope.clearException();
+        dropPendingException(globalObject, scope);
         return ifItCannotTell;
     }
     return result;
@@ -723,14 +723,15 @@ static JSValue ioBaseDel(JSGlobalObject* globalObject, JSValue self)
     if (!ioSaysItIsClosed(globalObject, self, true)) {
         // So that close() knows who is calling.
         setAttr(globalObject, self, ioName(globalObject, IOName::finalizing), jsBoolean(true));
-        scope.clearException();
+        dropPendingException(globalObject, scope);
         callMethod(globalObject, self, rt.names.close());
         if (scope.exception())
             ioReportWhileFinalizing(globalObject, self);
     }
 
-    // If that has left what the stream wraps open, it is on its own again.
+    // If that has left what the stream wraps open, it is on its own again. (The host may have ended it, which waits.)
     if (auto* record = PyRecord::tryFrom(self)) {
+        ExceptionSetAside suspended(globalObject);
         std::pair<JSValue, JSValue> wrapped;
         PyType* type = record->type();
         if (type->isSubtypeOf(ioType(globalObject, IOType::TextIOWrapper)))
@@ -744,7 +745,7 @@ static JSValue ioBaseDel(JSGlobalObject* globalObject, JSValue self)
                 ioDidUnwrap(globalObject, stream);
         }
     }
-    return jsUndefined();
+    return scope.exception() ? JSValue() : jsUndefined();
 }
 
 bool ioIsOfTypeThatOpenMakes(JSGlobalObject* globalObject, JSCell* cell)
@@ -761,8 +762,15 @@ bool ioIsOfTypeThatOpenMakes(JSGlobalObject* globalObject, JSCell* cell)
 
 void ioFinalizeNow(JSGlobalObject* globalObject, PyRecord* stream)
 {
-    SuspendExceptionScope suspended(getVM(globalObject));
+    VM& vm = getVM(globalObject);
+    // Not while the host is ending what runs here: close() is code of the program. The collector will find it, as it will if
+    // close() is ended now.
+    if (vm.hasPendingTermination()) [[unlikely]]
+        return;
+    ExceptionSetAside suspended(globalObject);
     ioBaseDel(globalObject, stream);
+    if (vm.hasPendingTerminationException()) [[unlikely]]
+        return;
     runtime(globalObject).unregisterFinalizable(stream);
 }
 

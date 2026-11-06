@@ -1342,7 +1342,7 @@ bool Monitoring::callTraceFunction(JSGlobalObject* globalObject, PyFrame* frame,
     JSValue arguments[3] = { frame, nameOf(what), argument };
     JSValue result = callWhileTracing(globalObject, frame->callFrame(), event, shown, function, CallArgs(arguments));
     if (failed(scope, result)) {
-        SuspendExceptionScope suspended(vm);
+        ExceptionSetAside suspended(globalObject);
         setTraceFunction({ });
         frame->setTrace(vm, { });
         return false;
@@ -1362,7 +1362,7 @@ bool Monitoring::callProfileFunction(JSGlobalObject* globalObject, PyFrame* fram
     JSValue arguments[3] = { frame, nameOf(what), argument };
     if (!failed(scope, callWhileTracing(globalObject, frame->callFrame(), event, shown, function, CallArgs(arguments))))
         return true;
-    SuspendExceptionScope suspended(vm);
+    ExceptionSetAside suspended(globalObject);
     setProfileFunction({ });
     return false;
 }
@@ -1974,7 +1974,7 @@ NEVER_INLINE Monitoring::Outcome Monitoring::handle(JSGlobalObject* globalObject
         auto dropArguments = makeScopeExit([&] {
             if (!generatorArgument)
                 return;
-            SuspendExceptionScope suspended(vm);
+            ExceptionSetAside suspended(globalObject);
             m_runtime.releaseIteratorOfLoop(generatorArgument);
         });
         JSValue result = call(globalObject, callee, CallArgs(arguments, count - (keywordNames ? keywordNames->length() : 0), keywordNames));

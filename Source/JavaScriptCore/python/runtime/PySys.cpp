@@ -48,7 +48,7 @@ static void addStandardStreams(JSGlobalObject* globalObject, PyModule* module)
         JSValue stream = makeStandardStream(globalObject, fd, fd != STDIN_FILENO, name, errors);
         if (failed(scope, stream)) {
             // A directory, say.
-            scope.clearException();
+            dropPendingException(globalObject, scope);
             stream = jsUndefined();
         }
         module->add(globalObject, attribute, stream);

@@ -177,7 +177,7 @@ static JSValue profilerUserObject(JSGlobalObject* globalObject, JSValue object)
             JSString* text = repr(globalObject, method);
             if (!failed(scope, text))
                 return text;
-            scope.clearException();
+            dropPendingException(globalObject, scope);
         }
     }
     if (JSValue owner = native->owner(); owner && isStr(owner))
@@ -307,7 +307,7 @@ static PyNativeFunction* profilerBuiltin(JSGlobalObject* globalObject, JSValue c
             return nullptr;
         JSValue bound = bindDescriptor(globalObject, callable, first, rt.typeOf(first));
         if (failed(scope, bound)) {
-            scope.clearException();
+            dropPendingException(globalObject, scope);
             return nullptr;
         }
         return PyNativeFunction::tryFrom(bound);

@@ -5,7 +5,6 @@
 
 #include "config.h"
 
-#include "FrameTracers.h"
 #include "JSArrayBufferView.h"
 #include "JSCInlines.h"
 #include "JSGenericTypedArrayViewInlines.h"
@@ -253,7 +252,7 @@ static JSValue jsTypedArrayCompare(JSGlobalObject* globalObject, JSValue self, J
     RETURN_IF_EXCEPTION(scope, { });
     JSValue result = richCompare(globalObject, view, other, op);
     {
-        SuspendExceptionScope suspended(vm);
+        ExceptionSetAside suspended(globalObject);
         PyMemoryView::from(view)->release(globalObject);
     }
     EXCEPTION_ASSERT(!!scope.exception() == !result);

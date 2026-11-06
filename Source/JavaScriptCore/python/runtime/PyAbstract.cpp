@@ -6,7 +6,6 @@
 #include "config.h"
 #include "PyAbstract.h"
 
-#include "FrameTracers.h"
 #include "FunctionCodeBlock.h"
 #include "JSCInlines.h"
 #include "LLIntThunks.h"
@@ -1688,15 +1687,18 @@ JSValue formatObject(JSGlobalObject* globalObject, JSValue value, JSString* spec
 String reprForMessage(JSGlobalObject* globalObject, JSValue value)
 {
     VM& vm = getVM(globalObject);
+    // Nobody will read it.
+    if (vm.hasPendingTerminationException()) [[unlikely]]
+        return "<?>"_s;
     // The message may be about an exception that is propagating, which is set aside: nothing runs while one is.
-    SuspendExceptionScope suspended(vm);
+    ExceptionSetAside suspended(globalObject);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     String result;
     JSString* text = repr(globalObject, value);
     if (!scope.exception())
         result = text->value(globalObject);
     if (scope.exception()) {
-        scope.clearException();
+        dropPendingException(globalObject, scope);
         result = "<?>"_s;
     }
     return result;

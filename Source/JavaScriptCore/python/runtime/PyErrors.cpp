@@ -7,13 +7,13 @@
 #include "PyErrors.h"
 
 #include "Exception.h"
-#include "FrameTracers.h"
 #include "JSCInlines.h"
 #include "PyAbstract.h"
 #include "PyException.h"
 #include "PyInternals.h"
 #include "PyNumbers.h"
 #include "PyStr.h"
+#include "PyThreads.h"
 #include "PyType.h"
 #include "TopExceptionScope.h"
 
@@ -218,11 +218,8 @@ static JSValue pendingExceptionToLookAt(JSGlobalObject* globalObject)
     if (vm.isTerminationException(exception))
         return { };
     // Wrapping it needs the way clear. Then it goes on as it came.
-    SuspendExceptionScope suspended(vm);
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    JSValue wrapped = exceptionFromThrownValue(globalObject, value);
-    scope.clearException();
-    return wrapped;
+    ExceptionSetAside suspended(globalObject);
+    return exceptionFromThrownValue(globalObject, value);
 }
 
 JSValue pendingException(JSGlobalObject* globalObject)
@@ -256,6 +253,22 @@ JSValue takePendingException(JSGlobalObject* globalObject)
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(getVM(globalObject));
     scope.clearException();
     return exception;
+}
+
+static void askForTerminationAgain(JSGlobalObject* globalObject)
+{
+    // The trap is spent once it has thrown. (The threads that Python starts are told at every safe point: Threads::throwIfStopping().)
+    // Whoever withdraws the termination withdraws this with it: VM::cancelTermination().
+    if (runtime(globalObject).threads().isMainThread())
+        getVM(globalObject).traps().fireTrap(VMTraps::NeedTermination);
+}
+
+void dropPendingException(JSGlobalObject* globalObject, ExceptionScope& scope)
+{
+    if (scope.tryClearException()) [[likely]]
+        return;
+    DECLARE_TOP_EXCEPTION_SCOPE(scope.vm()).clearException();
+    askForTerminationAgain(globalObject);
 }
 
 bool exceptionMatches(JSGlobalObject* globalObject, JSValue exception, JSValue typeOrTuple)

@@ -313,7 +313,7 @@ JSValue PyType::lookupSlow(JSString* name)
         bool wasTerminated = false;
         {
             // An exception may be on its way.
-            SuspendExceptionScope suspended(vm);
+            ExceptionSetAside suspended(globalObject);
             auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
             value = dict->get(globalObject, name);
             if (Exception* exception = scope.exception()) [[unlikely]] {

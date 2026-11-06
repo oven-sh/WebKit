@@ -212,7 +212,7 @@ PySet* Unit::frozensetOf(PyTuple* tuple)
     for (unsigned i = 0; !scope.exception() && i < tuple->length(); ++i)
         set->add(globalObject(), tuple->at(i));
     if (scope.exception()) {
-        scope.clearException();
+        dropPendingException(globalObject(), scope);
         return nullptr;
     }
     return set;
@@ -318,7 +318,7 @@ JSValue Unit::valueCPythonsCompilerWorksOut(Expr* node)
     }
     auto finish = [&](JSValue result) {
         if (scope.exception()) {
-            scope.clearException();
+            dropPendingException(globalObject(), scope);
             return JSValue();
         }
         return result;
@@ -361,7 +361,7 @@ JSValue Unit::itemCPythonsCompilerWorksOut(JSValue base, Expr* index)
         return { };
     JSValue item = getItem(globalObject(), base, key);
     if (scope.exception()) {
-        scope.clearException();
+        dropPendingException(globalObject(), scope);
         return { };
     }
     return item;
@@ -392,7 +392,7 @@ JSValue Unit::valueCPythonsCompilerWorksOut(Operator op, JSValue value, JSValue 
             if (isStr(sequence)) {
                 uint64_t length = strLength(globalObject(), strValue(sequence));
                 if (scope.exception()) [[unlikely]] {
-                    scope.clearException();
+                    dropPendingException(globalObject(), scope);
                     return maxStrSize + 1;
                 }
                 return length;
@@ -450,12 +450,12 @@ JSValue Unit::valueCPythonsCompilerWorksOut(Operator op, JSValue value, JSValue 
         }
     }
     if (scope.exception()) {
-        scope.clearException();
+        dropPendingException(globalObject(), scope);
         return { };
     }
     value = binaryOperation(globalObject(), static_cast<BinaryOperator>(op), value, right);
     if (scope.exception()) {
-        scope.clearException();
+        dropPendingException(globalObject(), scope);
         return { };
     }
     return value;

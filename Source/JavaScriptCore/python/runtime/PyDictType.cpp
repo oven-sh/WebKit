@@ -180,24 +180,24 @@ static String functionNameForMessage(JSGlobalObject* globalObject, JSValue funct
     auto textOf = [&](JSValue value) -> String {
         JSString* string = str(globalObject, value);
         if (scope.exception()) {
-            scope.clearException();
+            dropPendingException(globalObject, scope);
             return "?"_s;
         }
         String text = string->value(globalObject);
         if (scope.exception()) {
-            scope.clearException();
+            dropPendingException(globalObject, scope);
             return "?"_s;
         }
         return text;
     };
     JSValue qualname = getAttrIfPresent(globalObject, function, rt.names.dQualname());
     if (scope.exception())
-        scope.clearException();
+        dropPendingException(globalObject, scope);
     if (!qualname)
         return textOf(function);
     JSValue module = getAttrIfPresent(globalObject, function, rt.names.dModule());
     if (scope.exception())
-        scope.clearException();
+        dropPendingException(globalObject, scope);
     if (module && !isNone(module)) {
         String moduleName = textOf(module);
         if (moduleName != "builtins"_s)

@@ -74,7 +74,7 @@ static String lineOfProgramText(JSGlobalObject* globalObject, std::span<const ui
     if (!scope.exception())
         result = strValue(text)->value(globalObject);
     if (scope.exception()) {
-        scope.clearException();
+        dropPendingException(globalObject, scope);
         return { };
     }
     return result;
@@ -127,7 +127,7 @@ public:
         auto scope = DECLARE_TOP_EXCEPTION_SCOPE(getVM(m_globalObject));
         if (!failed(scope, codecLoadCharacterNames(m_globalObject)))
             return true;
-        scope.clearException();
+        dropPendingException(m_globalObject, scope);
         return false;
     }
 
@@ -147,7 +147,7 @@ public:
             unknownEncoding = rt.typeOf(exception)->isSubtypeOf(rt.LookupError());
             JSString* message = str(m_globalObject, exception);
             error = scope.exception() ? "encoding problem"_str : message->value(m_globalObject);
-            scope.clearException();
+            dropPendingException(m_globalObject, scope);
             return { };
         }
         // (String::utf8() goes through a Vector with room for three bytes to the unit.)
@@ -432,7 +432,7 @@ static std::optional<int> exitStatusOf(JSGlobalObject* globalObject, JSValue exc
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     JSString* text = str(globalObject, code);
     String message = scope.exception() ? String() : text->value(globalObject);
-    scope.clearException();
+    dropPendingException(globalObject, scope);
     writeToStderr(globalObject, makeString(message, '\n'));
     return 1;
 }

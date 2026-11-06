@@ -6,7 +6,6 @@
 #include "config.h"
 #include "PyCommandLine.h"
 
-#include "FrameTracers.h"
 #include "JSCInlines.h"
 #include "PyAbstract.h"
 #include "PyCodeCache.h"
@@ -1259,7 +1258,7 @@ static String promptText(JSGlobalObject* globalObject, ASCIILiteral name)
         return emptyString();
     JSString* text = str(globalObject, prompt);
     String result = text ? String(text->value(globalObject)) : emptyString();
-    scope.clearException();
+    dropPendingException(globalObject, scope);
     return result;
 }
 
@@ -1271,7 +1270,7 @@ static void flushStandardStreams(JSGlobalObject* globalObject)
         JSValue stream = rt.sysDict()->get(name);
         if (stream && !isNone(stream))
             callMethod(globalObject, stream, rt.names.flush());
-        scope.clearException();
+        dropPendingException(globalObject, scope);
     }
 }
 
@@ -1388,10 +1387,12 @@ std::optional<int> runBasicInteractiveLoop(JSGlobalObject* globalObject)
                     callMethod(globalObject, runner, internString(vm, "run"_s), result);
             }
         }
+        if (vm.hasPendingTerminationException()) [[unlikely]]
+            return 1;
         if (scope.exception()) {
             bool exits = pendingExceptionMatches(globalObject, rt.SystemExit());
             int status = handleUncaughtException(globalObject);
-            if (exits)
+            if (exits || vm.hasPendingTerminationException())
                 return status;
             wasInterrupted |= status == -SIGINT;
         }
@@ -1399,7 +1400,7 @@ std::optional<int> runBasicInteractiveLoop(JSGlobalObject* globalObject)
     }
     if (runner) {
         callMethod(globalObject, runner, internString(vm, "close"_s));
-        scope.clearException();
+        dropPendingException(globalObject, scope);
     }
     // As in CPython: a KeyboardInterrupt that was reported here is what the process dies of in the end.
     if (wasInterrupted)
@@ -1553,7 +1554,7 @@ std::optional<int> runCommandLine(JSGlobalObject* globalObject, JSValue* unfinis
     auto finish = [&] {
         // As in CPython, what a file has written comes before the traceback. After -c and -m it stays in the buffers until the interpreter ends.
         if (runsFile) {
-            SuspendExceptionScope suspended(vm);
+            ExceptionSetAside suspended(globalObject);
             flushStandardStreams(globalObject);
         }
         if (scope.exception())

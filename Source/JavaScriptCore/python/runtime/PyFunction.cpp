@@ -343,7 +343,7 @@ static String qualnameForMessage(JSGlobalObject* globalObject, PyFunction* funct
         String text = strValue(qualname)->value(globalObject);
         if (!scope.exception()) [[likely]]
             return text;
-        scope.clearException();
+        dropPendingException(globalObject, scope);
     }
     return function->codeInfo().qualname;
 }

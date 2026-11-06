@@ -319,7 +319,7 @@ static void warningsShowPlainly(JSGlobalObject* globalObject, JSValue filename, 
     };
     show();
     if (scope.exception())
-        scope.clearException();
+        dropPendingException(globalObject, scope);
 }
 
 static bool warningsCallShow(JSGlobalObject* globalObject, JSValue category, JSValue text, JSValue message, JSValue filename, int lineno, JSValue sourceLine, JSValue source, JSValue module)

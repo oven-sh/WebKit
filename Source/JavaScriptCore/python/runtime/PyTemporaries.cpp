@@ -8,11 +8,11 @@
 
 #include "BytecodeStructs.h"
 #include "CodeBlock.h"
-#include "FrameTracers.h"
 #include "JSCInlines.h"
 #include "PyBuffer.h"
 #include "PyBytecode.h"
 #include "PyBytes.h"
+#include "PyErrors.h"
 #include "PyFunction.h"
 #include "PyGenerator.h"
 #include "PyIO.h"
@@ -691,24 +691,24 @@ void Runtime::releaseGeneratorGoneThrough(JSValue iterator)
 NEVER_INLINE void Runtime::releaseGeneratorLeftHalfWay(JSValue iterator)
 {
     // An exception that was raised on the way waits.
-    std::optional<SuspendExceptionScope> suspended;
+    std::optional<ExceptionSetAside> suspended;
     forEachGeneratorBehind(iterator, [&](PyGenerator* generator) ALWAYS_INLINE_LAMBDA {
         if (!isToBeClosed(generator)) [[likely]]
             return;
         if (!suspended)
-            suspended.emplace(m_vm);
+            suspended.emplace(m_globalObject);
         finalizeGeneratorNow(m_globalObject, generator);
     });
 }
 
 void Runtime::releaseWhatIteratorHad(JSValue held)
 {
-    std::optional<SuspendExceptionScope> suspended;
+    std::optional<ExceptionSetAside> suspended;
     forEachGeneratorIn(held, [&](PyGenerator* generator) {
         if (!isToBeClosed(generator)) [[likely]]
             return;
         if (!suspended)
-            suspended.emplace(m_vm);
+            suspended.emplace(m_globalObject);
         finalizeGeneratorNow(m_globalObject, generator);
     }, 1);
 }

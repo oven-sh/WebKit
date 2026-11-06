@@ -8,7 +8,6 @@
 
 #if !OS(WINDOWS)
 
-#include "FrameTracers.h"
 #include "JSCInlines.h"
 #include "PyBuffer.h"
 #include "PyPosix.h"
@@ -968,7 +967,7 @@ static JSValue socketFinalize(JSGlobalObject* globalObject, JSValue self)
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
     // An exception that is propagating is set aside.
-    SuspendExceptionScope suspended(vm);
+    ExceptionSetAside suspended(globalObject);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     auto* socket = PyRecord::from(self);
     if (socket->number < 0)

@@ -8,7 +8,6 @@
 
 #if !OS(WINDOWS)
 
-#include "FrameTracers.h"
 #include "JSCInlines.h"
 #include "PyExec.h"
 #include <dirent.h>
@@ -1389,7 +1388,7 @@ static JSValue posixScandirIteratorFinalize(JSGlobalObject* globalObject, JSValu
     bool wasRaising = rt.vm().exceptionForInspection();
     {
         // An exception that is propagating is set aside.
-        SuspendExceptionScope suspended(rt.vm());
+        ExceptionSetAside suspended(globalObject);
         auto scope = DECLARE_TOP_EXCEPTION_SCOPE(rt.vm());
         warnAbout(globalObject, rt.ResourceWarning(), makeString("unclosed scandir iterator "_s, reprForMessage(globalObject, self)), 1, self);
         if (scope.exception()) {
