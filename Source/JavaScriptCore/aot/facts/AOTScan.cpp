@@ -889,7 +889,7 @@ static BitVector namesUnderWhichTextIsEvaluatedInScan(const BuiltinTable& builti
     BitVector names;
     for (uint32_t index = 0; index < builtins.builtinCount(); ++index) {
         const Builtin& entry = builtins.at(BuiltinID(index));
-        if (entry.holder && entry.name && builtins.at(builtins.canonicalID(BuiltinID(index))).flags.contains(BuiltinFlag::EvaluatesText) && !builtins.at(entry.holder).flags.contains(BuiltinFlag::IsGlobalObject))
+        if (entry.holder && entry.name && !builtins.at(entry.holder).flags.contains(BuiltinFlag::IsGlobalObject) && builtins.at(builtins.canonicalID(BuiltinID(index))).flags.contains(BuiltinFlag::EvaluatesText))
             names.set(entry.name.index());
     }
     return names;
@@ -899,9 +899,10 @@ class ScanOfBody {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(ScanOfBody);
     WTF_MAKE_NONCOPYABLE(ScanOfBody);
 public:
-    ScanOfBody(const Program& program, Mechanisms mechanisms, const BitVector& textsThatNameFieldsNeverWritten, const BitVector* namesUnderWhichEventsHang = nullptr, const BitVector* bodiesThatSeveralModulesName = nullptr)
+    ScanOfBody(const Program& program, Mechanisms mechanisms, const BitVector& textsThatNameFieldsNeverWritten, const BitVector* namesUnderWhichEventsHang = nullptr, const BitVector* bodiesThatSeveralModulesName = nullptr, const BitVector* namesUnderWhichTextIsEvaluated = nullptr)
         : m_program(program)
         , m_namesUnderWhichEventsHang(namesUnderWhichEventsHang)
+        , m_namesUnderWhichTextIsEvaluated(namesUnderWhichTextIsEvaluated)
         , m_bodiesThatSeveralModulesName(bodiesThatSeveralModulesName)
         , m_textsThatNameFieldsNeverWritten(textsThatNameFieldsNeverWritten)
         , m_walkFollowsConstants(mechanisms.contains(Mechanism::Folding))
@@ -1300,9 +1301,10 @@ private:
 
     const Program& m_program;
     const BitVector* m_namesUnderWhichEventsHang;
-    std::optional<BitVector> m_namesUnderWhichTextIsEvaluated;
+    const BitVector* m_namesUnderWhichTextIsEvaluated;
     const BitVector* m_bodiesThatSeveralModulesName;
     BitVector m_namesListedByThisScan;
+    BitVector m_namesOfEvaluatorsListedByThisScan;
     const BitVector& m_textsThatNameFieldsNeverWritten;
     BitVector m_textsSpelled;
     const bool m_walkFollowsConstants;
@@ -2337,8 +2339,10 @@ void ScanOfBody::noteNameThatMayBecomeText(BuiltinName name)
 {
     if (!name || isLibraryCode(m_program, *m_function))
         return;
-    if (!m_namesUnderWhichTextIsEvaluated)
-        m_namesUnderWhichTextIsEvaluated = namesUnderWhichTextIsEvaluatedInScan(m_program.builtins());
+    if (!m_namesUnderWhichTextIsEvaluated) {
+        m_namesOfEvaluatorsListedByThisScan = namesUnderWhichTextIsEvaluatedInScan(m_program.builtins());
+        m_namesUnderWhichTextIsEvaluated = &m_namesOfEvaluatorsListedByThisScan;
+    }
     if (m_namesUnderWhichTextIsEvaluated->get(name.index()))
         m_summary.textsThatNameEvents.append(m_program.keyOf(name));
 }
@@ -5163,7 +5167,7 @@ const uint32_t* ScanOfBody::readTerminator(const BodyTerminator& terminator, uin
     if (kind == TerminatorKind::SwitchString) {
         m_summary.weightOfOperations += terminator.numberOfTargets() * 2;
         for (StringID written : terminator.as<TerminatorKind::SwitchString>().strings())
-            noteTextThatMayNameEvent(written);
+            noteNameThatMayBecomeText(m_program.strings.builtinName(written));
     } else if (kind == TerminatorKind::Switch)
         m_summary.weightOfOperations += terminator.numberOfTargets() / 2;
     bool mayThrow = false;
@@ -6622,12 +6626,13 @@ ThinSummaries scanBodies(const Program& program, Diagnostics& diagnostics, const
     ThinSummaries summaries(numberOfFunctions, loops);
     BitVector textsThatNameFieldsNeverWritten = findTextsThatNameFieldsNeverWrittenForScan(program);
     BitVector namesUnderWhichEventsHang = namesUnderWhichEventsHangInScan(program.builtins());
+    BitVector namesUnderWhichTextIsEvaluated = namesUnderWhichTextIsEvaluatedInScan(program.builtins());
     BitVector bodiesThatSeveralModulesName = bodiesThatSeveralModulesNameInScan(program);
     Vector<std::unique_ptr<ScanOfBody>> scans(loops.width());
     auto scanOf = [&](unsigned worker) -> ScanOfBody& {
         std::unique_ptr<ScanOfBody>& scan = scans[worker];
         if (!scan)
-            scan = makeUnique<ScanOfBody>(program, mechanisms, textsThatNameFieldsNeverWritten, &namesUnderWhichEventsHang, &bodiesThatSeveralModulesName);
+            scan = makeUnique<ScanOfBody>(program, mechanisms, textsThatNameFieldsNeverWritten, &namesUnderWhichEventsHang, &bodiesThatSeveralModulesName, &namesUnderWhichTextIsEvaluated);
         return *scan;
     };
     forEachIndexInParallel(loops, static_cast<unsigned>((numberOfFunctions + functionsPerTask - 1) / functionsPerTask), [&](unsigned task, unsigned worker) {
