@@ -519,12 +519,17 @@ void Runtime::didMarkAll(SlotVisitor& visitor)
     double duration = m_collectionBegan ? (MonotonicTime::now() - m_collectionBegan).seconds() : 0;
     m_collectionBegan = { };
     // gc.collect() does its own accounting. See gcDisable().
-    if (gc.isCollecting || !gc.isEnabled)
+    if (gc.isCollecting || gc.collectsForItself || !gc.isEnabled)
         return;
     int generation = m_vm.heap.collectionScope() == CollectionScope::Full ? 2 : 0;
     ++gc.stats[generation].collections;
     gc.stats[generation].duration += duration;
-    if (hasCollectionCallbacks()) {
+    // In CPython nothing is collected between "start" and "stop". What comes in between here goes untold: what it finds is called before "stop" like the rest, and a
+    // callback that brings about a collection whenever it is called would otherwise never let the program go on.
+    bool isBeingToldOfOne = std::ranges::any_of(m_callsOwed, [](auto& owed) {
+        return !!owed->collectionBeingToldOf;
+    });
+    if (hasCollectionCallbacks() && !isBeingToldOfOne) {
         m_collectionsToTellOf.append({ generation, duration });
         didQueueCallsFor(m_currentThread, false);
     }

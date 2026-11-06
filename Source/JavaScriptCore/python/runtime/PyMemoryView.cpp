@@ -633,6 +633,7 @@ void Runtime::releaseUnreachableBuffers(bool thorough)
             profiler.setActiveHeapAnalyzer(&reachability);
             m_markingObserver = &reachability;
         }
+        SetForScope collectsForItself(gc.collectsForItself, true);
         m_vm.heap.collectNow(Synchronousness::Sync, thorough ? CollectionScope::Full : CollectionScope::Eden);
         if (isPrecise) {
             m_markingObserver = nullptr;

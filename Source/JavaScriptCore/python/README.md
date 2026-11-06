@@ -827,7 +827,10 @@ so the aim is that everything Python *guarantees* holds, and that what it merely
 - **The engine collects when it sees fit.** `gc.disable()`, `set_threshold()` and `freeze()` do not change that: the collector is the
   only thing that frees memory. A collection of the engine's own is told to `gc.callbacks` and counted in `get_stats()` at the next
   safe point: "start", then what it found (callbacks of weak references, finalizers), then "stop"; a collection of the young
-  generation as generation 0, a full one as generation 2. Not while the collector is "disabled".
+  generation as generation 0, a full one as generation 2. Not while the collector is "disabled". Nor is the program told of one that comes between "start" and "stop", in whichever thread: it is
+  counted, and what it finds is called before "stop" with the rest. In CPython nothing is collected in between, and a callback that brings about a collection whenever it is called would never
+  let the program go on. Where the runtime collects as a means to an end and CPython collects nothing (`get_objects()`, `get_referrers()`, buffers that nothing can reach any more), that is
+  neither told nor counted (`gc.collectsForItself`).
 - **A thread that waits collects.** A program may wait for what only a finalizer brings about: it has dropped a response without
   closing it, and waits for a server in another thread that waits for the end of the connection. A thread that has waited for
   50 ms collects and finalizes (`Threads::collectWhileIdle`), then less and less often; so does, at once, one whose wait nothing

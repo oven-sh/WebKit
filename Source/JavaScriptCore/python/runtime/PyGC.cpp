@@ -582,7 +582,10 @@ static JSValue gcGetObjects(JSGlobalObject* globalObject, JSValue generation)
     }
     // What is dead but has not been swept yet must not come back.
     vm.clearLastException();
-    vm.heap.collectNow(Synchronousness::Sync, CollectionScope::Full);
+    {
+        SetForScope collectsForItself(rt.gc.collectsForItself, true);
+        vm.heap.collectNow(Synchronousness::Sync, CollectionScope::Full);
+    }
     MarkedArgumentBuffer objects;
     {
         HeapView view(globalObject);
@@ -657,7 +660,10 @@ static JSValue gcGetReferrers(JSGlobalObject* globalObject, const CallArgs& args
     {
         vm.clearLastException();
         ReferrerListener listener(args.positional());
-        listener.listen(vm);
+        {
+            SetForScope collectsForItself(runtime(globalObject).gc.collectsForItself, true);
+            listener.listen(vm);
+        }
         UncheckedKeyHashSet<JSCell*> seen;
         if (!listener.found().isEmpty()) {
             HeapView view(globalObject);

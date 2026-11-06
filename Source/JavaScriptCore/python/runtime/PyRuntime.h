@@ -769,6 +769,8 @@ public:
         bool isEnabled { true };
         bool isCollecting { false }; // gc.collect() is at work,
         uint32_t collectingThread { noThread }; // in this thread.
+        // The runtime collects as a means to an end (to tell what is alive, or who refers to whom) where CPython collects nothing: that is in no statistics, and gc.callbacks do not hear of it.
+        bool collectsForItself { false };
         int debugFlags { 0 };
         std::array<int, 3> thresholds { 2000, 10, 10 };
         std::array<CollectionStats, 3> stats;
