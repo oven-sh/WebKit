@@ -50,6 +50,7 @@ bool tryEnsure(JSGlobalObject*);
 void runtimeIsBeginning(Runtime&);
 // Its built-in types are there, bare: those that C names by symbols are told so.
 void didMakeTypes(Runtime&);
+// By its thread, or by the collector with the world stopped. More than once does no harm.
 void runtimeIsEnding(Runtime&);
 // The collector of another VM asks too, on a thread of its own, while this one may be ending: the pointers are compared and never followed.
 extern std::atomic<const Runtime*> s_runtimeItIsFor;

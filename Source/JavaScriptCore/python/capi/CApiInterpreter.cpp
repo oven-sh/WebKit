@@ -172,6 +172,12 @@ bool tryEnsure(JSGlobalObject* globalObject)
     return true;
 }
 
+// The collector calls this too, with the world stopped, for the interpreter of a realm whose global object it has found dead: no cell is made here, no lock is taken, nothing of the
+// program's runs. From then on the global object and all that only it held are dead, though not swept, and C that JS calls on that thread could still come in.
+//  - Nobody is in the middle of a call then: a function that has entered has the global object in its Entry, on the stack, and that marks it.
+//  - An object that C owns holds the global object by its Structure, so the realm does not die while C owns one. What C may still own are cells that belong to no realm, a str or a
+//    large int. They die when nothing else holds them, and nothing follows C's pointers to them any more: every function refuses.
+//  - The indicator of a thread may still hold a pointer. Nothing follows that either: see errorIndicator().
 void runtimeIsEnding(Runtime& runtime)
 {
     if (!isFor(runtime))

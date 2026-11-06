@@ -245,6 +245,10 @@ ALWAYS_INLINE Handle newReference(JSValue value)
 // knows as the error indicator is not the VM's pending exception: it is a reference of its own, one for each thread, which is counted as
 // C's references are and is kept alive by that. An exception moves from one to the other where control does: see Entry, throwWhatCRaised().
 // What ends the program (a termination) is never in the indicator. It stays pending, and while it is, every function fails.
+// WHEN THE INTERPRETER ENDS nobody clears the indicators: they are the threads' own. What is left in one is a pointer to a cell that nothing holds any more. It is never followed: whoever
+// reads it to look at the object has asked who calls, and is refused from then on (PyErr_Occurred(), PyErr_ExceptionMatches(), PyErr_GetRaisedException()); whoever has called C looks only
+// if its interpreter is the one that the API is set up for (throwWhatCRaised() and the like), which none is any more; and to put another in its place gives the old one to
+// release(), which looks at its bits and at s_interpreterWhoseCountsFall, which is null. The API never comes back, so no later interpreter can take the pointer for one of its own.
 Handle& errorIndicator();
 // Takes over the reference. NULL: none is set any more.
 void setErrorIndicator(Handle);

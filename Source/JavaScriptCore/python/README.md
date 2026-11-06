@@ -1463,7 +1463,10 @@ program (a termination) is never put in the indicator: it stays pending, and whi
 **One interpreter of a process has the API: the first that there is** (`CApi::runtimeIsBeginning()`, in `Runtime`'s constructor). The functions are not told for whom they are called,
 and a symbol such as `PyLong_Type` stands for one object. Nothing that a program does changes whose the API is: for `bun main.py` it is main's, whatever its Workers do. In any
 other interpreter what needs the API is an `ImportError`; and when that one has ended nobody has the API any more, for what was loaded stays loaded, with pointers into its heap.
-(CPython's extensions have to say that they can serve more than one interpreter, and few do.)
+(CPython's extensions have to say that they can serve more than one interpreter, and few do.) It ends when its `Runtime` does (`runtimeIsEnding()`): for the interpreter of a realm to which
+nothing refers any more that is in the collection that finds the global object dead, with the world stopped, not when that cell is swept. C that JS calls on that thread could come in
+meanwhile. Nobody is in the middle of a call then (a function that has entered has the global object on its stack), and while C owns an object the realm does not die (the object holds it by
+its Structure). What C may still own are cells of no realm, a str or a large int, and what a thread's indicator still points to: nothing follows those pointers any more, for every function refuses.
 
 It is **set up** when that interpreter first has a use for it (`ensure()`, `tryEnsure()`): before it loads a library with `dlopen()`, because what a library does as it is loaded may read
 `PyExc_ValueError` without a call, and may call; before a function of C's in a `PyDLL` is called (after its arguments have been converted: a call that fails before it gets to C fails as
