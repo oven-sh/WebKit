@@ -350,7 +350,7 @@ UnlinkedFunctionExecutable* Compiler::compileCodeAnew(Unit* parent, const CodeSp
 
     if (!scope->isGenerator && !scope->isCoroutine) {
         return generate(parentSource, source, SourceParseMode::MethodMode, info.copyRef(), parameterCount, false, [&](BytecodeGenerator& generator) {
-            // (Not on the stack: functions are compiled in functions.)
+            // (Not on the stack: functions are compiled in functions. compile() holds off the collector.)
             auto unit = makeUnique<Unit>(*this, parent, spec, generator, info.get(), source, Unit::Part::Whole);
             unit->emitPrologue();
             emitBody(*unit);
