@@ -1236,6 +1236,7 @@ void Unit::emitPrologue()
         // throw() into one that has not started: it starts, and this is as far as it gets. BytecodeGeneratorification puts the switch of
         // the generator in the place of the jump, so that one which is started in the usual way runs nothing for this.
         Ref<Label> start = g.newLabel();
+        g.pythonGeneratorStartsHere();
         g.emitPyJumpIfFalse(g.generatorResumeModeRegister(), start.get());
         callRuntimeForEffect(RuntimeFunction::ThrowIntoGenerator, { g.generatorValueRegister() });
         // In CPython all of a generator is in a handler, of no line, which an exception that leaves it comes through. Tools are told so,

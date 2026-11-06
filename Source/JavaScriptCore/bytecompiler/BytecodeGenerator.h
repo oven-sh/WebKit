@@ -469,6 +469,9 @@ namespace JSC {
         OpcodeID opcodeOfLastInstruction() { return m_writer.position() ? m_lastInstruction->opcodeID() : op_nop; }
         // The compiler has found an error and given up. What there is has jumps that lead nowhere, and is not for anything to look at.
         void abandonPythonCode() { m_pythonCodeIsAbandoned = true; }
+        // The body of a generator: the instruction that comes next is at the end of what sets up the frame, and BytecodeGeneratorification puts the switch in its place.
+        void pythonGeneratorStartsHere() { m_pythonGeneratorStartPoint = m_writer.position(); }
+        unsigned pythonGeneratorStartPoint() const { return m_pythonGeneratorStartPoint; }
 
         VM& vm() const { return m_vm; }
         ParserArena& parserArena() const LIFETIME_BOUND { return m_scopeNode->parserArena(); }
@@ -1614,6 +1617,7 @@ namespace JSC {
         WaysToPythonLabel m_branchesToLastPythonLabel;
         size_t m_pythonMarksBeforeLastLabel { 0 };
         bool m_pythonCodeIsAbandoned { false };
+        unsigned m_pythonGeneratorStartPoint { 0 };
         UncheckedKeyHashMap<Label*, uint64_t> m_pythonVariablesBoundAtLabels; // For the labels still to be emitted.
         SegmentedVector<UsingScope, 8> m_usingScopeStack;
         unsigned m_yieldPoints { 0 };

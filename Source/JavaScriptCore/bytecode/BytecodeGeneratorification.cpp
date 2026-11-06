@@ -93,13 +93,6 @@ public:
                 break;
             }
 
-            case op_py_jfalse: {
-                // The first is at the end of what sets up the frame: see Python::Unit::emitPrologue().
-                if (!m_pythonStartPoint)
-                    m_pythonStartPoint = instruction.offset();
-                break;
-            }
-
             case op_py_generator_registers: {
                 // The one that is there already takes the values of the parameters from the first slots.
                 auto bytecode = instruction->as<OpPyGeneratorRegisters>();
@@ -205,7 +198,6 @@ private:
     BytecodeGenerator& m_bytecodeGenerator;
     VirtualRegister m_firstPythonParameter;
     unsigned m_pythonParameterCount { 0 };
-    std::optional<JSInstructionStream::Offset> m_pythonStartPoint;
     JSInstructionStream::Offset m_enterPoint;
     std::optional<GeneratorFrameData> m_generatorFrameData;
     UnlinkedCodeBlockGenerator* m_codeBlock;
@@ -371,7 +363,8 @@ void BytecodeGeneratorification::run()
         JSInstructionStream::Offset start = nextToEnterPoint.offset();
         JSInstructionStream::Offset other = start;
         if (isPython) {
-            auto startPoint = m_instructions.at(*m_pythonStartPoint);
+            auto startPoint = m_instructions.at(m_bytecodeGenerator.pythonGeneratorStartPoint());
+            RELEASE_ASSERT(startPoint->is<OpPyJfalse>());
             extractStoredJumpTargetsForInstruction(m_codeBlock, startPoint, [&](int32_t relative) {
                 start = startPoint.offset() + relative;
             });
@@ -391,7 +384,7 @@ void BytecodeGeneratorification::run()
             rewriter.insertFragmentBefore(nextToEnterPoint, [&] (BytecodeRewriter::Fragment& fragment) {
                 fragment.appendInstruction<OpPyGeneratorEnter>();
             });
-            rewriter.replaceBytecodeWithFragment(m_instructions.at(*m_pythonStartPoint), emitSwitch);
+            rewriter.replaceBytecodeWithFragment(m_instructions.at(m_bytecodeGenerator.pythonGeneratorStartPoint()), emitSwitch);
         } else
             rewriter.insertFragmentBefore(nextToEnterPoint, emitSwitch);
     }
