@@ -760,8 +760,8 @@ bool Unit::isReplacedByCopy(const Last& isLast, unsigned* jumpItStaysInFrontOf)
 bool Unit::canBranchTo(const Last& isLast)
 {
     ASSERT(isLast.kind == Last::BeforeJump);
-    // CPython's compiler has a branch to a jump go where the jump goes only if the jump is of that kind.
-    if (isLast.jumpIs < JumpIs::ToldOf)
+    // CPython's compiler has a branch to a jump go where the jump goes only if the jump is of that kind, and not because of the jump it leads to.
+    if (isLast.firstJumpIs < JumpIs::ToldOf)
         return false;
     for (size_t i = isLast.blockCount; i < m_blocks.size(); ++i) {
         switch (m_blocks[i].kind) {

@@ -36,6 +36,7 @@ struct Last {
     bool isBehindJump { false };
     unsigned jumpsBefore { 0 }; // How many such jumps, one leading to the next.
     JumpIs jumpIs { JumpIs::Hidden }; // BeforeJump
+    JumpIs firstJumpIs { JumpIs::Hidden }; // What the first of the jumps is by itself.
     bool isInPlaceOfJump { false }; // What is left like this would be a jump to the jump, and not the jump itself.
     // BeforeJump, for Unit::isReplacedByCopy(): how many instructions come after the jump if the function ends with them, and how many each of the
     // jumps comes with that lead one to the next, the last of them first. (More than there is room for: nothing is copied.)
@@ -61,6 +62,7 @@ struct Last {
         Last result = inPlaceOfJump(first);
         result.isInPlaceOfJump = false;
         result.isBehindJump = true;
+        result.firstJumpIs = first;
         if (result.jumpsBefore < maxJumps) {
             result.instructionsOfJumps[result.jumpsBefore] = instructions;
             result.targetsOfJumps[result.jumpsBefore] = blockCountOfJump <= UINT16_MAX && tryDepthOfJump <= UINT16_MAX ? targetOfJump : nullptr;
