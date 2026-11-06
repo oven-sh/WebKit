@@ -2425,13 +2425,28 @@ static bool leavesHandler(CodeBlock* codeBlock, BytecodeIndex index)
     return instruction->opcodeID() == op_py_runtime && static_cast<RuntimeFunction>(instruction->as<OpPyRuntime>().m_function) == RuntimeFunction::ReraiseOutOfHandler;
 }
 
-// Where the handlers begin: a place of no line, as the handler around a handler is.
-static unsigned whereHandlersBegin(CodeBlock* codeBlock)
+// Where the handlers begin: a place of no line, as the handler around a handler is. (There is a handler: an exception is leaving it.)
+static unsigned whereHandlersBegin(UnlinkedCodeBlock* code)
 {
+    ASSERT(code->numberOfExceptionHandlers());
     unsigned result = std::numeric_limits<unsigned>::max();
-    for (unsigned i = 0; i < codeBlock->numberOfExceptionHandlers(); ++i)
-        result = std::min<unsigned>(result, codeBlock->exceptionHandler(i).target);
+    for (size_t i = 0; i < code->numberOfExceptionHandlers(); ++i)
+        result = std::min<unsigned>(result, code->exceptionHandler(i).target);
     return result;
+}
+
+unsigned CodeMonitor::whereHandlersBegin()
+{
+    if (!m_whereHandlersBegin)
+        m_whereHandlersBegin = Python::whereHandlersBegin(m_code.get());
+    return m_whereHandlersBegin;
+}
+
+static unsigned whereHandlersBegin(CallFrame* callFrame)
+{
+    if (CodeMonitor* monitor = codeInfoOf(callFrame).monitor.get())
+        return monitor->whereHandlersBegin();
+    return whereHandlersBegin(callFrame->codeBlock()->unlinkedCodeBlock());
 }
 
 // In CPython these are three steps: the exception is raised again; a handler around the handler catches it, and puts back what was being
@@ -2440,7 +2455,7 @@ JSValue Monitoring::exceptionLeavesHandler(JSGlobalObject* globalObject, CallFra
 {
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(m_runtime.vm());
     for (unsigned event : { Event::Reraise, Event::ExceptionHandled }) {
-        unsigned offset = event == Event::Reraise ? callFrame->bytecodeIndex().offset() : whereHandlersBegin(callFrame->codeBlock());
+        unsigned offset = event == Event::Reraise ? callFrame->bytecodeIndex().offset() : whereHandlersBegin(callFrame);
         if (failed(scope, exceptionEvent(globalObject, callFrame, offset, event, exception))) {
             if (m_runtime.vm().isTerminationException(scope.exception()))
                 return { };
@@ -2579,7 +2594,7 @@ JSValue exceptionIsRaised(JSGlobalObject* globalObject, JSValue exception, CallF
         if (!isRaisedAgain)
             return tellOfException(globalObject, exception, callFrame, index.offset(), Event::Raise);
         // (By the handler around the handler: see Monitoring::exceptionLeavesHandler().)
-        return tellOfException(globalObject, exception, callFrame, leavesHandler(codeBlock, index) ? whereHandlersBegin(codeBlock) : index.offset(), Event::Reraise);
+        return tellOfException(globalObject, exception, callFrame, leavesHandler(codeBlock, index) ? whereHandlersBegin(callFrame) : index.offset(), Event::Reraise);
     };
     if (!isAwake) {
         if (!isWanted)
@@ -2624,7 +2639,7 @@ JSValue exceptionStaysOrLeaves(JSGlobalObject* globalObject, JSValue exception, 
                 offset = whereHandlerBegins(codeBlock, offset);
         }
     } else if (leavesHandler(codeBlock, index))
-        offset = whereHandlersBegin(codeBlock);
+        offset = whereHandlersBegin(callFrame);
     // In CPython all of a generator is in a handler, which makes a RuntimeError of a StopIteration and raises anything else again.
     if (!isCaught && codeInfoOf(callFrame).isGeneratorLike() && isPastStart(codeBlock->unlinkedCodeBlock()->pythonMarks(), index.offset())) {
         // It is of no line: the compiler has left a place for it right before the code of the program.

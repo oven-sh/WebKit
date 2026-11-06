@@ -170,6 +170,7 @@ public:
     int lineAt(unsigned offset) const;
     // Several lines may begin at an instruction: `while True:` and the first of its body.
     int firstLineAt(unsigned offset) const;
+    unsigned whereHandlersBegin();
 
     uint32_t localEvents(unsigned tool) const;
     void setLocalEvents(unsigned tool, uint32_t events);
@@ -233,6 +234,7 @@ private:
     // For each byte of the instructions: the index of the place there, plus one, or 0. Empty: there are too many.
     Vector<uint16_t> m_indexOfPointAt;
     unsigned m_generation { 0 };
+    unsigned m_whereHandlersBegin { 0 }; // 0: not asked for yet.
     Vector<LineStart> m_lineStarts;
     size_t m_sizeToldToCollector { 0 };
     std::array<uint8_t, Event::ungroupedCount> m_localTools { };
