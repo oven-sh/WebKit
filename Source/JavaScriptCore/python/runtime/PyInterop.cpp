@@ -1109,7 +1109,8 @@ static JSValue jsObjectContains(JSGlobalObject* globalObject, JSValue self, JSVa
             return jsBoolean(isIn);
         }
     }
-    if (iteratesInPython) [[unlikely]] {
+    // (A symbol is no item, here or below: `js.Symbol.iterator in o` is the `in` of JS, as o[js.Symbol.iterator] is its read.)
+    if (iteratesInPython && !key.isSymbol()) [[unlikely]] {
         JSValue iterator = getIter(globalObject, self);
         RETURN_IF_EXCEPTION(scope, { });
         while (true) {
@@ -1123,7 +1124,6 @@ static JSValue jsObjectContains(JSGlobalObject* globalObject, JSValue self, JSVa
                 return jsBoolean(true);
         }
     }
-    // (A symbol is no item there: `js.Symbol.iterator in o` is the `in` of JS, as o[js.Symbol.iterator] is its read.)
     if (iterates && !key.isSymbol()) {
         IterationRecord iteration = iteratorForIterable(globalObject, object, iterates);
         RETURN_IF_EXCEPTION(scope, { });
