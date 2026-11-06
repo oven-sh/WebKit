@@ -1505,7 +1505,8 @@ function of a `CDLL` that got in because no other thread wanted the GIL: CPython
 `dlopen()` or `dlclose()`, as in CPython. Code that
 returns a `py_object` returns a reference with it: a function of C's does, and the reference is given up once the object is in hand, or when the call ends in another way; a callback
 does, and C owns what it gets (a prototype over a Python callable that is called from Python does both). Whether a reference goes with it depends on whose the code is, the
-caller's interpreter for C's and the callback's own for a callback, and on nothing that changes with time.
+caller's interpreter for C's and the callback's own for a callback, and on nothing that changes with time. For a callback it is also the callback's own prototype that says whether the result is
+an object: one that returns a number, called by its address with a prototype that says `py_object`, gives no reference with the number. (In CPython that caller gives up a reference that nobody gave.)
 `ctypes`' own functions (`string_at()`, `cast()`) are no code in that sense: nothing is counted. `_ctypes.Py_INCREF()` and
 `Py_DECREF()` count in the same table. In an interpreter that the API is not for, C can own nothing: `Py_INCREF()` keeps a table of its own, and what a callback returns lives while the
 program holds it.

@@ -446,19 +446,22 @@ void giveBackReference(uint64_t bits)
     release(interpreter(), std::bit_cast<Handle>(static_cast<uintptr_t>(bits)));
 }
 
-// The caller may be another interpreter of the VM. (Not one of another VM: a callback that is called on a thread of another VM's is not run, and returns NULL.)
+// The caller may be another interpreter of the VM. (Not one of another VM: a callback that is called on a thread of another VM's is not run, and returns NULL.) So it has not asked
+// whether the API is set up. While it is not, nothing is counted, and no reference has come with anything.
 void takeOverReference(uint64_t bits)
 {
     Handle handle = std::bit_cast<Handle>(static_cast<uintptr_t>(bits));
     JSCell* cell = countedCell(handle);
     if (!cell)
         return;
-    Interpreter& current = interpreter();
-    ASSERT(current.vm.currentThreadIsHoldingAPILock());
+    Interpreter* current = s_interpreter.load(std::memory_order_relaxed);
+    if (!current) [[unlikely]]
+        return;
+    ASSERT(current->vm.currentThreadIsHoldingAPILock());
     // Where the call has ended otherwise than with a result, nobody has looked at the bits. What is in the table is a cell, and lives.
-    if (current.counts.get(cell)) [[likely]] {
+    if (current->counts.get(cell)) [[likely]] {
         didGetHolder(cell, Holder::Program);
-        release(current, handle);
+        release(*current, handle);
     }
 }
 

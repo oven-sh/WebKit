@@ -322,7 +322,7 @@ public:
     unsigned flags { 0 };
     void* code { nullptr };
     int slot { -1 }; // For whatever made the code.
-    bool givesReference { false }; // With an object that it returns: its interpreter is the one whose references are counted (CApi::isFor()).
+    bool givesReference { false }; // With its result: that is an object, by the prototype it was made with, and its interpreter is the one whose references are counted (CApi::isFor()).
     JSGlobalObject* globalObject { nullptr };
     WriteBarrier<Unknown> callable;
     WriteBarrier<PyTuple> argTypes;

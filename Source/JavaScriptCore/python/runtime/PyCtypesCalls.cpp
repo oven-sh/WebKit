@@ -574,7 +574,8 @@ JSValue callFunction(JSGlobalObject* globalObject, void* function, PyTuple* argu
         // A function of a PyDLL may call the C API, if it is C's: the prototype of a callback has the flag too.
         if ((flags & FunctionPythonAPI) && !isCallback && failed(scope, CApi::ensure(globalObject)))
             return { };
-        // Code that returns an object returns a reference with it. C's does, and so does a callback, if its interpreter counts (runCallback()).
+        // Code that returns an object returns a reference with it. C's does, and so does a callback, if its interpreter counts (runCallback()). What counts there is the prototype that the
+        // callback was made with, not the one that it is called by here: if that says "a number", no reference comes with the number, whatever this caller takes it for.
         returnsReference = returnsObject && (isCallback ? callbackGivesReference : CApi::tryEnsure(globalObject));
         // With more arguments than argtypes, the rest are those of a variadic function.
         unsigned fixedCount = converterCount && count > converterCount ? converterCount : count;
@@ -610,7 +611,6 @@ static PyCThunk* makeThunk(JSGlobalObject* globalObject, JSValue callable, JSVal
     thunk->callable.set(vm, thunk, callable);
     thunk->argTypes.set(vm, thunk, argTypes);
     thunk->globalObject = globalObject;
-    thunk->givesReference = CApi::isFor(runtime(globalObject));
     if (resultType && !isNone(resultType)) {
         PyCTypeInfo* info = infoOf(globalObject, resultType);
         if (!info || !info->accessor) {
@@ -618,6 +618,7 @@ static PyCThunk* makeThunk(JSGlobalObject* globalObject, JSValue callable, JSVal
             return nullptr;
         }
         thunk->resultType.set(vm, thunk, resultType);
+        thunk->givesReference = info->accessor.code == Code::Object && CApi::isFor(runtime(globalObject));
     }
     if (failed(scope, allocateCallbackCode(globalObject, thunk)))
         return nullptr;
@@ -703,7 +704,7 @@ void runCallback(PyCThunk* thunk, void** arguments, void* resultMemory)
         return;
     }
     store(static_cast<uint8_t*>(resultMemory), info->accessor, packed, info->size);
-    if (info->accessor.code == Code::Object && thunk->givesReference && CApi::tryEnsure(globalObject)) {
+    if (thunk->givesReference && CApi::tryEnsure(globalObject)) {
         uint64_t bits;
         memcpy(&bits, resultMemory, sizeof(bits));
         CApi::giveReference(bits);
