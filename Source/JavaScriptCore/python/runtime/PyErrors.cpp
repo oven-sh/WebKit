@@ -125,11 +125,19 @@ JSValue raiseExceptionThrownIntoGenerator(JSGlobalObject* globalObject, ThrowSco
     return { };
 }
 
+// What came of calling `type`. A __new__ of the program's may have handed back an exception of another type, one that it has had for long.
+static JSValue raiseResultOfCalling(JSGlobalObject* globalObject, ThrowScope& scope, PyType* type, PyException* exception)
+{
+    if (exception->type() != type) [[unlikely]]
+        return raiseException(globalObject, scope, exception);
+    return raiseNewException(globalObject, scope, exception);
+}
+
 JSValue raise(JSGlobalObject* globalObject, ThrowScope& scope, PyType* type, const String& message)
 {
     PyException* exception = newException(globalObject, type, message);
     RETURN_IF_EXCEPTION(scope, { });
-    return raiseNewException(globalObject, scope, exception);
+    return raiseResultOfCalling(globalObject, scope, type, exception);
 }
 
 JSValue raiseUnlessTooLong(JSGlobalObject* globalObject, ThrowScope& scope, PyType* type, String&& message)
@@ -143,7 +151,7 @@ JSValue raiseWithArgs(JSGlobalObject* globalObject, ThrowScope& scope, PyType* t
 {
     PyException* exception = newException(globalObject, type, std::span<const JSValue> { args.begin(), args.size() });
     RETURN_IF_EXCEPTION(scope, { });
-    return raiseNewException(globalObject, scope, exception);
+    return raiseResultOfCalling(globalObject, scope, type, exception);
 }
 
 JSValue raiseKeyError(JSGlobalObject* globalObject, ThrowScope& scope, JSValue key)

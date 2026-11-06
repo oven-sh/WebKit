@@ -94,19 +94,47 @@ static ALWAYS_INLINE bool isNative(JSValue method, JSValue (*function)(JSGlobalO
     return native && native->isVariadicWithSelf(function);
 }
 
+// (Not any function written in C++ that is found under the name: BaseException.add_note reads self.__notes__, which may be a property.)
+static ALWAYS_INLINE bool isInitOfBuiltinType(PyNativeFunction* native)
+{
+    return native && native->kind() == NativeKind::SlotWrapper && native->def().name == "__init__"_s;
+}
+
+static ALWAYS_INLINE bool isInitializedByBaseException(PyType* type)
+{
+    JSValue init = type->lookup(Special::Init);
+    if (isNative(init, baseExceptionInit)) [[likely]]
+        return true;
+    // A type that cannot be written to has an __init__ written in C++ that applies to it. Anything else was put into a dict behind the back of a type, which CPython
+    // never sees. Nor must this: it would be refused with an exception, which is made here, and refused in its turn.
+    if (type->isHeapType() || !type->isImmutable())
+        return false;
+    auto* native = PyNativeFunction::tryFrom(init);
+    if (!isInitOfBuiltinType(native))
+        return true;
+    // (object's is none of theirs either: BaseException has one.)
+    PyType* owner = native->ownerType();
+    return !owner->base() || !type->isSubtypeOf(owner);
+}
+
 PyException* newException(JSGlobalObject* globalObject, PyType* type, std::span<const JSValue> args)
 {
     // Most types of exceptions have the __new__ and the __init__ of BaseException. Then this is what comes of calling the type, and
     // nothing of the program's would be run. (One of them is RecursionError, which is made where the stack is as good as used up: a call would
     // find that out in its turn, and raise another.)
     Runtime& rt = runtime(globalObject);
-    if (type->type() == rt.typeType() && type->isMadeBy(baseExceptionNew) && isNative(type->lookup(Special::Init), baseExceptionInit)) [[likely]] {
+    if (type->type() == rt.typeType() && type->isMadeBy(baseExceptionNew) && isInitializedByBaseException(type)) [[likely]] {
         PyException* exception = PyException::create(rt.vm(), rt.structure<PyException>(), type);
         exception->setArgs(rt.vm(), PyTuple::create(globalObject, args));
         return exception;
     }
+    auto scope = DECLARE_THROW_SCOPE(rt.vm());
     JSValue result = call(globalObject, type, CallArgs(args));
-    return result ? PyException::from(result) : nullptr;
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    if (auto* exception = PyException::tryFrom(result)) [[likely]]
+        return exception;
+    raiseTypeError(globalObject, scope, "calling "_s, reprForMessage(globalObject, type), " should have returned an instance of BaseException, not "_s, typeName(globalObject, result));
+    return nullptr;
 }
 
 PyException* newException(JSGlobalObject* globalObject, PyType* type, const String& message)
@@ -976,7 +1004,7 @@ bool isMadeWithoutCodeOfTheProgram(JSGlobalObject* globalObject, PyType* type)
 {
     if (!type->has(TypeFlag::Heap) && !type->has(TypeFlag::Mutable)) [[likely]]
         return true;
-    return type->type() == runtime(globalObject).typeType() && type->maker() && PyNativeFunction::is(type->lookup(Special::Init)) && !type->lookup(Special::Del);
+    return type->type() == runtime(globalObject).typeType() && type->maker() && isInitOfBuiltinType(PyNativeFunction::tryFrom(type->lookup(Special::Init))) && !type->lookup(Special::Del);
 }
 
 void raiseStatement(JSGlobalObject* globalObject, JSValue exception, JSValue cause, JSValue callee)
