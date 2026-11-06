@@ -59,8 +59,6 @@ static JSValue posixStatResultNew(JSGlobalObject* globalObject, JSValue cls, con
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue result = structSeqNew(globalObject, cls, args);
     RETURN_IF_EXCEPTION(scope, { });
-    if (PyType::from(cls) != posixStatResultType(globalObject)) [[unlikely]]
-        return result;
     PyTuple* tuple = PyTuple::from(result);
     JSValue values[posixStatResultFieldCount];
     for (unsigned i = 0; i < posixStatResultFieldCount; ++i)

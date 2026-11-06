@@ -35,7 +35,7 @@ inline PyTuple* makeStructSeq(JSGlobalObject* globalObject, PyType* type, std::i
 // type(sequence, dict): the __new__ of the types, for one that has something to add to it.
 JSValue structSeqNew(JSGlobalObject*, JSValue type, const CallArgs&);
 // The value of a field, by its index among all the fields. None if the tuple has no such field: an instance need not have been made by its type
-// (tuple.__new__, once the type has lost its own; __class__). Whoever reads the items of one that a program hands it asks this.
+// (tuple.__new__, once the program has written a __new__ of its own into the type). Whoever reads the items of one that a program hands it asks this.
 JSValue structSeqField(JSGlobalObject*, PyTuple*, unsigned index);
 
 } // namespace Python

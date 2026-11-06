@@ -69,7 +69,6 @@ PyTuple* makeStructSeq(JSGlobalObject* globalObject, PyType* type, std::span<con
 {
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
-    // (The __new__ of one of these types can be written into another.)
     StructSeqFields fields = fieldsOf(globalObject, type);
     if (!fields || values.size() != fields.count()) [[unlikely]] {
         raiseIsNoStructSeq(globalObject, type, "n_fields"_s);
@@ -90,12 +89,8 @@ JSValue structSeqNew(JSGlobalObject* globalObject, JSValue cls, const CallArgs& 
     auto scope = DECLARE_THROW_SCOPE(vm);
     PyType* type = PyType::from(cls);
     StructSeqFields fields = fieldsOf(globalObject, type);
-    // A class that only names one of these types. It is made by what it inherits, as in CPython.
-    if (!fields) [[unlikely]] {
-        if (!isLaidOutAs(type, runtime(globalObject).tupleType()))
-            return raiseTypeError(globalObject, scope, "cannot create '"_s, type->nameInMessages(), "' instances"_s);
-        RELEASE_AND_RETURN(scope, tupleNew(globalObject, cls, args));
-    }
+    if (!fields) [[unlikely]]
+        RELEASE_AND_RETURN(scope, raiseIsNoStructSeq(globalObject, type, "n_fields"_s));
     // Whatever the type, the messages about the arguments call it "structseq".
     static constexpr ASCIILiteral keywords[] = { "sequence"_s, "dict"_s };
     JSValue arguments[std::size(keywords)];
