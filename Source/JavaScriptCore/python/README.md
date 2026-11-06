@@ -1504,8 +1504,9 @@ caller's interpreter for C's and the callback's own for a callback, and on nothi
 program holds it.
 
 **`PyTuple_SetItem()`** writes only into a tuple that C is filling. CPython asks for a reference count of 1, which here nobody knows; what is known is asked: `PyTuple_New()` has made
-the tuple (a flag in it), and C owns exactly one reference to it. Into any other it is a `SystemError`, as there. What passes here and not there is a tuple that C has shown to somebody
-who kept it. The hash that the tuple has kept is forgotten (CPython 3.15 goes on answering with it).
+the tuple, C has not given it away with a reference since (as the result of a call, or to a function that steals the reference: `giveAway()`), and C owns exactly one reference to it. The
+first two are a flag beside the count, which goes when the count does. Into any other tuple it is a `SystemError`, as there. What passes here and not there is a tuple that C has shown to
+somebody who kept it, without giving up a reference (`PyList_Append()`). The hash that the tuple has kept is forgotten (CPython 3.15 goes on answering with it).
 
 ## decimal
 

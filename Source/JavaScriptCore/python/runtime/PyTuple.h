@@ -52,10 +52,6 @@ public:
     int64_t cachedHash() const { return m_hash; }
     void setCachedHash(int64_t hash) { m_hash = hash; }
 
-    // The one kind of tuple that is written to after it has been made: PyTuple_New() of the C API makes it, and PyTuple_SetItem() fills it.
-    bool isFilledByC() const { return m_isFilledByC; }
-    void setIsFilledByC() { m_isFilledByC = true; }
-
     static constexpr ptrdiff_t offsetOfLength() { return OBJECT_OFFSETOF(PyTuple, m_length); }
     static constexpr ptrdiff_t offsetOfItems() { return sizeof(PyTuple); }
 
@@ -69,7 +65,6 @@ protected:
     const WriteBarrier<Unknown>* items() const { return storageBehind<const WriteBarrier<Unknown>>(this); }
 
     unsigned m_length;
-    bool m_isFilledByC { false };
     int64_t m_hash { -1 };
 };
 

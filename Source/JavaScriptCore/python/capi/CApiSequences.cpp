@@ -39,9 +39,10 @@ PY_CAPI Handle PyTuple_New(ssize_t length)
     }
     // (There is one empty tuple.)
     PyTuple* tuple = PyTuple::create(entry.globalObject, static_cast<unsigned>(length));
-    if (length)
-        tuple->setIsFilledByC();
-    return entry.newReference(tuple);
+    Handle result = entry.newReference(tuple);
+    if (result && length)
+        current->counts.find(tuple)->isBeingFilled = true;
+    return result;
 }
 
 PY_CAPI ssize_t PyTuple_Size(Handle object)
@@ -69,14 +70,15 @@ PY_CAPI Handle PyTuple_GetItem(Handle object, ssize_t index)
 }
 
 // For a tuple that nobody else has seen yet. CPython goes by the count of references, and refuses if there is more than one. Nobody counts the program's here. What is known is
-// asked: that PyTuple_New() has made the tuple, so what the program has made (a constant of its code) is as it was made, and that C owns one reference, so it has not given the
-// tuple away. Takes over the reference to the item.
+// asked: that PyTuple_New() has made the tuple, so what the program has made (a constant of its code) is as it was made; that C has not given it away with a reference since
+// (giveAway()); and that C owns one reference. That is kept with the count, and goes with it. Takes over the reference to the item.
 PY_CAPI int PyTuple_SetItem(Handle object, ssize_t index, Handle item)
 {
     CAPI_NOISY(-1);
     TakenOver takenOver(item);
     PyTuple* tuple = PyTuple::tryFrom(toJS(object));
-    bool isBeingFilled = tuple && tuple->isFilledByC() && interpreter().counts.get(tuple) == 1;
+    CountTable::Counts* counts = tuple ? current->counts.find(tuple) : nullptr;
+    bool isBeingFilled = counts && counts->isBeingFilled && counts->owned == 1;
     if (isBeingFilled && static_cast<size_t>(index) < tuple->length()) [[likely]] {
         tuple->initializeAt(current->vm, static_cast<unsigned>(index), item ? toJS(item) : jsUndefined());
         // Somebody may have asked before it was full.

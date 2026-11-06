@@ -422,7 +422,7 @@ void forgetWhatCRaised()
 void takeOverReference(uint64_t bits)
 {
     if (bits)
-        release(std::bit_cast<Handle>(static_cast<uintptr_t>(bits)));
+        giveAway(std::bit_cast<Handle>(static_cast<uintptr_t>(bits)));
 }
 
 void giveReference(uint64_t bits)

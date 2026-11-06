@@ -210,6 +210,19 @@ ALWAYS_INLINE void release(Handle handle)
         refuseToChangeCount(true);
 }
 
+// C gives a reference back, and the object goes with it: to a container, to whoever called C.
+ALWAYS_INLINE void giveAway(Handle handle)
+{
+    JSCell* cell = countedCell(handle);
+    if (!cell)
+        return;
+    Interpreter* current = s_interpreter.load(std::memory_order_relaxed);
+    if (hasGIL(current)) [[likely]]
+        current->counts.giveAway(cell, s_interpreterWhoseCountsFall.load(std::memory_order_relaxed));
+    else
+        refuseToChangeCount(true);
+}
+
 // A reference that a function takes over from C ("steals"), whether it succeeds or not: given up when the function returns, by which time
 // whatever was to hold the object does.
 class TakenOver {
@@ -223,7 +236,7 @@ public:
     ~TakenOver()
     {
         if (m_handle)
-            release(m_handle);
+            giveAway(m_handle);
     }
 
 private:
