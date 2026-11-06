@@ -2743,10 +2743,14 @@ RegisterID* Unit::callOnGeneratorExpression(Call* node, RegisterID* callee, JSVa
             callRuntime(collected.get(), RuntimeFunction::BuildSet);
         else if (collects)
             g.emitPyNewList(collected.get(), nullptr, 0);
+        // The loop owns the generator, like a `for` loop: if what takes the items raises, `set(x for x in y)` and an item that cannot be hashed, it is closed there and then.
         Reg generator = newTemporary();
+        unsigned made = beginTemporaryOfLoop(node->args[0]);
         expr(node->args[0], generator.get());
+        markTemporaryUsed(made, TemporaryUse::Loop, nullptr, true);
         Reg item = newTemporary();
         g.settlePythonLineMark();
+        pushBlock({ .kind = BlockKind::ForLoop, .tryDepth = g.tryDepth(), .saved = generator.get(), .ownsIterator = !!made, .isOnlyHere = true });
         g.emitLabel(loop.get());
         line(range);
         loc(range);
@@ -2770,6 +2774,7 @@ RegisterID* Unit::callOnGeneratorExpression(Call* node, RegisterID* callee, JSVa
         }
         if (collects)
             jump(loop.get());
+        popBlock();
         g.emitLabel(exhausted.get());
         silentLine(range);
         if (what == GoesThrough::Tuple)

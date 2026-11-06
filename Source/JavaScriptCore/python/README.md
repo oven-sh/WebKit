@@ -1832,7 +1832,7 @@ The other branches of JS are those the compiler adds for itself, and so is one o
 CPython's compiler has a branch to a jump go where the jump goes if the jump is of the kind that ends a `case` or the body of a loop, and not if it is of the kind that goes over an `else` or over handlers, whatever that one comes to lead to (`Last::firstJumpIs`, `Unit::canBranchTo()`).
 
 **Generator expressions.** `all()`, `any()`, `tuple()`, `list()` and `set()` of a generator expression are compiled as in CPython: if the name is bound to the builtin, the code goes through the generator itself
-(`Unit::callOnGeneratorExpression()`). No call is told of, the loop is, and `all()` and `any()` close the generator they leave early, there and then.
+(`Unit::callOnGeneratorExpression()`). No call is told of, the loop is, and `all()` and `any()` close the generator they leave early, there and then. The loop owns the generator like a `for` loop (`TemporaryUse::Loop`): if what is done with an item raises, an item of `set()` that cannot be hashed, the unwinder closes it.
 
 **Instructions.** `INSTRUCTION` events, and the `opcode` events of a frame with `f_trace_opcodes`, are told of JSC's instructions, the hidden jumps left out. There are fewer of them than in
 CPython, where a call is followed by something that drops or stores its result. Here the call does that itself, and nothing of the statement is left. `breakpoint()` counts on there being something: it asks for

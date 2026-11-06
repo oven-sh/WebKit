@@ -153,6 +153,7 @@ void Runtime::ownTemporary(CallFrame* callFrame, unsigned offset, JSCell* object
             return;
         break;
     case TemporaryUse::ForHeader:
+    case TemporaryUse::Loop:
         return;
     }
 
@@ -312,6 +313,7 @@ void Runtime::didStoreInItem(JSValue value)
 // closes such an argument (NativeFlag::ClosesGeneratorArgument, TypeFlag::GoesThroughArgument).
 // The use takes the note up, and owns the generator from then on: op_py_get_iter, op_py_compare or op_py_unpack, which is the very next instruction to run in the caller (for a generator
 // expression, the call that makes it, with what it goes through for its argument), or the function.
+// all(x for x in y), where the code goes through the generator itself: it is made where the loop keeps it, and owned from the start, without a note (TemporaryUse::Loop).
 //
 // for i, x in enumerate(g()): the generator is in the iterator, and nowhere else, and the iterator is where the generator is above. A type whose instances let nobody have what they were
 // made from says so (TypeFlag::HasIteratorsToItself). To be passed to it is a use that notes are made for as well, and when the iterator is made, the notes that were made for
@@ -355,6 +357,9 @@ void Runtime::findUseOfCall(UseOfCall& found, CodeBlock* codeBlock, unsigned cal
     switch (TemporaryUse::kindOf(use->bits)) {
     case TemporaryUse::ForHeader:
         found.kind = UseOfCall::ForHeader;
+        break;
+    case TemporaryUse::Loop:
+        found.kind = UseOfCall::Loop;
         break;
     case TemporaryUse::Argument:
         found.kind = UseOfCall::Argument;
@@ -429,6 +434,11 @@ void Runtime::didMakeGenerator(PyGenerator* generator, CallFrame* frameOfFunctio
     const UseOfCall* use = owningUseOfCall(callFrame, call);
     if (!use)
         return;
+    // There is nothing to wait for.
+    if (use->kind == UseOfCall::Loop) {
+        generator->loopOwnership = m_ownershipEpoch;
+        return;
+    }
     if (hasNotes) [[unlikely]]
         std::move_backward(m_newGenerators.begin(), m_newGenerators.end() - 1, m_newGenerators.end());
     m_newGenerators[0] = { generator, nullptr, callFrame, use->use, use->otherUse };

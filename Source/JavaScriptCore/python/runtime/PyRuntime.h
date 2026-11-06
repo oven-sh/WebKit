@@ -1248,7 +1248,7 @@ private:
     // g() returns: an f written in Python keeps it and runs no code of ours, the note of it would stay, and the next time round the
     // same g() may return the same generator to an f that closes what it is given.
     struct UseOfCall {
-        enum Kind : uint8_t { Other, ForHeader, Argument };
+        enum Kind : uint8_t { Other, ForHeader, Argument, Loop };
         CodeBlock* codeBlock { nullptr };
         unsigned call { 0 }; // Offsets of instructions.
         unsigned use { 0 };

@@ -253,6 +253,7 @@ struct TemporaryUse {
         StoredValue, // It is stored in an item of what is in the register, a variable. No code runs between making it and that.
         ForHeader, // A `for` loop goes through it, `in` searches it, or it is taken apart (a, b = g()).
         KeywordArgument, // As Argument.
+        Loop, // It is a generator, made where a loop of the compiler's keeps what it goes through: all(x for x in y).
     };
     // `isLast`: no other mark for this value follows.
     static constexpr uint64_t encode(Kind kind, int registerOffset, bool isLast) { return kind | isLast << 7 | static_cast<uint64_t>(static_cast<uint32_t>(registerOffset)) << 8; }
