@@ -52,6 +52,19 @@ static ALWAYS_INLINE bool isPythonCodeBlock(CodeBlock* codeBlock)
     return codeBlock && codeBlock->unlinkedCodeBlock()->isPython();
 }
 
+FastBitVector liveLocalsBefore(CodeBlock* codeBlock, unsigned offset)
+{
+    FastBitVector live = codeBlock->livenessAnalysis().getLivenessInfoAtInstruction(codeBlock, BytecodeIndex(offset));
+    for (auto& piece : blockPiecesOf(codeBlock)) {
+        if (!piece.contains(offset))
+            continue;
+        piece.forEachRegister([&](VirtualRegister held) {
+            live[held.toLocal()] = true;
+        });
+    }
+    return live;
+}
+
 bool liveLocalsOfFrame(CallFrame* callFrame, CodeBlock* codeBlock, bool isCalling, FastBitVector& live)
 {
     BytecodeIndex index = callFrame->bytecodeIndex();
@@ -69,14 +82,11 @@ bool liveLocalsOfFrame(CallFrame* callFrame, CodeBlock* codeBlock, bool isCallin
         }
     }
 
-    live = codeBlock->livenessAnalysis().getLivenessInfoAtInstruction(codeBlock, index);
-    for (auto& piece : blockPiecesOf(codeBlock)) {
-        if (!piece.contains(index.offset()))
-            continue;
-        piece.forEachRegister([&](VirtualRegister held) {
-            live[held.toLocal()] = true;
-        });
-    }
+    live = liveLocalsBefore(codeBlock, index.offset());
+    // A trace function has said where the frame is to go on (frame.f_lineno = n), and has not returned yet. What is read from there on is in its registers
+    // already (Monitoring::jump()), and nothing reads it where the frame still is.
+    if (PyFrame* frame = isPythonCodeBlock(codeBlock) ? frameObjectIfAny(callFrame) : nullptr; frame && frame->jumpTarget) [[unlikely]]
+        live |= liveLocalsBefore(codeBlock, *frame->jumpTarget);
     // That is what is live before the instruction, which may be half done: one that unpacks an iterable has set some of its
     // targets. A call sets its result when the callee returns, and until then the register has what some earlier expression left.
     switch (instruction->opcodeID()) {
