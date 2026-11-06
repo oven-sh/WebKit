@@ -573,11 +573,13 @@ std::optional<int> Unit::lineOfOnlyWayHere(JumpsHere jumpsHere)
 }
 
 // Where the statements end that a `try` or a `with` looks after, CPython's compiler has something that does nothing. It stays if it has a line of its own.
-void Unit::endOfProtectedStatements(JumpsHere jumpsHere, Label* end)
+// Behind the statements of a handler comes what puts back the exception that was being handled before, which is of no line either.
+void Unit::endOfProtectedStatements(JumpsHere jumpsHere, Label* end, ComesNext comesNext)
 {
     if (auto lineno = m_targetsOfJumpsStillJumpedTo.contains(end) || jumpOfConstantLeadsHere() ? std::nullopt : lineOfOnlyWayHere(jumpsHere)) {
         silentLine(*lineno);
-        OpNop::emit(&g);
+        if (comesNext == ComesNext::Nothing)
+            OpNop::emit(&g);
     }
 }
 
@@ -2531,6 +2533,7 @@ void Unit::tryExcept(AST::Try* node, const Last& isLast)
             outsideTry(cleanup.depthBefore, [&] {
                 if (cannotGetHere())
                     return;
+                endOfProtectedStatements(JumpsHere::Count, end.ptr(), ComesNext::Instruction);
                 SameLine sameLine(*this);
                 restoreHandledException(previous.get());
                 storeName(handler->name, constant(jsUndefined()), handler->range);
@@ -2553,6 +2556,7 @@ void Unit::tryExcept(AST::Try* node, const Last& isLast)
             outsideTry(cleanup.depthBefore, [&] {
                 if (cannotGetHere())
                     return;
+                endOfProtectedStatements(JumpsHere::Count, end.ptr(), ComesNext::Instruction);
                 restoreHandledException(previous.get());
                 leaveStatement(end.get(), isLast, JumpIs::ToldOfForwards);
             });

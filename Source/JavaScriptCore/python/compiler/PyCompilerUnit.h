@@ -565,7 +565,8 @@ private:
         int lineno { 0 };
         bool hasBreak { false };
     } m_endOfForLoop;
-    void endOfProtectedStatements(JumpsHere = JumpsHere::Count, Label* end = nullptr);
+    enum class ComesNext : bool { Nothing, Instruction };
+    void endOfProtectedStatements(JumpsHere = JumpsHere::Count, Label* end = nullptr, ComesNext = ComesNext::Nothing);
     // The statement that is being compiled, and what comes after it. (Of a compound statement: the last of its statements that was.)
     Stmt* m_statement { nullptr };
     const StatementsAfter* m_statementsAfter { nullptr };
