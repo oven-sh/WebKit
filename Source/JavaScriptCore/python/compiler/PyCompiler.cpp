@@ -1789,7 +1789,8 @@ void Unit::unwindBlocks(const Range& range, size_t count, Vector<TryContext>& su
         return;
     Block top = m_blocks.last();
     if (top.kind == BlockKind::ExceptionGroupHandler) {
-        fail(range, "'break', 'continue' and 'return' cannot appear in an except* block"_s);
+        // (What leaves by itself, at the end of a copy of a `finally` clause, has no place, as in CPython.)
+        fail(range.lineno ? range : Range { -1, -1, -1, -1 }, "'break', 'continue' and 'return' cannot appear in an except* block"_s);
         return;
     }
     // What the block runs on the way out is outside the block.
