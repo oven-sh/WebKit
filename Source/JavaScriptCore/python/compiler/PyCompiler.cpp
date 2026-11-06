@@ -500,12 +500,16 @@ void Unit::jump(Label& target)
         return hiddenJump(target);
     if (m_place.lineno > 0 && m_place.lineno == m_markedLine)
         place(m_place);
+    if (m_whereSomethingIsDropped == g.instructions().size())
+        g.addPythonMark(PythonMark::NoLine, jumpHasLineToItselfMark);
     g.emitJump(target);
 }
 
 void Unit::hiddenJump(Label& target)
 {
     g.addPythonMark(PythonMark::NoLine, hiddenJumpMark);
+    if (m_whereSomethingIsDropped == g.instructions().size())
+        g.addPythonMark(PythonMark::NoLine, jumpHasLineToItselfMark);
     g.emitJump(target);
 }
 

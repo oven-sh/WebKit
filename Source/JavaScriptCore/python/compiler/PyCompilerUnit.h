@@ -225,12 +225,16 @@ private:
         };
         Vector<Capture, 4> captures;
         Label* fail { nullptr };
-        // For a pattern written over several lines. CPython's code has on its stack what is still to be looked at and what has been
-        // captured; where a pattern fails with something there, that is dropped first, which is of the line the pattern begins on.
-        Label* failOnFirstLine { nullptr };
+        // CPython's code has on its stack what is still to be looked at and what has been captured; where a pattern fails with something
+        // there, that is dropped first, which is of the line the pattern begins on.
+        Label* failWithMoreToDrop { nullptr };
         unsigned stillToLookAt { 0 };
         // If the statement is the last of something: what comes then is of the line that the pattern failed on.
         ReturnsByLine* failsByLine { nullptr };
+        // It is the pattern of the last case of a `match` that the body of this loop, one of m_blocks, ends with.
+        std::optional<unsigned> loopToGoOnWith;
+        // With nothing to drop. A jump there is replaced by a copy of what is there.
+        bool functionEndsWhereItFails { false };
         bool allowIrrefutable { false };
     };
 
@@ -654,7 +658,12 @@ private:
     void subpattern(AST::Pattern*, RegisterID* subject, PatternContext&);
     void capture(Name, RegisterID* value, const Range&, PatternContext&);
     Label& whereToFail(PatternContext&);
-    void emitFailLabels(const Range&, PatternContext&);
+    void failUnless(RegisterID* condition, PatternContext&, bool isNone = false);
+    // CPython has an instruction here, of this line, that drops what the pattern has looked at. There is nothing to drop here, but it is
+    // where a branch goes on that comes right before, and a jump that comes next is not one with a jump that leads here.
+    void dropWhatPatternLookedAt(const Range&);
+    size_t m_whereSomethingIsDropped { notFound };
+    void emitFailLabels(const Range&, Label& failWithMoreToDrop, Label& fail);
     void patternValue(AST::MatchValue*, RegisterID* subject, PatternContext&);
     void patternSingleton(AST::MatchSingleton*, RegisterID* subject, PatternContext&);
     void patternSequence(AST::MatchSequence*, RegisterID* subject, PatternContext&);

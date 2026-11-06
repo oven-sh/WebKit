@@ -39,18 +39,46 @@ static bool isStarWildcard(Pattern* pattern)
 
 Label& Unit::whereToFail(PatternContext& context)
 {
-    if (context.failOnFirstLine && (context.stillToLookAt || !context.captures.isEmpty()))
-        return *context.failOnFirstLine;
+    if (context.stillToLookAt || !context.captures.isEmpty())
+        return *context.failWithMoreToDrop;
     return context.failsByLine ? labelForLine(*context.failsByLine, m_markedLine) : *context.fail;
+}
+
+// The pattern fails unless the condition holds; `isNone`: unless the value is None. Where to fail is to go on with the loop, with nothing to drop first, the branch
+// would go backwards: CPython has none that do, and turns it round to jump over a jump.
+void Unit::failUnless(RegisterID* condition, PatternContext& context, bool isNone)
+{
+    auto branch = [&](Label& target, bool ifItHolds) {
+        if (isNone)
+            g.emitPyJumpIfNone(condition, target, ifItHolds);
+        else if (ifItHolds)
+            g.emitPyJumpIfTrue(condition, target);
+        else
+            g.emitPyJumpIfFalse(condition, target);
+    };
+    if (!context.loopToGoOnWith || context.stillToLookAt || !context.captures.isEmpty())
+        return branch(whereToFail(context), false);
+    Ref<Label> goesOn = g.newLabel();
+    branch(goesOn.get(), true);
+    emitImplicitContinue(*context.loopToGoOnWith);
+    g.emitLabel(goesOn.get());
+}
+
+void Unit::dropWhatPatternLookedAt(const Range& range)
+{
+    if (m_markedPosition != g.instructions().size())
+        m_markedLine = -1;
+    line(range);
+    m_whereSomethingIsDropped = g.instructions().size();
 }
 
 void Unit::capture(Name name, RegisterID* value, const Range& range, PatternContext& context)
 {
-    // It is dropped, or put underneath whatever else there is.
-    if (!name || context.stillToLookAt || !context.captures.isEmpty())
-        line(range);
     if (!name)
-        return;
+        return dropWhatPatternLookedAt(range);
+    // It is put underneath whatever else there is.
+    if (context.stillToLookAt || !context.captures.isEmpty())
+        line(range);
     for (auto& existing : context.captures) {
         if (existing.name->impl() == name->impl()) {
             fail(range, makeString("multiple assignments to name '"_s, name->string(), "' in pattern"_s));
@@ -110,7 +138,7 @@ void Unit::patternValue(MatchValue* node, RegisterID* subject, PatternContext& c
     Reg result = newTemporary();
     loc(node->range);
     g.emitPyCompare(result.get(), subject, value.get(), Python::CompareOperator::Eq);
-    g.emitPyJumpIfFalse(result.get(), whereToFail(context));
+    failUnless(result.get(), context);
 }
 
 void Unit::patternSingleton(MatchSingleton* node, RegisterID* subject, PatternContext& context)
@@ -119,10 +147,10 @@ void Unit::patternSingleton(MatchSingleton* node, RegisterID* subject, PatternCo
     // (CPython's compiler makes one instruction of a test for None, which needs no constant.)
     noteConstant(constantValue(node->value), node->value.kind != ConstantValue::Kind::None);
     if (node->value.kind == ConstantValue::Kind::None)
-        return g.emitPyJumpIfNone(subject, whereToFail(context), false);
+        return failUnless(subject, context, true);
     Reg result = newTemporary();
     g.emitPyCompare(result.get(), subject, constant(constantValue(node->value)), Python::CompareOperator::Is);
-    g.emitPyJumpIfFalse(result.get(), whereToFail(context));
+    failUnless(result.get(), context);
 }
 
 void Unit::patternSequence(MatchSequence* node, RegisterID* subject, PatternContext& context)
@@ -164,7 +192,7 @@ void Unit::patternSequence(MatchSequence* node, RegisterID* subject, PatternCont
     }
     --context.stillToLookAt;
     if (onlyWildcards)
-        return;
+        return dropWhatPatternLookedAt(node->range);
 
     if (starIsWildcard) {
         // [first, *_, last]: only the items that matter are fetched.
@@ -187,8 +215,7 @@ void Unit::patternSequence(MatchSequence* node, RegisterID* subject, PatternCont
             subpattern(item, value.get(), context);
         }
         --context.stillToLookAt;
-        line(node->range);
-        return;
+        return dropWhatPatternLookedAt(node->range);
     }
 
     if (star >= 0 && (star >= 256 || size - star - 1 >= static_cast<unsigned>(std::numeric_limits<int>::max() >> 8))) {
@@ -225,7 +252,7 @@ void Unit::patternMapping(MatchMapping* node, RegisterID* subject, PatternContex
     g.emitPyJumpIfFalse(scratch.get(), whereToFail(context));
     if (!size && !node->rest) {
         --context.stillToLookAt;
-        return;
+        return dropWhatPatternLookedAt(node->range);
     }
     if (size) {
         callRuntime(scratch.get(), RuntimeFunction::GetLength, { subject });
@@ -292,11 +319,11 @@ void Unit::patternMapping(MatchMapping* node, RegisterID* subject, PatternContex
         }
     }
     context.stillToLookAt -= 2;
+    if (!node->rest)
+        return dropWhatPatternLookedAt(node->range);
     loc(node->range);
-    if (node->rest) {
-        callRuntime(values.get(), RuntimeFunction::CopyDictWithoutKeys, { subject, keys.get() });
-        capture(node->rest, values.get(), node->range, context);
-    }
+    callRuntime(values.get(), RuntimeFunction::CopyDictWithoutKeys, { subject, keys.get() });
+    capture(node->rest, values.get(), node->range, context);
 }
 
 void Unit::patternClass(MatchClass* node, RegisterID* subject, PatternContext& context)
@@ -324,8 +351,8 @@ void Unit::patternClass(MatchClass* node, RegisterID* subject, PatternContext& c
     Reg attributes = newTemporary();
     {
         Arguments arguments(*this, 4);
-        g.move(arguments[0], subject);
         expr(node->cls, arguments[1]);
+        g.move(arguments[0], subject);
         load(arguments[2], jsNumber(positionalCount));
         PyTuple* namesTuple = PyTuple::create(globalObject(), names.span());
         noteConstant(namesTuple);
@@ -340,7 +367,7 @@ void Unit::patternClass(MatchClass* node, RegisterID* subject, PatternContext& c
 
     unsigned total = positionalCount + keywordCount;
     if (!total)
-        return;
+        return dropWhatPatternLookedAt(node->range);
     Arguments items(*this, total);
     g.emitPyUnpack(items.first(), attributes.get(), total, -1);
     context.stillToLookAt += total;
@@ -348,7 +375,7 @@ void Unit::patternClass(MatchClass* node, RegisterID* subject, PatternContext& c
         --context.stillToLookAt;
         Pattern* item = i < positionalCount ? node->patterns[i] : node->kwdPatterns[i - positionalCount];
         if (isWildcard(item)) {
-            line(node->range);
+            dropWhatPatternLookedAt(node->range);
             continue;
         }
         subpattern(item, items[i], context);
@@ -366,11 +393,10 @@ void Unit::patternOr(MatchOr* node, RegisterID* subject, PatternContext& context
     for (unsigned i = 0; i < size; ++i) {
         Pattern* alternative = node->patterns[i];
         Ref<Label> next = g.newLabel();
-        Ref<Label> nextOnFirstLine = g.newLabel();
+        Ref<Label> nextWithMoreToDrop = g.newLabel();
         PatternContext inner;
         inner.fail = next.ptr();
-        if (alternative->range.lineno != alternative->range.endLineno)
-            inner.failOnFirstLine = nextOnFirstLine.ptr();
+        inner.failWithMoreToDrop = nextWithMoreToDrop.ptr();
         // One that always matches must come last, if it is allowed at all.
         inner.allowIrrefutable = i == size - 1 && context.allowIrrefutable;
         line(alternative->range);
@@ -399,12 +425,15 @@ void Unit::patternOr(MatchOr* node, RegisterID* subject, PatternContext& context
         }
         line(alternative->range);
         jump(end.get());
-        emitFailLabels(alternative->range, inner);
+        emitFailLabels(alternative->range, *inner.failWithMoreToDrop, *inner.fail);
     }
-    line(node->range);
-    jump(whereToFail(context));
+    dropWhatPatternLookedAt(node->range);
+    if (Label& target = whereToFail(context); context.functionEndsWhereItFails && &target != context.failWithMoreToDrop)
+        hiddenJump(target);
+    else
+        jump(target);
     g.emitLabel(end.get());
-    line(node->range);
+    dropWhatPatternLookedAt(node->range);
 
     for (auto& captured : control) {
         for (auto& existing : context.captures) {
@@ -417,14 +446,14 @@ void Unit::patternOr(MatchOr* node, RegisterID* subject, PatternContext& context
     }
 }
 
-void Unit::emitFailLabels(const Range& range, PatternContext& context)
+void Unit::emitFailLabels(const Range& range, Label& failWithMoreToDrop, Label& fail)
 {
-    if (context.failOnFirstLine && context.failOnFirstLine->isBound()) {
-        g.emitLabel(*context.failOnFirstLine);
-        line(range);
+    if (failWithMoreToDrop.isBound()) {
+        g.emitLabel(failWithMoreToDrop);
+        dropWhatPatternLookedAt(range);
     }
-    if (context.fail->isBound())
-        g.emitLabel(*context.fail);
+    if (fail.isBound())
+        g.emitLabel(fail);
 }
 
 void Unit::pattern(Pattern* node, RegisterID* subject, PatternContext& context)
@@ -462,35 +491,54 @@ void Unit::matchStatement(Match* node, const Last& isLast)
     for (unsigned i = 0; i < count; ++i) {
         MatchCase* matchCase = node->cases[i];
         Ref<Label> next = g.newLabel();
-        Ref<Label> nextOnFirstLine = g.newLabel();
+        Ref<Label> nextWithMoreToDrop = g.newLabel();
         PatternContext context;
-        context.fail = next.ptr();
-        if (matchCase->pattern->range.lineno != matchCase->pattern->range.endLineno)
-            context.failOnFirstLine = nextOnFirstLine.ptr();
+        context.failWithMoreToDrop = nextWithMoreToDrop.ptr();
         bool isLastCase = i + 1 == count;
+        // Like a test that fails: see jumpIfOrLeave().
+        bool failingBranchesToTarget = isLastCase && isLast.kind == Last::BeforeJump && !isReplacedByCopy(isLast) && canBranchTo(isLast);
+        context.fail = failingBranchesToTarget ? isLast.target : next.ptr();
         ReturnsByLine failsByLine;
-        if (isLast && isLastCase && matchCase->pattern->range.lineno != (matchCase->guard ? matchCase->guard->range : matchCase->pattern->range).endLineno)
+        if (isLast && isLastCase && !failingBranchesToTarget && matchCase->pattern->range.lineno != (matchCase->guard ? matchCase->guard->range : matchCase->pattern->range).endLineno)
             context.failsByLine = &failsByLine;
+        bool failingGoesOnWithLoop = isLastCase && isLast.kind == Last::OfLoopBody && !isLast.isBehindJump;
+        if (failingGoesOnWithLoop)
+            context.loopToGoOnWith = isLast.loop;
+        context.functionEndsWhereItFails = isLastCase && isLast.kind == Last::OfFunction;
         // A case that always matches must be guarded, or the last.
         context.allowIrrefutable = matchCase->guard || i == count - 1;
         pushBlock({ .kind = BlockKind::MatchSubject, .tryDepth = g.tryDepth() });
         m_statementStart = g.instructions().size();
         line(matchCase->pattern->range);
-        pattern(matchCase->pattern, subject.get(), context);
+        {
+            SetForScope replacedByCopy(m_targetReplacedByCopy, isLastCase ? targetReplacedByCopy(next.get(), isLast) : nullptr);
+            pattern(matchCase->pattern, subject.get(), context);
+        }
         if (!context.captures.isEmpty())
             line(matchCase->pattern->range);
         for (auto& captured : context.captures)
             storeName(captured.name, captured.reg.get(), matchCase->pattern->range);
         context.captures.clear();
         if (matchCase->guard) {
-            SetForScope branchTarget(m_branchTarget, context.failsByLine ? BranchTarget { next.ptr(), { }, context.failsByLine, { }, nullptr } : m_branchTarget);
-            jumpIf(matchCase->guard, next.get(), false);
+            SetForScope branchTarget(m_branchTarget, failingGoesOnWithLoop ? BranchTarget { next.ptr(), { }, nullptr, isLast.loop, nullptr }
+                : context.failsByLine ? BranchTarget { next.ptr(), { }, context.failsByLine, { }, nullptr } : m_branchTarget);
+            jumpIf(matchCase->guard, *context.fail, false);
         }
         popBlock();
-        statements(matchCase->body, 0, isLastCase ? isLast : lastBeforeJump(end.get(), isLast, JumpIs::ToldOf));
-        // After the last case there is nothing to jump over, as a rule.
-        if (isLast || !isLastCase || nextOnFirstLine->isBound())
+        // In CPython's code a jump to the end comes behind every body but that of a `case _:` that is the last of several. After the last case it has
+        // nothing to jump over but what drops something where the pattern has failed.
+        bool isDefault = isLastCase && count > 1 && isWildcard(matchCase->pattern);
+        bool endsWhereStatementEnds = isDefault && !next->isBound();
+        m_statementsEndWhereStatementEnds = endsWhereStatementEnds;
+        statements(matchCase->body, 0, isDefault ? isLast : lastBeforeJump(end.get(), isLast, JumpIs::ToldOf));
+        if (endsWhereStatementEnds)
+            continue;
+        if (isLast || !isLastCase || nextWithMoreToDrop->isBound())
             leaveStatement(end.get(), isLast, JumpIs::ToldOf);
+        else if (m_whereLineOfBranchIsMarked == g.instructions().size()) {
+            // What is left of the jump where a copy of the end of the function has taken its place is of the line of the only way there.
+            OpNop::emit(&g);
+        }
         for (auto& [lineno, label, place] : failsByLine) {
             g.emitLabel(label.get());
             if (isLast.kind != Last::BeforeJump || isLast.jumpIs >= JumpIs::ToldOf)
@@ -498,11 +546,18 @@ void Unit::matchStatement(Match* node, const Last& isLast)
             leave(isLast);
         }
         // (A pattern that always matches.)
-        if (!next->isBound() && !nextOnFirstLine->isBound())
+        if (!next->isBound() && !nextWithMoreToDrop->isBound())
             continue;
-        emitFailLabels(matchCase->pattern->range, context);
-        if (isLast.kind == Last::BeforeJump && isLastCase)
-            silentLine(matchCase->pattern->range.lineno);
+        emitFailLabels(matchCase->pattern->range, nextWithMoreToDrop.get(), next.get());
+        if (isLast.kind == Last::BeforeJump && isLastCase) {
+            // (Unless other ways meet here: see endOfStatement(). In CPython the body jumps here, over what drops something, and then a copy of the end of the
+            // function, which has lines of its own, does not take the line of either way.)
+            m_whereLineOfBranchIsMarked = g.instructions().size();
+            if (nextWithMoreToDrop->isBound() && isReplacedByCopy(isLast))
+                noLine();
+            else
+                silentLine(matchCase->pattern->range.lineno);
+        }
         else if (isLast && isLastCase)
             line(matchCase->pattern->range);
     }
