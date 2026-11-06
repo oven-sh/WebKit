@@ -96,7 +96,33 @@ static int waitWithTimeout(WaitRequest& request, int64_t timeout)
 int blockingWait(JSGlobalObject* globalObject, WaitRequest& request)
 {
     AllowThreads allow(globalObject, AllowThreads::LosesNothing);
-    return waitWithTimeout(request, request.timeout);
+    int64_t timeout = request.timeout;
+    int64_t deadline = -1;
+    if (timeout > 0 && __builtin_add_overflow(monotonicNanoseconds(), timeout, &deadline))
+        deadline = std::numeric_limits<int64_t>::max();
+    // What select() leaves in the sets when it fails is not specified.
+    fd_set* sets[3] = { request.readable, request.writable, request.exceptional };
+    fd_set saved[3];
+    if (request.kind == WaitRequest::Kind::Select) {
+        for (unsigned i = 0; i < 3; ++i) {
+            if (sets[i])
+                saved[i] = *sets[i];
+        }
+    }
+    while (true) {
+        int result = waitWithTimeout(request, timeout);
+        if (result >= 0 || errno != EINTR || !allow.wasInterruptedForNothing())
+            return result;
+        // Again, for the time that is left; if none is, it says what is ready now.
+        if (timeout > 0)
+            timeout = std::max<int64_t>(deadline - monotonicNanoseconds(), 0);
+        if (request.kind == WaitRequest::Kind::Select) {
+            for (unsigned i = 0; i < 3; ++i) {
+                if (sets[i])
+                    *sets[i] = saved[i];
+            }
+        }
+    }
 }
 
 int waitWithoutBlocking(WaitRequest& request)

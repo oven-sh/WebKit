@@ -407,10 +407,14 @@ static JSValue timeSleep(JSGlobalObject* globalObject, JSValue seconds)
             AllowThreads allow(globalObject, AllowThreads::LosesNothing);
 #if OS(LINUX)
             struct timespec until = timeToTimespec(piece == timeout ? deadline : now + piece);
-            error = clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &until, nullptr);
+            do {
+                error = clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &until, nullptr);
+            } while (error == EINTR && allow.wasInterruptedForNothing());
 #else
             struct timespec remaining = timeToTimespec(piece);
-            error = nanosleep(&remaining, nullptr) ? errno : 0;
+            do {
+                error = nanosleep(&remaining, &remaining) ? errno : 0;
+            } while (error == EINTR && allow.wasInterruptedForNothing());
 #endif
         }
         if (!error && piece == timeout)

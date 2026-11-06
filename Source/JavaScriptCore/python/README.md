@@ -799,11 +799,11 @@ so the aim is that everything Python *guarantees* holds, and that what it merely
     nobody else's (`wakeMainThreadFromSystemCall()`), the others `SIGURG`. A collection tells a thread once, however much it leaves for it: to
     tell is a system call. (Once for each callback of a weak reference, 200,000 of them took 145 ms, 100 ms of that in the kernel; now 42 ms.)
   - **And by nothing else.** The collector stops every thread with a signal to scan its stack, and a signal ends a sleep in the kernel. A thread that has given up the GIL to wait for another thread
-    (`Threads::waitUntil`) goes on for the time that is left, without the GIL in between, unless somebody has sent for it (`AllowThreads::wasInterruptedForNothing`). Whoever sends for a thread says so
+    (`Threads::waitUntil`), to sleep (`time.sleep`) or to wait for descriptors (`blockingWait`: `select`, `poll`, `epoll`, `kqueue`) goes on for the time that is left, without the GIL in between, unless somebody has sent for it (`AllowThreads::wasInterruptedForNothing`). Whoever sends for a thread says so
     before the signal: `Threads::interrupt` by a flag, the end of the VM by another, everybody else by `Sleeper::wake`: a signal of the program's (which is for the main thread, wherever it was delivered), the traps
     that another thread has left to the main one. (Each collection sent every thread that waits through the GIL: it asked for it, whoever ran had to give it up after a switch interval, and the thread made the
     calls in its queue, told or not.) Where there is no other thread the GIL is not given up, and every signal ends the wait as before: it may be the engine's own, for a trap that the host has set (a time
-    limit of `node:vm`, `Worker.terminate()`).
+    limit of `node:vm`, `Worker.terminate()`). The other system calls that may take long (`read`, `recv`, `accept`, the `wait` family, `flock`, a semaphore) still come back for the GIL when a signal ends them.
   - **The signal is sent only where it loses nothing** (`AllowThreads::LosesNothing`, which the call site says; but for what the host ends: `Threads::wakeToHandleTrap()`): a call that transfers nothing
     before it returns and is made again when it was interrupted: `read`, `readv`, `recv` and its kin, `accept`, `poll`/`select`/`epoll`, the
     `wait` family, `flock`, `lockf`, `open` (of a FIFO), a semaphore, a sleep. CPython sends a thread no signal at all, and one that comes in the
