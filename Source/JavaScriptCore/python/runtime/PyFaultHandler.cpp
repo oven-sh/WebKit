@@ -666,6 +666,20 @@ void cancelTracebackDumpRequests(Runtime& rt)
         cancelTracebackDumpRequests();
 }
 
+void faultHandlerOfRuntimeIsEnding(Runtime& rt)
+{
+    if (faultWatchdog().owner == &rt) {
+        cancelTracebackDumpRequests();
+        faultWatchdog().owner = nullptr;
+    }
+    // The handler of a fatal signal walks the frames by way of the global object that enabled it.
+    if (s_faultFatalGlobalObject != rt.globalObject())
+        return;
+    faultRestoreFatalSignals();
+    s_faultIsEnabled = false;
+    s_faultFatalGlobalObject = nullptr;
+}
+
 static void faultRunWatchdog()
 {
     // (CPython blocks all signals in this thread. Here no thread may block the one the engine suspends threads with: the

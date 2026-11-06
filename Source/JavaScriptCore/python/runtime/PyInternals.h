@@ -422,6 +422,8 @@ void withdrawTracebackDumpRequest();
 void cancelTracebackDumpRequests();
 // If it is this interpreter that asked for them: it ends.
 void cancelTracebackDumpRequests(Runtime&);
+// The runtime is going: what of faulthandler is its own is undone, enable() too.
+void faultHandlerOfRuntimeIsEnding(Runtime&);
 void dumpTracebackForSignal(JSGlobalObject*, int number);
 
 // What _thread.get_ident() returns.

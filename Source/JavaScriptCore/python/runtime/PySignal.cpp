@@ -646,7 +646,7 @@ void finalizeSignals(JSGlobalObject* globalObject)
 
 void detachSignals(Runtime& rt)
 {
-    cancelTracebackDumpRequests(rt);
+    faultHandlerOfRuntimeIsEnding(rt);
     if (s_signalState.runtime != &rt)
         return;
     signalRestoreActions();
