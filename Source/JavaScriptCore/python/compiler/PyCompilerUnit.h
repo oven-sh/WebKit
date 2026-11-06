@@ -134,10 +134,6 @@ public:
     // good until the next is allocated.
     RegisterID* expr(Expr*, RegisterID* dst = nullptr);
     void exprForEffect(Expr*, bool* endIsJumpedTo = nullptr);
-    RegisterID* exprWhoseEndMayBeJumpedTo(Expr*, RegisterID* dst, bool& endIsJumpedTo);
-    void exprStatementAtEndOfFunction(Expr*, const Last&);
-    void exprForEffectWhoseWaysLeave(Expr*, const Last&);
-    bool labelComesBehindStatements() const;
     void jumpIf(Expr*, Label& target, bool condition);
     void jumpIfTo(Expr*, Label& target, bool condition, bool isTurnedRound = false);
     void store(Expr* target, RegisterID* value);
@@ -324,6 +320,10 @@ private:
     Label* m_targetReplacedByCopy { nullptr };
     bool canBranchTo(const Last&);
     void unbindNameOfHandler(Name, const Range&);
+    RegisterID* exprWhoseEndMayBeJumpedTo(Expr*, RegisterID* dst, bool& endIsJumpedTo);
+    void exprStatementAtEndOfFunction(Expr*, const Last&);
+    void exprForEffectWhoseWaysLeave(Expr*, const Last&);
+    bool labelComesBehindStatements() const;
     void jumpIfOrLeave(Expr* test, Label& target, const Last&, ReturnsByLine&, bool condition = false);
     void emitReturnsByLine(ReturnsByLine&, const Last&);
     Label& labelForLine(ReturnsByLine&, int lineno, const Range& place = { });

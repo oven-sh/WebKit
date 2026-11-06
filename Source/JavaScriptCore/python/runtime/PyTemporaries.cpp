@@ -311,7 +311,7 @@ void Runtime::didStoreInItem(JSValue value)
 // of the argument. A generator function makes a note of the generator it has made, if it was made for a use that goes through it and keeps nothing: at the head of a `for`
 // loop, as what `in` searches or an assignment takes apart, or as a positional argument of a built-in function or type that is already waiting in its register and says that it
 // closes such an argument (NativeFlag::ClosesGeneratorArgument, TypeFlag::GoesThroughArgument).
-// The use takes the note up, and owns the generator from then on: op_py_get_iter, op_py_compare or op_py_unpack, which is the very next instruction to run in the caller (for a generator
+// The use takes the note up, and owns the generator from then on: op_py_get_iter, op_py_compare or op_py_unpack, which is the next instruction of the caller that runs any code of the program (a comprehension makes its list in between; for a generator
 // expression, the call that makes it, with what it goes through for its argument), or the function.
 // all(x for x in y), where the code goes through the generator itself: it is made where the loop keeps it, and owned from the start, without a note (TemporaryUse::Loop).
 //
