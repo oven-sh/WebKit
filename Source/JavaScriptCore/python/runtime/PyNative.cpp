@@ -8,6 +8,7 @@
 
 #include "JSCInlines.h"
 #include "PyAbstract.h"
+#include "PyBytecode.h"
 #include "PyErrors.h"
 #include "PyInternals.h"
 #include "PyJSView.h"
@@ -443,6 +444,31 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(callNativeFunctionThatMayWait, static N
     [[clang::musttail]] return callNativeFunctionWithFrame(globalObject, callFrame);
 }
 
+// CPython looks for signals after every call. Code counts on it: os.kill(os.getpid(), n), and the handler has run.
+// (Only signals. A finalizer between next(counter) and queue.put() in queue.put(next(counter)) is more than code is used to.)
+// Not after the call of __enter__ by a `with`: what a handler raises there would leave what has been entered without its __exit__. The signal waits for the
+// next place, which is in the statement.
+static NEVER_INLINE bool checkSignalsAfterCall(JSGlobalObject* globalObject, CallFrame* nativeFrame)
+{
+    VM& vm = getVM(globalObject);
+    void* caller = nativeFrame->callerFrameOrEntryFrame();
+    if (caller && caller != vm.topEntryFrame) {
+        auto* callFrame = static_cast<CallFrame*>(caller);
+        CodeBlock* codeBlock = callFrame->isNativeCalleeFrame() || callFrame->isZombieFrame() ? nullptr : callFrame->codeBlock();
+        if (codeBlock && codeBlock->unlinkedCodeBlock()->isPython()) {
+            unsigned call = callFrame->bytecodeIndex().offset();
+            unsigned next = call + codeBlock->instructions().at(call)->size();
+            auto marks = std::ranges::equal_range(codeBlock->unlinkedCodeBlock()->pythonMarks(), next, { }, &PythonMark::offset);
+            bool entersWith = std::ranges::any_of(marks, [](const PythonMark& mark) {
+                return mark.kind() == PythonMark::BlockBegin && TracedBlock::kindOf(mark.bits) == TracedBlock::With;
+            });
+            if (entersWith)
+                return true;
+        }
+    }
+    return checkOnlySignals(globalObject);
+}
+
 JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(callNativeFunctionWithFrame, static NEVER_INLINE, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     auto* function = uncheckedDowncast<PyNativeFunction>(callFrame->jsCallee());
@@ -467,9 +493,7 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(callNativeFunctionWithFrame, static NEV
             [[clang::musttail]] return callNativeFunctionAgainAfterCollecting(globalObject, callFrame);
         }
     }
-    // CPython looks for signals after every call. Code counts on it: os.kill(os.getpid(), n), and the handler has run.
-    // (Only signals. A finalizer between next(counter) and queue.put() in queue.put(next(counter)) is more than code is used to.)
-    if (vm.traps().needHandling(VMTraps::NeedPythonCalls) && result && !checkOnlySignals(globalObject)) [[unlikely]]
+    if (vm.traps().needHandling(VMTraps::NeedPythonCalls) && result && !checkSignalsAfterCall(globalObject, callFrame)) [[unlikely]]
         return { };
     return JSValue::encode(resultForCaller(globalObject, callFrame, result));
 }
@@ -514,8 +538,7 @@ static EncodedJSValue JSC_HOST_CALL_ATTRIBUTES callNativeFunctionInOrder(JSGloba
         return def.functionOfArity<arity>()(globalObject, value(index)...);
     }(std::make_index_sequence<arity>());
 
-    // As in callNativeFunctionWithFrame().
-    if (vm.traps().needHandling(VMTraps::NeedPythonCalls) && result && !checkOnlySignals(globalObject)) [[unlikely]]
+    if (vm.traps().needHandling(VMTraps::NeedPythonCalls) && result && !checkSignalsAfterCall(globalObject, callFrame)) [[unlikely]]
         return { };
     if (!result || !result.isCell()) [[likely]]
         return JSValue::encode(result);
