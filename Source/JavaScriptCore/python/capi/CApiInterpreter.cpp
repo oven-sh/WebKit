@@ -385,6 +385,14 @@ void Entry::raiseBadInternalCall()
     ASSERT_UNUSED(hasFailed, hasFailed);
 }
 
+// C can put anything there (PyErr_SetRaisedException()), and the program gets it.
+static JSValue toThrow(Handle exception)
+{
+    JSValue value = toJS(exception);
+    didGetHolder(value, Holder::Program);
+    return value;
+}
+
 bool throwWhatCRaised(JSGlobalObject* globalObject)
 {
     Handle exception = std::exchange(t_errorIndicator, nullptr);
@@ -392,7 +400,7 @@ bool throwWhatCRaised(JSGlobalObject* globalObject)
         return true;
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    throwPythonException(globalObject, scope, toJS(exception));
+    throwPythonException(globalObject, scope, toThrow(exception));
     release(exception);
     return false;
 }
@@ -404,7 +412,7 @@ bool throwWhatCRaisedBesideResult(JSGlobalObject* globalObject, const String& wh
         return true;
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue cause = toJS(exception);
+    JSValue cause = toThrow(exception);
     release(exception);
     raiseSystemError(globalObject, scope, who, " returned a result with an exception set"_s);
     if (auto* error = PyException::tryFrom(pendingException(globalObject))) {
@@ -422,8 +430,11 @@ void forgetWhatCRaised()
 
 void takeOverReference(uint64_t bits)
 {
-    if (bits)
-        giveAway(std::bit_cast<Handle>(static_cast<uintptr_t>(bits)));
+    Handle handle = std::bit_cast<Handle>(static_cast<uintptr_t>(bits));
+    // Where the call has ended otherwise than with a result, nobody has looked at the bits. What is in the table is a cell, and lives.
+    if (JSCell* cell = countedCell(handle); cell && interpreter().counts.get(cell))
+        didGetHolder(cell, Holder::Program);
+    release(handle);
 }
 
 void giveReference(uint64_t bits)

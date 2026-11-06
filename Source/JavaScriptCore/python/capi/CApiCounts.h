@@ -28,17 +28,11 @@ class CountTable {
 public:
     CountTable() = default;
 
-    struct Counts {
-        uint32_t owned { 0 };
-        // It is a tuple that PyTuple_New() has made, and C has not given it away since: see PyTuple_SetItem().
-        bool isBeingFilled { false };
-    };
-
     ALWAYS_INLINE void add(JSCell* cell)
     {
-        Counts& counts = m_counts.add(cell, Counts { }).iterator->value;
-        if (counts.owned != forEver) [[likely]]
-            ++counts.owned;
+        uint32_t& owned = m_counts.add(cell, 0).iterator->value;
+        if (owned != forEver) [[likely]]
+            ++owned;
     }
 
     ALWAYS_INLINE void remove(JSCell* cell)
@@ -47,34 +41,15 @@ public:
         // More references were given back than taken. In CPython the object would have been freed under its owners. Here nothing hangs on it.
         if (entry == m_counts.end()) [[unlikely]]
             return;
-        if (entry->value.owned == forEver) [[unlikely]]
+        if (entry->value == forEver) [[unlikely]]
             return;
-        if (!--entry->value.owned)
-            m_counts.remove(entry);
-    }
-
-    // The object goes with the reference: somebody else may see it from now on.
-    ALWAYS_INLINE void giveAway(JSCell* cell, bool countFalls)
-    {
-        auto entry = m_counts.find(cell);
-        if (entry == m_counts.end()) [[unlikely]]
-            return;
-        entry->value.isBeingFilled = false;
-        if (!countFalls || entry->value.owned == forEver) [[unlikely]]
-            return;
-        if (!--entry->value.owned)
+        if (!--entry->value)
             m_counts.remove(entry);
     }
 
     void clear() { m_counts.clear(); }
-    uint32_t get(JSCell* cell) const { return m_counts.get(cell).owned; }
+    uint32_t get(JSCell* cell) const { return m_counts.get(cell); }
     unsigned size() const { return m_counts.size(); }
-    // Null: C owns no reference to it.
-    Counts* find(JSCell* cell)
-    {
-        auto entry = m_counts.find(cell);
-        return entry == m_counts.end() ? nullptr : &entry->value;
-    }
 
     template<typename Function>
     void forEachCell(const Function& function) const
@@ -87,7 +62,7 @@ private:
     // A count that has got this far is no longer kept.
     static constexpr uint32_t forEver = std::numeric_limits<uint32_t>::max();
 
-    UncheckedKeyHashMap<JSCell*, Counts> m_counts;
+    UncheckedKeyHashMap<JSCell*, uint32_t> m_counts;
 };
 
 } // namespace CApi

@@ -1504,9 +1504,13 @@ caller's interpreter for C's and the callback's own for a callback, and on nothi
 program holds it.
 
 **`PyTuple_SetItem()`** writes only into a tuple that C is filling. CPython asks for a reference count of 1, which here nobody knows; what is known is asked: `PyTuple_New()` has made
-the tuple, C has not given it away with a reference since (as the result of a call, or to a function that steals the reference: `giveAway()`), and C owns exactly one reference to it. The
-first two are a flag beside the count, which goes when the count does. Into any other tuple it is a `SystemError`, as there. What passes here and not there is a tuple that C has shown to
-somebody who kept it, without giving up a reference (`PyList_Append()`). The hash that the tuple has kept is forgotten (CPython 3.15 goes on answering with it).
+the tuple, and there is no more than one reference to it among those that are known of: the ones that C owns, and the ones that C has handed on or seen taken (`didGetHolder()`: a container
+takes one over, or takes one of its own; the program gets one with a result, or with what C raised, and nobody counts what it does with it, so that is the end). The tuple keeps that: none, one, or
+more. So the one reference may be a container's: "put it in,
+then fill it" (`PyList_SetItem(list, i, pair)`, then `PyTuple_SetItem(pair, ...)` by the pointer that C still has) is how extensions keep their error paths short. Into any other tuple it is a
+`SystemError`, as there. Nobody sees what the program does. What passes here and not there is a tuple that somebody has got hold of without a reference changing hands under the eyes of the API,
+and kept: out of the container, or as the argument of a callback. What passes there and not here is a tuple whose other holder has let go of it again. The hash that the tuple has kept is
+forgotten (CPython 3.15 goes on answering with it).
 
 ## decimal
 

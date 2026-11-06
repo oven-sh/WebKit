@@ -8,6 +8,7 @@
 #include "CApiCounts.h"
 #include "CApiHooks.h"
 #include "PyErrors.h"
+#include "PyTuple.h"
 #include "PyType.h"
 
 #if PYTHON_HAS_CAPI
@@ -210,17 +211,13 @@ ALWAYS_INLINE void release(Handle handle)
         refuseToChangeCount(true);
 }
 
-// C gives a reference back, and the object goes with it: to a container, to whoever called C.
-ALWAYS_INLINE void giveAway(Handle handle)
+// Somebody else has a reference to the object now, and the API has seen it: C has handed one on (to a container that takes it over, to the program with a result or with what it
+// raised), or a container has taken one of its own. See PyTuple_SetItem().
+enum class Holder : bool { Container, Program };
+ALWAYS_INLINE void didGetHolder(JSValue value, Holder holder)
 {
-    JSCell* cell = countedCell(handle);
-    if (!cell)
-        return;
-    Interpreter* current = s_interpreter.load(std::memory_order_relaxed);
-    if (hasGIL(current)) [[likely]]
-        current->counts.giveAway(cell, s_interpreterWhoseCountsFall.load(std::memory_order_relaxed));
-    else
-        refuseToChangeCount(true);
+    if (auto* tuple = PyTuple::tryFrom(value); tuple && tuple->isMadeByC()) [[unlikely]]
+        tuple->addHolderThatCKnowsOf(holder == Holder::Program);
 }
 
 // A reference that a function takes over from C ("steals"), whether it succeeds or not: given up when the function returns, by which time
@@ -236,7 +233,7 @@ public:
     ~TakenOver()
     {
         if (m_handle)
-            giveAway(m_handle);
+            release(m_handle);
     }
 
 private:
