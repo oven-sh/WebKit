@@ -212,14 +212,14 @@ int waitForEvents(JSGlobalObject* globalObject, WaitRequest& request)
     }
 }
 
-bool waitUntilReady(JSGlobalObject* globalObject, int fd)
+bool waitUntilReady(JSGlobalObject* globalObject, int fd, bool isWaitOfCall)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     struct pollfd descriptor { fd, POLLIN, 0 };
     WaitRequest request { WaitRequest::Kind::Poll };
     request.timeout = -1;
-    request.isWaitOfCall = true;
+    request.isWaitOfCall = isWaitOfCall;
     request.descriptors = &descriptor;
     request.descriptorCount = 1;
     RELEASE_AND_RETURN(scope, waitForEvents(globalObject, request) != waitRaised);
@@ -271,7 +271,7 @@ bool waitUntilReadable(JSGlobalObject* globalObject, int fd)
     // Most of the time there is something to read. What is wrong with the descriptor, the read will say.
     if (result || !readWaitsAsPollDoes(fd))
         return true;
-    RELEASE_AND_RETURN(scope, waitUntilReady(globalObject, fd));
+    RELEASE_AND_RETURN(scope, waitUntilReady(globalObject, fd, true));
 }
 
 bool timeoutFromObject(JSGlobalObject* globalObject, JSValue value, int64_t unit, int64_t& nanoseconds, bool namesTimeout)

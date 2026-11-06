@@ -1283,6 +1283,20 @@ static JSValue posixSpawnp(JSGlobalObject* globalObject, const CallArgs& args) {
 // that of Windows does. They do what those of os.py do.
 enum : int { PosixSpawnWait = 0, PosixSpawnNoWait = 1 };
 
+#if OS(LINUX)
+// A descriptor for the process can be waited for like any other: see waitUntilReady(). waitpid() is a call that the kernel begins again after
+// the signal with which the engine asks for what runs to be ended. False: an exception. If there is no descriptor to be had, this does not wait.
+static bool posixWaitUntilChildHasEnded(JSGlobalObject* globalObject, pid_t pid, bool isWaitOfCall)
+{
+    int descriptor = static_cast<int>(syscall(SYS_pidfd_open, pid, 0));
+    if (descriptor < 0)
+        return true;
+    bool succeeded = waitUntilReady(globalObject, descriptor, isWaitOfCall);
+    close(descriptor);
+    return succeeded;
+}
+#endif
+
 static JSValue posixSpawnFamily(JSGlobalObject* globalObject, JSValue modeValue, JSValue file, JSValue argv, JSValue env, bool searchPath)
 {
     writeOutPendingOutput(globalObject);
@@ -1354,6 +1368,11 @@ static JSValue posixSpawnFamily(JSGlobalObject* globalObject, JSValue modeValue,
         RELEASE_AND_RETURN(scope, posixError(globalObject));
     if (mode == PosixSpawnNoWait)
         return jsNumber(pid);
+#if OS(LINUX)
+    // The child has been made, which is not to be done twice.
+    if (failed(scope, posixWaitUntilChildHasEnded(globalObject, pid, false)))
+        return { };
+#endif
     for (;;) {
         int status = 0;
         pid_t result;
@@ -1424,17 +1443,12 @@ static JSValue posixWaitpid(JSGlobalObject* globalObject, JSValue pidValue, JSVa
     int status = 0;
     pid_t result;
 #if OS(LINUX)
-    // A descriptor for the process can be waited for like any other: see waitUntilReady().
     if (pid > 0 && !(options & (WNOHANG | WUNTRACED | WCONTINUED))) {
         result = waitpid(pid, &status, options | WNOHANG);
         if (result > 0)
             RELEASE_AND_RETURN(scope, PyTuple::create(globalObject, { jsNumber(result), jsNumber(status) }));
-        if (int descriptor = result ? -1 : static_cast<int>(syscall(SYS_pidfd_open, pid, 0)); descriptor >= 0) {
-            bool succeeded = waitUntilReady(globalObject, descriptor);
-            close(descriptor);
-            if (failed(scope, succeeded))
-                return { };
-        }
+        if (!result && failed(scope, posixWaitUntilChildHasEnded(globalObject, pid, true)))
+            return { };
     }
 #endif
     do {

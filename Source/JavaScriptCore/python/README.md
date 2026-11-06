@@ -940,7 +940,7 @@ so the aim is that everything Python *guarantees* holds, and that what it merely
   made longer by one: the next wait begins with it. That goes for waiting for another thread
   (`Threads::waitUntil`) and for waiting for the kernel, which is done piece by piece (`IdleWait`): `time.sleep`, everything in
   `select` and every socket call that goes through `waitForEvents` (with a timeout, or on the main thread of a host with an event
-  loop), `os.read` and `FileIO` (so `input()` too), `os.waitpid` for one process on Linux.
+  loop), `os.read` and `FileIO` (so `input()` too), `os.waitpid` for one process and `os.spawnv(os.P_WAIT, ...)` on Linux.
   - *What that comes to, measured.* With 2,000,000 objects alive, a loop that drops one object with a `__del__` and sleeps for 1 ms used 91 % of a
     processor (266 full collections in 30 s, half as many rounds); now 6.5 %, 14 collections, 97 % of the rounds. Naps of 0.1 s: 65 % and now
     5.0 %. With 1,000 objects alive: 18.7 % and now 6.3 %. Two threads, one of which drops what the other makes: 93 % and now 9.9 %.

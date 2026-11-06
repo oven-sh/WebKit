@@ -54,7 +54,8 @@ namespace Python {
 // that Python handles has arrived, the function should return -1 with EINTR, as the system call does, or the handler waits.
 // A request with timeout 0 comes here too (asyncio asks that way whenever it has something to run): waitWithoutBlocking() is
 // the whole answer, and whether to turn the loop once first, so that a busy Python loop does not starve it, is up to the host.
-// What does not come here: time.sleep(), os.read() and the like, os.waitpid(), locks and semaphores.
+// What does not come here: time.sleep(), locks and semaphores. What does, as a Poll of one descriptor: os.read() and the like
+// (waitUntilReadable()), and on Linux os.waitpid() for one child and os.spawnv(os.P_WAIT) and its kin (waitUntilReady()).
 
 struct WaitRequest {
     enum class Kind : uint8_t { Poll, Select, Epoll, Kqueue };
@@ -122,8 +123,8 @@ int waitForEvents(JSGlobalObject*, WaitRequest&);
 // terminal that delivers lines or waits for a byte; open for reading, blocking), this waits instead, until there is something:
 // in waitForEvents(), where a thread that is idle collects and a host's event loop turns. False: an exception.
 bool waitUntilReadable(JSGlobalObject*, int fd);
-// The same without asking what the descriptor is: for one that the caller has made.
-bool waitUntilReady(JSGlobalObject*, int fd);
+// The same without asking what the descriptor is: for one that the caller has made. `isWaitOfCall`: see IdleWait.
+bool waitUntilReady(JSGlobalObject*, int fd, bool isWaitOfCall);
 
 // The clock that timeouts are measured by, in nanoseconds.
 int64_t monotonicNanoseconds();
