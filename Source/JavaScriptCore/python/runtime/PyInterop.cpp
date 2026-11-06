@@ -10,7 +10,6 @@
 #include "BooleanConstructor.h"
 #include "BuiltinNames.h"
 #include "FunctionPrototype.h"
-#include "GetterSetter.h"
 #include "IteratorOperations.h"
 #include "JSBoundFunction.h"
 #include "JSCInlines.h"
@@ -184,23 +183,23 @@ static bool propertyKeyForAttribute(JSGlobalObject* globalObject, JSObject* obje
 }
 
 // Whether the object is the `prototype` of a constructor. What is read off one is JS's spelling of an unbound method:
-// String.prototype.toUpperCase.call("abc"). `asksGetter`: for who runs code of the object's anyway. A getter of the program's is not asked even so:
-// it is not what makes a prototype, and nobody expects len() to call it.
-static bool isPrototypeOfConstructor(JSGlobalObject* globalObject, JSObject* object, bool asksGetter = false)
+// String.prototype.toUpperCase.call("abc"). An accessor that JS can make is not asked, whatever its getter is: it is not what makes a prototype, and
+// nobody expects len() or the read of an attribute to call it. `looksOnly`: where it takes the main thread to tell, no, and nothing is raised.
+static bool isPrototypeOfConstructor(JSGlobalObject* globalObject, JSObject* object, bool looksOnly = false)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue constructor = object->getDirect(vm, vm.propertyNames->constructor);
     if (!constructor) [[likely]]
         return false;
-    // In many classes of the host it is a getter written in C++ (Headers.prototype). In Iterator.prototype it is a getter, by the standard.
-    auto isGetterOfEngine = [&] {
-        auto* getter = dynamicDowncast<JSFunction>(uncheckedDowncast<GetterSetter>(constructor.asCell())->getter());
-        return getter && getter->isHostFunction() && !getter->isCompiledClosure() && !getter->inherits<JSBoundFunction>();
-    };
-    if (constructor.isCell() && (constructor.asCell()->type() == CustomGetterSetterType || (asksGetter && constructor.asCell()->type() == GetterSetterType && isGetterOfEngine()))) [[unlikely]] {
-        if (failed(scope, ensureMainThreadForJS(globalObject)))
+    // In many classes of the host it is a getter written in C++ (Headers.prototype), and so it is in Iterator.prototype, where the standard has an accessor.
+    if (constructor.isCell() && constructor.asCell()->type() == CustomGetterSetterType) [[unlikely]] {
+        if (!runtime(globalObject).threads().isMainThread()) [[unlikely]] {
+            scope.release();
+            if (!looksOnly)
+                ensureMainThreadForJS(globalObject);
             return false;
+        }
         constructor = object->get(globalObject, vm.propertyNames->constructor);
         RETURN_IF_EXCEPTION(scope, false);
     }
@@ -470,6 +469,7 @@ JSValue attributeOfObjectOfJS(JSGlobalObject* globalObject, JSObject* object, JS
 }
 
 static bool itemsAreProperties(JSGlobalObject*, JSObject*);
+static ALWAYS_INLINE JSValue objectOfPythonBehindProxy(JSGlobalObject*, JSObject*, std::optional<Special> also = std::nullopt);
 
 // `isOfDerivedClass`: the __getattribute__ that a class of Python's inherits from the class of JS's it derives from.
 template<bool isOfDerivedClass>
@@ -673,7 +673,7 @@ static JSValue methodOfIteration(JSGlobalObject* globalObject, JSObject* object)
     // (What is a Set by its cell is one, and the methods work on it: F.prototype = new Set([1]).)
     if (object->type() == JSSetType)
         return method;
-    bool isPrototype = isPrototypeOfConstructor(globalObject, object, true);
+    bool isPrototype = isPrototypeOfConstructor(globalObject, object);
     RETURN_IF_EXCEPTION(scope, { });
     return isPrototype ? JSValue() : method;
 }
@@ -710,6 +710,9 @@ static ItemsOfJS itemsOf(JSGlobalObject* globalObject, JSObject* object, JSValue
     // A Map is a mapping, whatever has been done to it. (Where that takes a method that is gone, it raises.)
     if (object->type() == JSMapType)
         return ItemsOfJS::ByMethods;
+    // (What it has of a mapping is what the object has, which are properties of the Proxy.)
+    if (objectOfPythonBehindProxy(globalObject, object)) [[unlikely]]
+        return ItemsOfJS::Iterated;
     if (!isSetAsTheEngineMadeIt(object)) {
         JSValue method = methodOfIteration(globalObject, object);
         RETURN_IF_EXCEPTION(scope, ItemsOfJS::Properties);
@@ -800,6 +803,8 @@ static bool itemsAreProperties(JSGlobalObject* globalObject, JSObject* object)
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (JSType type = object->type(); type == JSMapType || type == JSSetType || isWeakCollection(object) || isTypedArrayType(type))
         return false;
+    if (objectOfPythonBehindProxy(globalObject, object)) [[unlikely]]
+        return false;
     JSValue method;
     Inquiry result = inquirePropertyOfHost(globalObject, object, vm.propertyNames->iteratorSymbol, method);
     RETURN_IF_EXCEPTION(scope, false);
@@ -808,7 +813,12 @@ static bool itemsAreProperties(JSGlobalObject* globalObject, JSObject* object)
         RETURN_IF_EXCEPTION(scope, false);
         result = Inquiry::Value;
     }
-    return result == Inquiry::Absent || (result == Inquiry::Value && !method.isCallable());
+    if (result == Inquiry::Absent || (result == Inquiry::Value && !method.isCallable()))
+        return true;
+    // As methodOfIteration() has it.
+    if (result != Inquiry::Value)
+        return false;
+    RELEASE_AND_RETURN(scope, isPrototypeOfConstructor(globalObject, object, true));
 }
 
 // A plain object is a mapping by its type, which is all that `match` asks of anything else. One that JS iterates over is none.
@@ -1070,11 +1080,13 @@ static JSValue jsObjectDelItem(JSGlobalObject* globalObject, JSValue self, JSVal
     return deletePropertyOrThrow(globalObject, object, name) ? jsUndefined() : JSValue();
 }
 
-// The object of Python's that it is a Proxy of, if its type has one of these methods. Empty: it is none. What such an object contains, how much and in
-// which order is what its type says, and to JS its items, its attributes and what JS wants of it (`length`, Symbol.iterator) are all
-// properties: {'size': 7} has a `size`. So len(), bool(), `in` and iteration are those of the object, as typeof and Array.isArray() are those of
-// the target. (One whose type says nothing of the kind is an object with properties, which are its attributes.)
-static ALWAYS_INLINE JSValue objectOfPythonBehindProxy(JSGlobalObject* globalObject, JSObject* object, std::initializer_list<Special> methods)
+// The object of Python's that it is a Proxy of, if its type makes a container of it: it has __len__, __contains__, __iter__ or __getitem__. Empty:
+// it is none. What such an object contains, how much and in which order is what its type says, and to JS its items, its attributes and what JS
+// wants of it (`length`, Symbol.iterator) are all properties: {'size': 7} has a `size`. So len(), bool(), `in` and iteration are those of the object, all
+// four as soon as the type has one of them, as typeof and Array.isArray() are those of the target: what has a __len__ alone is not iterable
+// behind a Proxy either. (One whose type says nothing of the kind is an object with properties, which are its attributes.)
+// `also`: or this one.
+static ALWAYS_INLINE JSValue objectOfPythonBehindProxy(JSGlobalObject* globalObject, JSObject* object, std::optional<Special> also)
 {
     if (object->type() != ProxyObjectType) [[likely]]
         return { };
@@ -1088,14 +1100,24 @@ static ALWAYS_INLINE JSValue objectOfPythonBehindProxy(JSGlobalObject* globalObj
     if (!isPyObject(object) && !PyListObject::is(object) && !PyType::is(object))
         return { };
     PyType* type = typeOf(globalObject, object);
-    for (Special method : methods) {
-        if (JSValue found = type->lookup(method); found && !isNone(found))
-            return object;
-    }
-    return { };
+    auto has = [&](Special method) {
+        JSValue found = type->lookup(method);
+        return found && !isNone(found);
+    };
+    return has(Special::Len) || has(Special::Contains) || has(Special::Iter) || has(Special::GetItem) || (also && has(*also)) ? JSValue(object) : JSValue();
 }
 
 static JSValue jsObjectIter(JSGlobalObject*, JSValue);
+
+// A class of Python's that derives from one of JS's may have an __iter__() of its own.
+static bool hasIterOfPython(JSObject* object)
+{
+    PyType* type = typeByPrototype(object);
+    if (!type) [[likely]]
+        return false;
+    auto* native = PyNativeFunction::tryFrom(type->lookup(Special::Iter));
+    return !native || native->def().pointer.f1 != jsObjectIter;
+}
 
 static JSValue jsObjectContains(JSGlobalObject* globalObject, JSValue self, JSValue key)
 {
@@ -1104,7 +1126,7 @@ static JSValue jsObjectContains(JSGlobalObject* globalObject, JSValue self, JSVa
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSObject* object = asObject(self);
-    if (JSValue target = objectOfPythonBehindProxy(globalObject, object, { Special::Contains, Special::Iter, Special::GetItem })) [[unlikely]] {
+    if (JSValue target = objectOfPythonBehindProxy(globalObject, object)) [[unlikely]] {
         bool isIn = contains(globalObject, target, key);
         RETURN_IF_EXCEPTION(scope, { });
         return jsBoolean(isIn);
@@ -1127,13 +1149,8 @@ static JSValue jsObjectContains(JSGlobalObject* globalObject, JSValue self, JSVa
             return jsBoolean(isIn);
         }
     }
-    // A class of Python's that derives from one of JS's may have an __iter__() of its own. What that gives is what is in an instance then, as for
-    // a class without a __contains__(), unless the object says itself what is in it.
-    bool iteratesInPython = false;
-    if (typeByPrototype(object)) [[unlikely]] {
-        auto* native = PyNativeFunction::tryFrom(typeOf(globalObject, self)->lookup(Special::Iter));
-        iteratesInPython = !native || native->def().pointer.f1 != jsObjectIter;
-    }
+    // What that gives is what is in an instance then, as for a class without a __contains__(), unless the object says itself what is in it.
+    bool iteratesInPython = hasIterOfPython(object);
     // (A symbol is no item, here or below: `js.Symbol.iterator in o` is the `in` of JS, as o[js.Symbol.iterator] is its read.)
     if (iteratesInPython && !key.isSymbol()) [[unlikely]] {
         JSValue iterator = getIter(globalObject, self);
@@ -1152,8 +1169,12 @@ static JSValue jsObjectContains(JSGlobalObject* globalObject, JSValue self, JSVa
     if (iterates && !key.isSymbol()) {
         IterationRecord iteration = iteratorForIterable(globalObject, object, iterates);
         RETURN_IF_EXCEPTION(scope, { });
+        // (As forEachInIterationRecord() calls next(). That cannot be left early but by an exception.)
+        std::optional<CachedCall> holder;
+        CachedCall* next = iteration.nextMethod.isObject() ? CachedCall::tryEmplace(holder, globalObject, asObject(iteration.nextMethod), getCallDataInline(iteration.nextMethod), 0) : nullptr;
+        RETURN_IF_EXCEPTION(scope, { });
         while (true) {
-            JSValue result = iteratorStep(globalObject, iteration);
+            JSValue result = next ? iteratorStepWithCachedCall(globalObject, iteration, next) : iteratorStep(globalObject, iteration);
             RETURN_IF_EXCEPTION(scope, { });
             if (result.isFalse())
                 return jsBoolean(false);
@@ -1318,7 +1339,7 @@ static JSValue jsObjectIter(JSGlobalObject* globalObject, JSValue self)
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSObject* object = asObject(self);
-    if (JSValue target = objectOfPythonBehindProxy(globalObject, object, { Special::Iter, Special::GetItem })) [[unlikely]]
+    if (JSValue target = objectOfPythonBehindProxy(globalObject, object)) [[unlikely]]
         RELEASE_AND_RETURN(scope, getIter(globalObject, target));
     JSValue method;
     ItemsOfJS items = itemsOf(globalObject, object, &method);
@@ -1488,7 +1509,24 @@ static JSValue numberOfItems(JSGlobalObject* globalObject, JSObject* object)
     if (object->isCallable())
         return { };
     JSType type = object->type();
-    if (type != JSMapType && !isSetAsTheEngineMadeIt(object)) {
+    // What the engine goes through without calling anything is counted as it is: that is what iteration gives, whatever `size` says. (But for a Set that has
+    // been given a get() and a keys(), which make a mapping by its methods of it. To tell would take three reads, and its `size` says the same.)
+    if (isSetAsTheEngineMadeIt(object))
+        return jsNumber(uncheckedDowncast<JSSet>(object)->size());
+    if (type == JSMapType || type == JSSetType) {
+        // One of a derived class, or of another realm: what Python goes through it with is the engine's own. (It is looked at: to be counted so, no getter is called.)
+        bool isMap = type == JSMapType;
+        JSValue method;
+        Inquiry result = inquirePropertyOfHost(globalObject, object, isMap ? PropertyName(vm.propertyNames->keys) : PropertyName(vm.propertyNames->iteratorSymbol), method);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (auto* function = result == Inquiry::Value ? dynamicDowncast<JSFunction>(method) : nullptr; function && !hasIterOfPython(object)) {
+            if (isMap && function->intrinsic() == JSMapKeysIntrinsic && function->realm()->isMapPrototypeIteratorProtocolFastAndNonObservable())
+                return jsNumber(uncheckedDowncast<JSMap>(object)->size());
+            if (!isMap && function->intrinsic() == JSSetValuesIntrinsic && function->realm()->isSetPrototypeIteratorProtocolFastAndNonObservable())
+                return jsNumber(uncheckedDowncast<JSSet>(object)->size());
+        }
+    }
+    if (type != JSMapType) {
         JSValue iterates = methodOfIteration(globalObject, object);
         RETURN_IF_EXCEPTION(scope, { });
         if (!iterates) {
@@ -1501,8 +1539,11 @@ static JSValue numberOfItems(JSGlobalObject* globalObject, JSObject* object)
     }
     // (What the engine itself makes like an array has a `length`, whatever has been put on it.)
     bool isLikeArray = type == DirectArgumentsType || type == ScopedArgumentsType || type == ClonedArgumentsType || type == StringObjectType || type == DerivedStringObjectType;
-    for (unsigned i = 0; i < 2; ++i) {
-        JSValue count = object->get(globalObject, isLikeArray == !i ? vm.propertyNames->length : vm.propertyNames->size);
+    const Identifier* names[] = { &vm.propertyNames->size, &vm.propertyNames->length };
+    if (isLikeArray)
+        std::swap(names[0], names[1]);
+    for (const Identifier* name : names) {
+        JSValue count = object->get(globalObject, *name);
         RETURN_IF_EXCEPTION(scope, { });
         if (isSmallInt(count) && smallIntValue(count) >= 0)
             return count;
@@ -1522,7 +1563,7 @@ static JSValue jsObjectLen(JSGlobalObject* globalObject, JSValue self)
         return { };
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (JSValue target = objectOfPythonBehindProxy(globalObject, asObject(self), { Special::Len })) [[unlikely]] {
+    if (JSValue target = objectOfPythonBehindProxy(globalObject, asObject(self))) [[unlikely]] {
         int64_t count = length(globalObject, target);
         RETURN_IF_EXCEPTION(scope, { });
         RELEASE_AND_RETURN(scope, makeInt(globalObject, count));
@@ -1544,7 +1585,7 @@ static JSValue jsObjectBool(JSGlobalObject* globalObject, JSValue self)
         return { };
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (JSValue target = objectOfPythonBehindProxy(globalObject, asObject(self), { Special::Bool, Special::Len })) [[unlikely]] {
+    if (JSValue target = objectOfPythonBehindProxy(globalObject, asObject(self), Special::Bool)) [[unlikely]] {
         bool isTruthy = isTrue(globalObject, target);
         RETURN_IF_EXCEPTION(scope, { });
         return jsBoolean(isTruthy);
