@@ -109,8 +109,8 @@ objects dropped and collected leave 372 MB anonymous, and 36 MB half a second an
 ## The collector's policy
 
 The engine collects when the heap has grown by a factor since the last full collection. On a machine with 16 GB or more the factor is
-about 3 for a small heap (Bun sets `heapGrowthMaxIncrease` to 2: twice as much may be allocated as was marked; JSC's own default is 3, a factor of 4) and falls towards 1 as the heap nears the size of the memory (`Heap::updateAllocationLimits`, `proportionalHeapSize`; the memory is what
-the container allows, if there is one). So a program with 160 MB of live data may hold 300 to 600 MB. That buys speed. With the
+about 3 for a small heap (Bun sets `heapGrowthMaxIncrease` to 2: twice as much may be allocated as was marked; JSC's own default is 3, a factor of 4) and falls as the heap nears the size of the memory, to 2.2 at half of it and 1.74 at all of it (Bun sets `heapGrowthSteepnessFactor` to 1; with JSC's defaults: 2.1 and 1.41) (`Heap::updateAllocationLimits`, `proportionalHeapSize`; the memory is what
+the container allows, if there is one). So a program with 160 MB of live data may hold up to 480 MB. That buys speed. With the
 factor at 2 (`BUN_JSC_heapGrowthMaxIncrease=1`; measured before the changes below) the pytest run peaked at 846 MB, not at 911 to 1,197, in the same wall time and 2%
 more CPU time, and none of the Python benchmarks lost time, but a program in JS that churns objects took 1.5 times as long. It is the engine's policy for JS and Python alike and
 has been left alone, but for one thing: the size that counts is that of what is reachable, not of what a collection has kept for finalizers (README, "What waits for a finalizer does not make the heap grow"). In a program without such objects nothing has changed. `BUN_JSC_forceRAMSize=1073741824` makes a process behave as on a machine with 1 GB.
