@@ -1864,11 +1864,13 @@ value, which is not a constant, as CPython's stack does (`BlockKind::ValueToRetu
 place to go on at where no statement begins. The copy that runs on the way of an exception holds the exception, which it raises again (`BlockKind::ExceptionToRaise`), in a block within that of the handler. Variables without a value get `None`, with CPython's warning, because code further on
 may have been compiled knowing that they have one.
 
-Where the frame is: where the line begins that it is being told of (`Runtime::tracedOffset`), which is not the instruction it is at if a jump tells of the line it leads to. That jump may come
-behind marks that open the blocks again which it has left. Whatever is read at the place the frame is sent to, and is no variable, must be in use where the frame is (`liveLocalsBefore()`), or the frame is refused: a collection may have
-emptied the register, and whether one has come must not tell. What a block holds is in use no longer at the very end of the block, which is where the line of a `break`, a `continue` or a `return` with nothing to compute begins. Nor is the
-subject of a `match` behind the last pattern that looks at it: the block of a `case` names its register (`TracedBlock::Other`) without holding it. From the assignment until the frame goes on, what
-is in use at the place it has been sent to is in use for the collector too (`liveLocalsOfFrame()`): the trace function is still running, and may collect.
+Where the frame is: where the line begins that it is being told of (`Runtime::tracedOffset`), which is not the instruction it is at if a jump tells of the line it leads to; at any other event, at the instruction. A jump or a
+return that leaves blocks comes before the marks that open them again for the rest of their bodies (`Unit::unwindBlocks()`), so it is in none of those it has left, for a tool that is told of the jump and for the collector. Whatever is read at the place
+the frame is sent to, and is no variable, must be in use where the frame is (`liveLocalsBefore()`), or the frame is refused: a collection may have emptied the register, and whether one has come must not tell. What a block holds is
+in use for as long as a frame can be told of a line in the block: also at the first instruction on the way out, where the line of a `break`, a `continue` or a `return` with nothing to compute begins (`BlockPiece::holdsAt()`), and at the
+instruction that catches an exception for a handler in the block, which lies behind all the code. The subject of a `match` is not behind the last pattern that looks at it: the block of a `case` names its register (`TracedBlock::Other`)
+without holding it. From the assignment until the frame goes on, what is in use at the place it has been sent to is in use for the collector too (`liveLocalsOfFrame()`): the callback is still running, and may collect. The frame goes there when
+the callback returns, or not at all (`jumped()` in `Monitoring::handle()`): not if the callback raises.
 
 **Threads.** Trace and profile functions, and whether a callback is running, are the thread's (`Runtime::ThreadLocalState`). Tools 6 and 7 want their events
 while any thread has a function. The side tables are only changed with the GIL, and those the collector's threads read, with the lock of the table of monitored code as well.
