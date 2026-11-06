@@ -397,10 +397,11 @@ static bool isTracked(Runtime& rt, JSValue value, bool isYoung = false)
     return !isOfUntrackedType(type);
 }
 
-// Of what the program is given: see PyFrame::backIs().
+// Of what the program is given: see PyFrame::backIs() and PyException::isUnseen().
 static ALWAYS_INLINE void assertIsComplete(JSValue object)
 {
     ASSERT_UNUSED(object, !PyFrame::is(object) || !PyFrame::from(object)->lacksBack());
+    ASSERT_UNUSED(object, !PyException::is(object) || !PyException::from(object)->isUnseen());
 }
 
 // ---- gc.collect(): how much was found ----
