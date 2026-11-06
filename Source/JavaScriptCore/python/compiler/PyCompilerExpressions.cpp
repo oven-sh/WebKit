@@ -1151,10 +1151,9 @@ unsigned Unit::instructionsUntilFunctionEnds(const StatementsAfter& given, Comes
                 return sumToCopy(count, sumToCopy(2, loop.instructionsAfterLoop));
             if (loop.isLast.kind != Last::OfFunction || loop.isLast.exception || m_kind == UnitKind::Class)
                 return tooManyToCopy;
-            // (With what leaves a handler, or whatever else the loop is in, it is too long.)
-            if (innermostBlock(&loop - m_blocks.span().data()))
-                return tooManyToCopy;
-            return sumToCopy(count, 4);
+            // What leaves whatever the loop is in comes in between, and the `return` loads what it returns unless that waits (a `finally` clause on the way of `return a`).
+            bool valueWaits = loop.valueToReturn && !loop.valueToReturn->virtualRegister().isConstant();
+            return sumToCopy(count, sumToCopy((valueWaits ? 3 : 4) + loop.isLast.jumpsBefore, instructionsOnTheWayOut(valueWaits, 0, &loop - m_blocks.span().data())));
         }
         case StmtKind::Raise:
             if (Expr* exception = node->as<Raise>()->exc)
