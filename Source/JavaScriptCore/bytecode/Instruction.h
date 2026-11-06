@@ -47,6 +47,7 @@ struct JSOpcodeTraits {
     static constexpr OpcodeID page2 = op_page2;
     static constexpr OpcodeID firstIDThatIsNoOpcode = op_wide16; // That, wide32, instrumented and page2 are the last ids of page 1, in this order.
     static constexpr unsigned firstIDOfPage2 = firstPage2OpcodeID;
+    static constexpr unsigned numberOfIDs = numOpcodeIDs;
     static constexpr const unsigned* opcodeLengths = ::JSC::opcodeLengths;
     static constexpr const ASCIILiteral* opcodeNames = ::JSC::opcodeNames;
     static constexpr auto checkpointCountTable = bytecodeCheckpointCountTable;
@@ -87,13 +88,20 @@ public:
         return opcodeIDWhereThereIs(opcodeID);
     }
 
-    // Where an opcode would stand there is op_page2 or op_py_instrumented.
+    // Where an opcode would stand there is op_page2 or op_py_instrumented. Anything else, or no opcode of page 2 behind op_page2, and this is not
+    // the start of an instruction. To ask there is a mistake, but one that code of JS could make without harm when every byte spelled an opcode.
+    // So it can now: the answer is an id that has a name and a length in the tables, as the wrong opcode had that it was then.
     NEVER_INLINE typename Traits::OpcodeID opcodeIDWhereThereIs(typename Traits::OpcodeID found) const
     {
         if (found == Traits::instrumented)
             return originalOpcodeOfInstrumentedInstruction(this);
-        ASSERT(found == Traits::page2);
-        return static_cast<typename Traits::OpcodeID>(Traits::firstIDOfPage2 + static_cast<unsigned>((this + (narrow()->opcodeID() == Traits::page2 ? 1 : 2))->narrow()->opcodeID()));
+        if (found == Traits::page2) {
+            unsigned opcodeID = Traits::firstIDOfPage2 + static_cast<unsigned>((this + (narrow()->opcodeID() == Traits::page2 ? 1 : 2))->narrow()->opcodeID());
+            if (opcodeID < Traits::numberOfIDs) [[likely]]
+                return static_cast<typename Traits::OpcodeID>(opcodeID);
+        }
+        ASSERT_NOT_REACHED();
+        return Traits::page2;
     }
 
     const ASCIILiteral name() const

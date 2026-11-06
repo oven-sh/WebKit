@@ -65,18 +65,23 @@ static ALWAYS_INLINE const uint8_t* addressOfOpcode(const void* instruction)
 OpcodeID originalOpcodeOfInstrumentedInstruction(const void* instruction)
 {
     auto* address = static_cast<const uint8_t*>(instruction);
-    Locker locker { monitoredCodeLock };
-    auto it = monitoredCode().upper_bound(address);
-    if (it != monitoredCode().end() && it->second->m_instructions <= address) {
-        if (auto opcode = it->second->opcodeThatMayBeReplacedAt(address - it->second->m_instructions))
-            return static_cast<OpcodeID>(*opcode);
+    {
+        Locker locker { monitoredCodeLock };
+        auto it = monitoredCode().upper_bound(address);
+        // A monitor may outlive its code, and what was the memory of the instructions be somebody else's by now, of another VM too. Whoever
+        // has got that memory sees that the code is dead, without a lock: it was, before the memory was freed.
+        if (it != monitoredCode().end() && it->second->m_instructions <= address && it->second->code()) {
+            if (auto opcode = it->second->opcodeThatMayBeReplacedAt(address - it->second->m_instructions))
+                return static_cast<OpcodeID>(*opcode);
+            RELEASE_ASSERT(*addressOfOpcode(instruction) != op_py_instrumented);
+        } else if (*addressOfOpcode(instruction) == op_py_instrumented) {
+            // No instruction begins here, and the byte is an operand: see Instruction::opcodeIDWhereThereIs().
+            ASSERT_NOT_REACHED();
+            return op_py_instrumented;
+        }
     }
     // It has been put back since the caller looked.
-    auto opcode = static_cast<OpcodeID>(*addressOfOpcode(instruction));
-    RELEASE_ASSERT(opcode != op_py_instrumented);
-    if (opcode == op_page2)
-        return static_cast<OpcodeID>(firstPage2OpcodeID + addressOfOpcode(instruction)[1]);
-    return opcode;
+    return static_cast<const JSInstruction*>(instruction)->opcodeID();
 }
 
 JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_instrumented)
@@ -170,8 +175,8 @@ CodeMonitor::CodeMonitor(Monitoring& monitoring, UnlinkedCodeBlock* code, const 
     monitoring.m_monitors.append(this);
     findEntrances();
     Locker locker { monitoredCodeLock };
-    // When a VM ends, things go in no particular order: the instructions of some code of its may be gone, the monitor still be there,
-    // and these be where those were.
+    // Code and its monitor are swept in no particular order: the instructions of some code may be gone, the monitor still be there, and
+    // these be where those were.
     auto& map = monitoredCode();
     for (auto it = map.upper_bound(m_instructions); it != map.end() && it->second->m_instructions < m_instructions + m_instructionsSize;)
         it = map.erase(it);
