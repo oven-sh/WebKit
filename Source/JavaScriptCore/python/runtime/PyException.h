@@ -15,6 +15,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 namespace JSC {
 namespace Python {
 
+class PyFrame;
 class PyGenerator;
 class PyTraceback;
 

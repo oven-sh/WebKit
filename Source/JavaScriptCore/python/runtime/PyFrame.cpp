@@ -28,6 +28,7 @@
 #include "PyMonitoring.h"
 #include "PyNumbers.h"
 #include "PyStr.h"
+#include "PyThreads.h"
 #include "PyTypes.h"
 #include "PyVirtualFiles.h"
 #include "TopExceptionScope.h"

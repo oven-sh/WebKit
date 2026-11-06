@@ -25,6 +25,7 @@
 #include "PyIterators.h"
 #include "PyList.h"
 #include "PyModule.h"
+#include "PyMonitoring.h"
 #include "PyNumbers.h"
 #include "PyRange.h"
 #include "PySet.h"
