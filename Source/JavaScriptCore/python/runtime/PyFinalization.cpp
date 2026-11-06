@@ -567,7 +567,7 @@ void Runtime::reconcileWeakReferencesAtGCEnd()
 {
     scheduledTasks.removeUnmarked(m_vm.heap);
     m_typeLookupCache->removeUnmarked(m_vm.heap);
-    if (CApi::belongsTo(*this))
+    if (CApi::isSetUpFor(*this))
         CApi::didFinishMarking(m_vm.heap);
     // Each thread is told once of all that queueWeakRefCallback() has left for it: to tell may be a system call.
     Locker locker { m_finalizationLock };

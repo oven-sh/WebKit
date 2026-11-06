@@ -85,6 +85,7 @@ Runtime::Runtime(JSGlobalObject* globalObject)
     m_monitoring = makeUnique<Monitoring>(*this);
     m_typeLookupCache = makeUnique<TypeLookupCache>();
     m_vm.heap.addPythonRuntime(this);
+    CApi::runtimeIsBeginning(*this);
 }
 
 Runtime::~Runtime()

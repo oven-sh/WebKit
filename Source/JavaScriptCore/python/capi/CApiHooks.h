@@ -29,20 +29,33 @@ class Runtime;
 
 namespace CApi {
 
-// WHEN THE API COMES ABOUT. It is one interpreter's for good, so it is taken only for what cannot be done without it:
+// WHOSE THE API IS. The functions that C calls are not told for which interpreter, and a variable such as PyExc_ValueError holds one object. So the API serves one interpreter of
+// the process: THE FIRST THAT THERE IS, from its beginning to its end, and nobody after that: what was loaded has pointers into its heap. Nothing that a program does
+// changes whose it is.
+//
+// WHEN IT IS SET UP. When that interpreter first has a use for it:
+//  - before it loads a library: what a library does as it is loaded may read those variables, and may call;
 //  - before code of C's is called that may call it (a function of a PyDLL);
-//  - when C is about to be handed what only the API can account for: a reference, or a type that C knows by a symbol;
-//  - when a library calls it while it is being loaded.
+//  - when C is handed a reference.
 // With the GIL.
 
-// False, with an ImportError: the API is another interpreter's.
+// Sets it up. False, with an ImportError: the API is not for this interpreter.
 bool ensure(JSGlobalObject*);
 
 #if PYTHON_HAS_CAPI
 
 // False, and nothing is raised: for what can do without.
 bool tryEnsure(JSGlobalObject*);
-// Around dlopen(). What a library does as it is loaded (a constructor, the initializer of a static variable in C++) may call the API, on this thread.
+
+void runtimeIsBeginning(Runtime&);
+void runtimeIsEnding(Runtime&);
+// The collector of another VM asks too, on a thread of its own, while this one may be ending: the pointers are compared and never followed.
+extern std::atomic<const Runtime*> s_runtimeItIsFor;
+extern std::atomic<const Runtime*> s_runtimeItIsSetUpFor;
+ALWAYS_INLINE bool isFor(const Runtime& runtime) { return s_runtimeItIsFor.load(std::memory_order_relaxed) == &runtime; }
+ALWAYS_INLINE bool isSetUpFor(const Runtime& runtime) { return s_runtimeItIsSetUpFor.load(std::memory_order_relaxed) == &runtime; }
+
+// Around dlopen(). What a library does as it is loaded (a constructor, the initializer of a static variable in C++) is done on this thread.
 class LibraryBeingLoaded {
     WTF_MAKE_NONCOPYABLE(LibraryBeingLoaded);
     WTF_FORBID_HEAP_ALLOCATION;
@@ -53,14 +66,11 @@ public:
 private:
     JSGlobalObject* m_previous;
 };
-// The collector of another VM asks too, on a thread of its own, while this one may be ending: the pointer is compared and never followed.
-extern std::atomic<const Runtime*> s_runtime;
-ALWAYS_INLINE bool belongsTo(const Runtime& runtime) { return s_runtime.load(std::memory_order_relaxed) == &runtime; }
-void runtimeIsEnding(Runtime&);
+
 // The bits of the PyObject* for the object, for memory that C may read, now or later.
 uint64_t bitsForC(JSGlobalObject*, JSValue);
 
-// The rest is for the runtime that the API belongs to.
+// The rest is for the interpreter that the API has been set up for.
 
 // For the collector, with the world stopped, when marking is over and nothing has been freed yet.
 void didFinishMarking(JSC::Heap&);
@@ -77,13 +87,15 @@ JSValue objectOfSymbol(uint64_t bits);
 #else // !PYTHON_HAS_CAPI
 
 inline bool tryEnsure(JSGlobalObject*) { return false; }
+inline void runtimeIsBeginning(Runtime&) { }
+inline void runtimeIsEnding(Runtime&) { }
+inline bool isFor(const Runtime&) { return false; }
+inline bool isSetUpFor(const Runtime&) { return false; }
 class LibraryBeingLoaded {
 public:
     explicit LibraryBeingLoaded(JSGlobalObject*) { }
     ~LibraryBeingLoaded() { }
 };
-inline bool belongsTo(const Runtime&) { return false; }
-inline void runtimeIsEnding(Runtime&) { }
 inline uint64_t bitsForC(JSGlobalObject*, JSValue value) { return static_cast<uint64_t>(JSValue::encode(value)); }
 inline void didFinishMarking(JSC::Heap&) { }
 inline bool throwWhatCRaised(JSGlobalObject*) { return true; }

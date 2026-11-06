@@ -69,9 +69,8 @@ DEFINE_VISIT_CHILDREN(State);
 // ---- The one interpreter ----
 
 std::atomic<Interpreter*> s_interpreter;
-std::atomic<const Runtime*> s_runtime;
-// Once and for all.
-static std::atomic<bool> s_isTaken;
+std::atomic<const Runtime*> s_runtimeItIsFor;
+std::atomic<const Runtime*> s_runtimeItIsSetUpFor;
 
 static void setSymbols(Interpreter* interpreter)
 {
@@ -122,15 +121,23 @@ bool ensure(JSGlobalObject* globalObject)
         return true;
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    raiseImportError(globalObject, scope, "the C API serves one interpreter of a process, and it is not this one"_s);
+    raiseImportError(globalObject, scope, "the C API serves the first Python interpreter of a process, and that is not this one"_s);
     return false;
+}
+
+void runtimeIsBeginning(Runtime& runtime)
+{
+    // Once and for all.
+    static std::atomic<bool> isSettled;
+    if (!isSettled.exchange(true))
+        s_runtimeItIsFor.store(&runtime, std::memory_order_relaxed);
 }
 
 bool tryEnsure(JSGlobalObject* globalObject)
 {
-    if (belongsTo(runtime(globalObject))) [[likely]]
+    if (isSetUpFor(runtime(globalObject))) [[likely]]
         return true;
-    if (s_isTaken.exchange(true))
+    if (!isFor(runtime(globalObject)))
         return false;
 
     VM& vm = getVM(globalObject);
@@ -146,7 +153,7 @@ bool tryEnsure(JSGlobalObject* globalObject)
     setSymbols(interpreter);
     s_interpreter.store(interpreter, std::memory_order_release);
     s_interpreterWhoseCountsFall.store(interpreter, std::memory_order_relaxed);
-    s_runtime.store(&interpreter->runtime, std::memory_order_release);
+    s_runtimeItIsSetUpFor.store(&interpreter->runtime, std::memory_order_release);
     // It stays with the heap, which may outlive the runtime.
     addMarkingConstraint(vm);
     return true;
@@ -154,9 +161,12 @@ bool tryEnsure(JSGlobalObject* globalObject)
 
 void runtimeIsEnding(Runtime& runtime)
 {
-    if (!belongsTo(runtime))
+    if (!isFor(runtime))
         return;
-    s_runtime.store(nullptr, std::memory_order_relaxed);
+    s_runtimeItIsFor.store(nullptr, std::memory_order_relaxed);
+    if (!isSetUpFor(runtime))
+        return;
+    s_runtimeItIsSetUpFor.store(nullptr, std::memory_order_relaxed);
     s_interpreterWhoseCountsFall.store(nullptr, std::memory_order_relaxed);
     // Not freed: see Interpreter::lock.
     Interpreter* interpreter = s_interpreter.exchange(nullptr, std::memory_order_relaxed);
@@ -243,6 +253,7 @@ static constinit thread_local JSGlobalObject* t_loadsLibraryFor = nullptr;
 LibraryBeingLoaded::LibraryBeingLoaded(JSGlobalObject* globalObject)
     : m_previous(std::exchange(t_loadsLibraryFor, globalObject))
 {
+    tryEnsure(globalObject);
 }
 
 LibraryBeingLoaded::~LibraryBeingLoaded()
@@ -252,13 +263,9 @@ LibraryBeingLoaded::~LibraryBeingLoaded()
 
 bool mayEnterSlow(Interpreter* current)
 {
-    if (!current) {
-        // The thread is in dlopen(), which it has called with the GIL.
-        if (t_loadsLibraryFor)
-            return tryEnsure(t_loadsLibraryFor);
-        // What a library does as the process goes is nobody's mistake.
+    // What a library does when the interpreter has ended, as the process goes, is nobody's mistake. Nor is it one to ask before there is anything to ask about.
+    if (!current)
         return false;
-    }
     static std::atomic<bool> hasTold;
     if (!hasTold.exchange(true))
         fputs("Python: a function of the C API was called by a thread that does not hold the GIL; it fails\n", stderr);
@@ -356,7 +363,7 @@ static bool hasSymbol(Runtime& rt, PyType* type)
 uint64_t bitsForC(JSGlobalObject* globalObject, JSValue value)
 {
     Runtime& rt = runtime(globalObject);
-    if (belongsTo(rt)) [[unlikely]]
+    if (isSetUpFor(rt)) [[unlikely]]
         return bitsOf(toC(value));
     // What is written now may be read by C when there is an API, and C compares with the address of the symbol.
     if (PyType* type = PyType::tryFrom(value); type && hasSymbol(rt, type) && tryEnsure(globalObject)) [[unlikely]]

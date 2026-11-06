@@ -127,8 +127,7 @@ ALWAYS_INLINE Handle toC(JSValue value)
 
 // ---- The one interpreter ----
 //
-// The functions that C calls are not told for which interpreter, and a symbol such as PyLong_Type stands for one cell. So the API belongs to
-// one Runtime of the process: the first that asks for it. If that one ends, nobody has the API any more: what was loaded has pointers into its heap.
+// Whose the API is, and when it is set up: see CApiHooks.h.
 
 // What has to be a cell: the runtime refers to it (Runtime::Slot::CApi).
 class State final : public JSCell {
@@ -194,7 +193,7 @@ struct Interpreter {
     uint32_t noise { 0 };
 };
 
-// Null until a program needs the API, and again when its interpreter has ended. Any thread may read it, at any time: see Interpreter::lock.
+// Null until the API is set up, and again when its interpreter has ended. Any thread may read it, at any time: see Interpreter::lock.
 extern std::atomic<Interpreter*> s_interpreter;
 
 // For who has asked mayEnter(), or is the collector of the interpreter's VM.
@@ -225,7 +224,6 @@ ALWAYS_INLINE bool hasGIL(Interpreter* current)
 // EVERY FUNCTION THAT LOOKS AT AN OBJECT, AT THE TABLE OF COUNTS OR AT THE INTERPRETER ASKS THIS FIRST. A thread without the GIL would read what another thread is changing, and when
 // the interpreter has ended, or before there is one, there is nothing to look at. In CPython all of that is undefined. Here the function fails: it returns what it returns
 // when it fails, and sets no exception. A thread without the GIL is told of, once, on stderr.
-// (A library that calls as it is being loaded is let in: see LibraryBeingLoaded.)
 bool mayEnterSlow(Interpreter*);
 ALWAYS_INLINE bool mayEnter()
 {

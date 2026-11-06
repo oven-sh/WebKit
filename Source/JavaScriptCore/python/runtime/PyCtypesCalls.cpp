@@ -403,7 +403,7 @@ static JSValue makeResult(JSGlobalObject* globalObject, JSValue resultType, cons
     if (info->accessor && isSimpleInstanceType(*info->state.get(), PyType::from(resultType))) {
         result = load(globalObject, info->accessor, memory, info->size, { }, hint);
         // Code that returns an object returns a reference with it: C's does, and so does a callback (runCallback()).
-        if (info->accessor.code == Code::Object && result && resultIs == ResultIs::OfCode && CApi::belongsTo(runtime(globalObject))) {
+        if (info->accessor.code == Code::Object && result && resultIs == ResultIs::OfCode && CApi::isSetUpFor(runtime(globalObject))) {
             uint64_t bits;
             memcpy(&bits, memory, sizeof(bits));
             CApi::takeOverReference(bits);
@@ -504,7 +504,7 @@ JSValue callFunction(JSGlobalObject* globalObject, void* function, PyTuple* argu
     RETURN_IF_EXCEPTION(scope, { });
     // A function of a PyDLL may call the C API, if it is C's: the prototypes of ctypes' own functions, and of callbacks, have the flag too. Before
     // the arguments are converted, which are spelled for C.
-    if ((flags & FunctionPythonAPI) && !CApi::belongsTo(runtime(globalObject)) && !isOwnFunction(std::bit_cast<uintptr_t>(function)) && !isCallbackCode(function)) {
+    if ((flags & FunctionPythonAPI) && !CApi::isSetUpFor(runtime(globalObject)) && !isOwnFunction(std::bit_cast<uintptr_t>(function)) && !isCallbackCode(function)) {
         if (failed(scope, CApi::ensure(globalObject)))
             return { };
     }
@@ -576,7 +576,7 @@ JSValue callFunction(JSGlobalObject* globalObject, void* function, PyTuple* argu
         bool ok = callForeignFunction(globalObject, function, values.span(), fixedCount, result, flags);
         RETURN_IF_EXCEPTION(scope, { });
         ASSERT_UNUSED(ok, ok);
-        if ((flags & FunctionPythonAPI) && CApi::belongsTo(runtime(globalObject)) && failed(scope, CApi::throwWhatCRaised(globalObject)))
+        if ((flags & FunctionPythonAPI) && CApi::isSetUpFor(runtime(globalObject)) && failed(scope, CApi::throwWhatCRaised(globalObject)))
             return { };
     }
     RELEASE_AND_RETURN(scope, makeResult(globalObject, resultType, resultMemory, checker, ownResult, isOwn ? ResultIs::OfThisFile : ResultIs::OfCode));
@@ -688,7 +688,7 @@ void runCallback(PyCThunk* thunk, void** arguments, void* resultMemory)
         return;
     }
     store(static_cast<uint8_t*>(resultMemory), info->accessor, packed, info->size);
-    if (info->accessor.code == Code::Object && CApi::belongsTo(runtime(globalObject))) {
+    if (info->accessor.code == Code::Object && CApi::isSetUpFor(runtime(globalObject))) {
         uint64_t bits;
         memcpy(&bits, resultMemory, sizeof(bits));
         CApi::giveReference(bits);

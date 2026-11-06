@@ -113,7 +113,7 @@ PY_CAPI int Py_IsFalse(Handle object)
     return toJS(object).isFalse();
 }
 
-// Those that are no cells. A library may ask for them as it is loaded (Py_None is such a call), before there is an interpreter to ask.
+// Those that are no cells. Py_None is such a call, and C compares with it wherever it is.
 static JSValue constantThatIsNoCell(unsigned id)
 {
     switch (id) {
@@ -175,13 +175,11 @@ PY_CAPI Handle Py_GetConstant(unsigned id)
     return result;
 }
 
+// Whether the interpreter that the API serves is there. It need not have been set up.
 PY_CAPI int Py_IsInitialized()
 {
     CAPI_QUIET();
-    // Any thread may ask, with the GIL or without.
-    if (s_interpreter.load(std::memory_order_relaxed))
-        return true;
-    return mayEnter();
+    return !!s_runtimeItIsFor.load(std::memory_order_relaxed);
 }
 
 } // namespace CApi

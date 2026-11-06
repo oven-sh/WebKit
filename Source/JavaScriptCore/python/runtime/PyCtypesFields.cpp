@@ -203,7 +203,7 @@ JSValue objectFromBits(JSGlobalObject* globalObject, uint64_t bits, JSValue hint
 {
     if (hint && bitsOfObject(globalObject, hint) == bits) [[likely]]
         return hint;
-    if (CApi::belongsTo(runtime(globalObject))) {
+    if (CApi::isSetUpFor(runtime(globalObject))) {
         if (JSValue object = CApi::objectOfSymbol(bits))
             return object;
     }
