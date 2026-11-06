@@ -11,6 +11,13 @@
 namespace JSC {
 namespace Python {
 
+// See "What CPython's compiler copies".
+constexpr unsigned tooManyToCopy = 5;
+
+// Whether tools are told of a jump to where a statement ends. See jumpAsLaidOutMark, jumpForwardsAsLaidOutMark.
+// OfTheProgram: they are, come what may. The order is that of Last::inPlaceOfJump().
+enum class JumpIs : uint8_t { Hidden, ToldOfForwards, ToldOf, OfTheProgram };
+
 // What comes after a statement: something else, the end of the function, the end of the body of a loop, or a jump. See Unit::leaveStatement().
 struct Last {
     enum Kind : uint8_t { No, OfFunction, OfLoopBody, BeforeJump };
@@ -24,8 +31,45 @@ struct Last {
     // These are for Unit::reraiseOutOfHandler(), the two above as for BeforeJump.
     RegisterID* exception { nullptr };
     RegisterID* previous { nullptr };
+    // OfLoopBody: a jump comes first, over an `else`, the other cases or the handlers. In CPython's compiler a jump to such a jump goes where that
+    // goes, and a branch does not.
+    bool isBehindJump { false };
+    unsigned jumpsBefore { 0 }; // How many such jumps, one leading to the next.
+    JumpIs jumpIs { JumpIs::Hidden }; // BeforeJump
+    bool isInPlaceOfJump { false }; // What is left like this would be a jump to the jump, and not the jump itself.
+    // BeforeJump, for Unit::isReplacedByCopy(): how many instructions come after the jump if the function ends with them, and how many each of the
+    // jumps comes with that lead one to the next, the last of them first. (More than there is room for: nothing is copied.)
+    unsigned instructionsAfterJump { std::numeric_limits<unsigned>::max() };
+    static constexpr unsigned maxJumps = 6;
+    std::array<uint8_t, maxJumps> instructionsOfJumps { };
+    // Where they lead as the program has them, which is where the next of them is, and what `blockCount` and `tryDepth` are for that.
+    std::array<Label*, maxJumps> targetsOfJumps { };
+    std::array<uint16_t, maxJumps> blockCountsOfJumps { };
+    std::array<uint16_t, maxJumps> tryDepthsOfJumps { };
     explicit operator bool() const { return kind != No; }
     Last onlyIf(bool condition) const { return condition ? *this : Last { }; }
+    // A jump to a jump is of the kind that tools are told of whichever way it goes if either is.
+    Last inPlaceOfJump(JumpIs first) const
+    {
+        Last result = *this;
+        result.jumpIs = std::max(first, jumpIs);
+        result.isInPlaceOfJump = true;
+        return result;
+    }
+    Last behindJump(JumpIs first, unsigned instructions, Label* targetOfJump, size_t blockCountOfJump = 0, size_t tryDepthOfJump = 0) const
+    {
+        Last result = inPlaceOfJump(first);
+        result.isInPlaceOfJump = false;
+        result.isBehindJump = true;
+        if (result.jumpsBefore < maxJumps) {
+            result.instructionsOfJumps[result.jumpsBefore] = instructions;
+            result.targetsOfJumps[result.jumpsBefore] = blockCountOfJump <= UINT16_MAX && tryDepthOfJump <= UINT16_MAX ? targetOfJump : nullptr;
+            result.blockCountsOfJumps[result.jumpsBefore] = blockCountOfJump;
+            result.tryDepthsOfJumps[result.jumpsBefore] = tryDepthOfJump;
+        }
+        ++result.jumpsBefore;
+        return result;
+    }
 };
 
 // The compilation of one code object.
@@ -80,7 +124,7 @@ public:
     RegisterID* expr(Expr*, RegisterID* dst = nullptr);
     void exprForEffect(Expr*);
     void jumpIf(Expr*, Label& target, bool condition);
-    void jumpIfTo(Expr*, Label& target, bool condition);
+    void jumpIfTo(Expr*, Label& target, bool condition, bool isTurnedRound = false);
     void store(Expr* target, RegisterID* value);
     void deleteTarget(Expr*);
 
@@ -158,7 +202,17 @@ private:
         RegisterID* valueToReturn { nullptr }; // A loop: m_valueToReturn where it stands. (It may stand in a `finally` that a `return` is running.)
         bool ownsIterator { false }; // ForLoop: it goes through the value of a call. See beginTemporary().
         bool isMarked { true }; // There is a PythonMark where it begins and where it ends.
+        unsigned instructionsAfterLoop { tooManyToCopy }; // Last::instructionsAfterJump, for a `break`.
+        bool hasBreak { false }; // A loop.
     };
+
+    // Where the ways out of a statement go that leave it on different lines.
+    struct WayOut {
+        int lineno;
+        Ref<Label> label;
+        Range place;
+    };
+    using ReturnsByLine = Vector<WayOut, 4>;
 
     struct PatternContext {
         struct Capture {
@@ -172,7 +226,7 @@ private:
         Label* failOnFirstLine { nullptr };
         unsigned stillToLookAt { 0 };
         // If the statement is the last of something: what comes then is of the line that the pattern failed on.
-        Vector<std::pair<int, Ref<Label>>, 4>* failsByLine { nullptr };
+        ReturnsByLine* failsByLine { nullptr };
         bool allowIrrefutable { false };
     };
 
@@ -213,26 +267,41 @@ private:
     void noLine();
     // It is of this line, but nobody is told that the line begins.
     void silentLine(const Range&);
+    void silentLine(int lineno);
     // All that gets here is on this line, and what is laid out in front is of it too.
     void isStillOnLine(const Range&);
     // A jump that is there because of how the code is laid out here. In CPython there is none, or one that nobody is told of:
     // what handles exceptions is out of the way, at the end of the code.
     static Range rangeOfAttributeName(AST::Attribute*);
     void hiddenJump(Label&);
-    enum class JumpIs : uint8_t { OfTheProgram, Hidden };
+    void jump(Label&, JumpIs, bool takesInMore = false);
+    // The last jump that came of a test of a constant. CPython's compiler finds out late that it is a jump: see jump().
+    RefPtr<Label> m_targetOfJumpOfConstant;
+    size_t m_whereBranchOfConstantLeads { notFound };
+    bool jumpOfConstantLeadsHere()
+    {
+        size_t position = g.instructions().size();
+        return m_whereBranchOfConstantLeads == position || (m_targetOfJumpOfConstant && !m_targetOfJumpOfConstant->isForward() && m_targetOfJumpOfConstant->location() == position);
+    }
     void leaveStatement(Label& end, Last, JumpIs);
-    void endOfStatement(Label& end);
+    void endOfStatement(Label& end, Last = { }, int lineOfBranch = 0);
     bool cannotGetHere();
     void emitImplicitReturn(Last, const Range& = { });
     void emitImplicitContinue(unsigned loop, const Range& = { });
     void emitImplicitJump(Last, const Range& = { });
     void leave(Last, const Range& = { });
-    Last lastBeforeJump(Label&, Last);
+    Last lastBeforeJump(Label&, Last, JumpIs, unsigned instructions = 1);
+    bool isReplacedByCopy(const Last&, unsigned* jumpItStaysInFrontOf = nullptr);
+    // Jumps that lead to a jump and stay what they are: isReplacedByCopy() has found one that they stay in front of. Where they are; or, of one that goes further
+    // here than it does in CPython, where the jump leads that it stays in front of there.
+    Vector<unsigned, 4> m_jumpsThatStay;
+    Vector<Label*, 4> m_targetsOfJumpsStillJumpedTo;
+    Label* targetReplacedByCopy(Label& end, Last);
+    Label* m_targetReplacedByCopy { nullptr };
     bool canBranchTo(Last);
-    using ReturnsByLine = Vector<std::pair<int, Ref<Label>>, 4>;
-    void jumpIfOrLeave(Expr* test, Label& target, Last, ReturnsByLine&);
+    void jumpIfOrLeave(Expr* test, Label& target, Last, ReturnsByLine&, bool condition = false);
     void emitReturnsByLine(ReturnsByLine&, Last);
-    Label& labelForLine(ReturnsByLine&, int lineno);
+    Label& labelForLine(ReturnsByLine&, int lineno, const Range& place = { });
     ReturnsByLine* m_endsOfClassBody { nullptr };
     Label& endOfClassBodyForLine(int lineno);
     // What jumpIf() does about the branches that go to the label.
@@ -243,6 +312,7 @@ private:
         // Each is turned round, to jump over a jump
         std::optional<unsigned> loop { }; // to where this loop, one of m_blocks, goes on,
         Label* loopOfComprehension { nullptr }; // or here.
+        bool returnsAreJumps { false }; // `returns`: by its place as well, which the jump is of.
     };
     BranchTarget m_branchTarget;
     Last m_leavingAs { }; // Blocks are being left by a `return` or a `continue`, or as if by one. OfFunction:
@@ -317,8 +387,11 @@ private:
             function();
             g.emitUnreachable();
         }
+        m_endOfDeadCode = g.instructions().size();
         line(lineBefore);
     }
+    size_t m_endOfDeadCode { 0 };
+    size_t m_whereLineOfBranchIsMarked { notFound };
     std::optional<bool> constantTruth(Expr*);
 
     RegisterID* callRuntime(RegisterID* dst, RuntimeFunction, Arguments&);
@@ -415,7 +488,7 @@ private:
     void tryExcept(AST::Try*, Last);
     void tryStarExcept(AST::Try*, Last);
     void withStatement(AST::With*, unsigned index, Last);
-    void assertStatement(AST::Assert*);
+    void assertStatement(AST::Assert*, Last);
     void importStatement(AST::Import*);
     void importFrom(AST::ImportFrom*);
     void matchStatement(AST::Match*, Last);
@@ -455,13 +528,49 @@ private:
 
     // ---- Expressions ----
 
-    RegisterID* boolOp(AST::BoolOp*, RegisterID* dst);
+    RegisterID* boolOp(AST::BoolOp*, RegisterID* dst, bool* jumpThatFollowsIsOfNoLine = nullptr);
     void boolOperand(Expr*, RegisterID* result, Label* ifTrue, Label* ifFalse, const Range& rangeOfTest, const Range& rangeOfOperation, Label& whenConstantSettles, Label* endOfNested);
     RegisterID* chain(AST::Expr*, RegisterID* dst);
     static bool takeFormatApart(AST::BinOp*, Vector<PartOfFormat, 8>&);
     RegisterID* formatTakenApart(AST::BinOp*, const Vector<PartOfFormat, 8>&, RegisterID* dst);
     RegisterID* unaryOp(AST::UnaryOp*, RegisterID* dst);
-    RegisterID* ifExp(AST::IfExp*, RegisterID* dst);
+    struct EndOfIfExp {
+        Label& label;
+        bool isReachedFromNoLine { false };
+        bool jumpThereIsOfNoLine { false }; // The one that comes after the expression that is given this.
+        bool isCopied { false }; // isCopiedWhatComesAfter()
+    };
+    bool isCopiedWhatComesAfter(Expr*);
+    bool isCopiedWhatComesAfterStatement();
+    // What comes after a statement.
+    struct StatementsAfter {
+        Seq<Stmt*> body;
+        unsigned first { 0 };
+        Last isLast;
+        unsigned blockCount { 0 }; // The blocks that they are in.
+        // The statements are part of another statement, which these come after.
+        const StatementsAfter* enclosing { nullptr };
+        // Where the last of them ends, the other statement ends: the statements of an `if` without `else`, those of an `else`.
+        bool endsWhereEnclosingEnds { false };
+        unsigned instructionsBefore { 0 }; // What CPython's compiler has in front of them: see endOfProtectedStatements().
+    };
+    enum class ComesFirst : bool { PartOfStatement, Nothing };
+    unsigned instructionsUntilFunctionEnds(const StatementsAfter&, ComesFirst);
+    unsigned instructionsOnTheWayOut(bool withValue, unsigned firstBlock, unsigned blockCount);
+    enum class JumpsHere : bool { Count, AreTakenIn };
+    std::optional<int> lineOfOnlyWayHere(JumpsHere);
+    struct {
+        size_t position { std::numeric_limits<size_t>::max() };
+        int lineno { 0 };
+        bool hasBreak { false };
+    } m_endOfForLoop;
+    void endOfProtectedStatements(JumpsHere = JumpsHere::Count, Label* end = nullptr);
+    // The statement that is being compiled, and what comes after it. (Of a compound statement: the last of its statements that was.)
+    Stmt* m_statement { nullptr };
+    const StatementsAfter* m_statementsAfter { nullptr };
+    bool m_statementsEndWhereStatementEnds { false }; // For the next call of statements().
+    Expr* m_returnedExpression { nullptr }; // The body of a lambda.
+    RegisterID* ifExp(AST::IfExp*, RegisterID* dst, EndOfIfExp* enclosing = nullptr);
     RegisterID* compare(AST::Compare*, RegisterID* dst);
     RegisterID* emitCompare(RegisterID* dst, RegisterID* left, RegisterID* right, AST::CompareKind, Expr* rightExpr);
     void checkCompare(AST::Compare*);
@@ -571,6 +680,8 @@ private:
     int m_markedLine { -1 }; // What line() was last given, and where in the instructions.
     Range m_place; // All of it, if more than the line was given.
     size_t m_markedPosition { 0 };
+    // What has been emitted since without a mark is of the line that is marked next.
+    size_t m_whereLineBegins { notFound };
     size_t m_start { 0 }; // Where the program's own code begins.
     unsigned m_sameLineDepth { 0 };
     bool m_cannotBeReached { false }; // See deadStatements().

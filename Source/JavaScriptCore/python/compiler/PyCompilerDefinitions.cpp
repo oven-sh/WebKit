@@ -220,6 +220,8 @@ RegisterID* Unit::lambda(Lambda* node, RegisterID* dst)
     CodeSpec spec { UnitKind::Lambda, scope, names().lambda, node->range, node->range.lineno };
     spec.arguments = node->args;
     auto* executable = c.compileCode(this, spec, m_source, [&](Unit& unit) {
+        if (!scope->isGenerator)
+            unit.m_returnedExpression = node->body;
         Reg value = unit.expr(node->body);
         if (!scope->isGenerator)
             unit.line(node->body->range);
@@ -306,7 +308,7 @@ void Unit::compileClassBody(ClassDef* node, int firstLineNumber)
     };
     if (!cannotGetHere())
         emitEnd();
-    for (auto& [lineno, label] : ends) {
+    for (auto& [lineno, label, place] : ends) {
         g.emitLabel(label.get());
         if (lineno > 0)
             line(lineno);

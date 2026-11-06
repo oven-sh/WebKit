@@ -448,11 +448,22 @@ namespace JSC {
         // A line that has been marked and that no instruction has followed is given one that does nothing. Until then, the mark is
         // on whatever comes next, which is as good, unless that can be reached from elsewhere. emitLabel() sees to this
         // for a label that has been jumped to; it is for the compiler to do before a label that will be.
+        bool addPythonLineMarkAt(size_t position, unsigned value);
         void settlePythonLineMark();
         void emitPyAsyncForMark(unsigned mark);
         // Where the last label is that something jumps to, or may.
         // Of those that something may jump to.
         unsigned positionOfLastPythonLabel() const { return m_positionOfLastPythonLabel; }
+        // The jumps to the labels there, and the branches: how many, and where the first and the last are.
+        struct WaysToPythonLabel {
+            unsigned count { 0 };
+            unsigned first { 0 };
+            unsigned last { 0 };
+        };
+        const WaysToPythonLabel& jumpsToLastPythonLabel() const { return m_jumpsToLastPythonLabel; }
+        const WaysToPythonLabel& branchesToLastPythonLabel() const { return m_branchesToLastPythonLabel; }
+        int pythonLineAt(unsigned position) const;
+        bool lineBeginsBehindLastPythonLabel() const;
         // Where a range of the code begins or ends. Nothing jumps there.
         Ref<Label> newEmittedPythonRangeLabel();
         OpcodeID opcodeOfLastInstruction() { return m_writer.position() ? m_lastInstruction->opcodeID() : op_nop; }
@@ -1599,6 +1610,9 @@ namespace JSC {
         size_t m_pythonLineMarkPosition { std::numeric_limits<size_t>::max() };
         unsigned m_pythonLineMarkCount { 0 }; // How many lines are marked there.
         unsigned m_positionOfLastPythonLabel { 0 };
+        WaysToPythonLabel m_jumpsToLastPythonLabel;
+        WaysToPythonLabel m_branchesToLastPythonLabel;
+        size_t m_pythonMarksBeforeLastLabel { 0 };
         bool m_pythonCodeIsAbandoned { false };
         UncheckedKeyHashMap<Label*, uint64_t> m_pythonVariablesBoundAtLabels; // For the labels still to be emitted.
         SegmentedVector<UsingScope, 8> m_usingScopeStack;

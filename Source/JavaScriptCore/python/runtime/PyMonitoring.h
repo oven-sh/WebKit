@@ -109,7 +109,7 @@ public:
         uint16_t opcode { 0 }; // The opcode of the instruction.
         unsigned next { 0 }; // The offset of the instruction that follows.
         unsigned target { 0 }; // A jump, or a branch: where it goes.
-        unsigned shownTarget { 0 }; // A branch: where it is said to go. A call: what comes after it.
+        unsigned shownTarget { 0 }; // A branch, a jump: where it is said to go. A call: what comes after it.
         unsigned source { 0 }; // asyncForEndsMark: where the branch is said to be. isWhereBranchFallsThrough, isWhereBranchJumps: where it is.
         // A branch. Which way it goes is known once it has gone, so to tell of it here is to take the branch in C++, every time, for as long as one of
         // the ways is still wanted: and the way out of a loop is wanted until the loop ends. Where nothing else leads to where a way

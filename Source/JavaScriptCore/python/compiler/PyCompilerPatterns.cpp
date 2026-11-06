@@ -487,20 +487,23 @@ void Unit::matchStatement(Match* node, Last isLast)
             jumpIf(matchCase->guard, next.get(), false);
         }
         popBlock();
-        statements(matchCase->body, 0, isLastCase ? isLast : lastBeforeJump(end.get(), isLast));
+        statements(matchCase->body, 0, isLastCase ? isLast : lastBeforeJump(end.get(), isLast, JumpIs::ToldOf));
         // After the last case there is nothing to jump over, as a rule.
         if (isLast || !isLastCase || nextOnFirstLine->isBound())
-            leaveStatement(end.get(), isLast, JumpIs::OfTheProgram);
-        for (auto& [lineno, label] : failsByLine) {
+            leaveStatement(end.get(), isLast, JumpIs::ToldOf);
+        for (auto& [lineno, label, place] : failsByLine) {
             g.emitLabel(label.get());
-            line(lineno);
+            if (isLast.kind != Last::BeforeJump || isLast.jumpIs >= JumpIs::ToldOf)
+                line(lineno);
             leave(isLast);
         }
         // (A pattern that always matches.)
         if (!next->isBound() && !nextOnFirstLine->isBound())
             continue;
         emitFailLabels(matchCase->pattern->range, context);
-        if (isLast && isLastCase)
+        if (isLast.kind == Last::BeforeJump && isLastCase)
+            silentLine(matchCase->pattern->range.lineno);
+        else if (isLast && isLastCase)
             line(matchCase->pattern->range);
     }
     endOfStatement(end.get());

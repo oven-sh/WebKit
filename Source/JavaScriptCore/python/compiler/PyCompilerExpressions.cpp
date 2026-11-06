@@ -577,7 +577,7 @@ RegisterID* Unit::expr(Expr* node, RegisterID* dst)
 
 // ---- Operators ----
 
-RegisterID* Unit::boolOp(BoolOp* node, RegisterID* dst)
+RegisterID* Unit::boolOp(BoolOp* node, RegisterID* dst, bool* jumpThatFollowsIsOfNoLine)
 {
     // Not in `dst` until the end: the operands may read the variable it is, and may throw.
     Reg result = g.tempDestination(dst);
@@ -591,8 +591,17 @@ RegisterID* Unit::boolOp(BoolOp* node, RegisterID* dst)
         deadExpr(node->values[last]);
     else
         expr(node->values[last], result.get());
-    if (end->isBound())
+    if (end->isBound()) {
+        // See ifExp().
+        bool branchLeadsToJump = jumpThatFollowsIsOfNoLine && std::ranges::any_of(end->unresolvedJumps(), [&](int offset) {
+            return g.instructions().at(offset)->opcodeID() != op_jmp;
+        });
         g.emitLabel(end.get());
+        if (branchLeadsToJump) {
+            *jumpThatFollowsIsOfNoLine = true;
+            noLine();
+        }
+    }
     return dst ? g.move(dst, result.get()) : result.get();
 }
 
@@ -886,24 +895,356 @@ RegisterID* Unit::unaryOp(UnaryOp* node, RegisterID* dst)
     return g.emitPyUnary(g.finalDestination(dst, operand.get()), operand.get(), static_cast<Python::UnaryOperator>(node->op));
 }
 
-RegisterID* Unit::ifExp(IfExp* node, RegisterID* dst)
+// ---- What CPython's compiler copies ----
+//
+// A jump to a few instructions that end the function is replaced there by a copy of them: at most four, counted as they come out of its
+// code generator, before anything is worked out or dropped (inline_small_or_no_lineno_blocks()). Then there is no jump for a tool to be
+// told of, and none that could be of no line. Here the jump stays, and tools are not told of it. To know which, this counts as CPython does.
+
+static unsigned sumToCopy(unsigned a, unsigned b)
+{
+    return std::min(a + b, tooManyToCopy);
+}
+
+// The instructions that leave the value of the expression on the stack.
+static unsigned instructionsOf(Expr* node, unsigned depth = 0)
+{
+    if (depth >= tooManyToCopy)
+        return tooManyToCopy;
+    auto of = [&](Expr* part) { return instructionsOf(part, depth + 1); };
+    auto ofAll = [&](Seq<Expr*> parts) {
+        unsigned count = 0;
+        for (unsigned i = 0; i < parts.size() && count < tooManyToCopy; ++i)
+            count = sumToCopy(count, of(parts[i]));
+        return count;
+    };
+    switch (node->kind) {
+    case ExprKind::Name:
+    case ExprKind::Constant:
+        return 1;
+    case ExprKind::Attribute:
+        return sumToCopy(of(node->as<Attribute>()->value), 1);
+    case ExprKind::UnaryOp:
+        return sumToCopy(of(node->as<UnaryOp>()->operand), node->as<UnaryOp>()->op == AST::UnaryKind::Not ? 2 : 1);
+    case ExprKind::BinOp:
+        return sumToCopy(sumToCopy(of(node->as<BinOp>()->left), of(node->as<BinOp>()->right)), 1);
+    case ExprKind::Subscript:
+        return sumToCopy(sumToCopy(of(node->as<Subscript>()->value), of(node->as<Subscript>()->slice)), 1);
+    case ExprKind::Compare:
+        if (node->as<Compare>()->ops.size() != 1)
+            return tooManyToCopy;
+        return sumToCopy(sumToCopy(of(node->as<Compare>()->left), of(node->as<Compare>()->comparators[0])), 1);
+    case ExprKind::Tuple:
+        return sumToCopy(ofAll(node->as<Tuple>()->elts), 1);
+    case ExprKind::List:
+        return sumToCopy(ofAll(node->as<List>()->elts), 1);
+    case ExprKind::Set:
+        return sumToCopy(ofAll(node->as<Set>()->elts), 1);
+    default:
+        // (A call is four at least, with what uses its value.)
+        return tooManyToCopy;
+    }
+}
+
+// The instructions between those of `part` and the last of `node`. Nothing: it is no part of it, or not one after which it goes straight on.
+static std::optional<unsigned> instructionsAfter(Expr* part, Expr* node, unsigned depth = 0)
+{
+    if (node == part)
+        return 0;
+    if (!node || depth >= tooManyToCopy)
+        return std::nullopt;
+    auto after = [&](Expr* child, unsigned more) -> std::optional<unsigned> {
+        if (auto count = instructionsAfter(part, child, depth + 1))
+            return sumToCopy(*count, more);
+        return std::nullopt;
+    };
+    // They are evaluated in this order, and then come `more` instructions.
+    auto afterOneOf = [&](std::initializer_list<Seq<Expr*>> lists, unsigned more) -> std::optional<unsigned> {
+        for (auto list = lists.end(); list != lists.begin() && more < tooManyToCopy;) {
+            --list;
+            for (unsigned i = list->size(); i-- && more < tooManyToCopy;) {
+                if (auto count = after((*list)[i], more))
+                    return count;
+                more = sumToCopy(more, instructionsOf((*list)[i]));
+            }
+        }
+        return std::nullopt;
+    };
+    switch (node->kind) {
+    case ExprKind::Attribute:
+        return after(node->as<Attribute>()->value, 1);
+    case ExprKind::UnaryOp:
+        return after(node->as<UnaryOp>()->operand, node->as<UnaryOp>()->op == AST::UnaryKind::Not ? 2 : 1);
+    case ExprKind::NamedExpr:
+        return after(node->as<NamedExpr>()->value, 2);
+    case ExprKind::BinOp:
+        if (auto count = after(node->as<BinOp>()->right, 1))
+            return count;
+        return after(node->as<BinOp>()->left, sumToCopy(instructionsOf(node->as<BinOp>()->right), 1));
+    case ExprKind::Subscript:
+        if (auto count = after(node->as<Subscript>()->slice, 1))
+            return count;
+        return after(node->as<Subscript>()->value, sumToCopy(instructionsOf(node->as<Subscript>()->slice), 1));
+    case ExprKind::Compare:
+        if (node->as<Compare>()->ops.size() != 1)
+            return std::nullopt;
+        if (auto count = after(node->as<Compare>()->comparators[0], 1))
+            return count;
+        return after(node->as<Compare>()->left, sumToCopy(instructionsOf(node->as<Compare>()->comparators[0]), 1));
+    case ExprKind::Tuple:
+        return afterOneOf({ node->as<Tuple>()->elts }, 1);
+    case ExprKind::List:
+        return afterOneOf({ node->as<List>()->elts }, 1);
+    case ExprKind::Set:
+        return afterOneOf({ node->as<Set>()->elts }, 1);
+    case ExprKind::Call: {
+        auto* call = node->as<Call>();
+        // With keywords, their names are loaded before the call.
+        unsigned more = call->keywords.isEmpty() ? 1 : 2;
+        for (unsigned i = call->keywords.size(); i-- && more < tooManyToCopy;) {
+            if (!call->keywords[i]->arg)
+                return std::nullopt;
+            if (auto count = after(call->keywords[i]->value, more))
+                return count;
+            more = sumToCopy(more, instructionsOf(call->keywords[i]->value));
+        }
+        return afterOneOf({ call->args }, more);
+    }
+    // What leads to the end of these leads to what comes after them.
+    case ExprKind::IfExp:
+        if (auto count = after(node->as<IfExp>()->orelse, 0))
+            return count;
+        return after(node->as<IfExp>()->body, 0);
+    case ExprKind::BoolOp:
+        return after(node->as<BoolOp>()->values.last(), 0);
+    default:
+        return std::nullopt;
+    }
+}
+
+static unsigned instructionsThatStore(Expr* target)
+{
+    switch (target->kind) {
+    case ExprKind::Name:
+        return 1;
+    case ExprKind::Attribute:
+        return sumToCopy(instructionsOf(target->as<Attribute>()->value), 1);
+    case ExprKind::Subscript:
+        return sumToCopy(sumToCopy(instructionsOf(target->as<Subscript>()->value), instructionsOf(target->as<Subscript>()->slice)), 1);
+    default:
+        return tooManyToCopy;
+    }
+}
+
+// What `return` has to do on its way out, with a value on the stack or without.
+unsigned Unit::instructionsOnTheWayOut(bool withValue, unsigned firstBlock, unsigned blockCount)
+{
+    unsigned count = 0;
+    for (auto& block : m_blocks.span().subspan(firstBlock, blockCount - firstBlock)) {
+        switch (block.kind) {
+        case BlockKind::WhileLoop:
+        case BlockKind::MatchSubject:
+        case BlockKind::ExceptionHandler:
+            break;
+        case BlockKind::ForLoop:
+            count = sumToCopy(count, withValue ? 3 : 2);
+            break;
+        case BlockKind::TryExcept:
+            count = sumToCopy(count, 1);
+            break;
+        case BlockKind::HandlerCleanup:
+            if (block.name)
+                return tooManyToCopy;
+            count = sumToCopy(count, withValue ? 3 : 2);
+            break;
+        default:
+            return tooManyToCopy;
+        }
+    }
+    return count;
+}
+
+// From there on, to where the function ends.
+unsigned Unit::instructionsUntilFunctionEnds(const StatementsAfter& after, ComesFirst comesFirst)
+{
+    auto& [body, first, isLast, blockCount, enclosing, endsWhereEnclosingEnds, instructionsBefore] = after;
+    unsigned count = instructionsBefore;
+    for (unsigned i = first; i < body.size() && count < tooManyToCopy; ++i) {
+        Stmt* node = body[i];
+        switch (node->kind) {
+        case StmtKind::Global:
+        case StmtKind::Nonlocal:
+            continue;
+        case StmtKind::Pass:
+            count = sumToCopy(count, 1);
+            continue;
+        case StmtKind::Expr:
+            // (A constant leaves something that does nothing.)
+            count = sumToCopy(count, node->as<ExprStmt>()->value->is<Constant>() ? 1 : sumToCopy(instructionsOf(node->as<ExprStmt>()->value), 1));
+            continue;
+        case StmtKind::Assign:
+            if (node->as<Assign>()->targets.size() != 1)
+                return tooManyToCopy;
+            count = sumToCopy(count, sumToCopy(instructionsOf(node->as<Assign>()->value), instructionsThatStore(node->as<Assign>()->targets[0])));
+            continue;
+        case StmtKind::Return: {
+            // A constant is loaded last, and something that does nothing is there for its line. So it is for the line of the `return`, if that is another.
+            Expr* value = node->as<Return>()->value;
+            bool isConstant = !value || value->is<Constant>();
+            count = sumToCopy(count, sumToCopy(value ? instructionsOf(value) : 1, instructionsOnTheWayOut(!isConstant, 0, blockCount)));
+            return sumToCopy(count, 1 + (value && isConstant) + (!value || value->range.lineno != node->range.lineno));
+        }
+        case StmtKind::Break: {
+            // Something that does nothing, for the line, and a jump, which takes in a short end of the function. (What drops the iterator of a `for` loop makes it too long.)
+            if (!blockCount || m_blocks[blockCount - 1].kind != BlockKind::WhileLoop)
+                return tooManyToCopy;
+            auto& loop = m_blocks[blockCount - 1];
+            if (!loop.isLast)
+                return sumToCopy(count, sumToCopy(2, loop.instructionsAfterLoop));
+            if (loop.isLast.kind != Last::OfFunction || loop.isLast.exception || m_kind == UnitKind::Class)
+                return tooManyToCopy;
+            return sumToCopy(count, 4);
+        }
+        case StmtKind::Raise:
+            if (Expr* exception = node->as<Raise>()->exc)
+                count = sumToCopy(count, instructionsOf(exception));
+            if (Expr* cause = node->as<Raise>()->cause)
+                count = sumToCopy(count, instructionsOf(cause));
+            return sumToCopy(count, 1);
+        default:
+            return tooManyToCopy;
+        }
+    }
+    // It is where the statement ends that these are part of.
+    if (comesFirst == ComesFirst::Nothing && !count && !isLast && enclosing && endsWhereEnclosingEnds)
+        return instructionsUntilFunctionEnds(*enclosing, comesFirst);
+    // (The body of a class ends in more than a `return`.)
+    if (count >= tooManyToCopy || isLast.kind != Last::OfFunction || isLast.exception || m_kind == UnitKind::Class)
+        return tooManyToCopy;
+    if (!enclosing)
+        return sumToCopy(count, 2);
+    // The statements of an `if`, say. Other ways lead to what comes after them, so that it is not all one run of instructions, unless a
+    // jump comes first: over an `else`. That has been replaced by a copy itself, and has left something that does nothing.
+    if (!isLast.isBehindJump)
+        return tooManyToCopy;
+    // (More than the end of a `try` body comes to too much.)
+    if (blockCount && m_blocks[blockCount - 1].kind != BlockKind::TryExcept && m_blocks[blockCount - 1].kind != BlockKind::MatchSubject)
+        return tooManyToCopy;
+    return sumToCopy(count, 2 + isLast.jumpsBefore + (blockCount && m_blocks[blockCount - 1].kind == BlockKind::TryExcept));
+}
+
+// Whether what comes after the value of the expression is copied for a jump that leads there.
+bool Unit::isCopiedWhatComesAfter(Expr* part)
+{
+    if (m_returnedExpression) {
+        auto count = instructionsAfter(part, m_returnedExpression);
+        return count && *count + 1 < tooManyToCopy;
+    }
+    Stmt* node = m_statement;
+    if (!node)
+        return false;
+    std::optional<unsigned> count;
+    switch (node->kind) {
+    case StmtKind::Return:
+        if ((count = instructionsAfter(part, node->as<Return>()->value)))
+            return sumToCopy(sumToCopy(*count, instructionsOnTheWayOut(true, 0, m_blocks.size())), 1 + (node->as<Return>()->value->range.lineno != node->range.lineno)) < tooManyToCopy;
+        return false;
+    case StmtKind::Raise:
+        if ((count = instructionsAfter(part, node->as<Raise>()->cause)))
+            return sumToCopy(*count, 1) < tooManyToCopy;
+        if ((count = instructionsAfter(part, node->as<Raise>()->exc)))
+            return sumToCopy(*count, node->as<Raise>()->cause ? sumToCopy(instructionsOf(node->as<Raise>()->cause), 1) : 1) < tooManyToCopy;
+        return false;
+    case StmtKind::Expr:
+        if ((count = instructionsAfter(part, node->as<ExprStmt>()->value)))
+            count = sumToCopy(*count, 1);
+        break;
+    case StmtKind::Assign:
+        if ((count = instructionsAfter(part, node->as<Assign>()->value))) {
+            // All but the last store a copy.
+            count = sumToCopy(*count, node->as<Assign>()->targets.size() - 1);
+            for (Expr* target : node->as<Assign>()->targets)
+                count = sumToCopy(*count, instructionsThatStore(target));
+        }
+        break;
+    case StmtKind::AnnAssign:
+        if (node->as<AnnAssign>()->target->is<NameExpr>() && (count = instructionsAfter(part, node->as<AnnAssign>()->value)))
+            count = sumToCopy(*count, 1);
+        break;
+    case StmtKind::AugAssign:
+        if (node->as<AugAssign>()->target->is<NameExpr>() && (count = instructionsAfter(part, node->as<AugAssign>()->value)))
+            count = sumToCopy(*count, 2);
+        break;
+    case StmtKind::Delete:
+        if (node->as<Delete>()->targets.size() == 1 && node->as<Delete>()->targets[0]->is<Subscript>())
+            count = instructionsAfter(part, node->as<Delete>()->targets[0]);
+        break;
+    default:
+        break;
+    }
+    return count && m_statementsAfter && sumToCopy(*count, instructionsUntilFunctionEnds(*m_statementsAfter, ComesFirst::PartOfStatement)) < tooManyToCopy;
+}
+
+// The same for a jump to the end of the statement that is being compiled: over an `else`, out of a handler or a `case`, a `break`.
+bool Unit::isCopiedWhatComesAfterStatement()
+{
+    return m_statementsAfter && instructionsUntilFunctionEnds(*m_statementsAfter, ComesFirst::Nothing) < tooManyToCopy;
+}
+
+// `enclosing`: the expression is the first value of another, and what comes after it is the jump over the other value of that. As in
+// CPython, a jump does not lead to a jump: it goes where that goes.
+//
+// CPython's compiler gives the jump over the other value the line of what comes before it, if that is all that leads to it. A branch
+// leads to it too if the value is `a or b`. Then the jump is of no line, and what comes after the expression is a line that begins, be
+// it the line the frame has been on all the time: `x = (a or b) if c else d` is told of twice.
+RegisterID* Unit::ifExp(IfExp* node, RegisterID* dst, EndOfIfExp* enclosing)
 {
     Reg result = g.finalDestination(dst);
     Ref<Label> orelse = g.newLabel();
     Ref<Label> end = g.newLabel();
+    EndOfIfExp own { end.get() };
+    if (!enclosing)
+        own.isCopied = isCopiedWhatComesAfter(node);
+    EndOfIfExp& whereToGo = enclosing ? *enclosing : own;
     jumpIf(node->test, orelse.get(), false);
+    bool jumpIsOfNoLine = false;
     if (!m_cannotBeReached && cannotGetHere())
         deadExpr(node->body);
-    else
+    else if (!orelse->isBound())
         expr(node->body, result.get());
-    jump(end.get());
-    if (orelse->isBound()) {
-        g.emitLabel(orelse.get());
-        expr(node->orelse, result.get());
+    else if (node->body->is<BoolOp>() && isSafeToRecurse())
+        boolOp(node->body->as<BoolOp>(), result.get(), whereToGo.isCopied ? nullptr : &jumpIsOfNoLine);
+    else if (node->body->is<IfExp>() && isSafeToRecurse()) {
+        ifExp(node->body->as<IfExp>(), result.get(), &whereToGo);
+        jumpIsOfNoLine = std::exchange(whereToGo.jumpThereIsOfNoLine, false);
     } else
+        expr(node->body, result.get());
+    if (!cannotGetHere()) {
+        // (There is no other value in CPython's code, and here it is not run.)
+        if (!orelse->isBound())
+            hiddenJump(end.get());
+        else if (whereToGo.isCopied)
+            hiddenJump(whereToGo.label);
+        else {
+            whereToGo.isReachedFromNoLine |= jumpIsOfNoLine;
+            jump(whereToGo.label);
+        }
+    }
+    if (!orelse->isBound())
         deadExpr(node->orelse);
+    else {
+        g.emitLabel(orelse.get());
+        if (enclosing && node->orelse->is<BoolOp>() && isSafeToRecurse())
+            boolOp(node->orelse->as<BoolOp>(), result.get(), enclosing->isCopied ? nullptr : &enclosing->jumpThereIsOfNoLine);
+        else if (enclosing && node->orelse->is<IfExp>() && isSafeToRecurse())
+            ifExp(node->orelse->as<IfExp>(), result.get(), enclosing);
+        else
+            expr(node->orelse, result.get());
+    }
     if (end->isBound())
         g.emitLabel(end.get());
+    if (own.isReachedFromNoLine)
+        m_whereLineBegins = g.instructions().size();
     return result.get();
 }
 
@@ -1092,7 +1433,7 @@ void Unit::jumpIf(Expr* node, Label& target, bool condition)
     BranchTarget branchTarget = std::exchange(m_branchTarget, { });
     if (branchTarget.loop) {
         Ref<Label> goesOn = g.newLabel();
-        jumpIfTo(node, goesOn.get(), !condition);
+        jumpIfTo(node, goesOn.get(), !condition, true);
         if (!cannotGetHere())
             emitImplicitContinue(*branchTarget.loop);
         if (goesOn->isBound())
@@ -1112,7 +1453,7 @@ void Unit::jumpIf(Expr* node, Label& target, bool condition)
                 line(node->range);
         }
     } else if (branchTarget.returns) {
-        jumpIfTo(node, labelForLine(*branchTarget.returns, node->range.lineno), condition);
+        jumpIfTo(node, labelForLine(*branchTarget.returns, node->range.lineno, branchTarget.returnsAreJumps ? node->range : Range { }), condition);
     } else {
         jumpIfTo(node, target, condition);
         line(branchTarget.placeOfJumpThere);
@@ -1120,7 +1461,7 @@ void Unit::jumpIf(Expr* node, Label& target, bool condition)
     m_branchTarget = branchTarget;
 }
 
-void Unit::jumpIfTo(Expr* node, Label& target, bool condition)
+void Unit::jumpIfTo(Expr* node, Label& target, bool condition, bool isTurnedRound)
 {
     if (!isSafeToRecurse())
         return;
@@ -1130,8 +1471,13 @@ void Unit::jumpIfTo(Expr* node, Label& target, bool condition)
     if (auto truth = isMadeUp ? std::nullopt : constantTruth(node)) {
         line(node->range);
         noteWhatConstantIsMadeOf(node);
-        if (*truth == condition)
-            jump(target);
+        if (*truth == condition) {
+            // (Where something leads here, what CPython's compiler makes of the constant stays for its line.)
+            if (g.positionOfLastPythonLabel() == g.instructions().size())
+                g.addPythonMark(PythonMark::NoLine, jumpHasLineToItselfMark);
+            jump(target, JumpIs::ToldOf);
+            m_targetOfJumpOfConstant = &target;
+        }
         return;
     }
 
@@ -1179,6 +1525,8 @@ void Unit::jumpIfTo(Expr* node, Label& target, bool condition)
         checkCompare(compare);
         unsigned last = compare->ops.size() - 1;
         Ref<Label> isFalse = g.newLabel();
+        // Written the other way round, a comparison before the last that is false goes on with what follows the test. That is the target now.
+        bool goesStraightThere = isTurnedRound && !condition;
         Reg left = expr(compare->left);
         Reg result = newTemporary();
         for (unsigned i = 0; i <= last; ++i) {
@@ -1186,7 +1534,7 @@ void Unit::jumpIfTo(Expr* node, Label& target, bool condition)
             auto op = compare->ops[i];
             bool isLast = i == last;
             // Where to go, and on what, once this comparison is made.
-            Label& destination = isLast ? target : isFalse.get();
+            Label& destination = isLast || goesStraightThere ? target : isFalse.get();
             bool jumpOn = isLast ? condition : false;
             if (isNoneLiteral(rightExpr) && (op == AST::CompareKind::Is || op == AST::CompareKind::IsNot)) {
                 // The line `None` is written on is one the frame has been on.
@@ -1212,7 +1560,7 @@ void Unit::jumpIfTo(Expr* node, Label& target, bool condition)
                 g.emitPyCompareAndJump(left.get(), right.get(), static_cast<Python::CompareOperator>(op), jumpOn, destination);
             left = WTF::move(right);
         }
-        if (last && !condition) {
+        if (last && !condition && !goesStraightThere) {
             // A comparison before the last that is false makes the whole false.
             Ref<Label> end = g.newLabel();
             jump(end.get());

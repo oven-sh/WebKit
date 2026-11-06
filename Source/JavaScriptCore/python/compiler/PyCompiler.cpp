@@ -428,6 +428,12 @@ void Unit::markLine(int lineno)
 {
     // What follows a label may be reached from another line than the one before it.
     size_t position = g.instructions().size();
+    size_t whereItBegins = std::exchange(m_whereLineBegins, notFound);
+    if (whereItBegins < position && g.positionOfLastPythonLabel() <= whereItBegins && g.addPythonLineMarkAt(whereItBegins, lineMarkValue(lineno, false))) {
+        m_markedLine = lineno;
+        m_markedPosition = position;
+        return;
+    }
     if (lineno == m_markedLine && (position == m_markedPosition || g.positionOfLastPythonLabel() <= m_markedPosition))
         return;
     m_markedLine = lineno;
@@ -443,6 +449,14 @@ void Unit::silentLine(const Range& range)
     m_markedPosition = g.instructions().size();
     m_place = range;
     g.addPythonMark(PythonMark::Line, lineMarkValue(range.lineno, false, true));
+}
+
+void Unit::silentLine(int lineno)
+{
+    if (lineno <= 0)
+        return;
+    silentLine(Range { lineno, 0, lineno, 0 });
+    m_place = { };
 }
 
 void Unit::isStillOnLine(const Range& range)
@@ -461,54 +475,9 @@ void Unit::noLine()
     g.addPythonMark(PythonMark::NoLine, 0);
 }
 
-void Unit::jump(Label& target)
+static bool endsRun(OpcodeID opcode)
 {
-    // (`break` through a `finally` clause that returns. A jump would make it look as if the end of the loop could be reached.)
-    if (cannotGetHere())
-        return;
-    if (m_place.lineno > 0 && m_place.lineno == m_markedLine)
-        place(m_place);
-    g.emitJump(target);
-}
-
-void Unit::hiddenJump(Label& target)
-{
-    g.addPythonMark(PythonMark::NoLine, hiddenJumpMark);
-    g.emitJump(target);
-}
-
-// A function that comes to its end returns None, and that is of the line that was run last (f_lineno of the frame afterwards, what a
-// 'return' event shows). CPython's compiler gets there by copying the return for each way that leads to it. So here: whatever would
-// jump to the end of the last statement of a function returns there and then. Likewise for the jump at the end of the body of a loop:
-// CPython's compiler has what would jump to it go where it goes, so that each such jump is of the line that was run last.
-void Unit::leaveStatement(Label& end, Last isLast, JumpIs jumpIs)
-{
-    if (cannotGetHere())
-        return;
-    if (isLast)
-        leave(isLast);
-    else if (jumpIs == JumpIs::Hidden)
-        hiddenJump(end);
-    else
-        jump(end);
-}
-
-// Several ways meet there. What comes next, if it is not a statement, is of none of their lines.
-void Unit::endOfStatement(Label& end)
-{
-    if (!end.isBound())
-        return;
-    g.emitLabel(end);
-    if (!m_sameLineDepth && m_markedLine != -1 && m_markedPosition != g.instructions().size())
-        noLine();
-}
-
-// All the ways through what was just compiled have left it. (False may mean that it is not known.)
-bool Unit::cannotGetHere()
-{
-    if (g.positionOfLastPythonLabel() == g.instructions().size())
-        return false;
-    switch (g.opcodeOfLastInstruction()) {
+    switch (opcode) {
     case op_jmp:
     case op_py_jmp_back:
     case op_ret:
@@ -520,6 +489,137 @@ bool Unit::cannotGetHere()
     default:
         return false;
     }
+}
+
+void Unit::jump(Label& target)
+{
+    // (`break` through a `finally` clause that returns. A jump would make it look as if the end of the loop could be reached.)
+    if (cannotGetHere())
+        return;
+    if (&target == m_targetReplacedByCopy)
+        return hiddenJump(target);
+    if (m_place.lineno > 0 && m_place.lineno == m_markedLine)
+        place(m_place);
+    g.emitJump(target);
+}
+
+void Unit::hiddenJump(Label& target)
+{
+    g.addPythonMark(PythonMark::NoLine, hiddenJumpMark);
+    g.emitJump(target);
+}
+
+// `takesInMore`: it stands for a jump to a jump.
+void Unit::jump(Label& target, JumpIs jumpIs, bool takesInMore)
+{
+    if (cannotGetHere())
+        return;
+    if (jumpIs == JumpIs::Hidden) {
+        // It stands for a copy of what it leads to, which has its lines. Where ways meet it is of the line of one of them, so that the line it leads to begins there.
+        if (m_markedLine == -1 && !m_sameLineDepth && g.positionOfLastPythonLabel() == g.instructions().size()) {
+            auto& ways = g.branchesToLastPythonLabel().count ? g.branchesToLastPythonLabel() : g.jumpsToLastPythonLabel();
+            if (ways.count)
+                silentLine(g.pythonLineAt(ways.first));
+        }
+        return hiddenJump(target);
+    }
+    // A jump that came of a constant is still a branch when CPython's compiler takes in what jumps lead to and first works out the lines. Later it goes where
+    // this one goes, if this is still nothing but a jump, and the lines are worked out again; by then the jumps that lead nowhere have been dropped.
+    bool isLedToByConstant = jumpOfConstantLeadsHere();
+    if (auto lineno = m_targetsOfJumpsStillJumpedTo.contains(&target) || (isLedToByConstant && takesInMore) ? std::nullopt : lineOfOnlyWayHere(JumpsHere::AreTakenIn)) {
+        silentLine(*lineno);
+        if (!isLedToByConstant)
+            g.addPythonMark(PythonMark::NoLine, jumpHasLineToItselfMark);
+    }
+    if (jumpIs != JumpIs::OfTheProgram)
+        g.addPythonMark(PythonMark::NoLine, jumpIs == JumpIs::ToldOf ? jumpAsLaidOutMark : jumpForwardsAsLaidOutMark);
+    jump(target);
+}
+
+// What comes next, if it is not a statement, is of the line of the jump or the branch that leads here, if that is the only way here.
+// AreTakenIn: what comes next is a jump and nothing else, and what jumps to that has a copy of it in CPython.
+std::optional<int> Unit::lineOfOnlyWayHere(JumpsHere jumpsHere)
+{
+    size_t position = g.instructions().size();
+    // (Not behind a statement of which no instruction has come yet.)
+    if (m_sameLineDepth || g.positionOfLastPythonLabel() != position || g.lineBeginsBehindLastPythonLabel())
+        return std::nullopt;
+    // What drops the iterator comes first, and is the only way if something else is jumped to, by a `break`.
+    if (m_endOfForLoop.position == position)
+        return m_endOfForLoop.hasBreak ? std::optional(m_endOfForLoop.lineno) : std::nullopt;
+    auto& branches = g.branchesToLastPythonLabel();
+    auto& jumps = g.jumpsToLastPythonLabel();
+    // (The line after code that cannot be reached has been given an instruction, which cannot be reached either.)
+    bool isFallenInto = !endsRun(g.opcodeOfLastInstruction()) && !(g.opcodeOfLastInstruction() == op_nop && m_endOfDeadCode + 1 == position);
+    unsigned jumpCount = jumps.count;
+    unsigned jump = jumps.first;
+    if (jumpsHere == JumpsHere::AreTakenIn) {
+        // All but those that stay.
+        if (jumps.count > 2)
+            return std::nullopt;
+        bool firstStays = jumps.count && m_jumpsThatStay.contains(jumps.first);
+        bool lastStays = jumps.count > 1 && m_jumpsThatStay.contains(jumps.last);
+        jumpCount = firstStays + lastStays;
+        jump = firstStays ? jumps.first : jumps.last;
+    }
+    if (branches.count + jumpCount != 1 || isFallenInto)
+        return std::nullopt;
+    int lineno = g.pythonLineAt(branches.count ? branches.first : jump);
+    if (lineno < 0)
+        return std::nullopt;
+    return lineno;
+}
+
+// Where the statements end that a `try` or a `with` looks after, CPython's compiler has something that does nothing. It stays if it has a line of its own.
+void Unit::endOfProtectedStatements(JumpsHere jumpsHere, Label* end)
+{
+    if (auto lineno = m_targetsOfJumpsStillJumpedTo.contains(end) || jumpOfConstantLeadsHere() ? std::nullopt : lineOfOnlyWayHere(jumpsHere)) {
+        silentLine(*lineno);
+        OpNop::emit(&g);
+    }
+}
+
+// A function that comes to its end returns None, and that is of the line that was run last (f_lineno of the frame afterwards, what a
+// 'return' event shows). CPython's compiler gets there by copying the return for each way that leads to it. So here: whatever would
+// jump to the end of the last statement of a function returns there and then. Likewise for the jump at the end of the body of a loop:
+// CPython's compiler has what would jump to it go where it goes, so that each such jump is of the line that was run last.
+void Unit::leaveStatement(Label& end, Last isLast, JumpIs jumpIs)
+{
+    if (cannotGetHere())
+        return;
+    if (!isLast)
+        return jump(end, isCopiedWhatComesAfterStatement() ? JumpIs::Hidden : jumpIs);
+    Last leavingAs = isLast.inPlaceOfJump(jumpIs);
+    unsigned jumpItStaysInFrontOf = 0;
+    if (isLast.kind == Last::BeforeJump && !isReplacedByCopy(leavingAs, &jumpItStaysInFrontOf) && jumpItStaysInFrontOf == 1) {
+        m_jumpsThatStay.append(g.instructions().size());
+        return jump(end, jumpIs);
+    }
+    leave(leavingAs);
+}
+
+// Several ways meet there. What comes next, if it is not a statement, is of none of their lines. If a branch is the only way there, it is of the
+// line of the branch.
+void Unit::endOfStatement(Label& end, Last isLast, int lineOfBranch)
+{
+    m_targetsOfJumpsStillJumpedTo.removeAll(&end);
+    if (!end.isBound())
+        return;
+    bool branchIsOnlyWay = isLast && end.unresolvedJumps().size() == 1 && cannotGetHere();
+    g.emitLabel(end);
+    if (branchIsOnlyWay) {
+        m_whereLineOfBranchIsMarked = g.instructions().size();
+        return isLast.kind == Last::BeforeJump ? silentLine(lineOfBranch) : line(lineOfBranch);
+    }
+    // (Not if a statement has begun here. What is marked may be the line of a branch that was the only way to the end of a statement in this one.)
+    if (!m_sameLineDepth && m_markedLine != -1 && (m_markedPosition != g.instructions().size() || m_whereLineOfBranchIsMarked == g.instructions().size()))
+        noLine();
+}
+
+// All the ways through what was just compiled have left it. (False may mean that it is not known.)
+bool Unit::cannotGetHere()
+{
+    return g.positionOfLastPythonLabel() != g.instructions().size() && endsRun(g.opcodeOfLastInstruction());
 }
 
 // The statement may be in the body or in a handler of a `try` statement that is itself the last.
@@ -560,11 +660,24 @@ void Unit::emitImplicitContinue(unsigned loop, const Range& range)
 
 void Unit::emitImplicitJump(Last isLast, const Range& range)
 {
+    unsigned jumpItStaysInFrontOf = 0;
+    bool isCopy = isReplacedByCopy(isLast, &jumpItStaysInFrontOf);
+    bool staysAsInCPython = false;
+    // It goes as far as the jump before that one goes.
+    if (unsigned index = isLast.jumpsBefore - jumpItStaysInFrontOf + 1; jumpItStaysInFrontOf > 1 && isLast.targetsOfJumps[index]) {
+        isLast.target = isLast.targetsOfJumps[index];
+        isLast.blockCount = isLast.blockCountsOfJumps[index];
+        isLast.tryDepth = isLast.tryDepthsOfJumps[index];
+        staysAsInCPython = true;
+    } else if (Label* target = jumpItStaysInFrontOf ? isLast.targetsOfJumps[isLast.jumpsBefore - jumpItStaysInFrontOf] : nullptr)
+        m_targetsOfJumpsStillJumpedTo.append(target);
     SetForScope leavingAs(m_leavingAs, isLast);
     Vector<TryContext> suspended;
     unwindBlocks(range, isLast.blockCount, suspended);
     suspendTry(isLast.tryDepth, suspended);
-    jump(*isLast.target);
+    if (staysAsInCPython)
+        m_jumpsThatStay.append(g.instructions().size());
+    jump(*isLast.target, isCopy ? JumpIs::Hidden : isLast.jumpIs, isLast.jumpsBefore > (isLast.isInPlaceOfJump ? 0u : 1u));
     resumeTry(WTF::move(suspended));
 }
 
@@ -583,21 +696,69 @@ void Unit::leave(Last isLast, const Range& range)
 }
 
 // What comes after the statements that are about to be compiled is a jump to the label, unless they are the last of something already.
-Last Unit::lastBeforeJump(Label& target, Last isLast)
+// `instructions`: how many CPython's compiler has for it, with the jump.
+Last Unit::lastBeforeJump(Label& target, Last isLast, JumpIs jumpIs, unsigned instructions)
 {
     if (isLast)
-        return isLast;
-    return { Last::BeforeJump, 0, &target, static_cast<unsigned>(m_blocks.size()), static_cast<unsigned>(g.tryDepth()) };
+        return isLast.behindJump(jumpIs, instructions, &target, m_blocks.size(), g.tryDepth());
+    Last result { Last::BeforeJump, 0, &target, static_cast<unsigned>(m_blocks.size()), static_cast<unsigned>(g.tryDepth()) };
+    result.jumpIs = jumpIs;
+    if (m_statementsAfter)
+        result.instructionsAfterJump = instructionsUntilFunctionEnds(*m_statementsAfter, ComesFirst::Nothing);
+    return result.behindJump(jumpIs, instructions, &target, m_blocks.size(), g.tryDepth());
+}
+
+// Whether a jump to the first of the jumps is. CPython's compiler goes through the code again and again. Each time, whatever ends with a jump takes
+// in what the jump leads to, if that is of no line and ends with a jump itself, or is a short end of the function. What has taken in the end of the
+// function is an end of the function, and may not be short any more.
+// `jumpItStaysInFrontOf`: it is not, because one of the jumps, the first being 1, has taken in the end of the function and is not short. It leads there.
+bool Unit::isReplacedByCopy(const Last& isLast, unsigned* jumpItStaysInFrontOf)
+{
+    ASSERT(isLast.kind == Last::BeforeJump);
+    unsigned count = isLast.jumpsBefore;
+    if (isLast.instructionsAfterJump >= tooManyToCopy || count > Last::maxJumps)
+        return false;
+    // The jump in question, the others, the end of the function.
+    struct Run {
+        unsigned size;
+        unsigned target;
+        bool endsFunction { false };
+    };
+    std::array<Run, Last::maxJumps + 2> runs;
+    runs[0] = { 1, 1 };
+    for (unsigned i = 0; i < count; ++i)
+        runs[i + 1] = { isLast.instructionsOfJumps[count - 1 - i], i + 2 };
+    runs[count + 1] = { isLast.instructionsAfterJump, 0, true };
+    for (bool changed = true; std::exchange(changed, false);) {
+        for (unsigned i = 0; i <= count; ++i) {
+            Run& run = runs[i];
+            if (run.endsFunction)
+                continue;
+            const Run& target = runs[run.target];
+            if (target.endsFunction && target.size >= tooManyToCopy)
+                continue;
+            run = { run.size + target.size, target.target, target.endsFunction };
+            changed = true;
+        }
+    }
+    const Run& run = runs[isLast.isInPlaceOfJump || !count ? 0 : 1];
+    if (run.endsFunction)
+        return true;
+    if (jumpItStaysInFrontOf && run.target <= count)
+        *jumpItStaysInFrontOf = run.target;
+    return false;
 }
 
 // Nothing is to be run on the way there.
 bool Unit::canBranchTo(Last isLast)
 {
     ASSERT(isLast.kind == Last::BeforeJump);
+    // CPython's compiler has a branch to a jump go where the jump goes only if the jump is of that kind.
+    if (isLast.jumpIs < JumpIs::ToldOf)
+        return false;
     for (size_t i = isLast.blockCount; i < m_blocks.size(); ++i) {
         switch (m_blocks[i].kind) {
         case BlockKind::WhileLoop:
-        case BlockKind::TryExcept:
         case BlockKind::MatchSubject:
             break;
         default:
@@ -607,39 +768,60 @@ bool Unit::canBranchTo(Last isLast)
     return true;
 }
 
+// Where the test of a statement goes if it fails, if a jump there is replaced by a copy of what is there: a chain of comparisons has one.
+Label* Unit::targetReplacedByCopy(Label& end, Last isLast)
+{
+    if (!isLast)
+        return isCopiedWhatComesAfterStatement() ? &end : nullptr;
+    if (isLast.kind != Last::BeforeJump)
+        return nullptr;
+    if (!canBranchTo(isLast))
+        return &end;
+    return isReplacedByCopy(isLast) ? isLast.target : nullptr;
+}
+
 // jumpIf(test, target, false), for a statement after which, if the test fails and the statement is the last, the function ends. A test
 // written over several lines fails on one of them, and that is the line the function returns on. In the body of a loop, CPython has no
 // branches that go backwards: what would be one jumps over a jump.
-void Unit::jumpIfOrLeave(Expr* test, Label& target, Last isLast, ReturnsByLine& returns)
+void Unit::jumpIfOrLeave(Expr* test, Label& target, Last isLast, ReturnsByLine& returns, bool condition)
 {
-    if (isLast.kind == Last::OfLoopBody) {
+    if (isLast.kind == Last::OfLoopBody && !isLast.isBehindJump) {
         SetForScope branchTarget(m_branchTarget, BranchTarget { &target, { }, nullptr, isLast.loop, nullptr });
-        return jumpIf(test, target, false);
+        return jumpIf(test, target, condition);
     }
-    if (isLast.kind == Last::BeforeJump)
-        return jumpIf(test, canBranchTo(isLast) ? *isLast.target : target, false);
-    if (!isLast || test->range.lineno == test->range.endLineno)
-        return jumpIf(test, target, false);
-    SetForScope branchTarget(m_branchTarget, BranchTarget { &target, { }, &returns, { }, nullptr });
-    jumpIf(test, target, false);
+    // Of a jump of the kind that tools are told of whichever way it goes, and what is run before it, each way there has a copy. At one of the other kind the ways meet.
+    if (isLast.kind == Last::BeforeJump && canBranchTo(isLast))
+        return jumpIf(test, *isLast.target, condition);
+    // So they do where the end of the function has been copied behind it.
+    if (isLast.kind == Last::BeforeJump && (isLast.jumpIs < JumpIs::ToldOf || isReplacedByCopy(isLast)))
+        return jumpIf(test, target, condition);
+    if (!isLast || (isLast.kind == Last::OfFunction && test->range.lineno == test->range.endLineno))
+        return jumpIf(test, target, condition);
+    SetForScope branchTarget(m_branchTarget, BranchTarget { &target, { }, &returns, { }, nullptr, isLast.kind != Last::OfFunction });
+    jumpIf(test, target, condition);
 }
 
-Label& Unit::labelForLine(ReturnsByLine& labels, int lineno)
+Label& Unit::labelForLine(ReturnsByLine& labels, int lineno, const Range& place)
 {
-    size_t index = labels.findIf([&](auto& entry) { return entry.first == lineno; });
+    size_t index = labels.findIf([&](auto& entry) {
+        return entry.lineno == lineno && entry.place.colOffset == place.colOffset && entry.place.endLineno == place.endLineno && entry.place.endColOffset == place.endColOffset;
+    });
     if (index == notFound) {
         index = labels.size();
-        labels.append({ lineno, g.newLabel() });
+        labels.append({ lineno, g.newLabel(), place });
     }
-    return labels[index].second.get();
+    return labels[index].label.get();
 }
 
 void Unit::emitReturnsByLine(ReturnsByLine& returns, Last isLast)
 {
-    for (auto& [lineno, label] : returns) {
+    for (auto& [lineno, label, placeOfBranch] : returns) {
         g.emitLabel(label.get());
-        line(lineno);
-        emitImplicitReturn(isLast);
+        if (isLast.kind != Last::BeforeJump || isLast.jumpIs >= JumpIs::ToldOf)
+            line(lineno);
+        if (placeOfBranch.lineno)
+            place(placeOfBranch);
+        leave(isLast);
     }
 }
 
@@ -1439,6 +1621,8 @@ void Unit::pushBlock(Block&& block)
 {
     block.number = ++m_blockCount;
     m_info.hasLoopThatOwnsItsIterator |= block.ownsIterator;
+    if (block.breakTarget && m_statementsAfter)
+        block.instructionsAfterLoop = instructionsUntilFunctionEnds(*m_statementsAfter, ComesFirst::Nothing);
     markBlock(block, true);
     m_blocks.append(WTF::move(block));
 }
@@ -1510,7 +1694,12 @@ void Unit::unwindBlock(const Block& block, Vector<TryContext>& suspended)
         bool restHasLines = m_leavingAs && std::ranges::any_of(m_blocks.subspan(std::min<size_t>(stays, m_blocks.size())), [](const Block& other) {
             return other.kind == BlockKind::FinallyTry || other.kind == BlockKind::With || other.kind == BlockKind::AsyncWith;
         });
-        statements(block.finalBody, 0, m_leavingAs.onlyIf(!restHasLines));
+        Last isLast = m_leavingAs.onlyIf(!restHasLines);
+        // What else there is to do comes before the jump, with which the clause is left. (Nothing: a branch to a jump back is turned round.)
+        unsigned rest = instructionsOnTheWayOut(false, std::min<size_t>(stays, m_blocks.size()), m_blocks.size());
+        if (isLast.kind == Last::BeforeJump || (isLast.kind == Last::OfLoopBody && rest))
+            isLast = isLast.behindJump(isLast.jumpIs, 1 + rest, nullptr);
+        statements(block.finalBody, 0, isLast);
         return;
     }
     case BlockKind::FinallyEnd:
@@ -1562,11 +1751,15 @@ void Unit::unwindBlocks(const Range& range, size_t count, Vector<TryContext>& su
 
 void Unit::statements(Seq<Stmt*> body, unsigned first, Last isLast)
 {
+    StatementsAfter after { body, first, isLast, static_cast<unsigned>(m_blocks.size()), m_statementsAfter, std::exchange(m_statementsEndWhereStatementEnds, false) };
+    SetForScope statementsAfter(m_statementsAfter, &after);
     for (unsigned i = first; i < body.size(); ++i) {
         // After a `return`, say, or at the very beginning: what `if a and 0:` is in front of.
         if (!m_sameLineDepth && cannotGetHere())
             return deadStatements(body, i);
         m_statementIsLast = isLast.onlyIf(i + 1 == body.size());
+        m_statement = body[i];
+        after.first = i + 1;
         statement(body[i]);
     }
 }
@@ -1639,7 +1832,7 @@ void Unit::statement(Stmt* node)
     case StmtKind::TryStar:
         return tryStatement(node->as<AST::Try>(), isLast);
     case StmtKind::Assert:
-        return assertStatement(node->as<Assert>());
+        return assertStatement(node->as<Assert>(), isLast);
     case StmtKind::Import:
         return importStatement(node->as<Import>());
     case StmtKind::ImportFrom:
@@ -1882,23 +2075,29 @@ void Unit::ifStatement(If* node, Last isLast)
     Ref<Label> end = g.newLabel();
     if (node->orelse.isEmpty()) {
         ReturnsByLine returns;
-        jumpIfOrLeave(node->test, end.get(), isLast, returns);
+        {
+            SetForScope replacedByCopy(m_targetReplacedByCopy, targetReplacedByCopy(end.get(), isLast));
+            jumpIfOrLeave(node->test, end.get(), isLast, returns);
+        }
+        int lineOfBranch = m_markedLine;
+        m_statementsEndWhereStatementEnds = true;
         statements(node->body, 0, isLast);
-        if (isLast.kind == Last::OfFunction && !cannotGetHere())
-            emitImplicitReturn(isLast);
+        if ((isLast.kind == Last::OfFunction || !returns.isEmpty()) && !cannotGetHere())
+            leave(isLast);
         emitReturnsByLine(returns, isLast);
         if (end->isBound()) {
-            endOfStatement(end.get());
+            endOfStatement(end.get(), isLast, lineOfBranch);
             lineOfImplicitReturn(node->test->range.endLineno, isLast.onlyIf(isLast.kind == Last::OfFunction));
         }
         return;
     }
     Ref<Label> orelse = g.newLabel();
     jumpIf(node->test, orelse.get(), false);
-    statements(node->body, 0, lastBeforeJump(end.get(), isLast));
-    leaveStatement(end.get(), isLast, JumpIs::OfTheProgram);
+    statements(node->body, 0, lastBeforeJump(end.get(), isLast, JumpIs::ToldOfForwards));
+    leaveStatement(end.get(), isLast, JumpIs::ToldOfForwards);
     if (orelse->isBound())
         g.emitLabel(orelse.get());
+    m_statementsEndWhereStatementEnds = true;
     statements(node->orelse, 0, isLast);
     endOfStatement(end.get());
 }
@@ -1914,18 +2113,30 @@ void Unit::whileLoop(While* node, Last isLast)
     m_statementStart = g.instructions().size();
     pushBlock({ .kind = BlockKind::WhileLoop, .tryDepth = g.tryDepth(), .continueTarget = loop.ptr(), .breakTarget = end.ptr(), .isLast = isLast, .valueToReturn = m_valueToReturn });
     ReturnsByLine returns;
-    jumpIfOrLeave(node->test, anchor.get(), isLast.onlyIf(node->orelse.isEmpty()), returns);
+    {
+        SetForScope replacedByCopy(m_targetReplacedByCopy, node->orelse.isEmpty() ? targetReplacedByCopy(anchor.get(), isLast) : nullptr);
+        jumpIfOrLeave(node->test, anchor.get(), isLast.onlyIf(node->orelse.isEmpty()), returns);
+    }
+    int lineOfBranch = m_markedLine;
     statements(node->body, 0, { Last::OfLoopBody, static_cast<unsigned>(m_blocks.size() - 1) });
     jump(loop.get());
     popBlock();
     emitReturnsByLine(returns, isLast);
 
     if (anchor->isBound()) {
+        bool isOnlyWay = anchor->unresolvedJumps().size() == 1;
         g.emitLabel(anchor.get());
-        lineOfImplicitReturn(node->test->range.endLineno, isLast.onlyIf(node->orelse.isEmpty() && isLast.kind == Last::OfFunction));
+        if (isLast.kind == Last::BeforeJump) {
+            if (node->orelse.isEmpty() && isOnlyWay)
+                silentLine(lineOfBranch);
+        } else
+            lineOfImplicitReturn(isLast.kind == Last::OfFunction ? node->test->range.endLineno : lineOfBranch, isLast.onlyIf(node->orelse.isEmpty() && (isLast.kind == Last::OfFunction || isOnlyWay)));
     }
     statements(node->orelse, 0, isLast);
     endOfStatement(end.get());
+    // `while True:` has a branch to here, until CPython's compiler finds out.
+    if (node->orelse.isEmpty() && constantTruth(node->test) == true)
+        m_whereBranchOfConstantLeads = g.instructions().size();
 }
 
 void Unit::forLoop(For* node, Last isLast)
@@ -1965,11 +2176,15 @@ void Unit::forLoop(For* node, Last isLast)
     statements(node->body, 0, { Last::OfLoopBody, static_cast<unsigned>(m_blocks.size() - 1) });
     if (!cannotGetHere())
         jump(start.get());
+    bool hasBreak = m_blocks.last().hasBreak;
     popBlock();
 
     // Where CPython drops the iterator.
     g.emitLabel(cleanup.get());
     silentLine(node->iter->range);
+    // A `break` leads to what comes after that, be it one that cannot be reached, or one that goes on from here. See lineOfOnlyWayHere().
+    if (node->orelse.isEmpty())
+        m_endOfForLoop = { g.instructions().size(), node->iter->range.lineno, hasBreak && !end->isBound() };
     statements(node->orelse, 0, isLast);
     endOfStatement(end.get());
 }
@@ -2109,6 +2324,7 @@ void Unit::breakOrContinue(Stmt* node, bool isBreak)
         fail(node->range, isBreak ? "'break' outside loop"_s : "'continue' not properly in loop"_s);
         return;
     }
+    m_blocks[loop].hasBreak |= isBreak;
     // (A jump would make it look as if the end of the loop could be reached.)
     if (m_cannotBeReached) {
         // What is in the way is looked at all the same.
@@ -2120,15 +2336,16 @@ void Unit::breakOrContinue(Stmt* node, bool isBreak)
         return emitImplicitContinue(loop, node->range);
     // To leave a loop that is the last statement of the function is to return, and so on. A `return` in the loop that has got as far as a
     // `finally` with this `break` in it comes to nothing.
+    // (What drops the iterator when a `for` loop ends comes before the end.)
+    JumpIs jumpIs = m_blocks[loop].kind == BlockKind::ForLoop ? JumpIs::OfTheProgram : JumpIs::ToldOf;
     if (m_blocks[loop].isLast) {
         SetForScope valueToReturn(m_valueToReturn, m_blocks[loop].valueToReturn);
-        return leave(m_blocks[loop].isLast, node->range);
+        return leave(m_blocks[loop].isLast.inPlaceOfJump(jumpIs), node->range);
     }
-    SetForScope leavingAs(m_leavingAs, Last { });
-    Vector<TryContext> suspended;
-    unwindBlocks(node->range, loop, suspended);
-    jump(*m_blocks[loop].breakTarget);
-    resumeTry(WTF::move(suspended));
+    Last leavingAs { Last::BeforeJump, 0, m_blocks[loop].breakTarget, static_cast<unsigned>(loop), static_cast<unsigned>(m_blocks[loop].tryDepth) };
+    leavingAs.jumpIs = jumpIs;
+    leavingAs.instructionsAfterJump = m_blocks[loop].instructionsAfterLoop;
+    leave(leavingAs, node->range);
 }
 
 void Unit::raiseStatement(Raise* node)
@@ -2168,19 +2385,26 @@ void Unit::tryFinally(AST::Try* node, Last isLast)
     Ref<Label> exit = g.newLabel();
 
     Try body = beginTry();
+    // What comes after the statements is the clause.
+    StatementsAfter clause { node->finalbody, 0, { }, static_cast<unsigned>(m_blocks.size()), m_statementsAfter, false, 1 };
     pushBlock({ .kind = BlockKind::FinallyTry, .tryDepth = body.depthBefore, .finalBody = node->finalbody });
-    if (node->handlers.isEmpty())
-        statements(node->body);
-    else if (node->isStar())
-        tryStarExcept(node, { });
-    else
-        tryExcept(node, { });
+    {
+        SetForScope statementsAfter(m_statementsAfter, &clause);
+        m_statementsEndWhereStatementEnds = node->handlers.isEmpty();
+        if (node->handlers.isEmpty())
+            statements(node->body);
+        else if (node->isStar())
+            tryStarExcept(node, { });
+        else
+            tryExcept(node, { });
+    }
+    endOfProtectedStatements();
     popBlock();
     endTry(body);
 
     if (!cannotGetHere()) {
-        statements(node->finalbody, 0, isLast);
-        leaveStatement(exit.get(), isLast, JumpIs::Hidden);
+        statements(node->finalbody, 0, lastBeforeJump(exit.get(), isLast, JumpIs::ToldOfForwards));
+        leaveStatement(exit.get(), isLast, JumpIs::ToldOfForwards);
     }
 
     // An exception: it goes on after the clause has run.
@@ -2207,18 +2431,21 @@ void Unit::tryExcept(AST::Try* node, Last isLast)
 {
     Ref<Label> end = g.newLabel();
 
-    // What comes next is a jump over the handlers.
-    Last isLastOfBody = lastBeforeJump(end.get(), isLast);
+    // What comes next is a jump over the handlers. CPython's compiler puts the handlers behind everything else, so there it is a jump to what follows, and is dropped.
+    Last isLastOfBody = lastBeforeJump(end.get(), isLast, JumpIs::ToldOfForwards, node->orelse.isEmpty() ? 2 : 1);
+    Last isLastOfHandler = lastBeforeJump(end.get(), isLast, JumpIs::ToldOfForwards, 3);
+    Last isLastOfHandlerWithName = lastBeforeJump(end.get(), isLast, JumpIs::ToldOfForwards, 7);
     Try body = beginTry();
     pushBlock({ .kind = BlockKind::TryExcept, .tryDepth = body.depthBefore });
     statements(node->body, 0, isLastOfBody.onlyIf(node->orelse.isEmpty()));
+    endOfProtectedStatements(node->orelse.isEmpty() ? JumpsHere::AreTakenIn : JumpsHere::Count, end.ptr());
     popBlock();
     endTry(body);
     if (cannotGetHere())
         deadStatements(node->orelse);
     else
         statements(node->orelse, 0, isLastOfBody);
-    leaveStatement(end.get(), isLast, JumpIs::Hidden);
+    leaveStatement(end.get(), isLast, JumpIs::ToldOfForwards);
 
     Reg previous;
     Reg exception = beginExceptionHandler(body, previous);
@@ -2259,7 +2486,7 @@ void Unit::tryExcept(AST::Try* node, Last isLast)
             g.addPythonMark(PythonMark::BlockEnd, matching, bitsOfMatching);
             Try nameCleanup = beginTry();
             pushBlock({ .kind = BlockKind::HandlerCleanup, .tryDepth = cleanup.depthBefore, .saved = previous.get(), .name = handler->name, .range = handler->range, .isMarked = false });
-            statements(handler->body, 0, isLast.onlyIf(isLast.kind != Last::BeforeJump));
+            statements(handler->body, 0, isLastOfHandlerWithName);
             popBlock();
             endTry(nameCleanup);
             outsideTry(cleanup.depthBefore, [&] {
@@ -2269,7 +2496,7 @@ void Unit::tryExcept(AST::Try* node, Last isLast)
                 restoreHandledException(previous.get());
                 storeName(handler->name, constant(jsUndefined()), handler->range);
                 deleteName(handler->name, handler->range);
-                leaveStatement(end.get(), isLast, JumpIs::Hidden);
+                leaveStatement(end.get(), isLast, JumpIs::ToldOfForwards);
             });
 
             Reg thrown = beginHandler(nameCleanup);
@@ -2282,13 +2509,13 @@ void Unit::tryExcept(AST::Try* node, Last isLast)
         } else {
             g.addPythonMark(PythonMark::BlockEnd, matching, bitsOfMatching);
             pushBlock({ .kind = BlockKind::HandlerCleanup, .tryDepth = cleanup.depthBefore, .saved = previous.get(), .isMarked = false });
-            statements(handler->body, 0, isLast.onlyIf(isLast.kind != Last::BeforeJump));
+            statements(handler->body, 0, isLastOfHandler);
             popBlock();
             outsideTry(cleanup.depthBefore, [&] {
                 if (cannotGetHere())
                     return;
                 restoreHandledException(previous.get());
-                leaveStatement(end.get(), isLast, JumpIs::Hidden);
+                leaveStatement(end.get(), isLast, JumpIs::ToldOfForwards);
             });
         }
         g.emitLabel(next.get());
@@ -2320,9 +2547,10 @@ void Unit::tryStarExcept(AST::Try* node, Last isLast)
     Try body = beginTry();
     pushBlock({ .kind = BlockKind::TryExcept, .tryDepth = body.depthBefore });
     statements(node->body, 0, isLast.onlyIf(node->orelse.isEmpty()));
+    endOfProtectedStatements();
     popBlock();
     endTry(body);
-    leaveStatement(orelse.get(), isLast.onlyIf(node->orelse.isEmpty()), JumpIs::Hidden);
+    leaveStatement(orelse.get(), isLast.onlyIf(node->orelse.isEmpty()), JumpIs::ToldOfForwards);
 
     Reg previous;
     Reg original = beginExceptionHandler(body, previous);
@@ -2441,6 +2669,7 @@ void Unit::withStatement(With* node, unsigned index, Last isLast)
         statements(node->body);
     else
         withStatement(node, index + 1, { });
+    endOfProtectedStatements();
     popBlock();
     endTry(body);
 
@@ -2453,7 +2682,7 @@ void Unit::withStatement(With* node, unsigned index, Last isLast)
         if (isAsync)
             emitAwait(result.get(), result.get(), 2);
     }
-    leaveStatement(end.get(), isLast, JumpIs::Hidden);
+    leaveStatement(end.get(), isLast, JumpIs::ToldOf);
 
     // An exception: __exit__ says whether it goes on.
     Reg previous;
@@ -2476,7 +2705,7 @@ void Unit::withStatement(With* node, unsigned index, Last isLast)
     g.emitLabel(suppress.get());
     line(range);
     restoreHandledException(previous.get());
-    leaveStatement(end.get(), isLast, JumpIs::Hidden);
+    leaveStatement(end.get(), isLast, JumpIs::ToldOfForwards);
 
     Reg thrown = beginHandler(cleanup);
     restoreHandledException(previous.get());
@@ -2485,14 +2714,16 @@ void Unit::withStatement(With* node, unsigned index, Last isLast)
     endOfStatement(end.get());
 }
 
-void Unit::assertStatement(Assert* node)
+void Unit::assertStatement(Assert* node, Last isLast)
 {
     if (auto* tuple = node->test->tryAs<Tuple>(); tuple && !tuple->elts.isEmpty() && c.m_warned.add(node).isNewEntry)
         warn(node->range, "assertion is always true, perhaps remove parentheses?"_s);
     if (c.m_options.optimize)
         return;
     Ref<Label> end = g.newLabel();
-    jumpIf(node->test, end.get(), true);
+    ReturnsByLine returns;
+    jumpIfOrLeave(node->test, end.get(), isLast.onlyIf(isLast.kind != Last::OfFunction), returns, true);
+    int lineOfBranch = m_markedLine;
     auto fails = [&] {
         Arguments arguments(*this, 3);
         line(node->range);
@@ -2511,7 +2742,10 @@ void Unit::assertStatement(Assert* node)
         deadCode(fails);
     else
         fails();
-    if (end->isBound())
+    emitReturnsByLine(returns, isLast);
+    if (isLast.kind == Last::BeforeJump)
+        endOfStatement(end.get(), isLast, lineOfBranch);
+    else if (end->isBound())
         g.emitLabel(end.get());
 }
 
