@@ -2452,13 +2452,17 @@ void LinkFlow::takeNote(Note note, uint32_t number, uint32_t more)
     switch (note) {
     case Note::NameRead:
         builtinsInReach().noteNameRead(PropertyKeyID::fromBits(number));
-        if (more)
+        if (more) {
             builtinsInReach().noteNameSpelledByProgram(PropertyKeyID::fromBits(number));
+            builtinsInReach().noteNameReadByProgram(PropertyKeyID::fromBits(number));
+        }
         return;
     case Note::NameCalled:
         builtinsInReach().noteNameCalled(PropertyKeyID::fromBits(number));
         if (more)
             builtinsInReach().noteNameSpelledByProgram(PropertyKeyID::fromBits(number));
+        if (more & receiverMayBeNothing)
+            builtinsInReach().noteNameReadByProgram(PropertyKeyID::fromBits(number));
         return;
     case Note::ReadUnderKeyNobodyKnows:
         builtinsInReach().noteReadUnderKeyNobodyKnows();

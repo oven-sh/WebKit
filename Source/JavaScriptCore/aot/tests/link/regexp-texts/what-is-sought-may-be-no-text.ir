@@ -1,0 +1,74 @@
+# The list follows from the program alone, and the texts of a file do not hang on its neighbors. What nobody could keep is not made, also where what is sought is a number, which native code makes a text.
+# neighbor.js: const zeros = doubled("0", 12), given = doubled("g", 10); for (let turn = 0; turn < 100; turn++) zeros.replaceAll(0, given);   Four million characters a turn would end the rehearsal for every file.   (doubled(text, k): text = text + text, k times)
+# routes.js: export function route(path) { return new RegExp("^" + path); } . main.js: route("shops");
+# RUN: regexp-texts mechanisms=all
+# CHECK: text /^shops/
+
+module m0 path="/neighbor.js" displayPath="neighbor.js" body=f0
+module m1 path="/routes.js" displayPath="routes.js" body=f1 exports=[{name="route" variable=g0}]
+module m2 path="/main.js" displayPath="main.js" body=f3 requests=[{target=m0 completes=true}, {target=m1 completes=true}]
+entry module=m2
+variable g0 name="route" module=m1 declared={type=anything|absent} flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="0"
+    v1 = Add v0, v0
+    v2 = Add v1, v1
+    v3 = Add v2, v2
+    v4 = Add v3, v3
+    v5 = Add v4, v4
+    v6 = Add v5, v5
+    v7 = Add v6, v6
+    v8 = Add v7, v7
+    v9 = Add v8, v8
+    v10 = Add v9, v9
+    v11 = Add v10, v10
+    v12 = Add v11, v11
+    v13 = String string="g"
+    v14 = Add v13, v13
+    v15 = Add v14, v14
+    v16 = Add v15, v15
+    v17 = Add v16, v16
+    v18 = Add v17, v17
+    v19 = Add v18, v18
+    v20 = Add v19, v19
+    v21 = Add v20, v20
+    v22 = Add v21, v21
+    v23 = Add v22, v22
+    v24 = PropGet v12 key="replaceAll"
+    v25 = Integer
+    v26 = Integer
+    Jump -> next b1(v26)
+  b1(v27: anything):
+    LoopHint
+    v29 = Call v24, v12, v25, v23 calleeKey="replaceAll"
+    v30 = Increment v27
+    v31 = Integer integer=100
+    v32 = Less v30, v31
+    Branch v32 -> taken b1(v30), notTaken b2()
+  b2():
+    v33 = Undefined
+    Return v33
+}
+function f1 module=m1 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f2
+    PutModuleVariable v0 variable=g0
+    v2 = Undefined
+    Return v2
+}
+function f2 name="route" module=m1 position=10 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = String string="^"
+    v2 = Add v1, v0
+    v3 = Builtin builtin=RegExp
+    v4 = Construct v3, -, v2
+    Return v4
+}
+function f3 module=m2 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = String string="shops"
+    v2 = Call v0, -, v1
+    Return v2
+}

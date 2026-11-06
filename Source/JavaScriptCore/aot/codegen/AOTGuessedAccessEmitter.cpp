@@ -194,8 +194,11 @@ void GuessedAccessEmitter::generateSlotRead(const ValueContext& value)
         bool namesOrdinaryObjects = std::ranges::any_of(membersOf(types(), types().at(heldBySlots)), [&](LayoutID member) {
             return !m_plan.layout(member).holdsCompiledObjects();
         });
-        if (namesOrdinaryObjects)
-            askedOfWhatSlotsHold = types().unionOf(types().withoutObjects(heldBySlots), TypeTable::object);
+        bool namesWhatIsOutOfReach = m_facts.testMentionsWhatIsOutOfReach(types(), heldBySlots, scopedLambda<bool(FunctionID)>([&](FunctionID named) {
+            return m_facts.linked().mayBeMentionedBy(generator().unit(), named);
+        }));
+        if (namesOrdinaryObjects || namesWhatIsOutOfReach)
+            askedOfWhatSlotsHold = types().unionOf(types().withoutObjects(heldBySlots), types().at(heldBySlots).hasOnlyClosures() ? TypeTable::function : TypeTable::object);
     }
     Type held;
     if (ways) {

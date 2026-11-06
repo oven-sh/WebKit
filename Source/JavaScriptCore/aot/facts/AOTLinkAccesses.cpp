@@ -442,7 +442,7 @@ bool AccessInLinkAccesses::readsThroughSuperWhatIsOnlyCalled() const
     if (!user)
         return false;
     BodyValue call = index->value(user);
-    return (call.opcode() == Opcode::Call || call.opcode() == Opcode::CallList) && call.operand(0) == m_access.site;
+    return (call.opcode() == Opcode::Call || call.opcode() == Opcode::CallList) && call.operand(0) == m_access.site && call.operand(1);
 }
 
 void AccessInLinkAccesses::cannotTell(UnknownIs unknownIs, TellsName tellsName)
@@ -450,8 +450,9 @@ void AccessInLinkAccesses::cannotTell(UnknownIs unknownIs, TellsName tellsName)
     LinkFlow::UnknownByEscapeAlone unknownByEscapeAlone(unknownIs == UnknownIs::ByEscapeAlone, LinkFlow::UnknownByEscapeAlone::Marks::OfRule);
     bool isToldOf = tellsName == TellsName::Yes && isRead() && !m_access.answerIsOnlyCalled && (m_shared || !m_flow.rowsSpeakOfKeyFor(m_function, m_access.key));
     bool tellsSite = !m_shared && unknownIs == UnknownIs::InSight && !m_flow.codeAtWorkIsOfLibrary() && m_access.site.index() < 1u << 24;
+    bool isOnlyCalled = isToldOf && isNamed() && readsThroughSuperWhatIsOnlyCalled();
     if (isToldOf && isNamed())
-        m_flow.note(readsThroughSuperWhatIsOnlyCalled() ? LinkFlow::Note::NameCalled : LinkFlow::Note::NameRead, m_access.key.bits(), !m_flow.codeAtWorkIsOfLibrary());
+        m_flow.note(isOnlyCalled ? LinkFlow::Note::NameCalled : LinkFlow::Note::NameRead, m_access.key.bits(), m_flow.codeAtWorkIsOfLibrary() ? 0 : isOnlyCalled ? 1 | LinkFlow::receiverMayBeNothing : 1);
     else if (isToldOf && !m_keySpellsNoMemberOfTable)
         m_flow.note(LinkFlow::Note::ReadUnderKeyNobodyKnows, tellsSite ? m_function.index() + 1 : 0, tellsSite ? m_access.site.index() : 0);
     mayThrow();

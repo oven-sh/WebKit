@@ -2,12 +2,12 @@
 # So a program that never held a built-in cannot lay it under another name either: Object.defineProperty(mute, "toString", Object.getOwnPropertyDescriptor(Math, "cbrt")); new RegExp("a" + mute): Math.cbrt is not written down.
 # What lies there is what the program gets wherever it reads the same thing: ("b" + Object.values(Object.getOwnPropertyDescriptor(Math, "max")).includes(Math.max))
 # An object inside a list pays by its length like one that is handed over: const small = Object.create(Array.prototype); small.length = 3; ("d" + [small].join().length)
-# heir.length = 200000; const holder = [heir]; ("c" + (holder.join().length + .. six times ..)): the six together are more than a start may do.
+# heir.length = 1000000; const holder = [heir]; ("c" + (holder.join().length + .. nine times ..)): the nine together are more than a start may do.
 # DIAGNOSTIC: RegExpTextKnownAtRunTime
 # RUN: regexp-texts mechanisms=all
 # CHECK-NOT: text /aNaN/
 # CHECK: text /btrue/
-# CHECK-NOT: text /c1199994/
+# CHECK-NOT: text /c8999991/
 # CHECK: text /d2/
 
 module m0 path="main.js" displayPath="main.js" body=f0
@@ -56,7 +56,7 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v38 = PropGet v37 key="prototype"
     v39 = PropGet v1 key="create"
     v40 = Call v39, v1, v38 calleeKey="create"
-    v41 = Integer integer=200000
+    v41 = Integer integer=1000000
     PropSet v40, v41 key="length"
     v43 = NewArray v40 contents=anything
     v44 = PropGet v43 key="join"
@@ -82,9 +82,21 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v64 = Call v63, v43 calleeKey="join"
     v65 = PropGet v64 key="length"
     v66 = Add v62, v65
-    v67 = String string="c"
-    v68 = Add v67, v66
-    v69 = Construct v0, -, v68
-    v70 = NewArray v12, v23, v36, v69 contents=anything
-    Return v70
+    v67 = PropGet v43 key="join"
+    v68 = Call v67, v43 calleeKey="join"
+    v69 = PropGet v68 key="length"
+    v70 = Add v66, v69
+    v71 = PropGet v43 key="join"
+    v72 = Call v71, v43 calleeKey="join"
+    v73 = PropGet v72 key="length"
+    v74 = Add v70, v73
+    v75 = PropGet v43 key="join"
+    v76 = Call v75, v43 calleeKey="join"
+    v77 = PropGet v76 key="length"
+    v78 = Add v74, v77
+    v79 = String string="c"
+    v80 = Add v79, v78
+    v81 = Construct v0, -, v80
+    v82 = NewArray v12, v23, v36, v81 contents=anything
+    Return v82
 }

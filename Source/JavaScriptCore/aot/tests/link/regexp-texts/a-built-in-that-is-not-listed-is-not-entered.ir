@@ -1,5 +1,5 @@
 # The list follows from the program alone. Only the built-ins of which it is written down how their work grows are entered; any other gives what nobody knows.
-# new RegExp("a" + Math.cbrt(4)) . ("b" + Math.hypot(3, 4)) . ("c" + Math.max(2, 3)) . ("z+" + 1): Math.max is written down, Math.cbrt and Math.hypot are not.
+# new RegExp("a" + Math.cbrt(4)) . ("b" + Math.hypot(3, 4)) . ("c" + Number("3")) . ("z+" + 1): Number is written down, Math.cbrt and Math.hypot are not.
 # DIAGNOSTIC: RegExpTextKnownAtRunTime
 # RUN: regexp-texts mechanisms=all
 # CHECK-NOT: text /a
@@ -26,15 +26,16 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v12 = String string="b"
     v13 = Add v12, v11
     v14 = Construct v0, -, v13
-    v15 = PropGet v1 key="max"
-    v16 = Call v15, v1, v2, v3 calleeKey="max"
-    v17 = String string="c"
-    v18 = Add v17, v16
-    v19 = Construct v0, -, v18
-    v20 = String string="z+"
-    v21 = Integer integer=1
-    v22 = Add v20, v21
-    v23 = Construct v0, -, v22
-    v24 = NewArray v9, v14, v19, v23 contents=anything
-    Return v24
+    v15 = Builtin builtin=Number
+    v16 = String string="3"
+    v17 = Call v15, -, v16
+    v18 = String string="c"
+    v19 = Add v18, v17
+    v20 = Construct v0, -, v19
+    v21 = String string="z+"
+    v22 = Integer integer=1
+    v23 = Add v21, v22
+    v24 = Construct v0, -, v23
+    v25 = NewArray v9, v14, v20, v24 contents=anything
+    Return v25
 }

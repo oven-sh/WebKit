@@ -2810,6 +2810,7 @@ public:
     void noteNameRead(PropertyKeyID key) { m_namesRead.set(key.index()); }
     void noteNameCalled(PropertyKeyID key) { m_namesCalled.set(key.index()); }
     void noteNameSpelledByProgram(PropertyKeyID key) { m_namesSpelledByProgram.set(key.index()); }
+    void noteNameReadByProgram(PropertyKeyID key) { m_namesReadByProgram.set(key.index()); }
     void noteReadUnderKeyNobodyKnows() { m_readsUnderComputedKeys = true; }
     void noteInstancesAnswerEveryNameWithObjects() { m_objectsMayHaveMethodCalledWithStartupLoads = true; }
     std::span<const FunctionID> functionsThatAnswerEveryNameOnInstances() const { return m_functionsThatAnswerEveryNameOnInstances.span(); }
@@ -2819,6 +2820,7 @@ public:
     void noteStoreUnderKeyNobodyKnowsOn(BuiltinID canonicalHolder);
     void noteDeletionOfMemberOf(BuiltinID canonicalHolder);
     void noteLossOf(BuiltinID, const Witness& = noWitness);
+    void noteLossByWord(BuiltinID, const Witness& = noWitness);
     void noteCallOutOfSight(BuiltinID builtin) { m_isCalledOutOfSightOfLink.quickSet(m_builtins.canonicalID(builtin).index()); }
     void noteCallWithoutRow(BuiltinID builtin) { m_isCalledWithoutRow.quickSet(m_builtins.canonicalID(builtin).index()); }
     void noteObjectHandedToFormatter();
@@ -2886,7 +2888,9 @@ private:
     void followRequestsOfEvaluatedModules();
     void evaluate(ModuleID, const Witness&);
 
-    void letGo(BuiltinID canonical, const Witness&);
+    bool letGo(BuiltinID canonical, const Witness&);
+    void letGoByWord(BuiltinID canonical, const Witness&);
+    void letGoWhatRowsMake(BuiltinID canonical, const Witness&);
     void lookThrough(BuiltinID canonicalHolder);
     void spreadBelow(BuiltinID canonicalHolder);
     void findMembersOffUnknownValues(BuiltinID canonicalHolder);
@@ -2973,6 +2977,7 @@ private:
     BitVector m_isOutOfSight;
     BitVector m_isCalledOutOfSightOfLink;
     BitVector m_isCalledWithoutRow;
+    BitVector m_fellByWord;
     BitVector m_isCalledByHost;
     bool m_formattersAreHandedObjects { false };
 
@@ -3007,6 +3012,7 @@ private:
     BitVector m_namesRead;
     BitVector m_namesCalled;
     BitVector m_namesSpelledByProgram;
+    BitVector m_namesReadByProgram;
     bool m_readsUnderComputedKeys { false };
     Vector<FunctionID> m_functionsThatAnswerEveryNameOnInstances;
     WritesOnBuiltinsInProgramFacts m_writes;
@@ -3072,6 +3078,7 @@ BuilderOfProgramFacts::BuilderOfProgramFacts(const InputsOfProgramFacts& inputs,
     , m_isOutOfSight(m_builtins.builtinCount())
     , m_isCalledOutOfSightOfLink(m_builtins.builtinCount())
     , m_isCalledWithoutRow(m_builtins.builtinCount())
+    , m_fellByWord(m_builtins.builtinCount())
     , m_isCalledByHost(m_builtins.builtinCount())
     , m_hasComeOutOfSight(m_builtins.builtinCount())
     , m_classesWithObjects(m_builtins.classCount())
@@ -3541,6 +3548,7 @@ void BuilderOfProgramFacts::take(const LookupsPastProgramObjects& lookups)
     m_namesRead.merge(lookups.namesRead);
     m_namesCalled.merge(lookups.namesCalled);
     m_namesSpelledByProgram.merge(lookups.namesSpelledByProgram);
+    m_namesReadByProgram.merge(lookups.namesReadByProgram);
     for (size_t index : lookups.builtinsRead)
         noteReadOfMember(BuiltinID(static_cast<uint32_t>(index)));
     for (size_t index : lookups.builtinsCalled)
@@ -3554,7 +3562,7 @@ void BuilderOfProgramFacts::take(const LookupsPastProgramObjects& lookups)
     for (size_t index : lookups.typesHandedToHandlers)
         noteTypeHandedToHandler(BuiltinTypeID(static_cast<uint32_t>(index)));
     for (size_t index : lookups.builtinsLetGo)
-        noteLossOf(BuiltinID(static_cast<uint32_t>(index)));
+        noteLossByWord(BuiltinID(static_cast<uint32_t>(index)));
     for (size_t index : lookups.holdersStoredOnUnderAnyName)
         noteStoreUnderKeyNobodyKnowsOn(BuiltinID(static_cast<uint32_t>(index)));
     for (size_t index : lookups.holdersWhoseMembersAreDeleted)
@@ -3649,18 +3657,57 @@ void BuilderOfProgramFacts::noteEvaluated(ModuleID id)
     followRequestsOfEvaluatedModules();
 }
 
-void BuilderOfProgramFacts::letGo(BuiltinID canonical, const Witness& witness)
+bool BuilderOfProgramFacts::letGo(BuiltinID canonical, const Witness& witness)
 {
     uint32_t index = canonical.index();
     bool isLower = standsInFront(witness, m_witnessesOfEscapes[index]);
     if (m_isLetGo.quickSet(index) && !isLower)
-        return;
+        return false;
     if (isLower)
         m_witnessesOfEscapes[index] = witness;
     m_uses[index].add(BuiltinUse::Escaped);
     keepPlaceOf(canonical, m_witnesses[index], witness);
     m_holdersToSpreadBelow.append(canonical);
     lookThrough(canonical);
+    return true;
+}
+
+void BuilderOfProgramFacts::letGoByWord(BuiltinID canonical, const Witness& witness)
+{
+    if (letGo(canonical, witness) || !m_fellByWord.quickGet(canonical.index()))
+        letGoWhatRowsMake(canonical, witness);
+}
+
+void BuilderOfProgramFacts::letGoWhatRowsMake(BuiltinID canonical, const Witness& witness)
+{
+    if (!m_fellByWord.quickSet(canonical.index()) && m_isLetGo.quickGet(canonical.index()))
+        m_holdersToSpreadBelow.append(canonical);
+    auto letGoObjectsOf = [&](const BuiltinPlace& place) {
+        if (place.kind != BuiltinPlaceKind::NewValue || !place.newValueType)
+            return;
+        for (const BuiltinTypePart& part : m_builtins.at(place.newValueType).parts) {
+            if (part.kind == BuiltinTypePartKind::Builtin)
+                noteLossByWord(part.builtin, witness);
+        }
+    };
+    for (const BuiltinOverload& row : m_builtins.overloadsOf(canonical)) {
+        if (row.mode != BuiltinCallMode::Call && row.mode != BuiltinCallMode::Construct)
+            continue;
+        for (const BuiltinTransfer& transfer : row.flow.transfers)
+            letGoObjectsOf(transfer.from);
+        for (const BuiltinCallback& callback : row.flow.callbacks) {
+            letGoObjectsOf(callback.newTarget);
+            letGoObjectsOf(callback.thisValue);
+            letGoObjectsOf(callback.spreadArguments);
+            std::ranges::for_each(callback.arguments, letGoObjectsOf);
+        }
+        for (const BuiltinPropertyAction& action : row.flow.propertyActions)
+            letGoObjectsOf(action.value);
+        for (const BuiltinHandlerCall& call : row.flow.handlerCalls) {
+            letGoObjectsOf(call.thisValue);
+            std::ranges::for_each(call.arguments, letGoObjectsOf);
+        }
+    }
 }
 
 void BuilderOfProgramFacts::lookThrough(BuiltinID canonicalHolder)
@@ -3673,15 +3720,23 @@ void BuilderOfProgramFacts::spreadBelow(BuiltinID canonicalHolder)
 {
     Witness witness = m_witnessesOfEscapes[canonicalHolder.index()];
     const Builtin& holder = m_builtins.at(canonicalHolder);
-    if (m_followsClimbsFromWhatIsLetGo && holder.prototypeLink == BuiltinPrototypeLink::Builtin && holder.inheritsFrom)
-        letGo(m_builtins.canonicalID(holder.inheritsFrom), witness);
+    bool fellByWord = m_fellByWord.quickGet(canonicalHolder.index());
+    if (m_followsClimbsFromWhatIsLetGo && holder.prototypeLink == BuiltinPrototypeLink::Builtin && holder.inheritsFrom) {
+        if (fellByWord)
+            letGoByWord(m_builtins.canonicalID(holder.inheritsFrom), witness);
+        else
+            letGo(m_builtins.canonicalID(holder.inheritsFrom), witness);
+    }
     bool handsOutEvents = !m_eventsAreWithheld || standsInTextOfProgram(witness);
     for (BuiltinID member : m_builtins.membersOf(canonicalHolder)) {
         if (!handsOutEvents && m_rows.areEvents.quickGet(m_builtins.canonicalID(member).index()))
             continue;
         m_uses[member.index()].add(BuiltinUse::Escaped);
         keepLowerWitnessInProgramFacts(m_witnesses[member.index()], witness);
-        letGo(m_builtins.canonicalID(member), witness);
+        if (fellByWord)
+            letGoByWord(m_builtins.canonicalID(member), witness);
+        else
+            letGo(m_builtins.canonicalID(member), witness);
     }
 }
 
@@ -3775,8 +3830,13 @@ void BuilderOfProgramFacts::findMembersOffUnknownValues(BuiltinID canonicalHolde
             m_isFoundByWhatCodeWrote.quickSet(canonical.index());
         if (isNamed)
             m_uses[canonical.index()].add(callingUsesOf(m_builtins.at(canonical).kind));
-        if (isHandedOn && standsForObjectInProgramFacts(m_builtins, canonical))
-            letGo(canonical, noWitness);
+        bool fallsByWord = key && m_namesReadByProgram.get(key.index());
+        if ((isHandedOn || fallsByWord) && standsForObjectInProgramFacts(m_builtins, canonical)) {
+            if (fallsByWord)
+                letGoByWord(canonical, noWitness);
+            else
+                letGo(canonical, noWitness);
+        }
         for (const BuiltinOverload& row : m_builtins.overloadsOf(canonical)) {
             if (!isHandedOn || row.mode != BuiltinCallMode::Get || !row.result.type)
                 continue;
@@ -3825,6 +3885,16 @@ void BuilderOfProgramFacts::noteLossOf(BuiltinID builtin, const Witness& witness
     m_uses[canonical.index()].add(callingUsesOf(m_builtins.at(canonical).kind));
     if (standsForObjectInProgramFacts(m_builtins, canonical))
         letGo(canonical, witness);
+}
+
+void BuilderOfProgramFacts::noteLossByWord(BuiltinID builtin, const Witness& witness)
+{
+    noteLossOf(builtin, witness);
+    BuiltinID canonical = m_builtins.canonicalID(builtin);
+    if (standsForObjectInProgramFacts(m_builtins, canonical))
+        letGoByWord(canonical, witness);
+    else if (!m_fellByWord.quickGet(canonical.index()))
+        letGoWhatRowsMake(canonical, witness);
 }
 
 void BuilderOfProgramFacts::followWhatIsLetGo()
@@ -5371,6 +5441,14 @@ void BuiltinsInReach::noteNameSpelledByProgram(PropertyKeyID key)
     m_builder->noteNameSpelledByProgram(key);
 }
 
+void BuiltinsInReach::noteNameReadByProgram(PropertyKeyID key)
+{
+    if (m_linked->lookups.namesReadByProgram.set(key.index()))
+        return;
+    m_wasToldSomethingNew = true;
+    m_builder->noteNameReadByProgram(key);
+}
+
 void BuiltinsInReach::noteReadOfProgramUnderKeyNobodyKnows(FunctionID reader, ValueID site)
 {
     m_linked->lookups.readsOfProgramUnderKeysNobodyKnows.add((static_cast<uint64_t>(reader.index()) + 1) << 32 | site.index());
@@ -5426,7 +5504,7 @@ void BuiltinsInReach::noteLetGo(BuiltinID builtin)
     if (m_linked->lookups.builtinsLetGo.set(builtin.index()))
         return;
     m_wasToldSomethingNew = true;
-    m_builder->noteLossOf(builtin);
+    m_builder->noteLossByWord(builtin);
 }
 
 void BuiltinsInReach::noteCalledAtSite(FunctionID caller, ValueID site, bool isConstruction, BuiltinID row)

@@ -1,5 +1,5 @@
 # Once the realm of the build holds so many bytes, or so many characters have been made, the rehearsal is over, with what it has found.
-# export const first = new RegExp("a" + String("+b"));   const kept = []; for (let n = 0; ; n++) kept[n] = "x".repeat(1000000);   export function other() { return new RegExp("c" + String("+d")); }
+# export const first = new RegExp("a" + String("+b"));   const kept = []; for (let n = 0; ; n++) kept[n] = Array(1000000);   export function other() { return new RegExp("c" + String("+d")); }
 # DIAGNOSTIC: RegExpTextKnownAtRunTime
 # RUN: regexp-texts mechanisms=all
 # CHECK: text /a+b/
@@ -34,17 +34,16 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
   b2():
     v17 = Construct v0, -, v13
     v18 = NewArray contents=anything
-    v19 = String string="x"
+    v19 = Builtin builtin=Array
     v20 = Integer integer=1000000
     Jump -> next b3(v9)
   b3(v21: anything):
     LoopHint
-    v23 = PropGet v19 key="repeat"
-    v24 = Call v23, v19, v20 calleeKey="repeat"
-    ElemSet v18, v21, v24 mode=Strict
-    v26 = Increment v21
-    v27 = Boolean boolean=true
-    Branch v27 -> taken b3(v26), notTaken b4()
+    v23 = Call v19, -, v20
+    ElemSet v18, v21, v23 mode=Strict
+    v25 = Increment v21
+    v26 = Boolean boolean=true
+    Branch v26 -> taken b3(v25), notTaken b4()
   b4():
     Return v7
 }

@@ -59,6 +59,7 @@ public:
     void noteNameRead(PropertyKeyID);
     void noteNameCalled(PropertyKeyID);
     void noteNameSpelledByProgram(PropertyKeyID);
+    void noteNameReadByProgram(PropertyKeyID);
     void noteReadUnderKeyNobodyKnows();
     void noteReadOfProgramUnderKeyNobodyKnows(FunctionID, ValueID);
     void noteRead(BuiltinID);

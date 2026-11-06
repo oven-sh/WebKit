@@ -2519,7 +2519,14 @@ ValuesInLinkCalls CallInLinkCalls::callBuiltin(BuiltinID builtin, const Passed& 
     if (!hasRow)
         return callOutOfSight(call);
     if (m_builtins.at(call.builtin).origin == BuiltinOrigin::Host) {
-        add(call.result, callOutOfSight(call));
+        if (!passed.receiver || !m_builtins.ignoresReceiver(call.builtin)) {
+            add(call.result, callOutOfSight(call));
+            return WTF::move(call.result);
+        }
+        Passed handed = passed;
+        handed.receiver = std::nullopt;
+        RowCall withoutReceiver { call.builtin, call.mode, handed, call.isSeenByScan, call.isCalledByBuiltin };
+        add(call.result, callOutOfSight(withoutReceiver));
         return WTF::move(call.result);
     }
     if (!refusing.isEmpty()) {

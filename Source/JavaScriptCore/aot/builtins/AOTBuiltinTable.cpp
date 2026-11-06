@@ -398,6 +398,17 @@ BuiltinID BuiltinTable::findOwnPropertyOfInstances(BuiltinClassID builtinClass, 
     return canonicalID(member);
 }
 
+bool BuiltinTable::ignoresReceiver(BuiltinID builtin) const
+{
+    std::span<const BuiltinOverload> rows = overloadsOf(canonicalID(builtin));
+    bool noRowSpeaksOfIt = !rows.empty() && std::ranges::all_of(rows, [](const BuiltinOverload& row) {
+        return !row.isUndeclared() && !row.receiver;
+    });
+    return noRowSpeaksOfIt && std::ranges::all_of(overloadSummariesOf(canonicalID(builtin)), [](const BuiltinOverloadSummary& overload) {
+        return overload.callee == BuiltinCallee::HostFunction || overload.callee == BuiltinCallee::InternalFunction;
+    });
+}
+
 bool BuiltinTable::mayDefineOnNewInstances(BuiltinClassID builtinClass, BuiltinName name) const
 {
     if (listsOwnPropertiesOfNewInstances(builtinClass))

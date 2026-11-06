@@ -10,6 +10,7 @@
 
 #include "AOTArrayAllocationProfile.h"
 #include "AOTBarrierEmitter.h"
+#include "AOTConversionEmitter.h"
 #include "AOTElementAccessEmitter.h"
 #include "AOTElementEmitterAllocation.h"
 #include "AOTSweep.h"
@@ -230,6 +231,11 @@ void ArrayIntrinsicEmitter::putInBounds(const ValueContext& value, const ArraySt
         elements().storeRawElement(form, storage, position, rawElement);
         return;
     }
+    ValueID made = stored;
+    while (operationAt(made).opcode == Opcode::Narrowed)
+        made = operationAt(made).valueOperand();
+    if (operationAt(made).opcode != Opcode::Box && operationAt(made).opcode != Opcode::Integer)
+        rawElement = emitter<ConversionEmitter>().inFormOfType(rawElement, typeOf(stored));
     m_out.store64(rawElement.as<Boxed>().value(), elements().elementOfUnknownForm(storage, position));
     barrierAfterStore(value, array, typeOf(stored));
 }
