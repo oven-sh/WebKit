@@ -865,7 +865,8 @@ static NEVER_INLINE PyType::Construction findConstruction(Runtime& rt, PyType* t
 {
     auto takesAllArguments = [&](JSValue method, NativeKind kind) {
         auto* native = PyNativeFunction::tryFrom(method);
-        return native && native->kind() == kind && native->def().signature.isVariadic && native->def().signature.hasSelf && !native->def().signature.isMadeAtRunTime && !(native->def().flags & (OnWipedStack | MayWait));
+        // (The C++ function is called as it is, so it must at least be one of the type's own or inherited.)
+        return native && native->kind() == kind && type->isSubtypeOf(native->ownerType()) && native->def().signature.isVariadic && native->def().signature.hasSelf && !native->def().signature.isMadeAtRunTime && !(native->def().flags & (OnWipedStack | MayWait));
     };
     auto construction = PyType::Construction::General;
     JSValue newMethod = type->lookup(Special::New);
@@ -996,11 +997,15 @@ static JSValue typeCallWithoutNotes(JSGlobalObject* globalObject, PyType* type, 
     // In CPython the __new__ of a built-in type, found in a class or in the classes it derives from, stands for "what the class
     // inherits", whichever type it is of: that of __base__, which decides the layout. So class C(tzinfo, dict) is made by dict's,
     // and so is class C(dict): __new__ = object.__new__.
+    // The built-in type that has been asked for its __new__, if any.
+    PyType* asked = cls->isHeapType() ? nullptr : cls;
     if (native && cls->isHeapType() && (native->ownerType()->solidBase() != layoutBase(cls) || !cls->isSubtypeOf(native->ownerType()))) [[unlikely]] {
         PyNativeFunction* inherited = native;
         for (PyType* base = cls->base(); base; base = base->base()) {
             inherited = nativeNew(base->lookup(Special::New));
-            if (!inherited || !base->isHeapType())
+            if (!base->isHeapType())
+                asked = base;
+            if (!inherited || asked)
                 break;
         }
         // What it inherits may be "look __new__ up", from a class with one written in Python. That finds the same again.
@@ -1008,6 +1013,11 @@ static JSValue typeCallWithoutNotes(JSGlobalObject* globalObject, PyType* type, 
             native = inherited;
         else
             isChecked = true;
+    }
+    // Written into a built-in type that can be written to. It is called as the program would call it, and refuses.
+    if (native && !isChecked && asked && !asked->isSubtypeOf(native->ownerType())) [[unlikely]] {
+        newMethod = native;
+        isChecked = true;
     }
     if (native && !isChecked) {
         object = native->invokeWithSelf(globalObject, cls, args);
