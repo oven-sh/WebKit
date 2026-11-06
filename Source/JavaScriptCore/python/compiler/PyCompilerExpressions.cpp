@@ -1533,7 +1533,8 @@ void Unit::jumpIfTo(Expr* node, Label& target, bool condition, bool isTurnedRoun
             if (g.positionOfLastPythonLabel() == g.instructions().size())
                 g.addPythonMark(PythonMark::NoLine, jumpHasLineToItselfMark);
             jump(target, JumpIs::ToldOf);
-            m_targetOfJumpOfConstant = &target;
+            if (!m_cannotBeReached)
+                m_targetOfJumpOfConstant = &target;
         }
         return;
     }
