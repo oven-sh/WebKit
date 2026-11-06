@@ -507,7 +507,11 @@ void Unit::matchStatement(Match* node, const Last& isLast)
         context.functionEndsWhereItFails = isLastCase && isLast.kind == Last::OfFunction;
         // A case that always matches must be guarded, or the last.
         context.allowIrrefutable = matchCase->guard || i == count - 1;
-        pushBlock({ .kind = BlockKind::MatchSubject, .tryDepth = g.tryDepth(), .saved = isWildcard(matchCase->pattern) ? nullptr : subject.get(), .isOnlyHere = true });
+        // In CPython's code a jump to the end comes behind every body but that of a `case _:` that is the last of several. After the last case it has
+        // nothing to jump over but what drops something where the pattern has failed.
+        bool isDefault = isLastCase && count > 1 && isWildcard(matchCase->pattern);
+        // For `frame.f_lineno = n`: such a case does not look at the subject, and a frame can go to its line from anywhere.
+        pushBlock({ .kind = BlockKind::MatchSubject, .tryDepth = g.tryDepth(), .saved = isWildcard(matchCase->pattern) ? nullptr : subject.get(), .isMarked = !isDefault, .isOnlyHere = true });
         m_statementStart = g.instructions().size();
         line(matchCase->pattern->range);
         {
@@ -525,9 +529,6 @@ void Unit::matchStatement(Match* node, const Last& isLast)
             jumpIf(matchCase->guard, *context.fail, false);
         }
         popBlock();
-        // In CPython's code a jump to the end comes behind every body but that of a `case _:` that is the last of several. After the last case it has
-        // nothing to jump over but what drops something where the pattern has failed.
-        bool isDefault = isLastCase && count > 1 && isWildcard(matchCase->pattern);
         bool endsWhereStatementEnds = isDefault && !next->isBound() && failsByLine.isEmpty();
         m_statementsEndWhereStatementEnds = isDefault;
         statements(matchCase->body, 0, isDefault ? isLast : lastBeforeJump(end.get(), isLast, JumpIs::ToldOf));
