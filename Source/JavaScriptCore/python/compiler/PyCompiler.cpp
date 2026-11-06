@@ -655,9 +655,10 @@ void Unit::emitImplicitReturn(const Last& isLast, const Range& range)
         if (isLast.exception) {
             suspendTry(isLast.tryDepth, suspended);
             reraiseOutOfHandler(isLast.exception, isLast.previous);
-        } else if (m_valueToReturn)
+        } else if (m_valueToReturn) {
+            m_valueIsReturned |= !cannotGetHere();
             g.emitReturn(m_valueToReturn);
-        else if (m_endsOfClassBody)
+        } else if (m_endsOfClassBody)
             hiddenJump(endOfClassBodyForLine(m_markedLine));
         else {
             // (In CPython's list of constants None comes where the function ends, not where a copy of its end is.)
@@ -1877,6 +1878,9 @@ void Unit::unwindBlocks(const Range& range, size_t count, Vector<TryContext>& su
         unwindBlock(top, suspended);
         if (valueWaits)
             popBlock();
+    } else if (m_blocks.size() >= m_leftByStatement && ((top.kind == BlockKind::HandlerCleanup && top.name) || top.kind == BlockKind::With || top.kind == BlockKind::AsyncWith)) {
+        // CPython's compiler writes the rest of the way of a `return`, `break` or `continue` all the same, and None is among the constants from there on.
+        noteConstant(jsUndefined());
     }
     // As in CPython, where what comes after a clause or an __exit__ that runs on the way out is of no place.
     bool hasRunSomething = top.kind == BlockKind::FinallyTry || top.kind == BlockKind::With || top.kind == BlockKind::AsyncWith;
@@ -2572,12 +2576,14 @@ void Unit::returnStatement(Return* node)
     SetForScope leavingAs(m_leavingAs, Last { Last::OfFunction });
     SetForScope leftByStatement(m_leftByStatement, 0);
     SetForScope valueToReturn(m_valueToReturn, value.get());
+    SetForScope valueIsReturned(m_valueIsReturned, false);
     Vector<TryContext> suspended;
     // As in CPython, where what is on the way out comes from the constant that is returned.
     bool comesFromValue = node->value && node->value->is<Constant>() && node->value->range.lineno == node->range.lineno;
     unwindBlocks(comesFromValue ? node->value->range : node->range, 0, suspended, [&] {
+        // (Not in use if a `finally` clause never lets it be returned.)
         if (literal || !node->value)
-            noteConstant({ value->virtualRegister(), 0, true });
+            noteConstant({ value->virtualRegister(), 0, m_valueIsReturned || !cannotGetHere() });
         g.emitReturn(value.get());
     });
     resumeTry(WTF::move(suspended));

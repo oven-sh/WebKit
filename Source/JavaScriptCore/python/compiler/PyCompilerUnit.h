@@ -344,6 +344,7 @@ private:
     Last m_leavingAs { }; // Blocks are being left by a `return` or a `continue`, or as if by one. OfFunction:
     RegisterID* m_valueToReturn { nullptr }; // with this. Null: None.
     size_t m_leftByStatement { notFound }; // The blocks from this one on are left by a `return`, `break` or `continue` of the program; the others, if any, by a copy of the end of something.
+    bool m_valueIsReturned { false }; // A copy of the end of the way out of a `return`, in a `finally` clause, returns m_valueToReturn.
     void lineOfImplicitReturn(int lineno, const Last&);
     // What is emitted meanwhile goes with the line before it, whatever loc() and line() are given.
     class SameLine {
