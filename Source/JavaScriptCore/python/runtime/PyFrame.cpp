@@ -1911,13 +1911,9 @@ void Runtime::makeNotedEntry(PyException* exception)
     } else {
         // It is being handled by a thread that waits for the GIL, with its frames where they were.
         bool isFound = false;
-        threads().forEachThread([&](ThreadState& thread) {
-            if (isFound || !thread.saved)
-                return;
-            for (auto& saved : thread.saved->entries) {
-                if (saved.runtime == this && !isFound)
-                    isFound = takeOut(saved.state.notedEntries, m_notedEntriesLock, exception, entry);
-            }
+        threads().forEachStateSetAsideOf(*this, [&](ThreadState&, ThreadLocalState& state) {
+            if (!isFound)
+                isFound = takeOut(state.notedEntries, m_notedEntriesLock, exception, entry);
         });
         ASSERT(isFound);
         if (!isFound) {
@@ -1944,15 +1940,9 @@ void Runtime::makeNotedEntries()
     while (!m_notedEntries.isEmpty())
         m_notedEntries.last().exception->willBeSeen();
     Vector<PyException*, 8> exceptions;
-    threads().forEachThread([&](ThreadState& thread) {
-        if (!thread.saved)
-            return;
-        for (auto& saved : thread.saved->entries) {
-            if (saved.runtime != this)
-                continue;
-            for (auto& entry : saved.state.notedEntries)
-                exceptions.append(entry.exception);
-        }
+    threads().forEachStateSetAsideOf(*this, [&](ThreadState&, ThreadLocalState& state) {
+        for (auto& entry : state.notedEntries)
+            exceptions.append(entry.exception);
     });
     for (PyException* exception : exceptions)
         exception->willBeSeen();

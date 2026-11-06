@@ -99,7 +99,7 @@ void Runtime::end()
     if (std::exchange(m_hasEnded, true))
         return;
     detachSignals(*this);
-    m_threads->runtimeDidEnd();
+    m_threads->runtimeDidEnd(*this);
     CApi::runtimeIsEnding(*this);
 }
 

@@ -3245,16 +3245,10 @@ static void setFunctionOfOtherThreads(JSGlobalObject* globalObject, JSValue func
 {
     Runtime& rt = runtime(globalObject);
     int delta = 0;
-    rt.threads().forEachThread([&](ThreadState& thread) {
-        if (!thread.saved)
-            return;
-        for (auto& entry : thread.saved->entries) {
-            if (entry.runtime != &rt)
-                continue;
-            JSValue& slot = isProfile ? entry.state.profileFunction : entry.state.traceFunction;
-            delta += !!function - !!slot;
-            slot = function;
-        }
+    rt.threads().forEachStateSetAsideOf(rt, [&](ThreadState&, Runtime::ThreadLocalState& state) {
+        JSValue& slot = isProfile ? state.profileFunction : state.traceFunction;
+        delta += !!function - !!slot;
+        slot = function;
     });
     rt.monitoring().tracingThreadCountChanged(isProfile ? 0 : delta, isProfile ? delta : 0);
 }

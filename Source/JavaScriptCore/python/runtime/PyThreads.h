@@ -9,6 +9,7 @@
 #include "PyRuntime.h"
 #include <wtf/Condition.h>
 #include <wtf/Deque.h>
+#include <wtf/FixedVector.h>
 #include <wtf/HashMap.h>
 #include <wtf/Lock.h>
 #include <wtf/ScopedLambda.h>
@@ -16,6 +17,11 @@
 #include <wtf/text/CString.h>
 
 namespace JSC {
+
+class CodeBlockSet;
+class ConservativeRoots;
+class JITStubRoutineSet;
+
 namespace Python {
 
 // Threads.
@@ -80,7 +86,8 @@ public:
     std::atomic<bool> isBeingInterrupted { false };
     uint64_t timesInterrupted { 0 };
 
-    // The rest is for whoever holds the GIL. (And, of what is said to hold while it is parked, for JSLock::ifEmbedderThreadWaits().)
+    // The rest is for whoever holds the GIL. (And, of what is said to hold while it is parked, for JSLock::ifEmbedderThreadWaits(). `saved` changes only with access to the heap as well,
+    // so it is also for the collector once that has stopped the world.)
 
     // While the thread does not hold the GIL: where it left its frames, and what it took out of the runtimes.
     JSLock::ParkedThread* parked { nullptr };
@@ -120,10 +127,34 @@ PY_BEGIN_WITHOUT_PADDING
 struct SavedStates {
     static constexpr unsigned capacity = 4;
     struct Entry {
-        Runtime* runtime { nullptr };
+        Runtime* runtime { nullptr }; // Null: the entry is not used, or the runtime has ended since (Threads::runtimeDidEnd()).
         Runtime::ThreadLocalState state;
     };
     std::array<Entry, capacity> entries;
+    // Those of the runtimes beyond that, if there are any. They are not on the stack, so the collector is told where they are, and takes every word there for a
+    // reference as well: Threads::gatherConservativeRoots().
+    FixedVector<Entry> more;
+
+    template<typename Functor>
+    void forEachEntry(const Functor& functor)
+    {
+        for (auto& entry : entries)
+            functor(entry);
+        for (auto& entry : more)
+            functor(entry);
+    }
+    Entry* entryOf(Runtime& runtime)
+    {
+        for (auto& entry : entries) {
+            if (entry.runtime == &runtime)
+                return &entry;
+        }
+        for (auto& entry : more) {
+            if (entry.runtime == &runtime)
+                return &entry;
+        }
+        return nullptr;
+    }
 };
 PY_END_WITHOUT_PADDING
 
@@ -135,8 +166,8 @@ public:
 
     // A second thread has been started. It stays so.
     ALWAYS_INLINE bool isEnabled() const { return m_isEnabled; }
-    // One of the runtimes has ended, be it in the collector's thread. See prepareSignals().
-    void runtimeDidEnd() { m_hasPreparedSignals = false; }
+    // One of the runtimes has ended, be it in the collector's thread, which has stopped the world.
+    void runtimeDidEnd(Runtime&);
     // The thread that the first runtime of the VM was made on. Signal handlers run there, and JS.
     ALWAYS_INLINE bool isMainThread() const { return !m_isEnabled || isMainThreadSlow(); }
     uint64_t mainThreadIdent() const { return m_mainThreadIdent; }
@@ -234,6 +265,15 @@ public:
         for (auto& thread : m_threads)
             functor(thread.get());
     }
+    // What each thread that is not running took out of that runtime: functor(ThreadState&, Runtime::ThreadLocalState&).
+    template<typename Functor>
+    void forEachStateSetAsideOf(Runtime& runtime, const Functor& functor)
+    {
+        for (auto& thread : m_threads) {
+            if (auto* entry = thread->saved ? thread->saved->entryOf(runtime) : nullptr)
+                functor(thread.get(), entry->state);
+        }
+    }
     // Every cell that a thread that is not running took out of a runtime. (Its frames are to be had from JSLock.)
     template<typename Functor>
     void forEachCellSetAside(const Functor& functor)
@@ -245,17 +285,19 @@ public:
         for (auto& thread : m_threads) {
             if (!thread->saved)
                 continue;
-            for (auto& entry : thread->saved->entries) {
+            thread->saved->forEachEntry([&](SavedStates::Entry& entry) {
                 if (!entry.runtime)
-                    continue;
+                    return;
                 auto& state = entry.state;
                 for (JSValue value : { state.currentContext, state.handledException, state.asyncGenFirstIter, state.asyncGenFinalizer, state.sendResult, state.exceptionGroupRest, state.thrownException, state.throwArguments, state.threadLocals, state.traceFunction, state.profileFunction })
                     consider(value);
                 if (state.runningGenerator)
                     functor(std::bit_cast<JSCell*>(state.runningGenerator));
-            }
+            });
         }
     }
+    // For the collector, with the world stopped: what the threads that are not running took out of the runtimes and have no room for on their stacks.
+    void gatherConservativeRoots(ConservativeRoots&, JITStubRoutineSet&, CodeBlockSet&);
 
 private:
     friend class AllowThreads;

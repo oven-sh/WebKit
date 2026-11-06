@@ -433,15 +433,9 @@ static void localForgetThisThread(JSGlobalObject* globalObject)
 void forgetThreadLocalsOfOtherThreads(JSGlobalObject* globalObject)
 {
     Runtime& rt = runtime(globalObject);
-    rt.threads().forEachThread([&](ThreadState& thread) {
-        if (!thread.saved)
-            return;
-        for (auto& entry : thread.saved->entries) {
-            if (entry.runtime != &rt)
-                continue;
-            localTakeDictsOutOfPlace(globalObject, entry.state.threadLocals, thread);
-            entry.state.threadLocals = jsUndefined();
-        }
+    rt.threads().forEachStateSetAsideOf(rt, [&](ThreadState& thread, Runtime::ThreadLocalState& state) {
+        localTakeDictsOutOfPlace(globalObject, state.threadLocals, thread);
+        state.threadLocals = jsUndefined();
     });
 }
 

@@ -532,7 +532,7 @@ public:
         CodeBlock* codeBlock;
         unsigned offset; // Of the instruction that raised it, or called what did.
     };
-    // The innermost frame last. (No inline capacity: a saved state is on a stack that is scanned, and what is unused of a buffer there is whatever
+    // The innermost frame last. (No inline capacity: a saved state is, as a rule, on a stack that is scanned, and what is unused of a buffer there is whatever
     // deeper calls have left, held for as long as the thread waits.)
     using NotedEntries = Vector<NotedEntry>;
     // For the unwinder: the frame is about to catch the exception, which is unseen.
@@ -577,7 +577,7 @@ public:
     };
     RuntimeCall* runtimeCall { nullptr };
 
-    // For what lies on the stack of a thread without the GIL (ThreadLocalState): the compiler says so if a field is added that brings padding.
+    // For what the collector scans as it scans a stack, for as long as a thread is without the GIL (ThreadLocalState): the compiler says so if a field is added that brings padding.
 #if COMPILER(CLANG)
 #define PY_BEGIN_WITHOUT_PADDING _Pragma("clang diagnostic push") _Pragma("clang diagnostic error \"-Wpadded\"")
 #define PY_END_WITHOUT_PADDING _Pragma("clang diagnostic pop")
@@ -598,9 +598,9 @@ public:
     using NewGenerators = std::array<NewGenerator, 4>;
 
     // What of all this belongs to the thread that is running. It goes with the thread when another takes its place. It refers
-    // to cells, and is visited by nobody: it must be on the stack of the thread.
-    // It lies on the stack of a thread that has given up the GIL, for as long as that lasts, where the frames of the thread's last calls lay, and the collector takes every word there for a
-    // reference. So there is no room in it that is not written: no vector with room of its own, no padding (of a word with one byte written the rest still points into the old cell's block).
+    // to cells, and is visited by nobody: it must be on the stack of the thread, or where the collector looks as it looks at a stack (SavedStates).
+    // As a rule it lies on the stack of a thread that has given up the GIL, for as long as that lasts, where the frames of the thread's last calls lay, and the collector takes every word there
+    // for a reference. So there is no room in it that is not written: no vector with room of its own, no padding (of a word with one byte written the rest still points into the old cell's block).
     struct ThreadLocalState {
         JSValue currentContext;
         JSValue handledException;

@@ -934,6 +934,8 @@ void Heap::gatherStackRoots(ConservativeRoots& roots)
     ASSERT(m_collector->m_conductorThread);
     for (auto* runtime : m_pythonRuntimes)
         runtime->willScanStacks();
+    if (m_pythonThreads) [[unlikely]]
+        m_pythonThreads->gatherConservativeRoots(roots, *m_jitStubRoutines, *m_codeBlocks);
     m_machineThreads->gatherConservativeRoots(roots, *m_jitStubRoutines, *m_codeBlocks, m_collector->m_conductingMutatorState, m_collector->m_conductorThread);
 #if ENABLE(C_LOOP)
     vm().cloopStack().gatherConservativeRoots(roots, *m_jitStubRoutines, *m_codeBlocks);

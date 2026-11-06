@@ -482,13 +482,8 @@ void Runtime::didMarkAll(SlotVisitor& visitor)
             ASSERT(visitor.isMarked(generator) && generator->isRunning());
     };
     assertAreMarked(m_runningGenerator);
-    threads().forEachThread([&](ThreadState& thread) {
-        if (!thread.saved)
-            return;
-        for (auto& entry : thread.saved->entries) {
-            if (entry.runtime == this)
-                assertAreMarked(entry.state.runningGenerator);
-        }
+    threads().forEachStateSetAsideOf(*this, [&](ThreadState&, ThreadLocalState& state) {
+        assertAreMarked(state.runningGenerator);
     });
 #endif
     // What a collection has seen alive is old.

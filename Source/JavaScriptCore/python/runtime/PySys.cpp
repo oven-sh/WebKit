@@ -538,22 +538,18 @@ static JSValue sysCurrentExceptions(JSGlobalObject* globalObject)
     JSValue mine = rt.handledException();
     exceptions->set(globalObject, makeInt(globalObject, currentThreadIdent()), mine ? mine : jsUndefined());
     RETURN_IF_EXCEPTION(scope, { });
-    rt.threads().forEachThread([&](ThreadState& thread) {
-        if (!thread.saved)
+    rt.threads().forEachStateSetAsideOf(rt, [&](ThreadState& thread, Runtime::ThreadLocalState& state) {
+        if (scope.exception())
             return;
-        for (auto& entry : thread.saved->entries) {
-            if (scope.exception() || entry.runtime != &rt)
-                continue;
-            JSValue exception = entry.state.handledException;
-            for (PyGenerator* generator = entry.state.runningGenerator; generator; generator = generator->resumedBy()) {
-                if (JSValue value = generator->handledException()) {
-                    exception = value;
-                    break;
-                }
+        JSValue exception = state.handledException;
+        for (PyGenerator* generator = state.runningGenerator; generator; generator = generator->resumedBy()) {
+            if (JSValue value = generator->handledException()) {
+                exception = value;
+                break;
             }
-            exceptionWillBeSeen(exception);
-            exceptions->set(globalObject, makeInt(globalObject, thread.ident), exception ? exception : jsUndefined());
         }
+        exceptionWillBeSeen(exception);
+        exceptions->set(globalObject, makeInt(globalObject, thread.ident), exception ? exception : jsUndefined());
     });
     RETURN_IF_EXCEPTION(scope, { });
     return exceptions;

@@ -6,6 +6,7 @@
 #include "config.h"
 #include "PyThreads.h"
 
+#include "ConservativeRoots.h"
 #include "DeferTermination.h"
 #include "JSCInlines.h"
 #include "PyErrors.h"
@@ -149,6 +150,17 @@ void Threads::forgetRuntimesThatHaveGone()
         thread->waits = { };
 }
 
+void Threads::runtimeDidEnd(Runtime& runtime)
+{
+    // See prepareSignals().
+    m_hasPreparedSignals = false;
+    // Another may come to lie at its address.
+    for (auto& thread : m_threads) {
+        if (auto* entry = thread->saved ? thread->saved->entryOf(runtime) : nullptr)
+            entry->runtime = nullptr;
+    }
+}
+
 Threads::Threads(VM& vm)
     : m_vm(vm)
     , m_number(++s_lastNumberOfThreads)
@@ -222,6 +234,7 @@ ThreadState& Threads::current()
     t_currentThread = thread.ptr();
     if (thread->isMain && isMainThreadOfProcess())
         s_sleeperOfMainThreadOfProcess.store(&thread->sleeper);
+    RELEASE_ASSERT(m_vm.heap.hasAccess()); // See gatherConservativeRoots().
     m_threads.append(WTF::move(thread));
     return *t_currentThread;
 }
@@ -358,13 +371,16 @@ void Threads::release(ThreadState& thread, JSLock::ParkedThread& parked, SavedSt
     if (!m_vm.heap.hasAccess()) [[unlikely]]
         m_vm.heap.acquireAccess();
     auto& runtimes = m_vm.heap.pythonRuntimes();
-    RELEASE_ASSERT(runtimes.size() <= SavedStates::capacity);
+    if (runtimes.size() > SavedStates::capacity) [[unlikely]]
+        saved.more = FixedVector<SavedStates::Entry>(runtimes.size() - SavedStates::capacity);
+    // Before anything is put there: it is by this that the collector finds what is not on the stack.
+    thread.saved = &saved;
     for (unsigned i = 0; i < runtimes.size(); ++i) {
-        saved.entries[i].runtime = runtimes[i];
-        runtimes[i]->takeThreadLocalState(saved.entries[i].state);
+        auto& entry = i < SavedStates::capacity ? saved.entries[i] : saved.more[i - SavedStates::capacity];
+        entry.runtime = runtimes[i];
+        runtimes[i]->takeThreadLocalState(entry.state);
     }
     thread.parked = &parked;
-    thread.saved = &saved;
     thread.defersTermination = m_vm.traps().isDeferringTermination();
     // Not in stopAll(): nothing is left to end, and it parks again and again, with no look in between.
     bool isToBeFound = thread.isMain && !m_isStopping.load();
@@ -394,20 +410,40 @@ void Threads::acquire(ThreadState& thread, JSLock::ParkedThread& parked, SavedSt
     if (thread.isMain)
         m_parkedMainThread = nullptr;
     thread.parked = nullptr;
-    thread.saved = nullptr;
     // Now that it is back in the VM nobody hands out calls: that takes the GIL, or a collector that has stopped the VM's thread.
     thread.losesNothingIfInterrupted = false;
 #if !OS(WINDOWS)
     if (thread.isBeingInterrupted.load(std::memory_order_relaxed)) [[unlikely]]
         stopInterrupting(thread);
 #endif
-    for (auto& entry : saved.entries) {
-        // A runtime goes away with its global object, which something on this thread's stack may well have kept.
-        if (entry.runtime && m_vm.heap.pythonRuntimes().contains(entry.runtime))
-            entry.runtime->putThreadLocalState(entry.state);
+    // The entries are in the order that the list had. Since then runtimes may have gone, each with its global object, which leaves the others in their order (and their
+    // entries name nothing any more: runtimeDidEnd()), and the main thread may have made some, which are at the end.
+    auto& runtimes = m_vm.heap.pythonRuntimes();
+    unsigned position = 0;
+    saved.forEachEntry([&](SavedStates::Entry& entry) {
+        if (!entry.runtime)
+            return;
+        RELEASE_ASSERT(position < runtimes.size() && runtimes[position] == entry.runtime);
+        entry.runtime->putThreadLocalState(entry.state);
         entry.runtime = nullptr;
-    }
+        ++position;
+    });
+    // Not before: see release().
+    RELEASE_ASSERT(m_vm.heap.hasAccess());
+    thread.saved = nullptr;
+    saved.more.clear();
     didTakeGIL(thread);
+}
+
+// A thread enters and leaves the list, and sets `saved`, with access to the heap, so not while the collector looks. As a stack is scanned, so that a word means here what it means in the
+// four that are on one. (Heap::evacuateSparseAuxiliaryBlocks(), which has to know of every place from which a butterfly may be pointed into, is not told of these: a state refers to cells.)
+void Threads::gatherConservativeRoots(ConservativeRoots& roots, JITStubRoutineSet& jitStubRoutines, CodeBlockSet& codeBlocks)
+{
+    ASSERT(m_vm.heap.worldIsStopped());
+    for (auto& thread : m_threads) {
+        if (thread->saved && !thread->saved->more.isEmpty()) [[unlikely]]
+            roots.add(thread->saved->more.begin(), thread->saved->more.end(), jitStubRoutines, codeBlocks);
+    }
 }
 
 // The trap is the VM's, and what it stands for depends on the thread.
@@ -748,6 +784,7 @@ void Threads::runThread(ThreadState& thread, Function<void()>&& body)
                 runtime->monitoring().tracingThreadCountChanged(-!!state.traceFunction, -!!state.profileFunction);
         }
         --m_runningCount;
+        RELEASE_ASSERT(m_vm.heap.hasAccess());
         m_threads.removeFirstMatching([&](auto& other) {
             return other.ptr() == &thread;
         });
@@ -795,6 +832,7 @@ int Threads::start(size_t stackSize, Function<void()>&& body, uint64_t& ident)
     }
 
     // In the list before it runs: it takes itself out.
+    RELEASE_ASSERT(m_vm.heap.hasAccess());
     m_threads.append(thread.copyRef());
     ++m_runningCount;
 

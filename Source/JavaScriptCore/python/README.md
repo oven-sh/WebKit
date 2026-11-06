@@ -1117,6 +1117,10 @@ so the aim is that everything Python *guarantees* holds, and that what it merely
     word stood at the same offset from the stack pointer in every run, beside a return address into `VM::throwException`.) And in the padding: of a word with one byte written the rest still points into the block
     of the old cell, which holds nothing but such cells, and the scan also takes what points just behind a cell for a reference to it. `gc.get_objects()` in another thread found the frame of
     the function that had raised in every call, one for each such thread; now in none of 40. Nothing is wiped for that: there is nothing left to wipe.
+    The frame has room for the states of four runtimes. If more are alive in the VM, the rest is in a block of its own, all of it written when it is made, of which the collector is told, and which
+    it scans as it scans the stack, at the same time and by the same rules (`Threads::gatherConservativeRoots()`). Handles made when a state is put there would not do: other threads write
+    into a state that is set aside (`threading.setprofile_all_threads()`). In a heap snapshot a cell that only such a block keeps looks like one that only a word of a stack keeps: no edge leads to
+    it and it is no root. The word is then to be found from `ThreadState::saved`.
   - *What is left* are the words that the compiler leaves unwritten in frames that are not ours, on the way into the wait (`Threads::takeGIL`, `Condition::waitFor`, `ParkingLot`). Other shapes of that loop
     (a raise twelve calls deep, `hasattr()`, several threads) have the address of the carrier, or of the exception itself, in one of those in up to 15 looks of 40, for as long as the thread stays at that very place.
     And the 128 bytes below the stack pointer, which are no frame's: on x86-64, and on arm64 under Darwin, the scan of another thread's stack takes them in because the ABI lets the innermost function use them (`osRedZoneAdjustment`). On a loaded machine a thread that gives
@@ -2081,6 +2085,9 @@ What code outside `python/` asks is one of these, and the answer is the same in 
 - **Which runtimes does this heap have?** `Heap::pythonRuntimes()`, empty without Python. They are asked at three points, none of
   which touches a value of JS: before the stack is scanned (dead temporaries in frames of Python code are cleared), when
   marking has converged (Python objects to finalize are kept), and by the host before `console.log` writes (Python's `stdout` is flushed).
+- **Has Python started in this VM?** `Heap::pythonThreads()`, a pointer that is null until it does. Asked when the stacks are scanned: what a thread that is
+  parked has no room for on its stack is scanned with them (`Threads::gatherConservativeRoots()`). What follows a yes is a walk over the threads of Python's, which finds
+  nothing unless more than four realms have a Python.
 - **Is this the embedder's thread?** `Heap::mayRunEmbedderFinalizers()`: false only while a thread that Python started has the VM.
   See Threads. A program without such threads runs on one thread, and the answer is yes.
 - **Has this realm a Python?** `JSGlobalObject::pythonRuntime()`, a pointer that is null until Python starts there. Asked where an
@@ -2143,6 +2150,7 @@ What every program pays, with the sizes of a release build for x86-64:
 | `ArrayBuffer.prototype.resize()` | refuses to shrink a buffer that is pinned, as it refuses to detach one |
 | A block or large allocation is swept | one load and branch (`mayRunEmbedderFinalizers()`) |
 | The incremental sweeper runs | one load and branch (`hasParkedThreads()`) |
+| The stacks are scanned | one load and branch (`pythonThreads()`), beside the look at the list of runtimes |
 | A call is linked, or is virtual and not to compiled JS | is the caller Python code: three loads and a branch |
 | An exception is thrown | whether there is a Python in the VM is asked once for an unwind (`UnwindFunctor::m_tellsPython`: a load and a compare) and the frame it starts in is noted (`m_frameToldOfLast`: a store), and the answer is looked at twice for each frame the exception passes. All that is done on Python's account is out of line behind it. `throw` and `catch`: has the realm a Python, a load and a branch each |
 | Bytecode is generated, a code block is linked or asks to be compiled | a look at `isPython()`: for each loop and jump, each call site, each code block |
