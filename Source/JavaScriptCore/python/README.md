@@ -1780,7 +1780,7 @@ The collector is told the size of the side tables, which are several times the s
   what is inherited is an `AttributeError`. `object.__getattribute__()`, `__setattr__()` and `__delattr__()` do the same, for any object
   of JS's, so a `__setattr__` of the class's own may hand on to `object`'s, and `@dataclass(frozen=True)` works.
   `instance.__dict__` and `vars(instance)` are the mapping of its own properties (`_js.JSProperties`, a `MutableMapping` and no dict,
-  with the `copy()`, `|`, `reversed(mapping)` and order of `popitem()` of a dict): not the object itself, whose `[key]` finds what it inherits too
+  with the `copy()`, `|`, `reversed(mapping)` and `popitem()` from the end of a dict; the order is that of the properties, in which names that are array indices, `'2'`, `'10'`, come first and by value): not the object itself, whose `[key]` finds what it inherits too
   (`functools.cached_property` would find itself) and which may be a `Map`. The elements of a typed array are not in it. To store there
   defines the property, past whatever the class has for the name. It comes from the `__getattribute__` that the class inherits from
   `Base`; `object.__getattribute__(instance, '__dict__')` is an `AttributeError`, because who asks that way expects a dict
