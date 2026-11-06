@@ -919,6 +919,9 @@ JSCell* Unit::merged(JSCell* cell)
         String string = asString(cell)->value(globalObject());
         return scope.exception() ? cell : g.addStringConstant(*c.name(string));
     }
+    // It has been here before. (The key is as long as the constant.)
+    if (g.hasPythonConstant(cell))
+        return cell;
     Vector<uint8_t, 64> key;
     bool isLikeNoOther = false;
     if (!appendKeyOfConstant(vm(), key, cell, isLikeNoOther) || isLikeNoOther)
