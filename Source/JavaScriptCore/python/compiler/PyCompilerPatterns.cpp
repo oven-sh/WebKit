@@ -550,6 +550,10 @@ void Unit::matchStatement(Match* node, const Last& isLast)
         // (A pattern that always matches.)
         if (!next->isBound() && !nextWithMoreToDrop->isBound())
             continue;
+        // Where a `break` leads, behind a `for` loop, CPython is left with something of the line of the loop. What has failed does not come through it.
+        // (The guard of a `case _` that is the last of several branches to the end of the statement, like the `break`.)
+        if (!isDefault && m_endOfForLoop.position == g.instructions().size() && (m_endOfForLoop.hasBreak || g.jumpsToLastPythonLabel().count))
+            OpNop::emit(&g);
         emitFailLabels(matchCase->pattern->range, nextWithMoreToDrop.get(), next.get());
         if (isLast.kind == Last::BeforeJump && isLastCase) {
             // (Unless other ways meet here: see endOfStatement(). In CPython the body jumps here, over what drops something, and then a copy of the end of the
