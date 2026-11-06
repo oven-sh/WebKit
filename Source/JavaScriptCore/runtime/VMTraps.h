@@ -263,9 +263,13 @@ public:
         // A thread parked in Atomics.wait / memory.atomic.wait handles no traps; wake it so it sees this one.
         if (event == NeedTermination)
             notifySyncWaiterOfTermination();
+        // Nor does the embedder's thread where it waits outside the VM (JSLock::park()), or in an event loop of the embedder's.
+        if (event == NeedTermination || event == NeedWatchdogCheck)
+            notifyEmbedderThreadThatWaits(event);
     }
 
     JS_EXPORT_PRIVATE CONCURRENT_SAFE void notifySyncWaiterOfTermination();
+    JS_EXPORT_PRIVATE CONCURRENT_SAFE void notifyEmbedderThreadThatWaits(Event);
 
     // The following returns true if a trap was handled.
     bool handleTraps(BitField mask = AsyncEvents);

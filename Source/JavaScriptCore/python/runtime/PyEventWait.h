@@ -49,11 +49,14 @@ namespace Python {
 //   - Poll, Select: call waitWithoutBlocking() first; while it returns 0, watch the descriptors named in the request (or
 //     put them in a temporary epoll or kqueue and watch that) and the timer, turn the loop, and call it again.
 // Code that the host runs meanwhile may call back into Python, and that may wait in turn: the function must be reentrant.
-// It must not throw. If the host has to give up (the VM is terminating), it returns -1 with errno EINTR: the caller then
-// runs what is pending, which raises, or waits again for the time that is left. The same goes for a signal: as soon as one
-// that Python handles has arrived, the function should return -1 with EINTR, as the system call does, or the handler waits.
+// It throws nothing but a termination: if the host has to give up (the VM is terminating), it sees to it that one is thrown, and
+// returns -1 with errno EINTR. It returns the same, with nothing thrown, as soon as calls are owed (VMTraps::NeedPythonCalls; the
+// function of setCallsOwedFunction() is told), and makes none of them itself: the caller does, which may raise, and waits again
+// for the time that is left. That is how a signal that Python handles gets its handler called, as after the system call, and
+// how a wait is ended when the host ends what runs (mainThreadIsToHandleTrap()).
 // A request with timeout 0 comes here too (asyncio asks that way whenever it has something to run): waitWithoutBlocking() is
 // the whole answer, and whether to turn the loop once first, so that a busy Python loop does not starve it, is up to the host.
+// It must not sleep for such a request: nobody would know to wake it.
 // What does not come here: time.sleep(), locks and semaphores. What does, as a Poll of one descriptor: os.read() and the like
 // (waitUntilReadable()), and on Linux os.waitpid() for one child and os.spawnv(os.P_WAIT) and its kin (waitUntilReady()).
 
@@ -115,7 +118,7 @@ JS_EXPORT_PRIVATE int waitWithoutBlocking(WaitRequest&);
 static constexpr int waitRaised = -2;
 
 // Waits. If a signal interrupts the wait, its handler runs, and the wait goes on for the time that is left (PEP 475).
-// The result is as above, or waitRaised if there is an exception: the handler's.
+// The result is as above, or waitRaised if there is an exception: the handler's, or the host ends what runs.
 int waitForEvents(JSGlobalObject*, WaitRequest&);
 
 // Before a system call that reads at least one byte from a descriptor and may wait for long. If the descriptor is of a kind of which

@@ -424,6 +424,13 @@ CONCURRENT_SAFE void VMTraps::notifySyncWaiterOfTermination()
     vm().syncWaiter()->notifyOfTerminationRequest();
 }
 
+CONCURRENT_SAFE void VMTraps::notifyEmbedderThreadThatWaits(Event event)
+{
+    vm().apiLock().ifEmbedderThreadWaits([&](const AbstractLocker& locker, JSLock::ParkedThread* parked, bool isInEventLoop) {
+        Python::mainThreadIsToHandleTrap(vm(), locker, parked, isInEventLoop, event == NeedTermination);
+    });
+}
+
 CONCURRENT_SAFE void VMTraps::updateThreadStopRequestIfNeeded()
 {
     Locker locker { *m_trapSignalingLock };

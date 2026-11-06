@@ -336,6 +336,14 @@ void Threads::dropGIL(ThreadState&, bool isYielding)
     m_debts.removeFirst(&debt);
 }
 
+static constexpr auto endingTraps = VMTraps::NeedTermination | VMTraps::NeedWatchdogCheck;
+
+// Once it is back. Between calls there is nothing to end, and a thread that defers terminations would only go back to what it was waiting for.
+static bool wouldHandleTrap(const ThreadState& thread, bool isTermination)
+{
+    return thread.parked->isInCalls() && !(isTermination && thread.defersTermination);
+}
+
 void Threads::release(ThreadState& thread, JSLock::ParkedThread& parked, SavedStates& saved)
 {
     ASSERT(&thread == t_currentThread);
@@ -352,17 +360,34 @@ void Threads::release(ThreadState& thread, JSLock::ParkedThread& parked, SavedSt
     }
     thread.parked = &parked;
     thread.saved = &saved;
+    thread.defersTermination = m_vm.traps().isDeferringTermination();
+    // Not in stopAll(): nothing is left to end, and it parks again and again, with no look in between.
+    bool isToBeFound = thread.isMain && !m_isStopping.load();
+    if (isToBeFound) {
+        m_parkedMainThread = &thread;
+        parked.setIsEmbedderThread(this);
+    }
     if (m_vm.heap.hasPostponedEmbedderFinalizers() && !thread.isMain && !m_didTellMainThreadOfFinalizers) [[unlikely]]
         tellMainThreadOfFinalizers();
     // Whatever has caught an exception without making the VM forget it (see PyErrors.cpp): a collection that the program asks for does that, but only for
     // the thread that asks. So no thread takes one along.
     m_vm.clearLastException();
     m_vm.apiLock().park(parked);
+    // Whoever fires one either finds this thread parked, or has fired it before this looks. (It still has the GIL: whoever calls this drops it afterwards. So no other
+    // thread can have come across the bits meanwhile and set them aside for this one: VMTraps::handleTraps().)
+    if (isToBeFound && m_vm.traps().needHandling(endingTraps)) [[unlikely]] {
+        for (auto event : { VMTraps::NeedTermination, VMTraps::NeedWatchdogCheck }) {
+            if (m_vm.traps().needHandling(event) && wouldHandleTrap(thread, event == VMTraps::NeedTermination))
+                m_vm.traps().notifyEmbedderThreadThatWaits(event);
+        }
+    }
 }
 
 void Threads::acquire(ThreadState& thread, JSLock::ParkedThread& parked, SavedStates& saved)
 {
     m_vm.apiLock().unpark(parked);
+    if (thread.isMain)
+        m_parkedMainThread = nullptr;
     thread.parked = nullptr;
     thread.saved = nullptr;
     // Now that it is back in the VM nobody hands out calls: that takes the GIL, or a collector that has stopped the VM's thread.
@@ -487,6 +512,31 @@ void mainThreadHasTrapsToHandle(VM& vm)
         vm.heap.pythonRuntimes().first()->threads().wakeMainThread();
 }
 
+// The thread is kept parked meanwhile.
+void Threads::wakeToHandleTrap(ThreadState& thread, bool isTermination)
+{
+    thread.sleeper.wake();
+#if !OS(WINDOWS)
+    // What a signal makes a system call lose, it loses to code that is ended as soon as the call returns. The watchdog may find that it is not time yet.
+    if (wouldHandleTrap(thread, isTermination) && (isTermination || thread.losesNothingIfInterrupted))
+        interrupt(thread);
+#else
+    UNUSED_PARAM(isTermination);
+#endif
+}
+
+void mainThreadIsToHandleTrap(VM& vm, const AbstractLocker&, JSLock::ParkedThread* parked, bool isInEventLoop, bool isTermination)
+{
+    // There it waits whether there are other threads or not. What waits there looks for calls that are owed, and then at all else: waitForEvents().
+    if (isInEventLoop)
+        noteCallsOwed(vm);
+    // What is found there is what the thread itself goes on with when it is back: the Threads whose release() it is in, and its state.
+    if (parked) {
+        auto& threads = *static_cast<Threads*>(parked->embedderThreadClient());
+        threads.wakeToHandleTrap(*threads.m_parkedMainThread, isTermination);
+    }
+}
+
 // This thread has come across dead objects of the host, which only the main thread may sweep. That one does so at its next safe
 // point (makeCallsOwed()). If it sleeps, in a wait for other threads or in the host's event loop, it is woken up for it.
 void Threads::tellMainThreadOfFinalizers()
@@ -599,7 +649,6 @@ bool Threads::throwIfStoppingSlow()
 
 bool Threads::throwIfHostEndsWhatRuns()
 {
-    constexpr auto endingTraps = VMTraps::NeedTermination | VMTraps::NeedWatchdogCheck;
     if (!m_vm.traps().needHandling(endingTraps) || !m_vm.entryScope || !isMainThread()) [[likely]]
         return false;
     // Nothing would come of it, and it is not cheap.

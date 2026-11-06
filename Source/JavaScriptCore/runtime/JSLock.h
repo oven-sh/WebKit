@@ -165,10 +165,17 @@ public:
         CallFrame* topCallFrame() const { return m_topCallFrame; }
         EntryFrame* topEntryFrame() const { return m_topEntryFrame; }
         Thread& thread() const { return *m_thread; }
+        // In the middle of them, that is, rather than between two.
+        bool isInCalls() const { return m_entryScope; }
+        // This is the embedder's thread, for which terminations and the watchdog are (VMTraps::fireTrapsLeftToEmbedderThread()). To be said
+        // before it parks, with whatever the client wants to find in ifEmbedderThreadWaits().
+        void setIsEmbedderThread(void* client) { m_embedderThreadClient = client; }
+        void* embedderThreadClient() const { return m_embedderThreadClient; }
 
     private:
         friend class JSLock;
 
+        void* m_embedderThreadClient { nullptr };
         SUPPRESS_UNCOUNTED_MEMBER Thread* m_thread { nullptr };
         intptr_t m_lockCount { 0 };
         CallFrame* m_topCallFrame { nullptr };
@@ -201,6 +208,37 @@ public:
         for (ParkedThread* parked : m_parkedThreads)
             functor(*parked);
     }
+    // The embedder's thread is in an event loop of the embedder's, in the middle of calls: in the VM, but where it sleeps nothing polls for traps.
+    // What the loop runs may go there in its turn, or park.
+    class EmbedderThreadWaitsInEventLoop {
+        WTF_MAKE_NONCOPYABLE(EmbedderThreadWaitsInEventLoop);
+        WTF_FORBID_HEAP_ALLOCATION;
+    public:
+        explicit EmbedderThreadWaitsInEventLoop(JSLock& lock)
+            : m_lock(lock)
+        {
+            Locker locker { m_lock.m_embedderThreadWaitsLock };
+            ++m_lock.m_embedderThreadEventLoopWaits;
+        }
+        ~EmbedderThreadWaitsInEventLoop()
+        {
+            Locker locker { m_lock.m_embedderThreadWaitsLock };
+            --m_lock.m_embedderThreadEventLoopWaits;
+        }
+
+    private:
+        JSLock& m_lock;
+    };
+    // From any thread: functor(locker, ParkedThread* or null, bool isInEventLoop), if it is either. It stays so, and the object as it is, until the functor
+    // returns. Whoever does something and then calls this, and does not find the thread, has done it before the thread returns from park(),
+    // or from saying that it waits.
+    template<typename Functor>
+    void ifEmbedderThreadWaits(const Functor& functor)
+    {
+        Locker locker { m_embedderThreadWaitsLock };
+        if (m_parkedEmbedderThread || m_embedderThreadEventLoopWaits)
+            functor(locker, m_parkedEmbedderThread, !!m_embedderThreadEventLoopWaits);
+    }
 
     void makeWebThreadAware()
     {
@@ -232,7 +270,6 @@ private:
     // See https://bugs.webkit.org/show_bug.cgi?id=169042#c6
     std::atomic<bool> m_hasOwnerThread { false };
     bool m_shouldReleaseHeapAccess;
-    bool m_isParking { false }; // For willReleaseLock().
     RefPtr<Thread> m_ownerThread;
     intptr_t m_lockCount;
     unsigned m_lockDropDepth;
@@ -240,8 +277,13 @@ private:
     VM* m_vm;
     AtomStringTable* m_entryAtomStringTable; 
     Lock m_parkedThreadsLock;
+    // A lock of its own: nothing is done with it held but what is written here and in the one functor there is.
+    Lock m_embedderThreadWaitsLock;
+    bool m_isParking { false }; // For willReleaseLock().
     Vector<ParkedThread*, 4> m_parkedThreads WTF_GUARDED_BY_LOCK(m_parkedThreadsLock);
     std::atomic<unsigned> m_parkedThreadCount { 0 };
+    unsigned m_embedderThreadEventLoopWaits WTF_GUARDED_BY_LOCK(m_embedderThreadWaitsLock) { 0 };
+    ParkedThread* m_parkedEmbedderThread WTF_GUARDED_BY_LOCK(m_embedderThreadWaitsLock) { nullptr };
 };
 
 } // namespace

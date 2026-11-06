@@ -427,6 +427,11 @@ void JSLock::park(ParkedThread& parked)
         m_parkedThreads.append(&parked);
         m_parkedThreadCount.store(m_parkedThreads.size(), std::memory_order_relaxed);
     }
+    if (parked.m_embedderThreadClient) {
+        Locker locker { m_embedderThreadWaitsLock };
+        ASSERT(!m_parkedEmbedderThread);
+        m_parkedEmbedderThread = &parked;
+    }
 
     // Whoever comes next acquires access to the heap for itself; and if nobody comes, the collector need not wait for anybody.
     m_shouldReleaseHeapAccess = true;
@@ -446,6 +451,11 @@ void JSLock::unpark(ParkedThread& parked)
         bool wasThere = m_parkedThreads.removeFirst(&parked);
         RELEASE_ASSERT(wasThere);
         m_parkedThreadCount.store(m_parkedThreads.size(), std::memory_order_relaxed);
+    }
+    if (parked.m_embedderThreadClient) {
+        Locker locker { m_embedderThreadWaitsLock };
+        ASSERT(m_parkedEmbedderThread == &parked);
+        m_parkedEmbedderThread = nullptr;
     }
 
     VM& vm = *m_vm;

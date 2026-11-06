@@ -170,6 +170,14 @@ int waitForEvents(JSGlobalObject* globalObject, WaitRequest& request)
             result = blockingWait(globalObject, request);
         else {
             Runtime::EventLoopPositionScope position(runtime(globalObject), true);
+            // Not for a mere look, which sleeps nowhere.
+            std::optional<JSLock::EmbedderThreadWaitsInEventLoop> waits;
+            if (piece) {
+                waits.emplace(vm.apiLock());
+                // Whoever asks for what runs to be ended either finds that, or has asked before this looks.
+                if (runtime(globalObject).threads().throwIfHostEndsWhatRuns()) [[unlikely]]
+                    return waitRaised;
+            }
             result = function(globalObject, request);
         }
         request.timeout = timeout;

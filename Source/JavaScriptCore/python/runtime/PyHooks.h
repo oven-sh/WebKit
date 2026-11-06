@@ -8,6 +8,7 @@
 #include "BytecodeIndex.h"
 #include "CallData.h"
 #include "JSCJSValue.h"
+#include "JSLock.h"
 #include "VirtualRegister.h"
 #include <optional>
 #include <span>
@@ -82,6 +83,10 @@ JSValue constantFromParts(JSGlobalObject*, const ConstantParts&);
 JS_EXPORT_PRIVATE void makeCallsOwed(VM&);
 // For VMTraps::handleTraps() on another thread: see VMTraps::fireTrapsLeftToEmbedderThread().
 void mainThreadHasTrapsToHandle(VM&);
+// The host asks for what the main thread runs to be ended, or for a look whether it is to be (the watchdog). A thread that waits
+// polls nothing. One that is in the VM gets the engine's signal. One that is parked, or in the host's event loop, is woken by this. For
+// VMTraps::notifyEmbedderThreadThatWaits(): on any thread, in JSLock::ifEmbedderThreadWaits(), whose locker it is.
+void mainThreadIsToHandleTrap(VM&, const AbstractLocker&, JSLock::ParkedThread*, bool isInEventLoop, bool isTermination);
 
 // Python tells 2.0 from 2, which are one number in JS, by keeping floats that are whole numbers in objects. Code that is
 // not Python is given the number where a value is handed to it: the result of a call, an argument, an attribute.

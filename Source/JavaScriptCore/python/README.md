@@ -798,7 +798,7 @@ so the aim is that everything Python *guarantees* holds, and that what it merely
     sends its signals again and again). Once it is back none is sent, and none is on its way. The main thread gets a signal that is
     nobody else's (`wakeMainThreadFromSystemCall()`), the others `SIGURG`. A collection tells a thread once, however much it leaves for it: to
     tell is a system call. (Once for each callback of a weak reference, 200,000 of them took 145 ms, 100 ms of that in the kernel; now 42 ms.)
-  - **The signal is sent only where it loses nothing** (`AllowThreads::LosesNothing`, which the call site says): a call that transfers nothing
+  - **The signal is sent only where it loses nothing** (`AllowThreads::LosesNothing`, which the call site says; but for what the host ends: `Threads::wakeToHandleTrap()`): a call that transfers nothing
     before it returns and is made again when it was interrupted: `read`, `readv`, `recv` and its kin, `accept`, `poll`/`select`/`epoll`, the
     `wait` family, `flock`, `lockf`, `open` (of a FIFO), a semaphore, a sleep. CPython sends a thread no signal at all, and one that comes in the
     middle of `write`, `send`, `sendmsg`, `sendfile` or `recv(MSG_WAITALL)` makes the call return the part it has done, which a program that
@@ -2070,6 +2070,10 @@ What code outside `python/` asks is one of these, and the answer is the same in 
 - **Is a thread parked in the middle of a call?** `JSLock::hasParkedThreads()`: then code is running although the VM has no entry scope,
   and the texts that strings had before they were made atoms are kept (`Heap::clearConcurrentRetainedDataIfPossible()`): a
   `GCOwnedDataScope` on the stack of that thread may refer to one.
+- **Does the embedder's thread wait where it polls no traps?** `JSLock::ifEmbedderThreadWaits()`, asked by whoever asks for what runs to be ended
+  (`VMTraps::fireTrap()` of a termination or of a check of the watchdog, from any thread), beside the line that wakes a thread in `Atomics.wait()`.
+  The thread says so itself: while it is parked, and while a call of Python's has it in the host's event loop. Only then is Python told. Without
+  Python it never says so.
 
 One change to the collector was made for Python and is everybody's gain. The helper threads that mark in parallel used to be woken at
 the beginning of every collection and waited for at its end, which takes 0.4 ms and 0.9 ms of processor time with seven of
@@ -2104,7 +2108,7 @@ What every program pays, with the sizes of a release build for x86-64:
 | Where | What |
 | --- | --- |
 | `VM` (one) | 128 bytes of 111,040: 112 in `Heap` (the list of runtimes, two more owners of finalizers, a subspace pointer, what a collection marked once all that is reachable was marked and how much of that waits indefinitely), 8 in `VMTraps`, 8 of padding |
-| `JSLock` (one per VM) | 72 bytes: the list of parked threads |
+| `JSLock` (one per VM) | 72 bytes: the list of parked threads, which of them is the embedder's, and how deep that one is in the host's event loop |
 | `JSGlobalObject` | 8 bytes: the pointer to the runtime |
 | `UnlinkedCodeBlock::RareData`, `UnlinkedFunctionExecutable::RareData` | 8 bytes each, where there is rare data; `FunctionExecutable::RareData` 16. `CodeBlock`, `UnlinkedCodeBlock`, `UnlinkedFunctionExecutable`, `CallLinkInfo`, `Structure`, `JSString`, `JSArray`, `JSFunction`: nothing |
 | `JSType`, opcodes, `SpeculatedType`, `UseKind`, `VMTraps` | 19 of the 256 cell types, 42 of the 254 opcode numbers of one byte (17 are left; 17 more of Python's opcodes are on a second page), 1 of 64 bits, 1 of 64 kinds, 1 of 32 bits |
@@ -2128,6 +2132,7 @@ What every program pays, with the sizes of a release build for x86-64:
 | The mutator leaves a collection to the collector's thread | a lock, and a look whether that thread is there |
 | No thread can be started | helpers of the collector are done without, and so is its thread; for any other thread, up to 2 s of waiting for room, a line that names it, and the crash that used to come at once |
 | The lock of the VM is taken, released | a store; two loads and branches |
+| What runs is to be ended (`worker.terminate()`, the timeout of `node:vm`, the watchdog) | a call that takes a lock that nobody else has, to find that nobody waits |
 | A tick of the event loop that waits, a turn of it | a call that finds no other threads; a load of a flag |
 | The executable | about 10 MB of 134: 4.1 the standard library (compressed), the rest code |
 
@@ -2230,6 +2235,17 @@ that run the tests on a debug build have the option on. What that takes:
   - What has to be given back (a descriptor) belongs to its object before the next `RETURN_IF_EXCEPTION`, not after it.
   - No code of a frame that a termination leaves runs any more, not even the compiler's own. What that would have put back, the unwinder
     does: the exception that was being handled (`Runtime::handlersAreLeftByTermination()`).
+  - A thread that waits polls nothing. Out of a system call the engine's signal gets the thread that is in the VM, and what follows the
+    call has a look (`checkSignals()`: `Threads::throwIfHostEndsWhatRuns()`). With a second thread of Python's alive the main thread
+    is not in the VM while it waits: it has parked. And in the host's event loop, which turns while it waits for a descriptor, it goes back to sleep.
+    So the thread says where it is, and whoever fires the trap asks (`VMTraps::fireTrap()`, beside the line that wakes `Atomics.wait()`;
+    `JSLock::ifEmbedderThreadWaits()`, from any thread). If it waits, Python is told (`mainThreadIsToHandleTrap()`): the loop is woken if the thread
+    is there, and a main thread that is parked in the middle of calls is woken from what it sleeps on and got out of its system call as one that owes
+    calls is (`Threads::interrupt()`). Whatever the call: what a signal makes it lose, it loses to code that is ended when it returns. (A foreign
+    function goes on after a system call of its own has failed with `EINTR`, and is ended when it returns.) (For the watchdog, which may find that it is not time yet, only where nothing is lost. For a termination not
+    while the thread defers them: it would only make the call again.) The thread looks at the traps itself once it has parked, or has said that it
+    waits in the loop (`waitForEvents()`), so whoever fires either finds it or has fired before it looks: `JSLock::ifEmbedderThreadWaits()`, whose lock
+    orders the two.
 
 To find what is missing without dying at the first: `BUN_JSC_uncheckedExceptionsLog=FILE` with the option above writes each missing
 check to the file, once, with both stacks, and goes on; `Tools/Scripts/unchecked-exceptions FILE` puts them in order by the function

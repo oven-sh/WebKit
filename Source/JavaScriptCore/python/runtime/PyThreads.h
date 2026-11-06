@@ -78,11 +78,12 @@ public:
     std::atomic<bool> isBeingInterrupted { false };
     uint64_t timesInterrupted { 0 };
 
-    // The rest is for whoever holds the GIL.
+    // The rest is for whoever holds the GIL. (And, of what is said to hold while it is parked, for JSLock::ifEmbedderThreadWaits().)
 
     // While the thread does not hold the GIL: where it left its frames, and what it took out of the runtimes.
     JSLock::ParkedThread* parked { nullptr };
     bool losesNothingIfInterrupted { false }; // While it is parked. See AllowThreads::WhenInterrupted.
+    bool defersTermination { false }; // While it is parked.
     // It is in so many of them, one inside the other. See IdleWait.
     unsigned idleWaits { 0 };
     // Rather than works. (In any other system call, or in foreign code, it may be hard at work: compressing, hashing.)
@@ -288,6 +289,8 @@ private:
     void didTakeGIL(ThreadState&);
     void tellMainThreadOfFinalizers();
     void wakeMainThread();
+    void wakeToHandleTrap(ThreadState&, bool isTermination);
+    friend void mainThreadIsToHandleTrap(VM&, const AbstractLocker&, JSLock::ParkedThread*, bool, bool);
     friend void mainThreadHasTrapsToHandle(VM&);
 
     VM& m_vm; // Not to be touched without the GIL, except for its traps.
@@ -297,6 +300,7 @@ private:
     uint64_t m_mainThreadIdent { 0 };
     unsigned m_runningCount { 0 };
     Vector<Ref<ThreadState>> m_threads;
+    ThreadState* m_parkedMainThread { nullptr }; // For JSLock::ifEmbedderThreadWaits().
     UncheckedKeyHashMap<const void*, Deque<ThreadState*>> m_waiters;
     uint64_t m_bytesAllocatedAtIdleCollection { 0 };
     int64_t m_endOfLastIdleCollection { 0 };
@@ -349,7 +353,8 @@ public:
     // calls). A system call that has transferred a part returns that part: write, send, sendfile, recv with MSG_WAITALL come back
     // short, where a program that trusts a blocking call never looks. A time limit that the kernel keeps begins anew. pause() returns.
     // A foreign function does who knows what. So none is sent unless whoever gives up the GIL says that nothing is lost: the call
-    // transfers nothing before it returns, and what follows it makes it again when it was interrupted.
+    // transfers nothing before it returns, and what follows it makes it again when it was interrupted. (But to end what the thread runs:
+    // Threads::wakeToHandleTrap().)
     enum WhenInterrupted : bool { MayLoseSomething, LosesNothing };
 
     ALWAYS_INLINE explicit AllowThreads(JSGlobalObject* globalObject, WhenInterrupted whenInterrupted = MayLoseSomething)
