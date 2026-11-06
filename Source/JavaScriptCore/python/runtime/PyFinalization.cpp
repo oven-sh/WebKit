@@ -184,7 +184,7 @@ void Runtime::threadDidEnd(uint32_t thread)
     std::unique_ptr<CallsOwed> owed = WTF::move(m_callsOwed[index]);
     m_callsOwed.removeAt(index);
     CallsOwed& heir = callsOwedBy(0);
-    bool leavesSomething = owed->hasFinalizers() || owed->collectionBeingToldOf;
+    bool leavesSomething = owed->hasFinalizers() || m_threadBetweenStartAndStop == thread;
     didTakeFrom(*owed);
     while (!owed->finalizers.isEmpty())
         heir.finalizers.append(owed->finalizers.takeFirst());
@@ -192,8 +192,8 @@ void Runtime::threadDidEnd(uint32_t thread)
         heir.weakRefCallbacks.append(owed->weakRefCallbacks.takeFirst());
         heir.weakRefCallbacksAreInOrder = false;
     }
-    if (owed->collectionBeingToldOf && !heir.collectionBeingToldOf)
-        heir.collectionBeingToldOf = owed->collectionBeingToldOf;
+    if (m_threadBetweenStartAndStop == thread)
+        m_threadBetweenStartAndStop = heir.thread;
     if (leavesSomething)
         didQueueCallsFor(0);
 }
@@ -524,21 +524,28 @@ void Runtime::didMarkAll(SlotVisitor& visitor)
     gc.stats[generation].duration += duration;
     // In CPython nothing is collected between "start" and "stop". What comes in between here goes untold: what it finds is called before "stop" like the rest, and a
     // callback that brings about a collection whenever it is called would otherwise never let the program go on.
-    bool isBeingToldOfOne = std::ranges::any_of(m_callsOwed, [](auto& owed) {
-        return !!owed->collectionBeingToldOf;
-    });
-    if (hasCollectionCallbacks() && !isBeingToldOfOne) {
+    if (hasCollectionCallbacks() && m_threadBetweenStartAndStop == noThread) {
         m_collectionsToTellOf.append({ generation, duration });
         didQueueCallsFor(m_currentThread, false);
     }
 }
 
-bool Runtime::isTellingOfCollection()
+bool Runtime::willTellOfCollect()
 {
     Locker locker { m_finalizationLock };
-    return std::ranges::any_of(m_callsOwed, [](auto& owed) {
-        return !!owed->collectionBeingToldOf;
-    });
+    if (m_threadBetweenStartAndStop != noThread)
+        return false;
+    m_threadBetweenStartAndStop = m_currentThread;
+    return true;
+}
+
+void Runtime::didTellOfCollect()
+{
+    Locker locker { m_finalizationLock };
+    ASSERT(m_threadBetweenStartAndStop == m_currentThread && !m_collectionBeingToldOf);
+    m_threadBetweenStartAndStop = noThread;
+    if (!m_collectionsToTellOf.isEmpty())
+        didQueueCallsFor(m_currentThread, false);
 }
 
 void Runtime::WeakCellTable::removeUnmarked(JSC::Heap& heap)
@@ -795,8 +802,10 @@ void Runtime::didQueueCallsFor(uint32_t thread, bool mayUncoverMore)
 bool Runtime::owesCalls(CallsOf callsOf)
 {
     Locker locker { m_finalizationLock };
-    return !m_collectionsToTellOf.isEmpty() || std::ranges::any_of(m_callsOwed, [&](auto& owed) {
-        return owed->thread == m_currentThread ? owed->hasFinalizers() || owed->collectionBeingToldOf : callsOf == CallsOf::AllThreads && owed->hasFinalizers();
+    if (m_threadBetweenStartAndStop == noThread ? !m_collectionsToTellOf.isEmpty() : m_threadBetweenStartAndStop == m_currentThread && m_collectionBeingToldOf)
+        return true;
+    return std::ranges::any_of(m_callsOwed, [&](auto& owed) {
+        return (owed->thread == m_currentThread || callsOf == CallsOf::AllThreads) && owed->hasFinalizers();
     });
 }
 
@@ -931,7 +940,6 @@ void Runtime::runPendingCalls(bool mayPutOff, CallsOf callsOf)
         Locker locker { m_finalizationLock };
         own = &callsOwedBy(m_currentThread);
     }
-    auto& collection = own->collectionBeingToldOf;
 
     while (true) {
         // A long queue does not hold up Ctrl-C, and a handler is called with the frame of the program, not with that of a finalizer
@@ -952,6 +960,7 @@ void Runtime::runPendingCalls(bool mayPutOff, CallsOf callsOf)
         bool isDone = false;
         bool collectionStarts = false;
         bool collectionIsOver = false;
+        CollectionNotice collection { };
         {
             Locker locker { m_finalizationLock };
             // What others owe was found earlier than what this thread has just been given.
@@ -964,8 +973,9 @@ void Runtime::runPendingCalls(bool mayPutOff, CallsOf callsOf)
                     }
                 }
             }
-            if (!collection && !m_collectionsToTellOf.isEmpty()) {
-                collection = m_collectionsToTellOf.takeFirst();
+            if (m_threadBetweenStartAndStop == noThread && !m_collectionsToTellOf.isEmpty()) {
+                m_threadBetweenStartAndStop = m_currentThread;
+                m_collectionBeingToldOf = collection = m_collectionsToTellOf.takeFirst();
                 collectionStarts = true;
             } else if (!owed->weakRefCallbacks.isEmpty()) {
                 // The references to an object are told of its death latest first. The collector finds them in no order.
@@ -985,17 +995,21 @@ void Runtime::runPendingCalls(bool mayPutOff, CallsOf callsOf)
                 object = owed->finalizers.takeFirst();
                 didTakeFrom(*owed);
                 m_justFinalized.append(object);
-            } else if (collection)
+            } else if (m_threadBetweenStartAndStop == m_currentThread && m_collectionBeingToldOf) {
+                collection = *m_collectionBeingToldOf;
                 collectionIsOver = true;
-            else {
+            } else {
                 m_hasPendingCalls = false;
                 isDone = true;
             }
         }
         if (collectionStarts || collectionIsOver) {
-            tellOfCollection(collection->generation, collection->duration, collectionIsOver);
-            if (collectionIsOver)
-                collection = std::nullopt;
+            tellOfCollection(collection.generation, collection.duration, collectionIsOver);
+            if (collectionIsOver) {
+                Locker locker { m_finalizationLock };
+                m_collectionBeingToldOf = std::nullopt;
+                m_threadBetweenStartAndStop = noThread;
+            }
         } else if (isDone) {
             if (!std::exchange(m_shouldCollectAfterPendingCalls, false) || !collectionsLeft--)
                 return;

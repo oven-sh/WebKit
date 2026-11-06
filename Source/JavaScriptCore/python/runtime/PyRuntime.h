@@ -860,8 +860,9 @@ public:
         std::array<CollectionStats, 3> stats;
     } gc;
     bool hasCollectionCallbacks() const;
-    // Some thread is between "start" and "stop" of a collection of the engine's own. What is collected meanwhile goes untold.
-    bool isTellingOfCollection();
+    // For gc.collect(), around all that it does: see m_threadBetweenStartAndStop. False: some thread is between "start" and "stop", and the call goes untold.
+    bool willTellOfCollect();
+    void didTellOfCollect();
     // Calls gc.callbacks for a collection of the engine's own, which is over by then.
     void tellOfCollection(int generation, double duration, bool isOver);
     // For the collector, whenever it is about to look at the stacks. The first time in a collection is when that begins, as far as gc.get_stats() goes. See clearDeadTemporaries().
@@ -1218,8 +1219,6 @@ private:
         bool weakRefCallbacksAreInOrder { true };
         // A full collection has found some of these, and none has been taken since: the thread is in foreign code, or does not get its turn.
         bool hasStoodSinceFullCollection { false };
-        // gc.callbacks have been told the start of it, by this thread. They hear of the end when it has made its calls.
-        std::optional<CollectionNotice> collectionBeingToldOf;
         bool hasFinalizers() const { return !finalizers.isEmpty() || !weakRefCallbacks.isEmpty(); }
     };
     // The first is the main thread's. A thread has one from the first time it owes something, or looks, until it ends.
@@ -1234,8 +1233,12 @@ private:
     UncheckedKeyHashSet<JSCell*> m_finalized WTF_GUARDED_BY_LOCK(m_finalizationLock);
     Vector<JSCell*> m_justFinalized WTF_GUARDED_BY_LOCK(m_finalizationLock);
     size_t m_justFinalizedAndOld WTF_GUARDED_BY_LOCK(m_finalizationLock) { 0 }; // So many of the first.
-    // Whoever comes first tells.
+    // gc.callbacks hear "start" and "stop" in turn, as in CPython, where nothing is collected between the two. So one thread at a time is between them: it has told the start of a collection and
+    // will tell its end, and until then nobody tells anything. What is collected meanwhile goes untold; what was collected before and has not been told yet waits.
+    // Of the engine's own collections, which are over by then: whoever comes first tells, and tells of the end when it has made the calls that it owes.
     Deque<CollectionNotice> m_collectionsToTellOf WTF_GUARDED_BY_LOCK(m_finalizationLock);
+    uint32_t m_threadBetweenStartAndStop WTF_GUARDED_BY_LOCK(m_finalizationLock) { noThread };
+    std::optional<CollectionNotice> m_collectionBeingToldOf WTF_GUARDED_BY_LOCK(m_finalizationLock); // None: that thread is in gc.collect().
     MonotonicTime m_collectionBegan;
     Vector<PyWeakRef*> weakRefsWithCallbacksToUnmarkedObjects(SlotVisitor&);
     UncheckedKeyHashSet<JSCell*> whatOtherThreadsHold();

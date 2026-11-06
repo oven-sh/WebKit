@@ -28,6 +28,7 @@
 #include "SlotVisitorInlines.h"
 #include "TopExceptionScope.h"
 #include <wtf/HexNumber.h>
+#include <wtf/Scope.h>
 #include <wtf/SetForScope.h>
 
 namespace JSC {
@@ -596,6 +597,12 @@ static JSValue gcCollect(JSGlobalObject* globalObject, JSValue generationValue)
             rt.collectAfterPendingCalls();
         return jsNumber(0);
     }
+    // What this thread owes comes first: with reference counts those finalizers were called long ago. And a collection of the engine's own that nobody has been told of yet was before this one. (On the way
+    // here there need not have been a safe point.)
+    if (!rt.gc.isCollecting && rt.owesCalls(Runtime::CallsOf::ThisThread)) {
+        rt.runPendingCalls(false, Runtime::CallsOf::ThisThread);
+        RETURN_IF_EXCEPTION(scope, { });
+    }
     // From one of gc.callbacks, or from another thread that got its turn meanwhile.
     if (rt.gc.isCollecting)
         return jsNumber(0);
@@ -603,7 +610,11 @@ static JSValue gcCollect(JSGlobalObject* globalObject, JSValue generationValue)
     SetForScope collectingThread(rt.gc.collectingThread, rt.currentThread());
     // Another thread may be between "start" and "stop" of a collection of the engine's own, in a callback or a finalizer that has let go of the GIL. In CPython nothing is collected between the two: there this
     // call does nothing while another thread collects. Here it collects, and goes untold, like a collection of the engine's own that comes in between: whoever listens hears "start" and "stop" in turn.
-    bool isTold = !rt.isTellingOfCollection();
+    bool isTold = rt.willTellOfCollect();
+    auto isOver = makeScopeExit([&] {
+        if (isTold)
+            rt.didTellOfCollect();
+    });
 
     Runtime::CollectionStats stats;
     if (isTold)
@@ -618,11 +629,26 @@ static JSValue gcCollect(JSGlobalObject* globalObject, JSValue generationValue)
     Census census(rt, debug & debugSaveAll, debug & debugCollectable);
     // There are two generations here. What has come through a collection, of the engine's own or one asked for, is old.
     collectAndFinalize(globalObject, &census, generation == 2 ? CollectionScope::Full : CollectionScope::Eden);
-    RETURN_IF_EXCEPTION(scope, { });
-
     stats.collected = census.found;
     stats.candidates = census.candidates;
     stats.duration = (MonotonicTime::now() - start).seconds();
+    auto count = [&] {
+        auto& total = rt.gc.stats[generation];
+        ++total.collections;
+        total.collected += stats.collected;
+        total.candidates += stats.candidates;
+        total.duration += stats.duration;
+    };
+    if (scope.exception()) [[unlikely]] {
+        // What the handler of a signal has raised between two finalizers goes on to the caller. There has been a collection all the same, and whoever has heard "start" hears "stop".
+        if (!vm.hasPendingTerminationException()) {
+            ExceptionSetAside aside(globalObject);
+            count();
+            if (isTold)
+                callCollectionCallbacks(globalObject, "stop"_s, generation, stats);
+        }
+        return { };
+    }
     for (const String& description : census.descriptions)
         writeToStderr(globalObject, makeString("gc: collectable "_s, description, '\n'));
     RETURN_IF_EXCEPTION(scope, { });
@@ -637,11 +663,7 @@ static JSValue gcCollect(JSGlobalObject* globalObject, JSValue generationValue)
         writeToStderr(globalObject, makeString("gc: done, "_s, stats.collected, " unreachable, 0 uncollectable, "_s, FormattedNumber::fixedWidth(stats.duration, 4), "s elapsed\n"_s));
     RETURN_IF_EXCEPTION(scope, { });
 
-    auto& total = rt.gc.stats[generation];
-    ++total.collections;
-    total.collected += stats.collected;
-    total.candidates += stats.candidates;
-    total.duration += stats.duration;
+    count();
     if (isTold)
         callCollectionCallbacks(globalObject, "stop"_s, generation, stats);
     RETURN_IF_EXCEPTION(scope, { });
