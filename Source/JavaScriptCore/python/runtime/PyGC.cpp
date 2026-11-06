@@ -41,9 +41,11 @@ namespace Python {
 // ---- What a program may be given ----
 //
 // get_objects(), get_referrers() and get_referents() find objects by looking at the heap, and the heap is full of what is not for
-// a program to see. The rule is the same for the three. A cell is handed out if
+// a program to see. The rule is the same for the three, but for its third point. A cell is handed out if
 //  - it is an object of Python, of this global object, of a kind that programs get to see (isObjectOfPython(), TypeFlag::Internal);
 //  - it is whole: a tuple has all its items, a frame object knows its caller (isWhole());
+//  - it is not, and does not lead to, what is left of an exception that nobody has seen (HeapView::findWhatIsOutOfReach(): get_objects() and get_referrers(), which find what nothing of the
+//    program's refers to; get_referents() begins at what the program has);
 //  - it is not a part of something else: a tuple, list, dict or set that the runtime made for its own use, which code in C++
 //    trusts to hold what it put there. Those are the namespace of a class and the list of its subclasses, the variables of a frame
 //    that has ended, what is kept under a hidden key (hiddenField()) or in a slot of the runtime (Runtime::Slot), and, where that
@@ -79,6 +81,9 @@ static bool isObjectOfPython(JSCell* cell, JSGlobalObject* globalObject)
 
 static bool isWhole(JSCell* cell)
 {
+    // Only what is left of an exception that nobody has seen leads to such a frame object (PyFrame::backIs()). Whoever has a HeapView gives none of that: this is for those that look without one.
+    if (PyFrame::is(cell))
+        return !PyFrame::from(cell)->lacksBack();
     if (cell->type() != PyTupleType)
         return true;
     for (JSValue item : uncheckedDowncast<PyTuple>(cell)->span()) {
@@ -206,16 +211,23 @@ private:
         Vector<PyFrame*> frames;
         Vector<PyTraceback*> entries;
         Vector<PyException*> exceptions;
+        bool hasUnseenException = false;
+        bool hasFrameThatLacksCaller = false;
         for (JSCell* cell : m_objects) {
-            if (auto* exception = PyException::tryFrom(cell))
+            if (auto* exception = PyException::tryFrom(cell)) {
                 exceptions.append(exception);
-            else if (cell->type() != PyObjectType)
+                hasUnseenException |= exception->isUnseen();
+            } else if (cell->type() != PyObjectType)
                 continue;
-            else if (auto* frame = PyFrame::tryFrom(cell))
+            else if (auto* frame = PyFrame::tryFrom(cell)) {
                 frames.append(frame);
-            else if (auto* entry = PyTraceback::tryFrom(cell))
+                hasFrameThatLacksCaller |= frame->lacksBack();
+            } else if (auto* entry = PyTraceback::tryFrom(cell))
                 entries.append(entry);
         }
+        // As a rule there is neither, however many tracebacks the program keeps.
+        if (!hasUnseenException && !hasFrameThatLacksCaller)
+            return;
         // Chains may be as long as the stack was deep, and many begin in the middle of another.
         UncheckedKeyHashSet<JSCell*> isWithinReach;
         Vector<JSCell*> path;
