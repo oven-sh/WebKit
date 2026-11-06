@@ -41,11 +41,13 @@ class Sleeper {
 public:
     Sleeper() = default;
 
-    // Until wake(), or the time on the monotonic clock, in nanoseconds (negative: there is none), or, perhaps, a signal.
+    // Until wake(), or the time on the monotonic clock, in nanoseconds (negative: there is none), or, perhaps, a signal: false then.
     // A wake() that came before counts. Without the GIL.
-    void sleep(int64_t deadline);
+    bool sleep(int64_t deadline);
     // From any thread, and from signal handlers.
     void wake();
+    // Whether there has been a wake() that no sleep() has answered. It counts as answered.
+    bool takeWake() { return m_isWoken.exchange(0); }
 
 private:
 #if OS(LINUX)
@@ -370,6 +372,22 @@ public:
     {
         if (m_threads) [[unlikely]]
             acquire();
+    }
+
+    // The sleep or the system call for which this was made has come back because a signal arrived. True: nobody has sent for this thread, so it can go on for the time that is left, without the GIL in
+    // between. The collector stops every thread with a signal to scan its stack: each collection would send every thread that waits through the GIL.
+    // Whoever sends for a thread that has given up the GIL says so before the signal: Threads::interrupt() by a flag, the end of the VM by another, everybody else by Sleeper::wake(): a signal of the
+    // program's, which is for the main thread wherever it was delivered; the traps that another thread has left to the main one; a request for a traceback.
+    // With no other thread the GIL was not given up: false. The thread is still in the VM, and the signal may be the engine's own, for a trap that the host has set (a time limit of node:vm,
+    // Worker.terminate()), which knows of no flag. Nobody is stopped for a collection there either.
+    bool wasInterruptedForNothing()
+    {
+#if OS(WINDOWS)
+        return false;
+#else
+        // (The wake is taken whatever the flags say: whoever sets one of them wakes as well, and a wake that is left would count the next time.)
+        return m_thread && !m_thread->sleeper.takeWake() && !m_thread->isBeingInterrupted.load() && !m_threads->m_isStopping.load();
+#endif
     }
 
 private:

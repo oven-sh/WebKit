@@ -41,7 +41,7 @@ namespace Python {
 
 #if OS(LINUX)
 
-void Sleeper::sleep(int64_t deadline)
+bool Sleeper::sleep(int64_t deadline)
 {
     struct timespec time;
     if (deadline >= 0) {
@@ -51,12 +51,16 @@ void Sleeper::sleep(int64_t deadline)
     while (!m_isWoken.exchange(0)) {
         // The time is absolute, on the monotonic clock.
         long result = syscall(SYS_futex, &m_isWoken, FUTEX_WAIT_BITSET | FUTEX_PRIVATE_FLAG, 0, deadline >= 0 ? &time : nullptr, nullptr, FUTEX_BITSET_MATCH_ANY);
+        // (A wake() that has come since stays, for whoever asks what the signal was for.)
+        if (result < 0 && errno == EINTR)
+            return false;
         if (result < 0 && errno != EAGAIN) {
-            // Time is up, or a signal arrived.
+            // Time is up.
             m_isWoken.store(0);
-            return;
+            return true;
         }
     }
+    return true;
 }
 
 void Sleeper::wake()
@@ -69,7 +73,7 @@ void Sleeper::wake()
 
 #else
 
-void Sleeper::sleep(int64_t deadline)
+bool Sleeper::sleep(int64_t deadline)
 {
     // A signal handler cannot notify a condition. It sets the flag, which is looked at this often.
     constexpr int64_t slice = 20000000;
@@ -77,10 +81,11 @@ void Sleeper::sleep(int64_t deadline)
     while (!m_isWoken.exchange(false)) {
         int64_t now = monotonicNanoseconds();
         if (deadline >= 0 && now >= deadline)
-            return;
+            return true;
         int64_t time = deadline >= 0 ? std::min(deadline - now, slice) : slice;
         m_condition.waitFor(m_lock, Seconds::fromNanoseconds(static_cast<double>(time)));
     }
+    return true;
 }
 
 void Sleeper::wake()
@@ -1167,7 +1172,8 @@ bool Threads::waitUntil(JSGlobalObject* globalObject, const void* address, int64
         thread.isQueued = true;
         {
             AllowThreads allow(globalObject);
-            thread.sleeper.sleep(deadline >= 0 ? std::min(deadline, idle.timeToCollect()) : idle.timeToCollect());
+            int64_t until = deadline >= 0 ? std::min(deadline, idle.timeToCollect()) : idle.timeToCollect();
+            while (!thread.sleeper.sleep(until) && allow.wasInterruptedForNothing()) { }
         }
         if (thread.isQueued) {
             thread.isQueued = false;
