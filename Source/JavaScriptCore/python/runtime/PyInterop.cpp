@@ -1091,13 +1091,6 @@ static JSValue jsObjectContains(JSGlobalObject* globalObject, JSValue self, JSVa
         iterates = methodOfIteration(globalObject, object);
         RETURN_IF_EXCEPTION(scope, { });
     }
-    // A class of Python's that derives from one of JS's may have an __iter__() of its own. What that gives is what is in an instance then, as for
-    // a class without a __contains__(), unless the object says itself what is in it.
-    bool iteratesInPython = false;
-    if (typeByPrototype(object)) [[unlikely]] {
-        auto* native = PyNativeFunction::tryFrom(typeOf(globalObject, self)->lookup(Special::Iter));
-        iteratesInPython = !native || native->def().pointer.f1 != jsObjectIter;
-    }
     if (mustHaveMethod || iterates) {
         // A mapping by its methods has a has(), and what is like a Set says itself what is in it too. Of anything else that JS iterates over it
         // is what iteration gives, as of an iterable of Python's.
@@ -1108,6 +1101,13 @@ static JSValue jsObjectContains(JSGlobalObject* globalObject, JSValue self, JSVa
             RETURN_IF_EXCEPTION(scope, { });
             return jsBoolean(isIn);
         }
+    }
+    // A class of Python's that derives from one of JS's may have an __iter__() of its own. What that gives is what is in an instance then, as for
+    // a class without a __contains__(), unless the object says itself what is in it.
+    bool iteratesInPython = false;
+    if (typeByPrototype(object)) [[unlikely]] {
+        auto* native = PyNativeFunction::tryFrom(typeOf(globalObject, self)->lookup(Special::Iter));
+        iteratesInPython = !native || native->def().pointer.f1 != jsObjectIter;
     }
     // (A symbol is no item, here or below: `js.Symbol.iterator in o` is the `in` of JS, as o[js.Symbol.iterator] is its read.)
     if (iteratesInPython && !key.isSymbol()) [[unlikely]] {
