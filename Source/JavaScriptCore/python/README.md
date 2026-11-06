@@ -2160,6 +2160,10 @@ Importing `readline` is what gives `input()` and the basic loop line editing and
 module. It looks for one among the imported modules when a line is to be read from the terminal, and calls its `_read_line(prompt)`
 (`readLineWithEditor()`): a str, `NotImplemented` for "read it yourself", `EOFError`, `KeyboardInterrupt`. The host brings the module.
 
+Without it, `input()` on a terminal (`sys.stdin.fileno()` is 0, `sys.stdout.fileno()` is 1, both are terminals) flushes `sys.stdout` and writes the prompt
+to descriptor 2 itself, in the encoding of `sys.stdout`, as CPython does. What `flush()` raises is dropped, there as here, and a stream looks at
+signals after it has written: a prompt that went through it would take a Ctrl-C with it.
+
 ## Writing a module in C++
 
 Tables of `NativeDef` (`PY_FUNCTION`, `PY_METHOD`, `PY_SLOT`, ...) with signatures in the form of `__text_signature__`; the

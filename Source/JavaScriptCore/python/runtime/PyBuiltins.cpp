@@ -752,6 +752,51 @@ static bool isTerminal(JSGlobalObject* globalObject, JSValue file, int descripto
     return number.isInt32() && number.asInt32() == descriptor && isatty(descriptor);
 }
 
+// file.encoding and file.errors. False: an exception, or they are not both there as strings.
+static bool encodingOfFile(JSGlobalObject* globalObject, JSValue file, JSString*& encoding, JSString*& errors)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    for (auto [name, result] : { std::pair { "encoding"_s, &encoding }, std::pair { "errors"_s, &errors } }) {
+        JSValue value = getAttrIfPresent(globalObject, file, internString(vm, name));
+        if (scope.exception()) {
+            takePendingException(globalObject);
+            RETURN_IF_EXCEPTION(scope, false);
+        }
+        if (!value || !isStr(value))
+            return false;
+        *result = strValue(value);
+    }
+    return true;
+}
+
+// On a terminal the prompt does not go through sys.stdout. It is written to the standard error of C, or, once readline has been imported, to the
+// standard output, in the encoding of sys.stdout. So what the handler of a signal raises meanwhile (Ctrl-C) is raised in input(), and not in
+// a flush() of which nobody wants to know how it went. False: an exception.
+static bool writePromptToTerminal(JSGlobalObject* globalObject, int descriptor, PyBytes* prompt)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    writeOutPendingOutput(globalObject);
+    std::span<const uint8_t> rest = prompt->span();
+    while (!rest.empty()) {
+        // Not only after a write() that a signal has cut short: one that came before it began leaves it waiting, with nobody to end it.
+        if (failed(scope, checkSignals(globalObject)))
+            return false;
+        ssize_t count;
+        {
+            AllowThreads allow(globalObject, AllowThreads::LosesNothing);
+            count = write(descriptor, rest.data(), rest.size());
+        }
+        if (count > 0)
+            rest = rest.subspan(count);
+        else if (!count || errno != EINTR)
+            break;
+    }
+    ensureStillAliveHere(prompt);
+    return true;
+}
+
 static JSValue builtinInput(JSGlobalObject* globalObject, JSValue prompt)
 {
     Runtime& rt = runtime(globalObject);
@@ -772,21 +817,49 @@ static JSValue builtinInput(JSGlobalObject* globalObject, JSValue prompt)
     if (failed(scope, audit(globalObject, "builtins.input"_s, prompt)))
         return { };
 
-    callMethod(globalObject, errors, rt.names.flush());
-    if (scope.exception()) {
-        takePendingException(globalObject);
+    // How it went is of no interest. (What ends the program stays pending.)
+    auto flush = [&](JSValue file) {
+        callMethod(globalObject, file, rt.names.flush());
+        if (scope.exception())
+            takePendingException(globalObject);
+    };
+    flush(errors);
+    RETURN_IF_EXCEPTION(scope, { });
+
+    // As CPython has it: both are the terminal, and say how they are encoded. In this order.
+    bool isOnTerminal = isTerminal(globalObject, input, STDIN_FILENO) && isTerminal(globalObject, output, STDOUT_FILENO);
+    RETURN_IF_EXCEPTION(scope, { });
+    JSString* encoding = nullptr;
+    JSString* errorHandler = nullptr;
+    if (isOnTerminal) {
+        isOnTerminal = encodingOfFile(globalObject, input, encoding, errorHandler);
         RETURN_IF_EXCEPTION(scope, { });
     }
-    bool editsLines = rt.modules()->get(internString(vm, "readline"_s)) && isTerminal(globalObject, input, STDIN_FILENO) && isTerminal(globalObject, output, STDOUT_FILENO);
-    RETURN_IF_EXCEPTION(scope, { });
-    if (editsLines) {
-        callMethod(globalObject, output, rt.names.flush());
-        if (scope.exception()) {
-            takePendingException(globalObject);
+    if (isOnTerminal) {
+        flush(output);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (prompt) {
+            isOnTerminal = encodingOfFile(globalObject, output, encoding, errorHandler);
             RETURN_IF_EXCEPTION(scope, { });
         }
-        JSString* text = prompt ? str(globalObject, prompt) : jsEmptyString(vm);
-        RETURN_IF_EXCEPTION(scope, { });
+    }
+    // A signal may have come since input() was called. What its handler raises would be lost from here on: whatever writes or reads first writes out what other files hold, and
+    // what is raised meanwhile is only reported. So it is looked for before the prompt and before the line, which is where CPython raises it. (Not here without a prompt and
+    // off a terminal: there the flush() below comes first, and takes it along if sys.stdout has something to write.)
+    if ((isOnTerminal || prompt) && failed(scope, checkSignals(globalObject)))
+        return { };
+    if (isOnTerminal) {
+        JSString* text = jsEmptyString(vm);
+        PyBytes* encoded = nullptr;
+        if (prompt) {
+            text = str(globalObject, prompt);
+            RETURN_IF_EXCEPTION(scope, { });
+            JSValue bytes = strEncode(globalObject, text, encoding, errorHandler);
+            RETURN_IF_EXCEPTION(scope, { });
+            encoded = PyBytes::from(bytes);
+            if (memchr(encoded->data(), 0, encoded->length()))
+                return raiseValueError(globalObject, scope, "input: prompt string cannot contain null characters"_s);
+        }
         JSValue line = readLineWithEditor(globalObject, text);
         RETURN_IF_EXCEPTION(scope, { });
         if (line) {
@@ -794,30 +867,40 @@ static JSValue builtinInput(JSGlobalObject* globalObject, JSValue prompt)
                 return { };
             return line;
         }
-    }
-    if (prompt) {
-        JSString* text = str(globalObject, prompt);
-        RETURN_IF_EXCEPTION(scope, { });
-        writeToFile(globalObject, output, text);
-        RETURN_IF_EXCEPTION(scope, { });
-    }
-    callMethod(globalObject, output, rt.names.flush());
-    if (scope.exception()) {
-        takePendingException(globalObject);
+        // An editor that has declined (it is not the main thread that asks) would have written to the standard output, as GNU's does.
+        bool hasEditor = !!rt.modules()->get(internString(vm, "readline"_s));
+        if (encoded && failed(scope, writePromptToTerminal(globalObject, hasEditor ? STDOUT_FILENO : STDERR_FILENO, encoded)))
+            return { };
+    } else {
+        if (prompt) {
+            JSString* text = str(globalObject, prompt);
+            RETURN_IF_EXCEPTION(scope, { });
+            writeToFile(globalObject, output, text);
+            RETURN_IF_EXCEPTION(scope, { });
+        }
+        flush(output);
         RETURN_IF_EXCEPTION(scope, { });
     }
 
+    if (failed(scope, checkSignals(globalObject)))
+        return { };
     JSValue line = callMethod(globalObject, input, rt.names.readline());
     RETURN_IF_EXCEPTION(scope, { });
     if (!isStr(line))
         return raiseTypeError(globalObject, scope, "object.readline() returned non-string"_s);
     String text = strValue(line)->value(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
-    if (text.isEmpty())
+    if (text.isEmpty()) {
+        if (isOnTerminal)
+            return raiseWithArgs(globalObject, scope, rt.EOFError(), { });
         return raiseEOFError(globalObject, scope, "EOF when reading a line"_s);
+    }
     if (text.endsWith('\n'))
         text = text.left(text.length() - 1);
-    return makeStr(vm, text);
+    JSString* result = makeStr(vm, text);
+    if (isOnTerminal && failed(scope, audit(globalObject, "builtins.input/result"_s, result)))
+        return { };
+    return result;
 }
 
 static JSValue builtinBreakpoint(JSGlobalObject* globalObject, const CallArgs& args)
