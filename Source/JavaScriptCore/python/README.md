@@ -266,7 +266,7 @@ methods for all six. The rest goes by the table of CPython's docstrings (`PyDocs
 which says what each type has in its namespace: the docstrings; a wrapper of the type's own for what it does as `object` does
 (`deque.__getattribute__`); and `__module__`, which the types that CPython makes at run time (most of those outside `builtins`)
 have there, where their instances find it as well. `TypeFlag::Mutable` is for the few of those whose attributes can be set: the exceptions of
-modules (`struct.error`), struct sequences outside `sys`, `ast.AST`.
+modules (`struct.error`), `ExceptionGroup`, struct sequences outside `sys`, `ast.AST`, `typing.Generic`.
 
 **Who makes an instance.** As in CPython (`tp_new`) that is state of the type, with a history, and not worked out from the dicts:
 `PyType::maker()`, the `__new__` of a built-in type, or `looksUpNew()`, or neither ("cannot create"). A built-in type has its own

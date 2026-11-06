@@ -43,6 +43,11 @@ static StructSeqFields fieldsOf(JSGlobalObject* globalObject, PyType* type)
     return { names, itemCount.asUInt32() };
 }
 
+bool isStructSeqType(JSGlobalObject* globalObject, PyType* type)
+{
+    return !type->isHeapType() && fieldsOf(globalObject, type);
+}
+
 static JSValue raiseIsNoStructSeq(JSGlobalObject* globalObject, PyType* type, ASCIILiteral attribute)
 {
     auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));

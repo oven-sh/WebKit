@@ -19,6 +19,7 @@
 #include "PyModule.h"
 #include "PyNumbers.h"
 #include "PyStr.h"
+#include "PyStructSeq.h"
 #include "PyTypes.h"
 #include "PyWeakRef.h"
 #include <wtf/HexNumber.h>
@@ -548,7 +549,7 @@ static void objectSetClass(JSGlobalObject* globalObject, JSValue self, JSValue v
     PyType* oldType = rt.typeOf(self);
     bool areModules = oldType->isSubtypeOf(rt.moduleType()) && newType->isSubtypeOf(rt.moduleType());
     // (What an object of JS's is an instance of, its prototype says.)
-    if (!areModules && (!oldType->isHeapType() || !newType->isHeapType() || oldType->has(TypeFlag::Immutable) || newType->has(TypeFlag::Immutable) || oldType->has(TypeFlag::AttributesAreProperties))) {
+    if (!areModules && (oldType->isImmutable() || newType->isImmutable() || oldType->has(TypeFlag::AttributesAreProperties))) {
         raiseTypeError(globalObject, scope, "__class__ assignment only supported for mutable types or ModuleType subclasses"_s);
         return;
     }
@@ -557,8 +558,11 @@ static void objectSetClass(JSGlobalObject* globalObject, JSValue self, JSValue v
         raiseTypeError(globalObject, scope, "__class__ assignment: '"_s, newType->nameInMessages(), "' deallocator differs from '"_s, oldType->nameInMessages(), '\'');
         return;
     }
+    // A struct sequence without fields that are no items is laid out as a tuple. In CPython it lets go of its items in a way of its own, and so counts as laid out
+    // differently from what else derives from tuple: these become one another, and nothing else becomes one of them.
+    bool areTuplesOfOneKind = !oldType->has(TypeFlag::TupleSubclass) || isStructSeqType(globalObject, oldType) == isStructSeqType(globalObject, newType);
     // (A class without an order of its bases is still being made: this is the mro() of its metaclass.)
-    if (!newType->mro() || !layoutsAreCompatible(oldType, newType)) {
+    if (!newType->mro() || !areTuplesOfOneKind || !layoutsAreCompatible(oldType, newType)) {
         raiseTypeError(globalObject, scope, "__class__ assignment: '"_s, newType->nameInMessages(), "' object layout differs from '"_s, oldType->nameInMessages(), '\'');
         return;
     }
@@ -574,7 +578,9 @@ static void objectSetClass(JSGlobalObject* globalObject, JSValue self, JSValue v
         uncheckedDowncast<PyListObject>(cell)->setType(vm, newType);
     else
         PyType::from(self)->setType(vm, newType);
-    if (newType->lookup(Special::Del) && !oldType->lookup(Special::Del)) [[unlikely]] {
+    // (That the old class has a finalizer does not say that the object is listed: one that a type written in C++ was given later is not for what C++ has made. To be listed twice is
+    // to be listed once.)
+    if (newType->lookup(Special::Del)) [[unlikely]] {
         MarkedArgumentBuffer objects;
         objects.append(cell);
         rt.registerFinalizableLate(objects);
@@ -2153,7 +2159,7 @@ static JSValue typeGetAnnotate(JSGlobalObject* globalObject, JSValue self)
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
     PyType* type = PyType::from(self);
-    if (!type->isHeapType())
+    if (!type->isHeapType() && !isMadeAtRunTimeInCPython(type))
         return raiseNoTypeAttribute(globalObject, type, "__annotate__"_s);
     // What the program wrote itself comes before what the compiler made.
     JSValue annotate = type->dict()->get(rt.names.dAnnotate());
@@ -2176,7 +2182,7 @@ static void typeSetAnnotate(JSGlobalObject* globalObject, JSValue self, JSValue 
         raiseTypeError(globalObject, scope, "cannot delete __annotate__ attribute"_s);
         return;
     }
-    if (!type->isHeapType() || type->has(TypeFlag::Immutable)) {
+    if (type->isImmutable()) {
         raiseTypeError(globalObject, scope, "cannot set '__annotate__' attribute of immutable type '"_s, type->nameInMessages(), '\'');
         return;
     }
@@ -2196,7 +2202,7 @@ static JSValue typeGetAnnotations(JSGlobalObject* globalObject, JSValue self)
     VM& vm = rt.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     PyType* type = PyType::from(self);
-    if (!type->isHeapType())
+    if (!type->isHeapType() && !isMadeAtRunTimeInCPython(type))
         RELEASE_AND_RETURN(scope, raiseNoTypeAttribute(globalObject, type, "__annotations__"_s));
 
     JSValue annotations = type->dict()->get(rt.names.dAnnotations());
@@ -2225,7 +2231,7 @@ static void typeSetAnnotations(JSGlobalObject* globalObject, JSValue self, JSVal
     VM& vm = rt.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     PyType* type = PyType::from(self);
-    if (!type->isHeapType() || type->has(TypeFlag::Immutable)) {
+    if (type->isImmutable()) {
         raiseTypeError(globalObject, scope, "cannot set '__annotations__' attribute of immutable type '"_s, type->nameInMessages(), '\'');
         return;
     }
@@ -2392,6 +2398,9 @@ bool isMadeAtRunTimeInCPython(PyType* type)
 {
     if (type->isHeapType())
         return false;
+    // (Nothing can be set in a type that is not. In one of the others the program may have set __module__ to anything.)
+    if (!type->isImmutable())
+        return true;
     JSValue module = type->dict()->get(Runtime::from(type->realm()).names.dModule());
     return module && module.isString();
 }
