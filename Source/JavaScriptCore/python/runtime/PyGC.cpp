@@ -237,63 +237,58 @@ private:
         // As a rule there is neither, however many tracebacks the program keeps.
         if (!parts.hasUnseenException && !parts.hasFrameThatLacksCaller)
             return;
-        auto& [frames, entries, exceptions, hasUnseenException, hasFrameThatLacksCaller] = parts;
-        // Chains may be as long as the stack was deep, and many begin in the middle of another.
-        UncheckedKeyHashSet<JSCell*> isWithinReach;
-        Vector<JSCell*> path;
-        auto settle = [&](bool isOutOfReach) {
-            for (JSCell* cell : path)
-                (isOutOfReach ? m_outOfReach : isWithinReach).add(cell);
-            path.shrink(0);
-            return isOutOfReach;
-        };
-        auto leadsToFrameThatLacksCaller = [&](PyFrame* frame) {
-            while (true) {
-                if (!frame || isWithinReach.contains(frame))
-                    return settle(false);
-                path.append(frame);
-                if (frame->lacksBack() || m_outOfReach.contains(frame))
-                    return settle(true);
-                frame = PyFrame::tryFrom(frame->backAsItIs());
-            }
-        };
-        for (PyFrame* frame : frames)
-            leadsToFrameThatLacksCaller(frame);
-        // An entry leads to its frame object and to the entries of the calls that its call made.
-        Vector<PyTraceback*> chain;
-        auto look = [&](PyTraceback* first) {
-            bool isOutOfReach = false;
-            for (PyTraceback* entry = first; entry; entry = PyTraceback::tryFrom(entry->next())) {
-                if (m_outOfReach.contains(entry)) {
-                    isOutOfReach = true;
-                    break;
-                }
-                if (isWithinReach.contains(entry))
-                    break;
-                chain.append(entry);
-            }
-            while (!chain.isEmpty()) {
-                PyTraceback* entry = chain.takeLast();
-                isOutOfReach |= entry->frameIfMade() && m_outOfReach.contains(entry->frameIfMade());
-                (isOutOfReach ? m_outOfReach : isWithinReach).add(entry);
-            }
-        };
-        for (PyTraceback* entry : entries)
-            look(entry);
-        for (PyException* exception : exceptions) {
-            auto* first = PyTraceback::tryFrom(exception->tracebackAsItIs());
-            if (!exception->isUnseen()) {
-                if (first && m_outOfReach.contains(first))
-                    m_outOfReach.add(exception);
+        // First what is out of reach by itself, then all that leads there: so it makes no difference in which order the heap has given the cells.
+        for (PyException* exception : parts.exceptions) {
+            if (!exception->isUnseen())
                 continue;
-            }
             m_outOfReach.add(exception);
-            for (PyTraceback* entry = first; entry; entry = PyTraceback::tryFrom(entry->next())) {
+            for (auto* entry = PyTraceback::tryFrom(exception->tracebackAsItIs()); entry; entry = PyTraceback::tryFrom(entry->next())) {
                 m_outOfReach.add(entry);
                 // Not one that the program has asked for, or a tool: that one is known to others.
                 if (PyFrame* frame = entry->frameIfMade(); frame && frame->isKnownToTracebackOnly())
                     m_outOfReach.add(frame);
             }
+        }
+        // Chains may be as long as the stack was deep, and many begin in the middle of another. Each is followed until it ends or comes to what is known, and settled from there backwards.
+        UncheckedKeyHashSet<JSCell*> isWithinReach;
+        auto settleChainFrom = [&]<typename Cell>(Cell* first, auto&& next, auto&& isOutOfReachByItself) {
+            Vector<Cell*, 32> chain;
+            bool isOutOfReach = false;
+            for (Cell* cell = first; cell; cell = next(cell)) {
+                if (m_outOfReach.contains(cell)) {
+                    isOutOfReach = true;
+                    break;
+                }
+                if (isWithinReach.contains(cell))
+                    break;
+                chain.append(cell);
+            }
+            while (!chain.isEmpty()) {
+                Cell* cell = chain.takeLast();
+                isOutOfReach |= isOutOfReachByItself(cell);
+                (isOutOfReach ? m_outOfReach : isWithinReach).add(cell);
+            }
+        };
+        // A frame object leads to that of its caller.
+        for (PyFrame* frame : parts.frames) {
+            settleChainFrom(frame, [](PyFrame* frame) {
+                return PyFrame::tryFrom(frame->backAsItIs());
+            }, [](PyFrame* frame) {
+                return frame->lacksBack();
+            });
+        }
+        // An entry leads to its frame object and to the entries of the calls that its call made.
+        for (PyTraceback* entry : parts.entries) {
+            settleChainFrom(entry, [](PyTraceback* entry) {
+                return PyTraceback::tryFrom(entry->next());
+            }, [&](PyTraceback* entry) {
+                return entry->frameIfMade() && m_outOfReach.contains(entry->frameIfMade());
+            });
+        }
+        // An exception leads to its entries.
+        for (PyException* exception : parts.exceptions) {
+            if (auto* first = PyTraceback::tryFrom(exception->tracebackAsItIs()); first && m_outOfReach.contains(first))
+                m_outOfReach.add(exception);
         }
     }
 
