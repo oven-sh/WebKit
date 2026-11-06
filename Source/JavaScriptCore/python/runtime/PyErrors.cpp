@@ -272,6 +272,8 @@ static void askForTerminationAgain(JSGlobalObject* globalObject)
 
 void dropPendingException(JSGlobalObject* globalObject, ExceptionScope& scope)
 {
+    // The VM forgets it too, as where Python catches: see clearPendingExceptionIfMatches().
+    scope.vm().clearLastException();
     if (scope.tryClearException()) [[likely]]
         return;
     DECLARE_TOP_EXCEPTION_SCOPE(scope.vm()).clearException();
