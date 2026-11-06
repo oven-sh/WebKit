@@ -6,6 +6,7 @@
 #include "config.h"
 #include "PyList.h"
 
+#include "DeferTermination.h"
 #include "GCMemoryOperations.h"
 #include "JSCInlines.h"
 #include "PyAbstract.h"
@@ -1399,6 +1400,8 @@ void listSort(JSGlobalObject* globalObject, JSArray* list, JSValue key, bool rev
     // Not one that JS has forbidden to grow, which could not be filled again.
     bool staysFilled = !list->structure()->isStructureExtensible();
     if (!staysFilled) {
+        // From here on the items are nowhere but in `values`. It is not here that the host ends this, but in what is called below.
+        DeferTerminationForAWhile deferred(vm);
         listTruncate(globalObject, list, 0);
         RETURN_IF_EXCEPTION(scope, void());
     }
@@ -1453,16 +1456,25 @@ void listSort(JSGlobalObject* globalObject, JSArray* list, JSValue key, bool rev
     if (failed)
         pending = takePendingException(globalObject);
     if (staysFilled) {
+        // It has its items still, if the host has ended the sort. What is put into it may go to a setter of JS, which can be ended; nothing else
+        // ends this halfway.
+        RETURN_IF_EXCEPTION_WITH_TRAPS_DEFERRED(scope, void());
         for (unsigned i = 0; i < count && i < list->length(); ++i) {
             listSet(globalObject, list, i, valueData[i]);
-            RETURN_IF_EXCEPTION(scope, void());
+            RETURN_IF_EXCEPTION_WITH_TRAPS_DEFERRED(scope, void());
         }
     } else {
+        // The items go back even if the host has ended the sort, or is about to: the program may go on.
+        std::optional<ExceptionSetAside> suspended;
+        if (failed && !pending) [[unlikely]]
+            suspended.emplace(globalObject);
+        DeferTerminationForAWhile deferred(vm);
         listTruncate(globalObject, list, 0);
         RETURN_IF_EXCEPTION(scope, void());
         listAppendSpan(globalObject, list, { valueData, count });
         RETURN_IF_EXCEPTION(scope, void());
     }
+    RETURN_IF_EXCEPTION(scope, void());
     if (pending) {
         raiseException(globalObject, scope, pending);
         return;

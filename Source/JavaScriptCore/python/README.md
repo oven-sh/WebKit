@@ -2063,6 +2063,8 @@ that run the tests on a debug build have the option on. What that takes:
     `TerminationNotDeferred`, or it cannot be ended.
   - A stream or a generator that nothing refers to any more is closed at once where the runtime can tell. Not while the host is
     ending what runs here (`vm.hasPendingTermination()`): the collector finds it, if the program goes on.
+  - What the runtime has taken apart for as long as it calls code of the program goes back together whatever ends the call (the items
+    of a list that is being sorted): `ExceptionSetAside`, then `DeferTerminationForAWhile`.
 
 To find what is missing without dying at the first: `BUN_JSC_uncheckedExceptionsLog=FILE` with the option above writes each missing
 check to the file, once, with both stacks, and goes on; `Tools/Scripts/unchecked-exceptions FILE` puts them in order by the function
