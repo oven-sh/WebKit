@@ -151,7 +151,6 @@ void BunV8HeapSnapshotBuilder::analyzeNode(JSCell* cell)
 unsigned BunV8HeapSnapshotBuilder::analyzeNodeInternal(JSCell* cell)
 {
     Locker locker { m_buildingNodeMutex };
-    auto typeIndex = getNodeTypeIndex(cell);
     unsigned index = m_nodes.size();
 
     // Reuse the identifier from a prior snapshot if this cell survived;
@@ -170,7 +169,6 @@ unsigned BunV8HeapSnapshotBuilder::analyzeNodeInternal(JSCell* cell)
         .cell = cell,
         .selfSize = cell->estimatedSizeInBytes(m_profiler.vm()),
         .id = identifier + kSyntheticIdCount,
-        .typeIndex = typeIndex,
     });
 
     if (cell->type() == GlobalObjectType)
@@ -588,17 +586,28 @@ unsigned BunV8HeapSnapshotBuilder::addString(const String& str)
     return index;
 }
 
-String BunV8HeapSnapshotBuilder::generateV8HeapSnapshot()
+// Extra pass #1. The nodes are made on the collector's threads, where a cell must not be asked whether it is callable:
+// getCallData() is for the thread that runs the VM (JSCell::isCallableWithConcurrency()).
+void BunV8HeapSnapshotBuilder::fillInNodeTypesAndNames()
 {
-    if (m_overflowed.load(std::memory_order_relaxed))
-        return String();
-
-    // Extra pass #1: fill in the node names
+    // (All the types first: to name an object may resolve a rope, which is a node too.)
+    for (auto& node : m_nodes) {
+        if (node.cell)
+            node.typeIndex = getNodeTypeIndex(node.cell);
+    }
     for (auto& node : m_nodes) {
         if (node.cell)
             node.name = getDetailedNodeType(node.cell);
         node.edgesCount = 0; // Reset edge counts for deduplication pass
     }
+}
+
+String BunV8HeapSnapshotBuilder::generateV8HeapSnapshot()
+{
+    if (m_overflowed.load(std::memory_order_relaxed))
+        return String();
+
+    fillInNodeTypesAndNames();
 
     appendSyntheticRootEdges();
 
@@ -901,12 +910,7 @@ Vector<uint8_t> BunV8HeapSnapshotBuilder::generateV8HeapSnapshotBytes()
     if (m_overflowed.load(std::memory_order_relaxed))
         return {};
 
-    // Extra pass #1: fill in the node names
-    for (auto& node : m_nodes) {
-        if (node.cell)
-            node.name = getDetailedNodeType(node.cell);
-        node.edgesCount = 0; // Reset edge counts for deduplication pass
-    }
+    fillInNodeTypesAndNames();
 
     appendSyntheticRootEdges();
 

@@ -139,6 +139,7 @@ private:
 
     // Helper methods
     unsigned getOrCreateNodeId(JSCell*);
+    void fillInNodeTypesAndNames();
     unsigned getNodeTypeIndex(JSCell*);
     unsigned getEdgeTypeIndex(RootMarkReason);
     unsigned getEdgeTypeIndex(const String& type);
