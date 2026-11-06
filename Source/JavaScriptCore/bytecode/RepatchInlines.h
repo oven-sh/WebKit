@@ -122,6 +122,14 @@ inline void* linkCompiledCallee(VM& vm, JSCell* owner, CallFrame* calleeFrame, C
     return entrypoint.taggedPtr();
 }
 
+// The call throws, and unwinding begins at the frame of the callee, of which nothing but the header has been written. prepareForExecution() may
+// have succeeded, if the exception was pending before: a frame with a code block would be taken for one that has begun.
+ALWAYS_INLINE void* leaveWithoutCodeBlock(CallFrame* calleeFrame)
+{
+    calleeFrame->setCodeBlock(nullptr);
+    return nullptr;
+}
+
 inline void* handleHostCall(VM& vm, JSCell* owner, CallFrame* calleeFrame, JSValue callee, CallLinkInfo* callLinkInfo)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -142,7 +150,7 @@ inline void* handleHostCall(VM& vm, JSCell* owner, CallFrame* calleeFrame, JSVal
             DeferTraps deferTraps(vm); // We can't jettison if we're going to call this CodeBlock.
             auto* executable = uncheckedDowncast<FunctionExecutable>(function->executable());
             executable->prepareForExecution<FunctionExecutable>(vm, function, function->scopeUnchecked(), CodeSpecializationKind::CodeForCall, *calleeFrame->addressOfCodeBlock());
-            RETURN_IF_EXCEPTION(scope, nullptr);
+            RETURN_IF_EXCEPTION(scope, leaveWithoutCodeBlock(calleeFrame));
             // The trampolines go by ExecutableBase::m_jitCodeForCallWithArityCheck, which this fills.
             executable->entrypointFor(CodeSpecializationKind::CodeForCall, ArityCheckMode::MustCheckArity);
             calleeFrame->setCallee(function);
@@ -302,7 +310,7 @@ ALWAYS_INLINE void* linkFor(VM& vm, JSCell* owner, CallFrame* calleeFrame, CallL
 
         CodeBlock** codeBlockSlot = calleeFrame->addressOfCodeBlock();
         functionExecutable->prepareForExecution<FunctionExecutable>(vm, callee, scope, kind, *codeBlockSlot);
-        RETURN_IF_EXCEPTION(throwScope, nullptr);
+        RETURN_IF_EXCEPTION(throwScope, leaveWithoutCodeBlock(calleeFrame));
 
         codeBlock = *codeBlockSlot;
         ASSERT(codeBlock);
@@ -393,7 +401,7 @@ ALWAYS_INLINE void* virtualForWithFunction(VM& vm, JSCell* owner, CallFrame* cal
 
         CodeBlock** codeBlockSlot = calleeFrame->addressOfCodeBlock();
         functionExecutable->prepareForExecution<FunctionExecutable>(vm, function, scope, kind, *codeBlockSlot);
-        RETURN_IF_EXCEPTION(throwScope, nullptr);
+        RETURN_IF_EXCEPTION(throwScope, leaveWithoutCodeBlock(calleeFrame));
     }
 
     // FIXME: Support wasm IC.

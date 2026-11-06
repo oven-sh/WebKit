@@ -677,7 +677,7 @@ static ALWAYS_INLINE void* firstCallToJSFunction(VM& vm, CallFrame* calleeFrame,
     DeferTraps deferTraps(vm); // We can't jettison if we're going to call this CodeBlock.
     CodeBlock** codeBlockSlot = calleeFrame->addressOfCodeBlock();
     functionExecutable->prepareForExecution<FunctionExecutable>(vm, function, function->scopeUnchecked(), kind, *codeBlockSlot);
-    RETURN_IF_EXCEPTION(throwScope, nullptr);
+    RETURN_IF_EXCEPTION(throwScope, leaveWithoutCodeBlock(calleeFrame));
     ArityCheckMode arity = calleeFrame->argumentCountIncludingThis() < static_cast<size_t>((*codeBlockSlot)->numParameters()) ? ArityCheckMode::MustCheckArity : ArityCheckMode::ArityCheckNotRequired;
     return functionExecutable->entrypointFor(kind, arity).taggedPtr();
 }
