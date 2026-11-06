@@ -207,7 +207,7 @@ enum class NativeKind : uint8_t {
     New, // __new__: a Function bound to the type.
 };
 
-enum NativeFlag : uint8_t {
+enum NativeFlag : uint16_t {
     // list.__add__, tuple.__mul__ and the like: for `a + b`, the methods of numbers are tried on both operands first.
     SequenceOperation = 1 << 0,
     // __get__, which refuses (None, None). Set by the name.
@@ -230,6 +230,10 @@ enum NativeFlag : uint8_t {
     // None of its parameters can be given by name, and still CPython parses its arguments as it does those of functions that take
     // keywords (Argument Clinic does that for a method that is told its defining class), which shows in what it says of wrong ones.
     ParsedByName = 1 << 7,
+    // It stands where JS has a function of its own that takes the required parameters alone, and the others are what Python adds. What JS
+    // passes beyond the required ones is dropped, as that function ignores it: array.map(map.get) is get(item, index, array). For a function
+    // that is made bound to its `self`, not for one in the table of a type.
+    OptionalParametersAreNotForJS = 1 << 8,
 };
 
 JSValue makeInt(JSGlobalObject*, int64_t); // PyNumbers.h
@@ -318,7 +322,7 @@ public:
     static constexpr int arityOf(VariadicWithSelf) { return -2; }
 
     template<typename Function>
-    consteval NativeDef(NativeKind kind, ASCIILiteral name, Function function, ASCIILiteral signature, uint8_t flags = 0, RawHash rawHash = nullptr)
+    consteval NativeDef(NativeKind kind, ASCIILiteral name, Function function, ASCIILiteral signature, uint16_t flags = 0, RawHash rawHash = nullptr)
         : name(name)
         , signatureText(signature)
         , pointer(function)
@@ -343,7 +347,7 @@ public:
     KnownOfName knownOfName;
     NativeSignature signature;
     NativeKind kind;
-    uint8_t flags;
+    uint16_t flags;
 
 private:
     // Not constexpr, so that a table with a mistake in it does not compile.

@@ -1663,12 +1663,14 @@ The collector is told the size of the side tables, which are several times the s
   `Headers`, `URLSearchParams`, `FormData`, `CookieMap`, a cache from a package (`isMappingByMethods`, asked at each use). `o[k]` is `get(k)`, or a
   `KeyError` if not `has(k)`; `k in o` is `has(k)`; `o[k] = v` is `set(k, v)`; `del o[k]` is `delete(k)`; iteration is over `keys()`; `len()` is
   `length`, `size` or the number of keys; an empty one is false. So `dict(o)` and `**o`. `items()`, `pop()`, `popitem()`, `setdefault()` and `update()` are
-  those of a mapping, made of the above. `o.get(k, default=None)` is Python's too, where the `get()` of JS's is written in C++, as that of a `Map`, of `Headers`
-  and the like is: it knows no default and ignores a second argument. It is asked, and where a default was given, it gives `undefined` or `null` and `has(k)` says
-  no, the default is the answer. A `get()` written in JS says itself what its arguments mean (`get(key, options)` of a cache) and is left alone; so is
-  `Map.prototype.get`. `o.get` is then no function of JS's but a method written in C++, as `{}.get` is, whose `__self__` is the bound function of JS's;
-  it is remembered with that (`bindIfFunction`), so `o.get is o.get`. It goes by the name: the same function under another name is JS's. Passed on to JS it is a function of Python's of
-  two parameters. What else the object has itself comes first as ever:
+  those of a mapping, made of the above. `o.get(k, default=None)` is Python's too, where the `get()` of JS's is written in C++ and declares one parameter, as that of a `Map`, of `Headers`
+  and the like: it knows no default and ignores a second argument. Then `o.get` is no function of JS's but a method written in C++, as `{}.get` is, with the parameters of `collections.abc.Mapping.get`
+  (`attributeFromProperty`, `givesWayToGetOfMappings`, `jsMappingGet`). Its `__self__` is the `get()` that was found, bound to `o`: that is what it calls, so `super().get(k, default)`, in a class with a `get()` of its own, calls the one behind that. JS's is asked, and where a default was given, it gives `undefined` or `null` and `has(k)` says
+  no, the default is the answer. A `get()` written in JS says itself what its arguments mean (`get(key, options)` of a cache) and is left alone; so is one that declares
+  no parameter or several (the functions of an addon declare none), and `Map.prototype.get`. To read `o.get` runs and raises nothing but what the read of the property does, and nothing is remembered: what the object is goes by what can be
+  seen of its `Symbol.iterator`, `has` and `keys` without running code of the program's, so an object that has getters for those, or is a `Proxy`, keeps its `get()`. It goes by the name: the same function under another name is JS's.
+  As that of a dict, it does not go by the `__getitem__` that a class of Python's derived from the object's may have. The default is for Python: what JS passes beyond the key is dropped, as its own `get()` ignores it, so
+  `array.map(o.get)` is what it is in JS (`OptionalParametersAreNotForJS`). What else the object has itself comes first as ever:
   `o.keys()`, `o.values()` and `o.entries()` give iterators of JS. Its properties are attributes only. A key that is there twice
   (`URLSearchParams`) is iterated over twice, and `[]` gives what `get()` gives, the first.
   (A decision that can still be changed.)

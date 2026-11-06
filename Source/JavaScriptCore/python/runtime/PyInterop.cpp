@@ -223,16 +223,13 @@ static JSValue bindToObject(JSGlobalObject* globalObject, JSObject* function, JS
 }
 
 static bool isClassWrittenInJS(JSFunction*);
-static bool hasItemsByMethods(JSGlobalObject*, JSObject*);
-static JSValue getWithDefaultFor(JSGlobalObject*, JSBoundFunction*);
+static JSValue boundMethod(JSGlobalObject*, JSObject*, JSObject* function);
 
 // A function that is a property is a method: it is called with the object as `this`, as in object.method(). The method of an object is
 // one thing, however often it is read: object.method is object.method, and emitter.off(name, object.method) finds what on() was given.
-// `key`: of the property. The get() of a mapping by its methods takes a default, see getWithDefault().
-static JSValue bindIfFunction(JSGlobalObject* globalObject, JSObject* object, JSValue value, const Identifier& key)
+static JSValue bindIfFunction(JSGlobalObject* globalObject, JSObject* object, JSValue value)
 {
-    Runtime& rt = runtime(globalObject);
-    VM& vm = rt.vm();
+    VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (!value.isObject() || isPyObject(value) || PyFunction::is(value) || PyType::is(value) || PyNativeFunction::is(value))
         return value;
@@ -249,6 +246,14 @@ static JSValue bindIfFunction(JSGlobalObject* globalObject, JSObject* object, JS
     RETURN_IF_EXCEPTION(scope, { });
     if (isPrototype)
         return value;
+    RELEASE_AND_RETURN(scope, boundMethod(globalObject, object, function));
+}
+
+static JSValue boundMethod(JSGlobalObject* globalObject, JSObject* object, JSObject* function)
+{
+    Runtime& rt = runtime(globalObject);
+    VM& vm = rt.vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
     // object -> function -> bound function, all of it weak: a bound function lasts as long as both.
     auto mapIn = [&](JSValue found, auto&& remember) {
         // JSWeakMap::get() gives undefined for what is not there.
@@ -266,24 +271,7 @@ static JSValue bindIfFunction(JSGlobalObject* globalObject, JSObject* object, JS
         RETURN_IF_EXCEPTION(scope, { });
         methods->set(vm, function, bound);
     }
-    // It is a get() written in C++ that gives way: one written in JS says itself what its arguments mean (`get(key, options)` of a cache).
-    if (key != vm.propertyNames->get) [[likely]]
-        return bound;
-    if (auto* jsFunction = dynamicDowncast<JSFunction>(function); !jsFunction || !jsFunction->isHostFunction())
-        return bound;
-    // bound function -> what stands for it
-    if (JSValue method = methods->get(asObject(bound)); method.isCell())
-        return method;
-    // It may take JS to tell what the object is. Another thread can call neither.
-    if (!rt.threads().isMainThread())
-        return bound;
-    bool byMethods = hasItemsByMethods(globalObject, object);
-    RETURN_IF_EXCEPTION(scope, { });
-    if (!byMethods)
-        return bound;
-    JSValue method = getWithDefaultFor(globalObject, uncheckedDowncast<JSBoundFunction>(bound.asCell()));
-    methods->set(vm, asObject(bound), method);
-    return method;
+    return bound;
 }
 
 static bool isMappingByMethods(JSGlobalObject*, JSObject*);
@@ -332,6 +320,8 @@ static ALWAYS_INLINE JSValue readProperty(JSGlobalObject* globalObject, JSObject
     RELEASE_AND_RETURN(scope, slot.getValue(globalObject, key));
 }
 
+static JSValue getOfMappingsInPlaceOf(JSGlobalObject*, JSValue method, JSObject*);
+
 // The same as an attribute of the receiver: a function is bound to it.
 template<bool isOwn>
 static ALWAYS_INLINE JSValue attributeFromProperty(JSGlobalObject* globalObject, JSObject* holder, JSObject* receiver, const Identifier& key)
@@ -342,7 +332,14 @@ static ALWAYS_INLINE JSValue attributeFromProperty(JSGlobalObject* globalObject,
     RETURN_IF_EXCEPTION(scope, { });
     if (!value)
         return { };
-    RELEASE_AND_RETURN(scope, bindIfFunction(globalObject, receiver, value, key));
+    // mapping.get(key, default=None)
+    if (key == vm.propertyNames->get) [[unlikely]] {
+        JSValue method = getOfMappingsInPlaceOf(globalObject, value, receiver);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (method)
+            return method;
+    }
+    RELEASE_AND_RETURN(scope, bindIfFunction(globalObject, receiver, value));
 }
 
 JSValue attributeFromPropertyOfJS(JSGlobalObject* globalObject, JSObject* object, JSString* name)
@@ -734,6 +731,41 @@ static bool hasItemsByMethods(JSGlobalObject* globalObject, JSObject* object)
     return object->type() == JSWeakMapType || isMappingByMethods(globalObject, object);
 }
 
+// The get() of a Map, of Headers and the like, and of a WeakMap knows no default and ignores a second argument. To Python they are mappings,
+// and every mapping has get(key, default=None). So for them `get` is a method written in C++ that has (jsMappingGet), and not the property.
+// It is a get() written in C++ with one parameter that gives way. One written in JS says itself
+// what its arguments mean (`get(key, options)` of a cache), and so may one of an addon, whose functions declare no parameters.
+// To read an attribute is to run nothing that has nothing to do with it, so this goes by what can be told without: an object that has
+// getters for its other methods, or is a proxy, keeps its get().
+static bool givesWayToGetOfMappings(JSGlobalObject* globalObject, JSValue method, JSObject* object)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    // (What was compiled ahead of time is a host function to the engine, and written in JS all the same.)
+    auto* function = dynamicDowncast<JSFunction>(method);
+    if (!function || !function->isHostFunction() || function->isCompiledClosure() || function->inherits<JSBoundFunction>() || function->originalLength(vm) != 1)
+        return false;
+    // Map.prototype.get is JS's, as everything is that is read off a prototype: see bindIfFunction().
+    bool isPrototype = isPrototypeOfConstructor(globalObject, object);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (isPrototype)
+        return false;
+    // As hasItemsByMethods() has it.
+    if (JSType type = object->type(); type == JSMapType || type == JSWeakMapType)
+        return true;
+    if (typeOf(globalObject, object) == runtime(globalObject).jsPlainObjectType())
+        return false;
+    for (PropertyName name : { PropertyName(vm.propertyNames->iteratorSymbol), PropertyName(vm.propertyNames->has), PropertyName(vm.propertyNames->keys) }) {
+        JSValue other;
+        Inquiry result = inquirePropertyOfHost(globalObject, object, name, other);
+        RETURN_IF_EXCEPTION(scope, false);
+        // (What staticmethod() has is taken to be a function.)
+        if (result != Inquiry::Value || (!other.isCallable() && !isPyObject(other)))
+            return false;
+    }
+    return true;
+}
+
 // object.name(...arguments)
 static JSValue callMethodOfJS(JSGlobalObject* globalObject, JSObject* object, const Identifier& name, std::initializer_list<JSValue> arguments = { })
 {
@@ -750,19 +782,6 @@ static JSValue callMethodOfJS(JSGlobalObject* globalObject, JSObject* object, co
     JSValue result = JSC::call(globalObject, method, callData, object, list);
     RETURN_IF_EXCEPTION(scope, { });
     return result;
-}
-
-// False: it has not, which is a KeyError, or another exception.
-static bool hasKeyByMethod(JSGlobalObject* globalObject, JSObject* object, JSValue key)
-{
-    VM& vm = getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue has = callMethodOfJS(globalObject, object, vm.propertyNames->has, { key });
-    RETURN_IF_EXCEPTION(scope, false);
-    if (has.toBoolean(globalObject))
-        return true;
-    raiseKeyError(globalObject, scope, key);
-    return false;
 }
 
 // [...object.keys()]. Null: an exception.
@@ -793,39 +812,72 @@ static JSMap* mapWithItsOwnMethods(JSGlobalObject* globalObject, JSValue self, s
     return map;
 }
 
+// mapping.has(key). Map's own need not be called.
+static bool hasKeyByMethod(JSGlobalObject* globalObject, JSObject* object, JSValue key)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSMap* map = mapWithItsOwnMethods(globalObject, object, { { vm.propertyNames->has, JSMapHasIntrinsic } });
+    RETURN_IF_EXCEPTION(scope, false);
+    if (map)
+        RELEASE_AND_RETURN(scope, map->has(globalObject, valueForJS(key)));
+    JSValue has = callMethodOfJS(globalObject, object, vm.propertyNames->has, { key });
+    RETURN_IF_EXCEPTION(scope, false);
+    return has.toBoolean(globalObject);
+}
+
 // The items of an object are its properties. Those of what is a mapping by its methods are what the methods say.
-static JSValue jsObjectGetItem(JSGlobalObject* globalObject, JSValue self, JSValue key)
+// `isAbsent`: there is none, which is no exception yet. `refusesOtherKeys`: what can name no property is a TypeError, as opposed to not there.
+static JSValue itemOfObjectOfJS(JSGlobalObject* globalObject, JSValue self, JSValue key, bool& isAbsent, bool refusesOtherKeys)
 {
     if (!ensureMainThreadForJS(globalObject))
         return { };
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
+    JSObject* object = asObject(self);
     JSMap* map = mapWithItsOwnMethods(globalObject, self, { { vm.propertyNames->has, JSMapHasIntrinsic }, { vm.propertyNames->get, JSMapGetIntrinsic } });
     RETURN_IF_EXCEPTION(scope, { });
     if (map) {
-        bool found = map->has(globalObject, valueForJS(key));
+        JSValue value = map->get(globalObject, valueForJS(key));
         RETURN_IF_EXCEPTION(scope, { });
-        if (!found)
-            return raiseKeyError(globalObject, scope, key);
-        RELEASE_AND_RETURN(scope, map->get(globalObject, valueForJS(key)));
+        if (value.isUndefined()) {
+            isAbsent = !map->has(globalObject, valueForJS(key));
+            RETURN_IF_EXCEPTION(scope, { });
+        }
+        return value;
     }
-    bool byMethods = hasItemsByMethods(globalObject, asObject(self));
+    bool byMethods = hasItemsByMethods(globalObject, object);
     RETURN_IF_EXCEPTION(scope, { });
     if (byMethods) {
-        if (failed(scope, hasKeyByMethod(globalObject, asObject(self), key)))
+        isAbsent = !hasKeyByMethod(globalObject, object, key);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (isAbsent)
             return { };
-        RELEASE_AND_RETURN(scope, callMethodOfJS(globalObject, asObject(self), vm.propertyNames->get, { key }));
+        RELEASE_AND_RETURN(scope, callMethodOfJS(globalObject, object, vm.propertyNames->get, { key }));
+    }
+    if (!refusesOtherKeys && !isStr(key) && !isInt(key) && !key.isSymbol()) {
+        isAbsent = true;
+        return { };
     }
     Identifier name;
     if (failed(scope, propertyKeyForItem(globalObject, key, name)))
         return { };
-    JSObject* object = asObject(self);
-    PropertySlot slot(object, PropertySlot::InternalMethodType::Get);
-    bool found = object->getPropertySlot(globalObject, name, slot);
+    JSValue value = readProperty<false>(globalObject, object, object, name);
     RETURN_IF_EXCEPTION(scope, { });
-    if (!found)
+    isAbsent = !value;
+    return value;
+}
+
+static JSValue jsObjectGetItem(JSGlobalObject* globalObject, JSValue self, JSValue key)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    bool isAbsent = false;
+    JSValue value = itemOfObjectOfJS(globalObject, self, key, isAbsent, true);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (isAbsent)
         return raiseKeyError(globalObject, scope, key);
-    RELEASE_AND_RETURN(scope, slot.getValue(globalObject, name));
+    return value;
 }
 
 static JSValue jsObjectSetItem(JSGlobalObject* globalObject, JSValue self, JSValue key, JSValue value)
@@ -875,8 +927,10 @@ static JSValue jsObjectDelItem(JSGlobalObject* globalObject, JSValue self, JSVal
     bool byMethods = hasItemsByMethods(globalObject, asObject(self));
     RETURN_IF_EXCEPTION(scope, { });
     if (byMethods) {
-        if (failed(scope, hasKeyByMethod(globalObject, asObject(self), key)))
-            return { };
+        bool has = hasKeyByMethod(globalObject, asObject(self), key);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (!has)
+            return raiseKeyError(globalObject, scope, key);
         callMethodOfJS(globalObject, asObject(self), vm.propertyNames->deleteKeyword, { key });
         RETURN_IF_EXCEPTION(scope, { });
         return jsUndefined();
@@ -899,19 +953,12 @@ static JSValue jsObjectContains(JSGlobalObject* globalObject, JSValue self, JSVa
         return { };
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSMap* map = mapWithItsOwnMethods(globalObject, self, { { vm.propertyNames->has, JSMapHasIntrinsic } });
-    RETURN_IF_EXCEPTION(scope, { });
-    if (map)
-        RELEASE_AND_RETURN(scope, jsBoolean(map->has(globalObject, valueForJS(key))));
     if (auto* set = dynamicDowncast<JSSet>(self))
         RELEASE_AND_RETURN(scope, jsBoolean(set->has(globalObject, valueForJS(key))));
     bool byMethods = asObject(self)->type() == JSWeakSetType || hasItemsByMethods(globalObject, asObject(self));
     RETURN_IF_EXCEPTION(scope, { });
-    if (byMethods) {
-        JSValue has = callMethodOfJS(globalObject, asObject(self), vm.propertyNames->has, { key });
-        RETURN_IF_EXCEPTION(scope, { });
-        return jsBoolean(has.toBoolean(globalObject));
-    }
+    if (byMethods)
+        RELEASE_AND_RETURN(scope, jsBoolean(hasKeyByMethod(globalObject, asObject(self), key)));
     Identifier name;
     if (failed(scope, propertyKeyForItem(globalObject, key, name))) {
         takePendingException(globalObject);
@@ -1286,31 +1333,58 @@ static JSValue jsObjectMappingMethod(JSGlobalObject* globalObject, JSValue self,
     }));
 }
 
-// The get() of a Map, of Headers and the like, and of a WeakMap knows no default and ignores a second argument. To Python they are mappings,
-// and every mapping has get(key, default=None). So mapping.get is this to Python, a method written in C++ as that of a dict is. Its `self` is
-// the method of JS's, bound to the mapping.
-static JSValue getWithDefault(JSGlobalObject* globalObject, JSValue self, JSValue key, JSValue defaultValue)
+// The get() of an object that is a mapping. As that of a dict, it goes by what is in the mapping, whatever __getitem__ a class derived from
+// the object's has. A key that can name no property is not there, as for `in`.
+static JSValue jsObjectGet(JSGlobalObject* globalObject, JSValue self, JSValue key, JSValue defaultValue)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    bool isAbsent = false;
+    JSValue value = itemOfObjectOfJS(globalObject, self, key, isAbsent, false);
+    RETURN_IF_EXCEPTION(scope, { });
+    return isAbsent ? (defaultValue ? defaultValue : jsUndefined()) : value;
+}
+
+// What is read for mapping.get: see givesWayToGetOfMappings(). It is the get() that was found which is called, and the has() of the mapping that is
+// asked. `self`: that get(), bound to the mapping.
+static JSValue jsMappingGet(JSGlobalObject* globalObject, JSValue self, JSValue key, JSValue defaultValue)
 {
     if (!ensureMainThreadForJS(globalObject))
         return { };
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* method = uncheckedDowncast<JSBoundFunction>(self.asCell());
-    MarkedArgumentBuffer list;
-    list.append(valueForJS(key));
-    JSValue value = JSC::call(globalObject, method->targetFunction(), method->boundThis(), list, "not a function"_s);
+    JSObject* object = asObject(method->boundThis());
+    JSValue value;
+    // Map's own need not be called.
+    if (auto* map = dynamicDowncast<JSMap>(object); map && uncheckedDowncast<JSFunction>(method->targetFunction())->intrinsic() == JSMapGetIntrinsic)
+        value = map->get(globalObject, valueForJS(key));
+    else {
+        MarkedArgumentBuffer list;
+        list.append(valueForJS(key));
+        value = JSC::call(globalObject, method->targetFunction(), object, list, "not a function"_s);
+    }
     RETURN_IF_EXCEPTION(scope, { });
     if (!defaultValue || !value.isUndefinedOrNull())
         return value;
-    JSValue has = callMethodOfJS(globalObject, asObject(method->boundThis()), vm.propertyNames->has, { key });
+    bool has = hasKeyByMethod(globalObject, object, key);
     RETURN_IF_EXCEPTION(scope, { });
-    return has.toBoolean(globalObject) ? value : defaultValue;
+    return has ? value : defaultValue;
 }
-static constexpr NativeDef getWithDefaultDef = PY_METHOD("get", getWithDefault, "($self, key, default=None, /)");
+static constexpr NativeDef jsMappingGetDef = PY_METHOD_WITH_FLAGS("get", jsMappingGet, "($self, key, default=None)", OptionalParametersAreNotForJS);
 
-static JSValue getWithDefaultFor(JSGlobalObject* globalObject, JSBoundFunction* method)
+// `method`: what was found for object.get. Empty: it stays, or an exception.
+static JSValue getOfMappingsInPlaceOf(JSGlobalObject* globalObject, JSValue method, JSObject* object)
 {
-    return PyNativeFunction::create(globalObject, getWithDefaultDef, NativeKind::Function, method, runtime(globalObject).jsObjectType());
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    bool givesWay = givesWayToGetOfMappings(globalObject, method, object);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (!givesWay)
+        return { };
+    JSValue bound = boundMethod(globalObject, object, asObject(method));
+    RETURN_IF_EXCEPTION(scope, { });
+    return PyNativeFunction::create(globalObject, jsMappingGetDef, NativeKind::Function, bound, JSValue());
 }
 
 // MutableMapping.pop() asks `self` for a mark of the class.
@@ -2204,7 +2278,7 @@ static constexpr NativeDef jsObjectMethods[] = {
     PY_METHOD("keys", jsObjectKeys, "($self, /)"),
     PY_METHOD("values", jsObjectValues, "($self, /)"),
     PY_METHOD("items", jsObjectItems, "($self, /)"),
-    PY_METHOD("get", jsObjectMappingMethod<"get">, "($self, *args, **kwargs)"),
+    PY_METHOD("get", jsObjectGet, "($self, key, default=None)"),
     PY_METHOD("pop", jsObjectPop, "($self, key, default=<unrepresentable>, /)"),
     PY_METHOD("popitem", jsObjectMappingMethod<"popitem">, "($self, *args, **kwargs)"),
     PY_METHOD("setdefault", jsObjectMappingMethod<"setdefault">, "($self, *args, **kwargs)"),

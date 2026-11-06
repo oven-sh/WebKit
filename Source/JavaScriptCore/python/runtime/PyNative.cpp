@@ -447,7 +447,7 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(callNativeFunctionWithFrame, static NEV
     bool hasMarker = !args.hasKeywords() && hasKeywordMarker(globalObject, callFrame);
     // As for a function written in Python: what JS passes beyond what it can take is dropped. array.map(len)
     if (const NativeSignature& signature = function->def().signature; !signature.isVariadic && function->kind() != NativeKind::New && !args.hasKeywords() && !hasMarker) {
-        unsigned most = signature.maxPositional + (function->isDescriptor() ? 1 : 0);
+        unsigned most = ((function->def().flags & OptionalParametersAreNotForJS) ? signature.minPositional : signature.maxPositional) + (function->isDescriptor() ? 1 : 0);
         if (args.size() > most && !isBeingCalledByPython(globalObject, callFrame)) [[unlikely]]
             args = CallArgs(args.positional().first(most));
     }
@@ -528,12 +528,16 @@ static PyNativeFunction::Entry entryInOrder(unsigned arity)
     return entries[arity - (selfOfCall != SelfOfCall::None)];
 }
 
+static JSC_DECLARE_HOST_FUNCTION(callNativeFunctionWithParametersNotForJS);
+
 static PyNativeFunction::Entry entryFor(const NativeDef& def, NativeKind kind, JSValue owner)
 {
     if (def.flags & OnWipedStack)
         return callNativeFunctionOnWipedStack;
     if (def.flags & MayWait)
         return callNativeFunctionThatMayWait;
+    if (def.flags & OptionalParametersAreNotForJS)
+        return callNativeFunctionWithParametersNotForJS;
     auto& signature = def.signature;
     if (signature.isVariadic || signature.hasRequiredKeywordOnly || (def.flags & DescriptorGet))
         return callNativeFunctionWithFrame;
@@ -552,6 +556,16 @@ static PyNativeFunction::Entry entryFor(const NativeDef& def, NativeKind kind, J
         return callNativeFunctionWithFrame;
     }
     RELEASE_ASSERT_NOT_REACHED();
+}
+
+// NativeFlag::OptionalParametersAreNotForJS. With no more than the required arguments it makes no difference who calls.
+JSC_DEFINE_HOST_FUNCTION(callNativeFunctionWithParametersNotForJS, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    auto* function = uncheckedDowncast<PyNativeFunction>(callFrame->jsCallee());
+    if (callFrame->argumentCount() > function->def().signature.minPositional && !isBeingCalledByPython(globalObject, callFrame))
+        [[clang::musttail]] return callNativeFunctionWithFrame(globalObject, callFrame);
+    ASSERT(function->kind() == NativeKind::Function && function->def().signature.hasSelf && !function->def().signature.isVariadic && !function->def().signature.hasRequiredKeywordOnly);
+    [[clang::musttail]] return entryInOrder<SelfOfCall::Bound>(function->def().signature.parameterCount + 1)(globalObject, callFrame);
 }
 
 PY_DEFINE_JS_VIEW(PyNativeFunction)
