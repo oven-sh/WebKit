@@ -1057,8 +1057,14 @@ so the aim is that everything Python *guarantees* holds, and that what it merely
     the function that had raised in every call, one for each such thread; now in none of 40. Nothing is wiped for that: there is nothing left to wipe.
   - *What is left* are the words that the compiler leaves unwritten in frames that are not ours, on the way into the wait (`Threads::takeGIL`, `Condition::waitFor`, `ParkingLot`). Other shapes of that loop
     (a raise twelve calls deep, `hasattr()`, several threads) have the address of the carrier, or of the exception itself, in one of those in up to 15 looks of 40, for as long as the thread stays at that very place.
-    So what walks the heap does not count on it: a frame object that an exception nobody has seen has left behind lacks its caller (`PyFrame::backIs`), only that exception leads to it, and `gc.get_objects()`
-    and the like pass it over.
+    And the 128 bytes below the stack pointer, which are no frame's: the scan of another thread's stack takes them in because the ABI lets the innermost function use them (`osRedZoneAdjustment`). On a loaded machine a thread that gives
+    up the GIL loses the processor inside the system call by which it wakes the next one (`pthread_cond_signal`, on the way into the wait of `Threads::dropGIL`). After `hasattr()` had swallowed an `AttributeError`, an entry of the traceback
+    stood 64 bytes below the stack pointer there in 33 looks of 240, until the thread ran again.
+  - *So what walks the heap does not count on it.* An exception that nobody has seen is in the heap like any other: another thread is raising it, has caught it and is about to drop it, or has such a word on its stack. The runtime
+    counts on it that nothing of the program's has it, nor the entries of its traceback, nor the frame objects made for those, the last of which lacks its caller (`PyFrame::backIs`). `gc.get_objects()` and `gc.get_referrers()` pass over
+    all of that (`HeapView::findWhatIsOutOfReach`): the exception, its entries, their frame objects; and, whatever is left of the exception, all that leads to a frame object that lacks its caller: the frame objects of the calls it made, the
+    entries of those, the exception. (They used to pass over that one frame object only. Three threads that raise twelve calls deep and catch, 40 looks: a frame without its caller was reached 660 times from other frames, 715 times from
+    tracebacks, 715 times from exceptions; with assertions on, `f_back` of such a frame ended the process.)
 - **The collector marks while the program runs.** Its threads call `visitChildren` on cells that the program is changing at that
   moment. What every class of cell owes them:
   - Whatever `visitChildren` reads that is not a value is set by the constructor and never changes: the length of a tuple, the

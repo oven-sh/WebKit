@@ -45,6 +45,8 @@ public:
         assertFrameLeftLastHasCaller();
         return m_traceback.get();
     }
+    // For what walks the heap, and gives it to nobody.
+    JSValue tracebackAsItIs() const { return m_traceback.get(); }
     // For what adds an entry to it.
     JSValue tracebackSoFar()
     {
@@ -174,6 +176,8 @@ public:
             m_back.set(vm, this, caller);
     }
     bool lacksBack() const { return m_lacksBack; }
+    // For what walks the heap.
+    JSValue backAsItIs() const { return m_back.get(); }
     // The generator has yielded, or has ended: its frame is gone.
     void generatorHasStopped(bool isCompleted);
 

@@ -79,9 +79,6 @@ static bool isObjectOfPython(JSCell* cell, JSGlobalObject* globalObject)
 
 static bool isWhole(JSCell* cell)
 {
-    // Only an exception that nobody has seen leads to such a frame object (PyFrame::backIs()). That one may be alive: another thread is about to drop it.
-    if (PyFrame::is(cell))
-        return !PyFrame::from(cell)->lacksBack();
     if (cell->type() != PyTupleType)
         return true;
     for (JSValue item : uncheckedDowncast<PyTuple>(cell)->span()) {
@@ -159,13 +156,14 @@ public:
                 m_objects.append(cell);
             return IterationStatus::Continue;
         });
+        findWhatIsOutOfReach();
     }
 
     // All the objects of Python there are, parts included.
     const Vector<JSCell*>& objects() const { return m_objects; }
 
     // What a collection has found dead is only there until its finalizer has been called, which is going to happen in whoever's hands it is.
-    bool mayBeGiven(JSCell* cell) const { return !m_owners.contains(cell) && !m_toBeFinalized.contains(cell) && isObjectOfPython(cell, m_globalObject) && isWhole(cell); }
+    bool mayBeGiven(JSCell* cell) const { return !m_owners.contains(cell) && !m_toBeFinalized.contains(cell) && !m_outOfReach.contains(cell) && isObjectOfPython(cell, m_globalObject) && isWhole(cell); }
 
     // The cell, or what it is a part of. Null: nothing that may be given.
     JSCell* objectOf(JSCell* cell) const
@@ -199,6 +197,84 @@ private:
             addPart(item, owner, false);
     }
 
+    // An exception that nobody has seen (PyException::isUnseen()) is in the heap like any other: another thread is raising it, or has caught it and is about to drop it, or has dropped it and
+    // still has a word on its stack that leads to some of it. The runtime counts on it that nothing of the program's has such an exception, the entries of its traceback or the frame objects that were
+    // made for those, the last of which lacks its caller (PyFrame::backIs()). So none of that is given: the exception with its entries and their frame objects, and, whatever is left of the
+    // exception, all that leads to a frame object that lacks its caller: the frame objects of the calls it made, the entries of those, the exception.
+    void findWhatIsOutOfReach()
+    {
+        Vector<PyFrame*> frames;
+        Vector<PyTraceback*> entries;
+        Vector<PyException*> exceptions;
+        for (JSCell* cell : m_objects) {
+            if (auto* exception = PyException::tryFrom(cell))
+                exceptions.append(exception);
+            else if (cell->type() != PyObjectType)
+                continue;
+            else if (auto* frame = PyFrame::tryFrom(cell))
+                frames.append(frame);
+            else if (auto* entry = PyTraceback::tryFrom(cell))
+                entries.append(entry);
+        }
+        // Chains may be as long as the stack was deep, and many begin in the middle of another.
+        UncheckedKeyHashSet<JSCell*> isWithinReach;
+        Vector<JSCell*> path;
+        auto settle = [&](bool isOutOfReach) {
+            for (JSCell* cell : path)
+                (isOutOfReach ? m_outOfReach : isWithinReach).add(cell);
+            path.shrink(0);
+            return isOutOfReach;
+        };
+        auto leadsToFrameThatLacksCaller = [&](PyFrame* frame) {
+            while (true) {
+                if (!frame || isWithinReach.contains(frame))
+                    return settle(false);
+                path.append(frame);
+                if (frame->lacksBack() || m_outOfReach.contains(frame))
+                    return settle(true);
+                frame = PyFrame::tryFrom(frame->backAsItIs());
+            }
+        };
+        for (PyFrame* frame : frames)
+            leadsToFrameThatLacksCaller(frame);
+        // An entry leads to its frame object and to the entries of the calls that its call made.
+        Vector<PyTraceback*> chain;
+        auto look = [&](PyTraceback* first) {
+            bool isOutOfReach = false;
+            for (PyTraceback* entry = first; entry; entry = PyTraceback::tryFrom(entry->next())) {
+                if (m_outOfReach.contains(entry)) {
+                    isOutOfReach = true;
+                    break;
+                }
+                if (isWithinReach.contains(entry))
+                    break;
+                chain.append(entry);
+            }
+            while (!chain.isEmpty()) {
+                PyTraceback* entry = chain.takeLast();
+                isOutOfReach |= entry->frameIfMade() && m_outOfReach.contains(entry->frameIfMade());
+                (isOutOfReach ? m_outOfReach : isWithinReach).add(entry);
+            }
+        };
+        for (PyTraceback* entry : entries)
+            look(entry);
+        for (PyException* exception : exceptions) {
+            auto* first = PyTraceback::tryFrom(exception->tracebackAsItIs());
+            if (!exception->isUnseen()) {
+                if (first && m_outOfReach.contains(first))
+                    m_outOfReach.add(exception);
+                continue;
+            }
+            m_outOfReach.add(exception);
+            for (PyTraceback* entry = first; entry; entry = PyTraceback::tryFrom(entry->next())) {
+                m_outOfReach.add(entry);
+                // Not one that the program has asked for, or a tool: that one is known to others.
+                if (PyFrame* frame = entry->frameIfMade(); frame && frame->isKnownToTracebackOnly())
+                    m_outOfReach.add(frame);
+            }
+        }
+    }
+
     void addHiddenFields(JSObject* object)
     {
         Structure* structure = object->structure();
@@ -230,6 +306,7 @@ private:
     Vector<JSCell*> m_objects;
     UncheckedKeyHashMap<JSCell*, JSCell*> m_owners;
     UncheckedKeyHashSet<JSCell*> m_toBeFinalized;
+    UncheckedKeyHashSet<JSCell*> m_outOfReach;
     UncheckedKeyHashMap<Structure*, HiddenOffsets> m_hiddenOffsets;
 };
 
