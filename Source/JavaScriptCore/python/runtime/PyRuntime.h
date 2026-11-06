@@ -312,6 +312,10 @@ public:
 
     explicit Runtime(JSGlobalObject*);
     ~Runtime();
+    // For the collector, with the world stopped, when nothing more will be marked and the global object is not. The heap has forgotten the runtime by the time the program goes on: nobody
+    // asks it anything any more, for all the cells it knows are dead, and they are swept in any order, some of them long before the global object, whose destructor destroys this. What the
+    // world outside knows of the runtime (the signals, faulthandler, the C API) ends here as well.
+    void globalObjectDidDie();
 
     template<typename Visitor> void visit(Visitor&);
 
@@ -1197,6 +1201,8 @@ private:
     MonotonicTime m_collectionBegan;
     Vector<PyWeakRef*> weakRefsWithCallbacksToUnmarkedObjects(SlotVisitor&);
     UncheckedKeyHashSet<JSCell*> whatOtherThreadsHold();
+    bool m_hasEnded { false };
+    void end();
     bool m_hasPendingCalls { false };
     bool m_isRunningPendingCalls { false };
     void* m_stackWhereUnaskedCallsBegan { nullptr };

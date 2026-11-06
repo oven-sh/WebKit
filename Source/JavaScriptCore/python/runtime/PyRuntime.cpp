@@ -89,9 +89,29 @@ Runtime::Runtime(JSGlobalObject* globalObject)
 
 Runtime::~Runtime()
 {
+    end();
+    m_vm.heap.removePythonRuntime(this);
+}
+
+void Runtime::end()
+{
+    if (std::exchange(m_hasEnded, true))
+        return;
     detachSignals(*this);
     CApi::runtimeIsEnding(*this);
-    m_vm.heap.removePythonRuntime(this);
+}
+
+void Runtime::globalObjectDidDie()
+{
+    // It owes nothing: what is owed, and what has a finalizer and has died, is kept, and keeps the global object by way of its Structure.
+#if ASSERT_ENABLED
+    {
+        Locker locker { m_finalizationLock };
+        for (auto& owed : m_callsOwed)
+            ASSERT(!owed->hasFinalizers() && owed->weakRefCallbacks.isEmpty());
+    }
+#endif
+    end();
 }
 
 template<typename Visitor>

@@ -708,6 +708,11 @@ so the aim is that everything Python *guarantees* holds, and that what it merely
     collection, the runtimes in the order in which they began, and the one that was held may come first. (Each used to go through all the steps by itself in every round. A runtime without a standing queue had the heap make its note in the round in which
     another had only just put its queue forward: the program above made 15 full collections for 1 as soon as there was a second realm. And a runtime that had nothing left was told that marking was over while another was still keeping: it counted
     two collections for one, called `gc.callbacks` four times, and took out of its lists what the other might yet have marked.)
+  - *A runtime ends in the collection that finds its global object dead* (`Heap::didKeepAllPythonObjectsToFinalize`, `Runtime::globalObjectDidDie`), not when that is swept. The first eight global objects of a VM are allocations of their own, which are
+    destroyed at the end of that collection. The ninth lies in a block, and a block is swept when its memory is wanted, perhaps many collections later. Until then the runtime stayed in the heap's list, and the collector went on asking it about cells that had been
+    swept and whose memory was in use again: nine plain realms, a tenth that imports a `.py` and is dropped, 20 MB of garbage made by the main realm's Python in one call: a crash. It also kept the signals for as long. Now the heap forgets it there and then, and what
+    the world outside knows of it (the signals, `faulthandler`, the C API) ends as well. A realm that is dropped is garbage like any other: what of it has a finalizer is kept and finalized, at a safe point of whatever runs in the VM (`makeCallsOwed` goes through all the
+    runtimes), and keeps the realm meanwhile by way of its Structure. So a runtime that ends owes nothing.
 - **An object registers when it is made**, if its class has a `__del__` then. A class that gets one later, by assignment to the
   attribute or to `__bases__`, has the heap searched for its instances (`registerInstancesForFinalization`), once; an object
   that is given such a class by assignment to `__class__` registers then.

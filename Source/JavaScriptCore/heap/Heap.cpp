@@ -864,8 +864,16 @@ bool Heap::keepUnreachablePythonObjectsToFinalize(SlotVisitor& visitor)
 
 void Heap::didKeepAllPythonObjectsToFinalize(SlotVisitor& visitor)
 {
-    for (auto* runtime : m_pythonRuntimes)
+    // A runtime ends in the collection that finds its global object dead. Not when that is swept, which may be many collections later: what the runtime refers to has
+    // died with it, and may be swept, and its memory be used again, before.
+    m_pythonRuntimes.removeAllMatching([&](Python::Runtime* runtime) {
+        if (!visitor.isMarked(runtime->globalObject())) {
+            runtime->globalObjectDidDie();
+            return true;
+        }
         runtime->didMarkAll(visitor);
+        return false;
+    });
 }
 
 void Heap::willStartIterating()

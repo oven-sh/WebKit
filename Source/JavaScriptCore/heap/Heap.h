@@ -375,7 +375,8 @@ public:
     bool isMarked(const void*);
     static bool testAndSetMarked(HeapVersion, const void*);
 
-    // The global objects in which Python runs have objects to finalize. Only the mutator changes the list.
+    // The global objects in which Python runs have objects to finalize. The mutator changes the list, and the collector, with the world stopped, takes out a runtime whose
+    // global object it has found dead.
     void addPythonRuntime(Python::Runtime* runtime) { m_pythonRuntimes.append(runtime); }
     void removePythonRuntime(Python::Runtime* runtime) { m_pythonRuntimes.removeFirst(runtime); }
     const Vector<Python::Runtime*, 1>& pythonRuntimes() const { return m_pythonRuntimes; }
