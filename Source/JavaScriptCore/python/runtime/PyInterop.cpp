@@ -2587,6 +2587,21 @@ static JSValue jsFunctionSubclassCheck(JSGlobalObject* globalObject, JSValue sel
     // works in any thread.
     if (PyType* type = PyType::tryFrom(cls); type && type->isSubtypeOf(runtime(globalObject).JSError()))
         return jsBoolean(exceptionClassStandsForClassOfJS(globalObject, type, asObject(self)));
+    // An exception of Python's own is none of JS's, as `except js.Error` catches none. A thread other than the main one is told so too:
+    // contextlib.suppress(js.RangeError) asks this of whatever is raised under it.
+    if (PyType* type = PyType::tryFrom(cls); type && type->isSubtypeOf(runtime(globalObject).BaseException()) && !runtime(globalObject).threads().isMainThread()) {
+        JSObject* function = asObject(self);
+        while (auto* bound = dynamicDowncast<JSBoundFunction>(function))
+            function = bound->targetFunction();
+        // (What stands for the classes of Python's in a chain of prototypes has nothing to run.)
+        if (JSValue wanted = valueOfJSForAnyThread(globalObject, function, getVM(globalObject).propertyNames->prototype)) {
+            for (JSValue prototype = prototypeForJS(globalObject, type); prototype.isObject(); prototype = asObject(prototype)->getPrototypeDirect()) {
+                if (prototype == wanted)
+                    return jsBoolean(true);
+            }
+            return jsBoolean(false);
+        }
+    }
     if (!ensureMainThreadForJS(globalObject))
         return { };
     VM& vm = getVM(globalObject);

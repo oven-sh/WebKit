@@ -28,6 +28,7 @@
 #include "PyTypes.h"
 #include "TopExceptionScope.h"
 #include <errno.h>
+#include <unicode/uchar.h>
 #include <wtf/HexNumber.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -162,6 +163,14 @@ static constexpr unsigned prototypeForInstancesField = 1; // See prototypeForIns
 static constexpr unsigned osErrorClassesField = 2; // dict: see osErrorClassFor().
 
 static bool pendingExceptionIsForLackOfMeans(JSGlobalObject*, TopExceptionScope&);
+static bool pendingExceptionIsForLackOfStack(JSGlobalObject*, TopExceptionScope&);
+
+// Whether the host has asked for what runs on the main thread to be ended, and this is that.
+static bool isBeingEnded(Runtime& rt)
+{
+    VM& vm = rt.vm();
+    return rt.threads().isMainThread() && (vm.hasTerminationRequest() || vm.traps().needHandling(VMTraps::NeedTermination));
+}
 
 // JS lets anything be the `name` of a function. Not this long, since the class is made where nothing can be ended.
 static constexpr unsigned longestNameOfMirror = 1000;
@@ -177,11 +186,15 @@ static bool canNameClass(StringView name)
         // Control characters, and what ends a line.
         if (unit < 0x20 || (unit >= 0x7f && unit < 0xa0) || unit == 0x2028 || unit == 0x2029)
             return false;
-        if (!U16_IS_SURROGATE(unit))
-            continue;
-        if (!U16_IS_SURROGATE_LEAD(unit) || i + 1 == name.length() || !U16_IS_TRAIL(name[i + 1]))
+        char32_t character = unit;
+        if (U16_IS_SURROGATE(unit)) {
+            if (!U16_IS_SURROGATE_LEAD(unit) || i + 1 == name.length() || !U16_IS_TRAIL(name[i + 1]))
+                return false;
+            character = U16_GET_SUPPLEMENTARY(unit, name[++i]);
+        }
+        // What is not seen and changes what is: the marks that turn the direction of the text, those of no width.
+        if (character >= 0x80 && u_charType(character) == U_FORMAT_CHAR)
             return false;
-        ++i;
     }
     return true;
 }
@@ -215,7 +228,7 @@ static PyType* makeClassOfJSErrors(JSGlobalObject* globalObject, const String& n
 }
 
 // One of the classes that there is one of, made when it is first asked for. Where it cannot be made: JSError, or null.
-static PyType* classOfJSErrorsKeptAs(JSGlobalObject* globalObject, JSString* key, const String& name, std::initializer_list<JSValue> bases, JSValue prototypeOfJS, IfClassCannotBeMade otherwise)
+static PyType* classOfJSErrorsKeptAs(JSGlobalObject* globalObject, JSString* key, StringView nameWithoutJS, std::initializer_list<JSValue> bases, JSValue prototypeOfJS, IfClassCannotBeMade otherwise)
 {
     Runtime& rt = runtime(globalObject);
     if (!rt.slot(Runtime::Slot::JSErrorClasses))
@@ -223,7 +236,7 @@ static PyType* classOfJSErrorsKeptAs(JSGlobalObject* globalObject, JSString* key
     PyDict* classes = PyDict::from(rt.slot(Runtime::Slot::JSErrorClasses));
     if (JSValue type = classes->get(key))
         return PyType::from(type);
-    PyType* type = makeClassOfJSErrors(globalObject, name, bases, prototypeOfJS, otherwise);
+    PyType* type = makeClassOfJSErrors(globalObject, makeString("JS"_s, nameWithoutJS), bases, prototypeOfJS, otherwise);
     if (!type)
         return otherwise == IfClassCannotBeMade::Raise ? nullptr : rt.JSError();
     classes->set(rt.vm(), key, type);
@@ -240,7 +253,7 @@ static JSObject* typeErrorPrototypeOfJS(JSGlobalObject* realm)
 PyType* jsErrorTypeFor(JSGlobalObject* globalObject, PyType* base, IfClassCannotBeMade otherwise)
 {
     Runtime& rt = runtime(globalObject);
-    return classOfJSErrorsKeptAs(globalObject, base->nameString(), makeString("JS"_s, base->name()), { rt.JSError(), base }, base == rt.TypeError() ? typeErrorPrototypeOfJS(globalObject) : globalObject->errorPrototype(), otherwise);
+    return classOfJSErrorsKeptAs(globalObject, base->nameString(), base->name(), { rt.JSError(), base }, base == rt.TypeError() ? typeErrorPrototypeOfJS(globalObject) : globalObject->errorPrototype(), otherwise);
 }
 
 PyType* jsTypeErrorType(JSGlobalObject* globalObject, IfClassCannotBeMade otherwise)
@@ -254,7 +267,7 @@ PyType* jsThrownValueType(JSGlobalObject* globalObject, IfClassCannotBeMade othe
 {
     Runtime& rt = runtime(globalObject);
     // (The others are kept under the name of their other base. This one has none.)
-    return classOfJSErrorsKeptAs(globalObject, rt.JSError()->nameString(), "JSThrownValue"_s, { rt.JSError() }, jsNull(), otherwise);
+    return classOfJSErrorsKeptAs(globalObject, rt.JSError()->nameString(), "ThrownValue"_s, { rt.JSError() }, jsNull(), otherwise);
 }
 
 // object.name, if the object has it itself and it is a value. It runs no code of the program's. (A function makes its name and its prototype
@@ -264,7 +277,17 @@ PyType* jsThrownValueType(JSGlobalObject* globalObject, IfClassCannotBeMade othe
 struct CouldNotTell {
     bool needsMainThread { false };
     bool lackedMeans { false };
+    bool lackedStack { false }; // With lackedMeans: that is what there was none of.
 };
+static void raiseForLackOfMeans(JSGlobalObject* globalObject, bool lackedStack)
+{
+    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
+    if (lackedStack)
+        raiseRecursionError(globalObject, scope, "maximum recursion depth exceeded"_s);
+    else
+        raiseMemoryError(globalObject, scope, String());
+}
+
 static JSValue ownValueOfJS(JSGlobalObject* globalObject, JSObject* object, PropertyName name, CouldNotTell& couldNotTell)
 {
     if (!runtime(globalObject).threads().isMainThread()) [[unlikely]]
@@ -280,6 +303,7 @@ static JSValue ownValueOfJS(JSGlobalObject* globalObject, JSObject* object, Prop
     if (scope.exception()) [[unlikely]] {
         // (An accessor of the host's throws where the prototype is not what it is for: then there is no value.)
         couldNotTell.lackedMeans |= pendingExceptionIsForLackOfMeans(globalObject, scope);
+        couldNotTell.lackedStack |= pendingExceptionIsForLackOfStack(globalObject, scope);
         tryDropPendingException(scope);
         return { };
     }
@@ -313,7 +337,7 @@ static String nameOfClassForPrototype(JSGlobalObject* globalObject, JSObject* pr
             return { };
         }
     }
-    if (!canNameClass(text))
+    if (text.isEmpty() || !canNameClass(text))
         return { };
     String result = tryMakeString("JS"_s, text);
     couldNotTell.lackedMeans |= result.isNull();
@@ -376,30 +400,29 @@ static PyType* exceptionClassForPrototypeOfJS(JSGlobalObject* globalObject, JSOb
             return rt.JSError();
         object = asObject(parent);
     }
-    auto forLackOfMemory = [&] {
-        if (otherwise == IfClassCannotBeMade::Raise) {
-            auto scope = DECLARE_THROW_SCOPE(vm);
-            raiseMemoryError(globalObject, scope, String());
-        }
+    auto forLackOfMemoryOrStack = [&](bool lackedStack) {
+        if (otherwise == IfClassCannotBeMade::Raise)
+            raiseForLackOfMeans(globalObject, lackedStack);
         return forLackOfMeans(type);
     };
     if (withoutClass.hasOverflowed()) [[unlikely]]
-        return forLackOfMemory();
+        return forLackOfMemoryOrStack(false);
     while (!withoutClass.isEmpty()) {
         if (type->mro()->length() >= longestMROOfMirror) [[unlikely]] {
             classes->set(vm, prototype, type);
             return type;
         }
         // The chain is as long as the program has made it, so what is being ended makes no more of them: it will not see what it gets. (It is
-        // what runs on the main thread that a termination ends. Another thread that is to stop makes them all.)
-        if (rt.threads().isMainThread() && (vm.hasTerminationRequest() || vm.traps().needHandling(VMTraps::NeedTermination))) [[unlikely]]
+        // what runs on the main thread that a termination ends. Another thread that is to stop makes them all. So does who asks for the class
+        // itself, who is given null only with an exception: there are no more than longestMROOfMirror to make.)
+        if (otherwise == IfClassCannotBeMade::NearestStandsIn && isBeingEnded(rt)) [[unlikely]]
             return forLackOfMeans(type);
         JSObject* object = asObject(withoutClass.takeLast());
         CouldNotTell couldNotTell;
         String name = nameOfClassForPrototype(globalObject, object, couldNotTell);
         // A class is named once.
         if (couldNotTell.lackedMeans) [[unlikely]]
-            return forLackOfMemory();
+            return forLackOfMemoryOrStack(couldNotTell.lackedStack);
         if (couldNotTell.needsMainThread) [[unlikely]] {
             if (otherwise == IfClassCannotBeMade::NearestStandsIn)
                 return type;
@@ -485,8 +508,7 @@ static bool raiseIfCouldNotTell(JSGlobalObject* globalObject, const CouldNotTell
     if (otherwise != IfClassCannotBeMade::Raise)
         return true;
     if (couldNotTell.lackedMeans) {
-        auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
-        raiseMemoryError(globalObject, scope, String());
+        raiseForLackOfMeans(globalObject, couldNotTell.lackedStack);
         return false;
     }
     return !couldNotTell.needsMainThread || ensureMainThreadForJS(globalObject);
@@ -628,6 +650,15 @@ static bool pendingExceptionIsForLackOfMeans(JSGlobalObject* globalObject, TopEx
         return error->isStackOverflowError() || error->isOutOfMemoryError();
     auto* exception = PyException::tryFrom(pending->value());
     return exception && (exception->type()->isSubtypeOf(rt.RecursionError()) || exception->type()->isSubtypeOf(rt.MemoryError()));
+}
+
+static bool pendingExceptionIsForLackOfStack(JSGlobalObject* globalObject, TopExceptionScope& scope)
+{
+    JSValue pending = scope.exception()->value();
+    if (auto* error = dynamicDowncast<ErrorInstance>(pending))
+        return error->isStackOverflowError();
+    auto* exception = PyException::tryFrom(pending);
+    return exception && exception->type()->isSubtypeOf(runtime(globalObject).RecursionError());
 }
 
 // An error of the system, as Node and Bun throw them, has the name of the error number as its `code` (and the number, negated or libuv's
@@ -778,10 +809,11 @@ static JSValue keepExceptionFor(JSGlobalObject* globalObject, JSValue thrown, JS
 // One that is kept has the cause that is kept. So nothing is kept before all of the chain has been made: what is made of one link runs code of the
 // program's (toString()), which may catch another link, or something that has one for its cause, and would build on what is dropped again if a
 // link further down is not for keeps.
-static JSValue exceptionFromThrownValue(JSGlobalObject* globalObject, JSValue thrown, bool& isForKeeps)
+JSValue exceptionFromThrownValue(JSGlobalObject* globalObject, JSValue thrown)
 {
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
+    bool isForKeeps;
     bool isNew;
     JSValue result = exceptionWithoutCauseFromThrownValue(globalObject, thrown, isForKeeps, isNew);
     if (!result || !isNew || !isForKeeps) [[unlikely]]
@@ -805,10 +837,8 @@ static JSValue exceptionFromThrownValue(JSGlobalObject* globalObject, JSValue th
         positions.add(value.asCell(), values.size());
         values.append(value);
         exceptions.append(exception);
-        if (values.hasOverflowed() || exceptions.hasOverflowed()) [[unlikely]] {
-            isForKeeps = false;
+        if (values.hasOverflowed() || exceptions.hasOverflowed()) [[unlikely]]
             return result;
-        }
         if (!cause)
             break;
         JSValue causeInPython;
@@ -818,18 +848,15 @@ static JSValue exceptionFromThrownValue(JSGlobalObject* globalObject, JSValue th
             causeInPython = exceptions.at(position->value);
         else {
             // (As in exceptionClassForPrototypeOfJS(): what is being ended will not see what it gets.)
-            bool isBeingEnded = rt.threads().isMainThread() && (vm.hasTerminationRequest() || vm.traps().needHandling(VMTraps::NeedTermination));
-            if (!isBeingEnded) [[likely]]
+            if (!isBeingEnded(rt)) [[likely]]
                 causeInPython = exceptionWithoutCauseFromThrownValue(globalObject, cause, causeIsForKeeps, isNew);
         }
         if (causeInPython) {
             PyException::from(exception)->setCause(vm, causeInPython);
             PyException::from(exception)->setSuppressContext(true);
         }
-        if (!causeInPython || !causeIsForKeeps) [[unlikely]] {
-            isForKeeps = false;
+        if (!causeInPython || !causeIsForKeeps) [[unlikely]]
             return result;
-        }
         // (What is not new is an exception of Python's, or one that is kept, with its causes, or one of these here.)
         if (!isNew)
             break;
@@ -848,12 +875,6 @@ static JSValue exceptionFromThrownValue(JSGlobalObject* globalObject, JSValue th
         break;
     }
     return result;
-}
-
-JSValue exceptionFromThrownValue(JSGlobalObject* globalObject, JSValue thrown)
-{
-    bool isForKeeps;
-    return exceptionFromThrownValue(globalObject, thrown, isForKeeps);
 }
 
 bool isClassOfJSToCatch(JSGlobalObject* globalObject, JSValue value)
@@ -2029,14 +2050,16 @@ static JSValue jsErrorReduce(JSGlobalObject* globalObject, JSValue object)
 }
 
 // A copy stays in the process, where the class is at hand: what copy.copy() and copy.deepcopy() do where there is no __copy__(), step by step, with
-// the class as it is. `memo`: of deepcopy(), or None.
-static JSValue copyOfJSError(JSGlobalObject* globalObject, JSValue object, JSValue memo)
+// the class as it is. `memo`: what deepcopy() has given, or None for copy().
+static JSValue copyOfJSError(JSGlobalObject* globalObject, JSValue object, bool isDeep, JSValue memo)
 {
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     PyType* type = self(object)->type();
-    bool isDeep = !isNone(memo);
+    // (e.__deepcopy__(None): _reconstruct() takes a memo that is None for "not deep".)
+    if (isDeep && isNone(memo))
+        memo = PyDict::create(globalObject);
     JSValue module = importModule(globalObject, "copy"_s);
     RETURN_IF_EXCEPTION(scope, { });
     JSValue table = getAttr(globalObject, module, internString(vm, "dispatch_table"_s));
@@ -2084,7 +2107,12 @@ static JSValue copyOfJSError(JSGlobalObject* globalObject, JSValue object, JSVal
     // The class, where jsErrorReduce() has put another in its place. What the program has registered for the class, or has given the instance for a
     // __reduce_ex__() or a __reduce__(), says what it means. (Nothing can be set in a class that is named by another.)
     JSValue named;
-    if (PyDict* dict = self(object)->dict(); !isRegistered && (!dict || (!dict->get(rt.names.dReduceEx()) && !dict->get(rt.names.dReduce()))))
+    auto hasItsOwn = [&](JSString* name) {
+        PyDict* dict = self(object)->dict();
+        JSValue own = dict ? dict->get(name) : JSValue();
+        return own && !isNone(own);
+    };
+    if (!isRegistered && !hasItsOwn(rt.names.dReduceEx()) && !hasItsOwn(rt.names.dReduce()))
         named = classToPickleAs(globalObject, type);
     forEach(globalObject, reduced, [&](JSValue part) {
         arguments.append(arguments.size() == 2 && part == named ? JSValue(type) : part);
@@ -2104,8 +2132,8 @@ static JSValue copyOfJSError(JSGlobalObject* globalObject, JSValue object, JSVal
     RELEASE_AND_RETURN(scope, call(globalObject, reconstruct, CallArgs(valuesOf(arguments), arguments.size())));
 }
 
-static JSValue jsErrorCopy(JSGlobalObject* globalObject, JSValue object) { return copyOfJSError(globalObject, object, jsUndefined()); }
-static JSValue jsErrorDeepCopy(JSGlobalObject* globalObject, JSValue object, JSValue memo) { return copyOfJSError(globalObject, object, memo); }
+static JSValue jsErrorCopy(JSGlobalObject* globalObject, JSValue object) { return copyOfJSError(globalObject, object, false, jsUndefined()); }
+static JSValue jsErrorDeepCopy(JSGlobalObject* globalObject, JSValue object, JSValue memo) { return copyOfJSError(globalObject, object, true, memo); }
 
 static constexpr NativeDef jsErrorMethods[] = {
     PY_SLOT("__getattr__", jsErrorGetAttr, "($self, name, /)"),
