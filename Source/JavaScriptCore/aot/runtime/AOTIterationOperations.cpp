@@ -657,8 +657,13 @@ static void appendIterable(Instance& instance, JSGlobalObject* globalObject, JSA
             }
             JSArray* list = tryCreateArrayFromIterableFast(globalObject, iterable);
             RETURN_IF_EXCEPTION(scope, void());
-            if (list)
+            if (list) {
+                if (auto* members = dynamicDowncast<JSMapIterator>(cell))
+                    members->close(vm);
+                else if (auto* members = dynamicDowncast<JSSetIterator>(cell))
+                    members->close(vm);
                 RELEASE_AND_RETURN(scope, appendElementsOfList(globalObject, target, list));
+            }
         }
     }
 

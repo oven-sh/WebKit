@@ -763,7 +763,7 @@ JSPromise* JSModuleLoader::hostLoadImportedModule(JSGlobalObject* globalObject, 
 
 #if ENABLE(AOT)
     // Go by the record's type: uncompiled code can be loaded under any key.
-    bool isAskedFromOutsideImage = record && this == globalObject->moduleLoader() && vm.hasCompiledCode() && !dynamicDowncast<AOT::ModuleRecord>(record);
+    bool isAskedFromOutsideImage = vm.hasCompiledCode() && record && this == globalObject->moduleLoader() && !dynamicDowncast<AOT::ModuleRecord>(record);
     uint8_t flagsBeforeRequestFromOutsideImage = isAskedFromOutsideImage ? AOT::ModuleRecord::willAskHostForUncompiledModule(globalObject) : 0;
     auto didAskFromOutsideImage = makeScopeExit([&] {
         if (isAskedFromOutsideImage)
@@ -1169,6 +1169,7 @@ void JSModuleLoader::innerModuleLoading(JSGlobalObject* globalObject, ModuleGrap
                     }
                     // 2.d.iii. Else,
                     // 2.d.iii.1. Perform HostLoadImportedModule(module, request, state.[[HostDefined]], state).
+                    unsigned loadedModulesCountBefore = module->loadedModules().size();
                     bool useImportMap = true;
 #if ENABLE(AOT)
                     auto* compiled = dynamicDowncast<AOT::ModuleRecord>(cyclic);
@@ -1189,8 +1190,12 @@ void JSModuleLoader::innerModuleLoading(JSGlobalObject* globalObject, ModuleGrap
                     // If module.[[LoadedModules]] contains the request after the HostLoadImportedModule call, the requested
                     // module was loaded synchronously, which means it was already loaded before. In that case
                     // there is no need to attach a ModuleGraphLoadingError reaction, so we skip it.
-                    // Sizes can't tell: a CommonJS file that runs during the call can load this module's other requests.
-                    bool needsErrorReaction = !module->loadedModules().contains(ModuleMapKey { request.m_specifier.impl(), request.type() });
+                    // In a compiled program sizes can't tell: a CommonJS file that runs during the call can load this module's other requests.
+                    bool needsErrorReaction = module->loadedModules().size() == loadedModulesCountBefore;
+#if ENABLE(AOT)
+                    if (vm.hasCompiledCode())
+                        needsErrorReaction = !module->loadedModules().contains(ModuleMapKey { request.m_specifier.impl(), request.type() });
+#endif
                     if (needsErrorReaction)
                         promise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::ModuleGraphLoadingError, nullptr, state);
                     // 2.d.iv. If state.[[IsLoading]] is false, return UNUSED.

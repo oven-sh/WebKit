@@ -552,10 +552,8 @@ static JSArray* tryCreateArrayFromMapIterator(JSGlobalObject* globalObject, JSMa
         RELEASE_AND_RETURN(scope, constructEmptyArray(globalObject, nullptr));
     if (!storageCell) {
         storageCell = map->storageOrSentinel(vm);
-        if (storageCell == vm.orderedHashTableSentinel()) {
-            mapIterator->close(vm);
+        if (storageCell == vm.orderedHashTableSentinel())
             RELEASE_AND_RETURN(scope, constructEmptyArray(globalObject, nullptr));
-        }
     }
 
     JSMap::Helper::Entry startEntry = mapIterator->entry();
@@ -564,7 +562,7 @@ static JSArray* tryCreateArrayFromMapIterator(JSGlobalObject* globalObject, JSMa
     if (JSMap::Helper::isCompact(*storageCell)) [[unlikely]] {
         JSArray* result = tryCreateArrayFromCompactStorage<JSMap::Helper>(globalObject, storageCell, startEntry, kind);
         RETURN_IF_EXCEPTION(scope, nullptr);
-        if (result)
+        if (result && result->length())
             mapIterator->close(vm);
         return result;
     }
@@ -595,10 +593,8 @@ static JSArray* tryCreateArrayFromMapIterator(JSGlobalObject* globalObject, JSMa
         storage = currentStorage;
     }
 
-    if (!length) {
-        mapIterator->close(vm);
+    if (!length)
         RELEASE_AND_RETURN(scope, constructEmptyArray(globalObject, nullptr));
-    }
 
     Structure* resultStructure = globalObject->arrayStructureForIndexingTypeDuringAllocation(indexingType);
     IndexingType resultIndexingType = resultStructure->indexingType();
@@ -691,10 +687,8 @@ static JSArray* tryCreateArrayFromSetIterator(JSGlobalObject* globalObject, JSSe
         RELEASE_AND_RETURN(scope, constructEmptyArray(globalObject, nullptr));
     if (!storageCell) {
         storageCell = set->storageOrSentinel(vm);
-        if (storageCell == vm.orderedHashTableSentinel()) {
-            setIterator->close(vm);
+        if (storageCell == vm.orderedHashTableSentinel())
             RELEASE_AND_RETURN(scope, constructEmptyArray(globalObject, nullptr));
-        }
     }
 
     JSSet::Helper::Entry startEntry = setIterator->entry();
@@ -703,7 +697,7 @@ static JSArray* tryCreateArrayFromSetIterator(JSGlobalObject* globalObject, JSSe
     if (JSSet::Helper::isCompact(*storageCell)) [[unlikely]] {
         JSArray* result = tryCreateArrayFromCompactStorage<JSSet::Helper>(globalObject, storageCell, startEntry, IterationKind::Keys);
         RETURN_IF_EXCEPTION(scope, nullptr);
-        if (result)
+        if (result && result->length())
             setIterator->close(vm);
         return result;
     }
@@ -729,10 +723,8 @@ static JSArray* tryCreateArrayFromSetIterator(JSGlobalObject* globalObject, JSSe
         storage = currentStorage;
     }
 
-    if (!length) {
-        setIterator->close(vm);
+    if (!length)
         RELEASE_AND_RETURN(scope, constructEmptyArray(globalObject, nullptr));
-    }
 
     Structure* resultStructure = globalObject->arrayStructureForIndexingTypeDuringAllocation(indexingType);
     IndexingType resultIndexingType = resultStructure->indexingType();
@@ -799,6 +791,8 @@ static JSArray* tryCreateArrayFromSetIterator(JSGlobalObject* globalObject, JSSe
     return JSArray::createWithButterfly(vm, nullptr, resultStructure, resultButterfly);
 }
 
+static ALWAYS_INLINE JSArray* tryCreateArrayFromIterableFastInline(JSGlobalObject*, JSValue items);
+
 JSC_DEFINE_HOST_FUNCTION(arrayConstructorPrivateFromFastWithoutMapFn, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
@@ -810,14 +804,19 @@ JSC_DEFINE_HOST_FUNCTION(arrayConstructorPrivateFromFastWithoutMapFn, (JSGlobalO
     if (constructor != globalObject->arrayConstructor() && constructor.isObject()) [[unlikely]]
         return JSValue::encode(jsUndefined());
 
-    JSArray* result = tryCreateArrayFromIterableFast(globalObject, callFrame->uncheckedArgument(1));
-    RETURN_IF_EXCEPTION(scope, { });
+    JSArray* result = tryCreateArrayFromIterableFastInline(globalObject, callFrame->uncheckedArgument(1));
     if (result)
-        return JSValue::encode(result);
+        RELEASE_AND_RETURN(scope, JSValue::encode(result));
+    RETURN_IF_EXCEPTION(scope, { });
     return JSValue::encode(jsUndefined());
 }
 
 JSArray* tryCreateArrayFromIterableFast(JSGlobalObject* globalObject, JSValue items)
+{
+    return tryCreateArrayFromIterableFastInline(globalObject, items);
+}
+
+static ALWAYS_INLINE JSArray* tryCreateArrayFromIterableFastInline(JSGlobalObject* globalObject, JSValue items)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);

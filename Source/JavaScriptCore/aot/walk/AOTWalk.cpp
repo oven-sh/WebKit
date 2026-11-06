@@ -3448,6 +3448,53 @@ static void letObjectsLeaveAtSuspension(Walker& walker)
     }
 }
 
+static uint16_t wordThatVariableIsBornWithInWalk(const Program& program, VariableID variable)
+{
+    VariableInitialization born = program.at(variable).initialization;
+    return born == VariableInitialization::Uninitialized ? Primitive::Absent : born == VariableInitialization::Undefined ? Primitive::Undefined : 0;
+}
+
+bool Walker::leavesOutWordThatVariableIsBornWith(const Draft& draft, TypeID proven) const
+{
+    if (draft.opcode != Opcode::GetModuleVariable || plan().variable(draft.variable()).function)
+        return false;
+    uint16_t word = wordThatVariableIsBornWithInWalk(program(), draft.variable());
+    return word && !(m_types.at(proven).primitives & word);
+}
+
+Reference Walker::askVariableInFrontOfTypedCopy(const Draft& draft, uint32_t outermostLoopThatMayBeLeft)
+{
+    std::optional<uint32_t> loop = openLoopOfTypedCopy();
+    if (!loop || *loop < outermostLoopThatMayBeLeft)
+        return { };
+    Reference found;
+    Reference isAsBorn;
+    {
+        InFrontOfTypedCopy inFront(*this, true);
+        Draft read(Opcode::GetModuleVariable, draft.origin());
+        read.setVariable(draft.variable());
+        chooseConservativeFields(read);
+        read.setGivesWordAsItLies(true);
+        found = build(WTF::move(read));
+        if (!found || !found.isValue() || isUnreachable())
+            return { };
+        Draft test(Opcode::TypeTest, draft.origin());
+        test.setValueOperand(found);
+        test.setTestedType(TypeArena::fromPrimitives(wordThatVariableIsBornWithInWalk(program(), draft.variable())));
+        isAsBorn = build(WTF::move(test));
+    }
+    if (!isAsBorn || !isAsBorn.isValue() || !branchInFrontOfTypedCopy(isAsBorn, false))
+        return { };
+    noteGuessOpened();
+    InFrontOfTypedCopy inFront(*this, true);
+    Draft narrowed(Opcode::Narrowed, draft.origin());
+    narrowed.setValueOperand(found);
+    narrowed.setTestOperand(isAsBorn);
+    narrowed.setOperandIndex(OperandIndex::TypeTest::value);
+    narrowed.setIsOnTakenEdge(false);
+    return build(WTF::move(narrowed));
+}
+
 Reference Walker::build(Draft&& draft, const Effects* foundByCaller)
 {
     using Step = StepOfBuildInWalk;
@@ -3610,7 +3657,15 @@ Reference Walker::build(Draft&& draft, const Effects* foundByCaller)
     }
     if (!m_openLoops.isEmpty()) {
         if (!m_openLoops.isEmpty() && proven && !isNeverType(proven)) {
-            if (std::optional<uint32_t> loop = findLoopToBuildInFrontOf(draft, effects)) {
+            std::optional<uint32_t> loop = findLoopToBuildInFrontOf(draft, effects);
+            if (loop && leavesOutWordThatVariableIsBornWith(draft, proven)) {
+                if (Reference asked = askVariableInFrontOfTypedCopy(draft, *loop))
+                    return asked;
+                if (m_hasFailed || isUnreachable())
+                    return { };
+                loop = std::nullopt;
+            }
+            if (loop) {
             BlockID inside = std::exchange(m_block, m_openLoops[*loop].blockInFront);
             SetForScope loopsThatMayBeLeft(m_numberOfLoopsThatMayBeLeft, *loop);
             Reference built = build(WTF::move(draft), foundByCaller);

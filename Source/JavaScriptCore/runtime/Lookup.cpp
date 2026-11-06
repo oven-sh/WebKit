@@ -68,7 +68,9 @@ bool setUpStaticFunctionSlot(VM& vm, const ClassInfo* classInfo, const HashTable
             // LazyProperty::callFunc) so it can't return with one pending.
             DeferTerminationForAWhile deferScope(vm);
 #if ENABLE(AOT)
-            AOT::MakingOfMemberForLook making(slot.internalMethodType() != PropertySlot::InternalMethodType::Get);
+            std::optional<AOT::MakingOfMemberForLook> making;
+            if (vm.hasCompiledCode()) [[unlikely]]
+                making.emplace(slot.internalMethodType() != PropertySlot::InternalMethodType::Get);
 #endif
 #if ENABLE(AOT)
             // Compiled code may hold the object already. The property is that object.

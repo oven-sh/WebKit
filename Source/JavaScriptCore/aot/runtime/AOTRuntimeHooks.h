@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTRealmStartup.h"
+#include <atomic>
 
 namespace JSC {
 
@@ -67,7 +68,9 @@ public:
     NoHelperThreadsScope();
     ~NoHelperThreadsScope();
 };
-bool isInNoHelperThreadsScope();
+extern std::atomic<bool> wasNoHelperThreadsScopeEntered;
+bool isThreadInNoHelperThreadsScope();
+ALWAYS_INLINE bool isInNoHelperThreadsScope() { return wasNoHelperThreadsScopeEntered.load(std::memory_order_relaxed) && isThreadInNoHelperThreadsScope(); }
 
 } } // namespace JSC::AOT::RuntimeHooks
 

@@ -1272,7 +1272,8 @@ CatchInfo::CatchInfo(const Wasm::HandlerInfo* handler, const Wasm::Callee* calle
             CodePtr<ExceptionHandlerPtrTag> runway;
 #if ENABLE(WEBASSEMBLY_OMGJIT)
             // Where code comes from an image, nothing generates a thunk.
-            runway = Wasm::CodeInImage::catchRunwayFor(handler->m_nativeCode.untaggedPtr());
+            if (Options::runsCompiledImage())
+                runway = Wasm::CodeInImage::catchRunwayFor(handler->m_nativeCode.untaggedPtr());
 #endif
             m_nativeCode = runway ? runway : Wasm::Thunks::singleton().stub(Wasm::catchInWasmThunkGenerator).template retagged<ExceptionHandlerPtrTag>().code();
             m_nativeCodeForDispatchAndCatch = handler->m_nativeCode;

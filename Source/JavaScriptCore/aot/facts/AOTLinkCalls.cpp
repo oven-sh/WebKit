@@ -2518,6 +2518,10 @@ ValuesInLinkCalls CallInLinkCalls::callBuiltin(BuiltinID builtin, const Passed& 
     }
     if (!hasRow)
         return callOutOfSight(call);
+    if (m_builtins.at(call.builtin).origin == BuiltinOrigin::Host) {
+        add(call.result, callOutOfSight(call));
+        return WTF::move(call.result);
+    }
     if (!refusing.isEmpty()) {
         RowCall beside = call;
         for (const BuiltinOverload* row : refusing)

@@ -2103,6 +2103,8 @@ private:
     void endBlocksInFrontOfLoops(size_t frameIndex, BlockID next);
     bool standsInFrontOfLoop(uint32_t indexOfLoop, Reference) const;
     std::optional<uint32_t> findLoopToBuildInFrontOf(const Draft&, const Effects&) const;
+    bool leavesOutWordThatVariableIsBornWith(const Draft&, TypeID proven) const;
+    Reference askVariableInFrontOfTypedCopy(const Draft&, uint32_t outermostLoopThatMayBeLeft);
     struct HoistPoint {
         size_t frameIndex;
         BlockID inputBlock;

@@ -462,7 +462,7 @@ TypeID ResultRules::declared(const Operation& operation, VariableID variable)
     if (opcode == Opcode::GetModuleVariable && operation.followsItsStore())
         held = context.types.withoutPrimitives(held, Primitive::Absent);
     if (opcode == Opcode::GetModuleVariable && operation.givesWordAsItLies())
-        held = context.types.withPrimitives(held, Primitive::Absent);
+        held = context.types.withPrimitives(held, context.program.at(variable).initialization == VariableInitialization::Undefined ? Primitive::Undefined : Primitive::Absent);
     if (opcode == Opcode::GetModuleVariable && operation.mayPrecedeItsStore())
         return context.types.withPrimitives(held, Primitive::Unspecified);
     return held;

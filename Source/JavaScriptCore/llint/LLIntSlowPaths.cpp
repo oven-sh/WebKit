@@ -1149,21 +1149,22 @@ LLINT_SLOW_PATH_DECL(slow_path_get_by_id)
     const Identifier& ident = codeBlock->identifier(bytecode.m_property);
     JSValue baseValue = getOperand(callFrame, bytecode.m_base);
 #if ENABLE(AOT)
-    if (vm.hasCompiledCode() && baseValue.isCell() && baseValue.asCell()->type() == CompiledObjectType) [[unlikely]] {
-        Structure* structure = WTF::opaque(baseValue.asCell()->structure());
-        JSValue result = performLLIntGetByID(codeBlock->bytecodeIndex(pc), codeBlock, globalObject, baseValue, ident, metadata.m_modeMetadata);
-        if (!throwScope.exception())
-            cacheFieldOfCompiledObject(vm, codeBlock, globalObject, structure, ident, metadata.m_modeMetadata);
+    if (vm.hasCompiledCode()) [[unlikely]] {
+        bool isCompiledObject = baseValue.isCell() && baseValue.asCell()->type() == CompiledObjectType;
+        Structure* structure = isCompiledObject ? WTF::opaque(baseValue.asCell()->structure()) : nullptr;
+        JSValue result = performLLIntGetByIDWithCompiledCode(codeBlock->bytecodeIndex(pc), codeBlock, globalObject, baseValue, ident, metadata.m_modeMetadata);
+        if (isCompiledObject) {
+            if (!throwScope.exception())
+                cacheFieldOfCompiledObject(vm, codeBlock, globalObject, structure, ident, metadata.m_modeMetadata);
+        } else if (GetByIdModeMetadata& cache = metadata.m_modeMetadata; cache.mode == GetByIdMode::Default && cache.defaultMode.structureID && !cache.defaultMode.padding1) {
+            // The wait has run out on something that the cache cannot hold.
+            startWaitForOtherStructure(cache, true);
+        }
         LLINT_RETURN_PROFILED(result);
     }
 #endif
 
     JSValue result = performLLIntGetByID(codeBlock->bytecodeIndex(pc), codeBlock, globalObject, baseValue, ident, metadata.m_modeMetadata);
-#if ENABLE(AOT)
-    // The wait has run out on something that the cache cannot hold.
-    if (GetByIdModeMetadata& cache = metadata.m_modeMetadata; vm.hasCompiledCode() && cache.mode == GetByIdMode::Default && cache.defaultMode.structureID && !cache.defaultMode.padding1) [[unlikely]]
-        startWaitForOtherStructure(cache, true);
-#endif
     LLINT_RETURN_PROFILED(result);
 }
 

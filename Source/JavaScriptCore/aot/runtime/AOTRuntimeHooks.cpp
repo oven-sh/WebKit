@@ -199,10 +199,12 @@ CONCURRENT_SAFE void setLoopPollsEnabled(VM& vm, bool enabled)
         setPollsEnabled(*instance, enabled);
 }
 
+constinit std::atomic<bool> wasNoHelperThreadsScopeEntered { false };
 static thread_local unsigned t_noHelperThreadsScopes;
 
 NoHelperThreadsScope::NoHelperThreadsScope()
 {
+    wasNoHelperThreadsScopeEntered.store(true, std::memory_order_relaxed);
     ++t_noHelperThreadsScopes;
 }
 
@@ -211,7 +213,7 @@ NoHelperThreadsScope::~NoHelperThreadsScope()
     --t_noHelperThreadsScopes;
 }
 
-bool isInNoHelperThreadsScope()
+bool isThreadInNoHelperThreadsScope()
 {
     return t_noHelperThreadsScopes;
 }

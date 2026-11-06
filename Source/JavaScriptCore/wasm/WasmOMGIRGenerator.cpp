@@ -7169,6 +7169,8 @@ std::expected<std::unique_ptr<InternalFunction>, String> parseAndCompileOMG(Comp
         if (shouldDumpDisassemblyFor(compilationMode))
             procedure.code().setDisassembler(makeUniqueWithoutFastMallocCheck<B3::Air::Disassembler>());
         B3::prepareForGeneration(procedure);
+        if (procedure.report().failure) [[unlikely]]
+            return makeUnexpected(String("B3 could not compile the function"_s));
         B3::generate(procedure, *compilationContext.wasmEntrypointJIT);
         compilationContext.wasmEntrypointByproducts = procedure.releaseByproducts();
         result->entrypoint.calleeSaveRegisters = procedure.calleeSaveRegisterAtOffsetList();

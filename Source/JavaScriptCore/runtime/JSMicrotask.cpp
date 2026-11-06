@@ -331,7 +331,7 @@ static void promiseResolveThenableJob(JSGlobalObject* globalObject, JSValue prom
 static ALWAYS_INLINE JSValue asyncContextForDriverResume(JSGlobalObject* globalObject, VM& vm, JSValue target)
 {
 #if ENABLE(AOT)
-    if (vm.hasCompiledCode() && vm.isAsyncContextTrackingEnabled()) [[unlikely]] {
+    if (vm.isAsyncContextTrackingEnabled() && vm.hasCompiledCode()) [[unlikely]] {
         if (JSValue context = AOT::contextInWhichDriverGoesOn(target))
             return context;
     }
@@ -1220,7 +1220,7 @@ static void moduleLoadStep(JSGlobalObject* globalObject, VM& vm, ThrowScope& sco
             if (auto* compiled = context->payload()->inherits<ModuleGraphLoadingState>() ? nullptr : dynamicDowncast<AOT::ModuleRecord>(module))
                 compiled->willBeLoadedByImport();
 #endif
-            JSPromise* requestedPromise = context->loader()->loadRequestedModules(globalObject, module, context->scriptFetcher(), context->referrer().getModule() ? dynamicDowncast<ModuleGraphLoadingState>(context->payload()) : nullptr);
+            JSPromise* requestedPromise = context->loader()->loadRequestedModules(globalObject, module, context->scriptFetcher(), vm.hasCompiledCode() && context->referrer().getModule() ? dynamicDowncast<ModuleGraphLoadingState>(context->payload()) : nullptr);
             if (scope.exception()) {
                 loadPromise->rejectWithCaughtException(vm, scope);
                 return;
@@ -1272,7 +1272,7 @@ static void moduleLoadStep(JSGlobalObject* globalObject, VM& vm, ThrowScope& sco
 
             // setEntryRecord logic
             auto* entry = context->entry();
-            if (auto* cyclic = dynamicDowncast<CyclicModuleRecord>(module); cyclic && cyclic->status() != CyclicModuleRecord::Status::Unlinked && cyclic->status() != CyclicModuleRecord::Status::New) {
+            if (auto* cyclic = dynamicDowncast<CyclicModuleRecord>(module); cyclic && cyclic->status() != CyclicModuleRecord::Status::Unlinked && !(cyclic->status() == CyclicModuleRecord::Status::New && vm.hasCompiledCode())) {
                 ASSERT(cyclic->status() != CyclicModuleRecord::Status::Linking);
                 loadPromise->fulfill(vm, entry->record());
             } else {
@@ -1652,7 +1652,7 @@ static void dynamicImportLoadSettled(JSGlobalObject* globalObject, VM& vm, Throw
 
     // Step-6 linkAndEvaluateClosure
 #if ENABLE(AOT)
-    if (auto* compiled = dynamicDowncast<AOT::ModuleRecord>(module); compiled && compiled->holdGraphBehindEarlierCalls(dynamicPayload, deferred))
+    if (auto* compiled = vm.hasCompiledCode() ? dynamicDowncast<AOT::ModuleRecord>(module) : nullptr; compiled && compiled->holdGraphBehindEarlierCalls(dynamicPayload, deferred))
         return;
 #endif
     // 6.a. Let link be Completion(module.Link()).
