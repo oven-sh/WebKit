@@ -1,0 +1,87 @@
+# The list follows from the program alone. Inside the rehearsal the program never holds a built-in itself. What it holds in its place goes through the same call as any call of the program's, whoever makes the call: the engine too,
+# by a trap, an accessor on a descriptor, a callback. So what is not written down is entered by no road, and what is written down is paid for at the moment of the call.
+# const root = Math.cbrt.bind(null, 8);   new RegExp("a" + ("x" in new Proxy({}, { has: root }))) . descriptor.__defineGetter__("value", root); Object.defineProperty(holder, "k", descriptor); ("b" + holder.k) . ("f" + [4, 9].map(Math.sqrt))
+# It is the same thing each time that it is read, and it looks like what it stands for: ("c" + (Math.max === Math.max)) . ("d" + [Math.max].includes(Math.max)) . ("e" + Math.max.name) . ("g" + [4, 9].map(Math.abs))
+# DIAGNOSTIC: RegExpTextKnownAtRunTime
+# RUN: regexp-texts mechanisms=all
+# CHECK-NOT: text /atrue/
+# CHECK-NOT: text /b2/
+# CHECK: text /ctrue/
+# CHECK: text /dtrue/
+# CHECK: text /emax/
+# CHECK-NOT: text /f2,3/
+# CHECK: text /g4,9/
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 module=m0 position=1 fields=[{key="has" declared={type=anything}}] ownFieldCount=1
+layout L1 module=m0 position=2 fields=[]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=RegExp
+    v1 = Null
+    v2 = Builtin builtin=Math
+    v3 = PropGet v2 key="cbrt"
+    v4 = Integer integer=8
+    v5 = PropGet v3 key="bind"
+    v6 = Call v5, v3, v1, v4 calleeKey="bind"
+    v7 = Builtin builtin=Proxy
+    v8 = NewObject layout=L1
+    v9 = NewObject -, v6 layout=L0 fields=[0]
+    v10 = Construct v7, -, v8, v9
+    v11 = String string="x"
+    v12 = ElemHas v10, v11
+    v13 = String string="a"
+    v14 = Add v13, v12
+    v15 = Construct v0, -, v14
+    v16 = NewObject layout=L1
+    v17 = String string="value"
+    v18 = PropGet v16 key="__defineGetter__"
+    v19 = Call v18, v16, v17, v6 calleeKey="__defineGetter__"
+    v20 = NewObject layout=L1
+    v21 = Builtin builtin=Object
+    v22 = String string="k"
+    v23 = PropGet v21 key="defineProperty"
+    v24 = Call v23, v21, v20, v22, v16 calleeKey="defineProperty"
+    v25 = PropGet v20 key="k"
+    v26 = String string="b"
+    v27 = Add v26, v25
+    v28 = Construct v0, -, v27
+    v29 = PropGet v2 key="max"
+    v30 = PropGet v2 key="max"
+    v31 = StrictEq v29, v30
+    v32 = String string="c"
+    v33 = Add v32, v31
+    v34 = Construct v0, -, v33
+    v35 = NewArray v29 contents=anything
+    v36 = PropGet v2 key="max"
+    v37 = PropGet v35 key="includes"
+    v38 = Call v37, v35, v36 calleeKey="includes"
+    v39 = String string="d"
+    v40 = Add v39, v38
+    v41 = Construct v0, -, v40
+    v42 = PropGet v29 key="name"
+    v43 = String string="e"
+    v44 = Add v43, v42
+    v45 = Construct v0, -, v44
+    v46 = Integer integer=4
+    v47 = Integer integer=9
+    v48 = NewArray v46, v47 contents=anything
+    v49 = PropGet v2 key="sqrt"
+    v50 = PropGet v48 key="map"
+    v51 = Call v50, v48, v49 calleeKey="map"
+    v52 = String string="f"
+    v53 = Add v52, v51
+    v54 = Construct v0, -, v53
+    v55 = Integer integer=4
+    v56 = Integer integer=9
+    v57 = NewArray v55, v56 contents=anything
+    v58 = PropGet v2 key="abs"
+    v59 = PropGet v57 key="map"
+    v60 = Call v59, v57, v58 calleeKey="map"
+    v61 = String string="g"
+    v62 = Add v61, v60
+    v63 = Construct v0, -, v62
+    v64 = NewArray v15, v28, v34, v41, v45, v54, v63 contents=anything
+    Return v64
+}

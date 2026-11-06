@@ -1,0 +1,69 @@
+# The list follows from the program alone. Whatever is done on real values is paid for by what it touches, before it is done: the characters of a text that is made a number, the places of a list that is spread, the words of a BigInt that is written out;
+# and a built-in that is called back is handed the whole receiver at every element, so the price is the square.
+# new RegExp("a" + +"9".repeat(1000000)) . ("b" + [...Array(1000000)][0]) . ("c" + String(BigInt("0x" + "f".repeat(100000))).length) . ("d" + "a".repeat(3000).split("").map([].concat.bind([])).length) . ("z+" + 1)
+# DIAGNOSTIC: RegExpTextKnownAtRunTime
+# RUN: regexp-texts mechanisms=all
+# CHECK: text /z+1/
+# CHECK-NOT: text /
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=RegExp
+    v1 = Integer integer=1000000
+    v2 = String string="9"
+    v3 = PropGet v2 key="repeat"
+    v4 = Call v3, v2, v1 calleeKey="repeat"
+    v5 = ToNumber v4
+    v6 = String string="a"
+    v7 = Add v6, v5
+    v8 = Construct v0, -, v7
+    v9 = Builtin builtin=Array
+    v10 = Call v9, -, v1
+    v11 = NewArray contents=anything
+    AppendSpread v11, v10
+    v13 = Integer
+    v14 = ElemGet v11, v13
+    v15 = String string="b"
+    v16 = Add v15, v14
+    v17 = Construct v0, -, v16
+    v18 = String string="0x"
+    v19 = String string="f"
+    v20 = Integer integer=100000
+    v21 = PropGet v19 key="repeat"
+    v22 = Call v21, v19, v20 calleeKey="repeat"
+    v23 = Add v18, v22
+    v24 = Builtin builtin=BigInt
+    v25 = Call v24, -, v23
+    v26 = Builtin builtin=GlobalThis
+    v27 = PropGet v26 key="String" [isFreeName]
+    v28 = Call v27, -, v25
+    v29 = PropGet v28 key="length"
+    v30 = String string="c"
+    v31 = Add v30, v29
+    v32 = Construct v0, -, v31
+    v33 = String string="a"
+    v34 = Integer integer=3000
+    v35 = PropGet v33 key="repeat"
+    v36 = Call v35, v33, v34 calleeKey="repeat"
+    v37 = String string=""
+    v38 = PropGet v36 key="split"
+    v39 = Call v38, v36, v37 calleeKey="split"
+    v40 = NewArray contents=anything
+    v41 = PropGet v40 key="concat"
+    v42 = PropGet v41 key="bind"
+    v43 = Call v42, v41, v40 calleeKey="bind"
+    v44 = PropGet v39 key="map"
+    v45 = Call v44, v39, v43 calleeKey="map"
+    v46 = PropGet v45 key="length"
+    v47 = String string="d"
+    v48 = Add v47, v46
+    v49 = Construct v0, -, v48
+    v50 = Integer integer=1
+    v51 = String string="z+"
+    v52 = Add v51, v50
+    v53 = Construct v0, -, v52
+    v54 = NewArray v8, v17, v32, v49, v53 contents=anything
+    Return v54
+}

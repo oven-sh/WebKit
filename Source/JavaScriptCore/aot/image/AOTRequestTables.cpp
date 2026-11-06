@@ -304,6 +304,14 @@ static void encodeDirectEvalRequest(const TableEncoder& encoder, Typed::EvalScop
     for (Typed::EvalScopeFlags flag : scope.flags)
         setFlagOfDirectEvalRequest(request, flag);
     request.module = module.index();
+    request.outer = DirectEvalRequest::noOuter;
+    if (scope.outer) {
+        uint32_t keyOfOuter[] { static_cast<uint32_t>(RequestKind::DirectEval), scope.outer.index(), module.index() };
+        if (std::optional<uint32_t> offset = encoder.numbers.numberOf(NumberSpace::Request, keyOfOuter))
+            request.outer = *offset;
+        else
+            encoder.fail("what lies around the scope of a direct eval has no place among the requests"_s, module);
+    }
     request.numberOfBindings = static_cast<uint32_t>(scope.bindings.size());
 
     Vector<uint32_t, 16> names;

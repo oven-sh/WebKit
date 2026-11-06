@@ -257,6 +257,7 @@ public:
 
     static Structure* createStructure(VM& vm, JSGlobalObject* globalObject) { return Structure::create(vm, globalObject, jsNull(), TypeInfo(ObjectType, StructureFlags), info()); }
     static EvalBindings* create(VM&, Structure*, Instance*, const DirectEvalRequest&, JSCellButterfly* operands, JSObject* homeObjectHolder, std::span<const EvalBindingData>);
+    static EvalBindings* createWithoutPrivateValues(VM&, Structure*, Instance*, const DirectEvalRequest&, JSCellButterfly* operands, JSObject* homeObjectHolder, std::span<const EvalBindingData>);
 
     DECLARE_INFO;
     DECLARE_VISIT_CHILDREN;
@@ -344,10 +345,16 @@ void EvalBindings::storeStaticField(JSGlobalObject* globalObject, const EvalBind
     storeVariable(globalObject, binding, value);
 }
 
-EvalBindings* EvalBindings::create(VM& vm, Structure* structure, Instance* instance, const DirectEvalRequest& request, JSCellButterfly* operands, JSObject* homeObjectHolder, std::span<const EvalBindingData> bindings)
+EvalBindings* EvalBindings::createWithoutPrivateValues(VM& vm, Structure* structure, Instance* instance, const DirectEvalRequest& request, JSCellButterfly* operands, JSObject* homeObjectHolder, std::span<const EvalBindingData> bindings)
 {
     auto* result = new (NotNull, allocateCell<EvalBindings>(vm)) EvalBindings(vm, structure, instance, request, operands, homeObjectHolder, bindings);
     result->finishCreation(vm);
+    return result;
+}
+
+EvalBindings* EvalBindings::create(VM& vm, Structure* structure, Instance* instance, const DirectEvalRequest& request, JSCellButterfly* operands, JSObject* homeObjectHolder, std::span<const EvalBindingData> bindings)
+{
+    EvalBindings* result = createWithoutPrivateValues(vm, structure, instance, request, operands, homeObjectHolder, bindings);
     for (auto& binding : bindings) {
         if (JSCell* value = result->createPrivateValue(vm, binding))
             operands->setIndex(vm, result->privateValueIndexOf(binding), value);
@@ -711,6 +718,12 @@ static EvalScopeChain buildScopeChain(Instance* instance, JSGlobalObject* global
             pushBindings({ });
         innermost = EvalVariableScope::create(vm, ensureStructure(vm, *instance, &DirectEvalStructures::variableScope, EvalVariableScope::createStructure), innermost, scopeType, contents);
     };
+
+    if (request.outer != DirectEvalRequest::noOuter) {
+        const auto& outer = requestAt<DirectEvalRequest>(instance, request.outer);
+        EvalBindings* namesAround = EvalBindings::createWithoutPrivateValues(vm, ensureStructure(vm, *instance, &DirectEvalStructures::bindings, EvalBindings::createStructure), instance, outer, operandCopy, homeObjectHolder, unsafeMakeSpan(outer.bindings, outer.numberOfBindings));
+        innermost = EvalScope::create(vm, ensureStructure(vm, *instance, &DirectEvalStructures::scope, EvalScope::createStructure), innermost, namesAround, newTarget);
+    }
 
     PrivateNameEnvironment privateNames;
     for (auto& binding : bindings) {

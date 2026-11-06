@@ -315,6 +315,8 @@ struct EvalBindingData {
 static_assert(sizeof(EvalBindingData) == 28 && isImageRecord<EvalBindingData>);
 
 struct DirectEvalRequest {
+    static constexpr uint32_t noOuter = UINT32_MAX;
+
     std::span<const uint32_t> bindingsByName() const { return { reinterpret_cast<const uint32_t*>(bindings + numberOfBindings), numberOfBindings }; }
 
     uint32_t isStrict : 1;
@@ -327,10 +329,11 @@ struct DirectEvalRequest {
     uint32_t allowsNewTarget : 1;
     uint32_t unused : 24;
     uint32_t module;
+    uint32_t outer;
     uint32_t numberOfBindings;
     EvalBindingData bindings[];
 };
-static_assert(sizeof(DirectEvalRequest) == 12);
+static_assert(sizeof(DirectEvalRequest) == 16);
 
 struct PropertyDescriptorBits {
     uint32_t hasValue : 1;

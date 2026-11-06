@@ -753,6 +753,12 @@ static bool isValidEvalBinding(const Program& program, const EvalBinding& bindin
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+static bool isReachedWithoutOperand(const EvalBinding& binding)
+{
+    bool isName = binding.kind == EvalBindingKind::Variable || binding.kind == EvalBindingKind::Constant || binding.kind == EvalBindingKind::FunctionName;
+    return isName && binding.name && binding.variable;
+}
+
 static bool isValidExpectedResult(const Program& program, const ExpectedResult& expected)
 {
     return std::ranges::all_of(expected.layouts, [&](LayoutID layout) {
@@ -769,12 +775,21 @@ static bool isHelperOfCompiler(const BuiltinTable& builtins, RuntimeFunctionID i
 
 void ProgramVerifier::verifySmallRecords()
 {
+    BitVector scopesThatMayLieAroundOthers(m_program.evalScopes.size());
     for (unsigned index = 0; index < m_program.evalScopes.size(); ++index) {
-        bool hasValidBindings = std::ranges::all_of(m_program.evalScopes[index].bindings, [&](const EvalBinding& binding) {
+        const EvalScope& scope = m_program.evalScopes[index];
+        bool hasValidBindings = std::ranges::all_of(scope.bindings, [&](const EvalBinding& binding) {
             return isValidEvalBinding(m_program, binding);
         });
         if (!hasValidBindings)
             fail({ .kind = InternalErrorKind::PayloadOutOfRange, .count = index });
+        if (!scope.outer && std::ranges::all_of(scope.bindings, isReachedWithoutOperand))
+            scopesThatMayLieAroundOthers.set(index);
+    }
+    for (unsigned index = 0; index < m_program.evalScopes.size(); ++index) {
+        EvalScopeID outer = m_program.evalScopes[index].outer;
+        if (outer && !scopesThatMayLieAroundOthers.get(outer.index()))
+            fail({ .kind = InternalErrorKind::PayloadOutOfRange, .count = index, .detail = "what lies around the scope of a direct eval needs an operand of a call or has a scope around itself"_s });
     }
 
     auto& runtimeFunctions = m_program.runtimeFunctions;

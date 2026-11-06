@@ -374,7 +374,7 @@ bool Modules::bringBackMockKeptByImportersOfThisTestFile(ModuleID fileOrModule)
         if (ended == m_endedMocks.end() || !ended->value.last().isKeptWhereImporterIsAskedForAgain || ended->value.last().momentOfTestFile != m_instance.vm->aotState().momentOfTestFile || endedMock(fileOrModule, ended->value.size() - 1) != ofPreload)
             return false;
         ModuleID module = moduleWithExportsOf(fileOrModule);
-        keepMockThatStoodInPlace(fileOrModule, module, standing, m_exportsLeftOut.get(module));
+        keepMockThatStoodInPlace(fileOrModule, module, standing, exportsLeftOutOf(module));
         letGoOfNamespaceMadeUnderMock(module);
         setMockInPlace(fileOrModule, ofPreload, held.whatRequireAnswersUnderMockLaidInPreload.get());
     } else if (auto waiting = m_momentsWaitingMocksWereLaid.find(fileOrModule); !m_modulesWithMockToRun.get(fileOrModule.index()) || waiting == m_momentsWaitingMocksWereLaid.end() || !waiting->value.importersKeepMockThatStands)
@@ -404,7 +404,7 @@ void Modules::noteMomentMockComesInPlace(ModuleID fileOrModule, JSObject* mock, 
         ModuleID module = moduleWithExportsOf(fileOrModule);
         bool isKeptByImportersOfThisTestFile = waiting && waiting->importersKeepMockThatStands;
         std::optional<MomentMockWasLaid> laid = m_loadedInPreload.get(module.index()) || isKeptByImportersOfThisTestFile ? m_momentsStandingMocksWereLaid.takeOptional(fileOrModule) : std::nullopt;
-        std::optional<unsigned> ended = laid ? keepEndedMock(fileOrModule, earlier, *laid, waiting ? waiting->moment : 0, m_exportsLeftOut.get(module)) : std::nullopt;
+        std::optional<unsigned> ended = laid ? keepEndedMock(fileOrModule, earlier, *laid, waiting ? waiting->moment : 0, exportsLeftOutOf(module)) : std::nullopt;
         if (ended)
             m_endedMocks.find(fileOrModule)->value[*ended].isKeptWhereImporterIsAskedForAgain = isKeptByImportersOfThisTestFile;
         if (waiting && waiting->hadNamespace && waiting->moment == m_instance.vm->aotState().momentOfLoads) {

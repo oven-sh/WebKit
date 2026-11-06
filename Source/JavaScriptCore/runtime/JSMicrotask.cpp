@@ -327,6 +327,21 @@ static void promiseResolveThenableJob(JSGlobalObject* globalObject, JSValue prom
     EXCEPTION_ASSERT(scope.exception() || true);
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+static ALWAYS_INLINE JSValue asyncContextForDriverResume(JSGlobalObject* globalObject, VM& vm, JSValue target)
+{
+#if ENABLE(AOT)
+    if (vm.hasCompiledCode() && vm.isAsyncContextTrackingEnabled()) [[unlikely]] {
+        if (JSValue context = AOT::contextInWhichDriverGoesOn(target))
+            return context;
+    }
+#else
+    UNUSED_PARAM(target);
+#endif
+    return AsyncContextSwapScope::current(vm, globalObject);
+}
+#endif
+
 // Settle a cooperative-driver request (target is a driver, not a real .next() JSPromise). The iterator
 // result belongs to the producer's realm (for an async generator that is the generator's realm even when
 // driven cross-realm; for an AsyncFromSyncIterator it is the wrapper's realm), so use it for the object and
@@ -339,7 +354,7 @@ static ALWAYS_INLINE void settleDriverWithIteratorResult(JSGlobalObject* globalO
     JSGlobalObject* realm = producer->realm();
 #if USE(BUN_JSC_ADDITIONS)
     // AsyncGeneratorDriverResume runs the driver under the async context active now.
-    JSValue asyncContext = AsyncContextSwapScope::current(vm, globalObject);
+    JSValue asyncContext = asyncContextForDriverResume(globalObject, vm, target);
 #define BUN_ASYNC_CONTEXT , asyncContext
 #else
     UNUSED_PARAM(globalObject);
@@ -597,7 +612,7 @@ static void asyncGeneratorCompleteStep(JSGlobalObject* globalObject, JSAsyncGene
     // resolveWithInternalMicrotask keeps resolvePromise's thenable check, matching a real Promise settlement.
     if (isThrow) {
 #if USE(BUN_JSC_ADDITIONS)
-        JSPromise::rejectWithInternalMicrotask(vm, globalObject, value, InternalMicrotask::AsyncGeneratorDriverResume, target, AsyncContextSwapScope::current(vm, globalObject));
+        JSPromise::rejectWithInternalMicrotask(vm, globalObject, value, InternalMicrotask::AsyncGeneratorDriverResume, target, asyncContextForDriverResume(globalObject, vm, target));
 #else
         JSPromise::rejectWithInternalMicrotask(vm, globalObject, value, InternalMicrotask::AsyncGeneratorDriverResume, target);
 #endif

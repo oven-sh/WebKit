@@ -277,6 +277,7 @@ private:
     BitVector m_openClassObjects;
     BitVector m_variablesReadByUnseenCode;
     BitVector m_evaluatedModules;
+    BitVector m_scopesAroundDirectEvalsLetGo;
     BytesSharedByThreads m_modulesWithReachedCode;
     bool waitsUntilReachedCodeNamesIt(FunctionID);
     void noteFunctionsNamedBy(FunctionID);
@@ -339,6 +340,7 @@ StateOfLinkReach::StateOfLinkReach(LinkFlow& flow)
     m_openClassObjects = BitVector(m_numberOfLayouts);
     m_variablesReadByUnseenCode = BitVector(m_program.variables.size());
     m_evaluatedModules = BitVector(m_program.modules.size());
+    m_scopesAroundDirectEvalsLetGo = BitVector(m_program.evalScopes.size());
     m_modulesWithReachedCode = BytesSharedByThreads(m_program.modules.size());
     m_modulesWithEscapedExports = BitVector(m_program.modules.size());
     m_showsWaysBetweenModuleObjects = namesWaysToModuleObjects(m_program);
@@ -1003,16 +1005,22 @@ void StateOfLinkReach::letGoWhatDirectEvalsShowIn(FunctionID id)
 {
     const BodyIndex* index = bodiesLookedAt(m_flow.looks).find(id);
     RELEASE_ASSERT(index);
+    auto letGo = [&](const EvalScope& scope) {
+        for (const EvalBinding& binding : scope.bindings) {
+            if (binding.variable)
+                escapeVariable(binding.variable);
+            if (binding.layout && binding.field)
+                escapeField({ binding.layout, *binding.field });
+        }
+    };
     for (uint32_t block = 0; block < index->numberOfBlocks(); ++block) {
         for (BodyValue value : index->block(BlockID(block)).values()) {
             if (value.opcode() != Opcode::DirectEval)
                 continue;
-            for (const EvalBinding& binding : m_program.at(value.as<Opcode::DirectEval>().evalScope()).bindings) {
-                if (binding.variable)
-                    escapeVariable(binding.variable);
-                if (binding.layout && binding.field)
-                    escapeField({ binding.layout, *binding.field });
-            }
+            const EvalScope& scope = m_program.at(value.as<Opcode::DirectEval>().evalScope());
+            letGo(scope);
+            if (scope.outer && !m_scopesAroundDirectEvalsLetGo.set(scope.outer.index()))
+                letGo(m_program.at(scope.outer));
         }
     }
 }

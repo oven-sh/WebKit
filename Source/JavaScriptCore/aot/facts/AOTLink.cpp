@@ -1675,6 +1675,8 @@ void WriterOfLink::indexFunctionsThatAreHeld()
     sortAndRemoveDuplicates(loops(), m_functionsThatSlotsOfRecordsMayDefer);
 
     auto putInQueueFromStart = [&](FunctionID id) {
+        if (everyCallerIsKnownOf(id.index()) && m_flow.classOfConstructor(id))
+            return;
         m_tables.functions[id.index()].liesUnderNameOrIsLost = m_program.at(id).hasBody();
         m_tables.functions[id.index()].isInQueueFromStart = m_flow.reached.get(id.index()) && m_program.at(id).hasBody() && !mayTakeArrivals(id);
     };

@@ -57,7 +57,7 @@ record EvalBinding wire {
     name: String? kind: EvalBindingKind depth: UInt32 layout: Layout? field: UInt32? variable: Variable? operand: UInt32? function: UInt32?
     setter: UInt32?
 }
-record EvalScope wire { mode: ECMAMode flags: EvalScopeFlags bindings: Span<EvalBinding> }
+record EvalScope wire { mode: ECMAMode flags: EvalScopeFlags bindings: Span<EvalBinding> outer: EvalScope? }
 
 enum ModuleKind (| engine hoistsFunctionsIntoVariables: Bool, isFoundByPath: Bool, isProgramModule: Bool, canOwnVariables: Bool, isEvaluatedAtMostOnce: Bool, hasExportTable: Bool) {
     SourceText(true, true, true, true, true, true) CommonJs(true, true, true, true, true, false) Data(false, true, true, true, true, true) RuntimeSource(true, true, false, true, true, false) Runtime(false, true, false, false, false, false) External(false, false, false, false, false, false)

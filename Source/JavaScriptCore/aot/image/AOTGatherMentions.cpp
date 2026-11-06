@@ -267,15 +267,29 @@ private:
         switch (static_cast<RequestKind>(request[0])) {
         case RequestKind::NewClass:
         case RequestKind::TemplateObject:
-        case RequestKind::DirectEval:
         case RequestKind::CollectionData:
         case RequestKind::FormatPattern:
+            return;
+        case RequestKind::DirectEval:
+            addMentionsImpliedByDirectEvalRequest(request.subspan(1));
             return;
         case RequestKind::Data:
             addMentionsImpliedByDataRequest(request.subspan(1));
             return;
         }
         reportMalformedMention("the request has no kind"_s);
+    }
+
+    void addMentionsImpliedByDirectEvalRequest(std::span<const uint32_t> scopeAndModule)
+    {
+        if (scopeAndModule.size() != 2 || scopeAndModule[0] >= m_program.evalScopes.size()) {
+            reportMalformedMention("the request for a direct eval does not name a scope of the program and a module"_s);
+            return;
+        }
+        if (Typed::EvalScopeID outer = m_program.evalScopes[scopeAndModule[0]].outer) {
+            uint32_t request[] { static_cast<uint32_t>(RequestKind::DirectEval), outer.index(), scopeAndModule[1] };
+            add(NumberSpace::Request, request);
+        }
     }
 
     void addMentionsImpliedByDataRequest(std::span<const uint32_t> dataAndEncoding)

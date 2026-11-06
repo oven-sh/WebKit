@@ -1117,9 +1117,11 @@ static size_t sizeOfPagesAtStart(const Image& image)
     return roundUpToMultipleOf(pageSize(), VMPropertyCaches::maxSizeOfPagesAtStart(image) + below + above + arenaCapacity(image.programTables()) + sizeOfSmallTables);
 }
 
-#if OS(LINUX) && !ENABLE(AOT_GUARDED_PAGES)
+#if OS(LINUX)
+#if !ENABLE(AOT_GUARDED_PAGES)
 static thread_local uint8_t* t_pagesOfThread;
 static thread_local size_t t_sizeOfPagesOfThread;
+#endif
 static thread_local bool t_isStarting;
 static std::atomic<unsigned> s_numberOfThreadsStarting;
 
@@ -1172,12 +1174,17 @@ static void* tryReservePagesForTables(const Image& image, unsigned numberOfThrea
     if (!MarkedBlockCage::tryEnsureRoomForNewVMs(numberOfThreads))
         return nullptr;
     size_t size = sizeOfPagesAtStart(image);
+#if ENABLE(AOT_GUARDED_PAGES)
+    // Each table gets pages at an address of its own when its VM is made, so none are reserved here: there must be room for every thread that is starting.
+    return addressSpaceLeft() < numberOfThreads * size + sizeToLeaveFree ? nullptr : &s_numberOfThreadsStarting;
+#else
     if (addressSpaceLeft() < size + sizeToLeaveFree)
         return nullptr;
     void* pages = OSAllocator::tryReserveAndCommit(size, OSAllocator::FastMallocPages);
     if (pages)
         *static_cast<size_t*>(pages) = size;
     return pages;
+#endif
 }
 
 PagesForNewThread tryReservePagesForFirstThread()
@@ -1206,6 +1213,9 @@ PagesForNewThread tryReservePagesForNewThread(bool threadsAreEnding)
         --s_numberOfThreadsStarting;
         return { nullptr, true };
     }
+#if ENABLE(AOT_GUARDED_PAGES)
+    sizeToLeaveFree += numberOfThreads * sizeOfPagesAtStart(*image);
+#endif
     if (!tryEnsureRoomInAllocator(numberOfThreads, sizeToLeaveFree)) {
         releasePagesForNewThread(pages);
         return { nullptr, true };
@@ -1217,24 +1227,30 @@ void releasePagesForNewThread(void* pages)
 {
     if (!pages)
         return;
+#if !ENABLE(AOT_GUARDED_PAGES)
     OSAllocator::releaseDecommitted(pages, *static_cast<size_t*>(pages), 0);
+#endif
     --s_numberOfThreadsStarting;
 }
 
 void adoptPagesForNewThread(void* pages)
 {
+#if !ENABLE(AOT_GUARDED_PAGES)
     RELEASE_ASSERT(!t_pagesOfThread);
     t_pagesOfThread = static_cast<uint8_t*>(pages);
     t_sizeOfPagesOfThread = pages ? std::exchange(*static_cast<size_t*>(pages), 0) : 0;
+#endif
     t_isStarting = !!pages;
 }
 
 void releaseUnusedPagesOfThread()
 {
+#if !ENABLE(AOT_GUARDED_PAGES)
     if (t_sizeOfPagesOfThread)
         OSAllocator::releaseDecommitted(t_pagesOfThread, t_sizeOfPagesOfThread, 0);
     t_pagesOfThread = nullptr;
     t_sizeOfPagesOfThread = 0;
+#endif
 }
 
 void didStartThread(VM* vm)
@@ -1246,10 +1262,12 @@ void didStartThread(VM* vm)
     --s_numberOfThreadsStarting;
 }
 
+#if !ENABLE(AOT_GUARDED_PAGES)
 static std::pair<uint8_t*, size_t> takePagesOfThread()
 {
     return { std::exchange(t_pagesOfThread, nullptr), std::exchange(t_sizeOfPagesOfThread, 0) };
 }
+#endif
 #else
 PagesForNewThread tryReservePagesForFirstThread() { return { }; }
 PagesForNewThread tryReservePagesForNewThread(bool) { return { }; }

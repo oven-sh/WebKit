@@ -239,7 +239,23 @@ void generateRunAsyncGeneratorStep(StubAssembler& jit)
     Jump isNotCell = jit.branchIfNotCell(result);
     Jump isNotSentinel = jit.branchIfNotType(result, SentinelType);
     suspendsConsumer.append(jit.branchTest32(CCallHelpers::Zero, consumer, TrustedImm32(consumerOfStepAwaitsCall)));
-    needsOperation.append(jit.jump());
+    jit.load64(Address(fp, StepFrame::offsetOfDriver), word);
+    Jump isFrameOfFunction = jit.branchTest32(CCallHelpers::Zero, consumer, TrustedImm32(consumerIsAsyncGenerator));
+    jit.load64(fieldOf(word, AsyncGeneratorField::Frame), word);
+    isFrameOfFunction.link(&jit);
+    jit.load8(Address(word, SavedFrame::offsetOfFlags()), other);
+    jit.or32(TrustedImm32(SavedFrame::goesOnInContextOfItsAwaitFlag), other);
+    jit.store8(other, Address(word, SavedFrame::offsetOfFlags()));
+    Jump hasAwaitedWhileNothingWasTracked = jit.branchTest32(CCallHelpers::NonZero, consumer, TrustedImm32(consumerOfStepHasAwaited));
+    Jump tracksNone = emitBranchIfTracksNoAsyncContext(jit, other);
+    emitLoadCurrentAsyncContext(jit, other);
+    Jump hasContext = jit.jump();
+    hasAwaitedWhileNothingWasTracked.link(&jit);
+    tracksNone.link(&jit);
+    jit.move(TrustedImm64(JSValue::ValueUndefined), other);
+    hasContext.link(&jit);
+    jit.store64(other, Address(word, SavedFrame::offsetOfAsyncContext()));
+    suspendsConsumer.append(jit.jump());
     isNotSentinel.link(&jit);
     isNotCell.link(&jit);
 
@@ -321,6 +337,16 @@ static void emitStoreExecutingState(StubAssembler& jit, GPRReg generator)
     jit.store64(boxedInt32(static_cast<int32_t>(JSAsyncGenerator::AsyncGeneratorState::Executing)), fieldOf(generator, AsyncGeneratorField::State));
 }
 
+static void emitBranchUnlessDriverGoesOnInCurrentContext(StubAssembler& jit, GPRReg frame, GPRReg scratch, JumpList& otherwise)
+{
+    Jump goesOnInContextOfProducer = jit.branchTest8(CCallHelpers::Zero, Address(frame, SavedFrame::offsetOfFlags()), TrustedImm32(SavedFrame::goesOnInContextOfItsAwaitFlag));
+    Jump tracksNone = emitBranchIfTracksNoAsyncContext(jit, scratch);
+    emitLoadCurrentAsyncContext(jit, scratch);
+    otherwise.append(jit.branch64(CCallHelpers::NotEqual, scratch, Address(frame, SavedFrame::offsetOfAsyncContext())));
+    tracksNone.link(&jit);
+    goesOnInContextOfProducer.link(&jit);
+}
+
 enum class WaitingDriver : uint8_t { IsEnteredNext, MayGetJob };
 
 static void emitLoadFrameOfWaitingDriver(StubAssembler& jit, WaitingDriver what, GPRReg driver, GPRReg frame, GPRReg scratch, JumpList& otherwise)
@@ -331,11 +357,15 @@ static void emitLoadFrameOfWaitingDriver(StubAssembler& jit, WaitingDriver what,
     otherwise.append(jit.branchIfNotType(driver, JSAsyncGeneratorType));
     emitLoadFrameOfAwaitingGenerator(jit, driver, frame, scratch, otherwise);
     if (what == WaitingDriver::IsEnteredNext)
+        emitBranchUnlessDriverGoesOnInCurrentContext(jit, frame, scratch, otherwise);
+    if (what == WaitingDriver::IsEnteredNext)
         emitStoreExecutingState(jit, driver);
     Jump hasFrame = jit.jump();
     isSavedFrame.link(&jit);
     jit.move(driver, frame);
     otherwise.append(jit.branchTest32(CCallHelpers::Zero, Address(frame, SavedFrame::offsetOfLiveSlotMapOffsetPlusOne())));
+    if (what == WaitingDriver::IsEnteredNext)
+        emitBranchUnlessDriverGoesOnInCurrentContext(jit, frame, scratch, otherwise);
     hasFrame.link(&jit);
 }
 
@@ -413,6 +443,7 @@ void emitTakeYieldAwaitedJob(StubAssembler& jit, const GeneratorJobRegisters& re
     emitLoadFrameOfWaitingDriver(jit, WaitingDriver::MayGetJob, driver, saved, word, isLeftToJobLoop);
     isLeftToJobLoop.append(jit.branchTest8(CCallHelpers::Zero, Address(queue, MicrotaskQueue::offsetOfIsScheduledToRun())));
     emitPutAsyncContextOfJobInPlace(jit, argumentOfJob(slot, 3), word, value, isLeftToJobLoop);
+    emitBranchUnlessDriverGoesOnInCurrentContext(jit, saved, word, isLeftToJobLoop);
     jit.load64(argumentOfJob(slot, 1), value);
     emitDequeueHeadJob(jit, queue, word);
     emitFinishOnlyRequestAtYield(jit, producer, word);

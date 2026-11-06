@@ -143,10 +143,12 @@ public:
 
     CoroutineKind kind() const { return m_kind; }
     bool isOnStack() const { return !m_liveSlotMapOffsetPlusOne; }
-    void setIsEnteredByJobLoop(bool isEnteredByJobLoop) { m_flags = static_cast<uint8_t>((m_flags & ~(isEnteredByJobLoopFlag | hasPassedAwaitOnStackFlag)) | (isEnteredByJobLoop ? isEnteredByJobLoopFlag : 0)); }
+    void setIsEnteredByJobLoop(bool isEnteredByJobLoop) { m_flags = static_cast<uint8_t>((m_flags & ~(isEnteredByJobLoopFlag | hasPassedAwaitOnStackFlag | goesOnInContextOfItsAwaitFlag)) | (isEnteredByJobLoop ? isEnteredByJobLoopFlag : 0)); }
     SuspensionKind suspensionKind() const { return m_flags & isSuspendedAtYieldFlag ? SuspensionKind::Yield : SuspensionKind::Await; }
     bool hasPassedAwaitOnStack() const { return m_flags & hasPassedAwaitOnStackFlag; }
     void notePassedAwaitOnStack() { m_flags |= hasPassedAwaitOnStackFlag; }
+    bool goesOnInContextOfItsAwait() const { return m_flags & goesOnInContextOfItsAwaitFlag; }
+    JSValue contextOfAwait() const { return m_asyncContext ? JSValue::decode(m_asyncContext) : jsUndefined(); }
     void setStepStatus(AsyncGeneratorStepStatus status) { m_flags = (m_flags & ~stepStatusMask) | static_cast<uint8_t>(status) << stepStatusShift; }
     AsyncGeneratorStepStatus stepStatus() const { return static_cast<AsyncGeneratorStepStatus>((m_flags & stepStatusMask) >> stepStatusShift); }
     const void* resumeAddress() const { return m_resumeAddress; }
@@ -175,6 +177,7 @@ public:
     static constexpr uint8_t stepStatusMask = 3 << stepStatusShift;
     static constexpr uint8_t hasPassedAwaitOnStackFlag = 16;
     static constexpr uint8_t isHeapFrameFlag = 32;
+    static constexpr uint8_t goesOnInContextOfItsAwaitFlag = 64;
     static constexpr uint32_t minWordsForStringMove = 32;
     static constexpr size_t maxWordsAllocatedInStub = (MarkedSpace::largeCutoff - 64) / sizeof(uint64_t);
     static constexpr ptrdiff_t offsetOfNumberOfWords() { return OBJECT_OFFSETOF(SavedFrame, m_numberOfWords); }

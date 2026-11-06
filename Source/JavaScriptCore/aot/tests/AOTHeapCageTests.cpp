@@ -1280,6 +1280,60 @@ static void checkErrorOwedForStructuresIsHeardOfByTheirAllocator()
     AOT_TEST_CHECK(StructureAlignedMemoryAllocator::tryRestoreReleasedReserve());
 }
 
+static void checkErrorOwedForStructuresAndTablesLeavesThePollThatFillsTheReserve()
+{
+    TestVM test;
+    JSGlobalObject* realm = test.createRealm();
+    VM& vm = test.vm();
+
+    for (unsigned round = 0; round < 2; ++round) {
+        runOutOfStructures(vm);
+        vm.heap.cage().addExhaustedHeap(MarkedBlockCage::ExhaustedHeap::Tables);
+        AOT_TEST_CHECK(throwErrorIfOwed(vm, realm));
+        AOT_TEST_CHECK(vm.traps().needsOutOfMemoryError() && test.cage().errorWaitsForPoll());
+        AOT_TEST_CHECK(test.cage().tryTakeBackOutOfMemoryErrorAtPoll(vm));
+        AOT_TEST_CHECK(!vm.traps().needsOutOfMemoryError() && !test.cage().errorWaitsForPoll());
+    }
+    AOT_TEST_CHECK(StructureAlignedMemoryAllocator::releaseReserve());
+    AOT_TEST_CHECK(StructureAlignedMemoryAllocator::tryRestoreReleasedReserve());
+}
+
+static void checkReserveThatTheErrorForStructuresAndTablesTookIsKeptAgain()
+{
+    TestVM test;
+    JSGlobalObject* realm = test.createRealm();
+    VM& vm = test.vm();
+    MarkedBlockCage& cage = test.cage();
+
+    Vector<void*> blocks;
+    uintptr_t middle = cage.start() + cage.size() / 2;
+    do {
+        blocks.append(cage.tryAllocateAligned(blockSize, blockSize));
+        AOT_TEST_CHECK(blocks.last() && blocks.size() <= cage.size() / blockSize);
+    } while (std::bit_cast<uintptr_t>(blocks.last()) + blockSize <= middle);
+    constexpr size_t whole = cageSizeInMB * MB / 64;
+    for (size_t count = 0; count < 2 * whole / blockSize; ++count)
+        cage.keepReserveOnceHalfFull();
+    AOT_TEST_CHECK(cage.reserveSize() == whole);
+
+    runOutOfStructures(vm);
+    cage.addExhaustedHeap(MarkedBlockCage::ExhaustedHeap::Tables);
+    AOT_TEST_CHECK(createOutOfMemoryError(realm));
+    AOT_TEST_CHECK(vm.traps().needsOutOfMemoryError() && cage.errorWaitsForPoll());
+    // As where a cell of the error needs a block.
+    AOT_TEST_CHECK(cage.releaseReserve() && cage.reserveSize() < whole);
+    didThrowOwedOutOfMemoryError(vm);
+    AOT_TEST_CHECK(vm.traps().needsOutOfMemoryError() && cage.errorWaitsForPoll());
+    AOT_TEST_CHECK(cage.tryTakeBackOutOfMemoryErrorAtPoll(vm));
+    AOT_TEST_CHECK(!vm.traps().needsOutOfMemoryError() && !cage.errorWaitsForPoll());
+
+    size_t left = cage.reserveSize();
+    cage.keepReserveOnceHalfFull();
+    AOT_TEST_CHECK(cage.reserveSize() > left);
+    for (void* block : blocks)
+        cage.free(block);
+}
+
 static void checkRangeIsReused()
 {
     uintptr_t baseOfFirst;
@@ -1497,6 +1551,8 @@ std::span<const NativeTest> heapCageTests()
         { "heap-cage/cage/error-is-owed-once-collections-buy-next-to-nothing"_s, withCage<checkErrorIsOwedOnceCollectionsBuyNextToNothing> },
         { "heap-cage/cage/error-owed-by-barren-collections-is-offered-to-a-poll-once"_s, withCage<checkErrorOwedByBarrenCollectionsIsOfferedToPollOnce> },
         { "heap-cage/cage/error-owed-for-structures-is-heard-of-by-their-allocator"_s, withCage<checkErrorOwedForStructuresIsHeardOfByTheirAllocator> },
+        { "heap-cage/cage/error-owed-for-structures-and-tables-leaves-the-poll-that-fills-the-reserve"_s, withCage<checkErrorOwedForStructuresAndTablesLeavesThePollThatFillsTheReserve> },
+        { "heap-cage/cage/reserve-that-the-error-for-structures-and-tables-took-is-kept-again"_s, withCage<checkReserveThatTheErrorForStructuresAndTablesTookIsKeptAgain> },
         { "heap-cage/cage/error-of-another-request-leaves-what-is-owed-for-cells"_s, withCage<checkErrorOfAnotherRequestAndErrorOwedForCells<false>> },
         { "heap-cage/cage/blocks-to-fill-are-fresh-blocks-of-the-cage"_s, withCage<checkBlocksToFillAreFreshBlocksOfTheCage> },
 #if !ENABLE(MALLOC_HEAP_BREAKDOWN)

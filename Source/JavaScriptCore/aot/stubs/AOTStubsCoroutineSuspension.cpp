@@ -631,7 +631,7 @@ void generateAwaitBySavingFrame(StubAssembler& jit)
         checkStubOperands(awaitWithSavedFrame(), { awaited, savedFrame, siteWord });
         jit.bindEntry(awaitWithSavedFrame());
     }
-    emitSaveFrame(jit, { awaited, savedFrame, count, word, other, second }, siteWord, 0);
+    emitSaveFrame(jit, { awaited, savedFrame, count, word, other, second }, siteWord, 0, form == AwaitedOperand::Value ? SavedFrame::goesOnInContextOfItsAwaitFlag : 0);
 
     JumpList needsOperation;
     if (!queuesJobInOperation) {
@@ -843,7 +843,8 @@ void generateSuspendGenerator(StubAssembler& jit)
     Jump isFirstSave = emitLoadSavedFrame(jit, form, generator, saved);
     emitStoreSuspendedState(jit, form, generator);
     Label hasSavedFrame = jit.label();
-    emitSaveFrame(jit, { generator, saved, count, cursor, word, second }, siteWord, form == GeneratorSuspension::AsyncAwait ? 0 : SavedFrame::isSuspendedAtYieldFlag, form == GeneratorSuspension::Yield ? 0 : SavedFrame::hasPassedAwaitOnStackFlag);
+    const uint8_t keptAtAwait = form == GeneratorSuspension::AsyncAwait ? SavedFrame::goesOnInContextOfItsAwaitFlag : 0;
+    emitSaveFrame(jit, { generator, saved, count, cursor, word, second }, siteWord, form == GeneratorSuspension::AsyncAwait ? 0 : SavedFrame::isSuspendedAtYieldFlag, form == GeneratorSuspension::Yield ? 0 : SavedFrame::hasPassedAwaitOnStackFlag | keptAtAwait);
     emitBarrierPreservingOperands(jit, saved, value, siteWord, word);
     if (form == GeneratorSuspension::AsyncAwait) {
         JumpList isLeftToEngine;

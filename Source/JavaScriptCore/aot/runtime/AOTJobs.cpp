@@ -299,6 +299,12 @@ static SavedFrame* savedFrameOfDriver(JSValue driver)
     return savedFrameIn(driver);
 }
 
+JSValue contextInWhichDriverGoesOn(JSValue settlementTarget)
+{
+    SavedFrame* saved = savedFrameOfDriver(settlementTarget);
+    return saved && saved->goesOnInContextOfItsAwait() ? saved->contextOfAwait() : JSValue();
+}
+
 bool takesBareSteps(JSValue settlementTarget)
 {
     return savedFrameOfDriver(settlementTarget);

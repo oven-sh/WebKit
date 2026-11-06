@@ -63,6 +63,7 @@ ALWAYS_INLINE bool canRunHandlerOfJob(JSGlobalObject* globalObject, VM& vm, JSVa
 }
 JS_EXPORT_PRIVATE JSValue deliverStepToDriver(JSObject* driver, JSValue resolution, bool isRejected);
 JS_EXPORT_PRIVATE bool takesBareSteps(JSValue settlementTarget);
+JS_EXPORT_PRIVATE JSValue contextInWhichDriverGoesOn(JSValue settlementTarget);
 JS_EXPORT_PRIVATE void deliverBareStepToDriver(JSObject* driver, bool isDone);
 
 JSValue enterSavedFrame(VM&, Instance&, SavedFrame*, Typed::ResumeMode, JSValue sent);
