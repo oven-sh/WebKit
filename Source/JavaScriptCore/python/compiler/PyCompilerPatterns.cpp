@@ -554,11 +554,13 @@ void Unit::matchStatement(Match* node, const Last& isLast)
         if (isLast.kind == Last::BeforeJump && isLastCase) {
             // (Unless other ways meet here: see endOfStatement(). In CPython the body jumps here, over what drops something, and then a copy of the end of the
             // function, which has lines of its own, does not take the line of either way.)
-            m_whereLineOfBranchIsMarked = g.instructions().size();
-            if (nextWithMoreToDrop->isBound() && isReplacedByCopy(isLast))
+            // So it is where several branches meet. (A jump, which is how alternatives fail, takes a copy of its own.)
+            if ((nextWithMoreToDrop->isBound() || g.branchesToLastPythonLabel().count > 1) && isReplacedByCopy(isLast))
                 noLine();
-            else
+            else {
+                m_whereLineOfBranchIsMarked = g.instructions().size();
                 silentLine(matchCase->pattern->range.lineno);
+            }
         }
         else if (isLast && isLastCase)
             line(matchCase->pattern->range);
