@@ -2992,7 +2992,7 @@ void Unit::assertStatement(Assert* node, const Last& isLast)
         return;
     Ref<Label> end = g.newLabel();
     ReturnsByLine returns;
-    jumpIfOrLeave(node->test, end.get(), isLast.onlyIf(isLast.kind != Last::OfFunction), returns, true);
+    jumpIfOrLeave(node->test, end.get(), isLast, returns, true);
     int lineOfBranch = m_markedLine;
     auto fails = [&] {
         Arguments arguments(*this, 3);
