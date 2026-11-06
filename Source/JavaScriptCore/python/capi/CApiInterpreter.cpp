@@ -164,8 +164,9 @@ bool tryEnsure(JSGlobalObject* globalObject)
 
     auto* interpreter = new Interpreter(globalObject);
     setSymbols(interpreter->runtime);
-    s_interpreter.store(interpreter, std::memory_order_release);
+    // In this order: a reference can be refused, which clears the first, once the second is there.
     s_interpreterWhoseCountsFall.store(interpreter, std::memory_order_release);
+    s_interpreter.store(interpreter, std::memory_order_release);
     s_runtimeItIsSetUpFor.store(&interpreter->runtime, std::memory_order_relaxed);
     // It stays with the heap, which may outlive the runtime.
     addMarkingConstraint(vm);
