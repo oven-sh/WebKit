@@ -280,10 +280,51 @@ static JSValue jsTypedArrayBool(JSGlobalObject* globalObject, JSValue self)
     return jsBoolean(jsTypedArrayOf(self)->length());
 }
 
-// a[0], a[1] and so on, while there are any.
+// iter(a): what is at 0, 1 and so on in the array itself, while there is anything, as `in` and index() look. Not a[0], a[1]: a class of Python's
+// that derives from one of these may have a __getitem__() of its own, which iteration passes by, as that of a list or a bytearray does.
+enum JSTypedArrayIteratorField : unsigned { JSTypedArrayIteratorArray, JSTypedArrayIteratorPosition, JSTypedArrayIteratorFieldCount };
+
+static JSValue jsTypedArrayIteratorSelf(JSGlobalObject*, JSValue self) { return self; }
+
+static JSValue jsTypedArrayIteratorNext(JSGlobalObject* globalObject, JSValue self)
+{
+    if (!ensureMainThreadForJS(globalObject))
+        return { };
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* record = uncheckedDowncast<PyRecord>(self.asCell());
+    if (JSValue array = record->get(JSTypedArrayIteratorArray)) {
+        int64_t position = smallIntValue(record->get(JSTypedArrayIteratorPosition));
+        if (position < static_cast<int64_t>(jsTypedArrayOf(array)->length())) {
+            record->set(vm, JSTypedArrayIteratorPosition, smallInt(position + 1));
+            RELEASE_AND_RETURN(scope, jsTypedArrayOf(array)->getIndex(globalObject, static_cast<uint64_t>(position)));
+        }
+        // At its end it stays there, whatever the array grows to.
+        record->set(vm, JSTypedArrayIteratorArray, { });
+    }
+    return raiseStopIteration(globalObject, scope);
+}
+
+static JSValue jsTypedArrayIteratorLengthHint(JSGlobalObject*, JSValue self)
+{
+    auto* record = uncheckedDowncast<PyRecord>(self.asCell());
+    JSValue array = record->get(JSTypedArrayIteratorArray);
+    return smallInt(array ? std::max<int64_t>(static_cast<int64_t>(jsTypedArrayOf(array)->length()) - smallIntValue(record->get(JSTypedArrayIteratorPosition)), 0) : 0);
+}
+
+static constexpr NativeDef jsTypedArrayIteratorMethods[] = {
+    PY_SLOT("__iter__", jsTypedArrayIteratorSelf, "($self, /)"),
+    PY_SLOT("__next__", jsTypedArrayIteratorNext, "($self, /)"),
+    PY_METHOD("__length_hint__", jsTypedArrayIteratorLengthHint, "($self, /)"),
+};
+static constexpr TypeDef jsTypedArrayIteratorTypeDef { "_js.typed_array_iterator"_s, { TypeFlag::OwnLayout, TypeFlag::DisallowInstantiation }, jsTypedArrayIteratorMethods, { }, { } };
+
 static JSValue jsTypedArrayIter(JSGlobalObject* globalObject, JSValue self)
 {
-    return PyIterator::create(globalObject, PyIterator::Kind::Sequence, self);
+    PyRecord* record = PyRecord::create(globalObject, runtime(globalObject).typeFor(jsTypedArrayIteratorTypeDef), JSTypedArrayIteratorFieldCount);
+    record->set(getVM(globalObject), JSTypedArrayIteratorArray, self);
+    record->set(getVM(globalObject), JSTypedArrayIteratorPosition, jsNumber(0));
+    return record;
 }
 
 static constexpr NativeDef jsTypedArrayMethods[] = {

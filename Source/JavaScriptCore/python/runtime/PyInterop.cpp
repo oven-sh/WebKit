@@ -1104,7 +1104,7 @@ static JSValue jsObjectContains(JSGlobalObject* globalObject, JSValue self, JSVa
                 bool hasRaised = scope.exception();
                 // (The iterable may have no end, and code of JS's does not look for the signals of Python's.)
                 if (!found && !hasRaised && vm.traps().needHandling(VMTraps::NeedPythonCalls)) [[unlikely]]
-                    hasRaised = !checkOnlySignals(globalObject);
+                    hasRaised = failed(scope, checkOnlySignals(globalObject));
                 if (!found && !hasRaised) [[likely]]
                     continue;
                 // As `for...of` that is left early: the iterator that was made here is told, since nobody else can. One that the program has (a
