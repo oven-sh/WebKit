@@ -1117,10 +1117,10 @@ void LinkFlow::changeObserved(const FlowObserver& observer, const LinkType& now)
         }
         WhatIsStored stored = record.subjectIsMadeInBody ? WhatIsStored::TextsNumbersAndBooleans : WhatIsStored::Anything;
         if (!knowsEveryKey)
-            noteWriteOn(change.subject, { }, observer.function, stored);
+            noteWriteOn(change.subject, { }, observer.function, stored, record.subjectIsMadeInBody);
         else {
             for (PropertyKeyID key : keys)
-                noteWriteOn(change.subject, key, observer.function, stored);
+                noteWriteOn(change.subject, key, observer.function, stored, record.subjectIsMadeInBody);
         }
         change.namesOfCopyLeaveLinkAlone = knowsEveryKey && std::ranges::none_of(keys, [&](PropertyKeyID key) { return nameClassOf(key) == NameClass::Proto; });
     if (record.kind == SummaryChange::Kind::CopiesInto) {

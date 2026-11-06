@@ -1483,7 +1483,7 @@ void LinkFlow::noteWhatNativeCodeHandsToWhatIsLaidOn(BuiltinID written, Property
         std::ranges::for_each(table.membersOf(holder), lookAt);
 }
 
-void LinkFlow::noteWriteOn(const LinkType& subject, PropertyKeyID key, FunctionID writer, WhatIsStored stored)
+void LinkFlow::noteWriteOn(const LinkType& subject, PropertyKeyID key, FunctionID writer, WhatIsStored stored, bool subjectIsMadeInBody)
 {
     if (subject.builtin && stored == WhatIsStored::Anything)
         noteWhatNativeCodeHandsToWhatIsLaidOn(subject.builtin, key);
@@ -1497,7 +1497,7 @@ void LinkFlow::noteWriteOn(const LinkType& subject, PropertyKeyID key, FunctionI
         arrive(laidOnBuiltin(program.builtins().canonicalID(subject.builtin), key), LinkType::anything());
     noteWhatIsStoredOn(subject, stored);
     if (stored != WhatIsStored::Nothing)
-        noteWhatMayMakeThenableOf(subject, writer, key, stored == WhatIsStored::Anything);
+        noteWhatMayMakeThenableOf(subject, writer, key, stored == WhatIsStored::Anything, subjectIsMadeInBody);
     if (subject.holdsLostBuiltins)
         note(Note::WriteThroughLostBuiltins, key.bits(), isFileOfProductInTestRun(program, writer));
     if (subject.holdsUnseen && !m_isFunctionOfLibrary.quickGet(writer.index()))
@@ -6393,9 +6393,9 @@ Vector<FlowNodeID, 1> LinkFlow::nodesOfWhatFunctionAnswers(FunctionID id) const
     return nodes;
 }
 
-void LinkFlow::noteWhatMayMakeThenableOf(const LinkType& subject, FunctionID writer, std::optional<PropertyKeyID> writtenUnder, bool subjectMayBeWhatNobodyKnows)
+void LinkFlow::noteWhatMayMakeThenableOf(const LinkType& subject, FunctionID writer, std::optional<PropertyKeyID> writtenUnder, bool subjectMayBeWhatNobodyKnows, bool subjectIsMadeInBody)
 {
-    bool mayBeInstance = subject.classes != LinkType::Classes::None || (subjectMayBeWhatNobodyKnows && (subject.builtin || subject.holdsUnseen || subject.holdsLostBuiltins));
+    bool mayBeInstance = subject.classes != LinkType::Classes::None || (!subjectIsMadeInBody && (subject.builtin || subject.holdsUnseen || subject.holdsLostBuiltins));
     bool mayHideConstructor = !writtenUnder || (*writtenUnder ? nameClassOf(*writtenUnder) == NameClass::Proto || program.keyOf(BuiltinNames::constructor) == *writtenUnder : !m_isFunctionOfLibrary.quickGet(writer.index()));
     if (mayBeInstance && mayHideConstructor)
         arrive(whereInstancesLoseTheirConstructor(), LinkType::anything());

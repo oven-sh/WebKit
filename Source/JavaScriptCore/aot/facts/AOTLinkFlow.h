@@ -818,9 +818,9 @@ public:
     LinkType anythingBeside(BuiltinID canonical, FunctionID reader) const;
     LinkType unseenObjectsBelow(BuiltinID canonicalPrototype, FunctionID maker) const;
     enum class WhatIsStored : uint8_t { Anything, TextsNumbersAndBooleans, Nothing };
-    void noteWriteOn(const LinkType& subject, PropertyKeyID, FunctionID writer, WhatIsStored = WhatIsStored::Anything);
+    void noteWriteOn(const LinkType& subject, PropertyKeyID, FunctionID writer, WhatIsStored = WhatIsStored::Anything, bool subjectIsMadeInBody = false);
     void noteWhatIsStoredOn(const LinkType& subject, WhatIsStored);
-    void noteWhatMayMakeThenableOf(const LinkType& subject, FunctionID writer, std::optional<PropertyKeyID> writtenUnder, bool subjectMayBeWhatNobodyKnows = true);
+    void noteWhatMayMakeThenableOf(const LinkType& subject, FunctionID writer, std::optional<PropertyKeyID> writtenUnder, bool subjectMayBeWhatNobodyKnows = true, bool subjectIsMadeInBody = false);
     FlowNodeID whereInstancesAreMadeThenables();
     FlowNodeID whereInstancesLoseTheirConstructor();
     void noteWhatNativeCodeHandsToWhatIsLaidOn(BuiltinID written, PropertyKeyID) const;

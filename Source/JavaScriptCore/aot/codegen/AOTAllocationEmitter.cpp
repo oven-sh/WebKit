@@ -589,12 +589,19 @@ void AllocationEmitter::storeFieldsInExtension(const ValueContext& value, CellPo
         callVoidOperation(value, RuntimeOperation::EnsureExtensionGranules, { cell, integer(static_cast<int64_t>(granuleBits)) });
 
     SlotEmitter& slots = emitter<SlotEmitter>();
-    CodeGenerator::InitializationScope scope(generator());
-    Pointer extension = slots.extensionOf(cell, extensionWord);
-    for (const InitialField& field : initialFields) {
-        if (takesGranule(field))
+    bool hasStoredCell = false;
+    {
+        CodeGenerator::InitializationScope scope(generator());
+        Pointer extension = slots.extensionOf(cell, extensionWord);
+        for (const InitialField& field : initialFields) {
+            if (!takesGranule(field))
+                continue;
+            hasStoredCell |= traitsOf(field.slot->representation).holdsCell && typeOf(field.value).hasCells();
             slots.storeInExtension(extension, *field.slot, locationOfField(m_program, m_plan.slots(), layout, field.field), takeForSlot(field));
+        }
     }
+    if (hasStoredCell && value->storage() == AllocationStorage::Heap)
+        emitter<BarrierEmitter>().fenceAfterInitialization();
     ensureStillAliveHere(cell);
 }
 
@@ -651,6 +658,7 @@ void AllocationEmitter::storePrototype(const ValueContext& value, CellPointer ce
             CodeGenerator::InitializationScope scope(generator());
             emitter<AccessEmitter>().storeStructureAfterPrototypeTransition(cell, structureID);
         }
+        emitter<BarrierEmitter>().fenceAfterInitialization();
         join.add(cell);
 
         m_out.appendTo(isUnknown);

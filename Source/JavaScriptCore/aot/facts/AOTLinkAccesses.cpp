@@ -585,7 +585,7 @@ void AccessInLinkAccesses::resolve()
     if (!isRead()) {
         LinkFlow::WhatIsStored stored = m_access.subjectIsMadeInBody || m_access.holdsNewValueOfNativeCode || m_access.laysTextNumberOrBooleanThatIsWritten || storesTextNumberOrBooleanThatIsWritten() ? LinkFlow::WhatIsStored::TextsNumbersAndBooleans : LinkFlow::WhatIsStored::Anything;
         if (isNamed() || !m_keyIsOnlyNumbers) {
-            m_flow.noteWriteOn(subject, m_access.key, m_function, stored);
+            m_flow.noteWriteOn(subject, m_access.key, m_function, stored, m_access.subjectIsMadeInBody);
             if (!m_shared)
                 m_flow.noteSiteOfWrite(m_function, m_access.site, m_subject);
         } else
