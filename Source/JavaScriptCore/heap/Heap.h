@@ -379,11 +379,8 @@ public:
     void addPythonRuntime(Python::Runtime* runtime) { m_pythonRuntimes.append(runtime); }
     void removePythonRuntime(Python::Runtime* runtime) { m_pythonRuntimes.removeFirst(runtime); }
     const Vector<Python::Runtime*, 1>& pythonRuntimes() const { return m_pythonRuntimes; }
-    // For whoever keeps unreachable objects for their finalizers. See updateAllocationLimits().
-    // In a collection, once marking has converged: of what earlier collections kept, that of which nobody knows when its turn comes is marked, with all it
-    // refers to. What is kept from here on will be finalized soon.
-    void didKeepWhatWaitsForFinalizersIndefinitely();
-    // In the mutator: its turn has come.
+    // For whoever keeps unreachable objects for their finalizers, in the mutator: the turn has come of what nobody knew when its turn would come. See
+    // didKeepWhatWaitsForFinalizersIndefinitely() and updateAllocationLimits().
     void didBeginToFinalizeWhatWaitedIndefinitely() { m_maxEdenSizeWithheld = 0; }
 
     static inline size_t cellSize(const void*);
@@ -896,6 +893,11 @@ private:
     void didMarkAllThatIsReachable();
     // After that. True: more was marked, and marking goes on until it converges again.
     bool keepUnreachablePythonObjectsToFinalize(SlotVisitor&);
+    // In the course of that: of what earlier collections kept, that of which nobody knows when its turn comes is marked, with all it refers to. What is kept from
+    // here on will be finalized soon.
+    void didKeepWhatWaitsForFinalizersIndefinitely();
+    // No heap of the collector has kept anything more: nothing else is going to be marked in this collection.
+    void didKeepAllPythonObjectsToFinalize(SlotVisitor&);
 
     void deleteUnmarkedCompiledCode();
     void releaseUnusedSharedBaselineCode();

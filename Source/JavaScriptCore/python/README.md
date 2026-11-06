@@ -701,6 +701,13 @@ so the aim is that everything Python *guarantees* holds, and that what it merely
     With 229 MB queued for a thread that sat in `read()` by way of ctypes, the main thread's 8 million small objects took 3.3 to 3.8 s, with 6 full collections and 100 to 120 of the young generation;
     9 to 10 s without this (48 and 47); 1.5 s while the queue counted as alive in every respect, with 880 MB resident, not 415. (What is left is the walk through the three million entries, in every
     collection.) Queues that are being served are not touched by it: the same collections, time and memory in all the programs above.
+  - *Several runtimes in one heap* (a `ShadowRealm` that imports a `.py`). What one of them keeps may lead to what is another's, and the heap's notes are of all of them together. So the collector takes them through the steps side by
+    side (`Heap::keepUnreachablePythonObjectsToFinalize`, `Runtime::StepOfKeeping`): the queues that stand still, of all; the heap's note; the other queues; what has died; each step again and again until none of them has marked anything. Only then, once
+    for a collection, each is told that no more will be marked (`Heap::didKeepAllPythonObjectsToFinalize`, `Runtime::didMarkAll`). That is as far as it goes. In the last step each runtime works out by itself what of its own has died and in which order, in the same
+    round as the others, when what another has just kept has not been followed yet. So an object of one realm that only a dead object of another realm leads to does not wait for that one's finalizer, as it would in one realm: both are called after the same
+    collection, the runtimes in the order in which they began, and the one that was held may come first. (Each used to go through all the steps by itself in every round. A runtime without a standing queue had the heap make its note in the round in which
+    another had only just put its queue forward: the program above made 15 full collections for 1 as soon as there was a second realm. And a runtime that had nothing left was told that marking was over while another was still keeping: it counted
+    two collections for one, called `gc.callbacks` four times, and took out of its lists what the other might yet have marked.)
 - **An object registers when it is made**, if its class has a `__del__` then. A class that gets one later, by assignment to the
   attribute or to `__bases__`, has the heap searched for its instances (`registerInstancesForFinalization`), once; an object
   that is given such a class by assignment to `__class__` registers then.

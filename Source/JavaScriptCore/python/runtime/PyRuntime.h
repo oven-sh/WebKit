@@ -666,8 +666,12 @@ public:
     void unregisterFinalizable(PyManagedBuffer*);
     // For objects that were made long ago and whose class has a __del__ only now. Those that have been finalized are left alone.
     void registerFinalizableLate(const MarkedArgumentBuffer&);
-    // For the collector, with the world stopped, once all that is reachable is marked. True: it marked something.
-    bool keepUnreachableObjectsToFinalize(SlotVisitor&);
+    // For the collector, with the world stopped, once all that is reachable is marked. True: it marked something. There may be several runtimes in a heap, and what one of them keeps may lead to what is
+    // another's. So each step is taken by all of them, again and again until none has marked anything, before any takes the next (Heap::keepUnreachablePythonObjectsToFinalize()).
+    enum class StepOfKeeping : uint8_t { QueuesThatStandStill, OtherQueues, WhatHasDied };
+    bool keepUnreachableObjectsToFinalize(SlotVisitor&, StepOfKeeping);
+    // When none has anything left to keep: the collection will mark no more. Once for each collection.
+    void didMarkAll(SlotVisitor&);
     // For a weak reference whose referent has just died.
     void queueWeakRefCallback(PyWeakRef*);
     // Since the last collection, of whatever kind. With the GIL.
@@ -1194,7 +1198,6 @@ private:
     Deque<CollectionNotice> m_collectionsToTellOf WTF_GUARDED_BY_LOCK(m_finalizationLock);
     MonotonicTime m_collectionBegan;
     Vector<PyWeakRef*> weakRefsWithCallbacksToUnmarkedObjects(SlotVisitor&);
-    void didMarkAll(SlotVisitor&) WTF_REQUIRES_LOCK(m_finalizationLock);
     UncheckedKeyHashSet<JSCell*> whatOtherThreadsHold();
     bool m_hasPendingCalls { false };
     bool m_isRunningPendingCalls { false };

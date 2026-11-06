@@ -214,14 +214,14 @@ static bool hasFinalizerOfProgram(Runtime& rt, JSCell* cell)
     return cell->type() == PyGeneratorType || rt.typeOf(cell)->isHeapType();
 }
 
-bool Runtime::keepUnreachableObjectsToFinalize(SlotVisitor& visitor)
+bool Runtime::keepUnreachableObjectsToFinalize(SlotVisitor& visitor, StepOfKeeping step)
 {
     Locker locker { m_finalizationLock };
     // This is called again and again until it finds no more, and in a collection that the engine began by itself the program may
     // run in between, while what this has kept is marked. So each time the lists are left as the program may find them: whatever is
     // registered and not queued is in one of them, and there is no hole.
     // What is queued is kept, whoever queued it and whenever: an earlier collection, or the program, which need not tell the collector. Nothing else marks it.
-    {
+    if (step != StepOfKeeping::WhatHasDied) {
         bool keptSomething = false;
         auto keep = [&](JSCell* cell) {
             if (visitor.isMarked(cell))
@@ -230,20 +230,15 @@ bool Runtime::keepUnreachableObjectsToFinalize(SlotVisitor& visitor)
             keptSomething = true;
         };
         // First the queues that stand still: the heap wants to know how much that is.
-        for (bool standsStill : { true, false }) {
-            for (auto& owed : m_callsOwed) {
-                if (owed->hasStoodSinceFullCollection != standsStill)
-                    continue;
-                for (JSCell* cell : owed->finalizers)
-                    keep(cell);
-                for (PyWeakRef* weakRef : owed->weakRefCallbacks)
-                    keep(weakRef);
-            }
-            if (keptSomething)
-                return true;
-            if (standsStill)
-                m_vm.heap.didKeepWhatWaitsForFinalizersIndefinitely();
+        for (auto& owed : m_callsOwed) {
+            if (owed->hasStoodSinceFullCollection != (step == StepOfKeeping::QueuesThatStandStill))
+                continue;
+            for (JSCell* cell : owed->finalizers)
+                keep(cell);
+            for (PyWeakRef* weakRef : owed->weakRefCallbacks)
+                keep(weakRef);
         }
+        return keptSomething;
     }
     // All of them are found before any is marked.
     Vector<JSCell*> candidates;
@@ -296,11 +291,8 @@ bool Runtime::keepUnreachableObjectsToFinalize(SlotVisitor& visitor)
         if (finalizersAreLeft && candidates.isEmpty())
             return true;
     }
-    auto finish = [&]() WTF_REQUIRES_LOCK(m_finalizationLock) {
-        if (m_markingObserver && m_markingObserver->didFinishMarking(visitor))
-            return true;
-        didMarkAll(visitor);
-        return false;
+    auto finish = [&] {
+        return m_markingObserver && m_markingObserver->didFinishMarking(visitor);
     };
     bool wasAskedFor = m_collectionIsWaitedFor;
     bool wantsGarbage = wasAskedFor && m_markingObserver && m_markingObserver->wantsGarbage();
@@ -437,9 +429,9 @@ Vector<PyWeakRef*> Runtime::weakRefsWithCallbacksToUnmarkedObjects(SlotVisitor& 
     return result;
 }
 
-// The collection will mark no more.
 void Runtime::didMarkAll(SlotVisitor& visitor)
 {
+    Locker locker { m_finalizationLock };
     bool isFull = m_vm.heap.collectionScope() == CollectionScope::Full;
     if (isFull) {
         for (auto& owed : m_callsOwed)

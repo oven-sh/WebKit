@@ -652,8 +652,12 @@ NEVER_INLINE bool Collector::runFixpointPhase(GCConductor conn)
                 heap.didMarkAllThatIsReachable();
                 keptSomething |= heap.keepUnreachablePythonObjectsToFinalize(visitor);
             });
-            if (!keptSomething)
+            if (!keptSomething) {
+                forEachHeap([&](Heap& heap) {
+                    heap.didKeepAllPythonObjectsToFinalize(visitor);
+                });
                 return changePhase(conn, CollectorPhase::End);
+            }
         }
 
         m_scheduler->didExecuteConstraints();

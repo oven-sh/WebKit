@@ -849,10 +849,23 @@ void Heap::didKeepWhatWaitsForFinalizersIndefinitely()
 bool Heap::keepUnreachablePythonObjectsToFinalize(SlotVisitor& visitor)
 {
     SetRootMarkReasonScope rootScope(visitor, RootMarkReason::KeptForFinalizers);
-    bool keptSomething = false;
+    using Step = Python::Runtime::StepOfKeeping;
+    for (Step step : { Step::QueuesThatStandStill, Step::OtherQueues, Step::WhatHasDied }) {
+        bool keptSomething = false;
+        for (auto* runtime : m_pythonRuntimes)
+            keptSomething |= runtime->keepUnreachableObjectsToFinalize(visitor, step);
+        if (keptSomething)
+            return true;
+        if (step == Step::QueuesThatStandStill)
+            didKeepWhatWaitsForFinalizersIndefinitely();
+    }
+    return false;
+}
+
+void Heap::didKeepAllPythonObjectsToFinalize(SlotVisitor& visitor)
+{
     for (auto* runtime : m_pythonRuntimes)
-        keptSomething |= runtime->keepUnreachableObjectsToFinalize(visitor);
-    return keptSomething;
+        runtime->didMarkAll(visitor);
 }
 
 void Heap::willStartIterating()
