@@ -2614,9 +2614,39 @@ static PyNativeFunction* asNative(JSValue value) { return uncheckedDowncast<PyNa
 static JSValue nativeCall(JSGlobalObject* globalObject, JSValue self, const CallArgs& args) { return asNative(self)->invoke(globalObject, args); }
 static JSValue nativeGetName(JSGlobalObject* globalObject, JSValue self) { return internString(getVM(globalObject), asNative(self)->def().name); }
 
+// NativeDefMadeAtRunTime::doc: the signature, parentheses included, which is empty if there is none, and the text.
+static std::pair<std::span<const char>, std::span<const char>> partsOfDoc(const NativeDef& def)
+{
+    const char* text = static_cast<const NativeDefMadeAtRunTime&>(def).doc;
+    if (!text)
+        return { };
+    auto doc = unsafeSpan(text);
+    auto name = def.name.span();
+    if (size_t dot = reverseFind(name, '.'); dot != notFound)
+        name = name.subspan(dot + 1);
+    if (doc.size() <= name.size() || !equalSpans(doc.first(name.size()), name) || doc[name.size()] != '(')
+        return { { }, doc };
+    // It ends where the marker is, and has no empty line in it.
+    constexpr auto marker = ")\n--\n\n"_span;
+    for (size_t i = name.size(); i + 1 < doc.size(); ++i) {
+        if (doc[i] == ')' && spanHasPrefix(doc.subspan(i), marker))
+            return { doc.subspan(name.size(), i + 1 - name.size()), doc.subspan(i + marker.size()) };
+        if (doc[i] == '\n' && doc[i + 1] == '\n')
+            break;
+    }
+    return { { }, doc };
+}
+
+static JSValue strOrNone(JSGlobalObject* globalObject, std::span<const char> text)
+{
+    return text.empty() ? jsUndefined() : JSValue(makeStr(globalObject, String::fromUTF8(text)));
+}
+
 static JSValue nativeGetDoc(JSGlobalObject* globalObject, JSValue self)
 {
     auto* native = asNative(self);
+    if (native->def().signature.isMadeAtRunTime)
+        return strOrNone(globalObject, partsOfDoc(native->def()).second);
     JSValue owner = native->owner();
     if (!owner)
         return jsUndefined();
@@ -2631,6 +2661,10 @@ static JSValue nativeGetTextSignature(JSGlobalObject* globalObject, JSValue self
 {
     auto* native = asNative(self);
     auto& def = native->def();
+    if (def.signature.isMadeAtRunTime) {
+        auto signature = partsOfDoc(def).first;
+        return strOrNone(globalObject, signature.empty() ? def.signatureText.span() : signature);
+    }
     // Whatever the type: its own signature says what it takes.
     if (def.kind == NativeKind::New)
         return makeStr(getVM(globalObject), "($type, *args, **kwargs)"_s);
@@ -2759,6 +2793,12 @@ static JSValue wrapperDescriptorRepr(JSGlobalObject* globalObject, JSValue self)
     return makeStr(globalObject, descriptorRepr(globalObject, "slot wrapper"_s, native->def().name, native->ownerType()));
 }
 
+// What two function objects have in common if they are the same function.
+static const void* functionDefinedBy(const NativeDef& def)
+{
+    return def.signature.isMadeAtRunTime ? static_cast<const NativeDefMadeAtRunTime&>(def).functionDefined : &def;
+}
+
 template<bool wantEqual>
 static JSValue nativeEquality(JSGlobalObject* globalObject, JSValue self, JSValue other)
 {
@@ -2767,14 +2807,14 @@ static JSValue nativeEquality(JSGlobalObject* globalObject, JSValue self, JSValu
     if (!b || typeOf(globalObject, other) != typeOf(globalObject, self))
         return runtime(globalObject).notImplemented();
     auto* a = asNative(self);
-    bool equal = &a->def() == &b->def() && a->kind() == b->kind() && (a->self() ? b->self() && isIdentical(a->self(), b->self()) : !b->self());
+    bool equal = functionDefinedBy(a->def()) == functionDefinedBy(b->def()) && a->kind() == b->kind() && (a->self() ? b->self() && isIdentical(a->self(), b->self()) : !b->self());
     return jsBoolean(equal == wantEqual);
 }
 
 static JSValue nativeHash(JSGlobalObject* globalObject, JSValue self)
 {
     auto* native = asNative(self);
-    uint64_t bits = std::bit_cast<uintptr_t>(&native->def());
+    uint64_t bits = std::bit_cast<uintptr_t>(functionDefinedBy(native->def()));
     if (JSValue bound = native->self())
         bits ^= static_cast<uint64_t>(tryInt64(objectHash(globalObject, bound)).value_or(0));
     int64_t result = static_cast<int64_t>(bits >> 4);

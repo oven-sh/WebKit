@@ -108,6 +108,7 @@ struct NativeSignature {
     bool takesKeywords { false };
     bool hasRequiredKeywordOnly { false };
     bool isValid { true };
+    bool isMadeAtRunTime { false }; // It is a NativeDefMadeAtRunTime.
 };
 
 constexpr NativeSignature parseNativeSignature(const char* text, size_t length)
@@ -247,6 +248,8 @@ JSValue hashAsInt(JSGlobalObject* globalObject, JSValue self)
     RELEASE_AND_RETURN(scope, makeInt(globalObject, result));
 }
 
+class PyNativeFunction;
+
 class NativeDef {
 public:
     static constexpr unsigned maxArity = 8;
@@ -262,6 +265,8 @@ public:
     using F8 = JSValue (*)(JSGlobalObject*, JSValue, JSValue, JSValue, JSValue, JSValue, JSValue, JSValue, JSValue);
     using Variadic = JSValue (*)(JSGlobalObject*, const CallArgs&);
     using VariadicWithSelf = JSValue (*)(JSGlobalObject*, JSValue, const CallArgs&);
+    // See NativeDefMadeAtRunTime.
+    using VariadicOfFunction = JSValue (*)(JSGlobalObject*, PyNativeFunction*, JSValue self, const CallArgs&);
     // -1: an exception.
     using RawHash = int64_t (*)(JSGlobalObject*, JSValue self);
 
@@ -277,6 +282,7 @@ public:
         F8 f8;
         Variadic variadic;
         VariadicWithSelf variadicWithSelf;
+        VariadicOfFunction variadicOfFunction;
 
         constexpr Pointer(F0 f) : f0(f) { }
         constexpr Pointer(F1 f) : f1(f) { }
@@ -289,6 +295,7 @@ public:
         constexpr Pointer(F8 f) : f8(f) { }
         constexpr Pointer(Variadic f) : variadic(f) { }
         constexpr Pointer(VariadicWithSelf f) : variadicWithSelf(f) { }
+        constexpr Pointer(VariadicOfFunction f) : variadicOfFunction(f) { }
     };
 
     // The function, for one that takes `arity` values, `self` among them.
@@ -349,9 +356,45 @@ public:
     NativeKind kind;
     uint16_t flags;
 
+protected:
+    NativeDef(NativeKind kind, ASCIILiteral name, VariadicOfFunction function, ASCIILiteral signatureText)
+        : name(name)
+        , signatureText(signatureText)
+        , pointer(function)
+        , rawHash(nullptr)
+        , knownOfName(name, KnownOfName::HashOnly)
+        , kind(kind)
+        , flags(0)
+    {
+        signature.hasSelf = true;
+        signature.isVariadic = true;
+        signature.takesKeywords = true;
+        signature.isMadeAtRunTime = true;
+    }
+
 private:
     // Not constexpr, so that a table with a mistake in it does not compile.
     static void signatureDoesNotMatchFunction();
+};
+
+// A definition that is made while the program runs, for a function that is not Bun's: a PyMethodDef of the C API. It lies in a cell, which every function object
+// that is made of it keeps, a bound one too (PyNativeFunction::create()). One function of C++ serves many of them: it is told the function object, and
+// looks at the arguments itself.
+class NativeDefMadeAtRunTime : public NativeDef {
+public:
+    // `signatureText`: what __text_signature__ shows if the doc has none. Null: None.
+    NativeDefMadeAtRunTime(NativeKind kind, ASCIILiteral name, VariadicOfFunction function, ASCIILiteral signatureText, const char* doc, const void* functionDefined)
+        : NativeDef(kind, name, function, signatureText)
+        , doc(doc)
+        , functionDefined(functionDefined)
+    {
+    }
+
+    // What CPython has for a function written in C, in UTF-8: the text, with "name(signature)\n--\n\n" before it if __text_signature__ is to show one. Null: none.
+    // Like the name, it outlives the definition.
+    const char* doc;
+    // Two function objects are equal if they are bound to the same object and this is the same.
+    const void* functionDefined;
 };
 
 #define PY_FUNCTION(name, function, signature) NativeDef(NativeKind::Function, name ""_s, function, signature ""_s)
@@ -426,8 +469,9 @@ public:
     }
 
     // `kind` is that of the definition, or Function for one bound to `self`. `owner`: the type it is a method of, or the
-    // name of the module it is a function of, or empty. `name`: Runtime::nameIn() of the definition, for who has it.
-    static PyNativeFunction* create(JSGlobalObject*, const NativeDef&, NativeKind, JSValue self, JSValue owner, JSString* name = nullptr);
+    // name of the module it is a function of, or empty. `name`: Runtime::nameIn() of the definition, for who has it. `cellOfDefinition`: the cell
+    // that the definition lies in, if it is not static.
+    static PyNativeFunction* create(JSGlobalObject*, const NativeDef&, NativeKind, JSValue self, JSValue owner, JSString* name = nullptr, JSCell* cellOfDefinition = nullptr);
     // The method bound to `self`.
     static PyNativeFunction* createBound(JSGlobalObject*, PyNativeFunction* method, JSValue self);
 
@@ -442,6 +486,7 @@ public:
     NativeKind kind() const { return m_kind; }
     JSValue self() const { return m_self.get(); } // Empty: not bound.
     JSValue owner() const { return m_owner.get(); }
+    JSCell* cellOfDefinition() const { return m_cellOfDefinition.get(); }
     PyType* ownerType() const;
     bool isDescriptor() const { return m_kind == NativeKind::Method || m_kind == NativeKind::SlotWrapper || m_kind == NativeKind::ClassMethod; }
 
@@ -459,7 +504,11 @@ private:
     NativeKind m_kind;
     WriteBarrier<Unknown> m_self;
     WriteBarrier<Unknown> m_owner;
+    WriteBarrier<JSCell> m_cellOfDefinition;
 };
+
+// The size class that it had without the last field.
+static_assert(sizeof(PyNativeFunction) > 80 && sizeof(PyNativeFunction) <= 112);
 
 // Whether what a class has under a name is this function of C++.
 ALWAYS_INLINE bool isNative(JSValue method, NativeDef::F2 function)

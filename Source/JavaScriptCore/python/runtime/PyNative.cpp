@@ -339,6 +339,8 @@ static ALWAYS_INLINE JSValue invokeNativeImpl(JSGlobalObject* globalObject, cons
         RELEASE_AND_RETURN(scope, raiseNativeStackOverflow(globalObject));
 
     auto& signature = def.signature;
+    if (signature.isMadeAtRunTime) [[unlikely]]
+        RELEASE_AND_RETURN(scope, def.pointer.variadicOfFunction(globalObject, function, self, args));
     if (signature.isVariadic)
         RELEASE_AND_RETURN(scope, signature.hasSelf ? def.pointer.variadicWithSelf(globalObject, self, args) : def.pointer.variadic(globalObject, args));
 
@@ -379,6 +381,7 @@ static ALWAYS_INLINE JSValue invokeNativeImpl(JSGlobalObject* globalObject, cons
 
 JSValue invokeNative(JSGlobalObject* globalObject, const NativeDef& def, JSValue self, const CallArgs& args)
 {
+    ASSERT(!def.signature.isMadeAtRunTime);
     return invokeNativeImpl(globalObject, def, nullptr, self, args);
 }
 
@@ -578,7 +581,7 @@ PyNativeFunction::PyNativeFunction(VM& vm, Structure* structure, const NativeDef
 {
 }
 
-PyNativeFunction* PyNativeFunction::create(JSGlobalObject* globalObject, const NativeDef& def, NativeKind kind, JSValue self, JSValue owner, JSString* name)
+PyNativeFunction* PyNativeFunction::create(JSGlobalObject* globalObject, const NativeDef& def, NativeKind kind, JSValue self, JSValue owner, JSString* name, JSCell* cellOfDefinition)
 {
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
@@ -588,6 +591,7 @@ PyNativeFunction* PyNativeFunction::create(JSGlobalObject* globalObject, const N
     function->m_originalName.set(vm, function, name ? name : rt.nameIn(def));
     function->m_self.set(vm, function, self);
     function->m_owner.set(vm, function, owner);
+    function->m_cellOfDefinition.setMayBeNull(vm, function, cellOfDefinition);
     return function;
 }
 
@@ -600,6 +604,7 @@ PyNativeFunction* PyNativeFunction::createBound(JSGlobalObject* globalObject, Py
     function->m_originalName.set(vm, function, method->m_originalName.get());
     function->m_self.set(vm, function, self);
     function->m_owner.set(vm, function, method->owner());
+    function->m_cellOfDefinition.setMayBeNull(vm, function, method->cellOfDefinition());
     return function;
 }
 
@@ -610,6 +615,7 @@ void PyNativeFunction::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     Base::visitChildren(thisObject, visitor);
     visitor.append(thisObject->m_self);
     visitor.append(thisObject->m_owner);
+    visitor.append(thisObject->m_cellOfDefinition);
 }
 
 DEFINE_VISIT_CHILDREN(PyNativeFunction);

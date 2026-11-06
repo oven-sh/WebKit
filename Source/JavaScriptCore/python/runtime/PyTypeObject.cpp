@@ -847,7 +847,7 @@ static NEVER_INLINE PyType::Construction findConstruction(Runtime& rt, PyType* t
 {
     auto takesAllArguments = [&](JSValue method, NativeKind kind) {
         auto* native = PyNativeFunction::tryFrom(method);
-        return native && native->kind() == kind && native->def().signature.isVariadic && native->def().signature.hasSelf && !(native->def().flags & (OnWipedStack | MayWait));
+        return native && native->kind() == kind && native->def().signature.isVariadic && native->def().signature.hasSelf && !native->def().signature.isMadeAtRunTime && !(native->def().flags & (OnWipedStack | MayWait));
     };
     auto construction = PyType::Construction::General;
     JSValue newMethod = type->lookup(Special::New);
@@ -1283,7 +1283,7 @@ static JSValue typeNewWithKeywordsAsGiven(JSGlobalObject* globalObject, JSValue 
                 JSValue function = bindDescriptor(globalObject, winnerNew, { }, winner);
                 RETURN_IF_EXCEPTION(scope, { });
                 if (auto* native = PyNativeFunction::tryFrom(function); native && native->kind() == NativeKind::New)
-                    RELEASE_AND_RETURN(scope, invokeNative(globalObject, native->def(), winner, args));
+                    RELEASE_AND_RETURN(scope, native->invokeWithSelf(globalObject, winner, args));
                 RELEASE_AND_RETURN(scope, withFirstArgument(winner, args, [&](const CallArgs& all) {
                     return call(globalObject, function, all);
                 }));
