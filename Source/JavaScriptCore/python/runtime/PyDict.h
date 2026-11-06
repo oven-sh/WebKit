@@ -80,6 +80,10 @@ public:
         }
     }
     void* indices() { return m_hasWideHashes ? static_cast<void*>(wideHashes() + m_capacity) : static_cast<void*>(narrowHashes() + m_capacity); }
+    // Its dict has gone on to another table, which holds what this one held then. This one still refers to all of it, until it is swept. With reference counts it was freed there and then, and let
+    // go of nothing. Whoever asks the dead what they held (PyFinalizationOrder.cpp) does not ask this one. (Not so the table that clear() leaves: that is how the dict let go of the items.)
+    bool wasLeftForAnother() const { return m_wasLeftForAnother; }
+    void leaveForAnother() { m_wasLeftForAnother = true; }
 
     int32_t indexAt(uint32_t slot)
     {
@@ -106,6 +110,7 @@ private:
     int64_t* wideHashes() { return reinterpret_cast<int64_t*>(entries() + m_capacity); }
 
     bool m_hasWideHashes;
+    bool m_wasLeftForAnother { false };
     unsigned m_log2Size;
     unsigned m_capacity;
     unsigned m_entryCount { 0 }; // Including the deleted ones.

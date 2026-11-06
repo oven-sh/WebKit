@@ -736,10 +736,11 @@ so the aim is that everything Python *guarantees* holds, and that what it merely
     that order: a list, a tuple and a frame go from the end; the attributes of an instance in the order of their places, which is
     the order in which they were set unless one has been deleted, though those beyond the sixth lie outside the cell; a deque from
     its left end, which is somewhere in the middle of its memory.
-    The table that a dict or a set has left behind for a larger one is dead, still holds what it held, and nothing refers to it.
-    What something else holds as well, it does not count as holding (`letGoOfWhatTablesLeftBehindShare`): or an item would go when the
-    second of its holders does. What only such a table holds (what `clear()` let go of, what was removed from the dict since it grew)
-    goes at the table's own turn among what the program has dropped. A deque that grows or shrinks empties the memory that it leaves.
+    The table that a dict or a set has left for another (it grew, or was made anew) is dead, still refers to what it held, and nothing
+    refers to it. With reference counts it was freed on the spot and let go of nothing. It says what it is (`wasLeftForAnother()`) and is
+    not asked what it holds: or an item would go when the second of its holders does. The table that `clear()` leaves is not one of
+    these: it is how the container let go of its items, and takes its turn among what the program has dropped, like any other thing
+    that nothing refers to. A deque that grows or shrinks empties the memory that it leaves.
   - Only those are queued that no other object with a finalizer reaches. The rest wait for the collection that finds those gone, so
     a finalizer that resurrects its object also keeps what the object refers to from being finalized. So it goes level by level, each
     level in the order of reference counts: of `[N('x', N('x1')), N('y', N('y1'))]`, dropped, `y x y1 x1`, where CPython, which knows at

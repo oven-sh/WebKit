@@ -40,11 +40,15 @@ public:
 
     size_t mask() const { return m_mask; }
     Entry* entries() { return storageBehind<Entry>(this); }
+    // See PyDictStorage.
+    bool wasLeftForAnother() const { return m_wasLeftForAnother; }
+    void leaveForAnother() { m_wasLeftForAnother = true; }
 
 private:
     PySetStorage(VM&, Structure*, size_t size);
 
-    size_t m_mask;
+    uint32_t m_mask;
+    bool m_wasLeftForAnother { false };
 };
 
 // set and frozenset. The table is probed, and so iterated, exactly as CPython's: programs should not depend on the order

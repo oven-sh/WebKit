@@ -227,6 +227,7 @@ NEVER_INLINE void PyDict::keepWholeHashesOfStrings(VM& vm)
         PyDictStorage* wide = PyDictStorage::createCopy(vm, storage, true);
         vm.mutatorFence();
         m_storage.set(vm, this, wide);
+        storage->leaveForAnother();
         placeStringsByHash();
     }
 }
@@ -475,6 +476,8 @@ void PyDict::resize(VM& vm, unsigned minimumCapacity, unsigned unusedAtFront)
         m_isKeyed = true;
     m_firstEntry = unusedAtFront;
     vm.mutatorFence();
+    if (PyDictStorage* old = m_storage.get())
+        old->leaveForAnother();
     m_storage.set(vm, this, newStorage);
     keysChanged();
 }

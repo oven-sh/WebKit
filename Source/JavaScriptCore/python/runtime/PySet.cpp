@@ -32,8 +32,9 @@ static constexpr unsigned setPerturbShift = 5;
 
 PySetStorage::PySetStorage(VM& vm, Structure* structure, size_t size)
     : Base(vm, structure)
-    , m_mask(size - 1)
+    , m_mask(static_cast<uint32_t>(size - 1))
 {
+    RELEASE_ASSERT(size - 1 <= std::numeric_limits<uint32_t>::max());
     Entry* table = entries();
     for (size_t i = 0; i < size; ++i) {
         table[i].key.clear();
@@ -148,6 +149,8 @@ void PySet::resize(VM& vm, size_t minimumUsed)
     m_fill = m_used;
     vm.mutatorFence();
     m_storage.set(vm, this, storage);
+    if (old)
+        old->leaveForAnother();
 }
 
 static ALWAYS_INLINE bool areSameString(JSValue a, JSValue b)

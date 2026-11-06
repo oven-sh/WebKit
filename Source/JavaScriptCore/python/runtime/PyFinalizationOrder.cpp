@@ -116,10 +116,14 @@ private:
         }
     }
 
-    // The memory of a dict or a set.
-    static bool isTableOfContainer(JSCell* cell)
+    // The memory of a dict or a set that has gone on to other memory since: see PyDictStorage::wasLeftForAnother().
+    static bool isTableLeftForAnother(JSCell* cell)
     {
-        return cell->type() == CellType && (cell->classInfo() == PyDictStorage::info() || cell->classInfo() == PySetStorage::info());
+        if (cell->type() != CellType)
+            return false;
+        if (cell->classInfo() == PyDictStorage::info())
+            return uncheckedDowncast<PyDictStorage>(cell)->wasLeftForAnother();
+        return cell->classInfo() == PySetStorage::info() && uncheckedDowncast<PySetStorage>(cell)->wasLeftForAnother();
     }
 
     // Where the number of a cell is kept: there is a table for each block that has any, with room for as many cells as the block has.
@@ -209,7 +213,6 @@ private:
     void addAllThatDied(std::span<JSCell* const> candidates);
     void putAttributesInOrder(PyInstance*, std::span<unsigned> edges);
     void walk();
-    void letGoOfWhatTablesLeftBehindShare();
     Vector<unsigned> rootsInOrder();
     void flagAllReachedFrom(Vector<unsigned>&& worklist, Flag);
 
@@ -356,7 +359,7 @@ void DeadGraph::walk()
     for (unsigned i = 0; i < m_cells.size(); ++i) {
         m_firstEdge.append(m_edges.size());
         JSCell* cell = m_cells[i];
-        if (i >= maxCells || isInternalObject(cell))
+        if (i >= maxCells || isInternalObject(cell) || isTableLeftForAnother(cell))
             continue;
         m_wholeOfCurrentCell = wholeThatPartRefersTo(cell);
 #if ASSERT_ENABLED
@@ -402,43 +405,6 @@ void DeadGraph::walk()
             std::ranges::rotate(edges, edges.begin() + wrapped);
         }
     }
-}
-
-// A table that nothing refers to: its dict or set has left it behind, for a larger one or because it was emptied, and it still holds what it held then. With reference counts it was freed
-// there and then. What something else holds as well, as a rule the table that came after, did not notice: those edges are taken out, or the item would go when the second of its holders
-// does, whichever that is. What only this table holds (what clear() let go of, what has been removed from the dict since it grew) was dropped at some time that nobody knows, like any other
-// root: it goes when the turn of the table comes.
-void DeadGraph::letGoOfWhatTablesLeftBehindShare()
-{
-    if (!m_hasAllThatDied)
-        return;
-    unsigned count = m_cells.size();
-    bool hasTakenOut = false;
-    for (unsigned node = 0; node < count; ++node) {
-        if (m_references[node] || !isTableOfContainer(m_cells[node]))
-            continue;
-        for (unsigned& target : m_edges.mutableSpan().subspan(m_firstEdge[node], m_firstEdge[node + 1] - m_firstEdge[node])) {
-            if (m_references[target] > 1) {
-                --m_references[target];
-                target = none;
-                hasTakenOut = true;
-            }
-        }
-    }
-    if (!hasTakenOut)
-        return;
-    unsigned kept = 0;
-    unsigned next = 0;
-    for (unsigned node = 0; node < count; ++node) {
-        unsigned end = m_firstEdge[node + 1];
-        m_firstEdge[node] = kept;
-        for (; next < end; ++next) {
-            if (m_edges[next] != none)
-                m_edges[kept++] = m_edges[next];
-        }
-    }
-    m_firstEdge[count] = kept;
-    m_edges.shrink(kept);
 }
 
 // The cells that nothing dead refers to: the program dropped them, in an order that nobody knows. They are put in the order in which
@@ -525,7 +491,6 @@ void DeadGraph::flagAllReachedFrom(Vector<unsigned>&& worklist, Flag flag)
 FinalizationOrder DeadGraph::order()
 {
     walk();
-    letGoOfWhatTablesLeftBehindShare();
     unsigned count = m_cells.size();
     m_flags.fill(0, count);
     FinalizationOrder result;
