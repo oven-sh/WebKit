@@ -741,12 +741,14 @@ static JSValue cancelFuture(JSGlobalObject* globalObject, PyRecord* state, PyRec
 static JSValue futureNew(JSGlobalObject* globalObject, JSValue cls, const CallArgs&)
 {
     PyType* type = PyType::from(cls);
-    JSValue stateValue = hiddenField(globalObject, type, 0);
-    PyRecord* state = stateValue ? recordOf(stateValue) : moduleState(globalObject);
+    PyRecord* state = moduleState(globalObject);
     if (!ensureIsInitialized(globalObject, state))
         return { };
     PyType* taskType = typeIn(state, StateTaskType);
-    bool isTask = type == taskType || type->isSubtypeOf(taskType);
+    // Along __base__, which decides the layout and is how this function came to the class: the MRO may leave Task out.
+    bool isTask = false;
+    for (PyType* base = type; base && !isTask; base = base->base())
+        isTask = base == taskType;
     PyRecord* future = PyRecord::create(globalObject, type, isTask ? TaskFieldCount : FutureFieldCount);
     future->set(getVM(globalObject), FutureModuleState, state);
     return future;
