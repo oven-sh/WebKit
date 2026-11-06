@@ -428,6 +428,12 @@ void Threads::acquire(ThreadState& thread, JSLock::ParkedThread& parked, SavedSt
         entry.runtime = nullptr;
         ++position;
     });
+    // In those it has what a thread has that has just started. It runs there: the calls that are owed are made in every runtime of the VM.
+    for (; position < runtimes.size(); ++position) {
+        Runtime::ThreadLocalState state;
+        state.thread = thread.number();
+        runtimes[position]->putThreadLocalState(state);
+    }
     // Not before: see release().
     RELEASE_ASSERT(m_vm.heap.hasAccess());
     thread.saved = nullptr;
