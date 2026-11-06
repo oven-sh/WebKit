@@ -384,9 +384,19 @@ static bool convertArgument(JSGlobalObject* globalObject, JSValue object, unsign
 
 // ---- Results ----
 
-enum class ResultIs : bool { OfThisFile, OfCode };
+static bool isLoadedAsObject(PyCTypeInfo* info, JSValue type)
+{
+    return info && info->accessor.code == Code::Object && isSimpleInstanceType(*info->state.get(), PyType::from(type));
+}
 
-static JSValue makeResult(JSGlobalObject* globalObject, JSValue resultType, const uint8_t* memory, JSValue checker, JSValue hint, ResultIs resultIs)
+static void takeOverReferenceIn(const uint8_t* memory)
+{
+    uint64_t bits;
+    memcpy(&bits, memory, sizeof(bits));
+    CApi::takeOverReference(bits);
+}
+
+static JSValue makeResult(JSGlobalObject* globalObject, JSValue resultType, const uint8_t* memory, JSValue checker, JSValue hint, bool comesWithReference)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -402,12 +412,8 @@ static JSValue makeResult(JSGlobalObject* globalObject, JSValue resultType, cons
     JSValue result;
     if (info->accessor && isSimpleInstanceType(*info->state.get(), PyType::from(resultType))) {
         result = load(globalObject, info->accessor, memory, info->size, { }, hint);
-        // Code that returns an object returns a reference with it: C's does, and so does a callback (runCallback()).
-        if (info->accessor.code == Code::Object && result && resultIs == ResultIs::OfCode && CApi::isSetUpFor(runtime(globalObject))) {
-            uint64_t bits;
-            memcpy(&bits, memory, sizeof(bits));
-            CApi::takeOverReference(bits);
-        }
+        if (comesWithReference && result)
+            takeOverReferenceIn(memory);
     } else
         result = dataFromCopy(globalObject, PyType::from(resultType), memory, info->size);
     RETURN_IF_EXCEPTION(scope, { });
@@ -423,25 +429,19 @@ static bool isOwnFunction(uintptr_t address)
     return address == addressOfMemmove() || address == addressOfMemset() || address == addressOfCast() || address == addressOfMemoryViewAt() || address == addressOfStringAt() || address == addressOfWStringAt();
 }
 
-// Runs one of the functions above. False: the address is not one of theirs. Otherwise the result is in `memory`, unless
-// there is an exception.
-static bool callOwnFunction(JSGlobalObject* globalObject, uintptr_t address, std::span<const Argument> arguments, uint8_t* memory, JSValue& result)
+// Runs one of them. The result is in `memory`, unless there is an exception.
+static void callOwnFunction(JSGlobalObject* globalObject, uintptr_t address, std::span<const Argument> arguments, uint8_t* memory, JSValue& result)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    unsigned expected;
-    if (address == addressOfMemmove() || address == addressOfMemset() || address == addressOfCast() || address == addressOfMemoryViewAt())
-        expected = 3;
-    else if (address == addressOfStringAt() || address == addressOfWStringAt())
-        expected = 2;
-    else
-        return false;
+    ASSERT(isOwnFunction(address));
+    unsigned expected = address == addressOfStringAt() || address == addressOfWStringAt() ? 2 : 3;
     bool fits = arguments.size() == expected;
     for (auto& argument : arguments)
         fits &= argument.kind == ForeignKind::Pointer || (argument.kind >= ForeignKind::SInt8 && argument.kind <= ForeignKind::UInt64);
     if (!fits) {
         raiseTypeError(globalObject, scope, "this function takes "_s, expected, " arguments that are integers or pointers"_s);
-        return true;
+        return;
     }
     // An int is passed as 32 bits. A size_t or a pointer has all 64.
     auto wide = [&](unsigned index) -> int64_t {
@@ -473,7 +473,7 @@ static bool callOwnFunction(JSGlobalObject* globalObject, uintptr_t address, std
         else
             memset(destination, static_cast<int>(wide(1)), static_cast<size_t>(wide(2)));
         memcpy(memory, &destination, sizeof(void*));
-        return true;
+        return;
     }
     if (address == addressOfStringAt())
         result = stringAt(globalObject, static_cast<const char*>(pointer(0)), static_cast<int>(wide(1)));
@@ -483,15 +483,14 @@ static bool callOwnFunction(JSGlobalObject* globalObject, uintptr_t address, std
         result = memoryViewAt(globalObject, pointer(0), wide(1), !!wide(2));
     else {
         JSValue source = object(1);
-        RETURN_IF_EXCEPTION(scope, true);
+        RETURN_IF_EXCEPTION(scope, void());
         JSValue type = object(2);
-        RETURN_IF_EXCEPTION(scope, true);
+        RETURN_IF_EXCEPTION(scope, void());
         result = castTo(globalObject, pointer(0), source, type);
     }
-    RETURN_IF_EXCEPTION(scope, true);
+    RETURN_IF_EXCEPTION(scope, void());
     uint64_t bits = bitsOfObject(globalObject, result);
     memcpy(memory, &bits, sizeof(bits));
-    return true;
 }
 
 JSValue callFunction(JSGlobalObject* globalObject, void* function, PyTuple* arguments, unsigned flags, JSValue convertersValue, JSValue resultType, JSValue checker)
@@ -502,12 +501,6 @@ JSValue callFunction(JSGlobalObject* globalObject, void* function, PyTuple* argu
 
     audit(globalObject, "ctypes.call_function"_s, intFromPointer(globalObject, function), arguments);
     RETURN_IF_EXCEPTION(scope, { });
-    // A function of a PyDLL may call the C API, if it is C's: the prototypes of ctypes' own functions, and of callbacks, have the flag too. Before
-    // the arguments are converted, which are spelled for C.
-    if ((flags & FunctionPythonAPI) && !CApi::isSetUpFor(runtime(globalObject)) && !isOwnFunction(std::bit_cast<uintptr_t>(function)) && !isCallbackCode(function)) {
-        if (failed(scope, CApi::ensure(globalObject)))
-            return { };
-    }
     unsigned count = arguments->length();
     if (count > 1024)
         return raise(globalObject, scope, state.argumentError.get(), makeString("too many arguments ("_s, count, "), maximum is 1024"_s));
@@ -560,9 +553,11 @@ JSValue callFunction(JSGlobalObject* globalObject, void* function, PyTuple* argu
     result.memory = resultMemory;
 
     JSValue ownResult;
-    bool isOwn = callOwnFunction(globalObject, std::bit_cast<uintptr_t>(function), converted.span(), resultMemory, ownResult);
-    RETURN_IF_EXCEPTION(scope, { });
-    if (!isOwn) {
+    bool returnsReference = false;
+    if (isOwnFunction(std::bit_cast<uintptr_t>(function))) {
+        callOwnFunction(globalObject, std::bit_cast<uintptr_t>(function), converted.span(), resultMemory, ownResult);
+        RETURN_IF_EXCEPTION(scope, { });
+    } else {
         Vector<ForeignValue, 8> values(count);
         for (unsigned i = 0; i < count; ++i) {
             values[i].kind = converted[i].kind;
@@ -571,15 +566,29 @@ JSValue callFunction(JSGlobalObject* globalObject, void* function, PyTuple* argu
         }
         if (!function)
             return raiseValueError(globalObject, scope, "NULL pointer access"_s);
+        Runtime& rt = runtime(globalObject);
+        bool returnsObject = isLoadedAsObject(resultInfo, resultType);
+        bool callbackGivesReference = false;
+        bool isCallback = (returnsObject || ((flags & FunctionPythonAPI) && !CApi::isSetUpFor(rt))) && isCallbackCode(function, callbackGivesReference);
+        // A function of a PyDLL may call the C API, if it is C's: the prototype of a callback has the flag too.
+        if ((flags & FunctionPythonAPI) && !isCallback && failed(scope, CApi::ensure(globalObject)))
+            return { };
+        // Code that returns an object returns a reference with it. C's does, and so does a callback, if its interpreter counts (runCallback()).
+        returnsReference = returnsObject && (isCallback ? callbackGivesReference : CApi::tryEnsure(globalObject));
         // With more arguments than argtypes, the rest are those of a variadic function.
         unsigned fixedCount = converterCount && count > converterCount ? converterCount : count;
-        bool ok = callForeignFunction(globalObject, function, values.span(), fixedCount, result, flags);
-        RETURN_IF_EXCEPTION(scope, { });
-        ASSERT_UNUSED(ok, ok);
-        if ((flags & FunctionPythonAPI) && CApi::isSetUpFor(runtime(globalObject)) && failed(scope, CApi::throwWhatCRaised(globalObject)))
+        callForeignFunction(globalObject, function, values.span(), fixedCount, result, flags);
+        // However the call ends, neither the reference nor what C raised outlives it.
+        bool isEnded = scope.exception(); // The host is ending what runs here, or no such call can be made.
+        if (isEnded)
+            CApi::forgetWhatCRaised();
+        if (isEnded || (CApi::isSetUpFor(rt) && failed(scope, CApi::throwWhatCRaised(globalObject)))) [[unlikely]] {
+            if (returnsReference)
+                takeOverReferenceIn(resultMemory);
             return { };
+        }
     }
-    RELEASE_AND_RETURN(scope, makeResult(globalObject, resultType, resultMemory, checker, ownResult, isOwn ? ResultIs::OfThisFile : ResultIs::OfCode));
+    RELEASE_AND_RETURN(scope, makeResult(globalObject, resultType, resultMemory, checker, ownResult, returnsReference));
 }
 
 // ---- Callbacks ----
@@ -596,6 +605,7 @@ static PyCThunk* makeThunk(JSGlobalObject* globalObject, JSValue callable, JSVal
     thunk->callable.set(vm, thunk, callable);
     thunk->argTypes.set(vm, thunk, argTypes);
     thunk->globalObject = globalObject;
+    thunk->givesReference = CApi::isFor(runtime(globalObject));
     if (resultType && !isNone(resultType)) {
         PyCTypeInfo* info = infoOf(globalObject, resultType);
         if (!info || !info->accessor) {
@@ -688,7 +698,7 @@ void runCallback(PyCThunk* thunk, void** arguments, void* resultMemory)
         return;
     }
     store(static_cast<uint8_t*>(resultMemory), info->accessor, packed, info->size);
-    if (info->accessor.code == Code::Object && CApi::isSetUpFor(runtime(globalObject))) {
+    if (info->accessor.code == Code::Object && thunk->givesReference && CApi::tryEnsure(globalObject)) {
         uint64_t bits;
         memcpy(&bits, resultMemory, sizeof(bits));
         CApi::giveReference(bits);

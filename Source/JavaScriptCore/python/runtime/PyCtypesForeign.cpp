@@ -603,6 +603,8 @@ struct Incoming {
 static Lock callbackLock;
 static std::array<std::atomic<PyCThunk*>, callbackSlotCount> integerCallbacks;
 static std::array<std::atomic<PyCThunk*>, callbackSlotCount> floatCallbacks;
+// PyCThunk::givesReference, for who has the address of the code and may not look into the thunk: it may be another interpreter's.
+static std::array<std::atomic<bool>, callbackSlotCount> integerCallbackGivesReference;
 
 static void enterCallback(PyCThunk* thunk, Incoming& in, uint64_t (&result)[2])
 {
@@ -761,6 +763,8 @@ bool allocateCallbackCode(JSGlobalObject* globalObject, PyCThunk* thunk)
                 if (table[i].load())
                     continue;
                 table[i].store(thunk);
+                if (!isFloat)
+                    integerCallbackGivesReference[i].store(thunk->givesReference);
                 thunk->slot = static_cast<int>(i);
                 thunk->code = entries[i];
                 return true;
@@ -776,9 +780,27 @@ bool allocateCallbackCode(JSGlobalObject* globalObject, PyCThunk* thunk)
     return false;
 }
 
-bool isCallbackCode(void* function)
+bool isCallbackCode(void* function, bool& givesReference)
 {
-    return std::ranges::find(integerEntries, function) != integerEntries.end() || std::ranges::find(floatEntries, function) != floatEntries.end();
+    // The linker puts them where it likes.
+    struct Entry {
+        void* code;
+        std::atomic<bool>* givesReference;
+    };
+    static std::array<Entry, 2 * callbackSlotCount> sorted;
+    static std::once_flag once;
+    std::call_once(once, [] {
+        for (unsigned i = 0; i < callbackSlotCount; ++i) {
+            sorted[2 * i] = { integerEntries[i], &integerCallbackGivesReference[i] };
+            sorted[2 * i + 1] = { floatEntries[i], nullptr };
+        }
+        std::ranges::sort(sorted, std::less<void*>(), &Entry::code);
+    });
+    auto found = std::ranges::lower_bound(sorted, function, std::less<void*>(), &Entry::code);
+    if (found == sorted.end() || found->code != function)
+        return false;
+    givesReference = found->givesReference && found->givesReference->load();
+    return true;
 }
 
 void releaseCallbackCode(PyCThunk* thunk)
@@ -806,7 +828,7 @@ bool allocateCallbackCode(JSGlobalObject* globalObject, PyCThunk*)
     return raiseUnsupported(globalObject, "callbacks are"_s);
 }
 
-bool isCallbackCode(void*)
+bool isCallbackCode(void*, bool&)
 {
     return false;
 }

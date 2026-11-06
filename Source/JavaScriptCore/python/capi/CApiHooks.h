@@ -80,8 +80,14 @@ JSValue objectOfSymbol(JSGlobalObject*, uint64_t bits);
 // For the collector, with the world stopped, when marking is over and nothing has been freed yet.
 void didFinishMarking(JSC::Heap&);
 
-// After a call of a function of C's that has the GIL: what it raised, if it did, is thrown. False: it is.
+// After code of C's has run with the GIL.
+// What it raised, if it did, is thrown. False: it is.
 bool throwWhatCRaised(JSGlobalObject*);
+// The same where C has said that all went well: a SystemError, of which what C raised is the cause. `who` is the repr() of what was called.
+bool throwWhatCRaisedBesideResult(JSGlobalObject*, const String& who);
+// Nobody will look: the call ends otherwise.
+void forgetWhatCRaised();
+
 // C has handed over a reference with a result: these are the bits of the PyObject*.
 void takeOverReference(uint64_t bits);
 // And the other way round.
@@ -103,6 +109,8 @@ inline uint64_t bitsForC(JSGlobalObject*, JSValue value) { return static_cast<ui
 inline JSValue objectOfSymbol(JSGlobalObject*, uint64_t) { return { }; }
 inline void didFinishMarking(JSC::Heap&) { }
 inline bool throwWhatCRaised(JSGlobalObject*) { return true; }
+inline bool throwWhatCRaisedBesideResult(JSGlobalObject*, const String&) { return true; }
+inline void forgetWhatCRaised() { }
 inline void takeOverReference(uint64_t) { }
 inline void giveReference(uint64_t) { }
 

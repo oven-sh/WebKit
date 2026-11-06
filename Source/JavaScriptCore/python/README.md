@@ -1440,7 +1440,8 @@ not even for an object that C has just made: code that changes in place what it 
 **The error indicator is not the VM's pending exception.** C goes on calling the API while an exception is set, and the functions of the runtime expect none to be pending
 when they are entered. So the indicator is a reference of its own, one for each thread, counted like C's other references and kept alive by that (for ever, if a thread ends
 with an exception set). A function
-of the API that finds the runtime to have raised moves the exception there (`Entry::failed()`); whoever has called C throws what is there (`throwWhatCRaised()`). What ends the
+of the API that finds the runtime to have raised moves the exception there (`Entry::failed()`); whoever has called C throws what is there (`throwWhatCRaised()`), or drops it if the
+call ends otherwise: it does not outlive the call that set it. What ends the
 program (a termination) is never put in the indicator: it stays pending, and while it does every function of the API fails at once.
 
 **One interpreter of a process has the API: the first that there is** (`CApi::runtimeIsBeginning()`, in `Runtime`'s constructor). The functions are not told for whom they are called,
@@ -1464,9 +1465,13 @@ and it holds a reference to the lock. `Py_None` and the other constants that are
 it (`CAPI_ENTER()`, `CAPI_NOISY()`) or not (`CAPI_QUIET()`); `tools/check_capi.py` looks. A function is noisy unless it is known to be quiet. Nothing counts the noisy
 calls yet: that is for the order in which instances of extension types are destroyed.
 
-**`ctypes`.** A `py_object` is a `PyObject*`: the same bits. A function of a `PyDLL` is called with the GIL; what it raised is thrown when it returns, whatever it returned. Code that
-returns a `py_object` returns a reference with it: a function of C's does, and the reference is given up once the object is in hand; a callback does, and C owns what it gets (a
-prototype over a Python callable that is called from Python does both). `ctypes`' own functions (`string_at()`, `cast()`) are no code in that sense: nothing is counted. `_ctypes.Py_INCREF()` and
+**`ctypes`.** A `py_object` is a `PyObject*`: the same bits. A function of a `PyDLL` is called with the GIL; what C raised is thrown when it returns, whatever it returned (also for a
+function of a `CDLL` that got in because no other thread wanted the GIL: CPython crashes there). What a library raised as it was loaded is the cause of a `SystemError` from `dlopen()`, as in
+CPython. Code that
+returns a `py_object` returns a reference with it: a function of C's does, and the reference is given up once the object is in hand, or when the call ends in another way; a callback
+does, and C owns what it gets (a prototype over a Python callable that is called from Python does both). Whether a reference goes with it depends on whose the code is, the
+caller's interpreter for C's and the callback's own for a callback, and on nothing that changes with time.
+`ctypes`' own functions (`string_at()`, `cast()`) are no code in that sense: nothing is counted. `_ctypes.Py_INCREF()` and
 `Py_DECREF()` count in the same table. In an interpreter that the API is not for, C can own nothing: `Py_INCREF()` keeps a table of its own, and what a callback returns lives while the
 program holds it.
 

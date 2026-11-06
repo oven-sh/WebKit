@@ -8,6 +8,7 @@
 
 #include "CApiSymbols.h"
 #include "JSCInlines.h"
+#include "PyException.h"
 #include "SimpleMarkingConstraint.h"
 #include "SlotVisitorInlines.h"
 #include <wtf/TZoneMallocInlines.h>
@@ -339,6 +340,29 @@ bool throwWhatCRaised(JSGlobalObject* globalObject)
     throwPythonException(globalObject, scope, toJS(exception));
     release(exception);
     return false;
+}
+
+bool throwWhatCRaisedBesideResult(JSGlobalObject* globalObject, const String& who)
+{
+    Handle exception = std::exchange(t_errorIndicator, nullptr);
+    if (!exception) [[likely]]
+        return true;
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue cause = toJS(exception);
+    release(exception);
+    raiseSystemError(globalObject, scope, who, " returned a result with an exception set"_s);
+    if (auto* error = PyException::tryFrom(pendingException(globalObject))) {
+        error->setCause(vm, cause);
+        error->setContext(vm, cause);
+        error->setSuppressContext(true);
+    }
+    return false;
+}
+
+void forgetWhatCRaised()
+{
+    setErrorIndicator(nullptr);
 }
 
 void takeOverReference(uint64_t bits)

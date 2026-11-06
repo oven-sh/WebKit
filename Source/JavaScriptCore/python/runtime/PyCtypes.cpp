@@ -539,6 +539,8 @@ bool holdObject(JSGlobalObject* globalObject, JSValue object)
 // These are references as C owns them, and are counted with those: what is taken here may be given back by C. Only an interpreter that the C API is not for keeps count here.
 static JSValue moduleIncRef(JSGlobalObject* globalObject, JSValue, JSValue object)
 {
+    if (!object.isCell())
+        return object;
     if (CApi::tryEnsure(globalObject)) {
         CApi::giveReference(bitsOfObject(globalObject, object));
         return object;
@@ -552,8 +554,9 @@ static JSValue moduleDecRef(JSGlobalObject* globalObject, JSValue, JSValue objec
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (!object.isCell())
         return object;
-    if (CApi::tryEnsure(globalObject)) {
-        CApi::takeOverReference(bitsOfObject(globalObject, object));
+    if (Runtime& rt = runtime(globalObject); CApi::isFor(rt)) {
+        if (CApi::isSetUpFor(rt))
+            CApi::takeOverReference(bitsOfObject(globalObject, object));
         return object;
     }
     PyDict* held = stateOf(globalObject).heldObjects.get();
@@ -634,8 +637,14 @@ static JSValue moduleDlopen(JSGlobalObject* globalObject, JSValue name, JSValue 
         CApi::LibraryBeingLoaded loading(globalObject);
         handle = dlopen(isNone(name) ? nullptr : path.characters(), mode);
     }
+    // What the library did as it was loaded may have called the C API.
+    if (scope.exception() || !handle) [[unlikely]]
+        CApi::forgetWhatCRaised();
+    RETURN_IF_EXCEPTION(scope, { });
     if (!handle)
         RELEASE_AND_RETURN(scope, raiseLoaderError(globalObject, "dlopen() error"_s));
+    if (failed(scope, CApi::throwWhatCRaisedBesideResult(globalObject, "<built-in function dlopen>"_s)))
+        return { };
     return intFromPointer(globalObject, handle);
 }
 

@@ -322,6 +322,7 @@ public:
     unsigned flags { 0 };
     void* code { nullptr };
     int slot { -1 }; // For whatever made the code.
+    bool givesReference { false }; // With an object that it returns: its interpreter is the one whose references are counted (CApi::isFor()).
     JSGlobalObject* globalObject { nullptr };
     WriteBarrier<Unknown> callable;
     WriteBarrier<PyTuple> argTypes;
@@ -551,8 +552,8 @@ bool callForeignFunction(JSGlobalObject*, void* function, std::span<const Foreig
 // Sets `code` to a function of C that calls runCallback() with the thunk. False: an exception.
 bool allocateCallbackCode(JSGlobalObject*, PyCThunk*);
 void releaseCallbackCode(PyCThunk*);
-// Whether the address is one that allocateCallbackCode() gives out.
-bool isCallbackCode(void*);
+// Whether the address is one that allocateCallbackCode() gives out. Then `givesReference` is that of the thunk that it was last given to, in whatever interpreter.
+bool isCallbackCode(void*, bool& givesReference);
 // With the GIL. `arguments[i]` is where argument i is; the result, if any, is stored where `result` says. It raises nothing.
 void runCallback(PyCThunk*, void** arguments, void* result);
 
