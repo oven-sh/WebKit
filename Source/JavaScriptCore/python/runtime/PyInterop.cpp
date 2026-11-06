@@ -2597,13 +2597,17 @@ static JSValue jsFunctionSubclassCheck(JSGlobalObject* globalObject, JSValue sel
         JSObject* function = asObject(self);
         while (auto* bound = dynamicDowncast<JSBoundFunction>(function))
             function = bound->targetFunction();
-        // (What stands for the classes of Python's in a chain of prototypes has nothing to run.)
+        // (What stands for the classes of Python's in a chain of prototypes has nothing to run. What JS has put into the chain may answer for
+        // its prototype itself, a Proxy or an exception of Python's: that is the main thread's to ask.)
         if (JSValue wanted = valueOfJSForAnyThread(globalObject, function, getVM(globalObject).propertyNames->prototype)) {
-            for (JSValue prototype = prototypeForJS(globalObject, type); prototype.isObject(); prototype = asObject(prototype)->getPrototypeDirect()) {
+            JSValue prototype = prototypeForJS(globalObject, type);
+            while (prototype.isObject() && !asObject(prototype)->structure()->typeInfo().overridesGetPrototype()) {
                 if (prototype == wanted)
                     return jsBoolean(true);
+                prototype = asObject(prototype)->getPrototypeDirect();
             }
-            return jsBoolean(false);
+            if (!prototype.isObject())
+                return jsBoolean(false);
         }
     }
     if (!ensureMainThreadForJS(globalObject))
