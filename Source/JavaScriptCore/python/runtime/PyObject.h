@@ -159,6 +159,7 @@ public:
     void forEachAttribute(JSGlobalObject*, const ScopedLambda<bool(JSString* name, JSValue)>&);
 
     static constexpr ptrdiff_t offsetOfDict() { return OBJECT_OFFSETOF(PyInstance, m_dict); }
+    static constexpr PropertyOffset offsetOfDictAmongProperties = 1;
 
 private:
     PyInstance(VM&, Structure*, PyType*);

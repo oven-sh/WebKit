@@ -262,6 +262,7 @@ public:
             return m_version;
         return takeVersion();
     }
+    uint32_t versionIfAny() const { return m_version; }
     static constexpr ptrdiff_t offsetOfVersion() { return OBJECT_OFFSETOF(PyType, m_version); }
     // For the interpreter: what lookup(special) finds, if the state is not 0, and whether that is a function written in Python.
     static constexpr ptrdiff_t offsetOfSpecials() { return OBJECT_OFFSETOF(PyType, m_specials); }

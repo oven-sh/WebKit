@@ -396,6 +396,35 @@ static ALWAYS_INLINE void remember(Metadata& metadata, const AttributeCache& cac
     metadata.m_metatypeVersion = cache.metatypeVersion;
 }
 
+// See AttributeCache::dictThenClassValue. `valueInDict`: what the dict has, or empty.
+static ALWAYS_INLINE JSValue attributeBehindDict(JSGlobalObject* globalObject, JSValue base, JSString* name, JSValue valueInDict, int32_t kind, EncodedJSValue payload, JSValue* self)
+{
+    if (valueInDict)
+        return valueInDict;
+    if (!payload)
+        return getAttrOfAbsent(globalObject, base, name);
+    if (self && kind == AttributeCache::dictThenClassValue)
+        *self = base;
+    return JSValue::decode(payload);
+}
+
+// False: nothing of the kind is remembered of an object like this one.
+template<typename Metadata>
+static ALWAYS_INLINE bool findBehindDict(JSGlobalObject* globalObject, Metadata& metadata, JSValue base, JSString* name, JSValue* self, JSValue& result)
+{
+    if (!AttributeCache::asksDict(metadata.m_offset) || !base.isCell() || base.asCell()->structureID() != metadata.m_structureID)
+        return false;
+    auto* object = uncheckedDowncast<PyObject>(base.asCell());
+    if (object->type()->versionIfAny() != metadata.m_typeVersion)
+        return false;
+    PyDict* dict = PyDict::from(object->getDirect(static_cast<PropertyOffset>(metadata.m_metatypeVersion)));
+    // (Such a key may run code.)
+    if (!dict->hasOnlyStringKeys()) [[unlikely]]
+        return false;
+    result = attributeBehindDict(globalObject, base, name, dict->get(name), metadata.m_offset, metadata.m_payload, self);
+    return true;
+}
+
 // The lookup that op_py_get_attr and op_py_get_method make when they remember nothing of an object like this one. One walk finds the
 // attribute and what there is to remember. An object of which nothing can be remembered leaves what is remembered as it is.
 // Empty, and no exception: the attribute is not of a kind that is read in a line. That is left to getAttr() or getMethod(), and to the
@@ -404,6 +433,8 @@ static ALWAYS_INLINE void remember(Metadata& metadata, const AttributeCache& cac
 template<typename Metadata>
 static ALWAYS_INLINE JSValue findAttribute(JSGlobalObject* globalObject, Metadata& metadata, JSValue base, JSString* name, JSValue* self, PyProperty** property = nullptr)
 {
+    if (JSValue result; findBehindDict(globalObject, metadata, base, name, self, result))
+        return result;
     // As JS's own instruction does (llint_slow_path_get_by_id): an object that has lost attributes, or has very many, is given a Structure
     // that can be gone by again, once.
     if (base.isCell() && base.asCell()->type() == PyInstanceType) {
@@ -433,6 +464,9 @@ static ALWAYS_INLINE JSValue findAttribute(JSGlobalObject* globalObject, Metadat
     if (cache.offset >= 0)
         return asObject(base)->getDirect(cache.offset);
     switch (cache.offset) {
+    case AttributeCache::dictThenClassValue:
+    case AttributeCache::dictThenUnboundClassValue:
+        return attributeBehindDict(globalObject, base, name, cache.valueInDict, cache.offset, cache.payload, self);
     case AttributeCache::classValue:
         if (self)
             *self = base;

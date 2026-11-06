@@ -95,7 +95,7 @@ DEFINE_VISIT_CHILDREN(PyObject);
 PY_DEFINE_CELL(PyInstance);
 
 static_assert(PyObject::offsetOfType() == JSObject::offsetOfInlineStorage());
-static_assert(PyInstance::offsetOfDict() == JSObject::offsetOfInlineStorage() + sizeof(EncodedJSValue));
+static_assert(PyInstance::offsetOfDict() == JSObject::offsetOfInlineStorage() + PyInstance::offsetOfDictAmongProperties * sizeof(EncodedJSValue));
 static_assert(sizeof(PyInstance) == JSObject::offsetOfInlineStorage() + PyInstance::numberOfFields * sizeof(EncodedJSValue));
 
 PyInstance::PyInstance(VM& vm, Structure* structure, PyType* type)

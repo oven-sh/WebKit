@@ -3570,6 +3570,7 @@ llintOpWithMetadata(op_py_get_attr, OpPyGetAttr, macro (size, get, dispatch, met
 .other:
     bieq t1, constexpr Python::AttributeCache::moduleEntry, .module
     bilteq t1, constexpr Python::AttributeCache::valueOfClass, .ofClass
+    bilteq t1, constexpr Python::AttributeCache::dictThenClassValue, .slow
     pyCheckTypeVersion(OpPyGetAttr, .slow)
     loadq OpPyGetAttr::Metadata::m_payload[t5], t0
     bieq t1, constexpr Python::AttributeCache::staticMethod, .wrapped
@@ -3657,6 +3658,7 @@ llintOpWithMetadata(op_py_get_method, OpPyGetMethod, macro (size, get, dispatch,
 .other:
     bieq t1, constexpr Python::AttributeCache::moduleEntry, .module
     bilteq t1, constexpr Python::AttributeCache::valueOfClass, .ofClass
+    bilteq t1, constexpr Python::AttributeCache::dictThenClassValue, .slow
     pyCheckTypeVersion(OpPyGetMethod, .slow)
     loadq OpPyGetMethod::Metadata::m_payload[t5], t0
     loadq (constexpr (Python::PyWrapperObject::offsetOfWrapped()))[t0], t0

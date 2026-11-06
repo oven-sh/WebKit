@@ -95,7 +95,7 @@ JSValue getSpecialMethod(JSGlobalObject*, JSValue object, Special, JSValue& self
 
 // The __dict__ of the object. Null: it has none, or, unless `create`, has had no use for one yet.
 PyDict* instanceDict(JSGlobalObject*, JSValue object, bool create);
-// What op_py_get_attr and op_py_get_method remember of the last attribute they got (their metadata has these fields), so as to
+// What op_py_get_attr and op_py_get_method remember of the last attribute they got (their metadata has these fields but the last), so as to
 // get it again without a lookup from an object that is alike. The code that does so is in LowLevelInterpreter64.asm.
 struct AttributeCache {
     // `offset`, if it is not that of a property of the object, which holds the attribute.
@@ -106,10 +106,18 @@ struct AttributeCache {
     static constexpr int32_t classMethod = -5; // op_py_get_method only: `payload` is a classmethod. What that wraps now takes the class of the object as its first argument.
     static constexpr int32_t tupleItem = -6; // op_py_get_attr only: the attribute is item `payload` of the object, a tuple.
     static constexpr int32_t propertyGetter = -7; // op_py_get_attr only: `payload` is a property: the attribute is what the getter it has now returns for the object.
+    // The object keeps its attributes in a dict, as its Structure tells. Nothing is remembered of the dict: it is asked each time, by the
+    // slow path. What it does not have is as for classValue and unboundClassValue; `payload` is empty if the class has nothing either.
+    static constexpr int32_t dictThenClassValue = -8;
+    static constexpr int32_t dictThenUnboundClassValue = -9;
     // The object is a class, and the attribute was found in it or in one of its bases. As classValue, staticMethod, classMethod.
-    static constexpr int32_t valueOfClass = -8;
-    static constexpr int32_t staticMethodOfClass = -9;
-    static constexpr int32_t classMethodOfClass = -10; // The first argument is the object.
+    static constexpr int32_t valueOfClass = -10;
+    static constexpr int32_t staticMethodOfClass = -11;
+    static constexpr int32_t classMethodOfClass = -12; // The first argument is the object.
+    static constexpr bool asksDict(int32_t offset) { return offset == dictThenClassValue || offset == dictThenUnboundClassValue; }
+    // The interpreter tells them apart by their order.
+    static_assert(classMethodOfClass < valueOfClass && staticMethodOfClass < valueOfClass && valueOfClass < dictThenUnboundClassValue
+        && dictThenUnboundClassValue < dictThenClassValue && dictThenClassValue < propertyGetter);
     // Whether `payload` is a value. The versions vouch for it: while they hold, the class has it. The collector does not go by
     // that, since a dict can be written to behind the back of its class (gc.get_referents(C.__dict__)): what is remembered about
     // a value that is gone is forgotten, as it is for a Structure. See CodeBlock::reconcileLLIntInlineCachesAtGCEnd().
@@ -125,17 +133,20 @@ struct AttributeCache {
     int32_t offset { 0 };
     // ... or, if this is not 0, if it has this JSType: a str, a list. Then `payload` is as for classValue.
     uint32_t jsType { 0 };
+    // With asksDict() it is no version: the dict is the property at this offset.
     uint32_t metatypeVersion { 0 };
+    // The one field that is not remembered. With asksDict(): what the dict has now, or empty.
+    JSValue valueInDict;
 };
 // Finds the attribute and says where it is in the terms of AttributeCache. No code of the program has run when it says anything but None. With
-// the last two, whatever getAttr(), or with `forCall` getMethod(), would check or raise before it returns the attribute has been checked; with
-// the others the function named does the rest.
+// the last two, whatever getAttr(), or with `forCall` getMethod(), would check or raise before it returns the attribute has been checked (but
+// with asksDict() there may be none, neither in the dict nor in the class: then as for Absent); with the others the function named does the rest.
 enum class AttributeDescription : uint8_t {
     None, // Not to be said in those terms: that is for getAttr().
     Absent, // Neither the class nor the object has it: that is for getAttrOfAbsent().
     ToBind, // `payload` is what the class has, nothing of the object's comes before it, and there is no __getattr__: that is for getAttrFromDescriptor().
     ToBindToClass, // The same where the object is a class and `payload` is what it or one of its bases has, which is bound to the class and no object.
-    OfThisObjectNow, // Not to be remembered: the object keeps its attributes in a dict, its class has no version left...
+    OfThisObjectNow, // Not to be remembered: the Structure is the object's own, its class has no version left...
     OfAllAlike,
 };
 AttributeDescription describeAttribute(JSGlobalObject*, JSValue object, JSString* name, bool forCall, AttributeCache&);

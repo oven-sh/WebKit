@@ -889,6 +889,74 @@ static AttributeDescription describeAttributeOfClass(Runtime& rt, PyType* cls, J
     return rt.typeOf(attribute)->lookup(Special::Get) ? toBind : description;
 }
 
+// What the attribute is if the object has nothing of the name itself. `description`: what is to be said of it if it is `descriptor` as it is,
+// or follows from that without a call; `toBind`: if it is what a descriptor gives.
+static ALWAYS_INLINE AttributeDescription describeAttributeFromClass(Runtime& rt, JSValue descriptor, bool forCall, AttributeDescription description, AttributeDescription toBind, AttributeCache& cache)
+{
+    if (!descriptor)
+        return AttributeDescription::Absent;
+    cache.payload = JSValue::encode(descriptor);
+    if (isMethodDescriptor(descriptor)) {
+        cache.offset = AttributeCache::classValue;
+        return forCall ? description : toBind; // Otherwise the attribute is a new bound method each time.
+    }
+    switch (methodWrapperKind(rt, descriptor)) {
+    case MethodWrapper::StaticMethod:
+        cache.offset = AttributeCache::staticMethod;
+        return description;
+    case MethodWrapper::ClassMethod:
+        cache.offset = AttributeCache::classMethod;
+        return forCall ? description : toBind;
+    case MethodWrapper::None:
+        break;
+    }
+    // What is left is the attribute as it is, if there is nothing to bind.
+    if (descriptor.isCell()) {
+        if (auto* native = PyNativeFunction::tryFrom(descriptor); native && native->kind() == NativeKind::ClassMethod)
+            return toBind;
+        if (rt.typeOf(descriptor)->lookup(Special::Get))
+            return toBind;
+    }
+    cache.offset = forCall ? AttributeCache::unboundClassValue : AttributeCache::classValue;
+    return description;
+}
+
+// The same for an object that keeps its attributes in a dict, which is its property at `dictOffset`.
+static NEVER_INLINE AttributeDescription describeAttributeBehindDict(Runtime& rt, PyDict* dict, PropertyOffset dictOffset, JSString* name, JSValue descriptor, bool forCall, AttributeDescription description, AttributeDescription toBind, AttributeCache& cache)
+{
+    using enum AttributeDescription;
+    if (!dict->hasOnlyStringKeys())
+        return None;
+    JSValue value = dict->get(name);
+    if (value && description != OfAllAlike) {
+        cache.payload = JSValue::encode(value);
+        cache.offset = forCall ? AttributeCache::unboundClassValue : AttributeCache::classValue;
+        return OfThisObjectNow;
+    }
+    AttributeDescription fromClass = describeAttributeFromClass(rt, descriptor, forCall, description, toBind, cache);
+    // All that was found out before is about the class, and holds for all alike.
+    if (description == OfAllAlike) {
+        int32_t kind = 0;
+        if (fromClass == Absent || (fromClass == OfAllAlike && cache.offset == AttributeCache::classValue))
+            kind = AttributeCache::dictThenClassValue;
+        else if (fromClass == OfAllAlike && cache.offset == AttributeCache::unboundClassValue)
+            kind = AttributeCache::dictThenUnboundClassValue;
+        if (kind) {
+            cache.offset = kind;
+            cache.valueInDict = value;
+            ASSERT(isValidOffset(dictOffset));
+            cache.metatypeVersion = dictOffset;
+            return OfAllAlike;
+        }
+    }
+    if (value) {
+        cache.payload = JSValue::encode(value);
+        cache.offset = forCall ? AttributeCache::unboundClassValue : AttributeCache::classValue;
+        return OfThisObjectNow;
+    }
+    return fromClass == OfAllAlike ? OfThisObjectNow : fromClass;
+}
+
 // All but the versions. `type`: whose version is to be remembered, if any.
 static AttributeDescription describeAttributeOfObject(JSGlobalObject* globalObject, JSCell* cell, JSString* name, bool forCall, AttributeCache& cache, PyType*& type, uint64_t timesLookupRanCode)
 {
@@ -987,8 +1055,10 @@ static AttributeDescription describeAttributeOfObject(JSGlobalObject* globalObje
     // What the object holds itself. Its Structure tells, if the attributes are properties: those of an instance that has not been asked
     // for its __dict__.
     PyDict* dict = nullptr;
+    PropertyOffset dictOffset = invalidOffset;
     if (jsType == PyInstanceType) {
         dict = uncheckedDowncast<PyInstance>(cell)->dict();
+        dictOffset = PyInstance::offsetOfDictAmongProperties;
         if (!dict) {
             StringImpl* key = name->tryGetValueImpl();
             if (!key->isAtom())
@@ -1004,48 +1074,17 @@ static AttributeDescription describeAttributeOfObject(JSGlobalObject* globalObje
         bool isWrapper = cell->inherits<PyWrapperObject>();
         if (isWrapper && uncheckedDowncast<PyWrapperObject>(cell)->copiesAttributesLater())
             return None;
-        dict = instanceDict(globalObject, object, false);
-        // The others have their __dict__, once they have one, as a property: see instanceDict().
-        if (jsType == PyExceptionType || isWrapper)
+        if (jsType == PyExceptionType || isWrapper) {
+            dict = instanceDict(globalObject, object, false);
             description = OfThisObjectNow;
-    }
-    if (dict) {
-        if (!dict->hasOnlyStringKeys())
-            return None;
-        description = OfThisObjectNow;
-        if (JSValue value = dict->get(name)) {
-            cache.payload = JSValue::encode(value);
-            cache.offset = forCall ? AttributeCache::unboundClassValue : AttributeCache::classValue;
-            return description;
+        } else if (dictOffset = structure->get(vm, rt.dictKey()); isValidOffset(dictOffset)) {
+            // The others have their __dict__, once they have one, as a property: see instanceDict().
+            dict = PyDict::from(asObject(cell)->getDirect(dictOffset));
         }
     }
-
-    if (!descriptor)
-        return Absent;
-    cache.payload = JSValue::encode(descriptor);
-    if (isMethodDescriptor(descriptor)) {
-        cache.offset = AttributeCache::classValue;
-        return forCall ? description : toBind; // Otherwise the attribute is a new bound method each time.
-    }
-    switch (methodWrapperKind(rt, descriptor)) {
-    case MethodWrapper::StaticMethod:
-        cache.offset = AttributeCache::staticMethod;
-        return description;
-    case MethodWrapper::ClassMethod:
-        cache.offset = AttributeCache::classMethod;
-        return forCall ? description : toBind;
-    case MethodWrapper::None:
-        break;
-    }
-    // What is left is the attribute as it is, if there is nothing to bind.
-    if (descriptor.isCell()) {
-        if (auto* native = PyNativeFunction::tryFrom(descriptor); native && native->kind() == NativeKind::ClassMethod)
-            return toBind;
-        if (rt.typeOf(descriptor)->lookup(Special::Get))
-            return toBind;
-    }
-    cache.offset = forCall ? AttributeCache::unboundClassValue : AttributeCache::classValue;
-    return description;
+    if (dict) [[unlikely]]
+        return describeAttributeBehindDict(rt, dict, dictOffset, name, descriptor, forCall, description, toBind, cache);
+    return describeAttributeFromClass(rt, descriptor, forCall, description, toBind, cache);
 }
 
 AttributeDescription describeAttribute(JSGlobalObject* globalObject, JSValue object, JSString* name, bool forCall, AttributeCache& cache)

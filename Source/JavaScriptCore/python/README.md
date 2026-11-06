@@ -310,13 +310,22 @@ unpacking, cells, the binding of arguments when they are simply the parameters, 
   made, and names that a slot, a property or another data descriptor takes do not count: a wrong one costs memory (room for names that an instance does not set: `MEMORY.md`) or time (storage on the side, which the
   instruction does not allocate), nothing else. CPython gives every such instance room for 30. A type has a number too, new whenever it or one of its bases changes (`PyType::version`). An instruction
   remembers Structure, version and offset, or the value found in the class, or the method to call. `obj.__dict__` moves the
-  attributes into a real dict, for good, and gives the object a Structure that says so: of such an object nothing is remembered that
-  depends on what it holds itself, so neither its attributes nor the methods of its class. What only reads the attributes
-  therefore does not ask for the dict (`dir()`, `PyInstance::forEachAttribute`).
+  attributes into a real dict, for good, and gives the object a Structure that says so (and so do `vars()`, `hasattr(obj, '__dict__')`, `copy.copy()`
+  and pickling, of what is copied too, `inspect.getmembers()`); an instance of a class derived from `dict`, `str`, `int` has its attributes in a dict
+  from the first, which is a property of it. Of such a dict nothing is remembered, neither an index nor a version: it is asked at each read. What is
+  remembered is the half that the class says: that nothing in it comes before the dict, and what the attribute is if the dict does not
+  have it (`AttributeCache::dictThenClassValue`, `dictThenUnboundClassValue`). These are two more values of the field that says what kind of thing the
+  one entry of a site holds, as JS's `GetByIdModeMetadata` is one entry in one of several modes (`bytecode/GetByIdMetadata.h`); Structure and version
+  vouch for them as for the others, and the collector forgets them with the others. The interpreter leaves them to the slow path
+  (`findBehindDict()`), which compares the two, sees that the dict has nothing but strs for keys (otherwise a key might run code: the long way) and
+  looks the name up: 276 instructions for `obj.v` where the long way takes 425 and CPython 230. Such an object takes the one entry of the site
+  like any other: where such objects of two classes come by in turn each costs about 80 more than the long way did, and objects without a dict that
+  alternate with them miss too (0 to 0.16 % of all reads in six programs, against 2 to 13 % that are cheaper). What only reads the attributes
+  still does not ask for the dict (`dir()`, `PyInstance::forEachAttribute`).
   One object is remembered. Where objects of two classes come by in turn, or of one class with their attributes set in
   another order, each is looked up anew, and once: `describeAttribute()` finds the attribute and says where it is in the terms of
-  the cache, and whether that holds for all objects alike or for this one now (it keeps its attributes in a dict, its class has no
-  number left), or that there is none. The slow path (`findAttribute()`) reads through the description and remembers it if it holds for all, so an
+  the cache, and whether that holds for all objects alike or for this one now (its Structure is its own, its class has no
+  number left, what the class has may become another kind of descriptor), or that there is none. The slow path (`findAttribute()`) reads through the description and remembers it if it holds for all, so an
   object of which nothing can be remembered leaves what is remembered as it is. Where the attribute is what a descriptor gives for the object (a
   method that is read and not called, a built-in getter such as `__class__`, a `__get__` written in Python), the description names the descriptor and
   the slow path asks it (`getAttrFromDescriptor()`): nothing of that is remembered, but the walk is not made a second time. (So JS: one
