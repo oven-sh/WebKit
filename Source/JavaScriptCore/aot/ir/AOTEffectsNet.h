@@ -13,7 +13,7 @@
 namespace JSC { namespace AOT { namespace Typed {
 
 enum class KindOfEffectsRow : uint8_t { None, Operation, RuntimeOperation, Stub, Builtin, Callee, Summary };
-enum class PartOfEffects : uint8_t { None, RunsOtherCode, Throws, Writes, Collects, ThrowsByRule };
+enum class PartOfEffects : uint8_t { None, RunsOtherCode, Throws, Writes, Collects, ThrowsByRule, ShapesKnown };
 
 inline constexpr std::array<AbstractHeap, 8> heapsOfDigestInEffectsNet {
     AbstractHeap::ShapeWords, AbstractHeap::OrderWords, AbstractHeap::ObjectFields, AbstractHeap::NamedProperties,
@@ -108,6 +108,7 @@ struct RowThatSaysLess {
             return;
         switch (part) {
         case PartOfEffects::None:
+        case PartOfEffects::ShapesKnown:
             return;
         case PartOfEffects::RunsOtherCode:
             effects.mayCallUnknownCode = false;

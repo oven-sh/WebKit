@@ -2919,6 +2919,7 @@ struct ExpectationOfValue {
     bool isDeclared { false };
 };
 ExpectationOfValue findExpectation(Walker&, ValueID input);
+bool valueFitsSlot(Walker&, FieldReference, Reference value);
 PropertyKeyID nameUnderWhichValueIsRead(Walker&, ValueID input);
 TypeID typeHeldUnderName(Walker&, PropertyKeyID);
 TypeID partHeldUnderNameThatLoopWalksUnseen(Walker&, ValueID input);

@@ -9,6 +9,8 @@
 #if ENABLE(AOT)
 
 #include "AOTCellFormat.h"
+#include "AOTCompileUnit.h"
+#include "AOTEffectsNet.h"
 #include "AOTShapeTest.h"
 #include "AOTSort.h"
 #include "AOTTypeArena.h"
@@ -160,6 +162,22 @@ Condition ShapeTestEmitter::hasShapeIn(CellPointer cell, LayoutSetID tested, con
         return passes(cell, tested, testOf(tested), word);
 
     m_lastTestRefusesMarkedObjects = false;
+    if (uint32_t word = build().options().rowThatSaysLess) [[unlikely]] {
+        RowThatSaysLess row = RowThatSaysLess::decode(word);
+        if (row.part == PartOfEffects::ShapesKnown && generator().unit().function.index() == row.row) {
+            ShapeTable::ShapeList testedShapes;
+            ShapeTable::ShapeList knownShapes;
+            shapes.appendMemberShapes(membersOf(typeReader(), tested), testedShapes);
+            shapes.appendMemberShapes(membersOf(typeReader(), known), knownShapes);
+            knownShapes.removeLast();
+            ShapeTest test = shapes.testOfShapes(testedShapes.span(), knownShapes.span());
+            if (test.form == ShapeTestForm::BitSet) {
+                if (std::optional<Condition> passesTest = passesBitSetThatHoldsEveryKnownShape(shapeWordOf(cell, known.layouts), tested, LayoutSetID(), testedShapes.span(), knownShapes.span()))
+                    return *passesTest;
+            }
+            return passes(cell, tested, test, mayBearMark(known.layouts) ? WordOfTest::WithoutMark : WordOfTest::AsItLies);
+        }
+    }
     uint64_t testedAndKnown = static_cast<uint64_t>(tested.bits()) << 32 | known.layouts.bits();
     if (tested) {
         if (auto remembered = m_testsAmongKnownShapes.find(testedAndKnown); remembered != m_testsAmongKnownShapes.end())
@@ -333,7 +351,7 @@ std::optional<Condition> ShapeTestEmitter::passesBitSetThatHoldsEveryKnownShape(
 
     uint64_t key = static_cast<uint64_t>(tested.bits()) << 32 | known.bits();
     uint32_t constant = m_bitSetsThatHoldEveryKnownShape.ensure(key, [&] {
-        Vector<uint32_t, 16> halves(FillWith { }, ((last - first) >> logBitsPerHalf) + 1, 0u);
+        Vector<uint32_t, 16> halves(FillWith { }, ((last - first + 1) >> logBitsPerHalf) + 1, 0u);
         for (uint32_t shape : testedShapes) {
             if (shape < first || shape > last)
                 continue;
@@ -343,11 +361,13 @@ std::optional<Condition> ShapeTestEmitter::passesBitSetThatHoldsEveryKnownShape(
         return m_out.addConstantData(asBytes(halves.span()), ConstantKind::BitSetOverKnownShapes);
     }).iterator->value;
 
+    uint32_t count = last - first + 1;
     Word32 distanceFromLast = add(shapeWord, word32(last));
+    Word32 index = select(below(distanceFromLast, count), distanceFromLast, count);
     Pointer halves(m_out.relocatable(SymbolSpace::Constant, constant));
-    Pointer half = offsetBy(halves, zeroExtended(shiftRightUnsigned(distanceFromLast, word32(logBitsPerHalf))), logBytesPerHalf);
+    Pointer half = offsetBy(halves, zeroExtended(shiftRightUnsigned(index, word32(logBitsPerHalf))), logBytesPerHalf);
     Word32 bits(m_out.load32(m_out.address(m_heaps.AOTImage_tables, half.value())));
-    return hasBits(shiftRightUnsigned(bits, distanceFromLast), 1);
+    return hasBits(shiftRightUnsigned(bits, index), 1);
 }
 
 void ShapeTestEmitter::switchOnShape(CellPointer cell, std::span<const LayoutSetID> cases, std::span<const BlockEdge> targets, BlockEdge otherwise)

@@ -349,7 +349,7 @@ Reference valueOfOwnKey(Walker& walker, Reference object, LayoutID layout, Field
             for (FieldReference known : { place, FieldReference { layout, field } }) {
                 Reference held = name ? walker.state().slot(name, known) : Reference();
                 TypeID type = held ? walker.typeOf(held) : TypeID();
-                if (type && !(walker.types().at(type).primitives & Primitive::Absent))
+                if (type && !(walker.types().at(type).primitives & Primitive::Absent) && valueFitsSlot(walker, { layout, field }, held))
                     return held;
             }
         }

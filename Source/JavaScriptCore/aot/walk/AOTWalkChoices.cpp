@@ -180,7 +180,7 @@ static PropertyKeyID keyDefinedBehindAllocationInChoices(const Walker& walker, F
     return declaration.flags.containsAny(filledByAllocationAlone) ? PropertyKeyID() : declaration.key;
 }
 
-static bool valueFitsSlotInChoices(Walker& walker, FieldReference field, Reference value)
+bool valueFitsSlot(Walker& walker, FieldReference field, Reference value)
 {
     TypeArena& types = walker.types();
     TypeID proven = walker.typeOf(value);
@@ -219,7 +219,7 @@ static bool listFillerInPlaceOfMisfitInChoices(Walker& walker, LayoutID layout, 
     if (!draftOfFiller)
         return false;
     Reference filler = walker.constant(WTF::move(*draftOfFiller));
-    if (!filler || !valueFitsSlotInChoices(walker, field, filler))
+    if (!filler || !valueFitsSlot(walker, field, filler))
         return false;
     misfits.append({ position, key, values[position] });
     values[position] = filler;
@@ -308,7 +308,7 @@ static bool settleAllocationOfObjectInChoices(Walker& walker, Draft& draft, Refe
     size_t numberListed = 0;
     Vector<MisfitInChoices, 2> misfits;
     if (hasSlots) {
-        while (numberListed < fields.size() && plan.slot(layout, fields[numberListed]).hasStorage() && (valueFitsSlotInChoices(walker, { layout, fields[numberListed] }, values[numberListed]) || listFillerInPlaceOfMisfitInChoices(walker, layout, fields.span(), values, numberListed, misfits)))
+        while (numberListed < fields.size() && plan.slot(layout, fields[numberListed]).hasStorage() && (valueFitsSlot(walker, { layout, fields[numberListed] }, values[numberListed]) || listFillerInPlaceOfMisfitInChoices(walker, layout, fields.span(), values, numberListed, misfits)))
             ++numberListed;
         if (!plan.allocation(program, layout, fields.span().first(numberListed))) {
             numberListed = plan.keyOrders().lengthOfLongestBeginningWithOrderWord(layout, fields.span().first(numberListed));

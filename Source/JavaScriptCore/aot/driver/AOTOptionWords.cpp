@@ -211,6 +211,8 @@ static std::optional<uint32_t> parseRowThatSaysLess(StringView written)
         found.part = Typed::PartOfEffects::Throws;
     else if (matchesName(*part, "ThrowsByRule"_s))
         found.part = Typed::PartOfEffects::ThrowsByRule;
+    else if (matchesName(*part, "ShapesKnown"_s))
+        found.part = Typed::PartOfEffects::ShapesKnown;
     else if (auto heap = findMember<Typed::AbstractHeap>(*part)) {
         found.part = Typed::PartOfEffects::Writes;
         found.heap = *heap;
