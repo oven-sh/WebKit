@@ -57,8 +57,10 @@ JSValue objectGetState(JSGlobalObject*, JSValue self);
 // CPython's text for "module NAME", "type TYPE", "TYPE.NAME" or "MODULE.NAME"; None if it has none. (tools/make_docstrings.py)
 JSValue docstringFor(JSGlobalObject*, const String& key);
 std::span<const NativeGetSet> dictGetSet();
-// Whether it is the __dict__ that a class gives its instances.
+// Whether it is the __dict__ that a class, or a built-in type, gives its instances.
 bool isDictDescriptorOfInstances(JSValue descriptor);
+// The getter of those of built-in types. AttributeError for an object that has no dict.
+JSValue builtinInstanceGetDict(JSGlobalObject*, JSValue self);
 std::span<const NativeGetSet> weakrefGetSet();
 // __eq__ and so on, as they are for a type that has nothing to say: NotImplemented, and for __ne__ the opposite of __eq__.
 std::span<const NativeDef> defaultComparisons();

@@ -633,7 +633,7 @@ static constexpr NativeGetSet objectGetSets[] = {
 
 // ---- The __dict__ and __weakref__ of instances ----
 
-static JSValue builtinInstanceGetDict(JSGlobalObject* globalObject, JSValue self)
+JSValue builtinInstanceGetDict(JSGlobalObject* globalObject, JSValue self)
 {
     if (PyDict* dict = instanceDict(globalObject, self, true))
         return dict;
@@ -733,7 +733,7 @@ std::span<const NativeGetSet> dictGetSet() { return builtinInstanceDictGetSet; }
 bool isDictDescriptorOfInstances(JSValue descriptor)
 {
     auto* getSet = descriptor.isCell() ? dynamicDowncast<PyGetSetDescriptor>(descriptor.asCell()) : nullptr;
-    return getSet && &getSet->def() == &instanceDictGetSet[0];
+    return getSet && (getSet->def().getter == instanceGetDict || getSet->def().getter == builtinInstanceGetDict);
 }
 std::span<const NativeGetSet> weakrefGetSet() { return instanceWeakrefGetSet; }
 
@@ -1173,8 +1173,7 @@ static MROResult resolveMRO(JSGlobalObject* globalObject, PyType* type)
                 raiseTypeError(globalObject, scope, typeNameForMessage(globalObject, type), ".mro() returned a non-class ('"_s, typeNameForMessage(globalObject, rt.typeOf(mro->at(i))), "')"_s);
                 return MROResult::Raised;
             }
-            // (A built-in type may have a __dict__ for its instances and nothing else of its own.)
-            if (!solid->isSubtypeOf(base->solidBase()) || (!base->isHeapType() && ((base->has(TypeFlag::HasDict) && !type->has(TypeFlag::HasDict)) || (base->has(TypeFlag::HasWeakref) && !type->has(TypeFlag::HasWeakref))))) {
+            if (!solid->isSubtypeOf(base->solidBase())) {
                 raiseTypeError(globalObject, scope, typeNameForMessage(globalObject, type), ".mro() returned base with unsuitable layout ('"_s, typeNameForMessage(globalObject, base), "')"_s);
                 return MROResult::Raised;
             }

@@ -443,11 +443,6 @@ static JSValue ioBaseGetClosed(JSGlobalObject* globalObject, JSValue self)
     return jsBoolean(isClosed);
 }
 
-static JSValue ioBaseGetDict(JSGlobalObject* globalObject, JSValue self)
-{
-    return instanceDict(globalObject, self, true);
-}
-
 JSValue ioBaseClose(JSGlobalObject* globalObject, JSValue self)
 {
     VM& vm = getVM(globalObject);
@@ -843,7 +838,7 @@ static constexpr NativeDef ioBaseMethods[] = {
 };
 
 static constexpr NativeGetSet ioBaseGetSets[] = {
-    { "__dict__"_s, ioBaseGetDict },
+    { "__dict__"_s, builtinInstanceGetDict },
     { "closed"_s, ioBaseGetClosed },
 };
 
