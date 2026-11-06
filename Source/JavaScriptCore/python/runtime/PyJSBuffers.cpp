@@ -31,6 +31,8 @@ namespace Python {
 //   a[-1], a[1:3], a[::-1]     An index counts from the end if it is negative. A slice is a copy, as of any sequence that can be
 //                              changed, and what %TypedArray%.prototype.slice() makes: of a Buffer, a Buffer.
 //   a[i] = x, a[1:3] = items   JS converts what is stored. As many items as the slice has.
+//   len(a), bool(a), iter(a)   By what an index is counted from and checked against, and not by what the object says its `length` or its
+//                              Symbol.iterator is.
 //   x in a, a.index(x), a.count(x)
 //   a == b                     As for memoryview(a): the same items in the same shape, whatever exports them. So they have no hash.
 //
@@ -259,7 +261,35 @@ static JSValue jsTypedArrayCompare(JSGlobalObject* globalObject, JSValue self, J
     return result;
 }
 
+// What an index is counted from and checked against. (It takes no JS to tell, so any thread is told, as by memoryview(a).)
+static JSValue jsTypedArrayLen(JSGlobalObject*, JSValue self)
+{
+    return smallInt(jsTypedArrayOf(self)->length());
+}
+
+static JSValue jsTypedArrayBool(JSGlobalObject* globalObject, JSValue self)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    // A class of Python's that derives from one of these may have a __len__() of its own.
+    if (auto* native = PyNativeFunction::tryFrom(typeOf(globalObject, self)->lookup(Special::Len)); !native || native->def().pointer.f1 != jsTypedArrayLen) [[unlikely]] {
+        int64_t count = length(globalObject, self);
+        RETURN_IF_EXCEPTION(scope, { });
+        return jsBoolean(count);
+    }
+    return jsBoolean(jsTypedArrayOf(self)->length());
+}
+
+// a[0], a[1] and so on, while there are any.
+static JSValue jsTypedArrayIter(JSGlobalObject* globalObject, JSValue self)
+{
+    return PyIterator::create(globalObject, PyIterator::Kind::Sequence, self);
+}
+
 static constexpr NativeDef jsTypedArrayMethods[] = {
+    PY_SLOT("__len__", jsTypedArrayLen, "($self, /)"),
+    PY_SLOT("__bool__", jsTypedArrayBool, "($self, /)"),
+    PY_SLOT("__iter__", jsTypedArrayIter, "($self, /)"),
     PY_SLOT("__getitem__", jsTypedArrayGetItem, "($self, key, /)"),
     PY_SLOT("__setitem__", jsTypedArraySetItem, "($self, key, value, /)"),
     PY_SLOT("__delitem__", jsTypedArrayDelItem, "($self, key, /)"),
@@ -272,11 +302,12 @@ static constexpr NativeDef jsTypedArrayMethods[] = {
 static constexpr TypeDef jsTypedArrayTypeDef { "_js.JSTypedArray"_s, { TypeFlag::DisallowInstantiation, TypeFlag::HasWeakref, TypeFlag::Base, TypeFlag::OwnLayout, TypeFlag::Sequence }, jsTypedArrayMethods, { }, { } };
 PyType* jsTypedArrayType(Runtime& rt)
 {
+    // (typeOf() comes by here for every typed array.)
+    if (PyType* type = rt.typeIfMadeFor(jsTypedArrayTypeDef)) [[likely]]
+        return type;
     PyType* type = rt.typeFor(jsTypedArrayTypeDef, rt.jsObjectType());
-    if (!type->dict()->get(rt.name(Special::Hash))) [[unlikely]] {
-        type->dict()->set(rt.vm(), rt.name(Special::Hash), jsUndefined());
-        type->didChange(rt.vm());
-    }
+    type->dict()->set(rt.vm(), rt.name(Special::Hash), jsUndefined());
+    type->didChange(rt.vm());
     return type;
 }
 
