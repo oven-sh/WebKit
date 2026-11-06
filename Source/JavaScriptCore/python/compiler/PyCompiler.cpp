@@ -777,6 +777,7 @@ bool Unit::canBranchTo(const Last& isLast)
         switch (m_blocks[i].kind) {
         case BlockKind::WhileLoop:
         case BlockKind::MatchSubject:
+        case BlockKind::ValueToReturn:
             break;
         default:
             return false;
@@ -1699,6 +1700,14 @@ void Unit::pushBlock(Block&& block)
     m_blocks.append(WTF::move(block));
 }
 
+// Of the first so many, the innermost that is more than a value that waits.
+const Unit::Block* Unit::innermostBlock(size_t count) const
+{
+    while (count && m_blocks[count - 1].kind == BlockKind::ValueToReturn)
+        --count;
+    return count ? &m_blocks[count - 1] : nullptr;
+}
+
 void Unit::popBlock()
 {
     markBlock(m_blocks.last(), false);
@@ -1726,6 +1735,9 @@ void Unit::markBlock(const Block& block, bool begins)
     case BlockKind::FinallyEnd:
     case BlockKind::ExceptionGroupHandler:
         kind = TracedBlock::ExceptionHandlerWithMore;
+        break;
+    case BlockKind::ValueToReturn:
+        kind = TracedBlock::Value;
         break;
     case BlockKind::InlinedComprehension:
     case BlockKind::MatchSubject:
@@ -1757,6 +1769,7 @@ void Unit::unwindBlock(const Block& block, Vector<TryContext>& suspended)
         return;
     case BlockKind::InlinedComprehension:
     case BlockKind::MatchSubject:
+    case BlockKind::ValueToReturn:
         return;
     case BlockKind::FinallyTry: {
         // A `return` that runs the clause returns on the line that ran last, like a function that comes to its end: each way out of
@@ -1771,7 +1784,16 @@ void Unit::unwindBlock(const Block& block, Vector<TryContext>& suspended)
         unsigned rest = instructionsOnTheWayOut(false, std::min<size_t>(stays, m_blocks.size()), m_blocks.size());
         if (isLast.kind == Last::BeforeJump || (isLast.kind == Last::OfLoopBody && rest))
             isLast = isLast.behindJump(isLast.jumpIs, 1 + rest, nullptr);
+        // A frame cannot be sent into the clause from elsewhere (`frame.f_lineno = n`): there would be nothing to return. (A constant is loaded afterwards.)
+        // (Nor is there another block where a `break` or `continue` in such a clause runs a clause of its own: the value waits further out.)
+        bool valueWaits = m_valueToReturn && !m_valueToReturn->virtualRegister().isConstant() && !m_blocks.containsIf([&](const Block& other) {
+            return other.kind == BlockKind::ValueToReturn && other.saved == m_valueToReturn;
+        });
+        if (valueWaits)
+            pushBlock({ .kind = BlockKind::ValueToReturn, .tryDepth = g.tryDepth(), .saved = m_valueToReturn, .isOnlyHere = true });
         statements(block.finalBody, 0, isLast);
+        if (valueWaits)
+            popBlock();
         return;
     }
     case BlockKind::FinallyEnd:
@@ -2397,7 +2419,8 @@ void Unit::returnStatement(Return* node)
     } else
         value = constant(jsUndefined());
     // As in CPython: what leaves a `with` is of the line of the `with`, and nothing comes before it, unless the value begins on another line than the `return`.
-    bool leavesWithFirst = !m_blocks.isEmpty() && (m_blocks.last().kind == BlockKind::With || m_blocks.last().kind == BlockKind::AsyncWith);
+    auto* innermost = innermostBlock(m_blocks.size());
+    bool leavesWithFirst = innermost && (innermost->kind == BlockKind::With || innermost->kind == BlockKind::AsyncWith);
     if (!leavesWithFirst || !node->value || node->value->range.lineno != node->range.lineno)
         line(node->range);
 

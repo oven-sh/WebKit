@@ -189,6 +189,7 @@ struct TracedBlock {
         With, // __exit__, and the next register what to pass it first, or the empty value,
         ExceptionHandler, // the exception that was being handled before the one that is now.
         ExceptionHandlerWithMore, // The same, and there is more in other registers: `except*`, `finally` on the way of an exception.
+        Value, // A value that is read behind the block.
         Other,
     };
     // `ownsIterator`: see BlockPiece.

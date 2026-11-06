@@ -1858,7 +1858,8 @@ their constants (by type and bits: `0`, `0.0`, `-0.0` and `False` are four) and 
 
 **Frames.** While something is told of an event, `f_lineno` of that frame is the line CPython would show. `f_locals` reads and writes the registers.
 `f_lineno = n`, in a trace function, goes where CPython goes and refuses what it refuses, with its messages: the target must be the beginning of a statement whose blocks the
-frame is in already, or can take over (a `for` loop's iterator serves another `for` loop). Variables without a value get `None`, with CPython's warning, because code further on
+frame is in already, or can take over (a `for` loop's iterator serves another `for` loop). The copy of a `finally` clause that runs on the way of a `return` is such a block: it holds the
+value, which is not a constant, as CPython's stack does (`BlockKind::ValueToReturn`, `TracedBlock::Value`). A frame from elsewhere goes to another copy of the clause, or is refused. Variables without a value get `None`, with CPython's warning, because code further on
 may have been compiled knowing that they have one.
 
 **Threads.** Trace and profile functions, and whether a callback is running, are the thread's (`Runtime::ThreadLocalState`). Tools 6 and 7 want their events

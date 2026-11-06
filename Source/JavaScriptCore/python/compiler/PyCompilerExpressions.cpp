@@ -1051,6 +1051,7 @@ unsigned Unit::instructionsOnTheWayOut(bool withValue, unsigned firstBlock, unsi
         switch (block.kind) {
         case BlockKind::WhileLoop:
         case BlockKind::MatchSubject:
+        case BlockKind::ValueToReturn:
         case BlockKind::ExceptionHandler:
             break;
         case BlockKind::ForLoop:
@@ -1117,9 +1118,10 @@ unsigned Unit::instructionsUntilFunctionEnds(const StatementsAfter& given, Comes
         }
         case StmtKind::Break: {
             // Something that does nothing, for the line, and a jump, which takes in a short end of the function. (What drops the iterator of a `for` loop makes it too long.)
-            if (!blockCount || m_blocks[blockCount - 1].kind != BlockKind::WhileLoop)
+            auto* innermost = innermostBlock(blockCount);
+            if (!innermost || innermost->kind != BlockKind::WhileLoop)
                 return tooManyToCopy;
-            auto& loop = m_blocks[blockCount - 1];
+            auto& loop = *innermost;
             if (!loop.isLast)
                 return sumToCopy(count, sumToCopy(2, loop.instructionsAfterLoop));
             if (loop.isLast.kind != Last::OfFunction || loop.isLast.exception || m_kind == UnitKind::Class)
@@ -1148,9 +1150,10 @@ unsigned Unit::instructionsUntilFunctionEnds(const StatementsAfter& given, Comes
     if (!isLast.isBehindJump)
         return tooManyToCopy;
     // (More than the end of a `try` body comes to too much.)
-    if (blockCount && m_blocks[blockCount - 1].kind != BlockKind::TryExcept && m_blocks[blockCount - 1].kind != BlockKind::MatchSubject)
+    auto* innermost = innermostBlock(blockCount);
+    if (innermost && innermost->kind != BlockKind::TryExcept && innermost->kind != BlockKind::MatchSubject)
         return tooManyToCopy;
-    return sumToCopy(count, 2 + isLast.jumpsBefore + (blockCount && m_blocks[blockCount - 1].kind == BlockKind::TryExcept));
+    return sumToCopy(count, 2 + isLast.jumpsBefore + (innermost && innermost->kind == BlockKind::TryExcept));
 }
 
 // Whether what comes after the value of the expression is copied for a jump that leads there.

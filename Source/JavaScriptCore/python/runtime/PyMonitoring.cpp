@@ -2837,6 +2837,7 @@ void Monitoring::jump(JSGlobalObject* globalObject, PyFrame* frame, int requeste
                 message = "can't jump into an 'except' block as there's no exception"_s;
                 break;
             case TracedBlock::With:
+            case TracedBlock::Value:
             case TracedBlock::Other:
                 break;
             }

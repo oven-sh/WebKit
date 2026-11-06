@@ -187,6 +187,7 @@ private:
         ExceptionGroupHandler,
         InlinedComprehension,
         MatchSubject, // While the patterns of a case are tried.
+        ValueToReturn, // While a `finally` clause runs on the way of a `return`, whose value waits in a register.
     };
 
     // What a `return`, `break` or `continue` has to leave in good order on its way out.
@@ -510,6 +511,7 @@ private:
 
     void pushBlock(Block&&);
     void popBlock();
+    const Block* innermostBlock(size_t count) const;
     void markBlock(const Block&, bool begins);
     // Leaves the blocks down to the innermost loop, or, without `stopAtLoop`, all of them. The code emitted from then on is
     // outside their try ranges, until `suspended` is given to resumeTry(). Returns the loop.
