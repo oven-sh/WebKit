@@ -1077,7 +1077,7 @@ void initializeTypingTypes(JSGlobalObject* globalObject)
         type->didChange(vm);
     };
 
-    define(rt.noDefaultType(), "NoDefaultType"_s, { }, noDefaultMethods, { });
+    define(rt.noDefaultType(), "NoDefaultType"_s, { TypeFlag::NothingOfItsOwn }, noDefaultMethods, { });
     rt.noDefaultType()->putDirect(vm, rt.dictKey(), PyObject::create(vm, rt.structure<PyObject>(), rt.noDefaultType()), PropertyAttribute::DontEnum | 0);
     define(rt.constEvaluatorType(), "_typing._ConstEvaluator"_s, { }, constEvaluatorMethods, { });
 

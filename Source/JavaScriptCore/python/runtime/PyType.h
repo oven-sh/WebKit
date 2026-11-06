@@ -31,7 +31,7 @@ enum class TypeFlag : uint32_t {
     MatchSelf = 1 << 9, // In `case int(x)`, x is the subject itself.
     // The instances are laid out differently from those of the base, so no class can derive from this and from another such, nor can the mro() of a
     // metaclass put it among the bases of a class that does not derive from it: its methods take the instances for what they are. A built-in
-    // type that cannot be derived from has the flag without asking. (In CPython: the size of the instances says so.)
+    // type that cannot be derived from has the flag without asking, unless it says NothingOfItsOwn. (In CPython: the size of the instances says so.)
     OwnLayout = 1 << 10,
     Mutable = 1 << 11, // A built-in type whose attributes can be set all the same.
     // The instances are the runtime's own: each is a part of the one object that refers to it (it may refer back), and no program

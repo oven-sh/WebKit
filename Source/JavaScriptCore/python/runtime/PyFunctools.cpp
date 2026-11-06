@@ -72,7 +72,7 @@ static constexpr NativeDef functoolsPlaceholderMethods[] = {
     PY_SLOT("__repr__", functoolsPlaceholderName, "($self, /)"),
     PY_METHOD("__reduce__", functoolsPlaceholderName, "($self, /)"),
 };
-static constexpr TypeDef functoolsPlaceholderTypeDef { "functools._PlaceholderType"_s, { }, functoolsPlaceholderMethods, { }, { } };
+static constexpr TypeDef functoolsPlaceholderTypeDef { "functools._PlaceholderType"_s, { TypeFlag::NothingOfItsOwn }, functoolsPlaceholderMethods, { }, { } };
 static PyType* functoolsPlaceholderType(JSGlobalObject* globalObject) { return runtime(globalObject).typeFor(functoolsPlaceholderTypeDef); }
 
 // ---- partial ----

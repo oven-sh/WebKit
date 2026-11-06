@@ -54,9 +54,8 @@ static bool reduceHasItems(JSGlobalObject* globalObject, PyType* type)
 }
 
 // Whether the instances hold something besides a __dict__ and slots, which __new__ without arguments could not bring back.
-static bool reduceHasNativeState(JSGlobalObject* globalObject, PyType* type)
+static bool reduceHasNativeState(PyType* type)
 {
-    Runtime& rt = runtime(globalObject);
     while (type->isHeapType())
         type = type->base();
     // A type written in C++ that leaves it to object.__new__() to make its instances, as _io._IOBase, adds nothing to them.
@@ -65,9 +64,7 @@ static bool reduceHasNativeState(JSGlobalObject* globalObject, PyType* type)
         if (def.signature.isVariadic && def.signature.hasSelf && def.pointer.variadicWithSelf == objectNew)
             return false;
     }
-    if (type->has(TypeFlag::NothingOfItsOwn))
-        return false;
-    return type != rt.noneType() && type != rt.notImplementedType() && type != rt.ellipsisType();
+    return !type->has(TypeFlag::NothingOfItsOwn);
 }
 
 // `required`: the state is all there will be to make the copy from, so what it cannot hold is an error.
@@ -87,7 +84,7 @@ static JSValue reduceDefaultState(JSGlobalObject* globalObject, JSValue object, 
 
     JSValue namesValue = reduceSlotNames(globalObject, type);
     RETURN_IF_EXCEPTION(scope, { });
-    if (required && reduceHasNativeState(globalObject, type))
+    if (required && reduceHasNativeState(type))
         return raiseTypeError(globalObject, scope, "cannot pickle '"_s, type->nameInMessages(), "' object"_s);
 
     JSArray* names = tryAsList(namesValue);

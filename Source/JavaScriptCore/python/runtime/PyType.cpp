@@ -137,7 +137,7 @@ void PyType::initializeBuiltin(JSGlobalObject* globalObject, const TypeDef& def,
     setNameString(vm, internString(vm, dot == notFound ? fullName : fullName.substring(dot + 1)));
     m_flags = def.flags;
     // See the flag.
-    if (!has(TypeFlag::Base))
+    if (!has(TypeFlag::Base) && !has(TypeFlag::NothingOfItsOwn))
         m_flags.add(TypeFlag::OwnLayout);
     m_dict.set(vm, this, PyDict::create(globalObject));
     if (base) {

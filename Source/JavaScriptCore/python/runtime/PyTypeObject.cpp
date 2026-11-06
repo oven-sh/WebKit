@@ -2529,9 +2529,9 @@ static constexpr NativeDef ellipsisMethods[] = {
 void initializeSingletonTypes(JSGlobalObject* globalObject)
 {
     Runtime& rt = runtime(globalObject);
-    rt.noneType()->initializeBuiltin(globalObject, { "NoneType"_s, { }, noneMethods, { }, "The type of the None singleton."_s }, rt.typeType(), rt.objectType());
-    rt.notImplementedType()->initializeBuiltin(globalObject, { "NotImplementedType"_s, { }, notImplementedMethods, { }, "The type of the NotImplemented singleton."_s }, rt.typeType(), rt.objectType());
-    rt.ellipsisType()->initializeBuiltin(globalObject, { "ellipsis"_s, { }, ellipsisMethods, { }, "The type of the Ellipsis singleton."_s }, rt.typeType(), rt.objectType());
+    rt.noneType()->initializeBuiltin(globalObject, { "NoneType"_s, { TypeFlag::NothingOfItsOwn }, noneMethods, { }, "The type of the None singleton."_s }, rt.typeType(), rt.objectType());
+    rt.notImplementedType()->initializeBuiltin(globalObject, { "NotImplementedType"_s, { TypeFlag::NothingOfItsOwn }, notImplementedMethods, { }, "The type of the NotImplemented singleton."_s }, rt.typeType(), rt.objectType());
+    rt.ellipsisType()->initializeBuiltin(globalObject, { "ellipsis"_s, { TypeFlag::NothingOfItsOwn }, ellipsisMethods, { }, "The type of the Ellipsis singleton."_s }, rt.typeType(), rt.objectType());
 }
 
 } // namespace Python

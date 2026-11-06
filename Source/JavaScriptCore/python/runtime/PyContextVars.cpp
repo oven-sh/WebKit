@@ -256,7 +256,7 @@ static constexpr NativeDef tokenMissingMethods[] = {
     PY_SLOT("__repr__", tokenMissingRepr, "($self, /)"),
 };
 
-static constexpr TypeDef tokenMissingTypeDef { "Token.MISSING"_s, { }, tokenMissingMethods, { }, { } };
+static constexpr TypeDef tokenMissingTypeDef { "Token.MISSING"_s, { TypeFlag::NothingOfItsOwn }, tokenMissingMethods, { }, { } };
 
 static PyType* contextTokenType(JSGlobalObject* globalObject)
 {
