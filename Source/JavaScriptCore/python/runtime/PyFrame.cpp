@@ -55,7 +55,11 @@ static ALWAYS_INLINE bool isPythonCodeBlock(CodeBlock* codeBlock)
 FastBitVector liveLocalsBefore(CodeBlock* codeBlock, unsigned offset)
 {
     FastBitVector live = codeBlock->livenessAnalysis().getLivenessInfoAtInstruction(codeBlock, BytecodeIndex(offset));
-    for (auto& piece : blockPiecesOf(codeBlock)) {
+    auto pieces = blockPiecesOf(codeBlock);
+    // What catches an exception lies behind all the code, with a jump to where the handler begins. It is in the blocks which that is in.
+    if (!pieces.empty() && codeBlock->instructions().at(offset)->opcodeID() == op_py_catch)
+        offset = whereHandlerBegins(codeBlock, offset);
+    for (auto& piece : pieces) {
         if (!piece.holdsAt(offset))
             continue;
         piece.forEachRegister([&](VirtualRegister held) {
