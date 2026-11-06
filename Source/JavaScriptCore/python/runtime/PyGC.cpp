@@ -373,7 +373,7 @@ static JSArray* gcList(Runtime& rt, Runtime::Slot slot)
     return list ? asList(list) : nullptr;
 }
 
-// gc.callbacks. Raises nothing.
+// gc.callbacks. What they raise is reported. Only a termination is left pending.
 static void callCollectionCallbacks(JSGlobalObject* globalObject, ASCIILiteral phase, int generation, const Runtime::CollectionStats& stats)
 {
     Runtime& rt = runtime(globalObject);
@@ -394,9 +394,10 @@ static void callCollectionCallbacks(JSGlobalObject* globalObject, ASCIILiteral p
         call(globalObject, callback, phaseString, info);
         if (!scope.exception())
             continue;
+        if (!vm.hasPendingTerminationException()) [[likely]]
+            reportUnraisable(globalObject, makeString("Exception ignored while calling GC callback "_s, reprForMessage(globalObject, callback)), { });
         if (vm.hasPendingTerminationException()) [[unlikely]]
             return;
-        reportUnraisable(globalObject, makeString("Exception ignored while calling GC callback "_s, reprForMessage(globalObject, callback)), { });
     }
 }
 
@@ -445,6 +446,7 @@ static JSValue gcCollect(JSGlobalObject* globalObject, JSValue generationValue)
     int debug = rt.gc.debugFlags;
     if (debug & debugStats)
         writeToStderr(globalObject, makeString("gc: collecting generation "_s, generation, "...\ngc: objects in each generation: 0 0 0\ngc: objects in permanent generation: 0\n"_s));
+    RETURN_IF_EXCEPTION(scope, { });
     MonotonicTime start = MonotonicTime::now();
 
     if (debug & debugSaveAll)
@@ -459,6 +461,7 @@ static JSValue gcCollect(JSGlobalObject* globalObject, JSValue generationValue)
     stats.duration = (MonotonicTime::now() - start).seconds();
     for (const String& description : census.descriptions)
         writeToStderr(globalObject, makeString("gc: collectable "_s, description, '\n'));
+    RETURN_IF_EXCEPTION(scope, { });
     if (JSArray* garbage = gcList(rt, Runtime::Slot::GCGarbage)) {
         for (unsigned i = 0; i < census.kept.size(); ++i) {
             assertIsComplete(census.kept.at(i));
@@ -468,6 +471,7 @@ static JSValue gcCollect(JSGlobalObject* globalObject, JSValue generationValue)
     }
     if (debug & debugStats)
         writeToStderr(globalObject, makeString("gc: done, "_s, stats.collected, " unreachable, 0 uncollectable, "_s, FormattedNumber::fixedWidth(stats.duration, 4), "s elapsed\n"_s));
+    RETURN_IF_EXCEPTION(scope, { });
 
     auto& total = rt.gc.stats[generation];
     ++total.collections;

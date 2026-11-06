@@ -6,8 +6,8 @@
 #include "config.h"
 #include "PyIO.h"
 
+#include "DeferTermination.h"
 #include "Exception.h"
-#include "FrameTracers.h"
 #include "JSCInlines.h"
 #include "PyCodeCache.h"
 #include "PyCodecs.h"
@@ -673,15 +673,23 @@ void writeOutPendingOutputSlow(JSGlobalObject* globalObject)
         for (unsigned i = 0; i < listLength(list); ++i)
             streams.append(listGet(list, i));
         listTruncate(globalObject, list, 0);
-        scope.clearException();
+        dropPendingException(globalObject, scope);
         for (unsigned i = 0; i < streams.size(); ++i) {
             auto* stream = PyRecord::from(streams.at(i));
-            if (stream->type() == textIOWrapper)
+            if (scope.exception()) [[unlikely]] {
+                // The host has ended what was told that a stream could not be written. The rest is for another time, if there is one.
+                ExceptionSetAside suspended(globalObject);
+                DeferTerminationForAWhile deferred(rt.vm());
+                ioNotePendingOutput(globalObject, stream);
+            } else if (stream->type() == textIOWrapper)
                 textIOWriteOutPending(globalObject, stream);
             else
                 bufferedWriteOutPending(globalObject, stream);
         }
+        if (scope.exception()) [[unlikely]]
+            break;
     }
+    dropPendingException(globalObject, scope);
 }
 
 void ioDidUnwrap(JSGlobalObject* globalObject, JSValue stream)

@@ -5,6 +5,7 @@
 
 #include "config.h"
 
+#include "DeferTermination.h"
 #include "JSCInlines.h"
 #include "JSWeakMapInlines.h"
 #include "PyAbstract.h"
@@ -725,10 +726,11 @@ static void threadRun(JSGlobalObject* globalObject, JSValue function, PyTuple* a
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     callWithTupleAndDict(globalObject, function, args, kwargs);
     if (scope.exception()) [[unlikely]] {
+        if (!vm.hasPendingTerminationException() && !clearPendingExceptionIfMatches(globalObject, rt.SystemExit()))
+            reportUnraisable(globalObject, makeString("Exception ignored in thread started by "_s, reprForMessage(globalObject, function)), { });
+        // The host has ended the function, or the hook that was told what it raised.
         if (vm.hasPendingTerminationException())
             scope.clearException();
-        else if (!clearPendingExceptionIfMatches(globalObject, rt.SystemExit()))
-            reportUnraisable(globalObject, makeString("Exception ignored in thread started by "_s, reprForMessage(globalObject, function)), { });
     }
     localForgetThisThread(globalObject);
     threadRemoveShutdownHandle(globalObject, handle);
@@ -1064,10 +1066,20 @@ static JSValue atexitRunExitFuncs(JSGlobalObject* globalObject)
     for (unsigned i = 0; i < entries.size(); ++i) {
         auto* entry = PyTuple::from(entries.at(i));
         callWithTupleAndDict(globalObject, entry->at(0), PyTuple::from(entry->at(1)), PyDict::from(entry->at(2)));
-        if (scope.exception() && vm.hasPendingTerminationException()) [[unlikely]]
-            return { };
-        if (scope.exception())
+        if (scope.exception() && !vm.hasPendingTerminationException())
             reportUnraisable(globalObject, makeString("Exception ignored in atexit callback "_s, reprForMessage(globalObject, entry->at(0))), { });
+        if (scope.exception()) [[unlikely]] {
+            // The host has ended it. If there is another time, that is for those that have not been called.
+            ExceptionSetAside suspended(globalObject);
+            DeferTerminationForAWhile deferred(vm);
+            auto innerScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+            listTruncate(globalObject, callbacks, 0);
+            while (++i < entries.size()) {
+                listAppend(globalObject, callbacks, entries.at(i));
+                dropPendingException(globalObject, innerScope);
+            }
+            return { };
+        }
     }
     listTruncate(globalObject, callbacks, 0);
     return jsUndefined();

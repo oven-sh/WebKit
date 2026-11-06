@@ -314,10 +314,18 @@ static NEVER_INLINE bool signalRunHandlers(JSGlobalObject* globalObject)
 
     // Before the flags of the signals are looked at: one that arrives from here on sets it again.
     s_signalState.isTripped.store(false);
+    auto leaveTheRestForTheNextTime = [&] {
+        s_signalState.isTripped.store(true);
+        noteCallsOwed(vm);
+    };
 
     if (int error = s_signalState.wakeupError.exchange(0)) {
         raiseOSError(globalObject, scope, error);
         reportUnraisable(globalObject, "Exception ignored while trying to write to the signal wakeup fd"_s, { });
+        if (scope.exception()) [[unlikely]] {
+            leaveTheRestForTheNextTime();
+            return false;
+        }
     }
 
     if (s_signalState.tripped[0].exchange(false))
@@ -345,14 +353,16 @@ static NEVER_INLINE bool signalRunHandlers(JSGlobalObject* globalObject)
             // It was changed after the signal arrived.
             raise(globalObject, scope, rt.OSError(), makeString("Signal "_s, number, " ignored due to race condition"_s));
             reportUnraisable(globalObject, "Exception ignored while calling signal handler"_s, { });
+            if (scope.exception()) [[unlikely]] {
+                leaveTheRestForTheNextTime();
+                return false;
+            }
             continue;
         }
         PyFrame* frame = currentFrame(globalObject);
         call(globalObject, handler, jsNumber(number), frame ? JSValue(frame) : jsUndefined());
         if (scope.exception()) [[unlikely]] {
-            // The rest is for the next time.
-            s_signalState.isTripped.store(true);
-            noteCallsOwed(vm);
+            leaveTheRestForTheNextTime();
             rt.didRaiseInSignalHandler(pendingException(globalObject));
             return false;
         }

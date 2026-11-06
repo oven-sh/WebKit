@@ -2426,6 +2426,8 @@ private:
         JSValue notes = getAttrIfPresent(m_globalObject, exception, runtime(m_globalObject).names.dNotes());
         if (scope.exception()) {
             JSValue error = takePendingException(m_globalObject);
+            if (!error) [[unlikely]]
+                return dropPendingException(m_globalObject, scope);
             m_out.append("Ignored error getting __notes__: "_s, orFailure(textOf(error, true), "<__notes__ repr() failed>"_s), '\n');
             return;
         }
@@ -2777,7 +2779,8 @@ static String formatExceptionInPlaceOfTracebackModule(JSGlobalObject* globalObje
     return ExceptionPrinter(globalObject, false).print(exception);
 }
 
-// traceback._print_exception_bltin(exception[, file]). False: there is no such thing, or it failed. Nothing is left pending.
+// traceback._print_exception_bltin(exception[, file]). False: there is no such thing, or it failed. Only a termination is
+// left pending.
 static bool printWithTracebackModule(JSGlobalObject* globalObject, JSValue exception, JSValue file)
 {
     VM& vm = getVM(globalObject);
@@ -2785,8 +2788,7 @@ static bool printWithTracebackModule(JSGlobalObject* globalObject, JSValue excep
     auto hasFailed = [&] {
         if (!scope.exception()) [[likely]]
             return false;
-        if (!vm.hasPendingTerminationException())
-            scope.clearException();
+        std::ignore = scope.tryClearException();
         return true;
     };
     JSValue module = importModule(globalObject, "traceback"_s);
@@ -2805,19 +2807,22 @@ static bool printWithTracebackModule(JSGlobalObject* globalObject, JSValue excep
 void printException(JSGlobalObject* globalObject, JSValue exception, JSValue file, bool tracebackModuleIsToldTheFile)
 {
     VM& vm = getVM(globalObject);
+    if (vm.hasPendingTerminationException()) [[unlikely]]
+        return;
     if (printWithTracebackModule(globalObject, exception, tracebackModuleIsToldTheFile ? file : JSValue()) || vm.hasPendingTerminationException())
         return;
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     writeToFile(globalObject, file, makeStr(globalObject, formatExceptionInPlaceOfTracebackModule(globalObject, exception)));
     if (!scope.exception())
         callMethod(globalObject, file, runtime(globalObject).names.flush());
-    if (scope.exception() && !vm.hasPendingTerminationException())
-        scope.clearException();
+    std::ignore = scope.tryClearException();
 }
 
 void printException(JSGlobalObject* globalObject, JSValue exception)
 {
     Runtime& rt = runtime(globalObject);
+    if (rt.vm().hasPendingTerminationException()) [[unlikely]]
+        return;
     JSValue file = rt.sysDict()->get(rt.names.stderr_());
     // There is none before the interpreter has started, and what goes wrong until then has to be said all the same.
     if (!file)

@@ -894,6 +894,7 @@ void addNoteToPendingException(JSGlobalObject*, const String& note);
 // ---- Exceptions nobody can catch ----
 
 // Hands the exception that is propagating to sys.unraisablehook; it propagates no further. A null message is none.
+// Only a termination is pending afterwards: it was what propagated, or the host has ended the hook. The caller is to stop then.
 void reportUnraisable(JSGlobalObject*, const String& message, JSValue object);
 
 void initializeGCModule(JSGlobalObject*, PyModule*); // gc
@@ -918,6 +919,8 @@ void initializeWeakrefModule(JSGlobalObject*, PyModule*); // _weakref
 
 // sys.stdout.write(text) and the like. `file` may be None, which writes nothing.
 void writeToFile(JSGlobalObject*, JSValue file, JSString* text);
+// If sys.stderr fails, to that of the process. This and printException() leave nothing pending but a termination, and do nothing
+// if one is pending, so that several in a row need no check in between.
 void writeToStderr(JSGlobalObject*, const String&);
 
 } // namespace Python

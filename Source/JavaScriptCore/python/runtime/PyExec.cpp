@@ -381,11 +381,13 @@ static void writeRaw(FILE* file, const String& text)
     fflush(file);
 }
 
-// Never throws: there may be nobody left to tell.
+// What sys.stderr raises is dropped: there may be nobody left to tell.
 void writeToStderr(JSGlobalObject* globalObject, const String& text)
 {
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
+    if (vm.hasPendingTerminationException()) [[unlikely]]
+        return;
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     JSValue file = rt.sysDict()->get(rt.names.stderr_());
     if (!file || isNone(file)) {
@@ -393,21 +395,21 @@ void writeToStderr(JSGlobalObject* globalObject, const String& text)
         return;
     }
     writeToFile(globalObject, file, makeStr(vm, text));
-    if (scope.exception()) {
-        scope.clearException();
+    if (scope.exception() && scope.tryClearException())
         writeRaw(stderr, text);
-    }
 }
 
 static void flushStandardStream(JSGlobalObject* globalObject, JSString* name)
 {
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
+    if (vm.hasPendingTerminationException()) [[unlikely]]
+        return;
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     JSValue file = rt.sysDict()->get(name);
     if (file && !isNone(file))
         callMethod(globalObject, file, rt.names.flush());
-    scope.clearException();
+    dropPendingException(globalObject, scope);
 }
 
 // ---- A program ----
@@ -486,6 +488,8 @@ static int handleUncaughtException(JSGlobalObject* globalObject, JSValue excepti
         if (clearPendingExceptionIfMatches(globalObject, rt.RuntimeError()))
             return 1;
         reportUnraisable(globalObject, "Exception ignored in audit hook"_s, { });
+        if (vm.hasPendingTerminationException()) [[unlikely]]
+            return 1;
     }
     if (!hook) {
         writeToStderr(globalObject, "sys.excepthook is missing\n"_s);
@@ -495,12 +499,18 @@ static int handleUncaughtException(JSGlobalObject* globalObject, JSValue excepti
     call(globalObject, hook, rt.typeOf(exception), exception, traceback ? traceback : jsUndefined());
     if (scope.exception()) {
         JSValue second = takePendingException(globalObject);
+        if (!second) [[unlikely]] {
+            std::ignore = scope.tryClearException();
+            return 1;
+        }
         if (auto status = exitStatusOf(globalObject, second))
             return *status;
         writeToStderr(globalObject, "Error in sys.excepthook:\n"_s);
         printException(globalObject, second);
         writeToStderr(globalObject, "\nOriginal exception was:\n"_s);
         printException(globalObject, exception);
+        if (vm.hasPendingTerminationException()) [[unlikely]]
+            return 1;
     }
     if (rt.typeOf(exception)->isSubtypeOf(rt.KeyboardInterrupt()))
         return -SIGINT;
@@ -595,7 +605,7 @@ static bool flushStandardStreamsAtExit(JSGlobalObject* globalObject, bool report
         succeeded = false;
         if (reports && name == rt.names.stdout_())
             reportUnraisable(globalObject, "Exception ignored while flushing sys.stdout"_s, { });
-        scope.clearException();
+        TRY_CLEAR_EXCEPTION(scope, succeeded);
     }
     return succeeded;
 }
@@ -640,12 +650,12 @@ static NEVER_INLINE void runExitHandlersOnWipedStack(JSGlobalObject* globalObjec
             callMethod(globalObject, threading, internString(vm, "_shutdown"_s));
         } else
             waitForThreadsAtExit(globalObject);
-        if (scope.exception() && vm.hasPendingTerminationException()) [[unlikely]]
-            return;
-        if (scope.exception()) [[unlikely]] {
+        if (scope.exception() && !vm.hasPendingTerminationException()) [[unlikely]] {
             stopWaitingForThreadsAtExit(globalObject);
             reportUnraisable(globalObject, "Exception ignored on threading shutdown"_s, { });
         }
+        if (vm.hasPendingTerminationException()) [[unlikely]]
+            return;
         wipeStackBelow(globalObject);
         rt.finalizeWhatReferenceCountsWouldHaveFreed();
         if (vm.hasPendingTerminationException()) [[unlikely]]

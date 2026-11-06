@@ -215,7 +215,8 @@ private:
     std::array<PyGenerator*, 4> m_generators { };
     unsigned m_count { 0 };
 };
-// Nothing refers to it any more, and the code that held it knows: what CPython does at that moment. Does not throw.
+// Nothing refers to it any more, and the code that held it knows: what CPython does at that moment. What it raises is reported:
+// only a termination is left pending.
 void generatorIsDropped(JSGlobalObject*, PyGenerator*);
 // RuntimeWarning: coroutine '...' was never awaited
 void warnOfUnawaitedCoroutine(JSGlobalObject*, PyGenerator*);

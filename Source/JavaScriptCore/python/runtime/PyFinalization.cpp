@@ -6,6 +6,7 @@
 #include "config.h"
 #include "PyRuntime.h"
 
+#include "DeferTermination.h"
 #include "JSCInlines.h"
 #include "MarkedSpaceInlines.h"
 #include "PreventCollectionScope.h"
@@ -577,24 +578,37 @@ void reportUnraisable(JSGlobalObject* globalObject, const String& message, JSVal
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    // The host is ending what runs here, which goes on to the caller. (If it ended the look at what JS threw, that is still there.)
+    auto wasEnded = [&] {
+        std::ignore = scope.tryClearException();
+    };
     JSValue exception = takePendingException(globalObject);
-    if (!exception || rt.keepIfRaisedBySignalHandler(exception))
+    if (!exception)
+        return wasEnded();
+    if (rt.keepIfRaisedBySignalHandler(exception))
         return;
 
-    JSString* typeKey = internString(vm, "__unraisable_hook_args_type__"_s);
-    JSValue type = rt.sysDict()->get(typeKey);
-    if (!type) {
-        type = makeStructSeqType(globalObject, unraisableDef);
-        rt.sysDict()->set(vm, typeKey, type);
+    JSValue arguments;
+    {
+        // Nothing of the program's runs here. If the host ends what runs here, that waits for what is called next.
+        DeferTerminationForAWhile deferred(vm);
+        JSString* typeKey = internString(vm, "__unraisable_hook_args_type__"_s);
+        JSValue type = rt.sysDict()->get(typeKey);
+        if (!type) {
+            type = makeStructSeqType(globalObject, unraisableDef);
+            rt.sysDict()->set(vm, typeKey, type);
+        }
+        JSValue traceback = PyException::from(exception)->traceback();
+        arguments = makeStructSeq(globalObject, PyType::from(type), {
+            rt.typeOf(exception), exception, traceback ? traceback : jsUndefined(),
+            message.isNull() ? jsUndefined() : JSValue(makeStr(vm, message)), object ? object : jsUndefined() });
     }
-    JSValue traceback = PyException::from(exception)->traceback();
-    JSValue arguments = makeStructSeq(globalObject, PyType::from(type), {
-        rt.typeOf(exception), exception, traceback ? traceback : jsUndefined(),
-        message.isNull() ? jsUndefined() : JSValue(makeStr(vm, message)), object ? object : jsUndefined() });
 
     JSValue hook = rt.sysDict()->get(internString(vm, "unraisablehook"_s));
     if (hook && failed(scope, audit(globalObject, "sys.unraisablehook"_s, hook, arguments))) {
         JSValue second = takePendingException(globalObject);
+        if (!second) [[unlikely]]
+            return wasEnded();
         writeToStderr(globalObject, "Exception ignored in audit hook:\n"_s);
         printException(globalObject, second);
         hook = { };
@@ -604,6 +618,8 @@ void reportUnraisable(JSGlobalObject* globalObject, const String& message, JSVal
         if (!scope.exception())
             return;
         JSValue second = takePendingException(globalObject);
+        if (!second) [[unlikely]]
+            return wasEnded();
         writeToStderr(globalObject, "Exception ignored in sys.unraisablehook:\n"_s);
         printException(globalObject, second);
     }
@@ -613,14 +629,14 @@ void reportUnraisable(JSGlobalObject* globalObject, const String& message, JSVal
 
 // ---- Running what is queued ----
 
-// Never raises: what goes wrong is reported.
+// What goes wrong is reported. Only a termination is left pending.
 void warnOfUnawaitedCoroutine(JSGlobalObject* globalObject, PyGenerator* coroutine)
 {
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     auto report = [&] {
-        if (scope.exception())
+        if (scope.exception() && !vm.hasPendingTerminationException())
             reportUnraisable(globalObject, makeString("Exception ignored while finalizing coroutine "_s, reprForMessage(globalObject, coroutine)), { });
     };
     // warnings.py words it, as it can say where the coroutine was made. If that fails for any reason but that the filters make
@@ -636,7 +652,7 @@ void warnOfUnawaitedCoroutine(JSGlobalObject* globalObject, PyGenerator* corouti
         hasWarned = !scope.exception() || pendingExceptionMatches(globalObject, rt.RuntimeWarning());
     }
     report();
-    if (hasWarned)
+    if (hasWarned || vm.hasPendingTerminationException())
         return;
     warnAbout(globalObject, rt.RuntimeWarning(), makeString("coroutine "_s, reprForMessage(globalObject, coroutine->qualname()), " was never awaited"_s), 1, coroutine);
     report();
@@ -867,6 +883,12 @@ void Runtime::runPendingCalls(bool mayPutOff, CallsOf callsOf)
         // that happens to come next.
         if (!isFinalized && failed(scope, checkOnlySignals(globalObject))) [[unlikely]] {
             m_vm.traps().fireTrap(VMTraps::NeedPythonCalls);
+            return;
+        }
+        // A finalizer written in C++ drops what the code it calls raises. If that was ended by the host, this is where it is thrown
+        // again, before anything more is taken off the queue.
+        if (m_vm.traps().maybeNeedHandling() && m_vm.hasExceptionsAfterHandlingTraps()) [[unlikely]] {
+            didQueueCallsFor(m_currentThread);
             return;
         }
         // Once out of the queue, only the stack holds it.
