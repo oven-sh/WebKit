@@ -889,8 +889,8 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_catch)
         if (mode != CatchMode::HandledUnseen)
             ours->willBeSeen();
     } else {
-        // What goes wrong with this goes wrong in the handler, which the blocks around it cover.
-        GET(bytecode.m_previous) = JSValue();
+        // What goes wrong with this goes wrong in the handler, which the blocks around it cover. They put back what was being handled.
+        GET(bytecode.m_previous) = runtime(globalObject).handledExceptionInTopSlot();
         setCurrentVPC(callFrame, codeBlock, codeBlock->instructions().at(whereHandlerBegins(codeBlock, codeBlock->bytecodeOffset(pc))).ptr());
         exception = exceptionFromThrownValue(globalObject, exception);
         CHECK_EXCEPTION();
