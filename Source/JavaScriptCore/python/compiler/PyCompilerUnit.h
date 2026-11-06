@@ -529,6 +529,7 @@ private:
     void pushBlock(Block&&);
     void popBlock();
     const Block* innermostBlock(size_t count) const;
+    size_t tryDepthWhereWayOutBegins() const;
     void markBlock(const Block&, bool begins);
     // Leaves the blocks down to the innermost loop, or, without `stopAtLoop`, all of them. The code emitted from then on is
     // outside their try ranges, until `suspended` is given to resumeTry(). Returns the loop.

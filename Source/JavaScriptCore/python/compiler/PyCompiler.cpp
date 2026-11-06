@@ -1746,6 +1746,32 @@ const Unit::Block* Unit::innermostBlock(size_t count) const
     return count ? &m_blocks[count - 1] : nullptr;
 }
 
+// So many of the try ranges are for the instruction at which the line of a `return` begins whose value has been computed. In CPython something that does nothing is there for
+// the line, and goes if what follows is of the same line. What is left of the end of a `try` is of that line and does nothing either, and no handler is for it, not even one
+// further out. A `while` loop leaves nothing. What leaves a `with` is of the line of the `with`, and the clause of a `finally` of its own lines.
+size_t Unit::tryDepthWhereWayOutBegins() const
+{
+    bool hasLeftTry = false;
+    for (size_t i = m_blocks.size(); i--;) {
+        switch (m_blocks[i].kind) {
+        case BlockKind::WhileLoop:
+            continue;
+        case BlockKind::TryExcept:
+            hasLeftTry = true;
+            continue;
+        case BlockKind::FinallyTry:
+            return 0;
+        case BlockKind::With:
+        case BlockKind::AsyncWith:
+            return hasLeftTry ? 0 : g.tryDepth();
+        default:
+            // The first instruction that does something, in all that has not been left by then.
+            return i + 1 < m_blocks.size() ? m_blocks[i + 1].tryDepth : g.tryDepth();
+        }
+    }
+    return 0;
+}
+
 void Unit::popBlock()
 {
     markBlock(m_blocks.last(), false);
@@ -2578,11 +2604,9 @@ void Unit::returnStatement(Return* node)
     // A `finally` clause that never comes to its end does not read the value. Then nothing would at those jumps, where no block holds it yet, and a collection there would
     // empty the register. So it is read here, into the register it waits in.
     if (waysMeet && value->isTemporary() && m_blocks.containsIf([](auto& block) { return block.kind == BlockKind::FinallyTry; })) {
-        // The line begins at this instruction now, and what a trace function raises when it is told of the line is raised here. In CPython something that does nothing is there for
-        // the line. If a `try` is left first, that is what is left of the end of the `try`, and no handler is for it, not even one further out.
+        // The line begins at this instruction now, and what a trace function raises when it is told of the line is raised here.
         Vector<TryContext> suspended;
-        if (auto* first = innermostBlock(m_blocks.size()); first->kind == BlockKind::TryExcept || first->kind == BlockKind::FinallyTry)
-            suspendTry(0, suspended);
+        suspendTry(tryDepthWhereWayOutBegins(), suspended);
         value = g.move(g.newTemporary(), value.get());
         resumeTry(WTF::move(suspended));
     }
