@@ -2772,8 +2772,23 @@ void Monitoring::jump(JSGlobalObject* globalObject, PyFrame* frame, int requeste
         return;
     }
 
-    // Where the frame is: at the mark for the line it is being told of, or else past all those of the instruction.
+    // Where the frame is: at the mark for the line it is being told of, or else past all those of the instruction. A jump tells of the line that begins where it
+    // leads: then the frame is there, as far as anybody can tell, and has left what the jump leaves.
     unsigned offset = callFrame->bytecodeIndex().offset();
+    if (m_runtime.tracedEvent == Event::Line && m_runtime.tracedOffset >= 0) {
+        unsigned lines = 0;
+        unsigned last = std::numeric_limits<unsigned>::max();
+        for (auto& mark : marks) {
+            if (mark.offset != std::exchange(last, mark.offset))
+                lines = 0;
+            if (mark.kind() != PythonMark::Line)
+                continue;
+            if (mark.offset + lines++ == static_cast<unsigned>(m_runtime.tracedOffset) && lineOfMarkValue(mark.value()) == m_runtime.tracedLine) {
+                offset = mark.offset;
+                break;
+            }
+        }
+    }
     OpenBlocks open;
     std::optional<OpenBlocks> from;
     struct Target {
