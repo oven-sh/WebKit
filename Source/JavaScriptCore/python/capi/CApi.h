@@ -38,7 +38,8 @@ using Handle = Opaque*;
 
 // What a symbol such as PyLong_Type or _Py_NoneStruct is. C takes its address and nothing else.
 struct alignas(16) StaticObject {
-    EncodedJSValue value; // Of what the runtime itself keeps alive for as long as it lives.
+    // Of what the runtime itself keeps alive for as long as it lives. Empty while the API is not set up, but in those that stand for what is no cell.
+    EncodedJSValue value;
     uint64_t unused;
 };
 
@@ -55,7 +56,7 @@ extern "C" StaticObject pyStaticObjectsEnd __asm("__stop_py_statics");
 // What C links with. `used`: nothing in bun refers to most of it. (The names are C's whatever namespace the definitions are in.)
 #define PY_CAPI extern "C" __attribute__((visibility("default"), used))
 #define PY_CAPI_DATA(type, name) extern "C" { __attribute__((visibility("default"), used)) type name; }
-#define PY_CAPI_STATIC_OBJECT(name) extern "C" { __attribute__((visibility("default"), used, section(PY_CAPI_STATIC_SECTION))) JSC::Python::CApi::StaticObject name; }
+#define PY_CAPI_STATIC_OBJECT(name, ...) extern "C" { __attribute__((visibility("default"), used, section(PY_CAPI_STATIC_SECTION))) JSC::Python::CApi::StaticObject name { __VA_ARGS__ }; }
 
 ALWAYS_INLINE uintptr_t bitsOf(Handle handle) { return std::bit_cast<uintptr_t>(handle); }
 
@@ -182,7 +183,7 @@ struct Interpreter {
     static pthread_key_t makeKeyOfReferenceToThread();
     CountTable counts;
 
-    // See CAPI_QUIET().
+    // See CAPI_QUIET.
     ALWAYS_INLINE void noteNoisyCall()
     {
         if (finalizersOfCBeingServed) [[unlikely]]
@@ -325,12 +326,14 @@ void setErrorIndicator(Handle);
 // The argument is what the function returns when it fails. The thread has the GIL: the API demands it, and these ask (mayEnter()).
 //
 // Every function that C calls says in its first line which of two kinds it is:
-//  - CAPI_QUIET(): it can neither run code of the program nor put a reference where the program finds it. There are few of these, and they are what
+//  - CAPI_QUIET(failure): it can neither run code of the program nor put a reference where the program finds it. There are few of these, and they are what
 //    a tp_dealloc consists of: counts, the type and the data of an object, memory, the error indicator put aside and back.
+//    CAPI_QUIET_AND_ASKS_NOBODY(), for those of them that look at nothing but the bits of their arguments and what is the thread's own: any thread may call them, at any time.
+//    (retain() and release() ask for themselves.)
 //  - CAPI_ENTER(failure), or CAPI_NOISY(failure) where there is nothing to enter the runtime for: all others. They are counted, as they begin, while a finalizer
 //    of C's is being served.
 // What is done with the count: see "The C API" in ../README.md. A function is noisy unless it is known to be quiet; to take a quiet one for
-// noisy costs time, the other way round is an error. ../tools/check_capi.py looks for the first lines.
+// noisy costs time, the other way round is an error. ../tools/check_capi.py looks for the first lines, and that what asks nobody does not name the interpreter.
 class Entry {
     WTF_MAKE_NONCOPYABLE(Entry);
     WTF_FORBID_HEAP_ALLOCATION;
@@ -379,7 +382,10 @@ private:
     void moveExceptionToIndicator();
 };
 
-#define CAPI_QUIET() do { } while (false)
+#define CAPI_QUIET_AND_ASKS_NOBODY() do { } while (false)
+#define CAPI_QUIET(failure) \
+    if (!JSC::Python::CApi::mayEnter()) [[unlikely]] \
+        return failure
 #define CAPI_NOISY(failure) \
     if (!JSC::Python::CApi::mayEnter()) [[unlikely]] \
         return failure; \

@@ -1464,11 +1464,13 @@ the API (`mayEnter()`). If not (a thread that C made and that has not attached i
 interpreter, any thread before the API is set up or after its interpreter has ended) the function fails: it returns what it returns when it fails and sets no exception, with a
 line on stderr the first time if there is an interpreter. In CPython all of that is undefined. The question is `JSLock::isHeldBy()` with the thread's own `Thread`, which each thread
 keeps at hand, with a reference, from its first call to its end. What the question reads stays when the interpreter goes: the object that `s_interpreter` points to is never freed,
-and it holds a reference to the lock. `Py_None` and the other constants that are no cells, `Py_Is*()` and `Py_IsInitialized()` ask nothing.
+and it holds a reference to the lock. `Py_None` and the other constants that are no cells, `Py_Is*()` and `Py_IsInitialized()` ask nothing and look at nothing that could go away:
+the symbols of None and the bools say what they stand for from the time the executable is loaded. `Py_IsInitialized()` says whether the interpreter that the API serves is there.
 
 **Quiet and noisy.** Every function that C calls says in its first line whether it can run code of the program or put a reference where the program finds
-it (`CAPI_ENTER()`, `CAPI_NOISY()`) or not (`CAPI_QUIET()`); `tools/check_capi.py` looks. A function is noisy unless it is known to be quiet. Nothing counts the noisy
-calls yet: that is for the order in which instances of extension types are destroyed.
+it (`CAPI_ENTER()`, `CAPI_NOISY()`) or not (`CAPI_QUIET()`); all three ask who calls. `CAPI_QUIET_AND_ASKS_NOBODY()` is for the quiet ones that have nothing to ask for.
+`tools/check_capi.py` looks for the first lines, and that a function which asks nobody does not name the interpreter. A function is noisy unless it is known to be quiet. Nothing
+counts the noisy calls yet: that is for the order in which instances of extension types are destroyed.
 
 **`ctypes`.** A `py_object` is a `PyObject*`: the same bits. A function of a `PyDLL` is called with the GIL; what C raised is thrown when it returns, whatever it returned (also for a
 function of a `CDLL` that got in because no other thread wanted the GIL: CPython crashes there). What a library raised as it was loaded is the cause of a `SystemError` from `dlopen()`, as in

@@ -22,40 +22,40 @@ CAPI_FILE(References)
 
 PY_CAPI void _Py_IncRef(Handle object)
 {
-    CAPI_QUIET();
+    CAPI_QUIET_AND_ASKS_NOBODY();
     retain(object);
 }
 
 PY_CAPI void _Py_DecRef(Handle object)
 {
-    CAPI_QUIET();
+    CAPI_QUIET_AND_ASKS_NOBODY();
     release(object);
 }
 
 PY_CAPI void Py_IncRef(Handle object)
 {
-    CAPI_QUIET();
+    CAPI_QUIET_AND_ASKS_NOBODY();
     if (object)
         retain(object);
 }
 
 PY_CAPI void Py_DecRef(Handle object)
 {
-    CAPI_QUIET();
+    CAPI_QUIET_AND_ASKS_NOBODY();
     if (object)
         release(object);
 }
 
 PY_CAPI Handle Py_NewRef(Handle object)
 {
-    CAPI_QUIET();
+    CAPI_QUIET_AND_ASKS_NOBODY();
     retain(object);
     return object;
 }
 
 PY_CAPI Handle Py_XNewRef(Handle object)
 {
-    CAPI_QUIET();
+    CAPI_QUIET_AND_ASKS_NOBODY();
     if (object)
         retain(object);
     return object;
@@ -63,54 +63,61 @@ PY_CAPI Handle Py_XNewRef(Handle object)
 
 // What C owns, and two more: for whoever lent C the reference it asks with, and for whatever else refers to the object, which nobody has counted. So it is never 1, which
 // would tell C that nobody else can see the object, and that it may change it in place. For what is not counted: what CPython says of an object that lives for ever.
+static constexpr ssize_t countOfWhatLivesForEver = static_cast<ssize_t>(3) << 30;
+
 PY_CAPI ssize_t Py_REFCNT(Handle object)
 {
-    CAPI_QUIET();
-    if (JSCell* cell = countedCell(object); cell && mayEnter())
+    CAPI_QUIET(countOfWhatLivesForEver);
+    if (JSCell* cell = countedCell(object))
         return static_cast<ssize_t>(interpreter().counts.get(cell)) + 2;
-    return static_cast<ssize_t>(3) << 30;
+    return countOfWhatLivesForEver;
 }
 
 PY_CAPI Handle Py_TYPE(Handle object)
 {
-    CAPI_QUIET();
-    return mayEnter() ? toC(interpreter().runtime.typeOf(toJS(object))) : nullptr;
+    CAPI_QUIET(nullptr);
+    return toC(interpreter().runtime.typeOf(toJS(object)));
 }
 
 PY_CAPI int Py_IS_TYPE(Handle object, Handle type)
 {
-    CAPI_QUIET();
-    return mayEnter() && JSValue(interpreter().runtime.typeOf(toJS(object))) == toJS(type);
+    CAPI_QUIET(0);
+    return JSValue(interpreter().runtime.typeOf(toJS(object))) == toJS(type);
 }
 
-// One object may be spelled in two ways: see toC().
+// One object may be spelled in two ways: see toC(). Of these only None and the bools are, whose symbols say what they stand for at all times. (A type is only ever spelled by
+// its symbol, and what the symbols of Ellipsis and NotImplemented stand for is there while the API is.)
+static ALWAYS_INLINE JSValue plain(Handle handle)
+{
+    JSValue value = toJS(handle);
+    return value.isNull() ? jsUndefined() : value;
+}
+
 PY_CAPI int Py_Is(Handle a, Handle b)
 {
-    CAPI_QUIET();
-    // Nothing is looked into: any thread may ask, at any time.
-    auto plain = [](Handle handle) {
-        JSValue value = toJS(handle);
-        return value.isNull() ? jsUndefined() : value;
-    };
-    return plain(a) == plain(b);
+    CAPI_QUIET_AND_ASKS_NOBODY();
+    if (a == b)
+        return true;
+    JSValue first = plain(a);
+    return first && first == plain(b);
 }
 
 PY_CAPI int Py_IsNone(Handle object)
 {
-    CAPI_QUIET();
-    return toJS(object).isUndefinedOrNull();
+    CAPI_QUIET_AND_ASKS_NOBODY();
+    return plain(object).isUndefined();
 }
 
 PY_CAPI int Py_IsTrue(Handle object)
 {
-    CAPI_QUIET();
-    return toJS(object).isTrue();
+    CAPI_QUIET_AND_ASKS_NOBODY();
+    return plain(object).isTrue();
 }
 
 PY_CAPI int Py_IsFalse(Handle object)
 {
-    CAPI_QUIET();
-    return toJS(object).isFalse();
+    CAPI_QUIET_AND_ASKS_NOBODY();
+    return plain(object).isFalse();
 }
 
 // Those that are no cells. Py_None is such a call, and C compares with it wherever it is.
@@ -133,42 +140,40 @@ static JSValue constantThatIsNoCell(unsigned id)
 }
 
 // All of them live as long as the runtime.
-static JSValue constant(unsigned id)
+static Handle constantThatIsACell(unsigned id)
 {
+    CAPI_QUIET(nullptr);
     Interpreter& current = interpreter();
     switch (id) {
     case 3:
-        return current.runtime.ellipsis();
+        return toC(current.runtime.ellipsis());
     case 4:
-        return current.runtime.notImplemented();
+        return toC(current.runtime.notImplemented());
     case 7:
-        return jsEmptyString(current.vm);
+        return toC(jsEmptyString(current.vm));
     case 8:
-        return current.runtime.emptyBytes();
+        return toC(current.runtime.emptyBytes());
     case 9:
-        return current.runtime.emptyTuple();
+        return toC(current.runtime.emptyTuple());
     default:
-        return { };
+        break;
     }
-}
-
-PY_CAPI Handle Py_GetConstantBorrowed(unsigned id)
-{
-    CAPI_QUIET();
-    if (JSValue value = constantThatIsNoCell(id))
-        return toC(value);
-    if (!mayEnter())
-        return nullptr;
-    if (JSValue value = constant(id)) [[likely]]
-        return toC(value);
     CAPI_ENTER(nullptr);
     entry.raiseBadInternalCall();
     return nullptr;
 }
 
+PY_CAPI Handle Py_GetConstantBorrowed(unsigned id)
+{
+    CAPI_QUIET_AND_ASKS_NOBODY();
+    if (JSValue value = constantThatIsNoCell(id))
+        return toC(value);
+    return constantThatIsACell(id);
+}
+
 PY_CAPI Handle Py_GetConstant(unsigned id)
 {
-    CAPI_QUIET();
+    CAPI_QUIET_AND_ASKS_NOBODY();
     Handle result = Py_GetConstantBorrowed(id);
     if (result)
         retain(result);
@@ -178,7 +183,7 @@ PY_CAPI Handle Py_GetConstant(unsigned id)
 // Whether the interpreter that the API serves is there. It need not have been set up.
 PY_CAPI int Py_IsInitialized()
 {
-    CAPI_QUIET();
+    CAPI_QUIET_AND_ASKS_NOBODY();
     return !!s_runtimeItIsFor.load(std::memory_order_relaxed);
 }
 

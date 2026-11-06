@@ -26,10 +26,10 @@ namespace CApi {
 FOR_EACH_CAPI_STATIC_TYPE(DEFINE_STATIC_TYPE)
 #undef DEFINE_STATIC_TYPE
 
-// The headers for abi3t ask Py_GetConstantBorrowed() for these five.
-PY_CAPI_STATIC_OBJECT(_Py_NoneStruct)
-PY_CAPI_STATIC_OBJECT(_Py_FalseStruct)
-PY_CAPI_STATIC_OBJECT(_Py_TrueStruct)
+// The headers for abi3t ask Py_GetConstantBorrowed() for these five. Three are no cells, and are what they are at all times.
+PY_CAPI_STATIC_OBJECT(_Py_NoneStruct, JSValue::ValueUndefined)
+PY_CAPI_STATIC_OBJECT(_Py_FalseStruct, JSValue::ValueFalse)
+PY_CAPI_STATIC_OBJECT(_Py_TrueStruct, JSValue::ValueTrue)
 PY_CAPI_STATIC_OBJECT(_Py_EllipsisObject)
 PY_CAPI_STATIC_OBJECT(_Py_NotImplementedStruct)
 
@@ -87,9 +87,6 @@ static void setSymbols(Interpreter* interpreter)
     FOR_EACH_CAPI_STATIC_TYPE(SET_STATIC_TYPE)
 #undef SET_STATIC_TYPE
 
-    _Py_NoneStruct.value = JSValue::encode(jsUndefined());
-    _Py_FalseStruct.value = JSValue::encode(jsBoolean(false));
-    _Py_TrueStruct.value = JSValue::encode(jsBoolean(true));
     _Py_EllipsisObject.value = JSValue::encode(rt.ellipsis());
     _Py_NotImplementedStruct.value = JSValue::encode(rt.notImplemented());
 
@@ -102,8 +99,10 @@ static void setSymbols(Interpreter* interpreter)
 
 static void clearSymbols()
 {
-    for (StaticObject* symbol = &pyStaticObjectsBegin; symbol != &pyStaticObjectsEnd; ++symbol)
-        symbol->value = 0;
+    for (StaticObject* symbol = &pyStaticObjectsBegin; symbol != &pyStaticObjectsEnd; ++symbol) {
+        if (JSValue::decode(symbol->value).isCell())
+            symbol->value = 0;
+    }
 #define CLEAR_EXCEPTION(name) PyExc_##name = nullptr;
     FOR_EACH_CAPI_EXCEPTION(CLEAR_EXCEPTION)
 #undef CLEAR_EXCEPTION

@@ -36,29 +36,29 @@ static bool isExceptionInstance(Runtime& rt, JSValue value)
 // The type of the exception that is set, borrowed: the exception holds it.
 PY_CAPI Handle PyErr_Occurred()
 {
-    CAPI_QUIET();
+    CAPI_QUIET(nullptr);
     Handle exception = errorIndicator();
     if (!exception) [[likely]]
         return nullptr;
-    return mayEnter() ? toC(interpreter().runtime.typeOf(toJS(exception))) : nullptr;
+    return toC(interpreter().runtime.typeOf(toJS(exception)));
 }
 
 PY_CAPI void PyErr_Clear()
 {
-    CAPI_QUIET();
+    CAPI_QUIET_AND_ASKS_NOBODY();
     setErrorIndicator(nullptr);
 }
 
 PY_CAPI Handle PyErr_GetRaisedException()
 {
-    CAPI_QUIET();
+    CAPI_QUIET_AND_ASKS_NOBODY();
     return std::exchange(errorIndicator(), nullptr);
 }
 
 // Steals the reference.
 PY_CAPI void PyErr_SetRaisedException(Handle exception)
 {
-    CAPI_QUIET();
+    CAPI_QUIET_AND_ASKS_NOBODY();
     setErrorIndicator(exception);
 }
 
