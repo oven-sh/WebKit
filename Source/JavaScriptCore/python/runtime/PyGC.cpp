@@ -424,7 +424,13 @@ public:
     MarkedArgumentBuffer kept; // What was found, if it is to be kept.
     Vector<String> descriptions;
 
-    void willCollect() final { m_isDone = false; }
+    void willCollect() final
+    {
+        m_isDone = false;
+        // What is kept is handed to the program. Before each collection: between two of them finalizers run, which may let go of the GIL.
+        if (m_keepsWhatItFinds)
+            m_runtime.temporariesMayHaveEscaped();
+    }
 
     void didCollect() final
     {
@@ -554,8 +560,6 @@ static JSValue gcCollect(JSGlobalObject* globalObject, JSValue generationValue)
     RETURN_IF_EXCEPTION(scope, { });
     MonotonicTime start = MonotonicTime::now();
 
-    if (debug & debugSaveAll)
-        rt.temporariesMayHaveEscaped();
     Census census(rt, debug & debugSaveAll, debug & debugCollectable);
     // There are two generations here. What has come through a collection, of the engine's own or one asked for, is old.
     collectAndFinalize(globalObject, &census, generation == 2 ? CollectionScope::Full : CollectionScope::Eden);

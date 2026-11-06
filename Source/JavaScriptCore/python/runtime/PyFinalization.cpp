@@ -1241,8 +1241,8 @@ void collectAndFinalize(JSGlobalObject* globalObject, Runtime::MarkingObserver* 
             Runtime::WaitForCollection wait(rt, leavesCyclicGarbageForLater, callsOf);
             std::optional<PreventCollectionScope> preventCollection;
             if (observer) {
+                observer->willCollect(); // It may allocate.
                 preventCollection.emplace(vm.heap);
-                observer->willCollect();
                 rt.setMarkingObserver(observer);
             }
             wipeStackBelow(globalObject);
