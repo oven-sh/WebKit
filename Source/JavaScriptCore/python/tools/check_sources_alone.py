@@ -10,8 +10,14 @@ import concurrent.futures, json, os, re, shlex, subprocess, sys
 
 entry = next(entry for entry in json.load(open(sys.argv[1])) if re.search(r"UnifiedSource-python-\d+\.cpp$", entry["file"]))
 arguments = entry.get("arguments") or shlex.split(entry["command"])
-output = arguments.index("-o")
-arguments = [argument for i, argument in enumerate(arguments) if i not in (output, output + 1) and argument not in ("-c", entry["file"])]
+# Not what names the output, nor what has a list of dependencies written, which clang does with -fsyntax-only too: over the build's own (CMake: -MD -MT x -MF x.d).
+kept = []
+for argument in arguments:
+    if kept and kept[-1] in ("-o", "-MT", "-MQ", "-MF"):
+        kept.pop()
+    elif argument not in ("-c", "-MD", "-MMD", "-MP", entry["file"]):
+        kept.append(argument)
+arguments = kept
 # The tree that the build compiles, which need not be this one.
 root = next(argument[2:] for argument in arguments if re.fullmatch(r"-I.*/Source/JavaScriptCore", argument))
 sources = [line.split("@")[0].strip() for line in open(f"{root}/Sources.txt") if line.startswith("python/")]
