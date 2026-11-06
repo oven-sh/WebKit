@@ -323,6 +323,7 @@ private:
     Label* targetReplacedByCopy(Label& end, const Last&);
     Label* m_targetReplacedByCopy { nullptr };
     bool canBranchTo(const Last&);
+    void unbindNameOfHandler(Name, const Range&);
     void jumpIfOrLeave(Expr* test, Label& target, const Last&, ReturnsByLine&, bool condition = false);
     void emitReturnsByLine(ReturnsByLine&, const Last&);
     Label& labelForLine(ReturnsByLine&, int lineno, const Range& place = { });

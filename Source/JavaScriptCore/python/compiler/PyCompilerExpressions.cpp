@@ -2805,6 +2805,8 @@ RegisterID* Unit::yield(Yield* node, RegisterID* dst, bool isForEffect)
         fail(node->range, "'yield' outside function"_s);
         return g.finalDestination(dst);
     }
+    if (!node->value)
+        noteConstant(jsUndefined());
     Reg value = node->value ? expr(node->value) : constant(jsUndefined());
     loc(node->range);
     if (isAsyncGenerator())
@@ -2828,6 +2830,8 @@ RegisterID* Unit::emitDelegate(RegisterID* dst, RegisterID* iterator, int firstM
     {
         Reg value = newTemporary();
         Reg mode = newTemporary();
+        // (What is sent first is a constant of the code in CPython.)
+        noteConstant(jsUndefined());
         load(value.get(), jsUndefined());
         load(mode.get(), jsNumber(firstMode));
         g.emitPySend(yielded.get(), delegate.get(), value.get(), mode.get(), done.get());

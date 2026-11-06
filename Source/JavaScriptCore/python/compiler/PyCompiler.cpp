@@ -1570,6 +1570,14 @@ void Unit::storeName(Name name, RegisterID* value, const Range& range)
     }
 }
 
+// `except E as e:` is left: `e = None`, `del e`.
+void Unit::unbindNameOfHandler(Name name, const Range& range)
+{
+    noteConstant(jsUndefined());
+    storeName(name, constant(jsUndefined()), range);
+    deleteName(name, range);
+}
+
 void Unit::deleteName(Name name, const Range& range)
 {
     Name mangled = mangle(name);
@@ -1827,8 +1835,7 @@ void Unit::unwindBlock(const Block& block, Vector<TryContext>& suspended)
             restoreHandledException(block.saved);
         if (block.name) {
             SameLine sameLine(*this);
-            storeName(block.name, constant(jsUndefined()), block.range);
-            deleteName(block.name, block.range);
+            unbindNameOfHandler(block.name, block.range);
         }
         return;
     }
@@ -2740,15 +2747,13 @@ void Unit::tryExcept(AST::Try* node, const Last& isLast)
                 endOfProtectedStatements(JumpsHere::Count, end.ptr(), ComesNext::Instruction);
                 SameLine sameLine(*this);
                 restoreHandledException(previous.get());
-                storeName(handler->name, constant(jsUndefined()), handler->range);
-                deleteName(handler->name, handler->range);
+                unbindNameOfHandler(handler->name, handler->range);
                 leaveStatement(end.get(), isLast, JumpIs::ToldOfForwards);
             });
 
             Reg thrown = beginHandler(nameCleanup);
             SameLine sameLine(*this);
-            storeName(handler->name, constant(jsUndefined()), handler->range);
-            deleteName(handler->name, handler->range);
+            unbindNameOfHandler(handler->name, handler->range);
             g.move(exception.get(), thrown.get());
             outsideTry(cleanup.depthBefore, [&] {
                 reraiseOutOfHandler(exception.get(), previous.get());
@@ -2851,8 +2856,7 @@ void Unit::tryStarExcept(AST::Try* node, const Last& isLast)
             endOfProtectedStatements(JumpsHere::Count, next.ptr(), ComesNext::Instruction);
             if (handler->name) {
                 SameLine sameLine(*this);
-                storeName(handler->name, constant(jsUndefined()), handler->range);
-                deleteName(handler->name, handler->range);
+                unbindNameOfHandler(handler->name, handler->range);
             }
             jump(next.get());
         }
@@ -2861,8 +2865,7 @@ void Unit::tryStarExcept(AST::Try* node, const Last& isLast)
         callRuntime(thrown.get(), RuntimeFunction::CatchException, { thrown.get() });
         if (handler->name) {
             SameLine sameLine(*this);
-            storeName(handler->name, constant(jsUndefined()), handler->range);
-            deleteName(handler->name, handler->range);
+            unbindNameOfHandler(handler->name, handler->range);
         }
         g.emitPyListAppend(raised.get(), thrown.get());
         jump(next.get());
