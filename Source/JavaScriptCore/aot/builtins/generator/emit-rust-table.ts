@@ -574,7 +574,29 @@ function emitEntriesReadingUnderKeysTheyAreHanded(model: TableModel): string {
           value.place !== "NativeMemory",
       ),
     );
+  const mayBeGlobalObject = (type: ModelType): boolean =>
+    type.parts.some(part => part.part === "Builtin" && part.builtin.flags.includes("IsGlobalObject"));
+  const isGlobalObject = (place: ModelPlace): boolean => place.place === "NewValue" && mayBeGlobalObject(place.type);
+  const handsOutGlobalObject = ({ overloads }: ModelBuiltin): boolean =>
+    overloads.some(
+      ({ flow, result }) =>
+        [
+          result.type,
+          ...result.typesByPlatform.map(({ type }) => type),
+          ...result.properties.map(({ type }) => type),
+        ].some(mayBeGlobalObject) ||
+        flow.transfers.some(({ from }) => isGlobalObject(from)) ||
+        flow.propertyActions.some(({ value }) => isGlobalObject(value)) ||
+        flow.callbacks.some(call =>
+          [call.newTarget, call.thisValue, ...call.arguments, call.spreadArguments].some(isGlobalObject),
+        ) ||
+        flow.handlerCalls.some(call => [call.thisValue, ...call.arguments].some(isGlobalObject)),
+    );
   return [
+    emitSlice(
+      "pub static ENTRIES_THAT_HAND_OUT_THE_GLOBAL_OBJECT: &[BuiltinId]",
+      model.builtins.filter(handsOutGlobalObject).map(formatBuiltinId),
+    ),
     emitSlice(
       "pub static ENTRIES_READING_UNDER_KEYS_THEY_ARE_HANDED: &[BuiltinId]",
       model.builtins.filter(readsUnderSuchKey).map(formatBuiltinId),

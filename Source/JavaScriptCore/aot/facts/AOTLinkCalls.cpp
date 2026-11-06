@@ -2226,6 +2226,8 @@ ValuesInLinkCalls CallInLinkCalls::objectsConstructed(const Passed& passed, Func
             add(constructed, m_flow.objectsMadeForClassBelowConstructorFunction(constructor.constructedClass), notObservedForLinkCalls, TypeTable::object);
             return;
         }
+        if (!constructor.constructedClass)
+            m_flow.escape(newTarget);
         add(constructed, objectsThatNoNodeHolds(constructor.constructedClass));
     };
 
@@ -4188,6 +4190,9 @@ void CallInLinkCalls::addIteratedValues(const Values& iterables, Values& values)
                 hasKeys |= !!m_builtins.findSlot(current, ContentsSlot::Key);
             });
         }
+        bool handsOutWhatNoNodeHolds = hasKeys || m_builtins.typedArrayTypeOf(iterable.builtinClass) != NotTypedArray;
+        if (iterable.classes == LinkType::Classes::Site && handsOutWhatNoNodeHolds)
+            add(values, m_flow.contentsOf(iterable, SlotOfContents::underUnknownNames()), beyond(source));
         Values& list = hasKeys ? withKeys : others;
         if (source)
             add(list, source->node, source->distance, source->passes);
