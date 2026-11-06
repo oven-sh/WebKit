@@ -520,7 +520,8 @@ PyCArg* argumentFor(JSGlobalObject*, PyCData*);
 JSValue makeReference(JSGlobalObject*, JSValue object, int64_t offset);
 
 // function(*arguments). `converters`: a tuple of from_param methods, or empty. `resultType`: empty is int.
-JSValue callFunction(JSGlobalObject*, void* function, PyTuple* arguments, unsigned flags, JSValue converters, JSValue resultType, JSValue checker);
+// `resultIsDropped`: the caller is not going to give the result to anybody.
+JSValue callFunction(JSGlobalObject*, void* function, PyTuple* arguments, unsigned flags, JSValue converters, JSValue resultType, JSValue checker, bool resultIsDropped = false);
 
 // The functions of C that Lib/ctypes calls through function pointers: their addresses are real, and a call to one runs
 // here, without a foreign call.

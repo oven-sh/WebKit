@@ -401,7 +401,7 @@ static void takeOverReferenceIn(const uint8_t* memory, bool programGetsObject)
 }
 
 // `size`: so much room was made for a result that is an instance. (The type may have been given its fields during the call.)
-static NEVER_INLINE JSValue makeResult(JSGlobalObject* globalObject, JSValue resultType, const uint8_t* memory, int64_t size, JSValue checker, JSValue hint, bool comesWithReference)
+static NEVER_INLINE JSValue makeResult(JSGlobalObject* globalObject, JSValue resultType, const uint8_t* memory, int64_t size, JSValue checker, JSValue hint, bool comesWithReference, bool isDropped)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -419,7 +419,7 @@ static NEVER_INLINE JSValue makeResult(JSGlobalObject* globalObject, JSValue res
         result = load(globalObject, info->accessor, memory, info->size, { }, hint);
         // (Also if the bits are not those of an object that the program may have.)
         if (comesWithReference)
-            takeOverReferenceIn(memory, !!result);
+            takeOverReferenceIn(memory, result && !isDropped);
     } else
         result = dataFromCopy(globalObject, PyType::from(resultType), memory, size);
     RETURN_IF_EXCEPTION(scope, { });
@@ -573,7 +573,7 @@ static NEVER_INLINE bool convertArguments(JSGlobalObject* globalObject, void* fu
 // The function may wait for as long as it likes, and what earlier frames left in room of this frame that nothing is written to is under the eyes of
 // the collector until it returns. So the room for the arguments is written whether there are so many or not, and what comes before and after
 // the call has frames of its own.
-JSValue callFunction(JSGlobalObject* globalObject, void* function, PyTuple* arguments, unsigned flags, JSValue convertersValue, JSValue resultType, JSValue checker)
+JSValue callFunction(JSGlobalObject* globalObject, void* function, PyTuple* arguments, unsigned flags, JSValue convertersValue, JSValue resultType, JSValue checker, bool resultIsDropped)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -653,7 +653,7 @@ JSValue callFunction(JSGlobalObject* globalObject, void* function, PyTuple* argu
             return { };
         }
     }
-    RELEASE_AND_RETURN(scope, makeResult(globalObject, resultType, resultMemory, resultSize, checker, ownResult, returnsReference));
+    RELEASE_AND_RETURN(scope, makeResult(globalObject, resultType, resultMemory, resultSize, checker, ownResult, returnsReference, resultIsDropped));
 }
 
 // ---- Callbacks ----
@@ -1134,7 +1134,9 @@ static JSValue functionCall(JSGlobalObject* globalObject, JSValue self, const Ca
         } else if (required != actual)
             RELEASE_AND_RETURN(scope, raiseWrongArgumentCount(globalObject, ""_s, required, actual));
     }
-    JSValue result = callFunction(globalObject, address, arguments, info->flags, converters, resultType, checker);
+    // The value of a call with out parameters is theirs (buildCallResult()). Then only these two see what the function returned.
+    bool resultIsDropped = outputs.count && !checker && !errorCheck;
+    JSValue result = callFunction(globalObject, address, arguments, info->flags, converters, resultType, checker, resultIsDropped);
     RETURN_IF_EXCEPTION(scope, { });
     if (errorCheck) {
         JSValue checked = call(globalObject, errorCheck, result, self, arguments);
