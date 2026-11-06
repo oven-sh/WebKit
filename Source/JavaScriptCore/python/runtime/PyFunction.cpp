@@ -567,6 +567,31 @@ static ALWAYS_INLINE void forgetArgumentsFrom(JSValue* slot, JSValue* end)
         *slot = jsUndefined();
 }
 
+// The parameters from `first` on that can be passed by position and have no value yet take their defaults. False: an exception.
+// `noneHasValue`: whatever is in their slots.
+template<bool noneHasValue>
+static ALWAYS_INLINE bool bindDefaults(JSGlobalObject* globalObject, PyFunction* function, const CodeInfo& info, JSValue* slots, unsigned first)
+{
+    const unsigned argCount = info.argCount;
+    PyTuple* defaults = function->defaults();
+    unsigned defaultCount = defaults ? defaults->length() : 0;
+    unsigned required = argCount - std::min(defaultCount, argCount);
+    if (noneHasValue && first < required) [[unlikely]] {
+        for (unsigned i = first; i < required; ++i)
+            slots[i] = JSValue();
+    }
+    for (unsigned i = first; i < argCount; ++i) {
+        if (!noneHasValue && slots[i])
+            continue;
+        if (i < required) [[unlikely]] {
+            raiseMissingArguments(globalObject, function, info, slots, 0, required, "positional"_s);
+            return false;
+        }
+        slots[i] = defaults->at(i + defaultCount - argCount); // The last default is that of the last parameter.
+    }
+    return true;
+}
+
 // The keyword-only parameters that have no value yet.
 static NEVER_INLINE bool bindKeywordOnlyDefaults(JSGlobalObject* globalObject, PyFunction* function, const CodeInfo& info, JSValue* slots)
 {
@@ -705,20 +730,9 @@ static NEVER_INLINE bool bindKeywords(JSGlobalObject* globalObject, CallFrame* c
         return false;
     }
 
-    if (bound < argCount) {
-        PyTuple* defaults = function->defaults();
-        unsigned defaultCount = defaults ? defaults->length() : 0;
-        unsigned required = argCount - std::min(defaultCount, argCount);
-        for (unsigned i = bound; i < argCount; ++i) {
-            if (slots[i])
-                continue;
-            if (i < required) [[unlikely]] {
-                scope.release();
-                raiseMissingArguments(globalObject, function, info, slots, 0, required, "positional"_s);
-                return false;
-            }
-            slots[i] = defaults->at(i + defaultCount - argCount); // The last default is that of the last parameter.
-        }
+    if (bound < argCount && !bindDefaults<false>(globalObject, function, info, slots, bound)) [[unlikely]] {
+        scope.release();
+        return false;
     }
     if (bound < namedCount && info.kwOnlyCount)
         RELEASE_AND_RETURN(scope, bindKeywordOnlyDefaults(globalObject, function, info, slots));
@@ -754,18 +768,9 @@ static NEVER_INLINE bool bindPositional(JSGlobalObject* globalObject, CallFrame*
     if (next != slots + namedCount)
         forgetArgumentsFrom(next, slots + count);
 
-    if (count < argCount) {
-        PyTuple* defaults = function->defaults();
-        unsigned defaultCount = defaults ? defaults->length() : 0;
-        if (argCount - count > defaultCount) [[unlikely]] {
-            for (unsigned i = count; i < argCount - defaultCount; ++i)
-                slots[i] = JSValue();
-            scope.release();
-            raiseMissingArguments(globalObject, function, info, slots, 0, argCount - defaultCount, "positional"_s);
-            return false;
-        }
-        for (unsigned i = count; i < argCount; ++i)
-            slots[i] = defaults->at(i + defaultCount - argCount); // The last default is that of the last parameter.
+    if (count < argCount && !bindDefaults<true>(globalObject, function, info, slots, count)) [[unlikely]] {
+        scope.release();
+        return false;
     }
     if (argCount == namedCount)
         return true;

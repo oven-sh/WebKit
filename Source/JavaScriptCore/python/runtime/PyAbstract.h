@@ -127,8 +127,9 @@ struct AttributeCache {
     uint32_t jsType { 0 };
     uint32_t metatypeVersion { 0 };
 };
-// Finds the attribute and says where it is in the terms of AttributeCache. No code of the program has run when it says anything but None,
-// and whatever getAttr(), or with `forCall` getMethod(), would check or raise before it returns the attribute has been checked.
+// Finds the attribute and says where it is in the terms of AttributeCache. No code of the program has run when it says anything but None. With
+// the last two, whatever getAttr(), or with `forCall` getMethod(), would check or raise before it returns the attribute has been checked; with
+// the others the function named does the rest.
 enum class AttributeDescription : uint8_t {
     None, // Not to be said in those terms: that is for getAttr().
     Absent, // Neither the class nor the object has it: that is for getAttrOfAbsent().
