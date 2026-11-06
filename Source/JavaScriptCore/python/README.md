@@ -777,7 +777,9 @@ so the aim is that everything Python *guarantees* holds, and that what it merely
     look at a child that is old: that one comes up alone in a later full collection, and is its maker's.
   - What has to happen in one order is not split: a round that takes parents and children at once goes to the maker of the oldest, and
     so does each piece of cyclic garbage that hangs together, with the callbacks of the weak references to it. CPython's collector
-    calls those finalizers one after the other, in whichever thread it happens to run.
+    calls those finalizers one after the other, in whichever thread it happens to run. What hangs together does so by objects of the
+    program (`isCellOfTheProgram`), not by what the engine shares among them: the `Structure` of the instances of a class that have the same
+    attributes dies with the last of them, and all the dead of that shape refer to it.
   - **A collection that the program waits for** (`gc.collect()`, the retry after `EMFILE`, a wait that nothing else can end) is served by
     the caller: all that it finds, and all that any thread owes and has not begun, before it returns. A collection of the engine's
     own only hands out. A thread that collects because it is idle makes the calls that are its own.

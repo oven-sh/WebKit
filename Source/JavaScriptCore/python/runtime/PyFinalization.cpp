@@ -1045,35 +1045,9 @@ UncheckedKeyHashSet<JSCell*> Runtime::whatOtherThreadsHold()
     if (roots.isEmpty())
         return { };
 
-    // Every cell leads to its structure, that to the global object, and that to everything.
-    auto isOfTheProgram = [](JSCell* cell) {
-        switch (cell->type()) {
-        case StructureType:
-        case GlobalObjectType:
-        case GlobalLexicalEnvironmentType:
-        case GlobalProxyType:
-        case NativeExecutableType:
-        case ProgramExecutableType:
-        case ModuleProgramExecutableType:
-        case EvalExecutableType:
-        case FunctionExecutableType:
-        case UnlinkedFunctionExecutableType:
-        case UnlinkedProgramCodeBlockType:
-        case UnlinkedModuleProgramCodeBlockType:
-        case UnlinkedEvalCodeBlockType:
-        case UnlinkedFunctionCodeBlockType:
-        case CodeBlockType:
-        case StringType:
-        case HeapBigIntType:
-        case SymbolType:
-            return false;
-        default:
-            return true;
-        }
-    };
     DeferGC deferGC(m_vm);
     UncheckedKeyHashSet<JSCell*> emptied { sysDict(), builtins() };
-    for (JSCell* cell : cellsReachedFrom(m_vm, roots.span(), isOfTheProgram)) {
+    for (JSCell* cell : cellsReachedFrom(m_vm, roots.span(), [](JSCell* cell) { return isCellOfTheProgram(cell); })) {
         if (auto* module = PyModule::tryFrom(cell)) {
             emptied.add(module);
             if (PyDict* dict = module->dict())
@@ -1081,7 +1055,7 @@ UncheckedKeyHashSet<JSCell*> Runtime::whatOtherThreadsHold()
         }
     }
     return cellsReachedFrom(m_vm, roots.span(), [&](JSCell* cell) {
-        return isOfTheProgram(cell) && !emptied.contains(cell);
+        return isCellOfTheProgram(cell) && !emptied.contains(cell);
     });
 }
 

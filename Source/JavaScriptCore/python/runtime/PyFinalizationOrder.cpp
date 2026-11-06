@@ -586,12 +586,17 @@ FinalizationOrder DeadGraph::order()
         piece = Vector<unsigned>(count, [](size_t i) {
             return static_cast<unsigned>(i);
         });
+        // Not by way of what the engine shares among them. The Structure of the instances of a class that have the same attributes is held weakly: it dies with the last of them, and all the dead
+        // of that shape refer to it.
+        auto joins = [&](unsigned node) {
+            return !(m_flags[node] & Released) && isCellOfTheProgram(m_cells[node]);
+        };
         for (unsigned node = 0; node < count; ++node) {
-            if (m_flags[node] & Released)
+            if (!joins(node))
                 continue;
             for (unsigned successor : successors(node)) {
                 // The lower number stands for the piece: that of its oldest candidate.
-                if (unsigned a = pieceOf(node), b = pieceOf(successor); !(m_flags[successor] & Released) && a != b)
+                if (unsigned a = pieceOf(node), b = pieceOf(successor); joins(successor) && a != b)
                     piece[std::max(a, b)] = std::min(a, b);
             }
         }

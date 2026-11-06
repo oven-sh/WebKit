@@ -666,6 +666,34 @@ void importStar(JSGlobalObject*, JSValue module, JSValue locals);
 bool specIsInitializing(JSGlobalObject*, JSValue spec);
 // For a module written in C++ that has no __spec__ and __loader__ yet: has importlib make them. False: an exception.
 bool ensureNativeModuleSpec(JSGlobalObject*, PyModule*);
+// Not what the engine keeps for itself and shares among objects that have nothing to do with one another. Every cell leads to its structure, that to the global object, and that to everything.
+inline bool isCellOfTheProgram(JSCell* cell)
+{
+    switch (cell->type()) {
+    case StructureType:
+    case GlobalObjectType:
+    case GlobalLexicalEnvironmentType:
+    case GlobalProxyType:
+    case NativeExecutableType:
+    case ProgramExecutableType:
+    case ModuleProgramExecutableType:
+    case EvalExecutableType:
+    case FunctionExecutableType:
+    case UnlinkedFunctionExecutableType:
+    case UnlinkedProgramCodeBlockType:
+    case UnlinkedModuleProgramCodeBlockType:
+    case UnlinkedEvalCodeBlockType:
+    case UnlinkedFunctionCodeBlockType:
+    case CodeBlockType:
+    case StringType:
+    case HeapBigIntType:
+    case SymbolType:
+        return false;
+    default:
+        return true;
+    }
+}
+
 // See TypeFlag::Internal.
 ALWAYS_INLINE bool isInternalObject(JSCell* cell) { return cell->type() == PyObjectType && uncheckedDowncast<PyObject>(cell)->type()->has(TypeFlag::Internal); }
 // Some objects are made of several cells here, which refer to one another. Those are no cycles: in CPython there is one object,
