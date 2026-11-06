@@ -2237,8 +2237,16 @@ static JSValue tellWhileUnwinding(JSGlobalObject* globalObject, JSValue thrown, 
     auto isTold = makeScopeExit([&] {
         rt.framesToldOfException.removeLast(callFrame);
     });
-    JSValue exception = exceptionFromThrownValue(globalObject, thrown);
-    if (failed(scope, exception) || failed(scope, tell(exception)))
+    {
+        // The unwinder defers terminations. What is told is code of the program, as is what says what JS has thrown, and it has to
+        // be possible to end it. Then the exception goes on as if that had returned, and the termination is thrown at the next
+        // safe point.
+        TerminationNotDeferred canBeEnded(globalObject);
+        JSValue exception = exceptionFromThrownValue(globalObject, thrown);
+        if (!failed(scope, exception))
+            tell(exception);
+    }
+    if (scope.exception())
         return scope.exception()->value();
     {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
