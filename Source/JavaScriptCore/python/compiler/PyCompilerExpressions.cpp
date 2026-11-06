@@ -1151,6 +1151,9 @@ unsigned Unit::instructionsUntilFunctionEnds(const StatementsAfter& given, Comes
                 return sumToCopy(count, sumToCopy(2, loop.instructionsAfterLoop));
             if (loop.isLast.kind != Last::OfFunction || loop.isLast.exception || m_kind == UnitKind::Class)
                 return tooManyToCopy;
+            // (With what leaves a handler, or whatever else the loop is in, it is too long.)
+            if (innermostBlock(&loop - m_blocks.span().data()))
+                return tooManyToCopy;
             return sumToCopy(count, 4);
         }
         case StmtKind::Raise:
