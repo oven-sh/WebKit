@@ -112,6 +112,7 @@ struct QuestionsInLinkCalls {
     bool readPrivateFields { false };
     bool readThroughPrototypes { false };
     bool describeObjects { false };
+    bool describesLiteralMadeForCall { false };
     bool convertToPrimitive { false };
     bool onlyBoxedPrimitivesAreConverted { false };
     bool callMembers { false };
@@ -778,6 +779,7 @@ private:
     void addFit(const LinkType&, const Source*, const BuiltinType& accepted, Fit&);
     bool isAsClassMakesIt(const LinkType& instances, PristineAspectSet, const Source*);
     bool membersAboveInstancesAreWhatTableLists(BuiltinClassID);
+    bool membersOfHolderAreWhatTableLists(BuiltinID canonicalHolder);
     bool indexesAreAbsentAbove(BuiltinClassID);
     void applyRow(RowCall&);
     void applyParameter(RowCall&, const BuiltinParameter&);
@@ -884,6 +886,8 @@ private:
     void inspectType(const LinkType&, uint32_t inspection);
     void tellWhatFormatterIsHanded(const LinkType&, const Questions&);
     void tellFormatterLosesSight(const Questions&);
+    bool mayBePrintedWholeWhereItIsRefused(const LinkType&, bool isLiteralMadeForCall);
+    bool isLiteralMadeForCall(const RowCall&, BuiltinOperand) const;
     void followWhatHandlersAnswerForFormatter(RowCall&, const BuiltinHandlerCall&);
     bool gatherClosuresWrittenAt(const RowCall&, ValueID written, ValueID writer, std::span<const BuiltinName> path, Vector<FunctionID, 4>&) const;
     enum class SubjectOfInspection : uint8_t { Layout, Function, Site };
@@ -2776,7 +2780,7 @@ bool CallInLinkCalls::rowsSpeakOf(const RowCall& call)
             seen.builtin = m_builtins.canonicalID(seen.builtin);
         isCalledOnHolder &= seen == expected;
     });
-    return isCalledOnHolder;
+    return isCalledOnHolder && (!entry.holder || membersOfHolderAreWhatTableLists(m_builtins.canonicalID(entry.holder)));
 }
 
 void CallInLinkCalls::describeWhatRowRefuses(const RowCall& call, const BuiltinOverload& row)
@@ -2787,6 +2791,7 @@ void CallInLinkCalls::describeWhatRowRefuses(const RowCall& call, const BuiltinO
         if (!parameter.roles.contains(BuiltinOperandRole::DescribedWhenRefused) || !fitOf(call, parameter).mayBeOutside)
             return;
         throwAnything();
+        questions.describesLiteralMadeForCall = isLiteralMadeForCall(call, parameter.operand);
         ask(valuesAt(call, parameter.operand), questions);
     };
     if (row.receiver)
@@ -2877,6 +2882,20 @@ bool CallInLinkCalls::membersAboveInstancesAreWhatTableLists(BuiltinClassID buil
         holder = object.prototypeLink == BuiltinPrototypeLink::Builtin ? object.inheritsFrom : BuiltinID();
     }
     return true;
+}
+
+bool CallInLinkCalls::membersOfHolderAreWhatTableLists(BuiltinID canonicalHolder)
+{
+    if (!m_program.admitsReplacedBuiltins)
+        return true;
+    for (BuiltinID member : m_builtins.membersOf(canonicalHolder)) {
+        if (m_program.isUnlocked(member) || m_program.isUnlocked(m_builtins.canonicalID(member)))
+            return false;
+        if (m_program.isLockLeftToProgram(member) && (!m_flow.takeForConstant(member) || !watch(m_flow.writtenAtMember(member), 0)))
+            return false;
+    }
+    BuiltinClassID made = m_builtins.at(canonicalHolder).instanceClass;
+    return !made || membersAboveInstancesAreWhatTableLists(made);
 }
 
 bool CallInLinkCalls::isAsClassMakesIt(const LinkType& instances, PristineAspectSet aspects, const Source* source)
@@ -3118,6 +3137,7 @@ void CallInLinkCalls::applyParameter(RowCall& call, const BuiltinParameter& para
     Questions questions = questionsOf(parameter);
     if (questions.describeObjects && !fitOf(call, parameter).mayBeOutside)
         questions.describeObjects = false;
+    questions.describesLiteralMadeForCall = questions.describeObjects && isLiteralMadeForCall(call, parameter.operand);
     if (questions.isEmpty())
         return;
     questions.areAskedByFormatter = isPrinted;
@@ -4548,6 +4568,8 @@ bool CallInLinkCalls::ask(const Values& subjects, const Questions& questions)
         if (isDataDescriptorInSight(source))
             return;
         tellWhatFormatterIsHanded(type, questions);
+        if (questions.describeObjects && mayBePrintedWholeWhereItIsRefused(type, questions.describesLiteralMadeForCall))
+            m_flow.note(LinkFlow::Note::ObjectHandedToFormatter, 0);
         if (questions.iterate)
             tellWhatIterationCalls(type);
         if (mayAnswer(type, source, questions, false)) {
@@ -4698,6 +4720,36 @@ void CallInLinkCalls::tellWhatFormatterIsHanded(const LinkType& type, const Ques
     bool isFunctionThatNobodyAsks = questions.onlyFollow && type.functions != LinkType::Functions::None;
     if (isOfHost || isFunctionThatNobodyAsks || type.classes == LinkType::Classes::Mixed || type.builtin || type.holdsUnseen || type.holdsLostBuiltins)
         m_flow.note(LinkFlow::Note::ObjectHandedToFormatter, 0);
+}
+
+bool CallInLinkCalls::mayBePrintedWholeWhereItIsRefused(const LinkType& type, bool isLiteralMadeForCall)
+{
+    if (type.holdsPrimitivesAlone())
+        return false;
+    FlowNodeID lost = m_flow.whereInstancesLoseTheirConstructor();
+    if (!watch(lost, 1) || !heldAt(lost).isNothing())
+        return true;
+    if (isLiteralMadeForCall)
+        return false;
+    if (type.classes == LinkType::Classes::Mixed || type.builtin || type.holdsUnseen || type.holdsLostBuiltins || type.objects == LinkType::Objects::Lost)
+        return true;
+    if (type.classes == LinkType::Classes::Site) {
+        BuiltinID prototype = m_builtins.at(type.builtinClass).prototype;
+        if (!prototype || m_builtins.findMember(prototype, BuiltinNames::constructor).outcome != BuiltinMemberLookup::Outcome::Found)
+            return true;
+    }
+    bool isNoPlainObject = false;
+    forEachLayoutWithListedOwnValues(type, [&](LayoutID layout) {
+        for (LayoutID current = layout; current; current = m_program.at(current).base)
+            isNoPlainObject |= !!m_program.at(current).writtenBuiltinBase;
+    });
+    return isNoPlainObject;
+}
+
+bool CallInLinkCalls::isLiteralMadeForCall(const RowCall& call, BuiltinOperand operand) const
+{
+    ValueID written = valueWrittenAs(call, operand);
+    return written && call.literalsMadeForCall[literalHandedOn(call, written, m_call.site)].isInSight;
 }
 
 void CallInLinkCalls::tellFormatterLosesSight(const Questions& questions)

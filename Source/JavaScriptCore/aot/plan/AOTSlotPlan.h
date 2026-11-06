@@ -58,6 +58,7 @@ struct StorageOfLayouts {
 
     BitVector layoutsNeverAllocated;
     BitVector layoutsThatRepeatTheirBases;
+    Vector<LayoutID> nearestLayoutsAboveThatDoNotRepeat;
     Vector<StorageOfLayout> layouts;
 };
 
@@ -67,11 +68,11 @@ inline uint32_t numberOfFieldsNotRepeated(const Program& program, const BitVecto
     return layoutsThatRepeatTheirBases.get(id.index()) ? layout.ownFieldCount : static_cast<uint32_t>(layout.fields.size());
 }
 
-inline FieldReference fieldNotRepeated(const Program& program, const BitVector& layoutsThatRepeatTheirBases, FieldReference field)
+FieldReference fieldAboveLayoutThatRepeats(const Program&, std::span<const LayoutID> nearestLayoutsAboveThatDoNotRepeat, FieldReference);
+
+inline FieldReference fieldNotRepeated(const Program& program, const BitVector& layoutsThatRepeatTheirBases, std::span<const LayoutID> nearestLayoutsAboveThatDoNotRepeat, FieldReference field)
 {
-    while (layoutsThatRepeatTheirBases.get(field.layout.index()) && field.field >= program.at(field.layout).ownFieldCount)
-        field = { writtenBaseOf(program.at(field.layout)), field.field - program.at(field.layout).ownFieldCount };
-    return field;
+    return layoutsThatRepeatTheirBases.get(field.layout.index()) ? fieldAboveLayoutThatRepeats(program, nearestLayoutsAboveThatDoNotRepeat, field) : field;
 }
 
 enum class SlotStorage : uint8_t {

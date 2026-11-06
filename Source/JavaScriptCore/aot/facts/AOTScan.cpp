@@ -1269,6 +1269,7 @@ private:
     void removeRepeatedEdges();
     void listNamesSpelled();
     void listWhatWalkAsksOfNodesAndCalls();
+    void listSymbolsMadeOnce();
     void listStoresOnResult();
 
     void noteWritesIn(uint32_t block, const LocationMasks&);
@@ -3366,7 +3367,7 @@ void ScanOfBody::readAccess(const BodyValue& value, SummaryAccess::Kind kind, ui
     if (object) {
         uint16_t& uses = m_uses[m_roots[object.index()]];
         uses |= isAccessedByName;
-        if (!key || (kind != SummaryAccess::Kind::Store && kind != SummaryAccess::Kind::Define))
+        if (!key || (kind != SummaryAccess::Kind::Store && kind != SummaryAccess::Kind::Define) || (kind == SummaryAccess::Kind::Store && m_program.nameClassOf(key) == NameClass::Proto))
             uses |= isAccessedBesideNamedStores;
         if (!key && (uses & isFollowedWhileMade) && kind != SummaryAccess::Kind::Define && kind != SummaryAccess::Kind::Has)
             noteLeaving(object);
@@ -5941,6 +5942,13 @@ void ScanOfBody::layDescriptorsInSight()
             m_summary.accesses[definition.access].formCreated = form;
         }
         auto heldUnderValue = std::ranges::find(held, valueKey, &Held::key);
+        if (!isAccessor && std::ranges::count(held, valueKey, &Held::key) == 1) {
+            TypeID written = heldUnderValue->list.count == 1 ? primitiveConstantAt(m_atoms[heldUnderValue->list.first]) : TypeID();
+            bool isTextNumberOrBoolean = written && !(primitivesInID(written) & ~(Primitive::AnyString | Primitive::Number | Primitive::Boolean));
+            m_summary.changes[definition.change].laysTextNumberOrBooleanThatIsWritten = isTextNumberOrBoolean;
+            if (definition.access != DefinitionByDescriptorInScan::noDefinitionUnderName)
+                m_summary.accesses[definition.access].laysTextNumberOrBooleanThatIsWritten = isTextNumberOrBoolean;
+        }
         bool definitionBringsValue = definition.access != DefinitionByDescriptorInScan::noDefinitionUnderName && !isAccessor && std::ranges::count(held, valueKey, &Held::key) == 1 && isEnumerable && isConfigurable && isWritable && *isWritable
             && heldUnderValue->field != noSummaryNode && m_firstLeft[root] == definition.position && m_lastLeft[root] == definition.position;
         m_summary.changes[definition.change].laysValueInSight = definitionBringsValue;
@@ -6286,23 +6294,33 @@ void ScanOfBody::listWhatWalkAsksOfNodesAndCalls()
     });
 
     std::span<const SummaryCall> calls = m_summary.calls.span();
-    BitVector sitesOfCallsOfBuiltins;
+    bool callsBuiltinWithKey = false;
     for (const SummaryCall& call : calls) {
-        if (call.callee != SummaryCall::Callee::Builtin) {
-            if (!call.isMadeByProtocol) {
-                ++m_summary.numberOfOwnCalls;
-                m_summary.numberOfArgumentsOfOwnCalls += call.numberOfArguments;
-            }
-            continue;
+        if (call.callee == SummaryCall::Callee::Builtin)
+            callsBuiltinWithKey |= !!call.key;
+        else if (!call.isMadeByProtocol) {
+            ++m_summary.numberOfOwnCalls;
+            m_summary.numberOfArgumentsOfOwnCalls += call.numberOfArguments;
         }
+    }
+    if (callsBuiltinWithKey)
+        listSymbolsMadeOnce();
+    if (calls.size() == 1 && calls[0].isInTailPosition && !calls[0].isConstruction && !calls[0].passesList && !calls[0].isMadeByProtocol)
+        m_summary.tailCallThatIsOnlyCall.append({ calls[0].site, calls[0].numberOfArguments });
+}
+
+NEVER_INLINE void ScanOfBody::listSymbolsMadeOnce()
+{
+    BitVector sitesOfCallsOfBuiltins;
+    for (const SummaryCall& call : m_summary.calls) {
+        if (call.callee != SummaryCall::Callee::Builtin)
+            continue;
         bool isFirstRecordOfSite = !sitesOfCallsOfBuiltins.set(call.site.index());
         PropertyKeyID key = keyOfSymbolMadeOnceBy(m_program, call);
         if (key && isFirstRecordOfSite)
             m_summary.symbolsMadeOnce.append({ call.site, key });
     }
     std::ranges::sort(m_summary.symbolsMadeOnce, { }, &SummaryKeyAtSite::site);
-    if (calls.size() == 1 && calls[0].isInTailPosition && !calls[0].isConstruction && !calls[0].passesList && !calls[0].isMadeByProtocol)
-        m_summary.tailCallThatIsOnlyCall.append({ calls[0].site, calls[0].numberOfArguments });
 }
 
 void ScanOfBody::listStoresOnResult()

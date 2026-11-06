@@ -7,6 +7,11 @@
 # CHECK: Call Stub NewArrayWithLength.Int32
 # RUN(ANY): bytes f1 mechanisms=all
 # ANY-NOT: Stub NewArrayWithLength.Contiguous
+# It is the text's word and no choice of the walk: with every mechanism withheld the list is born the same.
+# RUN(WITHHELD): bytes f1 mechanisms=none
+# WITHHELD: Call Stub NewArrayWithLength.Int32
+# RUN(NEVER): bytes f1 mechanisms=none
+# NEVER-NOT: Stub NewArrayWithLength.Contiguous
 # RUN(FILTER): bytes f2 mechanisms=all
 # FILTER: Call Stub NewArrayWithLength.Contiguous
 

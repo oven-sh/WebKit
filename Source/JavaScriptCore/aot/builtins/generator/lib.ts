@@ -1264,8 +1264,8 @@ export const same = (path: BuiltinPath, original: BuiltinPath): Declaration[] =>
 export const inherits = (path: BuiltinPath, prototype: BuiltinPath | null): Declaration[] => [
   { declares: "Inheritance", path, prototype },
 ];
-export const inheritsFromUnknown = (path: BuiltinPath): Declaration[] => [
-  { declares: "Inheritance", path, prototype: null, isUnknown: true },
+export const inheritsFromUnknown = (path: BuiltinPath, ...namesFoundAbove: readonly string[]): Declaration[] => [
+  { declares: "Inheritance", path, prototype: null, isUnknown: true, namesFoundAbove },
 ];
 export const name = (...texts: readonly string[]): Declaration[] => texts.map(text => ({ declares: "Name", text }));
 

@@ -664,6 +664,10 @@ export function emitRustTable(model: TableModel): string {
       "pub static MEMBERS_CREATED_IN_SOME_RUNS: &[BuiltinId]",
       model.builtins.filter(builtin => builtin.isCreatedInSomeRuns).map(formatBuiltinId),
     ),
+    emitSlice(
+      "pub static NAMES_FOUND_ABOVE_PROTOTYPES_LINKED_ANEW: &[BuiltinName]",
+      model.builtins.flatMap(builtin => builtin.namesFoundAbove.map(name => formatBuiltinName(name.number))),
+    ),
     emitSlice("static HOST_READS: &[HostRead]", model.hostReads.map(formatHostRead)),
   ].join("");
 }

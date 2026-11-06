@@ -47,6 +47,8 @@ static bool hasTypedFormUnderKeyInNumberKeys(Walker& walker, const BodyValue& va
 
 static void buildAccessUnderKeyInNumberKeys(Walker& walker, const BodyValue& value, Reference key)
 {
+    if (walker.isUnreachable())
+        return;
     ValueID writtenKey = value.propertyOperand();
     Reference bound = walker.referenceBoundTo(writtenKey);
     walker.bind(writtenKey, key);

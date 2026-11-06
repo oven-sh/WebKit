@@ -201,7 +201,7 @@ public:
         }
 
         ~MethodTableUpdate();
-        void willStoreEntry();
+        void willStoreEntry(size_t index);
 
     private:
         ClassTable& m_classes;
@@ -368,7 +368,7 @@ private:
     Vector<uint32_t> m_createdStaticFieldsEnds;
     uint64_t m_numberOfWalksOverPrototypeHolders { 0 };
     unsigned m_numberOfOpenMethodTableUpdates { 0 };
-    bool m_methodTableIsWritable { false };
+    BitVector m_writablePagesOfMethodTable;
     RememberedSlotSet m_writes;
     Vector<JSObject*> m_declaredMemberHolders;
     ByIndex m_declaredMemberLocations;

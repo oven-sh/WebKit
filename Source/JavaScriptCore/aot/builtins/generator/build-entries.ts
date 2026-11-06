@@ -992,6 +992,7 @@ function linkPrototypes({ builder, sorted }: EntryContext): void {
     }
     const link: ModelPrototype = prototype === null ? { link: "Null" } : linkTo(prototype.sameObjectAs ?? prototype);
     written.set(builtin, declaration.isUnknown ? unknownPrototype : link);
+    builtin.namesFoundAbove = (declaration.namesFoundAbove ?? []).map(text => builder.internName(text, "Text"));
   }
   for (const builtin of builder.builtins) {
     const isOfUnknownClass =

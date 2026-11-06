@@ -366,6 +366,7 @@ public:
     void noteHintsOfHead(const Block* target);
     bool hasBackEdgeOutsideRareRegions(const Loop&) const;
     const Block* immediateDominatorOf(const Block*);
+    bool dominates(const Block* above, const Block* below);
     struct OperandTakenBack {
         Reg reg;
         Operation* value { nullptr };
@@ -515,10 +516,7 @@ public:
     };
     ArenaVector<ReferenceWhosePointerWaits> m_referencesWhosePointersWaitForFramedPart;
     ArenaVector<Operation*> m_valuesSavedInRareRegion;
-    uint32_t m_firstBlockOfRareRegion { 0 };
     Position m_endOfRareRegion { 0 };
-    ArenaVector<Position> m_savesHoldUntil;
-    bool m_rareRegionHasLoop { false };
     ArenaVector<PendingMove> m_pendingMoves;
     using PhisInSpill = ArenaVector<Operation*>;
     ArenaVector<PhisInSpill*> m_phisInSpills;

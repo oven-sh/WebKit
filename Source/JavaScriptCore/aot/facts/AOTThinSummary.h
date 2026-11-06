@@ -214,6 +214,7 @@ struct SummaryAccess {
     bool laysAccessorAsWritten : 1 { false };
     bool isByDescriptor : 1 { false };
     bool holdsNewValueOfNativeCode : 1 { false };
+    bool laysTextNumberOrBooleanThatIsWritten : 1 { false };
     bool subjectIsMadeInBody : 1 { false };
     std::optional<OptionSet<FieldForm>> formCreated;
     uint32_t subject { 0 };
@@ -281,6 +282,7 @@ struct SummaryChange {
     bool descriptorIsInSight { false };
     bool descriptorLaysNoAccessor { false };
     bool laysNewValueOfNativeCode { false };
+    bool laysTextNumberOrBooleanThatIsWritten { false };
     uint32_t getterInSight { noSummaryNode };
     uint32_t setterInSight { noSummaryNode };
     bool laysValueInSight { false };

@@ -1109,7 +1109,7 @@ void RuntimeCallEmitter::beginWatchOfEffects(const OperationContext& context, co
             if (!operand)
                 continue;
             Representation representation = representationOf(operand);
-            if (representation != Representation::JSValue && representation != Representation::Cell)
+            if ((representation != Representation::JSValue && representation != Representation::Cell) || typeOf(operand).opaque)
                 continue;
             LValue cell = generator().wordOf(operand);
             if (!cell || cell->type() != Machine::Int64)

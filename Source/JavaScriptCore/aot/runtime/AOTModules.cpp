@@ -1717,6 +1717,7 @@ bool Modules::setMockInPlace(ModuleID fileOrModule, JSObject* mock, JSValue what
     }
 
     didEndMock(fileOrModule);
+    forgetWhoLoadedItUnderMockInPlace(fileOrModule);
     bringBackErrorOfModuleThatRanBesideMock(module);
     loaded.wasRequiredUnderMockInPlace = false;
     JSValue original = isFile ? loaded.exportsOfOriginalBesideMock.get() : JSValue();
@@ -2453,7 +2454,7 @@ JSObject* Modules::moduleNamespace(ModuleID module, ModulePhase phase, bool shou
     if (m_mocks) [[unlikely]]
         noteLoadBehindMock(module, false);
     if (m_numberOfMocksInPlace && mockInPlace(module)) [[unlikely]]
-        ensureLoaded(module).wasImportedUnderMockInPlace = true;
+        noteImportUnderMockInPlace(module);
     if (JSObject* namespaceObject = namespaceIfCreated(module, phase))
         return namespaceObject;
     return createNamespace(module, phase, shouldPreventExtensions);
@@ -3193,7 +3194,8 @@ void Modules::deliverFirstTextOnItsWay()
 bool Modules::holdTextOfRequest(JSPromise* fetched, ModuleRecord* requested, ModuleID requester)
 {
     ModuleID file = fileOf(requested->module());
-    if ((m_textsOnTheirWay.isEmpty() && !m_canJobsOfFileTellWhenTextsCome) || !isFileOfProgram(file) || m_instance.vm->synchronousModuleQueue() || isFetchedInsideCall(file)) {
+    bool canProgramTellWhenTextsCome = !m_textsOnTheirWay.isEmpty() || m_canJobsOfFileTellWhenTextsCome || data(requester).isLoadedByLoader();
+    if (!canProgramTellWhenTextsCome || !isFileOfProgram(file) || m_instance.vm->synchronousModuleQueue() || isFetchedInsideCall(file)) {
         noteThatTextHasCome(file);
         return false;
     }
@@ -3532,24 +3534,13 @@ Modules::LoadInFlight* Modules::earlierLoadToRunFirst(const LoadInFlight& load)
 
 std::optional<ModuleID> Modules::rootOfRunningFileThatHoldsCycleBelow(ModuleID required)
 {
-    Vector<ModuleID, 2> closeCycles = modulesThatCloseCyclesBelow(required);
-    if (closeCycles.isEmpty()) [[likely]]
-        return std::nullopt;
     const FilesBeingRun& files = *m_innermostFilesBeingRun;
-    if (files.fileOrFace != files.root) {
-        bool holdsCycle = data(files.root).isSynchronous() && closeCycles.containsIf([&](ModuleID module) {
-            return leadsTo(files.root, module);
-        });
-        return holdsCycle ? std::optional(files.root) : std::nullopt;
-    }
-    goThroughLoadsOfEarlierJobs();
-    if (m_loadsThatHoldModules.isEmpty())
+    if (files.fileOrFace == files.root || !data(files.root).isSynchronous())
         return std::nullopt;
-    for (ModuleID module : closeCycles) {
-        if (LoadInFlight* load = loadBeingLoadedThatHolds(module); load && data(load->root).isSynchronous() && importsFileThatRunsAhead(load->root))
-            return load->root;
-    }
-    return std::nullopt;
+    bool holdsCycle = modulesThatCloseCyclesBelow(required).containsIf([&](ModuleID module) {
+        return leadsTo(files.root, module);
+    });
+    return holdsCycle ? std::optional(files.root) : std::nullopt;
 }
 
 bool ModuleRecord::holdGraphBehindEarlierCalls(JSCell* payload, bool isDeferred)
@@ -4093,7 +4084,7 @@ void Modules::appendRequestsForLoader(ModuleID module, ModuleRecord* record, Mod
         m_loadsInFlight.forEachOfRoot(module, [](LoadInFlight& load) {
             load.isWalked = true;
         });
-        if (!data(module).isLoadedByLoader() && m_rootWhoseFilesRanAhead != module && !mustWaitForFile && !endsAtStatement && planLevelsOfLoad(module)) {
+        if (!data(module).isLoadedByLoader() && m_rootWhoseFilesRanAhead != module && !mustWaitForFile && !endsAtStatement && !runsFileOfLoadInHandsOfLoader() && planLevelsOfLoad(module)) {
             appendNextOnWay();
             return;
         }
@@ -5835,13 +5826,18 @@ bool isStandingMockImportedByModuleYetToRun(JSGlobalObject* realm, ModuleID modu
     return modules->isGraphRunning() && modules->hasLinkedImporterYetToRun(module, asking);
 }
 
-bool willLeaveStandingMockAlone(JSGlobalObject* realm, ModuleID module)
+bool willLeaveStandingMockAlone(JSGlobalObject* realm, ModuleID module, bool staysTheOriginal, bool keepsWhatThisTestFileLoaded)
 {
     if (!hasMockInPlace(realm, module))
         return false;
     Modules* modules = modulesOf(realm);
-    if (!modules->wasLoadedInThisTestFile(modules->moduleWithExportsOf(module)))
-        modules->letGoOfImportersOf(module, Modules::ImportersLetGo::All);
+    if (staysTheOriginal || (keepsWhatThisTestFileLoaded && modules->wasLoadedUnderMockInPlaceByThisTestFile(module))) {
+        modules->noteCallOfMock(module, true);
+        modules->letGoOfImportersOf(module, Modules::ImportersLetGo::AllButThoseThatThisTestFileLinkedToModule);
+        return true;
+    }
+    modules->forgetWhoLoadedItUnderMockInPlace(module);
+    modules->letGoOfImportersOf(module, Modules::ImportersLetGo::All);
     return true;
 }
 
@@ -5928,6 +5924,10 @@ void didEndMock(JSGlobalObject* realm, ModuleID module)
         return;
     MockDoor door(modules, module, "didEndMock"_s);
     auto scope = DECLARE_THROW_SCOPE(realm->vm());
+    bool isBack = modules->bringBackMockKeptByImportersOfThisTestFile(module);
+    RETURN_IF_EXCEPTION(scope, void());
+    if (isBack)
+        return;
     modules->forgetCallOfMock(module);
     bool wasLoadedAsMock = modules->mockInPlace(module) && !modules->hasMockThatEnded(module);
     if (wasLoadedAsMock || modules->hasMockLaidOver(module))

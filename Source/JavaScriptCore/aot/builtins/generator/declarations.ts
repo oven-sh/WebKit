@@ -165,6 +165,7 @@ export interface InheritanceDeclaration {
   path: BuiltinPath;
   prototype: BuiltinPath | null;
   isUnknown?: boolean;
+  namesFoundAbove?: readonly string[];
 }
 
 export interface NameDeclaration {

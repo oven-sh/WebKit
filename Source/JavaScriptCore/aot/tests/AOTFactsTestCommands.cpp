@@ -565,6 +565,8 @@ static void printChangeOfSummary(IRPrinter& printer, const ThinSummary& summary,
         out.print(" under-a-name-that-nobody-else-names"_s);
     if (change.descriptorIsInSight)
         out.print(" descriptor-in-sight"_s);
+    if (change.laysTextNumberOrBooleanThatIsWritten)
+        out.print(" lays-text-number-or-boolean"_s);
     printNamedNodeOfSummary(printer, summary, "getter-in-sight="_s, change.getterInSight);
     printNamedNodeOfSummary(printer, summary, "setter-in-sight="_s, change.setterInSight);
     printNamedNodeOfSummary(printer, summary, "laid-through-constant="_s, change.valueLaidThroughConstant);

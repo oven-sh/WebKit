@@ -819,6 +819,7 @@ public:
     void noteWhatIsStoredOn(const LinkType& subject, WhatIsStored);
     void noteWhatMayMakeThenableOf(const LinkType& subject, FunctionID writer, std::optional<PropertyKeyID> writtenUnder, bool subjectMayBeWhatNobodyKnows = true);
     FlowNodeID whereInstancesAreMadeThenables();
+    FlowNodeID whereInstancesLoseTheirConstructor();
     void noteWhatNativeCodeHandsToWhatIsLaidOn(BuiltinID written, PropertyKeyID) const;
     void findWhatNativeCodeHandsToLibrary();
     Vector<std::pair<BuiltinID, BuiltinID>> m_holdersAtOrAboveWhatNativeCodeHandsToLibrary;
@@ -1282,6 +1283,7 @@ private:
     void foldObjectsTakenApart(LinkType& into, std::span<const LinkType> met) const;
     void foldFunctions(LinkType& into, std::span<const LinkType> met) const;
     bool severalThreadsPayFor(size_t numberOfSteps) const;
+    void wakeWhoWaitsForWhatWasHeldBack();
     void takeInWhatWasHeldBack();
     void layWhatWasHeldBackFor(unsigned lane);
     void gatherWhatLanesNoted();
@@ -1799,6 +1801,7 @@ private:
     uint32_t m_firstArgumentGatheredByLostFunctions { UINT32_MAX };
     uint32_t m_gatheredByLostFunctions { UINT32_MAX };
     uint32_t m_whereInstancesAreMadeThenables { UINT32_MAX };
+    uint32_t m_whereInstancesLoseTheirConstructor { UINT32_MAX };
     BitVector m_lostFunctionsTied;
     size_t m_numberOfLostFunctionsTied { 0 };
     bool m_lostFunctionsAreCalled { false };

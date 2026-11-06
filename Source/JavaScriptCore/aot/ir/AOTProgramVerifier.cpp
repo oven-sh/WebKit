@@ -241,6 +241,23 @@ private:
     bool m_hasInvalidReference { false };
 };
 
+struct LayoutRecordWithOwnFieldsAlone {
+    StringID name;
+    ModuleID module;
+    LayoutID base;
+    FunctionID constructor;
+    std::span<const Field> fields;
+    std::span<const StaticField> staticFields;
+    std::span<const LayoutID> supertypes;
+    ModuleID namespaceOf;
+};
+
+template<typename Visitor>
+void walkReferences(const LayoutRecordWithOwnFieldsAlone& subject, Visitor& visitor)
+{
+    walkLayoutRecord(subject, visitor);
+}
+
 void checkIDsThatRecordWalkerSkips(RecordReferenceChecker& checker, const FunctionRecord& function)
 {
     checker.checkRequired(function.module);
@@ -699,7 +716,18 @@ void ProgramVerifier::verifyIDs()
     for (uint32_t index : invalidTypes)
         fail(inRecord(index));
 
-    verifyEach(m_program.layouts.size(), [&](unsigned index) -> const LayoutRecord& { return m_program.layouts[index]; }, inLayout);
+    Vector<uint32_t> invalidLayouts = findIndicesInParallel(loops, m_program.layouts.size(), [&](unsigned index) {
+        const LayoutRecord& record = m_program.layouts[index];
+        RecordReferenceChecker checker = checkerOfProgram;
+        if (baseWhoseFieldListIsCopiedWhole(m_program, LayoutID(index))) {
+            const LayoutRecordWithOwnFieldsAlone own { record.name, record.module, record.base, record.constructor, record.fields.span().first(record.ownFieldCount), record.staticFields.span(), record.supertypes.span(), record.namespaceOf };
+            walkWithoutRoles(own, checker);
+        } else
+            forEachReference(record, checker);
+        return checker.hasInvalidReference();
+    });
+    for (uint32_t index : invalidLayouts)
+        fail(inLayout(index));
     verifyEach(m_program.functions.size(), [&](unsigned index) -> const FunctionRecord& { return m_program.functions[index]; }, [](uint32_t index) {
         return InternalError { .kind = InternalErrorKind::IdOutOfRange, .function = FunctionID(index), .count = index };
     });

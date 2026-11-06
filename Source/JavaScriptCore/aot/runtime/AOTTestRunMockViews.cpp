@@ -266,7 +266,8 @@ void Modules::linkAnewWhoeverReadsEndedMockBelow(ModuleID root)
         bool isLoaded = status(module) > ModuleStatus::Linked && !m_loadedInPreload.get(module.index());
         for (const ModuleRequestData& request : m_table.imports(module)) {
             ModuleID target = moduleLoadedBy(request);
-            if (isLoaded && indexOfEndedMockSeenAt(m_table.fileBehindFace(target).value_or(target), momentLinked(module)))
+            ModuleID mocked = m_table.fileBehindFace(target).value_or(target);
+            if (isLoaded && indexOfEndedMockSeenAt(mocked, momentLinked(module)) && !keepsEndedMockWhereItIsAskedForAgain(mocked, module))
                 m_momentsLoadedAnew.set(module, MomentLoadedAnew { ++state.momentOfLoads, state.momentOfTestFile, root });
             if (!request.isHoisted && !request.isDeferred && !seen.quickSet(target.index()))
                 work.append(target);
@@ -303,6 +304,7 @@ void Modules::forgetEndedMocksOfEarlierTestFiles()
                 storeValue(realm, namespaces, static_cast<unsigned>(kept.size()), object);
             }
             kept.append(entry.value[index]);
+            kept.last().isKeptWhereImporterIsAskedForAgain = false;
         }
         ensureLoaded(entry.key).namespacesOfEndedMocks.set(*this, namespaces);
         if (kept.isEmpty()) {
@@ -340,13 +342,71 @@ bool Modules::seesMockOf(ModuleID mocked, ModuleID importer) const
     return !m_loadedInPreload.get(importer.index()) && !wasLetGoByLoader(importer) && momentLinked(importer) < mock->value.momentOfTestFile;
 }
 
+void Modules::noteImportUnderMockInPlace(ModuleID module)
+{
+    LoadedModule& loaded = ensureLoaded(module);
+    loaded.wasImportedUnderMockInPlace = true;
+    if (!loaded.momentOfTestFileThatLoadedItUnderMockInPlace)
+        loaded.momentOfTestFileThatLoadedItUnderMockInPlace = m_instance.vm->aotState().momentOfTestFile;
+}
+
+bool Modules::wasLoadedUnderMockInPlaceByThisTestFile(ModuleID fileOrModule)
+{
+    ModuleID module = moduleWithExportsOf(fileOrModule);
+    return !m_loadedInPreload.get(module.index()) && ensureLoaded(module).momentOfTestFileThatLoadedItUnderMockInPlace == m_instance.vm->aotState().momentOfTestFile;
+}
+
+bool Modules::keepsEndedMockWhereItIsAskedForAgain(ModuleID fileOrModule, ModuleID importer) const
+{
+    std::optional<unsigned> ended = indexOfEndedMockSeenAt(fileOrModule, momentLinked(importer));
+    return ended && m_endedMocks.find(fileOrModule)->value[*ended].isKeptWhereImporterIsAskedForAgain;
+}
+
+bool Modules::bringBackMockKeptByImportersOfThisTestFile(ModuleID fileOrModule)
+{
+    LoadedModule& held = ensureLoaded(fileOrModule);
+    JSObject* standing = mockInPlace(fileOrModule);
+    JSObject* ofPreload = held.mockLaidInPreload.get();
+    if (!standing || !ofPreload || hasMockThatEnded(fileOrModule))
+        return false;
+    if (standing != ofPreload) {
+        auto ended = m_endedMocks.find(fileOrModule);
+        if (ended == m_endedMocks.end() || !ended->value.last().isKeptWhereImporterIsAskedForAgain || ended->value.last().momentOfTestFile != m_instance.vm->aotState().momentOfTestFile || endedMock(fileOrModule, ended->value.size() - 1) != ofPreload)
+            return false;
+        ModuleID module = moduleWithExportsOf(fileOrModule);
+        keepMockThatStoodInPlace(fileOrModule, module, standing, m_exportsLeftOut.get(module));
+        letGoOfNamespaceMadeUnderMock(module);
+        setMockInPlace(fileOrModule, ofPreload, held.whatRequireAnswersUnderMockLaidInPreload.get());
+    } else if (auto waiting = m_momentsWaitingMocksWereLaid.find(fileOrModule); !m_modulesWithMockToRun.get(fileOrModule.index()) || waiting == m_momentsWaitingMocksWereLaid.end() || !waiting->value.importersKeepMockThatStands)
+        return false;
+    forgetCallOfMock(fileOrModule);
+    m_modulesWithMockToRun.clear(fileOrModule.index());
+    m_modulesWithMockThatWaited.clear(fileOrModule.index());
+    m_modulesLoadedBeforeMockThatWaited.clear(fileOrModule.index());
+    dropErrorsOfLoadsEndedByMockOf(fileOrModule);
+    return true;
+}
+
+bool Modules::keepsMockThatStandsWhileAnotherWaits(ModuleID mocked, ModuleID importer) const
+{
+    ModuleID fileOrModule = m_table.fileBehindFace(mocked).value_or(mocked);
+    if (!m_modulesWithMockToRun.get(fileOrModule.index()) || !mockInPlace(fileOrModule) || m_table.fileBehindFace(importer) == std::optional(fileOrModule))
+        return false;
+    auto waiting = m_momentsWaitingMocksWereLaid.find(fileOrModule);
+    uint32_t linked = momentLinked(importer);
+    return waiting != m_momentsWaitingMocksWereLaid.end() && waiting->value.importersKeepMockThatStands && linked && linked < waiting->value.moment;
+}
+
 void Modules::noteMomentMockComesInPlace(ModuleID fileOrModule, JSObject* mock, bool stoodInPlace, bool leavesEarlierMockToItsImporters)
 {
     std::optional<MomentMockWasLaid> waiting = m_momentsWaitingMocksWereLaid.takeOptional(fileOrModule);
     if (JSObject* earlier = leavesEarlierMockToItsImporters ? mockInPlace(fileOrModule) : nullptr; earlier && earlier != mock && earlier == ensureLoaded(fileOrModule).mockLaidInPreload.get()) {
         ModuleID module = moduleWithExportsOf(fileOrModule);
-        std::optional<MomentMockWasLaid> laid = m_loadedInPreload.get(module.index()) ? m_momentsStandingMocksWereLaid.takeOptional(fileOrModule) : std::nullopt;
+        bool isKeptByImportersOfThisTestFile = waiting && waiting->importersKeepMockThatStands;
+        std::optional<MomentMockWasLaid> laid = m_loadedInPreload.get(module.index()) || isKeptByImportersOfThisTestFile ? m_momentsStandingMocksWereLaid.takeOptional(fileOrModule) : std::nullopt;
         std::optional<unsigned> ended = laid ? keepEndedMock(fileOrModule, earlier, *laid, waiting ? waiting->moment : 0, m_exportsLeftOut.get(module)) : std::nullopt;
+        if (ended)
+            m_endedMocks.find(fileOrModule)->value[*ended].isKeptWhereImporterIsAskedForAgain = isKeptByImportersOfThisTestFile;
         if (waiting && waiting->hadNamespace && waiting->moment == m_instance.vm->aotState().momentOfLoads) {
             keepNamespacesMadeUnder(fileOrModule, module, earlier, ended);
             letGoOfNamespaceMadeUnderMock(module);

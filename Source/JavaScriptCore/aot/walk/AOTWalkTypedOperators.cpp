@@ -148,7 +148,10 @@ static bool buildTypeTestInPlaceOfTypeOfOperator(Walker& walker, const BodyValue
         if (!text)
             return false;
         ValueID asked = index.value(answer).operand(OperandIndex::TypeOf::value);
-        TypeID tested = typeAskedByTextOfTypeOfOperator(walker, text, inputs.typeOf(asked));
+        TypeID source = inputs.typeOf(asked);
+        if (!source)
+            return false;
+        TypeID tested = typeAskedByTextOfTypeOfOperator(walker, text, source);
         if (!tested || types.testablePartOf(tested) != tested)
             return false;
         if (inputs.areOnlyTypes())

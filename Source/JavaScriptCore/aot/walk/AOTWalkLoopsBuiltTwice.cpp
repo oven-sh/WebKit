@@ -1348,7 +1348,10 @@ bool Walker::buildLoopTwice(BlockID inputHead, const LoopPreview& preview, std::
     Vector<Reference, 8> enteringTypedCopy;
     enteringTypedCopy.append(entering);
     for (const CounterTestedInFrontOfLoop& counter : counters) {
-        Reference test = isUnreachable() ? Reference() : buildTestOfNumber(*this, entering[counter.position], counter.tested, origin);
+        Reference asked = entering[counter.position];
+        if (!isUnreachable() && representationOf(asked) == Representation::OptionalDouble)
+            asked = convert(asked, Representation::JSValue, origin);
+        Reference test = isUnreachable() || !asked ? Reference() : buildTestOfNumber(*this, asked, counter.tested, origin);
         if (!test)
             continue;
         BlockID passed = addBlock();
@@ -1357,7 +1360,7 @@ bool Walker::buildLoopTwice(BlockID inputHead, const LoopPreview& preview, std::
         branch(test, passed, closedStart);
         rareWayLeadsToClosedStart = true;
         continueIn(passed);
-        enteringTypedCopy[counter.position] = buildProofOfNumber(*this, entering[counter.position], test, origin);
+        enteringTypedCopy[counter.position] = buildProofOfNumber(*this, asked, test, origin);
     }
     for (const FieldOfScope& field : fieldsTestedInFront) {
         Reference read = isUnreachable() ? Reference() : valueKnownOf(field);

@@ -173,6 +173,22 @@ TypeID Arrivals::provenAt(TypeArena& types, FunctionID function, uint32_t entryP
     return proven ? proven : askedByDoorsOfCapture(types, function, entryParameter);
 }
 
+TypeID Arrivals::leftAt(TypeArena& types, FunctionID function, uint32_t entryParameter) const
+{
+    const LinkedFunction& linked = linkTablesOfArrivals(m_facts).function(function);
+    if (entryParameter >= linked.numberOfParameters)
+        return TypeTable::anything;
+    TypeID joined;
+    {
+        Locker locker { m_locks[function.index()] };
+        joined = m_joined[linked.firstParameter + entryParameter];
+    }
+    if (!liesInThread(joined))
+        return joined;
+    Locker locker { m_joinsLock };
+    return copyTypeBetweenArenasOfArrivals(m_joins, types, joined);
+}
+
 TypeID Arrivals::askedByDoorsOfCapture(TypeArena& types, FunctionID id, uint32_t entryParameter) const
 {
     const Function& function = m_program.at(id);

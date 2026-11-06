@@ -38,6 +38,7 @@
 #include <span>
 #include <utility>
 #include <wtf/OSAllocator.h>
+#include <wtf/PageBlock.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -127,24 +128,31 @@ static auto guardsOfNameInClassRecord(const ProgramTables& tables, const LayoutD
     return std::ranges::equal_range(guardsOfNamesInClassRecord(tables, classLayout, side), key, { }, &NamedClassGuardData::name);
 }
 
-static void setMethodTableWritableForClassGuards(State& state, bool isWritable)
+static void setPagesOfMethodTableWritableForClassGuards(State& state, size_t firstPage, size_t numberOfPages, bool isWritable)
 {
-    OSAllocator::protect(state.instance.methodTable().data(), InstanceLayout::bytesReservedForMethodTable(state.tables.instanceSizes), true, isWritable);
+    OSAllocator::protect(reinterpret_cast<uint8_t*>(state.instance.methodTable().data()) + firstPage * pageSize(), numberOfPages * pageSize(), true, isWritable);
 }
 
-void ClassTable::MethodTableUpdate::willStoreEntry()
+void ClassTable::MethodTableUpdate::willStoreEntry(size_t index)
 {
-    if (!std::exchange(m_classes.m_methodTableIsWritable, true))
-    {
-        countEvent(*m_classes.m_state.instance.vm, RuntimeCounterID::MethodTableMadeWritable);
-        setMethodTableWritableForClassGuards(m_classes.m_state, true);
-    }
+    size_t page = index * sizeof(uint32_t) / pageSize();
+    if (m_classes.m_writablePagesOfMethodTable.set(page))
+        return;
+    countEvent(*m_classes.m_state.instance.vm, RuntimeCounterID::MethodTableMadeWritable);
+    setPagesOfMethodTableWritableForClassGuards(m_classes.m_state, page, 1, true);
 }
 
 ClassTable::MethodTableUpdate::~MethodTableUpdate()
 {
-    if (!--m_classes.m_numberOfOpenMethodTableUpdates && std::exchange(m_classes.m_methodTableIsWritable, false))
-        setMethodTableWritableForClassGuards(m_classes.m_state, false);
+    if (--m_classes.m_numberOfOpenMethodTableUpdates)
+        return;
+    BitVector& pages = m_classes.m_writablePagesOfMethodTable;
+    for (size_t first = pages.findBit(0, true); first < pages.size();) {
+        size_t end = pages.findBit(first, false);
+        setPagesOfMethodTableWritableForClassGuards(m_classes.m_state, first, end - first, false);
+        first = pages.findBit(end, true);
+    }
+    pages.clearAll();
 }
 
 static constexpr Typed::CountInEffectsNet countOfChangeOfClassGuard(bool holds)
@@ -165,7 +173,7 @@ static void repointMethodTableEntries(State& state, Dependents&& dependents, boo
         uint32_t entry = guardHolds ? compiled[index] : lookups[dependent.selector];
         if (table[index] == entry)
             continue;
-        update.willStoreEntry();
+        update.willStoreEntry(index);
         table[index] = entry;
         state.countWriteForEffectsNet(countOfChangeOfClassGuard(guardHolds));
     }
@@ -1008,7 +1016,7 @@ void ClassTable::holdMemberToProof(VM& vm, const LayoutData& layout, ClassSide s
         return;
     if (m_memberBeingDefined.classLayout && m_memberBeingDefined.classLayout->index == layout.index && m_memberBeingDefined.side == side && m_memberBeingDefined.uid == uid)
         return;
-    if ((uid->isSymbol() && static_cast<SymbolImpl*>(uid)->isPrivate()) || isImplicitMemberOfClassHolder(vm, side, uid) || isCompiledObject(holder))
+    if ((uid->isSymbol() && static_cast<SymbolImpl*>(uid)->isPrivate()) || parseIndex(PropertyName(uid)) || isImplicitMemberOfClassHolder(vm, side, uid) || isCompiledObject(holder))
         return;
 
     std::optional<uint32_t> key = identifiersOf(m_state.instance).numberOf(uid);

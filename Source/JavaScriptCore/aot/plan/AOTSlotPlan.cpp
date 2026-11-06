@@ -448,7 +448,7 @@ static BitVector findLayoutsNeverAllocatedForSlotPlan(const Program& program, co
 static bool declaresPrivateNameForSlotPlan(const Layout& layout)
 {
     constexpr OptionSet<FieldFlags> flagsOfPrivateNames { FieldFlags::IsPrivate, FieldFlags::IsBrand };
-    return std::ranges::any_of(layout.fields, [&](const Field& field) {
+    return std::ranges::any_of(layout.fields.span().first(layout.copiesWholeFieldListOfBase ? layout.ownFieldCount : layout.fields.size()), [&](const Field& field) {
         return field.flags.containsAny(flagsOfPrivateNames) && !field.flags.contains(FieldFlags::IsInherited);
     });
 }
@@ -867,7 +867,7 @@ static void placeAppendedFieldsForSlotPlan(const Program& program, const LinkTab
         numberGranulesOf(numberGranulesOf, index);
 }
 
-static void placeFieldsOfLayoutForSlotPlan(const Program& program, const BitVector& isPlaced, const BitVector& layoutsThatRepeatTheirBases, LayoutID id, PlacesOfFieldsInSlotPlan& result)
+static void placeFieldsOfLayoutForSlotPlan(const Program& program, const BitVector& isPlaced, const StorageOfLayouts& storageOfLayouts, LayoutID id, PlacesOfFieldsInSlotPlan& result)
 {
     const Layout& layout = program.at(id);
     bool isObject = isObjectLayout(layout.kind);
@@ -879,13 +879,13 @@ static void placeFieldsOfLayoutForSlotPlan(const Program& program, const BitVect
     if (base)
         end = result.ends[base.index()];
     end = std::max(end, result.ends[id.index()]);
-    uint32_t numberOfFields = numberOfFieldsNotRepeated(program, layoutsThatRepeatTheirBases, id);
+    uint32_t numberOfFields = numberOfFieldsNotRepeated(program, storageOfLayouts.layoutsThatRepeatTheirBases, id);
     for (uint32_t field = 0; base && field < numberOfFields; ++field) {
         std::optional<FieldReference> above = findFieldAboveForSlotPlan(program, isPlaced, { id, field }, base);
         if (!above || result.liesOutOfLine(result.rowOf({ id, field })))
             continue;
         uint32_t row = result.rowOf({ id, field });
-        uint32_t rowAbove = result.rowOf(fieldNotRepeated(program, layoutsThatRepeatTheirBases, *above));
+        uint32_t rowAbove = result.rowOf(fieldNotRepeated(program, storageOfLayouts.layoutsThatRepeatTheirBases, storageOfLayouts.nearestLayoutsAboveThatDoNotRepeat.span(), *above));
         result.offsets[row] = result.offsets[rowAbove];
         result.places[row] = result.places[rowAbove];
         end = std::max(end, result.offsets[row] + bytesPerSlotInSlotPlan);
@@ -920,8 +920,9 @@ static void numberRowsForSlotPlan(const Program& program, PlacesOfFieldsInSlotPl
     result.firstRowOfLayout.append(static_cast<uint32_t>(numberOfRows));
 }
 
-static void placeFieldsForSlotPlan(const Program& program, const LinkTables& link, const LinkTables& held, const BitVector& layoutsWithSlotsThatStoresMayEmpty, const Families* families, const LayoutsBelowTheirBases& layoutsBelowTheirBases, std::span<const StorageOfLayoutInSlotPlan> storage, const BitVector& layoutsThatRepeatTheirBases, bool hasTypedSlots, PlacesOfFieldsInSlotPlan& result)
+static void placeFieldsForSlotPlan(const Program& program, const LinkTables& link, const LinkTables& held, const BitVector& layoutsWithSlotsThatStoresMayEmpty, const Families* families, const LayoutsBelowTheirBases& layoutsBelowTheirBases, std::span<const StorageOfLayoutInSlotPlan> storage, const StorageOfLayouts& storageOfLayouts, bool hasTypedSlots, PlacesOfFieldsInSlotPlan& result)
 {
+    const BitVector& layoutsThatRepeatTheirBases = storageOfLayouts.layoutsThatRepeatTheirBases;
     uint32_t numberOfLayouts = static_cast<uint32_t>(program.layouts.size());
     uint32_t numberOfRows = result.firstRowOfLayout.last();
     result.offsets.fill(0, numberOfRows);
@@ -957,7 +958,7 @@ static void placeFieldsForSlotPlan(const Program& program, const LinkTables& lin
         Vector<uint8_t> offsetsOfFirstSlots(numberOfLayouts, [&](size_t index) {
             return static_cast<uint8_t>(result.offsetOfFirstSlotOf(LayoutID(index)));
         });
-        placeFieldsOfUnions(program, link, *families, layoutsBelowTheirBases, RowsOfSlotPlan { result.firstRowOfLayout.span(), result.offsets.mutableSpan(), result.places.mutableSpan(), result.ends.mutableSpan(), offsetsOfFirstSlots.span(), widthsInCell.span(), &layoutsThatRepeatTheirBases }, hasCells, addPlace);
+        placeFieldsOfUnions(program, link, *families, layoutsBelowTheirBases, RowsOfSlotPlan { result.firstRowOfLayout.span(), result.offsets.mutableSpan(), result.places.mutableSpan(), result.ends.mutableSpan(), offsetsOfFirstSlots.span(), widthsInCell.span(), &layoutsThatRepeatTheirBases, storageOfLayouts.nearestLayoutsAboveThatDoNotRepeat.span() }, hasCells, addPlace);
     }
 
     BitVector isPlaced(numberOfLayouts);
@@ -968,7 +969,7 @@ static void placeFieldsForSlotPlan(const Program& program, const LinkTables& lin
             waiting.append(current);
         while (!waiting.isEmpty()) {
             LayoutID id = waiting.takeLast();
-            placeFieldsOfLayoutForSlotPlan(program, isPlaced, layoutsThatRepeatTheirBases, id, result);
+            placeFieldsOfLayoutForSlotPlan(program, isPlaced, storageOfLayouts, id, result);
             isPlaced.quickSet(id.index());
         }
     }
@@ -1519,6 +1520,14 @@ static bool repeatsItsBaseInSlotPlan(const Program& program, const Facts& facts,
     return true;
 }
 
+FieldReference fieldAboveLayoutThatRepeats(const Program& program, std::span<const LayoutID> nearestLayoutsAboveThatDoNotRepeat, FieldReference field)
+{
+    const Layout& layout = program.at(field.layout);
+    LayoutID above = nearestLayoutsAboveThatDoNotRepeat[field.layout.index()];
+    uint32_t numberDeclaredBelow = static_cast<uint32_t>(layout.fields.size() - program.at(above).fields.size());
+    return field.field >= numberDeclaredBelow ? FieldReference { above, field.field - numberDeclaredBelow } : declarationOf(program, field);
+}
+
 StorageOfLayouts chooseStorageOfLayouts(const Program& program, const Facts& facts, const ParallelLoops& loops)
 {
     static_assert(!(indicesInRangeOfLoop % 64));
@@ -1544,6 +1553,17 @@ StorageOfLayouts chooseStorageOfLayouts(const Program& program, const Facts& fac
                 result.layoutsThatRepeatTheirBases.quickSet(index);
         }
     });
+    if (!result.layoutsThatRepeatTheirBases.isEmpty())
+        result.nearestLayoutsAboveThatDoNotRepeat.fill(LayoutID(), program.layouts.size());
+    Vector<uint32_t, 16> row;
+    for (size_t below : result.layoutsThatRepeatTheirBases) {
+        auto current = static_cast<uint32_t>(below);
+        for (; result.layoutsThatRepeatTheirBases.quickGet(current) && !result.nearestLayoutsAboveThatDoNotRepeat[current]; current = writtenBaseOf(program.layouts[current]).index())
+            row.append(current);
+        LayoutID above = result.layoutsThatRepeatTheirBases.quickGet(current) ? result.nearestLayoutsAboveThatDoNotRepeat[current] : LayoutID(current);
+        while (!row.isEmpty())
+            result.nearestLayoutsAboveThatDoNotRepeat[row.takeLast()] = above;
+    }
     return result;
 }
 
@@ -1574,7 +1594,7 @@ SlotPlanParts computeSlotPlanParts(Program& program, const Facts& facts, BuildCo
     Vector<LayoutID> environmentsHandedBack;
     runLanes(build.parallelLoops(), {
         [&] {
-            placeFieldsForSlotPlan(program, facts.linked(), facts.held(), layoutsWithSlotsThatStoresMayEmpty, families, layoutsBelowTheirBases, storage, storageOfLayouts.layoutsThatRepeatTheirBases, hasTypedSlots, places);
+            placeFieldsForSlotPlan(program, facts.linked(), facts.held(), layoutsWithSlotsThatStoresMayEmpty, families, layoutsBelowTheirBases, storage, storageOfLayouts, hasTypedSlots, places);
             if (hasTypedSlots)
                 chooseFormsOfPlacesForSlotPlan(program, facts, facts.linked(), families, storage, storageOfLayouts.layoutsThatRepeatTheirBases, places);
             forEachIndexInParallel(build.parallelLoops(), numberOfLayouts, [&](unsigned index) {

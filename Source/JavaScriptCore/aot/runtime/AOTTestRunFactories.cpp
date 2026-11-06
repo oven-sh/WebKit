@@ -166,10 +166,11 @@ bool Modules::isImportedByModuleThatRequireAnswered(ModuleID imported) const
     return false;
 }
 
-void Modules::noteCallOfMock(ModuleID fileOrModule)
+void Modules::noteCallOfMock(ModuleID fileOrModule, bool importersKeepMockThatStands)
 {
     MomentMockWasLaid call = momentOfNow();
     call.hadNamespace = !!namespaceIfCreated(moduleWithExportsOf(fileOrModule), ModulePhase::Evaluation);
+    call.importersKeepMockThatStands = importersKeepMockThatStands;
     m_momentsWaitingMocksWereLaid.set(fileOrModule, call);
 }
 
@@ -193,7 +194,8 @@ void Modules::deferMock(ModuleID module, AfterFailure afterFailure)
         m_modulesWithMockThatWaited.set(module.index());
         m_modulesLoadedBeforeMockThatWaited.set(module.index(), wasLoadedWithImporter(module));
         willMock(module);
-        noteCallOfMock(module);
+        auto noted = m_momentsWaitingMocksWereLaid.find(module);
+        noteCallOfMock(module, noted != m_momentsWaitingMocksWereLaid.end() && noted->value.importersKeepMockThatStands);
     }
 }
 
@@ -491,7 +493,7 @@ bool Modules::runMocksBelowSlow(ModuleID root, RootOfLoad rootOfLoad)
         if (isMocked(module))
             continue;
         for (const ModuleRequestData& request : m_table.requests(module) | std::views::reverse) {
-            if (!request.isHoisted && (!request.isRequire || data(module).isFaceOfFile()) && seesMockOf(moduleLoadedBy(request), module))
+            if (!request.isHoisted && (!request.isRequire || data(module).isFaceOfFile()) && seesMockOf(moduleLoadedBy(request), module) && !keepsMockThatStandsWhileAnotherWaits(moduleLoadedBy(request), module))
                 work.append(moduleLoadedBy(request));
         }
     }

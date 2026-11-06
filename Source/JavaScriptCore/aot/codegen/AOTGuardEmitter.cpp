@@ -469,6 +469,24 @@ void GuardEmitter::defineWhetherObjectIsPlainInstance(const ValueContext& value)
     });
 }
 
+void GuardEmitter::defineWhetherNoMemberIsFound(const ValueContext& value)
+{
+    defineTestByBranching(value, [&](BranchTargets targets) {
+        CellPointer cell = cellOrElse(value, value->objectOperand(), targets.notTaken);
+        auto goOnWhere = [&](Condition holds) {
+            LBasicBlock next = newBlock();
+            branch(holds, { normalEdge(next), targets.notTaken });
+            m_out.appendTo(next);
+        };
+        uint32_t bits = (value->asksForNoExtraProperties() ? orderWordHasExtraProperties : 0) | (value->asksForNoFieldOutsideSlot() ? orderWordHasFieldOutsideSlot : 0);
+        if (bits)
+            goOnWhere(hasNoBits(emitter<ShapeTestEmitter>().orderWordOf(cell), bits));
+        if (value->asksForLayoutPrototype())
+            goOnWhere(hasNoBits(loadByte(cell, m_heaps.JSCell_typeInfoFlags), JSC::IsPristine));
+        branch(value->conditions().isEmpty() ? boolean(true) : areMembersUnchanged(value->conditions()), targets);
+    });
+}
+
 void GuardEmitter::branchOnOwnPropertyByCell(const ValueContext& value, BranchTargets targets, LBasicBlock asksRunTime)
 {
     ValueID object = value->objectOperand();

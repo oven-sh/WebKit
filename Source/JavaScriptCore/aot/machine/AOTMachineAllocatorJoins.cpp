@@ -2492,6 +2492,17 @@ const Block* Allocator::immediateDominatorOf(const Block* block)
     return m_immediateDominators[block->index()];
 }
 
+bool Allocator::dominates(const Block* above, const Block* below)
+{
+    if (m_immediateDominators.isEmpty())
+        findImmediateDominatorsOfOrderedBlocks(*this);
+    if (m_numbersOfDominatedBlocks.isEmpty())
+        numberDominatedBlocksByPlaceInOrder(*this);
+    const NumbersOfDominatedBlocks& dominated = m_numbersOfDominatedBlocks[m_order.of(above).orderIndex];
+    uint32_t number = m_numbersOfDominatedBlocks[m_order.of(below).orderIndex].first;
+    return dominated.first <= number && number <= dominated.last;
+}
+
 bool Allocator::hasBackEdgeOutsideRareRegions(const Loop& loop) const
 {
     const Block* head = m_order.blocksInOrder()[loop.firstBlock];

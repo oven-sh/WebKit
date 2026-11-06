@@ -536,6 +536,7 @@ export interface ModelBuiltin {
   isAddedAtFirstRead: boolean;
   isAddedAsEnumerable: boolean;
   isCreatedInSomeRuns: boolean;
+  namesFoundAbove: readonly ModelName[];
   hostNumber: number;
   attachments: ModelAttachments;
 }

@@ -527,6 +527,7 @@ static ALWAYS_INLINE UGPRPair lookupExceptionHandler(VM& vm, Instance* instance,
     }
     AOTOperationPrologueCallFrameTracer tracer(vm, frameRecord);
     if (!exception) {
+        DeferGCForAWhile deferGC(vm);
         JSValue thrown = JSValue::decode(std::exchange(exceptions.thrownValue, 0));
         RELEASE_ASSERT(thrown);
         auto scope = DECLARE_THROW_SCOPE(vm);

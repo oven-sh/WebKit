@@ -62,6 +62,8 @@ public:
     void cannotHearOfWritesTo(BuiltinID holder);
     void hearsOfWritesTo(BuiltinID holder);
     void noteWriteAboveInstances(BuiltinID holder);
+    void takeAsWritten(BuiltinID member);
+    void takeAsHolderWithAddedNames(BuiltinID holder);
     void fillCellsUnderModules();
     void didLoadModule(RuntimeModuleID, JSObject* exports);
     void didLoadNativeModule(RuntimeModuleID, JSObject* exports);

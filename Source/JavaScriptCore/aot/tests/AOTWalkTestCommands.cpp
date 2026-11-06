@@ -35,6 +35,7 @@ public:
 
     bool isReady() const { return m_worker.has_value(); }
 
+    const WalkInputs& inputs() const { return m_inputs->walk; }
     const Program& program() const { return m_inputs->walk.program; }
     const Facts& facts() const { return m_inputs->walk.facts; }
     const Arrivals& arrivals() const { return m_inputs->walk.arrivals; }
@@ -139,6 +140,8 @@ static void runVerifyCodeCommand(TestCommandContext& context)
         kindOfBrokenRule = InternalErrorKind::TypeOutOfDate;
         brokenRule = verifyTypesOfCode(TypingContext { walks.program(), walks.types(), walks.walker().positions() }, walks.plan().conventions(), walks.arrivals(), code);
     }
+    if (brokenRule.isNull())
+        brokenRule = findCallThatHandsOverWhatItsUnitHasNotLeft(walks.inputs(), walks.types(), code, { });
     if (brokenRule.isNull())
         context.out.println("verified"_s);
     else

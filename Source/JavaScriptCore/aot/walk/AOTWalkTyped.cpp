@@ -88,6 +88,7 @@ static bool splitNullishOffReceiverInWalkTyped(Walker& walker, const BodyValue& 
         Draft asWritten = walker.draftOf(access);
         walker.chooseConservativeFields(asWritten);
         Effects effectsOfCheck = declaredBoundInTable(Opcode::RequireObjectCoercible);
+        effectsOfCheck.merge(declaredBoundOf(NamedEffectSet::Allocates));
         Reference built = walker.build(WTF::move(asWritten), &effectsOfCheck);
         if (built && resultRuleOf(opcode) != ResultRule::None)
             walker.bind(access.id(), built);

@@ -274,7 +274,7 @@ struct ModuleEvaluationPlanner {
     bool isEvaluatedWithImporter(uint32_t module) const;
     bool needsLoaderItself(uint32_t module) const;
     bool hasLinkWorkItself(uint32_t module) const;
-    bool requiresModuleDuringLoad(uint32_t module) const;
+    BitVector filesThatRequireModuleDuringLoad() const;
     bool runsCode(uint32_t module) const { return isEvaluatedWithImporter(module) && has(module, HasCode) && !has(module, BodyOnlyReturns); }
     bool importsCommonJSBeforeItBegins(size_t module) const { return isAskedOfLoader.quickGet(module) && program.modules[module].kind == ModuleKind::SourceText; }
     FoundModuleSiteKind kindInPlanOf(const FoundModuleSite&) const;
@@ -427,12 +427,42 @@ bool ModuleEvaluationPlanner::needsLoaderItself(uint32_t index) const
     return has(index, HasCode) && !has(index, BodyCanBeCalledByCode);
 }
 
-bool ModuleEvaluationPlanner::requiresModuleDuringLoad(uint32_t index) const
+BitVector ModuleEvaluationPlanner::filesThatRequireModuleDuringLoad() const
 {
-    const Module& file = has(index, IsFaceOfFile) ? program.at(program.modules[index].requests[0].target) : program.modules[index];
-    return file.kind == ModuleKind::CommonJs && std::ranges::any_of(file.requests, [&](const ModuleRequest& request) {
-        return request.kind == ModuleRequestKind::Require && program.at(request.target).flags.contains(ModuleFlags::IsRequiredDuringLoad);
+    BitVector files(numberOfModules);
+    bool someModuleIsRequiredDuringLoad = std::ranges::any_of(program.modules, [](const Module& module) {
+        return module.flags.contains(ModuleFlags::IsRequiredDuringLoad);
     });
+    if (!someModuleIsRequiredDuringLoad)
+        return files;
+
+    Vector<uint32_t> found;
+    Vector<std::pair<uint32_t, uint32_t>> requirers;
+    for (uint32_t index = 0; index < numberOfModules; ++index) {
+        if (program.modules[index].kind != ModuleKind::CommonJs)
+            continue;
+        for (const ModuleRequest& request : program.modules[index].requests) {
+            if (request.kind != ModuleRequestKind::Require)
+                continue;
+            const Module& required = program.at(request.target);
+            if (required.kind == ModuleKind::CommonJs)
+                requirers.append({ request.target.index(), index });
+            else if (required.flags.contains(ModuleFlags::IsRequiredDuringLoad) && !files.quickSet(index))
+                found.append(index);
+        }
+    }
+    std::ranges::sort(requirers);
+    while (!found.isEmpty()) {
+        for (auto [required, requirer] : std::ranges::equal_range(requirers, found.takeLast(), { }, &std::pair<uint32_t, uint32_t>::first)) {
+            if (!files.quickSet(requirer))
+                found.append(requirer);
+        }
+    }
+    for (uint32_t index = 0; index < numberOfModules; ++index) {
+        if (has(index, IsFaceOfFile) && files.quickGet(program.modules[index].requests[0].target.index()))
+            files.quickSet(index);
+    }
+    return files;
 }
 
 bool ModuleEvaluationPlanner::hasLinkWorkItself(uint32_t index) const
@@ -615,9 +645,12 @@ void ModuleEvaluationPlanner::chooseModulesWalkedByCode()
     BitVector leadsToCycle = modulesThatReach(components, [&](uint32_t index) {
         return components.membersOf(components.componentOf[index]).size() > 1;
     });
-    BitVector leadsToLoadInsideLoad = modulesThatReach(components, [&](uint32_t index) {
-        return requiresModuleDuringLoad(index);
-    });
+    BitVector leadsToLoadInsideLoad = filesThatRequireModuleDuringLoad();
+    if (!leadsToLoadInsideLoad.isEmpty()) {
+        leadsToLoadInsideLoad = modulesThatReach(components, [&, files = leadsToLoadInsideLoad](uint32_t index) {
+            return files.quickGet(index);
+        });
+    }
 
     isWalkedByCode.ensureSize(numberOfModules);
     startsItself.ensureSize(numberOfModules);

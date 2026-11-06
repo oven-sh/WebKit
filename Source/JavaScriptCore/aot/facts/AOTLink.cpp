@@ -294,13 +294,8 @@ bool LinkTables::memberHoldsOneFunction(const Program& program, LayoutID classLa
 
 bool LinkTables::findsNothingOnClassObjects(const Program& program, LayoutID classLayout, PropertyKeyID key) const
 {
-    if (findMember(program, classLayout, ClassSide::Static, key).kind != MemberFound::Kind::Nothing)
-        return false;
-    bool mayBeHidden = false;
-    size_t stepsLeft = program.layouts.size();
-    for (LayoutID current = classLayout; current && stepsLeft; current = program.at(current).base, --stepsLeft)
-        mayBeHidden |= program.at(current).mayHaveStaticField(key);
-    return !mayBeHidden && stepsLeft;
+    RELEASE_ASSERT(key == program.keyOf(program.builtins().nameOf(WellKnownSymbol::HasInstance)));
+    return findMember(program, classLayout, ClassSide::Static, key).kind == MemberFound::Kind::Nothing && !layouts[classLayout.index()].classObjectsOfRowMayHoldHasInstance;
 }
 
 bool LinkTables::findFunctionsLaidAbove(const Program& program, LayoutID layout, PropertyKeyID key, Vector<FunctionID, 4>& functions) const
@@ -1637,7 +1632,8 @@ void WriterOfLink::indexFunctionsThatAreHeld()
         holders.note(name.key, classOfConstructorFunction(m_program, name.holder), name.expected);
     forEachIndexOnAllThreads(m_program.layouts.size(), [&](uint32_t index, Holders& holders) {
         const Layout& layout = m_program.layouts[index];
-        for (uint32_t field = 0; field < layout.fields.size(); ++field) {
+        uint32_t numberOfFields = m_tables.layouts[index].takesCellsOfBase ? layout.ownFieldCount : static_cast<uint32_t>(layout.fields.size());
+        for (uint32_t field = 0; field < numberOfFields; ++field) {
             PropertyKeyID key = layout.fields[field].key;
             if (!key)
                 continue;

@@ -231,11 +231,13 @@ public:
         String tree = treeOf(root);
         if (StringView(tree) == expected)
             return;
-        dataLogLn("Expected ", expected, " and got ", tree, " in\n", m_test.printedProcedure());
+        dataLogLn("In row ", row, " of its table: expected ", expected, " and got ", tree, " in\n", m_test.printedProcedure());
         AOT_TEST_CHECK(StringView(tree) == expected);
     }
 
     void compile() { compileOrFail(m_test); }
+
+    size_t row { 0 };
 
     uint64_t run(const FoldingTestOperand& first, const FoldingTestOperand& second)
     {
@@ -250,9 +252,9 @@ public:
         if (actual == expected)
             return;
         if (m_operands == FoldingTestOperands::Integers)
-            dataLog("For the operands ", first.integer, " and ", second.integer);
+            dataLog("In row ", row, " of its table: for the operands ", first.integer, " and ", second.integer);
         else
-            dataLog("For the operands ", first.number, " and ", second.number);
+            dataLog("In row ", row, " of its table: for the operands ", first.number, " and ", second.number);
         dataLogLn(", the unfolded form returns the bits ", expected, " but the folded form returns ", actual, ":\n", m_test.printedProcedure());
         AOT_TEST_CHECK(actual == expected);
     }
@@ -358,6 +360,7 @@ static void checkFoldingTestCases(FoldingTestOperands operands, std::span<const 
 {
     for (const FoldingTestCase& testCase : cases) {
         FoldingTest folded(operands, FoldingTestForm::Folded);
+        folded.row = static_cast<size_t>(&testCase - cases.data());
         folded.finish(testCase.request(folded));
         if (!testCase.expected.isNull())
             folded.expectTree(folded.result(), testCase.expected);

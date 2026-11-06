@@ -1,0 +1,124 @@
+# A STATIC FIELD WHOSE WRITTEN KEY IS Symbol.hasInstance. It is a definition on the class object behind the class's birth (PropDefine key=@@hasInstance in the static initializer); no record of the class lists it.
+# class Any { static [Symbol.hasInstance] = () => true; }
+# class Below extends Any { }
+# class Plain { }
+# export const first = {} instanceof Any;
+# export const second = {} instanceof Below;
+# export const third = {} instanceof Plain;
+# All three were decided as the ordinary instanceof: false, false, false: the first two are true. And the record of the class said that its object never gets the name, so that the run time stopped at the definition.
+# Link notes the definition on the constructor; whoever asks that nothing is found under the name on the class objects of a row (the decision on instanceof, its road by a guard, the record of the class) is told.
+# The first two are left to the run time; the class without such a field is decided as before. Nothing unknown is called here: a call of `print` would let every class go, and the faulty build would answer rightly.
+# OPTIONS: mechanisms=all exclude=CodeOutsideImage
+# RUN: walk f0
+# CHECK-COUNT-2: = InstanceOf
+# CHECK-NOT: = InstanceOf
+module m0 path="seed2.js" displayPath="seed2.js" body=f0 exports=[{name="first" variable=g0}, {name="second" variable=g1}, {name="third" variable=g2}] namespaceLayout=L(m0)
+module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
+entry module=m0
+layout L0 kind=Instance name="Any" module=m0 position=6 constructor=f2
+layout L1 kind=Instance name="Below" module=m0 position=62 base=L0 constructor=f4 supertypes=[L0] flags=[HasHeritage]
+layout L2 kind=Instance name="Plain" module=m0 position=90 constructor=f1
+layout L3 module=m0 position=121
+layout L4 module=m0 position=162
+layout L5 module=m0 position=204
+data d0 root=Object{layout=L3} module=m0
+data d1 root=Object{layout=L4} module=m0
+data d2 root=Object{layout=L5} module=m0
+variable g0 name="first" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+variable g1 name="second" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+variable g2 name="third" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+variable g3 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g4 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g5 module=m0 declared={type=string|symbol flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g6 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1 @84
+    v1 = NewClass v0 layout=L2 @84
+    PutModuleVariable v1 variable=g3 @84
+    v3 = FinishClass v1 layout=L2 @84
+    v4 = Convert v3 declared={type=f1 flags=[IsFromCompiler]} @84
+    v5 = Convert v3 declared={type=f1 flags=[IsFromCompiler]} @84
+    v6 = NewClosure function=f2 @0
+    v7 = NewClass v6 layout=L0 @0
+    PutModuleVariable v7 variable=g4 @0
+    v9 = Builtin builtin=SymbolHasInstance @19
+    PutModuleVariable v9 variable=g5 @19
+    v11 = FinishClass v7 layout=L0 @0
+    v12 = Convert v11 declared={type=f2 flags=[IsFromCompiler]} @0
+    v13 = Convert v11 declared={type=function flags=[IsFromCompiler]} @0
+    v14 = CallDirect v13 function=f3 @0
+    v15 = Convert v11 declared={type=f2 flags=[IsFromCompiler]} @0
+    v16 = ResolveHeritage v15 @76
+    v17 = NewClosure function=f4 @56
+    v18 = NewClass v17, v15, v16 layout=L1 @56
+    PutModuleVariable v18 variable=g6 @56
+    v20 = FinishClass v18 layout=L1 @56
+    v21 = Convert v20 declared={type=f4 flags=[IsFromCompiler]} @56
+    v22 = Convert v20 declared={type=f4 flags=[IsFromCompiler]} @56
+    v23 = Data data=d0 @121
+    v24 = InstanceOf v23, v15 @124
+    PutModuleVariable v24 variable=g0 @113
+    v26 = Data data=d1 @162
+    v27 = InstanceOf v26, v22 @165
+    PutModuleVariable v27 variable=g1 @153
+    v29 = Data data=d2 @204
+    v30 = InstanceOf v29, v5 @207
+    PutModuleVariable v30 variable=g2 @196
+    v32 = Undefined @196
+    Return v32 @196
+}
+function f1 name="Plain" module=m0 position=90 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L2 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L2 @90
+    v2 = NewObject v1 layout=L2 @90
+    v3 = Convert v2 declared={type=L2} @90
+    Return v3 @90
+}
+function f2 name="Any" module=m0 position=6 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] functionTypes=[f6] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0 @6
+    v2 = NewObject v1 layout=L0 @6
+    v3 = Convert v2 declared={type=L0} @6
+    Return v3 @6
+}
+function f3 module=m0 position=6 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=function flags=[IsFromCompiler]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: function):
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @6
+    v2 = NewClosure function=f5 @42
+    PropDefine v1, v2 key=@@hasInstance @19
+    v4 = Undefined @6
+    Return v4 @6
+}
+function f4 name="Below" module=m0 position=62 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes=[f7] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 {
+  b0(v0: function, v1: anything, v2: Array):
+    v3 = GetSuperBase v0 @62
+    v4 = SuperConstructList v3, v1, v2 layout=L1 @62
+    v5 = Convert v4 declared={type=L1} @62
+    Return v5 @62
+}
+function f5 name="[Symbol.hasInstance]" module=m0 position=42 kind=Arrow flags=[IsNamedByComputedKey] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Boolean boolean=true @48
+    Return v0 @48
+}
+function f6 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f7 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f6]
+function f8 name="next" module=m1 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = HasJSType v0 first=5 last=5 @78
+    v2 = ToBoolean v1 @78
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0) @78
+  b1(v3):
+    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @229
+    v5 = StepArrayIterator v4 @229
+    v6 = ResultAt v5 index=1 @286
+    v7 = ResultAt v5 @334
+    v8 = Convert v7 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @266
+    v9 = CreateIteratorResult v6, v8 @266
+    Return v9 @266
+  b2(v10):
+    v11 = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance" @110
+    Unreachable @110
+}
+runtimefunction id=ArrayIteratorPrototypeNext function=f8 visibility=Private

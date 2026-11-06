@@ -1096,7 +1096,7 @@ void LinkFlow::changeObserved(const FlowObserver& observer, const LinkType& now)
     }
 
     if (record.kind == SummaryChange::Kind::Deletes || record.kind == SummaryChange::Kind::DefinesByDescriptor) {
-        noteWriteOn(change.subject, record.key, observer.function, record.kind == SummaryChange::Kind::Deletes ? WhatIsStored::Nothing : record.laysNewValueOfNativeCode ? WhatIsStored::TextsNumbersAndBooleans : WhatIsStored::Anything);
+        noteWriteOn(change.subject, record.key, observer.function, record.kind == SummaryChange::Kind::Deletes ? WhatIsStored::Nothing : record.laysNewValueOfNativeCode || record.laysTextNumberOrBooleanThatIsWritten ? WhatIsStored::TextsNumbersAndBooleans : WhatIsStored::Anything);
         if (!record.key && record.other != noSummaryNode)
             noteSiteOfCopy(observer.function, record.site, change.subjectNode, change.otherNode);
         else
@@ -1447,6 +1447,8 @@ void LinkFlow::findWhatRowsOfConstructorsFill()
         return static_cast<uint32_t>(listsOfFields.size() - 1);
     };
 
+    uint32_t placeUnderListMadeLast = UINT32_MAX;
+    Vector<PropertyKeyID, 32> addedToListMadeLast;
     auto placeOfListWith = [&](uint32_t place, Vector<PropertyKeyID, 32>& added) {
         std::ranges::sort(added);
         added.shrink(std::ranges::unique(added).begin() - added.begin());
@@ -1455,9 +1457,13 @@ void LinkFlow::findWhatRowsOfConstructorsFill()
         });
         if (added.isEmpty())
             return place;
+        if (placeUnderListMadeLast == place && addedToListMadeLast == added)
+            return static_cast<uint32_t>(lists.size() - 1);
         Vector<PropertyKeyID> merged(lists[place].size() + added.size());
         std::ranges::merge(lists[place], added, merged.begin());
         lists.append(WTF::move(merged));
+        placeUnderListMadeLast = place;
+        addedToListMadeLast = added;
         return static_cast<uint32_t>(lists.size() - 1);
     };
     auto hasAccessorFieldUnder = [&](LayoutID layout, PropertyKeyID key) {
@@ -1634,6 +1640,7 @@ private:
     void lookAtAccesses(FunctionID, const ThinSummary&);
     void lookAtChanges(FunctionID, const ThinSummary&);
     void noteChangeOfClosure(const LinkType& subject, PropertyKeyID);
+    void noteDefinitionOfHasInstanceOn(const LinkType& subject);
     void noteHeritage(const LinkType& heritage, FunctionID constructor);
     LayoutID findLayoutWhosePrototypeObjectIsAt(const ThinSummary&, uint32_t node) const;
     void noteNameWrittenOnPrototype(FunctionID, const ThinSummary&, const SummaryAccess&);
@@ -1684,6 +1691,7 @@ private:
     void writeWhosePrototypePropertyStaysAsMade();
     void noteNameGivenToClosure(const LinkType& subject, PropertyKeyID storedUnder = { });
     void writeNamesOnFunctions();
+    void writeRowsWhoseClassObjectsMayHoldHasInstance();
     BitVector m_functionsWhoseClosuresGetWhatIsNotListed;
     bool m_someConstructorGetsName { false };
     BitVector m_functionsWhosePrototypePropertyIsWritten;
@@ -2153,6 +2161,8 @@ void WriterOfLinkLayouts::lookAtAccesses(FunctionID id, const ThinSummary& summa
         if (constructs && key && (subject.objects == LinkType::Objects::Lost || subject.objects == LinkType::Objects::None) && findNameThatConstructorStores(id, summary, access))
             noteWriteInto(m_program.at(id).constructedClass, key, traits);
         noteChangeOfClosure(subject, key);
+        if (access.kind == SummaryAccess::Kind::Define && key && key == m_program.keyOf(m_program.builtins().nameOf(WellKnownSymbol::HasInstance)))
+            noteDefinitionOfHasInstanceOn(subject);
         bool isUnderPrototype = key && m_program.nameClassOf(key) == NameClass::Prototype;
         if (!key || isUnderPrototype)
             noteWriteOfPrototypeProperty(subject, key, access.kind == SummaryAccess::Kind::Store && access.storesObjectMadeForIt);
@@ -2483,6 +2493,31 @@ void WriterOfLinkLayouts::noteChangeOfClosure(const LinkType& subject, PropertyK
     m_tables.functions[subject.function.index()].closuresAreChanged = true;
 }
 
+void WriterOfLinkLayouts::noteDefinitionOfHasInstanceOn(const LinkType& subject)
+{
+    auto note = [&](FunctionID function) {
+        m_tables.functions[function.index()].hasInstanceIsDefinedOnClosures = true;
+    };
+    switch (subject.functions) {
+    case LinkType::Functions::None:
+        return;
+    case LinkType::Functions::Closure:
+        note(subject.function);
+        return;
+    case LinkType::Functions::Set:
+        std::ranges::for_each(m_flow.functionsOfSet(subject), note);
+        return;
+    case LinkType::Functions::Constructors:
+    case LinkType::Functions::Lost:
+        for (const Layout& layout : m_program.layouts) {
+            if (layout.constructor)
+                note(layout.constructor);
+        }
+        return;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
 void WriterOfLinkLayouts::noteWriteOfPrototypeProperty(const LinkType& subject, PropertyKeyID key, bool storesObjectMadeForIt)
 {
     if (key && m_program.nameClassOf(key) != NameClass::Prototype)
@@ -2535,6 +2570,24 @@ void WriterOfLinkLayouts::writeNamesOnFunctions()
     std::ranges::sort(m_tables.namesOnFunctions, { }, [](const LinkedNameOnFunction& name) {
         return std::pair { name.holder, name.key };
     });
+}
+
+void WriterOfLinkLayouts::writeRowsWhoseClassObjectsMayHoldHasInstance()
+{
+    PropertyKeyID key = m_program.keyOf(m_program.builtins().nameOf(WellKnownSymbol::HasInstance));
+    BitVector isAnswered(m_program.layouts.size());
+    Vector<LayoutID, 16> row;
+    for (uint32_t index = 0; index < m_program.layouts.size(); ++index) {
+        LayoutID current(index);
+        for (; current && !isAnswered.quickSet(current.index()); current = m_program.at(current).base)
+            row.append(current);
+        bool mayHold = current && m_tables.layouts[current.index()].classObjectsOfRowMayHoldHasInstance;
+        for (; !row.isEmpty(); row.removeLast()) {
+            const Layout& layout = m_program.at(row.last());
+            mayHold |= layout.mayHaveStaticField(key) || (layout.constructor && m_tables.functions[layout.constructor.index()].hasInstanceIsDefinedOnClosures);
+            m_tables.layouts[row.last().index()].classObjectsOfRowMayHoldHasInstance = mayHold;
+        }
+    }
 }
 
 void WriterOfLinkLayouts::writeWhosePrototypePropertyStaysAsMade()
@@ -4029,11 +4082,9 @@ void WriterOfLinkLayouts::lookAtSummaries()
     m_fieldsFilledByConstructors.merge(m_saidByEdges.fieldsFilledByConstructors);
     m_fieldsWrittenLate.merge(m_saidByEdges.fieldsWrittenLate);
     m_layoutsGivenUndefinedByMakers.merge(m_saidByEdges.layoutsGivenUndefinedByMakers);
-    for (size_t cell = 0; cell < m_classesThatMakersLayInFields.size(); ++cell) {
-        if (uint32_t made = m_saidByEdges.whatMakersLayInFields[cell])
+    for (size_t cell : m_saidByEdges.fieldsGivenValues) {
+        if (uint32_t made = m_classesThatMakersLayInFields.isEmpty() ? 0 : m_saidByEdges.whatMakersLayInFields[cell])
             noteWhatMakerLays(m_classesThatMakersLayInFields[cell], made);
-    }
-    for (size_t cell = 0; cell < m_unitsListedForFields.size(); ++cell) {
         uint32_t listed = m_saidByEdges.unitsListedForFields[cell];
         if (uint32_t& unit = m_unitsListedForFields[cell]; listed && unit != listed)
             unit = unit ? otherThanOneUnit : listed;
@@ -4074,6 +4125,7 @@ void WriterOfLinkLayouts::write(TypeArena& types)
     writeMembers();
     writeWhosePrototypePropertyStaysAsMade();
     writeNamesOnFunctions();
+    writeRowsWhoseClassObjectsMayHoldHasInstance();
     m_typesTurned = { };
 }
 

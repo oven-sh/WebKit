@@ -280,7 +280,7 @@ private:
             return std::nullopt;
         if (above.layout == reference.layout || !isTouchable(above.layout))
             return std::nullopt;
-        return m_layoutsPassedOver ? fieldNotRepeated(m_program, *m_layoutsPassedOver, above) : above;
+        return m_layoutsPassedOver ? fieldNotRepeated(m_program, *m_layoutsPassedOver, m_rows.nearestLayoutsAboveThatDoNotRepeat, above) : above;
     }
 
     void collectUnits()
@@ -491,6 +491,7 @@ private:
         Vector<Vector<DeclarationOfName>> declarationsInFamilies(numberOfFamilies);
         Vector<uint32_t> numbersOfDeclarationsInOrder;
         numbersOfDeclarationsInOrder.fill(0, numberOfFamilies);
+        BitVector familiesWhoseNamesInOrderHaveOneDeclarationEach(numberOfFamilies);
         Vector<uint32_t> lastFamiliesWithSeveralDeclarations;
         lastFamiliesWithSeveralDeclarations.fill(0, types.numberOfPropertyKeys());
 
@@ -504,14 +505,15 @@ private:
                 });
             }
             auto endOfThoseInOrder = declarations.begin() + numbersOfDeclarationsInOrder[family];
+            bool isAsFamilyInsideLeftIt = endOfThoseInOrder == declarations.end() && familiesWhoseNamesInOrderHaveOneDeclarationEach.quickGet(family);
             std::ranges::sort(std::span(endOfThoseInOrder, declarations.end()), { }, [](const DeclarationOfName& declaration) {
                 return static_cast<uint64_t>(declaration.key) << 32 | declaration.unit;
             });
             std::inplace_merge(declarations.begin(), endOfThoseInOrder, declarations.end());
 
             bool hasNameWithSeveralDeclarations = false;
-            size_t numberKept = 0;
-            for (size_t index = 0; index < declarations.size(); ++index) {
+            size_t numberKept = isAsFamilyInsideLeftIt ? declarations.size() : 0;
+            for (size_t index = numberKept; index < declarations.size(); ++index) {
                 DeclarationOfName declaration = declarations[index];
                 size_t numberKeptOfName = numberKept && declarations[numberKept - 1].key == declaration.key ? 1 + (numberKept > 1 && declarations[numberKept - 2].key == declaration.key) : 0;
                 if (numberKeptOfName == 2 || (numberKeptOfName && declarations[numberKept - 1].unit == declaration.unit))
@@ -543,6 +545,7 @@ private:
                 Vector<DeclarationOfName>& declarationsAbove = declarationsInFamilies[above.index()];
                 if (declarationsAbove.isEmpty()) {
                     numbersOfDeclarationsInOrder[above.index()] = declarations.size();
+                    familiesWhoseNamesInOrderHaveOneDeclarationEach.quickSet(above.index(), !hasNameWithSeveralDeclarations);
                     declarationsAbove = WTF::move(declarations);
                 } else
                     declarationsAbove.appendVector(declarations);

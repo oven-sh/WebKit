@@ -153,7 +153,7 @@ static constexpr RepresentationRule representationRuleOf(Opcode opcode)
 
     case Opcode::InitializeBuiltin: case Opcode::NativeBinding: case Opcode::LinkTimeConstant: case Opcode::RequireBuiltinModule:
     case Opcode::IsConstructor: case Opcode::ReadsIteratorOfListUnseen: case Opcode::ArraySpeciesCreate: case Opcode::GetByValWithThis: case Opcode::GetOwnProperty: case Opcode::ToLength:
-    case Opcode::HasJSType: case Opcode::FindsDeclaredMember: case Opcode::IsPlainInstanceOf: case Opcode::IsPlainHeirOf: case Opcode::GetInternalField: case Opcode::PutInternalField: case Opcode::ThrowNewError:
+    case Opcode::HasJSType: case Opcode::FindsDeclaredMember: case Opcode::FindsNoMember: case Opcode::IsPlainInstanceOf: case Opcode::IsPlainHeirOf: case Opcode::GetInternalField: case Opcode::PutInternalField: case Opcode::ThrowNewError:
     case Opcode::IsPristineArray: case Opcode::ArrayStorageKind: case Opcode::HasContiguousIndex: case Opcode::GetContiguousIndex: case Opcode::GetDoubleIndex: case Opcode::PutContiguousIndex: case Opcode::PutDoubleIndex:
     case Opcode::GetOwnContiguousIndex: case Opcode::GetOwnDoubleIndex: case Opcode::GetOwnInt32Index: case Opcode::PutOwnContiguousIndex: case Opcode::PutOwnDoubleIndex: case Opcode::PutOwnInt32Index:
     case Opcode::TryPutIndex: case Opcode::TryCopyFilledElements: case Opcode::TryPutElements: case Opcode::TryFillNewArray:

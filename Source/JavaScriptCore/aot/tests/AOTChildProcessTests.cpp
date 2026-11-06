@@ -191,7 +191,7 @@ static void testCrashesOnRequest()
 {
     if (!getenv(crashRequestVariable))
         return;
-    TemporaryFile file(".image"_s, { });
+    TemporaryFile file(".bin"_s, { });
     dataLogLn(fileLeftPrefix, file.path());
     CRASH();
 }
@@ -231,7 +231,7 @@ static void testCrashLeavesNoFiles()
     AOT_TEST_CHECK(start != notFound);
     start += fileLeftPrefix.length();
     String path = result.output.substring(start, result.output.find('\n', start) - start).trim(isASCIIWhitespace<char16_t>);
-    AOT_TEST_CHECK(path.startsWith(temporaryFolder()) && path.endsWith(".image"_s));
+    AOT_TEST_CHECK(path.startsWith(temporaryFolder()) && path.endsWith(".bin"_s));
     AOT_TEST_CHECK(!FileSystem::fileExists(path));
     AOT_TEST_CHECK(!FileSystem::fileExists(FileSystem::parentPath(path)));
 }

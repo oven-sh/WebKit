@@ -962,9 +962,10 @@ std::optional<CodeGenerator::WaysOfTruth> CodeGenerator::waysOfTruthOf(const Val
     std::span<const ValueID> behind = read.operationsBehind();
     if (block.isInLoop || m_headOfTurnsLaidOut || behind.size() != 1 || !code().releasesBehindLastReadsIn(id).empty())
         return std::nullopt;
+    static constexpr OpcodeSet tests { Opcode::ToBoolean, Opcode::TypeTest };
     auto testOfEnd = [&](BlockID tested, const Block& ended) -> const Operation* {
         ValueID test = testReadByBranchAlone(tested, ended.terminator);
-        return test && code().at(test).valueOperand() == read.id() ? &code().at(test) : nullptr;
+        return test && tests.contains(opcodeOf(test)) && code().at(test).valueOperand() == read.id() ? &code().at(test) : nullptr;
     };
     auto wayAlong = [&](EdgeID along) -> std::optional<BlockEdge> {
         const Edge& edge = code().at(along);
@@ -977,7 +978,6 @@ std::optional<CodeGenerator::WaysOfTruth> CodeGenerator::waysOfTruthOf(const Val
         TypeArena& types = inputs().types;
         return test.opcode == Opcode::TypeTest && types.isSubset(test.testedType(), asked) && types.isSubset(asked, test.testedType());
     };
-    static constexpr OpcodeSet tests { Opcode::ToBoolean, Opcode::TypeTest };
     if (block.terminator.kind != TerminatorKind::Branch || !tests.contains(opcodeOf(behind[0])))
         return std::nullopt;
     const Operation* first = testOfEnd(id, block);

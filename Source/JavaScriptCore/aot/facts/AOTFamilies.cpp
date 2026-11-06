@@ -42,8 +42,9 @@ static SetsOfLayoutsWritten setsWrittenOnPlacesForFamilies(const Program& progra
         for (const DeclaredCapture& declared : function.captures)
             note(declared);
     }
-    for (const Layout& layout : program.layouts) {
-        for (const Field& field : layout.fields)
+    for (uint32_t index = 0; index < program.layouts.size(); ++index) {
+        const Layout& layout = program.layouts[index];
+        for (const Field& field : layout.fields.span().first(baseWhoseFieldListIsCopiedWhole(program, LayoutID(index)) ? layout.ownFieldCount : layout.fields.size()))
             note(field.declared);
     }
     for (const Variable& variable : program.variables)

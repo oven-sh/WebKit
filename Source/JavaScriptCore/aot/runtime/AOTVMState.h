@@ -108,6 +108,8 @@ public:
     BitVector filesWithKnownFirstLoad;
     BitVector filesFirstLoadedSynchronously;
     BitVector filesWhoseTextHostKeeps;
+    BitVector builtinMembersWrittenInSomeRealm;
+    BitVector builtinHoldersWithNamesAddedInSomeRealm;
     bool hasCompiledCode { false };
     bool nativeTestChangesObjectsUnseen { false };
     bool didFinishCollection { false };

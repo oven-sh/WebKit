@@ -332,7 +332,7 @@ ClassRecordParts collectClassRecordParts(const TableEncoder& encoder, LayoutID c
     data.namesAreLaidUnderWrittenKeysAlone = !std::ranges::binary_search(linked.namesOnPrototypes, std::pair { classLayout, PropertyKeyID() }, { }, [](const Typed::LinkedNameOnPrototype& laid) {
         return std::pair { laid.layout, laid.key };
     });
-    data.classObjectLacksHasInstance = data.isChangedInSightAlone(ClassSide::Static) && linked.findMember(program, classLayout, ClassSide::Static, program.keyOf(program.builtins().nameOf(WellKnownSymbol::HasInstance))).kind == Typed::MemberFound::Kind::Nothing;
+    data.classObjectLacksHasInstance = data.isChangedInSightAlone(ClassSide::Static) && linked.findsNothingOnClassObjects(program, classLayout, program.keyOf(program.builtins().nameOf(WellKnownSymbol::HasInstance)));
     data.hasStaticFieldUnderComputedKey = layout.hasStaticFieldWithComputedKey();
     return parts;
 }

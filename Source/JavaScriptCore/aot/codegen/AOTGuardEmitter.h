@@ -35,6 +35,7 @@ public:
     void generateIsHolderWithoutAddedNames(const ValueContext&);
     void defineWhetherDeclaredMemberIsFound(const ValueContext&);
     void defineWhetherObjectIsPlainInstance(const ValueContext&);
+    void defineWhetherNoMemberIsFound(const ValueContext&);
     void branchOnOwnPropertyByCell(const ValueContext&, BranchTargets, LBasicBlock asksRunTime);
     void generateIsClosureOf(const ValueContext&);
     void generateIsEnumeratorCurrent(const ValueContext&);

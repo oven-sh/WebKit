@@ -2040,17 +2040,18 @@ static BuiltinsHeldByVariablesInProgramFacts builtinsHeldByVariablesStoredOnceIn
     }
     if (held.isEmpty())
         return table;
+    auto takeOffTable = [&](VariableID variable) {
+        if (!variable)
+            return;
+        held[variable.index()] = { };
+        table.areFollowedByLinkAsTheObject.clear(variable.index());
+    };
     for (const Module& module : program.modules) {
-        for (const ModuleExport& exported : module.exports) {
-            if (exported.variable)
-                held[exported.variable.index()] = { };
-        }
-        for (const SyntheticExport& exported : module.syntheticExports) {
-            if (exported.variable)
-                held[exported.variable.index()] = { };
-        }
-        if (module.exportsVariable)
-            held[module.exportsVariable.index()] = { };
+        for (const ModuleExport& exported : module.exports)
+            takeOffTable(exported.variable);
+        for (const SyntheticExport& exported : module.syntheticExports)
+            takeOffTable(exported.variable);
+        takeOffTable(module.exportsVariable);
     }
     return table;
 }
@@ -2895,9 +2896,9 @@ private:
     bool holdsNoCodeOfProgram(const BodyIndex&, ValueID) const;
     bool namesBuiltinThatEndsProcess(const BodyIndex&, const BodyValue&) const;
     bool codeThatNobodyNamesMayLeave();
-    bool mayLeave(FunctionID, const BodyIndex&, const BodyValue&);
-    bool mayThrowByItself(const BodyIndex&, const BodyValue&) const;
     enum class ThrowsOfOperations : bool { AreLeftOut, Count };
+    bool mayLeave(FunctionID, const BodyIndex&, const BodyValue&, ThrowsOfOperations);
+    bool mayThrowByItself(const BodyIndex&, const BodyValue&) const;
     bool bodyMayLeave(FunctionID, ThrowsOfOperations = ThrowsOfOperations::AreLeftOut);
     Vector<ModuleID> evaluationOrder() const;
     bool everyRunComesTo(const Witness&);
@@ -4244,7 +4245,7 @@ bool BuilderOfProgramFacts::codeThatNobodyNamesMayLeave()
     return *m_codeThatNobodyNamesMayLeave;
 }
 
-bool BuilderOfProgramFacts::mayLeave(FunctionID id, const BodyIndex& index, const BodyValue& value)
+bool BuilderOfProgramFacts::mayLeave(FunctionID id, const BodyIndex& index, const BodyValue& value, ThrowsOfOperations throwsOfOperations)
 {
     Opcode opcode = value.opcode();
     if (namesBuiltinThatEndsProcess(index, value))
@@ -4271,7 +4272,7 @@ bool BuilderOfProgramFacts::mayLeave(FunctionID id, const BodyIndex& index, cons
         const Module& target = m_source.at(opcode == Opcode::RequireModule ? value.as<Opcode::RequireModule>().module() : value.as<Opcode::EvaluateModule>().module());
         if (target.flags.contains(ModuleFlags::ThrowsAtLoad))
             return true;
-        return target.body && !isLibraryCode(m_source, m_source.at(target.body)) && bodyMayLeave(target.body);
+        return target.body && !isLibraryCode(m_source, m_source.at(target.body)) && bodyMayLeave(target.body, throwsOfOperations);
     }
     if (accessClassOf(opcode) == AccessClass::ByName) {
         std::optional<uint8_t> receiver = receiverOf(opcode);
@@ -4404,7 +4405,7 @@ bool BuilderOfProgramFacts::bodyMayLeave(FunctionID id, ThrowsOfOperations throw
         BodyBlock block = index->block(number);
         leaves |= block.terminator().kind() == TerminatorKind::Throw;
         for (BodyValue value : block.values())
-            leaves = leaves || mayLeave(id, *index, value) || (throwsOfOperations == ThrowsOfOperations::Count && mayThrowByItself(*index, value));
+            leaves = leaves || mayLeave(id, *index, value, throwsOfOperations) || (throwsOfOperations == ThrowsOfOperations::Count && mayThrowByItself(*index, value));
         if (leaves)
             break;
     }
@@ -4463,7 +4464,7 @@ bool BuilderOfProgramFacts::everyRunComesTo(const Witness& site)
         for (BodyValue value : block.values()) {
             if (value.id() == place)
                 break;
-            if (mayLeave(id, index, value) || mayThrowByItself(index, value))
+            if (mayLeave(id, index, value, ThrowsOfOperations::Count) || mayThrowByItself(index, value))
                 return false;
         }
         TerminatorKind kind = block.terminator().kind();

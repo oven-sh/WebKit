@@ -11,6 +11,7 @@
 #include <span>
 #include <wtf/FileSystem.h>
 #include <wtf/Noncopyable.h>
+#include <wtf/SHA1.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/WTFString.h>
 
@@ -21,22 +22,38 @@ class TemporaryFile {
 public:
     TemporaryFile(ASCIILiteral suffix, std::span<const uint8_t> contents)
         : m_pathWithoutSuffix(FileSystem::createTemporaryFile("testaot"_s, { }))
-        , m_path(makeString(m_pathWithoutSuffix, suffix))
+        , m_ownPath(makeString(m_pathWithoutSuffix, suffix))
+        , m_path(pathSharedByTests(suffix, contents))
     {
         AOT_TEST_CHECK(!m_pathWithoutSuffix.isNull());
-        AOT_TEST_CHECK(FileSystem::overwriteEntireFile(m_path, contents) == contents.size());
+        if (!m_path.isNull() && FileSystem::fileExists(m_path))
+            return;
+        AOT_TEST_CHECK(FileSystem::overwriteEntireFile(m_ownPath, contents) == contents.size());
+        if (m_path.isNull() || !(FileSystem::hardLink(m_ownPath, m_path) || FileSystem::fileExists(m_path)))
+            m_path = m_ownPath;
     }
 
     ~TemporaryFile()
     {
-        FileSystem::deleteFile(m_path);
+        FileSystem::deleteFile(m_ownPath);
         FileSystem::deleteFile(m_pathWithoutSuffix);
     }
 
     const String& path() const { return m_path; }
 
 private:
+    static String pathSharedByTests(ASCIILiteral suffix, std::span<const uint8_t> contents)
+    {
+        const char* folder = getenv("AOT_TEST_IMAGES");
+        if (!folder || suffix != ".image"_s)
+            return { };
+        SHA1 digest;
+        digest.addBytes(contents);
+        return FileSystem::pathByAppendingComponent(String::fromUTF8(folder), makeString(digest.computeHexDigest(), suffix));
+    }
+
     String m_pathWithoutSuffix;
+    String m_ownPath;
     String m_path;
 };
 

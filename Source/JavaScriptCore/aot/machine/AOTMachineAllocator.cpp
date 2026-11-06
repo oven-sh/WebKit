@@ -400,7 +400,6 @@ void Allocator::letGoOfWorkingLists()
     m_knownReadsOutsideRareRegions.letGo(m_arena);
     m_phisInSpills.letGo(m_arena);
     m_pendingMoves.letGo(m_arena);
-    m_savesHoldUntil.letGo(m_arena);
     m_valuesSavedInRareRegion.letGo(m_arena);
     m_resultsDefinedAtEndOfPredecessor.letGo(m_arena);
     m_numbersOfBlocksThatReadFrom.letGo(m_arena);
@@ -1642,19 +1641,9 @@ Location Allocator::defineResult(Operation* operation, RegisterMask allowed, Reg
 
 void Allocator::enterFramedPart()
 {
+    ASSERT(!m_order.of(m_block).isRare());
     auto everyWayHasDefined = [&](const Operation* reference) {
-        if (m_order.of(m_block).isRare())
-            return true;
-        const Block* defining = reference->owner();
-        uint32_t orderIndexOfDefining = m_order.of(defining).orderIndex;
-        const Block* block = m_block;
-        while (m_order.of(block).orderIndex > orderIndexOfDefining) {
-            const Block* dominator = immediateDominatorOf(block);
-            if (!dominator)
-                return !block->isEntry();
-            block = dominator;
-        }
-        return block == defining;
+        return dominates(reference->endsBlock() ? reference->owner()->successor(0).block() : reference->owner(), m_block);
     };
     for (ReferenceWhosePointerWaits& waiting : m_referencesWhosePointersWaitForFramedPart) {
         Operation* reference = waiting.reference;

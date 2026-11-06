@@ -75,6 +75,8 @@ struct TypeAsWritten {
     bool restsOnWrittenType { false };
     bool leavesOutWhoCalls { false };
     bool standsBehindBrokenPromise { false };
+    bool isBeingAsked { false };
+    bool restsOnCastAlone { false };
 };
 
 struct ValueAtPlace {
@@ -100,18 +102,20 @@ private:
     using Parts = Vector<ValueAtPlace, 4>;
 
     static uint64_t keyOf(ValueAtPlace asked) { return static_cast<uint64_t>(asked.place.index()) << 32 | asked.value.index(); }
-    TypeAsWritten known(ValueAtPlace asked) const { return m_known.get(keyOf(asked)); }
+    TypeAsWritten known(ValueAtPlace) const;
     TypeAsWritten asWalkHasIt(ValueID) const;
     TypeAsWritten typeWrittenOf(ValueID) const;
     TypeID typeStatedByCastsOf(ValueID) const;
-    Parts otherSidesOfRelationsInFront(ValueAtPlace) const;
-    TypeAsWritten cutByRelationsInFront(ValueAtPlace, TypeAsWritten) const;
+    void forEachRelationInFront(ValueAtPlace, const BodyIncomingEdge* comesRoundOn, const Invocable<void(const BodyEdgeResult&, BlockID)> auto&) const;
+    Parts otherSidesOfRelationsInFront(ValueAtPlace, const BodyIncomingEdge* comesRoundOn = nullptr) const;
+    TypeAsWritten cutByRelationsInFront(ValueAtPlace, TypeAsWritten, const BodyIncomingEdge* comesRoundOn = nullptr) const;
     BuiltinID builtinWrittenAsCallee(ValueID) const;
     BuiltinID builtinBoundedByArguments(BodyValue) const;
     BuiltinID methodCalledOnWrittenText(BodyValue) const;
     Parts partsOf(ValueAtPlace) const;
     Parts valuesThatMeetIn(ValueID parameter) const;
     Parts valuesThatEnterLoopAt(ValueID parameter) const;
+    Parts partsOfParameterOfHead(ValueID parameter) const;
     std::optional<BodyEdgeResult> testThatFills(ValueID parameter) const;
     TypeAsWritten typeOfParameter(BodyValue) const;
     TypeAsWritten typeWhereWaysMeet(ValueID parameter, const Parts&) const;
@@ -128,6 +132,18 @@ private:
 
 } // anonymous namespace
 
+TypeAsWritten TypesAsWritten::known(ValueAtPlace asked) const
+{
+    auto found = m_known.find(keyOf(asked));
+    if (found == m_known.end())
+        return { };
+    if (!found->value.isBeingAsked)
+        return found->value;
+    if (m_input.isParameter(asked.value) && m_input.isLoopHead(m_input.blockOf(asked.value)))
+        return typeOfParameter(m_input.value(asked.value));
+    return { };
+}
+
 TypeAsWritten TypesAsWritten::asWalkHasIt(ValueID value) const
 {
     Reference name = m_walker.referenceOf(value);
@@ -142,7 +158,7 @@ TypeAsWritten TypesAsWritten::typeWrittenOf(ValueID value) const
         return { typeOfConstant(typingForInt32Promises(m_walker), m_input.value(value)) };
     ExpectationOfValue expectation = findExpectation(m_walker, value);
     if (expectation.type && expectation.isDeclared)
-        return { expectation.type, true };
+        return { .type = expectation.type, .restsOnWrittenType = true, .restsOnCastAlone = true };
     return asWalkHasIt(value);
 }
 
@@ -178,64 +194,65 @@ TypeID TypesAsWritten::typeStatedByCastsOf(ValueID value) const
     return { };
 }
 
-TypesAsWritten::Parts TypesAsWritten::otherSidesOfRelationsInFront(ValueAtPlace asked) const
+void TypesAsWritten::forEachRelationInFront(ValueAtPlace asked, const BodyIncomingEdge* comesRoundOn, const Invocable<void(const BodyEdgeResult&, BlockID)> auto& functor) const
 {
-    Parts otherSides;
+    auto lookAtEdge = [&](BlockID block, uint32_t targetIndex) {
+        std::optional<std::array<BodyEdgeResult, 2>> bounds = boundsProvenOnEdge(m_input, m_input.terminator(block), targetIndex);
+        if (!bounds)
+            bounds = sidesOfEqualityOnEdgeForInt32Promises(m_input, m_input.terminator(block), targetIndex);
+        if (!bounds)
+            return;
+        for (const BodyEdgeResult& bound : *bounds) {
+            if (m_input.valueBehindCasts(bound.subject) == asked.value)
+                functor(bound, block);
+        }
+    };
+    if (comesRoundOn)
+        lookAtEdge(comesRoundOn->from, comesRoundOn->targetIndex);
     BlockID made = m_input.blockOf(asked.value);
     for (BlockID below = asked.place, block = m_input.immediateDominator(below); below != made && block; below = block, block = m_input.immediateDominator(below)) {
-        std::optional<BodyIncomingEdge> edge = m_input.onlyIncomingEdge(below);
-        if (!edge)
-            continue;
-        std::optional<std::array<BodyEdgeResult, 2>> bounds = boundsProvenOnEdge(m_input, m_input.terminator(block), edge->targetIndex);
-        if (!bounds)
-            bounds = sidesOfEqualityOnEdgeForInt32Promises(m_input, m_input.terminator(block), edge->targetIndex);
-        if (!bounds)
-            continue;
-        for (const BodyEdgeResult& bound : *bounds) {
-            if (m_input.valueBehindCasts(bound.subject) != asked.value)
-                continue;
-            if (ValueID otherSide = m_input.value(bound.test).operand(1 - bound.operandIndex))
-                otherSides.append({ otherSide, block });
-        }
+        if (std::optional<BodyIncomingEdge> edge = m_input.onlyIncomingEdge(below))
+            lookAtEdge(block, edge->targetIndex);
     }
+}
+
+TypesAsWritten::Parts TypesAsWritten::otherSidesOfRelationsInFront(ValueAtPlace asked, const BodyIncomingEdge* comesRoundOn) const
+{
+    Parts otherSides;
+    forEachRelationInFront(asked, comesRoundOn, [&](const BodyEdgeResult& bound, BlockID block) {
+        if (ValueID otherSide = m_input.value(bound.test).operand(1 - bound.operandIndex))
+            otherSides.append({ otherSide, block });
+    });
     return otherSides;
 }
 
-TypeAsWritten TypesAsWritten::cutByRelationsInFront(ValueAtPlace asked, TypeAsWritten written) const
+TypeAsWritten TypesAsWritten::cutByRelationsInFront(ValueAtPlace asked, TypeAsWritten written, const BodyIncomingEdge* comesRoundOn) const
 {
     if (!written.type)
         return written;
     TypingContext typing = typingForInt32Promises(m_walker);
-    BlockID made = m_input.blockOf(asked.value);
-    for (BlockID below = asked.place, block = m_input.immediateDominator(below); below != made && block; below = block, block = m_input.immediateDominator(below)) {
-        std::optional<BodyIncomingEdge> edge = m_input.onlyIncomingEdge(below);
-        if (!edge)
-            continue;
-        std::optional<std::array<BodyEdgeResult, 2>> bounds = boundsProvenOnEdge(m_input, m_input.terminator(block), edge->targetIndex);
-        if (!bounds)
-            bounds = sidesOfEqualityOnEdgeForInt32Promises(m_input, m_input.terminator(block), edge->targetIndex);
-        if (!bounds)
-            continue;
-        for (const BodyEdgeResult& bound : *bounds) {
-            if (m_input.valueBehindCasts(bound.subject) != asked.value)
-                continue;
-            BodyValue relation = m_input.value(bound.test);
-            ValueID otherSide = relation.operand(1 - bound.operandIndex);
-            TypeAsWritten judged = known({ otherSide, block });
-            TypeID other = judged.restsOnWrittenType ? judged.type : TypeID();
-            if (!other)
-                other = typeStatedByCastsOf(otherSide);
-            if (!other)
-                other = typeWrittenOf(m_input.valueBehindCasts(otherSide)).type;
-            if (!other)
-                continue;
-            TypeID cut = narrowByComparison(typing, relation.opcode(), !bound.operandIndex, written.type, other, bound.isOnTakenEdge ? EdgeSide::Taken : EdgeSide::NotTaken);
-            if (!cut || isNeverType(cut) || cut == written.type)
-                continue;
-            written.type = cut;
-            written.restsOnWrittenType = true;
+    forEachRelationInFront(asked, comesRoundOn, [&](const BodyEdgeResult& bound, BlockID block) {
+        BodyValue relation = m_input.value(bound.test);
+        ValueID otherSide = relation.operand(1 - bound.operandIndex);
+        bool hasFailed = !bound.isOnTakenEdge;
+        TypeAsWritten judged = known({ otherSide, block });
+        TypeID other = judged.restsOnWrittenType && !(hasFailed && judged.restsOnCastAlone) ? judged.type : TypeID();
+        if (!other && !hasFailed)
+            other = typeStatedByCastsOf(otherSide);
+        if (ValueID made = m_input.valueBehindCasts(otherSide); !other && made) {
+            TypeAsWritten ofOtherSide = typeWrittenOf(made);
+            bool isConstant = !m_input.isParameter(made) && primitiveConstants.contains(m_input.opcodeOf(made));
+            if ((!comesRoundOn || ofOtherSide.restsOnWrittenType || isConstant) && !(hasFailed && ofOtherSide.restsOnCastAlone))
+                other = ofOtherSide.type;
         }
-    }
+        if (!other)
+            return;
+        TypeID cut = narrowByComparison(typing, relation.opcode(), !bound.operandIndex, written.type, other, bound.isOnTakenEdge ? EdgeSide::Taken : EdgeSide::NotTaken);
+        if (!cut || isNeverType(cut) || cut == written.type)
+            return;
+        written.type = cut;
+        written.restsOnWrittenType = true;
+    });
     return written;
 }
 
@@ -302,7 +319,7 @@ TypesAsWritten::Parts TypesAsWritten::partsOf(ValueAtPlace asked) const
     if (written.isParameter()) {
         std::optional<BodyEdgeResult> filled = testThatFills(asked.value);
         if (!filled)
-            return m_input.isLoopHead(m_input.blockOf(asked.value)) ? valuesThatEnterLoopAt(asked.value) : valuesThatMeetIn(asked.value);
+            return m_input.isLoopHead(m_input.blockOf(asked.value)) ? partsOfParameterOfHead(asked.value) : valuesThatMeetIn(asked.value);
         BodyValue test = m_input.value(filled->test);
         BlockID from = m_input.onlyIncomingEdge(m_input.blockOf(asked.value))->from;
         for (uint32_t operandIndex = 0; operandIndex < numberOfNamedOperandsOf(test.opcode()); ++operandIndex) {
@@ -372,6 +389,21 @@ TypesAsWritten::Parts TypesAsWritten::valuesThatEnterLoopAt(ValueID parameter) c
     return entering;
 }
 
+TypesAsWritten::Parts TypesAsWritten::partsOfParameterOfHead(ValueID parameter) const
+{
+    Parts parts = valuesThatEnterLoopAt(parameter);
+    if (parts.isEmpty())
+        return parts;
+    BlockID head = m_input.blockOf(parameter);
+    uint32_t index = *m_input.block(head).indexOfParameter(parameter);
+    for (const BodyIncomingEdge& edge : m_walker.incomingEdgesOf(m_input, head)) {
+        std::span<const ValueID> arguments = edge.target.arguments();
+        if (edge.from >= head && index < arguments.size() && arguments[index])
+            parts.appendVector(otherSidesOfRelationsInFront({ m_input.valueBehindCasts(arguments[index]), edge.from }, &edge));
+    }
+    return parts;
+}
+
 std::optional<BodyEdgeResult> TypesAsWritten::testThatFills(ValueID parameter) const
 {
     std::optional<BodyIncomingEdge> edge = m_input.onlyIncomingEdge(m_input.blockOf(parameter));
@@ -418,6 +450,7 @@ TypeAsWritten TypesAsWritten::typeWhereWaysMeet(ValueID parameter, const Parts& 
         met.restsOnWrittenType |= typeOfPart.restsOnWrittenType;
         met.leavesOutWhoCalls |= typeOfPart.leavesOutWhoCalls;
         met.standsBehindBrokenPromise |= typeOfPart.standsBehindBrokenPromise;
+        met.restsOnCastAlone |= typeOfPart.restsOnCastAlone;
     }
     return met.restsOnWrittenType ? met : asWalkHasIt(parameter);
 }
@@ -451,25 +484,9 @@ TypeAsWritten TypesAsWritten::typeAtHeadOfLoop(BodyValue parameter, const Parts&
             continue;
         std::span<const ValueID> arguments = edge.target.arguments();
         ValueID comesRound = index < arguments.size() ? m_input.valueBehindCasts(arguments[index]) : ValueID();
-        std::optional<std::array<BodyEdgeResult, 2>> bounds = comesRound ? boundsProvenOnEdge(m_input, m_input.terminator(edge.from), edge.targetIndex) : std::nullopt;
-        if (!bounds)
+        TypeID round = comesRound ? cutByRelationsInFront({ comesRound, edge.from }, held, &edge).type : held.type;
+        if (round == held.type)
             return held;
-        TypeID round = held.type;
-        for (const BodyEdgeResult& bound : *bounds) {
-            if (m_input.valueBehindCasts(bound.subject) != comesRound)
-                continue;
-            BodyValue relation = m_input.value(bound.test);
-            ValueID otherSide = relation.operand(1 - bound.operandIndex);
-            TypeID other = typeStatedByCastsOf(otherSide);
-            if (ValueID made = m_input.valueBehindCasts(otherSide); !other && made) {
-                TypeAsWritten written = typeWrittenOf(made);
-                if (written.restsOnWrittenType || isConstant(made))
-                    other = written.type;
-            }
-            TypeID cut = other ? narrowByComparison(typing, relation.opcode(), !bound.operandIndex, round, other, bound.isOnTakenEdge ? EdgeSide::Taken : EdgeSide::NotTaken) : TypeID();
-            if (cut && !isNeverType(cut))
-                round = cut;
-        }
         met.type = met.type ? types.unionOf(met.type, round) : round;
     }
     return met.type ? met : held;
@@ -495,16 +512,27 @@ TypeAsWritten TypesAsWritten::typeBehindConvert(BodyValue convert, BlockID place
     bool statesNothing = !stated || declared.has(PositionFlags::IsInt32Promise) || declared.isExpected();
     if (!statesNothing && writtenTypeKeepsInt32Promise(m_walker, stated)) {
         TypeID both = entering.type && entering.restsOnWrittenType ? m_walker.types().intersectionOf(entering.type, stated) : TypeID();
-        return both && !isNeverType(both) ? TypeAsWritten { both, true, entering.leavesOutWhoCalls, entering.standsBehindBrokenPromise } : TypeAsWritten { stated, true };
+        if (both && !isNeverType(both)) {
+            entering.type = both;
+            return entering;
+        }
+        ValueID made = m_input.valueBehindCasts(convert.id());
+        return { .type = stated, .restsOnWrittenType = true, .restsOnCastAlone = !made || m_input.isParameter(made) || !primitiveConstants.contains(m_input.opcodeOf(made)) };
     }
+    bool isPromise = declared.has(PositionFlags::IsInt32Promise) && writtenTypeKeepsInt32Promise(m_walker, stated);
+    if (isPromise && (!entering.type || !entering.restsOnWrittenType))
+        return { stated, true };
     if (!entering.type || !entering.restsOnWrittenType)
         return asWalkHasIt(convert.id());
-    if (declared.has(PositionFlags::IsInt32Promise) && writtenTypeKeepsInt32Promise(m_walker, stated) && !numbersKeepInt32Promise(m_walker.types().at(entering.type)))
+    if (isPromise && !numbersKeepInt32Promise(m_walker.types().at(entering.type)))
         return { stated, true, entering.leavesOutWhoCalls, true };
+    if (isPromise)
+        entering.restsOnCastAlone = false;
     if (statesNothing)
         return entering;
     TypeID both = m_walker.types().intersectionOf(entering.type, stated);
-    return { isNeverType(both) ? stated : both, true, entering.leavesOutWhoCalls, entering.standsBehindBrokenPromise };
+    entering.type = isNeverType(both) ? stated : both;
+    return entering;
 }
 
 TypeAsWritten TypesAsWritten::compute(ValueAtPlace asked) const
@@ -516,7 +544,7 @@ TypeAsWritten TypesAsWritten::compute(ValueAtPlace asked) const
             return cutByRelationsInFront(asked, typeOfParameter(written));
         std::optional<BodyEdgeResult> filled = testThatFills(asked.value);
         if (!filled && m_input.isLoopHead(m_input.blockOf(asked.value)))
-            return cutByRelationsInFront(asked, typeAtHeadOfLoop(written, parts));
+            return cutByRelationsInFront(asked, typeAtHeadOfLoop(written, valuesThatEnterLoopAt(asked.value)));
         return cutByRelationsInFront(asked, filled ? typeBehindTest(asked.value, *filled, parts) : typeWhereWaysMeet(asked.value, parts));
     }
     Opcode opcode = written.opcode();
@@ -534,6 +562,7 @@ TypeAsWritten TypesAsWritten::compute(ValueAtPlace asked) const
         made.restsOnWrittenType |= typeOfPart.restsOnWrittenType;
         made.leavesOutWhoCalls |= typeOfPart.leavesOutWhoCalls;
         made.standsBehindBrokenPromise |= typeOfPart.standsBehindBrokenPromise;
+        made.restsOnCastAlone |= typeOfPart.restsOnCastAlone;
         typesOfParts.append(typeOfPart.type);
     }
     if (!made.restsOnWrittenType)
@@ -558,22 +587,25 @@ TypeAsWritten TypesAsWritten::of(ValueID root)
     Vector<ValueAtPlace, 16> pending { { root, m_place } };
     while (!pending.isEmpty()) {
         ValueAtPlace asked = pending.last();
-        if (m_known.contains(keyOf(asked))) {
+        auto entry = m_known.add(keyOf(asked), TypeAsWritten { .isBeingAsked = true });
+        if (!entry.isNewEntry && !entry.iterator->value.isBeingAsked) {
             pending.removeLast();
             continue;
         }
-        size_t numberPending = pending.size();
-        for (ValueAtPlace part : partsOf(asked)) {
-            if (!m_known.contains(keyOf(part)))
-                pending.append(part);
+        if (entry.isNewEntry) {
+            size_t numberPending = pending.size();
+            for (ValueAtPlace part : partsOf(asked)) {
+                if (!m_known.contains(keyOf(part)))
+                    pending.append(part);
+            }
+            for (ValueAtPlace otherSide : otherSidesOfRelationsInFront(asked)) {
+                if (!m_known.contains(keyOf(otherSide)))
+                    pending.append(otherSide);
+            }
+            if (pending.size() != numberPending)
+                continue;
         }
-        for (ValueAtPlace otherSide : otherSidesOfRelationsInFront(asked)) {
-            if (!m_known.contains(keyOf(otherSide)))
-                pending.append(otherSide);
-        }
-        if (pending.size() != numberPending)
-            continue;
-        m_known.add(keyOf(asked), compute(asked));
+        m_known.set(keyOf(asked), compute(asked));
         pending.removeLast();
     }
     return known({ root, m_place });

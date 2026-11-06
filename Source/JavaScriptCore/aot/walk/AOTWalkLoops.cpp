@@ -1061,7 +1061,7 @@ struct ValuesReached {
 };
 
 template<typename Functor>
-bool Walker::forEachValueThatMeetsIn(ValueID value, BlockID openHead, uint32_t firstRecord, const Functor& functor) const
+void Walker::forEachValueThatMeetsIn(ValueID value, BlockID openHead, uint32_t firstRecord, const Functor& functor) const
 {
     const Code& code = m_code;
     ValuesReached reached;
@@ -1106,15 +1106,15 @@ bool Walker::forEachValueThatMeetsIn(ValueID value, BlockID openHead, uint32_t f
     take(value, nullptr);
     for (size_t place = 0; place < joins.size(); ++place) {
         if (!takeWhatEntersJoin(joins[place], nullptr))
-            return false;
+            functor(joins[place], code.at(joins[place]).type);
     }
     std::ranges::sort(joins, { }, [](ValueID each) { return each.index(); });
     for (ValueID join : joins) {
         WhatMeetsInParameter inJoin { { }, { }, firstRecord };
-        takeWhatEntersJoin(join, &inJoin);
+        if (!takeWhatEntersJoin(join, &inJoin))
+            inJoin = { { }, code.at(join).type, firstRecord };
         m_whatMeetsInParameters.set(join.index(), inJoin);
     }
-    return true;
 }
 
 TypeID Walker::typeThatComesRoundBesideParameterItself(ValueID headParameter, Reference value) const
@@ -1122,11 +1122,11 @@ TypeID Walker::typeThatComesRoundBesideParameterItself(ValueID headParameter, Re
     if (!value || !value.isValue())
         return value ? ownTypeOf(value) : TypeID();
     TypeID beside;
-    bool isLookedThrough = forEachValueThatMeetsIn(value.id(), m_code.at(headParameter).block(), headParameter.index(), [&](ValueID source, TypeID type) {
+    forEachValueThatMeetsIn(value.id(), m_code.at(headParameter).block(), headParameter.index(), [&](ValueID source, TypeID type) {
         if (source != headParameter)
             beside = beside ? m_types.unionOf(beside, type) : type;
     });
-    return isLookedThrough ? beside : ownTypeOf(value);
+    return beside;
 }
 
 void Walker::noteHeadParametersThatEnter(TryOfLoop& tried, std::span<const Reference> entering) const
@@ -1142,7 +1142,7 @@ void Walker::noteHeadParametersThatEnter(TryOfLoop& tried, std::span<const Refer
         TypeID explained;
         TypeID beside;
         if (!headParameter && enters && enters.isValue()) {
-            bool isLookedThrough = forEachValueThatMeetsIn(enters.id(), m_frames[around->frameIndex].blocks[around->inputHead.index()].head, around->firstRecord, [&](ValueID source, TypeID type) {
+            forEachValueThatMeetsIn(enters.id(), m_frames[around->frameIndex].blocks[around->inputHead.index()].head, around->firstRecord, [&](ValueID source, TypeID type) {
                 size_t parameterAround = 0;
                 const TryOfLoop* taken = !headParameter && source && m_code.at(source).opcode == Opcode::Parameter && m_code.at(source).block() && m_code.at(m_code.at(source).block()).isLoopHead ? tryOfHeadParameter(source, parameterAround) : nullptr;
                 if (taken) {
@@ -1151,7 +1151,7 @@ void Walker::noteHeadParametersThatEnter(TryOfLoop& tried, std::span<const Refer
                 } else if (!source || source != headParameter)
                     beside = beside ? m_types.unionOf(beside, type) : type;
             });
-            if (!isLookedThrough || !headParameter || !m_types.isSubset(ownTypeOf(enters), beside ? m_types.unionOf(explained, beside) : explained))
+            if (!headParameter || !m_types.isSubset(ownTypeOf(enters), beside ? m_types.unionOf(explained, beside) : explained))
                 headParameter = { };
         }
         tried.headParametersThatEnter.append(headParameter);
@@ -1348,56 +1348,75 @@ bool Walker::noteWhatCameRoundInTry(BlockID head, size_t parameter, TypeID assum
 void Walker::noteOwnParametersThatMeetInValue(TryOfLoop& tried, size_t parameter, ValueID value, BlockID head)
 {
     constexpr OpcodeSet arithmeticWhoseKindFollowsItsOperands { Opcode::Add, Opcode::Sub, Opcode::Mul, Opcode::Increment, Opcode::Decrement };
-    if (m_code.at(value).opcode != Opcode::Parameter && !conversionsOfForm.contains(m_code.at(value).opcode) && !arithmeticWhoseKindFollowsItsOperands.contains(m_code.at(value).opcode))
-        return;
-    ValuesReached reached;
-    Vector<ValueID, 2> own;
-    ValueID began;
-    reached.add(value);
-    for (size_t next = 0; next < reached.inOrder.size(); ++next) {
-        ValueID id = reached.inOrder[next];
+    auto behindConversions = [&](ValueID id) {
         while (conversionsOfForm.contains(m_code.at(id).opcode))
             id = m_code.at(id).operand(0);
-        if (!next)
-            began = id;
+        return id;
+    };
+    auto forEachValueThatMakes = [&](ValueID id, const auto& functor) {
         const Operation& record = m_code.at(id);
-        if (arithmeticWhoseKindFollowsItsOperands.contains(record.opcode) && id.index() >= tried.firstRecord) {
+        if (id.index() < tried.firstRecord)
+            return;
+        if (arithmeticWhoseKindFollowsItsOperands.contains(record.opcode)) {
             for (uint32_t operandIndex = 0; operandIndex < numberOfNamedOperandsOf(record.opcode); ++operandIndex) {
                 if (ValueID operand = record.operand(operandIndex); operand && m_types.at(m_code.at(operand).type).hasOnlyPrimitives(Primitive::Number | Primitive::BigInt))
-                    reached.add(operand);
+                    functor(behindConversions(operand));
             }
-            continue;
+            return;
         }
         BlockID block = record.opcode == Opcode::Parameter ? record.block() : BlockID();
-        if (block == head) {
-            if (!own.contains(id))
-                own.append(id);
-            continue;
-        }
-        if (!block || id.index() < tried.firstRecord || m_code.at(block).isLoopHead || m_code.at(block).isHandlerBlock())
-            continue;
-        if (auto noted = tried.ownParametersThatMeetInRecords.find(id.index()); noted != tried.ownParametersThatMeetInRecords.end()) {
-            for (ValueID earlier : noted->value) {
-                if (!own.contains(earlier))
-                    own.append(earlier);
-            }
-            continue;
-        }
+        if (!block || block == head || m_code.at(block).isLoopHead || m_code.at(block).isHandlerBlock())
+            return;
         std::span<const ValueID> parameters = m_code.at(block).parameters();
         size_t position = std::ranges::find(parameters, id) - parameters.begin();
         for (EdgeID edge = m_code.at(block).firstEdgeIn(); edge; edge = m_code.at(edge).nextInto()) {
-            if (position >= m_code.at(edge).arguments().size())
-                continue;
-            reached.add(m_code.at(edge).arguments()[position]);
+            if (position < m_code.at(edge).arguments().size())
+                functor(behindConversions(m_code.at(edge).arguments()[position]));
         }
+    };
+    ValueID began = behindConversions(value);
+    if (m_code.at(began).opcode != Opcode::Parameter && !arithmeticWhoseKindFollowsItsOperands.contains(m_code.at(began).opcode))
+        return;
+    auto& noted = tried.ownParametersThatMeetInRecords;
+    ValuesReached reached;
+    reached.add(began);
+    size_t numberOfSteps = 0;
+    for (size_t next = 0; next < reached.inOrder.size(); ++next) {
+        if (noted.contains(reached.inOrder[next].index()))
+            continue;
+        forEachValueThatMakes(reached.inOrder[next], [&](ValueID maker) {
+            ++numberOfSteps;
+            reached.add(maker);
+        });
     }
+    std::span<const ValueID> parameters = m_code.at(head).parameters();
+    auto addIfOwn = [&](BitVector& places, ValueID id) {
+        if (m_code.at(id).opcode == Opcode::Parameter && m_code.at(id).block() == head)
+            places.set(std::ranges::lower_bound(parameters, id.index(), { }, [](ValueID each) { return each.index(); }) - parameters.begin());
+    };
     if (tried.ownParametersThatMeetInWhatCameRound.size() <= parameter)
         tried.ownParametersThatMeetInWhatCameRound.grow(parameter + 1);
-    for (ValueID found : own) {
-        if (!tried.ownParametersThatMeetInWhatCameRound[parameter].contains(found))
-            tried.ownParametersThatMeetInWhatCameRound[parameter].append(found);
+    BitVector& met = tried.ownParametersThatMeetInWhatCameRound[parameter];
+    for (ValueID id : reached.inOrder) {
+        if (auto ofRecord = noted.find(id.index()); ofRecord != noted.end())
+            met.merge(ofRecord->value);
+        else
+            addIfOwn(met, id);
     }
-    tried.ownParametersThatMeetInRecords.set(began.index(), WTF::move(own));
+    if (numberOfSteps <= ValuesReached::numberSearchedWithoutSet)
+        return;
+    std::ranges::sort(reached.inOrder, { }, [](ValueID each) { return each.index(); });
+    for (ValueID id : reached.inOrder) {
+        if (noted.contains(id.index()))
+            continue;
+        BitVector own;
+        addIfOwn(own, id);
+        forEachValueThatMakes(id, [&](ValueID maker) {
+            if (auto ofMaker = noted.find(maker.index()); ofMaker != noted.end())
+                own.merge(ofMaker->value);
+        });
+        noted.set(id.index(), WTF::move(own));
+    }
 }
 
 const Walker::TryOfLoop* Walker::tryOfHeadParameter(ValueID headParameter, size_t& parameter) const
@@ -1450,17 +1469,23 @@ void Walker::letParametersHoldWhatTheyTakeRound(AnswerOfLoop& answer, const TryO
     Vector<Vector<uint32_t, 2>, 8> takers;
     takers.grow(parameters.size());
     Vector<uint32_t, 8> waiting;
-    for (const Vector<Vector<ValueID, 2>, 8>* lists : { &tried.headParametersThatCameRound, &tried.ownParametersThatMeetInWhatCameRound }) {
-        for (uint32_t taker = 0; taker < lists->size() && taker < answer.types.size(); ++taker) {
-            for (ValueID handedOn : lists->at(taker)) {
-                uint32_t giver = std::ranges::lower_bound(parameters, handedOn.index(), { }, [](ValueID each) { return each.index(); }) - parameters.begin();
-                if (giver >= parameters.size() || parameters[giver] != handedOn || giver == taker || giver >= answer.types.size())
-                    continue;
-                if (takers[giver].isEmpty())
-                    waiting.append(giver);
-                takers[giver].append(taker);
-            }
+    auto noteTaker = [&](uint32_t giver, uint32_t taker) {
+        if (giver == taker || giver >= parameters.size() || giver >= answer.types.size())
+            return;
+        if (takers[giver].isEmpty())
+            waiting.append(giver);
+        takers[giver].append(taker);
+    };
+    for (uint32_t taker = 0; taker < tried.headParametersThatCameRound.size() && taker < answer.types.size(); ++taker) {
+        for (ValueID handedOn : tried.headParametersThatCameRound[taker]) {
+            uint32_t giver = std::ranges::lower_bound(parameters, handedOn.index(), { }, [](ValueID each) { return each.index(); }) - parameters.begin();
+            if (giver < parameters.size() && parameters[giver] == handedOn)
+                noteTaker(giver, taker);
         }
+    }
+    for (uint32_t taker = 0; taker < tried.ownParametersThatMeetInWhatCameRound.size() && taker < answer.types.size(); ++taker) {
+        for (size_t giver : tried.ownParametersThatMeetInWhatCameRound[taker])
+            noteTaker(giver, taker);
     }
     while (!waiting.isEmpty()) {
         uint32_t giver = waiting.takeLast();
@@ -1517,6 +1542,7 @@ bool Walker::tryLoop(BlockID inputHead, std::span<const Reference> entering)
     KeyOfRowOfLoop key = keyOfRowOfLoop(copyOfLoop, numberOfEntriesBefore);
     uint32_t place = m_placesOfAnswersOfLoops.add(key, static_cast<uint32_t>(m_answersOfLoops.size())).iterator->value;
     if (place == m_answersOfLoops.size()) {
+        moveWhereSanitizerWatches(m_answersOfLoops);
         m_answersOfLoops.append(AnswerOfLoop { });
         if (m_effectsSeededForNextRow) {
             m_answersOfLoops.last().effects = *m_effectsSeededForNextRow;
@@ -1579,11 +1605,17 @@ bool Walker::tryLoop(BlockID inputHead, std::span<const Reference> entering)
         auto isBoughtNoLonger = makeScopeExit([&] {
             m_loopsBeingBought.removeLast();
         });
-        for (Reference argument : enteringKept)
-            letLeave(m_state, argument);
-        Vector<FreshObjectKeptAtHead, 2> keptInFrontOfBuilds;
-        letMentionsOfLoopLeave(inputHead, m_answersOfLoops[place].mentionsThatLeave.span(), &keptInFrontOfBuilds, m_answersOfLoops[place].storesIntoScopes.areKnown);
-        handScopesKeptAtHeadToPreview(m_answersOfLoops[place].storesIntoScopes, keptInFrontOfBuilds.span(), learned);
+        auto prepareFrontOfBuilds = [&] {
+            BodyBlock head = index.block(inputHead);
+            for (uint32_t parameter = 0; parameter < head.numberOfParameters() && parameter < enteringKept.size(); ++parameter)
+                m_frames[frameIndex].references[head.parameter(parameter).index()] = enteringKept[parameter];
+            for (Reference argument : enteringKept)
+                letLeave(m_state, argument);
+            Vector<FreshObjectKeptAtHead, 2> keptInFrontOfBuilds;
+            letMentionsOfLoopLeave(inputHead, m_answersOfLoops[place].mentionsThatLeave.span(), &keptInFrontOfBuilds, m_answersOfLoops[place].storesIntoScopes.areKnown);
+            handScopesKeptAtHeadToPreview(m_answersOfLoops[place].storesIntoScopes, keptInFrontOfBuilds.span(), learned);
+        };
+        prepareFrontOfBuilds();
         bool isBuilt;
         {
             SetForScope headHandedOn(m_headOfRowHandedOn, inputHead);
@@ -1603,11 +1635,7 @@ bool Walker::tryLoop(BlockID inputHead, std::span<const Reference> entering)
             isBuilt = buildSeveralTimes(learned);
             if (isBuilt && std::exchange(m_typedBuildEndedListsTestedInFront, false)) {
                 standInFrontAgain();
-                for (Reference argument : enteringKept)
-                    letLeave(m_state, argument);
-                keptInFrontOfBuilds.shrink(0);
-                letMentionsOfLoopLeave(inputHead, m_answersOfLoops[place].mentionsThatLeave.span(), &keptInFrontOfBuilds, m_answersOfLoops[place].storesIntoScopes.areKnown);
-                handScopesKeptAtHeadToPreview(m_answersOfLoops[place].storesIntoScopes, keptInFrontOfBuilds.span(), learned);
+                prepareFrontOfBuilds();
                 m_answersOfLoops[place].listsAreStruck = true;
                 m_listsAreStruckInRow = true;
                 isBuilt = buildSeveralTimes(learned);
@@ -1777,6 +1805,7 @@ bool Walker::tryLoop(BlockID inputHead, std::span<const Reference> entering)
             placesOfAnswersBefore = m_placesOfAnswersOfLoops;
         }
         bool assumedTop = !m_answersOfLoops[place].knowsEffects && !m_answersOfLoops[place].claimsNothing;
+        moveWhereSanitizerWatches(m_triesOfLoops);
         m_triesOfLoops.append(TryOfLoop { frameIndex, inputHead, place, Effects::none(), false });
         if (frameIndex < m_operationsBeingWalkedInFrames.size())
             m_operationsBeingWalkedInFrames[frameIndex] = { };

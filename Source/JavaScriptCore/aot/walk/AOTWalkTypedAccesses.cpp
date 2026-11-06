@@ -191,13 +191,25 @@ static bool findsMemberWithoutCodeForTypedAccess(const Program& program, const L
     return isLookedUpAsNameForTypedAccess(program, key) && !link.lookupUnderKeyMayRunPreparation(program, key);
 }
 
+static bool objectsMayHoldNameBesideFieldsForTypedAccess(const LinkTables& link, LayoutID layout, PropertyKeyID key)
+{
+    if (layout.index() >= link.layouts.size() || link.layout(layout).isFilledUnderComputedKeys)
+        return true;
+    if (!link.layout(layout).possibleChanges.contains(LayoutChange::GainsProperty))
+        return false;
+    return std::ranges::contains(link.namesStoredBesideFieldsOf(layout), key, &LinkedNameBesideFields::key);
+}
+
 MemberFound findMemberAboveObjectsOf(const Program& program, const LinkTables& link, LayoutID layout, PropertyKeyID key)
 {
     if (!findsMemberWithoutCodeForTypedAccess(program, link, key) || !isFoundByShapeTest(program.at(layout)) || findField(program, layout, key))
         return { };
     if (possibleChangesForbid(possibleChangesForTypedAccess(link, layout), TypedAccess::FindsMethodAbove))
         return { };
-    return link.findMember(program, layout, ClassSide::Prototype, key);
+    MemberFound found = link.findMember(program, layout, ClassSide::Prototype, key);
+    if (found.kind == MemberFound::Kind::Accessor && objectsMayHoldNameBesideFieldsForTypedAccess(link, layout, key))
+        return { };
+    return found;
 }
 
 LayoutID classOfClassObject(const Program& program, FunctionID function)
@@ -1462,7 +1474,7 @@ static std::optional<OptionSet<FactOfCell>> askAheadAboutReadOfSlotThatMayBeEmpt
     });
 }
 
-static bool statementsLayNameAboveObjectsOfForTypedAccess(const Walker& walker, LayoutID member, PropertyKeyID key)
+static bool statementsLayNameAboveObjectsOfForTypedAccess(const Walker& walker, LayoutID member, PropertyKeyID key, bool guardOfNameAnswersForUnknownKeys = false)
 {
     const Program& program = walker.program();
     if (program.at(member).kind != LayoutKind::Instance)
@@ -1473,7 +1485,7 @@ static bool statementsLayNameAboveObjectsOfForTypedAccess(const Walker& walker, 
         if (!numberOfClassesLeft--)
             return true;
         for (const LinkedNameOnPrototype& name : std::ranges::equal_range(namesOnPrototypes, current, { }, &LinkedNameOnPrototype::layout)) {
-            if (!name.key || name.key == key)
+            if (name.key ? name.key == key : !guardOfNameAnswersForUnknownKeys)
                 return true;
         }
         LayoutID parent;
@@ -1494,7 +1506,7 @@ static bool findsNothingBehindLooksInTypedRead(const Walker& walker, const Recei
     const SlotPlan& slots = walker.plan().slots();
     auto askEachMember = [&] {
         return std::ranges::none_of(receivers.members, [&](LayoutID member) {
-            return slots.findField(program, member, key) || statementsLayNameAboveObjectsOfForTypedAccess(walker, member, key);
+            return slots.findField(program, member, key) || statementsLayNameAboveObjectsOfForTypedAccess(walker, member, key, receivers.possibleChanges.contains(LayoutChange::ChangesPrototype));
         });
     };
     bool noMemberHasNameOrFindsItLaidAbove;
@@ -2838,6 +2850,51 @@ Reference buildReadThatTestsShapeAndSlot(Walker& walker, const BodyValue& read, 
         return { };
     walker.letLeave(object);
     return walker.build(WTF::move(draft));
+}
+
+bool askCellAndGuardsWhetherNoMemberIsFound(Walker& walker, const BodyValue& question)
+{
+    if (!walker.has(Mechanism::TypedOperations))
+        return false;
+    Reference object = walker.referenceOf(question.objectOperand());
+    TypeID proven = object && object.isValue() ? walker.typeOf(object) : TypeID();
+    if (!proven || !walker.types().at(proven).isObject() || !walker.types().at(proven).hasOnlyLayouts())
+        return false;
+    std::optional<ReceiversOfTypedAccess> receivers = findReceiversOfTypedAccess(walker, proven);
+    if (!receivers)
+        return false;
+    PropertyKeyID key = question.key();
+    FieldOfTypedAccess field = describeFieldOfTypedAccess(walker, *receivers, key, { });
+    std::optional<OptionSet<FactOfCell>> asked = askAheadAboutReadThatFindsNothing(walker, *receivers, field, key);
+    if (!asked || !asked->containsOnly({ FactOfCell::NoExtraProperties, FactOfCell::NoFieldOutsideSlot, FactOfCell::HasLayoutPrototype }))
+        return false;
+    Vector<MemberConditionRecord, 8> conditions;
+    if (receivers->possibleChanges.contains(LayoutChange::ChangesPrototype)) {
+        for (LayoutID member : receivers->members) {
+            LayoutID classLayout;
+            if (whoAnswersForWhatStandsAboveObjectsOf(walker, member, key, LookupAbove::OfRead, classLayout) != WhoAnswersForWhatStandsAbove::GuardOfClass || walker.state().guardOfReadsHolds(classLayout, key))
+                continue;
+            MemberConditionRecord condition { MemberConditionKind::MemberUnchanged, classLayout, ClassSide::Prototype, key };
+            if (!conditions.contains(condition))
+                conditions.append(condition);
+        }
+    }
+    OptionSet<FactOfCell> left = *asked - walker.state().factsOfCell(object);
+    Draft stamped(Opcode::FindsNoMember, walker.originOf(question));
+    walker.chooseConservativeFields(stamped);
+    stamped.setObjectOperand(object);
+    stamped.setKey(key);
+    stamped.setReceivers(receivers->set);
+    stamped.setConditions(conditions.span());
+    stamped.setAsksForNoExtraProperties(left.contains(FactOfCell::NoExtraProperties));
+    stamped.setAsksForNoFieldOutsideSlot(left.contains(FactOfCell::NoFieldOutsideSlot));
+    stamped.setAsksForLayoutPrototype(left.contains(FactOfCell::HasLayoutPrototype));
+    Reference built = walker.build(WTF::move(stamped));
+    walker.bind(question.id(), built);
+    if (built && built.isValue())
+        noteKnown(walker, KnownNote::AnswerOfQuestionStillStands, Reference::value(walker.code().at(built.id()).objectOperand()), built, 0, LocationMasks(AbstractHeapSet { AbstractHeap::ShapeWords, AbstractHeap::OrderWords, AbstractHeap::NamedProperties, AbstractHeap::PrototypeLinks, AbstractHeap::MemberGuards }), 1, true);
+    walker.noteGuessOpened();
+    return true;
 }
 
 Reference buildReadThatTestsShapeAndCell(Walker& walker, const BodyValue& read, Reference object, TypeID guessed)

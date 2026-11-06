@@ -424,6 +424,8 @@ bool Walker::takeGeneratorForConsumer(const BodyValue& call)
         auto isInRegion = [&](BlockID block) {
             return std::ranges::binary_search(taken.region, block.index(), { }, [](BlockID each) { return each.index(); });
         };
+        if (m_makerOfListsBehindEntry && m_frames[frameIndex].isOfUnit && isInRegion(m_whereListsAreMadeBehindEntry))
+            return false;
         auto noteName = [&](ValueID named, auto...) {
             if (named && !isInRegion(index.blockOf(named)))
                 taken.valuesThatRegionNamesFromOutside.append(named);

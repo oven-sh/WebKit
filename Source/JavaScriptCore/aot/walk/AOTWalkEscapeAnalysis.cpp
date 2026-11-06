@@ -844,8 +844,11 @@ void markEscapingOperands(Walker& walker, const Draft& draft, const Effects* fou
         state.markEscaped(operand.object);
         lent.append(operand.object);
     }
-    if (someObjectHasLeft || !lent.isEmpty())
+    if (someObjectHasLeft || !lent.isEmpty()) {
+        if (effects.writes.contains(AbstractHeap::MemberGuards) && !effects.mayRunOtherCode() && writerEndsNoGuard(walker, draft))
+            effects.writes.remove(AbstractHeapSet { AbstractHeap::MemberGuards });
         state.invalidate(effects);
+    }
     for (Reference object : lent)
         state.noteFresh(object);
 }

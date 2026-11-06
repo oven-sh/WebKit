@@ -1021,7 +1021,8 @@ void StateOfLinkReach::fillFields()
 {
     for (uint32_t index = 0; index < m_numberOfLayouts; ++index) {
         const Layout& layout = m_program.layouts[index];
-        for (uint32_t field = 0; field < layout.fields.size(); ++field)
+        uint32_t numberOfFields = baseWhoseFieldListIsCopiedWhole(m_program, LayoutID(index)) ? layout.ownFieldCount : static_cast<uint32_t>(layout.fields.size());
+        for (uint32_t field = 0; field < numberOfFields; ++field)
             arriveWhatNoNodeBrings(m_flow.field({ LayoutID(index), field }), layout.fields[field].declared);
     }
 }

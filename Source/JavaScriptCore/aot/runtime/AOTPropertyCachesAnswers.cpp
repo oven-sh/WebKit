@@ -383,10 +383,14 @@ PropertyAnswer classifyNamespaceRead(const ReadQuery& query)
     }
     if (moduleExport.kind() != ModuleExportKind::Variable || state.modules->mockThatAnswersFor(moduleNamespace->module(), moduleExport))
         return PropertyAnswer::uncacheable(SlotAccess::Read);
-    if (traitsOf(moduleExport.variable.representation()).valueKind == SlotValueKind::DeferredClosure)
-        return PropertyAnswer::uncacheable(SlotAccess::Read);
-    if (!ProgramStatics::readVariableWithoutAllocating(state.instance, moduleExport.variable))
+    JSValue held = ProgramStatics::readVariableWithoutAllocating(state.instance, moduleExport.variable);
+    if (!held)
         return uncacheableOnce(SlotAccess::Read);
+    if (traitsOf(moduleExport.variable.representation()).valueKind == SlotValueKind::DeferredClosure) {
+        if (state.modules->status(moduleNamespace->module()) == ModuleStatus::Linked)
+            return uncacheableOnce(SlotAccess::Read);
+        return { .kind = PropertyAnswerKind::Constant, .isOwn = true, .constant = held };
+    }
     return { .kind = PropertyAnswerKind::Variable, .isOwn = true, .variable = moduleExport.variable };
 }
 

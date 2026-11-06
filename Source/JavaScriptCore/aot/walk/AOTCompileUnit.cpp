@@ -23,6 +23,7 @@
 #include "AOTStatistics.h"
 #include "AOTTypeArena.h"
 #include "AOTTypeIDs.h"
+#include "AOTTypeText.h"
 #include "AOTBodyIndex.h"
 #include "AOTEffectsOfOperations.h"
 #include "AOTFacts.h"
@@ -273,6 +274,176 @@ static String findOperationThatLinkHasNotCounted(const WalkInputs& inputs, TypeA
     return { };
 }
 
+namespace {
+
+class JudgeOfCalls {
+public:
+    JudgeOfCalls(const WalkInputs& inputs, TypeArena& types, const Code& code, std::span<const Walker::ArrivalHeld> held)
+        : m_inputs(inputs)
+        , m_types(types)
+        , m_code(code)
+        , m_held(held)
+    {
+    }
+
+    String run()
+    {
+        for (uint32_t index = 0; index < m_code.numberOfValues(); ++index) {
+            const Operation& call = m_code.at(ValueID(index));
+            if (call.opcode != Opcode::CallDirect || !call.block() || call.numberOfBoundArguments())
+                continue;
+            bool entersUnitThatBelievesCallers = call.role() == CodeRole::Body || call.role() == CodeRole::ParameterGuard || call.role() == CodeRole::CoroutineBody;
+            if (!entersUnitThatBelievesCallers || !m_inputs.arrivals.takesWhatWasLeft(call.function()))
+                continue;
+            if (String refusal = judge(ValueID(index), call); !refusal.isNull())
+                return refusal;
+        }
+        return { };
+    }
+
+private:
+    TypeID leftByThisUnitAt(FunctionID callee, uint32_t place, bool isPositional) const
+    {
+        TypeID left;
+        for (const Walker::ArrivalHeld& held : m_held) {
+            if (held.callee != callee)
+                continue;
+            TypeID here;
+            switch (held.kind) {
+            case Walker::ArrivalHeld::Kind::Anything:
+                return TypeTable::anything;
+            case Walker::ArrivalHeld::Kind::Proven:
+                if (held.entryParameter == place)
+                    here = held.proven;
+                break;
+            case Walker::ArrivalHeld::Kind::UndefinedFrom:
+                if (held.entryParameter <= place)
+                    here = isPositional ? TypeID(TypeTable::undefined) : TypeID(TypeTable::anything);
+                break;
+            }
+            if (here)
+                left = left ? m_types.unionOf(left, here) : here;
+        }
+        return left;
+    }
+
+    TypeID typeThatChecksInItsBlockAskOf(ValueID value, ValueID call) const
+    {
+        BlockID block = m_code.at(value).block();
+        TypeID asked = m_code.at(value).type;
+        for (ValueID id = m_code.at(call).block() == block ? m_code.at(call).previous : m_code.lastOperationOf(block); id && id != value; id = m_code.at(id).previous) {
+            const Operation& check = m_code.at(id);
+            if (check.opcode != Opcode::CheckProof)
+                continue;
+            ValueID checked = check.valueOperand();
+            while (checked != value && !m_code.isConstant(checked) && conversionsOfForm.contains(m_code.at(checked).opcode))
+                checked = m_code.at(checked).operand(0);
+            if (checked == value)
+                asked = m_types.intersectionOf(asked, check.checkedType());
+        }
+        return asked;
+    }
+
+    bool liesWithin(ValueID value, TypeID bound, ValueID call)
+    {
+        const Operation& record = m_code.at(value);
+        if (!record.type)
+            return false;
+        if (m_types.isSubset(record.type, bound))
+            return true;
+        if (m_code.isConstant(value) || !m_types.at(record.type).isJavaScriptValue())
+            return false;
+        if (m_types.isSubset(typeThatChecksInItsBlockAskOf(value, call), bound))
+            return true;
+        if (conversionsOfForm.contains(record.opcode))
+            return liesWithin(record.operand(0), bound, call);
+        if (record.opcode != Opcode::Parameter || m_code.at(record.block()).isEntry || m_code.at(record.block()).isHandlerBlock())
+            return false;
+        if (!m_parametersBeingAsked.add(value.index()).isNewEntry)
+            return true;
+        std::span<const ValueID> parameters = m_code.at(record.block()).parameters();
+        size_t place = std::ranges::find(parameters, value) - parameters.begin();
+        bool everyArrivalLiesWithin = true;
+        bool hasArrival = false;
+        m_code.forEachEdgeInto(record.block(), [&](const Edge& edge) {
+            hasArrival = true;
+            everyArrivalLiesWithin = everyArrivalLiesWithin && place < edge.arguments().size() && edge.arguments()[place] && liesWithin(edge.arguments()[place], bound, call);
+        });
+        return hasArrival && everyArrivalLiesWithin;
+    }
+
+    String judge(ValueID id, const Operation& call)
+    {
+        FunctionID callee = call.function();
+        const Function& function = m_inputs.program.at(callee);
+        bool isUnitOfCallee = callee == m_code.function();
+        std::span<const ValueID> handedOver = call.variadicOperands();
+        uint32_t firstPositional = function.firstParameterIndex();
+        uint32_t endOfPositional = firstPositional + function.numberOfPositionalParameters();
+        for (uint32_t place = 0; place < function.numberOfEntryParameters(); ++place) {
+            bool isPositional = place >= firstPositional && place < endOfPositional;
+            TypeID left = isUnitOfCallee ? m_inputs.arrivals.leftAt(m_types, callee, place) : leftByThisUnitAt(callee, place, isPositional);
+            if (left == TypeTable::anything || (isUnitOfCallee && !left))
+                continue;
+            ValueID operand = place < handedOver.size() ? handedOver[place] : ValueID();
+            if (!left)
+                return sentence(id, callee, place, operand, "and its unit has left nothing there"_s, { });
+            if (operand && m_code.at(operand).type == left)
+                continue;
+            if (isUnitOfCallee && operand && m_code.at(operand).opcode == Opcode::Parameter) {
+                const Block& entry = m_code.at(m_code.at(operand).block());
+                if (entry.isEntry && place < entry.parameters().size() && entry.parameters()[place] == operand)
+                    continue;
+            }
+            TypeID believed = m_inputs.facts.typeBelievedOfEntryParameter(m_types, callee, place, left);
+            if (!m_types.at(believed).isJavaScriptValue())
+                continue;
+            if (TypeID tested = call.role() == CodeRole::Body ? m_inputs.plan.conventions().typeBehindGuard(callee, place) : TypeID()) {
+                TypeID passed = m_types.intersectionOf(believed, tested);
+                believed = isNeverType(passed) ? tested : passed;
+            }
+            if (isUnitOfCallee)
+                believed = m_types.testablePartOf(believed);
+            if (!operand) {
+                if (place >= handedOver.size() && isPositional && m_types.isSubset(TypeTable::undefined, believed))
+                    continue;
+                return sentence(id, callee, place, operand, "by what was left there the callee believes"_s, believed);
+            }
+            m_parametersBeingAsked.clear();
+            if (!liesWithin(operand, believed, id))
+                return sentence(id, callee, place, operand, "by what was left there the callee believes"_s, believed);
+        }
+        return { };
+    }
+
+    String sentence(ValueID call, FunctionID callee, uint32_t place, ValueID operand, ASCIILiteral what, TypeID believed) const
+    {
+        StringPrintStream out;
+        out.print("f"_s, m_code.function().index(), " "_s, nameOf(m_code.role()), " v"_s, call.index(), " (CallDirect) hands "_s);
+        if (operand)
+            out.print(TypeInText { m_types, m_code.at(operand).type });
+        else
+            out.print("nothing"_s);
+        out.print(" to entry parameter "_s, place, " of f"_s, callee.index(), ", which goes by what its callers leave, "_s, what);
+        if (believed)
+            out.print(" "_s, TypeInText { m_types, believed });
+        return out.toString();
+    }
+
+    const WalkInputs& m_inputs;
+    TypeArena& m_types;
+    const Code& m_code;
+    std::span<const Walker::ArrivalHeld> m_held;
+    HashSet<uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_parametersBeingAsked;
+};
+
+} // anonymous namespace
+
+String findCallThatHandsOverWhatItsUnitHasNotLeft(const WalkInputs& inputs, TypeArena& types, const Code& code, std::span<const Walker::ArrivalHeld> arrivalsHeld)
+{
+    return JudgeOfCalls(inputs, types, code, arrivalsHeld).run();
+}
+
 static String findStoreOfWhatCallerMayLend(const WalkInputs& inputs, const Code& code)
 {
     CodeUnit unit = code.unit();
@@ -297,7 +468,7 @@ static String findStoreOfWhatCallerMayLend(const WalkInputs& inputs, const Code&
     return { };
 }
 
-static bool verifyCodeOfCompileUnit(const WalkInputs& inputs, BuildContext& build, TypeArena& types, const PositionTypes& positions, const Code& code)
+static bool verifyCodeOfCompileUnit(const WalkInputs& inputs, BuildContext& build, TypeArena& types, const PositionTypes& positions, const Code& code, std::span<const Walker::ArrivalHeld> arrivalsHeld)
 {
     InternalErrorKind kindOfBrokenRule { InternalErrorKind::OpcodeNotInForm };
     String brokenRule = verifyCode(CodeTextContext { inputs.program, types, &inputs.plan, &inputs.facts }, code, &kindOfBrokenRule);
@@ -305,6 +476,8 @@ static bool verifyCodeOfCompileUnit(const WalkInputs& inputs, BuildContext& buil
         kindOfBrokenRule = InternalErrorKind::TypeOutOfDate;
         brokenRule = verifyTypesOfCode(TypingContext { inputs.program, types, positions }, inputs.plan.conventions(), inputs.arrivals, code);
     }
+    if (brokenRule.isNull())
+        brokenRule = findCallThatHandsOverWhatItsUnitHasNotLeft(inputs, types, code, arrivalsHeld);
     if (brokenRule.isNull()) {
         kindOfBrokenRule = InternalErrorKind::EffectsNotCounted;
         brokenRule = findOperationThatLinkHasNotCounted(inputs, types, code);
@@ -400,7 +573,7 @@ bool CompileWorker::walkAndSweep(CodeUnit unit)
 
     if (inputs.options.verifiesCode) {
         work.setStep("verify"_s);
-        if (!verifyCodeOfCompileUnit(inputs, m_build, m_types, m_walker->positions(), code)) {
+        if (!verifyCodeOfCompileUnit(inputs, m_build, m_types, m_walker->positions(), code, m_walker->arrivalsHeld())) {
             m_build.diagnostics().append(m_walker->takeReports());
             return false;
         }
@@ -723,6 +896,7 @@ std::optional<CompiledCode> CompileWorker::compile(CodeUnit unit)
         return std::nullopt;
     std::optional<uint64_t> instructionsAfterSweep = instructionsOfCompileThreadSoFar(m_build);
 
+    RELEASE_ASSERT(m_walker->arrivalsHeld().empty());
     work.setStep("emit"_s);
     const Code& swept = m_walker->code();
     CompiledCode code = generateCode(CodeGenerationWorker { m_build, m_types, *m_arena }, m_inputs.generation, swept, m_totals);

@@ -582,7 +582,7 @@ void AccessInLinkAccesses::resolve()
     if (m_receiver != m_subject && !isAboveHomeObjectOfClassForLinkAccesses(subject))
         m_flow.addEdge(m_receiver, m_flow.unseen());
     if (!isRead()) {
-        LinkFlow::WhatIsStored stored = m_access.subjectIsMadeInBody || m_access.holdsNewValueOfNativeCode || storesTextNumberOrBooleanThatIsWritten() ? LinkFlow::WhatIsStored::TextsNumbersAndBooleans : LinkFlow::WhatIsStored::Anything;
+        LinkFlow::WhatIsStored stored = m_access.subjectIsMadeInBody || m_access.holdsNewValueOfNativeCode || m_access.laysTextNumberOrBooleanThatIsWritten || storesTextNumberOrBooleanThatIsWritten() ? LinkFlow::WhatIsStored::TextsNumbersAndBooleans : LinkFlow::WhatIsStored::Anything;
         if (isNamed() || !m_keyIsOnlyNumbers) {
             m_flow.noteWriteOn(subject, m_access.key, m_function, stored);
             if (!m_shared)
@@ -1230,6 +1230,9 @@ void AccessInLinkAccesses::resolveOnClosure(FunctionID function)
     tellAgainOnceClimbs(m_flow.foundOnClosuresOf(function));
     if (m_flow.escapedFunctions.get(function.index()))
         cannotTell(UnknownIs::ByEscapeAlone);
+    bool isResolvedOnClassObject = isNamed() && m_nameClass != NameClass::Prototype && m_nameClass != NameClass::Proto && classLayout && !m_flow.isOfConstructorFunction(classLayout);
+    if (!isResolvedOnClassObject)
+        layOnReceiverUnlessAccessorAnswers(LinkFlow::FoundMembers());
     if (!isNamed()) {
         bool findsNoMember = isRead() && (!classLayout || m_flow.isOfConstructorFunction(classLayout)) && namesNothingOnPlainClosures();
         if (!findsNoMember)

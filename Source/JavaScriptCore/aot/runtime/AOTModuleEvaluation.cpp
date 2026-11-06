@@ -899,31 +899,14 @@ bool Modules::importsFileThatRunsAhead(ModuleID root) const
     forEachFileEvaluatedByLoader([&](ModuleID file) {
         running.append(file);
     });
-    return importsOneOf(root, running.span());
-}
-
-bool Modules::loadFurtherOutWaitsForFileBeside(ModuleID module)
-{
-    ModuleID rootFurtherOut = m_rootsOfSynchronousLoads.first();
-    if (rootFurtherOut == module || !hasNotBegun(rootFurtherOut) || !leadsTo(rootFurtherOut, module))
-        return false;
-    std::optional<ModuleID> running = m_innermostFilesBeingRun ? fileOrFaceEvaluatedIn(*m_innermostFilesBeingRun) : std::nullopt;
-    if (!running)
-        return false;
-    ModuleID file = fileOf(*running);
-    return !importsOneOf(module, singleElementSpan(file));
-}
-
-bool Modules::importsOneOf(ModuleID root, std::span<const ModuleID> files) const
-{
-    if (files.empty())
+    if (running.isEmpty())
         return false;
     BitVector seen(m_table.size());
     seen.quickSet(root.index());
     Vector<uint32_t, 32> found { root.index() };
     for (size_t index = 0; index < found.size(); ++index) {
         ModuleID module(found[index]);
-        if (std::ranges::contains(files, fileOf(module)))
+        if (running.contains(fileOf(module)))
             return true;
         if (!data(module).isESModuleOfProgram())
             continue;
@@ -1900,7 +1883,7 @@ void Modules::noteLoadOfEachModuleWith(ModuleID root)
             if (!data(imported).isESModuleOfProgram())
                 continue;
             if (mockInPlace(imported))
-                ensureLoaded(imported).wasImportedUnderMockInPlace = true;
+                noteImportUnderMockInPlace(imported);
             if (!m_modulesLoadedBesideGroups.quickSet(imported.index()))
                 found.append(imported.index());
         }
@@ -2893,10 +2876,6 @@ void Modules::evaluateSynchronously(ModuleID module, SynchronousEvaluationReason
     if (runsStepsOfLoader)
         queue.emplace(*m_instance.vm);
     SetForScope activeSynchronousLoad(m_activeSynchronousLoad, ++m_synchronousLoadCount);
-    m_rootsOfSynchronousLoads.append(module);
-    auto didEndLoad = makeScopeExit([&] {
-        m_rootsOfSynchronousLoads.removeLast();
-    });
     auto leaveLoad = [&] {
         if (!queue)
             return;
@@ -2973,22 +2952,7 @@ void Modules::evaluateSynchronously(ModuleID module, SynchronousEvaluationReason
     promise->markAsHandled();
     if (promise->status() == JSPromise::Status::Rejected)
         throwException(realm, scope, promise->result());
-    else if (moduleData.isSynchronous() && hasNotBegun(module) && m_rootsOfSynchronousLoads.size() == 2 && !loadFurtherOutWaitsForFileBeside(module)) {
-        for (ModuleID waiting : Vector<ModuleID, 2> { m_rootsOfSynchronousLoads }) {
-            if (!hasNotBegun(waiting) || !data(waiting).isSynchronous() || !leadsTo(waiting, module))
-                continue;
-            link(waiting);
-            if (!scope.exception())
-                evaluateWithOwnStack(waiting);
-            if (Exception* exception = scope.exception()) [[unlikely]] {
-                if (waiting == module || m_instance.vm->isTerminationException(exception))
-                    return;
-                TRY_CLEAR_EXCEPTION(scope, void());
-            }
-        }
-        if (status(module) == ModuleStatus::Failed)
-            throwAsyncModuleError();
-    } else if (status(module) == ModuleStatus::Failed)
+    else if (status(module) == ModuleStatus::Failed)
         RELEASE_AND_RETURN(scope, throwEvaluationError(module));
     else if (moduleData.hasTopLevelAwait() || (status(module) != ModuleStatus::Evaluating && status(module) != ModuleStatus::Evaluated))
         throwAsyncModuleError();

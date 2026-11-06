@@ -35,7 +35,7 @@ static bool isBoxOrDoubleThatMayBeInt32InCountersOfLoops(const Walker& walker, R
     if (!mayBeInt32InCountersOfLoops(walker, value))
         return false;
     Representation held = walker.representationOf(value);
-    return held == Representation::JSValue || (held == Representation::Double && walker.types().at(walker.typeOf(value)).isNumber());
+    return held == Representation::JSValue || held == Representation::OptionalDouble || (held == Representation::Double && walker.types().at(walker.typeOf(value)).isNumber());
 }
 
 static bool isWholeNumberAsWrittenInCountersOfLoops(const BodyIndex& index, ValueID value)

@@ -277,6 +277,7 @@ AOT_LINK_OF_WALK(callMethodsBehindTestsOfShape, opcodesThatCallMethodsBehindTest
 bool askGuardsAboutDeclaredMember(Walker&, const BodyValue&);
 bool askCellWhetherItIsPlainInstance(Walker&, const BodyValue&);
 bool findConditionsOfOrdinaryInstanceOf(const Walker&, TypeID typeOfConstructor, Vector<MemberConditionRecord, 16>& conditions);
+bool askCellAndGuardsWhetherNoMemberIsFound(Walker&, const BodyValue&);
 LayoutSetID receiversWhoseCellsAnswerForOwnProperty(Walker&, ValueID input, PropertyKeyID);
 bool cellAnswersForOwnProperty(Walker&, TypeID typeOfObject, PropertyKeyID);
 TypeID objectsAboveWhichRecordsDeclareMember(Walker&, TypeID typeOfObjects, PropertyKeyID, LayoutID declaredAtOrAbove = { });
@@ -425,8 +426,11 @@ template<typename T, size_t inlineCapacity>
 ALWAYS_INLINE void moveWhereSanitizerWatches(Vector<T, inlineCapacity>& list)
 {
 #if ASSERT_ENABLED || ASAN_ENABLED
+    constexpr size_t longestListThatMoves = 64;
+    if (list.size() > longestListThatMoves || list.size() == list.capacity())
+        return;
     Vector<T, inlineCapacity> moved;
-    moved.reserveInitialCapacity(list.size() + inlineCapacity + 1);
+    moved.reserveInitialCapacity(std::max<size_t>(list.capacity(), inlineCapacity + 1));
     for (T& held : list)
         moved.append(WTF::move(held));
     list = WTF::move(moved);
@@ -1062,7 +1066,7 @@ public:
     bool walkInline(const BodyValue& call, FunctionID callee, std::span<const Reference> arguments, const Draft* writtenOut = nullptr, const BitVector* blocksOfHead = nullptr);
     using MakerOfListBehindEntry = ScopedLambda<Reference(unsigned entryParameter)>;
     bool walkBodyBehindEntry(std::span<const Reference> entryArguments, BlockID whereListsAreMade, const MakerOfListBehindEntry&);
-    bool walksBodyBehindEntry() const { return m_makerOfListsBehindEntry && m_frames.size() == 1; }
+    bool walksBodyBehindEntry() const { return m_makerOfListsBehindEntry && m_frames.last().isOfUnit; }
     Reference argumentOfEntry(uint32_t position, Origin);
     Reference makeHiddenListOfEntryAgain();
     void endLivesAtThrow(std::span<const Reference> thrown);
@@ -1558,11 +1562,13 @@ private:
         }
         void append(Frame&& frame)
         {
+            moveWhereSanitizerWatches(m_frames);
             m_frames.append(WTF::move(frame));
             findLast();
         }
         Frame& appendNew() LIFETIME_BOUND
         {
+            moveWhereSanitizerWatches(m_frames);
             m_frames.constructAndAppend();
             findLast();
             return *m_last;
@@ -1754,8 +1760,8 @@ private:
         bool startIsNarrowerThanRowHeld { false };
         Vector<TypeID, 8> madeInTurns;
         Vector<Vector<ValueID, 2>, 8> headParametersThatCameRound;
-        Vector<Vector<ValueID, 2>, 8> ownParametersThatMeetInWhatCameRound;
-        HashMap<uint32_t, Vector<ValueID, 2>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> ownParametersThatMeetInRecords;
+        Vector<BitVector, 8> ownParametersThatMeetInWhatCameRound;
+        HashMap<uint32_t, BitVector, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> ownParametersThatMeetInRecords;
         bool somethingIsWantedInside { false };
         struct NarrowingThatWaits {
             uint32_t firstRecordOfNest { 0 };
@@ -1921,7 +1927,7 @@ private:
         uint32_t firstRecord { 0 };
     };
     mutable HashMap<uint32_t, WhatMeetsInParameter, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_whatMeetsInParameters;
-    template<typename Functor> bool forEachValueThatMeetsIn(ValueID, BlockID openHead, uint32_t firstRecord, const Functor&) const;
+    template<typename Functor> void forEachValueThatMeetsIn(ValueID, BlockID openHead, uint32_t firstRecord, const Functor&) const;
     void noteSourcesOfHeadParameters(size_t frameIndex, BlockID inputHead, uint32_t answer, const TryOfLoop&, std::span<const Reference> entering);
     Vector<uint32_t>& m_headParametersWithSources;
     using TypesByRecord = HashMap<uint32_t, TypeID, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>;
@@ -2902,6 +2908,8 @@ Reference buildProofInFrontOfLoop(Walker&, const GuessInFrontOfLoop&, Reference 
 Vector<TypeID, 8> typesBehindParameterGuard(Walker&, FunctionID);
 
 bool walkEntryUnit(Walker&, CodeUnit);
+
+String findCallThatHandsOverWhatItsUnitHasNotLeft(const WalkInputs&, TypeArena&, const Code&, std::span<const Walker::ArrivalHeld>);
 
 } } } // namespace JSC::AOT::Typed
 

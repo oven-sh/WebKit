@@ -915,7 +915,7 @@ TypeID Facts::typeBelievedOfEntryParameter(TypeArena& types, FunctionID id, unsi
     if (isNeverType(both))
         return !declared || !declared->isEstablished() ? types.withSeeds(type, UnknownSeed::ParameterOfEscapedFunction) : type;
 
-    TypeID asked = both;
+    TypeID asked = types.withoutBoundsOfFractions(both);
     TypeID testable = types.testablePartOf(both);
     if ((types.at(testable).anyObject && !types.at(both).anyObject) || (types.at(testable).anyFunction && !types.at(both).anyFunction))
         asked = testable;

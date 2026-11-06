@@ -2053,7 +2053,13 @@ static void runFrameTestOfNarrowReferenceAheadOfGuard(bool passesRareSafepoint)
 
 static void testMachineFrameKeepsPointerAtHeadOfFramedPart() { runFrameTestOfNarrowReferenceAheadOfGuard(false); }
 
-static void runFrameTestOfReferenceThatSomeWayHasNotDefined(bool wayPassesBlockLaidBehindDefinition)
+enum class WayWithoutReference : uint8_t {
+    OutOfEntry,
+    PastBlockLaidBehindDefinition,
+    OutOfPatchThatDefinesIt,
+};
+
+static void runFrameTestOfReferenceThatSomeWayHasNotDefined(WayWithoutReference way)
 {
     ProcedureTraits traits;
     traits.chargesForCalleeSaves = true;
@@ -2069,8 +2075,33 @@ static void runFrameTestOfReferenceThatSomeWayHasNotDefined(bool wayPassesBlockL
     Block* other = out.newBlock();
     Block* meeting = out.newBlock();
 
-    Block* mid = wayPassesBlockLaidBehindDefinition ? out.newBlock() : nullptr;
-    out.branch(out.testNonZero64(argument, 4), normalEdge(defining), normalEdge(mid ? mid : other));
+    Block* mid = way == WayWithoutReference::PastBlockLaidBehindDefinition ? out.newBlock() : nullptr;
+    Operation* reference = nullptr;
+    if (way == WayWithoutReference::OutOfPatchThatDefinesIt) {
+        PatchOperation* patch = out.patch(Int32);
+        patch->appendSomeRegister(argument);
+        patch->effects = Effects::none();
+        patch->effects.terminal = true;
+        patch->setRunsWithoutFrame(true);
+        patch->setGenerator([](CCallHelpers& jit, const PatchParameters& params) {
+            jit.zeroExtend32ToWord(params[1].gpr(), params[0].gpr());
+            CCallHelpers::Jump toOther = jit.branchTest32(CCallHelpers::Zero, params[0].gpr(), CCallHelpers::TrustedImm32(4));
+            CCallHelpers::Jump toDefining;
+            if (!params.fallsThroughToSuccessor(0))
+                toDefining = jit.jump();
+            MacroAssembler::Label* labelOfDefining = params.successorLabels()[0];
+            MacroAssembler::Label* labelOfOther = params.successorLabels()[1];
+            params.addLatePath([=](CCallHelpers& jit) {
+                toOther.linkTo(*labelOfOther, &jit);
+                if (toDefining.isSet())
+                    toDefining.linkTo(*labelOfDefining, &jit);
+            });
+        });
+        out.appendSuccessor(normalEdge(defining));
+        out.appendSuccessor(normalEdge(other));
+        reference = patch;
+    } else
+        out.branch(out.testNonZero64(argument, 4), normalEdge(defining), normalEdge(mid ? mid : other));
     if (mid) {
         Block* leaving = out.newBlock();
         out.appendTo(mid);
@@ -2079,7 +2110,8 @@ static void runFrameTestOfReferenceThatSomeWayHasNotDefined(bool wayPassesBlockL
         out.ret(out.constInt64(11));
     }
     out.appendTo(defining);
-    Operation* reference = out.opaque(out.castToInt32(argument));
+    if (!reference)
+        reference = out.opaque(out.castToInt32(argument));
     reference->markAsNarrowReference();
     out.branch(out.testNonZero64(argument, 1), normalEdge(returning), normalEdge(calling));
     out.appendTo(returning);
@@ -2125,8 +2157,64 @@ static void runFrameTestOfReferenceThatSomeWayHasNotDefined(bool wayPassesBlockL
     AOT_FRAME_TEST_CHECK(test, test.call<uint64_t>(high + 0x80000105u) == 5);
 }
 
-static void testMachineFrameKeepsNoPointerWhereSomeWayHasNotDefinedReference() { runFrameTestOfReferenceThatSomeWayHasNotDefined(false); }
-static void testMachineFrameKeepsNoPointerWhereWayPastLaterBlockHasNotDefinedReference() { runFrameTestOfReferenceThatSomeWayHasNotDefined(true); }
+static void testMachineFrameKeepsNoPointerWhereSomeWayHasNotDefinedReference() { runFrameTestOfReferenceThatSomeWayHasNotDefined(WayWithoutReference::OutOfEntry); }
+static void testMachineFrameKeepsNoPointerWhereWayPastLaterBlockHasNotDefinedReference() { runFrameTestOfReferenceThatSomeWayHasNotDefined(WayWithoutReference::PastBlockLaidBehindDefinition); }
+static void testMachineFrameKeepsNoPointerBehindOtherSuccessorOfPatchThatDefinesReference() { runFrameTestOfReferenceThatSomeWayHasNotDefined(WayWithoutReference::OutOfPatchThatDefinesIt); }
+
+static void testMachineFrameKeepsPointerAtHeadBehindPartsThatSpilledReference()
+{
+    ProcedureTraits traits;
+    traits.chargesForCalleeSaves = true;
+    TestProcedure test(traits);
+    Output& out = test.out();
+    Procedure& proc = test.procedure();
+    Operation* argument = test.argumentGPR(0);
+    Block* choosing = out.newBlock();
+    Block* returning = out.newBlock();
+    Block* first = out.newBlock();
+    Block* second = out.newBlock();
+    Block* joining = out.newBlock();
+    Block* ending = out.newBlock();
+    Block* third = out.newBlock();
+
+    Operation* reference = out.opaque(out.castToInt32(argument));
+    reference->markAsNarrowReference();
+    out.branch(out.testNonZero64(argument, 1), normalEdge(first), normalEdge(choosing));
+    out.appendTo(choosing);
+    out.branch(out.testNonZero64(argument, 8), normalEdge(second), normalEdge(returning));
+    out.appendTo(returning);
+    out.ret(out.constInt64(5));
+    out.appendTo(first);
+    appendFrameTestCall(test);
+    ValueFromBlock fromFirst = out.anchor(out.opaque(out.constInt64(0)));
+    out.jump(joining);
+    out.appendTo(second);
+    appendFrameTestCall(test);
+    ValueFromBlock fromSecond = out.anchor(out.opaque(out.constInt64(2)));
+    out.jump(joining);
+    out.appendTo(joining);
+    out.branch(out.testNonZero64(out.phi(Int64, fromFirst, fromSecond), 2), normalEdge(ending), normalEdge(third));
+    out.appendTo(ending);
+    out.ret(out.constInt64(7));
+    out.appendTo(third);
+    appendFrameTestCall(test);
+    out.ret(out.zeroExtPtr(reference));
+
+    compileOrFail(test);
+    const Allocation& allocation = proc.allocation();
+    AOT_FRAME_TEST_CHECK(test, proc.liveness().of(reference).has(ValueFlag::NeedsPointerBesideIt) && allocation.isSpilled(reference) && allocation.headsOfFramedPart().size() == 3 && allocation.isHeadOfFramedPart(third));
+    for (const RegisterBinding& binding : allocation.registersAtHeadOf(third))
+        AOT_FRAME_TEST_CHECK(test, binding.value != reference);
+    unsigned numberOfStores = 0;
+    for (uint32_t index = allocation.stepsOf(third).begin; index < allocation.stepsOf(third).end; ++index)
+        numberOfStores += allocation.step(index).kind == StepKind::KeepPointer;
+    AOT_FRAME_TEST_CHECK(test, numberOfStores == 1);
+
+    constexpr uint64_t high = uint64_t { 7 } << 32;
+    AOT_FRAME_TEST_CHECK(test, test.call<uint64_t>(high + 0x80000101u) == 0x80000101u);
+    AOT_FRAME_TEST_CHECK(test, test.call<uint64_t>(high + 0x80000108u) == 7);
+    AOT_FRAME_TEST_CHECK(test, test.call<uint64_t>(high + 0x80000100u) == 5);
+}
 static void testMachineFrameKeepsPointerAtDefinitionForSafepointAheadOfFramedPart() { runFrameTestOfNarrowReferenceAheadOfGuard(true); }
 
 static void testMachineFrameIsSetUpForArmThatRunsOutOfRegisters()
@@ -2451,6 +2539,8 @@ std::span<const NativeTest> machineFrameTests()
         { "machine/frame/pointer-beside-a-reference-from-ahead-of-it-is-kept-at-its-head"_s, Machine::testMachineFrameKeepsPointerAtHeadOfFramedPart },
         { "machine/frame/no-pointer-is-kept-where-some-way-has-not-defined-the-reference"_s, Machine::testMachineFrameKeepsNoPointerWhereSomeWayHasNotDefinedReference },
         { "machine/frame/no-pointer-is-kept-where-a-way-past-a-later-block-has-not-defined-the-reference"_s, Machine::testMachineFrameKeepsNoPointerWhereWayPastLaterBlockHasNotDefinedReference },
+        { "machine/frame/no-pointer-is-kept-behind-the-other-successor-of-the-patch-that-defines-the-reference"_s, Machine::testMachineFrameKeepsNoPointerBehindOtherSuccessorOfPatchThatDefinesReference },
+        { "machine/frame/the-pointer-is-kept-at-a-head-behind-parts-that-spilled-the-reference"_s, Machine::testMachineFrameKeepsPointerAtHeadBehindPartsThatSpilledReference },
         { "machine/frame/safepoint-ahead-of-it-finds-the-pointer-kept"_s, Machine::testMachineFrameKeepsPointerAtDefinitionForSafepointAheadOfFramedPart },
         { "machine/frame/arm-that-runs-out-of-registers-is-framed-by-itself"_s, Machine::testMachineFrameIsSetUpForArmThatRunsOutOfRegisters },
         { "machine/frame/rare-region-ahead-of-it-has-a-frame-of-its-own"_s, Machine::testMachineFrameOfRareRegionAheadOfFramedPartIsItsOwn },

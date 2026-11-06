@@ -47,6 +47,7 @@ struct LinkedFunction {
     bool namesOnlyWhatEveryFunctionLeadsTo { false };
     bool closuresAreChanged { false };
     bool closuresGetOnlyNamesThatAreListed { false };
+    bool hasInstanceIsDefinedOnClosures { false };
     bool prototypePropertyStaysAsMade { false };
     uint32_t cycle { 0 };
     TypeID result;
@@ -102,6 +103,7 @@ struct LinkedLayout {
     bool takesCellsOfBase { false };
     bool listsEveryMemberAbove { false };
     bool listsEveryStaticMember { false };
+    bool classObjectsOfRowMayHoldHasInstance { true };
     bool hasConstructorFunctionInRow { true };
     bool isFilledUnderComputedKeys { false };
     bool onlyOwnObjectsStandBelowPrototype { false };

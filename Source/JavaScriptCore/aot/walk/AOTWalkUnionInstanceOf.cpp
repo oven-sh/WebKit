@@ -186,7 +186,7 @@ static bool recordsExpectNothingUnderNameOnStaticSidesForInstanceOf(const Walker
     size_t numberOfClassesLeft = program.layouts.size();
     for (LayoutID current = tested; current;) {
         const Layout& layout = program.at(current);
-        if (!numberOfClassesLeft-- || !layout.constructor || !walker.plan().hasClassRecord(current) || layout.mayHaveStaticField(key) || held.findNameOnFunction(layout.constructor, key))
+        if (!numberOfClassesLeft-- || !layout.constructor || !walker.plan().hasClassRecord(current) || layout.mayHaveStaticField(key) || held.findNameOnFunction(layout.constructor, key) || walker.facts().linked().function(layout.constructor).hasInstanceIsDefinedOnClosures)
             return false;
         for (const ClassMember& declared : walker.facts().membersOf(current)) {
             if (declared.side == ClassSide::Static && (!declared.key || declared.key == key))

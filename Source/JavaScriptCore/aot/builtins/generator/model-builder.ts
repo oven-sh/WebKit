@@ -393,6 +393,7 @@ export class ModelBuilder {
       isAddedAtFirstRead: false,
       isAddedAsEnumerable: false,
       isCreatedInSomeRuns: false,
+      namesFoundAbove: [],
       hostNumber: noHostNumber,
       attachments: createAttachments(),
     };

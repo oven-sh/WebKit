@@ -3261,6 +3261,26 @@ void LinkFlow::layWhatWasHeldBackFor(unsigned index)
 
 }
 
+void LinkFlow::wakeWhoWaitsForWhatWasHeldBack()
+{
+    for (unsigned index = 0; index < m_lanes.size(); ++index) {
+        Lane& lane = *m_lanes[index];
+        for (auto& holder : m_lanes) {
+            Vector<ObserverPut>& puts = holder->observersPut[index];
+            for (const ObserverPut& put : puts)
+                putObserver(lane, put.node, put.observer);
+            puts.shrink(0);
+        }
+        for (auto& holder : m_lanes) {
+            for (const EdgeLaid& laid : holder->edgesLaid[index]) {
+                if (m_accessorsWaitAt.quickGet(laid.from.index())) [[unlikely]]
+                    wakeAccessorsThatWaitAt(lane, laid.from);
+            }
+        }
+    }
+    takeOverNewObserversOfLanes();
+}
+
 void LinkFlow::takeInWhatWasHeldBack()
 {
     bool wasSettling = std::exchange(m_isSettling, true);
@@ -3608,15 +3628,18 @@ void LinkFlow::flow()
                 return hasResolvedSome;
             };
             do {
-                if (severalThreadsPayFor(numberOfNewObservers()))
-                    tellOnLanes();
-                while (!m_newObservers.isEmpty()) {
-                    auto [observer, node] = takeNewObserver();
-                    LinkType type = m_nodes[node.index()].type;
-                    tell(observer, type, LinkType { });
-                }
-                takeNotesOfPassOnOneThread();
-            } while (resolveCalls() || numberOfNewObservers() || takeInWhatWasNotedOfSymbols());
+                do {
+                    if (severalThreadsPayFor(numberOfNewObservers()))
+                        tellOnLanes();
+                    while (!m_newObservers.isEmpty()) {
+                        auto [observer, node] = takeNewObserver();
+                        LinkType type = m_nodes[node.index()].type;
+                        tell(observer, type, LinkType { });
+                    }
+                    takeNotesOfPassOnOneThread();
+                } while (resolveCalls() || numberOfNewObservers() || takeInWhatWasNotedOfSymbols());
+                wakeWhoWaitsForWhatWasHeldBack();
+            } while (numberOfNewObservers());
             m_tellsObservers = false;
             settle();
             m_holdsBack = false;
@@ -4863,7 +4886,10 @@ bool LinkFlow::tieStore(FlowNodeID aggregate, LayoutID layout, PropertyKeyID key
     }
 
     std::span<const MemberOfClass> members = membersFoundUnder(layout, ClassSide::Prototype, key);
+    bool mayBeFieldThatNoLayoutLists = !listed && program.at(key).kind == PropertyKeyKind::WellKnownSymbol;
     for (const MemberOfClass& found : members) {
+        if (mayBeFieldThatNoLayoutLists && found.kind != MethodKind::Method)
+            deferEscape(layout);
         switch (found.kind) {
         case MethodKind::Method:
             if (!listed)
@@ -6372,6 +6398,10 @@ Vector<FlowNodeID, 1> LinkFlow::nodesOfWhatFunctionAnswers(FunctionID id) const
 
 void LinkFlow::noteWhatMayMakeThenableOf(const LinkType& subject, FunctionID writer, std::optional<PropertyKeyID> writtenUnder, bool subjectMayBeWhatNobodyKnows)
 {
+    bool mayBeInstance = subject.classes != LinkType::Classes::None || (subjectMayBeWhatNobodyKnows && (subject.builtin || subject.holdsUnseen || subject.holdsLostBuiltins));
+    bool mayHideConstructor = !writtenUnder || (*writtenUnder ? nameClassOf(*writtenUnder) == NameClass::Proto || program.keyOf(BuiltinNames::constructor) == *writtenUnder : !m_isFunctionOfLibrary.quickGet(writer.index()));
+    if (mayBeInstance && mayHideConstructor)
+        arrive(whereInstancesLoseTheirConstructor(), LinkType::anything());
     bool namesSuchInstance = subject.classes == LinkType::Classes::Mixed || (subject.classes == LinkType::Classes::Site && !program.builtins().formatterWalksInstancesOf(subject.builtinClass));
     if (!namesSuchInstance && !(subjectMayBeWhatNobodyKnows && (subject.builtin || subject.holdsUnseen || subject.holdsLostBuiltins)))
         return;
@@ -6385,6 +6415,14 @@ void LinkFlow::noteWhatMayMakeThenableOf(const LinkType& subject, FunctionID wri
     if (writtenUnder && !*writtenUnder && !namesSuchInstance && m_isFunctionOfLibrary.quickGet(writer.index()))
         return;
     arrive(whereInstancesAreMadeThenables(), LinkType::anything());
+}
+
+FlowNodeID LinkFlow::whereInstancesLoseTheirConstructor()
+{
+    LockerOfWhatIsShared lockerOfWhatIsShared(*this);
+    if (m_whereInstancesLoseTheirConstructor == noNodeInLinkFlow)
+        m_whereInstancesLoseTheirConstructor = makeNode().index();
+    return FlowNodeID(m_whereInstancesLoseTheirConstructor);
 }
 
 FlowNodeID LinkFlow::whereInstancesAreMadeThenables()

@@ -26,6 +26,7 @@ public:
     TypeID provenAt(FunctionID, uint32_t entryParameter) const;
     TypeID askedByDoorsOfCapture(TypeArena&, FunctionID, uint32_t entryParameter) const;
     TypeID provenAt(TypeArena&, FunctionID, uint32_t entryParameter) const;
+    TypeID leftAt(TypeArena&, FunctionID, uint32_t entryParameter) const;
     bool takesWhatWasLeft(FunctionID) const;
     const Facts& facts() const { return m_facts; }
 
@@ -34,7 +35,7 @@ private:
     const Facts& m_facts;
     TypeTable& m_types;
     Vector<TypeID> m_joined;
-    Vector<Lock> m_locks;
+    mutable Vector<Lock> m_locks;
     mutable TypeArena m_joins;
     mutable Lock m_joinsLock;
 };

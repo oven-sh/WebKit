@@ -27,6 +27,7 @@
 #include "AOTRuntimeHooks.h"
 #include "AOTSchemaRuntimeOperations.h"
 #include "AOTState.h"
+#include "AOTVMState.h"
 #include "AOTVector.h"
 #include "BuiltinNames.h"
 #include "DeferTermination.h"
@@ -139,6 +140,13 @@ BuiltinCells::BuiltinCells(State& state)
     m_instance.builtins.hostValues = std::bit_cast<EncodedJSValue*>(std::bit_cast<uintptr_t>(m_values.data()) - m_numberOfFirstValue * sizeof(EncodedJSValue));
     m_instance.builtinBindings.directFunctions = BuiltinBindings::directFunctions().data();
     m_instance.builtinBindings.nativeFunctionsOfHost = BuiltinBindings::nativeFunctionsOfHost().data();
+    const VMState& vmState = m_instance.vm->aotState();
+    vmState.builtinMembersWrittenInSomeRealm.forEachSetBit([&](size_t index) {
+        noteWriteAboveInstances(BuiltinTable::singleton().at(BuiltinID(static_cast<uint32_t>(index))).holder);
+    });
+    vmState.builtinHoldersWithNamesAddedInSomeRealm.forEachSetBit([&](size_t index) {
+        noteWriteAboveInstances(BuiltinID(static_cast<uint32_t>(index)));
+    });
 }
 
 static bool isImmutableLocation(const BuiltinTable& table, const ProgramTables& tables, BuiltinID builtin)
@@ -589,11 +597,43 @@ void BuiltinCells::noteWriteAboveInstances(BuiltinID holder)
     }
 }
 
+static void forEachOtherRealm(Instance& instance, const Invocable<void(BuiltinCells&)> auto& functor)
+{
+    for (Instance* other : instance.vm->aotState().instances) {
+        if (other != &instance)
+            functor(*other->state->builtinCells);
+    }
+}
+
+void BuiltinCells::takeAsWritten(BuiltinID member)
+{
+    if (!m_membersWritten.empty() && !std::exchange(m_membersWritten[member.index()], 1))
+        m_state.countWriteForEffectsNet(Typed::CountInEffectsNet::WatchOverBuiltinsEnded);
+    noteWriteAboveInstances(BuiltinTable::singleton().at(member).holder);
+}
+
+void BuiltinCells::takeAsHolderWithAddedNames(BuiltinID holder)
+{
+    if (!m_namesOnHolders.empty()) {
+        NamesOnHolder& names = m_namesOnHolders[BuiltinTable::singleton().canonicalID(holder).index()];
+        if (names == NamesOnHolder::AreAsBuilt) {
+            names = NamesOnHolder::WereAdded;
+            m_state.countWriteForEffectsNet(Typed::CountInEffectsNet::WatchOverBuiltinsEnded);
+        }
+    }
+    noteWriteAboveInstances(holder);
+}
+
 void BuiltinCells::willAddNameTo(BuiltinID holder)
 {
     if (!m_namesOnHolders.empty() && std::exchange(m_namesOnHolders[BuiltinTable::singleton().canonicalID(holder).index()], NamesOnHolder::WereAdded) == NamesOnHolder::AreAsBuilt)
         m_state.countWriteForEffectsNet(Typed::CountInEffectsNet::WatchOverBuiltinsEnded);
     noteWriteAboveInstances(holder);
+    if (!m_instance.vm->aotState().builtinHoldersWithNamesAddedInSomeRealm.set(BuiltinTable::singleton().canonicalID(holder).index())) {
+        forEachOtherRealm(m_instance, [&](BuiltinCells& other) {
+            other.takeAsHolderWithAddedNames(holder);
+        });
+    }
 }
 
 void BuiltinCells::willWrite(BuiltinID member, UniquedStringImpl* key)
@@ -602,6 +642,11 @@ void BuiltinCells::willWrite(BuiltinID member, UniquedStringImpl* key)
     if (!m_membersWritten.empty() && !std::exchange(m_membersWritten[member.index()], 1))
         m_state.countWriteForEffectsNet(Typed::CountInEffectsNet::WatchOverBuiltinsEnded);
     noteWriteAboveInstances(table.at(member).holder);
+    if (!m_instance.vm->aotState().builtinMembersWrittenInSomeRealm.set(member.index())) {
+        forEachOtherRealm(m_instance, [&](BuiltinCells& other) {
+            other.takeAsWritten(member);
+        });
+    }
     if (!BuiltinBindings::provides(table.at(member).origin) || m_writtenMembers.quickSet(member.index()))
         return;
     JSObject* holder = m_lockedObjects.get(table.at(member).holder.index());
@@ -683,12 +728,14 @@ void BuiltinCells::hearsOfWritesTo(BuiltinID holder)
 {
     if (m_membersWritten.empty())
         return;
-    NamesOnHolder& names = m_namesOnHolders[BuiltinTable::singleton().canonicalID(holder).index()];
+    const VMState& vmState = m_instance.vm->aotState();
+    const uint32_t canonicalIndex = BuiltinTable::singleton().canonicalID(holder).index();
+    NamesOnHolder& names = m_namesOnHolders[canonicalIndex];
     const bool isHeardOfAgain = names != NamesOnHolder::AreNotHeardOf;
     if (!isHeardOfAgain)
-        names = NamesOnHolder::AreAsBuilt;
+        names = vmState.builtinHoldersWithNamesAddedInSomeRealm.get(canonicalIndex) ? NamesOnHolder::WereAdded : NamesOnHolder::AreAsBuilt;
     for (BuiltinID member : BuiltinTable::singleton().membersOf(holder)) {
-        if (m_writtenMembers.quickGet(member.index()))
+        if (m_writtenMembers.quickGet(member.index()) || vmState.builtinMembersWrittenInSomeRealm.get(member.index()))
             continue;
         RELEASE_ASSERT(!isHeardOfAgain || !m_membersWritten[member.index()]);
         m_membersWritten[member.index()] = 0;
@@ -711,6 +758,16 @@ void BuiltinCells::cannotHearOfWritesTo(BuiltinID holder)
         if (!m_membersWritten.empty() && !std::exchange(m_membersWritten[member.index()], 1))
             m_state.countWriteForEffectsNet(Typed::CountInEffectsNet::WatchOverBuiltinsEnded);
         m_writtenMembers.quickSet(member.index());
+        if (!m_instance.vm->aotState().builtinMembersWrittenInSomeRealm.set(member.index())) {
+            forEachOtherRealm(m_instance, [&](BuiltinCells& other) {
+                other.takeAsWritten(member);
+            });
+        }
+    }
+    if (!m_instance.vm->aotState().builtinHoldersWithNamesAddedInSomeRealm.set(table.canonicalID(holder).index())) {
+        forEachOtherRealm(m_instance, [&](BuiltinCells& other) {
+            other.takeAsHolderWithAddedNames(holder);
+        });
     }
 }
 

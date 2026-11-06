@@ -140,12 +140,17 @@ UnitsOfFields collectUnitsOfFields(const Program& program, const LinkTables& lin
     }
     result.rows.grow(numberOfRowsInUnits);
     for (uint32_t index : groups.layouts) {
-        for (uint32_t row = result.firstRowOfLayout[index]; row < result.firstRowOfLayout[index + 1]; ++row) {
-            if (result.unitOfRow[row] == UnitsOfFields::noUnit)
-                continue;
-            UnitsOfFields::Unit& unit = result.units[result.unitOfRow[row]];
-            result.rows[unit.firstRow + unit.numberOfRows++] = { LayoutID(index), row - result.firstRowOfLayout[index] };
-        }
+        uint32_t firstRow = result.firstRowOfLayout[index];
+        auto listRows = [&](uint32_t row, uint32_t end) {
+            for (; row < end; ++row) {
+                if (result.unitOfRow[row] == UnitsOfFields::noUnit)
+                    continue;
+                UnitsOfFields::Unit& unit = result.units[result.unitOfRow[row]];
+                result.rows[unit.firstRow + unit.numberOfRows++] = { LayoutID(index), row - firstRow };
+            }
+        };
+        listRows(firstRow, firstRow + numberOfFieldsNotRepeated(program, storage.layoutsThatRepeatTheirBases, LayoutID(index)));
+        listRows(firstRow + static_cast<uint32_t>(program.layouts[index].fields.size()), result.firstRowOfLayout[index + 1]);
     }
     return result;
 }

@@ -254,7 +254,7 @@ JS_EXPORT_PRIVATE bool isLeftAloneByMock(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void didBeginTestFile(JSGlobalObject*);
 JS_EXPORT_PRIVATE bool hasMockInPlace(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE bool isStandingMockImportedByModuleYetToRun(JSGlobalObject*, ModuleID, std::optional<ModuleID> asking);
-JS_EXPORT_PRIVATE bool willLeaveStandingMockAlone(JSGlobalObject*, ModuleID);
+JS_EXPORT_PRIVATE bool willLeaveStandingMockAlone(JSGlobalObject*, ModuleID, bool staysTheOriginal, bool keepsWhatThisTestFileLoaded);
 JS_EXPORT_PRIVATE bool wasLoadedUnderMockOfPreloadInThisTestFile(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE bool wasRequiredUnderMockInPlace(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE JSObject* mockInPlaceBehind(JSCell* moduleNamespace);

@@ -1039,6 +1039,10 @@ static void branchUnlessReceiverFindsBuiltin(StubAssembler& jit, const BoxedCall
         askAgainWhatReceiverFinds(jit, handler.form, methodIsRead);
         return;
     }
+    if (!jit.options().hasOneInstance) {
+        loadStructure(jit, thisGPR, scratch);
+        looksUp.append(branchIfNotOfThisRealm(jit, scratch));
+    }
     if (methodIsRead == MethodIsRead::InFrontOfTheCall || !structuresBelowClassOfReceiverAreKept(handler)) {
         looksUp.append(branchIfNotPristine(jit, thisGPR));
         askAgainWhatReceiverFinds(jit, handler.form, methodIsRead);
