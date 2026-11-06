@@ -1443,15 +1443,16 @@ not even for an object that C has just made: code that changes in place what it 
   where it allocates in the heap or gives up its access to it, and no operation on the table does either. So there is no lock, and no barrier. A thread
   without the GIL counts as stopped, so `Py_INCREF` and `Py_DECREF` look who calls: in CPython such a call spoils a count, here it would spoil the table. It is refused: the
   count stays as it was, with a line on stderr the first time. What was to be given back is then held for ever. What was to be taken is a reference that C believes in and
-  has not got, and nobody can tell which `Py_DECREF` will give it back: so from then on no count falls, and all that C owns or comes to own is held for ever. A leak, and
-  nothing that C rightly owns dies under it. The line says so.
+  has not got, and nobody can tell which `Py_DECREF` will give it back: so from then on nothing is let go of, and all that C owns or comes to own is held for ever. A leak, and
+  nothing that C rightly owns dies under it. The line says so. The counts go on falling, for they are asked about (`Py_REFCNT()`, `PyTuple_SetItem()`): it is the entry that stays when the count has
+  come to 0, and a key of the table is what the collector marks.
 - A thread that runs C for another interpreter (`CRunsFor`: its `ctypes` call, a library that it loads or lets go of) is refused as well, with a line of its own, and that is all: it costs
   the interpreter that has the API nothing. What `ctypes` hands to C there are that interpreter's own objects, and that C takes a reference to one of them says nothing about the
   objects of this one. No function hands such a thread an object of this interpreter. What it can name is what a library that both have loaded keeps in a variable of its own: to share an
   object between two interpreters in that way is an error in CPython too, and here it is not defended against.
 - A thread of another VM that gets into C in another way (a Worker's JS by `bun:ffi` or N-API, a destructor of a key of pthreads as the Worker's thread ends) is a thread without
   the GIL like any that C has started, and is treated so. It has no objects of its own, so a cell to which it takes a reference can only be one of this interpreter's, got by a variable:
-  that is the case which "no count falls" is for. The types, the exceptions, None and the numbers are not counted, whoever asks.
+  that is the case which "nothing is let go of" is for. The types, the exceptions, None and the numbers are not counted, whoever asks.
 
 **The error indicator is not the VM's pending exception.** C goes on calling the API while an exception is set, and the functions of the runtime expect none to be pending
 when they are entered. So the indicator is a reference of its own, one for each thread, counted like C's other references and kept alive by that (for ever, if a thread ends

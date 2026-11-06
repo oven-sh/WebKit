@@ -129,7 +129,7 @@ struct Interpreter {
 };
 
 // Null until the API is set up, and again when its interpreter has ended. Any thread may read it, at any time: see Interpreter::lock. Whoever follows the pointer without the GIL
-// has to see what the constructor wrote: it is stored with release, here and in s_interpreterWhoseCountsFall, and what is read is read through the pointer (an address dependency, which
+// has to see what the constructor wrote: it is stored with release, here and in s_interpreterThatLetsGo, and what is read is read through the pointer (an address dependency, which
 // orders the two loads on every processor that JSC runs on).
 extern std::atomic<Interpreter*> s_interpreter;
 
@@ -181,15 +181,17 @@ ALWAYS_INLINE Interpreter* interpreterToEnter()
 // spoils a count. Here it would spoil the table, so it is refused: the count stays as it is, and the program is told, once, on stderr.
 //  - A reference that was to be given back is held for ever.
 //  - A reference that was to be taken is one that C believes in and has not got, and nobody can tell which Py_DECREF will be the one that gives it back.
-//    So FROM THEN ON NO COUNT FALLS: all that C owns, or comes to own, is held for ever, and nothing that C rightly owns dies under it.
+//    So FROM THEN ON NOTHING IS LET GO OF: all that C owns, or comes to own, is held for ever, and nothing that C rightly owns dies under it. The counts go on falling, for they
+//    are asked about (Py_REFCNT(), PyTuple_SetItem()); it is the entry that stays when the count has come to 0.
 // A thread that runs C for ANOTHER interpreter (CRunsFor: it calls a function with ctypes, loads a library or lets go of one) is refused too, and that is all: it costs the interpreter
 // that has the API nothing. What ctypes hands to C there are that interpreter's own objects, and that C takes a reference to one says nothing about this one's. No function gives
 // such a thread an object of this interpreter. What it can name is what a library that both have loaded keeps in a variable of its own: to share that between two interpreters
 // is an error in CPython as well.
 // (When the interpreter has ended there is nothing left to count: what an extension gives back as the process goes is ignored.)
 void refuseToChangeCount(bool isToFall);
+void releaseSlow(JSCell*);
 // s_interpreter, until a reference that was to be taken has been refused.
-extern std::atomic<Interpreter*> s_interpreterWhoseCountsFall;
+extern std::atomic<Interpreter*> s_interpreterThatLetsGo;
 
 // THE QUESTION IS FOR C. Who has asked and been let in does not ask again, and the runtime does not ask at all where it keeps the books of a call that it has made itself (the hooks of
 // ctypes in CApiHooks.h): for whom C runs further out on the stack has nothing to do with whose reference the result of this call came with.
@@ -201,8 +203,8 @@ ALWAYS_INLINE void retain(Interpreter& current, Handle handle)
 
 ALWAYS_INLINE void release(Interpreter& current, Handle handle)
 {
-    if (JSCell* cell = countedCell(handle); cell && s_interpreterWhoseCountsFall.load(std::memory_order_relaxed)) [[likely]]
-        current.counts.remove(cell);
+    if (JSCell* cell = countedCell(handle))
+        current.counts.remove(cell, s_interpreterThatLetsGo.load(std::memory_order_relaxed));
 }
 
 // Py_INCREF(), Py_DECREF().
@@ -223,11 +225,11 @@ ALWAYS_INLINE void release(Handle handle)
     JSCell* cell = countedCell(handle);
     if (!cell)
         return;
-    Interpreter* current = s_interpreterWhoseCountsFall.load(std::memory_order_relaxed);
+    Interpreter* current = s_interpreterThatLetsGo.load(std::memory_order_relaxed);
     if (hasGIL(current)) [[likely]]
-        current->counts.remove(cell);
+        current->counts.remove(cell, true);
     else
-        refuseToChangeCount(true);
+        releaseSlow(cell);
 }
 
 // Somebody else has a reference to the object now, and the API has seen it: C has handed one on (to a container that takes it over, to the program with a result or with what it
@@ -274,7 +276,7 @@ ALWAYS_INLINE Handle newReference(Interpreter& current, JSValue value)
 // WHEN THE INTERPRETER ENDS nobody clears the indicators: they are the threads' own. What is left in one is a pointer to a cell that nothing holds any more. It is never followed: whoever
 // reads it to look at the object has asked who calls, and is refused from then on (PyErr_Occurred(), PyErr_ExceptionMatches(), PyErr_GetRaisedException()); whoever has called C looks only
 // if its interpreter is the one that the API is set up for (throwWhatCRaised() and the like), which none is any more; and to put another in its place gives the old one to
-// release(), which looks at its bits and at s_interpreterWhoseCountsFall, which is null. The API never comes back, so no later interpreter can take the pointer for one of its own.
+// release(), which looks at its bits and at s_interpreterThatLetsGo and s_interpreter, which are null. The API never comes back, so no later interpreter can take the pointer for one of its own.
 Handle& errorIndicator();
 // Takes over the reference. NULL: none is set any more.
 void setErrorIndicator(Interpreter&, Handle);

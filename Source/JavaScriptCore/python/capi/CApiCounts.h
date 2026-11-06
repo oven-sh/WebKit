@@ -36,15 +36,16 @@ public:
             ++owned;
     }
 
-    ALWAYS_INLINE void remove(JSCell* cell)
+    // `letsGo`: the entry goes with the last reference. If not, it stays, with a count of 0: a key is what the collector marks, so the object is held, and the number is still what C owns.
+    ALWAYS_INLINE void remove(JSCell* cell, bool letsGo)
     {
         auto entry = m_counts.find(cell);
         // More references were given back than taken. In CPython the object would have been freed under its owners. Here nothing hangs on it.
-        if (entry == m_counts.end()) [[unlikely]]
+        if (entry == m_counts.end() || !entry->value) [[unlikely]]
             return;
         if (entry->value == forEver) [[unlikely]]
             return;
-        if (!--entry->value)
+        if (!--entry->value && letsGo) [[likely]]
             m_counts.remove(entry);
     }
 

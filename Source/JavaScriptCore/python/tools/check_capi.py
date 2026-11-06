@@ -10,7 +10,7 @@ names_interpreter = re.compile(r"\b(interpreter\w*\(|current\b|s_interpreter\w*|
 may_name = {"Py_IsInitialized": "return !!s_runtimeItIsFor.load(std::memory_order_relaxed);"}
 if sys.argv[1:] == ["--self-test"]:
     seen = ["return interpreter().counts.get(cell);", "interpreter();", "f(interpreter())", "interpreterToEnter()", "current->vm", "s_interpreter.load()",
-        "s_interpreterWhoseCountsFall.load()", "s_runtimeItIsFor.load()", "hasGIL(x)", "hasGILSlow(x)", "CAPI_ENTER(0);", "Entry entry(a, b);", "setErrorIndicator(x, nullptr);", "return std::exchange(errorIndicator(), nullptr);"]
+        "s_interpreterThatLetsGo.load()", "s_runtimeItIsFor.load()", "hasGIL(x)", "hasGILSlow(x)", "CAPI_ENTER(0);", "Entry entry(a, b);", "setErrorIndicator(x, nullptr);", "return std::exchange(errorIndicator(), nullptr);"]
     unseen = ["retain(object);", "return toC(value);", "return plain(object).isTrue();"]
     wrong = [line for line in seen if not names_interpreter.search(line)] + [line for line in unseen if names_interpreter.search(line)]
     print("wrong:", wrong)

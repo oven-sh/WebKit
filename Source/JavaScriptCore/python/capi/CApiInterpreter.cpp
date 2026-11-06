@@ -166,7 +166,7 @@ bool tryEnsure(JSGlobalObject* globalObject)
     auto* interpreter = new Interpreter(globalObject);
     setSymbols(interpreter->runtime);
     // In this order: a reference can be refused, which clears the first, once the second is there.
-    s_interpreterWhoseCountsFall.store(interpreter, std::memory_order_release);
+    s_interpreterThatLetsGo.store(interpreter, std::memory_order_release);
     s_interpreter.store(interpreter, std::memory_order_release);
     s_runtimeItIsSetUpFor.store(&interpreter->runtime, std::memory_order_relaxed);
     // It stays with the heap, which may outlive the runtime.
@@ -188,7 +188,7 @@ void runtimeIsEnding(Runtime& runtime)
     if (!isSetUpFor(runtime))
         return;
     s_runtimeItIsSetUpFor.store(nullptr, std::memory_order_relaxed);
-    s_interpreterWhoseCountsFall.store(nullptr, std::memory_order_relaxed);
+    s_interpreterThatLetsGo.store(nullptr, std::memory_order_relaxed);
     // Not freed: see Interpreter::lock.
     Interpreter* interpreter = s_interpreter.exchange(nullptr, std::memory_order_relaxed);
     interpreter->counts.clear();
@@ -320,7 +320,7 @@ void didRefuseToEnter(Interpreter* current)
         tellOnce(hasTold, "Python: a function of the C API was called by a thread that does not hold the GIL; it fails\n");
 }
 
-std::atomic<Interpreter*> s_interpreterWhoseCountsFall;
+std::atomic<Interpreter*> s_interpreterThatLetsGo;
 
 void refuseToChangeCount(bool isToFall)
 {
@@ -335,13 +335,21 @@ void refuseToChangeCount(bool isToFall)
         return;
     }
     if (!isToFall) {
-        s_interpreterWhoseCountsFall.store(nullptr, std::memory_order_relaxed);
-        tellOnce(hasToldOfTaken, "Python: Py_INCREF was called by a thread that does not hold the GIL; the count stays as it was, and from now on no count falls: whatever C owns is held for ever\n");
+        s_interpreterThatLetsGo.store(nullptr, std::memory_order_relaxed);
+        tellOnce(hasToldOfTaken, "Python: Py_INCREF was called by a thread that does not hold the GIL; the count stays as it was, and from now on whatever C owns is held for ever\n");
         return;
     }
-    // With the GIL: this is what that line has told of.
-    if (s_interpreterWhoseCountsFall.load(std::memory_order_relaxed))
-        tellOnce(hasToldOfGivenBack, "Python: Py_DECREF was called by a thread that does not hold the GIL; the count stays as it was: the object is held for ever\n");
+    tellOnce(hasToldOfGivenBack, "Python: Py_DECREF was called by a thread that does not hold the GIL; the count stays as it was: the object is held for ever\n");
+}
+
+// Not the way of a thread that has the GIL while all is well.
+void releaseSlow(JSCell* cell)
+{
+    Interpreter* current = s_interpreter.load(std::memory_order_relaxed);
+    if (hasGIL(current) && !s_interpreterThatLetsGo.load(std::memory_order_relaxed))
+        current->counts.remove(cell, false);
+    else
+        refuseToChangeCount(true);
 }
 
 // ---- The error indicator ----
