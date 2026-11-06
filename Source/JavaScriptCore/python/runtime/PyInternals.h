@@ -392,9 +392,10 @@ bool checkOnlySignals(JSGlobalObject*);
 // program: whoever calls this holds nothing that only a variable of C++ refers to. See Runtime::releaseUnreachableBuffers().
 bool checkSignals(JSGlobalObject*);
 // Whether a signal may end a wait that nothing else can end. Where Python is the program, always: `threading.Event().wait()` sleeps
-// until Ctrl-C raises KeyboardInterrupt, or until a signal ends the process. Elsewhere, if there is a function for any signal.
+// until Ctrl-C raises KeyboardInterrupt, or until a signal ends the process. Elsewhere, if there is a function for any signal,
+// whichever runtime of the VM has the signals.
 bool signalMayEndWait(JSGlobalObject*);
-// As if the signal had arrived. Nothing happens if it is ignored or has its default effect. False: there is no such signal.
+// As if the signal had arrived, for the runtime of this VM that has the signals. Nothing happens if it is ignored or has its default effect. False: there is no such signal.
 // (PyErr_SetInterruptEx)
 bool simulateSignal(JSGlobalObject*, int number);
 // For a program in Python: SIGINT raises KeyboardInterrupt, SIGPIPE is ignored. May raise.

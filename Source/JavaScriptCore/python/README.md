@@ -1314,7 +1314,7 @@ up before it waits for events while a collection that it has asked for is under 
   others may be waiting for what a dropped object holds open, and in CPython it would have been closed when it was dropped.
 - A wait without a time limit while there is no other thread can be ended by a finalizer, so the thread collects at once, or by a
   signal. A program of Python sleeps until one comes, as in CPython: `threading.Event().wait()` until Ctrl-C. Where Python is not the
-  program (JS has called into it) and has no function for any signal, the wait is a `RuntimeError` ("deadlock: ..."): nothing of JS
+  program (JS has called into it) and no realm of the VM has a function for any signal, the wait is a `RuntimeError` ("deadlock: ..."): nothing of JS
   runs while the thread waits, so it would only hang.
 - At exit the threads that are not daemons are joined, unless the wait is interrupted; daemon threads never get the lock again.
 - **A VM that goes away while the process goes on takes its threads with it** (`stopThreads()`, `Threads::stopAll()`): a worker of the host's

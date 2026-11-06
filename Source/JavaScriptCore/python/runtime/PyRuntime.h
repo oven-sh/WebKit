@@ -727,9 +727,10 @@ public:
     void threadDidEnd(uint32_t thread);
     // One of those calls is running, in this thread. What it queues waits for it to return.
     bool isRunningPendingCalls() const { return m_isRunningPendingCalls; }
-    void didRaiseInSignalHandler(JSValue exception);
-    // For reportUnraisable(): true if the exception is not to be reported, because runPendingCalls() is going to throw it.
-    bool keepIfRaisedBySignalHandler(JSValue exception);
+    // What is thrown, as the VM has it: for what JS threw, the value and not the exception that a runtime makes of it.
+    void didRaiseInSignalHandler(JSValue thrown);
+    // For reportUnraisable(): true if it is not to be reported, because runPendingCalls() is going to throw it.
+    bool keepIfRaisedBySignalHandler(JSValue thrown);
     // Nobody asked for those calls, and the frame is of the code that happened to run when their time came. It has not called them,
     // and what they do is not laid at its door (PyWarnings.cpp).
     bool wasInterruptedByPendingCalls(CallFrame* callFrame) const { return m_stackWhereUnaskedCallsBegan && static_cast<void*>(callFrame) > m_stackWhereUnaskedCallsBegan; }

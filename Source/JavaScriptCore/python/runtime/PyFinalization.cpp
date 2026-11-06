@@ -624,10 +624,11 @@ void reportUnraisable(JSGlobalObject* globalObject, const String& message, JSVal
     auto wasEnded = [&] {
         std::ignore = scope.tryClearException();
     };
+    JSValue thrown = scope.exception() ? scope.exception()->value() : JSValue();
     JSValue exception = takePendingException(globalObject);
     if (!exception)
         return wasEnded();
-    if (rt.keepIfRaisedBySignalHandler(exception))
+    if (rt.keepIfRaisedBySignalHandler(thrown))
         return;
 
     JSValue arguments;
@@ -858,20 +859,20 @@ static NEVER_INLINE bool makeCallsOwedToProgram(VM& vm)
     return hasFinalized;
 }
 
-void Runtime::didRaiseInSignalHandler(JSValue exception)
+void Runtime::didRaiseInSignalHandler(JSValue thrown)
 {
     // Where CPython would be running the finalizer too, it is as in CPython: in gc.collect(), and at exit. (What is finalized at once, a
     // temporary say, is not called from the queue.)
     if (!m_isRunningPendingCalls || isFinalized || gc.collectingThread == m_currentThread)
         return;
-    setSlot(Slot::RaisedBySignalHandler, exception);
+    setSlot(Slot::RaisedBySignalHandler, thrown);
     m_threadWhereSignalHandlerRaised = m_currentThread;
     m_hasKeptWhatSignalHandlerRaised = false;
 }
 
-bool Runtime::keepIfRaisedBySignalHandler(JSValue exception)
+bool Runtime::keepIfRaisedBySignalHandler(JSValue thrown)
 {
-    if (m_threadWhereSignalHandlerRaised != m_currentThread || exception != slot(Slot::RaisedBySignalHandler))
+    if (m_threadWhereSignalHandlerRaised != m_currentThread || thrown != slot(Slot::RaisedBySignalHandler))
         return false;
     m_hasKeptWhatSignalHandlerRaised = true;
     return true;
@@ -1010,7 +1011,7 @@ void Runtime::runPendingCalls(bool mayPutOff, CallsOf callsOf)
             if (std::exchange(m_hasKeptWhatSignalHandlerRaised, false)) {
                 {
                     auto throwScope = DECLARE_THROW_SCOPE(m_vm);
-                    throwPythonException(globalObject, throwScope, raised);
+                    throwScope.throwException(globalObject, Exception::create(m_vm, raised, Exception::StackCaptureAction::DoNotCaptureStack));
                 }
                 EXCEPTION_ASSERT(scope.exception());
                 m_vm.traps().fireTrap(VMTraps::NeedPythonCalls);

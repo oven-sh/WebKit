@@ -216,6 +216,16 @@ static bool signalIsHandledByHostAsByDefault(int number, const struct sigaction&
 static ALWAYS_INLINE bool signalCanHandle(JSGlobalObject* globalObject) { return s_signalState.runtime == &runtime(globalObject); }
 // Handlers run on the main thread, and only there can they be set.
 static ALWAYS_INLINE bool signalIsOnHandlingThread(JSGlobalObject* globalObject) { return signalCanHandle(globalObject) && pthread_equal(pthread_self(), s_signalState.thread); }
+// The runtime that has the signals, if it is one of this thread's VM. Of another VM's nothing is read but the address of the VM: a worker's thread asks this while the collector of the main thread's VM
+// may be freeing that runtime.
+static ALWAYS_INLINE Runtime* signalOwnerInThisVM(JSGlobalObject* globalObject) { return s_signalState.vm.load() == &getVM(globalObject) ? s_signalState.runtime : nullptr; }
+// The handlers are called wherever that thread looks for signals, whichever runtime of the VM it is that looks: between two calls that it owes, in a wait. Or Ctrl-C would not end the sleep of a realm
+// because another realm was the first to import signal. Null: this thread calls no handlers.
+static ALWAYS_INLINE JSGlobalObject* signalGlobalObjectOfHandlers(JSGlobalObject* globalObject)
+{
+    Runtime* owner = signalOwnerInThisVM(globalObject);
+    return owner && pthread_equal(pthread_self(), s_signalState.thread) ? owner->globalObject() : nullptr;
+}
 
 static constexpr int signalDefault = 0; // SIG_DFL
 static constexpr int signalIgnore = 1; // SIG_IGN
@@ -366,7 +376,14 @@ static NEVER_INLINE bool signalRunHandlers(JSGlobalObject* globalObject)
         call(globalObject, handler, jsNumber(number), frame ? JSValue(frame) : jsUndefined());
         if (scope.exception()) [[unlikely]] {
             leaveTheRestForTheNextTime();
-            rt.didRaiseInSignalHandler(pendingException(globalObject));
+            // The call in the middle of which this comes may be one that another runtime of the VM owes. So all are told, and what they are told is what is thrown: of what JS threw each
+            // runtime has an exception of its own.
+            if (!vm.hasPendingTerminationException()) [[likely]] {
+                // It goes into whatever frames there are, of another runtime too, which keeps no notes for an exception of this one.
+                exceptionWillBeSeen(scope.exception()->value());
+                for (Runtime* runtime : vm.heap.pythonRuntimes())
+                    runtime->didRaiseInSignalHandler(scope.exception()->value());
+            }
             return false;
         }
     }
@@ -394,9 +411,8 @@ bool checkOnlySignals(JSGlobalObject* globalObject)
         return false;
     if (!s_signalState.isTripped.load(std::memory_order_relaxed)) [[likely]]
         return true;
-    if (!signalIsOnHandlingThread(globalObject))
-        return true;
-    return signalRunHandlers(globalObject);
+    JSGlobalObject* ofHandlers = signalGlobalObjectOfHandlers(globalObject);
+    return !ofHandlers || signalRunHandlers(ofHandlers);
 }
 
 static JSValue signalDefaultIntHandler(JSGlobalObject* globalObject, JSValue numberValue, JSValue)
@@ -411,7 +427,8 @@ static JSValue signalDefaultIntHandler(JSGlobalObject* globalObject, JSValue num
 
 bool signalMayEndWait(JSGlobalObject* globalObject)
 {
-    if (!signalCanHandle(globalObject))
+    globalObject = signalGlobalObjectOfHandlers(globalObject);
+    if (!globalObject)
         return false;
     if (s_signalState.isProgram)
         return true;
@@ -427,9 +444,10 @@ bool simulateSignal(JSGlobalObject* globalObject, int number)
 {
     if (number < 1 || number >= signalLimit)
         return false;
-    if (!signalCanHandle(globalObject))
+    Runtime* owner = signalOwnerInThisVM(globalObject);
+    if (!owner)
         return true;
-    JSValue handler = listGet(signalHandlers(globalObject), number);
+    JSValue handler = listGet(signalHandlers(owner->globalObject()), number);
     if (!signalIsAction(handler, signalDefault) && !signalIsAction(handler, signalIgnore))
         signalTrip(number);
     return true;
