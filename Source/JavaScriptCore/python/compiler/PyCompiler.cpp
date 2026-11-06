@@ -1592,6 +1592,8 @@ Unit::Reg Unit::beginHandler(Try& tryRange, Reg* previous, bool isOfLine)
     g.settlePythonLineMark();
     g.emitLabel(tryRange.handler.get());
     noLine();
+    if (m_cannotBeReached)
+        g.addPythonMark(PythonMark::NoLine, deadHandlerMark);
     Reg thrown = newTemporary();
     if (previous)
         *previous = newTemporary();

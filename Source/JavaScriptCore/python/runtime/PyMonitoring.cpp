@@ -475,6 +475,7 @@ void CodeMonitor::findPointsWithoutTellingTheCollector(bool everyInstruction)
         unsigned lastJumpForwardFrom { 0 }; // The offset of the last of the jumps and branches before it that go to it.
         bool firstLineFollowsCatch { false };
         bool comesAfterNoLine { false };
+        bool isDeadHandler { false };
         bool firstLineFollowsSilentLine { false };
         bool fallsThrough { true };
         unsigned sharedLineStart { noLineStart };
@@ -515,6 +516,8 @@ void CodeMonitor::findPointsWithoutTellingTheCollector(bool everyInstruction)
                         item.hasLineToItself = true;
                     else if (mark.value() == afterNoLineMark)
                         item.comesAfterNoLine = true;
+                    else if (mark.value() == deadHandlerMark)
+                        item.isDeadHandler = true;
                     else if (mark.value() != handlerOfLineMark)
                         item.asyncForMark = mark.value();
                     continue;
@@ -607,8 +610,11 @@ void CodeMonitor::findPointsWithoutTellingTheCollector(bool everyInstruction)
         visit(0);
         visitAllFromThere();
         isReachableWithoutException = isReachable;
-        for (unsigned i = 0; i < items.size(); ++i) {
-            if (items[i].opcode == op_py_catch)
+        for (unsigned i = 0; i + 1 < items.size(); ++i) {
+            if (items[i].opcode != op_py_catch)
+                continue;
+            // BytecodeGenerator::emitOutOfLinePyCatchHandler(): a jump to where the handler goes on comes next.
+            if (auto it = indexOfOffset.find(targetOfJump(code, items[i + 1].offset)); it == indexOfOffset.end() || !items[it->value].isDeadHandler)
                 visit(i);
         }
         visitAllFromThere();

@@ -159,6 +159,7 @@ enum class CompareOperator : uint8_t {
 //     jumpAsLaidOutMark: tools are told of the jump that comes next if there is one the way CPython's compiler lays the code out, with what
 //     only an exception leads to behind everything else: not if it leads to what comes next there. jumpForwardsAsLaidOutMark: nor if it
 //     goes backwards there, out of a handler. jumpHasLineToItselfMark: where there is none, something that does nothing is left for its line.
+//     deadHandlerMark: what comes next is where a handler goes on that covers code which cannot be reached. CPython's compiler drops it.
 // Start: where the program's own code begins, after the frame has been set up.
 // BlockBegin, BlockEnd: `value` numbers the block, `bits` is a TracedBlock.
 
@@ -170,6 +171,7 @@ constexpr unsigned handlerOfLineMark = 5;
 constexpr unsigned jumpAsLaidOutMark = 6;
 constexpr unsigned jumpForwardsAsLaidOutMark = 7;
 constexpr unsigned jumpHasLineToItselfMark = 8;
+constexpr unsigned deadHandlerMark = 9;
 
 // A statement begins: nothing is in a temporary register but what belongs to the blocks it is in.
 constexpr unsigned lineMarkValue(int line, bool isStatementStart, bool isSilent = false) { return static_cast<unsigned>(line) << 2 | isSilent << 1 | isStatementStart; }
