@@ -43,6 +43,7 @@
 #include <array>
 #include <wtf/ForbidHeapAllocation.h>
 #include <wtf/Noncopyable.h>
+#include <wtf/StackPointer.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -68,9 +69,13 @@ static ALWAYS_INLINE SavedFrame* savedFrameIn(JSValue value)
     return value && value.isCell() && value.asCell()->classInfo() == SavedFrame::info() ? uncheckedDowncast<SavedFrame>(value.asCell()) : nullptr;
 }
 
+static void markStepsWhoseConsumerHasAwaited(const Instance&, const uint64_t* frame);
+
 static AdapterEntry willEnterAdapter(Instance& instance, JSCell* frame, JSCell* asyncGenerator, bool asyncContextIsPutBack)
 {
     instance.vm->didEnterVM = true;
+    if (!instance.vm->isAsyncContextTrackingEnabled())
+        markStepsWhoseConsumerHasAwaited(instance, instance.coroutines.frameThatMayContinue);
     CoroutineWords& coroutines = instance.coroutines;
     return { std::exchange(coroutines.enteredFrame, frame), std::exchange(coroutines.enteredAsyncGenerator, asyncGenerator), std::exchange(coroutines.promiseOfEnteredHandler, nullptr), !!std::exchange(coroutines.asyncContextIsPutBack, asyncContextIsPutBack) };
 }
@@ -399,10 +404,19 @@ static JSPromise* tryPutPromiseInPlaceOfDriver(Instance& instance, const uint64_
 
 static bool consumerHasAwaitedInFrontOfEnd(const uint64_t* slotsOfStub, JSAsyncGenerator* generator)
 {
-    if (slotsOfStub[consumerSlotInStubFrame] & consumerOfStepHasAwaited || generator->state() != static_cast<int32_t>(JSAsyncGenerator::AsyncGeneratorState::Executing))
+    if (slotsOfStub[consumerSlotInStubFrame] & consumerOfStepHasAwaited)
+        return true;
+    if (int32_t state = generator->state(); !JSAsyncGenerator::isSuspendedYieldState(state) && !JSAsyncGenerator::isExecutingState(state))
         return true;
     SavedFrame* body = savedFrameIn(generator->frame());
     return body && body->hasPassedAwaitOnStack();
+}
+
+static void noteThatConsumerHasPassedAwait(const uint64_t* slotsOfStub)
+{
+    auto* consumer = dynamicDowncast<JSAsyncGenerator>(std::bit_cast<JSCell*>(slotsOfStub[driverSlotInStubFrame]));
+    if (SavedFrame* frame = consumer ? savedFrameIn(consumer->frame()) : nullptr)
+        frame->notePassedAwaitOnStack();
 }
 
 static AsyncGeneratorStep awaitPromiseInPlaceOfDriver(Instance& instance, const uint64_t* slotsOfStub, JSPromise* promise)
@@ -413,9 +427,9 @@ static AsyncGeneratorStep awaitPromiseInPlaceOfDriver(Instance& instance, const 
     return awaitPromiseOfStep(instance, promise, asObject(std::bit_cast<JSCell*>(slotsOfStub[driverSlotInStubFrame])));
 }
 
-void takeAwayRightToContinue(Instance& instance)
+static void markStepsWhoseConsumerHasAwaited(const Instance& instance, const uint64_t* frame)
 {
-    const uint64_t* frame = std::exchange(instance.coroutines.frameThatMayContinue, nullptr);
+    ASSERT(!frame || std::bit_cast<uintptr_t>(frame) > std::bit_cast<uintptr_t>(currentStackPointer()));
     bool hasAwaited = false;
     while (JSAsyncGenerator* generator = frame ? asyncGeneratorEnteredByStub(instance, frame) : nullptr) {
         SavedFrame* body = savedFrameIn(generator->frame());
@@ -425,6 +439,11 @@ void takeAwayRightToContinue(Instance& instance)
             slotsOfStub[consumerSlotInStubFrame] |= consumerOfStepHasAwaited;
         frame = std::bit_cast<const uint64_t*>(slotsOfStub[0]);
     }
+}
+
+void takeAwayRightToContinue(Instance& instance)
+{
+    markStepsWhoseConsumerHasAwaited(instance, std::exchange(instance.coroutines.frameThatMayContinue, nullptr));
 }
 
 static void rejectAsyncGeneratorStep(Instance& instance, const uint64_t* slotsOfStub, JSAsyncGenerator* generator, JSValue error)
@@ -443,8 +462,10 @@ static void rejectAsyncGeneratorStep(Instance& instance, const uint64_t* slotsOf
             JSPromise::resolveWithInternalMicrotaskForAsyncAwait(globalObject, vm, promise, InternalMicrotask::AsyncGeneratorBodyCallNormal, driver);
     };
     bool hasAwaitedInFront = promise && consumerHasAwaitedInFrontOfEnd(slotsOfStub, generator);
-    if (hasAwaitedInFront)
+    if (hasAwaitedInFront) {
+        noteThatConsumerHasPassedAwait(slotsOfStub);
         awaitPromise();
+    }
     finishAsyncGeneratorBodyCall(globalObject, generator, JSValue(), error, &vm.syncResumeCallCache());
     if (promise && !hasAwaitedInFront)
         awaitPromise();
@@ -458,8 +479,10 @@ static AsyncGeneratorStep finishAsyncGeneratorStep(Instance& instance, const uin
         auto scope = DECLARE_THROW_SCOPE(vm);
         JSPromise* promise = tryPutPromiseInPlaceOfDriver(instance, slotsOfStub, generator);
         std::optional<AsyncGeneratorStep> awaitedInFront;
-        if (promise && !isSeenTo && consumerHasAwaitedInFrontOfEnd(slotsOfStub, generator))
+        if (promise && !isSeenTo && consumerHasAwaitedInFrontOfEnd(slotsOfStub, generator)) {
+            noteThatConsumerHasPassedAwait(slotsOfStub);
             awaitedInFront = awaitPromiseInPlaceOfDriver(instance, slotsOfStub, promise);
+        }
         if (!isSeenTo)
             finishAsyncGeneratorBodyCall(instance.globalObject, generator, returned, JSValue(), &vm.syncResumeCallCache());
         if (scope.exception() || !promise)
@@ -479,6 +502,8 @@ JSValue enterSavedFrame(VM& vm, Instance& instance, SavedFrame* saved, ResumeMod
     static_assert(static_cast<int32_t>(JSGenerator::Argument::Generator) == 1 && static_cast<int32_t>(JSGenerator::Argument::State) == 2);
     static_assert(static_cast<int32_t>(JSGenerator::Argument::Value) == 3 && static_cast<int32_t>(JSGenerator::Argument::ResumeMode) == 4);
     ASSERT(&instance == Instance::owning(saved));
+    if (!instance.vm->isAsyncContextTrackingEnabled())
+        markStepsWhoseConsumerHasAwaited(instance, instance.coroutines.frameThatMayContinue);
     CallData callData = CallData::forCompiledCode(instance.state->coroutines->savedFrameEntrypoint(), instance.globalObject);
     return enterCompiledCode(vm, callData, saved, jsUndefined(), saved, jsUndefined(), jsNumber(0), sent, jsNumber(static_cast<int32_t>(engineResumeModeOf(mode))));
 }

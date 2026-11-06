@@ -56,8 +56,34 @@ void Modules::forgetLoadThatFailed(ModuleID file)
         m_records.remove(each);
         setStoredStatus(each, StoredModuleStatus::Linked);
     }
-    if (hasFailed)
-        forgetRunThatThrew(file);
+    if (!hasFailed)
+        return;
+    forgetRunThatThrew(file);
+    Vector<Identifier, 4> failedWithIt;
+    for (auto& [key, entry] : loader()->moduleMap()) {
+        if (entry->status() >= ModuleRegistryEntry::Status::FetchFailed)
+            failedWithIt.append(Identifier::fromUid(*m_instance.vm, key.first));
+    }
+    for (const Identifier& key : failedWithIt)
+        loader()->removeEntry(key);
+}
+
+bool Modules::importsModuleWhoseMockWaits(ModuleID root)
+{
+    BitVector isSeen(m_table.size());
+    Vector<ModuleID, 16> toVisit { root };
+    while (!toVisit.isEmpty()) {
+        ModuleID importer = toVisit.takeLast();
+        if (isSeen.quickSet(importer.index()))
+            continue;
+        for (const ModuleRequestData& request : m_table.imports(importer)) {
+            ModuleID imported = moduleLoadedBy(request);
+            if (m_modulesWithMockToRun.get(m_table.fileBehindFace(imported).value_or(imported).index()))
+                return true;
+            toVisit.append(imported);
+        }
+    }
+    return false;
 }
 
 bool Modules::runBodyOfLinkedModuleAheadOfMock(ModuleID module)

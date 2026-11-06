@@ -18,6 +18,13 @@ export function checkDenseIds(cppType: string, items: readonly { id: number }[],
   if (position !== -1) problems.add(null, `${cppType}(${items[position].id}) is at position ${position} of its list`);
 }
 
+export function hashOfText(text: string): number {
+  const bytes = Buffer.from(text, "latin1");
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < bytes.length; index++) hash = Math.imul(hash ^ bytes[index], 0x01000193) >>> 0;
+  return hash;
+}
+
 export function formatAggregate(members: readonly AggregateMember[]): string {
   const printed = members.flatMap(([name, value]) => (value === null ? [] : [`.${name} = ${value}`]));
   return printed.length === 0 ? "{ }" : `{ ${printed.join(", ")} }`;

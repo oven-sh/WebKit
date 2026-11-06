@@ -742,20 +742,24 @@ static JSCellButterfly* classTokenOrNull(State& state, JSValue value)
 
 enum class AboveProxies : bool { IsNotLookedAt, IsLookedAt };
 
-static void collectObjectsThatLookupComesTo(JSGlobalObject* globalObject, JSObject* lowest, AboveProxies aboveProxies, MarkedArgumentBuffer& objects)
+static size_t collectObjectsThatLookupComesTo(JSGlobalObject* globalObject, JSObject* lowest, AboveProxies aboveProxies, MarkedArgumentBuffer& objects)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+    std::optional<size_t> numberBelowProxies;
     for (JSObject* object = lowest; object;) {
         bool isProxy = object->type() == ProxyObjectType;
+        if (isProxy && !numberBelowProxies)
+            numberBelowProxies = objects.size();
         if (isProxy && aboveProxies == AboveProxies::IsNotLookedAt)
-            return;
+            break;
         if (!isProxy)
             objects.append(object);
         JSValue above = isProxy ? object->getPrototype(globalObject) : object->getPrototypeDirect();
-        RETURN_IF_EXCEPTION(scope, void());
+        RETURN_IF_EXCEPTION(scope, 0);
         object = above.isObject() ? asObject(above) : nullptr;
     }
+    return numberBelowProxies.value_or(objects.size());
 }
 
 static void collectClassTokens(VM& vm, State& state, const MarkedArgumentBuffer& objects, MarkedArgumentBuffer& tokens)
@@ -788,11 +792,11 @@ static void collectClassTokens(VM& vm, State& state, const MarkedArgumentBuffer&
     }
 }
 
-static JSValue findPrivateFieldAmong(VM& vm, State& state, const MarkedArgumentBuffer& objects, JSCellButterfly* token, uint32_t field)
+static JSValue findPrivateFieldAmong(VM& vm, State& state, const MarkedArgumentBuffer& objects, size_t numberBelowProxies, JSCellButterfly* token, uint32_t field)
 {
     for (size_t index = 0; index < objects.size(); ++index) {
         if (PrivateLocation location = locatePrivateName(vm, state, asObject(objects.at(index)), token, field); location.name)
-            return location.property.value;
+            return index < numberBelowProxies ? location.property.value : jsUndefined();
     }
     return { };
 }
@@ -811,7 +815,7 @@ static void forEachWrittenPrivateFieldOn(JSGlobalObject* globalObject, JSObject*
         return;
     State& state = *instance->state;
     MarkedArgumentBuffer objects;
-    collectObjectsThatLookupComesTo(globalObject, lowest, AboveProxies::IsLookedAt, objects);
+    size_t numberBelowProxies = collectObjectsThatLookupComesTo(globalObject, lowest, AboveProxies::IsLookedAt, objects);
     RETURN_IF_EXCEPTION(scope, void());
     MarkedArgumentBuffer tokens;
     collectClassTokens(vm, state, objects, tokens);
@@ -824,7 +828,7 @@ static void forEachWrittenPrivateFieldOn(JSGlobalObject* globalObject, JSObject*
         const LayoutData& declaringLayout = declaringLayoutOf(state, token);
         for (uint32_t field = 0; field < declaringLayout.numberOfFields; ++field) {
             const FieldData& declared = declaringLayout.fields()[field];
-            JSValue held = declared.isWrittenPrivateName ? findPrivateFieldAmong(vm, state, objects, token, field) : JSValue();
+            JSValue held = declared.isWrittenPrivateName ? findPrivateFieldAmong(vm, state, objects, numberBelowProxies, token, field) : JSValue();
             if (held && functor(state, token, field, declared, held) == IterationStatus::Done)
                 return;
         }
@@ -857,7 +861,7 @@ bool PropertyWalk::matchPrivateFieldsOfCompiledClasses(JSGlobalObject* globalObj
             everyFieldMatches = false;
             return IterationStatus::Done;
         }
-        JSValue ofObject = findPrivateFieldAmong(vm, state, objects, token, field);
+        JSValue ofObject = findPrivateFieldAmong(vm, state, objects, objects.size(), token, field);
         auto letsNothingGo = [](JSValue value) { return !value.isCell() || value.isString() || value.isHeapBigInt(); };
         if (!ofObject)
             everyFieldMatches = false;

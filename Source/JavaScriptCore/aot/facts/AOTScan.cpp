@@ -884,6 +884,17 @@ static BitVector namesUnderWhichEventsHangInScan(const BuiltinTable& builtins)
     return names;
 }
 
+static BitVector namesUnderWhichTextIsEvaluatedInScan(const BuiltinTable& builtins)
+{
+    BitVector names;
+    for (uint32_t index = 0; index < builtins.builtinCount(); ++index) {
+        const Builtin& entry = builtins.at(BuiltinID(index));
+        if (entry.holder && entry.name && builtins.at(builtins.canonicalID(BuiltinID(index))).flags.contains(BuiltinFlag::EvaluatesText))
+            names.set(entry.name.index());
+    }
+    return names;
+}
+
 class ScanOfBody {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(ScanOfBody);
     WTF_MAKE_NONCOPYABLE(ScanOfBody);
@@ -916,6 +927,7 @@ public:
     }
     void noteTextsSpelledIn(const DataNode&);
     void noteTextThatMayNameEvent(StringID);
+    void noteNameThatMayBecomeText(BuiltinName);
     void noteTextsThatMayNameEventsIn(const DataNode&);
     const BitVector& textsSpelled() const { return m_textsSpelled; }
     const SetsOfLayoutsWritten& setsOfLayoutsWritten() const { return m_setsOfLayoutsWritten; }
@@ -1288,6 +1300,7 @@ private:
 
     const Program& m_program;
     const BitVector* m_namesUnderWhichEventsHang;
+    std::optional<BitVector> m_namesUnderWhichTextIsEvaluated;
     const BitVector* m_bodiesThatSeveralModulesName;
     BitVector m_namesListedByThisScan;
     const BitVector& m_textsThatNameFieldsNeverWritten;
@@ -2320,6 +2333,16 @@ void ScanOfBody::noteTextThatMayNameEvent(StringID text)
         m_summary.textsThatNameEvents.append(m_program.keyOf(name));
 }
 
+void ScanOfBody::noteNameThatMayBecomeText(BuiltinName name)
+{
+    if (!name || isLibraryCode(m_program, *m_function))
+        return;
+    if (!m_namesUnderWhichTextIsEvaluated)
+        m_namesUnderWhichTextIsEvaluated = namesUnderWhichTextIsEvaluatedInScan(m_program.builtins());
+    if (m_namesUnderWhichTextIsEvaluated->get(name.index()))
+        m_summary.textsThatNameEvents.append(m_program.keyOf(name));
+}
+
 void ScanOfBody::noteTextsThatMayNameEventsIn(const DataNode& root)
 {
     Vector<const DataNode*, 32> nodesToVisit { &root };
@@ -2331,8 +2354,10 @@ void ScanOfBody::noteTextsThatMayNameEventsIn(const DataNode& root)
             for (const DataNode& element : array->elements)
                 nodesToVisit.append(&element);
         } else if (const auto* object = node.tryAs<DataNode::Object>()) {
-            for (const DataMember& member : object->members)
+            for (const DataMember& member : object->members) {
+                noteNameThatMayBecomeText(m_program.builtinNameOf(member.key));
                 nodesToVisit.append(&member.value);
+            }
         }
     }
 }
@@ -3128,6 +3153,8 @@ void ScanOfBody::readOperation(const BodyValue& value, uint32_t block)
         }
         if (opcode == Opcode::NewClosure && !references.namesUndefinedRecord) {
             FunctionID made = value.as<Opcode::NewClosure>().function();
+            if (StringID name = m_program.at(made).name)
+                noteNameThatMayBecomeText(m_program.strings.builtinName(name));
             if (LayoutID constructed = classOfConstructorFunction(m_program, made))
                 m_summary.classesEvaluated.append(constructed);
             if (!m_program.at(made).captures.isEmpty())
@@ -5133,9 +5160,11 @@ const uint32_t* ScanOfBody::readTerminator(const BodyTerminator& terminator, uin
         }
     }
 
-    if (kind == TerminatorKind::SwitchString)
+    if (kind == TerminatorKind::SwitchString) {
         m_summary.weightOfOperations += terminator.numberOfTargets() * 2;
-    else if (kind == TerminatorKind::Switch)
+        for (StringID written : terminator.as<TerminatorKind::SwitchString>().strings())
+            noteTextThatMayNameEvent(written);
+    } else if (kind == TerminatorKind::Switch)
         m_summary.weightOfOperations += terminator.numberOfTargets() / 2;
     bool mayThrow = false;
     if (terminatorKindsWithoutEffectsInScan.contains(kind))

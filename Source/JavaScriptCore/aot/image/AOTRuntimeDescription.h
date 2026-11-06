@@ -50,16 +50,10 @@ struct BuiltinTableDescription {
     uint64_t magic { expectedMagic };
     uint32_t size { sizeof(BuiltinTableDescription) };
     uint32_t hashOfBuiltinTokens;
-    uint32_t numberOfBuiltins;
-    uint32_t numberOfOverloads;
-    uint32_t numberOfTypes;
-    uint32_t numberOfClasses;
-    uint32_t numberOfSlots;
-    uint32_t numberOfLayouts;
-    uint32_t numberOfModules;
-    uint32_t numberOfFunctions;
+    uint32_t hashOfTable;
+    uint32_t hashOfHostBindings;
 };
-static_assert(sizeof(BuiltinTableDescription) == 48);
+static_assert(sizeof(BuiltinTableDescription) == 24);
 
 #if OS(DARWIN)
 #define AOT_IN_RUNTIME_DESCRIPTION_SECTION __attribute__((section("__TEXT,__bun_aot")))

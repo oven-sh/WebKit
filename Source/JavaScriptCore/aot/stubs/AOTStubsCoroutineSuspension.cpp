@@ -306,7 +306,7 @@ static void emitCopyFrameWords(StubAssembler& jit, const FrameCopyRegisters& reg
 #endif
 }
 
-static void emitSaveFrame(StubAssembler& jit, const FrameCopyRegisters& registers, GPRReg siteWord, uint8_t flags)
+static void emitSaveFrame(StubAssembler& jit, const FrameCopyRegisters& registers, GPRReg siteWord, uint8_t flags, uint8_t flagsKept = 0)
 {
     const GPRReg saved = registers.saved;
     const GPRReg word = registers.word;
@@ -319,7 +319,14 @@ static void emitSaveFrame(StubAssembler& jit, const FrameCopyRegisters& register
 #endif
     jit.loadCallerReturnAddress(0, word);
     jit.storePtr(word, Address(saved, SavedFrame::offsetOfResumeAddress()));
-    jit.store8(TrustedImm32(flags), Address(saved, SavedFrame::offsetOfFlags()));
+    if (flagsKept) {
+        jit.load8(Address(saved, SavedFrame::offsetOfFlags()), word);
+        jit.and32(TrustedImm32(flagsKept), word);
+        if (flags)
+            jit.or32(TrustedImm32(flags), word);
+        jit.store8(word, Address(saved, SavedFrame::offsetOfFlags()));
+    } else
+        jit.store8(TrustedImm32(flags), Address(saved, SavedFrame::offsetOfFlags()));
     jit.and32(TrustedImm32((1 << SavedFrame::liveSlotMapOffsetBits) - 1), siteWord, word);
     jit.add32(TrustedImm32(1), word);
     jit.store32(word, Address(saved, SavedFrame::offsetOfLiveSlotMapOffsetPlusOne()));
@@ -836,7 +843,7 @@ void generateSuspendGenerator(StubAssembler& jit)
     Jump isFirstSave = emitLoadSavedFrame(jit, form, generator, saved);
     emitStoreSuspendedState(jit, form, generator);
     Label hasSavedFrame = jit.label();
-    emitSaveFrame(jit, { generator, saved, count, cursor, word, second }, siteWord, form == GeneratorSuspension::AsyncAwait ? 0 : SavedFrame::isSuspendedAtYieldFlag);
+    emitSaveFrame(jit, { generator, saved, count, cursor, word, second }, siteWord, form == GeneratorSuspension::AsyncAwait ? 0 : SavedFrame::isSuspendedAtYieldFlag, form == GeneratorSuspension::Yield ? 0 : SavedFrame::hasPassedAwaitOnStackFlag);
     emitBarrierPreservingOperands(jit, saved, value, siteWord, word);
     if (form == GeneratorSuspension::AsyncAwait) {
         JumpList isLeftToEngine;

@@ -1817,7 +1817,7 @@ bool Modules::isNotLoaded(ModuleID module)
 
 void Modules::noteModulesLoadedWith(ModuleID root)
 {
-    if (!data(root).isESModuleOfProgram() || data(root).isFaceOfFile() || wasLoadedWithGraph(root))
+    if (!data(root).isESModuleOfProgram() || (data(root).isFaceOfFile() && !m_goesModuleByModule) || wasLoadedWithGraph(root))
         return;
     if (m_goesModuleByModule) {
         noteLoadOfEachModuleWith(root);
@@ -1861,10 +1861,6 @@ void Modules::noteLoadOfEachModuleWith(ModuleID root)
 {
     uint32_t moment = ++m_instance.vm->aotState().momentOfLoads;
     bool isAheadOfTestFiles = !m_hasBegunTestFile;
-    if (m_momentsOfLoads.isEmpty()) {
-        m_momentsOfLoads.fill(0, m_table.size());
-        m_loadedInPreload.ensureSize(m_table.size());
-    }
     m_modulesLoadedBesideGroups.ensureSize(m_table.size());
     m_modulesLoadedBesideGroups.quickSet(root.index());
     Vector<uint32_t, 32> found { root.index() };

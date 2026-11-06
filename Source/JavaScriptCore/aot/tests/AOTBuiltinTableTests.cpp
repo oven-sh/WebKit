@@ -88,18 +88,22 @@ static void testTableDescribesItself()
     auto bytesOf = [](const BuiltinTableDescription& description) {
         return std::span(reinterpret_cast<const uint8_t*>(&description), sizeof(description));
     };
-    AOT_TEST_CHECK(describedBuiltinTable.numberOfBuiltins == table().builtinCount() && describedBuiltinTable.numberOfClasses == table().classCount());
     AOT_TEST_CHECK(!findDifferenceFromThisRuntime(bytesOf(describedBuiltinTable)));
 
     BuiltinTableDescription other = describedBuiltinTable;
-    ++other.numberOfBuiltins;
+    other.hashOfTable ^= 1;
     std::optional<RuntimeDifference> difference = findDifferenceFromThisRuntime(bytesOf(other));
-    AOT_TEST_CHECK(difference && difference->name == "the number of built-ins"_s && difference->there == difference->here + 1);
+    AOT_TEST_CHECK(difference && difference->name == "the table of built-ins"_s);
+
+    other = describedBuiltinTable;
+    other.hashOfHostBindings ^= 1;
+    difference = findDifferenceFromThisRuntime(bytesOf(other));
+    AOT_TEST_CHECK(difference && difference->name == "the table of native functions"_s);
 
     other = describedBuiltinTable;
     other.size += 4;
     difference = findDifferenceFromThisRuntime(bytesOf(other));
-    AOT_TEST_CHECK(difference && difference->name.isNull());
+    AOT_TEST_CHECK(difference && difference->name == "the size of the description of the table of built-ins"_s && difference->there == difference->here + 4);
 }
 
 static void testNamesOfKeys()

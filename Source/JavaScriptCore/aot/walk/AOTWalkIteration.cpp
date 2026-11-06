@@ -2491,14 +2491,17 @@ private:
             return;
 
         TypeArena& types = m_walker.types();
-        BuiltinID method = m_walker.program().builtins().canonicalID(isAsync ? Builtins::AsyncGeneratorPrototypeNext : Builtins::GeneratorPrototypeNext);
+        const BuiltinTable& table = m_walker.program().builtins();
+        TypeID methods = isAsync
+            ? types.unionOf(types.forBuiltin(table.canonicalID(Builtins::AsyncGeneratorPrototypeNext)), types.forBuiltin(table.canonicalID(Builtins::AsyncFromSyncIteratorPrototypeNext)))
+            : types.forBuiltin(table.canonicalID(Builtins::GeneratorPrototypeNext));
         BlockID byCall = addBlock();
-        goOnWhereTypeTestPasses(next, types.forBuiltin(method), byCall);
+        goOnWhereTypeTestPasses(next, methods, byCall);
         m_walker.noteGuessOpened();
 
         if (isAsync) {
-            Reference generator = goOnWhereTypeTestPasses(iterator, types.builtinClass(BuiltinClasses::AsyncGenerator), byCall);
-            Reference stepped = m_walker.isUnreachable() ? Reference() : buildStepOfAsyncGenerator(m_walker, generator, sent ? sent : undefined(), m_held, { }, m_origin);
+            Reference generator = goOnWhereTypeTestPasses(iterator, types.unionOf(types.builtinClass(BuiltinClasses::AsyncGenerator), types.builtinClass(BuiltinClasses::AsyncFromSyncIterator)), byCall);
+            Reference stepped = m_walker.isUnreachable() ? Reference() : buildStepOfAsyncGenerator(m_walker, generator, sent ? sent : constant(draft(Opcode::Absent)), m_held, { }, m_origin);
             Reference value = resultOfGeneratorStep(stepped, StepGeneratorResult::Value);
             Reference status = resultOfGeneratorStep(stepped, StepGeneratorResult::Status);
             BlockID isAnsweredByObject = addBlock(BlockFrequency::Rare);

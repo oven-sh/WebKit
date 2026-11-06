@@ -2908,6 +2908,7 @@ private:
     void uniteUsesOfSameObject();
 
     void add(Vector<UnseenCodeRecord>&, UnseenCodeCause, BuiltinID, const Witness&) const;
+    void forEachCallInTextOfProgram(BuiltinID canonicalCallee, NOESCAPE const Invocable<void(const Witness&)> auto&) const;
     void addAtCallsInTextOfProgram(Vector<UnseenCodeRecord>&, UnseenCodeCause, BuiltinID named, BuiltinID canonicalCallee) const;
     std::optional<UnseenCodeCause> causeOfLettingCodeIn(BuiltinID canonical) const;
     void listBuiltinsThatLetCodeIn();
@@ -2942,6 +2943,7 @@ private:
     bool isPartThatBringsValueOrAccessor(PropertyKeyID) const;
     bool bringsValueOrAccessor(const DataNode::Object& descriptor) const;
     void reportWritesThatLocksRefuse();
+    bool isNameOfModuleWrittenOut(const BodyIndex&, const BodyValue& call, BuiltinID loader) const;
     void reportLoadsUnderNamesThatNobodyHasRead();
     bool frontEndLeavesMainModuleOpen() const;
     bool needsOneInstanceAtMost() const;
@@ -3137,24 +3139,29 @@ void BuilderOfProgramFacts::add(Vector<UnseenCodeRecord>& records, UnseenCodeCau
     records.append(UnseenCodeRecord { cause, number, witness });
 }
 
-void BuilderOfProgramFacts::addAtCallsInTextOfProgram(Vector<UnseenCodeRecord>& records, UnseenCodeCause cause, BuiltinID named, BuiltinID canonicalCallee) const
+void BuilderOfProgramFacts::forEachCallInTextOfProgram(BuiltinID canonicalCallee, NOESCAPE const Invocable<void(const Witness&)> auto& functor) const
 {
-    bool isCalledInTextOfProgram = false;
     for (const LinkedCallOfBuiltin& listed : m_inputs.linked.lookups.callsOfBuiltinsAtSites) {
         if (listed.row != canonicalCallee || !listed.caller || isLibraryCode(m_source, m_source.at(listed.caller)))
             continue;
         const BodyIndex* index = m_inputs.bodies.find(listed.caller);
         if (!index || !listed.site || listed.site.index() >= index->numberOfValues() || index->isParameter(listed.site))
             continue;
-        isCalledInTextOfProgram = true;
-        add(records, cause, named, Witness { listed.caller.index(), listed.site.index(), m_source.at(listed.caller).locationOf(index->value(listed.site)) });
+        functor(Witness { listed.caller.index(), listed.site.index(), m_source.at(listed.caller).locationOf(index->value(listed.site)) });
     }
     for (const Finding& call : m_callsOfEventsNamedInBodies) {
-        if (call.subject != canonicalCallee.index() || !standsInTextOfProgram(call.witness))
-            continue;
-        isCalledInTextOfProgram = true;
-        add(records, cause, named, call.witness);
+        if (call.subject == canonicalCallee.index() && standsInTextOfProgram(call.witness))
+            functor(call.witness);
     }
+}
+
+void BuilderOfProgramFacts::addAtCallsInTextOfProgram(Vector<UnseenCodeRecord>& records, UnseenCodeCause cause, BuiltinID named, BuiltinID canonicalCallee) const
+{
+    bool isCalledInTextOfProgram = false;
+    forEachCallInTextOfProgram(canonicalCallee, [&](const Witness& call) {
+        isCalledInTextOfProgram = true;
+        add(records, cause, named, call);
+    });
     if (isCalledInTextOfProgram)
         return;
     const Witness& whereUsed = m_witnesses[canonicalCallee.index()];
@@ -4784,6 +4791,23 @@ void BuilderOfProgramFacts::reportWritesThatLocksRefuse()
     m_inputs.build.diagnostics().append(WTF::move(diagnostics));
 }
 
+bool BuilderOfProgramFacts::isNameOfModuleWrittenOut(const BodyIndex& index, const BodyValue& call, BuiltinID loader) const
+{
+    if (!callsThatSpellOutArgumentsInProgramFacts.contains(call.opcode()))
+        return false;
+    std::span<const ValueID> arguments = call.variadicOperands();
+    return std::ranges::all_of(m_builtins.overloadsOf(loader), [&](const BuiltinOverload& overload) {
+        return std::ranges::all_of(overload.parameters, [&](const BuiltinParameter& parameter) {
+            if (!parameter.roles.contains(BuiltinOperandRole::ModuleSpecifier))
+                return true;
+            if (parameter.operand.kind() != BuiltinOperand::Kind::Argument || parameter.operand.argumentIndex() >= arguments.size())
+                return false;
+            ValueID name = index.valueBehindCasts(arguments[parameter.operand.argumentIndex()]);
+            return !index.isParameter(name) && index.opcodeOf(name) == Opcode::String;
+        });
+    });
+}
+
 void BuilderOfProgramFacts::reportLoadsUnderNamesThatNobodyHasRead()
 {
     if (!m_refused.codeOutsideImage || m_source.admitsInspector)
@@ -4809,6 +4833,23 @@ void BuilderOfProgramFacts::reportLoadsUnderNamesThatNobodyHasRead()
             .block = index->blockOf(ValueID(site.value)),
             .value = ValueID(site.value),
             .location = site.location,
+        });
+    }
+    for (size_t row : m_rows.areEvents) {
+        BuiltinID loader(static_cast<uint32_t>(row));
+        if (eventOfCalling(m_builtins, loader, m_refused) != UnseenCodeCause::LoadsModuleByName)
+            continue;
+        forEachCallInTextOfProgram(loader, [&](const Witness& site) {
+            const BodyIndex* index = m_inputs.bodies.find(FunctionID(site.function));
+            if (!index || site.value == Wire::none || isNameOfModuleWrittenOut(*index, index->value(ValueID(site.value)), loader))
+                return;
+            diagnostics.append(UserDiagnostic {
+                .kind = UserDiagnosticKind::ModuleNamedAtRunTimeIsRefused,
+                .function = FunctionID(site.function),
+                .block = index->blockOf(ValueID(site.value)),
+                .value = ValueID(site.value),
+                .location = site.location,
+            });
         });
     }
     AOT::sort(diagnostics, { }, [](const UserDiagnostic& diagnostic) {

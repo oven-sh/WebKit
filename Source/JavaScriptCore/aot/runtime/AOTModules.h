@@ -313,12 +313,15 @@ public:
     }
     class MocksBelowRoot {
     public:
-        MocksBelowRoot(const ModuleTable& table, Box<MockedModules> mocks, ModuleID root)
+        MocksBelowRoot(const ModuleTable& table, Box<MockedModules> mocks, ModuleID root, bool rootRunsBesideItsMock)
             : m_table(table)
             , m_mocks(WTF::move(mocks))
             , m_root(root)
+            , m_rootRunsBesideItsMock(rootRunsBesideItsMock)
         {
         }
+
+        bool rootRunsBesideItsMock() const { return m_rootRunsBesideItsMock; }
 
         bool hides(ModuleID module) const
         {
@@ -336,9 +339,10 @@ public:
         const ModuleTable& m_table;
         Box<MockedModules> m_mocks;
         ModuleID m_root;
+        bool m_rootRunsBesideItsMock;
         mutable Box<BitVector> m_reached;
     };
-    MocksBelowRoot mocksBelow(ModuleID root) const { return { m_table, m_mocks, root }; }
+    MocksBelowRoot mocksBelow(ModuleID root) const { return { m_table, m_mocks, root, isMocked(root) && (m_modulesThatRanBesideMock.get(root.index()) || runsBesideMockFor(root, std::nullopt)) }; }
     bool hasBegunToLoad(ModuleID) const;
     bool hostAnswersInPlaceOf(ModuleID, LoadByName);
     bool isKeptInRequireCache(ModuleID) const;
@@ -367,6 +371,7 @@ public:
     bool runMocksBelowSlow(ModuleID root, RootOfLoad);
     bool wasLoadedWhenMockWasMade(ModuleID);
     void forgetLoadThatFailed(ModuleID file);
+    bool importsModuleWhoseMockWaits(ModuleID root);
     bool runBodyOfLinkedModuleAheadOfMock(ModuleID);
     bool runBodyOfImportedModuleAheadOfMock(ModuleID);
     void runBodyOfRequiredFileAheadOfMock(ModuleID);

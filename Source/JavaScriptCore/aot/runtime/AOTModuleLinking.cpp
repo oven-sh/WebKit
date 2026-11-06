@@ -320,16 +320,20 @@ bool Modules::checkIsSettledForLinks(ModuleID module) const
     return isSettled;
 }
 
+static void appendModulesRequestedBy(const ModuleTable& table, ModuleID module, Vector<ModuleID, 32>& work)
+{
+    for (const ModuleRequestData& request : table.requests(module)) {
+        if (!request.isHoisted)
+            work.append(request.targetModule());
+    }
+}
+
 static void reachModulesByRequests(const ModuleTable& table, const BitVector& mocked, Vector<ModuleID, 32>&& work, BitVector& reached)
 {
     while (!work.isEmpty()) {
         ModuleID module = work.takeLast();
-        if (reached.quickSet(module.index()) || mocked.quickGet(module.index()))
-            continue;
-        for (const ModuleRequestData& request : table.requests(module)) {
-            if (!request.isHoisted)
-                work.append(request.targetModule());
-        }
+        if (!reached.quickSet(module.index()) && !mocked.quickGet(module.index()))
+            appendModulesRequestedBy(table, module, work);
     }
 }
 
@@ -339,12 +343,8 @@ static Box<MockedModules> createMockedModules(const ModuleTable& table, BitVecto
     mocks->modules = WTF::move(modules);
     BitVector below(table.size());
     Vector<ModuleID, 32> work;
-    for (size_t module : mocks->modules) {
-        for (const ModuleRequestData& request : table.requests(ModuleID(module))) {
-            if (!request.isHoisted)
-                work.append(request.targetModule());
-        }
-    }
+    for (size_t module : mocks->modules)
+        appendModulesRequestedBy(table, ModuleID(module), work);
     reachModulesByRequests(table, BitVector(table.size()), WTF::move(work), below);
     below.merge(mocks->modules);
     mocks->positionBelow.fill(MockedModules::notBelow, table.size());
@@ -401,18 +401,24 @@ void Modules::didEndMock(ModuleID mocked)
 
 const BitVector& Modules::MocksBelowRoot::reachedFromRoot() const
 {
-    if (!m_reached) {
-        m_reached = m_mocks->reachedFromRoots.ensure(m_root, [&] {
-            BitVector reached(m_table.size());
-            reachModulesByRequests(m_table, m_mocks->modules, { m_root }, reached);
-            Box<BitVector> reachedBelow = Box<BitVector>::create(m_mocks->numberBelow);
-            for (size_t module : reached) {
-                if (uint32_t position = m_mocks->positionBelow[module]; position != MockedModules::notBelow)
-                    reachedBelow->quickSet(position);
-            }
-            return reachedBelow;
-        }).iterator->value;
-    }
+    if (m_reached)
+        return *m_reached;
+    auto reach = [&] {
+        BitVector reached(m_table.size());
+        Vector<ModuleID, 32> work { m_root };
+        if (m_rootRunsBesideItsMock) {
+            reached.quickSet(work.takeLast().index());
+            appendModulesRequestedBy(m_table, m_root, work);
+        }
+        reachModulesByRequests(m_table, m_mocks->modules, WTF::move(work), reached);
+        Box<BitVector> reachedBelow = Box<BitVector>::create(m_mocks->numberBelow);
+        for (size_t module : reached) {
+            if (uint32_t position = m_mocks->positionBelow[module]; position != MockedModules::notBelow)
+                reachedBelow->quickSet(position);
+        }
+        return reachedBelow;
+    };
+    m_reached = m_rootRunsBesideItsMock ? reach() : m_mocks->reachedFromRoots.ensure(m_root, reach).iterator->value;
     return *m_reached;
 }
 
@@ -592,7 +598,8 @@ void Modules::finishLink(const ModuleLinkWalk& walk, LinkContext& context)
         RETURN_IF_EXCEPTION(scope, void());
         setValue(module, namespaceObject);
     }, [&](ModuleID module, bool resolvesNames) {
-        if (resolvesNames && !isMocked(module) && !mocks.hides(module))
+        bool runsItself = !isMocked(module) || (module == walk.root() && mocks.rootRunsBesideItsMock());
+        if (resolvesNames && runsItself && !mocks.hides(module))
             modulesThatResolveNames.append(module);
     });
     RETURN_IF_EXCEPTION(scope, void());

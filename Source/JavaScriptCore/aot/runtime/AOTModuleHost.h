@@ -117,6 +117,7 @@ String pathOfFileOfModule(ModuleID);
 String sourceProviderURL(ModuleID);
 JS_EXPORT_PRIVATE bool entryPointIsCommonJS(JSGlobalObject*);
 JS_EXPORT_PRIVATE bool isESModule(ModuleID);
+JS_EXPORT_PRIVATE bool isESModuleThatWaitsForNothing(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE bool isDataFile(ModuleID);
 std::optional<bool> findsBuiltinsReadOnly(ModuleID);
 enum class OtherNameOfModule : uint8_t { WithoutExtension, UnderAnotherExtension, AsFolder };
@@ -259,7 +260,7 @@ JS_EXPORT_PRIVATE bool wasLoadedUnderMockOfPreloadInThisTestFile(JSGlobalObject*
 JS_EXPORT_PRIVATE bool wasRequiredUnderMockInPlace(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE JSObject* mockInPlaceBehind(JSCell* moduleNamespace);
 JS_EXPORT_PRIVATE bool hasWordOfMock(JSGlobalObject*, ModuleID);
-JS_EXPORT_PRIVATE void willMockModule(JSGlobalObject*, ModuleID, JSObject* exports, bool exportsAreOfCommonJSModule = false);
+JS_EXPORT_PRIVATE void willMockModule(JSGlobalObject*, ModuleID, JSValue whatRequireAnswers, bool exportsAreOfCommonJSModule = false);
 JS_EXPORT_PRIVATE void didMockModule(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void mockExport(JSGlobalObject*, ModuleID, UniquedStringImpl* name, JSValue);
 JS_EXPORT_PRIVATE bool hasESModuleMarker(JSCell* moduleNamespace);

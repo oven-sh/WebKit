@@ -4,6 +4,7 @@ import {
   formatAggregate,
   formatId,
   formatUnlessZero,
+  hashOfText,
   joinBlocks,
   wrapFile,
   type AggregateMember,
@@ -420,6 +421,22 @@ function formatHostNumberBinding(builtin: ModelBuiltin): string[] {
   ];
 }
 
+function listHostBindings(model: TableModel): BindingLists {
+  const classes = findClassesWithBindings(model, "Host");
+  return {
+    classes: classes.map(builtinClass => formatClassBinding(builtinClass, formatId("BuiltinClassID", builtinClass))),
+    instanceStructureLookup: emitInstanceStructureLookup(classes),
+    cachedGetters: model.overloads.flatMap(formatCachedGetterBinding),
+    directFunctions: findDirectFunctions(model).map(formatDirectFunctionBinding),
+    nativeFunctions: findNativeFunctions(model, "Host").map(formatHostNativeFunction),
+    hostNumbers: model.builtins.flatMap(formatHostNumberBinding),
+  };
+}
+
+export function hashOfHostBindings(model: TableModel): number {
+  return hashOfText(Object.values(listHostBindings(model)).flat().join("\0"));
+}
+
 export function emitHostBindings(
   model: TableModel,
   formatRecord: FormatTableEntryRecord,
@@ -462,14 +479,7 @@ export function emitHostBindings(
     `using namespace JSC::AOT;\n${namespacesOfHostFunctions}`,
     emitCallListReference(nativeCallListStamp),
     emitDirectFormAssertions(directFunctions),
-    emitBindings("static constinit const BuiltinBindingSet hostBindings", {
-      classes: classes.map(builtinClass => formatClassBinding(builtinClass, formatId("BuiltinClassID", builtinClass))),
-      instanceStructureLookup: emitInstanceStructureLookup(classes),
-      cachedGetters: model.overloads.flatMap(formatCachedGetterBinding),
-      directFunctions: directFunctions.map(formatDirectFunctionBinding),
-      nativeFunctions: nativeFunctions.map(formatHostNativeFunction),
-      hostNumbers: model.builtins.flatMap(formatHostNumberBinding),
-    }),
+    emitBindings("static constinit const BuiltinBindingSet hostBindings", listHostBindings(model)),
     "}",
     [
       'extern "C" void Bun__AOT__registerHostBindings()',

@@ -6,6 +6,7 @@ import {
   formatEnumerator,
   formatId,
   formatName,
+  hashOfText,
   joinBlocks,
   lengthOfCharacters,
   Pool,
@@ -46,11 +47,7 @@ interface MemberNameClasses {
 }
 
 export function hashOfBuiltinTokens(model: TableModel): number {
-  let hash = 0x811c9dc5;
-  for (const { token } of model.builtins) {
-    for (const byte of Buffer.from(`${token}\0`, "latin1")) hash = Math.imul(hash ^ byte, 0x01000193) >>> 0;
-  }
-  return hash;
+  return hashOfText(model.builtins.map(({ token }) => `${token}\0`).join(""));
 }
 
 export function slotTokenOf(slot: ModelSlot): string {

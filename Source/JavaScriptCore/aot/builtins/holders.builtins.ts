@@ -579,6 +579,7 @@ export default b.declarations(
   }),
   b.class("%AsyncFromSyncIterator%", {
     ...lockedIteratorColumns,
+    jsType: "JSAsyncFromSyncIteratorType",
     proto: { next: stepOfWrappedIterator, return: stepOfWrappedIterator, throw: stepOfWrappedIterator },
   }),
   b.class("%IntlSegments%", {

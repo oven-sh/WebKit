@@ -64,6 +64,13 @@ export function engineFeaturesOf(declarations: readonly SourcedDeclaration[]): T
 
 export function emitEngineCode(model: TableModel, schema: Schema, features: readonly TableFeature[]): EngineCode {
   const ids = emitCppIds(model);
+  const otherFilesOfTable = new Map([
+    [arraysHeader, emitCppArraysHeader(model, engineListStampOf(ids))],
+    ["AOTBuiltinTableAttachments.cpp", emitCppAttachments(model, features)],
+    ["AOTBuiltinTableNames.cpp", emitCppNames(model)],
+    ["AOTBuiltinTableOverloads.cpp", emitCppOverloads(model)],
+    ["AOTBuiltinTableTypes.cpp", emitCppTypes(model)],
+  ]);
   return {
     engine: new Map([
       ["AOTBuiltinFeatures.h", emitCppFeatures(model, features)],
@@ -73,12 +80,8 @@ export function emitEngineCode(model: TableModel, schema: Schema, features: read
       ["AOTBuiltinTableWords.h", emitCppWords(schema)],
     ]),
     table: new Map([
-      [arraysHeader, emitCppArraysHeader(model, engineListStampOf(ids))],
-      ["AOTBuiltinTableAttachments.cpp", emitCppAttachments(model, features)],
-      ["AOTBuiltinTableBuiltins.cpp", emitCppBuiltins(model)],
-      ["AOTBuiltinTableNames.cpp", emitCppNames(model)],
-      ["AOTBuiltinTableOverloads.cpp", emitCppOverloads(model)],
-      ["AOTBuiltinTableTypes.cpp", emitCppTypes(model)],
+      ...otherFilesOfTable,
+      ["AOTBuiltinTableBuiltins.cpp", emitCppBuiltins(model, [...otherFilesOfTable.values()])],
     ]),
   };
 }

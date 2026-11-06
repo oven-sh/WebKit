@@ -660,7 +660,15 @@ static uint64_t secondDigestForEffectsNet(JSCell* cell, uint64_t lanes)
     else if (cell->isObject()) {
         JSObject* object = asObject(cell);
         const uint8_t* bytes = reinterpret_cast<const uint8_t*>(cell);
-        mix(Lane::Structure, cell->structureID().bits());
+        Object* withExtraProperties = compiledObjectOrNull(cell);
+        if (withExtraProperties && !withExtraProperties->extraProperties())
+            withExtraProperties = nullptr;
+        if (withExtraProperties) {
+            const CompiledStructure& structure = withExtraProperties->compiledStructure();
+            mix(Lane::Structure, reinterpret_cast<uintptr_t>(&structure.layout()));
+            mix(Lane::Structure, structure.flags().toRaw());
+        } else
+            mix(Lane::Structure, cell->structureID().bits());
         mix(Lane::Prototype, JSValue::encode(object->getPrototypeDirect()));
         if (Object* compiled = compiledObjectOrNull(cell)) {
             if (JSObject* extraProperties = compiled->extraProperties()) {

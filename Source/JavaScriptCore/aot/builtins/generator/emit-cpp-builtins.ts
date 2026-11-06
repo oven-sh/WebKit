@@ -1,4 +1,5 @@
 import { GeneratorError, Problems } from "./declarations.ts";
+import { hashOfHostBindings } from "./emit-cpp-bindings.ts";
 import { collectArrayDeclarations } from "./emit-cpp-ids.ts";
 import { textNamesArray, textNameSlotsArray } from "./emit-cpp-names.ts";
 import {
@@ -12,6 +13,7 @@ import {
   formatUnlessDefault,
   formatUnlessEmpty,
   formatUnlessZero,
+  hashOfText,
   joinBlocks,
   Pool,
   wrapFile,
@@ -400,22 +402,16 @@ function emitTableData(arrays: DeclaredArrays, lockedMembers: string | null, rea
   return `constinit const BuiltinTableData builtinTableData = ${data};`;
 }
 
-function emitDescription(model: TableModel): string {
+function emitDescription(model: TableModel, textsOfTable: readonly string[]): string {
   const description = formatAggregate([
     ["hashOfBuiltinTokens", "builtinTableHashOfBuiltinTokens"],
-    ["numberOfBuiltins", String(model.builtins.length)],
-    ["numberOfOverloads", String(model.overloads.length)],
-    ["numberOfTypes", String(model.types.length)],
-    ["numberOfClasses", String(model.classes.length)],
-    ["numberOfSlots", String(model.slots.length)],
-    ["numberOfLayouts", String(model.layouts.length)],
-    ["numberOfModules", String(model.modules.length)],
-    ["numberOfFunctions", String(model.functions.length)],
+    ["hashOfTable", `0x${hashOfText(textsOfTable.join("\0")).toString(16)}`],
+    ["hashOfHostBindings", `0x${hashOfHostBindings(model).toString(16)}`],
   ]);
   return `extern "C" AOT_KEPT_BY_EVERY_LINKER constinit const BuiltinTableDescription describedBuiltinTable = ${description};`;
 }
 
-export function emitCppBuiltins(model: TableModel): string {
+export function emitCppBuiltins(model: TableModel, otherFilesOfTable: readonly string[]): string {
   checkModel(model);
   const arrays = collectDeclaredArrays(model);
   checkArrayReferences(arrays);
@@ -519,7 +515,7 @@ export function emitCppBuiltins(model: TableModel): string {
       model.closedKeys.map(closedKeys => formatClosedKeys(closedKeys, closedKeyNames)),
     ),
   ];
-  const body = joinBlocks([
+  const blocks = [
     classSlots.emit(),
     classNames.emit(),
     layoutFields.emit(),
@@ -533,7 +529,7 @@ export function emitCppBuiltins(model: TableModel): string {
     `static_assert(${model.realmStructures.length} <= RealmStructureID::hashTableDeletedIndex);`,
     ...tableArrays,
     emitTableData(arrays, lockedMemberSpan, realmStructureSpan),
-    emitDescription(model),
-  ]);
+  ];
+  const body = joinBlocks([...blocks, emitDescription(model, [...otherFilesOfTable, ...blocks])]);
   return wrapFile(["AOTBuiltinTable.h", "AOTBuiltinTableArrays.h", "AOTRuntimeDescription.h", "JSCInlines.h"], body);
 }

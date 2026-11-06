@@ -138,6 +138,10 @@ Modules::Modules(State& state)
     m_modulesSettledForLinks.fill(0, m_table.size() / 64 + 1);
     m_loadedGroups.fill(0, m_table.size() / 64 + 1);
     m_goesModuleByModule = isTestRun();
+    if (m_goesModuleByModule) {
+        m_momentsOfLoads.fill(0, m_table.size());
+        m_loadedInPreload.ensureSize(m_table.size());
+    }
     state.caches->add(CacheKind::StrongRoots, "modules"_s, *this, RootVolatility::GreyedByExecution);
 }
 
@@ -1871,9 +1875,9 @@ bool Modules::willLeaveModuleAlone(ModuleID module, bool onlyIfLoadedInPreload, 
         RETURN_IF_EXCEPTION(scope, false);
         m_facesThatTookCopiesForMock.set(withExports.index());
     }
-    if (isFile && (onlyIfLoadedInPreload || withExports == module || status(withExports) != ModuleStatus::Evaluated || !didCaptureExports(withExports)))
+    if (isFile && (withExports == module || status(withExports) != ModuleStatus::Evaluated || !didCaptureExports(withExports)))
         return false;
-    if (onlyIfLoadedInPreload && !m_loadedInPreload.get(module.index()))
+    if (onlyIfLoadedInPreload && !m_loadedInPreload.get(withExports.index()))
         return false;
     if (LoadedModule* loaded = loadedIfExists(module); loaded && loaded->objectMadeByRequire && !isFile)
         return false;
@@ -4735,6 +4739,12 @@ bool isESModule(ModuleID module)
     return table && table->data(module).kind == ModuleKind::SourceText;
 }
 
+bool isESModuleThatWaitsForNothing(JSGlobalObject* realm, ModuleID module)
+{
+    Modules* modules = modulesOf(realm);
+    return modules && modules->data(module).kind == ModuleKind::SourceText && modules->data(module).isSynchronous() && !modules->importsModuleWhoseMockWaits(module);
+}
+
 std::optional<bool> findsBuiltinsReadOnly(ModuleID module)
 {
     std::optional<ModuleTable> table = currentModuleTable();
@@ -5969,13 +5979,14 @@ void didChangePlugins(JSGlobalObject* realm)
         modules->forgetWhatNamesResolvedTo();
 }
 
-void willMockModule(JSGlobalObject* realm, ModuleID module, JSObject* exports, bool exportsAreOfCommonJSModule)
+void willMockModule(JSGlobalObject* realm, ModuleID module, JSValue whatRequireAnswers, bool exportsAreOfCommonJSModule)
 {
     Modules* found = modulesOf(realm);
     if (!found)
         return;
     MockDoor door(found, module, "willMockModule"_s);
     Modules& modules = *found;
+    JSObject* exports = whatRequireAnswers.isObject() ? asObject(whatRequireAnswers) : constructEmptyObject(realm);
     modules.setExportsOfMockAreOfCommonJSModule(module, exportsAreOfCommonJSModule);
     if (modules.data(module).isOfLibrary() || !modules.table().hasFilePath(module)) {
         auto scope = DECLARE_THROW_SCOPE(realm->vm());
@@ -6025,7 +6036,7 @@ void willMockModule(JSGlobalObject* realm, ModuleID module, JSObject* exports, b
         modules.keepWhatMockIsLaidOver(module);
     if (hasRun && isFirstMock)
         modules.letGoOfImportersOf(module, Modules::ImportersLetGo::AllButThoseThatThisTestFileLinkedToModule);
-    modules.setCommonJSExports(module, exports);
+    modules.setCommonJSExports(module, whatRequireAnswers);
     modules.exportWhatMockNamesAlone(module, hasRun);
 }
 
