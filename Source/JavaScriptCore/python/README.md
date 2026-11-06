@@ -1691,7 +1691,8 @@ The collector is told the size of the side tables, which are several times the s
   properties (what JS iterates over, a `WeakMap`, a `WeakSet`: `itemsAreProperties`) they are the mapping of its own properties, `_js.JSProperties`, see below.
 - A function that is read off an object is bound to it, so `f = o.method; f()` works as it does in Python. It is one bound function for
   each object and function, remembered weakly (`bindIfFunction`): `o.method is o.method`, and `emitter.off(name, o.method)` finds what
-  `on()` was given. (The `get()` of a mapping by its methods: see there.) Not bound: classes, what a module exports (read off its namespace), and what is read off the `prototype` of a
+  `on()` was given. It is bound as `Function.prototype.bind()` binds it, so it has the `name` and `length` that gives (`bindToObject`): they are asked for at once of what
+  may say something else later, a callable `Proxy` or a function that was given another name, and what a trap or a getter throws comes out of the read. (The `get()` of a mapping by its methods: see there.) Not bound: classes, what a module exports (read off its namespace), and what is read off the `prototype` of a
   constructor, which is how JS spells an unbound method (`js.String.prototype.toUpperCase.call("abc")`).
 - `weakref.ref()`, `proxy()`, `finalize()` and the weak containers take objects and functions of JS.
 - A function written in JS has a signature for `inspect.signature()`, made of the text of its parameters (`__text_signature__`):

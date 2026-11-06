@@ -5,6 +5,7 @@
 
 #include "config.h"
 
+#include "AOTCompiledCallee.h"
 #include "BigIntConstructor.h"
 #include "BooleanConstructor.h"
 #include "BuiltinNames.h"
@@ -183,6 +184,42 @@ static bool isPrototypeOfConstructor(JSGlobalObject* globalObject, JSObject* obj
     return asObject(constructor)->getDirect(vm, vm.propertyNames->prototype) == JSValue(object);
 }
 
+// Function.prototype.bind.call(function, object), name and length included: they are worked out when they are asked for, if the function is
+// sure to say then what it says now. Of a proxy, or a function that has been given another name, they are asked at once. This is
+// functionProtoFuncBind() in runtime/FunctionPrototype.cpp, for a thread that may run no JS too: what changes there changes here.
+static JSValue bindToObject(JSGlobalObject* globalObject, JSObject* function, JSObject* object)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* jsFunction = dynamicDowncast<JSFunction>(function);
+    bool areOriginal = jsFunction && jsFunction->canAssumeNameAndLengthAreOriginal(vm);
+#if ENABLE(AOT)
+    if (isSlimClosureType(function->type()))
+        areOriginal = AOT::CompiledCallee::canAssumeNameAndLengthAreOriginal(vm, function);
+#endif
+    if (areOriginal) [[likely]]
+        RELEASE_AND_RETURN(scope, JSBoundFunction::create(vm, globalObject, function, object, ArgList(), PNaN, nullptr, SourceTaintedOrigin::Untainted));
+    JSValue lengthValue;
+    JSValue nameValue;
+    if (runtime(globalObject).threads().isMainThread()) [[likely]] {
+        bool hasLength = function->hasOwnProperty(globalObject, vm.propertyNames->length);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (hasLength) {
+            lengthValue = function->get(globalObject, vm.propertyNames->length);
+            RETURN_IF_EXCEPTION(scope, { });
+        }
+        nameValue = function->get(globalObject, vm.propertyNames->name);
+        RETURN_IF_EXCEPTION(scope, { });
+    } else if (inquireOwnProperty(globalObject, function, vm.propertyNames->length, lengthValue) == Inquiry::NeedsCode || inquireProperty(globalObject, function, vm.propertyNames->name, nameValue) == Inquiry::NeedsCode) {
+        scope.release();
+        ensureMainThreadForJS(globalObject);
+        return { };
+    }
+    double length = lengthValue && lengthValue.isNumber() ? std::max(lengthValue.toIntegerOrInfinity(globalObject), 0.0) : 0;
+    JSString* name = nameValue && nameValue.isString() ? asString(nameValue) : jsEmptyString(vm);
+    RELEASE_AND_RETURN(scope, JSBoundFunction::create(vm, globalObject, function, object, ArgList(), length, name, SourceTaintedOrigin::Untainted));
+}
+
 static bool isClassWrittenInJS(JSFunction*);
 static bool hasItemsByMethods(JSGlobalObject*, JSObject*);
 static JSValue getWithDefaultFor(JSGlobalObject*, JSBoundFunction*);
@@ -223,7 +260,7 @@ static JSValue bindIfFunction(JSGlobalObject* globalObject, JSObject* object, JS
     JSWeakMap* methods = mapIn(objects->get(object), [&](JSWeakMap* map) { objects->set(vm, object, map); });
     JSValue bound = methods->get(function);
     if (!bound.isCell()) {
-        bound = JSBoundFunction::create(vm, globalObject, function, object, ArgList(), 0, nullptr, SourceTaintedOrigin::Untainted);
+        bound = bindToObject(globalObject, function, object);
         RETURN_IF_EXCEPTION(scope, { });
         methods->set(vm, function, bound);
     }
