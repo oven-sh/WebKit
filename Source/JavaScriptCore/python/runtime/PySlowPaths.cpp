@@ -1253,92 +1253,166 @@ static JSValue makeGenerator(JSGlobalObject* globalObject, CallFrame* callFrame,
     return generator;
 }
 
-// Whether a hole of the array is undefined to JS as well, which asks the prototypes: none of them has anything to say about an index.
-static ALWAYS_INLINE bool holesAreUndefinedToJS(JSGlobalObject* globalObject, JSArray* list)
-{
-    Structure* structure = list->structure();
-    if (globalObject->isOriginalArrayStructure(structure) && globalObject->arrayPrototypeChainIsSane()) [[likely]]
-        return true;
-    return !structure->holesMustForwardToPrototype(list);
-}
-
-// callee(*positional, **keywords): the arguments in an array, as op_call_varargs takes them. The names of the keywords are set aside.
-// `keywords`: a dict that the compiled code has made. `mapping`: what was after the only **. If both are empty, nobody asks for the names.
-static JSValue callArguments(JSGlobalObject* globalObject, JSValue callee, JSValue positional, JSValue keywords, JSValue mapping)
+// list.extend(iterable), for what is after a *.
+static void extendWithSpread(JSGlobalObject* globalObject, JSArray* list, JSValue iterable, LengthHint lengthHint)
 {
     Runtime& rt = runtime(globalObject);
-    VM& vm = rt.vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto scope = DECLARE_THROW_SCOPE(rt.vm());
+    listExtend(globalObject, list, iterable, lengthHint);
+    if (!scope.exception()) [[likely]]
+        return;
+    PyType* type = rt.typeOf(iterable);
+    if (pendingExceptionMatches(globalObject, rt.TypeError()) && !type->lookup(Special::Iter) && !type->lookup(Special::GetItem)) {
+        takePendingException(globalObject);
+        raiseTypeError(globalObject, scope, "Value after * must be an iterable, not "_s, type->name());
+    }
+}
 
-    auto* tuple = PyTuple::tryFrom(positional);
-    if (tuple && tuple->type() != rt.tupleType())
-        tuple = nullptr;
+// Null: an exception.
+static JSArray* listOfSpread(JSGlobalObject* globalObject, JSValue iterable, LengthHint lengthHint, unsigned capacity = 0)
+{
+    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
+    JSArray* list = newList(globalObject, capacity);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    extendWithSpread(globalObject, list, iterable, lengthHint);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    return list;
+}
+
+static ALWAYS_INLINE PyTuple* asExactTuple(Runtime& rt, JSValue value)
+{
+    auto* tuple = PyTuple::tryFrom(value);
+    return tuple && tuple->type() == rt.tupleType() ? tuple : nullptr;
+}
+
+static ALWAYS_INLINE bool isKeywordNames(JSValue value)
+{
+    return value && value.isCell() && value.asCell()->type() == PyKwNamesType;
+}
+
+// See Python::prepareSpreadCall(). The number of arguments that the two are.
+static uint64_t prepareSpread(JSGlobalObject* globalObject, JSValue callee, JSValue& positional, JSValue& keywords, unsigned flags)
+{
+    Runtime& rt = runtime(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(rt.vm());
+    if (isKeywordNames(keywords))
+        return listLength(asList(positional));
+
+    PyTuple* tuple = positional ? asExactTuple(rt, positional) : nullptr;
     JSArray* list = isExactList(positional) ? asList(positional) : nullptr;
+    // It is refused for its length, before anything of it is read.
+    if (list && listLength(list) > maxArguments) [[unlikely]]
+        return listLength(list);
+    bool listIsOurs = list && flags & ListIsNobodyElses;
+    bool codeRunsBeforeCall = flags & CodeRunsBeforeCall;
+    bool positionalExtendsList = flags & PositionalExtendsList;
+    auto makeList = [&](unsigned roomForMore) {
+        unsigned capacity = (tuple ? tuple->length() : list ? listLength(list) : 0) + roomForMore;
+        list = positional ? listOfSpread(globalObject, positional, positionalExtendsList ? LengthHint::Asked : LengthHint::NotAsked, capacity) : newList(globalObject, capacity);
+        positional = list;
+        tuple = nullptr;
+        listIsOurs = true;
+    };
 
-    // In CPython's order: what is after the ** is read first. To go through what is after the * may run code, which may change it.
-    PyDict* dict = keywords ? PyDict::from(keywords) : nullptr;
-    if (mapping) {
-        dict = PyDict::tryFrom(mapping);
-        // (Keys that are not exactly strs may be asked when they are put into another dict.)
-        if (!dict || !isExactDict(rt, dict) || !dict->hasOnlyStringKeys() || (!tuple && !list)) {
-            dict = PyDict::create(globalObject);
-            dictMergeForCall(globalObject, dict, mapping, callee);
-            RETURN_IF_EXCEPTION(scope, { });
-        }
+    // The dict is only read, unless something could change it before it has been: to go through what is after the * may run code. (And keys that
+    // are not exactly strs may be asked when they are put into another dict, as they are in CPython, which always makes one.)
+    PyDict* dict = keywords ? PyDict::tryFrom(keywords) : nullptr;
+    bool isCopy = keywords && flags & KeywordsAreOfProgram
+        && (!dict || !isExactDict(rt, dict) || !dict->hasOnlyStringKeys() || (positional && !tuple && !list && !positionalExtendsList) || codeRunsBeforeCall);
+    // To read the mapping may run code as well.
+    if (positionalExtendsList && positional && !tuple && !listIsOurs && (!list || isCopy)) {
+        makeList(0);
+        RETURN_IF_EXCEPTION(scope, 0);
     }
-    if (dict && dict->isEmpty())
+    if (isCopy) {
+        dict = PyDict::create(globalObject);
+        dictMergeForCall(globalObject, dict, keywords, callee);
+        RETURN_IF_EXCEPTION(scope, 0);
+    }
+    if (dict && dict->isEmpty()) {
         dict = nullptr;
+        keywords = JSValue();
+        isCopy = false;
+    }
 
-    JSArray* array;
-    if (list && !dict && holesAreUndefinedToJS(globalObject, list)) [[likely]] {
-        // Made by the compiled code, or about to be copied into the frame anyway: by the rules of JS, which ask the prototypes about a hole.
-        array = list;
-    } else if (list && listLength(list) > maxArguments) {
-        // It is refused for its length, before anything of it is read.
-        if (keywords || mapping)
-            rt.setPendingKeywordNames(jsUndefined());
-        return list;
-    } else if (tuple && !dict) {
-        array = newList(globalObject, tuple->span());
-        RETURN_IF_EXCEPTION(scope, { });
-    } else {
-        array = newList(globalObject, dict ? (tuple ? tuple->length() : list ? list->length() : 0) + dict->size() : 0);
-        RETURN_IF_EXCEPTION(scope, { });
-        listExtend(globalObject, array, positional, LengthHint::NotAsked);
-        if (scope.exception()) [[unlikely]] {
-            PyType* type = rt.typeOf(positional);
-            if (pendingExceptionMatches(globalObject, rt.TypeError()) && !type->lookup(Special::Iter) && !type->lookup(Special::GetItem)) {
-                takePendingException(globalObject);
-                return raiseTypeError(globalObject, scope, "Value after * must be an iterable, not "_s, type->name());
-            }
-            return { };
+    if (!listIsOurs && (isCopy || (positional && !tuple && (!list || codeRunsBeforeCall)))) {
+        makeList(isCopy ? dict->size() : 0);
+        RETURN_IF_EXCEPTION(scope, 0);
+    }
+    if (isCopy) {
+        PyTuple* names = keywordNamesOf(globalObject, dict);
+        RETURN_IF_EXCEPTION(scope, 0);
+        JSValue key;
+        JSValue value;
+        for (unsigned position = 0; dict->next(position, key, value);) {
+            listAppend(globalObject, list, value);
+            RETURN_IF_EXCEPTION(scope, 0);
         }
-        // What was copied in one piece has the holes it had.
-        if (!holesAreUndefinedToJS(globalObject, array)) [[unlikely]] {
-            for (unsigned i = 0; i < listLength(array); ++i) {
-                if (array->tryGetIndexQuickly(i))
-                    continue;
-                listSet(globalObject, array, i, jsUndefined());
-                RETURN_IF_EXCEPTION(scope, { });
-            }
+        keywords = names;
+        return listLength(list);
+    }
+    return static_cast<uint64_t>(tuple ? tuple->length() : list ? listLength(list) : 0) + (dict ? dict->size() : 0);
+}
+
+namespace Python {
+
+uint64_t prepareSpreadCall(JSGlobalObject* globalObject, CallFrame* callFrame, const OpPyCallSpread& bytecode, unsigned moreFlags)
+{
+    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
+    JSValue positional = callFrame->r(bytecode.m_positional).jsValue();
+    JSValue keywords = callFrame->r(bytecode.m_keywords).jsValue();
+    uint64_t count = bytecode.m_leadingCount + prepareSpread(globalObject, callFrame->r(bytecode.m_callee).jsValue(), positional, keywords, bytecode.m_flags | moreFlags);
+    RETURN_IF_EXCEPTION(scope, 0);
+    // The call is refused. (And the two may be as they were.)
+    if (count > maxArguments) [[unlikely]]
+        return count;
+    JSValue names = keywords ? keywords : jsUndefined();
+    if (keywords && !isKeywordNames(keywords)) {
+        names = keywordNamesOf(globalObject, PyDict::from(keywords));
+        RETURN_IF_EXCEPTION(scope, 0);
+    }
+    callFrame->uncheckedR(bytecode.m_positional) = positional;
+    callFrame->uncheckedR(bytecode.m_keywords) = keywords;
+    callFrame->uncheckedR(bytecode.m_firstFree) = names;
+    return count;
+}
+
+JSValue fillSpreadCall(CallFrame* callFrame, const OpPyCallSpread& bytecode, JSValue* arguments)
+{
+    AssertNoGC assertNoGC;
+    ASSERT(callFrame->r(bytecode.m_firstFree).jsValue());
+    for (unsigned i = 0; i < bytecode.m_leadingCount; ++i)
+        *arguments++ = callFrame->r(bytecode.m_leading - i).jsValue();
+    if (JSValue positional = callFrame->r(bytecode.m_positional).jsValue()) {
+        if (auto* tuple = PyTuple::tryFrom(positional)) {
+            for (JSValue item : tuple->span())
+                *arguments++ = item;
+        } else {
+            JSArray* list = asList(positional);
+            for (unsigned i = 0, length = listLength(list); i < length; ++i)
+                *arguments++ = listGet(list, i);
         }
     }
-    if (!keywords && !mapping)
-        return array;
-
-    rt.setPendingKeywordNames(jsUndefined());
-    if (!dict)
-        return array;
-    PyTuple* names = keywordNamesOf(globalObject, dict);
-    RETURN_IF_EXCEPTION(scope, { });
-    JSValue key;
-    JSValue value;
-    for (unsigned position = 0; dict->next(position, key, value);) {
-        listAppend(globalObject, array, value);
-        RETURN_IF_EXCEPTION(scope, { });
+    if (JSValue keywords = callFrame->r(bytecode.m_keywords).jsValue(); keywords && !isKeywordNames(keywords)) {
+        PyDict* dict = PyDict::from(keywords);
+        JSValue key;
+        JSValue value;
+        for (unsigned position = 0; dict->next(position, key, value);)
+            *arguments++ = value;
     }
-    rt.setPendingKeywordNames(names);
-    return array;
+    return callFrame->r(bytecode.m_firstFree).jsValue();
+}
+
+} // namespace Python
+
+JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_spread_now)
+{
+    BEGIN();
+    auto bytecode = pc->as<OpPySpreadNow>();
+    JSArray* list = listOfSpread(globalObject, GET(bytecode.m_srcDst).jsValue(), LengthHint::Asked);
+    CHECK_EXCEPTION();
+    GET(bytecode.m_srcDst) = list;
+    END();
 }
 
 static JSValue importNameForInstruction(JSGlobalObject* globalObject, CallFrame* callFrame, JSString* name, JSValue fromList, JSValue level, ImportMode mode)
@@ -1565,17 +1639,10 @@ static JSValue runRuntimeFunction(JSGlobalObject* globalObject, CallFrame* callF
         RELEASE_AND_RETURN(scope, buildString(globalObject, args));
     case RuntimeFunction::BuildSlice:
         RELEASE_AND_RETURN(scope, PySlice::create(globalObject, args[0], args[1], args[2]));
-    case RuntimeFunction::ListExtend: {
-        listExtend(globalObject, asList(args[0]), args[1]);
-        if (scope.exception()) [[unlikely]] {
-            PyType* type = rt.typeOf(args[1]);
-            if (pendingExceptionMatches(globalObject, rt.TypeError()) && !type->lookup(Special::Iter) && !type->lookup(Special::GetItem)) {
-                takePendingException(globalObject);
-                return raiseTypeError(globalObject, scope, "Value after * must be an iterable, not "_s, type->name());
-            }
-        }
+    case RuntimeFunction::ListExtend:
+        scope.release();
+        extendWithSpread(globalObject, asList(args[0]), args[1], LengthHint::Asked);
         return jsUndefined();
-    }
     case RuntimeFunction::ListToTuple:
         RELEASE_AND_RETURN(scope, tupleFromList(globalObject, asList(args[0])));
     case RuntimeFunction::SetAdd: {
@@ -1721,10 +1788,6 @@ static JSValue runRuntimeFunction(JSGlobalObject* globalObject, CallFrame* callF
         scope.release();
         rt.releaseIteratorOfLoop(args[0]);
         return jsUndefined();
-    case RuntimeFunction::CallArguments:
-        RELEASE_AND_RETURN(scope, callArguments(globalObject, args[0], args[1], args[2], args.size() > 3 ? args[3] : JSValue()));
-    case RuntimeFunction::TakeKeywordNames:
-        return rt.takePendingKeywordNames();
 
     // ---- Imports ----
     case RuntimeFunction::ImportName:

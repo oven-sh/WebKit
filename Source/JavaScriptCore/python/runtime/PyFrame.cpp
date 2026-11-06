@@ -81,6 +81,7 @@ bool liveLocalsOfFrame(CallFrame* callFrame, CodeBlock* codeBlock, bool isCallin
     case op_call:
     case op_call_ignore_result:
     case op_call_varargs:
+    case op_py_call_spread:
     case op_construct:
     case op_construct_varargs:
     // These call the body of a generator. (What else op_py_send sets, the iterator, it sets before that. It reads it too, so it is live.)
@@ -161,6 +162,10 @@ static Register* endOfFrameMadeBy(CallFrame* callFrame, const JSInstruction* ins
         return hasCalled ? end(instruction->as<OpPyForIter>().m_stackOffset, argumentsOfGeneratorBody) : nullptr;
     case op_py_send:
         return hasCalled ? end(instruction->as<OpPySend>().m_stackOffset, argumentsOfGeneratorBody) : nullptr;
+    // This runs code of the program before it makes the frame, and none, nor a collection, while it fills it. Where the frame ends depends on the
+    // number of arguments: below this.
+    case op_py_call_spread:
+        return hasCalled ? &callFrame->r(instruction->as<OpPyCallSpread>().m_firstFree) + 1 : nullptr;
     default:
         return nullptr;
     }

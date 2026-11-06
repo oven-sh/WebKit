@@ -213,6 +213,7 @@ public:
     void setCachedHash(int64_t hash) { m_hash = hash; }
 
     static constexpr ptrdiff_t offsetOfStorage() { return OBJECT_OFFSETOF(PyDict, m_storage); }
+    static constexpr ptrdiff_t offsetOfUsed() { return OBJECT_OFFSETOF(PyDict, m_used); }
     static constexpr ptrdiff_t offsetOfWatchedVersion() { return OBJECT_OFFSETOF(PyDict, m_watchedVersion); }
 
 protected:

@@ -10,6 +10,7 @@
 namespace JSC {
 
 JSC_DECLARE_COMMON_SLOW_PATH(slow_path_py_bind_args);
+JSC_DECLARE_COMMON_SLOW_PATH(slow_path_py_spread_now);
 JSC_DECLARE_COMMON_SLOW_PATH(slow_path_py_load_cell);
 JSC_DECLARE_COMMON_SLOW_PATH(slow_path_py_store_cell);
 JSC_DECLARE_COMMON_SLOW_PATH(slow_path_py_list_append);

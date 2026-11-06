@@ -426,7 +426,8 @@ namespace JSC {
         RegisterID* emitPyNewList(RegisterID* dst, RegisterID* argv, unsigned argc);
         // Passes the first `argumentCount` of the arguments.
         RegisterID* emitPyCall(RegisterID* dst, RegisterID* function, CallArguments&, unsigned argumentCount);
-        RegisterID* emitPyCallVarargs(RegisterID* dst, RegisterID* function, RegisterID* thisRegister, RegisterID* arguments);
+        RegisterID* emitPyCallSpread(RegisterID* dst, RegisterID* function, RegisterID* leading, unsigned leadingCount, RegisterID* positional, RegisterID* keywords, unsigned flags);
+        void emitPySpreadNow(RegisterID* srcDst);
         // Code emitted between these two is not covered by the try blocks entered after the first `depth`:
         // the code of a `finally` clause that a `return` inside the `try` runs on its way out.
         size_t tryDepth() const { return m_tryContextStack.size(); }

@@ -285,7 +285,7 @@ all the others (`firstPage2OpcodeID`), so the interpreter's three tables serve t
 Which opcodes are there is a list of names in `bytecode/BytecodeList.rb` (`on_page2`); their definitions stay where they are. The generator gives every struct a constant `prefixBytes`, 0 or 1, which
 `decode()`, the setters, the interpreter's six accessors of operands and its three lengths of dispatch add; `Instruction::opcodeID()` and `size()` resolve the prefix out of line. Nothing else knows
 which page an opcode is on: not its handler, its slow path, `BytecodeUseDef.cpp`, the dump, or tracing's tables. An instruction of page 2 is one byte longer and takes three machine instructions more.
-On it are 16 of Python's opcodes that are rare: the six comparisons that are not followed by a jump, seven of the twelve that are, `py_unary`, `py_floor_div`, `py_store_cell`. None of JS's. What has metadata or
+On it are 17 of Python's opcodes that are rare: the six comparisons that are not followed by a jump, seven of the twelve that are, `py_unary`, `py_floor_div`, `py_store_cell`, `py_spread_now`. None of JS's. What has metadata or
 checkpoints stays on page 1 (the id indexes tables), and so does `op_nop`, which fills single bytes. The rule for a new opcode is in the list's comment, with how to put nearly all opcodes on
 page 2 for a test of the mechanism.
 
@@ -416,7 +416,18 @@ callee (`self` excepted: the method stays in the caller's register while the cal
 (`handleHostCall()`): they find the function (`Python::beginCallWithSelf()`), give it its code, and leave the frame to
 `llint_python_call_with_self_trampoline`. The callee in the frame is then the function, not what the instruction called
 (`isBeingCalledByPython()`).
-`f(*a, **k)` is `op_call_varargs` with an array that `callArguments()` makes, in CPython's order: `k` is read, then `a` is gone through.
+`f(x, *a, **k)` is `op_py_call_spread`, which puts the arguments into the frame of the callee from where they are: `x` from its register, the items
+from the tuple or the list, the values from the dict. Nothing is made on the way but the tuple of the names. It is JSC's `op_call_varargs` in all but that: the
+frame is placed and checked in the same way (`calleeFrameForVarargs()`), two slow paths size and fill it, and the call itself is the same code with the same
+call link info. All that allocates, raises or runs code is done by the first of the two, the names included, which wait in a register of the instruction: when the second fills
+the frame the stack pointer is at that frame, and C++ runs in what the collector takes for registers of the caller (`clearDeadTemporaries()`). The interpreter does by itself what most such calls are, a function that passes on what it was given: after the `*` a tuple (of up to 1,024 items) or nothing, after the `**` nothing or
+a dict that is empty, neither an instance of a derived class. Everything else is `Python::prepareSpreadCall()`, in CPython's order: `k` is read, then `a` is gone through. If an
+argument stands before the `*` it is the other way round, CPython having made a list of `x` and `a` by then (`PositionalExtendsList`), and if keyword arguments follow, `op_py_spread_now` goes through `a` before they are
+evaluated: it makes a list of whatever is no tuple. A dict of the program's with
+nothing but strs for keys is only read, not copied, if no code of the program can run before it has been. The instruction empties its registers when the arguments are in place, so the caller holds neither them nor what they came in.
+Arguments before a `*` that is not the last argument, and more than 30 of them, go into a list first, as all do in CPython.
+In instructions, with CPython's beside them: `f(*t)` 328 (446), `f(*l)` 772 (604), `f(x, *t)` 339 (1,119), `f(*t, **{})` 354 (686), `f(*t, **d)` 1,301 (1,350), `f(*t, k=x)` 1,953 (1,220: the dict is made
+and then taken apart), and `def g(*a, **k): return f(*a, **k)` called with one argument 1,020 (1,215).
 The names that come out of `k` are its keys as they are, not atoms: a program can make any number of them, and an atom is looked
 up in a table that all strs of the process share. So whoever takes keywords compares texts where the pointers differ.
 
@@ -1834,7 +1845,7 @@ What every program pays, with the sizes of a release build for x86-64:
 | `JSLock` (one per VM) | 72 bytes: the list of parked threads |
 | `JSGlobalObject` | 8 bytes: the pointer to the runtime |
 | `UnlinkedCodeBlock::RareData`, `UnlinkedFunctionExecutable::RareData` | 8 bytes each, where there is rare data; `FunctionExecutable::RareData` 16. `CodeBlock`, `UnlinkedCodeBlock`, `UnlinkedFunctionExecutable`, `CallLinkInfo`, `Structure`, `JSString`, `JSArray`, `JSFunction`: nothing |
-| `JSType`, opcodes, `SpeculatedType`, `UseKind`, `VMTraps` | 19 of the 256 cell types, 41 of the 254 opcode numbers of one byte (18 are left; 16 more of Python's opcodes are on a second page), 1 of 64 bits, 1 of 64 kinds, 1 of 32 bits |
+| `JSType`, opcodes, `SpeculatedType`, `UseKind`, `VMTraps` | 19 of the 256 cell types, 42 of the 254 opcode numbers of one byte (17 are left; 17 more of Python's opcodes are on a second page), 1 of 64 bits, 1 of 64 kinds, 1 of 32 bits |
 | `==` on two objects, DFG and FTL | nothing where the site has seen one kind of object that optimized code has a check for: plain objects (instances of classes are), arrays, functions, derived arrays, `Map`, `Set`, `WeakMap`, `WeakSet`, `Date`, `RegExp`, `Promise`, `Proxy`, `DataView`, `String` objects. Otherwise (errors, typed arrays, several kinds, an object or `null`), for each operand not known to be something else: load, subtract, compare, branch |
 | `==`, `<`, `+`, `-`... in the slow paths | the same test, put where JS is about to convert an object to a primitive. `==`: for an operand that is an object, and for `a == a` before the answer. `a - b`, `*`, `/`, `%`, `**`, `<<`, `>>`, `&`, `\|`, `^`, `~`, `++` and `--`: inside `JSValue::toNumeric()` and `toBigIntOrInt32()`, for an operand that is an object or a symbol; numbers, BigInts, strings, booleans, `undefined` and `null` never get to it. `+` and `-a`: for an operand that is an object. `<`, `<=`: for an operand that is an object or a symbol. (What is no object is no longer handed to `JSCell::toPrimitive()` to get it back, and an object goes straight to `JSObject::toPrimitive()`: these paths are shorter than they were before the branch.) `b = a++`: the same in `op_to_numeric`, which leaves a Python object as it is for the `++` that follows. `a = a++` on a local, where JSC left the `++` out because nothing could see it, has it: a move and an `op_inc` on a temporary. (`>>>` is not overloaded.) |
 | `Bun.deepEquals()`, `expect().toEqual()` | the same test for each pair of values compared |
@@ -1842,7 +1853,7 @@ What every program pays, with the sizes of a release build for x86-64:
 | `+x`, `x * 1`, `1 * x` | one byte more in each `op_to_number` (2 and 4 in the wide forms): what it was written as. A number: nothing. Anything else: in the slow paths a load and a compare, and for `x * 1` the test of the type. The result of `x * 1` is not known to be a number while bytecode is generated, so `x * 1 + y` checks that in Baseline; to the DFG and FTL it is one unless `x` may be a Python object |
 | A class definition with `extends` | a move, and a test of the type of the superclass; unless that is a `JSFunction` (so for `Map`, `Error`, `Promise`, a proxy, `null`), a call of a function that finds it is not Python's (175 instructions, once for each time the definition is evaluated). 29 bytes of bytecode, the metadata of an `op_call` and two constants |
 | A `catch` clause | 16 bytes in the rare data of the unlinked code block, in a `FixedVector`: where the clause begins and ends, which the table of handlers does not say (`PythonMark::CatchOfJS`) |
-| A metadata table, unlinked or linked | 8 bytes: five more kinds of instruction have metadata (16 where the offsets are of 32 bits). A cached code block with rare data: 8 bytes |
+| A metadata table, unlinked or linked | 12 bytes: six more kinds of instruction have metadata (24 where the offsets are of 32 bits). A cached code block with rare data: 8 bytes |
 | `ArrayBuffer.prototype.resize()` | refuses to shrink a buffer that is pinned, as it refuses to detach one |
 | A block or large allocation is swept | one load and branch (`mayRunEmbedderFinalizers()`) |
 | The incremental sweeper runs | one load and branch (`hasParkedThreads()`) |
@@ -1851,7 +1862,7 @@ What every program pays, with the sizes of a release build for x86-64:
 | Bytecode is generated, a code block is linked or asks to be compiled | a look at `isPython()`: for each loop and jump, each call site, each code block |
 | `Instruction::opcodeID()`, `size()` in C++ | nothing: `op_wide16`, `op_wide32`, `op_py_instrumented` and `op_page2` are the last four ids of one byte, and a narrow instruction is known by one compare, where upstream has two. The interpreter itself does not look |
 | The interpreter's three tables of handlers | 578 entries each for 338 ids, so that the byte behind `op_page2` is its own bound, as an opcode is; in the 16 KB that are set aside and protected for them anyway |
-| A collection | three walks over an empty list; four more kinds of metadata looked for in each code block that is visited; the visitors' counts are added up when marking has converged, not only at the end |
+| A collection | three walks over an empty list; five more kinds of metadata looked for in each code block that is visited; the visitors' counts are added up when marking has converged, not only at the end |
 | The mutator leaves a collection to the collector's thread | a lock, and a look whether that thread is there |
 | No thread can be started | helpers of the collector are done without, and so is its thread; for any other thread, up to 2 s of waiting for room, a line that names it, and the crash that used to come at once |
 | The lock of the VM is taken, released | a store; two loads and branches |

@@ -649,6 +649,7 @@ const ArrayType = constexpr ArrayType
 const PyObjectType = constexpr PyObjectType
 const PyInstanceType = constexpr PyInstanceType
 const PyTupleType = constexpr PyTupleType
+const PyDictType = constexpr PyDictType
 const PyKwNamesType = constexpr PyKwNamesType
 const PyFloatType = constexpr PyFloatType
 const PyGeneratorType = constexpr PyGeneratorType

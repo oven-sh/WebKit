@@ -5576,7 +5576,8 @@ protected:
     // 20: op_py_catch (opcode numbering).
     // 21: op_py_catch has a mode; Python::RuntimeFunction::Raise takes what was called, LeaveHandler (numbering of the functions).
     // 22: the switch of a generator of Python comes after what sets up the frame, and has a way for throw() into one that has not started.
-    static constexpr uint32_t cachedTypesFormatRevision = 22;
+    // 23: op_py_call_spread, op_py_spread_now (opcode numbering); no Python::RuntimeFunction::CallArguments, TakeKeywordNames (numbering of the functions).
+    static constexpr uint32_t cachedTypesFormatRevision = 23;
     static uint32_t currentCacheVersion() { return computeJSCBytecodeCacheVersion() ^ (cachedTypesFormatRevision * 0x9E3779B9u); }
 
     GenericCacheEntry(Encoder& encoder, CachedCodeBlockTag tag)

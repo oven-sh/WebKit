@@ -1579,11 +1579,16 @@ RegisterID* BytecodeGenerator::emitPyCall(RegisterID* dst, RegisterID* function,
     return dst;
 }
 
-RegisterID* BytecodeGenerator::emitPyCallVarargs(RegisterID* dst, RegisterID* function, RegisterID* thisRegister, RegisterID* arguments)
+RegisterID* BytecodeGenerator::emitPyCallSpread(RegisterID* dst, RegisterID* function, RegisterID* leading, unsigned leadingCount, RegisterID* positional, RegisterID* keywords, unsigned flags)
 {
     RefPtr<RegisterID> firstFree = newTemporary();
-    OpCallVarargs::emit(this, dst, function, thisRegister, arguments, firstFree.get(), 0, nextValueProfileIndex());
+    OpPyCallSpread::emit(this, dst, function, leadingCount ? leading : positional, leadingCount, positional, keywords, flags, firstFree.get(), nextValueProfileIndex());
     return dst;
+}
+
+void BytecodeGenerator::emitPySpreadNow(RegisterID* srcDst)
+{
+    OpPySpreadNow::emit(this, srcDst);
 }
 
 void BytecodeGenerator::emitPythonYieldPoint(RegisterID* argument)

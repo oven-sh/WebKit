@@ -709,6 +709,25 @@ op :py_get_method,
         metatypeVersion: unsigned,
     }
 
+# callee(leading..., *positional, **keywords). The leading arguments are in `leadingCount` registers from `leading` down. These, `positional` and
+# `keywords` are registers of the instruction's own. The last two may be empty: it puts there what it makes of them (Python::prepareSpreadCall()).
+# It empties them all when the arguments are in the frame of the callee, which begins below `firstFree`, one more of its own. `flags`: Python::SpreadCallFlag.
+op :py_call_spread,
+    args: {
+        dst: VirtualRegister,
+        callee: VirtualRegister,
+        leading: VirtualRegister,
+        leadingCount: unsigned,
+        positional: VirtualRegister,
+        keywords: VirtualRegister,
+        flags: unsigned,
+        firstFree: VirtualRegister,
+        valueProfile: unsigned,
+    },
+    metadata: {
+        callLinkInfo: DataOnlyCallLinkInfo,
+    }
+
 # Alignment: 4
 op :get_by_val_with_this,
     args: {
@@ -1531,6 +1550,12 @@ op :py_catch,
         mode: unsigned,
     }
 
+# What is after a * that stands behind other arguments is gone through before what follows it is evaluated: unless it is a tuple, a list is made of it.
+op :py_spread_now,
+    args: {
+        srcDst: VirtualRegister,
+    }
+
 # Everything else. `function`: Python::RuntimeFunction. Its arguments are in `argc` registers from `argv` down.
 op :py_runtime,
     args: {
@@ -1833,6 +1858,7 @@ on_page2 [
     :py_unary,
     :py_floor_div,
     :py_store_cell,
+    :py_spread_now,
 ]
 
 end_section :Bytecode
@@ -1889,6 +1915,7 @@ op :op_call_ignore_result_return_location
 op :op_construct_return_location
 op :op_super_construct_return_location
 op :op_call_varargs_return_location
+op :op_py_call_spread_return_location
 op :op_construct_varargs_return_location
 op :op_super_construct_varargs_return_location
 op :op_get_by_id_return_location
@@ -1926,6 +1953,7 @@ op :js_trampoline_op_call_ignore_result
 op :js_trampoline_op_construct
 op :js_trampoline_op_super_construct
 op :js_trampoline_op_call_varargs
+op :js_trampoline_op_py_call_spread
 op :js_trampoline_op_construct_varargs
 op :js_trampoline_op_super_construct_varargs
 op :js_trampoline_op_iterator_next

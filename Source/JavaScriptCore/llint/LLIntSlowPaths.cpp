@@ -2599,6 +2599,48 @@ static inline UGPRPair varargsSetup(CallFrame* callFrame, const JSInstruction* p
     LLINT_RETURN_TWO(pc, callerSP);
 }
 
+// As slow_path_size_frame_for_varargs and varargsSetup(), for op_py_call_spread.
+LLINT_SLOW_PATH_DECL(slow_path_py_size_frame_for_spread)
+{
+    LLINT_BEGIN();
+    auto bytecode = pc->as<OpPyCallSpread>();
+    uint64_t length = Python::prepareSpreadCall(globalObject, callFrame, bytecode);
+    LLINT_CALL_CHECK_EXCEPTION(globalObject);
+
+    CallFrame* calleeFrame = length <= maxArguments ? calleeFrameForVarargs(callFrame, -bytecode.m_firstFree.offset(), length + 1) : nullptr;
+    if (!calleeFrame || !vm.ensureJSStackCapacityFor(calleeFrame->registers())) [[unlikely]] {
+        throwStackOverflowError(globalObject, throwScope);
+        LLINT_CALL_CHECK_EXCEPTION(globalObject);
+    }
+    vm.varargsLength = length;
+    vm.newCallFrameReturnValue = calleeFrame;
+    LLINT_RETURN_CALLEE_FRAME(calleeFrame);
+}
+
+// It cannot fail: see Python::fillSpreadCall().
+LLINT_SLOW_PATH_DECL(slow_path_py_call_spread)
+{
+    CodeBlock* codeBlock = callFrame->codeBlock();
+    VM& vm = codeBlock->vm();
+    SlowPathFrameTracer tracer(vm, callFrame);
+    auto bytecode = pc->as<OpPyCallSpread>();
+    CallFrame* calleeFrame = vm.newCallFrameReturnValue;
+    JSValue thisValue = Python::fillSpreadCall(callFrame, bytecode, std::bit_cast<JSValue*>(calleeFrame->addressOfArgumentsStart()));
+    for (unsigned i = 0; i < bytecode.m_leadingCount; ++i)
+        callFrame->uncheckedR(bytecode.m_leading - i) = JSValue();
+    callFrame->uncheckedR(bytecode.m_firstFree) = JSValue();
+    callFrame->uncheckedR(bytecode.m_positional) = JSValue();
+    callFrame->uncheckedR(bytecode.m_keywords) = JSValue();
+
+    calleeFrame->setArgumentCountIncludingThis(vm.varargsLength + 1);
+    calleeFrame->setThisValue(thisValue);
+    calleeFrame->setCallerFrame(callFrame);
+    calleeFrame->uncheckedR(VirtualRegister(CallFrameSlot::callee)) = getOperand(callFrame, bytecode.m_callee);
+    setCurrentVPC(callFrame, codeBlock, pc);
+    auto* callerSP = calleeFrame + CallerFrameAndPC::sizeInRegisters;
+    LLINT_RETURN_TWO(pc, callerSP);
+}
+
 LLINT_SLOW_PATH_DECL(slow_path_call_varargs)
 {
     return varargsSetup<OpCallVarargs, SetArgumentsWith::Object>(callFrame, pc, CodeSpecializationKind::CodeForCall);

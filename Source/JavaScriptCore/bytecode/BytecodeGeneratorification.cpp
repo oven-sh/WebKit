@@ -243,12 +243,13 @@ private:
             return instruction->as<OpCall>().m_argv - CallFrame::headerSizeInRegisters;
         case op_call_ignore_result:
             return instruction->as<OpCallIgnoreResult>().m_argv - CallFrame::headerSizeInRegisters;
-        case op_call_varargs:
-            return instruction->as<OpCallVarargs>().m_firstFree.toLocal();
+        case op_py_call_spread:
+            return instruction->as<OpPyCallSpread>().m_firstFree.toLocal();
         case op_py_for_iter:
             return instruction->as<OpPyForIter>().m_stackOffset - CallFrame::headerSizeInRegisters;
         case op_py_send:
             return instruction->as<OpPySend>().m_stackOffset - CallFrame::headerSizeInRegisters;
+        case op_call_varargs:
         case op_tail_call:
         case op_tail_call_varargs:
         case op_call_direct_eval:
@@ -302,8 +303,8 @@ private:
             VirtualRegister result;
             if (instruction->is<OpCall>())
                 result = instruction->as<OpCall>().m_dst;
-            else if (instruction->is<OpCallVarargs>())
-                result = instruction->as<OpCallVarargs>().m_dst;
+            else if (instruction->is<OpPyCallSpread>())
+                result = instruction->as<OpPyCallSpread>().m_dst;
             else if (instruction->is<OpPyForIter>())
                 result = instruction->as<OpPyForIter>().m_dst;
             else if (instruction->is<OpPySend>())

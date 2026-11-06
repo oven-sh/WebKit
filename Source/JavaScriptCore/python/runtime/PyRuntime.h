@@ -563,7 +563,6 @@ public:
         PyGenerator* runningGenerator { nullptr };
         JSValue asyncGenFirstIter;
         JSValue asyncGenFinalizer;
-        JSValue pendingKeywordNames;
         JSValue sendResult;
         JSValue exceptionGroupRest;
         JSValue thrownException;
@@ -880,8 +879,6 @@ public:
 
     // ---- What an instruction leaves for the next ----
 
-    JSValue takePendingKeywordNames() { return take(m_pendingKeywordNames); }
-    void setPendingKeywordNames(JSValue value) { set(m_pendingKeywordNames, value); }
     JSValue takeSendResult() { return take(m_sendResult); }
     void setSendResult(JSValue value) { set(m_sendResult, value); }
     JSValue takeExceptionGroupRest() { return take(m_exceptionGroupRest); }
@@ -1056,7 +1053,6 @@ private:
     WriteBarrier<Unknown> m_threadLocals;
     RefPtr<Threads> m_threads;
 
-    WriteBarrier<Unknown> m_pendingKeywordNames;
     WriteBarrier<Unknown> m_sendResult;
     WriteBarrier<Unknown> m_exceptionGroupRest;
 

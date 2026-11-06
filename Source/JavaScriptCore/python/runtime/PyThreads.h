@@ -261,7 +261,7 @@ public:
                 if (!entry.runtime)
                     continue;
                 auto& state = entry.state;
-                for (JSValue value : { state.currentContext, state.handledException, state.asyncGenFirstIter, state.asyncGenFinalizer, state.pendingKeywordNames, state.sendResult, state.exceptionGroupRest, state.thrownException, state.throwArguments, state.threadLocals, state.traceFunction, state.profileFunction })
+                for (JSValue value : { state.currentContext, state.handledException, state.asyncGenFirstIter, state.asyncGenFinalizer, state.sendResult, state.exceptionGroupRest, state.thrownException, state.throwArguments, state.threadLocals, state.traceFunction, state.profileFunction })
                     consider(value);
                 if (state.runningGenerator)
                     functor(std::bit_cast<JSCell*>(state.runningGenerator));

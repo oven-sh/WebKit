@@ -824,7 +824,7 @@ void CodeMonitor::findPointsWithoutTellingTheCollector(bool everyInstruction)
             point.kinds |= bit(Event::PyReturn);
             break;
         case op_call:
-        case op_call_varargs:
+        case op_py_call_spread:
             point.kinds |= bit(Event::Call);
             point.shownTarget = point.next;
             while (true) {
@@ -2173,7 +2173,7 @@ NEVER_INLINE Monitoring::Outcome Monitoring::handle(JSGlobalObject* globalObject
     }
 
     case op_call:
-    case op_call_varargs: {
+    case op_py_call_spread: {
         if (kinds & bit(Event::Instruction) && isLastOfStatement && wanted(Event::Instruction))
             frameObjectOf(globalObject, callFrame)->callWithResultToTake = offset;
         uint8_t tools = wanted(Event::Call);
@@ -2194,19 +2194,28 @@ NEVER_INLINE Monitoring::Outcome Monitoring::handle(JSGlobalObject* globalObject
             count = bytecode.m_argc - 1;
             dst = bytecode.m_dst;
         } else {
-            auto bytecode = pc->as<OpCallVarargs>();
+            // What the instruction does first is done here, and left in its registers: it finds it done.
+            auto bytecode = pc->as<OpPyCallSpread>();
             callee = callFrame->r(bytecode.m_callee).jsValue();
-            thisValue = callFrame->r(bytecode.m_thisValue).jsValue();
-            JSArray* list = asArray(callFrame->r(bytecode.m_arguments).jsValue());
-            for (unsigned i = 0; i < listLength(list); ++i)
-                spread.append(listGet(list, i));
+            uint64_t total = prepareSpreadCall(globalObject, callFrame, bytecode, CodeRunsBeforeCall);
+            RETURN_IF_EXCEPTION(scope, threw);
+            // The instruction refuses it.
+            if (total > maxArguments) [[unlikely]]
+                return runIt;
+            count = total;
+            spread.fill(vm, count, [&](JSValue* values) {
+                thisValue = fillSpreadCall(callFrame, bytecode, values);
+            });
+            if (spread.hasOverflowed()) [[unlikely]] {
+                throwOutOfMemoryError(globalObject, scope);
+                return threw;
+            }
             arguments = reinterpret_cast<const JSValue*>(spread.data());
-            count = spread.size();
             dst = bytecode.m_dst;
         }
         PyTuple* keywordNames = thisValue.isCell() && thisValue.asCell()->type() == PyKwNamesType ? uncheckedDowncast<PyTuple>(thisValue.asCell()) : nullptr;
         JSValue callable = callee;
-        JSValue first = count > (opcode == op_call_varargs && keywordNames ? keywordNames->length() : 0) ? arguments[0] : missing();
+        JSValue first = count > (opcode == op_py_call_spread && keywordNames ? keywordNames->length() : 0) ? arguments[0] : missing();
         // f(*args) is told of as it stands, as in CPython.
         if (auto* method = opcode == op_call ? PyMethod::tryFrom(callee) : nullptr) {
             callable = method->function();

@@ -2372,28 +2372,86 @@ RegisterID* Unit::emitCall(RegisterID* dst, RegisterID* callee, std::span<Regist
         return g.emitPyCall(result.get(), callee, arguments, count);
     }
 
-    // callee(*positional, **named)
-    bool hasOnlyMapping = keywords.size() == 1 && !keywords[0]->arg;
-    Arguments operands(*this, hasOnlyMapping ? 4 : 3);
-    g.move(operands[0], callee);
-    if (pushed.empty() && !injected && args.size() == 1 && args[0]->is<Starred>())
-        expr(args[0]->as<Starred>()->value, operands[1]);
-    else {
-        // (In CPython a tuple, and a constant if there is nothing in it.)
-        if (pushed.empty() && !injected && args.isEmpty())
-            noteConstantMade(runtime().emptyTuple());
-        sequence(SequenceKind::List, args, operands[1], range, pushed, injected);
+    // callee(leading..., *positional, **named): op_py_call_spread. The arguments before a * that is the last of them stay in registers. Otherwise a
+    // list is made of all of them, as CPython makes one in every case.
+    unsigned plainCount = 0;
+    while (plainCount < args.size() && !args[plainCount]->is<Starred>())
+        ++plainCount;
+    Expr* spread = plainCount + 1 == args.size() && !injected ? args[plainCount]->as<Starred>()->value : nullptr;
+    unsigned leadingCount = pushed.size() + plainCount + (injected ? 1 : 0);
+    bool leadingAreInRegisters = (spread || plainCount == args.size()) && leadingCount + (spread ? 1 : 0) <= maxItemsCPythonHasOnItsStack;
+    // CPython's compiler makes one constant of a tuple of constants, and of three constants or more that a list begins with, on the line the call begins on.
+    PyTuple* constants = nullptr;
+    if (leadingCount == plainCount && (plainCount == args.size() || (leadingAreInRegisters && plainCount >= 3))) {
+        constants = tupleOfConstants({ args.begin(), plainCount });
+        if (constants && constants->length() != plainCount)
+            constants = nullptr;
+    }
+    bool allAreConstants = constants && !spread;
+    if (!leadingAreInRegisters || allAreConstants) {
+        leadingCount = 0;
+        spread = nullptr;
+    }
+    if (constants) {
+        for (unsigned i = 0; i < plainCount; ++i)
+            noteWhatConstantIsMadeOf(args[i]);
+        noteConstantMade(constants);
+    }
+    unsigned flags = 0;
+    Arguments leading(*this, leadingCount);
+    Reg positional = newTemporary();
+    Reg namedRegister = newTemporary();
+    if (allAreConstants) {
+        line(range);
+        if (plainCount)
+            load(positional.get(), constants);
+        else
+            g.move(positional.get(), emptyValue());
+    } else if (!leadingAreInRegisters) {
+        sequence(SequenceKind::List, args, positional.get(), range, pushed, injected);
+        flags |= ListIsNobodyElses;
+    } else {
+        unsigned next = 0;
+        for (RegisterID* value : pushed)
+            g.move(leading[next++], value);
+        for (unsigned i = 0; i < plainCount; ++i) {
+            if (constants)
+                load(leading[next++], constants->at(i));
+            else
+                expr(args[i], leading[next++]);
+        }
+        if (injected)
+            loadName(injected, leading[next++], range);
+        // What makes CPython's list or tuple, and what extends the list, is of the line the call begins on.
+        if (leadingCount || !spread)
+            line(range);
+        if (!spread)
+            g.move(positional.get(), emptyValue());
+        else {
+            expr(spread, positional.get());
+            if (leadingCount) {
+                flags |= PositionalExtendsList;
+                loc(range);
+                // CPython has gone through it by now. That makes a difference if anything is still to be evaluated.
+                if (keywords.isEmpty())
+                    line(range);
+                else {
+                    g.emitPySpreadNow(positional.get());
+                    flags |= ListIsNobodyElses;
+                }
+            }
+        }
     }
 
+    RegisterID* named = namedRegister.get();
     if (keywords.isEmpty())
-        g.move(operands[2], emptyValue());
-    else if (hasOnlyMapping) {
-        // It is only read: callArguments(). In CPython a dict is made here, on the line the call begins on.
+        g.move(named, emptyValue());
+    else if (keywords.size() == 1 && !keywords[0]->arg) {
+        // It is only read: prepareSpreadCall(). In CPython a dict is made here, on the line the call begins on.
         line(range);
-        g.move(operands[2], emptyValue());
-        expr(keywords[0]->value, operands[3]);
+        expr(keywords[0]->value, named);
+        flags |= KeywordsAreOfProgram;
     } else {
-        RegisterID* named = operands[2];
         bool haveDict = false;
         for (unsigned i = 0; i < keywords.size();) {
             if (!keywords[i]->arg) {
@@ -2431,15 +2489,8 @@ RegisterID* Unit::emitCall(RegisterID* dst, RegisterID* callee, std::span<Regist
         }
     }
     loc(range);
-    Reg array = newTemporary();
-    callRuntime(array.get(), RuntimeFunction::CallArguments, operands);
-    Reg thisValue = newTemporary();
-    if (keywords.isEmpty())
-        load(thisValue.get(), jsUndefined());
-    else
-        callRuntime(thisValue.get(), RuntimeFunction::TakeKeywordNames);
     markTemporaryMade(temporary);
-    return g.emitPyCallVarargs(result.get(), callee, thisValue.get(), array.get());
+    return g.emitPyCallSpread(result.get(), callee, leading.first(), leadingCount, positional.get(), named, flags);
 }
 
 // What a call passes as `this`.

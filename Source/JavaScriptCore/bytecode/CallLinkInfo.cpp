@@ -63,6 +63,7 @@ CallLinkInfo::CallType CallLinkInfo::callTypeFor(OpcodeID opcodeID)
         return Call;
 
     case op_call_varargs:
+    case op_py_call_spread:
         return CallVarargs;
 
     case op_construct:

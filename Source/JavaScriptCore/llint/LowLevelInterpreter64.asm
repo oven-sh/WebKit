@@ -2678,6 +2678,43 @@ macro commonCallOp(opcodeName, opcodeStruct, prepareCall, invokeCall, prepareSlo
     end)
 end
 
+# The frame of the callee is filled and sp is at it. t0 is the callee.
+macro doCallWithFrameOfVarargs(opcodeName, size, opcodeStruct, valueProfileName, dstVirtualRegister, dispatch, metadata, prepareCall, invokeCall)
+    metadata(t5, t2)
+
+    loadp %opcodeStruct%::Metadata::m_callLinkInfo.m_callee[t5], t1
+    btpz t1, (constexpr CallLinkInfo::polymorphicCalleeMask), .notPolymorphic
+    prepareCall(t2, t3, t4, t1, macro(address)
+        loadp %opcodeStruct%::Metadata::m_callLinkInfo.m_codeBlock[t5], t2
+        storep t2, address
+    end)
+    addp %opcodeStruct%::Metadata::m_callLinkInfo, t5, t2 # CallLinkInfo* in t2
+    jmp .goPolymorphic
+
+.notPolymorphic:
+    bqneq t0, t1, .opCallSlow
+    prepareCall(t2, t3, t4, t1, macro(address)
+        loadp %opcodeStruct%::Metadata::m_callLinkInfo.m_codeBlock[t5], t2
+        storep t2, address
+    end)
+
+.goPolymorphic:
+    loadp %opcodeStruct%::Metadata::m_callLinkInfo.m_monomorphicCallDestination[t5], t5
+.dispatch:
+    invokeCall(opcodeName, size, opcodeStruct, valueProfileName, dstVirtualRegister, dispatch, t5, t1, JSEntryPtrTag)
+
+.opCallSlow:
+    # t0 is callee
+    # t2 is CallLinkInfo*
+    prepareCall(t2, t3, t4, t1, macro(address)
+        storep 0, address
+    end)
+    addp %opcodeStruct%::Metadata::m_callLinkInfo, t5, t2 # CallLinkInfo* in t2
+    leap _g_config, t5
+    loadp JSCConfigOffset + constexpr JSC::offsetOfJSCConfigDefaultCallThunk[t5], t5
+    jmp .dispatch
+end
+
 macro doCallVarargs(opcodeName, size, get, opcodeStruct, valueProfileName, dstVirtualRegister, dispatch, metadata, frameSlowPath, slowPath, prepareCall, invokeCall, prepareSlowCall, dispatchAfterCall)
     callSlowPath(frameSlowPath)
     branchIfException(_llint_throw_from_slow_path_trampoline)
@@ -2692,39 +2729,7 @@ macro doCallVarargs(opcodeName, size, get, opcodeStruct, valueProfileName, dstVi
             move calleeFramePtr, sp
             get(m_callee, t1)
             loadConstantOrVariable(size, t1, t0)
-            metadata(t5, t2)
-
-            loadp %opcodeStruct%::Metadata::m_callLinkInfo.m_callee[t5], t1
-            btpz t1, (constexpr CallLinkInfo::polymorphicCalleeMask), .notPolymorphic
-            prepareCall(t2, t3, t4, t1, macro(address)
-                loadp %opcodeStruct%::Metadata::m_callLinkInfo.m_codeBlock[t5], t2
-                storep t2, address
-            end)
-            addp %opcodeStruct%::Metadata::m_callLinkInfo, t5, t2 # CallLinkInfo* in t2
-            jmp .goPolymorphic
-
-        .notPolymorphic:
-            bqneq t0, t1, .opCallSlow
-            prepareCall(t2, t3, t4, t1, macro(address)
-                loadp %opcodeStruct%::Metadata::m_callLinkInfo.m_codeBlock[t5], t2
-                storep t2, address
-            end)
-
-        .goPolymorphic:
-            loadp %opcodeStruct%::Metadata::m_callLinkInfo.m_monomorphicCallDestination[t5], t5
-        .dispatch:
-            invokeCall(opcodeName, size, opcodeStruct, valueProfileName, dstVirtualRegister, dispatch, t5, t1, JSEntryPtrTag)
-
-        .opCallSlow:
-            # t0 is callee
-            # t2 is CallLinkInfo*
-            prepareCall(t2, t3, t4, t1, macro(address)
-                storep 0, address
-            end)
-            addp %opcodeStruct%::Metadata::m_callLinkInfo, t5, t2 # CallLinkInfo* in t2
-            leap _g_config, t5
-            loadp JSCConfigOffset + constexpr JSC::offsetOfJSCConfigDefaultCallThunk[t5], t5
-            jmp .dispatch
+            doCallWithFrameOfVarargs(opcodeName, size, opcodeStruct, valueProfileName, dstVirtualRegister, dispatch, metadata, prepareCall, invokeCall)
         .dontUpdateSP:
             jmp _llint_throw_from_slow_path_trampoline
         end)
@@ -2819,6 +2824,7 @@ slowPathOp(py_ge)
 slowPathOp(py_compare)
 slowPathOp(py_unpack)
 slowPathOp(py_runtime)
+slowPathOp(py_spread_now)
 slowPathJumpOp(py_jtrue)
 slowPathJumpOp(py_jfalse)
 slowPathJumpOp(py_jeq)
@@ -2851,6 +2857,10 @@ llintOp(op_py_generator_return, OpPyGeneratorReturn, macro (size, get, dispatch)
     get(m_value, t2)
     loadConstantOrVariable(size, t2, r0)
     doReturn()
+end)
+
+llintOpWithMetadata(op_py_call_spread, OpPyCallSpread, macro (size, get, dispatch, metadata, return)
+    doCallVarargs(op_py_call_spread, size, get, OpPyCallSpread, m_valueProfile, m_dst, dispatch, metadata, _llint_slow_path_py_size_frame_for_spread, _llint_slow_path_py_call_spread, prepareForRegularCall, invokeForRegularCall, prepareForSlowRegularCall, dispatchAfterRegularCall)
 end)
 
 else
@@ -3247,6 +3257,116 @@ llintOp(op_py_bind_args, OpPyBindArgs, macro (size, get, dispatch)
 .slow:
     callSlowPath(_slow_path_py_bind_args)
     dispatch()
+end)
+
+
+# The cell is of that JSType and of that type of Python, not of one derived from it. `runtime`: see loadPythonRuntime().
+macro pyBranchIfCellIsNotExactly(cell, jsType, offsetOfTypeInRuntime, runtime, scratch, isNot)
+    bbneq JSCell::m_type[cell], jsType, isNot
+    loadp (constexpr (Python::PyObject::offsetOfType()))[cell], scratch
+    bpneq scratch, offsetOfTypeInRuntime[runtime], isNot
+end
+
+llintOp(op_py_spread_now, OpPySpreadNow, macro (size, get, dispatch)
+    get(m_srcDst, t0)
+    loadq [cfr, t0, 8], t1
+    btqnz t1, notCellMask, .slow
+    loadPythonRuntime(t3)
+    pyBranchIfCellIsNotExactly(t1, PyTupleType, (constexpr (Python::Runtime::offsetOfType(Python::TypeID::tupleType))), t3, t2, .slow)
+    dispatch()
+
+.slow:
+    callSlowPath(_slow_path_py_spread_now)
+    dispatch()
+end)
+
+
+llintOpWithMetadata(op_py_call_spread, OpPyCallSpread, macro (size, get, dispatch, metadata, return)
+    # After the * a tuple or nothing, after the ** nothing or a dict that is empty.
+    loadPythonRuntime(t3)
+    get(m_keywords, t0)
+    loadq [cfr, t0, 8], t1
+    btqz t1, .noKeywords
+    btqnz t1, notCellMask, .slow
+    pyBranchIfCellIsNotExactly(t1, PyDictType, (constexpr (Python::Runtime::offsetOfType(Python::TypeID::dictType))), t3, t2, .slow)
+    btinz (constexpr (Python::PyDict::offsetOfUsed()))[t1], .slow
+.noKeywords:
+    get(m_positional, t0)
+    loadq [cfr, t0, 8], t1
+    move 0, t2
+    btqz t1, .haveLength
+    btqnz t1, notCellMask, .slow
+    pyBranchIfCellIsNotExactly(t1, PyTupleType, (constexpr (Python::Runtime::offsetOfType(Python::TypeID::tupleType))), t3, t2, .slow)
+    loadi (constexpr (Python::PyTuple::offsetOfLength()))[t1], t2
+    addp (constexpr (Python::PyTuple::offsetOfItems())), t1
+    bia t2, constexpr Python::maxLengthSpreadByInterpreter, .slow
+.haveLength:
+    # The frame of the callee, as calleeFrameForVarargs() has it.
+    getu(size, OpPyCallSpread, m_leadingCount, t3)
+    addi t2, t3, t0
+    addi CallFrameHeaderSlots + 2, t0, t7
+    andi ~1, t7
+    get(m_firstFree, t5)
+    subi t5, t7
+    addi 1, t7
+    andi ~1, t7
+    lshiftp 3, t7
+    subp cfr, t7, t7
+    loadp CodeBlock[cfr], t5
+    loadp CodeBlock::m_vm[t5], t5
+    bpa VMSoftStackLimitOffset[t5], t7, .slow
+    # Before anything is written there: what is below sp belongs to whatever handles a signal.
+    addp CallerFrameAndPCSize, t7, sp
+
+    addi 1, t0
+    storei t0, LowWordOffset + ArgumentCountIncludingThis[t7]
+    storeq ValueUndefined, ThisArgumentOffset[t7]
+    leap FirstArgumentOffset[t7], t5
+    btiz t3, .leadingAreThere
+    get(m_leading, t0)
+    leap [cfr, t0, 8], t0
+.copyLeading:
+    loadq [t0], t6
+    storeq t6, [t5]
+    storeq ValueEmpty, [t0]
+    subp SlotSize, t0
+    addp SlotSize, t5
+    bsubinz 1, t3, .copyLeading
+.leadingAreThere:
+    btiz t2, .itemsAreThere
+.copyItem:
+    loadq [t1], t6
+    storeq t6, [t5]
+    addp SlotSize, t1
+    addp SlotSize, t5
+    bsubinz 1, t2, .copyItem
+.itemsAreThere:
+    get(m_positional, t0)
+    storeq ValueEmpty, [cfr, t0, 8]
+    get(m_keywords, t0)
+    storeq ValueEmpty, [cfr, t0, 8]
+    get(m_callee, t1)
+    loadConstantOrVariable(size, t1, t0)
+    storeq t0, Callee[t7]
+    storePC()
+    jmp .frameIsFilled
+
+    # As doCallVarargs().
+.slow:
+    callSlowPath(_llint_slow_path_py_size_frame_for_spread)
+    branchIfException(_llint_throw_from_slow_path_trampoline)
+    move r1, sp
+    storePC()
+    prepareStateForCCall()
+    move cfr, a0
+    move PC, a1
+    cCall2(_llint_slow_path_py_call_spread)
+    restoreStateAfterCCall()
+    move r1, sp
+    get(m_callee, t1)
+    loadConstantOrVariable(size, t1, t0)
+.frameIsFilled:
+    doCallWithFrameOfVarargs(op_py_call_spread, size, OpPyCallSpread, m_valueProfile, m_dst, dispatch, metadata, prepareForRegularCall, invokeForRegularCall)
 end)
 
 

@@ -305,8 +305,6 @@ constexpr unsigned makeFunctionIndexShift = 3;
     v(MakeFunction, -1) /* index and MakeFunctionParts, those parts, the cells of the closure... */ \
     v(SetFunctionTypeParams, 2) /* function, type params: the function */ \
     v(MakeGenerator, -1) /* how many slots it needs; for a generator expression: the iterator of its first iterable */ \
-    v(CallArguments, 3) /* function, args, kwargs or empty: an array of the arguments, and sets aside the names of the keywords */ \
-    v(TakeKeywordNames, 0) \
     /* Imports */ \
     v(ImportName, 4) /* name, fromlist, level, ImportMode */ \
     v(ImportFrom, 2) /* module, name */ \

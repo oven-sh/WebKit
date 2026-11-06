@@ -21,6 +21,7 @@ class JSCell;
 class JSFunction;
 class JSGlobalObject;
 class VM;
+struct OpPyCallSpread;
 
 namespace Python {
 
@@ -125,6 +126,25 @@ JS_EXPORT_PRIVATE CallData callDataUnknownToJS(JSValue callee);
 // its place: the function, and what goes in front of the arguments is left in Runtime::selfOfCall for llint_python_call_with_self_trampoline.
 // Null: there is no such function, and C++ makes the call.
 JS_EXPORT_PRIVATE JSFunction* beginCallWithSelf(JSGlobalObject*, JSValue callee);
+
+// op_py_call_spread: callee(leading..., *positional, **keywords).
+static constexpr unsigned maxLengthSpreadByInterpreter = 1024; // A longer tuple is for the slow path, which knows how many arguments there may be.
+enum SpreadCallFlag : unsigned {
+    KeywordsAreOfProgram = 1, // `keywords` is what the program wrote after the only **, which may be anything. Otherwise a dict that the compiled code has made.
+    PositionalExtendsList = 2, // There are leading arguments. CPython has them in a list, and extends that with what is after the * before it comes to the **.
+    ListIsNobodyElses = 4, // If `positional` is a list, the compiled code has made it.
+    CodeRunsBeforeCall = 8, // Not of the instruction: whoever prepares the call ahead of it, and then runs code of the program, wants nothing left that this code can change.
+};
+// What the instruction does before it calls, in two steps, for its slow paths and for whoever has to know the arguments ahead of it.
+// The first makes of `positional` a tuple or a list and of `keywords` a dict that is not empty, none of them an instance of a derived class, or leaves or
+// makes them empty. If it had to make a dict of what the program wrote, it goes on: `positional` is a list of all the arguments but the leading ones,
+// `keywords` their names as `this` has them. What it finds in one of these forms it leaves as it is, so it may be called again. It runs code of the
+// program in CPython's order: what is after the ** is read first, but see PositionalExtendsList. What the call passes as `this`, the names or
+// undefined, it leaves in `firstFree`. The number of arguments (with an exception, 0). More than maxArguments: the call is to be refused, and not all of this is done.
+JS_EXPORT_PRIVATE uint64_t prepareSpreadCall(JSGlobalObject*, CallFrame*, const OpPyCallSpread&, unsigned moreFlags = 0);
+// The second, right after that, copies them to where the arguments of the callee go, and returns `this`. It allocates nothing and raises nothing: the stack
+// pointer is at the frame of the callee by then, so that C++ runs in what are registers of the caller to the collector (clearDeadTemporaries()).
+JS_EXPORT_PRIVATE JSValue fillSpreadCall(CallFrame*, const OpPyCallSpread&, JSValue* arguments);
 
 // The stack has no room for the frame of a call of Python code, which is about to be told so.
 void frameHasNoRoom(CallFrame*, CodeBlock*);

@@ -141,7 +141,6 @@ void Runtime::visit(Visitor& visitor)
     visitor.append(m_asyncGenFirstIter);
     visitor.append(m_asyncGenFinalizer);
     visitor.append(m_threadLocals);
-    visitor.append(m_pendingKeywordNames);
     visitor.append(m_sendResult);
     visitor.append(m_exceptionGroupRest);
     // What waits for a call that is owed is not the program's to reach. The collector keeps it once it has marked all that is, so that it does not
@@ -761,7 +760,6 @@ void Runtime::takeThreadLocalState(ThreadLocalState& state)
     state.runningGenerator = std::exchange(m_runningGenerator, nullptr);
     state.asyncGenFirstIter = take(m_asyncGenFirstIter);
     state.asyncGenFinalizer = take(m_asyncGenFinalizer);
-    state.pendingKeywordNames = take(m_pendingKeywordNames);
     state.sendResult = take(m_sendResult);
     state.exceptionGroupRest = take(m_exceptionGroupRest);
     state.thrownException = take(thrownException);
@@ -809,7 +807,6 @@ void Runtime::putThreadLocalState(ThreadLocalState& state)
     m_runningGenerator = state.runningGenerator;
     put(m_asyncGenFirstIter, state.asyncGenFirstIter);
     put(m_asyncGenFinalizer, state.asyncGenFinalizer);
-    put(m_pendingKeywordNames, state.pendingKeywordNames);
     put(m_sendResult, state.sendResult);
     put(m_exceptionGroupRest, state.exceptionGroupRest);
     put(m_slots[static_cast<unsigned>(Slot::ThrownException)], state.thrownException);

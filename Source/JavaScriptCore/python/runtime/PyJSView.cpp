@@ -1017,8 +1017,8 @@ bool isBeingCalledByPython(JSGlobalObject* globalObject, CallFrame* callFrame)
     case op_call:
         callee = instruction->as<OpCall>().m_callee;
         break;
-    case op_call_varargs:
-        callee = instruction->as<OpCallVarargs>().m_callee;
+    case op_py_call_spread:
+        callee = instruction->as<OpPyCallSpread>().m_callee;
         break;
     default:
         return true;

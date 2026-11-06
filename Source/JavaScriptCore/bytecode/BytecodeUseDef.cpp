@@ -182,6 +182,17 @@ void computeUsesForBytecodeIndexImpl(const JSInstruction* instruction, Checkpoin
         handleNewArrayLike(instruction->as<OpPyRuntime>());
         return;
 
+    case op_py_call_spread: {
+        auto bytecode = instruction->as<OpPyCallSpread>();
+        functor(bytecode.m_callee);
+        for (int i = 0; i < static_cast<int>(bytecode.m_leadingCount); i++)
+            functor(VirtualRegister { bytecode.m_leading.offset() - i });
+        functor(bytecode.m_positional);
+        functor(bytecode.m_keywords);
+        return;
+    }
+    USES(OpPySpreadNow, srcDst)
+
     USES(OpToThis, srcDst)
     USES(OpCheckTdz, targetVirtualRegister)
     USES(OpIdentityWithProfile, srcDst)
@@ -788,6 +799,17 @@ void computeDefsForBytecodeIndexImpl(unsigned numVars, const JSInstruction* inst
     }
 
     DEFS(OpPyRuntime, dst)
+    case op_py_call_spread: {
+        auto bytecode = instruction->as<OpPyCallSpread>();
+        functor(bytecode.m_dst);
+        for (int i = 0; i < static_cast<int>(bytecode.m_leadingCount); i++)
+            functor(VirtualRegister { bytecode.m_leading.offset() - i });
+        functor(bytecode.m_positional);
+        functor(bytecode.m_keywords);
+        functor(bytecode.m_firstFree);
+        return;
+    }
+    DEFS(OpPySpreadNow, srcDst)
 
     case op_py_unpack: {
         auto bytecode = instruction->as<OpPyUnpack>();
