@@ -803,8 +803,12 @@ NEVER_INLINE Threads::CallAgain Threads::takeRequestToCallAgain(CallFrame* callF
         return CallAgain::No;
     }
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(m_vm);
-    ASSERT(scope.exception() && scope.exception()->value().isNull());
-    scope.clearException();
+    ASSERT(scope.exception() && (scope.exception()->value().isNull() || m_vm.hasPendingTerminationException()));
+    // On the way here the host may have asked for the end of what runs, and that has taken the place of the request.
+    if (!scope.tryClearException()) [[unlikely]] {
+        begun.call = nullptr;
+        return CallAgain::No;
+    }
     thread.callThatMayBeginAgain = callFrame;
     return begun.collects ? CallAgain::AfterCollecting : CallAgain::OnWipedStack;
 }
