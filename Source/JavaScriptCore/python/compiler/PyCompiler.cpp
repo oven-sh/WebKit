@@ -653,8 +653,10 @@ void Unit::emitImplicitReturn(const Last& isLast, const Range& range)
         g.emitReturn(m_valueToReturn);
     else if (m_endsOfClassBody)
         hiddenJump(endOfClassBodyForLine(m_markedLine));
-    else
-        emitReturnNone();
+    else {
+        // (In CPython's list of constants None comes where the function ends, not where a copy of its end is.)
+        g.emitReturn(constant(jsUndefined()));
+    }
     resumeTry(WTF::move(suspended));
 }
 
