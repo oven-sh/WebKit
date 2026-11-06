@@ -212,7 +212,9 @@ private:
         Ref<Label> label;
         Range place;
     };
-    using ReturnsByLine = Vector<WayOut, 4>;
+    struct ReturnsByLine : Vector<WayOut, 4> {
+        bool isInOrder { true }; // By line and place. See labelForLine().
+    };
 
     struct PatternContext {
         struct Capture {

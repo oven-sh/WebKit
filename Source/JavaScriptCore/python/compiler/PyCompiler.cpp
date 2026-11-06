@@ -807,14 +807,16 @@ void Unit::jumpIfOrLeave(Expr* test, Label& target, const Last& isLast, ReturnsB
 
 Label& Unit::labelForLine(ReturnsByLine& labels, int lineno, const Range& place)
 {
-    size_t index = labels.findIf([&](auto& entry) {
-        return entry.lineno == lineno && entry.place.colOffset == place.colOffset && entry.place.endLineno == place.endLineno && entry.place.endColOffset == place.endColOffset;
-    });
-    if (index == notFound) {
-        index = labels.size();
-        labels.append({ lineno, g.newLabel(), place });
-    }
-    return labels[index].label.get();
+    auto keyOf = [](int lineno, const Range& place) { return std::tuple { lineno, place.colOffset, place.endLineno, place.endColOffset }; };
+    auto key = keyOf(lineno, place);
+    auto keyOfEntry = [&](auto& entry) { return keyOf(entry.lineno, entry.place); };
+    // They are asked for in the order of the source, as a rule, and a test may have any number of operands.
+    auto it = labels.isInOrder ? std::ranges::lower_bound(labels, key, { }, keyOfEntry) : std::ranges::find(labels, key, keyOfEntry);
+    if (it != labels.end() && keyOfEntry(*it) == key)
+        return it->label.get();
+    labels.isInOrder &= it == labels.end();
+    labels.append({ lineno, g.newLabel(), place });
+    return labels.last().label.get();
 }
 
 void Unit::emitReturnsByLine(ReturnsByLine& returns, const Last& isLast)
