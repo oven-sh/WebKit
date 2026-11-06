@@ -471,7 +471,6 @@ public:
         BuiltinAll, // The functions, whatever the names are bound to.
         BuiltinAny,
         Decimal, // See Decimal::State in PyDecimal.h.
-        CApi, // See CApi::State in ../capi/CApi.h.
         Count
     };
     JSValue slot(Slot which) const { return m_slots[static_cast<unsigned>(which)].get(); }

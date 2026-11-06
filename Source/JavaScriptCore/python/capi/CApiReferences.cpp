@@ -85,8 +85,8 @@ PY_CAPI int Py_IS_TYPE(Handle object, Handle type)
     return JSValue(interpreter().runtime.typeOf(toJS(object))) == toJS(type);
 }
 
-// One object may be spelled in two ways: see toC(). Of these only None and the bools are, whose symbols say what they stand for at all times. (A type is only ever spelled by
-// its symbol, and what the symbols of Ellipsis and NotImplemented stand for is there while the API is.)
+// One object may be spelled in two ways for C too: None and the bools are, by their symbols, which say what they stand for at all times, and as toC() spells them. (A type is only ever
+// spelled by its symbol, a number in one way, and what the symbols of Ellipsis and NotImplemented stand for is there while the API is.)
 static ALWAYS_INLINE JSValue plain(Handle handle)
 {
     JSValue value = toJS(handle);

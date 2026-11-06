@@ -194,9 +194,9 @@ JSValue capsuleForMemory(JSGlobalObject* globalObject, PyByteStorage* storage)
 
 // ---- Objects ----
 
-uint64_t bitsOfObject(JSGlobalObject* globalObject, JSValue value)
+uint64_t bitsOfObject(JSGlobalObject*, JSValue value)
 {
-    return CApi::bitsForC(globalObject, value);
+    return identityBits(value);
 }
 
 JSValue objectFromBits(JSGlobalObject* globalObject, uint64_t bits, JSValue hint)

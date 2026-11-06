@@ -48,6 +48,8 @@ bool ensure(JSGlobalObject*);
 bool tryEnsure(JSGlobalObject*);
 
 void runtimeIsBeginning(Runtime&);
+// Its built-in types are there, bare: those that C names by symbols are told so.
+void didMakeTypes(Runtime&);
 void runtimeIsEnding(Runtime&);
 // The collector of another VM asks too, on a thread of its own, while this one may be ending: the pointers are compared and never followed.
 extern std::atomic<const Runtime*> s_runtimeItIsFor;
@@ -69,10 +71,7 @@ private:
 
 // ---- For every interpreter ----
 
-// The bits of the PyObject* for the object. They are what id() says, for whatever is a cell but a str: a built-in type that C names by a symbol (&PyLong_Type) has the
-// address of the symbol, in every interpreter and from the start, and any other cell its own. To say so takes no API.
-uint64_t bitsForC(JSGlobalObject*, JSValue);
-// The way back: this interpreter's object, if the bits are the address of one of the symbols that stand for objects. Empty: they are not.
+// From identityBits() back: this interpreter's object, if the bits are the address of one of the symbols that stand for objects. Empty: they are not.
 JSValue objectOfSymbol(JSGlobalObject*, uint64_t bits);
 
 // ---- For the interpreter that the API has been set up for ----
@@ -97,6 +96,7 @@ void giveReference(uint64_t bits);
 
 inline bool tryEnsure(JSGlobalObject*) { return false; }
 inline void runtimeIsBeginning(Runtime&) { }
+inline void didMakeTypes(Runtime&) { }
 inline void runtimeIsEnding(Runtime&) { }
 inline bool isFor(const Runtime&) { return false; }
 inline bool isSetUpFor(const Runtime&) { return false; }
@@ -105,7 +105,6 @@ public:
     explicit LibraryBeingLoaded(JSGlobalObject*) { }
     ~LibraryBeingLoaded() { }
 };
-inline uint64_t bitsForC(JSGlobalObject*, JSValue value) { return static_cast<uint64_t>(JSValue::encode(value.isNull() ? jsUndefined() : value)); }
 inline JSValue objectOfSymbol(JSGlobalObject*, uint64_t) { return { }; }
 inline void didFinishMarking(JSC::Heap&) { }
 inline bool throwWhatCRaised(JSGlobalObject*) { return true; }

@@ -193,6 +193,7 @@ void Runtime::initialize()
     initializeStructures();
     initializeNames();
     initializeTypes();
+    CApi::didMakeTypes(*this);
     initializeModules();
     RETURN_IF_EXCEPTION(scope, void());
     RELEASE_AND_RETURN(scope, startImportSystem(m_globalObject));

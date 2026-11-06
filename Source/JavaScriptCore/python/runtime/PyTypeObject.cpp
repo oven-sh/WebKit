@@ -7,7 +7,6 @@
 #include "PyInternals.h"
 #include "PyJSClass.h"
 
-#include "CApiHooks.h"
 #include "HeapIterationScope.h"
 #include "JSCInlines.h"
 #include "MarkedSpaceInlines.h"
@@ -96,17 +95,7 @@ JSValue identityOf(JSGlobalObject* globalObject, JSValue value)
         if (const StringImpl* impl = asString(value)->tryGetValueImpl())
             return makeInt(globalObject, static_cast<uint64_t>(std::bit_cast<uintptr_t>(impl)));
     }
-    if (value.isCell()) {
-        // A built-in type that C names by a symbol is where the symbol is, as in CPython.
-        if (value.asCell()->type() == InternalFunctionType) [[unlikely]]
-            return makeInt(globalObject, CApi::bitsForC(globalObject, value));
-        return makeInt(globalObject, static_cast<uint64_t>(std::bit_cast<uintptr_t>(value.asCell())));
-    }
-    if (value.isNumber())
-        value = jsNumber(numberValue(value));
-    else if (value.isNull())
-        value = jsUndefined();
-    return makeInt(globalObject, static_cast<uint64_t>(JSValue::encode(value)));
+    return makeInt(globalObject, identityBits(value));
 }
 
 String addressForRepr(JSGlobalObject* globalObject, JSValue value)
@@ -257,7 +246,8 @@ JSValue objectStr(JSGlobalObject* globalObject, JSValue self)
 
 int64_t identityHash(JSGlobalObject*, JSValue self)
 {
-    uint64_t bits = self.isCell() ? std::bit_cast<uintptr_t>(self.asCell()) : static_cast<uint64_t>(JSValue::encode(self));
+    // It goes by id(), as in CPython.
+    uint64_t bits = identityBits(self);
     int64_t hash = static_cast<int64_t>((bits >> 4) | (bits << 60));
     return hash == -1 ? -2 : hash;
 }

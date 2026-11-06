@@ -28,11 +28,13 @@ namespace CApi {
 // Two objects are the same if the pointers are equal, a container's own array of values is an array of PyObject*, and nothing
 // is allocated for a value to cross.
 //
-// Two kinds of value are spelled otherwise for C than in the heap:
-//  - A built-in type that C names by a symbol (&PyLong_Type). The address is fixed when bun is linked, and the cell is made when the
-//    program runs. All these symbols lie in one section (StaticObject). What comes in is tested for that range; a type that goes
-//    out is asked for its symbol (TypeExtension::symbol). The program sees the same number: it is the type's id() (bitsForC()).
+// Three kinds of value are spelled otherwise for C than in the heap (identityBits() in ../runtime/PyType.h, which id() goes by too):
+//  - A built-in type that C names by a symbol (&PyLong_Type), or by a variable that is as good as one (PyExc_ValueError, which a library may read as it is loaded, before
+//    there is an interpreter, and keep). The address is fixed when bun is linked, and the cell is made when the program runs. All these symbols lie in one section
+//    (StaticObject). What comes in is tested for that range; a type that goes out is asked for its symbol (PyType::symbolForC()). The program sees the same number: it is the
+//    type's id(), and its hash() goes by it.
 //  - null, which only JS makes and which is None as undefined is. C compares with Py_None: it gets undefined.
+//  - An int that is tagged as a double, as arithmetic may leave it. C compares pointers: it gets the one spelling that PyLong_FromLong() gives.
 struct Opaque;
 using Handle = Opaque*;
 
@@ -40,7 +42,8 @@ using Handle = Opaque*;
 struct alignas(16) StaticObject {
     // Of what the runtime itself keeps alive for as long as it lives. Empty while the API is not set up, but in those that stand for what is no cell.
     EncodedJSValue value;
-    uint64_t unused;
+    // Which it is: see CApiInterpreter.cpp.
+    uint64_t number;
 };
 
 #if OS(DARWIN)
@@ -55,8 +58,7 @@ extern "C" StaticObject pyStaticObjectsEnd __asm("__stop_py_statics");
 
 // What C links with. `used`: nothing in bun refers to most of it. (The names are C's whatever namespace the definitions are in.)
 #define PY_CAPI extern "C" __attribute__((visibility("default"), used))
-#define PY_CAPI_DATA(type, name) extern "C" { __attribute__((visibility("default"), used)) type name; }
-#define PY_CAPI_STATIC_OBJECT(name, ...) extern "C" { __attribute__((visibility("default"), used, section(PY_CAPI_STATIC_SECTION))) JSC::Python::CApi::StaticObject name { __VA_ARGS__ }; }
+#define PY_CAPI_STATIC_OBJECT(name, value, number) extern "C" { __attribute__((visibility("default"), used, section(PY_CAPI_STATIC_SECTION))) constinit JSC::Python::CApi::StaticObject name { value, number }; }
 
 ALWAYS_INLINE uintptr_t bitsOf(Handle handle) { return std::bit_cast<uintptr_t>(handle); }
 
@@ -81,91 +83,19 @@ ALWAYS_INLINE JSCell* countedCell(Handle handle)
     return std::bit_cast<JSCell*>(handle);
 }
 
-// What the C API knows about a type, for the types about which it knows something: PyType::extension().
-class TypeExtension final : public JSCell {
-public:
-    using Base = JSCell;
-    static constexpr unsigned StructureFlags = Base::StructureFlags;
-    static constexpr DestructionMode needsDestruction = DoesNotNeedDestruction;
-
-    template<typename CellType, SubspaceAccess>
-    static CompleteSubspace* subspaceFor(VM& vm) { return &vm.cellSpace(); }
-
-    DECLARE_INFO;
-
-    static Structure* createStructure(VM& vm, JSGlobalObject* globalObject)
-    {
-        return Structure::create(vm, globalObject, jsNull(), TypeInfo(CellType, StructureFlags), info());
-    }
-    static TypeExtension* create(VM&, Structure*);
-
-    static TypeExtension* of(PyType* type) { return static_cast<TypeExtension*>(type->extension()); }
-
-    // The symbol that C knows the type by. Null: none, and the address of the cell is what C gets.
-    StaticObject* symbol { nullptr };
-
-private:
-    TypeExtension(VM& vm, Structure* structure)
-        : Base(vm, structure)
-    {
-    }
-};
-
-ALWAYS_INLINE Handle toC(JSValue value)
-{
-    EncodedJSValue bits = JSValue::encode(value);
-    if (!(bits & JSValue::NotCellMask)) {
-        if (bits && value.asCell()->type() == InternalFunctionType) [[unlikely]] {
-            if (PyType* type = PyType::tryFrom(value.asCell())) {
-                if (auto* extension = TypeExtension::of(type); extension && extension->symbol)
-                    return std::bit_cast<Handle>(extension->symbol);
-            }
-        }
-    } else if (bits == JSValue::ValueNull) [[unlikely]]
-        bits = JSValue::ValueUndefined;
-    return std::bit_cast<Handle>(static_cast<uintptr_t>(bits));
-}
+ALWAYS_INLINE Handle toC(JSValue value) { return std::bit_cast<Handle>(static_cast<uintptr_t>(identityBits(value))); }
 
 // ---- The one interpreter ----
 //
 // Whose the API is, and when it is set up: see CApiHooks.h.
 
-// What has to be a cell: the runtime refers to it (Runtime::Slot::CApi).
-class State final : public JSCell {
-public:
-    using Base = JSCell;
-    static constexpr unsigned StructureFlags = Base::StructureFlags;
-    static constexpr DestructionMode needsDestruction = DoesNotNeedDestruction;
-
-    template<typename CellType, SubspaceAccess>
-    static CompleteSubspace* subspaceFor(VM& vm) { return &vm.cellSpace(); }
-
-    DECLARE_INFO;
-    DECLARE_VISIT_CHILDREN;
-
-    static Structure* createStructure(VM& vm, JSGlobalObject* globalObject)
-    {
-        return Structure::create(vm, globalObject, jsNull(), TypeInfo(CellType, StructureFlags), info());
-    }
-    static State* create(VM&, Structure*);
-
-    WriteBarrier<Structure> typeExtensionStructure;
-
-private:
-    State(VM& vm, Structure* structure)
-        : Base(vm, structure)
-    {
-    }
-};
-
 struct Interpreter {
     WTF_MAKE_STRUCT_TZONE_ALLOCATED(Interpreter);
 
-    Interpreter(JSGlobalObject* globalObject, State* state)
+    Interpreter(JSGlobalObject* globalObject)
         : globalObject(globalObject)
         , vm(getVM(globalObject))
         , runtime(Python::runtime(globalObject))
-        , state(state)
         , lock(vm.apiLock())
         , keyOfReferenceToThread(makeKeyOfReferenceToThread())
     {
@@ -176,7 +106,6 @@ struct Interpreter {
     JSGlobalObject* const globalObject;
     VM& vm;
     Runtime& runtime;
-    State* const state;
     const Ref<JSLock> lock;
     // See t_thisThread.
     const pthread_key_t keyOfReferenceToThread;

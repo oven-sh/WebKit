@@ -1404,19 +1404,26 @@ functions are exported from the executable. (So far there is what it takes to ho
 **A `PyObject*` is the 64 bits of the `JSValue`**, and NULL the empty value (`toJS()`, `toC()` in `capi/CApi.h`). The address of a cell stands for the cell. None, the
 bools, and the ints and floats that are no cells are addresses at which there is no memory, and C cannot tell. So `==` in C is `is`, nothing is allocated or looked
 up for a value to cross, and a reference that is borrowed from a container is the value that the container holds, good for as long as it holds it: CPython's rule.
-Two kinds of value are spelled otherwise for C than in the heap. A built-in type that C names by a symbol (`&PyLong_Type`) has an address that was fixed when the
-executable was linked: these symbols lie in one section, a pointer that comes in is tested for that range, and a type that goes out is asked for its
-symbol (`PyType::extension()`). And `null`, which only JS makes and which is None too, goes out as `undefined`, which is what C compares with.
-`PyExc_*` are variables and hold the addresses of the cells.
+Three kinds of value are spelled otherwise for C than in the heap, where one object has several spellings or C's was fixed beforehand:
+- A built-in type that C names by a symbol (`&PyLong_Type`; `PyExc_ValueError`, which is a variable) has an address that was fixed when the executable was linked. These symbols lie in one
+  section. A pointer that comes in is tested for that range, and the symbol holds the cell; a type that goes out is asked for its symbol (`PyType::symbolForC()`).
+- An int that is no cell may be tagged as an int32 or as a double, as the arithmetic left it (`(2**40 + 5) - 2**40`). It goes out in the one way in which `jsNumber()` tags it.
+- `null`, which only JS makes and which is None too, goes out as `undefined`.
 
-**The address of the symbol is the type's `id()`**, as it is in CPython: in every interpreter, from the start, whether it has the API or not (`CApi::bitsForC()`, which `identityOf()` asks
-for what is a type). So the eight bytes of a `py_object` are the `id()` of what they stand for whoever reads them, and to write a type into memory takes no API. The way
-back (`objectOfSymbol()`) gives each interpreter its own type. Nothing is kept for either: the 58 types are compared one after the other, after a test that sends every class of
-the program away. No cell can have such an `id()`: the section is part of the executable. `hash()` of a type does not follow its `id()` (nor does it in CPython 3.15).
+**One function says which object a value is**: `identityBits()`, in `runtime/PyType.h`. `toC()` is that function; `id()` is its result as an int; the hash that `object` and `type` give is
+made of it, as in CPython (`id()` turned right by four bits); the eight bytes of a `py_object` are it. (Only the `id()` of a str goes by something else, its characters: two cells with the same ones are one str to `is`. C has the cell.) It needs no API and
+asks for no interpreter: a type has been told its symbol when its interpreter made it (`CApi::didMakeTypes()`), in every interpreter, and a symbol says which it is (`StaticObject::number`), so
+the way back (`objectOfSymbol()`) gives each interpreter its own type. So the `id()` of `int` is `&PyLong_Type`, as it is in CPython, in every interpreter, from the start; and to write a type
+into memory takes no API. No cell can have such an `id()`: the section is part of the executable. What it costs: for a cell, one comparison of its `JSType`, which sends
+everything but types away.
+
+**`PyExc_ValueError` never changes.** A library may read it as it is loaded, whoever loads it and whenever (JS by `bun:ffi` before there is any Python, a Worker before main has a use
+for the API), and a constructor runs once in a process. So the variable is a constant that the linker fills: the address of a symbol like those of the types, which has no name of its own. What
+stands behind a symbol is there while the API is set up. Before and after, the symbol holds nothing, and nobody gets as far as looking: every function that would refuses the caller first.
 
 So a value that is its own 64 bits is one object however often it is made, where CPython makes a new object each time. `PyLong_FromLong(x) == PyLong_FromLong(x)` holds for every
 int that is no cell (below 2**53 in size; CPython: from -5 to 256), and `PyFloat_FromDouble(x) == PyFloat_FromDouble(x)` for every float that is no cell (1.5, 1e308; a float with a
-whole value, 0.0 and nan are cells, and differ as there). These are the rules of `is` in a program here. For C it means that an address used as a key finds an equal number, not
+whole value, 0.0 and nan are cells, and differ as there). These are the rules of `is` in a program here, and they hold however the number is tagged. For C it means that an address used as a key finds an equal number, not
 "the same allocation": harmless, since the objects are immutable, and nothing may be concluded from two addresses being equal but that the values are. There is no cell to count on:
 `Py_INCREF` and `Py_DECREF` of such a value do nothing, and its `Py_REFCNT()` never changes.
 
@@ -1450,7 +1457,7 @@ call ends otherwise: it does not outlive the call that set it. What ends the
 program (a termination) is never put in the indicator: it stays pending, and while it does every function of the API fails at once.
 
 **One interpreter of a process has the API: the first that there is** (`CApi::runtimeIsBeginning()`, in `Runtime`'s constructor). The functions are not told for whom they are called,
-and a variable such as `PyExc_ValueError` holds one object. Nothing that a program does changes whose the API is: for `bun main.py` it is main's, whatever its Workers do. In any
+and a symbol such as `PyLong_Type` stands for one object. Nothing that a program does changes whose the API is: for `bun main.py` it is main's, whatever its Workers do. In any
 other interpreter what needs the API is an `ImportError`; and when that one has ended nobody has the API any more, for what was loaded stays loaded, with pointers into its heap.
 (CPython's extensions have to say that they can serve more than one interpreter, and few do.)
 

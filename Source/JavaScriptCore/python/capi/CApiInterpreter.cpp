@@ -22,51 +22,76 @@ namespace CApi {
 
 // ---- The symbols that stand for objects ----
 
-#define DEFINE_STATIC_TYPE(symbol, id) PY_CAPI_STATIC_OBJECT(symbol)
+// Each says which it is. (Where the linker puts them is its own business.)
+enum SymbolNumber : uint64_t {
+#define DEFINE_NUMBER(symbol, id) NumberOf##symbol,
+    FOR_EACH_CAPI_STATIC_TYPE(DEFINE_NUMBER)
+#undef DEFINE_NUMBER
+#define DEFINE_NUMBER(name) NumberOf##name,
+    FOR_EACH_CAPI_EXCEPTION(DEFINE_NUMBER)
+#undef DEFINE_NUMBER
+    numberOfTypesWithSymbols,
+    NumberOfNone = numberOfTypesWithSymbols,
+    NumberOfFalse,
+    NumberOfTrue,
+    NumberOfEllipsis,
+    NumberOfNotImplemented,
+};
+
+#define DEFINE_STATIC_TYPE(symbol, id) PY_CAPI_STATIC_OBJECT(symbol, 0, NumberOf##symbol)
 FOR_EACH_CAPI_STATIC_TYPE(DEFINE_STATIC_TYPE)
 #undef DEFINE_STATIC_TYPE
 
 // The headers for abi3t ask Py_GetConstantBorrowed() for these five. Three are no cells, and are what they are at all times.
-PY_CAPI_STATIC_OBJECT(_Py_NoneStruct, JSValue::ValueUndefined)
-PY_CAPI_STATIC_OBJECT(_Py_FalseStruct, JSValue::ValueFalse)
-PY_CAPI_STATIC_OBJECT(_Py_TrueStruct, JSValue::ValueTrue)
-PY_CAPI_STATIC_OBJECT(_Py_EllipsisObject)
-PY_CAPI_STATIC_OBJECT(_Py_NotImplementedStruct)
+PY_CAPI_STATIC_OBJECT(_Py_NoneStruct, JSValue::ValueUndefined, NumberOfNone)
+PY_CAPI_STATIC_OBJECT(_Py_FalseStruct, JSValue::ValueFalse, NumberOfFalse)
+PY_CAPI_STATIC_OBJECT(_Py_TrueStruct, JSValue::ValueTrue, NumberOfTrue)
+PY_CAPI_STATIC_OBJECT(_Py_EllipsisObject, 0, NumberOfEllipsis)
+PY_CAPI_STATIC_OBJECT(_Py_NotImplementedStruct, 0, NumberOfNotImplemented)
 
-#define DEFINE_EXCEPTION(name) PY_CAPI_DATA(Handle, PyExc_##name)
+// PyExc_ValueError is a variable. A library may read it as it is loaded, whoever loads it and whenever (JS, by bun:ffi, before there is any Python), and keep what it has read. So what
+// it holds is good from before main() to the end of the process, and is never written: the address of a symbol like the others, which nobody names.
+#define DEFINE_EXCEPTION(name) \
+    extern "C" { \
+    __attribute__((visibility("hidden"), used, section(PY_CAPI_STATIC_SECTION))) constinit StaticObject pyExceptionSymbol##name { 0, NumberOf##name }; \
+    extern __attribute__((visibility("default"))) StaticObject* const PyExc_##name; \
+    __attribute__((used)) constinit StaticObject* const PyExc_##name = &pyExceptionSymbol##name; \
+    }
 FOR_EACH_CAPI_EXCEPTION(DEFINE_EXCEPTION)
 #undef DEFINE_EXCEPTION
-PY_CAPI_DATA(Handle, PyExc_EnvironmentError)
-PY_CAPI_DATA(Handle, PyExc_IOError)
+extern "C" {
+extern __attribute__((visibility("default"))) StaticObject* const PyExc_EnvironmentError;
+extern __attribute__((visibility("default"))) StaticObject* const PyExc_IOError;
+__attribute__((used)) constinit StaticObject* const PyExc_EnvironmentError = &pyExceptionSymbolOSError;
+__attribute__((used)) constinit StaticObject* const PyExc_IOError = &pyExceptionSymbolOSError;
+}
+
+// This interpreter's.
+static PyType* typeWithSymbol(Runtime& rt, uint64_t number)
+{
+    switch (number) {
+#define RETURN_STATIC_TYPE(symbol, id) \
+    case NumberOf##symbol: \
+        return rt.id##Type();
+        FOR_EACH_CAPI_STATIC_TYPE(RETURN_STATIC_TYPE)
+#undef RETURN_STATIC_TYPE
+#define RETURN_EXCEPTION(name) \
+    case NumberOf##name: \
+        return rt.name();
+        FOR_EACH_CAPI_EXCEPTION(RETURN_EXCEPTION)
+#undef RETURN_EXCEPTION
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+template<typename Function>
+static void forEachSymbol(const Function& function)
+{
+    for (StaticObject* symbol = &pyStaticObjectsBegin; symbol != &pyStaticObjectsEnd; ++symbol)
+        function(*symbol);
+}
 
 WTF_MAKE_STRUCT_TZONE_ALLOCATED_IMPL(Interpreter);
-
-const ClassInfo TypeExtension::s_info = { "PyCApiTypeExtension"_s, nullptr, nullptr, nullptr, CREATE_METHOD_TABLE(TypeExtension) };
-const ClassInfo State::s_info = { "PyCApiState"_s, nullptr, nullptr, nullptr, CREATE_METHOD_TABLE(State) };
-
-TypeExtension* TypeExtension::create(VM& vm, Structure* structure)
-{
-    auto* extension = new (NotNull, allocateCell<TypeExtension>(vm)) TypeExtension(vm, structure);
-    extension->finishCreation(vm);
-    return extension;
-}
-
-State* State::create(VM& vm, Structure* structure)
-{
-    auto* state = new (NotNull, allocateCell<State>(vm)) State(vm, structure);
-    state->finishCreation(vm);
-    return state;
-}
-
-template<typename Visitor>
-void State::visitChildrenImpl(JSCell* cell, Visitor& visitor)
-{
-    auto* thisObject = uncheckedDowncast<State>(cell);
-    Base::visitChildren(thisObject, visitor);
-    visitor.append(thisObject->typeExtensionStructure);
-}
-
-DEFINE_VISIT_CHILDREN(State);
 
 // ---- The one interpreter ----
 
@@ -74,40 +99,22 @@ std::atomic<Interpreter*> s_interpreter;
 std::atomic<const Runtime*> s_runtimeItIsFor;
 std::atomic<const Runtime*> s_runtimeItIsSetUpFor;
 
-static void setSymbols(Interpreter* interpreter)
+static void setSymbols(Runtime& rt)
 {
-    auto typeIs = [&](StaticObject& symbol, PyType* type) {
-        symbol.value = JSValue::encode(type);
-        auto* extension = TypeExtension::create(interpreter->vm, interpreter->state->typeExtensionStructure.get());
-        extension->symbol = &symbol;
-        type->setExtension(interpreter->vm, extension);
-    };
-    Runtime& rt = interpreter->runtime;
-#define SET_STATIC_TYPE(symbol, id) typeIs(symbol, rt.id##Type());
-    FOR_EACH_CAPI_STATIC_TYPE(SET_STATIC_TYPE)
-#undef SET_STATIC_TYPE
-
+    forEachSymbol([&](StaticObject& symbol) {
+        if (symbol.number < numberOfTypesWithSymbols)
+            symbol.value = JSValue::encode(typeWithSymbol(rt, symbol.number));
+    });
     _Py_EllipsisObject.value = JSValue::encode(rt.ellipsis());
     _Py_NotImplementedStruct.value = JSValue::encode(rt.notImplemented());
-
-#define SET_EXCEPTION(name) PyExc_##name = toC(rt.name());
-    FOR_EACH_CAPI_EXCEPTION(SET_EXCEPTION)
-#undef SET_EXCEPTION
-    PyExc_EnvironmentError = PyExc_OSError;
-    PyExc_IOError = PyExc_OSError;
 }
 
 static void clearSymbols()
 {
-    for (StaticObject* symbol = &pyStaticObjectsBegin; symbol != &pyStaticObjectsEnd; ++symbol) {
-        if (JSValue::decode(symbol->value).isCell())
-            symbol->value = 0;
-    }
-#define CLEAR_EXCEPTION(name) PyExc_##name = nullptr;
-    FOR_EACH_CAPI_EXCEPTION(CLEAR_EXCEPTION)
-#undef CLEAR_EXCEPTION
-    PyExc_EnvironmentError = nullptr;
-    PyExc_IOError = nullptr;
+    forEachSymbol([&](StaticObject& symbol) {
+        if (JSValue::decode(symbol.value).isCell())
+            symbol.value = 0;
+    });
 }
 
 static void addMarkingConstraint(VM&);
@@ -134,6 +141,14 @@ void runtimeIsBeginning(Runtime& runtime)
         s_runtimeItIsFor.store(&runtime, std::memory_order_relaxed);
 }
 
+void didMakeTypes(Runtime& runtime)
+{
+    forEachSymbol([&](StaticObject& symbol) {
+        if (symbol.number < numberOfTypesWithSymbols)
+            typeWithSymbol(runtime, symbol.number)->setSymbolForC(&symbol);
+    });
+}
+
 bool tryEnsure(JSGlobalObject* globalObject)
 {
     if (isSetUpFor(runtime(globalObject))) [[likely]]
@@ -147,11 +162,8 @@ bool tryEnsure(JSGlobalObject* globalObject)
     FOR_EACH_CAPI_FILE(KEEP_FILE)
 #undef KEEP_FILE
 
-    State* state = State::create(vm, State::createStructure(vm, globalObject));
-    runtime(globalObject).setSlot(Runtime::Slot::CApi, state);
-    state->typeExtensionStructure.set(vm, state, TypeExtension::createStructure(vm, globalObject));
-    auto* interpreter = new Interpreter(globalObject, state);
-    setSymbols(interpreter);
+    auto* interpreter = new Interpreter(globalObject);
+    setSymbols(interpreter->runtime);
     s_interpreter.store(interpreter, std::memory_order_release);
     s_interpreterWhoseCountsFall.store(interpreter, std::memory_order_release);
     s_runtimeItIsSetUpFor.store(&interpreter->runtime, std::memory_order_relaxed);
@@ -406,57 +418,29 @@ void giveReference(uint64_t bits)
 
 // ---- The symbols, for every interpreter ----
 
-// Not by TypeExtension::symbol, which only the types of one interpreter have, and only once the API is set up. Nothing is kept for this: it is asked for a type that is
-// written into memory as an object, and by id().
-static StaticObject* symbolOf(Runtime& rt, PyType* type)
-{
-    if (type->isHeapType())
-        return nullptr;
-#define RETURN_IF_STATIC_TYPE(symbol, id) \
-    if (type == rt.id##Type()) \
-        return &symbol;
-    FOR_EACH_CAPI_STATIC_TYPE(RETURN_IF_STATIC_TYPE)
-#undef RETURN_IF_STATIC_TYPE
-    return nullptr;
-}
-
-uint64_t bitsForC(JSGlobalObject* globalObject, JSValue value)
-{
-    if (value.isNull())
-        value = jsUndefined();
-    else if (value && value.isCell() && value.asCell()->type() == InternalFunctionType) {
-        if (PyType* type = PyType::tryFrom(value.asCell())) {
-            if (StaticObject* symbol = symbolOf(runtime(globalObject), type))
-                return std::bit_cast<uintptr_t>(symbol);
-        }
-    }
-    return static_cast<uint64_t>(JSValue::encode(value));
-}
-
 JSValue objectOfSymbol(JSGlobalObject* globalObject, uint64_t bits)
 {
     Handle handle = std::bit_cast<Handle>(static_cast<uintptr_t>(bits));
     if (!isStatic(handle)) [[likely]]
         return { };
-    auto* given = std::bit_cast<StaticObject*>(handle);
-    Runtime& rt = runtime(globalObject);
-#define RETURN_IF_STATIC_TYPE(symbol, id) \
-    if (given == &symbol) \
-        return rt.id##Type();
-    FOR_EACH_CAPI_STATIC_TYPE(RETURN_IF_STATIC_TYPE)
-#undef RETURN_IF_STATIC_TYPE
-    if (given == &_Py_NoneStruct)
-        return jsUndefined();
-    if (given == &_Py_FalseStruct)
-        return jsBoolean(false);
-    if (given == &_Py_TrueStruct)
-        return jsBoolean(true);
-    if (given == &_Py_EllipsisObject)
-        return rt.ellipsis();
-    if (given == &_Py_NotImplementedStruct)
-        return rt.notImplemented();
     // An address in the middle of one.
-    return { };
+    if ((bitsOf(handle) - std::bit_cast<uintptr_t>(&pyStaticObjectsBegin)) % sizeof(StaticObject))
+        return { };
+    Runtime& rt = runtime(globalObject);
+    switch (uint64_t number = std::bit_cast<StaticObject*>(handle)->number) {
+    case NumberOfNone:
+        return jsUndefined();
+    case NumberOfFalse:
+        return jsBoolean(false);
+    case NumberOfTrue:
+        return jsBoolean(true);
+    case NumberOfEllipsis:
+        return rt.ellipsis();
+    case NumberOfNotImplemented:
+        return rt.notImplemented();
+    default:
+        return typeWithSymbol(rt, number);
+    }
 }
 
 } // namespace CApi

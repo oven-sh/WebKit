@@ -284,9 +284,9 @@ public:
     // Type.prototype in JS: see PyJSClass.h. Null: nobody has asked for it.
     JSObject* jsPrototype() const { return m_jsPrototype.get(); }
     void setJSPrototype(VM& vm, JSObject* prototype) { m_jsPrototype.set(vm, this, prototype); }
-    // What the C API knows about the type: a CApi::TypeExtension (../capi/CApi.h). Null: nothing.
-    JSCell* extension() const { return m_extension.get(); }
-    void setExtension(VM& vm, JSCell* extension) { m_extension.set(vm, this, extension); }
+    // Where the type is for C, if C names it by a symbol of the executable (&PyLong_Type, PyExc_ValueError: ../capi/CApi.h). That is its id() then, in every interpreter. Null: it is where the cell is.
+    const void* symbolForC() const { return m_symbolForC; }
+    void setSymbolForC(const void* symbol) { m_symbolForC = symbol; }
 
     // The classes derived directly from this one, oldest first. It does not keep them alive.
     void appendSubclassesTo(MarkedArgumentBuffer&) const;
@@ -335,7 +335,7 @@ private:
     WriteBarrier<Unknown> m_subclasses; // A list, or empty: of built-in types, of weak references to classes, and of tuples of one such for dependents.
     WriteBarrier<Structure> m_instanceStructure;
     WriteBarrier<JSObject> m_jsPrototype;
-    WriteBarrier<JSCell> m_extension;
+    const void* m_symbolForC { nullptr };
     TypeLookupCache* m_lookupCache { nullptr }; // The runtime's.
     // Another after every change, like the version. But that is of 32 bits, for the instructions that remember it, so there are not enough for
     // every change of every type. Of these there are.
@@ -357,6 +357,27 @@ private:
     std::array<SpecialState, numberOfSpecials> m_specialStates { };
     std::array<WriteBarrier<Unknown>, numberOfSpecials> m_specials;
 };
+
+// The 64 bits that say which object it is: what id() returns and the default hash() goes by, for every object but a str, and what C has for a PyObject* (../capi/CApi.h). For all but strs,
+// `a is b` if the bits are equal. They are those of the value, but:
+//  - the same number may be tagged in two ways, and None is two values;
+//  - a built-in type that C names by a symbol is where the symbol is, as in CPython.
+ALWAYS_INLINE uint64_t identityBits(JSValue value)
+{
+    EncodedJSValue bits = JSValue::encode(value);
+    if (!(bits & JSValue::NotCellMask)) {
+        if (bits && value.asCell()->type() == InternalFunctionType) [[unlikely]] {
+            if (PyType* type = PyType::tryFrom(value.asCell())) {
+                if (const void* symbol = type->symbolForC())
+                    return std::bit_cast<uintptr_t>(symbol);
+            }
+        }
+    } else if (value.isDouble())
+        bits = JSValue::encode(jsNumber(value.asDouble() + 0.0)); // See numberValue().
+    else if (bits == JSValue::ValueNull) [[unlikely]]
+        bits = JSValue::ValueUndefined;
+    return static_cast<uint64_t>(bits);
+}
 
 // A PyDict is a dict or a frozendict, or an instance of a class derived from either.
 inline bool isDict(JSValue value)
