@@ -3311,7 +3311,13 @@ llintOpWithMetadata(op_py_call_spread, OpPyCallSpread, macro (size, get, dispatc
     loadb JSCell::m_indexingTypeAndMisc[t1], t2
     andi IndexingShapeMask, t2
     bieq t2, ContiguousShape, .listOfValues
-    bineq t2, Int32Shape, .slow
+    bieq t2, Int32Shape, .listOfValues
+    # Of whatever other kind, if there is nothing in it: a list that never had an item is of a kind of its own.
+    btiz t2, .slow
+    loadp JSObjectWithButterfly::m_butterfly[t1], t1
+    loadi -sizeof IndexingHeader + IndexingHeader::u.lengths.publicLength[t1], t2
+    btiz t2, .haveLength
+    jmp .slow
 .listOfValues:
     loadp JSObjectWithButterfly::m_butterfly[t1], t1
     loadi -sizeof IndexingHeader + IndexingHeader::u.lengths.publicLength[t1], t2
