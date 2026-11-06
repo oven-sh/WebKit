@@ -2284,7 +2284,10 @@ void LinkFlow::tellKeysThatBecomeTexts(LayoutID id)
     auto namesEvent = [&](const Field& field) {
         return field.key && m_keysThatNameEvents.get(field.key.index());
     };
-    if (!m_keysOfLayoutAreTold.at(id.index())) {
+    uint8_t told = m_keysOfLayoutAreTold.at(id.index());
+    if (told == nothingIsLeftToTell)
+        return;
+    if (!told) {
         bool isOfProgram = (layout.kind == LayoutKind::Record || layout.kind == LayoutKind::Instance || layout.kind == LayoutKind::Container) && layout.module
             && program.at(layout.module).kind != ModuleKind::RuntimeSource && !program.at(layout.module).flags.contains(ModuleFlags::IsLibrary);
         bool waits = isOfProgram && std::ranges::any_of(layout.fields, namesEvent);
@@ -2310,7 +2313,10 @@ void LinkFlow::noteKeysBecomeTextsAmongSet(const LinkType& type)
 void LinkFlow::tellNameThatBecomesText(FunctionID id)
 {
     const Function& function = program.at(id);
-    if (!m_nameOfFunctionIsTold.at(id.index())) {
+    uint8_t told = m_nameOfFunctionIsTold.at(id.index());
+    if (told == nothingIsLeftToTell)
+        return;
+    if (!told) {
         bool waits = function.name && m_textsThatNameEvents.get(function.name.index()) && !isLibraryCode(program, function);
         m_nameOfFunctionIsTold.set(id.index(), waits ? waitsForProgramToAsk : nothingIsLeftToTell);
         if (!waits)

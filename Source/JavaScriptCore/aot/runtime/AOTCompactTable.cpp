@@ -1668,6 +1668,16 @@ Position transitAndNext(VM& vm, JSCell* storage, uint32_t entry)
     return CompactTable::next(vm, storage, entry);
 }
 
+Position transitAndNext(VM& vm, JSObject* owner, JSCell* storage, uint32_t entry)
+{
+    uint32_t& deletedPrefix = CompactTable::deletedPrefixOf(owner);
+    if (entry > deletedPrefix || storage != CompactTable::tableOf(owner))
+        return CompactTable::next(vm, storage, entry);
+    Position position = CompactTable::next(vm, storage, deletedPrefix);
+    deletedPrefix = position.storage == storage ? position.entry : uncheckedDowncast<CompactTable>(storage)->used();
+    return position;
+}
+
 void setIterationEntry(JSCell* storage, uint32_t entry)
 {
     storage->vm().aotState().runtimeTable->setCompactTableIterationEntry(entry);

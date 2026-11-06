@@ -188,7 +188,7 @@ private:
 #if ENABLE(AOT)
     NEVER_INLINE NextResult nextWithAdvanceInCompactStorage(VM& vm, JSCell* storage)
     {
-        auto result = JSMap::Helper::transitAndNext(vm, *storage, entry());
+        auto result = AOT::CompactStorage::transitAndNext(vm, iteratedObject(), storage, entry());
         if (!result.storage) {
             markClosed(vm.orderedHashTableSentinel());
             return { };
