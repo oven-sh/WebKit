@@ -2762,7 +2762,8 @@ void Unit::withStatement(With* node, unsigned index, const Last& isLast)
     endTry(cleanup);
     // It goes on as if from where it was raised: the frame stays on that line. To a tool, what raises it again is of the line of the
     // `with`: see Monitoring::fire().
-    g.addPythonMark(PythonMark::Line, lineMarkValue(range.lineno, false));
+    if (!m_sameLineDepth)
+        g.addPythonMark(PythonMark::Line, lineMarkValue(range.lineno, false));
     noLine();
     reraiseOutOfHandler(exception.get(), previous.get());
 
