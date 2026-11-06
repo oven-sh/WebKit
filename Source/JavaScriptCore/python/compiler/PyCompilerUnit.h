@@ -7,6 +7,7 @@
 
 #include "PyCompiler.h"
 #include "PyFormatParts.h"
+#include <wtf/ScopedLambda.h>
 
 namespace JSC {
 namespace Python {
@@ -529,7 +530,7 @@ private:
     void markBlock(const Block&, bool begins);
     // Leaves the blocks down to the innermost loop, or, without `stopAtLoop`, all of them. The code emitted from then on is
     // outside their try ranges, until `suspended` is given to resumeTry(). Returns the loop.
-    void unwindBlocks(const Range&, size_t count, Vector<TryContext>& suspended);
+    void unwindBlocks(const Range&, size_t count, Vector<TryContext>& suspended, const ScopedLambda<void()>& leave);
     void unwindBlock(const Block&, Vector<TryContext>& suspended);
     void suspendTry(size_t depth, Vector<TryContext>& suspended);
     void resumeTry(Vector<TryContext>&& suspended) { g.resumeTryContexts(WTF::move(suspended)); }

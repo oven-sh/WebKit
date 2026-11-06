@@ -645,18 +645,19 @@ void Unit::emitImplicitReturn(const Last& isLast, const Range& range)
     ASSERT(isLast.kind == Last::OfFunction);
     SetForScope leavingAs(m_leavingAs, isLast);
     Vector<TryContext> suspended;
-    unwindBlocks(range, isLast.blockCount, suspended);
-    if (isLast.exception) {
-        suspendTry(isLast.tryDepth, suspended);
-        reraiseOutOfHandler(isLast.exception, isLast.previous);
-    } else if (m_valueToReturn)
-        g.emitReturn(m_valueToReturn);
-    else if (m_endsOfClassBody)
-        hiddenJump(endOfClassBodyForLine(m_markedLine));
-    else {
-        // (In CPython's list of constants None comes where the function ends, not where a copy of its end is.)
-        g.emitReturn(constant(jsUndefined()));
-    }
+    unwindBlocks(range, isLast.blockCount, suspended, [&] {
+        if (isLast.exception) {
+            suspendTry(isLast.tryDepth, suspended);
+            reraiseOutOfHandler(isLast.exception, isLast.previous);
+        } else if (m_valueToReturn)
+            g.emitReturn(m_valueToReturn);
+        else if (m_endsOfClassBody)
+            hiddenJump(endOfClassBodyForLine(m_markedLine));
+        else {
+            // (In CPython's list of constants None comes where the function ends, not where a copy of its end is.)
+            g.emitReturn(constant(jsUndefined()));
+        }
+    });
     resumeTry(WTF::move(suspended));
 }
 
@@ -671,9 +672,10 @@ void Unit::emitImplicitContinue(unsigned loop, const Range& range)
 {
     SetForScope leavingAs(m_leavingAs, Last { Last::OfLoopBody, loop });
     Vector<TryContext> suspended;
-    unwindBlocks(range, loop + 1, suspended);
-    suspendTry(m_blocks[loop].tryDepth, suspended);
-    jump(*m_blocks[loop].continueTarget);
+    unwindBlocks(range, loop + 1, suspended, [&] {
+        suspendTry(m_blocks[loop].tryDepth, suspended);
+        jump(*m_blocks[loop].continueTarget);
+    });
     resumeTry(WTF::move(suspended));
 }
 
@@ -692,11 +694,12 @@ void Unit::emitImplicitJump(Last isLast, const Range& range)
         m_targetsOfJumpsStillJumpedTo.append(target);
     SetForScope leavingAs(m_leavingAs, isLast);
     Vector<TryContext> suspended;
-    unwindBlocks(range, isLast.blockCount, suspended);
-    suspendTry(isLast.tryDepth, suspended);
-    if (staysAsInCPython)
-        m_jumpsThatStay.append(g.instructions().size());
-    jump(*isLast.target, isCopy ? JumpIs::Hidden : isLast.jumpIs, isLast.jumpsBefore > (isLast.isInPlaceOfJump ? 0u : 1u));
+    unwindBlocks(range, isLast.blockCount, suspended, [&] {
+        suspendTry(isLast.tryDepth, suspended);
+        if (staysAsInCPython)
+            m_jumpsThatStay.append(g.instructions().size());
+        jump(*isLast.target, isCopy ? JumpIs::Hidden : isLast.jumpIs, isLast.jumpsBefore > (isLast.isInPlaceOfJump ? 0u : 1u));
+    });
     resumeTry(WTF::move(suspended));
 }
 
@@ -1847,10 +1850,12 @@ void Unit::unwindBlock(const Block& block, Vector<TryContext>& suspended)
 }
 
 // Leaves all but the first `count` blocks.
-void Unit::unwindBlocks(const Range& range, size_t count, Vector<TryContext>& suspended)
+// `leave` emits the jump or the return that all this is for. It comes before the marks that open the blocks again for what follows in them: whoever asks which blocks
+// that instruction is in, the collector or a tool that is told of the jump, must not find those it has left.
+void Unit::unwindBlocks(const Range& range, size_t count, Vector<TryContext>& suspended, const ScopedLambda<void()>& leave)
 {
     if (m_blocks.size() <= count)
-        return;
+        return leave();
     Block top = m_blocks.last();
     if (top.kind == BlockKind::ExceptionGroupHandler) {
         // (What leaves by itself, at the end of a copy of a `finally` clause, has no place, as in CPython.)
@@ -1865,7 +1870,7 @@ void Unit::unwindBlocks(const Range& range, size_t count, Vector<TryContext>& su
         unwindBlock(top, suspended);
     // As in CPython, where what comes after a clause or an __exit__ that runs on the way out is of no place.
     bool hasRunSomething = top.kind == BlockKind::FinallyTry || top.kind == BlockKind::With || top.kind == BlockKind::AsyncWith;
-    unwindBlocks(hasRunSomething ? Range { -1, -1, -1, -1 } : range, count, suspended);
+    unwindBlocks(hasRunSomething ? Range { -1, -1, -1, -1 } : range, count, suspended, leave);
     markBlock(top, true);
     m_blocks.append(top);
 }
@@ -2552,10 +2557,11 @@ void Unit::returnStatement(Return* node)
     Vector<TryContext> suspended;
     // As in CPython, where what is on the way out comes from the constant that is returned.
     bool comesFromValue = node->value && node->value->is<Constant>() && node->value->range.lineno == node->range.lineno;
-    unwindBlocks(comesFromValue ? node->value->range : node->range, 0, suspended);
-    if (literal || !node->value)
-        noteConstant({ value->virtualRegister(), 0, true });
-    g.emitReturn(value.get());
+    unwindBlocks(comesFromValue ? node->value->range : node->range, 0, suspended, [&] {
+        if (literal || !node->value)
+            noteConstant({ value->virtualRegister(), 0, true });
+        g.emitReturn(value.get());
+    });
     resumeTry(WTF::move(suspended));
 }
 
@@ -2570,7 +2576,7 @@ void Unit::breakOrContinue(Stmt* node, bool isBreak)
         // (What is in the way is looked at first.)
         Vector<TryContext> suspended;
         SetForScope leavingAs(m_leavingAs, Last { });
-        unwindBlocks(node->range, 0, suspended);
+        unwindBlocks(node->range, 0, suspended, [] { });
         resumeTry(WTF::move(suspended));
         fail(node->range, isBreak ? "'break' outside loop"_s : "'continue' not properly in loop"_s);
         return;
