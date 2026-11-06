@@ -81,7 +81,7 @@ template<typename T, typename PtrTraits = RawPtrTraits<T>, typename RefDerefTrai
  * or ThreadSafeRefCounted objects start with a ref count of 1.
  */
 template<typename T, typename _PtrTraits, typename _RefDerefTraits>
-class RefPtr {
+class TRIVIAL_ABI RefPtr {
     WTF_FORBID_HEAP_ALLOCATION_ALLOWING_PLACEMENT_NEW;
 public:
     using PtrTraits = _PtrTraits;

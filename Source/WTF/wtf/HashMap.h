@@ -40,7 +40,7 @@ template<typename T> struct KeyValuePairKeyExtractor {
 };
 
 template<typename KeyArg, typename MappedArg, typename HashArg, typename KeyTraitsArg, typename MappedTraitsArg, typename TableTraitsArg, ShouldValidateKey shouldValidateKey, typename Malloc>
-class HashMap final {
+class TRIVIAL_ABI HashMap final {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(HashMap);
 private:
     using KeyTraits = KeyTraitsArg;
@@ -180,6 +180,8 @@ public:
 
     AddResult ensure(const KeyType&, NOESCAPE const Invocable<MappedType()> auto&) LIFETIME_BOUND;
     AddResult ensure(KeyType&&, NOESCAPE const Invocable<MappedType()> auto&) LIFETIME_BOUND;
+
+    iterator iteratorAt(decltype(AddResult::iterator) entry) LIFETIME_BOUND { return m_impl.iteratorAt(entry); }
 
     bool remove(const KeyType&);
     bool remove(iterator);

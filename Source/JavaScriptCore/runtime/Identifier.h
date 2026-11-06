@@ -84,7 +84,7 @@ ALWAYS_INLINE std::optional<uint32_t> parseIndex(const StringImpl& impl)
     return impl.is8Bit() ? parseIndex(impl.span8()) : parseIndex(impl.span16());
 }
 
-class Identifier {
+class TRIVIAL_ABI Identifier {
     friend class Structure;
 public:
     Identifier() = default;

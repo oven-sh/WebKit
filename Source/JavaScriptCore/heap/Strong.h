@@ -44,7 +44,7 @@ class VM;
 REFTRACKER_DECL(StrongRefTracker);
 
 // A strongly referenced handle that prevents the object it points to from being garbage collected.
-template <typename T, ShouldStrongDestructorGrabLock shouldStrongDestructorGrabLock> class Strong final : public Handle<T> {
+template <typename T, ShouldStrongDestructorGrabLock shouldStrongDestructorGrabLock> class TRIVIAL_ABI Strong final : public Handle<T> {
     using Handle<T>::slot;
     using Handle<T>::setSlot;
     template <typename U, ShouldStrongDestructorGrabLock> friend class Strong;

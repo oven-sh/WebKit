@@ -78,7 +78,7 @@ template<typename T, typename PtrTraits = RawPtrTraits<T>, typename RefDerefTrai
  * See RefPtr for full documentation on intrusive reference counting.
  */
 template<typename T, typename _PtrTraits, typename RefDerefTraits>
-class Ref {
+class TRIVIAL_ABI Ref {
     WTF_FORBID_HEAP_ALLOCATION_ALLOWING_PLACEMENT_NEW;
 public:
     using PtrTraits = _PtrTraits;

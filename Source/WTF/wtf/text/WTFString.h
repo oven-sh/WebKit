@@ -60,7 +60,7 @@ inline const String& nullString();
 
 enum class TrailingZerosPolicy : bool { Keep, Truncate };
 
-class String final {
+class TRIVIAL_ABI String final {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(String);
 public:
     // Construct a null string, distinguishable from an empty string.

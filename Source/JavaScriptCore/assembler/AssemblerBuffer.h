@@ -67,12 +67,22 @@ namespace JSC {
 
     struct AssemblerLabel {
         inline AssemblerLabel() { setOffset(std::numeric_limits<uint32_t>::max()); }
+#if USE(BUN_JSC_ADDITIONS) && !ENABLE(JIT_SIGN_ASSEMBLER_BUFFER)
+        // Only an offset that is signed with its own address has to be signed again when it is copied.
+        AssemblerLabel(const AssemblerLabel&) = default;
+        AssemblerLabel(AssemblerLabel&&) = default;
+        inline explicit AssemblerLabel(uint32_t offset) { setOffset(offset); }
+
+        AssemblerLabel& operator=(const AssemblerLabel&) = default;
+        AssemblerLabel& operator=(AssemblerLabel&&) = default;
+#else
         inline AssemblerLabel(const AssemblerLabel& other) { setOffset(other.offset()); }
         inline AssemblerLabel(AssemblerLabel&& other) { setOffset(other.offset()); }
         inline explicit AssemblerLabel(uint32_t offset) { setOffset(offset); }
 
         AssemblerLabel& operator=(const AssemblerLabel& other) { setOffset(other.offset()); return *this; }
         AssemblerLabel& operator=(AssemblerLabel&& other) { setOffset(other.offset()); return *this; }
+#endif
 
         bool isSet() const { return (offset() != std::numeric_limits<uint32_t>::max()); }
 

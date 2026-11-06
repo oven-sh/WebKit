@@ -43,7 +43,7 @@ class CodeBlock;
 struct DumpContext;
 struct InlineCallFrame;
 
-class CodeOrigin {
+class TRIVIAL_ABI CodeOrigin {
 public:
     CodeOrigin()
 #if CPU(ADDRESS64)

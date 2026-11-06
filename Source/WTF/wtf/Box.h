@@ -34,7 +34,7 @@ namespace WTF {
 // Box<T> is a reference-counted pointer to T that allocates T using FastMalloc and prepends a reference
 // count to it. It's almost just RefPtr<RefCountable<T>>, but has convenience operators.
 template<typename T>
-class Box {
+class TRIVIAL_ABI Box {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(Box);
 public:
     Box() = default;

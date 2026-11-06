@@ -80,7 +80,7 @@ private:
 // It only exists as the base of CString (UTF8CString / Latin1CString / ASCIICString) below, which carries the
 // encoding in the type. Its constructors, assignments and destructor are protected, so a const CStringBase& is the only
 // way to handle one directly, and neither slicing nor assigning through it can change a string's encoding.
-class CStringBase {
+class TRIVIAL_ABI CStringBase {
     WTF_MAKE_TZONE_ALLOCATED_EXPORT(CStringBase, WTF_EXPORT_PRIVATE);
 public:
     std::string toStdString() const;
@@ -183,7 +183,7 @@ inline const char* safePrintfType(const CStringBase& cstring) { return cstring.s
 // a mutable buffer, so there is no point at which the contents can be checked. It is therefore defined as
 // Latin-1 restricted to 0..127, and every operation treats it that way. A stray non-ASCII byte is then merely
 // a mislabeled Latin-1 byte, with no ill-defined behavior; the constructor asserts against it in debug builds.
-template<typename CharacterType> class CString final : public CStringBase {
+template<typename CharacterType> class TRIVIAL_ABI CString final : public CStringBase {
     WTF_MAKE_INHERITED_TZONE_ALLOCATED(CString);
     static_assert(std::same_as<CharacterType, char8_t> || std::same_as<CharacterType, Latin1Character> || std::same_as<CharacterType, char>);
 public:
