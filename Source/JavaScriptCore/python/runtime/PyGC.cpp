@@ -868,15 +868,24 @@ UncheckedKeyHashSet<JSCell*> cellsReachedFrom(VM& vm, std::span<JSCell* const> r
 static void appendReferents(JSGlobalObject* globalObject, JSCell* object, MarkedArgumentBuffer& result, unsigned depth = 0)
 {
     Runtime& rt = runtime(globalObject);
+    // What the program has put into a container of its own is the program's. A container that is a part of something else is the runtime's, and may hold what is the runtime's too.
+    auto give = [&](JSValue value) {
+        if (depth && value.isCell()) {
+            JSCell* cell = value.asCell();
+            if (!cell->isString() && !cell->isHeapBigInt() && !(cell->isObject() && isObjectOfPython(cell, globalObject) && isWhole(cell)))
+                return;
+        }
+        result.append(value);
+    };
     // Numbers are not cells, so no cell says that it refers to one. The items of these are asked for.
     if (JSArray* list = tryAsList(object)) {
         for (unsigned i = 0; i < listLength(list); ++i)
-            result.append(listGet(list, i));
+            give(listGet(list, i));
     } else if (auto* tuple = PyTuple::tryFrom(object)) {
         for (JSValue item : tuple->span()) {
             // In one that is the memory of something else, None may stand for nothing.
             if (item && !(depth && isNone(item)))
-                result.append(item);
+                give(item);
         }
     } else if (auto* dict = PyDict::tryFrom(object)) {
         // CPython's does not mention its keys if they are all strings.
@@ -888,15 +897,15 @@ static void appendReferents(JSGlobalObject* globalObject, JSCell* object, Marked
             mentionsKeys = !key.isString();
         position = 0;
         while (dict->next(position, key, value)) {
-            result.append(value);
+            give(value);
             if (mentionsKeys)
-                result.append(key);
+                give(key);
         }
     } else if (auto* set = PySet::tryFrom(object)) {
         size_t position = 0;
         JSValue key;
         while (set->next(position, key))
-            result.append(key);
+            give(key);
     } else {
         UncheckedKeyHashSet<JSCell*> parts;
         forEachPartInFields(object, [&](JSCell* part, bool) {
@@ -911,6 +920,9 @@ static void appendReferents(JSGlobalObject* globalObject, JSCell* object, Marked
             if (JSValue value = asObject(object)->getDirect(offset); value && value.isCell() && (isContainer(value.asCell()) || !isObjectOfPython(value.asCell(), globalObject)))
                 hidden.add(value.asCell());
         }
+        // A class does not hold on to the classes that derive from it: the list is of weak references, but for the types that are never freed. (CPython's does not mention them either.)
+        if (auto* pythonType = PyType::tryFrom(object); pythonType && pythonType->subclasses())
+            hidden.add(pythonType->subclasses().asCell());
         ReferentCollector collector(rt.vm());
         collector.visit(object);
         PyType* type = rt.typeOf(object);
