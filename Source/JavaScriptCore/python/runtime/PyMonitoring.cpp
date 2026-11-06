@@ -474,6 +474,7 @@ void CodeMonitor::findPointsWithoutTellingTheCollector(bool everyInstruction)
         bool isJumpAsLaidOut { false };
         bool isJumpForwardsAsLaidOut { false };
         bool hasLineToItself { false }; // A jump: it is a statement, or jumpHasLineToItselfMark.
+        bool isOfSilentLine { false };
         unsigned silentLinesFirst { 0 }; // How many lines that are not told of come before the first that begins here.
         uint8_t asyncForMark { 0 };
         bool beginsStatement { false };
@@ -549,6 +550,7 @@ void CodeMonitor::findPointsWithoutTellingTheCollector(bool everyInstruction)
                     item.firstLineFollowsSilentLine = followsSilentLine;
                 lines.append({ item.exitLine, offset });
             }
+            item.isOfSilentLine = isOfSilentLine;
             item.lineCount = lines.size() - item.firstLine;
             if (!item.lineCount)
                 item.silentLinesFirst = 0;
@@ -638,6 +640,8 @@ void CodeMonitor::findPointsWithoutTellingTheCollector(bool everyInstruction)
             bool isInHandler = !isReachableWithoutException.get(i);
             if (isInHandler == isReachableWithoutException.get(it->value)) {
                 items[i].isHiddenJump = items[i].isJumpForwardsAsLaidOut;
+                // Nobody is told of it, but it is there, on the line it was given.
+                items[i].hasLineToItself |= items[i].isHiddenJump && items[i].isOfSilentLine;
                 continue;
             }
             items[i].isHiddenJump = true;
