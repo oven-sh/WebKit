@@ -67,6 +67,11 @@ PY_CAPI void PyErr_SetRaisedException(Handle exception)
 static void setObject(Entry& entry, JSValue type, JSValue value)
 {
     Runtime& rt = entry.runtime();
+    // CPython follows the pointer.
+    if (!type) {
+        entry.raise(rt.SystemError(), "_PyErr_SetObject: the exception is NULL"_s);
+        return;
+    }
     if (!isExceptionClass(rt, type)) {
         String shown = reprForMessage(entry.globalObject, type);
         if (entry.failed())
