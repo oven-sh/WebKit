@@ -806,12 +806,7 @@ static bool isInitOfClassOfJS(JSValue init)
 // remembered until __init__ has seen it, for the instances of classes that have an __init__ of their own.
 static JSWeakMap* argumentsOfConstructors(JSGlobalObject* globalObject)
 {
-    Runtime& rt = runtime(globalObject);
-    if (JSValue map = rt.slot(Runtime::Slot::ArgumentsOfJSConstructors))
-        return uncheckedDowncast<JSWeakMap>(map);
-    JSWeakMap* map = JSWeakMap::create(rt.vm(), globalObject->weakMapStructure());
-    rt.setSlot(Runtime::Slot::ArgumentsOfJSConstructors, map);
-    return map;
+    return weakMapInSlot(globalObject, Runtime::Slot::ArgumentsOfJSConstructors);
 }
 
 static PyTuple* tupleOfArguments(JSGlobalObject* globalObject, const CallArgs& args)
@@ -931,13 +926,7 @@ PyType* typeForClassOfJS(JSGlobalObject* globalObject, JSObject* constructor)
     while (auto* bound = dynamicDowncast<JSBoundFunction>(constructor))
         constructor = bound->targetFunction();
 
-    JSWeakMap* types;
-    if (JSValue map = rt.slot(Runtime::Slot::TypesOfJSClasses))
-        types = uncheckedDowncast<JSWeakMap>(map);
-    else {
-        types = JSWeakMap::create(vm, globalObject->weakMapStructure());
-        rt.setSlot(Runtime::Slot::TypesOfJSClasses, types);
-    }
+    JSWeakMap* types = weakMapInSlot(globalObject, Runtime::Slot::TypesOfJSClasses);
     if (JSValue known = types->get(constructor); known.isCell())
         return PyType::from(known);
 

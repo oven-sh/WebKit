@@ -120,6 +120,8 @@ void getOwnPropertyNamesOfListSubclass(JSObject*, PropertyNameArrayBuilder&);
 // Makes the objects of JS that the view is made of (Runtime::jsViewObject()). They come before everything else of a Runtime:
 // the structures need the prototypes.
 void initializeJSView(JSGlobalObject*);
+// What JS is shown as the prototype of exceptions of Python's: an object that inherits from Error.prototype, or from that of a class that extends Error.
+JSObject* makePrototypeOfExceptionsForJS(JSGlobalObject*, JSObject* parent);
 
 // What toString() and the like, which all objects of Python's inherit, are about: `self`, or the object of Python's that it is a Proxy of or
 // inherits from. `self` itself, if there is none.

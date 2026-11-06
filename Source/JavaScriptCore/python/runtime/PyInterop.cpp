@@ -91,6 +91,9 @@ static Inquiry inquireOwnProperty(JSGlobalObject* globalObject, JSObject* object
         lookUp = JSObject::getOwnPropertySlot;
     if (name.isSymbol() && object->classInfo() == PyPrototypeView::info())
         lookUp = JSObject::getOwnPropertySlot;
+    // An Error has one for where it was made alone, which it works out when it is first asked.
+    if (object->type() == ErrorInstanceType && (isStored || !ErrorInstance::isLazilyMaterialized(vm, name)))
+        lookUp = JSObject::getOwnPropertySlot;
     bool isNamespace = lookUp == JSModuleNamespaceObject::getOwnPropertySlot;
     if (lookUp == JSFunction::info()->methodTable.getOwnPropertySlot) {
         // The name and length of a bound function are asked of its target.
@@ -111,6 +114,14 @@ static Inquiry inquireOwnProperty(JSGlobalObject* globalObject, JSObject* object
     return Inquiry::Value;
 }
 
+JSValue ownValueOfJSForAnyThread(JSGlobalObject* globalObject, JSObject* object, PropertyName name, bool& needsMainThread)
+{
+    JSValue value;
+    Inquiry result = inquireOwnProperty(globalObject, object, name, value);
+    needsMainThread |= result == Inquiry::NeedsCode;
+    return result == Inquiry::Value ? value : JSValue();
+}
+
 static Inquiry inquireProperty(JSGlobalObject* globalObject, JSObject* object, PropertyName name, JSValue& value)
 {
     while (true) {
@@ -126,6 +137,12 @@ static Inquiry inquireProperty(JSGlobalObject* globalObject, JSObject* object, P
             return Inquiry::Absent;
         object = asObject(prototype);
     }
+}
+
+JSValue valueOfJSForAnyThread(JSGlobalObject* globalObject, JSObject* object, PropertyName name)
+{
+    JSValue value;
+    return inquireProperty(globalObject, object, name, value) == Inquiry::Value ? value : JSValue();
 }
 
 static ALWAYS_INLINE bool isKeywordWithUnderscore(const Identifier& key)
@@ -255,22 +272,29 @@ static JSValue bindIfFunction(JSGlobalObject* globalObject, JSObject* object, JS
     RELEASE_AND_RETURN(scope, boundMethod(globalObject, object, function));
 }
 
+JSWeakMap* weakMapInSlot(JSGlobalObject* globalObject, Runtime::Slot slot)
+{
+    Runtime& rt = runtime(globalObject);
+    if (JSValue map = rt.slot(slot))
+        return uncheckedDowncast<JSWeakMap>(map);
+    JSWeakMap* map = JSWeakMap::create(rt.vm(), globalObject->weakMapStructure());
+    rt.setSlot(slot, map);
+    return map;
+}
+
 static JSValue boundMethod(JSGlobalObject* globalObject, JSObject* object, JSObject* function)
 {
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     // object -> function -> bound function, all of it weak: a bound function lasts as long as both.
-    auto mapIn = [&](JSValue found, auto&& remember) {
-        // JSWeakMap::get() gives undefined for what is not there.
-        if (found && found.isCell())
-            return uncheckedDowncast<JSWeakMap>(found);
-        JSWeakMap* map = JSWeakMap::create(vm, globalObject->weakMapStructure());
-        remember(map);
-        return map;
-    };
-    JSWeakMap* objects = mapIn(rt.slot(Runtime::Slot::BoundMethodsOfJS), [&](JSWeakMap* map) { rt.setSlot(Runtime::Slot::BoundMethodsOfJS, map); });
-    JSWeakMap* methods = mapIn(objects->get(object), [&](JSWeakMap* map) { objects->set(vm, object, map); });
+    JSWeakMap* objects = weakMapInSlot(globalObject, Runtime::Slot::BoundMethodsOfJS);
+    // (JSWeakMap::get() gives undefined for what is not there.)
+    JSWeakMap* methods = dynamicDowncast<JSWeakMap>(objects->get(object));
+    if (!methods) {
+        methods = JSWeakMap::create(vm, globalObject->weakMapStructure());
+        objects->set(vm, object, methods);
+    }
     JSValue bound = methods->get(function);
     if (!bound.isCell()) {
         bound = bindToObject(globalObject, function, object);
@@ -2517,6 +2541,10 @@ static JSValue jsFunctionMroEntries(JSGlobalObject* globalObject, JSValue self, 
 // issubclass(cls, function): whether the instances of the class inherit from function.prototype.
 static JSValue jsFunctionSubclassCheck(JSGlobalObject* globalObject, JSValue self, JSValue cls)
 {
+    // The classes of what JS threw mirror those of JS: issubclass(JSRangeError, js.RangeError). As `except js.RangeError`, it runs no code and
+    // works in any thread.
+    if (PyType* type = PyType::tryFrom(cls); type && type->isSubtypeOf(runtime(globalObject).JSError()))
+        return jsBoolean(exceptionClassStandsForClassOfJS(globalObject, type, asObject(self)));
     if (!ensureMainThreadForJS(globalObject))
         return { };
     VM& vm = getVM(globalObject);
@@ -2940,26 +2968,38 @@ static JSValue jsSpecialMethod(JSGlobalObject* globalObject, JSValue object, JSV
     return jsUndefined();
 }
 
-// _js.JSOSError, _js.JSFileNotFoundError and so on are made when they are first asked for.
+// _js.exception_class(js.RangeError) is _js.JSRangeError, the class of the exceptions that stand for its instances: for what wants a class of
+// Python's, as assertRaises() and pytest.raises() do.
+static JSValue jsExceptionClass(JSGlobalObject* globalObject, JSValue cls)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    PyType* type = cls.isObject() ? exceptionClassForClassOfJS(globalObject, asObject(cls), IfClassCannotBeMade::Raise) : nullptr;
+    RETURN_IF_EXCEPTION(scope, { });
+    if (!type)
+        return raiseTypeError(globalObject, scope, "exception_class() argument must be the Error of JavaScript or a class that extends it, not "_s, typeName(globalObject, cls));
+    return type;
+}
+
+// _js.JSOSError, _js.JSFileNotFoundError and so on are made when they are first asked for. So is _js.JSRangeError, for a global of JS's.
 static JSValue jsModuleGetAttr(JSGlobalObject* globalObject, JSValue nameValue)
 {
-    Runtime& rt = runtime(globalObject);
-    VM& vm = rt.vm();
+    VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSString* name = attributeName(globalObject, nameValue);
     RETURN_IF_EXCEPTION(scope, { });
     String text = stringOf(name);
-    if (text.startsWith("JS"_s)) {
-        PyType* base = PyType::tryFrom(rt.builtins()->get(internString(vm, text.substring(2))));
-        if (base && !base->isHeapType() && base->isSubtypeOf(rt.OSError()))
-            return jsErrorTypeFor(globalObject, base);
-    }
+    PyType* type = exceptionClassNamed(globalObject, text, IfClassCannotBeMade::Raise);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (type)
+        return type;
     return raiseAttributeError(globalObject, scope, jsUndefined(), name, makeString("module '_js' has no attribute '"_s, text, '\''));
 }
 
 static constexpr NativeDef jsModuleFunctions[] = {
     PY_FUNCTION("__getattr__", jsModuleGetAttr, "(name, /)"),
     PY_FUNCTION("exception_for", jsExceptionFor, "(thrown, /)"),
+    PY_FUNCTION("exception_class", jsExceptionClass, "(cls, /)"),
     PY_FUNCTION("special_method", jsSpecialMethod, "(object, name, /)"),
 };
 
@@ -2986,7 +3026,12 @@ void initializeJSModule(JSGlobalObject* globalObject, PyModule* module)
     RETURN_IF_EXCEPTION(scope, void());
     module->add(globalObject, "globalThis"_s, globalObject->globalThis());
     module->add(globalObject, "JSError"_s, rt.JSError());
-    module->add(globalObject, "JSTypeError"_s, jsTypeErrorType(globalObject));
+    PyType* typeErrorType = jsTypeErrorType(globalObject, IfClassCannotBeMade::Raise);
+    RETURN_IF_EXCEPTION(scope, void());
+    PyType* thrownValueType = jsThrownValueType(globalObject, IfClassCannotBeMade::Raise);
+    RETURN_IF_EXCEPTION(scope, void());
+    module->add(globalObject, "JSTypeError"_s, typeErrorType);
+    module->add(globalObject, "JSThrownValue"_s, thrownValueType);
     module->add(globalObject, "JSObject"_s, rt.jsObjectType());
     module->add(globalObject, "JSPlainObject"_s, rt.jsPlainObjectType());
     module->add(globalObject, "JSFunction"_s, rt.jsFunctionType());

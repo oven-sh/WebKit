@@ -632,10 +632,30 @@ void setPropertyOfJSForAttribute(JSGlobalObject*, JSObject*, JSString* name, JSV
 JSValue propertiesOfObjectOfJS(JSGlobalObject*, JSObject*);
 // For a mapping pattern.
 bool plainObjectIsMapping(JSGlobalObject*, JSObject*);
-// _js.JSTypeError. It is made when it is first asked for; JSError, if it cannot be made.
-PyType* jsTypeErrorType(JSGlobalObject*);
+// The classes of what stands for something that JS threw are made when they are first asked for. Where one cannot be made, for lack of stack or
+// memory, or on a thread that cannot see what it is called: who has to say now what was thrown takes the nearest that could, up to JSError,
+// and nothing is remembered of that. To who asks for the class itself it is raised, and the result is null.
+enum class IfClassCannotBeMade : bool { NearestStandsIn, Raise };
+// _js.JSTypeError.
+PyType* jsTypeErrorType(JSGlobalObject*, IfClassCannotBeMade = IfClassCannotBeMade::NearestStandsIn);
 // The same for OSError or a built-in class derived from it: _js.JSFileNotFoundError.
-PyType* jsErrorTypeFor(JSGlobalObject*, PyType* base);
+PyType* jsErrorTypeFor(JSGlobalObject*, PyType* base, IfClassCannotBeMade = IfClassCannotBeMade::NearestStandsIn);
+// _js.JSThrownValue: of what stands for something that JS threw and that is no Error.
+PyType* jsThrownValueType(JSGlobalObject*, IfClassCannotBeMade = IfClassCannotBeMade::NearestStandsIn);
+// _js.JSRangeError for js.RangeError, or for a class of Python's that derives from it. Null, and no exception: the class is not Error and
+// does not extend it. None of these runs code of the program's.
+PyType* exceptionClassForClassOfJS(JSGlobalObject*, JSObject* cls, IfClassCannotBeMade = IfClassCannotBeMade::NearestStandsIn);
+// _js.JSRangeError for "JSRangeError". Null, and no exception: there is no such class.
+PyType* exceptionClassNamed(JSGlobalObject*, const String& name, IfClassCannotBeMade = IfClassCannotBeMade::NearestStandsIn);
+// object.name, if the object has it itself, it is a value, and a thread other than the main one can see that. `needsMainThread` is set where it
+// cannot see whether. See inquireOwnProperty().
+JSValue ownValueOfJSForAnyThread(JSGlobalObject*, JSObject*, PropertyName, bool& needsMainThread);
+// object.name, own or inherited, if it is a value and that can be seen. Empty: not so.
+JSValue valueOfJSForAnyThread(JSGlobalObject*, JSObject*, PropertyName);
+// The WeakMap that is kept there, made when it is first asked for.
+JSWeakMap* weakMapInSlot(JSGlobalObject*, Runtime::Slot);
+// Whether the instances of the class, which derives from JSError, stand for instances of the class of JS's.
+bool exceptionClassStandsForClassOfJS(JSGlobalObject*, PyType*, JSObject* function);
 // Whether to call the function of JS is to construct it.
 bool isClassOfJS(JSCell*);
 // What `except` takes besides classes of exceptions: a class of JS.

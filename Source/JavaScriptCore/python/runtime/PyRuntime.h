@@ -463,6 +463,7 @@ public:
         GCGarbage, // gc.garbage and gc.callbacks, lists. The program has them too.
         GCCallbacks,
         JSErrorClasses, // dict: see jsErrorTypeFor() in PyException.cpp.
+        ExceptionClassesOfJSPrototypes, // A JSWeakMap: see exceptionClassForPrototypeOfJS() there.
         BoundMethodsOfJS, // A JSWeakMap: see bindIfFunction() in PyInterop.cpp.
         TypesOfJSClasses, // A JSWeakMap: see typeForClassOfJS() in PyJSClass.cpp.
         ArgumentsOfJSConstructors, // A JSWeakMap: see classOfJSNew() there.

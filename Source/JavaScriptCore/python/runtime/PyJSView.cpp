@@ -1102,6 +1102,17 @@ JSC_DEFINE_HOST_FUNCTION(jsViewImport, (JSGlobalObject* globalObject, CallFrame*
 
 // ---- Making it all ----
 
+// An exception is shown as an Error is, "ValueError: message", by what Error.prototype has.
+JSObject* makePrototypeOfExceptionsForJS(JSGlobalObject* globalObject, JSObject* parent)
+{
+    VM& vm = getVM(globalObject);
+    JSObject* prototype = constructEmptyObject(globalObject, parent);
+    prototype->didBecomePrototype(vm);
+    Identifier inspectSymbol = Identifier::fromUid(vm, vm.symbolRegistry().symbolForKey("nodejs.util.inspect.custom"_s).ptr());
+    prototype->putDirect(vm, inspectSymbol, JSFunction::create(vm, globalObject, 0, "[nodejs.util.inspect.custom]"_s, jsViewInspect, ImplementationVisibility::Public), static_cast<unsigned>(PropertyAttribute::DontEnum));
+    return prototype;
+}
+
 void initializeJSView(JSGlobalObject* globalObject)
 {
     Runtime& rt = runtime(globalObject);
@@ -1136,9 +1147,8 @@ void initializeJSView(JSGlobalObject* globalObject)
 
     addConversions(makePrototype(JSViewObject::ObjectPrototype, globalObject->objectPrototype()));
     addConversions(makePrototype(JSViewObject::FunctionPrototype, globalObject->functionPrototype()));
-    // An exception is shown as an Error is, "ValueError: message", by what Error.prototype has.
-    addFunction(makePrototype(JSViewObject::ExceptionPrototype, globalObject->errorPrototype()), inspectSymbol, "[nodejs.util.inspect.custom]"_s, 0, jsViewInspect);
-    addFunction(makePrototype(JSViewObject::TypeErrorPrototype, globalObject->errorStructure(ErrorType::TypeError)->storedPrototypeObject()), inspectSymbol, "[nodejs.util.inspect.custom]"_s, 0, jsViewInspect);
+    rt.setJSViewObject(JSViewObject::ExceptionPrototype, makePrototypeOfExceptionsForJS(globalObject, globalObject->errorPrototype()));
+    rt.setJSViewObject(JSViewObject::TypeErrorPrototype, makePrototypeOfExceptionsForJS(globalObject, globalObject->errorStructure(ErrorType::TypeError)->storedPrototypeObject()));
 
     JSObject* iteratorPrototype = makePrototype(JSViewObject::IteratorPrototype, globalObject->iteratorPrototype());
     rt.setJSViewObject(JSViewObject::Next, makeFunction("next"_s, 1, jsViewNext));
