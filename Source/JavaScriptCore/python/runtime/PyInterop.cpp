@@ -1467,7 +1467,7 @@ static JSValue jsObjectLen(JSGlobalObject* globalObject, JSValue self)
     if (JSValue target = objectOfPythonBehindProxy(globalObject, asObject(self), { Special::Len })) [[unlikely]] {
         int64_t count = length(globalObject, target);
         RETURN_IF_EXCEPTION(scope, { });
-        return smallInt(count);
+        RELEASE_AND_RETURN(scope, makeInt(globalObject, count));
     }
     JSValue count = numberOfItems(globalObject, asObject(self));
     RETURN_IF_EXCEPTION(scope, { });
