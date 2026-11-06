@@ -301,8 +301,7 @@ bool Runtime::keepUnreachableObjectsToFinalize(SlotVisitor& visitor)
         didMarkAll(visitor);
         return false;
     };
-    // A collection that was under way when the program asked for one is finished first.
-    bool wasAskedFor = m_scopeAskedFor && (*m_scopeAskedFor == CollectionScope::Eden || m_vm.heap.collectionScope() == CollectionScope::Full);
+    bool wasAskedFor = m_collectionIsWaitedFor;
     bool wantsGarbage = wasAskedFor && m_markingObserver && m_markingObserver->wantsGarbage();
     // That takes time for every dead cell, which at exit is every cell there is.
     bool looksAtAllThatDied = wasAskedFor && (wantsGarbage || finalizersOfProgram > 1);
@@ -580,7 +579,7 @@ void Runtime::queueWeakRefCallback(PyWeakRef* weakRef)
 {
     Locker locker { m_finalizationLock };
     bool isOfEarlierEra = m_threadThatPaysForEarlierEras != noThread && weakRef->serial() < m_firstWeakRefOfEra;
-    CallsOwed& owed = callsOwedBy(m_scopeAskedFor && m_askerMakesAllCalls ? m_currentThread : isOfEarlierEra ? m_threadThatPaysForEarlierEras : threadToMakeCallsOf(weakRef->thread()));
+    CallsOwed& owed = callsOwedBy(m_collectionIsWaitedFor && m_askerMakesAllCalls ? m_currentThread : isOfEarlierEra ? m_threadThatPaysForEarlierEras : threadToMakeCallsOf(weakRef->thread()));
     owed.weakRefCallbacks.append(weakRef);
     owed.weakRefCallbacksAreInOrder = false;
 }
@@ -1172,9 +1171,7 @@ void Runtime::collectAsAskedFor(CollectionScope collectionScope, bool leavesCycl
     // traceback and all that the frames in it refer to.
     m_vm.clearLastException();
     forgetCatchesInJSThatAreOver();
-    SetForScope scopeAskedFor(m_scopeAskedFor, collectionScope);
-    SetForScope leavesCyclicGarbage(m_leavesCyclicGarbageForLater, leavesCyclicGarbageForLater);
-    SetForScope askerMakesAllCalls(m_askerMakesAllCalls, callsOf == CallsOf::AllThreads);
+    WaitForCollection wait(*this, leavesCyclicGarbageForLater, callsOf);
     // The one is asked for to get rid of things, the other to be quick: what it frees is swept when the memory is wanted.
     if (collectionScope == CollectionScope::Full)
         m_vm.heap.collectNow(Synchronousness::Sync, CollectionScope::Full);
@@ -1237,6 +1234,8 @@ void collectAndFinalize(JSGlobalObject* globalObject, Runtime::MarkingObserver* 
         {
             // What an observer listens to is the collection asked for here, from beginning to end. Not one that was under way, or had been asked for: this one would follow, and
             // free what the observer has been told of and has noted by its address. Nor does another come before the observer has heard that it is over.
+            // The one that is finished first is waited for all the same: it finds what has just been dropped, and orders and hands out the finalizers as this one would have.
+            Runtime::WaitForCollection wait(rt, leavesCyclicGarbageForLater, callsOf);
             std::optional<PreventCollectionScope> preventCollection;
             if (observer) {
                 preventCollection.emplace(vm.heap);

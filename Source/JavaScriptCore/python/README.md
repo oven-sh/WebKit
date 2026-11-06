@@ -728,7 +728,8 @@ so the aim is that everything Python *guarantees* holds, and that what it merely
     weak reference. (Under CPython, in 18 suites of packages with other threads alive, the maker was the one to finalize in 84 of 100 cases,
     93 of 100 for `__del__`. The free-threaded build of 3.15 hands an object whose last reference another thread drops to its maker, too.)
   - What dies because something else died follows that: an object that waits for another (see the order above) goes to the
-    thread that finalizes the other, as the thread that frees the parent frees the child.
+    thread that finalizes the other, as the thread that frees the parent frees the child. That is worked out among what ONE collection finds dead. A collection of the young that takes a young parent does not
+    look at a child that is old: that one comes up alone in a later full collection, and is its maker's.
   - What has to happen in one order is not split: a round that takes parents and children at once goes to the maker of the oldest, and
     so does each piece of cyclic garbage that hangs together, with the callbacks of the weak references to it. CPython's collector
     calls those finalizers one after the other, in whichever thread it happens to run.
@@ -818,7 +819,9 @@ so the aim is that everything Python *guarantees* holds, and that what it merely
   whatever else is in the queue: a collection that `gc.callbacks` is to be told of is in it too.
   The collection that is looked at is the one asked for, from beginning to end (`PreventCollectionScope` in `collectAndFinalize`, as for `get_referrers()` and for buffers): what was under
   way or had been asked for is finished first, and no other begins until what was found has been put where the collector sees it. What that earlier one frees is neither counted nor saved, whichever
-  generation is asked for (ten young cycles, a collection that has been asked for and is not waited for, `gc.collect(0)`: 0). What looks on (`Census`) notes cells by their addresses
+  generation is asked for (ten young cycles, a collection that has been asked for and is not waited for, `gc.collect(0)`: 0). But it ends inside the call, so it is one that the caller waits for (`Runtime::WaitForCollection`), of whichever kind
+  it is: it looks at all that has died, orders the finalizers as reference counts would and hands them to the caller, as the one asked for would have done (`x = [A(1), A(2), A(3)]; del x; gc.collect()`: 3, 2, 1). A window
+  stays: a collection of the engine's own that begins after the drop and ENDS before the call takes the items for siblings, in the order in which they were made. Only an allocation between the two can set one off: none in 120,000 rounds. What looks on (`Census`) notes cells by their addresses
   and has them marked for one collection. A full collection of the engine's own that was under way when `gc.collect()` was called used to be taken for the one asked for; that one followed, freed
   the cells, and with `DEBUG_SAVEALL` their addresses went to `gc.garbage`.
 - **What the module `gc` hands out** (`get_objects`, `get_referrers`, `get_referents`, `garbage`) is decided in one place, at the top

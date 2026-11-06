@@ -14,6 +14,7 @@
 #include <wtf/HashMap.h>
 #include <wtf/HashSet.h>
 #include <wtf/Lock.h>
+#include <wtf/SetForScope.h>
 #include <wtf/TZoneMalloc.h>
 
 namespace JSC {
@@ -711,6 +712,22 @@ public:
     // cycle, or hangs off one, is kept, and comes up again in the next collection.
     // CallsOf::AllThreads: this thread will make the calls that come of it. Otherwise each is left to the thread that owes it.
     void collectAsAskedFor(CollectionScope = CollectionScope::Full, bool leavesCyclicGarbageForLater = false, CallsOf = CallsOf::AllThreads);
+    // The thread that has one of these waits for a collection. Every collection that ends meanwhile is one that it waits for, whoever began it and of whichever kind it is: one that
+    // was under way or had been asked for is finished first, and finds what the program has just dropped.
+    class WaitForCollection {
+        WTF_MAKE_NONCOPYABLE(WaitForCollection);
+    public:
+        WaitForCollection(Runtime& runtime, bool leavesCyclicGarbageForLater, CallsOf callsOf)
+            : m_isWaitedFor(runtime.m_collectionIsWaitedFor, true)
+            , m_leavesCyclicGarbageForLater(runtime.m_leavesCyclicGarbageForLater, leavesCyclicGarbageForLater)
+            , m_askerMakesAllCalls(runtime.m_askerMakesAllCalls, callsOf == CallsOf::AllThreads)
+        {
+        }
+    private:
+        SetForScope<bool> m_isWaitedFor;
+        SetForScope<bool> m_leavesCyclicGarbageForLater;
+        SetForScope<bool> m_askerMakesAllCalls;
+    };
     // For when the interpreter exits, before the program is told (atexit): what is unreachable by then and reference
     // counts would have freed would have been finalized long ago.
     void finalizeWhatReferenceCountsWouldHaveFreed();
@@ -1171,7 +1188,7 @@ private:
     bool m_shouldCollectAfterPendingCalls { false };
     bool m_mayHavePendingOutput { false };
     MarkingObserver* m_markingObserver { nullptr };
-    std::optional<CollectionScope> m_scopeAskedFor;
+    bool m_collectionIsWaitedFor { false }; // See WaitForCollection, for these three.
     bool m_leavesCyclicGarbageForLater { false };
     bool m_askerMakesAllCalls { false };
 
