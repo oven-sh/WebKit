@@ -213,7 +213,8 @@ void runtimeIsEnding(Runtime& runtime)
     if (!isSetUpFor(runtime))
         return;
     s_runtimeItIsSetUpFor.store(nullptr, std::memory_order_relaxed);
-    // Not freed: see Interpreter::lock. In this order: who finds the second null looks at the first, and what a library's thread gives back as the interpreter goes is nobody's mistake.
+    // Not freed: see Interpreter::lock. In this order: who finds the second null looks at the first, and what a library's thread gives back as the interpreter goes is nobody's mistake. (All that
+    // hangs on the order is a line on stderr. The stores and the loads are relaxed, so a processor that reorders them may still show a thread the second null and the first not.)
     Interpreter* interpreter = s_interpreter.exchange(nullptr, std::memory_order_relaxed);
     s_interpreterThatLetsGo.store(nullptr, std::memory_order_relaxed);
     interpreter->counts.clear();

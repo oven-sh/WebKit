@@ -1640,11 +1640,12 @@ not even for an object that C has just made: code that changes in place what it 
   has not got, and nobody can tell which `Py_DECREF` will give it back: so from then on nothing is let go of, and all that C owns or comes to own is held for ever. A leak, and
   nothing that C rightly owns dies under it. The line says so. The counts go on falling, for they are asked about (`Py_REFCNT()`, `PyTuple_SetItem()`): it is the entry that stays when the count has
   come to 0, and a key of the table is what the collector marks.
-- A thread that runs C for another interpreter (`CRunsFor`: its `ctypes` call, a library that it loads or lets go of) is refused as well, with a line of its own, and that is all: it costs
-  the interpreter that has the API nothing (but for the one case at the end of this item). What `ctypes` hands to C there are that interpreter's own objects, and that C takes a reference to one of them says nothing about the
+- A thread that runs C for another interpreter (`CRunsFor`: its `ctypes` call, a library that it loads or lets go of) is refused as well, with a line of its own, and the interpreter that has
+  the API goes on letting go. What `ctypes` hands to C there are that interpreter's own objects, and that C takes a reference to one of them says nothing about the
   objects of this one. No function hands such a thread an object of this interpreter. What it can name is what a library that both have loaded keeps in a variable of its own: to share an
   object between two interpreters in that way is an error in CPython too, and here it is not defended against. And it can call the code of a callback of this interpreter's, if it has got the
-  address as a number: that gives a reference with its result, as to any C, and this C cannot give it back, so the object is held for ever.
+  address as a number: that gives a reference with its result, as to any C, and this C cannot give it back, so the object is held for ever. So is any object of this interpreter's of which such C was to give back a
+  reference, or hand one on to a function that takes it over: the count stays as it was.
 - A thread of another VM that gets into C in another way (a Worker's JS by `bun:ffi` or N-API, a destructor of a key of pthreads as the Worker's thread ends) is a thread without
   the GIL like any that C has started, and is treated so. It has no objects of its own, so a cell to which it takes a reference can only be one of this interpreter's, got by a variable:
   that is the case which "nothing is let go of" is for. The types, the exceptions, None and the numbers are not counted, whoever asks.
@@ -1664,7 +1665,7 @@ other interpreter what needs the API is an `ImportError`; and when that one has 
 (CPython's extensions have to say that they can serve more than one interpreter, and few do.) It ends when its `Runtime` does (`runtimeIsEnding()`): for the interpreter of a realm to which
 nothing refers any more that is in the collection that finds the global object dead, with the world stopped, not when that cell is swept. C that JS calls on that thread could come in
 meanwhile. Nobody is in the middle of a call then (a function that has entered has the global object on its stack), and while C owns an object the realm does not die (the object holds it by
-its Structure; nor does it ever die if C has owned one since a reference was refused, see below). What C may still own are cells of no realm, a str or a large int, and what a thread's indicator still points to: nothing follows those pointers any more, for every function refuses.
+its Structure; nor does it ever die if C has owned one since a reference was refused, see above). What C may still own are cells of no realm, a str or a large int, and what a thread's indicator still points to: nothing follows those pointers any more, for every function refuses.
 
 It is **set up** when that interpreter first has a use for it (`ensure()`, `tryEnsure()`): before it loads a library with `dlopen()`, because what a library does as it is loaded may
 call; before a function of C's in a `PyDLL` is called (after its arguments have been converted: a call that fails before it gets to C fails as
@@ -1689,7 +1690,7 @@ told apart at every level. It costs who is let in nothing: while a thread runs C
 question above fails and the long way finds out why. C that JS runs (`bun:ffi`, N-API) runs for nobody in particular: on a thread that holds the GIL of the interpreter that has the
 API it is served, from whichever realm it was called, unless that is inside C which runs for another.
 The question is for C, and only C is asked. What the runtime does for itself (it throws what C raised, gives up the reference that came with a result, hands C one with the result of a callback;
-`_ctypes.Py_INCREF()`; the reference of an instance to its type, where `object.__new__` takes it and an assignment to `__class__` moves it) goes by whose call it is: code of the interpreter that is served may run deep inside C that another one runs, and its calls come with references and exceptions like any. A
+`_ctypes.Py_INCREF()`; the reference of an instance to its type, where `object.__new__` takes it and an assignment to `__class__` moves it) goes by whose call it is (and where any interpreter may be the caller, `takeOverReference()`, by whether the API is set up and the thread has its lock; never by for whom C runs): code of the interpreter that is served may run deep inside C that another one runs, and its calls come with references and exceptions like any. A
 function that has asked does not ask again for the references that it takes and gives (`retain()` and `release()` with `current`).
 
 **Quiet and noisy.** Every function that C calls says in its first line whether it enters the runtime (`CAPI_ENTER()`; `CAPI_NOISY()` where there is nothing to enter it for) or
@@ -1845,7 +1846,8 @@ takes one over, or takes one of its own; the program gets one with a result, or 
 more. So the one reference may be a container's: "put it in,
 then fill it" (`PyList_SetItem(list, i, pair)`, then `PyTuple_SetItem(pair, ...)` by the pointer that C still has) is how extensions keep their error paths short. Into any other tuple it is a
 `SystemError`. Nobody sees what the program does. What passes here and not there is a tuple that somebody has got hold of without a reference changing hands under the eyes of the API,
-and kept: out of the container, or as the argument of a callback. What passes there and not here: a tuple whose other holder has let go of it again, for holders are only ever counted up (the container
+and kept: out of the container, or as the argument of a callback; and a tuple that a function called with `ctypes` has returned in a call that did not end with it as its result (C has raised beside it; the
+prototype has an out parameter, whose value is the call's): nobody has got it, and the reference that came with it is given up, where CPython's `ctypes` leaks it in the first case and so counts two. What passes there and not here: a tuple whose other holder has let go of it again, for holders are only ever counted up (the container
 has died, the program has dropped the result; also where it is the API that puts something else in the tuple's place, `PyList_SetItem()` or `PyTuple_SetItem()`); and a tuple that the program has made
 and of which C has the only reference (a callback has made it and returned it). The hash that the tuple has kept is
 forgotten (CPython 3.15 goes on answering with it).

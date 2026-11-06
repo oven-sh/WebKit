@@ -88,6 +88,10 @@ private:
 // From identityBits() back: this interpreter's object, if the bits are the address of one of the symbols that stand for objects. Empty: they are not.
 JSValue objectOfSymbol(JSGlobalObject*, uint64_t bits);
 
+// ctypes: code has handed over a reference with its result. It is given up. `programGetsObject`: code of the program gets the object, as the result of the call or as what a _check_retval_ or an errcheck is handed; if not, nobody has got it. The code may be that of a
+// callback of the interpreter that the API is set up for, which another of the VM has called by its address. Nor need the API be set up. It asks for itself.
+void takeOverReference(uint64_t bits, bool programGetsObject);
+
 // ---- For the interpreter that the API has been set up for (isSetUpFor()) ----
 
 // For the collector, with the world stopped, when marking is over and nothing has been freed yet. True: it has queued something (Runtime::queueToFinalize()), of which the threads are to be told.
@@ -170,9 +174,7 @@ void forgetWhatCRaised();
 void giveReference(uint64_t bits);
 // It is given back, as by C: _ctypes.Py_DECREF().
 void giveBackReference(uint64_t bits);
-// Code has handed over a reference with its result. It is given up. `programGetsObject`: the call ends with the object as its result; if not, nobody has got it. This one is for any interpreter of the VM: the code may be that of a callback of the interpreter that
-// the API is set up for, which another has called by its address. Nor need the API be set up. It asks for itself.
-void takeOverReference(uint64_t bits, bool programGetsObject);
+// (takeOverReference(): see "For every interpreter".)
 
 #else // !PYTHON_HAS_CAPI
 

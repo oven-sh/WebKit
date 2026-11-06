@@ -287,11 +287,11 @@ ALWAYS_INLINE Interpreter* interpreterToLookAt()
 //  - A reference that was to be taken is one that C believes in and has not got, and nobody can tell which Py_DECREF will be the one that gives it back.
 //    So FROM THEN ON NOTHING IS LET GO OF: all that C owns, or comes to own, is held for ever, and nothing that C rightly owns dies under it. The counts go on falling, for they
 //    are asked about (Py_REFCNT(), PyTuple_SetItem()); it is the entry that stays when the count has come to 0.
-// A thread that runs C for ANOTHER interpreter (CRunsFor: it calls a function with ctypes, loads a library or lets go of one) is refused too, and that is all: it costs the interpreter
-// that has the API nothing. What ctypes hands to C there are that interpreter's own objects, and that C takes a reference to one says nothing about this one's. No function gives
+// A thread that runs C for ANOTHER interpreter (CRunsFor: it calls a function with ctypes, loads a library or lets go of one) is refused too, and the interpreter that has the API
+// goes on letting go. What ctypes hands to C there are that interpreter's own objects, and that C takes a reference to one says nothing about this one's. No function gives
 // such a thread an object of this interpreter. What it can name is what a library that both have loaded keeps in a variable of its own: to share that between two interpreters
 // is an error in CPython as well. (One more way: it calls the code of a callback of this interpreter's, whose address it has got as a number. That gives a reference with its result, as
-// to any C, and this C cannot give it back: the object is held for ever.)
+// to any C, and this C cannot give it back: the object is held for ever. So is whatever of this interpreter's such C was to give back, or to hand on to a function that takes a reference over.)
 // (When the interpreter has ended there is nothing left to count: what an extension gives back as the process goes is ignored.)
 void refuseToChangeCount(bool isToFall);
 void releaseSlow(JSCell*, Interpreter* thatLetsGo);
@@ -303,8 +303,8 @@ void didTakeWatchedReference(JSCell*);
 void moveToClass(Interpreter&, Body*, PyType*, VM*);
 void didGiveBackLastReferenceToBodyWithoutFace(Body*);
 
-// THE QUESTION IS FOR C. Who has asked and been let in does not ask again, and the runtime does not ask at all where it keeps the books of a call that it has made itself (the hooks of
-// ctypes in CApiHooks.h): for whom C runs further out on the stack has nothing to do with whose reference the result of this call came with.
+// THE QUESTION IS FOR C. Who has asked and been let in does not ask again, and the runtime does not ask it where it keeps the books of a call that it has made itself (the hooks of
+// ctypes in CApiHooks.h; takeOverReference() has a question of its own): for whom C runs further out on the stack has nothing to do with whose reference the result of this call came with.
 ALWAYS_INLINE void retainCell(Interpreter& current, JSCell* cell)
 {
     if (current.counts.add(cell)) [[unlikely]]
@@ -399,8 +399,8 @@ ALWAYS_INLINE Handle newReference(Interpreter& current, JSValue value)
 // What ends the program (a termination) is never in the indicator. It stays pending, and while it is, every function fails.
 // WHEN THE INTERPRETER ENDS nobody clears the indicators: they are the threads' own. What is left in one is a pointer to a cell that nothing holds any more. It is never followed: whoever
 // reads it to look at the object has asked who calls, and is refused from then on (PyErr_Occurred(), PyErr_ExceptionMatches(), PyErr_GetRaisedException()); whoever has called C looks only
-// if its interpreter is the one that the API is set up for (throwWhatCRaised() and the like), which none is any more; and to put another in its place gives the old one to
-// release(), which looks at its bits and at s_interpreterThatLetsGo and s_interpreter, which are null. The API never comes back, so no later interpreter can take the pointer for one of its own.
+// if its interpreter is the one that the API is set up for (throwWhatCRaised() and the like), which none is any more; and whoever is to put another in its place is refused as well, and hands the NEW one to
+// release(), which looks at its bits and at s_interpreterThatLetsGo and s_interpreter, which are null: the old one stays where it is. The API never comes back, so no later interpreter can take the pointer for one of its own.
 Handle& errorIndicator();
 // Takes over the reference. NULL: none is set any more.
 void setErrorIndicator(Interpreter&, Handle);
