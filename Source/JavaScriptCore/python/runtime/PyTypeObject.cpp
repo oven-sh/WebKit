@@ -638,7 +638,8 @@ static JSValue dictDescriptorOfBuiltinBase(JSGlobalObject* globalObject, JSValue
 {
     Runtime& rt = runtime(globalObject);
     PyType* type = rt.typeOf(self);
-    while (type->base() && (type->isHeapType() || !type->has(TypeFlag::HasDict)))
+    // (One that can be written to can be given a class for a base, and then finds the descriptor that has asked.)
+    while (type->base() && (type->isHeapType() || type->has(TypeFlag::Mutable) || !type->has(TypeFlag::HasDict)))
         type = type->base();
     if (!type->base())
         return { };
