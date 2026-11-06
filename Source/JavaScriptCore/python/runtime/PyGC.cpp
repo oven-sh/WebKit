@@ -954,8 +954,11 @@ static JSValue gcGetReferents(JSGlobalObject* globalObject, const CallArgs& args
         if (object.isCell() && object.asCell()->isObject() && isObjectOfPython(object.asCell(), globalObject) && !isOfUntrackedType(typeOf(globalObject, object)))
             appendReferents(globalObject, object.asCell(), result);
     }
-    for (unsigned i = 0; i < result.size(); ++i)
+    for (unsigned i = 0; i < result.size(); ++i) {
+        // By whichever way it has got there. (All that any thread is handling has been seen to above.)
+        exceptionWillBeSeen(result.at(i));
         assertIsComplete(result.at(i));
+    }
     RELEASE_AND_RETURN(scope, newList(globalObject, spanOf(result)));
 }
 
