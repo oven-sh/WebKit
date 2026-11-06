@@ -109,6 +109,9 @@ bool markWhatIsLeft(SlotVisitor&);
 
 // The object whose PyObject* is the address of this cell, if the cell is not an object itself. Empty: it is nothing of the kind. With the GIL.
 JSValue objectOfBody(Runtime&, JSCell*);
+// Whether this is the address of a cell that C owns a reference to. Then there is a cell, and it lives: every key of the table is marked by every collection. The address is not followed.
+// With the GIL, for the interpreter that the API is set up for.
+bool isAddressOfCellThatCOwns(const void*);
 
 // __class__ has been assigned to.
 void didChangeClass(JSCell*, PyType* oldType, PyType* newType);
@@ -181,6 +184,7 @@ inline JSValue allocateInstance(JSGlobalObject*, PyType*) { return { }; }
 inline bool instancesAreAlike(PyType*, PyType*) { return false; }
 inline bool markWhatIsLeft(SlotVisitor&) { return false; }
 inline JSValue objectOfBody(Runtime&, JSCell*) { return { }; }
+inline bool isAddressOfCellThatCOwns(const void*) { return false; }
 inline void didChangeClass(JSCell*, PyType*, PyType*) { }
 inline size_t numberOfInstances(Runtime&) { return 0; }
 inline bool hasInstancesToDestroy(Runtime&) { return false; }

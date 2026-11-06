@@ -211,11 +211,14 @@ JSValue objectFromBits(JSGlobalObject* globalObject, uint64_t bits, JSValue hint
         isValid = value.isNumber() || value.isBoolean() || value.isUndefinedOrNull();
     else {
         // Anything may be in the memory. It is taken for an object only if the heap has a live cell there, of a kind that
-        // programs get to see.
-        // (A block that cells are being allocated from cannot tell which of its cells are in use: allocation is suspended.)
-        vm.heap.objectSpace().enablePreciseAllocationTracking();
-        HeapIterationScope iterationScope(vm.heap);
-        isValid = HeapUtil::isPointerGCObjectJSCell(vm.heap, vm.heap.objectSpace().blocks().filter(), value.asCell());
+        // programs get to see. What C owns a reference to is one, and that is so of every result of a function of C's that keeps the rules: the heap is not asked.
+        isValid = CApi::isSetUpFor(runtime(globalObject)) && CApi::isAddressOfCellThatCOwns(value.asCell());
+        if (!isValid) {
+            // (A block that cells are being allocated from cannot tell which of its cells are in use: allocation is suspended.)
+            vm.heap.objectSpace().enablePreciseAllocationTracking();
+            HeapIterationScope iterationScope(vm.heap);
+            isValid = HeapUtil::isPointerGCObjectJSCell(vm.heap, vm.heap.objectSpace().blocks().filter(), value.asCell());
+        }
         if (isValid) {
             JSCell* cell = value.asCell();
             if (auto* view = PyMemoryView::tryFrom(cell); view && view->isInternal)

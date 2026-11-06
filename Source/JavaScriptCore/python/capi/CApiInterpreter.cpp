@@ -448,6 +448,11 @@ void giveReference(uint64_t bits)
     retain(interpreter(), std::bit_cast<Handle>(static_cast<uintptr_t>(bits)));
 }
 
+bool isAddressOfCellThatCOwns(const void* address)
+{
+    return interpreter().counts.contains(static_cast<JSCell*>(const_cast<void*>(address)));
+}
+
 void giveBackReference(uint64_t bits)
 {
     release(interpreter(), std::bit_cast<Handle>(static_cast<uintptr_t>(bits)));
