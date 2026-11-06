@@ -35,7 +35,11 @@ PY_CAPI Handle PyTuple_New(ssize_t length)
         entry.raise(entry.runtime().MemoryError(), String());
         return nullptr;
     }
-    return entry.newReference(PyTuple::create(entry.globalObject, static_cast<unsigned>(length)));
+    // (There is one empty tuple.)
+    PyTuple* tuple = PyTuple::create(entry.globalObject, static_cast<unsigned>(length));
+    if (length)
+        tuple->setIsFilledByC();
+    return entry.newReference(tuple);
 }
 
 PY_CAPI ssize_t PyTuple_Size(Handle object)
@@ -62,18 +66,23 @@ PY_CAPI Handle PyTuple_GetItem(Handle object, ssize_t index)
     return nullptr;
 }
 
-// For a tuple that nobody else has seen yet. Takes over the reference to the item.
+// For a tuple that nobody else has seen yet. CPython goes by the count of references, and refuses if there is more than one. Nobody counts the program's here. What is known is
+// asked: that PyTuple_New() has made the tuple, so what the program has made (a constant of its code) is as it was made, and that C owns one reference, so it has not given the
+// tuple away. Takes over the reference to the item.
 PY_CAPI int PyTuple_SetItem(Handle object, ssize_t index, Handle item)
 {
     CAPI_NOISY(-1);
     TakenOver takenOver(item);
     PyTuple* tuple = PyTuple::tryFrom(toJS(object));
-    if (tuple && static_cast<size_t>(index) < tuple->length()) [[likely]] {
+    bool isBeingFilled = tuple && tuple->isFilledByC() && interpreter().counts.get(tuple) == 1;
+    if (isBeingFilled && static_cast<size_t>(index) < tuple->length()) [[likely]] {
         tuple->initializeAt(interpreter().vm, static_cast<unsigned>(index), item ? toJS(item) : jsUndefined());
+        // Somebody may have asked before it was full.
+        tuple->setCachedHash(-1);
         return 0;
     }
     CAPI_ENTER(-1);
-    if (!tuple)
+    if (!isBeingFilled)
         entry.raiseBadInternalCall();
     else
         entry.raise(entry.runtime().IndexError(), "tuple assignment index out of range"_s);
@@ -97,11 +106,7 @@ PY_CAPI Handle PyList_New(ssize_t length)
     JSArray* list = newList(entry.globalObject, static_cast<unsigned>(length));
     if (entry.failed())
         return nullptr;
-    for (ssize_t i = 0; i < length; ++i) {
-        listAppend(entry.globalObject, list, jsUndefined());
-        if (entry.failed())
-            return nullptr;
-    }
+    listInsertGap(entry.globalObject, list, 0, static_cast<unsigned>(length));
     return entry.newReference(list);
 }
 
