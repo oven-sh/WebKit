@@ -1202,6 +1202,7 @@ private:
     Vector<PyWeakRef*> weakRefsWithCallbacksToUnmarkedObjects(SlotVisitor&);
     UncheckedKeyHashSet<JSCell*> whatOtherThreadsHold();
     bool m_hasEnded { false };
+    bool m_isPuttingFinalizersInOrder { false }; // In keepUnreachableObjectsToFinalize(), with m_finalizationLock.
     void end();
     bool m_hasPendingCalls { false };
     bool m_isRunningPendingCalls { false };

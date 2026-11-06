@@ -312,7 +312,10 @@ bool Runtime::keepUnreachableObjectsToFinalize(SlotVisitor& visitor, StepOfKeepi
     bool areOfSeveralThreads = !askerMakesAllCalls && std::ranges::any_of(places, [&](Finalizable* entry) {
         return entry->thread != places[0]->thread;
     });
+    // It goes through what has died, and the global object may be among that: see visitPendingCalls().
+    m_isPuttingFinalizersInOrder = true;
     FinalizationOrder order = finalizationOrder(m_vm.heap, visitor, candidates.span(), { referents.span(), looksAtAllThatDied, wantsGarbage, m_leavesCyclicGarbageForLater, areOfSeveralThreads });
+    m_isPuttingFinalizersInOrder = false;
 
     // All that the candidates reach is about to be marked, so the weak references to it stay as they are until the finalizers have
     // run and another collection finds it dead: first __del__, then the weak references, as with reference counts. But what is
@@ -590,7 +593,11 @@ void Runtime::queueWeakRefCallback(PyWeakRef* weakRef)
 template<typename Visitor>
 void Runtime::visitPendingCalls(Visitor& visitor)
 {
-    Locker locker { m_finalizationLock };
+    // The collector has the lock already where it comes here by itself: a realm has been dropped, and it looks at what the dead global object refers to in order to tell in which order the
+    // realm's objects are to be finalized. The world is stopped then, so nobody else reads the flag.
+    std::optional<Locker<Lock>> locker;
+    if (!m_isPuttingFinalizersInOrder)
+        locker.emplace(m_finalizationLock);
     for (auto& owed : m_callsOwed) {
         for (JSCell* cell : owed->finalizers)
             visitor.appendUnbarriered(cell);
