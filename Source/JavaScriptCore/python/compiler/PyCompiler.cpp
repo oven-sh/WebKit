@@ -2212,6 +2212,7 @@ void Unit::whileLoop(While* node, const Last& isLast)
         } else
             lineOfImplicitReturn(isLast.kind == Last::OfFunction ? node->test->range.endLineno : lineOfBranch, isLast.onlyIf(node->orelse.isEmpty() && (isLast.kind == Last::OfFunction || isOnlyWay)));
     }
+    m_statementsEndWhereStatementEnds = true;
     statements(node->orelse, 0, isLast);
     endOfStatement(end.get());
     // `while True:` has a branch to here, until CPython's compiler finds out.
@@ -2265,6 +2266,7 @@ void Unit::forLoop(For* node, const Last& isLast)
     // A `break` leads to what comes after that, be it one that cannot be reached, or one that goes on from here. See lineOfOnlyWayHere().
     if (node->orelse.isEmpty())
         m_endOfForLoop = { g.instructions().size(), node->iter->range.lineno, hasBreak && !end->isBound() };
+    m_statementsEndWhereStatementEnds = true;
     statements(node->orelse, 0, isLast);
     endOfStatement(end.get());
 }
