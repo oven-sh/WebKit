@@ -96,9 +96,9 @@ void forgetWhatCRaised();
 void giveReference(uint64_t bits);
 // It is given back, as by C: _ctypes.Py_DECREF().
 void giveBackReference(uint64_t bits);
-// Code has handed over a reference with its result, and the program gets the object. This one is for any interpreter of the VM: the code may be that of a callback of the interpreter that
+// Code has handed over a reference with its result. It is given up. `programGetsObject`: the call ends with the object as its result; if not, nobody has got it. This one is for any interpreter of the VM: the code may be that of a callback of the interpreter that
 // the API is set up for, which another has called by its address. Nor need the API be set up.
-void takeOverReference(uint64_t bits);
+void takeOverReference(uint64_t bits, bool programGetsObject);
 
 #else // !PYTHON_HAS_CAPI
 
@@ -119,7 +119,7 @@ inline bool throwWhatCRaised(JSGlobalObject*) { return true; }
 inline bool throwWhatCRaisedBesideResult(JSGlobalObject*, const String&) { return true; }
 inline void forgetWhatCRaised() { }
 inline void giveBackReference(uint64_t) { }
-inline void takeOverReference(uint64_t) { }
+inline void takeOverReference(uint64_t, bool) { }
 inline void giveReference(uint64_t) { }
 
 #endif // PYTHON_HAS_CAPI

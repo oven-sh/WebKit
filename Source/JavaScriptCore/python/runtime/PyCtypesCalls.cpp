@@ -389,11 +389,11 @@ static bool isLoadedAsObject(PyCTypeInfo* info, JSValue type)
     return info && info->accessor.code == Code::Object && isSimpleInstanceType(*info->state.get(), PyType::from(type));
 }
 
-static void takeOverReferenceIn(const uint8_t* memory)
+static void takeOverReferenceIn(const uint8_t* memory, bool programGetsObject)
 {
     uint64_t bits;
     memcpy(&bits, memory, sizeof(bits));
-    CApi::takeOverReference(bits);
+    CApi::takeOverReference(bits, programGetsObject);
 }
 
 static JSValue makeResult(JSGlobalObject* globalObject, JSValue resultType, const uint8_t* memory, JSValue checker, JSValue hint, bool comesWithReference)
@@ -414,7 +414,7 @@ static JSValue makeResult(JSGlobalObject* globalObject, JSValue resultType, cons
         result = load(globalObject, info->accessor, memory, info->size, { }, hint);
         // (Also if the bits are not those of an object that the program may have.)
         if (comesWithReference)
-            takeOverReferenceIn(memory);
+            takeOverReferenceIn(memory, !!result);
     } else
         result = dataFromCopy(globalObject, PyType::from(resultType), memory, info->size);
     RETURN_IF_EXCEPTION(scope, { });
@@ -590,7 +590,7 @@ JSValue callFunction(JSGlobalObject* globalObject, void* function, PyTuple* argu
             CApi::forgetWhatCRaised();
         if (isEnded || (isServed && failed(scope, CApi::throwWhatCRaised(globalObject)))) [[unlikely]] {
             if (returnsReference)
-                takeOverReferenceIn(resultMemory);
+                takeOverReferenceIn(resultMemory, false);
             return { };
         }
     }

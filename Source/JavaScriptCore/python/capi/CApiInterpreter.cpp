@@ -448,7 +448,7 @@ void giveBackReference(uint64_t bits)
 
 // The caller may be another interpreter of the VM. (Not one of another VM: a callback that is called on a thread of another VM's is not run, and returns NULL.) So it has not asked
 // whether the API is set up. While it is not, nothing is counted, and no reference has come with anything.
-void takeOverReference(uint64_t bits)
+void takeOverReference(uint64_t bits, bool programGetsObject)
 {
     Handle handle = std::bit_cast<Handle>(static_cast<uintptr_t>(bits));
     JSCell* cell = countedCell(handle);
@@ -458,9 +458,11 @@ void takeOverReference(uint64_t bits)
     if (!current) [[unlikely]]
         return;
     ASSERT(current->vm.currentThreadIsHoldingAPILock());
-    // Where the call has ended otherwise than with a result, nobody has looked at the bits. What is in the table is a cell, and lives.
-    if (current->counts.get(cell)) [[likely]] {
-        didGetHolder(cell, Holder::Program);
+    // Where the call has ended otherwise than with a result, nobody has looked at the bits. What is in the table is a cell, and lives. (By the key: when nothing is let go of any more, the
+    // count may be 0, and the program gets the object all the same.)
+    if (current->counts.contains(cell)) [[likely]] {
+        if (programGetsObject) [[likely]]
+            didGetHolder(cell, Holder::Program);
         release(*current, handle);
     }
 }

@@ -51,6 +51,8 @@ public:
 
     void clear() { m_counts.clear(); }
     uint32_t get(JSCell* cell) const { return m_counts.get(cell); }
+    // Whether it is a key: then it is a cell, and lives. (The count may be 0: see remove().)
+    bool contains(JSCell* cell) const { return m_counts.contains(cell); }
     unsigned size() const { return m_counts.size(); }
 
     template<typename Function>
