@@ -94,7 +94,7 @@ struct NumberingTestFixture {
     AbstractHeap everyElement { heaps.indexedContiguousProperties.atAnyIndex() };
     AbstractHeap firstElement { heaps.indexedContiguousProperties.at(0) };
     AbstractHeap secondElement { heaps.indexedContiguousProperties.at(1) };
-    AbstractHeap cousin { heaps.indexedInt32Properties.at(0) };
+    AbstractHeap cousin { heaps.indexedDoubleProperties.at(0) };
     AbstractHeap unrelated { heaps.JSPromise_slot };
     AbstractHeap immutable { heaps.JSCell_typeInfoType };
     AbstractHeap mutableAboveImmutable { heaps.JSRopeString_fiber1 };

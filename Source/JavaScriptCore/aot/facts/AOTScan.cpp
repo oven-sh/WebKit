@@ -915,6 +915,8 @@ public:
             m_textsSpelled.set(text.index());
     }
     void noteTextsSpelledIn(const DataNode&);
+    void noteTextThatMayNameEvent(StringID);
+    void noteTextsThatMayNameEventsIn(const DataNode&);
     const BitVector& textsSpelled() const { return m_textsSpelled; }
     const SetsOfLayoutsWritten& setsOfLayoutsWritten() const { return m_setsOfLayoutsWritten; }
     uint64_t numberOfValuesScanned() const { return m_numberOfValuesScanned; }
@@ -2282,6 +2284,8 @@ void ScanOfBody::addConstant(const BodyValue& value)
     }
     if (opcode == Opcode::Data) {
         DataID data = value.as<Opcode::Data>().data();
+        if (data)
+            noteTextsThatMayNameEventsIn(m_program.at(data).root);
         addNode(data ? nodeOfData(m_program.at(data).root) : 0);
         return;
     }
@@ -2297,19 +2301,40 @@ void ScanOfBody::addConstant(const BodyValue& value)
         }
         return;
     }
-    if (opcode == Opcode::String) {
-        BuiltinName name = m_program.strings.builtinName(value.as<Opcode::String>().string());
-        if (name && !isLibraryCode(m_program, *m_function)) {
-            if (!m_namesUnderWhichEventsHang) {
-                m_namesListedByThisScan = namesUnderWhichEventsHangInScan(m_program.builtins());
-                m_namesUnderWhichEventsHang = &m_namesListedByThisScan;
-            }
-            if (m_namesUnderWhichEventsHang->get(name.index()))
-                m_summary.textsThatNameEvents.append(m_program.keyOf(name));
-        }
-    }
+    if (opcode == Opcode::String)
+        noteTextThatMayNameEvent(value.as<Opcode::String>().string());
     TypeID type = typeOfPrimitiveConstantInScan(value);
     addNode(type ? constant(type) : 0);
+}
+
+void ScanOfBody::noteTextThatMayNameEvent(StringID text)
+{
+    BuiltinName name = m_program.strings.builtinName(text);
+    if (!name || isLibraryCode(m_program, *m_function))
+        return;
+    if (!m_namesUnderWhichEventsHang) {
+        m_namesListedByThisScan = namesUnderWhichEventsHangInScan(m_program.builtins());
+        m_namesUnderWhichEventsHang = &m_namesListedByThisScan;
+    }
+    if (m_namesUnderWhichEventsHang->get(name.index()))
+        m_summary.textsThatNameEvents.append(m_program.keyOf(name));
+}
+
+void ScanOfBody::noteTextsThatMayNameEventsIn(const DataNode& root)
+{
+    Vector<const DataNode*, 32> nodesToVisit { &root };
+    while (!nodesToVisit.isEmpty()) {
+        const DataNode& node = *nodesToVisit.takeLast();
+        if (const auto* string = node.tryAs<DataNode::String>())
+            noteTextThatMayNameEvent(string->value);
+        else if (const auto* array = node.tryAs<DataNode::Array>()) {
+            for (const DataNode& element : array->elements)
+                nodesToVisit.append(&element);
+        } else if (const auto* object = node.tryAs<DataNode::Object>()) {
+            for (const DataMember& member : object->members)
+                nodesToVisit.append(&member.value);
+        }
+    }
 }
 
 void ScanOfBody::addNatural(const BodyValue& value, const NaturalType& written)
@@ -3243,6 +3268,11 @@ void ScanOfBody::readOperation(const BodyValue& value, uint32_t block)
             addRead(value.id(), listOfNode(unscopables), value.key());
         }
         if (opcode == Opcode::NewTemplateObject) {
+            for (TemplateString part : value.as<Opcode::NewTemplateObject>().templateStrings()) {
+                if (part.cooked)
+                    noteTextThatMayNameEvent(part.cooked);
+                noteTextThatMayNameEvent(part.raw);
+            }
             uint32_t made = classInstanceMadeBy(value, whatIsMadeBy(value).builtinClass);
             addEdge(constant(typeOfElementsOfTemplateObject(value)), contentsNode(made, ContentsSlot::Element));
             addEdge(constant(TypeTable::undefined), contentsNode(made, SlotOfContents::noLongerAsMade()));

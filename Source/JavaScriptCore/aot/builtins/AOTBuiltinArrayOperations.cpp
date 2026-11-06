@@ -327,6 +327,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTArrayIndexOfString, size_t, (Instance* inst
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTArrayIndexOfString);
     JSArray* array = cellArgument<JSArray>(cell, Entry::operationAOTArrayIndexOfString);
+    EnsureStillAliveScope arrayScope(array);
     JSString* searchString = cellArgument<JSString>(searched, Entry::operationAOTArrayIndexOfString);
     constexpr size_t notFound = static_cast<size_t>(-1);
     const WriteBarrier<Unknown>* elements = hasContiguous(array->indexingType()) ? array->butterfly()->contiguous().data() : nullptr;

@@ -30,10 +30,12 @@
 #include "JSPromise.h"
 #include "MarkedVector.h"
 #include "ObjectConstructor.h"
+#include "ProxyObject.h"
 #include "RegExpObject.h"
 #include "TopExceptionScope.h"
 #include "YarrFlags.h"
 #include "YarrPattern.h"
+#include <optional>
 #include <wtf/BitVector.h>
 #include <wtf/HashSet.h>
 #include <wtf/SetForScope.h>
@@ -113,6 +115,7 @@ private:
     JSValue makeNumberThatNobodyKnows();
     void layUnderNumberThatNobodyKnows(JSObject*, JSValue number, JSValue laid);
     JSValue findUnderNumberThatNobodyKnows(JSObject*, JSValue number);
+    bool asksTheWorld(JSValue value) const { return value && value.isCell() && m_functionsThatAskTheWorld.contains(value.asCell()); }
     bool isGlobalObject(JSValue value) const { return value == JSValue(m_realm.get()) || value == JSValue(m_realm->globalThis()); }
     JSValue unknown() const { return m_unknown.get(); }
     JSValue at(const Activation& activation, ValueID id) const
@@ -148,6 +151,7 @@ private:
     JSValue construct(JSValue callee, JSValue newTarget, std::span<const JSValue> arguments);
     bool appendElementsOf(JSValue list, Values&);
     bool payForBuiltin(JSValue thisValue, std::span<const JSValue> arguments);
+    std::optional<uint64_t> elementsOfObjectHandedToBuiltin(JSObject*) const;
     JSValue noteMadeByBuiltin(JSValue);
     bool mayMatchWithoutEnd(RegExp*);
     void noteThrown(Exception*);
@@ -238,6 +242,9 @@ RehearsalOfRegExpTexts::RehearsalOfRegExpTexts(VM& vm, const Program& program, c
 {
     m_realm.set(vm, JSGlobalObject::create(vm, JSGlobalObject::createStructure(vm, jsNull())));
     JSGlobalObject* realm = m_realm.get();
+    realm->setEvalEnabled(false, "the rehearsal evaluates no text"_s);
+    realm->setWebAssemblyEnabled(false, "the rehearsal compiles no module"_s);
+    realm->weakRandom().setSeed(0);
 
     m_unknown.set(vm, constructEmptyObject(vm, realm->nullPrototypeObjectStructure()));
     m_unknown->putDirect(vm, vm.propertyNames->toPrimitiveSymbol, JSNativeStdFunction::create(vm, realm, 0, String(), [](JSGlobalObject* realm, CallFrame*) {
@@ -439,7 +446,13 @@ JSValue RehearsalOfRegExpTexts::closureOf(FunctionID function, std::span<const J
         return unknown();
     JSArray* held = asArray(list);
     bool isGoneThrough = !record.has(FunctionFlags::IsGenerator) && record.hasBody();
-    JSObject* made = JSNativeStdFunction::create(vm, realm, record.length, String(), [this, function, held, isGoneThrough](JSGlobalObject*, CallFrame* frame) {
+    JSObject* made = JSNativeStdFunction::create(vm, realm, record.length, String(), [this, function, held, isGoneThrough](JSGlobalObject* caller, CallFrame* frame) {
+        if (!m_operationsLeft || !m_operationsLeftInAll) {
+            auto scope = DECLARE_THROW_SCOPE(*m_vm);
+            return throwVMTypeError(caller, scope, "nobody knows the value"_s);
+        }
+        --m_operationsLeft;
+        --m_operationsLeftInAll;
         if (!isGoneThrough)
             return JSValue::encode(unknown());
         Values captures;
@@ -757,6 +770,10 @@ JSValue RehearsalOfRegExpTexts::call(JSValue callee, JSValue thisValue, std::spa
         return unknown();
     if (!isOfProgram && callee != m_regExpConstructor && (isPatternMadeHere(thisValue) || std::ranges::any_of(arguments, [&](JSValue argument) { return isPatternMadeHere(argument); })))
         return unknown();
+    if (!isOfProgram && (asksTheWorld(thisValue) || std::ranges::any_of(arguments, [&](JSValue argument) { return asksTheWorld(argument); }))) {
+        noteHandedToCodeThatNobodyKnows(arguments);
+        return unknown();
+    }
     CallData callData = getCallData(callee);
     if (callData.type == CallData::Type::None)
         return unknown();
@@ -791,6 +808,22 @@ bool RehearsalOfRegExpTexts::mayMatchWithoutEnd(RegExp* regExp)
     }).iterator->value;
 }
 
+std::optional<uint64_t> RehearsalOfRegExpTexts::elementsOfObjectHandedToBuiltin(JSObject* object) const
+{
+    for (JSObject* holder = object; holder;) {
+        if (holder->inherits<ProxyObject>())
+            return std::nullopt;
+        if (JSValue length = holder->getDirect(*m_vm, m_vm->propertyNames->length)) {
+            if (!length.isNumber() || !(length.asNumber() <= m_longestText))
+                return std::nullopt;
+            return length.asNumber() > 0 ? static_cast<uint64_t>(length.asNumber()) : 0;
+        }
+        JSValue above = holder->getPrototypeDirect();
+        holder = above.isObject() ? asObject(above) : nullptr;
+    }
+    return 0;
+}
+
 bool RehearsalOfRegExpTexts::payForBuiltin(JSValue thisValue, std::span<const JSValue> arguments)
 {
     uint64_t handed = 0;
@@ -805,6 +838,13 @@ bool RehearsalOfRegExpTexts::payForBuiltin(JSValue thisValue, std::span<const JS
             if (mayMatchWithoutEnd(pattern->regExp()))
                 return false;
             mayMatch = true;
+        } else if (auto* view = dynamicDowncast<JSArrayBufferView>(value))
+            handed += view->byteLength();
+        else if (value.isObject()) {
+            std::optional<uint64_t> elements = elementsOfObjectHandedToBuiltin(asObject(value));
+            if (!elements)
+                return false;
+            handed += *elements;
         }
         return !value.isNumber() || value.asNumber() <= m_longestText;
     };
@@ -867,6 +907,8 @@ JSValue RehearsalOfRegExpTexts::construct(JSValue callee, JSValue newTarget, std
         return unknown();
     if (callee == m_regExpConstructor)
         noteTexts(arguments);
+    if (asksTheWorld(newTarget) || std::ranges::any_of(arguments, [&](JSValue argument) { return asksTheWorld(argument); }))
+        return unknown();
     CallData constructData = getConstructData(callee);
     if (constructData.type == CallData::Type::None)
         return unknown();

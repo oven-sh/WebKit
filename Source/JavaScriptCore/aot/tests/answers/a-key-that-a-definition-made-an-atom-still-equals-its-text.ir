@@ -5,8 +5,15 @@
 # CHECK: 243
 # CHECK-NEXT: 243
 # CHECK-NEXT: 243
+# CHECK-NEXT: 243
+# CHECK-NEXT: 243
+# CHECK-NEXT: 243
+# CHECK-NEXT: 243
+# CHECK-NEXT: 243
+# CHECK-NEXT: 243
 # CHECK-NEXT: exited with 0
 # The row of the operation, then that of the operation of the run time, as each was before: under testing=CheckEffectsAtRunTime (ir/AOTEffectsNet.h) the process stops by name.
+# The key is put together out of three pairs of parts. The net keeps one byte a heap of what it hashes, and of a text it hashes addresses: one pair of words, in front and behind, reads alike in one process of 256.
 # RUN(OPERATION): run-in-shell testing=CheckEffectsAtRunTime,RowSaysLess:Operation/DefineGetter/StringStorage globalThis.id = value => value; globalThis.keep = value => value; globalThis.report = value => print(String(value));
 # OPERATION: AOT: f{{*}} at {{*}}: the rows of effects of operation:DefineGetter and of runtime:operationAOTDefineAccessor say that the call will not write StringStorage, and those words of operand 2 are others behind it. This is a bug in Bun.
 # RUN(RUNTIME): run-in-shell testing=CheckEffectsAtRunTime,RowSaysLess:RuntimeOperation/DefineAccessor/StringStorage globalThis.id = value => value; globalThis.keep = value => value; globalThis.report = value => print(String(value));
@@ -35,8 +42,32 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v15 = NewClosure function=f5
     v16 = Call v15, -, v4, v7
     v17 = Call v8, -, v16
-    v18 = Undefined
-    Return v18
+    v18 = String string="alph"
+    v19 = Call v1, -, v18
+    v20 = ToString v19
+    v21 = String string="abet"
+    v22 = Call v1, -, v21
+    v23 = ToString v22
+    v24 = Call v9, -, v20, v23
+    v25 = Call v8, -, v24
+    v26 = Call v12, -, v20, v23
+    v27 = Call v8, -, v26
+    v28 = Call v15, -, v20, v23
+    v29 = Call v8, -, v28
+    v30 = String string="al"
+    v31 = Call v1, -, v30
+    v32 = ToString v31
+    v33 = String string="phabet"
+    v34 = Call v1, -, v33
+    v35 = ToString v34
+    v36 = Call v9, -, v32, v35
+    v37 = Call v8, -, v36
+    v38 = Call v12, -, v32, v35
+    v39 = Call v8, -, v38
+    v40 = Call v15, -, v32, v35
+    v41 = Call v8, -, v40
+    v42 = Undefined
+    Return v42
 }
 function f1 name="underGetter" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything):

@@ -773,6 +773,8 @@ private:
     bool rowsSpeakOf(const RowCall&);
     bool rowsMayBeTakenAtTheirWord(BuiltinID);
     void describeWhatRowRefuses(const RowCall&, const BuiltinOverload&);
+    bool someRowInFrontTakesAllThatRowTakes(const RowCall&, const BuiltinOverload&);
+    void applyOperandsBesideRefused(RowCall&, const BuiltinOverload&);
     Fit fitOf(const RowCall&, const BuiltinOverload&);
     Fit fitOf(const RowCall&, const BuiltinParameter&);
     TypeID typeOfIntegerConstantAt(const Source*) const;
@@ -2487,6 +2489,7 @@ ValuesInLinkCalls CallInLinkCalls::callBuiltin(BuiltinID builtin, const Passed& 
     }
 
     bool hasRow = false;
+    Vector<const BuiltinOverload*, 4> refusing;
     for (const BuiltinOverload& row : m_builtins.overloadsOf(call.builtin)) {
         if (row.mode != call.mode)
             continue;
@@ -2495,6 +2498,7 @@ ValuesInLinkCalls CallInLinkCalls::callBuiltin(BuiltinID builtin, const Passed& 
         if (!fit.mayBeInside || fit.mayBeOutside)
             describeWhatRowRefuses(call, row);
         if (!fit.mayBeInside) {
+            refusing.append(&row);
             call.row = &row;
             enterCodeBehindRow(call);
             continue;
@@ -2510,6 +2514,11 @@ ValuesInLinkCalls CallInLinkCalls::callBuiltin(BuiltinID builtin, const Passed& 
     }
     if (!hasRow)
         return callOutOfSight(call);
+    if (!refusing.isEmpty()) {
+        RowCall beside = call;
+        for (const BuiltinOverload* row : refusing)
+            applyOperandsBesideRefused(beside, *row);
+    }
     throwError();
     return WTF::move(call.result);
 }
@@ -2807,6 +2816,50 @@ void CallInLinkCalls::describeWhatRowRefuses(const RowCall& call, const BuiltinO
         describe(*row.receiver);
     for (const BuiltinParameter& parameter : row.parameters)
         describe(parameter);
+}
+
+bool CallInLinkCalls::someRowInFrontTakesAllThatRowTakes(const RowCall& call, const BuiltinOverload& row)
+{
+    for (const BuiltinOverload& other : m_builtins.overloadsOf(call.builtin)) {
+        if (&other == &row)
+            return false;
+        if (other.mode != row.mode || !other.receiver != !row.receiver || other.parameters.size() != row.parameters.size())
+            continue;
+        auto takesAllAt = [&](const BuiltinParameter& parameter) {
+            const BuiltinParameter* its = m_builtins.parameterFor(other, parameter.operand);
+            if (!its || !(its->operand == parameter.operand))
+                return false;
+            if (!its->accepted || its->conversion != BuiltinConversion::None || m_builtins.at(its->accepted).isAnything())
+                return true;
+            return (its->accepted == parameter.accepted && parameter.conversion == BuiltinConversion::None) || !fitOf(call, parameter).mayBeInside;
+        };
+        if ((!row.receiver || takesAllAt(*row.receiver)) && std::ranges::all_of(row.parameters, takesAllAt))
+            return true;
+    }
+    return false;
+}
+
+void CallInLinkCalls::applyOperandsBesideRefused(RowCall& call, const BuiltinOverload& row)
+{
+    auto mayRunCode = [&](const BuiltinParameter& parameter) {
+        return (!parameter.protocols.isEmpty() || parameter.uses == OperandUses::all()) && fitOf(call, parameter).mayBeInside;
+    };
+    if (row.receiver && !fitOf(call, *row.receiver).mayBeInside)
+        return;
+    if (!(row.receiver && mayRunCode(*row.receiver)) && std::ranges::none_of(row.parameters, mayRunCode))
+        return;
+    if (someRowInFrontTakesAllThatRowTakes(call, row))
+        return;
+    call.row = &row;
+    call.result = { };
+    auto take = [&](const BuiltinParameter& parameter) {
+        if (mayRunCode(parameter))
+            applyParameter(call, parameter);
+    };
+    if (row.receiver)
+        take(*row.receiver);
+    for (const BuiltinParameter& parameter : row.parameters)
+        take(parameter);
 }
 
 FitInLinkCalls CallInLinkCalls::fitOf(const RowCall& call, const BuiltinOverload& row)

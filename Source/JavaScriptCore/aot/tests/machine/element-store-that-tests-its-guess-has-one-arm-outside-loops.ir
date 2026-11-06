@@ -11,7 +11,6 @@
 # RUN(OTHERS): emit f1 mechanisms=none+TypedOperations+Guesses
 # OTHERS-LABEL: unit f1:Body
 # OTHERS-NOT: = Store({{*}}indexedDoubleProperties
-# OTHERS-NOT: = Store({{*}}indexedInt32Properties
 # A list of each kind, then two that share their elements with one literal: whoever wrote into those in place would change what the last list holds.
 # RUN(ANSWER): run-in-shell globalThis.own = (a, b, c) => [a, b, c]; globalThis.fresh = () => ["a", "b", "c"]; globalThis.lists = [own(1, 2, 3), own(1.5, 2.5, 3.5), own("a", "b", "c"), fresh(), fresh()]; globalThis.next = 0; globalThis.takeList = () => globalThis.lists[globalThis.next++]; globalThis.show = (x) => print(x);
 # ANSWER: 2

@@ -309,6 +309,7 @@ export default b.declarations(
         args: { locales: b.any.optional, options: b.any.optional },
         returns: b.string,
         ...operandCodeEffects,
+        reads: ["ExternalState"],
         uses: {
           this: [...readsArrayLike, b.runsOnContents("ToPrimitive", b.calls("toLocaleString"))],
           locales: [b.readAsLocale, b.retained],

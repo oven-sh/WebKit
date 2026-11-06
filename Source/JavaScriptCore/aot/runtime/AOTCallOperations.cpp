@@ -144,6 +144,7 @@ static ClonedArguments* createArguments(Instance* instance, const ArgumentsObjec
         result->putDirectIndex(globalObject, i, value);
         RETURN_IF_EXCEPTION(scope, nullptr);
     }
+    vm.mutatorFence();
     return result;
 }
 

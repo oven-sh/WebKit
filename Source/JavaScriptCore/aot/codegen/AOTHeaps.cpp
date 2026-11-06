@@ -124,6 +124,7 @@ AOTHeaps::AOTHeaps()
     RELEASE_ASSERT(JSCell_indexingTypeAndMisc.offset() + 2 == JSCell_typeInfoFlags.offset());
     RELEASE_ASSERT(JSCell_indexingTypeAndMisc.offset() + 3 == JSCell_cellState.offset());
     RELEASE_ASSERT(!JSCell_freeListNext.offset());
+    RELEASE_ASSERT(forIndexingType(ArrayWithInt32) == forIndexingType(ArrayWithContiguous));
 }
 
 Machine::AbstractHeap AOTHeaps::addHeap(const Machine::AbstractHeap& parent, ASCIILiteral name, ptrdiff_t offset, Traits::Set traits)
@@ -140,7 +141,7 @@ const Machine::IndexedAbstractHeap* AOTHeaps::forIndexingType(IndexingType index
         return nullptr;
 
     case ALL_INT32_INDEXING_TYPES:
-        return &indexedInt32Properties;
+        return &indexedContiguousProperties;
 
     case ALL_DOUBLE_INDEXING_TYPES:
         return &indexedDoubleProperties;

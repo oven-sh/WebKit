@@ -399,6 +399,7 @@ export default b.declarations(
         returns: b.string,
         capability: "js",
         throws: true,
+        reads: ["ExternalState"],
         uses: { this: [readsElements], locales: [b.readAsLocale, b.retained], options: [b.retained] },
         usesFeature: ["ElementsToLocaleString", "IntlNumberFormat", "IntlUnits", "IntlDateTimeFormat"],
         implementation: b.compiled("TypedArrayPrototype", "toLocaleString"),

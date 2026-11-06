@@ -193,7 +193,6 @@ using HeapList = Vector<const Machine::AbstractHeap*, 16>;
     v(AOTClosure_captures, offsetOfClosureCaptures, sizeof(EncodedJSValue), Immutable, entire(Typed::AbstractHeap::EnvironmentFields)) \
     v(AOTSlimClosure_captures, offsetOfSlimClosureCaptures, sizeof(EncodedJSValue), Immutable, entire(Typed::AbstractHeap::EnvironmentFields)) \
     v(ArrayStorage_vector, ArrayStorage::vectorOffset(), sizeof(WriteBarrier<Unknown>), Mutable, elementsOfArrays) \
-    v(indexedInt32Properties, 0, sizeof(EncodedJSValue), Mutable, elementsOfArrays) \
     v(indexedDoubleProperties, 0, sizeof(double), Mutable, elementsOfArrays) \
     v(indexedContiguousProperties, 0, sizeof(EncodedJSValue), Mutable, elementsOfArrays) \
     v(DirectArguments_storage, DirectArguments::storageOffset(), sizeof(EncodedJSValue), Mutable, elementsOfArguments) \
