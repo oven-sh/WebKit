@@ -397,7 +397,7 @@ void writeToStderr(JSGlobalObject* globalObject, const String& text)
         return;
     }
     writeToFile(globalObject, file, makeStr(vm, text));
-    if (scope.exception() && scope.tryClearException())
+    if (scope.exception() && tryDropPendingException(scope))
         writeRaw(stderr, text);
 }
 
@@ -594,7 +594,7 @@ static bool flushStandardStreamsAtExit(JSGlobalObject* globalObject, bool report
         if (vm.hasPendingTerminationException()) [[unlikely]]
             return succeeded;
         if (scope.exception()) {
-            scope.clearException();
+            tryDropPendingException(scope);
             isClosed = false;
         }
         if (isClosed)
@@ -607,7 +607,8 @@ static bool flushStandardStreamsAtExit(JSGlobalObject* globalObject, bool report
         succeeded = false;
         if (reports && name == rt.names.stdout_())
             reportUnraisable(globalObject, "Exception ignored while flushing sys.stdout"_s, { });
-        TRY_CLEAR_EXCEPTION(scope, succeeded);
+        if (!tryDropPendingException(scope)) [[unlikely]]
+            return succeeded;
     }
     return succeeded;
 }

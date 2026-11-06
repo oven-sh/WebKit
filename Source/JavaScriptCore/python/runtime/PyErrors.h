@@ -113,6 +113,12 @@ JSValue takePendingException(JSGlobalObject*);
 // For where it is of no consequence what went wrong: nothing propagates any more, whatever it was. That the host is ending what runs
 // here is not for the caller to call off, so that is asked for again, and the next safe point throws it again.
 void dropPendingException(JSGlobalObject*, ExceptionScope&);
+// The same where the end of what runs here is to go on to the caller: that stays pending. False then.
+ALWAYS_INLINE bool tryDropPendingException(ExceptionScope& scope)
+{
+    scope.vm().clearLastException();
+    return scope.tryClearException();
+}
 
 // The exception that is propagating is set aside for as long as this lives, for what has to be done all the same: nothing can be
 // called while one is pending. Then it goes on. What is pending by then is dropped, as by dropPendingException().

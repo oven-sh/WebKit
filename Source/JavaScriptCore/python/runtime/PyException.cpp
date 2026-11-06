@@ -151,7 +151,7 @@ PyType* jsErrorTypeFor(JSGlobalObject* globalObject, PyType* base)
     JSValue type = call(globalObject, rt.typeType(), makeStr(vm, makeString("JS"_s, base->name())), PyTuple::create(globalObject, { rt.JSError(), base }), ns);
     // There may be next to no stack left, or memory.
     if (scope.exception()) [[unlikely]] {
-        (void)scope.tryClearException();
+        tryDropPendingException(scope);
         return rt.JSError();
     }
     classes->set(vm, base->nameString(), type);
@@ -177,7 +177,7 @@ static PyException* osErrorFromThrownValue(JSGlobalObject* globalObject, JSObjec
     auto property = [&](ASCIILiteral name) {
         JSValue value = thrown->get(globalObject, Identifier::fromString(vm, name));
         if (scope.exception()) [[unlikely]] {
-            (void)scope.tryClearException();
+            tryDropPendingException(scope);
             return JSValue();
         }
         return value;
@@ -203,7 +203,7 @@ static PyException* osErrorFromThrownValue(JSGlobalObject* globalObject, JSObjec
         return nullptr;
     PyException* exception = newException(globalObject, type, std::span<const JSValue> { arguments }.first(hasDestination ? 5 : hasPath ? 3 : 2));
     if (scope.exception()) [[unlikely]]
-        (void)scope.tryClearException();
+        tryDropPendingException(scope);
     return exception;
 }
 

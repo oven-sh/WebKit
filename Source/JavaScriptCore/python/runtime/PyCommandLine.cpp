@@ -1363,7 +1363,7 @@ std::optional<int> runBasicInteractiveLoop(JSGlobalObject* globalObject)
                     continue;
                 // Once more, so that tracebacks can show the lines, and a mistake is found in the lines as they were typed.
                 if (code || pendingExceptionMatches(globalObject, rt.SyntaxError())) {
-                    scope.clearException();
+                    tryDropPendingException(scope);
                     code = compileSource(globalObject, pending.span(), "<stdin>"_s, "single"_s, compileFlags, -1, globals->get(rt.names.dName()));
                 }
             }

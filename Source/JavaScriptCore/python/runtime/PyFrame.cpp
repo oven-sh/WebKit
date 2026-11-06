@@ -2850,7 +2850,7 @@ static bool printWithTracebackModule(JSGlobalObject* globalObject, JSValue excep
     auto hasFailed = [&] {
         if (!scope.exception()) [[likely]]
             return false;
-        std::ignore = scope.tryClearException();
+        tryDropPendingException(scope);
         return true;
     };
     JSValue module = importModule(globalObject, "traceback"_s);
@@ -2877,7 +2877,7 @@ void printException(JSGlobalObject* globalObject, JSValue exception, JSValue fil
     writeToFile(globalObject, file, makeStr(globalObject, formatExceptionInPlaceOfTracebackModule(globalObject, exception)));
     if (!scope.exception())
         callMethod(globalObject, file, runtime(globalObject).names.flush());
-    std::ignore = scope.tryClearException();
+    tryDropPendingException(scope);
 }
 
 void printException(JSGlobalObject* globalObject, JSValue exception)

@@ -636,7 +636,7 @@ void finalizeSignals(JSGlobalObject* globalObject)
     for (int number = 1; number < signalLimit; ++number) {
         listSet(globalObject, handlers, number, jsUndefined());
         // Code of JS may have seen to it that a store into any array calls a function of its own. What that throws is nobody's.
-        if (!scope.clearExceptionExceptTermination()) [[unlikely]]
+        if (!tryDropPendingException(scope)) [[unlikely]]
             return;
     }
 }
