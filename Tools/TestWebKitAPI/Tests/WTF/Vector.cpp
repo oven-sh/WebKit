@@ -727,9 +727,7 @@ TEST(WTF_Vector, ReverseIterator)
 
 TEST(WTF_Vector, MoveOnly_UncheckedAppend)
 {
-    Vector<MoveOnly> vector;
-
-    vector.reserveInitialCapacity(100);
+    Vector<MoveOnly> vector(ReserveCapacityTag { }, 100);
     for (size_t i = 0; i < 100; ++i) {
         MoveOnly moveOnly(i);
         vector.append(WTF::move(moveOnly));
@@ -1269,9 +1267,7 @@ static MoveOnly multiplyByTwoMoveOnly(const MoveOnly& value)
 
 TEST(WTF_Vector, MapStaticFunctionMoveOnly)
 {
-    Vector<MoveOnly> vector;
-
-    vector.reserveInitialCapacity(3);
+    Vector<MoveOnly> vector(ReserveCapacityTag { }, 3);
     for (unsigned i = 0; i < 3; ++i)
         vector.append(MoveOnly { i });
 
@@ -1301,9 +1297,7 @@ TEST(WTF_Vector, MapLambda)
 
 TEST(WTF_Vector, MapLambdaMove)
 {
-    Vector<MoveOnly> vector;
-
-    vector.reserveInitialCapacity(3);
+    Vector<MoveOnly> vector(ReserveCapacityTag { }, 3);
     for (unsigned i = 0; i < 3; ++i)
         vector.append(MoveOnly { i });
 
@@ -2650,8 +2644,7 @@ TEST(WTF_Vector, InsertFillAliasingWithReallocation)
 {
     // Test that insertFill() works correctly when data references an element
     // in the vector and the insertion triggers reallocation.
-    Vector<String> v;
-    v.reserveInitialCapacity(3);
+    Vector<String> v(ReserveCapacityTag { }, 3);
     v.append("a"_s);
     v.append("b"_s);
     v.append("c"_s);
@@ -2805,8 +2798,7 @@ TEST(WTF_Vector, AppendVectorMoveToEmpty)
 
 TEST(WTF_Vector, AppendVectorMoveTriggersExpansion)
 {
-    Vector<int> dest;
-    dest.reserveInitialCapacity(2);
+    Vector<int> dest(ReserveCapacityTag { }, 2);
     dest.append(1);
     dest.append(2);
     EXPECT_EQ(2U, dest.capacity());
@@ -2877,8 +2869,7 @@ TEST(WTF_Vector, AppendVectorMoveMoveOnlyToEmpty)
 
 TEST(WTF_Vector, AppendVectorMoveMoveOnlyTriggersExpansion)
 {
-    Vector<MoveOnly> dest;
-    dest.reserveInitialCapacity(1);
+    Vector<MoveOnly> dest(ReserveCapacityTag { }, 1);
     dest.append(MoveOnly(1));
     EXPECT_EQ(1U, dest.capacity());
 
@@ -2988,8 +2979,7 @@ TEST(WTF_Vector, AppendVectorMoveRef)
 TEST(WTF_Vector, AppendVectorMoveRefPtrTriggersExpansion)
 {
     // Same as above but forces capacity expansion during appendVector.
-    Vector<RefPtr<RefCountedObject>> dest;
-    dest.reserveInitialCapacity(1);
+    Vector<RefPtr<RefCountedObject>> dest(ReserveCapacityTag { }, 1);
     dest.append(RefCountedObject::create(1).ptr());
     EXPECT_EQ(1U, dest.capacity());
 

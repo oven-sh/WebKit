@@ -311,7 +311,7 @@ enum Intrinsic : uint8_t {
 #undef JSC_DEFINE_INTRINSIC
 };
 
-std::optional<IterationKind> LEGACY_NODELETE iterationKindForIntrinsic(Intrinsic);
+NODELETE std::optional<IterationKind> iterationKindForIntrinsic(Intrinsic);
 
 ASCIILiteral intrinsicName(Intrinsic);
 

@@ -37,11 +37,13 @@
 #include "DeprecatedGlobalSettings.h"
 #include "Document.h"
 #include "DocumentLoader.h"
+#include "DocumentInlines.h"
 #include "DocumentPage.h"
 #include "DocumentQuirks.h"
 #include "DocumentStorageAccess.h"
 #include "DocumentView.h"
 #include "Element.h"
+#include "ExtensionStyleSheets.h"
 #include "ElementAncestorIteratorInlines.h"
 #include "ElementInlines.h"
 #include "ElementTargetingTypes.h"
@@ -142,7 +144,7 @@ QuirksData resolveTopURLQuirks(const URL& url)
     return resolveSiteSpecificQuirks(context, context, IsTopDocument::Yes);
 }
 
-static inline OptionSet<AutoplayQuirk> LEGACY_NODELETE allowedAutoplayQuirks(Document& document)
+NODELETE static inline OptionSet<AutoplayQuirk> allowedAutoplayQuirks(Document& document)
 {
     auto* loader = document.loader();
     if (!loader)
@@ -151,14 +153,14 @@ static inline OptionSet<AutoplayQuirk> LEGACY_NODELETE allowedAutoplayQuirks(Doc
     return loader->allowedAutoplayQuirks();
 }
 
-static inline OptionSet<AutoplayQuirk> LEGACY_NODELETE allowedAutoplayQuirks(Document* document)
+NODELETE static inline OptionSet<AutoplayQuirk> allowedAutoplayQuirks(Document* document)
 {
     if (!document)
         return { };
     return allowedAutoplayQuirks(*document);
 }
 
-static HashMap<RegistrableDomain, String>& LEGACY_NODELETE updatableStorageAccessUserAgentStringQuirks()
+NODELETE static HashMap<RegistrableDomain, String>& updatableStorageAccessUserAgentStringQuirks()
 {
     // FIXME: Make this a member of Quirks.
     static MainThreadNeverDestroyed<HashMap<RegistrableDomain, String>> map;
@@ -168,12 +170,12 @@ static HashMap<RegistrableDomain, String>& LEGACY_NODELETE updatableStorageAcces
 #if USE(APPLE_INTERNAL_SDK)
 #import <WebKitAdditions/QuirksAdditions.cpp>
 #else
-static inline bool LEGACY_NODELETE shouldNotAutoUpgradeToHTTPSNavigationInternal(const URL&) { return false; }
-static inline bool LEGACY_NODELETE shouldDisableBlobFileAccessEnforcementInternal() { return false; }
-static inline bool LEGACY_NODELETE needsConsistentQueryParameterFilteringInternal(const URL&) { return false; }
-static inline bool LEGACY_NODELETE shouldExemptCookieFromITPDataRemovalInternal(const String&) { return false; }
+NODELETE static inline bool shouldNotAutoUpgradeToHTTPSNavigationInternal(const URL&) { return false; }
+NODELETE static inline bool shouldDisableBlobFileAccessEnforcementInternal() { return false; }
+NODELETE static inline bool needsConsistentQueryParameterFilteringInternal(const URL&) { return false; }
+NODELETE static inline bool shouldExemptCookieFromITPDataRemovalInternal(const String&) { return false; }
 #if PLATFORM(COCOA)
-static inline String LEGACY_NODELETE standardUserAgentWithApplicationNameIncludingCompatOverridesInternal(const String&, const String&, UserAgentType) { return { }; }
+NODELETE static inline String standardUserAgentWithApplicationNameIncludingCompatOverridesInternal(const String&, const String&, UserAgentType) { return { }; }
 #endif
 #endif
 
@@ -436,7 +438,7 @@ bool Quirks::shouldOpenAsAboutBlank(const String& stringToOpen) const
         return false;
 
     auto openerURL = protect(m_document)->url();
-    if (!m_document->frame() || !m_document->frame()->loader().userAgent(openerURL).contains("Macintosh"_s))
+    if (!m_document->frame() || !protect(m_document->frame()->loader())->userAgent(openerURL).contains("Macintosh"_s))
         return false;
 
     URL urlToOpen { URL { }, stringToOpen };
@@ -872,6 +874,26 @@ bool Quirks::needsPartitionedCookies(const ResourceRequest& request)
     return urlHasQuirk(request.url(), QuirkBehaviorID::NeedsPartitionedCookiesQuirk);
 }
 
+Vector<String> Quirks::cnameCloakingCookieCapExemptTargetPatterns(const URL& firstPartyURL)
+{
+    Vector<String> patterns;
+    for (const auto& behavior : resolveTopURLQuirks(firstPartyURL).behaviorsMatching(QuirkBehaviorID::NeedsSingleOwnerMainFrameCNAMECloakingCookieCapQuirk)) {
+        for (const auto& pattern : behavior.secondaryURL)
+            patterns.append(pattern.string().isolatedCopy());
+    }
+    return patterns;
+}
+
+bool Quirks::anyPatternMatchesCNAMETarget(const Vector<String>& patterns, const String& cnameHostName)
+{
+    auto hostName = cnameHostName.endsWith('.') ? cnameHostName.left(cnameHostName.length() - 1) : cnameHostName;
+    URLMatchContext context { URL { makeString("https://"_s, hostName, '/') } };
+    return patterns.containsIf([&](const String& patternString) {
+        auto pattern = QuirkMatchPattern::parse(patternString);
+        return pattern && pattern->matches(context);
+    });
+}
+
 bool Quirks::shouldExemptCookieFromITPDataRemoval(const String& cookieName)
 {
     return shouldExemptCookieFromITPDataRemovalInternal(cookieName);
@@ -1008,6 +1030,32 @@ Vector<String, 1> Quirks::scriptsToEvaluateBeforeRunningScriptFromURL(const URL&
     }
 
     return scripts;
+}
+
+Vector<String> Quirks::styleSheetsToInject()
+{
+    constexpr auto id = QuirkBehaviorID::NeedsStyleSheetInjectedQuirk;
+    QUIRKS_EARLY_RETURN_IF_DISABLED_WITH_VALUE({ });
+
+    if (!m_quirksData.isBehaviorEnabled(id))
+        return { };
+
+    Vector<String> styleSheets;
+    for (const auto& behavior : m_quirksData.behaviorsMatching(id)) {
+        if (!behavior.styleSheet.isEmpty())
+            styleSheets.append(behavior.styleSheet);
+    }
+
+    return styleSheets;
+}
+
+void Quirks::updateInjectedStyleSheets()
+{
+    RefPtr document = m_document;
+    if (!document || !document->frame() || !needsQuirks())
+        return;
+
+    protect(document->extensionStyleSheets())->setQuirkStyleSheets(styleSheetsToInject());
 }
 
 bool Quirks::needsChromeOSNavigatorUserAgentQuirk(const Document& document) const
@@ -1366,6 +1414,8 @@ void Quirks::urlsDidChange()
 
     if (!m_quirksData.hasSameBehaviorFlags(previousQuirksData))
         protect(m_document)->scheduleFullStyleRebuild();
+
+    updateInjectedStyleSheets();
 }
 
 void Quirks::logQuirksToConsoleIfNecessary() const

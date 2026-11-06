@@ -1272,7 +1272,7 @@ bool SpeculativeJIT::genericJSValueStrictEq(Node* node, bool invert)
     return false;
 }
 
-static const char* LEGACY_NODELETE dataFormatString(DataFormat format)
+NODELETE static const char* dataFormatString(DataFormat format)
 {
     // These values correspond to the DataFormat enum.
     const char* strings[] = {
@@ -8304,6 +8304,20 @@ void SpeculativeJIT::compileVarargsLength(Node* node)
 {
     LoadVarargsData* data = node->loadVarargsData();
 
+    if (node->argumentsChild().useKind() == KnownCellUse) {
+        SpeculateCellOperand arguments(this, node->argumentsChild());
+        GPRTemporary length(this);
+        GPRReg argumentsGPR = arguments.gpr();
+        GPRReg lengthGPR = length.gpr();
+
+        load32(Address(argumentsGPR, JSCellButterfly::offsetOfPublicLength()), lengthGPR);
+        speculationCheck(VarargsOverflow, JSValueSource(), Edge(), branch32(Above, lengthGPR, TrustedImm32(maxArguments)));
+        add32(TrustedImm32(1), lengthGPR);
+
+        strictInt32Result(lengthGPR, node);
+        return;
+    }
+
     GPRReg argumentsGPR = InvalidGPRReg;
     lock(GPRInfo::returnValueGPR);
     JSValueOperand arguments(this, node->argumentsChild());
@@ -8326,6 +8340,26 @@ void SpeculativeJIT::compileVarargsLength(Node* node)
 void SpeculativeJIT::compileLoadVarargs(Node* node)
 {
     LoadVarargsData* data = node->loadVarargsData();
+
+    if (node->argumentsChild().useKind() == KnownCellUse) {
+        SpeculateStrictInt32Operand argumentCount(this, node->child1());
+        SpeculateCellOperand arguments(this, node->argumentsChild());
+        GPRTemporary length(this);
+        GPRTemporary temp(this);
+        GPRReg argumentCountIncludingThis = argumentCount.gpr();
+        GPRReg argumentsGPR = arguments.gpr();
+        GPRReg lengthGPR = length.gpr();
+        GPRReg tempGPR = temp.gpr();
+
+        speculationCheck(VarargsOverflow, JSValueSource(), Edge(), branchTest32(Zero, argumentCountIncludingThis));
+        speculationCheck(VarargsOverflow, JSValueSource(), Edge(), branch32(Above, argumentCountIncludingThis, TrustedImm32(data->limit)));
+
+        store32(argumentCountIncludingThis, lowWordFor(data->machineCount));
+        sub32(argumentCountIncludingThis, TrustedImm32(1), lengthGPR);
+        emitLoadVarargsFromContiguousStorage(data, Address(argumentsGPR, JSCellButterfly::offsetOfData()), lengthGPR, tempGPR);
+        noResult(node);
+        return;
+    }
 
     SpeculateStrictInt32Operand argumentCount(this, node->child1());
     JSValueOperand arguments(this, node->argumentsChild(), ManualOperandSpeculation);
@@ -8460,10 +8494,17 @@ void SpeculativeJIT::compileForwardVarargs(Node* node)
     store32(lengthGPR, lowWordFor(data->machineCount));
         
     VirtualRegister sourceStart = argumentsStart(inlineCallFrame) + data->offset;
-    VirtualRegister targetStart = data->machineStart;
 
     sub32(TrustedImm32(1), lengthGPR);
-        
+    emitLoadVarargsFromContiguousStorage(data, addressFor(sourceStart), lengthGPR, tempGPR);
+
+    noResult(node);
+}
+
+void SpeculativeJIT::emitLoadVarargsFromContiguousStorage(LoadVarargsData* data, Address sourceStart, GPRReg lengthGPR, GPRReg tempGPR)
+{
+    VirtualRegister targetStart = data->machineStart;
+
     // First have a loop that fills in the undefined slots in case of an arity check failure.
     move(TrustedImm32(data->mandatoryMinimum), tempGPR);
     Jump done = branch32(BelowOrEqual, tempGPR, lengthGPR);
@@ -8483,11 +8524,7 @@ void SpeculativeJIT::compileForwardVarargs(Node* node)
         
     loop = label();
     sub32(TrustedImm32(1), lengthGPR);
-    loadValue(
-        BaseIndex(
-            GPRInfo::callFrameRegister, lengthGPR, TimesEight,
-            sourceStart.offset() * sizeof(EncodedJSValue)),
-        tempGPR);
+    loadValue(BaseIndex(sourceStart.base, lengthGPR, TimesEight, sourceStart.offset), tempGPR);
     storeValue(
         tempGPR,
         BaseIndex(
@@ -8496,8 +8533,6 @@ void SpeculativeJIT::compileForwardVarargs(Node* node)
     branchTest32(NonZero, lengthGPR).linkTo(loop, this);
         
     done.link(this);
-        
-    noResult(node);
 }
 
 void SpeculativeJIT::compileCreateActivation(Node* node)
@@ -8898,8 +8933,16 @@ void SpeculativeJIT::compileSpread(Node* node)
     else if (node->child1().useKind() == SetObjectUse)
         speculateSetObject(node->child1(), argument);
 
-    bool fastSpreadProven = m_graph.canDoFastSpread(node, m_state.forNode(node->child1()));
-    bool fastSpreadWithStructureCheck = !fastSpreadProven && m_graph.canDoFastSpreadWithStructureCheck(node);
+    // Same two decisions the pre-fix code made, so everything downstream is shared verbatim.
+    constexpr bool canSpeculate = true;
+    Graph::ProtocolWatchResult arrayWatch = Graph::ProtocolWatchResult::Unwatchable;
+    // The structures a RequiresSemanticStructureCheck operand must be narrowed to, which is every
+    // realm the operand's proven structures belong to rather than just the semantic origin's.
+    RegisteredStructureSet arrayStructuresToCheck;
+    if (node->child1().useKind() == ArrayUse)
+        std::tie(arrayWatch, arrayStructuresToCheck) = m_graph.tryWatchArrayIteratorProtocol(node->child1().node(), m_state.forNode(node->child1()), canSpeculate);
+    bool fastSpreadProven = arrayWatch == Graph::ProtocolWatchResult::Proven;
+    bool fastSpreadWithStructureCheck = arrayWatch == Graph::ProtocolWatchResult::RequiresSemanticStructureCheck;
 
     if (fastSpreadProven || fastSpreadWithStructureCheck) {
         GPRTemporary result(this);
@@ -8918,13 +8961,11 @@ void SpeculativeJIT::compileSpread(Node* node)
         JumpList done;
 
         if (fastSpreadWithStructureCheck) {
-            JSGlobalObject* childGlobalObject = m_graph.globalObjectFor(node->child1()->origin.semantic);
             load32(Address(argument, JSCell::structureIDOffset()), scratch1GPR);
             JumpList structureMatched;
-            for (IndexingType indexingType : Graph::originalArrayShapesForSpread) {
-                RegisteredStructure registered = m_graph.registerStructure(childGlobalObject->originalArrayStructureForIndexingType(indexingType));
+            arrayStructuresToCheck.forEach([&](RegisteredStructure registered) {
                 structureMatched.append(branchWeakStructure(Equal, scratch1GPR, registered));
-            }
+            });
             slowPath.append(jump());
             structureMatched.link(this);
         }
@@ -9013,24 +9054,24 @@ void SpeculativeJIT::compileSpread(Node* node)
 
         using Helper = JSSet::Helper;
 
-        // Guard: any non-default structure (changed prototype, or own properties
-        // including Symbol.iterator) means we cannot assume the standard iterator
-        // protocol applies to this instance. Route such sets to the slow path,
-        // which performs the authoritative isIteratorProtocolFastAndNonObservable
-        // check. The check can be folded when an upstream CheckStructure has
-        // already proven that the operand carries the original Set structure.
-        // FixupPhase arms the Set iterator protocol watchpoint on node->child1(), so
-        // child1's global object must be used.
-        JSGlobalObject* globalObject = m_graph.globalObjectFor(node->child1()->origin.semantic);
-        Structure* originalSetStructure = globalObject->setStructureConcurrently();
-        if (!originalSetStructure)
+        // The inline path below walks the Set's storage directly, bypassing Symbol.iterator, so it
+        // is only valid where the iteration protocol has been proven non-observable. Anything less
+        // goes to the slow path, which performs the authoritative
+        // isIteratorProtocolFastAndNonObservable check.
+        auto [setWatch, setStructureToCheck] = m_graph.tryWatchSetIteratorProtocol(node->child1().node(), m_state.forNode(node->child1()), canSpeculate);
+        switch (setWatch) {
+        case Graph::ProtocolWatchResult::Unwatchable:
             slowPath.append(jump());
-        else {
-            RegisteredStructure registeredSetStructure = m_graph.registerStructure(originalSetStructure);
-            if (!m_state.forNode(node->child1()).m_structure.isSubsetOf(RegisteredStructureSet { registeredSetStructure })) {
-                load32(Address(argument, JSCell::structureIDOffset()), scratch2GPR);
-                slowPath.append(branch32(NotEqual, scratch2GPR, TrustedImm32(registeredSetStructure->id().bits())));
-            }
+            break;
+
+        case Graph::ProtocolWatchResult::RequiresSemanticStructureCheck: {
+            load32(Address(argument, JSCell::structureIDOffset()), scratch2GPR);
+            slowPath.append(branch32(NotEqual, scratch2GPR, TrustedImm32(setStructureToCheck->id().bits())));
+            break;
+        }
+
+        case Graph::ProtocolWatchResult::Proven:
+            break;
         }
 
         // Load Set storage pointer.
@@ -12738,7 +12779,7 @@ void SpeculativeJIT::emitSwitchChar(Node* node, SwitchData* data)
 namespace {
 
 struct CharacterCase {
-    bool LEGACY_NODELETE operator<(const CharacterCase& other) const
+    NODELETE bool operator<(const CharacterCase& other) const
     {
         return character < other.character;
     }
@@ -15498,6 +15539,10 @@ void SpeculativeJIT::compileArraySortCompact(Node* node)
     jump().linkTo(loop, this);
 
     holes.link(this);
+    // The scratch won't be barriered, so need to undo the writes.
+    // Without this, we could have an unremembered old/black cell referencing new/white cells.
+    emitFillStorageWithJSEmpty(scratchGPR, JSCellButterfly::offsetOfData(), sortScratchSlotCount, counterGPR);
+    storePtr(scratchGPR, &vm().m_cachedSortScratch);
     move(TrustedImmPtr(std::bit_cast<void*>(vm().m_sortScratchSentinel.get())), scratchGPR);
 
     done.link(this);
@@ -17977,7 +18022,7 @@ void SpeculativeJIT::compileStringStartsOrEndsWithConstant(Node* node, bool isSt
     JumpList slowCase;
 
     loadPtr(Address(baseGPR, JSString::offsetOfValue()), implGPR);
-    slowCase.append(branchIfRopeStringImpl(implGPR));
+    Jump isRope = branchIfRopeStringImpl(implGPR);
 
     load32(Address(implGPR, StringImpl::lengthMemoryOffset()), lengthGPR);
     falseCase.append(branch32(Below, lengthGPR, TrustedImm32(searchLength)));
@@ -17988,6 +18033,7 @@ void SpeculativeJIT::compileStringStartsOrEndsWithConstant(Node* node, bool isSt
     // Anchor implGPR at the start of the matched window: data[0] for startsWith, or
     // data[length - searchLength] for endsWith.
     loadPtr(Address(implGPR, StringImpl::dataOffset()), implGPR);
+    Label haveCharacters = label();
     if (!isStartsWith) {
         addPtr(lengthGPR, implGPR);
         subPtr(TrustedImm32(searchLength), implGPR);
@@ -18028,6 +18074,19 @@ void SpeculativeJIT::compileStringStartsOrEndsWithConstant(Node* node, bool isSt
         falseCase.append(branch32(NotEqual, scratchGPR, TrustedImm32(search[0])));
     }
     trueCase.append(jump());
+
+    isRope.link(this);
+    load32(Address(baseGPR, JSRopeString::offsetOfLength()), lengthGPR);
+    falseCase.append(branch32(Below, lengthGPR, TrustedImm32(searchLength)));
+    slowCase.append(branchTestPtr(Zero, implGPR, TrustedImm32(JSRopeString::isSubstringInPointer)));
+    load64(Address(baseGPR, JSRopeString::offsetOfFiber1Lower()), implGPR);
+    and64(TrustedImm64(JSRopeString::CompactFibers::addressMask), implGPR);
+    loadPtr(Address(implGPR, JSString::offsetOfValue()), implGPR);
+    slowCase.append(branchTest32(Zero, Address(implGPR, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIs8Bit())));
+    loadPtr(Address(implGPR, StringImpl::dataOffset()), implGPR);
+    load32(Address(baseGPR, JSRopeString::offsetOfFiber2Lower()), scratchGPR);
+    addPtr(scratchGPR, implGPR);
+    jump().linkTo(haveCharacters, this);
 
     falseCase.link(this);
     move(TrustedImm32(0), implGPR);

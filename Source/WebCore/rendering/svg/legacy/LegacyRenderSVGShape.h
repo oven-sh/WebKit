@@ -92,14 +92,14 @@ protected:
     Path& ensurePath() LIFETIME_BOUND;
 
     virtual void updateShapeFromElement() = 0;
-    virtual bool LEGACY_NODELETE isEmpty() const;
+    NODELETE virtual bool isEmpty() const;
     virtual bool shapeDependentStrokeContains(const FloatPoint&, PointCoordinateSpace = GlobalCoordinateSpace);
     virtual bool shapeDependentFillContains(const FloatPoint&, const WindRule) const;
     float strokeWidth() const;
     float strokeWidthForMarkerUnits() const;
 
     inline bool hasNonScalingStroke() const;
-    AffineTransform nonScalingStrokeTransform() const;
+    AffineTransform computeNonScalingStrokeTransform() const;
     Path* nonScalingStrokePath(const Path*, const AffineTransform&) const;
 
     virtual FloatRect adjustStrokeBoundingBoxForMarkersAndZeroLengthLinecaps(RepaintRectCalculation, FloatRect strokeBoundingBox) const { return strokeBoundingBox; }

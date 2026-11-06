@@ -259,7 +259,7 @@ bool RenderBox::hasFragmentRangeInFragmentedFlow() const
     return false;
 }
 
-static RenderBlockFlow* LEGACY_NODELETE outermostBlockContainingFloatingObject(RenderBox& box)
+NODELETE static RenderBlockFlow* outermostBlockContainingFloatingObject(RenderBox& box)
 {
     ASSERT(box.isFloating());
     RenderBlockFlow* parentBlock = nullptr;
@@ -291,7 +291,7 @@ void RenderBox::removeFloatingOrOutOfFlowChildFromBlockLists()
         return removeFloatingAndInvalidateForLayout();
 
     if (isOutOfFlowPositioned())
-        return RenderBlock::removeOutOfFlowBox(*this);
+        return RenderBoxModelObject::removeOutOfFlowBox(*this);
 
     ASSERT_NOT_REACHED();
 }
@@ -586,7 +586,7 @@ void RenderBox::styleDidChange(Style::Difference diff, const Style::ComputedStyl
 #endif
 }
 
-static bool LEGACY_NODELETE hasEquivalentGridPositioningStyle(const Style::ComputedStyle& style, const Style::ComputedStyle& oldStyle)
+NODELETE static bool hasEquivalentGridPositioningStyle(const Style::ComputedStyle& style, const Style::ComputedStyle& oldStyle)
 {
     return oldStyle.gridItemColumnStart() == style.gridItemColumnStart()
         && oldStyle.gridItemColumnEnd() == style.gridItemColumnEnd()
@@ -1260,10 +1260,13 @@ bool RenderBox::scroll(ScrollDirection direction, ScrollGranularity granularity,
     if (stopElement && *stopElement && *stopElement == element())
         return true;
 
-    RenderBlock* nextScrollBlock = containingBlock();
+    CheckedPtr<RenderBoxModelObject> containingBlock = this->containingBlock();
+    // Inline boxes don't scroll, so continue with their containing block.
+    if (containingBlock && containingBlock->isInlineBox())
+        containingBlock = containingBlock->containingBlock();
 
-    if (nextScrollBlock && !nextScrollBlock->isRenderView())
-        return nextScrollBlock->scroll(direction, granularity, stepCount, stopElement, startBox, wheelEventAbsolutePoint);
+    if (containingBlock && !containingBlock->isRenderView())
+        return downcast<RenderBox>(*containingBlock).scroll(direction, granularity, stepCount, stopElement, startBox, wheelEventAbsolutePoint);
 
     return false;
 }
@@ -1291,9 +1294,12 @@ bool RenderBox::logicalScroll(ScrollLogicalDirection direction, ScrollGranularit
     if (stopElement && *stopElement && *stopElement == element())
         return true;
 
-    RenderBlock* b = containingBlock();
-    if (b && !b->isRenderView())
-        return b->logicalScroll(direction, granularity, stepCount, stopElement);
+    CheckedPtr<RenderBoxModelObject> containingBlock = this->containingBlock();
+    // Inline boxes don't scroll, so continue with their containing block.
+    if (containingBlock && containingBlock->isInlineBox())
+        containingBlock = containingBlock->containingBlock();
+    if (containingBlock && !containingBlock->isRenderView())
+        return downcast<RenderBox>(*containingBlock).logicalScroll(direction, granularity, stepCount, stopElement);
     return false;
 }
 
@@ -2714,7 +2720,7 @@ void RenderBox::updateLogicalWidth()
     setMarginEnd(computedValues.margins.end);
 }
 
-static LayoutUnit LEGACY_NODELETE inlineSizeFromAspectRatio(LayoutUnit borderPaddingInlineSum, LayoutUnit borderPaddingBlockSum, double aspectRatioValue, BoxSizing boxSizing, LayoutUnit blockSize, const Style::AspectRatio& aspectRatio, bool isRenderReplaced)
+NODELETE static LayoutUnit inlineSizeFromAspectRatio(LayoutUnit borderPaddingInlineSum, LayoutUnit borderPaddingBlockSum, double aspectRatioValue, BoxSizing boxSizing, LayoutUnit blockSize, const Style::AspectRatio& aspectRatio, bool isRenderReplaced)
 {
     if (boxSizing == BoxSizing::BorderBox && aspectRatio.isRatio() && !isRenderReplaced)
         return std::max(borderPaddingInlineSum, LayoutUnit(blockSize * aspectRatioValue));
@@ -2722,7 +2728,7 @@ static LayoutUnit LEGACY_NODELETE inlineSizeFromAspectRatio(LayoutUnit borderPad
     return LayoutUnit((blockSize - borderPaddingBlockSum) * aspectRatioValue) + borderPaddingInlineSum;
 }
 
-static bool LEGACY_NODELETE shouldMarginInlineEndContributeToScrollableOverflow(auto& renderer)
+NODELETE static bool shouldMarginInlineEndContributeToScrollableOverflow(auto& renderer)
 {
     auto isSupportedContent = renderer.isGridItem() || renderer.isFlexItemIncludingDeprecated() || (renderer.isInFlow() && renderer.parent()->isBlockContainer());
     if (!isSupportedContent)
@@ -2918,7 +2924,7 @@ std::pair<LayoutUnit, LayoutUnit> RenderBox::computeIntrinsicKeywordLogicalWidth
     return computeIntrinsicKeywordLogicalWidths();
 }
 
-static inline bool LEGACY_NODELETE isOrthogonal(const RenderBox& renderer, const RenderElement& ancestor)
+NODELETE static inline bool isOrthogonal(const RenderBox& renderer, const RenderElement& ancestor)
 {
     return renderer.isHorizontalWritingMode() != ancestor.isHorizontalWritingMode();
 }
@@ -3304,7 +3310,7 @@ RenderBoxFragmentInfo* RenderBox::renderBoxFragmentInfo(RenderFragmentContainer*
     return nullptr;
 }
 
-static bool LEGACY_NODELETE shouldFlipBeforeAfterMargins(WritingMode containingBlockWritingMode, WritingMode childWritingMode)
+NODELETE static bool shouldFlipBeforeAfterMargins(WritingMode containingBlockWritingMode, WritingMode childWritingMode)
 {
     ASSERT(containingBlockWritingMode.isOrthogonal(childWritingMode));
     auto childBlockFlowDirection = childWritingMode.blockDirection();
@@ -3392,13 +3398,10 @@ RenderBox::LogicalExtentComputedValues RenderBox::computeLogicalHeight(LayoutUni
     // Context here refers to the general term and not necessarily a formatting context
     // since, for example, we might compute the logical height from the aspect ratio.
     auto usedLogicalHeightFromContext = [&] -> std::optional<LayoutUnit> {
-        if (is<RenderTable>(*this)) {
-            // Tables use the passed-in height (not the style height) even when they are flex/grid items.
-            auto heightValue = logicalHeight;
-            if (shouldComputeLogicalHeightFromAspectRatio())
-                heightValue = blockSizeFromAspectRatio(horizontalBorderAndPaddingExtent(), verticalBorderAndPaddingExtent(), style().logicalAspectRatio(), style().boxSizingForAspectRatio(), logicalWidth(), style().aspectRatio(), is<RenderReplaced>(*this));
-            return heightValue;
-        }
+        // Tables use the passed-in height (not the style height or the aspect ratio, which RenderTable::layout() applies) even when
+        // they are flex/grid items.
+        if (is<RenderTable>(*this))
+            return logicalHeight;
 
         if (is<RenderFlexibleBox>(parent)) {
             if (auto overridingLogicalHeight = overridingLogicalHeightForFlexBasisComputation()) {
@@ -3939,7 +3942,7 @@ bool RenderBox::skipContainingBlockForPercentHeightCalculation(const RenderBox& 
     return document().inQuirksMode() && shouldSkipContainingBlockInQuirksMode();
 }
 
-static bool LEGACY_NODELETE tableCellShouldHaveZeroInitialSize(const RenderTableCell& tableCell, const RenderBox& child, bool scrollsOverflowY)
+NODELETE static bool tableCellShouldHaveZeroInitialSize(const RenderTableCell& tableCell, const RenderBox& child, bool scrollsOverflowY)
 {
     // Normally we would let the cell size intrinsically, but scrolling overflow has to be
     // treated differently, since WinIE lets scrolled overflow fragments shrink as needed.
@@ -4303,7 +4306,7 @@ LayoutRange RenderBox::containingBlockRangeForPositioned(const RenderBoxModelObj
         }
     }
 
-    // Inline containing blocks are formed by relatively-positioned inline boxes.
+    // Inline containing blocks are formed by positioned (e.g. relative, sticky) inline boxes and by inline boxes with (backdrop-)filter.
     if (container.isInlineBox()) {
         return isContainerInlineAxis
             ? LayoutRange(startEdge, container.paddingBoxLogicalWidth())
@@ -4770,7 +4773,7 @@ void RenderBox::addVisualEffectOverflow()
 }
 
 template<typename T>
-static void LEGACY_NODELETE convertOutsetsToOverflowCoordinates(RectEdges<T>& outsets, WritingMode writingMode)
+NODELETE static void convertOutsetsToOverflowCoordinates(RectEdges<T>& outsets, WritingMode writingMode)
 {
     switch (writingMode.blockDirection()) {
     case FlowDirection::TopToBottom:
@@ -5715,7 +5718,7 @@ void RenderBox::updateFloatPainterAfterSelfPaintingLayerChange()
 }
 
 using ShapeOutsideInfoMap = SingleThreadWeakHashMap<const RenderBox, std::unique_ptr<ShapeOutsideInfo>>;
-static ShapeOutsideInfoMap& LEGACY_NODELETE shapeOutsideInfoMap()
+NODELETE static ShapeOutsideInfoMap& shapeOutsideInfoMap()
 {
     static NeverDestroyed<ShapeOutsideInfoMap> staticInfoMap;
     return staticInfoMap;

@@ -517,6 +517,11 @@ enum ContentsFormat {
     "hardware"
 };
 
+enum LayerType {
+    "primary",
+    "backdrop"
+};
+
 [
     Conditional=WEBGL&VIDEO,
     ExportMacro=WEBCORE_TESTSUPPORT_EXPORT,
@@ -599,6 +604,7 @@ enum ContentsFormat {
     float usedOutlineOffset(Element element);
 
     DOMString computedAppleColorFilter(Element element);
+    [Conditional=AX_CUSTOM_COLOR_MODE] undefined setAXCustomColorModeElementQuirksForTesting(DOMString forceFilterSelector, DOMString preserveAuthoredColorsSelector);
     DOMString usedBackgroundColor(Element element);
 
     Node ensureUserAgentShadowRoot(Element host);
@@ -878,7 +884,7 @@ enum ContentsFormat {
 
     DOMString viewTransitionOldCaptureState(Document document, [AtomString] DOMString name);
 
-    unsigned long long layerIDForElement(Element element);
+    unsigned long long layerIDForElement(Element element, optional LayerType layerType = "primary");
     unsigned long long horizontalScrollbarLayerID(optional Node? node = null);
     unsigned long long verticalScrollbarLayerID(optional Node? node = null);
     DOMRect horizontalScrollbarFrameRect(optional Node? node = null);
@@ -1458,6 +1464,7 @@ enum ContentsFormat {
     [Conditional=VIDEO] boolean elementIsActiveNowPlayingSession(HTMLMediaElement element);
     [Conditional=VIDEO] Promise<boolean> elementIsActiveNowPlayingSessionInGPUProcess(HTMLMediaElement element);
     [Conditional=VIDEO] Promise<boolean> elementIsRemoteCommandTargetInGPUProcess(HTMLMediaElement element);
+    [Conditional=VIDEO] Promise<DOMRect> hostedVideoLayerBoundsInGPUProcess(HTMLMediaElement element);
     [Conditional=VIDEO] attribute double nowPlayingUpdateInterval;
 
     [Conditional=VIDEO] HTMLMediaElement? bestMediaElementForRemoteControls(PlaybackControlsPurpose purpose);

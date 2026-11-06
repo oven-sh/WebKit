@@ -148,6 +148,11 @@ extension WebPage {
         backingWebView._clickHighlightColorForTesting
     }
 
+    /// The bounds of the element whose click was handled as hover, in view coordinates, or `.zero` if there is none.
+    public var hoverActivatedByClickBounds: CGRect {
+        backingWebView._hoverActivatedByClickBoundsForTesting
+    }
+
     /// Sends a left mouse-down NSEvent to the web view at the given location.
     ///
     /// - Parameter location: The location in window coordinates.
@@ -248,7 +253,7 @@ extension WebPage {
     /// - Throws: Whatever `body` throws, without waiting for the scroll to come to rest.
     public func withWheelEventMonitoring<Failure: Error>(
         expectingMomentumEnd: Bool = false,
-        perform body: () async throws(Failure) -> Void
+        perform body: @concurrent () async throws(Failure) -> Void
     ) async throws(Failure) {
         await backingWebView._startMonitoringWheelEventsForTesting()
 

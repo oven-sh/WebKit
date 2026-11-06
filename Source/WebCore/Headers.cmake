@@ -2185,6 +2185,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     platform/LowPowerModeNotifier.h
     platform/MIMETypeRegistry.h
     platform/MainThreadSharedTimer.h
+    platform/MediaChannelLayout.h
     platform/MediaDescription.h
     platform/MediaPromiseTypes.h
     platform/MediaSample.h
@@ -2256,7 +2257,6 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     platform/ScrollAlignment.h
     platform/ScrollAnimation.h
     platform/ScrollAnimationMomentum.h
-    platform/ScrollAnimationSmooth.h
     platform/ScrollAnimator.h
     platform/ScrollSnapAnimatorState.h
     platform/ScrollTypes.h
@@ -2581,6 +2581,9 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     platform/graphics/MediaSourcePrivateClient.h
     platform/graphics/MediaTimeUpdateData.h
     platform/graphics/MediaUsageInfo.h
+    platform/graphics/MeshGradient.h
+    platform/graphics/MeshGradientRenderer.h
+    platform/graphics/MeshGradientRendererCPU.h
     platform/graphics/Model.h
     platform/graphics/ModelContext.h
     platform/graphics/NativeImage.h
@@ -2695,7 +2698,6 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     platform/graphics/coretext/DrawGlyphsRecorder.h
 
     platform/graphics/cv/CVUtilities.h
-    platform/graphics/cv/GraphicsContextGLCV.h
     platform/graphics/cv/ImageRotationSessionVT.h
     platform/graphics/cv/ImageTransferSessionVT.h
     platform/graphics/cv/PixelBufferConformerCV.h

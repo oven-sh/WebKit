@@ -130,6 +130,7 @@ void RemoteGraphicsContextGLProxy::initializeIPC(Ref<IPC::StreamClientConnection
         lazyInitialize(m_sharedResourceCache, gpuProcessConnection->sharedResourceCache());
 #if ENABLE(VIDEO)
         lazyInitialize(m_videoFrameObjectHeapProxy, Ref { gpuProcessConnection->videoFrameObjectHeapProxy() });
+        lazyInitialize(m_gpuProcessIPCConnection, Ref { gpuProcessConnection->connection() });
 #endif
     });
 
@@ -226,7 +227,8 @@ RefPtr<WebCore::VideoFrame> RemoteGraphicsContextGLProxy::surfaceBufferToVideoFr
     ASSERT(isMainRunLoop());
     if (isContextLost())
         return nullptr;
-    auto sendResult = sendSync(Messages::RemoteGraphicsContextGL::SurfaceBufferToVideoFrame(buffer));
+    auto reference = RemoteVideoFrameReference::generateForAdd();
+    auto sendResult = sendSync(Messages::RemoteGraphicsContextGL::SurfaceBufferToVideoFrame(buffer, reference));
     if (!sendResult.succeeded()) {
         markContextLost();
         return nullptr;
@@ -234,12 +236,12 @@ RefPtr<WebCore::VideoFrame> RemoteGraphicsContextGLProxy::surfaceBufferToVideoFr
     auto [result] = sendResult.takeReply();
     if (!result)
         return nullptr;
-    return RemoteVideoFrameProxy::create(protect(WebProcess::singleton().ensureGPUProcessConnection().connection()), protect(protect(WebProcess::singleton().ensureGPUProcessConnection())->videoFrameObjectHeapProxy()), WTF::move(*result));
+    return RemoteVideoFrameProxy::create(*m_gpuProcessIPCConnection, *m_videoFrameObjectHeapProxy, reference, WTF::move(*result));
 }
 #endif
 
 #if ENABLE(VIDEO)
-bool RemoteGraphicsContextGLProxy::copyTextureFromVideoFrame(WebCore::VideoFrame& videoFrame, PlatformGLObject texture, GCGLint level, GCGLenum internalFormat, GCGLenum format, GCGLenum type, bool premultiplyAlpha, bool flipY)
+bool RemoteGraphicsContextGLProxy::copyTextureFromVideoFrame(WebCore::VideoFrame& videoFrame, PlatformGLObject texture, GCGLenum target, GCGLint level, GCGLenum internalFormat, GCGLenum type, bool unpackFlipY, bool unpackPremultiplyAlpha)
 {
 #if PLATFORM(COCOA)
     recordVideoUploadForTesting(VideoUploadOutcome::NotTransferable, videoFrame.pixelFormat());
@@ -249,7 +251,7 @@ bool RemoteGraphicsContextGLProxy::copyTextureFromVideoFrame(WebCore::VideoFrame
         return false;
     }
 
-    auto sharedVideoFrame = m_sharedVideoFrameWriter.write(videoFrame, [this, protectedThis = protect(*this)](auto& semaphore) {
+    auto sharedVideoFrame = m_sharedVideoFrameWriter.write(videoFrame, *m_gpuProcessIPCConnection, [this, protectedThis = protect(*this)](auto& semaphore) {
         auto sendResult = send(Messages::RemoteGraphicsContextGL::SetSharedVideoFrameSemaphore { semaphore });
         if (sendResult != IPC::Error::NoError)
             markContextLost();
@@ -266,7 +268,7 @@ bool RemoteGraphicsContextGLProxy::copyTextureFromVideoFrame(WebCore::VideoFrame
 
     m_lastVideoUploadWasSentForTesting = true;
     ++m_videoUploadsSentForTesting;
-    auto sendResult = sendSync(Messages::RemoteGraphicsContextGL::CopyTextureFromVideoFrame(WTF::move(*sharedVideoFrame), texture, level, internalFormat, format, type, premultiplyAlpha, flipY));
+    auto sendResult = sendSync(Messages::RemoteGraphicsContextGL::CopyTextureFromVideoFrame(WTF::move(*sharedVideoFrame), texture, target, level, internalFormat, type, unpackFlipY, unpackPremultiplyAlpha));
     if (!sendResult.succeeded()) {
         markContextLost();
         return false;
@@ -301,18 +303,6 @@ std::optional<GraphicsContextGL::VideoUploadRecord> RemoteGraphicsContextGLProxy
     return record;
 #else
     return GraphicsContextGL::lastVideoUploadForTesting();
-#endif
-}
-
-void RemoteGraphicsContextGLProxy::setVideoUploadHardwareOnlyForTesting(bool hardwareOnly)
-{
-    GraphicsContextGL::setVideoUploadHardwareOnlyForTesting(hardwareOnly);
-#if PLATFORM(COCOA)
-    if (isContextLost() || !WebProcess::singleton().sharedPreferencesForWebProcessValue().allowTestOnlyIPC)
-        return;
-    auto sendResult = send(Messages::RemoteGraphicsContextGL::SetVideoUploadHardwareOnlyForTesting(hardwareOnly));
-    if (sendResult != IPC::Error::NoError)
-        markContextLost();
 #endif
 }
 

@@ -49,7 +49,7 @@ SVGGraphicsElement& RenderSVGTransformableContainer::graphicsElement() const
     return downcast<SVGGraphicsElement>(RenderSVGContainer::element());
 }
 
-inline SVGUseElement* LEGACY_NODELETE associatedUseElement(SVGGraphicsElement& element)
+NODELETE inline SVGUseElement* associatedUseElement(SVGGraphicsElement& element)
 {
     // If we're either the renderer for a <use> element, or for any <g> element inside the shadow
     // tree, that was created during the use/symbol/svg expansion in SVGUseElement. These containers
@@ -82,18 +82,14 @@ bool RenderSVGTransformableContainer::needsHasSVGTransformFlags() const
     return graphicsElement->hasTransformRelatedAttributes() || associatedUseElement(graphicsElement);
 }
 
-void RenderSVGTransformableContainer::updateLayerTransform()
+void RenderSVGTransformableContainer::updateSupplementalTransform()
 {
-    // First update the supplemental layer transform...
-    m_supplementalLayerTransform = AffineTransform::makeTranslation(additionalContainerTranslation());
-
-    // ... before being able to use it in RenderLayerModelObject::updateLayerTransform().
-    RenderSVGContainer::updateLayerTransform();
+    m_supplementalTransform = AffineTransform::makeTranslation(additionalContainerTranslation());
 }
 
 void RenderSVGTransformableContainer::applyTransform(TransformationMatrix& transform, const Style::ComputedStyle& style, const FloatRect& boundingBox, OptionSet<Style::TransformResolverOption> options) const
 {
-    auto postTransform = m_supplementalLayerTransform.isIdentity() ? std::nullopt : std::make_optional(m_supplementalLayerTransform);
+    auto postTransform = m_supplementalTransform.isIdentity() ? std::nullopt : std::make_optional(m_supplementalTransform);
     applySVGTransform(transform, protect(graphicsElement()), style, boundingBox, std::nullopt, postTransform, options);
 }
 

@@ -352,7 +352,7 @@ static String buildIntegerList(const Vector<ValueType>& values)
     return builder.toString();
 }
 
-static WeakHashSet<ResourceLoadStatisticsStore>& LEGACY_NODELETE allStores()
+NODELETE static WeakHashSet<ResourceLoadStatisticsStore>& allStores()
 {
     ASSERT(!RunLoop::isMain());
 
@@ -783,8 +783,7 @@ void ResourceLoadStatisticsStore::debugLogDomainsInBatches(ASCIILiteral action, 
         return;
     }
 
-    Vector<RegistrableDomain> batch;
-    batch.reserveInitialCapacity(maxNumberOfDomainsInOneLogStatement);
+    Vector<RegistrableDomain> batch(ReserveCapacityTag { }, maxNumberOfDomainsInOneLogStatement);
 #if !RELEASE_LOG_DISABLED
     auto batchNumber = 1;
     unsigned numberOfBatches = std::ceil(domains.size() / static_cast<float>(maxNumberOfDomainsInOneLogStatement));
@@ -1004,7 +1003,7 @@ void ResourceLoadStatisticsStore::addMissingTablesIfNecessary()
         ITP_RELEASE_LOG_ERROR("addMissingTablesIfNecessary: failed to create unique indices");
 }
 
-template<typename T, typename U, size_t size> bool LEGACY_NODELETE vectorEqualsArray(const Vector<T>& vector, const std::array<U, size> array)
+template<typename T, typename U, size_t size> NODELETE bool vectorEqualsArray(const Vector<T>& vector, const std::array<U, size> array)
 {
     if (vector.size() != size)
         return false;
@@ -1488,7 +1487,7 @@ Vector<ITPThirdPartyDataForSpecificFirstParty> ResourceLoadStatisticsStore::getT
     return thirdPartyDataForSpecificFirstPartyDomains;
 }
 
-static bool LEGACY_NODELETE hasBeenThirdParty(unsigned timesUnderFirstParty)
+NODELETE static bool hasBeenThirdParty(unsigned timesUnderFirstParty)
 {
     return timesUnderFirstParty > 0;
 }
@@ -2014,8 +2013,7 @@ Vector<RegistrableDomain> ResourceLoadStatisticsStore::ensurePrevalentResourcesF
     if (!debugModeEnabled())
         return { };
 
-    Vector<RegistrableDomain> primaryDomainsToBlock;
-    primaryDomainsToBlock.reserveInitialCapacity(2);
+    Vector<RegistrableDomain> primaryDomainsToBlock(ReserveCapacityTag { }, 2);
 
     auto transactionScope = beginTransactionIfNecessary();
 
@@ -3214,7 +3212,7 @@ void ResourceLoadStatisticsStore::appendSubStatisticList(StringBuilder& builder,
     }
 }
 
-SUPPRESS_NODELETE static bool LEGACY_NODELETE hasHadRecentUserInteraction(WTF::Seconds interactionTimeSeconds, WallTime now)
+NODELETE SUPPRESS_NODELETE static bool hasHadRecentUserInteraction(WTF::Seconds interactionTimeSeconds, WallTime now)
 {
     return interactionTimeSeconds > Seconds(0) && now.secondsSinceEpoch() - interactionTimeSeconds < 24_h;
 }

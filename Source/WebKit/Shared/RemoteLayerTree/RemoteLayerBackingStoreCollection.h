@@ -42,8 +42,6 @@ enum class SetNonVolatileResult : uint8_t;
 namespace WebKit {
 
 class RemoteLayerBackingStore;
-class RemoteLayerWithRemoteRenderingBackingStore;
-class RemoteLayerWithInProcessRenderingBackingStore;
 class RemoteLayerTreeContext;
 class RemoteLayerTreeTransaction;
 class RemoteImageBufferSetProxy;
@@ -59,7 +57,7 @@ public:
     RemoteLayerBackingStoreCollection(RemoteLayerTreeContext&);
     virtual ~RemoteLayerBackingStoreCollection();
 
-    void LEGACY_NODELETE ref() const;
+    NODELETE void ref() const;
     void deref() const;
 
     void markFrontBufferVolatileForTesting(RemoteLayerBackingStore&);
@@ -88,7 +86,7 @@ public:
 
     virtual void gpuProcessConnectionWasDestroyed();
 
-    RemoteLayerTreeContext& LEGACY_NODELETE layerTreeContext() const;
+    NODELETE RemoteLayerTreeContext& layerTreeContext() const;
 
 protected:
 
@@ -100,14 +98,12 @@ protected:
     virtual void markBackingStoreVolatileAfterReachabilityChange(RemoteLayerBackingStore&);
     virtual void markAllBackingStoreVolatileFromTimer();
 
-    bool collectRemoteRenderingBackingStoreBufferIdentifiersToMarkVolatile(RemoteLayerWithRemoteRenderingBackingStore&, OptionSet<VolatilityMarkingBehavior>, MonotonicTime now, Vector<std::pair<Ref<RemoteImageBufferSetProxy>, OptionSet<BufferInSetType>>>&);
+    bool collectRemoteRenderingBackingStoreBufferIdentifiersToMarkVolatile(RemoteLayerBackingStore&, OptionSet<VolatilityMarkingBehavior>, MonotonicTime now, Vector<std::pair<Ref<RemoteImageBufferSetProxy>, OptionSet<BufferInSetType>>>&);
 
     bool collectAllRemoteRenderingBufferIdentifiersToMarkVolatile(OptionSet<VolatilityMarkingBehavior> liveBackingStoreMarkingBehavior, OptionSet<VolatilityMarkingBehavior> unparentedBackingStoreMarkingBehavior, Vector<std::pair<Ref<RemoteImageBufferSetProxy>, OptionSet<BufferInSetType>>>&);
 
 
 private:
-    bool markInProcessBackingStoreVolatile(RemoteLayerWithInProcessRenderingBackingStore&, OptionSet<VolatilityMarkingBehavior> = { }, MonotonicTime = { });
-    bool markAllBackingStoreVolatile(OptionSet<VolatilityMarkingBehavior> liveBackingStoreMarkingBehavior, OptionSet<VolatilityMarkingBehavior> unparentedBackingStoreMarkingBehavior);
 
     bool updateUnreachableBackingStores();
     void volatilityTimerFired();

@@ -91,14 +91,17 @@ public:
     ALWAYS_INLINE static RenderText& fromLayoutBox(Layout::InlineTextBox& box) { SUPPRESS_MEMORY_UNSAFE_CAST return static_cast<RenderText&>(box); }
     ALWAYS_INLINE static const RenderText& fromLayoutBox(const Layout::InlineTextBox& box) { SUPPRESS_MEMORY_UNSAFE_CAST return static_cast<const RenderText&>(box); }
 
-    WEBCORE_EXPORT Text* LEGACY_NODELETE textNode() const;
+    NODELETE WEBCORE_EXPORT Text* textNode() const;
 
-    // The style of an anonymous inline box around the text. The inherited properties come from the parent, the other properties
-    // have their initial values.
+    // The style of an anonymous inline box around the text. The inherited properties come from the parent box, or from the
+    // DOM parent when it is display: contents and has no box. The other properties have their initial values.
     ALWAYS_INLINE const Style::ComputedStyle& style() const LIFETIME_BOUND { return Layout::InlineTextBox::style(); }
     ALWAYS_INLINE const Style::ComputedStyle& firstLineStyle() const LIFETIME_BOUND { return Layout::InlineTextBox::firstLineStyle(); }
     // On attach and parent style change.
     void inheritStyleFromParent();
+    bool inheritsStyleFromDisplayContentsParent() const { return Layout::InlineTextBox::inheritsStyleFromDisplayContentsParent(); }
+    void setStyleInheritedFromDisplayContentsParent(Style::ComputedStyle&&);
+    void clearStyleInheritedFromDisplayContentsParent();
     const Style::ComputedStyle* lazyPseudoElementStyle(const Style::PseudoElementIdentifier&, const Style::ComputedStyle* parentStyle = nullptr) const LIFETIME_BOUND;
 
     Color selectionBackgroundColor() const;
@@ -157,9 +160,9 @@ public:
 
     float hangablePunctuationStartWidth(unsigned index) const;
     float hangablePunctuationEndWidth(unsigned index) const;
-    unsigned LEGACY_NODELETE firstCharacterIndexStrippingSpaces() const;
-    unsigned LEGACY_NODELETE lastCharacterIndexStrippingSpaces() const;
-    static bool LEGACY_NODELETE isHangableStopOrComma(char16_t);
+    NODELETE unsigned firstCharacterIndexStrippingSpaces() const;
+    NODELETE unsigned lastCharacterIndexStrippingSpaces() const;
+    NODELETE static bool isHangableStopOrComma(char16_t);
     
     WEBCORE_EXPORT virtual IntRect linesBoundingBox() const;
     WEBCORE_EXPORT IntPoint firstRunLocation() const;
@@ -188,7 +191,7 @@ public:
 
     void momentarilyRevealLastTypedCharacter(unsigned offsetAfterLastTypedCharacter);
 
-    bool LEGACY_NODELETE containsOnlyCollapsibleWhitespace() const;
+    NODELETE bool containsOnlyCollapsibleWhitespace() const;
 
     FontCascade::CodePath fontCodePath() const { return m_fontCodePath; }
     bool canUseSimpleFontCodePath() const { return fontCodePath() == FontCascade::CodePath::Simple; }
@@ -199,15 +202,11 @@ public:
     float candidateComputedTextSize() const { return m_candidateComputedTextSize; }
     void setCandidateComputedTextSize(float size) { m_candidateComputedTextSize = size; }
 
-    StringView LEGACY_NODELETE stringView(unsigned start = 0, std::optional<unsigned> stop = std::nullopt) const;
+    NODELETE StringView stringView(unsigned start = 0, std::optional<unsigned> stop = std::nullopt) const;
     
-    bool LEGACY_NODELETE containsOnlyCSSWhitespace(unsigned from, unsigned length) const;
+    NODELETE bool containsOnlyCSSWhitespace(unsigned from, unsigned length) const;
 
     Vector<std::pair<unsigned, unsigned>> contentRangesBetweenOffsetsForType(const DocumentMarkerType, unsigned startOffset, unsigned endOffset) const;
-
-    bool hasInlineWrapperForDisplayContents() const { return m_hasInlineWrapperForDisplayContents; }
-    RenderBoxModelObject* LEGACY_NODELETE inlineWrapperForDisplayContents();
-    void setInlineWrapperForDisplayContents(RenderBoxModelObject*);
 
     template <typename MeasureTextCallback>
     static float measureTextConsideringPossibleTrailingSpace(bool currentCharacterIsSpace, unsigned startIndex, unsigned wordLength, WordTrailingSpace&, SingleThreadWeakHashSet<const Font>& fallbackFonts, NOESCAPE const MeasureTextCallback&);
@@ -216,8 +215,8 @@ public:
 
     bool canUseSimplifiedTextMeasuring() const { return layoutBox().canUseSimplifiedContentMeasuring(); }
 
-    // The layout box content is the rendered text, or the original text when combined, with the secure text disc swapped
-    // on Cocoa platforms. In a live inline formatting context it changes only together with the inline items.
+    // The layout box content is the rendered text, with the secure text disc swapped on Cocoa platforms. In a live inline
+    // formatting context it changes only together with the inline items.
     void updateLayoutBoxContent();
     bool layoutBoxContentNeedsUpdate() const { return m_layoutBoxContentNeedsUpdate; }
     void updateLayoutBoxContentIfNeeded()
@@ -236,6 +235,7 @@ protected:
     virtual void setTextInternal(const String&, bool force);
 
     void layoutBoxContentDidChange();
+    void displayContentsParentStyleDidChange(const Style::ComputedStyle& oldStyle, bool didChangeStyleSource);
 
 private:
     void updateRenderedText();
@@ -290,7 +290,6 @@ private:
     mutable unsigned m_knownToHaveNoOverflowAndNoFallbackFonts : 1 { false };
     unsigned m_useBackslashAsYenSymbol : 1 { false };
     unsigned m_originalTextDiffersFromRendered : 1 { false };
-    unsigned m_hasInlineWrapperForDisplayContents : 1 { false };
     unsigned m_layoutBoxContentNeedsUpdate : 1 { false };
     unsigned m_hasSecureTextTimer : 1 { false };
     FontCascade::CodePath m_fontCodePath : 2;
@@ -300,9 +299,9 @@ String applyTextTransform(const Style::ComputedStyle&, const String&, char32_t p
 String applyTextTransform(const Style::ComputedStyle&, const String&);
 String capitalize(const String&, char32_t previousCharacter, const AtomString& locale);
 String capitalize(const String&, const AtomString& locale);
-bool LEGACY_NODELETE isDutchLocale(const AtomString&);
-TextBreakIterator::LineMode::Behavior LEGACY_NODELETE mapLineBreakToIteratorMode(LineBreak);
-TextBreakIterator::ContentAnalysis LEGACY_NODELETE mapWordBreakToContentAnalysis(WordBreak);
+NODELETE bool isDutchLocale(const AtomString&);
+NODELETE TextBreakIterator::LineMode::Behavior mapLineBreakToIteratorMode(LineBreak);
+NODELETE TextBreakIterator::ContentAnalysis mapWordBreakToContentAnalysis(WordBreak);
 
 inline char16_t RenderText::characterAt(unsigned i) const
 {

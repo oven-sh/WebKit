@@ -87,6 +87,7 @@ private:
     PollResult poll(const AbstractLocker&) final
     {
         assertIsHeld(*m_collector.m_threadLock);
+        m_collector.assertIsCollectorThread();
         if (m_collector.m_threadShouldStop) {
             m_collector.m_threadIsWorking = false;
             return PollResult::Stop;
@@ -101,6 +102,7 @@ private:
 
     WorkResult work() final
     {
+        m_collector.assertIsCollectorThread();
 #if ENABLE(AOT)
         AOT::HeapHooks::willWorkOnThisThread(m_collector.heap().vm());
 #endif
@@ -111,6 +113,9 @@ private:
     void threadDidStart() final
     {
         Thread::registerGCThread(GCThreadType::Main);
+#if ASSERT_ENABLED
+        m_collector.m_collectorThreadUID.storeRelaxed(Thread::currentSingleton().uid());
+#endif
     }
 
     void threadIsStopping(const AbstractLocker&) final
@@ -252,7 +257,7 @@ GCRequest::Ticket Collector::requestCollection(Heap& requester, GCRequest reques
     // right now. This is an optimization that prevents the collector thread from ever starting in most
     // cases.
     ASSERT(m_lastServedTicket <= m_lastGrantedTicket);
-    ASSERT(requester.hasHeapAccess());
+    requester.assertIsAccessHolder();
     ASSERT(!(requester.m_worldState.load() & Heap::stoppedBit));
     // It's okay for a heap to request a GC while its membership is pending, but it can't be the conductor yet.
     if ((m_lastServedTicket == m_lastGrantedTicket) && !m_threadIsWorking && hasHeap(requester)) {
@@ -303,6 +308,7 @@ CollectionScope Collector::decideCollectionScope()
 
 void Collector::collectInCollectorThread()
 {
+    checkIsConductor(GCConductor::Collector);
     for (;;) {
         RunCurrentPhaseResult result = runCurrentPhase(GCConductor::Collector, nullptr);
         switch (result) {
@@ -331,9 +337,11 @@ bool Collector::tryEnsureThreadForWork()
 
 void Collector::collectInMutatorThread(Heap& conductor)
 {
+    conductor.assertIsAccessHolder();
     ASSERT(hasHeap(conductor));
     ASSERT(!m_conductingHeap);
     SetForScope setConductingHeap { m_conductingHeap, &conductor };
+    checkIsConductor(GCConductor::Mutator);
     for (;;) {
         RunCurrentPhaseResult result = runCurrentPhase(GCConductor::Mutator, nullptr);
         switch (result) {
@@ -344,6 +352,7 @@ void Collector::collectInMutatorThread(Heap& conductor)
         case RunCurrentPhaseResult::NeedCurrentThreadState:
             sanitizeStackForVM(conductor.vm());
             auto lambda = [&] (CurrentThreadState& state) {
+                assertIsConductor(GCConductor::Mutator);
                 for (;;) {
                     RunCurrentPhaseResult result = runCurrentPhase(GCConductor::Mutator, &state);
                     switch (result) {
@@ -365,7 +374,6 @@ void Collector::collectInMutatorThread(Heap& conductor)
 
 auto Collector::runCurrentPhase(GCConductor conn, CurrentThreadState* conductingMutatorState) -> RunCurrentPhaseResult
 {
-    assertConn(conn);
     m_conductingMutatorState = conductingMutatorState;
     m_conductorThread = &Thread::currentSingleton();
 
@@ -439,6 +447,7 @@ NEVER_INLINE bool Collector::runNotRunningPhase(GCConductor conn)
 
 NEVER_INLINE bool Collector::runBeginPhase(GCConductor conn)
 {
+    assertIsConductorWithWorldStopped(conn);
     MonotonicTime startTime = MonotonicTime::now();
 
     {
@@ -452,7 +461,7 @@ NEVER_INLINE bool Collector::runBeginPhase(GCConductor conn)
     CollectionScope scope = decideCollectionScope();
 
     beginSignpost(scope, conn);
-    beginCollectionInEachHeap(scope, startTime);
+    beginCollectionInEachHeap(conn, scope, startTime);
 
     if (scope == CollectionScope::Full) {
         m_opaqueRoots.clear();
@@ -505,10 +514,11 @@ NEVER_INLINE bool Collector::runBeginPhase(GCConductor conn)
     return changePhase(conn, CollectorPhase::Fixpoint);
 }
 
-void Collector::beginCollectionInEachHeap(CollectionScope scope, MonotonicTime startTime)
+void Collector::beginCollectionInEachHeap(GCConductor conn, CollectionScope scope, MonotonicTime startTime)
 {
     HeapVersion markingVersion = m_heaps.first()->objectSpace().markingVersion();
     forEachHeap([&](Heap& heap) {
+        assertIsConductorWithWorldStopped(conn);
         // SlotVisitor caches one marking version and uses it for every heap, so they must all have the
         // same one. A heap that joined after the others have collected can take their version. That is
         // safe only because it has never been collected: all of its blocks are still at nullVersion,
@@ -609,6 +619,7 @@ void Collector::startHelpers()
 
 NEVER_INLINE bool Collector::runFixpointPhase(GCConductor conn)
 {
+    assertIsConductorWithWorldStopped(conn);
     RELEASE_ASSERT_IMPLIES(conn == GCConductor::Mutator, m_conductingMutatorState);
 
     SlotVisitor& visitor = *m_collectorSlotVisitor;
@@ -739,6 +750,7 @@ NEVER_INLINE bool Collector::runConcurrentPhase(GCConductor conn)
 
 NEVER_INLINE bool Collector::runReloopPhase(GCConductor conn)
 {
+    assertIsConductorWithWorldStopped(conn);
     dataLogIf(Options::logGC(), "[GC<", *this, ">: ", gcConductorShortName(conn), " ");
 
     m_scheduler->didStop();
@@ -751,6 +763,7 @@ NEVER_INLINE bool Collector::runReloopPhase(GCConductor conn)
 
 NEVER_INLINE bool Collector::runEndPhase(GCConductor conn)
 {
+    assertIsConductorWithWorldStopped(conn);
     m_scheduler->endCollection();
 
     {
@@ -775,7 +788,7 @@ NEVER_INLINE bool Collector::runEndPhase(GCConductor conn)
             visitor.flushExtraMemoryVisited();
         });
 
-    endCollectionInEachHeap();
+    endCollectionInEachHeap(conn);
 
     forEachSlotVisitor(
         [&](SlotVisitor& visitor) {
@@ -810,15 +823,17 @@ NEVER_INLINE bool Collector::runEndPhase(GCConductor conn)
     endSignpost();
 
     forEachHeap([&](Heap& heap) {
+        assertIsConductorWithWorldStopped(conn);
         heap.setNeedCollectionEpilogue();
         heap.recordCollectionTime(m_afterGC - m_beforeGC);
     });
     return changePhase(conn, CollectorPhase::NotRunning);
 }
 
-void Collector::endCollectionInEachHeap()
+void Collector::endCollectionInEachHeap(GCConductor conn)
 {
     forEachHeap([&](Heap& heap) {
+        assertIsConductorWithWorldStopped(conn);
         ASSERT(heap.m_mutatorMarkStack->isEmpty() || heap.canSkipMarking());
 
         // Executing CodeBlocks keep writing their profiles without barriers after this collection. Remembering
@@ -833,6 +848,7 @@ void Collector::endCollectionInEachHeap()
         verifyGC();
 
     forEachHeap([&](Heap& heap) {
+        assertIsConductorWithWorldStopped(conn);
         heap.verifyHeapAfterMarking();
         heap.pruneDeadReferences();
         heap.prepareForAllocation();
@@ -842,7 +858,7 @@ void Collector::endCollectionInEachHeap()
 
 bool Collector::changePhase(GCConductor conn, CollectorPhase nextPhase)
 {
-    assertConn(conn);
+    checkIsConductor(conn);
 
     m_lastPhase = m_currentPhase;
     m_nextPhase = nextPhase;
@@ -854,7 +870,7 @@ bool Collector::changePhase(GCConductor conn, CollectorPhase nextPhase)
 // mutator is handed the conn instead, and finishes the transition at its next poll.
 NEVER_INLINE bool Collector::finishChangingPhase(GCConductor conn)
 {
-    assertConn(conn);
+    checkIsConductor(conn);
 
     if (m_nextPhase == m_currentPhase)
         return true;
@@ -872,11 +888,14 @@ NEVER_INLINE bool Collector::finishChangingPhase(GCConductor conn)
             // End sets the epilogue bit just before resuming into NotRunning, and nothing else sets it during a collection.
             RELEASE_ASSERT(heap().needCollectionEpilogue() == (m_currentPhase == CollectorPhase::End));
 
-            resumeThePeriphery();
+            resumeThePeriphery(conn);
             if (conn == GCConductor::Collector)
                 heap().resumeTheMutator();
-            else
+            else {
+                // For thread-safety analysis: the conductor role does not carry the conducting heap's access.
+                heap().assertIsAccessHolder();
                 heap().handleNeedCollectionEpilogue();
+            }
         } else {
             RELEASE_ASSERT(!suspendedBefore);
             RELEASE_ASSERT(suspendedAfter);
@@ -894,7 +913,7 @@ NEVER_INLINE bool Collector::finishChangingPhase(GCConductor conn)
                 // A mutator runs any pending epilogue before it starts conducting, and only End sets the bit.
                 RELEASE_ASSERT(!heap().needCollectionEpilogue());
             }
-            stopThePeriphery();
+            stopThePeriphery(conn);
         }
     }
 
@@ -902,10 +921,11 @@ NEVER_INLINE bool Collector::finishChangingPhase(GCConductor conn)
     return true;
 }
 
-void Collector::stopThePeriphery()
+void Collector::stopThePeriphery(GCConductor conn)
 {
     m_isCompilerThreadsSuspended = suspendCompilerThreads();
     forEachHeap([&](Heap& heap) {
+        assertIsConductor(conn);
         unsigned worldState = heap.m_worldState.load();
         if (&heap == m_conductingHeap)
             RELEASE_ASSERT(worldState & Heap::mutatorHasConnBit, worldState);
@@ -914,13 +934,20 @@ void Collector::stopThePeriphery()
         heap.stopThePeriphery();
     });
     m_collectorSlotVisitor->setMutatorsAreStopped(true);
+#if ASSERT_ENABLED
+    m_worldIsStopped = true;
+#endif
 
     m_stopTime = MonotonicTime::now();
 }
 
-NEVER_INLINE void Collector::resumeThePeriphery()
+NEVER_INLINE void Collector::resumeThePeriphery(GCConductor conn)
 {
-    forEachHeap([](Heap& heap) {
+#if ASSERT_ENABLED
+    m_worldIsStopped = false;
+#endif
+    forEachHeap([&](Heap& heap) {
+        assertIsConductor(conn);
         heap.resumeThePeriphery();
     });
     // Before any mutator runs again.
@@ -960,6 +987,7 @@ void Collector::resumeCompilerThreads()
 
 auto Collector::requestMembershipChange(MembershipChange&& change) -> MembershipChange::Ticket
 {
+    change.heap->assertIsAccessHolder();
     Locker locker { *m_threadLock };
     auto ticket = ++m_lastRequestedMembershipChange;
     // If the Collector is idle, apply the change now: no collection can start while this thread holds the lock. This
@@ -997,6 +1025,8 @@ void Collector::applyAllMembershipChangesWithLock(Vector<Heap*, 8>& changedHeaps
 
 void Collector::applyMembershipChangeWithLock(MembershipChange& change)
 {
+    // An idle Collector's requester, or the conductor.
+    ASSERT(change.heap->currentThreadIsAccessHolder() || currentThreadIsConductor());
     RELEASE_ASSERT(m_currentPhase == CollectorPhase::NotRunning);
     Heap& heap = *change.heap;
     switch (change.kind) {
@@ -1018,13 +1048,44 @@ void Collector::applyMembershipChangeWithLock(MembershipChange& change)
 }
 
 // Only the conducting heap's mutator has the conn, and none does while the collector thread conducts.
-void Collector::assertConn(GCConductor conn)
+void Collector::checkIsConductor(GCConductor conn)
 {
     RELEASE_ASSERT_IMPLIES(conn == GCConductor::Mutator, m_conductingHeap);
     forEachHeap([&](Heap& heap) {
         heap.checkConn(conn == GCConductor::Mutator && &heap == m_conductingHeap ? GCConductor::Mutator : GCConductor::Collector);
     });
+    if (conn == GCConductor::Mutator)
+        m_conductingHeap->assertIsAccessHolder();
+    else
+        assertIsCollectorThread();
 }
+
+#if ASSERT_ENABLED
+void Collector::assertIsConductor(GCConductor conn)
+{
+    checkIsConductor(conn);
+}
+
+void Collector::assertIsConductorWithWorldStopped(GCConductor conn)
+{
+    assertIsConductor(conn);
+    ASSERT(worldShouldBeSuspended(m_currentPhase));
+    ASSERT(m_worldIsStopped);
+}
+
+void Collector::assertIsCollectorThread() const
+{
+    ASSERT(m_collectorThreadUID.loadRelaxed() == Thread::currentSingleton().uid());
+}
+
+bool Collector::currentThreadIsConductor() const
+{
+    if (m_conductingHeap)
+        return m_conductingHeap->currentThreadIsAccessHolder();
+    return m_collectorThreadUID.loadRelaxed() == Thread::currentSingleton().uid();
+}
+#endif
+
 
 bool Collector::anyMutatorHasConnWithLock()
 {

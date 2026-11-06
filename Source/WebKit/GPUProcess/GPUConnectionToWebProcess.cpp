@@ -542,8 +542,12 @@ bool GPUConnectionToWebProcess::allowsExitUnderMemoryPressure() const
     if (hasOutstandingRenderingResourceUsage())
         return false;
 
+#if PLATFORM(COCOA)
+    return false;
+#else
     if (m_sharedPreferencesForWebProcess.useGPUProcessForDOMRenderingEnabled)
         return false;
+#endif
 
 #if ENABLE(WEB_AUDIO)
     RefPtr remoteAudioDestinationManager = m_remoteAudioDestinationManager.get();
@@ -731,6 +735,9 @@ void GPUConnectionToWebProcess::releaseRenderingBackend(RemoteRenderingBackendId
 void GPUConnectionToWebProcess::createGraphicsContextGL(RemoteGraphicsContextGLIdentifier identifier, WebCore::GraphicsContextGLAttributes attributes, RemoteRenderingBackendIdentifier renderingBackendIdentifier, IPC::StreamServerConnection::Handle&& connectionHandle)
 {
     MESSAGE_CHECK(!isLockdownModeEnabled());
+#if !PLATFORM(COCOA)
+    MESSAGE_CHECK(m_sharedPreferencesForWebProcess.useGPUProcessForWebGLEnabled);
+#endif
     MESSAGE_CHECK(!attributes.supportWebGLDraftExtensions || m_sharedPreferencesForWebProcess.webGLDraftExtensionsEnabled);
 
     auto it = m_remoteRenderingBackendMap.find(renderingBackendIdentifier);
@@ -936,6 +943,23 @@ void GPUConnectionToWebProcess::postNowPlayingRemoteControlCommandForTesting(Web
 {
     gpuProcess().nowPlayingManager().didReceiveRemoteControlCommand(type, argument);
 }
+
+#if PLATFORM(COCOA) && ENABLE(VIDEO)
+void GPUConnectionToWebProcess::hostedVideoLayerBoundsForTesting(WebCore::MediaPlayerClientIdentifier mediaElementIdentifier, CompletionHandler<void(std::optional<WebCore::FloatRect>)>&& completionHandler)
+{
+    if (auto bounds = protect(remoteMediaPlayerManagerProxy())->hostedVideoLayerBoundsForTesting(mediaElementIdentifier)) {
+        completionHandler(WTF::move(bounds));
+        return;
+    }
+
+    if (RefPtr rendererManager = m_remoteAudioVideoRendererProxyManager) {
+        completionHandler(rendererManager->hostedVideoLayerBoundsForTesting(mediaElementIdentifier));
+        return;
+    }
+
+    completionHandler(std::nullopt);
+}
+#endif
 
 void GPUConnectionToWebProcess::updateSupportedRemoteCommands()
 {

@@ -1996,6 +1996,7 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     wasm/js/JSWebAssemblyMemory.h
     wasm/js/JSWebAssemblyModule.h
     wasm/js/JSWebAssemblyStreamingContext.h
+    wasm/js/JSWebAssemblySuspendingWrapper.h
     wasm/js/WebAssemblyPromising.h
     wasm/js/WebAssemblySuspending.h
     wasm/js/JSWebAssemblyTable.h

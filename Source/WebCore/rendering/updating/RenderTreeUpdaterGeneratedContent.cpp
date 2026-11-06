@@ -34,7 +34,6 @@
 #include "PseudoElement.h"
 #include "PseudoElementUtilitiesInlines.h"
 #include "RenderBoxModelObject.h"
-#include "RenderCombineText.h"
 #include "RenderCounter.h"
 #include "RenderDescendantIterator.h"
 #include "RenderElementInlines.h"
@@ -265,7 +264,7 @@ struct SubtagComparison {
     std::strong_ordering comparison { std::strong_ordering::equal };
 };
 
-static SubtagComparison LEGACY_NODELETE subtagCompare(std::span<const char> key, std::span<const char> range)
+NODELETE static SubtagComparison subtagCompare(std::span<const char> key, std::span<const char> range)
 {
     SubtagComparison result;
 
@@ -291,7 +290,7 @@ static SubtagComparison LEGACY_NODELETE subtagCompare(std::span<const char> key,
     return result;
 }
 
-static std::strong_ordering LEGACY_NODELETE quoteTableLanguageComparisonFunction(const QuotesForLanguage& key, std::span<const QuotesForLanguage> range)
+NODELETE static std::strong_ordering quoteTableLanguageComparisonFunction(const QuotesForLanguage& key, std::span<const QuotesForLanguage> range)
 {
     // These strings need to be compared according to "Extended Filtering", as in Section 3.3.2 in RFC4647.
     // https://tools.ietf.org/html/rfc4647#page-10
@@ -346,7 +345,7 @@ static std::strong_ordering LEGACY_NODELETE quoteTableLanguageComparisonFunction
     }
 }
 
-static const QuotesForLanguage* LEGACY_NODELETE binaryFindQuotes(const QuotesForLanguage& key, std::span<const QuotesForLanguage> subrange = quoteTable)
+NODELETE static const QuotesForLanguage* binaryFindQuotes(const QuotesForLanguage& key, std::span<const QuotesForLanguage> subrange = quoteTable)
 {
     if (subrange.empty())
         return nullptr;
@@ -578,7 +577,7 @@ void RenderTreeUpdater::GeneratedContent::updateListMarkers()
     m_updater.m_builder.updateListMarkerContents();
 }
 
-static KeyframeEffectStack* LEGACY_NODELETE keyframeEffectStackForPseudoElement(const Element& element, PseudoElementType pseudoElementType)
+NODELETE static KeyframeEffectStack* keyframeEffectStackForPseudoElement(const Element& element, PseudoElementType pseudoElementType)
 {
     if (!element.mayHaveKeyframeEffects())
         return nullptr;
@@ -595,13 +594,10 @@ static bool needsPseudoElementForAnimation(const Element& element, PseudoElement
     return stack->requiresPseudoElement() || stack->containsProperty(CSSPropertyID::Display);
 }
 
-static RenderPtr<RenderObject> createContentRenderer(const Style::Content::Text& value, const String& altText, Document& document, const Style::ComputedStyle& pseudoStyle)
+static RenderPtr<RenderObject> createContentRenderer(const Style::Content::Text& value, const String& altText, Document& document, const Style::ComputedStyle&)
 {
     if (value.text.value.isEmpty() && altText.isEmpty())
         return { };
-
-    if (pseudoStyle.isListMarkerStyle() && pseudoStyle.textCombine() != TextCombine::None)
-        return createRenderer<RenderCombineText>(document, value.text.value);
 
     auto contentRenderer = createRenderer<RenderTextFragment>(document, value.text.value);
     contentRenderer->setAltText(altText);

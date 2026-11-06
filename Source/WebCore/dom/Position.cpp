@@ -42,6 +42,7 @@
 #include "InlineIteratorLogicalOrderTraversal.h"
 #include "InlineIteratorTextBox.h"
 #include "InlineRunAndOffset.h"
+#include "LayoutIntegrationLineLayout.h"
 #include "Logging.h"
 #include "NodeTraversal.h"
 #include "PositionIterator.h"
@@ -656,7 +657,7 @@ static RefPtr<Node> enclosingVisualBoundary(SUPPRESS_UNCHECKED_LOCAL Node* node)
 // The first-letter and remaining text are separate renderers but share one DOM
 // text node. upstream/downstream must not cross this boundary, just like they
 // must not cross visually distinct node boundaries.
-static bool LEGACY_NODELETE crossesFirstLetterBoundary(const RenderObject& renderer, const PositionIterator& current, const PositionIterator& previousLastVisible)
+NODELETE static bool crossesFirstLetterBoundary(const RenderObject& renderer, const PositionIterator& current, const PositionIterator& previousLastVisible)
 {
     auto* textFragment = dynamicDowncast<RenderTextFragment>(renderer);
     if (!textFragment || !textFragment->firstLetter())
@@ -1197,7 +1198,7 @@ InlineBoxAndOffset Position::inlineBoxAndOffset(Affinity affinity) const
     return inlineBoxAndOffset(affinity, primaryDirection());
 }
 
-static bool LEGACY_NODELETE isNonTextLeafChild(RenderObject& object)
+NODELETE static bool isNonTextLeafChild(RenderObject& object)
 {
     if (auto* renderElement = dynamicDowncast<RenderElement>(object))
         return !renderElement->firstChild();
@@ -1206,9 +1207,13 @@ static bool LEGACY_NODELETE isNonTextLeafChild(RenderObject& object)
 
 static InlineIterator::TextBoxIterator searchAheadForBetterMatch(RenderText& renderer)
 {
-    CheckedPtr container = renderer.containingBlock();
+    // Look for a better match in the same inline formatting context.
+    CheckedPtr lineLayout = LayoutIntegration::LineLayout::containing(renderer);
+    if (!lineLayout)
+        return { };
+    CheckedRef formattingContextRoot = lineLayout->flow();
     CheckedPtr<RenderObject> next = &renderer;
-    while ((next = next->nextInPreOrder(container.get()))) {
+    while ((next = next->nextInPreOrder(formattingContextRoot.ptr()))) {
         if (is<RenderBlock>(next))
             return { };
         if (next->isBR())

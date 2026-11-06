@@ -154,7 +154,7 @@ public:
 
     // Returns true if reordering instructions with these respective effects would change program
     // behavior in an observable way.
-    JS_EXPORT_PRIVATE bool LEGACY_NODELETE interferes(const Effects&) const;
+    NODELETE JS_EXPORT_PRIVATE bool interferes(const Effects&) const;
     
     friend bool operator==(const Effects&, const Effects&) = default;
 

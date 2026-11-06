@@ -70,6 +70,8 @@ enum class GammaAndColorProfileOption {
 
 enum class ImageAnimatingState : bool { No, Yes };
 
+enum class ImageAnimationOverride : uint8_t { None, Play, Pause };
+
 enum class EncodedDataStatus {
     Error,
     Unknown,
@@ -96,7 +98,8 @@ enum class ImageDrawResult {
 enum class InvertContent : uint8_t {
     FromResource,
     No,
-    Yes
+    Yes,
+    Forced
 };
 
 enum class ImagePaintTimeTransformation : uint8_t {

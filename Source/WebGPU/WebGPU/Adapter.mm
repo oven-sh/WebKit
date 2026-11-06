@@ -176,7 +176,7 @@ WGPUInstance wgpuAdapterGetInstance(WGPUAdapter adapter)
     }
 }
 
-void LEGACY_NODELETE wgpuAdapterAddRef(WGPUAdapter adapter)
+NODELETE void wgpuAdapterAddRef(WGPUAdapter adapter)
 {
     WebGPU::Metal::fromAPI(adapter).ref();
 }
@@ -258,6 +258,22 @@ static void listenForUncapturedErrors(WebGPU::Metal::Device& device, const WGPUU
         WGPUDevice handle = WebGPU::toAPI(*device);
         callbackInfo.callback(&handle, WebGPU::Metal::toAPI(error), WebGPU::Metal::toAPI(message), callbackInfo.userdata1, callbackInfo.userdata2);
     }, CompletionHandlerCallThread::AnyThread });
+}
+
+// The features for which wgpuAdapterHasFeature() is true, freed with
+// wgpuSupportedFeaturesFreeMembers().
+void wgpuAdapterGetFeatures(WGPUAdapter adapter, WGPUSupportedFeatures* features)
+{
+    @autoreleasepool {
+        *features = WebGPU::Metal::toAPIAllocated(protect(WebGPU::Metal::fromAPI(adapter))->features());
+    }
+}
+
+void wgpuSupportedFeaturesFreeMembers(WGPUSupportedFeatures features)
+{
+    @autoreleasepool {
+        WebGPU::Metal::freeAllocated(features);
+    }
 }
 
 // The C API reports a device that could not be created with WGPURequestDeviceStatus_Error and no

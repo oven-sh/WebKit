@@ -35,10 +35,12 @@
 #include <WebCore/GlyphBuffer.h>
 #include <WebCore/Gradient.h>
 #include <WebCore/GraphicsContext.h>
+#include <WebCore/MeshGradient.h>
 #include <WebCore/NativeImage.h>
 #include <WebCore/SharedBuffer.h>
 #include <WebCore/SystemImage.h>
 #include <WebCore/TextFlags.h>
+#include <wtf/ArgumentCoder.h>
 #include <wtf/Box.h>
 #include <wtf/TypeCasts.h>
 
@@ -508,6 +510,12 @@ public:
     {
     }
 
+    DrawFilteredImageBuffer(const FloatRect& sourceImageRect, Ref<Filter>&& filter)
+        : m_sourceImageRect(sourceImageRect)
+        , m_filter(WTF::move(filter))
+    {
+    }
+
     ImageBuffer* sourceImage() const { return m_sourceImage.get(); }
     FloatRect sourceImageRect() const { return m_sourceImageRect; }
     Filter& filter() const { return m_filter; }
@@ -516,6 +524,8 @@ public:
     void dump(TextStream&, OptionSet<AsTextFlag>) const;
 
 private:
+    friend struct IPC::ArgumentCoder<DrawFilteredImageBuffer>;
+
     const RefPtr<ImageBuffer> m_sourceImage;
     FloatRect m_sourceImageRect;
     const Ref<Filter> m_filter;
@@ -534,8 +544,33 @@ public:
     {
     }
 
+    DrawGlyphs(uint64_t fontIndex, Vector<GlyphBufferGlyph>&& glyphs, Vector<FloatSize>&& sizes, const FloatPoint& localAnchor, FontSmoothingMode smoothingMode)
+        : m_font(fontIndex)
+        , m_glyphs(WTF::move(glyphs))
+        , m_advances(makeGlyphBufferAdvances(sizes))
+        , m_localAnchor(localAnchor)
+        , m_fontSmoothingMode(smoothingMode)
+    {
+    }
+
+    const FontBase& font() const LIFETIME_BOUND
+    {
+        RELEASE_ASSERT(isResolved());
+        return std::get<Ref<const FontBase>>(m_font);
+    }
+    void setFont(Ref<const FontBase>&& font) { m_font = WTF::move(font); }
+    void setFontIndex(uint64_t fontIndex) { m_font = fontIndex; }
+    bool isResolved() const { return std::holds_alternative<Ref<const FontBase>>(m_font); }
+
+    uint64_t fontIndex() const
+    {
+        RELEASE_ASSERT(!isResolved());
+        return std::get<uint64_t>(m_font);
+    }
+
     const Vector<GlyphBufferGlyph>& glyphs() const LIFETIME_BOUND { return m_glyphs; }
     const Vector<GlyphBufferAdvance>& advances() const LIFETIME_BOUND { return m_advances; }
+    Vector<FloatSize> sizes() const { return WebCore::sizes(m_advances); }
     size_t length() const { return m_glyphs.size(); }
 
     FloatPoint localAnchor() const { return m_localAnchor; }
@@ -545,7 +580,7 @@ public:
     void dump(TextStream&, OptionSet<AsTextFlag>) const;
 
 private:
-    Ref<const FontBase> m_font;
+    Variant<Ref<const FontBase>, uint64_t> m_font;
     Vector<GlyphBufferGlyph> m_glyphs;
     Vector<GlyphBufferAdvance> m_advances;
     FloatPoint m_localAnchor;
@@ -599,15 +634,24 @@ public:
     static constexpr char name[] = "draw-display-list";
 
     WEBCORE_EXPORT DrawDisplayList(Ref<const DisplayList>&&);
+    WEBCORE_EXPORT explicit DrawDisplayList(uint64_t displayListIndex);
     WEBCORE_EXPORT ~DrawDisplayList();
 
-    WEBCORE_EXPORT Ref<const DisplayList> LEGACY_NODELETE displayList() const;
+    NODELETE WEBCORE_EXPORT Ref<const DisplayList> displayList() const;
+    WEBCORE_EXPORT void setDisplayList(Ref<const DisplayList>&&);
+    bool isResolved() const { return std::holds_alternative<Ref<const DisplayList>>(m_displayList); }
+
+    uint64_t displayListIndex() const
+    {
+        RELEASE_ASSERT(!isResolved());
+        return std::get<uint64_t>(m_displayList);
+    }
 
     void apply(GraphicsContext&, ControlFactory&) const;
     void dump(TextStream&, OptionSet<AsTextFlag>) const;
 
 private:
-    Ref<const DisplayList> m_displayList;
+    Variant<Ref<const DisplayList>, uint64_t> m_displayList;
 };
 
 class DrawPlaceholder {
@@ -618,7 +662,7 @@ public:
     WEBCORE_EXPORT ~DrawPlaceholder();
 
     WEBCORE_EXPORT void apply(GraphicsContext&) const;
-    void LEGACY_NODELETE dump(TextStream&, OptionSet<AsTextFlag>) const;
+    NODELETE void dump(TextStream&, OptionSet<AsTextFlag>) const;
 
 private:
     using FunctionHolder = Box<Function<void(GraphicsContext&)>>;
@@ -881,6 +925,27 @@ private:
     StrokeStyle m_style;
 };
 
+class DrawMeshGradient {
+public:
+    static constexpr char name[] = "draw-mesh-gradient";
+
+    DrawMeshGradient(MeshGradient& gradient, const FloatRect& destination)
+        : m_gradient(gradient)
+        , m_destination(destination)
+    {
+    }
+
+    const MeshGradient& gradient() const { return m_gradient; }
+    const FloatRect& destination() const LIFETIME_BOUND { return m_destination; }
+
+    WEBCORE_EXPORT void apply(GraphicsContext&) const;
+    void dump(TextStream&, OptionSet<AsTextFlag>) const;
+
+private:
+    const Ref<MeshGradient> m_gradient;
+    FloatRect m_destination;
+};
+
 class DrawDotsForDocumentMarker {
 public:
     static constexpr char name[] = "draw-dots-for-document-marker";
@@ -1069,6 +1134,8 @@ public:
     void dump(TextStream&, OptionSet<AsTextFlag>) const;
 
 private:
+    friend struct IPC::ArgumentCoder<FillRectWithGradient>;
+
     FloatRect m_rect;
     const Ref<Gradient> m_gradient;
 };
@@ -1089,6 +1156,8 @@ public:
     void dump(TextStream&, OptionSet<AsTextFlag>) const;
 
 private:
+    friend struct IPC::ArgumentCoder<FillRectWithGradientAndSpaceTransform>;
+
     FloatRect m_rect;
     const Ref<Gradient> m_gradient;
     AffineTransform m_gradientSpaceTransform;

@@ -52,7 +52,7 @@ RenderButton::RenderButton(HTMLFormControlElement& element, Style::ComputedStyle
 
 RenderButton::~RenderButton() = default;
 
-HTMLFormControlElement& LEGACY_NODELETE RenderButton::formControlElement() const
+NODELETE HTMLFormControlElement& RenderButton::formControlElement() const
 {
     return downcast<HTMLFormControlElement>(nodeForNonAnonymous());
 }
@@ -78,7 +78,6 @@ void RenderButton::setInnerRenderer(RenderBlock& innerRenderer)
             inlineFormattingContextRoot->inlineLayout()->rootStyleWillChange(*inlineFormattingContextRoot, inlineFormattingContextRoot->style());
         if (auto* lineLayout = LayoutIntegration::LineLayout::containing(*m_inner))
             lineLayout->styleWillChange(*m_inner, m_inner->style(), Style::DifferenceResult::Layout);
-        LayoutIntegration::LineLayout::updateStyle(*m_inner);
     }
 }
 

@@ -37,13 +37,14 @@ class FloatRect;
 class FloatSize;
 class GraphicsContext;
 class IntRect;
+class IntSize;
 class LocalFrame;
 class Node;
 
 class PrintContext : public FrameDestructionObserver, public RefCounted<PrintContext> {
     WTF_MAKE_TZONE_ALLOCATED_EXPORT(PrintContext, WEBCORE_EXPORT);
 public:
-    WEBCORE_EXPORT static Ref<PrintContext> LEGACY_NODELETE create(LocalFrame*);
+    NODELETE WEBCORE_EXPORT static Ref<PrintContext> create(LocalFrame*);
     ~PrintContext();
 
     // FrameDestructionObserver.
@@ -86,6 +87,9 @@ public:
     WEBCORE_EXPORT static bool isPageBoxVisible(LocalFrame*, int pageNumber);
     WEBCORE_EXPORT static String pageSizeAndMarginsInPixels(LocalFrame*, int pageNumber, int width, int height, int marginTop, int marginRight, int marginBottom, int marginLeft);
     WEBCORE_EXPORT static int numberOfPages(LocalFrame&, const FloatSize& pageSizeInPixels);
+    // Used by print reftests.
+    WEBCORE_EXPORT static IntSize cssPageBoxesSize(LocalFrame&, const IntSize& defaultPageBoxSize, const IntBoxExtent& defaultPageMargin);
+    WEBCORE_EXPORT static void spoolAllCSSPageBoxes(LocalFrame&, GraphicsContext&, const IntSize& defaultPageBoxSize, const IntBoxExtent& defaultPageMargin);
     // Draw all pages into a graphics context with lines which mean page boundaries.
     // The height of the graphics context should be
     // (pageSizeInPixels.height() + 1) * number-of-pages - 1
@@ -106,6 +110,8 @@ private:
 
     void computePageRectsWithPageSizeInternal(const FloatSize& pageSizeInPixels, bool allowHorizontalTiling);
     bool beginAndComputePageRectsWithPageSize(LocalFrame&, const FloatSize& pageSizeInPixels);
+    struct PageBox;
+    std::optional<PageBox> beginWithPageBoxSize(const IntSize& defaultPageBoxSize, const IntBoxExtent& defaultPageMargin);
     void collectLinkedDestinations(Document&);
     void outputLinkedDestinations(GraphicsContext&, Document&, const IntRect& pageRect);
 

@@ -258,7 +258,10 @@ bool PageClientImpl::isViewInWindow()
 
 bool PageClientImpl::isVisuallyIdle()
 {
-    return WindowServerConnection::singleton().applicationWindowModificationsHaveStopped() || !isActiveViewVisible();
+    // The window server's window modification notifications are a form of occlusion detection, so they
+    // should be ignored when the client has disabled it.
+    bool applicationWindowModificationsHaveStopped = m_impl && m_impl->windowOcclusionDetectionEnabled() && WindowServerConnection::singleton().applicationWindowModificationsHaveStopped();
+    return applicationWindowModificationsHaveStopped || !isActiveViewVisible();
 }
 
 void PageClientImpl::viewWillMoveToAnotherWindow()
@@ -760,7 +763,7 @@ String PageClientImpl::dismissCorrectionPanelSoon(WebCore::ReasonForDismissingAl
 #endif
 }
 
-static inline NSCorrectionResponse LEGACY_NODELETE toCorrectionResponse(AutocorrectionResponse response)
+NODELETE static inline NSCorrectionResponse toCorrectionResponse(AutocorrectionResponse response)
 {
     switch (response) {
     case WebCore::AutocorrectionResponse::Reverted:

@@ -64,7 +64,7 @@ static uint64_t nextLogIdentifier()
 }
 
 #if !RELEASE_LOG_DISABLED
-static WTFLogChannel& LEGACY_NODELETE logChannel()
+NODELETE static WTFLogChannel& logChannel()
 {
     return LogMedia;
 }
@@ -93,7 +93,7 @@ static PlatformMediaSession::RemoteControlCommandType platformCommandForMediaSes
     return map.get(action, PlatformMediaSession::RemoteControlCommandType::NoCommand);
 }
 
-static std::optional<std::pair<PlatformMediaSession::RemoteControlCommandType, PlatformMediaSession::RemoteCommandArgument>> LEGACY_NODELETE platformCommandForMediaSessionAction(const MediaSessionActionDetails& actionDetails)
+NODELETE static std::optional<std::pair<PlatformMediaSession::RemoteControlCommandType, PlatformMediaSession::RemoteCommandArgument>> platformCommandForMediaSessionAction(const MediaSessionActionDetails& actionDetails)
 {
     PlatformMediaSession::RemoteControlCommandType command = PlatformMediaSession::RemoteControlCommandType::NoCommand;
     PlatformMediaSession::RemoteCommandArgument argument;
@@ -258,8 +258,7 @@ ExceptionOr<void> MediaSession::setPlaylist(ScriptExecutionContext& context, Vec
 {
     ALWAYS_LOG(LOGIDENTIFIER);
 
-    Vector<Ref<MediaMetadata>> resolvedPlaylist;
-    resolvedPlaylist.reserveInitialCapacity(playlist.size());
+    Vector<Ref<MediaMetadata>> resolvedPlaylist(ReserveCapacityTag { }, playlist.size());
 
     for (auto& entry : playlist) {
         auto resolvedEntry = MediaMetadata::create(context, { entry->metadata() });
@@ -605,8 +604,7 @@ static Vector<URL> fallbackArtwork(DocumentLoader* loader)
     if (!size)
         return { };
 
-    Vector<URL> images;
-    images.reserveInitialCapacity(size);
+    Vector<URL> images(ReserveCapacityTag { }, size);
     for (const auto& icon : loader->linkIcons()) {
         if (icon.url.protocolIsInHTTPFamily())
             images.append(icon.url);

@@ -200,7 +200,7 @@ Ref<WebProcessPool> WebProcessPool::create(API::ProcessPoolConfiguration& config
     return adoptRef(*new WebProcessPool(configuration));
 }
 
-static Vector<WeakRef<WebProcessPool>>& LEGACY_NODELETE processPools()
+NODELETE static Vector<WeakRef<WebProcessPool>>& processPools()
 {
     static NeverDestroyed<Vector<WeakRef<WebProcessPool>>> processPools;
     return processPools;
@@ -213,7 +213,7 @@ Vector<Ref<WebProcessPool>> WebProcessPool::allProcessPools()
     });
 }
 
-static HashSet<String, ASCIICaseInsensitiveHash>& LEGACY_NODELETE globalURLSchemesWithCustomProtocolHandlers()
+NODELETE static HashSet<String, ASCIICaseInsensitiveHash>& globalURLSchemesWithCustomProtocolHandlers()
 {
     static NeverDestroyed<HashSet<String, ASCIICaseInsensitiveHash>> set;
     return set;
@@ -501,7 +501,7 @@ void WebProcessPool::setApplicationIsActive(bool isActive)
     m_webProcessCache->setApplicationIsActive(isActive);
 }
 
-static bool LEGACY_NODELETE shouldReportNetworkOrGPUProcessCrash(ProcessTerminationReason reason)
+NODELETE static bool shouldReportNetworkOrGPUProcessCrash(ProcessTerminationReason reason)
 {
     switch (reason) {
     case ProcessTerminationReason::ExceededMemoryLimit:
@@ -1650,8 +1650,12 @@ Ref<WebPageProxy> WebProcessPool::createWebPage(PageClient& pageClient, Ref<API:
         m_webProcessCache->updateCapacity(*this);
 
 #if ENABLE(GPU_PROCESS)
+#if PLATFORM(COCOA)
+    ensureGPUProcess();
+#else
     if (pagePreference->useGPUProcessForDOMRenderingEnabled())
         ensureGPUProcess();
+#endif
 
     if (RefPtr gpuProcess = GPUProcessProxy::singletonIfCreated()) {
         gpuProcess->updatePreferences(*process);
@@ -1835,7 +1839,7 @@ void WebProcessPool::countWebPagesInAllProcessesForTesting(CompletionHandler<voi
     class ResultAggregator : public RefCounted<ResultAggregator> {
     public:
         static Ref<ResultAggregator> create(CompletionHandler<void(size_t)>&& completionHandler) { return adoptRef(*new ResultAggregator(WTF::move(completionHandler))); }
-        void LEGACY_NODELETE addWebPageCount(unsigned count) { m_count += count; }
+        NODELETE void addWebPageCount(unsigned count) { m_count += count; }
         ~ResultAggregator()
         {
             m_completionHandler(m_count);
@@ -2414,6 +2418,26 @@ void WebProcessPool::removeProcessFromOriginCacheSet(WebProcessProxy& process)
     });
 }
 
+static void enableIPCSendOnCallingThread()
+{
+    IPC::Connection::enableSendOnCallingThread();
+
+    for (Ref process : WebProcessProxy::allProcesses()) {
+        if (process->canSendMessage())
+            process->send(Messages::AuxiliaryProcess::EnableIPCSendOnCallingThread(), 0);
+    }
+    for (Ref networkProcess : NetworkProcessProxy::allNetworkProcesses())
+        networkProcess->send(Messages::AuxiliaryProcess::EnableIPCSendOnCallingThread(), 0);
+#if ENABLE(GPU_PROCESS)
+    if (RefPtr gpuProcess = GPUProcessProxy::singletonIfCreated())
+        gpuProcess->send(Messages::AuxiliaryProcess::EnableIPCSendOnCallingThread(), 0);
+#endif
+#if ENABLE(MODEL_PROCESS)
+    if (RefPtr modelProcess = ModelProcessProxy::singletonIfCreated())
+        modelProcess->send(Messages::AuxiliaryProcess::EnableIPCSendOnCallingThread(), 0);
+#endif
+}
+
 bool WebProcessPool::hasAnyProcessPoolUsedSiteIsolation()
 {
     return s_hasAnyProcessPoolUsedSiteIsolation;
@@ -2443,7 +2467,11 @@ void WebProcessPool::processForNavigation(WebPageProxy& page, WebFrameProxy& fra
     bool siteIsolationEnabled = protect(page.preferences())->siteIsolationEnabled();
     if (siteIsolationEnabled && !m_hasUsedSiteIsolation) {
         m_hasUsedSiteIsolation = true;
-        s_hasAnyProcessPoolUsedSiteIsolation = true;
+        if (!s_hasAnyProcessPoolUsedSiteIsolation) {
+            s_hasAnyProcessPoolUsedSiteIsolation = true;
+            // FIXME(rdar://188839922): Enable this always, not only when Site Isolation is enabled.
+            enableIPCSendOnCallingThread();
+        }
         m_webProcessCache->updateCapacity(*this);
     }
 
@@ -3039,7 +3067,7 @@ void WebProcessPool::isJITDisabledInAllRemoteWorkerProcesses(CompletionHandler<v
                 m_callback(m_isJITDisabled);
         }
 
-        void LEGACY_NODELETE setJITEnabled(bool isJITEnabled) { m_isJITDisabled &= !isJITEnabled; }
+        NODELETE void setJITEnabled(bool isJITEnabled) { m_isJITDisabled &= !isJITEnabled; }
 
     private:
         explicit JITDisabledCallbackAggregator(CompletionHandler<void(bool)>&& callback)

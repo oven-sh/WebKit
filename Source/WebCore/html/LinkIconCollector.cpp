@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2025 Apple Inc. All rights reserved.
+ * Copyright (C) 2016-2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -38,7 +38,7 @@ namespace WebCore {
 
 constexpr unsigned defaultTouchIconWidth = 60;
 
-static unsigned LEGACY_NODELETE iconSize(const LinkIcon& icon)
+NODELETE static unsigned iconSize(const LinkIcon& icon)
 {
     if (icon.size)
         return *icon.size;
@@ -49,7 +49,7 @@ static unsigned LEGACY_NODELETE iconSize(const LinkIcon& icon)
     return 0;
 }
 
-static int LEGACY_NODELETE compareIcons(const LinkIcon& a, const LinkIcon& b)
+NODELETE static int compareIcons(const LinkIcon& a, const LinkIcon& b)
 {
     // Apple Touch icons always come first.
     if (a.type == LinkIconType::Favicon && b.type != LinkIconType::Favicon)
@@ -113,7 +113,9 @@ auto LinkIconCollector::iconsOfTypes(OptionSet<LinkIconType> iconTypes) -> Vecto
         icons.append({ url, iconType, linkElement->type(), iconSize, WTF::move(attributes) });
     }
 
-    std::ranges::sort(icons, [](auto& a, auto& b) {
+    // Among equally appropriate icons, the last declared wins (https://html.spec.whatwg.org/multipage/links.html#rel-icon).
+    icons.reverse();
+    std::ranges::stable_sort(icons, [](auto& a, auto& b) {
         return compareIcons(a, b) < 0;
     });
 

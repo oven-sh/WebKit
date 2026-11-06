@@ -234,6 +234,9 @@ void NetworkProcess::removeNetworkConnectionToWebProcess(NetworkConnectionToWebP
     m_webProcessConnections.remove(connection.webProcessIdentifier());
     m_allowedFirstPartiesForCookies.remove(connection.webProcessIdentifier());
     m_allowedWebPageProxyIdentifiers.remove(connection.webProcessIdentifier());
+    m_authorizedDownloads.removeIf([webProcessIdentifier = connection.webProcessIdentifier()] (auto& entry) {
+        return entry.value == webProcessIdentifier;
+    });
     auto completionHandlers = m_webProcessConnectionCloseHandlers.take(connection.webProcessIdentifier());
     for (auto& completionHandler : borrow(completionHandlers))
         completionHandler();
@@ -584,6 +587,25 @@ bool NetworkProcess::allowsWebPageProxyIdentifier(WebCore::ProcessIdentifier pro
     if (iterator == m_allowedWebPageProxyIdentifiers.end())
         return false;
     return iterator->value.contains(*pageID);
+}
+
+void NetworkProcess::authorizeDownloadForWebProcess(WebCore::ProcessIdentifier processIdentifier, DownloadID downloadID, CompletionHandler<void()>&& completionHandler)
+{
+    m_authorizedDownloads.set(downloadID, processIdentifier);
+    completionHandler();
+}
+
+std::optional<WebCore::ProcessIdentifier> NetworkProcess::authorizedProcessForDownload(DownloadID downloadID) const
+{
+    auto iterator = m_authorizedDownloads.find(downloadID);
+    if (iterator == m_authorizedDownloads.end())
+        return std::nullopt;
+    return iterator->value;
+}
+
+void NetworkProcess::removeAuthorizedDownload(DownloadID downloadID)
+{
+    m_authorizedDownloads.remove(downloadID);
 }
 
 #if PLATFORM(COCOA)
@@ -1802,7 +1824,7 @@ void NetworkProcess::setOptInCookiePartitioningEnabled(PAL::SessionID sessionID,
 }
 #endif
 
-void NetworkProcess::preconnectTo(PAL::SessionID sessionID, WebPageProxyIdentifier webPageProxyID, WebCore::PageIdentifier webPageID, WebCore::ResourceRequest&& request, WebCore::StoredCredentialsPolicy storedCredentialsPolicy, std::optional<NavigatingToAppBoundDomain> isNavigatingToAppBoundDomain, uint64_t requiredCookiesVersion)
+void NetworkProcess::preconnectTo(PAL::SessionID sessionID, WebPageProxyIdentifier webPageProxyID, WebCore::PageIdentifier webPageID, WebCore::ResourceRequest&& request, WebCore::StoredCredentialsPolicy storedCredentialsPolicy, std::optional<NavigatingToAppBoundDomain> isNavigatingToAppBoundDomain, OptionSet<WebCore::AdvancedPrivacyProtections> advancedPrivacyProtections, uint64_t requiredCookiesVersion)
 {
     auto url = request.url();
     auto userAgent = request.httpUserAgent();
@@ -1827,6 +1849,7 @@ void NetworkProcess::preconnectTo(PAL::SessionID sessionID, WebPageProxyIdentifi
     parameters.storedCredentialsPolicy = storedCredentialsPolicy;
     parameters.shouldPreconnectOnly = PreconnectOnly::Yes;
     parameters.requiredCookiesVersion = requiredCookiesVersion;
+    parameters.advancedPrivacyProtections = advancedPrivacyProtections;
 
     NetworkLoadParameters parametersForAdditionalPreconnect = parameters;
 
@@ -1848,6 +1871,7 @@ void NetworkProcess::preconnectTo(PAL::SessionID sessionID, WebPageProxyIdentifi
     UNUSED_PARAM(url);
     UNUSED_PARAM(userAgent);
     UNUSED_PARAM(storedCredentialsPolicy);
+    UNUSED_PARAM(advancedPrivacyProtections);
 #endif
 }
 
@@ -2730,6 +2754,15 @@ void NetworkProcess::runningOrTerminatingServiceWorkerCountForTesting(PAL::Sessi
         return completionHandler(0);
 
     completionHandler(session->ensureSWServer().runningOrTerminatingCount());
+}
+
+void NetworkProcess::loadersAwaitingWebProcessTransferCountForTesting(PAL::SessionID sessionID, CompletionHandler<void(uint64_t)>&& completionHandler) const
+{
+    CheckedPtr session = networkSession(sessionID);
+    if (!session)
+        return completionHandler(0);
+
+    completionHandler(session->loadersAwaitingWebProcessTransferCount());
 }
 
 void NetworkProcess::isStorageSuspendedForTesting(PAL::SessionID sessionID, CompletionHandler<void(bool)>&& completionHandler)

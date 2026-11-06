@@ -448,8 +448,7 @@ void WebExtensionContext::saveBackgroundPageListenersToStorage()
     RELEASE_LOG_DEBUG(Extensions, "Saving %u background content event listeners to storage", m_backgroundContentEventListeners.size());
 
     ASSERT(m_state);
-    Vector<int> listeners;
-    listeners.reserveInitialCapacity(m_backgroundContentEventListeners.size());
+    Vector<int> listeners(ReserveCapacityTag { }, m_backgroundContentEventListeners.size());
     for (auto& entry : m_backgroundContentEventListeners)
         listeners.append(static_cast<int>(entry.key));
     std::ranges::sort(listeners);
@@ -494,6 +493,11 @@ void WebExtensionContext::performTasksAfterBackgroundContentLoads()
 
     saveBackgroundPageListenersToStorage();
     scheduleBackgroundContentToUnload();
+}
+
+bool WebExtensionContext::isBackgroundPage(WebPageProxyIdentifier pageProxyIdentifier) const
+{
+    return m_backgroundWebView && webkitWebViewGetPage(m_backgroundWebView.get()).identifier() == pageProxyIdentifier;
 }
 
 bool WebExtensionContext::decidePolicyForNavigationAction(WebKitWebView *webView, WebKitNavigationPolicyDecision *navigationPolicy)
@@ -650,12 +654,6 @@ Vector<WebExtensionContext::PageIdentifierTuple> WebExtensionContext::tabPageIde
 void WebExtensionContext::cookiesDidChange(API::HTTPCookieStore&)
 {
     notImplemented();
-}
-
-bool WebExtensionContext::isBackgroundPage(WebPageProxyIdentifier) const
-{
-    notImplemented();
-    return false;
 }
 
 String WebExtensionContext::declarativeNetRequestContentRuleListFilePath()

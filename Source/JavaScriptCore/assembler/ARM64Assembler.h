@@ -294,6 +294,7 @@ public:
 
     static Condition invert(Condition cond)
     {
+        ASSERT(cond < ConditionAL);
         return static_cast<Condition>(cond ^ 1);
     }
 
@@ -1597,7 +1598,7 @@ public:
 
     ALWAYS_INLINE void ins(FPRegisterID vd, RegisterID rn, SIMDLane lane, uint32_t laneIndex)
     {
-        insn(simdGeneral(0, 1, encodeLaneAndIndex(lane, laneIndex), 0b0011, rn, vd));
+        insn(simdGeneral(0, 1, encodeLaneAndIndex(lane, laneIndex), 0b0011, xOrZr(rn), vd));
     }
 
     ALWAYS_INLINE void ins(FPRegisterID vd, FPRegisterID vn, SIMDLane lane, uint32_t laneIndex)
@@ -1615,13 +1616,15 @@ public:
     ALWAYS_INLINE void umov(RegisterID rd, FPRegisterID vn, SIMDLane lane, uint32_t laneIndex)
     {
         ASSERT(scalarTypeIsIntegral(lane));
-        insn(simdGeneral(0, simdQBit(lane), encodeLaneAndIndex(lane, laneIndex), 0b0111, vn, rd));
+        insn(simdGeneral(0, simdQBit(lane), encodeLaneAndIndex(lane, laneIndex), 0b0111, vn, xOrZr(rd)));
     }
 
     ALWAYS_INLINE void smov(RegisterID rd, FPRegisterID vn, SIMDLane lane, uint32_t laneIndex)
     {
         ASSERT(scalarTypeIsIntegral(lane));
-        insn(simdGeneral(0, simdQBit(lane), encodeLaneAndIndex(lane, laneIndex), 0b0101, vn, rd));
+        ASSERT(elementByteSize(lane) < 8);
+        // Q selects an X destination, which SMOV requires for 32-bit lanes.
+        insn(simdGeneral(0, elementByteSize(lane) == 4, encodeLaneAndIndex(lane, laneIndex), 0b0101, vn, xOrZr(rd)));
     }
 
     ALWAYS_INLINE void dupElement(FPRegisterID vd, FPRegisterID vn, SIMDLane lane, uint32_t laneIndex)
@@ -1634,7 +1637,7 @@ public:
     {
         // Take element from gpr and put it in each lane in vd
         ASSERT(scalarTypeIsIntegral(lane));
-        insn(simdGeneral(0, 1, encodeLaneAndIndex(lane, 0), 0b0001, rn, vd));
+        insn(simdGeneral(0, 1, encodeLaneAndIndex(lane, 0), 0b0001, xOrZr(rn), vd));
     }
 
     ALWAYS_INLINE void fcmeq(FPRegisterID vd, FPRegisterID vn, FPRegisterID vm, SIMDLane lane)
@@ -2110,7 +2113,7 @@ public:
     ALWAYS_INLINE void sshr_vi(FPRegisterID vd, FPRegisterID vn, uint8_t shift, SIMDLane lane)
     {
         uint8_t maxShift = elementByteSize(lane) * 8;
-        ASSERT(shift < maxShift && shift < 64 && shift);
+        ASSERT(shift && shift <= maxShift);
         shift = maxShift - shift;
         unsigned immh = elementByteSize(lane) | ((shift & 0b0111000) >> 3);
         unsigned immb = shift & 0b0111;
@@ -2151,7 +2154,7 @@ public:
         constexpr uint8_t destBitSize = narrowedLane == SIMDLane::i8x16 ? 8 : (narrowedLane == SIMDLane::i16x8 ? 16 : 32);
         constexpr uint8_t srcBitSize = destBitSize * 2;
 
-        ASSERT(shift > 0 && shift <= srcBitSize);
+        ASSERT(shift > 0 && shift <= destBitSize);
 
         // immh:immb = (source_element_bits) - shift
         unsigned immhb = srcBitSize - shift;
@@ -2250,9 +2253,14 @@ public:
         insn(0b00001110000000000000000000000000 | (Q << 30) | (vm << 16) | (len << 13) | (vn << 5) | vd);
     }
 
+    static constexpr bool isConsecutiveVectorRegisterPair(FPRegisterID first, FPRegisterID second)
+    {
+        return static_cast<unsigned>(second) == ((static_cast<unsigned>(first) + 1) & 31);
+    }
+
     ALWAYS_INLINE void tbl2(FPRegisterID vd, FPRegisterID vn, FPRegisterID vn2, FPRegisterID vm)
     {
-        RELEASE_ASSERT(vn2, vn2 == vn + 1);
+        RELEASE_ASSERT(isConsecutiveVectorRegisterPair(vn, vn2));
         const unsigned len = 1;
         const unsigned Q = 1;
         insn(0b00001110000000000000000000000000 | (Q << 30) | (vm << 16) | (len << 13) | (vn << 5) | vd);
@@ -2280,7 +2288,7 @@ public:
             RELEASE_ASSERT_NOT_REACHED();
         }
 
-        insn(0b01001101010000001100000000000000 | (sizeEncoding << 10) | (rn << 5) | vt);
+        insn(0b01001101010000001100000000000000 | (sizeEncoding << 10) | (xOrSp(rn) << 5) | vt);
     }
 
     template<int datasize>
@@ -2328,7 +2336,7 @@ public:
             RELEASE_ASSERT_NOT_REACHED();
         }
 
-        insn(0b00001101010000000000000000000000 | (Q << 30) | (opcode << 14) | (S << 12) | (size << 10) | (rn << 5) | vt);
+        insn(0b00001101010000000000000000000000 | (Q << 30) | (opcode << 14) | (S << 12) | (size << 10) | (xOrSp(rn) << 5) | vt);
     }
 
     template<int datasize>
@@ -2376,7 +2384,7 @@ public:
             RELEASE_ASSERT_NOT_REACHED();
         }
 
-        insn(0b0'0'0011010'0'0'000000000000000000000 | (Q << 30) | (opcode << 14) | (S << 12) | (size << 10) | (rn << 5) | vt);
+        insn(0b0'0'0011010'0'0'000000000000000000000 | (Q << 30) | (opcode << 14) | (S << 12) | (size << 10) | (xOrSp(rn) << 5) | vt);
     }
 
     template<int datasize>
@@ -2673,6 +2681,7 @@ public:
     void stxr(RegisterID result, RegisterID src, RegisterID dst)
     {
         CHECK_MEMOPSIZE();
+        ASSERT(result != src && result != dst);
         insn(exoticStore(MEMOPSIZE, ExoticStoreFence_None, result, src, dst));
     }
 
@@ -2687,6 +2696,7 @@ public:
     void stlxr(RegisterID result, RegisterID src, RegisterID dst)
     {
         CHECK_MEMOPSIZE();
+        ASSERT(result != src && result != dst);
         insn(exoticStore(MEMOPSIZE, ExoticStoreFence_Release, result, src, dst));
     }
     
@@ -3400,12 +3410,12 @@ public:
 
     ALWAYS_INLINE void fmov_top(FPRegisterID vd, RegisterID rn)
     {
-        insn(floatingPointIntegerConversions(Datasize_64, Datasize_64, FPIntConvOp_FMOV_XtoQ_top, rn, vd));
+        insn(floatingPointIntegerConversions(Datasize_64, Datasize_128, FPIntConvOp_FMOV_XtoQ_top, rn, vd));
     }
 
     ALWAYS_INLINE void fmov_top(RegisterID rd, FPRegisterID vn)
     {
-        insn(floatingPointIntegerConversions(Datasize_64, Datasize_64, FPIntConvOp_FMOV_QtoX_top, vn, rd));
+        insn(floatingPointIntegerConversions(Datasize_64, Datasize_128, FPIntConvOp_FMOV_QtoX_top, vn, rd));
     }
 
     template<int datasize>
@@ -3684,18 +3694,15 @@ public:
 
     static int exoticAtomicLoadStore(MemOpSize size, ExoticAtomicLoadStoreOp op, ExoticLoadFence loadFence, ExoticStoreFence storeFence, RegisterID rs, RegisterID rt, RegisterID rn)
     {
-        ASSERT((rs & 0b11111) == rs);
-        ASSERT((rn & 0b11111) == rn);
-        ASSERT((rt & 0b11111) == rt);
-        return 0b00111000'00100000'00000000'00000000 | size << 30 | loadFence << 23 | storeFence << 22 | rs << 16 | op << 10 | rn << 5 | rt;
+        // A zero register destination drops the acquire half of the ordering.
+        ASSERT(loadFence == ExoticLoadFence_None || !isZr(rt));
+        return 0b00111000'00100000'00000000'00000000 | size << 30 | loadFence << 23 | storeFence << 22 | xOrZr(rs) << 16 | op << 10 | xOrSp(rn) << 5 | xOrZr(rt);
     }
 
     static int exoticAtomicCAS(MemOpSize size, ExoticLoadFence loadFence, ExoticStoreFence storeFence, RegisterID rs, RegisterID rt, RegisterID rn)
     {
-        ASSERT((rs & 0b11111) == rs);
-        ASSERT((rn & 0b11111) == rn);
-        ASSERT((rt & 0b11111) == rt);
-        return 0b00001000'10100000'01111100'00000000 | size << 30 | storeFence << 22 | rs << 16 | loadFence << 15 | rn << 5 | rt;
+        ASSERT(loadFence == ExoticLoadFence_None || !isZr(rs));
+        return 0b00001000'10100000'01111100'00000000 | size << 30 | loadFence << 22 | xOrZr(rs) << 16 | storeFence << 15 | xOrSp(rn) << 5 | xOrZr(rt);
     }
 
     template<int datasize>
@@ -3971,16 +3978,12 @@ public:
 
     static void replaceWithJump(void* where, void* to)
     {
-        intptr_t offset = branchDisplacement(where, to);
-
 #if ENABLE(JUMP_ISLANDS)
-        if (!isInt<26>(offset)) {
+        if (!canEmitJump(where, to))
             to = ExecutableAllocator::singleton().getJumpIslandToUsingJITMemcpy(where, to);
-            offset = branchDisplacement(where, to);
-        }
 #endif
 
-        int insn = unconditionalBranchImmediate(false, offset);
+        int insn = unconditionalBranchImmediate(false, branchDisplacement(where, to));
         RELEASE_ASSERT(roundUpToMultipleOf<instructionSize>(where) == where);
         performJITMemcpy<jitMemcpyRepatchAtomic>(where, &insn, sizeof(int));
         cacheFlush(where, sizeof(int));
@@ -4072,9 +4075,16 @@ public:
     template<RepatchingInfo repatch = jitMemcpyRepatchFlush>
     static void relinkJump(void* from, void* to)
     {
+        // A patchable conditional branch may be rewritten as two instructions, and no write order keeps it correct for a thread running it midway.
+        static_assert(!(*repatch).contains(RepatchingFlag::Atomic));
+        bool mayRewritePreviousInstruction = disassembleNop(from);
         relinkJumpOrCall<BranchType_JMP, noFlush(repatch)>(reinterpret_cast<int*>(from), reinterpret_cast<const int*>(from), to);
-        if constexpr ((*repatch).contains(RepatchingFlag::Flush))
-            flushJump(from);
+        if constexpr ((*repatch).contains(RepatchingFlag::Flush)) {
+            if (mayRewritePreviousInstruction)
+                cacheFlush(reinterpret_cast<int*>(from) - 1, 2 * sizeof(int));
+            else
+                flushJump(from);
+        }
     }
 
     template<RepatchingInfo repatch = jitMemcpyRepatchFlush>
@@ -4088,7 +4098,10 @@ public:
     template<RepatchingInfo repatch = jitMemcpyRepatchFlush>
     static void relinkTailCall(void* from, void* to)
     {
-        relinkJump<repatch>(from, to);
+        ASSERT(!disassembleNop(from));
+        linkJumpOrCall<BranchType_JMP, noFlush(repatch)>(reinterpret_cast<int*>(from), reinterpret_cast<const int*>(from), to);
+        if constexpr ((*repatch).contains(RepatchingFlag::Flush))
+            flushTailCall(from);
     }
 
     static void flushJump(void* from)
@@ -4109,7 +4122,7 @@ public:
 #if ENABLE(JUMP_ISLANDS)
     static void* prepareForAtomicRelinkJumpConcurrently(void* from, void* to)
     {
-        if (isInt<26>(branchDisplacement(from, to)))
+        if (canEmitJump(from, to))
             return to;
 
         return ExecutableAllocator::singleton().getJumpIslandToConcurrently(from, to);
@@ -4228,7 +4241,7 @@ public:
                     relative += delta;
                 }
 
-                if (isInt<14>(relative))
+                if (isInt<16>(relative))
                     return LinkJumpTestBitDirect;
 
                 return LinkJumpTestBit;
@@ -4294,7 +4307,7 @@ public:
         return (std::bit_cast<intptr_t>(to) - std::bit_cast<intptr_t>(from)) >> 2;
     }
 
-    static ALWAYS_INLINE bool canEmitJump(void* from, void* to)
+    static ALWAYS_INLINE bool canEmitJump(const void* from, const void* to)
     {
         return isInt<26>(branchDisplacement(from, to));
     }
@@ -4352,19 +4365,17 @@ protected:
         ASSERT(!(reinterpret_cast<intptr_t>(to) & 3));
         assertIsNotTagged(to);
         assertIsNotTagged(fromInstruction);
-        intptr_t offset = branchDisplacement(fromInstruction, to);
 
 #if ENABLE(JUMP_ISLANDS)
-        if (!isInt<26>(offset)) {
+        if (!canEmitJump(fromInstruction, to)) {
             if constexpr (!(*repatch).contains(RepatchingFlag::Memcpy))
                 to = ExecutableAllocator::singleton().getJumpIslandToUsingJITMemcpy(std::bit_cast<void*>(fromInstruction), to);
             else
                 to = ExecutableAllocator::singleton().getJumpIslandToUsingMemcpy(std::bit_cast<void*>(fromInstruction), to);
-            offset = branchDisplacement(fromInstruction, to);
         }
 #endif
 
-        int insn = unconditionalBranchImmediate(isCall, offset);
+        int insn = unconditionalBranchImmediate(isCall, branchDisplacement(fromInstruction, to));
         RELEASE_ASSERT(roundUpToMultipleOf<instructionSize>(from) == from);
         machineCodeCopy<repatch>(from, &insn, sizeof(int));
     }
@@ -4468,9 +4479,6 @@ protected:
                 ASSERT_UNUSED(op01, !op01);
                 ASSERT(type == BranchType_JMP);
 
-                if (imm19 == 8)
-                    condition = invert(condition);
-
                 return linkConditionalBranch<IndirectBranch, repatch>(condition, from - 1, fromInstruction - 1, to);
             }
 
@@ -4480,9 +4488,6 @@ protected:
             bool isCompareAndBranchImmediate = disassembleCompareAndBranchImmediate(from - 1, opSize, op, imm19, rt);
 
             if (isCompareAndBranchImmediate) {
-                if (imm19 == 8)
-                    op = !op;
-
                 return linkCompareAndBranch<IndirectBranch, repatch>(op ? ConditionNE : ConditionEQ, opSize == Datasize_64, rt, from - 1, fromInstruction - 1, to);
             }
 
@@ -4491,9 +4496,6 @@ protected:
             bool isTestAndBranchImmediate = disassembleTestAndBranchImmediate(from - 1, op, bitNumber, imm14, rt);
 
             if (isTestAndBranchImmediate) {
-                if (imm14 == 8)
-                    op = !op;
-
                 return linkTestAndBranch<IndirectBranch, repatch>(op ? ConditionNE : ConditionEQ, bitNumber, rt, from - 1, fromInstruction - 1, to);
             }
         }
@@ -4556,7 +4558,7 @@ protected:
         op = static_cast<AddOp>((insn >> 30) & 1);
         S = static_cast<SetFlags>((insn >> 29) & 1);
         shift = (insn >> 22) & 3;
-        imm12 = (insn >> 10) & 0x3ff;
+        imm12 = (insn >> 10) & 0xfff;
         rn = disassembleXOrSp((insn >> 5) & 0x1f);
         rd = disassembleXOrZrOrSp(S, insn & 0x1f);
         return (insn & 0x1f000000) == 0x11000000;
@@ -5087,22 +5089,25 @@ protected:
     
     static int exoticLoad(MemOpSize size, ExoticLoadFence fence, ExoticLoadAtomic atomic, RegisterID dst, RegisterID src)
     {
-        return 0x085f7c00 | size << 30 | fence << 15 | atomic << 23 | src << 5 | dst;
+        return 0x085f7c00 | size << 30 | fence << 15 | atomic << 23 | xOrSp(src) << 5 | xOrZr(dst);
     }
     
     static int storeRelease(MemOpSize size, RegisterID src, RegisterID dst)
     {
-        return 0x089ffc00 | size << 30 | dst << 5 | src;
+        return 0x089ffc00 | size << 30 | xOrSp(dst) << 5 | xOrZr(src);
     }
     
     static int exoticStore(MemOpSize size, ExoticStoreFence fence, RegisterID result, RegisterID src, RegisterID dst)
     {
-        return 0x08007c00 | size << 30 | result << 16 | fence << 15 | dst << 5 | src;
+        // Overlapping the status register with the data or base register is CONSTRAINED UNPREDICTABLE.
+        ASSERT(result != src);
+        ASSERT(result != dst);
+        return 0x08007c00 | size << 30 | xOrZr(result) << 16 | fence << 15 | xOrSp(dst) << 5 | xOrZr(src);
     }
 
     static int fjcvtzsInsn(FPRegisterID dn, RegisterID rd)
     {
-        return 0x1e7e0000 | (dn << 5) | rd;
+        return 0x1e7e0000 | (dn << 5) | xOrZr(rd);
     }
     
     static int simdGeneral(bool scalar, bool Q, int imm5, int imm4, int rn, int rd)

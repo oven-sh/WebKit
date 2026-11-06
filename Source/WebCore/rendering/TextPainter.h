@@ -34,7 +34,6 @@ namespace WebCore {
 
 class FilterOperations;
 class FontCascade;
-class RenderCombineText;
 class TextRun;
 class Text;
 
@@ -56,14 +55,14 @@ static inline AffineTransform rotation(const FloatRect& boxRect, RotationDirecti
 
 class TextPainter {
 public:
-    TextPainter(GraphicsContext&, const FontCascade&, const Style::ComputedStyle&, const TextPaintStyle&, const Style::TextShadows&, const Style::AppleColorFilter&, const AtomString& emphasisMark, float emphasisMarkOffset, const RenderCombineText*);
+    TextPainter(GraphicsContext&, const FontCascade&, const Style::ComputedStyle&, const TextPaintStyle&, const Style::TextShadows&, const Style::AppleColorFilter&, const AtomString& emphasisMark, float emphasisMarkOffset, bool isCombinedText);
 
     void paintRange(const TextRun&, const FloatRect& boxRect, const FloatPoint& textOrigin, unsigned start, unsigned end);
 
     void setGlyphDisplayListIfNeeded(const InlineDisplay::Box&, const PaintInfo&, const Style::ComputedStyle&, const TextRun&);
 
     static bool shouldUseGlyphDisplayList(const PaintInfo&, const Style::ComputedStyle&);
-    WEBCORE_EXPORT static void LEGACY_NODELETE setForceUseGlyphDisplayListForTesting(bool);
+    NODELETE WEBCORE_EXPORT static void setForceUseGlyphDisplayListForTesting(bool);
     WEBCORE_EXPORT static String cachedGlyphDisplayListsForTextNodeAsText(Text&, OptionSet<DisplayList::AsTextFlag>);
     WEBCORE_EXPORT static void clearGlyphDisplayListCacheForTesting();
 
@@ -82,9 +81,9 @@ private:
     AtomString m_emphasisMark;
     const Style::TextShadows& m_shadow;
     const Style::AppleColorFilter& m_shadowColorFilter;
-    const CheckedPtr<const RenderCombineText> m_combinedText;
     RefPtr<const DisplayList::DisplayList> m_glyphDisplayList { nullptr };
     float m_emphasisMarkOffset { 0 };
+    bool m_isCombinedText { false };
 };
 
 class ShadowApplier {

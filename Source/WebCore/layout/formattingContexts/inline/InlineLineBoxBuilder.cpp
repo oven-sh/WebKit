@@ -114,12 +114,21 @@ TextUtil::FallbackFontList LineBoxBuilder::collectFallbackFonts(const InlineLeve
 {
     ASSERT(parentInlineBox.isInlineBox());
     auto& inlineTextBox = downcast<InlineTextBox>(run.layoutBox());
-    if (inlineTextBox.canUseSimplifiedContentMeasuring()) {
-        // Simplified text measuring works with primary font only.
-        return { };
+    auto fallbackFonts = [&] -> TextUtil::FallbackFontList {
+        if (inlineTextBox.canUseSimplifiedContentMeasuring()) {
+            // Simplified text measuring works with primary font only.
+            return { };
+        }
+        auto& text = run.textContent();
+        return TextUtil::fallbackFontsForText(StringView(inlineTextBox.content()).substring(text.start, text.length), style, text.needsHyphen ? TextUtil::IncludeHyphen::Yes : TextUtil::IncludeHyphen::No);
+    }();
+    if (inlineTextBox.inheritsStyleFromDisplayContentsParent()) {
+        // Text in a display: contents element can have a font of its own. Like glyphs from fallback fonts, it only stretches
+        // a parent inline box with line-height: normal (css-inline-3).
+        auto& parentStyle = isFirstFormattedLine() ? parentInlineBox.layoutBox().firstLineStyle() : parentInlineBox.layoutBox().style();
+        if (Ref primaryFont = style.fontCascade().primaryFont(); primaryFont.ptr() != &parentStyle.fontCascade().primaryFont())
+            fallbackFonts.add(primaryFont.get());
     }
-    auto& text = run.textContent();
-    auto fallbackFonts = TextUtil::fallbackFontsForText(StringView(inlineTextBox.content()).substring(text.start, text.length), style, text.needsHyphen ? TextUtil::IncludeHyphen::Yes : TextUtil::IncludeHyphen::No);
     if (fallbackFonts.isEmptyIgnoringNullReferences())
         return { };
 
@@ -133,7 +142,7 @@ TextUtil::FallbackFontList LineBoxBuilder::collectFallbackFonts(const InlineLeve
     return fallbackFonts;
 }
 
-static InlineLevelBox::AscentAndDescent LEGACY_NODELETE primaryFontMetricsForInlineBox(const InlineLevelBox& inlineBox, FontBaseline fontBaseline = FontBaseline::Alphabetic)
+NODELETE static InlineLevelBox::AscentAndDescent primaryFontMetricsForInlineBox(const InlineLevelBox& inlineBox, FontBaseline fontBaseline = FontBaseline::Alphabetic)
 {
     ASSERT(inlineBox.isInlineBox());
     auto& fontMetrics = inlineBox.primarymetricsOfPrimaryFont();
@@ -142,7 +151,7 @@ static InlineLevelBox::AscentAndDescent LEGACY_NODELETE primaryFontMetricsForInl
     return { ascent, descent };
 }
 
-static bool LEGACY_NODELETE isLineFitEdgeLeading(const InlineLevelBox& inlineBox)
+NODELETE static bool isLineFitEdgeLeading(const InlineLevelBox& inlineBox)
 {
     ASSERT(inlineBox.isInlineBox());
     return inlineBox.lineFitEdge().isLeading();
@@ -396,7 +405,7 @@ void LineBoxBuilder::setVerticalPropertiesForInlineLevelBox(const LineBox& lineB
             inlineLevelBox.setLogicalHeight(marginBoxHeight);
             return;
         }
-        if (auto ascent = layoutBox.baselineForIntegration()) {
+        if (auto ascent = listMarkerBoxGeometry.baseline()) {
             if (layoutBox.isListMarkerImage())
                 return setVerticalProperties({ *ascent, marginBoxHeight - *ascent });
             // Special list marker handling. Text driven list markers behave as text when it comes to layout bounds/ascent descent.
@@ -422,7 +431,7 @@ void LineBoxBuilder::setVerticalPropertiesForInlineLevelBox(const LineBox& lineB
         auto marginBoxHeight = inlineLevelBoxGeometry.marginBoxHeight();
         auto ascent = [&]() -> InlineLayoutUnit {
             if (layoutState().shouldNotSynthesizeInlineBlockBaseline())
-                return downcast<ElementBox>(layoutBox).baselineForIntegration().value_or(marginBoxHeight);
+                return inlineLevelBoxGeometry.baseline().value_or(marginBoxHeight);
 
             if (layoutBox.isInlineBlockBox()) {
                 // The baseline of an 'inline-block' is the baseline of its last line box in the normal flow, unless it has either no in-flow line boxes or
@@ -762,7 +771,7 @@ void LineBoxBuilder::adjustIdeographicBaselineIfApplicable(LineBox& lineBox)
                 // Integration codepath sets ideographic baseline by default for non-horizontal content.
                 continue;
             }
-            auto isInlineBlockWithNonSyntheticBaseline = layoutBox.isInlineBlockBox() && downcast<ElementBox>(layoutBox).baselineForIntegration().has_value();
+            auto isInlineBlockWithNonSyntheticBaseline = layoutBox.isInlineBlockBox() && formattingContext().geometryForBox(layoutBox).baseline().has_value();
             if (isInlineBlockWithNonSyntheticBaseline && !layoutBox.writingMode().isHorizontal())
                 continue;
         }

@@ -29,6 +29,7 @@
 #include "CSSImageValue.h"
 #include "CachedImage.h"
 #include "ContainerNodeInlines.h"
+#include "DefaultSizing.h"
 #include "DeprecatedCSSOMPrimitiveValue.h"
 #include "GraphicsContext.h"
 #include "ImageBuffer.h"
@@ -129,6 +130,14 @@ URL CachedImage::url() const
     return m_url;
 }
 
+RefPtr<SVGSVGElement> CachedImage::svgImageRootElement(const RenderElement& renderer) const
+{
+    RefPtr image = dynamicDowncast<SVGImage>(protect(m_cachedImage)->image());
+    if (!image)
+        return nullptr;
+    return image->rootElement(descriptorForRenderer(renderer, ImageDrawDescriptor { DefaultSizing { }.resolve(image->naturalDimensions()) }));
+}
+
 LegacyRenderSVGResourceContainer* CachedImage::uncheckedRenderSVGResource(TreeScope& treeScope, const AtomString& fragment) const
 {
     CheckedPtr renderSVGResource = ReferencedSVGResources::referencedRenderResource(treeScope, fragment);
@@ -151,11 +160,7 @@ LegacyRenderSVGResourceContainer* CachedImage::uncheckedRenderSVGResource(const 
         return uncheckedRenderSVGResource(protect(renderer->treeScopeForSVGReferences()), fragmentIdentifier);
     }
 
-    RefPtr image = dynamicDowncast<SVGImage>(protect(m_cachedImage)->image());
-    if (!image)
-        return nullptr;
-
-    auto rootElement = image->rootElement();
+    RefPtr rootElement = svgImageRootElement(*renderer);
     if (!rootElement)
         return nullptr;
 
@@ -188,11 +193,7 @@ RenderSVGResourceContainer* CachedImage::renderSVGResource(const RenderElement* 
         return nullptr;
     }
 
-    RefPtr image = dynamicDowncast<SVGImage>(protect(m_cachedImage)->image());
-    if (!image)
-        return nullptr;
-
-    auto rootElement = image->rootElement();
+    RefPtr rootElement = svgImageRootElement(*renderer);
     if (!rootElement)
         return nullptr;
 
@@ -382,7 +383,7 @@ static std::optional<FloatSize> fixedContentSize(const WebCore::Image& image, We
     return FloatSize { *naturalDimensions.width, *naturalDimensions.height };
 }
 
-static ConcreteObjectSize LEGACY_NODELETE viewportSize(const RenderElement& renderer, ConcreteObjectSize concreteObjectSize)
+NODELETE static ConcreteObjectSize viewportSize(const RenderElement& renderer, ConcreteObjectSize concreteObjectSize)
 {
     auto zoom = renderer.style().usedZoom();
     return ConcreteObjectSize::fixed(concreteObjectSize.size() * concreteObjectSize.zoom() / zoom, zoom);
@@ -546,10 +547,22 @@ bool CachedImage::isAnimated() const
     return m_cachedImage ? protect(m_cachedImage)->isAnimated() : false;
 }
 
+void CachedImage::startAnimation()
+{
+    if (m_cachedImage)
+        protect(m_cachedImage)->startAnimation();
+}
+
 void CachedImage::stopAnimation()
 {
     if (m_cachedImage)
         protect(m_cachedImage)->stopAnimation();
+}
+
+void CachedImage::clearAnimationOverride()
+{
+    if (m_cachedImage)
+        protect(m_cachedImage)->clearAnimationOverride();
 }
 
 void CachedImage::resetAnimation()

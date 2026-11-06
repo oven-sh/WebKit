@@ -80,6 +80,7 @@
 #include "StyleComputedStyle+InitialInlines.h"
 #include "TextPainter.h"
 #include <wtf/NativePromise.h>
+#include <wtf/ScopedLambda.h>
 #include <wtf/StackStats.h>
 #include <wtf/TypeCasts.h>
 #include <wtf/TZoneMallocInlines.h>
@@ -311,6 +312,13 @@ bool RenderImage::imageRepresentsNothing() const
     if (!imageResource().errorOccurred() || !m_altText.isEmpty())
         return false;
     return document().inNoQuirksMode() || (style().logicalWidth().isAuto() && style().logicalHeight().isAuto());
+}
+
+void RenderImage::forEachStyleImage(NOESCAPE const ScopedLambda<void(Style::Image&)>& function)
+{
+    RenderReplaced::forEachStyleImage(function);
+    if (RefPtr image = imageResource().styleImage())
+        function(*image);
 }
 
 void RenderImage::imageChanged(WrappedImagePtr newImage, const IntRect* rect)
@@ -653,7 +661,7 @@ void RenderImage::paintIncompleteImageOutline(PaintInfo& paintInfo, LayoutPoint 
     context.drawRect(snapRectToDevicePixels(LayoutRect({ paintOffset.x() + borderWidths.left() + padding.left(), paintOffset.y() + borderWidths.top() + padding.top() }, contentSize), document().deviceScaleFactor()), borderWidth);
 }
 
-static bool LEGACY_NODELETE isDeferredImage(Element* element)
+NODELETE static bool isDeferredImage(Element* element)
 {
     auto* image = dynamicDowncast<HTMLImageElement>(element);
     return image && image->isDeferred();
@@ -944,9 +952,12 @@ ImageDrawResult RenderImage::paintIntoRect(PaintInfo& paintInfo, const FloatRect
 #if ENABLE(AX_CUSTOM_COLOR_MODE)
     auto invertContent = [&] {
         if (styleImage->drawsSVGImage())
-            return AXCustomColorModeController::shouldInvertSVGImage(*this, *styleImage);
+            return AXCustomColorModeController::shouldInvertSVGImage(*this, *styleImage) ? InvertContent::Yes : InvertContent::No;
 
-        return AXCustomColorModeController::shouldInvertContentImage(*this, rect.size());
+        if (AXCustomColorModeController::shouldForceInvertBitmapImage(*this, *styleImage))
+            return InvertContent::Forced;
+
+        return AXCustomColorModeController::shouldInvertContentImage(*this, rect.size()) ? InvertContent::Yes : InvertContent::No;
     };
 #endif
 
@@ -959,7 +970,7 @@ ImageDrawResult RenderImage::paintIntoRect(PaintInfo& paintInfo, const FloatRect
         settings().imageSubsamplingEnabled() ? AllowImageSubsampling::Yes : AllowImageSubsampling::No,
         settings().showDebugBorders() ? ShowDebugBackground::Yes : ShowDebugBackground::No,
 #if ENABLE(AX_CUSTOM_COLOR_MODE)
-        invertContent() ? InvertContent::Yes : InvertContent::No,
+        invertContent(),
 #endif
 #if USE(SKIA)
         StrictImageClamping::No,
@@ -1119,7 +1130,7 @@ void RenderImage::layout()
     // https://html.spec.whatwg.org/multipage/images.html#relevant-mutations
     // "If the element allows auto-sizes: ... its concrete object size width changes"
     if (RefPtr imageElement = dynamicDowncast<HTMLImageElement>(element())) {
-        if (imageElement->hasAutoSizes() && imageElement->isLazyLoadable())
+        if (imageElement->allowsAutoSizes())
             imageElement->scheduleAutoSizesResolution();
     }
 }
@@ -1174,7 +1185,7 @@ RenderReplaced* RenderImage::embeddedSVGRoot() const
 {
     if (RefPtr cachedImage = this->cachedImage()) {
         if (RefPtr image = dynamicDowncast<SVGImage>(cachedImage->image()))
-            return image->embeddedSVGRoot();
+            return image->defaultInstanceEmbeddedSVGRoot();
     }
     return nullptr;
 }

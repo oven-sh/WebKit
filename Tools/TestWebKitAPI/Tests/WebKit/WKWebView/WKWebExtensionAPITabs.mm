@@ -629,6 +629,37 @@ TEST(WKWebExtensionAPITabs, DuplicateWithOptions)
     [manager run];
 }
 
+TEST(WKWebExtensionAPITabs, OptionalPropertiesOmitted)
+{
+    auto *backgroundScript = Util::constructScript(@[
+        @"const allWindows = await browser.windows.getAll({ populate: true })",
+        @"const firstTab = allWindows[0].tabs[0]",
+        @"const secondTab = allWindows[0].tabs[1]",
+
+        @"const queriedWithEmptyObject = await browser.tabs.query({ })",
+        @"const queriedWithoutArguments = await browser.tabs.query()",
+        @"browser.test.assertEq(queriedWithoutArguments.length, queriedWithEmptyObject.length, 'query() should match query({ })')",
+
+        @"await browser.tabs.update(secondTab.id, { openerTabId: firstTab.id })",
+
+        @"const emptyTab = await browser.tabs.update(secondTab.id, { })",
+        @"browser.test.assertEq(emptyTab.openerTabId, firstTab.id, 'update(tabId, { }) should keep the openerTabId')",
+
+        @"const pinnedTab = await browser.tabs.update(secondTab.id, { pinned: true })",
+        @"browser.test.assertEq(pinnedTab.openerTabId, firstTab.id, 'Updating another property should keep the openerTabId')",
+
+        @"const createdTab = await browser.tabs.create()",
+        @"browser.test.assertEq(typeof createdTab.id, 'number', 'create() should open a tab')",
+        @"browser.test.assertEq(createdTab.windowId, firstTab.windowId, 'create() should open the tab in the current window')",
+
+        @"browser.test.notifyPass()"
+    ]);
+
+    auto manager = Util::loadExtension(tabsManifest, @{ @"background.js": backgroundScript });
+
+    [manager runForTimeInterval:5];
+}
+
 TEST(WKWebExtensionAPITabs, Update)
 {
     auto *backgroundScript = Util::constructScript(@[
@@ -2308,6 +2339,60 @@ TEST(WKWebExtensionAPITabs, SendMessage)
     ]);
 
     auto manager = Util::loadExtension(tabsContentScriptManifest, @{ @"background.js": backgroundScript, @"content.js": contentScript });
+
+    RetainPtr urlRequest = server.requestWithLocalhost();
+    [manager.get().context setPermissionStatus:WKWebExtensionContextPermissionStatusGrantedExplicitly forURL:urlRequest.get().URL];
+
+    [manager runUntilTestMessage:@"Load Tab"];
+
+    [manager.get().defaultTab.webView loadRequest:urlRequest.get()];
+
+    [manager run];
+}
+
+TEST(WKWebExtensionAPITabs, SendMessageWithStructuredClone)
+{
+    TestWebKitAPI::HTTPServer server({
+        { "/"_s, { { { "Content-Type"_s, "text/html"_s } }, ""_s } },
+    }, TestWebKitAPI::HTTPServer::Protocol::Http);
+
+    auto *backgroundScript = Util::constructScript(@[
+        @"browser.runtime.onMessage.addListener(async (message, sender, sendResponse) => {",
+        @"  browser.test.assertEq(message, 'Ready')",
+
+        @"  const tabs = await browser.tabs.query({ active: true, currentWindow: true })",
+        @"  const tabId = tabs[0].id",
+
+        @"  const response = await browser.test.assertSafeResolve(() => browser.tabs.sendMessage(tabId, {",
+        @"    map: new Map([[ 'Content-Language', 'en' ]]),",
+        @"    buffer: new Uint8Array([ 1, 2, 3 ]).buffer",
+        @"  }))",
+
+        @"  browser.test.assertTrue(response?.date instanceof Date, 'Reply Date should arrive as a Date')",
+        @"  browser.test.assertEq(response?.date?.getTime(), 1700000000000, 'Reply Date should keep its time')",
+
+        @"  browser.test.notifyPass()",
+        @"})",
+
+        @"browser.test.sendMessage('Load Tab')"
+    ]);
+
+    auto *contentScript = Util::constructScript(@[
+        @"browser.runtime.onMessage.addListener((message, sender, sendResponse) => {",
+        @"  browser.test.assertTrue(message.map instanceof Map, 'Map should arrive as a Map')",
+        @"  browser.test.assertEq(message.map.get('Content-Language'), 'en', 'Map should keep its entries')",
+        @"  browser.test.assertDeepEq(Array.from(new Uint8Array(message.buffer)), [ 1, 2, 3 ], 'ArrayBuffer should keep its bytes')",
+
+        @"  sendResponse({ date: new Date(1700000000000) })",
+        @"})",
+
+        @"browser.runtime.sendMessage('Ready')"
+    ]);
+
+    NSMutableDictionary *manifest = [tabsContentScriptManifest mutableCopy];
+    manifest[@"message_serialization"] = @"structured_clone";
+
+    auto manager = Util::loadExtension(manifest, @{ @"background.js": backgroundScript, @"content.js": contentScript });
 
     RetainPtr urlRequest = server.requestWithLocalhost();
     [manager.get().context setPermissionStatus:WKWebExtensionContextPermissionStatusGrantedExplicitly forURL:urlRequest.get().URL];

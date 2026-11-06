@@ -2129,7 +2129,7 @@ auto UnifiedPDFPlugin::pdfElementTypesForPagePoint(const IntPoint& pointInPDFPag
 
 #pragma mark Events
 
-static bool LEGACY_NODELETE isContextMenuEvent(const auto& event)
+NODELETE static bool isContextMenuEvent(const auto& event)
 {
 #if PLATFORM(MAC)
     return event.menuTypeForEvent();
@@ -3566,7 +3566,7 @@ void UnifiedPDFPlugin::scrollWithDelta(const IntSize& scrollDelta)
 
 #pragma mark -
 
-static NSStringCompareOptions LEGACY_NODELETE compareOptionsForFindOptions(WebCore::FindOptions options)
+NODELETE static NSStringCompareOptions compareOptionsForFindOptions(WebCore::FindOptions options)
 {
     bool searchForward = !options.contains(FindOption::Backwards);
     bool isCaseSensitive = !options.contains(FindOption::CaseInsensitive);
@@ -4901,6 +4901,28 @@ CursorContext UnifiedPDFPlugin::cursorContext(FloatPoint pointInRootView) const
     UNUSED_PARAM(pointInRootView);
 #endif
     return context;
+}
+
+bool UnifiedPDFPlugin::hasSelectableTextAtPoint(FloatPoint pointInRootView) const
+{
+#if HAVE(PDFDOCUMENT_SELECTION_WITH_GRANULARITY)
+    auto [page, pointInPage] = rootViewToPage(pointInRootView);
+    if (!page)
+        return false;
+
+    if (RetainPtr annotation = [page annotationAtPoint:pointInPage]) {
+        if (annotationIsLinkWithDestination(annotation)
+            || annotationIsOfType(annotation, AnnotationType::Text)
+            || (![annotation isReadOnly] && annotationIsWidgetOfType(annotation, WidgetType::Button)))
+            return false;
+    }
+
+    RetainPtr word = selectionAtPoint(pointInPage, page, TextGranularity::WordGranularity);
+    return FloatRect { [word boundsForPage:page] }.contains(pointInPage);
+#else
+    UNUSED_PARAM(pointInRootView);
+    return false;
+#endif
 }
 
 #if PLATFORM(IOS_FAMILY)

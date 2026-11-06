@@ -40,6 +40,7 @@
 #include "HTMLNames.h"
 #include "Icon.h"
 #include "InputTypeNames.h"
+#include "LocalDOMWindow.h"
 #include "LocalFrame.h"
 #include "LocalFrameView.h"
 #include "LocalizedStrings.h"
@@ -49,7 +50,7 @@
 #include "Settings.h"
 #include "ShadowRoot.h"
 #include "UserAgentParts.h"
-#include "UserGestureIndicator.h"
+#include <JavaScriptCore/ConsoleTypes.h>
 #include <wtf/FileHandle.h>
 #include <wtf/FileSystem.h>
 #include <wtf/TZoneMallocInlines.h>
@@ -107,8 +108,7 @@ FormControlState FileInputType::saveFormControlState() const
 
     auto length = Checked<size_t>(m_fileList->files().size()) * Checked<size_t>(2) + Checked<size_t>(1);
 
-    Vector<AtomString> stateVector;
-    stateVector.reserveInitialCapacity(length);
+    Vector<AtomString> stateVector(ReserveCapacityTag { }, length);
     for (auto& file : m_fileList->files()) {
         stateVector.append(AtomString { file->path() });
         stateVector.append(AtomString { file->name() });
@@ -164,8 +164,11 @@ void FileInputType::handleDOMActivateEvent(Event& event)
     if (element()->isDisabledFormControl())
         return;
 
-    if (!UserGestureIndicator::processingUserGesture())
+    RefPtr window = element()->document().window();
+    if (!window || !window->consumeTransientActivation()) {
+        protect(element()->document())->addConsoleMessage(MessageSource::JS, MessageLevel::Warning, "File chooser dialog can only be shown with a user activation."_s);
         return;
+    }
 
     showPicker();
     event.setDefaultHandled();
@@ -248,7 +251,7 @@ void FileInputType::createShadowSubtree()
     disabledStateChanged();
 }
 
-static RefPtr<HTMLInputElement> LEGACY_NODELETE fileSelectorButton(const Element& element)
+NODELETE static RefPtr<HTMLInputElement> fileSelectorButton(const Element& element)
 {
     auto* root = element.userAgentShadowRoot();
     return root ? downcast<HTMLInputElement>(root->firstChild()) : nullptr;
@@ -310,12 +313,7 @@ FileChooserSettings FileInputType::fileChooserSettings() const
 #if ENABLE(MEDIA_CAPTURE)
     settings.mediaCaptureType = element->mediaCaptureType();
 #endif
-
-    // Unlike contentsToRootView(), this crosses remote frame boundaries, in process.
-    if (CheckedPtr renderer = element->renderer()) {
-        if (RefPtr view = element->document().view())
-            settings.elementRectInMainFrameViewCoordinates = enclosingIntRect(view->convertToRootViewAcrossIsolatedFrames(view->contentsToView(FloatRect { renderer->absoluteBoundingBoxRect() })));
-    }
+    settings.elementRectInMainFrameViewCoordinates = element->boundingBoxInMainFrameViewCoordinates();
 
     return settings;
 }

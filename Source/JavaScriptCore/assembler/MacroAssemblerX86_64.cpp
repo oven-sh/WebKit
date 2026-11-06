@@ -513,6 +513,16 @@ CPUFeatureSet MacroAssemblerX86_64::collectCPUFeatures()
             features = features.with(feature);
     };
 
+    bool isTranslated = false;
+#if OS(DARWIN)
+    {
+        uint32_t val = 0;
+        size_t valSize = sizeof(val);
+        // Not WTF::isX86BinaryRunningOnARM(): Rosetta developer builds compile it out but still run translated.
+        int rc = sysctlbyname("sysctl.proc_translated", &val, &valSize, nullptr, 0);
+        isTranslated = rc >= 0 && val;
+    }
+#endif
     bool hasAVX = false;
     {
         CPUID cpuid = getCPUID(0x1);
@@ -538,36 +548,37 @@ CPUFeatureSet MacroAssemblerX86_64::collectCPUFeatures()
         }
 #endif
         add(CPUFeature::AVX, hasAVX);
+        // Rosetta translates F16C even though it does not advertise it, the same as AVX.
+        bool hasF16C = isTranslated || (cpuid[2] & (1 << 29));
+        add(CPUFeature::F16C, hasAVX && hasF16C);
     }
     auto collectLeaf7Features = [&] {
-        if (getCPUID(0x0)[0] < 0x7)
+        if (getCPUID(0x0)[0] < 0x7) {
+            add(CPUFeature::AVX2, isTranslated);
             return;
+        }
         // CPUID leaf 7 sub-leaf 0: BMI1 = EBX[3], AVX2 = EBX[5].
         CPUID cpuid = getCPUID(0x7);
         add(CPUFeature::BMI1, cpuid[1] & (1 << 3));
         // AVX2 is VEX-encoded and therefore also requires the OS to have
         // enabled YMM state; gate it on the AVX result computed above.
-        bool hasAVX2Feature = cpuid[1] & (1 << 5);
+        // Rosetta translates AVX2 even though it does not advertise it.
+        bool hasAVX2Feature = isTranslated || (cpuid[1] & (1 << 5));
         add(CPUFeature::AVX2, hasAVX2Feature && hasAVX);
     };
 #if OS(DARWIN)
-    {
+    if (isTranslated) {
+        // Rosetta reports BMI1 only through CPUID, and only when the process is launched with
+        // ROSETTA_ADVERTISE_AVX=1.
+        collectLeaf7Features();
+    } else {
         uint32_t val = 0;
         size_t valSize = sizeof(val);
-        // Not WTF::isX86BinaryRunningOnARM(): Rosetta developer builds compile it out but still run translated.
-        int rc = sysctlbyname("sysctl.proc_translated", &val, &valSize, nullptr, 0);
-        if (rc >= 0 && val) {
-            // Rosetta translates AVX2 even when it does not advertise it, the same as AVX. It reports
-            // BMI1 only through CPUID, and only when the process is launched with ROSETTA_ADVERTISE_AVX=1.
-            collectLeaf7Features();
-            add(CPUFeature::AVX2, true);
-        } else {
-            rc = sysctlbyname("hw.optional.bmi1", &val, &valSize, nullptr, 0);
-            add(CPUFeature::BMI1, rc >= 0 && val);
+        int rc = sysctlbyname("hw.optional.bmi1", &val, &valSize, nullptr, 0);
+        add(CPUFeature::BMI1, rc >= 0 && val);
 
-            rc = sysctlbyname("hw.optional.avx2_0", &val, &valSize, nullptr, 0);
-            add(CPUFeature::AVX2, rc >= 0 && val);
-        }
+        rc = sysctlbyname("hw.optional.avx2_0", &val, &valSize, nullptr, 0);
+        add(CPUFeature::AVX2, rc >= 0 && val);
     }
 #else
     collectLeaf7Features();

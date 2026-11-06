@@ -39,6 +39,7 @@
 #include "RemoteDisplayListRecorderIdentifier.h"
 #include "RemoteGradientIdentifier.h"
 #include "RemoteGraphicsContextIdentifier.h"
+#include "RemoteMeshGradientIdentifier.h"
 #include "RemotePathImplIdentifier.h"
 #include "RemoteRenderingBackendIdentifier.h"
 #include "RemoteResourceCache.h"
@@ -111,7 +112,7 @@ public:
     virtual ~RemoteRenderingBackend();
     void stopListeningForIPC();
 
-    std::optional<SharedPreferencesForWebProcess> LEGACY_NODELETE sharedPreferencesForWebProcess() const;
+    NODELETE std::optional<SharedPreferencesForWebProcess> sharedPreferencesForWebProcess() const;
 
     RemoteResourceCache& remoteResourceCache() LIFETIME_BOUND { return m_remoteResourceCache; }
     RemoteSharedResourceCache& sharedResourceCache() { return m_sharedResourceCache; }
@@ -171,6 +172,8 @@ private:
     void releasePathImpl(RemotePathImplIdentifier);
     void cacheGradient(Ref<WebCore::Gradient>&&, RemoteGradientIdentifier);
     void releaseGradient(RemoteGradientIdentifier);
+    void cacheMeshGradient(Ref<WebCore::MeshGradient>&&, RemoteMeshGradientIdentifier);
+    void releaseMeshGradient(RemoteMeshGradientIdentifier);
     void cacheFilter(Ref<WebCore::Filter>&&);
     void releaseFilter(WebCore::RenderingResourceIdentifier);
     void cacheFont(const WebCore::FontInternalAttributes&, WebCore::FontPlatformDataAttributes, std::optional<WebCore::RenderingResourceIdentifier>);
@@ -204,7 +207,7 @@ private:
     void createTextDetector(ShapeDetectionIdentifier);
     void releaseTextDetector(ShapeDetectionIdentifier);
 
-    bool LEGACY_NODELETE shouldUseLockdownFontParser() const;
+    NODELETE bool shouldUseLockdownFontParser() const;
 
     void getImageBufferResourceLimitsForTesting(CompletionHandler<void(WebCore::ImageBufferResourceLimits)>&&);
 

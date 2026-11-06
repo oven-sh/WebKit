@@ -234,11 +234,11 @@ private:
     LibWebRTCCodecs();
     void ensureGPUProcessConnectionAndDispatchToThread(Function<void()>&&);
     void ensureGPUProcessConnectionOnMainThreadWithLock() WTF_REQUIRES_LOCK(m_connectionLock);
-    void LEGACY_NODELETE gpuProcessConnectionMayNoLongerBeNeeded();
+    NODELETE void gpuProcessConnectionMayNoLongerBeNeeded();
 
     void failedDecoding(VideoDecoderIdentifier);
     void flushDecoderCompleted(VideoDecoderIdentifier);
-    void completedDecoding(VideoDecoderIdentifier, int64_t timeStamp, int64_t timeStampNs, RemoteVideoFrameProxy::Properties&&);
+    void completedDecoding(IPC::Connection&, VideoDecoderIdentifier, int64_t timeStamp, int64_t timeStampNs, RemoteVideoFrameReference, RemoteVideoFrameProxy::Properties&&);
     // FIXME: Will be removed once RemoteVideoFrameProxy providers are the only ones sending data.
     void completedDecodingCV(VideoDecoderIdentifier, int64_t timeStamp, int64_t timeStampNs, RetainPtr<CVPixelBufferRef>&&);
     void completedEncoding(VideoEncoderIdentifier, std::span<const uint8_t>, const WebCore::GPUVideoEncoderFrameInfo&);
@@ -251,11 +251,11 @@ private:
 
     void clearConnection();
 
-    IPC::Connection* LEGACY_NODELETE encoderConnection(Encoder&) WTF_REQUIRES_LOCK(m_encodersConnectionLock);
+    NODELETE IPC::Connection* encoderConnection(Encoder&) WTF_REQUIRES_LOCK(m_encodersConnectionLock);
     void setEncoderConnection(Encoder&, Ref<IPC::Connection>&&) WTF_REQUIRES_LOCK(m_encodersConnectionLock);
     std::optional<EncoderInitializationData>& encoderInitializationData(Encoder&) WTF_REQUIRES_LOCK(m_encodersConnectionLock);
     void setEncoderInitializationData(Encoder&, EncoderInitializationData&&) WTF_REQUIRES_LOCK(m_encodersConnectionLock);
-    IPC::Connection* LEGACY_NODELETE decoderConnection(Decoder&) WTF_REQUIRES_LOCK(m_connectionLock);
+    NODELETE IPC::Connection* decoderConnection(Decoder&) WTF_REQUIRES_LOCK(m_connectionLock);
     void setDecoderConnection(Decoder&, RefPtr<IPC::Connection>&&) WTF_REQUIRES_LOCK(m_connectionLock);
 
     template<typename Buffer> bool copySharedVideoFrame(LibWebRTCCodecs::Encoder&, IPC::Connection&, Buffer&&);

@@ -332,8 +332,7 @@ void ViewPlatform::toplevelStateChanged(WPEToplevelState previousState, WPETople
 #if ENABLE(DEVELOPER_MODE)
 static Vector<WebKit::WebPlatformTouchPoint> platformTouchPoints(const Vector<WPETouchPoint>& touchPoints)
 {
-    Vector<WebPlatformTouchPoint> points;
-    points.reserveInitialCapacity(touchPoints.size());
+    Vector<WebPlatformTouchPoint> points(ReserveCapacityTag { }, touchPoints.size());
     for (const auto& touchPoint : touchPoints) {
         WebCore::IntPoint position(touchPoint.x, touchPoint.y);
         WebPlatformTouchPoint::State state = WebPlatformTouchPoint::State::Stationary;
@@ -382,8 +381,7 @@ Vector<WebKit::WebPlatformTouchPoint> ViewPlatform::touchPointsForEvent(WPEEvent
         RELEASE_ASSERT_NOT_REACHED();
     };
 
-    Vector<WebPlatformTouchPoint> points;
-    points.reserveInitialCapacity(m_touchEvents.size());
+    Vector<WebPlatformTouchPoint> points(ReserveCapacityTag { }, m_touchEvents.size());
     for (const auto& it : m_touchEvents) {
         auto* currentEvent = it.value.get();
         double x, y;
@@ -535,7 +533,7 @@ void ViewPlatform::handleGesture(WPEEvent* event)
                 dx = dy = 0;
 
             GRefPtr<WPEEvent> simulatedScrollEvent = adoptGRef(wpe_event_scroll_new(
-                m_wpeView.get(), WPE_INPUT_SOURCE_TOUCHSCREEN, 0, static_cast<WPEModifiers>(0), dx, dy, TRUE, FALSE, x, y
+                m_wpeView.get(), WPE_INPUT_SOURCE_TOUCHSCREEN, wpe_event_get_time(event), static_cast<WPEModifiers>(0), dx, dy, TRUE, FALSE, x, y
             ));
             page().handleNativeWheelEvent(WebKit::NativeWebWheelEvent::create(simulatedScrollEvent.get(), phase));
         }

@@ -26,7 +26,7 @@
 #include "config.h"
 #include "SkiaCompositingLayer.h"
 
-#if USE(COORDINATED_GRAPHICS) && USE(SKIA) && !USE(TEXTURE_MAPPER)
+#if USE(COORDINATED_GRAPHICS) && USE(SKIA)
 #include "BitmapTexture.h"
 #include "CoordinatedAnimatedBackingStoreClient.h"
 #include "CoordinatedImageBackingStore.h"
@@ -179,7 +179,12 @@ bool SkiaCompositingLayer::hasPendingBackingStoreTileUpdates() const
 void SkiaCompositingLayer::processPendingTileUpdates()
 {
     if (m_backingStore)
-        m_backingStore->processPendingTileUpdates();
+        m_backingStore->processPendingTileUpdates(SkiaBackingStore::ProcessHiddenTiles::No);
+}
+
+bool SkiaCompositingLayer::processPendingTileUpdatesIncludingPreRendered(const Function<bool()>& shouldStopProcessingTiles)
+{
+    return m_backingStore ? m_backingStore->processPendingTileUpdates(SkiaBackingStore::ProcessHiddenTiles::Yes, shouldStopProcessingTiles) : false;
 }
 
 void SkiaCompositingLayer::setImageBackingStore(CoordinatedImageBackingStore* imageBackingStore)
@@ -1973,4 +1978,4 @@ void SkiaCompositingLayer::recursiveCleanUpAfterPaint()
 
 } // namespace WebCore
 
-#endif // USE(COORDINATED_GRAPHICS) && USE(SKIA) && !USE(TEXTURE_MAPPER)
+#endif // USE(COORDINATED_GRAPHICS) && USE(SKIA)

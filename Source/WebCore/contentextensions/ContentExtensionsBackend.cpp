@@ -137,8 +137,7 @@ auto ContentExtensionsBackend::actionsFromContentRuleList(const ContentExtension
 
     const auto& universalActions = contentExtension.universalActions();
     if (auto totalActionCount = actionLocations.size() + universalActions.size()) {
-        Vector<uint32_t> vector;
-        vector.reserveInitialCapacity(totalActionCount);
+        Vector<uint32_t> vector(ReserveCapacityTag { }, totalActionCount);
         vector.appendContainerWithMapping(actionLocations, [](uint64_t actionLocation) {
             return static_cast<uint32_t>(actionLocation);
         });
@@ -313,8 +312,14 @@ ContentRuleListResults ContentExtensionsBackend::processContentRuleListsForLoad(
                     results.summary.modifyHeadersActions.append(action);
                 }
             }, [&] (const RedirectAction& redirectAction) {
-                if (results.summary.redirected)
-                    return;
+                auto extensionBaseURL = m_contentExtensions.get(contentRuleListIdentifier)->extensionBaseURL();
+
+                // Only the highest priority redirect applies, but same-priority redirects that only remove query parameters compose.
+                if (results.summary.redirected) {
+                    auto& [winningAction, winningBaseURL] = results.summary.redirectActions.first();
+                    if (redirectAction.priority != winningAction.priority || winningBaseURL != extensionBaseURL || !redirectAction.onlyRemovesQueryParameters() || !winningAction.onlyRemovesQueryParameters())
+                        return;
+                }
 
                 if (initiatingDocumentLoader.allowsActiveContentRuleListActionsForURL(contentRuleListIdentifier, url)) {
                     if (results.summary.blockedLoad)
@@ -322,7 +327,7 @@ ContentRuleListResults ContentExtensionsBackend::processContentRuleListsForLoad(
 
                     result.redirected = true;
                     results.summary.redirected = true;
-                    results.summary.redirectActions.append({ redirectAction, m_contentExtensions.get(contentRuleListIdentifier)->extensionBaseURL() });
+                    results.summary.redirectActions.append({ redirectAction, WTF::move(extensionBaseURL) });
                 }
             }, [&] (const ReportIdentifierAction& reportIdentifierAction) {
                 std::optional<String> initiator;

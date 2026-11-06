@@ -94,7 +94,7 @@ namespace WebKit {
 using namespace WebCore;
 
 #if ENABLE(MEDIA_STREAM) && HAVE(AUDIT_TOKEN)
-static bool LEGACY_NODELETE shouldCreateAppleCameraServiceSandboxExtension()
+NODELETE static bool shouldCreateAppleCameraServiceSandboxExtension()
 {
 #if !PLATFORM(MAC) && !PLATFORM(MACCATALYST)
     return false;
@@ -106,13 +106,13 @@ static bool LEGACY_NODELETE shouldCreateAppleCameraServiceSandboxExtension()
 }
 #endif
 
-static WeakPtr<GPUProcessProxy>& LEGACY_NODELETE singleton()
+NODELETE static WeakPtr<GPUProcessProxy>& singleton()
 {
     static NeverDestroyed<WeakPtr<GPUProcessProxy>> singleton;
     return singleton;
 }
 
-static RefPtr<GPUProcessProxy>& LEGACY_NODELETE keptAliveGPUProcessProxy()
+NODELETE static RefPtr<GPUProcessProxy>& keptAliveGPUProcessProxy()
 {
     static MainRunLoopNeverDestroyed<RefPtr<GPUProcessProxy>> keptAliveGPUProcessProxy;
     return keptAliveGPUProcessProxy.get();
@@ -626,9 +626,9 @@ void GPUProcessProxy::webProcessConnectionCountForTesting(CompletionHandler<void
     sendWithAsyncReply(Messages::GPUProcess::WebProcessConnectionCountForTesting(), WTF::move(completionHandler));
 }
 
-void GPUProcessProxy::runDisplayListDataTestsForTesting(CompletionHandler<void(Vector<String>&&)>&& completionHandler)
+void GPUProcessProxy::runDisplayListDataTestsForTesting(Vector<Ref<WebCore::SharedBuffer>>&& webFonts, CompletionHandler<void(std::optional<Vector<String>>&&)>&& completionHandler)
 {
-    sendWithAsyncReply(Messages::GPUProcess::RunDisplayListDataTestsForTesting(), WTF::move(completionHandler));
+    sendWithAsyncReply(Messages::GPUProcess::RunDisplayListDataTestsForTesting(WTF::move(webFonts)), WTF::move(completionHandler));
 }
 
 void GPUProcessProxy::didClose(IPC::Connection&)

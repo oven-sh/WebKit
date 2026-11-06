@@ -44,9 +44,9 @@ class ServiceWorkerInspectorProxy {
     WTF_MAKE_NONCOPYABLE(ServiceWorkerInspectorProxy);
 public:
     explicit ServiceWorkerInspectorProxy(ServiceWorkerThreadProxy&);
-    ~ServiceWorkerInspectorProxy();
+    NODELETE ~ServiceWorkerInspectorProxy();
 
-    void LEGACY_NODELETE serviceWorkerTerminated();
+    NODELETE void serviceWorkerTerminated();
 
     WEBCORE_EXPORT void connectToWorker(Inspector::FrontendChannel&, bool isAutomaticConnection = false, bool immediatelyPause = false);
     WEBCORE_EXPORT void disconnectFromWorker(Inspector::FrontendChannel&);

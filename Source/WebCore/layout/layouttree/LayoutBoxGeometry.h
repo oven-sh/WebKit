@@ -38,7 +38,7 @@ public:
     BoxGeometry(const BoxGeometry&);
     BoxGeometry& operator=(const BoxGeometry&);
     BoxGeometry() = default;
-    ~BoxGeometry();
+    NODELETE ~BoxGeometry();
 
     static LayoutUnit borderBoxTop(const BoxGeometry& box) { return box.top(); }
     static LayoutUnit borderBoxLeft(const BoxGeometry& box) { return box.left(); }
@@ -125,12 +125,16 @@ public:
     LayoutUnit verticalSpaceForScrollbar() const { return m_verticalSpaceForScrollbar; }
     LayoutUnit horizontalSpaceForScrollbar() const { return m_horizontalSpaceForScrollbar; }
 
+    // The baseline position of an atomic inline-level box from the top of its margin box, unless it is synthesized.
+    std::optional<LayoutUnit> baseline() const { return m_baseline; }
+    void setBaseline(std::optional<LayoutUnit> baseline) { m_baseline = baseline; }
+
     bool hasMarginBorderOrPadding() const { return horizontalMarginBorderAndPadding() || verticalMarginBorderAndPadding(); }
 
-    Rect LEGACY_NODELETE marginBox() const;
-    Rect LEGACY_NODELETE borderBox() const;
-    Rect LEGACY_NODELETE paddingBox() const;
-    Rect LEGACY_NODELETE contentBox() const;
+    NODELETE Rect marginBox() const;
+    NODELETE Rect borderBox() const;
+    NODELETE Rect paddingBox() const;
+    NODELETE Rect contentBox() const;
 
 #if ASSERT_ENABLED
     void setHasPrecomputedMarginBefore() { m_hasPrecomputedMarginBefore = true; }
@@ -166,7 +170,7 @@ public:
     void setHorizontalSpaceForScrollbar(LayoutUnit scrollbarWidth) { m_horizontalSpaceForScrollbar = scrollbarWidth; }
     void setSpaceForScrollbar(LayoutSize);
 
-    void LEGACY_NODELETE reset();
+    NODELETE void reset();
 
 private:
     LayoutUnit top() const;
@@ -201,6 +205,8 @@ private:
 
     LayoutUnit m_verticalSpaceForScrollbar;
     LayoutUnit m_horizontalSpaceForScrollbar;
+
+    std::optional<LayoutUnit> m_baseline;
 
 #if ASSERT_ENABLED
     bool m_hasValidTop { false };

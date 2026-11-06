@@ -33,6 +33,7 @@
 #include "Logging.h"
 #include "MessageSenderInlines.h"
 #include "WebExtensionAPINamespace.h"
+#include "WebExtensionAlarmParameters.h"
 #include "WebExtensionConstants.h"
 #include "WebExtensionContextMessages.h"
 #include "WebExtensionContextProxy.h"
@@ -178,7 +179,7 @@ void WebExtensionContextProxy::dispatchAlarmsEvent(const WebExtensionAlarmParame
     // Documentation: https://developer.mozilla.org/docs/Mozilla/Add-ons/WebExtensions/API/alarms/onAlarm
 
     enumerateNamespaceObjects([&](auto& namespaceObject) {
-        namespaceObject.alarms().onAlarm().invokeListenersWithParametersArgument(alarm);
+        protect(protect(namespaceObject.alarms())->onAlarm())->invokeListenersWithParametersArgument(alarm);
     });
 }
 

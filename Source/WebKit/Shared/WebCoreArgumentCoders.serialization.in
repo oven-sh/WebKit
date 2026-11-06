@@ -712,7 +712,7 @@ struct WebCore::ApplicationManifest {
 struct WebCore::RetrieveRecordsOptions {
     WebCore::ResourceRequest request;
     WebCore::CrossOriginEmbedderPolicy crossOriginEmbedderPolicy;
-    WebCore::DocumentIsolationPolicyValue documentIsolationPolicy;
+    WebCore::DocumentIsolationPolicy documentIsolationPolicy;
     Ref<WebCore::SecurityOrigin> sourceOrigin;
     bool ignoreSearch;
     bool ignoreMethod;
@@ -1087,6 +1087,13 @@ header: <WebCore/RectCorners.h>
     WebCore::Color right();
     WebCore::Color bottom();
     WebCore::Color left();
+}
+
+[AdditionalEncoder=StreamConnectionEncoder, CustomHeader] class WebCore::RectEdges<WebCore::FloatPoint> {
+    WebCore::FloatPoint top();
+    WebCore::FloatPoint right();
+    WebCore::FloatPoint bottom();
+    WebCore::FloatPoint left();
 }
 
 [CustomHeader] class WebCore::RectEdges<WebCore::RubberBandingBehavior> {
@@ -2112,6 +2119,21 @@ class WebCore::TransformOperations {
     WebCore::GradientSpreadMethod spreadMethod();
     WebCore::GradientColorStops stops();
     bool isTransient();
+}
+
+header: <WebCore/MeshGradient.h>
+[Nested, AdditionalEncoder=StreamConnectionEncoder] struct WebCore::MeshGradient::Point {
+    WebCore::FloatPoint position;
+    WebCore::Color color;
+    WebCore::RectEdges<WebCore::FloatPoint> controlPoints;
+};
+
+[RefCounted, AdditionalEncoder=StreamConnectionEncoder, CreateUsing=tryCreate] class WebCore::MeshGradient {
+    WebCore::ColorInterpolationMethod colorInterpolationMethod();
+    unsigned rows();
+    unsigned columns();
+    Vector<WebCore::MeshGradient::Point> points();
+    WebCore::Color backgroundColor();
 }
 
 header: <WebCore/Pattern.h>
@@ -3542,7 +3564,8 @@ header: <WebCore/ImageTypes.h>
 [AdditionalEncoder=StreamConnectionEncoder] enum class WebCore::InvertContent : uint8_t {
     FromResource,
     No,
-    Yes
+    Yes,
+    Forced
 };
 #endif
 
@@ -5233,6 +5256,7 @@ header: <WebCore/TextExtractionTypes.h>
     bool hasLineThrough;
     bool isVisuallyClickable;
     bool isDisabled;
+    Vector<std::pair<String, String>> dataAttributeCandidates;
 };
 
 header: <WebCore/TextExtractionTypes.h>
@@ -7155,6 +7179,19 @@ header: <WebCore/TrackInfo.h>
 #endif
 };
 
+header: <WebCore/MediaChannelLayout.h>
+enum class WebCore::MediaChannelLayoutKind : uint8_t {
+    Positional,
+    Discrete,
+    Ambisonic,
+};
+
+header: <WebCore/MediaChannelLayout.h>
+[CustomHeader] struct WebCore::MediaChannelLayout {
+    WebCore::MediaChannelLayoutKind kind;
+    uint32_t mask;
+};
+
 header: <WebCore/TrackInfo.h>
 [CustomHeader] struct WebCore::AudioSpecificInfoData {
     uint32_t rate;
@@ -7164,6 +7201,7 @@ header: <WebCore/TrackInfo.h>
 
     RefPtr<WebCore::SharedBuffer> cookieData;
     std::optional<WebCore::AudioSampleFormat> sampleFormat;
+    std::optional<WebCore::MediaChannelLayout> channelLayout;
 };
 using WebCore::AudioInfoData = std::pair<WebCore::TrackInfoData, WebCore::AudioSpecificInfoData>;
 
@@ -7704,6 +7742,7 @@ webkit_platform_headers: <WebCore/QuirkMatchPattern.h> <WebCore/QuirksData.h> <W
 
 [WebKitPlatform] enum class WebCore::URLEnvironment : uint8_t {
     SmallScreen,
+    Desktop,
     TubularApp,
     LensApp,
     SafariWebApp,
@@ -7720,6 +7759,7 @@ webkit_platform_headers: <WebCore/QuirkMatchPattern.h> <WebCore/QuirksData.h> <W
     String userAgent;
     String chromeCompatibilityVersion;
     Vector<String> cookieNames;
+    String styleSheet;
     String elementSelector;
     String documentSelector;
     Vector<WebCore::QuirkMatchPattern> secondaryURL;

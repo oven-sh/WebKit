@@ -139,6 +139,7 @@ WKRetainPtr<WKMutableDictionaryRef> TestInvocation::createTestSettingsDictionary
     setValue(beginTestMessageBody, "TestIdentifier", m_identifier);
     setValue(beginTestMessageBody, "UseFlexibleViewport", options().useFlexibleViewport());
     setValue(beginTestMessageBody, "DumpPixels", m_dumpPixels);
+    setValue(beginTestMessageBody, "DumpCSSPageBoxes", options().dumpCSSPageBoxes());
     setValue(beginTestMessageBody, "Timeout", static_cast<uint64_t>(m_timeout.milliseconds()));
     setValue(beginTestMessageBody, "additionalSupportedImageTypes", options().additionalSupportedImageTypes().c_str());
     auto allowedHostsValue = adoptWK(WKMutableArrayCreate());
@@ -224,8 +225,12 @@ end:
         WKInspectorClose(WKPageGetInspector(TestController::singleton().mainWebView()->page()));
 #endif // !PLATFORM(IOS_FAMILY)
 
-    if (TestController::singleton().resetStateToConsistentValues(m_options, TestController::ResetStage::AfterTest))
+    if (TestController::singleton().resetStateToConsistentValues(m_options, TestController::ResetStage::AfterTest)) {
+#if PLATFORM(MAC)
+        TestController::singleton().terminateWebContentProcessesIfAXAuthenticationWasDenied();
+#endif
         return;
+    }
 
     // The process is unresponsive, so let's start a new one.
     TestController::singleton().terminateWebContentProcess();
@@ -682,6 +687,11 @@ WKRetainPtr<WKTypeRef> TestInvocation::didReceiveSynchronousMessageFromInjectedB
     if (WKStringIsEqualToUTF8CString(messageName, "InitializeWebProcessAccessibility")) {
         // Initialize accessibility in the web content process by sending the IPC message
         TestController::singleton().initializeWebProcessAccessibility();
+        return nullptr;
+    }
+
+    if (WKStringIsEqualToUTF8CString(messageName, "SetAXAuthenticationDeniedForTesting")) {
+        TestController::singleton().setAXAuthenticationDeniedForTesting(booleanValue(messageBody));
         return nullptr;
     }
 #endif

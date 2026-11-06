@@ -49,7 +49,7 @@ class WEBCORE_EXPORT MediaSessionManagerCocoa
     WTF_MAKE_TZONE_ALLOCATED(MediaSessionManagerCocoa);
 public:
 #if PLATFORM(MAC)
-    static Ref<MediaSessionManagerCocoa> LEGACY_NODELETE create(PageIdentifier);
+    NODELETE static Ref<MediaSessionManagerCocoa> create(PageIdentifier);
 #endif
 
     // NowPlayingManagerClient.
@@ -117,7 +117,7 @@ private:
 
     void possiblyChangeAudioCategory();
 
-#if USE(NOW_PLAYING_ACTIVITY_SUPPRESSION)
+#if PLATFORM(APPLETV)
     static void updateNowPlayingSuppression(const NowPlayingInfo*);
 #endif
 

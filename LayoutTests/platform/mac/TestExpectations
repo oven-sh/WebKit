@@ -135,21 +135,6 @@ webkit.org/b/306558 accessibility/mac/style-range.html [ Failure ]
 http/tests/site-isolation/date-time-picker-in-cross-origin-iframe-001.html [ Pass ]
 http/tests/site-isolation/date-time-picker-in-cross-origin-iframe-002.html [ Pass ]
 
-# Site isolation accessibility tests using the accessibility client API:
-# Skip by default, enable tests that are stable.
-http/tests/site-isolation/accessibility/client [ Skip ]
-http/tests/site-isolation/accessibility/client/simple-iframe.html [ Pass ]
-http/tests/site-isolation/accessibility/client/iframe-bounds.html [ Pass ]
-http/tests/site-isolation/accessibility/client/absolute-position-iframe.html [ Pass ]
-http/tests/site-isolation/accessibility/client/absolute-position-iframe-in-scrolled-page.html [ Pass ]
-http/tests/site-isolation/accessibility/client/absolute-position-scrolled-iframe.html [ Pass ]
-http/tests/site-isolation/accessibility/client/absolute-position-scrolled-iframe-in-scrolled-page.html [ Pass ]
-http/tests/site-isolation/accessibility/client/absolute-position-nested-scrolled-iframes.html [ Pass ]
-http/tests/site-isolation/accessibility/client/walk-up-from-iframe-content.html [ Pass ]
-http/tests/site-isolation/accessibility/client/search-past-remote-frame-immediate-descendants.html [ Pass ]
-http/tests/site-isolation/accessibility/client/search-from-remote-frame-host.html [ Pass ]
-http/tests/site-isolation/accessibility/client/iframe-name-propagates-to-web-area.html [ Pass ]
-
 # Shared-process site isolation accessibility tests using the accessibility client API:
 # Skip by default, enable tests that are stable.
 http/wpt/site-isolation/accessibility [ Skip ]
@@ -875,7 +860,6 @@ webkit.org/b/137589 compositing/hidpi-compositing-vs-non-compositing-check-on-te
 # Underlines' starting and ending positions need to be pixel-snapped
 
 # Tests that fail with the SVG -> OTF font converter, but are lower priority than live-on
-webkit.org/b/140588 svg/W3C-SVG-1.1/fonts-desc-02-t.svg [ Failure ]
 webkit.org/b/140590 svg/custom/svg-fonts-in-text-controls.html [ Failure ]
 webkit.org/b/140589 svg/W3C-SVG-1.1/text-text-06-t.svg [ Failure ]
 webkit.org/b/140589 svg/text/text-text-06-t.svg [ Failure ]
@@ -2015,7 +1999,6 @@ imported/w3c/web-platform-tests/svg/painting/reftests/marker-path-022.svg [ Imag
 imported/w3c/web-platform-tests/svg/painting/reftests/marker-path-023.svg [ ImageOnlyFailure ]
 
 imported/w3c/web-platform-tests/svg/path/distance/pathlength-circle-mutating.svg [ ImageOnlyFailure ]
-imported/w3c/web-platform-tests/svg/painting/svg-percent-stroke-width-viewbox-update.html [ ImageOnlyFailure ]
 
 webkit.org/b/269873 imported/w3c/web-platform-tests/webrtc-extensions/transfer-datachannel-service-worker.https.html [ Pass Failure ]
 

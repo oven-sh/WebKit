@@ -634,8 +634,8 @@ private:
     void linkBlock(BasicBlock*, Vector<BasicBlock*>& possibleTargets);
     void linkBlocks(Vector<BasicBlock*>& unlinkedBlocks, Vector<BasicBlock*>& possibleTargets);
     
-    BytecodeIndex LEGACY_NODELETE nextOpcodeIndex() const { return BytecodeIndex(m_currentIndex.offset() + m_currentInstruction->size()); }
-    BytecodeIndex LEGACY_NODELETE nextCheckpoint() const { return m_currentIndex.withCheckpoint(m_currentIndex.checkpoint() + 1); }
+    NODELETE BytecodeIndex nextOpcodeIndex() const { return BytecodeIndex(m_currentIndex.offset() + m_currentInstruction->size()); }
+    NODELETE BytecodeIndex nextCheckpoint() const { return m_currentIndex.withCheckpoint(m_currentIndex.checkpoint() + 1); }
 
     BytecodeIndex progressToNextCheckpoint()
     {
@@ -899,7 +899,7 @@ private:
         return node;
     }
     
-    ArgumentPosition* LEGACY_NODELETE findArgumentPositionForArgument(int argument)
+    NODELETE ArgumentPosition* findArgumentPositionForArgument(int argument)
     {
         InlineStackEntry* stack = m_inlineStackTop;
         while (stack->m_inlineCallFrame)
@@ -907,7 +907,7 @@ private:
         return stack->m_argumentPositions[argument];
     }
     
-    ArgumentPosition* LEGACY_NODELETE findArgumentPositionForLocal(VirtualRegister operand)
+    NODELETE ArgumentPosition* findArgumentPositionForLocal(VirtualRegister operand)
     {
         for (InlineStackEntry* stack = m_inlineStackTop; ; stack = stack->m_caller) {
             InlineCallFrame* inlineCallFrame = stack->m_inlineCallFrame;
@@ -923,7 +923,7 @@ private:
         return nullptr;
     }
     
-    ArgumentPosition* LEGACY_NODELETE findArgumentPosition(Operand operand)
+    NODELETE ArgumentPosition* findArgumentPosition(Operand operand)
     {
         if (operand.isTmp())
             return nullptr;
@@ -1100,12 +1100,12 @@ private:
         return jsConstant(m_graph.freeze(constantValue));
     }
 
-    InlineCallFrame* LEGACY_NODELETE inlineCallFrame()
+    NODELETE InlineCallFrame* inlineCallFrame()
     {
         return m_inlineStackTop->m_inlineCallFrame;
     }
 
-    bool LEGACY_NODELETE allInlineFramesAreTailCalls()
+    NODELETE bool allInlineFramesAreTailCalls()
     {
         return !inlineCallFrame() || !inlineCallFrame()->getCallerSkippingTailCalls();
     }
@@ -1527,7 +1527,7 @@ private:
         return node;
     }
     
-    void LEGACY_NODELETE noticeArgumentsUse()
+    NODELETE void noticeArgumentsUse()
     {
         // All of the arguments in this function need to be formatted as JSValues because we will
         // load from them in a random-access fashion and we don't want to have to switch on
@@ -1589,7 +1589,7 @@ private:
         CodeBlock* const m_profiledBlock;
         InlineCallFrame* m_inlineCallFrame;
         
-        ScriptExecutable* LEGACY_NODELETE executable() { return m_codeBlock->ownerExecutable(); }
+        NODELETE ScriptExecutable* executable() { return m_codeBlock->ownerExecutable(); }
         
         QueryableExitProfile m_exitProfile;
         
@@ -1649,7 +1649,7 @@ private:
         
         ~InlineStackEntry();
         
-        Operand LEGACY_NODELETE remapOperand(Operand operand) const
+        NODELETE Operand remapOperand(Operand operand) const
         {
             if (!m_inlineCallFrame)
                 return operand;
@@ -6457,7 +6457,7 @@ bool ByteCodeParser::handleIntrinsicGetter(Operand result, SpeculatedType predic
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static void LEGACY_NODELETE blessCallDOMGetter(Node* node)
+NODELETE static void blessCallDOMGetter(Node* node)
 {
     DOMJIT::CallDOMGetterSnippet* snippet = node->callDOMGetterData()->snippet;
     if (snippet && !snippet->effect.mustGenerate())
@@ -7175,7 +7175,7 @@ bool ByteCodeParser::check(const ObjectPropertyCondition& condition)
     return true;
 }
 
-bool LEGACY_NODELETE ByteCodeParser::needsDynamicLookup(ResolveType type, OpcodeID opcode)
+NODELETE bool ByteCodeParser::needsDynamicLookup(ResolveType type, OpcodeID opcode)
 {
     ASSERT(opcode == op_resolve_scope || opcode == op_get_from_scope || opcode == op_put_to_scope);
 
@@ -8367,13 +8367,13 @@ void ByteCodeParser::handlePutPrivateNameById(
     } }
 }
 
-void LEGACY_NODELETE ByteCodeParser::prepareToParseBlock()
+NODELETE void ByteCodeParser::prepareToParseBlock()
 {
     clearCaches();
     ASSERT(m_setLocalQueue.isEmpty());
 }
 
-void LEGACY_NODELETE ByteCodeParser::clearCaches()
+NODELETE void ByteCodeParser::clearCaches()
 {
     m_constants.shrink(0);
 }
@@ -8398,7 +8398,7 @@ void ByteCodeParser::parseGetById(const JSInstruction* currentInstruction, unsig
     handleGetById(bytecode.m_dst, prediction, base, identifier, identifierNumber, getByStatus, type, nextOpcodeIndex());
 }
 
-static uint64_t LEGACY_NODELETE makeDynamicVarOpInfo(unsigned identifierNumber, unsigned getPutInfo)
+NODELETE static uint64_t makeDynamicVarOpInfo(unsigned identifierNumber, unsigned getPutInfo)
 {
     static_assert(sizeof(identifierNumber) == 4,
         "We cannot fit identifierNumber into the high bits of m_opInfo");
@@ -12953,6 +12953,12 @@ void ByteCodeParser::handleIteratorNext(const JSInstruction* currentInstruction,
         return node;
     };
 
+    // The fast paths predict the iterated value from the getValue checkpoint's value profile.
+    auto addIteratedValue = [&](auto&&... args) {
+        SetForScope semanticOrigin(m_currentSemanticOrigin, CodeOrigin(BytecodeIndex(m_currentIndex.offset(), OpIteratorNext::getValue), inlineCallFrame()));
+        return addToGraph(std::forward<decltype(args)>(args)...);
+    };
+
     auto emitFastArrayIteratorNext = [&](IterationKind kind, JSSentinel* sentinelCell) {
         bool hasIterator = sentinelCell != m_vm->fastArraySentinel();
         VirtualRegister sentinelOperand = hasIterator ? bytecode.m_next : bytecode.m_iterator;
@@ -13055,7 +13061,9 @@ void ByteCodeParser::handleIteratorNext(const JSInstruction* currentInstruction,
                 addVarArgChild(iteratedObjectInLoad);
                 addVarArgChild(index);
                 addVarArgChild(nullptr); // Leave room for property storage.
-                Node* element = addToGraph(Node::VarArg, GetByVal, OpInfo(arrayMode.asWord()), OpInfo(prediction));
+                Node* element = kind == IterationKind::Values
+                    ? addIteratedValue(Node::VarArg, GetByVal, OpInfo(arrayMode.asWord()), OpInfo(prediction))
+                    : addToGraph(Node::VarArg, GetByVal, OpInfo(arrayMode.asWord()), OpInfo(prediction));
                 if (kind == IterationKind::Entries) {
                     emitExitOK();
                     addVarArgChild(index);
@@ -13206,10 +13214,10 @@ void ByteCodeParser::handleIteratorNext(const JSInstruction* currentInstruction,
             Node* value = nullptr;
             switch (kind) {
             case IterationKind::Keys:
-                value = addToGraph(MapIteratorKey, OpInfo(BucketOwnerType::Map), OpInfo(prediction), Edge(keyStorage), Edge(keyEntry));
+                value = addIteratedValue(MapIteratorKey, OpInfo(BucketOwnerType::Map), OpInfo(prediction), Edge(keyStorage), Edge(keyEntry));
                 break;
             case IterationKind::Values:
-                value = addToGraph(MapIteratorValue, OpInfo(BucketOwnerType::Map), OpInfo(prediction), Edge(keyStorage), Edge(keyEntry));
+                value = addIteratedValue(MapIteratorValue, OpInfo(BucketOwnerType::Map), OpInfo(prediction), Edge(keyStorage), Edge(keyEntry));
                 break;
             case IterationKind::Entries: {
                 Node* key = addToGraph(MapIteratorKey, OpInfo(BucketOwnerType::Map), OpInfo(SpecBytecodeTop), Edge(keyStorage), Edge(keyEntry));
@@ -13364,7 +13372,7 @@ void ByteCodeParser::handleIteratorNext(const JSInstruction* currentInstruction,
                 unsigned vectorHint = 2;
                 value = addToGraph(Node::VarArg, NewArray, OpInfo(ArrayWithContiguous), OpInfo(vectorHint));
             } else
-                value = addToGraph(MapIteratorKey, OpInfo(BucketOwnerType::Set), OpInfo(prediction), Edge(keyStorage), Edge(keyEntry));
+                value = addIteratedValue(MapIteratorKey, OpInfo(BucketOwnerType::Set), OpInfo(prediction), Edge(keyStorage), Edge(keyEntry));
             Node* falseNode = jsConstant(jsBoolean(false));
 
             // Commit the advanced state after the loads, so a key OSR exit cannot leave

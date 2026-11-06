@@ -249,8 +249,6 @@ Shared/RemoteLayerTree/DynamicContentScalingBifurcatedImageBuffer.mm @nonARC
 Shared/RemoteLayerTree/DynamicContentScalingImageBufferBackend.mm @nonARC
 Shared/RemoteLayerTree/RemoteLayerBackingStore.mm @nonARC
 Shared/RemoteLayerTree/RemoteLayerBackingStoreCollection.mm @nonARC
-Shared/RemoteLayerTree/RemoteLayerWithInProcessRenderingBackingStore.mm @nonARC
-Shared/RemoteLayerTree/RemoteLayerWithRemoteRenderingBackingStore.mm @nonARC
 Shared/RemoteLayerTree/RemoteLayerTreePropertyApplier.mm @nonARC
 Shared/RemoteLayerTree/RemoteLayerTreeCommitBundle.mm @nonARC
 Shared/RemoteLayerTree/RemoteLayerTreeTransaction.mm @nonARC
@@ -522,7 +520,6 @@ UIProcess/Extensions/Cocoa/API/WebExtensionContextAPICookiesCocoa.mm
 UIProcess/Extensions/Cocoa/API/WebExtensionContextAPIDeclarativeNetRequestCocoa.mm
 UIProcess/Extensions/Cocoa/API/WebExtensionContextAPIDevToolsInspectedWindow.mm
 UIProcess/Extensions/Cocoa/API/WebExtensionContextAPIDevToolsPanels.mm
-UIProcess/Extensions/Cocoa/API/WebExtensionContextAPIEventCocoa.mm
 UIProcess/Extensions/Cocoa/API/WebExtensionContextAPIExtensionCocoa.mm
 UIProcess/Extensions/Cocoa/API/WebExtensionContextAPIMenusCocoa.mm
 UIProcess/Extensions/Cocoa/API/WebExtensionContextAPINotificationsCocoa.mm
@@ -680,6 +677,8 @@ UIProcess/Model/PortalPresentationManagerProxy.mm @nonARC
 UIProcess/Model/cocoa/ModelProcessProxyCocoa.mm @nonARC
 
 UIProcess/Network/CustomProtocols/LegacyCustomProtocolManagerProxy.cpp
+
+UIProcess/PhoneNumberPossession/Cocoa/WebPhoneNumberPossessionCoordinatorProxyCocoa.mm
 
 UIProcess/RemoteLayerTree/cocoa/RemoteLayerTreeLayers.mm @nonARC
 
@@ -1058,6 +1057,7 @@ WebPageTestingMessageReceiver.cpp
 WebPasteboardProxyMessageReceiver.cpp @cost:15
 WebPaymentCoordinatorMessageReceiver.cpp
 WebPaymentCoordinatorProxyMessageReceiver.cpp @cost:3
+WebPhoneNumberPossessionCoordinatorProxyMessageReceiver.cpp
 WebProcessMessageReceiver.cpp @cost:9
 WebProcessPoolMessageReceiver.cpp @cost:10
 WebProcessProxyMessageReceiver.cpp @cost:15

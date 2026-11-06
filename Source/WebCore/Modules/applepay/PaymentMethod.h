@@ -38,13 +38,13 @@ struct ApplePayPaymentMethod;
 
 class WEBCORE_EXPORT PaymentMethod {
 public:
-    PaymentMethod();
-    explicit PaymentMethod(RetainPtr<PKPaymentMethod>&&);
+    NODELETE PaymentMethod();
+    NODELETE explicit PaymentMethod(RetainPtr<PKPaymentMethod>&&);
     virtual ~PaymentMethod();
 
     virtual ApplePayPaymentMethod toApplePayPaymentMethod() const;
 
-    PKPaymentMethod *LEGACY_NODELETE pkPaymentMethod() const;
+    NODELETE PKPaymentMethod *pkPaymentMethod() const;
 
 private:
     friend struct IPC::ArgumentCoder<PaymentMethod>;

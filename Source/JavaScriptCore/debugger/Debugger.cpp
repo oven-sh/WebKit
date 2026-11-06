@@ -749,7 +749,7 @@ public:
     {
     }
 
-    void LEGACY_NODELETE operator()(CodeBlock* codeBlock) const
+    NODELETE void operator()(CodeBlock* codeBlock) const
     {
         if (codeBlock->hasDebuggerRequests() && m_debugger == codeBlock->globalObject()->debugger())
             codeBlock->clearDebuggerRequests();
@@ -865,7 +865,7 @@ public:
     {
     }
 
-    void LEGACY_NODELETE operator()(CodeBlock* codeBlock) const
+    NODELETE void operator()(CodeBlock* codeBlock) const
     {
         if (codeBlock->hasDebuggerRequests() && m_globalObject == codeBlock->globalObject())
             codeBlock->clearDebuggerRequests();
@@ -1052,6 +1052,12 @@ Debugger::BlackboxFlags Debugger::blackboxFlagsAtPosition(SourceID sourceID, con
     return relevantBlackboxFlags;
 }
 
+static bool isExecutingBuiltinDefaultClassConstructor(CallFrame* callFrame)
+{
+    CodeBlock* codeBlock = callFrame->codeBlock();
+    return codeBlock && codeBlock->unlinkedCodeBlock()->isBuiltinDefaultClassConstructor();
+}
+
 void Debugger::pauseIfNeeded(JSGlobalObject* globalObject)
 {
     VM& vm = m_vm;
@@ -1072,6 +1078,9 @@ void Debugger::pauseIfNeeded(JSGlobalObject* globalObject)
 
     BlackboxFlags relevantBlackboxFlags = blackboxFlagsAtPosition(sourceID, position);
     if (relevantBlackboxFlags.contains(BlackboxFlag::Ignore))
+        return;
+
+    if (isExecutingBuiltinDefaultClassConstructor(m_currentCallFrame))
         return;
 
     bool afterBlackboxedScript = m_afterBlackboxedScript;
@@ -1254,7 +1263,7 @@ public:
         ASSERT(callFrame->isEmptyTopLevelCallFrameForDebugger());
     }
 
-    CallFrame* LEGACY_NODELETE asCallFrame() { return CallFrame::create(m_values); }
+    NODELETE CallFrame* asCallFrame() { return CallFrame::create(m_values); }
 
 private:
     Register m_values[CallFrame::headerSizeInRegisters + /* thisValue */ 1] { };

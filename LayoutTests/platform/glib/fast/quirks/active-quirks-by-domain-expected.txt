@@ -6,6 +6,12 @@ https://amazon.com.attacker.com/
     (none)
 https://www.notamazon.com/
     (none)
+https://youtube.com.attacker.com/
+    (none)
+https://www.notyoutube.com/
+    (none)
+https://www.notgoogle.com/
+    (none)
 https://www.365scores.com/
     (none)
 https://actesting.org/
@@ -45,8 +51,10 @@ https://tieba.baidu.com/
 https://www.notbaidu.com/
     (none)
 https://www.bbc.co.uk/
+    NeedsDarkAppearanceWithoutColorSchemeQuirk
     ReturnNullPictureInPictureElementDuringFullscreenChangeQuirk
 https://www.bbc.com/
+    NeedsDarkAppearanceWithoutColorSchemeQuirk
     ReturnNullPictureInPictureElementDuringFullscreenChangeQuirk
 https://codepen.io/
     ShouldEnableSpeakerSelectionPermissionsPolicyQuirk
@@ -132,58 +140,85 @@ https://www.forbes.com/
 https://gizmodo.com/
     (none)
 https://play.geforcenow.com/
-    NeedsGeforcenowWarningDisplayNoneQuirk
+    NeedsStyleSheetInjectedQuirk
+        styleSheet: div.cdk-overlay-container, div.unsupported-scenario-container { display: none !important; }
 https://www.google.com/
+    NeedsSingleOwnerMainFrameCNAMECloakingCookieCapQuirk
+        secondaryURL: [*://*.youtube.com/*, *://*.google.com/*]
     ShouldBypassBackForwardCacheWhenElementMatchesQuirk
         documentSelector: body > div.docs-homescreen-freeze-el-full:first-child
 https://www.google.com/search
+    NeedsSingleOwnerMainFrameCNAMECloakingCookieCapQuirk
+        secondaryURL: [*://*.youtube.com/*, *://*.google.com/*]
     ShouldBypassBackForwardCacheWhenElementMatchesQuirk
         documentSelector: body > div.docs-homescreen-freeze-el-full:first-child
 https://www.google.com/search/howsearchworks
+    NeedsSingleOwnerMainFrameCNAMECloakingCookieCapQuirk
+        secondaryURL: [*://*.youtube.com/*, *://*.google.com/*]
     ShouldBypassBackForwardCacheWhenElementMatchesQuirk
         documentSelector: body > div.docs-homescreen-freeze-el-full:first-child
 https://www.google.co.jp/search
     ShouldBypassBackForwardCacheWhenElementMatchesQuirk
         documentSelector: body > div.docs-homescreen-freeze-el-full:first-child
 https://www.google.com/maps
+    NeedsSingleOwnerMainFrameCNAMECloakingCookieCapQuirk
+        secondaryURL: [*://*.youtube.com/*, *://*.google.com/*]
     ShouldAvoidResizingWhenInputViewBoundsChangeQuirk
     ShouldBypassBackForwardCacheWhenElementMatchesQuirk
         documentSelector: body > div.docs-homescreen-freeze-el-full:first-child
     ShouldDispatchSimulatedMouseEventsQuirk
 https://www.google.com/maps/
+    NeedsSingleOwnerMainFrameCNAMECloakingCookieCapQuirk
+        secondaryURL: [*://*.youtube.com/*, *://*.google.com/*]
     ShouldAvoidResizingWhenInputViewBoundsChangeQuirk
     ShouldBypassBackForwardCacheWhenElementMatchesQuirk
         documentSelector: body > div.docs-homescreen-freeze-el-full:first-child
     ShouldDispatchSimulatedMouseEventsQuirk
 https://www.google.com/maps/@37.33,-122.01,15z
+    NeedsSingleOwnerMainFrameCNAMECloakingCookieCapQuirk
+        secondaryURL: [*://*.youtube.com/*, *://*.google.com/*]
     ShouldAvoidResizingWhenInputViewBoundsChangeQuirk
     ShouldBypassBackForwardCacheWhenElementMatchesQuirk
         documentSelector: body > div.docs-homescreen-freeze-el-full:first-child
     ShouldDispatchSimulatedMouseEventsQuirk
 https://www.google.com/mapsearch
+    NeedsSingleOwnerMainFrameCNAMECloakingCookieCapQuirk
+        secondaryURL: [*://*.youtube.com/*, *://*.google.com/*]
     ShouldBypassBackForwardCacheWhenElementMatchesQuirk
         documentSelector: body > div.docs-homescreen-freeze-el-full:first-child
 https://maps.google.com/maps/
+    NeedsSingleOwnerMainFrameCNAMECloakingCookieCapQuirk
+        secondaryURL: [*://*.youtube.com/*, *://*.google.com/*]
     ShouldAvoidResizingWhenInputViewBoundsChangeQuirk
     ShouldBypassBackForwardCacheWhenElementMatchesQuirk
         documentSelector: body > div.docs-homescreen-freeze-el-full:first-child
     ShouldDispatchSimulatedMouseEventsQuirk
 https://docs.google.com/
     InputMethodUsesCorrectKeyEventOrder
+    NeedsSingleOwnerMainFrameCNAMECloakingCookieCapQuirk
+        secondaryURL: [*://*.youtube.com/*, *://*.google.com/*]
     ShouldBypassBackForwardCacheWhenElementMatchesQuirk
         documentSelector: body > div.docs-homescreen-freeze-el-full:first-child
 https://translate.google.com/
+    NeedsSingleOwnerMainFrameCNAMECloakingCookieCapQuirk
+        secondaryURL: [*://*.youtube.com/*, *://*.google.com/*]
     ShouldBypassBackForwardCacheWhenElementMatchesQuirk
         documentSelector: body > div.docs-homescreen-freeze-el-full:first-child
 https://mail.google.com/
+    NeedsSingleOwnerMainFrameCNAMECloakingCookieCapQuirk
+        secondaryURL: [*://*.youtube.com/*, *://*.google.com/*]
     ShouldBypassBackForwardCacheWhenElementMatchesQuirk
         documentSelector: body > div.docs-homescreen-freeze-el-full:first-child
 https://sites.google.com/
+    NeedsSingleOwnerMainFrameCNAMECloakingCookieCapQuirk
+        secondaryURL: [*://*.youtube.com/*, *://*.google.com/*]
     ShouldBypassBackForwardCacheWhenElementMatchesQuirk
         documentSelector: body > div.docs-homescreen-freeze-el-full:first-child
     ShouldPreventTouchEndDispatchQuirk
         elementSelector: .DPvwYc.sm8sCf
 https://meet.google.com/
+    NeedsSingleOwnerMainFrameCNAMECloakingCookieCapQuirk
+        secondaryURL: [*://*.youtube.com/*, *://*.google.com/*]
     ShouldBypassBackForwardCacheWhenElementMatchesQuirk
         documentSelector: body > div.docs-homescreen-freeze-el-full:first-child
     ShouldEnableCameraBackgroundPlayback
@@ -249,7 +284,6 @@ https://www.iheart.com/
         script: document.cookie = 'app=listen:60; path=/; domain=.iheart.com';
 https://www.imdb.com/
     NeedsChromeMediaControlsPseudoElementQuirk
-    NeedsWebKitMediaTextTrackDisplayQuirk
     NeedsZeroMaxTouchPointsQuirk
 https://www.instagram.com/
     NeedsInstagramResizingReelsQuirk
@@ -320,7 +354,7 @@ https://www.nba.com/
 https://www.nfl.com/
     ShouldSuppressHLSSubtitles
 https://www.nhl.com/
-    NeedsWebKitMediaTextTrackDisplayQuirk
+    (none)
 https://www.nytimes.com/
     (none)
 https://www.pandora.com/
@@ -357,7 +391,6 @@ https://soylent.com/
     (none)
 https://open.spotify.com/
     NeedsBodyScrollbarWidthNoneDisabledQuirk
-    NeedsWebKitMediaTextTrackDisplayQuirk
     ShouldAvoidStartingSelectionOnMouseDownOverPointerCursor
     ShouldBlockAudiblePlaybackWhileAudioIsPlaying
     ShouldDeferIntersectionObserversDuringResize
@@ -475,9 +508,14 @@ https://news.ycombinator.com/
     ShouldIgnoreTextAutoSizingQuirk
 https://ycombinator.com/
     (none)
+https://www.yelp.com/
+    NeedsStyleSheetInjectedQuirk
+        styleSheet: div:has(button[aria-label="Share"]):has(button[aria-label="Report"]):not(:has(video)) { pointer-events: none; } button[aria-label="Share"], button[aria-label="Report"] { pointer-events: auto; }
 https://www.youtube.com/
     HasBrokenEncryptedMediaAPISupportQuirk
     NeedsScrollbarWidthThinDisabledQuirk
+    NeedsSingleOwnerMainFrameCNAMECloakingCookieCapQuirk
+        secondaryURL: [*://*.youtube.com/*, *://*.google.com/*]
 https://www.youtube-nocookie.com/
     (none)
 https://www.zillow.com/

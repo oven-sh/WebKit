@@ -374,7 +374,23 @@ void Connection::platformOpen()
     });
 }
 
-bool Connection::hasPendingOutgoingMessage() const
+auto Connection::platformCreateOutgoingMessage(UniqueRef<Encoder>&& encoder) -> std::optional<OutgoingMessage>
+{
+    return WTF::move(encoder);
+}
+
+bool Connection::platformCanSendOutgoingMessages() const
+{
+    return m_isConnected && !platformHasMessageInFlight();
+}
+
+auto Connection::platformSendOutgoingMessage(OutgoingMessage& message) -> PlatformSendResult
+{
+    sendOutgoingMessage(WTF::move(message));
+    return PlatformSendResult::Done;
+}
+
+bool Connection::platformHasMessageInFlight() const
 {
 #if OS(ANDROID)
     return m_hasPendingOutputMessage || !m_outgoingHardwareBuffers.isEmpty();
@@ -421,8 +437,7 @@ bool Connection::sendOutputMessage(UnixMessage&& outputMessage)
     Vector<AttachmentInfo> attachmentInfo;
     if (!attachments.isEmpty()) {
         attachmentInfo.resize(attachments.size());
-        Vector<int> fds;
-        fds.reserveInitialCapacity(attachments.size());
+        Vector<int> fds(ReserveCapacityTag { }, attachments.size());
         for (size_t i = 0; i < attachments.size(); ++i) {
 #if OS(ANDROID)
             RELEASE_ASSERT(attachmentInfo[i].type() == AttachmentInfo::Type::Unset);

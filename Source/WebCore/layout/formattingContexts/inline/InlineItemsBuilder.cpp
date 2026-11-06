@@ -89,9 +89,15 @@ static unsigned moveToNextBreakablePosition(unsigned startPosition, CachedLineBr
     return textLength - startPosition;
 }
 
-static inline bool LEGACY_NODELETE isTextOrLineBreak(const Box& layoutBox)
+NODELETE static inline bool isTextOrLineBreak(const Box& layoutBox)
 {
     return layoutBox.isInFlow() && (layoutBox.isInlineTextBox() || (layoutBox.isLineBreakBox() && !layoutBox.isWordBreakOpportunity()));
+}
+
+NODELETE static inline bool isTextWithStyleOfItsOwn(const Box& layoutBox)
+{
+    auto* inlineTextBox = dynamicDowncast<InlineTextBox>(layoutBox);
+    return inlineTextBox && inlineTextBox->inheritsStyleFromDisplayContentsParent();
 }
 
 struct WidthAndGlyphOverflow {
@@ -141,7 +147,7 @@ void InlineItemsBuilder::build(InlineItemPosition startPosition)
     auto adjustInlineContentCacheWithNewInlineItems = [&] {
         ASSERT(!startPosition || startPosition.index < inlineContentCache().inlineItems().content().size());
 
-        auto contentAttributes = InlineContentCache::InlineItems::ContentAttributes { m_contentRequiresVisualReordering, m_hasTextAndLineBreakOnlyContent, m_hasTextAutospace, m_hasWhiteSpaceTrim, m_inlineBoxCount };
+        auto contentAttributes = InlineContentCache::InlineItems::ContentAttributes { m_contentRequiresVisualReordering, m_hasTextAndLineBreakOnlyContent, m_hasTextWithStyleOfItsOwn, m_hasTextAutospace, m_hasWhiteSpaceTrim, m_inlineBoxCount };
         auto isPopulatedFromCache = m_textContentPopulatedFromCache && *m_textContentPopulatedFromCache ? InlineContentCache::InlineItems::IsPopulatedFromCache::Yes : InlineContentCache::InlineItems::IsPopulatedFromCache::No;
         auto& inlineItemCache = inlineContentCache().inlineItems();
         if (!startPosition || startPosition.index >= inlineItemCache.content().size())
@@ -155,6 +161,7 @@ void InlineItemsBuilder::build(InlineItemPosition startPosition)
     size_t inlineBoxStart = 0;
     size_t inlineBoxEnd = 0;
     auto hasTextAndLineBreakOnlyContent = true;
+    auto hasTextWithStyleOfItsOwn = false;
     auto inlineLevelItems = HashSet<const Box*> { };
     for (auto& inlineItem : inlineContentCache().inlineItems().content()) {
         if (inlineItem.isInlineBoxStart()) {
@@ -169,14 +176,16 @@ void InlineItemsBuilder::build(InlineItemPosition startPosition)
         if (hasToBeUniqueLayoutBox)
             ASSERT(inlineLevelItems.add(&inlineItem.layoutBox()).isNewEntry);
         hasTextAndLineBreakOnlyContent &= isTextOrLineBreak(inlineItem.layoutBox());
+        hasTextWithStyleOfItsOwn |= isTextWithStyleOfItsOwn(inlineItem.layoutBox());
     }
     ASSERT(inlineBoxStart == inlineBoxEnd);
     ASSERT(m_inlineBoxCount == inlineBoxStart);
     ASSERT(m_hasTextAndLineBreakOnlyContent == hasTextAndLineBreakOnlyContent);
+    ASSERT(m_hasTextWithStyleOfItsOwn == hasTextWithStyleOfItsOwn);
 #endif
 }
 
-static bool LEGACY_NODELETE isNonReplacedInlineBlock(const Box& layoutBox)
+NODELETE static bool isNonReplacedInlineBlock(const Box& layoutBox)
 {
     // inline-block (InlineFlowRoot) is the inline-level block container 'white-space-trim' applies to; it already
     // implies isAtomicInlineBox(). A replaced box or iframe may carry InlineFlowRoot display but is not a block container.
@@ -272,8 +281,7 @@ void InlineItemsBuilder::adjustInlineItemsForWhiteSpaceTrim(InlineItemList& inli
     if (!hasItemsToDiscard)
         return;
 
-    InlineItemList remainingItems;
-    remainingItems.reserveInitialCapacity(inlineItemList.size());
+    InlineItemList remainingItems(ReserveCapacityTag { }, inlineItemList.size());
     for (size_t index = 0; index < inlineItemList.size(); ++index) {
         if (!itemsToDiscard.quickGet(index))
             remainingItems.append(WTF::move(inlineItemList[index]));
@@ -339,7 +347,7 @@ void InlineItemsBuilder::computeInlineBoxBoundaryTextSpacings(const InlineItemLi
         inlineContentCache().setInlineBoxBoundaryTextSpacings(WTF::move(spacings));
 }
 
-static bool LEGACY_NODELETE requiresVisualReordering(const Box& layoutBox)
+NODELETE static bool requiresVisualReordering(const Box& layoutBox)
 {
     if (auto* inlineTextBox = dynamicDowncast<InlineTextBox>(layoutBox))
         return inlineTextBox->hasStrongDirectionalityContent();
@@ -350,7 +358,7 @@ static bool LEGACY_NODELETE requiresVisualReordering(const Box& layoutBox)
     return false;
 }
 
-static inline bool LEGACY_NODELETE isInlineBoxWithInlineContent(const Box& layoutBox)
+NODELETE static inline bool isInlineBoxWithInlineContent(const Box& layoutBox)
 {
     return layoutBox.isInlineBox() && !layoutBox.isLineBreakBox() && !layoutBox.isOutOfFlowPositioned();
 }
@@ -363,6 +371,7 @@ InlineItemsBuilder::LayoutQueue InlineItemsBuilder::traverseUntilDamaged(const B
         queue.append(layoutBox);
         m_contentRequiresVisualReordering = m_contentRequiresVisualReordering || requiresVisualReordering(layoutBox);
         m_hasTextAndLineBreakOnlyContent &= (isInlineBoxWithInlineContent(layoutBox) || isTextOrLineBreak(layoutBox));
+        m_hasTextWithStyleOfItsOwn |= isTextWithStyleOfItsOwn(layoutBox);
         return &layoutBox == &firstDamagedLayoutBox;
     };
 
@@ -470,6 +479,7 @@ void InlineItemsBuilder::collectInlineItems(InlineItemList& inlineItemList, Inli
         while (!layoutQueue.isEmpty()) {
             auto layoutBox = layoutQueue.takeLast();
             m_hasTextAndLineBreakOnlyContent &= (isInlineBoxWithInlineContent(layoutBox) || isTextOrLineBreak(layoutBox));
+            m_hasTextWithStyleOfItsOwn |= isTextWithStyleOfItsOwn(layoutBox);
             if (layoutBox->isOutOfFlowPositioned())
                 inlineItemList.append({ layoutBox, InlineItem::Type::OutOfFlow });
             else if (CheckedPtr inlineTextBox = dynamicDowncast<InlineTextBox>(layoutBox))
@@ -754,8 +764,7 @@ void InlineItemsBuilder::breakAndComputeBidiLevels(InlineItemList& inlineItemLis
     ASSERT(!inlineItemList.isEmpty() || root().isListItem());
 
     StringBuilder paragraphContentBuilder;
-    InlineItemOffsetList inlineItemOffsets;
-    inlineItemOffsets.reserveInitialCapacity(inlineItemList.size());
+    InlineItemOffsetList inlineItemOffsets(ReserveCapacityTag { }, inlineItemList.size());
     buildBidiParagraph(root().style(), inlineItemList, paragraphContentBuilder, inlineItemOffsets);
     if (paragraphContentBuilder.isEmpty()) {
         // Style may trigger visual reordering even on a completely empty content.
@@ -848,8 +857,7 @@ void InlineItemsBuilder::breakAndComputeBidiLevels(InlineItemList& inlineItemLis
         // Let's not confuse ubidi with non-content entries.
         // Opaque runs are excluded from the visual list (ie. only empty inline boxes should be kept around as bidi content -to figure out their visual order).
         enum class InlineBoxHasContent : bool { No, Yes };
-        Vector<InlineBoxHasContent> inlineBoxContentFlagStack;
-        inlineBoxContentFlagStack.reserveInitialCapacity(inlineItemList.size());
+        Vector<InlineBoxHasContent> inlineBoxContentFlagStack(ReserveCapacityTag { }, inlineItemList.size());
         for (auto index = inlineItemList.size(); index--;) {
             auto& inlineItem = inlineItemList[index];
             CheckedRef style = inlineItem.style();
@@ -1313,8 +1321,7 @@ void InlineItemsBuilder::populateBreakingPositionCache(const InlineItemList& inl
             continue;
         }
 
-        TextBreakingPositionCache::List breakingPositionList;
-        breakingPositionList.reserveInitialCapacity(span.size());
+        TextBreakingPositionCache::List breakingPositionList(ReserveCapacityTag { }, span.size());
         for (auto& inlineItem : span) {
             if (auto* inlineTextItem = dynamicDowncast<InlineTextItem>(inlineItem))
                 breakingPositionList.append(inlineTextItem->end());

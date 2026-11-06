@@ -53,7 +53,7 @@ public:
     public:
         enum class LoadState : uint8_t { Loading, Finished, Failed };
 
-        ResourceData(const String& requestId, const String& loaderId);
+        NODELETE ResourceData(const String& requestId, const String& loaderId);
 
         const String& requestId() const LIFETIME_BOUND { return m_requestId; }
         const String& loaderId() const LIFETIME_BOUND { return m_loaderId; }
@@ -113,8 +113,8 @@ public:
         bool hasBufferedData() const { return hasData(); }
 
     private:
-        bool LEGACY_NODELETE hasData() const;
-        size_t LEGACY_NODELETE dataLength() const;
+        NODELETE bool hasData() const;
+        NODELETE size_t dataLength() const;
         void appendData(const SharedBuffer&);
         void decodeDataToContent();
 

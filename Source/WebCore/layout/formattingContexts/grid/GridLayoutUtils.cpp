@@ -157,11 +157,9 @@ std::optional<double> preferredAspectRatio(const ElementBox& gridItem)
     //
     // auto: "Replaced elements with a natural aspect ratio use that aspect ratio;
     // otherwise the box has no preferred aspect ratio."
-    if (computedAspectRatio.isAuto() || isDegenerateRatio()) {
-        if (gridItem.isReplacedBox() && gridItem.hasIntrinsicRatio())
-            return gridItem.intrinsicRatio();
+    // FIXME: Use the natural aspect ratio of replaced grid items once they are supported (GridAvoidanceReason::GridItemIsReplacedElement).
+    if (computedAspectRatio.isAuto() || isDegenerateRatio())
         return { };
-    }
 
     // <ratio>: "The box's preferred aspect ratio is the specified ratio of width / height."
     if (computedAspectRatio.isRatio()) {
@@ -173,8 +171,6 @@ std::optional<double> preferredAspectRatio(const ElementBox& gridItem)
     // unless it is a replaced element with a natural aspect ratio, in which case that aspect
     // ratio is used instead."
     if (computedAspectRatio.isAutoAndRatio()) {
-        if (gridItem.isReplacedBox() && gridItem.hasIntrinsicRatio())
-            return gridItem.intrinsicRatio();
         auto ratio = *computedAspectRatio.tryRatio();
         return ratio.numerator.value / ratio.denominator.value;
     }
@@ -184,14 +180,14 @@ std::optional<double> preferredAspectRatio(const ElementBox& gridItem)
 }
 
 // https://drafts.csswg.org/css-sizing-4/#aspect-ratio
-static BorderBoxSize LEGACY_NODELETE blockSizeFromAspectRatio(const PlacedGridItem& gridItem, double aspectRatio, LayoutUnit borderBoxInlineSize, LayoutUnit inlineBorderAndPadding, LayoutUnit blockBorderAndPadding)
+NODELETE static BorderBoxSize blockSizeFromAspectRatio(const PlacedGridItem& gridItem, double aspectRatio, LayoutUnit borderBoxInlineSize, LayoutUnit inlineBorderAndPadding, LayoutUnit blockBorderAndPadding)
 {
     if (gridItem.layoutBox().style().boxSizingForAspectRatio() == BoxSizing::BorderBox)
         return BorderBoxSize { ContentBoxSize { std::max(0_lu, LayoutUnit { borderBoxInlineSize / aspectRatio } - blockBorderAndPadding) }, blockBorderAndPadding };
     return BorderBoxSize { ContentBoxSize { LayoutUnit { std::max(0_lu, borderBoxInlineSize - inlineBorderAndPadding) / aspectRatio } }, blockBorderAndPadding };
 }
 
-static BorderBoxSize LEGACY_NODELETE inlineSizeFromAspectRatio(const PlacedGridItem& gridItem, double aspectRatio, LayoutUnit borderBoxBlockSize, LayoutUnit inlineBorderAndPadding, LayoutUnit blockBorderAndPadding)
+NODELETE static BorderBoxSize inlineSizeFromAspectRatio(const PlacedGridItem& gridItem, double aspectRatio, LayoutUnit borderBoxBlockSize, LayoutUnit inlineBorderAndPadding, LayoutUnit blockBorderAndPadding)
 {
     if (gridItem.layoutBox().style().boxSizingForAspectRatio() == BoxSizing::BorderBox)
         return BorderBoxSize { ContentBoxSize { std::max(0_lu, LayoutUnit { borderBoxBlockSize * aspectRatio } - inlineBorderAndPadding) }, inlineBorderAndPadding };
@@ -292,7 +288,7 @@ bool inlineContributionMayRequireFullSizingAlgorithmForIntrinsicWidth(const Elem
     return false;
 }
 
-static bool LEGACY_NODELETE spansAutoMinTrackSizingFunction(WTF::Range<size_t> spannedTrackIndexes, const TrackSizingFunctionsList& trackSizingFunctions)
+NODELETE static bool spansAutoMinTrackSizingFunction(WTF::Range<size_t> spannedTrackIndexes, const TrackSizingFunctionsList& trackSizingFunctions)
 {
     for (auto trackIndex : std::views::iota(spannedTrackIndexes.begin(), spannedTrackIndexes.end())) {
         if (trackSizingFunctions[trackIndex].min.isAuto())
@@ -301,7 +297,7 @@ static bool LEGACY_NODELETE spansAutoMinTrackSizingFunction(WTF::Range<size_t> s
     return false;
 }
 
-static bool LEGACY_NODELETE spansFlexMaxTrackSizingFunction(WTF::Range<size_t> spannedTrackIndexes, const TrackSizingFunctionsList& trackSizingFunctions)
+NODELETE static bool spansFlexMaxTrackSizingFunction(WTF::Range<size_t> spannedTrackIndexes, const TrackSizingFunctionsList& trackSizingFunctions)
 {
     for (auto trackIndex : std::views::iota(spannedTrackIndexes.begin(), spannedTrackIndexes.end())) {
         if (trackSizingFunctions[trackIndex].max.isFlex())
@@ -313,7 +309,7 @@ static bool LEGACY_NODELETE spansFlexMaxTrackSizingFunction(WTF::Range<size_t> s
 // https://www.w3.org/TR/css-sizing-3/#stretch-fit-size
 // The size a box would take if its outer size filled the available space in the given axis:
 // the available space (the grid area size) less the box's margins, border, and padding.
-static BorderBoxSize LEGACY_NODELETE stretchFitSize(LayoutUnit borderAndPadding, LayoutUnit availableSize, const UsedMargins& usedMargins)
+NODELETE static BorderBoxSize stretchFitSize(LayoutUnit borderAndPadding, LayoutUnit availableSize, const UsedMargins& usedMargins)
 {
     // A content box cannot be negative, so an item whose margins, border, and padding already fill
     // the available space stretches to a zero content box and overflows its grid area.
@@ -534,7 +530,7 @@ static BorderBoxSize blockContentSizeSuggestion(const PlacedGridItem& gridItem, 
 
 // https://drafts.csswg.org/css-overflow-3/#overflow-properties
 // The scroll, auto, and hidden values are known as the scrollable values of overflow.
-static bool LEGACY_NODELETE hasScrollableInlineComputedOverflowValue(const PlacedGridItem& gridItem)
+NODELETE static bool hasScrollableInlineComputedOverflowValue(const PlacedGridItem& gridItem)
 {
     auto computedOverflow = gridItem.layoutBox().style().overflowX();
     return computedOverflow == Overflow::Hidden || computedOverflow == Overflow::Scroll || computedOverflow == Overflow::Auto;
@@ -542,7 +538,7 @@ static bool LEGACY_NODELETE hasScrollableInlineComputedOverflowValue(const Place
 
 // https://drafts.csswg.org/css-overflow-3/#overflow-properties
 // The scroll, auto, and hidden values are known as the scrollable values of overflow.
-static bool LEGACY_NODELETE hasScrollableBlockComputedOverflowValue(const PlacedGridItem& gridItem)
+NODELETE static bool hasScrollableBlockComputedOverflowValue(const PlacedGridItem& gridItem)
 {
     auto computedOverflow = gridItem.layoutBox().style().overflowY();
     return computedOverflow == Overflow::Hidden || computedOverflow == Overflow::Scroll || computedOverflow == Overflow::Auto;
@@ -550,7 +546,7 @@ static bool LEGACY_NODELETE hasScrollableBlockComputedOverflowValue(const Placed
 
 // https://www.w3.org/TR/css-sizing-3/#fit-content-size
 // fit-content size = clamp(min-content, stretch-fit, max-content).
-static LayoutUnit LEGACY_NODELETE fitContentSize(BorderBoxSize minContentSize, BorderBoxSize maxContentSize, BorderBoxSize stretchFit)
+NODELETE static LayoutUnit fitContentSize(BorderBoxSize minContentSize, BorderBoxSize maxContentSize, BorderBoxSize stretchFit)
 {
     return std::max(minContentSize, std::min(maxContentSize, stretchFit)).value;
 }
@@ -598,13 +594,9 @@ LayoutUnit inlinePreferredSize(const PlacedGridItem& placedGridItem, LayoutUnit 
             return fitContentSize(minContentBorderBoxWidth, maxContentBorderBoxWidth, stretchFitBorderBoxWidth);
         }
 
-        // Otherwise, a replaced grid item with an automatic size uses its natural size in the axis
-        // (i.e. it is sized consistent with the block-level replaced element sizing rules).
-        auto& layoutBox = placedGridItem.layoutBox();
-        if (placedGridItem.isReplacedElement() && layoutBox.hasNaturalWidth())
-            return BorderBoxSize { ContentBoxSize { layoutBox.naturalWidth() }, borderAndPadding }.value;
-
-        // FIXME: Handle replaced elements with no natural size in the axis.
+        // FIXME: Otherwise, a replaced grid item with an automatic size uses its natural size in the axis
+        // (i.e. it is sized consistent with the block-level replaced element sizing rules). Replaced grid
+        // items are not supported yet (GridAvoidanceReason::GridItemIsReplacedElement).
         ASSERT_NOT_IMPLEMENTED_YET();
         return { };
     }
@@ -782,14 +774,10 @@ LayoutUnit blockPreferredSize(const PlacedGridItem& placedGridItem, LayoutUnit b
             return fitContentSize(minContentBorderBoxHeight, maxContentBorderBoxHeight, stretchFitBorderBoxHeight);
         }
 
-        // Otherwise, a replaced grid item with an automatic size uses its natural size in the axis
-        // (i.e. it is sized consistent with the block-level replaced element sizing rules).
-        auto& layoutBox = placedGridItem.layoutBox();
-        if (placedGridItem.isReplacedElement() && layoutBox.hasNaturalHeight())
-            return BorderBoxSize { ContentBoxSize { layoutBox.naturalHeight() }, borderAndPadding }.value;
-
-        // FIXME: Handle replaced elements with no natural size in the axis and non-replaced items
-        // with a preferred aspect ratio.
+        // FIXME: Otherwise, a replaced grid item with an automatic size uses its natural size in the axis
+        // (i.e. it is sized consistent with the block-level replaced element sizing rules). Replaced grid
+        // items are not supported yet (GridAvoidanceReason::GridItemIsReplacedElement). Also handle
+        // non-replaced items with a preferred aspect ratio.
         ASSERT_NOT_IMPLEMENTED_YET();
         return { };
     }
@@ -898,14 +886,14 @@ LayoutUnit blockUsedSize(const PlacedGridItem& gridItem, const TrackSizingFuncti
 }
 
 // The grid area is definite, so percentage and calc() minimum sizes can be resolved against it.
-static bool LEGACY_NODELETE isDefiniteMinimumSizeDuringItemSizing(const Style::MinimumSize& minimumSize)
+NODELETE static bool isDefiniteMinimumSizeDuringItemSizing(const Style::MinimumSize& minimumSize)
 {
     return minimumSize.isFixed() || minimumSize.isPercentOrCalculated();
 }
 
 // A maximum size of none is not definite.
 // FIXME: Percentage and calc() maximum sizes are definite too, but are not resolved yet; see inlineMaximumSize().
-static bool LEGACY_NODELETE isDefiniteMaximumSizeDuringItemSizing(const Style::MaximumSize& maximumSize)
+NODELETE static bool isDefiniteMaximumSizeDuringItemSizing(const Style::MaximumSize& maximumSize)
 {
     return maximumSize.isFixed();
 }
@@ -948,24 +936,24 @@ static bool needsTransferredInlineMaximumSize(const PlacedGridItem& gridItem)
 // transferred minimum is capped by the destination's maximum size. The spec's other caps and floors
 // cannot change the used size: an axis with a definite preferred size never receives transferred
 // limits, and the minimum size always wins over the maximum size.
-static LayoutUnit LEGACY_NODELETE transferredBlockMinimumSize(const PlacedGridItem& gridItem, double aspectRatio, LayoutUnit definiteInlineMinimumSize, LayoutUnit blockMaximumSize,
+NODELETE static LayoutUnit transferredBlockMinimumSize(const PlacedGridItem& gridItem, double aspectRatio, LayoutUnit definiteInlineMinimumSize, LayoutUnit blockMaximumSize,
     LayoutUnit inlineBorderAndPadding, LayoutUnit blockBorderAndPadding)
 {
     return std::min(blockSizeFromAspectRatio(gridItem, aspectRatio, definiteInlineMinimumSize, inlineBorderAndPadding, blockBorderAndPadding).value, blockMaximumSize);
 }
 
-static LayoutUnit LEGACY_NODELETE transferredBlockMaximumSize(const PlacedGridItem& gridItem, double aspectRatio, LayoutUnit definiteInlineMaximumSize, LayoutUnit inlineBorderAndPadding, LayoutUnit blockBorderAndPadding)
+NODELETE static LayoutUnit transferredBlockMaximumSize(const PlacedGridItem& gridItem, double aspectRatio, LayoutUnit definiteInlineMaximumSize, LayoutUnit inlineBorderAndPadding, LayoutUnit blockBorderAndPadding)
 {
     return blockSizeFromAspectRatio(gridItem, aspectRatio, definiteInlineMaximumSize, inlineBorderAndPadding, blockBorderAndPadding).value;
 }
 
-static LayoutUnit LEGACY_NODELETE transferredInlineMinimumSize(const PlacedGridItem& gridItem, double aspectRatio, LayoutUnit definiteBlockMinimumSize, LayoutUnit inlineMaximumSize,
+NODELETE static LayoutUnit transferredInlineMinimumSize(const PlacedGridItem& gridItem, double aspectRatio, LayoutUnit definiteBlockMinimumSize, LayoutUnit inlineMaximumSize,
     LayoutUnit inlineBorderAndPadding, LayoutUnit blockBorderAndPadding)
 {
     return std::min(inlineSizeFromAspectRatio(gridItem, aspectRatio, definiteBlockMinimumSize, inlineBorderAndPadding, blockBorderAndPadding).value, inlineMaximumSize);
 }
 
-static LayoutUnit LEGACY_NODELETE transferredInlineMaximumSize(const PlacedGridItem& gridItem, double aspectRatio, LayoutUnit definiteBlockMaximumSize, LayoutUnit inlineBorderAndPadding, LayoutUnit blockBorderAndPadding)
+NODELETE static LayoutUnit transferredInlineMaximumSize(const PlacedGridItem& gridItem, double aspectRatio, LayoutUnit definiteBlockMaximumSize, LayoutUnit inlineBorderAndPadding, LayoutUnit blockBorderAndPadding)
 {
     return inlineSizeFromAspectRatio(gridItem, aspectRatio, definiteBlockMaximumSize, inlineBorderAndPadding, blockBorderAndPadding).value;
 }

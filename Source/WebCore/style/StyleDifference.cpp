@@ -34,7 +34,7 @@
 namespace WebCore {
 namespace Style {
 
-static Visibility LEGACY_NODELETE visibilityIncludingForceHidden(const ComputedStyle& style)
+NODELETE static Visibility visibilityIncludingForceHidden(const ComputedStyle& style)
 {
     return style.isForceHidden() ? Visibility::Hidden : style.visibility();
 }
@@ -43,7 +43,7 @@ class DifferenceFunctions final {
 public:
     // MARK: DifferenceResult::Layout
 
-    static bool LEGACY_NODELETE positionChangeIsMovementOnly(const InsetBox& a, const InsetBox& b, const PreferredSize& width)
+    NODELETE static bool positionChangeIsMovementOnly(const InsetBox& a, const InsetBox& b, const PreferredSize& width)
     {
         // If any unit types are different, then we can't guarantee
         // that this was just a movement.
@@ -667,7 +667,7 @@ public:
 
     // MARK: DifferenceResult::Repaint
 
-    static bool LEGACY_NODELETE requiresPainting(const Style::ComputedStyle& style)
+    NODELETE static bool requiresPainting(const Style::ComputedStyle& style)
     {
         if (visibilityIncludingForceHidden(style) == Visibility::Hidden)
             return false;
@@ -823,6 +823,9 @@ public:
             || a.insideDefaultButton != b.insideDefaultButton
             || a.insideSubmitButton != b.insideSubmitButton
             || a.paintOrder != b.paintOrder
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+            || a.appleColorFilterOverride != b.appleColorFilterOverride
+#endif
     #if ENABLE(DARK_MODE_CSS)
             || a.colorScheme != b.colorScheme
     #endif

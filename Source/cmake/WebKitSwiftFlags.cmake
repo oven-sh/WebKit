@@ -69,6 +69,7 @@ set(WEBKIT_SWIFT_UPCOMING_FEATURE_FLAGS
     "-enable-upcoming-feature ExistentialAny"
     "-enable-upcoming-feature InternalImportsByDefault"
     "-enable-upcoming-feature MemberImportVisibility"
+    "-enable-upcoming-feature NonisolatedNonsendingByDefault"
 )
 
 set(WEBKIT_SWIFT_EXPERIMENTAL_FEATURE_FLAGS
@@ -90,6 +91,7 @@ set(WEBKIT_SWIFT_MEMORY_SAFETY_FLAGS
 set(WEBKIT_SWIFT_MEMORY_SAFETY_ERROR_FLAGS
     "-Werror ForeignReferenceType"
     "-Werror RegionIsolation"
+    "-Werror SendableClosureCaptures"
     "-Werror StrictMemorySafety"
 )
 

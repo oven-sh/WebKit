@@ -747,8 +747,7 @@ void DatabaseTracker::deleteDatabasesModifiedSince(WallTime time)
 {
     for (auto& origin : origins()) {
         Vector<String> databaseNames = this->databaseNames(origin);
-        Vector<String> databaseNamesToDelete;
-        databaseNamesToDelete.reserveInitialCapacity(databaseNames.size());
+        Vector<String> databaseNamesToDelete(ReserveCapacityTag { }, databaseNames.size());
         for (const auto& databaseName : databaseNames) {
             auto fullPath = fullPathForDatabase(origin, databaseName, false);
 
@@ -1270,7 +1269,7 @@ static Lock notificationLock;
 
 using NotificationQueue = Vector<std::pair<SecurityOriginData, String>>;
 
-static NotificationQueue& LEGACY_NODELETE notificationQueue() WTF_REQUIRES_LOCK(notificationLock)
+NODELETE static NotificationQueue& notificationQueue() WTF_REQUIRES_LOCK(notificationLock)
 {
     static NeverDestroyed<NotificationQueue> queue;
     return queue;

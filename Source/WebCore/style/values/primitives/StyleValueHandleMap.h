@@ -26,6 +26,7 @@
 #pragma once
 
 #include <wtf/HashMap.h>
+#include <wtf/Lock.h>
 #include <wtf/NeverDestroyed.h>
 
 namespace WebCore {
@@ -35,7 +36,7 @@ namespace Style {
 // what lets it stay packed. Each value type gets its own map.
 template<typename ValueType> class ValueHandleMap {
 public:
-    static ValueHandleMap& LEGACY_NODELETE singleton()
+    NODELETE static ValueHandleMap& singleton()
     {
         static NeverDestroyed<ValueHandleMap> map;
         return map;
@@ -45,7 +46,7 @@ public:
     void ref(unsigned handle);
     void deref(unsigned handle);
 
-    ValueType& LEGACY_NODELETE get(unsigned handle) const;
+    NODELETE ValueType& get(unsigned handle) const;
 
 private:
     friend NeverDestroyed<ValueHandleMap>;
@@ -62,15 +63,16 @@ private:
         }
     };
 
-    unsigned m_nextAvailableHandle { 1 };
-    HashMap<unsigned, Entry> m_map;
+    mutable Lock m_lock;
+    unsigned m_nextAvailableHandle WTF_GUARDED_BY_LOCK(m_lock) { 1 };
+    HashMap<unsigned, Entry> m_map WTF_GUARDED_BY_LOCK(m_lock);
 };
 
 template<typename ValueType> unsigned ValueHandleMap<ValueType>::insert(Ref<ValueType>&& value)
 {
-    ASSERT(m_nextAvailableHandle);
-
     Entry entry(WTF::move(value));
+    Locker locker { m_lock };
+    ASSERT(m_nextAvailableHandle);
 
     // FIXME: This monotonically increasing handle generation scheme is potentially wasteful
     // of the handle space. Consider reusing empty handles. https://bugs.webkit.org/show_bug.cgi?id=80489
@@ -81,16 +83,17 @@ template<typename ValueType> unsigned ValueHandleMap<ValueType>::insert(Ref<Valu
 }
 
 // HashMap lookups are not modeled by NoDeleteChecker but cannot destroy anything.
-template<typename ValueType> SUPPRESS_NODELETE ValueType& LEGACY_NODELETE ValueHandleMap<ValueType>::get(unsigned handle) const
+template<typename ValueType> NODELETE SUPPRESS_NODELETE ValueType& ValueHandleMap<ValueType>::get(unsigned handle) const
 {
+    Locker locker { m_lock };
     auto entry = m_map.find(handle);
     ASSERT(entry != m_map.end());
-
     return *entry->value.value;
 }
 
 template<typename ValueType> void ValueHandleMap<ValueType>::ref(unsigned handle)
 {
+    Locker locker { m_lock };
     ASSERT(m_map.contains(handle));
 
     ++m_map.find(handle)->value.referenceCountMinusOne;
@@ -98,6 +101,7 @@ template<typename ValueType> void ValueHandleMap<ValueType>::ref(unsigned handle
 
 template<typename ValueType> void ValueHandleMap<ValueType>::deref(unsigned handle)
 {
+    Locker locker { m_lock };
     ASSERT(m_map.contains(handle));
 
     auto it = m_map.find(handle);
@@ -106,7 +110,11 @@ template<typename ValueType> void ValueHandleMap<ValueType>::deref(unsigned hand
         return;
     }
 
+    RefPtr<ValueType> valueHold = WTF::move(it->value.value);
     m_map.remove(it);
+    locker.unlockEarly();
+    // Destroying Calculation::Value can run arbitrary `Calculation::Tree` teardown,
+    // so drop the last reference (valueHold) after unlocking.
 }
 
 } // namespace Style
