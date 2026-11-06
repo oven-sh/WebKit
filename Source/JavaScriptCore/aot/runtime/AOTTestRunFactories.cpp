@@ -40,6 +40,25 @@ bool Modules::wasLoadedWhenMockWasMade(ModuleID module)
     return m_modulesLoadedBeforeMockThatWaited.get(module.index());
 }
 
+void Modules::forgetLoadThatFailed(ModuleID file)
+{
+    if (!data(file).runsAgainAfterThrow())
+        return;
+    bool hasFailed = false;
+    for (ModuleID each : { moduleWithExportsOf(file), file }) {
+        ModuleRecord* record = m_records.get(each);
+        if (!record || !record->evaluationError())
+            continue;
+        hasFailed = true;
+        loader()->removeEntry(moduleKey(each));
+        Locker locker { m_state.caches->lock() };
+        m_records.remove(each);
+        setStoredStatus(each, StoredModuleStatus::Linked);
+    }
+    if (hasFailed)
+        forgetRunThatThrew(file);
+}
+
 bool Modules::runBodyOfLinkedModuleAheadOfMock(ModuleID module)
 {
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
@@ -544,6 +563,7 @@ bool runBodyOfLinkedModuleAheadOfMock(JSGlobalObject* realm, ModuleID module)
     Modules* modules = modulesOf(realm);
     MockDoor door(modules, module, "the mock call"_s);
     if (modules) {
+        modules->forgetLoadThatFailed(module);
         modules->countMocksAnewBehindLoad(module);
         modules->noteCallOfMock(module);
         modules->dropErrorsOfLoadsEndedByMockOf(module);

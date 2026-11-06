@@ -366,6 +366,7 @@ public:
     bool runMocksBelow(ModuleID root, RootOfLoad = RootOfLoad::BeginsLoad);
     bool runMocksBelowSlow(ModuleID root, RootOfLoad);
     bool wasLoadedWhenMockWasMade(ModuleID);
+    void forgetLoadThatFailed(ModuleID file);
     bool runBodyOfLinkedModuleAheadOfMock(ModuleID);
     bool runBodyOfImportedModuleAheadOfMock(ModuleID);
     void runBodyOfRequiredFileAheadOfMock(ModuleID);
