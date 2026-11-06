@@ -190,7 +190,7 @@ ALWAYS_INLINE Interpreter* interpreterToEnter()
 // to any C, and this C cannot give it back: the object is held for ever.)
 // (When the interpreter has ended there is nothing left to count: what an extension gives back as the process goes is ignored.)
 void refuseToChangeCount(bool isToFall);
-void releaseSlow(JSCell*);
+void releaseSlow(JSCell*, Interpreter* thatLetsGo);
 // s_interpreter, until a reference that was to be taken has been refused.
 extern std::atomic<Interpreter*> s_interpreterThatLetsGo;
 
@@ -230,7 +230,7 @@ ALWAYS_INLINE void release(Handle handle)
     if (hasGIL(current)) [[likely]]
         current->counts.remove(cell, true);
     else
-        releaseSlow(cell);
+        releaseSlow(cell, current);
 }
 
 // Somebody else has a reference to the object now, and the API has seen it: C has handed one on (to a container that takes it over, to the program with a result or with what it

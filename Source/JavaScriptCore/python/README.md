@@ -1471,7 +1471,7 @@ other interpreter what needs the API is an `ImportError`; and when that one has 
 (CPython's extensions have to say that they can serve more than one interpreter, and few do.) It ends when its `Runtime` does (`runtimeIsEnding()`): for the interpreter of a realm to which
 nothing refers any more that is in the collection that finds the global object dead, with the world stopped, not when that cell is swept. C that JS calls on that thread could come in
 meanwhile. Nobody is in the middle of a call then (a function that has entered has the global object on its stack), and while C owns an object the realm does not die (the object holds it by
-its Structure). What C may still own are cells of no realm, a str or a large int, and what a thread's indicator still points to: nothing follows those pointers any more, for every function refuses.
+its Structure; nor does it ever die if C has owned one since a reference was refused, see below). What C may still own are cells of no realm, a str or a large int, and what a thread's indicator still points to: nothing follows those pointers any more, for every function refuses.
 
 It is **set up** when that interpreter first has a use for it (`ensure()`, `tryEnsure()`): before it loads a library with `dlopen()`, because what a library does as it is loaded may
 call; before a function of C's in a `PyDLL` is called (after its arguments have been converted: a call that fails before it gets to C fails as

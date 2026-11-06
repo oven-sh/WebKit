@@ -177,8 +177,9 @@ bool tryEnsure(JSGlobalObject* globalObject)
 // The collector calls this too, with the world stopped, for the interpreter of a realm whose global object it has found dead: no cell is made here, no lock is taken, nothing of the
 // program's runs. From then on the global object and all that only it held are dead, though not swept, and C that JS calls on that thread could still come in.
 //  - Nobody is in the middle of a call then: a function that has entered has the global object in its Entry, on the stack, and that marks it.
-//  - An object that C owns holds the global object by its Structure, so the realm does not die while C owns one. What C may still own are cells that belong to no realm, a str or a
-//    large int. They die when nothing else holds them, and nothing follows C's pointers to them any more: every function refuses.
+//  - An object that is in the table holds the global object by its Structure, so the realm does not die while C owns one (nor ever, if C has owned one since a reference was refused: nothing is
+//    let go of then). What may still be there are cells that belong to no realm, a str or a large int. They die when nothing else holds them, and nothing follows C's pointers to them any more:
+//    every function refuses.
 //  - The indicator of a thread may still hold a pointer. Nothing follows that either: see errorIndicator().
 void runtimeIsEnding(Runtime& runtime)
 {
@@ -188,9 +189,9 @@ void runtimeIsEnding(Runtime& runtime)
     if (!isSetUpFor(runtime))
         return;
     s_runtimeItIsSetUpFor.store(nullptr, std::memory_order_relaxed);
-    s_interpreterThatLetsGo.store(nullptr, std::memory_order_relaxed);
-    // Not freed: see Interpreter::lock.
+    // Not freed: see Interpreter::lock. In this order: who finds the second null looks at the first, and what a library's thread gives back as the interpreter goes is nobody's mistake.
     Interpreter* interpreter = s_interpreter.exchange(nullptr, std::memory_order_relaxed);
+    s_interpreterThatLetsGo.store(nullptr, std::memory_order_relaxed);
     interpreter->counts.clear();
     clearSymbols();
 }
@@ -342,11 +343,11 @@ void refuseToChangeCount(bool isToFall)
     tellOnce(hasToldOfGivenBack, "Python: Py_DECREF was called by a thread that does not hold the GIL; the count stays as it was: the object is held for ever\n");
 }
 
-// Not the way of a thread that has the GIL while all is well.
-void releaseSlow(JSCell* cell)
+// Not the way of a thread that has the GIL while all is well. `thatLetsGo`: what the caller has read. If there is one, it has found that the thread has not got the GIL.
+void releaseSlow(JSCell* cell, Interpreter* thatLetsGo)
 {
-    Interpreter* current = s_interpreter.load(std::memory_order_relaxed);
-    if (hasGIL(current) && !s_interpreterThatLetsGo.load(std::memory_order_relaxed))
+    Interpreter* current = thatLetsGo ? nullptr : s_interpreter.load(std::memory_order_relaxed);
+    if (hasGIL(current))
         current->counts.remove(cell, false);
     else
         refuseToChangeCount(true);
@@ -446,8 +447,11 @@ void giveBackReference(uint64_t bits)
     release(interpreter(), std::bit_cast<Handle>(static_cast<uintptr_t>(bits)));
 }
 
-// The caller may be another interpreter of the VM. (Not one of another VM: a callback that is called on a thread of another VM's is not run, and returns NULL.) So it has not asked
-// whether the API is set up. While it is not, nothing is counted, and no reference has come with anything.
+// The caller may be any interpreter, so it has asked nothing, and this asks for itself.
+//  - Whether the API is set up. While it is not, nothing is counted, and no reference has come with anything.
+//  - Whether the thread has the lock of the VM whose table this is. A callback that is called on a thread of another VM's is not run, and returns NULL. But the caller reads whether the code gives
+//    a reference before it calls, and the code may be another callback's by the time it runs: its owner has let it die meanwhile, and a thread of the caller's VM has been given the same code for a callback
+//    of its own, which returns an object of that VM. (To call a callback that has died is an error everywhere.) Nothing has been given then either.
 void takeOverReference(uint64_t bits, bool programGetsObject)
 {
     Handle handle = std::bit_cast<Handle>(static_cast<uintptr_t>(bits));
@@ -455,9 +459,8 @@ void takeOverReference(uint64_t bits, bool programGetsObject)
     if (!cell)
         return;
     Interpreter* current = s_interpreter.load(std::memory_order_relaxed);
-    if (!current) [[unlikely]]
+    if (!current || !current->lock->currentThreadIsHoldingLock()) [[unlikely]]
         return;
-    ASSERT(current->vm.currentThreadIsHoldingAPILock());
     // Where the call has ended otherwise than with a result, nobody has looked at the bits. What is in the table is a cell, and lives. (By the key: when nothing is let go of any more, the
     // count may be 0, and the program gets the object all the same.)
     if (current->counts.contains(cell)) [[likely]] {

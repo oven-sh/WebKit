@@ -810,8 +810,11 @@ void releaseCallbackCode(PyCThunk* thunk)
     Locker locker { callbackLock };
     unsigned slot = static_cast<unsigned>(thunk->slot);
     auto& table = thunk->code == floatEntries[slot] ? floatCallbacks : integerCallbacks;
-    if (table[slot].load() == thunk)
+    if (table[slot].load() == thunk) {
         table[slot].store(nullptr);
+        if (&table == &integerCallbacks)
+            integerCallbackGivesReference[slot].store(false);
+    }
     thunk->slot = -1;
     thunk->code = nullptr;
 }

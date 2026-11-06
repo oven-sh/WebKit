@@ -55,7 +55,12 @@ public:
     // For PyTuple_SetItem() of the C API, the one thing that writes to a tuple after it has been made: see there.
     // The references to it that are not C's own, as far as the API has seen: none, one, or more. Nobody counts the program's: once it has the tuple, they are more; and so they are from the
     // start, unless PyTuple_New() has made it.
-    void setIsMadeByC() { m_holdersThatCKnowsOf = 0; }
+    // For PyTuple_New(), of the tuple that it has just made.
+    void setIsMadeByC()
+    {
+        ASSERT(m_holdersThatCKnowsOf == 2);
+        m_holdersThatCKnowsOf = 0;
+    }
     unsigned holdersThatCKnowsOf() const { return m_holdersThatCKnowsOf; }
     void addHolderThatCKnowsOf(bool isProgram)
     {

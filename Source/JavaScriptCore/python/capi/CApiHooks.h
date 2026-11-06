@@ -97,7 +97,7 @@ void giveReference(uint64_t bits);
 // It is given back, as by C: _ctypes.Py_DECREF().
 void giveBackReference(uint64_t bits);
 // Code has handed over a reference with its result. It is given up. `programGetsObject`: the call ends with the object as its result; if not, nobody has got it. This one is for any interpreter of the VM: the code may be that of a callback of the interpreter that
-// the API is set up for, which another has called by its address. Nor need the API be set up.
+// the API is set up for, which another has called by its address. Nor need the API be set up. It asks for itself.
 void takeOverReference(uint64_t bits, bool programGetsObject);
 
 #else // !PYTHON_HAS_CAPI

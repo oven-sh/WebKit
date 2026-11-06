@@ -12,7 +12,7 @@ namespace JSC {
 namespace Python {
 namespace CApi {
 
-// How many references C owns, for each cell of which it owns any.
+// How many references C owns, for each cell of which it owns any (or has owned any, once nothing is let go of any more: see remove()).
 //
 // A function that returns a new reference adds one, Py_DECREF and a function that steals a reference take one away, and with the last one the
 // entry goes (as long as anything is let go of: see remove()). Nothing else happens then: the object lives on if the program refers to it, and a collection finds out if not.
