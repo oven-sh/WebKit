@@ -146,7 +146,7 @@ public:
         m_runtime.forEachObjectToBeFinalized([&](JSCell* cell) {
             m_toBeFinalized.add(cell);
         });
-        PartsOfExceptions partsOfExceptions;
+        bool hasWhatIsOutOfReach = false;
         HeapIterationScope iterationScope(vm.heap);
         vm.heap.objectSpace().forEachLiveCell(iterationScope, [&](HeapCell* heapCell, HeapCell::Kind kind) {
             if (!isJSCellKind(kind))
@@ -160,11 +160,13 @@ public:
             addHiddenFields(asObject(cell));
             if (isObjectOfPython(cell, globalObject)) {
                 m_objects.append(cell);
-                partsOfExceptions.addIfIsOne(cell);
+                hasWhatIsOutOfReach |= isOutOfReachByItself(cell);
             }
             return IterationStatus::Continue;
         });
-        findWhatIsOutOfReach(partsOfExceptions);
+        // As a rule there is nothing of the kind, however many tracebacks the program keeps.
+        if (hasWhatIsOutOfReach)
+            findWhatIsOutOfReach();
     }
 
     // All the objects of Python there are, parts included.
@@ -205,40 +207,37 @@ private:
             addPart(item, owner, false);
     }
 
-    // What findWhatIsOutOfReach() goes through, sorted out in the pass that gathers the objects.
-    struct PartsOfExceptions {
-        void addIfIsOne(JSCell* cell)
-        {
-            if (auto* exception = PyException::tryFrom(cell)) {
-                exceptions.append(exception);
-                hasUnseenException |= exception->isUnseen();
-            } else if (cell->type() != PyObjectType)
-                return;
-            else if (auto* frame = PyFrame::tryFrom(cell)) {
-                frames.append(frame);
-                hasFrameThatLacksCaller |= frame->lacksBack();
-            } else if (auto* entry = PyTraceback::tryFrom(cell))
-                entries.append(entry);
-        }
-
-        Vector<PyFrame*> frames;
-        Vector<PyTraceback*> entries;
-        Vector<PyException*> exceptions;
-        bool hasUnseenException { false };
-        bool hasFrameThatLacksCaller { false };
-    };
+    static bool isOutOfReachByItself(JSCell* cell)
+    {
+        if (auto* exception = PyException::tryFrom(cell))
+            return exception->isUnseen();
+        if (cell->type() != PyObjectType)
+            return false;
+        auto* frame = PyFrame::tryFrom(cell);
+        return frame && frame->lacksBack();
+    }
 
     // An exception that nobody has seen (PyException::isUnseen()) is in the heap like any other: another thread is raising it, or has caught it and is about to drop it, or has dropped it and
     // still has a word on its stack that leads to some of it. The runtime counts on it that nothing of the program's has such an exception, the entries of its traceback or the frame objects that were
     // made for those, the last of which lacks its caller (PyFrame::backIs()). So none of that is given: the exception with its entries and their frame objects, and, whatever is left of the
     // exception, all that leads to a frame object that lacks its caller: the frame objects of the calls it made, the entries of those, the exception.
-    void findWhatIsOutOfReach(const PartsOfExceptions& parts)
+    void findWhatIsOutOfReach()
     {
-        // As a rule there is neither, however many tracebacks the program keeps.
-        if (!parts.hasUnseenException && !parts.hasFrameThatLacksCaller)
-            return;
+        Vector<PyFrame*> frames;
+        Vector<PyTraceback*> entries;
+        Vector<PyException*> exceptions;
+        for (JSCell* cell : m_objects) {
+            if (auto* exception = PyException::tryFrom(cell))
+                exceptions.append(exception);
+            else if (cell->type() != PyObjectType)
+                continue;
+            else if (auto* frame = PyFrame::tryFrom(cell))
+                frames.append(frame);
+            else if (auto* entry = PyTraceback::tryFrom(cell))
+                entries.append(entry);
+        }
         // First what is out of reach by itself, then all that leads there: so it makes no difference in which order the heap has given the cells.
-        for (PyException* exception : parts.exceptions) {
+        for (PyException* exception : exceptions) {
             if (!exception->isUnseen())
                 continue;
             m_outOfReach.add(exception);
@@ -270,7 +269,7 @@ private:
             }
         };
         // A frame object leads to that of its caller.
-        for (PyFrame* frame : parts.frames) {
+        for (PyFrame* frame : frames) {
             settleChainFrom(frame, [](PyFrame* frame) {
                 return PyFrame::tryFrom(frame->backAsItIs());
             }, [](PyFrame* frame) {
@@ -278,7 +277,7 @@ private:
             });
         }
         // An entry leads to its frame object and to the entries of the calls that its call made.
-        for (PyTraceback* entry : parts.entries) {
+        for (PyTraceback* entry : entries) {
             settleChainFrom(entry, [](PyTraceback* entry) {
                 return PyTraceback::tryFrom(entry->next());
             }, [&](PyTraceback* entry) {
@@ -286,7 +285,7 @@ private:
             });
         }
         // An exception leads to its entries.
-        for (PyException* exception : parts.exceptions) {
+        for (PyException* exception : exceptions) {
             if (auto* first = PyTraceback::tryFrom(exception->tracebackAsItIs()); first && m_outOfReach.contains(first))
                 m_outOfReach.add(exception);
         }
