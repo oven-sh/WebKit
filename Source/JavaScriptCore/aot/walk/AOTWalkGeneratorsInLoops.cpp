@@ -102,6 +102,8 @@ static bool wayOfReturnLeadsForward(const BodyIndex& body, BlockID blockOfYield,
 {
     HashMap<uint32_t, std::optional<int64_t>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> integersHandedOver;
     BitVector isSeen(body.numberOfBlocks());
+    BitVector isCounted(body.numberOfBlocks());
+    bool knowsLessThanWhereBlocksWereSeen = false;
     Vector<BlockID, 8> worklist;
     auto integerOf = [&](ValueID value) -> std::optional<int64_t> {
         if (!value)
@@ -125,10 +127,11 @@ static bool wayOfReturnLeadsForward(const BodyIndex& body, BlockID blockOfYield,
             if (!added.isNewEntry && added.iterator->value && added.iterator->value != arriving) {
                 added.iterator->value = std::nullopt;
                 knowsLess = true;
+                knowsLessThanWhereBlocksWereSeen = true;
             }
         }
         bool isNew = !isSeen.set(to.index());
-        if (isNew)
+        if (!isCounted.set(to.index()))
             numberOfOperations += block.numberOfValues() + 1;
         if (isNew || knowsLess)
             worklist.append(to);
@@ -136,7 +139,12 @@ static bool wayOfReturnLeadsForward(const BodyIndex& body, BlockID blockOfYield,
     };
     if (!visit(first))
         return false;
-    while (!worklist.isEmpty()) {
+    while (!worklist.isEmpty() || knowsLessThanWhereBlocksWereSeen) {
+        if (worklist.isEmpty()) {
+            knowsLessThanWhereBlocksWereSeen = false;
+            isSeen.clearAll();
+            visit(first);
+        }
         BodyBlock block = body.block(worklist.takeLast());
         BodyTerminator terminator = block.terminator();
         std::optional<int64_t> subject = terminator.kind() == TerminatorKind::Switch ? integerOf(terminator.operand(0)) : std::nullopt;

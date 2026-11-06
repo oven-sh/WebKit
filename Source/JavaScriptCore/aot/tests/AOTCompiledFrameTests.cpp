@@ -343,6 +343,12 @@ static void testWhichFramesAreShown()
 
     ShownFrameFilter belowShownFrame(true);
     AOT_TEST_CHECK(!belowShownFrame.shows(TraceVisibility::VisibleOnlyOnTop, false) && belowShownFrame.shows(TraceVisibility::Visible, false));
+
+    ShownFrameFilter withWhateverIsOnTop = ShownFrameFilter::showingWhateverIsOnTop(false);
+    AOT_TEST_CHECK(!withWhateverIsOnTop.shows(TraceVisibility::Hidden, true) && !withWhateverIsOnTop.hasShownFrame());
+    AOT_TEST_CHECK(withWhateverIsOnTop.shows(TraceVisibility::Hidden, false) && withWhateverIsOnTop.hasShownFrame());
+    AOT_TEST_CHECK(!withWhateverIsOnTop.shows(TraceVisibility::Hidden, false) && withWhateverIsOnTop.shows(TraceVisibility::Visible, false));
+    AOT_TEST_CHECK(!ShownFrameFilter::showingWhateverIsOnTop(true).shows(TraceVisibility::Hidden, false));
 }
 
 struct CallSiteCacheSlots {

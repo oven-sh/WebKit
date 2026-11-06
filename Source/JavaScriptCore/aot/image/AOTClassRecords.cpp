@@ -80,9 +80,22 @@ static BitVector findClassesWithRecordsAllTheWayUp(const TableEncoder& encoder)
     });
 }
 
+static BitVector findClassesWhosePrivateNamesTextsKnow(const Typed::Program& program)
+{
+    BitVector known(program.layouts.size());
+    for (const Typed::EvalScope& scope : program.evalScopes) {
+        for (const Typed::EvalBinding& binding : scope.bindings) {
+            if (binding.layout && !program.at(binding.layout).isEnvironment())
+                known.quickSet(binding.layout.index());
+        }
+    }
+    return known;
+}
+
 void askRowsOfClassesForClassRecords(TableEncoder& encoder)
 {
     encoder.classesWithRecordsAllTheWayUp = findClassesWithRecordsAllTheWayUp(encoder);
+    encoder.classesWhosePrivateNamesTextsKnow = findClassesWhosePrivateNamesTextsKnow(encoder.program);
 }
 
 static bool recordHoldsSideToStayingAsWritten(const TableEncoder& encoder, LayoutID classLayout, ClassSide side)
@@ -334,6 +347,7 @@ ClassRecordParts collectClassRecordParts(const TableEncoder& encoder, LayoutID c
     });
     data.classObjectLacksHasInstance = data.isChangedInSightAlone(ClassSide::Static) && linked.findsNothingOnClassObjects(program, classLayout, program.keyOf(program.builtins().nameOf(WellKnownSymbol::HasInstance)));
     data.hasStaticFieldUnderComputedKey = layout.hasStaticFieldWithComputedKey();
+    data.privateNamesAreKnownToTexts = encoder.classesWhosePrivateNamesTextsKnow.quickGet(classLayout.index());
     return parts;
 }
 

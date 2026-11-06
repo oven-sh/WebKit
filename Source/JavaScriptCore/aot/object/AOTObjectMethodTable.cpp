@@ -1130,6 +1130,8 @@ bool Object::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, Property
 
 bool Object::deletePropertyByIndex(JSCell* cell, JSGlobalObject* globalObject, unsigned index)
 {
+    if (index > MAX_ARRAY_INDEX) [[unlikely]]
+        return JSCell::deleteProperty(cell, globalObject, Identifier::from(globalObject->vm(), index));
     Object* object = uncheckedDowncast<Object>(cell);
     JSObject* extra = object->extraProperties();
     if (!extra)

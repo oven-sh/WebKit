@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTClassToken.h"
 #include "AOTEffectsNet.h"
 #include "AOTEnvironment.h"
 #include "AOTErrorMessages.h"
@@ -179,10 +180,12 @@ static bool needsPrivateBrand(const EvalBindingData& binding)
     return entry && entry->isPrivateMethodOrAccessor();
 }
 
-static Symbol* privateSymbolAt(Instance* instance, uint32_t privateKey)
+static Symbol* privateSymbolOf(Instance* instance, JSCellButterfly* operands, const EvalBindingData& binding)
 {
-    UniquedStringImpl* uid = identifierAt(instance, privateKey).impl();
+    UniquedStringImpl* uid = identifierAt(instance, binding.privateKey).impl();
     RELEASE_ASSERT(uid && uid->isSymbol() && static_cast<SymbolImpl*>(uid)->isPrivate());
+    if (Symbol* name = ClassToken::tryNameForText(*instance->vm, *instance->state, operandOrEmpty(operands, binding.operand), uid))
+        return name;
     return Symbol::create(*instance->vm, static_cast<SymbolImpl&>(*uid));
 }
 
@@ -305,7 +308,7 @@ JSCell* EvalBindings::createPrivateValue(VM& vm, const EvalBindingData& binding)
     if (isStaticPrivateField(binding))
         return createStaticFieldAccessors(vm, binding);
     if (kindOf(binding) == EvalBindingKind::PrivateName)
-        return privateSymbolAt(m_instance, binding.privateKey);
+        return privateSymbolOf(m_instance, m_operands.get(), binding);
     if (kindOf(binding) != EvalBindingKind::PrivateAccessor)
         return nullptr;
     JSCellButterfly* operands = m_operands.get();
@@ -766,7 +769,7 @@ static EvalScopeChain buildScopeChain(Instance* instance, JSGlobalObject* global
                 return binding.privateKey && needsPrivateBrand(binding);
             });
             if (instanceMember != group.end())
-                contents.privateBrand = privateSymbolAt(instance, instanceMember->privateKey);
+                contents.privateBrand = privateSymbolOf(instance, operandCopy, *instanceMember);
             pushVariableScope(ScopeType::LexicalScope, contents);
             runEnd = groupStart;
         }

@@ -285,6 +285,7 @@ struct TableEncoder {
     Vector<uint32_t> firstClassBelow;
     BitVector sidesWithClassGuardsHereOrBelow;
     BitVector classesWithRecordsAllTheWayUp;
+    BitVector classesWhosePrivateNamesTextsKnow;
 };
 
 bool showsVariablesOf(const TableInputs&, ModuleID);

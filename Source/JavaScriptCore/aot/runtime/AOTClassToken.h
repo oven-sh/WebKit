@@ -12,9 +12,14 @@
 namespace JSC {
 
 class JSCellButterfly;
+class JSValue;
+class Symbol;
 class VM;
 
 namespace AOT {
+
+class Object;
+struct State;
 
 class ClassToken {
 public:
@@ -48,6 +53,9 @@ public:
     static constexpr unsigned slotOfDefinition(uint32_t field, unsigned definition) { return slotOfRecord(field, recordsPerField) + definition * slotsPerDefinition; }
 
     static JSCellButterfly* create(VM&, const LayoutData& classLayout);
+    static Symbol* tryNameForText(VM&, State&, JSValue token, UniquedStringImpl* declaredName);
+    static UniquedStringImpl* declaredNameUnder(VM&, Object& holder, UniquedStringImpl* nameOfEvaluation);
+    static UniquedStringImpl* nameBesideFields(VM&, const Object& allocated, const FieldData&, bool holderIsCompiled);
 };
 
 } } // namespace JSC::AOT

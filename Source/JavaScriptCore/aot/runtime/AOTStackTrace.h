@@ -104,7 +104,8 @@ struct RunListing {
     bool isAboveFramesThatWait { false };
 };
 JS_EXPORT_PRIVATE IterationStatus appendShownFramesOfRun(VM&, CompiledFrameIterator&, ShownFrameFilter&, WTF::Vector<StackFrame>& results, RunListing&);
-void forEachShownFrameOfRunAtTop(VM&, const ScopedLambda<IterationStatus(const TraceFrame&)>&);
+enum class HiddenFrameOnTop : bool { IsLeftOut, IsShown };
+void forEachShownFrameOfRunAtTop(VM&, HiddenFrameOnTop, const ScopedLambda<IterationStatus(const TraceFrame&)>&);
 JS_EXPORT_PRIVATE bool tryGetStackTrace(VM&, JSCell* owner, WTF::Vector<StackFrame>& results, size_t framesToSkip, size_t maxStackSize, const ScopedLambda<bool(const StackFrame&)>* wanted = nullptr);
 JS_EXPORT_PRIVATE std::optional<TraceFrame> tryGetFrameOfClassCalledWithoutNew(VM&, CallFrame*);
 std::optional<TraceFrame> frameOfFunctionWhoseThisIsMade(const Image&, FunctionID constructed);

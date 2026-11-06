@@ -207,7 +207,8 @@ struct ClassData {
     uint32_t namesAreLaidUnderWrittenKeysAlone : 1;
     uint32_t classObjectLacksHasInstance : 1;
     uint32_t hasStaticFieldUnderComputedKey : 1;
-    uint32_t unusedClassBits : 26 - 2 * numberOfClassSides { 0 };
+    uint32_t privateNamesAreKnownToTexts : 1;
+    uint32_t unusedClassBits : 25 - 2 * numberOfClassSides { 0 };
 
     bool bitsAreClearWhileGuardsHold(ClassSide side) const { return side == ClassSide::Prototype ? guardsOfPrototypeSideHoldWhileClear : guardsHoldWhileClear; }
     bool hasGuardsHereOrBelow(ClassSide side) const { return sidesWithGuardsHereOrBelow >> static_cast<unsigned>(side) & 1; }

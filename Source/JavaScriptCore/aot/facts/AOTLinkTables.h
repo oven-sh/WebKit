@@ -288,7 +288,6 @@ struct LookupsPastProgramObjects {
     BitVector namesRead;
     BitVector namesCalled;
     BitVector namesSpelledByProgram;
-    BitVector namesReadByProgram;
     BitVector builtinsRead;
     BitVector builtinsCalled;
     BitVector builtinsConstructed;

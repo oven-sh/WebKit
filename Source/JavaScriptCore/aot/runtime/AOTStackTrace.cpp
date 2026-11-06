@@ -1034,7 +1034,7 @@ IterationStatus appendShownFramesOfRun(VM& vm, CompiledFrameIterator& frames, Sh
     return IterationStatus::Continue;
 }
 
-void forEachShownFrameOfRunAtTop(VM& vm, const ScopedLambda<IterationStatus(const TraceFrame&)>& functor)
+void forEachShownFrameOfRunAtTop(VM& vm, HiddenFrameOnTop hiddenFrameOnTop, const ScopedLambda<IterationStatus(const TraceFrame&)>& functor)
 {
     AssertNoGC assertNoGC;
     if (!vm.hasCompiledCode() || !vm.topCallFrame || vm.aotState().stackPointerOfImport)
@@ -1048,7 +1048,7 @@ void forEachShownFrameOfRunAtTop(VM& vm, const ScopedLambda<IterationStatus(cons
     RunWalk walk(vm.aotState(), *start);
     if (walk.isAtEnd())
         return;
-    ShownFrameFilter filter(isBelowHostFunction);
+    ShownFrameFilter filter = hiddenFrameOnTop == HiddenFrameOnTop::IsShown ? ShownFrameFilter::showingWhateverIsOnTop(isBelowHostFunction) : ShownFrameFilter(isBelowHostFunction);
     forEachShownFrameOfRun(vm, walk, start->calleeWasEntered, filter, [&](const ShownFrameOfRun& shown) {
         return functor(shown.frame);
     });

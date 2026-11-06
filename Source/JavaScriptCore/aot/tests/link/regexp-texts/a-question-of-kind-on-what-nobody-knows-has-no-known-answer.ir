@@ -1,0 +1,37 @@
+# The list follows from the program alone. A built-in that asks the kind or the identity of what it is handed converts nothing, so nothing throws: handed what nobody knows it would give a known answer and cut one arm of the branch behind it. It answers what nobody knows, and both arms are gone through.
+# const seven = [7].flat()[0]; new RegExp((Number.isInteger(seven) ? "whole" : "broken").toUpperCase() + "q");   ([7].flat()[0]: flat is not entered: nobody knows what it gives.)
+# RUN: regexp-texts mechanisms=all
+# CHECK: text /BROKENq/
+# CHECK: text /WHOLEq/
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=NumberIsInteger
+    v1 = Integer integer=7
+    v2 = NewArray v1 contents=anything
+    v3 = PropGet v2 key="flat"
+    v4 = Call v3, v2 calleeKey="flat"
+    v5 = Integer
+    v6 = ElemGet v4, v5
+    v7 = Call v0, -, v6
+    v8 = ToBoolean v7
+    Branch v8 -> taken b1(), notTaken b2()
+  b1():
+    v9 = String string="whole"
+    v10 = PropGet v9 key="toUpperCase"
+    v11 = Call v10, v9 calleeKey="toUpperCase"
+    Jump -> next b3(v11)
+  b2():
+    v12 = String string="broken"
+    v13 = PropGet v12 key="toUpperCase"
+    v14 = Call v13, v12 calleeKey="toUpperCase"
+    Jump -> next b3(v14)
+  b3(v15: anything):
+    v16 = Builtin builtin=RegExp
+    v17 = String string="q"
+    v18 = Add v15, v17
+    v19 = Construct v16, -, v18
+    Return v19
+}

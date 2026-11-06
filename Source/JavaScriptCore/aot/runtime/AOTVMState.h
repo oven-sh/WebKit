@@ -117,6 +117,7 @@ public:
     bool verifiesFastPathAnswers { false };
     bool someClassHasPrivateNames { false };
     bool somePrivateNameLiesBesideFields { false };
+    bool someTextKnowsPrivateNames { false };
     JSObject* classPrototypeBeingDefined { nullptr };
     JSGlobalObject* realmWhoseDatesAreWrittenInPlace { nullptr };
     Modules* modulesWhoseFilesRunAheadOfLoader { nullptr };

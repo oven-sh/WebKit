@@ -326,6 +326,11 @@ static void ensureRecordsOfKnownStructures(VM& vm, State& state, JSCellButterfly
         token->setIndex(vm, ClassToken::knownStructuresSlot, JSCellButterfly::create(vm, CopyOnWriteArrayWithContiguous, ClassToken::slotOfRecord(declaringLayoutOf(state, token).numberOfFields, 0)));
 }
 
+static bool objectsWithoutLayoutTakeNamesOfEvaluation(const LayoutData& declaringLayout)
+{
+    return declaringLayout.classData().privateNamesAreKnownToTexts && declaringLayout.evaluation() != EvaluationState::ProvenOnce;
+}
+
 static const FieldData& declaredFieldOf(const LayoutData& declaringLayout, uint32_t fieldIndex)
 {
     RELEASE_ASSERT(fieldIndex < declaringLayout.numberOfFields);
@@ -563,6 +568,8 @@ static bool tryDefineByExistingTransition(VM& vm, State& state, JSObject* base, 
         return false;
     const LayoutData& declaringLayout = declaringLayoutOf(state, token);
     const FieldData& declared = declaredFieldOf(declaringLayout, fieldIndex);
+    if (objectsWithoutLayoutTakeNamesOfEvaluation(declaringLayout))
+        return false;
     if (declared.isBrand() ? defined != JSValue(token) : !!brandOf(state, declaringLayout, token))
         return false;
     Structure* before = base->structure();
@@ -694,7 +701,8 @@ JSC_DEFINE_JIT_OPERATION(operationAOTPrivateDefine, void, (Instance* instance, E
     }
     if (isBrand && defined != JSValue(classToken)) [[unlikely]]
         crashOnWrongOperand(entry);
-    bool canUseDeclaredName = !location.underDeclaredName.value && (isBrand || location.belongsToEvaluation);
+    bool takesNameOfEvaluation = !location.compiledObject && objectsWithoutLayoutTakeNamesOfEvaluation(declaringLayoutOf(state, classToken));
+    bool canUseDeclaredName = !takesNameOfEvaluation && !location.underDeclaredName.value && (isBrand || location.belongsToEvaluation);
     UniquedStringImpl* uid = canUseDeclaredName ? location.declaredName : &privateNameOf(vm, state, classToken, field)->uid();
     if (Object* compiledObject = location.compiledObject) {
         const FieldData* own = canUseDeclaredName ? location.underDeclaredName.field : nullptr;
@@ -723,6 +731,8 @@ JSC_DEFINE_JIT_OPERATION(operationAOTPrivateDefine, void, (Instance* instance, E
         }
         ensureRecordsOfKnownStructures(vm, state, classToken);
         bool needsBrand = !isBrand && location.hasBrand;
+        if (takesNameOfEvaluation)
+            rememberDefinition(vm, classToken, field, before, base->structure(), std::nullopt);
         if (canUseDeclaredName && (!needsBrand || isValidOffset(location.brand.offset)))
             rememberDefinition(vm, classToken, field, before, base->structure(), needsBrand ? std::optional(location.brand.offset) : std::nullopt);
     }
@@ -738,6 +748,79 @@ static JSCellButterfly* classTokenOrNull(State& state, JSValue value)
     uint32_t index = token->get(ClassToken::classIndexSlot).asUInt32();
     const LayoutData* layout = index < state.tables.numberOfLayoutIndices ? state.objects->classes.classWithIndex(index) : nullptr;
     return layout && token->length() == ClassToken::firstNameSlot + layout->numberOfFields ? token : nullptr;
+}
+
+struct NameOfEvaluation {
+    JSCellButterfly* token { nullptr };
+    uint32_t field { 0 };
+};
+
+static void findNameAmongThoseOf(State& state, JSValue value, UniquedStringImpl* name, NameOfEvaluation& found)
+{
+    JSCellButterfly* token = found.token ? nullptr : classTokenOrNull(state, value);
+    uint32_t numberOfFields = token ? declaringLayoutOf(state, token).numberOfFields : 0;
+    for (uint32_t field = 0; field < numberOfFields; ++field) {
+        Symbol* symbol = privateNameIfCreated(token, field);
+        if (symbol && &symbol->uid() == name)
+            found = { token, field };
+    }
+}
+
+Symbol* ClassToken::tryNameForText(VM& vm, State& state, JSValue value, UniquedStringImpl* declaredName)
+{
+    JSCellButterfly* token = classTokenOrNull(state, value);
+    if (!token)
+        return nullptr;
+    const LayoutData& declaringLayout = declaringLayoutOf(state, token);
+    if (declaringLayout.evaluation() == EvaluationState::ProvenOnce)
+        return nullptr;
+    for (const FieldData& field : declaringLayout.fields()) {
+        if (!field.isPrivate() || state.objects->layouts.nameOf(vm, field) != declaredName)
+            continue;
+        vm.aotState().someTextKnowsPrivateNames = true;
+        return privateNameOf(vm, state, token, declaringLayout.indexOf(field));
+    }
+    return nullptr;
+}
+
+UniquedStringImpl* ClassToken::declaredNameUnder(VM& vm, Object& holder, UniquedStringImpl* nameOfEvaluation)
+{
+    State& state = holder.state();
+    NameOfEvaluation found;
+    for (const FieldData& field : holder.layout().fields()) {
+        if (field.isBrand())
+            findNameAmongThoseOf(state, findFieldProperty(vm, holder, field).valueOrAccessor, nameOfEvaluation, found);
+    }
+    JSObject* extra = !found.token && vm.aotState().somePrivateNameLiesBesideFields ? extraPropertiesIfMade(holder) : nullptr;
+    if (extra && !extra->structure()->isQuickPropertyAccessAllowedForEnumeration()) {
+        extra->structure()->forEachProperty(vm, [&](const PropertyTableEntry& entry) {
+            if (PropertyName(entry.key()).isPrivateName())
+                findNameAmongThoseOf(state, extra->getDirect(entry.offset()), nameOfEvaluation, found);
+            return !found.token;
+        });
+    }
+    if (!found.token)
+        return nullptr;
+    PrivateLocation location = locatePrivateName(vm, state, &holder, found.token, found.field);
+    return location.name == location.declaredName ? location.name : nullptr;
+}
+
+UniquedStringImpl* ClassToken::nameBesideFields(VM& vm, const Object& allocated, const FieldData& field, bool holderIsCompiled)
+{
+    State& state = allocated.state();
+    vm.aotState().somePrivateNameLiesBesideFields = true;
+    UniquedStringImpl* declaredName = state.objects->layouts.nameOf(vm, field);
+    for (const FieldData& brand : allocated.layout().fields()) {
+        JSCellButterfly* token = !holderIsCompiled && brand.isBrand() ? classTokenOrNull(state, findFieldProperty(vm, allocated, brand).valueOrAccessor) : nullptr;
+        const LayoutData* declaringLayout = token ? &declaringLayoutOf(state, token) : nullptr;
+        if (!declaringLayout || !objectsWithoutLayoutTakeNamesOfEvaluation(*declaringLayout))
+            continue;
+        for (const FieldData& declared : declaringLayout->fields()) {
+            if (declared.isPrivate() && state.objects->layouts.nameOf(vm, declared) == declaredName)
+                return &privateNameOf(vm, state, token, declaringLayout->indexOf(declared))->uid();
+        }
+    }
+    return declaredName;
 }
 
 enum class AboveProxies : bool { IsNotLookedAt, IsLookedAt };

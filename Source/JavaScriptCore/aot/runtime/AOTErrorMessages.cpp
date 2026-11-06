@@ -84,7 +84,15 @@ static String findQuotedText(ModuleID module, LineColumn place)
 String quotedTextOfFailedExpression(VM& vm)
 {
     String quoted;
-    forEachShownFrameOfRunAtTop(vm, [&](const TraceFrame& frame) {
+    forEachShownFrameOfRunAtTop(vm, HiddenFrameOnTop::IsShown, [&](const TraceFrame& frame) {
+        std::optional<SourcePosition> position = Image::current()->positionOf(frame.code.index(), frame.callSite);
+        if (position && position->source && FunctionDescription(frame.function).visibility() == TraceVisibility::Hidden)
+            quoted = findQuotedText(position->source, position->lineColumn);
+        return IterationStatus::Done;
+    });
+    if (!quoted.isNull())
+        return quoted;
+    forEachShownFrameOfRunAtTop(vm, HiddenFrameOnTop::IsLeftOut, [&](const TraceFrame& frame) {
         std::optional<SourcePosition> position = Image::current()->positionOf(frame.code.index(), frame.callSite);
         if (position && position->source) {
             quoted = findQuotedText(position->source, position->lineColumn);

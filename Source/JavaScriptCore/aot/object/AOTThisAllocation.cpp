@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTClassPrototype.h"
+#include "AOTClassToken.h"
 #include "AOTClosure.h"
 #include "AOTCompiledCallee.h"
 #include "AOTObject.h"
@@ -290,7 +291,7 @@ static void defineFieldOnInstance(VM& vm, State& state, const Object& allocated,
 {
     if (looksFilledWhenNotListed(field))
         return;
-    UniquedStringImpl* name = propertyNameOf(vm, allocated, field);
+    UniquedStringImpl* name = field.isPrivate() ? ClassToken::nameBesideFields(vm, allocated, field, isCompiledObject(&instance)) : propertyNameOf(vm, allocated, field);
     JSValue value = valueForInstance(vm, state, allocated, field, instance);
     ASSERT(value);
     if (isCompiledObject(&instance))

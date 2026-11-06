@@ -71,6 +71,9 @@ enum class GrowthOfWork : uint16_t {
     LaysTextBetweenPlaces = 1 << 9,
     LaysTextOverFind = 1 << 10,
     LaysTextOverEveryFind = 1 << 11,
+    AsksWhetherWhatIsGivenBackIsTrue = 1 << 12,
+    GoesIntoWhatItIsHandedFirst = 1 << 13,
+    AsksIdentityOfWhatIsHeld = 1 << 14,
 };
 
 static constexpr ASCIILiteral builtinsWhoseWorkGrowsWithWhatIsHanded[] = {
@@ -87,7 +90,7 @@ static constexpr ASCIILiteral builtinsWhoseWorkGrowsWithWhatIsHanded[] = {
     "ObjectPrototype__defineGetter__"_s, "ReflectDefineProperty"_s, "ObjectHasOwn"_s, "ObjectPrototypeHasOwnProperty"_s, "ObjectPrototypeValueOf"_s,
     "ObjectPrototypePropertyIsEnumerable"_s, "ObjectIsExtensible"_s, "Object"_s, "ObjectFromEntries"_s, "ObjectPrototype__lookupGetter__"_s, "ObjectPrototype__defineSetter__"_s,
     "ReflectGetPrototypeOf"_s, "ReflectGetOwnPropertyDescriptor"_s, "ArrayPrototypeToString"_s, "ErrorPrototypeToString"_s, "Symbol"_s, "SymbolFor"_s, "TypeError"_s,
-    "RangeError"_s, "SyntaxError"_s, "ReferenceError"_s, "ErrorCaptureStackTrace"_s, "ErrorIsError"_s, "StringPrototypeLastIndexOf"_s, "StringPrototypeStartsWith"_s,
+    "RangeError"_s, "SyntaxError"_s, "ReferenceError"_s, "ErrorIsError"_s, "StringPrototypeLastIndexOf"_s, "StringPrototypeStartsWith"_s,
     "StringPrototypeTrimLeft"_s, "StringPrototypeSubstring"_s, "StringPrototypeNormalize"_s, "StringFromCodePoint"_s, "NumberIsSafeInteger"_s, "NumberIsInteger"_s,
     "NumberIsFinite"_s, "NumberIsNaN"_s, "NumberPrototypeToFixed"_s, "ParseInt"_s, "IsFinite"_s, "IsNaN"_s, "MathMin"_s, "MathMax"_s, "MathFloor"_s, "MathCeil"_s, "MathAbs"_s,
     "MathPow"_s, "MathImul"_s, "MathRound"_s, "ArrayPrototypeIndexOf"_s, "ArrayPrototypeFind"_s, "ArrayPrototypeEvery"_s, "ArrayPrototypeReduceRight"_s,
@@ -114,6 +117,20 @@ static constexpr ASCIILiteral builtinsThatGoThroughWhatIsHandedByItsLength[] = {
 
 static constexpr ASCIILiteral builtinsThatGoOverTheirArguments[] = {
     "ArrayFrom"_s, "Set"_s, "Map"_s, "WeakMap"_s, "WeakSet"_s, "ObjectFromEntries"_s,
+};
+
+static constexpr ASCIILiteral builtinsThatAskWhetherWhatIsGivenBackIsTrue[] = {
+    "ArrayPrototypeEvery"_s, "ArrayPrototypeSome"_s, "ArrayPrototypeFind"_s, "ArrayPrototypeFindIndex"_s, "ArrayPrototypeFindLastIndex"_s, "ArrayPrototypeFilter"_s,
+};
+
+static constexpr ASCIILiteral builtinsThatGoIntoWhatTheyAreHandedFirst[] = {
+    "ObjectAssign"_s, "ObjectDefineProperty"_s, "ObjectDefineProperties"_s, "ObjectFreeze"_s, "ObjectSeal"_s, "ObjectSetPrototypeOf"_s, "ReflectDefineProperty"_s, "ObjectCreate"_s,
+    "ObjectKeys"_s, "ObjectValues"_s, "ObjectEntries"_s, "ObjectFromEntries"_s, "ObjectGetOwnPropertyNames"_s, "ObjectGetOwnPropertySymbols"_s, "ObjectGetOwnPropertyDescriptor"_s,
+    "ObjectGetOwnPropertyDescriptors"_s, "ObjectGetPrototypeOf"_s, "ReflectGetPrototypeOf"_s, "ReflectGetOwnPropertyDescriptor"_s, "ReflectOwnKeys"_s, "Object"_s, "ArrayFrom"_s,
+};
+
+static constexpr ASCIILiteral builtinsThatAskIdentityOfWhatIsHeld[] = {
+    "ArrayPrototypeIncludes"_s, "ArrayPrototypeIndexOf"_s,
 };
 
 static constexpr ASCIILiteral builtinsThatMakePatternOfTextHanded[] = {
@@ -184,7 +201,7 @@ static unsigned mostTermsThatVaryInOneAlternative(const Yarr::PatternDisjunction
     for (const auto& alternative : disjunction.m_alternatives) {
         unsigned inThisOne = 0;
         for (const Yarr::PatternTerm& term : alternative->m_terms) {
-            if (term.quantityType != Yarr::QuantifierType::FixedCount)
+            if (term.quantityType != Yarr::QuantifierType::FixedCount || term.type == Yarr::PatternTerm::Type::NumberedBackReference || term.type == Yarr::PatternTerm::Type::NamedBackReference)
                 ++inThisOne;
             if (term.type == Yarr::PatternTerm::Type::ParenthesesSubpattern || term.type == Yarr::PatternTerm::Type::ParentheticalAssertion)
                 inThisOne += mostTermsThatVaryInOneAlternative(*term.parentheses.disjunction);
@@ -192,6 +209,19 @@ static unsigned mostTermsThatVaryInOneAlternative(const Yarr::PatternDisjunction
         most = std::max(most, inThisOne);
     }
     return most;
+}
+
+static uint64_t numberOfNodesIn(const DataNode& node)
+{
+    uint64_t nodes = 1;
+    if (const auto* array = node.tryAs<DataNode::Array>()) {
+        for (const DataNode& element : array->elements)
+            nodes += numberOfNodesIn(element);
+    } else if (const auto* object = node.tryAs<DataNode::Object>()) {
+        for (const DataMember& member : object->members)
+            nodes += numberOfNodesIn(member.value);
+    }
+    return nodes;
 }
 
 class RehearsalOfRegExpTexts {
@@ -284,6 +314,7 @@ private:
         uint64_t handed { 0 };
         uint64_t characters { 0 };
         uint64_t stepsOfSearch { 0 };
+        bool holdsWhatNobodyKnows { false };
         uint64_t laidOut { 0 };
         uint64_t walked { 0 };
         Values* ropesHanded { nullptr };
@@ -412,8 +443,12 @@ private:
     UncheckedKeyHashMap<JSCell*, JSObject*> m_wrappersOfOriginals;
     Values m_wrappersMade;
     UncheckedKeyHashSet<JSCell*> m_handsOnItsReceiver;
+    JSValue m_functionPrototypeApply;
+    JSValue m_objectSetPrototypeOf;
+    UncheckedKeyHashMap<uint32_t, uint64_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_nodesOfData;
     bool m_callGoesStraightToProgram { false };
     bool m_receiverOfBuiltinIsText { false };
+    bool m_builtinAsksWhetherWhatIsGivenBackIsTrue { false };
     Values m_builtins;
     UncheckedKeyHashMap<uint32_t, uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_texts;
     Values m_textsMade;
@@ -539,11 +574,16 @@ RehearsalOfRegExpTexts::RehearsalOfRegExpTexts(VM& vm, const Program& program, c
     mark(builtinsThatGoThroughWhatIsHandedByItsLength, GrowthOfWork::WithLengthOfWhatIsHanded);
     mark(builtinsThatGoOverTheirArguments, GrowthOfWork::GoesOverItsArguments);
     mark(builtinsThatMakePatternOfTextHanded, GrowthOfWork::MakesPatternOfTextHanded);
+    mark(builtinsThatAskWhetherWhatIsGivenBackIsTrue, GrowthOfWork::AsksWhetherWhatIsGivenBackIsTrue);
+    mark(builtinsThatGoIntoWhatTheyAreHandedFirst, GrowthOfWork::GoesIntoWhatItIsHandedFirst);
+    mark(builtinsThatAskIdentityOfWhatIsHeld, GrowthOfWork::AsksIdentityOfWhatIsHeld);
+    m_objectSetPrototypeOf = inRealmByToken("ObjectSetPrototypeOf"_s);
     for (auto [token, growth] : { std::pair { "ArrayPrototypeJoin"_s, GrowthOfWork::LaysTextBetweenPlaces }, std::pair { "StringPrototypeReplace"_s, GrowthOfWork::LaysTextOverFind }, std::pair { "StringPrototypeReplaceAll"_s, GrowthOfWork::LaysTextOverEveryFind } })
         mark(std::span(&token, 1), growth);
     for (ASCIILiteral token : { "FunctionPrototypeCall"_s, "FunctionPrototypeApply"_s }) {
         if (JSValue function = inRealmByToken(token); isKnown(function) && function.isCell())
             m_handsOnItsReceiver.add(function.asCell());
+        m_functionPrototypeApply = inRealmByToken(token);
     }
     for (unsigned index = 0; index < table.builtinCount(); ++index) {
         BuiltinID id(index);
@@ -714,7 +754,8 @@ JSValue RehearsalOfRegExpTexts::closureOf(FunctionID function, std::span<const J
     JSObject* made = JSNativeStdFunction::create(vm, realm, record.length, String(), [this, function, held, isGoneThrough](JSGlobalObject* caller, CallFrame* frame) {
         bool givesBackToBuiltin = !std::exchange(m_callGoesStraightToProgram, false);
         bool receiverOfBuiltinIsText = m_receiverOfBuiltinIsText;
-        if (!m_operationsLeft || !m_operationsLeftInAll) {
+        bool isAskedWhetherTrue = givesBackToBuiltin && m_builtinAsksWhetherWhatIsGivenBackIsTrue;
+        if (!m_operationsLeft || !m_operationsLeftInAll || (isAskedWhetherTrue && !isGoneThrough)) {
             auto scope = DECLARE_THROW_SCOPE(*m_vm);
             return throwVMTypeError(caller, scope, "nobody knows the value"_s);
         }
@@ -734,6 +775,10 @@ JSValue RehearsalOfRegExpTexts::closureOf(FunctionID function, std::span<const J
             price.mayMatch = false;
             if (!isTaken || !pay(price))
                 given = unknown();
+        }
+        if (isAskedWhetherTrue && !isKnown(given)) {
+            auto scope = DECLARE_THROW_SCOPE(*m_vm);
+            return throwVMTypeError(caller, scope, "nobody knows the value"_s);
         }
         return JSValue::encode(given);
     }, held);
@@ -1145,7 +1190,9 @@ JSValue RehearsalOfRegExpTexts::call(JSValue callee, JSValue thisValue, std::spa
         noteHandedToCodeThatNobodyKnows(arguments);
         return unknown();
     }
-    if (!isOfProgram && !isKnown(thisValue))
+    if (!isOfProgram && (!isKnown(thisValue) || (workOf(callee).contains(GrowthOfWork::GoesIntoWhatItIsHandedFirst) && !arguments.empty() && !isKnown(arguments[0]))))
+        return unknown();
+    if (callee == m_objectSetPrototypeOf && arguments.size() > 1 && !isKnown(arguments[1]))
         return unknown();
     if (isOfProgram && !arguments.empty() && (!isKnown(thisValue) || thisValue.isUndefined()) && std::ranges::none_of(arguments, [&](JSValue argument) { return isKnown(argument); }))
         return unknown();
@@ -1169,6 +1216,12 @@ JSValue RehearsalOfRegExpTexts::call(JSValue callee, JSValue thisValue, std::spa
             if (auto* handedOn = dynamicDowncast<JSArray>(argument))
                 price.handed += handedOn->length();
         }
+        if (callee == m_functionPrototypeApply && arguments.size() > 1 && isKnown(arguments[1]) && arguments[1].isObject() && !arguments[1].inherits<JSArray>()) {
+            std::optional<uint64_t> elements = elementsOfObjectHandedToBuiltin(asObject(arguments[1]), true);
+            if (!elements)
+                return unknown();
+            price.handed += *elements;
+        }
         if (!pay(price))
             return unknown();
     } else if (!isOfProgram && !payForBuiltin(callee, thisValue, arguments, charactersHanded, ropesHanded))
@@ -1183,6 +1236,7 @@ JSValue RehearsalOfRegExpTexts::call(JSValue callee, JSValue thisValue, std::spa
     NakedPtr<Exception> exception;
     SetForScope goesStraightToProgram(m_callGoesStraightToProgram, isOfProgram || onlyHandsOn);
     SetForScope receiverIsText(m_receiverOfBuiltinIsText, thisValue.isString());
+    SetForScope asksWhetherTrue(m_builtinAsksWhetherWhatIsGivenBackIsTrue, !isOfProgram && workOf(callee).contains(GrowthOfWork::AsksWhetherWhatIsGivenBackIsTrue));
     JSValue result = JSC::call(realm, callee, callData, thisValue, list, exception);
     scope.clearException();
     noteLaidOutByBuiltin(ropesHanded);
@@ -1194,6 +1248,8 @@ JSValue RehearsalOfRegExpTexts::call(JSValue callee, JSValue thisValue, std::spa
         return notePatternMadeHere(result);
     if (isOfProgram)
         return result;
+    if (!onlyHandsOn && !result.isObject() && std::ranges::any_of(arguments, [&](JSValue argument) { return !isKnown(argument); }))
+        return unknown();
     if (workOf(callee).contains(GrowthOfWork::CopiesWhatIsHeld))
         exchangeBuiltinsHeldBy(result, 1);
     else if (workOf(callee).contains(GrowthOfWork::CopiesWhatIsHeldIntoStructuresOfStructures))
@@ -1269,8 +1325,10 @@ bool RehearsalOfRegExpTexts::take(JSValue value, OptionSet<GrowthOfWork> work, P
     }
     if (!value.isObject())
         return true;
-    if (!isKnown(value))
+    if (!isKnown(value)) {
+        price.holdsWhatNobodyKnows |= !!depth;
         return true;
+    }
     if (depth >= deepestCall)
         return false;
     JSObject* object = asObject(value);
@@ -1299,6 +1357,8 @@ bool RehearsalOfRegExpTexts::take(JSValue value, OptionSet<GrowthOfWork> work, P
         if (*elements >= charactersGoneOverAtPriceOfOneOperation)
             price.handed += *elements;
         price.handed += holdersPassed / charactersGoneOverAtPriceOfOneOperation * (1 + *elements);
+        if (work.contains(GrowthOfWork::WithPropertiesOfWhatIsHanded))
+            price.handed += object->structure()->maxOffset() + 1;
         return !passesWhatIsLeft(price);
     }
     if (auto* iterator = dynamicDowncast<JSMapIterator>(object))
@@ -1314,7 +1374,6 @@ bool RehearsalOfRegExpTexts::take(JSValue value, OptionSet<GrowthOfWork> work, P
     case JSWeakSetType:
     case JSPromiseType:
     case ErrorInstanceType:
-    case GlobalObjectType:
         break;
     default:
         return false;
@@ -1414,6 +1473,7 @@ bool RehearsalOfRegExpTexts::pay(const PriceOfBuiltin& asked)
     worstCase = std::max(worstCase, price);
     if (worstCase >= m_operationsLeft || worstCase >= m_operationsLeftInAll)
         return payForWalkThatEndedInRefusal(asked);
+    price = std::max(price, worstCase / charactersGoneOverAtPriceOfOneOperation);
     m_operationsLeft -= static_cast<uint32_t>(price);
     m_operationsLeftInAll -= price;
     m_bytesMade += asked.laidOut;
@@ -1569,7 +1629,7 @@ bool RehearsalOfRegExpTexts::payForBuiltin(JSValue callee, JSValue thisValue, st
     if (thisValue.isString() && !arguments.empty() && arguments[0].isString() && asString(arguments[0])->length() > static_cast<unsigned>(WTF::AdaptiveStringSearcherBase::bmMaxShift))
         price.stepsOfSearch = static_cast<uint64_t>(asString(thisValue)->length()) * asString(arguments[0])->length();
     charactersHanded = price.characters;
-    if (!pay(price))
+    if (!pay(price) || (price.holdsWhatNobodyKnows && work.contains(GrowthOfWork::AsksIdentityOfWhatIsHeld)))
         return false;
     return !wouldMakeMoreThanAnybodyKeeps(work, thisValue, arguments, price);
 }
@@ -1762,8 +1822,15 @@ JSValue RehearsalOfRegExpTexts::execute(Activation& activation, const BodyValue&
         return textOf(value.as<Opcode::String>().string());
     case Opcode::Builtin:
         return builtinInRealm(value.as<Opcode::Builtin>().builtin());
-    case Opcode::Data:
-        return settle(valueOfData(m_program.at(value.as<Opcode::Data>().data()).root));
+    case Opcode::Data: {
+        DataID data = value.as<Opcode::Data>().data();
+        PriceOfBuiltin price;
+        price.handed = m_nodesOfData.ensure(data.index(), [&] {
+            return numberOfNodesIn(m_program.at(data).root);
+        }).iterator->value;
+        price.laidOut = price.handed * sizeof(JSValue);
+        return pay(price) ? settle(valueOfData(m_program.at(data).root)) : unknown();
+    }
     case Opcode::NewClosure: {
         auto closure = value.as<Opcode::NewClosure>();
         return closureOf(closure.function(), operandsOf(closure.capturesOperands()).span());
@@ -2782,7 +2849,9 @@ void RehearsalOfRegExpTexts::runFrom(Activation& activation, BlockID current, JS
         case TerminatorKind::Switch:
         case TerminatorKind::SwitchString: {
             JSValue subject = at(activation, terminator.operand(0));
-            if (!isKnown(subject) || !payToLayOut(subject)) {
+            PriceOfBuiltin priceOfCases;
+            priceOfCases.characters = terminator.numberOfTargets();
+            if (!isKnown(subject) || !payToLayOut(subject) || !pay(priceOfCases)) {
                 current = goEachWayFrom(activation, block, result);
                 break;
             }
@@ -2800,8 +2869,9 @@ void RehearsalOfRegExpTexts::runFrom(Activation& activation, BlockID current, JS
                 auto scope = DECLARE_TOP_EXCEPTION_SCOPE(*m_vm);
                 String text = asString(subject)->value(realm);
                 bool isRead = !hasThrown(scope);
+                Vector<char16_t> buffer;
                 for (StringID written : terminator.as<TerminatorKind::SwitchString>().strings()) {
-                    if (isRead && charactersOf(written) == text) {
+                    if (isRead && m_program.strings.viewOf(written, buffer) == text) {
                         chosen = position;
                         break;
                     }

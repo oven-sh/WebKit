@@ -11,6 +11,7 @@
 #include "AOTChainDependents.h"
 #include "AOTClassPrototype.h"
 #include "AOTClassTable.h"
+#include "AOTClassToken.h"
 #include "AOTClosure.h"
 #include "AOTCompiledCallee.h"
 #include "AOTInstance.h"
@@ -734,7 +735,12 @@ JSValue getDirect(VM& vm, const JSObject* object, PropertyName name, unsigned* a
 {
     if (!isCompiledObject(object))
         return { };
-    return uncheckedDowncast<Object>(const_cast<JSObject*>(object))->getDirectFromNativeCode(vm, name, attributesOrNull);
+    Object& typed = *uncheckedDowncast<Object>(const_cast<JSObject*>(object));
+    JSValue value = typed.getDirectFromNativeCode(vm, name, attributesOrNull);
+    if (value || !vm.aotState().someTextKnowsPrivateNames || !name.isPrivateName()) [[likely]]
+        return value;
+    UniquedStringImpl* declaredName = ClassToken::declaredNameUnder(vm, typed, name.uid());
+    return declaredName ? typed.getDirectFromNativeCode(vm, declaredName, attributesOrNull) : JSValue();
 }
 
 bool ordinaryGetOwnPropertySlot(JSGlobalObject* globalObject, JSObject* object, PropertyName name, PropertySlot& slot)
@@ -816,7 +822,13 @@ bool tryReadDescriptorMembers(JSObject* object, DescriptorMembers& members)
 void putDirect(VM& vm, JSObject* object, PropertyName name, JSValue value, unsigned attributes)
 {
     ASSERT(isCompiledObject(object));
-    uncheckedDowncast<Object>(object)->putDirectFromNativeCode(vm, name, value, attributes);
+    Object& typed = *uncheckedDowncast<Object>(object);
+    UniquedStringImpl* uid = name.uid();
+    if (vm.aotState().someTextKnowsPrivateNames && name.isPrivateName() && !typed.getDirectFromNativeCode(vm, name, nullptr)) [[unlikely]] {
+        if (UniquedStringImpl* declaredName = ClassToken::declaredNameUnder(vm, typed, uid))
+            uid = declaredName;
+    }
+    typed.putDirectFromNativeCode(vm, uid, value, attributes);
 }
 
 void prepareForFreeze(JSObject* object)
