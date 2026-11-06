@@ -2820,7 +2820,7 @@ void Monitoring::jump(JSGlobalObject* globalObject, PyFrame* frame, int requeste
     unsigned lastOffset = std::numeric_limits<unsigned>::max();
     Vector<Target, 2> targets;
     bool isInExpression = false;
-    bool valueIsAllThereIs = false; // The line of a `return` that is told of when the value has been computed.
+    bool valueIsAllThereIs = false; // The line of a `return` that is told of when the value has been computed: it has a block to itself.
     int lineBefore = -1; // In the order of the code.
     for (auto& mark : marks) {
         if (!from && mark.offset > offset)
@@ -2845,6 +2845,8 @@ void Monitoring::jump(JSGlobalObject* globalObject, PyFrame* frame, int requeste
             ++linesAtOffset;
             // (If what comes before is of the same line, no line begins here in CPython's code.)
             valueIsAllThereIs &= std::exchange(lineBefore, lineOfMarkValue(mark.value())) != line;
+            if (size_t next = &mark - marks.data() + 1; next == marks.size() || marks[next].kind() != PythonMark::BlockEnd)
+                valueIsAllThereIs = false;
             if (lineOfMarkValue(mark.value()) != line)
                 break;
             if (isStatementStart(mark.value()) || valueIsAllThereIs)

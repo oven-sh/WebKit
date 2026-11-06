@@ -1816,19 +1816,8 @@ void Unit::unwindBlock(const Block& block, Vector<TryContext>& suspended)
         unsigned rest = instructionsOnTheWayOut(false, std::min<size_t>(stays, m_blocks.size()), m_blocks.size());
         if (isLast.kind == Last::BeforeJump || (isLast.kind == Last::OfLoopBody && rest))
             isLast = isLast.behindJump(isLast.jumpIs, 1 + rest, nullptr);
-        // A frame cannot be sent into the clause from elsewhere (`frame.f_lineno = n`): there would be nothing to return. (A constant is loaded afterwards.)
-        // (Nor is there one where a `break` or `continue` in such a clause runs a clause: one of its own, and the value waits further out; or one further out, and the value is given up.)
-        bool valueWaits = m_leavingAs.kind == Last::OfFunction && m_valueToReturn && !m_valueToReturn->virtualRegister().isConstant() && !m_blocks.containsIf([&](const Block& other) {
-            return other.kind == BlockKind::ValueToReturn && other.saved == m_valueToReturn;
-        });
-        if (valueWaits)
-            pushBlock({ .kind = BlockKind::ValueToReturn, .tryDepth = g.tryDepth(), .saved = m_valueToReturn, .isOnlyHere = true });
-        {
-            SetForScope leftByStatement(m_leftByStatement, notFound);
-            statements(block.finalBody, 0, isLast);
-        }
-        if (valueWaits)
-            popBlock();
+        SetForScope leftByStatement(m_leftByStatement, notFound);
+        statements(block.finalBody, 0, isLast);
         return;
     }
     case BlockKind::FinallyEnd:
@@ -1872,8 +1861,23 @@ void Unit::unwindBlocks(const Range& range, size_t count, Vector<TryContext>& su
     markBlock(top, false);
     m_blocks.removeLast();
     // Behind a `finally` clause that never comes to its end, all there is to do is to look at what else is in the way.
-    if (!cannotGetHere())
+    if (!cannotGetHere()) {
+        // A value to return waits while a `finally` clause runs: a frame cannot be sent into the clause from elsewhere (`frame.f_lineno = n`), there would be nothing to
+        // return. (A constant is loaded afterwards.) It waits from where it has been computed, so in all that runs before the clause as well: a clause that never comes to
+        // its end does not read it, and a register that nothing reads and no block holds is emptied by a collection.
+        // (None waits where a `break` or `continue` in such a clause runs a clause: one of its own, and the value waits further out; or one further out, and the value is given up.)
+        auto isClause = [](const Block& other) { return other.kind == BlockKind::FinallyTry; };
+        bool valueWaits = m_leavingAs.kind == Last::OfFunction && m_valueToReturn && !m_valueToReturn->virtualRegister().isConstant() && top.kind != BlockKind::ValueToReturn
+            && (isClause(top) || m_blocks.containsIf(isClause))
+            && !m_blocks.containsIf([&](const Block& other) { return other.kind == BlockKind::ValueToReturn && other.saved == m_valueToReturn; });
+        if (valueWaits) {
+            suspendTry(top.tryDepth, suspended);
+            pushBlock({ .kind = BlockKind::ValueToReturn, .tryDepth = g.tryDepth(), .saved = m_valueToReturn, .isOnlyHere = true });
+        }
         unwindBlock(top, suspended);
+        if (valueWaits)
+            popBlock();
+    }
     // As in CPython, where what comes after a clause or an __exit__ that runs on the way out is of no place.
     bool hasRunSomething = top.kind == BlockKind::FinallyTry || top.kind == BlockKind::With || top.kind == BlockKind::AsyncWith;
     unwindBlocks(hasRunSomething ? Range { -1, -1, -1, -1 } : range, count, suspended, leave);

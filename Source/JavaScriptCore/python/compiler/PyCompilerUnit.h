@@ -195,7 +195,7 @@ private:
         ExceptionGroupHandler,
         InlinedComprehension,
         MatchSubject, // While the patterns of a case are tried.
-        ValueToReturn, // While a `finally` clause runs on the way of a `return`, whose value waits in a register.
+        ValueToReturn, // While a `finally` clause runs on the way of a `return`, whose value waits in a register, and what runs before the clause.
         ExceptionToRaise, // While one runs on the way of an exception, which does.
     };
 
