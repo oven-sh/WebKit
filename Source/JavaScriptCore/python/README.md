@@ -815,6 +815,9 @@ so the aim is that everything Python *guarantees* holds, and that what it merely
   program that has `x` in 60 variables of a recursion, drops it, and asks in `f([1], key=check)` whether it is gone hears yes 0 to 2 times
   out of 18, for `max`, `min`, `sorted` and classes with `__init__` or `__new__`, whether the site has had one callee or several. (While a
   site with several callees took the slow path each time, it was 1, 18, 6, 0 and 18 for these; with one callee, as now.)
+  One such word is made by the compiler of C++ in the engine's own code: a `bool` in a callee-saved register whose other seven bytes are left over from the address of a cell. The collector
+  takes an address inside a cell for the cell, so the word stands for the neighbour in front of that cell whenever the last byte of the address was less than the size of the cells: 160 in 256 for the
+  keys and values of a small dict. `test_contextlib.test_nokeepref` meets it in the first resume of a generator (`Interpreter::executeCallImpl()`), and fails in two runs of three, on some builds and not on others.
 - **`gc.collect(0)` and `gc.collect(1)`** are collections of the young generation: of what has been allocated since the last
   collection, whoever made that. There are two generations here, and a program passes 0 or 1 to be quick. What is found
   dead is finalized, weak references to it are cleared and it is counted, as above; what has come through a collection is
