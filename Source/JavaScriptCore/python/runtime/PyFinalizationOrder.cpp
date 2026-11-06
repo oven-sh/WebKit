@@ -5,6 +5,7 @@
 
 #include "config.h"
 #include "PyInternals.h"
+#include "PyModule.h"
 
 #include "AbstractSlotVisitorInlines.h"
 #include "BlockDirectoryInlines.h"
@@ -61,7 +62,9 @@ public:
             addAllThatDied(candidates);
     }
 
-    // Outside a collection, of cells that are alive: the graph is what the candidates lead to by way of cells of the program. No cell is allocated while there is one.
+    // Outside a collection, of cells that are alive: the graph is what the candidates lead to by way of cells of the program, but not by way of a namespace: by its class, the methods of that and their
+    // globals every instance leads to all that is alive. The namespaces that are passed by are noted, and of what is in them only that is looked at which is in the graph anyway: it has a name.
+    // No cell is allocated while there is one.
     DeadGraph(JSC::Heap& heap, std::span<JSCell* const> candidates, const FinalizationQuestions& questions)
         : AbstractSlotVisitor(heap.collector(), "PythonFinalizationOrder"_s, m_opaqueRootStorage)
         , m_heap(heap)
@@ -191,7 +194,7 @@ private:
 
     void reach(JSCell* cell)
     {
-        if (!cell || cell == m_wholeOfCurrentCell || isOutside(cell))
+        if (!cell || cell == m_wholeOfCurrentCell || cell == m_namespacesOfCurrentCell[0] || cell == m_namespacesOfCurrentCell[1] || isOutside(cell))
             return;
 #if ASSERT_ENABLED
         // What a cell that was alive until now refers to was alive until now.
@@ -241,6 +244,8 @@ private:
     bool m_hasAllThatDied;
     size_t m_cellsLookedAt { 0 };
     JSCell* m_wholeOfCurrentCell { nullptr };
+    std::array<JSCell*, 2> m_namespacesOfCurrentCell { }; // Among the living only, like the next.
+    UncheckedKeyHashSet<PyDict*> m_namespacesPassedBy;
 #if ASSERT_ENABLED
     JSCell* m_currentCell { nullptr };
 #endif
@@ -380,6 +385,17 @@ void DeadGraph::walk()
         if (i >= maxCells || isInternalObject(cell) || isTableLeftForAnother(cell))
             continue;
         m_wholeOfCurrentCell = wholeThatPartRefersTo(cell);
+        if (!m_marker) {
+            m_namespacesOfCurrentCell = { };
+            if (auto* function = cell->type() == JSFunctionType ? PyFunction::tryFrom(cell) : nullptr)
+                m_namespacesOfCurrentCell = { function->globals(), function->builtins() };
+            else if (auto* module = PyModule::tryFrom(cell))
+                m_namespacesOfCurrentCell[0] = module->dict();
+            for (JSCell* dict : m_namespacesOfCurrentCell) {
+                if (dict)
+                    m_namespacesPassedBy.add(uncheckedDowncast<PyDict>(dict));
+            }
+        }
 #if ASSERT_ENABLED
         m_currentCell = cell;
         if (!cell->structureID().decontaminate()) [[unlikely]] {
@@ -547,6 +563,15 @@ Vector<unsigned> DeadGraph::candidatesWithHoldersFirst()
                 continue;
             for (unsigned target : successors(node))
                 holders[target] = 0;
+        }
+        // Among the living the namespaces are not in the graph. What has a name in one is as free.
+        for (PyDict* dict : m_namespacesPassedBy) {
+            JSValue key;
+            JSValue value;
+            for (unsigned position = 0; dict->next(position, key, value);) {
+                if (unsigned* slot = value.isCell() ? slotFor(value.asCell(), false) : nullptr; slot && *slot != none)
+                    holders[*slot] = 0;
+            }
         }
         Vector<unsigned> worklist;
         for (unsigned node = 0; node < count; ++node) {
