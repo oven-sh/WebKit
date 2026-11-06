@@ -1041,7 +1041,9 @@ static JSValue jsIteratorNext(JSGlobalObject* globalObject, JSValue self)
         record->set(vm, JSIteratorObject, { });
         return raiseStopIteration(globalObject, scope);
     }
-    RELEASE_AND_RETURN(scope, iteratorValue(globalObject, result));
+    JSValue value = iteratorValue(globalObject, result);
+    RETURN_IF_EXCEPTION(scope, { });
+    return value;
 }
 
 static constexpr NativeDef jsIteratorMethods[] = {
