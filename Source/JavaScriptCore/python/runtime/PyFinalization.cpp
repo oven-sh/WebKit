@@ -22,6 +22,7 @@
 #include "PyInternals.h"
 #include "PyList.h"
 #include "PyModule.h"
+#include "PyMonitoring.h"
 #include "PyStr.h"
 #include "PyStructSeq.h"
 #include "PyThreads.h"
@@ -1282,6 +1283,16 @@ void makeCallsOwed(VM& vm)
     if (vm.heap.pythonRuntimes().isEmpty())
         return;
     auto scope = DECLARE_THROW_SCOPE(vm);
+    // (One runtime's frame is at the safe point. The others have none.)
+    Vector<std::pair<Runtime*, Monitoring::NotesOfJump>, 1> notesOfJump;
+    for (Runtime* runtime : vm.heap.pythonRuntimes())
+        notesOfJump.append({ runtime, runtime->monitoring().takeNotesOfJump() });
+    auto putNotesBack = makeScopeExit([&] {
+        for (auto& [runtime, notes] : notesOfJump) {
+            if (vm.heap.pythonRuntimes().contains(runtime))
+                runtime->monitoring().putBack(notes);
+        }
+    });
     // Another thread has waited long enough for its turn.
     Threads& threads = vm.heap.pythonRuntimes().first()->threads();
     if (threads.dropIsRequested()) [[unlikely]] {

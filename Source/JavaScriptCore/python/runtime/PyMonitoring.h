@@ -352,6 +352,25 @@ public:
     // When the runtime is set up.
     void createState();
 
+    // What a jump has left for the instruction it leads to, which is the next that the frame runs. But a jump back is a safe point: code of the
+    // program may run in between, a finalizer or another thread, and whatever is told of that takes it that these are of the instruction before.
+    struct PlaceJumpedTo {
+        CallFrame* callFrame { nullptr };
+        unsigned offset { 0 };
+    };
+    struct NotesOfJump {
+        PlaceJumpedTo jumpGoesOn;
+        PlaceJumpedTo comesFromSameLine;
+        PlaceJumpedTo arrivesByJump;
+    };
+    NotesOfJump takeNotesOfJump() { return { std::exchange(m_jumpGoesOn, { }), std::exchange(m_comesFromSameLine, { }), std::exchange(m_arrivesByJump, { }) }; }
+    void putBack(const NotesOfJump& notes)
+    {
+        m_jumpGoesOn = notes.jumpGoesOn;
+        m_comesFromSameLine = notes.comesFromSameLine;
+        m_arrivesByJump = notes.arrivesByJump;
+    }
+
 private:
     friend class CodeMonitor;
 
@@ -393,20 +412,11 @@ private:
     unsigned m_monitorsWithLocalTools { 0 };
     unsigned m_monitorsWhoseLocalToolsWantExceptions { 0 };
     // The frame is about to run the op_jmp at the offset, having jumped to it: see handle().
-    struct {
-        CallFrame* callFrame { nullptr };
-        unsigned offset { 0 };
-    } m_jumpGoesOn;
+    PlaceJumpedTo m_jumpGoesOn;
     // The frame is about to run the instruction at the offset, having jumped to it from the line that begins there.
-    struct {
-        CallFrame* callFrame { nullptr };
-        unsigned offset { 0 };
-    } m_comesFromSameLine;
+    PlaceJumpedTo m_comesFromSameLine;
     // It got there by a jump: see Point::leadsWhereBranchJumps.
-    struct {
-        CallFrame* callFrame { nullptr };
-        unsigned offset { 0 };
-    } m_arrivesByJump;
+    PlaceJumpedTo m_arrivesByJump;
     std::array<JSValue, 8> m_namesOfWhat { }; // What trace and profile functions are told has happened. state() keeps them.
     unsigned m_tracingThreads { 0 };
     unsigned m_profilingThreads { 0 };
