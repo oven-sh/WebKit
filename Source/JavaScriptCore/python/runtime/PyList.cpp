@@ -2275,7 +2275,7 @@ int64_t hashOfTuple(JSGlobalObject* globalObject, PyTuple* tuple)
     return result;
 }
 
-static JSValue tupleNew(JSGlobalObject* globalObject, JSValue cls, const CallArgs& args)
+JSValue tupleNew(JSGlobalObject* globalObject, JSValue cls, const CallArgs& args)
 {
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();

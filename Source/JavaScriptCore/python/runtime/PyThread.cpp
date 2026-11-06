@@ -610,18 +610,7 @@ static constexpr TypeDef threadStateTypeDef { "_thread._state"_s, { TypeFlag::Di
 static constexpr ASCIILiteral exceptHookArgsFields[] = { "exc_type"_s, "exc_value"_s, "exc_traceback"_s, "thread"_s };
 static constexpr StructSeqDef exceptHookArgsDef { "_thread._ExceptHookArgs"_s, exceptHookArgsFields, 4 };
 
-static PyType* exceptHookArgsType(JSGlobalObject* globalObject)
-{
-    Runtime& rt = runtime(globalObject);
-    VM& vm = rt.vm();
-    PyDict* state = rt.typeFor(threadStateTypeDef)->dict();
-    JSString* key = internString(vm, "_ExceptHookArgs"_s);
-    if (JSValue type = state->get(key))
-        return PyType::from(type);
-    PyType* type = makeStructSeqType(globalObject, exceptHookArgsDef);
-    state->set(vm, key, type);
-    return type;
-}
+static PyType* exceptHookArgsType(JSGlobalObject* globalObject) { return structSeqTypeFor(globalObject, exceptHookArgsDef); }
 
 static JSValue threadAllocateLock(JSGlobalObject* globalObject) { return PyRecord::create(globalObject, runtime(globalObject).typeFor(lockTypeDef), 0); }
 static JSValue threadGetIdent(JSGlobalObject* globalObject) { return makeInt(globalObject, currentThreadIdent()); }

@@ -91,8 +91,11 @@ JSValue structSeqNew(JSGlobalObject* globalObject, JSValue cls, const CallArgs& 
     PyType* type = PyType::from(cls);
     StructSeqFields fields = fieldsOf(globalObject, type);
     // A class that only names one of these types. It is made by what it inherits, as in CPython.
-    if (!fields) [[unlikely]]
-        RELEASE_AND_RETURN(scope, uncheckedDowncast<PyNativeFunction>(runtime(globalObject).tupleType()->lookup(Special::New).asCell())->invokeWithSelf(globalObject, cls, args));
+    if (!fields) [[unlikely]] {
+        if (!isLaidOutAs(type, runtime(globalObject).tupleType()))
+            return raiseTypeError(globalObject, scope, "cannot create '"_s, type->nameInMessages(), "' instances"_s);
+        RELEASE_AND_RETURN(scope, tupleNew(globalObject, cls, args));
+    }
     // Whatever the type, the messages about the arguments call it "structseq".
     static constexpr ASCIILiteral keywords[] = { "sequence"_s, "dict"_s };
     JSValue arguments[std::size(keywords)];
@@ -228,18 +231,14 @@ static constexpr NativeDef structSeqConstructor[] = {
     PY_NEW(structSeqNew, "($type, /, sequence, dict=<unrepresentable>, *args)"),
 };
 
-static constexpr TypeDef structSeqStateTypeDef { "structseq._state"_s, { TypeFlag::DisallowInstantiation, TypeFlag::Internal }, { }, { }, { } };
-
 PyType* structSeqTypeFor(JSGlobalObject* globalObject, const StructSeqDef& def)
 {
-    VM& vm = getVM(globalObject);
-    // The runtime keeps a type for each definition, and a type has a dict: somewhere to keep what must be found again.
-    PyDict* state = runtime(globalObject).typeFor(structSeqStateTypeDef)->dict();
-    JSString* key = internString(vm, def.name);
-    if (JSValue type = state->get(key))
-        return PyType::from(type);
+    Runtime& rt = runtime(globalObject);
+    if (PyType* type = rt.typeIfMadeFor(def))
+        return type;
     PyType* type = makeStructSeqType(globalObject, def);
-    state->set(vm, key, type);
+    ASSERT(!rt.typeIfMadeFor(def));
+    rt.keepTypeMadeFor(def, type);
     return type;
 }
 

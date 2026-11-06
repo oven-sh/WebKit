@@ -305,10 +305,16 @@ void Runtime::initializeModules()
 
 // Without the lock, which is there for the collector: it reads the table from a thread of its own. Only a thread that is running
 // Python adds to it, and there is one of those at a time.
-PyType* Runtime::typeIfMadeFor(const TypeDef& def) const
+PyType* Runtime::typeIfMadeForDefinitionAt(const void* definition) const
 {
-    auto it = m_moduleTypes.find(&def);
+    auto it = m_moduleTypes.find(definition);
     return it != m_moduleTypes.end() ? it->value.get() : nullptr;
+}
+
+void Runtime::keepTypeMadeForDefinitionAt(const void* definition, PyType* type)
+{
+    Locker locker { m_moduleTypesLock };
+    m_moduleTypes.add(definition, WriteBarrier<PyType>(m_vm, m_globalObject, type));
 }
 
 PyType* Runtime::typeFor(const TypeDef& def, PyType* base)
@@ -316,11 +322,8 @@ PyType* Runtime::typeFor(const TypeDef& def, PyType* base)
     if (PyType* type = typeIfMadeFor(def)) [[likely]]
         return type;
     PyType* type = PyType::createBare(m_vm, m_typeStructure.get());
-    {
-        // In the table first: filling the type may ask for it.
-        Locker locker { m_moduleTypesLock };
-        m_moduleTypes.add(&def, WriteBarrier<PyType>(m_vm, m_globalObject, type));
-    }
+    // In the table first: filling the type may ask for it.
+    keepTypeMadeForDefinitionAt(&def, type);
     type->initializeBuiltin(m_globalObject, def, typeType(), base ? base : objectType());
     return type;
 }

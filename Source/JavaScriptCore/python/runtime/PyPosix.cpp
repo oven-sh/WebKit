@@ -651,17 +651,7 @@ PyDict* posixState(JSGlobalObject* globalObject)
     return runtime(globalObject).typeFor(posixStateTypeDef)->dict();
 }
 
-PyType* cachedStructSeqType(JSGlobalObject* globalObject, const StructSeqDef& def)
-{
-    VM& vm = getVM(globalObject);
-    PyDict* state = posixState(globalObject);
-    JSString* key = internString(vm, def.name);
-    if (JSValue type = state->get(key))
-        return PyType::from(type);
-    PyType* type = makeStructSeqType(globalObject, def);
-    state->set(vm, key, type);
-    return type;
-}
+PyType* cachedStructSeqType(JSGlobalObject* globalObject, const StructSeqDef& def) { return structSeqTypeFor(globalObject, def); }
 
 // ---- File descriptors ----
 

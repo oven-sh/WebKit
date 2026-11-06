@@ -444,22 +444,7 @@ static constexpr ASCIILiteral timeStructFields[] = {
 };
 static constexpr StructSeqDef timeStructDef { "time.struct_time"_s, timeStructFields, 9 };
 
-// Never seen from Python: the runtime keeps a type for each definition, and the dict of this one is where struct_time is kept,
-// out of reach of what is done to the module.
-static constexpr TypeDef timeStateTypeDef { "time._state"_s, { TypeFlag::DisallowInstantiation, TypeFlag::Internal }, { }, { }, { } };
-
-static PyType* timeStructType(JSGlobalObject* globalObject)
-{
-    Runtime& rt = runtime(globalObject);
-    VM& vm = rt.vm();
-    PyDict* state = rt.typeFor(timeStateTypeDef)->dict();
-    JSString* key = internString(vm, "struct_time"_s);
-    if (JSValue type = state->get(key))
-        return PyType::from(type);
-    PyType* type = makeStructSeqType(globalObject, timeStructDef);
-    state->set(vm, key, type);
-    return type;
-}
+static PyType* timeStructType(JSGlobalObject* globalObject) { return structSeqTypeFor(globalObject, timeStructDef); }
 
 static JSValue timeMakeStruct(JSGlobalObject* globalObject, const struct tm& tm)
 {

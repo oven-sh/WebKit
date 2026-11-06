@@ -455,12 +455,11 @@ static constexpr NativeDef posixSchedParamMethods[] = {
 
 static PyType* posixSchedParamType(JSGlobalObject* globalObject)
 {
-    VM& vm = getVM(globalObject);
-    if (JSValue type = posixState(globalObject)->get(internString(vm, posixSchedParamDef.name)))
-        return PyType::from(type);
+    if (PyType* type = runtime(globalObject).typeIfMadeFor(posixSchedParamDef))
+        return type;
     PyType* type = cachedStructSeqType(globalObject, posixSchedParamDef);
     type->addMethods(globalObject, posixSchedParamMethods);
-    type->didChange(vm);
+    type->didChange(getVM(globalObject));
     return type;
 }
 

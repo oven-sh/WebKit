@@ -120,6 +120,10 @@ constexpr size_t stackBytesWipedForCallsOwed = 8 * KB;
 // If all that callee(...) does is self = object.__new__(callee), then callee.__init__(self, ...), and that is a function written
 // in Python: the function, and a new `self`. Otherwise the empty value.
 JSValue prepareConstruct(JSGlobalObject*, JSValue callee, JSValue& self);
+// Whether it is this built-in type that decides the layout of the instances of the class: no other that has a layout of its own is between them.
+bool isLaidOutAs(PyType*, PyType* builtinType);
+// tuple.__new__. The instance is a PyTuple: it is for the caller to know that those of `cls` are.
+JSValue tupleNew(JSGlobalObject*, JSValue cls, const CallArgs&);
 // __build_class__(function, name, *bases, **keywords)
 JSValue buildClass(JSGlobalObject*, const CallArgs&);
 // The same for a body that is not a function of Python's: it is given the namespace to fill, and returns None, or nothing if it raises.

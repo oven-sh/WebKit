@@ -167,6 +167,8 @@ static PyType* layoutBase(PyType* type)
     return base;
 }
 
+bool isLaidOutAs(PyType* type, PyType* builtinType) { return layoutBase(type) == builtinType; }
+
 JSValue allocateInstance(JSGlobalObject* globalObject, PyType* type, PyType* layout)
 {
     Runtime& rt = runtime(globalObject);

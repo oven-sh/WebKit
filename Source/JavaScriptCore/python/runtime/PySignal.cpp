@@ -1027,21 +1027,8 @@ static JSValue signalValidSignals(JSGlobalObject* globalObject)
 
 static constexpr ASCIILiteral signalInfoFields[] = { "si_signo"_s, "si_code"_s, "si_errno"_s, "si_pid"_s, "si_uid"_s, "si_status"_s, "si_band"_s };
 static constexpr StructSeqDef signalInfoDef { "signal.struct_siginfo"_s, signalInfoFields, 7 };
-// Never seen from Python: its dict is where struct_siginfo is kept, out of reach of what is done to the module.
-static constexpr TypeDef signalStateTypeDef { "signal._state"_s, { TypeFlag::DisallowInstantiation, TypeFlag::Internal }, { }, { }, { } };
 
-static PyType* signalInfoType(JSGlobalObject* globalObject)
-{
-    Runtime& rt = runtime(globalObject);
-    VM& vm = rt.vm();
-    PyDict* state = rt.typeFor(signalStateTypeDef)->dict();
-    JSString* key = internString(vm, "struct_siginfo"_s);
-    if (JSValue type = state->get(key))
-        return PyType::from(type);
-    PyType* type = makeStructSeqType(globalObject, signalInfoDef);
-    state->set(vm, key, type);
-    return type;
-}
+static PyType* signalInfoType(JSGlobalObject* globalObject) { return structSeqTypeFor(globalObject, signalInfoDef); }
 
 static JSValue signalMakeInfo(JSGlobalObject* globalObject, const siginfo_t& info)
 {

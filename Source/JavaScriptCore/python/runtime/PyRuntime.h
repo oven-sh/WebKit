@@ -255,6 +255,7 @@ class PyType;
 class PyWeakRef;
 class Threads;
 struct StrIndexCache;
+struct StructSeqDef;
 struct TypeDef;
 
 enum class CellClass : uint8_t {
@@ -345,7 +346,10 @@ public:
     // The type a module written in C++ defines so, made the first time it is asked for. The definition, which must live as
     // long as the process, is what tells it from others. A null base is object.
     PyType* typeFor(const TypeDef&, PyType* base = nullptr);
-    PyType* typeIfMadeFor(const TypeDef&) const WTF_IGNORES_THREAD_SAFETY_ANALYSIS; // Null: it has not been asked for yet.
+    PyType* typeIfMadeFor(const TypeDef& def) const { return typeIfMadeForDefinitionAt(&def); } // Null: it has not been asked for yet.
+    // The same table for struct sequences, which are made in another way: structSeqTypeFor(). The definition lives as long as the process too.
+    PyType* typeIfMadeFor(const StructSeqDef& def) const { return typeIfMadeForDefinitionAt(&def); }
+    void keepTypeMadeFor(const StructSeqDef& def, PyType* type) { keepTypeMadeForDefinitionAt(&def, type); }
 
     JSString* name(NameID id) const { return m_names[static_cast<unsigned>(id)].get(); }
     JSString* name(Special special) const { return m_names[static_cast<unsigned>(special)].get(); }
@@ -1217,8 +1221,10 @@ private:
     bool m_leavesCyclicGarbageForLater { false };
     bool m_askerMakesAllCalls { false };
 
+    PyType* typeIfMadeForDefinitionAt(const void*) const WTF_IGNORES_THREAD_SAFETY_ANALYSIS;
+    void keepTypeMadeForDefinitionAt(const void*, PyType*);
     Lock m_moduleTypesLock;
-    UncheckedKeyHashMap<const TypeDef*, WriteBarrier<PyType>> m_moduleTypes WTF_GUARDED_BY_LOCK(m_moduleTypesLock);
+    UncheckedKeyHashMap<const void*, WriteBarrier<PyType>> m_moduleTypes WTF_GUARDED_BY_LOCK(m_moduleTypesLock);
 };
 
 #define PY_DEFINE_STRUCTURE_ACCESSOR(Class) \
