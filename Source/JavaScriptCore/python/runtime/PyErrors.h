@@ -135,6 +135,41 @@ private:
     TopExceptionScope m_scope;
 };
 
+// For code of the program that is called where terminations are deferred (DeferTermination): it has to be possible to end it. For as
+// long as this lives they are thrown. None gets out, so whoever deferred them notices nothing: one that is pending at the end is
+// dropped, as by dropPendingException(), before the deferral is put back. Any other exception goes on. It lifts one deferral, that
+// of the caller or of whoever called it: the count is the VM's, and another may be that of a thread that waits for the GIL. Where
+// they are not deferred, this does nothing.
+class TerminationNotDeferred {
+    WTF_MAKE_NONCOPYABLE(TerminationNotDeferred);
+    WTF_FORBID_HEAP_ALLOCATION;
+public:
+    ALWAYS_INLINE explicit TerminationNotDeferred(JSGlobalObject* globalObject)
+        : m_globalObject(globalObject)
+        , m_scope(DECLARE_TOP_EXCEPTION_SCOPE(getVM(globalObject)))
+        , m_wasDeferred(getVM(globalObject).traps().isDeferringTermination())
+    {
+        ASSERT(!m_scope.exception());
+        if (m_wasDeferred)
+            m_scope.vm().traps().undoDeferTermination(VMTraps::DeferAction::DeferForAWhile);
+    }
+
+    ALWAYS_INLINE ~TerminationNotDeferred()
+    {
+        bool isTermination = m_scope.exception() && m_scope.vm().hasPendingTerminationException();
+        if (!m_wasDeferred)
+            return;
+        if (isTermination) [[unlikely]]
+            dropPendingException(m_globalObject, m_scope);
+        m_scope.vm().traps().deferTermination(VMTraps::DeferAction::DeferForAWhile);
+    }
+
+private:
+    JSGlobalObject* m_globalObject;
+    TopExceptionScope m_scope;
+    bool m_wasDeferred;
+};
+
 // Whether `except typeOrTuple:` catches the exception. May throw.
 bool exceptionMatches(JSGlobalObject*, JSValue exception, JSValue typeOrTuple);
 

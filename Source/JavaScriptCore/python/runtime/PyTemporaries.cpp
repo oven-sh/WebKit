@@ -790,29 +790,27 @@ void Runtime::releaseIteratorsOfLoopsLeft(CallFrame* callFrame, unsigned offset,
         });
         if (goesOn)
             continue;
+        // Code of the program may run, which can ask for all the objects there are.
+        if (JSC::Exception* pending = m_vm.exceptionForInspection()) {
+            if (auto* generator = PyGenerator::tryFrom(iterator); !generator || !generator->isCompleted())
+                exceptionWillBeSeen(pending->value());
+        }
         // The exception waits, as it does while CPython pops the iterator off the stack of the frame. The frames that it has
         // left are still there, below this one: see tellOfException() in PyMonitoring.cpp.
-        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(m_vm);
-        JSC::Exception* pending = scope.exception();
-        scope.clearException();
-        // Code of the program may run, which can ask for all the objects there are.
-        if (auto* generator = PyGenerator::tryFrom(iterator); pending && !(generator && generator->isCompleted()))
-            exceptionWillBeSeen(pending->value());
-        {
-            SetForScope topCallFrame(m_vm.topCallFrame, callFrame);
-            framesToldOfException.append(callFrame);
-            auto isDone = makeScopeExit([&] {
-                framesToldOfException.removeLast(callFrame);
-            });
-            releaseIteratorOfLoop(iterator);
-        }
-        if (pending && !scope.exception()) {
-            {
-                auto throwScope = DECLARE_THROW_SCOPE(m_vm);
-                throwException(m_globalObject, throwScope, pending);
-            }
-            EXCEPTION_ASSERT(scope.exception());
-        }
+        ExceptionSetAside suspended(m_globalObject);
+        SetForScope topCallFrame(m_vm.topCallFrame, callFrame);
+        framesToldOfException.append(callFrame);
+        auto isDone = makeScopeExit([&] {
+            framesToldOfException.removeLast(callFrame);
+        });
+        // Interpreter::unwind() defers terminations while it unwinds any other exception: "The unwinding code only checks if we're
+        // handling a TerminationException before it starts unwinding and is not expecting this status to change in the middle.
+        // Without the DeferTerminationForAWhile scope, control flow may end up in an exception handler, and effectively "catch" the
+        // newly raised TerminationException". That does not apply to this call, because no termination gets out of it. The unwinder
+        // goes on with the exception it had, and the termination is thrown at the next safe point, which is where the scope in
+        // unwind() sends one that was asked for meanwhile. Without this a generator whose `finally` does not return cannot be ended.
+        TerminationNotDeferred canBeEnded(m_globalObject);
+        releaseIteratorOfLoop(iterator);
     }
 }
 
