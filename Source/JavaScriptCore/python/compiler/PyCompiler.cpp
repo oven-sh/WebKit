@@ -440,11 +440,17 @@ void Unit::markLine(int lineno)
         m_markedPosition = position;
         return;
     }
-    if (lineno == m_markedLine && (position == m_markedPosition || g.positionOfLastPythonLabel() <= m_markedPosition))
+    if (isMarkedAlready(lineno))
         return;
     m_markedLine = lineno;
     m_markedPosition = position;
     g.addPythonMark(PythonMark::Line, lineMarkValue(lineno, position == m_statementStart));
+}
+
+// What comes next is of the line, whichever way it is reached.
+bool Unit::isMarkedAlready(int lineno)
+{
+    return lineno == m_markedLine && (g.instructions().size() == m_markedPosition || g.positionOfLastPythonLabel() <= m_markedPosition);
 }
 
 void Unit::silentLine(const Range& range)
@@ -2543,7 +2549,7 @@ void Unit::returnStatement(Return* node)
     bool leavesWithFirst = innermost && (innermost->kind == BlockKind::With || innermost->kind == BlockKind::AsyncWith);
     if (!leavesWithFirst || !node->value || node->value->range.lineno != node->range.lineno) {
         // A frame that is told of the line once more has the value: it can be sent to where one waits, and back (`frame.f_lineno = n`).
-        bool valueWaits = value->isTemporary() && m_markedLine != node->range.lineno;
+        bool valueWaits = value->isTemporary() && !isMarkedAlready(node->range.lineno);
         if (valueWaits)
             pushBlock({ .kind = BlockKind::ValueToReturn, .tryDepth = g.tryDepth(), .saved = value.get(), .isOnlyHere = true });
         line(node->range);

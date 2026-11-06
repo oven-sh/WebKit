@@ -723,6 +723,7 @@ private:
     unsigned m_boundBitCount { 0 };
     unsigned m_usedVariableCount { 0 };
     void markLine(int lineno);
+    bool isMarkedAlready(int lineno);
     void place(const Range&);
     int m_markedLine { -1 }; // What line() was last given, and where in the instructions.
     Range m_place; // All of it, if more than the line was given.

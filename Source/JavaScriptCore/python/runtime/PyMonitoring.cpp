@@ -2802,6 +2802,7 @@ void Monitoring::jump(JSGlobalObject* globalObject, PyFrame* frame, int requeste
     Vector<Target, 2> targets;
     bool isInExpression = false;
     bool valueIsAllThereIs = false; // The line of a `return` that is told of when the value has been computed.
+    int lineBefore = -1; // In the order of the code.
     for (auto& mark : marks) {
         if (!from && mark.offset > offset)
             from = open;
@@ -2823,6 +2824,8 @@ void Monitoring::jump(JSGlobalObject* globalObject, PyFrame* frame, int requeste
             if (!from && mark.offset == offset && lineOfMarkValue(mark.value()) == m_runtime.tracedLine)
                 from = open;
             ++linesAtOffset;
+            // (If what comes before is of the same line, no line begins here in CPython's code.)
+            valueIsAllThereIs &= std::exchange(lineBefore, lineOfMarkValue(mark.value())) != line;
             if (lineOfMarkValue(mark.value()) != line)
                 break;
             if (isStatementStart(mark.value()) || valueIsAllThereIs)
