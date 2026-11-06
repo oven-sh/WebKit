@@ -1571,9 +1571,11 @@ void Unit::storeName(Name name, RegisterID* value, const Range& range)
 }
 
 // `except E as e:` is left: `e = None`, `del e`.
-void Unit::unbindNameOfHandler(Name name, const Range& range)
+// `isInCPythonsCode`: not a copy of what its compiler has once, further on.
+void Unit::unbindNameOfHandler(Name name, const Range& range, bool isInCPythonsCode)
 {
-    noteConstant(jsUndefined());
+    if (isInCPythonsCode)
+        noteConstant(jsUndefined());
     storeName(name, constant(jsUndefined()), range);
     deleteName(name, range);
 }
@@ -1812,7 +1814,10 @@ void Unit::unwindBlock(const Block& block, Vector<TryContext>& suspended)
         });
         if (valueWaits)
             pushBlock({ .kind = BlockKind::ValueToReturn, .tryDepth = g.tryDepth(), .saved = m_valueToReturn, .isOnlyHere = true });
-        statements(block.finalBody, 0, isLast);
+        {
+            SetForScope leftByStatement(m_leftByStatement, notFound);
+            statements(block.finalBody, 0, isLast);
+        }
         if (valueWaits)
             popBlock();
         return;
@@ -1835,7 +1840,7 @@ void Unit::unwindBlock(const Block& block, Vector<TryContext>& suspended)
             restoreHandledException(block.saved);
         if (block.name) {
             SameLine sameLine(*this);
-            unbindNameOfHandler(block.name, block.range);
+            unbindNameOfHandler(block.name, block.range, m_blocks.size() >= m_leftByStatement);
         }
         return;
     }
@@ -2542,6 +2547,7 @@ void Unit::returnStatement(Return* node)
     }
 
     SetForScope leavingAs(m_leavingAs, Last { Last::OfFunction });
+    SetForScope leftByStatement(m_leftByStatement, 0);
     SetForScope valueToReturn(m_valueToReturn, value.get());
     Vector<TryContext> suspended;
     // As in CPython, where what is on the way out comes from the constant that is returned.
@@ -2559,6 +2565,7 @@ void Unit::breakOrContinue(Stmt* node, bool isBreak)
     size_t loop = m_blocks.reverseFindIf([](auto& block) {
         return block.kind == BlockKind::WhileLoop || block.kind == BlockKind::ForLoop || block.kind == BlockKind::AsyncForLoop;
     });
+    SetForScope leftByStatement(m_leftByStatement, loop);
     if (loop == notFound) {
         // (What is in the way is looked at first.)
         Vector<TryContext> suspended;
