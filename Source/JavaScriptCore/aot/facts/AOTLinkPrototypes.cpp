@@ -160,11 +160,13 @@ uint32_t LinkFlow::recordOfNameOnPrototype(LayoutID layout, PropertyKeyID key)
     return record;
 }
 
-FlowNodeID LinkFlow::storedOnPrototypeOf(LayoutID layout, PropertyKeyID key)
+FlowNodeID LinkFlow::storedOnPrototypeOf(LayoutID layout, PropertyKeyID key, FunctionID whoStores)
 {
     LockerOfWhatIsShared lockerOfWhatIsShared(*this);
     RELEASE_ASSERT(key);
     uint32_t record = recordOfNameOnPrototype(layout, key);
+    if (!isLibraryCode(program, program.at(whoStores)) && program.at(whoStores).module != program.at(layout).module)
+        m_namesOnPrototypes[record].isStoredIntoFromOutside = true;
     if (!std::exchange(m_namesOnPrototypes[record].isStoredInto, true)) {
         auto noteFieldBelow = [&](LayoutID below) {
             if (std::optional<uint32_t> field = program.at(below).findField(key))
@@ -410,9 +412,9 @@ private:
     std::optional<End> findWhatCallHandsOver(uint32_t call, const End&) const;
     std::optional<End> findWhatMakerCaptures(FunctionID maker, const End&);
 
-    void layMembers(LayoutID classOfTarget, const End& source, bool copiesAccessorsAsTheyAre);
-    void layMembersOfLayout(LayoutID classOfTarget, LayoutID source, bool copiesAccessorsAsTheyAre);
-    void layUnder(LayoutID classOfTarget, PropertyKeyID, FlowNodeID held);
+    void layMembers(const End& target, LayoutID classOfTarget, const End& source, bool copiesAccessorsAsTheyAre);
+    void layMembersOfLayout(const End& target, LayoutID classOfTarget, LayoutID source, bool copiesAccessorsAsTheyAre);
+    void layUnder(const End& target, LayoutID classOfTarget, PropertyKeyID, FlowNodeID held);
     bool holdsAccessor(LayoutID, FlowNodeID) const;
 
     LinkFlow& m_flow;
@@ -541,7 +543,7 @@ void LinkFlow::CopiesOfMembers::lookAt(const Copy& copy)
     LayoutID classOfTarget = findClassOfPrototypeObjectAt(target);
     bool sourceIsKnown = listsMembersAt(source);
     if (classOfTarget && sourceIsKnown) {
-        layMembers(classOfTarget, source, copy.copiesAccessorsAsTheyAre);
+        layMembers(target, classOfTarget, source, copy.copiesAccessorsAsTheyAre);
         return;
     }
     if ((!classOfTarget && !mayHoldPrototypeObjectAt(target)) || (!sourceIsKnown && !mayHoldObjectAt(source)))
@@ -730,7 +732,7 @@ auto LinkFlow::CopiesOfMembers::findWhatMakerCaptures(FunctionID maker, const En
     return End { maker, found->value, end.isHolderOfPrototypeObject };
 }
 
-void LinkFlow::CopiesOfMembers::layMembers(LayoutID classOfTarget, const End& source, bool copiesAccessorsAsTheyAre)
+void LinkFlow::CopiesOfMembers::layMembers(const End& target, LayoutID classOfTarget, const End& source, bool copiesAccessorsAsTheyAre)
 {
     if (LayoutID classOfSource = findClassOfPrototypeObjectAt(source)) {
         if (classOfSource == classOfTarget)
@@ -738,37 +740,37 @@ void LinkFlow::CopiesOfMembers::layMembers(LayoutID classOfTarget, const End& so
         for (uint32_t record = m_flow.firstNameOnPrototypeOf(classOfSource); record != UINT32_MAX; record = m_flow.m_namesOnPrototypes[record].nextOfLayout) {
             NameOnPrototype name = m_flow.m_namesOnPrototypes[record];
             if (name.key && name.isStoredInto)
-                layUnder(classOfTarget, name.key, name.storedInSight);
+                layUnder(target, classOfTarget, name.key, name.storedInSight);
         }
         return;
     }
     LinkType seen = typeSeenAt(source);
     if (seen.objects == LinkType::Objects::Layout) {
-        layMembersOfLayout(classOfTarget, seen.layout, copiesAccessorsAsTheyAre);
+        layMembersOfLayout(target, classOfTarget, seen.layout, copiesAccessorsAsTheyAre);
         return;
     }
     for (LayoutID member : m_flow.layoutsOfSet(seen))
-        layMembersOfLayout(classOfTarget, member, copiesAccessorsAsTheyAre);
+        layMembersOfLayout(target, classOfTarget, member, copiesAccessorsAsTheyAre);
 }
 
-void LinkFlow::CopiesOfMembers::layMembersOfLayout(LayoutID classOfTarget, LayoutID source, bool copiesAccessorsAsTheyAre)
+void LinkFlow::CopiesOfMembers::layMembersOfLayout(const End& target, LayoutID classOfTarget, LayoutID source, bool copiesAccessorsAsTheyAre)
 {
     for (const OwnValue& value : m_flow.ownValuesOf(source)) {
         if (value.key && !(copiesAccessorsAsTheyAre && holdsAccessor(source, value.node)))
-            layUnder(classOfTarget, value.key, value.node);
+            layUnder(target, classOfTarget, value.key, value.node);
     }
     for (uint32_t place = m_flow.m_newestAppendedFieldOfLayout[source.index()]; place != UINT32_MAX; place = m_flow.m_appendedFields[place].next) {
         AppendedField field = m_flow.m_appendedFields[place];
-        layUnder(classOfTarget, field.key, field.node);
+        layUnder(target, classOfTarget, field.key, field.node);
     }
 }
 
-void LinkFlow::CopiesOfMembers::layUnder(LayoutID classOfTarget, PropertyKeyID key, FlowNodeID held)
+void LinkFlow::CopiesOfMembers::layUnder(const End& target, LayoutID classOfTarget, PropertyKeyID key, FlowNodeID held)
 {
     NameClass nameClass = m_flow.nameClassOf(key);
     if (nameClass == NameClass::Proto || mayBeElementKey(nameClass))
         return;
-    FlowNodeID laid = m_flow.storedOnPrototypeOf(classOfTarget, key);
+    FlowNodeID laid = m_flow.storedOnPrototypeOf(classOfTarget, key, target.function);
     if (!m_flow.m_edgesLaidByCopiesOfMembers.add(static_cast<uint64_t>(held.index()) << 32 | laid.index()).isNewEntry)
         return;
     m_flow.addEdge(held, laid);

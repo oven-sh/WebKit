@@ -74,6 +74,12 @@ public:
 
     void settle(Vector<BuiltinID>& cameIntoReach, Vector<BuiltinID>& cameOutOfSight);
     Vector<BuiltinID> takeMembersWrittenAfterAll() { return std::exchange(m_membersWrittenAfterAll, { }); }
+    struct NameOnHolder {
+        BuiltinID holder;
+        PropertyKeyID key;
+        friend bool operator==(const NameOnHolder&, const NameOnHolder&) = default;
+    };
+    Vector<NameOnHolder> takeNamesLaidAfterAll() { return std::exchange(m_namesLaidAfterAll, { }); }
 
     bool mayBeHandedWhatIsNoTextNumberOrBoolean(BuiltinID canonical) const;
     bool hasCallThatMayRunCode(BuiltinID canonical) const;
@@ -92,6 +98,7 @@ public:
     bool objectsMayHaveMethodCalledWithStartupLoads() const;
 
     bool takeForConstant(BuiltinID member);
+    void takeForUnlaid(BuiltinID canonicalHolder, PropertyKeyID);
 
     void noteWrite(BuiltinID holder, PropertyKeyID, bool onlyDeletes = false);
     void noteHandedWhatIsNoTextNumberOrBoolean(BuiltinID holder);
@@ -117,12 +124,17 @@ public:
     LookupsPastProgramObjects takeLookups();
 
 private:
+    bool mayHaveNameLaid(BuiltinID canonicalHolder, PropertyKeyID) const;
+
     std::unique_ptr<FactTables> m_tables;
     std::unique_ptr<LinkTables> m_linked;
     std::unique_ptr<InputsOfProgramFacts> m_inputs;
     std::unique_ptr<BuilderOfProgramFacts> m_builder;
     BitVector m_builtinsWorthFollowingToWrites;
     Vector<BuiltinID> m_membersWrittenAfterAll;
+    Vector<std::pair<BuiltinID, BuiltinID>> m_entriesBelowPrototypesOfEntries;
+    Vector<NameOnHolder> m_namesTakenForUnlaid;
+    Vector<NameOnHolder> m_namesLaidAfterAll;
     bool m_wasToldSomethingNew { true };
 };
 

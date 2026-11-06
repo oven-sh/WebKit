@@ -454,6 +454,16 @@ BuiltinClassID BuiltinTable::receiverClassOf(BuiltinID id) const
     return at(holder).instanceClass;
 }
 
+bool BuiltinTable::onlyEntriesInheritFrom(BuiltinID canonicalPrototype) const
+{
+    const Builtin& prototype = at(canonicalPrototype);
+    if (prototype.kind != BuiltinKind::Prototype || !prototype.instanceClass)
+        return false;
+    return std::ranges::all_of(m_data.classes, [&](const BuiltinClass& other) {
+        return other.instancesAreEntries || !isSameOrSubclassOf(other.id, prototype.instanceClass);
+    });
+}
+
 bool BuiltinTable::isSameOrSubclassOf(BuiltinClassID builtinClass, BuiltinClassID ancestor) const
 {
     for (BuiltinClassID current = builtinClass; current; current = at(current).parent) {

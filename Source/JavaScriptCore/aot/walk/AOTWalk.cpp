@@ -4115,7 +4115,7 @@ void Walker::jumpTo(BlockID next, std::span<const Reference> arguments)
         return;
     }
 
-    if (!pending->numberOfArrivals) {
+    if (m_hasFailed || !pending->numberOfArrivals) {
         m_block = { };
         m_state.clear();
         return;

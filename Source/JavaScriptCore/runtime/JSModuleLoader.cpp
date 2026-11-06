@@ -1421,7 +1421,8 @@ JSPromise* JSModuleLoader::loadRequestedModules(JSGlobalObject* globalObject, Ab
     auto state = ModuleGraphLoadingState::create(vm, pc, WTF::move(scriptFetcher));
     RETURN_IF_EXCEPTION(scope, nullptr);
 #if ENABLE(AOT)
-    if (askedBy && module->inherits<AOT::ModuleRecord>())
+    // Not in a graph that is left to the loader: there every state walks all that is still New, as for a plain record, and makes a CommonJS file that it comes to a second time in line.
+    if (auto* compiled = askedBy ? dynamicDowncast<AOT::ModuleRecord>(module) : nullptr; compiled && !compiled->takesEveryStepOfLoader())
         state->setWholeLoad(vm, askedBy);
 #else
     UNUSED_PARAM(askedBy);
@@ -1688,6 +1689,13 @@ JSPromise* JSModuleLoader::loadModuleSync(JSGlobalObject* globalObject, const Id
         ModuleRegistryEntry* entry = vm.hasCompiledCode() ? getRegisteredMayBeNull(moduleName, type) : nullptr;
         if (!entry || entry->status() != ModuleRegistryEntry::Status::Fetched || !entry->loadPromise() || entry->loadPromise()->status() != JSPromise::Status::Pending)
             return false;
+        // A graph that is left to the loader takes every step as `bun run` does: its root is loaded again only where a step of its load lies on the normal queue indeed.
+        // What a synchronous load further out has left to do it does when this one returns.
+        if (auto* compiled = dynamicDowncast<AOT::ModuleRecord>(entry->record()); compiled && compiled->takesEveryStepOfLoader()) {
+            return !vm.defaultMicrotaskQueue().allOf([&](const QueuedTask& task) {
+                return task.job() != InternalMicrotask::ModuleLoadStep || uncheckedDowncast<ModuleLoadingContext>(task.arguments()[2])->entry() != entry;
+            });
+        }
         // Not where the graph of the root waits for a step of a synchronous load further out, which goes on when this one returns.
         for (auto* outer = vm.m_synchronousModuleQueue->prev; outer; outer = outer->prev) {
             for (const VM::SynchronousModuleTask& step : outer->tasks) {

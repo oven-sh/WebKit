@@ -1115,7 +1115,7 @@ void AccessInLinkAccesses::resolveOnPrototype(LayoutID id)
         if (isDefinition && m_value == m_flow.unseen())
             m_flow.defineOnPrototypeOf(id, m_access.key);
         else
-            storeInto(m_flow.storedOnPrototypeOf(id, m_access.key));
+            storeInto(m_flow.storedOnPrototypeOf(id, m_access.key, m_function));
         return;
     }
     bool goesOnAboveClasses = members.lookupGoesOnAboveClasses();
@@ -1773,6 +1773,8 @@ void AccessInLinkAccesses::resolveUnderNameOnClass(const LinkType& instances)
     }
 
     if (isRead()) {
+        if (m_nameClass == NameClass::Proto && prototype && !m_flow.codeAtWorkIsOfLibrary())
+            m_flow.noteLossOf(m_table.canonicalID(prototype));
         if (!prototype || mayRunCodeFoundFrom(prototype))
             m_flow.addEdge(m_subject, m_flow.unseen());
         giveFrom(m_flow.contentsOf(instances, SlotOfContents::underUnknownNames()));
@@ -1955,6 +1957,8 @@ void AccessInLinkAccesses::resolveOnBuiltin(BuiltinID builtin)
     if (m_access.kind != Kind::Define && lookupPassesHolderLinkedAnew(m_program, builtin, m_access.key))
         m_flow.handToAccessorsLaidAbove(m_receiver);
     if (isRead() && isNamed()) {
+        if (m_nameClass == NameClass::Proto && m_table.at(builtin).prototypeLink == BuiltinPrototypeLink::Builtin && !m_flow.codeAtWorkIsOfLibrary())
+            m_flow.noteLossOf(m_table.canonicalID(m_table.at(builtin).inheritsFrom));
         if (giveWhatLightFormServes(builtin))
             return;
         BuiltinID member;

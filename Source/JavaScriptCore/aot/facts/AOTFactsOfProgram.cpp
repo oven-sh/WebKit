@@ -2437,9 +2437,12 @@ public:
     bool canLockAtStartUp(BuiltinID member) const;
     ReasonBuiltinStaysOpen reasonToLeaveOpen(BuiltinID member) const { return reasonToLeaveOpen(member, m_isLostOutOfPlaceThatHolds); }
     bool isWrittenAsFarAsLinkGoes(BuiltinID member) const { return reasonToLeaveOpen(member, m_isLost) != ReasonBuiltinStaysOpen::None; }
+    bool mayHaveNameLaidAsFarAsLinkGoes(BuiltinID canonicalHolder, PropertyKeyID key, bool unseenValuesMayLeadThere) const { return reasonNoLockHolds() != ReasonBuiltinStaysOpen::None || (unseenValuesMayLeadThere && isReachedThroughUnseen(canonicalHolder)) || reasonToLeaveOpenUnder(canonicalHolder, key, false, m_isLost, unseenValuesMayLeadThere) != ReasonBuiltinStaysOpen::None; }
 
 private:
     ReasonBuiltinStaysOpen reasonToLeaveOpen(BuiltinID member, const BitVector& lost) const;
+    ReasonBuiltinStaysOpen reasonNoLockHolds() const;
+    ReasonBuiltinStaysOpen reasonToLeaveOpenUnder(BuiltinID canonicalHolder, PropertyKeyID, bool isLockedForProduct, const BitVector& lost, bool unseenValuesMayLeadThere = true) const;
     void closeOverNamesReadThroughLostBuiltins(BitVector&) const;
     void carryOut(BuiltinID canonical, bool onlyWhatLiesOnIt, bool isByFileOfProduct);
     bool runsCodeThatNoLockIsLaidBeside(BuiltinID canonical, bool mayPassOptionThatRunsCode) const;
@@ -2709,7 +2712,7 @@ bool WritesOnBuiltinsInProgramFacts::isReachedThroughUnseen(BuiltinID canonicalH
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-ReasonBuiltinStaysOpen WritesOnBuiltinsInProgramFacts::reasonToLeaveOpen(BuiltinID member, const BitVector& lost) const
+ReasonBuiltinStaysOpen WritesOnBuiltinsInProgramFacts::reasonNoLockHolds() const
 {
     if (!m_locksAreLaid)
         return ReasonBuiltinStaysOpen::NoLockIsLaid;
@@ -2717,18 +2720,25 @@ ReasonBuiltinStaysOpen WritesOnBuiltinsInProgramFacts::reasonToLeaveOpen(Builtin
         if (runsCodeThatNoLockIsLaidBeside(BuiltinID(static_cast<uint32_t>(passed)), true))
             return ReasonBuiltinStaysOpen::NoLockIsLaid;
     }
+    return m_source.admitsInspector ? ReasonBuiltinStaysOpen::IsOpenToDebugger : ReasonBuiltinStaysOpen::None;
+}
+
+ReasonBuiltinStaysOpen WritesOnBuiltinsInProgramFacts::reasonToLeaveOpen(BuiltinID member, const BitVector& lost) const
+{
+    if (ReasonBuiltinStaysOpen reason = reasonNoLockHolds(); reason != ReasonBuiltinStaysOpen::None)
+        return reason;
     BuiltinID canonical = m_builtins.canonicalID(member);
-    if (m_source.admitsInspector)
-        return ReasonBuiltinStaysOpen::IsOpenToDebugger;
     if (m_source.isUnlocked(member) || m_source.isUnlocked(canonical))
         return ReasonBuiltinStaysOpen::IsLeftOpenForTests;
     if (m_isWritten.quickGet(member.index()) || m_isWritten.quickGet(canonical.index()) || m_lookups.membersWritten.get(member.index()))
         return ReasonBuiltinStaysOpen::IsWrittenUnderItsName;
-    BuiltinID holder = m_builtins.canonicalID(m_builtins.at(member).holder);
+    return reasonToLeaveOpenUnder(m_builtins.canonicalID(m_builtins.at(member).holder), m_source.keyOf(m_builtins.at(member).name), m_source.isLockLeftToProgram(member), lost);
+}
+
+ReasonBuiltinStaysOpen WritesOnBuiltinsInProgramFacts::reasonToLeaveOpenUnder(BuiltinID holder, PropertyKeyID key, bool isLockedForProduct, const BitVector& lost, bool unseenValuesMayLeadThere) const
+{
     if (m_isWrittenUnderAnyName.quickGet(holder.index()) || m_lookups.holdersWrittenUnderAnyName.get(holder.index()))
         return ReasonBuiltinStaysOpen::HolderIsWrittenUnderAnyName;
-    PropertyKeyID key = m_source.keyOf(m_builtins.at(member).name);
-    bool isLockedForProduct = m_source.isLockLeftToProgram(member);
     bool isWrittenThroughLostBuiltins = isLockedForProduct
         ? m_lookups.writesUnderAnyNameThroughLostBuiltinsBesideProduct || (key && m_lookups.namesWrittenThroughLostBuiltinsBesideProduct.get(key.index()))
         : m_lookups.writesUnderAnyNameThroughLostBuiltins || (key && m_lookups.namesWrittenThroughLostBuiltins.get(key.index()));
@@ -2740,11 +2750,11 @@ ReasonBuiltinStaysOpen WritesOnBuiltinsInProgramFacts::reasonToLeaveOpen(Builtin
         if (m_lookups.lostBuiltinsReachUnseen && isWrittenThroughUnseen)
             return ReasonBuiltinStaysOpen::IsWrittenThroughLostBuiltins;
     }
-    if (isNamedThroughUnseen && isReachedThroughUnseen(holder))
+    if (unseenValuesMayLeadThere && isNamedThroughUnseen && isReachedThroughUnseen(holder))
         return ReasonBuiltinStaysOpen::IsSpelledThroughUnseen;
-    if (!isLockedForProduct && key && m_lookups.namesWrittenThroughUnseenByLibrary.get(key.index()) && m_builtins.at(holder).origin == BuiltinOrigin::Host && m_builtins.at(holder).kind == BuiltinKind::Prototype)
+    if (unseenValuesMayLeadThere && !isLockedForProduct && key && m_lookups.namesWrittenThroughUnseenByLibrary.get(key.index()) && m_builtins.at(holder).origin == BuiltinOrigin::Host && m_builtins.at(holder).kind == BuiltinKind::Prototype)
         return ReasonBuiltinStaysOpen::IsSpelledThroughUnseen;
-    if ((m_source.isLockLeftToProgram(member) ? m_isCarriedOutBesideProduct : m_isCarriedOutByProgram).quickGet(holder.index()))
+    if ((isLockedForProduct ? m_isCarriedOutBesideProduct : m_isCarriedOutByProgram).quickGet(holder.index()))
         return ReasonBuiltinStaysOpen::HolderIsLetGoByProgram;
     return ReasonBuiltinStaysOpen::None;
 }
@@ -2800,6 +2810,7 @@ public:
     void takeBuiltinsThatCameOutOfSight(Vector<BuiltinID>&);
     bool objectsMayHaveMethodCalledWithStartupLoads() const { return m_objectsMayHaveMethodCalledWithStartupLoads; }
     bool isOutOfSight(BuiltinID canonical) const { return m_uses[canonical.index()].contains(BuiltinUse::Escaped) || m_isOutOfSight.quickGet(canonical.index()); }
+    bool machineCodeMayBeLoaded() const;
     bool isAskedForOtherNames(BuiltinID canonical) const { return m_lightFormsAskedForMore.get(canonical.index()) || m_uses[canonical.index()].contains(BuiltinUse::Escaped) || m_isOutOfSight.quickGet(canonical.index()); }
     const BuiltinCondition* lightFormOf(BuiltinID canonical) const { return m_source.testsReplaceBuiltins() ? nullptr : m_rows.lightFormOf(m_builtins, canonical); }
     void settle();
@@ -2989,6 +3000,7 @@ private:
     Vector<Witness> m_writesOfProgramOnBuiltins;
     Vector<Witness> m_loadsOfProgramByName;
     BitVector m_bodiesBeingAsked;
+    std::array<BitVector, 2> m_bodiesThatStay;
     std::optional<bool> m_codeThatNobodyNamesMayLeave;
     BitVector m_partOfClassIsUsed;
     Vector<Finding> m_callsOfEventsNamedInBodies;
@@ -3855,6 +3867,15 @@ void BuilderOfProgramFacts::listLoadsOfUnseenCode()
     add(m_program.unseenCode, m_refused.codeOutsideImage ? UnseenCodeCause::LoadsModuleByName : UnseenCodeCause::LoadsCodeByName, { }, witness);
 }
 
+bool BuilderOfProgramFacts::machineCodeMayBeLoaded() const
+{
+    return std::ranges::any_of(m_builtins.loadersOfMachineCode(), [&](const BuiltinLoaderOfMachineCode& loader) {
+        return std::ranges::any_of(std::array { loader.callee, loader.named }, [&](BuiltinID builtin) {
+            return builtin && m_uses[m_builtins.canonicalID(builtin).index()].containsAny(usesOfObjectItselfInProgramFacts);
+        });
+    });
+}
+
 void BuilderOfProgramFacts::listLoadsOfMachineCode()
 {
     for (const BuiltinLoaderOfMachineCode& loader : m_builtins.loadersOfMachineCode()) {
@@ -4242,6 +4263,10 @@ bool BuilderOfProgramFacts::codeThatNobodyNamesMayLeave()
         }
         return false;
     }();
+    if (*m_codeThatNobodyNamesMayLeave) {
+        for (BitVector& bodies : m_bodiesThatStay)
+            bodies.clearAll();
+    }
     return *m_codeThatNobodyNamesMayLeave;
 }
 
@@ -4398,6 +4423,9 @@ bool BuilderOfProgramFacts::mayThrowByItself(const BodyIndex& index, const BodyV
 bool BuilderOfProgramFacts::bodyMayLeave(FunctionID id, ThrowsOfOperations throwsOfOperations)
 {
     const BodyIndex* index = m_inputs.bodies.find(id);
+    BitVector& bodiesThatStay = m_bodiesThatStay[throwsOfOperations == ThrowsOfOperations::Count];
+    if (bodiesThatStay.get(id.index()))
+        return false;
     if (!index || m_bodiesBeingAsked.set(id.index()))
         return true;
     bool leaves = false;
@@ -4410,6 +4438,8 @@ bool BuilderOfProgramFacts::bodyMayLeave(FunctionID id, ThrowsOfOperations throw
             break;
     }
     m_bodiesBeingAsked.clear(id.index());
+    if (!leaves)
+        bodiesThatStay.set(id.index());
     return leaves;
 }
 
@@ -5187,6 +5217,15 @@ BuiltinsInReach::BuiltinsInReach(const Program& program, const LooksAtBodies& lo
                 m_builtinsWorthFollowingToWrites.quickSet(index);
         }
     }
+    for (uint32_t index = 0; index < builtins.builtinCount(); ++index) {
+        if (builtins.canonicalID(BuiltinID(index)).index() != index)
+            continue;
+        for (BuiltinID below(index); builtins.at(below).prototypeLink == BuiltinPrototypeLink::Builtin; ) {
+            below = builtins.canonicalID(builtins.at(below).inheritsFrom);
+            if (builtins.onlyEntriesInheritFrom(below))
+                m_entriesBelowPrototypesOfEntries.append({ below, BuiltinID(index) });
+        }
+    }
     bool hasGrown = true;
     while (std::exchange(hasGrown, false)) {
         for (uint32_t index = 0; index < builtins.builtinCount(); ++index) {
@@ -5534,6 +5573,29 @@ void BuiltinsInReach::settle(Vector<BuiltinID>& cameIntoReach, Vector<BuiltinID>
     }
     for (BuiltinID member : m_membersWrittenAfterAll)
         taken.clear(member.index());
+    m_namesTakenForUnlaid.removeAllMatching([&](const NameOnHolder& taken) {
+        if (!mayHaveNameLaid(taken.holder, taken.key))
+            return false;
+        m_namesLaidAfterAll.append(taken);
+        return true;
+    });
+}
+
+bool BuiltinsInReach::mayHaveNameLaid(BuiltinID canonicalHolder, PropertyKeyID key) const
+{
+    bool unseenValuesMayLeadThere = !m_inputs->program.builtins().onlyEntriesInheritFrom(canonicalHolder) || std::ranges::any_of(m_entriesBelowPrototypesOfEntries, [&](const auto& below) {
+        return below.first == canonicalHolder && m_builder->isOutOfSight(below.second);
+    });
+    return m_builder->machineCodeMayBeLoaded() || m_builder->writes().mayHaveNameLaidAsFarAsLinkGoes(canonicalHolder, key, unseenValuesMayLeadThere);
+}
+
+void BuiltinsInReach::takeForUnlaid(BuiltinID canonicalHolder, PropertyKeyID key)
+{
+    NameOnHolder taken { canonicalHolder, key };
+    if (m_namesTakenForUnlaid.contains(taken))
+        return;
+    m_namesTakenForUnlaid.append(taken);
+    m_wasToldSomethingNew = true;
 }
 
 bool BuiltinsInReach::takeForConstant(BuiltinID member)

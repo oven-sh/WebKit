@@ -1248,6 +1248,8 @@ static void printLinkedMembers(IRPrinter& printer, const LinkTables& tables)
             out.print(" expected="_s);
             printer.print(name.expected);
         }
+        if (name.isStoredIntoFromOutside)
+            out.print(" stored-into-from-outside"_s);
         if (name.expectedGetter) {
             out.print(" getter="_s);
             printer.print(name.expectedGetter);

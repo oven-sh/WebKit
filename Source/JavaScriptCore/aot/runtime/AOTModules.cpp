@@ -6211,6 +6211,11 @@ void ModuleRecord::willBeLoadedByImport()
     modules().willBeLoadedByImport(m_module);
 }
 
+bool ModuleRecord::takesEveryStepOfLoader()
+{
+    return modules().isLoadedByLoader(m_module);
+}
+
 bool ModuleRecord::takeStepOfMainModule()
 {
     return !requestedModules().isEmpty() && modules().takeStepOfMainModule(m_module);

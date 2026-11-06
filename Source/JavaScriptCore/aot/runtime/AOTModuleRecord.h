@@ -87,6 +87,7 @@ public:
     static void didLoseErrorOfModule(JSGlobalObject*, const Identifier& key);
     void willBeLoadedByImport();
     bool takeStepOfMainModule();
+    bool takesEveryStepOfLoader();
     bool takeLoadPromiseBelowMainModule();
     JSPromise* evaluateMainModule(JSPromise* evaluation);
     static void didEvaluateModulesInJob(JSGlobalObject*);

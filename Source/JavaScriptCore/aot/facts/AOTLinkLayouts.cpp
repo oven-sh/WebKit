@@ -3997,6 +3997,7 @@ void WriterOfLinkLayouts::writeMembers()
         if (!name.isDefinedByDescriptor && (!name.isStoredInto || !name.key))
             continue;
         LinkedNameOnPrototype linked { name.layout, name.key, FunctionID() };
+        linked.isStoredIntoFromOutside = name.isStoredIntoFromOutside;
         const LinkType& held = m_flow.typeAt(name.stored);
         LinkType oneClosure;
         oneClosure.functions = LinkType::Functions::Closure;

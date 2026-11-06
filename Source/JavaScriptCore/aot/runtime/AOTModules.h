@@ -452,6 +452,7 @@ public:
     bool isEntryPointOfRealm(ModuleID module) const { return m_firstModuleRequestedByHost == module; }
     bool takeStepOfMainModule(ModuleID module) { return isEntryPointOfRealm(module) && !std::exchange(m_didTakeStepOfMainModule, true); }
     void willBeLoadedByImport(ModuleID module) { m_didTakeStepOfMainModule |= isEntryPointOfRealm(module); }
+    bool isLoadedByLoader(ModuleID module) const { return data(module).isLoadedByLoader(); }
     bool takeLoadPromiseBelowMainModule(ModuleID module) { return isEntryPointOfRealm(module) && !m_didTakeStepOfMainModule && !std::exchange(m_didTakeLoadPromiseBelowMainModule, true); }
     JSPromise* evaluateMainModule(ModuleID entryPoint, JSPromise* evaluation);
     bool mainModuleWaitsForItsImport() const { return !!m_capabilityOfMainModule; }

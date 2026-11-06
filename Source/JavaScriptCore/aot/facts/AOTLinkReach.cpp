@@ -1535,6 +1535,10 @@ bool StateOfLinkReach::enterLibraryInReach()
     for (BuiltinID member : m_membersWrittenAfterAll)
         m_flow.arrive(m_flow.writtenAtMember(member), LinkType::anything());
     bool holdersThatAreWatchedHaveComeOutOfSight = false;
+    for (const BuiltinsInReach::NameOnHolder& laid : m_builtinsInReach.takeNamesLaidAfterAll()) {
+        m_flow.arrive(m_flow.laidOnBuiltin(laid.holder, laid.key), LinkType::anything());
+        holdersThatAreWatchedHaveComeOutOfSight = true;
+    }
     for (BuiltinID builtin : m_builtinsThatCameOutOfSight) {
         FlowNodeID watched = m_flow.findLaidOnBuiltin(builtin, { });
         if (!watched || !m_flow.typeAt(watched).isNothing())
@@ -2259,6 +2263,12 @@ bool LinkFlow::isWorthFollowingToWrites(BuiltinID canonical) const
 bool LinkFlow::isOutOfSight(BuiltinID canonical) const
 {
     return m_stateOfLinkReach->builtinsInReach().isOutOfSight(canonical);
+}
+
+void LinkFlow::takeForUnlaid(BuiltinID canonicalHolder, PropertyKeyID key)
+{
+    LockerOfWhatIsShared locker(*this);
+    builtinsInReach().takeForUnlaid(canonicalHolder, key);
 }
 
 bool LinkFlow::takeForConstant(BuiltinID member)

@@ -327,20 +327,25 @@ private:
         return left;
     }
 
-    TypeID typeThatChecksInItsBlockAskOf(ValueID value, ValueID call) const
+    TypeID typeThatChecksInFrontOfCallAskOf(ValueID value, ValueID call) const
     {
         BlockID block = m_code.at(value).block();
         TypeID asked = m_code.at(value).type;
-        for (ValueID id = m_code.at(call).block() == block ? m_code.at(call).previous : m_code.lastOperationOf(block); id && id != value; id = m_code.at(id).previous) {
-            const Operation& check = m_code.at(id);
-            if (check.opcode != Opcode::CheckProof)
-                continue;
-            ValueID checked = check.valueOperand();
-            while (checked != value && !m_code.isConstant(checked) && conversionsOfForm.contains(m_code.at(checked).opcode))
-                checked = m_code.at(checked).operand(0);
-            if (checked == value)
-                asked = m_types.intersectionOf(asked, check.checkedType());
-        }
+        auto askChecksBackFrom = [&](ValueID last) {
+            for (ValueID id = last; id && id != value; id = m_code.at(id).previous) {
+                const Operation& check = m_code.at(id);
+                if (check.opcode != Opcode::CheckProof)
+                    continue;
+                ValueID checked = check.valueOperand();
+                while (checked != value && !m_code.isConstant(checked) && conversionsOfForm.contains(m_code.at(checked).opcode))
+                    checked = m_code.at(checked).operand(0);
+                if (checked == value)
+                    asked = m_types.intersectionOf(asked, check.checkedType());
+            }
+        };
+        askChecksBackFrom(m_code.at(call).previous);
+        if (m_code.at(call).block() != block)
+            askChecksBackFrom(m_code.lastOperationOf(block));
         return asked;
     }
 
@@ -353,7 +358,7 @@ private:
             return true;
         if (m_code.isConstant(value) || !m_types.at(record.type).isJavaScriptValue())
             return false;
-        if (m_types.isSubset(typeThatChecksInItsBlockAskOf(value, call), bound))
+        if (m_types.isSubset(typeThatChecksInFrontOfCallAskOf(value, call), bound))
             return true;
         if (conversionsOfForm.contains(record.opcode))
             return liesWithin(record.operand(0), bound, call);
@@ -397,6 +402,8 @@ private:
             }
             TypeID believed = m_inputs.facts.typeBelievedOfEntryParameter(m_types, callee, place, left);
             if (!m_types.at(believed).isJavaScriptValue())
+                continue;
+            if (TypeID provenByLink = isUnitOfCallee ? TypeID() : m_inputs.facts.typeOfEntryParameter(callee, place).proven; provenByLink && m_types.isSubset(m_inputs.facts.typeBelievedOfEntryParameter(m_types, callee, place, provenByLink), believed))
                 continue;
             if (TypeID tested = call.role() == CodeRole::Body ? m_inputs.plan.conventions().typeBehindGuard(callee, place) : TypeID()) {
                 TypeID passed = m_types.intersectionOf(believed, tested);

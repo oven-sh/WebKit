@@ -979,6 +979,7 @@ public:
 
     BuiltinClassID receiverClassOf(BuiltinID) const;
     bool isSameOrSubclassOf(BuiltinClassID, BuiltinClassID ancestor) const;
+    bool onlyEntriesInheritFrom(BuiltinID canonicalPrototype) const;
     TypedArrayType typedArrayTypeOf(BuiltinClassID) const;
     BuiltinClassID typedArrayClassOf(BuiltinClassID) const;
     BuiltinSlotID findSlot(BuiltinClassID, BuiltinName) const;

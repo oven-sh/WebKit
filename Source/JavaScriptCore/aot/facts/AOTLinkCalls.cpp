@@ -1863,10 +1863,16 @@ CallInLinkCalls::MemberOfTable CallInLinkCalls::findAbove(BuiltinID firstHolder)
     });
     if (found.outcome != Lookup::Unknown)
         return found;
+    found = findOnce(1ull << 59 | static_cast<uint64_t>(firstHolder.index()) << 32 | m_call.key.index(), [&] {
+        MemberOfTable pastOpenHolders = findAbove(firstHolder, m_call.key, membersUnderKey(), OpenHolders::ArePassed);
+        return pastOpenHolders.outcome == Lookup::FoundWhereProgramMayWrite ? MemberOfTable { Lookup::Found, pastOpenHolders.member } : pastOpenHolders;
+    });
+    if (found.outcome != Lookup::Found || !nobodyHasLaidNameOnTheWayUpFrom(firstHolder))
+        return { };
     found = findOnce(1ull << 60 | static_cast<uint64_t>(firstHolder.index()) << 32 | m_call.key.index(), [&] {
         return findAbove(firstHolder, m_call.key, membersUnderKey(), OpenHolders::ArePassed);
     });
-    return found.outcome == Lookup::Found && nobodyHasLaidNameOnTheWayUpFrom(firstHolder) ? found : MemberOfTable();
+    return found.outcome == Lookup::Found ? found : MemberOfTable();
 }
 
 bool CallInLinkCalls::nobodyHasLaidNameOnTheWayUpFrom(BuiltinID firstHolder)
@@ -1881,7 +1887,10 @@ bool CallInLinkCalls::nobodyHasLaidNameOnTheWayUpFrom(BuiltinID firstHolder)
             if (!watch(laid, 0) || !m_flow.typeAt(laid).isNothing())
                 return false;
         }
-        if (membersUnderKey().findOwnMember(holder))
+        bool isFoundHere = !!membersUnderKey().findOwnMember(holder);
+        if (!isFoundHere || m_builtins.onlyEntriesInheritFrom(holder))
+            m_flow.takeForUnlaid(holder, m_call.key);
+        if (isFoundHere)
             return true;
         if (m_builtins.at(holder).prototypeLink != BuiltinPrototypeLink::Builtin)
             return false;
@@ -1917,7 +1926,7 @@ CallInLinkCalls::MemberOfTable CallInLinkCalls::findAbove(BuiltinID firstHolder,
         if (compiledModuleWithObject(m_program, holder) || m_builtins.at(m_builtins.rootOf(holder)).scope != BuiltinScope::Realm)
             return { };
         if (BuiltinID member = members.findOwnMember(holder)) {
-            if (!members.isLockedLocation(holder) && openHolders == OpenHolders::EndLookup)
+            if (!members.isLockedLocation(holder) && (openHolders == OpenHolders::EndLookup || !m_builtins.onlyEntriesInheritFrom(holder)))
                 return { Lookup::FoundWhereProgramMayWrite, member };
             return { Lookup::Found, m_builtins.canonicalID(member) };
         }

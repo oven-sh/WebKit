@@ -191,13 +191,9 @@ static bool findsMemberWithoutCodeForTypedAccess(const Program& program, const L
     return isLookedUpAsNameForTypedAccess(program, key) && !link.lookupUnderKeyMayRunPreparation(program, key);
 }
 
-static bool objectsMayHoldNameBesideFieldsForTypedAccess(const LinkTables& link, LayoutID layout, PropertyKeyID key)
+static bool objectsMayHoldNamesBesideFieldsForTypedAccess(const LinkTables& link, LayoutID layout)
 {
-    if (layout.index() >= link.layouts.size() || link.layout(layout).isFilledUnderComputedKeys)
-        return true;
-    if (!link.layout(layout).possibleChanges.contains(LayoutChange::GainsProperty))
-        return false;
-    return std::ranges::contains(link.namesStoredBesideFieldsOf(layout), key, &LinkedNameBesideFields::key);
+    return layout.index() >= link.layouts.size() || link.layout(layout).isFilledUnderComputedKeys || link.layout(layout).possibleChanges.contains(LayoutChange::GainsProperty);
 }
 
 MemberFound findMemberAboveObjectsOf(const Program& program, const LinkTables& link, LayoutID layout, PropertyKeyID key)
@@ -207,7 +203,7 @@ MemberFound findMemberAboveObjectsOf(const Program& program, const LinkTables& l
     if (possibleChangesForbid(possibleChangesForTypedAccess(link, layout), TypedAccess::FindsMethodAbove))
         return { };
     MemberFound found = link.findMember(program, layout, ClassSide::Prototype, key);
-    if (found.kind == MemberFound::Kind::Accessor && objectsMayHoldNameBesideFieldsForTypedAccess(link, layout, key))
+    if (found.kind == MemberFound::Kind::Accessor && objectsMayHoldNamesBesideFieldsForTypedAccess(link, layout))
         return { };
     return found;
 }
@@ -1696,6 +1692,11 @@ static bool recordsDeclareMemberAboveObjectsOfLayout(const Walker& walker, Layou
                 return false;
         }
         if (std::span<const uint32_t> places = walker.facts().placesOfMembersUnder(current, ClassSide::Prototype, key); !places.empty()) {
+            auto laid = std::ranges::equal_range(namesOnPrototypes, std::pair { current, key }, { }, [](const LinkedNameOnPrototype& name) {
+                return std::pair { name.layout, name.key };
+            });
+            if (std::ranges::any_of(laid, &LinkedNameOnPrototype::isStoredIntoFromOutside))
+                return false;
             return hasReachedClassThatMayDeclare && std::ranges::all_of(places, [&](uint32_t place) {
                 FunctionID function = walker.facts().membersOf(current)[place].function;
                 return function && isLibraryCode(program, program.at(function));

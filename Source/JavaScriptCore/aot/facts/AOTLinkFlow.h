@@ -469,7 +469,7 @@ public:
 
     LayoutID layoutOfConstructorFunction(FunctionID) const;
     bool isOfConstructorFunction(LayoutID layout) const { return m_layoutsOfConstructorFunctions.get(layout.index()); }
-    FlowNodeID storedOnPrototypeOf(LayoutID, PropertyKeyID);
+    FlowNodeID storedOnPrototypeOf(LayoutID, PropertyKeyID, FunctionID whoStores);
     FlowNodeID foundOnPrototypesAbove(LayoutID, PropertyKeyID);
     FlowNodeID foundOnPrototypesAboveUnderNumbers(LayoutID);
     void lookForSetterOnPrototypesAbove(LayoutID, PropertyKeyID);
@@ -485,6 +485,7 @@ public:
         FlowNodeID stored;
         FlowNodeID storedInSight;
         bool isStoredInto { false };
+        bool isStoredIntoFromOutside { false };
         bool isPassedByLookups { false };
         bool isDefinedByDescriptor { false };
         bool isReadUnderAnyKey { false };
@@ -687,6 +688,7 @@ public:
     bool enterLibraryInReach();
     BuiltinsInReach& builtinsInReach();
     bool takeForConstant(BuiltinID member);
+    void takeForUnlaid(BuiltinID canonicalHolder, PropertyKeyID);
     bool isOutOfSight(BuiltinID canonical) const;
     const BuiltinCondition* lightFormOf(BuiltinID canonical) const;
     bool isAskedForOtherNames(BuiltinID canonical) const;

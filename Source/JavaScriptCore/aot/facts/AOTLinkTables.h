@@ -132,6 +132,7 @@ struct LinkedNameOnPrototype {
     FunctionID expected;
     FunctionID expectedGetter;
     FunctionID expectedSetter;
+    bool isStoredIntoFromOutside { false };
 };
 
 struct LinkedNameOnFunction {
