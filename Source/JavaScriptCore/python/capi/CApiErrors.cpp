@@ -80,14 +80,20 @@ PY_CAPI void PyErr_SetObject(Handle typeHandle, Handle valueHandle)
         PyType* exceptionType = PyType::from(type);
         if (value && isExceptionInstance(rt, value) && rt.typeOf(value)->isSubtypeOf(exceptionType))
             raiseException(entry.globalObject, scope, value);
-        else if (!value || value.isUndefinedOrNull())
-            raiseWithArgs(entry.globalObject, scope, exceptionType, { });
-        else if (PyTuple* tuple = PyTuple::tryFrom(value)) {
-            JSValue exception = call(entry.globalObject, exceptionType, CallArgs(tuple->span().data(), tuple->length()));
-            if (!scope.exception())
+        else {
+            PyTuple* tuple = value ? PyTuple::tryFrom(value) : nullptr;
+            std::span<const JSValue> arguments = !value || value.isUndefinedOrNull() ? std::span<const JSValue> { } : tuple ? tuple->span() : std::span<const JSValue> { &value, 1 };
+            // The class may be the program's, and what comes of calling it may be anything.
+            JSValue exception = call(entry.globalObject, exceptionType, CallArgs(arguments));
+            if (scope.exception()) {
+            } else if (isExceptionInstance(rt, exception))
                 raiseException(entry.globalObject, scope, exception);
-        } else
-            raiseWithArgs(entry.globalObject, scope, exceptionType, { value });
+            else {
+                String shown = reprForMessage(entry.globalObject, type);
+                if (!scope.exception())
+                    raiseTypeError(entry.globalObject, scope, "calling "_s, shown, " should have returned an instance of BaseException, not "_s, typeName(entry.globalObject, exception));
+            }
+        }
     }
     entry.failed();
 }
