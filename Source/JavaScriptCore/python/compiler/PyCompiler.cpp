@@ -1673,9 +1673,10 @@ bool Unit::inExceptionHandler() const
 
 void Unit::pushBlock(Block&& block)
 {
-    // So many have room in CPython's compiler. What turns a StopIteration that leaves a generator or a coroutine into a RuntimeError is one.
+    // So many have room in CPython's compiler. What turns a StopIteration that leaves a generator or a coroutine into a RuntimeError is one, in the
+    // body of a `def`: not in a lambda, a generator expression or a module that awaits.
     constexpr unsigned mostBlocksOfCPython = 21;
-    unsigned blocksOfCPython = isGeneratorLike();
+    unsigned blocksOfCPython = isGeneratorLike() && (m_kind == UnitKind::Function || m_kind == UnitKind::AsyncFunction);
     for (auto& other : m_blocks)
         blocksOfCPython += !other.isOnlyHere;
     if (!block.isOnlyHere && blocksOfCPython >= mostBlocksOfCPython)
