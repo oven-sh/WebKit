@@ -240,6 +240,35 @@ void Entry::raiseBadInternalCall()
     ASSERT_UNUSED(hasFailed, hasFailed);
 }
 
+bool throwWhatCRaised(JSGlobalObject* globalObject)
+{
+    Handle exception = std::exchange(t_errorIndicator, nullptr);
+    if (!exception) [[likely]]
+        return true;
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    throwPythonException(globalObject, scope, toJS(exception));
+    release(exception);
+    return false;
+}
+
+void takeOverReference(uint64_t bits)
+{
+    if (bits)
+        release(std::bit_cast<Handle>(static_cast<uintptr_t>(bits)));
+}
+
+uint64_t bitsForC(JSValue value)
+{
+    return bitsOf(toC(value));
+}
+
+JSValue objectOfSymbol(uint64_t bits)
+{
+    Handle handle = std::bit_cast<Handle>(static_cast<uintptr_t>(bits));
+    return isStatic(handle) ? toJS(handle) : JSValue();
+}
+
 } // namespace CApi
 } // namespace Python
 } // namespace JSC

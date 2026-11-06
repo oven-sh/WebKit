@@ -6,6 +6,7 @@
 #include "config.h"
 #include "PyCtypes.h"
 
+#include "CApiHooks.h"
 #include "HeapIterationScope.h"
 #include "HeapUtil.h"
 #include "JSBigIntInlines.h"
@@ -195,6 +196,8 @@ JSValue capsuleForMemory(JSGlobalObject* globalObject, PyByteStorage* storage)
 
 uint64_t bitsOfObject(JSValue value)
 {
+    if (CApi::s_interpreter) [[unlikely]]
+        return CApi::bitsForC(value);
     return static_cast<uint64_t>(JSValue::encode(value));
 }
 
@@ -202,6 +205,10 @@ JSValue objectFromBits(JSGlobalObject* globalObject, uint64_t bits, JSValue hint
 {
     if (hint && bitsOfObject(hint) == bits) [[likely]]
         return hint;
+    if (CApi::belongsTo(runtime(globalObject))) {
+        if (JSValue object = CApi::objectOfSymbol(bits))
+            return object;
+    }
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue value = JSValue::decode(static_cast<EncodedJSValue>(bits));

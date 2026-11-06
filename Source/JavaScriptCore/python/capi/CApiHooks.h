@@ -35,6 +35,15 @@ void runtimeIsEnding(Runtime&);
 // For the collector, with the world stopped, when marking is over and nothing has been freed yet.
 void didFinishMarking(JSC::Heap&);
 
+// After a call of a function of C's that has the GIL: what it raised, if it did, is thrown. False: it is.
+bool throwWhatCRaised(JSGlobalObject*);
+// C has handed over a reference with a result: these are the bits of the PyObject*.
+void takeOverReference(uint64_t bits);
+// The bits of the PyObject* for the object.
+uint64_t bitsForC(JSValue);
+// The object, if the bits are the address of one of the symbols that stand for objects (&PyLong_Type). Empty: they are not.
+JSValue objectOfSymbol(uint64_t bits);
+
 } // namespace CApi
 } // namespace Python
 } // namespace JSC

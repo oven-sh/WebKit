@@ -1301,11 +1301,11 @@ checked and cannot be: `from_address`, `in_dll`, `string_at` and the like, an in
 elsewhere (a union, `memmove`, `from_buffer_copy`, a foreign function), and foreign calls themselves. These can crash the process, as in CPython. So
 can changing `_objects`, whose docstring says not to.
 
-**`py_object`.** There is no `PyObject*`. The eight bytes are the bits of the `JSValue`, which for most objects is what `id()`
+**`py_object`.** The eight bytes are a `PyObject*` as the C API has it (see there): the bits of the `JSValue`, which for most objects is what `id()`
 returns, and 0 is NULL. The object is kept alive by `_objects`. Bits read from memory are handed out as an object if they are those of
 what `_objects` holds for that place; otherwise only after the heap has confirmed that they are those of a live cell of a kind that programs
 see (`objectFromBits()`). `Py_INCREF` and `Py_DECREF` keep a table of objects that are to stay alive. `ctypes.pythonapi` would be the
-program itself, which has no C API. Bun takes the name away when `ctypes` is imported, as it is absent on PyPy: that is how programs find out.
+program itself, which has little of the C API yet. Bun takes the name away when `ctypes` is imported, as it is absent on PyPy: that is how programs find out.
 
 **`cast`, `string_at`, `wstring_at`, `memoryview_at`, `memmove`, `memset`** are, in `Lib/ctypes`, function pointers made from addresses
 that `_ctypes` exports. The addresses are real and distinct, and a call to one of them runs the C++ function directly.
@@ -1330,7 +1330,7 @@ a finalizer left to run, and comes up again in the next collection.
 `capi/` is CPython's C API for extension modules, in the one form in which C sees the layout of no object: **abi3t** (PEP 803). `PyObject`,
 `PyVarObject`, `PyTypeObject` and `PyModuleDef` are incomplete types there, `Py_INCREF`, `Py_TYPE` and `Py_SIZE` are calls, and what C knows of an object is its
 address. Nothing in `capi/` is CPython's text: what a function does is taken from the documentation, the list of the stable ABI, and from running CPython. The
-functions are exported from the executable. (So far there is what it takes to hold objects, and nothing calls it.)
+functions are exported from the executable. (So far there is what it takes to hold objects, and no way to load a module: a library loaded with `ctypes.PyDLL` can call it.)
 
 **A `PyObject*` is the 64 bits of the `JSValue`**, and NULL the empty value (`toJS()`, `toC()` in `capi/CApi.h`). The address of a cell stands for the cell. None, the
 bools, and the ints and floats that are no cells are addresses at which there is no memory, and C cannot tell. So `==` in C is `is`, nothing is allocated or looked
@@ -1356,7 +1356,7 @@ which would tell C that nobody else can see it.
 
 **The error indicator is not the VM's pending exception.** C goes on calling the API while an exception is set, and the functions of the runtime expect none to be pending
 when they are entered. So the indicator is a reference of its own, one for each thread, counted like C's other references and kept alive by that. A function
-of the API that finds the runtime to have raised moves the exception there (`Entry::failed()`); whoever has called C throws what is there. What ends the
+of the API that finds the runtime to have raised moves the exception there (`Entry::failed()`); whoever has called C throws what is there (`throwWhatCRaised()`). What ends the
 program (a termination) is never put in the indicator: it stays pending, and while it does every function of the API fails at once.
 
 **One interpreter of a process has the API**: the first `Runtime` that asks (`CApi::ensure()`). The functions are not told for whom they are called, and a symbol stands for one
@@ -1365,6 +1365,9 @@ cell. In any other, what needs the API is an `ImportError`; and when that one ha
 **Quiet and noisy.** Every function that C calls says in its first line whether it can run code of the program or put a reference where the program finds
 it (`CAPI_ENTER()`, `CAPI_NOISY()`) or not (`CAPI_QUIET()`); `tools/check_capi.py` looks. A function is noisy unless it is known to be quiet. Nothing counts the noisy
 calls yet: that is for the order in which instances of extension types are destroyed.
+
+**`ctypes`.** A `py_object` is a `PyObject*`: the same bits. A function of a `PyDLL` is called with the GIL; what it raised is thrown when it returns, whatever it returned; a
+`py_object` that it returns comes with a reference, which is given up once the object is in hand.
 
 ## decimal
 

@@ -6,6 +6,7 @@
 #include "config.h"
 #include "PyCtypes.h"
 
+#include "CApiHooks.h"
 #include "JSArrayBuffer.h"
 #include "JSCInlines.h"
 #include "PyList.h"
@@ -397,9 +398,15 @@ static JSValue makeResult(JSGlobalObject* globalObject, JSValue resultType, cons
     if (!info)
         RELEASE_AND_RETURN(scope, call(globalObject, resultType, jsNumber(number)));
     JSValue result;
-    if (info->accessor && isSimpleInstanceType(*info->state.get(), PyType::from(resultType)))
+    if (info->accessor && isSimpleInstanceType(*info->state.get(), PyType::from(resultType))) {
         result = load(globalObject, info->accessor, memory, info->size, { }, hint);
-    else
+        // A function that returns an object returns a reference with it.
+        if (info->accessor.code == Code::Object && result && CApi::belongsTo(runtime(globalObject))) {
+            uint64_t bits;
+            memcpy(&bits, memory, sizeof(bits));
+            CApi::takeOverReference(bits);
+        }
+    } else
         result = dataFromCopy(globalObject, PyType::from(resultType), memory, info->size);
     RETURN_IF_EXCEPTION(scope, { });
     if (!checker)
@@ -553,9 +560,14 @@ JSValue callFunction(JSGlobalObject* globalObject, void* function, PyTuple* argu
             return raiseValueError(globalObject, scope, "NULL pointer access"_s);
         // With more arguments than argtypes, the rest are those of a variadic function.
         unsigned fixedCount = converterCount && count > converterCount ? converterCount : count;
+        // A function of a PyDLL may call the C API.
+        if ((flags & FunctionPythonAPI) && failed(scope, CApi::ensure(globalObject)))
+            return { };
         bool ok = callForeignFunction(globalObject, function, values.span(), fixedCount, result, flags);
         RETURN_IF_EXCEPTION(scope, { });
         ASSERT_UNUSED(ok, ok);
+        if ((flags & FunctionPythonAPI) && failed(scope, CApi::throwWhatCRaised(globalObject)))
+            return { };
     }
     RELEASE_AND_RETURN(scope, makeResult(globalObject, resultType, resultMemory, checker, ownResult));
 }

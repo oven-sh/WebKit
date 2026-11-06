@@ -248,7 +248,7 @@ ALWAYS_INLINE Handle newReference(JSValue value)
 //
 // C goes on calling the API with an exception set, and the functions of the runtime expect none to be pending when they are entered. So what C
 // knows as the error indicator is not the VM's pending exception: it is a reference of its own, one for each thread, which is counted as
-// C's references are and is kept alive by that. An exception moves from one to the other where control does: see Entry.
+// C's references are and is kept alive by that. An exception moves from one to the other where control does: see Entry, throwWhatCRaised().
 // What ends the program (a termination) is never in the indicator. It stays pending, and while it is, every function fails.
 Handle& errorIndicator();
 // Takes over the reference. NULL: none is set any more.
