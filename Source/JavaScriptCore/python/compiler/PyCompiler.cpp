@@ -2447,9 +2447,9 @@ void Unit::asyncForLoop(For* node, const Last& isLast)
     }
 
     Try whole = beginTry(HandlerType::SynthesizedCatch);
+    pushBlock({ .kind = BlockKind::AsyncForLoop, .tryDepth = whole.depthBefore, .continueTarget = start.ptr(), .breakTarget = end.ptr(), .saved = iterator.get(), .range = node->range, .isLast = isLast, .valueToReturn = m_valueToReturn });
     g.emitLabel(start.get());
     line(node->iter->range);
-    pushBlock({ .kind = BlockKind::AsyncForLoop, .tryDepth = whole.depthBefore, .continueTarget = start.ptr(), .breakTarget = end.ptr(), .saved = iterator.get(), .range = node->range, .isLast = isLast, .valueToReturn = m_valueToReturn });
 
     // StopAsyncIteration from __anext__ ends the loop.
     Try guard = beginTry();
