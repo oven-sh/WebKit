@@ -2085,7 +2085,11 @@ JSFunction* beginCallWithSelf(JSGlobalObject* globalObject, JSValue callee)
 CallData callDataUnknownToJS(JSValue callee)
 {
     CallData callData;
-    if (callee.isCell() && PyListObject::is(callee.asCell()) && uncheckedDowncast<PyListObject>(callee.asCell())->type()->lookup(Special::Call)) {
+    if (!callee.isCell())
+        return callData;
+    JSCell* cell = callee.asCell();
+    PyType* type = isPyObjectType(cell->type()) ? uncheckedDowncast<PyObject>(cell)->type() : PyListObject::is(cell) ? uncheckedDowncast<PyListObject>(cell)->type() : nullptr;
+    if (type && type->lookup(Special::Call)) {
         callData.type = CallData::Type::Native;
         callData.native.function = callPythonObject;
         callData.native.isBoundFunction = false;

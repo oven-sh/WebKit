@@ -352,7 +352,7 @@ found last is in one table of 4096 entries for all the types of a runtime (`Type
 or one of its bases does, so nothing has to be looked for in the table then. The table keeps no value alive: after each collection it forgets those that are gone
 (`Runtime::reconcileWeakReferencesAtGCEnd()`), which only happens to a class whose dict was written to behind its back (`gc.get_referents(C.__dict__)`; CPython crashes). It
 does keep the text of a name, until another takes the place: so none of more than 100 characters, as in CPython. Whether an object can be called is a question that JSC takes to have no effects
-(`PyObject::getCallData()`), so `__call__` is looked for by its text alone there, and no key of a class's dict is asked whether it equals the name (`lookupByText()`). The collector asks
+(`PyObject::getCallData()`), so `__call__` is looked for by its text alone there, and no key of a class's dict is asked whether it equals the name (`PyType::AsksKeys::No`), nor is what such a key has said before gone by: where the only `__call__` of a class lies under a key that is no str, Python calls the object, and to JS it is an `"object"` that cannot be called, before and after. The collector asks
 it too, for the frames of the sampling profiler, on whatever thread it runs: what is looked up for it is not remembered, since letting go of a name takes the VM's table of atoms
 (`Heap::currentThreadIsDoingGCWork()`, as in `SymbolTable::materializeCachedEntries()`). All 96 KB of it are gone through at the end of a full
 collection (15 to 20 µs). An Eden collection frees nothing that has survived a collection, so at the end of one only those runs of 64 entries are gone through that were written

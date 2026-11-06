@@ -321,6 +321,7 @@ JSValue PyType::lookupSlow(JSString* name, AsksKeys asksKeys)
         if (vm.hasPendingTerminationException()) [[unlikely]]
             return { };
         JSGlobalObject* globalObject = realm();
+        m_hasAskedKeys = true;
         s_timesLookupRanCode.fetch_add(1, std::memory_order_relaxed);
         bool hasRaised = false;
         bool wasTerminated = false;

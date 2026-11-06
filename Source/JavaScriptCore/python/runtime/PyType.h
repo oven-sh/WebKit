@@ -216,21 +216,15 @@ public:
     // Whoever looks things up, in whatever classes, and then counts on it that nothing has changed meanwhile sees by this number
     // whether that has happened, here or in another thread.
     static uint64_t timesLookupRanCode() { return s_timesLookupRanCode.load(std::memory_order_relaxed); }
-    ALWAYS_INLINE JSValue lookup(Special special)
+    // AsksKeys::No is for whoever JSC takes to have no effects (getCallData()): no code of the program runs. A key that is no str and would say
+    // that it equals the name is passed over, whether or not it has been asked before: the answer does not depend on what was looked up earlier.
+    enum class AsksKeys : bool { No, Yes };
+    ALWAYS_INLINE JSValue lookup(Special special, AsksKeys asksKeys = AsksKeys::Yes)
     {
         unsigned index = static_cast<unsigned>(special);
-        if (m_specialStates[index] != SpecialState::Unknown) [[likely]]
+        if (m_specialStates[index] != SpecialState::Unknown && (asksKeys == AsksKeys::Yes || !m_hasAskedKeys)) [[likely]]
             return m_specials[index].get();
-        return lookupSpecialSlow(special, AsksKeys::Yes);
-    }
-    // The same for whoever JSC takes to have no effects (getCallData()): no key is asked, so that no code of the program runs. A key that is no
-    // str and says that it equals the name is passed over.
-    ALWAYS_INLINE JSValue lookupByText(Special special)
-    {
-        unsigned index = static_cast<unsigned>(special);
-        if (m_specialStates[index] != SpecialState::Unknown) [[likely]]
-            return m_specials[index].get();
-        return lookupSpecialSlow(special, AsksKeys::No);
+        return lookupSpecialSlow(special, asksKeys);
     }
     // Whether `method` is what lookup(special) finds now (code of the program's may have run since it was looked up), and that is a
     // method written in C++, of this type or of one it is derived from, that takes `self` and exactly `count` values more. To
@@ -312,7 +306,6 @@ private:
 
     void takeNewLookupKey();
 
-    enum class AsksKeys : bool { No, Yes };
     JSValue lookupSlow(JSString* name, AsksKeys = AsksKeys::Yes);
     static std::atomic<uint64_t> s_timesLookupRanCode;
     JSValue lookupSpecialSlow(Special, AsksKeys);
@@ -346,6 +339,8 @@ private:
     // reads the attributes of the instances is replaced by something simpler. It shows where a key that is no str raised when it
     // was asked whether it is "__getattr__".
     bool m_hasGivenUpGetAttr { false };
+    // What is remembered of the type may be what a key that is no str has said. For good: it only costs AsksKeys::No a walk.
+    bool m_hasAskedKeys { false };
     Construction m_construction { Construction::Unknown };
     enum class SpecialState : uint8_t { Unknown, Known, Function, NativeTakingNone, NativeTakingOne, NativeTakingTwo };
     static_assert(static_cast<uint8_t>(SpecialState::Known) == specialIsOfNoParticularKind && static_cast<uint8_t>(SpecialState::Function) == specialIsFunction);
