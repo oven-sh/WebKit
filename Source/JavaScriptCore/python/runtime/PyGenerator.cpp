@@ -719,6 +719,7 @@ JSValue getANext(JSGlobalObject* globalObject, JSValue iterator)
     if (!failed(scope, awaitable))
         return awaitable;
     JSValue cause = takePendingException(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
     PyException* error = newException(globalObject, rt.TypeError(), makeString("'async for' received an invalid object from __anext__: "_s, typeName(globalObject, next)));
     RETURN_IF_EXCEPTION(scope, { });
     raiseException(globalObject, scope, error);

@@ -1976,8 +1976,10 @@ static JSValue textIOClose(JSGlobalObject* globalObject, JSValue self)
             takePendingException(globalObject);
     }
     JSValue flushError;
-    if (failed(scope, ioFlush(globalObject, self)))
+    if (failed(scope, ioFlush(globalObject, self))) {
         flushError = takePendingException(globalObject);
+        RETURN_IF_EXCEPTION(scope, { });
+    }
     JSValue result = stream.callBuffer(runtime(globalObject).names.close());
     EXCEPTION_ASSERT(!!scope.exception() == !result);
     ioDidClose(globalObject, stream.record);

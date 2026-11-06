@@ -892,8 +892,10 @@ static JSValue bufferedClose(JSGlobalObject* globalObject, JSValue self)
     // flush() takes the lock itself.
     lock.release();
     JSValue flushError;
-    if (failed(scope, ioFlush(globalObject, self)))
+    if (failed(scope, ioFlush(globalObject, self))) {
         flushError = takePendingException(globalObject);
+        RETURN_IF_EXCEPTION(scope, { });
+    }
     if (failed(scope, lock.acquire()))
         return { };
 

@@ -592,15 +592,13 @@ static void reportCallbackError(JSGlobalObject* globalObject, const String& what
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue exception = takePendingException(globalObject);
-    String text = reprForMessage(globalObject, callable);
-    if (scope.exception()) {
-        takePendingException(globalObject);
-        text = "<unprintable>"_s;
+    if (JSValue exception = takePendingException(globalObject)) {
+        String text = reprForMessage(globalObject, callable);
+        raiseException(globalObject, scope, exception);
+        reportUnraisable(globalObject, makeString("Exception ignored while "_s, what, " ctypes callback function "_s, text), { });
     }
-    raiseException(globalObject, scope, exception);
-    scope.release();
-    reportUnraisable(globalObject, makeString("Exception ignored while "_s, what, " ctypes callback function "_s, text), { });
+    // Nothing propagates through the frames of C.
+    dropPendingException(globalObject, scope);
 }
 
 void runCallback(PyCThunk* thunk, void** arguments, void* resultMemory)
@@ -651,7 +649,7 @@ void runCallback(PyCThunk* thunk, void** arguments, void* resultMemory)
     JSValue result = call(globalObject, callable, CallArgs(plain.span()));
     if (scope.exception()) [[unlikely]] {
         reportCallbackError(globalObject, "calling"_s, callable);
-        EXCEPTION_ASSERT(!scope.exception() || vm.hasPendingTerminationException());
+        scope.assertNoException();
         result = { };
     }
     if (swapsErrno)

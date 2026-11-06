@@ -1959,12 +1959,11 @@ private:
             return 0;
         int64_t number = toInt64(m_globalObject, result);
         if (scope.exception()) {
-            JSValue exception = takePendingException(m_globalObject);
-            JSValue ignored = callMethod(m_globalObject, exception, internString(vm, "add_note"_s), makeStr(vm, makeString("invalid '"_s, name, "' event handler return value"_s)));
-            UNUSED_PARAM(ignored);
-            if (scope.exception())
-                takePendingException(m_globalObject);
-            {
+            if (JSValue exception = takePendingException(m_globalObject)) {
+                JSValue ignored = callMethod(m_globalObject, exception, internString(vm, "add_note"_s), makeStr(vm, makeString("invalid '"_s, name, "' event handler return value"_s)));
+                UNUSED_PARAM(ignored);
+                if (scope.exception())
+                    takePendingException(m_globalObject);
                 auto throwScope = DECLARE_THROW_SCOPE(vm);
                 throwPythonException(m_globalObject, throwScope, exception);
             }

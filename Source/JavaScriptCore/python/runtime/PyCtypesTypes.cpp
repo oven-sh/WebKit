@@ -998,6 +998,7 @@ static JSValue simpleMetaFromParam(JSGlobalObject* globalObject, JSValue self, J
         return argument;
     }
     JSValue exception = takePendingException(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
     JSValue asParameter = getAttrIfPresent(globalObject, value, state.asParameterName.get());
     RETURN_IF_EXCEPTION(scope, { });
     if (asParameter) {

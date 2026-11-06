@@ -144,9 +144,11 @@ public:
             result = strValue(text)->value(m_globalObject);
         if (scope.exception()) {
             // Whatever went wrong is a SyntaxError that says the same.
-            JSValue exception = takePendingException(m_globalObject);
-            unknownEncoding = rt.typeOf(exception)->isSubtypeOf(rt.LookupError());
-            JSString* message = str(m_globalObject, exception);
+            JSString* message = nullptr;
+            if (JSValue exception = takePendingException(m_globalObject)) {
+                unknownEncoding = rt.typeOf(exception)->isSubtypeOf(rt.LookupError());
+                message = str(m_globalObject, exception);
+            }
             error = scope.exception() ? "encoding problem"_str : message->value(m_globalObject);
             dropPendingException(m_globalObject, scope);
             return { };

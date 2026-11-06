@@ -1360,6 +1360,7 @@ static void addLazyImportToPendingException(JSGlobalObject* globalObject, PyReco
         return;
     auto* function = uncheckedDowncast<PyFunction>(functionValue.asCell());
     JSValue raised = takePendingException(globalObject);
+    RETURN_IF_EXCEPTION(scope, void());
     auto* exception = PyException::tryFrom(raised);
     if (!exception) {
         throwPythonException(globalObject, scope, raised);

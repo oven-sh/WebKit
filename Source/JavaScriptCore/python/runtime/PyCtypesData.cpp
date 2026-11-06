@@ -374,11 +374,13 @@ void extendError(JSGlobalObject* globalObject, PyType* exceptionType, const Stri
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue exception = takePendingException(globalObject);
+    RETURN_IF_EXCEPTION(scope, void());
     String name = typeOf(globalObject, exception)->name();
     JSString* text = str(globalObject, exception);
     String message;
     if (scope.exception()) {
         takePendingException(globalObject);
+        RETURN_IF_EXCEPTION(scope, void());
         message = "???"_s;
     } else
         message = stringOf(text);

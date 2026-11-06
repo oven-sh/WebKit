@@ -1627,13 +1627,10 @@ static bool startEagerly(JSGlobalObject* globalObject, PyRecord* state, PyRecord
     // If it comes to its end without suspending, that takes it out again; otherwise it goes on as any task.
     registerTask(globalObject, task);
     if (failed(scope, enterContext(globalObject, task->get(TaskContext)))) {
-        JSValue raised = takePendingException(globalObject);
+        ExceptionSetAside suspended(globalObject);
         setFlag(task, FlagLogDestroyPending, false);
         swapCurrentTask(globalObject, state, loop, previous);
-        if (scope.exception())
-            takePendingException(globalObject);
         unregisterTask(globalObject, task);
-        throwPythonException(globalObject, scope, raised);
         return false;
     }
 

@@ -218,11 +218,13 @@ static NEVER_INLINE void pickleReplaceException(JSGlobalObject* globalObject, Py
 {
     VM& vm = getVM(globalObject);
     JSValue exception = takePendingException(globalObject);
+    if (!exception)
+        return;
     auto scope = DECLARE_THROW_SCOPE(vm);
     String message = makeMessage(exception);
     if (!scope.exception())
         raise(globalObject, scope, type, message);
-    if (JSValue raised = pendingException(globalObject); exception && raised && raised != exception && PyException::is(raised))
+    if (JSValue raised = pendingException(globalObject); raised && raised != exception && PyException::is(raised))
         PyException::from(raised)->setContext(vm, exception);
 }
 

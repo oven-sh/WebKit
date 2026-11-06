@@ -458,8 +458,10 @@ JSValue ioBaseClose(JSGlobalObject* globalObject, JSValue self)
         return jsUndefined();
 
     JSValue flushError;
-    if (failed(scope, ioFlush(globalObject, self)))
+    if (failed(scope, ioFlush(globalObject, self))) {
         flushError = takePendingException(globalObject);
+        RETURN_IF_EXCEPTION(scope, { });
+    }
     setAttr(globalObject, self, ioName(globalObject, IOName::ioBaseClosed), jsBoolean(true));
     if (scope.exception() || flushError)
         ioChainExceptions(globalObject, flushError);
