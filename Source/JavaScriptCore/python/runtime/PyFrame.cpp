@@ -56,7 +56,7 @@ FastBitVector liveLocalsBefore(CodeBlock* codeBlock, unsigned offset)
 {
     FastBitVector live = codeBlock->livenessAnalysis().getLivenessInfoAtInstruction(codeBlock, BytecodeIndex(offset));
     for (auto& piece : blockPiecesOf(codeBlock)) {
-        if (!piece.contains(offset))
+        if (!piece.holdsAt(offset))
             continue;
         piece.forEachRegister([&](VirtualRegister held) {
             live[held.toLocal()] = true;

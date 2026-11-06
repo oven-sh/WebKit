@@ -210,7 +210,10 @@ struct BlockPiece {
     int held; // VirtualRegister::offset()
     bool holdsNextToo; // TracedBlock::With
     bool ownsIterator;
+    bool lineBeginsAtEnd { false }; // In the block: that of a `break`, a `continue` or a `return` with nothing to compute, whose first instruction is the first on the way out.
     bool contains(unsigned offset) const { return begin <= offset && offset < end; }
+    // A frame that is told of that line is in the block still, and a trace function may send it back into it.
+    bool holdsAt(unsigned offset) const { return contains(offset) || (lineBeginsAtEnd && offset == end); }
     template<typename Function>
     void forEachRegister(const Function& function) const
     {
@@ -226,7 +229,14 @@ Vector<BlockPiece, 4> blockPiecesIn(const Marks& marks)
 {
     using Mark = std::remove_cvref_t<decltype(marks[0])>;
     Vector<BlockPiece, 4> pieces;
+    // How many pieces had begun when the last line began, and where that was.
+    size_t piecesAtLastLine = 0;
+    unsigned offsetOfLastLine = std::numeric_limits<unsigned>::max();
     for (auto& mark : marks) {
+        if (mark.kind() == Mark::Line && !isSilentLine(mark.value())) {
+            piecesAtLastLine = pieces.size();
+            offsetOfLastLine = mark.offset;
+        }
         if ((mark.kind() != Mark::BlockBegin && mark.kind() != Mark::BlockEnd) || !VirtualRegister(TracedBlock::registerOffsetOf(mark.bits)).isValid() || TracedBlock::kindOf(mark.bits) == TracedBlock::Other)
             continue;
         if (mark.kind() == Mark::BlockBegin) {
@@ -236,6 +246,7 @@ Vector<BlockPiece, 4> blockPiecesIn(const Marks& marks)
         for (size_t i = pieces.size(); i--;) {
             if (pieces[i].number == mark.value()) {
                 pieces[i].end = mark.offset;
+                pieces[i].lineBeginsAtEnd = offsetOfLastLine == mark.offset && i < piecesAtLastLine;
                 break;
             }
         }

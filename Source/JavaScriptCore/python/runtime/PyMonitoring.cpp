@@ -2872,11 +2872,11 @@ void Monitoring::jump(JSGlobalObject* globalObject, PyFrame* frame, int requeste
     // is in use no longer at the very end of the block, nor is the subject of a `match` behind the last pattern that looks at it.
     CodeBlock* codeBlock = callFrame->codeBlock();
     FastBitVector inUse = liveLocalsBefore(codeBlock, offset);
-    FastBitVector needed = liveLocalsBefore(codeBlock, best->offset);
+    FastBitVector needed = codeBlock->livenessAnalysis().getLivenessInfoAtInstruction(codeBlock, BytecodeIndex(best->offset));
     bool hasAll = true;
     for (unsigned i = 0; i < best->blocks.size(); ++i) {
         VirtualRegister target = best->blocks[i].reg;
-        if (!target.isValid() || !needed[target.toLocal()])
+        if (!target.isValid() || (best->blocks[i].kind == TracedBlock::Other && !needed[target.toLocal()]))
             continue;
         VirtualRegister reg = from->at(i).reg;
         hasAll &= reg.isValid() && inUse[reg.toLocal()];
