@@ -50,7 +50,7 @@ void PyObject::setType(VM& vm, PyType* type)
 CallData PyObject::getCallData(JSCell* cell)
 {
     CallData callData;
-    if (uncheckedDowncast<PyObject>(cell)->type()->lookup(Special::Call)) {
+    if (uncheckedDowncast<PyObject>(cell)->type()->lookupByText(Special::Call)) {
         callData.type = CallData::Type::Native;
         callData.native.function = callPythonObject;
         callData.native.isBoundFunction = false;
@@ -63,7 +63,7 @@ CallData PyObject::getCallData(JSCell* cell)
 CallData PyObject::getConstructData(JSCell* cell)
 {
     CallData constructData;
-    if (uncheckedDowncast<PyObject>(cell)->type()->lookup(Special::MroEntries)) {
+    if (uncheckedDowncast<PyObject>(cell)->type()->lookupByText(Special::MroEntries)) {
         constructData.type = CallData::Type::Native;
         constructData.native.function = callPythonObject;
         constructData.native.isBoundFunction = false;

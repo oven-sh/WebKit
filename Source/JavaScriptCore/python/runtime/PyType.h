@@ -219,7 +219,16 @@ public:
         unsigned index = static_cast<unsigned>(special);
         if (m_specialStates[index] != SpecialState::Unknown) [[likely]]
             return m_specials[index].get();
-        return lookupSpecialSlow(special);
+        return lookupSpecialSlow(special, AsksKeys::Yes);
+    }
+    // The same for whoever JSC takes to have no effects (getCallData()): no key is asked, so that no code of the program runs. A key that is no
+    // str and says that it equals the name is passed over.
+    ALWAYS_INLINE JSValue lookupByText(Special special)
+    {
+        unsigned index = static_cast<unsigned>(special);
+        if (m_specialStates[index] != SpecialState::Unknown) [[likely]]
+            return m_specials[index].get();
+        return lookupSpecialSlow(special, AsksKeys::No);
     }
     // Whether `method` is what lookup(special) finds now (code of the program's may have run since it was looked up), and that is a
     // method written in C++, of this type or of one it is derived from, that takes `self` and exactly `count` values more. To
@@ -298,9 +307,10 @@ private:
 
     void takeNewLookupKey();
 
-    JSValue lookupSlow(JSString* name);
+    enum class AsksKeys : bool { No, Yes };
+    JSValue lookupSlow(JSString* name, AsksKeys = AsksKeys::Yes);
     static std::atomic<uint64_t> s_timesLookupRanCode;
-    JSValue lookupSpecialSlow(Special);
+    JSValue lookupSpecialSlow(Special, AsksKeys);
     Structure* createInstanceStructure(VM&);
     uint32_t takeVersion();
 

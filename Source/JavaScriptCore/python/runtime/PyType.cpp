@@ -290,18 +290,29 @@ void PyType::takeNewLookupKey()
     m_lookupKey = (lastKey.fetch_add(1, std::memory_order_relaxed) + 1) * 0x9E3779B97F4A7C15ull;
 }
 
-JSValue PyType::lookupSlow(JSString* name)
+JSValue PyType::lookupSlow(JSString* name, AsksKeys asksKeys)
 {
     PyTuple* mro = m_mro.get();
     if (!mro)
         return { };
     VM& vm = this->vm();
+    // The collector asks what is callable (SamplingProfiler::processUnverifiedStackTraces()), on whatever thread it runs. It is told what is
+    // there: to remember is to let go of another name, which takes the VM's table of atoms. As in SymbolTable::materializeCachedEntries().
+    bool isForCollector = vm.heap.currentThreadIsDoingGCWork();
+    if (isForCollector) [[unlikely]]
+        asksKeys = AsksKeys::No;
+    bool hasPassedOverKeys = false;
     uint64_t key = m_lookupKey;
     JSValue value;
     for (unsigned i = 0; !value && i < mro->length(); ++i) {
         PyDict* dict = uncheckedDowncast<PyType>(mro->at(i).asCell())->dict();
         if (dict->hasOnlyStringKeys()) [[likely]] {
             value = dict->get(name);
+            continue;
+        }
+        if (asksKeys == AsksKeys::No) {
+            value = dict->get(name);
+            hasPassedOverKeys = true;
             continue;
         }
         // type("X", (), { key: 1 }): the key is asked whether it equals the name. What it raises is lost, the name counts as not found,
@@ -333,7 +344,7 @@ JSValue PyType::lookupSlow(JSString* name)
             return { };
     }
     // And it may have changed the type, or its bases.
-    if (m_lookupKey != key) [[unlikely]]
+    if (m_lookupKey != key || isForCollector || hasPassedOverKeys) [[unlikely]]
         return value;
     // The table keeps the text. (The limit is CPython's.)
     StringImpl* impl = name->tryGetValueImpl();
@@ -364,13 +375,16 @@ JSValue PyType::lookupKey(JSGlobalObject* globalObject, JSValue name)
     return value;
 }
 
-JSValue PyType::lookupSpecialSlow(Special special)
+JSValue PyType::lookupSpecialSlow(Special special, AsksKeys asksKeys)
 {
     Runtime& rt = Runtime::from(realm());
     JSValue value;
     if (special != Special::GetAttr || !m_hasGivenUpGetAttr) {
         JSString* name = rt.name(special);
-        value = lookup(name);
+        value = asksKeys == AsksKeys::Yes ? lookup(name) : lookupSlow(name, asksKeys);
+        // See lookupSlow().
+        if (rt.vm().heap.currentThreadIsDoingGCWork()) [[unlikely]]
+            return value;
         if (special == Special::GetAttr && !value)
             m_hasGivenUpGetAttr = true;
         else {

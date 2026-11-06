@@ -347,7 +347,10 @@ found last is in one table of 4096 entries for all the types of a runtime (`Type
 (`HasOwnPropertyCache`, `MegamorphicCache`). An entry belongs to a key and a name. A type's key is a number that no type has had before, and it takes a new one whenever it changes,
 or one of its bases does, so nothing has to be looked for in the table then. The table keeps no value alive: after each collection it forgets those that are gone
 (`Runtime::reconcileWeakReferencesAtGCEnd()`), which only happens to a class whose dict was written to behind its back (`gc.get_referents(C.__dict__)`; CPython crashes). It
-does keep the text of a name, until another takes the place: so none of more than 100 characters, as in CPython. All 96 KB of it are gone through at the end of a full
+does keep the text of a name, until another takes the place: so none of more than 100 characters, as in CPython. Whether an object can be called is a question that JSC takes to have no effects
+(`PyObject::getCallData()`), so `__call__` is looked for by its text alone there, and no key of a class's dict is asked whether it equals the name (`lookupByText()`). The collector asks
+it too, for the frames of the sampling profiler, on whatever thread it runs: what is looked up for it is not remembered, since letting go of a name takes the VM's table of atoms
+(`Heap::currentThreadIsDoingGCWork()`, as in `SymbolTable::materializeCachedEntries()`). All 96 KB of it are gone through at the end of a full
 collection (15 to 20 µs). An Eden collection frees nothing that has survived a collection, so at the end of one only those runs of 64 entries are gone through that were written
 to since the last collection (`Heap::reconcileWeakGCHashTables()` goes by the same): none, in a program that looks up nothing new. (An Eden collection with nothing to do, in
 a program of JS that has imported one file of Python: 55 µs; 72 if all of the table were gone through, which is 1.5 to 2 % of a loop that only makes garbage.) More pairs of a class and a name than there are places push each other out, where the 16 places that each type had before grew with the number of
