@@ -137,46 +137,43 @@ static ChildProcessResult runInShellWithTripwire(std::span<const uint8_t> module
 {
     std::unique_ptr<CompileOutput> output = compileProgramWithModule(moduleOfProgram);
     TemporaryFile image(".image"_s, output->section(Wire::ResultSection::Image));
-    ModuleFolder folder(makeString(image.path(), ".modules"_s));
+    ModuleFolder folder(makeString(image.ownPath(), ".modules"_s));
     String mainPath = folder.write("main.js"_s, byteCast<uint8_t>(source.span8()));
 
     Vector<String> arguments { makeString("--aotImagePath="_s, image.path()), "--useBBQJIT=false"_s, "--useOMGJIT=false"_s, "--crashIfInterpreterIsUsed=true"_s, mainPath };
     return ChildProcessLauncher(shellPath(), { }).run(arguments.span());
 }
 
-static void testTripwireAcceptsBytesTheBuildNeverSaw()
+static void checkShellPrinted(const ChildProcessResult& result, ASCIILiteral expected)
 {
-    ChildProcessResult result = runInShellWithTripwire(moduleWithGCTypes, callsModuleFromOtherBytes);
-    if (!result.exitedWith(EXIT_SUCCESS))
+    String printed = makeStringByReplacingAll(result.output, "\r\n"_s, "\n"_s);
+    if (!result.exitedWith(EXIT_SUCCESS) || printed != expected)
         dataLogLn(shellPath(), " ", result.description(), "\n", result.output);
     AOT_TEST_CHECK(result.exitedWith(EXIT_SUCCESS));
-    AOT_TEST_CHECK(makeStringByReplacingAll(result.output, "\r\n"_s, "\n"_s) == "42\n"_s);
+    AOT_TEST_CHECK(printed == expected);
+}
+
+static void testTripwireAcceptsBytesTheBuildNeverSaw()
+{
+    checkShellPrinted(runInShellWithTripwire(moduleWithGCTypes, callsModuleFromOtherBytes), "42\n"_s);
 }
 
 static void testModuleOfProgramRunsUnderTripwire()
 {
-    ChildProcessResult result = runInShellWithTripwire(moduleWithGCTypes, callsModuleWithGCTypes);
-    if (!result.exitedWith(EXIT_SUCCESS))
-        dataLogLn(shellPath(), " ", result.description(), "\n", result.output);
-    AOT_TEST_CHECK(result.exitedWith(EXIT_SUCCESS));
-    AOT_TEST_CHECK(makeStringByReplacingAll(result.output, "\r\n"_s, "\n"_s) == "object\n"_s);
+    checkShellPrinted(runInShellWithTripwire(moduleWithGCTypes, callsModuleWithGCTypes), "object\n"_s);
 }
 
 static void testImportedMemoryInShell()
 {
     std::unique_ptr<CompileOutput> output = compileProgramWithModule(importedMemoryModule);
     TemporaryFile image(".image"_s, output->section(Wire::ResultSection::Image));
-    ModuleFolder folder(makeString(image.path(), ".modules"_s));
+    ModuleFolder folder(makeString(image.ownPath(), ".modules"_s));
     folder.write("module.wasm"_s, importedMemoryModule);
     folder.write("imports.js"_s, byteCast<uint8_t>(importsSource.span8()));
     String mainPath = folder.write("main.js"_s, byteCast<uint8_t>(mainSource.span8()));
 
     Vector<String> arguments { makeString("--aotImagePath="_s, image.path()), "--useBBQJIT=false"_s, "--useOMGJIT=false"_s, "-m"_s, mainPath };
-    ChildProcessResult result = ChildProcessLauncher(shellPath(), { }).run(arguments.span());
-    if (!result.exitedWith(EXIT_SUCCESS))
-        dataLogLn(shellPath(), " ", result.description(), "\n", result.output);
-    AOT_TEST_CHECK(result.exitedWith(EXIT_SUCCESS));
-    AOT_TEST_CHECK(makeStringByReplacingAll(result.output, "\r\n"_s, "\n"_s) == "7\n"_s);
+    checkShellPrinted(ChildProcessLauncher(shellPath(), { }).run(arguments.span()), "7\n"_s);
 }
 
 } } // namespace JSC::AOT

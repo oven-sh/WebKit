@@ -3280,7 +3280,7 @@ JSPromise* Modules::startImport(ModuleID module, std::optional<int64_t> referrer
     }
     importThatAsksHasWaited.reset();
     moduleThatImportAsksFor.reset();
-    if (text == TextOfImport::MayComeLater && (!m_textsOnTheirWay.isEmpty() || hasFileOfGraphBeingLoadedBegun()) && isTextLeftToRead(module)) [[unlikely]]
+    if (text == TextOfImport::MayComeLater && (!m_textsOnTheirWay.isEmpty() || hasFileOfGraphBeingLoadedBegun() || data(module).isLoadedByLoader()) && isTextLeftToRead(module)) [[unlikely]]
         return startImportInLaterTurn(module, referrerAsyncOrder);
     if (text == TextOfImport::MayComeLater && !hasTextAtHand() && textOfImportComesInLaterTurn(module, AskedBy::Import)) [[unlikely]] {
         JSPromise* promise = JSPromise::create(*m_instance.vm, realm->promiseStructure());

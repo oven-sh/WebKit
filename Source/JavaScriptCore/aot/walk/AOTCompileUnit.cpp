@@ -349,6 +349,18 @@ private:
         return asked;
     }
 
+    TypeID typeThatTestsAndChecksLeaveOf(ValueID value, ValueID call) const
+    {
+        TypeID left = typeThatChecksInFrontOfCallAskOf(value, call);
+        const Operation& record = m_code.at(value);
+        bool namesValueOfOperand = conversionsOfForm.contains(record.opcode) || (record.opcode == Opcode::Narrowed && !record.narrowsHolderOfOperand() && !record.narrowsOtherResultOfOperand());
+        ValueID behind = namesValueOfOperand ? record.operand(0) : ValueID();
+        if (!behind || m_code.isConstant(behind) || !m_code.at(behind).type || !m_types.at(m_code.at(behind).type).isJavaScriptValue())
+            return left;
+        TypeID both = m_types.intersectionOf(left, typeThatTestsAndChecksLeaveOf(behind, call));
+        return isNeverType(both) ? left : both;
+    }
+
     bool liesWithin(ValueID value, TypeID bound, ValueID call)
     {
         const Operation& record = m_code.at(value);
@@ -358,7 +370,7 @@ private:
             return true;
         if (m_code.isConstant(value) || !m_types.at(record.type).isJavaScriptValue())
             return false;
-        if (m_types.isSubset(typeThatChecksInFrontOfCallAskOf(value, call), bound))
+        if (m_types.isSubset(typeThatTestsAndChecksLeaveOf(value, call), bound))
             return true;
         if (conversionsOfForm.contains(record.opcode))
             return liesWithin(record.operand(0), bound, call);
@@ -400,16 +412,21 @@ private:
                 if (entry.isEntry && place < entry.parameters().size() && entry.parameters()[place] == operand)
                     continue;
             }
+            if (isNeverType(left)) {
+                if (operand && isNeverType(typeThatChecksInFrontOfCallAskOf(operand, id)))
+                    continue;
+                return sentence(id, callee, place, operand, "and all that its unit has left there is never"_s, { });
+            }
             TypeID believed = m_inputs.facts.typeBelievedOfEntryParameter(m_types, callee, place, left);
             if (!m_types.at(believed).isJavaScriptValue())
                 continue;
-            if (TypeID provenByLink = isUnitOfCallee ? TypeID() : m_inputs.facts.typeOfEntryParameter(callee, place).proven; provenByLink && m_types.isSubset(m_inputs.facts.typeBelievedOfEntryParameter(m_types, callee, place, provenByLink), believed))
+            if (TypeID provenByLink = isUnitOfCallee ? TypeID() : m_inputs.facts.typeOfEntryParameter(callee, place).proven; provenByLink && m_types.isSubset(provenByLink, left))
                 continue;
             if (TypeID tested = call.role() == CodeRole::Body ? m_inputs.plan.conventions().typeBehindGuard(callee, place) : TypeID()) {
                 TypeID passed = m_types.intersectionOf(believed, tested);
                 believed = isNeverType(passed) ? tested : passed;
             }
-            if (isUnitOfCallee)
+            if (isUnitOfCallee && !walksInputBody(m_code.role()) && m_code.role() != CodeRole::ParameterGuard)
                 believed = m_types.testablePartOf(believed);
             if (!operand) {
                 if (place >= handedOver.size() && isPositional && m_types.isSubset(TypeTable::undefined, believed))

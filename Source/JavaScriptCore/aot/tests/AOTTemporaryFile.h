@@ -40,6 +40,7 @@ public:
     }
 
     const String& path() const { return m_path; }
+    const String& ownPath() const { return m_ownPath; }
 
 private:
     static String pathSharedByTests(ASCIILiteral suffix, std::span<const uint8_t> contents)

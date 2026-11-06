@@ -2161,6 +2161,86 @@ static void testMachineFrameKeepsNoPointerWhereSomeWayHasNotDefinedReference() {
 static void testMachineFrameKeepsNoPointerWhereWayPastLaterBlockHasNotDefinedReference() { runFrameTestOfReferenceThatSomeWayHasNotDefined(WayWithoutReference::PastBlockLaidBehindDefinition); }
 static void testMachineFrameKeepsNoPointerBehindOtherSuccessorOfPatchThatDefinesReference() { runFrameTestOfReferenceThatSomeWayHasNotDefined(WayWithoutReference::OutOfPatchThatDefinesIt); }
 
+static void testMachineFrameCoversWholeFunctionWhereStoreAtHeadOfDeclinedFramedPartIsItsOnlyUseOutsideRareRegions()
+{
+    ProcedureTraits traits;
+    traits.chargesForCalleeSaves = true;
+    TestProcedure test(traits);
+    Output& out = test.out();
+    Procedure& proc = test.procedure();
+    const AbstractHeap& frameSlots = test.heaps().frameSlots;
+    StackSlot* slot = proc.addStackSlot(sizeof(uint64_t));
+    RegisterFile file = registerFileOfFrameTest(test);
+    const unsigned numberOfRegisters = numberOfFrameTestRegisters(file.allocatableIn(Bank::GP) & ~file.calleeSaved);
+    const unsigned numberMadeInTurn = numberOfRegisters - 4;
+    constexpr uint64_t numberOfTurns = 3;
+
+    Operation* argument = test.argumentGPR(0);
+    Operation* first = test.argumentGPR(1);
+    Operation* second = test.argumentGPR(2);
+    RegisterMask takenInLoop = maskOf(Reg(GPRInfo::argumentGPR1)) | maskOf(Reg(GPRInfo::argumentGPR2));
+    Block* leaving = out.newBlock();
+    Block* inFront = out.newBlock();
+    Block* turning = out.newBlock();
+    Block* behind = out.newBlock();
+    Block* calling = out.newBlock();
+    Block* onward = out.newBlock();
+    Block* shared = out.newBlock();
+
+    out.branch(out.testNonZero64(argument, 1), normalEdge(inFront), normalEdge(leaving));
+    out.appendTo(leaving);
+    ValueFromBlock fromLeaving = out.anchor(out.constInt64(5));
+    out.jump(shared);
+    out.appendTo(inFront);
+    ValueFromBlock firstTurn = out.anchor(out.int64Zero);
+    ValueFromBlock firstSum = out.anchor(out.int64Zero);
+    out.jump(turning);
+    out.appendTo(turning);
+    Operation* turn = out.phi(Int64, firstTurn);
+    Operation* sum = out.phi(Int64, firstSum);
+    PatchOperation* taking = out.patch(Void);
+    taking->effects = Effects::none();
+    taking->effects.writesLocalState = true;
+    taking->setRunsWithoutFrame(true);
+    taking->clobberLate(takenInLoop);
+    taking->setGenerator([takenInLoop](CCallHelpers& jit, const PatchParameters&) {
+        emitFrameTestPoison(jit, takenInLoop);
+    });
+    Vector<Operation*> madeInTurn = defineFrameTestValues(out, argument, numberMadeInTurn);
+    Operation* nextSum = addUpFrameTestValues(out, sum, madeInTurn.span());
+    Operation* nextTurn = out.add(turn, 1);
+    out.addIncomingToPhi(turn, out.anchor(nextTurn));
+    out.addIncomingToPhi(sum, out.anchor(nextSum));
+    out.branch(out.below(nextTurn, out.constInt64(numberOfTurns)), normalEdge(turning), normalEdge(behind));
+    out.appendTo(behind);
+    ValueFromBlock fromBehind = out.anchor(nextSum);
+    out.branch(out.testNonZero64(argument, 2), rareEdge(calling), normalEdge(onward));
+    out.appendTo(calling);
+    out.store64(out.add(first, second), out.address(frameSlots, out.slotBase(slot)));
+    appendFrameTestCall(test);
+    ValueFromBlock fromCalling = out.anchor(out.load64(out.address(frameSlots, out.slotBase(slot))));
+    out.jump(onward);
+    out.appendTo(onward);
+    ValueFromBlock fromOnward = out.anchor(out.add(out.phi(Int64, fromBehind, fromCalling), 2));
+    out.jump(shared);
+    out.appendTo(shared);
+    out.ret(out.add(out.phi(Int64, fromLeaving, fromOnward), 1));
+
+    compileOrFail(test);
+    const Allocation& allocation = proc.allocation();
+    AOT_FRAME_TEST_CHECK(test, allocation.hasFramedPart() && !allocation.needsFrameAheadOfFramedPart() && !allocation.usedCalleeSaves());
+    AOT_FRAME_TEST_CHECK(test, allocation.isInFramedPart(onward) && !allocation.isInFramedPart(shared) && proc.order().of(calling).isRare());
+    for (const Operation* value : { first, second })
+        AOT_FRAME_TEST_CHECK(test, allocation.isSpilled(value) && allocation.spills()[allocation.spillOf(value)].isStoredAtHeadOfFramedPart);
+    for (const SpillFacts& spill : allocation.spills())
+        AOT_FRAME_TEST_CHECK(test, spill.value == first || spill.value == second || spill.isSaveInRareRegion);
+    AOT_FRAME_TEST_CHECK(test, proc.frame().coverage() == FrameCoverage::WholeFunction);
+
+    AOT_FRAME_TEST_CHECK(test, test.call<uint64_t>(uint64_t { 4 }, uint64_t { 100 }, uint64_t { 20 }) == 6);
+    AOT_FRAME_TEST_CHECK(test, test.call<uint64_t>(uint64_t { 5 }, uint64_t { 100 }, uint64_t { 20 }) == numberOfTurns * sumOfFrameTestValues(5, numberMadeInTurn) + 3);
+    AOT_FRAME_TEST_CHECK(test, test.call<uint64_t>(uint64_t { 7 }, uint64_t { 100 }, uint64_t { 20 }) == 123);
+}
+
 static void testMachineFrameKeepsPointerAtHeadBehindPartsThatSpilledReference()
 {
     ProcedureTraits traits;
@@ -2541,6 +2621,7 @@ std::span<const NativeTest> machineFrameTests()
         { "machine/frame/no-pointer-is-kept-where-a-way-past-a-later-block-has-not-defined-the-reference"_s, Machine::testMachineFrameKeepsNoPointerWhereWayPastLaterBlockHasNotDefinedReference },
         { "machine/frame/no-pointer-is-kept-behind-the-other-successor-of-the-patch-that-defines-the-reference"_s, Machine::testMachineFrameKeepsNoPointerBehindOtherSuccessorOfPatchThatDefinesReference },
         { "machine/frame/the-pointer-is-kept-at-a-head-behind-parts-that-spilled-the-reference"_s, Machine::testMachineFrameKeepsPointerAtHeadBehindPartsThatSpilledReference },
+        { "machine/frame/the-whole-function-is-covered-where-a-store-at-the-head-of-a-declined-framed-part-is-its-only-use-outside-rare-regions"_s, Machine::testMachineFrameCoversWholeFunctionWhereStoreAtHeadOfDeclinedFramedPartIsItsOnlyUseOutsideRareRegions },
         { "machine/frame/safepoint-ahead-of-it-finds-the-pointer-kept"_s, Machine::testMachineFrameKeepsPointerAtDefinitionForSafepointAheadOfFramedPart },
         { "machine/frame/arm-that-runs-out-of-registers-is-framed-by-itself"_s, Machine::testMachineFrameIsSetUpForArmThatRunsOutOfRegisters },
         { "machine/frame/rare-region-ahead-of-it-has-a-frame-of-its-own"_s, Machine::testMachineFrameOfRareRegionAheadOfFramedPartIsItsOwn },

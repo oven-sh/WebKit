@@ -778,6 +778,7 @@ void Allocator::settleFramedPart()
             save.width = spills[index].width;
             save.destination = Location::spill(index);
             save.sources[0] = Location::reg(binding.reg);
+            noteFrameUse();
         }
         head.endOfSteps = m_allocation.m_steps.size();
     }

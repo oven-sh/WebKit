@@ -1689,13 +1689,10 @@ JSPromise* JSModuleLoader::loadModuleSync(JSGlobalObject* globalObject, const Id
         ModuleRegistryEntry* entry = vm.hasCompiledCode() ? getRegisteredMayBeNull(moduleName, type) : nullptr;
         if (!entry || entry->status() != ModuleRegistryEntry::Status::Fetched || !entry->loadPromise() || entry->loadPromise()->status() != JSPromise::Status::Pending)
             return false;
-        // A graph that is left to the loader takes every step as `bun run` does: its root is loaded again only where a step of its load lies on the normal queue indeed.
+        // A graph that is left to the loader takes every step as `bun run` does, and the text of an import() of it takes a turn: no step of its root lies among the jobs of the call.
         // What a synchronous load further out has left to do it does when this one returns.
-        if (auto* compiled = dynamicDowncast<AOT::ModuleRecord>(entry->record()); compiled && compiled->takesEveryStepOfLoader()) {
-            return !vm.defaultMicrotaskQueue().allOf([&](const QueuedTask& task) {
-                return task.job() != InternalMicrotask::ModuleLoadStep || uncheckedDowncast<ModuleLoadingContext>(task.arguments()[2])->entry() != entry;
-            });
-        }
+        if (auto* compiled = dynamicDowncast<AOT::ModuleRecord>(entry->record()); compiled && compiled->takesEveryStepOfLoader())
+            return false;
         // Not where the graph of the root waits for a step of a synchronous load further out, which goes on when this one returns.
         for (auto* outer = vm.m_synchronousModuleQueue->prev; outer; outer = outer->prev) {
             for (const VM::SynchronousModuleTask& step : outer->tasks) {

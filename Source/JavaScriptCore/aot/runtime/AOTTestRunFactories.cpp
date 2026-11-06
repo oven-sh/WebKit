@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTHeapCacheRegistry.h"
 #include "AOTInstance.h"
 #include "AOTState.h"
 #include "AOTVMState.h"
