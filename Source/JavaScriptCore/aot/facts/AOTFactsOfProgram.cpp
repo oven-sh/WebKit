@@ -52,10 +52,7 @@ static constexpr OptionSet<BuiltinUse> usesOfObjectItselfInProgramFacts { Builti
 
 static bool isObjectOfClassInProgramFacts(const BuiltinTable& builtins, BuiltinID canonical)
 {
-    const Builtin& entry = builtins.at(canonical);
-    if (entry.kind == BuiltinKind::Function || entry.kind == BuiltinKind::Method)
-        return true;
-    return entry.instanceClass && (entry.kind == BuiltinKind::Constructor || entry.kind == BuiltinKind::Prototype);
+    return builtins.isObjectOfClass(canonical);
 }
 
 static BuiltinID objectAnsweredByBindingInProgramFacts(const BuiltinTable& builtins, BuiltinID canonical)
@@ -538,6 +535,8 @@ private:
     ValueID originOfURLOrOfItsText(ValueID) const;
     BuiltinID holderOfMethodServed(ValueID) const;
     BuiltinID classOfPartAt(ValueID value) const { return value && !m_classOfPartOfValue.isEmpty() ? m_classOfPartOfValue[value.index()] : BuiltinID(); }
+    BuiltinID builtinThatLinkLedToAt(ValueID value) const { return value && !m_builtinThatLinkLedToOfValue.isEmpty() ? m_builtinThatLinkLedToOfValue[value.index()] : BuiltinID(); }
+    void followAsComeByThroughLink(ValueID, BuiltinID canonicalAbove);
     const BuiltinCondition* lightFormAt(ValueID value) const { return builtinAt(value) ? m_rows.lightFormOf(m_builtins, m_builtins.canonicalID(builtinAt(value))) : nullptr; }
     bool isFollowed(ValueID value) const { return builtinAt(value) || originOfURL(value) || holderOfMethodServed(value) || classOfPartAt(value); }
     BodyValue valueBehindCasts(ValueID value) const { return m_index.value(m_index.valueBehindCasts(value)); }
@@ -619,6 +618,7 @@ private:
     Vector<BuiltinID, 4> m_builtinsSpelledInTexts;
     Vector<ValueID> m_originOfURLOfValue;
     Vector<BuiltinID> m_classOfPartOfValue;
+    Vector<BuiltinID> m_builtinThatLinkLedToOfValue;
     struct MethodServed {
         ValueID value;
         BuiltinID holder;
@@ -712,6 +712,8 @@ void BodyLookOfProgramFacts::noteFate(ValueID value, Fate fate, const auto& plac
     }
     if (BuiltinID objectOfClass = classOfPartAt(value); objectOfClass && fate != Fate::IsInspected)
         note(Finding::Kind::PartOfClassIsUsed, 0, objectOfClass.index(), witnessAt(place));
+    if (BuiltinID above = builtinThatLinkLedToAt(value); above && fate != Fate::IsInspected)
+        noteUse(above, BuiltinUse::Escaped, place);
     if (fate != Fate::IsLetGo && fate != Fate::IsAskedForAnyMember)
         return;
     if (ValueID origin = originOfURL(value))
@@ -727,6 +729,8 @@ void BodyLookOfProgramFacts::handOn(ValueID from, ValueID to)
     }
     if (BuiltinID objectOfClass = classOfPartAt(from))
         followAsPartOfClass(to, objectOfClass);
+    if (BuiltinID above = builtinThatLinkLedToAt(from))
+        followAsComeByThroughLink(to, above);
     if (ValueID origin = originOfURL(from))
         m_originOfURLOfValue[to.index()] = origin;
     if (BuiltinID holder = holderOfMethodServed(from))
@@ -854,6 +858,13 @@ void BodyLookOfProgramFacts::followAsPartOfClass(ValueID value, BuiltinID object
     m_classOfPartOfValue[value.index()] = objectOfClass;
 }
 
+void BodyLookOfProgramFacts::followAsComeByThroughLink(ValueID value, BuiltinID canonicalAbove)
+{
+    if (m_builtinThatLinkLedToOfValue.isEmpty())
+        m_builtinThatLinkLedToOfValue.fill(BuiltinID(), m_index.numberOfValues());
+    m_builtinThatLinkLedToOfValue[value.index()] = canonicalAbove;
+}
+
 bool BodyLookOfProgramFacts::followPartOfClass(const BodyValue& value, BuiltinID holder, BuiltinID member)
 {
     if (value.opcode() != Opcode::PropGet || !isObjectOfClassInProgramFacts(m_builtins, m_builtins.canonicalID(holder)))
@@ -865,15 +876,24 @@ bool BodyLookOfProgramFacts::followPartOfClass(const BodyValue& value, BuiltinID
             return false;
     }
     followAsPartOfClass(value.id(), holder);
+    const Builtin& below = m_builtins.at(m_builtins.canonicalID(holder));
+    if (m_isOfProgram && below.prototypeLink == BuiltinPrototypeLink::Builtin && builtinMemberNameOf(m_program, value.as<Opcode::PropGet>().key()).name == BuiltinNames::__proto__)
+        followAsComeByThroughLink(value.id(), m_builtins.canonicalID(below.inheritsFrom));
     return true;
 }
 
 void BodyLookOfProgramFacts::accessMemberOfPartOfClass(const BodyValue& value, BuiltinID objectOfClass)
 {
-    if (value.opcode() == Opcode::PropGet)
+    BuiltinID above = builtinThatLinkLedToAt(value.operand(0));
+    if (value.opcode() == Opcode::PropGet) {
         followAsPartOfClass(value.id(), objectOfClass);
-    else if (value.opcode() != Opcode::PropHas)
+        if (above)
+            followAsComeByThroughLink(value.id(), above);
+    } else if (value.opcode() != Opcode::PropHas) {
         note(Finding::Kind::PartOfClassIsUsed, 0, objectOfClass.index(), witnessAt(value));
+        if (above)
+            noteUse(above, BuiltinUse::Escaped, value);
+    }
 }
 
 PropertyKeyID BodyLookOfProgramFacts::wellKnownSymbolThatReadGoesBy(const BodyValue& value) const

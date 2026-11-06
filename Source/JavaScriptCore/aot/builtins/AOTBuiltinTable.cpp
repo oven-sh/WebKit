@@ -454,6 +454,14 @@ BuiltinClassID BuiltinTable::receiverClassOf(BuiltinID id) const
     return at(holder).instanceClass;
 }
 
+bool BuiltinTable::isObjectOfClass(BuiltinID canonical) const
+{
+    const Builtin& entry = at(canonical);
+    if (entry.kind == BuiltinKind::Function || entry.kind == BuiltinKind::Method)
+        return true;
+    return entry.instanceClass && (entry.kind == BuiltinKind::Constructor || entry.kind == BuiltinKind::Prototype);
+}
+
 bool BuiltinTable::onlyEntriesInheritFrom(BuiltinID canonicalPrototype) const
 {
     const Builtin& prototype = at(canonicalPrototype);

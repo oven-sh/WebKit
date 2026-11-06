@@ -423,7 +423,7 @@ JSPromise* JSModuleLoader::loadModule(JSGlobalObject* globalObject, const Identi
 
             if (entry->status() != ModuleRegistryEntry::Status::New) {
 #if ENABLE(AOT)
-                // The host is asked nothing from here on, so its doors do not stand in front of a compiled module that the registry holds.
+                // The registry answers without the host, so the AOT runtime checks the request here.
                 if (vm.hasCompiledCode() && !recordInPlaceOfFetch && this == globalObject->moduleLoader() && (!entry->record() || dynamicDowncast<AOT::ModuleRecord>(entry->record()))) {
                     AOT::ModuleRecord::willAnswerFromRegistry(globalObject, specifier, referrer);
                     RETURN_IF_EXCEPTION(scope, nullptr);
@@ -762,7 +762,7 @@ JSPromise* JSModuleLoader::hostLoadImportedModule(JSGlobalObject* globalObject, 
         referrerKey = record->moduleKey();
 
 #if ENABLE(AOT)
-    // By the record and not by its key: code that is not compiled chooses the keys that it is loaded under.
+    // Go by the record's type: uncompiled code can be loaded under any key.
     bool isAskedFromOutsideImage = record && this == globalObject->moduleLoader() && vm.hasCompiledCode() && !dynamicDowncast<AOT::ModuleRecord>(record);
     uint8_t flagsBeforeRequestFromOutsideImage = isAskedFromOutsideImage ? AOT::ModuleRecord::willAskHostForUncompiledModule(globalObject) : 0;
     auto didAskFromOutsideImage = makeScopeExit([&] {
@@ -1189,7 +1189,7 @@ void JSModuleLoader::innerModuleLoading(JSGlobalObject* globalObject, ModuleGrap
                     // If module.[[LoadedModules]] contains the request after the HostLoadImportedModule call, the requested
                     // module was loaded synchronously, which means it was already loaded before. In that case
                     // there is no need to attach a ModuleGraphLoadingError reaction, so we skip it.
-                    // Comparing sizes is not enough: a CommonJS file that runs during the call may require() a module that imports this one, which loads other requests of this module.
+                    // Sizes can't tell: a CommonJS file that runs during the call can load this module's other requests.
                     bool needsErrorReaction = !module->loadedModules().contains(ModuleMapKey { request.m_specifier.impl(), request.type() });
                     if (needsErrorReaction)
                         promise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::ModuleGraphLoadingError, nullptr, state);
@@ -1213,8 +1213,7 @@ void JSModuleLoader::innerModuleLoading(JSGlobalObject* globalObject, ModuleGrap
             state->setIsLoading(false);
             // 5.b. For each Cyclic Module Record loaded of state.[[Visited]], do
 #if ENABLE(AOT)
-            // What the states of one load walked stays New until the load has ended, and its first state holds all of it.
-            // Until then another load has to walk through it to find what is still on its way.
+            // Modules of a whole load stay New until it ends, so other loads keep walking through them.
             if (!state->isPartOfWholeLoad())
 #endif
             state->iterateVisited([](CyclicModuleRecord* loaded) {
@@ -1421,7 +1420,7 @@ JSPromise* JSModuleLoader::loadRequestedModules(JSGlobalObject* globalObject, Ab
     auto state = ModuleGraphLoadingState::create(vm, pc, WTF::move(scriptFetcher));
     RETURN_IF_EXCEPTION(scope, nullptr);
 #if ENABLE(AOT)
-    // Not in a graph that is left to the loader: there every state walks all that is still New, as for a plain record, and makes a CommonJS file that it comes to a second time in line.
+    // A graph that takes every loader step loads like uncompiled records: each state walks whatever is still New.
     if (auto* compiled = askedBy ? dynamicDowncast<AOT::ModuleRecord>(module) : nullptr; compiled && !compiled->takesEveryStepOfLoader())
         state->setWholeLoad(vm, askedBy);
 #else
@@ -1689,8 +1688,7 @@ JSPromise* JSModuleLoader::loadModuleSync(JSGlobalObject* globalObject, const Id
         ModuleRegistryEntry* entry = vm.hasCompiledCode() ? getRegisteredMayBeNull(moduleName, type) : nullptr;
         if (!entry || entry->status() != ModuleRegistryEntry::Status::Fetched || !entry->loadPromise() || entry->loadPromise()->status() != JSPromise::Status::Pending)
             return false;
-        // A graph that is left to the loader takes every step as `bun run` does, and the text of an import() of it takes a turn: no step of its root lies among the jobs of the call.
-        // What a synchronous load further out has left to do it does when this one returns.
+        // import() of such a graph starts in a later turn, so no load step of its root is pending here.
         if (auto* compiled = dynamicDowncast<AOT::ModuleRecord>(entry->record()); compiled && compiled->takesEveryStepOfLoader())
             return false;
         // Not where the graph of the root waits for a step of a synchronous load further out, which goes on when this one returns.

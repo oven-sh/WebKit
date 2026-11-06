@@ -261,6 +261,7 @@ private:
     bool tellsWhatMayAnswerFrom(BuiltinID start);
     bool isServedByLightFormOf(BuiltinID) const;
     bool giveWhatLightFormServes(BuiltinID);
+    void letGoPrototypeWhoseMemberMakesObjectsForOtherReceivers(BuiltinID);
     bool mayRunCodeFoundFrom(BuiltinID start);
     bool nativeSetterFoundFromKeepsReceiver(BuiltinID start);
     bool holdsWhatTableLists(BuiltinID member);
@@ -1957,8 +1958,9 @@ void AccessInLinkAccesses::resolveOnBuiltin(BuiltinID builtin)
     if (m_access.kind != Kind::Define && lookupPassesHolderLinkedAnew(m_program, builtin, m_access.key))
         m_flow.handToAccessorsLaidAbove(m_receiver);
     if (isRead() && isNamed()) {
-        if (m_nameClass == NameClass::Proto && m_table.at(builtin).prototypeLink == BuiltinPrototypeLink::Builtin && !m_flow.codeAtWorkIsOfLibrary())
+        if (m_nameClass == NameClass::Proto && !m_table.isObjectOfClass(builtin) && m_table.at(builtin).prototypeLink == BuiltinPrototypeLink::Builtin && !m_flow.codeAtWorkIsOfLibrary())
             m_flow.noteLossOf(m_table.canonicalID(m_table.at(builtin).inheritsFrom));
+        letGoPrototypeWhoseMemberMakesObjectsForOtherReceivers(builtin);
         if (giveWhatLightFormServes(builtin))
             return;
         BuiltinID member;
@@ -1983,6 +1985,20 @@ void AccessInLinkAccesses::resolveOnBuiltin(BuiltinID builtin)
             m_flow.addEdge(m_subject, m_flow.unseen());
     }
     cannotTell();
+}
+
+void AccessInLinkAccesses::letGoPrototypeWhoseMemberMakesObjectsForOtherReceivers(BuiltinID builtin)
+{
+    BuiltinName name = m_program.builtinNameOf(m_access.key);
+    for (BuiltinID holder = m_table.canonicalID(builtin); name; holder = m_table.canonicalID(m_table.at(holder).inheritsFrom)) {
+        if (BuiltinID member = m_table.findOwnMember(holder, name)) {
+            if (m_table.onlyEntriesInheritFrom(holder))
+                m_flow.noteLossOf(holder);
+            return;
+        }
+        if (m_table.at(holder).prototypeLink != BuiltinPrototypeLink::Builtin)
+            return;
+    }
 }
 
 bool AccessInLinkAccesses::isServedByLightFormOf(BuiltinID builtin) const

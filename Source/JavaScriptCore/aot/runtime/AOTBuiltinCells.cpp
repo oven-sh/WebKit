@@ -31,6 +31,7 @@
 #include "AOTVector.h"
 #include "BuiltinNames.h"
 #include "DeferTermination.h"
+#include "FrameTracers.h"
 #include "GetterSetter.h"
 #include "GlobalObjectMethodTable.h"
 #include "ImmutablePropertyNames.h"
@@ -376,6 +377,7 @@ JSCell* BuiltinCells::cell(uint32_t number)
     std::optional<BuiltinCellKey> key = BuiltinCellKey::decode(keys[number], table);
     RELEASE_ASSERT(key);
     DeferTerminationForAWhile deferTermination(*m_instance.vm);
+    SuspendExceptionScope exceptionOnItsWay(*m_instance.vm);
     UseOfStackKeptFromProgram stackKeptFromProgram(*m_instance.vm);
     bool didEnterVM = m_instance.vm->didEnterVM;
     loadModuleOf(key->builtin());
