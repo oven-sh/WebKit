@@ -614,6 +614,8 @@ JSValue attributeOfObjectOfJS(JSGlobalObject*, JSObject*, JSString* name);
 void setPropertyOfJSForAttribute(JSGlobalObject*, JSObject*, JSString* name, JSValue value);
 // instance.__dict__, for an instance of a class of Python's that derives from one of JS's: the mapping of its own properties.
 JSValue propertiesOfObjectOfJS(JSGlobalObject*, JSObject*);
+// For a mapping pattern.
+bool plainObjectIsMapping(JSGlobalObject*, JSObject*);
 // _js.JSTypeError. It is made when it is first asked for; JSError, if it cannot be made.
 PyType* jsTypeErrorType(JSGlobalObject*);
 // The same for OSError or a built-in class derived from it: _js.JSFileNotFoundError.

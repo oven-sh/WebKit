@@ -725,6 +725,12 @@ static bool itemsAreProperties(JSGlobalObject* globalObject, JSObject* object)
     return result == Inquiry::Absent || (result == Inquiry::Value && method.isUndefinedOrNull());
 }
 
+// A plain object is a mapping by its type, which is all that `match` asks of anything else. One that JS iterates over is none.
+bool plainObjectIsMapping(JSGlobalObject* globalObject, JSObject* object)
+{
+    return itemsAreProperties(globalObject, object);
+}
+
 // Whether object[key] goes by its methods: a mapping by its methods, or a WeakMap, which is one that cannot be iterated over.
 static bool hasItemsByMethods(JSGlobalObject* globalObject, JSObject* object)
 {

@@ -1654,8 +1654,8 @@ The collector is told the size of the side tables, which are several times the s
   names; so `dict(object)`. What JS iterates over has none of them, unless it is a mapping by its methods: `dict(map.entries())` takes the pairs.
 - **A plain object**, one whose prototype is `Object.prototype` or `null`, has a type of its own, `_js.JSPlainObject`, which derives from `JSObject` and adds
   nothing to it but what it says to others: it is registered as a `collections.abc.MutableMapping` (when the interpreter starts, `registerInteropTypes`: the
-  type has instances before any module is imported that could do it), a mapping pattern of `match` takes it (`TypeFlag::Mapping`; of an object of JS's
-  the pattern asks `key in o` and `o[key]`, not `o.get(key, default)`: it has the `get` it has, `matchKeys`), and
+  type has instances before any module is imported that could do it), a mapping pattern of `match` takes it, unless JS iterates over it (`TypeFlag::Mapping`, `plainObjectIsMapping`; of an object of JS's
+  the pattern calls the `get(key, default)` of its type, which every mapping has, not `o.get`, which may be a property: `matchKeys`), and
   `json.dumps()` writes it as it writes a dict, wherever it is found (also a `Map`, and a `_js.JSProperties`). It is no `dict`: `isinstance(o, dict)` is false, and `o == {...}` goes by identity.
   So `json.dump()` and `JSONEncoder.iterencode()`, whose encoder is the library's own in Python and asks `isinstance(o, dict)`, take it only with
   `default=dict`. `typeOf()` tells by the type of the cell and one comparison of its prototype. (A decision that can still be changed.)

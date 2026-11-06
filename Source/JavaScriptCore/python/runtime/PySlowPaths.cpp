@@ -1416,11 +1416,12 @@ static JSValue matchKeys(JSGlobalObject* globalObject, JSValue subject, PyTuple*
     unsigned count = keys->length();
     if (!count)
         return rt.emptyTuple();
-    // subject.get(key, dummy): one call tells whether the key is there, and a defaultdict is not made to grow. An object of JS's has the
-    // get() it has, which may know no default, or none: it is asked for its items.
-    bool isOfJS = rt.typeOf(subject)->has(TypeFlag::AttributesAreProperties);
+    // subject.get(key, dummy): one call tells whether the key is there, and a defaultdict is not made to grow. An object of JS's may have
+    // a property of that name, which may know no default: it is the get() of its type that is called, which every mapping has.
     JSValue self;
-    JSValue get = isOfJS ? JSValue() : getMethod(globalObject, subject, rt.names.get(), self);
+    PyType* type = rt.typeOf(subject);
+    JSValue getOfType = type->has(TypeFlag::AttributesAreProperties) ? type->lookup(rt.names.get()) : JSValue();
+    JSValue get = getOfType ? bindDescriptor(globalObject, getOfType, subject, type) : getMethod(globalObject, subject, rt.names.get(), self);
     RETURN_IF_EXCEPTION(scope, { });
     PySet* seen = PySet::create(globalObject);
     JSValue dummy = PyObject::create(vm, rt.structure<PyObject>(), rt.objectType());
@@ -1431,13 +1432,7 @@ static JSValue matchKeys(JSGlobalObject* globalObject, JSValue subject, PyTuple*
         RETURN_IF_EXCEPTION(scope, { });
         if (!isNew)
             return raiseValueError(globalObject, scope, "mapping pattern checks duplicate key ("_s, reprForMessage(globalObject, key), ')');
-        JSValue value = dummy;
-        if (!isOfJS)
-            value = self ? call(globalObject, get, self, key, dummy) : call(globalObject, get, key, dummy);
-        else if (contains(globalObject, subject, key)) {
-            RETURN_IF_EXCEPTION(scope, { });
-            value = getItem(globalObject, subject, key);
-        }
+        JSValue value = self ? call(globalObject, get, self, key, dummy) : call(globalObject, get, key, dummy);
         RETURN_IF_EXCEPTION(scope, { });
         if (value == dummy)
             return jsUndefined();
@@ -1832,8 +1827,12 @@ static JSValue runRuntimeFunction(JSGlobalObject* globalObject, CallFrame* callF
     // ---- match ----
     case RuntimeFunction::MatchSequence:
         return jsBoolean(rt.typeOf(args[0])->has(TypeFlag::Sequence));
-    case RuntimeFunction::MatchMapping:
-        return jsBoolean(rt.typeOf(args[0])->has(TypeFlag::Mapping));
+    case RuntimeFunction::MatchMapping: {
+        PyType* type = rt.typeOf(args[0]);
+        if (type != rt.jsPlainObjectType()) [[likely]]
+            return jsBoolean(type->has(TypeFlag::Mapping));
+        RELEASE_AND_RETURN(scope, jsBoolean(plainObjectIsMapping(globalObject, asObject(args[0]))));
+    }
     case RuntimeFunction::MatchKeys:
         RELEASE_AND_RETURN(scope, matchKeys(globalObject, args[0], PyTuple::from(args[1])));
     case RuntimeFunction::MatchClass:
