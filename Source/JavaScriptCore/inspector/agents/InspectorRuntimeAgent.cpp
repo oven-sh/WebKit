@@ -468,7 +468,11 @@ void InspectorRuntimeAgent::willDestroyFrontendAndBackend(DisconnectReason reaso
 {
     if (reason != DisconnectReason::InspectedTargetDestroyed || vmOutlivesInspectedTarget()) {
         setTypeProfilerEnabledState(false);
+        // Bun: a frontend that leaves does not take the control flow profiler with it. The body of a suspended generator or async function, and a
+        // module, get their code again in the mode of their first code. That code has op_profile_control_flow, and linking it needs the profiler.
+#if !USE(BUN_JSC_ADDITIONS)
         setControlFlowProfilerEnabledState(false);
+#endif
     }
 
     std::ignore = disable();
