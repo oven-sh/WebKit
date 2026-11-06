@@ -2555,10 +2555,13 @@ void Unit::tryExcept(AST::Try* node, const Last& isLast)
         unsigned matching = ++m_blockCount;
         auto bitsOfMatching = TracedBlock::encode(TracedBlock::ExceptionHandler, exception->virtualRegister().offset(), false);
         g.addPythonMark(PythonMark::BlockBegin, matching, bitsOfMatching);
-        line(handler->range);
+        // (What it catches comes first in CPython's code, and may begin on another line.)
+        if (!handler->type || handler->type->range.lineno == handler->range.lineno)
+            line(handler->range);
         if (handler->type) {
             Reg type = expr(handler->type);
             Reg matches = newTemporary();
+            line(handler->range);
             loc(handler->range);
             g.emitPyCompare(matches.get(), exception.get(), type.get(), CompareOperator::ExceptionMatch);
             g.emitPyJumpIfFalse(matches.get(), next.get());
@@ -2663,9 +2666,12 @@ void Unit::tryStarExcept(AST::Try* node, const Last& isLast)
         Ref<Label> noMatch = g.newLabel();
         Reg match = newTemporary();
         m_statementStart = g.instructions().size();
-        line(handler->range);
+        // (As in tryExcept(). In front of the first clause CPython makes the list of what the clauses raise, on its line.)
+        if (handler == node->handlers[0] || !handler->type || handler->type->range.lineno == handler->range.lineno)
+            line(handler->range);
         if (handler->type) {
             Reg type = expr(handler->type);
+            line(handler->range);
             loc(handler->range);
             callRuntime(match.get(), RuntimeFunction::MatchExceptionGroup, { rest.get(), type.get() });
             callRuntime(rest.get(), RuntimeFunction::TakeExceptionGroupRest);
