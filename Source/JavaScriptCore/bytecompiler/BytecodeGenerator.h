@@ -385,6 +385,7 @@ namespace JSC {
         RegisterID* pythonParameter(unsigned index) { return &m_parameters[index + 1]; }
         RegisterID* calleeRegister() { return &m_calleeRegister; }
         RegisterID* pythonConstant(JSValue value) { return value ? addConstantValue(value) : addConstantEmptyValue(); }
+        JSValue pythonConstantAt(VirtualRegister reg) const { return m_codeBlock->getConstant(reg); }
         bool hasPythonConstant(JSValue value) const { return m_jsValueMap.contains(EncodedJSValueWithRepresentation { JSValue::encode(value), SourceCodeRepresentation::Other }); }
         RegisterID* pythonRegister(VirtualRegister reg) { return &registerFor(reg); }
         // The index, among the locals, of the first variable the compiler declares.

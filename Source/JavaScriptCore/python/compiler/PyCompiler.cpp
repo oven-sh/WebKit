@@ -908,7 +908,8 @@ static bool appendKeyOfConstant(VM& vm, Vector<uint8_t, 64>& key, JSValue value,
     return true;
 }
 
-JSCell* Unit::merged(JSCell* cell)
+// `twin`: the names of keyword arguments that are the items of this tuple, or the other way round, if the code has that.
+JSCell* Unit::merged(JSCell* cell, JSCell** twin)
 {
     if (cell->isString()) {
         // All but what the compiler has worked out: 'a' + 'b'.
@@ -920,12 +921,21 @@ JSCell* Unit::merged(JSCell* cell)
         return scope.exception() ? cell : g.addStringConstant(*c.name(string));
     }
     // It has been here before. (The key is as long as the constant.)
-    if (g.hasPythonConstant(cell))
+    bool mayHaveTwin = twin && (cell->type() == PyTupleType || cell->type() == PyKwNamesType);
+    if (g.hasPythonConstant(cell) && !mayHaveTwin)
         return cell;
     Vector<uint8_t, 64> key;
     bool isLikeNoOther = false;
     if (!appendKeyOfConstant(vm(), key, cell, isLikeNoOther) || isLikeNoOther)
         return cell;
+    constexpr auto tuple = static_cast<uint8_t>(ConstantParts::Kind::Tuple);
+    constexpr auto keywordNames = static_cast<uint8_t>(ConstantParts::Kind::KeywordNames);
+    if (mayHaveTwin) {
+        ASSERT(key[0] == tuple || key[0] == keywordNames);
+        key[0] ^= tuple ^ keywordNames;
+        *twin = m_mergedConstants.get(String(byteCast<Latin1Character>(key.span())));
+        key[0] ^= tuple ^ keywordNames;
+    }
     return m_mergedConstants.add(String(byteCast<Latin1Character>(key.span())), cell).iterator->value;
 }
 
@@ -940,10 +950,28 @@ void Unit::noteConstant(const CodeInfo::Constant& noted)
 {
     bool isUsed = noted.isUsed && !m_cannotBeReached;
     auto result = m_indexOfConstant.add(noted.reg.offset(), m_info.constants.size());
-    if (result.isNewEntry)
-        m_info.constants.append({ noted.reg, noted.functionIndex, isUsed });
-    else
+    if (!result.isNewEntry) {
         m_info.constants[result.iterator->value].isUsed |= isUsed;
+        return;
+    }
+    // The names of keyword arguments are a tuple like any other in CPython, and an equal tuple is the same object. Here they are two, for a callee tells the
+    // names by the type of the cell. co_consts has one, the plain one if there is one.
+    JSCell* twin = nullptr;
+    if (JSValue value = g.pythonConstantAt(noted.reg); value && value.isCell()) {
+        JSType type = value.asCell()->type();
+        m_hasKeywordNames |= type == PyKwNamesType;
+        if (type == PyKwNamesType || (type == PyTupleType && m_hasKeywordNames))
+            merged(value.asCell(), &twin);
+    }
+    if (auto it = twin ? m_indexOfConstant.find(g.pythonConstant(twin)->virtualRegister().offset()) : m_indexOfConstant.end(); it != m_indexOfConstant.end()) {
+        CodeInfo::Constant& shown = m_info.constants[it->value];
+        m_indexOfConstant.set(noted.reg.offset(), it->value);
+        if (twin->type() == PyKwNamesType)
+            shown.reg = noted.reg;
+        shown.isUsed |= isUsed;
+        return;
+    }
+    m_info.constants.append({ noted.reg, noted.functionIndex, isUsed });
 }
 
 void Unit::noteFoldedConstant(Expr* node, JSValue value)
