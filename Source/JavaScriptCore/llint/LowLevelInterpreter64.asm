@@ -3351,14 +3351,13 @@ llintOpWithMetadata(op_py_call_spread, OpPyCallSpread, macro (size, get, dispatc
     bsubinz 1, t3, .copyLeading
 .leadingAreThere:
     btiz t2, .itemsAreThere
+    subp SlotSize, t1
+    subp SlotSize, t5
 .copyItem:
-    loadq [t1], t6
-    btqnz t6, .isNoHole
-    move ValueUndefined, t6
+    loadq [t1, t2, 8], t6
+    btqz t6, .hole
 .isNoHole:
-    storeq t6, [t5]
-    addp SlotSize, t1
-    addp SlotSize, t5
+    storeq t6, [t5, t2, 8]
     bsubinz 1, t2, .copyItem
 .itemsAreThere:
     get(m_positional, t0)
@@ -3370,6 +3369,10 @@ llintOpWithMetadata(op_py_call_spread, OpPyCallSpread, macro (size, get, dispatc
     storeq t0, Callee[t7]
     storePC()
     jmp .frameIsFilled
+
+.hole:
+    move ValueUndefined, t6
+    jmp .isNoHole
 
     # As doCallVarargs().
 .slow:
