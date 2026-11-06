@@ -436,6 +436,11 @@ bool PyPrototypeView::getOwnPropertySlot(JSObject* object, JSGlobalObject*, Prop
     JSValue found = lookupForInstanceOfDerivedClass(start, type, !view->isSuper(), name);
     if (!found)
         return false;
+    // `name in instance` runs no getter.
+    if (slot.internalMethodType() == PropertySlot::InternalMethodType::HasProperty) {
+        slot.setValue(object, hidden, jsUndefined());
+        return true;
+    }
     JSValue bound = bindDescriptor(globalObject, found, instance, start);
     RETURN_IF_EXCEPTION(scope, false);
     slot.setValue(object, hidden, valueForJS(bound));

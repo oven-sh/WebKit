@@ -564,34 +564,14 @@ static JSValue jsObjectDelAttr(JSGlobalObject* globalObject, JSValue self, JSVal
     return jsObjectSetOrDelAttr<isOfDerivedClass>(globalObject, self, nameValue, { });
 }
 
-static JSValue jsObjectStr(JSGlobalObject*, JSValue self);
-
-// Object.prototype.toString() is to JS what object.__str__() is to Python: for who has nothing of its own. Where the instance has no
-// other, str() is repr(), so that a __repr__() of the class serves for both.
-static JSValue strOfInstanceOfDerivedClass(JSGlobalObject* globalObject, JSValue self)
-{
-    if (!ensureMainThreadForJS(globalObject))
-        return { };
-    VM& vm = getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    JSObject* object = asObject(self);
-    bool hasToPrimitive = object->hasProperty(globalObject, vm.propertyNames->toPrimitiveSymbol);
-    RETURN_IF_EXCEPTION(scope, { });
-    if (!hasToPrimitive) {
-        JSValue toString = object->get(globalObject, vm.propertyNames->toString);
-        RETURN_IF_EXCEPTION(scope, { });
-        // (Of whichever realm.)
-        if (auto* function = dynamicDowncast<JSFunction>(toString); function && function->isHostFunction() && function->nativeFunction() == TaggedNativeFunction(objectProtoFuncToString))
-            RELEASE_AND_RETURN(scope, repr(globalObject, self));
-    }
-    RELEASE_AND_RETURN(scope, jsObjectStr(globalObject, self));
-}
+template<bool isOfDerivedClass>
+static JSValue jsObjectStrImpl(JSGlobalObject*, JSValue self);
 
 static constexpr NativeDef methodsOfDerivedClasses[] = {
     PY_SLOT("__getattribute__", jsObjectGetAttributeImpl<true>, "($self, name, /)"),
     PY_SLOT("__setattr__", jsObjectSetOrDelAttr<true>, "($self, name, value, /)"),
     PY_SLOT("__delattr__", jsObjectDelAttr<true>, "($self, name, /)"),
-    PY_SLOT("__str__", strOfInstanceOfDerivedClass, "($self, /)"),
+    PY_SLOT("__str__", jsObjectStrImpl<true>, "($self, /)"),
 };
 
 void addMethodsOfDerivedClasses(JSGlobalObject* globalObject, PyType* type)
@@ -1902,8 +1882,35 @@ static JSValue jsObjectDir(JSGlobalObject* globalObject, JSValue self)
     return result;
 }
 
+// String(object), of an object without a [Symbol.toPrimitive]: what toString() gives, or valueOf(). But Object.prototype.toString() is to JS what
+// object.__str__() is to Python, for who has nothing of its own: where the instance has no other, str() is repr(), so that a __repr__() of
+// the class serves for both. To find out takes the read, and String() reads once: so what was read is what is called.
+static JSValue strOfInstanceOfDerivedClassByToString(JSGlobalObject* globalObject, JSObject* object)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    MarkedArgumentBuffer noArguments;
+    for (auto& name : { vm.propertyNames->toString, vm.propertyNames->valueOf }) {
+        JSValue method = object->get(globalObject, name);
+        RETURN_IF_EXCEPTION(scope, { });
+        // (Of whichever realm.)
+        if (auto* function = dynamicDowncast<JSFunction>(method); function && function->isHostFunction() && function->nativeFunction() == TaggedNativeFunction(objectProtoFuncToString))
+            RELEASE_AND_RETURN(scope, repr(globalObject, object));
+        auto callData = JSC::getCallData(method);
+        if (callData.type == CallData::Type::None)
+            continue;
+        JSValue result = JSC::call(globalObject, method, callData, object, noArguments);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (!result.isObject())
+            RELEASE_AND_RETURN(scope, result.toString(globalObject));
+    }
+    throwTypeError(globalObject, scope, "No default value"_s);
+    return { };
+}
+
 static JSValue jsObjectRepr(JSGlobalObject*, JSValue self);
-static JSValue jsObjectStr(JSGlobalObject* globalObject, JSValue self)
+template<bool isOfDerivedClass>
+static JSValue jsObjectStrImpl(JSGlobalObject* globalObject, JSValue self)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1912,6 +1919,7 @@ static JSValue jsObjectStr(JSGlobalObject* globalObject, JSValue self)
     // An object without a prototype, or the namespace of a module, has nothing by which JS could make a string of it. Nor has one that inherits
     // it from where the objects of Python's do, with nothing of Python's in it (Object.create(Class.prototype)): that is str(this).
     bool canConvert = false;
+    bool hasToPrimitive = false;
     for (auto& key : { vm.propertyNames->toPrimitiveSymbol, vm.propertyNames->toString, vm.propertyNames->valueOf }) {
         PropertySlot slot(self, PropertySlot::InternalMethodType::HasProperty);
         bool found = asObject(self)->getPropertySlot(globalObject, key, slot);
@@ -1919,11 +1927,19 @@ static JSValue jsObjectStr(JSGlobalObject* globalObject, JSValue self)
         if (!found)
             continue;
         canConvert = slot.slotBase() != runtime(globalObject).jsViewObject(JSViewObject::ObjectPrototype) || objectOfPythonWithin(self) != self;
+        hasToPrimitive = key == vm.propertyNames->toPrimitiveSymbol;
         break;
     }
     if (!canConvert)
         RELEASE_AND_RETURN(scope, repr(globalObject, self));
+    if (isOfDerivedClass && !hasToPrimitive)
+        RELEASE_AND_RETURN(scope, strOfInstanceOfDerivedClassByToString(globalObject, asObject(self)));
     RELEASE_AND_RETURN(scope, self.toString(globalObject));
+}
+
+static JSValue jsObjectStr(JSGlobalObject* globalObject, JSValue self)
+{
+    return jsObjectStrImpl<false>(globalObject, self);
 }
 
 static JSValue jsObjectRepr(JSGlobalObject* globalObject, JSValue self)
