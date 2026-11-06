@@ -1859,8 +1859,15 @@ their constants (by type and bits: `0`, `0.0`, `-0.0` and `False` are four) and 
 **Frames.** While something is told of an event, `f_lineno` of that frame is the line CPython would show. `f_locals` reads and writes the registers.
 `f_lineno = n`, in a trace function, goes where CPython goes and refuses what it refuses, with its messages: the target must be the beginning of a statement whose blocks the
 frame is in already, or can take over (a `for` loop's iterator serves another `for` loop). The copy of a `finally` clause that runs on the way of a `return` is such a block: it holds the
-value, which is not a constant, as CPython's stack does (`BlockKind::ValueToReturn`, `TracedBlock::Value`). A frame from elsewhere goes to another copy of the clause, or is refused. Variables without a value get `None`, with CPython's warning, because code further on
+value, which is not a constant, as CPython's stack does (`BlockKind::ValueToReturn`, `TracedBlock::Value`). A frame from elsewhere goes to another copy of the clause, or is refused. So is the line of a `return` over several lines that is told of when the value has been computed, the one
+place to go on at where no statement begins. The copy that runs on the way of an exception holds the exception, which it raises again (`BlockKind::ExceptionToRaise`), in a block within that of the handler. Variables without a value get `None`, with CPython's warning, because code further on
 may have been compiled knowing that they have one.
+
+Where the frame is: where the line begins that it is being told of (`Runtime::tracedOffset`), which is not the instruction it is at if a jump tells of the line it leads to. That jump may come
+behind marks that open the blocks again which it has left. Whatever is read at the place the frame is sent to, and is no variable, must be in use where the frame is (`liveLocalsBefore()`), or the frame is refused: a collection may have
+emptied the register, and whether one has come must not tell. What a block holds is in use no longer at the very end of the block, which is where the line of a `break`, a `continue` or a `return` with nothing to compute begins. Nor is the
+subject of a `match` behind the last pattern that looks at it: the block of a `case` names its register (`TracedBlock::Other`) without holding it. From the assignment until the frame goes on, what
+is in use at the place it has been sent to is in use for the collector too (`liveLocalsOfFrame()`): the trace function is still running, and may collect.
 
 **Threads.** Trace and profile functions, and whether a callback is running, are the thread's (`Runtime::ThreadLocalState`). Tools 6 and 7 want their events
 while any thread has a function. The side tables are only changed with the GIL, and those the collector's threads read, with the lock of the table of monitored code as well.
