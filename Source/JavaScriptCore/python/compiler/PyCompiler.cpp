@@ -778,6 +778,7 @@ bool Unit::canBranchTo(const Last& isLast)
         case BlockKind::WhileLoop:
         case BlockKind::MatchSubject:
         case BlockKind::ValueToReturn:
+        case BlockKind::ExceptionToRaise:
             break;
         default:
             return false;
@@ -1703,7 +1704,7 @@ void Unit::pushBlock(Block&& block)
 // Of the first so many, the innermost that is more than a value that waits.
 const Unit::Block* Unit::innermostBlock(size_t count) const
 {
-    while (count && m_blocks[count - 1].kind == BlockKind::ValueToReturn)
+    while (count && (m_blocks[count - 1].kind == BlockKind::ValueToReturn || m_blocks[count - 1].kind == BlockKind::ExceptionToRaise))
         --count;
     return count ? &m_blocks[count - 1] : nullptr;
 }
@@ -1730,6 +1731,7 @@ void Unit::markBlock(const Block& block, bool begins)
         break;
     case BlockKind::HandlerCleanup:
     case BlockKind::ExceptionHandler:
+    case BlockKind::ExceptionToRaise:
         kind = TracedBlock::ExceptionHandler;
         break;
     case BlockKind::FinallyEnd:
@@ -1770,6 +1772,7 @@ void Unit::unwindBlock(const Block& block, Vector<TryContext>& suspended)
     case BlockKind::InlinedComprehension:
     case BlockKind::MatchSubject:
     case BlockKind::ValueToReturn:
+    case BlockKind::ExceptionToRaise:
         return;
     case BlockKind::FinallyTry: {
         // A `return` that runs the clause returns on the line that ran last, like a function that comes to its end: each way out of
@@ -2546,8 +2549,11 @@ void Unit::tryFinally(AST::Try* node, const Last& isLast)
     Reg exception = beginExceptionHandler(body, previous);
     Try cleanup = beginTry();
     pushBlock({ .kind = BlockKind::FinallyEnd, .tryDepth = cleanup.depthBefore, .saved = previous.get() });
+    // It waits. On a way through the clause that does not come to its end nothing reads it any more, and a trace function may send the frame to another.
+    pushBlock({ .kind = BlockKind::ExceptionToRaise, .tryDepth = cleanup.depthBefore, .saved = exception.get(), .isOnlyHere = true });
     // It does so on the line that was run last. CPython's compiler copies what raises it again for each way that leads there.
     statements(node->finalbody, 0, { Last::OfFunction, 0, nullptr, static_cast<unsigned>(m_blocks.size()), static_cast<unsigned>(cleanup.depthBefore), exception.get(), previous.get() });
+    popBlock();
     popBlock();
     endTry(cleanup);
     if (!cannotGetHere())

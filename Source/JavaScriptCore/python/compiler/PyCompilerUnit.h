@@ -188,6 +188,7 @@ private:
         InlinedComprehension,
         MatchSubject, // While the patterns of a case are tried.
         ValueToReturn, // While a `finally` clause runs on the way of a `return`, whose value waits in a register.
+        ExceptionToRaise, // While one runs on the way of an exception, which does.
     };
 
     // What a `return`, `break` or `continue` has to leave in good order on its way out.

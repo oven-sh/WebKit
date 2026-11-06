@@ -1052,6 +1052,7 @@ unsigned Unit::instructionsOnTheWayOut(bool withValue, unsigned firstBlock, unsi
         case BlockKind::WhileLoop:
         case BlockKind::MatchSubject:
         case BlockKind::ValueToReturn:
+        case BlockKind::ExceptionToRaise:
         case BlockKind::ExceptionHandler:
             break;
         case BlockKind::ForLoop:
