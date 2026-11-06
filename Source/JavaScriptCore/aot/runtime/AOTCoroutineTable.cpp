@@ -211,6 +211,7 @@ void SavedFrame::save(VM& vm, const SuspendedMachineFrame& machineFrame, Suspens
     uint64_t siteWord = machineFrame.words->siteWord;
     RELEASE_ASSERT(m_numberOfWords == numberOfWords && !m_liveSlotMapOffsetPlusOne);
     RELEASE_ASSERT(m_numberOfSavedRegisterPairs == savedRegistersOrPairsOf(siteWord) && m_numberOfWordsSkippedAtBottom == skippedAtBottomOf(siteWord));
+    ASSERT(!goesOnInContextOfItsAwait());
     willWrite();
     uint64_t* words = this->words();
     const uint64_t* source = machineFrame.firstSavedWord();

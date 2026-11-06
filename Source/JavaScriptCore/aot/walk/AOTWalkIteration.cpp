@@ -2527,7 +2527,10 @@ private:
             };
             bool alwaysGoesByDriver = !m_goesByDriver || types.isSubset(m_walker.typeOf(m_goesByDriver), TypeArena::fromPrimitives(Primitive::True));
             BlockID byDriver = alwaysGoesByDriver ? BlockID() : addBlock();
-            if (byDriver) {
+            if (byDriver && m_walker.program().at(m_walker.unit().function).isModuleBody()) {
+                branch(truthOf(m_goesByDriver), byDriver, byCall);
+                continueIn(byDriver);
+            } else if (byDriver) {
                 BlockID inOwnContext = addBlock();
                 branch(truthOf(m_goesByDriver), byDriver, inOwnContext);
                 continueIn(inOwnContext);

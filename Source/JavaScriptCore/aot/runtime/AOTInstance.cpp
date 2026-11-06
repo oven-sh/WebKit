@@ -964,6 +964,10 @@ VMState::~VMState()
     RELEASE_ASSERT(!hasCompiledCode);
 }
 
+#if OS(LINUX) && ENABLE(AOT_GUARDED_PAGES)
+static void didMapPropertyCachesOfThread();
+#endif
+
 void VMState::attachImage(VM& vm)
 {
     RELEASE_ASSERT(!hasCompiledCode && !image);
@@ -993,6 +997,9 @@ void VMState::attachImage(VM& vm)
     runtimeTable = makeUnique<RuntimeTable>(vm);
     callSiteCache = makeUnique<CallSiteCache>();
     propertyCaches = makeUnique<VMPropertyCaches>(vm);
+#if OS(LINUX) && ENABLE(AOT_GUARDED_PAGES)
+    didMapPropertyCachesOfThread();
+#endif
     regExpLiterals = makeUnique<RegExpLiterals>(*caches);
     regExpMatchOutput = makeUniqueArray<int>(sizeOfRegExpMatchOutput);
 
@@ -1124,6 +1131,23 @@ static thread_local size_t t_sizeOfPagesOfThread;
 #endif
 static thread_local bool t_isStarting;
 static std::atomic<unsigned> s_numberOfThreadsStarting;
+#if ENABLE(AOT_GUARDED_PAGES)
+// Of the threads that are starting, those whose VM has not mapped its caches of properties, by far the largest of its tables.
+static thread_local bool t_hasNoPropertyCaches;
+static std::atomic<unsigned> s_numberOfThreadsWithoutPropertyCaches;
+
+static void didMapPropertyCachesOfThread()
+{
+    if (std::exchange(t_hasNoPropertyCaches, false))
+        --s_numberOfThreadsWithoutPropertyCaches;
+}
+
+static size_t sizeOfPagesThatStartingThreadsWillMap(const Image& image, unsigned numberOfThreads)
+{
+    size_t sizeOfCaches = VMPropertyCaches::maxSizeOfPagesAtStart(image);
+    return s_numberOfThreadsWithoutPropertyCaches * sizeOfCaches + numberOfThreads * (sizeOfPagesAtStart(image) - sizeOfCaches);
+}
+#endif
 
 static bool tryEnsureRoomInAllocator(unsigned numberOfThreads, size_t sizeToLeaveFree)
 {
@@ -1173,11 +1197,17 @@ static void* tryReservePagesForTables(const Image& image, unsigned numberOfThrea
 {
     if (!MarkedBlockCage::tryEnsureRoomForNewVMs(numberOfThreads))
         return nullptr;
-    size_t size = sizeOfPagesAtStart(image);
 #if ENABLE(AOT_GUARDED_PAGES)
     // Each table gets pages at an address of its own when its VM is made, so none are reserved here: there must be room for every thread that is starting.
-    return addressSpaceLeft() < numberOfThreads * size + sizeToLeaveFree ? nullptr : &s_numberOfThreadsStarting;
+    ++s_numberOfThreadsWithoutPropertyCaches;
+    // The count is read in front of the room: a thread that maps its caches in between is counted twice, never not at all.
+    size_t needed = sizeOfPagesThatStartingThreadsWillMap(image, numberOfThreads) + sizeToLeaveFree;
+    if (addressSpaceLeft() >= needed)
+        return &s_numberOfThreadsStarting;
+    --s_numberOfThreadsWithoutPropertyCaches;
+    return nullptr;
 #else
+    size_t size = sizeOfPagesAtStart(image);
     if (addressSpaceLeft() < size + sizeToLeaveFree)
         return nullptr;
     void* pages = OSAllocator::tryReserveAndCommit(size, OSAllocator::FastMallocPages);
@@ -1214,7 +1244,7 @@ PagesForNewThread tryReservePagesForNewThread(bool threadsAreEnding)
         return { nullptr, true };
     }
 #if ENABLE(AOT_GUARDED_PAGES)
-    sizeToLeaveFree += numberOfThreads * sizeOfPagesAtStart(*image);
+    sizeToLeaveFree += sizeOfPagesThatStartingThreadsWillMap(*image, numberOfThreads);
 #endif
     if (!tryEnsureRoomInAllocator(numberOfThreads, sizeToLeaveFree)) {
         releasePagesForNewThread(pages);
@@ -1227,7 +1257,9 @@ void releasePagesForNewThread(void* pages)
 {
     if (!pages)
         return;
-#if !ENABLE(AOT_GUARDED_PAGES)
+#if ENABLE(AOT_GUARDED_PAGES)
+    --s_numberOfThreadsWithoutPropertyCaches;
+#else
     OSAllocator::releaseDecommitted(pages, *static_cast<size_t*>(pages), 0);
 #endif
     --s_numberOfThreadsStarting;
@@ -1235,7 +1267,9 @@ void releasePagesForNewThread(void* pages)
 
 void adoptPagesForNewThread(void* pages)
 {
-#if !ENABLE(AOT_GUARDED_PAGES)
+#if ENABLE(AOT_GUARDED_PAGES)
+    t_hasNoPropertyCaches = !!pages;
+#else
     RELEASE_ASSERT(!t_pagesOfThread);
     t_pagesOfThread = static_cast<uint8_t*>(pages);
     t_sizeOfPagesOfThread = pages ? std::exchange(*static_cast<size_t*>(pages), 0) : 0;
@@ -1257,6 +1291,9 @@ void didStartThread(VM* vm)
 {
     if (!std::exchange(t_isStarting, false)) [[likely]]
         return;
+#if ENABLE(AOT_GUARDED_PAGES)
+    didMapPropertyCachesOfThread();
+#endif
     if (vm)
         vm->heap.cage().willRunProgram();
     --s_numberOfThreadsStarting;

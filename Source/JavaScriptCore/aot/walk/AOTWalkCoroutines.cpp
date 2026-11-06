@@ -142,7 +142,7 @@ Reference buildAwaitBySavingFrame(Walker& walker, Reference awaited, std::span<c
 bool canWaitForStepOfAsyncGenerator(Walker& walker)
 {
     std::optional<SuspendingBodyOfCoroutine> body = findSuspendingBodyOfCoroutine(walker);
-    return body && body->kind != CoroutineKind::Generator && !walker.program().at(walker.unit().function).isModuleBody();
+    return body && body->kind != CoroutineKind::Generator;
 }
 
 Reference buildStepOfAsyncGenerator(Walker& walker, Reference generator, Reference sent, std::span<const Reference> held, BuiltinID awaitedCallee, Origin origin)

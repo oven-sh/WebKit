@@ -1,0 +1,20 @@
+# const options = { eval: true }; sink(Object.keys(options));
+# The list of the keys makes the text "eval". The control: a-key-that-spells-a-member-of-the-global-object-is-no-text-where-nobody-lists-the-keys.ir.
+# RUN(TOLD): link lookups mechanisms=all
+# TOLD: lookup name-read "eval"
+
+data d0 root=Object{layout=L0 members=[{key="eval" value=Boolean{value=true}}]} module=m0
+layout L0 module=m0 fields=[{key="eval" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = Data data=d0
+    v3 = Builtin builtin=ObjectKeys
+    v4 = Call v3, -, v2
+    v5 = Call v1, -, v4
+    v6 = Undefined
+    Return v6
+}

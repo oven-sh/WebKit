@@ -160,7 +160,7 @@ static Reference buildAwaitOfPlainBodyInAwaitedCalls(Walker& walker, const BodyV
     if (!returned)
         return { };
 
-    if (kindOfAwaitingBody == CoroutineKind::AsyncGenerator) {
+    if (kindOfAwaitingBody == CoroutineKind::AsyncGenerator || walker.program().at(walker.unit().function).isModuleBody()) {
         Reference promise = buildNewPromiseOfCoroutineCalls(walker, origin);
         if (!promise)
             return { };

@@ -356,6 +356,15 @@ LinkFlow::LinkFlow(Program& program, const ThinSummaries& summaries, const Famil
     , m_order(order)
 {
     RELEASE_ASSERT(summaries.size() == program.functions.size());
+    m_keysOfLayoutAreTold = BytesSharedByThreads(program.layouts.size());
+    m_nameOfFunctionIsTold = BytesSharedByThreads(program.functions.size());
+    for (size_t index : summaries.namesUnderWhichEventsHang()) {
+        BuiltinName name(static_cast<uint32_t>(index));
+        if (PropertyKeyID key = program.keyOf(name))
+            m_keysThatNameEvents.set(key.index());
+        if (StringID text = program.stringOf(name))
+            m_textsThatNameEvents.set(text.index());
+    }
 
     unsigned numberOfLanes = loops.width() > 1 ? 32 : 1;
     if (order == OrderOfWorklist::Scattered) {
@@ -2267,6 +2276,59 @@ void LinkFlow::tell(const FlowObserver& observer, const LinkType& now, const Lin
         break;
     }
     typeObservedBefore = outer;
+}
+
+void LinkFlow::tellKeysThatBecomeTexts(LayoutID id)
+{
+    const Layout& layout = program.at(id);
+    auto namesEvent = [&](const Field& field) {
+        return field.key && m_keysThatNameEvents.get(field.key.index());
+    };
+    if (!m_keysOfLayoutAreTold.at(id.index())) {
+        bool isOfProgram = (layout.kind == LayoutKind::Record || layout.kind == LayoutKind::Instance || layout.kind == LayoutKind::Container) && layout.module
+            && program.at(layout.module).kind != ModuleKind::RuntimeSource && !program.at(layout.module).flags.contains(ModuleFlags::IsLibrary);
+        bool waits = isOfProgram && std::ranges::any_of(layout.fields, namesEvent);
+        m_keysOfLayoutAreTold.set(id.index(), waits ? waitsForProgramToAsk : nothingIsLeftToTell);
+        if (!waits)
+            return;
+    }
+    if (codeAtWorkIsOfLibrary())
+        return;
+    m_keysOfLayoutAreTold.set(id.index(), nothingIsLeftToTell);
+    for (const Field& field : layout.fields) {
+        if (namesEvent(field))
+            note(Note::NameRead, field.key.bits(), true);
+    }
+}
+
+void LinkFlow::noteKeysBecomeTextsAmongSet(const LinkType& type)
+{
+    for (LayoutID member : layoutsOfSet(type))
+        noteKeysBecomeTexts(member);
+}
+
+void LinkFlow::tellNameThatBecomesText(FunctionID id)
+{
+    const Function& function = program.at(id);
+    if (!m_nameOfFunctionIsTold.at(id.index())) {
+        bool waits = function.name && m_textsThatNameEvents.get(function.name.index()) && !isLibraryCode(program, function);
+        m_nameOfFunctionIsTold.set(id.index(), waits ? waitsForProgramToAsk : nothingIsLeftToTell);
+        if (!waits)
+            return;
+    }
+    if (codeAtWorkIsOfLibrary())
+        return;
+    m_nameOfFunctionIsTold.set(id.index(), nothingIsLeftToTell);
+    note(Note::NameRead, program.keyOf(program.strings.builtinName(function.name)).bits(), true);
+}
+
+void LinkFlow::noteNamesOfLostFunctionsBecomeTexts()
+{
+    if (m_namesOfLostFunctionsAreTold.at(0) || codeAtWorkIsOfLibrary())
+        return;
+    m_namesOfLostFunctionsAreTold.set(0, nothingIsLeftToTell);
+    for (uint32_t index = 0; index < program.functions.size(); ++index)
+        noteNameBecomesText(FunctionID(index));
 }
 
 const LinkType& LinkFlow::typeObservedBefore() const

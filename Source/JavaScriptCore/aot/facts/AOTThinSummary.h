@@ -727,6 +727,8 @@ public:
 
     const BitVector& textsSpelledThatNameFieldsNeverWritten() const LIFETIME_BOUND { return m_textsSpelledThatNameFieldsNeverWritten; }
     void setTextsSpelledThatNameFieldsNeverWritten(BitVector&& texts) { m_textsSpelledThatNameFieldsNeverWritten = WTF::move(texts); }
+    const BitVector& namesUnderWhichEventsHang() const LIFETIME_BOUND { return m_namesUnderWhichEventsHang; }
+    void setNamesUnderWhichEventsHang(const BitVector& names) { m_namesUnderWhichEventsHang = names; }
     const SetsOfLayoutsWritten& setsOfLayoutsWrittenInBodies() const LIFETIME_BOUND { return m_setsOfLayoutsWrittenInBodies; }
     void setSetsOfLayoutsWrittenInBodies(SetsOfLayoutsWritten&& sets) { m_setsOfLayoutsWrittenInBodies = WTF::move(sets); }
     uint64_t numberOfValuesScanned() const { return m_numberOfValuesScanned; }
@@ -747,6 +749,7 @@ public:
 private:
     LargeList<ThinSummary> m_summaries;
     BitVector m_textsSpelledThatNameFieldsNeverWritten;
+    BitVector m_namesUnderWhichEventsHang;
     SetsOfLayoutsWritten m_setsOfLayoutsWrittenInBodies;
     uint64_t m_numberOfValuesScanned { 0 };
     Vector<FunctionID> m_functionsThatCopyMembers;

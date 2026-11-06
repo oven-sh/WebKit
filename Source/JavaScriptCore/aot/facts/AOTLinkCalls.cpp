@@ -121,6 +121,7 @@ struct QuestionsInLinkCalls {
     bool areAskedByFormatter { false };
     bool onlyFollow { false };
     bool askConstructorsOfInstances { false };
+    bool listKeys { false };
 
     bool isEmpty() const { return keys.isEmpty() && keysAnsweredByProgramAlone.isEmpty() && !readEverything && !readOwnValues && !readPrivateFields && !describeObjects && !convertToPrimitive && !callMembers; }
     friend bool operator==(const QuestionsInLinkCalls&, const QuestionsInLinkCalls&) = default;
@@ -874,6 +875,7 @@ private:
     }
 
     Questions questionsOf(const BuiltinParameter&);
+    void tellKeysBecomeTextsAmong(const Values&);
     void addKeys(Questions&, std::span<const BuiltinName>);
     void addKeysAnsweredByProgramAlone(Questions&, std::span<const BuiltinName>);
     void addConversion(Questions&);
@@ -3197,6 +3199,8 @@ void CallInLinkCalls::applyParameter(RowCall& call, const BuiltinParameter& para
         return;
 
     Questions questions = questionsOf(parameter);
+    if (std::exchange(questions.listKeys, false))
+        tellKeysBecomeTextsAmong(values);
     if (questions.describeObjects && !fitOf(call, parameter).mayBeOutside)
         questions.describeObjects = false;
     questions.describesLiteralMadeForCall = questions.describeObjects && isLiteralMadeForCall(call, parameter.operand);
@@ -3663,6 +3667,13 @@ void CallInLinkCalls::tellWhatIsFoundUnder(PropertyKeyID key, const Values& obje
     });
 }
 
+void CallInLinkCalls::tellKeysBecomeTextsAmong(const Values& objects)
+{
+    forEachType(objects, [&](const LinkType& type, const Source*) {
+        m_flow.noteKeysBecomeTextsAmong(type);
+    });
+}
+
 void CallInLinkCalls::tellWhatReadFinds(const RowCall& call, const BuiltinPropertyAction& action)
 {
     const BuiltinParameter* read = m_builtins.parameterFor(*call.row, action.object);
@@ -3672,8 +3683,11 @@ void CallInLinkCalls::tellWhatReadFinds(const RowCall& call, const BuiltinProper
     forEachType(objects, [&](const LinkType& type, const Source*) {
         findsSomething |= type.holdsUnseen || type.holdsLostBuiltins;
     });
-    if (!findsSomething)
+    if (!findsSomething) {
+        if (action.key.kind == BuiltinKeyKind::Operand && !keyWrittenAs(call, *action.key.operand))
+            tellKeysBecomeTextsAmong(objects);
         return;
+    }
     switch (action.key.kind) {
     case BuiltinKeyKind::Indexes:
         return;
@@ -3687,6 +3701,7 @@ void CallInLinkCalls::tellWhatReadFinds(const RowCall& call, const BuiltinProper
                 tellWhatIsFoundUnder(*written, objects, readsThroughPrototypes);
             return;
         }
+        tellKeysBecomeTextsAmong(objects);
         bool spellsNoMemberOfTable = true;
         forEachType(valuesAt(call, *action.key.operand), [&](const LinkType& key, const Source*) {
             spellsNoMemberOfTable &= key == primitivesForLinkCalls(key.primitives & LinkType::closed(Primitive::All) & ~LinkType::closed(Primitive::AnyString | Primitive::AnySymbol));
@@ -4484,6 +4499,7 @@ QuestionsInLinkCalls CallInLinkCalls::questionsOf(const BuiltinParameter& parame
     for (Protocol protocol : parameter.protocols) {
         switch (protocol) {
         case Protocol::OwnKeys:
+            questions.listKeys = true;
             break;
         case Protocol::PrototypeChain:
             questions.readThroughPrototypes = true;

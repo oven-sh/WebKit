@@ -443,7 +443,7 @@ bool buildAwaitedStepWrittenByHand(Walker& walker, const BodyValue& call)
     if (call.opcode() != Opcode::Call || call.isDoneInPlace() || !walker.has(Mechanism::DirectCalls) || !walker.has(Mechanism::BuiltinCalls) || !walker.has(Mechanism::Guesses) || !walker.opensGuesses())
         return false;
     const Program& program = walker.program();
-    if (!call.thisValueOperand() || call.argumentsOperands().size() > 1 || call.calleeKey() != program.keyOf(BuiltinNames::next) || !canWaitForStepOfAsyncGenerator(walker))
+    if (!call.thisValueOperand() || call.argumentsOperands().size() > 1 || call.calleeKey() != program.keyOf(BuiltinNames::next) || !canWaitForStepOfAsyncGenerator(walker) || program.at(walker.unit().function).isModuleBody())
         return false;
 
     Reference receiver = walker.referenceOf(call.thisValueOperand());

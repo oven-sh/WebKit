@@ -37,7 +37,7 @@ std::optional<AwaitingBodyOfCoroutine> findAwaitingBodyOfCoroutine(Walker& walke
 {
     Reference driver;
     std::optional<CoroutineKind> kind = kindOfSuspendingBody(walker, driver);
-    if (!kind || *kind == CoroutineKind::Generator || walker.program().at(walker.unit().function).isModuleBody())
+    if (!kind || *kind == CoroutineKind::Generator)
         return std::nullopt;
     return AwaitingBodyOfCoroutine { *kind, driver };
 }

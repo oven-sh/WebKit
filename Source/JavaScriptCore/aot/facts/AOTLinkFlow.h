@@ -809,6 +809,25 @@ public:
         if (builtin)
             noteLossOfBuiltin(builtin);
     }
+    void noteKeysBecomeTexts(LayoutID layout)
+    {
+        if (m_keysOfLayoutAreTold.at(layout.index()) != nothingIsLeftToTell) [[unlikely]]
+            tellKeysThatBecomeTexts(layout);
+    }
+    void noteKeysBecomeTextsAmong(const LinkType& type)
+    {
+        if (type.objects == LinkType::Objects::Layout)
+            noteKeysBecomeTexts(type.layout);
+        else if (type.objects == LinkType::Objects::Set) [[unlikely]]
+            noteKeysBecomeTextsAmongSet(type);
+    }
+    void noteKeysBecomeTextsAmongSet(const LinkType&);
+    void noteNameBecomesText(FunctionID function)
+    {
+        if (m_nameOfFunctionIsTold.at(function.index()) != nothingIsLeftToTell) [[unlikely]]
+            tellNameThatBecomesText(function);
+    }
+    void noteNamesOfLostFunctionsBecomeTexts();
     Vector<BuiltinID> takeBuiltinsLost() { return std::exchange(m_builtinsLost, { }); }
     Vector<BuiltinID> takeBuiltinsLostInSight() { return std::exchange(m_builtinsLostInSight, { }); }
     Vector<BuiltinID> takeBuiltinsAtUnseen() { return std::exchange(m_builtinsAtUnseen, { }); }
@@ -1264,6 +1283,15 @@ private:
     void reachAll(std::span<const FunctionID>);
 public:
     void noteLayoutToTie(LayoutID layout) { m_layoutsToTie.append(layout); }
+    void tellKeysThatBecomeTexts(LayoutID);
+    void tellNameThatBecomesText(FunctionID);
+    static constexpr uint8_t nothingIsLeftToTell = 1;
+    static constexpr uint8_t waitsForProgramToAsk = 2;
+    BytesSharedByThreads m_keysOfLayoutAreTold;
+    BytesSharedByThreads m_nameOfFunctionIsTold;
+    BytesSharedByThreads m_namesOfLostFunctionsAreTold { 1 };
+    BitVector m_keysThatNameEvents;
+    BitVector m_textsThatNameEvents;
 private:
     void holdBackWhile(const ScopedLambda<void()>&);
     void takeNote(Note, uint32_t number, uint32_t more);

@@ -6627,6 +6627,7 @@ ThinSummaries scanBodies(const Program& program, Diagnostics& diagnostics, const
     BitVector textsThatNameFieldsNeverWritten = findTextsThatNameFieldsNeverWrittenForScan(program);
     BitVector namesUnderWhichEventsHang = namesUnderWhichEventsHangInScan(program.builtins());
     BitVector namesUnderWhichTextIsEvaluated = namesUnderWhichTextIsEvaluatedInScan(program.builtins());
+    summaries.setNamesUnderWhichEventsHang(namesUnderWhichEventsHang);
     BitVector bodiesThatSeveralModulesName = bodiesThatSeveralModulesNameInScan(program);
     Vector<std::unique_ptr<ScanOfBody>> scans(loops.width());
     auto scanOf = [&](unsigned worker) -> ScanOfBody& {

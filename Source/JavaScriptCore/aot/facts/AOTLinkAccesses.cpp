@@ -573,6 +573,8 @@ void AccessInLinkAccesses::resolve()
         m_flow.noteLossOf(subject.builtin);
 
     if (m_access.kind == Kind::Has) {
+        if (!isNamed())
+            m_flow.noteKeysBecomeTextsAmong(subject);
         mayThrow();
         if (m_value)
             m_flow.arrive(m_value, primitivesForLinkAccesses(Primitive::Boolean));
@@ -708,6 +710,8 @@ void AccessInLinkAccesses::resolveOnLayout(LayoutID id, const LinkType& pooled)
     if (m_flow.escapedLayouts.get(id.index()))
         cannotTell(UnknownIs::ByEscapeAlone);
     if (!isNamed()) {
+        if (isRead())
+            m_flow.noteKeysBecomeTexts(id);
         if (mayStoreIntoPrototypeLink())
             m_flow.escape(id);
         mayThrow();
@@ -1250,6 +1254,8 @@ void AccessInLinkAccesses::resolveOnClosure(FunctionID function)
         return;
     }
     tellAgainOnceClimbs(m_flow.foundOnClosuresOf(function));
+    if (isRead() && m_access.key == m_program.keyOf(BuiltinNames::name))
+        m_flow.noteNameBecomesText(function);
     if (m_flow.escapedFunctions.get(function.index()))
         cannotTell(UnknownIs::ByEscapeAlone);
     bool isResolvedOnClassObject = isNamed() && m_nameClass != NameClass::Prototype && m_nameClass != NameClass::Proto && classLayout && !m_flow.isOfConstructorFunction(classLayout);
@@ -1430,6 +1436,8 @@ void AccessInLinkAccesses::resolveOnConstructors(FamilyID family)
 
 void AccessInLinkAccesses::resolveOnLostFunctions()
 {
+    if (isRead() && m_access.key == m_program.keyOf(BuiltinNames::name))
+        m_flow.noteNamesOfLostFunctionsBecomeTexts();
     if (isRead() && namesNothingOnPlainClosures()) {
         cannotTell();
         return;

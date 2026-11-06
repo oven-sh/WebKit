@@ -66,6 +66,7 @@ enum class GrowthOfWork : uint8_t {
     WithPropertiesOfWhatIsHanded = 1 << 2,
     WithAllThatIsReached = 1 << 3,
     CopiesWhatIsHeld = 1 << 4,
+    CopiesWhatIsHeldIntoStructuresOfStructures = 1 << 5,
 };
 
 static constexpr ASCIILiteral builtinsWhoseWorkGrowsWithWhatIsHanded[] = {
@@ -95,7 +96,11 @@ static constexpr ASCIILiteral builtinsWhoseWorkGrowsWithWhatIsHanded[] = {
 };
 
 static constexpr ASCIILiteral builtinsThatCopyWhatIsHeld[] = {
-    "ObjectGetOwnPropertyDescriptor"_s, "ObjectGetOwnPropertyDescriptors"_s, "ReflectGetOwnPropertyDescriptor"_s, "ObjectValues"_s, "ObjectEntries"_s,
+    "ObjectGetOwnPropertyDescriptor"_s, "ReflectGetOwnPropertyDescriptor"_s, "ObjectValues"_s,
+};
+
+static constexpr ASCIILiteral builtinsThatCopyWhatIsHeldIntoStructuresOfStructures[] = {
+    "ObjectGetOwnPropertyDescriptors"_s, "ObjectEntries"_s,
 };
 
 static constexpr ASCIILiteral builtinsWhoseWorkGrowsWithNumbersHanded[] = {
@@ -414,6 +419,10 @@ RehearsalOfRegExpTexts::RehearsalOfRegExpTexts(VM& vm, const Program& program, c
     for (ASCIILiteral token : builtinsThatCopyWhatIsHeld) {
         if (JSValue function = inRealmByToken(token); isKnown(function) && function.isCell())
             m_workOfBuiltins.find(function.asCell())->value.add(GrowthOfWork::CopiesWhatIsHeld);
+    }
+    for (ASCIILiteral token : builtinsThatCopyWhatIsHeldIntoStructuresOfStructures) {
+        if (JSValue function = inRealmByToken(token); isKnown(function) && function.isCell())
+            m_workOfBuiltins.find(function.asCell())->value.add(GrowthOfWork::CopiesWhatIsHeldIntoStructuresOfStructures);
     }
     m_reflectConstruct = inRealmByToken("ReflectConstruct"_s);
     m_functionPrototypeBind = inRealmByToken("FunctionPrototypeBind"_s);
@@ -903,7 +912,9 @@ JSValue RehearsalOfRegExpTexts::inHandsOfProgram(JSValue value)
         return made;
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     JSValue name = original->get(realm, vm.propertyNames->name);
+    scope.clearException();
     JSValue length = original->get(realm, vm.propertyNames->length);
+    scope.clearException();
     String nameOfWrapper = name && name.isString() ? name.toWTFString(realm) : String();
     scope.clearException();
     JSObject* wrapper = JSNativeStdFunction::create(vm, realm, length && length.isUInt32() ? length.asUInt32() : 0, nameOfWrapper, [this, original](JSGlobalObject* caller, CallFrame* frame) {
@@ -920,18 +931,21 @@ JSValue RehearsalOfRegExpTexts::inHandsOfProgram(JSValue value)
     wrapper->setPrototypeDirect(vm, original->getPrototypeDirect());
     PropertyNameArrayBuilder names(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
     original->methodTable()->getOwnPropertyNames(original, realm, names, DontEnumPropertiesMode::Include);
+    scope.clearException();
     for (const Identifier& name : names) {
         if (name == vm.propertyNames->name || name == vm.propertyNames->length)
             continue;
         PropertySlot slot(original, PropertySlot::InternalMethodType::VMInquiry, &vm);
-        if (!original->methodTable()->getOwnPropertySlot(original, realm, name, slot))
+        bool isFound = original->methodTable()->getOwnPropertySlot(original, realm, name, slot);
+        scope.clearException();
+        if (!isFound)
             continue;
         if (slot.isAccessor())
             wrapper->putDirectAccessor(realm, name, slot.getterSetter(), slot.attributes());
         else if (slot.isValue())
             wrapper->putDirect(vm, name, slot.getValue(realm, name), slot.attributes());
+        scope.clearException();
     }
-    scope.clearException();
     m_wrappersMade.append(wrapper);
     m_wrappersOfOriginals.add(original, wrapper);
     m_originalsOfWrappers.add(wrapper, original);
@@ -949,7 +963,7 @@ void RehearsalOfRegExpTexts::exchangeBuiltinsHeldBy(JSValue made, unsigned level
         for (unsigned index = 0; index < list->length(); ++index) {
             JSValue held = list->tryGetIndexQuickly(index);
             if (held && held.isCallable())
-                list->putDirectIndex(m_realm.get(), index, inHandsOfProgram(held));
+                list->setIndexQuickly(vm, index, inHandsOfProgram(held));
             else if (held)
                 exchangeBuiltinsHeldBy(held, levels - 1);
         }
@@ -1044,6 +1058,8 @@ JSValue RehearsalOfRegExpTexts::call(JSValue callee, JSValue thisValue, std::spa
     if (isOfProgram)
         return result;
     if (workOf(callee).contains(GrowthOfWork::CopiesWhatIsHeld))
+        exchangeBuiltinsHeldBy(result, 1);
+    else if (workOf(callee).contains(GrowthOfWork::CopiesWhatIsHeldIntoStructuresOfStructures))
         exchangeBuiltinsHeldBy(result, 2);
     return noteMadeByBuiltin(result);
 }
@@ -1128,26 +1144,27 @@ bool RehearsalOfRegExpTexts::take(JSValue value, OptionSet<GrowthOfWork> work, P
         return true;
     }
     bool walksAll = work.contains(GrowthOfWork::WithAllThatIsReached);
-    if (auto* list = dynamicDowncast<JSArray>(object)) {
-        price.handed += list->length();
+    auto takePlaces = [&](uint64_t places) {
+        price.handed += places;
         if (passesWhatIsLeft(price))
             return false;
-        if (!hasContiguous(list->indexingType()) && !hasAnyArrayStorage(list->indexingType()))
+        if (!hasContiguous(object->indexingType()) && !hasAnyArrayStorage(object->indexingType()))
             return true;
-        for (unsigned index = 0; index < list->length(); ++index) {
+        for (unsigned index = 0; index < places; ++index) {
             ++price.walked;
-            JSValue element = list->tryGetIndexQuickly(index);
+            JSValue element = object->tryGetIndexQuickly(index);
             if (!element || !element.isCell())
                 continue;
             if (!take(element, work, price, depth + 1) || passesWhatIsLeft(price))
                 return false;
         }
         return true;
-    }
+    };
+    if (auto* list = dynamicDowncast<JSArray>(object))
+        return takePlaces(list->length());
     std::optional<uint64_t> elements = elementsOfObjectHandedToBuiltin(object);
-    if (!elements)
+    if (!elements || !takePlaces(*elements))
         return false;
-    price.handed += *elements;
     if (!work.contains(GrowthOfWork::WithPropertiesOfWhatIsHanded) || (depth && !walksAll))
         return true;
     bool isTaken = true;
@@ -1171,14 +1188,15 @@ bool RehearsalOfRegExpTexts::payForWalkThatEndedInRefusal(const PriceOfBuiltin& 
 
 bool RehearsalOfRegExpTexts::pay(const PriceOfBuiltin& asked)
 {
-    uint64_t price = asked.handed;
+    uint64_t worstCase = asked.handed;
     uint64_t most = std::max<uint64_t>(m_operationsLeft, 1);
-    for (unsigned term = asked.mayMatch ? asked.termsThatVary : 0; term-- && price < most;)
-        price *= std::max<uint64_t>(asked.handed, 1);
+    for (unsigned term = asked.mayMatch ? asked.termsThatVary : 0; term-- && worstCase < most;)
+        worstCase *= std::max<uint64_t>(asked.handed, 1);
     if (asked.mayMatch)
-        price += operationsForBuiltinHandedRegExp;
-    if (price >= m_operationsLeft || price >= m_operationsLeftInAll)
+        worstCase += operationsForBuiltinHandedRegExp;
+    if (worstCase >= m_operationsLeft || worstCase >= m_operationsLeftInAll)
         return payForWalkThatEndedInRefusal(asked);
+    uint64_t price = asked.handed + (asked.mayMatch ? operationsForBuiltinHandedRegExp : 0);
     m_operationsLeft -= static_cast<uint32_t>(price);
     m_operationsLeftInAll -= price;
     return true;
