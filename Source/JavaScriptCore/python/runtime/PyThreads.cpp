@@ -114,9 +114,34 @@ static std::atomic<Sleeper*> s_sleeperOfMainThreadOfProcess;
 
 Ref<Threads> Threads::sharedFor(VM& vm)
 {
-    if (!vm.heap.pythonRuntimes().isEmpty())
-        return vm.heap.pythonRuntimes().first()->threads();
-    return adoptRef(*new Threads(vm));
+    if (Threads* threads = vm.heap.pythonThreads()) {
+        if (vm.heap.pythonRuntimes().isEmpty())
+            threads->forgetRuntimesThatHaveGone();
+        return *threads;
+    }
+    Ref threads = adoptRef(*new Threads(vm));
+    vm.heap.setPythonThreads(threads.copyRef());
+    return threads;
+}
+
+// Python starts anew in the VM: no runtime is left of those that there have been. What they said or brought about is not for the next one. What stays is what is true of the VM and of
+// the process: which thread is the main one and its state, that there is a GIL once a thread has been started (enable()) and who holds it, what the host has been told of the environment.
+// No thread of theirs is left: one that runs, waits or has been frozen at the end of its interpreter keeps its runtime by way of its frames.
+void Threads::forgetRuntimesThatHaveGone()
+{
+    ASSERT(!m_runningCount);
+    m_isFinalized.store(false);
+    m_switchInterval.store(defaultSwitchInterval);
+    m_bytesAllocatedAtIdleCollection = 0;
+    m_endOfLastIdleCollection = 0;
+    m_durationOfLastIdleCollection = 0;
+    m_costOfLastIdleCollection = 0;
+    m_earlyIdleCollectionsLeft = mostEarlyIdleCollections;
+    m_lastIdleCollectionFoundSomething = false;
+    m_nextIdleCollectionMayFindMore = false;
+    m_threadThatWaitsOwesCalls = false;
+    for (auto& thread : m_threads)
+        thread->waits = { };
 }
 
 Threads::Threads(VM& vm)

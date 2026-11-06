@@ -84,6 +84,7 @@
 #include "JSWeakObjectRef.h"
 #include "PyHooks.h"
 #include "PyRuntime.h"
+#include "PyThreads.h"
 #include "PyWeakRef.h"
 #include "JSWeakSet.h"
 #include "MachineStackMarker.h"
@@ -860,6 +861,12 @@ bool Heap::keepUnreachablePythonObjectsToFinalize(SlotVisitor& visitor)
             didKeepWhatWaitsForFinalizersIndefinitely();
     }
     return false;
+}
+
+void Heap::setPythonThreads(Ref<Python::Threads>&& threads)
+{
+    ASSERT(!m_pythonThreads);
+    m_pythonThreads = WTF::move(threads);
 }
 
 void Heap::didKeepAllPythonObjectsToFinalize(SlotVisitor& visitor)

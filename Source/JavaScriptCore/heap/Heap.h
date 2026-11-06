@@ -75,6 +75,7 @@ namespace JSC {
 namespace Python {
 class PyWeakRef;
 class Runtime;
+class Threads;
 }
 
 class CagedAlignedMemoryAllocator;
@@ -380,6 +381,10 @@ public:
     void addPythonRuntime(Python::Runtime* runtime) { m_pythonRuntimes.append(runtime); }
     void removePythonRuntime(Python::Runtime* runtime) { m_pythonRuntimes.removeFirst(runtime); }
     const Vector<Python::Runtime*, 1>& pythonRuntimes() const { return m_pythonRuntimes; }
+    // What the threads that take turns in the VM to run Python have in common. There is one for the VM, from the first runtime on and for as long as the heap lives, whether or not a runtime
+    // is left: a thread may be in the middle of one of its functions when the last of them goes.
+    Python::Threads* pythonThreads() const { return m_pythonThreads.get(); }
+    void setPythonThreads(Ref<Python::Threads>&&);
     // For whoever keeps unreachable objects for their finalizers, in the mutator: the turn has come of what nobody knew when its turn would come. See
     // didKeepWhatWaitsForFinalizersIndefinitely() and updateAllocationLimits().
     void didBeginToFinalizeWhatWaitedIndefinitely() { m_maxEdenSizeWithheld = 0; }
@@ -887,6 +892,7 @@ private:
     void reconcileWeakReferencesInMarkedCells(CellSet&, CollectionScope);
 
     Vector<Python::Runtime*, 1> m_pythonRuntimes;
+    RefPtr<Python::Threads> m_pythonThreads;
 
     void reconcileWeakReferencesAtGCEnd();
 

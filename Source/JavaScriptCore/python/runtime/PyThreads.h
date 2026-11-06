@@ -148,7 +148,7 @@ private:
 
 class Threads final : public ThreadSafeRefCounted<Threads> {
 public:
-    // That of the VM: the runtimes of a VM share it.
+    // That of the VM: the runtimes of a VM share it, those that come when the others have gone too. The heap holds it.
     static Ref<Threads> sharedFor(VM&);
     ~Threads();
 
@@ -284,6 +284,7 @@ private:
 
     explicit Threads(VM&);
     JS_EXPORT_PRIVATE bool isMainThreadSlow() const;
+    void forgetRuntimesThatHaveGone();
     void enable();
     struct Start;
     static void* threadEntry(void*);
@@ -355,7 +356,8 @@ private:
     std::atomic<bool> m_dropIsRequested { false };
     std::atomic<bool> m_isFinalized { false };
     std::atomic<bool> m_isStopping { false };
-    std::atomic<int64_t> m_switchInterval { 5000000 };
+    static constexpr int64_t defaultSwitchInterval = 5000000;
+    std::atomic<int64_t> m_switchInterval { defaultSwitchInterval };
 };
 
 // While one of these exists, the thread does not hold the GIL, and other threads run. It must not touch the VM: no cell is read
