@@ -294,6 +294,17 @@ static ALWAYS_INLINE bool isDunderDict(Runtime& rt, JSString* name)
     return impl == dunderDict || (impl && !impl->isAtom() && WTF::equal(impl, dunderDict));
 }
 
+// A proxy has an answer to every read, and for what it inherits too. Whether there is such a property is another question. `value`: the
+// answer. Empty: there is none, or an exception.
+static NEVER_INLINE JSValue valueIfProxyHasProperty(JSGlobalObject* globalObject, JSObject* holder, const Identifier& key, bool isOwn, JSValue value)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    bool hasIt = isOwn ? holder->hasOwnProperty(globalObject, key) : holder->hasProperty(globalObject, key);
+    RETURN_IF_EXCEPTION(scope, { });
+    return hasIt ? value : JSValue();
+}
+
 // holder[key], read for the receiver, which is the holder or inherits from it. `isOwn`: only what the holder has itself. On a thread other than
 // the main one: what can be seen; `willBeBound`: and can be given to bindIfFunction() there. Empty: there is no such property, or an exception.
 template<bool isOwn, bool willBeBound = false>
@@ -317,6 +328,13 @@ static ALWAYS_INLINE JSValue readProperty(JSGlobalObject* globalObject, JSObject
     RETURN_IF_EXCEPTION(scope, { });
     if (!found)
         return { };
+    // (The value is in the slot: the trap has run.)
+    if (slot.isTaintedByOpaqueObject() && slot.slotBase()->type() == ProxyObjectType) [[unlikely]] {
+        JSValue value = slot.getValue(globalObject, key);
+        if (isOwn || value.isUndefined())
+            RELEASE_AND_RETURN(scope, valueIfProxyHasProperty(globalObject, holder, key, isOwn, value));
+        return value;
+    }
     RELEASE_AND_RETURN(scope, slot.getValue(globalObject, key));
 }
 

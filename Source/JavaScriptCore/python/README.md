@@ -1697,6 +1697,8 @@ The collector is told the size of the side tables, which are several times the s
   `on()` was given. It is bound as `Function.prototype.bind()` binds it, so it has the `name` and `length` that gives (`bindToObject`): they are asked for at once of what
   may say something else later, a callable `Proxy` or a function that was given another name, and what a trap or a getter throws comes out of the read. (The `get()` of a mapping by its methods: see there.) Not bound: classes, what a module exports (read off its namespace), and what is read off the `prototype` of a
   constructor, which is how JS spells an unbound method (`js.String.prototype.toUpperCase.call("abc")`).
+- A `Proxy` has an answer to every read. Where that is `undefined` it is asked whether it has the property (`has`), for an attribute as for an item: if not, `p.name` goes on to what every
+  object of Python's has, or is an `AttributeError`, and `p[key]` a `KeyError` (`readProperty`).
 - `weakref.ref()`, `proxy()`, `finalize()` and the weak containers take objects and functions of JS.
 - A function written in JS has a signature for `inspect.signature()`, made of the text of its parameters (`__text_signature__`):
   `(a, b=None, /, *rest)`. They go by position; a default is `None`, since to pass `undefined` gives the default; a pattern has no name
