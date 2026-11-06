@@ -260,6 +260,8 @@ static JSValue objectNe(JSGlobalObject* globalObject, JSValue self, JSValue othe
     auto scope = DECLARE_THROW_SCOPE(vm);
     // The opposite of whatever __eq__ says, if it says anything.
     JSValue method = rt.typeOf(self)->lookup(Special::Eq);
+    if (!method) [[unlikely]]
+        return rt.notImplemented();
     JSValue result = callOperatorMethod(globalObject, method, self, other);
     RETURN_IF_EXCEPTION(scope, { });
     if (result == rt.notImplemented())
