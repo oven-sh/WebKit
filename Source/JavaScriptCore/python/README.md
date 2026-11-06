@@ -1786,7 +1786,8 @@ The collector is told the size of the side tables, which are several times the s
   `Base`; `object.__getattribute__(instance, '__dict__')` is an `AttributeError`, because who asks that way expects a dict
   (`inspect.getattr_static()`, and so `isinstance()` with a protocol). `__dict__` cannot be assigned or deleted, of any object of JS's: no
   other mapping can take the place of the properties. Nor can `__class__`: the prototype says what the object is an instance of.
-  `copy.copy()` and `pickle` refuse such an instance.
+  `copy.copy()` and `pickle` refuse such an instance. Of its `__dict__` they make the dict that it stands for (`jsPropertiesReduce`), so the `copy.deepcopy(self.__dict__)` of a
+  `__deepcopy__()` works.
   `str(instance)` is what JS makes of it, by `toString()` or `[Symbol.toPrimitive]()`. Where it has no other than
   `Object.prototype.toString()`, which is to JS what `object.__str__()` is to Python, it is `repr(instance)`: a `__repr__()` of the class,
   or of `@dataclass`, serves `print()` too.

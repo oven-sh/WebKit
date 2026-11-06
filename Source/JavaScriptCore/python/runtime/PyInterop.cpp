@@ -1634,6 +1634,21 @@ static JSValue jsPropertiesCopy(JSGlobalObject* globalObject, JSValue self)
     return dict;
 }
 
+// To copy.copy(), copy.deepcopy() and pickle it is that dict: `copy.deepcopy(self.__dict__)` in a __deepcopy__(). An empty one that is then
+// given the items, so that they know of it before they come to what it holds, which may lead back to it.
+static JSValue jsPropertiesReduce(JSGlobalObject* globalObject, JSValue self)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue dict = jsPropertiesCopy(globalObject, self);
+    RETURN_IF_EXCEPTION(scope, { });
+    JSValue items = callMethod(globalObject, dict, internString(vm, "items"_s));
+    RETURN_IF_EXCEPTION(scope, { });
+    JSValue iterator = getIter(globalObject, items);
+    RETURN_IF_EXCEPTION(scope, { });
+    return PyTuple::create(globalObject, { runtime(globalObject).dictType(), PyTuple::create(globalObject, 0), jsUndefined(), jsUndefined(), iterator });
+}
+
 static JSValue jsPropertiesRepr(JSGlobalObject* globalObject, JSValue self)
 {
     VM& vm = getVM(globalObject);
@@ -1685,6 +1700,7 @@ static constexpr NativeDef jsPropertiesMethods[] = {
     PY_SLOT("__ror__", jsPropertiesOr<true>, "($self, value, /)"),
     PY_SLOT("__ior__", jsPropertiesIOr, "($self, value, /)"),
     PY_METHOD("__reversed__", jsPropertiesIter<true>, "($self, /)"),
+    PY_METHOD("__reduce__", jsPropertiesReduce, "($self, /)"),
     PY_METHOD("copy", jsPropertiesCopy, "($self, /)"),
     PY_METHOD("keys", jsObjectMappingMethod<"keys">, "($self, *args, **kwargs)"),
     PY_METHOD("values", jsObjectMappingMethod<"values">, "($self, *args, **kwargs)"),
