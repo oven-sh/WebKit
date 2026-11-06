@@ -445,7 +445,7 @@ static JSValue posixSchedParamNew(JSGlobalObject* globalObject, JSValue cls, con
 static JSValue posixSchedParamReduce(JSGlobalObject* globalObject, JSValue self)
 {
     PyTuple* tuple = PyTuple::from(self);
-    return PyTuple::create(globalObject, { tuple->type(), PyTuple::create(globalObject, { tuple->at(0) }) });
+    return PyTuple::create(globalObject, { tuple->type(), PyTuple::create(globalObject, { structSeqField(globalObject, tuple, 0) }) });
 }
 
 static constexpr NativeDef posixSchedParamMethods[] = {
@@ -474,7 +474,7 @@ static bool posixToSchedParam(JSGlobalObject* globalObject, JSValue value, struc
         return false;
     }
     int64_t priority;
-    if (failed(scope, posixToLong(globalObject, tuple->at(0), priority)))
+    if (failed(scope, posixToLong(globalObject, structSeqField(globalObject, tuple, 0), priority)))
         return false;
     if (priority > INT_MAX || priority < INT_MIN) {
         raiseOverflowError(globalObject, scope, "sched_priority out of range"_s);

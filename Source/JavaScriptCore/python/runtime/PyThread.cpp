@@ -921,9 +921,9 @@ static JSValue threadExceptHook(JSGlobalObject* globalObject, JSValue args)
     if (rt.typeOf(args) != exceptHookArgsType(globalObject))
         return raiseTypeError(globalObject, scope, "_thread.excepthook argument type must be ExceptHookArgs"_s);
     auto* tuple = PyTuple::from(args);
-    if (tuple->at(0) == JSValue(rt.SystemExit()))
+    if (structSeqField(globalObject, tuple, 0) == JSValue(rt.SystemExit()))
         return jsUndefined();
-    JSValue thread = tuple->at(3);
+    JSValue thread = structSeqField(globalObject, tuple, 3);
 
     JSValue file = rt.sysDict()->get(rt.names.stderr_());
     if (!file || isNone(file)) {
@@ -947,9 +947,11 @@ static JSValue threadExceptHook(JSGlobalObject* globalObject, JSValue args)
     RETURN_IF_EXCEPTION(scope, { });
     writeToFile(globalObject, file, makeStr(globalObject, text));
     RETURN_IF_EXCEPTION(scope, { });
-    if (auto* exception = PyException::tryFrom(tuple->at(1)); exception && !exception->traceback() && PyTraceback::is(tuple->at(2)))
-        exception->setTraceback(vm, tuple->at(2));
-    printException(globalObject, tuple->at(1), file, false);
+    JSValue value = structSeqField(globalObject, tuple, 1);
+    JSValue traceback = structSeqField(globalObject, tuple, 2);
+    if (auto* exception = PyException::tryFrom(value); exception && !exception->traceback() && PyTraceback::is(traceback))
+        exception->setTraceback(vm, traceback);
+    printException(globalObject, value, file, false);
     callMethod(globalObject, file, internString(vm, "flush"_s));
     RETURN_IF_EXCEPTION(scope, { });
     return jsUndefined();

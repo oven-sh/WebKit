@@ -613,6 +613,8 @@ template void Runtime::visitPendingCalls(AbstractSlotVisitor&);
 static constexpr ASCIILiteral unraisableFields[] = { "exc_type"_s, "exc_value"_s, "exc_traceback"_s, "err_msg"_s, "object"_s };
 static constexpr StructSeqDef unraisableDef { "UnraisableHookArgs"_s, unraisableFields, 5, true, true };
 
+PyType* unraisableHookArgsType(JSGlobalObject* globalObject) { return structSeqTypeFor(globalObject, unraisableDef); }
+
 void reportUnraisable(JSGlobalObject* globalObject, const String& message, JSValue object)
 {
     Runtime& rt = runtime(globalObject);
@@ -632,14 +634,8 @@ void reportUnraisable(JSGlobalObject* globalObject, const String& message, JSVal
     {
         // Nothing of the program's runs here. If the host ends what runs here, that waits for what is called next.
         DeferTerminationForAWhile deferred(vm);
-        JSString* typeKey = internString(vm, "__unraisable_hook_args_type__"_s);
-        JSValue type = rt.sysDict()->get(typeKey);
-        if (!type) {
-            type = makeStructSeqType(globalObject, unraisableDef);
-            rt.sysDict()->set(vm, typeKey, type);
-        }
         JSValue traceback = PyException::from(exception)->traceback();
-        arguments = makeStructSeq(globalObject, PyType::from(type), {
+        arguments = makeStructSeq(globalObject, unraisableHookArgsType(globalObject), {
             rt.typeOf(exception), exception, traceback ? traceback : jsUndefined(),
             message.isNull() ? jsUndefined() : JSValue(makeStr(vm, message)), object ? object : jsUndefined() });
     }

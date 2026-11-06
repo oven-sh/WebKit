@@ -149,8 +149,7 @@ static JSValue sysUnraisableHook(JSGlobalObject* globalObject, JSValue unraisabl
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue argumentsType = runtime(globalObject).sysDict()->get(internString(vm, "__unraisable_hook_args_type__"_s));
-    if (!argumentsType || JSValue(typeOf(globalObject, unraisable)) != argumentsType)
+    if (typeOf(globalObject, unraisable) != unraisableHookArgsType(globalObject))
         return raiseTypeError(globalObject, scope, "sys.unraisablehook argument type must be UnraisableHookArgs"_s);
     auto attribute = [&](ASCIILiteral name) { return getAttr(globalObject, unraisable, internString(vm, name)); };
     JSValue message = attribute("err_msg"_s);
@@ -580,16 +579,9 @@ static constexpr StructSeqDef asyncGenHooksDef { "asyncgen_hooks"_s, asyncGenHoo
 static JSValue sysGetAsyncGenHooks(JSGlobalObject* globalObject)
 {
     Runtime& rt = runtime(globalObject);
-    VM& vm = rt.vm();
-    JSString* key = internString(vm, "__asyncgen_hooks_type__"_s);
-    JSValue type = rt.sysDict()->get(key);
-    if (!type) {
-        type = makeStructSeqType(globalObject, asyncGenHooksDef);
-        rt.sysDict()->set(vm, key, type);
-    }
     JSValue firstIter = rt.asyncGenFirstIter();
     JSValue finalizer = rt.asyncGenFinalizer();
-    return makeStructSeq(globalObject, PyType::from(type), { firstIter ? firstIter : jsUndefined(), finalizer ? finalizer : jsUndefined() });
+    return makeStructSeq(globalObject, structSeqTypeFor(globalObject, asyncGenHooksDef), { firstIter ? firstIter : jsUndefined(), finalizer ? finalizer : jsUndefined() });
 }
 
 static JSValue sysSetAsyncGenHooks(JSGlobalObject* globalObject, JSValue firstIter, JSValue finalizer)
@@ -787,9 +779,7 @@ void updateSysFlags(JSGlobalObject* globalObject)
     VM& vm = rt.vm();
     const Configuration& configuration = Python::configuration();
     JSString* name = internString(vm, "flags"_s);
-    JSValue existing = rt.sysDict()->get(name);
-    PyType* type = existing ? rt.typeOf(existing) : makeStructSeqType(globalObject, flagsDef);
-    rt.sysDict()->set(vm, name, makeStructSeq(globalObject, type, {
+    rt.sysDict()->set(vm, name, makeStructSeq(globalObject, structSeqTypeFor(globalObject, flagsDef), {
         jsNumber(!!configuration.parserDebug), jsNumber(!!configuration.inspect), jsNumber(!!configuration.interactive), jsNumber(configuration.optimizationLevel),
         jsNumber(!configuration.writeBytecode), jsNumber(!configuration.userSiteDirectory), jsNumber(!configuration.siteImport), jsNumber(!configuration.useEnvironment),
         jsNumber(configuration.verbose), jsNumber(configuration.bytesWarning), jsNumber(!!configuration.quiet), jsNumber(!configuration.hashSeed || *configuration.hashSeed),

@@ -937,6 +937,8 @@ void addNoteToPendingException(JSGlobalObject*, const String& note);
 // Hands the exception that is propagating to sys.unraisablehook; it propagates no further. A null message is none.
 // Only a termination is pending afterwards: it was what propagated, or the host has ended the hook. The caller is to stop then.
 void reportUnraisable(JSGlobalObject*, const String& message, JSValue object);
+// What sys.unraisablehook is called with an instance of.
+PyType* unraisableHookArgsType(JSGlobalObject*);
 
 void initializeGCModule(JSGlobalObject*, PyModule*); // gc
 void initializeJSModule(JSGlobalObject*, PyModule*); // _js
