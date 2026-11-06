@@ -1421,13 +1421,15 @@ static JSObject* objectOfProperties(JSValue self) { return asObject(uncheckedDow
 // False: an exception, or, without one, the key is the name of no attribute.
 static bool nameOfAttributeFor(JSGlobalObject* globalObject, JSObject* object, JSValue key, Identifier& name)
 {
-    // (What cannot be hashed is refused, as by the dict.)
-    if (!isStr(key)) {
-        hash(globalObject, key);
-        return false;
-    }
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
+    // What cannot be hashed is refused, as by the dict. (A class derived from str may have a __hash__ of its own.)
+    if (!isExactStr(key)) {
+        hash(globalObject, key);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (!isStr(key))
+            return false;
+    }
     name = propertyKeyFor(globalObject, strValue(key));
     RETURN_IF_EXCEPTION(scope, false);
     return !isTypedArrayType(object->type()) || !isCanonicalNumericIndexString(name.impl());
