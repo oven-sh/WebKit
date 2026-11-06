@@ -314,7 +314,13 @@ bool Runtime::keepUnreachableObjectsToFinalize(SlotVisitor& visitor, StepOfKeepi
     });
     // It goes through what has died, and the global object may be among that: see visitPendingCalls().
     m_isPuttingFinalizersInOrder = true;
-    FinalizationOrder order = finalizationOrder(m_vm.heap, visitor, candidates.span(), { referents.span(), looksAtAllThatDied, wantsGarbage, m_leavesCyclicGarbageForLater, areOfSeveralThreads });
+    FinalizationOrder order = finalizationOrder(m_vm.heap, visitor, candidates.span(), {
+        .askedAbout = referents.span(),
+        .looksAtAllThatDied = looksAtAllThatDied,
+        .wantsGarbage = wantsGarbage,
+        .wantsToKnowWhatReferenceCountsWouldFree = m_leavesCyclicGarbageForLater,
+        .wantsPieces = areOfSeveralThreads,
+    });
     m_isPuttingFinalizersInOrder = false;
 
     // All that the candidates reach is about to be marked, so the weak references to it stay as they are until the finalizers have
