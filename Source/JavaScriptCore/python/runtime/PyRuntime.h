@@ -822,12 +822,8 @@ public:
     bool isTellingOfCollection();
     // Calls gc.callbacks for a collection of the engine's own, which is over by then.
     void tellOfCollection(int generation, double duration, bool isOver);
-    // For the collector, when it first looks at the stack.
-    void collectionIsBeginning()
-    {
-        if (!m_collectionBegan)
-            m_collectionBegan = MonotonicTime::now();
-    }
+    // For the collector, whenever it is about to look at the stacks. The first time in a collection is when that begins, as far as gc.get_stats() goes. See clearDeadTemporaries().
+    void willScanStacks();
 
     // ---- Objects that only a temporary register refers to (PyTemporaries.cpp) ----
 

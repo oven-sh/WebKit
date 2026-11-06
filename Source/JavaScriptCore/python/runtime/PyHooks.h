@@ -56,7 +56,7 @@ void willThrowInJS(JSGlobalObject*, JSValue thrown);
 // Code is about to be run for the first time, or for the first time in a while.
 void didCreateCodeBlock(CodeBlock*);
 
-// The collector is about to scan the stack, every word of it. A register that held an argument of a call that has returned
+// For Runtime::willScanStacks(). The collector is about to scan the stack, every word of it. A register that held an argument of a call that has returned
 // still holds it, and would keep the object alive for as long as the frame lasts, though nothing can read the register
 // again: `del x; gc.collect()` would not free what x was. So the temporaries of Python frames that are dead are emptied.
 // (Variables are left alone: an object lives as long as a variable names it, whether the code goes on to use it or not.)

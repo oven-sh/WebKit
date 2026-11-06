@@ -229,10 +229,17 @@ static void clearDeadTemporariesFrom(CallFrame* topCallFrame, EntryFrame* entryF
     }
 }
 
+void Runtime::willScanStacks()
+{
+    if (!m_collectionBegan)
+        m_collectionBegan = MonotonicTime::now();
+    // A frame says by itself whether it is one of Python's, whichever global object it belongs to: one walk serves all the runtimes of the heap.
+    if (this == m_vm.heap.pythonRuntimes().first())
+        clearDeadTemporaries(m_vm);
+}
+
 void clearDeadTemporaries(VM& vm)
 {
-    for (Runtime* runtime : vm.heap.pythonRuntimes())
-        runtime->collectionIsBeginning();
     clearDeadTemporariesFrom(vm.topCallFrame, vm.topEntryFrame);
     // A thread that is parked does not touch its frames before it has the VM again, which it cannot have during a collection.
     if (vm.apiLock().hasParkedThreads()) {

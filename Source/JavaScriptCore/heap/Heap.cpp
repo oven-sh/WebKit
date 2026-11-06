@@ -914,8 +914,8 @@ void Heap::iterateExecutingAndCompilingCodeBlocksWithoutHoldingLocks(Visitor& vi
 void Heap::gatherStackRoots(ConservativeRoots& roots)
 {
     ASSERT(m_collector->m_conductorThread);
-    if (!m_pythonRuntimes.isEmpty())
-        Python::clearDeadTemporaries(vm());
+    for (auto* runtime : m_pythonRuntimes)
+        runtime->willScanStacks();
     m_machineThreads->gatherConservativeRoots(roots, *m_jitStubRoutines, *m_codeBlocks, m_collector->m_conductingMutatorState, m_collector->m_conductorThread);
 #if ENABLE(C_LOOP)
     vm().cloopStack().gatherConservativeRoots(roots, *m_jitStubRoutines, *m_codeBlocks);
