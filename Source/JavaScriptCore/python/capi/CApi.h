@@ -333,7 +333,10 @@ private:
 // CAPI_FILE(Name) in it, and ensure() refers to them all.
 #define FOR_EACH_CAPI_FILE(v) \
     v(Errors) \
-    v(References)
+    v(Numbers) \
+    v(Object) \
+    v(References) \
+    v(Sequences)
 
 #define CAPI_FILE(name) \
     void keep##name() { }
