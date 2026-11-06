@@ -238,6 +238,9 @@ public:
         return static_cast<unsigned>(m_specialStates[index]) == static_cast<unsigned>(SpecialState::NativeTakingNone) + count && m_specials[index].get() == method;
     }
 
+    // Whether lookup(special) gives what it gave last until didChange() is called. (Not everything that is looked up is remembered.)
+    bool remembers(Special special) const { return m_specialStates[static_cast<unsigned>(special)] != SpecialState::Unknown; }
+
     // What calling the type comes to, once typeCall() has found out. It holds until the type changes.
     enum class Construction : uint8_t {
         Unknown,

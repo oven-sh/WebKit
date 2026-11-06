@@ -917,15 +917,19 @@ static NEVER_INLINE PyType::Construction findConstruction(Runtime& rt, PyType* t
         return native && native->kind() == kind && native->def().signature.isVariadic && native->def().signature.hasSelf && !native->def().signature.isMadeAtRunTime && !(native->def().flags & (OnWipedStack | MayWait));
     };
     auto construction = PyType::Construction::General;
+    uint64_t timesLookupRanCode = PyType::timesLookupRanCode();
     auto* init = PyNativeFunction::tryFrom(type->lookup(Special::Init));
-    if (!type->isHeapType() && type != rt.typeType() && !type->lookup(Special::Del) && takesAllArguments(type->maker(), NativeKind::New) && !type->isMadeBy(objectNew)) {
+    if (type->isImmutable() && !type->isHeapType() && type != rt.typeType() && !type->lookup(Special::Del) && takesAllArguments(type->maker(), NativeKind::New) && !type->isMadeBy(objectNew)) {
         // object.__init__ has nothing to say about the arguments of a type with a __new__ of its own.
         if (init && init->isVariadicWithSelf(objectInit))
             construction = PyType::Construction::NativeNew;
-        // (The C++ function is called as it is, so it must be the type's own or inherited.)
-        else if (takesAllArguments(init, NativeKind::SlotWrapper) && type->isSubtypeOf(init->ownerType()))
+        // (The C++ function is called as it is, so it must be the type's own or inherited, and still be found when this is.)
+        else if (takesAllArguments(init, NativeKind::SlotWrapper) && type->isSubtypeOf(init->ownerType()) && type->remembers(Special::Init))
             construction = PyType::Construction::NativeNewAndInit;
     }
+    // A key that is no str was asked, and may have changed the type.
+    if (timesLookupRanCode != PyType::timesLookupRanCode()) [[unlikely]]
+        return PyType::Construction::General;
     type->setConstruction(construction);
     return construction;
 }
@@ -1010,15 +1014,23 @@ static JSValue typeCallWithoutNotes(JSGlobalObject* globalObject, PyType* type, 
 
     if (auto construction = type->construction() == PyType::Construction::Unknown ? findConstruction(rt, type) : type->construction();
         construction != PyType::Construction::General && !derived && vm.isSafeToRecurseSoft()) {
-        JSValue object = type->maker()->def().pointer.variadicWithSelf(globalObject, type, args);
+        NativeDef::VariadicWithSelf make = type->maker()->def().pointer.variadicWithSelf;
+        if (construction == PyType::Construction::NativeNew) {
+            JSValue object = make(globalObject, type, args);
+            RETURN_IF_EXCEPTION(scope, { });
+            if (rt.typeOf(object) != type) [[unlikely]]
+                RELEASE_AND_RETURN(scope, initialize(object));
+            return object;
+        }
+        // (Now: __new__ may run code of the program's, after which nothing may be remembered of the type. Its __init__ is still this one: it cannot be written to.)
+        NativeDef::VariadicWithSelf init = uncheckedDowncast<PyNativeFunction>(type->lookup(Special::Init).asCell())->def().pointer.variadicWithSelf;
+        JSValue object = make(globalObject, type, args);
         RETURN_IF_EXCEPTION(scope, { });
         // What OSError(2, "") makes is of a class derived from it.
         if (rt.typeOf(object) != type) [[unlikely]]
             RELEASE_AND_RETURN(scope, initialize(object));
-        if (construction == PyType::Construction::NativeNewAndInit) {
-            uncheckedDowncast<PyNativeFunction>(type->lookup(Special::Init).asCell())->def().pointer.variadicWithSelf(globalObject, object, args);
-            RETURN_IF_EXCEPTION(scope, { });
-        }
+        init(globalObject, object, args);
+        RETURN_IF_EXCEPTION(scope, { });
         return object;
     }
 
