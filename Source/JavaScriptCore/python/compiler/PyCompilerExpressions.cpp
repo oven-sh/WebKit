@@ -3124,6 +3124,7 @@ RegisterID* Unit::comprehension(Expr* node, ComprehensionKind kind, Seq<Comprehe
         std::optional<Try> guard;
         if (!variables.isEmpty())
             guard = beginTry();
+        emitContainer(*this, result.get());
         loc(outermost->iter->range);
         if (outermost->isAsync)
             callRuntime(iterator.get(), RuntimeFunction::GetAIterOfLoop, { iterable.get() });
@@ -3134,7 +3135,6 @@ RegisterID* Unit::comprehension(Expr* node, ComprehensionKind kind, Seq<Comprehe
         iterable = nullptr;
         m_overlays.append(scope);
         pushBlock({ .kind = BlockKind::InlinedComprehension, .tryDepth = guard ? guard->depthBefore : g.tryDepth(), .range = range, .comprehension = scope });
-        emitContainer(*this, result.get());
         comprehensionGenerator(kind, generators, 0, element, value, result.get(), iterator.get(), !!temporaryOfIterable, range);
         line(range);
         popBlock();
@@ -3169,6 +3169,8 @@ RegisterID* Unit::comprehension(Expr* node, ComprehensionKind kind, Seq<Comprehe
     auto* executable = c.compileCode(this, spec, m_source, [&](Unit& unit) {
         unit.m_info.hasLoopThatOwnsItsIterator |= ownsFirstIterator;
         Reg iterator = isGenerator ? unit.m_firstIterator : unit.loadName(names().dotZero, unit.newTemporary().get(), range);
+        Reg result = unit.newTemporary();
+        emitContainer(unit, result.get());
         if (!isGenerator) {
             unit.loc(outermost->iter->range);
             if (outermost->isAsync)
@@ -3176,8 +3178,6 @@ RegisterID* Unit::comprehension(Expr* node, ComprehensionKind kind, Seq<Comprehe
             else
                 unit.g.emitPyGetIter(iterator.get(), iterator.get());
         }
-        Reg result = unit.newTemporary();
-        emitContainer(unit, result.get());
         unit.comprehensionGenerator(kind, generators, 0, element, value, result.get(), iterator.get(), false, range);
         if (isGenerator)
             unit.emitReturnNone();
