@@ -782,9 +782,7 @@ Label* Unit::targetReplacedByCopy(Label& end, const Last& isLast)
         return isCopiedWhatComesAfterStatement() ? &end : nullptr;
     if (isLast.kind != Last::BeforeJump)
         return nullptr;
-    if (!canBranchTo(isLast))
-        return &end;
-    return isReplacedByCopy(isLast) ? isLast.target : nullptr;
+    return isReplacedByCopy(isLast) || !canBranchTo(isLast) ? &end : nullptr;
 }
 
 // jumpIf(test, target, false), for a statement after which, if the test fails and the statement is the last, the function ends. A test
@@ -796,11 +794,13 @@ void Unit::jumpIfOrLeave(Expr* test, Label& target, const Last& isLast, ReturnsB
         SetForScope branchTarget(m_branchTarget, BranchTarget { &target, { }, nullptr, isLast.loop, nullptr });
         return jumpIf(test, target, condition);
     }
+    // Where the end of the function has been copied in place of the jump, there is no jump to go through.
+    if (isLast.kind == Last::BeforeJump && isReplacedByCopy(isLast))
+        return jumpIf(test, target, condition);
     // Of a jump of the kind that tools are told of whichever way it goes, and what is run before it, each way there has a copy. At one of the other kind the ways meet.
     if (isLast.kind == Last::BeforeJump && canBranchTo(isLast))
         return jumpIf(test, *isLast.target, condition);
-    // So they do where the end of the function has been copied behind it.
-    if (isLast.kind == Last::BeforeJump && (isLast.jumpIs < JumpIs::ToldOf || isReplacedByCopy(isLast)))
+    if (isLast.kind == Last::BeforeJump && isLast.jumpIs < JumpIs::ToldOf)
         return jumpIf(test, target, condition);
     if (!isLast || (isLast.kind == Last::OfFunction && test->range.lineno == test->range.endLineno))
         return jumpIf(test, target, condition);
@@ -2179,8 +2179,10 @@ void Unit::whileLoop(While* node, const Last& isLast)
         bool isOnlyWay = anchor->unresolvedJumps().size() == 1;
         g.emitLabel(anchor.get());
         if (isLast.kind == Last::BeforeJump) {
-            if (node->orelse.isEmpty() && isOnlyWay)
+            if (node->orelse.isEmpty() && isOnlyWay) {
+                m_whereLineOfBranchIsMarked = g.instructions().size();
                 silentLine(lineOfBranch);
+            }
         } else
             lineOfImplicitReturn(isLast.kind == Last::OfFunction ? node->test->range.endLineno : lineOfBranch, isLast.onlyIf(node->orelse.isEmpty() && (isLast.kind == Last::OfFunction || isOnlyWay)));
     }
