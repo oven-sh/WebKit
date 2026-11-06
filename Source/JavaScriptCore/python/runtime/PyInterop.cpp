@@ -829,7 +829,7 @@ static JSMap* mapWithItsOwnMethods(JSGlobalObject* globalObject, JSValue self, s
 }
 
 // mapping.has(key). Map's own need not be called.
-static ALWAYS_INLINE bool hasKeyByMethod(JSGlobalObject* globalObject, JSObject* object, JSValue key)
+static bool hasKeyByMethod(JSGlobalObject* globalObject, JSObject* object, JSValue key)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -971,14 +971,19 @@ static JSValue jsObjectContains(JSGlobalObject* globalObject, JSValue self, JSVa
         return { };
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (asObject(self)->type() == JSMapType)
-        RELEASE_AND_RETURN(scope, jsBoolean(hasKeyByMethod(globalObject, asObject(self), key)));
+    JSMap* map = mapWithItsOwnMethods(globalObject, self, { { vm.propertyNames->has, JSMapHasIntrinsic } });
+    RETURN_IF_EXCEPTION(scope, { });
+    if (map)
+        RELEASE_AND_RETURN(scope, jsBoolean(map->has(globalObject, valueForJS(key))));
     if (auto* set = dynamicDowncast<JSSet>(self))
         RELEASE_AND_RETURN(scope, jsBoolean(set->has(globalObject, valueForJS(key))));
     bool byMethods = asObject(self)->type() == JSWeakSetType || hasItemsByMethods(globalObject, asObject(self));
     RETURN_IF_EXCEPTION(scope, { });
-    if (byMethods)
-        RELEASE_AND_RETURN(scope, jsBoolean(hasKeyByMethod(globalObject, asObject(self), key)));
+    if (byMethods) {
+        JSValue has = callMethodOfJS(globalObject, asObject(self), vm.propertyNames->has, { key });
+        RETURN_IF_EXCEPTION(scope, { });
+        return jsBoolean(has.toBoolean(globalObject));
+    }
     Identifier name;
     if (failed(scope, propertyKeyForItem(globalObject, key, name))) {
         takePendingException(globalObject);
