@@ -19,6 +19,9 @@
 
 namespace JSC {
 
+class CodeBlockSet;
+class ConservativeRoots;
+class JITStubRoutineSet;
 class JSWeakMap;
 
 namespace Python {
@@ -868,8 +871,9 @@ public:
     void didTellOfCollect();
     // Calls gc.callbacks for a collection of the engine's own, which is over by then.
     void tellOfCollection(int generation, double duration, bool isOver);
-    // For the collector, whenever it is about to look at the stacks. The first time in a collection is when that begins, as far as gc.get_stats() goes. See clearDeadTemporaries().
-    void willScanStacks();
+    // For the collector, whenever it is about to look at the stacks. The first time in a collection is when that begins, as far as gc.get_stats() goes. See clearDeadTemporaries(),
+    // and Threads::gatherConservativeRoots() for what is scanned with them.
+    void willScanStacks(ConservativeRoots&, JITStubRoutineSet&, CodeBlockSet&);
 
     // ---- Objects that only a temporary register refers to (PyTemporaries.cpp) ----
 

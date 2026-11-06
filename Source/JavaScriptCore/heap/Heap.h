@@ -377,7 +377,7 @@ public:
     static bool testAndSetMarked(HeapVersion, const void*);
 
     // The global objects in which Python runs have objects to finalize. The mutator changes the list, and the collector, with the world stopped, takes out a runtime whose
-    // global object it has found dead.
+    // global object it has found dead. The list keeps its order, a new runtime goes to the end, and one that is taken out has ended (Runtime::end()): Threads::acquire() counts on it.
     void addPythonRuntime(Python::Runtime* runtime) { m_pythonRuntimes.append(runtime); }
     void removePythonRuntime(Python::Runtime* runtime) { m_pythonRuntimes.removeFirst(runtime); }
     const Vector<Python::Runtime*, 1>& pythonRuntimes() const { return m_pythonRuntimes; }

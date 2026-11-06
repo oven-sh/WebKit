@@ -443,6 +443,7 @@ void Threads::acquire(ThreadState& thread, JSLock::ParkedThread& parked, SavedSt
 
 // A thread enters and leaves the list, and sets `saved`, with access to the heap, so not while the collector looks. As a stack is scanned, so that a word means here what it means in the
 // four that are on one. (Heap::evacuateSparseAuxiliaryBlocks(), which has to know of every place from which a butterfly may be pointed into, is not told of these: a state refers to cells.)
+// It is a runtime that is asked (Runtime::willScanStacks()). Once the last has gone nobody is: by then every entry has been struck out (runtimeDidEnd()), and nobody reads the state of one that has.
 void Threads::gatherConservativeRoots(ConservativeRoots& roots, JITStubRoutineSet& jitStubRoutines, CodeBlockSet& codeBlocks)
 {
     ASSERT(m_vm.heap.worldIsStopped());

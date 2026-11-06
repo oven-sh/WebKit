@@ -229,13 +229,15 @@ static void clearDeadTemporariesFrom(CallFrame* topCallFrame, EntryFrame* entryF
     }
 }
 
-void Runtime::willScanStacks()
+void Runtime::willScanStacks(ConservativeRoots& roots, JITStubRoutineSet& jitStubRoutines, CodeBlockSet& codeBlocks)
 {
     if (!m_collectionBegan)
         m_collectionBegan = MonotonicTime::now();
-    // A frame says by itself whether it is one of Python's, whichever global object it belongs to: one walk serves all the runtimes of the heap.
-    if (this == m_vm.heap.pythonRuntimes().first())
+    // A frame says by itself whether it is one of Python's, whichever global object it belongs to: one walk serves all the runtimes of the heap. So does one over the threads.
+    if (this == m_vm.heap.pythonRuntimes().first()) {
         clearDeadTemporaries(m_vm);
+        m_threads->gatherConservativeRoots(roots, jitStubRoutines, codeBlocks);
+    }
 }
 
 void clearDeadTemporaries(VM& vm)

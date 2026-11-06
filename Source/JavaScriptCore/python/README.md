@@ -2083,11 +2083,9 @@ What code outside `python/` asks is one of these, and the answer is the same in 
 - **Is this code block Python's?** `UnlinkedCodeBlock::isPython()`: it is never compiled, its call sites are never virtual, unwinding
   tells the Python runtime of each of its frames, its generators are laid out differently.
 - **Which runtimes does this heap have?** `Heap::pythonRuntimes()`, empty without Python. They are asked at three points, none of
-  which touches a value of JS: before the stack is scanned (dead temporaries in frames of Python code are cleared), when
+  which touches a value of JS: before the stack is scanned (dead temporaries in frames of Python code are cleared, and what a thread that is parked
+  has no room for on its stack is scanned with it: `Threads::gatherConservativeRoots()`, which finds nothing unless more than four realms have a Python), when
   marking has converged (Python objects to finalize are kept), and by the host before `console.log` writes (Python's `stdout` is flushed).
-- **Has Python started in this VM?** `Heap::pythonThreads()`, a pointer that is null until it does. Asked when the stacks are scanned: what a thread that is
-  parked has no room for on its stack is scanned with them (`Threads::gatherConservativeRoots()`). What follows a yes is a walk over the threads of Python's, which finds
-  nothing unless more than four realms have a Python.
 - **Is this the embedder's thread?** `Heap::mayRunEmbedderFinalizers()`: false only while a thread that Python started has the VM.
   See Threads. A program without such threads runs on one thread, and the answer is yes.
 - **Has this realm a Python?** `JSGlobalObject::pythonRuntime()`, a pointer that is null until Python starts there. Asked where an
@@ -2150,7 +2148,6 @@ What every program pays, with the sizes of a release build for x86-64:
 | `ArrayBuffer.prototype.resize()` | refuses to shrink a buffer that is pinned, as it refuses to detach one |
 | A block or large allocation is swept | one load and branch (`mayRunEmbedderFinalizers()`) |
 | The incremental sweeper runs | one load and branch (`hasParkedThreads()`) |
-| The stacks are scanned | one load and branch (`pythonThreads()`), beside the look at the list of runtimes |
 | A call is linked, or is virtual and not to compiled JS | is the caller Python code: three loads and a branch |
 | An exception is thrown | whether there is a Python in the VM is asked once for an unwind (`UnwindFunctor::m_tellsPython`: a load and a compare) and the frame it starts in is noted (`m_frameToldOfLast`: a store), and the answer is looked at twice for each frame the exception passes. All that is done on Python's account is out of line behind it. `throw` and `catch`: has the realm a Python, a load and a branch each |
 | Bytecode is generated, a code block is linked or asks to be compiled | a look at `isPython()`: for each loop and jump, each call site, each code block |

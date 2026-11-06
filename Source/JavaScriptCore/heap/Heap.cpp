@@ -933,9 +933,7 @@ void Heap::gatherStackRoots(ConservativeRoots& roots)
 {
     ASSERT(m_collector->m_conductorThread);
     for (auto* runtime : m_pythonRuntimes)
-        runtime->willScanStacks();
-    if (m_pythonThreads) [[unlikely]]
-        m_pythonThreads->gatherConservativeRoots(roots, *m_jitStubRoutines, *m_codeBlocks);
+        runtime->willScanStacks(roots, *m_jitStubRoutines, *m_codeBlocks);
     m_machineThreads->gatherConservativeRoots(roots, *m_jitStubRoutines, *m_codeBlocks, m_collector->m_conductingMutatorState, m_collector->m_conductorThread);
 #if ENABLE(C_LOOP)
     vm().cloopStack().gatherConservativeRoots(roots, *m_jitStubRoutines, *m_codeBlocks);
@@ -1692,7 +1690,8 @@ ASCIILiteral Heap::reasonNotToEvacuateAuxiliaryBlocksNow()
 // pointer to it at that moment. Raw butterfly pointers exist in machine registers and on the machine stack of code that
 // runs on behalf of this VM (JIT code hoists the load, C++ keeps Butterfly* locals across calls that can collect), in
 // active DFG scratch buffers and OSR exit side state, and in the copies of machine stack that a suspended JSPI
-// computation keeps (PinballCompletion): everything the collector itself scans conservatively. Generated code, inline
+// computation keeps (PinballCompletion): everything the collector itself scans conservatively, but for what threads of
+// Python's that are parked have no room for on their stacks, which refers to cells (Threads::gatherConservativeRoots()). Generated code, inline
 // caches and profiles hold offsets and cells, suspended generators hold JSValues, compiler threads are parked at a
 // safepoint while cells move, the collector is not running. A cell of a candidate block that any such word points into,
 // or up to sizeof(IndexingHeader) past (the butterfly pointer of an object without indexed storage is that far beyond the
