@@ -1045,7 +1045,7 @@ void Heap::endMarking()
     size_t sizeMarked = bytesMarked + m_extraMemorySize;
     size_t reachableSizeMarked = *std::exchange(m_sizeMarkedWhenAllThatIsReachableWas, std::nullopt);
     m_sizeKeptForFinalizers = sizeMarked - reachableSizeMarked;
-    m_sizeWaitingForFinalizersIndefinitely = std::exchange(m_sizeMarkedWhenWhatWaitsIndefinitelyWas, std::nullopt).value_or(reachableSizeMarked) - reachableSizeMarked;
+    m_sizeWaitingForFinalizersIndefinitely = *std::exchange(m_sizeMarkedWhenWhatWaitsIndefinitelyWas, std::nullopt) - reachableSizeMarked;
     updateOldGenerationCellBytes(bytesMarked);
 
     m_objectSpace.endMarking();
