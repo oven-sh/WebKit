@@ -315,7 +315,7 @@ void didRefuseToEnter(Interpreter* current)
     static std::atomic<bool> hasToldOfOther;
     static std::atomic<bool> hasTold;
     if (runsCForAnotherInterpreter(*current))
-        tellOnce(hasToldOfOther, "Python: a function of the C API was called for an interpreter that the C API does not serve (it serves the first of the process); it fails, and nothing changes for the interpreter that it serves\n");
+        tellOnce(hasToldOfOther, "Python: a function of the C API was called for an interpreter that the C API does not serve (it serves the first of the process); it fails\n");
     else
         tellOnce(hasTold, "Python: a function of the C API was called by a thread that does not hold the GIL; it fails\n");
 }

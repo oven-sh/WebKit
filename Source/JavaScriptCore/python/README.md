@@ -1431,7 +1431,7 @@ whole value, 0.0 and nan are cells, and differ as there). These are the rules of
 `Py_INCREF` and `Py_DECREF` of such a value do nothing, and its `Py_REFCNT()` never changes.
 
 **References are counted in a table**, cell -> how many C owns (`capi/CApiCounts.h`). A function that returns a new reference adds one, `Py_DECREF` and a function that
-steals one take one away, and with the last the entry goes. Nothing else happens then: an object dies when a collection finds that nothing refers to it, as everywhere here.
+steals one take one away, and with the last the entry goes (as long as anything is let go of: see below). Nothing else happens then: an object dies when a collection finds that nothing refers to it, as everywhere here.
 What is not a cell is not counted, nor are the types with symbols. `Py_REFCNT()` is the count and two more, for whoever lent C the reference it asks with and for whatever else
 refers to the object: nobody knows how many do. It rises and falls by one as C takes and gives back, and it is never 1, which would tell C that nobody else can see the object,
 not even for an object that C has just made: code that changes in place what it alone owns takes its other way.

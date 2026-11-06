@@ -15,7 +15,7 @@ namespace CApi {
 // How many references C owns, for each cell of which it owns any.
 //
 // A function that returns a new reference adds one, Py_DECREF and a function that steals a reference take one away, and with the last one the
-// entry goes. Nothing else happens then: the object lives on if the program refers to it, and a collection finds out if not.
+// entry goes (as long as anything is let go of: see remove()). Nothing else happens then: the object lives on if the program refers to it, and a collection finds out if not.
 //
 // WHEN A COLLECTION HAS MARKED ALL IT WILL, EVERY KEY OF THE TABLE IS MARKED (markWhatCHolds(), asserted in didFinishMarking()). So no
 // key is the address of a cell that has been freed, whatever an extension does or fails to do.
