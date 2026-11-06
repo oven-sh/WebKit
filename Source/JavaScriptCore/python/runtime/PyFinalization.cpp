@@ -217,6 +217,8 @@ static bool hasFinalizerOfProgram(Runtime& rt, JSCell* cell)
 bool Runtime::keepUnreachableObjectsToFinalize(SlotVisitor& visitor, StepOfKeeping step)
 {
     Locker locker { m_finalizationLock };
+    if (step == StepOfKeeping::WhatObserversKeep)
+        return m_markingObserver && m_markingObserver->didFinishMarking(visitor);
     // This is called again and again until it finds no more, and in a collection that the engine began by itself the program may
     // run in between, while what this has kept is marked. So each time the lists are left as the program may find them: whatever is
     // registered and not queued is in one of them, and there is no hole.
@@ -291,15 +293,12 @@ bool Runtime::keepUnreachableObjectsToFinalize(SlotVisitor& visitor, StepOfKeepi
         if (finalizersAreLeft && candidates.isEmpty())
             return true;
     }
-    auto finish = [&] {
-        return m_markingObserver && m_markingObserver->didFinishMarking(visitor);
-    };
     bool wasAskedFor = m_collectionIsWaitedFor;
     bool wantsGarbage = wasAskedFor && m_markingObserver && m_markingObserver->wantsGarbage();
     // That takes time for every dead cell, which at exit is every cell there is.
     bool looksAtAllThatDied = wasAskedFor && (wantsGarbage || finalizersOfProgram > 1);
     if (candidates.isEmpty() && !wantsGarbage)
-        return finish();
+        return false;
 
     // An object is finalized before what it refers to.
     Vector<PyWeakRef*> weakRefs;
@@ -405,9 +404,7 @@ bool Runtime::keepUnreachableObjectsToFinalize(SlotVisitor& visitor, StepOfKeepi
         m_markingObserver->didFindGarbage(order.garbage.span(), order.cellsLookedAt, toKeep);
     for (JSCell* cell : toKeep)
         visitor.appendUnbarriered(cell);
-    if (candidates.isEmpty() && toKeep.isEmpty())
-        return finish();
-    return true;
+    return !candidates.isEmpty() || !toKeep.isEmpty();
 }
 
 // Dead or alive.

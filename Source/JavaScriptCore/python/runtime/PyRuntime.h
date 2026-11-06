@@ -700,7 +700,7 @@ public:
     void registerFinalizableLate(const MarkedArgumentBuffer&);
     // For the collector, with the world stopped, once all that is reachable is marked. True: it marked something. There may be several runtimes in a heap, and what one of them keeps may lead to what is
     // another's. So each step is taken by all of them, again and again until none has marked anything, before any takes the next (Heap::keepUnreachablePythonObjectsToFinalize()).
-    enum class StepOfKeeping : uint8_t { QueuesThatStandStill, OtherQueues, WhatHasDied };
+    enum class StepOfKeeping : uint8_t { QueuesThatStandStill, OtherQueues, WhatHasDied, WhatObserversKeep };
     bool keepUnreachableObjectsToFinalize(SlotVisitor&, StepOfKeeping);
     // When none has anything left to keep: the collection will mark no more. Once for each collection.
     void didMarkAll(SlotVisitor&);
@@ -751,7 +751,7 @@ public:
     class MarkingObserver {
     public:
         virtual ~MarkingObserver() = default;
-        // With the world stopped, when a collection has marked all that it will.
+        // With the world stopped, when a collection has marked all that it will: no runtime of the heap has anything left to keep.
         // True: it has marked something itself, so there is more to mark. It is told again when that is done.
         virtual bool didFinishMarking(SlotVisitor&) { return false; }
         // In a collection that was asked for, with the world stopped, before any object is kept for its finalizer: whether it

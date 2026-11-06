@@ -851,7 +851,7 @@ bool Heap::keepUnreachablePythonObjectsToFinalize(SlotVisitor& visitor)
 {
     SetRootMarkReasonScope rootScope(visitor, RootMarkReason::KeptForFinalizers);
     using Step = Python::Runtime::StepOfKeeping;
-    for (Step step : { Step::QueuesThatStandStill, Step::OtherQueues, Step::WhatHasDied }) {
+    for (Step step : { Step::QueuesThatStandStill, Step::OtherQueues, Step::WhatHasDied, Step::WhatObserversKeep }) {
         bool keptSomething = false;
         for (auto* runtime : m_pythonRuntimes)
             keptSomething |= runtime->keepUnreachableObjectsToFinalize(visitor, step);
