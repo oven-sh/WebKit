@@ -851,11 +851,11 @@ void CodeMonitor::findPointsWithoutTellingTheCollector(bool everyInstruction)
             }
             break;
         case op_py_prepare_construct:
-            point.kinds |= Point::construct;
+            point.kinds |= Point::whileCallsAreToldOf;
             break;
         case op_py_runtime:
             if (isLoadOfSuperAttribute(static_cast<RuntimeFunction>(instructions.at(item.offset)->as<OpPyRuntime>().m_function)))
-                point.kinds |= bit(Event::Call);
+                point.kinds |= bit(Event::Call) | Point::whileCallsAreToldOf;
             break;
         case op_py_send:
             point.kinds |= bit(Event::StopIteration);
@@ -1016,7 +1016,7 @@ uint8_t CodeMonitor::toolsWantedAt(Point& point)
     }
     if (point.kinds & bit(Event::PyResume))
         wanted |= tools(Event::PyThrow);
-    if (point.kinds & Point::construct)
+    if (point.kinds & Point::whileCallsAreToldOf)
         wanted |= tools(Event::Call);
     if (point.kinds & Point::forLoop)
         wanted |= tools(Event::Raise);
@@ -2149,11 +2149,13 @@ NEVER_INLINE Monitoring::Outcome Monitoring::handle(JSGlobalObject* globalObject
         return runIt;
     }
 
-    // While calls are told of, `super` is called like anything else, as in CPython.
+    // While calls are told of, `super` is called like anything else, as in CPython, and what it finds is bound and called as it is. Without a tool a function is
+    // called with the instance in front of the arguments, by a call of its own. So it is while any call in the code is told of, not only this one: a tool that
+    // has answered DISABLE to this one and to the call of what was found would be told of the other call.
     case op_py_runtime: {
-        uint8_t tools = kinds & bit(Event::Call) ? wanted(Event::Call) : 0;
-        if (!tools)
+        if (!(kinds & bit(Event::Call)) || !monitor.tools(Event::Call))
             return runIt;
+        uint8_t tools = wanted(Event::Call);
         auto bytecode = pc->as<OpPyRuntime>();
         auto function = static_cast<RuntimeFunction>(bytecode.m_function);
         auto operand = [&](int index) -> Register& { return callFrame->uncheckedR(VirtualRegister(bytecode.m_argv.offset() - index)); };
@@ -2176,14 +2178,8 @@ NEVER_INLINE Monitoring::Outcome Monitoring::handle(JSGlobalObject* globalObject
             return threw;
         JSValue attribute = getAttr(globalObject, made, asString(operand(3).jsValue()));
         RETURN_IF_EXCEPTION(scope, threw);
-        if (function == RuntimeFunction::LoadSuperMethod || function == RuntimeFunction::LoadZeroSuperMethod) {
-            // The function and its first argument, as without a tool. There is a call for that and one for anything else, and a tool
-            // that has answered DISABLE to one of the two is not to be told of the other when it is no longer told of this.
-            auto* method = PyMethod::tryFrom(attribute);
-            operand(2) = method ? method->self() : JSValue();
-            if (method)
-                attribute = method->function();
-        }
+        if (function == RuntimeFunction::LoadSuperMethod || function == RuntimeFunction::LoadZeroSuperMethod)
+            operand(2) = JSValue();
         callFrame->uncheckedR(bytecode.m_dst) = attribute;
         return { next(), goOn };
     }

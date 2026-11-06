@@ -94,7 +94,7 @@ public:
 
     // A place where something may happen that tools can ask to be told of.
     struct Point {
-        static constexpr uint16_t construct = 1 << 15; // op_py_prepare_construct: see Monitoring::handle().
+        static constexpr uint16_t whileCallsAreToldOf = 1 << 15; // It goes another way while any call in the code is told of: op_py_prepare_construct, super().m(). See Monitoring::handle().
         static constexpr uint16_t forLoop = 1 << 14; // op_py_for_iter
         // A branch after which, if it does not jump, CPython has something more to do on the same line, which here the instruction has
         // done: a `for` loop stores the item, `except E:` drops the exception. That is where it is said to go on.
