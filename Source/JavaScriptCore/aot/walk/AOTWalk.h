@@ -669,6 +669,11 @@ public:
             return bound;
         return narrowestReferenceOf(input);
     }
+    struct Binding {
+        uint32_t frame { 0 };
+        ValueID input;
+        Reference previous;
+    };
     Reference referenceBoundTo(ValueID input) const { return referenceBoundIn(m_frames.last(), input); }
     Reference nameLastBoundTo(ValueID input) const { return m_frames.last().lastNameOf(input); }
     ALWAYS_INLINE void bind(ValueID input, Reference reference)
@@ -681,6 +686,36 @@ public:
             frame.valuesBuiltTwice->noteBoundOnWay(input, reference);
         bound = reference;
     }
+    class StandIn {
+        WTF_MAKE_NONCOPYABLE(StandIn);
+    public:
+        StandIn(Walker& walker, ValueID input, Reference reference)
+            : m_walker(walker)
+            , m_kept { static_cast<uint32_t>(walker.m_frames.size() - 1), input, walker.referenceBoundTo(input) }
+        {
+            walker.m_valuesStoodInFor.append(m_kept);
+            walker.bind(input, reference);
+        }
+        ~StandIn()
+        {
+            m_walker.m_valuesStoodInFor.removeLast();
+            if (m_kept.frame + 1 == m_walker.m_frames.size())
+                m_walker.bind(m_kept.input, m_kept.previous);
+        }
+
+    private:
+        Walker& m_walker;
+        Binding m_kept;
+    };
+    Reference nameBehindStandIn(size_t frameIndex, ValueID input, Reference bound) const
+    {
+        for (const Binding& kept : m_valuesStoodInFor) {
+            if (kept.frame == frameIndex && kept.input == input) [[unlikely]]
+                return kept.previous;
+        }
+        return bound;
+    }
+    bool standsInForValueOfFrame() const { return m_valuesStoodInFor.containsIf([&](const Binding& kept) { return kept.frame + 1 == m_frames.size(); }); }
     ALWAYS_INLINE TypeID typeOf(Reference reference) const
     {
         if (hasTextsInStringBuilders()) [[unlikely]]
@@ -1593,12 +1628,6 @@ private:
         Frame* m_last { nullptr };
     };
 
-    struct Binding {
-        uint32_t frame { 0 };
-        ValueID input;
-        Reference previous;
-    };
-
     void beginUnit(CodeUnit);
     bool walkBody();
     bool walkBodyBehindItsParameters();
@@ -2465,6 +2494,7 @@ private:
     uint32_t m_firstFreeOpenEdge { noOpenEdge };
     Vector<PendingBlock>& m_pendingBlocks;
     Vector<Binding>& m_bindings;
+    Vector<Binding, 2> m_valuesStoodInFor;
     uint32_t m_numberOfClosedArms { 0 };
     ShortList<TypeID, 16> m_operandTypes;
     Vector<uint32_t, 16> m_sharedConstants;

@@ -835,7 +835,7 @@ void StateOfLinkReach::showExportsThatHostReadsOff(const Entry& entry, HostWith 
             VariableID shown = m_program.variableBehindExport(entry.module, index);
             if (shown && host == HostWith::Looks)
                 m_flow.note(LinkFlow::Note::ExportIsShown, shown.index());
-            else if (shown)
+            else if (shown && read.exportName != m_program.stringOf(BuiltinNames::then))
                 m_flow.showExport(entry.module, index);
             else
                 escapeExportsOf(entry.module);

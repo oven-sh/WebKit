@@ -311,7 +311,7 @@ void KnownThreading::walkBlockOnWays(std::span<const uint32_t> places, uint32_t 
 
 bool KnownThreading::armsMayWalkEndOfBlockFrom(uint32_t begin)
 {
-    return frame().block == m_block.id() && frame().endOfStretch == m_block.numberOfValues() && letArmsWalkEndOfBlockFrom(begin);
+    return !m_walker.standsInForValueOfFrame() && frame().block == m_block.id() && frame().endOfStretch == m_block.numberOfValues() && letArmsWalkEndOfBlockFrom(begin);
 }
 
 bool KnownThreading::endArmWithBranch()
@@ -808,7 +808,7 @@ bool Walker::armsTakeBranchForProofOf(BlockID inputBlock, uint32_t begin, uint32
     bool mayBeTaken = goesByOneOperand(kind) || kind == TerminatorKind::Jump || returnsFromCopy;
     if ((value && !value.isValue()) || !mayBeTaken || frame.endOfStretch != block.numberOfValues() || block.numberOfValues() - end > mostOperationsOfJoinWalkedForEachWay)
         return false;
-    if (hasTextsInStringBuilders())
+    if (hasTextsInStringBuilders() || standsInForValueOfFrame())
         return false;
     if (!goesByOneOperand(kind))
         value = { };

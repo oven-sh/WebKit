@@ -39,7 +39,7 @@ void Walker::noteStateAtThrowForHandler(std::span<const Reference> thrown)
             letLeave(state, reference);
     }
     for (ValueID argument : target.arguments()) {
-        if (Reference reference = referenceBoundIn(frame, argument))
+        if (Reference reference = nameBehindStandIn(frameIndex, argument, referenceBoundIn(frame, argument)))
             letLeave(state, reference);
     }
 }

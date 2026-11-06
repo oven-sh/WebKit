@@ -49,12 +49,9 @@ static void buildAccessUnderKeyInNumberKeys(Walker& walker, const BodyValue& val
 {
     if (walker.isUnreachable())
         return;
-    ValueID writtenKey = value.propertyOperand();
-    Reference bound = walker.referenceBoundTo(writtenKey);
-    walker.bind(writtenKey, key);
+    Walker::StandIn keyInPlaceOfWritten(walker, value.propertyOperand(), key);
     if (!buildTypedElementAccess(walker, value))
         walker.copy(value);
-    walker.bind(writtenKey, bound);
 }
 
 static bool keyIsBoundToRemainderInNumberKeys(Walker& walker, ValueID writtenKey)
@@ -78,6 +75,8 @@ static WayInNumberForms endOfAccessInNumberKeys(Walker& walker, const BodyValue&
 
 static bool buildAccessUnderWholeRemainderInNumberKeys(Walker& walker, const BodyValue& value, const InputsOfTypedOperation& inputs)
 {
+    if (value.opcode() == Opcode::ElemSet && value.valueOperand() == value.propertyOperand())
+        return false;
     std::optional<WholeRemainder> remainder = findWholeRemainder(walker, value.propertyOperand(), inputs);
     if (!remainder || (remainder->mayBeNaN && !walker.opensGuesses()) || !keyIsBoundToRemainderInNumberKeys(walker, value.propertyOperand()))
         return false;

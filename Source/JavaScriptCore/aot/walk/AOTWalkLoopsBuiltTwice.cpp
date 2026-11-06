@@ -40,7 +40,7 @@ void Walker::takeNamesOntoEdge(OpenEdge& edge, size_t frameIndex)
         return;
     edge.names = frame.valuesBuiltTwice->namesOfWay;
     for (ValueID value : frame.valuesBuiltTwice->boundOnWay) {
-        if (Reference name = frame.references[value.index()]; name && frame.valuesBuiltTwice->contains(value))
+        if (Reference name = nameBehindStandIn(frameIndex, value, frame.references[value.index()]); name && frame.valuesBuiltTwice->contains(value))
             edge.names.setNameIn(frame.valuesBuiltTwice->slotOf(value), name);
     }
 }

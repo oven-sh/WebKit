@@ -154,6 +154,7 @@ private:
     std::optional<uint64_t> elementsOfObjectHandedToBuiltin(JSObject*) const;
     JSValue noteMadeByBuiltin(JSValue);
     bool mayMatchWithoutEnd(RegExp*);
+    bool isAsRealmMadeIt(RegExpObject* pattern) { return pattern->structure() == m_realm->regExpStructure() && pattern->getLastIndex().isNumber() && m_realm.get()->regExpPrimordialPropertiesWatchpointSet().isStillValid(); }
     void noteThrown(Exception*);
     bool hasThrown(TopExceptionScope&);
     JSArray* newList();
@@ -835,7 +836,7 @@ bool RehearsalOfRegExpTexts::payForBuiltin(JSValue thisValue, std::span<const JS
         else if (auto* list = dynamicDowncast<JSArray>(value))
             handed += list->length();
         else if (auto* pattern = dynamicDowncast<RegExpObject>(value)) {
-            if (mayMatchWithoutEnd(pattern->regExp()))
+            if (!isAsRealmMadeIt(pattern) || mayMatchWithoutEnd(pattern->regExp()))
                 return false;
             mayMatch = true;
         } else if (auto* view = dynamicDowncast<JSArrayBufferView>(value))

@@ -82,7 +82,7 @@ bool Walker::jumpToHandlerInPlaceOfThrow(const BodyTerminator&)
     Vector<Reference, 4> arguments;
     Vector<TypeID, 4> types;
     for (ValueID argument : target.arguments()) {
-        Reference reference = referenceBoundIn(m_frames[frameIndex], argument);
+        Reference reference = nameBehindStandIn(frameIndex, argument, referenceBoundIn(m_frames[frameIndex], argument));
         TypeID type = ownTypeOf(reference);
         if (!type) {
             fail("a handler edge hands on a value that nothing was built for"_s);

@@ -209,9 +209,8 @@ bool buildAccessUnderIndexOfForInOfItsOpcodes(Walker& walker, const BodyValue& a
     const BodyIndex& body = walker.currentBodyIndex();
     BodyBlock block = body.block(body.blockOf(access.id()));
     uint32_t place = access.id().index() - block.firstValue().index();
-    walker.bind(property, index);
+    Walker::StandIn positionInPlaceOfName(walker, property, index);
     walker.walkStretch(block.id(), place, place + 1);
-    walker.bind(property, bound);
     return true;
 }
 
