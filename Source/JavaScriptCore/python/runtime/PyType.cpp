@@ -98,6 +98,7 @@ void PyType::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_subclasses);
     visitor.append(thisObject->m_instanceStructure);
     visitor.append(thisObject->m_jsPrototype);
+    visitor.append(thisObject->m_extension);
     visitor.appendValues(thisObject->m_specials.data(), numberOfSpecials);
 }
 

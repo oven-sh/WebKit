@@ -6,6 +6,7 @@
 #include "config.h"
 #include "PyRuntime.h"
 
+#include "CApiHooks.h"
 #include "DeferTermination.h"
 #include "JSCInlines.h"
 #include "MarkedSpaceInlines.h"
@@ -552,6 +553,8 @@ void Runtime::reconcileWeakReferencesAtGCEnd()
 {
     scheduledTasks.removeUnmarked(m_vm.heap);
     m_typeLookupCache->removeUnmarked(m_vm.heap);
+    if (CApi::belongsTo(*this))
+        CApi::didFinishMarking(m_vm.heap);
     // Each thread is told once of all that queueWeakRefCallback() has left for it: to tell may be a system call.
     Locker locker { m_finalizationLock };
     for (auto& owed : m_callsOwed) {

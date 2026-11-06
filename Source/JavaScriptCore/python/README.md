@@ -1325,6 +1325,47 @@ address, and finalizers call it by way of the library (they close what it opened
 which CPython lets go after the program's own at exit; here all that dies is found at once. So a callback that is found dead is kept while there is
 a finalizer left to run, and comes up again in the next collection.
 
+## The C API
+
+`capi/` is CPython's C API for extension modules, in the one form in which C sees the layout of no object: **abi3t** (PEP 803). `PyObject`,
+`PyVarObject`, `PyTypeObject` and `PyModuleDef` are incomplete types there, `Py_INCREF`, `Py_TYPE` and `Py_SIZE` are calls, and what C knows of an object is its
+address. Nothing in `capi/` is CPython's text: what a function does is taken from the documentation, the list of the stable ABI, and from running CPython. The
+functions are exported from the executable. (So far there is what it takes to hold objects, and nothing calls it.)
+
+**A `PyObject*` is the 64 bits of the `JSValue`**, and NULL the empty value (`toJS()`, `toC()` in `capi/CApi.h`). The address of a cell stands for the cell. None, the
+bools, and the ints and floats that are no cells are addresses at which there is no memory, and C cannot tell. So `==` in C is `is`, nothing is allocated or looked
+up for a value to cross, and a reference that is borrowed from a container is the value that the container holds, good for as long as it holds it: CPython's rule.
+Two kinds of value are spelled otherwise for C than in the heap. A built-in type that C names by a symbol (`&PyLong_Type`) has an address that was fixed when the
+executable was linked: these symbols lie in one section, a pointer that comes in is tested for that range, and a type that goes out is asked for its
+symbol (`PyType::extension()`). And `null`, which only JS makes and which is None too, goes out as `undefined`, which is what C compares with.
+`PyExc_*` are variables and hold the addresses of the cells.
+
+**References are counted in a table**, cell -> how many C owns (`capi/CApiCounts.h`). A function that returns a new reference adds one, `Py_DECREF` and a function that
+steals one take one away, and with the last the entry goes. Nothing else happens then: an object dies when a collection finds that nothing refers to it, as everywhere here.
+What is not a cell is not counted, nor are the types with symbols. `Py_REFCNT()` is the count and one more, for whatever else refers to the object: never 1,
+which would tell C that nobody else can see it.
+
+- **When a collection has marked all it will, every key of the table is marked.** No key is ever the address of a freed cell, whatever an extension does or
+  fails to do. That is asserted when marking ends.
+- What C holds is reachable as what a global variable holds is, and the collector learns of it as of an embedder's other roots: by a marking constraint
+  (`Heap::addMarkingConstraint()`, which Bun uses for its own). JSC evaluates constraints with the world stopped.
+- The program changes the table with the GIL, and the collector reads it only in the constraint. The thread that runs the program is never stopped from outside: it stops
+  where it allocates in the heap or gives up its access to it, and no operation on the table does either. So there is no lock, and no barrier. A thread
+  without the GIL counts as stopped, so `Py_INCREF` and `Py_DECREF` look who calls: in CPython such a call spoils a count, here it would spoil the table. It is refused: the
+  count stays as it was, with a line on stderr the first time.
+
+**The error indicator is not the VM's pending exception.** C goes on calling the API while an exception is set, and the functions of the runtime expect none to be pending
+when they are entered. So the indicator is a reference of its own, one for each thread, counted like C's other references and kept alive by that. A function
+of the API that finds the runtime to have raised moves the exception there (`Entry::failed()`); whoever has called C throws what is there. What ends the
+program (a termination) is never put in the indicator: it stays pending, and while it does every function of the API fails at once.
+
+**One interpreter of a process has the API**: the first `Runtime` that asks (`CApi::ensure()`). The functions are not told for whom they are called, and a symbol stands for one
+cell. In any other, what needs the API is an `ImportError`; and when that one has ended nobody has the API any more, for what was loaded has pointers into its heap.
+
+**Quiet and noisy.** Every function that C calls says in its first line whether it can run code of the program or put a reference where the program finds
+it (`CAPI_ENTER()`, `CAPI_NOISY()`) or not (`CAPI_QUIET()`); `tools/check_capi.py` looks. A function is noisy unless it is known to be quiet. Nothing counts the noisy
+calls yet: that is for the order in which instances of extension types are destroyed.
+
 ## decimal
 
 `_decimal` is `runtime/PyDecimal*.cpp`, and `Lib/decimal.py` takes it in place of `Lib/_pydecimal.py`, as in CPython. It is written from the

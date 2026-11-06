@@ -805,6 +805,9 @@ profiler/ProfilerOriginStack.cpp
 profiler/ProfilerProfiledBytecodes.cpp
 profiler/ProfilerTZoneImpls.cpp
 
+python/capi/CApiErrors.cpp
+python/capi/CApiInterpreter.cpp
+python/capi/CApiReferences.cpp
 python/compiler/PyCompiler.cpp
 python/compiler/PyCompilerDefinitions.cpp
 python/compiler/PyCompilerExpressions.cpp

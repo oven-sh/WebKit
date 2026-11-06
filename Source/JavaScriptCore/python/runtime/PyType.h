@@ -284,6 +284,9 @@ public:
     // Type.prototype in JS: see PyJSClass.h. Null: nobody has asked for it.
     JSObject* jsPrototype() const { return m_jsPrototype.get(); }
     void setJSPrototype(VM& vm, JSObject* prototype) { m_jsPrototype.set(vm, this, prototype); }
+    // What the C API knows about the type: a CApi::TypeExtension (../capi/CApi.h). Null: nothing.
+    JSCell* extension() const { return m_extension.get(); }
+    void setExtension(VM& vm, JSCell* extension) { m_extension.set(vm, this, extension); }
 
     // The classes derived directly from this one, oldest first. It does not keep them alive.
     void appendSubclassesTo(MarkedArgumentBuffer&) const;
@@ -327,6 +330,7 @@ private:
     WriteBarrier<Unknown> m_subclasses; // A list, or empty: of built-in types, of weak references to classes, and of tuples of one such for dependents.
     WriteBarrier<Structure> m_instanceStructure;
     WriteBarrier<JSObject> m_jsPrototype;
+    WriteBarrier<JSCell> m_extension;
     TypeLookupCache* m_lookupCache { nullptr }; // The runtime's.
     // Another after every change, like the version. But that is of 32 bits, for the instructions that remember it, so there are not enough for
     // every change of every type. Of these there are.

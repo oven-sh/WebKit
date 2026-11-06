@@ -7,6 +7,7 @@
 #include "PyRuntime.h"
 
 #include "ArrayPrototype.h"
+#include "CApiHooks.h"
 #include "DeferTermination.h"
 #include "FunctionPrototype.h"
 #include "JSAsyncFunctionGenerator.h"
@@ -89,6 +90,7 @@ Runtime::Runtime(JSGlobalObject* globalObject)
 Runtime::~Runtime()
 {
     detachSignals(*this);
+    CApi::runtimeIsEnding(*this);
     m_vm.heap.removePythonRuntime(this);
 }
 

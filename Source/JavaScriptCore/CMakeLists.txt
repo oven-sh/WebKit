@@ -45,6 +45,7 @@ set(JavaScriptCore_PRIVATE_INCLUDE_DIRECTORIES
     "${JAVASCRIPTCORE_DIR}/parser"
     "${JAVASCRIPTCORE_DIR}/profiler"
     "${JAVASCRIPTCORE_DIR}/python"
+    "${JAVASCRIPTCORE_DIR}/python/capi"
     "${JAVASCRIPTCORE_DIR}/python/compiler"
     "${JAVASCRIPTCORE_DIR}/python/parser"
     "${JAVASCRIPTCORE_DIR}/python/runtime"
