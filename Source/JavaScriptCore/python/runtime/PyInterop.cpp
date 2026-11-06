@@ -987,6 +987,7 @@ static JSValue jsObjectContains(JSGlobalObject* globalObject, JSValue self, JSVa
     Identifier name;
     if (failed(scope, propertyKeyForItem(globalObject, key, name))) {
         takePendingException(globalObject);
+        RETURN_IF_EXCEPTION(scope, { });
         return jsBoolean(false);
     }
     bool has = key.isSymbol() ? asObject(self)->hasProperty(globalObject, name) : asObject(self)->hasOwnProperty(globalObject, name);

@@ -1011,7 +1011,7 @@ static bool moduleIsInitializing(JSGlobalObject* globalObject, JSValue module)
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(getVM(globalObject));
     bool result = specIsInitializing(globalObject, object->dict()->get(runtime(globalObject).names.dSpec()));
     if (scope.exception()) [[unlikely]] {
-        takePendingException(globalObject);
+        dropPendingException(globalObject, scope);
         return false;
     }
     return result;

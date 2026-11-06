@@ -796,7 +796,7 @@ static JSValue itertoolsISliceNew(JSGlobalObject* globalObject, JSValue cls, con
     auto convert = [&](JSValue value) -> int64_t {
         int64_t result = toSsize(globalObject, value, rt.OverflowError());
         if (scope.exception()) {
-            takePendingException(globalObject);
+            dropPendingException(globalObject, scope);
             return -1;
         }
         return result;

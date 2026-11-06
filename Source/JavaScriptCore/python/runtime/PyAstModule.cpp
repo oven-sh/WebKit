@@ -658,11 +658,11 @@ AstState::AstState(JSGlobalObject* globalObject)
     RETURN_IF_EXCEPTION(scope, );
     JSValue table = hiddenField(globalObject, base, astStateField);
     if (!table) [[unlikely]] {
-        m_table = astMakeClasses(globalObject, base);
+        PyTuple* made = astMakeClasses(globalObject, base);
         RETURN_IF_EXCEPTION(scope, );
-        scope.release();
-        if (m_table)
-            setHiddenField(globalObject, base, astStateField, m_table);
+        setHiddenField(globalObject, base, astStateField, made);
+        RETURN_IF_EXCEPTION(scope, );
+        m_table = made;
         return;
     }
     m_table = uncheckedDowncast<PyTuple>(table.asCell());

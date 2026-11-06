@@ -1198,8 +1198,10 @@ static JSValue floatNew(JSGlobalObject* globalObject, JSValue cls, const CallArg
             isText = !sourceType->lookup(Special::Float) && !sourceType->lookup(Special::Index);
         }
         std::span<const uint8_t> bytes;
-        if (isText && !isStr(source))
+        if (isText && !isStr(source)) {
             isText = getBytesOfNumber(globalObject, source, bytes);
+            RETURN_IF_EXCEPTION(scope, { });
+        }
         if (isText) {
             String text;
             if (isStr(source)) {

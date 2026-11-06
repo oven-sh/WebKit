@@ -773,14 +773,18 @@ static JSValue builtinInput(JSGlobalObject* globalObject, JSValue prompt)
         return { };
 
     callMethod(globalObject, errors, rt.names.flush());
-    if (scope.exception())
+    if (scope.exception()) {
         takePendingException(globalObject);
+        RETURN_IF_EXCEPTION(scope, { });
+    }
     bool editsLines = rt.modules()->get(internString(vm, "readline"_s)) && isTerminal(globalObject, input, STDIN_FILENO) && isTerminal(globalObject, output, STDOUT_FILENO);
     RETURN_IF_EXCEPTION(scope, { });
     if (editsLines) {
         callMethod(globalObject, output, rt.names.flush());
-        if (scope.exception())
+        if (scope.exception()) {
             takePendingException(globalObject);
+            RETURN_IF_EXCEPTION(scope, { });
+        }
         JSString* text = prompt ? str(globalObject, prompt) : jsEmptyString(vm);
         RETURN_IF_EXCEPTION(scope, { });
         JSValue line = readLineWithEditor(globalObject, text);
@@ -798,8 +802,10 @@ static JSValue builtinInput(JSGlobalObject* globalObject, JSValue prompt)
         RETURN_IF_EXCEPTION(scope, { });
     }
     callMethod(globalObject, output, rt.names.flush());
-    if (scope.exception())
+    if (scope.exception()) {
         takePendingException(globalObject);
+        RETURN_IF_EXCEPTION(scope, { });
+    }
 
     JSValue line = callMethod(globalObject, input, rt.names.readline());
     RETURN_IF_EXCEPTION(scope, { });

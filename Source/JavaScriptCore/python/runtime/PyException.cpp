@@ -190,7 +190,10 @@ static PyException* osErrorFromThrownValue(JSGlobalObject* globalObject, JSObjec
     if (!errorNumber)
         return nullptr;
     JSValue path = property("path"_s);
-    JSValue destination = property("dest"_s);
+    JSValue destination = scope.exception() ? JSValue() : property("dest"_s);
+    // The host has ended the look.
+    if (scope.exception()) [[unlikely]]
+        return nullptr;
     PyType* base = osErrorSubclassFor(rt, *errorNumber);
     bool hasPath = path && path.isString();
     bool hasDestination = hasPath && destination && destination.isString();
@@ -235,6 +238,9 @@ JSValue exceptionFromThrownValue(JSGlobalObject* globalObject, JSValue thrown)
                 dropPendingException(globalObject, scope);
                 exception = nullptr;
                 message = "<exception>"_s;
+                // If it is the host that has ended the look, and the program goes on, the next look is a new one.
+                if (vm.hasPendingTermination()) [[unlikely]]
+                    remembers = false;
             }
         }
         if (!exception) {

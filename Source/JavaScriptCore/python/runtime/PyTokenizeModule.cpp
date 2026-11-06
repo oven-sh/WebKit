@@ -267,8 +267,7 @@ private:
             RETURN_IF_EXCEPTION(scope, void());
             auto set = [&](ASCIILiteral name, JSValue value) {
                 setAttr(m_globalObject, exception, internString(m_vm, name), value);
-                if (scope.exception())
-                    takePendingException(m_globalObject);
+                dropPendingException(m_globalObject, scope);
             };
             set("lineno"_s, jsNumber(currentLine));
             set("offset"_s, jsNumber(bufferEnd - bufferStart + (hasImplicitNewline ? 1 : 0)));

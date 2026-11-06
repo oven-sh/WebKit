@@ -239,8 +239,7 @@ JSValue raiseSyntaxErrorInfo(JSGlobalObject* globalObject, const SyntaxErrorInfo
         RETURN_IF_EXCEPTION(scope, { });
         auto set = [&](ASCIILiteral name, JSValue value) {
             setAttr(globalObject, exception, internString(vm, name), value);
-            if (scope.exception())
-                takePendingException(globalObject);
+            dropPendingException(globalObject, scope);
         };
         set("lineno"_s, jsNumber(info.lineno));
         set("offset"_s, jsNumber(info.offset));

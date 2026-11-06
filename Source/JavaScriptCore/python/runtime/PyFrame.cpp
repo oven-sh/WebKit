@@ -1553,6 +1553,7 @@ static JSValue proxyIOr(JSGlobalObject* globalObject, JSValue self, JSValue othe
     if (isMerged)
         return self;
     takePendingException(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
     return runtime(globalObject).notImplemented();
 }
 

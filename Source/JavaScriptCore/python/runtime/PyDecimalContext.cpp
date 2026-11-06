@@ -271,6 +271,7 @@ static JSValue signalDictCompare(JSGlobalObject* globalObject, JSValue self, JSV
             if (kind == DictOfSignals::Raised)
                 return { };
             takePendingException(globalObject);
+            RETURN_IF_EXCEPTION(scope, { });
             return rt.notImplemented();
         }
         return jsBoolean((own == otherConditions) == (op == CompareOperator::Eq));

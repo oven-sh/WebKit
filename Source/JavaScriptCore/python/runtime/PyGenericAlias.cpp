@@ -857,6 +857,7 @@ private:
         if (scope.exception()) {
             // It cannot be hashed, so it is looked for the slow way.
             takePendingException(m_globalObject);
+            RETURN_IF_EXCEPTION(scope, false);
             if (!m_unhashable) {
                 m_unhashable = newList(m_globalObject);
                 RETURN_IF_EXCEPTION(scope, false);

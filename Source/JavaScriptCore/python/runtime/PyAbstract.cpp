@@ -2164,8 +2164,11 @@ int64_t length(JSGlobalObject* globalObject, JSValue value)
         switch (cell->type()) {
         case ArrayType:
             return uncheckedDowncast<JSArray>(cell)->length();
-        case StringType:
-            RELEASE_AND_RETURN(scope, strLength(globalObject, uncheckedDowncast<JSString>(cell)));
+        case StringType: {
+            unsigned result = strLength(globalObject, uncheckedDowncast<JSString>(cell));
+            RETURN_IF_EXCEPTION(scope, -1);
+            return result;
+        }
         default:
             break;
         }

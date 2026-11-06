@@ -1065,6 +1065,7 @@ static JSValue bytesCompareMethod(JSGlobalObject* globalObject, JSValue self, JS
     bool selfRunsCode = bytesIsArray(self) && getBufferRunsCode(self);
     if ((selfRunsCode && failed(scope, getBytesLike(globalObject, self, a))) || failed(scope, getBytesLike(globalObject, other, b))) {
         takePendingException(globalObject);
+        RETURN_IF_EXCEPTION(scope, { });
         RELEASE_AND_RETURN(scope, runtime(globalObject).notImplemented());
     }
     if (!selfRunsCode)
@@ -1149,6 +1150,7 @@ static JSValue bytesContains(JSGlobalObject* globalObject, JSValue self, JSValue
         }
         // Whatever went wrong, it may still have bytes to look for.
         takePendingException(globalObject);
+        RETURN_IF_EXCEPTION(scope, { });
     }
     std::span<const uint8_t> needle;
     if (failed(scope, getBytesLike(globalObject, item, needle)))

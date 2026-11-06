@@ -767,7 +767,13 @@ static JSValue strStrMethod(JSGlobalObject*, JSValue self) { return strValue(sel
 
 static int64_t strHashMethod(JSGlobalObject* globalObject, JSValue self) { return hash(globalObject, strValue(self)); }
 
-static JSValue strLenMethod(JSGlobalObject* globalObject, JSValue self) { return jsNumber(strLength(globalObject, strValue(self))); }
+static JSValue strLenMethod(JSGlobalObject* globalObject, JSValue self)
+{
+    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
+    unsigned length = strLength(globalObject, strValue(self));
+    RETURN_IF_EXCEPTION(scope, { });
+    return jsNumber(length);
+}
 
 JSValue strCompare(JSGlobalObject* globalObject, JSString* a, JSString* b, CompareOperator op)
 {

@@ -1313,8 +1313,10 @@ static JSValue posixSpawnFamily(JSGlobalObject* globalObject, JSValue modeValue,
     PosixStrings environment;
     bool canRun = !failed(scope, posixToFSBytes(globalObject, file, program)) && !failed(scope, posixParseArguments(globalObject, argv, count, arguments))
         && (!env || (posixIsMapping(globalObject, env) && !failed(scope, posixParseEnvironment(globalObject, env, environment))));
-    if (!canRun)
+    if (!canRun) {
         takePendingException(globalObject);
+        RETURN_IF_EXCEPTION(scope, { });
+    }
 
     PosixChildEnvironment sharedEnvironment(globalObject);
 

@@ -57,6 +57,7 @@ struct ProfilerContext {
     int64_t start;
     int64_t timeInCalls;
     ProfilerEntry* entry;
+    bool hasStart { false }; // Not if the host has ended the timer that was asked for it.
 };
 
 struct ProfilerState {
@@ -143,12 +144,14 @@ static int64_t profilerExternalTime(JSGlobalObject* globalObject, JSValue self, 
         }
     }
     if (scope.exception()) {
-        reportUnraisable(globalObject, makeString("Exception ignored while calling _lsprof timer "_s, reprForMessage(globalObject, timer)), { });
+        if (!vm.hasPendingTerminationException()) [[likely]]
+            reportUnraisable(globalObject, makeString("Exception ignored while calling _lsprof timer "_s, reprForMessage(globalObject, timer)), { });
         return 0;
     }
     return result;
 }
 
+// What the timer raises is reported. Only a termination is left pending: the books are kept all the same, and whoever has called stops then.
 static int64_t profilerTime(JSGlobalObject* globalObject, JSValue self)
 {
     if (JSValue timer = PyRecord::from(self)->get(ProfilerTimer)) {
@@ -222,19 +225,25 @@ static void profilerEnterCall(JSGlobalObject* globalObject, JSValue self, const 
     state.contexts.append({ 0, 0, entry });
     size_t index = state.contexts.size() - 1;
     int64_t now = profilerTime(globalObject, self);
-    if (index < state.contexts.size())
+    if (index < state.contexts.size()) {
         state.contexts[index].start = now;
+        state.contexts[index].hasStart = !scope.exception();
+    }
 }
 
 static void profilerStop(JSGlobalObject* globalObject, JSValue self)
 {
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(getVM(globalObject));
     ProfilerState& state = profilerState(self);
-    int64_t now = profilerTime(globalObject, self);
+    // Once the host has ended the timer it is not asked again. A call of which the beginning or the end is not known is counted, with no time
+    // of its own.
+    int64_t now = scope.exception() ? 0 : profilerTime(globalObject, self);
+    bool hasEnd = !scope.exception();
     if (state.contexts.isEmpty())
         return;
     ProfilerContext context = state.contexts.takeLast();
     ProfilerEntry* entry = context.entry;
-    int64_t total = now - context.start;
+    int64_t total = hasEnd && context.hasStart ? now - context.start : context.timeInCalls;
     int64_t inlineTime = total - context.timeInCalls;
     auto count = [&](ProfilerCounts& counts) {
         if (!--counts.recursionLevel)
@@ -284,7 +293,9 @@ static JSValue profilerPyThrow(JSGlobalObject* globalObject, JSValue self, JSVal
 
 static JSValue profilerPyReturn(JSGlobalObject* globalObject, JSValue self, JSValue code, JSValue, JSValue)
 {
+    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
     profilerLeaveCall(globalObject, self, code.isCell() ? code.asCell() : nullptr);
+    RETURN_IF_EXCEPTION(scope, { });
     return jsUndefined();
 }
 
@@ -333,9 +344,12 @@ static JSValue profilerCCall(JSGlobalObject* globalObject, JSValue self, JSValue
 
 static JSValue profilerCReturn(JSGlobalObject* globalObject, JSValue self, JSValue, JSValue, JSValue callable, JSValue first)
 {
+    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
     if (profilerState(self).builtins) {
-        if (auto* native = profilerBuiltin(globalObject, callable, first))
+        if (auto* native = profilerBuiltin(globalObject, callable, first)) {
             profilerLeaveCall(globalObject, self, &native->def());
+            RETURN_IF_EXCEPTION(scope, { });
+        }
     }
     return jsUndefined();
 }
@@ -418,6 +432,7 @@ static JSValue profilerDisable(JSGlobalObject* globalObject, JSValue self)
     // The calls that are still under way end here.
     while (!state.contexts.isEmpty())
         profilerStop(globalObject, self);
+    RETURN_IF_EXCEPTION(scope, { });
     return jsUndefined();
 }
 

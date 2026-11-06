@@ -180,8 +180,7 @@ static void faultAppendFrames(JSGlobalObject* globalObject, StringBuilder& build
         frame = getAttr(globalObject, frame, internString(vm, "f_back"_s));
         EXCEPTION_ASSERT(!!scope.exception() == !frame);
     }
-    if (scope.exception())
-        takePendingException(globalObject);
+    dropPendingException(globalObject, scope);
 }
 
 // Raises nothing.
@@ -293,8 +292,10 @@ static int faultGetDescriptor(JSGlobalObject* globalObject, JSValue& file)
         return -1;
     }
     callMethod(globalObject, file, internString(vm, "flush"_s));
-    if (scope.exception())
+    if (scope.exception()) {
         takePendingException(globalObject);
+        RETURN_IF_EXCEPTION(scope, -1);
+    }
     return static_cast<int>(*fd);
 }
 

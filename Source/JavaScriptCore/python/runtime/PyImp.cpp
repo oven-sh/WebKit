@@ -319,8 +319,10 @@ static JSValue impGetFrozenObject(JSGlobalObject* globalObject, JSValue name, JS
     JSValue code;
     if (!holder.buffer.span().empty()) {
         code = readMarshalled(globalObject, holder.buffer.span());
-        if (failed(scope, code))
+        if (failed(scope, code)) {
             takePendingException(globalObject);
+            RETURN_IF_EXCEPTION(scope, { });
+        }
     }
     if (!code)
         RELEASE_AND_RETURN(scope, raiseFrozenError(globalObject, "Frozen object named "_s, name, " is invalid"_s));

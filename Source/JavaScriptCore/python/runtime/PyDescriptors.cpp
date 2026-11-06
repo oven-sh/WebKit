@@ -327,8 +327,7 @@ void copyAttributesOfWrapped(JSGlobalObject* globalObject, PyWrapperObject* wrap
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     wrapper->setCopiesAttributesLater(false);
     wrapperSetCallable(globalObject, wrapper, wrapper->wrapped());
-    if (scope.exception()) [[unlikely]]
-        takePendingException(globalObject);
+    dropPendingException(globalObject, scope);
 }
 
 JSValue makeStaticMethod(JSGlobalObject* globalObject, JSValue function)
