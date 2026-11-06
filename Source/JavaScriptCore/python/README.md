@@ -1447,9 +1447,10 @@ not even for an object that C has just made: code that changes in place what it 
   nothing that C rightly owns dies under it. The line says so. The counts go on falling, for they are asked about (`Py_REFCNT()`, `PyTuple_SetItem()`): it is the entry that stays when the count has
   come to 0, and a key of the table is what the collector marks.
 - A thread that runs C for another interpreter (`CRunsFor`: its `ctypes` call, a library that it loads or lets go of) is refused as well, with a line of its own, and that is all: it costs
-  the interpreter that has the API nothing. What `ctypes` hands to C there are that interpreter's own objects, and that C takes a reference to one of them says nothing about the
+  the interpreter that has the API nothing (but for the one case at the end of this item). What `ctypes` hands to C there are that interpreter's own objects, and that C takes a reference to one of them says nothing about the
   objects of this one. No function hands such a thread an object of this interpreter. What it can name is what a library that both have loaded keeps in a variable of its own: to share an
-  object between two interpreters in that way is an error in CPython too, and here it is not defended against.
+  object between two interpreters in that way is an error in CPython too, and here it is not defended against. And it can call the code of a callback of this interpreter's, if it has got the
+  address as a number: that gives a reference with its result, as to any C, and this C cannot give it back, so the object is held for ever.
 - A thread of another VM that gets into C in another way (a Worker's JS by `bun:ffi` or N-API, a destructor of a key of pthreads as the Worker's thread ends) is a thread without
   the GIL like any that C has started, and is treated so. It has no objects of its own, so a cell to which it takes a reference can only be one of this interpreter's, got by a variable:
   that is the case which "nothing is let go of" is for. The types, the exceptions, None and the numbers are not counted, whoever asks.

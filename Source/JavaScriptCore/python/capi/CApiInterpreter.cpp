@@ -331,7 +331,7 @@ void refuseToChangeCount(bool isToFall)
     static std::atomic<bool> hasToldOfTaken;
     static std::atomic<bool> hasToldOfGivenBack;
     if (runsCForAnotherInterpreter(*current)) {
-        tellOnce(hasToldOfOther, "Python: Py_INCREF or Py_DECREF was called for an interpreter that the C API does not serve (it serves the first of the process); the count stays as it was, and nothing changes for the interpreter that it serves\n");
+        tellOnce(hasToldOfOther, "Python: Py_INCREF or Py_DECREF was called for an interpreter that the C API does not serve (it serves the first of the process); the count stays as it was\n");
         return;
     }
     if (!isToFall) {
@@ -441,22 +441,24 @@ void giveReference(uint64_t bits)
     retain(interpreter(), std::bit_cast<Handle>(static_cast<uintptr_t>(bits)));
 }
 
-// The caller may be an interpreter of another VM. That one has not got the GIL, and the table is not its to change.
+void giveBackReference(uint64_t bits)
+{
+    release(interpreter(), std::bit_cast<Handle>(static_cast<uintptr_t>(bits)));
+}
+
+// The caller may be another interpreter of the VM. (Not one of another VM: a callback that is called on a thread of another VM's is not run, and returns NULL.)
 void takeOverReference(uint64_t bits)
 {
     Handle handle = std::bit_cast<Handle>(static_cast<uintptr_t>(bits));
     JSCell* cell = countedCell(handle);
     if (!cell)
         return;
-    Interpreter* current = s_interpreter.load(std::memory_order_relaxed);
-    if (!current || !current->lock->currentThreadIsHoldingLock()) [[unlikely]] {
-        refuseToChangeCount(true);
-        return;
-    }
+    Interpreter& current = interpreter();
+    ASSERT(current.vm.currentThreadIsHoldingAPILock());
     // Where the call has ended otherwise than with a result, nobody has looked at the bits. What is in the table is a cell, and lives.
-    if (current->counts.get(cell)) [[likely]] {
+    if (current.counts.get(cell)) [[likely]] {
         didGetHolder(cell, Holder::Program);
-        release(*current, handle);
+        release(current, handle);
     }
 }
 

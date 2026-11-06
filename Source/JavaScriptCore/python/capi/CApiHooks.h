@@ -94,8 +94,10 @@ void forgetWhatCRaised();
 
 // C is handed a reference: these are the bits of the PyObject*.
 void giveReference(uint64_t bits);
-// And the other way round: code has handed over a reference with its result. This one is for any interpreter: the code may be that of a callback of the interpreter that the API is set up
-// for, which somebody else has called by its address.
+// It is given back, as by C: _ctypes.Py_DECREF().
+void giveBackReference(uint64_t bits);
+// Code has handed over a reference with its result, and the program gets the object. This one is for any interpreter of the VM: the code may be that of a callback of the interpreter that
+// the API is set up for, which another has called by its address.
 void takeOverReference(uint64_t bits);
 
 #else // !PYTHON_HAS_CAPI
@@ -116,6 +118,7 @@ inline void didFinishMarking(JSC::Heap&) { }
 inline bool throwWhatCRaised(JSGlobalObject*) { return true; }
 inline bool throwWhatCRaisedBesideResult(JSGlobalObject*, const String&) { return true; }
 inline void forgetWhatCRaised() { }
+inline void giveBackReference(uint64_t) { }
 inline void takeOverReference(uint64_t) { }
 inline void giveReference(uint64_t) { }
 

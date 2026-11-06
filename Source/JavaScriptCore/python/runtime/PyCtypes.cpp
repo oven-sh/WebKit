@@ -556,7 +556,7 @@ static JSValue moduleDecRef(JSGlobalObject* globalObject, JSValue, JSValue objec
         return object;
     if (Runtime& rt = runtime(globalObject); CApi::isFor(rt)) {
         if (CApi::isSetUpFor(rt))
-            CApi::takeOverReference(identityBits(object));
+            CApi::giveBackReference(identityBits(object));
         return object;
     }
     PyDict* held = stateOf(globalObject).heldObjects.get();

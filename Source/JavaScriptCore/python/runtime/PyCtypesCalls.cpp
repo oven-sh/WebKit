@@ -412,7 +412,8 @@ static JSValue makeResult(JSGlobalObject* globalObject, JSValue resultType, cons
     JSValue result;
     if (info->accessor && isSimpleInstanceType(*info->state.get(), PyType::from(resultType))) {
         result = load(globalObject, info->accessor, memory, info->size, { }, hint);
-        if (comesWithReference && result)
+        // (Also if the bits are not those of an object that the program may have.)
+        if (comesWithReference)
             takeOverReferenceIn(memory);
     } else
         result = dataFromCopy(globalObject, PyType::from(resultType), memory, info->size);

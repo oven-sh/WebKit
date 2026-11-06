@@ -186,7 +186,8 @@ ALWAYS_INLINE Interpreter* interpreterToEnter()
 // A thread that runs C for ANOTHER interpreter (CRunsFor: it calls a function with ctypes, loads a library or lets go of one) is refused too, and that is all: it costs the interpreter
 // that has the API nothing. What ctypes hands to C there are that interpreter's own objects, and that C takes a reference to one says nothing about this one's. No function gives
 // such a thread an object of this interpreter. What it can name is what a library that both have loaded keeps in a variable of its own: to share that between two interpreters
-// is an error in CPython as well.
+// is an error in CPython as well. (One more way: it calls the code of a callback of this interpreter's, whose address it has got as a number. That gives a reference with its result, as
+// to any C, and this C cannot give it back: the object is held for ever.)
 // (When the interpreter has ended there is nothing left to count: what an extension gives back as the process goes is ignored.)
 void refuseToChangeCount(bool isToFall);
 void releaseSlow(JSCell*);
