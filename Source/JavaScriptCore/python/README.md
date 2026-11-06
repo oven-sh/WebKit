@@ -858,6 +858,9 @@ so the aim is that everything Python *guarantees* holds, and that what it merely
   of the runtime). A reference held by a part counts as held by its owner. A generator or coroutine that is running refers to its
   variables, as in CPython, though they are in a frame on the stack meanwhile (`forEachVariableOfRunningGenerators`); the variables
   of a function that is running belong to nobody, as in CPython.
+  `get_objects()` and `get_referrers()` find what nothing of the program's refers to, so they also pass over all that is left of an exception that nobody has seen, and all that leads there (`HeapView::findWhatIsOutOfReach`; below, "So what walks
+  the heap does not count on it"). `get_referents()` begins at what the program has. That may be a generator that is running in another thread and refers to the exception that it is handling. So all three first have the exceptions
+  that any thread is handling made fit to be seen (`temporariesMayHaveEscaped`), and that behind their audit hooks: a hook that lets go of the GIL lets the other threads raise new ones.
   `get_objects()` and `get_referrers()` begin with a collection (`collectBeforeLookingAtHeap`), so that what is dead and has not been swept does not come back. It calls nothing. What reference counts would
   have freed is gone in CPython: its finalizer is owed from then on, by the thread that made it, and until that has been called it is not given, nor does it count as a referrer. (It used to be given, and was
   then finalized in the hands of whoever had got it: a generator taken out of `get_objects()` while suspended was closed a moment later.) What is in a cycle, or hangs off one, is still there in CPython until a

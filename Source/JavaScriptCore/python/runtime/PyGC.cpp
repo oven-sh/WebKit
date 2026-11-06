@@ -146,6 +146,7 @@ public:
         m_runtime.forEachObjectToBeFinalized([&](JSCell* cell) {
             m_toBeFinalized.add(cell);
         });
+        PartsOfExceptions partsOfExceptions;
         HeapIterationScope iterationScope(vm.heap);
         vm.heap.objectSpace().forEachLiveCell(iterationScope, [&](HeapCell* heapCell, HeapCell::Kind kind) {
             if (!isJSCellKind(kind))
@@ -157,11 +158,13 @@ public:
                 addPart(part, cell, hasPartsInIt);
             });
             addHiddenFields(asObject(cell));
-            if (isObjectOfPython(cell, globalObject))
+            if (isObjectOfPython(cell, globalObject)) {
                 m_objects.append(cell);
+                partsOfExceptions.addIfIsOne(cell);
+            }
             return IterationStatus::Continue;
         });
-        findWhatIsOutOfReach();
+        findWhatIsOutOfReach(partsOfExceptions);
     }
 
     // All the objects of Python there are, parts included.
@@ -206,28 +209,34 @@ private:
     // still has a word on its stack that leads to some of it. The runtime counts on it that nothing of the program's has such an exception, the entries of its traceback or the frame objects that were
     // made for those, the last of which lacks its caller (PyFrame::backIs()). So none of that is given: the exception with its entries and their frame objects, and, whatever is left of the
     // exception, all that leads to a frame object that lacks its caller: the frame objects of the calls it made, the entries of those, the exception.
-    void findWhatIsOutOfReach()
-    {
-        Vector<PyFrame*> frames;
-        Vector<PyTraceback*> entries;
-        Vector<PyException*> exceptions;
-        bool hasUnseenException = false;
-        bool hasFrameThatLacksCaller = false;
-        for (JSCell* cell : m_objects) {
+    struct PartsOfExceptions {
+        void addIfIsOne(JSCell* cell)
+        {
             if (auto* exception = PyException::tryFrom(cell)) {
                 exceptions.append(exception);
                 hasUnseenException |= exception->isUnseen();
             } else if (cell->type() != PyObjectType)
-                continue;
+                return;
             else if (auto* frame = PyFrame::tryFrom(cell)) {
                 frames.append(frame);
                 hasFrameThatLacksCaller |= frame->lacksBack();
             } else if (auto* entry = PyTraceback::tryFrom(cell))
                 entries.append(entry);
         }
+
+        Vector<PyFrame*> frames;
+        Vector<PyTraceback*> entries;
+        Vector<PyException*> exceptions;
+        bool hasUnseenException { false };
+        bool hasFrameThatLacksCaller { false };
+    };
+
+    void findWhatIsOutOfReach(const PartsOfExceptions& parts)
+    {
         // As a rule there is neither, however many tracebacks the program keeps.
-        if (!hasUnseenException && !hasFrameThatLacksCaller)
+        if (!parts.hasUnseenException && !parts.hasFrameThatLacksCaller)
             return;
+        auto& [frames, entries, exceptions, hasUnseenException, hasFrameThatLacksCaller] = parts;
         // Chains may be as long as the stack was deep, and many begin in the middle of another.
         UncheckedKeyHashSet<JSCell*> isWithinReach;
         Vector<JSCell*> path;
@@ -669,7 +678,6 @@ static void collectBeforeLookingAtHeap(Runtime& rt)
 static JSValue gcGetObjects(JSGlobalObject* globalObject, JSValue generation)
 {
     Runtime& rt = runtime(globalObject);
-    rt.temporariesMayHaveEscaped();
     VM& vm = rt.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (failed(scope, audit(globalObject, "gc.get_objects"_s, generation && !isNone(generation) ? generation : jsNumber(-1))))
@@ -687,6 +695,8 @@ static JSValue gcGetObjects(JSGlobalObject* globalObject, JSValue generation)
         if (number >= 0 && number < 2)
             RELEASE_AND_RETURN(scope, newList(globalObject));
     }
+    // Behind all that may run code of the program, in this thread or, if that lets go of the GIL, in another: the hooks, __index__().
+    rt.temporariesMayHaveEscaped();
     collectBeforeLookingAtHeap(rt);
     MarkedArgumentBuffer objects;
     {
@@ -753,12 +763,12 @@ private:
 static JSValue gcGetReferrers(JSGlobalObject* globalObject, const CallArgs& args)
 {
     VM& vm = getVM(globalObject);
-    runtime(globalObject).temporariesMayHaveEscaped();
     auto scope = DECLARE_THROW_SCOPE(vm);
     // The hooks are given the objects in a tuple, which refers to them for as long as it is there.
     PyTuple* forHooks = isAudited(globalObject) ? PyTuple::create(globalObject, args.positional()) : nullptr;
     if (forHooks && failed(scope, audit(globalObject, "gc.get_referrers"_s, forHooks)))
         return { };
+    runtime(globalObject).temporariesMayHaveEscaped();
     MarkedArgumentBuffer result;
     {
         ReferrerListener listener(args.positional());
@@ -921,10 +931,12 @@ static void appendReferents(JSGlobalObject* globalObject, JSCell* object, Marked
 static JSValue gcGetReferents(JSGlobalObject* globalObject, const CallArgs& args)
 {
     VM& vm = getVM(globalObject);
-    runtime(globalObject).temporariesMayHaveEscaped();
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (isAudited(globalObject) && failed(scope, audit(globalObject, "gc.get_referents"_s, PyTuple::create(globalObject, args.positional()))))
         return { };
+    // Behind the hooks: one that lets go of the GIL lets other threads raise. A generator that is running in one of them refers to the exception that it is handling, and from here to the end
+    // no thread runs but this one.
+    runtime(globalObject).temporariesMayHaveEscaped();
     MarkedArgumentBuffer result;
     for (JSValue object : args.positional()) {
         // Its __name__, __qualname__ and __doc__ are among them.
