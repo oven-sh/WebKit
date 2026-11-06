@@ -705,7 +705,7 @@ so the aim is that everything Python *guarantees* holds, and that what it merely
     side (`Heap::keepUnreachablePythonObjectsToFinalize`, `Runtime::StepOfKeeping`): the queues that stand still, of all; the heap's note; the other queues; what has died; each step again and again until none of them has marked anything. Only then, once
     for a collection, each is told that no more will be marked (`Heap::didKeepAllPythonObjectsToFinalize`, `Runtime::didMarkAll`). That is as far as it goes. In the last step each runtime works out by itself what of its own has died and in which order, in the same
     round as the others, when what another has just kept has not been followed yet. So an object of one realm that only a dead object of another realm leads to does not wait for that one's finalizer, as it would in one realm: both are called after the same
-    collection, the runtimes in the order in which they began, and the one that was held may come first. (Each used to go through all the steps by itself in every round. A runtime without a standing queue had the heap make its note in the round in which
+    collection, at a safe point the runtimes in the order in which they began, in a collection that was asked for the runtime that asked last, and so the one that was held may come first. (Each used to go through all the steps by itself in every round. A runtime without a standing queue had the heap make its note in the round in which
     another had only just put its queue forward: the program above made 15 full collections for 1 as soon as there was a second realm. And a runtime that had nothing left was told that marking was over while another was still keeping: it counted
     two collections for one, called `gc.callbacks` four times, and took out of its lists what the other might yet have marked.)
   - *A runtime ends in the collection that finds its global object dead* (`Heap::didKeepAllPythonObjectsToFinalize`, `Runtime::globalObjectDidDie`), not when that is swept. The first eight global objects of a VM are allocations of their own, which are
@@ -736,9 +736,10 @@ so the aim is that everything Python *guarantees* holds, and that what it merely
     that order: a list, a tuple and a frame go from the end; the attributes of an instance in the order of their places, which is
     the order in which they were set unless one has been deleted, though those beyond the sixth lie outside the cell; a deque from
     its left end, which is somewhere in the middle of its memory.
-    The table that a dict or a set has left behind for a larger one is dead, still holds what it held, and nothing refers to it:
-    such tables let go first, so that nothing goes by them. (What only such a table holds goes first with it: what was removed from
-    the dict since, or cleared out of it.) A deque empties the memory that it leaves.
+    The table that a dict or a set has left behind for a larger one is dead, still holds what it held, and nothing refers to it.
+    What something else holds as well, it does not count as holding (`letGoOfWhatTablesLeftBehindShare`): or an item would go when the
+    second of its holders does. What only such a table holds (what `clear()` let go of, what was removed from the dict since it grew)
+    goes at the table's own turn among what the program has dropped. A deque that grows or shrinks empties the memory that it leaves.
   - Only those are queued that no other object with a finalizer reaches. The rest wait for the collection that finds those gone, so
     a finalizer that resurrects its object also keeps what the object refers to from being finalized. So it goes level by level, each
     level in the order of reference counts: of `[N('x', N('x1')), N('y', N('y1'))]`, dropped, `y x y1 x1`, where CPython, which knows at

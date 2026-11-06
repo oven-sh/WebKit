@@ -209,6 +209,7 @@ private:
     void addAllThatDied(std::span<JSCell* const> candidates);
     void putAttributesInOrder(PyInstance*, std::span<unsigned> edges);
     void walk();
+    void letGoOfWhatTablesLeftBehindShare();
     Vector<unsigned> rootsInOrder();
     void flagAllReachedFrom(Vector<unsigned>&& worklist, Flag);
 
@@ -403,6 +404,43 @@ void DeadGraph::walk()
     }
 }
 
+// A table that nothing refers to: its dict or set has left it behind, for a larger one or because it was emptied, and it still holds what it held then. With reference counts it was freed
+// there and then. What something else holds as well, as a rule the table that came after, did not notice: those edges are taken out, or the item would go when the second of its holders
+// does, whichever that is. What only this table holds (what clear() let go of, what has been removed from the dict since it grew) was dropped at some time that nobody knows, like any other
+// root: it goes when the turn of the table comes.
+void DeadGraph::letGoOfWhatTablesLeftBehindShare()
+{
+    if (!m_hasAllThatDied)
+        return;
+    unsigned count = m_cells.size();
+    bool hasTakenOut = false;
+    for (unsigned node = 0; node < count; ++node) {
+        if (m_references[node] || !isTableOfContainer(m_cells[node]))
+            continue;
+        for (unsigned& target : m_edges.mutableSpan().subspan(m_firstEdge[node], m_firstEdge[node + 1] - m_firstEdge[node])) {
+            if (m_references[target] > 1) {
+                --m_references[target];
+                target = none;
+                hasTakenOut = true;
+            }
+        }
+    }
+    if (!hasTakenOut)
+        return;
+    unsigned kept = 0;
+    unsigned next = 0;
+    for (unsigned node = 0; node < count; ++node) {
+        unsigned end = m_firstEdge[node + 1];
+        m_firstEdge[node] = kept;
+        for (; next < end; ++next) {
+            if (m_edges[next] != none)
+                m_edges[kept++] = m_edges[next];
+        }
+    }
+    m_firstEdge[count] = kept;
+    m_edges.shrink(kept);
+}
+
 // The cells that nothing dead refers to: the program dropped them, in an order that nobody knows. They are put in the order in which
 // the first candidate that each reaches was made. Those that reach none come last.
 Vector<unsigned> DeadGraph::rootsInOrder()
@@ -462,11 +500,6 @@ Vector<unsigned> DeadGraph::rootsInOrder()
         std::ranges::stable_sort(roots, [&](unsigned a, unsigned b) {
             return firstCandidateReached[a] < firstCandidateReached[b];
         });
-        // A table that nothing refers to: its dict or set has left it behind for a larger one, and it still holds what it held then. With reference counts it was freed there and then and let go of
-        // nothing. So these go first: what they let go of is still held by the table that came after, and goes when that does. (Or the container has been emptied: then this is how it let go.)
-        std::ranges::stable_partition(roots, [&](unsigned node) {
-            return isTableOfContainer(m_cells[node]);
-        });
     }
     for (unsigned node = 0; node < count; ++node) {
         if (!m_references[node] && (!m_candidateCount || firstCandidateReached[node] == none))
@@ -492,6 +525,7 @@ void DeadGraph::flagAllReachedFrom(Vector<unsigned>&& worklist, Flag flag)
 FinalizationOrder DeadGraph::order()
 {
     walk();
+    letGoOfWhatTablesLeftBehindShare();
     unsigned count = m_cells.size();
     m_flags.fill(0, count);
     FinalizationOrder result;
