@@ -1924,6 +1924,7 @@ void Unit::assign(Assign* node)
             }
         }
     }
+    unsigned storedTemporary = 0;
     // variable[key] = f(): the store is the one use of the value. The value comes first, so what it is stored in can only be known
     // when it is made if nothing of the program runs in between.
     if (auto* target = node->targets.size() == 1 ? node->targets[0]->tryAs<Subscript>() : nullptr; target && makesTemporary(node->value)) {
@@ -1935,12 +1936,16 @@ void Unit::assign(Assign* node)
         };
         auto* slice = target->slice->tryAs<Slice>();
         if (target->value->is<NameExpr>() && isAtHand(target->value) && (slice ? isAtHand(slice->lower) && isAtHand(slice->upper) && isAtHand(slice->step) : isAtHand(target->slice)))
-            m_storedTemporary = beginTemporary(node->value);
+            storedTemporary = beginTemporary(node->value);
     }
     // a, b = g(): to be taken apart is the one use of the value.
+    unsigned unpackedTemporary = 0;
     if (node->targets.size() == 1 && (node->targets[0]->is<Tuple>() || node->targets[0]->is<List>()))
-        m_unpackedTemporary = beginTemporaryOfLoop(node->value);
+        unpackedTemporary = beginTemporaryOfLoop(node->value);
     Reg value = expr(node->value);
+    // (Not before: the value may have targets of its own, those of a comprehension.)
+    m_storedTemporary = storedTemporary;
+    m_unpackedTemporary = unpackedTemporary;
     for (Expr* target : node->targets)
         store(target, value.get());
 }
