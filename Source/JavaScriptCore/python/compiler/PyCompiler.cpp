@@ -838,13 +838,21 @@ Label& Unit::labelForLine(ReturnsByLine& labels, int lineno, const Range& place)
 
 void Unit::emitReturnsByLine(ReturnsByLine& returns, const Last& isLast)
 {
-    for (auto& [lineno, label, placeOfBranch] : returns) {
-        g.emitLabel(label.get());
+    auto emit = [&](auto& entry) {
+        g.emitLabel(entry.label.get());
         if (isLast.kind != Last::BeforeJump || isLast.jumpIs >= JumpIs::ToldOf)
-            line(lineno);
-        if (placeOfBranch.lineno)
-            place(placeOfBranch);
+            line(entry.lineno);
+        if (entry.place.lineno)
+            place(entry.place);
         leave(isLast);
+    };
+    // `if a and 0:`: nothing that can be reached is left between the jump that came of the constant and what it leads to. In CPython such a jump is dropped.
+    auto* next = std::ranges::find(returns, m_targetOfJumpOfConstant.get(), [](auto& entry) { return entry.label.ptr(); });
+    if (next != returns.end())
+        emit(*next);
+    for (auto& entry : returns) {
+        if (&entry != next)
+            emit(entry);
     }
 }
 
