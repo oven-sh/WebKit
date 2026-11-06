@@ -60,13 +60,13 @@ void PyException::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
     auto* thisObject = uncheckedDowncast<PyException>(cell);
     Base::visitChildren(thisObject, visitor);
-    // In the order in which CPython's lets go of them. See DeadGraph.
+    // In the order in which CPython's lets go of them: a derived type first clears what is its own, then BaseException the rest. See DeadGraph.
+    visitor.appendValues(thisObject->m_fields.data(), numberOfFields);
     visitor.append(thisObject->m_dict);
     visitor.append(thisObject->m_args);
     visitor.append(thisObject->m_traceback);
     visitor.append(thisObject->m_cause);
     visitor.append(thisObject->m_context);
-    visitor.appendValues(thisObject->m_fields.data(), numberOfFields);
 }
 
 DEFINE_VISIT_CHILDREN(PyException);

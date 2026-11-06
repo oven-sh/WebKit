@@ -113,11 +113,12 @@ private:
 };
 
 // The fields, by class.
+// Those of a type in the order in which CPython's type clears them: see PyException::visitChildrenImpl().
 namespace ExceptionField {
 static constexpr unsigned stopIterationValue = 0;
 static constexpr unsigned systemExitCode = 0;
 static constexpr unsigned nameErrorName = 0;
-static constexpr unsigned attributeErrorName = 0, attributeErrorObj = 1;
+static constexpr unsigned attributeErrorObj = 0, attributeErrorName = 1;
 static constexpr unsigned importErrorMsg = 0, importErrorName = 1, importErrorPath = 2, importErrorNameFrom = 3;
 static constexpr unsigned osErrorErrno = 0, osErrorStrerror = 1, osErrorFilename = 2, osErrorFilename2 = 3, osErrorCharactersWritten = 4;
 static constexpr unsigned syntaxErrorMsg = 0, syntaxErrorFilename = 1, syntaxErrorLineno = 2, syntaxErrorOffset = 3, syntaxErrorText = 4, syntaxErrorEndLineno = 5, syntaxErrorEndOffset = 6, syntaxErrorPrintFileAndLine = 7, syntaxErrorMetadata = 8;
