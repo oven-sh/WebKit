@@ -191,28 +191,38 @@ ALWAYS_INLINE Interpreter& interpreter()
 
 // With the GIL, as everything here. A thread without it (one that C made and that has not attached itself, one between Py_BEGIN_ALLOW_THREADS and
 // Py_END_ALLOW_THREADS) counts as stopped: it would change the table under the thread that has the GIL, or under the collector. In CPython that
-// spoils a count. Here it would spoil the table, so it is refused: the count stays as it is, and the program is told, once, on stderr. What was to be given
-// back is held for ever; what was to be taken is not held by that. (When the interpreter has ended there is nothing left to count: what an extension
-// gives back as the process goes is ignored.)
-bool refuseToChangeCounts();
-ALWAYS_INLINE bool mayChangeCounts()
-{
-    Interpreter* current = s_interpreter;
-    if (current && current->vm.currentThreadIsHoldingAPILock()) [[likely]]
-        return true;
-    return refuseToChangeCounts();
-}
+// spoils a count. Here it would spoil the table, so it is refused: the count stays as it is, and the program is told, once, on stderr.
+//  - A reference that was to be given back is held for ever.
+//  - A reference that was to be taken is one that C believes in and has not got, and nobody can tell which Py_DECREF will be the one that gives it back.
+//    So FROM THEN ON NO COUNT FALLS: all that C owns, or comes to own, is held for ever, and nothing that C rightly owns dies under it.
+// (When the interpreter has ended there is nothing left to count: what an extension gives back as the process goes is ignored.)
+void refuseToChangeCount(bool isToFall);
+// s_interpreter, until a reference that was to be taken has been refused.
+extern std::atomic<Interpreter*> s_interpreterWhoseCountsFall;
+ALWAYS_INLINE bool hasGIL(Interpreter* current) { return current && current->vm.currentThreadIsHoldingAPILock(); }
 
 ALWAYS_INLINE void retain(Handle handle)
 {
-    if (JSCell* cell = countedCell(handle); cell && mayChangeCounts())
-        interpreter().counts.add(cell);
+    JSCell* cell = countedCell(handle);
+    if (!cell)
+        return;
+    Interpreter* current = s_interpreter;
+    if (hasGIL(current)) [[likely]]
+        current->counts.add(cell);
+    else
+        refuseToChangeCount(false);
 }
 
 ALWAYS_INLINE void release(Handle handle)
 {
-    if (JSCell* cell = countedCell(handle); cell && mayChangeCounts())
-        interpreter().counts.remove(cell);
+    JSCell* cell = countedCell(handle);
+    if (!cell)
+        return;
+    Interpreter* current = s_interpreterWhoseCountsFall.load(std::memory_order_relaxed);
+    if (hasGIL(current)) [[likely]]
+        current->counts.remove(cell);
+    else
+        refuseToChangeCount(true);
 }
 
 // A reference that a function takes over from C ("steals"), whether it succeeds or not: given up when the function returns, by which time

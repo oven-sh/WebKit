@@ -67,6 +67,7 @@ DEFINE_VISIT_CHILDREN(State);
 // ---- The one interpreter ----
 
 Interpreter* s_interpreter;
+std::atomic<const Runtime*> s_runtime;
 // Once and for all.
 static std::atomic<bool> s_isTaken;
 
@@ -115,7 +116,7 @@ FOR_EACH_CAPI_FILE(DECLARE_FILE)
 
 bool ensure(JSGlobalObject* globalObject)
 {
-    if (s_interpreter && s_interpreter->globalObject == globalObject) [[likely]]
+    if (belongsTo(runtime(globalObject))) [[likely]]
         return true;
 
     VM& vm = getVM(globalObject);
@@ -134,23 +135,20 @@ bool ensure(JSGlobalObject* globalObject)
     state->typeExtensionStructure.set(vm, state, TypeExtension::createStructure(vm, globalObject));
     auto* interpreter = new Interpreter(globalObject, state);
     setSymbols(interpreter);
-    // The collector of another VM asks whether this is its own.
-    WTF::storeStoreFence();
     s_interpreter = interpreter;
+    s_interpreterWhoseCountsFall.store(interpreter, std::memory_order_relaxed);
+    s_runtime.store(&interpreter->runtime, std::memory_order_release);
     // It stays with the heap, which may outlive the runtime.
     addMarkingConstraint(vm);
     return true;
-}
-
-bool belongsToSlow(const Runtime& runtime)
-{
-    return &s_interpreter->runtime == &runtime;
 }
 
 void runtimeIsEnding(Runtime& runtime)
 {
     if (!belongsTo(runtime))
         return;
+    s_runtime.store(nullptr, std::memory_order_relaxed);
+    s_interpreterWhoseCountsFall.store(nullptr, std::memory_order_relaxed);
     delete std::exchange(s_interpreter, nullptr);
     clearSymbols();
 }
@@ -190,12 +188,21 @@ void didFinishMarking(JSC::Heap& heap)
 #endif
 }
 
-bool refuseToChangeCounts()
+// ---- References ----
+
+std::atomic<Interpreter*> s_interpreterWhoseCountsFall;
+
+void refuseToChangeCount(bool isToFall)
 {
+    if (!s_interpreter)
+        return;
+    if (!isToFall)
+        s_interpreterWhoseCountsFall.store(nullptr, std::memory_order_relaxed);
+    else if (!s_interpreterWhoseCountsFall.load(std::memory_order_relaxed))
+        return;
     static std::atomic<bool> hasTold;
-    if (s_interpreter && !hasTold.exchange(true))
+    if (!hasTold.exchange(true))
         fputs("Python: Py_INCREF or Py_DECREF was called by a thread that does not hold the GIL; the count stays as it was\n", stderr);
-    return false;
 }
 
 // ---- The error indicator ----

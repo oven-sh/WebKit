@@ -1422,10 +1422,13 @@ which would tell C that nobody else can see it.
 - The program changes the table with the GIL, and the collector reads it only in the constraint. The thread that runs the program is never stopped from outside: it stops
   where it allocates in the heap or gives up its access to it, and no operation on the table does either. So there is no lock, and no barrier. A thread
   without the GIL counts as stopped, so `Py_INCREF` and `Py_DECREF` look who calls: in CPython such a call spoils a count, here it would spoil the table. It is refused: the
-  count stays as it was, with a line on stderr the first time.
+  count stays as it was, with a line on stderr the first time. What was to be given back is then held for ever. What was to be taken is a reference that C believes in and
+  has not got, and nobody can tell which `Py_DECREF` will give it back: so from then on no count falls, and all that C owns or comes to own is held for ever. A leak, and
+  nothing that C rightly owns dies under it.
 
 **The error indicator is not the VM's pending exception.** C goes on calling the API while an exception is set, and the functions of the runtime expect none to be pending
-when they are entered. So the indicator is a reference of its own, one for each thread, counted like C's other references and kept alive by that. A function
+when they are entered. So the indicator is a reference of its own, one for each thread, counted like C's other references and kept alive by that (for ever, if a thread ends
+with an exception set). A function
 of the API that finds the runtime to have raised moves the exception there (`Entry::failed()`); whoever has called C throws what is there (`throwWhatCRaised()`). What ends the
 program (a termination) is never put in the indicator: it stays pending, and while it does every function of the API fails at once.
 

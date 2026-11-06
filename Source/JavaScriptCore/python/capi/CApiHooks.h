@@ -26,8 +26,9 @@ extern Interpreter* s_interpreter;
 
 // Before anything of C's that may call the API is called. False, with an ImportError: the API is another interpreter's.
 bool ensure(JSGlobalObject*);
-bool belongsToSlow(const Runtime&);
-ALWAYS_INLINE bool belongsTo(const Runtime& runtime) { return s_interpreter && belongsToSlow(runtime); }
+// The collector of another VM asks too, on a thread of its own, while this one may be ending: the pointer is compared and never followed.
+extern std::atomic<const Runtime*> s_runtime;
+ALWAYS_INLINE bool belongsTo(const Runtime& runtime) { return s_runtime.load(std::memory_order_relaxed) == &runtime; }
 void runtimeIsEnding(Runtime&);
 
 // The rest is for the runtime that the API belongs to.
