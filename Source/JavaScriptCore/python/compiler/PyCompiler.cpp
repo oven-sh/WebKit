@@ -2647,7 +2647,7 @@ void Unit::tryStarExcept(AST::Try* node, const Last& isLast)
 
         if (handler->name)
             storeName(handler->name, match.get(), handler->range);
-        // The part that matched is what sys.exception() shows in the clause.
+        // The part that matched is what sys.exception() shows in the clause, and, as in CPython, from then on: where the next clause says what it catches.
         callRuntimeForEffect(RuntimeFunction::SetHandledException, { match.get() });
         match = nullptr;
 
@@ -2661,10 +2661,7 @@ void Unit::tryStarExcept(AST::Try* node, const Last& isLast)
             storeName(handler->name, constant(jsUndefined()), handler->range);
             deleteName(handler->name, handler->range);
         }
-        if (!cannotGetHere()) {
-            callRuntimeForEffect(RuntimeFunction::SetHandledException, { original.get() });
-            jump(next.get());
-        }
+        jump(next.get());
 
         Reg thrown = beginHandler(clause);
         callRuntime(thrown.get(), RuntimeFunction::CatchException, { thrown.get() });
@@ -2674,7 +2671,6 @@ void Unit::tryStarExcept(AST::Try* node, const Last& isLast)
             deleteName(handler->name, handler->range);
         }
         g.emitPyListAppend(raised.get(), thrown.get());
-        callRuntimeForEffect(RuntimeFunction::SetHandledException, { original.get() });
         jump(next.get());
 
         // Where CPython drops the None that stands for no match, on the line of the clause.
